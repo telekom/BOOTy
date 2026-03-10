@@ -26,9 +26,10 @@ type Orchestrator struct {
 	config   *Configurator
 
 	// Runtime state set during provisioning.
-	targetDisk    string
-	rootPartition string
-	bootPartition string
+	targetDisk      string
+	rootPartition   string
+	bootPartition   string
+	firmwareChanged bool // true if any step changed firmware values requiring hard reboot
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
@@ -110,7 +111,20 @@ func (o *Orchestrator) removeEFIBootEntries(ctx context.Context) error {
 }
 
 func (o *Orchestrator) setupMellanox(ctx context.Context) error {
-	return o.config.SetupMellanox(ctx)
+	changed, err := o.config.SetupMellanox(ctx)
+	if err != nil {
+		return err
+	}
+	if changed {
+		o.firmwareChanged = true
+	}
+	return nil
+}
+
+// FirmwareChanged reports whether any provisioning step changed firmware values
+// that require a hard reboot (not kexec) to reinitialize.
+func (o *Orchestrator) FirmwareChanged() bool {
+	return o.firmwareChanged
 }
 
 func (o *Orchestrator) wipeDisks(ctx context.Context) error {

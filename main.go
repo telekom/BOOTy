@@ -6,8 +6,6 @@ import (
 	"context"
 	"log/slog"
 	"os"
-	"os/exec"
-	"strings"
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/caprf"
@@ -149,7 +147,7 @@ func runCAPRF(ctx context.Context) {
 
 	// Attempt kexec into installed kernel; fall back to normal reboot.
 	if cfg.Mode != "deprovision" && cfg.Mode != "soft" {
-		tryKexec(cfg)
+		tryKexec(cfg, orch.FirmwareChanged())
 	}
 	time.Sleep(time.Second * 2)
 	realm.Reboot()
@@ -207,29 +205,18 @@ func detectIPMI(netCfg *network.Config) {
 	slog.Info("Detected IPMI info", "mac", mac, "ip", ip)
 }
 
-// hasMellanoxNICs checks if Mellanox ConnectX NICs are present.
-// Mellanox NICs require firmware reset on reboot, so kexec must be skipped.
-func hasMellanoxNICs() bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "lspci", "-d", "15b3:").CombinedOutput()
-	if err != nil {
-		return false
-	}
-	return strings.TrimSpace(string(out)) != ""
-}
-
 // tryKexec attempts to kexec into the installed kernel.
 // Falls back silently on failure so the caller can do a normal reboot.
-// Skips kexec when disabled by toggle or when Mellanox NICs require a hard reboot.
-func tryKexec(cfg *config.MachineConfig) {
+// Skips kexec when disabled by config toggle or when firmware was changed during
+// provisioning (e.g. Mellanox SR-IOV), since firmware reinit requires a hard reboot.
+func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) {
 	if cfg.DisableKexec {
 		slog.Info("Kexec disabled by configuration, skipping")
 		return
 	}
 
-	if hasMellanoxNICs() {
-		slog.Info("Mellanox NICs detected, hard reboot required — skipping kexec")
+	if firmwareChanged {
+		slog.Info("Firmware values changed during provisioning, hard reboot required — skipping kexec")
 		return
 	}
 
