@@ -107,82 +107,176 @@ jobs:
       - name: Install QEMU and dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 cpio busybox-static
+          sudo apt-get install -y qemu-system-x86 cpio busybox-static zstd
 
       - name: Build initramfs image
         run: |
+          # Build BOOTy as a static binary for linux/amd64
           CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
-            go build -ldflags "-linkmode external -extldflags '-static' -s -w" -o init
+            go build -ldflags "-linkmode external -extldflags '-static' -s -w" -o booty
 
-          mkdir -p initramfs/{bin,sbin,dev,proc,sys,etc,usr/bin}
+          # Create initramfs directory structure
+          mkdir -p initramfs/{bin,sbin,dev,proc,sys,etc,tmp,usr/bin,lib/modules,mnt,home}
 
-          # Use busybox-static from apt — no external downloads needed
+          # Create device nodes so the kernel can give init a working console
+          sudo mknod initramfs/dev/console c 5 1
+          sudo mknod initramfs/dev/ttyS0 c 4 64
+          sudo mknod initramfs/dev/null c 1 3
+
+          # Install busybox with shell and utility symlinks
           cp /bin/busybox initramfs/bin/busybox
-          cd initramfs/bin && ln -s busybox sh && ln -s busybox setsid && cd ../..
-          cd initramfs/usr/bin && ln -s ../../bin/busybox setsid && cd ../../..
+          cd initramfs/bin
+          for cmd in sh mount umount insmod setsid cttyhack; do
+            ln -sf busybox "$cmd"
+          done
+          cd ../..
+          cd initramfs/usr/bin && ln -sf ../../bin/busybox setsid && cd ../../..
 
-          cp init initramfs/init
+          # Copy BOOTy binary
+          cp booty initramfs/booty
 
+          # Copy e1000 kernel module (QEMU default virtual NIC)
+          MOD_PATH=$(find /lib/modules/$(uname -r) -name "e1000.ko*" | head -1)
+          if [ -n "$MOD_PATH" ]; then
+            case "$MOD_PATH" in
+              *.zst) zstd -d "$MOD_PATH" -o initramfs/lib/modules/e1000.ko ;;
+              *.xz)  xz -dc "$MOD_PATH" > initramfs/lib/modules/e1000.ko ;;
+              *.gz)  gzip -dc "$MOD_PATH" > initramfs/lib/modules/e1000.ko ;;
+              *)     cp "$MOD_PATH" initramfs/lib/modules/e1000.ko ;;
+            esac
+            echo "Copied e1000 module from $MOD_PATH"
+          else
+            echo "WARNING: e1000 module not found"
+          fi
+
+          # Create init wrapper: loads NIC driver and sets BOOTYURL before starting BOOTy
+          cat > initramfs/init << 'INITEOF'
+          #!/bin/sh
+          /bin/insmod /lib/modules/e1000.ko 2>/dev/null || true
+          export BOOTYURL="http://10.0.2.2:3000/booty"
+          exec /booty
+          INITEOF
+          chmod +x initramfs/init
+
+          # Package initramfs
           cd initramfs
-          find . -print0 | cpio --null -ov --format=newc 2>/dev/null | gzip > ../test-initramfs.cpio.gz
+          sudo find . -print0 | sudo cpio --null -ov --format=newc 2>/dev/null | gzip > ../test-initramfs.cpio.gz
           cd ..
 
       - name: Prepare kernel
         run: |
-          # Use the runner's own installed kernel — always available, no external download
           sudo cp /boot/vmlinuz-$(uname -r) vmlinuz
 
       - name: Start test provisioning server
         run: |
           mkdir -p images
-          cat > test-config.json <<'EOF'
-          {"action":"shell","dryRun":true,"dropToShell":true}
+          dd if=/dev/urandom bs=1024 count=1 of=images/test.img 2>/dev/null
+
+          # Config for QEMU default MAC 52:54:00:12:34:56 (dash-format: 52-54-00-12-34-56)
+          cat > test-config.json << 'EOF'
+          {
+            "action": "writeImage",
+            "sourceImage": "http://10.0.2.2:3000/images/test.img",
+            "destinationDevice": "/dev/sda",
+            "compressed": false,
+            "dryRun": false,
+            "dropToShell": false,
+            "wipeDevice": false,
+            "growPartition": 1,
+            "lvmRootName": "/dev/ubuntu-vg/root"
+          }
           EOF
 
-          python3 -c "
-          import http.server, json, os, threading
+          python3 << 'PYEOF' &
+          import http.server
 
           class Handler(http.server.SimpleHTTPRequestHandler):
               def do_GET(self):
-                  if self.path.endswith('.bty'):
+                  if self.path == '/booty/52-54-00-12-34-56.bty':
                       self.send_response(200)
                       self.send_header('Content-Type', 'application/json')
                       self.end_headers()
                       with open('test-config.json', 'rb') as f:
                           self.wfile.write(f.read())
-                  else:
+                  elif self.path.startswith('/images/'):
                       super().do_GET()
+                  else:
+                      self.send_response(404)
+                      self.end_headers()
+              def log_message(self, format, *args):
+                  print(f"[server] {format % args}")
 
           server = http.server.HTTPServer(('0.0.0.0', 3000), Handler)
-          threading.Thread(target=server.serve_forever, daemon=True).start()
-          import time; time.sleep(999999)
-          " &
+          print("[server] Listening on :3000")
+          server.serve_forever()
+          PYEOF
           echo $! > server.pid
           sleep 2
+          curl -sf http://localhost:3000/booty/52-54-00-12-34-56.bty | python3 -m json.tool
+          echo "Provisioning server ready"
 
       - name: Boot with QEMU and validate
         timeout-minutes: 5
         run: |
-          timeout 60 qemu-system-x86_64 \
+          timeout 120 qemu-system-x86_64 \
             -kernel vmlinuz \
             -initrd test-initramfs.cpio.gz \
             -append "console=ttyS0 panic=1" \
             -m 512 \
             -nographic \
             -no-reboot \
-            -net nic \
-            -net user,hostfwd=tcp::3000-:3000 \
+            -net nic,macaddr=52:54:00:12:34:56,model=e1000 \
+            -net user \
             -serial file:serial.log \
             2>&1 || true
 
-          echo "=== Serial Output ==="
+          echo ""
+          echo "======================================="
+          echo "        Serial Console Output          "
+          echo "======================================="
           cat serial.log || true
+          echo ""
+          echo "======================================="
 
-          if grep -q "BOOTy" serial.log 2>/dev/null; then
-            echo "PASS: BOOTy init started successfully"
+          PASS=true
+
+          if grep -q "Starting DHCP client" serial.log 2>/dev/null; then
+            echo "PASS: BOOTy init started — mount and device setup successful"
           else
-            echo "WARN: BOOTy banner not found in serial output (may be expected in dry-run mode)"
+            echo "FAIL: BOOTy init did not reach DHCP client"
+            PASS=false
           fi
+
+          if grep -q "Starting BOOTy" serial.log 2>/dev/null; then
+            echo "PASS: BOOTy main flow reached"
+          else
+            echo "FAIL: BOOTy did not reach main flow"
+            PASS=false
+          fi
+
+          if grep -q "Connecting to provisioning server" serial.log 2>/dev/null; then
+            echo "PASS: Network operational — provisioning server contacted"
+          else
+            echo "FAIL: Provisioning server not contacted"
+            PASS=false
+          fi
+
+          if [ "$PASS" = "false" ]; then
+            echo ""
+            echo "E2E BOOT VALIDATION FAILED"
+            exit 1
+          fi
+
+          echo ""
+          echo "ALL E2E CHECKS PASSED"
+
+      - name: Upload serial log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kvm-boot-serial-log
+          path: serial.log
+          if-no-files-found: ignore
 
       - name: Cleanup
         if: always()
