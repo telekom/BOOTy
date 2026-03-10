@@ -28,6 +28,9 @@ func NewConfigurator(diskMgr *disk.Manager) *Configurator {
 	return &Configurator{disk: diskMgr, rootDir: newroot}
 }
 
+// SetRootDir overrides the root directory (for testing).
+func (c *Configurator) SetRootDir(dir string) { c.rootDir = dir }
+
 // SetHostname writes the hostname to /etc/hostname.
 func (c *Configurator) SetHostname(cfg *config.MachineConfig) error {
 	path := filepath.Join(c.rootDir, "etc", "hostname")
