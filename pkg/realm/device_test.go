@@ -61,3 +61,53 @@ func TestMakedev(t *testing.T) {
 		t.Errorf("makedev(1, 3) = %d, want %d", result, expected)
 	}
 }
+
+func TestCreateDeviceNoDevicesToCreate(t *testing.T) {
+	// DefaultDevices all have CreateDevice=false, so CreateDevice() should
+	// iterate without calling Mknod.
+	d := DefaultDevices()
+	if err := d.CreateDevice(); err != nil {
+		t.Fatalf("CreateDevice() error: %v", err)
+	}
+}
+
+func TestCreateDeviceWithMknodFailure(t *testing.T) {
+	// Even with CreateDevice=true and an invalid path, the function logs
+	// but still returns nil.
+	d := &Devices{
+		Device: []Device{
+			{
+				CreateDevice: true,
+				Name:         "test",
+				Path:         "/nonexistent/path/testdev",
+				Mode:         0o666,
+				Major:        1,
+				Minor:        3,
+			},
+		},
+	}
+	if err := d.CreateDevice(); err != nil {
+		t.Fatalf("CreateDevice() error: %v", err)
+	}
+}
+
+func TestCreateDeviceMixed(t *testing.T) {
+	// Mix of CreateDevice=true and false.
+	d := &Devices{
+		Device: []Device{
+			{CreateDevice: false, Name: "skip-this"},
+			{CreateDevice: true, Name: "try-this", Path: "/nonexistent/devnode", Major: 1, Minor: 1},
+			{CreateDevice: false, Name: "skip-also"},
+		},
+	}
+	if err := d.CreateDevice(); err != nil {
+		t.Fatalf("CreateDevice() error: %v", err)
+	}
+}
+
+func TestCreateDeviceEmpty(t *testing.T) {
+	d := &Devices{}
+	if err := d.CreateDevice(); err != nil {
+		t.Fatalf("CreateDevice() error: %v", err)
+	}
+}

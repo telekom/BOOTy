@@ -72,3 +72,44 @@ func TestGetConfigForAddress404(t *testing.T) {
 		t.Error("GetConfigForAddress() with 404 response should return error")
 	}
 }
+
+func TestGetConfigForAddressInvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("not valid json!"))
+	}))
+	defer server.Close()
+
+	os.Setenv("BOOTYURL", server.URL)
+	defer os.Unsetenv("BOOTYURL")
+
+	_, err := GetConfigForAddress("aa-bb-cc-dd-ee-ff")
+	if err == nil {
+		t.Error("GetConfigForAddress() with invalid JSON should return error")
+	}
+}
+
+func TestGetConfigForAddressServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	os.Setenv("BOOTYURL", server.URL)
+	defer os.Unsetenv("BOOTYURL")
+
+	_, err := GetConfigForAddress("aa-bb-cc-dd-ee-ff")
+	if err == nil {
+		t.Error("GetConfigForAddress() with 500 response should return error")
+	}
+}
+
+func TestGetConfigForAddressConnectionRefused(t *testing.T) {
+	os.Setenv("BOOTYURL", "http://127.0.0.1:1")
+	defer os.Unsetenv("BOOTYURL")
+
+	_, err := GetConfigForAddress("aa-bb-cc-dd-ee-ff")
+	if err == nil {
+		t.Error("GetConfigForAddress() with refused connection should return error")
+	}
+}
