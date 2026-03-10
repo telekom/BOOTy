@@ -122,20 +122,33 @@ func runCAPRF(ctx context.Context) {
 		}
 	}
 
-	// Run the full provisioning pipeline.
+	// Run provisioning or deprovisioning based on mode.
 	diskMgr := disk.NewManager(nil)
 	orch := provision.NewOrchestrator(cfg, client, diskMgr)
-	if err := orch.Provision(ctx); err != nil {
-		slog.Error("Provisioning failed", "error", err)
+
+	switch cfg.Mode {
+	case "deprovision", "soft-deprovision":
+		if cfg.Mode == "soft-deprovision" {
+			cfg.Mode = "soft"
+		}
+		if err := orch.Deprovision(ctx); err != nil {
+			slog.Error("Deprovisioning failed", "error", err)
+		}
+	default:
+		if err := orch.Provision(ctx); err != nil {
+			slog.Error("Provisioning failed", "error", err)
+		}
 	}
 
-	slog.Info("BOOTy CAPRF provisioning complete")
+	slog.Info("BOOTy CAPRF complete")
 	if err := netMode.Teardown(ctx); err != nil {
 		slog.Warn("Network teardown error", "error", err)
 	}
 
 	// Attempt kexec into installed kernel; fall back to normal reboot.
-	tryKexec()
+	if cfg.Mode != "deprovision" && cfg.Mode != "soft" {
+		tryKexec()
+	}
 	time.Sleep(time.Second * 2)
 	realm.Reboot()
 }

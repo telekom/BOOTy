@@ -28,6 +28,19 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
     --mount=type=cache,sharing=locked,id=goroot,target=/root/.cache/go-build \
     CGO_ENABLED=1 GOOS=linux go build -a -ldflags "-linkmode external -extldflags '-static' -s -w" -o init
 
+# Build FRR (BGP/BFD/Zebra) for EVPN networking
+FROM debian:bookworm-slim AS frr
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    frr frr-pythontools && \
+    rm -rf /var/lib/apt/lists/*
+
+# Build disk and system tools
+FROM debian:bookworm-slim AS tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    mdadm wipefs e2fsprogs xfsprogs parted gdisk kpartx dosfstools \
+    efibootmgr dmidecode ethtool curl iproute2 bridge-utils \
+    && rm -rf /var/lib/apt/lists/*
+
 # Build Busybox
 FROM gcc:14 AS busybox
 RUN apt-get update && apt-get install -y cpio
@@ -43,6 +56,29 @@ RUN wget -qO- https://launchpad.net/cloud-utils/trunk/0.33/+download/cloud-utils
 COPY --from=lvm /LVM2.2.03.27/tools/lvm sbin
 COPY --from=sfdisk /util-linux/sfdisk.static bin/sfdisk
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
+
+# FRR binaries for EVPN networking
+COPY --from=frr /usr/lib/frr/bgpd sbin/bgpd
+COPY --from=frr /usr/lib/frr/zebra sbin/zebra
+COPY --from=frr /usr/lib/frr/bfdd sbin/bfdd
+COPY --from=frr /usr/bin/vtysh bin/vtysh
+COPY --from=frr /usr/lib/frr/watchfrr sbin/watchfrr
+
+# Disk and system tools
+COPY --from=tools /sbin/mdadm sbin/mdadm
+COPY --from=tools /usr/bin/wipefs bin/wipefs
+COPY --from=tools /sbin/resize2fs sbin/resize2fs
+COPY --from=tools /sbin/e2fsck sbin/e2fsck
+COPY --from=tools /usr/sbin/xfs_growfs sbin/xfs_growfs
+COPY --from=tools /usr/sbin/parted bin/parted
+COPY --from=tools /usr/sbin/sgdisk bin/sgdisk
+COPY --from=tools /sbin/partprobe bin/partprobe
+COPY --from=tools /usr/bin/efibootmgr bin/efibootmgr
+COPY --from=tools /usr/sbin/dmidecode bin/dmidecode
+COPY --from=tools /usr/sbin/ethtool bin/ethtool
+COPY --from=tools /usr/bin/curl bin/curl
+COPY --from=tools /sbin/ip bin/ip
+COPY --from=tools /sbin/bridge bin/bridge
 
 # Package initramfs
 RUN find . -print0 | cpio --null -ov --format=newc > ../initramfs.cpio
