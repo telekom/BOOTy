@@ -11,6 +11,8 @@ import (
 	"github.com/telekom/BOOTy/pkg/caprf"
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/image"
+	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/BOOTy/pkg/network/frr"
 	"github.com/telekom/BOOTy/pkg/plunderclient"
 	"github.com/telekom/BOOTy/pkg/plunderclient/types"
 	"github.com/telekom/BOOTy/pkg/utils"
@@ -101,6 +103,22 @@ func runCAPRF(ctx context.Context) {
 		"images", cfg.ImageURLs,
 	)
 
+	// Set up networking based on configuration.
+	netMode := setupNetworkMode(ctx, cfg)
+
+	// Wait for network connectivity before proceeding.
+	connectivityTarget := cfg.InitURL
+	if connectivityTarget == "" {
+		connectivityTarget = cfg.SuccessURL
+	}
+	if connectivityTarget != "" {
+		slog.Info("Waiting for network connectivity", "target", connectivityTarget)
+		if err := netMode.WaitForConnectivity(ctx, connectivityTarget, 5*time.Minute); err != nil {
+			slog.Error("Network connectivity timeout", "error", err)
+			realm.Reboot()
+		}
+	}
+
 	if err := client.ReportStatus(ctx, config.StatusInit, "provisioning started"); err != nil {
 		slog.Error("Failed to report init status", "error", err)
 	}
@@ -135,8 +153,58 @@ func runCAPRF(ctx context.Context) {
 	}
 
 	slog.Info("BOOTy CAPRF provisioning complete, rebooting")
+	if err := netMode.Teardown(ctx); err != nil {
+		slog.Warn("Network teardown error", "error", err)
+	}
 	time.Sleep(time.Second * 2)
 	realm.Reboot()
+}
+
+// setupNetworkMode detects and configures the appropriate network mode.
+func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mode {
+	netCfg := &network.Config{
+		UnderlaySubnet:   cfg.UnderlaySubnet,
+		UnderlayIP:       cfg.UnderlayIP,
+		OverlaySubnet:    cfg.OverlaySubnet,
+		IPMISubnet:       cfg.IPMISubnet,
+		ASN:              cfg.ASN,
+		ProvisionVNI:     cfg.ProvisionVNI,
+		DNSResolvers:     cfg.DNSResolvers,
+		DCGWIPs:          cfg.DCGWIPs,
+		LeafASN:          cfg.LeafASN,
+		LocalASN:         cfg.LocalASN,
+		OverlayAggregate: cfg.OverlayAggregate,
+		VPNRT:            cfg.VPNRT,
+	}
+
+	if netCfg.IsFRRMode() {
+		// Auto-detect IPMI MAC/IP from system if not provided.
+		if netCfg.IPMIMAC == "" || netCfg.IPMIIP == "" {
+			mac, ip, err := network.GetIPMIInfo()
+			if err == nil {
+				if netCfg.IPMIMAC == "" {
+					netCfg.IPMIMAC = mac
+				}
+				if netCfg.IPMIIP == "" {
+					netCfg.IPMIIP = ip
+				}
+				slog.Info("Detected IPMI info", "mac", mac, "ip", ip)
+			} else {
+				slog.Warn("Failed to detect IPMI info", "error", err)
+			}
+		}
+
+		slog.Info("Using FRR/EVPN network mode", "asn", cfg.ASN)
+		mgr := frr.NewManager(nil)
+		if err := mgr.Setup(ctx, netCfg); err != nil {
+			slog.Error("FRR network setup failed, falling back to DHCP", "error", err)
+			return &network.DHCPMode{}
+		}
+		return mgr
+	}
+
+	slog.Info("Using DHCP network mode")
+	return &network.DHCPMode{}
 }
 
 // runLegacy runs the original BOOTy flow using BOOTYURL environment variable.

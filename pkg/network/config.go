@@ -1,0 +1,64 @@
+// Package network provides network mode abstractions for provisioning.
+package network
+
+import (
+	"context"
+	"time"
+)
+
+// Mode configures network connectivity in the ramdisk.
+type Mode interface {
+	// Setup configures all networking (interfaces, routing, etc.)
+	Setup(ctx context.Context, cfg *Config) error
+	// WaitForConnectivity blocks until network is reachable.
+	WaitForConnectivity(ctx context.Context, target string, timeout time.Duration) error
+	// Teardown cleans up network configuration.
+	Teardown(ctx context.Context) error
+}
+
+// Config holds all parameters needed for network setup.
+type Config struct {
+	// DHCP mode fields.
+	Interfaces []string // NICs to configure (default: auto-detect)
+
+	// FRR/EVPN mode fields (from kernel cmdline or /deploy/vars).
+	UnderlaySubnet string // e.g. "192.168.4.0/24"
+	UnderlayIP     string // Direct underlay IP (if no subnet)
+	OverlaySubnet  string // e.g. "2a01:598:40a:5481::/64"
+	IPMISubnet     string // e.g. "172.30.0.0/24"
+	IPMIMAC        string // IPMI MAC for IP derivation
+	IPMIIP         string // IPMI IP for offset calculation
+	ASN            uint32 // BGP ASN for underlay
+	ProvisionVNI   uint32 // VXLAN VNI for provision network
+	DNSResolvers   string // Comma-separated DNS servers
+
+	// Optional FRR onefabric mode fields.
+	DCGWIPs          string // Data Center Gateway IPs (comma-sep)
+	LeafASN          uint32 // Leaf switch AS
+	LocalASN         uint32 // Local AS for leaf connections
+	OverlayAggregate string // Route aggregate for overlay
+	VPNRT            string // VPN route target for EVPN
+
+	// Common fields.
+	BridgeName string // Default: "br.provision"
+	VRFName    string // Default: "Vrf_underlay"
+	MTU        int    // Default: 9000
+}
+
+// ApplyDefaults fills in default values for unset fields.
+func (c *Config) ApplyDefaults() {
+	if c.BridgeName == "" {
+		c.BridgeName = "br.provision"
+	}
+	if c.VRFName == "" {
+		c.VRFName = "Vrf_underlay"
+	}
+	if c.MTU == 0 {
+		c.MTU = 9000
+	}
+}
+
+// IsFRRMode returns true if the config has enough parameters for FRR/EVPN.
+func (c *Config) IsFRRMode() bool {
+	return (c.UnderlaySubnet != "" || c.UnderlayIP != "") && c.ASN != 0
+}

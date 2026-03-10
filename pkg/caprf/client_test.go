@@ -409,3 +409,59 @@ export HOSTNAME="works"
 
 // Compile-time check that Client implements config.Provider.
 var _ config.Provider = (*Client)(nil)
+
+func TestParseVarsNetworkFields(t *testing.T) {
+	input := `underlay_subnet="192.168.4.0/24"
+underlay_ip="10.50.12.13"
+overlay_subnet="2a01:598:40a:5481::/64"
+ipmi_subnet="172.30.0.0/24"
+asn_server="65188"
+provision_vni="2002002"
+dns_resolver="2003:0:af08:1005::1000"
+dcgw_ips="10.10.10.1,10.10.10.2"
+leaf_asn="65500"
+local_asn="65501"
+overlay_aggregate="2a01:598:40a:5481::/64"
+vpn_rt="65188:2002"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UnderlaySubnet != "192.168.4.0/24" {
+		t.Errorf("UnderlaySubnet = %q", cfg.UnderlaySubnet)
+	}
+	if cfg.UnderlayIP != "10.50.12.13" {
+		t.Errorf("UnderlayIP = %q", cfg.UnderlayIP)
+	}
+	if cfg.OverlaySubnet != "2a01:598:40a:5481::/64" {
+		t.Errorf("OverlaySubnet = %q", cfg.OverlaySubnet)
+	}
+	if cfg.IPMISubnet != "172.30.0.0/24" {
+		t.Errorf("IPMISubnet = %q", cfg.IPMISubnet)
+	}
+	if cfg.ASN != 65188 {
+		t.Errorf("ASN = %d", cfg.ASN)
+	}
+	if cfg.ProvisionVNI != 2002002 {
+		t.Errorf("ProvisionVNI = %d", cfg.ProvisionVNI)
+	}
+	if cfg.DNSResolvers != "2003:0:af08:1005::1000" {
+		t.Errorf("DNSResolvers = %q", cfg.DNSResolvers)
+	}
+	if cfg.DCGWIPs != "10.10.10.1,10.10.10.2" {
+		t.Errorf("DCGWIPs = %q", cfg.DCGWIPs)
+	}
+	if cfg.LeafASN != 65500 {
+		t.Errorf("LeafASN = %d", cfg.LeafASN)
+	}
+	if cfg.LocalASN != 65501 {
+		t.Errorf("LocalASN = %d", cfg.LocalASN)
+	}
+	if cfg.OverlayAggregate != "2a01:598:40a:5481::/64" {
+		t.Errorf("OverlayAggregate = %q", cfg.OverlayAggregate)
+	}
+	if cfg.VPNRT != "65188:2002" {
+		t.Errorf("VPNRT = %q", cfg.VPNRT)
+	}
+}

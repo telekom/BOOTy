@@ -176,10 +176,33 @@ func applyVar(cfg *config.MachineConfig, key, value string) {
 		"ERROR_URL":                   &cfg.ErrorURL,
 		"SUCCESS_URL":                 &cfg.SuccessURL,
 		"DEBUG_URL":                   &cfg.DebugURL,
+		"underlay_subnet":             &cfg.UnderlaySubnet,
+		"underlay_ip":                 &cfg.UnderlayIP,
+		"overlay_subnet":              &cfg.OverlaySubnet,
+		"ipmi_subnet":                 &cfg.IPMISubnet,
+		"dns_resolver":                &cfg.DNSResolvers,
+		"dcgw_ips":                    &cfg.DCGWIPs,
+		"overlay_aggregate":           &cfg.OverlayAggregate,
+		"vpn_rt":                      &cfg.VPNRT,
 	}
 
 	if ptr, ok := strFields[key]; ok {
 		*ptr = value
+		return
+	}
+
+	// Uint32 fields mapped by key.
+	uint32Fields := map[string]*uint32{
+		"asn_server":    &cfg.ASN,
+		"provision_vni": &cfg.ProvisionVNI,
+		"leaf_asn":      &cfg.LeafASN,
+		"local_asn":     &cfg.LocalASN,
+	}
+
+	if ptr, ok := uint32Fields[key]; ok {
+		if n, err := strconv.ParseUint(value, 10, 32); err == nil {
+			*ptr = uint32(n)
+		}
 		return
 	}
 

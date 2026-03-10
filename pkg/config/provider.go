@@ -32,6 +32,20 @@ type MachineConfig struct {
 	SuccessURL string
 	DebugURL   string
 
+	// Network configuration (from kernel cmdline or /deploy/vars).
+	UnderlaySubnet   string // underlay_subnet: e.g. "192.168.4.0/24"
+	UnderlayIP       string // underlay_ip: direct underlay loopback IP
+	OverlaySubnet    string // overlay_subnet: e.g. "2a01:598:40a:5481::/64"
+	IPMISubnet       string // ipmi_subnet: e.g. "172.30.0.0/24"
+	ASN              uint32 // asn_server: BGP AS number
+	ProvisionVNI     uint32 // provision_vni: VXLAN VNI
+	DNSResolvers     string // dns_resolver: comma-separated DNS servers
+	DCGWIPs          string // dcgw_ips: Data Center Gateway IPs (onefabric)
+	LeafASN          uint32 // leaf_asn: Leaf switch AS
+	LocalASN         uint32 // local_asn: Local AS for leaf connections
+	OverlayAggregate string // overlay_aggregate: route aggregate for overlay
+	VPNRT            string // vpn_rt: VPN route target for EVPN
+
 	// Files and commands from ISO /deploy/ directories.
 	ProvisionerFiles []string // Paths to files in /deploy/file-system/
 	MachineFiles     []string // Paths to files in /deploy/machine-files/
