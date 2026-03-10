@@ -23,20 +23,20 @@ const ifname = "eth0"
 
 const netplanPath = "/etc/netplan/plunder_netplan.yaml"
 
-// LeasedAddress is the currently leased address
+// LeasedAddress is the currently leased address.
 var LeasedAddress string
 
-// GetMAC will return a mac address
+// GetMAC will return a mac address.
 func GetMAC() (string, error) {
 	// retrieve interface from name
 	iface, err := net.InterfaceByName(ifname)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("finding interface %s: %w", ifname, err)
 	}
 	return iface.HardwareAddr.String(), nil
 }
 
-// WriteNetPlan - will write a netplan to disk
+// WriteNetPlan will write a netplan to disk.
 func WriteNetPlan(chroot string, cfg *types.BootyConfig) error {
 
 	// Find the mac address of the adapter (interface)
@@ -69,60 +69,59 @@ func WriteNetPlan(chroot string, cfg *types.BootyConfig) error {
 	n.Network.Ethernets["eth0"] = e
 	b, err := yaml.Marshal(n)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshaling netplan: %w", err)
 	}
 	// TODO - remove netplan output
 	fmt.Printf("\n%s\n", b)
 
 	f, err := os.Create(chrootPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating netplan file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	_, err = f.Write(b)
 	if err != nil {
-		return err
+		return fmt.Errorf("writing netplan: %w", err)
 	}
 	return nil
 }
 
-// ApplyNetplan - this will be done through an /etc/rc.local (TODO)
+// ApplyNetplan - this will be done through an /etc/rc.local (TODO).
 func ApplyNetplan(chroot string) error {
 
 	chrootPath := fmt.Sprintf("%s%s", chroot, "/etc/rc.local")
 
-	//rclocal := "#!/bin/sh -e\n/usr/sbin/netplan apply\ndd if=/dev/zero of=/dev/sda bs=1024k count=50"
 	rclocal := "#!/bin/sh -e\n/usr/sbin/netplan apply\nrm /etc/rc.local"
 
 	f, err := os.Create(chrootPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating rc.local: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
-	_, err = f.Write([]byte(rclocal))
+	_, err = f.WriteString(rclocal)
 	if err != nil {
-		return err
+		return fmt.Errorf("writing rc.local: %w", err)
 	}
 
 	// set executable
-	err = os.Chmod(chrootPath, 0o755)
+	err = os.Chmod(chrootPath, 0o755) //nolint:gosec // G302: executable script needs 0755
 	if err != nil {
-		return err
+		return fmt.Errorf("setting rc.local permissions: %w", err)
 	}
 
 	return nil
 }
 
-// DHCPClient starts the DHCP client listening for a lease
+// DHCPClient starts the DHCP client listening for a lease.
 func DHCPClient() error {
 
 	// Bring up interface
 	ifaceDev, err := netlink.LinkByName(ifname)
 	if err != nil {
 		slog.Error("Error finding adapter", "error", err)
-		return err
+		return fmt.Errorf("finding adapter %s: %w", ifname, err)
 	}
 
 	if err := netlink.LinkSetUp(ifaceDev); err != nil {
@@ -132,7 +131,7 @@ func DHCPClient() error {
 	iface, err := net.InterfaceByName(ifname)
 	if err != nil {
 		slog.Error("Error finding interface by name", "error", err)
-		return err
+		return fmt.Errorf("finding interface %s: %w", ifname, err)
 	}
 	client := dhclient.Client{
 		Iface: iface,
@@ -175,21 +174,9 @@ func DHCPClient() error {
 		client.AddParamRequest(param)
 	}
 
-	// // Add requests for custom options
-	// for _, param := range requestParams {
-	// 	log.Printf("Requesting custom option %d", param)
-	// 	client.AddParamRequest(layers.DHCPOpt(param))
-	// }
-
 	// Add hostname option
 	hostname, _ := os.Hostname()
 	client.AddOption(layers.DHCPOptHostname, []byte(hostname))
-
-	// // Add custom options
-	// for _, option := range options {
-	// 	log.Printf("Adding option %d=0x%x", option.Type, option.Data)
-	// 	client.AddOption(option.Type, option.Data)
-	// }
 
 	client.Start()
 	defer client.Stop()

@@ -3,6 +3,7 @@
 package realm
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -33,10 +34,10 @@ import (
 // chroot /mnt /sbin/lvresize -l +100%FREE /dev/ubuntu-vg/root
 // chroot /mnt /sbin/resize2fs   /dev/ubuntu-vg/root
 
-// PartProbe will update partitions - will enable any volumes
+// PartProbe will update partitions - will enable any volumes.
 func PartProbe(device string) error {
 	// TTY hack to support ctrl+c
-	cmd := exec.Command("/usr/sbin/partprobe", device)
+	cmd := exec.CommandContext(context.Background(), "/usr/sbin/partprobe", device)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 
 	err := cmd.Start()
@@ -52,10 +53,10 @@ func PartProbe(device string) error {
 	return nil
 }
 
-// EnableLVM - will enable any volumes
+// EnableLVM - will enable any volumes.
 func EnableLVM() error {
 	// TTY hack to support ctrl+c
-	cmd := exec.Command("/sbin/lvm", "vgchange", "-ay")
+	cmd := exec.CommandContext(context.Background(), "/sbin/lvm", "vgchange", "-ay")
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 
 	err := cmd.Start()
@@ -69,7 +70,7 @@ func EnableLVM() error {
 	return nil
 }
 
-// MountRootVolume - will create a mountpoint and mount the root volume
+// MountRootVolume - will create a mountpoint and mount the root volume.
 func MountRootVolume(rootVolume string) (*Mounts, error) {
 	m := Mounts{}
 	root := Mount{
@@ -90,7 +91,7 @@ func MountRootVolume(rootVolume string) (*Mounts, error) {
 		Path:        "/mnt/dev",
 		FSType:      "devtmpfs",
 		Flags:       syscall.MS_MGC_VAL,
-		Mode:        0777,
+		Mode:        0o777,
 	}
 	m.Mount = append(m.Mount, dev)
 
@@ -101,7 +102,7 @@ func MountRootVolume(rootVolume string) (*Mounts, error) {
 		Source:      "proc",
 		Path:        "/mnt/proc",
 		FSType:      "proc",
-		Mode:        0777,
+		Mode:        0o777,
 	}
 	m.Mount = append(m.Mount, proc)
 
@@ -117,13 +118,13 @@ func MountRootVolume(rootVolume string) (*Mounts, error) {
 	return &m, nil
 }
 
-// GrowLVMRoot will grow the root filesystem
+// GrowLVMRoot will grow the root filesystem.
 func GrowLVMRoot(drive, volume string, partition int) error {
 	// chroot /mnt /usr/bin/growpart /dev/sda 1
 	// chroot /mnt /sbin/pvresize /dev/sda1
 	// chroot /mnt /sbin/lvresize -l +100%FREE /dev/ubuntu-vg/root
 	// chroot /mnt /sbin/resize2fs   /dev/ubuntu-vg/root
-	var chrootCommands [][]string
+	chrootCommands := make([][]string, 0, 4)
 
 	growpartition := []string{"/mnt", "/usr/bin/growpart", drive, fmt.Sprintf("%d", partition)}
 	chrootCommands = append(chrootCommands, growpartition)
@@ -137,7 +138,7 @@ func GrowLVMRoot(drive, volume string, partition int) error {
 	resizeFilesystem := []string{"/mnt", "/sbin/resize2fs", volume}
 	chrootCommands = append(chrootCommands, resizeFilesystem)
 	for x := range chrootCommands {
-		cmd := exec.Command("/usr/sbin/chroot", chrootCommands[x]...)
+		cmd := exec.CommandContext(context.Background(), "/usr/sbin/chroot", chrootCommands[x]...)
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 
 		err := cmd.Start()
@@ -152,7 +153,7 @@ func GrowLVMRoot(drive, volume string, partition int) error {
 	return nil
 }
 
-// Wipe will clean the beginning of the disk
+// Wipe will clean the beginning of the disk.
 func Wipe(device string) error {
 	// wipe
 	// dd if=/dev/zero of=/dev/sda bs=1024k count=100
@@ -162,7 +163,7 @@ func Wipe(device string) error {
 	blockSize := "bs=1024k"
 	count := "count=100"
 
-	cmd := exec.Command("/bin/dd", input, output, blockSize, count)
+	cmd := exec.CommandContext(context.Background(), "/bin/dd", input, output, blockSize, count)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 
 	err := cmd.Start()

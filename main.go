@@ -57,7 +57,11 @@ func main() {
 	}
 
 	slog.Info("Starting DHCP client")
-	go realm.DHCPClient()
+	go func() {
+		if err := realm.DHCPClient(); err != nil {
+			slog.Error("DHCP client error", "error", err)
+		}
+	}()
 
 	slog.Info("Starting BOOTy")
 	time.Sleep(time.Second * 2)
@@ -177,7 +181,9 @@ func main() {
 func onError(cfg *types.BootyConfig) {
 
 	if cfg.WipeDevice {
-		realm.Wipe(cfg.DestinationDevice)
+		if err := realm.Wipe(cfg.DestinationDevice); err != nil {
+			slog.Error("Wipe error", "error", err)
+		}
 	}
 
 	if cfg.DropToShell {

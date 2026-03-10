@@ -3,16 +3,17 @@
 package realm
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"os/exec"
 )
 
-// Shell will Start a userland shell
+// Shell will Start a userland shell.
 func Shell() {
 	slog.Info("Starting Shell")
 
-	cmd := exec.Command("/usr/bin/setsid", "cttyhack", "/bin/sh")
+	cmd := exec.CommandContext(context.Background(), "/usr/bin/setsid", "cttyhack", "/bin/sh")
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 
 	err := cmd.Start()

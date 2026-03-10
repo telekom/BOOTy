@@ -8,7 +8,7 @@ import (
 	"syscall"
 )
 
-// Reboot a host
+// Reboot a host.
 func Reboot() {
 	err := syscall.Reboot(syscall.LINUX_REBOOT_CMD_RESTART)
 	if err != nil {
@@ -18,7 +18,7 @@ func Reboot() {
 	os.Exit(1)
 }
 
-// PowerOff will result in the host using an ACPI power off
+// PowerOff will result in the host using an ACPI power off.
 func PowerOff() {
 	err := syscall.Reboot(syscall.LINUX_REBOOT_CMD_POWER_OFF)
 	if err != nil {
@@ -28,7 +28,7 @@ func PowerOff() {
 	os.Exit(1)
 }
 
-// Halt will instruct the CPU to enter a halt state
+// Halt will instruct the CPU to enter a halt state.
 func Halt() {
 	err := syscall.Reboot(syscall.LINUX_REBOOT_CMD_HALT)
 	if err != nil {
@@ -38,7 +38,7 @@ func Halt() {
 	os.Exit(1)
 }
 
-// Suspend will instruct the CPU to enter a suspended state
+// Suspend will instruct the CPU to enter a suspended state.
 func Suspend() {
 	err := syscall.Reboot(syscall.LINUX_REBOOT_CMD_SW_SUSPEND)
 	if err != nil {
