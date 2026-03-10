@@ -107,7 +107,7 @@ jobs:
       - name: Install QEMU and dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 qemu-utils cpio gzip
+          sudo apt-get install -y qemu-system-x86 cpio busybox-static
 
       - name: Build initramfs image
         run: |
@@ -116,8 +116,8 @@ jobs:
 
           mkdir -p initramfs/{bin,sbin,dev,proc,sys,etc,usr/bin}
 
-          wget -q https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox -O initramfs/bin/busybox
-          chmod +x initramfs/bin/busybox
+          # Use busybox-static from apt — no external downloads needed
+          cp /bin/busybox initramfs/bin/busybox
           cd initramfs/bin && ln -s busybox sh && ln -s busybox setsid && cd ../..
           cd initramfs/usr/bin && ln -s ../../bin/busybox setsid && cd ../../..
 
@@ -127,11 +127,10 @@ jobs:
           find . -print0 | cpio --null -ov --format=newc 2>/dev/null | gzip > ../test-initramfs.cpio.gz
           cd ..
 
-      - name: Download Linux kernel
+      - name: Prepare kernel
         run: |
-          wget -q https://kernel.ubuntu.com/mainline/v6.8/amd64/linux-image-unsigned-6.8.0-060800-generic_6.8.0-060800.202403102359_amd64.deb -O kernel.deb
-          dpkg-deb -x kernel.deb kernel-extracted
-          cp kernel-extracted/boot/vmlinuz-* vmlinuz
+          # Use the runner's own installed kernel — always available, no external download
+          cp /boot/vmlinuz-$(uname -r) vmlinuz
 
       - name: Start test provisioning server
         run: |
