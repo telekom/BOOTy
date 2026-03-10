@@ -10,11 +10,13 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/caprf"
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/frr"
 	"github.com/telekom/BOOTy/pkg/plunderclient"
 	"github.com/telekom/BOOTy/pkg/plunderclient/types"
+	"github.com/telekom/BOOTy/pkg/provision"
 	"github.com/telekom/BOOTy/pkg/utils"
 
 	"github.com/telekom/BOOTy/pkg/realm"
@@ -119,37 +121,11 @@ func runCAPRF(ctx context.Context) {
 		}
 	}
 
-	if err := client.ReportStatus(ctx, config.StatusInit, "provisioning started"); err != nil {
-		slog.Error("Failed to report init status", "error", err)
-	}
-
-	// Write images to disk.
-	for _, imgURL := range cfg.ImageURLs {
-		slog.Info("Writing image", "url", imgURL)
-		if err := image.Write(imgURL, "/dev/sda", false); err != nil {
-			slog.Error("Image write failed", "error", err)
-			_ = client.ReportStatus(ctx, config.StatusError, err.Error())
-			realm.Reboot()
-		}
-	}
-
-	slog.Info("Image written, beginning disk management")
-
-	// PartProbe + LVM + grow (when configured).
-	if err := realm.PartProbe("/dev/sda"); err != nil {
-		slog.Error("PartProbe failed", "error", err)
-		_ = client.ReportStatus(ctx, config.StatusError, err.Error())
-		realm.Reboot()
-	}
-
-	if err := realm.EnableLVM(); err != nil {
-		slog.Error("LVM enable failed", "error", err)
-		_ = client.ReportStatus(ctx, config.StatusError, err.Error())
-		realm.Reboot()
-	}
-
-	if err := client.ReportStatus(ctx, config.StatusSuccess, "provisioning complete"); err != nil {
-		slog.Error("Failed to report success status", "error", err)
+	// Run the full provisioning pipeline.
+	diskMgr := disk.NewManager(nil)
+	orch := provision.NewOrchestrator(cfg, client, diskMgr)
+	if err := orch.Provision(ctx); err != nil {
+		slog.Error("Provisioning failed", "error", err)
 	}
 
 	slog.Info("BOOTy CAPRF provisioning complete, rebooting")

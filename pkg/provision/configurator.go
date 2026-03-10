@@ -1,0 +1,266 @@
+//go:build linux
+
+package provision
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/disk"
+)
+
+const newroot = "/newroot"
+
+// Configurator handles post-image OS configuration.
+type Configurator struct {
+	disk    *disk.Manager
+	rootDir string // allows override for testing (default: /newroot)
+}
+
+// NewConfigurator creates a Configurator.
+func NewConfigurator(diskMgr *disk.Manager) *Configurator {
+	return &Configurator{disk: diskMgr, rootDir: newroot}
+}
+
+// SetHostname writes the hostname to /etc/hostname.
+func (c *Configurator) SetHostname(cfg *config.MachineConfig) error {
+	path := filepath.Join(c.rootDir, "etc", "hostname")
+	slog.Info("Setting hostname", "hostname", cfg.Hostname, "path", path)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("creating hostname dir: %w", err)
+	}
+	return os.WriteFile(path, []byte(cfg.Hostname+"\n"), 0o644)
+}
+
+// ConfigureKubelet writes kubelet drop-in configs for provider-id and node labels.
+func (c *Configurator) ConfigureKubelet(cfg *config.MachineConfig) error {
+	confDir := filepath.Join(c.rootDir, "etc", "kubernetes", "kubelet.conf.d")
+	if err := os.MkdirAll(confDir, 0o755); err != nil {
+		return fmt.Errorf("creating kubelet conf dir: %w", err)
+	}
+
+	if cfg.ProviderID != "" {
+		content := fmt.Sprintf("KUBELET_EXTRA_ARGS=\"--provider-id=%s\"\n", cfg.ProviderID)
+		path := filepath.Join(confDir, "10-caprf-provider-id.conf")
+		slog.Info("Writing kubelet provider-id config", "path", path)
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			return fmt.Errorf("writing provider-id conf: %w", err)
+		}
+	}
+
+	var labels []string
+	if cfg.FailureDomain != "" {
+		labels = append(labels, "topology.kubernetes.io/zone="+cfg.FailureDomain)
+	}
+	if cfg.Region != "" {
+		labels = append(labels, "topology.kubernetes.io/region="+cfg.Region)
+	}
+	if len(labels) > 0 {
+		content := fmt.Sprintf("KUBELET_EXTRA_ARGS=\"--node-labels=%s\"\n", strings.Join(labels, ","))
+		path := filepath.Join(confDir, "20-caprf-node-labels.conf")
+		slog.Info("Writing kubelet node labels config", "path", path)
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			return fmt.Errorf("writing node-labels conf: %w", err)
+		}
+	}
+	return nil
+}
+
+// ConfigureGRUB writes GRUB kernel parameters and runs update-grub via chroot.
+func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineConfig) error {
+	grubDir := filepath.Join(c.rootDir, "etc", "default", "grub.d")
+	if err := os.MkdirAll(grubDir, 0o755); err != nil {
+		return fmt.Errorf("creating grub.d dir: %w", err)
+	}
+
+	// Detect console: Lenovo uses ttyS1, default ttyS0.
+	console := "ttyS0"
+	if data, err := os.ReadFile("/sys/class/dmi/id/sys_vendor"); err == nil {
+		if strings.Contains(strings.ToLower(string(data)), "lenovo") {
+			console = "ttyS1"
+		}
+	}
+
+	grubLine := fmt.Sprintf("GRUB_CMDLINE_LINUX=\"ds=nocloud console=%s %s\"\n", console, cfg.ExtraKernelParams)
+	grubPath := filepath.Join(grubDir, "10-caprf-kernel-params.cfg")
+	slog.Info("Writing GRUB config", "path", grubPath, "console", console)
+	if err := os.WriteFile(grubPath, []byte(grubLine), 0o644); err != nil {
+		return fmt.Errorf("writing grub config: %w", err)
+	}
+
+	// Run update-grub in chroot.
+	out, err := c.disk.ChrootRun(ctx, c.rootDir, "update-grub")
+	if err != nil {
+		return fmt.Errorf("update-grub: %s: %w", string(out), err)
+	}
+	return nil
+}
+
+// CopyProvisionerFiles copies files from /deploy/file-system/ to the root.
+func (c *Configurator) CopyProvisionerFiles() error {
+	srcBase := "/deploy/file-system"
+	if _, err := os.Stat(srcBase); os.IsNotExist(err) {
+		slog.Info("No provisioner files directory found", "path", srcBase)
+		return nil
+	}
+	slog.Info("Copying provisioner files")
+	return filepath.WalkDir(srcBase, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		relPath, _ := filepath.Rel(srcBase, path)
+		destPath := filepath.Join(c.rootDir, relPath)
+
+		if d.IsDir() {
+			return os.MkdirAll(destPath, 0o755)
+		}
+		return copyFile(path, destPath)
+	})
+}
+
+// CopyMachineFiles copies files from /deploy/machine-files/ to the root.
+func (c *Configurator) CopyMachineFiles() error {
+	srcBase := "/deploy/machine-files"
+	if _, err := os.Stat(srcBase); os.IsNotExist(err) {
+		slog.Info("No machine files directory found", "path", srcBase)
+		return nil
+	}
+	slog.Info("Copying machine files")
+	return filepath.WalkDir(srcBase, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		relPath, _ := filepath.Rel(srcBase, path)
+		destPath := filepath.Join(c.rootDir, relPath)
+
+		if d.IsDir() {
+			return os.MkdirAll(destPath, 0o755)
+		}
+		return copyFile(path, destPath)
+	})
+}
+
+// RunMachineCommands executes commands from /deploy/machine-commands/ in chroot.
+func (c *Configurator) RunMachineCommands(ctx context.Context) error {
+	cmdDir := "/deploy/machine-commands"
+	if _, err := os.Stat(cmdDir); os.IsNotExist(err) {
+		slog.Info("No machine commands directory found", "path", cmdDir)
+		return nil
+	}
+	entries, err := os.ReadDir(cmdDir)
+	if err != nil {
+		return fmt.Errorf("reading machine-commands dir: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(cmdDir, entry.Name()))
+		if err != nil {
+			return fmt.Errorf("reading command file %s: %w", entry.Name(), err)
+		}
+		cmd := strings.TrimSpace(string(data))
+		if cmd == "" {
+			continue
+		}
+		slog.Info("Running machine command", "file", entry.Name(), "command", cmd)
+		out, err := c.disk.ChrootRun(ctx, c.rootDir, cmd)
+		if err != nil {
+			return fmt.Errorf("machine command %s: %s: %w", entry.Name(), string(out), err)
+		}
+	}
+	return nil
+}
+
+// ConfigureDNS writes resolv.conf to the chroot.
+func (c *Configurator) ConfigureDNS(cfg *config.MachineConfig) error {
+	if cfg.DNSResolvers == "" {
+		return nil
+	}
+	path := filepath.Join(c.rootDir, "etc", "resolv.conf")
+	slog.Info("Configuring DNS", "resolvers", cfg.DNSResolvers)
+	var lines []string
+	for _, r := range strings.Split(cfg.DNSResolvers, ",") {
+		r = strings.TrimSpace(r)
+		if r != "" {
+			lines = append(lines, "nameserver "+r)
+		}
+	}
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
+}
+
+// SetupEFIBoot removes old EFI boot entries.
+func (c *Configurator) SetupEFIBoot(ctx context.Context) error {
+	slog.Info("Setting up EFI boot")
+	// Mount efivarfs if not mounted.
+	efivarfs := filepath.Join(c.rootDir, "sys", "firmware", "efi", "efivars")
+	if err := os.MkdirAll(efivarfs, 0o755); err != nil {
+		return fmt.Errorf("creating efivarfs mountpoint: %w", err)
+	}
+	// Remove old ubuntu boot entries via efibootmgr in chroot.
+	out, err := c.disk.ChrootRun(ctx, c.rootDir, "efibootmgr")
+	if err != nil {
+		slog.Warn("efibootmgr list failed", "output", string(out), "error", err)
+		return nil
+	}
+	// Parse boot entries and remove ubuntu ones.
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(strings.ToLower(line), "ubuntu") {
+			// Extract boot number: "Boot0001* ubuntu" -> "0001"
+			if len(line) > 8 && strings.HasPrefix(line, "Boot") {
+				bootNum := line[4:8]
+				slog.Info("Removing EFI boot entry", "entry", bootNum)
+				if out, err := c.disk.ChrootRun(ctx, c.rootDir, "efibootmgr -b "+bootNum+" -B"); err != nil {
+					slog.Warn("Failed to remove EFI entry", "entry", bootNum, "output", string(out))
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// SetupMellanox detects and configures Mellanox ConnectX NICs.
+func (c *Configurator) SetupMellanox(ctx context.Context) error {
+	slog.Info("Checking for Mellanox NICs")
+	out, err := c.disk.ChrootRun(ctx, c.rootDir, "lspci -d 15b3:")
+	if err != nil || len(strings.TrimSpace(string(out))) == 0 {
+		slog.Info("No Mellanox NICs found")
+		return nil
+	}
+	slog.Info("Mellanox NICs detected, configuring SR-IOV")
+	if out, err := c.disk.ChrootRun(ctx, c.rootDir, "mstconfig -d /dev/mst/mt4117_pciconf0 set NUM_OF_VFS=32"); err != nil {
+		slog.Warn("mstconfig failed", "output", string(out), "error", err)
+	}
+	return nil
+}
+
+// copyFile copies a file preserving permissions.
+func copyFile(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = out.Close() }()
+
+	_, err = io.Copy(out, in)
+	return err
+}
