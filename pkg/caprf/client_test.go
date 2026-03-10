@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -268,6 +269,141 @@ TOKEN="bare-token"
 	}
 	if cfg.Token != "bare-token" {
 		t.Fatalf("expected bare-token, got %s", cfg.Token)
+	}
+}
+
+func TestNew(t *testing.T) {
+	// Create a temporary vars file.
+	f, err := os.CreateTemp(t.TempDir(), "vars-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = f.WriteString(`export HOSTNAME="test-via-file"
+export TOKEN="file-token"
+export MODE="provision"
+`)
+	f.Close()
+
+	client, err := New(f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := client.GetConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Hostname != "test-via-file" {
+		t.Fatalf("expected test-via-file, got %s", cfg.Hostname)
+	}
+	if cfg.Token != "file-token" {
+		t.Fatalf("expected file-token, got %s", cfg.Token)
+	}
+}
+
+func TestNewFileNotFound(t *testing.T) {
+	_, err := New("/nonexistent/path/to/vars")
+	if err == nil {
+		t.Fatal("expected error for nonexistent file")
+	}
+}
+
+func TestGetConfig(t *testing.T) {
+	cfg := &config.MachineConfig{
+		Hostname: "config-host",
+		Mode:     "provision",
+	}
+	client := NewFromConfig(cfg)
+	got, err := client.GetConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != cfg {
+		t.Fatal("expected same config pointer")
+	}
+}
+
+func TestClientShipDebug(t *testing.T) {
+	ts := newTestServer(t)
+
+	cfg := &config.MachineConfig{
+		Token:    "debug-token",
+		DebugURL: ts.server.URL + "/debug",
+	}
+
+	client := NewFromConfig(cfg)
+	if err := client.ShipDebug(context.Background(), "debug message"); err != nil {
+		t.Fatal(err)
+	}
+
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+
+	if len(ts.debugs) != 1 {
+		t.Fatalf("expected 1 debug entry, got %d", len(ts.debugs))
+	}
+	if ts.debugs[0] != "Bearer debug-token" {
+		t.Fatalf("expected auth header, got %s", ts.debugs[0])
+	}
+}
+
+func TestReportStatusUnknown(t *testing.T) {
+	client := NewFromConfig(&config.MachineConfig{})
+	err := client.ReportStatus(context.Background(), config.Status("invalid"), "msg")
+	if err == nil {
+		t.Fatal("expected error for unknown status")
+	}
+	if !strings.Contains(err.Error(), "unknown status") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPostWithAuthNon2xx(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := &config.MachineConfig{
+		InitURL: srv.URL + "/status/init",
+	}
+	client := NewFromConfig(cfg)
+	err := client.ReportStatus(context.Background(), config.StatusInit, "test")
+	if err == nil {
+		t.Fatal("expected error for 500 response")
+	}
+	if !strings.Contains(err.Error(), "status 500") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseVarsInvalidDiskSize(t *testing.T) {
+	input := `export MIN_DISK_SIZE_GB="notanumber"
+export HOSTNAME="host"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Invalid number should be silently ignored (stays 0).
+	if cfg.MinDiskSizeGB != 0 {
+		t.Fatalf("expected 0 for invalid disk size, got %d", cfg.MinDiskSizeGB)
+	}
+	if cfg.Hostname != "host" {
+		t.Fatalf("expected host, got %s", cfg.Hostname)
+	}
+}
+
+func TestParseVarsLineWithoutEquals(t *testing.T) {
+	input := `export NOSEPARATOR
+export HOSTNAME="works"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Hostname != "works" {
+		t.Fatalf("expected works, got %s", cfg.Hostname)
 	}
 }
 

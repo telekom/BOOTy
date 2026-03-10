@@ -305,7 +305,9 @@ jobs:
         run: |
           echo "Waiting for BGP sessions to establish..."
           for i in $(seq 1 30); do
-            if sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp summary" 2>/dev/null | grep -q "Estab"; then
+            # An established BGP neighbor shows an uptime (e.g. 00:00:27) in the Up/Down column.
+            # Non-established neighbors show a state name like Active, Idle, Connect, etc.
+            if sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp summary" 2>/dev/null | grep -qE "leaf01.*[0-9]{2}:[0-9]{2}:[0-9]{2}"; then
               echo "BGP sessions established after ${i}s"
               sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp summary"
               exit 0

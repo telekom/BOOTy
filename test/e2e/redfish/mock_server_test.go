@@ -137,3 +137,81 @@ func TestMockServerGetSystem(t *testing.T) {
 		t.Fatalf("expected Off, got %v", sys["PowerState"])
 	}
 }
+
+func TestMockServerGetSystems(t *testing.T) {
+	m := NewMockServer(t)
+
+	resp := doGet(t, m.URL()+"/redfish/v1/Systems")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var collection map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&collection); err != nil {
+		t.Fatal(err)
+	}
+	if collection["Name"] != "Computer System Collection" {
+		t.Fatalf("unexpected collection name: %v", collection["Name"])
+	}
+	members, ok := collection["Members"].([]any)
+	if !ok || len(members) != 1 {
+		t.Fatalf("expected 1 member, got %v", collection["Members"])
+	}
+}
+
+func TestMockServerResetInvalidJSON(t *testing.T) {
+	m := NewMockServer(t)
+
+	resp := doPost(t,
+		m.URL()+"/redfish/v1/Systems/1/Actions/ComputerSystem.Reset",
+		`{invalid json}`)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid JSON, got %d", resp.StatusCode)
+	}
+}
+
+func TestMockServerVirtualMediaInsertInvalidJSON(t *testing.T) {
+	m := NewMockServer(t)
+
+	resp := doPost(t,
+		m.URL()+"/redfish/v1/Managers/1/VirtualMedia/CD1/Actions/VirtualMedia.InsertMedia",
+		`not json`)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid JSON, got %d", resp.StatusCode)
+	}
+}
+
+func TestMockServerGracefulShutdown(t *testing.T) {
+	m := NewMockServer(t)
+
+	// Power on first.
+	resp := doPost(t, m.URL()+"/redfish/v1/Systems/1/Actions/ComputerSystem.Reset",
+		`{"ResetType":"On"}`)
+	resp.Body.Close()
+	if got := m.GetPowerState(); got != PowerOn {
+		t.Fatalf("expected PowerOn, got %s", got)
+	}
+
+	// Graceful shutdown.
+	resp = doPost(t, m.URL()+"/redfish/v1/Systems/1/Actions/ComputerSystem.Reset",
+		`{"ResetType":"GracefulShutdown"}`)
+	resp.Body.Close()
+	if got := m.GetPowerState(); got != PowerOff {
+		t.Fatalf("expected PowerOff after GracefulShutdown, got %s", got)
+	}
+}
+
+func TestMockServerForceRestart(t *testing.T) {
+	m := NewMockServer(t)
+
+	resp := doPost(t, m.URL()+"/redfish/v1/Systems/1/Actions/ComputerSystem.Reset",
+		`{"ResetType":"ForceRestart"}`)
+	resp.Body.Close()
+	if got := m.GetPowerState(); got != PowerOn {
+		t.Fatalf("expected PowerOn after ForceRestart, got %s", got)
+	}
+}
