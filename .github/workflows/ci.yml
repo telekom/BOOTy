@@ -130,7 +130,7 @@ jobs:
       - name: Prepare kernel
         run: |
           # Use the runner's own installed kernel — always available, no external download
-          cp /boot/vmlinuz-$(uname -r) vmlinuz
+          sudo cp /boot/vmlinuz-$(uname -r) vmlinuz
 
       - name: Start test provisioning server
         run: |
