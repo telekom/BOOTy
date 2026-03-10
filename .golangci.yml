@@ -60,9 +60,12 @@ linters:
         - performance
     gosec:
       excludes:
+        - G115 # integer overflow conversion — safe for file descriptors and VNI casts
         - G204 # subprocess launched with variable — intentional for exec.Command usage
+        - G301 # directory permissions > 0750 — 0755 is standard for system directories
         - G304 # file path from variable — intentional for device operations
         - G306 # poor file permissions — we handle explicitly
+        - G706 # log injection — values from local disk, not external input
     revive:
       rules:
         - name: blank-imports

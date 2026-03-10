@@ -49,7 +49,7 @@ func isExcluded(name string) bool {
 }
 
 // GetIPMIInfo reads the IPMI MAC and IP from the system.
-func GetIPMIInfo() (string, string, error) {
+func GetIPMIInfo() (mac, ip string, err error) {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return "", "", fmt.Errorf("list interfaces: %w", err)

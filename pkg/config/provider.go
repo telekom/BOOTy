@@ -24,6 +24,7 @@ type MachineConfig struct {
 	ProviderID        string   // PROVIDER_ID (kubelet --provider-id)
 	Mode              string   // MODE: "provision", "deprovision", "soft-deprovision"
 	MinDiskSizeGB     int      // MIN_DISK_SIZE_GB (optional, 0 = no minimum)
+	DisableKexec      bool     // DISABLE_KEXEC: skip kexec and always hard-reboot
 
 	// Status URLs parsed from /deploy/vars.
 	LogURL     string

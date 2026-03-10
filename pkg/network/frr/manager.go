@@ -33,7 +33,11 @@ type ExecCommander struct{}
 
 // Run executes a command and returns combined output.
 func (e *ExecCommander) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).CombinedOutput() //nolint:gosec // args from trusted config
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	if err != nil {
+		return out, fmt.Errorf("exec %s: %w", name, err)
+	}
+	return out, nil
 }
 
 // NewManager creates an FRR manager.
@@ -83,10 +87,8 @@ func (m *Manager) Setup(ctx context.Context, cfg *network.Config) error {
 		return fmt.Errorf("detect NICs: %w", err)
 	}
 
-	for _, nic := range nics {
-		if err := m.configureNIC(nic, cfg.VRFName, cfg.MTU); err != nil {
-			slog.Warn("Failed to configure NIC", "nic", nic, "error", err)
-		}
+	if err := m.configureNICs(nics, cfg.VRFName, cfg.MTU); err != nil {
+		return fmt.Errorf("configure NICs: %w", err)
 	}
 
 	if err := m.enableForwarding(); err != nil {
@@ -144,7 +146,10 @@ func (m *Manager) createVRF(name string) error {
 		}
 		return fmt.Errorf("add VRF %s: %w", name, err)
 	}
-	return netlink.LinkSetUp(vrf)
+	if err := netlink.LinkSetUp(vrf); err != nil {
+		return fmt.Errorf("bring up VRF %s: %w", name, err)
+	}
+	return nil
 }
 
 func (m *Manager) createDummy(name, vrfName, addr string) error {
@@ -176,7 +181,10 @@ func (m *Manager) createDummy(name, vrfName, addr string) error {
 		return fmt.Errorf("add addr to dummy: %w", err)
 	}
 
-	return netlink.LinkSetUp(link)
+	if err := netlink.LinkSetUp(link); err != nil {
+		return fmt.Errorf("bring up dummy %s: %w", name, err)
+	}
+	return nil
 }
 
 func (m *Manager) createVXLAN(vni uint32, srcIP, bridgeName, bridgeMAC string) error {
@@ -231,7 +239,10 @@ func (m *Manager) createVXLAN(vni uint32, srcIP, bridgeName, bridgeMAC string) e
 	if err := netlink.LinkSetUp(brLink); err != nil {
 		return fmt.Errorf("bring up bridge: %w", err)
 	}
-	return netlink.LinkSetUp(vxLink)
+	if err := netlink.LinkSetUp(vxLink); err != nil {
+		return fmt.Errorf("bring up VXLAN: %w", err)
+	}
+	return nil
 }
 
 func (m *Manager) addLoopbackAddress(ip string) error {
@@ -255,6 +266,15 @@ func (m *Manager) addLoopbackAddress(ip string) error {
 	return nil
 }
 
+func (m *Manager) configureNICs(nics []string, vrfName string, mtu int) error {
+	for _, nic := range nics {
+		if err := m.configureNIC(nic, vrfName, mtu); err != nil {
+			slog.Warn("Failed to configure NIC", "nic", nic, "error", err)
+		}
+	}
+	return nil
+}
+
 func (m *Manager) configureNIC(name, vrfName string, mtu int) error {
 	link, err := netlink.LinkByName(name)
 	if err != nil {
@@ -273,7 +293,10 @@ func (m *Manager) configureNIC(name, vrfName string, mtu int) error {
 		return fmt.Errorf("assign %s to VRF: %w", name, err)
 	}
 
-	return netlink.LinkSetUp(link)
+	if err := netlink.LinkSetUp(link); err != nil {
+		return fmt.Errorf("bring up NIC %s: %w", name, err)
+	}
+	return nil
 }
 
 func (m *Manager) enableForwarding() error {
@@ -300,7 +323,10 @@ func (m *Manager) writeFRRConfig(conf string) error {
 	if err := os.MkdirAll("/etc/frr", 0o755); err != nil {
 		return fmt.Errorf("create /etc/frr: %w", err)
 	}
-	return os.WriteFile("/etc/frr/frr.conf", []byte(conf), 0o640)
+	if err := os.WriteFile("/etc/frr/frr.conf", []byte(conf), 0o640); err != nil {
+		return fmt.Errorf("write frr.conf: %w", err)
+	}
+	return nil
 }
 
 func (m *Manager) writeDaemonsConfig() error {
@@ -329,7 +355,10 @@ zebra_options="  -A 127.0.0.1 -s 90000000"
 bgpd_options="   -A 127.0.0.1"
 bfdd_options="   -A 127.0.0.1"
 `
-	return os.WriteFile("/etc/frr/daemons", []byte(daemons), 0o640)
+	if err := os.WriteFile("/etc/frr/daemons", []byte(daemons), 0o640); err != nil {
+		return fmt.Errorf("write daemons config: %w", err)
+	}
+	return nil
 }
 
 func (m *Manager) startFRR(ctx context.Context) error {
@@ -391,9 +420,9 @@ func waitForHTTPWithFRR(ctx context.Context, cmd Commander, target string, timeo
 			return fmt.Errorf("create request: %w", err)
 		}
 
-		resp, err := client.Do(req)
+		resp, err := client.Do(req) //nolint:gosec // target URL from trusted config, not user input
 		if err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			slog.Info("Network connectivity established",
 				"target", target, "attempt", attempt)
 			return nil
@@ -410,7 +439,7 @@ func waitForHTTPWithFRR(ctx context.Context, cmd Commander, target string, timeo
 
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("connectivity check canceled: %w", ctx.Err())
 		case <-time.After(1 * time.Second):
 		}
 	}

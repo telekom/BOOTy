@@ -35,7 +35,10 @@ func (c *Configurator) SetHostname(cfg *config.MachineConfig) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("creating hostname dir: %w", err)
 	}
-	return os.WriteFile(path, []byte(cfg.Hostname+"\n"), 0o644)
+	if err := os.WriteFile(path, []byte(cfg.Hostname+"\n"), 0o644); err != nil {
+		return fmt.Errorf("writing hostname: %w", err)
+	}
+	return nil
 }
 
 // ConfigureKubelet writes kubelet drop-in configs for provider-id and node labels.
@@ -110,18 +113,7 @@ func (c *Configurator) CopyProvisionerFiles() error {
 		return nil
 	}
 	slog.Info("Copying provisioner files")
-	return filepath.WalkDir(srcBase, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		relPath, _ := filepath.Rel(srcBase, path)
-		destPath := filepath.Join(c.rootDir, relPath)
-
-		if d.IsDir() {
-			return os.MkdirAll(destPath, 0o755)
-		}
-		return copyFile(path, destPath)
-	})
+	return copyTree(srcBase, c.rootDir)
 }
 
 // CopyMachineFiles copies files from /deploy/machine-files/ to the root.
@@ -132,18 +124,26 @@ func (c *Configurator) CopyMachineFiles() error {
 		return nil
 	}
 	slog.Info("Copying machine files")
-	return filepath.WalkDir(srcBase, func(path string, d os.DirEntry, err error) error {
+	return copyTree(srcBase, c.rootDir)
+}
+
+// copyTree copies all files from srcBase into destRoot, preserving directory structure.
+func copyTree(srcBase, destRoot string) error {
+	if err := filepath.WalkDir(srcBase, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			return err
+			return fmt.Errorf("walk %s: %w", path, err)
 		}
 		relPath, _ := filepath.Rel(srcBase, path)
-		destPath := filepath.Join(c.rootDir, relPath)
+		destPath := filepath.Join(destRoot, relPath)
 
 		if d.IsDir() {
 			return os.MkdirAll(destPath, 0o755)
 		}
 		return copyFile(path, destPath)
-	})
+	}); err != nil {
+		return fmt.Errorf("copy tree from %s: %w", srcBase, err)
+	}
+	return nil
 }
 
 // RunMachineCommands executes commands from /deploy/machine-commands/ in chroot.
@@ -192,7 +192,10 @@ func (c *Configurator) ConfigureDNS(cfg *config.MachineConfig) error {
 			lines = append(lines, "nameserver "+r)
 		}
 	}
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		return fmt.Errorf("writing resolv.conf: %w", err)
+	}
+	return nil
 }
 
 // SetupEFIBoot removes old EFI boot entries.
@@ -229,7 +232,11 @@ func (c *Configurator) SetupEFIBoot(ctx context.Context) error {
 func (c *Configurator) SetupMellanox(ctx context.Context) error {
 	slog.Info("Checking for Mellanox NICs")
 	out, err := c.disk.ChrootRun(ctx, c.rootDir, "lspci -d 15b3:")
-	if err != nil || len(strings.TrimSpace(string(out))) == 0 {
+	if err != nil {
+		slog.Info("Mellanox detection skipped (lspci failed)", "error", err)
+		return nil //nolint:nilerr // lspci failure means no Mellanox NICs, not an error
+	}
+	if strings.TrimSpace(string(out)) == "" {
 		slog.Info("No Mellanox NICs found")
 		return nil
 	}
@@ -244,23 +251,25 @@ func (c *Configurator) SetupMellanox(ctx context.Context) error {
 func copyFile(src, dst string) error {
 	info, err := os.Stat(src)
 	if err != nil {
-		return err
+		return fmt.Errorf("stat %s: %w", src, err)
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
+		return fmt.Errorf("create dir for %s: %w", dst, err)
 	}
 	in, err := os.Open(src)
 	if err != nil {
-		return err
+		return fmt.Errorf("open source %s: %w", src, err)
 	}
 	defer func() { _ = in.Close() }()
 
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
 	if err != nil {
-		return err
+		return fmt.Errorf("open dest %s: %w", dst, err)
 	}
 	defer func() { _ = out.Close() }()
 
-	_, err = io.Copy(out, in)
-	return err
+	if _, err = io.Copy(out, in); err != nil {
+		return fmt.Errorf("copy %s -> %s: %w", src, dst, err)
+	}
+	return nil
 }

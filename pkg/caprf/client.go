@@ -213,5 +213,7 @@ func applyVar(cfg *config.MachineConfig, key, value string) {
 		if n, err := strconv.Atoi(value); err == nil {
 			cfg.MinDiskSizeGB = n
 		}
+	case "DISABLE_KEXEC":
+		cfg.DisableKexec = value == "true" || value == "1" || value == "yes"
 	}
 }

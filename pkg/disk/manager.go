@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -25,7 +24,11 @@ type ExecCommander struct{}
 
 // Run executes a system command and returns its combined output.
 func (e *ExecCommander) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	if err != nil {
+		return out, fmt.Errorf("exec %s: %w", name, err)
+	}
+	return out, nil
 }
 
 // Manager handles disk operations for provisioning.
@@ -83,8 +86,7 @@ func (m *Manager) WipeAllDisks(ctx context.Context) error {
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if strings.HasPrefix(name, "loop") || strings.HasPrefix(name, "sr") ||
-			strings.HasPrefix(name, "ram") || strings.HasPrefix(name, "dm-") {
+		if isVirtualDisk(name) {
 			continue
 		}
 		dev := "/dev/" + name
@@ -113,21 +115,14 @@ func (m *Manager) DetectDisk(_ context.Context, minSizeGB int) (string, error) {
 
 	for _, entry := range entries {
 		name := entry.Name()
-		if strings.HasPrefix(name, "loop") || strings.HasPrefix(name, "sr") ||
-			strings.HasPrefix(name, "ram") || strings.HasPrefix(name, "dm-") {
+		if isVirtualDisk(name) {
 			continue
 		}
 
-		sizePath := filepath.Join("/sys/block", name, "size")
-		data, err := os.ReadFile(sizePath)
+		sizeGB, err := readDiskSizeGB(name)
 		if err != nil {
 			continue
 		}
-		sectors, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
-		if err != nil {
-			continue
-		}
-		sizeGB := int(sectors * 512 / (1024 * 1024 * 1024))
 		if minSizeGB > 0 && sizeGB < minSizeGB {
 			continue
 		}
@@ -154,6 +149,26 @@ func (m *Manager) DetectDisk(_ context.Context, minSizeGB int) (string, error) {
 
 	slog.Info("Selected disk", "device", best.path, "sizeGB", best.sizeGB, "nvme", best.isNVMe)
 	return best.path, nil
+}
+
+// isVirtualDisk checks if a block device name is virtual (loop, cdrom, ram, device-mapper).
+func isVirtualDisk(name string) bool {
+	return strings.HasPrefix(name, "loop") || strings.HasPrefix(name, "sr") ||
+		strings.HasPrefix(name, "ram") || strings.HasPrefix(name, "dm-")
+}
+
+// readDiskSizeGB reads the size of a block device in GB from sysfs.
+func readDiskSizeGB(name string) (int, error) {
+	sizePath := "/sys/block/" + name + "/size" //nolint:gocritic // path join not needed for sysfs
+	data, err := os.ReadFile(sizePath)
+	if err != nil {
+		return 0, fmt.Errorf("read disk size %s: %w", name, err)
+	}
+	sectors, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse disk size %s: %w", name, err)
+	}
+	return int(sectors * 512 / (1024 * 1024 * 1024)), nil
 }
 
 // ParsePartitions reads the partition table using sfdisk --json.
@@ -237,7 +252,7 @@ func (m *Manager) MountPartition(_ context.Context, device, mountpoint string) e
 	if err := syscall.Mount(device, mountpoint, "ext4", 0, ""); err != nil {
 		// Try xfs if ext4 fails.
 		if err2 := syscall.Mount(device, mountpoint, "xfs", 0, ""); err2 != nil {
-			return fmt.Errorf("mounting %s at %s: ext4=%v xfs=%w", device, mountpoint, err, err2)
+			return fmt.Errorf("mounting %s at %s: ext4=%w, xfs=%w", device, mountpoint, err, err2) //nolint:errorlint // wrapping both errors
 		}
 	}
 	return nil
@@ -248,12 +263,18 @@ func (m *Manager) BindMount(source, target string) error {
 	if err := os.MkdirAll(target, 0o755); err != nil {
 		return fmt.Errorf("creating bind mount target %s: %w", target, err)
 	}
-	return syscall.Mount(source, target, "", syscall.MS_BIND, "")
+	if err := syscall.Mount(source, target, "", syscall.MS_BIND, ""); err != nil {
+		return fmt.Errorf("bind mount %s -> %s: %w", source, target, err)
+	}
+	return nil
 }
 
 // Unmount unmounts a filesystem.
 func (m *Manager) Unmount(target string) error {
-	return syscall.Unmount(target, 0)
+	if err := syscall.Unmount(target, 0); err != nil {
+		return fmt.Errorf("unmount %s: %w", target, err)
+	}
+	return nil
 }
 
 // CheckFilesystem runs e2fsck on the device.
