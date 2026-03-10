@@ -5,7 +5,7 @@ import (
 	"syscall"
 )
 
-// DefaultDevices will return the defult mounts
+// DefaultDevices will return the defult mounts.
 func DefaultDevices() *Devices {
 	d := &Devices{}
 
@@ -48,7 +48,7 @@ func DefaultDevices() *Devices {
 	return d
 }
 
-// CreateDevice -
+// CreateDevice -.
 func (d *Devices) CreateDevice() error {
 
 	for x := range d.Device {
@@ -62,7 +62,7 @@ func (d *Devices) CreateDevice() error {
 	return nil
 }
 
-// GetDevice -
+// GetDevice -.
 func (d *Devices) GetDevice(name string) *Device {
 
 	for x := range d.Device {

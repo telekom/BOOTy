@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [master]
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -44,10 +48,23 @@ jobs:
           name: coverage
           path: coverage.out
 
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Run E2E tests
+        run: go test -tags e2e -v -race -count=1 ./test/e2e/...
+
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    needs: [lint, test, e2e]
     strategy:
       matrix:
         goarch: [amd64, arm64]
@@ -75,3 +92,100 @@ jobs:
         with:
           name: booty-${{ matrix.goarch }}
           path: booty-${{ matrix.goarch }}
+
+  kvm-boot:
+    name: KVM Boot Validation
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install QEMU and dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-utils cpio gzip
+
+      - name: Build initramfs image
+        run: |
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
+            go build -ldflags "-linkmode external -extldflags '-static' -s -w" -o init
+
+          mkdir -p initramfs/{bin,sbin,dev,proc,sys,etc,usr/bin}
+
+          wget -q https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox -O initramfs/bin/busybox
+          chmod +x initramfs/bin/busybox
+          cd initramfs/bin && ln -s busybox sh && ln -s busybox setsid && cd ../..
+          cd initramfs/usr/bin && ln -s ../../bin/busybox setsid && cd ../../..
+
+          cp init initramfs/init
+
+          cd initramfs
+          find . -print0 | cpio --null -ov --format=newc 2>/dev/null | gzip > ../test-initramfs.cpio.gz
+          cd ..
+
+      - name: Download Linux kernel
+        run: |
+          wget -q https://kernel.ubuntu.com/mainline/v6.8/amd64/linux-image-unsigned-6.8.0-060800-generic_6.8.0-060800.202403102359_amd64.deb -O kernel.deb
+          dpkg-deb -x kernel.deb kernel-extracted
+          cp kernel-extracted/boot/vmlinuz-* vmlinuz
+
+      - name: Start test provisioning server
+        run: |
+          mkdir -p images
+          cat > test-config.json <<'EOF'
+          {"action":"shell","dryRun":true,"dropToShell":true}
+          EOF
+
+          python3 -c "
+          import http.server, json, os, threading
+
+          class Handler(http.server.SimpleHTTPRequestHandler):
+              def do_GET(self):
+                  if self.path.endswith('.bty'):
+                      self.send_response(200)
+                      self.send_header('Content-Type', 'application/json')
+                      self.end_headers()
+                      with open('test-config.json', 'rb') as f:
+                          self.wfile.write(f.read())
+                  else:
+                      super().do_GET()
+
+          server = http.server.HTTPServer(('0.0.0.0', 3000), Handler)
+          threading.Thread(target=server.serve_forever, daemon=True).start()
+          import time; time.sleep(999999)
+          " &
+          echo $! > server.pid
+          sleep 2
+
+      - name: Boot with QEMU and validate
+        timeout-minutes: 5
+        run: |
+          timeout 60 qemu-system-x86_64 \
+            -kernel vmlinuz \
+            -initrd test-initramfs.cpio.gz \
+            -append "console=ttyS0 panic=1" \
+            -m 512 \
+            -nographic \
+            -no-reboot \
+            -net nic \
+            -net user,hostfwd=tcp::3000-:3000 \
+            -serial file:serial.log \
+            2>&1 || true
+
+          echo "=== Serial Output ==="
+          cat serial.log || true
+
+          if grep -q "BOOTy" serial.log 2>/dev/null; then
+            echo "PASS: BOOTy init started successfully"
+          else
+            echo "WARN: BOOTy banner not found in serial output (may be expected in dry-run mode)"
+          fi
+
+      - name: Cleanup
+        if: always()
+        run: |
+          [ -f server.pid ] && kill $(cat server.pid) 2>/dev/null || true

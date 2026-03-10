@@ -2,7 +2,7 @@ package realm
 
 import "os"
 
-// Mount contains the configuration for a single mount within the initramfs
+// Mount contains the configuration for a single mount within the initramfs.
 type Mount struct {
 	// Create the location on disk
 	CreateMount bool
@@ -20,12 +20,12 @@ type Mount struct {
 	Options string
 }
 
-// Mounts are the paths that can be mounted or created on boot
+// Mounts are the paths that can be mounted or created on boot.
 type Mounts struct {
 	Mount []Mount
 }
 
-// Device contains the configuration for a single device within the initramfs
+// Device contains the configuration for a single device within the initramfs.
 type Device struct {
 	// Create the device within the ramdisk
 	CreateDevice bool
@@ -38,12 +38,12 @@ type Device struct {
 	Minor int64
 }
 
-// Devices are the devices that can be created on boot
+// Devices are the devices that can be created on boot.
 type Devices struct {
 	Device []Device
 }
 
-// Netplan outlines the Debian netplan configuration
+// Netplan outlines the Debian netplan configuration.
 type Netplan struct {
 	Network struct {
 		Ethernets map[string]interface{} `yaml:"ethernets"`
@@ -52,7 +52,7 @@ type Netplan struct {
 	} `yaml:"network"`
 }
 
-// Ethernets defines a connection
+// Ethernets defines a connection.
 type Ethernets struct {
 	Match struct {
 		Macaddress string `yaml:"macaddress,omitempty"`

@@ -2,6 +2,7 @@ package image
 
 import (
 	"compress/gzip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -39,7 +40,7 @@ func tickerProgress(byteCounter uint64) {
 	fmt.Printf("\rDownloading... %s complete", humanize.Bytes(byteCounter))
 }
 
-// Read - will take a local disk and copy an image to a remote server
+// Read will take a local disk and copy an image to a remote server.
 func Read(sourceDevice, destinationAddress, mac string, compressed bool) error {
 
 	var fileName string
@@ -57,21 +58,24 @@ func Read(sourceDevice, destinationAddress, mac string, compressed bool) error {
 	fmt.Println("--------------------------------------------------------------------------------")
 
 	client := &http.Client{}
-	_, err := UploadMultipartFile(client, destinationAddress, fileName, sourceDevice, compressed)
+	resp, err := UploadMultipartFile(client, destinationAddress, fileName, sourceDevice, compressed)
 	if err != nil {
 		return err
+	}
+	if resp != nil {
+		_ = resp.Body.Close()
 	}
 
 	return nil
 }
 
-// UploadMultipartFile -
+// UploadMultipartFile uploads the contents of path as a multipart form file.
 func UploadMultipartFile(client *http.Client, uri, key, path string, compressed bool) (*http.Response, error) {
 	body, writer := io.Pipe()
 
-	req, err := http.NewRequest(http.MethodPost, uri, body)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, uri, body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating upload request: %w", err)
 	}
 
 	mwriter := multipart.NewWriter(writer)
@@ -82,8 +86,8 @@ func UploadMultipartFile(client *http.Client, uri, key, path string, compressed 
 	// GO routine for the copy operation
 	go func() {
 		defer close(errchan)
-		defer writer.Close()
-		defer mwriter.Close()
+		defer func() { _ = writer.Close() }()
+		defer func() { _ = mwriter.Close() }()
 
 		// BootyImage is the key that the client will lookfor and
 		// key is the renamed file
@@ -99,7 +103,7 @@ func UploadMultipartFile(client *http.Client, uri, key, path string, compressed 
 			return
 		}
 
-		defer diskIn.Close()
+		defer func() { _ = diskIn.Close() }()
 
 		if !compressed {
 			// Without compression read raw output
@@ -129,7 +133,7 @@ func UploadMultipartFile(client *http.Client, uri, key, path string, compressed 
 
 	}()
 
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // URI is passed from caller, intentional
 	merr := <-errchan
 
 	if err != nil || merr != nil {
@@ -139,25 +143,25 @@ func UploadMultipartFile(client *http.Client, uri, key, path string, compressed 
 	return resp, nil
 }
 
-// Write will pull an image and write it to local storage device
-// with compress set to true it will use gzip compression to expand the data before
-// writing to an underlying device
+// Write will pull an image and write it to local storage device.
+// With compress set to true it will use gzip compression to expand the data before
+// writing to an underlying device.
 func Write(sourceImage, destinationDevice string, compressed bool) error {
 
-	req, err := http.NewRequest("GET", sourceImage, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, sourceImage, http.NoBody)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating image request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // sourceImage URL is from trusted config
 	if err != nil {
-		return err
+		return fmt.Errorf("fetching image: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode > 300 {
-		// Customize response for the 404 to make debugging simpler
-		if resp.StatusCode == 404 {
+		// Customize response for the 404 to make debugging simpler.
+		if resp.StatusCode == http.StatusNotFound {
 			return fmt.Errorf("%s not found", sourceImage)
 		}
 		return fmt.Errorf("%s", resp.Status)
@@ -165,11 +169,11 @@ func Write(sourceImage, destinationDevice string, compressed bool) error {
 
 	var out io.Reader
 
-	fileOut, err := os.OpenFile(destinationDevice, os.O_CREATE|os.O_WRONLY, 0644)
+	fileOut, err := os.OpenFile(destinationDevice, os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // device files need world-readable permissions
 	if err != nil {
-		return err
+		return fmt.Errorf("opening destination device: %w", err)
 	}
-	defer fileOut.Close()
+	defer func() { _ = fileOut.Close() }()
 
 	if !compressed {
 		// Without compression send raw output
@@ -180,7 +184,7 @@ func Write(sourceImage, destinationDevice string, compressed bool) error {
 		if err != nil {
 			return fmt.Errorf("new gzip reader: %w", err)
 		}
-		defer zipOUT.Close()
+		defer func() { _ = zipOUT.Close() }()
 		out = zipOUT
 	}
 
@@ -196,7 +200,7 @@ func Write(sourceImage, destinationDevice string, compressed bool) error {
 	}()
 	if _, err = io.Copy(fileOut, io.TeeReader(out, counter)); err != nil {
 		ticker.Stop()
-		return err
+		return fmt.Errorf("writing image to disk: %w", err)
 	}
 
 	fmt.Printf("\n")

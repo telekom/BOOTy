@@ -38,15 +38,23 @@ func main() {
 	sys.EnableMount = true
 
 	// Create all folders
-	m.CreateFolder()
+	if err := m.CreateFolder(); err != nil {
+		slog.Error("Failed to create folders", "error", err)
+	}
 	// Ensure that /dev is mounted (first)
-	m.MountNamed("dev", true)
+	if err := m.MountNamed("dev", true); err != nil {
+		slog.Error("Failed to mount dev", "error", err)
+	}
 
 	// Create all devices
-	d.CreateDevice()
+	if err := d.CreateDevice(); err != nil {
+		slog.Error("Failed to create devices", "error", err)
+	}
 
 	// Mount any additional mounts
-	m.MountAll()
+	if err := m.MountAll(); err != nil {
+		slog.Error("Failed to mount filesystems", "error", err)
+	}
 
 	slog.Info("Starting DHCP client")
 	go realm.DHCPClient()

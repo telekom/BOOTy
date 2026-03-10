@@ -10,6 +10,7 @@ import (
 	"github.com/zcalusic/sysinfo"
 )
 
+// SysInfo prints system hardware information to stdout.
 func SysInfo() {
 	var si sysinfo.SysInfo
 
@@ -17,11 +18,6 @@ func SysInfo() {
 	fmt.Println("")
 	fmt.Println("------------ BOOTy System Information ------------")
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', 0)
-	// 44  	fmt.Fprintln(w, "a\tb\tc")
-	// 45  	fmt.Fprintln(w, "aa\tbb\tcc")
-	// 46  	fmt.Fprintln(w, "aaa\t") // trailing tab
-	// 47  	fmt.Fprintln(w, "aaaa\tdddd\teeee")
-	// 48  	w.Flush()
 
 	fmt.Fprintf(w, "CPU:\t %s\n", si.CPU.Model)
 	fmt.Fprintf(w, "CPU speed:\t %dMHz\n", si.CPU.Speed)

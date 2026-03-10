@@ -107,7 +107,7 @@ func ApplyNetplan(chroot string) error {
 	}
 
 	// set executable
-	err = os.Chmod(chrootPath, 0777)
+	err = os.Chmod(chrootPath, 0o755)
 	if err != nil {
 		return err
 	}

@@ -20,16 +20,16 @@ func TestConfigHandler(t *testing.T) {
 		SourceImage: "http://example.com/image.img",
 		DryRun:      true,
 	}
-	var err error
-	data, err = json.Marshal(cfg)
+	configData, err := json.Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
+	srv := &Server{configData: configData}
 
 	req := httptest.NewRequest(http.MethodGet, "/booty/aa-bb-cc.bty", nil)
 	w := httptest.NewRecorder()
 
-	configHandler(w, req)
+	srv.configHandler(w, req)
 
 	resp := w.Result()
 	defer resp.Body.Close()
@@ -76,7 +76,8 @@ func TestImageHandler(t *testing.T) {
 	req.RemoteAddr = "127.0.0.1:1234"
 
 	w := httptest.NewRecorder()
-	imageHandler(w, req)
+	srv := &Server{}
+	srv.imageHandler(w, req)
 
 	resp := w.Result()
 	defer resp.Body.Close()
@@ -102,7 +103,8 @@ func TestImageHandlerBadRequest(t *testing.T) {
 	req.Header.Set("Content-Type", "text/plain")
 
 	w := httptest.NewRecorder()
-	imageHandler(w, req)
+	srv := &Server{}
+	srv.imageHandler(w, req)
 
 	resp := w.Result()
 	defer resp.Body.Close()
@@ -164,7 +166,8 @@ func TestImageHandlerMissingFormField(t *testing.T) {
 	req.RemoteAddr = "127.0.0.1:9999"
 
 	w := httptest.NewRecorder()
-	imageHandler(w, req)
+	srv := &Server{}
+	srv.imageHandler(w, req)
 
 	resp := w.Result()
 	defer resp.Body.Close()

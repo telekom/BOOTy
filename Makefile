@@ -62,9 +62,9 @@ getramdisk:
 simplify:
 	@gofmt -s -l -w $(SRC)
 
-test:
-	@echo Running tests
-	@go test ./...
+test-e2e:
+	@echo Running E2E tests
+	@go test -tags e2e -race -v ./test/e2e/...
 
 check:
 	@test -z $(shell gofmt -l main.go | tee /dev/stderr) || echo "[WARN] Fix formatting issues with 'make fmt'"

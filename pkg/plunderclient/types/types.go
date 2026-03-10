@@ -21,14 +21,14 @@ package types
 // ------------------ //
 
 const (
-	//ReadImage means that this is a read only action
+	// ReadImage means that this is a read only action.
 	ReadImage = "readImage"
 
-	// WriteImage means that this is a read/write action
+	// WriteImage means that this is a read/write action.
 	WriteImage = "writeImage"
 )
 
-// BootyConfig defines the data passed to the BOOTy initramdisk
+// BootyConfig defines the data passed to the BOOTy initramdisk.
 type BootyConfig struct {
 	// Defines what action the deployment will take
 	Action string `json:"action"`
@@ -55,7 +55,7 @@ type BootyConfig struct {
 	GrowPartition int    `json:"growPartition"`
 	LVMRootName   string `json:"lvmRootName"`
 
-	// Network modifcations
+	// Network modifications
 	Address    string `json:"address,omitempty"`
 	Gateway    string `json:"gateway,omitempty"`
 	NameServer string `json:"nameserver,omitempty"`

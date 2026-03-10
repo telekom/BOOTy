@@ -1,10 +1,6 @@
 name: KVM Boot Test
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [master]
   workflow_dispatch:
 
 permissions:
@@ -14,7 +10,7 @@ jobs:
   kvm-boot:
     name: KVM Boot Validation
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+
     steps:
       - uses: actions/checkout@v4
 
