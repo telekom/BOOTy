@@ -1,102 +1,162 @@
 # BOOTy
-A simple initrd that is used by plunder for Operating System image deployment. 
 
-It should go without saying that this it an early version of this software. It comes with **no guard rails** and if used incorrectly could break an existing Operating System
+[![CI](https://github.com/telekom/BOOTy/actions/workflows/ci.yml/badge.svg)](https://github.com/telekom/BOOTy/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/telekom/BOOTy)](https://goreportcard.com/report/github.com/telekom/BOOTy)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-## Example deployment
+A lightweight initrd for Operating System image deployment over the network.
 
-[![asciicast](https://asciinema.org/a/326011.svg)](https://asciinema.org/a/326011)
+BOOTy boots as the init process inside a minimal initramfs, contacts a provisioning server, and either **writes** a disk image to a local device or **reads** a local disk and uploads it to the server.
 
-## BOOTy build
+> **Warning** — This software has **no guard rails**. Incorrect use can overwrite an existing Operating System.
 
-At the moment the most simple method of building `BOOTy` is to use the `initrd.Dockerfile` to build all the components that are required and compile in `BOOTy` as the init process.
-
-```
-docker build -t init -f ./initrd.Dockerfile . ; \
-docker run init:latest tar -cf - /initramfs.cpio.gz | tar xf -   
-```
-
-**to-do** Mulit-arch builds may work with something like the following:
-
-` docker buildx build  --platform linux/amd64 -o local -t init -f ./initrd.Dockerfile . ; \
-docker run init:latest tar -cf - /initramfs.cpio.gz | tar xf -   `
-
-The above command will build these components:
-
-- BusyBox
-- LVM
-- BOOTy
-
-It will then produce a simple `initramfs` that can be booted with a kernel and then finally it will copy the new `initrams` from the Docker image to the local file system.
-
-## BOOTy boot
-
-Create a boot configuration (the below example uses `plunder`/[plndr.io](plndr.io)):
-
-`pldrctl create boot -i initramfs.cpio.gz -k kernel -c "console=tty0 console=ttyS0,9600" -n booty`
-
-Create a deployment configuration:
-
-`pldrctl create deployment -a a -m 00:50:56:a5:0e:0f -c booty`
-
-
-## Example Server
-
-Until the server components are implemented into [plndr.io](plndr.io) the server is an external component built for testing.
-
-The two actions dictate the direction of Operating system images. 
-
-The `writeImage` action will instruct the new server on boot to pull the `-sourceImage` and write the contents to the `-destinationDevice`. 
-
+## Architecture
 
 ```
-go run server/server.go -action writeImage \
--mac 00:50:56:a5:0e:0f \
--sourceImage http://192.168.0.95:3000/images/ubuntu.img \
--destinationDevice /dev/sda    
+┌──────────────┐         ┌──────────────────┐
+│  PXE / iPXE  │────────▶│   BOOTy initrd   │
+│  Boot loader │         │  (kernel + cpio)  │
+└──────────────┘         └───────┬──────────┘
+                                 │ DHCP / HTTP
+                         ┌───────▼──────────┐
+                         │  BOOTy Server     │
+                         │  (config + images)│
+                         └──────────────────┘
 ```
 
-The `readImage` action should be used when network booting a server that already has an Operating System installed. The `-destinationAddress` should be the address of the machine that is running the server and should be in the format `http://<address>/image` as the `/image` is a specific handler for receiving the disk image.
+1. A bare-metal server PXE-boots with a kernel and the BOOTy initramfs.
+2. BOOTy obtains an IP via DHCP and fetches its configuration from the provisioning server using its MAC address.
+3. Depending on the `action` field in the config, BOOTy either writes an image to disk or reads a disk and uploads it.
 
-```
-go run server/server.go -action readImage \
--mac 00:50:56:a5:0e:0f \
--destinationAddress http://192.168.0.95:3000/image \
--sourceDevice /dev/sda    
-```
+## Prerequisites
 
-### Disk Support
+- Go **1.26+**
+- Docker (for building the initramfs)
+- A DHCP/PXE environment for network booting
 
-The below command will write the Image `http://192.168.0.95:3000/images/ubuntu.img` to `/dev/sda`, it will then grow the partition `1` (which is `/dev/sda1`) and it will grow the root volume `/dev/ubuntu-vg/root` to the full size of the underlying disk. Also for development purposes `-shell` will drop to a shell if the process fails.
+## Building
 
-```
-go run server/server.go -action writeImage \
--mac 00:50:56:a5:0e:0f  \
--sourceImage http://192.168.0.95:3000/images/ubuntu.img \
--destinationDevice /dev/sda \
--growPartition 1 \
--lvmRoot /dev/ubuntu-vg/root \
--shell 
+### Initramfs (recommended)
+
+Build the complete initramfs with Docker:
+
+```bash
+make build
 ```
 
-## Network Support
+This compiles BOOTy for `linux/amd64` and `linux/arm64`, then packages BusyBox, LVM2, and cloud-utils into a bootable initramfs.
 
-With `BOOTy` we can now configure all of the required network settings that are needed to set a static address for a host.
+To extract the initramfs to the local filesystem:
 
+```bash
+docker run ghcr.io/telekom/booty:latest tar -cf - /initramfs.cpio.gz | tar xf -
 ```
- go run server/server.go -action writeImage \
- -mac 00:50:56:a5:0e:0f \
- -sourceImage http://192.168.0.95:3000/images/ubuntu.img \
- -destinationDevice /dev/sda \
- -growPartition 1 \
- -lvmRoot /dev/ubuntu-vg/root \
- -address 172.16.1.126/24 \
- -gateway 172.16.1.1
+
+### Binary only
+
+```bash
+GOOS=linux go build -o booty .
+```
+
+## Usage
+
+### Server
+
+The provisioning server serves configuration files and (optionally) disk images over HTTP.
+
+#### Write an image to a remote server
+
+```bash
+go run server/server.go \
+  -action writeImage \
+  -mac 00:50:56:a5:0e:0f \
+  -sourceImage http://192.168.0.95:3000/images/ubuntu.img \
+  -destinationDevice /dev/sda
+```
+
+#### Read a disk from a remote server
+
+```bash
+go run server/server.go \
+  -action readImage \
+  -mac 00:50:56:a5:0e:0f \
+  -destinationAddress http://192.168.0.95:3000/image \
+  -sourceDevice /dev/sda
+```
+
+### LVM & Disk Growth
+
+Write an image, grow partition 1, and expand the root LVM volume:
+
+```bash
+go run server/server.go \
+  -action writeImage \
+  -mac 00:50:56:a5:0e:0f \
+  -sourceImage http://192.168.0.95:3000/images/ubuntu.img \
+  -destinationDevice /dev/sda \
+  -growPartition 1 \
+  -lvmRoot /dev/ubuntu-vg/root \
+  -shell
+```
+
+### Static Network Configuration
+
+Set a static IP and gateway on the provisioned OS:
+
+```bash
+go run server/server.go \
+  -action writeImage \
+  -mac 00:50:56:a5:0e:0f \
+  -sourceImage http://192.168.0.95:3000/images/ubuntu.img \
+  -destinationDevice /dev/sda \
+  -growPartition 1 \
+  -lvmRoot /dev/ubuntu-vg/root \
+  -address 172.16.1.126/24 \
+  -gateway 172.16.1.1
 ```
 
 ### Debugging
 
-Two additional flags can be passed to debug:
+| Flag | Description |
+|------|-------------|
+| `-shell` | Drop to a BusyBox shell if something fails |
+| `-wipe` | Wipe the provisioned disk on failure |
+| `-dryRun` | Log actions without writing to disk |
 
-- `-shell` - drop to a shell if something failes
-- `-wipe` - wipe the provisioned disk if something fails
+## Development
+
+```bash
+# Run tests
+make test
+
+# Run linter
+make lint
+
+# Build binary
+make build
+```
+
+## Project Structure
+
+```
+├── cmd/booty.go          # CLI entry point & orchestration
+├── main.go               # Binary entry point
+├── server/server.go      # Provisioning server
+├── pkg/
+│   ├── image/            # Disk image read/write (HTTP, gzip)
+│   ├── plunderclient/    # HTTP client for config retrieval
+│   ├── realm/            # Device, disk, mount, network, shell ops
+│   ├── utils/            # Cmdline parsing, helpers
+│   └── ux/               # ASCII art & system info display
+├── initrd.Dockerfile     # Multi-stage initramfs build
+├── .github/workflows/    # CI, KVM test, release pipelines
+└── .golangci.yml         # Linter configuration
+```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding standards, and the PR process.
+
+## License
+
+This project is licensed under the Apache License 2.0 — see [LICENSE](LICENSE) for details.

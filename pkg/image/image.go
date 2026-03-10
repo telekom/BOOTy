@@ -1,33 +1,31 @@
 package image
 
-// This package handles the pulling and management of images
-
 import (
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/dustin/go-humanize"
-	log "github.com/sirupsen/logrus"
 )
-
-var tick chan time.Time
 
 // WriteCounter counts the number of bytes written to it. It implements to the io.Writer interface
 // and we can pass this into io.TeeReader() which will report progress on each write cycle.
 type WriteCounter struct {
-	Total uint64
+	Total atomic.Uint64
 }
 
 func (wc *WriteCounter) Write(p []byte) (int, error) {
 	n := len(p)
-	wc.Total += uint64(n)
+	wc.Total.Add(uint64(n))
 	return n, nil
 }
 
@@ -67,7 +65,7 @@ func Read(sourceDevice, destinationAddress, mac string, compressed bool) error {
 	return nil
 }
 
-//UploadMultipartFile -
+// UploadMultipartFile -
 func UploadMultipartFile(client *http.Client, uri, key, path string, compressed bool) (*http.Response, error) {
 	body, writer := io.Pipe()
 
@@ -106,25 +104,21 @@ func UploadMultipartFile(client *http.Client, uri, key, path string, compressed 
 		if !compressed {
 			// Without compression read raw output
 			if written, err := io.Copy(w, diskIn); err != nil {
-				errchan <- fmt.Errorf("error copying %s (%d bytes written): %v", path, written, err)
+				errchan <- fmt.Errorf("error copying %s (%d bytes written): %w", path, written, err)
 				return
 			}
 
 		} else {
 			// With compression run data through gzip writer
 			zipWriter := gzip.NewWriter(w)
-			if err != nil {
-				errchan <- fmt.Errorf("[ERROR] New gzip reader: %s", err)
-				return
-			}
 
 			// run an io.Copy on the disk into the zipWriter
 			if written, err := io.Copy(zipWriter, diskIn); err != nil {
-				errchan <- fmt.Errorf("error copying %s (%d bytes written): %v", path, written, err)
+				errchan <- fmt.Errorf("error copying %s (%d bytes written): %w", path, written, err)
 				return
 			}
 			// Ensure we close our zipWriter (otherwise we will get "unexpected EOF")
-			err = zipWriter.Close()
+			_ = zipWriter.Close()
 
 		}
 
@@ -139,7 +133,7 @@ func UploadMultipartFile(client *http.Client, uri, key, path string, compressed 
 	merr := <-errchan
 
 	if err != nil || merr != nil {
-		return resp, fmt.Errorf("http error: %v, multipart error: %v", err, merr)
+		return resp, errors.Join(err, merr)
 	}
 
 	return resp, nil
@@ -162,7 +156,7 @@ func Write(sourceImage, destinationDevice string, compressed bool) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode > 300 {
-		// Customise response for the 404 to make degugging simpler
+		// Customize response for the 404 to make debugging simpler
 		if resp.StatusCode == 404 {
 			return fmt.Errorf("%s not found", sourceImage)
 		}
@@ -181,23 +175,23 @@ func Write(sourceImage, destinationDevice string, compressed bool) error {
 		// Without compression send raw output
 		out = resp.Body
 	} else {
-		// With compression run data through gzip writer
+		// With compression run data through gzip reader
 		zipOUT, err := gzip.NewReader(resp.Body)
 		if err != nil {
-			fmt.Println("[ERROR] New gzip reader:", err)
+			return fmt.Errorf("new gzip reader: %w", err)
 		}
 		defer zipOUT.Close()
 		out = zipOUT
 	}
 
-	log.Infof("Beginning write of image [%s] to disk [%s]", filepath.Base(sourceImage), destinationDevice)
+	slog.Info("Beginning write of image to disk", "image", filepath.Base(sourceImage), "device", destinationDevice)
 	// Create our progress reporter and pass it to be used alongside our writer
 	ticker := time.NewTicker(500 * time.Millisecond)
 	counter := &WriteCounter{}
 
 	go func() {
 		for ; true; <-ticker.C {
-			tickerProgress(counter.Total)
+			tickerProgress(counter.Total.Load())
 		}
 	}()
 	if _, err = io.Copy(fileOut, io.TeeReader(out, counter)); err != nil {
@@ -205,13 +199,7 @@ func Write(sourceImage, destinationDevice string, compressed bool) error {
 		return err
 	}
 
-	count, err := io.Copy(fileOut, out)
-	if err != nil {
-		ticker.Stop()
-		return fmt.Errorf("Error writing %d bytes to disk [%s] -> %v", count, destinationDevice, err)
-	}
 	fmt.Printf("\n")
-
 	ticker.Stop()
 	return nil
 }

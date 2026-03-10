@@ -44,7 +44,7 @@ type BootyConfig struct {
 
 	// Read Image from Disk and write to remote address
 	SourceDevice       string `json:"sourceDevice,omitempty"`
-	DesintationAddress string `json:"desintationAddress,omitempty"`
+	DestinationAddress string `json:"destinationAddress,omitempty"`
 
 	// Post tasks - Once the image has been deployed
 

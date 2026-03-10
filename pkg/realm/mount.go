@@ -1,13 +1,12 @@
-//+build linux
+//go:build linux
 
 package realm
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"syscall"
-
-	log "github.com/sirupsen/logrus"
 )
 
 // DefaultMounts will return the defult mounts
@@ -120,12 +119,12 @@ func DefaultMounts() *Mounts {
 func (m *Mounts) CreateFolder() error {
 
 	for x := range m.Mount {
-		if m.Mount[x].CreateMount == true {
+		if m.Mount[x].CreateMount {
 			err := os.MkdirAll(m.Mount[x].Path, m.Mount[x].Mode)
 			if err != nil {
-				return fmt.Errorf("Folder[%s] create error [%v]", m.Mount[x].Path, err)
+				return fmt.Errorf("folder [%s] create error: %w", m.Mount[x].Path, err)
 			}
-			log.Infof("Folder created [%s] -> [%s]", m.Mount[x].Name, m.Mount[x].Path)
+			slog.Info("Folder created", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
 		}
 	}
 	return nil
@@ -134,12 +133,12 @@ func (m *Mounts) CreateFolder() error {
 // MountAll -
 func (m *Mounts) MountAll() error {
 	for x := range m.Mount {
-		if m.Mount[x].EnableMount == true {
+		if m.Mount[x].EnableMount {
 			err := syscall.Mount(m.Mount[x].Source, m.Mount[x].Path, m.Mount[x].FSType, m.Mount[x].Flags, m.Mount[x].Options)
 			if err != nil {
-				return fmt.Errorf("Mounting [%s] -> [%s] error [%v]", m.Mount[x].Source, m.Mount[x].Path, err)
+				return fmt.Errorf("mounting [%s] -> [%s]: %w", m.Mount[x].Source, m.Mount[x].Path, err)
 			}
-			log.Infof("Mounted [%s] -> [%s]", m.Mount[x].Name, m.Mount[x].Path)
+			slog.Info("Mounted", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
 		}
 	}
 	return nil
@@ -148,13 +147,13 @@ func (m *Mounts) MountAll() error {
 // MountNamed -
 func (m *Mounts) MountNamed(name string, remove bool) error {
 	for x := range m.Mount {
-		if m.Mount[x].Name == name && m.Mount[x].EnableMount == true {
+		if m.Mount[x].Name == name && m.Mount[x].EnableMount {
 			err := syscall.Mount(m.Mount[x].Source, m.Mount[x].Path, m.Mount[x].FSType, m.Mount[x].Flags, m.Mount[x].Options)
 			if err != nil {
-				return fmt.Errorf("Mounting [%s] -> [%s] error [%v]", m.Mount[x].Source, m.Mount[x].Path, err)
+				return fmt.Errorf("mounting [%s] -> [%s]: %w", m.Mount[x].Source, m.Mount[x].Path, err)
 			}
 
-			log.Infof("Mounted [%s] -> [%s]", m.Mount[x].Name, m.Mount[x].Path)
+			slog.Info("Mounted", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
 			// Remove this element
 			if remove {
 				m.Mount = append(m.Mount[:x], m.Mount[x+1:]...)
@@ -172,10 +171,9 @@ func (m *Mounts) UnMountAll() error {
 		err := syscall.Unmount(m.Mount[x].Path, int(m.Mount[x].Flags))
 
 		if err != nil {
-			return fmt.Errorf("Unmounting [%s] -> [%s] error [%v]", m.Mount[x].Source, m.Mount[x].Path, err)
+			return fmt.Errorf("unmounting [%s] -> [%s]: %w", m.Mount[x].Source, m.Mount[x].Path, err)
 		}
-		log.Infof("Unmounted [%s] -> [%s]", m.Mount[x].Name, m.Mount[x].Path)
-		return nil
+		slog.Info("Unmounted", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
 	}
 
 	return nil
@@ -189,17 +187,17 @@ func (m *Mounts) UnMountNamed(name string) error {
 			err := syscall.Unmount(m.Mount[x].Path, syscall.MNT_FORCE)
 
 			if err != nil {
-				return fmt.Errorf("Unmounting [%s] -> [%s] error [%v]", m.Mount[x].Source, m.Mount[x].Path, err)
+				return fmt.Errorf("unmounting [%s] -> [%s]: %w", m.Mount[x].Source, m.Mount[x].Path, err)
 			}
 
-			log.Infof("Unmounted [%s] -> [%s]", m.Mount[x].Name, m.Mount[x].Path)
+			slog.Info("Unmounted", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
 			// Remove this element
 			m.Mount = append(m.Mount[:x], m.Mount[x+1:]...)
 			return nil
 
 		}
 	}
-	return fmt.Errorf("Unable to find mount [%s]", name)
+	return fmt.Errorf("unable to find mount [%s]", name)
 }
 
 // GetMount -

@@ -1,29 +1,24 @@
 
 SHELL := /bin/sh
 
-# The name of the executable (default is current directory name)
 TARGET := booty
 .DEFAULT_GOAL: $(TARGET)
 
-# These will be provided to the target
 VERSION := 0.0.0
 BUILD := `git rev-parse HEAD`
 
-# Operating System Default (LINUX)
 TARGETOS=linux
 
-# Use linker flags to provide version/build settings to the target
 LDFLAGS=-ldflags "-s -w -X=main.Version=$(VERSION) -X=main.Build=$(BUILD) -extldflags -static"
 
-# go source files, ignore vendor directory
 SRC = $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 
 DOCKERTAG ?= $(VERSION)
-REPOSITORY = plndr
+REPOSITORY = ghcr.io/telekom/booty
 
-.PHONY: all build clean install uninstall fmt simplify check run
+.PHONY: all build clean install uninstall fmt lint test docker dockerx86
 
-all: check install
+all: lint test install
 
 $(TARGET): $(SRC)
 	@go build $(LDFLAGS) -o $(TARGET)
@@ -44,20 +39,18 @@ uninstall: clean
 fmt:
 	@gofmt -l -w $(SRC)
 
-demo:
-	@cd demo
-	@docker buildx build  --platform linux/amd64,linux/arm64,linux/arm/v7 --push -t $(REPOSITORY)/$(TARGET):$(DOCKERTAG) .
-	@echo New Multi Architecture Docker image created
-	@cd ..
+lint:
+	@golangci-lint run ./...
 
-# This is typically only for quick testing
+test:
+	@go test -race -coverprofile=coverage.out ./...
+	@go tool cover -func=coverage.out
+
 dockerx86:
-	@docker buildx build  --platform linux/amd64 --load -t $(REPOSITORY)/$(TARGET):$(DOCKERTAG) -f initrd.Dockerfile .
-	@echo New Multi Architecture Docker image created
+	@docker buildx build --platform linux/amd64 --load -t $(REPOSITORY):$(DOCKERTAG) -f initrd.Dockerfile .
 
 docker:
-	@docker buildx build  --platform linux/amd64,linux/arm64,linux/arm/v7 --push -t $(REPOSITORY)/$(TARGET):$(DOCKERTAG) -f initrd.Dockerfile .
-	@echo New Multi Architecture Docker image created
+	@docker buildx build --platform linux/amd64,linux/arm64 --push -t $(REPOSITORY):$(DOCKERTAG) -f initrd.Dockerfile .
 
 # This is typically only for quick testing
 getramdisk:
@@ -69,10 +62,13 @@ getramdisk:
 simplify:
 	@gofmt -s -l -w $(SRC)
 
+test:
+	@echo Running tests
+	@go test ./...
+
 check:
 	@test -z $(shell gofmt -l main.go | tee /dev/stderr) || echo "[WARN] Fix formatting issues with 'make fmt'"
-	@for d in $$(go list ./... | grep -v /vendor/); do golint $${d}; done
-	@go tool vet ${SRC}
+	@go vet ./...
 
 run: install
 	@$(TARGET)

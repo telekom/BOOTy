@@ -2,14 +2,13 @@ package utils
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path"
 	"strconv"
 	"strings"
 )
 
-//CmdlinePath is the default location for the cmdline
+// CmdlinePath is the default location for the cmdline
 const CmdlinePath = "/proc/cmdline"
 
 // ParseCmdLine will read through the command line and return the source and destination
@@ -21,7 +20,7 @@ func ParseCmdLine(path string) (m map[string]string, err error) {
 
 	m = make(map[string]string)
 	// Read the file
-	b, err := ioutil.ReadFile(path)
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return
 	}
@@ -39,7 +38,7 @@ func ParseCmdLine(path string) (m map[string]string, err error) {
 	return
 }
 
-//ClearScreen will clear the screen of all text
+// ClearScreen will clear the screen of all text
 func ClearScreen() {
 	fmt.Print("\033[2J")
 }
@@ -52,7 +51,7 @@ func GetBlockDeviceSize(device string) (int64, error) {
 
 	path := fmt.Sprintf("/sys/block/%s/size", device)
 
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return 0, err
 	}
@@ -63,12 +62,12 @@ func GetBlockDeviceSize(device string) (int64, error) {
 
 // DashMac makes a mac address something that can be used in a URL
 func DashMac(mac string) string {
-	return strings.Replace(mac, ":", "-", -1)
+	return strings.ReplaceAll(mac, ":", "-")
 }
 
 // ClearDir is a helper function to remove all files in a directory
 func ClearDir(dir string) error {
-	names, err := ioutil.ReadDir(dir)
+	names, err := os.ReadDir(dir)
 	if err != nil {
 		return err
 	}

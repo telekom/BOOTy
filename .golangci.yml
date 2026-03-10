@@ -1,0 +1,34 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - unconvert
+    - nilerr
+    - errorlint
+  settings:
+    errorlint:
+      errorf: true
+      asserts: true
+      comparison: true
+    misspell:
+      locale: US
+    staticcheck:
+      checks:
+        - "all"
+        - "-ST1018"
+        - "-ST1000"
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

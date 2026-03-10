@@ -1,13 +1,14 @@
+//go:build linux
+
 package realm
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"syscall"
 	"time"
-
-	log "github.com/sirupsen/logrus"
 )
 
 // Update partitions
@@ -40,11 +41,11 @@ func PartProbe(device string) error {
 
 	err := cmd.Start()
 	if err != nil {
-		return fmt.Errorf("Partition Probe command error [%v]", err)
+		return fmt.Errorf("partition probe command error: %w", err)
 	}
 	err = cmd.Wait()
 	if err != nil {
-		return fmt.Errorf("Partition Probe  error [%v]", err)
+		return fmt.Errorf("partition probe error: %w", err)
 	}
 	// Ensure that disks are mounted and we're in a position to mount them
 	time.Sleep(time.Second * 2)
@@ -59,11 +60,11 @@ func EnableLVM() error {
 
 	err := cmd.Start()
 	if err != nil {
-		return fmt.Errorf("Linux Volume command error [%v]", err)
+		return fmt.Errorf("linux volume command error: %w", err)
 	}
 	err = cmd.Wait()
 	if err != nil {
-		return fmt.Errorf("Linux Volume error [%v]", err)
+		return fmt.Errorf("linux volume error: %w", err)
 	}
 	return nil
 }
@@ -141,21 +142,21 @@ func GrowLVMRoot(drive, volume string, partition int) error {
 
 		err := cmd.Start()
 		if err != nil {
-			return fmt.Errorf("Partition Probe command error [%v]", err)
+			return fmt.Errorf("chroot command error: %w", err)
 		}
 		err = cmd.Wait()
 		if err != nil {
-			return fmt.Errorf("Partition Probe  error [%v]", err)
+			return fmt.Errorf("chroot error: %w", err)
 		}
 	}
 	return nil
 }
 
-//Wipe will clean the beginning of the disk
+// Wipe will clean the beginning of the disk
 func Wipe(device string) error {
 	// wipe
 	// dd if=/dev/zero of=/dev/sda bs=1024k count=100
-	log.Println("Wiping disk")
+	slog.Info("Wiping disk")
 	input := "if=/dev/zero"
 	output := fmt.Sprintf("of=%s", device)
 	blockSize := "bs=1024k"
@@ -166,12 +167,12 @@ func Wipe(device string) error {
 
 	err := cmd.Start()
 	if err != nil {
-		return fmt.Errorf("Disk Wipe command error [%v]", err)
+		return fmt.Errorf("disk wipe command error: %w", err)
 	}
-	log.Printf("Waiting for command to finish...")
+	slog.Info("Waiting for command to finish...")
 	err = cmd.Wait()
 	if err != nil {
-		return fmt.Errorf("Disk Wipe [%v]", err)
+		return fmt.Errorf("disk wipe: %w", err)
 	}
 	return nil
 }

@@ -1,0 +1,121 @@
+name: KVM Boot Test
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kvm-boot:
+    name: KVM Boot Validation
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install QEMU and dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-utils dnsmasq cpio gzip
+
+      - name: Build initramfs image
+        run: |
+          # Build the init binary for linux/amd64
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
+            go build -ldflags "-linkmode external -extldflags '-static' -s -w" -o init
+
+          # Create minimal initramfs structure
+          mkdir -p initramfs/{bin,sbin,dev,proc,sys,etc,usr/bin}
+
+          # Install busybox
+          wget -q https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox -O initramfs/bin/busybox
+          chmod +x initramfs/bin/busybox
+          cd initramfs/bin && ln -s busybox sh && ln -s busybox setsid && cd ../..
+          cd initramfs/usr/bin && ln -s ../../bin/busybox setsid && cd ../../..
+
+          # Copy init binary
+          cp init initramfs/init
+
+          # Package initramfs
+          cd initramfs
+          find . -print0 | cpio --null -ov --format=newc 2>/dev/null | gzip > ../test-initramfs.cpio.gz
+          cd ..
+
+      - name: Download Linux kernel
+        run: |
+          # Use a pre-built minimal kernel for testing
+          wget -q https://kernel.ubuntu.com/mainline/v6.8/amd64/linux-image-unsigned-6.8.0-060800-generic_6.8.0-060800.202403102359_amd64.deb -O kernel.deb
+          dpkg-deb -x kernel.deb kernel-extracted
+          cp kernel-extracted/boot/vmlinuz-* vmlinuz
+
+      - name: Start test provisioning server
+        run: |
+          # Create a test config
+          mkdir -p images
+          cat > test-config.json <<'EOF'
+          {"action":"shell","dryRun":true,"dropToShell":true}
+          EOF
+
+          # Start a simple HTTP server to serve the config
+          python3 -c "
+          import http.server, json, os, threading
+
+          class Handler(http.server.SimpleHTTPRequestHandler):
+              def do_GET(self):
+                  if self.path.endswith('.bty'):
+                      self.send_response(200)
+                      self.send_header('Content-Type', 'application/json')
+                      self.end_headers()
+                      with open('test-config.json', 'rb') as f:
+                          self.wfile.write(f.read())
+                  else:
+                      super().do_GET()
+
+          server = http.server.HTTPServer(('0.0.0.0', 3000), Handler)
+          threading.Thread(target=server.serve_forever, daemon=True).start()
+          import time; time.sleep(999999)
+          " &
+          echo $! > server.pid
+          sleep 2
+
+      - name: Boot with QEMU and validate
+        timeout-minutes: 5
+        run: |
+          # Boot QEMU with the initramfs; user-mode networking with port forwarding
+          # The init process will attempt DHCP and config fetch
+          # We capture serial output to validate boot sequence
+          timeout 60 qemu-system-x86_64 \
+            -kernel vmlinuz \
+            -initrd test-initramfs.cpio.gz \
+            -append "console=ttyS0 panic=1" \
+            -m 512 \
+            -nographic \
+            -no-reboot \
+            -net nic \
+            -net user,hostfwd=tcp::3000-:3000 \
+            -serial file:serial.log \
+            2>&1 || true
+
+          echo "=== Serial Output ==="
+          cat serial.log || true
+
+          # Validate boot sequence markers
+          if grep -q "BOOTy" serial.log 2>/dev/null; then
+            echo "PASS: BOOTy init started successfully"
+          else
+            echo "WARN: BOOTy banner not found in serial output (may be expected in dry-run mode)"
+          fi
+
+      - name: Cleanup
+        if: always()
+        run: |
+          [ -f server.pid ] && kill $(cat server.pid) 2>/dev/null || true

@@ -1,19 +1,19 @@
-//+build linux
+//go:build linux
 
 package realm
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/plunder-app/BOOTy/pkg/plunderclient/types"
-	"github.com/plunder-app/BOOTy/pkg/utils"
-	log "github.com/sirupsen/logrus"
+	"github.com/telekom/BOOTy/pkg/plunderclient/types"
+	"github.com/telekom/BOOTy/pkg/utils"
 	"github.com/vishvananda/netlink"
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 
 	"github.com/digineo/go-dhclient"
 	"github.com/google/gopacket/layers"
@@ -121,20 +121,17 @@ func DHCPClient() error {
 	// Bring up interface
 	ifaceDev, err := netlink.LinkByName(ifname)
 	if err != nil {
-		log.Errorf("Error finding adapter [%v]", err)
-
+		slog.Error("Error finding adapter", "error", err)
 		return err
 	}
 
 	if err := netlink.LinkSetUp(ifaceDev); err != nil {
-		log.Errorf("Error bringing up adapter [%v]", err)
+		slog.Error("Error bringing up adapter", "error", err)
 	}
 
-	// Setup interface to recieve DHCP traffic
 	iface, err := net.InterfaceByName(ifname)
 	if err != nil {
-		log.Errorf("Error finding interface by name [%v]", err)
-
+		slog.Error("Error finding interface by name", "error", err)
 		return err
 	}
 	client := dhclient.Client{
@@ -154,9 +151,9 @@ func DHCPClient() error {
 
 			err = netlink.AddrAdd(link, addr)
 			if err != nil {
-				log.Errorf("Error adding %s to link %s", cidr.String(), iface.Name)
+				slog.Error("Error adding address to link", "address", cidr.String(), "link", iface.Name)
 			} else {
-				log.Printf("Adding address %s to link %s", cidr.String(), iface.Name)
+				slog.Info("Adding address to link", "address", cidr.String(), "link", iface.Name)
 			}
 
 			// Apply default gateway so we can route outside
@@ -165,17 +162,17 @@ func DHCPClient() error {
 				Gw:    lease.ServerID,
 			}
 			if err := netlink.RouteAdd(&route); err != nil {
-				log.Errorf("Error setting gateway [%v]", err)
+				slog.Error("Error setting gateway", "error", err)
 			} else {
-				log.Printf("Adding gateway %s to link %s", lease.ServerID.String(), iface.Name)
+				slog.Info("Adding gateway to link", "gateway", lease.ServerID.String(), "link", iface.Name)
 			}
 		},
 	}
 
 	// Add requests for default options
 	for _, param := range dhclient.DefaultParamsRequestList {
-		log.Printf("Requesting default option %d", param)
-		client.AddParamRequest(layers.DHCPOpt(param))
+		slog.Info("Requesting default option", "option", param)
+		client.AddParamRequest(param)
 	}
 
 	// // Add requests for custom options
@@ -199,22 +196,20 @@ func DHCPClient() error {
 
 	// Below will sit
 
-	c := make(chan os.Signal)
+	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGUSR1)
 	for {
 		sig := <-c
-		log.Println("received", sig)
+		slog.Info("Received signal", "signal", sig)
 		switch sig {
 		case syscall.SIGINT, syscall.SIGTERM:
 			return nil
 		case syscall.SIGHUP:
-			log.Println("renew lease")
+			slog.Info("Renewing lease")
 			client.Renew()
 		case syscall.SIGUSR1:
-			log.Println("acquire new lease")
+			slog.Info("Acquiring new lease")
 			client.Rebind()
 		}
 	}
-	//log.Errorf("DHCP client has ended")
-	//return nil
 }

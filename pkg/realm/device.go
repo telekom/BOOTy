@@ -1,9 +1,8 @@
 package realm
 
 import (
+	"log/slog"
 	"syscall"
-
-	log "github.com/sirupsen/logrus"
 )
 
 // DefaultDevices will return the defult mounts
@@ -53,10 +52,10 @@ func DefaultDevices() *Devices {
 func (d *Devices) CreateDevice() error {
 
 	for x := range d.Device {
-		if d.Device[x].CreateDevice == true {
+		if d.Device[x].CreateDevice {
 			err := syscall.Mknod(d.Device[x].Path, d.Device[x].Mode, makedev(d.Device[x].Major, d.Device[x].Minor))
 			if err != nil {
-				log.Errorf("Device Error [%v]", err)
+				slog.Error("Device Error", "error", err)
 			}
 		}
 	}
