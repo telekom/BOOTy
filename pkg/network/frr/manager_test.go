@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -177,10 +178,10 @@ func TestStartFRRFallback(t *testing.T) {
 }
 
 func TestWaitForHTTPWithFRRRestartsOnFailure(t *testing.T) {
-	callCount := 0
+	var callCount atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		callCount++
-		if callCount < 3 {
+		n := callCount.Add(1)
+		if n < 3 {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
