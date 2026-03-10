@@ -12,6 +12,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/image"
+	"github.com/telekom/BOOTy/pkg/kexec"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/frr"
 	"github.com/telekom/BOOTy/pkg/plunderclient"
@@ -128,10 +129,13 @@ func runCAPRF(ctx context.Context) {
 		slog.Error("Provisioning failed", "error", err)
 	}
 
-	slog.Info("BOOTy CAPRF provisioning complete, rebooting")
+	slog.Info("BOOTy CAPRF provisioning complete")
 	if err := netMode.Teardown(ctx); err != nil {
 		slog.Warn("Network teardown error", "error", err)
 	}
+
+	// Attempt kexec into installed kernel; fall back to normal reboot.
+	tryKexec()
 	time.Sleep(time.Second * 2)
 	realm.Reboot()
 }
@@ -181,6 +185,41 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 
 	slog.Info("Using DHCP network mode")
 	return &network.DHCPMode{}
+}
+
+// tryKexec attempts to kexec into the installed kernel.
+// Falls back silently on failure so the caller can do a normal reboot.
+func tryKexec() {
+	const grubPath = "/newroot/boot/grub/grub.cfg"
+	f, err := os.Open(grubPath)
+	if err != nil {
+		slog.Warn("Cannot open grub.cfg, skipping kexec", "error", err)
+		return
+	}
+	defer func() { _ = f.Close() }()
+
+	entries, err := kexec.ParseGrubCfg(f)
+	if err != nil {
+		slog.Warn("Failed to parse grub.cfg", "error", err)
+		return
+	}
+	entry, err := kexec.GetDefaultEntry(entries)
+	if err != nil {
+		slog.Warn("No default boot entry found", "error", err)
+		return
+	}
+
+	kernel := "/newroot" + entry.Kernel
+	initrd := "/newroot" + entry.Initramfs
+	slog.Info("Attempting kexec", "kernel", kernel, "initrd", initrd)
+
+	if err := kexec.Load(kernel, initrd, entry.KernelArgs); err != nil {
+		slog.Warn("kexec load failed, falling back to reboot", "error", err)
+		return
+	}
+	if err := kexec.Execute(); err != nil {
+		slog.Warn("kexec execute failed, falling back to reboot", "error", err)
+	}
 }
 
 // runLegacy runs the original BOOTy flow using BOOTYURL environment variable.
