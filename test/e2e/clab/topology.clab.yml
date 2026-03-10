@@ -1,0 +1,29 @@
+name: booty-lab
+
+topology:
+  nodes:
+    spine01:
+      kind: linux
+      image: quay.io/frrouting/frr:10.3.1
+      binds:
+        - spine01.frr.conf:/etc/frr/frr.conf:ro
+        - daemons:/etc/frr/daemons:ro
+      exec:
+        - ip link set dev eth1 mtu 9000
+    leaf01:
+      kind: linux
+      image: quay.io/frrouting/frr:10.3.1
+      binds:
+        - leaf01.frr.conf:/etc/frr/frr.conf:ro
+        - daemons:/etc/frr/daemons:ro
+      exec:
+        - ip link set dev eth1 mtu 9000
+        # Create VXLAN + bridge for EVPN verification
+        - ip link add vxlan100 type vxlan id 100 dstport 4789 local 10.0.0.2 nolearning
+        - ip link add br100 type bridge
+        - ip link set vxlan100 master br100
+        - ip link set vxlan100 up
+        - ip link set br100 up
+
+  links:
+    - endpoints: ["spine01:eth1", "leaf01:eth1"]
