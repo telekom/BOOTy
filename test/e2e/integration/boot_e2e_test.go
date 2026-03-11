@@ -22,6 +22,7 @@ const (
 	caprfContainer       = labPrefix + "-caprf-mock"
 	clientContainer      = labPrefix + "-client"
 	spineContainer       = labPrefix + "-spine01"
+	nginxContainer       = labPrefix + "-nginx"
 )
 
 // requireBootLab skips the test if the boot topology is not deployed.
@@ -282,6 +283,126 @@ func TestBootCAPRFMockReceivedInitStatus(t *testing.T) {
 		t.Fatalf("CAPRF mock did not receive /status/init request\nAccess log:\n%s", out)
 	}
 	t.Logf("CAPRF mock received /status/init request\nAccess log:\n%s", out)
+}
+
+// --- Image pull through EVPN ---
+
+func TestBootAllNodesImageReachableThroughEVPN(t *testing.T) {
+	requireBootLab(t)
+
+	containers := []struct {
+		name string
+		desc string
+	}{
+		{provisionContainer, "provision"},
+		{deprovisionContainer, "deprovision"},
+		{standbyContainer, "standby"},
+	}
+
+	for _, c := range containers {
+		c := c
+		t.Run(c.desc, func(t *testing.T) {
+			t.Parallel()
+			var ok bool
+			for i := 0; i < 30; i++ {
+				_, err := bootDockerExec(t, c.name, "wget", "-q", "-O", "/dev/null", "http://10.100.0.10/images/test.img")
+				if err == nil {
+					ok = true
+					break
+				}
+				time.Sleep(1 * time.Second)
+			}
+			if !ok {
+				t.Fatalf("%s node cannot download image from nginx (10.100.0.10) through EVPN", c.desc)
+			}
+			t.Logf("%s node: image download from nginx through EVPN succeeded", c.desc)
+		})
+	}
+}
+
+func TestBootNginxAccessLogShowsImageRequest(t *testing.T) {
+	requireBootLab(t)
+
+	// Ensure at least one node has fetched the image first
+	time.Sleep(30 * time.Second)
+
+	out, err := bootDockerExec(t, nginxContainer, "cat", "/var/log/nginx/access.log")
+	if err != nil {
+		t.Logf("could not read nginx access log: %v", err)
+		t.Skip("nginx access log not accessible")
+	}
+
+	if !strings.Contains(out, "/images/test.img") {
+		t.Logf("Nginx access log:\n%s", out)
+		t.Fatal("nginx did not receive /images/test.img request through EVPN")
+	}
+	t.Logf("Nginx received image request through EVPN:\n%s", out)
+}
+
+// --- CAPRF error lifecycle (provision fails at disk ops) ---
+
+func TestBootCAPRFMockReceivedErrorFromProvision(t *testing.T) {
+	requireBootLab(t)
+
+	// Wait for provision to attempt disk ops and fail
+	time.Sleep(45 * time.Second)
+
+	out, err := bootDockerExec(t, caprfContainer, "cat", "/var/log/nginx/access.log")
+	if err != nil {
+		t.Fatalf("could not read CAPRF access log: %v\n%s", err, out)
+	}
+
+	if !strings.Contains(out, "/status/error") {
+		t.Logf("CAPRF access log:\n%s", out)
+		t.Fatal("CAPRF mock did not receive /status/error — provision should fail at disk ops")
+	}
+	t.Log("CAPRF mock received /status/error (provision failed at disk ops as expected)")
+}
+
+func TestBootProvisionShowsProvisioningSteps(t *testing.T) {
+	requireBootLab(t)
+
+	if !waitForLogEntry(t, provisionContainer, "report-init", 60*time.Second) {
+		t.Fatal("provision node did not reach report-init")
+	}
+
+	// Wait for provisioning steps to execute and (likely) fail at disk ops
+	time.Sleep(15 * time.Second)
+
+	logs := getBootyLogs(t, provisionContainer)
+
+	// Provisioning should log step names and eventually fail
+	if strings.Contains(logs, "Provisioning step") || strings.Contains(logs, "find-disk") {
+		t.Log("provision node: provisioning steps visible in logs (full orchestrator lifecycle)")
+	} else {
+		t.Logf("Full logs:\n%s", logs)
+		t.Fatal("provision node: no provisioning step activity found in logs")
+	}
+}
+
+// --- Standby heartbeat through EVPN ---
+
+func TestBootStandbyHeartbeatsSentToCAPRF(t *testing.T) {
+	requireBootLab(t)
+
+	// Wait for standby to enter heartbeat loop
+	if !waitForLogEntry(t, standbyContainer, "standby", 60*time.Second) {
+		t.Fatal("standby node did not enter standby mode")
+	}
+
+	// Wait for at least one heartbeat to be sent
+	time.Sleep(30 * time.Second)
+
+	out, err := bootDockerExec(t, caprfContainer, "cat", "/var/log/nginx/access.log")
+	if err != nil {
+		t.Fatalf("could not read CAPRF access log: %v\n%s", err, out)
+	}
+
+	if !strings.Contains(out, "/status/heartbeat") {
+		t.Logf("CAPRF access log:\n%s", out)
+		t.Fatal("CAPRF mock did not receive /status/heartbeat from standby")
+	}
+	t.Log("CAPRF mock received heartbeat from standby node through EVPN")
 }
 
 // --- Full log dump test (always runs last) ---
