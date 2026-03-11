@@ -103,9 +103,11 @@ COPY --from=busybox /initramfs.cpio.gz /iso/boot/initrd.img
 
 # Fetch a kernel — use the Debian cloud kernel (lightweight, no initramfs deps)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends linux-image-cloud-amd64 && \
-    cp /boot/vmlinuz-* /iso/boot/vmlinuz && \
-    rm -rf /var/lib/apt/lists/*
+    REAL_PKG=$(apt-cache depends linux-image-cloud-amd64 | awk '/Depends:/{print $2}' | head -1) && \
+    apt-get download "$REAL_PKG" && \
+    dpkg-deb -x linux-image-*.deb /tmp/kernel && \
+    cp /tmp/kernel/boot/vmlinuz-* /iso/boot/vmlinuz && \
+    rm -rf /tmp/kernel *.deb /var/lib/apt/lists/*
 
 # ISOLINUX bootloader
 RUN mkdir -p /iso/isolinux && \
