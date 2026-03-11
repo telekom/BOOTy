@@ -328,8 +328,7 @@ jobs:
           exit 1
 
       - name: Run E2E integration tests
-        run: go test -tags e2e_integration -v -race -count=1 ./test/e2e/integration/... || true
-
+        run: go test -tags e2e_integration -v -race -count=1 -timeout 10m ./test/e2e/integration/...
       - name: Cleanup
         if: always()
         run: sudo containerlab destroy --topo test/e2e/clab/topology.clab.yml --cleanup

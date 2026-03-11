@@ -68,6 +68,7 @@ topology:
       binds:
         - caprf-mock.conf:/etc/nginx/nginx.conf:ro
         - images:/srv/images:ro
+        - data:/srv/data:ro
       exec:
         - ip addr add 10.100.0.11/24 dev eth1
         - ip link set dev eth1 up
