@@ -154,24 +154,11 @@ func TestAddBGPPeerError(t *testing.T) {
 	}
 }
 
-func TestStartFRRSystemctl(t *testing.T) {
-	cmd := newMockFRRCommander()
-	mgr := NewManager(cmd)
-
-	if err := mgr.startFRR(context.Background()); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(cmd.calls) != 1 {
-		t.Fatalf("expected 1 call, got %d", len(cmd.calls))
-	}
-}
-
-func TestStartFRRFallback(t *testing.T) {
-	cmd := newMockFRRCommander()
-	cmd.setResult("systemctl restart", nil, fmt.Errorf("systemctl failed"))
-	mgr := NewManager(cmd)
-
-	// startDaemonsDirect will try to stat daemon paths; won't find them in test.
+func TestStartFRRFallthrough(t *testing.T) {
+	// startFRR tries systemctl → frrinit.sh → startDaemonsDirect.
+	// In test, neither systemctl nor frrinit.sh exist, so it falls
+	// through to startDaemonsDirect which skips missing daemon binaries.
+	mgr := NewManager(nil)
 	if err := mgr.startFRR(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -189,9 +176,8 @@ func TestWaitForHTTPWithFRRRestartsOnFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cmd := newMockFRRCommander()
 	// The function should succeed after a few retries.
-	err := waitForHTTPWithFRR(context.Background(), cmd, srv.URL, 30*time.Second)
+	err := waitForHTTPWithFRR(context.Background(), srv.URL, 30*time.Second)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -151,7 +151,7 @@ func (m *Manager) startFRRStack(ctx context.Context, cfg *network.Config, underl
 
 // WaitForConnectivity polls the target URL until reachable, restarting FRR periodically.
 func (m *Manager) WaitForConnectivity(ctx context.Context, target string, timeout time.Duration) error {
-	return waitForHTTPWithFRR(ctx, m.commander, target, timeout)
+	return waitForHTTPWithFRR(ctx, target, timeout)
 }
 
 // Teardown removes the FRR network configuration.
@@ -416,27 +416,40 @@ bfdd_options="   -A 127.0.0.1"
 	return nil
 }
 
+// startFRR launches FRR daemons using the best available method.
+// All methods avoid CombinedOutput() because FRR daemons fork with -d,
+// and child processes inherit pipes, blocking CombinedOutput() indefinitely.
 func (m *Manager) startFRR(ctx context.Context) error {
-	out, err := m.commander.Run(ctx, "systemctl", "restart", "frr")
-	if err == nil {
+	if err := runDaemonCmd(ctx, "systemctl", "restart", "frr"); err == nil {
 		slog.Info("FRR daemons started via systemctl")
 		return nil
 	}
-	slog.Warn("systemctl restart frr failed, trying frrinit.sh",
-		"error", err, "output", string(out))
 
 	initPath := "/usr/lib/frr/frrinit.sh"
 	if _, statErr := os.Stat(initPath); statErr == nil {
-		out, err = m.commander.Run(ctx, initPath, "start")
-		if err == nil {
+		if err := runDaemonCmd(ctx, initPath, "start"); err == nil {
 			slog.Info("FRR daemons started via frrinit.sh")
 			return nil
 		}
-		slog.Warn("frrinit.sh start failed, falling back to direct daemon start",
-			"error", err, "output", string(out))
+		slog.Warn("frrinit.sh start failed, falling back to direct daemon start")
 	}
 
 	return m.startDaemonsDirect(ctx)
+}
+
+// runDaemonCmd runs a command that may fork long-lived daemons.
+// It uses os.Stderr directly (no pipes) so cmd.Wait returns when the
+// parent process exits, not when all child pipe holders close.
+func runDaemonCmd(ctx context.Context, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("running %s: %w", name, err)
+	}
+
+	return nil
 }
 
 func (m *Manager) startDaemonsDirect(ctx context.Context) error {
@@ -459,14 +472,12 @@ func (m *Manager) startDaemonsDirect(ctx context.Context) error {
 			slog.Debug("Daemon not found, skipping", "daemon", d.name)
 			continue
 		}
-		out, err := m.commander.Run(ctx, path, d.args...)
-		if err != nil {
-			slog.Warn("Failed to start daemon",
-				"daemon", d.name, "error", err, "output", string(out))
+		if err := runDaemonCmd(ctx, path, d.args...); err != nil {
+			slog.Warn("Failed to start daemon", "daemon", d.name, "error", err)
 		} else {
 			slog.Info("Started FRR daemon", "daemon", d.name)
 		}
-		time.Sleep(500 * time.Millisecond) // allow daemon to initialize
+		time.Sleep(500 * time.Millisecond)
 	}
 	return nil
 }
@@ -489,7 +500,7 @@ func (m *Manager) addBGPPeer(ctx context.Context, vrfName string, asn uint32, ni
 }
 
 // waitForHTTPWithFRR polls target, restarting FRR every 20s if needed.
-func waitForHTTPWithFRR(ctx context.Context, cmd Commander, target string, timeout time.Duration) error {
+func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duration) error {
 	if target == "" {
 		return fmt.Errorf("empty connectivity target URL")
 	}
@@ -520,8 +531,8 @@ func waitForHTTPWithFRR(ctx context.Context, cmd Commander, target string, timeo
 
 		if time.Since(lastRestart) >= restartInterval {
 			slog.Info("Restarting FRR daemons for connectivity recovery")
-			if _, sErr := cmd.Run(ctx, "systemctl", "restart", "frr"); sErr != nil {
-				_, _ = cmd.Run(ctx, "/usr/lib/frr/frrinit.sh", "restart")
+			if sErr := runDaemonCmd(ctx, "systemctl", "restart", "frr"); sErr != nil {
+				_ = runDaemonCmd(ctx, "/usr/lib/frr/frrinit.sh", "restart")
 			}
 			lastRestart = time.Now()
 		}
