@@ -20,7 +20,7 @@ COPY --from=builder /booty /usr/local/bin/booty
 RUN mkdir -p /deploy /tmp /etc/frr /var/run/frr && \
     chown -R frr:frr /etc/frr /var/run/frr
 
-# Entrypoint: run BOOTy in CAPRF mode, tee all output to a log file.
-# BOOTy writes structured logs to stderr.
-CMD ["/bin/sh", "-c", "/usr/local/bin/booty 2>&1 | tee /var/log/booty.log; sleep infinity"]
+# Entrypoint: run BOOTy in CAPRF mode.
+# BOOTy writes structured logs to stderr; direct output avoids pipe buffering.
+CMD ["/bin/sh", "-c", "/usr/local/bin/booty 2>&1; sleep infinity"]
 

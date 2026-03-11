@@ -56,7 +56,7 @@ func bootDockerExecOrFail(t *testing.T, container string, args ...string) string
 // getBootyLogs retrieves the full BOOTy log output from a container.
 func getBootyLogs(t *testing.T, container string) string {
 	t.Helper()
-	// BOOTy output goes to container stdout/stderr via tee
+	// BOOTy output goes to container stdout/stderr
 	out, err := exec.Command("docker", "logs", container).CombinedOutput()
 	if err != nil {
 		t.Logf("Warning: could not get logs for %s: %v", container, err)
@@ -209,7 +209,8 @@ func TestBootProvisionStartsAndReportsInit(t *testing.T) {
 	}
 
 	// Wait for provisioning to start (report-init step)
-	if !waitForLogEntry(t, provisionContainer, "report-init", 30*time.Second) {
+	// EVPN convergence (BGP + route exchange + VXLAN) takes 30-60s.
+	if !waitForLogEntry(t, provisionContainer, "report-init", 120*time.Second) {
 		logs := getBootyLogs(t, provisionContainer)
 		t.Fatalf("provision node did not reach report-init step\nFull logs:\n%s", logs)
 	}

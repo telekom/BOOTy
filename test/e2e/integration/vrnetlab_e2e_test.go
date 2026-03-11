@@ -107,9 +107,11 @@ func TestVrnetlabBGPSessionsEstablished(t *testing.T) {
 	requireVrnetlabLab(t)
 
 	var established bool
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 60; i++ {
 		out, err := vmDockerExec(t, vmSpine, "vtysh", "-c", "show bgp summary")
-		if err == nil && strings.Contains(out, "Estab") {
+		// "never" in Up/Down column = peer not yet established;
+		// "65020" = booty-provision AS confirms peers are configured.
+		if err == nil && strings.Contains(out, "65020") && !strings.Contains(out, "never") {
 			established = true
 			t.Logf("BGP established:\n%s", out)
 			break
@@ -139,9 +141,11 @@ func TestVrnetlabLeafBGPEstablished(t *testing.T) {
 	requireVrnetlabLab(t)
 
 	var established bool
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 60; i++ {
 		out, err := vmDockerExec(t, vmLeaf, "vtysh", "-c", "show bgp summary")
-		if err == nil && strings.Contains(out, "Estab") {
+		// "never" in Up/Down column = peer not yet established;
+		// "65000" = spine01 AS confirms peer is configured.
+		if err == nil && strings.Contains(out, "65000") && !strings.Contains(out, "never") {
 			established = true
 			t.Logf("Leaf BGP established:\n%s", out)
 			break
