@@ -132,7 +132,7 @@ type frrConfigData struct {
 	VPNRT            string
 }
 
-const frrConfigTemplate = `frr version 8.2.2
+const frrConfigTemplate = `frr version 10.3
 frr defaults datacenter
 !
 router bgp {{ .ASN }} vrf {{ .VRFName }}

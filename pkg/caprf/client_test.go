@@ -465,3 +465,87 @@ vpn_rt="65188:2002"
 		t.Errorf("VPNRT = %q", cfg.VPNRT)
 	}
 }
+
+func TestClientHeartbeat(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewFromConfig(&config.MachineConfig{HeartbeatURL: srv.URL})
+	if err := client.Heartbeat(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClientFetchCommands(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"ID":"cmd-1","Type":"provision","Payload":null}]`))
+	}))
+	defer srv.Close()
+
+	client := NewFromConfig(&config.MachineConfig{CommandsURL: srv.URL})
+	cmds, err := client.FetchCommands(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cmds) != 1 {
+		t.Fatalf("expected 1 command, got %d", len(cmds))
+	}
+	if cmds[0].ID != "cmd-1" || cmds[0].Type != "provision" {
+		t.Errorf("unexpected command: %+v", cmds[0])
+	}
+}
+
+func TestClientFetchCommandsNoContent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	client := NewFromConfig(&config.MachineConfig{CommandsURL: srv.URL})
+	cmds, err := client.FetchCommands(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmds != nil {
+		t.Errorf("expected nil commands on 204, got %v", cmds)
+	}
+}
+
+func TestClientFetchCommandsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := NewFromConfig(&config.MachineConfig{CommandsURL: srv.URL})
+	_, err := client.FetchCommands(context.Background())
+	if err == nil {
+		t.Error("expected error on 500")
+	}
+}
+
+func TestParseVarsAgentURLs(t *testing.T) {
+	input := `HOSTNAME="standby-host"
+HEARTBEAT_URL="http://server/status/heartbeat"
+COMMANDS_URL="http://server/commands"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.HeartbeatURL != "http://server/status/heartbeat" {
+		t.Errorf("HeartbeatURL = %q", cfg.HeartbeatURL)
+	}
+	if cfg.CommandsURL != "http://server/commands" {
+		t.Errorf("CommandsURL = %q", cfg.CommandsURL)
+	}
+}

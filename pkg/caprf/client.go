@@ -4,6 +4,7 @@ package caprf
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -92,16 +93,48 @@ func (c *Client) ShipDebug(ctx context.Context, message string) error {
 	return c.postWithAuth(ctx, c.cfg.DebugURL, message)
 }
 
-// Heartbeat is a no-op in the current provisioning mode.
-// Future agent mode will implement actual heartbeat.
-func (c *Client) Heartbeat(_ context.Context) error {
-	return nil
+// Heartbeat sends a keepalive to the CAPRF server.
+// Returns nil if no heartbeat URL is configured (non-standby mode).
+func (c *Client) Heartbeat(ctx context.Context) error {
+	if c.cfg.HeartbeatURL == "" {
+		return nil
+	}
+	return c.postWithAuth(ctx, c.cfg.HeartbeatURL, "heartbeat")
 }
 
-// FetchCommands is a no-op in the current provisioning mode.
-// Future agent mode will implement command fetching.
-func (c *Client) FetchCommands(_ context.Context) ([]config.Command, error) {
-	return nil, nil
+// FetchCommands polls the CAPRF server for pending commands.
+// Returns nil if no commands URL is configured.
+func (c *Client) FetchCommands(ctx context.Context) ([]config.Command, error) {
+	if c.cfg.CommandsURL == "" {
+		return nil, nil
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.cfg.CommandsURL, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("create commands request: %w", err)
+	}
+	if c.cfg.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
+	}
+
+	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
+	if err != nil {
+		return nil, fmt.Errorf("fetch commands: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // best-effort close
+
+	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch commands: status %d", resp.StatusCode)
+	}
+
+	var cmds []config.Command
+	if err := json.NewDecoder(resp.Body).Decode(&cmds); err != nil {
+		return nil, fmt.Errorf("decode commands: %w", err)
+	}
+	return cmds, nil
 }
 
 func (c *Client) postWithAuth(ctx context.Context, url, body string) error {
@@ -198,6 +231,8 @@ func applyVar(cfg *config.MachineConfig, key, value string) {
 		"ERROR_URL":                   &cfg.ErrorURL,
 		"SUCCESS_URL":                 &cfg.SuccessURL,
 		"DEBUG_URL":                   &cfg.DebugURL,
+		"HEARTBEAT_URL":               &cfg.HeartbeatURL,
+		"COMMANDS_URL":                &cfg.CommandsURL,
 		"underlay_subnet":             &cfg.UnderlaySubnet,
 		"underlay_ip":                 &cfg.UnderlayIP,
 		"overlay_subnet":              &cfg.OverlaySubnet,
@@ -231,11 +266,19 @@ func applyVar(cfg *config.MachineConfig, key, value string) {
 	switch key {
 	case "IMAGE":
 		cfg.ImageURLs = strings.Fields(value)
+	case "IMAGE_CHECKSUM":
+		cfg.ImageChecksum = value
+	case "IMAGE_CHECKSUM_TYPE":
+		cfg.ImageChecksumType = value
 	case "MIN_DISK_SIZE_GB":
 		if n, err := strconv.Atoi(value); err == nil {
 			cfg.MinDiskSizeGB = n
 		}
 	case "DISABLE_KEXEC":
 		cfg.DisableKexec = value == "true" || value == "1" || value == "yes"
+	case "NUM_VFS":
+		if n, err := strconv.Atoi(value); err == nil {
+			cfg.NumVFs = n
+		}
 	}
 }

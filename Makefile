@@ -16,7 +16,7 @@ SRC = $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 DOCKERTAG ?= $(VERSION)
 REPOSITORY = ghcr.io/telekom/booty
 
-.PHONY: all build clean install uninstall fmt lint test docker dockerx86
+.PHONY: all build clean install uninstall fmt lint test docker dockerx86 iso
 
 all: lint test install
 
@@ -51,6 +51,15 @@ dockerx86:
 
 docker:
 	@docker buildx build --platform linux/amd64,linux/arm64 --push -t $(REPOSITORY):$(DOCKERTAG) -f initrd.Dockerfile .
+
+iso:
+	@docker buildx build --platform linux/amd64 --target iso --output type=local,dest=. -f initrd.Dockerfile .
+	@echo ISO built: booty.iso
+
+test-iso:
+	@echo Verifying ISO hybrid boot record
+	@file booty.iso | grep -q "ISO 9660" || (echo "FAIL: not a valid ISO"; exit 1)
+	@echo PASS
 
 # This is typically only for quick testing
 getramdisk:

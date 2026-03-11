@@ -239,7 +239,7 @@ func TestSetupMellanoxNoNICs(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
 	cmd.setResult("chroot "+c.rootDir, []byte(""), nil)
-	changed, err := c.SetupMellanox(context.Background())
+	changed, err := c.SetupMellanox(context.Background(), 32)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestSetupMellanoxLspciFailure(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
 	cmd.setResult("chroot "+c.rootDir, nil, fmt.Errorf("lspci not found"))
-	changed, err := c.SetupMellanox(context.Background())
+	changed, err := c.SetupMellanox(context.Background(), 32)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -279,11 +279,12 @@ func TestSetupMellanoxFirmwareChanged(t *testing.T) {
 	mgr := disk.NewManager(&sequentialCommander{
 		results: []mockResult{
 			{output: []byte("15b3:1017 Mellanox ConnectX-5"), err: nil},
+			{output: []byte("mt4125_pciconf0\n"), err: nil},
 			{output: []byte("Applied"), err: nil},
 		},
 	})
 	c := &Configurator{disk: mgr, rootDir: t.TempDir()}
-	changed, err := c.SetupMellanox(context.Background())
+	changed, err := c.SetupMellanox(context.Background(), 32)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -296,11 +297,12 @@ func TestSetupMellanoxMstconfigFails(t *testing.T) {
 	mgr := disk.NewManager(&sequentialCommander{
 		results: []mockResult{
 			{output: []byte("15b3:1017 Mellanox ConnectX-5"), err: nil},
+			{output: []byte("mt4125_pciconf0\n"), err: nil},
 			{output: []byte("failed"), err: fmt.Errorf("mstconfig: exit 1")},
 		},
 	})
 	c := &Configurator{disk: mgr, rootDir: t.TempDir()}
-	changed, err := c.SetupMellanox(context.Background())
+	changed, err := c.SetupMellanox(context.Background(), 32)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

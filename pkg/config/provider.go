@@ -16,6 +16,8 @@ const (
 // MachineConfig holds all configuration needed for provisioning a machine.
 type MachineConfig struct {
 	ImageURLs         []string // Space-separated IMAGE field from /deploy/vars
+	ImageChecksum     string   // IMAGE_CHECKSUM: expected hex digest of the raw image
+	ImageChecksumType string   // IMAGE_CHECKSUM_TYPE: "sha256" or "sha512"
 	Hostname          string   // HOSTNAME
 	Token             string   // TOKEN (Bearer auth for CAPRF server)
 	ExtraKernelParams string   // MACHINE_EXTRA_KERNEL_PARAMS
@@ -24,14 +26,17 @@ type MachineConfig struct {
 	ProviderID        string   // PROVIDER_ID (kubelet --provider-id)
 	Mode              string   // MODE: "provision", "deprovision", "soft-deprovision"
 	MinDiskSizeGB     int      // MIN_DISK_SIZE_GB (optional, 0 = no minimum)
+	NumVFs            int      // NUM_VFS: number of SR-IOV VFs for Mellanox (default: 32)
 	DisableKexec      bool     // DISABLE_KEXEC: skip kexec and always hard-reboot
 
 	// Status URLs parsed from /deploy/vars.
-	LogURL     string
-	InitURL    string
-	ErrorURL   string
-	SuccessURL string
-	DebugURL   string
+	LogURL       string
+	InitURL      string
+	ErrorURL     string
+	SuccessURL   string
+	DebugURL     string
+	HeartbeatURL string // POST /status/heartbeat
+	CommandsURL  string // GET /commands
 
 	// Network configuration (from kernel cmdline or /deploy/vars).
 	UnderlaySubnet   string // underlay_subnet: e.g. "192.168.4.0/24"

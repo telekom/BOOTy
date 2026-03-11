@@ -233,7 +233,7 @@ func (c *Configurator) SetupEFIBoot(ctx context.Context) error {
 
 // SetupMellanox detects and configures Mellanox ConnectX NICs.
 // Returns true if firmware values were changed (requiring a hard reboot for reinit).
-func (c *Configurator) SetupMellanox(ctx context.Context) (bool, error) {
+func (c *Configurator) SetupMellanox(ctx context.Context, numVFs int) (bool, error) {
 	slog.Info("Checking for Mellanox NICs")
 	out, err := c.disk.ChrootRun(ctx, c.rootDir, "lspci -d 15b3:")
 	if err != nil {
@@ -244,14 +244,38 @@ func (c *Configurator) SetupMellanox(ctx context.Context) (bool, error) {
 		slog.Info("No Mellanox NICs found")
 		return false, nil
 	}
-	slog.Info("Mellanox NICs detected, configuring SR-IOV")
-	out, err = c.disk.ChrootRun(ctx, c.rootDir, "mstconfig -d /dev/mst/mt4117_pciconf0 set NUM_OF_VFS=32")
+
+	if numVFs <= 0 {
+		numVFs = 32
+	}
+
+	// Enumerate all Mellanox mst pciconf devices dynamically.
+	listOut, err := c.disk.ChrootRun(ctx, c.rootDir, "ls /dev/mst/")
 	if err != nil {
-		slog.Warn("mstconfig failed", "output", string(out), "error", err)
+		slog.Warn("Cannot list /dev/mst/ devices", "error", err)
 		return false, nil
 	}
-	slog.Info("Mellanox firmware values changed, hard reboot required")
-	return true, nil
+
+	changed := false
+	for _, entry := range strings.Fields(string(listOut)) {
+		if !strings.Contains(entry, "pciconf") {
+			continue
+		}
+		devPath := "/dev/mst/" + entry
+		cmd := fmt.Sprintf("mstconfig -d %s set NUM_OF_VFS=%d", devPath, numVFs)
+		slog.Info("Configuring Mellanox SR-IOV", "device", devPath, "numVFs", numVFs)
+		out, err = c.disk.ChrootRun(ctx, c.rootDir, cmd)
+		if err != nil {
+			slog.Warn("mstconfig failed", "device", devPath, "output", string(out), "error", err)
+			continue
+		}
+		changed = true
+	}
+
+	if changed {
+		slog.Info("Mellanox firmware values changed, hard reboot required")
+	}
+	return changed, nil
 }
 
 // copyFile copies a file preserving permissions.

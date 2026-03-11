@@ -128,11 +128,14 @@ func runCAPRF(ctx context.Context) {
 		}
 	}
 
-	// Run provisioning or deprovisioning based on mode.
+	// Run provisioning, deprovisioning, or standby based on mode.
 	diskMgr := disk.NewManager(nil)
 	orch := provision.NewOrchestrator(cfg, client, diskMgr)
 
 	switch cfg.Mode {
+	case "standby":
+		runStandby(ctx, client, cfg, netMode, diskMgr)
+		return // standby handles its own lifecycle
 	case "deprovision", "soft-deprovision":
 		if cfg.Mode == "soft-deprovision" {
 			cfg.Mode = "soft"
@@ -255,6 +258,87 @@ func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) {
 	}
 	if err := kexec.Execute(); err != nil {
 		slog.Warn("kexec execute failed, falling back to reboot", "error", err)
+	}
+}
+
+// runStandby keeps the machine in a hot standby loop. It sends periodic
+// heartbeats to the CAPRF server and polls for commands. When a "provision"
+// or "deprovision" command arrives, it re-enters the normal CAPRF flow.
+func runStandby(ctx context.Context, client config.Provider, cfg *config.MachineConfig, netMode network.Mode, diskMgr *disk.Manager) {
+	const (
+		heartbeatInterval = 30 * time.Second
+		pollInterval      = 10 * time.Second
+	)
+
+	slog.Info("Entering standby mode")
+	_ = client.ReportStatus(ctx, config.StatusInit, "standby")
+
+	heartbeatTicker := time.NewTicker(heartbeatInterval)
+	defer heartbeatTicker.Stop()
+
+	pollTicker := time.NewTicker(pollInterval)
+	defer pollTicker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			slog.Info("Standby context cancelled, shutting down")
+			if err := netMode.Teardown(ctx); err != nil {
+				slog.Warn("Network teardown error", "error", err)
+			}
+			return
+
+		case <-heartbeatTicker.C:
+			if err := client.Heartbeat(ctx); err != nil {
+				slog.Warn("Heartbeat failed", "error", err)
+			}
+
+		case <-pollTicker.C:
+			cmds, err := client.FetchCommands(ctx)
+			if err != nil {
+				slog.Warn("Command poll failed", "error", err)
+				continue
+			}
+			for _, cmd := range cmds {
+				slog.Info("Received command", "id", cmd.ID, "type", cmd.Type)
+				switch cmd.Type {
+				case "provision":
+					cfg.Mode = "provision"
+					orch := provision.NewOrchestrator(cfg, client, diskMgr)
+					if err := orch.Provision(ctx); err != nil {
+						slog.Error("Hot provision failed", "error", err)
+					}
+					if err := netMode.Teardown(ctx); err != nil {
+						slog.Warn("Network teardown error", "error", err)
+					}
+					tryKexec(cfg, orch.FirmwareChanged())
+					time.Sleep(2 * time.Second)
+					realm.Reboot()
+					return
+				case "deprovision":
+					cfg.Mode = "deprovision"
+					orch := provision.NewOrchestrator(cfg, client, diskMgr)
+					if err := orch.Deprovision(ctx); err != nil {
+						slog.Error("Hot deprovision failed", "error", err)
+					}
+					if err := netMode.Teardown(ctx); err != nil {
+						slog.Warn("Network teardown error", "error", err)
+					}
+					time.Sleep(2 * time.Second)
+					realm.Reboot()
+					return
+				case "reboot":
+					slog.Info("Reboot command received")
+					if err := netMode.Teardown(ctx); err != nil {
+						slog.Warn("Network teardown error", "error", err)
+					}
+					realm.Reboot()
+					return
+				default:
+					slog.Warn("Unknown command type", "type", cmd.Type)
+				}
+			}
+		}
 	}
 }
 

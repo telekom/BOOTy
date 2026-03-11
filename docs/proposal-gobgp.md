@@ -1,99 +1,167 @@
-# Proposal: Replace FRR with GoBGP
+# Proposal: Replace FRR with GoBGP — Three-Tier Network Stack
+
+## Status: Proposal
 
 ## Summary
 
-Replace the FRR (Free Range Routing) dependency with [GoBGP](https://github.com/osrg/gobgp) — a pure-Go BGP implementation — for the EVPN underlay network setup.
+Replace the FRR (Free Range Routing) shelling approach with
+[GoBGP](https://github.com/osrg/gobgp) — a pure-Go BGP library — and
+restructure the network stack into three distinct tiers:
+
+1. **Underlay** — eBGP peering with leaf switches for VXLAN reachability.
+2. **Overlay** — EVPN Type-2/3 routes for provisioning VXLAN (VNI).
+3. **IPMI** — Lightweight L3 path to the BMC (optional, auto-detected).
 
 ## Motivation
 
-BOOTy currently shells out to the system FRR daemon for BGP/EVPN configuration. This has several drawbacks:
+The current `network/frr` package shells out to FRR daemons (`bgpd`,
+`zebra`, `bfdd`) and renders a text template for `/etc/frr/frr.conf`.
+This works but has significant drawbacks:
 
-1. **Dependency**: FRR must be installed in the initramfs, adding ~50MB and complex packaging
-2. **Configuration**: FRR config is rendered to `/etc/frr/frr.conf` and managed via `vtysh` commands — error-prone shell interaction
-3. **Observability**: FRR runs as a separate process; monitoring BGP state requires parsing `vtysh` output
-4. **Startup time**: FRR daemon startup adds 3-5 seconds to the provisioning flow
-5. **Cross-platform testing**: FRR is Linux-only, making unit tests require build tags
+| Concern | FRR (current) | GoBGP (proposed) |
+|---------|---------------|------------------|
+| Dependency | ~50 MB in initramfs (3 daemons, vtysh, libs) | Go library linked into binary |
+| Configuration | Text template → `vtysh` shell-out | Direct Go API calls |
+| Startup | 3-5 s daemon startup | < 100 ms in-process |
+| Observability | Parse `vtysh show` output | Go API: `ListPeer()`, `ListPath()` |
+| Testing | Linux-only, build tags, real daemons | Pure Go mocks, cross-platform |
+| Binary size delta | 0 (external) | +15 MB to BOOTy binary |
+| Initramfs size delta | +50 MB | 0 |
 
-## Design
+**Net savings: ~35 MB smaller initramfs, faster boot, better testability.**
+
+## Three-Tier Architecture
+
+```
+┌─────────────────────────────────────────────────┐
+│ BOOTy initrd                                    │
+│                                                 │
+│  ┌─────────────────────────────────────────────┐│
+│  │ Tier 1: Underlay                            ││
+│  │  • eBGP sessions to leaf (IPv6 link-local)  ││
+│  │  • Advertise loopback /32 (VTEP IP)         ││
+│  │  • BFD for fast failover                    ││
+│  └─────────────────────────────────────────────┘│
+│  ┌─────────────────────────────────────────────┐│
+│  │ Tier 2: Overlay (EVPN)                      ││
+│  │  • L2VPN EVPN address family                ││
+│  │  • Type-3 (IMET) for BUM flooding           ││
+│  │  • Type-2 (MAC/IP) when needed              ││
+│  │  • VXLAN tunnel to provisioning VNI         ││
+│  │  • Route Target import/export               ││
+│  └─────────────────────────────────────────────┘│
+│  ┌─────────────────────────────────────────────┐│
+│  │ Tier 3: IPMI (optional)                     ││
+│  │  • Static route or BGP to BMC subnet        ││
+│  │  • Auto-detected via ipmitool               ││
+│  └─────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────┘
+```
+
+### Interface Design
+
+```go
+// Tier represents a single concern in the network stack.
+type Tier interface {
+    Setup(ctx context.Context) error
+    Ready(ctx context.Context, timeout time.Duration) error
+    Teardown(ctx context.Context) error
+}
+
+// Stack composes all tiers and satisfies network.Mode.
+type Stack struct {
+    Underlay Tier
+    Overlay  Tier
+    IPMI     Tier // may be nil
+}
+
+func (s *Stack) Setup(ctx context.Context, cfg *Config) error {
+    if err := s.Underlay.Setup(ctx); err != nil { return err }
+    if err := s.Overlay.Setup(ctx); err != nil { return err }
+    if s.IPMI != nil { _ = s.IPMI.Setup(ctx) } // best-effort
+    return nil
+}
+```
 
 ### GoBGP Integration
 
-GoBGP provides a Go library (`github.com/osrg/gobgp/v3/pkg/server`) for embedding a BGP speaker directly in the application.
-
 ```go
-import "github.com/osrg/gobgp/v3/pkg/server"
+import (
+    "github.com/osrg/gobgp/v3/pkg/server"
+    api "github.com/osrg/gobgp/v3/api"
+)
 
-func (m *Manager) Setup(ctx context.Context, cfg *network.Config) error {
-    s := server.NewBgpServer()
-    go s.Serve()
+type UnderlayTier struct {
+    bgp *server.BgpServer
+    cfg *Config
+}
 
-    // Configure global BGP
-    s.StartBgp(ctx, &api.StartBgpRequest{
+func (u *UnderlayTier) Setup(ctx context.Context) error {
+    u.bgp = server.NewBgpServer()
+    go u.bgp.Serve()
+
+    return u.bgp.StartBgp(ctx, &api.StartBgpRequest{
         Global: &api.Global{
-            Asn:        cfg.ASN,
-            RouterId:   underlayIP,
+            Asn:        u.cfg.ASN,
+            RouterId:   u.cfg.UnderlayIP,
             ListenPort: 179,
         },
     })
-
-    // Add EVPN address family and peers
-    // ...
 }
 ```
 
-### Benefits
+### VXLAN Setup
 
-- **No external dependencies**: GoBGP links as a Go library, no daemon process needed
-- **Smaller initramfs**: Eliminates ~50MB FRR installation
-- **Direct API**: No shell-out to `vtysh`; direct Go API for configuration and monitoring
-- **Better testing**: Pure Go, no build tags needed for unit/integration tests
-- **Faster startup**: In-process BGP speaker starts in milliseconds
-- **Type safety**: Go structs instead of text templates for configuration
-
-### EVPN Capabilities
-
-GoBGP supports the EVPN features BOOTy needs:
-- BGP unnumbered (interface peering)
-- L2VPN EVPN address family
-- VXLAN VNI advertisement
-- Route targets and route distinguishers
-- IPv4/IPv6 underlay
-
-### Migration Path
-
-1. **Phase 1**: Add GoBGP as an alternative `network.Mode` implementation alongside FRR
-2. **Phase 2**: Run both in CI, compare behavior
-3. **Phase 3**: Default to GoBGP, deprecate FRR
-4. **Phase 4**: Remove FRR code and initramfs dependency
-
-### Interface Compatibility
-
-Both implementations satisfy the existing `network.Mode` interface:
+The overlay tier creates the VXLAN interface and bridge using netlink
+(replacing the current `ip link` shell-outs):
 
 ```go
-type Mode interface {
-    Setup(ctx context.Context, cfg *Config) error
-    WaitForConnectivity(ctx context.Context, target string, timeout time.Duration) error
-    Teardown(ctx context.Context) error
+func (o *OverlayTier) Setup(ctx context.Context) error {
+    // Create VXLAN device
+    vxlan := &netlink.Vxlan{
+        LinkAttrs: netlink.LinkAttrs{Name: "vxlan" + strconv.Itoa(o.cfg.ProvisionVNI)},
+        VxlanId:   o.cfg.ProvisionVNI,
+        Port:      4789,
+        SrcAddr:   net.ParseIP(o.cfg.UnderlayIP),
+    }
+    if err := netlink.LinkAdd(vxlan); err != nil { return err }
+    return netlink.LinkSetUp(vxlan)
 }
 ```
+
+## Migration Path
+
+| Phase | Description | Deliverable |
+|-------|-------------|-------------|
+| 1 | Add GoBGP as `network.Mode` alongside FRR | `network/gobgp/` package |
+| 2 | Run both in CI with containerlab topology | Integration test parity |
+| 3 | Default to GoBGP, deprecate FRR path | Config toggle `NETWORK_MODE` |
+| 4 | Remove FRR from Dockerfile and codebase | Smaller initramfs |
 
 ## Risks
 
-- **BGP unnumbered**: GoBGP's support for interface-based peering (RFC 5549) needs verification
-- **EVPN maturity**: GoBGP's EVPN implementation is less battle-tested than FRR's in production networks
-- **Binary size**: GoBGP adds ~15MB to the BOOTy binary (vs ~50MB saved from removing FRR from initramfs)
-- **Debugging**: FRR's `vtysh` is a familiar debugging tool for network engineers
+- **BGP unnumbered**: GoBGP's RFC 5549 (interface peering via IPv6 LL)
+  support needs verification with actual leaf switches.
+- **EVPN maturity**: FRR's EVPN is more battle-tested in DC fabrics.
+  GoBGP's EVPN works but has fewer production deployments.
+- **Debugging**: Network engineers rely on `vtysh` for troubleshooting.
+  GoBGP's `gobgp` CLI (or a built-in HTTP debug endpoint) can substitute.
+- **Kernel VXLAN**: Replacing FRR's zebra with direct netlink calls
+  requires careful testing of VXLAN encap/decap.
 
 ## Alternatives
 
-- **Keep FRR**: Accept the dependency and packaging complexity
-- **ExaBGP**: Python-based, even heavier dependency
-- **Custom BGP**: Write minimal BGP speaker — high risk, low reward given GoBGP exists
+- **Keep FRR**: Accept the 50 MB dependency and shell-out complexity.
+  Reasonable if GoBGP's EVPN proves insufficient.
+- **bio-routing**: Alternative Go BGP library from Google. EVPN support
+  is less mature than GoBGP.
+- **Partial migration**: Use GoBGP for BGP only, keep FRR zebra for
+  VXLAN kernel programming. Reduces complexity incrementally.
 
 ## Next Steps
 
-1. Prototype GoBGP integration with the BOOTy `network.Mode` interface
-2. Verify BGP unnumbered and EVPN Type-3 route support
-3. Benchmark startup time and memory usage vs FRR
-4. Run integration tests with containerlab topology
+1. Prototype `network/gobgp/` package with `UnderlayTier` using GoBGP API
+2. Verify BGP unnumbered + EVPN Type-3 in containerlab
+3. Benchmark: startup time, memory, convergence time vs FRR
+4. Implement `OverlayTier` with netlink VXLAN creation
+5. Add integration test comparing FRR and GoBGP output

@@ -805,6 +805,7 @@ func TestMellanoxFirmwareDetectionE2E(t *testing.T) {
 	seqCmd := &sequentialCmd{
 		results: []cmdResult{
 			{Output: []byte("15b3:1017 Mellanox ConnectX-5")},
+			{Output: []byte("mt4125_pciconf0\n")},
 			{Output: []byte("Applied")},
 		},
 	}
@@ -813,7 +814,7 @@ func TestMellanoxFirmwareDetectionE2E(t *testing.T) {
 	c := provision.NewConfigurator(diskMgr)
 	c.SetRootDir(t.TempDir())
 
-	changed, err := c.SetupMellanox(context.Background())
+	changed, err := c.SetupMellanox(context.Background(), 32)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1488,7 +1489,7 @@ func TestMellanoxNoNICsE2E(t *testing.T) {
 	c := provision.NewConfigurator(diskMgr)
 	c.SetRootDir(t.TempDir())
 
-	changed, err := c.SetupMellanox(context.Background())
+	changed, err := c.SetupMellanox(context.Background(), 32)
 	if err != nil {
 		t.Fatal(err)
 	}

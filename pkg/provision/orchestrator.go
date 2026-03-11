@@ -111,7 +111,7 @@ func (o *Orchestrator) removeEFIBootEntries(ctx context.Context) error {
 }
 
 func (o *Orchestrator) setupMellanox(ctx context.Context) error {
-	changed, err := o.config.SetupMellanox(ctx)
+	changed, err := o.config.SetupMellanox(ctx, o.cfg.NumVFs)
 	if err != nil {
 		return err
 	}
@@ -141,9 +141,16 @@ func (o *Orchestrator) detectDisk(ctx context.Context) error {
 }
 
 func (o *Orchestrator) streamImage(ctx context.Context) error {
+	var opts []image.StreamOpts
+	if o.cfg.ImageChecksum != "" {
+		opts = append(opts, image.StreamOpts{
+			Checksum:     o.cfg.ImageChecksum,
+			ChecksumType: o.cfg.ImageChecksumType,
+		})
+	}
 	for _, imgURL := range o.cfg.ImageURLs {
 		slog.Info("Streaming image", "url", imgURL, "disk", o.targetDisk)
-		if err := image.Stream(ctx, imgURL, o.targetDisk); err != nil {
+		if err := image.Stream(ctx, imgURL, o.targetDisk, opts...); err != nil {
 			return fmt.Errorf("streaming %s: %w", imgURL, err)
 		}
 	}

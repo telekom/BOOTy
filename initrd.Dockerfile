@@ -28,9 +28,15 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
     --mount=type=cache,sharing=locked,id=goroot,target=/root/.cache/go-build \
     CGO_ENABLED=1 GOOS=linux go build -a -ldflags "-linkmode external -extldflags '-static' -s -w" -o init
 
-# Build FRR (BGP/BFD/Zebra) for EVPN networking
+# Build FRR (BGP/BFD/Zebra) for EVPN networking — use FRR official stable repo
 FROM debian:bookworm-slim AS frr
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl gnupg lsb-release ca-certificates && \
+    curl -s https://deb.frrouting.org/frr/keys.gpg \
+      | tee /usr/share/keyrings/frrouting.gpg > /dev/null && \
+    echo "deb [signed-by=/usr/share/keyrings/frrouting.gpg] https://deb.frrouting.org/frr $(lsb_release -s -c) frr-stable" \
+      > /etc/apt/sources.list.d/frr.list && \
+    apt-get update && apt-get install -y --no-install-recommends \
     frr frr-pythontools && \
     rm -rf /var/lib/apt/lists/*
 
@@ -85,5 +91,39 @@ RUN find . -print0 | cpio --null -ov --format=newc > ../initramfs.cpio
 RUN gzip ../initramfs.cpio
 RUN mv ../initramfs.cpio.gz /
 
+# ── ISO build stage (optional, triggered by --target=iso) ──────────────────
+FROM debian:bookworm-slim AS iso-builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xorriso syslinux syslinux-common isolinux curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=busybox /initramfs.cpio.gz /iso/boot/initrd.img
+
+# Fetch a kernel — use the Debian cloud kernel (lightweight, no initramfs deps)
+RUN apt-get update && apt-get download linux-image-cloud-amd64 2>/dev/null && \
+    dpkg-deb -x linux-image-cloud-amd64*.deb /tmp/kernel && \
+    cp /tmp/kernel/boot/vmlinuz-* /iso/boot/vmlinuz && \
+    rm -rf /tmp/kernel linux-image-cloud-amd64*.deb /var/lib/apt/lists/*
+
+# ISOLINUX bootloader
+RUN mkdir -p /iso/isolinux && \
+    cp /usr/lib/ISOLINUX/isolinux.bin /iso/isolinux/ && \
+    cp /usr/lib/syslinux/modules/bios/ldlinux.c32 /iso/isolinux/
+
+RUN printf 'DEFAULT booty\nLABEL booty\n  KERNEL /boot/vmlinuz\n  APPEND initrd=/boot/initrd.img console=tty0 console=ttyS0,115200n8\n' \
+    > /iso/isolinux/isolinux.cfg
+
+RUN xorriso -as mkisofs \
+    -o /booty.iso \
+    -b isolinux/isolinux.bin \
+    -c isolinux/boot.cat \
+    -no-emul-boot -boot-load-size 4 -boot-info-table \
+    -isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin \
+    /iso
+
+FROM scratch AS iso
+COPY --from=iso-builder /booty.iso .
+
+# ── Default target: initramfs ──────────────────────────────────────────────
 FROM scratch
 COPY --from=busybox /initramfs.cpio.gz .
