@@ -14,7 +14,7 @@ RUN gcc -O2 -fPIC -static -L command.o dumpconfig.o formats.o lvchange.o lvconve
 
 # Build scripted fdisk (sfdisk)
 FROM gcc:14 AS sfdisk
-RUN apt-get update -y && apt-get install -y bison autopoint gettext
+RUN apt-get update -y && apt-get install -y bison autopoint gettext flex
 RUN git clone https://github.com/karelzak/util-linux.git
 WORKDIR util-linux
 RUN ./autogen.sh && ./configure --enable-static-programs=sfdisk && make
@@ -43,7 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Build disk and system tools
 FROM debian:bookworm-slim AS tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    mdadm wipefs e2fsprogs xfsprogs parted gdisk kpartx dosfstools \
+    mdadm util-linux e2fsprogs xfsprogs parted gdisk kpartx dosfstools \
     efibootmgr dmidecode ethtool curl iproute2 bridge-utils \
     && rm -rf /var/lib/apt/lists/*
 
@@ -53,10 +53,12 @@ RUN apt-get update && apt-get install -y cpio
 RUN curl -O https://busybox.net/downloads/busybox-1.37.0.tar.bz2
 RUN tar -xf busybox*bz2
 WORKDIR busybox-1.37.0
-RUN make defconfig && make LDFLAGS=-static CONFIG_PREFIX=./initramfs install
+RUN make defconfig \
+    && sed -i 's/CONFIG_TC=y/# CONFIG_TC is not set/' .config \
+    && make LDFLAGS=-static CONFIG_PREFIX=./initramfs install
 
 WORKDIR initramfs
-RUN wget -qO- https://launchpad.net/cloud-utils/trunk/0.33/+download/cloud-utils-0.33.tar.gz | tar -xvz -C /tmp && mv /tmp/cloud-utils-0.33/bin/growpart ./bin
+RUN curl -fsSL https://github.com/canonical/cloud-utils/archive/refs/tags/0.33.tar.gz | tar -xz -C /tmp && mv /tmp/cloud-utils-0.33/bin/growpart ./bin
 
 # Copy build contents from previous builds
 COPY --from=lvm /LVM2.2.03.27/tools/lvm sbin
@@ -72,7 +74,7 @@ COPY --from=frr /usr/lib/frr/watchfrr sbin/watchfrr
 
 # Disk and system tools
 COPY --from=tools /sbin/mdadm sbin/mdadm
-COPY --from=tools /usr/bin/wipefs bin/wipefs
+COPY --from=tools /usr/sbin/wipefs bin/wipefs
 COPY --from=tools /sbin/resize2fs sbin/resize2fs
 COPY --from=tools /sbin/e2fsck sbin/e2fsck
 COPY --from=tools /usr/sbin/xfs_growfs sbin/xfs_growfs
@@ -125,13 +127,19 @@ FROM scratch AS iso
 COPY --from=iso-builder /booty.iso .
 
 # ── Slim target: BOOTy + busybox shell + minimal tools, no FRR/LVM ────────
-FROM gcc:14 AS slim-builder
-RUN apt-get update && apt-get install -y cpio
-RUN curl -O https://busybox.net/downloads/busybox-1.37.0.tar.bz2
-RUN tar -xf busybox*bz2
-WORKDIR busybox-1.37.0
-RUN make defconfig && make LDFLAGS=-static CONFIG_PREFIX=./initramfs install
-WORKDIR initramfs
+FROM debian:bookworm-slim AS slim-builder
+RUN apt-get update && apt-get install -y --no-install-recommends cpio \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /build/initramfs
+
+# Copy ONLY busybox binary + symlinks (not FRR/LVM binaries from busybox stage)
+COPY --from=busybox /busybox-1.37.0/initramfs/bin/busybox bin/busybox
+RUN for cmd in sh mount umount insmod ash ls cat echo grep mkdir rm cp mv \
+      sleep date df du find head wc sort uniq tr sed awk ping wget ifconfig \
+      route telnet vi chmod chown ln test expr; do \
+      ln -sf busybox bin/$cmd; \
+    done
+COPY --from=busybox /busybox-1.37.0/initramfs/bin/growpart bin/growpart
 
 # BOOTy init binary (static, CGO-enabled)
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .

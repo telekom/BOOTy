@@ -16,7 +16,7 @@ SRC = $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 DOCKERTAG ?= $(VERSION)
 REPOSITORY = ghcr.io/telekom/booty
 
-.PHONY: all build clean install uninstall fmt lint test docker dockerx86 iso slim micro dockerx86slim dockerx86micro clab-up clab-down test-e2e-integration
+.PHONY: all build clean install uninstall fmt lint test docker dockerx86 iso slim micro dockerx86slim dockerx86micro clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot
 
 all: lint test install
 
@@ -100,6 +100,22 @@ clab-down:
 test-e2e-integration:
 	@echo Running E2E integration tests (requires clab-up)
 	@go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/...
+
+booty-test-image:
+	@echo Building BOOTy test container image
+	@docker build -t booty-test:latest -f test/e2e/clab/booty-test.Dockerfile .
+
+clab-boot-up: booty-test-image
+	@echo Deploying boot test topology (includes BOOTy nodes)
+	@cd test/e2e/clab && sudo clab deploy --topo topology-boot.clab.yml
+
+clab-boot-down:
+	@echo Destroying boot test topology
+	@cd test/e2e/clab && sudo clab destroy --topo topology-boot.clab.yml
+
+test-e2e-boot:
+	@echo Running BOOTy boot E2E tests (requires clab-boot-up)
+	@go test -tags e2e_boot -race -v -timeout 300s ./test/e2e/integration/...
 
 check:
 	@test -z $(shell gofmt -l main.go | tee /dev/stderr) || echo "[WARN] Fix formatting issues with 'make fmt'"

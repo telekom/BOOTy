@@ -1,0 +1,122 @@
+# Extended topology for full BOOTy boot testing.
+# Adds 3 BOOTy nodes (provision, deprovision, standby) that run BOOTy
+# on the same EVPN fabric, each with its own /deploy/vars config.
+# The booty-test image must be built before deploying:
+#   docker build -t booty-test -f test/e2e/clab/booty-test.Dockerfile .
+name: booty-boot-lab
+
+topology:
+  nodes:
+    spine01:
+      kind: linux
+      image: quay.io/frrouting/frr:10.3.1
+      binds:
+        - spine01.frr.conf:/etc/frr/frr.conf:ro
+        - daemons:/etc/frr/daemons:ro
+      exec:
+        - ip link set dev eth1 mtu 9000
+        - ip link add vxlan100 type vxlan id 100 dstport 4789 local 10.0.0.1 nolearning
+        - ip link add br100 type bridge
+        - ip link set vxlan100 master br100
+        - ip link set vxlan100 up
+        - ip link set br100 up
+        # Client-facing interfaces
+        - ip link set dev eth2 master br100
+        - ip link set dev eth2 up
+        # BOOTy node interfaces
+        - ip link set dev eth3 master br100
+        - ip link set dev eth3 up
+        - ip link set dev eth4 master br100
+        - ip link set dev eth4 up
+        - ip link set dev eth5 master br100
+        - ip link set dev eth5 up
+
+    leaf01:
+      kind: linux
+      image: quay.io/frrouting/frr:10.3.1
+      binds:
+        - leaf01.frr.conf:/etc/frr/frr.conf:ro
+        - daemons:/etc/frr/daemons:ro
+      exec:
+        - ip link set dev eth1 mtu 9000
+        - ip link add vxlan100 type vxlan id 100 dstport 4789 local 10.0.0.2 nolearning
+        - ip link add br100 type bridge
+        - ip link set vxlan100 master br100
+        - ip link set vxlan100 up
+        - ip link set br100 up
+        - ip link set dev eth2 master br100
+        - ip link set dev eth2 up
+        - ip link set dev eth3 master br100
+        - ip link set dev eth3 up
+
+    client:
+      kind: linux
+      image: alpine:3.20
+      exec:
+        - ip addr add 10.100.0.100/24 dev eth1
+        - ip link set dev eth1 up
+      cmd: sleep infinity
+
+    nginx:
+      kind: linux
+      image: nginx:alpine
+      binds:
+        - nginx.conf:/etc/nginx/nginx.conf:ro
+        - html:/usr/share/nginx/html:ro
+        - images:/srv/images:ro
+      exec:
+        - ip addr add 10.100.0.10/24 dev eth1
+        - ip link set dev eth1 up
+
+    caprf-mock:
+      kind: linux
+      image: nginx:alpine
+      binds:
+        - caprf-mock.conf:/etc/nginx/nginx.conf:ro
+        - images:/srv/images:ro
+        - data:/srv/data:ro
+      exec:
+        - ip addr add 10.100.0.11/24 dev eth1
+        - ip link set dev eth1 up
+
+    # ── BOOTy boot nodes: one per mode, all on spine's bridge ──────────
+    booty-provision:
+      kind: linux
+      image: booty-test:latest
+      binds:
+        - data/vars-provision:/deploy/vars:ro
+      exec:
+        - ip addr add 10.100.0.20/24 dev eth1
+        - ip link set dev eth1 up
+
+    booty-deprovision:
+      kind: linux
+      image: booty-test:latest
+      binds:
+        - data/vars-deprovision:/deploy/vars:ro
+      exec:
+        - ip addr add 10.100.0.21/24 dev eth1
+        - ip link set dev eth1 up
+
+    booty-standby:
+      kind: linux
+      image: booty-test:latest
+      binds:
+        - data/vars-standby:/deploy/vars:ro
+      exec:
+        - ip addr add 10.100.0.22/24 dev eth1
+        - ip link set dev eth1 up
+
+  links:
+    # Fabric link (eBGP)
+    - endpoints: ["spine01:eth1", "leaf01:eth1"]
+    # Client attached to spine's bridge
+    - endpoints: ["spine01:eth2", "client:eth1"]
+    # Nginx attached to leaf's bridge
+    - endpoints: ["leaf01:eth2", "nginx:eth1"]
+    # CAPRF mock attached to leaf's bridge
+    - endpoints: ["leaf01:eth3", "caprf-mock:eth1"]
+    # BOOTy nodes attached to spine's bridge (parallel on same fabric)
+    - endpoints: ["spine01:eth3", "booty-provision:eth1"]
+    - endpoints: ["spine01:eth4", "booty-deprovision:eth1"]
+    - endpoints: ["spine01:eth5", "booty-standby:eth1"]
