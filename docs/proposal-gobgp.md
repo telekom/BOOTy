@@ -27,6 +27,7 @@ This works but has significant drawbacks:
 | Testing | Linux-only, build tags, real daemons | Pure Go mocks, cross-platform |
 | Binary size delta | 0 (external) | +15 MB to BOOTy binary |
 | Initramfs size delta | +50 MB | 0 |
+| BFD support | Yes (native `bfdd` daemon) | **No** (not supported) |
 
 **Net savings: ~35 MB smaller initramfs, faster boot, better testability.**
 
@@ -53,7 +54,7 @@ into the binary — no extra daemons needed. The **micro** build with
 │  │ Tier 1: Underlay                            ││
 │  │  • eBGP sessions to leaf (IPv6 link-local)  ││
 │  │  • Advertise loopback /32 (VTEP IP)         ││
-│  │  • BFD for fast failover                    ││
+│  │  • Aggressive hold timer for fast failover  ││
 │  └─────────────────────────────────────────────┘│
 │  ┌─────────────────────────────────────────────┐│
 │  │ Tier 2: Overlay (EVPN)                      ││
@@ -101,8 +102,8 @@ func (s *Stack) Setup(ctx context.Context, cfg *Config) error {
 
 ```go
 import (
-    "github.com/osrg/gobgp/v3/pkg/server"
-    api "github.com/osrg/gobgp/v3/api"
+    "github.com/osrg/gobgp/v4/pkg/server"
+    api "github.com/osrg/gobgp/v4/api"
 )
 
 type UnderlayTier struct {
@@ -124,13 +125,18 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 }
 ```
 
-### BFD Integration
+### Fast Failover (No BFD)
 
-GoBGP supports BFD (Bidirectional Forwarding Detection) natively via
-its API. Each BGP neighbor can be configured with a BFD profile:
+> **Note**: GoBGP does **not** support BFD (Bidirectional Forwarding
+> Detection). There is no `BfdProfile` struct in the GoBGP API. This
+> is a key difference from FRR, which provides BFD via its `bfdd` daemon.
+
+Without BFD, link failure detection relies on BGP hold timers. The default
+BGP hold timer is 90 seconds — far too slow for data-center failover.
+To compensate, use aggressive BGP timers:
 
 ```go
-func (u *UnderlayTier) addPeerWithBFD(ctx context.Context, peer PeerConfig) error {
+func (u *UnderlayTier) addPeerWithFastTimers(ctx context.Context, peer PeerConfig) error {
     return u.bgp.AddPeer(ctx, &api.AddPeerRequest{
         Peer: &api.Peer{
             Conf: &api.PeerConf{
@@ -140,20 +146,30 @@ func (u *UnderlayTier) addPeerWithBFD(ctx context.Context, peer PeerConfig) erro
             Transport: &api.Transport{
                 LocalAddress: "::",
             },
-            // BFD: detect link failure in ~300ms (3 × 100ms intervals)
-            BfdProfile: &api.BfdProfile{
-                Enabled:           true,
-                DetectMultiplier:  3,
-                MinTxInterval:     100, // ms
-                MinRxInterval:     100, // ms
+            Timers: &api.Timers{
+                Config: &api.TimersConfig{
+                    // Aggressive timers: detect failure in ~9s (3 × 3s)
+                    HoldTime:          9,
+                    KeepaliveInterval: 3,
+                },
             },
         },
     })
 }
 ```
 
-With FRR, BFD requires `bfdd` + configuration in `/etc/frr/frr.conf`.
-With GoBGP, it's a single API field — no extra daemon.
+**Trade-off**: FRR with BFD detects link failure in ~300ms (3 × 100ms).
+GoBGP with aggressive hold timer detects failure in ~9 seconds. For
+BOOTy's use case (provisioning, not production traffic), this is
+acceptable — the machine is not forwarding user traffic during boot.
+
+If sub-second failover is required in the future, options are:
+1. **Keep FRR for BFD**: Use FRR's `bfdd` alongside GoBGP (defeats
+   the single-binary goal).
+2. **Implement BFD in Go**: A minimal BFD implementation (~500 LOC)
+   using raw sockets. Libraries like `cloudprober/cloudprober` exist
+   but are not directly importable.
+3. **Accept 9s failover**: Appropriate for provisioning workloads.
 
 ### EVPN Type-5 with LWT Encap
 
@@ -370,7 +386,7 @@ func Setup(ctx context.Context) error {
 | Cold start to first BGP OPEN | 3-5 s | < 100 ms | GoBGP benchmarks |
 | Time to EVPN convergence (2 peers) | 8-12 s | 2-4 s | Containerlab tests |
 | Memory (steady state, 2 peers) | ~45 MB (3 daemons) | ~20 MB (in-process) | FRR RSS measured |
-| BFD failover detection | 300 ms (3×100ms) | 300 ms (3×100ms) | Same BFD timers |
+| Link failure detection | 300 ms (BFD: 3×100ms) | ~9 s (hold timer: 3×3s) | **GoBGP lacks BFD** |
 | Initramfs size contribution | +50 MB | +0 MB (compiled in) | Dockerfile analysis |
 | Binary size increase | +0 MB | +15 MB (est.) | go-containerregistry analogy |
 
@@ -413,7 +429,7 @@ BGP state machine without Linux network namespaces.
 test/e2e/integration/
 ├── gobgp_test.go         // GoBGP ↔ FRR interop in clab topology
 ├── gobgp_evpn_test.go    // EVPN convergence, VTEP reachability
-└── gobgp_failover_test.go // BFD failover, peer flap recovery
+└── gobgp_failover_test.go // Hold-timer failover, peer flap recovery
 ```
 
 The existing 5-node containerlab topology (`spine1`, `spine2`,
@@ -424,7 +440,7 @@ The existing 5-node containerlab topology (`spine1`, `spine2`,
 2. Loopback route advertisement and reception
 3. EVPN Type-5 route exchange and VRF default route installation
 4. LWT encap + `ip neigh` resolution on VXLAN device
-5. BFD session up and failover on link down
+5. Hold-timer failover on link down (no BFD)
 6. Convergence time under controlled failure
 
 ### Comparison Tests
@@ -473,7 +489,7 @@ without SSH or `vtysh`.
 
 ### Phase 1 Detail
 
-1. Add `github.com/osrg/gobgp/v3` to `go.mod`
+1. Add `github.com/osrg/gobgp/v4` to `go.mod`
 2. Create `pkg/network/gobgp/` with `UnderlayTier`, `OverlayTier`
 3. Implement `network.Mode` interface (`Setup`, `WaitForConnectivity`, `Teardown`)
 4. Wire into `main.go` via `NETWORK_MODE=gobgp` config variable
@@ -488,6 +504,12 @@ without SSH or `vtysh`.
 
 ## Risks
 
+- **No BFD**: GoBGP does not support BFD. Link failure detection relies
+  on BGP hold timers (~9s with aggressive 3s keepalive). FRR's `bfdd`
+  achieves ~300ms. For provisioning workloads this is acceptable, but
+  it's a regression from FRR. Mitigation: use 3s keepalive/9s hold timer;
+  if sub-second failover is needed, implement minimal BFD in Go or keep
+  FRR `bfdd` as a sidecar.
 - **BGP unnumbered**: GoBGP's RFC 5549 (interface peering via IPv6 LL)
   support needs verification with actual leaf switches. Mitigation:
   test in containerlab with Cumulus VX first, then on physical hardware.
@@ -508,7 +530,7 @@ without SSH or `vtysh`.
 - **Keep FRR**: Accept the 50 MB dependency and shell-out complexity.
   Reasonable if GoBGP's EVPN proves insufficient.
 - **bio-routing**: Alternative Go BGP library from Google. EVPN support
-  is less mature than GoBGP. No BFD support.
+  is less mature than GoBGP. Also no BFD support.
 - **Partial migration**: Use GoBGP for BGP only, keep FRR zebra for
   VXLAN kernel programming. Reduces complexity incrementally.
 - **Type-2/3 fallback**: If Type-5 with LWT proves insufficient for

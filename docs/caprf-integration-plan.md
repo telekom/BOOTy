@@ -1141,7 +1141,7 @@ s.WatchEvent(ctx, server.WatchEventMessageCallbacks{
 | Route programming | IP prefix routes from EVPN Type 5 | `vishvananda/netlink` |
 | BUM flooding | Multicast entries from EVPN Type 3 | `vishvananda/netlink` |
 | Local MAC learning | Watch local ARP → advertise via GoBGP | `vishvananda/netlink` |
-| BFD | Fast failure detection | Custom or skip |
+| BFD | Fast failure detection | **Not available** — use aggressive BGP hold timers |
 
 ### Implementation Architecture
 
@@ -1150,9 +1150,13 @@ pkg/network/gobgp/
 ├── bgp.go        — Embedded GoBGP server, peer config, route advertisement
 ├── dataplane.go  — Netlink programming (VXLAN, VRF, bridge, FDB, routes)
 ├── watcher.go    — Watch GoBGP RIB changes → translate to netlink ops
-├── learning.go   — Watch local ARP/ND → advertise as EVPN Type 2
-└── bfd.go        — Optional minimal BFD (or skip)
+└── learning.go   — Watch local ARP/ND → advertise as EVPN Type 2
 ```
+
+> **Note**: GoBGP does **not** support BFD. A previously proposed `bfd.go`
+> has been removed. Link failure detection relies on aggressive BGP
+> hold timers (3s keepalive / 9s hold → ~9s failover), which is
+> acceptable for provisioning workloads. See proposal-gobgp.md for details.
 
 ### Data Flow
 
@@ -1195,7 +1199,9 @@ Local network interfaces
 
 ### Disadvantages / Risks
 
-- **No BFD**: Must implement minimal BFD or accept slower failure detection (~hold-timer 90s)
+- **No BFD**: GoBGP does not support BFD. Failover relies on aggressive
+  BGP hold timers (~9s with 3s keepalive vs FRR's ~300ms BFD). Acceptable
+  for provisioning workloads where sub-second failover is not critical.
 - **EVPN interop**: GoBGP less battle-tested with some TOR switch vendors than FRR
 - **ARP/ND learning**: Must implement local MAC learning (FRR's zebra does this automatically)
 - **More code**: ~2,500–3,500 LOC vs "configure FRR and let it handle everything"
