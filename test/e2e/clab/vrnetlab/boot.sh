@@ -1,10 +1,8 @@
 #!/bin/bash
 # Container entrypoint for BOOTy vrnetlab VM.
-# Injects /deploy/vars and IP into the initramfs, bridges the container's
+# Injects /deploy/vars into the initramfs, bridges the container's
 # data interface (eth1) to a QEMU tap device, then boots the VM.
 set -e
-
-BOOTY_IP="${BOOTY_IP:-10.100.0.20}"
 
 # ── Prepare initramfs ──────────────────────────────────────────────────
 cd /opt/initramfs
@@ -14,9 +12,6 @@ if [ -f /deploy/vars ]; then
     mkdir -p deploy
     cp /deploy/vars deploy/vars
 fi
-
-# Inject IP address into init wrapper
-sed -i "s|__BOOTY_IP__|${BOOTY_IP}|g" init
 
 # Pack initramfs
 find . -print0 | cpio --null -ov --format=newc 2>/dev/null | gzip > /tmp/initramfs.cpio.gz
@@ -47,7 +42,7 @@ else
     echo "[boot.sh] KVM not available, using TCG emulation"
 fi
 
-echo "[boot.sh] Booting BOOTy VM (IP: ${BOOTY_IP})..."
+echo "[boot.sh] Booting BOOTy VM..."
 
 # ── Boot QEMU ──────────────────────────────────────────────────────────
 # net.ifnames=0 forces classic eth0 naming inside the VM.

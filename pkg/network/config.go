@@ -30,6 +30,7 @@ type Config struct {
 	IPMIIP         string // IPMI IP for offset calculation
 	ASN            uint32 // BGP ASN for underlay
 	ProvisionVNI   uint32 // VXLAN VNI for provision network
+	ProvisionIP    string // IP/mask to assign to provision bridge (e.g. "10.100.0.20/24")
 	DNSResolvers   string // Comma-separated DNS servers
 
 	// Optional FRR onefabric mode fields.
@@ -50,9 +51,9 @@ func (c *Config) ApplyDefaults() {
 	if c.BridgeName == "" {
 		c.BridgeName = "br.provision"
 	}
-	if c.VRFName == "" {
-		c.VRFName = "Vrf_underlay"
-	}
+	// VRFName is intentionally left empty by default — standard EVPN runs
+	// the underlay in the default namespace. Set vrf_name explicitly if
+	// VRF isolation is required.
 	if c.MTU == 0 {
 		c.MTU = 9000
 	}

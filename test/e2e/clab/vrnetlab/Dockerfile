@@ -7,8 +7,10 @@
 # ── Stage 1: Build BOOTy static binary ────────────────────────────────
 FROM golang:1.26-alpine AS builder
 RUN apk add --no-cache git ca-certificates gcc linux-headers musl-dev
-COPY . /src
+COPY go.mod go.sum /src/
 WORKDIR /src
+RUN go mod download
+COPY . /src
 RUN CGO_ENABLED=1 GOOS=linux go build -a \
     -ldflags "-linkmode external -extldflags '-static' -s -w" \
     -o /booty
@@ -25,11 +27,20 @@ RUN apt-get update && \
 # ── Stage 3: Assemble initramfs ───────────────────────────────────────
 FROM debian:bookworm-slim AS initramfs
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    cpio busybox-static \
+    cpio busybox-static curl gnupg lsb-release ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# Install FRR for EVPN networking support inside the VM.
+RUN curl -s https://deb.frrouting.org/frr/keys.gpg \
+      | tee /usr/share/keyrings/frrouting.gpg > /dev/null && \
+    echo "deb [signed-by=/usr/share/keyrings/frrouting.gpg] https://deb.frrouting.org/frr $(lsb_release -s -c) frr-stable" \
+      > /etc/apt/sources.list.d/frr.list && \
+    apt-get update && apt-get install -y --no-install-recommends frr && \
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /initramfs
-RUN mkdir -p bin sbin dev proc sys etc tmp deploy lib/modules mnt
+RUN mkdir -p bin sbin dev proc sys etc tmp deploy lib/modules mnt \
+    usr/lib/frr usr/bin etc/frr var/run/frr lib
 
 # Busybox: static binary + essential symlinks
 RUN cp /bin/busybox bin/busybox && \
@@ -41,6 +52,20 @@ RUN cp /bin/busybox bin/busybox && \
 
 # BOOTy binary (exec'd by init wrapper)
 COPY --from=builder /booty /initramfs/booty
+
+# FRR daemons and dependencies for EVPN networking.
+# Copy binaries and resolve all shared library dependencies.
+RUN mkdir -p /initramfs/lib64 /initramfs/lib/x86_64-linux-gnu && \
+    for bin in /usr/lib/frr/zebra /usr/lib/frr/bgpd /usr/lib/frr/bfdd /usr/bin/vtysh; do \
+        dest="/initramfs$(dirname $bin)"; \
+        mkdir -p "$dest"; \
+        cp "$bin" "/initramfs${bin}"; \
+        ldd "$bin" 2>/dev/null | grep -o '/[^ ]*' | while read -r lib; do \
+            mkdir -p "/initramfs$(dirname $lib)"; \
+            cp -n "$lib" "/initramfs${lib}" 2>/dev/null || true; \
+        done; \
+    done && \
+    cp /lib64/ld-linux-x86-64.so.2 /initramfs/lib64/ 2>/dev/null || true
 
 # Init wrapper (PID 1 — sets up network then execs BOOTy)
 COPY test/e2e/clab/vrnetlab/init-wrapper.sh /initramfs/init

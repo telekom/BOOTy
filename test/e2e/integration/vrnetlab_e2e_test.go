@@ -225,6 +225,16 @@ func TestVrnetlabVMCAPRFModeDetected(t *testing.T) {
 	t.Log("provision VM: CAPRF mode detected from /deploy/vars")
 }
 
+func TestVrnetlabVMFRRNetworkModeDetected(t *testing.T) {
+	requireVrnetlabLab(t)
+
+	if !waitForVMLog(t, vmProvision, "Using FRR/EVPN network mode", 150*time.Second) {
+		logs := getVMSerialLog(t, vmProvision)
+		t.Fatalf("provision VM did not enter FRR/EVPN network mode\n%s", logs)
+	}
+	t.Log("provision VM: FRR/EVPN network mode active")
+}
+
 func TestVrnetlabVMNetworkConnectivity(t *testing.T) {
 	requireVrnetlabLab(t)
 
@@ -239,8 +249,8 @@ func TestVrnetlabVMNetworkConnectivity(t *testing.T) {
 func TestVrnetlabVMProvisionReportsInit(t *testing.T) {
 	requireVrnetlabLab(t)
 
-	// report-init means: boot → mounts → DHCP → /deploy/vars → CAPRF →
-	// network mode → connectivity OK → CAPRF init report
+	// report-init means: boot → mounts → DHCP goroutine → /deploy/vars → CAPRF →
+	// FRR/EVPN network mode → connectivity OK → CAPRF init report
 	if !waitForVMLog(t, vmProvision, "report-init", 180*time.Second) {
 		logs := getVMSerialLog(t, vmProvision)
 		t.Fatalf("provision VM did not reach report-init\n%s", logs)
@@ -346,6 +356,7 @@ func TestVrnetlabProvisionFullLifecycleViaEVPN(t *testing.T) {
 	}{
 		{"Starting BOOTy", 120 * time.Second, "BOOTy started as PID 1"},
 		{"CAPRF mode active", 60 * time.Second, "CAPRF mode detected from /deploy/vars"},
+		{"Using FRR/EVPN network mode", 30 * time.Second, "FRR/EVPN network mode active"},
 		{"report-init", 60 * time.Second, "init reported to CAPRF through EVPN"},
 	}
 
@@ -387,6 +398,12 @@ func TestVrnetlabDeprovisionFullLifecycleViaEVPN(t *testing.T) {
 	}
 	t.Log("deprovision VM: CAPRF mode active")
 
+	if !waitForVMLog(t, vmDeprovision, "Using FRR/EVPN network mode", 60*time.Second) {
+		logs := getVMSerialLog(t, vmDeprovision)
+		t.Fatalf("deprovision VM did not enter FRR/EVPN mode\n%s", logs)
+	}
+	t.Log("deprovision VM: FRR/EVPN network mode active")
+
 	// Wait for deprovisioning steps to execute
 	time.Sleep(15 * time.Second)
 	logs := getVMSerialLog(t, vmDeprovision)
@@ -411,6 +428,12 @@ func TestVrnetlabStandbyFullLifecycleViaEVPN(t *testing.T) {
 		t.Fatalf("standby VM did not enter CAPRF mode\n%s", logs)
 	}
 	t.Log("standby VM: CAPRF mode active")
+
+	if !waitForVMLog(t, vmStandby, "Using FRR/EVPN network mode", 60*time.Second) {
+		logs := getVMSerialLog(t, vmStandby)
+		t.Fatalf("standby VM did not enter FRR/EVPN mode\n%s", logs)
+	}
+	t.Log("standby VM: FRR/EVPN network mode active")
 
 	if !waitForVMLog(t, vmStandby, "standby", 60*time.Second) {
 		logs := getVMSerialLog(t, vmStandby)

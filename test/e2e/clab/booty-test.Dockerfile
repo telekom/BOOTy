@@ -4,16 +4,21 @@
 # then fail at disk operations (expected in container context).
 FROM golang:1.26-alpine AS builder
 RUN apk add --no-cache git ca-certificates gcc linux-headers musl-dev
-COPY . /go/src/github.com/telekom/BOOTy/
+COPY go.mod go.sum /go/src/github.com/telekom/BOOTy/
 WORKDIR /go/src/github.com/telekom/BOOTy
+RUN go mod download
+COPY . /go/src/github.com/telekom/BOOTy/
 RUN CGO_ENABLED=1 GOOS=linux go build -a \
     -ldflags "-linkmode external -extldflags '-static' -s -w" \
     -o /booty
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates iproute2
+# Install FRR from the official Alpine repo for EVPN networking support.
+RUN apk add --no-cache frr
 COPY --from=builder /booty /usr/local/bin/booty
-RUN mkdir -p /deploy /tmp
+RUN mkdir -p /deploy /tmp /etc/frr /var/run/frr && \
+    chown -R frr:frr /etc/frr /var/run/frr
 
 # Entrypoint: run BOOTy in CAPRF mode, tee all output to a log file.
 # BOOTy writes structured logs to stderr.

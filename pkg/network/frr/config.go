@@ -151,7 +151,7 @@ type frrConfigData struct {
 const frrConfigTemplate = `frr version 10.3
 frr defaults datacenter
 !
-router bgp {{ .ASN }} vrf {{ .VRFName }}
+router bgp {{ .ASN }}{{ if .VRFName }} vrf {{ .VRFName }}{{ end }}
  bgp router-id {{ .UnderlayIP }}
  no bgp default ipv4-unicast
  bgp bestpath as-path multipath-relax

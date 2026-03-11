@@ -22,15 +22,15 @@ topology:
         - ip link set vxlan100 master br100
         - ip link set vxlan100 up
         - ip link set br100 up
-        # Client-facing interface
+        # Client-facing interface (on bridge)
         - ip link set dev eth2 master br100
         - ip link set dev eth2 up
-        # QEMU VM interfaces (BOOTy nodes on the fabric)
-        - ip link set dev eth3 master br100
+        # QEMU VM interfaces — L3 underlay for BGP peering (NOT on br100)
+        - ip link set dev eth3 mtu 9000
         - ip link set dev eth3 up
-        - ip link set dev eth4 master br100
+        - ip link set dev eth4 mtu 9000
         - ip link set dev eth4 up
-        - ip link set dev eth5 master br100
+        - ip link set dev eth5 mtu 9000
         - ip link set dev eth5 up
 
     leaf01:
@@ -88,24 +88,18 @@ topology:
       image: booty-vrnetlab:latest
       binds:
         - data/vars-provision:/deploy/vars:ro
-      env:
-        BOOTY_IP: "10.100.0.20"
 
     booty-deprovision:
       kind: linux
       image: booty-vrnetlab:latest
       binds:
         - data/vars-deprovision:/deploy/vars:ro
-      env:
-        BOOTY_IP: "10.100.0.21"
 
     booty-standby:
       kind: linux
       image: booty-vrnetlab:latest
       binds:
         - data/vars-standby:/deploy/vars:ro
-      env:
-        BOOTY_IP: "10.100.0.22"
 
   links:
     # Fabric link (eBGP between spine and leaf)

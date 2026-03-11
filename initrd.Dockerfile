@@ -22,8 +22,11 @@ RUN ./autogen.sh && ./configure --enable-static-programs=sfdisk && make
 # Build BOOTy as an init
 FROM golang:1.26-alpine AS dev
 RUN apk add --no-cache git ca-certificates gcc linux-headers musl-dev
-COPY . /go/src/github.com/telekom/BOOTy/
+COPY go.mod go.sum /go/src/github.com/telekom/BOOTy/
 WORKDIR /go/src/github.com/telekom/BOOTy
+RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
+    go mod download
+COPY . /go/src/github.com/telekom/BOOTy/
 RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
     --mount=type=cache,sharing=locked,id=goroot,target=/root/.cache/go-build \
     CGO_ENABLED=1 GOOS=linux go build -a -ldflags "-linkmode external -extldflags '-static' -s -w" -o init

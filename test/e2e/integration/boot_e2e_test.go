@@ -202,13 +202,19 @@ func TestBootProvisionStartsAndReportsInit(t *testing.T) {
 		t.Fatalf("provision node did not enter CAPRF mode\nFull logs:\n%s", logs)
 	}
 
+	// Verify FRR/EVPN network mode (not DHCP)
+	if !waitForLogEntry(t, provisionContainer, "Using FRR/EVPN network mode", 30*time.Second) {
+		logs := getBootyLogs(t, provisionContainer)
+		t.Fatalf("provision node did not enter FRR/EVPN network mode\nFull logs:\n%s", logs)
+	}
+
 	// Wait for provisioning to start (report-init step)
 	if !waitForLogEntry(t, provisionContainer, "report-init", 30*time.Second) {
 		logs := getBootyLogs(t, provisionContainer)
 		t.Fatalf("provision node did not reach report-init step\nFull logs:\n%s", logs)
 	}
 
-	t.Log("provision node: Started BOOTy → CAPRF mode → report-init OK")
+	t.Log("provision node: Started BOOTy → CAPRF mode → FRR/EVPN → report-init OK")
 }
 
 func TestBootDeprovisionStartsAndReportsInit(t *testing.T) {
@@ -224,7 +230,13 @@ func TestBootDeprovisionStartsAndReportsInit(t *testing.T) {
 		t.Fatalf("deprovision node did not enter CAPRF mode\nFull logs:\n%s", logs)
 	}
 
-	t.Log("deprovision node: Started BOOTy → CAPRF mode OK")
+	// Verify FRR/EVPN network mode (not DHCP)
+	if !waitForLogEntry(t, deprovisionContainer, "Using FRR/EVPN network mode", 30*time.Second) {
+		logs := getBootyLogs(t, deprovisionContainer)
+		t.Fatalf("deprovision node did not enter FRR/EVPN network mode\nFull logs:\n%s", logs)
+	}
+
+	t.Log("deprovision node: Started BOOTy → CAPRF mode → FRR/EVPN OK")
 }
 
 func TestBootStandbyEntersStandbyLoop(t *testing.T) {
@@ -240,13 +252,19 @@ func TestBootStandbyEntersStandbyLoop(t *testing.T) {
 		t.Fatalf("standby node did not enter CAPRF mode\nFull logs:\n%s", logs)
 	}
 
+	// Verify FRR/EVPN network mode (not DHCP)
+	if !waitForLogEntry(t, standbyContainer, "Using FRR/EVPN network mode", 30*time.Second) {
+		logs := getBootyLogs(t, standbyContainer)
+		t.Fatalf("standby node did not enter FRR/EVPN network mode\nFull logs:\n%s", logs)
+	}
+
 	// Standby mode should enter the standby loop
 	if !waitForLogEntry(t, standbyContainer, "standby", 30*time.Second) {
 		logs := getBootyLogs(t, standbyContainer)
 		t.Fatalf("standby node did not enter standby mode\nFull logs:\n%s", logs)
 	}
 
-	t.Log("standby node: Started BOOTy → CAPRF mode → standby loop OK")
+	t.Log("standby node: Started BOOTy → CAPRF mode → FRR/EVPN → standby loop OK")
 }
 
 // --- Log content validation ---

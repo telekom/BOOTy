@@ -20,15 +20,15 @@ topology:
         - ip link set vxlan100 master br100
         - ip link set vxlan100 up
         - ip link set br100 up
-        # Client-facing interfaces
+        # Client-facing interface (on bridge)
         - ip link set dev eth2 master br100
         - ip link set dev eth2 up
-        # BOOTy node interfaces
-        - ip link set dev eth3 master br100
+        # BOOTy node interfaces — L3 underlay for BGP peering (NOT on br100)
+        - ip link set dev eth3 mtu 9000
         - ip link set dev eth3 up
-        - ip link set dev eth4 master br100
+        - ip link set dev eth4 mtu 9000
         - ip link set dev eth4 up
-        - ip link set dev eth5 master br100
+        - ip link set dev eth5 mtu 9000
         - ip link set dev eth5 up
 
     leaf01:
@@ -85,27 +85,18 @@ topology:
       image: booty-test:latest
       binds:
         - data/vars-provision:/deploy/vars:ro
-      exec:
-        - ip addr add 10.100.0.20/24 dev eth1
-        - ip link set dev eth1 up
 
     booty-deprovision:
       kind: linux
       image: booty-test:latest
       binds:
         - data/vars-deprovision:/deploy/vars:ro
-      exec:
-        - ip addr add 10.100.0.21/24 dev eth1
-        - ip link set dev eth1 up
 
     booty-standby:
       kind: linux
       image: booty-test:latest
       binds:
         - data/vars-standby:/deploy/vars:ro
-      exec:
-        - ip addr add 10.100.0.22/24 dev eth1
-        - ip link set dev eth1 up
 
   links:
     # Fabric link (eBGP)

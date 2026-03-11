@@ -45,6 +45,7 @@ type MachineConfig struct {
 	IPMISubnet       string // ipmi_subnet: e.g. "172.30.0.0/24"
 	ASN              uint32 // asn_server: BGP AS number
 	ProvisionVNI     uint32 // provision_vni: VXLAN VNI
+	ProvisionIP      string // provision_ip: IP/mask for provision bridge
 	DNSResolvers     string // dns_resolver: comma-separated DNS servers
 	DCGWIPs          string // dcgw_ips: Data Center Gateway IPs (onefabric)
 	LeafASN          uint32 // leaf_asn: Leaf switch AS

@@ -66,8 +66,10 @@ func (m *Manager) Setup(ctx context.Context, cfg *network.Config) error {
 		"vni", cfg.ProvisionVNI,
 	)
 
-	if err := m.createVRF(cfg.VRFName); err != nil {
-		return fmt.Errorf("create VRF: %w", err)
+	if cfg.VRFName != "" {
+		if err := m.createVRF(cfg.VRFName); err != nil {
+			return fmt.Errorf("create VRF: %w", err)
+		}
 	}
 
 	if err := m.createDummy("dummy.underlay", cfg.VRFName, underlayIP+"/32"); err != nil {
@@ -76,6 +78,12 @@ func (m *Manager) Setup(ctx context.Context, cfg *network.Config) error {
 
 	if err := m.createVXLAN(cfg.ProvisionVNI, underlayIP, cfg.BridgeName, bridgeMAC); err != nil {
 		return fmt.Errorf("create VXLAN: %w", err)
+	}
+
+	if cfg.ProvisionIP != "" {
+		if err := m.addBridgeAddress(cfg.BridgeName, cfg.ProvisionIP); err != nil {
+			return fmt.Errorf("add bridge address: %w", err)
+		}
 	}
 
 	if err := m.addLoopbackAddress(overlayIP); err != nil {
@@ -165,12 +173,14 @@ func (m *Manager) createDummy(name, vrfName, addr string) error {
 		return fmt.Errorf("find dummy %s: %w", name, err)
 	}
 
-	vrfLink, err := netlink.LinkByName(vrfName)
-	if err != nil {
-		return fmt.Errorf("find VRF %s: %w", vrfName, err)
-	}
-	if err := netlink.LinkSetMasterByIndex(link, vrfLink.Attrs().Index); err != nil {
-		return fmt.Errorf("assign dummy to VRF: %w", err)
+	if vrfName != "" {
+		vrfLink, err := netlink.LinkByName(vrfName)
+		if err != nil {
+			return fmt.Errorf("find VRF %s: %w", vrfName, err)
+		}
+		if err := netlink.LinkSetMasterByIndex(link, vrfLink.Attrs().Index); err != nil {
+			return fmt.Errorf("assign dummy to VRF: %w", err)
+		}
 	}
 
 	nlAddr, err := netlink.ParseAddr(addr)
@@ -266,6 +276,25 @@ func (m *Manager) addLoopbackAddress(ip string) error {
 	return nil
 }
 
+func (m *Manager) addBridgeAddress(bridgeName, addr string) error {
+	link, err := netlink.LinkByName(bridgeName)
+	if err != nil {
+		return fmt.Errorf("find bridge %s: %w", bridgeName, err)
+	}
+
+	nlAddr, err := netlink.ParseAddr(addr)
+	if err != nil {
+		return fmt.Errorf("parse provision IP %s: %w", addr, err)
+	}
+
+	if err := netlink.AddrAdd(link, nlAddr); err != nil && !os.IsExist(err) {
+		return fmt.Errorf("add provision IP to bridge: %w", err)
+	}
+
+	slog.Info("Assigned provision IP to bridge", "bridge", bridgeName, "ip", addr)
+	return nil
+}
+
 func (m *Manager) configureNICs(nics []string, vrfName string, mtu int) error {
 	for _, nic := range nics {
 		if err := m.configureNIC(nic, vrfName, mtu); err != nil {
@@ -285,12 +314,14 @@ func (m *Manager) configureNIC(name, vrfName string, mtu int) error {
 		return fmt.Errorf("set MTU on %s: %w", name, err)
 	}
 
-	vrfLink, err := netlink.LinkByName(vrfName)
-	if err != nil {
-		return fmt.Errorf("find VRF %s: %w", vrfName, err)
-	}
-	if err := netlink.LinkSetMasterByIndex(link, vrfLink.Attrs().Index); err != nil {
-		return fmt.Errorf("assign %s to VRF: %w", name, err)
+	if vrfName != "" {
+		vrfLink, err := netlink.LinkByName(vrfName)
+		if err != nil {
+			return fmt.Errorf("find VRF %s: %w", vrfName, err)
+		}
+		if err := netlink.LinkSetMasterByIndex(link, vrfLink.Attrs().Index); err != nil {
+			return fmt.Errorf("assign %s to VRF: %w", name, err)
+		}
 	}
 
 	if err := netlink.LinkSetUp(link); err != nil {
@@ -389,9 +420,13 @@ func (m *Manager) startDaemonsDirect(ctx context.Context) error {
 }
 
 func (m *Manager) addBGPPeer(ctx context.Context, vrfName string, asn uint32, nic string) error {
+	bgpCmd := fmt.Sprintf("router bgp %d", asn)
+	if vrfName != "" {
+		bgpCmd = fmt.Sprintf("router bgp %d vrf %s", asn, vrfName)
+	}
 	out, err := m.commander.Run(ctx, "vtysh",
 		"-c", "conf t",
-		"-c", fmt.Sprintf("router bgp %d vrf %s", asn, vrfName),
+		"-c", bgpCmd,
 		"-c", fmt.Sprintf("neighbor %s interface peer-group fabric", nic),
 	)
 	if err != nil {

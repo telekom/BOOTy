@@ -11,8 +11,8 @@ func TestApplyDefaults(t *testing.T) {
 	if cfg.BridgeName != "br.provision" {
 		t.Errorf("BridgeName = %q, want %q", cfg.BridgeName, "br.provision")
 	}
-	if cfg.VRFName != "Vrf_underlay" {
-		t.Errorf("VRFName = %q, want %q", cfg.VRFName, "Vrf_underlay")
+	if cfg.VRFName != "" {
+		t.Errorf("VRFName = %q, want empty (no VRF by default)", cfg.VRFName)
 	}
 	if cfg.MTU != 9000 {
 		t.Errorf("MTU = %d, want %d", cfg.MTU, 9000)

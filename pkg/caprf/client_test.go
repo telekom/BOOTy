@@ -417,6 +417,7 @@ overlay_subnet="2a01:598:40a:5481::/64"
 ipmi_subnet="172.30.0.0/24"
 asn_server="65188"
 provision_vni="2002002"
+provision_ip="10.100.0.42/24"
 dns_resolver="2003:0:af08:1005::1000"
 dcgw_ips="10.10.10.1,10.10.10.2"
 leaf_asn="65500"
@@ -445,6 +446,9 @@ vpn_rt="65188:2002"
 	}
 	if cfg.ProvisionVNI != 2002002 {
 		t.Errorf("ProvisionVNI = %d", cfg.ProvisionVNI)
+	}
+	if cfg.ProvisionIP != "10.100.0.42/24" {
+		t.Errorf("ProvisionIP = %q", cfg.ProvisionIP)
 	}
 	if cfg.DNSResolvers != "2003:0:af08:1005::1000" {
 		t.Errorf("DNSResolvers = %q", cfg.DNSResolvers)

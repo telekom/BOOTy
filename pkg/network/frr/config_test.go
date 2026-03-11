@@ -247,3 +247,19 @@ func TestRenderConfig_NoNICs(t *testing.T) {
 		t.Error("config missing router bgp line")
 	}
 }
+
+func TestRenderConfig_NoVRF(t *testing.T) {
+	cfg := network.Config{
+		ASN: 65020,
+	}
+	conf, err := RenderConfig(&cfg, "10.0.0.20", []string{"eth1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(conf, "router bgp 65020\n") {
+		t.Errorf("expected 'router bgp 65020' without VRF, got:\n%s", conf)
+	}
+	if strings.Contains(conf, "vrf") {
+		t.Errorf("config should not contain VRF reference when VRFName is empty:\n%s", conf)
+	}
+}
