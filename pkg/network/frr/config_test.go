@@ -141,6 +141,11 @@ func TestDeriveIPFromOffset(t *testing.T) {
 		{"offset_1", "172.30.0.1", "172.30.0.0/24", "10.0.0.0/24", "10.0.0.1"},
 		{"offset_254", "172.30.0.254", "172.30.0.0/24", "10.0.0.0/24", "10.0.0.254"},
 		{"zero_offset", "172.30.0.0", "172.30.0.0/24", "10.0.0.0/24", "10.0.0.0"},
+		// IPv6 → IPv6
+		{"ipv6_offset", "fd00::a", "fd00::/64", "fd01::/64", "fd01::a"},
+		{"ipv6_offset_1", "fd00::1", "fd00::/64", "fd01::/64", "fd01::1"},
+		// IPv4 → IPv6 (cross-family)
+		{"cross_ipv4_to_ipv6", "172.30.0.42", "172.30.0.0/24", "fd00::/64", "fd00::2a"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

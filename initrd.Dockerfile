@@ -165,7 +165,7 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
 FROM debian:bookworm-slim AS micro-builder
 RUN apt-get update && apt-get install -y --no-install-recommends cpio \
     && rm -rf /var/lib/apt/lists/*
-WORKDIR /initramfs
+WORKDIR /build/initramfs
 RUN mkdir -p bin sbin dev proc sys tmp etc
 COPY --from=micro-dev /go/src/github.com/telekom/BOOTy/init .
 COPY --from=micro-dev /etc/ssl/certs/ca-certificates.crt etc/ssl/certs/

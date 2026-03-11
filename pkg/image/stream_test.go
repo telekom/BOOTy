@@ -4,10 +4,12 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
@@ -210,6 +212,58 @@ func TestStreamChecksumMismatch(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected checksum mismatch error")
+	}
+}
+
+func TestStreamChecksumSHA512(t *testing.T) {
+	data := []byte("sha512 checksum test data")
+	h := sha512.Sum512(data)
+	checksum := hex.EncodeToString(h[:])
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	}))
+	defer srv.Close()
+
+	tmpFile, err := os.CreateTemp(t.TempDir(), "disk-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = tmpFile.Close()
+
+	err = Stream(context.Background(), srv.URL+"/image.img", tmpFile.Name(), StreamOpts{
+		Checksum:     checksum,
+		ChecksumType: "sha512",
+	})
+	if err != nil {
+		t.Fatalf("sha512 stream failed: %v", err)
+	}
+}
+
+func TestStreamUnsupportedChecksumType(t *testing.T) {
+	data := []byte("unsupported hash")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	}))
+	defer srv.Close()
+
+	tmpFile, err := os.CreateTemp(t.TempDir(), "disk-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = tmpFile.Close()
+
+	err = Stream(context.Background(), srv.URL+"/image.img", tmpFile.Name(), StreamOpts{
+		Checksum:     "deadbeef",
+		ChecksumType: "md5",
+	})
+	if err == nil {
+		t.Fatal("expected error for unsupported checksum type")
+	}
+	if !strings.Contains(err.Error(), "unsupported checksum type") {
+		t.Errorf("error = %q, want to contain 'unsupported checksum type'", err.Error())
 	}
 }
 
