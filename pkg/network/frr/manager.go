@@ -509,7 +509,7 @@ func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duratio
 	client := &http.Client{Timeout: 10 * time.Second}
 	attempt := 0
 	lastRestart := time.Now()
-	const restartInterval = 20 * time.Second
+	const restartInterval = 120 * time.Second
 
 	for time.Now().Before(deadline) {
 		attempt++

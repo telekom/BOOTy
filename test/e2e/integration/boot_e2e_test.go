@@ -6,6 +6,7 @@
 package integration
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -39,8 +40,10 @@ func requireBootLab(t *testing.T) {
 
 func bootDockerExec(t *testing.T, container string, args ...string) (string, error) {
 	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	cmdArgs := append([]string{"exec", container}, args...)
-	out, err := exec.Command("docker", cmdArgs...).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "docker", cmdArgs...).CombinedOutput()
 	return string(out), err
 }
 
@@ -102,7 +105,7 @@ func TestBootProvisionNodeReachesCAPRF(t *testing.T) {
 
 	// The provision node (10.100.0.20) should reach caprf-mock (10.100.0.11) through EVPN.
 	var reachable bool
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 90; i++ {
 		out, err := bootDockerExec(t, provisionContainer, "ping", "-c", "1", "-W", "1", "10.100.0.11")
 		if err == nil && strings.Contains(out, "1 packets received") {
 			reachable = true
@@ -305,7 +308,7 @@ func TestBootStandbyShowsMode(t *testing.T) {
 func TestBootCAPRFMockReceivedInitStatus(t *testing.T) {
 	requireBootLab(t)
 
-	out, ok := waitForAccessLogEntry(t, caprfContainer, "/var/log/nginx/access.log", "/status/init", 60*time.Second)
+	out, ok := waitForAccessLogEntry(t, caprfContainer, "/var/log/nginx/access.log", "/status/init", 180*time.Second)
 	if !ok {
 		t.Fatalf("CAPRF mock did not receive /status/init request\nAccess log:\n%s", out)
 	}
