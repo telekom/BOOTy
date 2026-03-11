@@ -162,6 +162,7 @@ router bgp {{ .ASN }}{{ if .VRFName }} vrf {{ .VRFName }}{{ end }}
 {{- end }}
  !
  address-family ipv4 unicast
+  neighbor fabric activate
   redistribute connected
  exit-address-family
  !
