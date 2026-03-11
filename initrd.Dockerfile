@@ -124,6 +124,59 @@ RUN xorriso -as mkisofs \
 FROM scratch AS iso
 COPY --from=iso-builder /booty.iso .
 
+# ── Slim target: BOOTy + busybox shell + minimal tools, no FRR/LVM ────────
+FROM gcc:14 AS slim-builder
+RUN apt-get update && apt-get install -y cpio
+RUN curl -O https://busybox.net/downloads/busybox-1.37.0.tar.bz2
+RUN tar -xf busybox*bz2
+WORKDIR busybox-1.37.0
+RUN make defconfig && make LDFLAGS=-static CONFIG_PREFIX=./initramfs install
+WORKDIR initramfs
+
+# BOOTy init binary (static, CGO-enabled)
+COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
+
+# Minimal networking tools (DHCP mode — no FRR, no BGP)
+COPY --from=tools /sbin/ip bin/ip
+COPY --from=tools /usr/sbin/ethtool bin/ethtool
+COPY --from=tools /usr/bin/curl bin/curl
+
+# Basic disk tools (filesystem check + resize only)
+COPY --from=tools /sbin/partprobe bin/partprobe
+COPY --from=tools /sbin/e2fsck sbin/e2fsck
+COPY --from=tools /sbin/resize2fs sbin/resize2fs
+
+# Package slim initramfs
+RUN find . -print0 | cpio --null -ov --format=newc > ../initramfs.cpio \
+    && gzip ../initramfs.cpio && mv ../initramfs.cpio.gz /
+
+FROM scratch AS slim
+COPY --from=slim-builder /initramfs.cpio.gz .
+
+# ── Micro target: pure-Go BOOTy only, gokrazy-inspired ────────────────────
+FROM golang:1.26-alpine AS micro-dev
+RUN apk add --no-cache git ca-certificates
+COPY . /go/src/github.com/telekom/BOOTy/
+WORKDIR /go/src/github.com/telekom/BOOTy
+RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
+    --mount=type=cache,sharing=locked,id=goroot,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -a -ldflags "-s -w" -o init
+
+FROM debian:bookworm-slim AS micro-builder
+RUN apt-get update && apt-get install -y --no-install-recommends cpio \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /initramfs
+RUN mkdir -p bin sbin dev proc sys tmp etc
+COPY --from=micro-dev /go/src/github.com/telekom/BOOTy/init .
+COPY --from=micro-dev /etc/ssl/certs/ca-certificates.crt etc/ssl/certs/
+
+# Package micro initramfs
+RUN find . -print0 | cpio --null -ov --format=newc > ../initramfs.cpio \
+    && gzip ../initramfs.cpio && mv ../initramfs.cpio.gz /
+
+FROM scratch AS micro
+COPY --from=micro-builder /initramfs.cpio.gz .
+
 # ── Default target: initramfs ──────────────────────────────────────────────
 FROM scratch
 COPY --from=busybox /initramfs.cpio.gz .

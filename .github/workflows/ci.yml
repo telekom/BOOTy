@@ -102,6 +102,90 @@ jobs:
           name: booty-${{ matrix.goarch }}
           path: booty-${{ matrix.goarch }}
 
+  build-flavours:
+    name: Build Flavours (slim + micro)
+    runs-on: ubuntu-latest
+    needs: [lint, test, e2e]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build slim initramfs
+        run: |
+          docker buildx build --platform linux/amd64 --target slim \
+            --output type=local,dest=out-slim -f initrd.Dockerfile .
+          echo "Slim initramfs:"
+          ls -lh out-slim/initramfs.cpio.gz
+
+      - name: Build micro initramfs
+        run: |
+          docker buildx build --platform linux/amd64 --target micro \
+            --output type=local,dest=out-micro -f initrd.Dockerfile .
+          echo "Micro initramfs:"
+          ls -lh out-micro/initramfs.cpio.gz
+
+      - name: Verify slim is smaller than default
+        run: |
+          docker buildx build --platform linux/amd64 \
+            --output type=local,dest=out-default -f initrd.Dockerfile .
+
+          DEFAULT_SIZE=$(stat -c%s out-default/initramfs.cpio.gz)
+          SLIM_SIZE=$(stat -c%s out-slim/initramfs.cpio.gz)
+          MICRO_SIZE=$(stat -c%s out-micro/initramfs.cpio.gz)
+
+          echo "Default: $(numfmt --to=iec $DEFAULT_SIZE)"
+          echo "Slim:    $(numfmt --to=iec $SLIM_SIZE)"
+          echo "Micro:   $(numfmt --to=iec $MICRO_SIZE)"
+
+          if [ "$MICRO_SIZE" -ge "$SLIM_SIZE" ]; then
+            echo "::error::Micro ($MICRO_SIZE) should be smaller than slim ($SLIM_SIZE)"
+            exit 1
+          fi
+          if [ "$SLIM_SIZE" -ge "$DEFAULT_SIZE" ]; then
+            echo "::error::Slim ($SLIM_SIZE) should be smaller than default ($DEFAULT_SIZE)"
+            exit 1
+          fi
+          echo "PASS: micro < slim < default"
+
+      - name: Verify slim contents
+        run: |
+          gzip -dc out-slim/initramfs.cpio.gz | cpio -t 2>/dev/null > slim-files.txt
+          echo "Slim file count: $(wc -l < slim-files.txt)"
+
+          # Must contain BOOTy init and busybox
+          grep -q "^init$\|^./init$" slim-files.txt || (echo "FAIL: init missing"; exit 1)
+          grep -q "bin/busybox" slim-files.txt || (echo "FAIL: busybox missing"; exit 1)
+          grep -q "bin/ip" slim-files.txt || (echo "FAIL: ip missing"; exit 1)
+
+          # Must NOT contain FRR or LVM
+          if grep -q "sbin/bgpd" slim-files.txt; then echo "FAIL: bgpd present in slim"; exit 1; fi
+          if grep -q "sbin/lvm" slim-files.txt; then echo "FAIL: lvm present in slim"; exit 1; fi
+          echo "PASS: slim contents verified"
+
+      - name: Verify micro contents
+        run: |
+          gzip -dc out-micro/initramfs.cpio.gz | cpio -t 2>/dev/null > micro-files.txt
+          echo "Micro file count: $(wc -l < micro-files.txt)"
+
+          # Must contain BOOTy init
+          grep -q "^init$\|^./init$" micro-files.txt || (echo "FAIL: init missing"; exit 1)
+
+          # Must NOT contain busybox, FRR, LVM, or external tools
+          if grep -q "bin/busybox" micro-files.txt; then echo "FAIL: busybox present in micro"; exit 1; fi
+          if grep -q "sbin/bgpd" micro-files.txt; then echo "FAIL: bgpd present in micro"; exit 1; fi
+          if grep -q "bin/ip" micro-files.txt; then echo "FAIL: ip present in micro"; exit 1; fi
+          echo "PASS: micro contents verified"
+
+      - name: Upload build flavour artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-flavours
+          path: |
+            out-slim/initramfs.cpio.gz
+            out-micro/initramfs.cpio.gz
+
   kvm-boot:
     name: KVM Boot Validation
     runs-on: ubuntu-latest
