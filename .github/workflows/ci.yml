@@ -795,3 +795,104 @@ jobs:
       - name: Cleanup
         if: always()
         run: sudo containerlab destroy --topo test/e2e/clab/topology-boot.clab.yml --cleanup
+
+  e2e-vrnetlab:
+    name: E2E EVPN Boot (vrnetlab)
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Build BOOTy vrnetlab VM image
+        run: docker build -t booty-vrnetlab:latest -f test/e2e/clab/vrnetlab/Dockerfile .
+
+      - name: Install ContainerLab
+        run: bash -c "$(curl -sL https://get.containerlab.dev)"
+
+      - name: Deploy vrnetlab EVPN topology
+        run: sudo containerlab deploy --topo test/e2e/clab/topology-vrnetlab.clab.yml
+
+      - name: Wait for BGP convergence
+        run: |
+          echo "Waiting for BGP sessions to establish..."
+          for i in $(seq 1 30); do
+            if sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp summary" 2>/dev/null \
+               | grep -qE "[0-9]{2}:[0-9]{2}:[0-9]{2}"; then
+              echo "BGP established after ${i}s"
+              sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp summary"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "BGP did not converge in 30s"
+          sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp summary" || true
+          exit 1
+
+      - name: Wait for VM boot
+        run: |
+          echo "Waiting for BOOTy QEMU VM to start..."
+          for i in $(seq 1 120); do
+            if sudo docker logs clab-booty-vrnetlab-lab-booty-provision 2>&1 | grep -q "Starting BOOTy"; then
+              echo "BOOTy VM started after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "VM did not boot in 120s — dumping serial log:"
+          sudo docker logs clab-booty-vrnetlab-lab-booty-provision 2>&1 | tail -50
+          exit 1
+
+      - name: Run vrnetlab EVPN E2E tests
+        run: go test -tags e2e_vrnetlab -v -race -count=1 -timeout 10m ./test/e2e/integration/...
+
+      - name: Collect vrnetlab logs
+        if: always()
+        run: |
+          mkdir -p vrnetlab-logs
+
+          for node in booty-provision booty-deprovision booty-standby; do
+            name="clab-booty-vrnetlab-lab-${node}"
+            echo ""
+            echo "======================================="
+            echo "  ${node} SERIAL LOG"
+            echo "======================================="
+            sudo docker logs "${name}" 2>&1 | tee vrnetlab-logs/${node}-serial.log || echo "(no logs)"
+            echo "======================================="
+          done
+
+          echo ""
+          echo "======================================="
+          echo "  CAPRF Mock Access Log"
+          echo "======================================="
+          sudo docker exec clab-booty-vrnetlab-lab-caprf-mock cat /var/log/nginx/access.log 2>/dev/null \
+            | tee vrnetlab-logs/caprf-access.log || echo "(no logs)"
+
+          echo ""
+          echo "======================================="
+          echo "  BGP Summary (spine01)"
+          echo "======================================="
+          sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp summary" 2>/dev/null \
+            | tee vrnetlab-logs/bgp-summary.txt || true
+
+          echo ""
+          echo "======================================="
+          echo "  EVPN State (spine01)"
+          echo "======================================="
+          sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null \
+            | tee vrnetlab-logs/evpn-state.txt || true
+
+      - name: Upload vrnetlab logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vrnetlab-logs
+          path: vrnetlab-logs/
+          if-no-files-found: ignore
+
+      - name: Cleanup
+        if: always()
+        run: sudo containerlab destroy --topo test/e2e/clab/topology-vrnetlab.clab.yml --cleanup
