@@ -329,6 +329,290 @@ jobs:
 
       - name: Run E2E integration tests
         run: go test -tags e2e_integration -v -race -count=1 -timeout 10m ./test/e2e/integration/...
+
+      - name: Collect container logs
+        if: always()
+        run: |
+          mkdir -p clab-logs
+          for c in spine01 leaf01 client nginx caprf-mock; do
+            name="clab-booty-lab-${c}"
+            echo "=== Logs for ${name} ===" | tee clab-logs/${c}.log
+            sudo docker logs "${name}" >> clab-logs/${c}.log 2>&1 || echo "(no logs)"
+          done
+
+          echo ""
+          echo "=== FRR Routing State (spine01) ==="
+          sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp summary" 2>/dev/null | tee clab-logs/spine01-bgp-summary.txt || true
+          sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null | tee clab-logs/spine01-evpn.txt || true
+          sudo docker exec clab-booty-lab-spine01 vtysh -c "show ip route" 2>/dev/null | tee clab-logs/spine01-routes.txt || true
+
+          echo ""
+          echo "=== FRR Routing State (leaf01) ==="
+          sudo docker exec clab-booty-lab-leaf01 vtysh -c "show bgp summary" 2>/dev/null | tee clab-logs/leaf01-bgp-summary.txt || true
+          sudo docker exec clab-booty-lab-leaf01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null | tee clab-logs/leaf01-evpn.txt || true
+          sudo docker exec clab-booty-lab-leaf01 vtysh -c "show ip route" 2>/dev/null | tee clab-logs/leaf01-routes.txt || true
+
+      - name: Upload ContainerLab logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clab-logs
+          path: clab-logs/
+          if-no-files-found: ignore
+
       - name: Cleanup
         if: always()
         run: sudo containerlab destroy --topo test/e2e/clab/topology.clab.yml --cleanup
+
+  uefi-iso-boot:
+    name: UEFI ISO Boot Validation
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install UEFI and ISO dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 ovmf xorriso grub-efi-amd64-bin \
+            grub-common mtools cpio busybox-static zstd dosfstools
+
+      - name: Build initramfs image
+        run: |
+          # Build BOOTy as a static binary for linux/amd64
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
+            go build -ldflags "-linkmode external -extldflags '-static' -s -w" -o booty
+
+          # Create initramfs directory structure
+          mkdir -p initramfs/{bin,sbin,dev,proc,sys,etc,tmp,usr/bin,lib/modules,mnt,home}
+
+          # Create device nodes so the kernel can give init a working console
+          sudo mknod initramfs/dev/console c 5 1
+          sudo mknod initramfs/dev/ttyS0 c 4 64
+          sudo mknod initramfs/dev/null c 1 3
+
+          # Install busybox with shell and utility symlinks
+          cp /bin/busybox initramfs/bin/busybox
+          cd initramfs/bin
+          for cmd in sh mount umount insmod setsid cttyhack; do
+            ln -sf busybox "$cmd"
+          done
+          cd ../..
+          cd initramfs/usr/bin && ln -sf ../../bin/busybox setsid && cd ../../..
+
+          # Copy BOOTy binary
+          cp booty initramfs/booty
+
+          # Copy e1000 kernel module (QEMU default virtual NIC)
+          MOD_PATH=$(find /lib/modules/$(uname -r) -name "e1000.ko*" | head -1)
+          if [ -n "$MOD_PATH" ]; then
+            case "$MOD_PATH" in
+              *.zst) zstd -d "$MOD_PATH" -o initramfs/lib/modules/e1000.ko ;;
+              *.xz)  xz -dc "$MOD_PATH" > initramfs/lib/modules/e1000.ko ;;
+              *.gz)  gzip -dc "$MOD_PATH" > initramfs/lib/modules/e1000.ko ;;
+              *)     cp "$MOD_PATH" initramfs/lib/modules/e1000.ko ;;
+            esac
+          fi
+
+          # Create init wrapper
+          cat > initramfs/init << 'INITEOF'
+          #!/bin/sh
+          /bin/insmod /lib/modules/e1000.ko 2>/dev/null || true
+          export BOOTYURL="http://10.0.2.2:3000/booty"
+          exec /booty
+          INITEOF
+          chmod +x initramfs/init
+
+          # Package initramfs
+          cd initramfs
+          sudo find . -print0 | sudo cpio --null -ov --format=newc 2>/dev/null | gzip > ../test-initramfs.cpio.gz
+          cd ..
+
+      - name: Prepare kernel
+        run: |
+          sudo cp /boot/vmlinuz-$(uname -r) vmlinuz
+          sudo chmod 644 vmlinuz
+
+      - name: Create UEFI-bootable ISO
+        run: |
+          # Create ISO directory structure
+          mkdir -p iso/boot/grub iso/EFI/BOOT
+          cp vmlinuz iso/boot/vmlinuz
+          cp test-initramfs.cpio.gz iso/boot/initrd
+
+          # Write GRUB configuration
+          cat > iso/boot/grub/grub.cfg << 'EOF'
+          set timeout=0
+          set default=0
+          menuentry 'BOOTy UEFI Test' {
+            linux /boot/vmlinuz console=ttyS0 panic=1
+            initrd /boot/initrd
+          }
+          EOF
+
+          # Create standalone GRUB EFI binary
+          grub-mkstandalone -O x86_64-efi -o iso/EFI/BOOT/BOOTX64.EFI \
+            --locales="" --fonts="" \
+            "boot/grub/grub.cfg=iso/boot/grub/grub.cfg"
+
+          # Create FAT image for EFI System Partition
+          dd if=/dev/zero of=iso/efi.img bs=1M count=8
+          mkfs.vfat iso/efi.img
+          mmd -i iso/efi.img ::/EFI ::/EFI/BOOT
+          mcopy -i iso/efi.img iso/EFI/BOOT/BOOTX64.EFI ::/EFI/BOOT/
+
+          # Create UEFI-bootable ISO
+          xorriso -as mkisofs \
+            -R -J \
+            -o test-uefi.iso \
+            -eltorito-alt-boot \
+            -e efi.img \
+            -no-emul-boot \
+            iso/
+
+          ls -lh test-uefi.iso
+          echo "UEFI ISO created successfully"
+
+      - name: Start test provisioning server
+        run: |
+          mkdir -p images
+          dd if=/dev/urandom bs=1024 count=1 of=images/test.img 2>/dev/null
+
+          cat > test-config.json << 'EOF'
+          {
+            "action": "writeImage",
+            "sourceImage": "http://10.0.2.2:3000/images/test.img",
+            "destinationDevice": "/dev/sda",
+            "compressed": false,
+            "dryRun": false,
+            "dropToShell": false,
+            "wipeDevice": false,
+            "growPartition": 1,
+            "lvmRootName": "/dev/ubuntu-vg/root"
+          }
+          EOF
+
+          python3 << 'PYEOF' &
+          import http.server
+
+          class Handler(http.server.SimpleHTTPRequestHandler):
+              def do_GET(self):
+                  if self.path == '/booty/52-54-00-12-34-56.bty':
+                      self.send_response(200)
+                      self.send_header('Content-Type', 'application/json')
+                      self.end_headers()
+                      with open('test-config.json', 'rb') as f:
+                          self.wfile.write(f.read())
+                  elif self.path.startswith('/images/'):
+                      super().do_GET()
+                  else:
+                      self.send_response(404)
+                      self.end_headers()
+              def log_message(self, format, *args):
+                  print(f"[server] {format % args}")
+
+          server = http.server.HTTPServer(('0.0.0.0', 3000), Handler)
+          print("[server] Listening on :3000")
+          server.serve_forever()
+          PYEOF
+          echo $! > server.pid
+          sleep 2
+          curl -sf http://localhost:3000/booty/52-54-00-12-34-56.bty | python3 -m json.tool
+
+      - name: Boot ISO with UEFI firmware (OVMF) and validate
+        timeout-minutes: 5
+        run: |
+          # Find OVMF firmware (path varies between Ubuntu versions).
+          OVMF=$(find /usr/share -name "OVMF_CODE*.fd" 2>/dev/null | head -1)
+          if [ -z "$OVMF" ]; then
+            echo "OVMF firmware not found"
+            exit 1
+          fi
+          echo "Using OVMF firmware: $OVMF"
+
+          timeout 120 qemu-system-x86_64 \
+            -bios "$OVMF" \
+            -cdrom test-uefi.iso \
+            -boot d \
+            -m 512 \
+            -nographic \
+            -no-reboot \
+            -net nic,macaddr=52:54:00:12:34:56,model=e1000 \
+            -net user \
+            -serial file:serial-uefi.log \
+            2>&1 || true
+
+          echo ""
+          echo "========================================="
+          echo "     UEFI ISO Serial Console Output      "
+          echo "========================================="
+          cat serial-uefi.log || true
+          echo ""
+          echo "========================================="
+
+          PASS=true
+
+          if grep -q "Starting DHCP client" serial-uefi.log 2>/dev/null; then
+            echo "PASS: BOOTy init started under UEFI — EFI firmware + ISO boot working"
+          else
+            echo "FAIL: BOOTy init did not reach DHCP client under UEFI"
+            PASS=false
+          fi
+
+          if grep -q "Starting BOOTy" serial-uefi.log 2>/dev/null; then
+            echo "PASS: BOOTy main flow reached under UEFI"
+          else
+            echo "FAIL: BOOTy did not reach main flow under UEFI"
+            PASS=false
+          fi
+
+          if grep -q "Connecting to provisioning server" serial-uefi.log 2>/dev/null; then
+            echo "PASS: Network operational under UEFI — provisioning server contacted"
+          else
+            echo "FAIL: Provisioning server not contacted under UEFI"
+            PASS=false
+          fi
+
+          if [ "$PASS" = "false" ]; then
+            echo ""
+            echo "UEFI ISO BOOT VALIDATION FAILED"
+            exit 1
+          fi
+
+          echo ""
+          echo "ALL UEFI ISO BOOT CHECKS PASSED"
+
+      - name: Upload UEFI serial log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uefi-iso-boot-serial-log
+          path: serial-uefi.log
+          if-no-files-found: ignore
+
+      - name: Cleanup
+        if: always()
+        run: |
+          [ -f server.pid ] && kill $(cat server.pid) 2>/dev/null || true
+
+  linux-e2e:
+    name: Linux E2E (Privileged)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install disk utilities
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fdisk gdisk e2fsprogs xfsprogs cloud-guest-utils parted util-linux
+
+      - name: Run Linux E2E tests
+        run: sudo -E $(which go) test -tags linux_e2e -v -count=1 -timeout 5m ./test/e2e/linux/...
