@@ -79,6 +79,22 @@ func waitForLogEntry(t *testing.T, container, entry string, timeout time.Duratio
 	return false
 }
 
+// waitForAccessLogEntry polls a container's file until it contains the expected string.
+func waitForAccessLogEntry(t *testing.T, container, logPath, entry string, timeout time.Duration) (string, bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastOut string
+	for time.Now().Before(deadline) {
+		out, err := bootDockerExec(t, container, "cat", logPath)
+		if err == nil && strings.Contains(out, entry) {
+			return out, true
+		}
+		lastOut = out
+		time.Sleep(3 * time.Second)
+	}
+	return lastOut, false
+}
+
 // --- Connectivity tests: BOOTy nodes can reach services through fabric ---
 
 func TestBootProvisionNodeReachesCAPRF(t *testing.T) {
@@ -270,16 +286,8 @@ func TestBootStandbyShowsMode(t *testing.T) {
 func TestBootCAPRFMockReceivedInitStatus(t *testing.T) {
 	requireBootLab(t)
 
-	// Wait for at least one BOOTy node to report init
-	time.Sleep(30 * time.Second)
-
-	// Check CAPRF mock access log for /status/init requests
-	out, err := bootDockerExec(t, caprfContainer, "cat", "/var/log/nginx/access.log")
-	if err != nil {
-		t.Fatalf("could not read CAPRF access log: %v\n%s", err, out)
-	}
-
-	if !strings.Contains(out, "/status/init") {
+	out, ok := waitForAccessLogEntry(t, caprfContainer, "/var/log/nginx/access.log", "/status/init", 60*time.Second)
+	if !ok {
 		t.Fatalf("CAPRF mock did not receive /status/init request\nAccess log:\n%s", out)
 	}
 	t.Logf("CAPRF mock received /status/init request\nAccess log:\n%s", out)
@@ -323,16 +331,8 @@ func TestBootAllNodesImageReachableThroughEVPN(t *testing.T) {
 func TestBootNginxAccessLogShowsImageRequest(t *testing.T) {
 	requireBootLab(t)
 
-	// Ensure at least one node has fetched the image first
-	time.Sleep(30 * time.Second)
-
-	out, err := bootDockerExec(t, nginxContainer, "cat", "/var/log/nginx/access.log")
-	if err != nil {
-		t.Logf("could not read nginx access log: %v", err)
-		t.Skip("nginx access log not accessible")
-	}
-
-	if !strings.Contains(out, "/images/test.img") {
+	out, ok := waitForAccessLogEntry(t, nginxContainer, "/var/log/nginx/access.log", "/images/test.img", 60*time.Second)
+	if !ok {
 		t.Logf("Nginx access log:\n%s", out)
 		t.Fatal("nginx did not receive /images/test.img request through EVPN")
 	}
@@ -344,15 +344,8 @@ func TestBootNginxAccessLogShowsImageRequest(t *testing.T) {
 func TestBootCAPRFMockReceivedErrorFromProvision(t *testing.T) {
 	requireBootLab(t)
 
-	// Wait for provision to attempt disk ops and fail
-	time.Sleep(45 * time.Second)
-
-	out, err := bootDockerExec(t, caprfContainer, "cat", "/var/log/nginx/access.log")
-	if err != nil {
-		t.Fatalf("could not read CAPRF access log: %v\n%s", err, out)
-	}
-
-	if !strings.Contains(out, "/status/error") {
+	out, ok := waitForAccessLogEntry(t, caprfContainer, "/var/log/nginx/access.log", "/status/error", 90*time.Second)
+	if !ok {
 		t.Logf("CAPRF access log:\n%s", out)
 		t.Fatal("CAPRF mock did not receive /status/error — provision should fail at disk ops")
 	}
@@ -372,7 +365,7 @@ func TestBootProvisionShowsProvisioningSteps(t *testing.T) {
 	logs := getBootyLogs(t, provisionContainer)
 
 	// Provisioning should log step names and eventually fail
-	if strings.Contains(logs, "Provisioning step") || strings.Contains(logs, "find-disk") {
+	if strings.Contains(logs, "Provisioning step") || strings.Contains(logs, "detect-disk") {
 		t.Log("provision node: provisioning steps visible in logs (full orchestrator lifecycle)")
 	} else {
 		t.Logf("Full logs:\n%s", logs)
@@ -390,15 +383,8 @@ func TestBootStandbyHeartbeatsSentToCAPRF(t *testing.T) {
 		t.Fatal("standby node did not enter standby mode")
 	}
 
-	// Wait for at least one heartbeat to be sent
-	time.Sleep(30 * time.Second)
-
-	out, err := bootDockerExec(t, caprfContainer, "cat", "/var/log/nginx/access.log")
-	if err != nil {
-		t.Fatalf("could not read CAPRF access log: %v\n%s", err, out)
-	}
-
-	if !strings.Contains(out, "/status/heartbeat") {
+	out, ok := waitForAccessLogEntry(t, caprfContainer, "/var/log/nginx/access.log", "/status/heartbeat", 60*time.Second)
+	if !ok {
 		t.Logf("CAPRF access log:\n%s", out)
 		t.Fatal("CAPRF mock did not receive /status/heartbeat from standby")
 	}

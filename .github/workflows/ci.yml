@@ -416,25 +416,26 @@ jobs:
 
       - name: Collect container logs
         if: always()
+        timeout-minutes: 3
         run: |
           mkdir -p clab-logs
           for c in spine01 leaf01 client nginx caprf-mock; do
             name="clab-booty-lab-${c}"
             echo "=== Logs for ${name} ===" | tee clab-logs/${c}.log
-            sudo docker logs "${name}" >> clab-logs/${c}.log 2>&1 || echo "(no logs)"
+            timeout 30 sudo docker logs "${name}" >> clab-logs/${c}.log 2>&1 || echo "(no logs)"
           done
 
           echo ""
           echo "=== FRR Routing State (spine01) ==="
-          sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp summary" 2>/dev/null | tee clab-logs/spine01-bgp-summary.txt || true
-          sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null | tee clab-logs/spine01-evpn.txt || true
-          sudo docker exec clab-booty-lab-spine01 vtysh -c "show ip route" 2>/dev/null | tee clab-logs/spine01-routes.txt || true
+          timeout 15 sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp summary" 2>/dev/null | tee clab-logs/spine01-bgp-summary.txt || true
+          timeout 15 sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null | tee clab-logs/spine01-evpn.txt || true
+          timeout 15 sudo docker exec clab-booty-lab-spine01 vtysh -c "show ip route" 2>/dev/null | tee clab-logs/spine01-routes.txt || true
 
           echo ""
           echo "=== FRR Routing State (leaf01) ==="
-          sudo docker exec clab-booty-lab-leaf01 vtysh -c "show bgp summary" 2>/dev/null | tee clab-logs/leaf01-bgp-summary.txt || true
-          sudo docker exec clab-booty-lab-leaf01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null | tee clab-logs/leaf01-evpn.txt || true
-          sudo docker exec clab-booty-lab-leaf01 vtysh -c "show ip route" 2>/dev/null | tee clab-logs/leaf01-routes.txt || true
+          timeout 15 sudo docker exec clab-booty-lab-leaf01 vtysh -c "show bgp summary" 2>/dev/null | tee clab-logs/leaf01-bgp-summary.txt || true
+          timeout 15 sudo docker exec clab-booty-lab-leaf01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null | tee clab-logs/leaf01-evpn.txt || true
+          timeout 15 sudo docker exec clab-booty-lab-leaf01 vtysh -c "show ip route" 2>/dev/null | tee clab-logs/leaf01-routes.txt || true
 
       - name: Upload ContainerLab logs
         if: always()
@@ -748,10 +749,11 @@ jobs:
           exit 1
 
       - name: Run BOOTy boot E2E tests
-        run: go test -tags e2e_boot -v -race -count=1 -timeout 5m ./test/e2e/integration/...
+        run: go test -tags e2e_boot -v -race -count=1 -timeout 10m ./test/e2e/integration/...
 
       - name: Collect BOOTy container logs
         if: always()
+        timeout-minutes: 3
         run: |
           mkdir -p boot-logs
 
@@ -761,7 +763,7 @@ jobs:
             echo "======================================="
             echo "  ${node} FULL BOOTY LOGS"
             echo "======================================="
-            sudo docker logs "${name}" 2>&1 | tee boot-logs/${node}.log || echo "(no logs)"
+            timeout 30 sudo docker logs "${name}" 2>&1 | tee boot-logs/${node}.log || echo "(no logs)"
             echo "======================================="
           done
 
@@ -769,20 +771,20 @@ jobs:
           echo "======================================="
           echo "  CAPRF Mock Access Log"
           echo "======================================="
-          sudo docker exec clab-booty-boot-lab-caprf-mock cat /var/log/nginx/access.log 2>/dev/null | tee boot-logs/caprf-access.log || echo "(no logs)"
+          timeout 15 sudo docker exec clab-booty-boot-lab-caprf-mock cat /var/log/nginx/access.log 2>/dev/null | tee boot-logs/caprf-access.log || echo "(no logs)"
           echo "======================================="
 
           echo ""
           echo "======================================="
           echo "  BGP Summary (spine01)"
           echo "======================================="
-          sudo docker exec clab-booty-boot-lab-spine01 vtysh -c "show bgp summary" 2>/dev/null | tee boot-logs/bgp-summary.txt || true
+          timeout 15 sudo docker exec clab-booty-boot-lab-spine01 vtysh -c "show bgp summary" 2>/dev/null | tee boot-logs/bgp-summary.txt || true
 
           echo ""
           echo "======================================="
           echo "  EVPN State (spine01)"
           echo "======================================="
-          sudo docker exec clab-booty-boot-lab-spine01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null | tee boot-logs/evpn-state.txt || true
+          timeout 15 sudo docker exec clab-booty-boot-lab-spine01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null | tee boot-logs/evpn-state.txt || true
 
       - name: Upload boot logs
         if: always()
@@ -847,10 +849,11 @@ jobs:
           exit 1
 
       - name: Run vrnetlab EVPN E2E tests
-        run: go test -tags e2e_vrnetlab -v -race -count=1 -timeout 10m ./test/e2e/integration/...
+        run: go test -tags e2e_vrnetlab -v -race -count=1 -timeout 20m ./test/e2e/integration/...
 
       - name: Collect vrnetlab logs
         if: always()
+        timeout-minutes: 3
         run: |
           mkdir -p vrnetlab-logs
 
@@ -860,7 +863,7 @@ jobs:
             echo "======================================="
             echo "  ${node} SERIAL LOG"
             echo "======================================="
-            sudo docker logs "${name}" 2>&1 | tee vrnetlab-logs/${node}-serial.log || echo "(no logs)"
+            timeout 30 sudo docker logs "${name}" 2>&1 | tee vrnetlab-logs/${node}-serial.log || echo "(no logs)"
             echo "======================================="
           done
 
@@ -868,21 +871,21 @@ jobs:
           echo "======================================="
           echo "  CAPRF Mock Access Log"
           echo "======================================="
-          sudo docker exec clab-booty-vrnetlab-lab-caprf-mock cat /var/log/nginx/access.log 2>/dev/null \
+          timeout 15 sudo docker exec clab-booty-vrnetlab-lab-caprf-mock cat /var/log/nginx/access.log 2>/dev/null \
             | tee vrnetlab-logs/caprf-access.log || echo "(no logs)"
 
           echo ""
           echo "======================================="
           echo "  BGP Summary (spine01)"
           echo "======================================="
-          sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp summary" 2>/dev/null \
+          timeout 15 sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp summary" 2>/dev/null \
             | tee vrnetlab-logs/bgp-summary.txt || true
 
           echo ""
           echo "======================================="
           echo "  EVPN State (spine01)"
           echo "======================================="
-          sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null \
+          timeout 15 sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null \
             | tee vrnetlab-logs/evpn-state.txt || true
 
       - name: Upload vrnetlab logs

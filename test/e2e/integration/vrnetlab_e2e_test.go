@@ -83,6 +83,22 @@ func waitForVMLog(t *testing.T, container, entry string, timeout time.Duration) 
 	return false
 }
 
+// waitForVMAccessLog polls a container's file until it contains the expected string.
+func waitForVMAccessLog(t *testing.T, container, logPath, entry string, timeout time.Duration) (string, bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastOut string
+	for time.Now().Before(deadline) {
+		out, err := vmDockerExec(t, container, "cat", logPath)
+		if err == nil && strings.Contains(out, entry) {
+			return out, true
+		}
+		lastOut = out
+		time.Sleep(3 * time.Second)
+	}
+	return lastOut, false
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // EVPN Fabric Validation
 // ═══════════════════════════════════════════════════════════════════════
@@ -239,15 +255,8 @@ func TestVrnetlabVMProvisionReportsInit(t *testing.T) {
 func TestVrnetlabCAPRFMockReceivedInit(t *testing.T) {
 	requireVrnetlabLab(t)
 
-	// Wait for at least one VM to have completed boot and contacted CAPRF
-	time.Sleep(60 * time.Second)
-
-	out, err := vmDockerExec(t, vmCAPRF, "cat", "/var/log/nginx/access.log")
-	if err != nil {
-		t.Fatalf("could not read CAPRF access log: %v\n%s", err, out)
-	}
-
-	if !strings.Contains(out, "/status/init") {
+	out, ok := waitForVMAccessLog(t, vmCAPRF, "/var/log/nginx/access.log", "/status/init", 120*time.Second)
+	if !ok {
 		t.Logf("CAPRF access log:\n%s", out)
 		t.Fatal("CAPRF mock did not receive /status/init — VM→EVPN→CAPRF path broken")
 	}
@@ -257,15 +266,8 @@ func TestVrnetlabCAPRFMockReceivedInit(t *testing.T) {
 func TestVrnetlabCAPRFMockReceivedHeartbeat(t *testing.T) {
 	requireVrnetlabLab(t)
 
-	// Standby mode sends heartbeats; wait for at least one
-	time.Sleep(90 * time.Second)
-
-	out, err := vmDockerExec(t, vmCAPRF, "cat", "/var/log/nginx/access.log")
-	if err != nil {
-		t.Fatalf("could not read CAPRF access log: %v\n%s", err, out)
-	}
-
-	if !strings.Contains(out, "/status/heartbeat") {
+	out, ok := waitForVMAccessLog(t, vmCAPRF, "/var/log/nginx/access.log", "/status/heartbeat", 120*time.Second)
+	if !ok {
 		t.Logf("CAPRF access log:\n%s", out)
 		t.Log("no heartbeat received yet (standby VM may not have reached heartbeat loop)")
 	} else {
@@ -294,7 +296,7 @@ func TestVrnetlabProvisionAttemptsImageDownload(t *testing.T) {
 	hasImageAttempt := strings.Contains(logs, "Streaming image") ||
 		strings.Contains(logs, "Beginning write") ||
 		strings.Contains(logs, "stream-image")
-	hasDiskStep := strings.Contains(logs, "find-disk") ||
+	hasDiskStep := strings.Contains(logs, "detect-disk") ||
 		strings.Contains(logs, "Provisioning step")
 
 	if hasImageAttempt {
@@ -310,35 +312,20 @@ func TestVrnetlabProvisionAttemptsImageDownload(t *testing.T) {
 func TestVrnetlabNginxReceivedImageRequest(t *testing.T) {
 	requireVrnetlabLab(t)
 
-	// Wait for provisioning attempts
-	time.Sleep(120 * time.Second)
-
-	out, err := vmDockerExec(t, vmNginx, "cat", "/var/log/nginx/access.log")
-	if err != nil {
-		t.Logf("could not read nginx access log: %v", err)
-		t.Skip("nginx access log not accessible")
-	}
-
-	if strings.Contains(out, "/images/test.img") {
-		t.Logf("Nginx received image request from BOOTy VM through EVPN:\n%s", out)
-	} else {
+	out, ok := waitForVMAccessLog(t, vmNginx, "/var/log/nginx/access.log", "/images/test.img", 120*time.Second)
+	if !ok {
 		t.Logf("Nginx access log:\n%s", out)
 		t.Log("no /images/test.img request in nginx log (VM may not have reached stream-image step)")
+	} else {
+		t.Logf("Nginx received image request from BOOTy VM through EVPN:\n%s", out)
 	}
 }
 
 func TestVrnetlabCAPRFMockReceivedErrorFromProvision(t *testing.T) {
 	requireVrnetlabLab(t)
 
-	// Wait for provision to fail at disk ops and report error
-	time.Sleep(120 * time.Second)
-
-	out, err := vmDockerExec(t, vmCAPRF, "cat", "/var/log/nginx/access.log")
-	if err != nil {
-		t.Fatalf("could not read CAPRF access log: %v\n%s", err, out)
-	}
-
-	if !strings.Contains(out, "/status/error") {
+	out, ok := waitForVMAccessLog(t, vmCAPRF, "/var/log/nginx/access.log", "/status/error", 180*time.Second)
+	if !ok {
 		t.Logf("CAPRF access log:\n%s", out)
 		t.Fatal("CAPRF mock did not receive /status/error — provision should fail at disk ops")
 	}
@@ -374,7 +361,7 @@ func TestVrnetlabProvisionFullLifecycleViaEVPN(t *testing.T) {
 	time.Sleep(15 * time.Second)
 	logs := getVMSerialLog(t, vmProvision)
 
-	if strings.Contains(logs, "Provisioning step") || strings.Contains(logs, "find-disk") {
+	if strings.Contains(logs, "Provisioning step") || strings.Contains(logs, "detect-disk") {
 		t.Log("provision VM: provisioning orchestrator executing steps through EVPN")
 	}
 
