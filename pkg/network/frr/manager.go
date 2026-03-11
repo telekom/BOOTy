@@ -66,43 +66,63 @@ func (m *Manager) Setup(ctx context.Context, cfg *network.Config) error {
 		"vni", cfg.ProvisionVNI,
 	)
 
+	nics, err := m.setupInterfaces(cfg, underlayIP, overlayIP, bridgeMAC)
+	if err != nil {
+		return err
+	}
+
+	if err := m.startFRRStack(ctx, cfg, underlayIP, nics); err != nil {
+		return err
+	}
+
+	slog.Info("FRR/EVPN network setup complete", "nics", nics)
+	return nil
+}
+
+// setupInterfaces creates VRF, dummy, VXLAN, bridge, loopback, and configures NICs.
+func (m *Manager) setupInterfaces(cfg *network.Config, underlayIP, overlayIP, bridgeMAC string) ([]string, error) {
 	if cfg.VRFName != "" {
 		if err := m.createVRF(cfg.VRFName); err != nil {
-			return fmt.Errorf("create VRF: %w", err)
+			return nil, fmt.Errorf("create VRF: %w", err)
 		}
 	}
 
 	if err := m.createDummy("dummy.underlay", cfg.VRFName, underlayIP+"/32"); err != nil {
-		return fmt.Errorf("create dummy: %w", err)
+		return nil, fmt.Errorf("create dummy: %w", err)
 	}
 
 	if err := m.createVXLAN(cfg.ProvisionVNI, underlayIP, cfg.BridgeName, bridgeMAC); err != nil {
-		return fmt.Errorf("create VXLAN: %w", err)
+		return nil, fmt.Errorf("create VXLAN: %w", err)
 	}
 
 	if cfg.ProvisionIP != "" {
 		if err := m.addBridgeAddress(cfg.BridgeName, cfg.ProvisionIP); err != nil {
-			return fmt.Errorf("add bridge address: %w", err)
+			return nil, fmt.Errorf("add bridge address: %w", err)
 		}
 	}
 
 	if err := m.addLoopbackAddress(overlayIP); err != nil {
-		return fmt.Errorf("add loopback address: %w", err)
+		return nil, fmt.Errorf("add loopback address: %w", err)
 	}
 
 	nics, err := network.DetectPhysicalNICs()
 	if err != nil {
-		return fmt.Errorf("detect NICs: %w", err)
+		return nil, fmt.Errorf("detect NICs: %w", err)
 	}
 
 	if err := m.configureNICs(nics, cfg.VRFName, cfg.MTU); err != nil {
-		return fmt.Errorf("configure NICs: %w", err)
+		return nil, fmt.Errorf("configure NICs: %w", err)
 	}
 
 	if err := m.enableForwarding(); err != nil {
 		slog.Warn("Failed to enable IP forwarding", "error", err)
 	}
 
+	return nics, nil
+}
+
+// startFRRStack renders config, writes it, starts FRR daemons, and adds BGP peers.
+func (m *Manager) startFRRStack(ctx context.Context, cfg *network.Config, underlayIP string, nics []string) error {
 	frrConf, err := RenderConfig(cfg, underlayIP, nics)
 	if err != nil {
 		return fmt.Errorf("render FRR config: %w", err)
@@ -126,7 +146,6 @@ func (m *Manager) Setup(ctx context.Context, cfg *network.Config) error {
 		}
 	}
 
-	slog.Info("FRR/EVPN network setup complete", "nics", nics)
 	return nil
 }
 
