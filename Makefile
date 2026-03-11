@@ -16,7 +16,7 @@ SRC = $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 DOCKERTAG ?= $(VERSION)
 REPOSITORY = ghcr.io/telekom/booty
 
-.PHONY: all build clean install uninstall fmt lint test docker dockerx86 iso
+.PHONY: all build clean install uninstall fmt lint test docker dockerx86 iso clab-up clab-down test-e2e-integration
 
 all: lint test install
 
@@ -74,6 +74,18 @@ simplify:
 test-e2e:
 	@echo Running E2E tests
 	@go test -tags e2e -race -v ./test/e2e/...
+
+clab-up:
+	@echo Deploying ContainerLab topology
+	@cd test/e2e/clab && sudo clab deploy --topo topology.clab.yml
+
+clab-down:
+	@echo Destroying ContainerLab topology
+	@cd test/e2e/clab && sudo clab destroy --topo topology.clab.yml
+
+test-e2e-integration:
+	@echo Running E2E integration tests (requires clab-up)
+	@go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/...
 
 check:
 	@test -z $(shell gofmt -l main.go | tee /dev/stderr) || echo "[WARN] Fix formatting issues with 'make fmt'"
