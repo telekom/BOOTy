@@ -6,6 +6,8 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/caprf"
@@ -81,6 +83,10 @@ func setupMountsAndDevices() {
 
 // runCAPRF runs the CAPRF provisioning flow (ISO-based, /deploy/vars config).
 func runCAPRF(ctx context.Context) {
+	// Handle SIGTERM/SIGINT for graceful shutdown.
+	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
+	defer cancel()
+
 	client, err := caprf.New(varsPath)
 	if err != nil {
 		slog.Error("Failed to create CAPRF client", "error", err)

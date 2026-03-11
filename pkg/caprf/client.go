@@ -105,6 +105,28 @@ func (c *Client) FetchCommands(_ context.Context) ([]config.Command, error) {
 }
 
 func (c *Client) postWithAuth(ctx context.Context, url, body string) error {
+	var lastErr error
+	for attempt := range 3 {
+		if attempt > 0 {
+			backoff := time.Duration(1<<(attempt-1)) * time.Second // 1s, 2s
+			slog.Info("Retrying request", "url", url, "attempt", attempt+1, "backoff", backoff)
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		lastErr = c.doPost(ctx, url, body)
+		if lastErr == nil {
+			return nil
+		}
+		slog.Warn("Request failed", "url", url, "attempt", attempt+1, "error", lastErr)
+	}
+	return lastErr
+}
+
+func (c *Client) doPost(ctx context.Context, url, body string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url,
 		strings.NewReader(body))
 	if err != nil {

@@ -59,6 +59,11 @@ jobs:
           docker push ghcr.io/telekom/booty:${GITHUB_REF_NAME#v}
           docker push ghcr.io/telekom/booty:latest
 
+      - name: Extract initramfs from container
+        run: |
+          docker run --rm ghcr.io/telekom/booty:${GITHUB_REF_NAME#v} \
+            cat /initramfs.cpio.gz > booty-initramfs.cpio.gz
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -66,3 +71,4 @@ jobs:
           files: |
             booty-linux-amd64
             booty-linux-arm64
+            booty-initramfs.cpio.gz

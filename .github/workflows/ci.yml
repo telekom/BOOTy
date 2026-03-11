@@ -42,6 +42,15 @@ jobs:
       - name: Run tests
         run: go test -v -race -coverprofile=coverage.out -count=1 ./...
 
+      - name: Check coverage gate (80%)
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $NF}' | tr -d '%')
+          echo "Total coverage: ${COVERAGE}%"
+          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+            echo "::error::Coverage ${COVERAGE}% is below the 80% minimum"
+            exit 1
+          fi
+
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         with:
