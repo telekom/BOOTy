@@ -265,7 +265,7 @@ func applyVar(cfg *config.MachineConfig, key, value string) {
 
 	switch key {
 	case "IMAGE":
-		cfg.ImageURLs = strings.Fields(value)
+		cfg.ImageURLs = strings.Fields(strings.ReplaceAll(value, ",", " "))
 	case "IMAGE_CHECKSUM":
 		cfg.ImageChecksum = value
 	case "IMAGE_CHECKSUM_TYPE":

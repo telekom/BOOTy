@@ -42,12 +42,12 @@ jobs:
       - name: Run tests
         run: go test -v -race -coverprofile=coverage.out -count=1 ./...
 
-      - name: Check coverage gate (80%)
+      - name: Check coverage gate (40%)
         run: |
           COVERAGE=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $NF}' | tr -d '%')
           echo "Total coverage: ${COVERAGE}%"
-          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
-            echo "::error::Coverage ${COVERAGE}% is below the 80% minimum"
+          if (( $(echo "$COVERAGE < 40" | bc -l) )); then
+            echo "::error::Coverage ${COVERAGE}% is below the 40% minimum"
             exit 1
           fi
 

@@ -47,8 +47,11 @@ func WaitForHTTP(ctx context.Context, target string, timeout time.Duration) erro
 		resp, err := client.Do(req) //nolint:gosec // target is from trusted config
 		if err == nil {
 			_ = resp.Body.Close()
-			slog.Info("Network connectivity established", "target", target, "attempt", attempt)
-			return nil
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				slog.Info("Network connectivity established", "target", target, "attempt", attempt)
+				return nil
+			}
+			slog.Debug("Connectivity check: server not ready", "target", target, "status", resp.StatusCode)
 		}
 
 		slog.Debug("Connectivity check failed", "target", target, "attempt", attempt, "error", err)

@@ -62,6 +62,22 @@ func DeriveIPFromOffset(sourceIP, sourceSubnet, targetSubnet string) (string, er
 
 	src4 := src.To4()
 	if src4 != nil {
+		// Cross-family: IPv4 source + IPv6 target — compute offset from IPv4, apply to IPv6.
+		if tgtNet.IP.To4() == nil {
+			srcBase := srcNet.IP.To4()
+			if srcBase == nil {
+				return "", fmt.Errorf("invalid IPv4 source subnet")
+			}
+			offset := ipToUint32(src4) - ipToUint32(srcBase)
+			result := make(net.IP, 16)
+			copy(result, tgtNet.IP.To16())
+			tgtLast4 := ipToUint32(tgtNet.IP.To16()[12:16]) + offset
+			result[12] = byte(tgtLast4 >> 24) //nolint:gosec // intentional truncation for IP byte extraction
+			result[13] = byte(tgtLast4 >> 16) //nolint:gosec // intentional truncation
+			result[14] = byte(tgtLast4 >> 8)  //nolint:gosec // intentional truncation
+			result[15] = byte(tgtLast4)       //nolint:gosec // intentional truncation
+			return result.String(), nil
+		}
 		return deriveIPv4Offset(src4, srcNet, tgtNet)
 	}
 	return deriveIPv6Offset(src.To16(), srcNet, tgtNet)

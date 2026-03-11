@@ -282,7 +282,7 @@ func runStandby(ctx context.Context, client config.Provider, cfg *config.Machine
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("Standby context cancelled, shutting down")
+			slog.Info("Standby context canceled, shutting down")
 			if err := netMode.Teardown(ctx); err != nil {
 				slog.Warn("Network teardown error", "error", err)
 			}
