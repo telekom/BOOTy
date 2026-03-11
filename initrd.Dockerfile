@@ -102,10 +102,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=busybox /initramfs.cpio.gz /iso/boot/initrd.img
 
 # Fetch a kernel — use the Debian cloud kernel (lightweight, no initramfs deps)
-RUN apt-get update && apt-get download linux-image-cloud-amd64 2>/dev/null && \
-    dpkg-deb -x linux-image-cloud-amd64*.deb /tmp/kernel && \
-    cp /tmp/kernel/boot/vmlinuz-* /iso/boot/vmlinuz && \
-    rm -rf /tmp/kernel linux-image-cloud-amd64*.deb /var/lib/apt/lists/*
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends linux-image-cloud-amd64 && \
+    cp /boot/vmlinuz-* /iso/boot/vmlinuz && \
+    rm -rf /var/lib/apt/lists/*
 
 # ISOLINUX bootloader
 RUN mkdir -p /iso/isolinux && \
@@ -161,7 +161,7 @@ RUN find . -print0 | cpio --null -ov --format=newc > ../initramfs.cpio \
 FROM scratch AS slim
 COPY --from=slim-builder /initramfs.cpio.gz .
 
-# ── Micro target: pure-Go BOOTy only, gokrazy-inspired ────────────────────
+# ── Micro target: pure-Go BOOTy only, no external binaries ────────────────
 FROM golang:1.26-alpine AS micro-dev
 RUN apk add --no-cache git ca-certificates
 COPY . /go/src/github.com/telekom/BOOTy/

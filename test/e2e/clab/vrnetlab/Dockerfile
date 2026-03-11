@@ -16,10 +16,9 @@ RUN CGO_ENABLED=1 GOOS=linux go build -a \
 # ── Stage 2: Extract a bootable kernel ────────────────────────────────
 FROM debian:bookworm-slim AS kernel
 RUN apt-get update && \
-    apt-get download linux-image-cloud-amd64 2>/dev/null && \
-    dpkg-deb -x linux-image-cloud-amd64*.deb /tmp/kernel && \
-    cp /tmp/kernel/boot/vmlinuz-* /vmlinuz && \
-    rm -rf /tmp/kernel *.deb /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends linux-image-cloud-amd64 && \
+    cp /boot/vmlinuz-* /vmlinuz && \
+    rm -rf /var/lib/apt/lists/*
 
 # ── Stage 3: Assemble initramfs ───────────────────────────────────────
 FROM debian:bookworm-slim AS initramfs
