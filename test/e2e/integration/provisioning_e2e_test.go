@@ -234,12 +234,12 @@ func TestImageDownloadViaGoClient(t *testing.T) {
 func TestImageDownloadViaOverlayFromClient(t *testing.T) {
     requireNetworkLab(t)
 
-    body := curlFromClient(t, "http://10.100.0.10/images/test.img")
+    body := wgetFromClient(t, "http://10.100.0.10/images/test.img")
     if !strings.Contains(body, "BOOTY-TEST-IMAGE-CONTENT") {
         t.Fatalf("overlay image mismatch: %s", body)
     }
 
-    html := curlFromClient(t, "http://10.100.0.10/")
+    html := wgetFromClient(t, "http://10.100.0.10/")
     if !strings.Contains(html, "booty-lab") {
         t.Fatalf("overlay static content mismatch: %s", html)
     }
@@ -525,7 +525,7 @@ func TestFullProvisioningFlow(t *testing.T) {
 
     // Step 5: Also verify image download through EVPN overlay
     t.Log("Step 5: Verifying image download through EVPN overlay")
-    overlayBody := curlFromClient(t, "http://10.100.0.10/images/test.img")
+    overlayBody := wgetFromClient(t, "http://10.100.0.10/images/test.img")
     if !strings.Contains(overlayBody, "BOOTY-TEST-IMAGE-CONTENT") {
         t.Fatalf("overlay image mismatch: %s", overlayBody)
     }

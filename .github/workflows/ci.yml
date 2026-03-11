@@ -526,16 +526,26 @@ jobs:
       - name: Boot ISO with UEFI firmware (OVMF) and validate
         timeout-minutes: 5
         run: |
-          # Find OVMF firmware (path varies between Ubuntu versions).
-          OVMF=$(find /usr/share -name "OVMF_CODE*.fd" 2>/dev/null | head -1)
-          if [ -z "$OVMF" ]; then
+          # Find OVMF firmware — OVMF requires pflash, not -bios.
+          OVMF_CODE=$(find /usr/share -name "OVMF_CODE*.fd" ! -name "*snakeoil*" 2>/dev/null | head -1)
+          if [ -z "$OVMF_CODE" ]; then
+            OVMF_CODE=$(find /usr/share -name "OVMF_CODE*.fd" 2>/dev/null | head -1)
+          fi
+          OVMF_VARS=$(find /usr/share -name "OVMF_VARS*.fd" ! -name "*snakeoil*" 2>/dev/null | head -1)
+          if [ -z "$OVMF_VARS" ]; then
+            OVMF_VARS=$(find /usr/share -name "OVMF_VARS*.fd" 2>/dev/null | head -1)
+          fi
+          if [ -z "$OVMF_CODE" ] || [ -z "$OVMF_VARS" ]; then
             echo "OVMF firmware not found"
             exit 1
           fi
-          echo "Using OVMF firmware: $OVMF"
+          echo "Using OVMF code: $OVMF_CODE"
+          echo "Using OVMF vars: $OVMF_VARS"
+          cp "$OVMF_VARS" /tmp/ovmf_vars.fd
 
           timeout 120 qemu-system-x86_64 \
-            -bios "$OVMF" \
+            -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+            -drive if=pflash,format=raw,file=/tmp/ovmf_vars.fd \
             -cdrom test-uefi.iso \
             -boot d \
             -m 512 \

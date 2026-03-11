@@ -38,10 +38,12 @@ func TestBGPPeerEstablished(t *testing.T) {
 	requireContainerLab(t)
 
 	// Give BGP time to converge.
+	// FRR shows a numeric PfxRcd value (not "Estab") when the peer is established.
+	// When a peer is NOT established, the State/PfxRcd column shows words like "Active", "Connect", etc.
 	var established bool
 	for range 30 {
 		out := dockerExec(t, "clab-booty-lab-spine01", "vtysh", "-c", "show bgp summary")
-		if strings.Contains(out, "Estab") {
+		if strings.Contains(out, "leaf01") && !strings.Contains(out, "Active") && !strings.Contains(out, "Connect") && !strings.Contains(out, "OpenSent") && !strings.Contains(out, "OpenConfirm") && strings.Contains(out, "65001") {
 			established = true
 			t.Logf("BGP established:\n%s", out)
 			break
@@ -58,11 +60,21 @@ func TestBGPEVPNAddressFamily(t *testing.T) {
 	requireContainerLab(t)
 
 	// Verify EVPN address family is active on spine.
-	out := dockerExec(t, "clab-booty-lab-spine01", "vtysh", "-c", "show bgp l2vpn evpn summary")
-	if !strings.Contains(out, "Estab") {
+	// FRR shows numeric PfxRcd when established; non-established shows "Active"/"Connect"/etc.
+	var active bool
+	for range 30 {
+		out := dockerExec(t, "clab-booty-lab-spine01", "vtysh", "-c", "show bgp l2vpn evpn summary")
+		if strings.Contains(out, "leaf01") && !strings.Contains(out, "Active") && !strings.Contains(out, "Connect") && strings.Contains(out, "65001") {
+			active = true
+			t.Logf("EVPN summary:\n%s", out)
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+	if !active {
+		out := dockerExec(t, "clab-booty-lab-spine01", "vtysh", "-c", "show bgp l2vpn evpn summary")
 		t.Fatalf("EVPN address family not established:\n%s", out)
 	}
-	t.Logf("EVPN summary:\n%s", out)
 }
 
 func TestLeafLoopbackReachable(t *testing.T) {

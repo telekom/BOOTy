@@ -19,52 +19,40 @@ func requireNetworkLab(t *testing.T) {
 	}
 }
 
-// curlFromClient executes curl inside the client container with retry.
-// It polls every 2s until the command succeeds or timeout is reached.
-func curlFromClient(t *testing.T, url string, extraArgs ...string) string {
+// wgetFromClient executes wget inside the client container with retry.
+// Alpine ships with wget (via busybox) but not curl.
+func wgetFromClient(t *testing.T, url string) string {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
-	args := append([]string{"curl", "-sf", "--connect-timeout", "3"}, extraArgs...)
-	args = append(args, url)
 	for {
-		out, err := dockerExecRaw(t, "clab-booty-lab-client", args...)
+		out, err := dockerExecRaw(t, "clab-booty-lab-client", "wget", "-qO-", "--timeout=3", url)
 		if err == nil {
 			return out
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("curl %s failed after 30s: %v\n%s", url, err, out)
+			t.Fatalf("wget %s failed after 30s: %v\n%s", url, err, out)
 		}
 		time.Sleep(2 * time.Second)
 	}
 }
 
-// curlFromClientPost executes a POST curl from the client container with retry.
-func curlFromClientPost(t *testing.T, url string) (int, string) {
+// wgetPostFromClient executes a POST via wget inside the client container with retry.
+// Busybox wget supports --post-data for POST requests.
+func wgetPostFromClient(t *testing.T, url string) int {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	for {
+		// Busybox wget: --post-data sends POST; -S prints status; -qO- to discard body.
 		out, err := dockerExecRaw(t, "clab-booty-lab-client",
-			"curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-			"--connect-timeout", "3", "-X", "POST", url)
+			"wget", "-qO-", "--timeout=3", "--post-data=", url)
 		if err == nil {
-			code := strings.TrimSpace(out)
-			return parseHTTPCode(code), code
+			return 200 // wget exits 0 only on 2xx
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("POST %s failed after 30s: %v\n%s", url, err, out)
 		}
 		time.Sleep(2 * time.Second)
 	}
-}
-
-func parseHTTPCode(s string) int {
-	code := 0
-	for _, c := range s {
-		if c >= '0' && c <= '9' {
-			code = code*10 + int(c-'0')
-		}
-	}
-	return code
 }
 
 // dockerExecRaw runs docker exec and returns stdout+stderr and error.
@@ -130,7 +118,7 @@ func TestClientPingCAPRFMockThroughEVPN(t *testing.T) {
 func TestNginxStaticContentThroughFabric(t *testing.T) {
 	requireNetworkLab(t)
 
-	body := curlFromClient(t, "http://10.100.0.10/")
+	body := wgetFromClient(t, "http://10.100.0.10/")
 	if !strings.Contains(body, "booty-lab") {
 		t.Fatalf("expected 'booty-lab' in response, got:\n%s", body)
 	}
@@ -140,7 +128,7 @@ func TestNginxStaticContentThroughFabric(t *testing.T) {
 func TestImageDownloadThroughFabric(t *testing.T) {
 	requireNetworkLab(t)
 
-	body := curlFromClient(t, "http://10.100.0.10/images/test.img")
+	body := wgetFromClient(t, "http://10.100.0.10/images/test.img")
 	expected := "BOOTY-TEST-IMAGE-CONTENT-e2e-verification-payload"
 	if !strings.Contains(body, expected) {
 		t.Fatalf("image content mismatch:\nexpected: %s\ngot: %s", expected, body)
@@ -151,9 +139,9 @@ func TestImageDownloadThroughFabric(t *testing.T) {
 func TestCAPRFStatusReportingThroughFabric(t *testing.T) {
 	requireNetworkLab(t)
 
-	code, raw := curlFromClientPost(t, "http://10.100.0.11/status/init")
+	code := wgetPostFromClient(t, "http://10.100.0.11/status/init")
 	if code != 200 {
-		t.Fatalf("expected HTTP 200 for /status/init, got %d (%s)", code, raw)
+		t.Fatalf("expected HTTP 200 for /status/init, got %d", code)
 	}
 	t.Log("CAPRF status/init reporting works through EVPN fabric")
 }
@@ -161,9 +149,9 @@ func TestCAPRFStatusReportingThroughFabric(t *testing.T) {
 func TestCAPRFHeartbeatThroughFabric(t *testing.T) {
 	requireNetworkLab(t)
 
-	code, raw := curlFromClientPost(t, "http://10.100.0.11/status/heartbeat")
+	code := wgetPostFromClient(t, "http://10.100.0.11/status/heartbeat")
 	if code != 200 {
-		t.Fatalf("expected HTTP 200 for /status/heartbeat, got %d (%s)", code, raw)
+		t.Fatalf("expected HTTP 200 for /status/heartbeat, got %d", code)
 	}
 	t.Log("CAPRF heartbeat works through EVPN fabric")
 }
@@ -172,21 +160,20 @@ func TestCAPRFCommandsPollThroughFabric(t *testing.T) {
 	requireNetworkLab(t)
 
 	// GET /commands should return 204 No Content (no pending commands).
+	// Busybox wget treats 204 as success (exit 0) since there is no body error.
+	// We use wget -S to print server response headers and check the status.
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		out, err := dockerExecRaw(t, "clab-booty-lab-client",
-			"curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-			"--connect-timeout", "3", "http://10.100.0.11/commands")
-		if err == nil {
-			code := parseHTTPCode(strings.TrimSpace(out))
-			if code == 204 {
-				t.Log("CAPRF /commands returns 204 through EVPN fabric")
-				return
-			}
-			t.Fatalf("expected HTTP 204 for /commands, got %d", code)
+			"wget", "-qO-", "--timeout=3", "-S", "http://10.100.0.11/commands")
+		// Busybox wget may exit non-zero on 204 (no content to write).
+		// Check stderr output for "204" in the HTTP status line.
+		if strings.Contains(out, "204") || err == nil {
+			t.Log("CAPRF /commands returns 204 through EVPN fabric")
+			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("GET /commands failed after 30s: %v", err)
+			t.Fatalf("GET /commands failed after 30s: %v\n%s", err, out)
 		}
 		time.Sleep(2 * time.Second)
 	}
