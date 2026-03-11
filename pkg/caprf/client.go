@@ -146,7 +146,7 @@ func (c *Client) postWithAuth(ctx context.Context, url, body string) error {
 			select {
 			case <-time.After(backoff):
 			case <-ctx.Done():
-				return ctx.Err()
+				return fmt.Errorf("request retry canceled: %w", ctx.Err())
 			}
 		}
 

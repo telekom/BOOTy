@@ -15,6 +15,7 @@ import (
 // Format represents a detected compression format.
 type Format string
 
+// Supported compression formats.
 const (
 	FormatRaw   Format = "raw"
 	FormatGzip  Format = "gzip"
@@ -81,7 +82,8 @@ func Decompressor(r io.Reader, f Format) (io.Reader, io.Closer, error) {
 		if err != nil {
 			return nil, nil, fmt.Errorf("zstd reader: %w", err)
 		}
-		return zr, zr.IOReadCloser(), nil
+		closer := zr.IOReadCloser()
+		return zr, closer, nil
 
 	case FormatLZ4:
 		return lz4.NewReader(r), nil, nil

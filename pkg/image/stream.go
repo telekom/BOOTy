@@ -74,7 +74,7 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 
 	// If checksum is requested, tee through a hash writer.
 	var h hash.Hash
-	var src io.Reader = decompressed
+	src := decompressed
 	if opt.Checksum != "" {
 		h, err = newHash(opt.ChecksumType)
 		if err != nil {
