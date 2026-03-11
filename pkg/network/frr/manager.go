@@ -373,8 +373,13 @@ func (m *Manager) writeFRRConfig(conf string) error {
 	if err := os.MkdirAll("/etc/frr", 0o755); err != nil {
 		return fmt.Errorf("create /etc/frr: %w", err)
 	}
-	if err := os.WriteFile("/etc/frr/frr.conf", []byte(conf), 0o640); err != nil {
+	if err := os.WriteFile("/etc/frr/frr.conf", []byte(conf), 0o644); err != nil {
 		return fmt.Errorf("write frr.conf: %w", err)
+	}
+	// vtysh.conf must exist for integrated config mode.
+	vtyshConf := "service integrated-vtysh-config\n"
+	if err := os.WriteFile("/etc/frr/vtysh.conf", []byte(vtyshConf), 0o644); err != nil {
+		return fmt.Errorf("write vtysh.conf: %w", err)
 	}
 	return nil
 }
@@ -413,27 +418,55 @@ bfdd_options="   -A 127.0.0.1"
 
 func (m *Manager) startFRR(ctx context.Context) error {
 	out, err := m.commander.Run(ctx, "systemctl", "restart", "frr")
-	if err != nil {
-		slog.Warn("systemctl restart frr failed, trying direct daemon start",
-			"error", err, "output", string(out))
-		return m.startDaemonsDirect(ctx)
+	if err == nil {
+		slog.Info("FRR daemons started via systemctl")
+		return nil
 	}
-	slog.Info("FRR daemons started via systemctl")
-	return nil
+	slog.Warn("systemctl restart frr failed, trying frrinit.sh",
+		"error", err, "output", string(out))
+
+	initPath := "/usr/lib/frr/frrinit.sh"
+	if _, statErr := os.Stat(initPath); statErr == nil {
+		out, err = m.commander.Run(ctx, initPath, "start")
+		if err == nil {
+			slog.Info("FRR daemons started via frrinit.sh")
+			return nil
+		}
+		slog.Warn("frrinit.sh start failed, falling back to direct daemon start",
+			"error", err, "output", string(out))
+	}
+
+	return m.startDaemonsDirect(ctx)
 }
 
 func (m *Manager) startDaemonsDirect(ctx context.Context) error {
-	for _, daemon := range []string{"zebra", "bgpd", "bfdd"} {
-		path := "/usr/lib/frr/" + daemon
+	// FRR 10.x requires mgmtd before other daemons; staticd is always needed.
+	// bgpd needs -f to read the integrated frr.conf config file.
+	type daemonSpec struct {
+		name string
+		args []string
+	}
+	daemons := []daemonSpec{
+		{"mgmtd", []string{"-d", "-A", "127.0.0.1"}},
+		{"zebra", []string{"-d", "-A", "127.0.0.1", "-s", "90000000"}},
+		{"staticd", []string{"-d", "-A", "127.0.0.1"}},
+		{"bgpd", []string{"-d", "-A", "127.0.0.1", "-f", "/etc/frr/frr.conf"}},
+		{"bfdd", []string{"-d", "-A", "127.0.0.1"}},
+	}
+	for _, d := range daemons {
+		path := "/usr/lib/frr/" + d.name
 		if _, err := os.Stat(path); err != nil {
-			slog.Debug("Daemon not found, skipping", "daemon", daemon)
+			slog.Debug("Daemon not found, skipping", "daemon", d.name)
 			continue
 		}
-		out, err := m.commander.Run(ctx, path, "-d", "-A", "127.0.0.1")
+		out, err := m.commander.Run(ctx, path, d.args...)
 		if err != nil {
 			slog.Warn("Failed to start daemon",
-				"daemon", daemon, "error", err, "output", string(out))
+				"daemon", d.name, "error", err, "output", string(out))
+		} else {
+			slog.Info("Started FRR daemon", "daemon", d.name)
 		}
+		time.Sleep(500 * time.Millisecond) // allow daemon to initialize
 	}
 	return nil
 }
@@ -487,7 +520,9 @@ func waitForHTTPWithFRR(ctx context.Context, cmd Commander, target string, timeo
 
 		if time.Since(lastRestart) >= restartInterval {
 			slog.Info("Restarting FRR daemons for connectivity recovery")
-			_, _ = cmd.Run(ctx, "systemctl", "restart", "frr")
+			if _, sErr := cmd.Run(ctx, "systemctl", "restart", "frr"); sErr != nil {
+				_, _ = cmd.Run(ctx, "/usr/lib/frr/frrinit.sh", "restart")
+			}
 			lastRestart = time.Now()
 		}
 

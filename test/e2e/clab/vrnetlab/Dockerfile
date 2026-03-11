@@ -56,7 +56,7 @@ COPY --from=builder /booty /initramfs/booty
 # FRR daemons and dependencies for EVPN networking.
 # Copy binaries and resolve all shared library dependencies.
 RUN mkdir -p /initramfs/lib64 /initramfs/lib/x86_64-linux-gnu && \
-    for bin in /usr/lib/frr/zebra /usr/lib/frr/bgpd /usr/lib/frr/bfdd /usr/bin/vtysh; do \
+    for bin in /usr/lib/frr/mgmtd /usr/lib/frr/zebra /usr/lib/frr/staticd /usr/lib/frr/bgpd /usr/lib/frr/bfdd /usr/bin/vtysh; do \
         dest="/initramfs$(dirname $bin)"; \
         mkdir -p "$dest"; \
         cp "$bin" "/initramfs${bin}"; \
