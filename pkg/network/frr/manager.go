@@ -146,8 +146,9 @@ func (m *Manager) startFRRStack(ctx context.Context, cfg *network.Config, underl
 		return fmt.Errorf("start FRR: %w", err)
 	}
 
-	// Peers are defined statically in frr.conf via the config builder.
-	// No vtysh addBGPPeer calls needed — FRR loads them from the config file.
+	// Peers are declared in the dynamically generated frr.conf (via RenderConfig
+	// which receives the detected NIC names). No vtysh addBGPPeer calls needed —
+	// FRR loads them from the config file at startup.
 
 	return nil
 }
