@@ -13,7 +13,7 @@ require (
 	github.com/ulikunitz/xz v0.5.15
 	github.com/vishvananda/netlink v1.3.1
 	github.com/zcalusic/sysinfo v1.1.3
-	golang.org/x/sys v0.41.0
+	golang.org/x/sys v0.42.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
