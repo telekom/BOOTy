@@ -123,7 +123,17 @@ func TestVrnetlabBGPSessionsEstablished(t *testing.T) {
 	}
 	if !established {
 		out, _ := vmDockerExec(t, vmSpine, "vtysh", "-c", "show bgp summary")
-		t.Fatalf("BGP sessions not established on spine01\n%s", out)
+		nbr, _ := vmDockerExec(t, vmSpine, "vtysh", "-c", "show bgp neighbor json")
+		bfd, _ := vmDockerExec(t, vmSpine, "vtysh", "-c", "show bfd peers json")
+		// Retrieve VM-side FRR state via docker logs (serial console output).
+		vmLogs := getVMSerialLog(t, vmProvision)
+		vmTail := ""
+		if len(vmLogs) > 2000 {
+			vmTail = vmLogs[len(vmLogs)-2000:]
+		} else {
+			vmTail = vmLogs
+		}
+		t.Fatalf("BGP sessions not established on spine01\nSummary:\n%s\nNeighbor JSON:\n%s\nBFD JSON:\n%s\nVM serial (tail):\n%s", out, nbr, bfd, vmTail)
 	}
 }
 

@@ -891,6 +891,20 @@ jobs:
 
           echo ""
           echo "======================================="
+          echo "  BGP Neighbor Detail (spine01)"
+          echo "======================================="
+          timeout 15 sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp neighbor json" 2>/dev/null \
+            | tee vrnetlab-logs/bgp-neighbor.json || true
+
+          echo ""
+          echo "======================================="
+          echo "  BFD Peers (spine01)"
+          echo "======================================="
+          timeout 15 sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bfd peers json" 2>/dev/null \
+            | tee vrnetlab-logs/bfd-peers.json || true
+
+          echo ""
+          echo "======================================="
           echo "  EVPN State (spine01)"
           echo "======================================="
           timeout 15 sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null \

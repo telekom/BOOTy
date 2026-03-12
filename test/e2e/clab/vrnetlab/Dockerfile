@@ -80,9 +80,10 @@ COPY --from=builder /booty /initramfs/booty
 COPY --from=kernel /modules/ /initramfs/modules/
 
 # FRR daemons and dependencies for EVPN networking.
+# Match production initramfs: only bgpd, zebra, bfdd (no mgmtd/staticd).
 # Copy binaries and resolve all shared library dependencies.
 RUN mkdir -p /initramfs/lib64 /initramfs/lib/x86_64-linux-gnu && \
-    for bin in /usr/lib/frr/mgmtd /usr/lib/frr/zebra /usr/lib/frr/staticd /usr/lib/frr/bgpd /usr/lib/frr/bfdd /usr/bin/vtysh; do \
+    for bin in /usr/lib/frr/zebra /usr/lib/frr/bgpd /usr/lib/frr/bfdd /usr/bin/vtysh; do \
         dest="/initramfs$(dirname $bin)"; \
         mkdir -p "$dest"; \
         cp "$bin" "/initramfs${bin}"; \
