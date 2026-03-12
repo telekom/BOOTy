@@ -6,7 +6,9 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -32,6 +34,7 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 
 	setupMountsAndDevices()
+	loadModules()
 
 	slog.Info("Starting DHCP client")
 	go func() {
@@ -78,6 +81,32 @@ func setupMountsAndDevices() {
 	}
 	if err := m.MountAll(); err != nil {
 		slog.Error("Failed to mount filesystems", "error", err)
+	}
+}
+
+// loadModules loads kernel modules from /modules/ for common server NICs.
+// Modules are stored as a flat directory of .ko files.
+// Errors are non-fatal: modules may already be built-in or not needed.
+func loadModules() {
+	const moduleDir = "/modules"
+	entries, err := os.ReadDir(moduleDir)
+	if err != nil {
+		slog.Debug("No kernel modules directory, skipping", "path", moduleDir)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		ko := filepath.Join(moduleDir, entry.Name())
+		out, err := exec.CommandContext(ctx, "insmod", ko).CombinedOutput() //nolint:gosec // fixed path
+		if err != nil {
+			slog.Debug("Module load skipped", "module", entry.Name(), "output", string(out))
+			continue
+		}
+		slog.Info("Loaded kernel module", "module", entry.Name())
 	}
 }
 

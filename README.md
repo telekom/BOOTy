@@ -59,11 +59,15 @@ BOOTy operates in two modes depending on the boot environment:
 - **Dual-mode provisioning** — CAPRF (Kubernetes) and legacy (standalone) modes
 - **FRR/EVPN networking** — BGP underlay with VXLAN overlay for data center fabrics
 - **DHCP fallback** — Automatic fallback when FRR configuration is absent
+- **Broad NIC driver support** — Intel (e1000e, igb, igc, ixgbe, i40e, ice), Broadcom (tg3, bnxt_en), Mellanox/NVIDIA (mlx4, mlx5), plus virtio for VMs
 - **Gzip image streaming** — Transparent decompression during disk writes
 - **24-step provisioning pipeline** — RAID cleanup, disk detection, image streaming, partition growth, LVM, filesystem resize, OS configuration, EFI boot, Mellanox SR-IOV
 - **Kexec support** — Fast reboot into installed kernel without full BIOS POST (auto-disabled after firmware changes)
 - **Remote logging** — Real-time log and debug shipping to CAPRF controller
 - **Hard/soft deprovisioning** — Full disk wipe or GRUB rename for reprovisioning
+- **Standby mode** — Hot standby with heartbeats and command polling for sub-second provisioning
+- **Multi-architecture** — Builds for `linux/amd64` and `linux/arm64`
+- **Multiple build flavors** — Full (FRR+tools), slim (DHCP-only), micro (pure Go), ISO (bootable)
 
 ## Prerequisites
 
@@ -81,7 +85,7 @@ Build the complete initramfs with Docker:
 make build
 ```
 
-This compiles BOOTy for `linux/amd64` and `linux/arm64`, then packages BusyBox, LVM2, and cloud-utils into a bootable initramfs.
+This compiles BOOTy for `linux/amd64` and `linux/arm64`, then packages BusyBox, LVM2, FRR, and kernel modules for common server NICs into a bootable initramfs.
 
 To extract the initramfs to the local filesystem:
 
@@ -89,11 +93,57 @@ To extract the initramfs to the local filesystem:
 docker run ghcr.io/telekom/booty:latest tar -cf - /initramfs.cpio.gz | tar xf -
 ```
 
+### Build Flavors
+
+The `initrd.Dockerfile` supports multiple build targets via `--target`:
+
+| Target | Size | Networking | Disk Tools | Use Case |
+|--------|------|-----------|------------|----------|
+| *(default)* | ~80 MB | FRR/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production bare-metal provisioning |
+| `iso` | ~100 MB | FRR/EVPN + DHCP | Full | Bootable ISO for Redfish virtual media |
+| `slim` | ~15 MB | DHCP only | Minimal (e2fsck, resize2fs) | Lightweight provisioning without BGP |
+| `micro` | ~10 MB | None (pure Go) | None | Minimal agent, custom network stack |
+
+```bash
+# Build ISO (for Redfish BMC virtual media boot)
+docker build --target=iso -f initrd.Dockerfile -o type=local,dest=. .
+
+# Build slim initramfs
+docker build --target=slim -f initrd.Dockerfile -o type=local,dest=. .
+```
+
 ### Binary only
 
 ```bash
 GOOS=linux go build -o booty .
 ```
+
+## Hardware Compatibility
+
+### Network Interface Cards
+
+BOOTy includes kernel modules for common data center NICs. Modules are loaded
+automatically at boot from the `/modules/` directory in the initramfs.
+
+| Vendor | Driver | Hardware | Speed |
+|--------|--------|----------|-------|
+| **Intel** | `e1000e` | I217/I218/I219 | 1G |
+| **Intel** | `igb` | I350, I210/I211 | 1G |
+| **Intel** | `igc` | I225/I226 | 2.5G |
+| **Intel** | `ixgbe` | X520, X540, X550 (82599) | 10G |
+| **Intel** | `i40e` | X710, XL710, XXV710 | 10/25/40G |
+| **Intel** | `ice` | E810 | 25/50/100G |
+| **Intel** | `iavf` | Adaptive Virtual Function | VF |
+| **Broadcom** | `tg3` | NetXtreme BCM57xx | 1G |
+| **Broadcom** | `bnxt_en` | NetXtreme-E/C BCM573xx/574xx | 10/25/50/100G |
+| **NVIDIA/Mellanox** | `mlx4_core`/`mlx4_en` | ConnectX-3 | 10/40G |
+| **NVIDIA/Mellanox** | `mlx5_core` | ConnectX-4/5/6/7, BlueField | 10/25/40/50/100/200/400G |
+| **Emulex/Broadcom** | `be2net` | OneConnect OCe14xxx | 10G |
+| **QEMU/KVM** | `virtio_net` | VirtIO NIC | Virtual |
+
+**Mellanox SR-IOV**: ConnectX-4+ cards are automatically detected via `lspci` and
+configured for SR-IOV using `mstconfig` during provisioning (requires a hard reboot
+to apply firmware changes).
 
 ## Usage
 
@@ -165,10 +215,12 @@ go run server/server.go \
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `MODE` | `provision` | `provision`, `deprovision`, `soft-deprovision`, or `standby` |
 | `DISABLE_KEXEC` | `false` | Skip kexec, always hard-reboot |
-| `MIN_DISK_SIZE_GB` | `0` | Minimum disk size (0 = no minimum) |
+| `MIN_DISK_SIZE_GB` | `0` | Minimum disk size filter (0 = no minimum) |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters |
-| `MODE` | `provision` | `provision`, `deprovision`, or `soft-deprovision` |
+| `HEARTBEAT_URL` | — | Standby mode: URL for periodic keepalives |
+| `COMMANDS_URL` | — | Standby mode: URL to poll for pending commands |
 
 ### Debugging
 
@@ -197,26 +249,30 @@ make build
 ## Project Structure
 
 ```
-├── main.go                     # Entry point: CAPRF vs legacy mode detection
+├── main.go                     # Entry point: CAPRF vs legacy mode, kernel module loading
 ├── cmd/booty.go                # Legacy CLI orchestration
 ├── server/server.go            # Legacy provisioning server
+├── initrd.Dockerfile           # Multi-stage initramfs build (default, iso, slim, micro)
 ├── pkg/
 │   ├── caprf/                  # CAPRF client (status, log, debug, vars parsing)
 │   ├── config/                 # MachineConfig, Provider interface, Status types
 │   ├── disk/                   # Disk detection, partitioning, RAID, LVM, mount
 │   ├── image/                  # Image streaming (HTTP, gzip auto-detect)
 │   ├── kexec/                  # GRUB parsing, kexec load/execute
-│   ├── network/                # Network mode abstraction (FRR, DHCP)
+│   ├── network/                # Network mode abstraction (FRR, DHCP), NIC detection
 │   │   └── frr/               # FRR/EVPN: config rendering, address derivation
 │   ├── provision/              # Orchestrator (24-step provision, deprovision)
-│   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI
+│   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
 │   ├── plunderclient/          # Legacy HTTP client for config retrieval
 │   ├── realm/                  # Device, mount, network, shell operations
 │   ├── utils/                  # Cmdline parsing, helpers
 │   └── ux/                     # ASCII art & system info display
-├── test/e2e/                   # E2E tests (67 tests, build tag: e2e)
-├── initrd.Dockerfile           # Multi-stage initramfs build
-├── .github/workflows/          # CI, KVM boot test, release pipelines
+├── test/e2e/                   # E2E tests (ContainerLab + vrnetlab EVPN fabric)
+│   ├── clab/                   # ContainerLab topologies and FRR configs
+│   │   └── vrnetlab/          # QEMU VM image builder for vrnetlab testing
+│   └── integration/           # Integration test suites
+├── docs/                       # Design documents and proposals
+├── .github/workflows/          # CI (lint, test, build, E2E clab, E2E vrnetlab, KVM boot)
 └── .golangci.yml               # Linter configuration
 ```
 

@@ -1,5 +1,11 @@
 # CAPRF Provisioning Integration into BOOTy
 
+## Status: Implemented
+
+All phases below are complete. CI runs 12 jobs across lint, unit tests,
+build, E2E ContainerLab, E2E vrnetlab (EVPN boot), and KVM boot validation.
+All 12 jobs pass as of the `feat/carpf-integration` branch.
+
 ## Overview
 
 Integrate all cluster-api-provider-redfish (CAPRF) provisioning capabilities into BOOTy as a

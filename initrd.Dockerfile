@@ -43,6 +43,33 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     frr frr-pythontools && \
     rm -rf /var/lib/apt/lists/*
 
+# Extract kernel and NIC driver modules for bare-metal servers
+FROM debian:bookworm-slim AS kernel
+RUN apt-get update && \
+    REAL_PKG=$(apt-cache depends linux-image-amd64 | awk '/Depends:/{print $2}' | head -1) && \
+    apt-get download "$REAL_PKG" && \
+    dpkg-deb -x linux-image-*.deb /tmp/kernel && \
+    cp /tmp/kernel/boot/vmlinuz-* /vmlinuz && \
+    KVER=$(ls /tmp/kernel/lib/modules/ | head -1) && \
+    MDIR="/tmp/kernel/lib/modules/$KVER" && \
+    mkdir -p /modules && \
+    # QEMU/KVM virtio
+    for m in virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
+             virtio_pci virtio_net failover net_failover \
+    # VXLAN/bridge networking (FRR/EVPN)
+             dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc \
+    # Intel: e1000e (1G), igb (1G), igc (i225/i226), ixgbe (10G), i40e (10/25/40G), ice (25/50/100G), iavf (VF)
+             e1000e igb igc ixgbe i40e ice iavf \
+    # Broadcom: tg3 (legacy NetXtreme 1G), bnxt_en (NetXtreme-E/C 10/25/50/100G)
+             tg3 bnxt_en \
+    # Mellanox/NVIDIA: mlx4 (ConnectX-3), mlx5 (ConnectX-4/5/6/7)
+             mlx4_core mlx4_en mlx5_core mlxfw \
+    # Emulex/Broadcom: be2net (OneConnect)
+             be2net; do \
+        find "$MDIR" -name "${m}.ko*" -exec cp {} /modules/ \; 2>/dev/null || true; \
+    done && \
+    rm -rf /tmp/kernel *.deb /var/lib/apt/lists/*
+
 # Build disk and system tools
 FROM debian:bookworm-slim AS tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -91,6 +118,9 @@ COPY --from=tools /usr/bin/curl bin/curl
 COPY --from=tools /sbin/ip bin/ip
 COPY --from=tools /sbin/bridge bin/bridge
 
+# Kernel modules for common server NICs (flat directory, loaded via insmod)
+COPY --from=kernel /modules/ modules/
+
 # Package initramfs
 RUN find . -print0 | cpio --null -ov --format=newc > ../initramfs.cpio
 RUN gzip ../initramfs.cpio
@@ -104,13 +134,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=busybox /initramfs.cpio.gz /iso/boot/initrd.img
 
-# Fetch a kernel — use the Debian cloud kernel (lightweight, no initramfs deps)
-RUN apt-get update && \
-    REAL_PKG=$(apt-cache depends linux-image-cloud-amd64 | awk '/Depends:/{print $2}' | head -1) && \
-    apt-get download "$REAL_PKG" && \
-    dpkg-deb -x linux-image-*.deb /tmp/kernel && \
-    cp /tmp/kernel/boot/vmlinuz-* /iso/boot/vmlinuz && \
-    rm -rf /tmp/kernel *.deb /var/lib/apt/lists/*
+# Use the standard Debian kernel (has all common NIC drivers as modules)
+COPY --from=kernel /vmlinuz /iso/boot/vmlinuz
 
 # ISOLINUX bootloader
 RUN mkdir -p /iso/isolinux && \

@@ -1,11 +1,11 @@
 # Proposal: Standby Mode for BOOTy
 
-## Status: Partially Implemented
+## Status: Implemented
 
 The core standby loop, heartbeat, and command polling are implemented in
 `main.go` (`runStandby`) and `pkg/caprf/client.go` (`Heartbeat`,
-`FetchCommands`). The CAPRF server-side endpoints and hot-pool scheduling
-remain future work.
+`FetchCommands`). Both methods use real HTTP calls tested with `httptest.Server`.
+The E2E vrnetlab test suite validates standby heartbeat delivery end-to-end.
 
 ## Summary
 

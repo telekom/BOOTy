@@ -18,7 +18,7 @@ RUN CGO_ENABLED=1 GOOS=linux go build -a \
 # ── Stage 2: Extract a bootable kernel ────────────────────────────────
 FROM debian:bookworm-slim AS kernel
 RUN apt-get update && \
-    REAL_PKG=$(apt-cache depends linux-image-cloud-amd64 | awk '/Depends:/{print $2}' | head -1) && \
+    REAL_PKG=$(apt-cache depends linux-image-amd64 | awk '/Depends:/{print $2}' | head -1) && \
     apt-get download "$REAL_PKG" && \
     dpkg-deb -x linux-image-*.deb /tmp/kernel && \
     cp /tmp/kernel/boot/vmlinuz-* /vmlinuz && \
@@ -27,7 +27,12 @@ RUN apt-get update && \
     mkdir -p /modules && \
     for m in virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
              virtio_pci virtio_net failover net_failover \
-             dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc; do \
+             dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc \
+    # Common server NIC drivers (Intel, Broadcom, Mellanox/NVIDIA)
+             e1000e igb igc ixgbe i40e ice iavf \
+             tg3 bnxt_en \
+             mlx4_core mlx4_en mlx5_core mlxfw \
+             be2net; do \
         find "$MDIR" -name "${m}.ko*" -exec cp {} /modules/ \; ; \
     done && \
     rm -rf /tmp/kernel *.deb /var/lib/apt/lists/*
