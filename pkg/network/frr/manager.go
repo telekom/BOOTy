@@ -561,7 +561,10 @@ func (m *Manager) addBGPPeer(ctx context.Context, vrfName string, asn uint32, ni
 
 // waitForHTTPWithFRR polls target, restarting FRR every 20s if needed.
 func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duration, mgr *Manager) error {
-	log := mgr.log
+	log := slog.Default().With("component", "frr")
+	if mgr != nil {
+		log = mgr.log
+	}
 	if target == "" {
 		return fmt.Errorf("empty connectivity target URL")
 	}
