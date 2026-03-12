@@ -283,7 +283,7 @@ func TestFRRConfigRenderMatchesTopology(t *testing.T) {
         VRFName:        "Vrf_underlay",
     }
 
-    rendered, err := frr.RenderConfig(cfg, "10.0.0.1", []string{"eth1"})
+    rendered, err := frr.RenderConfig(cfg, "10.0.0.1", "", []string{"eth1"})
     if err != nil {
         t.Fatalf("RenderConfig: %v", err)
     }
@@ -315,7 +315,7 @@ func TestFRRConfigRenderOnefabric(t *testing.T) {
         VPNRT:            "65000:100",
     }
 
-    rendered, err := frr.RenderConfig(cfg, "10.0.0.1", []string{"eth1", "eth2"})
+    rendered, err := frr.RenderConfig(cfg, "10.0.0.1", "", []string{"eth1", "eth2"})
     if err != nil {
         t.Fatalf("RenderConfig onefabric: %v", err)
     }
