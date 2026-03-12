@@ -67,6 +67,7 @@ topology:
       exec:
         - ip addr add 10.100.0.10/24 dev eth1
         - ip link set dev eth1 up
+        - sh -c 'rm -f /var/log/nginx/access.log && touch /var/log/nginx/access.log && nginx -s reload'
 
     caprf-mock:
       kind: linux
@@ -78,6 +79,7 @@ topology:
       exec:
         - ip addr add 10.100.0.11/24 dev eth1
         - ip link set dev eth1 up
+        - sh -c 'rm -f /var/log/nginx/access.log && touch /var/log/nginx/access.log && nginx -s reload'
 
     # ── BOOTy boot nodes: one per mode, all on spine's bridge ──────────
     booty-provision:
