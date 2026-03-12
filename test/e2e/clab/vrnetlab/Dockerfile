@@ -46,7 +46,15 @@ RUN curl -s https://deb.frrouting.org/frr/keys.gpg \
 
 WORKDIR /initramfs
 RUN mkdir -p bin sbin dev proc sys etc tmp deploy lib/modules mnt \
-    usr/lib/frr usr/bin etc/frr var/run/frr lib
+    usr/lib/frr usr/bin etc/frr var/run/frr lib && \
+    echo 'root:x:0:0:root:/root:/bin/sh' > etc/passwd && \
+    echo 'frr:x:101:104::/var/run/frr:/bin/sh' >> etc/passwd && \
+    echo 'root:x:0:' > etc/group && \
+    echo 'frr:x:104:' >> etc/group && \
+    echo 'frrvty:x:103:frr' >> etc/group && \
+    echo 'passwd: files' > etc/nsswitch.conf && \
+    echo 'group: files' >> etc/nsswitch.conf && \
+    chown -R 101:104 etc/frr var/run/frr
 
 # Busybox: static binary + essential symlinks
 RUN cp /bin/busybox bin/busybox && \
@@ -74,7 +82,8 @@ RUN mkdir -p /initramfs/lib64 /initramfs/lib/x86_64-linux-gnu && \
             cp -n "$lib" "/initramfs${lib}" 2>/dev/null || true; \
         done; \
     done && \
-    cp /lib64/ld-linux-x86-64.so.2 /initramfs/lib64/ 2>/dev/null || true
+    cp /lib64/ld-linux-x86-64.so.2 /initramfs/lib64/ 2>/dev/null || true && \
+    cp /lib/x86_64-linux-gnu/libnss_files.so.2 /initramfs/lib/x86_64-linux-gnu/ 2>/dev/null || true
 
 # Init wrapper (PID 1 — sets up network then execs BOOTy)
 COPY test/e2e/clab/vrnetlab/init-wrapper.sh /initramfs/init

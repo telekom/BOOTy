@@ -120,7 +120,7 @@ func TestBootAllNodesReachCAPRF(t *testing.T) {
 			// run all 3 connectivity checks in parallel with a generous budget.
 			var reachable bool
 			for i := 0; i < 420; i++ {
-				_, err := bootDockerExec(t, c.name, "wget", "-q", "-O", "/dev/null", "--timeout=2", "http://10.100.0.11/")
+				_, err := bootDockerExec(t, c.name, "wget", "-q", "-O", "/dev/null", "--timeout=2", "http://10.100.0.11/health")
 				if err == nil {
 					reachable = true
 					break
