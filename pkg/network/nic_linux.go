@@ -56,14 +56,12 @@ func DetectPhysicalNICs() ([]string, error) {
 
 // detectNICsOnce performs a single scan of network interfaces and reports
 // whether any temporary containerlab names (clab-*) were found.
-func detectNICsOnce() ([]string, bool, error) {
+func detectNICsOnce() (nics []string, hasTemp bool, err error) {
 	links, err := netlink.LinkList()
 	if err != nil {
 		return nil, false, fmt.Errorf("list links: %w", err)
 	}
 
-	var nics []string
-	hasTemp := false
 	for _, link := range links {
 		name := link.Attrs().Name
 		if isExcluded(name) {
