@@ -307,7 +307,7 @@ func DumpDebugState(failedStep string) {
 	}
 
 	for _, dc := range debugCmds {
-		out, err := exec.Command("sh", "-c", dc.cmd).CombinedOutput() //nolint:gosec // debug cmds are hardcoded
+		out, err := exec.CommandContext(context.Background(), "sh", "-c", dc.cmd).CombinedOutput() //nolint:gosec // debug cmds are hardcoded
 		if err != nil {
 			slog.Error("Debug command failed", "label", dc.label, "error", err)
 			continue

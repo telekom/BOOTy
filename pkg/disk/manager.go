@@ -185,14 +185,15 @@ func (m *Manager) CreateRAIDArray(ctx context.Context, name string, level int, d
 
 	slog.Info("Creating RAID array", "name", name, "level", level, "devices", devices)
 
-	args := []string{
-		"--create", "/dev/" + name,
+	args := make([]string, 0, 10+len(devices))
+	args = append(args,
+		"--create", "/dev/"+name,
 		"--level", strconv.Itoa(level),
 		"--raid-devices", strconv.Itoa(len(devices)),
-		"--run",       // don't ask for confirmation
-		"--force",     // force creation
+		"--run",   // don't ask for confirmation
+		"--force", // force creation
 		"--metadata", "1.2",
-	}
+	)
 	args = append(args, devices...)
 
 	out, err := m.cmd.Run(ctx, "mdadm", args...)
@@ -366,12 +367,12 @@ func (m *Manager) MountPartition(_ context.Context, device, mountpoint string) e
 	}
 	var errs []string
 	for _, fsType := range supportedFilesystems {
-		if err := syscall.Mount(device, mountpoint, fsType, 0, ""); err == nil {
+		err := syscall.Mount(device, mountpoint, fsType, 0, "")
+		if err == nil {
 			slog.Info("Mounted partition", "device", device, "fsType", fsType)
 			return nil
-		} else {
-			errs = append(errs, fmt.Sprintf("%s=%v", fsType, err))
 		}
+		errs = append(errs, fmt.Sprintf("%s=%v", fsType, err))
 	}
 	return fmt.Errorf("mounting %s at %s: tried %s", device, mountpoint, strings.Join(errs, ", "))
 }
@@ -426,13 +427,11 @@ func (m *Manager) EnableLVM(ctx context.Context) error {
 	return nil
 }
 
-// ChrootRun executes a command in a chroot environment using Go's
-// SysProcAttr.Chroot, eliminating the need for the external chroot binary.
+// ChrootRun executes a command in a chroot environment.
+// When using a mock commander (tests), the command is routed through the commander.
+// For real execution, the external chroot binary is used.
 func (m *Manager) ChrootRun(ctx context.Context, root, command string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "/bin/bash", "-c", command)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Chroot: root}
-	cmd.Dir = "/"
-	out, err := cmd.CombinedOutput()
+	out, err := m.cmd.Run(ctx, "chroot", root, "/bin/bash", "-c", command)
 	if err != nil {
 		return out, fmt.Errorf("chroot exec in %s: %w", root, err)
 	}

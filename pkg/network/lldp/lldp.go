@@ -38,7 +38,7 @@ func Listen(ctx context.Context, iface string, timeout time.Duration) (*Neighbor
 	if err != nil {
 		return nil, fmt.Errorf("raw socket: %w", err)
 	}
-	defer unix.Close(fd)
+	defer func() { _ = unix.Close(fd) }()
 
 	// Bind to specific interface.
 	addr := unix.SockaddrLinklayer{

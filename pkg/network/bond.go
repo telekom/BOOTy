@@ -42,7 +42,7 @@ func (b *BondMode) Setup(_ context.Context, cfg *Config) error {
 	}
 
 	bond := netlink.NewLinkBond(netlink.LinkAttrs{Name: "bond0"})
-	bond.Mode = netlink.BondMode(mode)
+	bond.Mode = mode
 	bond.LacpRate = netlink.BOND_LACP_RATE_FAST
 	bond.XmitHashPolicy = netlink.BOND_XMIT_HASH_POLICY_LAYER3_4
 

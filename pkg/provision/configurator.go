@@ -245,12 +245,12 @@ func (c *Configurator) RemoveEFIBootEntries(ctx context.Context) error {
 }
 
 // CreateEFIBootEntry creates a new EFI boot entry for the installed OS.
-func (c *Configurator) CreateEFIBootEntry(ctx context.Context, disk, bootPart string) error {
+func (c *Configurator) CreateEFIBootEntry(ctx context.Context, diskDev, bootPart string) error {
 	if bootPart == "" {
 		slog.Warn("No EFI partition found, skipping EFI boot entry creation")
 		return nil
 	}
-	slog.Info("Creating EFI boot entry", "disk", disk, "partition", bootPart)
+	slog.Info("Creating EFI boot entry", "disk", diskDev, "partition", bootPart)
 
 	// Mount efivarfs if not mounted.
 	efivarfs := filepath.Join(c.rootDir, "sys", "firmware", "efi", "efivars")
@@ -268,7 +268,7 @@ func (c *Configurator) CreateEFIBootEntry(ctx context.Context, disk, bootPart st
 	// Determine partition number from the partition device path.
 	partNum := partNumberFromDevice(bootPart)
 
-	cmd := fmt.Sprintf("efibootmgr -c -d %s -p %s -L ubuntu -l %s", disk, partNum, loader)
+	cmd := fmt.Sprintf("efibootmgr -c -d %s -p %s -L ubuntu -l %s", diskDev, partNum, loader)
 	out, err := c.disk.ChrootRun(ctx, c.rootDir, cmd)
 	if err != nil {
 		return fmt.Errorf("efibootmgr create: %s: %w", string(out), err)
@@ -345,7 +345,7 @@ func hasPCIVendor(vendorID string) (bool, error) {
 	}
 	target := "0x" + vendorID
 	for _, entry := range entries {
-		data, err := os.ReadFile(filepath.Join("/sys/bus/pci/devices", entry.Name(), "vendor"))
+		data, err := os.ReadFile(filepath.Join("/sys/bus/pci/devices", entry.Name(), "vendor")) //nolint:gocritic // absolute sysfs path is correct
 		if err != nil {
 			continue
 		}

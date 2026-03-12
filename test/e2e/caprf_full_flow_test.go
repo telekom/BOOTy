@@ -44,6 +44,10 @@ type cmdCall struct {
 	Args []string
 }
 
+func (c cmdCall) String() string {
+	return c.Name + " " + strings.Join(c.Args, " ")
+}
+
 type cmdResult struct {
 	Output []byte
 	Err    error
@@ -495,7 +499,7 @@ func TestFRRConfigRenderingE2E(t *testing.T) {
 		t.Fatal("expected FRR mode")
 	}
 
-	rendered, err := frr.RenderConfig(netCfg, "10.0.0.42", []string{"eth0", "eth1"})
+	rendered, err := frr.RenderConfig(netCfg, "10.0.0.42", "", []string{"eth0", "eth1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -532,7 +536,7 @@ func TestFRROnefabricConfigE2E(t *testing.T) {
 		VPNRT:            "65001:10100",
 	}
 
-	rendered, err := frr.RenderConfig(netCfg, "10.0.0.42", []string{"eth0"})
+	rendered, err := frr.RenderConfig(netCfg, "10.0.0.42", "", []string{"eth0"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1671,15 +1675,15 @@ func TestCreateEFIBootEntryE2E(t *testing.T) {
 	calls := cmd.getCalls()
 	found := false
 	for _, call := range calls {
-		if strings.Contains(call, "efibootmgr -c") {
+		if strings.Contains(call.String(), "efibootmgr -c") {
 			found = true
-			if !strings.Contains(call, "-d /dev/sda") {
+			if !strings.Contains(call.String(), "-d /dev/sda") {
 				t.Errorf("expected -d /dev/sda in call: %s", call)
 			}
-			if !strings.Contains(call, "-p 1") {
+			if !strings.Contains(call.String(), "-p 1") {
 				t.Errorf("expected -p 1 in call: %s", call)
 			}
-			if !strings.Contains(call, "shimx64.efi") {
+			if !strings.Contains(call.String(), "shimx64.efi") {
 				t.Errorf("expected shimx64.efi in call: %s", call)
 			}
 		}
@@ -1706,12 +1710,12 @@ func TestCreateEFIBootEntryGrubFallbackE2E(t *testing.T) {
 	calls := cmd.getCalls()
 	found := false
 	for _, call := range calls {
-		if strings.Contains(call, "efibootmgr -c") {
+		if strings.Contains(call.String(), "efibootmgr -c") {
 			found = true
-			if !strings.Contains(call, "grubx64.efi") {
+			if !strings.Contains(call.String(), "grubx64.efi") {
 				t.Errorf("expected grubx64.efi fallback in call: %s", call)
 			}
-			if !strings.Contains(call, "-p 1") {
+			if !strings.Contains(call.String(), "-p 1") {
 				t.Errorf("expected -p 1 for nvme0n1p1 in call: %s", call)
 			}
 		}
@@ -1748,7 +1752,7 @@ func TestDisableLVME2E(t *testing.T) {
 	calls := cmd.getCalls()
 	found := false
 	for _, call := range calls {
-		if strings.Contains(call, "lvm") && strings.Contains(call, "vgchange") {
+		if strings.Contains(call.String(), "lvm") && strings.Contains(call.String(), "vgchange") {
 			found = true
 		}
 	}
@@ -1785,9 +1789,9 @@ func TestCreateRAIDArrayE2E(t *testing.T) {
 	calls := cmd.getCalls()
 	found := false
 	for _, call := range calls {
-		if strings.Contains(call, "mdadm") && strings.Contains(call, "--create") {
+		if strings.Contains(call.String(), "mdadm") && strings.Contains(call.String(), "--create") {
 			found = true
-			if !strings.Contains(call, "/dev/md0") {
+			if !strings.Contains(call.String(), "/dev/md0") {
 				t.Errorf("expected /dev/md0 in call: %s", call)
 			}
 		}

@@ -239,11 +239,8 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		bond := &network.BondMode{}
 		if err := bond.Setup(ctx, netCfg); err != nil {
 			slog.Error("Bond setup failed", "error", err)
-		} else {
-			// The bond interface becomes the static/DHCP interface.
-			if netCfg.StaticIface == "" {
-				netCfg.StaticIface = "bond0"
-			}
+		} else if netCfg.StaticIface == "" {
+			netCfg.StaticIface = "bond0"
 		}
 	}
 
