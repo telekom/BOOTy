@@ -234,10 +234,10 @@ func TestChrootRunFallbackOnNotFound(t *testing.T) {
 	mgr := NewManager(cmd)
 
 	// Simulate chroot binary not found.
-	cmd.setResult("chroot /newroot", nil, fmt.Errorf("exec chroot: %w", exec.ErrNotFound))
+	cmd.setResult("chroot /nonexistent", nil, fmt.Errorf("exec chroot: %w", exec.ErrNotFound))
 
 	// The fallback will try to exec /bin/bash with SysProcAttr.Chroot.
-	// In test context this may fail because /newroot doesn't exist,
+	// In test context this will fail because /nonexistent doesn't exist,
 	// but we verify the fallback path is triggered (not the "chroot exec" error).
 	_, err := mgr.ChrootRun(context.Background(), "/nonexistent", "echo hi")
 	if err == nil {

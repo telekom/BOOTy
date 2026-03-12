@@ -127,8 +127,8 @@ func TestCreateFolderSkipsNonCreate(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if _, err := os.Stat("/tmp/should-not-create-" + t.Name()); err == nil {
-		t.Fatal("directory should not have been created")
 		os.Remove("/tmp/should-not-create-" + t.Name())
+		t.Fatal("directory should not have been created")
 	}
 }
 
