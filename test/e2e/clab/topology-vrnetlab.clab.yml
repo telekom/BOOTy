@@ -63,6 +63,7 @@ topology:
     nginx:
       kind: linux
       image: nginx:alpine
+      cmd: sh -c "rm -f /var/log/nginx/access.log && touch /var/log/nginx/access.log && nginx -g 'daemon off;'"
       binds:
         - nginx.conf:/etc/nginx/nginx.conf:ro
         - html:/usr/share/nginx/html:ro
@@ -74,6 +75,9 @@ topology:
     caprf-mock:
       kind: linux
       image: nginx:alpine
+      # Override CMD: remove /dev/stdout symlink so access_log writes to a real
+      # file that tests can read with "docker exec ... cat".
+      cmd: sh -c "rm -f /var/log/nginx/access.log && touch /var/log/nginx/access.log && nginx -g 'daemon off;'"
       binds:
         - caprf-mock.conf:/etc/nginx/nginx.conf:ro
         - images:/srv/images:ro

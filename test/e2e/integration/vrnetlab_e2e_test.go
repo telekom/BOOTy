@@ -9,6 +9,7 @@
 package integration
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -44,8 +45,10 @@ func requireVrnetlabLab(t *testing.T) {
 
 func vmDockerExec(t *testing.T, container string, args ...string) (string, error) {
 	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	cmdArgs := append([]string{"exec", container}, args...)
-	out, err := exec.Command("docker", cmdArgs...).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "docker", cmdArgs...).CombinedOutput()
 	return string(out), err
 }
 
