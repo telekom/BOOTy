@@ -105,31 +105,88 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 
 // openSource returns a ReadCloser for the given URL.
 // Supports http/https and oci:// protocols.
+// HTTP requests are retried up to 3 times with exponential backoff.
 func openSource(ctx context.Context, url string) (io.ReadCloser, error) {
 	if IsOCIReference(url) {
 		ref := TrimOCIScheme(url)
 		slog.Info("Pulling OCI image", "ref", ref)
-		return FetchOCILayer(ctx, ref)
+		return fetchOCIWithRetry(ctx, ref)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
+	return httpGetWithRetry(ctx, url)
+}
 
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // URL from trusted config
-	if err != nil {
-		return nil, fmt.Errorf("fetching image: %w", err)
-	}
+// httpGetWithRetry performs an HTTP GET with retry and exponential backoff.
+func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
+	const maxRetries = 3
+	backoff := time.Second
 
-	if resp.StatusCode != http.StatusOK {
+	var lastErr error
+	for attempt := range maxRetries {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+		if err != nil {
+			return nil, fmt.Errorf("creating request: %w", err)
+		}
+
+		resp, err := http.DefaultClient.Do(req) //nolint:gosec // URL from trusted config
+		if err != nil {
+			lastErr = fmt.Errorf("fetching image (attempt %d/%d): %w", attempt+1, maxRetries, err)
+			slog.Warn("HTTP request failed, retrying", "attempt", attempt+1, "error", err, "backoff", backoff)
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("context canceled: %w", ctx.Err())
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+			continue
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			return resp.Body, nil
+		}
 		_ = resp.Body.Close()
+
 		if resp.StatusCode == http.StatusNotFound {
 			return nil, fmt.Errorf("image not found: %s", url)
 		}
+		// Retry on 5xx server errors.
+		if resp.StatusCode >= 500 {
+			lastErr = fmt.Errorf("server error %d for %s (attempt %d/%d)", resp.StatusCode, url, attempt+1, maxRetries)
+			slog.Warn("HTTP server error, retrying", "attempt", attempt+1, "status", resp.StatusCode, "backoff", backoff)
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("context canceled: %w", ctx.Err())
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+			continue
+		}
 		return nil, fmt.Errorf("unexpected status %d for %s", resp.StatusCode, url)
 	}
-	return resp.Body, nil
+	return nil, lastErr
+}
+
+// fetchOCIWithRetry retries OCI layer fetch with exponential backoff.
+func fetchOCIWithRetry(ctx context.Context, ref string) (io.ReadCloser, error) {
+	const maxRetries = 3
+	backoff := time.Second
+
+	var lastErr error
+	for attempt := range maxRetries {
+		rc, err := FetchOCILayer(ctx, ref)
+		if err == nil {
+			return rc, nil
+		}
+		lastErr = fmt.Errorf("OCI pull (attempt %d/%d): %w", attempt+1, maxRetries, err)
+		slog.Warn("OCI pull failed, retrying", "attempt", attempt+1, "error", err, "backoff", backoff)
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+	}
+	return nil, lastErr
 }
 
 func newHash(checksumType string) (hash.Hash, error) {

@@ -553,3 +553,116 @@ COMMANDS_URL="http://server/commands"
 		t.Errorf("CommandsURL = %q", cfg.CommandsURL)
 	}
 }
+
+func TestParseVarsStaticNetworking(t *testing.T) {
+	input := `STATIC_IP="10.0.0.5/24"
+STATIC_GATEWAY="10.0.0.1"
+STATIC_IFACE="eth0"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.StaticIP != "10.0.0.5/24" {
+		t.Errorf("StaticIP = %q, want %q", cfg.StaticIP, "10.0.0.5/24")
+	}
+	if cfg.StaticGateway != "10.0.0.1" {
+		t.Errorf("StaticGateway = %q, want %q", cfg.StaticGateway, "10.0.0.1")
+	}
+	if cfg.StaticIface != "eth0" {
+		t.Errorf("StaticIface = %q, want %q", cfg.StaticIface, "eth0")
+	}
+}
+
+func TestParseVarsBondConfig(t *testing.T) {
+	input := `BOND_INTERFACES="eth0,eth1"
+BOND_MODE="802.3ad"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BondInterfaces != "eth0,eth1" {
+		t.Errorf("BondInterfaces = %q, want %q", cfg.BondInterfaces, "eth0,eth1")
+	}
+	if cfg.BondMode != "802.3ad" {
+		t.Errorf("BondMode = %q, want %q", cfg.BondMode, "802.3ad")
+	}
+}
+
+func TestParseVarsSecureErase(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{`SECURE_ERASE="true"`, true},
+		{`SECURE_ERASE="1"`, true},
+		{`SECURE_ERASE="yes"`, true},
+		{`SECURE_ERASE="false"`, false},
+		{`SECURE_ERASE="0"`, false},
+	}
+	for _, tt := range tests {
+		cfg, err := ParseVars(strings.NewReader(tt.input))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.SecureErase != tt.want {
+			t.Errorf("SecureErase for %q = %v, want %v", tt.input, cfg.SecureErase, tt.want)
+		}
+	}
+}
+
+func TestParseVarsPostProvisionCmds(t *testing.T) {
+	input := `POST_PROVISION_CMDS="apt update;systemctl enable foo;echo done"`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.PostProvisionCmds) != 3 {
+		t.Fatalf("PostProvisionCmds len = %d, want 3", len(cfg.PostProvisionCmds))
+	}
+	if cfg.PostProvisionCmds[0] != "apt update" {
+		t.Errorf("cmd[0] = %q, want %q", cfg.PostProvisionCmds[0], "apt update")
+	}
+	if cfg.PostProvisionCmds[2] != "echo done" {
+		t.Errorf("cmd[2] = %q, want %q", cfg.PostProvisionCmds[2], "echo done")
+	}
+}
+
+func TestParseVarsImageChecksum(t *testing.T) {
+	input := `IMAGE_CHECKSUM="abc123def456"
+IMAGE_CHECKSUM_TYPE="sha256"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ImageChecksum != "abc123def456" {
+		t.Errorf("ImageChecksum = %q", cfg.ImageChecksum)
+	}
+	if cfg.ImageChecksumType != "sha256" {
+		t.Errorf("ImageChecksumType = %q", cfg.ImageChecksumType)
+	}
+}
+
+func TestParseVarsNumVFs(t *testing.T) {
+	input := `NUM_VFS="64"`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.NumVFs != 64 {
+		t.Errorf("NumVFs = %d, want 64", cfg.NumVFs)
+	}
+}
+
+func TestParseVarsDisableKexec(t *testing.T) {
+	input := `DISABLE_KEXEC="true"`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.DisableKexec {
+		t.Error("DisableKexec should be true")
+	}
+}

@@ -358,3 +358,63 @@ func TestFindPartitionsCaseInsensitive(t *testing.T) {
 		t.Errorf("expected /dev/sda2, got %s", root.Node)
 	}
 }
+
+func TestDisableLVM(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+
+	// DisableLVM should succeed even if lvm fails (no LVM present).
+	cmd.setResult("lvm vgchange", nil, fmt.Errorf("exec lvm: exit 5"))
+	if err := mgr.DisableLVM(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cmd.calls) != 1 || cmd.calls[0].name != "lvm" {
+		t.Fatalf("expected lvm call, got %v", cmd.calls)
+	}
+	if cmd.calls[0].args[0] != "vgchange" || cmd.calls[0].args[1] != "-an" {
+		t.Errorf("expected vgchange -an, got %v", cmd.calls[0].args)
+	}
+}
+
+func TestDisableLVMSuccess(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+
+	if err := mgr.DisableLVM(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCreateRAIDArray(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+
+	err := mgr.CreateRAIDArray(context.Background(), "md0", 1, []string{"/dev/sda", "/dev/sdb"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cmd.calls) != 1 || cmd.calls[0].name != "mdadm" {
+		t.Fatalf("expected mdadm call, got %v", cmd.calls)
+	}
+}
+
+func TestCreateRAIDArrayTooFewDevices(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+
+	err := mgr.CreateRAIDArray(context.Background(), "md0", 1, []string{"/dev/sda"})
+	if err == nil {
+		t.Fatal("expected error for single device RAID")
+	}
+}
+
+func TestCreateRAIDArrayError(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+
+	cmd.setResult("mdadm --create", nil, fmt.Errorf("mdadm: exit 1"))
+	err := mgr.CreateRAIDArray(context.Background(), "md0", 1, []string{"/dev/sda", "/dev/sdb"})
+	if err == nil {
+		t.Fatal("expected error when mdadm fails")
+	}
+}

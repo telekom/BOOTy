@@ -690,6 +690,14 @@ jobs:
           path: serial-uefi.log
           if-no-files-found: ignore
 
+      - name: Upload ISO artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: booty-uefi-iso
+          path: test-uefi.iso
+          if-no-files-found: ignore
+
       - name: Cleanup
         if: always()
         run: |

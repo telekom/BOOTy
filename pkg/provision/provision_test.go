@@ -311,21 +311,101 @@ func TestSetupMellanoxMstconfigFails(t *testing.T) {
 	}
 }
 
-func TestSetupEFIBootNoEntries(t *testing.T) {
+func TestRemoveEFIBootEntriesNoEntries(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
 	cmd.setResult("chroot "+c.rootDir, []byte("BootCurrent: 0001\nBootOrder: 0001\n"), nil)
-	if err := c.SetupEFIBoot(context.Background()); err != nil {
+	if err := c.RemoveEFIBootEntries(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestSetupEFIBootFailure(t *testing.T) {
+func TestRemoveEFIBootEntriesFailure(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
 	cmd.setResult("chroot "+c.rootDir, nil, fmt.Errorf("efibootmgr not found"))
-	if err := c.SetupEFIBoot(context.Background()); err != nil {
+	if err := c.RemoveEFIBootEntries(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPartNumberFromDevice(t *testing.T) {
+	tests := []struct {
+		dev  string
+		want string
+	}{
+		{"/dev/sda1", "1"},
+		{"/dev/sda2", "2"},
+		{"/dev/sda15", "15"},
+		{"/dev/nvme0n1p1", "1"},
+		{"/dev/nvme0n1p2", "2"},
+		{"/dev/nvme0n1p15", "15"},
+		{"/dev/vda3", "3"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.dev, func(t *testing.T) {
+			if got := partNumberFromDevice(tt.dev); got != tt.want {
+				t.Errorf("partNumberFromDevice(%q) = %q, want %q", tt.dev, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCreateEFIBootEntry(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+
+	// Create the shim EFI loader file so it's detected.
+	efiDir := filepath.Join(c.rootDir, "boot", "efi", "EFI", "ubuntu")
+	if err := os.MkdirAll(efiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(efiDir, "shimx64.efi"), []byte("shim"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd.setResult("chroot "+c.rootDir, []byte("Boot0001* ubuntu"), nil)
+
+	err := c.CreateEFIBootEntry(context.Background(), "/dev/sda", "/dev/sda1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCreateEFIBootEntryEmptyPartition(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+
+	// Empty boot partition should skip without error.
+	err := c.CreateEFIBootEntry(context.Background(), "/dev/sda", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunPostProvisionCmds(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+
+	cmd.setResult("chroot "+c.rootDir, []byte("ok"), nil)
+
+	cmds := []string{"apt update", "systemctl enable foo", ""}
+	err := c.RunPostProvisionCmds(context.Background(), cmds)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunPostProvisionCmdsError(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+
+	cmd.setResult("chroot "+c.rootDir, nil, fmt.Errorf("command failed"))
+
+	cmds := []string{"failing-command"}
+	err := c.RunPostProvisionCmds(context.Background(), cmds)
+	if err == nil {
+		t.Fatal("expected error when command fails")
 	}
 }
 

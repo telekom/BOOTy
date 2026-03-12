@@ -1319,10 +1319,10 @@ func TestCAPRFImageServeAndStreamE2E(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 28: SetupEFIBoot
+// Test 28: RemoveEFIBootEntries
 // ---------------------------------------------------------------------------
 
-func TestSetupEFIBootE2E(t *testing.T) {
+func TestRemoveEFIBootEntriesE2E(t *testing.T) {
 	cmd := newMockCommander()
 	cmd.set("chroot", []byte("Boot0001* ubuntu\nBoot0002* other"), nil)
 
@@ -1331,13 +1331,8 @@ func TestSetupEFIBootE2E(t *testing.T) {
 	root := t.TempDir()
 	c.SetRootDir(root)
 
-	if err := c.SetupEFIBoot(context.Background()); err != nil {
-		t.Fatalf("SetupEFIBoot: %v", err)
-	}
-
-	efiDir := filepath.Join(root, "sys", "firmware", "efi", "efivars")
-	if _, err := os.Stat(efiDir); err != nil {
-		t.Errorf("efivarfs dir should exist: %v", err)
+	if err := c.RemoveEFIBootEntries(context.Background()); err != nil {
+		t.Fatalf("RemoveEFIBootEntries: %v", err)
 	}
 
 	calls := cmd.getCalls()
@@ -1366,6 +1361,16 @@ export SUCCESS_URL="http://caprf/success"
 export ERROR_URL="http://caprf/error"
 export LOG_URL="http://caprf/log"
 export DEBUG_URL="http://caprf/debug"
+export STATIC_IP="10.1.0.5/24"
+export STATIC_GATEWAY="10.1.0.1"
+export STATIC_IFACE="eth0"
+export BOND_INTERFACES="eth0,eth1"
+export BOND_MODE="802.3ad"
+export SECURE_ERASE="true"
+export POST_PROVISION_CMDS="apt update;systemctl enable foo"
+export NUM_VFS="64"
+export IMAGE_CHECKSUM="sha256hash"
+export IMAGE_CHECKSUM_TYPE="sha256"
 underlay_subnet="10.0.0.0/24"
 underlay_ip="10.0.0.5"
 overlay_subnet="fd00::/64"
@@ -1409,6 +1414,13 @@ vpn_rt="65001:10100"
 		{"DCGWIPs", cfg.DCGWIPs, "10.99.0.1,10.99.0.2"},
 		{"OverlayAggregate", cfg.OverlayAggregate, "fd00::/48"},
 		{"VPNRT", cfg.VPNRT, "65001:10100"},
+		{"StaticIP", cfg.StaticIP, "10.1.0.5/24"},
+		{"StaticGateway", cfg.StaticGateway, "10.1.0.1"},
+		{"StaticIface", cfg.StaticIface, "eth0"},
+		{"BondInterfaces", cfg.BondInterfaces, "eth0,eth1"},
+		{"BondMode", cfg.BondMode, "802.3ad"},
+		{"ImageChecksum", cfg.ImageChecksum, "sha256hash"},
+		{"ImageChecksumType", cfg.ImageChecksumType, "sha256"},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
@@ -1433,6 +1445,15 @@ vpn_rt="65001:10100"
 	}
 	if cfg.LocalASN != 65200 {
 		t.Errorf("LocalASN = %d, want 65200", cfg.LocalASN)
+	}
+	if cfg.NumVFs != 64 {
+		t.Errorf("NumVFs = %d, want 64", cfg.NumVFs)
+	}
+	if !cfg.SecureErase {
+		t.Error("SecureErase should be true")
+	}
+	if len(cfg.PostProvisionCmds) != 2 {
+		t.Errorf("PostProvisionCmds len = %d, want 2", len(cfg.PostProvisionCmds))
 	}
 	if len(cfg.ImageURLs) != 2 {
 		t.Errorf("ImageURLs = %v, want 2 entries", cfg.ImageURLs)
@@ -1618,5 +1639,214 @@ func TestConfiguratorKubeletNoLabelsE2E(t *testing.T) {
 	labelsPath := filepath.Join(root, "etc", "kubernetes", "kubelet.conf.d", "20-caprf-node-labels.conf")
 	if _, err := os.Stat(labelsPath); !os.IsNotExist(err) {
 		t.Error("labels conf should not exist without failure domain or region")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test: CreateEFIBootEntry
+// ---------------------------------------------------------------------------
+
+func TestCreateEFIBootEntryE2E(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.set("chroot", []byte("Boot0001* ubuntu"), nil)
+
+	diskMgr := disk.NewManager(cmd)
+	c := provision.NewConfigurator(diskMgr)
+	root := t.TempDir()
+	c.SetRootDir(root)
+
+	// Create shimx64.efi so loader detection works.
+	efiDir := filepath.Join(root, "boot", "efi", "EFI", "ubuntu")
+	if err := os.MkdirAll(efiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(efiDir, "shimx64.efi"), []byte("shim"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.CreateEFIBootEntry(context.Background(), "/dev/sda", "/dev/sda1"); err != nil {
+		t.Fatalf("CreateEFIBootEntry: %v", err)
+	}
+
+	calls := cmd.getCalls()
+	found := false
+	for _, call := range calls {
+		if strings.Contains(call, "efibootmgr -c") {
+			found = true
+			if !strings.Contains(call, "-d /dev/sda") {
+				t.Errorf("expected -d /dev/sda in call: %s", call)
+			}
+			if !strings.Contains(call, "-p 1") {
+				t.Errorf("expected -p 1 in call: %s", call)
+			}
+			if !strings.Contains(call, "shimx64.efi") {
+				t.Errorf("expected shimx64.efi in call: %s", call)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected efibootmgr -c call, got: %v", calls)
+	}
+}
+
+func TestCreateEFIBootEntryGrubFallbackE2E(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.set("chroot", []byte("Boot0001* ubuntu"), nil)
+
+	diskMgr := disk.NewManager(cmd)
+	c := provision.NewConfigurator(diskMgr)
+	root := t.TempDir()
+	c.SetRootDir(root)
+
+	// No shimx64.efi — should fallback to grubx64.efi.
+	if err := c.CreateEFIBootEntry(context.Background(), "/dev/nvme0n1", "/dev/nvme0n1p1"); err != nil {
+		t.Fatalf("CreateEFIBootEntry: %v", err)
+	}
+
+	calls := cmd.getCalls()
+	found := false
+	for _, call := range calls {
+		if strings.Contains(call, "efibootmgr -c") {
+			found = true
+			if !strings.Contains(call, "grubx64.efi") {
+				t.Errorf("expected grubx64.efi fallback in call: %s", call)
+			}
+			if !strings.Contains(call, "-p 1") {
+				t.Errorf("expected -p 1 for nvme0n1p1 in call: %s", call)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected efibootmgr -c call, got: %v", calls)
+	}
+}
+
+func TestCreateEFIBootEntryEmptyPartitionE2E(t *testing.T) {
+	cmd := newMockCommander()
+	diskMgr := disk.NewManager(cmd)
+	c := provision.NewConfigurator(diskMgr)
+	c.SetRootDir(t.TempDir())
+
+	// Empty partition should skip gracefully.
+	if err := c.CreateEFIBootEntry(context.Background(), "/dev/sda", ""); err != nil {
+		t.Fatalf("CreateEFIBootEntry with empty partition: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test: DisableLVM
+// ---------------------------------------------------------------------------
+
+func TestDisableLVME2E(t *testing.T) {
+	cmd := newMockCommander()
+	diskMgr := disk.NewManager(cmd)
+
+	if err := diskMgr.DisableLVM(context.Background()); err != nil {
+		t.Fatalf("DisableLVM: %v", err)
+	}
+
+	calls := cmd.getCalls()
+	found := false
+	for _, call := range calls {
+		if strings.Contains(call, "lvm") && strings.Contains(call, "vgchange") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected lvm vgchange call, got: %v", calls)
+	}
+}
+
+func TestDisableLVMNotPresentE2E(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.set("lvm", nil, fmt.Errorf("lvm: command not found"))
+
+	diskMgr := disk.NewManager(cmd)
+
+	// Should not return error even when lvm is not present.
+	if err := diskMgr.DisableLVM(context.Background()); err != nil {
+		t.Fatalf("DisableLVM should not fail: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test: CreateRAIDArray
+// ---------------------------------------------------------------------------
+
+func TestCreateRAIDArrayE2E(t *testing.T) {
+	cmd := newMockCommander()
+	diskMgr := disk.NewManager(cmd)
+
+	err := diskMgr.CreateRAIDArray(context.Background(), "md0", 1, []string{"/dev/sda", "/dev/sdb"})
+	if err != nil {
+		t.Fatalf("CreateRAIDArray: %v", err)
+	}
+
+	calls := cmd.getCalls()
+	found := false
+	for _, call := range calls {
+		if strings.Contains(call, "mdadm") && strings.Contains(call, "--create") {
+			found = true
+			if !strings.Contains(call, "/dev/md0") {
+				t.Errorf("expected /dev/md0 in call: %s", call)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected mdadm call, got: %v", calls)
+	}
+}
+
+func TestCreateRAIDArrayTooFewDevicesE2E(t *testing.T) {
+	cmd := newMockCommander()
+	diskMgr := disk.NewManager(cmd)
+
+	err := diskMgr.CreateRAIDArray(context.Background(), "md0", 1, []string{"/dev/sda"})
+	if err == nil {
+		t.Fatal("expected error with single device")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test: RunPostProvisionCmds
+// ---------------------------------------------------------------------------
+
+func TestRunPostProvisionCmdsE2E(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.set("chroot", []byte("ok"), nil)
+
+	diskMgr := disk.NewManager(cmd)
+	c := provision.NewConfigurator(diskMgr)
+	c.SetRootDir(t.TempDir())
+
+	cmds := []string{"apt update", "systemctl enable foo", "echo done"}
+	if err := c.RunPostProvisionCmds(context.Background(), cmds); err != nil {
+		t.Fatalf("RunPostProvisionCmds: %v", err)
+	}
+}
+
+func TestRunPostProvisionCmdsEmptyE2E(t *testing.T) {
+	cmd := newMockCommander()
+	diskMgr := disk.NewManager(cmd)
+	c := provision.NewConfigurator(diskMgr)
+	c.SetRootDir(t.TempDir())
+
+	// Empty cmds should be a no-op.
+	if err := c.RunPostProvisionCmds(context.Background(), nil); err != nil {
+		t.Fatalf("RunPostProvisionCmds with nil: %v", err)
+	}
+}
+
+func TestRunPostProvisionCmdsFailE2E(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.set("chroot", nil, fmt.Errorf("command failed"))
+
+	diskMgr := disk.NewManager(cmd)
+	c := provision.NewConfigurator(diskMgr)
+	c.SetRootDir(t.TempDir())
+
+	cmds := []string{"failing-command"}
+	if err := c.RunPostProvisionCmds(context.Background(), cmds); err == nil {
+		t.Fatal("expected error when post-provision command fails")
 	}
 }

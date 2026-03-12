@@ -70,11 +70,12 @@ RUN apt-get update && \
     done && \
     rm -rf /tmp/kernel *.deb /var/lib/apt/lists/*
 
-# Build disk and system tools
+# Build disk, system, and firmware tools
 FROM debian:bookworm-slim AS tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    mdadm util-linux e2fsprogs xfsprogs parted gdisk kpartx dosfstools \
+    mdadm util-linux e2fsprogs xfsprogs btrfs-progs parted gdisk kpartx dosfstools \
     efibootmgr dmidecode ethtool curl iproute2 bridge-utils \
+    hdparm nvme-cli mstflint lldpd \
     && rm -rf /var/lib/apt/lists/*
 
 # Build Busybox
@@ -108,6 +109,7 @@ COPY --from=tools /usr/sbin/wipefs bin/wipefs
 COPY --from=tools /sbin/resize2fs sbin/resize2fs
 COPY --from=tools /sbin/e2fsck sbin/e2fsck
 COPY --from=tools /usr/sbin/xfs_growfs sbin/xfs_growfs
+COPY --from=tools /sbin/btrfs bin/btrfs
 COPY --from=tools /usr/sbin/parted bin/parted
 COPY --from=tools /usr/sbin/sgdisk bin/sgdisk
 COPY --from=tools /sbin/partprobe bin/partprobe
@@ -117,6 +119,18 @@ COPY --from=tools /usr/sbin/ethtool bin/ethtool
 COPY --from=tools /usr/bin/curl bin/curl
 COPY --from=tools /sbin/ip bin/ip
 COPY --from=tools /sbin/bridge bin/bridge
+
+# Secure erase tools
+COPY --from=tools /sbin/hdparm bin/hdparm
+COPY --from=tools /usr/sbin/nvme bin/nvme
+
+# Firmware tools (Mellanox ConnectX SR-IOV config)
+COPY --from=tools /usr/bin/mstconfig bin/mstconfig
+COPY --from=tools /usr/bin/mstflint bin/mstflint
+
+# LLDP daemon for switch topology discovery
+COPY --from=tools /usr/sbin/lldpcli bin/lldpcli
+COPY --from=tools /usr/sbin/lldpd sbin/lldpd
 
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/

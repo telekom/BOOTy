@@ -40,6 +40,15 @@ type Config struct {
 	OverlayAggregate string // Route aggregate for overlay
 	VPNRT            string // VPN route target for EVPN
 
+	// Static networking fields.
+	StaticIP      string // IP/mask to assign (e.g. "10.0.0.5/24")
+	StaticGateway string // Default gateway IP
+	StaticIface   string // Interface name (default: auto-detect first physical NIC)
+
+	// LACP bonding fields.
+	BondInterfaces string // Comma-separated NICs to bond (e.g. "eth0,eth1")
+	BondMode       string // Bonding mode (default: "802.3ad" for LACP)
+
 	// Common fields.
 	BridgeName string // Default: "br.provision"
 	VRFName    string // Default: "Vrf_underlay"
@@ -62,4 +71,14 @@ func (c *Config) ApplyDefaults() {
 // IsFRRMode returns true if the config has enough parameters for FRR/EVPN.
 func (c *Config) IsFRRMode() bool {
 	return (c.UnderlaySubnet != "" || c.UnderlayIP != "") && c.ASN != 0
+}
+
+// IsStaticMode returns true if static IP configuration is provided.
+func (c *Config) IsStaticMode() bool {
+	return c.StaticIP != ""
+}
+
+// IsBondMode returns true if LACP bonding interfaces are configured.
+func (c *Config) IsBondMode() bool {
+	return c.BondInterfaces != ""
 }

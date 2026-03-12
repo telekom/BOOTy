@@ -4,9 +4,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -23,6 +23,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/plunderclient/types"
 	"github.com/telekom/BOOTy/pkg/provision"
 	"github.com/telekom/BOOTy/pkg/utils"
+	"golang.org/x/sys/unix"
 
 	"github.com/telekom/BOOTy/pkg/realm"
 	"github.com/telekom/BOOTy/pkg/ux"
@@ -85,7 +86,7 @@ func setupMountsAndDevices() {
 }
 
 // loadModules loads kernel modules from /modules/ for common server NICs.
-// Modules are stored as a flat directory of .ko files.
+// Uses the finit_module syscall directly instead of shelling out to insmod.
 // Errors are non-fatal: modules may already be built-in or not needed.
 func loadModules() {
 	const moduleDir = "/modules"
@@ -94,20 +95,31 @@ func loadModules() {
 		slog.Debug("No kernel modules directory, skipping", "path", moduleDir)
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		ko := filepath.Join(moduleDir, entry.Name())
-		out, err := exec.CommandContext(ctx, "insmod", ko).CombinedOutput() //nolint:gosec // fixed path
-		if err != nil {
-			slog.Debug("Module load skipped", "module", entry.Name(), "output", string(out))
+		if err := loadModule(ko); err != nil {
+			slog.Debug("Module load skipped", "module", entry.Name(), "error", err)
 			continue
 		}
 		slog.Info("Loaded kernel module", "module", entry.Name())
 	}
+}
+
+// loadModule loads a single kernel module via the finit_module syscall.
+func loadModule(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open module %s: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if err := unix.FinitModule(int(f.Fd()), "", 0); err != nil {
+		return fmt.Errorf("finit_module %s: %w", filepath.Base(path), err)
+	}
+	return nil
 }
 
 // runCAPRF runs the CAPRF provisioning flow (ISO-based, /deploy/vars config).
@@ -207,22 +219,51 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		LocalASN:         cfg.LocalASN,
 		OverlayAggregate: cfg.OverlayAggregate,
 		VPNRT:            cfg.VPNRT,
+		StaticIP:         cfg.StaticIP,
+		StaticGateway:    cfg.StaticGateway,
+		StaticIface:      cfg.StaticIface,
+		BondInterfaces:   cfg.BondInterfaces,
+		BondMode:         cfg.BondMode,
 	}
 
-	if !netCfg.IsFRRMode() {
-		slog.Info("Using DHCP network mode")
-		return &network.DHCPMode{}
+	// Set up bonding first if configured (bond becomes the interface for other modes).
+	if netCfg.IsBondMode() {
+		slog.Info("Setting up LACP bond")
+		bond := &network.BondMode{}
+		if err := bond.Setup(ctx, netCfg); err != nil {
+			slog.Error("Bond setup failed", "error", err)
+		} else {
+			// The bond interface becomes the static/DHCP interface.
+			if netCfg.StaticIface == "" {
+				netCfg.StaticIface = "bond0"
+			}
+		}
 	}
 
-	detectIPMI(netCfg)
-
-	slog.Info("Using FRR/EVPN network mode", "asn", cfg.ASN)
-	mgr := frr.NewManager(nil)
-	if err := mgr.Setup(ctx, netCfg); err != nil {
-		slog.Error("FRR network setup failed, falling back to DHCP", "error", err)
-		return &network.DHCPMode{}
+	// Priority: FRR > Static > DHCP.
+	if netCfg.IsFRRMode() {
+		detectIPMI(netCfg)
+		slog.Info("Using FRR/EVPN network mode", "asn", cfg.ASN)
+		mgr := frr.NewManager(nil)
+		if err := mgr.Setup(ctx, netCfg); err != nil {
+			slog.Error("FRR network setup failed, falling back to DHCP", "error", err)
+			return &network.DHCPMode{}
+		}
+		return mgr
 	}
-	return mgr
+
+	if netCfg.IsStaticMode() {
+		slog.Info("Using static network mode", "ip", cfg.StaticIP)
+		mode := &network.StaticMode{}
+		if err := mode.Setup(ctx, netCfg); err != nil {
+			slog.Error("Static network setup failed, falling back to DHCP", "error", err)
+			return &network.DHCPMode{}
+		}
+		return mode
+	}
+
+	slog.Info("Using DHCP network mode")
+	return &network.DHCPMode{}
 }
 
 // detectIPMI auto-detects IPMI MAC/IP from system if not provided.

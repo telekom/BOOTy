@@ -28,6 +28,8 @@ type MachineConfig struct {
 	MinDiskSizeGB     int      // MIN_DISK_SIZE_GB (optional, 0 = no minimum)
 	NumVFs            int      // NUM_VFS: number of SR-IOV VFs for Mellanox (default: 32)
 	DisableKexec      bool     // DISABLE_KEXEC: skip kexec and always hard-reboot
+	SecureErase       bool     // SECURE_ERASE: use ATA/NVMe secure erase instead of wipefs
+	PostProvisionCmds []string // POST_PROVISION_CMDS: commands to run in chroot after provisioning
 
 	// Status URLs parsed from /deploy/vars.
 	LogURL       string
@@ -52,6 +54,15 @@ type MachineConfig struct {
 	LocalASN         uint32 // local_asn: Local AS for leaf connections
 	OverlayAggregate string // overlay_aggregate: route aggregate for overlay
 	VPNRT            string // vpn_rt: VPN route target for EVPN
+
+	// Static networking fields.
+	StaticIP      string // STATIC_IP: IP/mask to assign (e.g. "10.0.0.5/24")
+	StaticGateway string // STATIC_GATEWAY: default gateway IP
+	StaticIface   string // STATIC_IFACE: interface name (default: auto-detect first physical NIC)
+
+	// LACP bonding fields.
+	BondInterfaces string // BOND_INTERFACES: comma-separated NICs to bond (e.g. "eth0,eth1")
+	BondMode       string // BOND_MODE: bonding mode (default: "802.3ad")
 
 	// Files and commands from ISO /deploy/ directories.
 	ProvisionerFiles []string // Paths to files in /deploy/file-system/

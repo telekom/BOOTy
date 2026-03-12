@@ -217,7 +217,16 @@ func ParseVars(r io.Reader) (*config.MachineConfig, error) {
 }
 
 func applyVar(cfg *config.MachineConfig, key, value string) {
-	// Simple string fields mapped by key.
+	if applyStringVar(cfg, key, value) {
+		return
+	}
+	if applyUint32Var(cfg, key, value) {
+		return
+	}
+	applySpecialVar(cfg, key, value)
+}
+
+func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 	strFields := map[string]*string{
 		"HOSTNAME":                    &cfg.Hostname,
 		"TOKEN":                       &cfg.Token,
@@ -242,14 +251,23 @@ func applyVar(cfg *config.MachineConfig, key, value string) {
 		"dcgw_ips":                    &cfg.DCGWIPs,
 		"overlay_aggregate":           &cfg.OverlayAggregate,
 		"vpn_rt":                      &cfg.VPNRT,
+		"STATIC_IP":                   &cfg.StaticIP,
+		"STATIC_GATEWAY":              &cfg.StaticGateway,
+		"STATIC_IFACE":                &cfg.StaticIface,
+		"BOND_INTERFACES":             &cfg.BondInterfaces,
+		"BOND_MODE":                   &cfg.BondMode,
+		"IMAGE_CHECKSUM":              &cfg.ImageChecksum,
+		"IMAGE_CHECKSUM_TYPE":         &cfg.ImageChecksumType,
 	}
 
 	if ptr, ok := strFields[key]; ok {
 		*ptr = value
-		return
+		return true
 	}
+	return false
+}
 
-	// Uint32 fields mapped by key.
+func applyUint32Var(cfg *config.MachineConfig, key, value string) bool {
 	uint32Fields := map[string]*uint32{
 		"asn_server":    &cfg.ASN,
 		"provision_vni": &cfg.ProvisionVNI,
@@ -261,22 +279,25 @@ func applyVar(cfg *config.MachineConfig, key, value string) {
 		if n, err := strconv.ParseUint(value, 10, 32); err == nil {
 			*ptr = uint32(n)
 		}
-		return
+		return true
 	}
+	return false
+}
 
+func applySpecialVar(cfg *config.MachineConfig, key, value string) {
 	switch key {
 	case "IMAGE":
 		cfg.ImageURLs = strings.Fields(strings.ReplaceAll(value, ",", " "))
-	case "IMAGE_CHECKSUM":
-		cfg.ImageChecksum = value
-	case "IMAGE_CHECKSUM_TYPE":
-		cfg.ImageChecksumType = value
 	case "MIN_DISK_SIZE_GB":
 		if n, err := strconv.Atoi(value); err == nil {
 			cfg.MinDiskSizeGB = n
 		}
 	case "DISABLE_KEXEC":
 		cfg.DisableKexec = value == "true" || value == "1" || value == "yes"
+	case "SECURE_ERASE":
+		cfg.SecureErase = value == "true" || value == "1" || value == "yes"
+	case "POST_PROVISION_CMDS":
+		cfg.PostProvisionCmds = strings.Split(value, ";")
 	case "NUM_VFS":
 		if n, err := strconv.Atoi(value); err == nil {
 			cfg.NumVFs = n

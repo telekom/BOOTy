@@ -181,6 +181,26 @@ func (c *Configurator) RunMachineCommands(ctx context.Context) error {
 	return nil
 }
 
+// RunPostProvisionCmds executes custom commands in the chroot after provisioning.
+// Each command is run via /bin/bash -c in the chroot environment.
+func (c *Configurator) RunPostProvisionCmds(ctx context.Context, cmds []string) error {
+	for i, cmd := range cmds {
+		cmd = strings.TrimSpace(cmd)
+		if cmd == "" {
+			continue
+		}
+		slog.Info("Running post-provision command", "index", i, "command", cmd)
+		out, err := c.disk.ChrootRun(ctx, c.rootDir, cmd)
+		if err != nil {
+			return fmt.Errorf("post-provision cmd %d (%s): %s: %w", i, cmd, string(out), err)
+		}
+		if len(out) > 0 {
+			slog.Debug("Post-provision command output", "index", i, "output", string(out))
+		}
+	}
+	return nil
+}
+
 // ConfigureDNS writes resolv.conf to the chroot.
 func (c *Configurator) ConfigureDNS(cfg *config.MachineConfig) error {
 	if cfg.DNSResolvers == "" {
@@ -201,46 +221,85 @@ func (c *Configurator) ConfigureDNS(cfg *config.MachineConfig) error {
 	return nil
 }
 
-// SetupEFIBoot removes old EFI boot entries.
-func (c *Configurator) SetupEFIBoot(ctx context.Context) error {
-	slog.Info("Setting up EFI boot")
-	// Mount efivarfs if not mounted.
-	efivarfs := filepath.Join(c.rootDir, "sys", "firmware", "efi", "efivars")
-	if err := os.MkdirAll(efivarfs, 0o755); err != nil {
-		return fmt.Errorf("creating efivarfs mountpoint: %w", err)
-	}
-	// Remove old ubuntu boot entries via efibootmgr in chroot.
+// RemoveEFIBootEntries removes old EFI boot entries matching "ubuntu".
+func (c *Configurator) RemoveEFIBootEntries(ctx context.Context) error {
+	slog.Info("Removing old EFI boot entries")
 	out, err := c.disk.ChrootRun(ctx, c.rootDir, "efibootmgr")
 	if err != nil {
 		slog.Warn("efibootmgr list failed", "output", string(out), "error", err)
 		return nil
 	}
-	// Parse boot entries and remove ubuntu ones.
 	for _, line := range strings.Split(string(out), "\n") {
-		if strings.Contains(strings.ToLower(line), "ubuntu") {
-			// Extract boot number: "Boot0001* ubuntu" -> "0001"
-			if len(line) > 8 && strings.HasPrefix(line, "Boot") {
-				bootNum := line[4:8]
-				slog.Info("Removing EFI boot entry", "entry", bootNum)
-				if out, err := c.disk.ChrootRun(ctx, c.rootDir, "efibootmgr -b "+bootNum+" -B"); err != nil {
-					slog.Warn("Failed to remove EFI entry", "entry", bootNum, "output", string(out))
-				}
+		if !strings.Contains(strings.ToLower(line), "ubuntu") {
+			continue
+		}
+		if len(line) > 8 && strings.HasPrefix(line, "Boot") {
+			bootNum := line[4:8]
+			slog.Info("Removing EFI boot entry", "entry", bootNum)
+			if out, err := c.disk.ChrootRun(ctx, c.rootDir, "efibootmgr -b "+bootNum+" -B"); err != nil {
+				slog.Warn("Failed to remove EFI entry", "entry", bootNum, "output", string(out))
 			}
 		}
 	}
 	return nil
 }
 
+// CreateEFIBootEntry creates a new EFI boot entry for the installed OS.
+func (c *Configurator) CreateEFIBootEntry(ctx context.Context, disk, bootPart string) error {
+	if bootPart == "" {
+		slog.Warn("No EFI partition found, skipping EFI boot entry creation")
+		return nil
+	}
+	slog.Info("Creating EFI boot entry", "disk", disk, "partition", bootPart)
+
+	// Mount efivarfs if not mounted.
+	efivarfs := filepath.Join(c.rootDir, "sys", "firmware", "efi", "efivars")
+	if err := os.MkdirAll(efivarfs, 0o755); err != nil {
+		return fmt.Errorf("creating efivarfs mountpoint: %w", err)
+	}
+
+	// Detect EFI loader path — prefer shimx64.efi, fallback to grubx64.efi.
+	loader := `\EFI\ubuntu\shimx64.efi`
+	shimPath := filepath.Join(c.rootDir, "boot", "efi", "EFI", "ubuntu", "shimx64.efi")
+	if _, err := os.Stat(shimPath); err != nil {
+		loader = `\EFI\ubuntu\grubx64.efi`
+	}
+
+	// Determine partition number from the partition device path.
+	partNum := partNumberFromDevice(bootPart)
+
+	cmd := fmt.Sprintf("efibootmgr -c -d %s -p %s -L ubuntu -l %s", disk, partNum, loader)
+	out, err := c.disk.ChrootRun(ctx, c.rootDir, cmd)
+	if err != nil {
+		return fmt.Errorf("efibootmgr create: %s: %w", string(out), err)
+	}
+	slog.Info("EFI boot entry created", "output", string(out))
+	return nil
+}
+
+// partNumberFromDevice extracts the partition number from a device path.
+// e.g. "/dev/sda1" → "1", "/dev/nvme0n1p2" → "2".
+func partNumberFromDevice(dev string) string {
+	for i := len(dev) - 1; i >= 0; i-- {
+		if dev[i] < '0' || dev[i] > '9' {
+			return dev[i+1:]
+		}
+	}
+	return "1"
+}
+
 // SetupMellanox detects and configures Mellanox ConnectX NICs.
 // Returns true if firmware values were changed (requiring a hard reboot for reinit).
 func (c *Configurator) SetupMellanox(ctx context.Context, numVFs int) (bool, error) {
 	slog.Info("Checking for Mellanox NICs")
-	out, err := c.disk.ChrootRun(ctx, c.rootDir, "lspci -d 15b3:")
+
+	// Detect Mellanox NICs via sysfs (vendor 0x15b3) instead of lspci.
+	found, err := hasPCIVendor("15b3")
 	if err != nil {
-		slog.Info("Mellanox detection skipped (lspci failed)", "error", err)
-		return false, nil //nolint:nilerr // lspci failure means no Mellanox NICs, not an error
+		slog.Info("PCI enumeration failed, skipping Mellanox setup", "error", err)
+		return false, nil
 	}
-	if strings.TrimSpace(string(out)) == "" {
+	if !found {
 		slog.Info("No Mellanox NICs found")
 		return false, nil
 	}
@@ -264,7 +323,7 @@ func (c *Configurator) SetupMellanox(ctx context.Context, numVFs int) (bool, err
 		devPath := "/dev/mst/" + entry
 		cmd := fmt.Sprintf("mstconfig -d %s set NUM_OF_VFS=%d", devPath, numVFs)
 		slog.Info("Configuring Mellanox SR-IOV", "device", devPath, "numVFs", numVFs)
-		out, err = c.disk.ChrootRun(ctx, c.rootDir, cmd)
+		out, err := c.disk.ChrootRun(ctx, c.rootDir, cmd)
 		if err != nil {
 			slog.Warn("mstconfig failed", "device", devPath, "output", string(out), "error", err)
 			continue
@@ -276,6 +335,25 @@ func (c *Configurator) SetupMellanox(ctx context.Context, numVFs int) (bool, err
 		slog.Info("Mellanox firmware values changed, hard reboot required")
 	}
 	return changed, nil
+}
+
+// hasPCIVendor checks if any PCI device with the given vendor ID exists via sysfs.
+func hasPCIVendor(vendorID string) (bool, error) {
+	entries, err := os.ReadDir("/sys/bus/pci/devices")
+	if err != nil {
+		return false, fmt.Errorf("reading PCI devices: %w", err)
+	}
+	target := "0x" + vendorID
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join("/sys/bus/pci/devices", entry.Name(), "vendor"))
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(string(data)) == target {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // copyFile copies a file preserving permissions.

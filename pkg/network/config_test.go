@@ -58,3 +58,41 @@ func TestIsFRRMode(t *testing.T) {
 		})
 	}
 }
+
+func TestIsStaticMode(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+		want bool
+	}{
+		{"empty", Config{}, false},
+		{"with_static_ip", Config{StaticIP: "10.0.0.5/24"}, true},
+		{"with_gateway_only", Config{StaticGateway: "10.0.0.1"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.IsStaticMode(); got != tt.want {
+				t.Errorf("IsStaticMode() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsBondMode(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+		want bool
+	}{
+		{"empty", Config{}, false},
+		{"with_interfaces", Config{BondInterfaces: "eth0,eth1"}, true},
+		{"with_bond_mode_only", Config{BondMode: "802.3ad"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.IsBondMode(); got != tt.want {
+				t.Errorf("IsBondMode() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

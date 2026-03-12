@@ -6,6 +6,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"os/exec"
+	"strings"
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
@@ -50,6 +53,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		{"copy-provisioner-files", o.copyProvisionerFiles},
 		{"configure-dns", o.configureDNS},
 		{"stop-raid", o.stopRAID},
+		{"disable-lvm", o.disableLVM},
 		{"remove-efi-entries", o.removeEFIBootEntries},
 		{"setup-mellanox", o.setupMellanox},
 		{"wipe-disks", o.wipeDisks},
@@ -67,15 +71,18 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		{"configure-grub", o.configureGRUB},
 		{"copy-machine-files", o.copyMachineFiles},
 		{"run-machine-commands", o.runMachineCommands},
+		{"run-post-provision-cmds", o.runPostProvisionCmds},
+		{"create-efi-boot-entry", o.createEFIBootEntry},
 		{"teardown-chroot", o.teardownChroot},
 		{"report-success", o.reportSuccess},
 	}
 
-	for _, step := range steps {
-		slog.Info("Provisioning step", "step", step.Name)
+	for i, step := range steps {
+		slog.Info("Provisioning step", "step", step.Name, "index", i+1, "total", len(steps))
 		if err := step.Fn(ctx); err != nil {
 			msg := fmt.Sprintf("step %s failed: %v", step.Name, err)
 			slog.Error("Provisioning step failed", "step", step.Name, "error", err)
+			dumpDebugState(step.Name)
 			_ = o.provider.ReportStatus(ctx, config.StatusError, msg)
 			return fmt.Errorf("provision step %s: %w", step.Name, err)
 		}
@@ -106,8 +113,16 @@ func (o *Orchestrator) stopRAID(ctx context.Context) error {
 	return o.disk.StopRAIDArrays(ctx)
 }
 
+func (o *Orchestrator) disableLVM(ctx context.Context) error {
+	return o.disk.DisableLVM(ctx)
+}
+
 func (o *Orchestrator) removeEFIBootEntries(ctx context.Context) error {
-	return o.config.SetupEFIBoot(ctx)
+	return o.config.RemoveEFIBootEntries(ctx)
+}
+
+func (o *Orchestrator) createEFIBootEntry(ctx context.Context) error {
+	return o.config.CreateEFIBootEntry(ctx, o.targetDisk, o.bootPartition)
 }
 
 func (o *Orchestrator) setupMellanox(ctx context.Context) error {
@@ -129,6 +144,10 @@ func (o *Orchestrator) FirmwareChanged() bool {
 
 func (o *Orchestrator) wipeDisks(ctx context.Context) error {
 	return o.disk.WipeAllDisks(ctx)
+}
+
+func (o *Orchestrator) secureEraseDisks(ctx context.Context) error {
+	return o.disk.SecureEraseAllDisks(ctx)
 }
 
 func (o *Orchestrator) detectDisk(ctx context.Context) error {
@@ -227,6 +246,13 @@ func (o *Orchestrator) runMachineCommands(ctx context.Context) error {
 	return o.config.RunMachineCommands(ctx)
 }
 
+func (o *Orchestrator) runPostProvisionCmds(ctx context.Context) error {
+	if len(o.cfg.PostProvisionCmds) == 0 {
+		return nil
+	}
+	return o.config.RunPostProvisionCmds(ctx, o.cfg.PostProvisionCmds)
+}
+
 func (o *Orchestrator) teardownChroot(_ context.Context) error {
 	o.disk.TeardownChrootBindMounts(newroot)
 	return o.disk.Unmount(newroot)
@@ -234,4 +260,45 @@ func (o *Orchestrator) teardownChroot(_ context.Context) error {
 
 func (o *Orchestrator) reportSuccess(ctx context.Context) error {
 	return o.provider.ReportStatus(ctx, config.StatusSuccess, "provisioning complete")
+}
+
+// dumpDebugState logs system state useful for diagnosing failures.
+func dumpDebugState(failedStep string) {
+	slog.Error("=== DEBUG DUMP START ===", "failedStep", failedStep)
+
+	debugCmds := []struct {
+		label string
+		cmd   string
+	}{
+		{"block devices", "lsblk -a"},
+		{"mounts", "cat /proc/mounts"},
+		{"memory", "cat /proc/meminfo"},
+		{"disk partitions", "cat /proc/partitions"},
+		{"dmesg tail", "dmesg | tail -50"},
+		{"network interfaces", "ip -br addr"},
+		{"routes", "ip route"},
+	}
+
+	for _, dc := range debugCmds {
+		out, err := exec.Command("sh", "-c", dc.cmd).CombinedOutput() //nolint:gosec // debug cmds are hardcoded
+		if err != nil {
+			slog.Error("Debug command failed", "label", dc.label, "error", err)
+			continue
+		}
+		// Log each line separately for readability.
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if line != "" {
+				slog.Error("DEBUG", "label", dc.label, "data", line)
+			}
+		}
+	}
+
+	// Log environment.
+	for _, env := range os.Environ() {
+		if strings.HasPrefix(env, "BOOTY_") || strings.HasPrefix(env, "MODE=") {
+			slog.Error("DEBUG env", "var", env)
+		}
+	}
+
+	slog.Error("=== DEBUG DUMP END ===", "failedStep", failedStep)
 }

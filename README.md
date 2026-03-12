@@ -58,10 +58,19 @@ BOOTy operates in two modes depending on the boot environment:
 
 - **Dual-mode provisioning** — CAPRF (Kubernetes) and legacy (standalone) modes
 - **FRR/EVPN networking** — BGP underlay with VXLAN overlay for data center fabrics
-- **DHCP fallback** — Automatic fallback when FRR configuration is absent
+- **Static IP networking** — Direct IP assignment via netlink (no external tools)
+- **LACP bond** — 802.3ad link aggregation with configurable bond modes
+- **DHCP fallback** — Automatic DHCP on all physical interfaces with connectivity check
 - **Broad NIC driver support** — Intel (e1000e, igb, igc, ixgbe, i40e, ice), Broadcom (tg3, bnxt_en), Mellanox/NVIDIA (mlx4, mlx5), plus virtio for VMs
-- **Gzip image streaming** — Transparent decompression during disk writes
-- **24-step provisioning pipeline** — RAID cleanup, disk detection, image streaming, partition growth, LVM, filesystem resize, OS configuration, EFI boot, Mellanox SR-IOV
+- **Multi-format image streaming** — Gzip, lz4, xz, zstd decompression with auto-detection
+- **OCI registry support** — Pull images from OCI registries (authenticated & unauthenticated) via `oci://` URLs
+- **HTTP retry with backoff** — Automatic exponential backoff retry for image downloads and OCI pulls
+- **Secure erase** — NVMe format (SES1) and ATA Security Erase for full disk sanitization
+- **Software RAID** — mdadm array creation (RAID 0/1/5/6/10)
+- **Filesystem support** — ext2, ext3, ext4, xfs, btrfs, vfat mount/resize
+- **LLDP discovery** — Raw AF_PACKET-based LLDP listener for switch topology discovery
+- **Post-provision hooks** — Execute arbitrary commands in chroot after OS configuration
+- **25-step provisioning pipeline** — RAID cleanup, disk detection, image streaming, partition growth, LVM, filesystem resize, OS configuration, EFI boot, Mellanox SR-IOV, post-provision hooks
 - **Kexec support** — Fast reboot into installed kernel without full BIOS POST (auto-disabled after firmware changes)
 - **Remote logging** — Real-time log and debug shipping to CAPRF controller
 - **Hard/soft deprovisioning** — Full disk wipe or GRUB rename for reprovisioning
@@ -141,9 +150,9 @@ automatically at boot from the `/modules/` directory in the initramfs.
 | **Emulex/Broadcom** | `be2net` | OneConnect OCe14xxx | 10G |
 | **QEMU/KVM** | `virtio_net` | VirtIO NIC | Virtual |
 
-**Mellanox SR-IOV**: ConnectX-4+ cards are automatically detected via `lspci` and
-configured for SR-IOV using `mstconfig` during provisioning (requires a hard reboot
-to apply firmware changes).
+**Mellanox SR-IOV**: ConnectX-4+ cards are automatically detected via sysfs PCI vendor
+ID (`/sys/bus/pci/devices/*/vendor`) — no `lspci` binary needed. SR-IOV is configured
+using `mstconfig` during provisioning (requires a hard reboot to apply firmware changes).
 
 ## Usage
 
@@ -221,6 +230,13 @@ go run server/server.go \
 | `MACHINE_EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters |
 | `HEARTBEAT_URL` | — | Standby mode: URL for periodic keepalives |
 | `COMMANDS_URL` | — | Standby mode: URL to poll for pending commands |
+| `SECURE_ERASE` | `false` | Use NVMe format / ATA secure erase instead of partition wipe |
+| `STATIC_IP` | — | Static IP in CIDR notation (e.g. `10.0.0.5/24`) |
+| `STATIC_GATEWAY` | — | Default gateway for static networking |
+| `STATIC_IFACE` | — | Interface for static IP (auto-detect if empty) |
+| `BOND_INTERFACES` | — | Comma-separated interfaces for LACP bond (e.g. `eth0,eth1`) |
+| `BOND_MODE` | `802.3ad` | Bond mode: `802.3ad`/`lacp`, `balance-rr`, `active-backup`, `balance-xor` |
+| `POST_PROVISION_CMDS` | — | Semicolon-separated commands to run in chroot after provisioning |
 
 ### Debugging
 
@@ -229,6 +245,71 @@ go run server/server.go \
 | `-shell` | Drop to a BusyBox shell if something fails |
 | `-wipe` | Wipe the provisioned disk on failure |
 | `-dryRun` | Log actions without writing to disk |
+
+## OCI Image Sources
+
+BOOTy supports pulling disk images from OCI-compliant container registries. Use the
+`oci://` URL scheme in the `IMAGE` variable:
+
+```bash
+# Unauthenticated registry
+export IMAGE="oci://ghcr.io/myorg/os-images:ubuntu-22.04"
+
+# Authenticated registry (credentials from standard Docker config)
+export IMAGE="oci://registry.example.com/images:rhel-9"
+```
+
+The OCI image must contain exactly one layer with the disk image (optionally compressed).
+Authentication uses the standard Docker credential chain (`~/.docker/config.json`,
+`DOCKER_CONFIG`, credential helpers). Both `docker.io` and OCI-spec registries are
+supported via [go-containerregistry](https://github.com/google/go-containerregistry).
+
+HTTP and OCI fetches are retried up to 3 times with exponential backoff (1s, 2s, 4s).
+
+## Network Modes
+
+BOOTy supports multiple network modes with automatic fallback:
+
+| Priority | Mode | Trigger | Description |
+|----------|------|---------|-------------|
+| 1 | **Bond** | `BOND_INTERFACES` set | Creates bond0 (LACP/802.3ad) from listed interfaces |
+| 2 | **FRR/EVPN** | `underlay_subnet`+`asn_server` set | BGP underlay with VXLAN overlay |
+| 3 | **Static** | `STATIC_IP` set | Assigns IP via netlink, adds default route |
+| 4 | **DHCP** | Default | Tries DHCP on all physical interfaces |
+
+Bond mode creates the bond interface first, then the selected upper mode (FRR/Static/DHCP)
+runs on top of it. Each mode falls back to DHCP on failure.
+
+## Extending Bundled Binaries
+
+The initramfs is built in `initrd.Dockerfile` using a multi-stage Docker build. To add
+a new binary:
+
+1. **Install the package** in the `tools` build stage:
+```dockerfile
+# In the 'tools' stage (FROM alpine AS tools)
+RUN apk add --no-cache your-package
+```
+
+2. **Copy the binary** into the final initramfs:
+```dockerfile
+# In the builder stage
+COPY --from=tools /usr/sbin/your-binary sbin/your-binary
+```
+
+3. **Verify all shared library dependencies** are satisfied:
+```bash
+# Inside the container
+ldd /usr/sbin/your-binary
+```
+
+Currently bundled binaries: `mdadm`, `wipefs`, `sfdisk`, `sgdisk`, `e2fsck`,
+`resize2fs`, `xfs_growfs`, `xfs_repair`, `btrfs`, `parted`, `kpartx`, `lvm`,
+`hdparm`, `nvme`, `mstconfig`, `mstflint`, `lldpcli`, `lldpd`, `efibootmgr`.
+
+> **Prefer Go libraries**: Where possible, use Go syscalls or libraries instead of
+> shelling out to external binaries. Examples: `unix.FinitModule()` instead of `insmod`,
+> `syscall.SysProcAttr{Chroot}` instead of `chroot`, sysfs reads instead of `lspci`.
 
 ## Development
 
@@ -257,10 +338,11 @@ make build
 │   ├── caprf/                  # CAPRF client (status, log, debug, vars parsing)
 │   ├── config/                 # MachineConfig, Provider interface, Status types
 │   ├── disk/                   # Disk detection, partitioning, RAID, LVM, mount
-│   ├── image/                  # Image streaming (HTTP, gzip auto-detect)
+│   ├── image/                  # Image streaming (HTTP, OCI, gzip/lz4/xz/zstd auto-detect)
 │   ├── kexec/                  # GRUB parsing, kexec load/execute
-│   ├── network/                # Network mode abstraction (FRR, DHCP), NIC detection
-│   │   └── frr/               # FRR/EVPN: config rendering, address derivation
+│   ├── network/                # Network mode abstraction (FRR, DHCP, Static, Bond)
+│   │   ├── frr/               # FRR/EVPN: config rendering, address derivation
+│   │   └── lldp/              # LLDP frame listener (raw AF_PACKET sockets)
 │   ├── provision/              # Orchestrator (24-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
 │   ├── plunderclient/          # Legacy HTTP client for config retrieval
