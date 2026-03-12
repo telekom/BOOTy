@@ -11,6 +11,16 @@ updates:
     schedule:
       interval: weekly
 
+  - package-ecosystem: docker
+    directory: /test/e2e/clab
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /test/e2e/clab/vrnetlab
+    schedule:
+      interval: weekly
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
