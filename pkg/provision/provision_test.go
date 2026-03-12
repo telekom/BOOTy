@@ -238,7 +238,8 @@ func TestRunMachineCommandsNotExist(t *testing.T) {
 func TestSetupMellanoxNoNICs(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
-	cmd.setResult("chroot "+c.rootDir, []byte(""), nil)
+	restore := SetPCIVendorCheckFunc(func(string) (bool, error) { return false, nil })
+	defer restore()
 	changed, err := c.SetupMellanox(context.Background(), 32)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -251,7 +252,8 @@ func TestSetupMellanoxNoNICs(t *testing.T) {
 func TestSetupMellanoxLspciFailure(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
-	cmd.setResult("chroot "+c.rootDir, nil, fmt.Errorf("lspci not found"))
+	restore := SetPCIVendorCheckFunc(func(string) (bool, error) { return false, fmt.Errorf("sysfs not available") })
+	defer restore()
 	changed, err := c.SetupMellanox(context.Background(), 32)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -276,9 +278,10 @@ func (s *sequentialCommander) Run(_ context.Context, _ string, _ ...string) ([]b
 }
 
 func TestSetupMellanoxFirmwareChanged(t *testing.T) {
+	restore := SetPCIVendorCheckFunc(func(string) (bool, error) { return true, nil })
+	defer restore()
 	mgr := disk.NewManager(&sequentialCommander{
 		results: []mockResult{
-			{output: []byte("15b3:1017 Mellanox ConnectX-5"), err: nil},
 			{output: []byte("mt4125_pciconf0\n"), err: nil},
 			{output: []byte("Applied"), err: nil},
 		},
@@ -294,9 +297,10 @@ func TestSetupMellanoxFirmwareChanged(t *testing.T) {
 }
 
 func TestSetupMellanoxMstconfigFails(t *testing.T) {
+	restore := SetPCIVendorCheckFunc(func(string) (bool, error) { return true, nil })
+	defer restore()
 	mgr := disk.NewManager(&sequentialCommander{
 		results: []mockResult{
-			{output: []byte("15b3:1017 Mellanox ConnectX-5"), err: nil},
 			{output: []byte("mt4125_pciconf0\n"), err: nil},
 			{output: []byte("failed"), err: fmt.Errorf("mstconfig: exit 1")},
 		},

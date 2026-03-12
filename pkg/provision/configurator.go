@@ -294,7 +294,7 @@ func (c *Configurator) SetupMellanox(ctx context.Context, numVFs int) (bool, err
 	slog.Info("Checking for Mellanox NICs")
 
 	// Detect Mellanox NICs via sysfs (vendor 0x15b3) instead of lspci.
-	found, err := hasPCIVendor("15b3")
+	found, err := hasPCIVendorFunc("15b3")
 	if err != nil {
 		slog.Info("PCI enumeration failed, skipping Mellanox setup", "error", err)
 		return false, nil
@@ -335,6 +335,17 @@ func (c *Configurator) SetupMellanox(ctx context.Context, numVFs int) (bool, err
 		slog.Info("Mellanox firmware values changed, hard reboot required")
 	}
 	return changed, nil
+}
+
+// hasPCIVendorFunc is the PCI vendor check function, replaceable in tests.
+var hasPCIVendorFunc = hasPCIVendor
+
+// SetPCIVendorCheckFunc overrides the PCI vendor detection for testing.
+// Returns a restore function that resets to the original implementation.
+func SetPCIVendorCheckFunc(fn func(string) (bool, error)) func() {
+	old := hasPCIVendorFunc
+	hasPCIVendorFunc = fn
+	return func() { hasPCIVendorFunc = old }
 }
 
 // hasPCIVendor checks if any PCI device with the given vendor ID exists via sysfs.

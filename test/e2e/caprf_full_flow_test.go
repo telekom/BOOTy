@@ -806,9 +806,10 @@ func TestConfiguratorFileOperationsE2E(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestMellanoxFirmwareDetectionE2E(t *testing.T) {
+	restore := provision.SetPCIVendorCheckFunc(func(string) (bool, error) { return true, nil })
+	defer restore()
 	seqCmd := &sequentialCmd{
 		results: []cmdResult{
-			{Output: []byte("15b3:1017 Mellanox ConnectX-5")},
 			{Output: []byte("mt4125_pciconf0\n")},
 			{Output: []byte("Applied")},
 		},
