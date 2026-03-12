@@ -9,10 +9,15 @@
 /bin/mount -t devtmpfs devtmpfs /dev 2>/dev/null
 /bin/mount -t tmpfs tmpfs /tmp 2>/dev/null
 
-# Load kernel modules needed by BOOTy's FRR/EVPN network stack
-/bin/busybox depmod 2>/dev/null || true
-/bin/modprobe dummy 2>/dev/null || true
-/bin/modprobe vxlan 2>/dev/null || true
+# Widen serial console so log lines are not truncated at 80 columns
+stty cols 200 2>/dev/null || true
+
+# Load kernel modules needed by BOOTy's FRR/EVPN network stack.
+# Modules are in /modules/ (flat directory), loaded via insmod in dependency order.
+for mod in llc stp bridge udp_tunnel ip6_udp_tunnel dummy vxlan; do
+    ko=$(find /modules -name "${mod}.ko*" 2>/dev/null | head -1)
+    [ -n "$ko" ] && /bin/insmod "$ko" 2>/dev/null || true
+done
 
 # Wait for virtio NIC to appear
 sleep 3

@@ -100,59 +100,39 @@ func waitForAccessLogEntry(t *testing.T, container, logPath, entry string, timeo
 
 // --- Connectivity tests: BOOTy nodes can reach services through fabric ---
 
-func TestBootProvisionNodeReachesCAPRF(t *testing.T) {
+func TestBootAllNodesReachCAPRF(t *testing.T) {
 	requireBootLab(t)
 
-	// The provision node (10.100.0.20) should reach caprf-mock (10.100.0.11) through EVPN.
-	var reachable bool
-	for i := 0; i < 120; i++ {
-		_, err := bootDockerExec(t, provisionContainer, "wget", "-q", "-O", "/dev/null", "--timeout=2", "http://10.100.0.11/")
-		if err == nil {
-			reachable = true
-			break
-		}
-		time.Sleep(1 * time.Second)
+	containers := []struct {
+		name string
+		desc string
+	}{
+		{provisionContainer, "provision"},
+		{deprovisionContainer, "deprovision"},
+		{standbyContainer, "standby"},
 	}
-	if !reachable {
-		t.Fatal("provision node cannot reach CAPRF mock (10.100.0.11) through EVPN fabric")
-	}
-	t.Log("provision node reaches CAPRF mock through EVPN fabric")
-}
 
-func TestBootDeprovisionNodeReachesCAPRF(t *testing.T) {
-	requireBootLab(t)
-
-	var reachable bool
-	for i := 0; i < 120; i++ {
-		_, err := bootDockerExec(t, deprovisionContainer, "wget", "-q", "-O", "/dev/null", "--timeout=2", "http://10.100.0.11/")
-		if err == nil {
-			reachable = true
-			break
-		}
-		time.Sleep(1 * time.Second)
+	for _, c := range containers {
+		c := c
+		t.Run(c.desc, func(t *testing.T) {
+			t.Parallel()
+			// EVPN data-plane convergence can take several minutes in CI;
+			// run all 3 connectivity checks in parallel with a generous budget.
+			var reachable bool
+			for i := 0; i < 420; i++ {
+				_, err := bootDockerExec(t, c.name, "wget", "-q", "-O", "/dev/null", "--timeout=2", "http://10.100.0.11/")
+				if err == nil {
+					reachable = true
+					break
+				}
+				time.Sleep(1 * time.Second)
+			}
+			if !reachable {
+				t.Fatalf("%s node cannot reach CAPRF mock (10.100.0.11) through EVPN fabric", c.desc)
+			}
+			t.Logf("%s node reaches CAPRF mock through EVPN fabric", c.desc)
+		})
 	}
-	if !reachable {
-		t.Fatal("deprovision node cannot reach CAPRF mock (10.100.0.11) through EVPN fabric")
-	}
-	t.Log("deprovision node reaches CAPRF mock through EVPN fabric")
-}
-
-func TestBootStandbyNodeReachesCAPRF(t *testing.T) {
-	requireBootLab(t)
-
-	var reachable bool
-	for i := 0; i < 120; i++ {
-		_, err := bootDockerExec(t, standbyContainer, "wget", "-q", "-O", "/dev/null", "--timeout=2", "http://10.100.0.11/")
-		if err == nil {
-			reachable = true
-			break
-		}
-		time.Sleep(1 * time.Second)
-	}
-	if !reachable {
-		t.Fatal("standby node cannot reach CAPRF mock (10.100.0.11) through EVPN fabric")
-	}
-	t.Log("standby node reaches CAPRF mock through EVPN fabric")
 }
 
 func TestBootAllNodesReachNginx(t *testing.T) {
