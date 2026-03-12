@@ -1,0 +1,923 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.10.1
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Run tests
+        run: go test -v -race -coverprofile=coverage.out -count=1 ./...
+
+      - name: Check coverage gate (40%)
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $NF}' | tr -d '%')
+          echo "Total coverage: ${COVERAGE}%"
+          if (( $(echo "$COVERAGE < 40" | bc -l) )); then
+            echo "::error::Coverage ${COVERAGE}% is below the 40% minimum"
+            exit 1
+          fi
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Run E2E tests
+        run: go test -tags e2e -v -race -count=1 ./test/e2e/...
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [lint, test, e2e]
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install cross-compilation tools
+        if: matrix.goarch == 'arm64'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 1
+          CC: ${{ matrix.goarch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}
+        run: go build -ldflags "-s -w -linkmode external -extldflags '-static'" -o booty-${{ matrix.goarch }}
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: booty-${{ matrix.goarch }}
+          path: booty-${{ matrix.goarch }}
+
+  build-flavours:
+    name: Build Flavours (slim + micro)
+    runs-on: ubuntu-latest
+    needs: [lint, test, e2e]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build slim initramfs
+        run: |
+          docker buildx build --platform linux/amd64 --target slim \
+            --output type=local,dest=out-slim -f initrd.Dockerfile .
+          echo "Slim initramfs:"
+          ls -lh out-slim/initramfs.cpio.gz
+
+      - name: Build micro initramfs
+        run: |
+          docker buildx build --platform linux/amd64 --target micro \
+            --output type=local,dest=out-micro -f initrd.Dockerfile .
+          echo "Micro initramfs:"
+          ls -lh out-micro/initramfs.cpio.gz
+
+      - name: Verify slim is smaller than default
+        run: |
+          docker buildx build --platform linux/amd64 \
+            --output type=local,dest=out-default -f initrd.Dockerfile .
+
+          DEFAULT_SIZE=$(stat -c%s out-default/initramfs.cpio.gz)
+          SLIM_SIZE=$(stat -c%s out-slim/initramfs.cpio.gz)
+          MICRO_SIZE=$(stat -c%s out-micro/initramfs.cpio.gz)
+
+          echo "Default: $(numfmt --to=iec $DEFAULT_SIZE)"
+          echo "Slim:    $(numfmt --to=iec $SLIM_SIZE)"
+          echo "Micro:   $(numfmt --to=iec $MICRO_SIZE)"
+
+          if [ "$MICRO_SIZE" -ge "$SLIM_SIZE" ]; then
+            echo "::error::Micro ($MICRO_SIZE) should be smaller than slim ($SLIM_SIZE)"
+            exit 1
+          fi
+          if [ "$SLIM_SIZE" -ge "$DEFAULT_SIZE" ]; then
+            echo "::error::Slim ($SLIM_SIZE) should be smaller than default ($DEFAULT_SIZE)"
+            exit 1
+          fi
+          echo "PASS: micro < slim < default"
+
+      - name: Verify slim contents
+        run: |
+          gzip -dc out-slim/initramfs.cpio.gz | cpio -t 2>/dev/null > slim-files.txt
+          echo "Slim file count: $(wc -l < slim-files.txt)"
+
+          # Must contain BOOTy init and busybox
+          grep -q "^init$\|^./init$" slim-files.txt || (echo "FAIL: init missing"; exit 1)
+          grep -q "bin/busybox" slim-files.txt || (echo "FAIL: busybox missing"; exit 1)
+          grep -q "bin/ip" slim-files.txt || (echo "FAIL: ip missing"; exit 1)
+
+          # Must NOT contain FRR or LVM
+          if grep -q "sbin/bgpd" slim-files.txt; then echo "FAIL: bgpd present in slim"; exit 1; fi
+          if grep -q "sbin/lvm" slim-files.txt; then echo "FAIL: lvm present in slim"; exit 1; fi
+          echo "PASS: slim contents verified"
+
+      - name: Verify micro contents
+        run: |
+          gzip -dc out-micro/initramfs.cpio.gz | cpio -t 2>/dev/null > micro-files.txt
+          echo "Micro file count: $(wc -l < micro-files.txt)"
+
+          # Must contain BOOTy init
+          grep -q "^init$\|^./init$" micro-files.txt || (echo "FAIL: init missing"; exit 1)
+
+          # Must NOT contain busybox, FRR, LVM, or external tools
+          if grep -q "bin/busybox" micro-files.txt; then echo "FAIL: busybox present in micro"; exit 1; fi
+          if grep -q "sbin/bgpd" micro-files.txt; then echo "FAIL: bgpd present in micro"; exit 1; fi
+          if grep -q "bin/ip" micro-files.txt; then echo "FAIL: ip present in micro"; exit 1; fi
+          echo "PASS: micro contents verified"
+
+      - name: Upload build flavour artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-flavours
+          path: |
+            out-slim/initramfs.cpio.gz
+            out-micro/initramfs.cpio.gz
+
+  kvm-boot:
+    name: KVM Boot Validation
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install QEMU and dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 cpio busybox-static zstd
+
+      - name: Build initramfs image
+        run: |
+          # Build BOOTy as a static binary for linux/amd64
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
+            go build -ldflags "-linkmode external -extldflags '-static' -s -w" -o booty
+
+          # Create initramfs directory structure
+          mkdir -p initramfs/{bin,sbin,dev,proc,sys,etc,tmp,usr/bin,lib/modules,mnt,home}
+
+          # Create device nodes so the kernel can give init a working console
+          sudo mknod initramfs/dev/console c 5 1
+          sudo mknod initramfs/dev/ttyS0 c 4 64
+          sudo mknod initramfs/dev/null c 1 3
+
+          # Install busybox with shell and utility symlinks
+          cp /bin/busybox initramfs/bin/busybox
+          cd initramfs/bin
+          for cmd in sh mount umount insmod setsid cttyhack; do
+            ln -sf busybox "$cmd"
+          done
+          cd ../..
+          cd initramfs/usr/bin && ln -sf ../../bin/busybox setsid && cd ../../..
+
+          # Copy BOOTy binary
+          cp booty initramfs/booty
+
+          # Copy e1000 kernel module (QEMU default virtual NIC)
+          MOD_PATH=$(find /lib/modules/$(uname -r) -name "e1000.ko*" | head -1)
+          if [ -n "$MOD_PATH" ]; then
+            case "$MOD_PATH" in
+              *.zst) zstd -d "$MOD_PATH" -o initramfs/lib/modules/e1000.ko ;;
+              *.xz)  xz -dc "$MOD_PATH" > initramfs/lib/modules/e1000.ko ;;
+              *.gz)  gzip -dc "$MOD_PATH" > initramfs/lib/modules/e1000.ko ;;
+              *)     cp "$MOD_PATH" initramfs/lib/modules/e1000.ko ;;
+            esac
+            echo "Copied e1000 module from $MOD_PATH"
+          else
+            echo "WARNING: e1000 module not found"
+          fi
+
+          # Create init wrapper: loads NIC driver and sets BOOTYURL before starting BOOTy
+          cat > initramfs/init << 'INITEOF'
+          #!/bin/sh
+          /bin/insmod /lib/modules/e1000.ko 2>/dev/null || true
+          export BOOTYURL="http://10.0.2.2:3000/booty"
+          exec /booty
+          INITEOF
+          chmod +x initramfs/init
+
+          # Package initramfs
+          cd initramfs
+          sudo find . -print0 | sudo cpio --null -ov --format=newc 2>/dev/null | gzip > ../test-initramfs.cpio.gz
+          cd ..
+
+      - name: Prepare kernel
+        run: |
+          sudo cp /boot/vmlinuz-$(uname -r) vmlinuz
+          sudo chmod 644 vmlinuz
+
+      - name: Start test provisioning server
+        run: |
+          mkdir -p images
+          dd if=/dev/urandom bs=1024 count=1 of=images/test.img 2>/dev/null
+
+          # Config for QEMU default MAC 52:54:00:12:34:56 (dash-format: 52-54-00-12-34-56)
+          cat > test-config.json << 'EOF'
+          {
+            "action": "writeImage",
+            "sourceImage": "http://10.0.2.2:3000/images/test.img",
+            "destinationDevice": "/dev/sda",
+            "compressed": false,
+            "dryRun": false,
+            "dropToShell": false,
+            "wipeDevice": false,
+            "growPartition": 1,
+            "lvmRootName": "/dev/ubuntu-vg/root"
+          }
+          EOF
+
+          python3 << 'PYEOF' &
+          import http.server
+
+          class Handler(http.server.SimpleHTTPRequestHandler):
+              def do_GET(self):
+                  if self.path == '/booty/52-54-00-12-34-56.bty':
+                      self.send_response(200)
+                      self.send_header('Content-Type', 'application/json')
+                      self.end_headers()
+                      with open('test-config.json', 'rb') as f:
+                          self.wfile.write(f.read())
+                  elif self.path.startswith('/images/'):
+                      super().do_GET()
+                  else:
+                      self.send_response(404)
+                      self.end_headers()
+              def log_message(self, format, *args):
+                  print(f"[server] {format % args}")
+
+          server = http.server.HTTPServer(('0.0.0.0', 3000), Handler)
+          print("[server] Listening on :3000")
+          server.serve_forever()
+          PYEOF
+          echo $! > server.pid
+          sleep 2
+          curl -sf http://localhost:3000/booty/52-54-00-12-34-56.bty | python3 -m json.tool
+          echo "Provisioning server ready"
+
+      - name: Boot with QEMU and validate
+        timeout-minutes: 5
+        run: |
+          timeout 120 qemu-system-x86_64 \
+            -kernel vmlinuz \
+            -initrd test-initramfs.cpio.gz \
+            -append "console=ttyS0 panic=1" \
+            -m 512 \
+            -nographic \
+            -no-reboot \
+            -net nic,macaddr=52:54:00:12:34:56,model=e1000 \
+            -net user \
+            -serial file:serial.log \
+            2>&1 || true
+
+          echo ""
+          echo "======================================="
+          echo "        Serial Console Output          "
+          echo "======================================="
+          cat serial.log || true
+          echo ""
+          echo "======================================="
+
+          PASS=true
+
+          if grep -q "Legacy mode" serial.log 2>/dev/null; then
+            echo "PASS: BOOTy init started — mount and device setup successful"
+          else
+            echo "FAIL: BOOTy init did not reach DHCP setup"
+            PASS=false
+          fi
+
+          if grep -q "Starting BOOTy" serial.log 2>/dev/null; then
+            echo "PASS: BOOTy main flow reached"
+          else
+            echo "FAIL: BOOTy did not reach main flow"
+            PASS=false
+          fi
+
+          if grep -q "Connecting to provisioning server" serial.log 2>/dev/null; then
+            echo "PASS: Network operational — provisioning server contacted"
+          else
+            echo "FAIL: Provisioning server not contacted"
+            PASS=false
+          fi
+
+          if [ "$PASS" = "false" ]; then
+            echo ""
+            echo "E2E BOOT VALIDATION FAILED"
+            exit 1
+          fi
+
+          echo ""
+          echo "ALL E2E CHECKS PASSED"
+
+      - name: Upload serial log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kvm-boot-serial-log
+          path: serial.log
+          if-no-files-found: ignore
+
+      - name: Cleanup
+        if: always()
+        run: |
+          [ -f server.pid ] && kill $(cat server.pid) 2>/dev/null || true
+
+  e2e-clab:
+    name: E2E ContainerLab
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install ContainerLab
+        run: bash -c "$(curl -sL https://get.containerlab.dev)"
+
+      - name: Deploy topology
+        run: sudo containerlab deploy --topo test/e2e/clab/topology.clab.yml
+
+      - name: Wait for BGP convergence
+        run: |
+          echo "Waiting for BGP sessions to establish..."
+          for i in $(seq 1 30); do
+            # An established BGP neighbor shows an uptime (e.g. 00:00:27) in the Up/Down column.
+            # Non-established neighbors show a state name like Active, Idle, Connect, etc.
+            if sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp summary" 2>/dev/null | grep -qE "leaf01.*[0-9]{2}:[0-9]{2}:[0-9]{2}"; then
+              echo "BGP sessions established after ${i}s"
+              sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp summary"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "BGP sessions did not establish in 30s"
+          sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp summary" || true
+          exit 1
+
+      - name: Run E2E integration tests
+        run: go test -tags e2e_integration -v -race -count=1 -timeout 10m ./test/e2e/integration/...
+
+      - name: Collect container logs
+        if: always()
+        timeout-minutes: 3
+        run: |
+          mkdir -p clab-logs
+          for c in spine01 leaf01 client nginx caprf-mock; do
+            name="clab-booty-lab-${c}"
+            echo "=== Logs for ${name} ===" | tee clab-logs/${c}.log
+            timeout 30 sudo docker logs "${name}" >> clab-logs/${c}.log 2>&1 || echo "(no logs)"
+          done
+
+          echo ""
+          echo "=== FRR Routing State (spine01) ==="
+          timeout 15 sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp summary" 2>/dev/null | tee clab-logs/spine01-bgp-summary.txt || true
+          timeout 15 sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null | tee clab-logs/spine01-evpn.txt || true
+          timeout 15 sudo docker exec clab-booty-lab-spine01 vtysh -c "show ip route" 2>/dev/null | tee clab-logs/spine01-routes.txt || true
+
+          echo ""
+          echo "=== FRR Routing State (leaf01) ==="
+          timeout 15 sudo docker exec clab-booty-lab-leaf01 vtysh -c "show bgp summary" 2>/dev/null | tee clab-logs/leaf01-bgp-summary.txt || true
+          timeout 15 sudo docker exec clab-booty-lab-leaf01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null | tee clab-logs/leaf01-evpn.txt || true
+          timeout 15 sudo docker exec clab-booty-lab-leaf01 vtysh -c "show ip route" 2>/dev/null | tee clab-logs/leaf01-routes.txt || true
+
+      - name: Upload ContainerLab logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clab-logs
+          path: clab-logs/
+          if-no-files-found: ignore
+
+      - name: Cleanup
+        if: always()
+        run: sudo containerlab destroy --topo test/e2e/clab/topology.clab.yml --cleanup
+
+  uefi-iso-boot:
+    name: UEFI ISO Boot Validation
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install UEFI and ISO dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 ovmf xorriso grub-efi-amd64-bin \
+            grub-common mtools cpio busybox-static zstd dosfstools
+
+      - name: Build initramfs image
+        run: |
+          # Build BOOTy as a static binary for linux/amd64
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
+            go build -ldflags "-linkmode external -extldflags '-static' -s -w" -o booty
+
+          # Create initramfs directory structure
+          mkdir -p initramfs/{bin,sbin,dev,proc,sys,etc,tmp,usr/bin,lib/modules,mnt,home}
+
+          # Create device nodes so the kernel can give init a working console
+          sudo mknod initramfs/dev/console c 5 1
+          sudo mknod initramfs/dev/ttyS0 c 4 64
+          sudo mknod initramfs/dev/null c 1 3
+
+          # Install busybox with shell and utility symlinks
+          cp /bin/busybox initramfs/bin/busybox
+          cd initramfs/bin
+          for cmd in sh mount umount insmod setsid cttyhack; do
+            ln -sf busybox "$cmd"
+          done
+          cd ../..
+          cd initramfs/usr/bin && ln -sf ../../bin/busybox setsid && cd ../../..
+
+          # Copy BOOTy binary
+          cp booty initramfs/booty
+
+          # Copy e1000 kernel module (QEMU default virtual NIC)
+          MOD_PATH=$(find /lib/modules/$(uname -r) -name "e1000.ko*" | head -1)
+          if [ -n "$MOD_PATH" ]; then
+            case "$MOD_PATH" in
+              *.zst) zstd -d "$MOD_PATH" -o initramfs/lib/modules/e1000.ko ;;
+              *.xz)  xz -dc "$MOD_PATH" > initramfs/lib/modules/e1000.ko ;;
+              *.gz)  gzip -dc "$MOD_PATH" > initramfs/lib/modules/e1000.ko ;;
+              *)     cp "$MOD_PATH" initramfs/lib/modules/e1000.ko ;;
+            esac
+          fi
+
+          # Create init wrapper
+          cat > initramfs/init << 'INITEOF'
+          #!/bin/sh
+          /bin/insmod /lib/modules/e1000.ko 2>/dev/null || true
+          export BOOTYURL="http://10.0.2.2:3000/booty"
+          exec /booty
+          INITEOF
+          chmod +x initramfs/init
+
+          # Package initramfs
+          cd initramfs
+          sudo find . -print0 | sudo cpio --null -ov --format=newc 2>/dev/null | gzip > ../test-initramfs.cpio.gz
+          cd ..
+
+      - name: Prepare kernel
+        run: |
+          sudo cp /boot/vmlinuz-$(uname -r) vmlinuz
+          sudo chmod 644 vmlinuz
+
+      - name: Create UEFI-bootable ISO
+        run: |
+          # Create ISO directory structure
+          mkdir -p iso/boot/grub iso/EFI/BOOT
+          cp vmlinuz iso/boot/vmlinuz
+          cp test-initramfs.cpio.gz iso/boot/initrd
+
+          # Write GRUB configuration
+          cat > iso/boot/grub/grub.cfg << 'EOF'
+          search --no-floppy --set=root --file /boot/vmlinuz
+          set timeout=0
+          set default=0
+          menuentry 'BOOTy UEFI Test' {
+            linux /boot/vmlinuz console=ttyS0 panic=1
+            initrd /boot/initrd
+          }
+          EOF
+
+          # Create standalone GRUB EFI binary
+          grub-mkstandalone -O x86_64-efi -o iso/EFI/BOOT/BOOTX64.EFI \
+            --locales="" --fonts="" \
+            "boot/grub/grub.cfg=iso/boot/grub/grub.cfg"
+
+          # Create FAT image for EFI System Partition
+          dd if=/dev/zero of=iso/efi.img bs=1M count=8
+          mkfs.vfat iso/efi.img
+          mmd -i iso/efi.img ::/EFI ::/EFI/BOOT
+          mcopy -i iso/efi.img iso/EFI/BOOT/BOOTX64.EFI ::/EFI/BOOT/
+
+          # Create UEFI-bootable ISO
+          xorriso -as mkisofs \
+            -R -J \
+            -o test-uefi.iso \
+            -eltorito-alt-boot \
+            -e efi.img \
+            -no-emul-boot \
+            iso/
+
+          ls -lh test-uefi.iso
+          echo "UEFI ISO created successfully"
+
+      - name: Start test provisioning server
+        run: |
+          mkdir -p images
+          dd if=/dev/urandom bs=1024 count=1 of=images/test.img 2>/dev/null
+
+          cat > test-config.json << 'EOF'
+          {
+            "action": "writeImage",
+            "sourceImage": "http://10.0.2.2:3000/images/test.img",
+            "destinationDevice": "/dev/sda",
+            "compressed": false,
+            "dryRun": false,
+            "dropToShell": false,
+            "wipeDevice": false,
+            "growPartition": 1,
+            "lvmRootName": "/dev/ubuntu-vg/root"
+          }
+          EOF
+
+          python3 << 'PYEOF' &
+          import http.server
+
+          class Handler(http.server.SimpleHTTPRequestHandler):
+              def do_GET(self):
+                  if self.path == '/booty/52-54-00-12-34-56.bty':
+                      self.send_response(200)
+                      self.send_header('Content-Type', 'application/json')
+                      self.end_headers()
+                      with open('test-config.json', 'rb') as f:
+                          self.wfile.write(f.read())
+                  elif self.path.startswith('/images/'):
+                      super().do_GET()
+                  else:
+                      self.send_response(404)
+                      self.end_headers()
+              def log_message(self, format, *args):
+                  print(f"[server] {format % args}")
+
+          server = http.server.HTTPServer(('0.0.0.0', 3000), Handler)
+          print("[server] Listening on :3000")
+          server.serve_forever()
+          PYEOF
+          echo $! > server.pid
+          sleep 2
+          curl -sf http://localhost:3000/booty/52-54-00-12-34-56.bty | python3 -m json.tool
+
+      - name: Boot ISO with UEFI firmware (OVMF) and validate
+        timeout-minutes: 5
+        run: |
+          # Find OVMF firmware — OVMF requires pflash, not -bios.
+          OVMF_CODE=$(find /usr/share -name "OVMF_CODE*.fd" ! -name "*snakeoil*" 2>/dev/null | head -1)
+          if [ -z "$OVMF_CODE" ]; then
+            OVMF_CODE=$(find /usr/share -name "OVMF_CODE*.fd" 2>/dev/null | head -1)
+          fi
+          OVMF_VARS=$(find /usr/share -name "OVMF_VARS*.fd" ! -name "*snakeoil*" 2>/dev/null | head -1)
+          if [ -z "$OVMF_VARS" ]; then
+            OVMF_VARS=$(find /usr/share -name "OVMF_VARS*.fd" 2>/dev/null | head -1)
+          fi
+          if [ -z "$OVMF_CODE" ] || [ -z "$OVMF_VARS" ]; then
+            echo "OVMF firmware not found"
+            exit 1
+          fi
+          echo "Using OVMF code: $OVMF_CODE"
+          echo "Using OVMF vars: $OVMF_VARS"
+          cp "$OVMF_VARS" /tmp/ovmf_vars.fd
+
+          timeout 120 qemu-system-x86_64 \
+            -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+            -drive if=pflash,format=raw,file=/tmp/ovmf_vars.fd \
+            -cdrom test-uefi.iso \
+            -boot d \
+            -m 512 \
+            -nographic \
+            -no-reboot \
+            -net nic,macaddr=52:54:00:12:34:56,model=e1000 \
+            -net user \
+            -serial file:serial-uefi.log \
+            2>&1 || true
+
+          echo ""
+          echo "========================================="
+          echo "     UEFI ISO Serial Console Output      "
+          echo "========================================="
+          cat serial-uefi.log || true
+          echo ""
+          echo "========================================="
+
+          PASS=true
+
+          if grep -q "Legacy mode" serial-uefi.log 2>/dev/null; then
+            echo "PASS: BOOTy init started under UEFI — EFI firmware + ISO boot working"
+          else
+            echo "FAIL: BOOTy init did not reach DHCP setup under UEFI"
+            PASS=false
+          fi
+
+          if grep -q "Starting BOOTy" serial-uefi.log 2>/dev/null; then
+            echo "PASS: BOOTy main flow reached under UEFI"
+          else
+            echo "FAIL: BOOTy did not reach main flow under UEFI"
+            PASS=false
+          fi
+
+          if grep -q "Connecting to provisioning server" serial-uefi.log 2>/dev/null; then
+            echo "PASS: Network operational under UEFI — provisioning server contacted"
+          else
+            echo "FAIL: Provisioning server not contacted under UEFI"
+            PASS=false
+          fi
+
+          if [ "$PASS" = "false" ]; then
+            echo ""
+            echo "UEFI ISO BOOT VALIDATION FAILED"
+            exit 1
+          fi
+
+          echo ""
+          echo "ALL UEFI ISO BOOT CHECKS PASSED"
+
+      - name: Upload UEFI serial log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uefi-iso-boot-serial-log
+          path: serial-uefi.log
+          if-no-files-found: ignore
+
+      - name: Upload ISO artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: booty-uefi-iso
+          path: test-uefi.iso
+          if-no-files-found: ignore
+
+      - name: Cleanup
+        if: always()
+        run: |
+          [ -f server.pid ] && kill $(cat server.pid) 2>/dev/null || true
+
+  linux-e2e:
+    name: Linux E2E (Privileged)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install disk utilities
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fdisk gdisk e2fsprogs xfsprogs cloud-guest-utils parted util-linux
+
+      - name: Run Linux E2E tests
+        run: sudo -E $(which go) test -tags linux_e2e -v -count=1 -timeout 5m ./test/e2e/linux/...
+
+  e2e-boot:
+    name: E2E Boot (ContainerLab)
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Build BOOTy test container image
+        run: docker build -t booty-test:latest -f test/e2e/clab/booty-test.Dockerfile .
+
+      - name: Install ContainerLab
+        run: bash -c "$(curl -sL https://get.containerlab.dev)"
+
+      - name: Deploy boot topology
+        run: sudo containerlab deploy --topo test/e2e/clab/topology-boot.clab.yml
+
+      - name: Wait for BGP convergence
+        run: |
+          echo "Waiting for BGP sessions to establish..."
+          for i in $(seq 1 30); do
+            if sudo docker exec clab-booty-boot-lab-spine01 vtysh -c "show bgp summary" 2>/dev/null | grep -qE "leaf01.*[0-9]{2}:[0-9]{2}:[0-9]{2}"; then
+              echo "BGP sessions established after ${i}s"
+              sudo docker exec clab-booty-boot-lab-spine01 vtysh -c "show bgp summary"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "BGP sessions did not establish in 30s"
+          sudo docker exec clab-booty-boot-lab-spine01 vtysh -c "show bgp summary" || true
+          exit 1
+
+      - name: Run BOOTy boot E2E tests
+        run: go test -tags e2e_boot -v -race -count=1 -timeout 10m ./test/e2e/integration/...
+
+      - name: Collect BOOTy container logs
+        if: always()
+        timeout-minutes: 3
+        run: |
+          mkdir -p boot-logs
+
+          for node in booty-provision booty-deprovision booty-standby; do
+            name="clab-booty-boot-lab-${node}"
+            echo ""
+            echo "======================================="
+            echo "  ${node} FULL BOOTY LOGS"
+            echo "======================================="
+            timeout 30 sudo docker logs "${name}" 2>&1 | tee boot-logs/${node}.log || echo "(no logs)"
+            echo "======================================="
+          done
+
+          echo ""
+          echo "======================================="
+          echo "  CAPRF Mock Access Log"
+          echo "======================================="
+          timeout 15 sudo docker exec clab-booty-boot-lab-caprf-mock cat /var/log/nginx/access.log 2>/dev/null | tee boot-logs/caprf-access.log || echo "(no logs)"
+          echo "======================================="
+
+          echo ""
+          echo "======================================="
+          echo "  BGP Summary (spine01)"
+          echo "======================================="
+          timeout 15 sudo docker exec clab-booty-boot-lab-spine01 vtysh -c "show bgp summary" 2>/dev/null | tee boot-logs/bgp-summary.txt || true
+
+          echo ""
+          echo "======================================="
+          echo "  EVPN State (spine01)"
+          echo "======================================="
+          timeout 15 sudo docker exec clab-booty-boot-lab-spine01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null | tee boot-logs/evpn-state.txt || true
+
+      - name: Upload boot logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-logs
+          path: boot-logs/
+          if-no-files-found: ignore
+
+      - name: Cleanup
+        if: always()
+        run: sudo containerlab destroy --topo test/e2e/clab/topology-boot.clab.yml --cleanup
+
+  e2e-vrnetlab:
+    name: E2E EVPN Boot (vrnetlab)
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Build BOOTy vrnetlab VM image
+        run: docker build -t booty-vrnetlab:latest -f test/e2e/clab/vrnetlab/Dockerfile .
+
+      - name: Install ContainerLab
+        run: bash -c "$(curl -sL https://get.containerlab.dev)"
+
+      - name: Deploy vrnetlab EVPN topology
+        run: sudo containerlab deploy --topo test/e2e/clab/topology-vrnetlab.clab.yml
+
+      - name: Wait for BGP convergence
+        run: |
+          echo "Waiting for BGP sessions to establish..."
+          for i in $(seq 1 30); do
+            if sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp summary" 2>/dev/null \
+               | grep -qE "[0-9]{2}:[0-9]{2}:[0-9]{2}"; then
+              echo "BGP established after ${i}s"
+              sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp summary"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "BGP did not converge in 30s"
+          sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp summary" || true
+          exit 1
+
+      - name: Wait for VM boot
+        run: |
+          echo "Waiting for BOOTy QEMU VM to start..."
+          for i in $(seq 1 120); do
+            if sudo docker logs clab-booty-vrnetlab-lab-booty-provision 2>&1 | grep -q "Starting BOOTy"; then
+              echo "BOOTy VM started after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "VM did not boot in 120s — dumping serial log:"
+          sudo docker logs clab-booty-vrnetlab-lab-booty-provision 2>&1 | tail -50
+          exit 1
+
+      - name: Run vrnetlab EVPN E2E tests
+        run: go test -tags e2e_vrnetlab -v -race -count=1 -timeout 20m ./test/e2e/integration/...
+
+      - name: Collect vrnetlab logs
+        if: always()
+        timeout-minutes: 3
+        run: |
+          mkdir -p vrnetlab-logs
+
+          for node in booty-provision booty-deprovision booty-standby; do
+            name="clab-booty-vrnetlab-lab-${node}"
+            echo ""
+            echo "======================================="
+            echo "  ${node} SERIAL LOG"
+            echo "======================================="
+            timeout 30 sudo docker logs "${name}" 2>&1 | tee vrnetlab-logs/${node}-serial.log || echo "(no logs)"
+            echo "======================================="
+          done
+
+          echo ""
+          echo "======================================="
+          echo "  CAPRF Mock Access Log"
+          echo "======================================="
+          timeout 15 sudo docker exec clab-booty-vrnetlab-lab-caprf-mock cat /var/log/nginx/access.log 2>/dev/null \
+            | tee vrnetlab-logs/caprf-access.log || echo "(no logs)"
+
+          echo ""
+          echo "======================================="
+          echo "  BGP Summary (spine01)"
+          echo "======================================="
+          timeout 15 sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp summary" 2>/dev/null \
+            | tee vrnetlab-logs/bgp-summary.txt || true
+
+          echo ""
+          echo "======================================="
+          echo "  BGP Neighbor Detail (spine01)"
+          echo "======================================="
+          timeout 15 sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp neighbor json" 2>/dev/null \
+            | tee vrnetlab-logs/bgp-neighbor.json || true
+
+          echo ""
+          echo "======================================="
+          echo "  BFD Peers (spine01)"
+          echo "======================================="
+          timeout 15 sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bfd peers json" 2>/dev/null \
+            | tee vrnetlab-logs/bfd-peers.json || true
+
+          echo ""
+          echo "======================================="
+          echo "  EVPN State (spine01)"
+          echo "======================================="
+          timeout 15 sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null \
+            | tee vrnetlab-logs/evpn-state.txt || true
+
+      - name: Upload vrnetlab logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vrnetlab-logs
+          path: vrnetlab-logs/
+          if-no-files-found: ignore
+
+      - name: Cleanup
+        if: always()
+        run: sudo containerlab destroy --topo test/e2e/clab/topology-vrnetlab.clab.yml --cleanup

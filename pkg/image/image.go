@@ -1,33 +1,32 @@
 package image
 
-// This package handles the pulling and management of images
-
 import (
 	"compress/gzip"
+	"context"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/dustin/go-humanize"
-	log "github.com/sirupsen/logrus"
 )
-
-var tick chan time.Time
 
 // WriteCounter counts the number of bytes written to it. It implements to the io.Writer interface
 // and we can pass this into io.TeeReader() which will report progress on each write cycle.
 type WriteCounter struct {
-	Total uint64
+	Total atomic.Uint64
 }
 
 func (wc *WriteCounter) Write(p []byte) (int, error) {
 	n := len(p)
-	wc.Total += uint64(n)
+	wc.Total.Add(uint64(n))
 	return n, nil
 }
 
@@ -41,7 +40,7 @@ func tickerProgress(byteCounter uint64) {
 	fmt.Printf("\rDownloading... %s complete", humanize.Bytes(byteCounter))
 }
 
-// Read - will take a local disk and copy an image to a remote server
+// Read will take a local disk and copy an image to a remote server.
 func Read(sourceDevice, destinationAddress, mac string, compressed bool) error {
 
 	var fileName string
@@ -59,21 +58,24 @@ func Read(sourceDevice, destinationAddress, mac string, compressed bool) error {
 	fmt.Println("--------------------------------------------------------------------------------")
 
 	client := &http.Client{}
-	_, err := UploadMultipartFile(client, destinationAddress, fileName, sourceDevice, compressed)
+	resp, err := UploadMultipartFile(client, destinationAddress, fileName, sourceDevice, compressed)
 	if err != nil {
 		return err
+	}
+	if resp != nil {
+		_ = resp.Body.Close()
 	}
 
 	return nil
 }
 
-//UploadMultipartFile -
+// UploadMultipartFile uploads the contents of path as a multipart form file.
 func UploadMultipartFile(client *http.Client, uri, key, path string, compressed bool) (*http.Response, error) {
 	body, writer := io.Pipe()
 
-	req, err := http.NewRequest(http.MethodPost, uri, body)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, uri, body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating upload request: %w", err)
 	}
 
 	mwriter := multipart.NewWriter(writer)
@@ -84,8 +86,8 @@ func UploadMultipartFile(client *http.Client, uri, key, path string, compressed 
 	// GO routine for the copy operation
 	go func() {
 		defer close(errchan)
-		defer writer.Close()
-		defer mwriter.Close()
+		defer func() { _ = writer.Close() }()
+		defer func() { _ = mwriter.Close() }()
 
 		// BootyImage is the key that the client will lookfor and
 		// key is the renamed file
@@ -101,30 +103,26 @@ func UploadMultipartFile(client *http.Client, uri, key, path string, compressed 
 			return
 		}
 
-		defer diskIn.Close()
+		defer func() { _ = diskIn.Close() }()
 
 		if !compressed {
 			// Without compression read raw output
 			if written, err := io.Copy(w, diskIn); err != nil {
-				errchan <- fmt.Errorf("error copying %s (%d bytes written): %v", path, written, err)
+				errchan <- fmt.Errorf("error copying %s (%d bytes written): %w", path, written, err)
 				return
 			}
 
 		} else {
 			// With compression run data through gzip writer
 			zipWriter := gzip.NewWriter(w)
-			if err != nil {
-				errchan <- fmt.Errorf("[ERROR] New gzip reader: %s", err)
-				return
-			}
 
 			// run an io.Copy on the disk into the zipWriter
 			if written, err := io.Copy(zipWriter, diskIn); err != nil {
-				errchan <- fmt.Errorf("error copying %s (%d bytes written): %v", path, written, err)
+				errchan <- fmt.Errorf("error copying %s (%d bytes written): %w", path, written, err)
 				return
 			}
 			// Ensure we close our zipWriter (otherwise we will get "unexpected EOF")
-			err = zipWriter.Close()
+			_ = zipWriter.Close()
 
 		}
 
@@ -135,35 +133,35 @@ func UploadMultipartFile(client *http.Client, uri, key, path string, compressed 
 
 	}()
 
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // URI is passed from caller, intentional
 	merr := <-errchan
 
 	if err != nil || merr != nil {
-		return resp, fmt.Errorf("http error: %v, multipart error: %v", err, merr)
+		return resp, errors.Join(err, merr)
 	}
 
 	return resp, nil
 }
 
-// Write will pull an image and write it to local storage device
-// with compress set to true it will use gzip compression to expand the data before
-// writing to an underlying device
+// Write will pull an image and write it to local storage device.
+// With compress set to true it will use gzip compression to expand the data before
+// writing to an underlying device.
 func Write(sourceImage, destinationDevice string, compressed bool) error {
 
-	req, err := http.NewRequest("GET", sourceImage, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, sourceImage, http.NoBody)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating image request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // sourceImage URL is from trusted config
 	if err != nil {
-		return err
+		return fmt.Errorf("fetching image: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode > 300 {
-		// Customise response for the 404 to make degugging simpler
-		if resp.StatusCode == 404 {
+		// Customize response for the 404 to make debugging simpler.
+		if resp.StatusCode == http.StatusNotFound {
 			return fmt.Errorf("%s not found", sourceImage)
 		}
 		return fmt.Errorf("%s", resp.Status)
@@ -171,47 +169,41 @@ func Write(sourceImage, destinationDevice string, compressed bool) error {
 
 	var out io.Reader
 
-	fileOut, err := os.OpenFile(destinationDevice, os.O_CREATE|os.O_WRONLY, 0644)
+	fileOut, err := os.OpenFile(destinationDevice, os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // device files need world-readable permissions
 	if err != nil {
-		return err
+		return fmt.Errorf("opening destination device: %w", err)
 	}
-	defer fileOut.Close()
+	defer func() { _ = fileOut.Close() }()
 
 	if !compressed {
 		// Without compression send raw output
 		out = resp.Body
 	} else {
-		// With compression run data through gzip writer
+		// With compression run data through gzip reader
 		zipOUT, err := gzip.NewReader(resp.Body)
 		if err != nil {
-			fmt.Println("[ERROR] New gzip reader:", err)
+			return fmt.Errorf("new gzip reader: %w", err)
 		}
-		defer zipOUT.Close()
+		defer func() { _ = zipOUT.Close() }()
 		out = zipOUT
 	}
 
-	log.Infof("Beginning write of image [%s] to disk [%s]", filepath.Base(sourceImage), destinationDevice)
+	slog.Info("Beginning write of image to disk", "image", filepath.Base(sourceImage), "device", destinationDevice)
 	// Create our progress reporter and pass it to be used alongside our writer
 	ticker := time.NewTicker(500 * time.Millisecond)
 	counter := &WriteCounter{}
 
 	go func() {
 		for ; true; <-ticker.C {
-			tickerProgress(counter.Total)
+			tickerProgress(counter.Total.Load())
 		}
 	}()
 	if _, err = io.Copy(fileOut, io.TeeReader(out, counter)); err != nil {
 		ticker.Stop()
-		return err
+		return fmt.Errorf("writing image to disk: %w", err)
 	}
 
-	count, err := io.Copy(fileOut, out)
-	if err != nil {
-		ticker.Stop()
-		return fmt.Errorf("Error writing %d bytes to disk [%s] -> %v", count, destinationDevice, err)
-	}
 	fmt.Printf("\n")
-
 	ticker.Stop()
 	return nil
 }

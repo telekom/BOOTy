@@ -1,56 +1,55 @@
-//+build linux
+//go:build linux
 
 package realm
 
 import (
+	"log/slog"
 	"os"
 	"syscall"
-
-	log "github.com/sirupsen/logrus"
 )
 
-// This contains all methods for managing the final steps with a host
-
-// Reboot a host
+// Reboot a host. When the BOOTY_NO_REBOOT environment variable is set,
+// the process exits instead of issuing a reboot syscall (used in test containers).
 func Reboot() {
+	if os.Getenv("BOOTY_NO_REBOOT") != "" {
+		slog.Info("Reboot suppressed (BOOTY_NO_REBOOT set)")
+		os.Exit(0)
+	}
 	err := syscall.Reboot(syscall.LINUX_REBOOT_CMD_RESTART)
 	if err != nil {
-		log.Errorf("reboot off failed: %v", err)
+		slog.Error("Reboot failed", "error", err)
 		Shell()
 	}
-	// Should cause a panic
 	os.Exit(1)
 }
 
-// PowerOff will result in the host using an ACPI power off
+// PowerOff will result in the host using an ACPI power off.
 func PowerOff() {
 	err := syscall.Reboot(syscall.LINUX_REBOOT_CMD_POWER_OFF)
 	if err != nil {
-		log.Errorf("power off failed: %v", err)
+		slog.Error("Power off failed", "error", err)
 		Shell()
 	}
-	// Should cause a panic
 	os.Exit(1)
 }
 
-// Halt will instruct the CPU to enter a halt state (no-power off (usually))
+// Halt will instruct the CPU to enter a halt state.
 func Halt() {
 	err := syscall.Reboot(syscall.LINUX_REBOOT_CMD_HALT)
 	if err != nil {
-		log.Errorf("halt failed: %v", err)
+		slog.Error("Halt failed", "error", err)
 		Shell()
 	}
-	// Should cause a panic
 	os.Exit(1)
 }
 
-// Suspend will instruct the CPU to enter a suspended state (no-power off (usually))
+// Suspend will instruct the CPU to enter a suspended state.
 func Suspend() {
 	err := syscall.Reboot(syscall.LINUX_REBOOT_CMD_SW_SUSPEND)
 	if err != nil {
-		log.Errorf("suspend failed: %v", err)
+		slog.Error("Suspend failed", "error", err)
 		Shell()
-		log.Warnln("Attempting a reboot")
+		slog.Warn("Attempting a reboot")
 		Reboot()
 	}
 }

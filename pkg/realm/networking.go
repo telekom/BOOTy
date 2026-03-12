@@ -1,19 +1,19 @@
-//+build linux
+//go:build linux
 
 package realm
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/plunder-app/BOOTy/pkg/plunderclient/types"
-	"github.com/plunder-app/BOOTy/pkg/utils"
-	log "github.com/sirupsen/logrus"
+	"github.com/telekom/BOOTy/pkg/plunderclient/types"
+	"github.com/telekom/BOOTy/pkg/utils"
 	"github.com/vishvananda/netlink"
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 
 	"github.com/digineo/go-dhclient"
 	"github.com/google/gopacket/layers"
@@ -23,20 +23,20 @@ const ifname = "eth0"
 
 const netplanPath = "/etc/netplan/plunder_netplan.yaml"
 
-// LeasedAddress is the currently leased address
+// LeasedAddress is the currently leased address.
 var LeasedAddress string
 
-// GetMAC will return a mac address
+// GetMAC will return a mac address.
 func GetMAC() (string, error) {
 	// retrieve interface from name
 	iface, err := net.InterfaceByName(ifname)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("finding interface %s: %w", ifname, err)
 	}
 	return iface.HardwareAddr.String(), nil
 }
 
-// WriteNetPlan - will write a netplan to disk
+// WriteNetPlan will write a netplan to disk.
 func WriteNetPlan(chroot string, cfg *types.BootyConfig) error {
 
 	// Find the mac address of the adapter (interface)
@@ -69,73 +69,69 @@ func WriteNetPlan(chroot string, cfg *types.BootyConfig) error {
 	n.Network.Ethernets["eth0"] = e
 	b, err := yaml.Marshal(n)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshaling netplan: %w", err)
 	}
 	// TODO - remove netplan output
 	fmt.Printf("\n%s\n", b)
 
 	f, err := os.Create(chrootPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating netplan file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	_, err = f.Write(b)
 	if err != nil {
-		return err
+		return fmt.Errorf("writing netplan: %w", err)
 	}
 	return nil
 }
 
-// ApplyNetplan - this will be done through an /etc/rc.local (TODO)
+// ApplyNetplan - this will be done through an /etc/rc.local (TODO).
 func ApplyNetplan(chroot string) error {
 
 	chrootPath := fmt.Sprintf("%s%s", chroot, "/etc/rc.local")
 
-	//rclocal := "#!/bin/sh -e\n/usr/sbin/netplan apply\ndd if=/dev/zero of=/dev/sda bs=1024k count=50"
 	rclocal := "#!/bin/sh -e\n/usr/sbin/netplan apply\nrm /etc/rc.local"
 
 	f, err := os.Create(chrootPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating rc.local: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
-	_, err = f.Write([]byte(rclocal))
+	_, err = f.WriteString(rclocal)
 	if err != nil {
-		return err
+		return fmt.Errorf("writing rc.local: %w", err)
 	}
 
 	// set executable
-	err = os.Chmod(chrootPath, 0777)
+	err = os.Chmod(chrootPath, 0o755) //nolint:gosec // G302: executable script needs 0755
 	if err != nil {
-		return err
+		return fmt.Errorf("setting rc.local permissions: %w", err)
 	}
 
 	return nil
 }
 
-// DHCPClient starts the DHCP client listening for a lease
+// DHCPClient starts the DHCP client listening for a lease.
 func DHCPClient() error {
 
 	// Bring up interface
 	ifaceDev, err := netlink.LinkByName(ifname)
 	if err != nil {
-		log.Errorf("Error finding adapter [%v]", err)
-
-		return err
+		slog.Error("Error finding adapter", "error", err)
+		return fmt.Errorf("finding adapter %s: %w", ifname, err)
 	}
 
 	if err := netlink.LinkSetUp(ifaceDev); err != nil {
-		log.Errorf("Error bringing up adapter [%v]", err)
+		slog.Error("Error bringing up adapter", "error", err)
 	}
 
-	// Setup interface to recieve DHCP traffic
 	iface, err := net.InterfaceByName(ifname)
 	if err != nil {
-		log.Errorf("Error finding interface by name [%v]", err)
-
-		return err
+		slog.Error("Error finding interface by name", "error", err)
+		return fmt.Errorf("finding interface %s: %w", ifname, err)
 	}
 	client := dhclient.Client{
 		Iface: iface,
@@ -154,9 +150,9 @@ func DHCPClient() error {
 
 			err = netlink.AddrAdd(link, addr)
 			if err != nil {
-				log.Errorf("Error adding %s to link %s", cidr.String(), iface.Name)
+				slog.Error("Error adding address to link", "address", cidr.String(), "link", iface.Name)
 			} else {
-				log.Printf("Adding address %s to link %s", cidr.String(), iface.Name)
+				slog.Info("Adding address to link", "address", cidr.String(), "link", iface.Name)
 			}
 
 			// Apply default gateway so we can route outside
@@ -165,56 +161,42 @@ func DHCPClient() error {
 				Gw:    lease.ServerID,
 			}
 			if err := netlink.RouteAdd(&route); err != nil {
-				log.Errorf("Error setting gateway [%v]", err)
+				slog.Error("Error setting gateway", "error", err)
 			} else {
-				log.Printf("Adding gateway %s to link %s", lease.ServerID.String(), iface.Name)
+				slog.Info("Adding gateway to link", "gateway", lease.ServerID.String(), "link", iface.Name)
 			}
 		},
 	}
 
 	// Add requests for default options
 	for _, param := range dhclient.DefaultParamsRequestList {
-		log.Printf("Requesting default option %d", param)
-		client.AddParamRequest(layers.DHCPOpt(param))
+		slog.Info("Requesting default option", "option", param)
+		client.AddParamRequest(param)
 	}
-
-	// // Add requests for custom options
-	// for _, param := range requestParams {
-	// 	log.Printf("Requesting custom option %d", param)
-	// 	client.AddParamRequest(layers.DHCPOpt(param))
-	// }
 
 	// Add hostname option
 	hostname, _ := os.Hostname()
 	client.AddOption(layers.DHCPOptHostname, []byte(hostname))
-
-	// // Add custom options
-	// for _, option := range options {
-	// 	log.Printf("Adding option %d=0x%x", option.Type, option.Data)
-	// 	client.AddOption(option.Type, option.Data)
-	// }
 
 	client.Start()
 	defer client.Stop()
 
 	// Below will sit
 
-	c := make(chan os.Signal)
+	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGUSR1)
 	for {
 		sig := <-c
-		log.Println("received", sig)
+		slog.Info("Received signal", "signal", sig)
 		switch sig {
 		case syscall.SIGINT, syscall.SIGTERM:
 			return nil
 		case syscall.SIGHUP:
-			log.Println("renew lease")
+			slog.Info("Renewing lease")
 			client.Renew()
 		case syscall.SIGUSR1:
-			log.Println("acquire new lease")
+			slog.Info("Acquiring new lease")
 			client.Rebind()
 		}
 	}
-	//log.Errorf("DHCP client has ended")
-	//return nil
 }
