@@ -139,6 +139,8 @@ func (m *Manager) startFRRStack(ctx context.Context, cfg *network.Config, underl
 		return fmt.Errorf("write daemons config: %w", err)
 	}
 
+	ensureFRRDirs()
+
 	if err := m.startFRR(ctx); err != nil {
 		return fmt.Errorf("start FRR: %w", err)
 	}
@@ -162,6 +164,17 @@ func (m *Manager) Teardown(ctx context.Context) error {
 	_, _ = m.commander.Run(ctx, "systemctl", "stop", "frr")
 	slog.Info("FRR teardown complete")
 	return nil
+}
+
+// ensureFRRDirs creates runtime directories that FRR daemons expect.
+// Without these, zebra cannot create its zserv.api socket and bgpd
+// cannot communicate with zebra, breaking BGP unnumbered.
+func ensureFRRDirs() {
+	for _, d := range []string{"/var/run/frr", "/var/tmp/frr", "/var/lib/frr"} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			slog.Warn("Failed to create FRR directory", "path", d, "error", err)
+		}
+	}
 }
 
 func (m *Manager) createVRF(name string) error {
