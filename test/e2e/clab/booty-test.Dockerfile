@@ -12,7 +12,7 @@ RUN CGO_ENABLED=1 GOOS=linux go build -a \
     -ldflags "-linkmode external -extldflags '-static' -s -w" \
     -o /booty
 
-FROM alpine:3.20
+FROM alpine:3.23
 RUN apk add --no-cache ca-certificates iproute2
 # Install FRR from the official Alpine repo for EVPN networking support.
 RUN apk add --no-cache frr
