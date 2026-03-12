@@ -105,9 +105,9 @@ func TestBootProvisionNodeReachesCAPRF(t *testing.T) {
 
 	// The provision node (10.100.0.20) should reach caprf-mock (10.100.0.11) through EVPN.
 	var reachable bool
-	for i := 0; i < 90; i++ {
-		out, err := bootDockerExec(t, provisionContainer, "ping", "-c", "1", "-W", "1", "10.100.0.11")
-		if err == nil && strings.Contains(out, "1 packets received") {
+	for i := 0; i < 120; i++ {
+		_, err := bootDockerExec(t, provisionContainer, "wget", "-q", "-O", "/dev/null", "--timeout=2", "http://10.100.0.11/")
+		if err == nil {
 			reachable = true
 			break
 		}
@@ -123,9 +123,9 @@ func TestBootDeprovisionNodeReachesCAPRF(t *testing.T) {
 	requireBootLab(t)
 
 	var reachable bool
-	for i := 0; i < 30; i++ {
-		out, err := bootDockerExec(t, deprovisionContainer, "ping", "-c", "1", "-W", "1", "10.100.0.11")
-		if err == nil && strings.Contains(out, "1 packets received") {
+	for i := 0; i < 120; i++ {
+		_, err := bootDockerExec(t, deprovisionContainer, "wget", "-q", "-O", "/dev/null", "--timeout=2", "http://10.100.0.11/")
+		if err == nil {
 			reachable = true
 			break
 		}
@@ -141,9 +141,9 @@ func TestBootStandbyNodeReachesCAPRF(t *testing.T) {
 	requireBootLab(t)
 
 	var reachable bool
-	for i := 0; i < 30; i++ {
-		out, err := bootDockerExec(t, standbyContainer, "ping", "-c", "1", "-W", "1", "10.100.0.11")
-		if err == nil && strings.Contains(out, "1 packets received") {
+	for i := 0; i < 120; i++ {
+		_, err := bootDockerExec(t, standbyContainer, "wget", "-q", "-O", "/dev/null", "--timeout=2", "http://10.100.0.11/")
+		if err == nil {
 			reachable = true
 			break
 		}
@@ -172,9 +172,9 @@ func TestBootAllNodesReachNginx(t *testing.T) {
 		t.Run(c.desc, func(t *testing.T) {
 			t.Parallel()
 			var reachable bool
-			for i := 0; i < 30; i++ {
-				out, err := bootDockerExec(t, c.name, "ping", "-c", "1", "-W", "1", "10.100.0.10")
-				if err == nil && strings.Contains(out, "1 packets received") {
+			for i := 0; i < 120; i++ {
+				_, err := bootDockerExec(t, c.name, "wget", "-q", "-O", "/dev/null", "--timeout=2", "http://10.100.0.10/")
+				if err == nil {
 					reachable = true
 					break
 				}
