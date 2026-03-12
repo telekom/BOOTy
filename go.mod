@@ -11,7 +11,7 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.26
 	github.com/spf13/cobra v1.10.2
 	github.com/ulikunitz/xz v0.5.15
-	github.com/vishvananda/netlink v1.3.0
+	github.com/vishvananda/netlink v1.3.1
 	github.com/zcalusic/sysinfo v1.1.3
 	golang.org/x/sys v0.41.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -31,7 +31,7 @@ require (
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/vbatts/tar-split v0.12.2 // indirect
-	github.com/vishvananda/netns v0.0.4 // indirect
+	github.com/vishvananda/netns v0.0.5 // indirect
 	golang.org/x/net v0.33.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 )
