@@ -148,6 +148,9 @@ func (b *FRRConfigBuilder) writeRouterBGP(sb *strings.Builder) {
 
 	for _, nic := range b.nics {
 		fmt.Fprintf(sb, " neighbor %s interface peer-group %s\n", nic, b.peerGroupName)
+		// Explicit remote-as on each interface ensures correct AS even when
+		// peer-group property inheritance is unreliable (FRR 10.5+/mgmtd).
+		fmt.Fprintf(sb, " neighbor %s remote-as %s\n", nic, b.peerRemoteAS)
 	}
 
 	b.writeAddressFamilies(sb)
