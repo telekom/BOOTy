@@ -52,7 +52,7 @@ jobs:
           fi
 
       - name: Upload coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: coverage.out
@@ -97,7 +97,7 @@ jobs:
         run: go build -ldflags "-s -w -linkmode external -extldflags '-static'" -o booty-${{ matrix.goarch }}
 
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: booty-${{ matrix.goarch }}
           path: booty-${{ matrix.goarch }}
@@ -179,7 +179,7 @@ jobs:
           echo "PASS: micro contents verified"
 
       - name: Upload build flavour artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-flavours
           path: |
@@ -366,7 +366,7 @@ jobs:
 
       - name: Upload serial log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kvm-boot-serial-log
           path: serial.log
@@ -439,7 +439,7 @@ jobs:
 
       - name: Upload ContainerLab logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: clab-logs
           path: clab-logs/
@@ -684,7 +684,7 @@ jobs:
 
       - name: Upload UEFI serial log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: uefi-iso-boot-serial-log
           path: serial-uefi.log
@@ -692,7 +692,7 @@ jobs:
 
       - name: Upload ISO artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: booty-uefi-iso
           path: test-uefi.iso
@@ -796,7 +796,7 @@ jobs:
 
       - name: Upload boot logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: boot-logs
           path: boot-logs/
@@ -912,7 +912,7 @@ jobs:
 
       - name: Upload vrnetlab logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: vrnetlab-logs
           path: vrnetlab-logs/
