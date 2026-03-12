@@ -154,8 +154,15 @@ func (o *Orchestrator) secureEraseDisks(ctx context.Context) error {
 }
 
 func (o *Orchestrator) detectDisk(ctx context.Context) error {
-	// If a specific disk device is configured, use it directly.
+	// If a specific disk device is configured, validate and use it directly.
 	if o.cfg.DiskDevice != "" {
+		info, err := os.Stat(o.cfg.DiskDevice)
+		if err != nil {
+			return fmt.Errorf("configured disk device %s: %w", o.cfg.DiskDevice, err)
+		}
+		if info.Mode()&os.ModeDevice == 0 {
+			return fmt.Errorf("configured disk device %s is not a device node", o.cfg.DiskDevice)
+		}
 		o.log.Info("Using configured disk device", "device", o.cfg.DiskDevice)
 		o.targetDisk = o.cfg.DiskDevice
 		return nil
@@ -338,14 +345,16 @@ func DumpDebugState(failedStep string) {
 // runDebugCmd executes a single debug command and logs its output.
 func runDebugCmd(label, cmd string) {
 	out, err := exec.CommandContext(context.Background(), "sh", "-c", cmd).CombinedOutput() //nolint:gosec // debug cmds are hardcoded
-	if err != nil {
-		slog.Error("Debug command failed", "label", label, "error", err)
-		return
-	}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line != "" {
-			slog.Error("DEBUG", "label", label, "data", line)
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed != "" {
+		for _, line := range strings.Split(trimmed, "\n") {
+			if line != "" {
+				slog.Error("DEBUG", "label", label, "data", line)
+			}
 		}
+	}
+	if err != nil {
+		slog.Error("Debug command failed", "label", label, "cmd", cmd, "error", err)
 	}
 }
 
@@ -378,7 +387,7 @@ func stepDebugCmds(step string) []debugCmd {
 		return []debugCmd{
 			{"chroot bin", "ls /newroot/bin/ /newroot/usr/bin/ 2>/dev/null | head -50 || true"},
 			{"chroot boot", "ls -la /newroot/boot/ 2>/dev/null || echo '/newroot/boot not found'"},
-			{"chroot mounts", "cat /proc/mounts | grep newroot"},
+			{"chroot mounts", "cat /proc/mounts | grep newroot || true"},
 		}
 	case "remove-efi-entries", "create-efi-boot-entry":
 		return []debugCmd{

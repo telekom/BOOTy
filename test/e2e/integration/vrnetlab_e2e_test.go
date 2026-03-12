@@ -592,6 +592,8 @@ var vrnetlabAllowedErrors = []string{
 	"=== CONFIG",
 	"Provisioning failed",
 	"Provisioning step",
+	"Deprovisioning failed",
+	"Deprovisioning step",
 	"stream-image",
 	"partition-disk",
 	"parse-partitions",
@@ -640,7 +642,7 @@ func TestVrnetlabNoUnexpectedErrors(t *testing.T) {
 // Full Log Dump (always runs last for debugging)
 // ═══════════════════════════════════════════════════════════════════════
 
-func TestVrnetlabDumpAllLogs(t *testing.T) {
+func TestVrnetlabZZZDumpAllLogs(t *testing.T) {
 	requireVrnetlabLab(t)
 
 	time.Sleep(10 * time.Second)

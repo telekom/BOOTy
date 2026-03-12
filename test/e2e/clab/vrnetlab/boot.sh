@@ -72,6 +72,8 @@ echo "[boot.sh] VM MAC: ${VM_MAC}"
 
 # ── Create VM disk ─────────────────────────────────────────────────────
 # Provide a 2 GiB virtio disk so BOOTy can run the full provisioning pipeline.
+# Remove any stale disk image from a previous container run.
+rm -f /tmp/disk.qcow2
 qemu-img create -f qcow2 /tmp/disk.qcow2 2G
 echo "[boot.sh] Created 2 GiB VM disk at /tmp/disk.qcow2"
 

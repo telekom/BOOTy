@@ -26,6 +26,10 @@ func isMounted(path string) bool {
 			return true
 		}
 	}
+	if scanner.Err() != nil {
+		// On read error, assume mounted to avoid duplicate mount attempts.
+		return true
+	}
 	return false
 }
 

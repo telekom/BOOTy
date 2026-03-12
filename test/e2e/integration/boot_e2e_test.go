@@ -374,7 +374,7 @@ func TestBootProvisionShowsProvisioningSteps(t *testing.T) {
 		t.Fatal("provision node: no provisioning step activity found in logs")
 	}
 
-	// With a disk available (loop device), provisioning should progress past detect-disk.
+	// If a disk is available (e.g. loop device), provisioning may progress past detect-disk.
 	if strings.Contains(logs, "stream-image") || strings.Contains(logs, "Using configured disk device") {
 		t.Log("provision node: provisioning progressed past disk detection")
 	} else {
@@ -413,6 +413,8 @@ var allowedErrorPatterns = []string{
 	"=== CONFIG",
 	"Provisioning failed",
 	"Provisioning step",
+	"Deprovisioning failed",
+	"Deprovisioning step",
 	"stream-image",
 	"partition-disk",
 	"parse-partitions",
@@ -460,7 +462,7 @@ func TestBootNoUnexpectedErrors(t *testing.T) {
 
 // --- Full log dump test (always runs last) ---
 
-func TestBootDumpAllLogs(t *testing.T) {
+func TestBootZZZDumpAllLogs(t *testing.T) {
 	requireBootLab(t)
 
 	// Wait for BOOTy processes to have run

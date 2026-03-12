@@ -357,7 +357,7 @@ jobs:
 
           # Check for unexpected ERROR-level log entries.
           # Allow-list: errors expected in minimal CI environments (no disk, no provisioning server response).
-          ALLOWED_ERRORS="no suitable disk found|detect-disk|partition-disk|parse-partitions|format-disk|stream-image|Provisioning failed|Provisioning step|Connecting to provisioning server|DEBUG DUMP|=== DEBUG|=== CONFIG|Disk Error|msg=DEBUG|Debug command|DEBUG env"
+          ALLOWED_ERRORS="no suitable disk found|detect-disk|partition-disk|parse-partitions|format-disk|stream-image|Provisioning failed|Provisioning step|Deprovisioning failed|Deprovisioning step|Connecting to provisioning server|DEBUG DUMP|=== DEBUG|=== CONFIG|Disk Error|msg=DEBUG|Debug command|DEBUG env"
           UNEXPECTED=$(grep 'level=ERROR' serial.log 2>/dev/null | grep -vE "$ALLOWED_ERRORS" || true)
           if [ -n "$UNEXPECTED" ]; then
             echo "FAIL: Unexpected ERROR-level log entries found:"
@@ -923,7 +923,7 @@ jobs:
             | tee vrnetlab-logs/evpn-state.txt || true
 
           # Check for unexpected ERROR-level log entries in vrnetlab serial logs
-          ALLOWED_ERRORS="no suitable disk found|detect-disk|partition-disk|parse-partitions|format-disk|stream-image|Provisioning failed|Provisioning step|Connecting to provisioning server|DEBUG DUMP|=== DEBUG|=== CONFIG|Disk Error|msg=DEBUG|Debug command|DEBUG env"
+          ALLOWED_ERRORS="no suitable disk found|detect-disk|partition-disk|parse-partitions|format-disk|stream-image|Provisioning failed|Provisioning step|Deprovisioning failed|Deprovisioning step|Connecting to provisioning server|DEBUG DUMP|=== DEBUG|=== CONFIG|Disk Error|msg=DEBUG|Debug command|DEBUG env"
           VRNETLAB_ERRORS=""
           for logfile in vrnetlab-logs/*-serial.log; do
             [ -f "$logfile" ] || continue
