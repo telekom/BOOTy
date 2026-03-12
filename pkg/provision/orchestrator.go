@@ -82,7 +82,8 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		if err := step.Fn(ctx); err != nil {
 			msg := fmt.Sprintf("step %s failed: %v", step.Name, err)
 			slog.Error("Provisioning step failed", "step", step.Name, "error", err)
-			dumpDebugState(step.Name)
+			DumpDebugState(step.Name)
+			dumpConfig(o.cfg)
 			_ = o.provider.ReportStatus(ctx, config.StatusError, msg)
 			return fmt.Errorf("provision step %s: %w", step.Name, err)
 		}
@@ -262,21 +263,47 @@ func (o *Orchestrator) reportSuccess(ctx context.Context) error {
 	return o.provider.ReportStatus(ctx, config.StatusSuccess, "provisioning complete")
 }
 
-// dumpDebugState logs system state useful for diagnosing failures.
-func dumpDebugState(failedStep string) {
+// DumpDebugState logs system state useful for diagnosing failures.
+// BOOTy runs as PID 1 in an initramfs — this dump is the only diagnostic
+// data available before reboot, so it must be comprehensive.
+func DumpDebugState(failedStep string) {
 	slog.Error("=== DEBUG DUMP START ===", "failedStep", failedStep)
 
 	debugCmds := []struct {
 		label string
 		cmd   string
 	}{
+		// Block devices & disk subsystem.
 		{"block devices", "lsblk -a"},
 		{"mounts", "cat /proc/mounts"},
 		{"memory", "cat /proc/meminfo"},
 		{"disk partitions", "cat /proc/partitions"},
-		{"dmesg tail", "dmesg | tail -50"},
+		{"mdstat", "cat /proc/mdstat"},
+		{"df", "df -h"},
+		{"pvs", "pvs"},
+		{"lvs", "lvs"},
+
+		// Kernel messages.
+		{"dmesg tail", "dmesg | tail -100"},
+
+		// Network interfaces & routes (IPv4 + IPv6).
 		{"network interfaces", "ip -br addr"},
-		{"routes", "ip route"},
+		{"interface stats", "ip -s link"},
+		{"routes v4", "ip route"},
+		{"routes v6", "ip -6 route"},
+		{"bridge fdb", "bridge fdb show"},
+		{"vxlan interfaces", "ip link show type vxlan"},
+
+		// FRR state.
+		{"frr config", "cat /etc/frr/frr.conf"},
+		{"frr daemons", "pgrep -la 'bgpd|zebra|bfdd|mgmtd|staticd'"},
+		{"frr log tail", "tail -100 /var/log/frr/frr.log"},
+		{"bgp summary", "vtysh -c 'show bgp summary'"},
+		{"bgp ipv4", "vtysh -c 'show bgp ipv4 unicast'"},
+		{"bgp ipv6", "vtysh -c 'show bgp ipv6 unicast'"},
+		{"bgp l2vpn evpn", "vtysh -c 'show bgp l2vpn evpn'"},
+		{"bfd peers", "vtysh -c 'show bfd peers'"},
+		{"frr interfaces", "vtysh -c 'show interface brief'"},
 	}
 
 	for _, dc := range debugCmds {
@@ -301,4 +328,39 @@ func dumpDebugState(failedStep string) {
 	}
 
 	slog.Error("=== DEBUG DUMP END ===", "failedStep", failedStep)
+}
+
+// dumpConfig logs the parsed machine configuration on failure.
+// Token is excluded to avoid leaking credentials.
+func dumpConfig(cfg *config.MachineConfig) {
+	if cfg == nil {
+		return
+	}
+	slog.Error("=== CONFIG DUMP ===",
+		"hostname", cfg.Hostname,
+		"mode", cfg.Mode,
+		"images", cfg.ImageURLs,
+		"asn", cfg.ASN,
+		"provision_vni", cfg.ProvisionVNI,
+		"underlay_subnet", cfg.UnderlaySubnet,
+		"underlay_ip", cfg.UnderlayIP,
+		"overlay_subnet", cfg.OverlaySubnet,
+		"ipmi_subnet", cfg.IPMISubnet,
+		"dcgw_ips", cfg.DCGWIPs,
+		"leaf_asn", cfg.LeafASN,
+		"local_asn", cfg.LocalASN,
+		"vpn_rt", cfg.VPNRT,
+		"overlay_aggregate", cfg.OverlayAggregate,
+		"provision_ip", cfg.ProvisionIP,
+		"dns_resolver", cfg.DNSResolvers,
+		"vrf_table_id", cfg.VRFTableID,
+		"bgp_keepalive", cfg.BGPKeepalive,
+		"bgp_hold", cfg.BGPHold,
+		"bfd_transmit_ms", cfg.BFDTransmitMS,
+		"bfd_receive_ms", cfg.BFDReceiveMS,
+		"static_ip", cfg.StaticIP,
+		"static_gateway", cfg.StaticGateway,
+		"bond_interfaces", cfg.BondInterfaces,
+		"min_disk_size_gb", cfg.MinDiskSizeGB,
+	)
 }

@@ -308,6 +308,52 @@ func TestNewFileNotFound(t *testing.T) {
 	}
 }
 
+func TestParseVarsNetworkTuning(t *testing.T) {
+	input := `export asn_server="64497"
+export provision_vni="2001000"
+export underlay_subnet="10.50.0.0/16"
+export overlay_subnet="fd21:0cc2:0981::/64"
+export vrf_table_id="10"
+export bgp_keepalive="30"
+export bgp_hold="90"
+export bfd_transmit_ms="150"
+export bfd_receive_ms="150"
+export dcgw_ips="10.10.10.1,10.10.10.2"
+export vpn_rt="64497:1000"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ASN != 64497 {
+		t.Errorf("ASN = %d, want 64497", cfg.ASN)
+	}
+	if cfg.ProvisionVNI != 2001000 {
+		t.Errorf("ProvisionVNI = %d, want 2001000", cfg.ProvisionVNI)
+	}
+	if cfg.VRFTableID != 10 {
+		t.Errorf("VRFTableID = %d, want 10", cfg.VRFTableID)
+	}
+	if cfg.BGPKeepalive != 30 {
+		t.Errorf("BGPKeepalive = %d, want 30", cfg.BGPKeepalive)
+	}
+	if cfg.BGPHold != 90 {
+		t.Errorf("BGPHold = %d, want 90", cfg.BGPHold)
+	}
+	if cfg.BFDTransmitMS != 150 {
+		t.Errorf("BFDTransmitMS = %d, want 150", cfg.BFDTransmitMS)
+	}
+	if cfg.BFDReceiveMS != 150 {
+		t.Errorf("BFDReceiveMS = %d, want 150", cfg.BFDReceiveMS)
+	}
+	if cfg.DCGWIPs != "10.10.10.1,10.10.10.2" {
+		t.Errorf("DCGWIPs = %q, want %q", cfg.DCGWIPs, "10.10.10.1,10.10.10.2")
+	}
+	if cfg.VPNRT != "64497:1000" {
+		t.Errorf("VPNRT = %q, want %q", cfg.VPNRT, "64497:1000")
+	}
+}
+
 func TestGetConfig(t *testing.T) {
 	cfg := &config.MachineConfig{
 		Hostname: "config-host",

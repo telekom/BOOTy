@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 	"strings"
-	"text/template"
 
 	"github.com/telekom/BOOTy/pkg/network"
 )
@@ -135,92 +134,43 @@ func DeriveBridgeMAC(ipmiMAC string) string {
 	return fmt.Sprintf("02:54:%s:%s:%s:%s", parts[2], parts[3], parts[4], parts[5])
 }
 
-type frrConfigData struct {
-	ASN              uint32
-	UnderlayIP       string
-	NICs             []string
-	VRFName          string
-	IsOnefabric      bool
-	DCGWIPs          []string
-	LeafASN          uint32
-	LocalASN         uint32
-	OverlayAggregate string
-	VPNRT            string
-}
+// RenderConfig generates the FRR configuration file content using the builder.
+// overlayIP is used to detect IPv6 and conditionally add the IPv6 address-family.
+func RenderConfig(cfg *network.Config, underlayIP, overlayIP string, nics []string) (string, error) {
+	b := NewFRRConfigBuilder(cfg.ASN, underlayIP)
 
-const frrConfigTemplate = `frr version 10.3
-frr defaults datacenter
-!
-router bgp {{ .ASN }}{{ if .VRFName }} vrf {{ .VRFName }}{{ end }}
- bgp router-id {{ .UnderlayIP }}
- no bgp default ipv4-unicast
- bgp bestpath as-path multipath-relax
- neighbor fabric peer-group
- neighbor fabric remote-as external
-{{- range .NICs }}
- neighbor {{ . }} interface peer-group fabric
-{{- end }}
- !
- address-family ipv4 unicast
-  neighbor fabric activate
-  redistribute connected
- exit-address-family
- !
- address-family l2vpn evpn
-  neighbor fabric activate
-  advertise-all-vni
- exit-address-family
-exit
-!
-{{- if .IsOnefabric }}
-{{- range .DCGWIPs }}
- neighbor {{ . }} remote-as internal
- neighbor {{ . }} update-source {{ $.UnderlayIP }}
-{{- end }}
- !
- address-family l2vpn evpn
-{{- range .DCGWIPs }}
-  neighbor {{ . }} activate
-{{- end }}
-{{- if .OverlayAggregate }}
-  aggregate-address {{ .OverlayAggregate }}
-{{- end }}
-{{- if .VPNRT }}
-  route-target both {{ .VPNRT }}
-{{- end }}
- exit-address-family
-{{- end }}
-line vty
-!
-`
-
-// RenderConfig generates the FRR configuration file content.
-func RenderConfig(cfg *network.Config, underlayIP string, nics []string) (string, error) {
-	data := frrConfigData{
-		ASN:        cfg.ASN,
-		UnderlayIP: underlayIP,
-		NICs:       nics,
-		VRFName:    cfg.VRFName,
+	if cfg.VRFName != "" {
+		b.WithVRF(cfg.VRFName, cfg.VRFTableID)
 	}
+
+	b.WithNICs(nics)
+
+	if cfg.BGPKeepalive > 0 && cfg.BGPHold > 0 {
+		b.WithBGPTimers(cfg.BGPKeepalive, cfg.BGPHold)
+	}
+
+	if cfg.BFDTransmitMS > 0 && cfg.BFDReceiveMS > 0 {
+		b.WithBFDProfile("datacenter", cfg.BFDTransmitMS, cfg.BFDReceiveMS)
+	}
+
+	// Always add IPv4 unicast.
+	b.WithAddressFamily("ipv4", "unicast")
+
+	// Add IPv6 unicast when overlay is IPv6.
+	if isIPv6(overlayIP) {
+		b.WithAddressFamily("ipv6", "unicast")
+	}
+
+	// Always add l2vpn evpn.
+	b.WithAddressFamily("l2vpn", "evpn")
 
 	if cfg.DCGWIPs != "" {
-		data.IsOnefabric = true
-		data.DCGWIPs = strings.Split(cfg.DCGWIPs, ",")
-		data.LeafASN = cfg.LeafASN
-		data.LocalASN = cfg.LocalASN
-		data.OverlayAggregate = cfg.OverlayAggregate
-		data.VPNRT = cfg.VPNRT
+		b.WithOnefabric(
+			strings.Split(cfg.DCGWIPs, ","),
+			cfg.OverlayAggregate,
+			cfg.VPNRT,
+		)
 	}
 
-	tmpl, err := template.New("frr").Parse(frrConfigTemplate)
-	if err != nil {
-		return "", fmt.Errorf("parse FRR template: %w", err)
-	}
-
-	var sb strings.Builder
-	if err := tmpl.Execute(&sb, data); err != nil {
-		return "", fmt.Errorf("execute FRR template: %w", err)
-	}
-
-	return sb.String(), nil
+	return b.Build(), nil
 }

@@ -269,10 +269,15 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 
 func applyUint32Var(cfg *config.MachineConfig, key, value string) bool {
 	uint32Fields := map[string]*uint32{
-		"asn_server":    &cfg.ASN,
-		"provision_vni": &cfg.ProvisionVNI,
-		"leaf_asn":      &cfg.LeafASN,
-		"local_asn":     &cfg.LocalASN,
+		"asn_server":      &cfg.ASN,
+		"provision_vni":   &cfg.ProvisionVNI,
+		"leaf_asn":        &cfg.LeafASN,
+		"local_asn":       &cfg.LocalASN,
+		"vrf_table_id":    &cfg.VRFTableID,
+		"bgp_keepalive":   &cfg.BGPKeepalive,
+		"bgp_hold":        &cfg.BGPHold,
+		"bfd_transmit_ms": &cfg.BFDTransmitMS,
+		"bfd_receive_ms":  &cfg.BFDReceiveMS,
 	}
 
 	if ptr, ok := uint32Fields[key]; ok {

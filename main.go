@@ -131,12 +131,14 @@ func runCAPRF(ctx context.Context) {
 	client, err := caprf.New(varsPath)
 	if err != nil {
 		slog.Error("Failed to create CAPRF client", "error", err)
+		provision.DumpDebugState("caprf-init")
 		realm.Reboot()
 	}
 
 	cfg, err := client.GetConfig(ctx)
 	if err != nil {
 		slog.Error("Failed to get CAPRF config", "error", err)
+		provision.DumpDebugState("config-fetch")
 		realm.Reboot()
 	}
 
@@ -224,6 +226,11 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		StaticIface:      cfg.StaticIface,
 		BondInterfaces:   cfg.BondInterfaces,
 		BondMode:         cfg.BondMode,
+		VRFTableID:       cfg.VRFTableID,
+		BGPKeepalive:     cfg.BGPKeepalive,
+		BGPHold:          cfg.BGPHold,
+		BFDTransmitMS:    cfg.BFDTransmitMS,
+		BFDReceiveMS:     cfg.BFDReceiveMS,
 	}
 
 	// Set up bonding first if configured (bond becomes the interface for other modes).
@@ -247,6 +254,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		mgr := frr.NewManager(nil)
 		if err := mgr.Setup(ctx, netCfg); err != nil {
 			slog.Error("FRR network setup failed, falling back to DHCP", "error", err)
+			mgr.DumpFRRState()
 			return &network.DHCPMode{}
 		}
 		return mgr

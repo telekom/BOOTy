@@ -49,6 +49,13 @@ type Config struct {
 	BondInterfaces string // Comma-separated NICs to bond (e.g. "eth0,eth1")
 	BondMode       string // Bonding mode (default: "802.3ad" for LACP)
 
+	// BGP/BFD tuning fields.
+	VRFTableID    uint32 // Routing table ID for VRF (default: 1)
+	BGPKeepalive  uint32 // BGP keepalive interval in seconds (0 = FRR default)
+	BGPHold       uint32 // BGP hold timer in seconds (0 = FRR default)
+	BFDTransmitMS uint32 // BFD transmit interval in ms (default: 300)
+	BFDReceiveMS  uint32 // BFD receive interval in ms (default: 300)
+
 	// Common fields.
 	BridgeName string // Default: "br.provision"
 	VRFName    string // Default: "Vrf_underlay"
@@ -65,6 +72,15 @@ func (c *Config) ApplyDefaults() {
 	// VRF isolation is required.
 	if c.MTU == 0 {
 		c.MTU = 9000
+	}
+	if c.VRFTableID == 0 {
+		c.VRFTableID = 1
+	}
+	if c.BFDTransmitMS == 0 {
+		c.BFDTransmitMS = 300
+	}
+	if c.BFDReceiveMS == 0 {
+		c.BFDReceiveMS = 300
 	}
 }
 

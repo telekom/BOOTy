@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/vishvananda/netlink"
@@ -71,7 +72,7 @@ func (m *Manager) Setup(ctx context.Context, cfg *network.Config) error {
 		return err
 	}
 
-	if err := m.startFRRStack(ctx, cfg, underlayIP, nics); err != nil {
+	if err := m.startFRRStack(ctx, cfg, underlayIP, overlayIP, nics); err != nil {
 		return err
 	}
 
@@ -82,7 +83,7 @@ func (m *Manager) Setup(ctx context.Context, cfg *network.Config) error {
 // setupInterfaces creates VRF, dummy, VXLAN, bridge, loopback, and configures NICs.
 func (m *Manager) setupInterfaces(cfg *network.Config, underlayIP, overlayIP, bridgeMAC string) ([]string, error) {
 	if cfg.VRFName != "" {
-		if err := m.createVRF(cfg.VRFName); err != nil {
+		if err := m.createVRF(cfg.VRFName, cfg.VRFTableID); err != nil {
 			return nil, fmt.Errorf("create VRF: %w", err)
 		}
 	}
@@ -94,7 +95,7 @@ func (m *Manager) setupInterfaces(cfg *network.Config, underlayIP, overlayIP, br
 		}
 	}
 
-	if err := m.createVXLAN(cfg.ProvisionVNI, underlayIP, cfg.BridgeName, bridgeMAC); err != nil {
+	if err := m.createVXLAN(cfg.ProvisionVNI, underlayIP, cfg.BridgeName, bridgeMAC, cfg.MTU); err != nil {
 		return nil, fmt.Errorf("create VXLAN: %w", err)
 	}
 
@@ -125,8 +126,8 @@ func (m *Manager) setupInterfaces(cfg *network.Config, underlayIP, overlayIP, br
 }
 
 // startFRRStack renders config, writes it, starts FRR daemons, and adds BGP peers.
-func (m *Manager) startFRRStack(ctx context.Context, cfg *network.Config, underlayIP string, nics []string) error {
-	frrConf, err := RenderConfig(cfg, underlayIP, nics)
+func (m *Manager) startFRRStack(ctx context.Context, cfg *network.Config, underlayIP, overlayIP string, nics []string) error {
+	frrConf, err := RenderConfig(cfg, underlayIP, overlayIP, nics)
 	if err != nil {
 		return fmt.Errorf("render FRR config: %w", err)
 	}
@@ -156,7 +157,7 @@ func (m *Manager) startFRRStack(ctx context.Context, cfg *network.Config, underl
 
 // WaitForConnectivity polls the target URL until reachable, restarting FRR periodically.
 func (m *Manager) WaitForConnectivity(ctx context.Context, target string, timeout time.Duration) error {
-	return waitForHTTPWithFRR(ctx, target, timeout)
+	return waitForHTTPWithFRR(ctx, target, timeout, m)
 }
 
 // Teardown removes the FRR network configuration.
@@ -164,6 +165,38 @@ func (m *Manager) Teardown(ctx context.Context) error {
 	_, _ = m.commander.Run(ctx, "systemctl", "stop", "frr")
 	slog.Info("FRR teardown complete")
 	return nil
+}
+
+// DumpFRRState logs FRR diagnostic state via the commander abstraction.
+// Called on FRR setup failure or connectivity timeout to capture BGP/EVPN state.
+func (m *Manager) DumpFRRState() {
+	ctx := context.Background()
+	type frrCmd struct {
+		label string
+		args  []string
+	}
+	cmds := []frrCmd{
+		{"bgp summary", []string{"-c", "show bgp summary"}},
+		{"bgp ipv4", []string{"-c", "show bgp ipv4 unicast"}},
+		{"bgp ipv6", []string{"-c", "show bgp ipv6 unicast"}},
+		{"bgp l2vpn evpn", []string{"-c", "show bgp l2vpn evpn"}},
+		{"bfd peers", []string{"-c", "show bfd peers"}},
+		{"interface brief", []string{"-c", "show interface brief"}},
+	}
+	slog.Error("=== FRR STATE DUMP START ===")
+	for _, c := range cmds {
+		out, err := m.commander.Run(ctx, "vtysh", c.args...)
+		if err != nil {
+			slog.Error("FRR dump command failed", "label", c.label, "error", err)
+			continue
+		}
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if line != "" {
+				slog.Error("FRR", "label", c.label, "data", line)
+			}
+		}
+	}
+	slog.Error("=== FRR STATE DUMP END ===")
 }
 
 // ensureFRRDirs creates runtime directories that FRR daemons expect.
@@ -177,10 +210,10 @@ func ensureFRRDirs() {
 	}
 }
 
-func (m *Manager) createVRF(name string) error {
+func (m *Manager) createVRF(name string, tableID uint32) error {
 	vrf := &netlink.Vrf{
 		LinkAttrs: netlink.LinkAttrs{Name: name},
-		Table:     1,
+		Table:     tableID,
 	}
 	if err := netlink.LinkAdd(vrf); err != nil {
 		if os.IsExist(err) {
@@ -232,8 +265,14 @@ func (m *Manager) createDummy(name, vrfName, addr string) error {
 	return nil
 }
 
-func (m *Manager) createVXLAN(vni uint32, srcIP, bridgeName, bridgeMAC string) error {
+func (m *Manager) createVXLAN(vni uint32, srcIP, bridgeName, bridgeMAC string, physicalMTU int) error {
 	vxlanName := fmt.Sprintf("vx%d", vni)
+
+	// VXLAN MTU = physical MTU minus 50 bytes overhead (outer IP + UDP + VXLAN headers).
+	vxlanMTU := physicalMTU - 50
+	if vxlanMTU <= 0 {
+		vxlanMTU = 1500
+	}
 
 	srcAddr := net.ParseIP(srcIP)
 	vxlan := &netlink.Vxlan{
@@ -253,7 +292,7 @@ func (m *Manager) createVXLAN(vni uint32, srcIP, bridgeName, bridgeMAC string) e
 	if err != nil {
 		return fmt.Errorf("find VXLAN: %w", err)
 	}
-	if err := netlink.LinkSetMTU(vxLink, 1500); err != nil {
+	if err := netlink.LinkSetMTU(vxLink, vxlanMTU); err != nil {
 		return fmt.Errorf("set VXLAN MTU: %w", err)
 	}
 
@@ -516,7 +555,7 @@ func (m *Manager) addBGPPeer(ctx context.Context, vrfName string, asn uint32, ni
 }
 
 // waitForHTTPWithFRR polls target, restarting FRR every 20s if needed.
-func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duration) error {
+func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duration, mgr *Manager) error {
 	if target == "" {
 		return fmt.Errorf("empty connectivity target URL")
 	}
@@ -560,5 +599,9 @@ func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duratio
 		}
 	}
 
+	if mgr != nil {
+		slog.Error("Connectivity timeout — dumping FRR state for diagnostics")
+		mgr.DumpFRRState()
+	}
 	return fmt.Errorf("network connectivity timeout after %s (%d attempts)", timeout, attempt)
 }

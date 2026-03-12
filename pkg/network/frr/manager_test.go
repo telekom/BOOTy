@@ -177,7 +177,7 @@ func TestWaitForHTTPWithFRRRestartsOnFailure(t *testing.T) {
 	defer srv.Close()
 
 	// The function should succeed after a few retries.
-	err := waitForHTTPWithFRR(context.Background(), srv.URL, 30*time.Second)
+	err := waitForHTTPWithFRR(context.Background(), srv.URL, 30*time.Second, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -186,7 +186,7 @@ func TestRenderConfig_Basic(t *testing.T) {
 		ASN:     65000,
 		VRFName: "Vrf_underlay",
 	}
-	conf, err := RenderConfig(&cfg, "192.168.4.42", []string{"eth0", "eth1"})
+	conf, err := RenderConfig(&cfg, "192.168.4.42", "192.168.4.42", []string{"eth0", "eth1"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestRenderConfig_Onefabric(t *testing.T) {
 		OverlayAggregate: "10.10.0.0/16",
 		VPNRT:            "65000:100",
 	}
-	conf, err := RenderConfig(&cfg, "192.168.4.42", []string{"eth0"})
+	conf, err := RenderConfig(&cfg, "192.168.4.42", "192.168.4.42", []string{"eth0"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestRenderConfig_NoNICs(t *testing.T) {
 		ASN:     65000,
 		VRFName: "Vrf_test",
 	}
-	conf, err := RenderConfig(&cfg, "10.0.0.1", nil)
+	conf, err := RenderConfig(&cfg, "10.0.0.1", "10.0.0.1", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestRenderConfig_NoVRF(t *testing.T) {
 	cfg := network.Config{
 		ASN: 65020,
 	}
-	conf, err := RenderConfig(&cfg, "10.0.0.20", []string{"eth1"})
+	conf, err := RenderConfig(&cfg, "10.0.0.20", "10.0.0.20", []string{"eth1"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -261,5 +261,215 @@ func TestRenderConfig_NoVRF(t *testing.T) {
 	}
 	if strings.Contains(conf, "vrf") {
 		t.Errorf("config should not contain VRF reference when VRFName is empty:\n%s", conf)
+	}
+}
+
+func TestRenderConfig_IPv6Overlay(t *testing.T) {
+	cfg := network.Config{
+		ASN:     64497,
+		VRFName: "p_zerotrust",
+	}
+	conf, err := RenderConfig(&cfg, "10.50.0.42", "fd21:0cc2:0981::2a", []string{"eth0"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	checks := []string{
+		"address-family ipv4 unicast",
+		"address-family ipv6 unicast",
+		"address-family l2vpn evpn",
+		"advertise ipv4 unicast",
+		"advertise ipv6 unicast",
+	}
+	for _, check := range checks {
+		if !strings.Contains(conf, check) {
+			t.Errorf("IPv6 overlay config missing %q:\n%s", check, conf)
+		}
+	}
+}
+
+func TestRenderConfig_IPv4OnlyNoIPv6AF(t *testing.T) {
+	cfg := network.Config{
+		ASN: 64497,
+	}
+	conf, err := RenderConfig(&cfg, "10.50.0.42", "10.50.0.42", []string{"eth0"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if strings.Contains(conf, "address-family ipv6 unicast") {
+		t.Errorf("IPv4-only config should NOT contain address-family ipv6 unicast:\n%s", conf)
+	}
+	if strings.Contains(conf, "advertise ipv6 unicast") {
+		t.Errorf("IPv4-only config should NOT contain advertise ipv6 unicast:\n%s", conf)
+	}
+}
+
+func TestRenderConfig_VBM4XParams(t *testing.T) {
+	cfg := network.Config{
+		ASN:           64497,
+		VRFName:       "p_zerotrust",
+		VRFTableID:    10,
+		DCGWIPs:       "10.10.10.1,10.10.10.2",
+		LeafASN:       64498,
+		LocalASN:      65500,
+		VPNRT:         "64497:1000",
+		BGPKeepalive:  30,
+		BGPHold:       90,
+		BFDTransmitMS: 150,
+		BFDReceiveMS:  150,
+	}
+	conf, err := RenderConfig(&cfg, "10.50.0.42", "10.50.0.42", []string{"swp0", "swp1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	checks := []string{
+		"router bgp 64497 vrf p_zerotrust",
+		"timers bgp 30 90",
+		"profile datacenter",
+		"transmit-interval 150",
+		"receive-interval 150",
+		"neighbor fabric bfd profile datacenter",
+		"neighbor swp0 interface peer-group fabric",
+		"neighbor swp1 interface peer-group fabric",
+		"neighbor 10.10.10.1 remote-as internal",
+		"neighbor 10.10.10.2 remote-as internal",
+		"route-target both 64497:1000",
+	}
+	for _, check := range checks {
+		if !strings.Contains(conf, check) {
+			t.Errorf("vbm4x config missing %q:\n%s", check, conf)
+		}
+	}
+}
+
+func TestRenderConfig_DualStack(t *testing.T) {
+	cfg := network.Config{
+		ASN:           64497,
+		VRFName:       "p_zerotrust",
+		VRFTableID:    10,
+		DCGWIPs:       "10.10.10.1",
+		VPNRT:         "64497:1000",
+		BGPKeepalive:  30,
+		BGPHold:       90,
+		BFDTransmitMS: 150,
+		BFDReceiveMS:  150,
+	}
+	conf, err := RenderConfig(&cfg, "10.50.0.42", "fd21:0cc2:0981::2a", []string{"eth0"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	checks := []string{
+		"address-family ipv4 unicast",
+		"address-family ipv6 unicast",
+		"address-family l2vpn evpn",
+		"advertise ipv4 unicast",
+		"advertise ipv6 unicast",
+		"timers bgp 30 90",
+		"profile datacenter",
+		"route-target both 64497:1000",
+	}
+	for _, check := range checks {
+		if !strings.Contains(conf, check) {
+			t.Errorf("dual-stack config missing %q:\n%s", check, conf)
+		}
+	}
+}
+
+func TestFRRConfigBuilder_Basic(t *testing.T) {
+	b := NewFRRConfigBuilder(65000, "10.0.0.1").
+		WithNICs([]string{"eth0"}).
+		WithAddressFamily("ipv4", "unicast").
+		WithAddressFamily("l2vpn", "evpn")
+
+	conf := b.Build()
+
+	checks := []string{
+		"frr version 10.3",
+		"frr defaults datacenter",
+		"router bgp 65000",
+		"bgp router-id 10.0.0.1",
+		"no bgp default ipv4-unicast",
+		"neighbor fabric peer-group",
+		"neighbor fabric remote-as external",
+		"neighbor eth0 interface peer-group fabric",
+		"address-family ipv4 unicast",
+		"address-family l2vpn evpn",
+		"advertise-all-vni",
+		"line vty",
+	}
+	for _, check := range checks {
+		if !strings.Contains(conf, check) {
+			t.Errorf("builder config missing %q:\n%s", check, conf)
+		}
+	}
+}
+
+func TestFRRConfigBuilder_WithBFDAndTimers(t *testing.T) {
+	b := NewFRRConfigBuilder(64497, "10.50.0.42").
+		WithVRF("p_zerotrust", 10).
+		WithNICs([]string{"swp0"}).
+		WithBGPTimers(30, 90).
+		WithBFDProfile("datacenter", 150, 150).
+		WithAddressFamily("ipv4", "unicast").
+		WithAddressFamily("l2vpn", "evpn")
+
+	conf := b.Build()
+
+	checks := []string{
+		"bfd",
+		"profile datacenter",
+		"transmit-interval 150",
+		"receive-interval 150",
+		"timers bgp 30 90",
+		"neighbor fabric bfd profile datacenter",
+		"router bgp 64497 vrf p_zerotrust",
+	}
+	for _, check := range checks {
+		if !strings.Contains(conf, check) {
+			t.Errorf("BFD/timers config missing %q:\n%s", check, conf)
+		}
+	}
+}
+
+func TestFRRConfigBuilder_NoTimersNoSection(t *testing.T) {
+	b := NewFRRConfigBuilder(65000, "10.0.0.1").
+		WithAddressFamily("ipv4", "unicast").
+		WithAddressFamily("l2vpn", "evpn")
+	conf := b.Build()
+
+	if strings.Contains(conf, "timers bgp") {
+		t.Errorf("expected no timers bgp when keepalive/hold are 0:\n%s", conf)
+	}
+	if strings.Contains(conf, "bfd") {
+		t.Errorf("expected no BFD section when not configured:\n%s", conf)
+	}
+}
+
+func TestFRRConfigBuilder_IPv6Advertise(t *testing.T) {
+	b := NewFRRConfigBuilder(65000, "10.0.0.1").
+		WithAddressFamily("ipv4", "unicast").
+		WithAddressFamily("ipv6", "unicast").
+		WithAddressFamily("l2vpn", "evpn")
+	conf := b.Build()
+
+	if !strings.Contains(conf, "advertise ipv4 unicast") {
+		t.Errorf("expected 'advertise ipv4 unicast' in EVPN AF:\n%s", conf)
+	}
+	if !strings.Contains(conf, "advertise ipv6 unicast") {
+		t.Errorf("expected 'advertise ipv6 unicast' in EVPN AF:\n%s", conf)
+	}
+}
+
+func TestFRRConfigBuilder_IPv4OnlyNoIPv6Advertise(t *testing.T) {
+	b := NewFRRConfigBuilder(65000, "10.0.0.1").
+		WithAddressFamily("ipv4", "unicast").
+		WithAddressFamily("l2vpn", "evpn")
+	conf := b.Build()
+
+	if strings.Contains(conf, "advertise ipv6 unicast") {
+		t.Errorf("should not advertise ipv6 when only ipv4 is configured:\n%s", conf)
 	}
 }

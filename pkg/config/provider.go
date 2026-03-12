@@ -60,6 +60,13 @@ type MachineConfig struct {
 	StaticGateway string // STATIC_GATEWAY: default gateway IP
 	StaticIface   string // STATIC_IFACE: interface name (default: auto-detect first physical NIC)
 
+	// BGP/BFD tuning fields.
+	VRFTableID    uint32 // vrf_table_id: routing table ID for VRF (default: 1)
+	BGPKeepalive  uint32 // bgp_keepalive: BGP keepalive interval in seconds (0 = FRR default)
+	BGPHold       uint32 // bgp_hold: BGP hold timer in seconds (0 = FRR default)
+	BFDTransmitMS uint32 // bfd_transmit_ms: BFD transmit interval in ms (default: 300)
+	BFDReceiveMS  uint32 // bfd_receive_ms: BFD receive interval in ms (default: 300)
+
 	// LACP bonding fields.
 	BondInterfaces string // BOND_INTERFACES: comma-separated NICs to bond (e.g. "eth0,eth1")
 	BondMode       string // BOND_MODE: bonding mode (default: "802.3ad")
