@@ -154,6 +154,12 @@ func (o *Orchestrator) secureEraseDisks(ctx context.Context) error {
 }
 
 func (o *Orchestrator) detectDisk(ctx context.Context) error {
+	// If a specific disk device is configured, use it directly.
+	if o.cfg.DiskDevice != "" {
+		o.log.Info("Using configured disk device", "device", o.cfg.DiskDevice)
+		o.targetDisk = o.cfg.DiskDevice
+		return nil
+	}
 	d, err := o.disk.DetectDisk(ctx, o.cfg.MinDiskSizeGB)
 	if err != nil {
 		return err
@@ -268,8 +274,15 @@ func (o *Orchestrator) reportSuccess(ctx context.Context) error {
 // DumpDebugState logs system state useful for diagnosing failures.
 // BOOTy runs as PID 1 in an initramfs — this dump is the only diagnostic
 // data available before reboot, so it must be comprehensive.
+// Step-specific debug commands are run first, followed by comprehensive dump.
 func DumpDebugState(failedStep string) {
 	slog.Error("=== DEBUG DUMP START ===", "failedStep", failedStep)
+
+	// Step-specific commands run first for targeted diagnostics.
+	stepCmds := stepDebugCmds(failedStep)
+	for _, dc := range stepCmds {
+		runDebugCmd(dc.label, dc.cmd)
+	}
 
 	debugCmds := []struct {
 		label string
@@ -309,17 +322,7 @@ func DumpDebugState(failedStep string) {
 	}
 
 	for _, dc := range debugCmds {
-		out, err := exec.CommandContext(context.Background(), "sh", "-c", dc.cmd).CombinedOutput() //nolint:gosec // debug cmds are hardcoded
-		if err != nil {
-			slog.Error("Debug command failed", "label", dc.label, "error", err)
-			continue
-		}
-		// Log each line separately for readability.
-		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-			if line != "" {
-				slog.Error("DEBUG", "label", dc.label, "data", line)
-			}
-		}
+		runDebugCmd(dc.label, dc.cmd)
 	}
 
 	// Log environment.
@@ -330,6 +333,61 @@ func DumpDebugState(failedStep string) {
 	}
 
 	slog.Error("=== DEBUG DUMP END ===", "failedStep", failedStep)
+}
+
+// runDebugCmd executes a single debug command and logs its output.
+func runDebugCmd(label, cmd string) {
+	out, err := exec.CommandContext(context.Background(), "sh", "-c", cmd).CombinedOutput() //nolint:gosec // debug cmds are hardcoded
+	if err != nil {
+		slog.Error("Debug command failed", "label", label, "error", err)
+		return
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line != "" {
+			slog.Error("DEBUG", "label", label, "data", line)
+		}
+	}
+}
+
+type debugCmd struct {
+	label string
+	cmd   string
+}
+
+// stepDebugCmds returns step-specific debug commands for targeted diagnostics.
+func stepDebugCmds(step string) []debugCmd {
+	switch step {
+	case "detect-disk":
+		return []debugCmd{
+			{"sysblock entries", "ls -la /sys/block/"},
+			{"sysblock sizes", "for d in /sys/block/*/size; do echo \"$d: $(cat $d)\"; done"},
+			{"dev devices", "ls -la /dev/sd* /dev/nvme* /dev/vd* /dev/loop* 2>/dev/null || true"},
+		}
+	case "stream-image":
+		return []debugCmd{
+			{"target disk info", "fdisk -l 2>/dev/null | head -30 || true"},
+			{"disk space", "df -h"},
+			{"partitions", "cat /proc/partitions"},
+		}
+	case "mount-root", "setup-chroot-binds":
+		return []debugCmd{
+			{"proc mounts", "cat /proc/mounts"},
+			{"newroot contents", "ls -la /newroot/ 2>/dev/null || echo '/newroot not found'"},
+		}
+	case "configure-grub", "run-machine-commands", "run-post-provision-cmds", "configure-kubelet":
+		return []debugCmd{
+			{"chroot bin", "ls /newroot/bin/ /newroot/usr/bin/ 2>/dev/null | head -50 || true"},
+			{"chroot boot", "ls -la /newroot/boot/ 2>/dev/null || echo '/newroot/boot not found'"},
+			{"chroot mounts", "cat /proc/mounts | grep newroot"},
+		}
+	case "remove-efi-entries", "create-efi-boot-entry":
+		return []debugCmd{
+			{"efivarfs", "ls /sys/firmware/efi/efivars/ 2>/dev/null | head -20 || echo 'no EFI'"},
+			{"efibootmgr", "efibootmgr -v 2>/dev/null || echo 'efibootmgr not available'"},
+		}
+	default:
+		return nil
+	}
 }
 
 // dumpConfig logs the parsed machine configuration on failure.

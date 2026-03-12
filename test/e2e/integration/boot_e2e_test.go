@@ -373,6 +373,13 @@ func TestBootProvisionShowsProvisioningSteps(t *testing.T) {
 		t.Logf("Full logs:\n%s", logs)
 		t.Fatal("provision node: no provisioning step activity found in logs")
 	}
+
+	// With a disk available (loop device), provisioning should progress past detect-disk.
+	if strings.Contains(logs, "stream-image") || strings.Contains(logs, "Using configured disk device") {
+		t.Log("provision node: provisioning progressed past disk detection")
+	} else {
+		t.Log("provision node: provisioning did not reach stream-image (disk may not be available)")
+	}
 }
 
 // --- Standby heartbeat through EVPN ---
@@ -391,6 +398,58 @@ func TestBootStandbyHeartbeatsSentToCAPRF(t *testing.T) {
 		t.Fatal("CAPRF mock did not receive /status/heartbeat from standby")
 	}
 	t.Log("CAPRF mock received heartbeat from standby node through EVPN")
+}
+
+// --- Unexpected ERROR detection ---
+
+// allowedErrorPatterns lists error messages that are expected in minimal CI
+// environments (no real disk, provisioning failure at disk ops, etc.).
+var allowedErrorPatterns = []string{
+	"no suitable disk found",
+	"detect-disk",
+	"Connecting to provisioning server",
+	"DEBUG DUMP",
+	"=== DEBUG",
+	"=== CONFIG",
+	"Provisioning failed",
+	"stream-image",
+	"partition-disk",
+	"format-disk",
+}
+
+func TestBootNoUnexpectedErrors(t *testing.T) {
+	requireBootLab(t)
+
+	// Wait for BOOTy to have progressed through provisioning attempt
+	time.Sleep(15 * time.Second)
+
+	containers := []struct {
+		name string
+		desc string
+	}{
+		{provisionContainer, "provision"},
+		{deprovisionContainer, "deprovision"},
+		{standbyContainer, "standby"},
+	}
+
+	for _, c := range containers {
+		logs := getBootyLogs(t, c.name)
+		for _, line := range strings.Split(logs, "\n") {
+			if !strings.Contains(line, "level=ERROR") {
+				continue
+			}
+			allowed := false
+			for _, pattern := range allowedErrorPatterns {
+				if strings.Contains(line, pattern) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				t.Errorf("%s: unexpected ERROR log: %s", c.desc, line)
+			}
+		}
+	}
 }
 
 // --- Full log dump test (always runs last) ---

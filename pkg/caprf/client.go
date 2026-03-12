@@ -261,6 +261,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"BOND_MODE":                   &cfg.BondMode,
 		"IMAGE_CHECKSUM":              &cfg.ImageChecksum,
 		"IMAGE_CHECKSUM_TYPE":         &cfg.ImageChecksumType,
+		"DISK_DEVICE":                 &cfg.DiskDevice,
 	}
 
 	if ptr, ok := strFields[key]; ok {

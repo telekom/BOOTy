@@ -26,6 +26,7 @@ type MachineConfig struct {
 	ProviderID        string   // PROVIDER_ID (kubelet --provider-id)
 	Mode              string   // MODE: "provision", "deprovision", "soft-deprovision"
 	MinDiskSizeGB     int      // MIN_DISK_SIZE_GB (optional, 0 = no minimum)
+	DiskDevice        string   // DISK_DEVICE: override disk detection (e.g. "/dev/sda", "/dev/loop0")
 	NumVFs            int      // NUM_VFS: number of SR-IOV VFs for Mellanox (default: 32)
 	DisableKexec      bool     // DISABLE_KEXEC: skip kexec and always hard-reboot
 	SecureErase       bool     // SECURE_ERASE: use ATA/NVMe secure erase instead of wipefs

@@ -16,6 +16,8 @@ FROM alpine:3.23
 RUN apk add --no-cache ca-certificates iproute2
 # Install FRR from the official Alpine repo for EVPN networking support.
 RUN apk add --no-cache frr
+# Disk provisioning tools needed for full provisioning pipeline.
+RUN apk add --no-cache e2fsprogs dosfstools sgdisk parted lvm2 util-linux
 COPY --from=builder /booty /usr/local/bin/booty
 RUN mkdir -p /deploy /tmp /etc/frr /var/run/frr && \
     chown -R frr:frr /etc/frr /var/run/frr

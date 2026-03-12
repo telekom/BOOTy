@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -196,6 +198,69 @@ func TestGrowPartitionNoChange(t *testing.T) {
 	cmd.setResult("growpart /dev/sda", []byte("NOCHANGE: partition already fills disk"), fmt.Errorf("exit 1"))
 	if err := mgr.GrowPartition(context.Background(), "/dev/sda", 2); err != nil {
 		t.Fatalf("unexpected error for NOCHANGE: %v", err)
+	}
+}
+
+func TestChrootRunSuccess(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+
+	cmd.setResult("chroot /newroot", []byte("hello"), nil)
+	out, err := mgr.ChrootRun(context.Background(), "/newroot", "echo hello")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(out) != "hello" {
+		t.Errorf("expected 'hello', got %q", string(out))
+	}
+}
+
+func TestChrootRunCommandError(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+
+	cmd.setResult("chroot /newroot", []byte("error output"), fmt.Errorf("exec chroot: exit 1"))
+	_, err := mgr.ChrootRun(context.Background(), "/newroot", "false")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "chroot exec") {
+		t.Errorf("expected 'chroot exec' in error, got: %v", err)
+	}
+}
+
+func TestChrootRunFallbackOnNotFound(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+
+	// Simulate chroot binary not found.
+	cmd.setResult("chroot /newroot", nil, fmt.Errorf("exec chroot: %w", exec.ErrNotFound))
+
+	// The fallback will try to exec /bin/bash with SysProcAttr.Chroot.
+	// In test context this may fail because /newroot doesn't exist,
+	// but we verify the fallback path is triggered (not the "chroot exec" error).
+	_, err := mgr.ChrootRun(context.Background(), "/nonexistent", "echo hi")
+	if err == nil {
+		t.Fatal("expected error (nonexistent root)")
+	}
+	// Should be a syscall fallback error, not "chroot exec" error.
+	if strings.Contains(err.Error(), "chroot exec") {
+		t.Error("expected syscall fallback error, got chroot exec error")
+	}
+}
+
+func TestIsExecNotFound(t *testing.T) {
+	if !isExecNotFound(exec.ErrNotFound) {
+		t.Error("expected true for exec.ErrNotFound")
+	}
+	if !isExecNotFound(fmt.Errorf("exec chroot: %w", exec.ErrNotFound)) {
+		t.Error("expected true for wrapped exec.ErrNotFound")
+	}
+	if !isExecNotFound(fmt.Errorf("executable file not found in $PATH")) {
+		t.Error("expected true for message-based detection")
+	}
+	if isExecNotFound(fmt.Errorf("some other error")) {
+		t.Error("expected false for unrelated error")
 	}
 }
 

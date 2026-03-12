@@ -5,6 +5,7 @@ package disk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -429,13 +430,39 @@ func (m *Manager) EnableLVM(ctx context.Context) error {
 
 // ChrootRun executes a command in a chroot environment.
 // When using a mock commander (tests), the command is routed through the commander.
-// For real execution, the external chroot binary is used.
+// For real execution, the external chroot binary is used. If the chroot binary
+// is not found (e.g., in minimal initramfs), falls back to syscall-based chroot.
 func (m *Manager) ChrootRun(ctx context.Context, root, command string) ([]byte, error) {
 	out, err := m.cmd.Run(ctx, "chroot", root, "/bin/bash", "-c", command)
 	if err != nil {
+		// If chroot binary is missing, fall back to syscall-based chroot.
+		if isExecNotFound(err) {
+			slog.Info("chroot binary not found, using syscall fallback", "root", root)
+			return m.chrootSyscall(ctx, root, command)
+		}
 		return out, fmt.Errorf("chroot exec in %s: %w", root, err)
 	}
 	return out, nil
+}
+
+// chrootSyscall runs a command using SysProcAttr.Chroot instead of the chroot binary.
+func (m *Manager) chrootSyscall(ctx context.Context, root, command string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "/bin/bash", "-c", command)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Chroot: root}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return out, fmt.Errorf("chroot syscall in %s: %w", root, err)
+	}
+	return out, nil
+}
+
+// isExecNotFound checks whether an error indicates the executable was not found.
+func isExecNotFound(err error) bool {
+	if errors.Is(err, exec.ErrNotFound) {
+		return true
+	}
+	// The Commander wraps errors, so also check the message.
+	return strings.Contains(err.Error(), "executable file not found")
 }
 
 // SetupChrootBindMounts creates standard bind mounts for chroot operations.

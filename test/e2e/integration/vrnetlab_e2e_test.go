@@ -579,6 +579,58 @@ func TestVrnetlabAllVMsEnterCAPRF(t *testing.T) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// Unexpected ERROR Detection
+// ═══════════════════════════════════════════════════════════════════════
+
+// vrnetlabAllowedErrors lists error messages expected in CI (no real disk, etc.).
+var vrnetlabAllowedErrors = []string{
+	"no suitable disk found",
+	"detect-disk",
+	"Connecting to provisioning server",
+	"DEBUG DUMP",
+	"=== DEBUG",
+	"=== CONFIG",
+	"Provisioning failed",
+	"stream-image",
+	"partition-disk",
+	"format-disk",
+}
+
+func TestVrnetlabNoUnexpectedErrors(t *testing.T) {
+	requireVrnetlabLab(t)
+
+	time.Sleep(15 * time.Second)
+
+	vms := []struct {
+		name string
+		desc string
+	}{
+		{vmProvision, "provision"},
+		{vmDeprovision, "deprovision"},
+		{vmStandby, "standby"},
+	}
+
+	for _, vm := range vms {
+		logs := getVMSerialLog(t, vm.name)
+		for _, line := range strings.Split(logs, "\n") {
+			if !strings.Contains(line, "level=ERROR") {
+				continue
+			}
+			allowed := false
+			for _, pattern := range vrnetlabAllowedErrors {
+				if strings.Contains(line, pattern) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				t.Errorf("%s: unexpected ERROR log: %s", vm.desc, line)
+			}
+		}
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // Full Log Dump (always runs last for debugging)
 // ═══════════════════════════════════════════════════════════════════════
 
