@@ -279,12 +279,21 @@ func TestRenderConfig_IPv6Overlay(t *testing.T) {
 		"address-family ipv4 unicast",
 		"address-family ipv6 unicast",
 		"address-family l2vpn evpn",
-		"advertise ipv4 unicast",
-		"advertise ipv6 unicast",
 	}
 	for _, check := range checks {
 		if !strings.Contains(conf, check) {
 			t.Errorf("IPv6 overlay config missing %q:\n%s", check, conf)
+		}
+	}
+
+	// Without onefabric (no DCGWIPs), advertise lines should NOT be present.
+	noChecks := []string{
+		"advertise ipv4 unicast",
+		"advertise ipv6 unicast",
+	}
+	for _, check := range noChecks {
+		if strings.Contains(conf, check) {
+			t.Errorf("IPv6 overlay config without onefabric should NOT contain %q:\n%s", check, conf)
 		}
 	}
 }

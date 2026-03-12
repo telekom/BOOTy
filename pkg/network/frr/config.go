@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"text/template"
 
 	"github.com/telekom/BOOTy/pkg/network"
 )
@@ -134,43 +135,139 @@ func DeriveBridgeMAC(ipmiMAC string) string {
 	return fmt.Sprintf("02:54:%s:%s:%s:%s", parts[2], parts[3], parts[4], parts[5])
 }
 
-// RenderConfig generates the FRR configuration file content using the builder.
+// frrConfigData holds template data for FRR configuration rendering.
+type frrConfigData struct {
+	ASN              uint32
+	UnderlayIP       string
+	NICs             []string
+	VRFName          string
+	BGPKeepalive     uint32
+	BGPHold          uint32
+	BFDProfile       string
+	BFDTransmitMS    uint32
+	BFDReceiveMS     uint32
+	HasIPv6          bool
+	IsOnefabric      bool
+	DCGWIPs          []string
+	OverlayAggregate string
+	VPNRT            string
+}
+
+const frrConfigTemplate = `frr version 10.3
+frr defaults datacenter
+!
+{{- if .BFDProfile }}
+bfd
+ profile {{ .BFDProfile }}
+  transmit-interval {{ .BFDTransmitMS }}
+  receive-interval {{ .BFDReceiveMS }}
+ exit
+exit
+!
+{{- end }}
+router bgp {{ .ASN }}{{ if .VRFName }} vrf {{ .VRFName }}{{ end }}
+ bgp router-id {{ .UnderlayIP }}
+ no bgp default ipv4-unicast
+ bgp bestpath as-path multipath-relax
+{{- if and .BGPKeepalive .BGPHold }}
+ timers bgp {{ .BGPKeepalive }} {{ .BGPHold }}
+{{- end }}
+ neighbor fabric peer-group
+ neighbor fabric remote-as external
+{{- if .BFDProfile }}
+ neighbor fabric bfd profile {{ .BFDProfile }}
+{{- end }}
+{{- range .NICs }}
+ neighbor {{ . }} interface peer-group fabric
+{{- end }}
+ !
+ address-family ipv4 unicast
+  neighbor fabric activate
+  redistribute connected
+ exit-address-family
+{{- if .HasIPv6 }}
+ !
+ address-family ipv6 unicast
+  neighbor fabric activate
+  redistribute connected
+ exit-address-family
+{{- end }}
+ !
+ address-family l2vpn evpn
+  neighbor fabric activate
+  advertise-all-vni
+{{- if .IsOnefabric }}
+  advertise ipv4 unicast
+{{- if .HasIPv6 }}
+  advertise ipv6 unicast
+{{- end }}
+{{- end }}
+ exit-address-family
+{{- if .IsOnefabric }}
+{{- range .DCGWIPs }}
+ neighbor {{ . }} remote-as internal
+ neighbor {{ . }} update-source {{ $.UnderlayIP }}
+{{- end }}
+ !
+ address-family l2vpn evpn
+{{- range .DCGWIPs }}
+  neighbor {{ . }} activate
+{{- end }}
+{{- if .OverlayAggregate }}
+  aggregate-address {{ .OverlayAggregate }}
+{{- end }}
+{{- if .VPNRT }}
+  route-target both {{ .VPNRT }}
+{{- end }}
+ exit-address-family
+{{- end }}
+exit
+!
+line vty
+!
+`
+
+// RenderConfig generates the FRR configuration file content using a template.
 // overlayIP is used to detect IPv6 and conditionally add the IPv6 address-family.
 func RenderConfig(cfg *network.Config, underlayIP, overlayIP string, nics []string) (string, error) {
-	b := NewFRRConfigBuilder(cfg.ASN, underlayIP)
-
-	if cfg.VRFName != "" {
-		b.WithVRF(cfg.VRFName, cfg.VRFTableID)
+	data := frrConfigData{
+		ASN:        cfg.ASN,
+		UnderlayIP: underlayIP,
+		NICs:       nics,
+		VRFName:    cfg.VRFName,
 	}
 
-	b.WithNICs(nics)
-
 	if cfg.BGPKeepalive > 0 && cfg.BGPHold > 0 {
-		b.WithBGPTimers(cfg.BGPKeepalive, cfg.BGPHold)
+		data.BGPKeepalive = cfg.BGPKeepalive
+		data.BGPHold = cfg.BGPHold
 	}
 
 	if cfg.BFDTransmitMS > 0 && cfg.BFDReceiveMS > 0 {
-		b.WithBFDProfile("datacenter", cfg.BFDTransmitMS, cfg.BFDReceiveMS)
+		data.BFDProfile = "datacenter"
+		data.BFDTransmitMS = cfg.BFDTransmitMS
+		data.BFDReceiveMS = cfg.BFDReceiveMS
 	}
 
-	// Always add IPv4 unicast.
-	b.WithAddressFamily("ipv4", "unicast")
-
-	// Add IPv6 unicast when overlay is IPv6.
 	if isIPv6(overlayIP) {
-		b.WithAddressFamily("ipv6", "unicast")
+		data.HasIPv6 = true
 	}
-
-	// Always add l2vpn evpn.
-	b.WithAddressFamily("l2vpn", "evpn")
 
 	if cfg.DCGWIPs != "" {
-		b.WithOnefabric(
-			strings.Split(cfg.DCGWIPs, ","),
-			cfg.OverlayAggregate,
-			cfg.VPNRT,
-		)
+		data.IsOnefabric = true
+		data.DCGWIPs = strings.Split(cfg.DCGWIPs, ",")
+		data.OverlayAggregate = cfg.OverlayAggregate
+		data.VPNRT = cfg.VPNRT
 	}
 
-	return b.Build(), nil
+	tmpl, err := template.New("frr").Parse(frrConfigTemplate)
+	if err != nil {
+		return "", fmt.Errorf("parse FRR template: %w", err)
+	}
+
+	var sb strings.Builder
+	if err := tmpl.Execute(&sb, data); err != nil {
+		return "", fmt.Errorf("execute FRR template: %w", err)
+	}
+
+	return sb.String(), nil
 }

@@ -20,12 +20,6 @@ func TestApplyDefaults(t *testing.T) {
 	if cfg.VRFTableID != 1 {
 		t.Errorf("VRFTableID = %d, want %d", cfg.VRFTableID, 1)
 	}
-	if cfg.BFDTransmitMS != 300 {
-		t.Errorf("BFDTransmitMS = %d, want %d", cfg.BFDTransmitMS, 300)
-	}
-	if cfg.BFDReceiveMS != 300 {
-		t.Errorf("BFDReceiveMS = %d, want %d", cfg.BFDReceiveMS, 300)
-	}
 }
 
 func TestApplyDefaults_NoOverwrite(t *testing.T) {

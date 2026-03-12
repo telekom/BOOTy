@@ -76,12 +76,8 @@ func (c *Config) ApplyDefaults() {
 	if c.VRFTableID == 0 {
 		c.VRFTableID = 1
 	}
-	if c.BFDTransmitMS == 0 {
-		c.BFDTransmitMS = 300
-	}
-	if c.BFDReceiveMS == 0 {
-		c.BFDReceiveMS = 300
-	}
+	// BFD is opt-in: only enabled when bfd_transmit_ms / bfd_receive_ms
+	// are explicitly set via environment variables.
 }
 
 // IsFRRMode returns true if the config has enough parameters for FRR/EVPN.
