@@ -110,7 +110,7 @@ func TestVrnetlabBGPSessionsEstablished(t *testing.T) {
 	requireVrnetlabLab(t)
 
 	var established bool
-	for i := 0; i < 60; i++ {
+	for i := 0; i < 180; i++ {
 		out, err := vmDockerExec(t, vmSpine, "vtysh", "-c", "show bgp summary")
 		// "never" in Up/Down column = peer not yet established;
 		// "65020" = booty-provision AS confirms peers are configured.

@@ -26,12 +26,25 @@ done
 # Create tap device and bridge it with container's eth1.
 # Traffic path: QEMU VM eth0 ↔ tap0 ↔ br-data ↔ eth1 ↔ containerlab fabric
 ip tuntap add mode tap tap0
+
+# Match TAP MTU to the containerlab link MTU so jumbo frames pass through.
+ETH1_MTU=$(cat /sys/class/net/eth1/mtu 2>/dev/null || echo 9000)
+ip link set tap0 mtu "$ETH1_MTU"
 ip link set tap0 up
+
 ip link add name br-data type bridge
+# Disable multicast snooping — required for IPv6 NDP (BGP unnumbered) to
+# traverse the bridge immediately without waiting for MLD/IGMP queries.
+echo 0 > /sys/devices/virtual/net/br-data/bridge/multicast_snooping 2>/dev/null || true
+ip link set dev br-data mtu "$ETH1_MTU"
 ip link set dev br-data up
 ip link set dev eth1 master br-data
 ip link set dev tap0 master br-data
 ip addr flush dev eth1
+
+# Prevent iptables/ip6tables from filtering bridge traffic.
+sysctl -q -w net.bridge.bridge-nf-call-iptables=0 2>/dev/null || true
+sysctl -q -w net.bridge.bridge-nf-call-ip6tables=0 2>/dev/null || true
 
 # ── Determine QEMU acceleration ───────────────────────────────────────
 KVM_ARGS=""
