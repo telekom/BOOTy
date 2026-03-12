@@ -22,6 +22,9 @@ RUN apt-get update && \
     apt-get download "$REAL_PKG" && \
     dpkg-deb -x linux-image-*.deb /tmp/kernel && \
     cp /tmp/kernel/boot/vmlinuz-* /vmlinuz && \
+    KVER=$(ls /tmp/kernel/lib/modules/ | head -1) && \
+    mkdir -p /modules && \
+    cp -a /tmp/kernel/lib/modules/"$KVER" /modules/"$KVER" && \
     rm -rf /tmp/kernel *.deb /var/lib/apt/lists/*
 
 # ── Stage 3: Assemble initramfs ───────────────────────────────────────
@@ -45,13 +48,16 @@ RUN mkdir -p bin sbin dev proc sys etc tmp deploy lib/modules mnt \
 # Busybox: static binary + essential symlinks
 RUN cp /bin/busybox bin/busybox && \
     cd bin && \
-    for cmd in sh mount umount insmod ip ping cat echo ls mkdir rm \
+    for cmd in sh mount umount insmod modprobe ip ping cat echo ls mkdir rm \
                chmod sleep ln test grep awk sed head tail; do \
         ln -sf busybox "$cmd"; \
     done
 
 # BOOTy binary (exec'd by init wrapper)
 COPY --from=builder /booty /initramfs/booty
+
+# Kernel modules for networking (dummy, vxlan, bridge, etc.)
+COPY --from=kernel /modules/ /initramfs/lib/modules/
 
 # FRR daemons and dependencies for EVPN networking.
 # Copy binaries and resolve all shared library dependencies.

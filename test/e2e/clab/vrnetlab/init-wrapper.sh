@@ -9,6 +9,11 @@
 /bin/mount -t devtmpfs devtmpfs /dev 2>/dev/null
 /bin/mount -t tmpfs tmpfs /tmp 2>/dev/null
 
+# Load kernel modules needed by BOOTy's FRR/EVPN network stack
+/bin/busybox depmod 2>/dev/null || true
+/bin/modprobe dummy 2>/dev/null || true
+/bin/modprobe vxlan 2>/dev/null || true
+
 # Wait for virtio NIC to appear
 sleep 3
 

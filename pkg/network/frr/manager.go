@@ -88,7 +88,10 @@ func (m *Manager) setupInterfaces(cfg *network.Config, underlayIP, overlayIP, br
 	}
 
 	if err := m.createDummy("dummy.underlay", cfg.VRFName, underlayIP+"/32"); err != nil {
-		return nil, fmt.Errorf("create dummy: %w", err)
+		slog.Warn("Cannot create dummy interface, using loopback for underlay IP", "error", err)
+		if loErr := m.addLoopbackAddress(underlayIP); loErr != nil {
+			return nil, fmt.Errorf("add underlay IP to loopback: %w", loErr)
+		}
 	}
 
 	if err := m.createVXLAN(cfg.ProvisionVNI, underlayIP, cfg.BridgeName, bridgeMAC); err != nil {
