@@ -102,7 +102,6 @@ func (b *FRRConfigBuilder) Build() string {
 	b.writeHeader(&sb)
 	b.writeBFDProfile(&sb)
 	b.writeRouterBGP(&sb)
-	b.writeOnefabric(&sb)
 	b.writeFooter(&sb)
 
 	return sb.String()
@@ -152,6 +151,7 @@ func (b *FRRConfigBuilder) writeRouterBGP(sb *strings.Builder) {
 	}
 
 	b.writeAddressFamilies(sb)
+	b.writeOnefabric(sb)
 
 	sb.WriteString("exit\n")
 	sb.WriteString("!\n")
