@@ -41,6 +41,7 @@ RUN apt-get update && \
 FROM debian:bookworm-slim AS initramfs
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cpio busybox-static curl gnupg lsb-release ca-certificates \
+    e2fsprogs dosfstools gdisk parted lvm2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install FRR for EVPN networking support inside the VM.
@@ -69,7 +70,7 @@ RUN mkdir -p bin sbin dev proc sys etc tmp deploy lib/modules mnt \
 RUN cp /bin/busybox bin/busybox && \
     cd bin && \
     for cmd in sh mount umount insmod find ip ping cat echo ls mkdir rm \
-               chmod sleep ln test grep awk sed head tail stty; do \
+               chmod sleep ln test grep awk sed head tail stty chroot; do \
         ln -sf busybox "$cmd"; \
     done
 
@@ -81,9 +82,12 @@ COPY --from=kernel /modules/ /initramfs/modules/
 
 # FRR daemons and dependencies for EVPN networking.
 # mgmtd is required in FRR 10.5+ for proper integrated config loading.
+# Also include disk provisioning tools (sgdisk, mkfs, parted, lvm).
 # Copy binaries and resolve all shared library dependencies.
 RUN mkdir -p /initramfs/lib64 /initramfs/lib/x86_64-linux-gnu && \
-    for bin in /usr/lib/frr/mgmtd /usr/lib/frr/zebra /usr/lib/frr/bgpd /usr/lib/frr/bfdd /usr/bin/vtysh; do \
+    for bin in /usr/lib/frr/mgmtd /usr/lib/frr/zebra /usr/lib/frr/bgpd /usr/lib/frr/bfdd /usr/bin/vtysh \
+               /usr/sbin/sgdisk /usr/sbin/mkfs.ext4 /usr/sbin/mkfs.vfat /usr/sbin/parted \
+               /usr/sbin/pvcreate /usr/sbin/vgcreate /usr/sbin/lvcreate; do \
         dest="/initramfs$(dirname $bin)"; \
         mkdir -p "$dest"; \
         cp "$bin" "/initramfs${bin}"; \
@@ -104,7 +108,7 @@ RUN chmod +x /initramfs/init
 # ── Stage 4: Runtime container with QEMU ──────────────────────────────
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    qemu-system-x86 iproute2 bridge-utils cpio gzip procps \
+    qemu-system-x86 qemu-utils iproute2 bridge-utils cpio gzip procps \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=kernel /vmlinuz /opt/vmlinuz

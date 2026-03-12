@@ -3,11 +3,35 @@
 package realm
 
 import (
+	"bufio"
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"syscall"
 )
+
+// isMounted checks whether a path is already a mount point by reading /proc/mounts.
+func isMounted(path string) bool {
+	f, err := os.Open("/proc/mounts")
+	if err != nil {
+		return false
+	}
+	defer f.Close() //nolint:errcheck // best-effort close
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) >= 2 && fields[1] == path {
+			return true
+		}
+	}
+	if scanner.Err() != nil {
+		// On read error, assume mounted to avoid duplicate mount attempts.
+		return true
+	}
+	return false
+}
 
 // DefaultMounts will return the default mounts.
 func DefaultMounts() *Mounts {
@@ -41,34 +65,42 @@ func (m *Mounts) CreateFolder() error {
 	return nil
 }
 
-// MountAll mounts all enabled partitions.
+// MountAll mounts all enabled partitions, skipping those already mounted.
 func (m *Mounts) MountAll() error {
 	for x := range m.Mount {
-		if m.Mount[x].EnableMount {
-			err := syscall.Mount(m.Mount[x].Source, m.Mount[x].Path, m.Mount[x].FSType, m.Mount[x].Flags, m.Mount[x].Options)
-			if err != nil {
-				return fmt.Errorf("mounting [%s] -> [%s]: %w", m.Mount[x].Source, m.Mount[x].Path, err)
-			}
-			slog.Info("Mounted", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
+		if !m.Mount[x].EnableMount {
+			continue
 		}
+		if isMounted(m.Mount[x].Path) {
+			slog.Info("Already mounted, skipping", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
+			continue
+		}
+		err := syscall.Mount(m.Mount[x].Source, m.Mount[x].Path, m.Mount[x].FSType, m.Mount[x].Flags, m.Mount[x].Options)
+		if err != nil {
+			return fmt.Errorf("mounting [%s] -> [%s]: %w", m.Mount[x].Source, m.Mount[x].Path, err)
+		}
+		slog.Info("Mounted", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
 	}
 	return nil
 }
 
-// MountNamed mounts a single named partition.
+// MountNamed mounts a single named partition, skipping if already mounted.
 func (m *Mounts) MountNamed(name string, remove bool) error {
 	for x := range m.Mount {
 		if m.Mount[x].Name != name || !m.Mount[x].EnableMount {
 			continue
 		}
 
-		err := syscall.Mount(m.Mount[x].Source, m.Mount[x].Path, m.Mount[x].FSType, m.Mount[x].Flags, m.Mount[x].Options)
-		if err != nil {
-			return fmt.Errorf("mounting [%s] -> [%s]: %w", m.Mount[x].Source, m.Mount[x].Path, err)
+		if isMounted(m.Mount[x].Path) {
+			slog.Info("Already mounted, skipping", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
+		} else {
+			err := syscall.Mount(m.Mount[x].Source, m.Mount[x].Path, m.Mount[x].FSType, m.Mount[x].Flags, m.Mount[x].Options)
+			if err != nil {
+				return fmt.Errorf("mounting [%s] -> [%s]: %w", m.Mount[x].Source, m.Mount[x].Path, err)
+			}
+			slog.Info("Mounted", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
 		}
 
-		slog.Info("Mounted", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
-		// Remove this element
 		if remove {
 			m.Mount = append(m.Mount[:x], m.Mount[x+1:]...)
 		}

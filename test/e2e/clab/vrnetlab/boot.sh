@@ -70,6 +70,13 @@ fi
 VM_MAC="52:54:00:$(printf '%02x' $((RANDOM % 256))):$(printf '%02x' $((RANDOM % 256))):$(printf '%02x' $((RANDOM % 256)))"
 echo "[boot.sh] VM MAC: ${VM_MAC}"
 
+# ── Create VM disk ─────────────────────────────────────────────────────
+# Provide a 2 GiB virtio disk so BOOTy can run the full provisioning pipeline.
+# Remove any stale disk image from a previous container run.
+rm -f /tmp/disk.qcow2
+qemu-img create -f qcow2 /tmp/disk.qcow2 2G
+echo "[boot.sh] Created 2 GiB VM disk at /tmp/disk.qcow2"
+
 echo "[boot.sh] Booting BOOTy VM..."
 
 # ── Boot QEMU ──────────────────────────────────────────────────────────
@@ -84,4 +91,5 @@ exec qemu-system-x86_64 \
     -no-reboot \
     ${KVM_ARGS} \
     -device virtio-net-pci,netdev=data,mac=${VM_MAC} \
-    -netdev tap,id=data,ifname=tap0,script=no,downscript=no
+    -netdev tap,id=data,ifname=tap0,script=no,downscript=no \
+    -drive file=/tmp/disk.qcow2,format=qcow2,if=virtio,media=disk

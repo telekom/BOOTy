@@ -180,7 +180,7 @@ WORKDIR /build/initramfs
 COPY --from=busybox /busybox-1.37.0/initramfs/bin/busybox bin/busybox
 RUN for cmd in sh mount umount insmod ash ls cat echo grep mkdir rm cp mv \
       sleep date df du find head wc sort uniq tr sed awk ping wget ifconfig \
-      route telnet vi chmod chown ln test expr; do \
+      route telnet vi chmod chown ln test expr chroot; do \
       ln -sf busybox bin/$cmd; \
     done
 COPY --from=busybox /busybox-1.37.0/initramfs/bin/growpart bin/growpart

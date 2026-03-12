@@ -219,7 +219,7 @@ jobs:
           # Install busybox with shell and utility symlinks
           cp /bin/busybox initramfs/bin/busybox
           cd initramfs/bin
-          for cmd in sh mount umount insmod setsid cttyhack; do
+          for cmd in sh mount umount insmod setsid cttyhack chroot; do
             ln -sf busybox "$cmd"
           done
           cd ../..
@@ -355,6 +355,18 @@ jobs:
             PASS=false
           fi
 
+          # Check for unexpected ERROR-level log entries.
+          # Allow-list: errors expected in minimal CI environments (no disk, no provisioning server response).
+          ALLOWED_ERRORS="no suitable disk found|detect-disk|partition-disk|parse-partitions|format-disk|stream-image|Provisioning failed|Provisioning step|Deprovisioning failed|Deprovisioning step|Connecting to provisioning server|DEBUG DUMP|=== DEBUG|=== CONFIG|Disk Error|msg=DEBUG|Debug command|DEBUG env"
+          UNEXPECTED=$(grep 'level=ERROR' serial.log 2>/dev/null | grep -vE "$ALLOWED_ERRORS" || true)
+          if [ -n "$UNEXPECTED" ]; then
+            echo "FAIL: Unexpected ERROR-level log entries found:"
+            echo "$UNEXPECTED"
+            PASS=false
+          else
+            echo "PASS: No unexpected ERROR-level log entries"
+          fi
+
           if [ "$PASS" = "false" ]; then
             echo ""
             echo "E2E BOOT VALIDATION FAILED"
@@ -483,7 +495,7 @@ jobs:
           # Install busybox with shell and utility symlinks
           cp /bin/busybox initramfs/bin/busybox
           cd initramfs/bin
-          for cmd in sh mount umount insmod setsid cttyhack; do
+          for cmd in sh mount umount insmod setsid cttyhack chroot; do
             ln -sf busybox "$cmd"
           done
           cd ../..
@@ -909,6 +921,22 @@ jobs:
           echo "======================================="
           timeout 15 sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null \
             | tee vrnetlab-logs/evpn-state.txt || true
+
+          # Check for unexpected ERROR-level log entries in vrnetlab serial logs
+          ALLOWED_ERRORS="no suitable disk found|detect-disk|partition-disk|parse-partitions|format-disk|stream-image|Provisioning failed|Provisioning step|Deprovisioning failed|Deprovisioning step|Connecting to provisioning server|DEBUG DUMP|=== DEBUG|=== CONFIG|Disk Error|msg=DEBUG|Debug command|DEBUG env"
+          VRNETLAB_ERRORS=""
+          for logfile in vrnetlab-logs/*-serial.log; do
+            [ -f "$logfile" ] || continue
+            UNEXPECTED=$(grep 'level=ERROR' "$logfile" 2>/dev/null | grep -vE "$ALLOWED_ERRORS" || true)
+            if [ -n "$UNEXPECTED" ]; then
+              echo "WARNING: Unexpected ERROR-level logs in $(basename "$logfile"):"
+              echo "$UNEXPECTED"
+              VRNETLAB_ERRORS="yes"
+            fi
+          done
+          if [ -n "$VRNETLAB_ERRORS" ]; then
+            echo "::warning::Unexpected ERROR-level log entries found in vrnetlab serial logs"
+          fi
 
       - name: Upload vrnetlab logs
         if: always()

@@ -14,20 +14,23 @@ topology:
         - spine01.frr.conf:/etc/frr/frr.conf:ro
         - daemons:/etc/frr/daemons:ro
       exec:
+        # eth1 → leaf01 (eBGP fabric underlay)
         - ip link set dev eth1 mtu 9000
         - ip link add vxlan100 type vxlan id 100 dstport 4789 local 10.0.0.1 nolearning
         - ip link add br100 type bridge
         - ip link set vxlan100 master br100
         - ip link set vxlan100 up
         - ip link set br100 up
-        # Client-facing interface (on bridge)
+        # eth2 → client (L2 on br100)
         - ip link set dev eth2 master br100
         - ip link set dev eth2 up
-        # BOOTy node interfaces — L3 underlay for BGP peering (NOT on br100)
+        # eth3 → booty-provision (L3 underlay, NOT on br100)
         - ip link set dev eth3 mtu 9000
         - ip link set dev eth3 up
+        # eth4 → booty-deprovision (L3 underlay, NOT on br100)
         - ip link set dev eth4 mtu 9000
         - ip link set dev eth4 up
+        # eth5 → booty-standby (L3 underlay, NOT on br100)
         - ip link set dev eth5 mtu 9000
         - ip link set dev eth5 up
 
@@ -38,14 +41,17 @@ topology:
         - leaf01.frr.conf:/etc/frr/frr.conf:ro
         - daemons:/etc/frr/daemons:ro
       exec:
+        # eth1 → spine01 (eBGP fabric underlay)
         - ip link set dev eth1 mtu 9000
         - ip link add vxlan100 type vxlan id 100 dstport 4789 local 10.0.0.2 nolearning
         - ip link add br100 type bridge
         - ip link set vxlan100 master br100
         - ip link set vxlan100 up
         - ip link set br100 up
+        # eth2 → nginx (image server, L2 on br100)
         - ip link set dev eth2 master br100
         - ip link set dev eth2 up
+        # eth3 → caprf-mock (provisioning API, L2 on br100)
         - ip link set dev eth3 master br100
         - ip link set dev eth3 up
 
@@ -81,7 +87,7 @@ topology:
         - ip link set dev eth1 up
         - sh -c 'rm -f /var/log/nginx/access.log && touch /var/log/nginx/access.log && nginx -s reload'
 
-    # ── BOOTy boot nodes: one per mode, all on spine's bridge ──────────
+    # ── BOOTy boot nodes: one per mode, all on spine's L3 underlay ────
     booty-provision:
       kind: linux
       image: booty-test:latest
@@ -89,6 +95,10 @@ topology:
         - data/vars-provision:/deploy/vars:ro
       env:
         BOOTY_NO_REBOOT: "1"
+      exec:
+        # Create a 2 GiB sparse disk image and attach as loop device for provisioning.
+        - dd if=/dev/zero of=/tmp/disk.img bs=1M count=0 seek=2048
+        - losetup /dev/loop0 /tmp/disk.img
 
     booty-deprovision:
       kind: linux
@@ -107,15 +117,17 @@ topology:
         BOOTY_NO_REBOOT: "1"
 
   links:
-    # Fabric link (eBGP)
-    - endpoints: ["spine01:eth1", "leaf01:eth1"]
-    # Client attached to spine's bridge
-    - endpoints: ["spine01:eth2", "client:eth1"]
-    # Nginx attached to leaf's bridge
-    - endpoints: ["leaf01:eth2", "nginx:eth1"]
-    # CAPRF mock attached to leaf's bridge
-    - endpoints: ["leaf01:eth3", "caprf-mock:eth1"]
-    # BOOTy nodes attached to spine's bridge (parallel on same fabric)
-    - endpoints: ["spine01:eth3", "booty-provision:eth1"]
-    - endpoints: ["spine01:eth4", "booty-deprovision:eth1"]
-    - endpoints: ["spine01:eth5", "booty-standby:eth1"]
+    # ── Fabric ──────────────────────────────────────────────────────
+    - endpoints: ["spine01:eth1", "leaf01:eth1"]              # eBGP underlay
+
+    # ── Spine-side L2 segment (br100, VXLAN VNI 100) ───────────────
+    - endpoints: ["spine01:eth2", "client:eth1"]              # test client
+
+    # ── Leaf-side L2 segment (br100, VXLAN VNI 100) ────────────────
+    - endpoints: ["leaf01:eth2", "nginx:eth1"]                # image server
+    - endpoints: ["leaf01:eth3", "caprf-mock:eth1"]           # provisioning API
+
+    # ── BOOTy nodes → spine L3 underlay (BGP unnumbered) ───────────
+    - endpoints: ["spine01:eth3", "booty-provision:eth1"]     # provision mode
+    - endpoints: ["spine01:eth4", "booty-deprovision:eth1"]   # deprovision mode
+    - endpoints: ["spine01:eth5", "booty-standby:eth1"]       # standby mode

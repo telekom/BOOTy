@@ -9,14 +9,14 @@ topology:
         - spine01.frr.conf:/etc/frr/frr.conf:ro
         - daemons:/etc/frr/daemons:ro
       exec:
+        # eth1 → leaf01 (eBGP fabric underlay)
         - ip link set dev eth1 mtu 9000
-        # Create VXLAN + bridge on spine side (mirrors leaf for EVPN L2 extension)
         - ip link add vxlan100 type vxlan id 100 dstport 4789 local 10.0.0.1 nolearning
         - ip link add br100 type bridge
         - ip link set vxlan100 master br100
         - ip link set vxlan100 up
         - ip link set br100 up
-        # Attach client-facing interface to bridge
+        # eth2 → client (L2 on br100)
         - ip link set dev eth2 master br100
         - ip link set dev eth2 up
 
@@ -27,16 +27,17 @@ topology:
         - leaf01.frr.conf:/etc/frr/frr.conf:ro
         - daemons:/etc/frr/daemons:ro
       exec:
+        # eth1 → spine01 (eBGP fabric underlay)
         - ip link set dev eth1 mtu 9000
-        # Create VXLAN + bridge for EVPN verification
         - ip link add vxlan100 type vxlan id 100 dstport 4789 local 10.0.0.2 nolearning
         - ip link add br100 type bridge
         - ip link set vxlan100 master br100
         - ip link set vxlan100 up
         - ip link set br100 up
-        # Attach nginx and caprf-mock interfaces to bridge
+        # eth2 → nginx (image server, L2 on br100)
         - ip link set dev eth2 master br100
         - ip link set dev eth2 up
+        # eth3 → caprf-mock (provisioning API, L2 on br100)
         - ip link set dev eth3 master br100
         - ip link set dev eth3 up
 
@@ -74,11 +75,12 @@ topology:
         - ip link set dev eth1 up
 
   links:
-    # Fabric link (eBGP)
-    - endpoints: ["spine01:eth1", "leaf01:eth1"]
-    # Client attached to spine's bridge
-    - endpoints: ["spine01:eth2", "client:eth1"]
-    # Nginx attached to leaf's bridge
-    - endpoints: ["leaf01:eth2", "nginx:eth1"]
-    # CAPRF mock attached to leaf's bridge
-    - endpoints: ["leaf01:eth3", "caprf-mock:eth1"]
+    # ── Fabric ──────────────────────────────────────────────────────
+    - endpoints: ["spine01:eth1", "leaf01:eth1"]              # eBGP underlay
+
+    # ── Spine-side L2 segment (br100, VXLAN VNI 100) ───────────────
+    - endpoints: ["spine01:eth2", "client:eth1"]              # test client
+
+    # ── Leaf-side L2 segment (br100, VXLAN VNI 100) ────────────────
+    - endpoints: ["leaf01:eth2", "nginx:eth1"]                # image server
+    - endpoints: ["leaf01:eth3", "caprf-mock:eth1"]           # provisioning API

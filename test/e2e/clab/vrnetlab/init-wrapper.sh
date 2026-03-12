@@ -3,6 +3,8 @@
 # Mounts essential filesystems, brings up the network interface,
 # then execs BOOTy which configures FRR/EVPN networking.
 
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/lib/frr
+
 # Mount essential filesystems
 /bin/mount -t proc proc /proc 2>/dev/null
 /bin/mount -t sysfs sysfs /sys 2>/dev/null

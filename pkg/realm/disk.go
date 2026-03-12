@@ -37,7 +37,7 @@ import (
 // PartProbe will update partitions - will enable any volumes.
 func PartProbe(device string) error {
 	// TTY hack to support ctrl+c
-	cmd := exec.CommandContext(context.Background(), "/usr/sbin/partprobe", device)
+	cmd := exec.CommandContext(context.Background(), "partprobe", device)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 
 	err := cmd.Start()
