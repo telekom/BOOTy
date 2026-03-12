@@ -8,8 +8,13 @@ import (
 	"syscall"
 )
 
-// Reboot a host.
+// Reboot a host. When the BOOTY_NO_REBOOT environment variable is set,
+// the process exits instead of issuing a reboot syscall (used in test containers).
 func Reboot() {
+	if os.Getenv("BOOTY_NO_REBOOT") != "" {
+		slog.Info("Reboot suppressed (BOOTY_NO_REBOOT set)")
+		os.Exit(0)
+	}
 	err := syscall.Reboot(syscall.LINUX_REBOOT_CMD_RESTART)
 	if err != nil {
 		slog.Error("Reboot failed", "error", err)

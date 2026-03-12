@@ -87,18 +87,24 @@ topology:
       image: booty-test:latest
       binds:
         - data/vars-provision:/deploy/vars:ro
+      env:
+        BOOTY_NO_REBOOT: "1"
 
     booty-deprovision:
       kind: linux
       image: booty-test:latest
       binds:
         - data/vars-deprovision:/deploy/vars:ro
+      env:
+        BOOTY_NO_REBOOT: "1"
 
     booty-standby:
       kind: linux
       image: booty-test:latest
       binds:
         - data/vars-standby:/deploy/vars:ro
+      env:
+        BOOTY_NO_REBOOT: "1"
 
   links:
     # Fabric link (eBGP)
