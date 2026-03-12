@@ -27,6 +27,7 @@ type Orchestrator struct {
 	provider config.Provider
 	disk     *disk.Manager
 	config   *Configurator
+	log      *slog.Logger
 
 	// Runtime state set during provisioning.
 	targetDisk      string
@@ -42,6 +43,7 @@ func NewOrchestrator(cfg *config.MachineConfig, provider config.Provider, diskMg
 		provider: provider,
 		disk:     diskMgr,
 		config:   NewConfigurator(diskMgr),
+		log:      slog.Default().With("component", "provision"),
 	}
 }
 
@@ -78,10 +80,10 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 	}
 
 	for i, step := range steps {
-		slog.Info("Provisioning step", "step", step.Name, "index", i+1, "total", len(steps))
+		o.log.Info("Provisioning step", "step", step.Name, "index", i+1, "total", len(steps))
 		if err := step.Fn(ctx); err != nil {
 			msg := fmt.Sprintf("step %s failed: %v", step.Name, err)
-			slog.Error("Provisioning step failed", "step", step.Name, "error", err)
+			o.log.Error("Provisioning step failed", "step", step.Name, "error", err)
 			DumpDebugState(step.Name)
 			dumpConfig(o.cfg)
 			_ = o.provider.ReportStatus(ctx, config.StatusError, msg)
@@ -169,7 +171,7 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 		})
 	}
 	for _, imgURL := range o.cfg.ImageURLs {
-		slog.Info("Streaming image", "url", imgURL, "disk", o.targetDisk)
+		o.log.Info("Streaming image", "url", imgURL, "disk", o.targetDisk)
 		if err := image.Stream(ctx, imgURL, o.targetDisk, opts...); err != nil {
 			return fmt.Errorf("streaming %s: %w", imgURL, err)
 		}
@@ -189,7 +191,7 @@ func (o *Orchestrator) parsePartitions(ctx context.Context) error {
 
 	boot, err := o.disk.FindBootPartition(parts)
 	if err != nil {
-		slog.Warn("No EFI partition found", "error", err)
+		o.log.Warn("No EFI partition found", "error", err)
 	} else {
 		o.bootPartition = boot.Node
 	}
@@ -221,7 +223,7 @@ func (o *Orchestrator) setupChrootBinds(_ context.Context) error {
 func (o *Orchestrator) growPartition(ctx context.Context) error {
 	partNum := disk.PartitionNumber(o.rootPartition, o.targetDisk)
 	if partNum == 0 {
-		slog.Warn("Could not determine partition number, skipping grow")
+		o.log.Warn("Could not determine partition number, skipping grow")
 		return nil
 	}
 	return o.disk.GrowPartition(ctx, o.targetDisk, partNum)

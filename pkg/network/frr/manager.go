@@ -22,6 +22,7 @@ import (
 type Manager struct {
 	cfg       network.Config
 	commander Commander
+	log       *slog.Logger
 }
 
 // Commander abstracts command execution for testing.
@@ -46,7 +47,10 @@ func NewManager(commander Commander) *Manager {
 	if commander == nil {
 		commander = &ExecCommander{}
 	}
-	return &Manager{commander: commander}
+	return &Manager{
+		commander: commander,
+		log:       slog.Default().With("component", "frr"),
+	}
 }
 
 // Setup configures the full FRR/EVPN network stack.
@@ -59,7 +63,7 @@ func (m *Manager) Setup(ctx context.Context, cfg *network.Config) error {
 		return fmt.Errorf("derive addresses: %w", err)
 	}
 
-	slog.Info("FRR setup",
+	m.log.Info("FRR setup",
 		"underlay_ip", underlayIP,
 		"overlay_ip", overlayIP,
 		"bridge_mac", bridgeMAC,
@@ -76,7 +80,7 @@ func (m *Manager) Setup(ctx context.Context, cfg *network.Config) error {
 		return err
 	}
 
-	slog.Info("FRR/EVPN network setup complete", "nics", nics)
+	m.log.Info("FRR/EVPN network setup complete", "nics", nics)
 	return nil
 }
 
@@ -89,7 +93,7 @@ func (m *Manager) setupInterfaces(cfg *network.Config, underlayIP, overlayIP, br
 	}
 
 	if err := m.createDummy("dummy.underlay", cfg.VRFName, underlayIP+"/32"); err != nil {
-		slog.Warn("Cannot create dummy interface, using loopback for underlay IP", "error", err)
+		m.log.Warn("Cannot create dummy interface, using loopback for underlay IP", "error", err)
 		if loErr := m.addLoopbackAddress(underlayIP); loErr != nil {
 			return nil, fmt.Errorf("add underlay IP to loopback: %w", loErr)
 		}
@@ -119,7 +123,7 @@ func (m *Manager) setupInterfaces(cfg *network.Config, underlayIP, overlayIP, br
 	}
 
 	if err := m.enableForwarding(); err != nil {
-		slog.Warn("Failed to enable IP forwarding", "error", err)
+		m.log.Warn("Failed to enable IP forwarding", "error", err)
 	}
 
 	return nics, nil
@@ -161,7 +165,7 @@ func (m *Manager) WaitForConnectivity(ctx context.Context, target string, timeou
 // Teardown removes the FRR network configuration.
 func (m *Manager) Teardown(ctx context.Context) error {
 	_, _ = m.commander.Run(ctx, "systemctl", "stop", "frr")
-	slog.Info("FRR teardown complete")
+	m.log.Info("FRR teardown complete")
 	return nil
 }
 
@@ -181,20 +185,20 @@ func (m *Manager) DumpFRRState() {
 		{"bfd peers", []string{"-c", "show bfd peers"}},
 		{"interface brief", []string{"-c", "show interface brief"}},
 	}
-	slog.Error("=== FRR STATE DUMP START ===")
+	m.log.Error("=== FRR STATE DUMP START ===")
 	for _, c := range cmds {
 		out, err := m.commander.Run(ctx, "vtysh", c.args...)
 		if err != nil {
-			slog.Error("FRR dump command failed", "label", c.label, "error", err)
+			m.log.Error("FRR dump command failed", "label", c.label, "error", err)
 			continue
 		}
 		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 			if line != "" {
-				slog.Error("FRR", "label", c.label, "data", line)
+				m.log.Error("FRR", "label", c.label, "data", line)
 			}
 		}
 	}
-	slog.Error("=== FRR STATE DUMP END ===")
+	m.log.Error("=== FRR STATE DUMP END ===")
 }
 
 // ensureFRRDirs creates runtime directories that FRR daemons expect.
@@ -215,7 +219,7 @@ func (m *Manager) createVRF(name string, tableID uint32) error {
 	}
 	if err := netlink.LinkAdd(vrf); err != nil {
 		if os.IsExist(err) {
-			slog.Debug("VRF already exists", "name", name)
+			m.log.Debug("VRF already exists", "name", name)
 			return nil
 		}
 		return fmt.Errorf("add VRF %s: %w", name, err)
@@ -363,14 +367,14 @@ func (m *Manager) addBridgeAddress(bridgeName, addr string) error {
 		return fmt.Errorf("add provision IP to bridge: %w", err)
 	}
 
-	slog.Info("Assigned provision IP to bridge", "bridge", bridgeName, "ip", addr)
+	m.log.Info("Assigned provision IP to bridge", "bridge", bridgeName, "ip", addr)
 	return nil
 }
 
 func (m *Manager) configureNICs(nics []string, vrfName string, mtu int) error {
 	for _, nic := range nics {
 		if err := m.configureNIC(nic, vrfName, mtu); err != nil {
-			slog.Warn("Failed to configure NIC", "nic", nic, "error", err)
+			m.log.Warn("Failed to configure NIC", "nic", nic, "error", err)
 		}
 	}
 	return nil
@@ -416,7 +420,7 @@ func (m *Manager) enableForwarding() error {
 
 	for path, val := range sysctls {
 		if err := os.WriteFile(path, []byte(val), 0o644); err != nil { //nolint:gosec // sysctl paths are trusted
-			slog.Debug("Failed to set sysctl", "path", path, "error", err)
+			m.log.Debug("Failed to set sysctl", "path", path, "error", err)
 		}
 	}
 	return nil
@@ -474,17 +478,17 @@ bfdd_options="   -A 127.0.0.1"
 // and child processes inherit pipes, blocking CombinedOutput() indefinitely.
 func (m *Manager) startFRR(ctx context.Context) error {
 	if err := runDaemonCmd(ctx, "systemctl", "restart", "frr"); err == nil {
-		slog.Info("FRR daemons started via systemctl")
+		m.log.Info("FRR daemons started via systemctl")
 		return nil
 	}
 
 	initPath := "/usr/lib/frr/frrinit.sh"
 	if _, statErr := os.Stat(initPath); statErr == nil {
 		if err := runDaemonCmd(ctx, initPath, "start"); err == nil {
-			slog.Info("FRR daemons started via frrinit.sh")
+			m.log.Info("FRR daemons started via frrinit.sh")
 			return nil
 		}
-		slog.Warn("frrinit.sh start failed, falling back to direct daemon start")
+		m.log.Warn("frrinit.sh start failed, falling back to direct daemon start")
 	}
 
 	return m.startDaemonsDirect(ctx)
@@ -525,13 +529,13 @@ func (m *Manager) startDaemonsDirect(ctx context.Context) error {
 	for _, d := range daemons {
 		path := "/usr/lib/frr/" + d.name
 		if _, err := os.Stat(path); err != nil {
-			slog.Debug("Daemon not found, skipping", "daemon", d.name)
+			m.log.Debug("Daemon not found, skipping", "daemon", d.name)
 			continue
 		}
 		if err := runDaemonCmd(ctx, path, d.args...); err != nil {
-			slog.Warn("Failed to start daemon", "daemon", d.name, "error", err)
+			m.log.Warn("Failed to start daemon", "daemon", d.name, "error", err)
 		} else {
-			slog.Info("Started FRR daemon", "daemon", d.name)
+			m.log.Info("Started FRR daemon", "daemon", d.name)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
@@ -551,12 +555,13 @@ func (m *Manager) addBGPPeer(ctx context.Context, vrfName string, asn uint32, ni
 	if err != nil {
 		return fmt.Errorf("vtysh add peer %s: %w (output: %s)", nic, err, string(out))
 	}
-	slog.Info("Added BGP peer", "nic", nic, "vrf", vrfName)
+	m.log.Info("Added BGP peer", "nic", nic, "vrf", vrfName)
 	return nil
 }
 
 // waitForHTTPWithFRR polls target, restarting FRR every 20s if needed.
 func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duration, mgr *Manager) error {
+	log := mgr.log
 	if target == "" {
 		return fmt.Errorf("empty connectivity target URL")
 	}
@@ -577,16 +582,16 @@ func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duratio
 		resp, err := client.Do(req) //nolint:gosec // target URL from trusted config, not user input
 		if err == nil {
 			_ = resp.Body.Close()
-			slog.Info("Network connectivity established",
+			log.Info("Network connectivity established",
 				"target", target, "attempt", attempt)
 			return nil
 		}
 
-		slog.Debug("Connectivity check failed",
+		log.Debug("Connectivity check failed",
 			"target", target, "attempt", attempt, "error", err)
 
 		if time.Since(lastRestart) >= restartInterval {
-			slog.Info("Restarting FRR daemons for connectivity recovery")
+			log.Info("Restarting FRR daemons for connectivity recovery")
 			if sErr := runDaemonCmd(ctx, "systemctl", "restart", "frr"); sErr != nil {
 				_ = runDaemonCmd(ctx, "/usr/lib/frr/frrinit.sh", "restart")
 			}
@@ -601,7 +606,7 @@ func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duratio
 	}
 
 	if mgr != nil {
-		slog.Error("Connectivity timeout — dumping FRR state for diagnostics")
+		log.Error("Connectivity timeout — dumping FRR state for diagnostics")
 		mgr.DumpFRRState()
 	}
 	return fmt.Errorf("network connectivity timeout after %s (%d attempts)", timeout, attempt)

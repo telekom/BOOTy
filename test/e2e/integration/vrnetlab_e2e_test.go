@@ -224,10 +224,10 @@ func TestVrnetlabVMBootStarted(t *testing.T) {
 func TestVrnetlabVMMountsSuccessful(t *testing.T) {
 	requireVrnetlabLab(t)
 
-	// BOOTy logs "Starting DHCP client" after setupMountsAndDevices() completes
-	if !waitForVMLog(t, vmProvision, "Starting DHCP client", 120*time.Second) {
+	// BOOTy logs "Beginning provisioning process" after setupMountsAndDevices() and loadModules() complete
+	if !waitForVMLog(t, vmProvision, "Beginning provisioning process", 120*time.Second) {
 		logs := getVMSerialLog(t, vmProvision)
-		t.Fatalf("provision VM did not reach DHCP stage (mounts may have failed)\n%s", logs)
+		t.Fatalf("provision VM did not reach provisioning stage (mounts may have failed)\n%s", logs)
 	}
 	t.Log("provision VM: mount and device setup completed")
 }

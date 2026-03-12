@@ -18,10 +18,19 @@ find . -print0 | cpio --null -ov --format=newc 2>/dev/null | gzip > /tmp/initram
 
 # ── Set up QEMU networking ─────────────────────────────────────────────
 # Wait for eth1 (containerlab data interface)
+ETH1_READY=false
 for i in $(seq 1 60); do
-    ip link show eth1 2>/dev/null && break
+    if ip link show eth1 >/dev/null 2>&1; then
+        ETH1_READY=true
+        break
+    fi
     sleep 0.5
 done
+
+if [ "$ETH1_READY" != "true" ]; then
+    echo "[boot.sh] ERROR: eth1 not found after 30s — containerlab link not ready" >&2
+    exit 1
+fi
 
 # Create tap device and bridge it with container's eth1.
 # Traffic path: QEMU VM eth0 ↔ tap0 ↔ br-data ↔ eth1 ↔ containerlab fabric

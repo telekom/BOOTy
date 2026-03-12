@@ -37,15 +37,7 @@ func main() {
 	setupMountsAndDevices()
 	loadModules()
 
-	slog.Info("Starting DHCP client")
-	go func() {
-		if err := realm.DHCPClient(); err != nil {
-			slog.Error("DHCP client error", "error", err)
-		}
-	}()
-
 	slog.Info("Starting BOOTy")
-	time.Sleep(time.Second * 2)
 	ux.Captain()
 	ux.SysInfo()
 
@@ -56,6 +48,14 @@ func main() {
 	if _, err := os.Stat(varsPath); err == nil {
 		runCAPRF(ctx)
 	} else {
+		// Legacy mode: use proper DHCP mode to get network connectivity,
+		// then proceed with plunder client provisioning.
+		slog.Info("Legacy mode — starting DHCP for network connectivity")
+		dhcp := network.NewDHCPMode()
+		if err := dhcp.Setup(ctx, nil); err != nil {
+			slog.Error("DHCP setup failed", "error", err)
+			realm.Reboot()
+		}
 		runLegacy()
 	}
 }
@@ -252,7 +252,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		if err := mgr.Setup(ctx, netCfg); err != nil {
 			slog.Error("FRR network setup failed, falling back to DHCP", "error", err)
 			mgr.DumpFRRState()
-			return &network.DHCPMode{}
+			return network.NewDHCPMode()
 		}
 		return mgr
 	}
@@ -262,13 +262,13 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		mode := &network.StaticMode{}
 		if err := mode.Setup(ctx, netCfg); err != nil {
 			slog.Error("Static network setup failed, falling back to DHCP", "error", err)
-			return &network.DHCPMode{}
+			return network.NewDHCPMode()
 		}
 		return mode
 	}
 
 	slog.Info("Using DHCP network mode")
-	return &network.DHCPMode{}
+	return network.NewDHCPMode()
 }
 
 // detectIPMI auto-detects IPMI MAC/IP from system if not provided.

@@ -17,10 +17,21 @@ import (
 // DHCPMode implements the Mode interface using DHCP on all physical interfaces.
 type DHCPMode struct {
 	client *dhclient.Client
+	log    *slog.Logger
+}
+
+// NewDHCPMode creates a DHCPMode with a component logger.
+func NewDHCPMode() *DHCPMode {
+	return &DHCPMode{
+		log: slog.Default().With("component", "dhcp"),
+	}
 }
 
 // Setup tries DHCP on each physical interface until one gets a lease.
 func (d *DHCPMode) Setup(ctx context.Context, _ *Config) error {
+	if d.log == nil {
+		d.log = slog.Default().With("component", "dhcp")
+	}
 	ifaces, err := physicalInterfaces()
 	if err != nil {
 		return fmt.Errorf("listing interfaces: %w", err)
@@ -29,18 +40,18 @@ func (d *DHCPMode) Setup(ctx context.Context, _ *Config) error {
 		return fmt.Errorf("no physical interfaces found for DHCP")
 	}
 
-	slog.Info("Trying DHCP on all interfaces", "count", len(ifaces))
+	d.log.Info("Trying DHCP on all interfaces", "count", len(ifaces))
 
 	for _, iface := range ifaces {
-		slog.Info("Attempting DHCP", "interface", iface.Name)
+		d.log.Info("Attempting DHCP", "interface", iface.Name)
 
 		link, err := netlink.LinkByName(iface.Name)
 		if err != nil {
-			slog.Warn("Cannot find link for DHCP", "interface", iface.Name, "error", err)
+			d.log.Warn("Cannot find link for DHCP", "interface", iface.Name, "error", err)
 			continue
 		}
 		if err := netlink.LinkSetUp(link); err != nil {
-			slog.Warn("Cannot bring up link for DHCP", "interface", iface.Name, "error", err)
+			d.log.Warn("Cannot bring up link for DHCP", "interface", iface.Name, "error", err)
 			continue
 		}
 
@@ -52,9 +63,9 @@ func (d *DHCPMode) Setup(ctx context.Context, _ *Config) error {
 				cidr := net.IPNet{IP: lease.FixedAddress, Mask: lease.Netmask}
 				addr, _ := netlink.ParseAddr(cidr.String())
 				if err := netlink.AddrAdd(link, addr); err != nil {
-					slog.Warn("Failed to assign DHCP address", "iface", iface.Name, "error", err)
+					d.log.Warn("Failed to assign DHCP address", "iface", iface.Name, "error", err)
 				} else {
-					slog.Info("DHCP lease obtained", "iface", iface.Name, "addr", cidr.String())
+					d.log.Info("DHCP lease obtained", "iface", iface.Name, "addr", cidr.String())
 				}
 				// Default gateway.
 				if lease.ServerID != nil {
@@ -79,11 +90,11 @@ func (d *DHCPMode) Setup(ctx context.Context, _ *Config) error {
 		case <-leased:
 			timer.Stop()
 			d.client = &client
-			slog.Info("DHCP succeeded", "interface", iface.Name)
+			d.log.Info("DHCP succeeded", "interface", iface.Name)
 			return nil
 		case <-timer.C:
 			client.Stop()
-			slog.Info("DHCP timeout on interface, trying next", "interface", iface.Name)
+			d.log.Info("DHCP timeout on interface, trying next", "interface", iface.Name)
 		case <-ctx.Done():
 			client.Stop()
 			return fmt.Errorf("context canceled during DHCP: %w", ctx.Err())

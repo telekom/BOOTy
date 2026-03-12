@@ -21,6 +21,7 @@ import (
 type Client struct {
 	httpClient *http.Client
 	cfg        *config.MachineConfig
+	log        *slog.Logger
 }
 
 // New creates a CAPRF client by parsing the vars file at the given path.
@@ -39,6 +40,7 @@ func New(varsPath string) (*Client, error) {
 	return &Client{
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		cfg:        cfg,
+		log:        slog.Default().With("component", "caprf"),
 	}, nil
 }
 
@@ -47,6 +49,7 @@ func NewFromConfig(cfg *config.MachineConfig) *Client {
 	return &Client{
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		cfg:        cfg,
+		log:        slog.Default().With("component", "caprf"),
 	}
 }
 
@@ -70,7 +73,7 @@ func (c *Client) ReportStatus(ctx context.Context, status config.Status, message
 	}
 
 	if url == "" {
-		slog.Warn("No URL configured for status, skipping", "status", status)
+		c.log.Warn("No URL configured for status, skipping", "status", status)
 		return nil
 	}
 
@@ -142,7 +145,7 @@ func (c *Client) postWithAuth(ctx context.Context, url, body string) error {
 	for attempt := range 3 {
 		if attempt > 0 {
 			backoff := time.Duration(1<<(attempt-1)) * time.Second // 1s, 2s
-			slog.Info("Retrying request", "url", url, "attempt", attempt+1, "backoff", backoff)
+			c.log.Info("Retrying request", "url", url, "attempt", attempt+1, "backoff", backoff)
 			select {
 			case <-time.After(backoff):
 			case <-ctx.Done():
@@ -154,7 +157,7 @@ func (c *Client) postWithAuth(ctx context.Context, url, body string) error {
 		if lastErr == nil {
 			return nil
 		}
-		slog.Warn("Request failed", "url", url, "attempt", attempt+1, "error", lastErr)
+		c.log.Warn("Request failed", "url", url, "attempt", attempt+1, "error", lastErr)
 	}
 	return lastErr
 }

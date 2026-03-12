@@ -334,10 +334,10 @@ jobs:
 
           PASS=true
 
-          if grep -q "Starting DHCP client" serial.log 2>/dev/null; then
+          if grep -q "Legacy mode" serial.log 2>/dev/null; then
             echo "PASS: BOOTy init started — mount and device setup successful"
           else
-            echo "FAIL: BOOTy init did not reach DHCP client"
+            echo "FAIL: BOOTy init did not reach DHCP setup"
             PASS=false
           fi
 
@@ -652,10 +652,10 @@ jobs:
 
           PASS=true
 
-          if grep -q "Starting DHCP client" serial-uefi.log 2>/dev/null; then
+          if grep -q "Legacy mode" serial-uefi.log 2>/dev/null; then
             echo "PASS: BOOTy init started under UEFI — EFI firmware + ISO boot working"
           else
-            echo "FAIL: BOOTy init did not reach DHCP client under UEFI"
+            echo "FAIL: BOOTy init did not reach DHCP setup under UEFI"
             PASS=false
           fi
 
