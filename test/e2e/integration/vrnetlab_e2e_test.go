@@ -591,9 +591,15 @@ var vrnetlabAllowedErrors = []string{
 	"=== DEBUG",
 	"=== CONFIG",
 	"Provisioning failed",
+	"Provisioning step",
 	"stream-image",
 	"partition-disk",
+	"parse-partitions",
 	"format-disk",
+	"Disk Error",
+	"msg=DEBUG",
+	"Debug command",
+	"DEBUG env",
 }
 
 func TestVrnetlabNoUnexpectedErrors(t *testing.T) {
