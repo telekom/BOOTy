@@ -46,7 +46,7 @@ func (s *StaticMode) Setup(_ context.Context, cfg *Config) error {
 		if err != nil || len(nics) == 0 {
 			return fmt.Errorf("no physical NICs found for static mode")
 		}
-		ifaceName = nics[0].Attrs().Name
+		ifaceName = nics[0]
 	}
 	s.iface = ifaceName
 

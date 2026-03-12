@@ -243,8 +243,9 @@ func TestResizeFilesystemBothFail(t *testing.T) {
 
 	cmd.setResult("resize2fs /dev/sda2", nil, fmt.Errorf("not ext4"))
 	cmd.setResult("xfs_growfs /dev/sda2", nil, fmt.Errorf("not xfs"))
+	cmd.setResult("btrfs filesystem", nil, fmt.Errorf("not btrfs"))
 	if err := mgr.ResizeFilesystem(context.Background(), "/dev/sda2"); err == nil {
-		t.Fatal("expected error when both fail")
+		t.Fatal("expected error when all resize methods fail")
 	}
 }
 

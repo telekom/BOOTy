@@ -51,7 +51,7 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 		if err := step.Fn(ctx); err != nil {
 			msg := fmt.Sprintf("step %s failed: %v", step.Name, err)
 			slog.Error("Deprovisioning step failed", "step", step.Name, "error", err)
-			dumpDebugState(step.Name)
+			DumpDebugState(step.Name)
 			_ = o.provider.ReportStatus(ctx, config.StatusError, msg)
 			return fmt.Errorf("deprovision step %s: %w", step.Name, err)
 		}
