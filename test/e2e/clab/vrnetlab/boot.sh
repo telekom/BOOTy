@@ -55,6 +55,12 @@ else
     echo "[boot.sh] KVM not available, using TCG emulation"
 fi
 
+# ── Generate unique VM MAC address ─────────────────────────────────────
+# Each container needs a unique MAC so BGP unnumbered (IPv6 link-local)
+# addresses don't collide across VMs sharing the same spine.
+VM_MAC="52:54:00:$(printf '%02x' $((RANDOM % 256))):$(printf '%02x' $((RANDOM % 256))):$(printf '%02x' $((RANDOM % 256)))"
+echo "[boot.sh] VM MAC: ${VM_MAC}"
+
 echo "[boot.sh] Booting BOOTy VM..."
 
 # ── Boot QEMU ──────────────────────────────────────────────────────────
@@ -68,5 +74,5 @@ exec qemu-system-x86_64 \
     -nographic \
     -no-reboot \
     ${KVM_ARGS} \
-    -device virtio-net-pci,netdev=data \
+    -device virtio-net-pci,netdev=data,mac=${VM_MAC} \
     -netdev tap,id=data,ifname=tap0,script=no,downscript=no

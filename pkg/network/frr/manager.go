@@ -508,17 +508,30 @@ func runDaemonCmd(ctx context.Context, name string, args ...string) error {
 }
 
 func (m *Manager) startDaemonsDirect(ctx context.Context) error {
-	// FRR 10.x requires mgmtd before other daemons; staticd is always needed.
-	// bgpd needs -f to read the integrated frr.conf config file.
+	// FRR 10.x daemon startup order: mgmtd → zebra → staticd → bgpd → bfdd.
+	// When mgmtd is present (FRR 10.5+), it reads /etc/frr/frr.conf and
+	// distributes config to other daemons — bgpd must NOT use -f in that case.
+	// When mgmtd is absent (production initramfs), bgpd reads config via -f.
 	type daemonSpec struct {
 		name string
 		args []string
 	}
+
+	hasMgmtd := false
+	if _, err := os.Stat("/usr/lib/frr/mgmtd"); err == nil {
+		hasMgmtd = true
+	}
+
+	bgpdArgs := []string{"-d", "-A", "127.0.0.1"}
+	if !hasMgmtd {
+		bgpdArgs = append(bgpdArgs, "-f", "/etc/frr/frr.conf")
+	}
+
 	daemons := []daemonSpec{
 		{"mgmtd", []string{"-d", "-A", "127.0.0.1"}},
 		{"zebra", []string{"-d", "-A", "127.0.0.1", "-s", "90000000"}},
 		{"staticd", []string{"-d", "-A", "127.0.0.1"}},
-		{"bgpd", []string{"-d", "-A", "127.0.0.1", "-f", "/etc/frr/frr.conf"}},
+		{"bgpd", bgpdArgs},
 		{"bfdd", []string{"-d", "-A", "127.0.0.1"}},
 	}
 	for _, d := range daemons {
