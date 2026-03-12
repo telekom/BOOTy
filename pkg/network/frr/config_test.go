@@ -1,6 +1,7 @@
 package frr
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -471,5 +472,400 @@ func TestFRRConfigBuilder_IPv4OnlyNoIPv6Advertise(t *testing.T) {
 
 	if strings.Contains(conf, "advertise ipv6 unicast") {
 		t.Errorf("should not advertise ipv6 when only ipv4 is configured:\n%s", conf)
+	}
+}
+
+// frrValidator tracks state while scanning FRR config lines.
+type frrValidator struct {
+	issues           []string
+	inRouterBGP      bool
+	inAddressFamily  bool
+	routerBGPClosed  bool
+	inBFD            bool
+	afCount          int
+	afClosed         int
+	peerGroupDefined map[string]bool
+	peerGroupUsed    map[string]bool
+	bfdProfileDef    map[string]bool
+	bfdProfileUsed   map[string]bool
+}
+
+func newFRRValidator() *frrValidator {
+	return &frrValidator{
+		peerGroupDefined: map[string]bool{},
+		peerGroupUsed:    map[string]bool{},
+		bfdProfileDef:    map[string]bool{},
+		bfdProfileUsed:   map[string]bool{},
+	}
+}
+
+func (v *frrValidator) processBFDLine(trimmed string) {
+	if trimmed == "bfd" && !v.inRouterBGP {
+		v.inBFD = true
+	}
+	if !v.inBFD {
+		return
+	}
+	if strings.HasPrefix(trimmed, "profile ") {
+		v.bfdProfileDef[strings.TrimPrefix(trimmed, "profile ")] = true
+	}
+	if trimmed == "exit" {
+		v.inBFD = false
+	}
+}
+
+func (v *frrValidator) processRouterBGPLine(trimmed string, lineNum int) {
+	// Peer-group definition: "neighbor X peer-group" (not "interface peer-group").
+	if strings.HasSuffix(trimmed, " peer-group") && !strings.Contains(trimmed, "interface peer-group") {
+		pg := strings.TrimPrefix(trimmed, "neighbor ")
+		pg = strings.TrimSuffix(pg, " peer-group")
+		v.peerGroupDefined[pg] = true
+	}
+
+	// Peer-group usage: "neighbor X interface peer-group Y".
+	if idx := strings.Index(trimmed, "interface peer-group "); idx >= 0 {
+		pgName := strings.TrimSpace(trimmed[idx+len("interface peer-group "):])
+		v.peerGroupUsed[pgName] = true
+	}
+
+	// BFD profile reference inside router bgp.
+	if idx := strings.Index(trimmed, "bfd profile "); idx >= 0 {
+		v.bfdProfileUsed[strings.TrimSpace(trimmed[idx+len("bfd profile "):])] = true
+	}
+
+	// Address-family open/close.
+	if strings.HasPrefix(trimmed, "address-family ") {
+		v.afCount++
+		v.inAddressFamily = true
+	}
+	if trimmed == "exit-address-family" {
+		if !v.inAddressFamily {
+			v.issues = append(v.issues, fmt.Sprintf("line %d: 'exit-address-family' without matching 'address-family'", lineNum))
+		}
+		v.inAddressFamily = false
+		v.afClosed++
+	}
+
+	// "exit" closes the router bgp block (but not address-family).
+	if trimmed == "exit" && !v.inAddressFamily {
+		v.inRouterBGP = false
+		v.routerBGPClosed = true
+	}
+}
+
+// validateFRRConfig performs structural validation of generated FRR config text.
+// It returns a list of issues found. An empty list means the config is valid.
+func validateFRRConfig(conf string) []string {
+	v := newFRRValidator()
+	lines := strings.Split(conf, "\n")
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		lineNum := i + 1
+
+		v.processBFDLine(trimmed)
+
+		// Detect router bgp block entry.
+		if strings.HasPrefix(trimmed, "router bgp ") && !v.inRouterBGP {
+			if v.routerBGPClosed {
+				v.issues = append(v.issues, fmt.Sprintf("line %d: multiple 'router bgp' blocks", lineNum))
+			}
+			v.inRouterBGP = true
+		}
+
+		if v.inRouterBGP {
+			v.processRouterBGPLine(trimmed, lineNum)
+		}
+	}
+
+	// Check for unclosed blocks.
+	if v.inRouterBGP {
+		v.issues = append(v.issues, "router bgp block not closed with 'exit'")
+	}
+	if v.inAddressFamily {
+		v.issues = append(v.issues, "address-family block not closed with 'exit-address-family'")
+	}
+	if v.afCount != v.afClosed {
+		v.issues = append(v.issues, fmt.Sprintf("%d address-family opened but %d closed", v.afCount, v.afClosed))
+	}
+
+	// Check peer-group references.
+	for pg := range v.peerGroupUsed {
+		if !v.peerGroupDefined[pg] {
+			v.issues = append(v.issues, fmt.Sprintf("peer-group %q used but never defined with 'neighbor %s peer-group'", pg, pg))
+		}
+	}
+
+	// Check BFD profile references.
+	for prof := range v.bfdProfileUsed {
+		if !v.bfdProfileDef[prof] {
+			v.issues = append(v.issues, fmt.Sprintf("BFD profile %q referenced but never defined", prof))
+		}
+	}
+
+	// Must have line vty footer.
+	if !strings.Contains(conf, "line vty") {
+		v.issues = append(v.issues, "missing 'line vty' footer")
+	}
+
+	// Must have frr header.
+	if !strings.HasPrefix(conf, "frr version") {
+		v.issues = append(v.issues, "missing 'frr version' header")
+	}
+
+	return v.issues
+}
+
+// TestValidateConfig_AllScenarios runs the config builder through every
+// meaningful scenario and validates the output is structurally valid FRR config.
+func TestValidateConfig_AllScenarios(t *testing.T) {
+	tests := []struct {
+		name    string
+		builder *FRRConfigBuilder
+	}{
+		{
+			name: "minimal",
+			builder: NewFRRConfigBuilder(65000, "10.0.0.1").
+				WithAddressFamily("ipv4", "unicast").
+				WithAddressFamily("l2vpn", "evpn"),
+		},
+		{
+			name: "single_nic",
+			builder: NewFRRConfigBuilder(65000, "10.0.0.1").
+				WithNICs([]string{"eth0"}).
+				WithAddressFamily("ipv4", "unicast").
+				WithAddressFamily("l2vpn", "evpn"),
+		},
+		{
+			name: "multi_nic",
+			builder: NewFRRConfigBuilder(65000, "10.0.0.1").
+				WithNICs([]string{"eth0", "eth1", "eth2", "swp0"}).
+				WithAddressFamily("ipv4", "unicast").
+				WithAddressFamily("l2vpn", "evpn"),
+		},
+		{
+			name: "with_vrf",
+			builder: NewFRRConfigBuilder(64497, "10.50.0.42").
+				WithVRF("p_zerotrust", 10).
+				WithNICs([]string{"eth0"}).
+				WithAddressFamily("ipv4", "unicast").
+				WithAddressFamily("l2vpn", "evpn"),
+		},
+		{
+			name: "with_bfd_and_timers",
+			builder: NewFRRConfigBuilder(64497, "10.50.0.42").
+				WithVRF("p_zerotrust", 10).
+				WithNICs([]string{"swp0", "swp1"}).
+				WithBGPTimers(30, 90).
+				WithBFDProfile("datacenter", 150, 150).
+				WithAddressFamily("ipv4", "unicast").
+				WithAddressFamily("l2vpn", "evpn"),
+		},
+		{
+			name: "ipv6_dual_stack",
+			builder: NewFRRConfigBuilder(64497, "10.50.0.42").
+				WithVRF("p_zerotrust", 10).
+				WithNICs([]string{"eth0"}).
+				WithAddressFamily("ipv4", "unicast").
+				WithAddressFamily("ipv6", "unicast").
+				WithAddressFamily("l2vpn", "evpn"),
+		},
+		{
+			name: "onefabric",
+			builder: NewFRRConfigBuilder(65000, "192.168.4.42").
+				WithVRF("Vrf_underlay", 1).
+				WithNICs([]string{"eth0"}).
+				WithBGPTimers(3, 9).
+				WithBFDProfile("datacenter", 300, 300).
+				WithAddressFamily("ipv4", "unicast").
+				WithAddressFamily("l2vpn", "evpn").
+				WithOnefabric([]string{"10.0.0.1", "10.0.0.2"}, "10.10.0.0/16", "65000:100"),
+		},
+		{
+			name: "onefabric_single_dcgw",
+			builder: NewFRRConfigBuilder(65000, "192.168.4.42").
+				WithVRF("Vrf_underlay", 1).
+				WithNICs([]string{"eth0", "eth1"}).
+				WithAddressFamily("ipv4", "unicast").
+				WithAddressFamily("l2vpn", "evpn").
+				WithOnefabric([]string{"10.0.0.1"}, "10.10.0.0/16", "65000:100"),
+		},
+		{
+			name: "full_vbm4x",
+			builder: NewFRRConfigBuilder(64497, "10.50.0.42").
+				WithVRF("p_zerotrust", 10).
+				WithNICs([]string{"eth0", "eth1"}).
+				WithBGPTimers(30, 90).
+				WithBFDProfile("datacenter", 150, 150).
+				WithAddressFamily("ipv4", "unicast").
+				WithAddressFamily("ipv6", "unicast").
+				WithAddressFamily("l2vpn", "evpn").
+				WithOnefabric([]string{"10.10.10.1", "10.10.10.2"}, "10.10.0.0/16", "64497:1000"),
+		},
+		{
+			name: "no_evpn",
+			builder: NewFRRConfigBuilder(65000, "10.0.0.1").
+				WithNICs([]string{"eth0"}).
+				WithAddressFamily("ipv4", "unicast"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conf := tt.builder.Build()
+			issues := validateFRRConfig(conf)
+			if len(issues) > 0 {
+				t.Errorf("config validation failed:\n%s\n\nGenerated config:\n%s",
+					strings.Join(issues, "\n"), conf)
+			}
+		})
+	}
+}
+
+// TestValidateConfig_PeerGroupBeforeNeighbor checks that the peer-group is
+// defined before any neighbor references it.
+func TestValidateConfig_PeerGroupBeforeNeighbor(t *testing.T) {
+	b := NewFRRConfigBuilder(65000, "10.0.0.1").
+		WithNICs([]string{"eth0", "eth1", "eth2"}).
+		WithAddressFamily("ipv4", "unicast").
+		WithAddressFamily("l2vpn", "evpn")
+	conf := b.Build()
+
+	pgIdx := strings.Index(conf, "neighbor fabric peer-group")
+	if pgIdx == -1 {
+		t.Fatal("peer-group definition not found")
+	}
+
+	for _, nic := range []string{"eth0", "eth1", "eth2"} {
+		nicLine := fmt.Sprintf("neighbor %s interface peer-group fabric", nic)
+		nicIdx := strings.Index(conf, nicLine)
+		if nicIdx == -1 {
+			t.Errorf("neighbor %s not found in config", nic)
+			continue
+		}
+		if nicIdx < pgIdx {
+			t.Errorf("neighbor %s (pos %d) appears before peer-group definition (pos %d):\n%s",
+				nic, nicIdx, pgIdx, conf)
+		}
+	}
+}
+
+// TestValidateConfig_OnefabricInsideRouterBGP checks that onefabric DCGW
+// neighbors are inside the router bgp block, not after exit.
+func TestValidateConfig_OnefabricInsideRouterBGP(t *testing.T) {
+	b := NewFRRConfigBuilder(65000, "192.168.4.42").
+		WithVRF("Vrf_underlay", 1).
+		WithNICs([]string{"eth0"}).
+		WithAddressFamily("ipv4", "unicast").
+		WithAddressFamily("l2vpn", "evpn").
+		WithOnefabric([]string{"10.0.0.1", "10.0.0.2"}, "10.10.0.0/16", "65000:100")
+	conf := b.Build()
+
+	// Find the router bgp block boundaries.
+	routerIdx := strings.Index(conf, "router bgp ")
+	exitIdx := strings.LastIndex(conf, "exit\n!\nline vty")
+	if routerIdx == -1 || exitIdx == -1 {
+		t.Fatalf("could not find router bgp or exit markers in:\n%s", conf)
+	}
+
+	for _, dcgwIP := range []string{"10.0.0.1", "10.0.0.2"} {
+		neighborLine := fmt.Sprintf("neighbor %s remote-as internal", dcgwIP)
+		neighborIdx := strings.Index(conf, neighborLine)
+		if neighborIdx == -1 {
+			t.Errorf("DCGW neighbor %s not found", dcgwIP)
+			continue
+		}
+		if neighborIdx < routerIdx || neighborIdx > exitIdx {
+			t.Errorf("DCGW neighbor %s (pos %d) is outside router bgp block (%d-%d):\n%s",
+				dcgwIP, neighborIdx, routerIdx, exitIdx, conf)
+		}
+	}
+}
+
+// TestValidateConfig_BFDBeforeRouterBGP checks that BFD profile is defined
+// before the router bgp block.
+func TestValidateConfig_BFDBeforeRouterBGP(t *testing.T) {
+	b := NewFRRConfigBuilder(64497, "10.50.0.42").
+		WithBFDProfile("datacenter", 150, 150).
+		WithNICs([]string{"eth0"}).
+		WithAddressFamily("ipv4", "unicast").
+		WithAddressFamily("l2vpn", "evpn")
+	conf := b.Build()
+
+	bfdIdx := strings.Index(conf, "bfd\n")
+	routerIdx := strings.Index(conf, "router bgp ")
+	if bfdIdx == -1 {
+		t.Fatal("BFD section not found")
+	}
+	if routerIdx == -1 {
+		t.Fatal("router bgp not found")
+	}
+	if bfdIdx > routerIdx {
+		t.Errorf("BFD (pos %d) must appear before router bgp (pos %d):\n%s",
+			bfdIdx, routerIdx, conf)
+	}
+}
+
+// TestValidateConfig_ViaRenderConfig validates configs produced by the
+// higher-level RenderConfig function (the one actually used at runtime).
+func TestValidateConfig_ViaRenderConfig(t *testing.T) {
+	tests := []struct {
+		name       string
+		cfg        network.Config
+		underlayIP string
+		overlayIP  string
+		nics       []string
+	}{
+		{
+			name:       "basic_ipv4",
+			cfg:        network.Config{ASN: 65000, VRFName: "Vrf_underlay"},
+			underlayIP: "192.168.4.42",
+			overlayIP:  "192.168.4.42",
+			nics:       []string{"eth0", "eth1"},
+		},
+		{
+			name: "onefabric",
+			cfg: network.Config{
+				ASN: 65000, VRFName: "Vrf_underlay",
+				DCGWIPs: "10.0.0.1,10.0.0.2", VPNRT: "65000:100",
+				OverlayAggregate: "10.10.0.0/16",
+			},
+			underlayIP: "192.168.4.42",
+			overlayIP:  "192.168.4.42",
+			nics:       []string{"eth0"},
+		},
+		{
+			name: "dual_stack_with_bfd",
+			cfg: network.Config{
+				ASN: 64497, VRFName: "p_zerotrust", VRFTableID: 10,
+				BGPKeepalive: 30, BGPHold: 90,
+				BFDTransmitMS: 150, BFDReceiveMS: 150,
+				DCGWIPs: "10.10.10.1", VPNRT: "64497:1000",
+			},
+			underlayIP: "10.50.0.42",
+			overlayIP:  "fd21:0cc2:0981::2a",
+			nics:       []string{"eth0", "eth1"},
+		},
+		{
+			name:       "no_nics",
+			cfg:        network.Config{ASN: 65000},
+			underlayIP: "10.0.0.1",
+			overlayIP:  "10.0.0.1",
+			nics:       nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conf, err := RenderConfig(&tt.cfg, tt.underlayIP, tt.overlayIP, tt.nics)
+			if err != nil {
+				t.Fatalf("RenderConfig error: %v", err)
+			}
+			issues := validateFRRConfig(conf)
+			if len(issues) > 0 {
+				t.Errorf("config validation failed:\n%s\n\nGenerated config:\n%s",
+					strings.Join(issues, "\n"), conf)
+			}
+		})
 	}
 }

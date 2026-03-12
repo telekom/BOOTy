@@ -146,11 +146,8 @@ func (m *Manager) startFRRStack(ctx context.Context, cfg *network.Config, underl
 		return fmt.Errorf("start FRR: %w", err)
 	}
 
-	for _, nic := range nics {
-		if err := m.addBGPPeer(ctx, cfg.VRFName, cfg.ASN, nic); err != nil {
-			slog.Warn("Failed to add BGP peer", "nic", nic, "error", err)
-		}
-	}
+	// Peers are defined statically in frr.conf via the config builder.
+	// No vtysh addBGPPeer calls needed — FRR loads them from the config file.
 
 	return nil
 }
