@@ -25,7 +25,8 @@ RUN apt-get update && \
     KVER=$(ls /tmp/kernel/lib/modules/ | head -1) && \
     MDIR="/tmp/kernel/lib/modules/$KVER" && \
     mkdir -p /modules && \
-    for m in virtio virtio_ring virtio_pci virtio_net failover net_failover \
+    for m in virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
+             virtio_pci virtio_net failover net_failover \
              dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc; do \
         find "$MDIR" -name "${m}.ko*" -exec cp {} /modules/ \; ; \
     done && \

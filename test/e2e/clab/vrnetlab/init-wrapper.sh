@@ -15,7 +15,8 @@ stty cols 200 2>/dev/null || true
 # Load kernel modules needed by BOOTy's FRR/EVPN network stack.
 # Modules are in /modules/ (flat directory), loaded via insmod in dependency order.
 # virtio modules must load first so QEMU's virtio-net NIC appears as eth0.
-for mod in virtio_ring virtio virtio_pci failover net_failover virtio_net \
+for mod in virtio_ring virtio virtio_pci_modern_dev virtio_pci_legacy_dev \
+         virtio_pci failover net_failover virtio_net \
          llc stp bridge udp_tunnel ip6_udp_tunnel dummy vxlan; do
     ko=$(find /modules -name "${mod}.ko*" 2>/dev/null | head -1)
     [ -n "$ko" ] && /bin/insmod "$ko" 2>/dev/null || true
