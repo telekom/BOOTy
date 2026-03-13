@@ -357,20 +357,28 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) {
 	case "IMAGE":
 		cfg.ImageURLs = strings.Fields(strings.ReplaceAll(value, ",", " "))
 	case "MIN_DISK_SIZE_GB":
-		if n, err := strconv.Atoi(value); err == nil {
-			cfg.MinDiskSizeGB = n
-		}
+		setIntField(&cfg.MinDiskSizeGB, value)
 	case "DISABLE_KEXEC":
-		cfg.DisableKexec = value == "true" || value == "1" || value == "yes"
+		cfg.DisableKexec = parseBoolVar(value)
 	case "SECURE_ERASE":
-		cfg.SecureErase = value == "true" || value == "1" || value == "yes"
+		cfg.SecureErase = parseBoolVar(value)
 	case "POST_PROVISION_CMDS":
 		cfg.PostProvisionCmds = strings.Split(value, ";")
 	case "NUM_VFS":
-		if n, err := strconv.Atoi(value); err == nil {
-			cfg.NumVFs = n
-		}
+		setIntField(&cfg.NumVFs, value)
 	case "INVENTORY_ENABLED":
-		cfg.InventoryEnabled = value == "true" || value == "1" || value == "yes"
+		cfg.InventoryEnabled = parseBoolVar(value)
+	}
+}
+
+// parseBoolVar interprets common truthy string values.
+func parseBoolVar(value string) bool {
+	return value == "true" || value == "1" || value == "yes"
+}
+
+// setIntField sets an int field from a string value, ignoring parse errors.
+func setIntField(field *int, value string) {
+	if n, err := strconv.Atoi(value); err == nil {
+		*field = n
 	}
 }

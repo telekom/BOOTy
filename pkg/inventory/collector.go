@@ -177,11 +177,12 @@ func collectDisks() []DiskInfo {
 		// Rotational: 0 = SSD/NVMe, 1 = HDD.
 		rotStr := readSysFile(filepath.Join(SysBlockPath, name, "queue", "rotational"))
 		d.Rotational = rotStr == "1"
-		if d.Rotational {
+		switch {
+		case d.Rotational:
 			d.Type = "HDD"
-		} else if strings.HasPrefix(name, "nvme") {
+		case strings.HasPrefix(name, "nvme"):
 			d.Type = "NVMe"
-		} else {
+		default:
 			d.Type = "SSD"
 		}
 
