@@ -6,6 +6,7 @@ init
 # Build artifacts
 images/*
 coverage.out
+coverage.html
 
 # IDE
 .idea/

@@ -45,6 +45,8 @@ lint:
 test:
 	@go test -race -coverprofile=coverage.out ./...
 	@go tool cover -func=coverage.out
+	@go tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report: coverage.html"
 
 dockerx86:
 	@docker buildx build --platform linux/amd64 --load -t $(REPOSITORY):$(DOCKERTAG) -f initrd.Dockerfile .

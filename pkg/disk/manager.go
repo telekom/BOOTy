@@ -87,6 +87,10 @@ func (m *Manager) WipeAllDisks(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reading /sys/block: %w", err)
 	}
+	var (
+		wiped  int
+		failed int
+	)
 	for _, entry := range entries {
 		name := entry.Name()
 		if isVirtualDisk(name) {
@@ -100,7 +104,13 @@ func (m *Manager) WipeAllDisks(ctx context.Context) error {
 		}
 		if out, err := m.cmd.Run(ctx, "wipefs", "-af", dev); err != nil {
 			slog.Warn("wipefs failed", "device", dev, "output", string(out), "error", err)
+			failed++
+		} else {
+			wiped++
 		}
+	}
+	if wiped == 0 && failed > 0 {
+		return fmt.Errorf("all %d disk wipe(s) failed", failed)
 	}
 	return nil
 }
@@ -482,8 +492,11 @@ func (m *Manager) SetupChrootBindMounts(root string) error {
 }
 
 // TeardownChrootBindMounts unmounts standard bind mounts.
+// Errors are logged to aid debugging of stale mount points.
 func (m *Manager) TeardownChrootBindMounts(root string) {
 	for _, rel := range []string{"run", "sys", "proc", "dev"} {
-		_ = m.Unmount(root + "/" + rel)
+		if err := m.Unmount(root + "/" + rel); err != nil {
+			slog.Warn("Chroot unmount failed", "path", root+"/"+rel, "error", err)
+		}
 	}
 }

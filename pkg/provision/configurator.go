@@ -110,23 +110,22 @@ func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineCon
 
 // CopyProvisionerFiles copies files from /deploy/file-system/ to the root.
 func (c *Configurator) CopyProvisionerFiles() error {
-	srcBase := "/deploy/file-system"
-	if _, err := os.Stat(srcBase); os.IsNotExist(err) {
-		slog.Info("No provisioner files directory found", "path", srcBase)
-		return nil
-	}
-	slog.Info("Copying provisioner files")
-	return copyTree(srcBase, c.rootDir)
+	return c.copyTreeIntoChroot("/deploy/file-system", "provisioner files")
 }
 
 // CopyMachineFiles copies files from /deploy/machine-files/ to the root.
 func (c *Configurator) CopyMachineFiles() error {
-	srcBase := "/deploy/machine-files"
+	return c.copyTreeIntoChroot("/deploy/machine-files", "machine files")
+}
+
+// copyTreeIntoChroot copies all files from srcBase into the chroot root.
+// If srcBase does not exist, it logs and returns nil.
+func (c *Configurator) copyTreeIntoChroot(srcBase, label string) error {
 	if _, err := os.Stat(srcBase); os.IsNotExist(err) {
-		slog.Info("No machine files directory found", "path", srcBase)
+		slog.Info("No "+label+" directory found", "path", srcBase)
 		return nil
 	}
-	slog.Info("Copying machine files")
+	slog.Info("Copying "+label, "src", srcBase)
 	return copyTree(srcBase, c.rootDir)
 }
 

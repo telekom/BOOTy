@@ -159,6 +159,13 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("4-octet ASN %d with VNI %d > 65535 is unsupported (RD/RT truncation)", c.ASN, c.ProvisionVNI)
 	}
 
+	// MTU must leave room for VXLAN overhead (50 bytes) plus minimum
+	// useful IP payload (576 bytes per RFC 791).
+	const minMTU = 576 + 50 // minIP + vxlanOverhead
+	if c.MTU > 0 && c.MTU < minMTU {
+		return fmt.Errorf("MTU %d too low (minimum %d = 576 IP + 50 VXLAN overhead)", c.MTU, minMTU)
+	}
+
 	return nil
 }
 

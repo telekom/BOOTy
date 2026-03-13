@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -537,7 +538,7 @@ func dumpConfig(cfg *config.MachineConfig) {
 	slog.Error("=== CONFIG DUMP ===",
 		"hostname", cfg.Hostname,
 		"mode", cfg.Mode,
-		"images", cfg.ImageURLs,
+		"images", redactURLs(cfg.ImageURLs),
 		"asn", cfg.ASN,
 		"provision_vni", cfg.ProvisionVNI,
 		"underlay_subnet", cfg.UnderlaySubnet,
@@ -561,4 +562,20 @@ func dumpConfig(cfg *config.MachineConfig) {
 		"bond_interfaces", cfg.BondInterfaces,
 		"min_disk_size_gb", cfg.MinDiskSizeGB,
 	)
+}
+
+// redactURLs strips embedded credentials from image URLs to prevent leaking
+// secrets (e.g. oci://user:pass@registry/image:tag) in debug logs.
+func redactURLs(urls []string) []string {
+	redacted := make([]string, len(urls))
+	for i, raw := range urls {
+		u, err := url.Parse(raw)
+		if err != nil || u.User == nil {
+			redacted[i] = raw
+			continue
+		}
+		u.User = url.User("REDACTED")
+		redacted[i] = u.String()
+	}
+	return redacted
 }
