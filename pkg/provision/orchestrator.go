@@ -13,6 +13,7 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
+	"github.com/telekom/BOOTy/pkg/firmware"
 	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/inventory"
 )
@@ -54,6 +55,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 	steps := []Step{
 		{"report-init", o.reportInit},
 		{"collect-inventory", o.collectInventory},
+		{"collect-firmware", o.collectFirmware},
 		{"set-hostname", o.setHostname},
 		{"copy-provisioner-files", o.copyProvisionerFiles},
 		{"configure-dns", o.configureDNS},
@@ -128,6 +130,37 @@ func (o *Orchestrator) collectInventory(ctx context.Context) error {
 		o.log.Warn("Failed to report hardware inventory", "error", err)
 	}
 	return nil
+}
+
+func (o *Orchestrator) collectFirmware(ctx context.Context) error {
+	if !o.cfg.FirmwareEnabled {
+		o.log.Info("Firmware reporting disabled, skipping")
+		return nil
+	}
+
+	report, err := firmware.Collect()
+	if err != nil {
+		o.log.Warn("Firmware collection failed, continuing", "error", err)
+		return nil
+	}
+
+	if o.cfg.FirmwareMinBIOS != "" || o.cfg.FirmwareMinBMC != "" {
+		policy := firmware.Policy{
+			MinBIOSVersion: o.cfg.FirmwareMinBIOS,
+			MinBMCVersion:  o.cfg.FirmwareMinBMC,
+		}
+		results := firmware.Validate(report, policy)
+		for _, r := range results {
+			o.log.Info("Firmware validation", "name", r.Name, "status", r.Status, "message", r.Message)
+		}
+	}
+
+	data, err := json.Marshal(report)
+	if err != nil {
+		return fmt.Errorf("marshal firmware report: %w", err)
+	}
+
+	return o.provider.ReportFirmware(ctx, data)
 }
 
 func (o *Orchestrator) setHostname(_ context.Context) error {

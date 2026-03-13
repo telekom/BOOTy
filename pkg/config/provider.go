@@ -68,6 +68,12 @@ type MachineConfig struct {
 	BFDTransmitMS uint32 // bfd_transmit_ms: BFD transmit interval in ms (default: 300)
 	BFDReceiveMS  uint32 // bfd_receive_ms: BFD receive interval in ms (default: 300)
 
+	// Firmware reporting fields.
+	FirmwareEnabled bool   // FIRMWARE_REPORT: enable firmware collection
+	FirmwareURL     string // FIRMWARE_URL: endpoint for firmware report
+	FirmwareMinBIOS string // FIRMWARE_MIN_BIOS: minimum BIOS version
+	FirmwareMinBMC  string // FIRMWARE_MIN_BMC: minimum BMC version
+
 	// LACP bonding fields.
 	BondInterfaces string // BOND_INTERFACES: comma-separated NICs to bond (e.g. "eth0,eth1")
 	BondMode       string // BOND_MODE: bonding mode (default: "802.3ad")
@@ -106,4 +112,6 @@ type Provider interface {
 	FetchCommands(ctx context.Context) ([]Command, error)
 	// ReportInventory sends hardware inventory data to the server.
 	ReportInventory(ctx context.Context, data []byte) error
+	// ReportFirmware sends a firmware report to the server.
+	ReportFirmware(ctx context.Context, data []byte) error
 }

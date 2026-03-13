@@ -775,3 +775,86 @@ INVENTORY_URL="http://caprf.example.com/inventory"`
 		t.Errorf("InventoryURL = %q", cfg.InventoryURL)
 	}
 }
+
+func TestParseVarsFirmwareConfig(t *testing.T) {
+	input := strings.Join([]string{
+		`FIRMWARE_REPORT="true"`,
+		`FIRMWARE_URL="http://caprf/firmware"`,
+		`FIRMWARE_MIN_BIOS="U50"`,
+		`FIRMWARE_MIN_BMC="2.72"`,
+	}, "\n")
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.FirmwareEnabled {
+		t.Error("FirmwareEnabled should be true")
+	}
+	if cfg.FirmwareURL != "http://caprf/firmware" {
+		t.Errorf("FirmwareURL = %q", cfg.FirmwareURL)
+	}
+	if cfg.FirmwareMinBIOS != "U50" {
+		t.Errorf("FirmwareMinBIOS = %q", cfg.FirmwareMinBIOS)
+	}
+	if cfg.FirmwareMinBMC != "2.72" {
+		t.Errorf("FirmwareMinBMC = %q", cfg.FirmwareMinBMC)
+	}
+}
+
+func TestReportFirmware(t *testing.T) {
+	var received []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("Content-Type = %q, want application/json", r.Header.Get("Content-Type"))
+		}
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
+		}
+		body := make([]byte, r.ContentLength)
+		_, _ = r.Body.Read(body)
+		received = body
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewFromConfig(&config.MachineConfig{
+		Token:       "test-token",
+		FirmwareURL: srv.URL,
+	})
+
+	data := []byte(`{"bios":{"version":"U50"}}`)
+	if err := client.ReportFirmware(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if string(received) != string(data) {
+		t.Errorf("received = %q, want %q", received, data)
+	}
+}
+
+func TestReportFirmwareNoURL(t *testing.T) {
+	client := NewFromConfig(&config.MachineConfig{})
+	err := client.ReportFirmware(context.Background(), []byte(`{}`))
+	if err != nil {
+		t.Errorf("expected nil error when no URL, got %v", err)
+	}
+}
+
+func TestParseBoolVar(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"true", true},
+		{"1", true},
+		{"yes", true},
+		{"false", false},
+		{"0", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		got := parseBoolVar(tt.input)
+		if got != tt.want {
+			t.Errorf("parseBoolVar(%q) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}

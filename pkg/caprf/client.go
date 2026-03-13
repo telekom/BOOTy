@@ -106,6 +106,15 @@ func (c *Client) Heartbeat(ctx context.Context) error {
 	return c.postWithAuth(ctx, c.cfg.HeartbeatURL, "heartbeat")
 }
 
+// ReportFirmware sends a JSON firmware report to the CAPRF server.
+func (c *Client) ReportFirmware(ctx context.Context, data []byte) error {
+	if c.cfg.FirmwareURL == "" {
+		c.log.Warn("No firmware URL configured, skipping report")
+		return nil
+	}
+	return c.postJSONWithAuth(ctx, c.cfg.FirmwareURL, data)
+}
+
 // FetchCommands polls the CAPRF server for pending commands.
 // Returns nil if no commands URL is configured.
 func (c *Client) FetchCommands(ctx context.Context) ([]config.Command, error) {
@@ -322,6 +331,9 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"IMAGE_CHECKSUM_TYPE":         &cfg.ImageChecksumType,
 		"DISK_DEVICE":                 &cfg.DiskDevice,
 		"INVENTORY_URL":               &cfg.InventoryURL,
+		"FIRMWARE_URL":                &cfg.FirmwareURL,
+		"FIRMWARE_MIN_BIOS":           &cfg.FirmwareMinBIOS,
+		"FIRMWARE_MIN_BMC":            &cfg.FirmwareMinBMC,
 	}
 
 	if ptr, ok := strFields[key]; ok {
@@ -369,6 +381,8 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) {
 		setIntField(&cfg.NumVFs, value)
 	case "INVENTORY_ENABLED":
 		cfg.InventoryEnabled = parseBoolVar(value)
+	case "FIRMWARE_REPORT":
+		cfg.FirmwareEnabled = parseBoolVar(value)
 	}
 }
 
