@@ -535,8 +535,8 @@ func sendRouterAdvertisement(iface string) {
 	ra := make([]byte, 0, raPacketSize)
 	ra = append(ra,
 		icmpv6TypeRA, 0, 0, 0, // type, code, checksum (kernel fills)
-		defaultHopLimit,       // cur hop limit
-		0,                     // flags
+		defaultHopLimit,            // cur hop limit
+		0,                          // flags
 		raLifetimeHi, raLifetimeLo, // router lifetime = 1800s
 		0, 0, 0, 0, // reachable time
 		0, 0, 0, 0, // retrans timer
