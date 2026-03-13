@@ -9,6 +9,7 @@
 package integration
 
 import (
+	"context"
 	"os/exec"
 	"strings"
 	"testing"
@@ -27,7 +28,7 @@ const (
 
 func requireGoBGPVRLab(t *testing.T) {
 	t.Helper()
-	out, err := exec.Command("docker", "ps", "--format", "{{.Names}}").Output()
+	out, err := exec.CommandContext(context.Background(), "docker", "ps", "--format", "{{.Names}}").Output()
 	if err != nil {
 		t.Skipf("docker not available: %v", err)
 	}
@@ -39,7 +40,7 @@ func requireGoBGPVRLab(t *testing.T) {
 func vrDockerExec(t *testing.T, container string, args ...string) string {
 	t.Helper()
 	cmdArgs := append([]string{"exec", container}, args...)
-	out, err := exec.Command("docker", cmdArgs...).CombinedOutput()
+	out, err := exec.CommandContext(context.Background(), "docker", cmdArgs...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker exec %s %s failed: %v\n%s",
 			container, strings.Join(args, " "), err, out)
@@ -50,8 +51,63 @@ func vrDockerExec(t *testing.T, container string, args ...string) string {
 func vrDockerExecRaw(t *testing.T, container string, args ...string) (string, error) {
 	t.Helper()
 	cmdArgs := append([]string{"exec", container}, args...)
-	out, err := exec.Command("docker", cmdArgs...).CombinedOutput()
+	out, err := exec.CommandContext(context.Background(), "docker", cmdArgs...).CombinedOutput()
 	return string(out), err
+}
+
+// vrDumpDebugState collects comprehensive network and BGP debug info from all
+// vrnetlab containers and logs it. Called via t.Cleanup on test failure.
+func vrDumpDebugState(t *testing.T) {
+	t.Helper()
+	if !t.Failed() {
+		return
+	}
+
+	t.Log("=== DEBUG STATE DUMP (vrnetlab test failed) ===")
+
+	for _, cmd := range []string{
+		"show bgp summary",
+		"show bgp neighbors eth3 json",
+		"show bgp neighbors eth4 json",
+		"show bgp neighbors 10.0.2.2 json",
+		"show bgp l2vpn evpn",
+		"show ip route",
+	} {
+		out, _ := vrDockerExecRaw(t, gobgpVRSpine, "vtysh", "-c", cmd)
+		t.Logf("[spine01] %s:\n%s", cmd, out)
+	}
+
+	for _, cmd := range []string{
+		"show bgp summary",
+		"show bgp neighbors 10.0.3.2 json",
+	} {
+		out, _ := vrDockerExecRaw(t, gobgpVRRR, "vtysh", "-c", cmd)
+		t.Logf("[rr01] %s:\n%s", cmd, out)
+	}
+
+	for _, node := range []struct{ name, container string }{
+		{"booty-unnumbered", gobgpVRUnnumbered},
+		{"booty-dual", gobgpVRDual},
+		{"booty-numbered", gobgpVRNumbered},
+	} {
+		for _, cmd := range [][]string{
+			{"ip", "-6", "addr", "show"},
+			{"ip", "-6", "neigh", "show"},
+			{"ip", "route", "show"},
+			{"ip", "-6", "route", "show"},
+		} {
+			out, _ := vrDockerExecRaw(t, node.container, cmd...)
+			t.Logf("[%s] %s:\n%s", node.name, strings.Join(cmd, " "), out)
+		}
+	}
+
+	for _, cmd := range [][]string{
+		{"ip", "-6", "neigh", "show"},
+		{"ip", "-6", "addr", "show"},
+	} {
+		out, _ := vrDockerExecRaw(t, gobgpVRSpine, cmd...)
+		t.Logf("[spine01] %s:\n%s", strings.Join(cmd, " "), out)
+	}
 }
 
 func vrWaitForBGPInterface(t *testing.T, iface string) {
@@ -92,12 +148,14 @@ func vrWaitForBGPPeer(t *testing.T, neighbor string) {
 
 func TestVRGoBGPUnnumberedEstablished(t *testing.T) {
 	requireGoBGPVRLab(t)
+	t.Cleanup(func() { vrDumpDebugState(t) })
 	vrWaitForBGPInterface(t, "eth3")
 	t.Log("VM unnumbered: BGP ESTABLISHED on spine:eth3")
 }
 
 func TestVRGoBGPUnnumberedEVPN(t *testing.T) {
 	requireGoBGPVRLab(t)
+	t.Cleanup(func() { vrDumpDebugState(t) })
 	vrWaitForBGPInterface(t, "eth3")
 
 	out := vrDockerExec(t, gobgpVRSpine,
@@ -111,12 +169,14 @@ func TestVRGoBGPUnnumberedEVPN(t *testing.T) {
 
 func TestVRGoBGPDualUnnumberedEstablished(t *testing.T) {
 	requireGoBGPVRLab(t)
+	t.Cleanup(func() { vrDumpDebugState(t) })
 	vrWaitForBGPInterface(t, "eth4")
 	t.Log("VM dual: unnumbered BGP ESTABLISHED on spine:eth4")
 }
 
 func TestVRGoBGPDualNumberedEstablished(t *testing.T) {
 	requireGoBGPVRLab(t)
+	t.Cleanup(func() { vrDumpDebugState(t) })
 
 	deadline := time.Now().Add(vrBGPTimeout)
 	for {
@@ -135,6 +195,7 @@ func TestVRGoBGPDualNumberedEstablished(t *testing.T) {
 
 func TestVRGoBGPDualEVPNOnRR(t *testing.T) {
 	requireGoBGPVRLab(t)
+	t.Cleanup(func() { vrDumpDebugState(t) })
 
 	deadline := time.Now().Add(vrBGPTimeout)
 	for {
@@ -155,12 +216,14 @@ func TestVRGoBGPDualEVPNOnRR(t *testing.T) {
 
 func TestVRGoBGPNumberedEstablished(t *testing.T) {
 	requireGoBGPVRLab(t)
+	t.Cleanup(func() { vrDumpDebugState(t) })
 	vrWaitForBGPPeer(t, "10.0.2.2")
 	t.Log("VM numbered: BGP ESTABLISHED on spine: 10.0.2.2")
 }
 
 func TestVRGoBGPNumberedEVPN(t *testing.T) {
 	requireGoBGPVRLab(t)
+	t.Cleanup(func() { vrDumpDebugState(t) })
 	vrWaitForBGPPeer(t, "10.0.2.2")
 
 	out := vrDockerExec(t, gobgpVRSpine,
@@ -174,6 +237,7 @@ func TestVRGoBGPNumberedEVPN(t *testing.T) {
 
 func TestVRGoBGPFabricEstablished(t *testing.T) {
 	requireGoBGPVRLab(t)
+	t.Cleanup(func() { vrDumpDebugState(t) })
 	vrWaitForBGPInterface(t, "eth1")
 	t.Log("VM fabric: spine ↔ leaf ESTABLISHED")
 }

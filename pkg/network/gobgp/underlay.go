@@ -188,6 +188,11 @@ func (u *UnderlayTier) configureNICs() error {
 			u.log.Warn("Failed to bring up NIC", "nic", nic, "error", err)
 		}
 
+		// Force the kernel to send Router Solicitations so the adjacent FRR
+		// switch learns our link-local via NDP. Without this, FRR's BGP
+		// unnumbered rejects incoming connections from unknown link-locals.
+		sendRouterSolicitation(nic)
+
 		// Assign NIC to VRF for traffic isolation.
 		if u.cfg.VRFName != "" {
 			vrfLink, err := netlink.LinkByName(u.cfg.VRFName)
@@ -222,13 +227,6 @@ func (u *UnderlayTier) startBgpServer(ctx context.Context) error {
 		"routerID", u.cfg.RouterID,
 		"port", u.cfg.ListenPort,
 	)
-
-	// Enable DEBUG logging for GoBGP to diagnose connection issues.
-	if err := u.bgp.SetLogLevel(ctx, &apipb.SetLogLevelRequest{
-		Level: apipb.SetLogLevelRequest_DEBUG,
-	}); err != nil {
-		u.log.Warn("Failed to set GoBGP log level", "error", err)
-	}
 
 	return nil
 }
@@ -413,6 +411,27 @@ func (u *UnderlayTier) announceUnderlayRoute(ctx context.Context) error {
 	return nil
 }
 
+// sendRouterSolicitation sends an ICMPv6 Router Solicitation (type 133) on
+// the interface so that the adjacent FRR switch learns our link-local address
+// via NDP and can match incoming BGP connections to its interface peer config.
+func sendRouterSolicitation(iface string) {
+	lc := net.ListenConfig{}
+	conn, err := lc.ListenPacket(context.Background(), "ip6:ipv6-icmp", "::"+"%"+iface)
+	if err != nil {
+		// Fallback: use ping6 to at least trigger NDP neighbor discovery.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = exec.CommandContext(ctx, "ping", "-6", "-c1", "-W1", "-I", iface, "ff02::2").Run() //nolint:gosec // constant args
+		return
+	}
+	defer conn.Close() //nolint:errcheck // best-effort RS
+
+	// ICMPv6 Router Solicitation: type=133, code=0, checksum=0 (kernel fills), reserved=0
+	rs := []byte{133, 0, 0, 0, 0, 0, 0, 0}
+	dst := &net.IPAddr{IP: net.ParseIP("ff02::2"), Zone: iface} // all-routers multicast
+	_, _ = conn.WriteTo(rs, dst)
+}
+
 // discoverLinkLocalPeer finds the remote peer's link-local IPv6 address on the
 // given interface by polling the NDP neighbor table. An ICMPv6 ping to the
 // all-nodes multicast group is sent first to trigger neighbor discovery.
@@ -436,9 +455,13 @@ func discoverLinkLocalPeer(iface string) (string, error) {
 	return "", fmt.Errorf("no IPv6 link-local neighbor found on %s after 10s", iface)
 }
 
-// triggerNDP sends an ICMPv6 echo to ff02::1 (all-nodes) on the interface to
-// populate the NDP neighbor table.
+// triggerNDP sends ICMPv6 packets on the interface to populate the NDP
+// neighbor table and to announce our presence to adjacent FRR switches.
+// It sends both a Router Solicitation (ff02::2) and an echo (ff02::1).
 func triggerNDP(iface string) {
+	// Also send RS so FRR's zebra learns our link-local for BGP unnumbered.
+	sendRouterSolicitation(iface)
+
 	// Try raw socket first (requires CAP_NET_RAW).
 	lc := net.ListenConfig{}
 	conn, err := lc.ListenPacket(context.Background(), "ip6:ipv6-icmp", "::"+"%"+iface)
