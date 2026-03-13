@@ -54,6 +54,9 @@ func TestParsePartitionLayout(t *testing.T) {
 			if len(layout.Partitions) != tc.parts {
 				t.Errorf("got %d partitions, want %d", len(layout.Partitions), tc.parts)
 			}
+			if layout.Table == "" {
+				t.Error("expected default table to be set, got empty")
+			}
 		})
 	}
 }
@@ -135,4 +138,31 @@ func containsStr(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestGenerateFstabNil(t *testing.T) {
+	got := GenerateFstab(nil, "/dev/sda")
+	if got != "" {
+		t.Errorf("GenerateFstab(nil) = %q, want empty", got)
+	}
+}
+
+func TestApplyPartitionLayoutNilLayout(t *testing.T) {
+	mgr := &Manager{}
+	err := mgr.ApplyPartitionLayout(t.Context(), "/dev/sda", nil)
+	if err == nil {
+		t.Error("expected error for nil layout")
+	}
+}
+
+func TestApplyPartitionLayoutUnsupportedTable(t *testing.T) {
+	mgr := &Manager{}
+	layout := &config.PartitionLayout{
+		Table:      "mbr",
+		Partitions: []config.Partition{{Label: "test"}},
+	}
+	err := mgr.ApplyPartitionLayout(t.Context(), "/dev/sda", layout)
+	if err == nil {
+		t.Error("expected error for mbr table type")
+	}
 }
