@@ -1033,3 +1033,23 @@ func TestClientAcknowledgeCommandNoURL(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestParseVarsTPMEnabled(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{`TPM_ENABLED="true"`, true},
+		{`TPM_ENABLED="1"`, true},
+		{`TPM_ENABLED="false"`, false},
+	}
+	for _, tt := range tests {
+		cfg, err := ParseVars(strings.NewReader(tt.input))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.TPMEnabled != tt.want {
+			t.Errorf("TPMEnabled for %q = %v, want %v", tt.input, cfg.TPMEnabled, tt.want)
+		}
+	}
+}
