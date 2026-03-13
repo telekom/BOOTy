@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
 )
@@ -86,13 +87,19 @@ func (o *Orchestrator) dryRunConfigValidation(_ context.Context) DryRunResult {
 }
 
 func (o *Orchestrator) dryRunImageReachability(ctx context.Context) DryRunResult {
+	httpClient := &http.Client{Timeout: 10 * time.Second}
 	for _, imgURL := range o.cfg.ImageURLs {
+		// Skip non-HTTP sources (OCI registries validated via separate path).
+		if strings.HasPrefix(imgURL, "oci://") {
+			o.log.Info("Skipping OCI image reachability check", "url", imgURL)
+			continue
+		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodHead, imgURL, http.NoBody)
 		if err != nil {
 			return DryRunResult{Step: "image-reachability", Status: DryRunFail,
 				Message: fmt.Sprintf("invalid image URL %s: %v", imgURL, err)}
 		}
-		resp, err := http.DefaultClient.Do(req) //nolint:gosec // URL from trusted config
+		resp, err := httpClient.Do(req) //nolint:gosec // URL from trusted config
 		if err != nil {
 			return DryRunResult{Step: "image-reachability", Status: DryRunFail,
 				Message: fmt.Sprintf("image unreachable %s: %v", imgURL, err)}
