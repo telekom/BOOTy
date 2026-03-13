@@ -35,11 +35,7 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 			Step{"stop-raid", o.stopRAID},
 			Step{"disable-lvm", o.disableLVM},
 		)
-		if o.cfg.SecureErase {
-			steps = append(steps, Step{"secure-erase-disks", o.secureEraseDisks})
-		} else {
-			steps = append(steps, Step{"wipe-disks", o.wipeDisks})
-		}
+		steps = append(steps, Step{"wipe-disks", o.wipeOrSecureEraseDisks})
 		steps = append(steps,
 			Step{"remove-efi-entries", o.removeEFIBootEntries},
 		)
@@ -52,7 +48,9 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 			msg := fmt.Sprintf("step %s failed: %v", step.Name, err)
 			slog.Error("Deprovisioning step failed", "step", step.Name, "error", err)
 			DumpDebugState(step.Name)
-			_ = o.provider.ReportStatus(ctx, config.StatusError, msg)
+			if reportErr := o.provider.ReportStatus(ctx, config.StatusError, msg); reportErr != nil {
+				slog.Error("Failed to report error status", "error", reportErr)
+			}
 			return fmt.Errorf("deprovision step %s: %w", step.Name, err)
 		}
 	}

@@ -130,13 +130,29 @@ func (c *Configurator) copyTreeIntoChroot(srcBase, label string) error {
 }
 
 // copyTree copies all files from srcBase into destRoot, preserving directory structure.
+// Symlinks and paths that escape destRoot are rejected to prevent path traversal.
 func copyTree(srcBase, destRoot string) error {
-	if err := filepath.WalkDir(srcBase, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return fmt.Errorf("walk %s: %w", path, err)
+	cleanDest, err := filepath.Abs(destRoot)
+	if err != nil {
+		return fmt.Errorf("resolve dest root: %w", err)
+	}
+	if err := filepath.WalkDir(srcBase, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return fmt.Errorf("walk %s: %w", path, walkErr)
+		}
+		// Reject symlinks to prevent following links that escape the tree.
+		if d.Type()&os.ModeSymlink != 0 {
+			slog.Warn("Skipping symlink in copy tree", "path", path)
+			return nil
 		}
 		relPath, _ := filepath.Rel(srcBase, path)
-		destPath := filepath.Join(destRoot, relPath)
+		destPath := filepath.Join(cleanDest, relPath)
+
+		// Verify the resolved destination stays within destRoot.
+		absDest, err := filepath.Abs(destPath)
+		if err != nil || !strings.HasPrefix(absDest, cleanDest+string(filepath.Separator)) && absDest != cleanDest {
+			return fmt.Errorf("path traversal blocked: %s escapes %s", relPath, cleanDest)
+		}
 
 		if d.IsDir() {
 			return os.MkdirAll(destPath, 0o755)
@@ -317,6 +333,11 @@ func (c *Configurator) SetupMellanox(ctx context.Context, numVFs int) (bool, err
 	changed := false
 	for _, entry := range strings.Fields(string(listOut)) {
 		if !strings.Contains(entry, "pciconf") {
+			continue
+		}
+		// Validate device name to prevent shell injection.
+		if strings.ContainsAny(entry, ";&|`$(){}\"'\\<>\n\r") {
+			slog.Warn("Skipping mst device with suspicious name", "entry", entry)
 			continue
 		}
 		devPath := "/dev/mst/" + entry

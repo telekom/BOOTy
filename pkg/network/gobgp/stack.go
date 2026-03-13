@@ -56,6 +56,10 @@ func (s *Stack) Setup(ctx context.Context, _ *network.Config) error {
 	s.overlay.SetBgpServer(s.underlay.BgpServer())
 
 	if err := s.overlay.Setup(ctx); err != nil {
+		// Clean up the underlay that was already started.
+		if teardownErr := s.underlay.Teardown(ctx); teardownErr != nil {
+			s.log.Warn("Failed to tear down underlay after overlay failure", "error", teardownErr)
+		}
 		return fmt.Errorf("overlay setup: %w", err)
 	}
 
