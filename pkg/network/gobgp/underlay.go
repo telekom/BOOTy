@@ -133,6 +133,17 @@ func (u *UnderlayTier) Teardown(_ context.Context) error {
 		u.log.Info("BGP server stopped")
 	}
 
+	// Release NICs from VRF so the VRF itself can be cleaned up.
+	for _, nic := range u.nics {
+		link, err := netlink.LinkByName(nic)
+		if err != nil {
+			continue
+		}
+		if err := netlink.LinkSetNoMaster(link); err != nil {
+			u.log.Warn("Failed to release NIC from VRF", "nic", nic, "error", err)
+		}
+	}
+
 	link, err := netlink.LinkByName("dummy.underlay")
 	if err == nil {
 		if delErr := netlink.LinkDel(link); delErr != nil {
