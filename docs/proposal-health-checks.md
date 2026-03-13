@@ -1,6 +1,6 @@
 # Proposal: Pre-Provisioning Health Checks
 
-## Status: Implemented (PR #17)
+## Status: Implemented
 
 ## Priority: P1
 
