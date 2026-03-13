@@ -128,26 +128,11 @@ func (c *Config) Validate() error {
 	if c.ASN == 0 {
 		return fmt.Errorf("ASN is required for GoBGP mode")
 	}
-	if c.RouterID == "" {
-		return fmt.Errorf("router ID (underlay IP) is required for GoBGP mode")
+	if err := c.validateRouterID(); err != nil {
+		return err
 	}
-	if net.ParseIP(c.RouterID) == nil || net.ParseIP(c.RouterID).To4() == nil {
-		return fmt.Errorf("router ID %q must be a valid IPv4 address", c.RouterID)
-	}
-	switch c.PeerMode {
-	case network.PeerModeDual, network.PeerModeNumbered:
-		if len(c.NeighborAddrs) == 0 {
-			return fmt.Errorf("BGP_NEIGHBORS required for %s peer mode", c.PeerMode)
-		}
-		for _, addr := range c.NeighborAddrs {
-			if net.ParseIP(addr) == nil {
-				return fmt.Errorf("invalid neighbor address %q", addr)
-			}
-		}
-	case network.PeerModeUnnumbered:
-		// No extra validation needed.
-	default:
-		return fmt.Errorf("unknown peer mode %q", c.PeerMode)
+	if err := c.validatePeerMode(); err != nil {
+		return err
 	}
 
 	if c.ProvisionVNI == 0 || c.ProvisionVNI > 16777215 {
@@ -166,6 +151,35 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("MTU %d too low (minimum %d = 576 IP + 50 VXLAN overhead)", c.MTU, minMTU)
 	}
 
+	return nil
+}
+
+func (c *Config) validateRouterID() error {
+	if c.RouterID == "" {
+		return fmt.Errorf("router ID (underlay IP) is required for GoBGP mode")
+	}
+	if net.ParseIP(c.RouterID) == nil || net.ParseIP(c.RouterID).To4() == nil {
+		return fmt.Errorf("router ID %q must be a valid IPv4 address", c.RouterID)
+	}
+	return nil
+}
+
+func (c *Config) validatePeerMode() error {
+	switch c.PeerMode {
+	case network.PeerModeDual, network.PeerModeNumbered:
+		if len(c.NeighborAddrs) == 0 {
+			return fmt.Errorf("BGP_NEIGHBORS required for %s peer mode", c.PeerMode)
+		}
+		for _, addr := range c.NeighborAddrs {
+			if net.ParseIP(addr) == nil {
+				return fmt.Errorf("invalid neighbor address %q", addr)
+			}
+		}
+	case network.PeerModeUnnumbered:
+		// No extra validation needed.
+	default:
+		return fmt.Errorf("unknown peer mode %q", c.PeerMode)
+	}
 	return nil
 }
 
