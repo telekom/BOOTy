@@ -46,6 +46,7 @@ func (c *ThermalStateCheck) Run(_ context.Context) CheckResult {
 			Status:   StatusSkip,
 			Severity: c.Severity(),
 			Message:  "thermal zone info not available",
+			Details:  err.Error(),
 		}
 	}
 

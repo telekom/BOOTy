@@ -3,7 +3,6 @@ package health
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 )
 
@@ -52,7 +51,6 @@ func RunAll(ctx context.Context, checks []Check, skipList string) ([]CheckResult
 
 	for _, c := range checks {
 		if _, skip := skips[c.Name()]; skip {
-			slog.Info("Skipping health check", "check", c.Name())
 			results = append(results, CheckResult{
 				Name:     c.Name(),
 				Status:   StatusSkip,
@@ -62,19 +60,11 @@ func RunAll(ctx context.Context, checks []Check, skipList string) ([]CheckResult
 			continue
 		}
 
-		slog.Info("Running health check", "check", c.Name())
 		result := c.Run(ctx)
 		results = append(results, result)
 
-		if result.Status == StatusFail {
-			slog.Warn("Health check failed",
-				"check", result.Name,
-				"severity", result.Severity,
-				"message", result.Message,
-			)
-			if result.Severity == SeverityCritical {
-				criticalFailure = true
-			}
+		if result.Status == StatusFail && result.Severity == SeverityCritical {
+			criticalFailure = true
 		}
 	}
 

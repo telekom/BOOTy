@@ -117,13 +117,13 @@ func (c *MinimumMemoryCheck) Run(_ context.Context) CheckResult {
 		}
 	}
 
-	totalGB := totalKB / (1024 * 1024)
-	if totalGB < int64(c.MinGB) {
+	totalGiB := totalKB / (1024 * 1024)
+	if totalGiB < int64(c.MinGB) {
 		return CheckResult{
 			Name:     c.Name(),
 			Status:   StatusFail,
 			Severity: c.Severity(),
-			Message:  fmt.Sprintf("insufficient memory: %d GB < %d GB minimum", totalGB, c.MinGB),
+			Message:  fmt.Sprintf("insufficient memory: %d GiB < %d GiB minimum", totalGiB, c.MinGB),
 		}
 	}
 
@@ -131,7 +131,7 @@ func (c *MinimumMemoryCheck) Run(_ context.Context) CheckResult {
 		Name:     c.Name(),
 		Status:   StatusPass,
 		Severity: c.Severity(),
-		Message:  fmt.Sprintf("memory OK: %d GB >= %d GB minimum", totalGB, c.MinGB),
+		Message:  fmt.Sprintf("memory OK: %d GiB >= %d GiB minimum", totalGiB, c.MinGB),
 	}
 }
 

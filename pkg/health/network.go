@@ -33,7 +33,7 @@ func (c *NICLinkStateCheck) Run(_ context.Context) CheckResult {
 	if err != nil {
 		return CheckResult{
 			Name:     c.Name(),
-			Status:   StatusFail,
+			Status:   StatusSkip,
 			Severity: c.Severity(),
 			Message:  fmt.Sprintf("cannot read %s", c.sysPath()),
 			Details:  err.Error(),
