@@ -183,10 +183,19 @@ func runCAPRF(ctx context.Context) {
 	diskMgr := disk.NewManager(nil)
 	orch := provision.NewOrchestrator(cfg, client, diskMgr)
 
+	// DRY_RUN=true overrides mode to dry-run.
+	if cfg.DryRun {
+		cfg.Mode = "dry-run"
+	}
+
 	switch cfg.Mode {
 	case "standby":
 		runStandby(ctx, client, cfg, netMode, diskMgr)
 		return // standby handles its own lifecycle
+	case "dry-run":
+		if err := orch.DryRun(ctx); err != nil {
+			slog.Error("Dry-run failed", "error", err)
+		}
 	case "deprovision", "soft-deprovision":
 		if cfg.Mode == "soft-deprovision" {
 			cfg.Mode = "soft"

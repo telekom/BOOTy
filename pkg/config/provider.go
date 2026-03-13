@@ -97,6 +97,9 @@ type MachineConfig struct {
 	BGPNeighbors string // BGP_NEIGHBORS: comma-separated numbered peer IPs
 	BGPRemoteASN uint32 // bgp_remote_asn: remote ASN for numbered peers (0 = iBGP)
 
+	// Dry-run mode.
+	DryRun bool // DRY_RUN: simulate provisioning without destructive changes
+
 	// Network mode override.
 	NetworkMode string // NETWORK_MODE: "gobgp" to use in-process GoBGP instead of FRR
 
