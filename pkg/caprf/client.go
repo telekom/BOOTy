@@ -3,6 +3,7 @@ package caprf
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -175,7 +176,7 @@ func (c *Client) postJSONWithAuth(ctx context.Context, url string, data []byte) 
 // doPostJSON sends a single JSON POST request.
 func (c *Client) doPostJSON(ctx context.Context, url string, data []byte) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url,
-		strings.NewReader(string(data)))
+		bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
