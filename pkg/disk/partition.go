@@ -82,12 +82,13 @@ func GenerateFstab(layout *config.PartitionLayout, device string) string {
 		}
 		opts := "defaults"
 		dump, pass := 0, 0
-		if part.Mountpoint == "/" {
+		switch part.Mountpoint {
+		case "/":
 			pass = 1
-		} else if part.Mountpoint == "/boot/efi" {
+		case "/boot/efi":
 			opts = "umask=0077"
 			pass = 2
-		} else {
+		default:
 			pass = 2
 		}
 		fmt.Fprintf(&sb, "%s\t%s\t%s\t%s\t%d\t%d\n", partDev, part.Mountpoint, fsType, opts, dump, pass)
