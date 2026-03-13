@@ -966,3 +966,23 @@ func TestClientReportHealthChecksNoURL(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestParseVarsSecureBootReEnable(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{`SECUREBOOT_REENABLE="true"`, true},
+		{`SECUREBOOT_REENABLE="1"`, true},
+		{`SECUREBOOT_REENABLE="false"`, false},
+	}
+	for _, tt := range tests {
+		cfg, err := ParseVars(strings.NewReader(tt.input))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.SecureBootReEnable != tt.want {
+			t.Errorf("SecureBootReEnable for %q = %v, want %v", tt.input, cfg.SecureBootReEnable, tt.want)
+		}
+	}
+}

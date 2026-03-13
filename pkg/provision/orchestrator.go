@@ -89,7 +89,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		{"run-post-provision-cmds", o.runPostProvisionCmds},
 		{"create-efi-boot-entry", o.createEFIBootEntry},
 		{"teardown-chroot", o.teardownChroot},
-		{"request-secureboot", o.requestSecureBootReEnable},
+		{"request-secureboot-reenable", o.requestSecureBootReEnable},
 		{"report-success", o.reportSuccess},
 	}
 
