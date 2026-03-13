@@ -92,7 +92,11 @@ func writeNetplan(rootDir, iface, staticIP, gateway, dnsResolvers string) error 
 		writeNetplanStatic(&buf, staticIP, gateway, dnsResolvers)
 	}
 
-	return os.WriteFile(filepath.Join(netplanDir, "01-booty-provisioned.yaml"), []byte(buf.String()), 0o600)
+	path := filepath.Join(netplanDir, "01-booty-provisioned.yaml")
+	if err := os.WriteFile(path, []byte(buf.String()), 0o600); err != nil {
+		return fmt.Errorf("writing netplan config %s: %w", path, err)
+	}
+	return nil
 }
 
 // writeNetplanStatic writes static IP configuration into a netplan buffer.
@@ -146,7 +150,11 @@ func writeSystemdNetworkd(rootDir, iface, staticIP, gateway, dnsResolvers string
 		writeNetworkdStatic(&buf, staticIP, gateway, dnsResolvers)
 	}
 
-	return os.WriteFile(filepath.Join(networkDir, "10-booty.network"), []byte(buf.String()), 0o644)
+	path := filepath.Join(networkDir, "10-booty.network")
+	if err := os.WriteFile(path, []byte(buf.String()), 0o644); err != nil {
+		return fmt.Errorf("writing networkd config %s: %w", path, err)
+	}
+	return nil
 }
 
 // writeNetworkdStatic writes static IP configuration into a systemd-networkd buffer.
