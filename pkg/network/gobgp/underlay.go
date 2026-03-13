@@ -93,7 +93,9 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 
 // Ready waits until at least one BGP peer reaches ESTABLISHED state.
 func (u *UnderlayTier) Ready(ctx context.Context, timeout time.Duration) error {
-	deadline := time.After(timeout)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
@@ -101,7 +103,7 @@ func (u *UnderlayTier) Ready(ctx context.Context, timeout time.Duration) error {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("context canceled: %w", ctx.Err())
-		case <-deadline:
+		case <-timer.C:
 			return fmt.Errorf("timed out waiting for BGP peers to establish")
 		case <-ticker.C:
 			if u.hasEstablishedPeer(ctx) {
@@ -189,10 +191,10 @@ func (u *UnderlayTier) configureNICs() error {
 		// Assign NIC to VRF for traffic isolation.
 		if u.cfg.VRFName != "" {
 			vrfLink, err := netlink.LinkByName(u.cfg.VRFName)
-			if err == nil {
-				if err := netlink.LinkSetMasterByIndex(link, vrfLink.Attrs().Index); err != nil {
-					u.log.Warn("Failed to assign NIC to VRF", "nic", nic, "error", err)
-				}
+			if err != nil {
+				u.log.Warn("Failed to find VRF for NIC assignment", "nic", nic, "vrf", u.cfg.VRFName, "error", err)
+			} else if err := netlink.LinkSetMasterByIndex(link, vrfLink.Attrs().Index); err != nil {
+				u.log.Warn("Failed to assign NIC to VRF", "nic", nic, "error", err)
 			}
 		}
 	}

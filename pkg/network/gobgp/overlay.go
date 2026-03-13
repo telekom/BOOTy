@@ -17,12 +17,21 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
+// vxlanOverhead is the VXLAN encapsulation overhead in bytes:
+// 8 (outer UDP) + 8 (VXLAN header) + 20 (outer IPv4) + 14 (outer Ethernet).
+const vxlanOverhead = 50
+
 // OverlayTier manages EVPN Type-5 routes and VXLAN encapsulation.
 type OverlayTier struct {
 	bgp    *server.BgpServer
 	cfg    *Config
 	log    *slog.Logger
 	cancel context.CancelFunc
+
+	// Track resources created by us for clean teardown.
+	createdVRF    bool
+	createdBridge bool
+	createdVXLAN  bool
 }
 
 // NewOverlayTier creates a new overlay tier.
@@ -70,23 +79,31 @@ func (o *OverlayTier) Ready(_ context.Context, _ time.Duration) error {
 	return nil
 }
 
-// Teardown removes the overlay network resources.
+// Teardown removes the overlay network resources we created (bridge, vxlan).
+// VRF is cleaned up separately by Stack.Teardown after underlay detaches.
 func (o *OverlayTier) Teardown(_ context.Context) error {
 	if o.cancel != nil {
 		o.cancel()
 	}
 	vxlanName := fmt.Sprintf("vx%d", o.cfg.ProvisionVNI)
 
-	for _, name := range []string{o.cfg.BridgeName, vxlanName, o.cfg.VRFName} {
-		if name == "" {
+	type owned struct {
+		name    string
+		created bool
+	}
+	for _, res := range []owned{
+		{o.cfg.BridgeName, o.createdBridge},
+		{vxlanName, o.createdVXLAN},
+	} {
+		if res.name == "" || !res.created {
 			continue
 		}
-		link, err := netlink.LinkByName(name)
+		link, err := netlink.LinkByName(res.name)
 		if err != nil {
 			continue
 		}
 		if err := netlink.LinkDel(link); err != nil {
-			o.log.Warn("Failed to remove interface", "name", name, "error", err)
+			o.log.Warn("Failed to remove interface", "name", res.name, "error", err)
 		}
 	}
 
@@ -105,17 +122,22 @@ func (o *OverlayTier) CreateVRF() error {
 		Table:     o.cfg.VRFTableID,
 	}
 	if err := netlink.LinkAdd(vrf); err != nil {
-		if errors.Is(err, syscall.EEXIST) {
-			o.log.Debug("VRF already exists", "name", o.cfg.VRFName)
-			return nil
+		if !errors.Is(err, syscall.EEXIST) {
+			return fmt.Errorf("add VRF %s: %w", o.cfg.VRFName, err)
 		}
-		return fmt.Errorf("add VRF %s: %w", o.cfg.VRFName, err)
+	} else {
+		o.createdVRF = true
 	}
-	if err := netlink.LinkSetUp(vrf); err != nil {
+
+	link, err := netlink.LinkByName(o.cfg.VRFName)
+	if err != nil {
+		return fmt.Errorf("find VRF %s: %w", o.cfg.VRFName, err)
+	}
+	if err := netlink.LinkSetUp(link); err != nil {
 		return fmt.Errorf("bring up VRF %s: %w", o.cfg.VRFName, err)
 	}
 
-	o.log.Info("Created VRF", "name", o.cfg.VRFName, "table", o.cfg.VRFTableID)
+	o.log.Info("VRF ready", "name", o.cfg.VRFName, "table", o.cfg.VRFTableID)
 	return nil
 }
 
@@ -162,7 +184,7 @@ func (o *OverlayTier) createVXLANAndBridge() error {
 }
 
 func (o *OverlayTier) createVXLAN(name string) (netlink.Link, error) {
-	vxlanMTU := o.cfg.MTU - 50
+	vxlanMTU := o.cfg.MTU - vxlanOverhead
 	if vxlanMTU <= 0 {
 		vxlanMTU = 1500
 	}
@@ -177,8 +199,12 @@ func (o *OverlayTier) createVXLAN(name string) (netlink.Link, error) {
 		VtepDevIndex: 0,
 	}
 
-	if err := netlink.LinkAdd(vxlan); err != nil && !errors.Is(err, syscall.EEXIST) {
-		return nil, fmt.Errorf("add VXLAN %s: %w", name, err)
+	if err := netlink.LinkAdd(vxlan); err != nil {
+		if !errors.Is(err, syscall.EEXIST) {
+			return nil, fmt.Errorf("add VXLAN %s: %w", name, err)
+		}
+	} else {
+		o.createdVXLAN = true
 	}
 
 	link, err := netlink.LinkByName(name)
@@ -203,8 +229,12 @@ func (o *OverlayTier) createBridge() (netlink.Link, error) {
 			HardwareAddr: hwAddr,
 		},
 	}
-	if err := netlink.LinkAdd(bridge); err != nil && !errors.Is(err, syscall.EEXIST) {
-		return nil, fmt.Errorf("add bridge %s: %w", o.cfg.BridgeName, err)
+	if err := netlink.LinkAdd(bridge); err != nil {
+		if !errors.Is(err, syscall.EEXIST) {
+			return nil, fmt.Errorf("add bridge %s: %w", o.cfg.BridgeName, err)
+		}
+	} else {
+		o.createdBridge = true
 	}
 
 	link, err := netlink.LinkByName(o.cfg.BridgeName)

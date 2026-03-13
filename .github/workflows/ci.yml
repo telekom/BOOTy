@@ -10,6 +10,9 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
+env:
+  CONTAINERLAB_VERSION: "0.62.2"
+
 permissions:
   contents: read
 
@@ -432,7 +435,7 @@ jobs:
           go-version: "1.26"
 
       - name: Install ContainerLab
-        run: bash -c "$(curl -sL https://get.containerlab.dev)"
+        run: curl -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}
 
       - name: Deploy topology
         run: sudo containerlab deploy --topo test/e2e/clab/topology.clab.yml
@@ -779,7 +782,7 @@ jobs:
         run: docker build -t booty-test:latest -f test/e2e/clab/booty-test.Dockerfile .
 
       - name: Install ContainerLab
-        run: bash -c "$(curl -sL https://get.containerlab.dev)"
+        run: curl -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}
 
       - name: Deploy boot topology
         run: sudo containerlab deploy --topo test/e2e/clab/topology-boot.clab.yml
@@ -864,7 +867,7 @@ jobs:
         run: docker build -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
 
       - name: Install ContainerLab
-        run: bash -c "$(curl -sL https://get.containerlab.dev)"
+        run: curl -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}
 
       - name: Deploy GoBGP topology
         run: sudo containerlab deploy --topo test/e2e/clab/topology-gobgp.clab.yml
@@ -936,7 +939,7 @@ jobs:
         run: docker build -t booty-vrnetlab:latest -f test/e2e/clab/vrnetlab/Dockerfile .
 
       - name: Install ContainerLab
-        run: bash -c "$(curl -sL https://get.containerlab.dev)"
+        run: curl -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}
 
       - name: Deploy vrnetlab EVPN topology
         run: sudo containerlab deploy --topo test/e2e/clab/topology-vrnetlab.clab.yml

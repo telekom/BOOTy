@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/vishvananda/netlink"
 )
 
 // Stack composes underlay and overlay tiers into a network.Mode implementation.
@@ -74,6 +75,7 @@ func (s *Stack) WaitForConnectivity(ctx context.Context, _ string, timeout time.
 }
 
 // Teardown tears down the overlay and underlay tiers in reverse order.
+// VRF is deleted last since both tiers may have interfaces enslaved to it.
 func (s *Stack) Teardown(ctx context.Context) error {
 	s.log.Info("Tearing down GoBGP network stack")
 
@@ -88,6 +90,15 @@ func (s *Stack) Teardown(ctx context.Context) error {
 		s.log.Warn("Underlay teardown error", "error", err)
 		if firstErr == nil {
 			firstErr = err
+		}
+	}
+
+	// Delete VRF after both tiers have detached their interfaces.
+	if name := s.overlay.cfg.VRFName; name != "" && s.overlay.createdVRF {
+		if link, err := netlink.LinkByName(name); err == nil {
+			if err := netlink.LinkDel(link); err != nil {
+				s.log.Warn("Failed to remove VRF", "name", name, "error", err)
+			}
 		}
 	}
 
