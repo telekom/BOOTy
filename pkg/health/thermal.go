@@ -17,8 +17,11 @@ type ThermalStateCheck struct {
 	MaxTempMilliC int
 }
 
-func (c *ThermalStateCheck) Name() string        { return "thermal-state" }
-func (c *ThermalStateCheck) Severity() Severity   { return SeverityWarning }
+// Name returns the check identifier.
+func (c *ThermalStateCheck) Name() string { return "thermal-state" }
+
+// Severity returns the check severity level.
+func (c *ThermalStateCheck) Severity() Severity { return SeverityWarning }
 
 func (c *ThermalStateCheck) sysPath() string {
 	if c.SysThermalPath != "" {
@@ -34,6 +37,7 @@ func (c *ThermalStateCheck) maxTemp() int {
 	return 95000 // 95°C
 }
 
+// Run executes the thermal zone check.
 func (c *ThermalStateCheck) Run(_ context.Context) CheckResult {
 	entries, err := os.ReadDir(c.sysPath())
 	if err != nil {

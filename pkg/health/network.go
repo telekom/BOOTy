@@ -14,8 +14,11 @@ type NICLinkStateCheck struct {
 	SysNetPath string
 }
 
-func (c *NICLinkStateCheck) Name() string        { return "nic-link-state" }
-func (c *NICLinkStateCheck) Severity() Severity   { return SeverityWarning }
+// Name returns the check identifier.
+func (c *NICLinkStateCheck) Name() string { return "nic-link-state" }
+
+// Severity returns the check severity level.
+func (c *NICLinkStateCheck) Severity() Severity { return SeverityWarning }
 
 func (c *NICLinkStateCheck) sysPath() string {
 	if c.SysNetPath != "" {
@@ -24,6 +27,7 @@ func (c *NICLinkStateCheck) sysPath() string {
 	return "/sys/class/net"
 }
 
+// Run executes the NIC link state check.
 func (c *NICLinkStateCheck) Run(_ context.Context) CheckResult {
 	entries, err := os.ReadDir(c.sysPath())
 	if err != nil {

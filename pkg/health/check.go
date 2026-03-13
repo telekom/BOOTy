@@ -10,6 +10,7 @@ import (
 // Severity represents the criticality of a health check.
 type Severity string
 
+// Severity constants for health check results.
 const (
 	SeverityInfo     Severity = "info"
 	SeverityWarning  Severity = "warning"
@@ -19,6 +20,7 @@ const (
 // Status represents the outcome of a health check.
 type Status string
 
+// Status constants for health check outcomes.
 const (
 	StatusPass Status = "pass"
 	StatusFail Status = "fail"

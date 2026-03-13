@@ -14,8 +14,11 @@ type DiskSMARTCheck struct {
 	SysBlockPath string
 }
 
-func (c *DiskSMARTCheck) Name() string        { return "disk-smart" }
-func (c *DiskSMARTCheck) Severity() Severity   { return SeverityWarning }
+// Name returns the check identifier.
+func (c *DiskSMARTCheck) Name() string { return "disk-smart" }
+
+// Severity returns the check severity level.
+func (c *DiskSMARTCheck) Severity() Severity { return SeverityWarning }
 
 func (c *DiskSMARTCheck) sysPath() string {
 	if c.SysBlockPath != "" {
@@ -24,6 +27,7 @@ func (c *DiskSMARTCheck) sysPath() string {
 	return "/sys/block"
 }
 
+// Run executes the disk SMART health check.
 func (c *DiskSMARTCheck) Run(_ context.Context) CheckResult {
 	entries, err := os.ReadDir(c.sysPath())
 	if err != nil {
@@ -88,8 +92,11 @@ type DiskPresenceCheck struct {
 	SysBlockPath string
 }
 
-func (c *DiskPresenceCheck) Name() string        { return "disk-presence" }
-func (c *DiskPresenceCheck) Severity() Severity   { return SeverityCritical }
+// Name returns the check identifier.
+func (c *DiskPresenceCheck) Name() string { return "disk-presence" }
+
+// Severity returns the check severity level.
+func (c *DiskPresenceCheck) Severity() Severity { return SeverityCritical }
 
 func (c *DiskPresenceCheck) sysPath() string {
 	if c.SysBlockPath != "" {
@@ -98,6 +105,7 @@ func (c *DiskPresenceCheck) sysPath() string {
 	return "/sys/block"
 }
 
+// Run executes the disk presence check.
 func (c *DiskPresenceCheck) Run(_ context.Context) CheckResult {
 	entries, err := os.ReadDir(c.sysPath())
 	if err != nil {

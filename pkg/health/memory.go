@@ -15,8 +15,11 @@ type MemoryECCCheck struct {
 	EdacPath string
 }
 
-func (c *MemoryECCCheck) Name() string        { return "memory-ecc" }
-func (c *MemoryECCCheck) Severity() Severity   { return SeverityCritical }
+// Name returns the check identifier.
+func (c *MemoryECCCheck) Name() string { return "memory-ecc" }
+
+// Severity returns the check severity level.
+func (c *MemoryECCCheck) Severity() Severity { return SeverityCritical }
 
 func (c *MemoryECCCheck) edacPath() string {
 	if c.EdacPath != "" {
@@ -25,6 +28,7 @@ func (c *MemoryECCCheck) edacPath() string {
 	return "/sys/devices/system/edac/mc"
 }
 
+// Run executes the ECC memory error check.
 func (c *MemoryECCCheck) Run(_ context.Context) CheckResult {
 	entries, err := os.ReadDir(c.edacPath())
 	if err != nil {
@@ -78,8 +82,11 @@ type MinimumMemoryCheck struct {
 	ProcMemInfoPath string
 }
 
-func (c *MinimumMemoryCheck) Name() string        { return "minimum-memory" }
-func (c *MinimumMemoryCheck) Severity() Severity   { return SeverityCritical }
+// Name returns the check identifier.
+func (c *MinimumMemoryCheck) Name() string { return "minimum-memory" }
+
+// Severity returns the check severity level.
+func (c *MinimumMemoryCheck) Severity() Severity { return SeverityCritical }
 
 func (c *MinimumMemoryCheck) memInfoPath() string {
 	if c.ProcMemInfoPath != "" {
@@ -88,6 +95,7 @@ func (c *MinimumMemoryCheck) memInfoPath() string {
 	return "/proc/meminfo"
 }
 
+// Run executes the minimum memory check.
 func (c *MinimumMemoryCheck) Run(_ context.Context) CheckResult {
 	if c.MinGB <= 0 {
 		return CheckResult{
@@ -131,9 +139,9 @@ func (c *MinimumMemoryCheck) Run(_ context.Context) CheckResult {
 func readMemTotal(path string) (int64, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("open %s: %w", path, err)
 	}
-	defer f.Close() //nolint:errcheck
+	defer f.Close() //nolint:errcheck // best-effort close on read-only file
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -141,7 +149,11 @@ func readMemTotal(path string) (int64, error) {
 		if strings.HasPrefix(line, "MemTotal:") {
 			fields := strings.Fields(line)
 			if len(fields) >= 2 {
-				return strconv.ParseInt(fields[1], 10, 64)
+				v, err := strconv.ParseInt(fields[1], 10, 64)
+				if err != nil {
+					return 0, fmt.Errorf("parse MemTotal: %w", err)
+				}
+				return v, nil
 			}
 		}
 	}

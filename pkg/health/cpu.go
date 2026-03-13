@@ -16,8 +16,11 @@ type MinimumCPUCheck struct {
 	ProcCPUInfoPath string
 }
 
-func (c *MinimumCPUCheck) Name() string        { return "minimum-cpu" }
-func (c *MinimumCPUCheck) Severity() Severity   { return SeverityCritical }
+// Name returns the check identifier.
+func (c *MinimumCPUCheck) Name() string { return "minimum-cpu" }
+
+// Severity returns the check severity level.
+func (c *MinimumCPUCheck) Severity() Severity { return SeverityCritical }
 
 func (c *MinimumCPUCheck) cpuInfoPath() string {
 	if c.ProcCPUInfoPath != "" {
@@ -26,6 +29,7 @@ func (c *MinimumCPUCheck) cpuInfoPath() string {
 	return "/proc/cpuinfo"
 }
 
+// Run executes the minimum CPU check.
 func (c *MinimumCPUCheck) Run(_ context.Context) CheckResult {
 	if c.MinCPUs <= 0 {
 		return CheckResult{
@@ -68,9 +72,9 @@ func (c *MinimumCPUCheck) Run(_ context.Context) CheckResult {
 func countProcessors(path string) (int, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("open %s: %w", path, err)
 	}
-	defer f.Close() //nolint:errcheck
+	defer f.Close() //nolint:errcheck // best-effort close on read-only file
 
 	count := 0
 	scanner := bufio.NewScanner(f)
@@ -88,5 +92,8 @@ func countProcessors(path string) (int, error) {
 			count++
 		}
 	}
-	return count, scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return count, fmt.Errorf("scan %s: %w", path, err)
+	}
+	return count, nil
 }

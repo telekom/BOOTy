@@ -412,7 +412,7 @@ type stubCheck struct {
 	result Status
 }
 
-func (s *stubCheck) Name() string      { return s.name }
+func (s *stubCheck) Name() string       { return s.name }
 func (s *stubCheck) Severity() Severity { return s.sev }
 func (s *stubCheck) Run(_ context.Context) CheckResult {
 	return CheckResult{
