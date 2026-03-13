@@ -420,7 +420,11 @@ func (u *UnderlayTier) announceUnderlayRoute(ctx context.Context) error {
 		return fmt.Errorf("build origin attr: %w", err)
 	}
 
-	nexthop, err := anypb.New(&apipb.NextHopAttribute{NextHop: u.cfg.RouterID})
+	// Use 0.0.0.0 as next-hop so GoBGP replaces it with the session's
+	// local address for each peer (link-local for unnumbered, interface IP
+	// for numbered). Setting RouterID here would create circular resolution
+	// on the remote FRR side (NH=10.x.x.x advertised AS 10.x.x.x/32).
+	nexthop, err := anypb.New(&apipb.NextHopAttribute{NextHop: "0.0.0.0"})
 	if err != nil {
 		return fmt.Errorf("build next-hop attr: %w", err)
 	}
