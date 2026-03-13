@@ -59,7 +59,7 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 
 	// Unnumbered and dual modes need physical NICs for interface-based peering.
 	if u.cfg.PeerMode != network.PeerModeNumbered {
-		nics, err := network.DetectPhysicalNICs()
+		nics, err := u.waitForNICs()
 		if err != nil {
 			return fmt.Errorf("detect NICs: %w", err)
 		}
@@ -194,6 +194,24 @@ func (u *UnderlayTier) createUnderlayDummy() error {
 
 	u.log.Info("Created underlay dummy", "ip", u.cfg.RouterID)
 	return nil
+}
+
+// waitForNICs detects physical NICs, retrying briefly when only one NIC is
+// found. In containerlab environments, veth links are created after the
+// container starts, so data-plane NICs may not be immediately visible.
+func (u *UnderlayTier) waitForNICs() ([]string, error) {
+	for range 20 { //nolint:mnd // 20 × 500ms = 10s max wait
+		nics, err := network.DetectPhysicalNICs()
+		if err != nil {
+			return nil, err
+		}
+		if len(nics) > 1 {
+			return nics, nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	// Return whatever was found on the last scan (may be only 1 NIC).
+	return network.DetectPhysicalNICs()
 }
 
 func (u *UnderlayTier) configureNICs() error {
