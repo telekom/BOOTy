@@ -305,7 +305,7 @@ func (o *OverlayTier) advertiseType5(ctx context.Context) error {
 		return fmt.Errorf("build EVPN NLRI: %w", err)
 	}
 
-	pattrs, err := buildType5PathAttrs(o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
+	pattrs, err := buildType5PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
 	if err != nil {
 		return fmt.Errorf("build path attributes: %w", err)
 	}
@@ -394,15 +394,18 @@ func buildEVPNType5NLRI(rd *anypb.Any, gwAddr string, label uint32) (*anypb.Any,
 }
 
 // buildType5PathAttrs builds BGP path attributes for EVPN Type-5 advertisement.
-func buildType5PathAttrs(nextHop string, asn, vni uint32) ([]*anypb.Any, error) {
+func buildType5PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32) ([]*anypb.Any, error) {
 	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0}) // IGP
 	if err != nil {
 		return nil, fmt.Errorf("marshal origin: %w", err)
 	}
 
+	// GoBGP requires MpReachNLRIAttribute to carry both the next-hop and the
+	// NLRI list for EVPN address families.
 	mpReach, err := anypb.New(&apipb.MpReachNLRIAttribute{
 		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 		NextHops: []string{nextHop},
+		Nlris:    []*anypb.Any{nlri},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal mp-reach: %w", err)
