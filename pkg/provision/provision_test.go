@@ -468,3 +468,56 @@ func TestDeprovisionSoftMode(t *testing.T) {
 		t.Error("expected error status to be reported on failure")
 	}
 }
+
+func TestRedactURLs(t *testing.T) {
+	tests := []struct {
+		name string
+		urls []string
+		want []string
+	}{
+		{
+			name: "no credentials",
+			urls: []string{"http://example.com/image.gz"},
+			want: []string{"http://example.com/image.gz"},
+		},
+		{
+			name: "with credentials",
+			urls: []string{"http://user:pass@registry.example.com/image:tag"},
+			want: []string{"http://REDACTED@registry.example.com/image:tag"},
+		},
+		{
+			name: "oci with credentials",
+			urls: []string{"oci://user:pass@registry/repo:v1"},
+			want: []string{"oci://REDACTED@registry/repo:v1"},
+		},
+		{
+			name: "empty",
+			urls: []string{},
+			want: []string{},
+		},
+		{
+			name: "mixed",
+			urls: []string{
+				"http://example.com/plain.gz",
+				"http://admin:secret@example.com/private.gz",
+			},
+			want: []string{
+				"http://example.com/plain.gz",
+				"http://REDACTED@example.com/private.gz",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := redactURLs(tc.urls)
+			if len(got) != len(tc.want) {
+				t.Fatalf("len = %d, want %d", len(got), len(tc.want))
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}

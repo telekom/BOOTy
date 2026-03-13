@@ -122,10 +122,10 @@ func (c *Configurator) CopyMachineFiles() error {
 // If srcBase does not exist, it logs and returns nil.
 func (c *Configurator) copyTreeIntoChroot(srcBase, label string) error {
 	if _, err := os.Stat(srcBase); os.IsNotExist(err) {
-		slog.Info("No "+label+" directory found", "path", srcBase)
+		slog.Info("No directory found", "label", label, "path", srcBase)
 		return nil
 	}
-	slog.Info("Copying "+label, "src", srcBase)
+	slog.Info("Copying files", "label", label, "src", srcBase)
 	return copyTree(srcBase, c.rootDir)
 }
 
