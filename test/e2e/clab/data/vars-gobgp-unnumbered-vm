@@ -1,7 +1,7 @@
 export IMAGE="http://10.100.0.10/images/test.img"
 export HOSTNAME="booty-gobgp-unnumbered-vm"
 export TOKEN="e2e-fabric-token"
-export MODE="provision"
+export MODE="standby"
 export MIN_DISK_SIZE_GB="1"
 export LOG_URL="http://10.100.0.11/log"
 export INIT_URL="http://10.100.0.11/status/init"
