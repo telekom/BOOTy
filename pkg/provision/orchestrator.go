@@ -4,6 +4,7 @@ package provision
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/image"
+	"github.com/telekom/BOOTy/pkg/inventory"
 )
 
 // Step represents a named provisioning step.
@@ -51,6 +53,7 @@ func NewOrchestrator(cfg *config.MachineConfig, provider config.Provider, diskMg
 func (o *Orchestrator) Provision(ctx context.Context) error {
 	steps := []Step{
 		{"report-init", o.reportInit},
+		{"collect-inventory", o.collectInventory},
 		{"set-hostname", o.setHostname},
 		{"copy-provisioner-files", o.copyProvisionerFiles},
 		{"configure-dns", o.configureDNS},
@@ -95,6 +98,36 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 
 func (o *Orchestrator) reportInit(ctx context.Context) error {
 	return o.provider.ReportStatus(ctx, config.StatusInit, "provisioning started")
+}
+
+func (o *Orchestrator) collectInventory(ctx context.Context) error {
+	if !o.cfg.InventoryEnabled {
+		o.log.Info("Hardware inventory collection disabled, skipping")
+		return nil
+	}
+
+	inv, err := inventory.Collect()
+	if err != nil {
+		o.log.Warn("Hardware inventory collection failed", "error", err)
+		return nil // non-fatal
+	}
+
+	data, err := json.Marshal(inv)
+	if err != nil {
+		o.log.Warn("Failed to marshal hardware inventory", "error", err)
+		return nil // non-fatal
+	}
+
+	o.log.Info("Hardware inventory collected",
+		"cpus", len(inv.CPUs),
+		"disks", len(inv.Disks),
+		"nics", len(inv.NICs),
+		"pci_devices", len(inv.PCIDevices))
+
+	if err := o.provider.ReportInventory(ctx, data); err != nil {
+		o.log.Warn("Failed to report hardware inventory", "error", err)
+	}
+	return nil
 }
 
 func (o *Orchestrator) setHostname(_ context.Context) error {

@@ -75,6 +75,10 @@ type MachineConfig struct {
 	// VLAN fields.
 	VLANs string // VLANS: multi-VLAN config "200:eno1:10.200.0.42/24,300:eno2"
 
+	// Hardware inventory fields.
+	InventoryEnabled bool   // INVENTORY_ENABLED: collect and report hardware inventory
+	InventoryURL     string // INVENTORY_URL: POST endpoint for inventory JSON
+
 	// Files and commands from ISO /deploy/ directories.
 	ProvisionerFiles []string // Paths to files in /deploy/file-system/
 	MachineFiles     []string // Paths to files in /deploy/machine-files/
@@ -100,4 +104,6 @@ type Provider interface {
 	Heartbeat(ctx context.Context) error
 	// FetchCommands retrieves pending commands (nil in current mode, future agent mode).
 	FetchCommands(ctx context.Context) ([]Command, error)
+	// ReportInventory sends hardware inventory data to the server.
+	ReportInventory(ctx context.Context, data []byte) error
 }
