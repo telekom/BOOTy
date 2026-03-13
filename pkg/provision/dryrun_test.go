@@ -17,7 +17,9 @@ type dryRunProvider struct {
 	lastMessage string
 }
 
-func (p *dryRunProvider) GetConfig(_ context.Context) (*config.MachineConfig, error) { return nil, nil }
+func (p *dryRunProvider) GetConfig(_ context.Context) (*config.MachineConfig, error) {
+	return &config.MachineConfig{}, nil
+}
 func (p *dryRunProvider) ReportStatus(_ context.Context, s config.Status, msg string) error {
 	p.lastStatus = s
 	p.lastMessage = msg

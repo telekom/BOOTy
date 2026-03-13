@@ -15,6 +15,7 @@ import (
 // DryRunStatus represents the result status of a dry-run check.
 type DryRunStatus string
 
+// DryRunPass, DryRunWarn, and DryRunFail represent dry-run check outcomes.
 const (
 	DryRunPass DryRunStatus = "pass"
 	DryRunWarn DryRunStatus = "warn"
@@ -42,15 +43,16 @@ func (o *Orchestrator) DryRun(ctx context.Context) error {
 		{"health-checks", o.dryRunHealthChecks},
 	}
 
-	var results []DryRunResult
+	results := make([]DryRunResult, 0, len(checks))
 	var failed int
 	for _, c := range checks {
 		result := c.fn(ctx)
 		results = append(results, result)
 		icon := "✓"
-		if result.Status == DryRunWarn {
+		switch result.Status {
+		case DryRunWarn:
 			icon = "⚠"
-		} else if result.Status == DryRunFail {
+		case DryRunFail:
 			icon = "✗"
 			failed++
 		}
