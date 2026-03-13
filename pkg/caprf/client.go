@@ -140,6 +140,63 @@ func (c *Client) FetchCommands(ctx context.Context) ([]config.Command, error) {
 	return cmds, nil
 }
 
+// ReportInventory posts a hardware inventory JSON payload to the CAPRF server.
+func (c *Client) ReportInventory(ctx context.Context, data []byte) error {
+	if c.cfg.InventoryURL == "" {
+		c.log.Warn("No inventory URL configured, skipping inventory report")
+		return nil
+	}
+	return c.postJSONWithAuth(ctx, c.cfg.InventoryURL, data)
+}
+
+// postJSONWithAuth posts a JSON payload with Bearer auth and retry logic.
+func (c *Client) postJSONWithAuth(ctx context.Context, url string, data []byte) error {
+	var lastErr error
+	for attempt := range 3 {
+		if attempt > 0 {
+			backoff := time.Duration(1<<(attempt-1)) * time.Second
+			c.log.Info("Retrying request", "url", url, "attempt", attempt+1, "backoff", backoff)
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return fmt.Errorf("request retry canceled: %w", ctx.Err())
+			}
+		}
+
+		lastErr = c.doPostJSON(ctx, url, data)
+		if lastErr == nil {
+			return nil
+		}
+		c.log.Warn("Request failed", "url", url, "attempt", attempt+1, "error", lastErr)
+	}
+	return lastErr
+}
+
+// doPostJSON sends a single JSON POST request.
+func (c *Client) doPostJSON(ctx context.Context, url string, data []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url,
+		strings.NewReader(string(data)))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.cfg.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
+	}
+
+	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
+	if err != nil {
+		return fmt.Errorf("POST %s: %w", url, err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // best-effort close
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("POST %s: status %d", url, resp.StatusCode)
+	}
+	return nil
+}
+
 func (c *Client) postWithAuth(ctx context.Context, url, body string) error {
 	var lastErr error
 	for attempt := range 3 {
@@ -263,6 +320,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"IMAGE_CHECKSUM":              &cfg.ImageChecksum,
 		"IMAGE_CHECKSUM_TYPE":         &cfg.ImageChecksumType,
 		"DISK_DEVICE":                 &cfg.DiskDevice,
+		"INVENTORY_URL":               &cfg.InventoryURL,
 	}
 
 	if ptr, ok := strFields[key]; ok {
@@ -312,5 +370,7 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) {
 		if n, err := strconv.Atoi(value); err == nil {
 			cfg.NumVFs = n
 		}
+	case "INVENTORY_ENABLED":
+		cfg.InventoryEnabled = value == "true" || value == "1" || value == "yes"
 	}
 }

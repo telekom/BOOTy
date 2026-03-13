@@ -3,6 +3,7 @@ package caprf
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -234,6 +235,42 @@ func TestClientFetchCommandsNoop(t *testing.T) {
 	}
 	if cmds != nil {
 		t.Fatalf("expected nil commands, got %v", cmds)
+	}
+}
+
+func TestClientReportInventory(t *testing.T) {
+	var receivedBody []byte
+	var receivedContentType string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedContentType = r.Header.Get("Content-Type")
+		body, _ := io.ReadAll(r.Body)
+		receivedBody = body
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewFromConfig(&config.MachineConfig{
+		Token:        "test-token",
+		InventoryURL: srv.URL + "/inventory",
+	})
+
+	data := []byte(`{"system":{"vendor":"Dell"}}`)
+	if err := client.ReportInventory(context.Background(), data); err != nil {
+		t.Fatalf("ReportInventory() error: %v", err)
+	}
+	if receivedContentType != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", receivedContentType)
+	}
+	if string(receivedBody) != string(data) {
+		t.Errorf("body = %q, want %q", receivedBody, data)
+	}
+}
+
+func TestClientReportInventoryNoURL(t *testing.T) {
+	client := NewFromConfig(&config.MachineConfig{})
+	// Should be a no-op when no URL is configured.
+	if err := client.ReportInventory(context.Background(), []byte(`{}`)); err != nil {
+		t.Fatalf("ReportInventory() with no URL should not error: %v", err)
 	}
 }
 
@@ -721,5 +758,20 @@ func TestParseVarsVLANs(t *testing.T) {
 	}
 	if cfg.VLANs != "200:eno1:10.200.0.42/24,300:eno2" {
 		t.Errorf("VLANs = %q, want %q", cfg.VLANs, "200:eno1:10.200.0.42/24,300:eno2")
+	}
+}
+
+func TestParseVarsInventory(t *testing.T) {
+	input := `INVENTORY_ENABLED="true"
+INVENTORY_URL="http://caprf.example.com/inventory"`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.InventoryEnabled {
+		t.Error("InventoryEnabled should be true")
+	}
+	if cfg.InventoryURL != "http://caprf.example.com/inventory" {
+		t.Errorf("InventoryURL = %q", cfg.InventoryURL)
 	}
 }
