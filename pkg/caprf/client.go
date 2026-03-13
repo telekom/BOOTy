@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/health"
 )
 
 // Client communicates with the CAPRF provisioning server.
@@ -95,6 +96,21 @@ func (c *Client) ShipDebug(ctx context.Context, message string) error {
 		return nil
 	}
 	return c.postWithAuth(ctx, c.cfg.DebugURL, message)
+}
+
+// ReportHealthChecks sends health check results to the CAPRF server.
+func (c *Client) ReportHealthChecks(ctx context.Context, results []health.CheckResult) error {
+	if c.cfg.HealthCheckURL == "" {
+		c.log.Warn("No health check URL configured, skipping report")
+		return nil
+	}
+
+	data, err := json.Marshal(results)
+	if err != nil {
+		return fmt.Errorf("marshal health results: %w", err)
+	}
+
+	return c.postJSONWithAuth(ctx, c.cfg.HealthCheckURL, data)
 }
 
 // Heartbeat sends a keepalive to the CAPRF server.
@@ -322,6 +338,8 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"FIRMWARE_URL":                &cfg.FirmwareURL,
 		"FIRMWARE_MIN_BIOS":           &cfg.FirmwareMinBIOS,
 		"FIRMWARE_MIN_BMC":            &cfg.FirmwareMinBMC,
+		"HEALTH_SKIP_CHECKS":          &cfg.HealthSkipChecks,
+		"HEALTH_CHECK_URL":            &cfg.HealthCheckURL,
 	}
 
 	if ptr, ok := strFields[key]; ok {
@@ -371,6 +389,12 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) {
 		cfg.InventoryEnabled = parseBoolVar(value)
 	case "FIRMWARE_REPORT":
 		cfg.FirmwareEnabled = parseBoolVar(value)
+	case "HEALTH_CHECKS_ENABLED":
+		cfg.HealthChecksEnabled = parseBoolVar(value)
+	case "HEALTH_MIN_MEMORY_GB":
+		setIntField(&cfg.HealthMinMemoryGB, value)
+	case "HEALTH_MIN_CPUS":
+		setIntField(&cfg.HealthMinCPUs, value)
 	}
 }
 

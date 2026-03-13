@@ -1,6 +1,6 @@
 # Proposal: Pre-Provisioning Health Checks
 
-## Status: Proposal
+## Status: Implemented
 
 ## Priority: P1
 
@@ -10,6 +10,58 @@ Run a suite of hardware health checks **before** starting the provisioning
 pipeline. If a machine fails any critical check, provisioning is aborted and
 the machine is flagged for manual intervention — preventing wasted time
 imaging a machine that will fail in production.
+
+## Implementation Details
+
+The health check framework and 7 built-in checks are fully implemented.
+Key decisions and deviations from the original proposal:
+
+- **Status type**: Uses typed `Status` string constants (`StatusPass`,
+  `StatusFail`, `StatusSkip`) instead of raw strings.
+- **Severity**: Uses typed `Severity` constants (`SeverityInfo`,
+  `SeverityWarning`, `SeverityCritical`).
+- **Skip support**: `StatusSkip` used when hardware is not available
+  (e.g., no EDAC for ECC, no thermal zones), distinguishing from `Pass`.
+- **Check skipping**: `RunAll()` accepts a skip list to disable specific
+  checks by name via `HEALTH_SKIP_CHECKS` config.
+- **Counter accuracy**: `checked` counters increment only after
+  successfully reading the relevant data (e.g., ioerr_cnt, temp file).
+- **Error specificity**: Critical failure error message includes the
+  names of the failed checks.
+- **CAPRF reporting**: `ReportHealthChecks()` POSTs results with retry
+  logic; best-effort (does not fail provisioning on report error).
+- **FirmwareVersion check**: Not implemented in this PR — firmware
+  checks are handled separately in PR #19.
+- **ThermalState**: Reads from sysfs `/sys/class/thermal` (not Redfish),
+  consistent with the initrd-only approach.
+
+### Implemented Checks
+
+| Check | Source | Severity | Status |
+|-------|--------|----------|--------|
+| `disk-presence` | `/sys/block/` | Critical | Implemented |
+| `disk-smart` | `/sys/block/*/device/ioerr_cnt` | Warning | Implemented |
+| `memory-ecc` | `/sys/devices/system/edac/mc/` | Critical | Implemented |
+| `minimum-memory` | `/proc/meminfo` | Critical | Implemented |
+| `minimum-cpu` | `/proc/cpuinfo` | Critical | Implemented |
+| `nic-link-state` | `/sys/class/net/*/carrier` | Warning | Implemented |
+| `thermal-state` | `/sys/class/thermal/` | Warning | Implemented |
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `pkg/health/check.go` | Check framework, `RunAll()`, types |
+| `pkg/health/check_test.go` | Comprehensive unit tests |
+| `pkg/health/cpu.go` | Minimum CPU check |
+| `pkg/health/disk.go` | Disk presence + SMART checks |
+| `pkg/health/memory.go` | ECC + minimum memory checks |
+| `pkg/health/network.go` | NIC link state check |
+| `pkg/health/thermal.go` | Thermal zone check |
+| `pkg/provision/orchestrator.go` | `runHealthChecks()` step |
+| `pkg/caprf/client.go` | `ReportHealthChecks()` |
+| `pkg/caprf/client_test.go` | Health reporting tests |
+| `pkg/config/provider.go` | Health check config fields |
 
 ## Motivation
 
@@ -33,6 +85,11 @@ Common failure modes that waste provisioning cycles:
 | **Tinkerbell** | No built-in health checks |
 
 ## Design
+
+> **Note**: The code snippets and tables below reflect the original proposal.
+> See the "Implementation Details" section above for the actual implementation,
+> which deviates in several areas (typed Status/Severity, `StatusSkip`,
+> `RunAll` with skip list, `HealthReporter` named interface, etc.).
 
 ### Check Framework
 

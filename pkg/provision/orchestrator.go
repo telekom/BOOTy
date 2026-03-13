@@ -14,6 +14,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/firmware"
+	"github.com/telekom/BOOTy/pkg/health"
 	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/inventory"
 )
@@ -22,6 +23,11 @@ import (
 type Step struct {
 	Name string
 	Fn   func(ctx context.Context) error
+}
+
+// HealthReporter is an optional provider capability for reporting health check results.
+type HealthReporter interface {
+	ReportHealthChecks(context.Context, []health.CheckResult) error
 }
 
 // Orchestrator runs the full provisioning pipeline.
@@ -56,6 +62,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		{"report-init", o.reportInit},
 		{"collect-inventory", o.collectInventory},
 		{"collect-firmware", o.collectFirmware},
+		{"health-checks", o.runHealthChecks},
 		{"set-hostname", o.setHostname},
 		{"copy-provisioner-files", o.copyProvisionerFiles},
 		{"configure-dns", o.configureDNS},
@@ -344,6 +351,56 @@ func (o *Orchestrator) runPostProvisionCmds(ctx context.Context) error {
 func (o *Orchestrator) teardownChroot(_ context.Context) error {
 	o.disk.TeardownChrootBindMounts(newroot)
 	return o.disk.Unmount(newroot)
+}
+
+func (o *Orchestrator) runHealthChecks(ctx context.Context) error {
+	if !o.cfg.HealthChecksEnabled {
+		o.log.Info("Health checks disabled, skipping")
+		return nil
+	}
+
+	checks := []health.Check{
+		&health.DiskPresenceCheck{},
+		&health.DiskIOErrorCheck{},
+		&health.MemoryECCCheck{},
+		&health.MinimumMemoryCheck{MinGiB: o.cfg.HealthMinMemoryGB},
+		&health.MinimumCPUCheck{MinCPUs: o.cfg.HealthMinCPUs},
+		&health.NICLinkStateCheck{},
+		&health.ThermalStateCheck{},
+	}
+
+	results, critical := health.RunAll(ctx, checks, o.cfg.HealthSkipChecks)
+
+	for _, r := range results {
+		logAttrs := []any{
+			"check", r.Name,
+			"status", r.Status,
+			"severity", r.Severity,
+			"message", r.Message,
+		}
+		if r.Details != "" {
+			logAttrs = append(logAttrs, "details", r.Details)
+		}
+		o.log.Info("Health check result", logAttrs...)
+	}
+
+	// Best-effort report to server.
+	if reporter, ok := o.provider.(HealthReporter); ok {
+		if err := reporter.ReportHealthChecks(ctx, results); err != nil {
+			o.log.Warn("Failed to report health checks", "error", err)
+		}
+	}
+
+	if critical {
+		var failed []string
+		for _, r := range results {
+			if r.Status == health.StatusFail && r.Severity == health.SeverityCritical {
+				failed = append(failed, r.Name)
+			}
+		}
+		return fmt.Errorf("critical health check(s) failed: %s", strings.Join(failed, ", "))
+	}
+	return nil
 }
 
 func (o *Orchestrator) reportSuccess(ctx context.Context) error {
