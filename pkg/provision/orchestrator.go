@@ -367,12 +367,16 @@ func (o *Orchestrator) runHealthChecks(ctx context.Context) error {
 	results, critical := health.RunAll(ctx, checks, o.cfg.HealthSkipChecks)
 
 	for _, r := range results {
-		o.log.Info("Health check result",
+		logAttrs := []any{
 			"check", r.Name,
 			"status", r.Status,
 			"severity", r.Severity,
 			"message", r.Message,
-		)
+		}
+		if r.Details != "" {
+			logAttrs = append(logAttrs, "details", r.Details)
+		}
+		o.log.Info("Health check result", logAttrs...)
 	}
 
 	// Best-effort report to server.

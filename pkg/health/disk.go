@@ -49,8 +49,8 @@ func (c *DiskSMARTCheck) Run(_ context.Context) CheckResult {
 			continue
 		}
 
-		// SMART health is exposed via /sys/block/<dev>/device/state or
-		// /sys/block/<dev>/device/delete (presence indicates a real device).
+		// Check I/O error count via /sys/block/<dev>/device/ioerr_cnt
+		// which is exposed by SCSI devices for monitoring disk health.
 		deviceDir := filepath.Join(c.sysPath(), name, "device")
 		if _, err := os.Stat(deviceDir); err != nil {
 			continue // not a real device
