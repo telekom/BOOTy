@@ -1,6 +1,6 @@
 # Proposal: Hardware Inventory and Inspection
 
-## Status: Proposal
+## Status: Implemented (PR #18)
 
 ## Priority: P1
 
@@ -10,6 +10,37 @@ Implement hardware inventory collection in BOOTy's initrd phase, reporting
 detailed system specs back to the CAPRF controller. This enables automated
 hardware classification, capacity planning, and scheduling decisions based
 on actual hardware capabilities rather than static labels.
+
+## Implementation Details
+
+Core hardware inventory collection is fully implemented. Key decisions
+and deviations from the original proposal:
+
+- **Package**: `pkg/inventory/` with `collector.go` and `types.go`.
+- **Collection scope**: CPU, system info, memory total, disks, NICs, and
+  NVMe devices collected from sysfs/procfs. DIMM-level detail and PCIe
+  topology are **not yet implemented** (requires `dmidecode` / SMBIOS).
+- **GPU/Accelerators**: Not implemented — deferred to future work.
+- **CAPRF reporting**: `Client.ReportInventory()` POSTs JSON to the
+  configured inventory URL with authentication and retry.
+- **Orchestrator integration**: Inventory runs as an early provisioning
+  step; report is best-effort (does not fail provisioning).
+- **Hardware validation**: Optional hardware requirements validation is
+  **not yet implemented** — deferred.
+- **CAPRF-side storage**: CRD extension to store inventory in
+  `RedfishHost` status is **not yet implemented** on CAPRF side.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `pkg/inventory/collector.go` | Sysfs/procfs hardware collection |
+| `pkg/inventory/collector_test.go` | Unit tests with mock sysfs |
+| `pkg/inventory/types.go` | Data model types |
+| `pkg/caprf/client.go` | `ReportInventory()` |
+| `pkg/caprf/client_test.go` | Inventory reporting tests |
+| `pkg/config/provider.go` | `InventoryURL` config field |
+| `pkg/provision/orchestrator.go` | `collectInventory()` step |
 
 ## Motivation
 
