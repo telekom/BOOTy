@@ -1,6 +1,6 @@
 # Proposal: Firmware Version Reporting and Validation
 
-## Status: Proposal
+## Status: Implemented (PR #19)
 
 ## Priority: P2
 
@@ -10,6 +10,40 @@ Collect and report firmware versions (BIOS, BMC/iLO/XCC, NIC, storage
 controller) from both Redfish and sysfs during provisioning. Optionally
 validate that firmware meets minimum version requirements before
 provisioning proceeds.
+
+## Implementation Details
+
+The sysfs-based firmware collection is fully implemented. Key decisions
+and deviations from the original proposal:
+
+- **Package**: `pkg/firmware/` (not `pkg/inventory/`) to keep firmware
+  concerns separate from hardware inventory.
+- **Types**: `Report`, `Version`, `NICFirmware`, `StorageFirmware` in
+  `pkg/firmware/types.go`.
+- **Collection**: `Collect()` reads BIOS, BMC, NIC, and storage firmware
+  from sysfs (`/sys/class/dmi/id`, `/sys/class/net`, `/sys/class/scsi_host`).
+- **NIC filtering**: Physical NICs identified by presence of `device/`
+  directory (PCI-backed), virtual interfaces filtered automatically.
+- **CAPRF reporting**: `Client.ReportFirmware()` POSTs JSON to the
+  configured firmware URL with retry logic.
+- **Orchestrator integration**: Firmware collection runs as a provisioning
+  step, with best-effort reporting.
+- **Validation**: Firmware version validation (minimum version policy) is
+  **not yet implemented** — deferred to a future PR.
+- **Redfish-side collection**: CAPRF-side Redfish firmware enrichment is
+  **not yet implemented** — deferred to CAPRF work.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `pkg/firmware/collector.go` | Sysfs firmware collection |
+| `pkg/firmware/collector_test.go` | Unit tests with mock sysfs |
+| `pkg/firmware/types.go` | Data types |
+| `pkg/caprf/client.go` | `ReportFirmware()`, `withRetry()` helper |
+| `pkg/caprf/client_test.go` | Tests for firmware reporting |
+| `pkg/config/provider.go` | `FirmwareURL` config field |
+| `pkg/provision/orchestrator.go` | Firmware step integration |
 
 ## Motivation
 
