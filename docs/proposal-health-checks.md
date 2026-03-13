@@ -43,7 +43,7 @@ Key decisions and deviations from the original proposal:
 | `disk-smart` | `/sys/block/*/device/ioerr_cnt` | Warning | Implemented |
 | `memory-ecc` | `/sys/devices/system/edac/mc/` | Critical | Implemented |
 | `minimum-memory` | `/proc/meminfo` | Critical | Implemented |
-| `minimum-cpu` | `/proc/cpuinfo` | Warning | Implemented |
+| `minimum-cpu` | `/proc/cpuinfo` | Critical | Implemented |
 | `nic-link-state` | `/sys/class/net/*/carrier` | Warning | Implemented |
 | `thermal-state` | `/sys/class/thermal/` | Warning | Implemented |
 
@@ -85,6 +85,11 @@ Common failure modes that waste provisioning cycles:
 | **Tinkerbell** | No built-in health checks |
 
 ## Design
+
+> **Note**: The code snippets and tables below reflect the original proposal.
+> See the "Implementation Details" section above for the actual implementation,
+> which deviates in several areas (typed Status/Severity, `StatusSkip`,
+> `RunAll` with skip list, `HealthReporter` named interface, etc.).
 
 ### Check Framework
 

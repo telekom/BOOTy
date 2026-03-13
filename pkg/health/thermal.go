@@ -85,6 +85,15 @@ func (c *ThermalStateCheck) Run(_ context.Context) CheckResult {
 		}
 	}
 
+	if checked == 0 {
+		return CheckResult{
+			Name:     c.Name(),
+			Status:   StatusSkip,
+			Severity: c.Severity(),
+			Message:  "no readable thermal zones found",
+		}
+	}
+
 	return CheckResult{
 		Name:     c.Name(),
 		Status:   StatusPass,

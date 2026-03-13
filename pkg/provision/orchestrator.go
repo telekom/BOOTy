@@ -25,6 +25,11 @@ type Step struct {
 	Fn   func(ctx context.Context) error
 }
 
+// HealthReporter is an optional provider capability for reporting health check results.
+type HealthReporter interface {
+	ReportHealthChecks(context.Context, []health.CheckResult) error
+}
+
 // Orchestrator runs the full provisioning pipeline.
 type Orchestrator struct {
 	cfg      *config.MachineConfig
@@ -380,9 +385,7 @@ func (o *Orchestrator) runHealthChecks(ctx context.Context) error {
 	}
 
 	// Best-effort report to server.
-	if reporter, ok := o.provider.(interface {
-		ReportHealthChecks(context.Context, []health.CheckResult) error
-	}); ok {
+	if reporter, ok := o.provider.(HealthReporter); ok {
 		if err := reporter.ReportHealthChecks(ctx, results); err != nil {
 			o.log.Warn("Failed to report health checks", "error", err)
 		}

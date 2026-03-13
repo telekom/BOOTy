@@ -35,7 +35,7 @@ func (c *NICLinkStateCheck) Run(_ context.Context) CheckResult {
 			Name:     c.Name(),
 			Status:   StatusFail,
 			Severity: c.Severity(),
-			Message:  "cannot read /sys/class/net",
+			Message:  fmt.Sprintf("cannot read %s", c.sysPath()),
 			Details:  err.Error(),
 		}
 	}

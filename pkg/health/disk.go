@@ -35,7 +35,7 @@ func (c *DiskSMARTCheck) Run(_ context.Context) CheckResult {
 			Name:     c.Name(),
 			Status:   StatusFail,
 			Severity: c.Severity(),
-			Message:  "cannot read /sys/block",
+			Message:  fmt.Sprintf("cannot read %s", c.sysPath()),
 			Details:  err.Error(),
 		}
 	}
@@ -79,6 +79,15 @@ func (c *DiskSMARTCheck) Run(_ context.Context) CheckResult {
 		}
 	}
 
+	if checked == 0 {
+		return CheckResult{
+			Name:     c.Name(),
+			Status:   StatusSkip,
+			Severity: c.Severity(),
+			Message:  "no disks with IO error counters found",
+		}
+	}
+
 	return CheckResult{
 		Name:     c.Name(),
 		Status:   StatusPass,
@@ -113,7 +122,7 @@ func (c *DiskPresenceCheck) Run(_ context.Context) CheckResult {
 			Name:     c.Name(),
 			Status:   StatusFail,
 			Severity: c.Severity(),
-			Message:  "cannot read /sys/block",
+			Message:  fmt.Sprintf("cannot read %s", c.sysPath()),
 			Details:  err.Error(),
 		}
 	}
