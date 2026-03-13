@@ -399,6 +399,8 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) {
 		setIntField(&cfg.HealthMinMemoryGB, value)
 	case "HEALTH_MIN_CPUS":
 		setIntField(&cfg.HealthMinCPUs, value)
+	case "TPM_ENABLED":
+		cfg.TPMEnabled = parseBoolVar(value)
 	}
 }
 

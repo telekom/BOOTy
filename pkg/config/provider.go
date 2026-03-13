@@ -92,6 +92,9 @@ type MachineConfig struct {
 	HealthSkipChecks    string // HEALTH_SKIP_CHECKS: comma-separated check names to skip
 	HealthCheckURL      string // HEALTH_CHECK_URL: POST endpoint for health results
 
+	// TPM detection.
+	TPMEnabled bool // TPM_ENABLED: detect and report TPM 2.0 presence
+
 	// BGP peering mode and numbered peer configuration.
 	BGPPeerMode  string // BGP_PEER_MODE: "unnumbered" (default), "dual", "numbered"
 	BGPNeighbors string // BGP_NEIGHBORS: comma-separated numbered peer IPs
