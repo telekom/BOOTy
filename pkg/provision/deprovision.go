@@ -34,9 +34,7 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 		steps = append(steps,
 			Step{"stop-raid", o.stopRAID},
 			Step{"disable-lvm", o.disableLVM},
-		)
-		steps = append(steps, Step{"wipe-disks", o.wipeOrSecureEraseDisks})
-		steps = append(steps,
+			Step{"wipe-disks", o.wipeOrSecureEraseDisks},
 			Step{"remove-efi-entries", o.removeEFIBootEntries},
 		)
 	}

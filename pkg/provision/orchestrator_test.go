@@ -4,12 +4,12 @@ package provision
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
-	"github.com/telekom/BOOTy/pkg/health"
 )
 
 // newTestOrchestrator builds an Orchestrator with a mock provider and disk manager
@@ -58,7 +58,7 @@ func TestProvisionReportsErrorOnStepFailure(t *testing.T) {
 	if gotErr == nil {
 		t.Fatal("expected error from failing step")
 	}
-	if gotErr != testErr {
+	if !errors.Is(gotErr, testErr) {
 		t.Errorf("expected simulated failure, got %v", gotErr)
 	}
 	// Verify init was still reported before the failure.
@@ -133,9 +133,10 @@ func TestWipeOrSecureEraseDisks(t *testing.T) {
 			cfg := &config.MachineConfig{SecureErase: tc.secureErase}
 			cmd := newMockCommander()
 			if tc.wipeErr != nil {
-				// WipeAllDisks reads /sys/block which will be empty in test
-				// — it won't produce errors in our mock setup.
-				// We test via the error path of the mock commander.
+				cmd.setResult("wipefs -af", nil, tc.wipeErr)
+			}
+			if tc.secureErr != nil {
+				cmd.setResult("wipefs -af", nil, tc.secureErr)
 			}
 			provider := &mockProvider{}
 			mgr := disk.NewManager(cmd)
@@ -211,17 +212,6 @@ func TestFirmwareChanged(t *testing.T) {
 	if !o.FirmwareChanged() {
 		t.Error("expected firmware change after setting flag")
 	}
-}
-
-// healthMockProvider implements both config.Provider and HealthReporter.
-type healthMockProvider struct {
-	mockProvider
-	healthResults []health.CheckResult
-}
-
-func (p *healthMockProvider) ReportHealthChecks(_ context.Context, results []health.CheckResult) error {
-	p.healthResults = results
-	return nil
 }
 
 // buildSteps is a test helper that returns the provisioning steps.
