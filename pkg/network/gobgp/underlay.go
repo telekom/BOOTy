@@ -24,10 +24,11 @@ import (
 // Depending on PeerMode it establishes unnumbered (link-local),
 // numbered (explicit IP), or a combination of both session types.
 type UnderlayTier struct {
-	bgp  *server.BgpServer
-	cfg  *Config
-	nics []string
-	log  *slog.Logger
+	bgp    *server.BgpServer
+	cfg    *Config
+	nics   []string
+	log    *slog.Logger
+	stopRA chan struct{} // signals the periodic RA goroutine to stop
 }
 
 // NewUnderlayTier creates a new underlay tier.
@@ -88,6 +89,13 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 		return fmt.Errorf("announce underlay route: %w", err)
 	}
 
+	// Start periodic Router Advertisements so FRR's zebra continuously
+	// knows our link-local addresses for BGP unnumbered peering.
+	if u.cfg.PeerMode != network.PeerModeNumbered && len(u.nics) > 0 {
+		u.stopRA = make(chan struct{})
+		go u.sendPeriodicRA()
+	}
+
 	return nil
 }
 
@@ -116,6 +124,10 @@ func (u *UnderlayTier) Ready(ctx context.Context, timeout time.Duration) error {
 
 // Teardown stops the BGP server and removes the underlay dummy interface.
 func (u *UnderlayTier) Teardown(_ context.Context) error {
+	if u.stopRA != nil {
+		close(u.stopRA)
+	}
+
 	if u.bgp != nil {
 		u.bgp.Stop()
 		u.log.Info("BGP server stopped")
@@ -187,11 +199,6 @@ func (u *UnderlayTier) configureNICs() error {
 		if err := netlink.LinkSetUp(link); err != nil {
 			u.log.Warn("Failed to bring up NIC", "nic", nic, "error", err)
 		}
-
-		// Force the kernel to send Router Solicitations so the adjacent FRR
-		// switch learns our link-local via NDP. Without this, FRR's BGP
-		// unnumbered rejects incoming connections from unknown link-locals.
-		sendRouterSolicitation(nic)
 
 		// Assign NIC to VRF for traffic isolation.
 		if u.cfg.VRFName != "" {
@@ -411,25 +418,62 @@ func (u *UnderlayTier) announceUnderlayRoute(ctx context.Context) error {
 	return nil
 }
 
-// sendRouterSolicitation sends an ICMPv6 Router Solicitation (type 133) on
-// the interface so that the adjacent FRR switch learns our link-local address
-// via NDP and can match incoming BGP connections to its interface peer config.
-func sendRouterSolicitation(iface string) {
+// sendRouterAdvertisement sends an ICMPv6 Router Advertisement (type 134) on
+// the interface so that the adjacent FRR switch's zebra learns our link-local
+// address and registers it as the BGP unnumbered peer for the interface.
+// FRR's BGP unnumbered peering requires zebra to receive an RA from the peer.
+func sendRouterAdvertisement(iface string) {
 	lc := net.ListenConfig{}
 	conn, err := lc.ListenPacket(context.Background(), "ip6:ipv6-icmp", "::"+"%"+iface)
 	if err != nil {
-		// Fallback: use ping6 to at least trigger NDP neighbor discovery.
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = exec.CommandContext(ctx, "ping", "-6", "-c1", "-W1", "-I", iface, "ff02::2").Run() //nolint:gosec // constant args
 		return
 	}
-	defer conn.Close() //nolint:errcheck // best-effort RS
+	defer conn.Close() //nolint:errcheck // best-effort RA
 
-	// ICMPv6 Router Solicitation: type=133, code=0, checksum=0 (kernel fills), reserved=0
-	rs := []byte{133, 0, 0, 0, 0, 0, 0, 0}
-	dst := &net.IPAddr{IP: net.ParseIP("ff02::2"), Zone: iface} // all-routers multicast
-	_, _ = conn.WriteTo(rs, dst)
+	// ICMPv6 Router Advertisement (RFC 4861 §4.2):
+	//   Type:           134
+	//   Code:           0
+	//   Checksum:       0 (kernel fills)
+	//   Cur Hop Limit:  64
+	//   Flags (M|O):    0
+	//   Router Lifetime: 1800s (big-endian: 0x0708)
+	//   Reachable Time: 0
+	//   Retrans Timer:  0
+	ra := []byte{
+		134, 0, 0, 0, // type, code, checksum (kernel fills)
+		64,         // cur hop limit
+		0,          // flags
+		0x07, 0x08, // router lifetime = 1800s
+		0, 0, 0, 0, // reachable time
+		0, 0, 0, 0, // retrans timer
+	}
+	dst := &net.IPAddr{IP: net.ParseIP("ff02::1"), Zone: iface} // all-nodes multicast
+	_, _ = conn.WriteTo(ra, dst)
+}
+
+// sendPeriodicRA sends Router Advertisements on all NICs every 10 seconds
+// until the stop channel is closed. This keeps FRR's zebra informed about
+// our link-local addresses so BGP unnumbered sessions can establish and
+// remain active.
+func (u *UnderlayTier) sendPeriodicRA() {
+	// Send an initial burst so FRR learns us quickly.
+	for _, nic := range u.nics {
+		sendRouterAdvertisement(nic)
+	}
+
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-u.stopRA:
+			return
+		case <-ticker.C:
+			for _, nic := range u.nics {
+				sendRouterAdvertisement(nic)
+			}
+		}
+	}
 }
 
 // discoverLinkLocalPeer finds the remote peer's link-local IPv6 address on the
@@ -457,10 +501,10 @@ func discoverLinkLocalPeer(iface string) (string, error) {
 
 // triggerNDP sends ICMPv6 packets on the interface to populate the NDP
 // neighbor table and to announce our presence to adjacent FRR switches.
-// It sends both a Router Solicitation (ff02::2) and an echo (ff02::1).
+// It sends both a Router Advertisement (ff02::1) and an echo (ff02::1).
 func triggerNDP(iface string) {
-	// Also send RS so FRR's zebra learns our link-local for BGP unnumbered.
-	sendRouterSolicitation(iface)
+	// Send RA so FRR's zebra learns our link-local for BGP unnumbered.
+	sendRouterAdvertisement(iface)
 
 	// Try raw socket first (requires CAP_NET_RAW).
 	lc := net.ListenConfig{}
