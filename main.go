@@ -435,16 +435,16 @@ func runRescue(ctx context.Context, cfg *config.MachineConfig, client config.Pro
 
 	// Write authorized keys if provided.
 	if cfg.RescueSSHPubKey != "" {
-		if err := os.MkdirAll("/root/.ssh", 0700); err != nil {
+		if err := os.MkdirAll("/root/.ssh", 0o700); err != nil {
 			slog.Error("Failed to create .ssh directory", "error", err)
-		} else if err := os.WriteFile("/root/.ssh/authorized_keys", []byte(cfg.RescueSSHPubKey+"\n"), 0600); err != nil {
+		} else if err := os.WriteFile("/root/.ssh/authorized_keys", []byte(cfg.RescueSSHPubKey+"\n"), 0o600); err != nil {
 			slog.Error("Failed to write authorized_keys", "error", err)
 		}
 	}
 
 	// Start dropbear SSH server if available.
 	if _, err := exec.LookPath("dropbear"); err == nil {
-		sshCmd := exec.Command("dropbear", "-R", "-F", "-p", "22")
+		sshCmd := exec.CommandContext(ctx, "dropbear", "-R", "-F", "-p", "22")
 		if err := sshCmd.Start(); err != nil {
 			slog.Warn("Failed to start SSH server", "error", err)
 		} else {
