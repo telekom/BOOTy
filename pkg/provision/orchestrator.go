@@ -140,6 +140,8 @@ func (o *Orchestrator) collectFirmware(ctx context.Context) error {
 
 	report, err := firmware.Collect()
 	if err != nil {
+		// Collection is best-effort: missing sysfs entries are common in
+		// virtual environments, so we log and continue provisioning.
 		o.log.Warn("Firmware collection failed, continuing", "error", err)
 		return nil
 	}

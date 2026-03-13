@@ -29,7 +29,8 @@ and deviations from the original proposal:
 - **Orchestrator integration**: Firmware collection runs as a provisioning
   step, with best-effort reporting.
 - **Validation**: Firmware version validation (minimum version policy) is
-  **not yet implemented** — deferred to a future PR.
+  implemented via `firmware.Validate()` — checks BIOS and BMC versions
+  against configurable minimums.
 - **Redfish-side collection**: CAPRF-side Redfish firmware enrichment is
   **not yet implemented** — deferred to CAPRF work.
 
