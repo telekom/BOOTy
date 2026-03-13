@@ -3,7 +3,6 @@
 package tpm
 
 import (
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"os"
@@ -11,7 +10,8 @@ import (
 	"strings"
 )
 
-const (
+var (
+	// basePaths are overridable for testing.
 	tpmDevicePath   = "/dev/tpm0"
 	tpmrmDevicePath = "/dev/tpmrm0"
 	sysTPMPath      = "/sys/class/tpm/tpm0"
@@ -89,7 +89,8 @@ func ReadPCRs() (map[int]string, error) {
 			slog.Warn("Failed to read PCR", "index", idx, "error", err)
 			continue
 		}
-		pcrs[idx] = hex.EncodeToString(data)
+		// sysfs PCR values are already ASCII hex with a trailing newline.
+		pcrs[idx] = strings.TrimSpace(string(data))
 	}
 	return pcrs, nil
 }
