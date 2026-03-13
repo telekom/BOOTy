@@ -1,3 +1,5 @@
+//go:build linux
+
 package provision
 
 import (
@@ -43,7 +45,7 @@ func TestDetectOSFamily(t *testing.T) {
 
 func TestWriteNetplanStatic(t *testing.T) {
 	dir := t.TempDir()
-	err := writeNetplan(dir, "10.0.1.5/24", "10.0.1.1", "8.8.8.8,8.8.4.4")
+	err := writeNetplan(dir, "eth0", "10.0.1.5/24", "10.0.1.1", "8.8.8.8,8.8.4.4")
 	if err != nil {
 		t.Fatalf("writeNetplan() error = %v", err)
 	}
@@ -68,7 +70,7 @@ func TestWriteNetplanStatic(t *testing.T) {
 
 func TestWriteNetplanDHCP(t *testing.T) {
 	dir := t.TempDir()
-	err := writeNetplan(dir, "", "", "")
+	err := writeNetplan(dir, "eth0", "", "", "")
 	if err != nil {
 		t.Fatalf("writeNetplan() error = %v", err)
 	}
@@ -86,7 +88,7 @@ func TestWriteNetplanDHCP(t *testing.T) {
 
 func TestWriteSystemdNetworkdStatic(t *testing.T) {
 	dir := t.TempDir()
-	err := writeSystemdNetworkd(dir, "10.0.1.5/24", "10.0.1.1", "8.8.8.8,8.8.4.4")
+	err := writeSystemdNetworkd(dir, "eth0", "10.0.1.5/24", "10.0.1.1", "8.8.8.8,8.8.4.4")
 	if err != nil {
 		t.Fatalf("writeSystemdNetworkd() error = %v", err)
 	}
@@ -111,7 +113,7 @@ func TestWriteSystemdNetworkdStatic(t *testing.T) {
 
 func TestWriteSystemdNetworkdDHCP(t *testing.T) {
 	dir := t.TempDir()
-	err := writeSystemdNetworkd(dir, "", "", "")
+	err := writeSystemdNetworkd(dir, "eth0", "", "", "")
 	if err != nil {
 		t.Fatalf("writeSystemdNetworkd() error = %v", err)
 	}
