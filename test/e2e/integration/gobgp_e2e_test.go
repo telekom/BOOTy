@@ -118,7 +118,7 @@ func TestGoBGPUnnumberedEVPNActive(t *testing.T) {
 	// Verify L2VPN-EVPN address family is negotiated.
 	out := gobgpDockerExec(t, gobgpLabSpine,
 		"vtysh", "-c", "show bgp neighbors eth3 json")
-	if !strings.Contains(out, "l2vpnEvpn") {
+	if !strings.Contains(strings.ToLower(out), "l2vpnevpn") {
 		t.Errorf("L2VPN-EVPN not active on unnumbered peer:\n%s", out)
 	}
 }
@@ -206,7 +206,7 @@ func TestGoBGPDualEVPNOnNumberedOnly(t *testing.T) {
 	for {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabRR,
 			"vtysh", "-c", "show bgp neighbors 10.0.3.2 json")
-		if strings.Contains(out, "l2vpnEvpn") && strings.Contains(out, "Established") {
+		if strings.Contains(strings.ToLower(out), "l2vpnevpn") && strings.Contains(out, "Established") {
 			t.Log("Dual mode: L2VPN-EVPN active on numbered iBGP to rr01")
 			return
 		}
@@ -234,7 +234,7 @@ func TestGoBGPNumberedEVPNActive(t *testing.T) {
 
 	out := gobgpDockerExec(t, gobgpLabSpine,
 		"vtysh", "-c", "show bgp neighbors 10.0.2.2 json")
-	if !strings.Contains(out, "l2vpnEvpn") {
+	if !strings.Contains(strings.ToLower(out), "l2vpnevpn") {
 		t.Errorf("L2VPN-EVPN not active on numbered peer:\n%s", out)
 	}
 }

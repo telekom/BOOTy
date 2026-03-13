@@ -6,12 +6,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"time"
 
 	apipb "github.com/osrg/gobgp/v3/api"
 	"github.com/osrg/gobgp/v3/pkg/server"
 	"github.com/vishvananda/netlink"
+	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/telekom/BOOTy/pkg/network"
 )
@@ -78,6 +80,10 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 
 	if err := u.addPeers(ctx); err != nil {
 		return fmt.Errorf("add BGP peers: %w", err)
+	}
+
+	if err := u.announceUnderlayRoute(ctx); err != nil {
+		return fmt.Errorf("announce underlay route: %w", err)
 	}
 
 	return nil
@@ -333,4 +339,45 @@ func (u *UnderlayTier) hasEstablishedPeer(ctx context.Context) bool {
 	}
 
 	return established
+}
+
+// announceUnderlayRoute advertises the RouterID /32 via IPv4 unicast so that
+// remote peers (e.g. FRR spine) learn the underlay loopback as a BGP route.
+func (u *UnderlayTier) announceUnderlayRoute(ctx context.Context) error {
+	ip := net.ParseIP(u.cfg.RouterID).To4()
+	if ip == nil {
+		return fmt.Errorf("invalid router ID %q", u.cfg.RouterID)
+	}
+
+	nlri, err := anypb.New(&apipb.IPAddressPrefix{
+		PrefixLen: 32,
+		Prefix:    u.cfg.RouterID,
+	})
+	if err != nil {
+		return fmt.Errorf("build NLRI: %w", err)
+	}
+
+	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0}) // IGP
+	if err != nil {
+		return fmt.Errorf("build origin attr: %w", err)
+	}
+
+	nexthop, err := anypb.New(&apipb.NextHopAttribute{NextHop: u.cfg.RouterID})
+	if err != nil {
+		return fmt.Errorf("build next-hop attr: %w", err)
+	}
+
+	_, err = u.bgp.AddPath(ctx, &apipb.AddPathRequest{
+		Path: &apipb.Path{
+			Family: &apipb.Family{Afi: apipb.Family_AFI_IP, Safi: apipb.Family_SAFI_UNICAST},
+			Nlri:   nlri,
+			Pattrs: []*anypb.Any{origin, nexthop},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("add underlay route: %w", err)
+	}
+
+	u.log.Info("Announced underlay route", "prefix", u.cfg.RouterID+"/32")
+	return nil
 }

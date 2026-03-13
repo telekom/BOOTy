@@ -102,7 +102,7 @@ func TestVRGoBGPUnnumberedEVPN(t *testing.T) {
 
 	out := vrDockerExec(t, gobgpVRSpine,
 		"vtysh", "-c", "show bgp neighbors eth3 json")
-	if !strings.Contains(out, "l2vpnEvpn") {
+	if !strings.Contains(strings.ToLower(out), "l2vpnevpn") {
 		t.Errorf("L2VPN-EVPN not active on unnumbered VM peer:\n%s", out)
 	}
 }
@@ -140,7 +140,7 @@ func TestVRGoBGPDualEVPNOnRR(t *testing.T) {
 	for {
 		out, _ := vrDockerExecRaw(t, gobgpVRRR,
 			"vtysh", "-c", "show bgp neighbors 10.0.3.2 json")
-		if strings.Contains(out, "l2vpnEvpn") && strings.Contains(out, "Established") {
+		if strings.Contains(strings.ToLower(out), "l2vpnevpn") && strings.Contains(out, "Established") {
 			t.Log("VM dual: L2VPN-EVPN active on numbered iBGP to rr01")
 			return
 		}
@@ -165,7 +165,7 @@ func TestVRGoBGPNumberedEVPN(t *testing.T) {
 
 	out := vrDockerExec(t, gobgpVRSpine,
 		"vtysh", "-c", "show bgp neighbors 10.0.2.2 json")
-	if !strings.Contains(out, "l2vpnEvpn") {
+	if !strings.Contains(strings.ToLower(out), "l2vpnevpn") {
 		t.Errorf("L2VPN-EVPN not active on numbered VM peer:\n%s", out)
 	}
 }
