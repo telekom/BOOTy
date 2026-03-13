@@ -60,17 +60,15 @@ func gobgpDockerExecRaw(t *testing.T, container string, args ...string) (string,
 }
 
 // waitForBGPPeer polls the spine's FRR vtysh until the given neighbor reaches
-// ESTABLISHED state.
+// ESTABLISHED state. Uses per-neighbor JSON to avoid false positives from
+// other sessions being established.
 func waitForBGPPeer(t *testing.T, neighbor string) {
 	t.Helper()
 	deadline := time.Now().Add(bgpConvergeTimeout)
 	for {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabSpine,
-			"vtysh", "-c", "show bgp summary json")
-		if strings.Contains(out, `"state":"Established"`) ||
-			strings.Contains(out, neighbor) && strings.Contains(out, "Established") {
-			// For interface peers the key is the interface name, not an IP.
-			// For numbered peers the key is the neighbor IP.
+			"vtysh", "-c", "show bgp neighbors "+neighbor+" json")
+		if strings.Contains(out, "Established") {
 			return
 		}
 		if time.Now().After(deadline) {

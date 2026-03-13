@@ -435,15 +435,15 @@ func triggerNDP(iface string) {
 	lc := net.ListenConfig{}
 	conn, err := lc.ListenPacket(context.Background(), "ip6:ipv6-icmp", "::"+"%"+iface)
 	if err != nil {
-		// Fallback: use the ip command to trigger NDP via neighbor solicitation.
+		// Fallback: use ping6 to send an ICMPv6 echo to all-nodes multicast.
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		_ = exec.CommandContext(ctx, "ip", "-6", "neigh", "show", "dev", iface).Run() //nolint:gosec // constant args
+		_ = exec.CommandContext(ctx, "ping", "-6", "-c1", "-W1", "-I", iface, "ff02::1").Run() //nolint:gosec // constant args
 		return
 	}
 	defer conn.Close() //nolint:errcheck // best-effort NDP solicitation
 
-	dst := &net.UDPAddr{IP: net.ParseIP("ff02::1"), Zone: iface}
+	dst := &net.IPAddr{IP: net.ParseIP("ff02::1"), Zone: iface}
 	// ICMPv6 echo request: type=128, code=0, checksum=0 (kernel fills), id=0, seq=1
 	msg := []byte{128, 0, 0, 0, 0, 0, 0, 1}
 	_, _ = conn.WriteTo(msg, dst)

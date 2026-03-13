@@ -878,7 +878,7 @@ jobs:
           for i in $(seq 1 60); do
             ESTABLISHED=$(sudo docker exec clab-booty-gobgp-lab-spine01 vtysh -c "show bgp summary json" 2>/dev/null \
               | grep -c '"state":"Established"' || true)
-            if [ "$ESTABLISHED" -ge 3 ]; then
+            if [ "$ESTABLISHED" -ge 5 ]; then
               echo "All BGP sessions established after ${i}s"
               sudo docker exec clab-booty-gobgp-lab-spine01 vtysh -c "show bgp summary"
               exit 0
