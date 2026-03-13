@@ -98,7 +98,8 @@ func Teardown(parentName string, vlanID int) error {
 
 	link, err := netlink.LinkByName(vlanName)
 	if err != nil {
-		return nil // already removed
+		// Interface does not exist — nothing to tear down.
+		return nil //nolint:nilerr // not-found means already removed
 	}
 
 	if err := netlink.LinkDel(link); err != nil {
