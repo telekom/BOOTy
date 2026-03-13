@@ -107,7 +107,9 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		}
 		duration := time.Since(start)
 		o.log.Info("Provisioning step completed", "step", step.Name, "duration", duration)
-		_ = o.provider.ShipLog(ctx, fmt.Sprintf("step %d/%d %s completed in %s", i+1, len(steps), step.Name, duration))
+		shipCtx, shipCancel := context.WithTimeout(ctx, 5*time.Second)
+		_ = o.provider.ShipLog(shipCtx, fmt.Sprintf("step %d/%d %s completed in %s", i+1, len(steps), step.Name, duration))
+		shipCancel()
 	}
 	return nil
 }
