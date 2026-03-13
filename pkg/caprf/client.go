@@ -109,7 +109,7 @@ func (c *Client) Heartbeat(ctx context.Context) error {
 // ReportFirmware sends a JSON firmware report to the CAPRF server.
 func (c *Client) ReportFirmware(ctx context.Context, data []byte) error {
 	if c.cfg.FirmwareURL == "" {
-		c.log.Warn("No firmware URL configured, skipping report")
+		c.log.Debug("No firmware URL configured, skipping report")
 		return nil
 	}
 	return c.postJSONWithAuth(ctx, c.cfg.FirmwareURL, data)
@@ -159,8 +159,19 @@ func (c *Client) ReportInventory(ctx context.Context, data []byte) error {
 	return c.postJSONWithAuth(ctx, c.cfg.InventoryURL, data)
 }
 
-// postJSONWithAuth posts a JSON payload with Bearer auth and retry logic.
+func (c *Client) postWithAuth(ctx context.Context, url, body string) error {
+	return c.withRetry(ctx, url, func() error {
+		return c.doPost(ctx, url, body)
+	})
+}
+
 func (c *Client) postJSONWithAuth(ctx context.Context, url string, data []byte) error {
+	return c.withRetry(ctx, url, func() error {
+		return c.doPostJSON(ctx, url, data)
+	})
+}
+
+func (c *Client) withRetry(ctx context.Context, url string, fn func() error) error {
 	var lastErr error
 	for attempt := range 3 {
 		if attempt > 0 {
@@ -173,7 +184,7 @@ func (c *Client) postJSONWithAuth(ctx context.Context, url string, data []byte) 
 			}
 		}
 
-		lastErr = c.doPostJSON(ctx, url, data)
+		lastErr = fn()
 		if lastErr == nil {
 			return nil
 		}
@@ -182,14 +193,13 @@ func (c *Client) postJSONWithAuth(ctx context.Context, url string, data []byte) 
 	return lastErr
 }
 
-// doPostJSON sends a single JSON POST request.
-func (c *Client) doPostJSON(ctx context.Context, url string, data []byte) error {
+func (c *Client) doPost(ctx context.Context, url, body string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url,
-		bytes.NewReader(data))
+		strings.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "text/plain")
 	if c.cfg.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
 	}
@@ -207,35 +217,13 @@ func (c *Client) doPostJSON(ctx context.Context, url string, data []byte) error 
 	return nil
 }
 
-func (c *Client) postWithAuth(ctx context.Context, url, body string) error {
-	var lastErr error
-	for attempt := range 3 {
-		if attempt > 0 {
-			backoff := time.Duration(1<<(attempt-1)) * time.Second // 1s, 2s
-			c.log.Info("Retrying request", "url", url, "attempt", attempt+1, "backoff", backoff)
-			select {
-			case <-time.After(backoff):
-			case <-ctx.Done():
-				return fmt.Errorf("request retry canceled: %w", ctx.Err())
-			}
-		}
-
-		lastErr = c.doPost(ctx, url, body)
-		if lastErr == nil {
-			return nil
-		}
-		c.log.Warn("Request failed", "url", url, "attempt", attempt+1, "error", lastErr)
-	}
-	return lastErr
-}
-
-func (c *Client) doPost(ctx context.Context, url, body string) error {
+func (c *Client) doPostJSON(ctx context.Context, url string, data []byte) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url,
-		strings.NewReader(body))
+		bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
-	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("Content-Type", "application/json")
 	if c.cfg.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
 	}

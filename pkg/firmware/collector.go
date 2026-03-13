@@ -11,12 +11,9 @@ import (
 
 // Sysfs paths (variables for testability).
 var (
-	// SysDMIPath is the base for DMI identity files.
-	SysDMIPath = "/sys/class/dmi/id"
-	// SysNetPath is the base for network interface sysfs entries.
-	SysNetPath = "/sys/class/net"
-	// SysSCSIHostPath is the base for SCSI host firmware info.
-	SysSCSIHostPath = "/sys/class/scsi_host"
+	sysDMIPath      = "/sys/class/dmi/id"
+	sysNetPath      = "/sys/class/net"
+	sysSCSIHostPath = "/sys/class/scsi_host"
 )
 
 // Collect gathers firmware version data from sysfs.
@@ -33,9 +30,9 @@ func Collect() (*Report, error) {
 
 func collectBIOS() Version {
 	v := Version{Component: "BIOS"}
-	v.Version = readSysFile(filepath.Join(SysDMIPath, "bios_version"))
-	v.Date = readSysFile(filepath.Join(SysDMIPath, "bios_date"))
-	v.Vendor = readSysFile(filepath.Join(SysDMIPath, "bios_vendor"))
+	v.Version = readSysFile(filepath.Join(sysDMIPath, "bios_version"))
+	v.Date = readSysFile(filepath.Join(sysDMIPath, "bios_date"))
+	v.Vendor = readSysFile(filepath.Join(sysDMIPath, "bios_vendor"))
 	return v
 }
 
@@ -45,13 +42,13 @@ func collectBMC() Version {
 	// available and fall back to empty — enrichment via Redfish happens
 	// on the CAPRF side.
 	v := Version{Component: "BMC"}
-	v.Vendor = readSysFile(filepath.Join(SysDMIPath, "board_vendor"))
-	v.Version = readSysFile(filepath.Join(SysDMIPath, "board_version"))
+	v.Vendor = readSysFile(filepath.Join(sysDMIPath, "board_vendor"))
+	v.Version = readSysFile(filepath.Join(sysDMIPath, "board_version"))
 	return v
 }
 
 func collectNICFirmware() []NICFirmware {
-	entries, err := os.ReadDir(SysNetPath)
+	entries, err := os.ReadDir(sysNetPath)
 	if err != nil {
 		return nil
 	}
@@ -59,12 +56,12 @@ func collectNICFirmware() []NICFirmware {
 	var nics []NICFirmware
 	for _, e := range entries {
 		name := e.Name()
-		if name == "lo" || strings.HasPrefix(name, "veth") || strings.HasPrefix(name, "docker") {
+		if name == "lo" {
 			continue
 		}
 
 		// Only include physical NICs that have a PCI device backing.
-		devicePath := filepath.Join(SysNetPath, name, "device")
+		devicePath := filepath.Join(sysNetPath, name, "device")
 		if !dirExists(devicePath) {
 			continue
 		}
@@ -98,18 +95,18 @@ func readPCIAddr(devicePath string) string {
 }
 
 func collectStorageFirmware() []StorageFirmware {
-	entries, err := os.ReadDir(SysSCSIHostPath)
+	entries, err := os.ReadDir(sysSCSIHostPath)
 	if err != nil {
 		return nil
 	}
 
 	var storage []StorageFirmware
 	for _, e := range entries {
-		fw := readSysFile(filepath.Join(SysSCSIHostPath, e.Name(), "firmware_rev"))
+		fw := readSysFile(filepath.Join(sysSCSIHostPath, e.Name(), "firmware_rev"))
 		if fw == "" {
 			continue
 		}
-		model := readSysFile(filepath.Join(SysSCSIHostPath, e.Name(), "model_name"))
+		model := readSysFile(filepath.Join(sysSCSIHostPath, e.Name(), "model_name"))
 		storage = append(storage, StorageFirmware{
 			Controller: e.Name(),
 			Model:      model,

@@ -50,18 +50,18 @@ func setupSCSIHost(t *testing.T, tmpDir, host string, files map[string]string) {
 
 func withTestPaths(t *testing.T, tmpDir string) {
 	t.Helper()
-	origDMI := SysDMIPath
-	origNet := SysNetPath
-	origSCSI := SysSCSIHostPath
+	origDMI := sysDMIPath
+	origNet := sysNetPath
+	origSCSI := sysSCSIHostPath
 
-	SysDMIPath = filepath.Join(tmpDir, "dmi", "id")
-	SysNetPath = filepath.Join(tmpDir, "net")
-	SysSCSIHostPath = filepath.Join(tmpDir, "scsi_host")
+	sysDMIPath = filepath.Join(tmpDir, "dmi", "id")
+	sysNetPath = filepath.Join(tmpDir, "net")
+	sysSCSIHostPath = filepath.Join(tmpDir, "scsi_host")
 
 	t.Cleanup(func() {
-		SysDMIPath = origDMI
-		SysNetPath = origNet
-		SysSCSIHostPath = origSCSI
+		sysDMIPath = origDMI
+		sysNetPath = origNet
+		sysSCSIHostPath = origSCSI
 	})
 }
 
