@@ -101,7 +101,7 @@ func (m *Manager) NVMeListNamespaces(ctx context.Context, controller string) ([]
 
 func mustParseHex(s string) uint64 {
 	var val uint64
-	fmt.Sscanf(s, "%x", &val)
+	_, _ = fmt.Sscanf(s, "%x", &val)
 	return val
 }
 
