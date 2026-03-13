@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	apipb "github.com/osrg/gobgp/v3/api"
-	"google.golang.org/protobuf/proto"
 )
 
 func TestBuildRouteDistinguisher(t *testing.T) {
@@ -81,8 +80,6 @@ func TestBuildRouteDistinguisher(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			two := &apipb.RouteDistinguisherTwoOctetASN{}
-
 			msg, err := rd.UnmarshalNew()
 			if err != nil {
 				t.Fatalf("unmarshal RD: %v", err)
@@ -90,10 +87,13 @@ func TestBuildRouteDistinguisher(t *testing.T) {
 
 			var gotTwo *apipb.RouteDistinguisherTwoOctetASN
 			var gotFour *apipb.RouteDistinguisherFourOctetASN
-			if proto.Equal(msg, two) || msg.ProtoReflect().Descriptor().FullName() == two.ProtoReflect().Descriptor().FullName() {
-				gotTwo = msg.(*apipb.RouteDistinguisherTwoOctetASN)
-			} else {
-				gotFour = msg.(*apipb.RouteDistinguisherFourOctetASN)
+			switch v := msg.(type) {
+			case *apipb.RouteDistinguisherTwoOctetASN:
+				gotTwo = v
+			case *apipb.RouteDistinguisherFourOctetASN:
+				gotFour = v
+			default:
+				t.Fatalf("unexpected RD type: %T", msg)
 			}
 			tt.check(t, gotTwo, gotFour)
 		})
