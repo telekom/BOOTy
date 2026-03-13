@@ -300,7 +300,6 @@ func (u *UnderlayTier) addNumberedPeer(ctx context.Context, addr string, familie
 		Timers:   bgpTimers(u.cfg),
 		AfiSafis: families,
 		Transport: &apipb.Transport{
-			LocalAddress: u.cfg.RouterID,
 			MtuDiscovery: true,
 		},
 	}

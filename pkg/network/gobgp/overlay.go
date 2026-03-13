@@ -18,9 +18,10 @@ import (
 
 // OverlayTier manages EVPN Type-5 routes and VXLAN encapsulation.
 type OverlayTier struct {
-	bgp *server.BgpServer
-	cfg *Config
-	log *slog.Logger
+	bgp    *server.BgpServer
+	cfg    *Config
+	log    *slog.Logger
+	cancel context.CancelFunc
 }
 
 // NewOverlayTier creates a new overlay tier.
@@ -55,7 +56,9 @@ func (o *OverlayTier) Setup(ctx context.Context) error {
 		return fmt.Errorf("advertise EVPN Type-5: %w", err)
 	}
 
-	go o.watchRoutes(ctx)
+	watchCtx, cancel := context.WithCancel(ctx)
+	o.cancel = cancel
+	go o.watchRoutes(watchCtx)
 
 	return nil
 }
@@ -68,6 +71,9 @@ func (o *OverlayTier) Ready(_ context.Context, _ time.Duration) error {
 
 // Teardown removes the overlay network resources.
 func (o *OverlayTier) Teardown(_ context.Context) error {
+	if o.cancel != nil {
+		o.cancel()
+	}
 	vxlanName := fmt.Sprintf("vx%d", o.cfg.ProvisionVNI)
 
 	for _, name := range []string{o.cfg.BridgeName, vxlanName, o.cfg.VRFName} {

@@ -172,7 +172,7 @@ func ParseVLANs(spec string) ([]VLANConfig, error) {
 
 // IsGoBGPMode returns true if GoBGP mode is explicitly requested.
 func (c *Config) IsGoBGPMode() bool {
-	return c.NetworkMode == "gobgp"
+	return strings.EqualFold(c.NetworkMode, "gobgp")
 }
 
 // PeerMode controls how BGP neighbor sessions are established.
