@@ -50,12 +50,12 @@ func Detect() Info {
 		info.Version = "2.0"
 	}
 
-	info.Manufacturer = readSysfs(filepath.Join(sysTPMPath, "device/description"))
+	info.Manufacturer = readSysfs(filepath.Join(sysTPMPath, "device", "description"))
 	if info.Manufacturer == "" {
-		info.Manufacturer = readSysfs(filepath.Join(sysTPMPath, "device/manufacturer"))
+		info.Manufacturer = readSysfs(filepath.Join(sysTPMPath, "device", "manufacturer"))
 	}
 
-	info.FirmwareVer = readSysfs(filepath.Join(sysTPMPath, "device/firmware_node/description"))
+	info.FirmwareVer = readSysfs(filepath.Join(sysTPMPath, "device", "firmware_node", "description"))
 
 	slog.Info("TPM detected",
 		"version", info.Version,
