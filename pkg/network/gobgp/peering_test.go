@@ -188,6 +188,7 @@ func TestScenarioNumberedOnly(t *testing.T) {
 			PeerMode:      network.PeerModeNumbered,
 			NeighborAddrs: []string{"fd00::1"},
 			RemoteASN:     65000,
+			ProvisionVNI:  100,
 		}
 
 		if err := cfg.Validate(); err != nil {
