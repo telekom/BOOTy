@@ -427,6 +427,30 @@ func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) {
 	}
 }
 
+// startRescueSSH starts a dropbear SSH server if a pubkey is configured and
+// dropbear is available.
+func startRescueSSH(ctx context.Context, pubKey string) {
+	if pubKey == "" {
+		slog.Info("No SSH pubkey configured, skipping SSH server")
+		return
+	}
+	if _, err := exec.LookPath("dropbear"); err != nil {
+		slog.Warn("dropbear not found, SSH server unavailable")
+		return
+	}
+	sshCmd := exec.CommandContext(ctx, "dropbear", "-R", "-F", "-p", "22")
+	if err := sshCmd.Start(); err != nil {
+		slog.Warn("Failed to start SSH server", "error", err)
+		return
+	}
+	slog.Info("SSH server started on port 22")
+	go func() {
+		if err := sshCmd.Wait(); err != nil {
+			slog.Warn("SSH server exited", "error", err)
+		}
+	}()
+}
+
 // runRescue drops the machine into rescue mode with optional SSH server.
 // It reports "rescue" status to the controller and waits for timeout or shutdown.
 func runRescue(ctx context.Context, cfg *config.MachineConfig, client config.Provider) {
@@ -443,23 +467,7 @@ func runRescue(ctx context.Context, cfg *config.MachineConfig, client config.Pro
 	}
 
 	// Start dropbear SSH server if available and pubkey is configured.
-	if cfg.RescueSSHPubKey == "" {
-		slog.Info("No SSH pubkey configured, skipping SSH server")
-	} else if _, err := exec.LookPath("dropbear"); err == nil {
-		sshCmd := exec.CommandContext(ctx, "dropbear", "-R", "-F", "-p", "22")
-		if err := sshCmd.Start(); err != nil {
-			slog.Warn("Failed to start SSH server", "error", err)
-		} else {
-			slog.Info("SSH server started on port 22")
-			go func() {
-				if err := sshCmd.Wait(); err != nil {
-					slog.Warn("SSH server exited", "error", err)
-				}
-			}()
-		}
-	} else {
-		slog.Warn("dropbear not found, SSH server unavailable")
-	}
+	startRescueSSH(ctx, cfg.RescueSSHPubKey)
 
 	// Send periodic heartbeats.
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
