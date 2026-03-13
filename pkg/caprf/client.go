@@ -490,6 +490,13 @@ func applyFeatureToggle(cfg *config.MachineConfig, key, value string) bool {
 		cfg.RescueAutoMountDisks = parseBoolVar(value)
 	case "EVPN_L2_ENABLED":
 		cfg.EVPNL2Enabled = parseBoolVar(value)
+	case "PARTITION_LAYOUT":
+		layout, err := config.ParsePartitionLayout(value)
+		if err != nil {
+			slog.Warn("Invalid partition layout, ignoring", "error", err)
+		} else {
+			cfg.PartitionLayout = layout
+		}
 	default:
 		return false
 	}
