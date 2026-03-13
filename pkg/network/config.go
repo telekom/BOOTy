@@ -66,7 +66,7 @@ type Config struct {
 
 	// Common fields.
 	BridgeName  string // Default: "br.provision"
-	VRFName     string // Default: "Vrf_underlay"
+	VRFName     string // Default: empty (no VRF isolation); set explicitly if needed
 	MTU         int    // Default: 9000
 	NetworkMode string // "gobgp" to use in-process GoBGP instead of FRR
 

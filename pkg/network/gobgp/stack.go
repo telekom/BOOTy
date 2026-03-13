@@ -42,6 +42,11 @@ func (s *Stack) Setup(ctx context.Context, _ *network.Config) error {
 		"vni", s.cfg.ProvisionVNI,
 	)
 
+	// Create VRF first so underlay can assign dummy/NICs to it.
+	if err := s.overlay.CreateVRF(); err != nil {
+		return fmt.Errorf("create VRF: %w", err)
+	}
+
 	if err := s.underlay.Setup(ctx); err != nil {
 		return fmt.Errorf("underlay setup: %w", err)
 	}

@@ -849,6 +849,78 @@ jobs:
         if: always()
         run: sudo containerlab destroy --topo test/e2e/clab/topology-boot.clab.yml --cleanup
 
+  e2e-gobgp:
+    name: E2E GoBGP PeerModes
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+
+      - name: Build GoBGP test image
+        run: docker build -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
+
+      - name: Install ContainerLab
+        run: bash -c "$(curl -sL https://get.containerlab.dev)"
+
+      - name: Deploy GoBGP topology
+        run: sudo containerlab deploy --topo test/e2e/clab/topology-gobgp.clab.yml
+
+      - name: Wait for BGP convergence
+        run: |
+          echo "Waiting for GoBGP sessions to establish..."
+          for i in $(seq 1 60); do
+            ESTABLISHED=$(sudo docker exec clab-booty-gobgp-lab-spine01 vtysh -c "show bgp summary json" 2>/dev/null \
+              | grep -c '"state":"Established"' || true)
+            if [ "$ESTABLISHED" -ge 3 ]; then
+              echo "All BGP sessions established after ${i}s"
+              sudo docker exec clab-booty-gobgp-lab-spine01 vtysh -c "show bgp summary"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Not all BGP sessions established in 60s"
+          sudo docker exec clab-booty-gobgp-lab-spine01 vtysh -c "show bgp summary" || true
+          exit 1
+
+      - name: Run GoBGP E2E tests
+        run: go test -tags e2e_gobgp -v -race -count=1 -timeout 10m ./test/e2e/integration/...
+
+      - name: Collect GoBGP logs
+        if: always()
+        timeout-minutes: 3
+        run: |
+          mkdir -p gobgp-logs
+          for node in spine01 leaf01 rr01 booty-unnumbered booty-dual booty-numbered client; do
+            name="clab-booty-gobgp-lab-${node}"
+            timeout 30 sudo docker logs "${name}" >> gobgp-logs/${node}.log 2>&1 || echo "(no logs)"
+          done
+
+          echo "=== FRR State (spine01) ==="
+          timeout 15 sudo docker exec clab-booty-gobgp-lab-spine01 vtysh -c "show bgp summary" 2>/dev/null \
+            | tee gobgp-logs/bgp-summary.txt || true
+          timeout 15 sudo docker exec clab-booty-gobgp-lab-spine01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null \
+            | tee gobgp-logs/evpn-state.txt || true
+
+          echo "=== FRR State (rr01) ==="
+          timeout 15 sudo docker exec clab-booty-gobgp-lab-rr01 vtysh -c "show bgp summary" 2>/dev/null \
+            | tee gobgp-logs/rr01-bgp-summary.txt || true
+
+      - name: Upload GoBGP logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gobgp-logs
+          path: gobgp-logs/
+          if-no-files-found: ignore
+
+      - name: Cleanup
+        if: always()
+        run: sudo containerlab destroy --topo test/e2e/clab/topology-gobgp.clab.yml --cleanup
+
   e2e-vrnetlab:
     name: E2E EVPN Boot (vrnetlab)
     runs-on: ubuntu-latest

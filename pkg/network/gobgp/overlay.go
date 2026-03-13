@@ -36,12 +36,9 @@ func (o *OverlayTier) SetBgpServer(s *server.BgpServer) {
 	o.bgp = s
 }
 
-// Setup creates VRF, VXLAN, bridge, and advertises EVPN Type-5 routes.
+// Setup creates VXLAN, bridge, and advertises EVPN Type-5 routes.
+// VRF creation is handled by the stack before underlay/overlay setup.
 func (o *OverlayTier) Setup(ctx context.Context) error {
-	if err := o.createVRF(); err != nil {
-		return fmt.Errorf("create VRF: %w", err)
-	}
-
 	if err := o.createVXLANAndBridge(); err != nil {
 		return fmt.Errorf("create VXLAN/bridge: %w", err)
 	}
@@ -89,7 +86,9 @@ func (o *OverlayTier) Teardown(_ context.Context) error {
 	return nil
 }
 
-func (o *OverlayTier) createVRF() error {
+// CreateVRF creates the VRF interface if VRFName is configured.
+// Called by Stack before underlay setup so that dummy/NICs can be assigned.
+func (o *OverlayTier) CreateVRF() error {
 	if o.cfg.VRFName == "" {
 		return nil
 	}

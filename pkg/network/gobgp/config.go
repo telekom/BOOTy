@@ -114,7 +114,7 @@ func (c *Config) ApplyDefaults() {
 	if c.MTU == 0 {
 		c.MTU = 9000
 	}
-	if c.VRFTableID == 0 {
+	if c.VRFTableID == 0 || c.VRFTableID == 1 {
 		c.VRFTableID = 1000
 	}
 }
@@ -145,6 +145,12 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("unknown peer mode %q", c.PeerMode)
 	}
+
+	// 4-octet ASN RD/RT format can only encode 16-bit VNI values.
+	if c.ASN > 65535 && c.ProvisionVNI > 65535 {
+		return fmt.Errorf("4-octet ASN %d with VNI %d > 65535 is unsupported (RD/RT truncation)", c.ASN, c.ProvisionVNI)
+	}
+
 	return nil
 }
 
