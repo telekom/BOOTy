@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -45,7 +44,7 @@ func DetectNVMeControllers() []string {
 		name := e.Name()
 		// Match /dev/nvme0, /dev/nvme1, etc. (not nvme0n1 which is a namespace)
 		if strings.HasPrefix(name, "nvme") && !strings.Contains(name, "n") {
-			controllers = append(controllers, filepath.Join("/dev", name))
+			controllers = append(controllers, "/dev/"+name)
 		}
 	}
 	return controllers
