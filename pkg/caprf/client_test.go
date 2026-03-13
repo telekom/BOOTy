@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/health"
 )
 
 // testServer is a minimal CAPRF server for testing.
@@ -855,5 +856,86 @@ func TestParseBoolVar(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("parseBoolVar(%q) = %v, want %v", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestParseVarsHealthChecks(t *testing.T) {
+	input := `HEALTH_CHECKS_ENABLED="true"
+HEALTH_MIN_MEMORY_GB="16"
+HEALTH_MIN_CPUS="4"
+HEALTH_SKIP_CHECKS="disk-smart,thermal"
+HEALTH_CHECK_URL="http://caprf.example.com/health"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.HealthChecksEnabled {
+		t.Error("HealthChecksEnabled should be true")
+	}
+	if cfg.HealthMinMemoryGB != 16 {
+		t.Errorf("HealthMinMemoryGB = %d, want 16", cfg.HealthMinMemoryGB)
+	}
+	if cfg.HealthMinCPUs != 4 {
+		t.Errorf("HealthMinCPUs = %d, want 4", cfg.HealthMinCPUs)
+	}
+	if cfg.HealthSkipChecks != "disk-smart,thermal" {
+		t.Errorf("HealthSkipChecks = %q", cfg.HealthSkipChecks)
+	}
+	if cfg.HealthCheckURL != "http://caprf.example.com/health" {
+		t.Errorf("HealthCheckURL = %q", cfg.HealthCheckURL)
+	}
+}
+
+func TestParseVarsHealthChecksDisabled(t *testing.T) {
+	input := `HEALTH_CHECKS_ENABLED="false"`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.HealthChecksEnabled {
+		t.Error("HealthChecksEnabled should be false")
+	}
+}
+
+func TestClientReportHealthChecks(t *testing.T) {
+	var receivedBody string
+	var receivedContentType string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedContentType = r.Header.Get("Content-Type")
+		buf := new(strings.Builder)
+		_, _ = fmt.Fprintf(buf, "%s", r.Body)
+		body, _ := os.ReadFile("/dev/stdin")
+		_ = body
+		b := make([]byte, 4096)
+		n, _ := r.Body.Read(b)
+		receivedBody = string(b[:n])
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewFromConfig(&config.MachineConfig{HealthCheckURL: srv.URL})
+	results := []health.CheckResult{
+		{Name: "disk-presence", Status: "pass", Severity: "critical", Message: "ok"},
+	}
+	err := client.ReportHealthChecks(context.Background(), results)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if receivedContentType != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", receivedContentType)
+	}
+
+	if !strings.Contains(receivedBody, "disk-presence") {
+		t.Errorf("body does not contain expected check name: %s", receivedBody)
+	}
+}
+
+func TestClientReportHealthChecksNoURL(t *testing.T) {
+	client := NewFromConfig(&config.MachineConfig{})
+	err := client.ReportHealthChecks(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
 	}
 }

@@ -85,6 +85,13 @@ type MachineConfig struct {
 	InventoryEnabled bool   // INVENTORY_ENABLED: collect and report hardware inventory
 	InventoryURL     string // INVENTORY_URL: POST endpoint for inventory JSON
 
+	// Health check configuration.
+	HealthChecksEnabled bool   // HEALTH_CHECKS_ENABLED: run pre-provision health checks
+	HealthMinMemoryGB   int    // HEALTH_MIN_MEMORY_GB: minimum RAM in GB
+	HealthMinCPUs       int    // HEALTH_MIN_CPUS: minimum CPU count
+	HealthSkipChecks    string // HEALTH_SKIP_CHECKS: comma-separated check names to skip
+	HealthCheckURL      string // HEALTH_CHECK_URL: POST endpoint for health results
+
 	// Files and commands from ISO /deploy/ directories.
 	ProvisionerFiles []string // Paths to files in /deploy/file-system/
 	MachineFiles     []string // Paths to files in /deploy/machine-files/

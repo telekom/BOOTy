@@ -14,6 +14,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/firmware"
+	"github.com/telekom/BOOTy/pkg/health"
 	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/inventory"
 )
@@ -56,6 +57,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		{"report-init", o.reportInit},
 		{"collect-inventory", o.collectInventory},
 		{"collect-firmware", o.collectFirmware},
+		{"health-checks", o.runHealthChecks},
 		{"set-hostname", o.setHostname},
 		{"copy-provisioner-files", o.copyProvisionerFiles},
 		{"configure-dns", o.configureDNS},
@@ -344,6 +346,48 @@ func (o *Orchestrator) runPostProvisionCmds(ctx context.Context) error {
 func (o *Orchestrator) teardownChroot(_ context.Context) error {
 	o.disk.TeardownChrootBindMounts(newroot)
 	return o.disk.Unmount(newroot)
+}
+
+func (o *Orchestrator) runHealthChecks(ctx context.Context) error {
+	if !o.cfg.HealthChecksEnabled {
+		o.log.Info("Health checks disabled, skipping")
+		return nil
+	}
+
+	checks := []health.Check{
+		&health.DiskPresenceCheck{},
+		&health.DiskSMARTCheck{},
+		&health.MemoryECCCheck{},
+		&health.MinimumMemoryCheck{MinGB: o.cfg.HealthMinMemoryGB},
+		&health.MinimumCPUCheck{MinCPUs: o.cfg.HealthMinCPUs},
+		&health.NICLinkStateCheck{},
+		&health.ThermalStateCheck{},
+	}
+
+	results, critical := health.RunAll(ctx, checks, o.cfg.HealthSkipChecks)
+
+	for _, r := range results {
+		o.log.Info("Health check result",
+			"check", r.Name,
+			"status", r.Status,
+			"severity", r.Severity,
+			"message", r.Message,
+		)
+	}
+
+	// Best-effort report to server.
+	if reporter, ok := o.provider.(interface {
+		ReportHealthChecks(context.Context, []health.CheckResult) error
+	}); ok {
+		if err := reporter.ReportHealthChecks(ctx, results); err != nil {
+			o.log.Warn("Failed to report health checks", "error", err)
+		}
+	}
+
+	if critical {
+		return fmt.Errorf("critical health check(s) failed")
+	}
+	return nil
 }
 
 func (o *Orchestrator) reportSuccess(ctx context.Context) error {
