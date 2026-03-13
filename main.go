@@ -19,6 +19,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/kexec"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/frr"
+	"github.com/telekom/BOOTy/pkg/network/vlan"
 	"github.com/telekom/BOOTy/pkg/plunderclient"
 	"github.com/telekom/BOOTy/pkg/plunderclient/types"
 	"github.com/telekom/BOOTy/pkg/provision"
@@ -233,7 +234,38 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		BFDReceiveMS:     cfg.BFDReceiveMS,
 	}
 
-	// Set up bonding first if configured (bond becomes the interface for other modes).
+	// Parse VLAN configuration.
+	if cfg.VLANs != "" {
+		vlans, err := network.ParseVLANs(cfg.VLANs)
+		if err != nil {
+			slog.Error("Invalid VLAN configuration", "error", err)
+		} else {
+			netCfg.VLANs = vlans
+		}
+	}
+
+	// Set up VLANs first — they create sub-interfaces that other modes use.
+	if netCfg.IsVLANMode() {
+		slog.Info("Setting up VLAN interfaces", "count", len(netCfg.VLANs))
+		for _, v := range netCfg.VLANs {
+			name, err := vlan.Setup(vlan.Config{
+				ID:      v.ID,
+				Parent:  v.Parent,
+				Address: v.Address,
+				Gateway: v.Gateway,
+			})
+			if err != nil {
+				slog.Error("VLAN setup failed", "vlan", v.ID, "parent", v.Parent, "error", err)
+				continue
+			}
+			// If static interface is not set, use the first VLAN interface.
+			if netCfg.StaticIface == "" {
+				netCfg.StaticIface = name
+			}
+		}
+	}
+
+	// Set up bonding if configured (bond becomes the interface for other modes).
 	if netCfg.IsBondMode() {
 		slog.Info("Setting up LACP bond")
 		bond := &network.BondMode{}

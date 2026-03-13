@@ -1,6 +1,6 @@
 # Proposal: VLAN Support
 
-## Status: Proposal
+## Status: Implemented (PR #20)
 
 ## Priority: P1
 
@@ -10,6 +10,37 @@ Add VLAN tagging support to BOOTy's network stack, enabling provisioning
 traffic to traverse tagged VLANs. This is essential for data-center
 deployments where provisioning, management, and production traffic are
 isolated on separate VLANs via 802.1Q tagging.
+
+## Implementation Details
+
+VLAN support is fully implemented. Key decisions and deviations from the
+original proposal:
+
+- **Package**: `pkg/network/vlan/` with `Setup()` and `Teardown()`.
+- **Config parsing**: `VLANConfig` parsed from `/deploy/vars` env vars
+  (`VLAN_ID`, `VLAN_PARENT`, `VLAN_IP`, `VLAN_GATEWAY`, and multi-VLAN
+  `VLANS` format) in `pkg/network/config.go`.
+- **Integration**: VLAN setup runs before network mode selection in
+  `main.go`. The created VLAN interface name replaces the parent in
+  subsequent network operations.
+- **8021q module**: Added to `loadModules()` in `main.go`.
+- **CAPRF**: `InventoryURL` config plumbed through for completeness.
+- **MTU handling**: Not explicitly handled — relies on network defaults.
+  Jumbo frame support deferred to future work.
+- **Multi-VLAN**: Compact `VLANS` format supported for multiple VLANs.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `pkg/network/vlan/vlan.go` | VLAN interface creation and teardown |
+| `pkg/network/vlan/vlan_test.go` | Unit tests |
+| `pkg/network/config.go` | `VLANConfig` type and parsing |
+| `pkg/network/config_test.go` | Config parsing tests |
+| `main.go` | 8021q module loading, VLAN setup integration |
+| `pkg/caprf/client.go` | Minor config additions |
+| `pkg/caprf/client_test.go` | Tests |
+| `pkg/config/provider.go` | VLAN env var parsing |
 
 ## Motivation
 

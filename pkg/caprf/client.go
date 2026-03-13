@@ -259,6 +259,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"STATIC_IFACE":                &cfg.StaticIface,
 		"BOND_INTERFACES":             &cfg.BondInterfaces,
 		"BOND_MODE":                   &cfg.BondMode,
+		"VLANS":                       &cfg.VLANs,
 		"IMAGE_CHECKSUM":              &cfg.ImageChecksum,
 		"IMAGE_CHECKSUM_TYPE":         &cfg.ImageChecksumType,
 		"DISK_DEVICE":                 &cfg.DiskDevice,
