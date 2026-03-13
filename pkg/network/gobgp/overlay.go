@@ -16,9 +16,21 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
-// vxlanOverhead is the VXLAN encapsulation overhead in bytes:
-// 8 (outer UDP) + 8 (VXLAN header) + 20 (outer IPv4) + 14 (outer Ethernet).
-const vxlanOverhead = 50
+const (
+	// vxlanOverhead is the VXLAN encapsulation overhead in bytes:
+	// 8 (outer UDP) + 8 (VXLAN header) + 20 (outer IPv4) + 14 (outer Ethernet).
+	vxlanOverhead = 50
+
+	// vxlanPort is the IANA-assigned VXLAN UDP port.
+	vxlanPort = 4789
+
+	// defaultMTU is the fallback inner MTU when cfg.MTU is too low.
+	defaultMTU = 1500
+
+	// asnMax2Byte is the maximum 2-byte ASN value, used to select
+	// between 2-octet and 4-octet BGP community / RD formats.
+	asnMax2Byte = 65535
+)
 
 // OverlayTier manages EVPN Type-5 routes and VXLAN encapsulation.
 type OverlayTier struct {
@@ -101,7 +113,7 @@ func (o *OverlayTier) Teardown(_ context.Context) error {
 		}
 	}
 
-	vxlanName := fmt.Sprintf("vx%d", o.cfg.ProvisionVNI)
+	vxlanName := o.vxlanName()
 
 	type owned struct {
 		name    string
@@ -157,8 +169,13 @@ func (o *OverlayTier) CreateVRF() error {
 	return nil
 }
 
+// vxlanName returns the VXLAN interface name derived from the provision VNI.
+func (o *OverlayTier) vxlanName() string {
+	return fmt.Sprintf("vx%d", o.cfg.ProvisionVNI)
+}
+
 func (o *OverlayTier) createVXLANAndBridge() error {
-	vxlanName := fmt.Sprintf("vx%d", o.cfg.ProvisionVNI)
+	vxlanName := o.vxlanName()
 
 	vxLink, err := o.createVXLAN(vxlanName)
 	if err != nil {
@@ -202,7 +219,7 @@ func (o *OverlayTier) createVXLANAndBridge() error {
 func (o *OverlayTier) createVXLAN(name string) (netlink.Link, error) {
 	vxlanMTU := o.cfg.MTU - vxlanOverhead
 	if vxlanMTU <= 0 {
-		vxlanMTU = 1500
+		vxlanMTU = defaultMTU
 	}
 
 	srcAddr := net.ParseIP(o.cfg.RouterID)
@@ -210,7 +227,7 @@ func (o *OverlayTier) createVXLAN(name string) (netlink.Link, error) {
 		LinkAttrs:    netlink.LinkAttrs{Name: name},
 		VxlanId:      o.cfg.ProvisionVNI,
 		SrcAddr:      srcAddr,
-		Port:         4789,
+		Port:         vxlanPort,
 		Learning:     false,
 		VtepDevIndex: 0,
 	}
@@ -372,7 +389,7 @@ func (o *OverlayTier) watchRoutes(ctx context.Context) {
 func buildRouteDistinguisher(asn, vni uint32) (*anypb.Any, error) {
 	var a *anypb.Any
 	var err error
-	if asn <= 65535 {
+	if asn <= asnMax2Byte {
 		a, err = anypb.New(&apipb.RouteDistinguisherTwoOctetASN{
 			Admin:    asn,
 			Assigned: vni,
@@ -448,7 +465,7 @@ func buildType5PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32) ([]*a
 func buildRouteTarget(asn, vni uint32) (*anypb.Any, error) {
 	var a *anypb.Any
 	var err error
-	if asn <= 65535 {
+	if asn <= asnMax2Byte {
 		a, err = anypb.New(&apipb.TwoOctetAsSpecificExtended{
 			IsTransitive: true,
 			SubType:      0x02, // Route Target

@@ -57,7 +57,8 @@ BOOTy operates in two modes depending on the boot environment:
 ## Features
 
 - **Dual-mode provisioning** — CAPRF (Kubernetes) and legacy (standalone) modes
-- **FRR/EVPN networking** — BGP underlay with VXLAN overlay for data center fabrics
+- **FRR/EVPN networking** — BGP underlay with VXLAN overlay for data center fabrics (FRR-based)
+- **GoBGP/EVPN networking** — Pure-Go BGP stack with VXLAN overlay (no external daemons)
 - **Static IP networking** — Direct IP assignment via netlink (no external tools)
 - **LACP bond** — 802.3ad link aggregation with configurable bond modes
 - **DHCP fallback** — Automatic DHCP on all physical interfaces with connectivity check
@@ -76,7 +77,7 @@ BOOTy operates in two modes depending on the boot environment:
 - **Hard/soft deprovisioning** — Full disk wipe or GRUB rename for reprovisioning
 - **Standby mode** — Hot standby with heartbeats and command polling for sub-second provisioning
 - **Multi-architecture** — Builds for `linux/amd64` and `linux/arm64`
-- **Multiple build flavors** — Full (FRR+tools), slim (DHCP-only), micro (pure Go), ISO (bootable)
+- **Multiple build flavors** — Full (FRR+tools), GoBGP (pure Go BGP), slim (DHCP-only), micro (pure Go), ISO (bootable)
 
 ## Prerequisites
 
@@ -109,7 +110,9 @@ The `initrd.Dockerfile` supports multiple build targets via `--target`:
 | Target | Size | Networking | Disk Tools | Use Case |
 |--------|------|-----------|------------|----------|
 | *(default)* | ~80 MB | FRR/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production bare-metal provisioning |
+| `gobgp` | ~45 MB | GoBGP/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production without FRR dependency |
 | `iso` | ~100 MB | FRR/EVPN + DHCP | Full | Bootable ISO for Redfish virtual media |
+| `gobgp-iso` | ~65 MB | GoBGP/EVPN + DHCP | Full | Bootable GoBGP ISO for Redfish virtual media |
 | `slim` | ~15 MB | DHCP only | Minimal (e2fsck, resize2fs) | Lightweight provisioning without BGP |
 | `micro` | ~10 MB | None (pure Go) | None | Minimal agent, custom network stack |
 
@@ -273,12 +276,34 @@ BOOTy supports multiple network modes with automatic fallback:
 | Priority | Mode | Trigger | Description |
 |----------|------|---------|-------------|
 | 1 | **Bond** | `BOND_INTERFACES` set | Creates bond0 (LACP/802.3ad) from listed interfaces |
-| 2 | **FRR/EVPN** | `underlay_subnet`+`asn_server` set | BGP underlay with VXLAN overlay |
-| 3 | **Static** | `STATIC_IP` set | Assigns IP via netlink, adds default route |
-| 4 | **DHCP** | Default | Tries DHCP on all physical interfaces |
+| 2 | **GoBGP/EVPN** | `NETWORK_MODE=gobgp` | Pure-Go BGP+EVPN via GoBGP (see below) |
+| 3 | **FRR/EVPN** | `underlay_subnet`+`asn_server` set | BGP underlay with VXLAN overlay (FRR) |
+| 4 | **Static** | `STATIC_IP` set | Assigns IP via netlink, adds default route |
+| 5 | **DHCP** | Default | Tries DHCP on all physical interfaces |
 
 Bond mode creates the bond interface first, then the selected upper mode (FRR/Static/DHCP)
 runs on top of it. Each mode falls back to DHCP on failure.
+
+### GoBGP Mode
+
+Set `NETWORK_MODE=gobgp` to use the pure-Go BGP stack instead of FRR. GoBGP mode
+uses a three-tier architecture:
+
+1. **Underlay** — eBGP peering with leaf switches for VXLAN reachability
+2. **Overlay** — EVPN Type-5 routes with VXLAN encapsulation
+3. **IPMI** — Optional L3 path to the BMC (planned)
+
+The `BGP_PEER_MODE` environment variable controls session establishment:
+
+| Mode | Description |
+|------|-------------|
+| `unnumbered` (default) | Link-local interface peers — IPv4 + L2VPN-EVPN over unnumbered sessions |
+| `dual` | Unnumbered underlay (IPv4) + numbered peers for L2VPN-EVPN (route reflectors or DCGWs) |
+| `numbered` | Explicit neighbor IPs only — requires DHCP or static underlay for initial connectivity |
+
+Additional environment variables for GoBGP mode:
+- `BGP_NEIGHBORS` — Comma-separated peer IPs (required for `dual` and `numbered` modes)
+- `BGP_REMOTE_ASN` — Remote ASN for numbered peers (0 or omitted = iBGP)
 
 ## Extending Bundled Binaries
 
