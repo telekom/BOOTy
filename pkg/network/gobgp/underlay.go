@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os/exec"
 	"syscall"
 	"time"
 
@@ -275,8 +276,17 @@ func (u *UnderlayTier) addNumberedPeers(ctx context.Context, families []*apipb.A
 }
 
 func (u *UnderlayTier) addInterfacePeer(ctx context.Context, iface string, families []*apipb.AfiSafi) error {
+	// GoBGP's AddPeer has a bug where ExtractNeighborAddress is called before
+	// SetDefaultNeighborConfigValues, so NeighborInterface is never resolved.
+	// Work around by resolving the link-local address ourselves.
+	addr, err := discoverLinkLocalPeer(iface)
+	if err != nil {
+		return fmt.Errorf("discover link-local peer on %s: %w", iface, err)
+	}
+
 	peer := &apipb.Peer{
 		Conf: &apipb.PeerConf{
+			NeighborAddress:   addr,
 			NeighborInterface: iface,
 			PeerAsn:           0, // External peer, ASN learned via open
 		},
@@ -291,7 +301,7 @@ func (u *UnderlayTier) addInterfacePeer(ctx context.Context, iface string, famil
 		return fmt.Errorf("add peer on %s: %w", iface, err)
 	}
 
-	u.log.Info("Added unnumbered BGP peer", "interface", iface)
+	u.log.Info("Added unnumbered BGP peer", "interface", iface, "address", addr)
 	return nil
 }
 
@@ -390,4 +400,86 @@ func (u *UnderlayTier) announceUnderlayRoute(ctx context.Context) error {
 
 	u.log.Info("Announced underlay route", "prefix", u.cfg.RouterID+"/32")
 	return nil
+}
+
+// discoverLinkLocalPeer finds the remote peer's link-local IPv6 address on the
+// given interface by polling the NDP neighbor table. An ICMPv6 ping to the
+// all-nodes multicast group is sent first to trigger neighbor discovery.
+func discoverLinkLocalPeer(iface string) (string, error) {
+	ifi, err := net.InterfaceByName(iface)
+	if err != nil {
+		return "", fmt.Errorf("interface %s: %w", iface, err)
+	}
+
+	// Trigger NDP by pinging the all-nodes multicast address.
+	go triggerNDP(iface) //nolint:errcheck // best-effort NDP solicitation
+
+	for range 20 {
+		addr, found := findLinkLocalNeighbor(ifi, iface)
+		if found {
+			return addr, nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	return "", fmt.Errorf("no IPv6 link-local neighbor found on %s after 10s", iface)
+}
+
+// triggerNDP sends an ICMPv6 echo to ff02::1 (all-nodes) on the interface to
+// populate the NDP neighbor table.
+func triggerNDP(iface string) {
+	// Try raw socket first (requires CAP_NET_RAW).
+	lc := net.ListenConfig{}
+	conn, err := lc.ListenPacket(context.Background(), "ip6:ipv6-icmp", "::"+"%"+iface)
+	if err != nil {
+		// Fallback: use the ip command to trigger NDP via neighbor solicitation.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = exec.CommandContext(ctx, "ip", "-6", "neigh", "show", "dev", iface).Run() //nolint:gosec // constant args
+		return
+	}
+	defer conn.Close() //nolint:errcheck // best-effort NDP solicitation
+
+	dst := &net.UDPAddr{IP: net.ParseIP("ff02::1"), Zone: iface}
+	// ICMPv6 echo request: type=128, code=0, checksum=0 (kernel fills), id=0, seq=1
+	msg := []byte{128, 0, 0, 0, 0, 0, 0, 1}
+	_, _ = conn.WriteTo(msg, dst)
+}
+
+// findLinkLocalNeighbor looks for exactly one non-local link-local IPv6
+// neighbor on the given interface.
+func findLinkLocalNeighbor(ifi *net.Interface, iface string) (string, bool) {
+	neighs, err := netlink.NeighList(ifi.Index, netlink.FAMILY_V6)
+	if err != nil {
+		return "", false
+	}
+
+	for i := range neighs {
+		n := &neighs[i]
+		if n.State&netlink.NUD_FAILED != 0 {
+			continue
+		}
+		if !n.IP.IsLinkLocalUnicast() {
+			continue
+		}
+		if isOwnAddress(ifi, n.IP) {
+			continue
+		}
+		return fmt.Sprintf("%s%%%s", n.IP, iface), true
+	}
+	return "", false
+}
+
+// isOwnAddress checks if the given IP belongs to the interface.
+func isOwnAddress(ifi *net.Interface, ip net.IP) bool {
+	addrs, err := ifi.Addrs()
+	if err != nil {
+		return false
+	}
+	for _, a := range addrs {
+		if parsed, _, _ := net.ParseCIDR(a.String()); ip.Equal(parsed) {
+			return true
+		}
+	}
+	return false
 }
