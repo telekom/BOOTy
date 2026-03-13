@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
@@ -94,14 +95,19 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 
 	for i, step := range steps {
 		o.log.Info("Provisioning step", "step", step.Name, "index", i+1, "total", len(steps))
+		start := time.Now()
 		if err := step.Fn(ctx); err != nil {
-			msg := fmt.Sprintf("step %s failed: %v", step.Name, err)
-			o.log.Error("Provisioning step failed", "step", step.Name, "error", err)
+			duration := time.Since(start)
+			msg := fmt.Sprintf("step %s failed after %s: %v", step.Name, duration, err)
+			o.log.Error("Provisioning step failed", "step", step.Name, "error", err, "duration", duration)
 			DumpDebugState(step.Name)
 			dumpConfig(o.cfg)
 			_ = o.provider.ReportStatus(ctx, config.StatusError, msg)
 			return fmt.Errorf("provision step %s: %w", step.Name, err)
 		}
+		duration := time.Since(start)
+		o.log.Info("Provisioning step completed", "step", step.Name, "duration", duration)
+		_ = o.provider.ShipLog(ctx, fmt.Sprintf("step %d/%d %s completed in %s", i+1, len(steps), step.Name, duration))
 	}
 	return nil
 }
