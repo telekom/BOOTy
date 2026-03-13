@@ -442,13 +442,20 @@ func runRescue(ctx context.Context, cfg *config.MachineConfig, client config.Pro
 		}
 	}
 
-	// Start dropbear SSH server if available.
-	if _, err := exec.LookPath("dropbear"); err == nil {
+	// Start dropbear SSH server if available and pubkey is configured.
+	if cfg.RescueSSHPubKey == "" {
+		slog.Info("No SSH pubkey configured, skipping SSH server")
+	} else if _, err := exec.LookPath("dropbear"); err == nil {
 		sshCmd := exec.CommandContext(ctx, "dropbear", "-R", "-F", "-p", "22")
 		if err := sshCmd.Start(); err != nil {
 			slog.Warn("Failed to start SSH server", "error", err)
 		} else {
 			slog.Info("SSH server started on port 22")
+			go func() {
+				if err := sshCmd.Wait(); err != nil {
+					slog.Warn("SSH server exited", "error", err)
+				}
+			}()
 		}
 	} else {
 		slog.Warn("dropbear not found, SSH server unavailable")
@@ -465,7 +472,9 @@ func runRescue(ctx context.Context, cfg *config.MachineConfig, client config.Pro
 			case <-heartbeatCtx.Done():
 				return
 			case <-ticker.C:
-				_ = client.Heartbeat(heartbeatCtx)
+				if err := client.Heartbeat(heartbeatCtx); err != nil {
+					slog.Warn("Rescue heartbeat failed", "error", err)
+				}
 			}
 		}
 	}()
@@ -473,8 +482,10 @@ func runRescue(ctx context.Context, cfg *config.MachineConfig, client config.Pro
 	// Wait for timeout or context cancellation.
 	if cfg.RescueTimeout > 0 {
 		slog.Info("Rescue mode will auto-reboot", "timeout_seconds", cfg.RescueTimeout)
+		timer := time.NewTimer(time.Duration(cfg.RescueTimeout) * time.Second)
+		defer timer.Stop()
 		select {
-		case <-time.After(time.Duration(cfg.RescueTimeout) * time.Second):
+		case <-timer.C:
 			slog.Info("Rescue mode timeout reached, rebooting")
 		case <-ctx.Done():
 		}

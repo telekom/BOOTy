@@ -966,3 +966,19 @@ func TestClientReportHealthChecksNoURL(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestParseVarsRescueConfig(t *testing.T) {
+	input := `RESCUE_SSH_PUBKEY="ssh-ed25519 AAAA... user@host"
+RESCUE_TIMEOUT="300"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RescueSSHPubKey != "ssh-ed25519 AAAA... user@host" {
+		t.Errorf("RescueSSHPubKey = %q", cfg.RescueSSHPubKey)
+	}
+	if cfg.RescueTimeout != 300 {
+		t.Errorf("RescueTimeout = %d, want 300", cfg.RescueTimeout)
+	}
+}
