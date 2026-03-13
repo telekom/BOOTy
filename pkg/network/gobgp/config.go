@@ -48,6 +48,7 @@ type Config struct {
 	MTU               int              // Physical interface MTU (default: 9000)
 	KeepaliveInterval uint64           // BGP keepalive seconds (default: 3)
 	HoldTime          uint64           // BGP hold timer seconds (default: 9)
+	ConnectRetry      uint64           // BGP connect retry seconds (default: 5)
 	OverlayIP         string           // Overlay loopback IP (derived or same as RouterID)
 	BridgeMAC         string           // Derived MAC for provision bridge
 	IPMIMAC           string           // IPMI MAC for bridge MAC derivation
@@ -107,6 +108,9 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.HoldTime == 0 {
 		c.HoldTime = 9
+	}
+	if c.ConnectRetry == 0 {
+		c.ConnectRetry = 5
 	}
 	if c.BridgeName == "" {
 		c.BridgeName = "br.provision"

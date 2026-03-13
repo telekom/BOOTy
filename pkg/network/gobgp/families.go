@@ -8,6 +8,7 @@ import (
 func bgpTimers(cfg *Config) *apipb.Timers {
 	return &apipb.Timers{
 		Config: &apipb.TimersConfig{
+			ConnectRetry:      cfg.ConnectRetry,
 			KeepaliveInterval: cfg.KeepaliveInterval,
 			HoldTime:          cfg.HoldTime,
 		},
