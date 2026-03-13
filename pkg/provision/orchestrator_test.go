@@ -29,8 +29,8 @@ func TestProvisionStepCount(t *testing.T) {
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
-	// Access steps through a helper that returns the same slice as Provision().
-	steps := o.buildSteps()
+	// Use the shared provisionSteps() method from orchestrator.go.
+	steps := o.provisionSteps()
 	if len(steps) != 30 {
 		t.Fatalf("expected 30 provisioning steps, got %d", len(steps))
 	}
@@ -211,42 +211,5 @@ func TestFirmwareChanged(t *testing.T) {
 	o.firmwareChanged = true
 	if !o.FirmwareChanged() {
 		t.Error("expected firmware change after setting flag")
-	}
-}
-
-// buildSteps is a test helper that returns the provisioning steps.
-// This mirrors the step list in Provision() to enable step-count validation.
-func (o *Orchestrator) buildSteps() []Step {
-	return []Step{
-		{"report-init", o.reportInit},
-		{"collect-inventory", o.collectInventory},
-		{"collect-firmware", o.collectFirmware},
-		{"health-checks", o.runHealthChecks},
-		{"set-hostname", o.setHostname},
-		{"copy-provisioner-files", o.copyProvisionerFiles},
-		{"configure-dns", o.configureDNS},
-		{"stop-raid", o.stopRAID},
-		{"disable-lvm", o.disableLVM},
-		{"remove-efi-entries", o.removeEFIBootEntries},
-		{"setup-mellanox", o.setupMellanox},
-		{"wipe-disks", o.wipeOrSecureEraseDisks},
-		{"detect-disk", o.detectDisk},
-		{"stream-image", o.streamImage},
-		{"partprobe", o.partprobe},
-		{"parse-partitions", o.parsePartitions},
-		{"check-filesystem", o.checkFilesystem},
-		{"enable-lvm", o.enableLVM},
-		{"mount-root", o.mountRoot},
-		{"setup-chroot-binds", o.setupChrootBinds},
-		{"grow-partition", o.growPartition},
-		{"resize-filesystem", o.resizeFilesystem},
-		{"configure-kubelet", o.configureKubelet},
-		{"configure-grub", o.configureGRUB},
-		{"copy-machine-files", o.copyMachineFiles},
-		{"run-machine-commands", o.runMachineCommands},
-		{"run-post-provision-cmds", o.runPostProvisionCmds},
-		{"create-efi-boot-entry", o.createEFIBootEntry},
-		{"teardown-chroot", o.teardownChroot},
-		{"report-success", o.reportSuccess},
 	}
 }

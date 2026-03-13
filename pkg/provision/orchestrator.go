@@ -58,9 +58,9 @@ func NewOrchestrator(cfg *config.MachineConfig, provider config.Provider, diskMg
 	}
 }
 
-// Provision runs all provisioning steps sequentially.
-func (o *Orchestrator) Provision(ctx context.Context) error {
-	steps := []Step{
+// provisionSteps returns the ordered list of provisioning steps.
+func (o *Orchestrator) provisionSteps() []Step {
+	return []Step{
 		{"report-init", o.reportInit},
 		{"collect-inventory", o.collectInventory},
 		{"collect-firmware", o.collectFirmware},
@@ -92,6 +92,11 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		{"teardown-chroot", o.teardownChroot},
 		{"report-success", o.reportSuccess},
 	}
+}
+
+// Provision runs all provisioning steps sequentially.
+func (o *Orchestrator) Provision(ctx context.Context) error {
+	steps := o.provisionSteps()
 
 	for i, step := range steps {
 		o.log.Info("Provisioning step", "step", step.Name, "index", i+1, "total", len(steps))
@@ -475,13 +480,13 @@ func DumpDebugState(failedStep string) {
 	slog.Error("=== DEBUG DUMP END ===", "failedStep", failedStep)
 }
 
-// runDebugCmd executes a single debug command and logs its output.
 // debugCtx returns a context with a 10-second timeout for debug commands,
 // preventing them from blocking shutdown indefinitely.
 func debugCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 10*time.Second) //nolint:mnd // fixed debug timeout
 }
 
+// runDebugCmd executes a single debug command and logs its output.
 func runDebugCmd(label, cmd string) {
 	ctx, cancel := debugCtx()
 	defer cancel()

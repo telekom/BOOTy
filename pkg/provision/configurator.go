@@ -150,7 +150,7 @@ func copyTree(srcBase, destRoot string) error {
 
 		// Verify the resolved destination stays within destRoot.
 		absDest, err := filepath.Abs(destPath)
-		if err != nil || !strings.HasPrefix(absDest, cleanDest+string(filepath.Separator)) && absDest != cleanDest {
+		if err != nil || (!strings.HasPrefix(absDest, cleanDest+string(filepath.Separator)) && absDest != cleanDest) {
 			return fmt.Errorf("path traversal blocked: %s escapes %s", relPath, cleanDest)
 		}
 
