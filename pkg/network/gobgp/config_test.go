@@ -6,6 +6,140 @@ import (
 	"github.com/telekom/BOOTy/pkg/network"
 )
 
+func TestNewConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		netCfg  *network.Config
+		wantErr bool
+		check   func(t *testing.T, cfg *Config)
+	}{
+		{
+			name: "minimal_unnumbered",
+			netCfg: &network.Config{
+				UnderlayIP:   "10.0.0.1",
+				ASN:          65000,
+				ProvisionVNI: 4000,
+				BGPPeerMode:  network.PeerModeUnnumbered,
+			},
+			check: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				if cfg.RouterID != "10.0.0.1" {
+					t.Errorf("RouterID = %q, want 10.0.0.1", cfg.RouterID)
+				}
+				if cfg.ASN != 65000 {
+					t.Errorf("ASN = %d, want 65000", cfg.ASN)
+				}
+				if cfg.ProvisionVNI != 4000 {
+					t.Errorf("ProvisionVNI = %d, want 4000", cfg.ProvisionVNI)
+				}
+				if cfg.ListenPort != 179 {
+					t.Errorf("ListenPort = %d, want 179 (default)", cfg.ListenPort)
+				}
+				if cfg.MTU != 9000 {
+					t.Errorf("MTU = %d, want 9000 (default)", cfg.MTU)
+				}
+			},
+		},
+		{
+			name: "dual_with_neighbors",
+			netCfg: &network.Config{
+				UnderlayIP:   "10.0.0.5",
+				ASN:          65000,
+				ProvisionVNI: 4000,
+				BGPPeerMode:  network.PeerModeDual,
+				BGPNeighbors: "10.0.0.1,10.0.0.2",
+			},
+			check: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				if cfg.PeerMode != network.PeerModeDual {
+					t.Errorf("PeerMode = %q, want dual", cfg.PeerMode)
+				}
+				if len(cfg.NeighborAddrs) != 2 {
+					t.Errorf("NeighborAddrs = %d, want 2", len(cfg.NeighborAddrs))
+				}
+			},
+		},
+		{
+			name: "overlay_same_as_underlay",
+			netCfg: &network.Config{
+				UnderlayIP:   "192.168.1.10",
+				ASN:          65100,
+				ProvisionVNI: 100,
+				BGPPeerMode:  network.PeerModeUnnumbered,
+			},
+			check: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				if cfg.OverlayIP != "192.168.1.10" {
+					t.Errorf("OverlayIP = %q, want same as RouterID", cfg.OverlayIP)
+				}
+			},
+		},
+		{
+			name: "missing_underlay_ip",
+			netCfg: &network.Config{
+				ASN:          65000,
+				ProvisionVNI: 4000,
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing_asn",
+			netCfg: &network.Config{
+				UnderlayIP:   "10.0.0.1",
+				ProvisionVNI: 4000,
+			},
+			wantErr: true,
+		},
+		{
+			name: "numbered_without_neighbors",
+			netCfg: &network.Config{
+				UnderlayIP:   "10.0.0.1",
+				ASN:          65000,
+				ProvisionVNI: 4000,
+				BGPPeerMode:  network.PeerModeNumbered,
+			},
+			wantErr: true,
+		},
+		{
+			name: "custom_timers",
+			netCfg: &network.Config{
+				UnderlayIP:   "10.0.0.1",
+				ASN:          65000,
+				ProvisionVNI: 4000,
+				BGPPeerMode:  network.PeerModeUnnumbered,
+				BGPKeepalive: 10,
+				BGPHold:      30,
+			},
+			check: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				if cfg.KeepaliveInterval != 10 {
+					t.Errorf("KeepaliveInterval = %d, want 10", cfg.KeepaliveInterval)
+				}
+				if cfg.HoldTime != 30 {
+					t.Errorf("HoldTime = %d, want 30", cfg.HoldTime)
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := NewConfig(tt.netCfg)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tt.check != nil {
+				tt.check(t, cfg)
+			}
+		})
+	}
+}
+
 func TestApplyDefaults(t *testing.T) {
 	cfg := &Config{}
 	cfg.ApplyDefaults()

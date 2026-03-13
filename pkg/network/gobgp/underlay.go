@@ -20,6 +20,36 @@ import (
 	"github.com/telekom/BOOTy/pkg/network"
 )
 
+// Underlay network constants.
+const (
+	// nicRetryCount is the number of iterations when waiting for physical NICs.
+	nicRetryCount = 20
+
+	// nicRetryInterval is the delay between NIC detection attempts.
+	nicRetryInterval = 500 * time.Millisecond
+
+	// raInterval is the period between Router Advertisement bursts.
+	raInterval = 10 * time.Second
+
+	// raPacketSize is the RA packet capacity: 16-byte header + 8-byte SLLAO.
+	raPacketSize = 24
+
+	// icmpv6TypeRA is the ICMPv6 Router Advertisement message type (RFC 4861 §4.2).
+	icmpv6TypeRA = 134
+
+	// defaultHopLimit is the default IPv6 Cur Hop Limit advertised in RAs.
+	defaultHopLimit = 64
+
+	// raLifetimeHi and raLifetimeLo encode the router lifetime of 1800s
+	// in big-endian format (0x0708 = 1800).
+	raLifetimeHi = 0x07
+	raLifetimeLo = 0x08
+
+	// mandatedHopLimit is the hop limit mandated by RFC 4861 §6.1.2.
+	// FRR's zebra silently drops RAs with any other value.
+	mandatedHopLimit = 255
+)
+
 // UnderlayTier manages BGP peering for VXLAN reachability.
 // Depending on PeerMode it establishes unnumbered (link-local),
 // numbered (explicit IP), or a combination of both session types.
@@ -202,7 +232,7 @@ func (u *UnderlayTier) createUnderlayDummy() error {
 // found. In containerlab environments, veth links are created after the
 // container starts, so data-plane NICs may not be immediately visible.
 func (u *UnderlayTier) waitForNICs() ([]string, error) {
-	for range 20 { //nolint:mnd // 20 × 500ms = 10s max wait
+	for range nicRetryCount {
 		nics, err := network.DetectPhysicalNICs()
 		if err != nil {
 			return nil, err
@@ -210,7 +240,7 @@ func (u *UnderlayTier) waitForNICs() ([]string, error) {
 		if len(nics) > 1 {
 			return nics, nil
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(nicRetryInterval)
 	}
 	// Return whatever was found on the last scan (may be only 1 NIC).
 	return network.DetectPhysicalNICs()
@@ -478,11 +508,11 @@ func sendRouterAdvertisement(iface string) {
 	// Set Hop Limit to 255 as required by RFC 4861 §6.1.2.
 	// FRR's zebra silently drops RAs with any other hop limit.
 	pc := ipv6.NewPacketConn(conn)
-	if err := pc.SetMulticastHopLimit(255); err != nil {
+	if err := pc.SetMulticastHopLimit(mandatedHopLimit); err != nil {
 		slog.Warn("Failed to set multicast hop limit", "iface", iface, "error", err)
 		return
 	}
-	if err := pc.SetHopLimit(255); err != nil {
+	if err := pc.SetHopLimit(mandatedHopLimit); err != nil {
 		slog.Warn("Failed to set hop limit", "iface", iface, "error", err)
 		return
 	}
@@ -502,12 +532,12 @@ func sendRouterAdvertisement(iface string) {
 	//   Type:   1 (Source Link-Layer Address)
 	//   Length: 1 (in units of 8 octets = 8 bytes total)
 	//   Link-Layer Address: 6 bytes MAC
-	ra := make([]byte, 0, 24) //nolint:mnd // 16-byte RA header + 8-byte SLLAO
+	ra := make([]byte, 0, raPacketSize)
 	ra = append(ra,
-		134, 0, 0, 0, // type, code, checksum (kernel fills)
-		64,         // cur hop limit
-		0,          // flags
-		0x07, 0x08, // router lifetime = 1800s
+		icmpv6TypeRA, 0, 0, 0, // type, code, checksum (kernel fills)
+		defaultHopLimit,            // cur hop limit
+		0,                          // flags
+		raLifetimeHi, raLifetimeLo, // router lifetime = 1800s
 		0, 0, 0, 0, // reachable time
 		0, 0, 0, 0, // retrans timer
 		// Source Link-Layer Address option
@@ -529,7 +559,7 @@ func (u *UnderlayTier) sendPeriodicRA() {
 		sendRouterAdvertisement(nic)
 	}
 
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(raInterval)
 	defer ticker.Stop()
 
 	for {
