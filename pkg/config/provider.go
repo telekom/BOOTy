@@ -146,6 +146,9 @@ type MachineConfig struct {
 	CloudInitEnabled    bool   // CLOUDINIT_ENABLED: generate and inject cloud-init config
 	CloudInitDatasource string // CLOUDINIT_DATASOURCE: datasource type (defaults to "nocloud" if empty)
 
+	// NVMe namespace management.
+	NVMeNamespaces string // NVME_NAMESPACES: JSON config for namespace creation
+
 	// Files and commands from ISO /deploy/ directories.
 	ProvisionerFiles []string // Paths to files in /deploy/file-system/
 	MachineFiles     []string // Paths to files in /deploy/machine-files/
