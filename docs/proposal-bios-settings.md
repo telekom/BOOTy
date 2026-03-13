@@ -1,6 +1,6 @@
 # Proposal: BIOS Settings Management via Redfish
 
-## Status: Proposal
+## Status: Phase 1 Implemented (BIOS info in debug dump, CAPRF Redfish methods)
 
 ## Priority: P2
 

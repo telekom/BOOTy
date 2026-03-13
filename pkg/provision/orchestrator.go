@@ -425,6 +425,12 @@ func DumpDebugState(failedStep string) {
 		label string
 		cmd   string
 	}{
+		// System & BIOS information.
+		{"system vendor", "cat /sys/class/dmi/id/sys_vendor 2>/dev/null || echo 'unknown'"},
+		{"product name", "cat /sys/class/dmi/id/product_name 2>/dev/null || echo 'unknown'"},
+		{"bios version", "cat /sys/class/dmi/id/bios_version 2>/dev/null || echo 'unknown'"},
+		{"bios date", "cat /sys/class/dmi/id/bios_date 2>/dev/null || echo 'unknown'"},
+
 		// Block devices & disk subsystem.
 		{"block devices", "lsblk -a"},
 		{"mounts", "cat /proc/mounts"},
