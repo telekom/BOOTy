@@ -5,12 +5,19 @@
 //   - Tier 1 (Underlay): eBGP peering with leaf switches for VXLAN reachability
 //   - Tier 2 (Overlay): EVPN Type-5 routes with VXLAN encapsulation
 //   - Tier 3 (IPMI): Optional L3 path to the BMC (not yet implemented)
+//
+// Supported BGP session modes (PeerMode):
+//   - Unnumbered: link-local interface peers (IPv4 + L2VPN-EVPN)
+//   - Dual: unnumbered underlay (IPv4) + numbered peers (L2VPN-EVPN)
+//   - Numbered: explicit neighbor IPs only (IPv4 + L2VPN-EVPN), requires
+//     DHCP or static underlay for initial connectivity
 package gobgp
 
 import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/network"
@@ -29,21 +36,24 @@ type Tier interface {
 
 // Config holds GoBGP three-tier stack configuration.
 type Config struct {
-	ASN               uint32 // Local BGP autonomous system number
-	RouterID          string // BGP router ID (underlay IP)
-	ListenPort        int32  // BGP listen port (default: 179)
-	ProvisionVNI      int    // VXLAN VNI for provisioning network
-	ProvisionIP       string // IP/mask for provision bridge
-	DNSResolvers      string // Comma-separated DNS servers
-	BridgeName        string // Bridge device name (default: "br.provision")
-	VRFName           string // VRF name (default: empty, same as FRR)
-	VRFTableID        uint32 // Routing table ID for VRF (default: 1000)
-	MTU               int    // Physical interface MTU (default: 9000)
-	KeepaliveInterval uint64 // BGP keepalive seconds (default: 3)
-	HoldTime          uint64 // BGP hold timer seconds (default: 9)
-	OverlayIP         string // Overlay loopback IP (derived or same as RouterID)
-	BridgeMAC         string // Derived MAC for provision bridge
-	IPMIMAC           string // IPMI MAC for bridge MAC derivation
+	ASN               uint32           // Local BGP autonomous system number
+	RouterID          string           // BGP router ID (underlay IP)
+	ListenPort        int32            // BGP listen port (default: 179)
+	ProvisionVNI      int              // VXLAN VNI for provisioning network
+	ProvisionIP       string           // IP/mask for provision bridge
+	DNSResolvers      string           // Comma-separated DNS servers
+	BridgeName        string           // Bridge device name (default: "br.provision")
+	VRFName           string           // VRF name (default: empty, same as FRR)
+	VRFTableID        uint32           // Routing table ID for VRF (default: 1000)
+	MTU               int              // Physical interface MTU (default: 9000)
+	KeepaliveInterval uint64           // BGP keepalive seconds (default: 3)
+	HoldTime          uint64           // BGP hold timer seconds (default: 9)
+	OverlayIP         string           // Overlay loopback IP (derived or same as RouterID)
+	BridgeMAC         string           // Derived MAC for provision bridge
+	IPMIMAC           string           // IPMI MAC for bridge MAC derivation
+	PeerMode          network.PeerMode // BGP session establishment mode
+	NeighborAddrs     []string         // Explicit numbered peer IPs (dual/numbered modes)
+	RemoteASN         uint32           // Remote ASN for numbered peers (0 = same ASN → iBGP)
 }
 
 // NewConfig creates a GoBGP Config from network configuration.
@@ -72,6 +82,9 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		OverlayIP:         overlayIP,
 		BridgeMAC:         bridgeMAC,
 		IPMIMAC:           netCfg.IPMIMAC,
+		PeerMode:          netCfg.BGPPeerMode,
+		NeighborAddrs:     parseNeighborAddrs(netCfg.BGPNeighbors),
+		RemoteASN:         netCfg.BGPRemoteASN,
 	}
 
 	cfg.ApplyDefaults()
@@ -117,5 +130,40 @@ func (c *Config) Validate() error {
 	if net.ParseIP(c.RouterID) == nil || net.ParseIP(c.RouterID).To4() == nil {
 		return fmt.Errorf("router ID %q must be a valid IPv4 address", c.RouterID)
 	}
+	switch c.PeerMode {
+	case network.PeerModeDual, network.PeerModeNumbered:
+		if len(c.NeighborAddrs) == 0 {
+			return fmt.Errorf("BGP_NEIGHBORS required for %s peer mode", c.PeerMode)
+		}
+		for _, addr := range c.NeighborAddrs {
+			if net.ParseIP(addr) == nil {
+				return fmt.Errorf("invalid neighbor address %q", addr)
+			}
+		}
+	case network.PeerModeUnnumbered:
+		// No extra validation needed.
+	default:
+		return fmt.Errorf("unknown peer mode %q", c.PeerMode)
+	}
 	return nil
+}
+
+// parseNeighborAddrs splits a comma-separated list of IPs into a string slice.
+func parseNeighborAddrs(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var addrs []string
+	for _, a := range strings.Split(s, ",") {
+		a = strings.TrimSpace(a)
+		if a != "" {
+			addrs = append(addrs, a)
+		}
+	}
+	return addrs
+}
+
+// IsiBGP returns true when the numbered peers use the same ASN (iBGP).
+func (c *Config) IsiBGP() bool {
+	return c.RemoteASN == 0 || c.RemoteASN == c.ASN
 }

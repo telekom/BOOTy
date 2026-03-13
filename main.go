@@ -234,6 +234,9 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		BFDTransmitMS:    cfg.BFDTransmitMS,
 		BFDReceiveMS:     cfg.BFDReceiveMS,
 		NetworkMode:      cfg.NetworkMode,
+		BGPPeerMode:      network.ParsePeerMode(cfg.BGPPeerMode),
+		BGPNeighbors:     cfg.BGPNeighbors,
+		BGPRemoteASN:     cfg.BGPRemoteASN,
 	}
 
 	// Parse VLAN configuration.

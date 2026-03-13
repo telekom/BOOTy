@@ -59,6 +59,11 @@ type Config struct {
 	BFDTransmitMS uint32 // BFD transmit interval in ms (default: 300)
 	BFDReceiveMS  uint32 // BFD receive interval in ms (default: 300)
 
+	// BGP peering mode (GoBGP).
+	BGPPeerMode  PeerMode // Unnumbered (default), dual, or numbered
+	BGPNeighbors string   // Comma-separated numbered peer IPs
+	BGPRemoteASN uint32   // Remote ASN for numbered peers (0 = iBGP)
+
 	// Common fields.
 	BridgeName  string // Default: "br.provision"
 	VRFName     string // Default: "Vrf_underlay"
@@ -168,4 +173,37 @@ func ParseVLANs(spec string) ([]VLANConfig, error) {
 // IsGoBGPMode returns true if GoBGP mode is explicitly requested.
 func (c *Config) IsGoBGPMode() bool {
 	return c.NetworkMode == "gobgp"
+}
+
+// PeerMode controls how BGP neighbor sessions are established.
+type PeerMode string
+
+const (
+	// PeerModeUnnumbered uses link-local interface peers for both IPv4 unicast
+	// and L2VPN-EVPN address families.  This is the default for leaf-peered
+	// datacenter fabrics running BGP unnumbered.
+	PeerModeUnnumbered PeerMode = "unnumbered"
+
+	// PeerModeDual combines unnumbered interface peers (IPv4 unicast only) with
+	// numbered peers for L2VPN-EVPN.  Typical use case: fabric underlay via
+	// unnumbered, EVPN via iBGP to route reflectors.
+	PeerModeDual PeerMode = "dual"
+
+	// PeerModeNumbered uses explicit neighbor IPs for all BGP sessions.  The
+	// machine must already have underlay reachability (e.g. via DHCP or static
+	// IP).  All configured address families are negotiated over the numbered
+	// sessions.
+	PeerModeNumbered PeerMode = "numbered"
+)
+
+// ParsePeerMode converts a string to a PeerMode, defaulting to unnumbered.
+func ParsePeerMode(s string) PeerMode {
+	switch PeerMode(strings.ToLower(s)) {
+	case PeerModeDual:
+		return PeerModeDual
+	case PeerModeNumbered:
+		return PeerModeNumbered
+	default:
+		return PeerModeUnnumbered
+	}
 }

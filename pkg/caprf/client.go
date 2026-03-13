@@ -332,6 +332,8 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"BOND_MODE":                   &cfg.BondMode,
 		"VLANS":                       &cfg.VLANs,
 		"NETWORK_MODE":                &cfg.NetworkMode,
+		"BGP_PEER_MODE":               &cfg.BGPPeerMode,
+		"BGP_NEIGHBORS":               &cfg.BGPNeighbors,
 		"IMAGE_CHECKSUM":              &cfg.ImageChecksum,
 		"IMAGE_CHECKSUM_TYPE":         &cfg.ImageChecksumType,
 		"DISK_DEVICE":                 &cfg.DiskDevice,
@@ -361,6 +363,7 @@ func applyUint32Var(cfg *config.MachineConfig, key, value string) bool {
 		"bgp_hold":        &cfg.BGPHold,
 		"bfd_transmit_ms": &cfg.BFDTransmitMS,
 		"bfd_receive_ms":  &cfg.BFDReceiveMS,
+		"bgp_remote_asn":  &cfg.BGPRemoteASN,
 	}
 
 	if ptr, ok := uint32Fields[key]; ok {

@@ -92,6 +92,11 @@ type MachineConfig struct {
 	HealthSkipChecks    string // HEALTH_SKIP_CHECKS: comma-separated check names to skip
 	HealthCheckURL      string // HEALTH_CHECK_URL: POST endpoint for health results
 
+	// BGP peering mode and numbered peer configuration.
+	BGPPeerMode  string // BGP_PEER_MODE: "unnumbered" (default), "dual", "numbered"
+	BGPNeighbors string // BGP_NEIGHBORS: comma-separated numbered peer IPs
+	BGPRemoteASN uint32 // bgp_remote_asn: remote ASN for numbered peers (0 = iBGP)
+
 	// Network mode override.
 	NetworkMode string // NETWORK_MODE: "gobgp" to use in-process GoBGP instead of FRR
 

@@ -16,7 +16,9 @@ import (
 	"github.com/telekom/BOOTy/pkg/network"
 )
 
-// UnderlayTier manages eBGP peering with leaf switches.
+// UnderlayTier manages BGP peering for VXLAN reachability.
+// Depending on PeerMode it establishes unnumbered (link-local),
+// numbered (explicit IP), or a combination of both session types.
 type UnderlayTier struct {
 	bgp  *server.BgpServer
 	cfg  *Config
@@ -42,25 +44,28 @@ func (u *UnderlayTier) NICs() []string {
 	return u.nics
 }
 
-// Setup creates the underlay loopback, detects NICs, starts the BGP server,
-// and adds peers for each physical interface.
+// Setup creates the underlay loopback, detects NICs (when needed), starts the
+// BGP server, and adds peers according to the configured PeerMode.
 func (u *UnderlayTier) Setup(ctx context.Context) error {
 	if err := u.createUnderlayDummy(); err != nil {
 		return fmt.Errorf("create underlay dummy: %w", err)
 	}
 
-	nics, err := network.DetectPhysicalNICs()
-	if err != nil {
-		return fmt.Errorf("detect NICs: %w", err)
-	}
-	if len(nics) == 0 {
-		return fmt.Errorf("no physical NICs detected")
-	}
-	u.nics = nics
-	u.log.Info("Detected physical NICs", "nics", nics)
+	// Unnumbered and dual modes need physical NICs for interface-based peering.
+	if u.cfg.PeerMode != network.PeerModeNumbered {
+		nics, err := network.DetectPhysicalNICs()
+		if err != nil {
+			return fmt.Errorf("detect NICs: %w", err)
+		}
+		if len(nics) == 0 {
+			return fmt.Errorf("no physical NICs detected")
+		}
+		u.nics = nics
+		u.log.Info("Detected physical NICs", "nics", nics)
 
-	if err := u.configureNICs(); err != nil {
-		return fmt.Errorf("configure NICs: %w", err)
+		if err := u.configureNICs(); err != nil {
+			return fmt.Errorf("configure NICs: %w", err)
+		}
 	}
 
 	if err := enableForwarding(u.log); err != nil {
@@ -210,41 +215,45 @@ func (u *UnderlayTier) startBgpServer(ctx context.Context) error {
 }
 
 func (u *UnderlayTier) addPeers(ctx context.Context) error {
-	for _, nic := range u.nics {
-		if err := u.addInterfacePeer(ctx, nic); err != nil {
-			u.log.Warn("Failed to add peer for NIC", "nic", nic, "error", err)
+	switch u.cfg.PeerMode {
+	case network.PeerModeUnnumbered:
+		// All families over unnumbered interface peers.
+		for _, nic := range u.nics {
+			if err := u.addInterfacePeer(ctx, nic, allFamilies()); err != nil {
+				u.log.Warn("Failed to add unnumbered peer", "nic", nic, "error", err)
+			}
+		}
+	case network.PeerModeDual:
+		// IPv4 unicast over unnumbered peers (underlay reachability).
+		for _, nic := range u.nics {
+			if err := u.addInterfacePeer(ctx, nic, ipv4Families()); err != nil {
+				u.log.Warn("Failed to add unnumbered peer", "nic", nic, "error", err)
+			}
+		}
+		// L2VPN-EVPN (+ IPv4) over numbered peers to RR / DCGW.
+		for _, addr := range u.cfg.NeighborAddrs {
+			if err := u.addNumberedPeer(ctx, addr, allFamilies()); err != nil {
+				u.log.Warn("Failed to add numbered peer", "addr", addr, "error", err)
+			}
+		}
+	case network.PeerModeNumbered:
+		// All families over numbered peers. Machine already has underlay IP.
+		for _, addr := range u.cfg.NeighborAddrs {
+			if err := u.addNumberedPeer(ctx, addr, allFamilies()); err != nil {
+				u.log.Warn("Failed to add numbered peer", "addr", addr, "error", err)
+			}
 		}
 	}
 	return nil
 }
 
-func (u *UnderlayTier) addInterfacePeer(ctx context.Context, iface string) error {
-	timers := &apipb.Timers{
-		Config: &apipb.TimersConfig{
-			KeepaliveInterval: u.cfg.KeepaliveInterval,
-			HoldTime:          u.cfg.HoldTime,
-		},
-	}
-
-	families := []*apipb.AfiSafi{
-		{
-			Config: &apipb.AfiSafiConfig{
-				Family: &apipb.Family{Afi: apipb.Family_AFI_IP, Safi: apipb.Family_SAFI_UNICAST},
-			},
-		},
-		{
-			Config: &apipb.AfiSafiConfig{
-				Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
-			},
-		},
-	}
-
+func (u *UnderlayTier) addInterfacePeer(ctx context.Context, iface string, families []*apipb.AfiSafi) error {
 	peer := &apipb.Peer{
 		Conf: &apipb.PeerConf{
 			NeighborInterface: iface,
 			PeerAsn:           0, // External peer, ASN learned via open
 		},
-		Timers:   timers,
+		Timers:   bgpTimers(u.cfg),
 		AfiSafis: families,
 		Transport: &apipb.Transport{
 			MtuDiscovery: true,
@@ -255,7 +264,39 @@ func (u *UnderlayTier) addInterfacePeer(ctx context.Context, iface string) error
 		return fmt.Errorf("add peer on %s: %w", iface, err)
 	}
 
-	u.log.Info("Added BGP peer", "interface", iface)
+	u.log.Info("Added unnumbered BGP peer", "interface", iface)
+	return nil
+}
+
+func (u *UnderlayTier) addNumberedPeer(ctx context.Context, addr string, families []*apipb.AfiSafi) error {
+	remoteASN := u.cfg.RemoteASN
+	if remoteASN == 0 {
+		remoteASN = u.cfg.ASN // iBGP
+	}
+
+	peer := &apipb.Peer{
+		Conf: &apipb.PeerConf{
+			NeighborAddress: addr,
+			PeerAsn:         remoteASN,
+		},
+		Timers:   bgpTimers(u.cfg),
+		AfiSafis: families,
+		Transport: &apipb.Transport{
+			LocalAddress: u.cfg.RouterID,
+			MtuDiscovery: true,
+		},
+	}
+
+	sessionType := "iBGP"
+	if remoteASN != u.cfg.ASN {
+		sessionType = "eBGP"
+	}
+
+	if err := u.bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: peer}); err != nil {
+		return fmt.Errorf("add %s peer %s: %w", sessionType, addr, err)
+	}
+
+	u.log.Info("Added numbered BGP peer", "address", addr, "type", sessionType, "remoteASN", remoteASN)
 	return nil
 }
 
