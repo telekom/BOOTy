@@ -150,6 +150,11 @@ func runCAPRF(ctx context.Context) {
 		realm.Reboot()
 	}
 
+	// DRY_RUN=true overrides mode before logging.
+	if cfg.DryRun {
+		cfg.Mode = "dry-run"
+	}
+
 	// Wire remote log shipping.
 	if cfg.LogURL != "" {
 		remote := caprf.NewRemoteHandler(client, slog.Default().Handler(), slog.LevelInfo, 256)
@@ -182,11 +187,6 @@ func runCAPRF(ctx context.Context) {
 	// Run provisioning, deprovisioning, or standby based on mode.
 	diskMgr := disk.NewManager(nil)
 	orch := provision.NewOrchestrator(cfg, client, diskMgr)
-
-	// DRY_RUN=true overrides mode to dry-run.
-	if cfg.DryRun {
-		cfg.Mode = "dry-run"
-	}
 
 	switch cfg.Mode {
 	case "standby":
