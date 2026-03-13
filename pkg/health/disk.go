@@ -55,7 +55,6 @@ func (c *DiskSMARTCheck) Run(_ context.Context) CheckResult {
 		if _, err := os.Stat(deviceDir); err != nil {
 			continue // not a real device
 		}
-		checked++
 
 		// Check for SMART errors via ioerr_cnt if available.
 		errCnt := filepath.Join(deviceDir, "ioerr_cnt")
@@ -63,6 +62,7 @@ func (c *DiskSMARTCheck) Run(_ context.Context) CheckResult {
 		if err != nil {
 			continue // ioerr_cnt not available, skip
 		}
+		checked++
 		count := strings.TrimSpace(string(data))
 		if count != "0x0" && count != "0" {
 			warnings = append(warnings, fmt.Sprintf("%s: ioerr_cnt=%s", name, count))

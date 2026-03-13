@@ -176,8 +176,8 @@ func TestMemoryECCCheck(t *testing.T) {
 		c := &MemoryECCCheck{EdacPath: "/nonexistent/path"}
 		result := c.Run(context.Background())
 
-		if result.Status != StatusPass {
-			t.Errorf("expected pass (no EDAC), got %s", result.Status)
+		if result.Status != StatusSkip {
+			t.Errorf("expected skip (no EDAC), got %s", result.Status)
 		}
 	})
 
@@ -400,8 +400,8 @@ func TestThermalStateCheck(t *testing.T) {
 		c := &ThermalStateCheck{SysThermalPath: "/nonexistent"}
 		result := c.Run(context.Background())
 
-		if result.Status != StatusPass {
-			t.Errorf("expected pass (no thermal info), got %s", result.Status)
+		if result.Status != StatusSkip {
+			t.Errorf("expected skip (no thermal info), got %s", result.Status)
 		}
 	})
 }

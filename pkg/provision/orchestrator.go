@@ -385,7 +385,13 @@ func (o *Orchestrator) runHealthChecks(ctx context.Context) error {
 	}
 
 	if critical {
-		return fmt.Errorf("critical health check(s) failed")
+		var failed []string
+		for _, r := range results {
+			if r.Status == health.StatusFail && r.Severity == health.SeverityCritical {
+				failed = append(failed, r.Name)
+			}
+		}
+		return fmt.Errorf("critical health check(s) failed: %s", strings.Join(failed, ", "))
 	}
 	return nil
 }

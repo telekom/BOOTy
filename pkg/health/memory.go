@@ -32,10 +32,10 @@ func (c *MemoryECCCheck) edacPath() string {
 func (c *MemoryECCCheck) Run(_ context.Context) CheckResult {
 	entries, err := os.ReadDir(c.edacPath())
 	if err != nil {
-		// No EDAC support — not an error, just info.
+		// No EDAC support — not an error, just skip.
 		return CheckResult{
 			Name:     c.Name(),
-			Status:   StatusPass,
+			Status:   StatusSkip,
 			Severity: c.Severity(),
 			Message:  "EDAC not available, skipping ECC check",
 		}

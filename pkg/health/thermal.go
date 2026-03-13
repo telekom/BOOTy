@@ -43,7 +43,7 @@ func (c *ThermalStateCheck) Run(_ context.Context) CheckResult {
 	if err != nil {
 		return CheckResult{
 			Name:     c.Name(),
-			Status:   StatusPass,
+			Status:   StatusSkip,
 			Severity: c.Severity(),
 			Message:  "thermal zone info not available",
 		}
@@ -57,7 +57,6 @@ func (c *ThermalStateCheck) Run(_ context.Context) CheckResult {
 		if !strings.HasPrefix(e.Name(), "thermal_zone") {
 			continue
 		}
-		checked++
 
 		tempFile := filepath.Join(c.sysPath(), e.Name(), "temp")
 		data, err := os.ReadFile(tempFile)
@@ -69,6 +68,7 @@ func (c *ThermalStateCheck) Run(_ context.Context) CheckResult {
 		if err != nil {
 			continue
 		}
+		checked++
 
 		if temp > maxTemp {
 			hot = append(hot, fmt.Sprintf("%s: %d°C", e.Name(), temp/1000))
