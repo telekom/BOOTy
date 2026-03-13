@@ -151,7 +151,11 @@ func (o *Orchestrator) collectFirmware(ctx context.Context) error {
 		}
 		results := firmware.Validate(report, policy)
 		for _, r := range results {
-			o.log.Info("Firmware validation", "name", r.Name, "status", r.Status, "message", r.Message)
+			if r.Status == "fail" {
+				o.log.Warn("Firmware validation", "name", r.Name, "status", r.Status, "message", r.Message)
+			} else {
+				o.log.Info("Firmware validation", "name", r.Name, "status", r.Status, "message", r.Message)
+			}
 		}
 	}
 

@@ -810,8 +810,7 @@ func TestReportFirmware(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer test-token" {
 			t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
 		}
-		body := make([]byte, r.ContentLength)
-		_, _ = r.Body.Read(body)
+		body, _ := io.ReadAll(r.Body)
 		received = body
 		w.WriteHeader(http.StatusOK)
 	}))

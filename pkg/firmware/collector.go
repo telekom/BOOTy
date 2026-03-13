@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -176,13 +177,37 @@ func checkVersion(name, actual, minimum string) ValidationResult {
 	}
 }
 
-// compareVersions does a simple lexicographic comparison of version strings.
-// This handles most numeric version schemes (e.g., "2.72" vs "2.80") and
-// simple alphanumeric identifiers (e.g., "U46" vs "U50"). For complex
-// vendor-specific formats, CAPRF-side validation with proper parsing is
-// recommended.
+// compareVersions compares version strings segment by segment.
+// Segments are split on ".". Each segment is compared numerically if both
+// parse as integers; otherwise they are compared lexicographically.
 func compareVersions(a, b string) int {
-	return strings.Compare(a, b)
+	sa := strings.Split(a, ".")
+	sb := strings.Split(b, ".")
+	for i := 0; i < len(sa) || i < len(sb); i++ {
+		var va, vb string
+		if i < len(sa) {
+			va = sa[i]
+		}
+		if i < len(sb) {
+			vb = sb[i]
+		}
+		na, errA := strconv.Atoi(va)
+		nb, errB := strconv.Atoi(vb)
+		switch {
+		case errA == nil && errB == nil:
+			if na != nb {
+				if na < nb {
+					return -1
+				}
+				return 1
+			}
+		default:
+			if c := strings.Compare(va, vb); c != 0 {
+				return c
+			}
+		}
+	}
+	return 0
 }
 
 func readSysFile(path string) string {
