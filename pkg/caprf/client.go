@@ -399,6 +399,13 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) {
 		setIntField(&cfg.HealthMinMemoryGB, value)
 	case "HEALTH_MIN_CPUS":
 		setIntField(&cfg.HealthMinCPUs, value)
+	case "PARTITION_LAYOUT":
+		layout, err := config.ParsePartitionLayout(value)
+		if err != nil {
+			slog.Warn("Invalid partition layout, ignoring", "error", err)
+		} else {
+			cfg.PartitionLayout = layout
+		}
 	}
 }
 
