@@ -12,9 +12,9 @@ import (
 func enableForwarding(log *slog.Logger) error {
 	// Critical: forwarding must be enabled for routing to work.
 	critical := map[string]string{
-		"/proc/sys/net/ipv4/ip_forward":          "1",
-		"/proc/sys/net/ipv6/conf/all/forwarding":  "1",
-		"/proc/sys/net/ipv4/conf/all/rp_filter":   "0",
+		"/proc/sys/net/ipv4/ip_forward":             "1",
+		"/proc/sys/net/ipv6/conf/all/forwarding":    "1",
+		"/proc/sys/net/ipv4/conf/all/rp_filter":     "0",
 		"/proc/sys/net/ipv4/conf/default/rp_filter": "0",
 	}
 	for path, val := range critical {

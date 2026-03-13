@@ -214,36 +214,55 @@ func (u *UnderlayTier) startBgpServer(ctx context.Context) error {
 }
 
 func (u *UnderlayTier) addPeers(ctx context.Context) error {
+	var added int
+	var lastErr error
+
 	switch u.cfg.PeerMode {
 	case network.PeerModeUnnumbered:
-		// All families over unnumbered interface peers.
-		for _, nic := range u.nics {
-			if err := u.addInterfacePeer(ctx, nic, allFamilies()); err != nil {
-				u.log.Warn("Failed to add unnumbered peer", "nic", nic, "error", err)
-			}
-		}
+		added, lastErr = u.addInterfacePeers(ctx, allFamilies())
 	case network.PeerModeDual:
-		// IPv4 unicast over unnumbered peers (underlay reachability).
-		for _, nic := range u.nics {
-			if err := u.addInterfacePeer(ctx, nic, ipv4Families()); err != nil {
-				u.log.Warn("Failed to add unnumbered peer", "nic", nic, "error", err)
-			}
-		}
-		// L2VPN-EVPN (+ IPv4) over numbered peers to RR / DCGW.
-		for _, addr := range u.cfg.NeighborAddrs {
-			if err := u.addNumberedPeer(ctx, addr, allFamilies()); err != nil {
-				u.log.Warn("Failed to add numbered peer", "addr", addr, "error", err)
-			}
+		added, lastErr = u.addInterfacePeers(ctx, ipv4Families())
+		n, err := u.addNumberedPeers(ctx, allFamilies())
+		added += n
+		if err != nil {
+			lastErr = err
 		}
 	case network.PeerModeNumbered:
-		// All families over numbered peers. Machine already has underlay IP.
-		for _, addr := range u.cfg.NeighborAddrs {
-			if err := u.addNumberedPeer(ctx, addr, allFamilies()); err != nil {
-				u.log.Warn("Failed to add numbered peer", "addr", addr, "error", err)
-			}
-		}
+		added, lastErr = u.addNumberedPeers(ctx, allFamilies())
+	}
+
+	if added == 0 && lastErr != nil {
+		return fmt.Errorf("no BGP peers added: %w", lastErr)
 	}
 	return nil
+}
+
+func (u *UnderlayTier) addInterfacePeers(ctx context.Context, families []*apipb.AfiSafi) (int, error) {
+	var added int
+	var lastErr error
+	for _, nic := range u.nics {
+		if err := u.addInterfacePeer(ctx, nic, families); err != nil {
+			u.log.Warn("Failed to add unnumbered peer", "nic", nic, "error", err)
+			lastErr = err
+		} else {
+			added++
+		}
+	}
+	return added, lastErr
+}
+
+func (u *UnderlayTier) addNumberedPeers(ctx context.Context, families []*apipb.AfiSafi) (int, error) {
+	var added int
+	var lastErr error
+	for _, addr := range u.cfg.NeighborAddrs {
+		if err := u.addNumberedPeer(ctx, addr, families); err != nil {
+			u.log.Warn("Failed to add numbered peer", "addr", addr, "error", err)
+			lastErr = err
+		} else {
+			added++
+		}
+	}
+	return added, lastErr
 }
 
 func (u *UnderlayTier) addInterfacePeer(ctx context.Context, iface string, families []*apipb.AfiSafi) error {

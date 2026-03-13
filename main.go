@@ -333,6 +333,8 @@ func setupGoBGPStack(ctx context.Context, netCfg *network.Config) (*gobgp.Stack,
 	}
 	stack := gobgp.NewStack(bgpCfg)
 	if err := stack.Setup(ctx, netCfg); err != nil {
+		// Clean up partially created network state before returning.
+		_ = stack.Teardown(ctx)
 		return nil, fmt.Errorf("gobgp setup: %w", err)
 	}
 	return stack, nil
