@@ -68,3 +68,23 @@ func TestParseNVMeConfigNamespaceFields(t *testing.T) {
 		t.Errorf("blockSize = %d, want 4096", ns.BlockSize)
 	}
 }
+
+func TestNVMeControllerRegex(t *testing.T) {
+	tests := []struct {
+		name  string
+		match bool
+	}{
+		{"nvme0", true},
+		{"nvme1", true},
+		{"nvme10", true},
+		{"nvme0n1", false},
+		{"nvme0n1p1", false},
+		{"sda", false},
+		{"nvme", false},
+	}
+	for _, tc := range tests {
+		if got := nvmeControllerRE.MatchString(tc.name); got != tc.match {
+			t.Errorf("nvmeControllerRE.MatchString(%q) = %v, want %v", tc.name, got, tc.match)
+		}
+	}
+}
