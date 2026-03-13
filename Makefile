@@ -87,12 +87,14 @@ arm64:
 	@docker buildx build --platform linux/arm64 --load -t $(REPOSITORY):$(DOCKERTAG)-arm64 -f initrd.Dockerfile .
 
 arm64-slim:
-	@docker buildx build --platform linux/arm64 --target slim --output type=local,dest=. -f initrd.Dockerfile .
-	@echo ARM64 slim initramfs built: initramfs.cpio.gz
+	@mkdir -p dist/arm64
+	@docker buildx build --platform linux/arm64 --target slim --output type=local,dest=dist/arm64 -f initrd.Dockerfile .
+	@echo ARM64 slim initramfs built: dist/arm64/initramfs.cpio.gz
 
 arm64-gobgp:
-	@docker buildx build --platform linux/arm64 --target gobgp --output type=local,dest=. -f initrd.Dockerfile .
-	@echo ARM64 GoBGP initramfs built: initramfs.cpio.gz
+	@mkdir -p dist/arm64
+	@docker buildx build --platform linux/arm64 --target gobgp --output type=local,dest=dist/arm64 -f initrd.Dockerfile .
+	@echo ARM64 GoBGP initramfs built: dist/arm64/initramfs.cpio.gz
 
 test-iso:
 	@echo Verifying ISO hybrid boot record
@@ -105,6 +107,12 @@ getramdisk:
 	@ID=$$(docker create $(REPOSITORY)/$(TARGET):$(DOCKERTAG) null); \
 	docker cp $$ID:/initramfs.cpio.gz initramfs.cpio.gz ; docker rm $$ID
 	@echo Extracted ramdisk
+
+getramdisk-arm64:
+
+	@ID=$$(docker create $(REPOSITORY):$(DOCKERTAG)-arm64 null); \
+	docker cp $$ID:/initramfs.cpio.gz dist/arm64/initramfs.cpio.gz ; docker rm $$ID
+	@echo Extracted ARM64 ramdisk to dist/arm64/
 
 simplify:
 	@gofmt -s -l -w $(SRC)
