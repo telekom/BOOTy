@@ -712,3 +712,14 @@ func TestParseVarsDisableKexec(t *testing.T) {
 		t.Error("DisableKexec should be true")
 	}
 }
+
+func TestParseVarsVLANs(t *testing.T) {
+	input := `VLANS="200:eno1:10.200.0.42/24,300:eno2"`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.VLANs != "200:eno1:10.200.0.42/24,300:eno2" {
+		t.Errorf("VLANs = %q, want %q", cfg.VLANs, "200:eno1:10.200.0.42/24,300:eno2")
+	}
+}

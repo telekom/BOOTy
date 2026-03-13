@@ -72,6 +72,9 @@ type MachineConfig struct {
 	BondInterfaces string // BOND_INTERFACES: comma-separated NICs to bond (e.g. "eth0,eth1")
 	BondMode       string // BOND_MODE: bonding mode (default: "802.3ad")
 
+	// VLAN fields.
+	VLANs string // VLANS: multi-VLAN config "200:eno1:10.200.0.42/24,300:eno2"
+
 	// Files and commands from ISO /deploy/ directories.
 	ProvisionerFiles []string // Paths to files in /deploy/file-system/
 	MachineFiles     []string // Paths to files in /deploy/machine-files/

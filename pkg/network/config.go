@@ -3,6 +3,9 @@ package network
 
 import (
 	"context"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -60,6 +63,17 @@ type Config struct {
 	BridgeName string // Default: "br.provision"
 	VRFName    string // Default: "Vrf_underlay"
 	MTU        int    // Default: 9000
+
+	// VLAN configuration.
+	VLANs []VLANConfig // 802.1Q VLAN interfaces to create before network mode setup
+}
+
+// VLANConfig holds configuration for a single 802.1Q VLAN interface.
+type VLANConfig struct {
+	ID      int    // VLAN identifier (1-4094)
+	Parent  string // Physical parent interface (e.g. "eno1")
+	Address string // Static IP/CIDR (e.g. "10.200.0.42/24"); empty = DHCP
+	Gateway string // Default gateway IP (optional)
 }
 
 // ApplyDefaults fills in default values for unset fields.
@@ -93,4 +107,59 @@ func (c *Config) IsStaticMode() bool {
 // IsBondMode returns true if LACP bonding interfaces are configured.
 func (c *Config) IsBondMode() bool {
 	return c.BondInterfaces != ""
+}
+
+// IsVLANMode returns true if any VLAN interfaces are configured.
+func (c *Config) IsVLANMode() bool {
+	return len(c.VLANs) > 0
+}
+
+// ParseVLANs parses a comma-separated VLAN specification string into
+// a slice of VLANConfig. Each entry has the format:
+//
+//	ID:parent[:address[:gateway]]
+//
+// Examples:
+//
+//	"200:eno1:10.200.0.42/24"
+//	"200:eno1:10.200.0.42/24,300:eno2"
+//	"200:eno1:10.200.0.42/24:10.200.0.1"
+func ParseVLANs(spec string) ([]VLANConfig, error) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return nil, nil
+	}
+
+	var configs []VLANConfig
+	for _, entry := range strings.Split(spec, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		parts := strings.SplitN(entry, ":", 4)
+		if len(parts) < 2 {
+			return nil, fmt.Errorf("invalid VLAN entry %q: need at least ID:parent", entry)
+		}
+
+		id, err := strconv.Atoi(parts[0])
+		if err != nil {
+			return nil, fmt.Errorf("invalid VLAN ID %q: %w", parts[0], err)
+		}
+		if id < 1 || id > 4094 {
+			return nil, fmt.Errorf("VLAN ID %d out of range (1-4094)", id)
+		}
+
+		cfg := VLANConfig{
+			ID:     id,
+			Parent: parts[1],
+		}
+		if len(parts) >= 3 {
+			cfg.Address = parts[2]
+		}
+		if len(parts) >= 4 {
+			cfg.Gateway = parts[3]
+		}
+		configs = append(configs, cfg)
+	}
+	return configs, nil
 }

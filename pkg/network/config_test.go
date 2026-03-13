@@ -99,3 +99,84 @@ func TestIsBondMode(t *testing.T) {
 		})
 	}
 }
+
+func TestIsVLANMode(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+		want bool
+	}{
+		{"empty", Config{}, false},
+		{"with_vlans", Config{VLANs: []VLANConfig{{ID: 100, Parent: "eth0"}}}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.IsVLANMode(); got != tt.want {
+				t.Errorf("IsVLANMode() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseVLANs(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    []VLANConfig
+		wantErr bool
+	}{
+		{"empty", "", nil, false},
+		{"whitespace", "  ", nil, false},
+		{
+			"single_minimal",
+			"200:eno1",
+			[]VLANConfig{{ID: 200, Parent: "eno1"}},
+			false,
+		},
+		{
+			"single_with_address",
+			"200:eno1:10.200.0.42/24",
+			[]VLANConfig{{ID: 200, Parent: "eno1", Address: "10.200.0.42/24"}},
+			false,
+		},
+		{
+			"single_with_gateway",
+			"200:eno1:10.200.0.42/24:10.200.0.1",
+			[]VLANConfig{{ID: 200, Parent: "eno1", Address: "10.200.0.42/24", Gateway: "10.200.0.1"}},
+			false,
+		},
+		{
+			"multi_vlan",
+			"200:eno1:10.200.0.42/24,300:eno2",
+			[]VLANConfig{
+				{ID: 200, Parent: "eno1", Address: "10.200.0.42/24"},
+				{ID: 300, Parent: "eno2"},
+			},
+			false,
+		},
+		{"invalid_no_parent", "200", nil, true},
+		{"invalid_id_zero", "0:eth0", nil, true},
+		{"invalid_id_high", "4095:eth0", nil, true},
+		{"invalid_id_text", "abc:eth0", nil, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseVLANs(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseVLANs() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr {
+				if len(got) != len(tt.want) {
+					t.Errorf("ParseVLANs() returned %d configs, want %d", len(got), len(tt.want))
+					return
+				}
+				for i := range got {
+					if got[i] != tt.want[i] {
+						t.Errorf("ParseVLANs()[%d] = %+v, want %+v", i, got[i], tt.want[i])
+					}
+				}
+			}
+		})
+	}
+}
