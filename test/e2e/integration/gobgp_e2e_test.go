@@ -234,18 +234,18 @@ func TestGoBGPDualNumberedEstablished(t *testing.T) {
 	requireGoBGPLab(t)
 	t.Cleanup(func() { dumpDebugState(t) })
 
-	// booty-dual also peers with rr01 via iBGP numbered for L2VPN-EVPN.
+	// booty-dual also peers with rr01 via eBGP numbered for L2VPN-EVPN.
 	// Check rr01's perspective: neighbor 10.0.3.2 should be ESTABLISHED.
 	deadline := time.Now().Add(bgpConvergeTimeout)
 	for {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabRR,
 			"vtysh", "-c", "show bgp neighbors 10.0.3.2 json")
 		if strings.Contains(out, "Established") {
-			t.Log("Dual mode: numbered iBGP peer ESTABLISHED on rr01")
+			t.Log("Dual mode: numbered eBGP peer ESTABLISHED on rr01")
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("iBGP peer 10.0.3.2 not ESTABLISHED on rr01:\n%s", out)
+			t.Fatalf("eBGP peer 10.0.3.2 not ESTABLISHED on rr01:\n%s", out)
 		}
 		time.Sleep(bgpConvergeInterval)
 	}
