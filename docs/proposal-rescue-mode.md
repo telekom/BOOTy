@@ -1,6 +1,6 @@
 # Proposal: Rescue Mode
 
-## Status: Proposal
+## Status: Implemented
 
 ## Priority: P2
 

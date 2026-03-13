@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -187,6 +188,10 @@ func runCAPRF(ctx context.Context) {
 	case "standby":
 		runStandby(ctx, client, cfg, netMode, diskMgr)
 		return // standby handles its own lifecycle
+	case "rescue":
+		runRescue(ctx, cfg, client)
+		realm.Reboot()
+		return
 	case "deprovision", "soft-deprovision":
 		if cfg.Mode == "soft-deprovision" {
 			cfg.Mode = "soft"
@@ -420,6 +425,64 @@ func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) {
 	if err := kexec.Execute(); err != nil {
 		slog.Warn("kexec execute failed, falling back to reboot", "error", err)
 	}
+}
+
+// runRescue drops the machine into rescue mode with optional SSH server.
+// It reports "rescue" status to the controller and waits for timeout or shutdown.
+func runRescue(ctx context.Context, cfg *config.MachineConfig, client config.Provider) {
+	slog.Info("Entering rescue mode")
+	_ = client.ReportStatus(ctx, config.StatusInit, "rescue-mode-active")
+
+	// Write authorized keys if provided.
+	if cfg.RescueSSHPubKey != "" {
+		if err := os.MkdirAll("/root/.ssh", 0700); err != nil {
+			slog.Error("Failed to create .ssh directory", "error", err)
+		} else if err := os.WriteFile("/root/.ssh/authorized_keys", []byte(cfg.RescueSSHPubKey+"\n"), 0600); err != nil {
+			slog.Error("Failed to write authorized_keys", "error", err)
+		}
+	}
+
+	// Start dropbear SSH server if available.
+	if _, err := exec.LookPath("dropbear"); err == nil {
+		sshCmd := exec.Command("dropbear", "-R", "-F", "-p", "22")
+		if err := sshCmd.Start(); err != nil {
+			slog.Warn("Failed to start SSH server", "error", err)
+		} else {
+			slog.Info("SSH server started on port 22")
+		}
+	} else {
+		slog.Warn("dropbear not found, SSH server unavailable")
+	}
+
+	// Send periodic heartbeats.
+	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
+	defer cancelHeartbeat()
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-ticker.C:
+				_ = client.Heartbeat(heartbeatCtx)
+			}
+		}
+	}()
+
+	// Wait for timeout or context cancellation.
+	if cfg.RescueTimeout > 0 {
+		slog.Info("Rescue mode will auto-reboot", "timeout_seconds", cfg.RescueTimeout)
+		select {
+		case <-time.After(time.Duration(cfg.RescueTimeout) * time.Second):
+			slog.Info("Rescue mode timeout reached, rebooting")
+		case <-ctx.Done():
+		}
+	} else {
+		slog.Info("Rescue mode active, waiting for manual reboot or shutdown")
+		<-ctx.Done()
+	}
+	_ = client.ReportStatus(ctx, config.StatusSuccess, "rescue-mode-exiting")
 }
 
 // runStandby keeps the machine in a hot standby loop. It sends periodic
