@@ -25,7 +25,8 @@ deviations from the original proposal:
 - **BGP session modes**: Unnumbered (IPv6 link-local eBGP), Dual
   (unnumbered underlay + numbered EVPN to route reflectors), Numbered
   (traditional IP-based peering). All three fully implemented.
-- **4-octet ASN**: Validated in config (`<=4294967295`).
+- **4-octet ASN**: Inherently guaranteed by `uint32` type; RD/RT
+  truncation is validated when both ASN and VNI exceed 16-bit range.
 - **VRF ordering**: VRF setup runs before VXLAN to ensure the table ID
   is available when VXLAN routes are installed.
 - **IP forwarding**: `enableForwarding()` writes sysctl parameters for

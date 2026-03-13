@@ -4,11 +4,10 @@ package gobgp
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
-	"syscall"
+	"os"
 	"time"
 
 	apipb "github.com/osrg/gobgp/v3/api"
@@ -29,9 +28,10 @@ type OverlayTier struct {
 	cancel context.CancelFunc
 
 	// Track resources created by us for clean teardown.
-	createdVRF    bool
-	createdBridge bool
-	createdVXLAN  bool
+	createdVRF      bool
+	createdBridge   bool
+	createdVXLAN    bool
+	addedLoopbackIP *netlink.Addr
 }
 
 // NewOverlayTier creates a new overlay tier.
@@ -79,12 +79,24 @@ func (o *OverlayTier) Ready(_ context.Context, _ time.Duration) error {
 	return nil
 }
 
-// Teardown removes the overlay network resources we created (bridge, vxlan).
+// Teardown removes the overlay network resources we created (bridge, vxlan)
+// and removes the overlay loopback IP from lo.
 // VRF is cleaned up separately by Stack.Teardown after underlay detaches.
 func (o *OverlayTier) Teardown(_ context.Context) error {
 	if o.cancel != nil {
 		o.cancel()
 	}
+
+	// Remove overlay loopback IP from lo.
+	if o.addedLoopbackIP != nil {
+		lo, err := netlink.LinkByName("lo")
+		if err == nil {
+			if err := netlink.AddrDel(lo, o.addedLoopbackIP); err != nil {
+				o.log.Warn("Failed to remove overlay loopback IP", "ip", o.addedLoopbackIP, "error", err)
+			}
+		}
+	}
+
 	vxlanName := fmt.Sprintf("vx%d", o.cfg.ProvisionVNI)
 
 	type owned struct {
@@ -122,7 +134,7 @@ func (o *OverlayTier) CreateVRF() error {
 		Table:     o.cfg.VRFTableID,
 	}
 	if err := netlink.LinkAdd(vrf); err != nil {
-		if !errors.Is(err, syscall.EEXIST) {
+		if !os.IsExist(err) {
 			return fmt.Errorf("add VRF %s: %w", o.cfg.VRFName, err)
 		}
 	} else {
@@ -200,7 +212,7 @@ func (o *OverlayTier) createVXLAN(name string) (netlink.Link, error) {
 	}
 
 	if err := netlink.LinkAdd(vxlan); err != nil {
-		if !errors.Is(err, syscall.EEXIST) {
+		if !os.IsExist(err) {
 			return nil, fmt.Errorf("add VXLAN %s: %w", name, err)
 		}
 	} else {
@@ -230,7 +242,7 @@ func (o *OverlayTier) createBridge() (netlink.Link, error) {
 		},
 	}
 	if err := netlink.LinkAdd(bridge); err != nil {
-		if !errors.Is(err, syscall.EEXIST) {
+		if !os.IsExist(err) {
 			return nil, fmt.Errorf("add bridge %s: %w", o.cfg.BridgeName, err)
 		}
 	} else {
@@ -259,7 +271,7 @@ func (o *OverlayTier) addProvisionIP() error {
 		return fmt.Errorf("parse provision IP %s: %w", o.cfg.ProvisionIP, err)
 	}
 
-	if err := netlink.AddrAdd(link, addr); err != nil && !errors.Is(err, syscall.EEXIST) {
+	if err := netlink.AddrAdd(link, addr); err != nil && !os.IsExist(err) {
 		return fmt.Errorf("add provision IP to bridge: %w", err)
 	}
 
@@ -286,9 +298,10 @@ func (o *OverlayTier) addOverlayLoopback() error {
 		}
 	}
 
-	if err := netlink.AddrAdd(lo, addr); err != nil && !errors.Is(err, syscall.EEXIST) {
+	if err := netlink.AddrAdd(lo, addr); err != nil && !os.IsExist(err) {
 		return fmt.Errorf("add overlay IP to loopback: %w", err)
 	}
+	o.addedLoopbackIP = addr
 
 	o.log.Info("Added overlay loopback", "ip", o.cfg.OverlayIP)
 	return nil

@@ -5,7 +5,7 @@
 #
 #   booty-unnumbered  PeerMode=unnumbered  eBGP unnumbered to spine (all AFI/SAFI)
 #   booty-dual        PeerMode=dual        eBGP unnumbered to spine (IPv4) +
-#                                          iBGP numbered to rr01 (L2VPN-EVPN)
+#                                          eBGP numbered to rr01 (L2VPN-EVPN)
 #   booty-numbered    PeerMode=numbered    eBGP numbered to spine (all AFI/SAFI)
 #
 # Network topology:

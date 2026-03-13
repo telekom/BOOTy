@@ -150,6 +150,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("unknown peer mode %q", c.PeerMode)
 	}
 
+	if c.ProvisionVNI == 0 || c.ProvisionVNI > 16777215 {
+		return fmt.Errorf("ProvisionVNI %d out of range (must be 1..16777215)", c.ProvisionVNI)
+	}
+
 	// 4-octet ASN RD/RT format can only encode 16-bit VNI values.
 	if c.ASN > 65535 && c.ProvisionVNI > 65535 {
 		return fmt.Errorf("4-octet ASN %d with VNI %d > 65535 is unsupported (RD/RT truncation)", c.ASN, c.ProvisionVNI)

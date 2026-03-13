@@ -76,7 +76,7 @@ func TestValidateRequiresRouterID(t *testing.T) {
 }
 
 func TestValidateAcceptsValid(t *testing.T) {
-	cfg := &Config{ASN: 65000, RouterID: "10.0.0.1", PeerMode: network.PeerModeUnnumbered}
+	cfg := &Config{ASN: 65000, RouterID: "10.0.0.1", PeerMode: network.PeerModeUnnumbered, ProvisionVNI: 100}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -103,9 +103,10 @@ func TestValidateRejectsNonIPv4RouterID(t *testing.T) {
 
 func TestValidatePeerModeUnnumbered(t *testing.T) {
 	cfg := &Config{
-		ASN:      65000,
-		RouterID: "10.0.0.1",
-		PeerMode: network.PeerModeUnnumbered,
+		ASN:          65000,
+		RouterID:     "10.0.0.1",
+		PeerMode:     network.PeerModeUnnumbered,
+		ProvisionVNI: 100,
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("unnumbered mode should not require neighbors: %v", err)
@@ -140,6 +141,7 @@ func TestValidatePeerModeDualWithNeighbors(t *testing.T) {
 		RouterID:      "10.0.0.1",
 		PeerMode:      network.PeerModeDual,
 		NeighborAddrs: []string{"10.0.0.100", "10.0.0.101"},
+		ProvisionVNI:  100,
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("dual mode with valid neighbors should pass: %v", err)
@@ -153,6 +155,7 @@ func TestValidatePeerModeNumberedWithNeighbors(t *testing.T) {
 		PeerMode:      network.PeerModeNumbered,
 		NeighborAddrs: []string{"10.0.0.50"},
 		RemoteASN:     65001,
+		ProvisionVNI:  100,
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("numbered mode with valid neighbors should pass: %v", err)

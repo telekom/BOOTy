@@ -43,8 +43,10 @@ func requireGoBGPLab(t *testing.T) {
 // gobgpDockerExec runs a command inside a GoBGP lab container.
 func gobgpDockerExec(t *testing.T, container string, args ...string) string {
 	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), bgpConvergeTimeout)
+	defer cancel()
 	cmdArgs := append([]string{"exec", container}, args...)
-	out, err := exec.CommandContext(context.Background(), "docker", cmdArgs...).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "docker", cmdArgs...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker exec %s %s failed: %v\n%s",
 			container, strings.Join(args, " "), err, out)
@@ -55,8 +57,10 @@ func gobgpDockerExec(t *testing.T, container string, args ...string) string {
 // gobgpDockerExecRaw runs docker exec and returns output + error without failing.
 func gobgpDockerExecRaw(t *testing.T, container string, args ...string) (string, error) {
 	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), bgpConvergeTimeout)
+	defer cancel()
 	cmdArgs := append([]string{"exec", container}, args...)
-	out, err := exec.CommandContext(context.Background(), "docker", cmdArgs...).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "docker", cmdArgs...).CombinedOutput()
 	return string(out), err
 }
 
@@ -272,7 +276,7 @@ func TestGoBGPDualEVPNOnNumberedOnly(t *testing.T) {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabRR,
 			"vtysh", "-c", "show bgp neighbors 10.0.3.2 json")
 		if strings.Contains(strings.ToLower(out), "l2vpnevpn") && strings.Contains(out, "Established") {
-			t.Log("Dual mode: L2VPN-EVPN active on numbered iBGP to rr01")
+			t.Log("Dual mode: L2VPN-EVPN active on numbered eBGP to rr01")
 			return
 		}
 		if time.Now().After(deadline) {

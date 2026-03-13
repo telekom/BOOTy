@@ -39,8 +39,10 @@ func requireGoBGPVRLab(t *testing.T) {
 
 func vrDockerExec(t *testing.T, container string, args ...string) string {
 	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), vrBGPTimeout)
+	defer cancel()
 	cmdArgs := append([]string{"exec", container}, args...)
-	out, err := exec.CommandContext(context.Background(), "docker", cmdArgs...).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "docker", cmdArgs...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker exec %s %s failed: %v\n%s",
 			container, strings.Join(args, " "), err, out)
@@ -50,8 +52,10 @@ func vrDockerExec(t *testing.T, container string, args ...string) string {
 
 func vrDockerExecRaw(t *testing.T, container string, args ...string) (string, error) {
 	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), vrBGPTimeout)
+	defer cancel()
 	cmdArgs := append([]string{"exec", container}, args...)
-	out, err := exec.CommandContext(context.Background(), "docker", cmdArgs...).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "docker", cmdArgs...).CombinedOutput()
 	return string(out), err
 }
 
@@ -183,11 +187,11 @@ func TestVRGoBGPDualNumberedEstablished(t *testing.T) {
 		out, _ := vrDockerExecRaw(t, gobgpVRRR,
 			"vtysh", "-c", "show bgp neighbors 10.0.3.2 json")
 		if strings.Contains(out, "Established") {
-			t.Log("VM dual: numbered iBGP ESTABLISHED on rr01")
+			t.Log("VM dual: numbered eBGP ESTABLISHED on rr01")
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("VM dual iBGP peer not ESTABLISHED on rr01:\n%s", out)
+			t.Fatalf("VM dual eBGP peer not ESTABLISHED on rr01:\n%s", out)
 		}
 		time.Sleep(vrBGPPollInterval)
 	}
@@ -202,7 +206,7 @@ func TestVRGoBGPDualEVPNOnRR(t *testing.T) {
 		out, _ := vrDockerExecRaw(t, gobgpVRRR,
 			"vtysh", "-c", "show bgp neighbors 10.0.3.2 json")
 		if strings.Contains(strings.ToLower(out), "l2vpnevpn") && strings.Contains(out, "Established") {
-			t.Log("VM dual: L2VPN-EVPN active on numbered iBGP to rr01")
+			t.Log("VM dual: L2VPN-EVPN active on numbered eBGP to rr01")
 			return
 		}
 		if time.Now().After(deadline) {
