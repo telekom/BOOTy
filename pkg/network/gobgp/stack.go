@@ -63,12 +63,20 @@ func (s *Stack) Setup(ctx context.Context, _ *network.Config) error {
 	return nil
 }
 
-// WaitForConnectivity waits for at least one BGP peer to establish.
-func (s *Stack) WaitForConnectivity(ctx context.Context, _ string, timeout time.Duration) error {
+// WaitForConnectivity waits for BGP to establish and then polls the target
+// URL until reachable, consistent with other network modes.
+func (s *Stack) WaitForConnectivity(ctx context.Context, target string, timeout time.Duration) error {
 	s.log.Info("Waiting for BGP peer connectivity", "timeout", timeout)
 
 	if err := s.underlay.Ready(ctx, timeout); err != nil {
 		return fmt.Errorf("underlay connectivity: %w", err)
+	}
+
+	if target != "" {
+		s.log.Info("BGP established, polling target URL", "target", target)
+		if err := network.WaitForHTTP(ctx, target, timeout); err != nil {
+			return fmt.Errorf("target connectivity: %w", err)
+		}
 	}
 
 	return nil

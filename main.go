@@ -292,7 +292,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 			if frrErr := mgr.Setup(ctx, netCfg); frrErr != nil {
 				slog.Error("FRR fallback also failed", "error", frrErr)
 				mgr.DumpFRRState()
-				return network.NewDHCPMode()
+				return dhcpFallback(ctx, netCfg)
 			}
 			return mgr
 		}
@@ -306,7 +306,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		if err := mgr.Setup(ctx, netCfg); err != nil {
 			slog.Error("FRR network setup failed, falling back to DHCP", "error", err)
 			mgr.DumpFRRState()
-			return network.NewDHCPMode()
+			return dhcpFallback(ctx, netCfg)
 		}
 		return mgr
 	}
@@ -316,13 +316,23 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		mode := &network.StaticMode{}
 		if err := mode.Setup(ctx, netCfg); err != nil {
 			slog.Error("Static network setup failed, falling back to DHCP", "error", err)
-			return network.NewDHCPMode()
+			return dhcpFallback(ctx, netCfg)
 		}
 		return mode
 	}
 
 	slog.Info("Using DHCP network mode")
-	return network.NewDHCPMode()
+	return dhcpFallback(ctx, netCfg)
+}
+
+// dhcpFallback creates a DHCP mode and attempts setup.
+// Returns the mode even if setup fails, so the caller can still proceed.
+func dhcpFallback(ctx context.Context, netCfg *network.Config) network.Mode {
+	dhcp := network.NewDHCPMode()
+	if err := dhcp.Setup(ctx, netCfg); err != nil {
+		slog.Error("DHCP setup failed", "error", err)
+	}
+	return dhcp
 }
 
 // setupGoBGPStack creates and sets up a GoBGP/EVPN network stack.

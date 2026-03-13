@@ -473,8 +473,14 @@ func sendRouterAdvertisement(iface string) {
 	// Set Hop Limit to 255 as required by RFC 4861 §6.1.2.
 	// FRR's zebra silently drops RAs with any other hop limit.
 	pc := ipv6.NewPacketConn(conn)
-	_ = pc.SetMulticastHopLimit(255)
-	_ = pc.SetHopLimit(255)
+	if err := pc.SetMulticastHopLimit(255); err != nil {
+		slog.Warn("Failed to set multicast hop limit", "iface", iface, "error", err)
+		return
+	}
+	if err := pc.SetHopLimit(255); err != nil {
+		slog.Warn("Failed to set hop limit", "iface", iface, "error", err)
+		return
+	}
 
 	mac := ifi.HardwareAddr
 
