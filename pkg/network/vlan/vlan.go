@@ -91,8 +91,8 @@ func Setup(cfg Config) (string, error) {
 	return vlanName, nil
 }
 
-// Teardown removes a VLAN interface by name. It is safe to call if the
-// interface has already been removed.
+// Teardown removes a VLAN interface derived from parentName and vlanID.
+// It is safe to call if the interface has already been removed.
 func Teardown(parentName string, vlanID int) error {
 	vlanName := fmt.Sprintf("%s.%d", parentName, vlanID)
 
