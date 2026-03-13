@@ -222,6 +222,14 @@ func (u *UnderlayTier) startBgpServer(ctx context.Context) error {
 		"routerID", u.cfg.RouterID,
 		"port", u.cfg.ListenPort,
 	)
+
+	// Enable DEBUG logging for GoBGP to diagnose connection issues.
+	if err := u.bgp.SetLogLevel(ctx, &apipb.SetLogLevelRequest{
+		Level: apipb.SetLogLevelRequest_DEBUG,
+	}); err != nil {
+		u.log.Warn("Failed to set GoBGP log level", "error", err)
+	}
+
 	return nil
 }
 
