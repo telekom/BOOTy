@@ -1,6 +1,6 @@
 # Proposal: Network Configuration Persistence
 
-## Status: Proposal
+## Status: Implemented (netplan + systemd-networkd)
 
 ## Priority: P2
 

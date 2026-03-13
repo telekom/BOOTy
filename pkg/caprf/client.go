@@ -332,6 +332,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"BOND_MODE":                   &cfg.BondMode,
 		"VLANS":                       &cfg.VLANs,
 		"NETWORK_MODE":                &cfg.NetworkMode,
+		"OS_FAMILY":                   &cfg.OSFamily,
 		"BGP_PEER_MODE":               &cfg.BGPPeerMode,
 		"BGP_NEIGHBORS":               &cfg.BGPNeighbors,
 		"IMAGE_CHECKSUM":              &cfg.ImageChecksum,
@@ -391,6 +392,8 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) {
 		setIntField(&cfg.NumVFs, value)
 	case "INVENTORY_ENABLED":
 		cfg.InventoryEnabled = parseBoolVar(value)
+	case "PERSIST_NETWORK":
+		cfg.PersistNetwork = parseBoolVar(value)
 	case "FIRMWARE_REPORT":
 		cfg.FirmwareEnabled = parseBoolVar(value)
 	case "HEALTH_CHECKS_ENABLED":
