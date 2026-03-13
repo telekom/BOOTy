@@ -282,7 +282,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 	}
 
 	// Priority: GoBGP > FRR > Static > DHCP.
-	if netCfg.IsGoBGPMode() && netCfg.IsFRRMode() {
+	if netCfg.IsGoBGPMode() {
 		detectIPMI(netCfg)
 		slog.Info("Using GoBGP/EVPN network mode", "asn", cfg.ASN)
 		stack, err := setupGoBGPStack(ctx, netCfg)

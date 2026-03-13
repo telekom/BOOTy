@@ -4,10 +4,11 @@ package gobgp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
-	"os"
+	"syscall"
 	"time"
 
 	apipb "github.com/osrg/gobgp/v3/api"
@@ -104,7 +105,7 @@ func (o *OverlayTier) CreateVRF() error {
 		Table:     o.cfg.VRFTableID,
 	}
 	if err := netlink.LinkAdd(vrf); err != nil {
-		if os.IsExist(err) {
+		if errors.Is(err, syscall.EEXIST) {
 			o.log.Debug("VRF already exists", "name", o.cfg.VRFName)
 			return nil
 		}
@@ -176,7 +177,7 @@ func (o *OverlayTier) createVXLAN(name string) (netlink.Link, error) {
 		VtepDevIndex: 0,
 	}
 
-	if err := netlink.LinkAdd(vxlan); err != nil && !os.IsExist(err) {
+	if err := netlink.LinkAdd(vxlan); err != nil && !errors.Is(err, syscall.EEXIST) {
 		return nil, fmt.Errorf("add VXLAN %s: %w", name, err)
 	}
 
@@ -202,7 +203,7 @@ func (o *OverlayTier) createBridge() (netlink.Link, error) {
 			HardwareAddr: hwAddr,
 		},
 	}
-	if err := netlink.LinkAdd(bridge); err != nil && !os.IsExist(err) {
+	if err := netlink.LinkAdd(bridge); err != nil && !errors.Is(err, syscall.EEXIST) {
 		return nil, fmt.Errorf("add bridge %s: %w", o.cfg.BridgeName, err)
 	}
 
@@ -228,7 +229,7 @@ func (o *OverlayTier) addProvisionIP() error {
 		return fmt.Errorf("parse provision IP %s: %w", o.cfg.ProvisionIP, err)
 	}
 
-	if err := netlink.AddrAdd(link, addr); err != nil && !os.IsExist(err) {
+	if err := netlink.AddrAdd(link, addr); err != nil && !errors.Is(err, syscall.EEXIST) {
 		return fmt.Errorf("add provision IP to bridge: %w", err)
 	}
 
@@ -255,7 +256,7 @@ func (o *OverlayTier) addOverlayLoopback() error {
 		}
 	}
 
-	if err := netlink.AddrAdd(lo, addr); err != nil && !os.IsExist(err) {
+	if err := netlink.AddrAdd(lo, addr); err != nil && !errors.Is(err, syscall.EEXIST) {
 		return fmt.Errorf("add overlay IP to loopback: %w", err)
 	}
 

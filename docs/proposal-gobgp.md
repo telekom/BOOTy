@@ -1,6 +1,6 @@
 # Proposal: Replace FRR with GoBGP — Three-Tier Network Stack
 
-## Status: Implemented (PR #21)
+## Status: Implemented
 
 ## Summary
 
