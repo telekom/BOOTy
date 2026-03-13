@@ -15,6 +15,7 @@ import (
 	apipb "github.com/osrg/gobgp/v3/api"
 	"github.com/osrg/gobgp/v3/pkg/server"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/net/ipv6"
 	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/telekom/BOOTy/pkg/network"
@@ -433,13 +434,28 @@ func (u *UnderlayTier) announceUnderlayRoute(ctx context.Context) error {
 // the interface so that the adjacent FRR switch's zebra learns our link-local
 // address and registers it as the BGP unnumbered peer for the interface.
 // FRR's BGP unnumbered peering requires zebra to receive an RA from the peer.
+// RFC 4861 §6.1.2 mandates Hop Limit = 255; receivers discard RAs with any
+// other value.
 func sendRouterAdvertisement(iface string) {
+	ifi, err := net.InterfaceByName(iface)
+	if err != nil {
+		return
+	}
+
 	lc := net.ListenConfig{}
 	conn, err := lc.ListenPacket(context.Background(), "ip6:ipv6-icmp", "::"+"%"+iface)
 	if err != nil {
 		return
 	}
 	defer conn.Close() //nolint:errcheck // best-effort RA
+
+	// Set Hop Limit to 255 as required by RFC 4861 §6.1.2.
+	// FRR's zebra silently drops RAs with any other hop limit.
+	pc := ipv6.NewPacketConn(conn)
+	_ = pc.SetMulticastHopLimit(255)
+	_ = pc.SetHopLimit(255)
+
+	mac := ifi.HardwareAddr
 
 	// ICMPv6 Router Advertisement (RFC 4861 §4.2):
 	//   Type:           134
@@ -450,14 +466,23 @@ func sendRouterAdvertisement(iface string) {
 	//   Router Lifetime: 1800s (big-endian: 0x0708)
 	//   Reachable Time: 0
 	//   Retrans Timer:  0
-	ra := []byte{
+	// Followed by Source Link-Layer Address option (RFC 4861 §4.6.1):
+	//   Type:   1 (Source Link-Layer Address)
+	//   Length: 1 (in units of 8 octets = 8 bytes total)
+	//   Link-Layer Address: 6 bytes MAC
+	ra := make([]byte, 0, 24) //nolint:mnd // 16-byte RA header + 8-byte SLLAO
+	ra = append(ra,
 		134, 0, 0, 0, // type, code, checksum (kernel fills)
 		64,         // cur hop limit
 		0,          // flags
 		0x07, 0x08, // router lifetime = 1800s
 		0, 0, 0, 0, // reachable time
 		0, 0, 0, 0, // retrans timer
-	}
+		// Source Link-Layer Address option
+		1, 1, // type=1, length=1 (8 bytes)
+	)
+	ra = append(ra, mac...)
+
 	dst := &net.IPAddr{IP: net.ParseIP("ff02::1"), Zone: iface} // all-nodes multicast
 	_, _ = conn.WriteTo(ra, dst)
 }
