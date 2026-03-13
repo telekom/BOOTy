@@ -89,6 +89,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		{"run-post-provision-cmds", o.runPostProvisionCmds},
 		{"create-efi-boot-entry", o.createEFIBootEntry},
 		{"teardown-chroot", o.teardownChroot},
+		{"request-secureboot", o.requestSecureBootReEnable},
 		{"report-success", o.reportSuccess},
 	}
 
@@ -402,6 +403,14 @@ func (o *Orchestrator) runHealthChecks(ctx context.Context) error {
 		return fmt.Errorf("critical health check(s) failed: %s", strings.Join(failed, ", "))
 	}
 	return nil
+}
+
+func (o *Orchestrator) requestSecureBootReEnable(ctx context.Context) error {
+	if !o.cfg.SecureBootReEnable {
+		return nil
+	}
+	o.log.Info("Requesting CAPRF to re-enable SecureBoot after reboot")
+	return o.provider.ReportStatus(ctx, config.StatusInit, "secureboot-reenable-requested")
 }
 
 func (o *Orchestrator) reportSuccess(ctx context.Context) error {

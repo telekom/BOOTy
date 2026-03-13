@@ -385,6 +385,8 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) {
 		cfg.DisableKexec = parseBoolVar(value)
 	case "SECURE_ERASE":
 		cfg.SecureErase = parseBoolVar(value)
+	case "SECUREBOOT_REENABLE":
+		cfg.SecureBootReEnable = parseBoolVar(value)
 	case "POST_PROVISION_CMDS":
 		cfg.PostProvisionCmds = strings.Split(value, ";")
 	case "NUM_VFS":
