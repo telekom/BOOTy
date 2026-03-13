@@ -87,9 +87,10 @@ func (c *Config) ApplyDefaults() {
 	if c.BridgeName == "" {
 		c.BridgeName = "br.provision"
 	}
-	// VRFName is intentionally left empty by default — standard EVPN runs
-	// the underlay in the default namespace. Set vrf_name explicitly if
-	// VRF isolation is required.
+	// VRFName is intentionally left empty by default — the GoBGP stack
+	// creates a VRF only when VRFName is set via the VRF_NAME env var.
+	// Standard underlay peering runs in the default namespace.
+	// Overlay VXLAN/bridge resources are always created regardless of VRF.
 	if c.MTU == 0 {
 		c.MTU = 9000
 	}

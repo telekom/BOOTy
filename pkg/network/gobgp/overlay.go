@@ -50,6 +50,10 @@ func (o *OverlayTier) SetBgpServer(s *server.BgpServer) {
 // Setup creates VXLAN, bridge, and advertises EVPN Type-5 routes.
 // VRF creation is handled by the stack before underlay/overlay setup.
 func (o *OverlayTier) Setup(ctx context.Context) error {
+	if o.bgp == nil {
+		return fmt.Errorf("BGP server not set: call SetBgpServer before Setup")
+	}
+
 	if err := o.createVXLANAndBridge(); err != nil {
 		return fmt.Errorf("create VXLAN/bridge: %w", err)
 	}

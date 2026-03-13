@@ -57,6 +57,8 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 	}
 
 	// Unnumbered and dual modes need physical NICs for interface-based peering.
+	// Numbered mode uses explicit IP addresses so NIC detection, link-up, and
+	// MTU configuration are not required — the OS network stack handles that.
 	if u.cfg.PeerMode != network.PeerModeNumbered {
 		nics, err := u.waitForNICs()
 		if err != nil {
@@ -126,6 +128,7 @@ func (u *UnderlayTier) Ready(ctx context.Context, timeout time.Duration) error {
 func (u *UnderlayTier) Teardown(_ context.Context) error {
 	if u.stopRA != nil {
 		close(u.stopRA)
+		u.stopRA = nil
 	}
 
 	if u.bgp != nil {
