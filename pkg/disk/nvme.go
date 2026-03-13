@@ -8,8 +8,13 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"regexp"
 	"strings"
 )
+
+// nvmeControllerRE matches NVMe controller device names (nvme0, nvme1, etc.)
+// but not namespace devices (nvme0n1, nvme0n1p1).
+var nvmeControllerRE = regexp.MustCompile(`^nvme\d+$`)
 
 // NVMeNamespaceConfig defines the desired namespace layout for an NVMe controller.
 type NVMeNamespaceConfig struct {
@@ -43,7 +48,7 @@ func DetectNVMeControllers() []string {
 	for _, e := range entries {
 		name := e.Name()
 		// Match /dev/nvme0, /dev/nvme1, etc. (not nvme0n1 which is a namespace)
-		if strings.HasPrefix(name, "nvme") && !strings.Contains(name, "n") {
+		if nvmeControllerRE.MatchString(name) {
 			controllers = append(controllers, "/dev/"+name)
 		}
 	}
@@ -69,21 +74,35 @@ func (m *Manager) NVMeIdentifyController(ctx context.Context, controller string)
 	return info, nil
 }
 
-// NVMeListNamespaces lists existing namespaces on a controller.
+// nsidRE extracts namespace IDs from nvme list-ns output (e.g., "[   0]:0x1" → "1").
+var nsidRE = regexp.MustCompile(`0x([0-9a-fA-F]+)`)
+
+// NVMeListNamespaces lists existing namespace IDs on a controller.
 func (m *Manager) NVMeListNamespaces(ctx context.Context, controller string) ([]string, error) {
 	out, err := m.cmd.Run(ctx, "nvme", "list-ns", controller)
 	if err != nil {
 		return nil, fmt.Errorf("nvme list-ns %s: %w", controller, err)
 	}
 
-	var namespaces []string
+	var nsids []string
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
-		if line != "" && strings.HasPrefix(line, "[") {
-			namespaces = append(namespaces, line)
+		if line == "" {
+			continue
+		}
+		if m := nsidRE.FindStringSubmatch(line); m != nil {
+			// Parse hex NSID to decimal.
+			nsid := fmt.Sprintf("%d", mustParseHex(m[1]))
+			nsids = append(nsids, nsid)
 		}
 	}
-	return namespaces, nil
+	return nsids, nil
+}
+
+func mustParseHex(s string) uint64 {
+	var val uint64
+	fmt.Sscanf(s, "%x", &val)
+	return val
 }
 
 // NVMeResetNamespaces deletes all namespaces and recreates a single default namespace.
@@ -92,14 +111,13 @@ func (m *Manager) NVMeResetNamespaces(ctx context.Context, controller string) er
 	slog.Info("Resetting NVMe namespaces to factory default", "controller", controller)
 
 	// List existing namespaces.
-	namespaces, err := m.NVMeListNamespaces(ctx, controller)
+	nsids, err := m.NVMeListNamespaces(ctx, controller)
 	if err != nil {
 		return err
 	}
 
 	// Delete all namespaces.
-	for i := range namespaces {
-		nsid := fmt.Sprintf("%d", i+1)
+	for _, nsid := range nsids {
 		if _, err := m.cmd.Run(ctx, "nvme", "delete-ns", controller, "-n", nsid); err != nil {
 			slog.Warn("Failed to delete namespace", "controller", controller, "nsid", nsid, "error", err)
 		}
