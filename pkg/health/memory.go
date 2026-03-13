@@ -157,5 +157,8 @@ func readMemTotal(path string) (int64, error) {
 			}
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return 0, fmt.Errorf("scan %s: %w", path, err)
+	}
 	return 0, fmt.Errorf("MemTotal not found in %s", path)
 }

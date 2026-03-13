@@ -863,7 +863,7 @@ func TestParseVarsHealthChecks(t *testing.T) {
 	input := `HEALTH_CHECKS_ENABLED="true"
 HEALTH_MIN_MEMORY_GB="16"
 HEALTH_MIN_CPUS="4"
-HEALTH_SKIP_CHECKS="disk-smart,thermal"
+HEALTH_SKIP_CHECKS="disk-smart,thermal-state"
 HEALTH_CHECK_URL="http://caprf.example.com/health"
 `
 	cfg, err := ParseVars(strings.NewReader(input))
@@ -879,7 +879,7 @@ HEALTH_CHECK_URL="http://caprf.example.com/health"
 	if cfg.HealthMinCPUs != 4 {
 		t.Errorf("HealthMinCPUs = %d, want 4", cfg.HealthMinCPUs)
 	}
-	if cfg.HealthSkipChecks != "disk-smart,thermal" {
+	if cfg.HealthSkipChecks != "disk-smart,thermal-state" {
 		t.Errorf("HealthSkipChecks = %q", cfg.HealthSkipChecks)
 	}
 	if cfg.HealthCheckURL != "http://caprf.example.com/health" {
@@ -903,13 +903,8 @@ func TestClientReportHealthChecks(t *testing.T) {
 	var receivedContentType string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedContentType = r.Header.Get("Content-Type")
-		buf := new(strings.Builder)
-		_, _ = fmt.Fprintf(buf, "%s", r.Body)
-		body, _ := os.ReadFile("/dev/stdin")
-		_ = body
-		b := make([]byte, 4096)
-		n, _ := r.Body.Read(b)
-		receivedBody = string(b[:n])
+		body, _ := io.ReadAll(r.Body)
+		receivedBody = string(body)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
