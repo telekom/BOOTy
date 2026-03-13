@@ -180,3 +180,22 @@ func TestParseVLANs(t *testing.T) {
 		})
 	}
 }
+
+func TestIsGoBGPMode(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+		want bool
+	}{
+		{"empty", Config{}, false},
+		{"gobgp", Config{NetworkMode: "gobgp"}, true},
+		{"other", Config{NetworkMode: "frr"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.IsGoBGPMode(); got != tt.want {
+				t.Errorf("IsGoBGPMode() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

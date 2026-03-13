@@ -19,6 +19,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/kexec"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/frr"
+	"github.com/telekom/BOOTy/pkg/network/gobgp"
 	"github.com/telekom/BOOTy/pkg/network/vlan"
 	"github.com/telekom/BOOTy/pkg/plunderclient"
 	"github.com/telekom/BOOTy/pkg/plunderclient/types"
@@ -232,6 +233,10 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		BGPHold:          cfg.BGPHold,
 		BFDTransmitMS:    cfg.BFDTransmitMS,
 		BFDReceiveMS:     cfg.BFDReceiveMS,
+		NetworkMode:      cfg.NetworkMode,
+		BGPPeerMode:      network.ParsePeerMode(cfg.BGPPeerMode),
+		BGPNeighbors:     cfg.BGPNeighbors,
+		BGPRemoteASN:     cfg.BGPRemoteASN,
 	}
 
 	// Parse VLAN configuration.
@@ -276,7 +281,24 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		}
 	}
 
-	// Priority: FRR > Static > DHCP.
+	// Priority: GoBGP > FRR > Static > DHCP.
+	if netCfg.IsGoBGPMode() {
+		detectIPMI(netCfg)
+		slog.Info("Using GoBGP/EVPN network mode", "asn", cfg.ASN)
+		stack, err := setupGoBGPStack(ctx, netCfg)
+		if err != nil {
+			slog.Error("GoBGP setup failed, falling back to FRR", "error", err)
+			mgr := frr.NewManager(nil)
+			if frrErr := mgr.Setup(ctx, netCfg); frrErr != nil {
+				slog.Error("FRR fallback also failed", "error", frrErr)
+				mgr.DumpFRRState()
+				return dhcpFallback(ctx, netCfg)
+			}
+			return mgr
+		}
+		return stack
+	}
+
 	if netCfg.IsFRRMode() {
 		detectIPMI(netCfg)
 		slog.Info("Using FRR/EVPN network mode", "asn", cfg.ASN)
@@ -284,7 +306,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		if err := mgr.Setup(ctx, netCfg); err != nil {
 			slog.Error("FRR network setup failed, falling back to DHCP", "error", err)
 			mgr.DumpFRRState()
-			return network.NewDHCPMode()
+			return dhcpFallback(ctx, netCfg)
 		}
 		return mgr
 	}
@@ -294,13 +316,38 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		mode := &network.StaticMode{}
 		if err := mode.Setup(ctx, netCfg); err != nil {
 			slog.Error("Static network setup failed, falling back to DHCP", "error", err)
-			return network.NewDHCPMode()
+			return dhcpFallback(ctx, netCfg)
 		}
 		return mode
 	}
 
 	slog.Info("Using DHCP network mode")
-	return network.NewDHCPMode()
+	return dhcpFallback(ctx, netCfg)
+}
+
+// dhcpFallback creates a DHCP mode and attempts setup.
+// Returns the mode even if setup fails, so the caller can still proceed.
+func dhcpFallback(ctx context.Context, netCfg *network.Config) network.Mode {
+	dhcp := network.NewDHCPMode()
+	if err := dhcp.Setup(ctx, netCfg); err != nil {
+		slog.Error("DHCP setup failed", "error", err)
+	}
+	return dhcp
+}
+
+// setupGoBGPStack creates and sets up a GoBGP/EVPN network stack.
+func setupGoBGPStack(ctx context.Context, netCfg *network.Config) (*gobgp.Stack, error) {
+	bgpCfg, err := gobgp.NewConfig(netCfg)
+	if err != nil {
+		return nil, fmt.Errorf("gobgp config: %w", err)
+	}
+	stack := gobgp.NewStack(bgpCfg)
+	if err := stack.Setup(ctx, netCfg); err != nil {
+		// Clean up partially created network state before returning.
+		_ = stack.Teardown(ctx)
+		return nil, fmt.Errorf("gobgp setup: %w", err)
+	}
+	return stack, nil
 }
 
 // detectIPMI auto-detects IPMI MAC/IP from system if not provided.

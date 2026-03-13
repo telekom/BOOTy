@@ -554,6 +554,38 @@ vpn_rt="65188:2002"
 	}
 }
 
+func TestParseVarsNetworkMode(t *testing.T) {
+	input := `NETWORK_MODE="gobgp"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.NetworkMode != "gobgp" {
+		t.Errorf("NetworkMode = %q, want gobgp", cfg.NetworkMode)
+	}
+}
+
+func TestParseVarsBGPPeering(t *testing.T) {
+	input := `BGP_PEER_MODE="dual"
+BGP_NEIGHBORS="10.0.0.1,10.0.0.2"
+bgp_remote_asn="65100"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BGPPeerMode != "dual" {
+		t.Errorf("BGPPeerMode = %q, want dual", cfg.BGPPeerMode)
+	}
+	if cfg.BGPNeighbors != "10.0.0.1,10.0.0.2" {
+		t.Errorf("BGPNeighbors = %q, want 10.0.0.1,10.0.0.2", cfg.BGPNeighbors)
+	}
+	if cfg.BGPRemoteASN != 65100 {
+		t.Errorf("BGPRemoteASN = %d, want 65100", cfg.BGPRemoteASN)
+	}
+}
+
 func TestClientHeartbeat(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

@@ -40,11 +40,18 @@ jobs:
             go build -ldflags "-s -w -X=main.Version=${VERSION} -X=main.Build=${BUILD} -linkmode external -extldflags '-static'" \
             -o booty-linux-arm64
 
-      - name: Build and push initramfs image
+      - name: Build initramfs image
         run: |
           docker buildx build --platform linux/amd64 --load \
             -t ghcr.io/telekom/booty:${GITHUB_REF_NAME#v} \
             -t ghcr.io/telekom/booty:latest \
+            -f initrd.Dockerfile .
+
+      - name: Build GoBGP initramfs image
+        run: |
+          docker buildx build --platform linux/amd64 --target gobgp --load \
+            -t ghcr.io/telekom/booty-gobgp:${GITHUB_REF_NAME#v} \
+            -t ghcr.io/telekom/booty-gobgp:latest \
             -f initrd.Dockerfile .
 
       - name: Login to GHCR
@@ -58,11 +65,15 @@ jobs:
         run: |
           docker push ghcr.io/telekom/booty:${GITHUB_REF_NAME#v}
           docker push ghcr.io/telekom/booty:latest
+          docker push ghcr.io/telekom/booty-gobgp:${GITHUB_REF_NAME#v}
+          docker push ghcr.io/telekom/booty-gobgp:latest
 
       - name: Extract initramfs from container
         run: |
           docker run --rm ghcr.io/telekom/booty:${GITHUB_REF_NAME#v} \
             cat /initramfs.cpio.gz > booty-initramfs.cpio.gz
+          docker run --rm ghcr.io/telekom/booty-gobgp:${GITHUB_REF_NAME#v} \
+            cat /initramfs.cpio.gz > booty-gobgp-initramfs.cpio.gz
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -72,3 +83,4 @@ jobs:
             booty-linux-amd64
             booty-linux-arm64
             booty-initramfs.cpio.gz
+            booty-gobgp-initramfs.cpio.gz
