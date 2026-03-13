@@ -420,13 +420,19 @@ func (u *UnderlayTier) announceUnderlayRoute(ctx context.Context) error {
 		return fmt.Errorf("build origin attr: %w", err)
 	}
 
-	// Use 0.0.0.0 as next-hop so GoBGP replaces it with the session's
-	// local address for each peer (link-local for unnumbered, interface IP
-	// for numbered). Setting RouterID here would create circular resolution
-	// on the remote FRR side (NH=10.x.x.x advertised AS 10.x.x.x/32).
-	nexthop, err := anypb.New(&apipb.NextHopAttribute{NextHop: "0.0.0.0"})
+	// Use MpReachNLRI with the RouterID as next-hop so GoBGP can properly
+	// encode the route for both IPv4 (numbered) and IPv6 (unnumbered)
+	// transport peers. For eBGP numbered peers GoBGP replaces the next-hop
+	// with the session's local IPv4 address. For eBGP unnumbered peers
+	// GoBGP uses RFC 5549 extended next-hop encoding, and FRR resolves the
+	// next-hop via interface NDP mapping.
+	mpReach, err := anypb.New(&apipb.MpReachNLRIAttribute{
+		Family:   &apipb.Family{Afi: apipb.Family_AFI_IP, Safi: apipb.Family_SAFI_UNICAST},
+		NextHops: []string{u.cfg.RouterID},
+		Nlris:    []*anypb.Any{nlri},
+	})
 	if err != nil {
-		return fmt.Errorf("build next-hop attr: %w", err)
+		return fmt.Errorf("build mp-reach: %w", err)
 	}
 
 	aspath, err := anypb.New(&apipb.AsPathAttribute{
@@ -440,7 +446,7 @@ func (u *UnderlayTier) announceUnderlayRoute(ctx context.Context) error {
 		Path: &apipb.Path{
 			Family: &apipb.Family{Afi: apipb.Family_AFI_IP, Safi: apipb.Family_SAFI_UNICAST},
 			Nlri:   nlri,
-			Pattrs: []*anypb.Any{origin, nexthop, aspath},
+			Pattrs: []*anypb.Any{origin, mpReach, aspath},
 		},
 	})
 	if err != nil {
