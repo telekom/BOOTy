@@ -142,6 +142,18 @@ func (u *UnderlayTier) createUnderlayDummy() error {
 		return fmt.Errorf("bring up dummy.underlay: %w", err)
 	}
 
+	// Assign dummy to VRF for traffic isolation.
+	if u.cfg.VRFName != "" {
+		vrfLink, err := netlink.LinkByName(u.cfg.VRFName)
+		if err != nil {
+			u.log.Debug("VRF not yet created, skipping dummy assignment", "vrf", u.cfg.VRFName)
+		} else {
+			if err := netlink.LinkSetMasterByIndex(link, vrfLink.Attrs().Index); err != nil {
+				return fmt.Errorf("assign dummy to VRF %s: %w", u.cfg.VRFName, err)
+			}
+		}
+	}
+
 	u.log.Info("Created underlay dummy", "ip", u.cfg.RouterID)
 	return nil
 }
@@ -160,6 +172,16 @@ func (u *UnderlayTier) configureNICs() error {
 
 		if err := netlink.LinkSetUp(link); err != nil {
 			u.log.Warn("Failed to bring up NIC", "nic", nic, "error", err)
+		}
+
+		// Assign NIC to VRF for traffic isolation.
+		if u.cfg.VRFName != "" {
+			vrfLink, err := netlink.LinkByName(u.cfg.VRFName)
+			if err == nil {
+				if err := netlink.LinkSetMasterByIndex(link, vrfLink.Attrs().Index); err != nil {
+					u.log.Warn("Failed to assign NIC to VRF", "nic", nic, "error", err)
+				}
+			}
 		}
 	}
 	return nil

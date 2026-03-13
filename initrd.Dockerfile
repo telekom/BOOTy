@@ -205,6 +205,94 @@ RUN find . -print0 | cpio --null -ov --format=newc > ../initramfs.cpio \
 FROM scratch AS slim
 COPY --from=slim-builder /initramfs.cpio.gz .
 
+# ── GoBGP target: like default but without FRR (GoBGP is in-process Go) ───
+FROM debian:bookworm-slim AS gobgp-builder
+RUN apt-get update && apt-get install -y --no-install-recommends cpio \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /build/initramfs
+
+# Copy busybox base (without FRR binaries from the busybox stage)
+COPY --from=busybox /busybox-1.37.0/initramfs/bin/busybox bin/busybox
+RUN for cmd in sh mount umount insmod ash ls cat echo grep mkdir rm cp mv \
+      sleep date df du find head wc sort uniq tr sed awk ping wget ifconfig \
+      route telnet vi chmod chown ln test expr chroot; do \
+      ln -sf busybox bin/$cmd; \
+    done
+COPY --from=busybox /busybox-1.37.0/initramfs/bin/growpart bin/growpart
+
+# BOOTy init binary (with GoBGP compiled in)
+COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
+
+# LVM + sfdisk for disk management
+COPY --from=lvm /LVM2.2.03.27/tools/lvm sbin/lvm
+COPY --from=sfdisk /util-linux/sfdisk.static bin/sfdisk
+
+# Disk and system tools (same as default)
+COPY --from=tools /sbin/mdadm sbin/mdadm
+COPY --from=tools /usr/sbin/wipefs bin/wipefs
+COPY --from=tools /sbin/resize2fs sbin/resize2fs
+COPY --from=tools /sbin/e2fsck sbin/e2fsck
+COPY --from=tools /usr/sbin/xfs_growfs sbin/xfs_growfs
+COPY --from=tools /usr/bin/btrfs bin/btrfs
+COPY --from=tools /usr/sbin/parted bin/parted
+COPY --from=tools /usr/sbin/sgdisk bin/sgdisk
+COPY --from=tools /sbin/partprobe bin/partprobe
+COPY --from=tools /usr/bin/efibootmgr bin/efibootmgr
+COPY --from=tools /usr/sbin/dmidecode bin/dmidecode
+COPY --from=tools /usr/sbin/ethtool bin/ethtool
+COPY --from=tools /usr/bin/curl bin/curl
+COPY --from=tools /sbin/ip bin/ip
+COPY --from=tools /sbin/bridge bin/bridge
+
+# Secure erase tools
+COPY --from=tools /sbin/hdparm bin/hdparm
+COPY --from=tools /usr/sbin/nvme bin/nvme
+
+# Firmware tools (Mellanox ConnectX SR-IOV config)
+COPY --from=tools /usr/bin/mstconfig bin/mstconfig
+COPY --from=tools /usr/bin/mstflint bin/mstflint
+
+# LLDP daemon for switch topology discovery
+COPY --from=tools /usr/sbin/lldpcli bin/lldpcli
+COPY --from=tools /usr/sbin/lldpd sbin/lldpd
+
+# Kernel modules for common server NICs (flat directory, loaded via insmod)
+COPY --from=kernel /modules/ modules/
+
+# Package GoBGP initramfs (no FRR binaries — GoBGP runs in-process)
+RUN find . -print0 | cpio --null -ov --format=newc > ../initramfs.cpio \
+    && gzip ../initramfs.cpio && mv ../initramfs.cpio.gz /
+
+FROM scratch AS gobgp
+COPY --from=gobgp-builder /initramfs.cpio.gz .
+
+# ── GoBGP ISO target ──────────────────────────────────────────────────────
+FROM debian:bookworm-slim AS gobgp-iso-builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xorriso syslinux syslinux-common isolinux curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=gobgp-builder /initramfs.cpio.gz /iso/boot/initrd.img
+COPY --from=kernel /vmlinuz /iso/boot/vmlinuz
+
+RUN mkdir -p /iso/isolinux && \
+    cp /usr/lib/ISOLINUX/isolinux.bin /iso/isolinux/ && \
+    cp /usr/lib/syslinux/modules/bios/ldlinux.c32 /iso/isolinux/
+
+RUN printf 'DEFAULT booty\nLABEL booty\n  KERNEL /boot/vmlinuz\n  APPEND initrd=/boot/initrd.img console=tty0 console=ttyS0,115200n8\n' \
+    > /iso/isolinux/isolinux.cfg
+
+RUN xorriso -as mkisofs \
+    -o /booty-gobgp.iso \
+    -b isolinux/isolinux.bin \
+    -c isolinux/boot.cat \
+    -no-emul-boot -boot-load-size 4 -boot-info-table \
+    -isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin \
+    /iso
+
+FROM scratch AS gobgp-iso
+COPY --from=gobgp-iso-builder /booty-gobgp.iso .
+
 # ── Micro target: pure-Go BOOTy only, no external binaries ────────────────
 FROM golang:1.26-alpine AS micro-dev
 RUN apk add --no-cache git ca-certificates

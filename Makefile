@@ -16,7 +16,7 @@ SRC = $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 DOCKERTAG ?= $(VERSION)
 REPOSITORY = ghcr.io/telekom/booty
 
-.PHONY: all build clean install uninstall fmt lint test docker dockerx86 iso slim micro dockerx86slim dockerx86micro clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab
+.PHONY: all build clean install uninstall fmt lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab
 
 all: lint test install
 
@@ -64,11 +64,22 @@ micro:
 	@docker buildx build --platform linux/amd64 --target micro --output type=local,dest=. -f initrd.Dockerfile .
 	@echo Micro initramfs built: initramfs.cpio.gz
 
+gobgp:
+	@docker buildx build --platform linux/amd64 --target gobgp --output type=local,dest=. -f initrd.Dockerfile .
+	@echo GoBGP initramfs built: initramfs.cpio.gz
+
+gobgp-iso:
+	@docker buildx build --platform linux/amd64 --target gobgp-iso --output type=local,dest=. -f initrd.Dockerfile .
+	@echo GoBGP ISO built: booty-gobgp.iso
+
 dockerx86slim:
 	@docker buildx build --platform linux/amd64 --target slim --load -t $(REPOSITORY):$(DOCKERTAG)-slim -f initrd.Dockerfile .
 
 dockerx86micro:
 	@docker buildx build --platform linux/amd64 --target micro --load -t $(REPOSITORY):$(DOCKERTAG)-micro -f initrd.Dockerfile .
+
+dockerx86gobgp:
+	@docker buildx build --platform linux/amd64 --target gobgp --load -t $(REPOSITORY):$(DOCKERTAG)-gobgp -f initrd.Dockerfile .
 
 test-iso:
 	@echo Verifying ISO hybrid boot record

@@ -554,6 +554,18 @@ vpn_rt="65188:2002"
 	}
 }
 
+func TestParseVarsNetworkMode(t *testing.T) {
+	input := `NETWORK_MODE="gobgp"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.NetworkMode != "gobgp" {
+		t.Errorf("NetworkMode = %q, want gobgp", cfg.NetworkMode)
+	}
+}
+
 func TestClientHeartbeat(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

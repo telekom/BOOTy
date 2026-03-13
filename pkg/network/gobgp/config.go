@@ -10,6 +10,7 @@ package gobgp
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/network"
@@ -112,6 +113,9 @@ func (c *Config) Validate() error {
 	}
 	if c.RouterID == "" {
 		return fmt.Errorf("router ID (underlay IP) is required for GoBGP mode")
+	}
+	if net.ParseIP(c.RouterID) == nil || net.ParseIP(c.RouterID).To4() == nil {
+		return fmt.Errorf("router ID %q must be a valid IPv4 address", c.RouterID)
 	}
 	return nil
 }

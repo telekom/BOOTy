@@ -116,56 +116,29 @@ func (o *OverlayTier) createVRF() error {
 func (o *OverlayTier) createVXLANAndBridge() error {
 	vxlanName := fmt.Sprintf("vx%d", o.cfg.ProvisionVNI)
 
-	// VXLAN MTU = physical MTU minus 50 bytes overhead.
-	vxlanMTU := o.cfg.MTU - 50
-	if vxlanMTU <= 0 {
-		vxlanMTU = 1500
-	}
-
-	srcAddr := net.ParseIP(o.cfg.RouterID)
-	vxlan := &netlink.Vxlan{
-		LinkAttrs:    netlink.LinkAttrs{Name: vxlanName},
-		VxlanId:      o.cfg.ProvisionVNI,
-		SrcAddr:      srcAddr,
-		Port:         4789,
-		Learning:     false,
-		VtepDevIndex: 0,
-	}
-
-	if err := netlink.LinkAdd(vxlan); err != nil && !os.IsExist(err) {
-		return fmt.Errorf("add VXLAN %s: %w", vxlanName, err)
-	}
-
-	vxLink, err := netlink.LinkByName(vxlanName)
+	vxLink, err := o.createVXLAN(vxlanName)
 	if err != nil {
-		return fmt.Errorf("find VXLAN: %w", err)
-	}
-	if err := netlink.LinkSetMTU(vxLink, vxlanMTU); err != nil {
-		return fmt.Errorf("set VXLAN MTU: %w", err)
+		return err
 	}
 
-	hwAddr, err := net.ParseMAC(o.cfg.BridgeMAC)
+	brLink, err := o.createBridge()
 	if err != nil {
-		return fmt.Errorf("parse bridge MAC %s: %w", o.cfg.BridgeMAC, err)
-	}
-
-	bridge := &netlink.Bridge{
-		LinkAttrs: netlink.LinkAttrs{
-			Name:         o.cfg.BridgeName,
-			HardwareAddr: hwAddr,
-		},
-	}
-	if err := netlink.LinkAdd(bridge); err != nil && !os.IsExist(err) {
-		return fmt.Errorf("add bridge %s: %w", o.cfg.BridgeName, err)
-	}
-
-	brLink, err := netlink.LinkByName(o.cfg.BridgeName)
-	if err != nil {
-		return fmt.Errorf("find bridge: %w", err)
+		return err
 	}
 
 	if err := netlink.LinkSetMasterByIndex(vxLink, brLink.Attrs().Index); err != nil {
 		return fmt.Errorf("attach VXLAN to bridge: %w", err)
+	}
+
+	// Assign bridge to VRF for traffic isolation.
+	if o.cfg.VRFName != "" {
+		vrfLink, err := netlink.LinkByName(o.cfg.VRFName)
+		if err != nil {
+			return fmt.Errorf("find VRF %s: %w", o.cfg.VRFName, err)
+		}
+		if err := netlink.LinkSetMasterByIndex(brLink, vrfLink.Attrs().Index); err != nil {
+			return fmt.Errorf("assign bridge to VRF: %w", err)
+		}
 	}
 
 	if err := netlink.LinkSetUp(brLink); err != nil {
@@ -180,6 +153,59 @@ func (o *OverlayTier) createVXLANAndBridge() error {
 		"bridge", o.cfg.BridgeName,
 	)
 	return nil
+}
+
+func (o *OverlayTier) createVXLAN(name string) (netlink.Link, error) {
+	vxlanMTU := o.cfg.MTU - 50
+	if vxlanMTU <= 0 {
+		vxlanMTU = 1500
+	}
+
+	srcAddr := net.ParseIP(o.cfg.RouterID)
+	vxlan := &netlink.Vxlan{
+		LinkAttrs:    netlink.LinkAttrs{Name: name},
+		VxlanId:      o.cfg.ProvisionVNI,
+		SrcAddr:      srcAddr,
+		Port:         4789,
+		Learning:     false,
+		VtepDevIndex: 0,
+	}
+
+	if err := netlink.LinkAdd(vxlan); err != nil && !os.IsExist(err) {
+		return nil, fmt.Errorf("add VXLAN %s: %w", name, err)
+	}
+
+	link, err := netlink.LinkByName(name)
+	if err != nil {
+		return nil, fmt.Errorf("find VXLAN: %w", err)
+	}
+	if err := netlink.LinkSetMTU(link, vxlanMTU); err != nil {
+		return nil, fmt.Errorf("set VXLAN MTU: %w", err)
+	}
+	return link, nil
+}
+
+func (o *OverlayTier) createBridge() (netlink.Link, error) {
+	hwAddr, err := net.ParseMAC(o.cfg.BridgeMAC)
+	if err != nil {
+		return nil, fmt.Errorf("parse bridge MAC %s: %w", o.cfg.BridgeMAC, err)
+	}
+
+	bridge := &netlink.Bridge{
+		LinkAttrs: netlink.LinkAttrs{
+			Name:         o.cfg.BridgeName,
+			HardwareAddr: hwAddr,
+		},
+	}
+	if err := netlink.LinkAdd(bridge); err != nil && !os.IsExist(err) {
+		return nil, fmt.Errorf("add bridge %s: %w", o.cfg.BridgeName, err)
+	}
+
+	link, err := netlink.LinkByName(o.cfg.BridgeName)
+	if err != nil {
+		return nil, fmt.Errorf("find bridge: %w", err)
+	}
+	return link, nil
 }
 
 func (o *OverlayTier) addProvisionIP() error {
@@ -289,13 +315,21 @@ func (o *OverlayTier) watchRoutes(ctx context.Context) {
 	}
 }
 
-// buildRouteDistinguisher builds an RD as Type 0 (2-octet ASN).
+// buildRouteDistinguisher builds an RD, selecting 2-octet or 4-octet ASN type.
 func buildRouteDistinguisher(asn, vni uint32) (*anypb.Any, error) {
-	rd := &apipb.RouteDistinguisherTwoOctetASN{
-		Admin:    asn,
-		Assigned: vni,
+	var a *anypb.Any
+	var err error
+	if asn <= 65535 {
+		a, err = anypb.New(&apipb.RouteDistinguisherTwoOctetASN{
+			Admin:    asn,
+			Assigned: vni,
+		})
+	} else {
+		a, err = anypb.New(&apipb.RouteDistinguisherFourOctetASN{
+			Admin:    asn,
+			Assigned: vni & 0xFFFF,
+		})
 	}
-	a, err := anypb.New(rd)
 	if err != nil {
 		return nil, fmt.Errorf("marshal route distinguisher: %w", err)
 	}
@@ -349,14 +383,26 @@ func buildType5PathAttrs(nextHop string, asn, vni uint32) ([]*anypb.Any, error) 
 	return []*anypb.Any{origin, mpReach, extComm}, nil
 }
 
-// buildRouteTarget builds a route target extended community (Type 0x02).
+// buildRouteTarget builds a route target extended community (Type 0x02),
+// selecting 2-octet or 4-octet format based on ASN size.
 func buildRouteTarget(asn, vni uint32) (*anypb.Any, error) {
-	a, err := anypb.New(&apipb.TwoOctetAsSpecificExtended{
-		IsTransitive: true,
-		SubType:      0x02, // Route Target
-		Asn:          asn,
-		LocalAdmin:   vni,
-	})
+	var a *anypb.Any
+	var err error
+	if asn <= 65535 {
+		a, err = anypb.New(&apipb.TwoOctetAsSpecificExtended{
+			IsTransitive: true,
+			SubType:      0x02, // Route Target
+			Asn:          asn,
+			LocalAdmin:   vni,
+		})
+	} else {
+		a, err = anypb.New(&apipb.FourOctetAsSpecificExtended{
+			IsTransitive: true,
+			SubType:      0x02, // Route Target
+			Asn:          asn,
+			LocalAdmin:   vni & 0xFFFF,
+		})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("marshal route target: %w", err)
 	}

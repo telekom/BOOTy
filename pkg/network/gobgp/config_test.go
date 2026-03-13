@@ -79,3 +79,22 @@ func TestValidateAcceptsValid(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+func TestValidateRejectsNonIPv4RouterID(t *testing.T) {
+	tests := []struct {
+		name     string
+		routerID string
+	}{
+		{"ipv6", "fd00::1"},
+		{"hostname", "router1.example.com"},
+		{"garbage", "not-an-ip"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{ASN: 65000, RouterID: tt.routerID}
+			if err := cfg.Validate(); err == nil {
+				t.Errorf("expected error for RouterID %q", tt.routerID)
+			}
+		})
+	}
+}
