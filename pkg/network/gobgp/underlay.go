@@ -288,14 +288,15 @@ func (u *UnderlayTier) addInterfacePeer(ctx context.Context, iface string, famil
 
 	peer := &apipb.Peer{
 		Conf: &apipb.PeerConf{
-			NeighborAddress:   addr,
-			NeighborInterface: iface,
-			PeerAsn:           0, // External peer, ASN learned via open
+			NeighborAddress: addr,
+			PeerAsn:         0, // External peer, ASN learned via open
 		},
 		Timers:   bgpTimers(u.cfg),
 		AfiSafis: families,
 		Transport: &apipb.Transport{
-			MtuDiscovery: true,
+			MtuDiscovery:  true,
+			LocalAddress:  fmt.Sprintf("::%%%s", iface),
+			RemoteAddress: addr,
 		},
 	}
 

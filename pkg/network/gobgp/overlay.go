@@ -375,7 +375,11 @@ func buildRouteDistinguisher(asn, vni uint32) (*anypb.Any, error) {
 // buildEVPNType5NLRI builds an EVPN IP Prefix (Type-5) NLRI for default route.
 func buildEVPNType5NLRI(rd *anypb.Any, gwAddr string, label uint32) (*anypb.Any, error) {
 	route := &apipb.EVPNIPPrefixRoute{
-		Rd:          rd,
+		Rd: rd,
+		Esi: &apipb.EthernetSegmentIdentifier{
+			Type:  0,
+			Value: make([]byte, 9),
+		},
 		EthernetTag: 0,
 		IpPrefix:    "0.0.0.0",
 		IpPrefixLen: 0,
