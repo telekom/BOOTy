@@ -331,6 +331,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"BOND_INTERFACES":             &cfg.BondInterfaces,
 		"BOND_MODE":                   &cfg.BondMode,
 		"VLANS":                       &cfg.VLANs,
+		"NETWORK_MODE":                &cfg.NetworkMode,
 		"IMAGE_CHECKSUM":              &cfg.ImageChecksum,
 		"IMAGE_CHECKSUM_TYPE":         &cfg.ImageChecksumType,
 		"DISK_DEVICE":                 &cfg.DiskDevice,

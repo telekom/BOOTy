@@ -19,6 +19,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/kexec"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/frr"
+	"github.com/telekom/BOOTy/pkg/network/gobgp"
 	"github.com/telekom/BOOTy/pkg/network/vlan"
 	"github.com/telekom/BOOTy/pkg/plunderclient"
 	"github.com/telekom/BOOTy/pkg/plunderclient/types"
@@ -232,6 +233,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		BGPHold:          cfg.BGPHold,
 		BFDTransmitMS:    cfg.BFDTransmitMS,
 		BFDReceiveMS:     cfg.BFDReceiveMS,
+		NetworkMode:      cfg.NetworkMode,
 	}
 
 	// Parse VLAN configuration.
@@ -276,7 +278,18 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		}
 	}
 
-	// Priority: FRR > Static > DHCP.
+	// Priority: GoBGP > FRR > Static > DHCP.
+	if netCfg.IsGoBGPMode() && netCfg.IsFRRMode() {
+		detectIPMI(netCfg)
+		slog.Info("Using GoBGP/EVPN network mode", "asn", cfg.ASN)
+		stack, err := setupGoBGPStack(ctx, netCfg)
+		if err != nil {
+			slog.Error("GoBGP setup failed, falling back to DHCP", "error", err)
+			return network.NewDHCPMode()
+		}
+		return stack
+	}
+
 	if netCfg.IsFRRMode() {
 		detectIPMI(netCfg)
 		slog.Info("Using FRR/EVPN network mode", "asn", cfg.ASN)
@@ -301,6 +314,19 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 
 	slog.Info("Using DHCP network mode")
 	return network.NewDHCPMode()
+}
+
+// setupGoBGPStack creates and sets up a GoBGP/EVPN network stack.
+func setupGoBGPStack(ctx context.Context, netCfg *network.Config) (*gobgp.Stack, error) {
+	bgpCfg, err := gobgp.NewConfig(netCfg)
+	if err != nil {
+		return nil, fmt.Errorf("gobgp config: %w", err)
+	}
+	stack := gobgp.NewStack(bgpCfg)
+	if err := stack.Setup(ctx, netCfg); err != nil {
+		return nil, fmt.Errorf("gobgp setup: %w", err)
+	}
+	return stack, nil
 }
 
 // detectIPMI auto-detects IPMI MAC/IP from system if not provided.

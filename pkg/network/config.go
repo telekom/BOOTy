@@ -60,9 +60,10 @@ type Config struct {
 	BFDReceiveMS  uint32 // BFD receive interval in ms (default: 300)
 
 	// Common fields.
-	BridgeName string // Default: "br.provision"
-	VRFName    string // Default: "Vrf_underlay"
-	MTU        int    // Default: 9000
+	BridgeName  string // Default: "br.provision"
+	VRFName     string // Default: "Vrf_underlay"
+	MTU         int    // Default: 9000
+	NetworkMode string // "gobgp" to use in-process GoBGP instead of FRR
 
 	// VLAN configuration.
 	VLANs []VLANConfig // 802.1Q VLAN interfaces to create before network mode setup
@@ -162,4 +163,9 @@ func ParseVLANs(spec string) ([]VLANConfig, error) {
 		configs = append(configs, cfg)
 	}
 	return configs, nil
+}
+
+// IsGoBGPMode returns true if GoBGP mode is explicitly requested.
+func (c *Config) IsGoBGPMode() bool {
+	return c.NetworkMode == "gobgp"
 }
