@@ -337,7 +337,8 @@ func (u *UnderlayTier) addInterfacePeer(ctx context.Context, iface string, famil
 		AfiSafis: families,
 		Transport: &apipb.Transport{
 			MtuDiscovery:  true,
-			LocalAddress:  fmt.Sprintf("::%%%s", iface),
+			LocalAddress:  "::",
+			BindInterface: iface,
 			RemoteAddress: addr,
 		},
 	}
@@ -420,19 +421,14 @@ func (u *UnderlayTier) announceUnderlayRoute(ctx context.Context) error {
 		return fmt.Errorf("build origin attr: %w", err)
 	}
 
-	// Use MpReachNLRI with the RouterID as next-hop so GoBGP can properly
-	// encode the route for both IPv4 (numbered) and IPv6 (unnumbered)
-	// transport peers. For eBGP numbered peers GoBGP replaces the next-hop
-	// with the session's local IPv4 address. For eBGP unnumbered peers
-	// GoBGP uses RFC 5549 extended next-hop encoding, and FRR resolves the
-	// next-hop via interface NDP mapping.
-	mpReach, err := anypb.New(&apipb.MpReachNLRIAttribute{
-		Family:   &apipb.Family{Afi: apipb.Family_AFI_IP, Safi: apipb.Family_SAFI_UNICAST},
-		NextHops: []string{u.cfg.RouterID},
-		Nlris:    []*anypb.Any{nlri},
-	})
+	// Use 0.0.0.0 as next-hop so GoBGP replaces it with the session's
+	// local address for each peer. For numbered peers this resolves to the
+	// interface IPv4 address; for unnumbered peers GoBGP detects the IPv6
+	// link-local local address and uses RFC 5549 extended next-hop encoding
+	// (MP_REACH_NLRI with IPv6 next-hop for IPv4 unicast).
+	nexthop, err := anypb.New(&apipb.NextHopAttribute{NextHop: "0.0.0.0"})
 	if err != nil {
-		return fmt.Errorf("build mp-reach: %w", err)
+		return fmt.Errorf("build nexthop attr: %w", err)
 	}
 
 	aspath, err := anypb.New(&apipb.AsPathAttribute{
@@ -446,7 +442,7 @@ func (u *UnderlayTier) announceUnderlayRoute(ctx context.Context) error {
 		Path: &apipb.Path{
 			Family: &apipb.Family{Afi: apipb.Family_AFI_IP, Safi: apipb.Family_SAFI_UNICAST},
 			Nlri:   nlri,
-			Pattrs: []*anypb.Any{origin, mpReach, aspath},
+			Pattrs: []*anypb.Any{origin, nexthop, aspath},
 		},
 	})
 	if err != nil {
