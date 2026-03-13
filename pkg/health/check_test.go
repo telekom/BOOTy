@@ -78,7 +78,7 @@ func TestParseSkipList(t *testing.T) {
 		{"", map[string]struct{}{}},
 		{"a,b", map[string]struct{}{"a": {}, "b": {}}},
 		{" a , b , c ", map[string]struct{}{"a": {}, "b": {}, "c": {}}},
-		{"disk-smart", map[string]struct{}{"disk-smart": {}}},
+		{"disk-ioerr", map[string]struct{}{"disk-ioerr": {}}},
 	}
 
 	for _, tc := range tests {
@@ -133,7 +133,7 @@ func TestDiskPresenceCheck(t *testing.T) {
 	})
 }
 
-func TestDiskSMARTCheck(t *testing.T) {
+func TestDiskIOErrorCheck(t *testing.T) {
 	t.Run("no errors", func(t *testing.T) {
 		dir := t.TempDir()
 		devDir := filepath.Join(dir, "sda", "device")
@@ -144,7 +144,7 @@ func TestDiskSMARTCheck(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		c := &DiskSMARTCheck{SysBlockPath: dir}
+		c := &DiskIOErrorCheck{SysBlockPath: dir}
 		result := c.Run(context.Background())
 
 		if result.Status != StatusPass {
@@ -162,7 +162,7 @@ func TestDiskSMARTCheck(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		c := &DiskSMARTCheck{SysBlockPath: dir}
+		c := &DiskIOErrorCheck{SysBlockPath: dir}
 		result := c.Run(context.Background())
 
 		if result.Status != StatusFail {
@@ -225,7 +225,7 @@ func TestMinimumMemoryCheck(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		c := &MinimumMemoryCheck{MinGB: 8, ProcMemInfoPath: meminfo}
+		c := &MinimumMemoryCheck{MinGiB: 8, ProcMemInfoPath: meminfo}
 		result := c.Run(context.Background())
 
 		if result.Status != StatusPass {
@@ -239,7 +239,7 @@ func TestMinimumMemoryCheck(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		c := &MinimumMemoryCheck{MinGB: 8, ProcMemInfoPath: meminfo}
+		c := &MinimumMemoryCheck{MinGiB: 8, ProcMemInfoPath: meminfo}
 		result := c.Run(context.Background())
 
 		if result.Status != StatusFail {
@@ -248,7 +248,7 @@ func TestMinimumMemoryCheck(t *testing.T) {
 	})
 
 	t.Run("no minimum configured", func(t *testing.T) {
-		c := &MinimumMemoryCheck{MinGB: 0}
+		c := &MinimumMemoryCheck{MinGiB: 0}
 		result := c.Run(context.Background())
 
 		if result.Status != StatusPass {

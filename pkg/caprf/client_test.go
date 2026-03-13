@@ -863,7 +863,7 @@ func TestParseVarsHealthChecks(t *testing.T) {
 	input := `HEALTH_CHECKS_ENABLED="true"
 HEALTH_MIN_MEMORY_GB="16"
 HEALTH_MIN_CPUS="4"
-HEALTH_SKIP_CHECKS="disk-smart,thermal-state"
+HEALTH_SKIP_CHECKS="disk-ioerr,thermal-state"
 HEALTH_CHECK_URL="http://caprf.example.com/health"
 `
 	cfg, err := ParseVars(strings.NewReader(input))
@@ -879,7 +879,7 @@ HEALTH_CHECK_URL="http://caprf.example.com/health"
 	if cfg.HealthMinCPUs != 4 {
 		t.Errorf("HealthMinCPUs = %d, want 4", cfg.HealthMinCPUs)
 	}
-	if cfg.HealthSkipChecks != "disk-smart,thermal-state" {
+	if cfg.HealthSkipChecks != "disk-ioerr,thermal-state" {
 		t.Errorf("HealthSkipChecks = %q", cfg.HealthSkipChecks)
 	}
 	if cfg.HealthCheckURL != "http://caprf.example.com/health" {

@@ -361,9 +361,9 @@ func (o *Orchestrator) runHealthChecks(ctx context.Context) error {
 
 	checks := []health.Check{
 		&health.DiskPresenceCheck{},
-		&health.DiskSMARTCheck{},
+		&health.DiskIOErrorCheck{},
 		&health.MemoryECCCheck{},
-		&health.MinimumMemoryCheck{MinGB: o.cfg.HealthMinMemoryGB},
+		&health.MinimumMemoryCheck{MinGiB: o.cfg.HealthMinMemoryGB},
 		&health.MinimumCPUCheck{MinCPUs: o.cfg.HealthMinCPUs},
 		&health.NICLinkStateCheck{},
 		&health.ThermalStateCheck{},

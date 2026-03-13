@@ -77,7 +77,7 @@ func (c *MemoryECCCheck) Run(_ context.Context) CheckResult {
 
 // MinimumMemoryCheck verifies the system has at least a minimum amount of RAM.
 type MinimumMemoryCheck struct {
-	MinGB int
+	MinGiB int
 	// ProcMemInfoPath allows overriding /proc/meminfo for testing.
 	ProcMemInfoPath string
 }
@@ -97,7 +97,7 @@ func (c *MinimumMemoryCheck) memInfoPath() string {
 
 // Run executes the minimum memory check.
 func (c *MinimumMemoryCheck) Run(_ context.Context) CheckResult {
-	if c.MinGB <= 0 {
+	if c.MinGiB <= 0 {
 		return CheckResult{
 			Name:     c.Name(),
 			Status:   StatusPass,
@@ -118,12 +118,12 @@ func (c *MinimumMemoryCheck) Run(_ context.Context) CheckResult {
 	}
 
 	totalGiB := totalKB / (1024 * 1024)
-	if totalGiB < int64(c.MinGB) {
+	if totalGiB < int64(c.MinGiB) {
 		return CheckResult{
 			Name:     c.Name(),
 			Status:   StatusFail,
 			Severity: c.Severity(),
-			Message:  fmt.Sprintf("insufficient memory: %d GiB < %d GiB minimum", totalGiB, c.MinGB),
+			Message:  fmt.Sprintf("insufficient memory: %d GiB < %d GiB minimum", totalGiB, c.MinGiB),
 		}
 	}
 
@@ -131,7 +131,7 @@ func (c *MinimumMemoryCheck) Run(_ context.Context) CheckResult {
 		Name:     c.Name(),
 		Status:   StatusPass,
 		Severity: c.Severity(),
-		Message:  fmt.Sprintf("memory OK: %d GiB >= %d GiB minimum", totalGiB, c.MinGB),
+		Message:  fmt.Sprintf("memory OK: %d GiB >= %d GiB minimum", totalGiB, c.MinGiB),
 	}
 }
 

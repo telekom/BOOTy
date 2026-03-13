@@ -8,27 +8,27 @@ import (
 	"strings"
 )
 
-// DiskSMARTCheck verifies SMART health status for all block devices.
-type DiskSMARTCheck struct {
+// DiskIOErrorCheck verifies SCSI I/O error counters for all block devices.
+type DiskIOErrorCheck struct {
 	// SysBlockPath allows overriding /sys/block for testing.
 	SysBlockPath string
 }
 
 // Name returns the check identifier.
-func (c *DiskSMARTCheck) Name() string { return "disk-smart" }
+func (c *DiskIOErrorCheck) Name() string { return "disk-ioerr" }
 
 // Severity returns the check severity level.
-func (c *DiskSMARTCheck) Severity() Severity { return SeverityWarning }
+func (c *DiskIOErrorCheck) Severity() Severity { return SeverityWarning }
 
-func (c *DiskSMARTCheck) sysPath() string {
+func (c *DiskIOErrorCheck) sysPath() string {
 	if c.SysBlockPath != "" {
 		return c.SysBlockPath
 	}
 	return "/sys/block"
 }
 
-// Run executes the disk SMART health check.
-func (c *DiskSMARTCheck) Run(_ context.Context) CheckResult {
+// Run executes the disk I/O error check.
+func (c *DiskIOErrorCheck) Run(_ context.Context) CheckResult {
 	entries, err := os.ReadDir(c.sysPath())
 	if err != nil {
 		return CheckResult{
@@ -56,7 +56,7 @@ func (c *DiskSMARTCheck) Run(_ context.Context) CheckResult {
 			continue // not a real device
 		}
 
-		// Check for SMART errors via ioerr_cnt if available.
+		// Check for I/O errors via ioerr_cnt if available.
 		errCnt := filepath.Join(deviceDir, "ioerr_cnt")
 		data, err := os.ReadFile(errCnt)
 		if err != nil {

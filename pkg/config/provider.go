@@ -87,7 +87,7 @@ type MachineConfig struct {
 
 	// Health check configuration.
 	HealthChecksEnabled bool   // HEALTH_CHECKS_ENABLED: run pre-provision health checks
-	HealthMinMemoryGB   int    // HEALTH_MIN_MEMORY_GB: minimum RAM in GB
+	HealthMinMemoryGB   int    // HEALTH_MIN_MEMORY_GB: minimum RAM in GiB (name kept for compatibility)
 	HealthMinCPUs       int    // HEALTH_MIN_CPUS: minimum CPU count
 	HealthSkipChecks    string // HEALTH_SKIP_CHECKS: comma-separated check names to skip
 	HealthCheckURL      string // HEALTH_CHECK_URL: POST endpoint for health results
