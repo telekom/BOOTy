@@ -16,7 +16,7 @@ SRC = $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 DOCKERTAG ?= $(VERSION)
 REPOSITORY = ghcr.io/telekom/booty
 
-.PHONY: all build clean install uninstall fmt lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab
+.PHONY: all build clean install uninstall fmt lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab
 
 all: lint test install
 
@@ -143,6 +143,36 @@ clab-vrnetlab-down:
 test-e2e-vrnetlab:
 	@echo Running vrnetlab EVPN E2E tests (requires clab-vrnetlab-up)
 	@go test -tags e2e_vrnetlab -race -v -timeout 600s ./test/e2e/integration/...
+
+# ── GoBGP e2e targets ──────────────────────────────────────────────────────
+
+booty-gobgp-test-image:
+	@echo Building BOOTy GoBGP test container image (no FRR)
+	@docker build -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
+
+clab-gobgp-up: booty-gobgp-test-image
+	@echo Deploying GoBGP test topology (unnumbered + dual + numbered)
+	@cd test/e2e/clab && sudo clab deploy --topo topology-gobgp.clab.yml
+
+clab-gobgp-down:
+	@echo Destroying GoBGP test topology
+	@cd test/e2e/clab && sudo clab destroy --topo topology-gobgp.clab.yml
+
+test-e2e-gobgp:
+	@echo Running GoBGP E2E tests (requires clab-gobgp-up)
+	@go test -tags e2e_gobgp -race -v -timeout 300s ./test/e2e/integration/...
+
+clab-gobgp-vrnetlab-up: booty-vrnetlab-image
+	@echo Deploying GoBGP vrnetlab topology (QEMU VMs, all PeerModes)
+	@cd test/e2e/clab && sudo clab deploy --topo topology-gobgp-vrnetlab.clab.yml
+
+clab-gobgp-vrnetlab-down:
+	@echo Destroying GoBGP vrnetlab topology
+	@cd test/e2e/clab && sudo clab destroy --topo topology-gobgp-vrnetlab.clab.yml
+
+test-e2e-gobgp-vrnetlab:
+	@echo Running GoBGP vrnetlab E2E tests (requires clab-gobgp-vrnetlab-up)
+	@go test -tags e2e_gobgp_vrnetlab -race -v -timeout 600s ./test/e2e/integration/...
 
 check:
 	@test -z $(shell gofmt -l main.go | tee /dev/stderr) || echo "[WARN] Fix formatting issues with 'make fmt'"

@@ -1,0 +1,205 @@
+# GoBGP e2e topology: tests all three BGP PeerMode scenarios using containerlab.
+#
+# This topology runs three BOOTy instances with GoBGP (no FRR), each exercising
+# a different BGP session mode:
+#
+#   booty-unnumbered  PeerMode=unnumbered  eBGP unnumbered to spine (all AFI/SAFI)
+#   booty-dual        PeerMode=dual        eBGP unnumbered to spine (IPv4) +
+#                                          iBGP numbered to rr01 (L2VPN-EVPN)
+#   booty-numbered    PeerMode=numbered    eBGP numbered to spine (all AFI/SAFI)
+#
+# Network topology:
+#
+#   ┌─────────┐         ┌──────────┐
+#   │  rr01   │◄──iBGP──│ spine01  │◄──eBGP──┐ leaf01
+#   │ ASN65000│  eth1-6  │ ASN65000 │  eth1    │ ASN65001
+#   └────┬────┘         │          │         └──────────┘
+#        │ eth2          │ eth3-5   │
+#        │               │          │
+#   ┌────▼────┐    ┌─────▼─────┐   │
+#   │  booty  │    │   booty   │   │ eth5
+#   │  dual   │    │ unnumbered│   │
+#   └─────────┘    └───────────┘   │
+#                            ┌─────▼─────┐
+#                            │   booty   │
+#                            │ numbered  │
+#                            └───────────┘
+#
+# Build the test image first:
+#   docker build -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
+name: booty-gobgp-lab
+
+topology:
+  nodes:
+    # ── EVPN Fabric (FRR) ──────────────────────────────────────────────
+    spine01:
+      kind: linux
+      image: quay.io/frrouting/frr:10.3.1
+      binds:
+        - spine01-gobgp.frr.conf:/etc/frr/frr.conf:ro
+        - daemons:/etc/frr/daemons:ro
+      exec:
+        # eth1 → leaf01 (eBGP underlay)
+        - ip link set dev eth1 mtu 9000
+        - ip link add vxlan100 type vxlan id 100 dstport 4789 local 10.0.0.1 nolearning
+        - ip link add br100 type bridge
+        - ip link set vxlan100 master br100
+        - ip link set vxlan100 up
+        - ip link set br100 up
+        # eth2 → client (L2 on br100)
+        - ip link set dev eth2 master br100
+        - ip link set dev eth2 up
+        # eth3 → booty-unnumbered (eBGP unnumbered)
+        - ip link set dev eth3 mtu 9000
+        - ip link set dev eth3 up
+        # eth4 → booty-dual (eBGP unnumbered, IPv4 only)
+        - ip link set dev eth4 mtu 9000
+        - ip link set dev eth4 up
+        # eth5 → booty-numbered (eBGP numbered, 10.0.2.1/30)
+        - ip link set dev eth5 mtu 9000
+        - ip link set dev eth5 up
+        # eth6 → rr01 (iBGP numbered, 10.0.1.1/30)
+        - ip link set dev eth6 mtu 9000
+        - ip link set dev eth6 up
+
+    leaf01:
+      kind: linux
+      image: quay.io/frrouting/frr:10.3.1
+      binds:
+        - leaf01.frr.conf:/etc/frr/frr.conf:ro
+        - daemons:/etc/frr/daemons:ro
+      exec:
+        - ip link set dev eth1 mtu 9000
+        - ip link add vxlan100 type vxlan id 100 dstport 4789 local 10.0.0.2 nolearning
+        - ip link add br100 type bridge
+        - ip link set vxlan100 master br100
+        - ip link set vxlan100 up
+        - ip link set br100 up
+        - ip link set dev eth2 master br100
+        - ip link set dev eth2 up
+        - ip link set dev eth3 master br100
+        - ip link set dev eth3 up
+
+    # ── Route reflector (FRR): iBGP peer for dual mode ─────────────────
+    rr01:
+      kind: linux
+      image: quay.io/frrouting/frr:10.3.1
+      binds:
+        - rr01.frr.conf:/etc/frr/frr.conf:ro
+        - daemons:/etc/frr/daemons:ro
+      exec:
+        # eth1 → spine01 (iBGP 10.0.1.2/30)
+        - ip link set dev eth1 mtu 9000
+        - ip link set dev eth1 up
+        # eth2 → booty-dual (iBGP 10.0.3.1/30)
+        - ip link set dev eth2 mtu 9000
+        - ip link set dev eth2 up
+        # VXLAN for L2VPN-EVPN
+        - ip link add vxlan100 type vxlan id 100 dstport 4789 local 10.0.0.3 nolearning
+        - ip link add br100 type bridge
+        - ip link set vxlan100 master br100
+        - ip link set vxlan100 up
+        - ip link set br100 up
+
+    # ── Service containers ─────────────────────────────────────────────
+    client:
+      kind: linux
+      image: alpine:3.20
+      exec:
+        - ip addr add 10.100.0.100/24 dev eth1
+        - ip link set dev eth1 up
+      cmd: sleep infinity
+
+    nginx:
+      kind: linux
+      image: nginx:alpine
+      binds:
+        - nginx.conf:/etc/nginx/nginx.conf:ro
+        - html:/usr/share/nginx/html:ro
+        - images:/srv/images:ro
+      exec:
+        - ip addr add 10.100.0.10/24 dev eth1
+        - ip link set dev eth1 up
+
+    caprf-mock:
+      kind: linux
+      image: nginx:alpine
+      binds:
+        - caprf-mock.conf:/etc/nginx/nginx.conf:ro
+        - images:/srv/images:ro
+        - data:/srv/data:ro
+      exec:
+        - ip addr add 10.100.0.11/24 dev eth1
+        - ip link set dev eth1 up
+
+    # ── GoBGP BOOTy nodes (one per PeerMode) ──────────────────────────
+
+    # Scenario 1: BGP unnumbered — all address families on link-local sessions
+    booty-unnumbered:
+      kind: linux
+      image: booty-gobgp-test:latest
+      binds:
+        - data/vars-gobgp-unnumbered:/deploy/vars:ro
+      env:
+        BOOTY_NO_REBOOT: "1"
+      exec:
+        - dd if=/dev/zero of=/tmp/disk.img bs=1M count=0 seek=2048
+        - losetup /dev/loop0 /tmp/disk.img
+
+    # Scenario 2: Dual mode — unnumbered underlay (IPv4) + numbered EVPN to RR
+    booty-dual:
+      kind: linux
+      image: booty-gobgp-test:latest
+      binds:
+        - data/vars-gobgp-dual:/deploy/vars:ro
+      env:
+        BOOTY_NO_REBOOT: "1"
+      exec:
+        # eth2 → rr01: assign numbered IP for iBGP session
+        - ip addr add 10.0.3.2/30 dev eth2
+        - ip link set dev eth2 mtu 9000
+        - ip link set dev eth2 up
+        - dd if=/dev/zero of=/tmp/disk.img bs=1M count=0 seek=2048
+        - losetup /dev/loop0 /tmp/disk.img
+
+    # Scenario 3: Numbered only — all sessions via explicit IPs
+    booty-numbered:
+      kind: linux
+      image: booty-gobgp-test:latest
+      binds:
+        - data/vars-gobgp-numbered:/deploy/vars:ro
+      env:
+        BOOTY_NO_REBOOT: "1"
+      exec:
+        # Assign static IP on the point-to-point link to spine
+        - ip addr add 10.0.2.2/30 dev eth1
+        - ip link set dev eth1 mtu 9000
+        - ip link set dev eth1 up
+        - dd if=/dev/zero of=/tmp/disk.img bs=1M count=0 seek=2048
+        - losetup /dev/loop0 /tmp/disk.img
+
+  links:
+    # ── Fabric ──────────────────────────────────────────────────────
+    - endpoints: ["spine01:eth1", "leaf01:eth1"]              # eBGP underlay
+
+    # ── Spine-side L2 segment (br100, VXLAN VNI 100) ───────────────
+    - endpoints: ["spine01:eth2", "client:eth1"]              # test client
+
+    # ── Leaf-side L2 segment (br100, VXLAN VNI 100) ────────────────
+    - endpoints: ["leaf01:eth2", "nginx:eth1"]                # image server
+    - endpoints: ["leaf01:eth3", "caprf-mock:eth1"]           # provisioning API
+
+    # ── BGP unnumbered: booty-unnumbered → spine ───────────────────
+    - endpoints: ["spine01:eth3", "booty-unnumbered:eth1"]
+
+    # ── BGP dual: booty-dual → spine (unnumbered) ──────────────────
+    - endpoints: ["spine01:eth4", "booty-dual:eth1"]
+
+    # ── BGP numbered: booty-numbered → spine (10.0.2.0/30) ─────────
+    - endpoints: ["spine01:eth5", "booty-numbered:eth1"]
+
+    # ── iBGP: spine ↔ rr01 (10.0.1.0/30) ──────────────────────────
+    - endpoints: ["spine01:eth6", "rr01:eth1"]
+
+    # ── iBGP: rr01 ↔ booty-dual (10.0.3.0/30) ─────────────────────
+    - endpoints: ["rr01:eth2", "booty-dual:eth2"]
