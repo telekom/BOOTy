@@ -163,6 +163,29 @@ POST /status/heartbeat
 2. **Manual reboot**: Operator types `reboot` at the rescue shell
 3. **Timeout**: Optional auto-reboot after configurable duration
 
+## Required Binaries in Initramfs
+
+| Binary | Package | Purpose | Initramfs Flavor | Already Present? |
+|--------|---------|---------|-----------------|------------------|
+| `dropbear` | `dropbear-bin` | Lightweight SSH server (~110 KB) | full, gobgp | **No — add** |
+| `mount` | busybox | Mount local disks in rescue mode | all | **Yes** (busybox) |
+| `lsblk` | busybox | List block devices for auto-mount | all | **Yes** (busybox) |
+
+**Dockerfile change** (tools stage):
+
+```dockerfile
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ... existing packages ... \
+    dropbear-bin \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=tools /usr/sbin/dropbear bin/dropbear
+```
+
+**Note**: `dropbear` adds only ~110 KB to the initramfs. It is included
+in full and gobgp flavors only. Slim and micro flavors do not support
+rescue mode.
+
 ## Affected Files
 
 | File | Change |

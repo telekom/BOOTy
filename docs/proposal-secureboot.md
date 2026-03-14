@@ -142,6 +142,28 @@ console. Options to automate:
 **Recommended**: Use Redfish SecureBoot database API when available (HPE iLO 5+
 supports it). Fall back to `mokutil` for older firmware.
 
+## Required Binaries in Initramfs
+
+| Binary | Package | Purpose | Initramfs Flavor | Already Present? |
+|--------|---------|---------|-----------------|------------------|
+| `efibootmgr` | `efibootmgr` | Read/write EFI boot entries, check SecureBoot state | all | **Yes** |
+| `mokutil` | `mokutil` | MOK key enrollment/listing (Phase 2) | full, gobgp | **No — add** |
+
+Phase 1 (re-enable via Redfish) requires no new BOOTy binaries — the
+Redfish call is made by CAPRF. Phase 2 (MOK enrollment) needs `mokutil`
+in the initramfs for `mokutil --import`.
+
+**Dockerfile change** (tools stage, Phase 2 only):
+
+```dockerfile
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ... existing packages ... \
+    mokutil \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=tools /usr/bin/mokutil bin/mokutil
+```
+
 ## Affected Files
 
 | File | Change |

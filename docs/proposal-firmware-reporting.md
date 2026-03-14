@@ -177,6 +177,18 @@ type RedfishHostStatus struct {
 }
 ```
 
+## Required Binaries in Initramfs
+
+All required binaries are already present:
+
+| Binary | Package | Purpose | Initramfs Flavor | Already Present? |
+|--------|---------|---------|-----------------|------------------|
+| `dmidecode` | `dmidecode` | BIOS/BMC version from SMBIOS tables | all | **Yes** |
+| `ethtool` | `ethtool` | NIC firmware version (`ethtool -i`) | all | **Yes** |
+| `mstflint` | `mstflint` | Mellanox NIC firmware version | full, gobgp | **Yes** |
+| `nvme` | `nvme-cli` | NVMe controller firmware version | all | **Yes** |
+| `hdparm` | `hdparm` | SATA disk firmware version | all | **Yes** |
+
 ## Affected Files
 
 | File | Change |

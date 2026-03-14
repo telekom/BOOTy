@@ -148,6 +148,23 @@ expose OEM extensions under `/redfish/v1/Systems/1/Oem/`:
 - `Oem.Lenovo.FrontPanelUSB` — USB management
 - `Oem.Lenovo.BIOSSettings` — direct BIOS attribute access
 
+## Required Binaries in Initramfs
+
+No additional binaries needed. Vendor-specific Redfish interactions are
+handled by the CAPRF controller via HTTP. BOOTy vendor detection uses
+sysfs (`/sys/class/dmi/id/sys_vendor`) and existing binaries:
+
+| Binary | Package | Purpose | Initramfs Flavor | Already Present? |
+|--------|---------|---------|-----------------|------------------|
+| `dmidecode` | `dmidecode` | DMI/SMBIOS parsing for vendor detection | all | **Yes** |
+
+**Vendor-specific kernel modules** (may need to be added to initrd):
+
+| Module | Vendor | Purpose |
+|--------|--------|---------|
+| `hpilo` | HPE | iLO device driver (optional, for local iLO access) |
+| `ipmi_si` | All | IPMI system interface (for local BMC access) |
+
 ## Affected Files
 
 | File | Change |

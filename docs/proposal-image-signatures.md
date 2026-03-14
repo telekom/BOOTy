@@ -199,6 +199,19 @@ If verification fails:
 4. **Set machine phase** to `PhaseFailed` with security annotation
 5. **Log at ERROR level** with the expected and actual checksums
 
+## Required Binaries in Initramfs
+
+No additional binaries needed. All verification uses pure Go libraries:
+
+| Go Library | Purpose | Already Used? |
+|-----------|---------|--------------|
+| `crypto/sha256`, `crypto/sha512` | Checksum computation (Tier 1) | **Yes** (stdlib) |
+| `golang.org/x/crypto/openpgp` | GPG signature verification (Tier 2) | **No — add** |
+| `sigstore/cosign/v2` | Cosign OCI signature verification (Tier 3) | **No — add** |
+
+**Build tags**: Tier 2 and Tier 3 are optional via `//go:build gpg` and
+`//go:build cosign` to avoid pulling large dependencies into slim/micro builds.
+
 ## Affected Files
 
 | File | Change |

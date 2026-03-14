@@ -199,6 +199,21 @@ Content-Type: application/json
 }
 ```
 
+## Required Binaries in Initramfs
+
+All required binaries are already present. Health checks primarily use
+sysfs/procfs parsing in Go:
+
+| Binary | Package | Purpose | Initramfs Flavor | Already Present? |
+|--------|---------|---------|-----------------|------------------|
+| `nvme` | `nvme-cli` | NVMe SMART health (`nvme smart-log`) | all | **Yes** |
+| `hdparm` | `hdparm` | SATA SMART data (fallback) | all | **Yes** |
+| `ethtool` | `ethtool` | NIC link state and driver info | all | **Yes** |
+| `ip` | `iproute2` | Network interface state | all | **Yes** |
+| `dmidecode` | `dmidecode` | Memory ECC status | all | **Yes** |
+
+Most checks use `/sys/` and `/proc/` directly (Go sysfs parsing).
+
 ## Affected Files
 
 | File | Change |

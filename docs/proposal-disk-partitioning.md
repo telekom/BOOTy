@@ -199,6 +199,26 @@ func (m *Manager) GenerateFstab(layout PartitionLayout) string {
 }
 ```
 
+## Required Binaries in Initramfs
+
+All required binaries are already present in the initramfs:
+
+| Binary | Package | Purpose | Initramfs Flavor | Already Present? |
+|--------|---------|---------|-----------------|------------------|
+| `sgdisk` | `gdisk` | GPT partition table creation | all | **Yes** |
+| `parted` | `parted` | MBR/GPT partitioning (alternative) | all | **Yes** |
+| `partprobe` | `parted` | Re-read partition table after changes | all | **Yes** |
+| `mkfs.ext4` | `e2fsprogs` | ext4 filesystem formatting | all | **Yes** (via `e2fsck`) |
+| `mkfs.xfs` | `xfsprogs` | XFS filesystem formatting | all | **Yes** (via `xfs_growfs`) |
+| `mkfs.vfat` | `dosfstools` | FAT32 formatting (EFI partition) | full, gobgp | **No — add** |
+| `mkswap` | `util-linux` / busybox | Swap partition formatting | all | **Yes** (busybox) |
+| `lvm` | `lvm2` | LVM logical volume management | all | **Yes** |
+| `wipefs` | `util-linux` | Wipe filesystem signatures | all | **Yes** |
+
+**Note**: `mkfs.vfat` is only needed if custom partition layouts include
+EFI System Partitions. For whole-disk imaging (current default), it is
+not required.
+
 ## Affected Files
 
 | File | Change |

@@ -232,6 +232,32 @@ export TPM_PCR_CONFIG="10"         # PCR index for config hash
 export TPM_PCR_PROVISIONER="14"    # PCR index for provisioner steps
 ```
 
+## Required Binaries in Initramfs
+
+TPM operations use **pure Go** (`google/go-tpm`) via `/dev/tpmrm0`, so no
+userspace binaries are strictly required. Debug/fallback tools are optional:
+
+| Binary | Package | Purpose | Initramfs Flavor | Already Present? |
+|--------|---------|---------|-----------------|------------------|
+| `tpm2_pcrread` | `tpm2-tools` | Debug: read PCR values from CLI | full (optional) | **No — optional** |
+| `tpm2_quote` | `tpm2-tools` | Debug: generate attestation quote from CLI | full (optional) | **No — optional** |
+| `tpm2_eventlog` | `tpm2-tools` | Debug: parse TPM event log | full (optional) | **No — optional** |
+
+**Go Dependencies**:
+
+| Package | Purpose |
+|---------|---------|
+| `github.com/google/go-tpm/v2` | Pure Go TPM 2.0 operations |
+| `github.com/google/go-tpm-tools` | Higher-level helpers |
+
+**Kernel modules** (must be loaded):
+
+| Module | Purpose |
+|--------|---------|
+| `tpm_tis` | TPM Interface Specification driver |
+| `tpm_crb` | TPM Command Response Buffer driver |
+| `tpm_tis_core` | Core TIS support |
+
 ## Affected Files
 
 | File | Change |

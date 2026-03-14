@@ -185,6 +185,15 @@ func (o *Orchestrator) ResetNVMeNamespaces(ctx context.Context) error {
 }
 ```
 
+## Required Binaries in Initramfs
+
+| Binary | Package | Purpose | Initramfs Flavor | Already Present? |
+|--------|---------|---------|-----------------|------------------|
+| `nvme` | `nvme-cli` | NVMe namespace CRUD, format, identify | all | **Yes** |
+
+No new binaries needed. All NVMe namespace operations use the existing
+`nvme-cli` tool already in the initramfs.
+
 ## Affected Files
 
 | File | Change |
