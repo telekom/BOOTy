@@ -4,6 +4,7 @@ package vrf
 
 import (
 	"fmt"
+	"math"
 )
 
 // Config defines a VRF instance.
@@ -21,16 +22,19 @@ type MultiVRFConfig struct {
 	Extra        []Config `json:"extra,omitempty"`
 }
 
+// maxTableID is the maximum valid routing table ID for VRF on Linux.
+const maxTableID = math.MaxUint32 - 1
+
 // Validate checks the VRF configuration for correctness.
 func (c *Config) Validate() error {
 	if c.Name == "" {
-		return fmt.Errorf("VRF name is required")
+		return fmt.Errorf("vrf name is required")
 	}
 	if c.TableID == 0 {
-		return fmt.Errorf("VRF %s: table ID must be > 0", c.Name)
+		return fmt.Errorf("vrf %s: table ID must be > 0", c.Name)
 	}
-	if c.TableID > 4294967294 {
-		return fmt.Errorf("VRF %s: table ID %d exceeds maximum", c.Name, c.TableID)
+	if c.TableID > maxTableID {
+		return fmt.Errorf("vrf %s: table ID %d exceeds maximum", c.Name, c.TableID)
 	}
 	return nil
 }
