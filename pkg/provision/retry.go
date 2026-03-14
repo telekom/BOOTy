@@ -47,8 +47,11 @@ func WithRetry(ctx context.Context, name string, policy RetryPolicy, fn func(ctx
 
 		if err := fn(ctx); err != nil {
 			lastErr = err
-			if !isTransient(err) && !policy.Transient {
+			if isPermanent(err) {
 				return fmt.Errorf("%s: permanent failure: %w", name, err)
+			}
+			if !isTransient(err) && !policy.Transient {
+				return fmt.Errorf("%s: non-transient failure: %w", name, err)
 			}
 			continue
 		}
