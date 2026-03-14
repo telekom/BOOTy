@@ -35,11 +35,12 @@ func (m *Manager) ApplyLVMConfig(ctx context.Context, device string, layout *con
 	// Create logical volumes.
 	for _, vol := range lvm.Volumes {
 		args := []string{}
-		if vol.Extents != "" {
+		switch {
+		case vol.Extents != "":
 			args = append(args, "-l", vol.Extents)
-		} else if vol.SizeMB > 0 {
+		case vol.SizeMB > 0:
 			args = append(args, "-L", fmt.Sprintf("%dM", vol.SizeMB))
-		} else {
+		default:
 			args = append(args, "-l", "100%FREE")
 		}
 		args = append(args, "-n", vol.Name, lvm.VolumeGroup)

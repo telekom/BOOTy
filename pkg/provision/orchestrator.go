@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -283,6 +284,14 @@ func (o *Orchestrator) applyPartitionLayout(ctx context.Context) error {
 	fstab := disk.GenerateFstab(o.cfg.PartitionLayout, device)
 	if o.cfg.PartitionLayout.LVM != nil {
 		fstab += disk.GenerateLVMFstab(o.cfg.PartitionLayout.LVM)
+	}
+
+	fstabPath := filepath.Join(o.config.rootDir, "etc", "fstab")
+	if err := os.MkdirAll(filepath.Dir(fstabPath), 0o755); err != nil {
+		return fmt.Errorf("creating fstab directory: %w", err)
+	}
+	if err := os.WriteFile(fstabPath, []byte(fstab), 0o644); err != nil {
+		return fmt.Errorf("writing fstab: %w", err)
 	}
 	o.log.Info("Generated fstab for custom layout")
 

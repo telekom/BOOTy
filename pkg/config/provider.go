@@ -115,9 +115,9 @@ type MachineConfig struct {
 
 // PartitionLayout defines a declarative partitioning scheme for the target disk.
 type PartitionLayout struct {
-	Table      string      `json:"table"`      // "gpt" or "mbr" (default: "gpt")
+	Table      string      `json:"table"`            // "gpt" or "mbr" (default: "gpt")
 	Device     string      `json:"device,omitempty"` // Device override (empty = auto-detect)
-	Partitions []Partition `json:"partitions"` // Ordered list of partitions to create
+	Partitions []Partition `json:"partitions"`       // Ordered list of partitions to create
 	LVM        *LVMConfig  `json:"lvm,omitempty"`    // Optional LVM configuration
 }
 
