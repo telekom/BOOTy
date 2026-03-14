@@ -62,7 +62,9 @@ func TestCacheOperations(t *testing.T) {
 	m := New(nil, &Config{CacheDir: dir})
 
 	// Initially not cached.
-	if m.IsCached("sha256:abc") {
+	if cached, err := m.IsCached("sha256:abc"); err != nil {
+		t.Fatalf("IsCached: %v", err)
+	} else if cached {
 		t.Error("should not be cached initially")
 	}
 
@@ -73,7 +75,9 @@ func TestCacheOperations(t *testing.T) {
 	}
 
 	// Now should be cached.
-	if !m.IsCached("sha256:abc") {
+	if cached, err := m.IsCached("sha256:abc"); err != nil {
+		t.Fatalf("IsCached: %v", err)
+	} else if !cached {
 		t.Error("should be cached after add")
 	}
 
