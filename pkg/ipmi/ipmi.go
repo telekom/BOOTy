@@ -1,3 +1,5 @@
+//go:build linux
+
 package ipmi
 
 import (
@@ -17,6 +19,9 @@ type Manager struct {
 
 // New creates an IPMI manager.
 func New(log *slog.Logger) *Manager {
+	if log == nil {
+		log = slog.Default()
+	}
 	return &Manager{
 		device: "/dev/ipmi0",
 		log:    log,
@@ -55,7 +60,7 @@ const (
 	// BootCDROM boots from CD/DVD.
 	BootCDROM BootDevice = "cdrom"
 	// BootBIOS enters BIOS setup.
-	BootBIOS BootDevice = "bios-setup"
+	BootBIOS BootDevice = "bios"
 )
 
 // ChassisStatus holds chassis power state information.
@@ -68,53 +73,27 @@ type ChassisStatus struct {
 
 // GetBMCNetwork reads the BMC network configuration.
 func (m *Manager) GetBMCNetwork(ctx context.Context, channel int) (*BMCNetConfig, error) {
-	ip, err := m.lanGet(ctx, channel, "IP Address")
+	out, err := m.output(ctx, "lan", "print", fmt.Sprintf("%d", channel))
 	if err != nil {
-		return nil, fmt.Errorf("get BMC IP: %w", err)
-	}
-	mask, err := m.lanGet(ctx, channel, "Subnet Mask")
-	if err != nil {
-		return nil, fmt.Errorf("get BMC netmask: %w", err)
-	}
-	gw, err := m.lanGet(ctx, channel, "Default Gateway IP")
-	if err != nil {
-		return nil, fmt.Errorf("get BMC gateway: %w", err)
-	}
-	mac, err := m.lanGet(ctx, channel, "MAC Address")
-	if err != nil {
-		return nil, fmt.Errorf("get BMC MAC: %w", err)
-	}
-	src, err := m.lanGet(ctx, channel, "IP Address Source")
-	if err != nil {
-		return nil, fmt.Errorf("get BMC IP source: %w", err)
+		return nil, fmt.Errorf("get BMC network: %w", err)
 	}
 
+	fields := parseLanPrint(out)
 	return &BMCNetConfig{
-		IPAddress:  strings.TrimSpace(ip),
-		Netmask:    strings.TrimSpace(mask),
-		Gateway:    strings.TrimSpace(gw),
-		MACAddress: strings.TrimSpace(mac),
-		DHCP:       strings.Contains(strings.ToLower(src), "dhcp"),
+		IPAddress:  fields["IP Address"],
+		Netmask:    fields["Subnet Mask"],
+		Gateway:    fields["Default Gateway IP"],
+		MACAddress: fields["MAC Address"],
+		DHCP:       strings.Contains(strings.ToLower(fields["IP Address Source"]), "dhcp"),
 	}, nil
 }
 
 // SetNextBoot sets the boot device for the next boot only.
 func (m *Manager) SetNextBoot(ctx context.Context, device BootDevice) error {
-	var devStr string
-	switch device {
-	case BootPXE:
-		devStr = "pxe"
-	case BootDisk:
-		devStr = "disk"
-	case BootCDROM:
-		devStr = "cdrom"
-	case BootBIOS:
-		devStr = "bios"
-	default:
-		return fmt.Errorf("unknown boot device: %s", device)
+	if err := ValidateBootDevice(string(device)); err != nil {
+		return err
 	}
-
-	return m.run(ctx, "chassis", "bootdev", devStr, "options=efiboot")
+	return m.run(ctx, "chassis", "bootdev", string(device), "options=efiboot")
 }
 
 // ChassisControl sends a chassis control command (power on/off/cycle/reset).
@@ -134,24 +113,24 @@ func (m *Manager) DevicePath() string {
 	return m.device
 }
 
-func (m *Manager) lanGet(ctx context.Context, channel int, param string) (string, error) {
-	out, err := m.output(ctx, "lan", "print", fmt.Sprintf("%d", channel))
-	if err != nil {
-		return "", err
-	}
-	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, param) {
-			parts := strings.SplitN(line, ":", 2)
-			if len(parts) == 2 {
-				return strings.TrimSpace(parts[1]), nil
-			}
+// parseLanPrint parses "ipmitool lan print" output into a key-value map.
+func parseLanPrint(output string) map[string]string {
+	result := make(map[string]string)
+	for _, line := range strings.Split(output, "\n") {
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			continue
 		}
+		key := strings.TrimSpace(parts[0])
+		val := strings.TrimSpace(parts[1])
+		result[key] = val
 	}
-	return "", fmt.Errorf("parameter %q not found in LAN config", param)
+	return result
 }
 
 func (m *Manager) run(ctx context.Context, args ...string) error {
-	cmd := exec.CommandContext(ctx, "ipmitool", args...)
+	fullArgs := append([]string{"-d", m.device}, args...)
+	cmd := exec.CommandContext(ctx, "ipmitool", fullArgs...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ipmitool %s: %s: %w", strings.Join(args, " "), string(out), err)
@@ -160,7 +139,8 @@ func (m *Manager) run(ctx context.Context, args ...string) error {
 }
 
 func (m *Manager) output(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "ipmitool", args...)
+	fullArgs := append([]string{"-d", m.device}, args...)
+	cmd := exec.CommandContext(ctx, "ipmitool", fullArgs...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("ipmitool %s: %s: %w", strings.Join(args, " "), string(out), err)
@@ -178,11 +158,11 @@ func ParseBMCMAC(mac string) (net.HardwareAddr, error) {
 }
 
 // ValidateBootDevice checks if a boot device string is valid.
-func ValidateBootDevice(device string) (BootDevice, error) {
+func ValidateBootDevice(device string) error {
 	switch BootDevice(device) {
 	case BootPXE, BootDisk, BootCDROM, BootBIOS:
-		return BootDevice(device), nil
+		return nil
 	default:
-		return "", fmt.Errorf("invalid boot device: %q", device)
+		return fmt.Errorf("invalid boot device: %q", device)
 	}
 }
