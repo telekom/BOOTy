@@ -5,6 +5,9 @@ import (
 	"strings"
 )
 
+// DefaultKeyFilePath is the standard path for LUKS key files in initramfs.
+const DefaultKeyFilePath = "/etc/luks/keyfile"
+
 // GenerateCrypttab creates /etc/crypttab content for the provisioned OS.
 func GenerateCrypttab(targets []Target, method UnlockMethod) string {
 	lines := make([]string, 0, 1+len(targets))
@@ -24,8 +27,12 @@ func GenerateCrypttab(targets []Target, method UnlockMethod) string {
 		default:
 			options = "luks,discard"
 		}
-		lines = append(lines, fmt.Sprintf("%s %s none %s",
-			t.MappedName, t.Device, options))
+		keyField := "none"
+		if method == UnlockKeyFile {
+			keyField = DefaultKeyFilePath
+		}
+		lines = append(lines, fmt.Sprintf("%s %s %s %s",
+			t.MappedName, t.Device, keyField, options))
 	}
 	return strings.Join(lines, "\n") + "\n"
 }

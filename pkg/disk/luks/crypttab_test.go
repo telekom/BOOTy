@@ -60,6 +60,12 @@ func TestGenerateCrypttab_KeyFile(t *testing.T) {
 	if !strings.Contains(result, "keyfile-timeout=30s") {
 		t.Error("keyfile method should have keyfile-timeout option")
 	}
+	if !strings.Contains(result, DefaultKeyFilePath) {
+		t.Errorf("keyfile method should reference key file path %s", DefaultKeyFilePath)
+	}
+	if strings.Contains(result, " none ") {
+		t.Error("keyfile method should not use 'none' as key field")
+	}
 }
 
 func TestGenerateCrypttab_MultipleTargets(t *testing.T) {
