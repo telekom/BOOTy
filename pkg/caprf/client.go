@@ -317,6 +317,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"HEARTBEAT_URL":               &cfg.HeartbeatURL,
 		"COMMANDS_URL":                &cfg.CommandsURL,
 		"RESCUE_SSH_PUBKEY":           &cfg.RescueSSHPubKey,
+		"RESCUE_PASSWORD_HASH":        &cfg.RescuePasswordHash,
 		"underlay_subnet":             &cfg.UnderlaySubnet,
 		"underlay_ip":                 &cfg.UnderlayIP,
 		"overlay_subnet":              &cfg.OverlaySubnet,
@@ -402,6 +403,8 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) {
 		setIntField(&cfg.HealthMinCPUs, value)
 	case "RESCUE_TIMEOUT":
 		setIntField(&cfg.RescueTimeout, value)
+	case "RESCUE_AUTO_MOUNT":
+		cfg.RescueAutoMountDisks = parseBoolVar(value)
 	}
 }
 

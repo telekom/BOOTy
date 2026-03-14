@@ -31,8 +31,10 @@ type MachineConfig struct {
 	DisableKexec      bool     // DISABLE_KEXEC: skip kexec and always hard-reboot
 	SecureErase       bool     // SECURE_ERASE: use ATA/NVMe secure erase instead of wipefs
 	PostProvisionCmds []string // POST_PROVISION_CMDS: commands to run in chroot after provisioning
-	RescueSSHPubKey   string   // RESCUE_SSH_PUBKEY: authorized SSH public key for rescue mode
-	RescueTimeout     int      // RESCUE_TIMEOUT: auto-reboot after N seconds (0 = no timeout)
+	RescueSSHPubKey      string   // RESCUE_SSH_PUBKEY: authorized SSH public key for rescue mode
+	RescueTimeout        int      // RESCUE_TIMEOUT: auto-reboot after N seconds (0 = no timeout)
+	RescuePasswordHash   string   // RESCUE_PASSWORD_HASH: crypt(3) hash for console login
+	RescueAutoMountDisks bool     // RESCUE_AUTO_MOUNT: mount detected partitions read-only under /rescue/
 
 	// Status URLs parsed from /deploy/vars.
 	LogURL       string

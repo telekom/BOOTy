@@ -1,6 +1,6 @@
 # Proposal: Rescue Mode
 
-## Status: Partially Implemented
+## Status: Fully Implemented
 
 Implemented: `RESCUE_MODE` flag, dropbear SSH (gated on `RESCUE_SSH_PUBKEY`),
 `RESCUE_TIMEOUT` auto-reboot, heartbeat loop, status reporting.

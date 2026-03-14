@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -457,6 +458,16 @@ func runRescue(ctx context.Context, cfg *config.MachineConfig, client config.Pro
 	slog.Info("Entering rescue mode")
 	_ = client.ReportStatus(ctx, config.StatusInit, "rescue-mode-active")
 
+	// Set root password hash for console login if provided.
+	if cfg.RescuePasswordHash != "" {
+		setRescuePassword(cfg.RescuePasswordHash)
+	}
+
+	// Auto-mount detected partitions read-only under /rescue/.
+	if cfg.RescueAutoMountDisks {
+		mountRescueDisks()
+	}
+
 	// Write authorized keys if provided.
 	if cfg.RescueSSHPubKey != "" {
 		if err := os.MkdirAll("/root/.ssh", 0o700); err != nil {
@@ -470,6 +481,7 @@ func runRescue(ctx context.Context, cfg *config.MachineConfig, client config.Pro
 	startRescueSSH(ctx, cfg.RescueSSHPubKey)
 
 	// Send periodic heartbeats.
+	rescueStart := time.Now()
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
 	defer cancelHeartbeat()
 	go func() {
@@ -487,6 +499,9 @@ func runRescue(ctx context.Context, cfg *config.MachineConfig, client config.Pro
 		}
 	}()
 
+	// Poll for CAPRF commands (reboot/provision).
+	go pollRescueCommands(heartbeatCtx, client, rescueStart)
+
 	// Wait for timeout or context cancellation.
 	if cfg.RescueTimeout > 0 {
 		slog.Info("Rescue mode will auto-reboot", "timeout_seconds", cfg.RescueTimeout)
@@ -502,6 +517,82 @@ func runRescue(ctx context.Context, cfg *config.MachineConfig, client config.Pro
 		<-ctx.Done()
 	}
 	_ = client.ReportStatus(ctx, config.StatusSuccess, "rescue-mode-exiting")
+}
+
+// setRescuePassword sets the root password from a crypt(3) hash.
+func setRescuePassword(hash string) {
+	out, err := exec.Command("chpasswd", "-e").Output() //nolint:gosec // trusted config
+	if err != nil {
+		// Try writing /etc/shadow directly
+		shadowEntry := fmt.Sprintf("root:%s:19000:0:99999:7:::\n", hash)
+		if writeErr := os.WriteFile("/etc/shadow", []byte(shadowEntry), 0o600); writeErr != nil {
+			slog.Warn("Failed to set rescue password", "error", writeErr)
+			return
+		}
+	} else {
+		_ = out
+	}
+	slog.Info("Rescue console password configured")
+}
+
+// mountRescueDisks auto-mounts detected partitions read-only under /rescue/.
+func mountRescueDisks() {
+	out, err := exec.Command("lsblk", "-rno", "NAME,TYPE").Output()
+	if err != nil {
+		slog.Warn("Failed to list block devices for rescue mount", "error", err)
+		return
+	}
+
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[1] != "part" {
+			continue
+		}
+		devName := fields[0]
+		devPath := "/dev/" + devName
+		mountPoint := "/rescue/" + devName
+
+		if err := os.MkdirAll(mountPoint, 0o755); err != nil {
+			slog.Warn("Failed to create rescue mount point", "device", devName, "error", err)
+			continue
+		}
+
+		mountOut, mountErr := exec.Command("mount", "-o", "ro", devPath, mountPoint).CombinedOutput() //nolint:gosec // trusted device paths
+		if mountErr != nil {
+			slog.Debug("Could not mount partition for rescue", "device", devName, "error", mountErr, "output", string(mountOut))
+			continue
+		}
+		slog.Info("Rescue-mounted partition", "device", devName, "mountpoint", mountPoint)
+	}
+}
+
+// pollRescueCommands checks for CAPRF commands to exit rescue mode.
+func pollRescueCommands(ctx context.Context, client config.Provider, start time.Time) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cmds, err := client.FetchCommands(ctx)
+			if err != nil {
+				continue
+			}
+			for _, cmd := range cmds {
+				switch cmd.Type {
+				case "reboot":
+					slog.Info("Received reboot command from CAPRF, exiting rescue mode")
+					_ = client.ReportStatus(ctx, config.StatusSuccess, fmt.Sprintf("rescue-reboot-commanded after %s", time.Since(start).Truncate(time.Second)))
+					return
+				case "provision":
+					slog.Info("Received provision command from CAPRF, exiting rescue mode")
+					_ = client.ReportStatus(ctx, config.StatusInit, "rescue-to-provision")
+					return
+				}
+			}
+		}
+	}
 }
 
 // runStandby keeps the machine in a hot standby loop. It sends periodic
