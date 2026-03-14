@@ -522,16 +522,15 @@ func runRescue(ctx context.Context, cfg *config.MachineConfig, client config.Pro
 
 // setRescuePassword sets the root password from a crypt(3) hash.
 func setRescuePassword(hash string) {
-	out, err := exec.CommandContext(context.Background(), "chpasswd", "-e").Output() //nolint:gosec // trusted config
-	if err != nil {
-		// Try writing /etc/shadow directly
+	cmd := exec.CommandContext(context.Background(), "chpasswd", "-e") //nolint:gosec // trusted config
+	cmd.Stdin = strings.NewReader("root:" + hash + "\n")
+	if err := cmd.Run(); err != nil {
+		// Try writing /etc/shadow directly as fallback.
 		shadowEntry := fmt.Sprintf("root:%s:19000:0:99999:7:::\n", hash)
 		if writeErr := os.WriteFile("/etc/shadow", []byte(shadowEntry), 0o600); writeErr != nil {
 			slog.Warn("Failed to set rescue password", "error", writeErr)
 			return
 		}
-	} else {
-		_ = out
 	}
 	slog.Info("Rescue console password configured")
 }

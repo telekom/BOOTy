@@ -76,6 +76,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     mdadm util-linux e2fsprogs xfsprogs btrfs-progs parted gdisk kpartx dosfstools \
     efibootmgr dmidecode ethtool curl iproute2 bridge-utils \
     hdparm nvme-cli mstflint lldpd \
+    dropbear-bin \
     && rm -rf /var/lib/apt/lists/*
 
 # Build Busybox
@@ -131,6 +132,9 @@ COPY --from=tools /usr/bin/mstflint bin/mstflint
 # LLDP daemon for switch topology discovery
 COPY --from=tools /usr/sbin/lldpcli bin/lldpcli
 COPY --from=tools /usr/sbin/lldpd sbin/lldpd
+
+# Dropbear lightweight SSH server for rescue mode (~110 KB)
+COPY --from=tools /usr/sbin/dropbear bin/dropbear
 
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
@@ -255,6 +259,9 @@ COPY --from=tools /usr/bin/mstflint bin/mstflint
 # LLDP daemon for switch topology discovery
 COPY --from=tools /usr/sbin/lldpcli bin/lldpcli
 COPY --from=tools /usr/sbin/lldpd sbin/lldpd
+
+# Dropbear lightweight SSH server for rescue mode (~110 KB)
+COPY --from=tools /usr/sbin/dropbear bin/dropbear
 
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
