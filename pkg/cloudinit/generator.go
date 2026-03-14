@@ -72,15 +72,17 @@ type EthConfig struct {
 
 // BondConfig represents a bond device configuration.
 type BondConfig struct {
-	Interfaces []string    `yaml:"interfaces"`
-	Parameters *BondParams `yaml:"parameters,omitempty"`
-	Addresses  []string    `yaml:"addresses,omitempty"`
-	DHCP4      bool        `yaml:"dhcp4,omitempty"`
+	Interfaces  []string    `yaml:"interfaces"`
+	Parameters  *BondParams `yaml:"parameters,omitempty"`
+	Addresses   []string    `yaml:"addresses,omitempty"`
+	Gateway4    string      `yaml:"gateway4,omitempty"`
+	Nameservers *NSConfig   `yaml:"nameservers,omitempty"`
+	DHCP4       bool        `yaml:"dhcp4,omitempty"`
 }
 
 // BondParams represents bond parameters.
 type BondParams struct {
-	Mode               string `yaml:"mode"`
+	Mode               string `yaml:"mode,omitempty"`
 	LACPRate           string `yaml:"lacp-rate,omitempty"`
 	TransmitHashPolicy string `yaml:"transmit-hash-policy,omitempty"`
 }
@@ -114,10 +116,14 @@ type Config struct {
 	DNS         []string
 	BondIfaces  []string
 	BondMode    string
+	MACAddress  string
 }
 
 // Generate creates cloud-init user-data, meta-data, and network-config.
 func Generate(cfg *Config) (*UserData, *MetaData, *NetworkConfig) {
+	if cfg == nil {
+		cfg = &Config{}
+	}
 	userData := &UserData{
 		Hostname:          cfg.Hostname,
 		FQDN:              cfg.FQDN,
@@ -146,38 +152,45 @@ func generateNetworkConfig(cfg *Config) *NetworkConfig {
 	nc := &NetworkConfig{Version: 2}
 
 	if len(cfg.BondIfaces) > 0 {
-		nc.Bonds = map[string]BondConfig{
-			"bond0": {
-				Interfaces: cfg.BondIfaces,
-				Parameters: &BondParams{Mode: cfg.BondMode},
-				Addresses:  addressList(cfg.StaticIP),
-				DHCP4:      cfg.StaticIP == "",
-			},
+		bondMode := cfg.BondMode
+		if bondMode == "" {
+			bondMode = "802.3ad"
 		}
+		bond := BondConfig{
+			Interfaces: cfg.BondIfaces,
+			Parameters: &BondParams{Mode: bondMode},
+			Addresses:  addressList(cfg.StaticIP),
+			DHCP4:      cfg.StaticIP == "",
+			Gateway4:   cfg.Gateway,
+		}
+		if len(cfg.DNS) > 0 {
+			bond.Nameservers = &NSConfig{Addresses: cfg.DNS}
+		}
+		nc.Bonds = map[string]BondConfig{"bond0": bond}
 		return nc
 	}
 
 	if cfg.StaticIP != "" {
-		nc.Ethernets = map[string]EthConfig{
-			"id0": {
-				Match:     &MatchConfig{Driver: "virtio*"},
-				DHCP4:     false,
-				Addresses: []string{cfg.StaticIP},
-				Gateway4:  cfg.Gateway,
-				Nameservers: &NSConfig{
-					Addresses: cfg.DNS,
-				},
+		eth := EthConfig{
+			DHCP4:     false,
+			Addresses: []string{cfg.StaticIP},
+			Gateway4:  cfg.Gateway,
+			Nameservers: &NSConfig{
+				Addresses: cfg.DNS,
 			},
 		}
+		if cfg.MACAddress != "" {
+			eth.Match = &MatchConfig{MACAddress: cfg.MACAddress}
+		}
+		nc.Ethernets = map[string]EthConfig{"id0": eth}
 		return nc
 	}
 
-	nc.Ethernets = map[string]EthConfig{
-		"id0": {
-			Match: &MatchConfig{Driver: "virtio*"},
-			DHCP4: true,
-		},
+	eth := EthConfig{DHCP4: true}
+	if cfg.MACAddress != "" {
+		eth.Match = &MatchConfig{MACAddress: cfg.MACAddress}
 	}
+	nc.Ethernets = map[string]EthConfig{"id0": eth}
 	return nc
 }
 
