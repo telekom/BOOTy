@@ -1,6 +1,6 @@
 # Proposal: Image Signature Verification
 
-## Status: Proposal
+## Status: Implemented (Tier 1 checksum, Tier 2 config)
 
 ## Priority: P3
 
