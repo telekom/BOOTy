@@ -1,3 +1,5 @@
+//go:build linux
+
 package luks
 
 import (
@@ -49,13 +51,16 @@ type Manager struct {
 
 // New creates a LUKS encryption manager.
 func New(log *slog.Logger) *Manager {
+	if log == nil {
+		log = slog.Default()
+	}
 	return &Manager{log: log}
 }
 
 // Format creates a LUKS2 volume on the target device.
 func (m *Manager) Format(ctx context.Context, target *Target, cfg *Config) error {
 	if cfg.Passphrase == "" {
-		return fmt.Errorf("LUKS passphrase required for initial format")
+		return fmt.Errorf("passphrase required for LUKS format")
 	}
 
 	cipher := cfg.Cipher
@@ -77,12 +82,13 @@ func (m *Manager) Format(ctx context.Context, target *Target, cfg *Config) error
 		"--cipher", cipher,
 		"--key-size", fmt.Sprintf("%d", keySize),
 		"--hash", hash,
+		"--key-file", "-",
 		"--batch-mode",
 		target.Device,
 	}
 
 	cmd := exec.CommandContext(ctx, "cryptsetup", args...)
-	cmd.Stdin = strings.NewReader(cfg.Passphrase)
+	cmd.Stdin = strings.NewReader(cfg.Passphrase + "\n")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("cryptsetup luksFormat %s: %s: %w", target.Device, string(out), err)
@@ -94,9 +100,10 @@ func (m *Manager) Format(ctx context.Context, target *Target, cfg *Config) error
 // Open maps a LUKS volume to /dev/mapper/<name>.
 func (m *Manager) Open(ctx context.Context, target *Target, passphrase string) error {
 	cmd := exec.CommandContext(ctx, "cryptsetup", "luksOpen",
+		"--key-file", "-",
 		target.Device, target.MappedName,
 	)
-	cmd.Stdin = strings.NewReader(passphrase)
+	cmd.Stdin = strings.NewReader(passphrase + "\n")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("cryptsetup luksOpen %s: %s: %w", target.Device, string(out), err)
