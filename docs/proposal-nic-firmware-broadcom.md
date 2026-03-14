@@ -1,6 +1,6 @@
 # Proposal: Broadcom NIC Firmware Management
 
-## Status: Implemented
+## Status: Proposal
 
 ## Priority: P2
 

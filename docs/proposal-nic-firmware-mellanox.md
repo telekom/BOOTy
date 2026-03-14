@@ -1,6 +1,6 @@
 # Proposal: Mellanox/NVIDIA ConnectX NIC Firmware Management
 
-## Status: Implemented
+## Status: Proposal
 
 ## Priority: P1
 

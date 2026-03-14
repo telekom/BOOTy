@@ -17,6 +17,9 @@ type Manager struct {
 
 // New creates a Mellanox firmware manager.
 func New(log *slog.Logger) *Manager {
+	if log == nil {
+		log = slog.Default()
+	}
 	return &Manager{log: log}
 }
 

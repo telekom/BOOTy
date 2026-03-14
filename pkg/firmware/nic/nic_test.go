@@ -24,8 +24,12 @@ func TestDetectVendorFrom(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			devDir := filepath.Join(root, tc.pciAddr)
-			os.MkdirAll(devDir, 0o755)
-			os.WriteFile(filepath.Join(devDir, "vendor"), []byte(tc.vendorID+"\n"), 0o644)
+			if err := os.MkdirAll(devDir, 0o755); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(devDir, "vendor"), []byte(tc.vendorID+"\n"), 0o644); err != nil {
+				t.Fatalf("write: %v", err)
+			}
 
 			got := detectVendorFrom(root, tc.pciAddr)
 			if got != tc.expected {

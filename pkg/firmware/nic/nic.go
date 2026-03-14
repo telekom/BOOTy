@@ -97,9 +97,18 @@ type DiffChange struct {
 
 // Compare compares a baseline against a live firmware state.
 func Compare(baseline *Baseline, state *FirmwareState) *Diff {
+	if baseline == nil || state == nil {
+		return &Diff{Match: baseline == nil && state == nil}
+	}
+
 	diff := &Diff{
 		NIC:   state.NIC,
 		Match: true,
+	}
+
+	if baseline.Parameters == nil || state.Parameters == nil {
+		diff.Match = baseline.Parameters == nil && state.Parameters == nil
+		return diff
 	}
 
 	for name, expected := range baseline.Parameters {

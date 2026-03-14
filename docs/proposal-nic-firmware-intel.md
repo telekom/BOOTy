@@ -1,6 +1,6 @@
 # Proposal: Intel NIC Firmware Management
 
-## Status: Implemented
+## Status: Proposal
 
 ## Priority: P1
 
