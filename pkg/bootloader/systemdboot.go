@@ -28,20 +28,74 @@ func NewSystemdBoot(log *slog.Logger) *SystemdBoot {
 // Name returns the bootloader type.
 func (s *SystemdBoot) Name() string { return "systemd-boot" }
 
-// Install installs systemd-boot via bootctl.
+// Install installs systemd-boot via bootctl, falling back to manual EFI
+// binary copy when bootctl is not available in the initramfs.
 func (s *SystemdBoot) Install(ctx context.Context, rootPath, espPath string) error {
 	s.rootPath = rootPath
 	s.espPath = espPath
 
-	cmd := exec.CommandContext(ctx, "bootctl", "install",
-		"--esp-path="+espPath,
-		"--root="+rootPath,
-	)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("bootctl install: %s: %w", string(out), err)
+	if _, err := exec.LookPath("bootctl"); err == nil {
+		cmd := exec.CommandContext(ctx, "bootctl", "install",
+			"--esp-path="+espPath,
+			"--root="+rootPath,
+		)
+		out, runErr := cmd.CombinedOutput()
+		if runErr != nil {
+			s.Log.Warn("bootctl install failed, trying manual install", "error", runErr, "output", string(out))
+		} else {
+			s.Log.Info("systemd-boot installed via bootctl", "esp", espPath)
+			return nil
+		}
 	}
-	s.Log.Info("systemd-boot installed", "esp", espPath)
+
+	// Manual fallback: copy the systemd-boot EFI binary from the target OS
+	// or from a bundled copy in the initramfs.
+	efiDir := filepath.Join(espPath, "EFI", "systemd")
+	bootDir := filepath.Join(espPath, "EFI", "BOOT")
+	if err := os.MkdirAll(efiDir, 0o755); err != nil {
+		return fmt.Errorf("create EFI/systemd directory: %w", err)
+	}
+	if err := os.MkdirAll(bootDir, 0o755); err != nil {
+		return fmt.Errorf("create EFI/BOOT directory: %w", err)
+	}
+
+	// Look for the systemd-boot EFI binary in common locations.
+	candidates := []string{
+		filepath.Join(rootPath, "usr/lib/systemd/boot/efi/systemd-bootx64.efi"),
+		"/bin/systemd-bootx64.efi",
+	}
+	var srcEFI string
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			srcEFI = c
+			break
+		}
+	}
+	if srcEFI == "" {
+		return errors.New("systemd-boot EFI binary not found in target OS or initramfs")
+	}
+
+	efiData, err := os.ReadFile(srcEFI)
+	if err != nil {
+		return fmt.Errorf("read systemd-boot EFI: %w", err)
+	}
+	dst := filepath.Join(efiDir, "systemd-bootx64.efi")
+	if err := os.WriteFile(dst, efiData, 0o644); err != nil {
+		return fmt.Errorf("write systemd-boot EFI: %w", err)
+	}
+	// Also copy as the default UEFI boot binary.
+	fallback := filepath.Join(bootDir, "BOOTX64.EFI")
+	if err := os.WriteFile(fallback, efiData, 0o644); err != nil {
+		return fmt.Errorf("write fallback BOOTX64.EFI: %w", err)
+	}
+
+	// Create loader directory for configuration files.
+	loaderDir := filepath.Join(espPath, "loader")
+	if err := os.MkdirAll(loaderDir, 0o755); err != nil {
+		return fmt.Errorf("create loader directory: %w", err)
+	}
+
+	s.Log.Info("systemd-boot installed manually", "esp", espPath, "source", srcEFI)
 	return nil
 }
 
@@ -95,14 +149,37 @@ func (s *SystemdBoot) ListEntries(_ context.Context, rootPath string) ([]BootEnt
 	return entries, nil
 }
 
-// SetDefault sets the default boot entry via bootctl.
-func (s *SystemdBoot) SetDefault(ctx context.Context, entryID string) error {
-	cmd := exec.CommandContext(ctx, "bootctl", "set-default", entryID+".conf")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("bootctl set-default %s: %s: %w", entryID, string(out), err)
+// SetDefault sets the default boot entry via bootctl, falling back to writing
+// loader.conf directly when bootctl is not available.
+func (s *SystemdBoot) SetDefault(_ context.Context, entryID string) error {
+	if _, err := exec.LookPath("bootctl"); err == nil {
+		cmd := exec.Command("bootctl", "set-default", entryID+".conf")
+		out, runErr := cmd.CombinedOutput()
+		if runErr == nil {
+			return nil
+		}
+		s.Log.Warn("bootctl set-default failed, falling back to loader.conf", "error", runErr, "output", string(out))
 	}
-	return nil
+
+	// Fallback: write default entry directly into loader.conf.
+	loaderConf := filepath.Join(s.espPath, "loader", "loader.conf")
+	data, err := os.ReadFile(loaderConf)
+	if err != nil {
+		return fmt.Errorf("read loader.conf for set-default: %w", err)
+	}
+	lines := strings.Split(string(data), "\n")
+	found := false
+	for i, line := range lines {
+		if strings.HasPrefix(line, "default") {
+			lines[i] = "default " + entryID + ".conf"
+			found = true
+			break
+		}
+	}
+	if !found {
+		lines = append(lines, "default "+entryID+".conf")
+	}
+	return os.WriteFile(loaderConf, []byte(strings.Join(lines, "\n")), 0o644)
 }
 
 func (s *SystemdBoot) generateLoaderConf(cfg *BootConfig) error {
