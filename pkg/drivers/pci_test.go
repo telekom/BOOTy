@@ -1,3 +1,5 @@
+//go:build linux
+
 package drivers
 
 import (
@@ -13,6 +15,7 @@ func TestFormatPCIID(t *testing.T) {
 		{"0x8086", "0x15b8", "8086:15b8"},
 		{"8086", "15b8", "8086:15b8"},
 		{"0x15b3", "0x1013", "15b3:1013"},
+		{"0X8086", "0X15B8", "8086:15b8"},
 	}
 	for _, tc := range tests {
 		got := formatPCIID(tc.vendor, tc.device)
@@ -44,10 +47,16 @@ func TestScanPCIDevicesFrom(t *testing.T) {
 
 	// Create mock PCI device
 	devDir := filepath.Join(root, "0000:00:1f.0")
-	os.MkdirAll(devDir, 0o755)
-	os.WriteFile(filepath.Join(devDir, "vendor"), []byte("0x8086\n"), 0o644)
-	os.WriteFile(filepath.Join(devDir, "device"), []byte("0x15b8\n"), 0o644)
-	os.WriteFile(filepath.Join(devDir, "class"), []byte("0x020000\n"), 0o644)
+	if err := os.MkdirAll(devDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	for name, data := range map[string]string{
+		"vendor": "0x8086\n", "device": "0x15b8\n", "class": "0x020000\n",
+	} {
+		if err := os.WriteFile(filepath.Join(devDir, name), []byte(data), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
 
 	devices, err := scanPCIDevicesFrom(root)
 	if err != nil {
@@ -128,7 +137,9 @@ func TestPCIDevice_Fields(t *testing.T) {
 func TestReadSysfsFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test")
-	os.WriteFile(path, []byte("  hello\n"), 0o644)
+	if err := os.WriteFile(path, []byte("  hello\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
 
 	got := readSysfsFile(path)
 	if got != "hello" {

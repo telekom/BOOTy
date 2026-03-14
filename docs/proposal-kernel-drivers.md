@@ -1,6 +1,6 @@
 # Proposal: Kernel Driver/Module Extensibility
 
-## Status: Implemented
+## Status: Proposal
 
 ## Priority: P2
 

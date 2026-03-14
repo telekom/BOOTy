@@ -1,3 +1,5 @@
+//go:build linux
+
 package drivers
 
 import (
@@ -118,8 +120,10 @@ func readSysfsFile(path string) string {
 
 // formatPCIID converts sysfs vendor/device values (0x8086, 0x15b8) to "8086:15b8".
 func formatPCIID(vendor, device string) string {
-	v := strings.TrimPrefix(vendor, "0x")
-	d := strings.TrimPrefix(device, "0x")
+	v := strings.TrimSpace(vendor)
+	d := strings.TrimSpace(device)
+	v = strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(v, "0x"), "0X"))
+	d = strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(d, "0x"), "0X"))
 	return v + ":" + d
 }
 

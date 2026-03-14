@@ -1,3 +1,5 @@
+//go:build linux
+
 package drivers
 
 import (
@@ -91,9 +93,12 @@ func (m *Manager) ListLoaded() ([]Module, error) {
 // FindModule searches for a .ko file in the modules directory.
 func (m *Manager) FindModule(name string) (string, error) {
 	var found string
-	err := filepath.Walk(m.modulesDir, func(path string, _ os.FileInfo, walkErr error) error {
+	err := filepath.WalkDir(m.modulesDir, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		if d.IsDir() {
+			return nil
 		}
 		base := filepath.Base(path)
 		// Match name.ko, name.ko.xz, name.ko.zst, etc.
