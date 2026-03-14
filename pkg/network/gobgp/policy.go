@@ -105,6 +105,9 @@ func ParseStandardCommunity(s string) (asn, value uint16, err error) {
 
 // ValidateCommunities checks all community strings for validity.
 func ValidateCommunities(cfg *CommunityConfig) error {
+	if cfg == nil {
+		return nil
+	}
 	for _, c := range cfg.Standard {
 		if _, _, err := ParseStandardCommunity(c); err != nil {
 			return err
@@ -115,11 +118,22 @@ func ValidateCommunities(cfg *CommunityConfig) error {
 		if len(parts) != 3 {
 			return fmt.Errorf("invalid extended community %q, expected TYPE:ASN:value", c)
 		}
+		if _, err := strconv.ParseUint(parts[1], 10, 16); err != nil {
+			return fmt.Errorf("invalid extended community ASN %q: %w", parts[1], err)
+		}
+		if _, err := strconv.ParseUint(parts[2], 10, 16); err != nil {
+			return fmt.Errorf("invalid extended community value %q: %w", parts[2], err)
+		}
 	}
 	for _, c := range cfg.Large {
 		parts := strings.SplitN(c, ":", 3)
 		if len(parts) != 3 {
 			return fmt.Errorf("invalid large community %q, expected GA:LD1:LD2", c)
+		}
+		for i, p := range parts {
+			if _, err := strconv.ParseUint(p, 10, 32); err != nil {
+				return fmt.Errorf("invalid large community part[%d] %q: %w", i, p, err)
+			}
 		}
 	}
 	return nil
