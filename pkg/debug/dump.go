@@ -2,6 +2,7 @@
 package debug
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -53,12 +54,12 @@ type KernelSnapshot struct {
 }
 
 // Collect gathers a debug dump from the running system.
-func Collect() *Dump {
+func Collect(ctx context.Context) *Dump {
 	d := &Dump{}
 	d.System = collectSystem()
-	d.Disk = collectDisk()
-	d.Network = collectNetwork()
-	d.Kernel = collectKernel()
+	d.Disk = collectDisk(ctx)
+	d.Network = collectNetwork(ctx)
+	d.Kernel = collectKernel(ctx)
 	return d
 }
 
@@ -83,30 +84,30 @@ func collectSystem() SystemSnapshot {
 	}
 }
 
-func collectDisk() DiskSnapshot {
+func collectDisk(ctx context.Context) DiskSnapshot {
 	return DiskSnapshot{
-		Lsblk:  runCmd("lsblk", "--json"),
+		Lsblk:  runCmd(ctx, "lsblk", "--json"),
 		Mounts: readFile("/proc/mounts"),
-		Fdisk:  runCmd("fdisk", "-l"),
-		Df:     runCmd("df", "-h"),
+		Fdisk:  runCmd(ctx, "fdisk", "-l"),
+		Df:     runCmd(ctx, "df", "-h"),
 	}
 }
 
-func collectNetwork() NetworkSnapshot {
+func collectNetwork(ctx context.Context) NetworkSnapshot {
 	return NetworkSnapshot{
-		IPAddr:     runCmd("ip", "addr"),
-		IPRoute:    runCmd("ip", "route"),
-		IPNeigh:    runCmd("ip", "neigh"),
+		IPAddr:     runCmd(ctx, "ip", "addr"),
+		IPRoute:    runCmd(ctx, "ip", "route"),
+		IPNeigh:    runCmd(ctx, "ip", "neigh"),
 		ResolvConf: readFile("/etc/resolv.conf"),
 	}
 }
 
-func collectKernel() KernelSnapshot {
+func collectKernel(ctx context.Context) KernelSnapshot {
 	return KernelSnapshot{
-		Dmesg:      runCmd("dmesg", "--level=err,warn"),
-		Lsmod:      runCmd("lsmod"),
+		Dmesg:      runCmd(ctx, "dmesg", "--level=err,warn"),
+		Lsmod:      runCmd(ctx, "lsmod"),
 		Cmdline:    readFile("/proc/cmdline"),
-		EFIBootmgr: runCmd("efibootmgr", "-v"),
+		EFIBootmgr: runCmd(ctx, "efibootmgr", "-v"),
 	}
 }
 
@@ -118,8 +119,8 @@ func readFile(path string) string {
 	return strings.TrimSpace(string(data))
 }
 
-func runCmd(name string, args ...string) string {
-	out, err := exec.Command(name, args...).CombinedOutput() //nolint:gosec // trusted internal commands
+func runCmd(ctx context.Context, name string, args ...string) string {
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput() //nolint:gosec // trusted internal commands
 	if err != nil {
 		slog.Debug("debug dump command failed", "cmd", name, "error", err)
 		return ""

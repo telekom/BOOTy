@@ -85,7 +85,7 @@ func (e *Emitter) Marshal() ([]byte, error) {
 }
 
 // MarshalEvent serializes a single event to JSON.
-func MarshalEvent(ev ProvisionEvent) ([]byte, error) {
+func MarshalEvent(ev *ProvisionEvent) ([]byte, error) {
 	data, err := json.Marshal(ev)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling event: %w", err)

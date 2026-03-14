@@ -63,7 +63,7 @@ func TestMarshalEvent(t *testing.T) {
 		Step:    "mount-root",
 		Message: "mount failed",
 	}
-	data, err := MarshalEvent(ev)
+	data, err := MarshalEvent(&ev)
 	if err != nil {
 		t.Fatal(err)
 	}

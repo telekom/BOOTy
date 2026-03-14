@@ -158,7 +158,7 @@ func (o *Orchestrator) emitEvent(ctx context.Context, eventType events.EventType
 		Message:  message,
 		Progress: progress,
 	}
-	data, err := events.MarshalEvent(ev)
+	data, err := events.MarshalEvent(&ev)
 	if err != nil {
 		o.log.Warn("Failed to marshal event", "error", err)
 		return
@@ -190,7 +190,7 @@ func (o *Orchestrator) shipDebugDump(ctx context.Context) {
 	if !ok {
 		return
 	}
-	dump := debug.Collect()
+	dump := debug.Collect(ctx)
 	data, err := dump.Marshal()
 	if err != nil {
 		o.log.Warn("Failed to marshal debug dump", "error", err)
