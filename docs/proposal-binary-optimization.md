@@ -1,6 +1,6 @@
 # Proposal: Binary Optimization — Go Build Slimming
 
-## Status: Implemented (PR #58)
+## Status: Implemented
 
 ## Priority: P2
 
