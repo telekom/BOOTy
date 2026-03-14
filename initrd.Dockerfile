@@ -105,7 +105,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     mdadm util-linux e2fsprogs xfsprogs btrfs-progs parted gdisk kpartx dosfstools \
     efibootmgr dmidecode ethtool curl iproute2 bridge-utils \
     hdparm nvme-cli mstflint lldpd \
-    dropbear-bin \
+    dropbear-bin cryptsetup-bin \
     && rm -rf /var/lib/apt/lists/*
 
 # Collect shared libraries for all tool binaries while their packages are
@@ -182,6 +182,9 @@ COPY --from=tools /sbin/bridge bin/bridge
 # Secure erase tools
 COPY --from=tools /sbin/hdparm bin/hdparm
 COPY --from=tools /usr/sbin/nvme bin/nvme
+
+# LUKS disk encryption
+COPY --from=tools /sbin/cryptsetup sbin/cryptsetup
 
 # Firmware tools (Mellanox ConnectX SR-IOV config)
 COPY --from=tools /usr/bin/mstconfig bin/mstconfig
@@ -323,6 +326,9 @@ COPY --from=tools /sbin/bridge bin/bridge
 # Secure erase tools
 COPY --from=tools /sbin/hdparm bin/hdparm
 COPY --from=tools /usr/sbin/nvme bin/nvme
+
+# LUKS disk encryption
+COPY --from=tools /sbin/cryptsetup sbin/cryptsetup
 
 # Firmware tools (Mellanox ConnectX SR-IOV config)
 COPY --from=tools /usr/bin/mstconfig bin/mstconfig
