@@ -1,6 +1,6 @@
 # Proposal: Observability — Metrics, Debug Dump, and Structured Logging
 
-## Status: Phase 1 Implemented (step timing + progress shipping)
+## Status: Fully Implemented
 
 ## Priority: P1 (debug dump), P2 (metrics)
 
