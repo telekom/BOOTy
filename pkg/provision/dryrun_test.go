@@ -86,8 +86,12 @@ func TestDryRunImageReachability(t *testing.T) {
 }
 
 func TestDryRunImageUnreachable(t *testing.T) {
+	// Use a closed server for fast, deterministic connection failure.
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	srv.Close()
+
 	o := NewOrchestrator(
-		&config.MachineConfig{ImageURLs: []string{"http://192.0.2.1:1/unreachable.img"}},
+		&config.MachineConfig{ImageURLs: []string{srv.URL + "/unreachable.img"}},
 		&dryRunProvider{},
 		disk.NewManager(nil),
 	)
@@ -115,5 +119,42 @@ func TestDryRunHealthChecks(t *testing.T) {
 				t.Errorf("got %s, want %s", result.Status, tc.expect)
 			}
 		})
+	}
+}
+
+func TestDryRunDiskDetection_Configured(t *testing.T) {
+	// Non-device path should fail device-node check.
+	o := NewOrchestrator(
+		&config.MachineConfig{DiskDevice: "/tmp"},
+		&dryRunProvider{},
+		disk.NewManager(nil),
+	)
+	result := o.dryRunDiskDetection(context.Background())
+	if result.Status != DryRunFail {
+		t.Errorf("got %s, want fail for non-device path: %s", result.Status, result.Message)
+	}
+}
+
+func TestDryRunDiskDetection_Missing(t *testing.T) {
+	o := NewOrchestrator(
+		&config.MachineConfig{DiskDevice: "/dev/nonexistent-disk-xyz"},
+		&dryRunProvider{},
+		disk.NewManager(nil),
+	)
+	result := o.dryRunDiskDetection(context.Background())
+	if result.Status != DryRunFail {
+		t.Errorf("got %s, want fail for missing device: %s", result.Status, result.Message)
+	}
+}
+
+func TestDryRunImageReachability_NoURLs(t *testing.T) {
+	o := NewOrchestrator(
+		&config.MachineConfig{},
+		&dryRunProvider{},
+		disk.NewManager(nil),
+	)
+	result := o.dryRunImageReachability(context.Background())
+	if result.Status != DryRunFail {
+		t.Errorf("got %s, want fail for empty URLs: %s", result.Status, result.Message)
 	}
 }

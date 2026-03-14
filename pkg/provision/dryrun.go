@@ -92,9 +92,12 @@ func (o *Orchestrator) dryRunConfigValidation(_ context.Context) DryRunResult {
 }
 
 func (o *Orchestrator) dryRunImageReachability(ctx context.Context) DryRunResult {
+	if len(o.cfg.ImageURLs) == 0 {
+		return DryRunResult{Step: "image-reachability", Status: DryRunFail, Message: "no image URLs configured"}
+	}
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 	for _, imgURL := range o.cfg.ImageURLs {
-		// Skip non-HTTP sources (OCI registries validated via separate path).
+		// Skip OCI sources (validated via separate registry path).
 		if strings.HasPrefix(imgURL, "oci://") {
 			o.log.Info("Skipping OCI image reachability check", "url", imgURL)
 			continue
@@ -121,9 +124,14 @@ func (o *Orchestrator) dryRunImageReachability(ctx context.Context) DryRunResult
 
 func (o *Orchestrator) dryRunDiskDetection(ctx context.Context) DryRunResult {
 	if o.cfg.DiskDevice != "" {
-		if _, err := os.Stat(o.cfg.DiskDevice); err != nil {
+		info, err := os.Stat(o.cfg.DiskDevice)
+		if err != nil {
 			return DryRunResult{Step: "disk-detection", Status: DryRunFail,
 				Message: fmt.Sprintf("configured disk %s not found: %v", o.cfg.DiskDevice, err)}
+		}
+		if info.Mode()&os.ModeDevice == 0 {
+			return DryRunResult{Step: "disk-detection", Status: DryRunFail,
+				Message: fmt.Sprintf("configured disk %s is not a device node", o.cfg.DiskDevice)}
 		}
 		return DryRunResult{Step: "disk-detection", Status: DryRunPass,
 			Message: fmt.Sprintf("configured disk %s exists", o.cfg.DiskDevice)}

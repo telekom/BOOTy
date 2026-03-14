@@ -193,6 +193,7 @@ func runCAPRF(ctx context.Context) {
 		runStandby(ctx, client, cfg, netMode, diskMgr)
 		return // standby handles its own lifecycle
 	case "dry-run":
+		cfg.DisableKexec = true
 		if err := orch.DryRun(ctx); err != nil {
 			slog.Error("Dry-run failed", "error", err)
 		}
