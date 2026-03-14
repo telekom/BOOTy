@@ -39,23 +39,8 @@ func (o *Orchestrator) persistNetworkConfig() error {
 		iface = detectPrimaryInterface()
 	}
 
-	switch osFamily {
-	case "ubuntu":
-		if err := writeNetplan(rootDir, iface, o.cfg.StaticIP, o.cfg.StaticGateway, o.cfg.DNSResolvers); err != nil {
-			return err
-		}
-	case "flatcar":
-		if err := writeSystemdNetworkd(rootDir, iface, o.cfg.StaticIP, o.cfg.StaticGateway, o.cfg.DNSResolvers); err != nil {
-			return err
-		}
-	case "rhel":
-		if err := writeNetworkManager(rootDir, iface, o.cfg.StaticIP, o.cfg.StaticGateway, o.cfg.DNSResolvers); err != nil {
-			return err
-		}
-	default:
-		if err := writeNetplan(rootDir, iface, o.cfg.StaticIP, o.cfg.StaticGateway, o.cfg.DNSResolvers); err != nil {
-			return err
-		}
+	if err := writeNetworkForOS(rootDir, osFamily, iface, o.cfg.StaticIP, o.cfg.StaticGateway, o.cfg.DNSResolvers); err != nil {
+		return err
 	}
 
 	// Persist bond configuration if present.
@@ -73,6 +58,20 @@ func (o *Orchestrator) persistNetworkConfig() error {
 	}
 
 	return nil
+}
+
+// writeNetworkForOS dispatches to the correct network config writer for the OS family.
+func writeNetworkForOS(rootDir, osFamily, iface, staticIP, gateway, dnsResolvers string) error {
+	switch osFamily {
+	case "ubuntu":
+		return writeNetplan(rootDir, iface, staticIP, gateway, dnsResolvers)
+	case "flatcar":
+		return writeSystemdNetworkd(rootDir, iface, staticIP, gateway, dnsResolvers)
+	case "rhel":
+		return writeNetworkManager(rootDir, iface, staticIP, gateway, dnsResolvers)
+	default:
+		return writeNetplan(rootDir, iface, staticIP, gateway, dnsResolvers)
+	}
 }
 
 // detectOSFamily reads /etc/os-release in the chroot to determine the OS.
@@ -246,12 +245,7 @@ func writeNetworkManager(rootDir, iface, staticIP, gateway, dnsResolvers string)
 	} else {
 		buf.WriteString("[ipv4]\nmethod=manual\n")
 		fmt.Fprintf(&buf, "addresses=%s\n", staticIP)
-		if gateway != "" {
-			ip := parseGateway(gateway)
-			if ip != nil {
-				fmt.Fprintf(&buf, "gateway=%s\n", ip)
-			}
-		}
+		writeNMGateway(&buf, gateway)
 		if dnsResolvers != "" {
 			dns := strings.ReplaceAll(dnsResolvers, ",", ";")
 			fmt.Fprintf(&buf, "dns=%s;\n", dns)
@@ -263,6 +257,17 @@ func writeNetworkManager(rootDir, iface, staticIP, gateway, dnsResolvers string)
 		return fmt.Errorf("writing NetworkManager config %s: %w", path, err)
 	}
 	return nil
+}
+
+// writeNMGateway appends the gateway line to a NetworkManager config if valid.
+func writeNMGateway(buf *strings.Builder, gateway string) {
+	if gateway == "" {
+		return
+	}
+	ip := parseGateway(gateway)
+	if ip != nil {
+		fmt.Fprintf(buf, "gateway=%s\n", ip)
+	}
 }
 
 // persistBondConfig writes bond configuration into the target OS.
@@ -396,7 +401,7 @@ func writeBondNetworkManager(rootDir string, ifaces []string, mode string, cfg *
 }
 
 // persistVLANConfig writes VLAN configuration into the target OS.
-// VLANs format: "200:eno1:10.200.0.42/24,300:eno2"
+// VLANs format: "200:eno1:10.200.0.42/24,300:eno2".
 func persistVLANConfig(rootDir, osFamily string, cfg *config.MachineConfig) error {
 	for _, vlanSpec := range strings.Split(cfg.VLANs, ",") {
 		parts := strings.SplitN(strings.TrimSpace(vlanSpec), ":", 3)
