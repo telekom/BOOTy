@@ -1,3 +1,5 @@
+//go:build linux
+
 package ipmi
 
 import (
@@ -27,7 +29,7 @@ func TestBootDeviceConstants(t *testing.T) {
 		{BootPXE, "pxe"},
 		{BootDisk, "disk"},
 		{BootCDROM, "cdrom"},
-		{BootBIOS, "bios-setup"},
+		{BootBIOS, "bios"},
 	}
 
 	for _, tc := range tests {
@@ -45,13 +47,13 @@ func TestValidateBootDevice(t *testing.T) {
 		{"pxe", false},
 		{"disk", false},
 		{"cdrom", false},
-		{"bios-setup", false},
+		{"bios", false},
 		{"invalid", true},
 		{"", true},
 	}
 
 	for _, tc := range tests {
-		got, err := ValidateBootDevice(tc.input)
+		err := ValidateBootDevice(tc.input)
 		if tc.wantErr {
 			if err == nil {
 				t.Errorf("ValidateBootDevice(%q) should error", tc.input)
@@ -59,9 +61,6 @@ func TestValidateBootDevice(t *testing.T) {
 		} else {
 			if err != nil {
 				t.Errorf("ValidateBootDevice(%q) unexpected error: %v", tc.input, err)
-			}
-			if string(got) != tc.input {
-				t.Errorf("ValidateBootDevice(%q) = %q", tc.input, got)
 			}
 		}
 	}
@@ -148,5 +147,26 @@ func TestSensorReading_Fields(t *testing.T) {
 	}
 	if reading.Status != "ok" {
 		t.Errorf("Status = %q, want ok", reading.Status)
+	}
+}
+
+func TestParseLanPrint(t *testing.T) {
+	output := `Set in Progress         : Set Complete
+IP Address Source       : DHCP Address
+IP Address              : 10.0.0.100
+Subnet Mask             : 255.255.255.0
+MAC Address             : aa:bb:cc:dd:ee:ff
+Default Gateway IP      : 10.0.0.1
+`
+
+	fields := parseLanPrint(output)
+	if fields["IP Address"] != "10.0.0.100" {
+		t.Errorf("IP Address = %q", fields["IP Address"])
+	}
+	if fields["IP Address Source"] != "DHCP Address" {
+		t.Errorf("IP Address Source = %q", fields["IP Address Source"])
+	}
+	if fields["MAC Address"] != "aa:bb:cc:dd:ee:ff" {
+		t.Errorf("MAC Address = %q", fields["MAC Address"])
 	}
 }
