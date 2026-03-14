@@ -35,6 +35,27 @@ func ParseNVMeConfig(data string) ([]NVMeNamespaceConfig, error) {
 	if err := json.Unmarshal([]byte(data), &configs); err != nil {
 		return nil, fmt.Errorf("parsing NVMe namespace config: %w", err)
 	}
+	for i, cfg := range configs {
+		if cfg.Controller == "" {
+			return nil, fmt.Errorf("config[%d]: controller must not be empty", i)
+		}
+		if len(cfg.Namespaces) == 0 {
+			return nil, fmt.Errorf("config[%d]: namespaces must not be empty", i)
+		}
+		totalPct := 0
+		for j, ns := range cfg.Namespaces {
+			if ns.SizePct <= 0 || ns.SizePct > 100 {
+				return nil, fmt.Errorf("config[%d].namespaces[%d]: sizePct %d out of range 1-100", i, j, ns.SizePct)
+			}
+			if ns.BlockSize != 0 && ns.BlockSize != 512 && ns.BlockSize != 4096 {
+				return nil, fmt.Errorf("config[%d].namespaces[%d]: blockSize %d must be 512 or 4096", i, j, ns.BlockSize)
+			}
+			totalPct += ns.SizePct
+		}
+		if totalPct > 100 {
+			return nil, fmt.Errorf("config[%d]: total sizePct %d exceeds 100%%", i, totalPct)
+		}
+	}
 	return configs, nil
 }
 
@@ -90,19 +111,25 @@ func (m *Manager) NVMeListNamespaces(ctx context.Context, controller string) ([]
 		if line == "" {
 			continue
 		}
-		if m := nsidRE.FindStringSubmatch(line); m != nil {
+		if match := nsidRE.FindStringSubmatch(line); match != nil {
 			// Parse hex NSID to decimal.
-			nsid := fmt.Sprintf("%d", mustParseHex(m[1]))
-			nsids = append(nsids, nsid)
+			nsid, err := parseHex(match[1])
+			if err != nil {
+				continue
+			}
+			nsidStr := fmt.Sprintf("%d", nsid)
+			nsids = append(nsids, nsidStr)
 		}
 	}
 	return nsids, nil
 }
 
-func mustParseHex(s string) uint64 {
+func parseHex(s string) (uint64, error) {
 	var val uint64
-	_, _ = fmt.Sscanf(s, "%x", &val)
-	return val
+	if _, err := fmt.Sscanf(s, "%x", &val); err != nil {
+		return 0, fmt.Errorf("parsing hex NSID %q: %w", s, err)
+	}
+	return val, nil
 }
 
 // NVMeSupportsMultiNS checks whether the controller supports multiple namespaces.
@@ -203,7 +230,7 @@ func (m *Manager) applyControllerLayout(ctx context.Context, cfg NVMeNamespaceCo
 
 	// Delete existing namespaces first.
 	if err := m.NVMeResetNamespaces(ctx, controller); err != nil {
-		slog.Warn("Reset before layout failed, continuing", "controller", controller, "error", err)
+		return fmt.Errorf("reset namespaces on %s: %w", controller, err)
 	}
 	// Delete the default NS that reset creates.
 	if _, err := m.cmd.Run(ctx, "nvme", "delete-ns", controller, "-n", "1"); err != nil {
