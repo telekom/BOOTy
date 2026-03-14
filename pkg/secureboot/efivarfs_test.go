@@ -12,7 +12,9 @@ func writeEFIVar(t *testing.T, dir, name string, attrs uint32, data []byte) {
 	buf := make([]byte, 4+len(data))
 	binary.LittleEndian.PutUint32(buf[:4], attrs)
 	copy(buf[4:], data)
-	os.WriteFile(filepath.Join(dir, name), buf, 0o644)
+	if err := os.WriteFile(filepath.Join(dir, name), buf, 0o644); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
 }
 
 func TestReadVar(t *testing.T) {
@@ -40,7 +42,9 @@ func TestReadVar_NotFound(t *testing.T) {
 
 func TestReadVar_TooShort(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "Short-1234"), []byte{0, 0}, 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "Short-1234"), []byte{0, 0}, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
 
 	r := NewEFIVarReader(dir)
 	_, err := r.ReadVar("Short")
@@ -114,9 +118,13 @@ func TestWriteVar(t *testing.T) {
 
 func TestListVars(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "Mok-1234"), []byte("a"), 0o644)
-	os.WriteFile(filepath.Join(dir, "MokNew-5678"), []byte("b"), 0o644)
-	os.WriteFile(filepath.Join(dir, "Other-9999"), []byte("c"), 0o644)
+	for _, f := range []struct{ name, data string }{
+		{"Mok-1234", "a"}, {"MokNew-5678", "b"}, {"Other-9999", "c"},
+	} {
+		if err := os.WriteFile(filepath.Join(dir, f.name), []byte(f.data), 0o644); err != nil {
+			t.Fatalf("write %s: %v", f.name, err)
+		}
+	}
 
 	r := NewEFIVarReader(dir)
 	vars, err := r.ListVars("Mok")

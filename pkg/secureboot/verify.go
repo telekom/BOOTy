@@ -96,8 +96,8 @@ func (v *ChainVerifier) verifyComponent(name, path string) ComponentStatus {
 		}
 	}
 
-	// Check for PE signature (MZ header).
-	signed, signer := checkPESignature(path)
+	// Check for PE format (MZ header).
+	signed, signer := hasPEHeader(path)
 
 	return ComponentStatus{
 		Path:     path,
@@ -107,8 +107,8 @@ func (v *ChainVerifier) verifyComponent(name, path string) ComponentStatus {
 	}
 }
 
-// checkPESignature checks if a file has a valid PE/COFF signature.
-func checkPESignature(path string) (signed bool, signer string) {
+// hasPEHeader checks if a file has a PE/COFF (MZ) header.
+func hasPEHeader(path string) (isPE bool, format string) {
 	f, err := os.Open(path)
 	if err != nil {
 		return false, ""
@@ -128,7 +128,7 @@ func checkPESignature(path string) (signed bool, signer string) {
 	// Full Authenticode signature verification would parse the PE optional
 	// header's Certificate Table (data directory entry 4) and verify
 	// the PKCS#7 signature. For now we detect the MZ header as a proxy.
-	return true, "pe-binary"
+	return true, "pe-detected"
 }
 
 func findFirstExisting(root string, candidates []string) string {
