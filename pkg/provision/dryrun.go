@@ -5,6 +5,7 @@ package provision
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -40,8 +41,12 @@ func (o *Orchestrator) DryRun(ctx context.Context) error {
 	}{
 		{"config-validation", o.dryRunConfigValidation},
 		{"image-reachability", o.dryRunImageReachability},
+		{"image-checksum", o.dryRunImageChecksum},
 		{"disk-detection", o.dryRunDiskDetection},
+		{"network-link", o.dryRunNetworkLink},
+		{"efi-boot", o.dryRunEFIBoot},
 		{"health-checks", o.dryRunHealthChecks},
+		{"inventory-probe", o.dryRunInventoryProbe},
 	}
 
 	results := make([]DryRunResult, 0, len(checks))
@@ -138,4 +143,67 @@ func (o *Orchestrator) dryRunHealthChecks(_ context.Context) DryRunResult {
 		return DryRunResult{Step: "health-checks", Status: DryRunWarn, Message: "health checks disabled"}
 	}
 	return DryRunResult{Step: "health-checks", Status: DryRunPass, Message: "health checks enabled and will run"}
+}
+
+func (o *Orchestrator) dryRunImageChecksum(_ context.Context) DryRunResult {
+	if o.cfg.ImageChecksum == "" {
+		return DryRunResult{Step: "image-checksum", Status: DryRunWarn,
+			Message: "no image checksum configured — integrity cannot be verified"}
+	}
+	validTypes := map[string]bool{"sha256": true, "sha512": true}
+	if o.cfg.ImageChecksumType != "" && !validTypes[o.cfg.ImageChecksumType] {
+		return DryRunResult{Step: "image-checksum", Status: DryRunWarn,
+			Message: fmt.Sprintf("unusual checksum type: %s", o.cfg.ImageChecksumType)}
+	}
+	return DryRunResult{Step: "image-checksum", Status: DryRunPass,
+		Message: fmt.Sprintf("checksum configured (%s)", o.cfg.ImageChecksumType)}
+}
+
+func (o *Orchestrator) dryRunNetworkLink(_ context.Context) DryRunResult {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return DryRunResult{Step: "network-link", Status: DryRunFail,
+			Message: fmt.Sprintf("cannot list interfaces: %v", err)}
+	}
+
+	var upIfaces []string
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if iface.Flags&net.FlagUp != 0 {
+			upIfaces = append(upIfaces, iface.Name)
+		}
+	}
+
+	if len(upIfaces) == 0 {
+		return DryRunResult{Step: "network-link", Status: DryRunFail,
+			Message: "no non-loopback interfaces are up"}
+	}
+	return DryRunResult{Step: "network-link", Status: DryRunPass,
+		Message: fmt.Sprintf("interfaces up: %s", strings.Join(upIfaces, ", "))}
+}
+
+func (o *Orchestrator) dryRunEFIBoot(_ context.Context) DryRunResult {
+	// Check EFI variables directory exists
+	if _, err := os.Stat("/sys/firmware/efi"); err != nil {
+		return DryRunResult{Step: "efi-boot", Status: DryRunWarn,
+			Message: "system not booted in EFI mode"}
+	}
+	return DryRunResult{Step: "efi-boot", Status: DryRunPass,
+		Message: "EFI firmware detected"}
+}
+
+func (o *Orchestrator) dryRunInventoryProbe(_ context.Context) DryRunResult {
+	if !o.cfg.InventoryEnabled {
+		return DryRunResult{Step: "inventory-probe", Status: DryRunWarn,
+			Message: "hardware inventory disabled"}
+	}
+	// Check DMI data accessible
+	if _, err := os.Stat("/sys/class/dmi/id/sys_vendor"); err != nil {
+		return DryRunResult{Step: "inventory-probe", Status: DryRunWarn,
+			Message: "DMI data not accessible"}
+	}
+	return DryRunResult{Step: "inventory-probe", Status: DryRunPass,
+		Message: "hardware inventory enabled, DMI accessible"}
 }
