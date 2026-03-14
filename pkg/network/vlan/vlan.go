@@ -1,140 +1,129 @@
-//go:build linux
-
-// Package vlan provides IEEE 802.1Q VLAN interface management for BOOTy.
+// Package vlan provides VLAN configuration and validation.
 package vlan
 
 import (
 	"fmt"
-	"log/slog"
 	"net"
-
-	"github.com/vishvananda/netlink"
+	"strings"
 )
 
-// Config holds configuration for a single VLAN interface.
+// MinID is the minimum valid VLAN ID.
+const MinID = 1
+
+// MaxID is the maximum valid VLAN ID.
+const MaxID = 4094
+
+// Config describes a VLAN interface.
 type Config struct {
-	// ID is the 802.1Q VLAN identifier (1-4094).
-	ID int
-	// Parent is the name of the physical interface (e.g. "eno1").
-	Parent string
-	// Address is the static IP/CIDR to assign (e.g. "10.200.0.42/24").
-	// When empty, the VLAN interface is left unconfigured for DHCP.
-	Address string
-	// Gateway is the default gateway IP for this VLAN (optional).
-	Gateway string
+	ID          int    `json:"id"`
+	Parent      string `json:"parent"`
+	Name        string `json:"name,omitempty"`
+	Address     string `json:"address,omitempty"` // CIDR.
+	Gateway     string `json:"gateway,omitempty"`
+	MTU         int    `json:"mtu,omitempty"`
+	DHCP        bool   `json:"dhcp,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
-// InterfaceName returns the conventional VLAN interface name (e.g. "eno1.200").
+// InterfaceName returns the VLAN interface name.
 func (c *Config) InterfaceName() string {
+	if c.Name != "" {
+		return c.Name
+	}
 	return fmt.Sprintf("%s.%d", c.Parent, c.ID)
 }
 
-// Setup creates a VLAN interface on the given parent and optionally configures
-// an address and gateway route. It returns the name of the created interface.
-func Setup(cfg Config) (string, error) {
-	if cfg.ID < 1 || cfg.ID > 4094 {
-		return "", fmt.Errorf("invalid VLAN ID %d: must be 1-4094", cfg.ID)
+// Validate checks the VLAN config.
+func (c *Config) Validate() error {
+	if c.ID < MinID || c.ID > MaxID {
+		return fmt.Errorf("vlan id %d out of range [%d, %d]", c.ID, MinID, MaxID)
 	}
-
-	parent, err := netlink.LinkByName(cfg.Parent)
-	if err != nil {
-		return "", fmt.Errorf("parent interface %s not found: %w", cfg.Parent, err)
+	if c.Parent == "" {
+		return fmt.Errorf("parent interface required")
 	}
-
-	// Ensure parent is up.
-	if err := netlink.LinkSetUp(parent); err != nil {
-		return "", fmt.Errorf("bring up parent %s: %w", cfg.Parent, err)
-	}
-
-	vlanName := cfg.InterfaceName()
-	vlanLink := &netlink.Vlan{
-		LinkAttrs: netlink.LinkAttrs{
-			Name:        vlanName,
-			ParentIndex: parent.Attrs().Index,
-		},
-		VlanId: cfg.ID,
-	}
-
-	if err := netlink.LinkAdd(vlanLink); err != nil {
-		return "", fmt.Errorf("create VLAN %d on %s: %w", cfg.ID, cfg.Parent, err)
-	}
-
-	if err := netlink.LinkSetUp(vlanLink); err != nil {
-		return "", fmt.Errorf("bring up VLAN interface %s: %w", vlanName, err)
-	}
-
-	if cfg.Address != "" {
-		addr, err := netlink.ParseAddr(cfg.Address)
-		if err != nil {
-			return "", fmt.Errorf("parse VLAN address %q: %w", cfg.Address, err)
-		}
-		if err := netlink.AddrAdd(vlanLink, addr); err != nil {
-			return "", fmt.Errorf("assign address %s to %s: %w", cfg.Address, vlanName, err)
+	if c.Address != "" {
+		if _, _, err := net.ParseCIDR(c.Address); err != nil {
+			return fmt.Errorf("invalid address %q: %w", c.Address, err)
 		}
 	}
-
-	if cfg.Gateway != "" {
-		gw := net.ParseIP(cfg.Gateway)
-		if gw == nil {
-			return "", fmt.Errorf("invalid gateway IP %q", cfg.Gateway)
-		}
-		route := &netlink.Route{
-			LinkIndex: vlanLink.Attrs().Index,
-			Gw:        gw,
-		}
-		if err := netlink.RouteAdd(route); err != nil {
-			return "", fmt.Errorf("add gateway route %s on %s: %w", cfg.Gateway, vlanName, err)
+	if c.Gateway != "" {
+		if net.ParseIP(c.Gateway) == nil {
+			return fmt.Errorf("invalid gateway %q", c.Gateway)
 		}
 	}
-
-	slog.Info("VLAN interface created", "name", vlanName, "id", cfg.ID, "parent", cfg.Parent)
-	return vlanName, nil
-}
-
-// Teardown removes a VLAN interface derived from parentName and vlanID.
-// It is safe to call if the interface has already been removed.
-func Teardown(parentName string, vlanID int) error {
-	vlanName := fmt.Sprintf("%s.%d", parentName, vlanID)
-
-	link, err := netlink.LinkByName(vlanName)
-	if err != nil {
-		// Interface does not exist — nothing to tear down.
-		return nil //nolint:nilerr // not-found means already removed
+	if c.MTU < 0 || c.MTU > 9216 {
+		return fmt.Errorf("mtu %d out of range [0, 9216]", c.MTU)
 	}
-
-	if err := netlink.LinkDel(link); err != nil {
-		return fmt.Errorf("delete VLAN interface %s: %w", vlanName, err)
-	}
-
-	slog.Info("VLAN interface removed", "name", vlanName)
 	return nil
 }
 
-// SetupAll creates all VLAN interfaces from a slice of configs.
-// Returns the names of all created interfaces. If any setup fails,
-// previously created VLANs are torn down and the error is returned.
-func SetupAll(cfgs []Config) ([]string, error) {
-	var names []string
-	for _, cfg := range cfgs {
-		name, err := Setup(cfg)
-		if err != nil {
-			// Roll back already-created VLANs.
-			for _, c := range cfgs[:len(names)] {
-				_ = Teardown(c.Parent, c.ID)
-			}
-			return nil, fmt.Errorf("VLAN setup failed: %w", err)
-		}
-		names = append(names, name)
-	}
-	return names, nil
+// TrunkConfig describes a VLAN trunk (multiple VLANs on one port).
+type TrunkConfig struct {
+	Parent   string `json:"parent"`
+	VLANs    []int  `json:"vlans"`
+	NativeID int    `json:"nativeId,omitempty"`
+	AllowAll bool   `json:"allowAll,omitempty"`
 }
 
-// TeardownAll removes all VLAN interfaces. Errors are logged but do not
-// stop teardown of remaining interfaces.
-func TeardownAll(cfgs []Config) {
-	for _, cfg := range cfgs {
-		if err := Teardown(cfg.Parent, cfg.ID); err != nil {
-			slog.Warn("VLAN teardown error", "vlan", cfg.InterfaceName(), "error", err)
-		}
+// Validate checks the trunk config.
+func (c *TrunkConfig) Validate() error {
+	if c.Parent == "" {
+		return fmt.Errorf("parent interface required")
 	}
+	if !c.AllowAll && len(c.VLANs) == 0 {
+		return fmt.Errorf("at least one VLAN required when allowAll is false")
+	}
+	seen := make(map[int]bool)
+	for _, id := range c.VLANs {
+		if id < MinID || id > MaxID {
+			return fmt.Errorf("vlan id %d out of range", id)
+		}
+		if seen[id] {
+			return fmt.Errorf("duplicate vlan id %d", id)
+		}
+		seen[id] = true
+	}
+	if c.NativeID != 0 && (c.NativeID < MinID || c.NativeID > MaxID) {
+		return fmt.Errorf("native vlan id %d out of range", c.NativeID)
+	}
+	return nil
+}
+
+// MultiConfig holds multiple VLAN configs.
+type MultiConfig struct {
+	VLANs []Config `json:"vlans"`
+}
+
+// Validate checks all VLAN configs for validity and uniqueness.
+func (m *MultiConfig) Validate() error {
+	seen := make(map[string]bool)
+	for i := range m.VLANs {
+		if err := m.VLANs[i].Validate(); err != nil {
+			return fmt.Errorf("vlan %d: %w", i, err)
+		}
+		key := fmt.Sprintf("%s:%d", m.VLANs[i].Parent, m.VLANs[i].ID)
+		if seen[key] {
+			return fmt.Errorf("duplicate vlan %s.%d", m.VLANs[i].Parent, m.VLANs[i].ID)
+		}
+		seen[key] = true
+	}
+	return nil
+}
+
+// Names returns all VLAN interface names.
+func (m *MultiConfig) Names() []string {
+	names := make([]string, 0, len(m.VLANs))
+	for i := range m.VLANs {
+		names = append(names, m.VLANs[i].InterfaceName())
+	}
+	return names
+}
+
+// FormatVLANList formats a list of VLAN IDs for display.
+func FormatVLANList(ids []int) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, fmt.Sprintf("%d", id))
+	}
+	return strings.Join(parts, ", ")
 }
