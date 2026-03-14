@@ -23,29 +23,29 @@ const (
 type Machine struct {
 	Name        string `json:"name"`
 	Namespace   string `json:"namespace"`
-	RedfishHost string `json:"redfish_host,omitempty"`
+	RedfishHost string `json:"redfishHost,omitempty"`
 	Address     string `json:"address,omitempty"`
 }
 
 // Event represents a provisioning lifecycle event.
 type Event struct {
-	Type      Type              `json:"event"`
-	Timestamp time.Time         `json:"timestamp"`
-	Machine   Machine           `json:"machine"`
-	Details   map[string]string `json:"details,omitempty"`
+	Type      Type           `json:"event"`
+	Timestamp time.Time      `json:"timestamp"`
+	Machine   Machine        `json:"machine"`
+	Details   map[string]any `json:"details,omitempty"`
 }
 
 // New creates an event with the current timestamp.
 func New(t Type, m Machine) *Event {
 	return &Event{
 		Type:      t,
-		Timestamp: time.Now(),
+		Timestamp: time.Now().UTC(),
 		Machine:   m,
 	}
 }
 
 // WithDetails adds details to the event and returns itself for chaining.
-func (e *Event) WithDetails(details map[string]string) *Event {
+func (e *Event) WithDetails(details map[string]any) *Event {
 	e.Details = details
 	return e
 }
