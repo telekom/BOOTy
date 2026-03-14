@@ -3,9 +3,11 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -60,18 +62,37 @@ func TestTokenManager_Acquire_ServerError(t *testing.T) {
 func TestTokenManager_Token_ThreadSafe(t *testing.T) {
 	tm := NewTokenManager("http://unused", "initial", slog.Default())
 
+	var wg sync.WaitGroup
+	for range 10 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 100 {
+				_ = tm.Token()
+			}
+		}()
+	}
+	// concurrent writer
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := range 100 {
+			tm.mu.Lock()
+			tm.token = fmt.Sprintf("token-%d", i)
+			tm.mu.Unlock()
+		}
+	}()
+
 	done := make(chan struct{})
 	go func() {
-		for range 100 {
-			_ = tm.Token()
-		}
+		wg.Wait()
 		close(done)
 	}()
 
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("Token() concurrent reads timed out")
+		t.Fatal("concurrent Token() access timed out")
 	}
 }
 
@@ -121,6 +142,7 @@ func TestTokenManager_RenewWithRetry_EventualSuccess(t *testing.T) {
 	tm := NewTokenManager(server.URL, "token", slog.Default())
 	tm.refreshToken = "refresh"
 	tm.expiresAt = time.Now().Add(time.Hour)
+	tm.backoff = func(_ int) time.Duration { return time.Millisecond }
 
 	if err := tm.renewWithRetry(context.Background()); err != nil {
 		t.Fatalf("renewWithRetry should succeed after retries: %v", err)
@@ -140,6 +162,7 @@ func TestTokenManager_RenewWithRetry_Exhausted(t *testing.T) {
 	tm := NewTokenManager(server.URL, "token", slog.Default())
 	tm.refreshToken = "refresh"
 	tm.expiresAt = time.Now().Add(time.Hour)
+	tm.backoff = func(_ int) time.Duration { return time.Millisecond }
 
 	if err := tm.renewWithRetry(context.Background()); err == nil {
 		t.Fatal("expected error after exhausting retries")

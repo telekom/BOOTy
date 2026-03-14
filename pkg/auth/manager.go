@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -30,20 +31,28 @@ type TokenManager struct {
 	client       *http.Client
 	log          *slog.Logger
 	onFatal      func()
+	backoff      func(attempt int) time.Duration
 }
 
 // NewTokenManager creates a token manager with an initial bootstrap token.
 func NewTokenManager(tokenURL, bootstrapToken string, log *slog.Logger) *TokenManager {
+	if log == nil {
+		log = slog.Default()
+	}
 	return &TokenManager{
 		tokenURL: tokenURL,
 		token:    bootstrapToken,
 		client:   &http.Client{Timeout: 15 * time.Second},
 		log:      log.With("component", "auth"),
+		backoff:  defaultBackoff,
 	}
 }
 
 // SetOnFatal sets the callback invoked when token renewal is permanently exhausted.
+// Must be called before StartRenewal.
 func (tm *TokenManager) SetOnFatal(fn func()) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
 	tm.onFatal = fn
 }
 
@@ -69,6 +78,7 @@ func (tm *TokenManager) Acquire(ctx context.Context, serial, bmcMAC string) erro
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 
 	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return fmt.Errorf("acquire token: status %d", resp.StatusCode)
 	}
 
@@ -118,8 +128,11 @@ func (tm *TokenManager) renewLoop(ctx context.Context) {
 		case <-time.After(renewAfter):
 			if err := tm.renewWithRetry(ctx); err != nil {
 				tm.log.Error("token renewal exhausted", "error", err)
-				if tm.onFatal != nil {
-					tm.onFatal()
+				tm.mu.RLock()
+				fatal := tm.onFatal
+				tm.mu.RUnlock()
+				if fatal != nil {
+					fatal()
 				}
 
 				return
@@ -155,6 +168,7 @@ func (tm *TokenManager) renew(ctx context.Context) error {
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 
 	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return fmt.Errorf("renew token: status %d", resp.StatusCode)
 	}
 
@@ -180,17 +194,17 @@ func (tm *TokenManager) renewWithRetry(ctx context.Context) error {
 	var lastErr error
 
 	for attempt := range 5 {
-		backoff := time.Duration(1<<attempt) * time.Second
-
-		select {
-		case <-time.After(backoff):
-		case <-ctx.Done():
-			return fmt.Errorf("renewal canceled: %w", ctx.Err())
-		}
-
 		if err := tm.renew(ctx); err != nil {
 			lastErr = err
-			tm.log.Warn("Renewal attempt failed", "attempt", attempt+1, "error", err)
+			tm.log.Warn("renewal attempt failed", "attempt", attempt+1, "error", err)
+
+			backoff := tm.backoff(attempt)
+
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return fmt.Errorf("renewal canceled: %w", ctx.Err())
+			}
 
 			continue
 		}
@@ -199,4 +213,8 @@ func (tm *TokenManager) renewWithRetry(ctx context.Context) error {
 	}
 
 	return fmt.Errorf("renewal exhausted after 5 attempts: %w", lastErr)
+}
+
+func defaultBackoff(attempt int) time.Duration {
+	return time.Duration(1<<attempt) * time.Second
 }
