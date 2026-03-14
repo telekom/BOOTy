@@ -1,7 +1,11 @@
 // Package config defines the provisioning configuration provider interface.
 package config
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+)
 
 // Status represents the provisioning status reported to the server.
 type Status string
@@ -104,6 +108,60 @@ type MachineConfig struct {
 	ProvisionerFiles []string // Paths to files in /deploy/file-system/
 	MachineFiles     []string // Paths to files in /deploy/machine-files/
 	MachineCommands  []string // Commands from /deploy/machine-commands/
+
+	// Declarative disk partitioning (JSON from PARTITION_LAYOUT).
+	PartitionLayout *PartitionLayout
+}
+
+// PartitionLayout defines a declarative partitioning scheme for the target disk.
+type PartitionLayout struct {
+	Table      string      `json:"table"`            // "gpt" (default: "gpt") — only GPT is supported
+	Device     string      `json:"device,omitempty"` // Device override (empty = auto-detect)
+	Partitions []Partition `json:"partitions"`       // Ordered list of partitions to create
+	LVM        *LVMConfig  `json:"lvm,omitempty"`    // Optional LVM configuration
+}
+
+// Partition defines a single partition in a PartitionLayout.
+type Partition struct {
+	Label      string `json:"label"`                // GPT partition label (e.g. "efi", "root", "data")
+	SizeMB     int    `json:"sizeMB,omitempty"`     // Size in MiB (0 = fill remaining space)
+	TypeGUID   string `json:"typeGUID,omitempty"`   // GPT type GUID (auto-set from fsType if omitted)
+	Filesystem string `json:"filesystem,omitempty"` // mkfs type: "vfat", "ext4", "xfs", "swap"
+	Mountpoint string `json:"mountpoint,omitempty"` // Target mount path (e.g. "/", "/boot/efi")
+}
+
+// LVMConfig defines LVM volume group and logical volume configuration.
+type LVMConfig struct {
+	VolumeGroup string     `json:"volumeGroup"` // VG name (e.g. "sysvg")
+	PVPartition int        `json:"pvPartition"` // 1-based partition index for the PV
+	Volumes     []LVVolume `json:"volumes"`     // Logical volumes to create
+}
+
+// LVVolume defines a single logical volume within an LVM volume group.
+type LVVolume struct {
+	Name       string `json:"name"`                 // LV name (e.g. "root", "var")
+	SizeMB     int    `json:"sizeMB,omitempty"`     // Size in MiB (0 = fill remaining)
+	Extents    string `json:"extents,omitempty"`    // Size as extents (e.g. "100%FREE")
+	Filesystem string `json:"filesystem,omitempty"` // mkfs type
+	Mountpoint string `json:"mountpoint,omitempty"` // Target mount path
+}
+
+// ParsePartitionLayout parses a JSON partition layout string.
+func ParsePartitionLayout(data string) (*PartitionLayout, error) {
+	var layout PartitionLayout
+	if err := json.Unmarshal([]byte(data), &layout); err != nil {
+		return nil, fmt.Errorf("parsing partition layout: %w", err)
+	}
+	if len(layout.Partitions) == 0 {
+		return nil, fmt.Errorf("partition layout has no partitions")
+	}
+	if layout.Table == "" {
+		layout.Table = "gpt"
+	}
+	if layout.Table != "gpt" {
+		return nil, fmt.Errorf("unsupported partition table %q, only \"gpt\" is supported", layout.Table)
+	}
+	return &layout, nil
 }
 
 // Command represents a server-issued command (future agent mode).

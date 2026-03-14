@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -73,12 +74,14 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		{"setup-mellanox", o.setupMellanox},
 		{"wipe-disks", o.wipeDisks},
 		{"detect-disk", o.detectDisk},
+		{"apply-partition-layout", o.applyPartitionLayout},
 		{"stream-image", o.streamImage},
 		{"partprobe", o.partprobe},
 		{"parse-partitions", o.parsePartitions},
 		{"check-filesystem", o.checkFilesystem},
 		{"enable-lvm", o.enableLVM},
 		{"mount-root", o.mountRoot},
+		{"write-fstab", o.writeFstabStep},
 		{"setup-chroot-binds", o.setupChrootBinds},
 		{"grow-partition", o.growPartition},
 		{"resize-filesystem", o.resizeFilesystem},
@@ -252,6 +255,60 @@ func (o *Orchestrator) detectDisk(ctx context.Context) error {
 		return err
 	}
 	o.targetDisk = d
+	return nil
+}
+
+func (o *Orchestrator) applyPartitionLayout(ctx context.Context) error {
+	if o.cfg.PartitionLayout == nil {
+		return nil
+	}
+
+	device := o.targetDisk
+	if o.cfg.PartitionLayout.Device != "" {
+		device = o.cfg.PartitionLayout.Device
+		o.targetDisk = device
+	}
+
+	o.log.Info("Applying custom partition layout", "device", device, "partitions", len(o.cfg.PartitionLayout.Partitions))
+
+	if err := o.disk.ApplyPartitionLayout(ctx, device, o.cfg.PartitionLayout); err != nil {
+		return fmt.Errorf("apply partition layout: %w", err)
+	}
+
+	// Apply LVM if configured.
+	if o.cfg.PartitionLayout.LVM != nil {
+		if err := o.disk.ApplyLVMConfig(ctx, device, o.cfg.PartitionLayout); err != nil {
+			return fmt.Errorf("apply LVM config: %w", err)
+		}
+	}
+
+	o.log.Info("Custom partition layout applied")
+	return nil
+}
+
+// writeFstab generates and writes fstab after root is mounted.
+func (o *Orchestrator) writeFstabStep(_ context.Context) error {
+	return o.writeFstab()
+}
+
+func (o *Orchestrator) writeFstab() error {
+	if o.cfg.PartitionLayout == nil {
+		return nil
+	}
+	device := o.targetDisk
+	fstab := disk.GenerateFstab(o.cfg.PartitionLayout, device)
+	if o.cfg.PartitionLayout.LVM != nil {
+		fstab += disk.GenerateLVMFstab(o.cfg.PartitionLayout.LVM)
+	}
+
+	fstabPath := filepath.Join(o.config.rootDir, "etc", "fstab")
+	if err := os.MkdirAll(filepath.Dir(fstabPath), 0o755); err != nil {
+		return fmt.Errorf("creating fstab directory: %w", err)
+	}
+	if err := os.WriteFile(fstabPath, []byte(fstab), 0o644); err != nil {
+		return fmt.Errorf("writing fstab: %w", err)
+	}
+	o.log.Info("Generated fstab for custom layout")
 	return nil
 }
 

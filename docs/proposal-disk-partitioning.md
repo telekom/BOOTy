@@ -2,6 +2,11 @@
 
 ## Status: Proposal
 
+Phase 1 implements: `ParsePartitionLayout`, `ApplyPartitionLayout` (GPT only via sgdisk),
+`GenerateFstab`, partition type GUID resolution, device naming.
+Wired into the provisioning orchestrator as the apply-partition-layout step — `MachineConfig.PartitionLayout` is parsed but
+`ApplyPartitionLayout` is not called from the orchestrator.
+
 ## Priority: P3
 
 ## Summary
