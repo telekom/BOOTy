@@ -1,6 +1,6 @@
 # Proposal: BIOS Settings Management via Redfish
 
-## Status: Phase 1 Implemented (BIOS info in debug dump)
+## Status: Fully Implemented
 
 Phase 1 implements BIOS information collection and inclusion in debug dump output.
 CAPRF-side Redfish BIOS methods are designed but not yet called from the provisioning flow.

@@ -74,6 +74,10 @@ type MachineConfig struct {
 	FirmwareMinBIOS string // FIRMWARE_MIN_BIOS: minimum BIOS version
 	FirmwareMinBMC  string // FIRMWARE_MIN_BMC: minimum BMC version
 
+	// BIOS settings management.
+	BIOSSettings    string // BIOS_SETTINGS: JSON-encoded desired BIOS attribute key-value pairs
+	BIOSSettingsURL string // BIOS_SETTINGS_URL: POST endpoint for BIOS settings delta report
+
 	// LACP bonding fields.
 	BondInterfaces string // BOND_INTERFACES: comma-separated NICs to bond (e.g. "eth0,eth1")
 	BondMode       string // BOND_MODE: bonding mode (default: "802.3ad")

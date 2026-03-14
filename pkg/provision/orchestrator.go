@@ -63,6 +63,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		{"report-init", o.reportInit},
 		{"collect-inventory", o.collectInventory},
 		{"collect-firmware", o.collectFirmware},
+		{"report-bios-settings", o.reportBIOSSettings},
 		{"health-checks", o.runHealthChecks},
 		{"set-hostname", o.setHostname},
 		{"copy-provisioner-files", o.copyProvisionerFiles},
@@ -175,6 +176,53 @@ func (o *Orchestrator) collectFirmware(ctx context.Context) error {
 	}
 
 	return o.provider.ReportFirmware(ctx, data)
+}
+
+// BIOSSettingsReporter is an optional provider capability for reporting BIOS settings.
+type BIOSSettingsReporter interface {
+	ReportBIOSSettings(ctx context.Context, data []byte) error
+}
+
+func (o *Orchestrator) reportBIOSSettings(ctx context.Context) error {
+	if o.cfg.BIOSSettings == "" {
+		return nil
+	}
+
+	// Parse the desired settings to validate JSON
+	var desired map[string]interface{}
+	if err := json.Unmarshal([]byte(o.cfg.BIOSSettings), &desired); err != nil {
+		o.log.Warn("Invalid BIOS_SETTINGS JSON, skipping", "error", err)
+		return nil
+	}
+
+	o.log.Info("Reporting desired BIOS settings to CAPRF", "count", len(desired))
+
+	reporter, ok := o.provider.(BIOSSettingsReporter)
+	if !ok {
+		o.log.Debug("Provider does not support BIOS settings reporting")
+		return nil
+	}
+
+	// Build report with current BIOS info alongside desired settings
+	report := map[string]interface{}{
+		"desired":      desired,
+		"biosVersion":  readSysInfo("/sys/class/dmi/id/bios_version"),
+		"biosDate":     readSysInfo("/sys/class/dmi/id/bios_date"),
+		"biosVendor":   readSysInfo("/sys/class/dmi/id/bios_vendor"),
+		"systemVendor": readSysInfo("/sys/class/dmi/id/sys_vendor"),
+		"productName":  readSysInfo("/sys/class/dmi/id/product_name"),
+	}
+
+	data, err := json.Marshal(report)
+	if err != nil {
+		o.log.Warn("Failed to marshal BIOS settings report", "error", err)
+		return nil
+	}
+
+	if reportErr := reporter.ReportBIOSSettings(ctx, data); reportErr != nil {
+		o.log.Warn("Failed to report BIOS settings", "error", reportErr)
+	}
+	return nil
 }
 
 func (o *Orchestrator) setHostname(_ context.Context) error {
@@ -406,6 +454,14 @@ func (o *Orchestrator) runHealthChecks(ctx context.Context) error {
 
 func (o *Orchestrator) reportSuccess(ctx context.Context) error {
 	return o.provider.ReportStatus(ctx, config.StatusSuccess, "provisioning complete")
+}
+
+func readSysInfo(path string) string {
+	data, err := os.ReadFile(path) //nolint:gosec // trusted system paths
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // DumpDebugState logs system state useful for diagnosing failures.
