@@ -125,6 +125,8 @@ type Provider interface {
 	Heartbeat(ctx context.Context) error
 	// FetchCommands retrieves pending commands (nil in current mode, future agent mode).
 	FetchCommands(ctx context.Context) ([]Command, error)
+	// AcknowledgeCommand reports command execution result back to the server.
+	AcknowledgeCommand(ctx context.Context, cmdID, status, message string) error
 	// ReportInventory sends hardware inventory data to the server.
 	ReportInventory(ctx context.Context, data []byte) error
 	// ReportFirmware sends a firmware report to the server.
