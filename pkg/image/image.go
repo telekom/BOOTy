@@ -159,7 +159,7 @@ func Write(sourceImage, destinationDevice string, compressed bool) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode > 300 {
+	if resp.StatusCode >= 300 {
 		// Customize response for the 404 to make debugging simpler.
 		if resp.StatusCode == http.StatusNotFound {
 			return fmt.Errorf("%s not found", sourceImage)

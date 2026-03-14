@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 )
 
 // RemoteHandler is a slog.Handler that ships log lines to the CAPRF /log endpoint.
@@ -93,10 +94,15 @@ func (h *RemoteHandler) WithGroup(name string) slog.Handler {
 }
 
 // Close stops the background drain goroutine and flushes remaining logs.
+// Uses a timeout to prevent blocking shutdown indefinitely.
 func (h *RemoteHandler) Close() {
 	h.once.Do(func() {
 		close(h.buf)
-		<-h.done
+		select {
+		case <-h.done:
+		case <-time.After(5 * time.Second): //nolint:mnd // fixed drain timeout
+			slog.Warn("Log handler drain timed out after 5s")
+		}
 	})
 }
 

@@ -47,7 +47,14 @@ go test ./pkg/image/...
 go test -tags e2e_integration -v -race -count=1 ./test/e2e/integration/...
 ```
 
-Note: Many packages in `pkg/realm/` use the `//go:build linux` build tag and will only compile/test on Linux.
+### Test Requirements
+
+- **Linux only**: All tests in `pkg/provision/`, `pkg/disk/`, `pkg/network/`, and `pkg/realm/` use `//go:build linux`. Use `GOOS=linux` for compilation on macOS/Windows, but execution requires Linux.
+- **Coverage gate**: `make test` enforces a **40% coverage** minimum. New code should include tests to maintain or increase coverage.
+- **Race detector**: `-race` is enabled by default in all test targets.
+- **E2E tests**: Require [ContainerLab](https://containerlab.dev/) (Linux only) and use build tags: `e2e`, `e2e_integration`, `e2e_boot`, `e2e_vrnetlab`, `e2e_gobgp`.
+- **Table-driven tests**: Prefer `tests := []struct{...}` with subtests over individual test functions.
+- **Test helpers**: Use `t.Helper()` in all helper functions so failures report the caller's line.
 
 ## Linting
 

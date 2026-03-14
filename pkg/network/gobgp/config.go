@@ -128,12 +128,43 @@ func (c *Config) Validate() error {
 	if c.ASN == 0 {
 		return fmt.Errorf("ASN is required for GoBGP mode")
 	}
+	if err := c.validateRouterID(); err != nil {
+		return err
+	}
+	if err := c.validatePeerMode(); err != nil {
+		return err
+	}
+
+	if c.ProvisionVNI == 0 || c.ProvisionVNI > 16777215 {
+		return fmt.Errorf("ProvisionVNI %d out of range (must be 1..16777215)", c.ProvisionVNI)
+	}
+
+	// 4-octet ASN RD/RT format can only encode 16-bit VNI values.
+	if c.ASN > 65535 && c.ProvisionVNI > 65535 {
+		return fmt.Errorf("4-octet ASN %d with VNI %d > 65535 is unsupported (RD/RT truncation)", c.ASN, c.ProvisionVNI)
+	}
+
+	// MTU must leave room for VXLAN overhead (50 bytes) plus minimum
+	// useful IP payload (576 bytes per RFC 791).
+	const minMTU = 576 + 50 // minIP + vxlanOverhead
+	if c.MTU > 0 && c.MTU < minMTU {
+		return fmt.Errorf("MTU %d too low (minimum %d = 576 IP + 50 VXLAN overhead)", c.MTU, minMTU)
+	}
+
+	return nil
+}
+
+func (c *Config) validateRouterID() error {
 	if c.RouterID == "" {
 		return fmt.Errorf("router ID (underlay IP) is required for GoBGP mode")
 	}
 	if net.ParseIP(c.RouterID) == nil || net.ParseIP(c.RouterID).To4() == nil {
 		return fmt.Errorf("router ID %q must be a valid IPv4 address", c.RouterID)
 	}
+	return nil
+}
+
+func (c *Config) validatePeerMode() error {
 	switch c.PeerMode {
 	case network.PeerModeDual, network.PeerModeNumbered:
 		if len(c.NeighborAddrs) == 0 {
@@ -149,16 +180,6 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("unknown peer mode %q", c.PeerMode)
 	}
-
-	if c.ProvisionVNI == 0 || c.ProvisionVNI > 16777215 {
-		return fmt.Errorf("ProvisionVNI %d out of range (must be 1..16777215)", c.ProvisionVNI)
-	}
-
-	// 4-octet ASN RD/RT format can only encode 16-bit VNI values.
-	if c.ASN > 65535 && c.ProvisionVNI > 65535 {
-		return fmt.Errorf("4-octet ASN %d with VNI %d > 65535 is unsupported (RD/RT truncation)", c.ASN, c.ProvisionVNI)
-	}
-
 	return nil
 }
 

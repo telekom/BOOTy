@@ -92,9 +92,11 @@ Design, Affected Files, Risks, and Effort Estimate.
 | [Agent / Standby Mode](proposal-agent-mode.md) | Implemented |
 | [GoBGP Network Stack](proposal-gobgp.md) | Implemented |
 | [CAPRF Integration](caprf-integration-plan.md) | Implemented |
-| [Hardware Inventory](proposal-hardware-inventory.md) | Implemented (Phases 1-2) |
-| [Firmware Reporting](proposal-firmware-reporting.md) | Implemented |
+| [Hardware Inventory](proposal-hardware-inventory.md) | Implemented |
 | [Health Pre-Checks](proposal-health-checks.md) | Implemented |
+| [VLAN Support](proposal-vlan-support.md) | Implemented |
+| [Firmware Reporting](proposal-firmware-reporting.md) | Implemented |
+| [Observability (Debug Dump)](proposal-observability.md) | Implemented |
 
 ## Total Estimated Effort
 
