@@ -966,3 +966,19 @@ func TestClientReportHealthChecksNoURL(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestParseVarsImageSignature(t *testing.T) {
+	input := `IMAGE_SIGNATURE_URL="https://example.com/image.sig"
+IMAGE_GPG_PUBKEY="https://example.com/pubkey.asc"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ImageSignatureURL != "https://example.com/image.sig" {
+		t.Errorf("ImageSignatureURL = %q", cfg.ImageSignatureURL)
+	}
+	if cfg.ImageGPGPubKey != "https://example.com/pubkey.asc" {
+		t.Errorf("ImageGPGPubKey = %q", cfg.ImageGPGPubKey)
+	}
+}

@@ -1,4 +1,5 @@
 // verify.go implements image integrity verification via checksums.
+// TODO: integrate ChecksumReader into Stream() to replace inline checksum verification in stream.go.
 
 package image
 
