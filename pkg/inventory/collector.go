@@ -12,12 +12,12 @@ import (
 
 // Paths can be overridden in tests.
 var (
-	ProcCPUInfoPath = "/proc/cpuinfo"
-	ProcMemInfoPath = "/proc/meminfo"
-	SysBlockPath    = "/sys/block"
-	SysNetPath      = "/sys/class/net"
-	SysDMIPath      = "/sys/class/dmi/id"
-	SysPCIPath      = "/sys/bus/pci/devices"
+	ProcCPUInfoPath  = "/proc/cpuinfo"
+	ProcMemInfoPath  = "/proc/meminfo"
+	SysBlockPath     = "/sys/block"
+	SysNetPath       = "/sys/class/net"
+	SysDMIPath       = "/sys/class/dmi/id"
+	SysPCIPath       = "/sys/bus/pci/devices"
 	SysDMIMemoryPath = "/sys/firmware/dmi/entries/17-0"
 )
 
