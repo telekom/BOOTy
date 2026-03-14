@@ -1,6 +1,6 @@
 # Proposal: Vendor-Specific BIOS Settings Management
 
-## Status: Proposal
+## Status: Implemented
 
 ## Priority: P1
 
