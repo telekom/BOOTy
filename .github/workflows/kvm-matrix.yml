@@ -1,0 +1,125 @@
+name: KVM Test Matrix
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "pkg/secureboot/**"
+      - "pkg/disk/**"
+      - "pkg/tpm/**"
+      - "pkg/kexec/**"
+      - "pkg/bios/**"
+      - "pkg/bootloader/**"
+  pull_request:
+    paths:
+      - "pkg/secureboot/**"
+      - "pkg/disk/**"
+      - "pkg/tpm/**"
+      - "pkg/kexec/**"
+      - "pkg/bios/**"
+      - "pkg/bootloader/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kvm-tests:
+    name: KVM ${{ matrix.scenario }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - scenario: secureboot
+            qemu_extra: >-
+              -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.secboot.fd
+              -drive if=pflash,format=raw,file=OVMF_VARS.fd
+            test_tag: e2e_kvm_secureboot
+            setup: |
+              cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
+          - scenario: luks
+            qemu_extra: >-
+              -drive file=test-disk.qcow2,format=qcow2,if=virtio
+            test_tag: e2e_kvm_luks
+            setup: |
+              qemu-img create -f qcow2 test-disk.qcow2 10G
+          - scenario: tpm
+            qemu_extra: >-
+              -chardev socket,id=chrtpm,path=/tmp/swtpm.sock
+              -tpmdev emulator,id=tpm0,chardev=chrtpm
+              -device tpm-tis,tpmdev=tpm0
+            test_tag: e2e_kvm_tpm
+            setup: |
+              mkdir -p /tmp/tpm
+              swtpm socket --tpmstate dir=/tmp/tpm --ctrl type=unixio,path=/tmp/swtpm.sock --tpm2 &
+              sleep 1
+          - scenario: kexec
+            qemu_extra: ""
+            test_tag: e2e_kvm_kexec
+            setup: ""
+          - scenario: bootloader
+            qemu_extra: >-
+              -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd
+              -drive if=pflash,format=raw,file=OVMF_VARS.fd
+            test_tag: e2e_kvm_bootloader
+            setup: |
+              cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
+      fail-fast: false
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+
+      - name: Install KVM dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 ovmf swtpm swtpm-tools cpio busybox-static zstd
+
+      - name: Scenario-specific setup
+        if: matrix.setup != ''
+        run: ${{ matrix.setup }}
+
+      - name: Build BOOTy initramfs
+        run: |
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
+            go build -ldflags "-linkmode external -extldflags '-static' -s -w" -o booty
+
+          mkdir -p initramfs/{bin,sbin,dev,proc,sys,etc,tmp,usr/bin,lib/modules,mnt}
+          sudo mknod initramfs/dev/console c 5 1
+          sudo mknod initramfs/dev/ttyS0 c 4 64
+          sudo mknod initramfs/dev/null c 1 3
+
+          cp /bin/busybox initramfs/bin/busybox
+          cd initramfs/bin
+          for cmd in sh mount umount insmod setsid cttyhack chroot; do
+            ln -sf busybox "$cmd"
+          done
+          cd ../..
+
+          cp booty initramfs/booty
+          cat > initramfs/init << 'INITEOF'
+          #!/bin/sh
+          export BOOTYURL="http://10.0.2.2:3000/booty"
+          exec /booty
+          INITEOF
+          chmod +x initramfs/init
+
+          cd initramfs
+          sudo find . -print0 | sudo cpio --null -ov --format=newc 2>/dev/null | gzip > ../test-initramfs.cpio.gz
+          cd ..
+
+      - name: Prepare kernel
+        run: |
+          sudo cp /boot/vmlinuz-$(uname -r) vmlinuz
+          sudo chmod 644 vmlinuz
+
+      - name: Run KVM test (${{ matrix.scenario }})
+        run: |
+          go test -tags ${{ matrix.test_tag }} -race -v -timeout 15m ./test/e2e/kvm/...
+        env:
+          QEMU_EXTRA_ARGS: ${{ matrix.qemu_extra }}
+          BOOTY_INITRAMFS: test-initramfs.cpio.gz
+          BOOTY_KERNEL: vmlinuz

@@ -1,0 +1,23 @@
+name: booty-dhcp-lab
+
+topology:
+  nodes:
+    dhcp-server:
+      kind: linux
+      image: alpine:3.20
+      binds:
+        - dhcpd.conf:/etc/dhcp/dhcpd.conf:ro
+      exec:
+        - apk add --no-cache dhcp
+        - touch /var/lib/dhcp/dhcpd.leases
+        - ip addr add 10.200.0.1/24 dev eth1
+        - ip link set dev eth1 up
+
+    booty:
+      kind: linux
+      image: alpine:3.20
+      exec:
+        - ip link set dev eth1 up
+
+  links:
+    - endpoints: ["dhcp-server:eth1", "booty:eth1"]

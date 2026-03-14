@@ -16,7 +16,7 @@ SRC = $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 DOCKERTAG ?= $(VERSION)
 REPOSITORY = ghcr.io/telekom/booty
 
-.PHONY: all build clean install uninstall fmt lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab
+.PHONY: all build clean install uninstall fmt lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic
 
 all: lint test install
 
@@ -175,6 +175,62 @@ clab-gobgp-vrnetlab-down:
 test-e2e-gobgp-vrnetlab:
 	@echo Running GoBGP vrnetlab E2E tests (requires clab-gobgp-vrnetlab-up)
 	@go test -tags e2e_gobgp_vrnetlab -race -v -timeout 600s ./test/e2e/integration/...
+
+# ── DHCP lab targets ───────────────────────────────────────────────────────
+
+clab-dhcp-up:
+	@echo Deploying DHCP test topology
+	@cd test/e2e/clab && sudo clab deploy --topo topology-dhcp.clab.yml
+
+clab-dhcp-down:
+	@echo Destroying DHCP test topology
+	@cd test/e2e/clab && sudo clab destroy --topo topology-dhcp.clab.yml
+
+test-e2e-dhcp:
+	@echo Running DHCP E2E tests (requires clab-dhcp-up)
+	@go test -tags e2e_dhcp -race -v -timeout 120s ./test/e2e/integration/...
+
+# ── LACP lab targets ──────────────────────────────────────────────────────
+
+clab-lacp-up:
+	@echo Deploying LACP bond test topology
+	@cd test/e2e/clab && sudo clab deploy --topo topology-lacp.clab.yml
+
+clab-lacp-down:
+	@echo Destroying LACP bond test topology
+	@cd test/e2e/clab && sudo clab destroy --topo topology-lacp.clab.yml
+
+test-e2e-lacp:
+	@echo Running LACP bond E2E tests (requires clab-lacp-up)
+	@go test -tags e2e_lacp -race -v -timeout 120s ./test/e2e/integration/...
+
+# ── Static IP lab targets ─────────────────────────────────────────────────
+
+clab-static-up:
+	@echo Deploying static IP test topology
+	@cd test/e2e/clab && sudo clab deploy --topo topology-static.clab.yml
+
+clab-static-down:
+	@echo Destroying static IP test topology
+	@cd test/e2e/clab && sudo clab destroy --topo topology-static.clab.yml
+
+test-e2e-static:
+	@echo Running static IP E2E tests (requires clab-static-up)
+	@go test -tags e2e_static -race -v -timeout 120s ./test/e2e/integration/...
+
+# ── Multi-NIC lab targets ─────────────────────────────────────────────────
+
+clab-multi-nic-up:
+	@echo Deploying multi-NIC test topology
+	@cd test/e2e/clab && sudo clab deploy --topo topology-multi-nic.clab.yml
+
+clab-multi-nic-down:
+	@echo Destroying multi-NIC test topology
+	@cd test/e2e/clab && sudo clab destroy --topo topology-multi-nic.clab.yml
+
+test-e2e-multi-nic:
+	@echo Running multi-NIC E2E tests (requires clab-multi-nic-up)
+	@go test -tags e2e_multi_nic -race -v -timeout 120s ./test/e2e/integration/...
 
 check:
 	@test -z $(shell gofmt -l main.go | tee /dev/stderr) || echo "[WARN] Fix formatting issues with 'make fmt'"

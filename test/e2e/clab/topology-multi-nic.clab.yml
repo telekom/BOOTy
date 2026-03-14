@@ -1,0 +1,42 @@
+name: booty-multi-nic-lab
+
+topology:
+  nodes:
+    switch:
+      kind: linux
+      image: alpine:3.20
+      exec:
+        # Management network on eth1
+        - ip addr add 10.203.0.1/24 dev eth1
+        - ip link set eth1 up
+        # Data bridge for bond members (eth2+eth3)
+        - ip link add br-data type bridge
+        - ip link set br-data up
+        - ip link set eth2 master br-data
+        - ip link set eth3 master br-data
+        - ip link set eth2 up
+        - ip link set eth3 up
+        - ip addr add 10.203.1.1/24 dev br-data
+        # Storage network on eth4
+        - ip addr add 10.203.2.1/24 dev eth4
+        - ip link set eth4 up
+
+    booty:
+      kind: linux
+      image: alpine:3.20
+      exec:
+        # Management
+        - ip addr add 10.203.0.10/24 dev eth1
+        - ip link set eth1 up
+        # Data NICs (bond members)
+        - ip link set eth2 up
+        - ip link set eth3 up
+        # Storage VLAN
+        - ip addr add 10.203.2.10/24 dev eth4
+        - ip link set eth4 up
+
+  links:
+    - endpoints: ["switch:eth1", "booty:eth1"]
+    - endpoints: ["switch:eth2", "booty:eth2"]
+    - endpoints: ["switch:eth3", "booty:eth3"]
+    - endpoints: ["switch:eth4", "booty:eth4"]
