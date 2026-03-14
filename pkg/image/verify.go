@@ -11,8 +11,8 @@ import (
 	"strings"
 )
 
-// checksumReader wraps an io.Reader to compute a checksum while streaming.
-type checksumReader struct {
+// ChecksumReader wraps an io.Reader to compute a checksum while streaming.
+type ChecksumReader struct {
 	reader   io.Reader
 	hasher   hash.Hash
 	expected string
@@ -35,7 +35,7 @@ func ParseChecksum(s string) (algo, hex string, err error) {
 
 // NewChecksumReader wraps a reader to compute and verify a checksum.
 // The checksum string must be in "algo:hex" format.
-func NewChecksumReader(r io.Reader, checksum string) (*checksumReader, error) {
+func NewChecksumReader(r io.Reader, checksum string) (*ChecksumReader, error) {
 	algo, expected, err := ParseChecksum(checksum)
 	if err != nil {
 		return nil, err
@@ -49,7 +49,7 @@ func NewChecksumReader(r io.Reader, checksum string) (*checksumReader, error) {
 		h = sha512.New()
 	}
 
-	return &checksumReader{
+	return &ChecksumReader{
 		reader:   io.TeeReader(r, h),
 		hasher:   h,
 		expected: expected,
@@ -58,13 +58,15 @@ func NewChecksumReader(r io.Reader, checksum string) (*checksumReader, error) {
 }
 
 // Read implements io.Reader, computing the hash as data flows through.
-func (cr *checksumReader) Read(p []byte) (int, error) {
-	return cr.reader.Read(p)
+func (cr *ChecksumReader) Read(p []byte) (int, error) {
+	n, err := cr.reader.Read(p)
+
+	return n, err //nolint:wrapcheck // must preserve io.EOF sentinel for callers
 }
 
 // Verify checks that the computed checksum matches the expected value.
 // Must be called after all data has been read.
-func (cr *checksumReader) Verify() error {
+func (cr *ChecksumReader) Verify() error {
 	actual := fmt.Sprintf("%x", cr.hasher.Sum(nil))
 	if actual != cr.expected {
 		return fmt.Errorf("checksum mismatch: expected %s:%s, got %s:%s", cr.algo, cr.expected, cr.algo, actual)
