@@ -212,6 +212,21 @@ modules := []string{
 
 Verify the module is available in the initrd kernel build.
 
+## Required Binaries in Initramfs
+
+No additional binaries needed. VLAN creation uses the `vishvananda/netlink`
+Go library (pure Go netlink). The `8021q` kernel module must be available:
+
+| Binary | Package | Purpose | Initramfs Flavor | Already Present? |
+|--------|---------|---------|-----------------|------------------|
+| `ip` | `iproute2` | Fallback VLAN management (`ip link add type vlan`) | all | **Yes** |
+
+**Kernel module** (must be in initramfs kernel):
+
+| Module | Purpose |
+|--------|---------|
+| `8021q` | 802.1Q VLAN tagging support |
+
 ## Affected Files
 
 | File | Change |

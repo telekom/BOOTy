@@ -174,6 +174,21 @@ Dry-run produces a structured report:
 Result: READY (1 warning, 1 info)
 ```
 
+## Required Binaries in Initramfs
+
+No additional binaries needed. Dry-run mode reuses existing tools for
+non-destructive checks:
+
+| Binary | Package | Purpose | Initramfs Flavor | Already Present? |
+|--------|---------|---------|-----------------|------------------|
+| `ip` | `iproute2` | Verify link state, check DHCP | all | **Yes** |
+| `sgdisk` | `gdisk` | Validate partition layout fits on disk | all | **Yes** |
+| `efibootmgr` | `efibootmgr` | Check EFI boot entries | all | **Yes** |
+| `curl` | `curl` | HEAD request to verify image URL | all | **Yes** |
+
+Dry-run is a pure orchestration mode — it calls existing tools in
+read-only/non-destructive mode.
+
 ## Affected Files
 
 | File | Change |

@@ -205,6 +205,22 @@ var (
 )
 ```
 
+## Required Binaries in Initramfs
+
+No additional binaries needed. Debug dump collection uses existing tools
+already in the initramfs:
+
+| Binary | Package | Purpose | Initramfs Flavor | Already Present? |
+|--------|---------|---------|-----------------|------------------|
+| `ip` | `iproute2` | Network state capture (`ip addr`, `ip route`, `ip neigh`) | all | **Yes** |
+| `dmesg` | busybox | Kernel message log capture | all | **Yes** (busybox) |
+| `lsmod` | busybox | Loaded kernel modules | all | **Yes** (busybox) |
+| `df` | busybox | Disk usage | all | **Yes** (busybox) |
+| `efibootmgr` | `efibootmgr` | UEFI boot entries | all | **Yes** |
+| `dmidecode` | `dmidecode` | System/BIOS info for debug context | all | **Yes** |
+
+Metrics and event streaming are pure Go (no external binaries).
+
 ## Affected Files
 
 | File | Change |

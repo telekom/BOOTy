@@ -12,12 +12,13 @@ import (
 
 // Paths can be overridden in tests.
 var (
-	ProcCPUInfoPath = "/proc/cpuinfo"
-	ProcMemInfoPath = "/proc/meminfo"
-	SysBlockPath    = "/sys/block"
-	SysNetPath      = "/sys/class/net"
-	SysDMIPath      = "/sys/class/dmi/id"
-	SysPCIPath      = "/sys/bus/pci/devices"
+	ProcCPUInfoPath  = "/proc/cpuinfo"
+	ProcMemInfoPath  = "/proc/meminfo"
+	SysBlockPath     = "/sys/block"
+	SysNetPath       = "/sys/class/net"
+	SysDMIPath       = "/sys/class/dmi/id"
+	SysPCIPath       = "/sys/bus/pci/devices"
+	SysDMIMemoryPath = "/sys/firmware/dmi/entries/17-0"
 )
 
 // Collect gathers a full hardware inventory from sysfs and procfs.
@@ -132,6 +133,7 @@ func collectMemory() MemoryInfo {
 	}
 	defer f.Close() //nolint:errcheck // best-effort
 
+	var mem MemoryInfo
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -139,11 +141,67 @@ func collectMemory() MemoryInfo {
 			fields := strings.Fields(line)
 			if len(fields) >= 2 {
 				kb, _ := strconv.ParseUint(fields[1], 10, 64)
-				return MemoryInfo{TotalBytes: kb * 1024}
+				mem.TotalBytes = kb * 1024
 			}
+			break
 		}
 	}
-	return MemoryInfo{}
+	mem.DIMMs = collectDIMMs()
+	return mem
+}
+
+// collectDIMMs reads DIMM info from DMI SMBIOS type-17 entries.
+// Falls back gracefully if DMI data is unavailable.
+func collectDIMMs() []DIMMInfo {
+	// DMI type 17 = Memory Device. Search for all type-17 directories.
+	parent := filepath.Dir(SysDMIMemoryPath)
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return nil
+	}
+
+	var dimms []DIMMInfo
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "17-") {
+			continue
+		}
+		dir := filepath.Join(parent, e.Name())
+		slot := readDMIField(dir, "locator")
+		sizeStr := readDMIField(dir, "size")
+		memType := readDMIField(dir, "type")
+		speedStr := readDMIField(dir, "speed")
+
+		if sizeStr == "" || sizeStr == "No Module Installed" || sizeStr == "0" {
+			continue
+		}
+
+		var sizeGB int
+		var sizeMB uint64
+		if _, err := fmt.Sscanf(sizeStr, "%d", &sizeMB); err == nil {
+			sizeGB = int(sizeMB / 1024) //nolint:gosec // trusted DMI value
+		}
+
+		var speedMHz int
+		if speedStr != "" {
+			_, _ = fmt.Sscanf(speedStr, "%d", &speedMHz)
+		}
+
+		dimms = append(dimms, DIMMInfo{
+			Slot:     slot,
+			SizeGB:   sizeGB,
+			Type:     memType,
+			SpeedMHz: speedMHz,
+		})
+	}
+	return dimms
+}
+
+func readDMIField(dir, field string) string {
+	data, err := os.ReadFile(filepath.Join(dir, field)) //nolint:gosec // trusted sysfs path
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 func collectDisks() []DiskInfo {

@@ -172,6 +172,12 @@ func (d *Dispatcher) sendWithRetry(cfg WebhookConfig, payload []byte) {
 }
 ```
 
+## Required Binaries in Initramfs
+
+No BOOTy binary changes needed. Webhooks are dispatched by the **CAPRF
+controller**, not by BOOTy. BOOTy continues to report events via its
+existing HTTP API.
+
 ## Affected Files
 
 | File | Change |

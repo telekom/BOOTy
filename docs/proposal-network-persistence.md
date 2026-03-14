@@ -147,6 +147,16 @@ export OS_FAMILY="ubuntu"  # or "rhel", "flatcar"
 # Network config is derived from current BOOTy networking state
 ```
 
+## Required Binaries in Initramfs
+
+No additional binaries needed. Network config file generation is pure Go
+(YAML/INI marshaling). The provisioned OS network tools are used at boot
+time, not by BOOTy:
+
+| Binary | Package | Purpose | Initramfs Flavor | Already Present? |
+|--------|---------|---------|-----------------|------------------|
+| `ip` | `iproute2` | Read current network state for config generation | all | **Yes** |
+
 ## Affected Files
 
 | File | Change |

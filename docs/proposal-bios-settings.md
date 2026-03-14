@@ -201,6 +201,15 @@ var VendorPresets = map[string]map[string]string{
 }
 ```
 
+## Required Binaries in Initramfs
+
+No BOOTy binary changes needed. This proposal is implemented entirely in
+the **CAPRF controller** via Redfish HTTP API calls. BOOTy is not directly
+involved in reading or writing BIOS settings in this flow.
+
+For a Redfish-less variant where BOOTy handles BIOS locally, see
+[Vendor-Specific BIOS Management](proposal-bios-management-vendors.md).
+
 ## Affected Files
 
 | File | Change |

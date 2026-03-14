@@ -1,6 +1,6 @@
 # Proposal: Hardware Inventory and Inspection
 
-## Status: Implemented (PR #18)
+## Status: Fully Implemented (Phases 1-2)
 
 ## Priority: P1
 
@@ -214,6 +214,22 @@ steps := []Step{
     // ... existing steps ...
 }
 ```
+
+## Required Binaries in Initramfs
+
+All required binaries are already present. Inventory collection primarily
+uses sysfs/procfs parsing in Go, with binary fallbacks:
+
+| Binary | Package | Purpose | Initramfs Flavor | Already Present? |
+|--------|---------|---------|-----------------|------------------|
+| `dmidecode` | `dmidecode` | SMBIOS system/memory/CPU details | all | **Yes** |
+| `ethtool` | `ethtool` | NIC details (driver, firmware, features) | all | **Yes** |
+| `lspci` | `pciutils` | PCI device enumeration (optional, can use sysfs) | full, gobgp | **No — optional** |
+| `nvme` | `nvme-cli` | NVMe controller/namespace details | all | **Yes** |
+
+**Note**: `lspci` is optional — PCI devices can be enumerated from
+`/sys/bus/pci/devices/` directly in Go. See
+[Full Server Inventory](proposal-full-inventory.md) for extended use.
 
 ## Affected Files
 

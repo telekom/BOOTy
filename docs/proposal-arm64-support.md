@@ -150,6 +150,29 @@ jobs:
       - run: make initrd ARCH=${{ matrix.arch }}
 ```
 
+## Required Binaries in Initramfs
+
+ARM64 builds use the same binaries as AMD64 but compiled for `aarch64`.
+The multi-arch Dockerfile handles this via `--platform linux/arm64`.
+No new binaries are needed beyond the existing set.
+
+**ARM64-specific kernel modules** (replace some AMD64-only modules):
+
+| Module | Purpose | AMD64 Equivalent |
+|--------|---------|-----------------|
+| `thunder_bgx` | Cavium ThunderX NIC | `ixgbe` |
+| `octeontx2` | Marvell OcteonTX2 NIC | `i40e` |
+| `mlx5_core` | Mellanox ConnectX (same) | `mlx5_core` |
+| `ahci_platform` | Platform AHCI controller | `ahci` |
+| `gpio-dwapb` | DesignWare GPIO | N/A |
+
+**Dockerfile change** (multi-arch build):
+
+```dockerfile
+# Multi-arch base images (already supported by Alpine/Debian)
+FROM --platform=$TARGETPLATFORM alpine:3.19 AS base
+```
+
 ## Affected Files
 
 | File | Change |

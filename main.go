@@ -31,6 +31,12 @@ import (
 	"github.com/telekom/BOOTy/pkg/ux"
 )
 
+// Version and Build are set via -ldflags at build time.
+var (
+	Version = "dev"
+	Build   = "unknown"
+)
+
 const varsPath = "/deploy/vars"
 
 func main() {
@@ -39,7 +45,7 @@ func main() {
 	setupMountsAndDevices()
 	loadModules()
 
-	slog.Info("Starting BOOTy")
+	slog.Info("Starting BOOTy", "version", Version, "build", Build)
 	ux.Captain()
 	ux.SysInfo()
 
