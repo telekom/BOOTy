@@ -91,12 +91,12 @@ jobs:
 
       - name: Extract initramfs from containers
         run: |
-          # Use docker cp from a created (not started) container — the image is FROM scratch with no shell
-          CID=$(docker create ghcr.io/telekom/booty:${GITHUB_REF_NAME#v})
+          # Pass a dummy command — image is FROM scratch with no CMD, but we never start the container
+          CID=$(docker create ghcr.io/telekom/booty:${GITHUB_REF_NAME#v} /nonexistent)
           docker cp "$CID:/initramfs.cpio.gz" booty-initramfs.cpio.gz
           docker rm "$CID"
 
-          CID=$(docker create ghcr.io/telekom/booty-gobgp:${GITHUB_REF_NAME#v})
+          CID=$(docker create ghcr.io/telekom/booty-gobgp:${GITHUB_REF_NAME#v} /nonexistent)
           docker cp "$CID:/initramfs.cpio.gz" booty-gobgp-initramfs.cpio.gz
           docker rm "$CID"
 
