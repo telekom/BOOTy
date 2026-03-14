@@ -150,6 +150,11 @@ func runCAPRF(ctx context.Context) {
 		realm.Reboot()
 	}
 
+	// DRY_RUN=true overrides mode before logging.
+	if cfg.DryRun {
+		cfg.Mode = "dry-run"
+	}
+
 	// Wire remote log shipping.
 	if cfg.LogURL != "" {
 		remote := caprf.NewRemoteHandler(client, slog.Default().Handler(), slog.LevelInfo, 256)
@@ -187,6 +192,11 @@ func runCAPRF(ctx context.Context) {
 	case "standby":
 		runStandby(ctx, client, cfg, netMode, diskMgr)
 		return // standby handles its own lifecycle
+	case "dry-run":
+		cfg.DisableKexec = true
+		if err := orch.DryRun(ctx); err != nil {
+			slog.Error("Dry-run failed", "error", err)
+		}
 	case "deprovision", "soft-deprovision":
 		if cfg.Mode == "soft-deprovision" {
 			cfg.Mode = "soft"

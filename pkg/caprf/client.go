@@ -399,6 +399,8 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) {
 		setIntField(&cfg.HealthMinMemoryGB, value)
 	case "HEALTH_MIN_CPUS":
 		setIntField(&cfg.HealthMinCPUs, value)
+	case "DRY_RUN":
+		cfg.DryRun = parseBoolVar(value)
 	}
 }
 
