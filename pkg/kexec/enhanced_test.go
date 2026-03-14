@@ -9,10 +9,16 @@ import (
 func createKernel(t *testing.T, root, version string, withInitrd bool) {
 	t.Helper()
 	bootDir := filepath.Join(root, "boot")
-	os.MkdirAll(bootDir, 0o755)
-	os.WriteFile(filepath.Join(bootDir, "vmlinuz-"+version), []byte("kernel"), 0o644)
+	if err := os.MkdirAll(bootDir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", bootDir, err)
+	}
+	if err := os.WriteFile(filepath.Join(bootDir, "vmlinuz-"+version), []byte("kernel"), 0o644); err != nil {
+		t.Fatalf("write vmlinuz-%s: %v", version, err)
+	}
 	if withInitrd {
-		os.WriteFile(filepath.Join(bootDir, "initrd.img-"+version), []byte("initrd"), 0o644)
+		if err := os.WriteFile(filepath.Join(bootDir, "initrd.img-"+version), []byte("initrd"), 0o644); err != nil {
+			t.Fatalf("write initrd.img-%s: %v", version, err)
+		}
 	}
 }
 
@@ -182,9 +188,15 @@ func TestApplyOverrides_CmdlineReplace(t *testing.T) {
 func TestDiscoverKernels_InitramfsImg(t *testing.T) {
 	root := t.TempDir()
 	bootDir := filepath.Join(root, "boot")
-	os.MkdirAll(bootDir, 0o755)
-	os.WriteFile(filepath.Join(bootDir, "vmlinuz-5.15.0"), []byte("k"), 0o644)
-	os.WriteFile(filepath.Join(bootDir, "initramfs-5.15.0.img"), []byte("i"), 0o644)
+	if err := os.MkdirAll(bootDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(bootDir, "vmlinuz-5.15.0"), []byte("k"), 0o644); err != nil {
+		t.Fatalf("write kernel: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(bootDir, "initramfs-5.15.0.img"), []byte("i"), 0o644); err != nil {
+		t.Fatalf("write initramfs: %v", err)
+	}
 
 	kernels, err := DiscoverKernels(root)
 	if err != nil {

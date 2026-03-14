@@ -1,6 +1,6 @@
 # Proposal: Enhanced Kexec — Multi-Kernel Support + Chain Loading
 
-## Status: Implemented
+## Status: Proposal
 
 ## Priority: P1
 
