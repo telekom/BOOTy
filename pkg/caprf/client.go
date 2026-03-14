@@ -343,6 +343,8 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"FIRMWARE_MIN_BMC":            &cfg.FirmwareMinBMC,
 		"HEALTH_SKIP_CHECKS":          &cfg.HealthSkipChecks,
 		"HEALTH_CHECK_URL":            &cfg.HealthCheckURL,
+		"TOKEN_URL":                   &cfg.TokenURL,
+		"TOKEN_ALGORITHM":             &cfg.TokenAlgorithm,
 	}
 
 	if ptr, ok := strFields[key]; ok {
