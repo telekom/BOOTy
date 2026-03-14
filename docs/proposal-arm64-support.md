@@ -1,6 +1,6 @@
 # Proposal: ARM64 / Multi-Architecture Support
 
-## Status: Fully Implemented
+## Status: Proposal
 
 ## Priority: P4
 
