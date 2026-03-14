@@ -89,10 +89,8 @@ func (r *EFIVarReader) WriteVar(fullName string, attrs uint32, data []byte) erro
 }
 
 // removeImmutable clears the immutable attribute on an efivarfs file.
-func removeImmutable(path string) error {
-	// On real systems, we'd use ioctl FS_IOC_SETFLAGS to clear FS_IMMUTABLE_FL.
-	// For now, we attempt removal which works if running as root.
-	_ = path
+// TODO: implement FS_IOC_SETFLAGS ioctl (linux-only) to clear FS_IMMUTABLE_FL.
+func removeImmutable(_ string) error {
 	return nil
 }
 

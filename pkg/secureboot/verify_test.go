@@ -78,33 +78,37 @@ func TestVerifyChain_EmptyRoot(t *testing.T) {
 	}
 }
 
-func TestCheckPESignature_ValidMZ(t *testing.T) {
+func TestHasPEHeader_ValidMZ(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "test.efi")
-	os.WriteFile(path, []byte{'M', 'Z', 0, 0, 0}, 0o644)
+	if err := os.WriteFile(path, []byte{'M', 'Z', 0, 0, 0}, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
 
-	signed, signer := checkPESignature(path)
+	signed, signer := hasPEHeader(path)
 	if !signed {
 		t.Error("expected signed")
 	}
-	if signer != "pe-binary" {
+	if signer != "pe-detected" {
 		t.Errorf("signer = %q", signer)
 	}
 }
 
-func TestCheckPESignature_InvalidHeader(t *testing.T) {
+func TestHasPEHeader_InvalidHeader(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "test.bin")
-	os.WriteFile(path, []byte("not-pe"), 0o644)
+	if err := os.WriteFile(path, []byte("not-pe"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
 
-	signed, _ := checkPESignature(path)
+	signed, _ := hasPEHeader(path)
 	if signed {
 		t.Error("expected not signed")
 	}
 }
 
-func TestCheckPESignature_Missing(t *testing.T) {
-	signed, _ := checkPESignature("/nonexistent")
+func TestHasPEHeader_Missing(t *testing.T) {
+	signed, _ := hasPEHeader("/nonexistent")
 	if signed {
 		t.Error("expected not signed for missing file")
 	}
@@ -113,8 +117,12 @@ func TestCheckPESignature_Missing(t *testing.T) {
 func TestFindFirstKernel_Glob(t *testing.T) {
 	root := t.TempDir()
 	bootDir := filepath.Join(root, "boot")
-	os.MkdirAll(bootDir, 0o755)
-	os.WriteFile(filepath.Join(bootDir, "vmlinuz-5.15.0-generic"), []byte("k"), 0o644)
+	if err := os.MkdirAll(bootDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(bootDir, "vmlinuz-5.15.0-generic"), []byte("k"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
 
 	got := findFirstKernel(root)
 	if got == "" {
@@ -124,7 +132,9 @@ func TestFindFirstKernel_Glob(t *testing.T) {
 
 func createFile(t *testing.T, path string, data []byte) {
 	t.Helper()
-	os.MkdirAll(filepath.Dir(path), 0o755)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)
 	}

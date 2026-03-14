@@ -20,6 +20,9 @@ func NewMOKEnroller(log *slog.Logger, efivar *EFIVarReader) *MOKEnroller {
 
 // EnrollMOK writes a DER-encoded certificate to the MokNew EFI variable.
 // After writing, a reboot is required to complete enrollment via MokManager.
+// NOTE: production use should encode the cert into an EFI_SIGNATURE_LIST
+// with EFI_CERT_X509_GUID and handle MokAuth. Consider falling back to
+// mokutil --import for broader compatibility.
 func (e *MOKEnroller) EnrollMOK(certDER []byte) error {
 	if len(certDER) == 0 {
 		return fmt.Errorf("empty MOK certificate")

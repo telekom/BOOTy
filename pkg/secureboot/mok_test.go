@@ -42,7 +42,9 @@ func TestEnrollMOK_Empty(t *testing.T) {
 
 func TestListMOKs(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "MokListRT-1234"), []byte("x"), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "MokListRT-1234"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
 
 	r := NewEFIVarReader(dir)
 	e := NewMOKEnroller(nil, r)
