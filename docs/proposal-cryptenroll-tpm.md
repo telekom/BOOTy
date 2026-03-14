@@ -1,6 +1,6 @@
 # Proposal: systemd-cryptenroll with TPM2 Setup
 
-## Status: Proposal
+## Status: Implemented
 
 ## Priority: P2
 
