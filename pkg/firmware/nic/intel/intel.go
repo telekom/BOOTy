@@ -17,6 +17,9 @@ type Manager struct {
 
 // New creates an Intel firmware manager.
 func New(log *slog.Logger) *Manager {
+	if log == nil {
+		log = slog.Default()
+	}
 	return &Manager{log: log}
 }
 
@@ -47,6 +50,9 @@ func (m *Manager) Capture(n *nic.Identifier) (*nic.FirmwareState, error) {
 
 // Apply sets firmware parameters on an Intel NIC.
 func (m *Manager) Apply(n *nic.Identifier, changes []nic.FlagChange) error {
+	if n.Interface == "" {
+		return fmt.Errorf("interface name required for ethtool operations")
+	}
 	for _, change := range changes {
 		if err := m.applyViaEthtool(context.Background(), n.Interface, change); err != nil {
 			return fmt.Errorf("set %s=%s: %w", change.Name, change.Value, err)
@@ -55,6 +61,10 @@ func (m *Manager) Apply(n *nic.Identifier, changes []nic.FlagChange) error {
 	return nil
 }
 
+// captureViaEthtool captures metadata via "ethtool -i".
+// NOTE: this captures driver/firmware metadata (read-only), not the priv-flags
+// that Apply modifies via --set-priv-flags. A future enhancement should also
+// capture --show-priv-flags output for baseline/diff to be effective.
 func (m *Manager) captureViaEthtool(ctx context.Context, iface string, state *nic.FirmwareState) error {
 	cmd := exec.CommandContext(ctx, "ethtool", "-i", iface)
 	out, err := cmd.CombinedOutput()
