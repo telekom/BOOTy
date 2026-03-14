@@ -28,6 +28,7 @@ build: $(TARGET)
 	@true
 
 build-all: $(SRC)
+	@mkdir -p dist/amd64 dist/arm64
 	@GOOS=$(TARGETOS) GOARCH=amd64 go build $(LDFLAGS) -o dist/amd64/$(TARGET)
 	@GOOS=$(TARGETOS) GOARCH=arm64 go build $(LDFLAGS) -o dist/arm64/$(TARGET)
 
@@ -114,7 +115,7 @@ getramdisk:
 	@echo Extracted ramdisk
 
 getramdisk-arm64:
-
+	@mkdir -p dist/arm64
 	@ID=$$(docker create $(REPOSITORY):$(DOCKERTAG)-arm64 null); \
 	docker cp $$ID:/initramfs.cpio.gz dist/arm64/initramfs.cpio.gz ; docker rm $$ID
 	@echo Extracted ARM64 ramdisk to dist/arm64/
