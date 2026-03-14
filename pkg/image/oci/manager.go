@@ -2,6 +2,7 @@ package oci
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -99,19 +100,25 @@ func (m *Manager) CacheDir() string {
 }
 
 // IsCached checks if a layer digest is in the cache.
-func (m *Manager) IsCached(digest string) bool {
+func (m *Manager) IsCached(digest string) (bool, error) {
 	idx, err := m.loadCacheIndex()
 	if err != nil {
-		return false
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("check cache for %s: %w", digest, err)
 	}
 	_, ok := idx.Entries[digest]
-	return ok
+	return ok, nil
 }
 
 // AddToCache records a layer in the cache index.
 func (m *Manager) AddToCache(digest, localPath string, size int64) error {
 	idx, err := m.loadCacheIndex()
 	if err != nil {
+		if m.log != nil {
+			m.log.Info("initializing new cache index", "reason", err)
+		}
 		idx = &CacheIndex{Entries: make(map[string]CacheEntry)}
 	}
 	idx.Entries[digest] = CacheEntry{
