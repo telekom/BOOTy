@@ -259,7 +259,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 	if netCfg.IsVLANMode() {
 		slog.Info("Setting up VLAN interfaces", "count", len(netCfg.VLANs))
 		for _, v := range netCfg.VLANs {
-			name, err := vlan.Setup(vlan.Config{
+			name, err := vlan.Setup(&vlan.Config{
 				ID:      v.ID,
 				Parent:  v.Parent,
 				Address: v.Address,
