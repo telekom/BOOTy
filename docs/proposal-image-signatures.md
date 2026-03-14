@@ -1,6 +1,6 @@
 # Proposal: Image Signature Verification
 
-## Status: Proposal
+## Status: Implemented
 
 ## Priority: P3
 
