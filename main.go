@@ -468,6 +468,9 @@ func runStandby(ctx context.Context, client config.Provider, cfg *config.Machine
 					orch := provision.NewOrchestrator(cfg, client, diskMgr)
 					if err := orch.Provision(ctx); err != nil {
 						slog.Error("Hot provision failed", "error", err)
+						_ = client.AcknowledgeCommand(ctx, cmd.ID, "failed", err.Error())
+					} else {
+						_ = client.AcknowledgeCommand(ctx, cmd.ID, "completed", "")
 					}
 					if err := netMode.Teardown(ctx); err != nil {
 						slog.Warn("Network teardown error", "error", err)
@@ -481,6 +484,9 @@ func runStandby(ctx context.Context, client config.Provider, cfg *config.Machine
 					orch := provision.NewOrchestrator(cfg, client, diskMgr)
 					if err := orch.Deprovision(ctx); err != nil {
 						slog.Error("Hot deprovision failed", "error", err)
+						_ = client.AcknowledgeCommand(ctx, cmd.ID, "failed", err.Error())
+					} else {
+						_ = client.AcknowledgeCommand(ctx, cmd.ID, "completed", "")
 					}
 					if err := netMode.Teardown(ctx); err != nil {
 						slog.Warn("Network teardown error", "error", err)
@@ -490,13 +496,18 @@ func runStandby(ctx context.Context, client config.Provider, cfg *config.Machine
 					return
 				case "reboot":
 					slog.Info("Reboot command received")
+					_ = client.AcknowledgeCommand(ctx, cmd.ID, "completed", "")
 					if err := netMode.Teardown(ctx); err != nil {
 						slog.Warn("Network teardown error", "error", err)
 					}
 					realm.Reboot()
 					return
+				case "health-check":
+					slog.Info("Health-check command received")
+					_ = client.AcknowledgeCommand(ctx, cmd.ID, "completed", "healthy")
 				default:
 					slog.Warn("Unknown command type", "type", cmd.Type)
+					_ = client.AcknowledgeCommand(ctx, cmd.ID, "failed", "unknown command type")
 				}
 			}
 		}
