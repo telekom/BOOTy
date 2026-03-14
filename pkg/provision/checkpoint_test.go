@@ -4,6 +4,7 @@ package provision
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -67,7 +68,10 @@ func TestCheckpoint_IsCompleted(t *testing.T) {
 
 func TestLoadCheckpoint_Missing(t *testing.T) {
 	// LoadCheckpoint uses the hardcoded path, which won't exist in test
-	cp := LoadCheckpoint()
+	cp, err := LoadCheckpoint()
+	if !errors.Is(err, ErrNoCheckpoint) {
+		t.Fatalf("expected ErrNoCheckpoint, got: %v", err)
+	}
 	if cp != nil {
 		t.Error("expected nil for missing checkpoint")
 	}

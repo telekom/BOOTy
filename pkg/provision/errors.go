@@ -24,3 +24,8 @@ func isTransient(err error) bool {
 	var transient *TransientError
 	return errors.As(err, &transient)
 }
+
+func isPermanent(err error) bool {
+	var permanent *PermanentError
+	return errors.As(err, &permanent)
+}

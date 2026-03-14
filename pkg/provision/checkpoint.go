@@ -4,9 +4,13 @@ package provision
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 )
+
+// ErrNoCheckpoint is returned when no checkpoint file exists.
+var ErrNoCheckpoint = errors.New("no checkpoint found")
 
 // Checkpoint records provisioning progress to tmpfs.
 type Checkpoint struct {
@@ -30,17 +34,21 @@ func (c *Checkpoint) Save() error {
 	return nil
 }
 
-// LoadCheckpoint reads a checkpoint from tmpfs (returns nil if none exists).
-func LoadCheckpoint() *Checkpoint {
+// LoadCheckpoint reads a checkpoint from tmpfs.
+// Returns (nil, nil) if no checkpoint file exists.
+func LoadCheckpoint() (*Checkpoint, error) {
 	data, err := os.ReadFile(checkpointPath) //nolint:gosec // checkpoint path is a constant
 	if err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil, ErrNoCheckpoint
+		}
+		return nil, fmt.Errorf("read checkpoint: %w", err)
 	}
 	var cp Checkpoint
-	if json.Unmarshal(data, &cp) != nil {
-		return nil
+	if err := json.Unmarshal(data, &cp); err != nil {
+		return nil, fmt.Errorf("unmarshal checkpoint: %w", err)
 	}
-	return &cp
+	return &cp, nil
 }
 
 // MarkStep records a completed step in the checkpoint.
