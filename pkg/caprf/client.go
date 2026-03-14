@@ -414,6 +414,8 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"EVENT_URL":                   &cfg.EventURL,
 		"MOK_CERT_PATH":               &cfg.MOKCertPath,
 		"MOK_PASSWORD":                &cfg.MOKPassword,
+		"TOKEN_URL":                   &cfg.TokenURL,
+		"TOKEN_ALGORITHM":             &cfg.TokenAlgorithm,
 	}
 
 	if ptr, ok := strFields[key]; ok {

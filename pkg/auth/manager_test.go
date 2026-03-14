@@ -1,0 +1,165 @@
+package auth
+
+import (
+	"context"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+func TestTokenManager_Acquire(t *testing.T) {
+	var callCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount.Add(1)
+
+		if r.Header.Get("Authorization") != "Bearer bootstrap-token" {
+			t.Errorf("expected bootstrap token, got %q", r.Header.Get("Authorization"))
+		}
+
+		resp := TokenResponse{
+			AccessToken:  "jwt-token-abc",
+			RefreshToken: "refresh-xyz",
+			ExpiresIn:    3600,
+			TokenType:    "Bearer",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	tm := NewTokenManager(server.URL, "bootstrap-token", slog.Default())
+	if err := tm.Acquire(context.Background(), "SN123", "aa:bb:cc:dd:ee:ff"); err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+
+	if got := tm.Token(); got != "jwt-token-abc" {
+		t.Errorf("expected token 'jwt-token-abc', got %q", got)
+	}
+
+	if callCount.Load() != 1 {
+		t.Errorf("expected 1 call, got %d", callCount.Load())
+	}
+}
+
+func TestTokenManager_Acquire_ServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	tm := NewTokenManager(server.URL, "bad-token", slog.Default())
+	if err := tm.Acquire(context.Background(), "SN123", "aa:bb:cc:dd:ee:ff"); err == nil {
+		t.Fatal("expected error for 401 response")
+	}
+}
+
+func TestTokenManager_Token_ThreadSafe(t *testing.T) {
+	tm := NewTokenManager("http://unused", "initial", slog.Default())
+
+	done := make(chan struct{})
+	go func() {
+		for range 100 {
+			_ = tm.Token()
+		}
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Token() concurrent reads timed out")
+	}
+}
+
+func TestTokenManager_Renew(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		resp := TokenResponse{
+			AccessToken:  "renewed-token",
+			RefreshToken: "new-refresh",
+			ExpiresIn:    7200,
+			TokenType:    "Bearer",
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	tm := NewTokenManager(server.URL, "old-token", slog.Default())
+	tm.refreshToken = "old-refresh"
+	tm.expiresAt = time.Now().Add(time.Hour)
+
+	if err := tm.renew(context.Background()); err != nil {
+		t.Fatalf("renew failed: %v", err)
+	}
+
+	if got := tm.Token(); got != "renewed-token" {
+		t.Errorf("expected 'renewed-token', got %q", got)
+	}
+}
+
+func TestTokenManager_RenewWithRetry_EventualSuccess(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n := calls.Add(1)
+		if n < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		resp := TokenResponse{
+			AccessToken: "retry-token",
+			ExpiresIn:   3600,
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	tm := NewTokenManager(server.URL, "token", slog.Default())
+	tm.refreshToken = "refresh"
+	tm.expiresAt = time.Now().Add(time.Hour)
+
+	if err := tm.renewWithRetry(context.Background()); err != nil {
+		t.Fatalf("renewWithRetry should succeed after retries: %v", err)
+	}
+
+	if got := tm.Token(); got != "retry-token" {
+		t.Errorf("expected 'retry-token', got %q", got)
+	}
+}
+
+func TestTokenManager_RenewWithRetry_Exhausted(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	tm := NewTokenManager(server.URL, "token", slog.Default())
+	tm.refreshToken = "refresh"
+	tm.expiresAt = time.Now().Add(time.Hour)
+
+	if err := tm.renewWithRetry(context.Background()); err == nil {
+		t.Fatal("expected error after exhausting retries")
+	}
+}
+
+func TestTokenManager_RenewWithRetry_ContextCancel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	tm := NewTokenManager(server.URL, "token", slog.Default())
+	tm.refreshToken = "refresh"
+	tm.expiresAt = time.Now().Add(time.Hour)
+
+	if err := tm.renewWithRetry(ctx); err == nil {
+		t.Fatal("expected error when context is canceled")
+	}
+}
