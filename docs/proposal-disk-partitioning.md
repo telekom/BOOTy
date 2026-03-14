@@ -1,10 +1,10 @@
 # Proposal: Custom Disk Partitioning
 
-## Status: Fully Implemented
+## Status: Proposal
 
 Phase 1 implements: `ParsePartitionLayout`, `ApplyPartitionLayout` (GPT only via sgdisk),
 `GenerateFstab`, partition type GUID resolution, device naming.
-Not yet wired into the provisioning flow — `MachineConfig.PartitionLayout` is parsed but
+Wired into the provisioning orchestrator as the apply-partition-layout step — `MachineConfig.PartitionLayout` is parsed but
 `ApplyPartitionLayout` is not called from the orchestrator.
 
 ## Priority: P3

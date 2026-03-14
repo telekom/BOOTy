@@ -7,17 +7,24 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/telekom/BOOTy/pkg/config"
 )
 
 // ApplyLVMConfig creates PV, VG, and LVs according to the LVM config.
 func (m *Manager) ApplyLVMConfig(ctx context.Context, device string, layout *config.PartitionLayout) error {
-	if layout.LVM == nil || len(layout.LVM.Volumes) == 0 {
+	if layout == nil || layout.LVM == nil || len(layout.LVM.Volumes) == 0 {
 		return nil
 	}
 
 	lvm := layout.LVM
+	if lvm.PVPartition < 1 {
+		return fmt.Errorf("lvm.pvPartition must be >= 1, got %d", lvm.PVPartition)
+	}
+	if lvm.PVPartition > len(layout.Partitions) {
+		return fmt.Errorf("lvm.pvPartition %d exceeds partition count %d", lvm.PVPartition, len(layout.Partitions))
+	}
 	pvDev := partitionDevice(device, lvm.PVPartition)
 
 	slog.Info("Setting up LVM", "vg", lvm.VolumeGroup, "pv", pvDev, "volumes", len(lvm.Volumes))
@@ -67,8 +74,7 @@ func GenerateLVMFstab(lvm *config.LVMConfig) string {
 	if lvm == nil {
 		return ""
 	}
-	var sb fmt.Stringer = &fstabBuilder{}
-	b := sb.(*fstabBuilder)
+	var sb strings.Builder
 	for _, vol := range lvm.Volumes {
 		if vol.Mountpoint == "" {
 			continue
@@ -82,23 +88,7 @@ func GenerateLVMFstab(lvm *config.LVMConfig) string {
 		if vol.Mountpoint == "/" {
 			pass = 1
 		}
-		b.addEntry(lvDev, vol.Mountpoint, fsType, "defaults", 0, pass)
+		fmt.Fprintf(&sb, "%s\t%s\t%s\t%s\t%d\t%d\n", lvDev, vol.Mountpoint, fsType, "defaults", 0, pass)
 	}
-	return b.String()
-}
-
-type fstabBuilder struct {
-	entries []string
-}
-
-func (b *fstabBuilder) addEntry(dev, mount, fs, opts string, dump, pass int) {
-	b.entries = append(b.entries, fmt.Sprintf("%s\t%s\t%s\t%s\t%d\t%d", dev, mount, fs, opts, dump, pass))
-}
-
-func (b *fstabBuilder) String() string {
-	result := ""
-	for _, e := range b.entries {
-		result += e + "\n"
-	}
-	return result
+	return sb.String()
 }
