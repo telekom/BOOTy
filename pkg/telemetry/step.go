@@ -1,3 +1,4 @@
+// Package telemetry provides provisioning metrics and step timing.
 package telemetry
 
 import (
