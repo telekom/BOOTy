@@ -107,7 +107,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     mdadm util-linux e2fsprogs xfsprogs btrfs-progs parted gdisk kpartx dosfstools \
     efibootmgr dmidecode ethtool curl iproute2 bridge-utils \
     hdparm nvme-cli mstflint lldpd \
-    dropbear-bin cryptsetup-bin \
+    dropbear-bin cryptsetup-bin ipmitool \
     && rm -rf /var/lib/apt/lists/*
 
 # Collect shared libraries for all tool binaries while their packages are
@@ -191,6 +191,9 @@ COPY --from=tools /sbin/cryptsetup sbin/cryptsetup
 # Firmware tools (Mellanox ConnectX SR-IOV config)
 COPY --from=tools /usr/bin/mstconfig bin/mstconfig
 COPY --from=tools /usr/bin/mstflint bin/mstflint
+
+# IPMI local management
+COPY --from=tools /usr/bin/ipmitool bin/ipmitool
 
 # LLDP daemon for switch topology discovery
 COPY --from=tools /usr/sbin/lldpcli bin/lldpcli
@@ -335,6 +338,9 @@ COPY --from=tools /sbin/cryptsetup sbin/cryptsetup
 # Firmware tools (Mellanox ConnectX SR-IOV config)
 COPY --from=tools /usr/bin/mstconfig bin/mstconfig
 COPY --from=tools /usr/bin/mstflint bin/mstflint
+
+# IPMI local management
+COPY --from=tools /usr/bin/ipmitool bin/ipmitool
 
 # LLDP daemon for switch topology discovery
 COPY --from=tools /usr/sbin/lldpcli bin/lldpcli
