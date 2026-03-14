@@ -6,21 +6,30 @@ import (
 	"testing"
 )
 
+func writeSysfs(t *testing.T, path string, content string) {
+	t.Helper()
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
 func TestScanGPUsFrom(t *testing.T) {
 	root := t.TempDir()
 
 	// Create a GPU device.
 	gpuDir := filepath.Join(root, "0000:3b:00.0")
-	os.MkdirAll(gpuDir, 0o755)
-	os.WriteFile(filepath.Join(gpuDir, "class"), []byte("0x030200\n"), 0o644)
-	os.WriteFile(filepath.Join(gpuDir, "vendor"), []byte("0x10de\n"), 0o644)
-	os.WriteFile(filepath.Join(gpuDir, "device"), []byte("0x20b0\n"), 0o644)
-	os.WriteFile(filepath.Join(gpuDir, "numa_node"), []byte("0\n"), 0o644)
+	writeSysfs(t, filepath.Join(gpuDir, "class"), "0x030200\n")
+	writeSysfs(t, filepath.Join(gpuDir, "vendor"), "0x10de\n")
+	writeSysfs(t, filepath.Join(gpuDir, "device"), "0x20b0\n")
+	writeSysfs(t, filepath.Join(gpuDir, "numa_node"), "0\n")
 
 	// Create a non-GPU device.
 	otherDir := filepath.Join(root, "0000:00:00.0")
-	os.MkdirAll(otherDir, 0o755)
-	os.WriteFile(filepath.Join(otherDir, "class"), []byte("0x060000\n"), 0o644)
+	writeSysfs(t, filepath.Join(otherDir, "class"), "0x060000\n")
 
 	gpus := scanGPUsFrom(root)
 	if len(gpus) != 1 {
@@ -45,17 +54,18 @@ func TestScanUSBFrom(t *testing.T) {
 	root := t.TempDir()
 
 	devDir := filepath.Join(root, "1-1")
-	os.MkdirAll(devDir, 0o755)
-	os.WriteFile(filepath.Join(devDir, "idVendor"), []byte("0781\n"), 0o644)
-	os.WriteFile(filepath.Join(devDir, "idProduct"), []byte("5583\n"), 0o644)
-	os.WriteFile(filepath.Join(devDir, "product"), []byte("Ultra Fit\n"), 0o644)
-	os.WriteFile(filepath.Join(devDir, "bDeviceClass"), []byte("08\n"), 0o644)
-	os.WriteFile(filepath.Join(devDir, "busnum"), []byte("1\n"), 0o644)
-	os.WriteFile(filepath.Join(devDir, "devnum"), []byte("3\n"), 0o644)
+	writeSysfs(t, filepath.Join(devDir, "idVendor"), "0781\n")
+	writeSysfs(t, filepath.Join(devDir, "idProduct"), "5583\n")
+	writeSysfs(t, filepath.Join(devDir, "product"), "Ultra Fit\n")
+	writeSysfs(t, filepath.Join(devDir, "bDeviceClass"), "08\n")
+	writeSysfs(t, filepath.Join(devDir, "busnum"), "1\n")
+	writeSysfs(t, filepath.Join(devDir, "devnum"), "3\n")
 
 	// Device without vendor/product IDs should be skipped.
 	skipDir := filepath.Join(root, "1-0:1.0")
-	os.MkdirAll(skipDir, 0o755)
+	if err := os.MkdirAll(skipDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
 
 	devices := scanUSBFrom(root)
 	if len(devices) != 1 {
@@ -63,6 +73,9 @@ func TestScanUSBFrom(t *testing.T) {
 	}
 	if devices[0].VendorID != "0781" {
 		t.Errorf("vendorId = %q", devices[0].VendorID)
+	}
+	if devices[0].Class != "Mass Storage" {
+		t.Errorf("class = %q, want Mass Storage", devices[0].Class)
 	}
 	if devices[0].Bus != 1 {
 		t.Errorf("bus = %d", devices[0].Bus)
@@ -93,14 +106,12 @@ func TestCollectThermalFrom(t *testing.T) {
 
 	// Create thermal zone.
 	zoneDir := filepath.Join(thermalDir, "thermal_zone0")
-	os.MkdirAll(zoneDir, 0o755)
-	os.WriteFile(filepath.Join(zoneDir, "type"), []byte("x86_pkg_temp\n"), 0o644)
-	os.WriteFile(filepath.Join(zoneDir, "temp"), []byte("45000\n"), 0o644)
+	writeSysfs(t, filepath.Join(zoneDir, "type"), "x86_pkg_temp\n")
+	writeSysfs(t, filepath.Join(zoneDir, "temp"), "45000\n")
 
 	// Create hwmon with fan.
 	hw0 := filepath.Join(hwmonDir, "hwmon0")
-	os.MkdirAll(hw0, 0o755)
-	os.WriteFile(filepath.Join(hw0, "fan1_input"), []byte("2500\n"), 0o644)
+	writeSysfs(t, filepath.Join(hw0, "fan1_input"), "2500\n")
 
 	info := collectThermalFrom(thermalDir, hwmonDir)
 	if len(info.CPUTemps) != 1 {
@@ -139,7 +150,7 @@ func TestResolveGPUName(t *testing.T) {
 func TestExtendedInventoryTypes(t *testing.T) {
 	ext := &ExtendedInventory{
 		GPUs: []GPUInfo{{Name: "test"}},
-		Thermal: ThermalInfo{
+		Thermal: &ThermalInfo{
 			Fans: []FanInfo{{Name: "fan1", RPM: 1000, Status: "ok"}},
 		},
 		PowerSupplies: []PSUInfo{{Name: "PSU1", Status: "ok", Watts: 800}},

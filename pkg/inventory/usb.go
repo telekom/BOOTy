@@ -9,7 +9,7 @@ import (
 
 // ScanUSBDevices enumerates USB devices from sysfs.
 func ScanUSBDevices() []USBDeviceInfo {
-	return scanUSBFrom("/sys/bus/usb/devices")
+	return scanUSBFrom(SysUSBPath)
 }
 
 func scanUSBFrom(basePath string) []USBDeviceInfo {
@@ -32,7 +32,7 @@ func scanUSBFrom(basePath string) []USBDeviceInfo {
 			VendorID:  vendorID,
 			ProductID: productID,
 			Name:      readSysfs(devPath, "product"),
-			Class:     readSysfs(devPath, "bDeviceClass"),
+			Class:     ClassifyUSBDevice(readSysfs(devPath, "bDeviceClass")),
 		}
 
 		busStr := readSysfs(devPath, "busnum")
@@ -49,25 +49,27 @@ func scanUSBFrom(basePath string) []USBDeviceInfo {
 	return devices
 }
 
+// usbClassNames maps USB class codes to human-readable names.
+var usbClassNames = map[string]string{
+	"00": "Interface-defined",
+	"01": "Audio",
+	"02": "CDC Communications",
+	"03": "HID",
+	"06": "Imaging",
+	"07": "Printer",
+	"08": "Mass Storage",
+	"09": "Hub",
+	"0a": "CDC Data",
+	"0e": "Video",
+	"e0": "Wireless",
+	"ef": "Miscellaneous",
+	"ff": "Vendor-specific",
+}
+
 // ClassifyUSBDevice returns a human-readable class name.
 func ClassifyUSBDevice(classCode string) string {
-	classCode = strings.TrimSpace(classCode)
-	classes := map[string]string{
-		"00": "Interface-defined",
-		"01": "Audio",
-		"02": "CDC Communications",
-		"03": "HID",
-		"06": "Imaging",
-		"07": "Printer",
-		"08": "Mass Storage",
-		"09": "Hub",
-		"0a": "CDC Data",
-		"0e": "Video",
-		"e0": "Wireless",
-		"ef": "Miscellaneous",
-		"ff": "Vendor-specific",
-	}
-	if name, ok := classes[classCode]; ok {
+	classCode = strings.TrimSpace(strings.TrimPrefix(strings.ToLower(classCode), "0x"))
+	if name, ok := usbClassNames[classCode]; ok {
 		return name
 	}
 	return "Unknown (" + classCode + ")"
