@@ -1,6 +1,6 @@
 # Proposal: Bootloader Management — GRUB Enhancement + systemd-boot
 
-## Status: Implemented
+## Status: Proposal
 
 ## Priority: P2
 

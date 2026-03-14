@@ -1,3 +1,5 @@
+//go:build linux
+
 package bootloader
 
 import (
@@ -78,6 +80,7 @@ func TestExtractQuoted(t *testing.T) {
 		{"menuentry 'Recovery Mode' {", "Recovery Mode"},
 		{"no quotes here", ""},
 		{"single 'quote", ""},
+		{`menuentry "CentOS 7" --class centos {`, "CentOS 7"},
 	}
 
 	for _, tc := range tests {

@@ -1,8 +1,11 @@
+//go:build linux
+
 package bootloader
 
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -53,6 +56,9 @@ func (g *GRUB) Install(ctx context.Context, rootPath, espPath string) error {
 
 // Configure writes GRUB defaults and runs update-grub.
 func (g *GRUB) Configure(ctx context.Context, cfg *BootConfig) error {
+	if g.rootPath == "" {
+		return fmt.Errorf("root path not set, call Install first")
+	}
 	grubDefault := filepath.Join(g.rootPath, "etc", "default", "grub")
 
 	lines := []string{
@@ -91,15 +97,23 @@ func (g *GRUB) Configure(ctx context.Context, cfg *BootConfig) error {
 func (g *GRUB) ListEntries(_ context.Context, rootPath string) ([]BootEntry, error) {
 	grubCfg := filepath.Join(rootPath, "boot", "grub", "grub.cfg")
 	if _, err := os.Stat(grubCfg); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("stat grub config: %w", err)
+		}
 		// Try grub2 path
 		grubCfg = filepath.Join(rootPath, "boot", "grub2", "grub.cfg")
 	}
 	return parseGRUBConfig(grubCfg)
 }
 
-// SetDefault sets the default boot entry.
+// SetDefault sets the default boot entry via grub-set-default.
 func (g *GRUB) SetDefault(ctx context.Context, entryID string) error {
-	return g.Configure(ctx, &BootConfig{DefaultKernel: entryID})
+	cmd := exec.CommandContext(ctx, "chroot", g.rootPath, "grub-set-default", entryID)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("grub-set-default %s: %s: %w", entryID, string(out), err)
+	}
+	return nil
 }
 
 // parseGRUBConfig extracts boot entries from a grub.cfg file.
@@ -158,15 +172,18 @@ func parseGRUBConfig(path string) ([]BootEntry, error) {
 	return entries, nil
 }
 
-// extractQuoted extracts the first single-quoted string from a line.
+// extractQuoted extracts the first quoted string (single or double) from a line.
 func extractQuoted(line string) string {
-	start := strings.IndexByte(line, '\'')
-	if start < 0 {
-		return ""
+	for _, q := range []byte{'\'', '"'} {
+		start := strings.IndexByte(line, q)
+		if start < 0 {
+			continue
+		}
+		end := strings.IndexByte(line[start+1:], q)
+		if end < 0 {
+			continue
+		}
+		return line[start+1 : start+1+end]
 	}
-	end := strings.IndexByte(line[start+1:], '\'')
-	if end < 0 {
-		return ""
-	}
-	return line[start+1 : start+1+end]
+	return ""
 }
