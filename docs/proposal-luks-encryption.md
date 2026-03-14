@@ -1,6 +1,6 @@
 # Proposal: Full LUKS Disk Encryption
 
-## Status: Phase 1 Implemented (PR #44)
+## Status: Implemented
 
 ## Priority: P1
 
