@@ -1,0 +1,151 @@
+package drivers
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestFormatPCIID(t *testing.T) {
+	tests := []struct {
+		vendor, device, want string
+	}{
+		{"0x8086", "0x15b8", "8086:15b8"},
+		{"8086", "15b8", "8086:15b8"},
+		{"0x15b3", "0x1013", "15b3:1013"},
+	}
+	for _, tc := range tests {
+		got := formatPCIID(tc.vendor, tc.device)
+		if got != tc.want {
+			t.Errorf("formatPCIID(%q, %q) = %q, want %q", tc.vendor, tc.device, got, tc.want)
+		}
+	}
+}
+
+func TestLookupModule(t *testing.T) {
+	tests := []struct {
+		vendor, device, want string
+	}{
+		{"0x8086", "0x15b8", "e1000e"},
+		{"0x15b3", "0x1013", "mlx5_core"},
+		{"0x14e4", "0x1750", "bnxt_en"},
+		{"0x0000", "0x0000", ""},
+	}
+	for _, tc := range tests {
+		got := LookupModule(tc.vendor, tc.device)
+		if got != tc.want {
+			t.Errorf("LookupModule(%q, %q) = %q, want %q", tc.vendor, tc.device, got, tc.want)
+		}
+	}
+}
+
+func TestScanPCIDevicesFrom(t *testing.T) {
+	root := t.TempDir()
+
+	// Create mock PCI device
+	devDir := filepath.Join(root, "0000:00:1f.0")
+	os.MkdirAll(devDir, 0o755)
+	os.WriteFile(filepath.Join(devDir, "vendor"), []byte("0x8086\n"), 0o644)
+	os.WriteFile(filepath.Join(devDir, "device"), []byte("0x15b8\n"), 0o644)
+	os.WriteFile(filepath.Join(devDir, "class"), []byte("0x020000\n"), 0o644)
+
+	devices, err := scanPCIDevicesFrom(root)
+	if err != nil {
+		t.Fatalf("scanPCIDevicesFrom: %v", err)
+	}
+	if len(devices) != 1 {
+		t.Fatalf("devices = %d, want 1", len(devices))
+	}
+	if devices[0].Module != "e1000e" {
+		t.Errorf("module = %q, want e1000e", devices[0].Module)
+	}
+}
+
+func TestScanPCIDevicesFrom_Empty(t *testing.T) {
+	root := t.TempDir()
+	devices, err := scanPCIDevicesFrom(root)
+	if err != nil {
+		t.Fatalf("scanPCIDevicesFrom: %v", err)
+	}
+	if len(devices) != 0 {
+		t.Errorf("devices = %d, want 0", len(devices))
+	}
+}
+
+func TestScanPCIDevicesFrom_NoSuchDir(t *testing.T) {
+	_, err := scanPCIDevicesFrom("/nonexistent")
+	if err == nil {
+		t.Error("expected error for nonexistent dir")
+	}
+}
+
+func TestManifest_AllModules(t *testing.T) {
+	m := &Manifest{
+		Common:  []string{"vxlan", "bridge"},
+		NICs:    []string{"e1000e", "mlx5_core"},
+		Storage: []string{"nvme", "nvme_core"},
+		USB:     []string{"xhci_hcd"},
+		Custom:  []string{"vxlan"}, // duplicate should be deduped
+	}
+
+	got := m.AllModules()
+	if len(got) != 7 {
+		t.Errorf("AllModules count = %d, want 7 (got: %v)", len(got), got)
+	}
+
+	// Verify first module is from common
+	if got[0] != "vxlan" {
+		t.Errorf("first module = %q, want vxlan", got[0])
+	}
+}
+
+func TestManifest_AllModules_Empty(t *testing.T) {
+	m := &Manifest{}
+	got := m.AllModules()
+	if len(got) != 0 {
+		t.Errorf("AllModules empty = %d, want 0", len(got))
+	}
+}
+
+func TestPCIDevice_Fields(t *testing.T) {
+	dev := PCIDevice{
+		Address:  "0000:00:1f.0",
+		VendorID: "0x8086",
+		DeviceID: "0x15b8",
+		Class:    "0x020000",
+		Driver:   "e1000e",
+		Module:   "e1000e",
+	}
+
+	if dev.Address != "0000:00:1f.0" {
+		t.Error("bad address")
+	}
+	if dev.Driver != "e1000e" {
+		t.Error("bad driver")
+	}
+}
+
+func TestReadSysfsFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test")
+	os.WriteFile(path, []byte("  hello\n"), 0o644)
+
+	got := readSysfsFile(path)
+	if got != "hello" {
+		t.Errorf("readSysfsFile = %q, want hello", got)
+	}
+}
+
+func TestReadSysfsFile_Missing(t *testing.T) {
+	got := readSysfsFile("/nonexistent/file")
+	if got != "" {
+		t.Errorf("readSysfsFile missing = %q, want empty", got)
+	}
+}
+
+func TestNewManager(t *testing.T) {
+	m := NewManager(nil)
+	if m.modulesDir != "/lib/modules" {
+		t.Errorf("modulesDir = %q", m.modulesDir)
+	}
+}
