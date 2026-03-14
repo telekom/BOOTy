@@ -1,6 +1,6 @@
 # Proposal: Full Server Inventory — Extended Collection
 
-## Status: Proposal
+## Status: Implemented
 
 ## Priority: P1
 
