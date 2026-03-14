@@ -104,7 +104,9 @@ func TestKafkaHandler_WithAttrs(t *testing.T) {
 	}
 
 	var msg LogMessage
-	json.Unmarshal(mw.messages[0], &msg)
+	if err := json.Unmarshal(mw.messages[0], &msg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
 	if msg.Step != "network" {
 		t.Errorf("step = %q, want network", msg.Step)
 	}
