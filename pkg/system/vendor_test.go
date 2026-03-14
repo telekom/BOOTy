@@ -3,24 +3,26 @@ package system
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
 func TestParseVendor(t *testing.T) {
 	tests := []struct {
+		name string
 		raw  string
 		want Vendor
 	}{
-		{raw: "HPE", want: VendorHPE},
-		{raw: "Hewlett Packard Enterprise", want: VendorHPE},
-		{raw: "Lenovo", want: VendorLenovo},
-		{raw: "LENOVO", want: VendorLenovo},
-		{raw: "Dell Inc.", want: VendorDell},
-		{raw: "Supermicro", want: VendorGeneric},
-		{raw: "", want: VendorGeneric},
+		{name: "hpe-short", raw: "HPE", want: VendorHPE},
+		{name: "hpe-full", raw: "Hewlett Packard Enterprise", want: VendorHPE},
+		{name: "lenovo", raw: "Lenovo", want: VendorLenovo},
+		{name: "lenovo-upper", raw: "LENOVO", want: VendorLenovo},
+		{name: "dell", raw: "Dell Inc.", want: VendorDell},
+		{name: "supermicro-generic", raw: "Supermicro", want: VendorGeneric},
+		{name: "empty-generic", raw: "", want: VendorGeneric},
 	}
 	for _, tt := range tests {
-		t.Run(tt.raw, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			if got := ParseVendor(tt.raw); got != tt.want {
 				t.Errorf("ParseVendor(%q) = %q, want %q", tt.raw, got, tt.want)
 			}
@@ -45,18 +47,18 @@ func TestDetectVendorFromPath(t *testing.T) {
 func TestKernelModules(t *testing.T) {
 	tests := []struct {
 		vendor Vendor
-		want   int
+		want   []string
 	}{
-		{vendor: VendorHPE, want: 3},
-		{vendor: VendorLenovo, want: 3},
-		{vendor: VendorDell, want: 3},
-		{vendor: VendorGeneric, want: 0},
+		{vendor: VendorHPE, want: []string{"hpilo", "hpwdt", "ilo_hwmon"}},
+		{vendor: VendorLenovo, want: []string{"ibm_rtl", "ipmi_si", "ipmi_devintf"}},
+		{vendor: VendorDell, want: []string{"dell_rbu", "ipmi_si", "ipmi_devintf"}},
+		{vendor: VendorGeneric, want: nil},
 	}
 	for _, tt := range tests {
 		t.Run(string(tt.vendor), func(t *testing.T) {
 			mods := KernelModules(tt.vendor)
-			if len(mods) != tt.want {
-				t.Errorf("KernelModules(%q) = %d modules, want %d", tt.vendor, len(mods), tt.want)
+			if !reflect.DeepEqual(mods, tt.want) {
+				t.Errorf("KernelModules(%q) = %v, want %v", tt.vendor, mods, tt.want)
 			}
 		})
 	}
