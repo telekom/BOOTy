@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -40,7 +41,7 @@ type KernelInfo struct {
 	Cmdline    string `json:"cmdline"`
 }
 
-// EnhancedManager handles kernel selection and kexec chain loading.
+// EnhancedManager handles kernel selection and boot parameter overrides.
 type EnhancedManager struct {
 	log *slog.Logger
 }
@@ -53,11 +54,12 @@ func NewEnhancedManager(log *slog.Logger) *EnhancedManager {
 // SelectKernel finds the appropriate kernel based on config.
 func (m *EnhancedManager) SelectKernel(rootPath string, cfg *KexecConfig) (*KernelInfo, error) {
 	if cfg.KernelPath != "" {
-		return &KernelInfo{
+		ki := &KernelInfo{
 			KernelPath: cfg.KernelPath,
 			InitrdPath: cfg.InitrdPath,
 			Cmdline:    cfg.Cmdline,
-		}, nil
+		}
+		return applyOverrides(ki, cfg), nil
 	}
 
 	kernels, err := DiscoverKernels(rootPath)
@@ -105,24 +107,64 @@ func DiscoverKernels(rootPath string) ([]KernelInfo, error) {
 			if _, statErr := os.Stat(initrdPath); statErr == nil {
 				info.InitrdPath = initrdPath
 				break
+			} else if !os.IsNotExist(statErr) {
+				return nil, fmt.Errorf("stat %s: %w", initrdPath, statErr)
 			}
 			// Try with .img suffix.
 			initrdImg := filepath.Join(bootDir, prefix+version+".img")
 			if _, statErr := os.Stat(initrdImg); statErr == nil {
 				info.InitrdPath = initrdImg
 				break
+			} else if !os.IsNotExist(statErr) {
+				return nil, fmt.Errorf("stat %s: %w", initrdImg, statErr)
 			}
 		}
 
 		kernels = append(kernels, info)
 	}
 
-	// Sort by version descending (latest first).
+	// Sort by version descending (latest first) using numeric-aware comparison.
 	sort.Slice(kernels, func(i, j int) bool {
-		return kernels[i].Version > kernels[j].Version
+		return compareVersions(kernels[i].Version, kernels[j].Version) > 0
 	})
 
 	return kernels, nil
+}
+
+// compareVersions compares two kernel version strings numerically.
+// Returns >0 if a > b, <0 if a < b, 0 if equal.
+func compareVersions(a, b string) int {
+	pa := splitVersion(a)
+	pb := splitVersion(b)
+	for i := 0; i < len(pa) || i < len(pb); i++ {
+		var va, vb int
+		if i < len(pa) {
+			va = pa[i]
+		}
+		if i < len(pb) {
+			vb = pb[i]
+		}
+		if va != vb {
+			return va - vb
+		}
+	}
+	return 0
+}
+
+// splitVersion splits a version string into numeric components.
+func splitVersion(v string) []int {
+	var parts []int
+	for _, seg := range strings.FieldsFunc(v, func(r rune) bool {
+		return r == '.' || r == '-'
+	}) {
+		n, err := strconv.Atoi(seg)
+		if err != nil {
+			// Non-numeric suffix (e.g. "generic") — skip.
+			continue
+		}
+		parts = append(parts, n)
+	}
+	return parts
 }
 
 func applyOverrides(ki *KernelInfo, cfg *KexecConfig) *KernelInfo {
