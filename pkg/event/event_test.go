@@ -2,6 +2,7 @@ package event
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -21,9 +22,10 @@ func TestNew(t *testing.T) {
 
 func TestWithDetails(t *testing.T) {
 	m := Machine{Name: "worker-1"}
-	e := New(ProvisionFailed, m).WithDetails(map[string]string{
-		"step":  "image-streaming",
-		"error": "connection reset",
+	e := New(ProvisionFailed, m).WithDetails(map[string]any{
+		"step":    "image-streaming",
+		"error":   "connection reset",
+		"attempt": 3,
 	})
 	if e.Details["step"] != "image-streaming" {
 		t.Errorf("Details[step] = %q, want image-streaming", e.Details["step"])
@@ -42,6 +44,14 @@ func TestEventJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal failed: %v", err)
 	}
+
+	raw := string(data)
+	for _, field := range []string{`"event"`, `"timestamp"`, `"machine"`, `"redfishHost"`} {
+		if !strings.Contains(raw, field) {
+			t.Errorf("JSON missing field %s: %s", field, raw)
+		}
+	}
+
 	var decoded Event
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("Unmarshal failed: %v", err)
