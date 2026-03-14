@@ -1,6 +1,6 @@
 # Proposal: Full Secure Boot Chain
 
-## Status: Proposal
+## Status: Implemented
 
 ## Priority: P0
 

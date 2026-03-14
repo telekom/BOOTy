@@ -1,0 +1,129 @@
+package secureboot
+
+import (
+	"encoding/binary"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func writeEFIVar(t *testing.T, dir, name string, attrs uint32, data []byte) {
+	t.Helper()
+	buf := make([]byte, 4+len(data))
+	binary.LittleEndian.PutUint32(buf[:4], attrs)
+	copy(buf[4:], data)
+	os.WriteFile(filepath.Join(dir, name), buf, 0o644)
+}
+
+func TestReadVar(t *testing.T) {
+	dir := t.TempDir()
+	writeEFIVar(t, dir, "TestVar-abcd-1234", 0x07, []byte{0x42})
+
+	r := NewEFIVarReader(dir)
+	data, err := r.ReadVar("TestVar")
+	if err != nil {
+		t.Fatalf("ReadVar: %v", err)
+	}
+	if len(data) != 1 || data[0] != 0x42 {
+		t.Errorf("data = %v", data)
+	}
+}
+
+func TestReadVar_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	r := NewEFIVarReader(dir)
+	_, err := r.ReadVar("NoSuchVar")
+	if err == nil {
+		t.Error("expected error for missing variable")
+	}
+}
+
+func TestReadVar_TooShort(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "Short-1234"), []byte{0, 0}, 0o644)
+
+	r := NewEFIVarReader(dir)
+	_, err := r.ReadVar("Short")
+	if err == nil {
+		t.Error("expected error for short variable")
+	}
+}
+
+func TestIsSecureBootEnabled(t *testing.T) {
+	dir := t.TempDir()
+	writeEFIVar(t, dir, "SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c", 0x06, []byte{1})
+
+	r := NewEFIVarReader(dir)
+	enabled, err := r.IsSecureBootEnabled()
+	if err != nil {
+		t.Fatalf("IsSecureBootEnabled: %v", err)
+	}
+	if !enabled {
+		t.Error("expected SecureBoot enabled")
+	}
+}
+
+func TestIsSecureBootDisabled(t *testing.T) {
+	dir := t.TempDir()
+	writeEFIVar(t, dir, "SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c", 0x06, []byte{0})
+
+	r := NewEFIVarReader(dir)
+	enabled, err := r.IsSecureBootEnabled()
+	if err != nil {
+		t.Fatalf("IsSecureBootEnabled: %v", err)
+	}
+	if enabled {
+		t.Error("expected SecureBoot disabled")
+	}
+}
+
+func TestIsSetupMode(t *testing.T) {
+	dir := t.TempDir()
+	writeEFIVar(t, dir, "SetupMode-8be4df61-93ca-11d2-aa0d-00e098032b8c", 0x06, []byte{1})
+
+	r := NewEFIVarReader(dir)
+	setup, err := r.IsSetupMode()
+	if err != nil {
+		t.Fatalf("IsSetupMode: %v", err)
+	}
+	if !setup {
+		t.Error("expected setup mode")
+	}
+}
+
+func TestWriteVar(t *testing.T) {
+	dir := t.TempDir()
+	r := NewEFIVarReader(dir)
+
+	err := r.WriteVar("TestWrite-1234", 0x07, []byte{0xAB})
+	if err != nil {
+		t.Fatalf("WriteVar: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "TestWrite-1234"))
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if len(data) != 5 {
+		t.Fatalf("len = %d, want 5", len(data))
+	}
+	if data[4] != 0xAB {
+		t.Errorf("data byte = %x, want AB", data[4])
+	}
+}
+
+func TestListVars(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "Mok-1234"), []byte("a"), 0o644)
+	os.WriteFile(filepath.Join(dir, "MokNew-5678"), []byte("b"), 0o644)
+	os.WriteFile(filepath.Join(dir, "Other-9999"), []byte("c"), 0o644)
+
+	r := NewEFIVarReader(dir)
+	vars, err := r.ListVars("Mok")
+	if err != nil {
+		t.Fatalf("ListVars: %v", err)
+	}
+	if len(vars) != 2 {
+		t.Errorf("got %d Mok vars, want 2", len(vars))
+	}
+}
