@@ -119,7 +119,7 @@ func TestWipeOrSecureEraseDisks(t *testing.T) {
 			name:        "quick erase error",
 			secureErase: false,
 			wipeErr:     fmt.Errorf("wipe failed"),
-			wantErr:     false, // WipeAllDisks logs but does not return on individual disk failure
+			wantErr:     true, // WipeAllDisks returns error when all disk wipes fail
 		},
 		{
 			name:        "secure erase error",
