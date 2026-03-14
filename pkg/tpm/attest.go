@@ -25,14 +25,51 @@ type AttestationQuote struct {
 	Signature []byte            `json:"signature"` // Quote signature
 	PCRDigest []byte            `json:"pcrDigest"` // Composite PCR digest
 	PCRValues map[int][]byte    `json:"pcrValues"` // Individual PCR values
-	Nonce     []byte            `json:"nonce"`      // Server-provided nonce
-	ExtraData map[string]string `json:"extraData"`  // Optional metadata
+	Nonce     []byte            `json:"nonce"`     // Server-provided nonce
+	ExtraData map[string]string `json:"extraData"` // Optional metadata
 }
 
 // Quote generates a TPM 2.0 attestation quote over the selected PCRs
 // using an Attestation Key created in the TPM.
 func (d *Device) Quote(pcrSelection []int, nonce []byte) (*AttestationQuote, error) {
-	// Create a primary key in the endorsement hierarchy for signing.
+	createResp, err := d.createAttestationKey()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		flushCtx := tpm2.FlushContext{FlushHandle: createResp.ObjectHandle}
+		_, _ = flushCtx.Execute(d.transport) //nolint:errcheck // best-effort cleanup
+	}()
+
+	sel := buildPCRSelection(pcrSelection)
+	quoteResp, err := d.generateQuote(createResp.ObjectHandle, nonce, sel)
+	if err != nil {
+		return nil, err
+	}
+
+	pcrValues, pcrDigest, err := d.readPCRDigest(pcrSelection, sel)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &AttestationQuote{
+		QuoteData: tpm2.Marshal(quoteResp.Quoted),
+		Signature: tpm2.Marshal(quoteResp.Signature),
+		PCRDigest: pcrDigest,
+		PCRValues: pcrValues,
+		Nonce:     nonce,
+	}
+
+	d.log.Info("Generated TPM attestation quote",
+		"pcrs", pcrSelection,
+		"nonce_len", len(nonce),
+	)
+
+	return result, nil
+}
+
+// createAttestationKey creates a primary ECC key in the endorsement hierarchy.
+func (d *Device) createAttestationKey() (*tpm2.CreatePrimaryResponse, error) {
 	primaryTemplate := tpm2.TPMTPublic{
 		Type:    tpm2.TPMAlgECC,
 		NameAlg: tpm2.TPMAlgSHA256,
@@ -41,7 +78,7 @@ func (d *Device) Quote(pcrSelection []int, nonce []byte) (*AttestationQuote, err
 			FixedParent:         true,
 			SensitiveDataOrigin: true,
 			UserWithAuth:        true,
-			SignEncrypt:          true,
+			SignEncrypt:         true,
 			Restricted:          true,
 		},
 		Parameters: tpm2.NewTPMUPublicParms(
@@ -61,7 +98,7 @@ func (d *Device) Quote(pcrSelection []int, nonce []byte) (*AttestationQuote, err
 		),
 	}
 
-	createResp, err := tpm2.CreatePrimary{
+	resp, err := tpm2.CreatePrimary{
 		PrimaryHandle: tpm2.AuthHandle{
 			Handle: tpm2.TPMRHEndorsement,
 			Auth:   tpm2.PasswordAuth(nil),
@@ -71,12 +108,12 @@ func (d *Device) Quote(pcrSelection []int, nonce []byte) (*AttestationQuote, err
 	if err != nil {
 		return nil, fmt.Errorf("creating attestation key: %w", err)
 	}
-	defer func() {
-		tpm2.FlushContext{FlushHandle: createResp.ObjectHandle}.Execute(d.transport) //nolint:errcheck
-	}()
+	return resp, nil
+}
 
-	// Build PCR selection.
-	sel := tpm2.TPMLPCRSelection{
+// buildPCRSelection creates a TPM PCR selection structure.
+func buildPCRSelection(pcrSelection []int) tpm2.TPMLPCRSelection {
+	return tpm2.TPMLPCRSelection{
 		PCRSelections: []tpm2.TPMSPCRSelection{
 			{
 				Hash:      tpm2.TPMAlgSHA256,
@@ -84,12 +121,14 @@ func (d *Device) Quote(pcrSelection []int, nonce []byte) (*AttestationQuote, err
 			},
 		},
 	}
+}
 
-	// Generate the quote.
+// generateQuote executes a TPM Quote command.
+func (d *Device) generateQuote(handle tpm2.TPMHandle, nonce []byte, sel tpm2.TPMLPCRSelection) (*tpm2.QuoteResponse, error) {
 	nonceTPM := tpm2.TPM2BData{Buffer: nonce}
-	quoteResp, err := tpm2.Quote{
+	resp, err := tpm2.Quote{
 		SignHandle: tpm2.AuthHandle{
-			Handle: createResp.ObjectHandle,
+			Handle: handle,
 			Auth:   tpm2.PasswordAuth(nil),
 		},
 		QualifyingData: nonceTPM,
@@ -107,13 +146,16 @@ func (d *Device) Quote(pcrSelection []int, nonce []byte) (*AttestationQuote, err
 	if err != nil {
 		return nil, fmt.Errorf("generating TPM quote: %w", err)
 	}
+	return resp, nil
+}
 
-	// Read PCR values.
+// readPCRDigest reads PCR values and computes a composite digest.
+func (d *Device) readPCRDigest(pcrSelection []int, sel tpm2.TPMLPCRSelection) (map[int][]byte, []byte, error) {
 	pcrReadResp, err := tpm2.PCRRead{
 		PCRSelectionIn: sel,
 	}.Execute(d.transport)
 	if err != nil {
-		return nil, fmt.Errorf("reading PCR values for quote: %w", err)
+		return nil, nil, fmt.Errorf("reading PCR values for quote: %w", err)
 	}
 
 	pcrValues := make(map[int][]byte, len(pcrSelection))
@@ -132,20 +174,7 @@ func (d *Device) Quote(pcrSelection []int, nonce []byte) (*AttestationQuote, err
 	}
 	pcrDigest := h.Sum(nil)
 
-	result := &AttestationQuote{
-		QuoteData: tpm2.Marshal(quoteResp.Quoted),
-		Signature: tpm2.Marshal(quoteResp.Signature),
-		PCRDigest: pcrDigest,
-		PCRValues: pcrValues,
-		Nonce:     nonce,
-	}
-
-	d.log.Info("Generated TPM attestation quote",
-		"pcrs", pcrSelection,
-		"nonce_len", len(nonce),
-	)
-
-	return result, nil
+	return pcrValues, pcrDigest, nil
 }
 
 // VerifyQuoteSignature verifies an attestation quote signature using
@@ -184,5 +213,3 @@ func pcrSelectMultiple(indices []int) []byte {
 	}
 	return mask
 }
-
-

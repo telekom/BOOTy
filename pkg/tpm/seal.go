@@ -23,7 +23,8 @@ func (d *Device) SealSecret(secret []byte, pcrSelection []int) (*SealedBlob, err
 		return nil, err
 	}
 	defer func() {
-		tpm2.FlushContext{FlushHandle: srkResp.ObjectHandle}.Execute(d.transport) //nolint:errcheck
+		flushCtx := tpm2.FlushContext{FlushHandle: srkResp.ObjectHandle}
+		_, _ = flushCtx.Execute(d.transport) //nolint:errcheck // best-effort TPM cleanup
 	}()
 
 	// Build PCR policy session.
@@ -49,9 +50,9 @@ func (d *Device) SealSecret(secret []byte, pcrSelection []int) (*SealedBlob, err
 			Type:    tpm2.TPMAlgKeyedHash,
 			NameAlg: tpm2.TPMAlgSHA256,
 			ObjectAttributes: tpm2.TPMAObject{
-				FixedTPM:     true,
-				FixedParent:  true,
-				NoDA:         true,
+				FixedTPM:        true,
+				FixedParent:     true,
+				NoDA:            true,
 				AdminWithPolicy: true,
 			},
 			AuthPolicy: sess.policyDigest,
@@ -89,7 +90,8 @@ func (d *Device) UnsealSecret(blob *SealedBlob, pcrSelection []int) ([]byte, err
 		return nil, err
 	}
 	defer func() {
-		tpm2.FlushContext{FlushHandle: srkResp.ObjectHandle}.Execute(d.transport) //nolint:errcheck
+		flushCtx := tpm2.FlushContext{FlushHandle: srkResp.ObjectHandle}
+		_, _ = flushCtx.Execute(d.transport) //nolint:errcheck // best-effort TPM cleanup
 	}()
 
 	// Load the sealed object.
@@ -110,7 +112,8 @@ func (d *Device) UnsealSecret(blob *SealedBlob, pcrSelection []int) ([]byte, err
 		return nil, fmt.Errorf("loading sealed object: %w", err)
 	}
 	defer func() {
-		tpm2.FlushContext{FlushHandle: loadResp.ObjectHandle}.Execute(d.transport) //nolint:errcheck
+		flushCtx := tpm2.FlushContext{FlushHandle: loadResp.ObjectHandle}
+		_, _ = flushCtx.Execute(d.transport) //nolint:errcheck // best-effort TPM cleanup
 	}()
 
 	// Create a policy session and satisfy the PCR policy.
@@ -118,7 +121,7 @@ func (d *Device) UnsealSecret(blob *SealedBlob, pcrSelection []int) ([]byte, err
 	if err != nil {
 		return nil, fmt.Errorf("creating policy session: %w", err)
 	}
-	defer closer() //nolint:errcheck
+	defer closer() //nolint:errcheck // best-effort policy session cleanup
 
 	// Apply the PCR policy.
 	sel := tpm2.TPMLPCRSelection{
@@ -165,7 +168,7 @@ func (d *Device) createPCRPolicySession(pcrSelection []int) (*pcrPolicySession, 
 	if err != nil {
 		return nil, fmt.Errorf("creating trial policy session: %w", err)
 	}
-	defer closer() //nolint:errcheck
+	defer closer() //nolint:errcheck // best-effort trial session cleanup
 
 	sel := tpm2.TPMLPCRSelection{
 		PCRSelections: []tpm2.TPMSPCRSelection{

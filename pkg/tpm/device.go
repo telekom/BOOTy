@@ -34,7 +34,7 @@ func Open() (*Device, error) {
 // Close releases the TPM device handle.
 func (d *Device) Close() error {
 	if d.transport != nil {
-		d.transport.Close()
+		return d.transport.Close()
 	}
 	return nil
 }
