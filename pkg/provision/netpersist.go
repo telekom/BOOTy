@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/telekom/BOOTy/pkg/config"
 )
 
 // persistNetworkStep is the provisioning step wrapper for network persistence.
@@ -39,15 +41,38 @@ func (o *Orchestrator) persistNetworkConfig() error {
 
 	switch osFamily {
 	case "ubuntu":
-		return writeNetplan(rootDir, iface, o.cfg.StaticIP, o.cfg.StaticGateway, o.cfg.DNSResolvers)
+		if err := writeNetplan(rootDir, iface, o.cfg.StaticIP, o.cfg.StaticGateway, o.cfg.DNSResolvers); err != nil {
+			return err
+		}
 	case "flatcar":
-		return writeSystemdNetworkd(rootDir, iface, o.cfg.StaticIP, o.cfg.StaticGateway, o.cfg.DNSResolvers)
+		if err := writeSystemdNetworkd(rootDir, iface, o.cfg.StaticIP, o.cfg.StaticGateway, o.cfg.DNSResolvers); err != nil {
+			return err
+		}
 	case "rhel":
-		o.log.Warn("Network persistence not yet supported for RHEL-based systems, skipping")
-		return nil
+		if err := writeNetworkManager(rootDir, iface, o.cfg.StaticIP, o.cfg.StaticGateway, o.cfg.DNSResolvers); err != nil {
+			return err
+		}
 	default:
-		return writeNetplan(rootDir, iface, o.cfg.StaticIP, o.cfg.StaticGateway, o.cfg.DNSResolvers)
+		if err := writeNetplan(rootDir, iface, o.cfg.StaticIP, o.cfg.StaticGateway, o.cfg.DNSResolvers); err != nil {
+			return err
+		}
 	}
+
+	// Persist bond configuration if present.
+	if o.cfg.BondInterfaces != "" {
+		if err := persistBondConfig(rootDir, osFamily, o.cfg); err != nil {
+			o.log.Warn("Failed to persist bond configuration", "error", err)
+		}
+	}
+
+	// Persist VLAN configuration if present.
+	if o.cfg.VLANs != "" {
+		if err := persistVLANConfig(rootDir, osFamily, o.cfg); err != nil {
+			o.log.Warn("Failed to persist VLAN configuration", "error", err)
+		}
+	}
+
+	return nil
 }
 
 // detectOSFamily reads /etc/os-release in the chroot to determine the OS.
@@ -200,4 +225,264 @@ func detectPrimaryInterface() string {
 		}
 	}
 	return "eth0"
+}
+
+// writeNetworkManager generates NetworkManager INI keyfile configs for RHEL.
+func writeNetworkManager(rootDir, iface, staticIP, gateway, dnsResolvers string) error {
+	nmDir := filepath.Join(rootDir, "etc", "NetworkManager", "system-connections")
+	if err := os.MkdirAll(nmDir, 0o755); err != nil {
+		return fmt.Errorf("create NetworkManager directory: %w", err)
+	}
+
+	var buf strings.Builder
+	buf.WriteString("[connection]\n")
+	fmt.Fprintf(&buf, "id=booty-%s\n", iface)
+	buf.WriteString("type=ethernet\n")
+	buf.WriteString("autoconnect=true\n\n")
+	buf.WriteString("[ethernet]\n\n")
+
+	if staticIP == "" {
+		buf.WriteString("[ipv4]\nmethod=auto\n")
+	} else {
+		buf.WriteString("[ipv4]\nmethod=manual\n")
+		fmt.Fprintf(&buf, "addresses=%s\n", staticIP)
+		if gateway != "" {
+			ip := parseGateway(gateway)
+			if ip != nil {
+				fmt.Fprintf(&buf, "gateway=%s\n", ip)
+			}
+		}
+		if dnsResolvers != "" {
+			dns := strings.ReplaceAll(dnsResolvers, ",", ";")
+			fmt.Fprintf(&buf, "dns=%s;\n", dns)
+		}
+	}
+
+	path := filepath.Join(nmDir, fmt.Sprintf("booty-%s.nmconnection", iface))
+	if err := os.WriteFile(path, []byte(buf.String()), 0o600); err != nil {
+		return fmt.Errorf("writing NetworkManager config %s: %w", path, err)
+	}
+	return nil
+}
+
+// persistBondConfig writes bond configuration into the target OS.
+func persistBondConfig(rootDir, osFamily string, cfg *config.MachineConfig) error {
+	bondIfaces := strings.Split(cfg.BondInterfaces, ",")
+	if len(bondIfaces) < 2 {
+		return nil
+	}
+	bondMode := cfg.BondMode
+	if bondMode == "" {
+		bondMode = "802.3ad"
+	}
+
+	switch osFamily {
+	case "ubuntu":
+		return writeBondNetplan(rootDir, bondIfaces, bondMode, cfg)
+	case "flatcar":
+		return writeBondSystemd(rootDir, bondIfaces, bondMode, cfg)
+	case "rhel":
+		return writeBondNetworkManager(rootDir, bondIfaces, bondMode, cfg)
+	default:
+		return writeBondNetplan(rootDir, bondIfaces, bondMode, cfg)
+	}
+}
+
+func writeBondNetplan(rootDir string, ifaces []string, mode string, cfg *config.MachineConfig) error {
+	netplanDir := filepath.Join(rootDir, "etc", "netplan")
+	if err := os.MkdirAll(netplanDir, 0o755); err != nil {
+		return fmt.Errorf("create netplan directory: %w", err)
+	}
+
+	var buf strings.Builder
+	buf.WriteString("# BOOTy bond configuration\n")
+	buf.WriteString("network:\n")
+	buf.WriteString("  version: 2\n")
+	buf.WriteString("  bonds:\n")
+	buf.WriteString("    bond0:\n")
+	buf.WriteString("      interfaces:\n")
+	for _, iface := range ifaces {
+		fmt.Fprintf(&buf, "        - %s\n", strings.TrimSpace(iface))
+	}
+	fmt.Fprintf(&buf, "      parameters:\n        mode: %s\n", mode)
+
+	if cfg.StaticIP != "" {
+		fmt.Fprintf(&buf, "      addresses: [%q]\n", cfg.StaticIP)
+	} else {
+		buf.WriteString("      dhcp4: true\n")
+	}
+
+	path := filepath.Join(netplanDir, "02-booty-bond.yaml")
+	if err := os.WriteFile(path, []byte(buf.String()), 0o600); err != nil {
+		return fmt.Errorf("writing bond netplan: %w", err)
+	}
+	return nil
+}
+
+func writeBondSystemd(rootDir string, ifaces []string, mode string, cfg *config.MachineConfig) error {
+	networkDir := filepath.Join(rootDir, "etc", "systemd", "network")
+	if err := os.MkdirAll(networkDir, 0o755); err != nil {
+		return fmt.Errorf("create systemd network directory: %w", err)
+	}
+
+	// Write .netdev for bond
+	var netdev strings.Builder
+	netdev.WriteString("[NetDev]\nName=bond0\nKind=bond\n\n")
+	fmt.Fprintf(&netdev, "[Bond]\nMode=%s\n", mode)
+	netdevPath := filepath.Join(networkDir, "10-bond0.netdev")
+	if err := os.WriteFile(netdevPath, []byte(netdev.String()), 0o644); err != nil {
+		return fmt.Errorf("writing bond netdev: %w", err)
+	}
+
+	// Write .network to attach slaves
+	for i, iface := range ifaces {
+		var slave strings.Builder
+		slave.WriteString("[Match]\n")
+		fmt.Fprintf(&slave, "Name=%s\n\n", strings.TrimSpace(iface))
+		slave.WriteString("[Network]\nBond=bond0\n")
+		slavePath := filepath.Join(networkDir, fmt.Sprintf("10-bond0-slave%d.network", i))
+		if err := os.WriteFile(slavePath, []byte(slave.String()), 0o644); err != nil {
+			return fmt.Errorf("writing bond slave config: %w", err)
+		}
+	}
+
+	// Write .network for bond0 itself
+	var bondNet strings.Builder
+	bondNet.WriteString("[Match]\nName=bond0\n\n[Network]\n")
+	if cfg.StaticIP != "" {
+		fmt.Fprintf(&bondNet, "Address=%s\n", cfg.StaticIP)
+	} else {
+		bondNet.WriteString("DHCP=yes\n")
+	}
+	bondNetPath := filepath.Join(networkDir, "10-bond0.network")
+	if err := os.WriteFile(bondNetPath, []byte(bondNet.String()), 0o644); err != nil {
+		return fmt.Errorf("writing bond network: %w", err)
+	}
+	return nil
+}
+
+func writeBondNetworkManager(rootDir string, ifaces []string, mode string, cfg *config.MachineConfig) error {
+	nmDir := filepath.Join(rootDir, "etc", "NetworkManager", "system-connections")
+	if err := os.MkdirAll(nmDir, 0o755); err != nil {
+		return fmt.Errorf("create NetworkManager directory: %w", err)
+	}
+
+	// Bond master
+	var master strings.Builder
+	master.WriteString("[connection]\nid=bond0\ntype=bond\nautoconnect=true\n\n")
+	fmt.Fprintf(&master, "[bond]\nmode=%s\n\n", mode)
+	if cfg.StaticIP != "" {
+		fmt.Fprintf(&master, "[ipv4]\nmethod=manual\naddresses=%s\n", cfg.StaticIP)
+	} else {
+		master.WriteString("[ipv4]\nmethod=auto\n")
+	}
+	masterPath := filepath.Join(nmDir, "bond0.nmconnection")
+	if err := os.WriteFile(masterPath, []byte(master.String()), 0o600); err != nil {
+		return fmt.Errorf("writing bond master: %w", err)
+	}
+
+	// Bond slaves
+	for i, iface := range ifaces {
+		ifaceName := strings.TrimSpace(iface)
+		var slave strings.Builder
+		fmt.Fprintf(&slave, "[connection]\nid=bond0-slave%d\ntype=ethernet\nmaster=bond0\nslave-type=bond\n\n", i)
+		fmt.Fprintf(&slave, "[ethernet]\n\n[match]\ninterface-name=%s\n", ifaceName)
+		slavePath := filepath.Join(nmDir, fmt.Sprintf("bond0-slave%d.nmconnection", i))
+		if err := os.WriteFile(slavePath, []byte(slave.String()), 0o600); err != nil {
+			return fmt.Errorf("writing bond slave: %w", err)
+		}
+	}
+	return nil
+}
+
+// persistVLANConfig writes VLAN configuration into the target OS.
+// VLANs format: "200:eno1:10.200.0.42/24,300:eno2"
+func persistVLANConfig(rootDir, osFamily string, cfg *config.MachineConfig) error {
+	for _, vlanSpec := range strings.Split(cfg.VLANs, ",") {
+		parts := strings.SplitN(strings.TrimSpace(vlanSpec), ":", 3)
+		if len(parts) < 2 {
+			continue
+		}
+		vlanID := parts[0]
+		parentIface := parts[1]
+		ip := ""
+		if len(parts) == 3 {
+			ip = parts[2]
+		}
+
+		switch osFamily {
+		case "ubuntu":
+			if err := writeVLANNetplan(rootDir, vlanID, parentIface, ip); err != nil {
+				return err
+			}
+		case "flatcar":
+			if err := writeVLANSystemd(rootDir, vlanID, parentIface, ip); err != nil {
+				return err
+			}
+		default:
+			if err := writeVLANNetplan(rootDir, vlanID, parentIface, ip); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func writeVLANNetplan(rootDir, vlanID, parent, ip string) error {
+	netplanDir := filepath.Join(rootDir, "etc", "netplan")
+	if err := os.MkdirAll(netplanDir, 0o755); err != nil {
+		return fmt.Errorf("create netplan directory: %w", err)
+	}
+
+	var buf strings.Builder
+	buf.WriteString("# BOOTy VLAN configuration\nnetwork:\n  version: 2\n  vlans:\n")
+	fmt.Fprintf(&buf, "    vlan%s:\n      id: %s\n      link: %s\n", vlanID, vlanID, parent)
+	if ip != "" {
+		fmt.Fprintf(&buf, "      addresses: [%q]\n", ip)
+	}
+
+	path := filepath.Join(netplanDir, fmt.Sprintf("03-booty-vlan%s.yaml", vlanID))
+	if err := os.WriteFile(path, []byte(buf.String()), 0o600); err != nil {
+		return fmt.Errorf("writing VLAN netplan: %w", err)
+	}
+	return nil
+}
+
+func writeVLANSystemd(rootDir, vlanID, parent, ip string) error {
+	networkDir := filepath.Join(rootDir, "etc", "systemd", "network")
+	if err := os.MkdirAll(networkDir, 0o755); err != nil {
+		return fmt.Errorf("create systemd network directory: %w", err)
+	}
+
+	vlanName := fmt.Sprintf("vlan%s", vlanID)
+
+	// .netdev
+	var netdev strings.Builder
+	fmt.Fprintf(&netdev, "[NetDev]\nName=%s\nKind=vlan\n\n[VLAN]\nId=%s\n", vlanName, vlanID)
+	netdevPath := filepath.Join(networkDir, fmt.Sprintf("20-%s.netdev", vlanName))
+	if err := os.WriteFile(netdevPath, []byte(netdev.String()), 0o644); err != nil {
+		return fmt.Errorf("writing VLAN netdev: %w", err)
+	}
+
+	// .network for VLAN interface
+	var network strings.Builder
+	fmt.Fprintf(&network, "[Match]\nName=%s\n\n[Network]\n", vlanName)
+	if ip != "" {
+		fmt.Fprintf(&network, "Address=%s\n", ip)
+	} else {
+		network.WriteString("DHCP=yes\n")
+	}
+	networkPath := filepath.Join(networkDir, fmt.Sprintf("20-%s.network", vlanName))
+	if err := os.WriteFile(networkPath, []byte(network.String()), 0o644); err != nil {
+		return fmt.Errorf("writing VLAN network: %w", err)
+	}
+
+	// Add VLAN to parent interface
+	parentNetPath := filepath.Join(networkDir, fmt.Sprintf("20-%s-vlan.network", parent))
+	var parentNet strings.Builder
+	fmt.Fprintf(&parentNet, "[Match]\nName=%s\n\n[Network]\nVLAN=%s\n", parent, vlanName)
+	if err := os.WriteFile(parentNetPath, []byte(parentNet.String()), 0o644); err != nil {
+		return fmt.Errorf("writing parent VLAN network: %w", err)
+	}
+	return nil
 }
