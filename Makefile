@@ -8,6 +8,7 @@ VERSION := 0.0.0
 BUILD := `git rev-parse HEAD`
 
 TARGETOS=linux
+TARGETARCH ?= amd64
 
 LDFLAGS=-ldflags "-s -w -X=main.Version=$(VERSION) -X=main.Build=$(BUILD) -extldflags -static"
 
@@ -21,10 +22,14 @@ REPOSITORY = ghcr.io/telekom/booty
 all: lint test install
 
 $(TARGET): $(SRC)
-	@go build $(LDFLAGS) -o $(TARGET)
+	@GOOS=$(TARGETOS) GOARCH=$(TARGETARCH) go build $(LDFLAGS) -o $(TARGET)
 
 build: $(TARGET)
 	@true
+
+build-all: $(SRC)
+	@GOOS=$(TARGETOS) GOARCH=amd64 go build $(LDFLAGS) -o dist/amd64/$(TARGET)
+	@GOOS=$(TARGETOS) GOARCH=arm64 go build $(LDFLAGS) -o dist/arm64/$(TARGET)
 
 clean:
 	@rm -f $(TARGET)

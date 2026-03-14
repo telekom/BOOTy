@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -273,11 +274,18 @@ func (c *Configurator) CreateEFIBootEntry(ctx context.Context, diskDev, bootPart
 		return fmt.Errorf("creating efivarfs mountpoint: %w", err)
 	}
 
-	// Detect EFI loader path — prefer shimx64.efi, fallback to grubx64.efi.
-	loader := `\EFI\ubuntu\shimx64.efi`
-	shimPath := filepath.Join(c.rootDir, "boot", "efi", "EFI", "ubuntu", "shimx64.efi")
+	// Detect EFI loader path — architecture-aware shimx64/shimaa64 with grub fallback.
+	shimName := "shimx64.efi"
+	grubName := "grubx64.efi"
+	if runtime.GOARCH == "arm64" {
+		shimName = "shimaa64.efi"
+		grubName = "grubaa64.efi"
+	}
+
+	loader := `\EFI\ubuntu\` + shimName
+	shimPath := filepath.Join(c.rootDir, "boot", "efi", "EFI", "ubuntu", shimName)
 	if _, err := os.Stat(shimPath); err != nil {
-		loader = `\EFI\ubuntu\grubx64.efi`
+		loader = `\EFI\ubuntu\` + grubName
 	}
 
 	// Determine partition number from the partition device path.
