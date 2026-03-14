@@ -8,6 +8,7 @@ VERSION := 0.0.0
 BUILD := `git rev-parse HEAD`
 
 TARGETOS=linux
+TARGETARCH ?= amd64
 
 LDFLAGS=-ldflags "-s -w -X=main.Version=$(VERSION) -X=main.Build=$(BUILD) -extldflags -static"
 
@@ -16,15 +17,20 @@ SRC = $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 DOCKERTAG ?= $(VERSION)
 REPOSITORY = ghcr.io/telekom/booty
 
-.PHONY: all build clean install uninstall fmt lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab
+.PHONY: all build clean install uninstall fmt lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab
 
 all: lint test install
 
 $(TARGET): $(SRC)
-	@go build $(LDFLAGS) -o $(TARGET)
+	@GOOS=$(TARGETOS) GOARCH=$(TARGETARCH) go build $(LDFLAGS) -o $(TARGET)
 
 build: $(TARGET)
 	@true
+
+build-all: $(SRC)
+	@mkdir -p dist/amd64 dist/arm64
+	@GOOS=$(TARGETOS) GOARCH=amd64 go build $(LDFLAGS) -o dist/amd64/$(TARGET)
+	@GOOS=$(TARGETOS) GOARCH=arm64 go build $(LDFLAGS) -o dist/arm64/$(TARGET)
 
 clean:
 	@rm -f $(TARGET)
@@ -83,6 +89,19 @@ dockerx86micro:
 dockerx86gobgp:
 	@docker buildx build --platform linux/amd64 --target gobgp --load -t $(REPOSITORY):$(DOCKERTAG)-gobgp -f initrd.Dockerfile .
 
+arm64:
+	@docker buildx build --platform linux/arm64 --load -t $(REPOSITORY):$(DOCKERTAG)-arm64 -f initrd.Dockerfile .
+
+arm64-slim:
+	@mkdir -p dist/arm64
+	@docker buildx build --platform linux/arm64 --target slim --output type=local,dest=dist/arm64 -f initrd.Dockerfile .
+	@echo ARM64 slim initramfs built: dist/arm64/initramfs.cpio.gz
+
+arm64-gobgp:
+	@mkdir -p dist/arm64
+	@docker buildx build --platform linux/arm64 --target gobgp --output type=local,dest=dist/arm64 -f initrd.Dockerfile .
+	@echo ARM64 GoBGP initramfs built: dist/arm64/initramfs.cpio.gz
+
 test-iso:
 	@echo Verifying ISO hybrid boot record
 	@file booty.iso | grep -q "ISO 9660" || (echo "FAIL: not a valid ISO"; exit 1)
@@ -94,6 +113,12 @@ getramdisk:
 	@ID=$$(docker create $(REPOSITORY)/$(TARGET):$(DOCKERTAG) null); \
 	docker cp $$ID:/initramfs.cpio.gz initramfs.cpio.gz ; docker rm $$ID
 	@echo Extracted ramdisk
+
+getramdisk-arm64:
+	@mkdir -p dist/arm64
+	@ID=$$(docker create $(REPOSITORY):$(DOCKERTAG)-arm64 null); \
+	docker cp $$ID:/initramfs.cpio.gz dist/arm64/initramfs.cpio.gz ; docker rm $$ID
+	@echo Extracted ARM64 ramdisk to dist/arm64/
 
 simplify:
 	@gofmt -s -l -w $(SRC)

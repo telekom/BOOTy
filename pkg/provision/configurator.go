@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -257,11 +258,10 @@ func (c *Configurator) CreateEFIBootEntry(ctx context.Context, diskDev, bootPart
 		return fmt.Errorf("creating efivarfs mountpoint: %w", err)
 	}
 
-	// Detect EFI loader path — prefer shimx64.efi, fallback to grubx64.efi.
-	loader := `\EFI\ubuntu\shimx64.efi`
-	shimPath := filepath.Join(c.rootDir, "boot", "efi", "EFI", "ubuntu", "shimx64.efi")
-	if _, err := os.Stat(shimPath); err != nil {
-		loader = `\EFI\ubuntu\grubx64.efi`
+	// Detect EFI loader path — architecture-aware shimx64/shimaa64 with grub fallback.
+	loader, err := efiLoaderPath(c.rootDir, runtime.GOARCH)
+	if err != nil {
+		return fmt.Errorf("detect EFI loader: %w", err)
 	}
 
 	// Determine partition number from the partition device path.
@@ -274,6 +274,28 @@ func (c *Configurator) CreateEFIBootEntry(ctx context.Context, diskDev, bootPart
 	}
 	slog.Info("EFI boot entry created", "output", string(out))
 	return nil
+}
+
+// efiLoaderNames returns the shim and grub EFI binary names for the given architecture.
+func efiLoaderNames(arch string) (shimName, grubName string) {
+	if arch == "arm64" {
+		return "shimaa64.efi", "grubaa64.efi"
+	}
+	return "shimx64.efi", "grubx64.efi"
+}
+
+// efiLoaderPath determines the EFI loader path, preferring shim with grub fallback.
+func efiLoaderPath(rootDir, arch string) (string, error) {
+	shimName, grubName := efiLoaderNames(arch)
+	shimPath := filepath.Join(rootDir, "boot", "efi", "EFI", "ubuntu", shimName)
+	_, err := os.Stat(shimPath)
+	if err == nil {
+		return `\EFI\ubuntu\` + shimName, nil
+	}
+	if !os.IsNotExist(err) {
+		return "", fmt.Errorf("stat shim %s: %w", shimPath, err)
+	}
+	return `\EFI\ubuntu\` + grubName, nil
 }
 
 // partNumberFromDevice extracts the partition number from a device path.
