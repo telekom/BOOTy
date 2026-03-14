@@ -24,7 +24,10 @@ func (c *Checkpoint) Save() error {
 	if err != nil {
 		return fmt.Errorf("marshal checkpoint: %w", err)
 	}
-	return os.WriteFile(checkpointPath, data, 0o600)
+	if err := os.WriteFile(checkpointPath, data, 0o600); err != nil {
+		return fmt.Errorf("write checkpoint: %w", err)
+	}
+	return nil
 }
 
 // LoadCheckpoint reads a checkpoint from tmpfs (returns nil if none exists).

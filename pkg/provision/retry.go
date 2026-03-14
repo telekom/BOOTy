@@ -63,7 +63,7 @@ func backoffDelay(policy RetryPolicy, attempt int) time.Duration {
 		delay = policy.MaxDelay
 	}
 	if policy.Jitter > 0 {
-		jitter := time.Duration(float64(delay) * policy.Jitter * rand.Float64())
+		jitter := time.Duration(float64(delay) * policy.Jitter * rand.Float64()) //nolint:gosec // jitter does not need crypto-grade randomness
 		delay += jitter
 	}
 	return delay
