@@ -1,6 +1,6 @@
 # Proposal: Enhanced Attestation
 
-## Status: Phase 1 Implemented (PR #57, #65)
+## Status: Implemented
 
 ## Priority: P2
 
