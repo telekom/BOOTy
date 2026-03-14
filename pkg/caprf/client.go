@@ -184,7 +184,8 @@ func (c *Client) AcknowledgeCommand(ctx context.Context, cmdID, status, message 
 	if err != nil {
 		return fmt.Errorf("marshal command ack: %w", err)
 	}
-	return c.postJSONWithAuth(ctx, c.cfg.CommandsURL+"/ack", data)
+	ackURL := strings.TrimRight(c.cfg.CommandsURL, "/") + "/ack"
+	return c.postJSONWithAuth(ctx, ackURL, data)
 }
 
 // ReportInventory posts a hardware inventory JSON payload to the CAPRF server.

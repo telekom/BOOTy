@@ -966,3 +966,42 @@ func TestClientReportHealthChecksNoURL(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestClientAcknowledgeCommand(t *testing.T) {
+	var receivedMethod, receivedPath, receivedBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedMethod = r.Method
+		receivedPath = r.URL.Path
+		body, _ := io.ReadAll(r.Body)
+		receivedBody = string(body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewFromConfig(&config.MachineConfig{CommandsURL: srv.URL + "/commands"})
+	err := client.AcknowledgeCommand(context.Background(), "cmd-123", "completed", "done")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if receivedMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", receivedMethod)
+	}
+	if receivedPath != "/commands/ack" {
+		t.Errorf("path = %q, want /commands/ack", receivedPath)
+	}
+	if !strings.Contains(receivedBody, `"id":"cmd-123"`) {
+		t.Errorf("body missing cmd ID: %s", receivedBody)
+	}
+	if !strings.Contains(receivedBody, `"status":"completed"`) {
+		t.Errorf("body missing status: %s", receivedBody)
+	}
+}
+
+func TestClientAcknowledgeCommandNoURL(t *testing.T) {
+	client := NewFromConfig(&config.MachineConfig{})
+	err := client.AcknowledgeCommand(context.Background(), "cmd-1", "completed", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+}
