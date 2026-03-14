@@ -1,0 +1,107 @@
+name: Nightly Build
+
+on:
+  schedule:
+    - cron: "0 2 * * *" # 2 AM UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  version:
+    name: Determine Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - id: version
+        run: |
+          BASE=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "version=${BASE}-nightly.$(date +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.arch }}/${{ matrix.flavor }})
+    needs: version
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64]
+        flavor: [default, gobgp, slim, micro]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build binary
+        run: |
+          CGO_ENABLED=1 GOOS=linux GOARCH=${{ matrix.arch }} CC=gcc \
+            go build -ldflags "-s -w \
+              -X main.Version=${{ needs.version.outputs.version }} \
+              -X main.Build=$(date -u +%Y%m%dT%H%M%S) \
+              -linkmode external -extldflags '-static'" \
+            -o booty-${{ matrix.arch }}
+
+      - name: Build initramfs (${{ matrix.flavor }})
+        run: |
+          TARGET_ARG=""
+          if [ "${{ matrix.flavor }}" != "default" ]; then
+            TARGET_ARG="--target=${{ matrix.flavor }}"
+          fi
+          docker buildx build --platform linux/${{ matrix.arch }} \
+            ${TARGET_ARG} \
+            --output type=local,dest=out-${{ matrix.flavor }} \
+            -f initrd.Dockerfile .
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: nightly-${{ matrix.flavor }}-${{ matrix.arch }}
+          path: |
+            booty-${{ matrix.arch }}
+            out-${{ matrix.flavor }}/initramfs.cpio.gz
+
+  scan:
+    name: Vulnerability Scan
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          exit-code: 0
+          format: table
+
+  sbom:
+    name: Generate SBOM
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          format: spdx-json
+          output-file: sbom-nightly.spdx.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v7
+        with:
+          name: sbom-nightly
+          path: sbom-nightly.spdx.json
