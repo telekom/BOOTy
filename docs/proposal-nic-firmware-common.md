@@ -1,6 +1,6 @@
 # Proposal: NIC Firmware Management — Common Framework
 
-## Status: Proposal
+## Status: Implemented
 
 ## Priority: P1
 
