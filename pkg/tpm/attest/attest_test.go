@@ -82,7 +82,7 @@ func TestVerifyPCRs(t *testing.T) {
 		act := map[int][]byte{0: {0x01, 0x02}, 7: {0x03, 0x04}}
 		r := VerifyPCRs(exp, act)
 		if !r.Verified {
-			t.Errorf("expected verified, got error: %s", r.Error)
+			t.Errorf("expected verified, got errors: %v", r.Errors)
 		}
 	})
 	t.Run("mismatch", func(t *testing.T) {

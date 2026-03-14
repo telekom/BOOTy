@@ -82,7 +82,7 @@ type Quote struct {
 type AttestationResult struct {
 	Verified   bool         `json:"verified"`
 	PCRMatches map[int]bool `json:"pcr_matches"`
-	Error      string       `json:"error,omitempty"`
+	Errors     []string     `json:"errors,omitempty"`
 	VerifiedAt time.Time    `json:"verified_at"`
 }
 
@@ -141,7 +141,7 @@ func VerifyPCRs(expected, actual map[int][]byte) *AttestationResult {
 		if !ok {
 			result.PCRMatches[idx] = false
 			result.Verified = false
-			result.Error = fmt.Sprintf("missing PCR[%d] in actual values", idx)
+			result.Errors = append(result.Errors, fmt.Sprintf("missing PCR[%d] in actual values", idx))
 			continue
 		}
 		match := len(exp) == len(act)
@@ -156,7 +156,7 @@ func VerifyPCRs(expected, actual map[int][]byte) *AttestationResult {
 		result.PCRMatches[idx] = match
 		if !match {
 			result.Verified = false
-			result.Error = fmt.Sprintf("PCR[%d] mismatch", idx)
+			result.Errors = append(result.Errors, fmt.Sprintf("PCR[%d] mismatch", idx))
 		}
 	}
 	return result
