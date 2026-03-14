@@ -88,3 +88,59 @@ func TestNVMeControllerRegex(t *testing.T) {
 		}
 	}
 }
+
+func TestParseNVMeConfigValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{
+			name:    "empty controller",
+			input:   `[{"controller":"","namespaces":[{"label":"os","sizePct":100}]}]`,
+			wantErr: true,
+		},
+		{
+			name:    "empty namespaces",
+			input:   `[{"controller":"/dev/nvme0","namespaces":[]}]`,
+			wantErr: true,
+		},
+		{
+			name:    "sizePct zero",
+			input:   `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":0}]}]`,
+			wantErr: true,
+		},
+		{
+			name:    "sizePct over 100",
+			input:   `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":101}]}]`,
+			wantErr: true,
+		},
+		{
+			name:    "total sizePct exceeds 100",
+			input:   `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":60},{"label":"data","sizePct":50}]}]`,
+			wantErr: true,
+		},
+		{
+			name:    "invalid blockSize",
+			input:   `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":100,"blockSize":1024}]}]`,
+			wantErr: true,
+		},
+		{
+			name:    "valid config",
+			input:   `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":50},{"label":"data","sizePct":50,"blockSize":4096}]}]`,
+			wantErr: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseNVMeConfig(tc.input)
+			if tc.wantErr && err == nil {
+				t.Error("expected error")
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
