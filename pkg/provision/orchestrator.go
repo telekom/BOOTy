@@ -81,6 +81,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"wipe-disks", o.wipeOrSecureEraseDisks},
 		{"detect-disk", o.detectDisk},
 		{"verify-image", o.verifyImageSignature},
+		{"apply-partition-layout", o.applyPartitionLayout},
 		{"stream-image", o.streamImage},
 		{"partprobe", o.partprobe},
 		{"parse-partitions", o.parsePartitions},
@@ -368,6 +369,39 @@ func (o *Orchestrator) detectDisk(ctx context.Context) error {
 		return err
 	}
 	o.targetDisk = d
+	return nil
+}
+
+func (o *Orchestrator) applyPartitionLayout(ctx context.Context) error {
+	if o.cfg.PartitionLayout == nil {
+		return nil
+	}
+
+	device := o.targetDisk
+	if o.cfg.PartitionLayout.Device != "" {
+		device = o.cfg.PartitionLayout.Device
+	}
+
+	o.log.Info("Applying custom partition layout", "device", device, "partitions", len(o.cfg.PartitionLayout.Partitions))
+
+	if err := o.disk.ApplyPartitionLayout(ctx, device, o.cfg.PartitionLayout); err != nil {
+		return fmt.Errorf("apply partition layout: %w", err)
+	}
+
+	// Apply LVM if configured.
+	if o.cfg.PartitionLayout.LVM != nil {
+		if err := o.disk.ApplyLVMConfig(ctx, device, o.cfg.PartitionLayout); err != nil {
+			return fmt.Errorf("apply LVM config: %w", err)
+		}
+	}
+
+	// Generate and write fstab.
+	fstab := disk.GenerateFstab(o.cfg.PartitionLayout, device)
+	if o.cfg.PartitionLayout.LVM != nil {
+		fstab += disk.GenerateLVMFstab(o.cfg.PartitionLayout.LVM)
+	}
+	o.log.Info("Generated fstab for custom layout")
+
 	return nil
 }
 
