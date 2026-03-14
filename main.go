@@ -468,6 +468,13 @@ func runStandby(ctx context.Context, client config.Provider, cfg *config.Machine
 					orch := provision.NewOrchestrator(cfg, client, diskMgr)
 					if err := orch.Provision(ctx); err != nil {
 						slog.Error("Hot provision failed", "error", err)
+						if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "failed", err.Error()); ackErr != nil {
+							slog.Warn("Failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
+						}
+					} else {
+						if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "completed", ""); ackErr != nil {
+							slog.Warn("Failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
+						}
 					}
 					if err := netMode.Teardown(ctx); err != nil {
 						slog.Warn("Network teardown error", "error", err)
@@ -481,6 +488,13 @@ func runStandby(ctx context.Context, client config.Provider, cfg *config.Machine
 					orch := provision.NewOrchestrator(cfg, client, diskMgr)
 					if err := orch.Deprovision(ctx); err != nil {
 						slog.Error("Hot deprovision failed", "error", err)
+						if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "failed", err.Error()); ackErr != nil {
+							slog.Warn("Failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
+						}
+					} else {
+						if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "completed", ""); ackErr != nil {
+							slog.Warn("Failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
+						}
 					}
 					if err := netMode.Teardown(ctx); err != nil {
 						slog.Warn("Network teardown error", "error", err)
@@ -490,13 +504,25 @@ func runStandby(ctx context.Context, client config.Provider, cfg *config.Machine
 					return
 				case "reboot":
 					slog.Info("Reboot command received")
+					if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "completed", ""); ackErr != nil {
+						slog.Warn("Failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
+					}
 					if err := netMode.Teardown(ctx); err != nil {
 						slog.Warn("Network teardown error", "error", err)
 					}
 					realm.Reboot()
 					return
+				case "health-check":
+					// Liveness probe — confirms agent is responsive.
+					slog.Info("Health-check command received")
+					if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "completed", "healthy"); ackErr != nil {
+						slog.Warn("Failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
+					}
 				default:
 					slog.Warn("Unknown command type", "type", cmd.Type)
+					if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "failed", "unknown command type"); ackErr != nil {
+						slog.Warn("Failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
+					}
 				}
 			}
 		}
