@@ -89,6 +89,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"check-filesystem", o.checkFilesystem},
 		{"enable-lvm", o.enableLVM},
 		{"mount-root", o.mountRoot},
+		{"write-fstab", o.writeFstabStep},
 		{"setup-chroot-binds", o.setupChrootBinds},
 		{"grow-partition", o.growPartition},
 		{"resize-filesystem", o.resizeFilesystem},
@@ -381,6 +382,7 @@ func (o *Orchestrator) applyPartitionLayout(ctx context.Context) error {
 	device := o.targetDisk
 	if o.cfg.PartitionLayout.Device != "" {
 		device = o.cfg.PartitionLayout.Device
+		o.targetDisk = device
 	}
 
 	o.log.Info("Applying custom partition layout", "device", device, "partitions", len(o.cfg.PartitionLayout.Partitions))
@@ -396,7 +398,20 @@ func (o *Orchestrator) applyPartitionLayout(ctx context.Context) error {
 		}
 	}
 
-	// Generate and write fstab.
+	o.log.Info("Custom partition layout applied")
+	return nil
+}
+
+// writeFstab generates and writes fstab after root is mounted.
+func (o *Orchestrator) writeFstabStep(_ context.Context) error {
+	return o.writeFstab()
+}
+
+func (o *Orchestrator) writeFstab() error {
+	if o.cfg.PartitionLayout == nil {
+		return nil
+	}
+	device := o.targetDisk
 	fstab := disk.GenerateFstab(o.cfg.PartitionLayout, device)
 	if o.cfg.PartitionLayout.LVM != nil {
 		fstab += disk.GenerateLVMFstab(o.cfg.PartitionLayout.LVM)
@@ -410,7 +425,6 @@ func (o *Orchestrator) applyPartitionLayout(ctx context.Context) error {
 		return fmt.Errorf("writing fstab: %w", err)
 	}
 	o.log.Info("Generated fstab for custom layout")
-
 	return nil
 }
 

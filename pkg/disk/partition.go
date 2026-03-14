@@ -137,18 +137,22 @@ func partitionDevice(device string, num int) string {
 // formatPartition runs mkfs for the given filesystem type.
 func (m *Manager) formatPartition(ctx context.Context, device, fsType string) error {
 	slog.Info("Formatting partition", "device", device, "filesystem", fsType)
+	var out []byte
 	var err error
 	switch fsType {
 	case "vfat":
-		_, err = m.cmd.Run(ctx, "mkfs.vfat", "-F", "32", device)
+		out, err = m.cmd.Run(ctx, "mkfs.vfat", "-F", "32", device)
 	case "ext4":
-		_, err = m.cmd.Run(ctx, "mkfs.ext4", "-F", device)
+		out, err = m.cmd.Run(ctx, "mkfs.ext4", "-F", device)
 	case "xfs":
-		_, err = m.cmd.Run(ctx, "mkfs.xfs", "-f", device)
+		out, err = m.cmd.Run(ctx, "mkfs.xfs", "-f", device)
 	case "swap":
-		_, err = m.cmd.Run(ctx, "mkswap", device)
+		out, err = m.cmd.Run(ctx, "mkswap", device)
 	default:
 		return fmt.Errorf("unsupported filesystem: %s", fsType)
 	}
-	return err
+	if err != nil {
+		return fmt.Errorf("mkfs.%s %s: %s: %w", fsType, device, string(out), err)
+	}
+	return nil
 }

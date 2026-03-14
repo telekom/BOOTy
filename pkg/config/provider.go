@@ -147,7 +147,7 @@ type MachineConfig struct {
 
 // PartitionLayout defines a declarative partitioning scheme for the target disk.
 type PartitionLayout struct {
-	Table      string      `json:"table"`            // "gpt" or "mbr" (default: "gpt")
+	Table      string      `json:"table"`            // "gpt" (default: "gpt") — only GPT is supported
 	Device     string      `json:"device,omitempty"` // Device override (empty = auto-detect)
 	Partitions []Partition `json:"partitions"`       // Ordered list of partitions to create
 	LVM        *LVMConfig  `json:"lvm,omitempty"`    // Optional LVM configuration
@@ -189,6 +189,9 @@ func ParsePartitionLayout(data string) (*PartitionLayout, error) {
 	}
 	if layout.Table == "" {
 		layout.Table = "gpt"
+	}
+	if layout.Table != "gpt" {
+		return nil, fmt.Errorf("unsupported partition table %q, only \"gpt\" is supported", layout.Table)
 	}
 	return &layout, nil
 }
