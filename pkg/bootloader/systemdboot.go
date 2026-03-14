@@ -1,7 +1,10 @@
+//go:build linux
+
 package bootloader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -44,6 +47,9 @@ func (s *SystemdBoot) Install(ctx context.Context, rootPath, espPath string) err
 
 // Configure generates loader.conf and boot entry files.
 func (s *SystemdBoot) Configure(_ context.Context, cfg *BootConfig) error {
+	if s.espPath == "" {
+		return fmt.Errorf("ESP path not set, call Install first")
+	}
 	// Generate loader.conf
 	if err := s.generateLoaderConf(cfg); err != nil {
 		return err
@@ -62,6 +68,9 @@ func (s *SystemdBoot) Configure(_ context.Context, cfg *BootConfig) error {
 func (s *SystemdBoot) ListEntries(_ context.Context, rootPath string) ([]BootEntry, error) {
 	entriesDir := filepath.Join(rootPath, "boot", "efi", "loader", "entries")
 	if _, err := os.Stat(entriesDir); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("stat entries dir: %w", err)
+		}
 		// Try alternative path
 		entriesDir = filepath.Join(rootPath, "boot", "loader", "entries")
 	}
@@ -86,9 +95,14 @@ func (s *SystemdBoot) ListEntries(_ context.Context, rootPath string) ([]BootEnt
 	return entries, nil
 }
 
-// SetDefault sets the default boot entry.
+// SetDefault sets the default boot entry via bootctl.
 func (s *SystemdBoot) SetDefault(ctx context.Context, entryID string) error {
-	return s.Configure(ctx, &BootConfig{DefaultKernel: entryID})
+	cmd := exec.CommandContext(ctx, "bootctl", "set-default", entryID+".conf")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("bootctl set-default %s: %s: %w", entryID, string(out), err)
+	}
+	return nil
 }
 
 func (s *SystemdBoot) generateLoaderConf(cfg *BootConfig) error {
@@ -106,13 +120,18 @@ func (s *SystemdBoot) generateLoaderConf(cfg *BootConfig) error {
 }
 
 func (s *SystemdBoot) generateEntry(entry *BootEntry) error {
+	// Sanitize entry ID to prevent path traversal.
+	safeID := filepath.Base(entry.ID)
+	if safeID != entry.ID || safeID == "." || safeID == ".." {
+		return fmt.Errorf("invalid entry ID: %q", entry.ID)
+	}
 	entriesDir := filepath.Join(s.espPath, "loader", "entries")
 	if err := os.MkdirAll(entriesDir, 0o755); err != nil {
 		return fmt.Errorf("create entries dir: %w", err)
 	}
 	content := fmt.Sprintf("title   %s\nlinux   %s\ninitrd  %s\noptions %s\n",
 		entry.Title, entry.Kernel, entry.Initrd, entry.Cmdline)
-	entryPath := filepath.Join(entriesDir, entry.ID+".conf")
+	entryPath := filepath.Join(entriesDir, safeID+".conf")
 	if err := os.WriteFile(entryPath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("write entry %s: %w", entry.ID, err)
 	}
@@ -132,11 +151,12 @@ func parseLoaderEntry(path string) (BootEntry, error) {
 
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
-		key, val, ok := strings.Cut(line, " ")
-		if !ok {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
 			continue
 		}
-		val = strings.TrimSpace(val)
+		key := fields[0]
+		val := strings.Join(fields[1:], " ")
 		switch strings.ToLower(key) {
 		case "title":
 			entry.Title = val

@@ -1,3 +1,5 @@
+//go:build linux
+
 package bootloader
 
 import (
@@ -72,8 +74,12 @@ func TestSystemdBoot_ListEntries(t *testing.T) {
 	entry1 := "title   Ubuntu 22.04\nlinux   /vmlinuz-5.15.0\ninitrd  /initrd.img-5.15.0\noptions root=UUID=abc ro\n"
 	entry2 := "title   Recovery\nlinux   /vmlinuz-5.15.0\ninitrd  /initrd.img-5.15.0\noptions root=UUID=abc ro single\n"
 
-	os.WriteFile(filepath.Join(entriesDir, "ubuntu.conf"), []byte(entry1), 0o644)
-	os.WriteFile(filepath.Join(entriesDir, "recovery.conf"), []byte(entry2), 0o644)
+	if err := os.WriteFile(filepath.Join(entriesDir, "ubuntu.conf"), []byte(entry1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(entriesDir, "recovery.conf"), []byte(entry2), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	sb := &SystemdBoot{Log: slog.Default()}
 	entries, err := sb.ListEntries(context.Background(), root)
@@ -90,7 +96,9 @@ func TestParseLoaderEntry(t *testing.T) {
 	dir := t.TempDir()
 	content := "title   Test Entry\nlinux   /vmlinuz\ninitrd  /initrd.img\noptions root=UUID=test ro\n"
 	path := filepath.Join(dir, "test.conf")
-	os.WriteFile(path, []byte(content), 0o644)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	entry, err := parseLoaderEntry(path)
 	if err != nil {
