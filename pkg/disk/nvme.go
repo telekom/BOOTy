@@ -118,7 +118,7 @@ func (m *Manager) NVMeSupportsMultiNS(ctx context.Context, controller string) (b
 	}
 	var count int
 	if _, err := fmt.Sscanf(nn, "%d", &count); err != nil {
-		return false, nil
+		return false, fmt.Errorf("parsing namespace count %q: %w", nn, err)
 	}
 	return count > 1, nil
 }
@@ -150,7 +150,7 @@ func (m *Manager) CreateNVMeNamespace(ctx context.Context, controller string, si
 }
 
 // AttachNVMeNamespace attaches a namespace to controller 0.
-func (m *Manager) AttachNVMeNamespace(ctx context.Context, controller string, nsid string) error {
+func (m *Manager) AttachNVMeNamespace(ctx context.Context, controller, nsid string) error {
 	out, err := m.cmd.Run(ctx, "nvme", "attach-ns", controller, "-n", nsid, "-c", "0")
 	if err != nil {
 		return fmt.Errorf("nvme attach-ns %s -n %s: %s: %w", controller, nsid, string(out), err)
@@ -177,59 +177,72 @@ func (m *Manager) FormatNVMeNamespace(ctx context.Context, device string, blockS
 // ApplyNVMeNamespaceLayout creates namespaces from config, using percentage-based sizing.
 func (m *Manager) ApplyNVMeNamespaceLayout(ctx context.Context, cfgs []NVMeNamespaceConfig) error {
 	for _, cfg := range cfgs {
-		controller := cfg.Controller
-
-		supported, err := m.NVMeSupportsMultiNS(ctx, controller)
-		if err != nil {
-			return fmt.Errorf("checking NVMe multi-namespace support: %w", err)
-		}
-		if !supported {
-			slog.Warn("Controller does not support multiple namespaces, skipping", "controller", controller)
-			continue
-		}
-
-		// Get total capacity from controller.
-		info, err := m.NVMeIdentifyController(ctx, controller)
-		if err != nil {
-			return fmt.Errorf("identifying controller %s: %w", controller, err)
-		}
-		tnvmcap, ok := info["tnvmcap"]
-		if !ok {
-			return fmt.Errorf("controller %s missing tnvmcap field", controller)
-		}
-		var totalBytes uint64
-		if _, err := fmt.Sscanf(tnvmcap, "%d", &totalBytes); err != nil {
-			return fmt.Errorf("parsing tnvmcap %q: %w", tnvmcap, err)
-		}
-
-		// Delete existing namespaces first.
-		if err := m.NVMeResetNamespaces(ctx, controller); err != nil {
-			slog.Warn("Reset before layout failed, continuing", "controller", controller, "error", err)
-		}
-		// Delete the default NS that reset creates.
-		if _, err := m.cmd.Run(ctx, "nvme", "delete-ns", controller, "-n", "1"); err != nil {
-			slog.Warn("Failed to delete default namespace after reset", "error", err)
-		}
-
-		for _, ns := range cfg.Namespaces {
-			bs := ns.BlockSize
-			if bs == 0 {
-				bs = 512
-			}
-			sizeBlocks := (totalBytes * uint64(ns.SizePct)) / (100 * uint64(bs))
-
-			nsid, err := m.CreateNVMeNamespace(ctx, controller, sizeBlocks, bs)
-			if err != nil {
-				return err
-			}
-			if err := m.AttachNVMeNamespace(ctx, controller, nsid); err != nil {
-				return err
-			}
-			slog.Info("Created NVMe namespace", "controller", controller, "nsid", nsid, "label", ns.Label, "sizePct", ns.SizePct)
+		if err := m.applyControllerLayout(ctx, cfg); err != nil {
+			return err
 		}
 	}
-
 	return nil
+}
+
+func (m *Manager) applyControllerLayout(ctx context.Context, cfg NVMeNamespaceConfig) error {
+	controller := cfg.Controller
+
+	supported, err := m.NVMeSupportsMultiNS(ctx, controller)
+	if err != nil {
+		return fmt.Errorf("checking NVMe multi-namespace support: %w", err)
+	}
+	if !supported {
+		slog.Warn("Controller does not support multiple namespaces, skipping", "controller", controller)
+		return nil
+	}
+
+	totalBytes, err := m.nvmeControllerCapacity(ctx, controller)
+	if err != nil {
+		return err
+	}
+
+	// Delete existing namespaces first.
+	if err := m.NVMeResetNamespaces(ctx, controller); err != nil {
+		slog.Warn("Reset before layout failed, continuing", "controller", controller, "error", err)
+	}
+	// Delete the default NS that reset creates.
+	if _, err := m.cmd.Run(ctx, "nvme", "delete-ns", controller, "-n", "1"); err != nil {
+		slog.Warn("Failed to delete default namespace after reset", "error", err)
+	}
+
+	for _, ns := range cfg.Namespaces {
+		bs := ns.BlockSize
+		if bs == 0 {
+			bs = 512
+		}
+		sizeBlocks := (totalBytes * uint64(ns.SizePct)) / (100 * uint64(bs))
+
+		nsid, err := m.CreateNVMeNamespace(ctx, controller, sizeBlocks, bs)
+		if err != nil {
+			return err
+		}
+		if err := m.AttachNVMeNamespace(ctx, controller, nsid); err != nil {
+			return err
+		}
+		slog.Info("Created NVMe namespace", "controller", controller, "nsid", nsid, "label", ns.Label, "sizePct", ns.SizePct)
+	}
+	return nil
+}
+
+func (m *Manager) nvmeControllerCapacity(ctx context.Context, controller string) (uint64, error) {
+	info, err := m.NVMeIdentifyController(ctx, controller)
+	if err != nil {
+		return 0, fmt.Errorf("identifying controller %s: %w", controller, err)
+	}
+	tnvmcap, ok := info["tnvmcap"]
+	if !ok {
+		return 0, fmt.Errorf("controller %s missing tnvmcap field", controller)
+	}
+	var totalBytes uint64
+	if _, err := fmt.Sscanf(tnvmcap, "%d", &totalBytes); err != nil {
+		return 0, fmt.Errorf("parsing tnvmcap %q: %w", tnvmcap, err)
+	}
+	return totalBytes, nil
 }
 
 // NVMeResetNamespaces deletes all namespaces and recreates a single default namespace.
