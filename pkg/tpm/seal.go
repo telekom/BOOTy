@@ -10,8 +10,8 @@ import (
 
 // SealedBlob holds a TPM-sealed secret and its associated policy.
 type SealedBlob struct {
-	Public  []byte `json:"public"`  // TPM2B_PUBLIC marshalled
-	Private []byte `json:"private"` // TPM2B_PRIVATE marshalled
+	Public  []byte `json:"public"`  // TPM2B_PUBLIC marshaled
+	Private []byte `json:"private"` // TPM2B_PRIVATE marshaled
 }
 
 // SealSecret seals data to the current values of the specified PCR registers.

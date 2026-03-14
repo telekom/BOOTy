@@ -150,7 +150,7 @@ func (d *Device) generateQuote(handle tpm2.TPMHandle, nonce []byte, sel tpm2.TPM
 }
 
 // readPCRDigest reads PCR values and computes a composite digest.
-func (d *Device) readPCRDigest(pcrSelection []int, sel tpm2.TPMLPCRSelection) (map[int][]byte, []byte, error) {
+func (d *Device) readPCRDigest(pcrSelection []int, sel tpm2.TPMLPCRSelection) (pcrValues map[int][]byte, pcrDigest []byte, err error) {
 	pcrReadResp, err := tpm2.PCRRead{
 		PCRSelectionIn: sel,
 	}.Execute(d.transport)
@@ -158,7 +158,7 @@ func (d *Device) readPCRDigest(pcrSelection []int, sel tpm2.TPMLPCRSelection) (m
 		return nil, nil, fmt.Errorf("reading PCR values for quote: %w", err)
 	}
 
-	pcrValues := make(map[int][]byte, len(pcrSelection))
+	pcrValues = make(map[int][]byte, len(pcrSelection))
 	for i, idx := range pcrSelection {
 		if i < len(pcrReadResp.PCRValues.Digests) {
 			pcrValues[idx] = pcrReadResp.PCRValues.Digests[i].Buffer
@@ -172,7 +172,7 @@ func (d *Device) readPCRDigest(pcrSelection []int, sel tpm2.TPMLPCRSelection) (m
 			h.Write(v)
 		}
 	}
-	pcrDigest := h.Sum(nil)
+	pcrDigest = h.Sum(nil)
 
 	return pcrValues, pcrDigest, nil
 }
