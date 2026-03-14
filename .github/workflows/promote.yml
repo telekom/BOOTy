@@ -59,7 +59,8 @@ jobs:
 
       - name: Create promoted tag
         run: |
-          git tag "${{ steps.tag.outputs.tag }}" "${{ inputs.version }}"
+          COMMIT=$(git rev-list -n 1 "${{ inputs.version }}")
+          git tag "${{ steps.tag.outputs.tag }}" "$COMMIT"
           git push origin "${{ steps.tag.outputs.tag }}"
 
       - name: Summary

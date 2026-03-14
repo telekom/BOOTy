@@ -63,7 +63,8 @@ jobs:
         run: |
           sha256sum booty-${{ matrix.flavor }}-${{ matrix.arch }} > booty-${{ matrix.flavor }}-${{ matrix.arch }}.sha256
           if [ -f out-${{ matrix.flavor }}/initramfs.cpio.gz ]; then
-            sha256sum out-${{ matrix.flavor }}/initramfs.cpio.gz > ${{ matrix.flavor }}-initramfs.cpio.gz.sha256
+            cp out-${{ matrix.flavor }}/initramfs.cpio.gz ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.gz
+            sha256sum ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.gz > ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.gz.sha256
           fi
 
       - name: Upload artifacts
@@ -73,8 +74,9 @@ jobs:
           path: |
             booty-${{ matrix.flavor }}-${{ matrix.arch }}
             booty-${{ matrix.flavor }}-${{ matrix.arch }}.sha256
-            out-${{ matrix.flavor }}/initramfs.cpio.gz
-            ${{ matrix.flavor }}-initramfs.cpio.gz.sha256
+            ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.gz
+            ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.gz.sha256
+          if-no-files-found: ignore
 
   sbom:
     name: Generate SBOM
@@ -103,7 +105,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: fs
           scan-ref: .
@@ -128,7 +130,12 @@ jobs:
 
       - name: Sign checksums with Cosign
         run: |
-          find artifacts -name "*.sha256" -exec cosign sign-blob --yes {} \;
+          for f in $(find artifacts -name "*.sha256"); do
+            cosign sign-blob --yes \
+              --output-signature "${f}.sig" \
+              --bundle "${f}.bundle" \
+              "$f"
+          done
 
   changelog:
     name: Generate Changelog
