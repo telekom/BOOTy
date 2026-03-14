@@ -84,6 +84,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		{"resize-filesystem", o.resizeFilesystem},
 		{"configure-kubelet", o.configureKubelet},
 		{"configure-grub", o.configureGRUB},
+		{"persist-network", o.persistNetworkStep},
 		{"copy-machine-files", o.copyMachineFiles},
 		{"run-machine-commands", o.runMachineCommands},
 		{"run-post-provision-cmds", o.runPostProvisionCmds},

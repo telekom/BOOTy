@@ -100,6 +100,10 @@ type MachineConfig struct {
 	// Network mode override.
 	NetworkMode string // NETWORK_MODE: "gobgp" to use in-process GoBGP instead of FRR
 
+	// Network persistence.
+	PersistNetwork bool   // PERSIST_NETWORK: write network config into target OS
+	OSFamily       string // OS_FAMILY: "ubuntu" or "flatcar" (auto-detected if empty; "rhel" detected but not yet supported for network persistence)
+
 	// Files and commands from ISO /deploy/ directories.
 	ProvisionerFiles []string // Paths to files in /deploy/file-system/
 	MachineFiles     []string // Paths to files in /deploy/machine-files/
