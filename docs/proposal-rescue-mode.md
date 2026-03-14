@@ -2,7 +2,7 @@
 
 ## Status: Fully Implemented
 
-Implemented: `RESCUE_MODE` flag, dropbear SSH (gated on `RESCUE_SSH_PUBKEY`),
+Implemented: `MODE="rescue"` flag, dropbear SSH (gated on `RESCUE_SSH_PUBKEY`),
 `RESCUE_TIMEOUT` auto-reboot, heartbeat loop, status reporting.
 Not yet implemented: `RESCUE_PASSWORD_HASH` (interactive login), disk auto-mount,
 CAPRF rescue-mode API extensions.

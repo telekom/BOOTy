@@ -439,7 +439,7 @@ func startRescueSSH(ctx context.Context, pubKey string) {
 		slog.Warn("dropbear not found, SSH server unavailable")
 		return
 	}
-	sshCmd := exec.CommandContext(ctx, "dropbear", "-R", "-F", "-p", "22")
+	sshCmd := exec.CommandContext(ctx, "dropbear", "-R", "-F", "-s", "-p", "22")
 	if err := sshCmd.Start(); err != nil {
 		slog.Warn("Failed to start SSH server", "error", err)
 		return
@@ -468,17 +468,16 @@ func runRescue(ctx context.Context, cfg *config.MachineConfig, client config.Pro
 		mountRescueDisks()
 	}
 
-	// Write authorized keys if provided.
+	// Write authorized keys and start SSH only after successful key setup.
 	if cfg.RescueSSHPubKey != "" {
 		if err := os.MkdirAll("/root/.ssh", 0o700); err != nil {
-			slog.Error("Failed to create .ssh directory", "error", err)
+			slog.Error("Failed to create .ssh directory, skipping SSH", "error", err)
 		} else if err := os.WriteFile("/root/.ssh/authorized_keys", []byte(cfg.RescueSSHPubKey+"\n"), 0o600); err != nil {
-			slog.Error("Failed to write authorized_keys", "error", err)
+			slog.Error("Failed to write authorized_keys, skipping SSH", "error", err)
+		} else {
+			startRescueSSH(ctx, cfg.RescueSSHPubKey)
 		}
 	}
-
-	// Start dropbear SSH server if available and pubkey is configured.
-	startRescueSSH(ctx, cfg.RescueSSHPubKey)
 
 	// Send periodic heartbeats.
 	rescueStart := time.Now()
@@ -516,12 +515,14 @@ func runRescue(ctx context.Context, cfg *config.MachineConfig, client config.Pro
 		slog.Info("Rescue mode active, waiting for manual reboot or shutdown")
 		<-ctx.Done()
 	}
-	_ = client.ReportStatus(ctx, config.StatusSuccess, "rescue-mode-exiting")
+	reportCtx, reportCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer reportCancel()
+	_ = client.ReportStatus(reportCtx, config.StatusSuccess, "rescue-mode-exiting")
 }
 
 // setRescuePassword sets the root password from a crypt(3) hash.
 func setRescuePassword(hash string) {
-	out, err := exec.Command("chpasswd", "-e").Output() //nolint:gosec // trusted config
+	out, err := exec.CommandContext(context.Background(), "chpasswd", "-e").Output() //nolint:gosec // trusted config
 	if err != nil {
 		// Try writing /etc/shadow directly
 		shadowEntry := fmt.Sprintf("root:%s:19000:0:99999:7:::\n", hash)
@@ -537,7 +538,7 @@ func setRescuePassword(hash string) {
 
 // mountRescueDisks auto-mounts detected partitions read-only under /rescue/.
 func mountRescueDisks() {
-	out, err := exec.Command("lsblk", "-rno", "NAME,TYPE").Output()
+	out, err := exec.CommandContext(context.Background(), "lsblk", "-rno", "NAME,TYPE").Output()
 	if err != nil {
 		slog.Warn("Failed to list block devices for rescue mount", "error", err)
 		return
@@ -557,7 +558,7 @@ func mountRescueDisks() {
 			continue
 		}
 
-		mountOut, mountErr := exec.Command("mount", "-o", "ro", devPath, mountPoint).CombinedOutput() //nolint:gosec // trusted device paths
+		mountOut, mountErr := exec.CommandContext(context.Background(), "mount", "-o", "ro", devPath, mountPoint).CombinedOutput() //nolint:gosec // trusted device paths
 		if mountErr != nil {
 			slog.Debug("Could not mount partition for rescue", "device", devName, "error", mountErr, "output", string(mountOut))
 			continue
