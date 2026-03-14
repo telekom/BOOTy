@@ -1,0 +1,178 @@
+//go:build linux
+
+package provision
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+)
+
+func TestWithRetry_Success(t *testing.T) {
+	policy := RetryPolicy{MaxAttempts: 3, InitialDelay: time.Millisecond, MaxDelay: 10 * time.Millisecond}
+	calls := 0
+	err := WithRetry(context.Background(), "test-step", policy, func(_ context.Context) error {
+		calls++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("expected 1 call, got %d", calls)
+	}
+}
+
+func TestWithRetry_EventualSuccess(t *testing.T) {
+	policy := RetryPolicy{
+		MaxAttempts:  3,
+		InitialDelay: time.Millisecond,
+		MaxDelay:     10 * time.Millisecond,
+		Transient:    true,
+	}
+	calls := 0
+	err := WithRetry(context.Background(), "test-step", policy, func(_ context.Context) error {
+		calls++
+		if calls < 3 {
+			return errors.New("transient failure")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if calls != 3 {
+		t.Errorf("expected 3 calls, got %d", calls)
+	}
+}
+
+func TestWithRetry_Exhausted(t *testing.T) {
+	policy := RetryPolicy{
+		MaxAttempts:  2,
+		InitialDelay: time.Millisecond,
+		MaxDelay:     5 * time.Millisecond,
+		Transient:    true,
+	}
+	calls := 0
+	err := WithRetry(context.Background(), "test-step", policy, func(_ context.Context) error {
+		calls++
+		return errors.New("always fails")
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if calls != 3 { // initial + 2 retries
+		t.Errorf("expected 3 calls, got %d", calls)
+	}
+}
+
+func TestWithRetry_PermanentError(t *testing.T) {
+	policy := RetryPolicy{
+		MaxAttempts:  5,
+		InitialDelay: time.Millisecond,
+		MaxDelay:     5 * time.Millisecond,
+		Transient:    false,
+	}
+	calls := 0
+	err := WithRetry(context.Background(), "test-step", policy, func(_ context.Context) error {
+		calls++
+		return &PermanentError{Err: errors.New("disk gone")}
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if calls != 1 {
+		t.Errorf("expected 1 call (no retry on permanent), got %d", calls)
+	}
+}
+
+func TestWithRetry_ContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	policy := RetryPolicy{
+		MaxAttempts:  10,
+		InitialDelay: time.Second,
+		MaxDelay:     time.Second,
+		Transient:    true,
+	}
+	calls := 0
+	go func() {
+		time.Sleep(5 * time.Millisecond)
+		cancel()
+	}()
+	err := WithRetry(ctx, "test-step", policy, func(_ context.Context) error {
+		calls++
+		return errors.New("fail")
+	})
+	if err == nil {
+		t.Fatal("expected error on context cancel")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got %v", err)
+	}
+}
+
+func TestWithRetry_NoRetry(t *testing.T) {
+	policy := RetryPolicy{MaxAttempts: 0}
+	calls := 0
+	err := WithRetry(context.Background(), "test-step", policy, func(_ context.Context) error {
+		calls++
+		return errors.New("fail")
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if calls != 1 {
+		t.Errorf("expected 1 call (no retry), got %d", calls)
+	}
+}
+
+func TestBackoffDelay(t *testing.T) {
+	policy := RetryPolicy{
+		InitialDelay: 100 * time.Millisecond,
+		MaxDelay:     time.Second,
+		Jitter:       0.0,
+	}
+	tests := []struct {
+		attempt  int
+		expected time.Duration
+	}{
+		{1, 100 * time.Millisecond},
+		{2, 200 * time.Millisecond},
+		{3, 400 * time.Millisecond},
+		{4, 800 * time.Millisecond},
+		{5, time.Second}, // capped
+	}
+	for _, tc := range tests {
+		got := backoffDelay(policy, tc.attempt)
+		if got != tc.expected {
+			t.Errorf("backoffDelay(attempt=%d) = %v, want %v", tc.attempt, got, tc.expected)
+		}
+	}
+}
+
+func TestBackoffDelay_WithJitter(t *testing.T) {
+	policy := RetryPolicy{
+		InitialDelay: 100 * time.Millisecond,
+		MaxDelay:     time.Second,
+		Jitter:       0.5,
+	}
+	base := 100 * time.Millisecond
+	delay := backoffDelay(policy, 1)
+	maxJitter := time.Duration(float64(base) * 0.5)
+	if delay < base || delay > base+maxJitter {
+		t.Errorf("delay %v out of jitter range [%v, %v]", delay, base, base+maxJitter)
+	}
+}
+
+func TestDefaultPolicies(t *testing.T) {
+	required := []string{
+		"report-init", "configure-dns", "stream-image",
+		"detect-disk", "partprobe", "report-success",
+	}
+	for _, name := range required {
+		if _, ok := DefaultPolicies[name]; !ok {
+			t.Errorf("missing default policy for step %q", name)
+		}
+	}
+}
