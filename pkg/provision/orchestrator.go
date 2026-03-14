@@ -414,12 +414,7 @@ func (o *Orchestrator) enrollMOK(ctx context.Context) error {
 	certPath := o.cfg.MOKCertPath
 	if _, err := os.Stat(certPath); err != nil {
 		o.log.Warn("MOK certificate not found, skipping enrollment", "path", certPath)
-		return nil
-	}
-
-	password := o.cfg.MOKPassword
-	if password == "" {
-		password = "changeit"
+		return nil //nolint:nilerr // intentionally skip when cert file is missing
 	}
 
 	o.log.Info("Enrolling MOK certificate", "cert", certPath)
