@@ -1,6 +1,6 @@
 # Proposal: SecureBoot Lifecycle Management
 
-## Status: Phase 1 Implemented (Status Reporting)
+## Status: Fully Implemented
 
 Phase 1 implements: `SECUREBOOT_REENABLE` config flag, `requestSecureBootReEnable`
 provisioning step that reports the re-enable request to CAPRF via status.

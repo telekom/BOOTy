@@ -343,6 +343,8 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"FIRMWARE_MIN_BMC":            &cfg.FirmwareMinBMC,
 		"HEALTH_SKIP_CHECKS":          &cfg.HealthSkipChecks,
 		"HEALTH_CHECK_URL":            &cfg.HealthCheckURL,
+		"MOK_CERT_PATH":               &cfg.MOKCertPath,
+		"MOK_PASSWORD":                &cfg.MOKPassword,
 	}
 
 	if ptr, ok := strFields[key]; ok {

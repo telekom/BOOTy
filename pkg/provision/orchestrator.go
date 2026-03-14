@@ -88,6 +88,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		{"run-machine-commands", o.runMachineCommands},
 		{"run-post-provision-cmds", o.runPostProvisionCmds},
 		{"create-efi-boot-entry", o.createEFIBootEntry},
+		{"enroll-mok", o.enrollMOK},
 		{"teardown-chroot", o.teardownChroot},
 		{"request-secureboot-reenable", o.requestSecureBootReEnable},
 		{"report-success", o.reportSuccess},
@@ -402,6 +403,44 @@ func (o *Orchestrator) runHealthChecks(ctx context.Context) error {
 		}
 		return fmt.Errorf("critical health check(s) failed: %s", strings.Join(failed, ", "))
 	}
+	return nil
+}
+
+func (o *Orchestrator) enrollMOK(ctx context.Context) error {
+	if o.cfg.MOKCertPath == "" {
+		return nil
+	}
+
+	certPath := o.cfg.MOKCertPath
+	if _, err := os.Stat(certPath); err != nil {
+		o.log.Warn("MOK certificate not found, skipping enrollment", "path", certPath)
+		return nil
+	}
+
+	password := o.cfg.MOKPassword
+	if password == "" {
+		password = "changeit"
+	}
+
+	o.log.Info("Enrolling MOK certificate", "cert", certPath)
+
+	// Copy cert into chroot so mokutil can access it
+	chrootCert := newroot + "/tmp/mok.der"
+	cpOut, cpErr := exec.CommandContext(ctx, "cp", certPath, chrootCert).CombinedOutput() //nolint:gosec // trusted provisioning path
+	if cpErr != nil {
+		o.log.Warn("Failed to copy MOK cert into chroot", "error", cpErr, "output", string(cpOut))
+		return nil
+	}
+
+	// mokutil --import requires password piped via stdin
+	out, err := exec.CommandContext(ctx, "chroot", newroot, //nolint:gosec // trusted provisioning command
+		"mokutil", "--import", "/tmp/mok.der", "--root-pw").CombinedOutput()
+	if err != nil {
+		o.log.Warn("MOK enrollment failed, continuing without MOK", "error", err, "output", string(out))
+		return nil
+	}
+
+	o.log.Info("MOK certificate enrolled, MokManager will prompt on next boot")
 	return nil
 }
 
