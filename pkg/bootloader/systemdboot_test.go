@@ -124,3 +124,76 @@ func TestParseLoaderEntry_Missing(t *testing.T) {
 		t.Error("expected error for missing file")
 	}
 }
+
+func TestSystemdBoot_InstallFallback(t *testing.T) {
+	root := t.TempDir()
+	esp := filepath.Join(root, "boot", "efi")
+	if err := os.MkdirAll(esp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Place a fake EFI binary in the target OS path.
+	efiSrcDir := filepath.Join(root, "usr", "lib", "systemd", "boot", "efi")
+	if err := os.MkdirAll(efiSrcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	efiContent := []byte("fake-efi-binary")
+	if err := os.WriteFile(filepath.Join(efiSrcDir, "systemd-bootx64.efi"), efiContent, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sb := NewSystemdBoot(slog.Default())
+	// bootctl is not in PATH during tests, so the fallback path is exercised.
+	if err := sb.Install(context.Background(), root, esp); err != nil {
+		t.Fatalf("Install fallback: %v", err)
+	}
+
+	// Verify EFI files were copied.
+	dst := filepath.Join(esp, "EFI", "systemd", "systemd-bootx64.efi")
+	data, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("read installed EFI: %v", err)
+	}
+	if string(data) != "fake-efi-binary" {
+		t.Errorf("EFI content = %q", string(data))
+	}
+
+	fallback := filepath.Join(esp, "EFI", "BOOT", "BOOTX64.EFI")
+	if _, err := os.Stat(fallback); err != nil {
+		t.Errorf("BOOTX64.EFI not created: %v", err)
+	}
+}
+
+func TestSystemdBoot_SetDefaultFallback(t *testing.T) {
+	esp := t.TempDir()
+	loaderDir := filepath.Join(esp, "loader")
+	if err := os.MkdirAll(loaderDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create an initial loader.conf with a default entry.
+	initial := "timeout 5\ndefault old-entry.conf\n"
+	if err := os.WriteFile(filepath.Join(loaderDir, "loader.conf"), []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sb := &SystemdBoot{
+		Log:     slog.Default(),
+		espPath: esp,
+	}
+
+	if err := sb.SetDefault(context.Background(), "new-entry"); err != nil {
+		t.Fatalf("SetDefault fallback: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(loaderDir, "loader.conf"))
+	if err != nil {
+		t.Fatalf("read loader.conf: %v", err)
+	}
+	if !strings.Contains(string(data), "default new-entry.conf") {
+		t.Errorf("loader.conf = %q, want default new-entry.conf", string(data))
+	}
+	if strings.Contains(string(data), "old-entry") {
+		t.Errorf("loader.conf still has old-entry: %q", string(data))
+	}
+}
