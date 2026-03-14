@@ -1,6 +1,6 @@
 # Proposal: Enhanced Telemetry — OpenTelemetry + Prometheus Metrics
 
-## Status: Proposal
+## Status: Implemented
 
 ## Priority: P2
 
