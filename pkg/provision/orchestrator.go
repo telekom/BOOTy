@@ -80,6 +80,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"mount-efivarfs", o.mountEFIVars},
 		{"remove-efi-entries", o.removeEFIBootEntries},
 		{"setup-mellanox", o.setupMellanox},
+		{"setup-nvme-namespaces", o.setupNVMeNamespaces},
 		{"wipe-disks", o.wipeOrSecureEraseDisks},
 		{"detect-disk", o.detectDisk},
 		{"verify-image", o.verifyImageSignature},
@@ -344,6 +345,17 @@ func (o *Orchestrator) setupMellanox(ctx context.Context) error {
 // that require a hard reboot (not kexec) to reinitialize.
 func (o *Orchestrator) FirmwareChanged() bool {
 	return o.firmwareChanged
+}
+
+func (o *Orchestrator) setupNVMeNamespaces(ctx context.Context) error {
+	if o.cfg.NVMeNamespaces == "" {
+		return nil
+	}
+	cfgs, err := disk.ParseNVMeConfig(o.cfg.NVMeNamespaces)
+	if err != nil {
+		return fmt.Errorf("parsing NVMe namespace layout: %w", err)
+	}
+	return o.disk.ApplyNVMeNamespaceLayout(ctx, cfgs)
 }
 
 func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
