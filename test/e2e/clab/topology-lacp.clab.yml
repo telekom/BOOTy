@@ -5,6 +5,7 @@ topology:
     switch:
       kind: linux
       image: alpine:3.20
+      cmd: sleep infinity
       exec:
         # Create a bridge for bonded links
         - ip link add br-bond type bridge
@@ -18,6 +19,7 @@ topology:
     booty:
       kind: linux
       image: alpine:3.20
+      cmd: sleep infinity
       exec:
         - ip link set eth1 up
         - ip link set eth2 up

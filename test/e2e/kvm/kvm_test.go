@@ -5,6 +5,7 @@ package kvm
 import (
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -22,4 +23,20 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// splitExtraArgs splits an environment variable into separate arguments.
+func splitExtraArgs(env string) []string {
+	if env == "" {
+		return nil
+	}
+	return strings.Fields(env)
+}
+
+// tail returns the last n bytes of data.
+func tail(data []byte, n int) []byte {
+	if len(data) <= n {
+		return data
+	}
+	return data[len(data)-n:]
 }

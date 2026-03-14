@@ -13,19 +13,18 @@ func TestBootloaderQEMU(t *testing.T) {
 	qemuAvailable(t)
 	initramfs := envOrDefault("BOOTY_INITRAMFS", "test-initramfs.cpio.gz")
 	kernel := envOrDefault("BOOTY_KERNEL", "vmlinuz")
-	extraArgs := envOrDefault("QEMU_EXTRA_ARGS", "")
+	ovmf := envOrDefault("OVMF_CODE", "/usr/share/OVMF/OVMF_CODE.fd")
 
 	args := []string{
 		"-m", "512",
 		"-nographic",
 		"-no-reboot",
+		"-drive", "if=pflash,format=raw,readonly=on,file=" + ovmf,
 		"-kernel", kernel,
 		"-initrd", initramfs,
 		"-append", "console=ttyS0 panic=1",
 	}
-	if extraArgs != "" {
-		args = append(args, extraArgs)
-	}
+	args = append(args, splitExtraArgs(envOrDefault("QEMU_EXTRA_ARGS", ""))...)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
