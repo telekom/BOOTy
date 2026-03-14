@@ -2,7 +2,6 @@ package hpe
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 
 	"github.com/telekom/BOOTy/pkg/bios"
@@ -72,5 +71,5 @@ func (m *Manager) Apply(_ context.Context, changes []bios.SettingChange) ([]stri
 
 // Reset restores HPE BIOS to factory defaults.
 func (m *Manager) Reset(_ context.Context) error {
-	return fmt.Errorf("HPE BIOS reset not implemented")
+	return bios.ErrNotImplemented
 }

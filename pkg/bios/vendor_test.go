@@ -2,6 +2,7 @@ package bios_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/bios"
@@ -50,8 +51,8 @@ func TestVendorManagers(t *testing.T) {
 			}
 
 			err = mgr.Reset(context.Background())
-			if err == nil {
-				t.Error("expected Reset error (not implemented)")
+			if !errors.Is(err, bios.ErrNotImplemented) {
+				t.Errorf("Reset error = %v, want ErrNotImplemented", err)
 			}
 		})
 	}

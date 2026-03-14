@@ -2,7 +2,6 @@ package dell
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 
 	"github.com/telekom/BOOTy/pkg/bios"
@@ -69,5 +68,5 @@ func (m *Manager) Apply(_ context.Context, changes []bios.SettingChange) ([]stri
 
 // Reset restores Dell BIOS to factory defaults.
 func (m *Manager) Reset(_ context.Context) error {
-	return fmt.Errorf("dell BIOS reset not implemented")
+	return bios.ErrNotImplemented
 }

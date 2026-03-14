@@ -1,9 +1,15 @@
 package bios
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // Vendor represents a server vendor detected from DMI.
 type Vendor string
+
+// ErrNotImplemented is returned when a BIOS operation is not yet implemented.
+var ErrNotImplemented = errors.New("bios operation not implemented")
 
 const (
 	// VendorHPE is for HPE ProLiant servers.
