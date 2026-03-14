@@ -1,6 +1,6 @@
 # Proposal: Cloud-Init Configuration Management
 
-## Status: Implemented
+## Status: Proposal
 
 ## Priority: P1
 
