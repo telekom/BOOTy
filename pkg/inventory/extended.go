@@ -5,12 +5,12 @@ type ExtendedInventory struct {
 	Base               HardwareInventory `json:"base"`
 	GPUs               []GPUInfo         `json:"gpus,omitempty"`
 	StorageControllers []StorageCtrlInfo `json:"storageControllers,omitempty"`
-	Thermal            ThermalInfo       `json:"thermal,omitempty"`
+	Thermal            *ThermalInfo      `json:"thermal,omitempty"`
 	PowerSupplies      []PSUInfo         `json:"powerSupplies,omitempty"`
 	USBDevices         []USBDeviceInfo   `json:"usbDevices,omitempty"`
 	PCITopology        []PCIBridgeInfo   `json:"pciTopology,omitempty"`
 	Transceivers       []TransceiverInfo `json:"transceivers,omitempty"`
-	Chassis            ChassisInfo       `json:"chassis,omitempty"`
+	Chassis            *ChassisInfo      `json:"chassis,omitempty"`
 }
 
 // GPUInfo captures GPU/accelerator details.

@@ -19,6 +19,9 @@ var (
 	SysDMIPath       = "/sys/class/dmi/id"
 	SysPCIPath       = "/sys/bus/pci/devices"
 	SysDMIMemoryPath = "/sys/firmware/dmi/entries/17-0"
+	SysThermalPath   = "/sys/class/thermal"
+	SysHwmonPath     = "/sys/class/hwmon"
+	SysUSBPath       = "/sys/bus/usb/devices"
 )
 
 // Collect gathers a full hardware inventory from sysfs and procfs.

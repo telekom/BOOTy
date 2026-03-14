@@ -9,7 +9,7 @@ import (
 
 // CollectThermal reads thermal sensor data from sysfs.
 func CollectThermal() ThermalInfo {
-	return collectThermalFrom("/sys/class/thermal", "/sys/class/hwmon")
+	return collectThermalFrom(SysThermalPath, SysHwmonPath)
 }
 
 func collectThermalFrom(thermalPath, hwmonPath string) ThermalInfo {

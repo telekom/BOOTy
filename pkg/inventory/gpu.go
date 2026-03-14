@@ -15,7 +15,7 @@ var gpuPCIClasses = map[string]bool{
 
 // ScanGPUs enumerates GPU/accelerator devices from sysfs.
 func ScanGPUs() []GPUInfo {
-	return scanGPUsFrom("/sys/bus/pci/devices")
+	return scanGPUsFrom(SysPCIPath)
 }
 
 func scanGPUsFrom(basePath string) []GPUInfo {
