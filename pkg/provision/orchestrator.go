@@ -99,11 +99,38 @@ func (o *Orchestrator) provisionSteps() []Step {
 func (o *Orchestrator) Provision(ctx context.Context) error {
 	steps := o.provisionSteps()
 
+	// Load or create checkpoint for resume-on-failure support.
+	cp, cpErr := LoadCheckpoint()
+	if cpErr != nil && cpErr != ErrNoCheckpoint {
+		o.log.Warn("Failed to load checkpoint, starting fresh", "error", cpErr)
+	}
+	if cp == nil {
+		cp = &Checkpoint{}
+	}
+
 	for i, step := range steps {
+		// Skip already-completed steps on resume.
+		if cp.IsCompleted(step.Name) {
+			o.log.Info("Skipping completed step", "step", step.Name)
+			continue
+		}
+
 		o.log.Info("Provisioning step", "step", step.Name, "index", i+1, "total", len(steps))
-		if err := step.Fn(ctx); err != nil {
+
+		// Apply retry policy if one is defined for this step.
+		var err error
+		if policy, ok := DefaultPolicies[step.Name]; ok {
+			err = WithRetry(ctx, step.Name, policy, step.Fn)
+		} else {
+			err = step.Fn(ctx)
+		}
+
+		if err != nil {
 			msg := fmt.Sprintf("step %s failed: %v", step.Name, err)
 			o.log.Error("Provisioning step failed", "step", step.Name, "error", err)
+			cp.Errors = append(cp.Errors, msg)
+			cp.AttemptCount++
+			_ = cp.Save()
 			DumpDebugState(step.Name)
 			dumpConfig(o.cfg)
 			if reportErr := o.provider.ReportStatus(ctx, config.StatusError, msg); reportErr != nil {
@@ -111,6 +138,9 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 			}
 			return fmt.Errorf("provision step %s: %w", step.Name, err)
 		}
+
+		cp.MarkStep(step.Name)
+		_ = cp.Save()
 	}
 	return nil
 }
