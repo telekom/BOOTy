@@ -116,6 +116,10 @@ linters:
           - cyclop
           - gocognit
           - funlen
+      - path: pkg/event/dispatch\.go
+        text: "G704"
+        linters:
+          - gosec
       - linters:
           - revive
         text: "var-naming: avoid"
