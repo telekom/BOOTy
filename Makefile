@@ -188,7 +188,7 @@ clab-dhcp-down:
 
 test-e2e-dhcp:
 	@echo Running DHCP E2E tests (requires clab-dhcp-up)
-	@go test -tags e2e_dhcp -race -v -timeout 120s ./test/e2e/integration/...
+	@go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/...
 
 # ── LACP lab targets ──────────────────────────────────────────────────────
 
@@ -202,7 +202,7 @@ clab-lacp-down:
 
 test-e2e-lacp:
 	@echo Running LACP bond E2E tests (requires clab-lacp-up)
-	@go test -tags e2e_lacp -race -v -timeout 120s ./test/e2e/integration/...
+	@go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/...
 
 # ── Static IP lab targets ─────────────────────────────────────────────────
 
@@ -216,7 +216,7 @@ clab-static-down:
 
 test-e2e-static:
 	@echo Running static IP E2E tests (requires clab-static-up)
-	@go test -tags e2e_static -race -v -timeout 120s ./test/e2e/integration/...
+	@go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/...
 
 # ── Multi-NIC lab targets ─────────────────────────────────────────────────
 
@@ -230,7 +230,7 @@ clab-multi-nic-down:
 
 test-e2e-multi-nic:
 	@echo Running multi-NIC E2E tests (requires clab-multi-nic-up)
-	@go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/...
+	@go test -tags e2e_multi_nic -race -v -timeout 120s ./test/e2e/integration/...
 
 check:
 	@test -z $(shell gofmt -l main.go | tee /dev/stderr) || echo "[WARN] Fix formatting issues with 'make fmt'"

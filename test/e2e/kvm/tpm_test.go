@@ -24,16 +24,16 @@ func TestTPMQEMU(t *testing.T) {
 
 	// Start swtpm emulator.
 	swtpmCtx, swtpmCancel := context.WithCancel(context.Background())
-	defer swtpmCancel()
 	swtpm := exec.CommandContext(swtpmCtx, "swtpm", "socket",
 		"--tpmstate", "dir="+tpmDir,
 		"--ctrl", "type=unixio,path="+tpmSocket,
 		"--tpm2",
 	)
 	if err := swtpm.Start(); err != nil {
+		swtpmCancel()
 		t.Fatalf("failed to start swtpm: %v", err)
 	}
-	defer func() { _ = swtpm.Wait() }()
+	defer func() { swtpmCancel(); _ = swtpm.Wait() }()
 
 	// Wait for swtpm socket to appear before launching QEMU.
 	for i := range 50 {

@@ -33,6 +33,7 @@ jobs:
           - scenario: secureboot
             qemu_extra: ""
             test_tag: e2e_kvm_secureboot
+            ovmf_vars: OVMF_VARS.fd
             setup: |
               cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
           - scenario: luks
@@ -52,6 +53,7 @@ jobs:
           - scenario: bootloader
             qemu_extra: ""
             test_tag: e2e_kvm_bootloader
+            ovmf_vars: OVMF_VARS.fd
             setup: |
               cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
       fail-fast: false
@@ -114,3 +116,4 @@ jobs:
           BOOTY_INITRAMFS: test-initramfs.cpio.gz
           BOOTY_KERNEL: vmlinuz
           LUKS_DISK_IMAGE: ${{ matrix.luks_disk }}
+          OVMF_VARS: ${{ matrix.ovmf_vars }}

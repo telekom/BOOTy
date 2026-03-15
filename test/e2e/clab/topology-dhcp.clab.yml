@@ -12,7 +12,7 @@ topology:
         - touch /var/lib/dhcp/dhcpd.leases
         - ip addr add 10.200.0.1/24 dev eth1
         - ip link set dev eth1 up
-        - dhcpd -cf /etc/dhcp/dhcpd.conf eth1
+        - dhcpd -cf /etc/dhcp/dhcpd.conf -pf /var/run/dhcpd.pid eth1
 
     booty:
       kind: linux
