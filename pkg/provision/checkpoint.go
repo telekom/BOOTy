@@ -19,12 +19,17 @@ type Checkpoint struct {
 	AttemptCount      int      `json:"attemptCount"`
 	Errors            []string `json:"errors,omitempty"`
 	path              string   // configurable checkpoint file path
+	persist           bool     // only write to disk when true (BOOTY_RESUME)
 }
 
 const defaultCheckpointPath = "/tmp/booty-checkpoint.json"
 
-// Save writes the current checkpoint to tmpfs.
+// Save writes the current checkpoint atomically to tmpfs.
+// It is a no-op when the checkpoint was not loaded from disk (persist=false).
 func (c *Checkpoint) Save() error {
+	if !c.persist {
+		return nil
+	}
 	data, err := json.Marshal(c)
 	if err != nil {
 		return fmt.Errorf("marshal checkpoint: %w", err)
@@ -33,8 +38,12 @@ func (c *Checkpoint) Save() error {
 	if p == "" {
 		p = defaultCheckpointPath
 	}
-	if err := os.WriteFile(p, data, 0o600); err != nil {
-		return fmt.Errorf("write checkpoint: %w", err)
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return fmt.Errorf("write checkpoint tmp: %w", err)
+	}
+	if err := os.Rename(tmp, p); err != nil {
+		return fmt.Errorf("rename checkpoint: %w", err)
 	}
 	return nil
 }
@@ -60,11 +69,16 @@ func LoadCheckpointFrom(path string) (*Checkpoint, error) {
 		return nil, fmt.Errorf("unmarshal checkpoint: %w", err)
 	}
 	cp.path = path
+	cp.persist = true
 	return &cp, nil
 }
 
 // Remove deletes the checkpoint file.
+// It is a no-op when the checkpoint was not loaded from disk (persist=false).
 func (c *Checkpoint) Remove() error {
+	if !c.persist {
+		return nil
+	}
 	p := c.path
 	if p == "" {
 		p = defaultCheckpointPath

@@ -113,7 +113,8 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 }
 
 // loadOrCreateCheckpoint loads an existing checkpoint when BOOTY_RESUME is set,
-// or returns a fresh checkpoint.
+// or returns a fresh checkpoint. Only checkpoints created via BOOTY_RESUME
+// persist to disk; otherwise Save/Remove are no-ops.
 func (o *Orchestrator) loadOrCreateCheckpoint() *Checkpoint {
 	if os.Getenv("BOOTY_RESUME") != "" {
 		cp, cpErr := LoadCheckpoint()
@@ -123,6 +124,7 @@ func (o *Orchestrator) loadOrCreateCheckpoint() *Checkpoint {
 		if cp != nil {
 			return cp
 		}
+		return &Checkpoint{persist: true}
 	}
 	return &Checkpoint{}
 }
