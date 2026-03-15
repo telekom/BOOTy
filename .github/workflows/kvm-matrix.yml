@@ -126,8 +126,8 @@ jobs:
           go test -tags ${{ matrix.test_tag }} -race -v -timeout 15m ./test/e2e/kvm/...
         env:
           QEMU_EXTRA_ARGS: ${{ matrix.qemu_extra }}
-          BOOTY_INITRAMFS: test-initramfs.cpio.gz
-          BOOTY_KERNEL: vmlinuz
-          LUKS_DISK_IMAGE: ${{ matrix.luks_disk }}
-          OVMF_VARS: ${{ matrix.ovmf_vars }}
+          BOOTY_INITRAMFS: ${{ github.workspace }}/test-initramfs.cpio.gz
+          BOOTY_KERNEL: ${{ github.workspace }}/vmlinuz
+          LUKS_DISK_IMAGE: ${{ matrix.luks_disk && format('{0}/{1}', github.workspace, matrix.luks_disk) || '' }}
+          OVMF_VARS: ${{ matrix.ovmf_vars && format('{0}/{1}', github.workspace, matrix.ovmf_vars) || '' }}
           OVMF_CODE: ${{ matrix.ovmf_code }}
