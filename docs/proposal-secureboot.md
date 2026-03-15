@@ -1,11 +1,12 @@
 # Proposal: SecureBoot Lifecycle Management
 
-## Status: Fully Implemented
+## Status: Phase 1 Implemented (PR #25)
 
-Phase 1 implements: `SECUREBOOT_REENABLE` config flag, `requestSecureBootReEnable`
-provisioning step that reports the re-enable request to CAPRF via status.
-The actual Redfish-based re-enablement happens on the CAPRF controller side.
-Not yet implemented: MOK enrollment, efivarfs direct manipulation.
+Phase 1 implements: SecureBoot re-enable flow (`SECUREBOOT_REENABLE` config flag,
+`requestSecureBootReEnable` step), MOK certificate enrollment (`MOK_CERT_PATH`,
+`MOK_PASSWORD`) via `mokutil --import` inside chroot.
+The Redfish-based re-enablement happens on the CAPRF controller side.
+Not yet implemented: efivarfs direct manipulation, automated key rotation.
 
 ## Priority: P0
 

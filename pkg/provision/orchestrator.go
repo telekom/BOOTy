@@ -413,8 +413,11 @@ func (o *Orchestrator) enrollMOK(ctx context.Context) error {
 
 	certPath := o.cfg.MOKCertPath
 	if _, err := os.Stat(certPath); err != nil {
-		o.log.Warn("MOK certificate not found, skipping enrollment", "path", certPath)
-		return nil //nolint:nilerr // intentionally skip when cert file is missing
+		if os.IsNotExist(err) {
+			o.log.Warn("MOK certificate not found, skipping enrollment", "path", certPath)
+			return nil
+		}
+		return fmt.Errorf("stat MOK certificate: %w", err)
 	}
 
 	o.log.Info("Enrolling MOK certificate", "cert", certPath)
@@ -423,16 +426,20 @@ func (o *Orchestrator) enrollMOK(ctx context.Context) error {
 	chrootCert := newroot + "/tmp/mok.der"
 	cpOut, cpErr := exec.CommandContext(ctx, "cp", certPath, chrootCert).CombinedOutput() //nolint:gosec // trusted provisioning path
 	if cpErr != nil {
-		o.log.Warn("Failed to copy MOK cert into chroot", "error", cpErr, "output", string(cpOut))
-		return nil
+		return fmt.Errorf("copy MOK cert into chroot: %s: %w", string(cpOut), cpErr)
 	}
 
 	// mokutil --import requires password piped via stdin
-	out, err := exec.CommandContext(ctx, "chroot", newroot, //nolint:gosec // trusted provisioning command
-		"mokutil", "--import", "/tmp/mok.der", "--root-pw").CombinedOutput()
+	mokCmd := exec.CommandContext(ctx, "chroot", newroot, //nolint:gosec // trusted provisioning command
+		"mokutil", "--import", "/tmp/mok.der")
+	if o.cfg.MOKPassword != "" {
+		mokCmd.Stdin = strings.NewReader(o.cfg.MOKPassword + "\n" + o.cfg.MOKPassword + "\n")
+	} else {
+		mokCmd.Args = append(mokCmd.Args, "--root-pw")
+	}
+	out, err := mokCmd.CombinedOutput()
 	if err != nil {
-		o.log.Warn("MOK enrollment failed, continuing without MOK", "error", err, "output", string(out))
-		return nil
+		return fmt.Errorf("MOK enrollment failed: %s: %w", string(out), err)
 	}
 
 	o.log.Info("MOK certificate enrolled, MokManager will prompt on next boot")
