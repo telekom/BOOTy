@@ -966,3 +966,54 @@ func TestClientReportHealthChecksNoURL(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestParseVarsBIOSSettings(t *testing.T) {
+	input := strings.Join([]string{
+		`BIOS_SETTINGS='{"PxeDev1EnDis":"Enabled","SriovGlobalEnable":"Enabled"}'`,
+		`BIOS_SETTINGS_URL="http://caprf/bios-settings"`,
+	}, "\n")
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BIOSSettings == "" {
+		t.Error("BIOSSettings should not be empty")
+	}
+	if cfg.BIOSSettingsURL != "http://caprf/bios-settings" {
+		t.Errorf("BIOSSettingsURL = %q", cfg.BIOSSettingsURL)
+	}
+}
+
+func TestReportBIOSSettings(t *testing.T) {
+	var received []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("Content-Type = %q, want application/json", r.Header.Get("Content-Type"))
+		}
+		body, _ := io.ReadAll(r.Body)
+		received = body
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewFromConfig(&config.MachineConfig{
+		Token:           "test-token",
+		BIOSSettingsURL: srv.URL,
+	})
+
+	data := []byte(`{"desired":{"PxeDev1EnDis":"Enabled"}}`)
+	if err := client.ReportBIOSSettings(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if string(received) != string(data) {
+		t.Errorf("received = %q, want %q", received, data)
+	}
+}
+
+func TestReportBIOSSettingsNoURL(t *testing.T) {
+	client := NewFromConfig(&config.MachineConfig{})
+	err := client.ReportBIOSSettings(context.Background(), []byte(`{}`))
+	if err != nil {
+		t.Errorf("expected nil error when no URL, got %v", err)
+	}
+}

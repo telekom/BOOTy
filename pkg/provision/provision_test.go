@@ -5,8 +5,10 @@ package provision
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -516,6 +518,80 @@ func TestRedactURLs(t *testing.T) {
 			for i := range got {
 				if got[i] != tc.want[i] {
 					t.Errorf("[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// mockBIOSProvider embeds mockProvider and implements BIOSSettingsReporter.
+type mockBIOSProvider struct {
+	mockProvider
+	biosData []byte
+	biosErr  error
+}
+
+func (p *mockBIOSProvider) ReportBIOSSettings(_ context.Context, data []byte) error {
+	p.biosData = data
+	return p.biosErr
+}
+
+func TestReportBIOSSettings(t *testing.T) {
+	tests := []struct {
+		name         string
+		settings     string
+		provider     config.Provider
+		wantReport   bool
+		wantContains string
+	}{
+		{
+			name:     "empty settings skips",
+			settings: "",
+			provider: &mockProvider{},
+		},
+		{
+			name:     "invalid JSON skips",
+			settings: "not-json",
+			provider: &mockProvider{},
+		},
+		{
+			name:     "provider without BIOSSettingsReporter skips",
+			settings: `{"BootMode":"UEFI"}`,
+			provider: &mockProvider{},
+		},
+		{
+			name:         "valid settings reported",
+			settings:     `{"BootMode":"UEFI"}`,
+			provider:     &mockBIOSProvider{},
+			wantReport:   true,
+			wantContains: "UEFI",
+		},
+		{
+			name:     "report error is non-fatal",
+			settings: `{"BootMode":"UEFI"}`,
+			provider: &mockBIOSProvider{biosErr: fmt.Errorf("network error")},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			o := &Orchestrator{
+				cfg:      &config.MachineConfig{BIOSSettings: tc.settings},
+				provider: tc.provider,
+				log:      slog.Default(),
+			}
+			if err := o.reportBIOSSettings(context.Background()); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.wantReport {
+				bp, ok := tc.provider.(*mockBIOSProvider)
+				if !ok || bp.biosData == nil {
+					t.Fatal("expected BIOS data to be reported")
+				}
+				if tc.wantContains != "" {
+					if got := string(bp.biosData); !strings.Contains(got, tc.wantContains) {
+						t.Errorf("report = %q, want to contain %q", got, tc.wantContains)
+					}
 				}
 			}
 		})

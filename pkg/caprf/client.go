@@ -175,6 +175,15 @@ func (c *Client) ReportInventory(ctx context.Context, data []byte) error {
 	return c.postJSONWithAuth(ctx, c.cfg.InventoryURL, data)
 }
 
+// ReportBIOSSettings posts a BIOS settings delta report to the CAPRF server.
+func (c *Client) ReportBIOSSettings(ctx context.Context, data []byte) error {
+	if c.cfg.BIOSSettingsURL == "" {
+		c.log.Debug("No BIOS settings URL configured, skipping")
+		return nil
+	}
+	return c.postJSONWithAuth(ctx, c.cfg.BIOSSettingsURL, data)
+}
+
 func (c *Client) postWithAuth(ctx context.Context, url, body string) error {
 	return c.withRetry(ctx, url, func() error {
 		return c.doPost(ctx, url, body)
@@ -343,6 +352,8 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"FIRMWARE_MIN_BMC":            &cfg.FirmwareMinBMC,
 		"HEALTH_SKIP_CHECKS":          &cfg.HealthSkipChecks,
 		"HEALTH_CHECK_URL":            &cfg.HealthCheckURL,
+		"BIOS_SETTINGS":               &cfg.BIOSSettings,
+		"BIOS_SETTINGS_URL":           &cfg.BIOSSettingsURL,
 	}
 
 	if ptr, ok := strFields[key]; ok {
