@@ -215,7 +215,7 @@ func (o *Orchestrator) captureBIOS(ctx context.Context) error {
 	}
 
 	if o.cfg.BIOSReportURL != "" {
-		return o.provider.ReportStatus(ctx, config.StatusInit, "bios: "+string(data))
+		return o.provider.ReportBIOS(ctx, data)
 	}
 	o.log.Info("BIOS state captured", "vendor", vendor, "settings", len(state.Settings))
 	return nil

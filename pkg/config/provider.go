@@ -133,4 +133,6 @@ type Provider interface {
 	ReportInventory(ctx context.Context, data []byte) error
 	// ReportFirmware sends a firmware report to the server.
 	ReportFirmware(ctx context.Context, data []byte) error
+	// ReportBIOS sends a BIOS state report to the server.
+	ReportBIOS(ctx context.Context, data []byte) error
 }

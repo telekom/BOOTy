@@ -131,6 +131,15 @@ func (c *Client) ReportFirmware(ctx context.Context, data []byte) error {
 	return c.postJSONWithAuth(ctx, c.cfg.FirmwareURL, data)
 }
 
+// ReportBIOS sends a JSON BIOS state report to the CAPRF server.
+func (c *Client) ReportBIOS(ctx context.Context, data []byte) error {
+	if c.cfg.BIOSReportURL == "" {
+		c.log.Debug("No BIOS report URL configured, skipping report")
+		return nil
+	}
+	return c.postJSONWithAuth(ctx, c.cfg.BIOSReportURL, data)
+}
+
 // FetchCommands polls the CAPRF server for pending commands.
 // Returns nil if no commands URL is configured.
 func (c *Client) FetchCommands(ctx context.Context) ([]config.Command, error) {

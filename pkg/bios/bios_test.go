@@ -90,7 +90,9 @@ func TestDetectVendorFrom(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "sys_vendor")
-			os.WriteFile(path, []byte(tc.content), 0o644)
+			if err := os.WriteFile(path, []byte(tc.content), 0o644); err != nil {
+				t.Fatalf("write fixture: %v", err)
+			}
 
 			got, err := detectVendorFrom(path)
 			if err != nil {
