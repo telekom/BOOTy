@@ -1,0 +1,133 @@
+name: KVM Test Matrix
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "pkg/secureboot/**"
+      - "pkg/disk/**"
+      - "pkg/tpm/**"
+      - "pkg/kexec/**"
+      - "pkg/bios/**"
+      - "pkg/bootloader/**"
+      - "test/e2e/kvm/**"
+      - ".github/workflows/kvm-matrix.yml"
+  pull_request:
+    paths:
+      - "pkg/secureboot/**"
+      - "pkg/disk/**"
+      - "pkg/tpm/**"
+      - "pkg/kexec/**"
+      - "pkg/bios/**"
+      - "pkg/bootloader/**"
+      - "test/e2e/kvm/**"
+      - ".github/workflows/kvm-matrix.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kvm-tests:
+    name: KVM ${{ matrix.scenario }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - scenario: secureboot
+            qemu_extra: ""
+            test_tag: e2e_kvm_secureboot
+            ovmf_vars: OVMF_VARS.fd
+            ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.secboot.fd
+            setup: |
+              cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
+          - scenario: luks
+            qemu_extra: ""
+            test_tag: e2e_kvm_luks
+            luks_disk: test-disk.qcow2
+            setup: |
+              qemu-img create -f qcow2 test-disk.qcow2 10G
+          - scenario: tpm
+            qemu_extra: ""
+            test_tag: e2e_kvm_tpm
+            setup: ""
+          - scenario: kexec
+            qemu_extra: ""
+            test_tag: e2e_kvm_kexec
+            setup: ""
+          - scenario: bootloader
+            qemu_extra: ""
+            test_tag: e2e_kvm_bootloader
+            ovmf_vars: OVMF_VARS.fd
+            ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.fd
+            setup: |
+              cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
+      fail-fast: false
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+
+      - name: Install KVM dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 ovmf swtpm swtpm-tools cpio busybox-static zstd linux-image-generic
+
+      - name: Scenario-specific setup
+        if: matrix.setup != ''
+        run: ${{ matrix.setup }}
+
+      - name: Build BOOTy initramfs
+        run: |
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
+            go build -ldflags "-linkmode external -extldflags '-static' -s -w" -o booty
+
+          mkdir -p initramfs/{bin,sbin,dev,proc,sys,etc,tmp,usr/bin,lib/modules,mnt}
+          sudo mknod initramfs/dev/console c 5 1
+          sudo mknod initramfs/dev/ttyS0 c 4 64
+          sudo mknod initramfs/dev/null c 1 3
+
+          cp "$(which busybox)" initramfs/bin/busybox
+          cd initramfs/bin
+          for cmd in sh mount umount insmod setsid cttyhack chroot; do
+            ln -sf busybox "$cmd"
+          done
+          cd ../..
+
+          cp booty initramfs/booty
+          cat > initramfs/init << 'INITEOF'
+          #!/bin/sh
+          export BOOTYURL="http://10.0.2.2:3000/booty"
+          exec /booty
+          INITEOF
+          chmod +x initramfs/init
+
+          cd initramfs
+          sudo find . -print0 | sudo cpio --null -ov --format=newc 2>/dev/null | gzip > ../test-initramfs.cpio.gz
+          cd ..
+
+      - name: Prepare kernel
+        run: |
+          KERNEL=$(ls /boot/vmlinuz-* 2>/dev/null | head -1)
+          if [ -z "$KERNEL" ]; then
+            echo "No kernel found in /boot, extracting from package"
+            apt-get download linux-image-$(uname -r) 2>/dev/null || apt-get download linux-image-generic
+            dpkg-deb -x linux-image*.deb /tmp/kernel-extract
+            KERNEL=$(ls /tmp/kernel-extract/boot/vmlinuz-* | head -1)
+          fi
+          sudo cp "$KERNEL" vmlinuz
+          sudo chmod 644 vmlinuz
+
+      - name: Run KVM test (${{ matrix.scenario }})
+        run: |
+          go test -tags ${{ matrix.test_tag }} -race -v -timeout 15m ./test/e2e/kvm/...
+        env:
+          QEMU_EXTRA_ARGS: ${{ matrix.qemu_extra }}
+          BOOTY_INITRAMFS: ${{ github.workspace }}/test-initramfs.cpio.gz
+          BOOTY_KERNEL: ${{ github.workspace }}/vmlinuz
+          LUKS_DISK_IMAGE: ${{ matrix.luks_disk && format('{0}/{1}', github.workspace, matrix.luks_disk) || '' }}
+          OVMF_VARS: ${{ matrix.ovmf_vars && format('{0}/{1}', github.workspace, matrix.ovmf_vars) || '' }}
+          OVMF_CODE: ${{ matrix.ovmf_code }}
