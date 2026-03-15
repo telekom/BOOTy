@@ -84,8 +84,8 @@ func RegisterManager(vendor Vendor, factory func(*slog.Logger) Manager) {
 // NewManager returns a Manager for the given vendor, or an error if unsupported.
 func NewManager(vendor Vendor, log *slog.Logger) (Manager, error) {
 	managerMu.Lock()
-	defer managerMu.Unlock()
 	factory, ok := managerFactories[vendor]
+	managerMu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("no BIOS manager registered for vendor %q", vendor)
 	}

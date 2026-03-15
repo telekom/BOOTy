@@ -72,6 +72,29 @@ func TestCompare_MissingSetting(t *testing.T) {
 	}
 }
 
+func TestCompare_NilBaseline(t *testing.T) {
+	state := &State{Settings: map[string]Setting{"A": {CurrentValue: "1"}}}
+	diff := Compare(nil, state)
+	if diff.Matches {
+		t.Error("nil baseline vs non-nil state should not match")
+	}
+}
+
+func TestCompare_NilState(t *testing.T) {
+	baseline := &Baseline{Settings: map[string]string{"A": "1"}}
+	diff := Compare(baseline, nil)
+	if diff.Matches {
+		t.Error("non-nil baseline vs nil state should not match")
+	}
+}
+
+func TestCompare_BothNil(t *testing.T) {
+	diff := Compare(nil, nil)
+	if !diff.Matches {
+		t.Error("both nil should match")
+	}
+}
+
 func TestDetectVendorFrom(t *testing.T) {
 	tests := []struct {
 		name     string

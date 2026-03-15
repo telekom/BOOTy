@@ -20,10 +20,6 @@ import (
 	"github.com/telekom/BOOTy/pkg/inventory"
 
 	"github.com/telekom/BOOTy/pkg/bios"
-	_ "github.com/telekom/BOOTy/pkg/bios/dell"       // register Dell BIOS manager
-	_ "github.com/telekom/BOOTy/pkg/bios/hpe"        // register HPE BIOS manager
-	_ "github.com/telekom/BOOTy/pkg/bios/lenovo"     // register Lenovo BIOS manager
-	_ "github.com/telekom/BOOTy/pkg/bios/supermicro" // register Supermicro BIOS manager
 )
 
 // Step represents a named provisioning step.
@@ -214,8 +210,8 @@ func (o *Orchestrator) captureBIOS(ctx context.Context) error {
 		return fmt.Errorf("marshal bios state: %w", err)
 	}
 
-	if o.cfg.BIOSReportURL != "" {
-		return o.provider.ReportBIOS(ctx, data)
+	if err := o.provider.ReportBIOS(ctx, data); err != nil {
+		o.log.Warn("Failed to report BIOS state", "error", err)
 	}
 	o.log.Info("BIOS state captured", "vendor", vendor, "settings", len(state.Settings))
 	return nil
