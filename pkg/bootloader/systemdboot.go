@@ -232,8 +232,16 @@ func (s *SystemdBoot) generateEntry(entry *BootEntry) error {
 	if err := os.MkdirAll(entriesDir, 0o755); err != nil {
 		return fmt.Errorf("create entries dir: %w", err)
 	}
-	content := fmt.Sprintf("title   %s\nlinux   %s\ninitrd  %s\noptions %s\n",
-		entry.Title, entry.Kernel, entry.Initrd, entry.Cmdline)
+	var lines []string
+	lines = append(lines, fmt.Sprintf("title   %s", entry.Title))
+	lines = append(lines, fmt.Sprintf("linux   %s", entry.Kernel))
+	if entry.Initrd != "" {
+		lines = append(lines, fmt.Sprintf("initrd  %s", entry.Initrd))
+	}
+	if entry.Cmdline != "" {
+		lines = append(lines, fmt.Sprintf("options %s", entry.Cmdline))
+	}
+	content := strings.Join(lines, "\n") + "\n"
 	entryPath := filepath.Join(entriesDir, safeID+".conf")
 	if err := os.WriteFile(entryPath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("write entry %s: %w", entry.ID, err)
