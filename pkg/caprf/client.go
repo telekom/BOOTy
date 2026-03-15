@@ -185,8 +185,8 @@ func (c *Client) FetchCommands(ctx context.Context) ([]config.Command, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create commands request: %w", err)
 	}
-	if c.cfg.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
+	if tok := c.CurrentToken(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
@@ -259,8 +259,8 @@ func (c *Client) doPost(ctx context.Context, url, body string) error {
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "text/plain")
-	if c.cfg.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
+	if tok := c.CurrentToken(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
@@ -283,8 +283,8 @@ func (c *Client) doPostJSON(ctx context.Context, url string, data []byte) error 
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if c.cfg.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
+	if tok := c.CurrentToken(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
