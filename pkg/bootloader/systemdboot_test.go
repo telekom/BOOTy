@@ -141,7 +141,8 @@ func TestSystemdBoot_InstallFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	efiContent := []byte("fake-efi-binary")
-	if err := os.WriteFile(filepath.Join(efiSrcDir, "systemd-bootx64.efi"), efiContent, 0o644); err != nil {
+	efiBootBin, efiFallbackBin := efiFileNames()
+	if err := os.WriteFile(filepath.Join(efiSrcDir, efiBootBin), efiContent, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -152,7 +153,7 @@ func TestSystemdBoot_InstallFallback(t *testing.T) {
 	}
 
 	// Verify EFI files were copied.
-	dst := filepath.Join(esp, "EFI", "systemd", "systemd-bootx64.efi")
+	dst := filepath.Join(esp, "EFI", "systemd", efiBootBin)
 	data, err := os.ReadFile(dst)
 	if err != nil {
 		t.Fatalf("read installed EFI: %v", err)
@@ -161,9 +162,9 @@ func TestSystemdBoot_InstallFallback(t *testing.T) {
 		t.Errorf("EFI content = %q", string(data))
 	}
 
-	fallback := filepath.Join(esp, "EFI", "BOOT", "BOOTX64.EFI")
+	fallback := filepath.Join(esp, "EFI", "BOOT", efiFallbackBin)
 	if _, err := os.Stat(fallback); err != nil {
-		t.Errorf("BOOTX64.EFI not created: %v", err)
+		t.Errorf("%s not created: %v", efiFallbackBin, err)
 	}
 }
 

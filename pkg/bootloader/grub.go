@@ -50,13 +50,13 @@ func (g *GRUB) Install(ctx context.Context, rootPath, espPath string) error {
 	}
 
 	// Translate espPath to chroot-relative path.
-	chrootESP := espPath
-	if strings.HasPrefix(espPath, rootPath) {
-		chrootESP = strings.TrimPrefix(espPath, rootPath)
-		if chrootESP == "" {
-			chrootESP = "/"
-		}
+	rootClean := filepath.Clean(rootPath)
+	espClean := filepath.Clean(espPath)
+	rel, relErr := filepath.Rel(rootClean, espClean)
+	if relErr != nil || strings.HasPrefix(rel, "..") {
+		return fmt.Errorf("esp path %q is not inside root %q", espPath, rootPath)
 	}
+	chrootESP := "/" + rel
 
 	cmd := exec.CommandContext(ctx, "chroot", rootPath,
 		grubBin,
@@ -98,11 +98,13 @@ func (g *GRUB) Configure(ctx context.Context, cfg *BootConfig) error {
 
 	// Run update-grub / grub2-mkconfig in chroot
 	mkconfig := "update-grub"
+	cfgPath := "/boot/grub/grub.cfg"
 	if _, err := os.Stat(filepath.Join(g.rootPath, "usr", "sbin", "grub2-mkconfig")); err == nil {
 		mkconfig = "grub2-mkconfig"
+		cfgPath = "/boot/grub2/grub.cfg"
 	}
 
-	cmd := exec.CommandContext(ctx, "chroot", g.rootPath, mkconfig, "-o", "/boot/grub/grub.cfg")
+	cmd := exec.CommandContext(ctx, "chroot", g.rootPath, mkconfig, "-o", cfgPath)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s: %s: %w", mkconfig, string(out), err)
@@ -129,10 +131,14 @@ func (g *GRUB) SetDefault(ctx context.Context, entryID string) error {
 	if g.rootPath == "" {
 		return fmt.Errorf("root path not set, call Install first")
 	}
-	cmd := exec.CommandContext(ctx, "chroot", g.rootPath, "grub-set-default", entryID)
+	setBin := "grub-set-default"
+	if _, err := os.Stat(filepath.Join(g.rootPath, "usr", "sbin", "grub2-set-default")); err == nil {
+		setBin = "grub2-set-default"
+	}
+	cmd := exec.CommandContext(ctx, "chroot", g.rootPath, setBin, entryID)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("grub-set-default %s: %s: %w", entryID, string(out), err)
+		return fmt.Errorf("%s %s: %s: %w", setBin, entryID, string(out), err)
 	}
 	return nil
 }

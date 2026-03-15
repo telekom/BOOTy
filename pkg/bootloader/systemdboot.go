@@ -209,6 +209,9 @@ func (s *SystemdBoot) generateLoaderConf(cfg *BootConfig) error {
 	}
 	// Validate DefaultEntry to prevent invalid loader.conf content.
 	defaultEntry := cfg.DefaultEntry
+	if defaultEntry == "" {
+		return fmt.Errorf("default entry must not be empty")
+	}
 	if strings.ContainsAny(defaultEntry, "/\\") || defaultEntry == ".." {
 		return fmt.Errorf("invalid default entry: %q", defaultEntry)
 	}
@@ -233,13 +236,14 @@ func (s *SystemdBoot) generateEntry(entry *BootEntry) error {
 		return fmt.Errorf("create entries dir: %w", err)
 	}
 	var lines []string
-	lines = append(lines, fmt.Sprintf("title   %s", entry.Title))
-	lines = append(lines, fmt.Sprintf("linux   %s", entry.Kernel))
+	sanitize := strings.NewReplacer("\n", " ", "\r", " ")
+	lines = append(lines, fmt.Sprintf("title   %s", sanitize.Replace(entry.Title)))
+	lines = append(lines, fmt.Sprintf("linux   %s", sanitize.Replace(entry.Kernel)))
 	if entry.Initrd != "" {
-		lines = append(lines, fmt.Sprintf("initrd  %s", entry.Initrd))
+		lines = append(lines, fmt.Sprintf("initrd  %s", sanitize.Replace(entry.Initrd)))
 	}
 	if entry.Cmdline != "" {
-		lines = append(lines, fmt.Sprintf("options %s", entry.Cmdline))
+		lines = append(lines, fmt.Sprintf("options %s", sanitize.Replace(entry.Cmdline)))
 	}
 	content := strings.Join(lines, "\n") + "\n"
 	entryPath := filepath.Join(entriesDir, safeID+".conf")
