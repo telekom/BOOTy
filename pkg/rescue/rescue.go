@@ -51,6 +51,9 @@ func (c *Config) Validate() error {
 	if c.RetryDelay < 0 {
 		return fmt.Errorf("retryDelay must be non-negative")
 	}
+	if c.ShellTimeout < 0 {
+		return fmt.Errorf("shellTimeout must be non-negative")
+	}
 	return nil
 }
 
@@ -109,6 +112,10 @@ func (s *RetryState) Remaining() int {
 
 // Decide determines the rescue action based on config and state.
 func Decide(cfg *Config, state *RetryState) Action {
+	if state.MaxRetries == 0 && cfg.MaxRetries > 0 {
+		state.MaxRetries = cfg.MaxRetries
+	}
+
 	switch cfg.Mode {
 	case ModeRetry:
 		if state.CanRetry() {

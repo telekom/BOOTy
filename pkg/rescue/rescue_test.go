@@ -42,6 +42,7 @@ func TestConfig_Validate(t *testing.T) {
 		{"retry no max", Config{Mode: ModeRetry}, true},
 		{"bad mode", Config{Mode: "bad"}, true},
 		{"negative delay", Config{Mode: ModeReboot, RetryDelay: -1}, true},
+		{"negative shell timeout", Config{Mode: ModeShell, ShellTimeout: -1}, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -132,6 +133,19 @@ func TestDecide_Retry(t *testing.T) {
 
 	if action.Type != ModeRetry {
 		t.Errorf("type = %q", action.Type)
+	}
+}
+
+func TestDecide_RetrySyncsMaxRetries(t *testing.T) {
+	cfg := &Config{Mode: ModeRetry, MaxRetries: 5}
+	state := &RetryState{} // MaxRetries not set — Decide should sync from cfg
+	action := Decide(cfg, state)
+
+	if action.Type != ModeRetry {
+		t.Errorf("type = %q, want retry", action.Type)
+	}
+	if state.MaxRetries != 5 {
+		t.Errorf("state.MaxRetries = %d, want 5", state.MaxRetries)
 	}
 }
 
