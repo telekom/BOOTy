@@ -66,7 +66,7 @@ func (s *SystemdBoot) Install(ctx context.Context, rootPath, espPath string) err
 	// Look for the systemd-boot EFI binary in common locations.
 	candidates := []string{
 		filepath.Join(rootPath, "usr", "lib", "systemd", "boot", "efi", efiBootBin),
-		filepath.Join("/bin", efiBootBin),
+		"/bin/" + efiBootBin,
 	}
 	var srcEFI string
 	for _, c := range candidates {
