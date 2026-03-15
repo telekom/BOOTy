@@ -19,12 +19,11 @@ import (
 	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/inventory"
 
-	// Register vendor BIOS managers.
 	"github.com/telekom/BOOTy/pkg/bios"
-	_ "github.com/telekom/BOOTy/pkg/bios/dell"
-	_ "github.com/telekom/BOOTy/pkg/bios/hpe"
-	_ "github.com/telekom/BOOTy/pkg/bios/lenovo"
-	_ "github.com/telekom/BOOTy/pkg/bios/supermicro"
+	_ "github.com/telekom/BOOTy/pkg/bios/dell"      // register Dell BIOS manager
+	_ "github.com/telekom/BOOTy/pkg/bios/hpe"        // register HPE BIOS manager
+	_ "github.com/telekom/BOOTy/pkg/bios/lenovo"     // register Lenovo BIOS manager
+	_ "github.com/telekom/BOOTy/pkg/bios/supermicro" // register Supermicro BIOS manager
 )
 
 // Step represents a named provisioning step.

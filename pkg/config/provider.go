@@ -101,7 +101,7 @@ type MachineConfig struct {
 	NetworkMode string // NETWORK_MODE: "gobgp" to use in-process GoBGP instead of FRR
 
 	// BIOS vendor management.
-	BIOSEnabled  bool   // BIOS_ENABLED: detect vendor and capture BIOS settings
+	BIOSEnabled   bool   // BIOS_ENABLED: detect vendor and capture BIOS settings
 	BIOSReportURL string // BIOS_REPORT_URL: POST endpoint for BIOS state report
 
 	// Files and commands from ISO /deploy/ directories.
