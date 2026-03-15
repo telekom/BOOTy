@@ -137,7 +137,9 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 			o.log.Error("Provisioning step failed", "step", step.Name, "error", err)
 			cp.Errors = append(cp.Errors, msg)
 			cp.AttemptCount++
-			_ = cp.Save()
+			if saveErr := cp.Save(); saveErr != nil {
+				o.log.Warn("Failed to save checkpoint", "error", saveErr)
+			}
 			DumpDebugState(step.Name)
 			dumpConfig(o.cfg)
 			if reportErr := o.provider.ReportStatus(ctx, config.StatusError, msg); reportErr != nil {
@@ -147,7 +149,14 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		}
 
 		cp.MarkStep(step.Name)
-		_ = cp.Save()
+		if saveErr := cp.Save(); saveErr != nil {
+			o.log.Warn("Failed to save checkpoint", "error", saveErr)
+		}
+	}
+
+	// Remove checkpoint on successful completion to avoid stale data.
+	if rmErr := cp.Remove(); rmErr != nil {
+		o.log.Warn("Failed to remove checkpoint", "error", rmErr)
 	}
 	return nil
 }

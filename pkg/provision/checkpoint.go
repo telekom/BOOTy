@@ -18,9 +18,10 @@ type Checkpoint struct {
 	CompletedSteps    []string `json:"completedSteps"`
 	AttemptCount      int      `json:"attemptCount"`
 	Errors            []string `json:"errors,omitempty"`
+	path              string   // configurable checkpoint file path
 }
 
-const checkpointPath = "/tmp/booty-checkpoint.json"
+const defaultCheckpointPath = "/tmp/booty-checkpoint.json"
 
 // Save writes the current checkpoint to tmpfs.
 func (c *Checkpoint) Save() error {
@@ -28,16 +29,26 @@ func (c *Checkpoint) Save() error {
 	if err != nil {
 		return fmt.Errorf("marshal checkpoint: %w", err)
 	}
-	if err := os.WriteFile(checkpointPath, data, 0o600); err != nil {
+	p := c.path
+	if p == "" {
+		p = defaultCheckpointPath
+	}
+	if err := os.WriteFile(p, data, 0o600); err != nil {
 		return fmt.Errorf("write checkpoint: %w", err)
 	}
 	return nil
 }
 
 // LoadCheckpoint reads a checkpoint from tmpfs.
-// Returns (nil, nil) if no checkpoint file exists.
+// Returns (nil, ErrNoCheckpoint) if no checkpoint file exists.
 func LoadCheckpoint() (*Checkpoint, error) {
-	data, err := os.ReadFile(checkpointPath) //nolint:gosec // checkpoint path is a constant
+	return LoadCheckpointFrom(defaultCheckpointPath)
+}
+
+// LoadCheckpointFrom reads a checkpoint from the given path.
+// Returns (nil, ErrNoCheckpoint) if the file does not exist.
+func LoadCheckpointFrom(path string) (*Checkpoint, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // checkpoint path is a constant or explicitly provided
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, ErrNoCheckpoint
@@ -48,7 +59,20 @@ func LoadCheckpoint() (*Checkpoint, error) {
 	if err := json.Unmarshal(data, &cp); err != nil {
 		return nil, fmt.Errorf("unmarshal checkpoint: %w", err)
 	}
+	cp.path = path
 	return &cp, nil
+}
+
+// Remove deletes the checkpoint file.
+func (c *Checkpoint) Remove() error {
+	p := c.path
+	if p == "" {
+		p = defaultCheckpointPath
+	}
+	if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove checkpoint: %w", err)
+	}
+	return nil
 }
 
 // MarkStep records a completed step in the checkpoint.
