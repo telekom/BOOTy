@@ -2,13 +2,13 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 )
@@ -83,7 +83,7 @@ func (tm *TokenManager) Acquire(ctx context.Context, serial, bmcMAC string) erro
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tm.tokenURL,
-		strings.NewReader(string(data)))
+		bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("create token request: %w", err)
 	}
@@ -191,10 +191,16 @@ func (tm *TokenManager) renew(ctx context.Context) error {
 	refresh := tm.refreshToken
 	tm.mu.RUnlock()
 
-	body := fmt.Sprintf(`{"refresh_token":%q}`, refresh)
+	type renewRequest struct {
+		RefreshToken string `json:"refresh_token"` //nolint:gosec // G117: this is the token request
+	}
+	data, err := json.Marshal(renewRequest{RefreshToken: refresh})
+	if err != nil {
+		return fmt.Errorf("marshal renewal request: %w", err)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tm.tokenURL,
-		strings.NewReader(body))
+		bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("create renewal request: %w", err)
 	}
@@ -218,6 +224,13 @@ func (tm *TokenManager) renew(ctx context.Context) error {
 	var tokenResp TokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
 		return fmt.Errorf("decode renewal response: %w", err)
+	}
+
+	if tokenResp.AccessToken == "" {
+		return fmt.Errorf("renew token: empty access_token in response")
+	}
+	if tokenResp.ExpiresIn <= 0 {
+		return fmt.Errorf("renew token: invalid expires_in %d", tokenResp.ExpiresIn)
 	}
 
 	tm.mu.Lock()

@@ -182,6 +182,14 @@ func runCAPRF(ctx context.Context) {
 		realm.Reboot()
 	}
 
+	// Acquire JWT if a token URL is configured.
+	if err := client.AcquireToken(ctx); err != nil {
+		slog.Error("Failed to acquire JWT token", "error", err)
+	}
+	if err := client.StartTokenRenewal(ctx); err != nil {
+		slog.Error("Failed to start token renewal", "error", err)
+	}
+
 	cfg, err := client.GetConfig(ctx)
 	if err != nil {
 		slog.Error("Failed to get CAPRF config", "error", err)
