@@ -108,28 +108,13 @@ var validName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 // Validate checks the network configuration.
 func (c *NetworkConfig) Validate() error {
 	for i, iface := range c.Interfaces {
-		if iface.Name == "" {
-			return fmt.Errorf("interface %d: name required", i)
-		}
-		if !validName.MatchString(iface.Name) {
-			return fmt.Errorf("interface %q: invalid name", iface.Name)
-		}
-		if !iface.DHCP && iface.Address == "" {
-			return fmt.Errorf("interface %q: address or dhcp required", iface.Name)
+		if err := validateInterface(i, &iface); err != nil {
+			return err
 		}
 	}
 	for i := range c.Bonds {
-		if c.Bonds[i].Name == "" {
-			return fmt.Errorf("bond %d: name required", i)
-		}
-		if !validName.MatchString(c.Bonds[i].Name) {
-			return fmt.Errorf("bond %q: invalid name", c.Bonds[i].Name)
-		}
-		if len(c.Bonds[i].Members) < 2 {
-			return fmt.Errorf("bond %q: at least 2 members required", c.Bonds[i].Name)
-		}
-		if c.Bonds[i].Mode == "" {
-			return fmt.Errorf("bond %q: mode required", c.Bonds[i].Name)
+		if err := validateBond(i, &c.Bonds[i]); err != nil {
+			return err
 		}
 	}
 	for i, vlan := range c.VLANs {
@@ -147,6 +132,35 @@ func (c *NetworkConfig) Validate() error {
 		if route.Gateway == "" {
 			return fmt.Errorf("route %d: gateway required", i)
 		}
+	}
+	return nil
+}
+
+func validateInterface(i int, iface *InterfaceConfig) error {
+	if iface.Name == "" {
+		return fmt.Errorf("interface %d: name required", i)
+	}
+	if !validName.MatchString(iface.Name) {
+		return fmt.Errorf("interface %q: invalid name", iface.Name)
+	}
+	if !iface.DHCP && iface.Address == "" {
+		return fmt.Errorf("interface %q: address or dhcp required", iface.Name)
+	}
+	return nil
+}
+
+func validateBond(i int, bond *BondConfig) error {
+	if bond.Name == "" {
+		return fmt.Errorf("bond %d: name required", i)
+	}
+	if !validName.MatchString(bond.Name) {
+		return fmt.Errorf("bond %q: invalid name", bond.Name)
+	}
+	if len(bond.Members) < 2 {
+		return fmt.Errorf("bond %q: at least 2 members required", bond.Name)
+	}
+	if bond.Mode == "" {
+		return fmt.Errorf("bond %q: mode required", bond.Name)
 	}
 	return nil
 }
