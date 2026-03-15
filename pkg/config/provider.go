@@ -100,6 +100,10 @@ type MachineConfig struct {
 	// Network mode override.
 	NetworkMode string // NETWORK_MODE: "gobgp" to use in-process GoBGP instead of FRR
 
+	// Cloud-init generation.
+	CloudInitEnabled    bool   // CLOUDINIT_ENABLED: generate and inject cloud-init config
+	CloudInitDatasource string // CLOUDINIT_DATASOURCE: "nocloud" (default)
+
 	// Files and commands from ISO /deploy/ directories.
 	ProvisionerFiles []string // Paths to files in /deploy/file-system/
 	MachineFiles     []string // Paths to files in /deploy/machine-files/
