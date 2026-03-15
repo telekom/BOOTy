@@ -1,4 +1,4 @@
-// events package provides structured provisioning event emission.
+// Package events provides structured provisioning event emission.
 package events
 
 import (

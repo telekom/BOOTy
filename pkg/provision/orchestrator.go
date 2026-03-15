@@ -129,6 +129,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 			DumpDebugState(step.Name)
 			dumpConfig(o.cfg)
 			o.reportMetrics(ctx, collector)
+			o.emitEvent(ctx, events.EventProvFailed, step.Name, msg, progress)
 			_ = o.provider.ReportStatus(ctx, config.StatusError, msg)
 			return fmt.Errorf("provision step %s: %w", step.Name, err)
 		}
@@ -147,23 +148,27 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 }
 
 // emitEvent sends a provisioning event if the provider supports it.
+// Uses a short timeout to avoid blocking provisioning progress.
 func (o *Orchestrator) emitEvent(ctx context.Context, eventType events.EventType, step, message string, progress float64) {
 	reporter, ok := o.provider.(EventReporter)
 	if !ok {
 		return
 	}
 	ev := events.ProvisionEvent{
-		Type:     eventType,
-		Step:     step,
-		Message:  message,
-		Progress: progress,
+		Type:      eventType,
+		Step:      step,
+		Message:   message,
+		Progress:  progress,
+		Timestamp: time.Now(),
 	}
 	data, err := events.MarshalEvent(&ev)
 	if err != nil {
 		o.log.Warn("Failed to marshal event", "error", err)
 		return
 	}
-	if sendErr := reporter.SendEvent(ctx, data); sendErr != nil {
+	evCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if sendErr := reporter.SendEvent(evCtx, data); sendErr != nil {
 		o.log.Debug("Failed to send event", "error", sendErr)
 	}
 }
@@ -190,13 +195,15 @@ func (o *Orchestrator) shipDebugDump(ctx context.Context) {
 	if !ok {
 		return
 	}
-	dump := debug.Collect(ctx)
+	dumpCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	dump := debug.Collect(dumpCtx)
 	data, err := dump.Marshal()
 	if err != nil {
 		o.log.Warn("Failed to marshal debug dump", "error", err)
 		return
 	}
-	if shipErr := reporter.ShipDebug(ctx, string(data)); shipErr != nil {
+	if shipErr := reporter.ShipDebug(dumpCtx, string(data)); shipErr != nil {
 		o.log.Warn("Failed to ship debug dump", "error", shipErr)
 	}
 }

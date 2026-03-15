@@ -1,4 +1,4 @@
-// debug package provides structured debug dump collection.
+// Package debug provides structured debug dump collection.
 package debug
 
 import (

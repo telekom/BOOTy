@@ -1,4 +1,4 @@
-// metrics package provides provisioning metrics collection.
+// Package metrics provides provisioning metrics collection.
 package metrics
 
 import (
