@@ -1,6 +1,6 @@
 # Proposal: Network Configuration Persistence
 
-## Status: Implemented
+## Status: In Progress
 
 ## Priority: P2
 

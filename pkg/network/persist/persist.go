@@ -34,15 +34,15 @@ func ParseOSFamily(s string) (OSFamily, error) {
 	}
 }
 
-// ConfigPath returns the network config directory for the OS family.
+// ConfigPath returns the relative network config directory for the OS family.
 func (f OSFamily) ConfigPath() string {
 	switch f {
 	case Ubuntu:
-		return "/etc/netplan"
+		return "etc/netplan"
 	case RHEL:
-		return "/etc/NetworkManager/system-connections"
+		return "etc/NetworkManager/system-connections"
 	case Flatcar:
-		return "/etc/systemd/network"
+		return "etc/systemd/network"
 	default:
 		return ""
 	}
@@ -72,11 +72,11 @@ type BondConfig struct {
 
 // VLANConfig describes a VLAN interface.
 type VLANConfig struct {
-	Name   string `json:"name"`
-	Parent string `json:"parent"`
-	ID     int    `json:"id"`
-	DHCP   bool   `json:"dhcp,omitempty"`
-	Addr   string `json:"address,omitempty"`
+	Name    string `json:"name"`
+	Parent  string `json:"parent"`
+	ID      int    `json:"id"`
+	DHCP    bool   `json:"dhcp,omitempty"`
+	Address string `json:"address,omitempty"`
 }
 
 // DNSConfig holds DNS settings.
@@ -210,8 +210,8 @@ func renderNetplanVLANs(b *strings.Builder, vlans []VLANConfig) {
 		fmt.Fprintf(b, "      link: %s\n", vlans[i].Parent)
 		if vlans[i].DHCP {
 			b.WriteString("      dhcp4: true\n")
-		} else if vlans[i].Addr != "" {
-			fmt.Fprintf(b, "      addresses: [%s]\n", vlans[i].Addr)
+		} else if vlans[i].Address != "" {
+			fmt.Fprintf(b, "      addresses: [%s]\n", vlans[i].Address)
 		}
 	}
 }
@@ -275,6 +275,9 @@ func writeNetplan(dir string, cfg *NetworkConfig) error {
 }
 
 func writeNetworkd(dir string, cfg *NetworkConfig) error {
+	if len(cfg.Bonds) > 0 || len(cfg.VLANs) > 0 {
+		return fmt.Errorf("networkd renderer does not yet support bonds or vlans")
+	}
 	for i := range cfg.Interfaces {
 		content := RenderNetworkdUnit(&cfg.Interfaces[i])
 		filename := fmt.Sprintf("10-booty-%s.network", cfg.Interfaces[i].Name)
@@ -310,6 +313,9 @@ func renderNMKeyfile(iface *InterfaceConfig) string {
 }
 
 func writeNMKeyfiles(dir string, cfg *NetworkConfig) error {
+	if len(cfg.Bonds) > 0 || len(cfg.VLANs) > 0 {
+		return fmt.Errorf("networkmanager renderer does not yet support bonds or vlans")
+	}
 	for i := range cfg.Interfaces {
 		content := renderNMKeyfile(&cfg.Interfaces[i])
 		filename := fmt.Sprintf("booty-%s.nmconnection", cfg.Interfaces[i].Name)
