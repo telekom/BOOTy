@@ -47,16 +47,16 @@ func (m *Manifest) AllModules() []string {
 
 // Manager handles kernel module operations.
 type Manager struct {
-	log            *slog.Logger
-	modulesDir     string
+	log             *slog.Logger
+	modulesDir      string
 	procModulesPath string
 }
 
 // NewManager creates a kernel module manager.
 func NewManager(log *slog.Logger) *Manager {
 	return &Manager{
-		log:            log,
-		modulesDir:     "/lib/modules",
+		log:             log,
+		modulesDir:      "/lib/modules",
 		procModulesPath: "/proc/modules",
 	}
 }
