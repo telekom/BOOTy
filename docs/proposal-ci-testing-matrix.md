@@ -1,6 +1,6 @@
 # Proposal: CI Testing Matrix — DHCP, LACP, Static, Multi-NIC, KVM
 
-## Status: Proposal
+## Status: Implemented (PR #68)
 
 ## Priority: P1
 
