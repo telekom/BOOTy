@@ -21,6 +21,13 @@ type TokenResponse struct {
 	TokenType    string `json:"token_type"`
 }
 
+// tokenRequest is the JSON body sent to the token endpoint.
+type tokenRequest struct {
+	MachineSerial string `json:"machineSerial"`
+	BMCMAC        string `json:"bmcMAC"`
+	Algorithm     string `json:"algorithm,omitempty"`
+}
+
 // TokenManager handles JWT acquisition, renewal, and failure recovery.
 type TokenManager struct {
 	tokenURL     string
@@ -32,6 +39,8 @@ type TokenManager struct {
 	log          *slog.Logger
 	onFatal      func()
 	backoff      func(attempt int) time.Duration
+	algorithm    string
+	acquired     bool // true after a successful Acquire call
 }
 
 // NewTokenManager creates a token manager with an initial bootstrap token.
@@ -48,6 +57,11 @@ func NewTokenManager(tokenURL, bootstrapToken string, log *slog.Logger) *TokenMa
 	}
 }
 
+// SetAlgorithm configures the token algorithm (e.g. RS256, ES256) sent in requests.
+func (tm *TokenManager) SetAlgorithm(alg string) {
+	tm.algorithm = alg
+}
+
 // SetOnFatal sets the callback invoked when token renewal is permanently exhausted.
 // Must be called before StartRenewal.
 func (tm *TokenManager) SetOnFatal(fn func()) {
@@ -58,10 +72,18 @@ func (tm *TokenManager) SetOnFatal(fn func()) {
 
 // Acquire exchanges the bootstrap token for a JWT from the token endpoint.
 func (tm *TokenManager) Acquire(ctx context.Context, serial, bmcMAC string) error {
-	body := fmt.Sprintf(`{"machineSerial":%q,"bmcMAC":%q}`, serial, bmcMAC)
+	reqBody := tokenRequest{
+		MachineSerial: serial,
+		BMCMAC:        bmcMAC,
+		Algorithm:     tm.algorithm,
+	}
+	data, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("marshal token request: %w", err)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tm.tokenURL,
-		strings.NewReader(body))
+		strings.NewReader(string(data)))
 	if err != nil {
 		return fmt.Errorf("create token request: %w", err)
 	}
@@ -73,13 +95,13 @@ func (tm *TokenManager) Acquire(ctx context.Context, serial, bmcMAC string) erro
 
 	resp, err := tm.client.Do(req) //nolint:gosec // G704: token URL from trusted config
 	if err != nil {
-		return fmt.Errorf("acquire token: %w", err)
+		return fmt.Errorf("acquire token from %s: %w", tm.tokenURL, err)
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return fmt.Errorf("acquire token: status %d", resp.StatusCode)
+		return fmt.Errorf("acquire token from %s: status %d", tm.tokenURL, resp.StatusCode)
 	}
 
 	var tokenResp TokenResponse
@@ -87,10 +109,18 @@ func (tm *TokenManager) Acquire(ctx context.Context, serial, bmcMAC string) erro
 		return fmt.Errorf("decode token response: %w", err)
 	}
 
+	if tokenResp.AccessToken == "" {
+		return fmt.Errorf("acquire token from %s: empty access_token in response", tm.tokenURL)
+	}
+	if tokenResp.ExpiresIn <= 0 {
+		return fmt.Errorf("acquire token from %s: invalid expires_in %d", tm.tokenURL, tokenResp.ExpiresIn)
+	}
+
 	tm.mu.Lock()
 	tm.token = tokenResp.AccessToken
 	tm.refreshToken = tokenResp.RefreshToken
 	tm.expiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+	tm.acquired = true
 	tm.mu.Unlock()
 
 	tm.log.Info("JWT acquired", "expiresIn", tokenResp.ExpiresIn)
@@ -107,12 +137,24 @@ func (tm *TokenManager) Token() string {
 }
 
 // StartRenewal begins the background renewal goroutine.
-// Renews at 80% of token lifetime.
-func (tm *TokenManager) StartRenewal(ctx context.Context) {
+// Renews at 80% of token lifetime. Must be called after a successful Acquire.
+func (tm *TokenManager) StartRenewal(ctx context.Context) error {
+	tm.mu.RLock()
+	if !tm.acquired {
+		tm.mu.RUnlock()
+		return fmt.Errorf("cannot start renewal: Acquire has not been called")
+	}
+	tm.mu.RUnlock()
 	go tm.renewLoop(ctx)
+	return nil
 }
 
 func (tm *TokenManager) renewLoop(ctx context.Context) {
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	// Drain the initial fire so we start with a proper sleep.
+	<-timer.C
+
 	for {
 		tm.mu.RLock()
 		remaining := time.Until(tm.expiresAt)
@@ -123,9 +165,10 @@ func (tm *TokenManager) renewLoop(ctx context.Context) {
 		}
 
 		renewAfter := time.Duration(float64(remaining) * 0.8)
+		timer.Reset(renewAfter)
 
 		select {
-		case <-time.After(renewAfter):
+		case <-timer.C:
 			if err := tm.renewWithRetry(ctx); err != nil {
 				tm.log.Error("token renewal exhausted", "error", err)
 				tm.mu.RLock()

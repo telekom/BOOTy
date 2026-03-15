@@ -1193,6 +1193,22 @@ func TestSendEvent_TelemetryEnabled(t *testing.T) {
 	}
 }
 
+func TestParseVarsTokenFields(t *testing.T) {
+	input := `export TOKEN_URL="https://auth.example.com/token"
+export TOKEN_ALGORITHM="ES256"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TokenURL != "https://auth.example.com/token" {
+		t.Errorf("TokenURL = %q, want %q", cfg.TokenURL, "https://auth.example.com/token")
+	}
+	if cfg.TokenAlgorithm != "ES256" {
+		t.Errorf("TokenAlgorithm = %q, want %q", cfg.TokenAlgorithm, "ES256")
+	}
+}
+
 func TestParseVarsRescueMode(t *testing.T) {
 	vars := "RESCUE_MODE=shell\n" +
 		"RESCUE_SSH_PUBKEY=ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest admin@ops\n" +

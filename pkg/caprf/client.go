@@ -22,9 +22,10 @@ import (
 
 // Client communicates with the CAPRF provisioning server.
 type Client struct {
-	httpClient *http.Client
-	cfg        *config.MachineConfig
-	log        *slog.Logger
+	httpClient   *http.Client
+	cfg          *config.MachineConfig
+	log          *slog.Logger
+	tokenManager *auth.TokenManager
 }
 
 // New creates a CAPRF client by parsing the vars file at the given path.
@@ -58,7 +59,7 @@ func NewFromConfig(cfg *config.MachineConfig) *Client {
 
 // AcquireToken exchanges the bootstrap token for a JWT if a token URL
 // is configured. The acquired JWT replaces the bootstrap token for all
-// subsequent API calls.
+// subsequent API calls. The TokenManager is retained for background renewal.
 func (c *Client) AcquireToken(ctx context.Context) error {
 	if c.cfg.TokenURL == "" {
 		return nil
@@ -69,12 +70,32 @@ func (c *Client) AcquireToken(ctx context.Context) error {
 	}
 
 	tm := auth.NewTokenManager(c.cfg.TokenURL, c.cfg.Token, c.log)
+	if c.cfg.TokenAlgorithm != "" {
+		tm.SetAlgorithm(c.cfg.TokenAlgorithm)
+	}
 	if err := tm.Acquire(ctx, c.cfg.Hostname, ""); err != nil {
 		return fmt.Errorf("acquire jwt: %w", err)
 	}
 	c.cfg.Token = tm.Token()
+	c.tokenManager = tm
 	c.log.Info("JWT token acquired, using for subsequent API calls")
 	return nil
+}
+
+// StartTokenRenewal begins background JWT renewal if a token was acquired.
+func (c *Client) StartTokenRenewal(ctx context.Context) error {
+	if c.tokenManager == nil {
+		return nil
+	}
+	return c.tokenManager.StartRenewal(ctx)
+}
+
+// CurrentToken returns the latest token, preferring the token manager if active.
+func (c *Client) CurrentToken() string {
+	if c.tokenManager != nil {
+		return c.tokenManager.Token()
+	}
+	return c.cfg.Token
 }
 
 // GetConfig returns the parsed machine configuration.
