@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNew(t *testing.T) {
@@ -112,7 +113,12 @@ func TestDispatcherSend(t *testing.T) {
 	if err := d.Send(context.Background(), e); err != nil {
 		t.Fatalf("Send() error: %v", err)
 	}
-	received := <-ch
+	var received Event
+	select {
+	case received = <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for event")
+	}
 	if received.Type != ProvisionStarted {
 		t.Errorf("received Type = %q, want %q", received.Type, ProvisionStarted)
 	}
