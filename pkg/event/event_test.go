@@ -100,7 +100,10 @@ func TestDispatcherSend(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d := NewDispatcher(srv.URL, slog.Default())
+	d, err := NewDispatcher(srv.URL, slog.Default())
+	if err != nil {
+		t.Fatalf("NewDispatcher() error: %v", err)
+	}
 	e := New(ProvisionStarted, Machine{Name: "test-host"})
 	if err := d.Send(context.Background(), e); err != nil {
 		t.Fatalf("Send() error: %v", err)
@@ -119,7 +122,10 @@ func TestDispatcherSendError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d := NewDispatcher(srv.URL, slog.Default())
+	d, err := NewDispatcher(srv.URL, slog.Default())
+	if err != nil {
+		t.Fatalf("NewDispatcher() error: %v", err)
+	}
 	e := New(ProvisionFailed, Machine{Name: "fail-host"})
 	if err := d.Send(context.Background(), e); err == nil {
 		t.Error("expected error for 500 response")
