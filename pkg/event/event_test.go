@@ -88,16 +88,18 @@ func TestEventTypes(t *testing.T) {
 }
 
 func TestDispatcherSend(t *testing.T) {
-	var received Event
+	ch := make(chan Event, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Content-Type") != "application/json" {
 			t.Error("missing content-type header")
 		}
-		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+		var ev Event
+		if err := json.NewDecoder(r.Body).Decode(&ev); err != nil {
 			t.Errorf("decode body: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
+		ch <- ev
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -110,6 +112,7 @@ func TestDispatcherSend(t *testing.T) {
 	if err := d.Send(context.Background(), e); err != nil {
 		t.Fatalf("Send() error: %v", err)
 	}
+	received := <-ch
 	if received.Type != ProvisionStarted {
 		t.Errorf("received Type = %q, want %q", received.Type, ProvisionStarted)
 	}
@@ -142,6 +145,7 @@ func TestNewDispatcher_InvalidURL(t *testing.T) {
 		{"no scheme", "example.com/webhook"},
 		{"empty", ""},
 		{"ftp scheme", "ftp://example.com/webhook"},
+		{"userinfo", "https://user:pass@example.com/webhook"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

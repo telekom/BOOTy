@@ -32,8 +32,11 @@ func NewDispatcher(webhookURL string, log *slog.Logger) (*Dispatcher, error) {
 	if u.Host == "" {
 		return nil, fmt.Errorf("webhook URL must have a host")
 	}
+	if u.User != nil {
+		return nil, fmt.Errorf("webhook URL must not contain credentials")
+	}
 	if log == nil {
-		log = slog.Default()
+		log = slog.Default().With("component", "event")
 	}
 	return &Dispatcher{
 		url: &url.URL{
@@ -70,8 +73,8 @@ func (d *Dispatcher) Send(ctx context.Context, e *Event) error {
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 	_, _ = io.Copy(io.Discard, resp.Body)
 
-	if resp.StatusCode >= http.StatusBadRequest {
-		return fmt.Errorf("webhook returned status %d", resp.StatusCode)
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("webhook returned non-2xx status %d", resp.StatusCode)
 	}
 
 	d.log.Debug("Event dispatched", "type", e.Type, "machine", e.Machine.Name)
