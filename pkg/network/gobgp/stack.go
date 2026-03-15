@@ -49,6 +49,7 @@ func (s *Stack) Setup(ctx context.Context, _ *network.Config) error {
 	}
 
 	if err := s.underlay.Setup(ctx); err != nil {
+		s.cleanupVRF()
 		return fmt.Errorf("underlay setup: %w", err)
 	}
 
