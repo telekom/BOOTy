@@ -523,7 +523,6 @@ func TestRedactURLs(t *testing.T) {
 }
 
 func TestIsSafeDeviceName(t *testing.T) {
-	t.Helper()
 	tests := []struct {
 		name string
 		want bool
@@ -607,20 +606,34 @@ func TestCopyTreePathTraversal(t *testing.T) {
 	src := t.TempDir()
 	dst := t.TempDir()
 
-	// Create a directory with a traversal component.
-	traversalDir := filepath.Join(src, "..", "escape")
-	// We can't actually create ../escape relative to src in a temp dir,
-	// so we test by creating a dir named literally "../etc" inside src
-	// (which filepath.Join will resolve).
-	badDir := filepath.Join(src, "subdir")
-	if err := os.MkdirAll(badDir, 0o755); err != nil {
+	// Create a normal file under src.
+	if err := os.WriteFile(filepath.Join(src, "ok.txt"), []byte("safe"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_ = traversalDir // not used directly
 
-	// The function resolves paths via filepath.Abs and checks HasPrefix,
-	// so normal subdirectories should be fine.
+	// Normal copy should succeed.
 	if err := copyTree(src, dst); err != nil {
 		t.Fatalf("copyTree() on clean tree should succeed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "ok.txt")); err != nil {
+		t.Errorf("expected ok.txt to be copied: %v", err)
+	}
+
+	// Create a symlink inside src that points outside.
+	outsideFile := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outsideFile, []byte("escape"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(src, "escape")); err != nil {
+		t.Fatal(err)
+	}
+
+	dst2 := t.TempDir()
+	// Copy should skip the symlink (no error, but symlink not followed).
+	if err := copyTree(src, dst2); err != nil {
+		t.Fatalf("copyTree() should skip symlinks without error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst2, "escape")); !os.IsNotExist(err) {
+		t.Error("expected symlink target to not be copied")
 	}
 }

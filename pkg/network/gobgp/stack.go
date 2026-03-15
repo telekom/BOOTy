@@ -60,6 +60,14 @@ func (s *Stack) Setup(ctx context.Context, _ *network.Config) error {
 		if teardownErr := s.underlay.Teardown(ctx); teardownErr != nil {
 			s.log.Warn("Failed to tear down underlay after overlay failure", "error", teardownErr)
 		}
+		// Clean up the VRF created earlier.
+		if name := s.overlay.cfg.VRFName; name != "" && s.overlay.createdVRF {
+			if link, linkErr := netlink.LinkByName(name); linkErr == nil {
+				if delErr := netlink.LinkDel(link); delErr != nil {
+					s.log.Warn("Failed to delete VRF after overlay failure", "name", name, "error", delErr)
+				}
+			}
+		}
 		return fmt.Errorf("overlay setup: %w", err)
 	}
 
