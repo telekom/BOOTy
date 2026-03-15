@@ -966,3 +966,16 @@ func TestClientReportHealthChecksNoURL(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+func TestParseVarsTelemetryConfig(t *testing.T) {
+	vars := "TELEMETRY_ENABLED=true\nTELEMETRY_URL=https://caprf.example.com/telemetry\n"
+	cfg, err := ParseVars(strings.NewReader(vars))
+	if err != nil {
+		t.Fatalf("ParseVars() error: %v", err)
+	}
+	if !cfg.TelemetryEnabled {
+		t.Error("TelemetryEnabled should be true")
+	}
+	if cfg.TelemetryURL != "https://caprf.example.com/telemetry" {
+		t.Errorf("TelemetryURL = %q, want %q", cfg.TelemetryURL, "https://caprf.example.com/telemetry")
+	}
+}

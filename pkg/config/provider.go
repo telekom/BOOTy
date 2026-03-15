@@ -100,6 +100,10 @@ type MachineConfig struct {
 	// Network mode override.
 	NetworkMode string // NETWORK_MODE: "gobgp" to use in-process GoBGP instead of FRR
 
+	// Telemetry configuration.
+	TelemetryEnabled bool   // TELEMETRY_ENABLED: enable provisioning metrics collection
+	TelemetryURL     string // TELEMETRY_URL: POST endpoint for metrics snapshot
+
 	// Files and commands from ISO /deploy/ directories.
 	ProvisionerFiles []string // Paths to files in /deploy/file-system/
 	MachineFiles     []string // Paths to files in /deploy/machine-files/
