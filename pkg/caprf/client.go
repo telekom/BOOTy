@@ -365,6 +365,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"FIRMWARE_MIN_BMC":            &cfg.FirmwareMinBMC,
 		"HEALTH_SKIP_CHECKS":          &cfg.HealthSkipChecks,
 		"HEALTH_CHECK_URL":            &cfg.HealthCheckURL,
+		"TELEMETRY_URL":               &cfg.TelemetryURL,
 	}
 
 	if ptr, ok := strFields[key]; ok {
@@ -421,8 +422,8 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) {
 		setIntField(&cfg.HealthMinMemoryGB, value)
 	case "HEALTH_MIN_CPUS":
 		setIntField(&cfg.HealthMinCPUs, value)
-	case "DRY_RUN":
-		cfg.DryRun = parseBoolVar(value)
+	case "TELEMETRY_ENABLED":
+		cfg.TelemetryEnabled = parseBoolVar(value)
 	}
 }
 

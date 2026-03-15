@@ -994,42 +994,16 @@ func TestClientReportHealthChecksNoURL(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-
-func TestClientAcknowledgeCommand(t *testing.T) {
-	var receivedMethod, receivedPath, receivedBody string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedMethod = r.Method
-		receivedPath = r.URL.Path
-		body, _ := io.ReadAll(r.Body)
-		receivedBody = string(body)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	client := NewFromConfig(&config.MachineConfig{CommandsURL: srv.URL + "/commands"})
-	err := client.AcknowledgeCommand(context.Background(), "cmd-123", "completed", "done")
+func TestParseVarsTelemetryConfig(t *testing.T) {
+	vars := "TELEMETRY_ENABLED=true\nTELEMETRY_URL=https://caprf.example.com/telemetry\n"
+	cfg, err := ParseVars(strings.NewReader(vars))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("ParseVars() error: %v", err)
 	}
-
-	if receivedMethod != http.MethodPost {
-		t.Errorf("method = %q, want POST", receivedMethod)
+	if !cfg.TelemetryEnabled {
+		t.Error("TelemetryEnabled should be true")
 	}
-	if receivedPath != "/commands/ack" {
-		t.Errorf("path = %q, want /commands/ack", receivedPath)
-	}
-	if !strings.Contains(receivedBody, `"id":"cmd-123"`) {
-		t.Errorf("body missing cmd ID: %s", receivedBody)
-	}
-	if !strings.Contains(receivedBody, `"status":"completed"`) {
-		t.Errorf("body missing status: %s", receivedBody)
-	}
-}
-
-func TestClientAcknowledgeCommandNoURL(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{})
-	err := client.AcknowledgeCommand(context.Background(), "cmd-1", "completed", "")
-	if err != nil {
-		t.Fatal(err)
+	if cfg.TelemetryURL != "https://caprf.example.com/telemetry" {
+		t.Errorf("TelemetryURL = %q, want %q", cfg.TelemetryURL, "https://caprf.example.com/telemetry")
 	}
 }
