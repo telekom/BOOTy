@@ -21,6 +21,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/health"
 	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/inventory"
+	"github.com/telekom/BOOTy/pkg/rescue"
 )
 
 // Step represents a named provisioning step.
@@ -182,6 +183,22 @@ func (o *Orchestrator) executeStep(ctx context.Context, step Step, cp *Checkpoin
 		o.log.Warn("failed to save checkpoint", "error", saveErr)
 	}
 	return nil
+}
+
+// RescueAction returns the rescue action to take after a provisioning failure,
+// based on the machine config's RescueMode setting.
+func (o *Orchestrator) RescueAction(state *rescue.RetryState) rescue.Action {
+	cfg := &rescue.Config{Mode: rescue.ModeReboot}
+	if o.cfg.RescueMode != "" {
+		mode, err := rescue.ParseMode(o.cfg.RescueMode)
+		if err != nil {
+			o.log.Warn("invalid rescue mode, defaulting to reboot", "mode", o.cfg.RescueMode, "error", err)
+		} else {
+			cfg.Mode = mode
+		}
+	}
+	cfg.ApplyDefaults()
+	return rescue.Decide(cfg, state)
 }
 
 func (o *Orchestrator) reportInit(ctx context.Context) error {
