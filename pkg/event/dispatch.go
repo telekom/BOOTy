@@ -7,25 +7,31 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 )
 
 // Dispatcher sends events to a webhook URL.
 type Dispatcher struct {
-	url    string
+	url    *url.URL
 	client *http.Client
 	log    *slog.Logger
 }
 
 // NewDispatcher creates a webhook event dispatcher.
-func NewDispatcher(webhookURL string, log *slog.Logger) *Dispatcher {
+// It validates the webhook URL at construction time.
+func NewDispatcher(webhookURL string, log *slog.Logger) (*Dispatcher, error) {
+	u, err := url.Parse(webhookURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse webhook URL: %w", err)
+	}
 	return &Dispatcher{
-		url: webhookURL,
+		url: u,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
 		log: log,
-	}
+	}, nil
 }
 
 // Send dispatches an event to the webhook URL.
@@ -35,7 +41,7 @@ func (d *Dispatcher) Send(ctx context.Context, e *Event) error {
 		return fmt.Errorf("marshal event: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.url, bytes.NewReader(data)) //nolint:gosec // G704 — URL from trusted admin webhook config
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.url.String(), bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
