@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/telekom/BOOTy/pkg/cloudinit"
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/executil"
@@ -95,6 +96,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"resize-filesystem", o.resizeFilesystem},
 		{"configure-kubelet", o.configureKubelet},
 		{"configure-grub", o.configureGRUB},
+		{"inject-cloudinit", o.injectCloudInit},
 		{"copy-machine-files", o.copyMachineFiles},
 		{"run-machine-commands", o.runMachineCommands},
 		{"run-post-provision-cmds", o.runPostProvisionCmds},
@@ -702,6 +704,29 @@ func (o *Orchestrator) configureKubelet(_ context.Context) error {
 
 func (o *Orchestrator) configureGRUB(ctx context.Context) error {
 	return o.config.ConfigureGRUB(ctx, o.cfg)
+}
+
+func (o *Orchestrator) injectCloudInit(_ context.Context) error {
+	if !o.cfg.CloudInitEnabled {
+		return nil
+	}
+
+	ciCfg := &cloudinit.Config{
+		Hostname:   o.cfg.Hostname,
+		FQDN:       o.cfg.Hostname,
+		StaticIP:   o.cfg.StaticIP,
+		Gateway:    o.cfg.StaticGateway,
+		BondIfaces: strings.Split(o.cfg.BondInterfaces, ","),
+		BondMode:   o.cfg.BondMode,
+	}
+
+	ud, md, nc := cloudinit.Generate(ciCfg)
+	rootPath := o.config.rootDir
+	if err := cloudinit.InjectNoCloud(rootPath, ud, md, nc); err != nil {
+		return fmt.Errorf("inject cloud-init: %w", err)
+	}
+	o.log.Info("Cloud-init NoCloud seed injected", "root", rootPath)
+	return nil
 }
 
 func (o *Orchestrator) copyMachineFiles(_ context.Context) error {

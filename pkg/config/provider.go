@@ -142,6 +142,10 @@ type MachineConfig struct {
 	// EVPN L2 overlay (Type-2/3 route processing) — disabled by default.
 	EVPNL2Enabled bool // EVPN_L2_ENABLED: enable Type-2/3 route handling for L2 overlay
 
+	// Cloud-init generation.
+	CloudInitEnabled    bool   // CLOUDINIT_ENABLED: generate and inject cloud-init config
+	CloudInitDatasource string // CLOUDINIT_DATASOURCE: "nocloud" (default)
+
 	// Files and commands from ISO /deploy/ directories.
 	ProvisionerFiles []string // Paths to files in /deploy/file-system/
 	MachineFiles     []string // Paths to files in /deploy/machine-files/
