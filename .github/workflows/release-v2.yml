@@ -1,0 +1,186 @@
+name: Release v2
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write # for cosign signing
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }}/${{ matrix.flavor }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+        flavor: [default, gobgp, slim, micro]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Install cross-compilation tools
+        if: matrix.arch == 'arm64'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build binary
+        if: matrix.flavor == 'default'
+        env:
+          CC: ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          CGO_ENABLED=1 GOOS=linux GOARCH=${{ matrix.arch }} CC=$CC \
+            go build -ldflags "-s -w \
+              -X main.Version=${VERSION} \
+              -X main.Build=${{ github.sha }} \
+              -linkmode external -extldflags '-static'" \
+            -o booty-${{ matrix.arch }}
+
+      - name: Build initramfs (${{ matrix.flavor }})
+        if: matrix.arch == 'amd64'
+        run: |
+          TARGET_ARG=""
+          if [ "${{ matrix.flavor }}" != "default" ]; then
+            TARGET_ARG="--target=${{ matrix.flavor }}"
+          fi
+          docker buildx build --platform linux/${{ matrix.arch }} \
+            ${TARGET_ARG} \
+            --output type=local,dest=out-${{ matrix.flavor }} \
+            -f initrd.Dockerfile .
+
+      - name: Generate checksums
+        run: |
+          if [ -f booty-${{ matrix.arch }} ]; then
+            sha256sum booty-${{ matrix.arch }} > booty-${{ matrix.arch }}.sha256
+          fi
+          if [ -f out-${{ matrix.flavor }}/initramfs.cpio.gz ]; then
+            cp out-${{ matrix.flavor }}/initramfs.cpio.gz ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.gz
+            sha256sum ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.gz > ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.gz.sha256
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.flavor }}-${{ matrix.arch }}
+          path: |
+            booty-${{ matrix.arch }}
+            booty-${{ matrix.arch }}.sha256
+            ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.gz
+            ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.gz.sha256
+          if-no-files-found: ignore
+
+  sbom:
+    name: Generate SBOM
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v7
+        with:
+          name: sbom
+          path: sbom.spdx.json
+
+  scan:
+    name: Vulnerability Scan
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          exit-code: 1
+          format: table
+
+  sign:
+    name: Sign Artifacts
+    needs: [build, sbom]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Sign checksums with Cosign
+        run: |
+          for f in $(find artifacts -name "*.sha256"); do
+            cosign sign-blob --yes \
+              --output-signature "${f}.sig" \
+              --bundle "${f}.bundle" \
+              "$f"
+          done
+
+  changelog:
+    name: Generate Changelog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        uses: orhun/git-cliff-action@v3
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: CHANGELOG.md
+
+      - name: Upload changelog
+        uses: actions/upload-artifact@v7
+        with:
+          name: changelog
+          path: CHANGELOG.md
+
+  release:
+    name: Create GitHub Release
+    needs: [build, sbom, scan, sign, changelog]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect release files
+        run: |
+          mkdir release-files
+          find artifacts -type f \( -name "booty-*" -o -name "*.cpio.gz" -o -name "*.sha256" -o -name "*.sig" -o -name "*.bundle" -o -name "*.spdx.json" \) \
+            -exec cp {} release-files/ \;
+          ls -lh release-files/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: artifacts/changelog/CHANGELOG.md
+          files: release-files/*
