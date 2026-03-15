@@ -20,8 +20,8 @@ func TestSystemdBoot_Configure(t *testing.T) {
 	}
 
 	cfg := BootConfig{
-		DefaultKernel: "ubuntu",
-		Timeout:       5,
+		DefaultEntry: "ubuntu",
+		Timeout:      5,
 		Entries: []BootEntry{
 			{
 				ID:      "ubuntu",
