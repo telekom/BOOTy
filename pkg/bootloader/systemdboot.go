@@ -61,7 +61,7 @@ func (s *SystemdBoot) Install(ctx context.Context, rootPath, espPath string) err
 
 	// Look for the systemd-boot EFI binary in common locations.
 	candidates := []string{
-		filepath.Join(rootPath, "usr/lib/systemd/boot/efi/systemd-bootx64.efi"),
+		filepath.Join(rootPath, "usr", "lib", "systemd", "boot", "efi", "systemd-bootx64.efi"),
 		"/bin/systemd-bootx64.efi",
 	}
 	var srcEFI string
@@ -151,9 +151,9 @@ func (s *SystemdBoot) ListEntries(_ context.Context, rootPath string) ([]BootEnt
 
 // SetDefault sets the default boot entry via bootctl, falling back to writing
 // loader.conf directly when bootctl is not available.
-func (s *SystemdBoot) SetDefault(_ context.Context, entryID string) error {
+func (s *SystemdBoot) SetDefault(ctx context.Context, entryID string) error {
 	if _, err := exec.LookPath("bootctl"); err == nil {
-		cmd := exec.Command("bootctl", "set-default", entryID+".conf")
+		cmd := exec.CommandContext(ctx, "bootctl", "set-default", entryID+".conf")
 		out, runErr := cmd.CombinedOutput()
 		if runErr == nil {
 			return nil
@@ -179,7 +179,10 @@ func (s *SystemdBoot) SetDefault(_ context.Context, entryID string) error {
 	if !found {
 		lines = append(lines, "default "+entryID+".conf")
 	}
-	return os.WriteFile(loaderConf, []byte(strings.Join(lines, "\n")), 0o644)
+	if err := os.WriteFile(loaderConf, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		return fmt.Errorf("write loader.conf: %w", err)
+	}
+	return nil
 }
 
 func (s *SystemdBoot) generateLoaderConf(cfg *BootConfig) error {
