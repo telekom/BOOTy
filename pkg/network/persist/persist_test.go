@@ -325,25 +325,31 @@ func TestRenderNetplan_DNSAndRoutes(t *testing.T) {
 		},
 	}
 	result := RenderNetplan(cfg)
-	if !strings.Contains(result, "nameservers:") {
-		t.Error("missing nameservers")
+	// DNS and routes must appear under the interface stanza, not at root.
+	ethIdx := strings.Index(result, "    eth0:")
+	if ethIdx < 0 {
+		t.Fatal("missing eth0 stanza")
 	}
-	if !strings.Contains(result, "addresses: [8.8.8.8, 8.8.4.4]") {
-		t.Error("missing dns addresses")
+	ifaceSection := result[ethIdx:]
+	if !strings.Contains(ifaceSection, "nameservers:") {
+		t.Error("nameservers not under interface")
 	}
-	if !strings.Contains(result, "search: [example.com]") {
-		t.Error("missing dns search")
+	if !strings.Contains(ifaceSection, "addresses: [8.8.8.8, 8.8.4.4]") {
+		t.Error("missing dns addresses under interface")
 	}
-	if !strings.Contains(result, "routes:") {
-		t.Error("missing routes")
+	if !strings.Contains(ifaceSection, "search: [example.com]") {
+		t.Error("missing dns search under interface")
 	}
-	if !strings.Contains(result, "to: 10.0.0.0/8") {
+	if !strings.Contains(ifaceSection, "routes:") {
+		t.Error("routes not under interface")
+	}
+	if !strings.Contains(ifaceSection, "to: 10.0.0.0/8") {
 		t.Error("missing route destination")
 	}
-	if !strings.Contains(result, "via: 10.0.0.1") {
+	if !strings.Contains(ifaceSection, "via: 10.0.0.1") {
 		t.Error("missing route gateway")
 	}
-	if !strings.Contains(result, "metric: 100") {
+	if !strings.Contains(ifaceSection, "metric: 100") {
 		t.Error("missing route metric")
 	}
 }
@@ -407,6 +413,47 @@ func TestWriteNetworkd_DNSAndRoutes(t *testing.T) {
 	}
 	if !strings.Contains(content, "Metric=50") {
 		t.Error("missing route metric")
+	}
+}
+
+func TestWriteNetworkd_MTUAndDNS(t *testing.T) {
+	root := t.TempDir()
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{
+			{Name: "eth0", Address: "10.0.0.5/24", Gateway: "10.0.0.1", MTU: 9000},
+		},
+		DNS: DNSConfig{
+			Servers: []string{"8.8.8.8"},
+			Search:  []string{"example.com"},
+		},
+	}
+	if err := Write(root, Flatcar, cfg); err != nil {
+		t.Fatalf("Write() error: %v", err)
+	}
+	path := filepath.Join(root, "etc/systemd/network/10-booty-eth0.network")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error: %v", err)
+	}
+	content := string(data)
+	// DNS must appear under [Network], not after [Link].
+	linkIdx := strings.Index(content, "[Link]")
+	dnsIdx := strings.Index(content, "DNS=8.8.8.8")
+	domainsIdx := strings.Index(content, "Domains=example.com")
+	if linkIdx < 0 {
+		t.Fatal("missing [Link] section")
+	}
+	if dnsIdx < 0 {
+		t.Fatal("missing DNS entry")
+	}
+	if domainsIdx < 0 {
+		t.Fatal("missing Domains entry")
+	}
+	if dnsIdx > linkIdx {
+		t.Error("DNS appears after [Link] — should be under [Network]")
+	}
+	if domainsIdx > linkIdx {
+		t.Error("Domains appears after [Link] — should be under [Network]")
 	}
 }
 
