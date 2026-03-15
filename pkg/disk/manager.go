@@ -102,9 +102,15 @@ func (m *Manager) WipeAllDisks(ctx context.Context) error {
 		if out, err := m.cmd.Run(ctx, "sgdisk", "--zap-all", dev); err != nil {
 			slog.Debug("sgdisk zap failed (may not be GPT)", "device", dev, "output", string(out))
 		}
-		if out, err := m.cmd.Run(ctx, "wipefs", "-af", dev); err != nil {
-			slog.Warn("wipefs failed", "device", dev, "output", string(out), "error", err)
-			failed++
+		// Try pure Go wipe first, fall back to external wipefs.
+		if err := WipeFS(dev); err != nil {
+			slog.Debug("Go WipeFS failed, trying wipefs", "device", dev, "error", err)
+			if out, err := m.cmd.Run(ctx, "wipefs", "-af", dev); err != nil {
+				slog.Warn("wipefs failed", "device", dev, "output", string(out), "error", err)
+				failed++
+			} else {
+				wiped++
+			}
 		} else {
 			wiped++
 		}
@@ -357,8 +363,14 @@ func (m *Manager) ResizeFilesystem(ctx context.Context, device string) error {
 }
 
 // PartProbe re-reads partition table.
+// Tries the pure Go ioctl approach first, falls back to external partprobe.
 func (m *Manager) PartProbe(ctx context.Context, disk string) error {
 	slog.Info("Re-reading partition table", "disk", disk)
+	if err := RereadPartitions(disk); err == nil {
+		slog.Info("Partition table re-read via ioctl", "disk", disk)
+		return nil
+	}
+	slog.Debug("ioctl re-read failed, falling back to partprobe", "disk", disk)
 	out, err := m.cmd.Run(ctx, "partprobe", disk)
 	if err != nil {
 		return fmt.Errorf("partprobe %s: %s: %w", disk, string(out), err)
