@@ -123,13 +123,14 @@ func (t *StepTracker) RecordRetry(name string) {
 	defer t.mu.Unlock()
 
 	for i := len(t.steps) - 1; i >= 0; i-- {
-		if t.steps[i].Name == name {
-			t.steps[i].Retries++
-			if t.metrics != nil {
-				t.metrics.StepRetries.Inc()
-			}
-			return
+		if t.steps[i].Name != name || t.steps[i].Status != StatusRunning {
+			continue
 		}
+		t.steps[i].Retries++
+		if t.metrics != nil {
+			t.metrics.StepRetries.Inc()
+		}
+		return
 	}
 
 	if t.log != nil {
