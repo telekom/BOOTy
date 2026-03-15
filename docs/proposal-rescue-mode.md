@@ -1,16 +1,15 @@
 # Proposal: Rescue Mode
 
-## Status: Proposal
+## Status: In Progress
 
 ## Priority: P2
 
 ## Summary
 
-Add a **rescue mode** to BOOTy that drops the machine into an interactive
-debug shell instead of provisioning, while maintaining full network
-connectivity and disk access. This enables remote troubleshooting of
-machines that fail provisioning, have hardware issues, or need manual
-inspection.
+Add a **rescue mode** to BOOTy that provides configurable failure recovery
+when provisioning fails. Phase 1 implements a failure-recovery decision
+engine with four modes (reboot, retry, shell, wait). Phase 2 will add an
+interactive SSH-accessible rescue environment.
 
 ## Motivation
 
@@ -21,13 +20,9 @@ options are:
 2. Physical access to the machine — not scalable
 3. Re-provision with debug flags — destroys evidence of the failure
 
-Rescue mode provides a fully-equipped Linux shell running in the BOOTy initrd
-with:
-- Network connectivity (DHCP, static, or EVPN — same as normal provisioning)
-- Access to all local disks (mount, inspect, repair)
-- SSH server for remote access
-- All BOOTy tooling available (`lsblk`, `sgdisk`, `mokutil`, etc.)
-- CAPRF heartbeat so the controller knows the machine is in rescue mode
+Rescue mode provides configurable recovery behavior after provisioning
+failure, allowing operators to choose the best strategy for their
+environment.
 
 ### Industry Context
 
@@ -39,164 +34,58 @@ with:
 
 ## Design
 
-### Activation
+### Phase 1: Failure Recovery (Implemented)
 
-Rescue mode is activated via the CAPRF controller or `/deploy/vars`:
+Phase 1 provides a configurable recovery strategy when provisioning fails,
+controlled via the `RESCUE_MODE` variable in CAPRF `/deploy/vars`:
 
 ```bash
 # /deploy/vars
-export MODE="rescue"
-export RESCUE_SSH_PUBKEY="ssh-ed25519 AAAA... user@admin"
-export RESCUE_PASSWORD_HASH="$6$..."  # optional console password
+export RESCUE_MODE="retry"   # reboot | retry | shell | wait
 ```
 
-Or via standby command dispatch:
+#### Recovery Modes
 
-```json
-{"ID": "cmd-rescue", "Type": "rescue", "Payload": {"sshPubKey": "ssh-ed25519..."}}
-```
+| Mode | Behavior |
+|------|----------|
+| `reboot` | (Default) Reboot the machine immediately |
+| `retry` | Retry provisioning up to MaxRetries times (default: 3) with 30s delay |
+| `shell` | Drop to a local debug shell (via `realm.Shell()`) |
+| `wait` | Wait indefinitely for manual intervention |
 
-### Architecture
-
-```
-┌──────────────────────────────────────────────┐
-│ BOOTy (initrd) — Rescue Mode                 │
-│                                              │
-│  1. Parse /deploy/vars (MODE=rescue)         │
-│  2. Setup networking (same as provision)     │
-│  3. Mount all local disks (read-only)        │
-│  4. Start dropbear SSH server on port 22     │
-│  5. Send heartbeat (status: "rescue")        │
-│  6. Drop to interactive shell (/bin/sh)      │
-│  7. Wait for "reboot" command or manual exit │
-└──────────────────────────────────────────────┘
-```
-
-### SSH Server
-
-Use `dropbear` — a lightweight SSH server (~110 KB binary) suitable for
-initrd environments:
-
-```go
-// main.go — rescue mode entry
-func runRescue(cfg *config.MachineConfig) error {
-    slog.Info("entering rescue mode")
-
-    // Setup networking
-    if err := setupNetworking(cfg); err != nil {
-        return fmt.Errorf("setup networking for rescue: %w", err)
-    }
-
-    // Write SSH authorized_keys
-    if cfg.RescueSSHPubKey != "" {
-        if err := os.MkdirAll("/root/.ssh", 0700); err != nil {
-            return err
-        }
-        if err := os.WriteFile("/root/.ssh/authorized_keys",
-            []byte(cfg.RescueSSHPubKey), 0600); err != nil {
-            return err
-        }
-    }
-
-    // Start dropbear SSH daemon
-    cmd := exec.Command("dropbear", "-R", "-F", "-p", "22")
-    if err := cmd.Start(); err != nil {
-        slog.Warn("failed to start SSH server", "error", err)
-    }
-
-    // Auto-mount local disks read-only
-    mountLocalDisks()
-
-    // Heartbeat loop (rescue status)
-    go rescueHeartbeat(cfg)
-
-    // Interactive shell or wait for reboot command
-    shell := exec.Command("/bin/sh")
-    shell.Stdin = os.Stdin
-    shell.Stdout = os.Stdout
-    shell.Stderr = os.Stderr
-    return shell.Run()
-}
-```
-
-### Disk Access
-
-In rescue mode, all detected block devices are mounted read-only under
-`/rescue/`:
+#### Architecture
 
 ```
-/rescue/sda1  → first partition of sda
-/rescue/sda2  → second partition
-/rescue/nvme0n1p1 → first NVMe partition
+┌─────────────────────────────────────────────┐
+│ BOOTy (initrd) — Failure Recovery           │
+│                                             │
+│  1. Run provisioning steps                  │
+│  2. On failure:                             │
+│     a. Call RescueAction(retryState)        │
+│     b. Decide action from RESCUE_MODE       │
+│     c. retry → loop back to step 1         │
+│     d. shell → realm.Shell()               │
+│     e. wait  → block indefinitely          │
+│     f. reboot → fall through to reboot     │
+└─────────────────────────────────────────────┘
 ```
 
-The operator can remount read-write if needed:
+#### Implementation
 
-```bash
-mount -o remount,rw /rescue/sda2
-```
+- `pkg/rescue/rescue.go` — Config, Validate, ApplyDefaults, Decide, RetryState
+- `pkg/rescue/rescue_test.go` — Comprehensive unit tests
+- `pkg/provision/orchestrator.go` — `RescueAction()` method bridges config to rescue
+- `main.go` — Wires `RescueAction()` into provisioning failure paths
+- `pkg/config/provider.go` — `RescueMode` field parsed from CAPRF vars
+- `pkg/caprf/client.go` — `RESCUE_MODE` env var mapping
 
-### CAPRF Integration
+### Phase 2: Full Rescue Mode (Future)
 
-The controller tracks rescue mode as a distinct machine phase:
-
-```go
-// api/v1alpha1/redfishmachine_phases.go
-const PhaseRescue MachinePhase = "Rescue"
-```
-
-The heartbeat includes rescue status:
-
-```json
-POST /status/heartbeat
-{
-    "status": "rescue",
-    "ssh_host": "10.0.1.42",
-    "ssh_port": 22,
-    "uptime_seconds": 3600
-}
-```
-
-### Exit from Rescue
-
-1. **CAPRF command**: Send `reboot` or `provision` command via standby channel
-2. **Manual reboot**: Operator types `reboot` at the rescue shell
-3. **Timeout**: Optional auto-reboot after configurable duration
-
-## Required Binaries in Initramfs
-
-| Binary | Package | Purpose | Initramfs Flavor | Already Present? |
-|--------|---------|---------|-----------------|------------------|
-| `dropbear` | `dropbear-bin` | Lightweight SSH server (~110 KB) | full, gobgp | **No — add** |
-| `mount` | busybox | Mount local disks in rescue mode | all | **Yes** (busybox) |
-| `lsblk` | busybox | List block devices for auto-mount | all | **Yes** (busybox) |
-
-**Dockerfile change** (tools stage):
-
-```dockerfile
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ... existing packages ... \
-    dropbear-bin \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY --from=tools /usr/sbin/dropbear bin/dropbear
-```
-
-**Note**: `dropbear` adds only ~110 KB to the initramfs. It is included
-in full and gobgp flavors only. Slim and micro flavors do not support
-rescue mode.
-
-## Affected Files
-
-| File | Change |
-|------|--------|
-| `main.go` | Add `runRescue()` function, wire to `MODE=rescue` |
-| `pkg/config/provider.go` | Add `RescueSSHPubKey`, `RescuePasswordHash` |
-| `initrd.Dockerfile` | Add `dropbear` SSH server binary |
-| `pkg/caprf/client.go` | Extend heartbeat with rescue status fields |
-| CAPRF `api/v1alpha1/redfishmachine_phases.go` | Add `PhaseRescue` |
-
-## Configuration
+Phase 2 will add a full interactive rescue environment with:
+- SSH server (dropbear) for remote access
+- Auto-mount local disks under `/rescue/`
+- CAPRF heartbeat with rescue status
+- Configurable auto-reboot timeout
 
 ```bash
 # /deploy/vars
