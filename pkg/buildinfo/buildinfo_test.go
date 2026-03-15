@@ -13,10 +13,10 @@ func TestGet(t *testing.T) {
 		t.Errorf("GoVersion = %q, want %q", info.GoVersion, runtime.Version())
 	}
 	if info.OS != runtime.GOOS {
-		t.Errorf("OS = %q", info.OS)
+		t.Errorf("OS = %q, want %q", info.OS, runtime.GOOS)
 	}
 	if info.Arch != runtime.GOARCH {
-		t.Errorf("Arch = %q", info.Arch)
+		t.Errorf("Arch = %q, want %q", info.Arch, runtime.GOARCH)
 	}
 }
 
@@ -31,7 +31,7 @@ func TestInfo_JSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	if decoded.GoVersion != info.GoVersion {
-		t.Errorf("GoVersion = %q", decoded.GoVersion)
+		t.Errorf("GoVersion = %q, want %q", decoded.GoVersion, info.GoVersion)
 	}
 }
 
