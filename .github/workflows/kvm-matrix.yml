@@ -10,6 +10,8 @@ on:
       - "pkg/kexec/**"
       - "pkg/bios/**"
       - "pkg/bootloader/**"
+      - "test/e2e/kvm/**"
+      - ".github/workflows/kvm-matrix.yml"
   pull_request:
     paths:
       - "pkg/secureboot/**"
@@ -18,6 +20,8 @@ on:
       - "pkg/kexec/**"
       - "pkg/bios/**"
       - "pkg/bootloader/**"
+      - "test/e2e/kvm/**"
+      - ".github/workflows/kvm-matrix.yml"
   workflow_dispatch:
 
 permissions:

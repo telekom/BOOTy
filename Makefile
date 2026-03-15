@@ -230,7 +230,7 @@ clab-multi-nic-down:
 
 test-e2e-multi-nic:
 	@echo Running multi-NIC E2E tests (requires clab-multi-nic-up)
-	@go test -tags e2e_multi_nic -race -v -timeout 120s ./test/e2e/integration/...
+	@go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/...
 
 check:
 	@test -z $(shell gofmt -l main.go | tee /dev/stderr) || echo "[WARN] Fix formatting issues with 'make fmt'"
