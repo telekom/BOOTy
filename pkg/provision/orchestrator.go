@@ -18,6 +18,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/health"
 	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/inventory"
+	"github.com/telekom/BOOTy/pkg/tpm"
 )
 
 // Step represents a named provisioning step.
@@ -63,6 +64,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		{"report-init", o.reportInit},
 		{"collect-inventory", o.collectInventory},
 		{"collect-firmware", o.collectFirmware},
+		{"detect-tpm", o.detectTPM},
 		{"health-checks", o.runHealthChecks},
 		{"set-hostname", o.setHostname},
 		{"copy-provisioner-files", o.copyProvisionerFiles},
@@ -175,6 +177,28 @@ func (o *Orchestrator) collectFirmware(ctx context.Context) error {
 	}
 
 	return o.provider.ReportFirmware(ctx, data)
+}
+
+func (o *Orchestrator) detectTPM(ctx context.Context) error {
+	if !o.cfg.TPMEnabled {
+		o.log.Info("TPM detection disabled, skipping")
+		return nil
+	}
+
+	info := tpm.Detect()
+	o.log.Info("TPM detection result", "present", info.Present, "version", info.Version,
+		"manufacturer", info.Manufacturer)
+
+	if !info.Present {
+		o.log.Info("No TPM device found")
+		return nil
+	}
+
+	data, err := json.Marshal(info)
+	if err != nil {
+		return fmt.Errorf("marshal tpm info: %w", err)
+	}
+	return o.provider.ReportStatus(ctx, config.StatusInit, "tpm: "+string(data))
 }
 
 func (o *Orchestrator) setHostname(_ context.Context) error {
