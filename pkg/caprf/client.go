@@ -343,6 +343,8 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"FIRMWARE_MIN_BMC":            &cfg.FirmwareMinBMC,
 		"HEALTH_SKIP_CHECKS":          &cfg.HealthSkipChecks,
 		"HEALTH_CHECK_URL":            &cfg.HealthCheckURL,
+		"MOK_CERT_PATH":               &cfg.MOKCertPath,
+		"MOK_PASSWORD":                &cfg.MOKPassword,
 	}
 
 	if ptr, ok := strFields[key]; ok {
@@ -385,6 +387,8 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) {
 		cfg.DisableKexec = parseBoolVar(value)
 	case "SECURE_ERASE":
 		cfg.SecureErase = parseBoolVar(value)
+	case "SECUREBOOT_REENABLE":
+		cfg.SecureBootReEnable = parseBoolVar(value)
 	case "POST_PROVISION_CMDS":
 		cfg.PostProvisionCmds = strings.Split(value, ";")
 	case "NUM_VFS":

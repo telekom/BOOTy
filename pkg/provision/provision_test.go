@@ -5,6 +5,7 @@ package provision
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -517,6 +518,36 @@ func TestRedactURLs(t *testing.T) {
 				if got[i] != tc.want[i] {
 					t.Errorf("[%d] = %q, want %q", i, got[i], tc.want[i])
 				}
+			}
+		})
+	}
+}
+
+func TestRequestSecureBootReEnable(t *testing.T) {
+	tests := []struct {
+		name       string
+		reEnable   bool
+		wantStatus int
+	}{
+		{"disabled does not report", false, 0},
+		{"enabled reports status", true, 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &mockProvider{}
+			o := &Orchestrator{
+				cfg:      &config.MachineConfig{SecureBootReEnable: tc.reEnable},
+				provider: p,
+				log:      slog.Default(),
+			}
+			if err := o.requestSecureBootReEnable(context.Background()); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(p.statuses) != tc.wantStatus {
+				t.Errorf("status reports = %d, want %d", len(p.statuses), tc.wantStatus)
+			}
+			if tc.wantStatus > 0 && p.statuses[0].message != "secureboot-reenable-requested" {
+				t.Errorf("message = %q, want %q", p.statuses[0].message, "secureboot-reenable-requested")
 			}
 		})
 	}
