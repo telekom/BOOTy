@@ -465,7 +465,7 @@ func runRescue(ctx context.Context, cfg *config.MachineConfig, client config.Pro
 
 	// Auto-mount detected partitions read-only under /rescue/.
 	if cfg.RescueAutoMountDisks {
-		mountRescueDisks()
+		mountRescueDisks(ctx)
 	}
 
 	// Write authorized keys and start SSH only after successful key setup.
@@ -499,9 +499,11 @@ func runRescue(ctx context.Context, cfg *config.MachineConfig, client config.Pro
 	}()
 
 	// Poll for CAPRF commands (reboot/provision).
-	go pollRescueCommands(heartbeatCtx, client, rescueStart)
+	rescueCtx, cancelRescue := context.WithCancel(heartbeatCtx)
+	defer cancelRescue()
+	go pollRescueCommands(rescueCtx, cancelRescue, client, rescueStart)
 
-	// Wait for timeout or context cancellation.
+	// Wait for timeout, command exit, or context cancellation.
 	if cfg.RescueTimeout > 0 {
 		slog.Info("Rescue mode will auto-reboot", "timeout_seconds", cfg.RescueTimeout)
 		timer := time.NewTimer(time.Duration(cfg.RescueTimeout) * time.Second)
@@ -509,11 +511,11 @@ func runRescue(ctx context.Context, cfg *config.MachineConfig, client config.Pro
 		select {
 		case <-timer.C:
 			slog.Info("Rescue mode timeout reached, rebooting")
-		case <-ctx.Done():
+		case <-rescueCtx.Done():
 		}
 	} else {
 		slog.Info("Rescue mode active, waiting for manual reboot or shutdown")
-		<-ctx.Done()
+		<-rescueCtx.Done()
 	}
 	reportCtx, reportCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer reportCancel()
@@ -522,22 +524,25 @@ func runRescue(ctx context.Context, cfg *config.MachineConfig, client config.Pro
 
 // setRescuePassword sets the root password from a crypt(3) hash.
 func setRescuePassword(hash string) {
+	// Validate hash to prevent injection via newlines, colons, or carriage returns.
+	if strings.ContainsAny(hash, "\n\r:") {
+		slog.Warn("Rescue password hash contains invalid characters, skipping")
+		return
+	}
 	cmd := exec.CommandContext(context.Background(), "chpasswd", "-e") //nolint:gosec // trusted config
 	cmd.Stdin = strings.NewReader("root:" + hash + "\n")
 	if err := cmd.Run(); err != nil {
-		// Try writing /etc/shadow directly as fallback.
-		shadowEntry := fmt.Sprintf("root:%s:19000:0:99999:7:::\n", hash)
-		if writeErr := os.WriteFile("/etc/shadow", []byte(shadowEntry), 0o600); writeErr != nil {
-			slog.Warn("Failed to set rescue password", "error", writeErr)
-			return
-		}
+		slog.Warn("chpasswd failed, skipping shadow fallback", "error", err)
+	} else {
+		slog.Info("Rescue console password configured")
 	}
-	slog.Info("Rescue console password configured")
 }
 
 // mountRescueDisks auto-mounts detected partitions read-only under /rescue/.
-func mountRescueDisks() {
-	out, err := exec.CommandContext(context.Background(), "lsblk", "-rno", "NAME,TYPE").Output()
+func mountRescueDisks(ctx context.Context) {
+	cmdCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(cmdCtx, "lsblk", "-rno", "NAME,TYPE").Output()
 	if err != nil {
 		slog.Warn("Failed to list block devices for rescue mount", "error", err)
 		return
@@ -557,7 +562,9 @@ func mountRescueDisks() {
 			continue
 		}
 
-		mountOut, mountErr := exec.CommandContext(context.Background(), "mount", "-o", "ro", devPath, mountPoint).CombinedOutput() //nolint:gosec // trusted device paths
+		mountCtx, mountCancel := context.WithTimeout(ctx, 10*time.Second)
+		mountOut, mountErr := exec.CommandContext(mountCtx, "mount", "-o", "ro", devPath, mountPoint).CombinedOutput() //nolint:gosec // trusted device paths
+		mountCancel()
 		if mountErr != nil {
 			slog.Debug("Could not mount partition for rescue", "device", devName, "error", mountErr, "output", string(mountOut))
 			continue
@@ -567,7 +574,7 @@ func mountRescueDisks() {
 }
 
 // pollRescueCommands checks for CAPRF commands to exit rescue mode.
-func pollRescueCommands(ctx context.Context, client config.Provider, start time.Time) {
+func pollRescueCommands(ctx context.Context, cancel context.CancelFunc, client config.Provider, start time.Time) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -584,10 +591,12 @@ func pollRescueCommands(ctx context.Context, client config.Provider, start time.
 				case "reboot":
 					slog.Info("Received reboot command from CAPRF, exiting rescue mode")
 					_ = client.ReportStatus(ctx, config.StatusSuccess, fmt.Sprintf("rescue-reboot-commanded after %s", time.Since(start).Truncate(time.Second)))
+					cancel()
 					return
 				case "provision":
 					slog.Info("Received provision command from CAPRF, exiting rescue mode")
 					_ = client.ReportStatus(ctx, config.StatusInit, "rescue-to-provision")
+					cancel()
 					return
 				}
 			}
