@@ -200,3 +200,25 @@ func TestModeConstants(t *testing.T) {
 		t.Error("ModeWait")
 	}
 }
+
+func TestDecide_NilState(t *testing.T) {
+	cfg := &Config{Mode: ModeReboot}
+	cfg.ApplyDefaults()
+	action := Decide(cfg, nil)
+	if action.Type != ModeReboot {
+		t.Errorf("nil state should work, got type = %q", action.Type)
+	}
+}
+
+func TestDecide_CfgMaxRetriesOverridesState(t *testing.T) {
+	cfg := &Config{Mode: ModeRetry, MaxRetries: 5}
+	state := &RetryState{MaxRetries: 2, Attempts: 3}
+	// cfg.MaxRetries=5 should override state.MaxRetries=2
+	action := Decide(cfg, state)
+	if action.Type != ModeRetry {
+		t.Errorf("cfg override should allow retry, got %q", action.Type)
+	}
+	if state.MaxRetries != 5 {
+		t.Errorf("state.MaxRetries = %d, want 5", state.MaxRetries)
+	}
+}

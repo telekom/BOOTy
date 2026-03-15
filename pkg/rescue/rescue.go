@@ -112,7 +112,10 @@ func (s *RetryState) Remaining() int {
 
 // Decide determines the rescue action based on config and state.
 func Decide(cfg *Config, state *RetryState) Action {
-	if state.MaxRetries == 0 && cfg.MaxRetries > 0 {
+	if state == nil {
+		state = &RetryState{}
+	}
+	if cfg.MaxRetries > 0 {
 		state.MaxRetries = cfg.MaxRetries
 	}
 

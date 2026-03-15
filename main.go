@@ -23,6 +23,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/network/gobgp"
 	"github.com/telekom/BOOTy/pkg/network/vlan"
 	"github.com/telekom/BOOTy/pkg/provision"
+	"github.com/telekom/BOOTy/pkg/rescue"
 	"golang.org/x/sys/unix"
 
 	"github.com/telekom/BOOTy/pkg/realm"
@@ -241,8 +242,31 @@ func runCAPRF(ctx context.Context) {
 			slog.Error("Deprovisioning failed", "error", err)
 		}
 	default:
-		if err := orch.Provision(ctx); err != nil {
+		var retryState rescue.RetryState
+		for {
+			err := orch.Provision(ctx)
+			if err == nil {
+				break
+			}
 			slog.Error("Provisioning failed", "error", err)
+			action := orch.RescueAction(&retryState)
+			slog.Info("Rescue action", "type", action.Type, "message", action.Message)
+			switch action.Type {
+			case rescue.ModeRetry:
+				retryState.RecordAttempt(err)
+				slog.Info("Retrying provisioning", "attempt", retryState.Attempts)
+				time.Sleep(30 * time.Second)
+				continue
+			case rescue.ModeShell:
+				slog.Info("Dropping to rescue shell")
+				realm.Shell()
+			case rescue.ModeWait:
+				slog.Info("Waiting for manual intervention")
+				select {}
+			default:
+				// ModeReboot: fall through to reboot
+			}
+			break
 		}
 	}
 
@@ -536,9 +560,25 @@ func runStandby(ctx context.Context, client config.Provider, cfg *config.Machine
 				case "provision":
 					cfg.Mode = "provision"
 					orch := provision.NewOrchestrator(cfg, client, diskMgr)
-					if err := orch.Provision(ctx); err != nil {
-						slog.Error("Hot provision failed", "error", err)
-						if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "failed", err.Error()); ackErr != nil {
+					var retryState rescue.RetryState
+					var provErr error
+					for {
+						provErr = orch.Provision(ctx)
+						if provErr == nil {
+							break
+						}
+						slog.Error("Hot provision failed", "error", provErr)
+						action := orch.RescueAction(&retryState)
+						slog.Info("Rescue action", "type", action.Type, "message", action.Message)
+						if action.Type == rescue.ModeRetry {
+							retryState.RecordAttempt(provErr)
+							time.Sleep(30 * time.Second)
+							continue
+						}
+						break
+					}
+					if provErr != nil {
+						if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "failed", provErr.Error()); ackErr != nil {
 							slog.Warn("Failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
 						}
 					} else {
