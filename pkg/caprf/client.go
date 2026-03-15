@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/telekom/BOOTy/pkg/auth"
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/health"
 )
@@ -53,6 +54,27 @@ func NewFromConfig(cfg *config.MachineConfig) *Client {
 		cfg:        cfg,
 		log:        slog.Default().With("component", "caprf"),
 	}
+}
+
+// AcquireToken exchanges the bootstrap token for a JWT if a token URL
+// is configured. The acquired JWT replaces the bootstrap token for all
+// subsequent API calls.
+func (c *Client) AcquireToken(ctx context.Context) error {
+	if c.cfg.TokenURL == "" {
+		return nil
+	}
+	if c.cfg.Token == "" {
+		c.log.Warn("Token URL configured but no bootstrap token, skipping JWT acquisition")
+		return nil
+	}
+
+	tm := auth.NewTokenManager(c.cfg.TokenURL, c.cfg.Token, c.log)
+	if err := tm.Acquire(ctx, c.cfg.Hostname, ""); err != nil {
+		return fmt.Errorf("acquire jwt: %w", err)
+	}
+	c.cfg.Token = tm.Token()
+	c.log.Info("JWT token acquired, using for subsequent API calls")
+	return nil
 }
 
 // GetConfig returns the parsed machine configuration.

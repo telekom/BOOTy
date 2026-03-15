@@ -966,3 +966,34 @@ func TestClientReportHealthChecksNoURL(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+func TestAcquireTokenNoURL(t *testing.T) {
+	client := NewFromConfig(&config.MachineConfig{Token: "bootstrap"})
+	if err := client.AcquireToken(context.Background()); err != nil {
+		t.Fatalf("AcquireToken() with no URL should succeed: %v", err)
+	}
+}
+
+func TestAcquireTokenWithServer(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer bootstrap-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"access_token":"jwt-token-123","token_type":"Bearer","expires_in":3600}`)
+	}))
+	defer srv.Close()
+
+	client := NewFromConfig(&config.MachineConfig{
+		Token:    "bootstrap-token",
+		TokenURL: srv.URL,
+		Hostname: "test-host",
+	})
+	if err := client.AcquireToken(context.Background()); err != nil {
+		t.Fatalf("AcquireToken() error: %v", err)
+	}
+	cfg, _ := client.GetConfig(context.Background())
+	if cfg.Token != "jwt-token-123" {
+		t.Errorf("Token = %q, want %q", cfg.Token, "jwt-token-123")
+	}
+}
