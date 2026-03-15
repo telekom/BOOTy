@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -59,10 +60,13 @@ func (s *SystemdBoot) Install(ctx context.Context, rootPath, espPath string) err
 		return fmt.Errorf("create EFI/BOOT directory: %w", err)
 	}
 
+	// Determine EFI binary names based on architecture.
+	efiBootBin, efiFallbackBin := efiFileNames()
+
 	// Look for the systemd-boot EFI binary in common locations.
 	candidates := []string{
-		filepath.Join(rootPath, "usr", "lib", "systemd", "boot", "efi", "systemd-bootx64.efi"),
-		"/bin/systemd-bootx64.efi",
+		filepath.Join(rootPath, "usr", "lib", "systemd", "boot", "efi", efiBootBin),
+		filepath.Join("/bin", efiBootBin),
 	}
 	var srcEFI string
 	for _, c := range candidates {
@@ -79,14 +83,14 @@ func (s *SystemdBoot) Install(ctx context.Context, rootPath, espPath string) err
 	if err != nil {
 		return fmt.Errorf("read systemd-boot EFI: %w", err)
 	}
-	dst := filepath.Join(efiDir, "systemd-bootx64.efi")
+	dst := filepath.Join(efiDir, efiBootBin)
 	if err := os.WriteFile(dst, efiData, 0o644); err != nil {
 		return fmt.Errorf("write systemd-boot EFI: %w", err)
 	}
 	// Also copy as the default UEFI boot binary.
-	fallback := filepath.Join(bootDir, "BOOTX64.EFI")
+	fallback := filepath.Join(bootDir, efiFallbackBin)
 	if err := os.WriteFile(fallback, efiData, 0o644); err != nil {
-		return fmt.Errorf("write fallback BOOTX64.EFI: %w", err)
+		return fmt.Errorf("write fallback %s: %w", efiFallbackBin, err)
 	}
 
 	// Create loader directory for configuration files.
@@ -102,7 +106,7 @@ func (s *SystemdBoot) Install(ctx context.Context, rootPath, espPath string) err
 // Configure generates loader.conf and boot entry files.
 func (s *SystemdBoot) Configure(_ context.Context, cfg *BootConfig) error {
 	if s.espPath == "" {
-		return fmt.Errorf("ESP path not set, call Install first")
+		return fmt.Errorf("esp path not set, call Install first")
 	}
 	// Generate loader.conf
 	if err := s.generateLoaderConf(cfg); err != nil {
@@ -152,8 +156,12 @@ func (s *SystemdBoot) ListEntries(_ context.Context, rootPath string) ([]BootEnt
 // SetDefault sets the default boot entry via bootctl, falling back to writing
 // loader.conf directly when bootctl is not available.
 func (s *SystemdBoot) SetDefault(ctx context.Context, entryID string) error {
+	if s.espPath == "" {
+		return fmt.Errorf("esp path not set, call Install first")
+	}
 	if _, err := exec.LookPath("bootctl"); err == nil {
-		cmd := exec.CommandContext(ctx, "bootctl", "set-default", entryID+".conf")
+		cmd := exec.CommandContext(ctx, "bootctl", "set-default",
+			"--esp-path="+s.espPath, entryID+".conf")
 		out, runErr := cmd.CombinedOutput()
 		if runErr == nil {
 			return nil
@@ -191,7 +199,7 @@ func (s *SystemdBoot) generateLoaderConf(cfg *BootConfig) error {
 		return fmt.Errorf("create loader dir: %w", err)
 	}
 	content := fmt.Sprintf("default %s.conf\ntimeout %d\nconsole-mode max\n",
-		cfg.DefaultKernel, cfg.Timeout)
+		cfg.DefaultEntry, cfg.Timeout)
 	loaderPath := filepath.Join(loaderDir, "loader.conf")
 	if err := os.WriteFile(loaderPath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("write loader.conf: %w", err)
@@ -249,4 +257,13 @@ func parseLoaderEntry(path string) (BootEntry, error) {
 		}
 	}
 	return entry, nil
+}
+
+// efiFileNames returns the architecture-appropriate EFI binary and fallback
+// boot file names.
+func efiFileNames() (bootBin, fallbackBin string) {
+	if runtime.GOARCH == "arm64" {
+		return "systemd-bootaa64.efi", "BOOTAA64.EFI"
+	}
+	return "systemd-bootx64.efi", "BOOTX64.EFI"
 }

@@ -62,7 +62,7 @@ func (g *GRUB) Configure(ctx context.Context, cfg *BootConfig) error {
 	grubDefault := filepath.Join(g.rootPath, "etc", "default", "grub")
 
 	lines := []string{
-		fmt.Sprintf("GRUB_DEFAULT=%q", cfg.DefaultKernel),
+		fmt.Sprintf("GRUB_DEFAULT=%q", cfg.DefaultEntry),
 		fmt.Sprintf("GRUB_TIMEOUT=%d", cfg.Timeout),
 		fmt.Sprintf("GRUB_CMDLINE_LINUX_DEFAULT=%q", cfg.KernelCmdline),
 	}
@@ -108,6 +108,9 @@ func (g *GRUB) ListEntries(_ context.Context, rootPath string) ([]BootEntry, err
 
 // SetDefault sets the default boot entry via grub-set-default.
 func (g *GRUB) SetDefault(ctx context.Context, entryID string) error {
+	if g.rootPath == "" {
+		return fmt.Errorf("root path not set, call Install first")
+	}
 	cmd := exec.CommandContext(ctx, "chroot", g.rootPath, "grub-set-default", entryID)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

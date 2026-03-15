@@ -22,7 +22,7 @@ type Bootloader interface {
 
 // BootConfig holds bootloader configuration.
 type BootConfig struct {
-	DefaultKernel string      `json:"defaultKernel"`
+	DefaultEntry  string      `json:"defaultEntry"`
 	KernelCmdline string      `json:"kernelCmdline"`
 	ExtraParams   string      `json:"extraParams"`
 	Timeout       int         `json:"timeout"`
