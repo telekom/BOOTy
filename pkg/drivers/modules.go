@@ -5,6 +5,7 @@ package drivers
 import (
 	"bufio"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -46,23 +47,25 @@ func (m *Manifest) AllModules() []string {
 
 // Manager handles kernel module operations.
 type Manager struct {
-	log        *slog.Logger
-	modulesDir string
+	log            *slog.Logger
+	modulesDir     string
+	procModulesPath string
 }
 
 // NewManager creates a kernel module manager.
 func NewManager(log *slog.Logger) *Manager {
 	return &Manager{
-		log:        log,
-		modulesDir: "/lib/modules",
+		log:            log,
+		modulesDir:     "/lib/modules",
+		procModulesPath: "/proc/modules",
 	}
 }
 
 // ListLoaded returns currently loaded kernel modules from /proc/modules.
 func (m *Manager) ListLoaded() ([]Module, error) {
-	f, err := os.Open("/proc/modules")
+	f, err := os.Open(m.procModulesPath)
 	if err != nil {
-		return nil, fmt.Errorf("open /proc/modules: %w", err)
+		return nil, fmt.Errorf("open %s: %w", m.procModulesPath, err)
 	}
 	defer func() { _ = f.Close() }()
 
@@ -85,7 +88,7 @@ func (m *Manager) ListLoaded() ([]Module, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan /proc/modules: %w", err)
+		return nil, fmt.Errorf("scan %s: %w", m.procModulesPath, err)
 	}
 	return modules, nil
 }
@@ -104,7 +107,7 @@ func (m *Manager) FindModule(name string) (string, error) {
 		// Match name.ko, name.ko.xz, name.ko.zst, etc.
 		if strings.HasPrefix(base, name+".ko") {
 			found = path
-			return filepath.SkipAll
+			return fs.SkipAll
 		}
 		return nil
 	})
