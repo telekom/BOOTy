@@ -103,7 +103,7 @@ func TestRescueModeStatusReporting(t *testing.T) {
 		t.Fatalf("ReportStatus: %v", err)
 	}
 	if err := client.Heartbeat(ctx); err != nil {
-		t.Logf("Heartbeat: %v (may be expected if URL not configured)", err)
+		t.Errorf("Heartbeat failed: %v", err)
 	}
 
 	time.Sleep(100 * time.Millisecond)
