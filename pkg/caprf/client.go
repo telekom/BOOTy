@@ -131,6 +131,15 @@ func (c *Client) ReportFirmware(ctx context.Context, data []byte) error {
 	return c.postJSONWithAuth(ctx, c.cfg.FirmwareURL, data)
 }
 
+// ReportBIOS sends a JSON BIOS state report to the CAPRF server.
+func (c *Client) ReportBIOS(ctx context.Context, data []byte) error {
+	if c.cfg.BIOSReportURL == "" {
+		c.log.Debug("No BIOS report URL configured, skipping report")
+		return nil
+	}
+	return c.postJSONWithAuth(ctx, c.cfg.BIOSReportURL, data)
+}
+
 // FetchCommands polls the CAPRF server for pending commands.
 // Returns nil if no commands URL is configured.
 func (c *Client) FetchCommands(ctx context.Context) ([]config.Command, error) {
@@ -343,6 +352,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"FIRMWARE_MIN_BMC":            &cfg.FirmwareMinBMC,
 		"HEALTH_SKIP_CHECKS":          &cfg.HealthSkipChecks,
 		"HEALTH_CHECK_URL":            &cfg.HealthCheckURL,
+		"BIOS_REPORT_URL":             &cfg.BIOSReportURL,
 	}
 
 	if ptr, ok := strFields[key]; ok {
@@ -399,6 +409,8 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) {
 		setIntField(&cfg.HealthMinMemoryGB, value)
 	case "HEALTH_MIN_CPUS":
 		setIntField(&cfg.HealthMinCPUs, value)
+	case "BIOS_ENABLED":
+		cfg.BIOSEnabled = parseBoolVar(value)
 	}
 }
 

@@ -27,6 +27,11 @@ import (
 	"github.com/telekom/BOOTy/pkg/utils"
 	"golang.org/x/sys/unix"
 
+	_ "github.com/telekom/BOOTy/pkg/bios/dell"       // register Dell BIOS manager
+	_ "github.com/telekom/BOOTy/pkg/bios/hpe"        // register HPE BIOS manager
+	_ "github.com/telekom/BOOTy/pkg/bios/lenovo"     // register Lenovo BIOS manager
+	_ "github.com/telekom/BOOTy/pkg/bios/supermicro" // register Supermicro BIOS manager
+
 	"github.com/telekom/BOOTy/pkg/realm"
 	"github.com/telekom/BOOTy/pkg/ux"
 )
