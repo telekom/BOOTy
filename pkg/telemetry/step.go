@@ -100,6 +100,10 @@ func (t *StepTracker) EndStep(name string, err error) {
 		}
 		return
 	}
+
+	if t.log != nil {
+		t.log.Warn("EndStep called for unknown or non-running step", "step", name)
+	}
 }
 
 // SkipStep records a skipped step.
@@ -127,6 +131,10 @@ func (t *StepTracker) RecordRetry(name string) {
 			return
 		}
 	}
+
+	if t.log != nil {
+		t.log.Warn("RecordRetry called for unknown step", "step", name)
+	}
 }
 
 // Steps returns a copy of all step records.
@@ -138,7 +146,8 @@ func (t *StepTracker) Steps() []StepRecord {
 	return out
 }
 
-// TotalDuration returns the total duration of all completed steps.
+// TotalDuration returns the sum of durations across all steps
+// (including zero-duration for pending or skipped steps).
 func (t *StepTracker) TotalDuration() time.Duration {
 	t.mu.Lock()
 	defer t.mu.Unlock()

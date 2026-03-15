@@ -42,8 +42,8 @@ type Histogram struct {
 // Observe records a value.
 func (h *Histogram) Observe(v float64) {
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.values = append(h.values, v)
-	h.mu.Unlock()
 }
 
 // Count returns the number of observations.
@@ -86,7 +86,7 @@ func NewMetrics() *Metrics {
 func (m *Metrics) Snapshot() *MetricSnapshot {
 	return &MetricSnapshot{
 		StepDurationCount:  m.StepDuration.Count(),
-		StepDurationSum:    m.StepDuration.Sum(),
+		StepDurationSumS:   m.StepDuration.Sum(),
 		StepRetries:        m.StepRetries.Value(),
 		StepErrors:         m.StepErrors.Value(),
 		ProvisionCount:     m.ProvisionDuration.Count(),
@@ -102,7 +102,7 @@ func (m *Metrics) Snapshot() *MetricSnapshot {
 // MetricSnapshot is a point-in-time view of metrics for JSON export.
 type MetricSnapshot struct {
 	StepDurationCount  int     `json:"stepDurationCount"`
-	StepDurationSum    float64 `json:"stepDurationSumS"`
+	StepDurationSumS   float64 `json:"stepDurationSumS"`
 	StepRetries        int64   `json:"stepRetries"`
 	StepErrors         int64   `json:"stepErrors"`
 	ProvisionCount     int     `json:"provisionCount"`

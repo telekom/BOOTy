@@ -82,8 +82,8 @@ func TestMetrics_Snapshot(t *testing.T) {
 	if snap.StepDurationCount != 2 {
 		t.Errorf("stepDurationCount = %d", snap.StepDurationCount)
 	}
-	if snap.StepDurationSum != 4.0 {
-		t.Errorf("stepDurationSum = %f", snap.StepDurationSum)
+	if snap.StepDurationSumS != 4.0 {
+		t.Errorf("stepDurationSumS = %f", snap.StepDurationSumS)
 	}
 }
 
