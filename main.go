@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -187,6 +189,10 @@ func runCAPRF(ctx context.Context) {
 	case "standby":
 		runStandby(ctx, client, cfg, netMode, diskMgr)
 		return // standby handles its own lifecycle
+	case "rescue":
+		runRescue(ctx, cfg, client)
+		realm.Reboot()
+		return
 	case "deprovision", "soft-deprovision":
 		if cfg.Mode == "soft-deprovision" {
 			cfg.Mode = "soft"
@@ -419,6 +425,182 @@ func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) {
 	}
 	if err := kexec.Execute(); err != nil {
 		slog.Warn("kexec execute failed, falling back to reboot", "error", err)
+	}
+}
+
+// startRescueSSH starts a dropbear SSH server if a pubkey is configured and
+// dropbear is available.
+func startRescueSSH(ctx context.Context, pubKey string) {
+	if pubKey == "" {
+		slog.Info("No SSH pubkey configured, skipping SSH server")
+		return
+	}
+	if _, err := exec.LookPath("dropbear"); err != nil {
+		slog.Warn("dropbear not found, SSH server unavailable")
+		return
+	}
+	sshCmd := exec.CommandContext(ctx, "dropbear", "-R", "-F", "-s", "-p", "22")
+	if err := sshCmd.Start(); err != nil {
+		slog.Warn("Failed to start SSH server", "error", err)
+		return
+	}
+	slog.Info("SSH server started on port 22")
+	go func() {
+		if err := sshCmd.Wait(); err != nil {
+			slog.Warn("SSH server exited", "error", err)
+		}
+	}()
+}
+
+// runRescue drops the machine into rescue mode with optional SSH server.
+// It reports "rescue" status to the controller and waits for timeout or shutdown.
+func runRescue(ctx context.Context, cfg *config.MachineConfig, client config.Provider) {
+	slog.Info("Entering rescue mode")
+	_ = client.ReportStatus(ctx, config.StatusInit, "rescue-mode-active")
+
+	// Set root password hash for console login if provided.
+	if cfg.RescuePasswordHash != "" {
+		setRescuePassword(cfg.RescuePasswordHash)
+	}
+
+	// Auto-mount detected partitions read-only under /rescue/.
+	if cfg.RescueAutoMountDisks {
+		mountRescueDisks(ctx)
+	}
+
+	// Write authorized keys and start SSH only after successful key setup.
+	if cfg.RescueSSHPubKey != "" {
+		if err := os.MkdirAll("/root/.ssh", 0o700); err != nil {
+			slog.Error("Failed to create .ssh directory, skipping SSH", "error", err)
+		} else if err := os.WriteFile("/root/.ssh/authorized_keys", []byte(cfg.RescueSSHPubKey+"\n"), 0o600); err != nil {
+			slog.Error("Failed to write authorized_keys, skipping SSH", "error", err)
+		} else {
+			startRescueSSH(ctx, cfg.RescueSSHPubKey)
+		}
+	}
+
+	// Send periodic heartbeats.
+	rescueStart := time.Now()
+	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
+	defer cancelHeartbeat()
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-ticker.C:
+				if err := client.Heartbeat(heartbeatCtx); err != nil {
+					slog.Warn("Rescue heartbeat failed", "error", err)
+				}
+			}
+		}
+	}()
+
+	// Poll for CAPRF commands (reboot/provision).
+	rescueCtx, cancelRescue := context.WithCancel(heartbeatCtx)
+	defer cancelRescue()
+	go pollRescueCommands(rescueCtx, cancelRescue, client, rescueStart)
+
+	// Wait for timeout, command exit, or context cancellation.
+	if cfg.RescueTimeout > 0 {
+		slog.Info("Rescue mode will auto-reboot", "timeout_seconds", cfg.RescueTimeout)
+		timer := time.NewTimer(time.Duration(cfg.RescueTimeout) * time.Second)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			slog.Info("Rescue mode timeout reached, rebooting")
+		case <-rescueCtx.Done():
+		}
+	} else {
+		slog.Info("Rescue mode active, waiting for manual reboot or shutdown")
+		<-rescueCtx.Done()
+	}
+	reportCtx, reportCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer reportCancel()
+	_ = client.ReportStatus(reportCtx, config.StatusSuccess, "rescue-mode-exiting")
+}
+
+// setRescuePassword sets the root password from a crypt(3) hash.
+func setRescuePassword(hash string) {
+	// Validate hash to prevent injection via newlines, colons, or carriage returns.
+	if strings.ContainsAny(hash, "\n\r:") {
+		slog.Warn("Rescue password hash contains invalid characters, skipping")
+		return
+	}
+	cmd := exec.CommandContext(context.Background(), "chpasswd", "-e") //nolint:gosec // trusted config
+	cmd.Stdin = strings.NewReader("root:" + hash + "\n")
+	if err := cmd.Run(); err != nil {
+		slog.Warn("chpasswd failed, skipping shadow fallback", "error", err)
+	} else {
+		slog.Info("Rescue console password configured")
+	}
+}
+
+// mountRescueDisks auto-mounts detected partitions read-only under /rescue/.
+func mountRescueDisks(ctx context.Context) {
+	cmdCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(cmdCtx, "lsblk", "-rno", "NAME,TYPE").Output()
+	if err != nil {
+		slog.Warn("Failed to list block devices for rescue mount", "error", err)
+		return
+	}
+
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[1] != "part" {
+			continue
+		}
+		devName := fields[0]
+		devPath := "/dev/" + devName
+		mountPoint := "/rescue/" + devName
+
+		if err := os.MkdirAll(mountPoint, 0o755); err != nil {
+			slog.Warn("Failed to create rescue mount point", "device", devName, "error", err)
+			continue
+		}
+
+		mountCtx, mountCancel := context.WithTimeout(ctx, 10*time.Second)
+		mountOut, mountErr := exec.CommandContext(mountCtx, "mount", "-o", "ro", devPath, mountPoint).CombinedOutput() //nolint:gosec // trusted device paths
+		mountCancel()
+		if mountErr != nil {
+			slog.Debug("Could not mount partition for rescue", "device", devName, "error", mountErr, "output", string(mountOut))
+			continue
+		}
+		slog.Info("Rescue-mounted partition", "device", devName, "mountpoint", mountPoint)
+	}
+}
+
+// pollRescueCommands checks for CAPRF commands to exit rescue mode.
+func pollRescueCommands(ctx context.Context, cancel context.CancelFunc, client config.Provider, start time.Time) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cmds, err := client.FetchCommands(ctx)
+			if err != nil {
+				continue
+			}
+			for _, cmd := range cmds {
+				switch cmd.Type {
+				case "reboot":
+					slog.Info("Received reboot command from CAPRF, exiting rescue mode")
+					_ = client.ReportStatus(ctx, config.StatusSuccess, fmt.Sprintf("rescue-reboot-commanded after %s", time.Since(start).Truncate(time.Second)))
+					cancel()
+					return
+				case "provision":
+					slog.Info("Received provision command from CAPRF, exiting rescue mode")
+					_ = client.ReportStatus(ctx, config.StatusInit, "rescue-to-provision")
+					cancel()
+					return
+				}
+			}
+		}
 	}
 }
 
