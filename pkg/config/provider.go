@@ -104,6 +104,10 @@ type MachineConfig struct {
 	ProvisionerFiles []string // Paths to files in /deploy/file-system/
 	MachineFiles     []string // Paths to files in /deploy/machine-files/
 	MachineCommands  []string // Commands from /deploy/machine-commands/
+
+	// JWT token management.
+	TokenURL       string // TOKEN_URL: JWT token endpoint
+	TokenAlgorithm string // TOKEN_ALGORITHM: RS256 or ES256
 }
 
 // Command represents a server-issued command (future agent mode).

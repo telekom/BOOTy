@@ -176,6 +176,10 @@ export SUCCESS_URL="http://caprf:8080/status/success"
 export ERROR_URL="http://caprf:8080/status/error"
 export LOG_URL="http://caprf:8080/log"
 
+# JWT authentication (optional — omit for static bearer token)
+export TOKEN_URL="http://caprf:8080/auth/token"  # JWT token endpoint
+export TOKEN_ALGORITHM="RS256"                    # RS256 or ES256
+
 # Network (FRR/EVPN mode — omit for DHCP fallback)
 underlay_subnet="10.0.0.0/24"
 asn_server="65001"
