@@ -5,6 +5,7 @@ package provision
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -100,9 +101,15 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 	steps := o.provisionSteps()
 
 	// Load or create checkpoint for resume-on-failure support.
-	cp, cpErr := LoadCheckpoint()
-	if cpErr != nil && cpErr != ErrNoCheckpoint {
-		o.log.Warn("Failed to load checkpoint, starting fresh", "error", cpErr)
+	// Only use checkpoint if it was explicitly requested via environment variable,
+	// to avoid stale checkpoints interfering with fresh provisioning runs.
+	var cp *Checkpoint
+	if os.Getenv("BOOTY_RESUME") != "" {
+		var cpErr error
+		cp, cpErr = LoadCheckpoint()
+		if cpErr != nil && !errors.Is(cpErr, ErrNoCheckpoint) {
+			o.log.Warn("Failed to load checkpoint, starting fresh", "error", cpErr)
+		}
 	}
 	if cp == nil {
 		cp = &Checkpoint{}
