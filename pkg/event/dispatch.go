@@ -35,7 +35,7 @@ func (d *Dispatcher) Send(ctx context.Context, e *Event) error {
 		return fmt.Errorf("marshal event: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.url, bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.url, bytes.NewReader(data)) //nolint:gosec // G704 — URL from trusted admin webhook config
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
