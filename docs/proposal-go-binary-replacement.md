@@ -1,6 +1,6 @@
 # Proposal: Go Binary Replacement for Shell Tools
 
-## Status: Proposal
+## Status: Phase 1 Implemented (PR #64)
 
 ## Priority: P3
 

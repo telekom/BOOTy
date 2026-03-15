@@ -1,6 +1,6 @@
 # Proposal: SecureBoot Lifecycle Management
 
-## Status: Proposal
+## Status: Phase 1 Implemented
 
 ## Priority: P0
 

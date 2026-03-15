@@ -1,6 +1,6 @@
 # Proposal: BGP Networking Modes — Full Mode Matrix
 
-## Status: Proposal
+## Status: Phase 1 Implemented (PR #53)
 
 ## Priority: P1
 

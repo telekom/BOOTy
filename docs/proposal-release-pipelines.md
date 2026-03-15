@@ -1,6 +1,6 @@
 # Proposal: Production Release Pipelines
 
-## Status: Proposal
+## Status: Implemented (PR #67)
 
 ## Priority: P0
 

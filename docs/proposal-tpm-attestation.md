@@ -1,6 +1,6 @@
 # Proposal: TPM Measured Boot and Attestation
 
-## Status: Proposal
+## Status: Phase 1 Implemented (Detection)
 
 ## Priority: P4
 

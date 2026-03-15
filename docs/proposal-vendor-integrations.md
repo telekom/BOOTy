@@ -1,6 +1,6 @@
 # Proposal: Vendor-Specific BMC Integrations (HPE iLO & Lenovo XCC)
 
-## Status: Proposal
+## Status: HPE Phase 1 Implemented (CAPRF), Lenovo Proposal
 
 ## Priority: P0 (HPE), P2 (Lenovo)
 

@@ -1,6 +1,6 @@
 # Proposal: Advanced OCI Image Support
 
-## Status: Proposal
+## Status: Phase 1 Implemented (PR #51)
 
 ## Priority: P1
 
