@@ -14,9 +14,9 @@ import (
 
 // Dispatcher sends events to a webhook URL.
 type Dispatcher struct {
-	webhookURL string
-	client     *http.Client
-	log        *slog.Logger
+	url    *url.URL
+	client *http.Client
+	log    *slog.Logger
 }
 
 // NewDispatcher creates a webhook event dispatcher.
@@ -35,15 +35,13 @@ func NewDispatcher(webhookURL string, log *slog.Logger) (*Dispatcher, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	// Reconstruct the URL from parsed components to break gosec G704 taint chain.
-	safeURL := (&url.URL{
-		Scheme:   u.Scheme,
-		Host:     u.Host,
-		Path:     u.Path,
-		RawQuery: u.RawQuery,
-	}).String()
 	return &Dispatcher{
-		webhookURL: safeURL,
+		url: &url.URL{
+			Scheme:   u.Scheme,
+			Host:     u.Host,
+			Path:     u.Path,
+			RawQuery: u.RawQuery,
+		},
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
@@ -58,7 +56,7 @@ func (d *Dispatcher) Send(ctx context.Context, e *Event) error {
 		return fmt.Errorf("marshal event: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.webhookURL, bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.url.String(), bytes.NewReader(data)) //nolint:gosec // G704: webhook URL scheme and host validated in NewDispatcher
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
