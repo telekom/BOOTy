@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -101,11 +102,17 @@ type NetworkConfig struct {
 	Routes     []RouteConfig     `json:"routes,omitempty"`
 }
 
+// validName matches safe interface and bond names (alphanumeric, dots, hyphens, underscores).
+var validName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+
 // Validate checks the network configuration.
 func (c *NetworkConfig) Validate() error {
 	for i, iface := range c.Interfaces {
 		if iface.Name == "" {
 			return fmt.Errorf("interface %d: name required", i)
+		}
+		if !validName.MatchString(iface.Name) {
+			return fmt.Errorf("interface %q: invalid name", iface.Name)
 		}
 		if !iface.DHCP && iface.Address == "" {
 			return fmt.Errorf("interface %q: address or dhcp required", iface.Name)
@@ -115,8 +122,14 @@ func (c *NetworkConfig) Validate() error {
 		if c.Bonds[i].Name == "" {
 			return fmt.Errorf("bond %d: name required", i)
 		}
+		if !validName.MatchString(c.Bonds[i].Name) {
+			return fmt.Errorf("bond %q: invalid name", c.Bonds[i].Name)
+		}
 		if len(c.Bonds[i].Members) < 2 {
 			return fmt.Errorf("bond %q: at least 2 members required", c.Bonds[i].Name)
+		}
+		if c.Bonds[i].Mode == "" {
+			return fmt.Errorf("bond %q: mode required", c.Bonds[i].Name)
 		}
 	}
 	for i, vlan := range c.VLANs {
@@ -146,6 +159,8 @@ func RenderNetplan(cfg *NetworkConfig) string {
 	renderNetplanEthernets(&b, cfg.Interfaces)
 	renderNetplanBonds(&b, cfg.Bonds)
 	renderNetplanVLANs(&b, cfg.VLANs)
+	renderNetplanDNS(&b, &cfg.DNS)
+	renderNetplanRoutes(&b, cfg.Routes)
 	return b.String()
 }
 
@@ -188,9 +203,18 @@ func renderNetplanBonds(b *strings.Builder, bonds []BondConfig) {
 		if bonds[i].Address != "" {
 			fmt.Fprintf(b, "      addresses: [%s]\n", bonds[i].Address)
 		}
+		if bonds[i].Gateway != "" {
+			fmt.Fprintf(b, "      gateway4: %s\n", bonds[i].Gateway)
+		}
+		if bonds[i].MTU > 0 {
+			fmt.Fprintf(b, "      mtu: %d\n", bonds[i].MTU)
+		}
 		fmt.Fprintf(b, "      parameters:\n        mode: %s\n", bonds[i].Mode)
 		if bonds[i].LACPRate != "" {
 			fmt.Fprintf(b, "        lacp-rate: %s\n", bonds[i].LACPRate)
+		}
+		if bonds[i].HashPolicy != "" {
+			fmt.Fprintf(b, "        transmit-hash-policy: %s\n", bonds[i].HashPolicy)
 		}
 	}
 }
@@ -212,6 +236,32 @@ func renderNetplanVLANs(b *strings.Builder, vlans []VLANConfig) {
 			b.WriteString("      dhcp4: true\n")
 		} else if vlans[i].Address != "" {
 			fmt.Fprintf(b, "      addresses: [%s]\n", vlans[i].Address)
+		}
+	}
+}
+
+func renderNetplanDNS(b *strings.Builder, dns *DNSConfig) {
+	if len(dns.Servers) == 0 && len(dns.Search) == 0 {
+		return
+	}
+	b.WriteString("  nameservers:\n")
+	if len(dns.Servers) > 0 {
+		fmt.Fprintf(b, "    addresses: [%s]\n", strings.Join(dns.Servers, ", "))
+	}
+	if len(dns.Search) > 0 {
+		fmt.Fprintf(b, "    search: [%s]\n", strings.Join(dns.Search, ", "))
+	}
+}
+
+func renderNetplanRoutes(b *strings.Builder, routes []RouteConfig) {
+	if len(routes) == 0 {
+		return
+	}
+	b.WriteString("  routes:\n")
+	for _, r := range routes {
+		fmt.Fprintf(b, "    - to: %s\n      via: %s\n", r.Destination, r.Gateway)
+		if r.Metric > 0 {
+			fmt.Fprintf(b, "      metric: %d\n", r.Metric)
 		}
 	}
 }
@@ -248,7 +298,12 @@ func Write(rootDir string, family OSFamily, cfg *NetworkConfig) error {
 		return fmt.Errorf("validate config: %w", err)
 	}
 
-	configDir := filepath.Join(rootDir, family.ConfigPath())
+	configPath := family.ConfigPath()
+	if configPath == "" {
+		return fmt.Errorf("unsupported OS family %q", family)
+	}
+
+	configDir := filepath.Join(rootDir, configPath)
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		return fmt.Errorf("create config dir %s: %w", configDir, err)
 	}
@@ -280,7 +335,10 @@ func writeNetworkd(dir string, cfg *NetworkConfig) error {
 	}
 	for i := range cfg.Interfaces {
 		content := RenderNetworkdUnit(&cfg.Interfaces[i])
-		filename := fmt.Sprintf("10-booty-%s.network", cfg.Interfaces[i].Name)
+		if len(cfg.DNS.Servers) > 0 || len(cfg.Routes) > 0 {
+			content = appendNetworkdDNSRoutes(content, &cfg.DNS, cfg.Routes)
+		}
+		filename := fmt.Sprintf("10-booty-%s.network", filepath.Base(cfg.Interfaces[i].Name))
 		path := filepath.Join(dir, filename)
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			return fmt.Errorf("write networkd unit for %s: %w", cfg.Interfaces[i].Name, err)
@@ -289,8 +347,28 @@ func writeNetworkd(dir string, cfg *NetworkConfig) error {
 	return nil
 }
 
+func appendNetworkdDNSRoutes(content string, dns *DNSConfig, routes []RouteConfig) string {
+	var b strings.Builder
+	b.WriteString(content)
+	for _, s := range dns.Servers {
+		fmt.Fprintf(&b, "DNS=%s\n", s)
+	}
+	for _, d := range dns.Search {
+		fmt.Fprintf(&b, "Domains=%s\n", d)
+	}
+	for _, r := range routes {
+		b.WriteString("\n[Route]\n")
+		fmt.Fprintf(&b, "Destination=%s\n", r.Destination)
+		fmt.Fprintf(&b, "Gateway=%s\n", r.Gateway)
+		if r.Metric > 0 {
+			fmt.Fprintf(&b, "Metric=%d\n", r.Metric)
+		}
+	}
+	return b.String()
+}
+
 // renderNMKeyfile renders a NetworkManager keyfile for an interface.
-func renderNMKeyfile(iface *InterfaceConfig) string {
+func renderNMKeyfile(iface *InterfaceConfig, dns *DNSConfig, routes []RouteConfig) string {
 	var b strings.Builder
 	b.WriteString("[connection]\n")
 	fmt.Fprintf(&b, "id=%s\n", iface.Name)
@@ -309,6 +387,19 @@ func renderNMKeyfile(iface *InterfaceConfig) string {
 			fmt.Fprintf(&b, "gateway=%s\n", iface.Gateway)
 		}
 	}
+	if len(dns.Servers) > 0 {
+		fmt.Fprintf(&b, "dns=%s\n", strings.Join(dns.Servers, ";"))
+	}
+	if len(dns.Search) > 0 {
+		fmt.Fprintf(&b, "dns-search=%s\n", strings.Join(dns.Search, ";"))
+	}
+	for i, r := range routes {
+		fmt.Fprintf(&b, "route%d=%s,%s", i+1, r.Destination, r.Gateway)
+		if r.Metric > 0 {
+			fmt.Fprintf(&b, ",%d", r.Metric)
+		}
+		b.WriteByte('\n')
+	}
 	return b.String()
 }
 
@@ -317,8 +408,8 @@ func writeNMKeyfiles(dir string, cfg *NetworkConfig) error {
 		return fmt.Errorf("networkmanager renderer does not yet support bonds or vlans")
 	}
 	for i := range cfg.Interfaces {
-		content := renderNMKeyfile(&cfg.Interfaces[i])
-		filename := fmt.Sprintf("booty-%s.nmconnection", cfg.Interfaces[i].Name)
+		content := renderNMKeyfile(&cfg.Interfaces[i], &cfg.DNS, cfg.Routes)
+		filename := fmt.Sprintf("booty-%s.nmconnection", filepath.Base(cfg.Interfaces[i].Name))
 		path := filepath.Join(dir, filename)
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			return fmt.Errorf("write nm keyfile for %s: %w", cfg.Interfaces[i].Name, err)
