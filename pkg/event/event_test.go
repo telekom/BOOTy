@@ -1,7 +1,11 @@
 package event
 
 import (
+	"context"
 	"encoding/json"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -80,5 +84,44 @@ func TestEventTypes(t *testing.T) {
 			t.Errorf("duplicate event type: %q", et)
 		}
 		seen[et] = true
+	}
+}
+
+func TestDispatcherSend(t *testing.T) {
+	var received Event
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Error("missing content-type header")
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	d := NewDispatcher(srv.URL, slog.Default())
+	e := New(ProvisionStarted, Machine{Name: "test-host"})
+	if err := d.Send(context.Background(), e); err != nil {
+		t.Fatalf("Send() error: %v", err)
+	}
+	if received.Type != ProvisionStarted {
+		t.Errorf("received Type = %q, want %q", received.Type, ProvisionStarted)
+	}
+	if received.Machine.Name != "test-host" {
+		t.Errorf("received Machine.Name = %q, want %q", received.Machine.Name, "test-host")
+	}
+}
+
+func TestDispatcherSendError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	d := NewDispatcher(srv.URL, slog.Default())
+	e := New(ProvisionFailed, Machine{Name: "fail-host"})
+	if err := d.Send(context.Background(), e); err == nil {
+		t.Error("expected error for 500 response")
 	}
 }
