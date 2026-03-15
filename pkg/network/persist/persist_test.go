@@ -34,13 +34,13 @@ func TestParseOSFamily(t *testing.T) {
 }
 
 func TestOSFamily_ConfigPath(t *testing.T) {
-	if Ubuntu.ConfigPath() != "/etc/netplan" {
+	if Ubuntu.ConfigPath() != "etc/netplan" {
 		t.Error("ubuntu path")
 	}
-	if RHEL.ConfigPath() != "/etc/NetworkManager/system-connections" {
+	if RHEL.ConfigPath() != "etc/NetworkManager/system-connections" {
 		t.Error("rhel path")
 	}
-	if Flatcar.ConfigPath() != "/etc/systemd/network" {
+	if Flatcar.ConfigPath() != "etc/systemd/network" {
 		t.Error("flatcar path")
 	}
 	if OSFamily("x").ConfigPath() != "" {
