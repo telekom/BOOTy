@@ -24,6 +24,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/plunderclient"
 	"github.com/telekom/BOOTy/pkg/plunderclient/types"
 	"github.com/telekom/BOOTy/pkg/provision"
+	"github.com/telekom/BOOTy/pkg/rescue"
 	"github.com/telekom/BOOTy/pkg/utils"
 	"golang.org/x/sys/unix"
 
@@ -195,8 +196,31 @@ func runCAPRF(ctx context.Context) {
 			slog.Error("Deprovisioning failed", "error", err)
 		}
 	default:
-		if err := orch.Provision(ctx); err != nil {
+		var retryState rescue.RetryState
+		for {
+			err := orch.Provision(ctx)
+			if err == nil {
+				break
+			}
 			slog.Error("Provisioning failed", "error", err)
+			action := orch.RescueAction(&retryState)
+			slog.Info("Rescue action", "type", action.Type, "message", action.Message)
+			switch action.Type {
+			case rescue.ModeRetry:
+				retryState.RecordAttempt(err)
+				slog.Info("Retrying provisioning", "attempt", retryState.Attempts)
+				time.Sleep(30 * time.Second)
+				continue
+			case rescue.ModeShell:
+				slog.Info("Dropping to rescue shell")
+				realm.Shell()
+			case rescue.ModeWait:
+				slog.Info("Waiting for manual intervention")
+				select {}
+			default:
+				// ModeReboot: fall through to reboot
+			}
+			break
 		}
 	}
 
@@ -466,8 +490,21 @@ func runStandby(ctx context.Context, client config.Provider, cfg *config.Machine
 				case "provision":
 					cfg.Mode = "provision"
 					orch := provision.NewOrchestrator(cfg, client, diskMgr)
-					if err := orch.Provision(ctx); err != nil {
-						slog.Error("Hot provision failed", "error", err)
+					var retryState rescue.RetryState
+					for {
+						provErr := orch.Provision(ctx)
+						if provErr == nil {
+							break
+						}
+						slog.Error("Hot provision failed", "error", provErr)
+						action := orch.RescueAction(&retryState)
+						slog.Info("Rescue action", "type", action.Type, "message", action.Message)
+						if action.Type == rescue.ModeRetry {
+							retryState.RecordAttempt(provErr)
+							time.Sleep(30 * time.Second)
+							continue
+						}
+						break
 					}
 					if err := netMode.Teardown(ctx); err != nil {
 						slog.Warn("Network teardown error", "error", err)

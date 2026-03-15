@@ -5,12 +5,14 @@ package provision
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
+	"github.com/telekom/BOOTy/pkg/rescue"
 )
 
 type mockCommander struct {
@@ -519,5 +521,46 @@ func TestRedactURLs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRescueAction(t *testing.T) {
+	t.Helper()
+	tests := []struct {
+		name       string
+		rescueMode string
+		wantType   rescue.Mode
+	}{
+		{"empty defaults to reboot", "", rescue.ModeReboot},
+		{"invalid defaults to reboot", "bogus", rescue.ModeReboot},
+		{"reboot mode", "reboot", rescue.ModeReboot},
+		{"retry mode", "retry", rescue.ModeRetry},
+		{"shell mode", "shell", rescue.ModeShell},
+		{"wait mode", "wait", rescue.ModeWait},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			orch := &Orchestrator{
+				cfg: &config.MachineConfig{RescueMode: tc.rescueMode},
+				log: slog.Default(),
+			}
+			state := &rescue.RetryState{}
+			action := orch.RescueAction(state)
+			if action.Type != tc.wantType {
+				t.Errorf("RescueAction() type = %q, want %q", action.Type, tc.wantType)
+			}
+		})
+	}
+}
+
+func TestRescueAction_RetryExhausted(t *testing.T) {
+	orch := &Orchestrator{
+		cfg: &config.MachineConfig{RescueMode: "retry"},
+		log: slog.Default(),
+	}
+	state := &rescue.RetryState{Attempts: 3, MaxRetries: 3}
+	action := orch.RescueAction(state)
+	if action.Type != rescue.ModeReboot {
+		t.Errorf("exhausted retry should reboot, got %q", action.Type)
 	}
 }
