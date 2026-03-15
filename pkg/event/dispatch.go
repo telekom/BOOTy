@@ -54,18 +54,22 @@ func NewDispatcher(webhookURL string, log *slog.Logger) (*Dispatcher, error) {
 
 // Send dispatches an event to the webhook URL.
 func (d *Dispatcher) Send(ctx context.Context, e *Event) error {
+	if e == nil {
+		return fmt.Errorf("event must not be nil")
+	}
+
 	data, err := json.Marshal(e)
 	if err != nil {
 		return fmt.Errorf("marshal event: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.url.String(), bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.url.String(), bytes.NewReader(data)) //nolint:gosec // G704: webhook URL validated at Dispatcher creation
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := d.client.Do(req)
+	resp, err := d.client.Do(req) //nolint:gosec // G704: intentional HTTP call to user-configured webhook
 	if err != nil {
 		return fmt.Errorf("send webhook: %w", err)
 	}
