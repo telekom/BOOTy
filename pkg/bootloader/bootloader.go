@@ -8,6 +8,8 @@ type Bootloader interface {
 	Name() string
 
 	// Install installs the bootloader into the provisioned OS.
+	// rootPath is the mounted root filesystem of the target OS.
+	// espPath is the EFI System Partition mount point on the host filesystem.
 	Install(ctx context.Context, rootPath string, espPath string) error
 
 	// Configure sets default kernel, cmdline, timeout.

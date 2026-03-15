@@ -159,6 +159,13 @@ func (s *SystemdBoot) SetDefault(ctx context.Context, entryID string) error {
 	if s.espPath == "" {
 		return fmt.Errorf("esp path not set, call Install first")
 	}
+	// Validate entryID to prevent path traversal and invalid loader.conf entries.
+	safeID := filepath.Base(entryID)
+	if safeID != entryID || safeID == "." || safeID == ".." || strings.ContainsAny(entryID, "/\\") {
+		return fmt.Errorf("invalid entry ID: %q", entryID)
+	}
+	// Strip trailing .conf if caller accidentally included it.
+	entryID = strings.TrimSuffix(entryID, ".conf")
 	if _, err := exec.LookPath("bootctl"); err == nil {
 		cmd := exec.CommandContext(ctx, "bootctl", "set-default",
 			"--esp-path="+s.espPath, entryID+".conf")
@@ -178,7 +185,9 @@ func (s *SystemdBoot) SetDefault(ctx context.Context, entryID string) error {
 	lines := strings.Split(string(data), "\n")
 	found := false
 	for i, line := range lines {
-		if strings.HasPrefix(line, "default") {
+		trimmed := strings.TrimSpace(line)
+		fields := strings.Fields(trimmed)
+		if len(fields) >= 1 && fields[0] == "default" {
 			lines[i] = "default " + entryID + ".conf"
 			found = true
 			break
@@ -198,8 +207,14 @@ func (s *SystemdBoot) generateLoaderConf(cfg *BootConfig) error {
 	if err := os.MkdirAll(loaderDir, 0o755); err != nil {
 		return fmt.Errorf("create loader dir: %w", err)
 	}
+	// Validate DefaultEntry to prevent invalid loader.conf content.
+	defaultEntry := cfg.DefaultEntry
+	if strings.ContainsAny(defaultEntry, "/\\") || defaultEntry == ".." {
+		return fmt.Errorf("invalid default entry: %q", defaultEntry)
+	}
+	defaultEntry = strings.TrimSuffix(defaultEntry, ".conf")
 	content := fmt.Sprintf("default %s.conf\ntimeout %d\nconsole-mode max\n",
-		cfg.DefaultEntry, cfg.Timeout)
+		defaultEntry, cfg.Timeout)
 	loaderPath := filepath.Join(loaderDir, "loader.conf")
 	if err := os.WriteFile(loaderPath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("write loader.conf: %w", err)
