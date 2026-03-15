@@ -3,6 +3,8 @@ package persist
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -237,4 +239,84 @@ func RenderNetworkdUnit(iface *InterfaceConfig) string {
 		fmt.Fprintf(&b, "MTUBytes=%d\n", iface.MTU)
 	}
 	return b.String()
+}
+
+// Write renders and writes the network configuration to the target OS root.
+// rootDir is the mount point of the target root filesystem (e.g., "/newroot").
+func Write(rootDir string, family OSFamily, cfg *NetworkConfig) error {
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("validate config: %w", err)
+	}
+
+	configDir := filepath.Join(rootDir, family.ConfigPath())
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		return fmt.Errorf("create config dir %s: %w", configDir, err)
+	}
+
+	switch family {
+	case Ubuntu:
+		return writeNetplan(configDir, cfg)
+	case Flatcar:
+		return writeNetworkd(configDir, cfg)
+	case RHEL:
+		return writeNMKeyfiles(configDir, cfg)
+	default:
+		return fmt.Errorf("unsupported OS family %q", family)
+	}
+}
+
+func writeNetplan(dir string, cfg *NetworkConfig) error {
+	content := RenderNetplan(cfg)
+	path := filepath.Join(dir, "99-booty.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("write netplan config: %w", err)
+	}
+	return nil
+}
+
+func writeNetworkd(dir string, cfg *NetworkConfig) error {
+	for i := range cfg.Interfaces {
+		content := RenderNetworkdUnit(&cfg.Interfaces[i])
+		filename := fmt.Sprintf("10-booty-%s.network", cfg.Interfaces[i].Name)
+		path := filepath.Join(dir, filename)
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			return fmt.Errorf("write networkd unit for %s: %w", cfg.Interfaces[i].Name, err)
+		}
+	}
+	return nil
+}
+
+// renderNMKeyfile renders a NetworkManager keyfile for an interface.
+func renderNMKeyfile(iface *InterfaceConfig) string {
+	var b strings.Builder
+	b.WriteString("[connection]\n")
+	fmt.Fprintf(&b, "id=%s\n", iface.Name)
+	b.WriteString("type=ethernet\n\n")
+	b.WriteString("[ethernet]\n")
+	if iface.MAC != "" {
+		fmt.Fprintf(&b, "mac-address=%s\n", iface.MAC)
+	}
+	b.WriteString("\n[ipv4]\n")
+	if iface.DHCP {
+		b.WriteString("method=auto\n")
+	} else if iface.Address != "" {
+		b.WriteString("method=manual\n")
+		fmt.Fprintf(&b, "address1=%s\n", iface.Address)
+		if iface.Gateway != "" {
+			fmt.Fprintf(&b, "gateway=%s\n", iface.Gateway)
+		}
+	}
+	return b.String()
+}
+
+func writeNMKeyfiles(dir string, cfg *NetworkConfig) error {
+	for i := range cfg.Interfaces {
+		content := renderNMKeyfile(&cfg.Interfaces[i])
+		filename := fmt.Sprintf("booty-%s.nmconnection", cfg.Interfaces[i].Name)
+		path := filepath.Join(dir, filename)
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			return fmt.Errorf("write nm keyfile for %s: %w", cfg.Interfaces[i].Name, err)
+		}
+	}
+	return nil
 }

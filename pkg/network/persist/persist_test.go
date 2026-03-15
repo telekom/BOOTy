@@ -1,6 +1,8 @@
 package persist
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -196,5 +198,95 @@ func TestOSFamilyConstants(t *testing.T) {
 	}
 	if string(Flatcar) != "flatcar" {
 		t.Error("Flatcar")
+	}
+}
+func TestWriteNetplan(t *testing.T) {
+	root := t.TempDir()
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{
+			{Name: "eth0", DHCP: true},
+			{Name: "eth1", Address: "10.0.0.5/24", Gateway: "10.0.0.1"},
+		},
+	}
+	if err := Write(root, Ubuntu, cfg); err != nil {
+		t.Fatalf("Write() error: %v", err)
+	}
+	path := filepath.Join(root, "etc/netplan/99-booty.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "eth0:") {
+		t.Error("missing eth0")
+	}
+	if !strings.Contains(content, "dhcp4: true") {
+		t.Error("missing dhcp4")
+	}
+	if !strings.Contains(content, "10.0.0.5/24") {
+		t.Error("missing address")
+	}
+}
+
+func TestWriteNetworkd(t *testing.T) {
+	root := t.TempDir()
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{
+			{Name: "ens3", Address: "192.168.1.10/24", Gateway: "192.168.1.1"},
+		},
+	}
+	if err := Write(root, Flatcar, cfg); err != nil {
+		t.Fatalf("Write() error: %v", err)
+	}
+	path := filepath.Join(root, "etc/systemd/network/10-booty-ens3.network")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "Name=ens3") {
+		t.Error("missing Name match")
+	}
+	if !strings.Contains(content, "Address=192.168.1.10/24") {
+		t.Error("missing address")
+	}
+}
+
+func TestWriteNMKeyfiles(t *testing.T) {
+	root := t.TempDir()
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{
+			{Name: "enp1s0", DHCP: true, MAC: "aa:bb:cc:dd:ee:ff"},
+		},
+	}
+	if err := Write(root, RHEL, cfg); err != nil {
+		t.Fatalf("Write() error: %v", err)
+	}
+	path := filepath.Join(root, "etc/NetworkManager/system-connections/booty-enp1s0.nmconnection")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "type=ethernet") {
+		t.Error("missing type")
+	}
+	if !strings.Contains(content, "method=auto") {
+		t.Error("missing dhcp method")
+	}
+	if !strings.Contains(content, "mac-address=aa:bb:cc:dd:ee:ff") {
+		t.Error("missing mac")
+	}
+}
+
+func TestWriteValidationError(t *testing.T) {
+	root := t.TempDir()
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{
+			{Name: ""}, // missing name
+		},
+	}
+	if err := Write(root, Ubuntu, cfg); err == nil {
+		t.Error("expected validation error")
 	}
 }
