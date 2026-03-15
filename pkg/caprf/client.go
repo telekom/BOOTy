@@ -332,6 +332,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"BOND_MODE":                   &cfg.BondMode,
 		"VLANS":                       &cfg.VLANs,
 		"NETWORK_MODE":                &cfg.NetworkMode,
+		"CLOUDINIT_DATASOURCE":        &cfg.CloudInitDatasource,
 		"BGP_PEER_MODE":               &cfg.BGPPeerMode,
 		"BGP_NEIGHBORS":               &cfg.BGPNeighbors,
 		"IMAGE_CHECKSUM":              &cfg.ImageChecksum,
@@ -395,6 +396,8 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) {
 		cfg.FirmwareEnabled = parseBoolVar(value)
 	case "HEALTH_CHECKS_ENABLED":
 		cfg.HealthChecksEnabled = parseBoolVar(value)
+	case "CLOUDINIT_ENABLED":
+		cfg.CloudInitEnabled = parseBoolVar(value)
 	case "HEALTH_MIN_MEMORY_GB":
 		setIntField(&cfg.HealthMinMemoryGB, value)
 	case "HEALTH_MIN_CPUS":
