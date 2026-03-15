@@ -332,6 +332,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"BOND_MODE":                   &cfg.BondMode,
 		"VLANS":                       &cfg.VLANs,
 		"NETWORK_MODE":                &cfg.NetworkMode,
+		"RESCUE_MODE":                 &cfg.RescueMode,
 		"BGP_PEER_MODE":               &cfg.BGPPeerMode,
 		"BGP_NEIGHBORS":               &cfg.BGPNeighbors,
 		"IMAGE_CHECKSUM":              &cfg.ImageChecksum,

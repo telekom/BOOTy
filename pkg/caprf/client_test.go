@@ -966,3 +966,13 @@ func TestClientReportHealthChecksNoURL(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+func TestParseVarsRescueMode(t *testing.T) {
+	vars := "RESCUE_MODE=shell\n"
+	cfg, err := ParseVars(strings.NewReader(vars))
+	if err != nil {
+		t.Fatalf("ParseVars() error: %v", err)
+	}
+	if cfg.RescueMode != "shell" {
+		t.Errorf("RescueMode = %q, want %q", cfg.RescueMode, "shell")
+	}
+}

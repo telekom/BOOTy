@@ -100,6 +100,9 @@ type MachineConfig struct {
 	// Network mode override.
 	NetworkMode string // NETWORK_MODE: "gobgp" to use in-process GoBGP instead of FRR
 
+	// Rescue mode configuration.
+	RescueMode string // RESCUE_MODE: "reboot" (default), "retry", "shell", "wait"
+
 	// Files and commands from ISO /deploy/ directories.
 	ProvisionerFiles []string // Paths to files in /deploy/file-system/
 	MachineFiles     []string // Paths to files in /deploy/machine-files/
