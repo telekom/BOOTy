@@ -121,6 +121,9 @@ type MachineConfig struct {
 	MOKCertPath        string // MOK_CERT_PATH: path to DER-encoded MOK certificate for enrollment
 	MOKPassword        string // MOK_PASSWORD: one-time password for MokManager confirmation
 
+	// Rescue mode configuration.
+	RescueMode string // RESCUE_MODE: "reboot" (default), "retry", "shell", "wait"
+
 	// Files and commands from ISO /deploy/ directories.
 	ProvisionerFiles []string // Paths to files in /deploy/file-system/
 	MachineFiles     []string // Paths to files in /deploy/machine-files/
