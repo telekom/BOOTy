@@ -33,14 +33,19 @@ var DefaultPolicies = map[string]RetryPolicy{
 
 // WithRetry executes fn with the given retry policy.
 func WithRetry(ctx context.Context, name string, policy RetryPolicy, fn func(ctx context.Context) error) error {
+	if policy.MaxAttempts < 0 {
+		policy.MaxAttempts = 0
+	}
 	var lastErr error
 	for attempt := range policy.MaxAttempts + 1 {
 		if attempt > 0 {
 			delay := backoffDelay(policy, attempt)
 			slog.Warn("Retrying step", "step", name, "attempt", attempt, "delay", delay)
+			timer := time.NewTimer(delay)
 			select {
-			case <-time.After(delay):
+			case <-timer.C:
 			case <-ctx.Done():
+				timer.Stop()
 				return fmt.Errorf("retry canceled for %s: %w", name, ctx.Err())
 			}
 		}

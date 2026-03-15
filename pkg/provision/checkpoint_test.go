@@ -3,9 +3,7 @@
 package provision
 
 import (
-	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 )
@@ -18,21 +16,15 @@ func TestCheckpoint_SaveLoad(t *testing.T) {
 		LastCompletedStep: "stream-image",
 		CompletedSteps:    []string{"report-init", "configure-dns", "stream-image"},
 		AttemptCount:      1,
+		path:              path,
 	}
-	data, err := json.Marshal(cp)
+	if err := cp.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	result, err := LoadCheckpointFrom(path)
 	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	loaded, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	var result Checkpoint
-	if err := json.Unmarshal(loaded, &result); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+		t.Fatalf("LoadCheckpointFrom: %v", err)
 	}
 	if result.LastCompletedStep != "stream-image" {
 		t.Errorf("got %q, want %q", result.LastCompletedStep, "stream-image")
@@ -67,8 +59,8 @@ func TestCheckpoint_IsCompleted(t *testing.T) {
 }
 
 func TestLoadCheckpoint_Missing(t *testing.T) {
-	// LoadCheckpoint uses the hardcoded path, which won't exist in test
-	cp, err := LoadCheckpoint()
+	dir := t.TempDir()
+	cp, err := LoadCheckpointFrom(filepath.Join(dir, "nonexistent.json"))
 	if !errors.Is(err, ErrNoCheckpoint) {
 		t.Fatalf("expected ErrNoCheckpoint, got: %v", err)
 	}
