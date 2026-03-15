@@ -13,6 +13,12 @@ import (
 var ErrNoCheckpoint = errors.New("no checkpoint found")
 
 // Checkpoint records provisioning progress to tmpfs.
+//
+// NOTE: The checkpoint currently only persists step completion status.
+// Steps that derive in-memory state (e.g., detect-disk sets targetDisk,
+// parse-partitions sets partition paths) will need to re-run on resume
+// to rebuild that state. This means resume is only effective for skipping
+// truly idempotent steps that precede the failure point.
 type Checkpoint struct {
 	LastCompletedStep string   `json:"lastCompletedStep"`
 	CompletedSteps    []string `json:"completedSteps"`
