@@ -121,6 +121,12 @@ func (c *NetworkConfig) Validate() error {
 		if vlan.Parent == "" {
 			return fmt.Errorf("vlan %d: parent required", i)
 		}
+		if !validName.MatchString(vlan.Parent) {
+			return fmt.Errorf("vlan %d: invalid parent name %q", i, vlan.Parent)
+		}
+		if vlan.Name != "" && !validName.MatchString(vlan.Name) {
+			return fmt.Errorf("vlan %d: invalid name %q", i, vlan.Name)
+		}
 		if vlan.ID < 1 || vlan.ID > 4094 {
 			return fmt.Errorf("vlan %d: id must be 1-4094", i)
 		}
@@ -159,6 +165,14 @@ func validateBond(i int, bond *BondConfig) error {
 	if len(bond.Members) < 2 {
 		return fmt.Errorf("bond %q: at least 2 members required", bond.Name)
 	}
+	for j, m := range bond.Members {
+		if m == "" {
+			return fmt.Errorf("bond %q: member %d is empty", bond.Name, j)
+		}
+		if !validName.MatchString(m) {
+			return fmt.Errorf("bond %q: member %q: invalid name", bond.Name, m)
+		}
+	}
 	if bond.Mode == "" {
 		return fmt.Errorf("bond %q: mode required", bond.Name)
 	}
@@ -166,25 +180,29 @@ func validateBond(i int, bond *BondConfig) error {
 }
 
 // RenderNetplan renders the configuration as netplan YAML.
+// DNS and routes are placed under the first interface for netplan compatibility.
 func RenderNetplan(cfg *NetworkConfig) string {
 	var b strings.Builder
 	b.WriteString("network:\n")
 	b.WriteString("  version: 2\n")
-	renderNetplanEthernets(&b, cfg.Interfaces)
+	renderNetplanEthernets(&b, cfg.Interfaces, &cfg.DNS, cfg.Routes)
 	renderNetplanBonds(&b, cfg.Bonds)
 	renderNetplanVLANs(&b, cfg.VLANs)
-	renderNetplanDNS(&b, &cfg.DNS)
-	renderNetplanRoutes(&b, cfg.Routes)
 	return b.String()
 }
 
-func renderNetplanEthernets(b *strings.Builder, ifaces []InterfaceConfig) {
+func renderNetplanEthernets(b *strings.Builder, ifaces []InterfaceConfig, dns *DNSConfig, routes []RouteConfig) {
 	if len(ifaces) == 0 {
 		return
 	}
 	b.WriteString("  ethernets:\n")
 	for i := range ifaces {
 		renderNetplanInterface(b, &ifaces[i])
+		// Attach DNS and routes to the first interface.
+		if i == 0 {
+			renderNetplanIfaceDNS(b, dns)
+			renderNetplanIfaceRoutes(b, routes)
+		}
 	}
 }
 
@@ -264,6 +282,32 @@ func renderNetplanDNS(b *strings.Builder, dns *DNSConfig) {
 	}
 	if len(dns.Search) > 0 {
 		fmt.Fprintf(b, "    search: [%s]\n", strings.Join(dns.Search, ", "))
+	}
+}
+
+func renderNetplanIfaceDNS(b *strings.Builder, dns *DNSConfig) {
+	if len(dns.Servers) == 0 && len(dns.Search) == 0 {
+		return
+	}
+	b.WriteString("      nameservers:\n")
+	if len(dns.Servers) > 0 {
+		fmt.Fprintf(b, "        addresses: [%s]\n", strings.Join(dns.Servers, ", "))
+	}
+	if len(dns.Search) > 0 {
+		fmt.Fprintf(b, "        search: [%s]\n", strings.Join(dns.Search, ", "))
+	}
+}
+
+func renderNetplanIfaceRoutes(b *strings.Builder, routes []RouteConfig) {
+	if len(routes) == 0 {
+		return
+	}
+	b.WriteString("      routes:\n")
+	for _, r := range routes {
+		fmt.Fprintf(b, "        - to: %s\n          via: %s\n", r.Destination, r.Gateway)
+		if r.Metric > 0 {
+			fmt.Fprintf(b, "          metric: %d\n", r.Metric)
+		}
 	}
 }
 
@@ -362,14 +406,24 @@ func writeNetworkd(dir string, cfg *NetworkConfig) error {
 }
 
 func appendNetworkdDNSRoutes(content string, dns *DNSConfig, routes []RouteConfig) string {
-	var b strings.Builder
-	b.WriteString(content)
+	// DNS and Domains must appear under [Network], not after [Link].
+	// Insert DNS entries before [Link] if present, otherwise append.
+	var dnsLines strings.Builder
 	for _, s := range dns.Servers {
-		fmt.Fprintf(&b, "DNS=%s\n", s)
+		fmt.Fprintf(&dnsLines, "DNS=%s\n", s)
 	}
 	for _, d := range dns.Search {
-		fmt.Fprintf(&b, "Domains=%s\n", d)
+		fmt.Fprintf(&dnsLines, "Domains=%s\n", d)
 	}
+
+	if idx := strings.Index(content, "\n[Link]"); idx >= 0 {
+		content = content[:idx] + "\n" + dnsLines.String() + content[idx:]
+	} else {
+		content += dnsLines.String()
+	}
+
+	var b strings.Builder
+	b.WriteString(content)
 	for _, r := range routes {
 		b.WriteString("\n[Route]\n")
 		fmt.Fprintf(&b, "Destination=%s\n", r.Destination)
