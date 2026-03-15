@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -40,10 +41,27 @@ func (g *GRUB) Install(ctx context.Context, rootPath, espPath string) error {
 		grubBin = "grub2-install"
 	}
 
+	// Determine grub target based on architecture.
+	var grubTarget string
+	if runtime.GOARCH == "arm64" {
+		grubTarget = "arm64-efi"
+	} else {
+		grubTarget = "x86_64-efi"
+	}
+
+	// Translate espPath to chroot-relative path.
+	chrootESP := espPath
+	if strings.HasPrefix(espPath, rootPath) {
+		chrootESP = strings.TrimPrefix(espPath, rootPath)
+		if chrootESP == "" {
+			chrootESP = "/"
+		}
+	}
+
 	cmd := exec.CommandContext(ctx, "chroot", rootPath,
 		grubBin,
-		"--target=x86_64-efi",
-		"--efi-directory="+espPath,
+		"--target="+grubTarget,
+		"--efi-directory="+chrootESP,
 		"--no-nvram",
 	)
 	out, err := cmd.CombinedOutput()
@@ -137,7 +155,7 @@ func parseGRUBConfig(path string) ([]BootEntry, error) {
 		if strings.HasPrefix(line, "menuentry ") {
 			title := extractQuoted(line)
 			current = &BootEntry{
-				ID:    fmt.Sprintf("entry-%d", len(entries)),
+				ID:    fmt.Sprintf("%d", len(entries)),
 				Title: title,
 			}
 			continue

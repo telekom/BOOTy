@@ -126,6 +126,9 @@ func TestParseLoaderEntry_Missing(t *testing.T) {
 }
 
 func TestSystemdBoot_InstallFallback(t *testing.T) {
+	// Force bootctl to not be found so the fallback path is always exercised.
+	t.Setenv("PATH", t.TempDir())
+
 	root := t.TempDir()
 	esp := filepath.Join(root, "boot", "efi")
 	if err := os.MkdirAll(esp, 0o755); err != nil {
@@ -165,6 +168,9 @@ func TestSystemdBoot_InstallFallback(t *testing.T) {
 }
 
 func TestSystemdBoot_SetDefaultFallback(t *testing.T) {
+	// Force bootctl to not be found so the fallback path is always exercised.
+	t.Setenv("PATH", t.TempDir())
+
 	esp := t.TempDir()
 	loaderDir := filepath.Join(esp, "loader")
 	if err := os.MkdirAll(loaderDir, 0o755); err != nil {
