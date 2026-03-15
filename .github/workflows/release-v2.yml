@@ -172,7 +172,7 @@ jobs:
       - name: Collect release files
         run: |
           mkdir release-files
-          find artifacts -type f \( -name "booty-*" -o -name "*.cpio.gz" -o -name "*.sha256" -o -name "*.spdx.json" \) \
+          find artifacts -type f \( -name "booty-*" -o -name "*.cpio.gz" -o -name "*.sha256" -o -name "*.sig" -o -name "*.bundle" -o -name "*.spdx.json" \) \
             -exec cp {} release-files/ \;
           ls -lh release-files/
 
