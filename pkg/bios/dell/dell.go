@@ -20,6 +20,12 @@ var CriticalSettings = map[string]string{
 	"MemTest":                  "Disabled",
 }
 
+func init() {
+	bios.RegisterManager(bios.VendorDell, func(log *slog.Logger) bios.Manager {
+		return New(log)
+	})
+}
+
 // Manager handles Dell PowerEdge BIOS operations.
 type Manager struct {
 	log *slog.Logger

@@ -3,6 +3,8 @@ package bios
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 )
 
 // Vendor represents a server vendor detected from DMI.
@@ -63,4 +65,21 @@ type Setting struct {
 type SettingChange struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
+}
+
+// managerFactory is registered by vendor packages via init().
+var managerFactories = map[Vendor]func(*slog.Logger) Manager{}
+
+// RegisterManager registers a vendor-specific manager factory.
+func RegisterManager(vendor Vendor, factory func(*slog.Logger) Manager) {
+	managerFactories[vendor] = factory
+}
+
+// NewManager returns a Manager for the given vendor, or an error if unsupported.
+func NewManager(vendor Vendor, log *slog.Logger) (Manager, error) {
+	factory, ok := managerFactories[vendor]
+	if !ok {
+		return nil, fmt.Errorf("no BIOS manager registered for vendor %q", vendor)
+	}
+	return factory(log), nil
 }

@@ -343,6 +343,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"FIRMWARE_MIN_BMC":            &cfg.FirmwareMinBMC,
 		"HEALTH_SKIP_CHECKS":          &cfg.HealthSkipChecks,
 		"HEALTH_CHECK_URL":            &cfg.HealthCheckURL,
+		"BIOS_REPORT_URL":             &cfg.BIOSReportURL,
 	}
 
 	if ptr, ok := strFields[key]; ok {
@@ -399,6 +400,8 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) {
 		setIntField(&cfg.HealthMinMemoryGB, value)
 	case "HEALTH_MIN_CPUS":
 		setIntField(&cfg.HealthMinCPUs, value)
+	case "BIOS_ENABLED":
+		cfg.BIOSEnabled = parseBoolVar(value)
 	}
 }
 

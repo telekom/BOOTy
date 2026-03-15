@@ -100,6 +100,10 @@ type MachineConfig struct {
 	// Network mode override.
 	NetworkMode string // NETWORK_MODE: "gobgp" to use in-process GoBGP instead of FRR
 
+	// BIOS vendor management.
+	BIOSEnabled  bool   // BIOS_ENABLED: detect vendor and capture BIOS settings
+	BIOSReportURL string // BIOS_REPORT_URL: POST endpoint for BIOS state report
+
 	// Files and commands from ISO /deploy/ directories.
 	ProvisionerFiles []string // Paths to files in /deploy/file-system/
 	MachineFiles     []string // Paths to files in /deploy/machine-files/

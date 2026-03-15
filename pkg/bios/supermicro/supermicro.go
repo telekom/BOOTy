@@ -7,6 +7,12 @@ import (
 	"github.com/telekom/BOOTy/pkg/bios"
 )
 
+func init() {
+	bios.RegisterManager(bios.VendorSupermicro, func(log *slog.Logger) bios.Manager {
+		return New(log)
+	})
+}
+
 // Manager handles Supermicro BIOS operations.
 type Manager struct {
 	log *slog.Logger

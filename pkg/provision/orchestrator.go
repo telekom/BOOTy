@@ -18,6 +18,13 @@ import (
 	"github.com/telekom/BOOTy/pkg/health"
 	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/inventory"
+
+	// Register vendor BIOS managers.
+	"github.com/telekom/BOOTy/pkg/bios"
+	_ "github.com/telekom/BOOTy/pkg/bios/dell"
+	_ "github.com/telekom/BOOTy/pkg/bios/hpe"
+	_ "github.com/telekom/BOOTy/pkg/bios/lenovo"
+	_ "github.com/telekom/BOOTy/pkg/bios/supermicro"
 )
 
 // Step represents a named provisioning step.
@@ -63,6 +70,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		{"report-init", o.reportInit},
 		{"collect-inventory", o.collectInventory},
 		{"collect-firmware", o.collectFirmware},
+		{"capture-bios", o.captureBIOS},
 		{"health-checks", o.runHealthChecks},
 		{"set-hostname", o.setHostname},
 		{"copy-provisioner-files", o.copyProvisionerFiles},
@@ -175,6 +183,43 @@ func (o *Orchestrator) collectFirmware(ctx context.Context) error {
 	}
 
 	return o.provider.ReportFirmware(ctx, data)
+}
+
+func (o *Orchestrator) captureBIOS(ctx context.Context) error {
+	if !o.cfg.BIOSEnabled {
+		o.log.Info("BIOS capture disabled, skipping")
+		return nil
+	}
+
+	vendor, err := bios.DetectVendor()
+	if err != nil {
+		o.log.Warn("BIOS vendor detection failed, continuing", "error", err)
+		return nil
+	}
+	o.log.Info("BIOS vendor detected", "vendor", vendor)
+
+	mgr, err := bios.NewManager(vendor, o.log)
+	if err != nil {
+		o.log.Warn("No BIOS manager for vendor, continuing", "vendor", vendor, "error", err)
+		return nil
+	}
+
+	state, err := mgr.Capture(ctx)
+	if err != nil {
+		o.log.Warn("BIOS capture failed, continuing", "error", err)
+		return nil
+	}
+
+	data, err := json.Marshal(state)
+	if err != nil {
+		return fmt.Errorf("marshal bios state: %w", err)
+	}
+
+	if o.cfg.BIOSReportURL != "" {
+		return o.provider.ReportStatus(ctx, config.StatusInit, "bios: "+string(data))
+	}
+	o.log.Info("BIOS state captured", "vendor", vendor, "settings", len(state.Settings))
+	return nil
 }
 
 func (o *Orchestrator) setHostname(_ context.Context) error {

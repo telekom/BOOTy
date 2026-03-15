@@ -21,6 +21,12 @@ var CriticalSettings = map[string]string{
 	"PackageCState":            "C0/C1",
 }
 
+func init() {
+	bios.RegisterManager(bios.VendorLenovo, func(log *slog.Logger) bios.Manager {
+		return New(log)
+	})
+}
+
 // Manager handles Lenovo ThinkSystem BIOS operations.
 type Manager struct {
 	log *slog.Logger

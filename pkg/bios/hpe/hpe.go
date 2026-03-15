@@ -21,6 +21,12 @@ var CriticalSettings = map[string]string{
 	"EmbSata1Aspm":            "Disabled",
 }
 
+func init() {
+	bios.RegisterManager(bios.VendorHPE, func(log *slog.Logger) bios.Manager {
+		return New(log)
+	})
+}
+
 // Manager handles HPE ProLiant BIOS operations.
 type Manager struct {
 	log *slog.Logger

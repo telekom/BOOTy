@@ -966,3 +966,16 @@ func TestClientReportHealthChecksNoURL(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+func TestParseVarsBIOSConfig(t *testing.T) {
+	vars := "BIOS_ENABLED=true\nBIOS_REPORT_URL=https://caprf.example.com/bios\n"
+	cfg, err := ParseVars(strings.NewReader(vars))
+	if err != nil {
+		t.Fatalf("ParseVars() error: %v", err)
+	}
+	if !cfg.BIOSEnabled {
+		t.Error("BIOSEnabled should be true")
+	}
+	if cfg.BIOSReportURL != "https://caprf.example.com/bios" {
+		t.Errorf("BIOSReportURL = %q, want %q", cfg.BIOSReportURL, "https://caprf.example.com/bios")
+	}
+}
