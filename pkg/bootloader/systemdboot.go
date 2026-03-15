@@ -237,8 +237,10 @@ func (s *SystemdBoot) generateEntry(entry *BootEntry) error {
 	}
 	var lines []string
 	sanitize := strings.NewReplacer("\n", " ", "\r", " ")
-	lines = append(lines, fmt.Sprintf("title   %s", sanitize.Replace(entry.Title)))
-	lines = append(lines, fmt.Sprintf("linux   %s", sanitize.Replace(entry.Kernel)))
+	lines = append(lines,
+		fmt.Sprintf("title   %s", sanitize.Replace(entry.Title)),
+		fmt.Sprintf("linux   %s", sanitize.Replace(entry.Kernel)),
+	)
 	if entry.Initrd != "" {
 		lines = append(lines, fmt.Sprintf("initrd  %s", sanitize.Replace(entry.Initrd)))
 	}
