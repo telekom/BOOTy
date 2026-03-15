@@ -20,7 +20,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/inventory"
 
 	"github.com/telekom/BOOTy/pkg/bios"
-	_ "github.com/telekom/BOOTy/pkg/bios/dell"      // register Dell BIOS manager
+	_ "github.com/telekom/BOOTy/pkg/bios/dell"       // register Dell BIOS manager
 	_ "github.com/telekom/BOOTy/pkg/bios/hpe"        // register HPE BIOS manager
 	_ "github.com/telekom/BOOTy/pkg/bios/lenovo"     // register Lenovo BIOS manager
 	_ "github.com/telekom/BOOTy/pkg/bios/supermicro" // register Supermicro BIOS manager
