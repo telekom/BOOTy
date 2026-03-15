@@ -94,7 +94,9 @@ func TestDispatcherSend(t *testing.T) {
 			t.Error("missing content-type header")
 		}
 		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
-			t.Fatalf("decode body: %v", err)
+			t.Errorf("decode body: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -129,5 +131,40 @@ func TestDispatcherSendError(t *testing.T) {
 	e := New(ProvisionFailed, Machine{Name: "fail-host"})
 	if err := d.Send(context.Background(), e); err == nil {
 		t.Error("expected error for 500 response")
+	}
+}
+
+func TestNewDispatcher_InvalidURL(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{"no scheme", "example.com/webhook"},
+		{"empty", ""},
+		{"ftp scheme", "ftp://example.com/webhook"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewDispatcher(tc.url, nil)
+			if err == nil {
+				t.Error("expected error for invalid URL")
+			}
+		})
+	}
+}
+
+func TestNewDispatcher_NilLogger(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	d, err := NewDispatcher(srv.URL, nil)
+	if err != nil {
+		t.Fatalf("NewDispatcher() error: %v", err)
+	}
+	e := New(ProvisionStarted, Machine{Name: "nil-logger"})
+	if err := d.Send(context.Background(), e); err != nil {
+		t.Errorf("Send() with nil logger: %v", err)
 	}
 }

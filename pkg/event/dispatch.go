@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -24,6 +25,15 @@ func NewDispatcher(webhookURL string, log *slog.Logger) (*Dispatcher, error) {
 	u, err := url.Parse(webhookURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse webhook URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, fmt.Errorf("webhook URL scheme must be http or https, got %q", u.Scheme)
+	}
+	if u.Host == "" {
+		return nil, fmt.Errorf("webhook URL must have a host")
+	}
+	if log == nil {
+		log = slog.Default()
 	}
 	return &Dispatcher{
 		url: u,
@@ -52,6 +62,7 @@ func (d *Dispatcher) Send(ctx context.Context, e *Event) error {
 		return fmt.Errorf("send webhook: %w", err)
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
+	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		return fmt.Errorf("webhook returned status %d", resp.StatusCode)
