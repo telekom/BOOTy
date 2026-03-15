@@ -85,33 +85,33 @@ func NewMetrics() *Metrics {
 // Snapshot returns a JSON-serializable snapshot of all metrics.
 func (m *Metrics) Snapshot() *MetricSnapshot {
 	return &MetricSnapshot{
-		StepDurationCount:  m.StepDuration.Count(),
-		StepDurationSumS:   m.StepDuration.Sum(),
-		StepRetries:        m.StepRetries.Value(),
-		StepErrors:         m.StepErrors.Value(),
-		ProvisionCount:     m.ProvisionDuration.Count(),
-		ProvisionDurationS: m.ProvisionDuration.Sum(),
-		ImageBytes:         m.ImageBytes.Value(),
-		DiskCount:          m.DiskCount.Value(),
-		NICCount:           m.NICCount.Value(),
-		MemoryTotalBytes:   m.MemoryTotalBytes.Value(),
-		CPUCount:           m.CPUCount.Value(),
+		StepDurationCount:     m.StepDuration.Count(),
+		StepDurationSumS:      m.StepDuration.Sum(),
+		StepRetries:           m.StepRetries.Value(),
+		StepErrors:            m.StepErrors.Value(),
+		ProvisionCount:        m.ProvisionDuration.Count(),
+		ProvisionDurationSumS: m.ProvisionDuration.Sum(),
+		ImageBytes:            m.ImageBytes.Value(),
+		DiskCount:             m.DiskCount.Value(),
+		NICCount:              m.NICCount.Value(),
+		MemoryTotalBytes:      m.MemoryTotalBytes.Value(),
+		CPUCount:              m.CPUCount.Value(),
 	}
 }
 
 // MetricSnapshot is a point-in-time view of metrics for JSON export.
 type MetricSnapshot struct {
-	StepDurationCount  int     `json:"stepDurationCount"`
-	StepDurationSumS   float64 `json:"stepDurationSumS"`
-	StepRetries        int64   `json:"stepRetries"`
-	StepErrors         int64   `json:"stepErrors"`
-	ProvisionCount     int     `json:"provisionCount"`
-	ProvisionDurationS float64 `json:"provisionDurationS"`
-	ImageBytes         int64   `json:"imageBytes"`
-	DiskCount          int64   `json:"diskCount"`
-	NICCount           int64   `json:"nicCount"`
-	MemoryTotalBytes   int64   `json:"memoryTotalBytes"`
-	CPUCount           int64   `json:"cpuCount"`
+	StepDurationCount     int     `json:"stepDurationCount"`
+	StepDurationSumS      float64 `json:"stepDurationSumS"`
+	StepRetries           int64   `json:"stepRetries"`
+	StepErrors            int64   `json:"stepErrors"`
+	ProvisionCount        int     `json:"provisionCount"`
+	ProvisionDurationSumS float64 `json:"provisionDurationSumS"`
+	ImageBytes            int64   `json:"imageBytes"`
+	DiskCount             int64   `json:"diskCount"`
+	NICCount              int64   `json:"nicCount"`
+	MemoryTotalBytes      int64   `json:"memoryTotalBytes"`
+	CPUCount              int64   `json:"cpuCount"`
 }
 
 // JSON returns the snapshot as JSON bytes.
