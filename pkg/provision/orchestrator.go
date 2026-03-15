@@ -5,6 +5,7 @@ package provision
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -92,16 +93,69 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		{"report-success", o.reportSuccess},
 	}
 
+	cp := o.loadOrCreateCheckpoint()
+
 	for i, step := range steps {
-		o.log.Info("Provisioning step", "step", step.Name, "index", i+1, "total", len(steps))
-		if err := step.Fn(ctx); err != nil {
-			msg := fmt.Sprintf("step %s failed: %v", step.Name, err)
-			o.log.Error("Provisioning step failed", "step", step.Name, "error", err)
-			DumpDebugState(step.Name)
-			dumpConfig(o.cfg)
-			_ = o.provider.ReportStatus(ctx, config.StatusError, msg)
-			return fmt.Errorf("provision step %s: %w", step.Name, err)
+		if cp.IsCompleted(step.Name) {
+			o.log.Info("Skipping completed step", "step", step.Name)
+			continue
 		}
+		o.log.Info("Provisioning step", "step", step.Name, "index", i+1, "total", len(steps))
+		if err := o.executeStep(ctx, step, cp); err != nil {
+			return err
+		}
+	}
+
+	if rmErr := cp.Remove(); rmErr != nil {
+		o.log.Warn("Failed to remove checkpoint", "error", rmErr)
+	}
+	return nil
+}
+
+// loadOrCreateCheckpoint loads an existing checkpoint when BOOTY_RESUME is set,
+// or returns a fresh checkpoint. Only checkpoints created via BOOTY_RESUME
+// persist to disk; otherwise Save/Remove are no-ops.
+func (o *Orchestrator) loadOrCreateCheckpoint() *Checkpoint {
+	if os.Getenv("BOOTY_RESUME") != "" {
+		cp, cpErr := LoadCheckpoint()
+		if cpErr != nil && !errors.Is(cpErr, ErrNoCheckpoint) {
+			o.log.Warn("Failed to load checkpoint, starting fresh", "error", cpErr)
+		}
+		if cp != nil {
+			return cp
+		}
+		return &Checkpoint{persist: true}
+	}
+	return &Checkpoint{}
+}
+
+// executeStep runs a single provisioning step with optional retry, updating
+// the checkpoint on success or failure.
+func (o *Orchestrator) executeStep(ctx context.Context, step Step, cp *Checkpoint) error {
+	var err error
+	if policy, ok := DefaultPolicies[step.Name]; ok {
+		err = WithRetry(ctx, step.Name, policy, step.Fn)
+	} else {
+		err = step.Fn(ctx)
+	}
+
+	if err != nil {
+		msg := fmt.Sprintf("step %s failed: %v", step.Name, err)
+		o.log.Error("Provisioning step failed", "step", step.Name, "error", err)
+		cp.Errors = append(cp.Errors, msg)
+		cp.AttemptCount++
+		if saveErr := cp.Save(); saveErr != nil {
+			o.log.Warn("Failed to save checkpoint", "error", saveErr)
+		}
+		DumpDebugState(step.Name)
+		dumpConfig(o.cfg)
+		_ = o.provider.ReportStatus(ctx, config.StatusError, msg)
+		return fmt.Errorf("provision step %s: %w", step.Name, err)
+	}
+
+	cp.MarkStep(step.Name)
+	if saveErr := cp.Save(); saveErr != nil {
+		o.log.Warn("Failed to save checkpoint", "error", saveErr)
 	}
 	return nil
 }

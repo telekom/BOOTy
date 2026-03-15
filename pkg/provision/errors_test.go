@@ -1,0 +1,53 @@
+//go:build linux
+
+package provision
+
+import (
+	"errors"
+	"fmt"
+	"testing"
+)
+
+func TestTransientError(t *testing.T) {
+	inner := errors.New("network timeout")
+	err := &TransientError{Err: inner}
+
+	if err.Error() != "network timeout" {
+		t.Errorf("got %q, want %q", err.Error(), "network timeout")
+	}
+	if !errors.Is(err, inner) {
+		t.Error("Unwrap should return inner error")
+	}
+}
+
+func TestPermanentError(t *testing.T) {
+	inner := errors.New("disk not found")
+	err := &PermanentError{Err: inner}
+
+	if err.Error() != "disk not found" {
+		t.Errorf("got %q, want %q", err.Error(), "disk not found")
+	}
+	if !errors.Is(err, inner) {
+		t.Error("Unwrap should return inner error")
+	}
+}
+
+func TestIsTransient(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"transient error", &TransientError{Err: errors.New("timeout")}, true},
+		{"permanent error", &PermanentError{Err: errors.New("disk")}, false},
+		{"plain error", errors.New("generic"), false},
+		{"wrapped transient", fmt.Errorf("wrap: %w", &TransientError{Err: errors.New("t")}), true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isTransient(tc.err); got != tc.want {
+				t.Errorf("isTransient(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
