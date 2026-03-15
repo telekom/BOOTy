@@ -360,12 +360,15 @@ func (c *Configurator) SetupMellanox(ctx context.Context, numVFs int) (bool, err
 // isSafeDeviceName validates that a device name contains only safe characters
 // (letters, digits, dots, underscores, hyphens).
 func isSafeDeviceName(name string) bool {
+	if name == "" {
+		return false
+	}
 	for _, r := range name {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-') {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '.' && r != '_' && r != '-' {
 			return false
 		}
 	}
-	return len(name) > 0
+	return true
 }
 
 // hasPCIVendorFunc is the PCI vendor check function, replaceable in tests.
