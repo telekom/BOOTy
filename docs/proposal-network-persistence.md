@@ -1,6 +1,6 @@
 # Proposal: Network Configuration Persistence
 
-## Status: In Progress (library only — not yet integrated into provisioning orchestrator)
+## Status: In Progress
 
 ## Priority: P2
 
