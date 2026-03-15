@@ -2,8 +2,10 @@
 
 ## Status: Fully Implemented
 
-Phase 1 implements BIOS information collection and inclusion in debug dump output.
-CAPRF-side Redfish BIOS methods are designed but not yet called from the provisioning flow.
+Phase 1 implements BIOS information collection in debug dump output.
+Phase 2 adds BIOS settings reporting to CAPRF via the `report-bios-settings`
+provisioning step, which validates desired settings JSON and ships a report
+including current BIOS version/vendor info alongside desired configuration.
 
 ## Priority: P2
 
