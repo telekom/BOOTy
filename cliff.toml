@@ -3,8 +3,10 @@
 
 [changelog]
 header = """
-# Changelog\n
-All notable changes to BOOTy are documented here.\n
+# Changelog
+
+All notable changes to BOOTy are documented here.
+
 """
 body = """
 {% if version %}\
@@ -19,7 +21,7 @@ body = """
             {{ commit.message | upper_first }}
             {% if commit.breaking %} (**BREAKING**){% endif %}
     {% endfor %}
-{% endfor %}\n
+{% endfor %}
 """
 trim = true
 
