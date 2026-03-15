@@ -104,6 +104,8 @@ func (s *SystemdBoot) Install(ctx context.Context, rootPath, espPath string) err
 }
 
 // Configure generates loader.conf and boot entry files.
+// When cfg.Entries is empty but KernelCmdline is set, a default entry is
+// composed from the shared BootConfig fields.
 func (s *SystemdBoot) Configure(_ context.Context, cfg *BootConfig) error {
 	if s.espPath == "" {
 		return fmt.Errorf("esp path not set, call Install first")
@@ -113,8 +115,22 @@ func (s *SystemdBoot) Configure(_ context.Context, cfg *BootConfig) error {
 		return err
 	}
 
+	entries := cfg.Entries
+	if len(entries) == 0 && cfg.KernelCmdline != "" {
+		cmdline := cfg.KernelCmdline
+		if cfg.ExtraParams != "" {
+			cmdline += " " + cfg.ExtraParams
+		}
+		entries = []BootEntry{{
+			ID:      cfg.DefaultEntry,
+			Title:   cfg.DefaultEntry,
+			Kernel:  "/vmlinuz",
+			Cmdline: cmdline,
+		}}
+	}
+
 	// Generate boot entries
-	for _, entry := range cfg.Entries {
+	for _, entry := range entries {
 		if err := s.generateEntry(&entry); err != nil {
 			return err
 		}
@@ -212,7 +228,7 @@ func (s *SystemdBoot) generateLoaderConf(cfg *BootConfig) error {
 	if defaultEntry == "" {
 		return fmt.Errorf("default entry must not be empty")
 	}
-	if strings.ContainsAny(defaultEntry, "/\\") || defaultEntry == ".." {
+	if strings.ContainsAny(defaultEntry, "/\\") || defaultEntry == ".." || defaultEntry == "." {
 		return fmt.Errorf("invalid default entry: %q", defaultEntry)
 	}
 	defaultEntry = strings.TrimSuffix(defaultEntry, ".conf")
@@ -230,6 +246,9 @@ func (s *SystemdBoot) generateEntry(entry *BootEntry) error {
 	safeID := filepath.Base(entry.ID)
 	if safeID != entry.ID || safeID == "." || safeID == ".." {
 		return fmt.Errorf("invalid entry ID: %q", entry.ID)
+	}
+	if entry.Kernel == "" {
+		return fmt.Errorf("entry %q: kernel path required", entry.ID)
 	}
 	entriesDir := filepath.Join(s.espPath, "loader", "entries")
 	if err := os.MkdirAll(entriesDir, 0o755); err != nil {

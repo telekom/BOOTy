@@ -53,7 +53,7 @@ func (g *GRUB) Install(ctx context.Context, rootPath, espPath string) error {
 	rootClean := filepath.Clean(rootPath)
 	espClean := filepath.Clean(espPath)
 	rel, relErr := filepath.Rel(rootClean, espClean)
-	if relErr != nil || strings.HasPrefix(rel, "..") {
+	if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("esp path %q is not inside root %q", espPath, rootPath)
 	}
 	chrootESP := "/" + rel
