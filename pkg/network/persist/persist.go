@@ -272,19 +272,6 @@ func renderNetplanVLANs(b *strings.Builder, vlans []VLANConfig) {
 	}
 }
 
-func renderNetplanDNS(b *strings.Builder, dns *DNSConfig) {
-	if len(dns.Servers) == 0 && len(dns.Search) == 0 {
-		return
-	}
-	b.WriteString("  nameservers:\n")
-	if len(dns.Servers) > 0 {
-		fmt.Fprintf(b, "    addresses: [%s]\n", strings.Join(dns.Servers, ", "))
-	}
-	if len(dns.Search) > 0 {
-		fmt.Fprintf(b, "    search: [%s]\n", strings.Join(dns.Search, ", "))
-	}
-}
-
 func renderNetplanIfaceDNS(b *strings.Builder, dns *DNSConfig) {
 	if len(dns.Servers) == 0 && len(dns.Search) == 0 {
 		return
@@ -307,19 +294,6 @@ func renderNetplanIfaceRoutes(b *strings.Builder, routes []RouteConfig) {
 		fmt.Fprintf(b, "        - to: %s\n          via: %s\n", r.Destination, r.Gateway)
 		if r.Metric > 0 {
 			fmt.Fprintf(b, "          metric: %d\n", r.Metric)
-		}
-	}
-}
-
-func renderNetplanRoutes(b *strings.Builder, routes []RouteConfig) {
-	if len(routes) == 0 {
-		return
-	}
-	b.WriteString("  routes:\n")
-	for _, r := range routes {
-		fmt.Fprintf(b, "    - to: %s\n      via: %s\n", r.Destination, r.Gateway)
-		if r.Metric > 0 {
-			fmt.Fprintf(b, "      metric: %d\n", r.Metric)
 		}
 	}
 }
