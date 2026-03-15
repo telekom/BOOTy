@@ -36,6 +36,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Build binary
+        if: matrix.flavor == 'default'
         env:
           CC: ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}
         run: |
@@ -45,7 +46,7 @@ jobs:
               -X main.Version=${VERSION} \
               -X main.Build=${{ github.sha }} \
               -linkmode external -extldflags '-static'" \
-            -o booty-${{ matrix.flavor }}-${{ matrix.arch }}
+            -o booty-${{ matrix.arch }}
 
       - name: Build initramfs (${{ matrix.flavor }})
         if: matrix.arch == 'amd64'
@@ -61,7 +62,9 @@ jobs:
 
       - name: Generate checksums
         run: |
-          sha256sum booty-${{ matrix.flavor }}-${{ matrix.arch }} > booty-${{ matrix.flavor }}-${{ matrix.arch }}.sha256
+          if [ -f booty-${{ matrix.arch }} ]; then
+            sha256sum booty-${{ matrix.arch }} > booty-${{ matrix.arch }}.sha256
+          fi
           if [ -f out-${{ matrix.flavor }}/initramfs.cpio.gz ]; then
             cp out-${{ matrix.flavor }}/initramfs.cpio.gz ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.gz
             sha256sum ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.gz > ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.gz.sha256
@@ -72,8 +75,8 @@ jobs:
         with:
           name: release-${{ matrix.flavor }}-${{ matrix.arch }}
           path: |
-            booty-${{ matrix.flavor }}-${{ matrix.arch }}
-            booty-${{ matrix.flavor }}-${{ matrix.arch }}.sha256
+            booty-${{ matrix.arch }}
+            booty-${{ matrix.arch }}.sha256
             ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.gz
             ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.gz.sha256
           if-no-files-found: ignore

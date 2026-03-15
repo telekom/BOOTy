@@ -44,13 +44,14 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Build binary
+        if: matrix.flavor == 'default'
         run: |
           CGO_ENABLED=1 GOOS=linux GOARCH=${{ matrix.arch }} CC=gcc \
             go build -ldflags "-s -w \
               -X main.Version=${{ needs.version.outputs.version }} \
               -X main.Build=$(date -u +%Y%m%dT%H%M%S) \
               -linkmode external -extldflags '-static'" \
-            -o booty-${{ matrix.flavor }}-${{ matrix.arch }}
+            -o booty-${{ matrix.arch }}
 
       - name: Build initramfs (${{ matrix.flavor }})
         run: |
@@ -68,8 +69,9 @@ jobs:
         with:
           name: nightly-${{ matrix.flavor }}-${{ matrix.arch }}
           path: |
-            booty-${{ matrix.flavor }}-${{ matrix.arch }}
+            booty-${{ matrix.arch }}
             out-${{ matrix.flavor }}/initramfs.cpio.gz
+          if-no-files-found: ignore
 
   scan:
     name: Vulnerability Scan
