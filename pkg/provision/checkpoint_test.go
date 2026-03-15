@@ -17,6 +17,7 @@ func TestCheckpoint_SaveLoad(t *testing.T) {
 		CompletedSteps:    []string{"report-init", "configure-dns", "stream-image"},
 		AttemptCount:      1,
 		path:              path,
+		persist:           true,
 	}
 	if err := cp.Save(); err != nil {
 		t.Fatalf("Save: %v", err)

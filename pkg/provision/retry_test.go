@@ -10,7 +10,7 @@ import (
 )
 
 func TestWithRetry_Success(t *testing.T) {
-	policy := RetryPolicy{MaxAttempts: 3, InitialDelay: time.Millisecond, MaxDelay: 10 * time.Millisecond}
+	policy := RetryPolicy{MaxRetries: 3, InitialDelay: time.Millisecond, MaxDelay: 10 * time.Millisecond}
 	calls := 0
 	err := WithRetry(context.Background(), "test-step", policy, func(_ context.Context) error {
 		calls++
@@ -26,7 +26,7 @@ func TestWithRetry_Success(t *testing.T) {
 
 func TestWithRetry_EventualSuccess(t *testing.T) {
 	policy := RetryPolicy{
-		MaxAttempts:  3,
+		MaxRetries:   3,
 		InitialDelay: time.Millisecond,
 		MaxDelay:     10 * time.Millisecond,
 		Transient:    true,
@@ -49,7 +49,7 @@ func TestWithRetry_EventualSuccess(t *testing.T) {
 
 func TestWithRetry_Exhausted(t *testing.T) {
 	policy := RetryPolicy{
-		MaxAttempts:  2,
+		MaxRetries:   2,
 		InitialDelay: time.Millisecond,
 		MaxDelay:     5 * time.Millisecond,
 		Transient:    true,
@@ -69,7 +69,7 @@ func TestWithRetry_Exhausted(t *testing.T) {
 
 func TestWithRetry_PermanentError(t *testing.T) {
 	policy := RetryPolicy{
-		MaxAttempts:  5,
+		MaxRetries:   5,
 		InitialDelay: time.Millisecond,
 		MaxDelay:     5 * time.Millisecond,
 		Transient:    false,
@@ -90,7 +90,7 @@ func TestWithRetry_PermanentError(t *testing.T) {
 func TestWithRetry_ContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	policy := RetryPolicy{
-		MaxAttempts:  10,
+		MaxRetries:   10,
 		InitialDelay: time.Second,
 		MaxDelay:     time.Second,
 		Transient:    true,
@@ -113,7 +113,7 @@ func TestWithRetry_ContextCancel(t *testing.T) {
 }
 
 func TestWithRetry_NoRetry(t *testing.T) {
-	policy := RetryPolicy{MaxAttempts: 0}
+	policy := RetryPolicy{MaxRetries: 0}
 	calls := 0
 	err := WithRetry(context.Background(), "test-step", policy, func(_ context.Context) error {
 		calls++
