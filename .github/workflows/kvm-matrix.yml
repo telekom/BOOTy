@@ -31,36 +31,26 @@ jobs:
       matrix:
         include:
           - scenario: secureboot
-            qemu_extra: >-
-              -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.secboot.fd
-              -drive if=pflash,format=raw,file=OVMF_VARS.fd
+            qemu_extra: ""
             test_tag: e2e_kvm_secureboot
             setup: |
               cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
           - scenario: luks
-            qemu_extra: >-
-              -drive file=test-disk.qcow2,format=qcow2,if=virtio
+            qemu_extra: ""
             test_tag: e2e_kvm_luks
+            luks_disk: test-disk.qcow2
             setup: |
               qemu-img create -f qcow2 test-disk.qcow2 10G
           - scenario: tpm
-            qemu_extra: >-
-              -chardev socket,id=chrtpm,path=/tmp/swtpm.sock
-              -tpmdev emulator,id=tpm0,chardev=chrtpm
-              -device tpm-tis,tpmdev=tpm0
+            qemu_extra: ""
             test_tag: e2e_kvm_tpm
-            setup: |
-              mkdir -p /tmp/tpm
-              swtpm socket --tpmstate dir=/tmp/tpm --ctrl type=unixio,path=/tmp/swtpm.sock --tpm2 &
-              sleep 1
+            setup: ""
           - scenario: kexec
             qemu_extra: ""
             test_tag: e2e_kvm_kexec
             setup: ""
           - scenario: bootloader
-            qemu_extra: >-
-              -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd
-              -drive if=pflash,format=raw,file=OVMF_VARS.fd
+            qemu_extra: ""
             test_tag: e2e_kvm_bootloader
             setup: |
               cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
@@ -123,3 +113,4 @@ jobs:
           QEMU_EXTRA_ARGS: ${{ matrix.qemu_extra }}
           BOOTY_INITRAMFS: test-initramfs.cpio.gz
           BOOTY_KERNEL: vmlinuz
+          LUKS_DISK_IMAGE: ${{ matrix.luks_disk }}

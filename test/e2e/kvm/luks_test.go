@@ -14,6 +14,9 @@ func TestLUKSQEMU(t *testing.T) {
 	initramfs := envOrDefault("BOOTY_INITRAMFS", "test-initramfs.cpio.gz")
 	kernel := envOrDefault("BOOTY_KERNEL", "vmlinuz")
 	diskImg := envOrDefault("LUKS_DISK_IMAGE", "")
+	if diskImg == "" {
+		t.Skip("LUKS_DISK_IMAGE not set — skipping LUKS test")
+	}
 
 	args := []string{
 		"-m", "512",
@@ -25,8 +28,6 @@ func TestLUKSQEMU(t *testing.T) {
 	}
 	if diskImg != "" {
 		args = append(args, "-drive", "file="+diskImg+",format=qcow2,if=virtio")
-	} else {
-		t.Log("LUKS_DISK_IMAGE not set — booting without additional disk")
 	}
 	args = append(args, splitExtraArgs(envOrDefault("QEMU_EXTRA_ARGS", ""))...)
 

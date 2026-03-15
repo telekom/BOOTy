@@ -1,5 +1,9 @@
 name: booty-lacp-lab
 
+# NOTE: The 'switch' node is a simple Linux bridge and does not support
+# 802.3ad LACP negotiation. This topology validates multi-link bond
+# connectivity (e.g. balance-rr), not full LACP.
+
 topology:
   nodes:
     switch:

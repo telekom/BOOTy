@@ -4,6 +4,7 @@ package kvm
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -32,7 +33,18 @@ func TestTPMQEMU(t *testing.T) {
 	if err := swtpm.Start(); err != nil {
 		t.Fatalf("failed to start swtpm: %v", err)
 	}
-	defer swtpmCancel()
+	defer func() { _ = swtpm.Wait() }()
+
+	// Wait for swtpm socket to appear before launching QEMU.
+	for i := range 50 {
+		if _, err := os.Stat(tpmSocket); err == nil {
+			break
+		}
+		if i == 49 {
+			t.Fatal("swtpm socket did not appear within timeout")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 
 	args := []string{
 		"-m", "512",
