@@ -54,6 +54,9 @@ type Manager struct {
 
 // NewManager creates a kernel module manager.
 func NewManager(log *slog.Logger) *Manager {
+	if log == nil {
+		log = slog.Default().With("component", "drivers")
+	}
 	return &Manager{
 		log:             log,
 		modulesDir:      "/lib/modules",
@@ -80,8 +83,15 @@ func (m *Manager) ListLoaded() ([]Module, error) {
 			}
 			if len(fields) >= 4 {
 				deps := strings.TrimSuffix(strings.TrimPrefix(fields[3], "["), "]")
+				deps = strings.TrimRight(deps, ",")
 				if deps != "" && deps != "-" {
-					mod.Dependencies = strings.Split(deps, ",")
+					var cleaned []string
+					for _, d := range strings.Split(deps, ",") {
+						if d != "" {
+							cleaned = append(cleaned, d)
+						}
+					}
+					mod.Dependencies = cleaned
 				}
 			}
 			modules = append(modules, mod)
@@ -120,9 +130,9 @@ func (m *Manager) FindModule(name string) (string, error) {
 	return found, nil
 }
 
-// IsLoaded checks if a module is currently loaded.
-func IsLoaded(name string) bool {
-	data, err := os.ReadFile("/proc/modules")
+// IsLoaded checks if a module is currently loaded by reading procModulesPath.
+func (m *Manager) IsLoaded(name string) bool {
+	data, err := os.ReadFile(m.procModulesPath)
 	if err != nil {
 		return false
 	}

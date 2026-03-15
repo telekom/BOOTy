@@ -98,7 +98,11 @@ func RequiredModules() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	return UniqueModulesFrom(devices), nil
+}
 
+// UniqueModulesFrom extracts unique module names from a list of PCI devices.
+func UniqueModulesFrom(devices []PCIDevice) []string {
 	seen := make(map[string]bool)
 	var modules []string
 	for _, dev := range devices {
@@ -107,7 +111,7 @@ func RequiredModules() ([]string, error) {
 			modules = append(modules, dev.Module)
 		}
 	}
-	return modules, nil
+	return modules
 }
 
 func readSysfsFile(path string) string {
