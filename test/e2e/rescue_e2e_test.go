@@ -140,7 +140,7 @@ func TestRescueModeCommandPolling(t *testing.T) {
 
 	vars := "export MODE=\"rescue\"\n" +
 		"export HOSTNAME=\"rescue-cmd\"\n" +
-		"export COMMAND_URL=\"" + base + "/commands\"\n"
+		"export COMMANDS_URL=\"" + base + "/commands\"\n"
 
 	cfg, err := caprf.ParseVars(strings.NewReader(vars))
 	if err != nil {
