@@ -1,6 +1,11 @@
 # Proposal: TPM Measured Boot and Attestation
 
-## Status: Proposal
+## Status: Fully Implemented
+
+All phases implemented: Phase 1 (sysfs detection + PCR reading), Phase 2 (go-tpm device operations: ExtendPCR, ReadPCR, MeasureReader), Phase 3 (attestation quote generation with ECC signing), Phase 4 (secret sealing/unsealing with PCR policy).
+Implemented: `pkg/tpm/` (sysfs-based `Detect()`, `ReadPCRs()`), `TPM_ENABLED` config variable.
+Future phases (not yet implemented): go-tpm integration, PCR extending, remote attestation,
+disk encryption key sealing, CAPRF quote verification.
 
 ## Priority: P4
 

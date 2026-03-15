@@ -175,6 +175,15 @@ func (c *Client) ReportInventory(ctx context.Context, data []byte) error {
 	return c.postJSONWithAuth(ctx, c.cfg.InventoryURL, data)
 }
 
+// SubmitAttestation posts a TPM attestation quote to the CAPRF server.
+func (c *Client) SubmitAttestation(ctx context.Context, data []byte) error {
+	if c.cfg.TPMAttestationURL == "" {
+		c.log.Debug("No TPM attestation URL configured, skipping")
+		return nil
+	}
+	return c.postJSONWithAuth(ctx, c.cfg.TPMAttestationURL, data)
+}
+
 func (c *Client) postWithAuth(ctx context.Context, url, body string) error {
 	return c.withRetry(ctx, url, func() error {
 		return c.doPost(ctx, url, body)
@@ -343,6 +352,9 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"FIRMWARE_MIN_BMC":            &cfg.FirmwareMinBMC,
 		"HEALTH_SKIP_CHECKS":          &cfg.HealthSkipChecks,
 		"HEALTH_CHECK_URL":            &cfg.HealthCheckURL,
+		"TPM_ATTESTATION_URL":         &cfg.TPMAttestationURL,
+		"TPM_PCR_SELECTION":           &cfg.TPMPCRSelection,
+		"TPM_SEAL_PCRS":               &cfg.TPMSealPCRs,
 	}
 
 	if ptr, ok := strFields[key]; ok {
@@ -399,6 +411,8 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) {
 		setIntField(&cfg.HealthMinMemoryGB, value)
 	case "HEALTH_MIN_CPUS":
 		setIntField(&cfg.HealthMinCPUs, value)
+	case "TPM_ENABLED":
+		cfg.TPMEnabled = parseBoolVar(value)
 	}
 }
 
