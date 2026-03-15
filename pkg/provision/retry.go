@@ -73,7 +73,7 @@ func WithRetry(ctx context.Context, name string, policy RetryPolicy, fn func(ctx
 
 func backoffDelay(policy RetryPolicy, attempt int) time.Duration {
 	delay := time.Duration(float64(policy.InitialDelay) * math.Pow(2, float64(attempt-1)))
-	if delay > policy.MaxDelay {
+	if policy.MaxDelay > 0 && delay > policy.MaxDelay {
 		delay = policy.MaxDelay
 	}
 	if policy.Jitter > 0 {
