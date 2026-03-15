@@ -74,7 +74,16 @@ func TestNetworkConfig_Validate(t *testing.T) {
 			Bonds: []BondConfig{{Members: []string{"eth0", "eth1"}}},
 		}, true},
 		{"bond 1 member", NetworkConfig{
-			Bonds: []BondConfig{{Name: "bond0", Members: []string{"eth0"}}},
+			Bonds: []BondConfig{{Name: "bond0", Members: []string{"eth0"}, Mode: "802.3ad"}},
+		}, true},
+		{"bond no mode", NetworkConfig{
+			Bonds: []BondConfig{{Name: "bond0", Members: []string{"eth0", "eth1"}}},
+		}, true},
+		{"invalid iface name", NetworkConfig{
+			Interfaces: []InterfaceConfig{{Name: "../../etc", DHCP: true}},
+		}, true},
+		{"invalid bond name", NetworkConfig{
+			Bonds: []BondConfig{{Name: "../bad", Members: []string{"eth0", "eth1"}, Mode: "802.3ad"}},
 		}, true},
 		{"valid vlan", NetworkConfig{
 			VLANs: []VLANConfig{{Parent: "eth0", ID: 100}},
@@ -288,5 +297,149 @@ func TestWriteValidationError(t *testing.T) {
 	}
 	if err := Write(root, Ubuntu, cfg); err == nil {
 		t.Error("expected validation error")
+	}
+}
+
+func TestWriteUnsupportedFamily(t *testing.T) {
+	root := t.TempDir()
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
+	}
+	if err := Write(root, OSFamily("bsd"), cfg); err == nil {
+		t.Error("expected unsupported family error")
+	}
+}
+
+func TestRenderNetplan_DNSAndRoutes(t *testing.T) {
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{
+			{Name: "eth0", DHCP: true},
+		},
+		DNS: DNSConfig{
+			Servers: []string{"8.8.8.8", "8.8.4.4"},
+			Search:  []string{"example.com"},
+		},
+		Routes: []RouteConfig{
+			{Destination: "10.0.0.0/8", Gateway: "10.0.0.1", Metric: 100},
+			{Destination: "172.16.0.0/12", Gateway: "10.0.0.1"},
+		},
+	}
+	result := RenderNetplan(cfg)
+	if !strings.Contains(result, "nameservers:") {
+		t.Error("missing nameservers")
+	}
+	if !strings.Contains(result, "addresses: [8.8.8.8, 8.8.4.4]") {
+		t.Error("missing dns addresses")
+	}
+	if !strings.Contains(result, "search: [example.com]") {
+		t.Error("missing dns search")
+	}
+	if !strings.Contains(result, "routes:") {
+		t.Error("missing routes")
+	}
+	if !strings.Contains(result, "to: 10.0.0.0/8") {
+		t.Error("missing route destination")
+	}
+	if !strings.Contains(result, "via: 10.0.0.1") {
+		t.Error("missing route gateway")
+	}
+	if !strings.Contains(result, "metric: 100") {
+		t.Error("missing route metric")
+	}
+}
+
+func TestRenderNetplan_BondAllFields(t *testing.T) {
+	cfg := &NetworkConfig{
+		Bonds: []BondConfig{
+			{
+				Name:       "bond0",
+				Members:    []string{"eth0", "eth1"},
+				Mode:       "802.3ad",
+				Address:    "10.0.0.1/24",
+				Gateway:    "10.0.0.254",
+				MTU:        9000,
+				LACPRate:   "fast",
+				HashPolicy: "layer3+4",
+			},
+		},
+	}
+	result := RenderNetplan(cfg)
+	for _, want := range []string{
+		"gateway4: 10.0.0.254",
+		"mtu: 9000",
+		"lacp-rate: fast",
+		"transmit-hash-policy: layer3+4",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("missing %q in netplan bond output", want)
+		}
+	}
+}
+
+func TestWriteNetworkd_DNSAndRoutes(t *testing.T) {
+	root := t.TempDir()
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{
+			{Name: "eth0", Address: "10.0.0.5/24", Gateway: "10.0.0.1"},
+		},
+		DNS: DNSConfig{Servers: []string{"8.8.8.8"}},
+		Routes: []RouteConfig{
+			{Destination: "172.16.0.0/12", Gateway: "10.0.0.1", Metric: 50},
+		},
+	}
+	if err := Write(root, Flatcar, cfg); err != nil {
+		t.Fatalf("Write() error: %v", err)
+	}
+	path := filepath.Join(root, "etc/systemd/network/10-booty-eth0.network")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "DNS=8.8.8.8") {
+		t.Error("missing DNS")
+	}
+	if !strings.Contains(content, "[Route]") {
+		t.Error("missing Route section")
+	}
+	if !strings.Contains(content, "Destination=172.16.0.0/12") {
+		t.Error("missing route destination")
+	}
+	if !strings.Contains(content, "Metric=50") {
+		t.Error("missing route metric")
+	}
+}
+
+func TestWriteNMKeyfiles_DNSAndRoutes(t *testing.T) {
+	root := t.TempDir()
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{
+			{Name: "enp1s0", Address: "10.0.0.5/24", Gateway: "10.0.0.1"},
+		},
+		DNS: DNSConfig{
+			Servers: []string{"8.8.8.8", "8.8.4.4"},
+			Search:  []string{"example.com"},
+		},
+		Routes: []RouteConfig{
+			{Destination: "172.16.0.0/12", Gateway: "10.0.0.1"},
+		},
+	}
+	if err := Write(root, RHEL, cfg); err != nil {
+		t.Fatalf("Write() error: %v", err)
+	}
+	path := filepath.Join(root, "etc/NetworkManager/system-connections/booty-enp1s0.nmconnection")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "dns=8.8.8.8;8.8.4.4") {
+		t.Error("missing dns servers")
+	}
+	if !strings.Contains(content, "dns-search=example.com") {
+		t.Error("missing dns search")
+	}
+	if !strings.Contains(content, "route1=172.16.0.0/12,10.0.0.1") {
+		t.Error("missing route")
 	}
 }
