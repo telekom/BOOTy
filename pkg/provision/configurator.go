@@ -335,9 +335,9 @@ func (c *Configurator) SetupMellanox(ctx context.Context, numVFs int) (bool, err
 		if !strings.Contains(entry, "pciconf") {
 			continue
 		}
-		// Validate device name to prevent shell injection.
-		if strings.ContainsAny(entry, ";&|`$(){}\"'\\<>\n\r") {
-			slog.Warn("Skipping mst device with suspicious name", "entry", entry)
+		// Validate device name with allowlist to prevent shell injection.
+		if !isSafeDeviceName(entry) {
+			slog.Warn("Skipping mst device with invalid characters", "entry", entry)
 			continue
 		}
 		devPath := "/dev/mst/" + entry
@@ -355,6 +355,17 @@ func (c *Configurator) SetupMellanox(ctx context.Context, numVFs int) (bool, err
 		slog.Info("Mellanox firmware values changed, hard reboot required")
 	}
 	return changed, nil
+}
+
+// isSafeDeviceName validates that a device name contains only safe characters
+// (letters, digits, dots, underscores, hyphens).
+func isSafeDeviceName(name string) bool {
+	for _, r := range name {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return len(name) > 0
 }
 
 // hasPCIVendorFunc is the PCI vendor check function, replaceable in tests.

@@ -114,6 +114,9 @@ func TestWipeOrSecureEraseDisks(t *testing.T) {
 		{
 			name:        "secure erase enabled",
 			secureErase: true,
+			// NOTE: SecureEraseAllDisks reads /sys/block which is empty in test,
+			// so this only verifies the function is called without panic.
+			// Full coverage requires integration tests with real or mock disks.
 		},
 		{
 			name:        "quick erase error",
@@ -125,7 +128,9 @@ func TestWipeOrSecureEraseDisks(t *testing.T) {
 			name:        "secure erase error",
 			secureErase: true,
 			secureErr:   fmt.Errorf("secure erase failed"),
-			wantErr:     false, // SecureEraseAllDisks logs but continues on individual disk failure
+			// NOTE: /sys/block is empty in tests, so the mocked wipefs error
+			// is never reached. wantErr=false reflects the no-op behavior.
+			wantErr: false,
 		},
 	}
 	for _, tc := range tests {
