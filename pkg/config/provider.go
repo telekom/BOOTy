@@ -92,6 +92,10 @@ type MachineConfig struct {
 	HealthSkipChecks    string // HEALTH_SKIP_CHECKS: comma-separated check names to skip
 	HealthCheckURL      string // HEALTH_CHECK_URL: POST endpoint for health results
 
+	// Observability fields.
+	MetricsURL string // METRICS_URL: POST endpoint for provisioning metrics
+	EventURL   string // EVENT_URL: POST endpoint for provisioning events
+
 	// BGP peering mode and numbered peer configuration.
 	BGPPeerMode  string // BGP_PEER_MODE: "unnumbered" (default), "dual", "numbered"
 	BGPNeighbors string // BGP_NEIGHBORS: comma-separated numbered peer IPs

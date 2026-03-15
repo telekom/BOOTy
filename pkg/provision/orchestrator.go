@@ -11,13 +11,17 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/debug"
 	"github.com/telekom/BOOTy/pkg/disk"
+	"github.com/telekom/BOOTy/pkg/events"
 	"github.com/telekom/BOOTy/pkg/firmware"
 	"github.com/telekom/BOOTy/pkg/health"
 	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/inventory"
+	"github.com/telekom/BOOTy/pkg/metrics"
 )
 
 // Step represents a named provisioning step.
@@ -29,6 +33,21 @@ type Step struct {
 // HealthReporter is an optional provider capability for reporting health check results.
 type HealthReporter interface {
 	ReportHealthChecks(context.Context, []health.CheckResult) error
+}
+
+// MetricsReporter is an optional provider capability for reporting provisioning metrics.
+type MetricsReporter interface {
+	ReportMetrics(ctx context.Context, data []byte) error
+}
+
+// EventReporter is an optional provider capability for sending provisioning events.
+type EventReporter interface {
+	SendEvent(ctx context.Context, data []byte) error
+}
+
+// DebugReporter is an optional provider capability for shipping debug dumps.
+type DebugReporter interface {
+	ShipDebug(ctx context.Context, data string) error
 }
 
 // Orchestrator runs the full provisioning pipeline.
@@ -92,18 +111,101 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		{"report-success", o.reportSuccess},
 	}
 
+	collector := metrics.NewCollector()
+	o.emitEvent(ctx, events.EventProvStarted, "", "provisioning started", 0)
+
 	for i, step := range steps {
 		o.log.Info("Provisioning step", "step", step.Name, "index", i+1, "total", len(steps))
+		progress := float64(i) / float64(len(steps))
+		o.emitEvent(ctx, events.EventStepStarted, step.Name, "starting", progress)
+		start := time.Now()
 		if err := step.Fn(ctx); err != nil {
-			msg := fmt.Sprintf("step %s failed: %v", step.Name, err)
-			o.log.Error("Provisioning step failed", "step", step.Name, "error", err)
+			duration := time.Since(start)
+			collector.RecordStep(step.Name, duration, err)
+			o.emitEvent(ctx, events.EventStepFailed, step.Name, err.Error(), progress)
+			msg := fmt.Sprintf("step %s failed after %s: %v", step.Name, duration, err)
+			o.log.Error("Provisioning step failed", "step", step.Name, "error", err, "duration", duration)
+			o.shipDebugDump(ctx)
 			DumpDebugState(step.Name)
 			dumpConfig(o.cfg)
+			o.reportMetrics(ctx, collector)
+			o.emitEvent(ctx, events.EventProvFailed, step.Name, msg, progress)
 			_ = o.provider.ReportStatus(ctx, config.StatusError, msg)
 			return fmt.Errorf("provision step %s: %w", step.Name, err)
 		}
+		duration := time.Since(start)
+		collector.RecordStep(step.Name, duration, nil)
+		o.emitEvent(ctx, events.EventStepCompleted, step.Name, "completed", float64(i+1)/float64(len(steps)))
+		o.log.Info("Provisioning step completed", "step", step.Name, "duration", duration)
+		shipCtx, shipCancel := context.WithTimeout(ctx, 5*time.Second)
+		_ = o.provider.ShipLog(shipCtx, fmt.Sprintf("step %d/%d %s completed in %s", i+1, len(steps), step.Name, duration))
+		shipCancel()
 	}
+
+	o.emitEvent(ctx, events.EventProvCompleted, "", "provisioning completed", 1.0)
+	o.reportMetrics(ctx, collector)
 	return nil
+}
+
+// emitEvent sends a provisioning event if the provider supports it.
+// Uses a short timeout to avoid blocking provisioning progress.
+func (o *Orchestrator) emitEvent(ctx context.Context, eventType events.EventType, step, message string, progress float64) {
+	reporter, ok := o.provider.(EventReporter)
+	if !ok {
+		return
+	}
+	ev := events.ProvisionEvent{
+		Type:      eventType,
+		Step:      step,
+		Message:   message,
+		Progress:  progress,
+		Timestamp: time.Now(),
+	}
+	data, err := events.MarshalEvent(&ev)
+	if err != nil {
+		o.log.Warn("Failed to marshal event", "error", err)
+		return
+	}
+	evCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if sendErr := reporter.SendEvent(evCtx, data); sendErr != nil {
+		o.log.Debug("Failed to send event", "error", sendErr)
+	}
+}
+
+// reportMetrics publishes the collected metrics if the provider supports it.
+func (o *Orchestrator) reportMetrics(ctx context.Context, collector *metrics.Collector) {
+	reporter, ok := o.provider.(MetricsReporter)
+	if !ok {
+		return
+	}
+	data, err := collector.Marshal()
+	if err != nil {
+		o.log.Warn("Failed to marshal metrics", "error", err)
+		return
+	}
+	if reportErr := reporter.ReportMetrics(ctx, data); reportErr != nil {
+		o.log.Warn("Failed to report metrics", "error", reportErr)
+	}
+}
+
+// shipDebugDump collects and sends a structured debug dump if the provider supports it.
+func (o *Orchestrator) shipDebugDump(ctx context.Context) {
+	reporter, ok := o.provider.(DebugReporter)
+	if !ok {
+		return
+	}
+	dumpCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	dump := debug.Collect(dumpCtx)
+	data, err := dump.Marshal()
+	if err != nil {
+		o.log.Warn("Failed to marshal debug dump", "error", err)
+		return
+	}
+	if shipErr := reporter.ShipDebug(dumpCtx, string(data)); shipErr != nil {
+		o.log.Warn("Failed to ship debug dump", "error", shipErr)
+	}
 }
 
 func (o *Orchestrator) reportInit(ctx context.Context) error {

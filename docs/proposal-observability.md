@@ -1,6 +1,12 @@
 # Proposal: Observability — Metrics, Debug Dump, and Structured Logging
 
-## Status: Proposal
+## Status: Phase 1 Implemented (PR #26)
+
+Phase 1 implements: structured debug dump collection and shipping, provisioning
+event emission (step started/completed/failed, provision started/completed/failed),
+basic metrics collection (step durations, success/failure counts).
+Not yet implemented: Prometheus endpoint integration, debug dump schema versioning,
+controller-side event consumption.
 
 ## Priority: P1 (debug dump), P2 (metrics)
 

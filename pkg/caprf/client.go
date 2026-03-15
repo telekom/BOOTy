@@ -175,6 +175,23 @@ func (c *Client) ReportInventory(ctx context.Context, data []byte) error {
 	return c.postJSONWithAuth(ctx, c.cfg.InventoryURL, data)
 }
 
+// ReportMetrics posts provisioning metrics to the CAPRF server.
+func (c *Client) ReportMetrics(ctx context.Context, data []byte) error {
+	if c.cfg.MetricsURL == "" {
+		c.log.Debug("No metrics URL configured, skipping")
+		return nil
+	}
+	return c.postJSONWithAuth(ctx, c.cfg.MetricsURL, data)
+}
+
+// SendEvent posts a single provisioning event to the CAPRF server.
+func (c *Client) SendEvent(ctx context.Context, data []byte) error {
+	if c.cfg.EventURL == "" {
+		return nil
+	}
+	return c.postJSONWithAuth(ctx, c.cfg.EventURL, data)
+}
+
 func (c *Client) postWithAuth(ctx context.Context, url, body string) error {
 	return c.withRetry(ctx, url, func() error {
 		return c.doPost(ctx, url, body)
@@ -343,6 +360,8 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"FIRMWARE_MIN_BMC":            &cfg.FirmwareMinBMC,
 		"HEALTH_SKIP_CHECKS":          &cfg.HealthSkipChecks,
 		"HEALTH_CHECK_URL":            &cfg.HealthCheckURL,
+		"METRICS_URL":                 &cfg.MetricsURL,
+		"EVENT_URL":                   &cfg.EventURL,
 	}
 
 	if ptr, ok := strFields[key]; ok {
