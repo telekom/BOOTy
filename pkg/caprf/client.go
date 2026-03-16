@@ -71,8 +71,17 @@ func (c *Client) AcquireToken(ctx context.Context) error {
 
 	tm := auth.NewTokenManager(c.cfg.TokenURL, c.cfg.Token, c.log)
 	if c.cfg.TokenAlgorithm != "" {
+		switch c.cfg.TokenAlgorithm {
+		case "RS256", "ES256":
+			// Valid algorithms.
+		default:
+			return fmt.Errorf("unsupported token algorithm %q, must be RS256 or ES256", c.cfg.TokenAlgorithm)
+		}
 		tm.SetAlgorithm(c.cfg.TokenAlgorithm)
 	}
+	// bmcMAC is intentionally empty — the token endpoint identifies the
+	// machine by serial (hostname). BMC MAC is only required for PXE
+	// bootstrap flows that are not yet implemented.
 	if err := tm.Acquire(ctx, c.cfg.Hostname, ""); err != nil {
 		return fmt.Errorf("acquire jwt: %w", err)
 	}

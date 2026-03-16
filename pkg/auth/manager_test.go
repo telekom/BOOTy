@@ -186,3 +186,72 @@ func TestTokenManager_RenewWithRetry_ContextCancel(t *testing.T) {
 		t.Fatal("expected error when context is canceled")
 	}
 }
+
+func TestTokenManager_StartRenewal_NotAcquired(t *testing.T) {
+	tm := NewTokenManager("http://unused", "token", slog.Default())
+	if err := tm.StartRenewal(context.Background()); err == nil {
+		t.Fatal("expected error starting renewal without Acquire")
+	}
+}
+
+func TestTokenManager_StartRenewal_RenewsBeforeExpiry(t *testing.T) {
+	var renewCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		renewCalls.Add(1)
+		resp := TokenResponse{
+			AccessToken: "renewed",
+			ExpiresIn:   1, // 1 second — renewal at 80% = ~800ms
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	tm := NewTokenManager(server.URL, "bootstrap", slog.Default())
+	// Simulate a prior Acquire.
+	tm.mu.Lock()
+	tm.token = "initial-jwt"
+	tm.refreshToken = "refresh"
+	tm.expiresAt = time.Now().Add(1 * time.Second)
+	tm.acquired = true
+	tm.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := tm.StartRenewal(ctx); err != nil {
+		t.Fatalf("StartRenewal failed: %v", err)
+	}
+
+	// Wait for at least one renewal cycle.
+	time.Sleep(2 * time.Second)
+	cancel()
+
+	if renewCalls.Load() < 1 {
+		t.Errorf("expected at least 1 renewal call, got %d", renewCalls.Load())
+	}
+	if got := tm.Token(); got != "renewed" {
+		t.Errorf("expected token 'renewed', got %q", got)
+	}
+}
+
+func TestTokenManager_SetAlgorithm_ThreadSafe(t *testing.T) {
+	tm := NewTokenManager("http://unused", "token", slog.Default())
+	var wg sync.WaitGroup
+	for range 10 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tm.SetAlgorithm("RS256")
+		}()
+	}
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent SetAlgorithm timed out")
+	}
+}

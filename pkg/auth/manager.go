@@ -58,7 +58,10 @@ func NewTokenManager(tokenURL, bootstrapToken string, log *slog.Logger) *TokenMa
 }
 
 // SetAlgorithm configures the token algorithm (e.g. RS256, ES256) sent in requests.
+// Must be called before Acquire or StartRenewal.
 func (tm *TokenManager) SetAlgorithm(alg string) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
 	tm.algorithm = alg
 }
 
@@ -72,10 +75,13 @@ func (tm *TokenManager) SetOnFatal(fn func()) {
 
 // Acquire exchanges the bootstrap token for a JWT from the token endpoint.
 func (tm *TokenManager) Acquire(ctx context.Context, serial, bmcMAC string) error {
+	tm.mu.RLock()
+	alg := tm.algorithm
+	tm.mu.RUnlock()
 	reqBody := tokenRequest{
 		MachineSerial: serial,
 		BMCMAC:        bmcMAC,
-		Algorithm:     tm.algorithm,
+		Algorithm:     alg,
 	}
 	data, err := json.Marshal(reqBody)
 	if err != nil {
@@ -192,7 +198,7 @@ func (tm *TokenManager) renew(ctx context.Context) error {
 	tm.mu.RUnlock()
 
 	type renewRequest struct {
-		RefreshToken string `json:"refresh_token"` //nolint:gosec // G117: this is the token request
+		RefreshToken string `json:"refresh_token,omitempty"` //nolint:gosec // G117: this is the token request
 	}
 	data, err := json.Marshal(renewRequest{RefreshToken: refresh})
 	if err != nil {
