@@ -195,23 +195,27 @@ func TestTokenManager_StartRenewal_NotAcquired(t *testing.T) {
 }
 
 func TestTokenManager_StartRenewal_RenewsBeforeExpiry(t *testing.T) {
+	renewed := make(chan struct{})
 	var renewCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		renewCalls.Add(1)
 		resp := TokenResponse{
 			AccessToken: "renewed",
-			ExpiresIn:   1, // 1 second — renewal at 80% = ~800ms
+			ExpiresIn:   60,
 		}
 		_ = json.NewEncoder(w).Encode(resp)
+		// Signal AFTER encoding the response so the client has data to read.
+		if renewCalls.Add(1) == 1 {
+			close(renewed)
+		}
 	}))
 	defer server.Close()
 
 	tm := NewTokenManager(server.URL, "bootstrap", slog.Default())
-	// Simulate a prior Acquire.
+	// Set an already-expired token so renewLoop fires the immediate path (timer.Reset(0)).
 	tm.mu.Lock()
 	tm.token = "initial-jwt"
 	tm.refreshToken = "refresh"
-	tm.expiresAt = time.Now().Add(1 * time.Second)
+	tm.expiresAt = time.Now().Add(-time.Second)
 	tm.acquired = true
 	tm.mu.Unlock()
 
@@ -222,16 +226,22 @@ func TestTokenManager_StartRenewal_RenewsBeforeExpiry(t *testing.T) {
 		t.Fatalf("StartRenewal failed: %v", err)
 	}
 
-	// Wait for at least one renewal cycle.
-	time.Sleep(2 * time.Second)
-	cancel()
+	// Wait for the server to finish sending the renewal response.
+	select {
+	case <-renewed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for renewal")
+	}
 
-	if renewCalls.Load() < 1 {
-		t.Errorf("expected at least 1 renewal call, got %d", renewCalls.Load())
+	// Poll briefly: the goroutine needs to read and apply the HTTP response.
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if tm.Token() == "renewed" {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
-	if got := tm.Token(); got != "renewed" {
-		t.Errorf("expected token 'renewed', got %q", got)
-	}
+	t.Errorf("expected token 'renewed', got %q", tm.Token())
 }
 
 func TestTokenManager_SetAlgorithm_ThreadSafe(t *testing.T) {

@@ -15,8 +15,8 @@ import (
 
 // TokenResponse represents the server's token endpoint response.
 type TokenResponse struct {
-	AccessToken  string `json:"access_token"`            //nolint:gosec // G117: this is the token endpoint response
-	RefreshToken string `json:"refresh_token,omitempty"` //nolint:gosec // G117: this is the token endpoint response
+	AccessToken  string `json:"access_token"`            //nolint:gosec // G101: struct field for token endpoint response, not a hardcoded credential
+	RefreshToken string `json:"refresh_token,omitempty"` //nolint:gosec // G101: struct field for token endpoint response, not a hardcoded credential
 	ExpiresIn    int    `json:"expires_in"`
 	TokenType    string `json:"token_type"`
 }
@@ -30,17 +30,18 @@ type tokenRequest struct {
 
 // TokenManager handles JWT acquisition, renewal, and failure recovery.
 type TokenManager struct {
-	tokenURL     string
-	token        string
-	refreshToken string
-	expiresAt    time.Time
-	mu           sync.RWMutex
-	client       *http.Client
-	log          *slog.Logger
-	onFatal      func()
-	backoff      func(attempt int) time.Duration
-	algorithm    string
-	acquired     bool // true after a successful Acquire call
+	tokenURL       string
+	token          string
+	refreshToken   string
+	expiresAt      time.Time
+	mu             sync.RWMutex
+	client         *http.Client
+	log            *slog.Logger
+	onFatal        func()
+	backoff        func(attempt int) time.Duration
+	algorithm      string
+	acquired       bool
+	renewalStarted bool // true after a successful Acquire call
 }
 
 // NewTokenManager creates a token manager with an initial bootstrap token.
@@ -99,7 +100,7 @@ func (tm *TokenManager) Acquire(ctx context.Context, serial, bmcMAC string) erro
 	tm.mu.RUnlock()
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := tm.client.Do(req) //nolint:gosec // G704: token URL from trusted config
+	resp, err := tm.client.Do(req) //nolint:gosec // G107: token URL comes from validated configuration, not user input
 	if err != nil {
 		return fmt.Errorf("acquire token from %s: %w", tm.tokenURL, err)
 	}
@@ -144,13 +145,19 @@ func (tm *TokenManager) Token() string {
 
 // StartRenewal begins the background renewal goroutine.
 // Renews at 80% of token lifetime. Must be called after a successful Acquire.
+// Idempotent: subsequent calls after the first are a no-op.
 func (tm *TokenManager) StartRenewal(ctx context.Context) error {
-	tm.mu.RLock()
+	tm.mu.Lock()
 	if !tm.acquired {
-		tm.mu.RUnlock()
+		tm.mu.Unlock()
 		return fmt.Errorf("cannot start renewal: Acquire has not been called")
 	}
-	tm.mu.RUnlock()
+	if tm.renewalStarted {
+		tm.mu.Unlock()
+		return nil
+	}
+	tm.renewalStarted = true
+	tm.mu.Unlock()
 	go tm.renewLoop(ctx)
 	return nil
 }
@@ -167,11 +174,12 @@ func (tm *TokenManager) renewLoop(ctx context.Context) {
 		tm.mu.RUnlock()
 
 		if remaining <= 0 {
-			remaining = 30 * time.Second
+			// Token already expired — attempt renewal immediately.
+			timer.Reset(0)
+		} else {
+			// Renew at 80% of remaining lifetime to avoid expiry races.
+			timer.Reset(time.Duration(float64(remaining) * 0.8))
 		}
-
-		renewAfter := time.Duration(float64(remaining) * 0.8)
-		timer.Reset(renewAfter)
 
 		select {
 		case <-timer.C:
@@ -198,7 +206,7 @@ func (tm *TokenManager) renew(ctx context.Context) error {
 	tm.mu.RUnlock()
 
 	type renewRequest struct {
-		RefreshToken string `json:"refresh_token,omitempty"` //nolint:gosec // G117: this is the token request
+		RefreshToken string `json:"refresh_token,omitempty"` //nolint:gosec // G101: struct field for token request body, not a hardcoded credential
 	}
 	data, err := json.Marshal(renewRequest{RefreshToken: refresh})
 	if err != nil {
@@ -216,7 +224,7 @@ func (tm *TokenManager) renew(ctx context.Context) error {
 	tm.mu.RUnlock()
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := tm.client.Do(req) //nolint:gosec // G704: token URL from trusted config
+	resp, err := tm.client.Do(req) //nolint:gosec // G107: token URL comes from validated configuration, not user input
 	if err != nil {
 		return fmt.Errorf("renew token: %w", err)
 	}
