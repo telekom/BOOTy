@@ -243,6 +243,7 @@ func runCAPRF(ctx context.Context) {
 		}
 	default:
 		var retryState rescue.RetryState
+		rescueCfg := orch.RescueConfig()
 		for {
 			err := orch.Provision(ctx)
 			if err == nil {
@@ -254,15 +255,20 @@ func runCAPRF(ctx context.Context) {
 			switch action.Type {
 			case rescue.ModeRetry:
 				retryState.RecordAttempt(err)
-				slog.Info("Retrying provisioning", "attempt", retryState.Attempts)
-				time.Sleep(30 * time.Second)
+				slog.Info("Retrying provisioning", "attempt", retryState.Attempts, "delay", rescueCfg.RetryDelay)
+				time.Sleep(rescueCfg.RetryDelay)
 				continue
 			case rescue.ModeShell:
 				slog.Info("Dropping to rescue shell")
 				realm.Shell()
 			case rescue.ModeWait:
 				slog.Info("Waiting for manual intervention")
-				select {}
+				<-ctx.Done()
+				slog.Info("Context canceled while waiting in rescue mode")
+				if err := netMode.Teardown(ctx); err != nil {
+					slog.Warn("Network teardown error", "error", err)
+				}
+				return
 			default:
 				// ModeReboot: fall through to reboot
 			}
@@ -560,31 +566,50 @@ func runStandby(ctx context.Context, client config.Provider, cfg *config.Machine
 				case "provision":
 					cfg.Mode = "provision"
 					orch := provision.NewOrchestrator(cfg, client, diskMgr)
+					rescueCfg := orch.RescueConfig()
 					var retryState rescue.RetryState
 					var provErr error
+					provisionSucceeded := false
 					for {
 						provErr = orch.Provision(ctx)
 						if provErr == nil {
+							provisionSucceeded = true
 							break
 						}
 						slog.Error("Hot provision failed", "error", provErr)
-						action := orch.RescueAction(&retryState)
+						action := rescue.Decide(rescueCfg, &retryState)
 						slog.Info("Rescue action", "type", action.Type, "message", action.Message)
-						if action.Type == rescue.ModeRetry {
+						switch action.Type {
+						case rescue.ModeRetry:
 							retryState.RecordAttempt(provErr)
-							time.Sleep(30 * time.Second)
+							time.Sleep(rescueCfg.RetryDelay)
 							continue
+						case rescue.ModeShell:
+							slog.Info("Dropping to rescue shell")
+							realm.Shell()
+							return
+						case rescue.ModeWait:
+							slog.Info("Waiting for manual intervention")
+							<-ctx.Done()
+							slog.Info("Standby context canceled while waiting in rescue mode")
+							return
+						default:
+							// ModeReboot
 						}
 						break
 					}
-					if provErr != nil {
+					if !provisionSucceeded {
 						if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "failed", provErr.Error()); ackErr != nil {
 							slog.Warn("Failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
 						}
-					} else {
-						if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "completed", ""); ackErr != nil {
-							slog.Warn("Failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
+						if err := netMode.Teardown(ctx); err != nil {
+							slog.Warn("Network teardown error", "error", err)
 						}
+						realm.Reboot()
+						return
+					}
+					if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "completed", ""); ackErr != nil {
+						slog.Warn("Failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
 					}
 					if err := netMode.Teardown(ctx); err != nil {
 						slog.Warn("Network teardown error", "error", err)

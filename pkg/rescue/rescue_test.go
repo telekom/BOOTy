@@ -37,6 +37,7 @@ func TestConfig_Validate(t *testing.T) {
 		cfg     Config
 		wantErr bool
 	}{
+		{"empty mode allowed", Config{}, false},
 		{"valid reboot", Config{Mode: ModeReboot}, false},
 		{"valid retry", Config{Mode: ModeRetry, MaxRetries: 3}, false},
 		{"retry no max", Config{Mode: ModeRetry}, true},
@@ -106,7 +107,7 @@ func TestRetryState_RecordAttempt(t *testing.T) {
 }
 
 func TestRetryState_RecordAttempt_NilErr(t *testing.T) {
-	s := &RetryState{MaxRetries: 3}
+	s := &RetryState{MaxRetries: 3, LastError: "previous error"}
 	s.RecordAttempt(nil)
 
 	if s.LastError != "" {

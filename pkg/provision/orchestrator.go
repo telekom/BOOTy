@@ -185,9 +185,8 @@ func (o *Orchestrator) executeStep(ctx context.Context, step Step, cp *Checkpoin
 	return nil
 }
 
-// RescueAction returns the rescue action to take after a provisioning failure,
-// based on the machine config's RescueMode setting.
-func (o *Orchestrator) RescueAction(state *rescue.RetryState) rescue.Action {
+// RescueConfig returns the normalized rescue config derived from machine config.
+func (o *Orchestrator) RescueConfig() *rescue.Config {
 	cfg := &rescue.Config{Mode: rescue.ModeReboot}
 	if o.cfg.RescueMode != "" {
 		mode, err := rescue.ParseMode(o.cfg.RescueMode)
@@ -198,6 +197,13 @@ func (o *Orchestrator) RescueAction(state *rescue.RetryState) rescue.Action {
 		}
 	}
 	cfg.ApplyDefaults()
+	return cfg
+}
+
+// RescueAction returns the rescue action to take after a provisioning failure,
+// based on the machine config's RescueMode setting.
+func (o *Orchestrator) RescueAction(state *rescue.RetryState) rescue.Action {
+	cfg := o.RescueConfig()
 	return rescue.Decide(cfg, state)
 }
 

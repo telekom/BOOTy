@@ -42,8 +42,10 @@ type Config struct {
 
 // Validate checks the rescue config.
 func (c *Config) Validate() error {
-	if _, err := ParseMode(string(c.Mode)); err != nil {
-		return fmt.Errorf("invalid mode: %w", err)
+	if c.Mode != "" {
+		if _, err := ParseMode(string(c.Mode)); err != nil {
+			return fmt.Errorf("invalid mode: %w", err)
+		}
 	}
 	if c.Mode == ModeRetry && c.MaxRetries < 1 {
 		return fmt.Errorf("maxRetries must be >= 1 for retry mode")
@@ -98,7 +100,9 @@ func (s *RetryState) RecordAttempt(err error) {
 	s.LastRetry = time.Now()
 	if err != nil {
 		s.LastError = err.Error()
+		return
 	}
+	s.LastError = ""
 }
 
 // Remaining returns the number of retries remaining.
@@ -134,7 +138,7 @@ func Decide(cfg *Config, state *RetryState) Action {
 	case ModeShell:
 		return Action{
 			Type:    ModeShell,
-			Message: fmt.Sprintf("dropping to rescue shell (timeout: %s)", cfg.ShellTimeout),
+			Message: "dropping to rescue shell",
 		}
 	case ModeWait:
 		return Action{
