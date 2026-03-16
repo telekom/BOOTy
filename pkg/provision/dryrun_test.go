@@ -4,8 +4,12 @@ package provision
 
 import (
 	"context"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -25,12 +29,30 @@ func (p *dryRunProvider) ReportStatus(_ context.Context, s config.Status, msg st
 	p.lastMessage = msg
 	return nil
 }
-func (p *dryRunProvider) ShipLog(_ context.Context, _ string) error                 { return nil }
-func (p *dryRunProvider) Heartbeat(_ context.Context) error                         { return nil }
-func (p *dryRunProvider) FetchCommands(_ context.Context) ([]config.Command, error) { return nil, nil }
+func (p *dryRunProvider) ShipLog(_ context.Context, _ string) error                  { return nil }
+func (p *dryRunProvider) Heartbeat(_ context.Context) error                          { return nil }
+func (p *dryRunProvider) FetchCommands(_ context.Context) ([]config.Command, error)  { return nil, nil }
 func (p *dryRunProvider) AcknowledgeCommand(_ context.Context, _, _, _ string) error { return nil }
 func (p *dryRunProvider) ReportInventory(_ context.Context, _ []byte) error          { return nil }
 func (p *dryRunProvider) ReportFirmware(_ context.Context, _ []byte) error           { return nil }
+
+func withMockInterfaces(t *testing.T, fn func() ([]net.Interface, error)) {
+	t.Helper()
+	original := listInterfaces
+	listInterfaces = fn
+	t.Cleanup(func() {
+		listInterfaces = original
+	})
+}
+
+func withMockStat(t *testing.T, fn func(string) (os.FileInfo, error)) {
+	t.Helper()
+	original := statPath
+	statPath = fn
+	t.Cleanup(func() {
+		statPath = original
+	})
+}
 
 func TestDryRunConfigValidation(t *testing.T) {
 	tests := []struct {
@@ -168,8 +190,28 @@ func TestDryRunImageReachability_OCI(t *testing.T) {
 		disk.NewManager(nil),
 	)
 	result := o.dryRunImageReachability(context.Background())
-	if result.Status != DryRunPass {
-		t.Errorf("got %s, want pass for OCI URLs: %s", result.Status, result.Message)
+	if result.Status != DryRunWarn {
+		t.Errorf("got %s, want warn for OCI URLs: %s", result.Status, result.Message)
+	}
+	if !strings.Contains(result.Message, "skipped") {
+		t.Errorf("expected skipped message, got %q", result.Message)
+	}
+}
+
+func TestDryRunImageReachability_MixedHTTPAndOCI(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	o := NewOrchestrator(
+		&config.MachineConfig{ImageURLs: []string{srv.URL + "/image.raw", "oci://registry.example.com/image:latest"}},
+		&dryRunProvider{},
+		disk.NewManager(nil),
+	)
+	result := o.dryRunImageReachability(context.Background())
+	if result.Status != DryRunWarn {
+		t.Errorf("got %s, want warn for mixed URLs: %s", result.Status, result.Message)
 	}
 }
 
@@ -215,29 +257,87 @@ func TestDryRunImageChecksum(t *testing.T) {
 }
 
 func TestDryRunNetworkLink(t *testing.T) {
-	// This test just exercises the code path — actual results depend on host.
-	o := NewOrchestrator(
-		&config.MachineConfig{},
-		&dryRunProvider{},
-		disk.NewManager(nil),
-	)
-	result := o.dryRunNetworkLink(context.Background())
-	if result.Status != DryRunPass && result.Status != DryRunFail {
-		t.Errorf("unexpected status %s: %s", result.Status, result.Message)
+	tests := []struct {
+		name       string
+		ifaces     []net.Interface
+		err        error
+		expect     DryRunStatus
+		wantSubstr string
+	}{
+		{
+			name:       "physical interface up",
+			ifaces:     []net.Interface{{Name: "eth0", Flags: net.FlagUp}},
+			expect:     DryRunPass,
+			wantSubstr: "interfaces up",
+		},
+		{
+			name:       "only loopback up",
+			ifaces:     []net.Interface{{Name: "lo", Flags: net.FlagUp | net.FlagLoopback}},
+			expect:     DryRunFail,
+			wantSubstr: "no physical non-loopback interfaces are up",
+		},
+		{
+			name:       "only virtual interfaces up",
+			ifaces:     []net.Interface{{Name: "docker0", Flags: net.FlagUp}},
+			expect:     DryRunFail,
+			wantSubstr: "no physical non-loopback interfaces are up",
+		},
+		{
+			name:       "interface enumeration error",
+			err:        errors.New("boom"),
+			expect:     DryRunFail,
+			wantSubstr: "cannot list interfaces",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			withMockInterfaces(t, func() ([]net.Interface, error) {
+				if tc.err != nil {
+					return nil, tc.err
+				}
+				return tc.ifaces, nil
+			})
+
+			o := NewOrchestrator(&config.MachineConfig{}, &dryRunProvider{}, disk.NewManager(nil))
+			result := o.dryRunNetworkLink(context.Background())
+			if result.Status != tc.expect {
+				t.Errorf("got %s, want %s: %s", result.Status, tc.expect, result.Message)
+			}
+			if !strings.Contains(result.Message, tc.wantSubstr) {
+				t.Errorf("message %q does not contain %q", result.Message, tc.wantSubstr)
+			}
+		})
 	}
 }
 
 func TestDryRunEFIBoot(t *testing.T) {
-	o := NewOrchestrator(
-		&config.MachineConfig{},
-		&dryRunProvider{},
-		disk.NewManager(nil),
-	)
-	result := o.dryRunEFIBoot(context.Background())
-	// Non-EFI Linux environments (e.g. BIOS boot or containers) should return
-	// warn; EFI systems return pass.
-	if result.Status != DryRunPass && result.Status != DryRunWarn {
-		t.Errorf("unexpected status %s: %s", result.Status, result.Message)
+	tests := []struct {
+		name   string
+		err    error
+		expect DryRunStatus
+	}{
+		{name: "efi present", err: nil, expect: DryRunPass},
+		{name: "efi missing", err: os.ErrNotExist, expect: DryRunWarn},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			withMockStat(t, func(string) (os.FileInfo, error) {
+				if tc.err != nil {
+					return nil, tc.err
+				}
+				return nil, nil
+			})
+
+			o := NewOrchestrator(&config.MachineConfig{}, &dryRunProvider{}, disk.NewManager(nil))
+			result := o.dryRunEFIBoot(context.Background())
+			if result.Status != tc.expect {
+				t.Errorf("got %s, want %s: %s", result.Status, tc.expect, result.Message)
+			}
+		})
 	}
 }
 
@@ -354,5 +454,34 @@ func TestDryRunAggregation(t *testing.T) {
 	}
 	if provFail.lastStatus != config.StatusError {
 		t.Errorf("expected StatusError, got %s", provFail.lastStatus)
+	}
+}
+
+func TestRedactImageURL(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "removes credentials and query",
+			in:   "https://user:secret@example.com/image.raw?token=abc#frag",
+			want: "https://example.com/image.raw",
+		},
+		{
+			name: "invalid URL is unchanged",
+			in:   "::://bad-url",
+			want: "::://bad-url",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := redactImageURL(tc.in)
+			if got != tc.want {
+				t.Errorf("redactImageURL(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
 	}
 }

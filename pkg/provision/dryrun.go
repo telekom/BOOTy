@@ -7,11 +7,17 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
+)
+
+var (
+	listInterfaces = net.Interfaces
+	statPath       = os.Stat
 )
 
 // DryRunStatus represents the result status of a dry-run check.
@@ -96,35 +102,52 @@ func (o *Orchestrator) dryRunImageReachability(ctx context.Context) DryRunResult
 		return DryRunResult{Status: DryRunFail, Message: "no image URLs configured"}
 	}
 	httpClient := &http.Client{Timeout: 10 * time.Second}
+	validated := 0
+	skippedOCI := 0
 	for _, imgURL := range o.cfg.ImageURLs {
-		// Skip OCI sources (validated via separate registry path).
+		redactedURL := redactImageURL(imgURL)
+		// Skip OCI sources until registry reachability checks are implemented.
 		if strings.HasPrefix(imgURL, "oci://") {
-			o.log.Info("Skipping OCI image reachability check", "url", imgURL)
+			skippedOCI++
+			o.log.Info("Skipping OCI image reachability check", "url", redactedURL)
 			continue
 		}
 		// Validate URL scheme is http/https before making outbound request.
 		if !strings.HasPrefix(imgURL, "http://") && !strings.HasPrefix(imgURL, "https://") {
 			return DryRunResult{Status: DryRunFail,
-				Message: fmt.Sprintf("unsupported URL scheme: %s", imgURL)}
+				Message: fmt.Sprintf("unsupported URL scheme: %s", redactedURL)}
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodHead, imgURL, http.NoBody)
 		if err != nil {
 			return DryRunResult{Status: DryRunFail,
-				Message: fmt.Sprintf("invalid image URL %s: %v", imgURL, err)}
+				Message: fmt.Sprintf("invalid image URL %s: %v", redactedURL, err)}
 		}
 		resp, err := httpClient.Do(req) //nolint:gosec // URL from trusted config
 		if err != nil {
 			return DryRunResult{Status: DryRunFail,
-				Message: fmt.Sprintf("image unreachable %s: %v", imgURL, err)}
+				Message: fmt.Sprintf("image unreachable %s: %v", redactedURL, err)}
 		}
 		_ = resp.Body.Close()
 		if resp.StatusCode >= 400 {
 			return DryRunResult{Status: DryRunFail,
-				Message: fmt.Sprintf("image server returned %d for %s", resp.StatusCode, imgURL)}
+				Message: fmt.Sprintf("image server returned %d for %s", resp.StatusCode, redactedURL)}
 		}
-		o.log.Info("Image reachable", "url", imgURL, "status", resp.StatusCode)
+		validated++
+		o.log.Info("Image reachable", "url", redactedURL, "status", resp.StatusCode)
 	}
-	return DryRunResult{Status: DryRunPass, Message: "all images reachable"}
+	if validated == 0 && skippedOCI > 0 {
+		return DryRunResult{
+			Status:  DryRunWarn,
+			Message: fmt.Sprintf("skipped %d OCI image URL(s); reachability not validated", skippedOCI),
+		}
+	}
+	if skippedOCI > 0 {
+		return DryRunResult{
+			Status:  DryRunWarn,
+			Message: fmt.Sprintf("validated %d HTTP image URL(s), skipped %d OCI image URL(s)", validated, skippedOCI),
+		}
+	}
+	return DryRunResult{Status: DryRunPass, Message: "all HTTP image URLs reachable"}
 }
 
 func (o *Orchestrator) dryRunDiskDetection(ctx context.Context) DryRunResult {
@@ -180,7 +203,7 @@ func (o *Orchestrator) dryRunImageChecksum(_ context.Context) DryRunResult {
 }
 
 func (o *Orchestrator) dryRunNetworkLink(_ context.Context) DryRunResult {
-	ifaces, err := net.Interfaces()
+	ifaces, err := listInterfaces()
 	if err != nil {
 		return DryRunResult{Status: DryRunFail,
 			Message: fmt.Sprintf("cannot list interfaces: %v", err)}
@@ -221,12 +244,23 @@ func isVirtualInterface(name string) bool {
 
 func (o *Orchestrator) dryRunEFIBoot(_ context.Context) DryRunResult {
 	// Check EFI variables directory exists
-	if _, err := os.Stat("/sys/firmware/efi"); err != nil {
+	if _, err := statPath("/sys/firmware/efi"); err != nil {
 		return DryRunResult{Status: DryRunWarn,
 			Message: "system not booted in EFI mode"}
 	}
 	return DryRunResult{Status: DryRunPass,
 		Message: "EFI firmware detected"}
+}
+
+func redactImageURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	u.User = nil
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
 }
 
 func (o *Orchestrator) dryRunInventoryProbe(_ context.Context) DryRunResult {
