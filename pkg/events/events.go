@@ -26,7 +26,7 @@ type ProvisionEvent struct {
 	Type      EventType `json:"type"`
 	Step      string    `json:"step,omitempty"`
 	Message   string    `json:"message"`
-	Progress  float64   `json:"progress,omitempty"`
+	Progress  float64   `json:"progress"`
 	Timestamp time.Time `json:"timestamp"`
 }
 

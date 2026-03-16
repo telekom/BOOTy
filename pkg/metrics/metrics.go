@@ -10,37 +10,37 @@ import (
 
 // StepMetrics captures timing and status for a single provisioning step.
 type StepMetrics struct {
-	Name     string        `json:"name"`
-	Duration time.Duration `json:"duration"`
-	Status   string        `json:"status"`
-	Error    string        `json:"error,omitempty"`
+	Name       string  `json:"name"`
+	DurationMs int64   `json:"durationMs"`
+	Status     string  `json:"status"`
+	Error      string  `json:"error,omitempty"`
 }
 
 // ImageMetrics captures image download performance.
 type ImageMetrics struct {
-	URL           string        `json:"url"`
-	SizeBytes     int64         `json:"sizeBytes"`
-	Duration      time.Duration `json:"duration"`
-	SpeedMBps     float64       `json:"speedMBps"`
-	ChecksumMatch bool          `json:"checksumMatch"`
+	URL           string  `json:"url"`
+	SizeBytes     int64   `json:"sizeBytes"`
+	DurationMs    int64   `json:"durationMs"`
+	SpeedMBps     float64 `json:"speedMBps"`
+	ChecksumMatch bool    `json:"checksumMatch"`
 }
 
 // DiskMetrics captures disk write performance.
 type DiskMetrics struct {
-	DevicePath   string        `json:"devicePath"`
-	WrittenBytes int64         `json:"writtenBytes"`
-	Duration     time.Duration `json:"duration"`
-	SpeedMBps    float64       `json:"speedMBps"`
+	DevicePath   string  `json:"devicePath"`
+	WrittenBytes int64   `json:"writtenBytes"`
+	DurationMs   int64   `json:"durationMs"`
+	SpeedMBps    float64 `json:"speedMBps"`
 }
 
 // Summary holds all metrics collected during a provisioning run.
 type Summary struct {
-	StartTime time.Time     `json:"startTime"`
-	EndTime   time.Time     `json:"endTime"`
-	TotalDur  time.Duration `json:"totalDuration"`
-	Steps     []StepMetrics `json:"steps"`
-	Image     *ImageMetrics `json:"image,omitempty"`
-	Disk      *DiskMetrics  `json:"disk,omitempty"`
+	StartTime  time.Time     `json:"startTime"`
+	EndTime    time.Time     `json:"endTime"`
+	TotalDurMs int64         `json:"totalDurationMs"`
+	Steps      []StepMetrics `json:"steps"`
+	Image      *ImageMetrics `json:"image,omitempty"`
+	Disk       *DiskMetrics  `json:"disk,omitempty"`
 }
 
 // Collector accumulates metrics during provisioning.
@@ -61,7 +61,7 @@ func NewCollector() *Collector {
 func (c *Collector) RecordStep(name string, duration time.Duration, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	m := StepMetrics{Name: name, Duration: duration, Status: "ok"}
+	m := StepMetrics{Name: name, DurationMs: duration.Milliseconds(), Status: "ok"}
 	if err != nil {
 		m.Status = "error"
 		m.Error = err.Error()
@@ -78,7 +78,7 @@ func (c *Collector) RecordImage(url string, sizeBytes int64, duration time.Durat
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.image = &ImageMetrics{
-		URL: url, SizeBytes: sizeBytes, Duration: duration,
+		URL: url, SizeBytes: sizeBytes, DurationMs: duration.Milliseconds(),
 		SpeedMBps: speedMBps, ChecksumMatch: checksumOK,
 	}
 }
@@ -93,7 +93,7 @@ func (c *Collector) RecordDisk(devicePath string, writtenBytes int64, duration t
 	defer c.mu.Unlock()
 	c.disk = &DiskMetrics{
 		DevicePath: devicePath, WrittenBytes: writtenBytes,
-		Duration: duration, SpeedMBps: speedMBps,
+		DurationMs: duration.Milliseconds(), SpeedMBps: speedMBps,
 	}
 }
 
@@ -105,7 +105,7 @@ func (c *Collector) Summarize() Summary {
 	steps := make([]StepMetrics, len(c.steps))
 	copy(steps, c.steps)
 	return Summary{
-		StartTime: c.startTime, EndTime: now, TotalDur: now.Sub(c.startTime),
+		StartTime: c.startTime, EndTime: now, TotalDurMs: now.Sub(c.startTime).Milliseconds(),
 		Steps: steps, Image: c.image, Disk: c.disk,
 	}
 }

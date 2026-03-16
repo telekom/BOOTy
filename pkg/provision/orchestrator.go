@@ -76,9 +76,9 @@ func NewOrchestrator(cfg *config.MachineConfig, provider config.Provider, diskMg
 	}
 }
 
-// Provision runs all provisioning steps sequentially.
-func (o *Orchestrator) Provision(ctx context.Context) error {
-	steps := []Step{
+// provisionSteps returns the ordered list of provisioning steps.
+func (o *Orchestrator) provisionSteps() []Step {
+	return []Step{
 		{"report-init", o.reportInit},
 		{"collect-inventory", o.collectInventory},
 		{"collect-firmware", o.collectFirmware},
@@ -90,7 +90,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		{"disable-lvm", o.disableLVM},
 		{"remove-efi-entries", o.removeEFIBootEntries},
 		{"setup-mellanox", o.setupMellanox},
-		{"wipe-disks", o.wipeDisks},
+		{"wipe-disks", o.wipeOrSecureEraseDisks},
 		{"detect-disk", o.detectDisk},
 		{"stream-image", o.streamImage},
 		{"partprobe", o.partprobe},
@@ -110,6 +110,11 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		{"teardown-chroot", o.teardownChroot},
 		{"report-success", o.reportSuccess},
 	}
+}
+
+// Provision runs all provisioning steps sequentially.
+func (o *Orchestrator) Provision(ctx context.Context) error {
+	steps := o.provisionSteps()
 
 	collector := metrics.NewCollector()
 	o.emitEvent(ctx, events.EventProvStarted, "", "provisioning started", 0)
@@ -130,7 +135,9 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 			dumpConfig(o.cfg)
 			o.reportMetrics(ctx, collector)
 			o.emitEvent(ctx, events.EventProvFailed, step.Name, msg, progress)
-			_ = o.provider.ReportStatus(ctx, config.StatusError, msg)
+			if reportErr := o.provider.ReportStatus(ctx, config.StatusError, msg); reportErr != nil {
+				o.log.Error("Failed to report error status", "error", reportErr)
+			}
 			return fmt.Errorf("provision step %s: %w", step.Name, err)
 		}
 		duration := time.Since(start)
@@ -184,7 +191,9 @@ func (o *Orchestrator) reportMetrics(ctx context.Context, collector *metrics.Col
 		o.log.Warn("Failed to marshal metrics", "error", err)
 		return
 	}
-	if reportErr := reporter.ReportMetrics(ctx, data); reportErr != nil {
+	metricsCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if reportErr := reporter.ReportMetrics(metricsCtx, data); reportErr != nil {
 		o.log.Warn("Failed to report metrics", "error", reportErr)
 	}
 }
@@ -327,12 +336,12 @@ func (o *Orchestrator) FirmwareChanged() bool {
 	return o.firmwareChanged
 }
 
-func (o *Orchestrator) wipeDisks(ctx context.Context) error {
+func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
+	if o.cfg.SecureErase {
+		o.log.Info("Secure erase enabled, performing hardware-level erase")
+		return o.disk.SecureEraseAllDisks(ctx)
+	}
 	return o.disk.WipeAllDisks(ctx)
-}
-
-func (o *Orchestrator) secureEraseDisks(ctx context.Context) error {
-	return o.disk.SecureEraseAllDisks(ctx)
 }
 
 func (o *Orchestrator) detectDisk(ctx context.Context) error {
@@ -574,9 +583,17 @@ func DumpDebugState(failedStep string) {
 	slog.Error("=== DEBUG DUMP END ===", "failedStep", failedStep)
 }
 
+// debugCtx returns a context with a 10-second timeout for debug commands,
+// preventing them from blocking shutdown indefinitely.
+func debugCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 10*time.Second) //nolint:mnd // fixed debug timeout
+}
+
 // runDebugCmd executes a single debug command and logs its output.
 func runDebugCmd(label, cmd string) {
-	out, err := exec.CommandContext(context.Background(), "sh", "-c", cmd).CombinedOutput() //nolint:gosec // debug cmds are hardcoded
+	ctx, cancel := debugCtx()
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "sh", "-c", cmd).CombinedOutput() //nolint:gosec // debug cmds are hardcoded
 	trimmed := strings.TrimSpace(string(out))
 	if trimmed != "" {
 		for _, line := range strings.Split(trimmed, "\n") {
