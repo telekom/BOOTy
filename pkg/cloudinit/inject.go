@@ -18,17 +18,17 @@ func InjectNoCloud(rootPath string, ud *UserData, md *MetaData, nc *NetworkConfi
 
 	userData, err := ud.Render()
 	if err != nil {
-		return err
+		return fmt.Errorf("render user-data: %w", err)
 	}
 
 	metaData, err := md.Render()
 	if err != nil {
-		return err
+		return fmt.Errorf("render meta-data: %w", err)
 	}
 
 	networkConfig, err := nc.Render()
 	if err != nil {
-		return err
+		return fmt.Errorf("render network-config: %w", err)
 	}
 
 	files := map[string][]byte{
@@ -37,10 +37,16 @@ func InjectNoCloud(rootPath string, ud *UserData, md *MetaData, nc *NetworkConfi
 		"network-config": networkConfig,
 	}
 
+	// Write to temp files first, then rename atomically to prevent
+	// partial seed state on failure.
 	for name, data := range files {
 		fpath := filepath.Join(seedDir, name)
-		if err := os.WriteFile(fpath, data, 0o600); err != nil {
+		tmp := fpath + ".tmp"
+		if err := os.WriteFile(tmp, data, 0o600); err != nil {
 			return fmt.Errorf("write %s: %w", name, err)
+		}
+		if err := os.Rename(tmp, fpath); err != nil {
+			return fmt.Errorf("rename %s: %w", name, err)
 		}
 	}
 	return nil

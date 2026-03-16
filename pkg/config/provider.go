@@ -144,7 +144,7 @@ type MachineConfig struct {
 
 	// Cloud-init generation.
 	CloudInitEnabled    bool   // CLOUDINIT_ENABLED: generate and inject cloud-init config
-	CloudInitDatasource string // CLOUDINIT_DATASOURCE: "nocloud" (default)
+	CloudInitDatasource string // CLOUDINIT_DATASOURCE: datasource type (defaults to "nocloud" if empty)
 
 	// Files and commands from ISO /deploy/ directories.
 	ProvisionerFiles []string // Paths to files in /deploy/file-system/

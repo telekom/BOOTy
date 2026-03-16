@@ -711,13 +711,35 @@ func (o *Orchestrator) injectCloudInit(_ context.Context) error {
 		return nil
 	}
 
+	// Validate datasource — only NoCloud is supported.
+	ds := o.cfg.CloudInitDatasource
+	if ds == "" {
+		ds = "nocloud"
+	}
+	if ds != "nocloud" {
+		return fmt.Errorf("unsupported cloud-init datasource %q, only \"nocloud\" is supported", ds)
+	}
+
+	// Split bond interfaces, filtering empty strings from empty input.
+	var bondIfaces []string
+	if o.cfg.BondInterfaces != "" {
+		bondIfaces = strings.Split(o.cfg.BondInterfaces, ",")
+	}
+
+	// Parse DNS resolvers into a slice.
+	var dns []string
+	if o.cfg.DNSResolvers != "" {
+		dns = strings.Split(o.cfg.DNSResolvers, ",")
+	}
+
 	ciCfg := &cloudinit.Config{
 		Hostname:   o.cfg.Hostname,
-		FQDN:       o.cfg.Hostname,
+		FQDN:       o.cfg.Hostname, // no separate FQDN config field yet
 		StaticIP:   o.cfg.StaticIP,
 		Gateway:    o.cfg.StaticGateway,
-		BondIfaces: strings.Split(o.cfg.BondInterfaces, ","),
+		BondIfaces: bondIfaces,
 		BondMode:   o.cfg.BondMode,
+		DNS:        dns,
 	}
 
 	ud, md, nc := cloudinit.Generate(ciCfg)

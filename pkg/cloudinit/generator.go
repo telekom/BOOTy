@@ -2,6 +2,7 @@ package cloudinit
 
 import (
 	"fmt"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -151,13 +152,22 @@ func Generate(cfg *Config) (*UserData, *MetaData, *NetworkConfig) {
 func generateNetworkConfig(cfg *Config) *NetworkConfig {
 	nc := &NetworkConfig{Version: 2}
 
-	if len(cfg.BondIfaces) > 0 {
+	// Filter empty interface names from BondIfaces.
+	var bondIfaces []string
+	for _, iface := range cfg.BondIfaces {
+		iface = strings.TrimSpace(iface)
+		if iface != "" {
+			bondIfaces = append(bondIfaces, iface)
+		}
+	}
+
+	if len(bondIfaces) > 0 {
 		bondMode := cfg.BondMode
 		if bondMode == "" {
 			bondMode = "802.3ad"
 		}
 		bond := BondConfig{
-			Interfaces: cfg.BondIfaces,
+			Interfaces: bondIfaces,
 			Parameters: &BondParams{Mode: bondMode},
 			Addresses:  addressList(cfg.StaticIP),
 			DHCP4:      cfg.StaticIP == "",
@@ -175,9 +185,11 @@ func generateNetworkConfig(cfg *Config) *NetworkConfig {
 			DHCP4:     false,
 			Addresses: []string{cfg.StaticIP},
 			Gateway4:  cfg.Gateway,
-			Nameservers: &NSConfig{
+		}
+		if len(cfg.DNS) > 0 {
+			eth.Nameservers = &NSConfig{
 				Addresses: cfg.DNS,
-			},
+			}
 		}
 		if cfg.MACAddress != "" {
 			eth.Match = &MatchConfig{MACAddress: cfg.MACAddress}

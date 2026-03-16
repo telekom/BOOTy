@@ -215,3 +215,73 @@ func TestAddressList(t *testing.T) {
 		t.Errorf("addressList ip = %v", got)
 	}
 }
+
+func TestGenerate_BondIfaces_EmptyStringsFiltered(t *testing.T) {
+	cfg := &Config{
+		Hostname:   "node-1",
+		Serial:     "SN1",
+		BondIfaces: []string{"", " ", ""},
+	}
+
+	_, _, nc := Generate(cfg)
+
+	// All empty/whitespace ifaces should be filtered out, producing DHCP config.
+	if len(nc.Bonds) != 0 {
+		t.Error("bonds should be empty when all BondIfaces are empty strings")
+	}
+	eth, ok := nc.Ethernets["id0"]
+	if !ok {
+		t.Fatal("expected ethernets[id0]")
+	}
+	if !eth.DHCP4 {
+		t.Error("DHCP4 should be true when bond ifaces are all empty")
+	}
+}
+
+func TestGenerate_StaticIP_NoDNS_NoNameservers(t *testing.T) {
+	cfg := &Config{
+		Hostname: "node-1",
+		Serial:   "SN1",
+		StaticIP: "10.0.0.5/24",
+		Gateway:  "10.0.0.1",
+		DNS:      nil,
+	}
+
+	_, _, nc := Generate(cfg)
+
+	eth := nc.Ethernets["id0"]
+	if eth.Nameservers != nil {
+		t.Error("Nameservers should be nil when DNS is empty")
+	}
+}
+
+func TestInjectNoCloud_NilInput(t *testing.T) {
+	root := t.TempDir()
+	err := InjectNoCloud(root, nil, &MetaData{}, &NetworkConfig{})
+	if err == nil {
+		t.Error("expected error for nil user-data")
+	}
+}
+
+func TestInjectNoCloud_ErrorContext(t *testing.T) {
+	root := t.TempDir()
+	ud := &UserData{Hostname: "test"}
+	md := &MetaData{InstanceID: "id", LocalHostname: "test", Platform: "booty"}
+	nc := &NetworkConfig{Version: 2}
+
+	if err := InjectNoCloud(root, ud, md, nc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify seed files exist after atomic write.
+	seedDir := filepath.Join(root, "var", "lib", "cloud", "seed", "nocloud")
+	for _, name := range []string{"user-data", "meta-data", "network-config"} {
+		if _, err := os.Stat(filepath.Join(seedDir, name)); err != nil {
+			t.Errorf("seed file %s missing: %v", name, err)
+		}
+		// Verify no .tmp files were left behind.
+		if _, err := os.Stat(filepath.Join(seedDir, name+".tmp")); err == nil {
+			t.Errorf("temp file %s.tmp should not exist after successful write", name)
+		}
+	}
+}
