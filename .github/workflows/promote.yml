@@ -59,6 +59,10 @@ jobs:
 
       - name: Create promoted tag
         run: |
+          if git rev-parse "${{ steps.tag.outputs.tag }}" >/dev/null 2>&1; then
+            echo "::error::Tag ${{ steps.tag.outputs.tag }} already exists"
+            exit 1
+          fi
           COMMIT=$(git rev-list -n 1 "${{ inputs.version }}")
           git tag "${{ steps.tag.outputs.tag }}" "$COMMIT"
           git push origin "${{ steps.tag.outputs.tag }}"
