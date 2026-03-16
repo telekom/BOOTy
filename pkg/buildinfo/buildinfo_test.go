@@ -33,6 +33,12 @@ func TestInfo_JSON(t *testing.T) {
 	if decoded.GoVersion != info.GoVersion {
 		t.Errorf("GoVersion = %q, want %q", decoded.GoVersion, info.GoVersion)
 	}
+	if decoded.OS != info.OS {
+		t.Errorf("OS = %q, want %q", decoded.OS, info.OS)
+	}
+	if decoded.Arch != info.Arch {
+		t.Errorf("Arch = %q, want %q", decoded.Arch, info.Arch)
+	}
 }
 
 func TestDependencies(t *testing.T) {
@@ -72,17 +78,17 @@ func TestTotalEstimate(t *testing.T) {
 }
 
 func TestFlavorConstants(t *testing.T) {
-	if string(FlavorFull) != "full" {
-		t.Error("FlavorFull")
+	if got := string(FlavorFull); got != "full" {
+		t.Errorf("FlavorFull = %q, want %q", got, "full")
 	}
-	if string(FlavorGoBGP) != "gobgp" {
-		t.Error("FlavorGoBGP")
+	if got := string(FlavorGoBGP); got != "gobgp" {
+		t.Errorf("FlavorGoBGP = %q, want %q", got, "gobgp")
 	}
-	if string(FlavorSlim) != "slim" {
-		t.Error("FlavorSlim")
+	if got := string(FlavorSlim); got != "slim" {
+		t.Errorf("FlavorSlim = %q, want %q", got, "slim")
 	}
-	if string(FlavorMicro) != "micro" {
-		t.Error("FlavorMicro")
+	if got := string(FlavorMicro); got != "micro" {
+		t.Errorf("FlavorMicro = %q, want %q", got, "micro")
 	}
 }
 
