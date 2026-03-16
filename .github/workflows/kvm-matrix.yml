@@ -34,30 +34,35 @@ jobs:
     strategy:
       matrix:
         include:
-          - scenario: secureboot
+          - scenario: secureboot-smoke
             qemu_extra: ""
-            test_tag: e2e_kvm_secureboot
+            test_tag: e2e
+            test_regex: TestUEFISecureBootSmoke
             ovmf_vars: OVMF_VARS.fd
             ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.secboot.fd
             setup: |
               cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
           - scenario: luks
             qemu_extra: ""
-            test_tag: e2e_kvm_luks
+            test_tag: e2e
+            test_regex: TestLUKSSmokeQEMU
             luks_disk: test-disk.qcow2
             setup: |
               qemu-img create -f qcow2 test-disk.qcow2 10G
           - scenario: tpm
             qemu_extra: ""
-            test_tag: e2e_kvm_tpm
+            test_tag: e2e
+            test_regex: TestTPMSmokeQEMU
             setup: ""
           - scenario: kexec
             qemu_extra: ""
-            test_tag: e2e_kvm_kexec
+            test_tag: e2e
+            test_regex: TestKexecSmokeQEMU
             setup: ""
-          - scenario: bootloader
+          - scenario: bootloader-smoke
             qemu_extra: ""
-            test_tag: e2e_kvm_bootloader
+            test_tag: e2e
+            test_regex: TestUEFIBootPathSmoke
             ovmf_vars: OVMF_VARS.fd
             ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.fd
             setup: |
@@ -90,7 +95,14 @@ jobs:
           sudo mknod initramfs/dev/ttyS0 c 4 64
           sudo mknod initramfs/dev/null c 1 3
 
-          cp "$(which busybox)" initramfs/bin/busybox
+          BB_BIN="$(command -v busybox)"
+          if ! ldd "$BB_BIN" 2>&1 | grep -q "not a dynamic executable"; then
+            echo "::error::busybox binary is dynamically linked: $BB_BIN"
+            ldd "$BB_BIN" || true
+            exit 1
+          fi
+
+          cp "$BB_BIN" initramfs/bin/busybox
           cd initramfs/bin
           for cmd in sh mount umount insmod setsid cttyhack chroot; do
             ln -sf busybox "$cmd"
@@ -123,11 +135,11 @@ jobs:
 
       - name: Run KVM test (${{ matrix.scenario }})
         run: |
-          go test -tags ${{ matrix.test_tag }} -race -v -timeout 15m ./test/e2e/kvm/...
+          go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -v -timeout 15m ./test/e2e/kvm/...
         env:
           QEMU_EXTRA_ARGS: ${{ matrix.qemu_extra }}
           BOOTY_INITRAMFS: ${{ github.workspace }}/test-initramfs.cpio.gz
           BOOTY_KERNEL: ${{ github.workspace }}/vmlinuz
           LUKS_DISK_IMAGE: ${{ matrix.luks_disk && format('{0}/{1}', github.workspace, matrix.luks_disk) || '' }}
           OVMF_VARS: ${{ matrix.ovmf_vars && format('{0}/{1}', github.workspace, matrix.ovmf_vars) || '' }}
-          OVMF_CODE: ${{ matrix.ovmf_code }}
+          OVMF_CODE: ${{ matrix.ovmf_code || '' }}

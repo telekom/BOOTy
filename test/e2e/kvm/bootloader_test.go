@@ -1,15 +1,15 @@
-//go:build e2e_kvm_bootloader
+//go:build e2e
 
 package kvm
 
 import (
-	"context"
-	"os/exec"
 	"testing"
 	"time"
 )
 
-func TestBootloaderQEMU(t *testing.T) {
+// TestUEFIBootPathSmoke verifies BOOTy starts under OVMF firmware.
+// It is a smoke check, not full GRUB/systemd-boot chain validation.
+func TestUEFIBootPathSmoke(t *testing.T) {
 	qemuAvailable(t)
 	initramfs := envOrDefault("BOOTY_INITRAMFS", "test-initramfs.cpio.gz")
 	kernel := envOrDefault("BOOTY_KERNEL", "vmlinuz")
@@ -32,14 +32,6 @@ func TestBootloaderQEMU(t *testing.T) {
 	)
 	args = append(args, splitExtraArgs(envOrDefault("QEMU_EXTRA_ARGS", ""))...)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "qemu-system-x86_64", args...)
-	out, err := cmd.CombinedOutput()
-	if ctx.Err() == context.DeadlineExceeded {
-		t.Logf("QEMU timed out (expected for initrd boot)")
-	} else if err != nil {
-		t.Fatalf("QEMU bootloader failed: %v\nOutput: %s", err, out)
-	}
+	out := runQEMUSmoke(t, args, 2*time.Minute, "uefi-boot-path")
 	t.Logf("Bootloader QEMU output (last 500 bytes): %s", tail(out, 500))
 }

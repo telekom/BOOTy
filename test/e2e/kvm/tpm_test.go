@@ -1,4 +1,4 @@
-//go:build e2e_kvm_tpm
+//go:build e2e
 
 package kvm
 
@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func TestTPMQEMU(t *testing.T) {
+func TestTPMSmokeQEMU(t *testing.T) {
 	qemuAvailable(t)
 	if _, err := exec.LookPath("swtpm"); err != nil {
 		t.Skip("swtpm not available")
@@ -36,7 +36,7 @@ func TestTPMQEMU(t *testing.T) {
 	defer func() { swtpmCancel(); _ = swtpm.Wait() }()
 
 	// Wait for swtpm socket to appear before launching QEMU.
-	for i := range 50 {
+	for i := 0; i < 50; i++ {
 		if _, err := os.Stat(tpmSocket); err == nil {
 			break
 		}
@@ -59,14 +59,6 @@ func TestTPMQEMU(t *testing.T) {
 	}
 	args = append(args, splitExtraArgs(envOrDefault("QEMU_EXTRA_ARGS", ""))...)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "qemu-system-x86_64", args...)
-	out, err := cmd.CombinedOutput()
-	if ctx.Err() == context.DeadlineExceeded {
-		t.Logf("QEMU timed out (expected for initrd boot)")
-	} else if err != nil {
-		t.Fatalf("QEMU TPM failed: %v\nOutput: %s", err, out)
-	}
+	out := runQEMUSmoke(t, args, 2*time.Minute, "tpm")
 	t.Logf("TPM QEMU output (last 500 bytes): %s", tail(out, 500))
 }

@@ -188,21 +188,26 @@ clab-dhcp-down:
 
 test-e2e-dhcp:
 	@echo Running DHCP E2E tests (requires clab-dhcp-up)
-	@go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/...
+	@BOOTY_TOPOLOGY=dhcp go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/... -run TestContainerLabTopologySmoke
 
-# ── LACP lab targets ──────────────────────────────────────────────────────
+# ── Bonding (non-LACP) lab targets ───────────────────────────────────────
 
-clab-lacp-up:
-	@echo Deploying LACP bond test topology
+clab-bond-up:
+	@echo Deploying bond-mode (non-LACP) test topology
 	@cd test/e2e/clab && sudo clab deploy --topo topology-lacp.clab.yml
 
-clab-lacp-down:
-	@echo Destroying LACP bond test topology
+clab-bond-down:
+	@echo Destroying bond-mode (non-LACP) test topology
 	@cd test/e2e/clab && sudo clab destroy --topo topology-lacp.clab.yml
 
-test-e2e-lacp:
-	@echo Running LACP bond E2E tests (requires clab-lacp-up)
-	@go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/...
+test-e2e-bond:
+	@echo Running bond-mode (non-LACP) E2E tests (requires clab-bond-up)
+	@BOOTY_TOPOLOGY=bond go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/... -run TestContainerLabTopologySmoke
+
+# Backward-compatible aliases.
+clab-lacp-up: clab-bond-up
+clab-lacp-down: clab-bond-down
+test-e2e-lacp: test-e2e-bond
 
 # ── Static IP lab targets ─────────────────────────────────────────────────
 
@@ -216,7 +221,7 @@ clab-static-down:
 
 test-e2e-static:
 	@echo Running static IP E2E tests (requires clab-static-up)
-	@go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/...
+	@BOOTY_TOPOLOGY=static go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/... -run TestContainerLabTopologySmoke
 
 # ── Multi-NIC lab targets ─────────────────────────────────────────────────
 
@@ -230,7 +235,7 @@ clab-multi-nic-down:
 
 test-e2e-multi-nic:
 	@echo Running multi-NIC E2E tests (requires clab-multi-nic-up)
-	@go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/...
+	@BOOTY_TOPOLOGY=multi-nic go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/... -run TestContainerLabTopologySmoke
 
 check:
 	@test -z $(shell gofmt -l main.go | tee /dev/stderr) || echo "[WARN] Fix formatting issues with 'make fmt'"

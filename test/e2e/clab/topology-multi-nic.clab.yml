@@ -4,7 +4,7 @@ topology:
   nodes:
     switch:
       kind: linux
-      image: alpine:3.20
+      image: ghcr.io/srl-labs/network-multitool:latest
       cmd: sleep infinity
       exec:
         # Management network on eth1
@@ -24,7 +24,7 @@ topology:
 
     booty:
       kind: linux
-      image: alpine:3.20
+      image: ghcr.io/srl-labs/network-multitool:latest
       cmd: sleep infinity
       exec:
         # Management

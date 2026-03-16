@@ -1,4 +1,4 @@
-name: booty-lacp-lab
+name: booty-bond-lab
 
 # NOTE: The 'switch' node is a simple Linux bridge and does not support
 # 802.3ad LACP negotiation. This topology validates multi-link bond
@@ -8,7 +8,7 @@ topology:
   nodes:
     switch:
       kind: linux
-      image: alpine:3.20
+      image: ghcr.io/srl-labs/network-multitool:latest
       cmd: sleep infinity
       exec:
         # Create a bridge for bonded links
@@ -22,7 +22,7 @@ topology:
 
     booty:
       kind: linux
-      image: alpine:3.20
+      image: ghcr.io/srl-labs/network-multitool:latest
       cmd: sleep infinity
       exec:
         - ip link set eth1 up

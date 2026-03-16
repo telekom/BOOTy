@@ -7,16 +7,17 @@ topology:
       image: networkboot/dhcpd:1.4.0
       binds:
         - dhcpd.conf:/etc/dhcp/dhcpd.conf:ro
-      cmd: sleep infinity
-      exec:
-        - touch /var/lib/dhcp/dhcpd.leases
-        - ip addr add 10.200.0.1/24 dev eth1
-        - ip link set dev eth1 up
-        - dhcpd -cf /etc/dhcp/dhcpd.conf -pf /var/run/dhcpd.pid eth1
+      cmd: >
+        sh -ec "
+          touch /var/lib/dhcp/dhcpd.leases &&
+          ip addr add 10.200.0.1/24 dev eth1 &&
+          ip link set dev eth1 up &&
+          exec dhcpd -f -cf /etc/dhcp/dhcpd.conf -pf /var/run/dhcpd.pid eth1
+        "
 
     booty:
       kind: linux
-      image: alpine:3.20
+      image: ghcr.io/srl-labs/network-multitool:latest
       cmd: sleep infinity
       exec:
         - ip link set dev eth1 up
