@@ -3,11 +3,11 @@
 package kvm
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -31,7 +31,7 @@ func TestTPMSmokeQEMU(t *testing.T) {
 		"--ctrl", "type=unixio,path="+tpmSocket,
 		"--tpm2",
 	)
-	var swtpmStderr strings.Builder
+	var swtpmStderr bytes.Buffer
 	swtpm.Stderr = &swtpmStderr
 	if err := swtpm.Start(); err != nil {
 		swtpmCancel()

@@ -215,6 +215,8 @@ jobs:
         run: |
           go test -v -tags ${{ matrix.scenario.test_tag }} -run ${{ matrix.scenario.test_regex }} ./test/e2e/kvm/...
         timeout-minutes: 15
+        env:
+          QEMU_EXTRA_ARGS: ${{ matrix.scenario.qemu_args }}
 ```
 
 ### Required Binaries / Tools (CI Only)
