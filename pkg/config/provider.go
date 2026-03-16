@@ -194,7 +194,7 @@ func ParsePartitionLayout(data string) (*PartitionLayout, error) {
 	if layout.Table != "gpt" {
 		return nil, fmt.Errorf("unsupported partition table %q, only \"gpt\" is supported", layout.Table)
 	}
-	if err := validatePartitions(layout.Partitions); err != nil {
+	if err := validatePartitions(layout.Partitions, layout.LVM != nil); err != nil {
 		return nil, err
 	}
 	if err := validateLVMConfig(layout.LVM); err != nil {
@@ -203,7 +203,10 @@ func ParsePartitionLayout(data string) (*PartitionLayout, error) {
 	return &layout, nil
 }
 
-func validatePartitions(partitions []Partition) error {
+// validatePartitions checks partition definitions for required fields.
+// When hasLVM is true, the root mountpoint "/" may be provided by an LV
+// instead of a partition, so the root-presence check is skipped.
+func validatePartitions(partitions []Partition, hasLVM bool) error {
 	hasRoot := false
 	fillCount := 0
 	for i, part := range partitions {
@@ -223,8 +226,8 @@ func validatePartitions(partitions []Partition) error {
 			fillCount++
 		}
 	}
-	if !hasRoot {
-		return fmt.Errorf("partition layout must include a partition with mountpoint \"/\"")
+	if !hasRoot && !hasLVM {
+		return fmt.Errorf("partition layout must include a partition with mountpoint \"/\"; use LVM volumes for LVM-backed root filesystems")
 	}
 	if fillCount > 1 {
 		return fmt.Errorf("only one partition may use sizeMB=0 (fill remaining), got %d", fillCount)

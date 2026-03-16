@@ -325,8 +325,16 @@ func ParseVars(r io.Reader) (*config.MachineConfig, error) {
 			continue
 		}
 
-		// Unquote value (remove surrounding double quotes).
-		value = strings.Trim(value, `"`)
+		// Unquote value: strip surrounding double quotes or single quotes.
+		// Single quotes are common for JSON values in shell-style var files.
+		if len(value) >= 2 {
+			switch {
+			case value[0] == '"' && value[len(value)-1] == '"':
+				value = value[1 : len(value)-1]
+			case value[0] == '\'' && value[len(value)-1] == '\'':
+				value = value[1 : len(value)-1]
+			}
+		}
 
 		applyVar(cfg, key, value)
 	}

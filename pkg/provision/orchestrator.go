@@ -385,6 +385,13 @@ func (o *Orchestrator) applyPartitionLayout(ctx context.Context) error {
 		o.targetDisk = device
 	}
 
+	// Validate the target device exists and is a block device.
+	if info, err := os.Stat(device); err != nil {
+		return fmt.Errorf("partition layout device %q: %w", device, err)
+	} else if info.Mode()&os.ModeDevice == 0 {
+		return fmt.Errorf("partition layout device %q is not a block device", device)
+	}
+
 	o.log.Info("Applying custom partition layout", "device", device, "partitions", len(o.cfg.PartitionLayout.Partitions))
 
 	if err := o.disk.ApplyPartitionLayout(ctx, device, o.cfg.PartitionLayout); err != nil {
@@ -431,8 +438,14 @@ func (o *Orchestrator) writeFstab() error {
 func (o *Orchestrator) streamImage(ctx context.Context) error {
 	// When using a custom partition layout, the partitions are already created
 	// and formatted — streaming a raw image would overwrite the table.
+	// Warn if image URLs were also provided, since that is almost certainly a
+	// misconfiguration (the partition table would be destroyed).
 	if o.cfg.PartitionLayout != nil {
-		o.log.Info("Skipping image streaming: custom partition layout is active")
+		if len(o.cfg.ImageURLs) > 0 {
+			o.log.Warn("Custom partition layout is active; image URLs are ignored to prevent overwriting the partition table", "urls", o.cfg.ImageURLs)
+		} else {
+			o.log.Info("Skipping image streaming: custom partition layout is active")
+		}
 		return nil
 	}
 
@@ -540,12 +553,28 @@ func (o *Orchestrator) parsePartitionsFromLayout(_ context.Context) error {
 	}
 
 	// Find boot/EFI partition from the layout.
+	// Prefer explicit /boot/efi mountpoint; only fall back to vfat filesystem
+	// when no partition has a /boot/efi mountpoint, to avoid picking the wrong
+	// vfat partition in layouts that have multiple vfat partitions.
+	espIdx := -1
 	for i, part := range layout.Partitions {
-		if part.Mountpoint == "/boot/efi" || part.Filesystem == "vfat" {
-			o.bootPartition = disk.PartitionDevicePath(o.targetDisk, i+1)
-			o.log.Info("Boot partition from layout", "device", o.bootPartition)
+		if part.Mountpoint == "/boot/efi" {
+			espIdx = i
 			break
 		}
+	}
+	if espIdx == -1 {
+		for i, part := range layout.Partitions {
+			if part.Filesystem == "vfat" {
+				espIdx = i
+				o.log.Warn("No /boot/efi mountpoint found; selecting first vfat partition as ESP", "index", i+1)
+				break
+			}
+		}
+	}
+	if espIdx != -1 {
+		o.bootPartition = disk.PartitionDevicePath(o.targetDisk, espIdx+1)
+		o.log.Info("Boot partition from layout", "device", o.bootPartition)
 	}
 
 	return nil

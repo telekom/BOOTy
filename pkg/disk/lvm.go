@@ -77,10 +77,15 @@ func GenerateLVMFstab(lvm *config.LVMConfig) string {
 	}
 	var sb strings.Builder
 	for _, vol := range lvm.Volumes {
+		lvDev := fmt.Sprintf("/dev/%s/%s", lvm.VolumeGroup, vol.Name)
+		// Swap volumes have no mountpoint but must appear in fstab as "none swap sw".
+		if vol.Filesystem == "swap" {
+			fmt.Fprintf(&sb, "%s\tnone\tswap\tsw\t0\t0\n", lvDev)
+			continue
+		}
 		if vol.Mountpoint == "" {
 			continue
 		}
-		lvDev := fmt.Sprintf("/dev/%s/%s", lvm.VolumeGroup, vol.Name)
 		fsType := vol.Filesystem
 		if fsType == "" {
 			fsType = "auto"
