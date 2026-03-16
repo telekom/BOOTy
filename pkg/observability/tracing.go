@@ -4,6 +4,7 @@ package observability
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 )
@@ -19,7 +20,9 @@ const (
 )
 
 // Span represents a single traced operation.
+// Span methods are safe for concurrent use.
 type Span struct {
+	mu        sync.Mutex
 	TraceID   string            `json:"traceId"`
 	SpanID    string            `json:"spanId"`
 	ParentID  string            `json:"parentId,omitempty"`
@@ -68,14 +71,19 @@ func (t *Tracer) StartSpan(_ context.Context, name string) *Span {
 }
 
 // StartChildSpan creates a child span under a parent.
+// If parent is nil, the span is created as a root span with no parent.
 func (t *Tracer) StartChildSpan(_ context.Context, parent *Span, name string) *Span {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.counter++
+	var parentID string
+	if parent != nil {
+		parentID = parent.SpanID
+	}
 	span := &Span{
 		TraceID:   t.traceID,
 		SpanID:    fmt.Sprintf("span-%d", t.counter),
-		ParentID:  parent.SpanID,
+		ParentID:  parentID,
 		Name:      name,
 		StartTime: time.Now(),
 		Attrs:     make(map[string]string),
@@ -86,25 +94,44 @@ func (t *Tracer) StartChildSpan(_ context.Context, parent *Span, name string) *S
 
 // EndSpan ends the given span with a status.
 func EndSpan(span *Span, status SpanStatus) {
+	span.mu.Lock()
+	defer span.mu.Unlock()
 	span.EndTime = time.Now()
 	span.Status = status
 }
 
 // AddEvent adds a timestamped event to a span.
+// The attrs map is copied to prevent external mutation.
 func AddEvent(span *Span, name string, attrs map[string]string) {
+	span.mu.Lock()
+	defer span.mu.Unlock()
 	span.Events = append(span.Events, SpanEvent{
 		Name:      name,
 		Timestamp: time.Now(),
-		Attrs:     attrs,
+		Attrs:     maps.Clone(attrs),
 	})
 }
 
-// Spans returns a copy of all recorded spans.
-func (t *Tracer) Spans() []*Span {
+// Spans returns a deep copy of all recorded spans.
+func (t *Tracer) Spans() []Span {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	out := make([]*Span, len(t.spans))
-	copy(out, t.spans)
+	out := make([]Span, len(t.spans))
+	for i, s := range t.spans {
+		s.mu.Lock()
+		out[i] = Span{
+			TraceID:   s.TraceID,
+			SpanID:    s.SpanID,
+			ParentID:  s.ParentID,
+			Name:      s.Name,
+			StartTime: s.StartTime,
+			EndTime:   s.EndTime,
+			Status:    s.Status,
+			Attrs:     maps.Clone(s.Attrs),
+			Events:    append([]SpanEvent(nil), s.Events...),
+		}
+		s.mu.Unlock()
+	}
 	return out
 }
 
@@ -115,13 +142,16 @@ type ExporterConfig struct {
 	Insecure bool   `json:"insecure,omitempty"`
 }
 
-// Validate checks the exporter config.
+// Validate checks the exporter config and defaults Protocol to "grpc" if empty.
 func (c *ExporterConfig) Validate() error {
 	if c.Endpoint == "" {
 		return fmt.Errorf("exporter endpoint required")
 	}
+	if c.Protocol == "" {
+		c.Protocol = "grpc"
+	}
 	switch c.Protocol {
-	case "grpc", "http", "":
+	case "grpc", "http":
 		return nil
 	default:
 		return fmt.Errorf("unsupported protocol %q", c.Protocol)

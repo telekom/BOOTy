@@ -10,10 +10,10 @@ import (
 
 // StepMetrics captures timing and status for a single provisioning step.
 type StepMetrics struct {
-	Name       string  `json:"name"`
-	DurationMs int64   `json:"durationMs"`
-	Status     string  `json:"status"`
-	Error      string  `json:"error,omitempty"`
+	Name       string `json:"name"`
+	DurationMs int64  `json:"durationMs"`
+	Status     string `json:"status"`
+	Error      string `json:"error,omitempty"`
 }
 
 // ImageMetrics captures image download performance.
