@@ -355,7 +355,17 @@ func (o *Orchestrator) setupNVMeNamespaces(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("parsing NVMe namespace layout: %w", err)
 	}
-	return o.disk.ApplyNVMeNamespaceLayout(ctx, cfgs)
+	if err := o.disk.ApplyNVMeNamespaceLayout(ctx, cfgs); err != nil {
+		return err
+	}
+	// After namespace creation the first controller's first namespace is
+	// typically the OS target disk. Set it so DetectDisk picks the right
+	// device instead of scanning by size.
+	if len(cfgs) > 0 && o.cfg.DiskDevice == "" {
+		o.cfg.DiskDevice = cfgs[0].Controller + "n1"
+		o.log.Info("Set disk device from NVMe namespace layout", "device", o.cfg.DiskDevice)
+	}
+	return nil
 }
 
 func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {

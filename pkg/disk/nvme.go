@@ -29,6 +29,9 @@ type NVMeNamespace struct {
 	BlockSize int    `json:"blockSize,omitempty"` // 512 or 4096 (default: 512)
 }
 
+// nvmeControllerPathRE validates that a controller path looks like /dev/nvme0, /dev/nvme1, etc.
+var nvmeControllerPathRE = regexp.MustCompile(`^/dev/nvme\d+$`)
+
 // ParseNVMeConfig parses a JSON NVMe namespace configuration string.
 func ParseNVMeConfig(data string) ([]NVMeNamespaceConfig, error) {
 	var configs []NVMeNamespaceConfig
@@ -38,6 +41,9 @@ func ParseNVMeConfig(data string) ([]NVMeNamespaceConfig, error) {
 	for i, cfg := range configs {
 		if cfg.Controller == "" {
 			return nil, fmt.Errorf("config[%d]: controller must not be empty", i)
+		}
+		if !nvmeControllerPathRE.MatchString(cfg.Controller) {
+			return nil, fmt.Errorf("config[%d]: controller %q must be an NVMe controller path (e.g. /dev/nvme0)", i, cfg.Controller)
 		}
 		if len(cfg.Namespaces) == 0 {
 			return nil, fmt.Errorf("config[%d]: namespaces must not be empty", i)
@@ -287,12 +293,22 @@ func (m *Manager) NVMeResetNamespaces(ctx context.Context, controller string) er
 	// Delete all namespaces.
 	for _, nsid := range nsids {
 		if _, err := m.cmd.Run(ctx, "nvme", "delete-ns", controller, "-n", nsid); err != nil {
-			slog.Warn("Failed to delete namespace", "controller", controller, "nsid", nsid, "error", err)
+			return fmt.Errorf("deleting namespace %s on %s: %w", nsid, controller, err)
 		}
 	}
 
+	// Get total capacity for the default namespace.
+	totalBytes, err := m.nvmeControllerCapacity(ctx, controller)
+	if err != nil {
+		return fmt.Errorf("reading controller capacity for reset: %w", err)
+	}
+	sizeBlocks := totalBytes / 512
+
 	// Create single namespace using full capacity.
-	if _, err := m.cmd.Run(ctx, "nvme", "create-ns", controller, "-s", "0", "-c", "0", "-b", "512"); err != nil {
+	if _, err := m.cmd.Run(ctx, "nvme", "create-ns", controller,
+		"-s", fmt.Sprintf("%d", sizeBlocks),
+		"-c", fmt.Sprintf("%d", sizeBlocks),
+		"-b", "512"); err != nil {
 		return fmt.Errorf("creating default namespace: %w", err)
 	}
 

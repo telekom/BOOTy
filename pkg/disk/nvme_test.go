@@ -185,8 +185,95 @@ func TestParseNVMeConfig_NegativeSizePct(t *testing.T) {
 }
 
 func TestDetectNVMeControllers(t *testing.T) {
-	// Just exercises the code path - results depend on host hardware.
 	controllers := DetectNVMeControllers()
-	// On most CI/dev machines there are no NVMe controllers.
-	_ = controllers
+	for _, c := range controllers {
+		if !nvmeControllerPathRE.MatchString(c) {
+			t.Errorf("DetectNVMeControllers returned non-controller path %q", c)
+		}
+	}
+}
+
+func TestParseNVMeConfig_InvalidControllerPath(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"namespace path", `[{"controller":"/dev/nvme0n1","namespaces":[{"label":"os","sizePct":100}]}]`},
+		{"partition path", `[{"controller":"/dev/nvme0n1p1","namespaces":[{"label":"os","sizePct":100}]}]`},
+		{"sata device", `[{"controller":"/dev/sda","namespaces":[{"label":"os","sizePct":100}]}]`},
+		{"relative path", `[{"controller":"nvme0","namespaces":[{"label":"os","sizePct":100}]}]`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseNVMeConfig(tc.input)
+			if err == nil {
+				t.Error("expected error for invalid controller path")
+			}
+		})
+	}
+}
+
+func TestNVMeIdentifyController(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("nvme id-ctrl", []byte("mn : Samsung SSD 980 PRO\nnn : 32\ntnvmcap : 1000204886016\n"), nil)
+	mgr := NewManager(cmd)
+
+	info, err := mgr.NVMeIdentifyController(t.Context(), "/dev/nvme0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info["mn"] != "Samsung SSD 980 PRO" {
+		t.Errorf("mn = %q, want Samsung SSD 980 PRO", info["mn"])
+	}
+	if info["nn"] != "32" {
+		t.Errorf("nn = %q, want 32", info["nn"])
+	}
+}
+
+func TestNVMeListNamespaces(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("nvme list-ns", []byte("[   0]:0x1\n[   1]:0x2\n[   2]:0xa\n"), nil)
+	mgr := NewManager(cmd)
+
+	nsids, err := mgr.NVMeListNamespaces(t.Context(), "/dev/nvme0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(nsids) != 3 {
+		t.Fatalf("got %d NSIDs, want 3", len(nsids))
+	}
+	want := []string{"1", "2", "10"}
+	for i, w := range want {
+		if nsids[i] != w {
+			t.Errorf("nsid[%d] = %q, want %q", i, nsids[i], w)
+		}
+	}
+}
+
+func TestNVMeSupportsMultiNS(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("nvme id-ctrl", []byte("nn : 32\n"), nil)
+	mgr := NewManager(cmd)
+
+	supported, err := mgr.NVMeSupportsMultiNS(t.Context(), "/dev/nvme0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !supported {
+		t.Error("expected multi-NS support for nn=32")
+	}
+}
+
+func TestNVMeSupportsMultiNS_Single(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("nvme id-ctrl", []byte("nn : 1\n"), nil)
+	mgr := NewManager(cmd)
+
+	supported, err := mgr.NVMeSupportsMultiNS(t.Context(), "/dev/nvme0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if supported {
+		t.Error("expected no multi-NS support for nn=1")
+	}
 }

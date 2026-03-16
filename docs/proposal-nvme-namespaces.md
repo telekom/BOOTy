@@ -1,6 +1,6 @@
 # Proposal: NVMe Namespace Management
 
-## Status: Implemented
+## Status: Phase 1 Implemented
 
 ## Priority: P4
 
