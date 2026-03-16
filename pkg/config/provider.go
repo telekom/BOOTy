@@ -103,6 +103,10 @@ type MachineConfig struct {
 	// Network mode override.
 	NetworkMode string // NETWORK_MODE: "gobgp" to use in-process GoBGP instead of FRR
 
+	// Observability fields.
+	MetricsURL string // METRICS_URL: POST endpoint for provisioning metrics
+	EventURL   string // EVENT_URL: POST endpoint for provisioning events
+
 	// Files and commands from ISO /deploy/ directories.
 	ProvisionerFiles []string // Paths to files in /deploy/file-system/
 	MachineFiles     []string // Paths to files in /deploy/machine-files/
