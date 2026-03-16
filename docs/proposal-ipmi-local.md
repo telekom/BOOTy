@@ -1,6 +1,6 @@
 # Proposal: Local IPMI Management
 
-## Status: Proposal
+## Status: Implemented (PR #45)
 
 ## Priority: P2
 

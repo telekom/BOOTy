@@ -1,6 +1,6 @@
 # Proposal: Resilient Provisioning — Self-Healing Error Recovery
 
-## Status: Proposal
+## Status: Implemented (PR #41)
 
 ## Priority: P1
 

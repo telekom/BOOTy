@@ -1,6 +1,6 @@
 # Proposal: Webhook and Event Notifications
 
-## Status: Proposal
+## Status: Phase 1 Implemented (PR #69)
 
 ## Priority: P3
 
