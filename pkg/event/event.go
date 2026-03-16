@@ -1,6 +1,10 @@
 package event
 
-import "time"
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+)
 
 // Type identifies a provisioning lifecycle event.
 type Type string
@@ -46,6 +50,20 @@ func New(t Type, m Machine) *Event {
 
 // WithDetails adds details to the event and returns itself for chaining.
 func (e *Event) WithDetails(details map[string]any) *Event {
-	e.Details = details
+	if details == nil {
+		e.Details = nil
+		return e
+	}
+
+	normalized := make(map[string]any, len(details))
+	for k, v := range details {
+		if _, err := json.Marshal(v); err != nil {
+			normalized[k] = fmt.Sprintf("%v", v)
+			continue
+		}
+		normalized[k] = v
+	}
+
+	e.Details = normalized
 	return e
 }

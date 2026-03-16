@@ -37,6 +37,18 @@ func TestWithDetails(t *testing.T) {
 	}
 }
 
+func TestWithDetails_NormalizesNonJSONValue(t *testing.T) {
+	e := New(ProvisionFailed, Machine{Name: "worker-1"}).WithDetails(map[string]any{
+		"bad": func() {},
+	})
+	if _, ok := e.Details["bad"].(string); !ok {
+		t.Fatalf("non-JSON value should be normalized to string, got %T", e.Details["bad"])
+	}
+	if _, err := json.Marshal(e); err != nil {
+		t.Fatalf("event should marshal after normalization: %v", err)
+	}
+}
+
 func TestEventJSON(t *testing.T) {
 	m := Machine{
 		Name:        "worker-42",
@@ -130,6 +142,7 @@ func TestDispatcherSend(t *testing.T) {
 func TestDispatcherSendError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("upstream failure"))
 	}))
 	defer srv.Close()
 
@@ -138,8 +151,27 @@ func TestDispatcherSendError(t *testing.T) {
 		t.Fatalf("NewDispatcher() error: %v", err)
 	}
 	e := New(ProvisionFailed, Machine{Name: "fail-host"})
-	if err := d.Send(context.Background(), e); err == nil {
+	err = d.Send(context.Background(), e)
+	if err == nil {
 		t.Error("expected error for 500 response")
+	} else if !strings.Contains(err.Error(), "upstream failure") {
+		t.Errorf("error = %q, expected response body snippet", err)
+	}
+}
+
+func TestDispatcherSend_NilEvent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	d, err := NewDispatcher(srv.URL, slog.Default())
+	if err != nil {
+		t.Fatalf("NewDispatcher() error: %v", err)
+	}
+
+	if err := d.Send(context.Background(), nil); err == nil {
+		t.Fatal("expected error for nil event")
 	}
 }
 
@@ -151,6 +183,8 @@ func TestNewDispatcher_InvalidURL(t *testing.T) {
 		{"no scheme", "example.com/webhook"},
 		{"empty", ""},
 		{"ftp scheme", "ftp://example.com/webhook"},
+		{"http external disallowed", "http://example.com/webhook"},
+		{"private ip disallowed", "https://10.0.0.1/webhook"},
 		{"userinfo", "https://user:pass@example.com/webhook"},
 	}
 	for _, tc := range tests {
