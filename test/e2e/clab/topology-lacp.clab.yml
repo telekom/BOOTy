@@ -1,0 +1,35 @@
+name: booty-bond-lab
+
+# NOTE: Despite the filename (topology-lacp), this topology does NOT validate
+# 802.3ad LACP negotiation — the 'switch' node is a simple Linux bridge.
+# It validates multi-link bond connectivity (e.g. balance-rr). The filename
+# is retained for backward compatibility with existing clab-lacp-* Make aliases.
+# The canonical targets are clab-bond-up/down and test-e2e-bond.
+
+topology:
+  nodes:
+    switch:
+      kind: linux
+      image: ghcr.io/srl-labs/network-multitool:v0.5.0
+      cmd: sleep infinity
+      exec:
+        # Create a bridge for bonded links
+        - ip link add br-bond type bridge
+        - ip link set br-bond up
+        - ip link set eth1 master br-bond
+        - ip link set eth2 master br-bond
+        - ip link set eth1 up
+        - ip link set eth2 up
+        - ip addr add 10.201.0.1/24 dev br-bond
+
+    booty:
+      kind: linux
+      image: ghcr.io/srl-labs/network-multitool:v0.5.0
+      cmd: sleep infinity
+      exec:
+        - ip link set eth1 up
+        - ip link set eth2 up
+
+  links:
+    - endpoints: ["switch:eth1", "booty:eth1"]
+    - endpoints: ["switch:eth2", "booty:eth2"]

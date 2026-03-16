@@ -1,0 +1,24 @@
+name: booty-static-lab
+
+topology:
+  nodes:
+    router:
+      kind: linux
+      image: alpine:3.20
+      cmd: sleep infinity
+      exec:
+        - ip addr add 10.202.0.1/24 dev eth1
+        - ip link set eth1 up
+        - sh -c 'echo 1 > /proc/sys/net/ipv4/ip_forward'
+
+    booty:
+      kind: linux
+      image: alpine:3.20
+      cmd: sleep infinity
+      exec:
+        - ip addr add 10.202.0.10/24 dev eth1
+        - ip link set eth1 up
+        - ip route add default via 10.202.0.1
+
+  links:
+    - endpoints: ["router:eth1", "booty:eth1"]

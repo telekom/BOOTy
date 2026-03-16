@@ -171,21 +171,26 @@ jobs:
     strategy:
       matrix:
         scenario:
-          - name: secureboot
+          - name: secureboot-smoke
             qemu_args: "-drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.secboot.fd"
-            test_tag: e2e_kvm_secureboot
+            test_tag: e2e
+            test_regex: TestUEFISecureBootSmoke
           - name: luks
             qemu_args: "-drive file=test-disk.qcow2,format=qcow2,if=virtio"
-            test_tag: e2e_kvm_luks
+            test_tag: e2e
+            test_regex: TestLUKSSmokeQEMU
           - name: tpm
             qemu_args: "-tpmdev emulator,id=tpm0,chardev=chrtpm -chardev socket,id=chrtpm,path=/tmp/swtpm.sock -device tpm-tis,tpmdev=tpm0"
-            test_tag: e2e_kvm_tpm
+            test_tag: e2e
+            test_regex: TestTPMSmokeQEMU
           - name: kexec
             qemu_args: "-append 'console=ttyS0'"
-            test_tag: e2e_kvm_kexec
-          - name: bootloader
+            test_tag: e2e
+            test_regex: TestKexecSmokeQEMU
+          - name: bootloader-smoke
             qemu_args: "-drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd"
-            test_tag: e2e_kvm_bootloader
+            test_tag: e2e
+            test_regex: TestUEFIBootPathSmoke
       fail-fast: false
 
     steps:
@@ -208,8 +213,10 @@ jobs:
 
       - name: Run KVM tests
         run: |
-          go test -v -tags ${{ matrix.scenario.test_tag }} ./test/e2e/kvm/...
+          go test -v -tags ${{ matrix.scenario.test_tag }} -run ${{ matrix.scenario.test_regex }} ./test/e2e/kvm/...
         timeout-minutes: 15
+        env:
+          QEMU_EXTRA_ARGS: ${{ matrix.scenario.qemu_args }}
 ```
 
 ### Required Binaries / Tools (CI Only)
