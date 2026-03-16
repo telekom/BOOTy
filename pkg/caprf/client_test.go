@@ -877,11 +877,17 @@ func TestParseBoolVar(t *testing.T) {
 		want  bool
 	}{
 		{"true", true},
+		{"TRUE", true},
+		{"True", true},
 		{"1", true},
 		{"yes", true},
+		{"YES", true},
+		{"Yes", true},
+		{" true ", true},
 		{"false", false},
 		{"0", false},
 		{"", false},
+		{"no", false},
 	}
 	for _, tt := range tests {
 		got := parseBoolVar(tt.input)
@@ -927,6 +933,28 @@ func TestParseVarsHealthChecksDisabled(t *testing.T) {
 	}
 	if cfg.HealthChecksEnabled {
 		t.Error("HealthChecksEnabled should be false")
+	}
+}
+
+func TestParseVarsDryRun(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{`DRY_RUN="true"`, true},
+		{`DRY_RUN="TRUE"`, true},
+		{`DRY_RUN="1"`, true},
+		{`DRY_RUN="false"`, false},
+		{`DRY_RUN="0"`, false},
+	}
+	for _, tt := range tests {
+		cfg, err := ParseVars(strings.NewReader(tt.input))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.DryRun != tt.want {
+			t.Errorf("ParseVars(%q): DryRun = %v, want %v", tt.input, cfg.DryRun, tt.want)
+		}
 	}
 }
 

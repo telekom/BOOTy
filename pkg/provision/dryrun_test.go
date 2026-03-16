@@ -55,6 +55,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 	}
 
 	for _, tc := range tests {
+		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			o := NewOrchestrator(tc.cfg, &dryRunProvider{}, disk.NewManager(nil))
 			result := o.dryRunConfigValidation(context.Background())
@@ -156,5 +157,159 @@ func TestDryRunImageReachability_NoURLs(t *testing.T) {
 	result := o.dryRunImageReachability(context.Background())
 	if result.Status != DryRunFail {
 		t.Errorf("got %s, want fail for empty URLs: %s", result.Status, result.Message)
+	}
+}
+
+func TestDryRunImageReachability_OCI(t *testing.T) {
+	o := NewOrchestrator(
+		&config.MachineConfig{ImageURLs: []string{"oci://registry.example.com/image:latest"}},
+		&dryRunProvider{},
+		disk.NewManager(nil),
+	)
+	result := o.dryRunImageReachability(context.Background())
+	if result.Status != DryRunPass {
+		t.Errorf("got %s, want pass for OCI URLs: %s", result.Status, result.Message)
+	}
+}
+
+func TestDryRunImageReachability_UnsupportedScheme(t *testing.T) {
+	o := NewOrchestrator(
+		&config.MachineConfig{ImageURLs: []string{"ftp://example.com/img"}},
+		&dryRunProvider{},
+		disk.NewManager(nil),
+	)
+	result := o.dryRunImageReachability(context.Background())
+	if result.Status != DryRunFail {
+		t.Errorf("got %s, want fail for unsupported scheme: %s", result.Status, result.Message)
+	}
+}
+
+func TestDryRunImageChecksum(t *testing.T) {
+	tests := []struct {
+		name         string
+		checksum     string
+		checksumType string
+		expect       DryRunStatus
+	}{
+		{"no checksum", "", "", DryRunWarn},
+		{"sha256", "abc123", "sha256", DryRunPass},
+		{"sha512", "abc123", "sha512", DryRunPass},
+		{"empty type defaults to sha256", "abc123", "", DryRunPass},
+		{"unsupported type", "abc123", "md5", DryRunFail},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.MachineConfig{
+				ImageChecksum:     tc.checksum,
+				ImageChecksumType: tc.checksumType,
+			}
+			o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
+			result := o.dryRunImageChecksum(context.Background())
+			if result.Status != tc.expect {
+				t.Errorf("got %s, want %s: %s", result.Status, tc.expect, result.Message)
+			}
+		})
+	}
+}
+
+func TestDryRunNetworkLink(t *testing.T) {
+	// This test just exercises the code path — actual results depend on host.
+	o := NewOrchestrator(
+		&config.MachineConfig{},
+		&dryRunProvider{},
+		disk.NewManager(nil),
+	)
+	result := o.dryRunNetworkLink(context.Background())
+	if result.Status != DryRunPass && result.Status != DryRunFail {
+		t.Errorf("unexpected status %s: %s", result.Status, result.Message)
+	}
+}
+
+func TestDryRunEFIBoot(t *testing.T) {
+	o := NewOrchestrator(
+		&config.MachineConfig{},
+		&dryRunProvider{},
+		disk.NewManager(nil),
+	)
+	result := o.dryRunEFIBoot(context.Background())
+	// macOS / non-EFI systems should return warn; EFI systems return pass.
+	if result.Status != DryRunPass && result.Status != DryRunWarn {
+		t.Errorf("unexpected status %s: %s", result.Status, result.Message)
+	}
+}
+
+func TestDryRunInventoryProbe(t *testing.T) {
+	tests := []struct {
+		name    string
+		enabled bool
+		expect  DryRunStatus
+	}{
+		{"disabled", false, DryRunWarn},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.MachineConfig{InventoryEnabled: tc.enabled}
+			o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
+			result := o.dryRunInventoryProbe(context.Background())
+			if result.Status != tc.expect {
+				t.Errorf("got %s, want %s: %s", result.Status, tc.expect, result.Message)
+			}
+		})
+	}
+}
+
+func TestIsVirtualInterface(t *testing.T) {
+	tests := []struct {
+		name    string
+		virtual bool
+	}{
+		{"eth0", false},
+		{"eno1", false},
+		{"enp3s0", false},
+		{"veth123abc", true},
+		{"docker0", true},
+		{"br-abc123", true},
+		{"virbr0", true},
+		{"cni0", true},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isVirtualInterface(tc.name); got != tc.virtual {
+				t.Errorf("isVirtualInterface(%q) = %v, want %v", tc.name, got, tc.virtual)
+			}
+		})
+	}
+}
+
+func TestDryRunDiskDetection_CharDevice(t *testing.T) {
+	// /dev/null is a character device and should fail the block device check.
+	o := NewOrchestrator(
+		&config.MachineConfig{DiskDevice: "/dev/null"},
+		&dryRunProvider{},
+		disk.NewManager(nil),
+	)
+	result := o.dryRunDiskDetection(context.Background())
+	if result.Status != DryRunFail {
+		t.Errorf("got %s, want fail for char device: %s", result.Status, result.Message)
+	}
+}
+
+func TestDryRunImageReachability_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	o := NewOrchestrator(
+		&config.MachineConfig{ImageURLs: []string{srv.URL + "/missing.img"}},
+		&dryRunProvider{},
+		disk.NewManager(nil),
+	)
+	result := o.dryRunImageReachability(context.Background())
+	if result.Status != DryRunFail {
+		t.Errorf("got %s, want fail for 404: %s", result.Status, result.Message)
 	}
 }

@@ -197,6 +197,7 @@ func runCAPRF(ctx context.Context) {
 		if err := orch.DryRun(ctx); err != nil {
 			slog.Error("Dry-run failed", "error", err)
 		}
+		return
 	case "deprovision", "soft-deprovision":
 		if cfg.Mode == "soft-deprovision" {
 			cfg.Mode = "soft"

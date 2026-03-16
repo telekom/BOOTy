@@ -53,16 +53,12 @@ func (o *Orchestrator) DryRun(ctx context.Context) error {
 	var failed int
 	for _, c := range checks {
 		result := c.fn(ctx)
+		result.Step = c.name
 		results = append(results, result)
-		icon := "✓"
-		switch result.Status {
-		case DryRunWarn:
-			icon = "⚠"
-		case DryRunFail:
-			icon = "✗"
+		if result.Status == DryRunFail {
 			failed++
 		}
-		o.log.Info("Dry-run check", "step", result.Step, "status", icon, "message", result.Message)
+		o.log.Info("Dry-run check", "step", result.Step, "status", string(result.Status), "message", result.Message)
 	}
 
 	var summary strings.Builder
@@ -72,12 +68,16 @@ func (o *Orchestrator) DryRun(ctx context.Context) error {
 
 	if failed > 0 {
 		msg := fmt.Sprintf("dry-run completed with %d failure(s):\n%s", failed, summary.String())
-		_ = o.provider.ReportStatus(ctx, config.StatusError, msg)
+		if err := o.provider.ReportStatus(ctx, config.StatusError, msg); err != nil {
+			o.log.Warn("failed to report dry-run status", "error", err)
+		}
 		return fmt.Errorf("dry-run: %d check(s) failed", failed)
 	}
 
 	msg := fmt.Sprintf("dry-run passed all checks:\n%s", summary.String())
-	_ = o.provider.ReportStatus(ctx, config.StatusSuccess, msg)
+	if err := o.provider.ReportStatus(ctx, config.StatusSuccess, msg); err != nil {
+		o.log.Warn("failed to report dry-run status", "error", err)
+	}
 	return nil
 }
 
@@ -101,6 +101,11 @@ func (o *Orchestrator) dryRunImageReachability(ctx context.Context) DryRunResult
 		if strings.HasPrefix(imgURL, "oci://") {
 			o.log.Info("Skipping OCI image reachability check", "url", imgURL)
 			continue
+		}
+		// Validate URL scheme is http/https before making outbound request.
+		if !strings.HasPrefix(imgURL, "http://") && !strings.HasPrefix(imgURL, "https://") {
+			return DryRunResult{Step: "image-reachability", Status: DryRunFail,
+				Message: fmt.Sprintf("unsupported URL scheme: %s", imgURL)}
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodHead, imgURL, http.NoBody)
 		if err != nil {
@@ -129,9 +134,9 @@ func (o *Orchestrator) dryRunDiskDetection(ctx context.Context) DryRunResult {
 			return DryRunResult{Step: "disk-detection", Status: DryRunFail,
 				Message: fmt.Sprintf("configured disk %s not found: %v", o.cfg.DiskDevice, err)}
 		}
-		if info.Mode()&os.ModeDevice == 0 {
+		if info.Mode()&os.ModeDevice == 0 || info.Mode()&os.ModeCharDevice != 0 {
 			return DryRunResult{Step: "disk-detection", Status: DryRunFail,
-				Message: fmt.Sprintf("configured disk %s is not a device node", o.cfg.DiskDevice)}
+				Message: fmt.Sprintf("configured disk %s is not a block device", o.cfg.DiskDevice)}
 		}
 		return DryRunResult{Step: "disk-detection", Status: DryRunPass,
 			Message: fmt.Sprintf("configured disk %s exists", o.cfg.DiskDevice)}
@@ -158,13 +163,17 @@ func (o *Orchestrator) dryRunImageChecksum(_ context.Context) DryRunResult {
 		return DryRunResult{Step: "image-checksum", Status: DryRunWarn,
 			Message: "no image checksum configured — integrity cannot be verified"}
 	}
+	checkType := o.cfg.ImageChecksumType
+	if checkType == "" {
+		checkType = "sha256"
+	}
 	validTypes := map[string]bool{"sha256": true, "sha512": true}
-	if o.cfg.ImageChecksumType != "" && !validTypes[o.cfg.ImageChecksumType] {
-		return DryRunResult{Step: "image-checksum", Status: DryRunWarn,
-			Message: fmt.Sprintf("unusual checksum type: %s", o.cfg.ImageChecksumType)}
+	if !validTypes[checkType] {
+		return DryRunResult{Step: "image-checksum", Status: DryRunFail,
+			Message: fmt.Sprintf("unsupported checksum type: %s", checkType)}
 	}
 	return DryRunResult{Step: "image-checksum", Status: DryRunPass,
-		Message: fmt.Sprintf("checksum configured (%s)", o.cfg.ImageChecksumType)}
+		Message: fmt.Sprintf("checksum configured (%s)", checkType)}
 }
 
 func (o *Orchestrator) dryRunNetworkLink(_ context.Context) DryRunResult {
@@ -179,6 +188,10 @@ func (o *Orchestrator) dryRunNetworkLink(_ context.Context) DryRunResult {
 		if iface.Flags&net.FlagLoopback != 0 {
 			continue
 		}
+		// Skip virtual interfaces (veth, docker, bridges).
+		if isVirtualInterface(iface.Name) {
+			continue
+		}
 		if iface.Flags&net.FlagUp != 0 {
 			upIfaces = append(upIfaces, iface.Name)
 		}
@@ -186,10 +199,21 @@ func (o *Orchestrator) dryRunNetworkLink(_ context.Context) DryRunResult {
 
 	if len(upIfaces) == 0 {
 		return DryRunResult{Step: "network-link", Status: DryRunFail,
-			Message: "no non-loopback interfaces are up"}
+			Message: "no physical non-loopback interfaces are up"}
 	}
 	return DryRunResult{Step: "network-link", Status: DryRunPass,
 		Message: fmt.Sprintf("interfaces up: %s", strings.Join(upIfaces, ", "))}
+}
+
+// isVirtualInterface returns true for known virtual interface name prefixes.
+func isVirtualInterface(name string) bool {
+	virtualPrefixes := []string{"veth", "docker", "br-", "virbr", "cni", "flannel", "cali", "tunl", "vxlan"}
+	for _, prefix := range virtualPrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (o *Orchestrator) dryRunEFIBoot(_ context.Context) DryRunResult {
