@@ -68,7 +68,7 @@ func TestIsLUKSWithError(t *testing.T) {
 	})
 
 	t.Run("exit status one means not luks", func(t *testing.T) {
-		cmd := exec.Command("sh", "-c", "exit 1")
+		cmd := exec.CommandContext(context.Background(), "sh", "-c", "exit 1")
 		exitErr := cmd.Run()
 		if exitErr == nil {
 			t.Fatal("expected non-zero exit error")
