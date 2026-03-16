@@ -32,6 +32,11 @@ type MachineConfig struct {
 	SecureErase       bool     // SECURE_ERASE: use ATA/NVMe secure erase instead of wipefs
 	PostProvisionCmds []string // POST_PROVISION_CMDS: commands to run in chroot after provisioning
 
+	// SecureBoot lifecycle fields.
+	SecureBootReEnable bool   // SECUREBOOT_REENABLE: signal CAPRF to re-enable SecureBoot after provisioning
+	MOKCertPath        string // MOK_CERT_PATH: path to DER-encoded MOK certificate for enrollment
+	MOKPassword        string // MOK_PASSWORD: one-time password for MokManager confirmation
+
 	// Status URLs parsed from /deploy/vars.
 	LogURL       string
 	InitURL      string
