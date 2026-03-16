@@ -1,5 +1,6 @@
-// lvm.go implements LVM volume group and logical volume management.
 //go:build linux
+
+// lvm.go implements LVM volume group and logical volume management.
 
 package disk
 

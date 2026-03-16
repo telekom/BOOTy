@@ -429,6 +429,13 @@ func (o *Orchestrator) writeFstab() error {
 }
 
 func (o *Orchestrator) streamImage(ctx context.Context) error {
+	// When using a custom partition layout, the partitions are already created
+	// and formatted — streaming a raw image would overwrite the table.
+	if o.cfg.PartitionLayout != nil {
+		o.log.Info("Skipping image streaming: custom partition layout is active")
+		return nil
+	}
+
 	bestURL := o.bestImageURL
 	if bestURL == "" {
 		// verify-image may have skipped URL resolution; resolve it now.
@@ -496,6 +503,13 @@ func (o *Orchestrator) partprobe(ctx context.Context) error {
 }
 
 func (o *Orchestrator) parsePartitions(ctx context.Context) error {
+	// With a custom partition layout, derive root from the layout definition
+	// rather than scanning by GUID (which can pick the wrong partition when
+	// multiple Linux-type partitions exist).
+	if o.cfg.PartitionLayout != nil {
+		return o.parsePartitionsFromLayout(ctx)
+	}
+
 	parts, err := o.disk.ParsePartitions(ctx, o.targetDisk)
 	if err != nil {
 		return err
@@ -514,6 +528,51 @@ func (o *Orchestrator) parsePartitions(ctx context.Context) error {
 	}
 	o.rootPartition = root.Node
 	return nil
+}
+
+// parsePartitionsFromLayout determines boot/root partitions from the declared
+// partition layout instead of scanning GPT type GUIDs.
+func (o *Orchestrator) parsePartitionsFromLayout(_ context.Context) error {
+	layout := o.cfg.PartitionLayout
+
+	if err := o.resolveRootFromLayout(layout); err != nil {
+		return err
+	}
+
+	// Find boot/EFI partition from the layout.
+	for i, part := range layout.Partitions {
+		if part.Mountpoint == "/boot/efi" || part.Filesystem == "vfat" {
+			o.bootPartition = disk.PartitionDevicePath(o.targetDisk, i+1)
+			o.log.Info("Boot partition from layout", "device", o.bootPartition)
+			break
+		}
+	}
+
+	return nil
+}
+
+func (o *Orchestrator) resolveRootFromLayout(layout *config.PartitionLayout) error {
+	// When LVM is configured, use the LV with mountpoint "/" as root.
+	if layout.LVM != nil {
+		for _, vol := range layout.LVM.Volumes {
+			if vol.Mountpoint == "/" {
+				o.rootPartition = fmt.Sprintf("/dev/%s/%s", layout.LVM.VolumeGroup, vol.Name)
+				o.log.Info("Root from LVM", "device", o.rootPartition)
+				return nil
+			}
+		}
+		return fmt.Errorf("LVM config has no volume with mountpoint \"/\"")
+	}
+
+	// Find the partition with mountpoint "/" from the layout definition.
+	for i, part := range layout.Partitions {
+		if part.Mountpoint == "/" {
+			o.rootPartition = disk.PartitionDevicePath(o.targetDisk, i+1)
+			o.log.Info("Root from partition layout", "device", o.rootPartition)
+			return nil
+		}
+	}
+	return fmt.Errorf("partition layout has no partition with mountpoint \"/\"")
 }
 
 func (o *Orchestrator) checkFilesystem(ctx context.Context) error {

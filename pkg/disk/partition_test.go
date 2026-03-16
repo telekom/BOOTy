@@ -199,6 +199,64 @@ func TestParsePartitionLayout_InvalidLVMName(t *testing.T) {
 	}
 }
 
+func TestParsePartitionLayout_NoRootMountpoint(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"data","sizeMB":1024,"filesystem":"ext4","mountpoint":"/data"}]}`
+	_, err := config.ParsePartitionLayout(input)
+	if err == nil {
+		t.Error("expected error for missing root mountpoint")
+	}
+}
+
+func TestParsePartitionLayout_MultipleFillRemaining(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"efi","sizeMB":512,"filesystem":"vfat","mountpoint":"/boot/efi"},{"label":"root","filesystem":"ext4","mountpoint":"/"},{"label":"data","filesystem":"ext4","mountpoint":"/data"}]}`
+	_, err := config.ParsePartitionLayout(input)
+	if err == nil {
+		t.Error("expected error for multiple sizeMB=0 partitions")
+	}
+}
+
+func TestParsePartitionLayout_InvalidPVPartition(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"root","sizeMB":1024,"filesystem":"ext4","mountpoint":"/"}],"lvm":{"volumeGroup":"sysvg","pvPartition":0,"volumes":[{"name":"root","filesystem":"ext4","mountpoint":"/"}]}}`
+	_, err := config.ParsePartitionLayout(input)
+	if err == nil {
+		t.Error("expected error for pvPartition=0")
+	}
+}
+
+func TestGenerateFstabSwap(t *testing.T) {
+	layout := &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "root", SizeMB: 8192, Filesystem: "ext4", Mountpoint: "/"},
+			{Label: "swap", SizeMB: 2048, Filesystem: "swap"},
+		},
+	}
+	fstab := GenerateFstab(layout, "/dev/sda")
+	if !strings.Contains(fstab, "none\tswap\tsw") {
+		t.Errorf("fstab missing swap entry:\n%s", fstab)
+	}
+	if !strings.Contains(fstab, "/dev/sda2") {
+		t.Errorf("fstab missing swap device:\n%s", fstab)
+	}
+}
+
+func TestPartitionDevicePath(t *testing.T) {
+	tests := []struct {
+		device string
+		num    int
+		want   string
+	}{
+		{"/dev/sda", 1, "/dev/sda1"},
+		{"/dev/nvme0n1", 1, "/dev/nvme0n1p1"},
+	}
+	for _, tc := range tests {
+		got := PartitionDevicePath(tc.device, tc.num)
+		if got != tc.want {
+			t.Errorf("PartitionDevicePath(%s, %d) = %s, want %s", tc.device, tc.num, got, tc.want)
+		}
+	}
+}
+
 func TestParsePartitionLayout_EmptyLVMVGName(t *testing.T) {
 	input := `{"table":"gpt","partitions":[{"label":"root","filesystem":"ext4","mountpoint":"/"}],"lvm":{"volumeGroup":"","pvPartition":1,"volumes":[{"name":"root"}]}}`
 	_, err := config.ParsePartitionLayout(input)

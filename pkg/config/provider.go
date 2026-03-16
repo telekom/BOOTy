@@ -204,6 +204,8 @@ func ParsePartitionLayout(data string) (*PartitionLayout, error) {
 }
 
 func validatePartitions(partitions []Partition) error {
+	hasRoot := false
+	fillCount := 0
 	for i, part := range partitions {
 		if part.Label == "" {
 			return fmt.Errorf("partition %d: label is required", i+1)
@@ -214,6 +216,18 @@ func validatePartitions(partitions []Partition) error {
 		if part.SizeMB < 0 {
 			return fmt.Errorf("partition %d (%s): sizeMB must be non-negative", i+1, part.Label)
 		}
+		if part.Mountpoint == "/" {
+			hasRoot = true
+		}
+		if part.SizeMB == 0 {
+			fillCount++
+		}
+	}
+	if !hasRoot {
+		return fmt.Errorf("partition layout must include a partition with mountpoint \"/\"")
+	}
+	if fillCount > 1 {
+		return fmt.Errorf("only one partition may use sizeMB=0 (fill remaining), got %d", fillCount)
 	}
 	return nil
 }
@@ -227,6 +241,9 @@ func validateLVMConfig(lvm *LVMConfig) error {
 	}
 	if !isValidLVMName(lvm.VolumeGroup) {
 		return fmt.Errorf("lvm: invalid volumeGroup name %q", lvm.VolumeGroup)
+	}
+	if lvm.PVPartition < 1 {
+		return fmt.Errorf("lvm: pvPartition must be >= 1, got %d", lvm.PVPartition)
 	}
 	for i, vol := range lvm.Volumes {
 		if vol.Name == "" {
