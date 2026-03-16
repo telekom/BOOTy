@@ -130,13 +130,29 @@ func (c *Configurator) copyTreeIntoChroot(srcBase, label string) error {
 }
 
 // copyTree copies all files from srcBase into destRoot, preserving directory structure.
+// Symlinks and paths that escape destRoot are rejected to prevent path traversal.
 func copyTree(srcBase, destRoot string) error {
-	if err := filepath.WalkDir(srcBase, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return fmt.Errorf("walk %s: %w", path, err)
+	cleanDest, err := filepath.Abs(destRoot)
+	if err != nil {
+		return fmt.Errorf("resolve dest root: %w", err)
+	}
+	if err := filepath.WalkDir(srcBase, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return fmt.Errorf("walk %s: %w", path, walkErr)
+		}
+		// Reject symlinks to prevent following links that escape the tree.
+		if d.Type()&os.ModeSymlink != 0 {
+			slog.Warn("Skipping symlink in copy tree", "path", path)
+			return nil
 		}
 		relPath, _ := filepath.Rel(srcBase, path)
-		destPath := filepath.Join(destRoot, relPath)
+		destPath := filepath.Join(cleanDest, relPath)
+
+		// Verify the resolved destination stays within destRoot.
+		absDest, err := filepath.Abs(destPath)
+		if err != nil || (!strings.HasPrefix(absDest, cleanDest+string(filepath.Separator)) && absDest != cleanDest) {
+			return fmt.Errorf("path traversal blocked: %s escapes %s", relPath, cleanDest)
+		}
 
 		if d.IsDir() {
 			return os.MkdirAll(destPath, 0o755)
@@ -319,6 +335,11 @@ func (c *Configurator) SetupMellanox(ctx context.Context, numVFs int) (bool, err
 		if !strings.Contains(entry, "pciconf") {
 			continue
 		}
+		// Validate device name with allowlist to prevent shell injection.
+		if !isSafeDeviceName(entry) {
+			slog.Warn("Skipping mst device with invalid characters", "entry", entry)
+			continue
+		}
 		devPath := "/dev/mst/" + entry
 		cmd := fmt.Sprintf("mstconfig -d %s set NUM_OF_VFS=%d", devPath, numVFs)
 		slog.Info("Configuring Mellanox SR-IOV", "device", devPath, "numVFs", numVFs)
@@ -334,6 +355,20 @@ func (c *Configurator) SetupMellanox(ctx context.Context, numVFs int) (bool, err
 		slog.Info("Mellanox firmware values changed, hard reboot required")
 	}
 	return changed, nil
+}
+
+// isSafeDeviceName validates that a device name contains only safe characters
+// (letters, digits, dots, underscores, hyphens).
+func isSafeDeviceName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '.' && r != '_' && r != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 // hasPCIVendorFunc is the PCI vendor check function, replaceable in tests.

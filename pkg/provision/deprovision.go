@@ -20,7 +20,7 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 	if mode == "" {
 		mode = "hard"
 	}
-	slog.Info("Starting deprovisioning", "mode", mode)
+	o.log.Info("Starting deprovisioning", "mode", mode)
 
 	steps := []Step{
 		{"report-init", o.reportInit},
@@ -34,25 +34,21 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 		steps = append(steps,
 			Step{"stop-raid", o.stopRAID},
 			Step{"disable-lvm", o.disableLVM},
-		)
-		if o.cfg.SecureErase {
-			steps = append(steps, Step{"secure-erase-disks", o.secureEraseDisks})
-		} else {
-			steps = append(steps, Step{"wipe-disks", o.wipeDisks})
-		}
-		steps = append(steps,
+			Step{"wipe-disks", o.wipeOrSecureEraseDisks},
 			Step{"remove-efi-entries", o.removeEFIBootEntries},
 		)
 	}
 	steps = append(steps, Step{"report-success", o.reportDeprovisionSuccess})
 
 	for i, step := range steps {
-		slog.Info("Deprovisioning step", "step", step.Name, "index", i+1, "total", len(steps))
+		o.log.Info("Deprovisioning step", "step", step.Name, "index", i+1, "total", len(steps))
 		if err := step.Fn(ctx); err != nil {
 			msg := fmt.Sprintf("step %s failed: %v", step.Name, err)
-			slog.Error("Deprovisioning step failed", "step", step.Name, "error", err)
+			o.log.Error("Deprovisioning step failed", "step", step.Name, "error", err)
 			DumpDebugState(step.Name)
-			_ = o.provider.ReportStatus(ctx, config.StatusError, msg)
+			if reportErr := o.provider.ReportStatus(ctx, config.StatusError, msg); reportErr != nil {
+				o.log.Error("Failed to report error status", "error", reportErr)
+			}
 			return fmt.Errorf("deprovision step %s: %w", step.Name, err)
 		}
 	}
