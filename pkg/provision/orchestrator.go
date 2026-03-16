@@ -104,6 +104,9 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 
 	for i, step := range steps {
 		if cp.IsCompleted(step.Name) {
+			// NOTE: skipped steps that set in-memory state (targetDisk,
+			// rootPartition, etc.) will leave those fields empty. See
+			// Checkpoint struct doc for the current resume limitation.
 			o.log.Info("Skipping completed step", "step", step.Name)
 			continue
 		}

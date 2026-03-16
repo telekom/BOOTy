@@ -51,3 +51,23 @@ func TestIsTransient(t *testing.T) {
 		})
 	}
 }
+
+func TestTransientError_NilErr(t *testing.T) {
+	err := &TransientError{}
+	if err.Error() != "transient error" {
+		t.Errorf("got %q, want %q", err.Error(), "transient error")
+	}
+	if err.Unwrap() != nil {
+		t.Error("expected nil from Unwrap")
+	}
+}
+
+func TestPermanentError_NilErr(t *testing.T) {
+	err := &PermanentError{}
+	if err.Error() != "permanent error" {
+		t.Errorf("got %q, want %q", err.Error(), "permanent error")
+	}
+	if err.Unwrap() != nil {
+		t.Error("expected nil from Unwrap")
+	}
+}

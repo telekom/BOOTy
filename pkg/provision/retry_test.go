@@ -176,3 +176,23 @@ func TestDefaultPolicies(t *testing.T) {
 		}
 	}
 }
+
+func TestWithRetry_NonTransientFailure(t *testing.T) {
+	policy := RetryPolicy{
+		MaxRetries:   5,
+		InitialDelay: time.Millisecond,
+		MaxDelay:     5 * time.Millisecond,
+		Transient:    false, // errors NOT assumed transient
+	}
+	calls := 0
+	err := WithRetry(context.Background(), "test-step", policy, func(_ context.Context) error {
+		calls++
+		return errors.New("regular error (non-typed)")
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if calls != 1 {
+		t.Errorf("expected 1 call (no retry on non-transient), got %d", calls)
+	}
+}
