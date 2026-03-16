@@ -40,13 +40,15 @@ func TestDiscoverKernels(t *testing.T) {
 		t.Errorf("first = %q, want 6.1.0-200-generic", kernels[0].Version)
 	}
 	if kernels[0].InitrdPath == "" {
-		t.Error("expected initrd for 6.1.0")
+		t.Errorf("expected initrd for 6.1.0-200-generic, got empty InitrdPath")
 	}
 }
 
 func TestDiscoverKernels_Empty(t *testing.T) {
 	root := t.TempDir()
-	os.MkdirAll(filepath.Join(root, "boot"), 0o755)
+	if err := os.MkdirAll(filepath.Join(root, "boot"), 0o755); err != nil {
+		t.Fatalf("mkdir boot: %v", err)
+	}
 
 	kernels, err := DiscoverKernels(root)
 	if err != nil {
@@ -58,6 +60,7 @@ func TestDiscoverKernels_Empty(t *testing.T) {
 }
 
 func TestSelectKernel_ExplicitPath(t *testing.T) {
+	root := t.TempDir()
 	m := NewEnhancedManager(nil)
 	cfg := &KexecConfig{
 		KernelPath: "/boot/vmlinuz-custom",
@@ -65,12 +68,13 @@ func TestSelectKernel_ExplicitPath(t *testing.T) {
 		Cmdline:    "root=/dev/sda1",
 	}
 
-	ki, err := m.SelectKernel("/", cfg)
+	ki, err := m.SelectKernel(root, cfg)
 	if err != nil {
 		t.Fatalf("SelectKernel: %v", err)
 	}
-	if ki.KernelPath != "/boot/vmlinuz-custom" {
-		t.Errorf("path = %q", ki.KernelPath)
+	want := filepath.Join(root, "/boot/vmlinuz-custom")
+	if ki.KernelPath != want {
+		t.Errorf("KernelPath = %q, want %q", ki.KernelPath, want)
 	}
 }
 
@@ -119,7 +123,9 @@ func TestSelectKernel_NotFound(t *testing.T) {
 
 func TestSelectKernel_NoKernels(t *testing.T) {
 	root := t.TempDir()
-	os.MkdirAll(filepath.Join(root, "boot"), 0o755)
+	if err := os.MkdirAll(filepath.Join(root, "boot"), 0o755); err != nil {
+		t.Fatalf("mkdir boot: %v", err)
+	}
 
 	m := NewEnhancedManager(nil)
 	_, err := m.SelectKernel(root, &KexecConfig{})

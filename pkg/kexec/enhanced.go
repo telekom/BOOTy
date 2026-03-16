@@ -55,9 +55,12 @@ func NewEnhancedManager(log *slog.Logger) *EnhancedManager {
 func (m *EnhancedManager) SelectKernel(rootPath string, cfg *KexecConfig) (*KernelInfo, error) {
 	if cfg.KernelPath != "" {
 		ki := &KernelInfo{
-			KernelPath: cfg.KernelPath,
+			KernelPath: filepath.Join(rootPath, cfg.KernelPath),
 			InitrdPath: cfg.InitrdPath,
 			Cmdline:    cfg.Cmdline,
+		}
+		if cfg.InitrdPath != "" {
+			ki.InitrdPath = filepath.Join(rootPath, cfg.InitrdPath)
 		}
 		return applyOverrides(ki, cfg), nil
 	}
@@ -185,6 +188,11 @@ func applyOverrides(ki *KernelInfo, cfg *KexecConfig) *KernelInfo {
 	if len(cfg.CmdlineRemove) > 0 {
 		result.Cmdline = RemoveCmdlineArgs(result.Cmdline, cfg.CmdlineRemove)
 	}
+	// Apply mode-specific cmdline modifications.
+	if cfg.Mode == ModeRescue {
+		result.Cmdline = BuildRescueCmdline(result.Cmdline)
+	}
+	// ModeChain (staged boot through secondary kernel) is planned for a future release.
 	return &result
 }
 
