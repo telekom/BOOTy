@@ -59,6 +59,8 @@ jobs:
 
       - name: Create promoted tag
         run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           if git rev-parse "${{ steps.tag.outputs.tag }}" >/dev/null 2>&1; then
             echo "::error::Tag ${{ steps.tag.outputs.tag }} already exists"
             exit 1

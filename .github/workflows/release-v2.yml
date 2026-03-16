@@ -153,19 +153,19 @@ jobs:
             artifacts/**/*.bundle
 
   container:
-    name: Container Image (${{ matrix.arch }})
+    name: Container Image (${{ matrix.flavor }})
     needs: build
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        arch: [amd64, arm64]
+        flavor: [default, gobgp]
     steps:
       - uses: actions/checkout@v6
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
-          platforms: arm64
+          platforms: arm64,amd64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -180,8 +180,15 @@ jobs:
       - name: Build and push container image
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          IMAGE=ghcr.io/${{ github.repository }}:${VERSION}-${{ matrix.arch }}
-          docker buildx build --platform linux/${{ matrix.arch }} \
+          TARGET_ARG=""
+          IMAGE_TAG="${VERSION}"
+          if [ "${{ matrix.flavor }}" = "gobgp" ]; then
+            TARGET_ARG="--target=gobgp"
+            IMAGE_TAG="${VERSION}-gobgp"
+          fi
+          IMAGE=ghcr.io/${{ github.repository }}:${IMAGE_TAG}
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            ${TARGET_ARG} \
             --push \
             -t "${IMAGE}" \
             -f initrd.Dockerfile .
@@ -192,7 +199,11 @@ jobs:
       - name: Sign container image
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          IMAGE=ghcr.io/${{ github.repository }}:${VERSION}-${{ matrix.arch }}
+          IMAGE_TAG="${VERSION}"
+          if [ "${{ matrix.flavor }}" = "gobgp" ]; then
+            IMAGE_TAG="${VERSION}-gobgp"
+          fi
+          IMAGE=ghcr.io/${{ github.repository }}:${IMAGE_TAG}
           cosign sign --yes "${IMAGE}"
 
   changelog:
