@@ -126,8 +126,8 @@ func readSysfsFile(path string) string {
 func formatPCIID(vendor, device string) string {
 	v := strings.TrimSpace(vendor)
 	d := strings.TrimSpace(device)
-	v = strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(v, "0x"), "0X"))
-	d = strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(d, "0x"), "0X"))
+	v = strings.TrimPrefix(strings.ToLower(v), "0x")
+	d = strings.TrimPrefix(strings.ToLower(d), "0x")
 	return v + ":" + d
 }
 

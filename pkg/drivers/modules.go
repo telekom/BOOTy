@@ -10,12 +10,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Module represents a kernel module with its metadata.
 type Module struct {
-	Name         string   `json:"name"`
-	Path         string   `json:"path,omitempty"`
+	Name string `json:"name"`
+	Path string `json:"path,omitempty"`
+	// UsedBy is parsed from the 4th /proc/modules field.
+	UsedBy []string `json:"usedBy,omitempty"`
+	// Deprecated: kept for compatibility; mirrors UsedBy.
 	Dependencies []string `json:"dependencies,omitempty"`
 	Loaded       bool     `json:"loaded"`
 }
@@ -36,6 +41,10 @@ func (m *Manifest) AllModules() []string {
 
 	for _, list := range [][]string{m.Common, m.NICs, m.Storage, m.USB, m.Custom} {
 		for _, mod := range list {
+			mod = strings.TrimSpace(mod)
+			if mod == "" {
+				continue
+			}
 			if !seen[mod] {
 				seen[mod] = true
 				result = append(result, mod)
@@ -50,6 +59,10 @@ type Manager struct {
 	log             *slog.Logger
 	modulesDir      string
 	procModulesPath string
+
+	cacheMu      sync.Mutex
+	loadedCache  map[string]struct{}
+	loadedCached time.Time
 }
 
 // NewManager creates a kernel module manager.
@@ -59,9 +72,25 @@ func NewManager(log *slog.Logger) *Manager {
 	}
 	return &Manager{
 		log:             log,
-		modulesDir:      "/lib/modules",
+		modulesDir:      defaultModulesDir(),
 		procModulesPath: "/proc/modules",
 	}
+}
+
+func defaultModulesDir() string {
+	release, err := os.ReadFile("/proc/sys/kernel/osrelease")
+	if err != nil {
+		return "/lib/modules"
+	}
+	kernel := strings.TrimSpace(string(release))
+	if kernel == "" {
+		return "/lib/modules"
+	}
+	path := "/lib/modules/" + kernel
+	if _, err := os.Stat(path); err == nil {
+		return path
+	}
+	return "/lib/modules"
 }
 
 // ListLoaded returns currently loaded kernel modules from /proc/modules.
@@ -76,26 +105,30 @@ func (m *Manager) ListLoaded() ([]Module, error) {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
-		if len(fields) >= 1 {
-			mod := Module{
-				Name:   fields[0],
-				Loaded: true,
-			}
-			if len(fields) >= 4 {
-				deps := strings.TrimSuffix(strings.TrimPrefix(fields[3], "["), "]")
-				deps = strings.TrimRight(deps, ",")
-				if deps != "" && deps != "-" {
-					var cleaned []string
-					for _, d := range strings.Split(deps, ",") {
-						if d != "" {
-							cleaned = append(cleaned, d)
-						}
-					}
-					mod.Dependencies = cleaned
-				}
-			}
-			modules = append(modules, mod)
+		if len(fields) < 1 {
+			continue
 		}
+
+		mod := Module{
+			Name:   fields[0],
+			Loaded: true,
+		}
+		if len(fields) >= 4 {
+			deps := strings.TrimSuffix(strings.TrimPrefix(fields[3], "["), "]")
+			deps = strings.TrimRight(deps, ",")
+			if deps != "" && deps != "-" {
+				var usedBy []string
+				for _, d := range strings.Split(deps, ",") {
+					d = strings.TrimSpace(d)
+					if d != "" {
+						usedBy = append(usedBy, d)
+					}
+				}
+				mod.UsedBy = usedBy
+				mod.Dependencies = append([]string(nil), usedBy...)
+			}
+		}
+		modules = append(modules, mod)
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scan %s: %w", m.procModulesPath, err)
@@ -105,8 +138,27 @@ func (m *Manager) ListLoaded() ([]Module, error) {
 
 // FindModule searches for a .ko file in the modules directory.
 func (m *Manager) FindModule(name string) (string, error) {
+	for _, root := range []string{filepath.Join(m.modulesDir, "kernel"), m.modulesDir} {
+		info, err := os.Stat(root)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+
+		found, err := findModuleInTree(root, name)
+		if err != nil {
+			return "", err
+		}
+		if found != "" {
+			return found, nil
+		}
+	}
+
+	return "", fmt.Errorf("module %q not found in %s", name, m.modulesDir)
+}
+
+func findModuleInTree(root, name string) (string, error) {
 	var found string
-	err := filepath.WalkDir(m.modulesDir, func(path string, d os.DirEntry, walkErr error) error {
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -114,7 +166,6 @@ func (m *Manager) FindModule(name string) (string, error) {
 			return nil
 		}
 		base := filepath.Base(path)
-		// Match name.ko, name.ko.xz, name.ko.zst, etc.
 		if strings.HasPrefix(base, name+".ko") {
 			found = path
 			return fs.SkipAll
@@ -122,27 +173,41 @@ func (m *Manager) FindModule(name string) (string, error) {
 		return nil
 	})
 	if err != nil {
-		return "", fmt.Errorf("walk modules dir: %w", err)
-	}
-	if found == "" {
-		return "", fmt.Errorf("module %q not found in %s", name, m.modulesDir)
+		return "", fmt.Errorf("walk modules dir %s: %w", root, err)
 	}
 	return found, nil
 }
 
 // IsLoaded checks if a module is currently loaded by reading procModulesPath.
 func (m *Manager) IsLoaded(name string) bool {
+	normalized := strings.ReplaceAll(name, "-", "_")
+
+	m.cacheMu.Lock()
+	if time.Since(m.loadedCached) > time.Second || m.loadedCache == nil {
+		cache, err := m.readLoadedSet()
+		if err != nil {
+			m.cacheMu.Unlock()
+			return false
+		}
+		m.loadedCache = cache
+		m.loadedCached = time.Now()
+	}
+	_, ok := m.loadedCache[normalized]
+	m.cacheMu.Unlock()
+	return ok
+}
+
+func (m *Manager) readLoadedSet() (map[string]struct{}, error) {
 	data, err := os.ReadFile(m.procModulesPath)
 	if err != nil {
-		return false
+		return nil, fmt.Errorf("read %s: %w", m.procModulesPath, err)
 	}
-	// Module names in /proc/modules use underscores
-	normalized := strings.ReplaceAll(name, "-", "_")
+	loaded := make(map[string]struct{})
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) >= 1 && fields[0] == normalized {
-			return true
+		if len(fields) >= 1 {
+			loaded[fields[0]] = struct{}{}
 		}
 	}
-	return false
+	return loaded, nil
 }

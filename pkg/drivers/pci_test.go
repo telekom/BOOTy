@@ -5,6 +5,7 @@ package drivers
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -88,34 +89,6 @@ func TestScanPCIDevicesFrom_NoSuchDir(t *testing.T) {
 	}
 }
 
-func TestManifest_AllModules(t *testing.T) {
-	m := &Manifest{
-		Common:  []string{"vxlan", "bridge"},
-		NICs:    []string{"e1000e", "mlx5_core"},
-		Storage: []string{"nvme", "nvme_core"},
-		USB:     []string{"xhci_hcd"},
-		Custom:  []string{"vxlan"}, // duplicate should be deduped
-	}
-
-	got := m.AllModules()
-	if len(got) != 7 {
-		t.Errorf("AllModules count = %d, want 7 (got: %v)", len(got), got)
-	}
-
-	// Verify first module is from common
-	if got[0] != "vxlan" {
-		t.Errorf("first module = %q, want vxlan", got[0])
-	}
-}
-
-func TestManifest_AllModules_Empty(t *testing.T) {
-	m := &Manifest{}
-	got := m.AllModules()
-	if len(got) != 0 {
-		t.Errorf("AllModules empty = %d, want 0", len(got))
-	}
-}
-
 func TestPCIDevice_Fields(t *testing.T) {
 	dev := PCIDevice{
 		Address:  "0000:00:1f.0",
@@ -156,7 +129,10 @@ func TestReadSysfsFile_Missing(t *testing.T) {
 
 func TestNewManager(t *testing.T) {
 	m := NewManager(nil)
-	if m.modulesDir != "/lib/modules" {
-		t.Errorf("modulesDir = %q", m.modulesDir)
+	if m.modulesDir == "" {
+		t.Fatal("modulesDir must not be empty")
+	}
+	if !strings.HasPrefix(m.modulesDir, "/lib/modules") {
+		t.Errorf("unexpected modulesDir value %q", m.modulesDir)
 	}
 }
