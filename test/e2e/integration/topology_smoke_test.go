@@ -3,10 +3,23 @@
 package integration
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
+)
+
+// Container name constants for each topology.
+const (
+	dhcpServer   = "clab-booty-dhcp-lab-dhcp-server"
+	dhcpBooty    = "clab-booty-dhcp-lab-booty"
+	bondSwitch   = "clab-booty-bond-lab-switch"
+	bondBooty    = "clab-booty-bond-lab-booty"
+	staticRouter = "clab-booty-static-lab-router"
+	staticBooty  = "clab-booty-static-lab-booty"
+	multiSwitch  = "clab-booty-multi-nic-lab-switch"
+	multiBooty   = "clab-booty-multi-nic-lab-booty"
 )
 
 type topologyCheck struct {
@@ -21,28 +34,28 @@ type topologySpec struct {
 
 var topologySpecs = map[string]topologySpec{
 	"dhcp": {
-		containers: []string{"clab-booty-dhcp-lab-dhcp-server", "clab-booty-dhcp-lab-booty"},
+		containers: []string{dhcpServer, dhcpBooty},
 		checks: []topologyCheck{
-			{container: "clab-booty-dhcp-lab-dhcp-server", args: []string{"pgrep", "dhcpd"}},
+			{container: dhcpServer, args: []string{"pgrep", "dhcpd"}},
 		},
 	},
 	"bond": {
-		containers: []string{"clab-booty-bond-lab-switch", "clab-booty-bond-lab-booty"},
+		containers: []string{bondSwitch, bondBooty},
 		checks: []topologyCheck{
-			{container: "clab-booty-bond-lab-switch", args: []string{"ip", "link", "show", "br-bond"}},
+			{container: bondSwitch, args: []string{"ip", "link", "show", "br-bond"}},
 		},
 	},
 	"static": {
-		containers: []string{"clab-booty-static-lab-router", "clab-booty-static-lab-booty"},
+		containers: []string{staticRouter, staticBooty},
 		checks: []topologyCheck{
-			{container: "clab-booty-static-lab-booty", args: []string{"ip", "route", "show", "default"}},
+			{container: staticBooty, args: []string{"ip", "route", "show", "default"}},
 		},
 	},
 	"multi-nic": {
-		containers: []string{"clab-booty-multi-nic-lab-switch", "clab-booty-multi-nic-lab-booty"},
+		containers: []string{multiSwitch, multiBooty},
 		checks: []topologyCheck{
-			{container: "clab-booty-multi-nic-lab-switch", args: []string{"ip", "link", "show", "br-data"}},
-			{container: "clab-booty-multi-nic-lab-booty", args: []string{"ip", "addr", "show", "eth4"}},
+			{container: multiSwitch, args: []string{"ip", "link", "show", "br-data"}},
+			{container: multiBooty, args: []string{"ip", "addr", "show", "eth4"}},
 		},
 	},
 }
@@ -58,13 +71,17 @@ func TestContainerLabTopologySmoke(t *testing.T) {
 		t.Fatalf("unsupported BOOTY_TOPOLOGY %q", topo)
 	}
 
-	out, err := exec.Command("docker", "ps", "--format", "{{.Names}}").Output()
+	out, err := exec.CommandContext(context.Background(), "docker", "ps", "--format", "{{.Names}}").Output()
 	if err != nil {
 		t.Skipf("docker not available: %v", err)
 	}
-	ps := string(out)
+	running := strings.Split(strings.TrimSpace(string(out)), "\n")
+	runningSet := make(map[string]bool, len(running))
+	for _, name := range running {
+		runningSet[name] = true
+	}
 	for _, name := range spec.containers {
-		if !strings.Contains(ps, name) {
+		if !runningSet[name] {
 			t.Fatalf("expected container %s not found in docker ps", name)
 		}
 	}

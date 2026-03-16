@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -19,6 +20,7 @@ func TestTPMSmokeQEMU(t *testing.T) {
 
 	initramfs := envOrDefault("BOOTY_INITRAMFS", "test-initramfs.cpio.gz")
 	kernel := envOrDefault("BOOTY_KERNEL", "vmlinuz")
+	requireKVMAssets(t, initramfs, kernel)
 	tpmDir := t.TempDir()
 	tpmSocket := filepath.Join(tpmDir, "swtpm-sock")
 
@@ -29,6 +31,8 @@ func TestTPMSmokeQEMU(t *testing.T) {
 		"--ctrl", "type=unixio,path="+tpmSocket,
 		"--tpm2",
 	)
+	var swtpmStderr strings.Builder
+	swtpm.Stderr = &swtpmStderr
 	if err := swtpm.Start(); err != nil {
 		swtpmCancel()
 		t.Fatalf("failed to start swtpm: %v", err)
@@ -41,7 +45,7 @@ func TestTPMSmokeQEMU(t *testing.T) {
 			break
 		}
 		if i == 49 {
-			t.Fatal("swtpm socket did not appear within timeout")
+			t.Fatalf("swtpm socket did not appear within timeout; stderr: %s", swtpmStderr.String())
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

@@ -29,6 +29,17 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
+// requireKVMAssets skips the test if the initramfs or kernel files are not present.
+func requireKVMAssets(t *testing.T, initramfs, kernel string) {
+	t.Helper()
+	if _, err := os.Stat(initramfs); err != nil {
+		t.Skipf("initramfs %s not found — skipping KVM test", initramfs)
+	}
+	if _, err := os.Stat(kernel); err != nil {
+		t.Skipf("kernel %s not found — skipping KVM test", kernel)
+	}
+}
+
 // splitExtraArgs splits a shell-style argument string into separate arguments,
 // respecting single and double quotes so values like "-append 'console=ttyS0 panic=1'"
 // are parsed correctly.

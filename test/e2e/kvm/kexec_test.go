@@ -11,6 +11,7 @@ func TestKexecSmokeQEMU(t *testing.T) {
 	qemuAvailable(t)
 	initramfs := envOrDefault("BOOTY_INITRAMFS", "test-initramfs.cpio.gz")
 	kernel := envOrDefault("BOOTY_KERNEL", "vmlinuz")
+	requireKVMAssets(t, initramfs, kernel)
 
 	args := []string{
 		"-m", "512",

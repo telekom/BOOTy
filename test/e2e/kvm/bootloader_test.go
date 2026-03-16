@@ -3,6 +3,7 @@
 package kvm
 
 import (
+	"os"
 	"testing"
 	"time"
 )
@@ -17,8 +18,13 @@ func TestUEFIBootPathSmoke(t *testing.T) {
 	qemuAvailable(t)
 	initramfs := envOrDefault("BOOTY_INITRAMFS", "test-initramfs.cpio.gz")
 	kernel := envOrDefault("BOOTY_KERNEL", "vmlinuz")
+	requireKVMAssets(t, initramfs, kernel)
 	ovmf := envOrDefault("OVMF_CODE", "/usr/share/OVMF/OVMF_CODE.fd")
 	ovmfVars := envOrDefault("OVMF_VARS", "")
+
+	if _, err := os.Stat(ovmf); err != nil {
+		t.Skipf("OVMF firmware not found at %s — skipping UEFI boot path test", ovmf)
+	}
 
 	args := []string{
 		"-m", "512",

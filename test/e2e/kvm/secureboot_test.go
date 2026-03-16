@@ -3,6 +3,7 @@
 package kvm
 
 import (
+	"os"
 	"testing"
 	"time"
 )
@@ -18,8 +19,13 @@ func TestUEFISecureBootSmoke(t *testing.T) {
 	qemuAvailable(t)
 	initramfs := envOrDefault("BOOTY_INITRAMFS", "test-initramfs.cpio.gz")
 	kernel := envOrDefault("BOOTY_KERNEL", "vmlinuz")
+	requireKVMAssets(t, initramfs, kernel)
 	ovmf := envOrDefault("OVMF_CODE", "/usr/share/OVMF/OVMF_CODE.secboot.fd")
 	ovmfVars := envOrDefault("OVMF_VARS", "")
+
+	if _, err := os.Stat(ovmf); err != nil {
+		t.Skipf("OVMF Secure Boot firmware not found at %s — skipping test", ovmf)
+	}
 
 	args := []string{
 		"-m", "512",
