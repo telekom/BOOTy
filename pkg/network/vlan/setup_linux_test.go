@@ -149,3 +149,51 @@ func TestTeardownAll_UsesCustomName(t *testing.T) {
 		t.Fatalf("expected custom-named vlan to be deleted")
 	}
 }
+
+func TestSetup_CleansUpOnMTUFailure(t *testing.T) {
+	restore := snapshotNetlinkFns()
+	defer restore()
+
+	parent := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth0", Index: 10}}
+	created := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "mgmt0", Index: 20}}
+	var deleted int32
+
+	linkByName = func(name string) (netlink.Link, error) {
+		switch name {
+		case "eth0":
+			return parent, nil
+		case "mgmt0":
+			return created, nil
+		default:
+			return nil, errors.New("not found")
+		}
+	}
+	linkSetUp = func(netlink.Link) error { return nil }
+	linkAdd = func(netlink.Link) error { return nil }
+	linkSetMTU = func(link netlink.Link, _ int) error {
+		if link.Attrs().Name == "mgmt0" {
+			return errors.New("mtu set failed")
+		}
+		return nil
+	}
+	linkDel = func(link netlink.Link) error {
+		if link.Attrs().Name == "mgmt0" {
+			atomic.AddInt32(&deleted, 1)
+		}
+		return nil
+	}
+
+	_, err := Setup(&Config{ID: 100, Parent: "eth0", Name: "mgmt0", MTU: 9000})
+	if err == nil {
+		t.Fatal("expected setup error")
+	}
+	if atomic.LoadInt32(&deleted) != 1 {
+		t.Fatalf("expected partial setup cleanup")
+	}
+}
+
+func TestTeardownConfig_Nil(t *testing.T) {
+	if err := TeardownConfig(nil); err == nil {
+		t.Fatal("expected error for nil config")
+	}
+}
