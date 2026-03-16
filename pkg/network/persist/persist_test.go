@@ -67,9 +67,27 @@ func TestNetworkConfig_Validate(t *testing.T) {
 		{"no addr no dhcp", NetworkConfig{
 			Interfaces: []InterfaceConfig{{Name: "eth0"}},
 		}, true},
+		{"dhcp and static address conflict", NetworkConfig{
+			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true, Address: "10.0.0.5/24"}},
+		}, true},
+		{"invalid interface mac", NetworkConfig{
+			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true, MAC: "bad-mac"}},
+		}, true},
+		{"invalid interface gateway", NetworkConfig{
+			Interfaces: []InterfaceConfig{{Name: "eth0", Address: "10.0.0.5/24", Gateway: "bad-gw"}},
+		}, true},
+		{"invalid interface address", NetworkConfig{
+			Interfaces: []InterfaceConfig{{Name: "eth0", Address: "10.0.0.5"}},
+		}, true},
+		{"duplicate interface names", NetworkConfig{
+			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}, {Name: "eth0", DHCP: true}},
+		}, true},
 		{"valid bond", NetworkConfig{
 			Bonds: []BondConfig{{Name: "bond0", Members: []string{"eth0", "eth1"}, Mode: "802.3ad"}},
 		}, false},
+		{"invalid bond address", NetworkConfig{
+			Bonds: []BondConfig{{Name: "bond0", Members: []string{"eth0", "eth1"}, Mode: "802.3ad", Address: "10.0.0.1"}},
+		}, true},
 		{"bond no name", NetworkConfig{
 			Bonds: []BondConfig{{Members: []string{"eth0", "eth1"}}},
 		}, true},
@@ -94,14 +112,42 @@ func TestNetworkConfig_Validate(t *testing.T) {
 		{"vlan bad id", NetworkConfig{
 			VLANs: []VLANConfig{{Parent: "eth0", ID: 5000}},
 		}, true},
+		{"vlan dhcp and static conflict", NetworkConfig{
+			VLANs: []VLANConfig{{Parent: "eth0", ID: 100, DHCP: true, Address: "10.0.0.5/24"}},
+		}, true},
+		{"vlan invalid address", NetworkConfig{
+			VLANs: []VLANConfig{{Parent: "eth0", ID: 100, Address: "10.0.0.5"}},
+		}, true},
 		{"valid route", NetworkConfig{
-			Routes: []RouteConfig{{Destination: "10.0.0.0/8", Gateway: "10.0.0.1"}},
+			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
+			Routes:     []RouteConfig{{Destination: "10.0.0.0/8", Gateway: "10.0.0.1"}},
 		}, false},
+		{"invalid route destination", NetworkConfig{
+			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
+			Routes:     []RouteConfig{{Destination: "10.0.0.0", Gateway: "10.0.0.1"}},
+		}, true},
+		{"invalid route gateway", NetworkConfig{
+			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
+			Routes:     []RouteConfig{{Destination: "10.0.0.0/8", Gateway: "bad-gw"}},
+		}, true},
 		{"route no dest", NetworkConfig{
-			Routes: []RouteConfig{{Gateway: "10.0.0.1"}},
+			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
+			Routes:     []RouteConfig{{Gateway: "10.0.0.1"}},
 		}, true},
 		{"route no gw", NetworkConfig{
-			Routes: []RouteConfig{{Destination: "10.0.0.0/8"}},
+			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
+			Routes:     []RouteConfig{{Destination: "10.0.0.0/8"}},
+		}, true},
+		{"invalid dns server", NetworkConfig{
+			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
+			DNS:        DNSConfig{Servers: []string{"bad-dns"}},
+		}, true},
+		{"invalid dns search", NetworkConfig{
+			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
+			DNS:        DNSConfig{Search: []string{"bad domain"}},
+		}, true},
+		{"dns without any interface", NetworkConfig{
+			DNS: DNSConfig{Servers: []string{"8.8.8.8"}},
 		}, true},
 	}
 	for _, tc := range tests {
@@ -129,6 +175,9 @@ func TestRenderNetplan(t *testing.T) {
 	}
 
 	result := RenderNetplan(cfg)
+	if !strings.Contains(result, "renderer: networkd") {
+		t.Error("missing renderer")
+	}
 	if !strings.Contains(result, "ethernets:") {
 		t.Error("missing ethernets")
 	}
@@ -157,6 +206,9 @@ func TestRenderNetplan_Empty(t *testing.T) {
 	result := RenderNetplan(cfg)
 	if !strings.Contains(result, "version: 2") {
 		t.Error("missing version")
+	}
+	if !strings.Contains(result, "renderer: networkd") {
+		t.Error("missing renderer")
 	}
 }
 
@@ -220,10 +272,17 @@ func TestWriteNetplan(t *testing.T) {
 	if err := Write(root, Ubuntu, cfg); err != nil {
 		t.Fatalf("Write() error: %v", err)
 	}
-	path := filepath.Join(root, "etc/netplan/99-booty.yaml")
+	path := filepath.Join(root, "etc/netplan/01-booty-provisioned.yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("ReadFile() error: %v", err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat() error: %v", err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("file mode = %o, want 600", fi.Mode().Perm())
 	}
 	content := string(data)
 	if !strings.Contains(content, "eth0:") {
@@ -300,6 +359,13 @@ func TestWriteValidationError(t *testing.T) {
 	}
 }
 
+func TestWriteNilConfig(t *testing.T) {
+	root := t.TempDir()
+	if err := Write(root, Ubuntu, nil); err == nil {
+		t.Error("expected nil config error")
+	}
+}
+
 func TestWriteUnsupportedFamily(t *testing.T) {
 	root := t.TempDir()
 	cfg := &NetworkConfig{
@@ -351,6 +417,12 @@ func TestRenderNetplan_DNSAndRoutes(t *testing.T) {
 	}
 	if !strings.Contains(ifaceSection, "metric: 100") {
 		t.Error("missing route metric")
+	}
+	if strings.Contains(result, "\n  nameservers:") {
+		t.Error("nameservers rendered at root level")
+	}
+	if strings.Contains(result, "\n  routes:") {
+		t.Error("routes rendered at root level")
 	}
 }
 
@@ -413,6 +485,56 @@ func TestWriteNetworkd_DNSAndRoutes(t *testing.T) {
 	}
 	if !strings.Contains(content, "Metric=50") {
 		t.Error("missing route metric")
+	}
+}
+
+func TestWriteNetworkd_SearchOnly(t *testing.T) {
+	root := t.TempDir()
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{{Name: "eth0", Address: "10.0.0.5/24", Gateway: "10.0.0.1"}},
+		DNS:        DNSConfig{Search: []string{"example.com"}},
+	}
+	if err := Write(root, Flatcar, cfg); err != nil {
+		t.Fatalf("Write() error: %v", err)
+	}
+	path := filepath.Join(root, "etc/systemd/network/10-booty-eth0.network")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error: %v", err)
+	}
+	if !strings.Contains(string(data), "Domains=example.com") {
+		t.Error("missing search domain in networkd output")
+	}
+}
+
+func TestWriteNetworkd_GlobalRoutesOnlyPrimary(t *testing.T) {
+	root := t.TempDir()
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{
+			{Name: "eth0", Address: "10.0.0.5/24", Gateway: "10.0.0.1"},
+			{Name: "eth1", Address: "10.0.1.5/24", Gateway: "10.0.1.1"},
+		},
+		DNS:    DNSConfig{Servers: []string{"8.8.8.8"}},
+		Routes: []RouteConfig{{Destination: "172.16.0.0/12", Gateway: "10.0.0.1"}},
+	}
+	if err := Write(root, Flatcar, cfg); err != nil {
+		t.Fatalf("Write() error: %v", err)
+	}
+	firstPath := filepath.Join(root, "etc/systemd/network/10-booty-eth0.network")
+	secondPath := filepath.Join(root, "etc/systemd/network/10-booty-eth1.network")
+	first, err := os.ReadFile(firstPath)
+	if err != nil {
+		t.Fatalf("ReadFile(first) error: %v", err)
+	}
+	second, err := os.ReadFile(secondPath)
+	if err != nil {
+		t.Fatalf("ReadFile(second) error: %v", err)
+	}
+	if !strings.Contains(string(first), "[Route]") {
+		t.Error("expected route in primary interface networkd file")
+	}
+	if strings.Contains(string(second), "[Route]") {
+		t.Error("did not expect duplicated route in secondary interface networkd file")
 	}
 }
 
