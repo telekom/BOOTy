@@ -49,6 +49,7 @@ func (s *Stack) Setup(ctx context.Context, _ *network.Config) error {
 	}
 
 	if err := s.underlay.Setup(ctx); err != nil {
+		s.cleanupVRF()
 		return fmt.Errorf("underlay setup: %w", err)
 	}
 
@@ -56,6 +57,12 @@ func (s *Stack) Setup(ctx context.Context, _ *network.Config) error {
 	s.overlay.SetBgpServer(s.underlay.BgpServer())
 
 	if err := s.overlay.Setup(ctx); err != nil {
+		// Clean up the underlay that was already started.
+		if teardownErr := s.underlay.Teardown(ctx); teardownErr != nil {
+			s.log.Warn("Failed to tear down underlay after overlay failure", "error", teardownErr)
+		}
+		// Clean up the VRF created earlier.
+		s.cleanupVRF()
 		return fmt.Errorf("overlay setup: %w", err)
 	}
 
@@ -82,6 +89,21 @@ func (s *Stack) WaitForConnectivity(ctx context.Context, target string, timeout 
 	return nil
 }
 
+// cleanupVRF removes the VRF link if it was created by the overlay tier.
+func (s *Stack) cleanupVRF() {
+	name := s.overlay.cfg.VRFName
+	if name == "" || !s.overlay.createdVRF {
+		return
+	}
+	link, err := netlink.LinkByName(name)
+	if err != nil {
+		return
+	}
+	if err := netlink.LinkDel(link); err != nil {
+		s.log.Warn("Failed to delete VRF", "name", name, "error", err)
+	}
+}
+
 // Teardown tears down the overlay and underlay tiers in reverse order.
 // VRF is deleted last since both tiers may have interfaces enslaved to it.
 func (s *Stack) Teardown(ctx context.Context) error {
@@ -102,13 +124,7 @@ func (s *Stack) Teardown(ctx context.Context) error {
 	}
 
 	// Delete VRF after both tiers have detached their interfaces.
-	if name := s.overlay.cfg.VRFName; name != "" && s.overlay.createdVRF {
-		if link, err := netlink.LinkByName(name); err == nil {
-			if err := netlink.LinkDel(link); err != nil {
-				s.log.Warn("Failed to remove VRF", "name", name, "error", err)
-			}
-		}
-	}
+	s.cleanupVRF()
 
 	return firstErr
 }
