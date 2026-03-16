@@ -2,6 +2,7 @@ package secureboot
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -84,7 +85,7 @@ func (v *ChainVerifier) verifyComponent(name, path string) ComponentStatus {
 		return ComponentStatus{
 			Path:  path,
 			Valid: false,
-			Error: fmt.Sprintf("stat %s: %s", name, err),
+			Error: fmt.Sprintf("stat %s at %s: %v", name, path, err),
 		}
 	}
 
@@ -97,7 +98,14 @@ func (v *ChainVerifier) verifyComponent(name, path string) ComponentStatus {
 	}
 
 	// Check for PE format (MZ header).
-	signed, signer := hasPEHeader(path)
+	signed, signer, headerErr := hasPEHeader(path)
+	if headerErr != nil {
+		return ComponentStatus{
+			Path:  path,
+			Valid: false,
+			Error: fmt.Sprintf("read %s header at %s: %v", name, path, headerErr),
+		}
+	}
 
 	return ComponentStatus{
 		Path:     path,
@@ -108,27 +116,27 @@ func (v *ChainVerifier) verifyComponent(name, path string) ComponentStatus {
 }
 
 // hasPEHeader checks if a file has a PE/COFF (MZ) header.
-func hasPEHeader(path string) (isPE bool, format string) {
+func hasPEHeader(path string) (isPE bool, format string, err error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return false, ""
+		return false, "", err
 	}
 	defer func() { _ = f.Close() }()
 
 	// Read MZ header.
 	header := make([]byte, 2)
-	if _, err := f.Read(header); err != nil {
-		return false, ""
+	if _, err := io.ReadFull(f, header); err != nil {
+		return false, "", err
 	}
 	if header[0] != 'M' || header[1] != 'Z' {
-		return false, ""
+		return false, "", nil
 	}
 
 	// Has MZ header — it's a PE binary.
 	// Full Authenticode signature verification would parse the PE optional
 	// header's Certificate Table (data directory entry 4) and verify
 	// the PKCS#7 signature. For now we detect the MZ header as a proxy.
-	return true, "pe-detected"
+	return true, "pe-detected", nil
 }
 
 func findFirstExisting(root string, candidates []string) string {

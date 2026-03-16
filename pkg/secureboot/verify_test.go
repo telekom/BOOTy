@@ -3,6 +3,7 @@ package secureboot
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -85,7 +86,10 @@ func TestHasPEHeader_ValidMZ(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	signed, signer := hasPEHeader(path)
+	signed, signer, err := hasPEHeader(path)
+	if err != nil {
+		t.Fatalf("hasPEHeader: %v", err)
+	}
 	if !signed {
 		t.Error("expected signed")
 	}
@@ -101,16 +105,39 @@ func TestHasPEHeader_InvalidHeader(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	signed, _ := hasPEHeader(path)
+	signed, _, err := hasPEHeader(path)
+	if err != nil {
+		t.Fatalf("hasPEHeader: %v", err)
+	}
 	if signed {
 		t.Error("expected not signed")
 	}
 }
 
 func TestHasPEHeader_Missing(t *testing.T) {
-	signed, _ := hasPEHeader("/nonexistent")
+	signed, _, err := hasPEHeader("/nonexistent")
 	if signed {
 		t.Error("expected not signed for missing file")
+	}
+	if err == nil {
+		t.Error("expected error for missing file")
+	}
+}
+
+func TestVerifyComponent_ReadErrorIncludesPath(t *testing.T) {
+	root := t.TempDir()
+	bad := filepath.Join(root, "bad.efi")
+	if err := os.WriteFile(bad, []byte{'M'}, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	v := NewChainVerifier(nil)
+	status := v.verifyComponent("shim", bad)
+	if status.Valid {
+		t.Fatal("expected invalid status for short header")
+	}
+	if status.Error == "" || !strings.Contains(status.Error, bad) {
+		t.Fatalf("expected error to include path %q, got %q", bad, status.Error)
 	}
 }
 

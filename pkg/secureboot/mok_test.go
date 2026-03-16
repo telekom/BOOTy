@@ -1,6 +1,7 @@
 package secureboot
 
 import (
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
@@ -26,6 +27,9 @@ func TestEnrollMOK(t *testing.T) {
 	// 4 bytes attrs + cert data.
 	if len(data) != 4+len(certDER) {
 		t.Errorf("MokNew size = %d, want %d", len(data), 4+len(certDER))
+	}
+	if got := binary.LittleEndian.Uint32(data[:4]); got != 0x07 {
+		t.Errorf("MokNew attrs = 0x%x, want 0x7", got)
 	}
 }
 

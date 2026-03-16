@@ -5,9 +5,11 @@
 Implemented features:
 - SecureBoot re-enable flow (`SECUREBOOT_REENABLE` config flag, `requestSecureBootReEnable` step)
 - MOK certificate enrollment (`MOK_CERT_PATH`, `MOK_PASSWORD`) via `mokutil --import` inside chroot
+- efivarfs variable access (`EFIVarReader`) including `WriteVar` support
+- direct `MokNew-*` EFI variable writes via `MOKEnroller`
 - The Redfish-based re-enablement happens on the CAPRF controller side
 
-Not yet implemented: efivarfs direct manipulation, automated key rotation.
+Not yet implemented: authenticated EFI signature list/MokAuth flow, automated key rotation.
 
 ## Priority: P0
 

@@ -2,8 +2,10 @@ package secureboot
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -37,7 +39,7 @@ func (r *EFIVarReader) ReadVar(name string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read efi variable %s: %w", name, err)
 	}
-	if len(data) <= 4 {
+	if len(data) < 4 {
 		return nil, fmt.Errorf("efi variable %s too short (%d bytes)", name, len(data))
 	}
 	return data[4:], nil
@@ -88,10 +90,23 @@ func (r *EFIVarReader) WriteVar(fullName string, attrs uint32, data []byte) erro
 	return nil
 }
 
-// removeImmutable clears the immutable attribute on an efivarfs file.
-// TODO: implement FS_IOC_SETFLAGS ioctl (linux-only) to clear FS_IMMUTABLE_FL.
-func removeImmutable(_ string) error {
-	return nil
+// removeImmutable best-effort clears the immutable bit for efivarfs files.
+func removeImmutable(path string) error {
+	cmd := exec.Command("chattr", "-i", path)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, exec.ErrNotFound) {
+		// Some environments do not include chattr; allow write to proceed.
+		return nil
+	}
+	lower := strings.ToLower(string(out))
+	if strings.Contains(lower, "operation not supported") || strings.Contains(lower, "inappropriate ioctl") {
+		// Filesystem does not support immutable attribute operations.
+		return nil
+	}
+	return fmt.Errorf("chattr -i %s: %s: %w", path, string(out), err)
 }
 
 // ListVars returns all EFI variable names matching a prefix.

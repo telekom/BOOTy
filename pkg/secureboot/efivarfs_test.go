@@ -53,6 +53,20 @@ func TestReadVar_TooShort(t *testing.T) {
 	}
 }
 
+func TestReadVar_OnlyAttrs(t *testing.T) {
+	dir := t.TempDir()
+	writeEFIVar(t, dir, "EmptyPayload-1234", 0x07, nil)
+
+	r := NewEFIVarReader(dir)
+	data, err := r.ReadVar("EmptyPayload")
+	if err != nil {
+		t.Fatalf("ReadVar: %v", err)
+	}
+	if len(data) != 0 {
+		t.Fatalf("expected empty payload, got %d bytes", len(data))
+	}
+}
+
 func TestIsSecureBootEnabled(t *testing.T) {
 	dir := t.TempDir()
 	writeEFIVar(t, dir, "SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c", 0x06, []byte{1})
