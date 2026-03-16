@@ -207,7 +207,7 @@ func TestLogMessage_JSON(t *testing.T) {
 		BMCMAC:         "mac",
 		ProvisioningID: "prov",
 		Step:           "step",
-		Attrs:          map[string]string{"k": "v"},
+			Attrs:          map[string]any{"k": "v"},
 	}
 	data, err := json.Marshal(msg)
 	if err != nil {

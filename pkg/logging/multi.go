@@ -27,7 +27,7 @@ func (m *MultiHandler) Enabled(ctx context.Context, level slog.Level) bool {
 }
 
 // Handle sends the record to all handlers, returning the first error.
-func (m *MultiHandler) Handle(ctx context.Context, r slog.Record) error { //nolint:gocritic // slog.Handler interface requires value receiver.
+func (m *MultiHandler) Handle(ctx context.Context, r slog.Record) error { //nolint:gocritic // slog.Record is passed by value per slog.Handler interface.
 	for idx, h := range m.handlers {
 		if h.Enabled(ctx, r.Level) {
 			if err := h.Handle(ctx, r); err != nil {

@@ -45,7 +45,7 @@ type LogMessage struct {
 	BMCMAC         string            `json:"bmcMac,omitempty"`
 	ProvisioningID string            `json:"provisioningId,omitempty"`
 	Step           string            `json:"step,omitempty"`
-	Attrs          map[string]string `json:"attrs,omitempty"`
+	Attrs          map[string]any    `json:"attrs,omitempty"`
 }
 
 // MachineIdentity holds machine identification for log enrichment.
@@ -75,8 +75,11 @@ func NewWriterAdapter(w io.Writer) MessageWriter {
 func (a *writerAdapter) WriteMessage(_, _ string, data []byte) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if _, err := fmt.Fprintf(a.w, "%s\n", data); err != nil {
+	if _, err := a.w.Write(data); err != nil {
 		return fmt.Errorf("write message: %w", err)
+	}
+	if _, err := a.w.Write([]byte{'\n'}); err != nil {
+		return fmt.Errorf("write newline: %w", err)
 	}
 	return nil
 }
@@ -109,7 +112,12 @@ func (h *KafkaHandler) Enabled(_ context.Context, level slog.Level) bool {
 }
 
 // Handle processes a log record.
-func (h *KafkaHandler) Handle(_ context.Context, r slog.Record) error { //nolint:gocritic // slog.Handler interface requires value receiver.
+func (h *KafkaHandler) Handle(_ context.Context, r slog.Record) error { //nolint:gocritic // slog.Record is passed by value per slog.Handler interface.
+	groupPrefix := ""
+	if len(h.groups) > 0 {
+		groupPrefix = joinGroups(h.groups) + "."
+	}
+
 	msg := LogMessage{
 		Timestamp:      r.Time,
 		Level:          r.Level.String(),
@@ -117,7 +125,7 @@ func (h *KafkaHandler) Handle(_ context.Context, r slog.Record) error { //nolint
 		MachineSerial:  h.identity.Serial,
 		BMCMAC:         h.identity.BMCMAC,
 		ProvisioningID: h.identity.ProvisioningID,
-		Attrs:          make(map[string]string),
+		Attrs:          make(map[string]any),
 	}
 
 	// Add handler-level attrs.
@@ -125,7 +133,7 @@ func (h *KafkaHandler) Handle(_ context.Context, r slog.Record) error { //nolint
 		if a.Key == "step" {
 			msg.Step = a.Value.String()
 		} else {
-			msg.Attrs[a.Key] = a.Value.String()
+			msg.Attrs[groupPrefix+a.Key] = a.Value.Any()
 		}
 	}
 
@@ -134,7 +142,7 @@ func (h *KafkaHandler) Handle(_ context.Context, r slog.Record) error { //nolint
 		if a.Key == "step" {
 			msg.Step = a.Value.String()
 		} else {
-			msg.Attrs[a.Key] = a.Value.String()
+			msg.Attrs[groupPrefix+a.Key] = a.Value.Any()
 		}
 		return true
 	})
@@ -145,6 +153,15 @@ func (h *KafkaHandler) Handle(_ context.Context, r slog.Record) error { //nolint
 	}
 
 	return h.writer.WriteMessage(h.topic, msg.MachineSerial, data)
+}
+
+// joinGroups joins group names with dots.
+func joinGroups(groups []string) string {
+	result := groups[0]
+	for _, g := range groups[1:] {
+		result += "." + g
+	}
+	return result
 }
 
 // WithAttrs returns a new handler with the given attributes.
