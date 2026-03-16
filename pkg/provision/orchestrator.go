@@ -720,16 +720,20 @@ func (o *Orchestrator) injectCloudInit(_ context.Context) error {
 		return fmt.Errorf("unsupported cloud-init datasource %q, only \"nocloud\" is supported", ds)
 	}
 
-	// Split bond interfaces, filtering empty strings from empty input.
+	// Split bond interfaces, trimming spaces and filtering empty entries.
 	var bondIfaces []string
-	if o.cfg.BondInterfaces != "" {
-		bondIfaces = strings.Split(o.cfg.BondInterfaces, ",")
+	for _, iface := range strings.Split(o.cfg.BondInterfaces, ",") {
+		if s := strings.TrimSpace(iface); s != "" {
+			bondIfaces = append(bondIfaces, s)
+		}
 	}
 
-	// Parse DNS resolvers into a slice.
+	// Parse DNS resolvers, trimming spaces and filtering empty entries.
 	var dns []string
-	if o.cfg.DNSResolvers != "" {
-		dns = strings.Split(o.cfg.DNSResolvers, ",")
+	for _, r := range strings.Split(o.cfg.DNSResolvers, ",") {
+		if s := strings.TrimSpace(r); s != "" {
+			dns = append(dns, s)
+		}
 	}
 
 	ciCfg := &cloudinit.Config{

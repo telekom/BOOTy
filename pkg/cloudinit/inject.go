@@ -37,16 +37,28 @@ func InjectNoCloud(rootPath string, ud *UserData, md *MetaData, nc *NetworkConfi
 		"network-config": networkConfig,
 	}
 
-	// Write to temp files first, then rename atomically to prevent
-	// partial seed state on failure.
+	// Two-phase write: first write all temp files, then rename atomically.
+	// This prevents partial seed state — if any write fails the final files
+	// remain untouched until all temps have been written successfully.
+	type entry struct{ name, tmp, final string }
+	var entries []entry
 	for name, data := range files {
 		fpath := filepath.Join(seedDir, name)
 		tmp := fpath + ".tmp"
 		if err := os.WriteFile(tmp, data, 0o600); err != nil {
+			// Clean up any temp files already written before returning.
+			for _, e := range entries {
+				_ = os.Remove(e.tmp)
+			}
+			_ = os.Remove(tmp)
 			return fmt.Errorf("write %s: %w", name, err)
 		}
-		if err := os.Rename(tmp, fpath); err != nil {
-			return fmt.Errorf("rename %s: %w", name, err)
+		entries = append(entries, entry{name: name, tmp: tmp, final: fpath})
+	}
+	// All temp files written — now rename to final paths.
+	for _, e := range entries {
+		if err := os.Rename(e.tmp, e.final); err != nil {
+			return fmt.Errorf("rename %s: %w", e.name, err)
 		}
 	}
 	return nil

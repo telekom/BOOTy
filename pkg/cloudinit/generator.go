@@ -29,7 +29,7 @@ type User struct {
 	Shell             string   `yaml:"shell,omitempty"`
 	Sudo              string   `yaml:"sudo,omitempty"`
 	SSHAuthorizedKeys []string `yaml:"ssh_authorized_keys,omitempty"`
-	LockPasswd        bool     `yaml:"lock_passwd"`
+	LockPasswd        *bool    `yaml:"lock_passwd,omitempty"`
 }
 
 // WriteFile represents a file to write during cloud-init.

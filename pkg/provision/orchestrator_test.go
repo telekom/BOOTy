@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -784,5 +786,54 @@ func TestResizeFilesystemSkippedForPartitionLayout(t *testing.T) {
 	}
 	if len(cmd.calls) != 0 {
 		t.Fatalf("expected no commands when resize-filesystem is skipped, got %d", len(cmd.calls))
+	}
+}
+
+func TestInjectCloudInit_Disabled(t *testing.T) {
+	cfg := &config.MachineConfig{CloudInitEnabled: false}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	if err := o.injectCloudInit(context.Background()); err != nil {
+		t.Fatalf("expected no error when CloudInit disabled, got %v", err)
+	}
+}
+
+func TestInjectCloudInit_UnsupportedDatasource(t *testing.T) {
+	cfg := &config.MachineConfig{
+		CloudInitEnabled:    true,
+		CloudInitDatasource: "openstack",
+	}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	err := o.injectCloudInit(context.Background())
+	if err == nil {
+		t.Fatal("expected error for unsupported datasource")
+	}
+	if !strings.Contains(err.Error(), "unsupported") {
+		t.Errorf("expected 'unsupported' in error, got %v", err)
+	}
+}
+
+func TestInjectCloudInit_NoCloudinject(t *testing.T) {
+	cfg := &config.MachineConfig{
+		CloudInitEnabled:    true,
+		CloudInitDatasource: "nocloud",
+		Hostname:            "test-host",
+	}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	if err := o.injectCloudInit(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify the seed files were created under rootDir.
+	seedDir := filepath.Join(o.config.rootDir, "var", "lib", "cloud", "seed", "nocloud")
+	for _, name := range []string{"user-data", "meta-data", "network-config"} {
+		if _, err := os.Stat(filepath.Join(seedDir, name)); err != nil {
+			t.Errorf("expected seed file %s to exist: %v", name, err)
+		}
 	}
 }
