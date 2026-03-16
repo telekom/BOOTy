@@ -51,7 +51,7 @@ package inventory
 
 // ExtendedInventory adds operational data to the base HardwareInventory.
 type ExtendedInventory struct {
-    HardwareInventory                                 // embed base inventory
+    Base HardwareInventory `json:"base"`
 
     GPUs               []GPUInfo              `json:"gpus,omitempty"`
     StorageControllers []StorageControllerInfo `json:"storageControllers,omitempty"`
@@ -184,7 +184,7 @@ func (c *Collector) CollectExtended(ctx context.Context) (*ExtendedInventory, er
     if err != nil {
         return nil, fmt.Errorf("collect base inventory: %w", err)
     }
-    inv.HardwareInventory = *base
+    inv.Base = *base
 
     // Extended data (best-effort — log and continue on errors)
     inv.GPUs = c.collectGPUs(ctx)

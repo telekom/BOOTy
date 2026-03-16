@@ -37,7 +37,8 @@ func scanGPUsFrom(basePath string) []GPUInfo {
 			Vendor:  readSysfs(devPath, "vendor"),
 		}
 
-		gpu.Name = resolveGPUName(gpu.Vendor, readSysfs(devPath, "device"))
+		deviceID := readSysfs(devPath, "device")
+		gpu.Name = resolveGPUName(gpu.Vendor, deviceID)
 		gpu.Driver = readDriverName(devPath)
 
 		numaStr := readSysfs(devPath, "numa_node")
@@ -52,22 +53,27 @@ func scanGPUsFrom(basePath string) []GPUInfo {
 	return gpus
 }
 
+// knownGPUNames maps "vendor:device" PCI IDs to human-readable GPU names.
+var knownGPUNames = map[string]string{
+	"0x10de:0x20b0": "NVIDIA A100-SXM4-40GB",
+	"0x10de:0x20b2": "NVIDIA A100-SXM4-80GB",
+	"0x10de:0x2330": "NVIDIA H100-SXM5-80GB",
+	"0x10de:0x26b5": "NVIDIA L40S",
+	"0x1002:0x740c": "AMD Instinct MI250X",
+	"0x1002:0x740f": "AMD Instinct MI300X",
+	"0x8086:0x0bda": "Intel Data Center GPU Max 1550",
+}
+
 func resolveGPUName(vendorID, deviceID string) string {
-	// Map well-known vendor+device IDs to names.
 	key := vendorID + ":" + deviceID
-	names := map[string]string{
-		"0x10de:0x20b0": "NVIDIA A100-SXM4-40GB",
-		"0x10de:0x20b2": "NVIDIA A100-SXM4-80GB",
-		"0x10de:0x2330": "NVIDIA H100-SXM5-80GB",
-		"0x10de:0x26b5": "NVIDIA L40S",
-		"0x1002:0x740c": "AMD Instinct MI250X",
-		"0x1002:0x740f": "AMD Instinct MI300X",
-		"0x8086:0x0bda": "Intel Data Center GPU Max 1550",
-	}
-	if name, ok := names[key]; ok {
+	if name, ok := knownGPUNames[key]; ok {
 		return name
 	}
-	return "GPU " + deviceID
+	// Prefer device ID if available; fall back to vendor+device key.
+	if deviceID != "" {
+		return "GPU " + deviceID
+	}
+	return "GPU " + key
 }
 
 func readSysfs(devPath, attr string) string {
