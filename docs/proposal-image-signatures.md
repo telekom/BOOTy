@@ -1,6 +1,6 @@
 # Proposal: Image Signature Verification
 
-## Status: Implemented
+## Status: Phase 1 Implemented (Checksum Verification)
 
 ## Priority: P3
 

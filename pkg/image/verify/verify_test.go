@@ -9,6 +9,8 @@ import (
 )
 
 func TestParseChecksum(t *testing.T) {
+	sha256Valid := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	sha512Valid := "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e"
 	tests := []struct {
 		name    string
 		input   string
@@ -16,11 +18,14 @@ func TestParseChecksum(t *testing.T) {
 		hash    string
 		wantErr bool
 	}{
-		{"sha256", "sha256:abc123", SHA256, "abc123", false},
-		{"sha512", "sha512:def456", SHA512, "def456", false},
+		{"sha256", "sha256:" + sha256Valid, SHA256, sha256Valid, false},
+		{"sha512", "sha512:" + sha512Valid, SHA512, sha512Valid, false},
 		{"no colon", "sha256abc", "", "", true},
 		{"bad algo", "md5:abc", "", "", true},
 		{"empty hash", "sha256:", "", "", true},
+		{"invalid hex", "sha256:xyz", "", "", true},
+		{"wrong length", "sha256:abcd", "", "", true},
+		{"uppercase normalized", "sha256:" + strings.ToUpper(sha256Valid), SHA256, sha256Valid, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -162,14 +167,17 @@ func TestHashBytes_BadAlgo(t *testing.T) {
 }
 
 func TestVerifyConfig_Validate(t *testing.T) {
+	sha256Valid := "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	tests := []struct {
 		name    string
 		cfg     VerifyConfig
 		wantErr bool
 	}{
 		{"empty", VerifyConfig{}, false},
-		{"valid checksum", VerifyConfig{Checksum: "sha256:abc"}, false},
+		{"valid checksum", VerifyConfig{Checksum: sha256Valid}, false},
 		{"bad checksum", VerifyConfig{Checksum: "bad"}, true},
+		{"invalid hex checksum", VerifyConfig{Checksum: "sha256:xyz"}, true},
+		{"wrong length checksum", VerifyConfig{Checksum: "sha256:abcd"}, true},
 		{"sig without key", VerifyConfig{SignatureURL: "http://x"}, true},
 		{"sig with key", VerifyConfig{SignatureURL: "http://x", PublicKeyPath: "/k"}, false},
 	}
@@ -184,7 +192,7 @@ func TestVerifyConfig_Validate(t *testing.T) {
 }
 
 func TestVerifyConfig_Predicates(t *testing.T) {
-	cfg := VerifyConfig{Checksum: "sha256:abc"}
+	cfg := VerifyConfig{Checksum: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}
 	if !cfg.HasChecksum() {
 		t.Error("HasChecksum should be true")
 	}

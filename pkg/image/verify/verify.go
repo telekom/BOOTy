@@ -1,10 +1,11 @@
-// Package verify provides image checksum and signature verification.
+// Package verify provides image checksum verification for streamed OS images.
 package verify
 
 import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -22,6 +23,7 @@ const (
 )
 
 // ParseChecksum parses a checksum string in the format "algo:hexhash".
+// It validates that the hash is valid hex and the correct length for the algorithm.
 func ParseChecksum(s string) (Algorithm, string, error) {
 	parts := strings.SplitN(s, ":", 2)
 	if len(parts) != 2 {
@@ -31,9 +33,17 @@ func ParseChecksum(s string) (Algorithm, string, error) {
 	if err := algo.Validate(); err != nil {
 		return "", "", err
 	}
-	hexHash := parts[1]
+	hexHash := strings.ToLower(parts[1])
 	if hexHash == "" {
 		return "", "", fmt.Errorf("empty hash value")
+	}
+	decoded, err := hex.DecodeString(hexHash)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid hex in checksum: %w", err)
+	}
+	expectedLen := algo.DigestSize()
+	if len(decoded) != expectedLen {
+		return "", "", fmt.Errorf("checksum length %d bytes, want %d for %s", len(decoded), expectedLen, algo)
 	}
 	return algo, hexHash, nil
 }
@@ -45,6 +55,18 @@ func (a Algorithm) Validate() error {
 		return nil
 	default:
 		return fmt.Errorf("unsupported checksum algorithm %q", a)
+	}
+}
+
+// DigestSize returns the expected digest size in bytes for the algorithm.
+func (a Algorithm) DigestSize() int {
+	switch a {
+	case SHA256:
+		return sha256.Size
+	case SHA512:
+		return sha512.Size
+	default:
+		return 0
 	}
 }
 
@@ -88,8 +110,11 @@ func NewChecksumReader(r io.Reader, checksum string) (*ChecksumReader, error) {
 
 // Read implements io.Reader.
 func (c *ChecksumReader) Read(p []byte) (int, error) {
-	//nolint:wrapcheck // must return unwrapped io.EOF for io.ReadAll compatibility
-	return c.reader.Read(p)
+	n, err := c.reader.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return n, fmt.Errorf("checksum read: %w", err)
+	}
+	return n, err
 }
 
 // Verify checks the computed checksum against expected.
