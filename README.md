@@ -33,7 +33,7 @@ BOOTy operates in two modes depending on the boot environment:
 1. A Redfish BMC mounts an ISO containing a kernel, BOOTy initramfs, and `/deploy/vars` config.
 2. BOOTy reads `/deploy/vars` for machine config, image URLs, and CAPRF server endpoints.
 3. Network connectivity is established via **FRR/EVPN** (BGP underlay) or **DHCP** fallback.
-4. The provisioning pipeline runs 24 steps: status reporting → RAID cleanup → disk detection → image streaming → partition management → OS configuration → kexec.
+4. The provisioning pipeline runs 25 steps: status reporting → RAID cleanup → disk detection → image streaming → partition management → OS configuration → kexec.
 5. Status, logs, and debug info are shipped back to the CAPRF controller throughout.
 
 ### Legacy Mode
@@ -350,18 +350,33 @@ Currently bundled binaries: `mdadm`, `wipefs`, `sfdisk`, `sgdisk`, `e2fsck`,
 ## Development
 
 ```bash
-# Run unit tests with coverage
-make test
-
-# Run E2E tests (Linux only)
-go test -tags e2e -v -race ./test/e2e/...
-
-# Run linter
-make lint
-
 # Build binary
 make build
+
+# Run unit tests with coverage (40% coverage gate)
+make test
+
+# Run linter (golangci-lint v2)
+make lint
+
+# Format code
+make fmt
+
+# E2E tests — ContainerLab (Linux only)
+make clab-up && make test-e2e-integration       # FRR/EVPN topology
+make clab-gobgp-up && make test-e2e-gobgp        # GoBGP topology
+make clab-boot-up && make test-e2e-boot          # Boot orchestrator
+
+# E2E tests — KVM/QEMU vrnetlab (Linux + KVM)
+make clab-vrnetlab-up && make test-e2e-vrnetlab   # Full EVPN boot flow
+make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab  # GoBGP + real switches
+
+# Linux-only E2E (disk/mount/loop device, requires root)
+go test -tags linux_e2e -v ./pkg/disk/...
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for coding standards, test requirements,
+and the PR process.
 
 ## Project Structure
 
@@ -372,14 +387,20 @@ make build
 ├── initrd.Dockerfile           # Multi-stage initramfs build (default, iso, slim, micro)
 ├── pkg/
 │   ├── caprf/                  # CAPRF client (status, log, debug, vars parsing)
+│   ├── cloudinit/              # Cloud-init NoCloud/ConfigDrive generation
 │   ├── config/                 # MachineConfig, Provider interface, Status types
 │   ├── disk/                   # Disk detection, partitioning, RAID, LVM, mount
+│   ├── firmware/               # Firmware version collection from sysfs
+│   ├── health/                 # Pre-provisioning hardware health checks
 │   ├── image/                  # Image streaming (HTTP, OCI, gzip/lz4/xz/zstd auto-detect)
+│   ├── inventory/              # Hardware inventory from sysfs/procfs
 │   ├── kexec/                  # GRUB parsing, kexec load/execute
-│   ├── network/                # Network mode abstraction (FRR, DHCP, Static, Bond)
+│   ├── network/                # Network mode abstraction (FRR, GoBGP, DHCP, Static, Bond)
 │   │   ├── frr/               # FRR/EVPN: config rendering, address derivation
-│   │   └── lldp/              # LLDP frame listener (raw AF_PACKET sockets)
-│   ├── provision/              # Orchestrator (24-step provision, deprovision)
+│   │   ├── gobgp/             # Pure-Go BGP stack (3-tier: Underlay, Overlay, IPMI)
+│   │   ├── lldp/              # LLDP frame listener (raw AF_PACKET sockets)
+│   │   └── vlan/              # VLAN 802.1Q tagging via netlink
+│   ├── provision/              # Orchestrator (25-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
 │   ├── plunderclient/          # Legacy HTTP client for config retrieval
 │   ├── realm/                  # Device, mount, network, shell operations
@@ -393,6 +414,18 @@ make build
 ├── .github/workflows/          # CI (lint, test, build, E2E clab, E2E vrnetlab, KVM boot)
 └── .golangci.yml               # Linter configuration
 ```
+
+## Documentation
+
+All design proposals live in `docs/proposal-*.md`. See `docs/roadmap.md` for the
+full feature roadmap with priorities and status tracking.
+
+| Resource | Description |
+|----------|-------------|
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup, coding standards, PR process |
+| [docs/roadmap.md](docs/roadmap.md) | Feature roadmap (P0–P4 priorities) |
+| [.github/AGENTS.md](.github/AGENTS.md) | Copilot agents, review personas, prompts |
+| [.github/copilot-instructions.md](.github/copilot-instructions.md) | Project guidelines for Copilot |
 
 ## Contributing
 
