@@ -1,0 +1,77 @@
+name: Promote Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to promote (e.g., v1.2.3-beta.1)"
+        required: true
+        type: string
+      channel:
+        description: "Target channel"
+        required: true
+        type: choice
+        options:
+          - beta
+          - stable
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  promote:
+    name: Promote ${{ inputs.version }} to ${{ inputs.channel }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.channel }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Validate version exists
+        run: |
+          if ! git rev-parse "${{ inputs.version }}" >/dev/null 2>&1; then
+            echo "::error::Tag ${{ inputs.version }} does not exist"
+            exit 1
+          fi
+
+      - name: Determine new tag
+        id: tag
+        run: |
+          VERSION="${{ inputs.version }}"
+          BASE="${VERSION%-*}"  # strip pre-release suffix
+          case "${{ inputs.channel }}" in
+            beta)
+              # Find next beta number
+              LAST=$(git tag -l "${BASE}-beta.*" | sort -V | tail -1)
+              if [ -z "$LAST" ]; then
+                NUM=1
+              else
+                NUM=$((${LAST##*.} + 1))
+              fi
+              echo "tag=${BASE}-beta.${NUM}" >> "$GITHUB_OUTPUT"
+              ;;
+            stable)
+              echo "tag=${BASE}" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Create promoted tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git rev-parse "${{ steps.tag.outputs.tag }}" >/dev/null 2>&1; then
+            echo "::error::Tag ${{ steps.tag.outputs.tag }} already exists"
+            exit 1
+          fi
+          COMMIT=$(git rev-list -n 1 "${{ inputs.version }}")
+          git tag "${{ steps.tag.outputs.tag }}" "$COMMIT"
+          git push origin "${{ steps.tag.outputs.tag }}"
+
+      - name: Summary
+        run: |
+          echo "## Promotion Complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Source: \`${{ inputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Target: \`${{ steps.tag.outputs.tag }}\` (${{ inputs.channel }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "- The release-v2 workflow will now build artifacts for this tag." >> "$GITHUB_STEP_SUMMARY"
