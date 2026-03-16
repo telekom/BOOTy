@@ -66,7 +66,7 @@ func BuildLoadOption(entry *BootEntry) ([]byte, error) {
 	buf = binary.LittleEndian.AppendUint32(buf, loadAttrs)
 
 	// Description as UCS-2 null-terminated
-	desc := encodeUCS2(entry.Label)
+	desc := encodeUTF16LE(entry.Label)
 
 	// FilePathListLength
 	devPath, err := buildFileDevicePath(entry.LoaderPath)
@@ -84,8 +84,10 @@ func BuildLoadOption(entry *BootEntry) ([]byte, error) {
 	return buf, nil
 }
 
-// encodeUCS2 encodes a Go string to UTF-16LE with null terminator.
-func encodeUCS2(s string) []byte {
+// encodeUTF16LE encodes a Go string to UTF-16LE with a null terminator.
+// UEFI firmware uses UTF-16LE for string fields (the spec calls it "UCS-2"
+// but modern UEFI implementations support full UTF-16 surrogate pairs).
+func encodeUTF16LE(s string) []byte {
 	runes := []rune(s)
 	utf16Encoded := utf16.Encode(runes)
 	buf := make([]byte, (len(utf16Encoded)+1)*2) // +1 for null terminator
@@ -99,7 +101,7 @@ func encodeUCS2(s string) []byte {
 // buildFileDevicePath creates a minimal EFI file-path device path for a loader.
 // Type 0x04 (Media), Sub-Type 0x04 (File Path).
 func buildFileDevicePath(loaderPath string) ([]byte, error) {
-	pathUCS2 := encodeUCS2(loaderPath)
+	pathUCS2 := encodeUTF16LE(loaderPath)
 
 	// Device path node: Type(1) + SubType(1) + Length(2) + path data
 	nodeLen := 4 + len(pathUCS2)

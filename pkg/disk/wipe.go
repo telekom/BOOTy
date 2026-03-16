@@ -12,7 +12,8 @@ const wipeSize = 1 << 20 // 1 MiB
 // WipeFS removes filesystem and partition-table signatures from a device
 // by zeroing the first and last 1 MiB. This covers GPT, MBR, and most
 // filesystem superblock locations.
-// Equivalent to `wipefs -af <device>`.
+// Note: unlike `wipefs -af`, this zeroes entire 1 MiB regions rather than
+// targeting individual signature offsets.
 func WipeFS(device string) error {
 	f, err := os.OpenFile(device, os.O_WRONLY, 0) //nolint:gosec // intentional device write
 	if err != nil {
@@ -32,6 +33,9 @@ func WipeFS(device string) error {
 		if end, seekErr := f.Seek(0, io.SeekEnd); seekErr == nil {
 			devSize = end
 		}
+	}
+	if devSize <= 0 {
+		slog.Warn("could not determine device size; tail wipe skipped", "device", device)
 	}
 
 	startLen := int64(wipeSize)

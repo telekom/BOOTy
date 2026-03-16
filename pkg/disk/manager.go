@@ -115,8 +115,8 @@ func (m *Manager) WipeAllDisks(ctx context.Context) error {
 			wiped++
 		}
 	}
-	if wiped == 0 && failed > 0 {
-		return fmt.Errorf("all %d disk wipe(s) failed", failed)
+	if failed > 0 {
+		return fmt.Errorf("%d disk wipe(s) failed (succeeded: %d)", failed, wiped)
 	}
 	return nil
 }

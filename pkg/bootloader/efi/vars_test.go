@@ -134,7 +134,7 @@ func TestBuildLoadOption_LongLoaderPath(t *testing.T) {
 }
 
 func TestEncodeUCS2(t *testing.T) {
-	result := encodeUCS2("AB")
+	result := encodeUTF16LE("AB")
 	if len(result) != 6 {
 		t.Fatalf("encodeUCS2 length = %d, want 6", len(result))
 	}
