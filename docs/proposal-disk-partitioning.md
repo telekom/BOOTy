@@ -1,6 +1,6 @@
 # Proposal: Custom Disk Partitioning
 
-## Status: Proposal
+## Status: Phase 1 Implemented
 
 Phase 1 implements: `ParsePartitionLayout`, `ApplyPartitionLayout` (GPT only via sgdisk),
 `GenerateFstab`, partition type GUID resolution, device naming.

@@ -154,3 +154,137 @@ func TestApplyPartitionLayoutUnsupportedTable(t *testing.T) {
 		t.Error("expected error for mbr table type")
 	}
 }
+
+func TestApplyPartitionLayoutEmptyDevice(t *testing.T) {
+	mgr := &Manager{}
+	layout := &config.PartitionLayout{
+		Table:      "gpt",
+		Partitions: []config.Partition{{Label: "root"}},
+	}
+	err := mgr.ApplyPartitionLayout(t.Context(), "", layout)
+	if err == nil {
+		t.Error("expected error for empty device")
+	}
+}
+
+func TestParsePartitionLayout_MissingLabel(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"sizeMB":512,"filesystem":"vfat"}]}`
+	_, err := config.ParsePartitionLayout(input)
+	if err == nil {
+		t.Error("expected error for missing label")
+	}
+}
+
+func TestParsePartitionLayout_RelativeMountpoint(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"root","sizeMB":512,"filesystem":"ext4","mountpoint":"boot"}]}`
+	_, err := config.ParsePartitionLayout(input)
+	if err == nil {
+		t.Error("expected error for relative mountpoint")
+	}
+}
+
+func TestParsePartitionLayout_NegativeSize(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"root","sizeMB":-100,"filesystem":"ext4","mountpoint":"/"}]}`
+	_, err := config.ParsePartitionLayout(input)
+	if err == nil {
+		t.Error("expected error for negative sizeMB")
+	}
+}
+
+func TestParsePartitionLayout_InvalidLVMName(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"root","filesystem":"ext4","mountpoint":"/"}],"lvm":{"volumeGroup":"sys/vg","pvPartition":1,"volumes":[{"name":"root","filesystem":"ext4","mountpoint":"/"}]}}`
+	_, err := config.ParsePartitionLayout(input)
+	if err == nil {
+		t.Error("expected error for invalid LVM VG name")
+	}
+}
+
+func TestParsePartitionLayout_EmptyLVMVGName(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"root","filesystem":"ext4","mountpoint":"/"}],"lvm":{"volumeGroup":"","pvPartition":1,"volumes":[{"name":"root"}]}}`
+	_, err := config.ParsePartitionLayout(input)
+	if err == nil {
+		t.Error("expected error for empty volumeGroup")
+	}
+}
+
+func TestParsePartitionLayout_RelativeLVMMountpoint(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"pv","filesystem":"ext4","mountpoint":"/"}],"lvm":{"volumeGroup":"sysvg","pvPartition":1,"volumes":[{"name":"data","mountpoint":"data"}]}}`
+	_, err := config.ParsePartitionLayout(input)
+	if err == nil {
+		t.Error("expected error for relative LVM mountpoint")
+	}
+}
+
+func TestGenerateLVMFstab(t *testing.T) {
+	lvm := &config.LVMConfig{
+		VolumeGroup: "sysvg",
+		Volumes: []config.LVVolume{
+			{Name: "root", Filesystem: "ext4", Mountpoint: "/"},
+			{Name: "var", Filesystem: "xfs", Mountpoint: "/var"},
+			{Name: "swap", Filesystem: "swap"},
+		},
+	}
+	fstab := GenerateLVMFstab(lvm)
+	if fstab == "" {
+		t.Fatal("fstab is empty")
+	}
+	if !strings.Contains(fstab, "/dev/sysvg/root") {
+		t.Errorf("fstab missing root LV:\n%s", fstab)
+	}
+	if !strings.Contains(fstab, "/dev/sysvg/var") {
+		t.Errorf("fstab missing var LV:\n%s", fstab)
+	}
+	// swap has no mountpoint, should be excluded
+	if strings.Contains(fstab, "swap") {
+		t.Errorf("fstab should not include volumes without mountpoint:\n%s", fstab)
+	}
+}
+
+func TestGenerateLVMFstabNil(t *testing.T) {
+	got := GenerateLVMFstab(nil)
+	if got != "" {
+		t.Errorf("GenerateLVMFstab(nil) = %q, want empty", got)
+	}
+}
+
+func TestApplyLVMConfig_NilLayout(t *testing.T) {
+	mgr := &Manager{}
+	err := mgr.ApplyLVMConfig(t.Context(), "/dev/sda", nil)
+	if err != nil {
+		t.Errorf("expected nil error for nil layout, got %v", err)
+	}
+}
+
+func TestApplyLVMConfig_InvalidPVPartition(t *testing.T) {
+	mgr := &Manager{}
+	layout := &config.PartitionLayout{
+		Table:      "gpt",
+		Partitions: []config.Partition{{Label: "root"}},
+		LVM: &config.LVMConfig{
+			VolumeGroup: "sysvg",
+			PVPartition: 0,
+			Volumes:     []config.LVVolume{{Name: "root"}},
+		},
+	}
+	err := mgr.ApplyLVMConfig(t.Context(), "/dev/sda", layout)
+	if err == nil {
+		t.Error("expected error for PVPartition < 1")
+	}
+}
+
+func TestApplyLVMConfig_PVPartitionExceedsCount(t *testing.T) {
+	mgr := &Manager{}
+	layout := &config.PartitionLayout{
+		Table:      "gpt",
+		Partitions: []config.Partition{{Label: "root"}},
+		LVM: &config.LVMConfig{
+			VolumeGroup: "sysvg",
+			PVPartition: 5,
+			Volumes:     []config.LVVolume{{Name: "root"}},
+		},
+	}
+	err := mgr.ApplyLVMConfig(t.Context(), "/dev/sda", layout)
+	if err == nil {
+		t.Error("expected error for PVPartition exceeding partition count")
+	}
+}

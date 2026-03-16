@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // Status represents the provisioning status reported to the server.
@@ -193,7 +194,65 @@ func ParsePartitionLayout(data string) (*PartitionLayout, error) {
 	if layout.Table != "gpt" {
 		return nil, fmt.Errorf("unsupported partition table %q, only \"gpt\" is supported", layout.Table)
 	}
+	if err := validatePartitions(layout.Partitions); err != nil {
+		return nil, err
+	}
+	if err := validateLVMConfig(layout.LVM); err != nil {
+		return nil, err
+	}
 	return &layout, nil
+}
+
+func validatePartitions(partitions []Partition) error {
+	for i, part := range partitions {
+		if part.Label == "" {
+			return fmt.Errorf("partition %d: label is required", i+1)
+		}
+		if part.Mountpoint != "" && !strings.HasPrefix(part.Mountpoint, "/") {
+			return fmt.Errorf("partition %d (%s): mountpoint %q must be an absolute path", i+1, part.Label, part.Mountpoint)
+		}
+		if part.SizeMB < 0 {
+			return fmt.Errorf("partition %d (%s): sizeMB must be non-negative", i+1, part.Label)
+		}
+	}
+	return nil
+}
+
+func validateLVMConfig(lvm *LVMConfig) error {
+	if lvm == nil {
+		return nil
+	}
+	if lvm.VolumeGroup == "" {
+		return fmt.Errorf("lvm: volumeGroup is required")
+	}
+	if !isValidLVMName(lvm.VolumeGroup) {
+		return fmt.Errorf("lvm: invalid volumeGroup name %q", lvm.VolumeGroup)
+	}
+	for i, vol := range lvm.Volumes {
+		if vol.Name == "" {
+			return fmt.Errorf("lvm volume %d: name is required", i+1)
+		}
+		if !isValidLVMName(vol.Name) {
+			return fmt.Errorf("lvm volume %d: invalid name %q", i+1, vol.Name)
+		}
+		if vol.Mountpoint != "" && !strings.HasPrefix(vol.Mountpoint, "/") {
+			return fmt.Errorf("lvm volume %d (%s): mountpoint %q must be an absolute path", i+1, vol.Name, vol.Mountpoint)
+		}
+	}
+	return nil
+}
+
+// isValidLVMName checks that a name contains only safe characters for LVM identifiers.
+func isValidLVMName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, c := range name {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '_' && c != '-' && c != '.' {
+			return false
+		}
+	}
+	return true
 }
 
 // Command represents a server-issued command (future agent mode).
