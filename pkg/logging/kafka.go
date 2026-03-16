@@ -38,14 +38,14 @@ func (c *KafkaConfig) Validate() error {
 
 // LogMessage is the structured Kafka message format.
 type LogMessage struct {
-	Timestamp      time.Time         `json:"timestamp"`
-	Level          string            `json:"level"`
-	Message        string            `json:"message"`
-	MachineSerial  string            `json:"machineSerial,omitempty"`
-	BMCMAC         string            `json:"bmcMac,omitempty"`
-	ProvisioningID string            `json:"provisioningId,omitempty"`
-	Step           string            `json:"step,omitempty"`
-	Attrs          map[string]any    `json:"attrs,omitempty"`
+	Timestamp      time.Time      `json:"timestamp"`
+	Level          string         `json:"level"`
+	Message        string         `json:"message"`
+	MachineSerial  string         `json:"machineSerial,omitempty"`
+	BMCMAC         string         `json:"bmcMac,omitempty"`
+	ProvisioningID string         `json:"provisioningId,omitempty"`
+	Step           string         `json:"step,omitempty"`
+	Attrs          map[string]any `json:"attrs,omitempty"`
 }
 
 // MachineIdentity holds machine identification for log enrichment.
