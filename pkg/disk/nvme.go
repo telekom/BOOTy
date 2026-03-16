@@ -209,41 +209,42 @@ func (m *Manager) FormatNVMeNamespace(ctx context.Context, device string, blockS
 }
 
 // ApplyNVMeNamespaceLayout creates namespaces from config, using percentage-based sizing.
-func (m *Manager) ApplyNVMeNamespaceLayout(ctx context.Context, cfgs []NVMeNamespaceConfig) error {
+// Returns created NSIDs per controller in creation order.
+func (m *Manager) ApplyNVMeNamespaceLayout(ctx context.Context, cfgs []NVMeNamespaceConfig) (map[string][]string, error) {
+	created := make(map[string][]string, len(cfgs))
 	for _, cfg := range cfgs {
-		if err := m.applyControllerLayout(ctx, cfg); err != nil {
-			return err
+		nsids, err := m.applyControllerLayout(ctx, cfg)
+		if err != nil {
+			return nil, err
 		}
+		created[cfg.Controller] = nsids
 	}
-	return nil
+	return created, nil
 }
 
-func (m *Manager) applyControllerLayout(ctx context.Context, cfg NVMeNamespaceConfig) error {
+func (m *Manager) applyControllerLayout(ctx context.Context, cfg NVMeNamespaceConfig) ([]string, error) {
 	controller := cfg.Controller
 
 	supported, err := m.NVMeSupportsMultiNS(ctx, controller)
 	if err != nil {
-		return fmt.Errorf("checking NVMe multi-namespace support: %w", err)
+		return nil, fmt.Errorf("checking NVMe multi-namespace support: %w", err)
 	}
 	if !supported {
 		slog.Warn("Controller does not support multiple namespaces, skipping", "controller", controller)
-		return nil
+		return nil, nil
 	}
 
 	totalBytes, err := m.nvmeControllerCapacity(ctx, controller)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// Delete existing namespaces first.
-	if err := m.NVMeResetNamespaces(ctx, controller); err != nil {
-		return fmt.Errorf("reset namespaces on %s: %w", controller, err)
-	}
-	// Delete the default NS that reset creates.
-	if _, err := m.cmd.Run(ctx, "nvme", "delete-ns", controller, "-n", "1"); err != nil {
-		slog.Warn("Failed to delete default namespace after reset", "error", err)
+	// Delete existing namespaces first so layout creation is deterministic.
+	if err := m.deleteAllNamespaces(ctx, controller); err != nil {
+		return nil, fmt.Errorf("reset namespaces on %s: %w", controller, err)
 	}
 
+	created := make([]string, 0, len(cfg.Namespaces))
 	for _, ns := range cfg.Namespaces {
 		bs := ns.BlockSize
 		if bs == 0 {
@@ -253,14 +254,15 @@ func (m *Manager) applyControllerLayout(ctx context.Context, cfg NVMeNamespaceCo
 
 		nsid, err := m.CreateNVMeNamespace(ctx, controller, sizeBlocks, bs)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if err := m.AttachNVMeNamespace(ctx, controller, nsid); err != nil {
-			return err
+			return nil, err
 		}
+		created = append(created, nsid)
 		slog.Info("Created NVMe namespace", "controller", controller, "nsid", nsid, "label", ns.Label, "sizePct", ns.SizePct)
 	}
-	return nil
+	return created, nil
 }
 
 func (m *Manager) nvmeControllerCapacity(ctx context.Context, controller string) (uint64, error) {
@@ -284,17 +286,8 @@ func (m *Manager) nvmeControllerCapacity(ctx context.Context, controller string)
 func (m *Manager) NVMeResetNamespaces(ctx context.Context, controller string) error {
 	slog.Info("Resetting NVMe namespaces to factory default", "controller", controller)
 
-	// List existing namespaces.
-	nsids, err := m.NVMeListNamespaces(ctx, controller)
-	if err != nil {
+	if err := m.deleteAllNamespaces(ctx, controller); err != nil {
 		return err
-	}
-
-	// Delete all namespaces.
-	for _, nsid := range nsids {
-		if _, err := m.cmd.Run(ctx, "nvme", "delete-ns", controller, "-n", nsid); err != nil {
-			return fmt.Errorf("deleting namespace %s on %s: %w", nsid, controller, err)
-		}
 	}
 
 	// Get total capacity for the default namespace.
@@ -304,19 +297,28 @@ func (m *Manager) NVMeResetNamespaces(ctx context.Context, controller string) er
 	}
 	sizeBlocks := totalBytes / 512
 
-	// Create single namespace using full capacity.
-	if _, err := m.cmd.Run(ctx, "nvme", "create-ns", controller,
-		"-s", fmt.Sprintf("%d", sizeBlocks),
-		"-c", fmt.Sprintf("%d", sizeBlocks),
-		"-b", "512"); err != nil {
+	// Create and attach single namespace using full capacity.
+	nsid, err := m.CreateNVMeNamespace(ctx, controller, sizeBlocks, 512)
+	if err != nil {
 		return fmt.Errorf("creating default namespace: %w", err)
 	}
-
-	// Attach namespace 1 to controller 0.
-	if _, err := m.cmd.Run(ctx, "nvme", "attach-ns", controller, "-n", "1", "-c", "0"); err != nil {
+	if err := m.AttachNVMeNamespace(ctx, controller, nsid); err != nil {
 		return fmt.Errorf("attaching default namespace: %w", err)
 	}
 
 	slog.Info("NVMe namespaces reset to factory default", "controller", controller)
+	return nil
+}
+
+func (m *Manager) deleteAllNamespaces(ctx context.Context, controller string) error {
+	nsids, err := m.NVMeListNamespaces(ctx, controller)
+	if err != nil {
+		return err
+	}
+	for _, nsid := range nsids {
+		if _, err := m.cmd.Run(ctx, "nvme", "delete-ns", controller, "-n", nsid); err != nil {
+			return fmt.Errorf("deleting namespace %s on %s: %w", nsid, controller, err)
+		}
+	}
 	return nil
 }
