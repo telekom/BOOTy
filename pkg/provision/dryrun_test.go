@@ -373,6 +373,31 @@ func TestDryRunInventoryProbe(t *testing.T) {
 	}
 }
 
+func TestDryRunInventoryProbe_Enabled(t *testing.T) {
+	t.Helper()
+	cfg := &config.MachineConfig{InventoryEnabled: true}
+	o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
+
+	origStatPath := statPath
+	defer func() { statPath = origStatPath }()
+
+	t.Run("dmi accessible", func(t *testing.T) {
+		statPath = func(p string) (os.FileInfo, error) { return os.Stat(os.DevNull) }
+		result := o.dryRunInventoryProbe(context.Background())
+		if result.Status != DryRunPass {
+			t.Errorf("expected pass when DMI accessible, got %s: %s", result.Status, result.Message)
+		}
+	})
+
+	t.Run("dmi not accessible", func(t *testing.T) {
+		statPath = func(_ string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+		result := o.dryRunInventoryProbe(context.Background())
+		if result.Status != DryRunWarn {
+			t.Errorf("expected warn when DMI not accessible, got %s: %s", result.Status, result.Message)
+		}
+	})
+}
+
 func TestIsVirtualInterface(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -435,7 +460,9 @@ func TestDryRunAggregation(t *testing.T) {
 
 	provider := &dryRunProvider{}
 
-	// All checks should pass with valid config and reachable image server.
+	// DryRun with a reachable image server and valid hostname, but /dev/null
+	// as DiskDevice (a char device, not a block device) so disk check warns/fails.
+	// Verifies aggregation and provider status reporting run without panic.
 	o := NewOrchestrator(
 		&config.MachineConfig{
 			ImageURLs:  []string{srv.URL + "/image.raw"},

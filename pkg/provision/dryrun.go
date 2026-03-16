@@ -282,7 +282,7 @@ func (o *Orchestrator) dryRunInventoryProbe(_ context.Context) DryRunResult {
 			Message: "hardware inventory disabled"}
 	}
 	// Check DMI data accessible
-	if _, err := os.Stat("/sys/class/dmi/id/sys_vendor"); err != nil {
+	if _, err := statPath("/sys/class/dmi/id/sys_vendor"); err != nil {
 		return DryRunResult{Status: DryRunWarn,
 			Message: "DMI data not accessible"}
 	}

@@ -238,7 +238,8 @@ go run server/server.go \
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MODE` | `provision` | `provision`, `deprovision`, `soft-deprovision`, or `standby` |
+| `MODE` | `provision` | `provision`, `deprovision`, `soft-deprovision`, `standby`, or `dry-run` |
+| `DRY_RUN` | `false` | When `true`, forces `MODE=dry-run`: validates prerequisites without destructive writes |
 | `DISABLE_KEXEC` | `false` | Skip kexec, always hard-reboot |
 | `MIN_DISK_SIZE_GB` | `0` | Minimum disk size filter (0 = no minimum) |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters |
