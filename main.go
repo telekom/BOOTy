@@ -165,7 +165,7 @@ func runCAPRF(ctx context.Context) {
 	slog.Info("CAPRF mode active",
 		"hostname", cfg.Hostname,
 		"mode", cfg.Mode,
-		"images", cfg.ImageURLs,
+		"image_count", len(cfg.ImageURLs),
 	)
 
 	// Set up networking based on configuration.

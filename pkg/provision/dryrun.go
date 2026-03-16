@@ -18,6 +18,7 @@ import (
 var (
 	listInterfaces = net.Interfaces
 	statPath       = os.Stat
+	readPath       = os.ReadFile
 )
 
 // DryRunStatus represents the result status of a dry-run check.
@@ -232,7 +233,10 @@ func (o *Orchestrator) dryRunNetworkLink(_ context.Context) DryRunResult {
 		if isVirtualInterface(iface.Name) {
 			continue
 		}
-		if iface.Flags&net.FlagUp != 0 {
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		if interfaceHasCarrier(iface.Name) {
 			upIfaces = append(upIfaces, iface.Name)
 		}
 	}
@@ -243,6 +247,20 @@ func (o *Orchestrator) dryRunNetworkLink(_ context.Context) DryRunResult {
 	}
 	return DryRunResult{Status: DryRunPass,
 		Message: fmt.Sprintf("interfaces up: %s", strings.Join(upIfaces, ", "))}
+}
+
+func interfaceHasCarrier(name string) bool {
+	carrierPath := fmt.Sprintf("/sys/class/net/%s/carrier", name)
+	if carrierRaw, err := readPath(carrierPath); err == nil {
+		return strings.TrimSpace(string(carrierRaw)) == "1"
+	}
+
+	operStatePath := fmt.Sprintf("/sys/class/net/%s/operstate", name)
+	operStateRaw, err := readPath(operStatePath)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(operStateRaw)) == "up"
 }
 
 // isVirtualInterface returns true for known virtual interface name prefixes.

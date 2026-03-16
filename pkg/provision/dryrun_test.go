@@ -65,6 +65,15 @@ func withMockStat(t *testing.T, fn func(string) (os.FileInfo, error)) {
 	})
 }
 
+func withMockReadPath(t *testing.T, fn func(string) ([]byte, error)) {
+	t.Helper()
+	original := readPath
+	readPath = fn
+	t.Cleanup(func() {
+		readPath = original
+	})
+}
+
 func TestDryRunConfigValidation(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -339,6 +348,10 @@ func TestDryRunNetworkLink(t *testing.T) {
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			withMockReadPath(t, func(string) ([]byte, error) {
+				return []byte("1\n"), nil
+			})
+
 			withMockInterfaces(t, func() ([]net.Interface, error) {
 				if tc.err != nil {
 					return nil, tc.err
@@ -353,6 +366,96 @@ func TestDryRunNetworkLink(t *testing.T) {
 			}
 			if !strings.Contains(result.Message, tc.wantSubstr) {
 				t.Errorf("message %q does not contain %q", result.Message, tc.wantSubstr)
+			}
+		})
+	}
+}
+
+func TestDryRunNetworkLink_CarrierDown(t *testing.T) {
+	withMockInterfaces(t, func() ([]net.Interface, error) {
+		return []net.Interface{{Name: "eth0", Flags: net.FlagUp}}, nil
+	})
+	withMockReadPath(t, func(path string) ([]byte, error) {
+		if strings.HasSuffix(path, "/carrier") {
+			return []byte("0\n"), nil
+		}
+		return nil, os.ErrNotExist
+	})
+
+	o := NewOrchestrator(&config.MachineConfig{}, &dryRunProvider{}, disk.NewManager(nil))
+	result := o.dryRunNetworkLink(context.Background())
+	if result.Status != DryRunFail {
+		t.Errorf("got %s, want fail when carrier is down: %s", result.Status, result.Message)
+	}
+}
+
+func TestInterfaceHasCarrier(t *testing.T) {
+	tests := []struct {
+		name     string
+		readPath func(string) ([]byte, error)
+		expected bool
+	}{
+		{
+			name: "carrier up",
+			readPath: func(path string) ([]byte, error) {
+				if strings.HasSuffix(path, "/carrier") {
+					return []byte("1\n"), nil
+				}
+				return nil, os.ErrNotExist
+			},
+			expected: true,
+		},
+		{
+			name: "carrier down",
+			readPath: func(path string) ([]byte, error) {
+				if strings.HasSuffix(path, "/carrier") {
+					return []byte("0\n"), nil
+				}
+				return nil, os.ErrNotExist
+			},
+			expected: false,
+		},
+		{
+			name: "fallback operstate up",
+			readPath: func(path string) ([]byte, error) {
+				if strings.HasSuffix(path, "/carrier") {
+					return nil, os.ErrNotExist
+				}
+				if strings.HasSuffix(path, "/operstate") {
+					return []byte("up\n"), nil
+				}
+				return nil, os.ErrNotExist
+			},
+			expected: true,
+		},
+		{
+			name: "fallback operstate down",
+			readPath: func(path string) ([]byte, error) {
+				if strings.HasSuffix(path, "/carrier") {
+					return nil, os.ErrNotExist
+				}
+				if strings.HasSuffix(path, "/operstate") {
+					return []byte("down\n"), nil
+				}
+				return nil, os.ErrNotExist
+			},
+			expected: false,
+		},
+		{
+			name: "both probes unavailable",
+			readPath: func(string) ([]byte, error) {
+				return nil, os.ErrNotExist
+			},
+			expected: false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			withMockReadPath(t, tc.readPath)
+			if got := interfaceHasCarrier("eth0"); got != tc.expected {
+				t.Errorf("interfaceHasCarrier() = %v, want %v", got, tc.expected)
 			}
 		})
 	}
