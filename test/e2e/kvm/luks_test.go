@@ -29,6 +29,6 @@ func TestLUKSSmokeQEMU(t *testing.T) {
 	}
 	args = append(args, splitExtraArgs(envOrDefault("QEMU_EXTRA_ARGS", ""))...)
 
-	out := runQEMUSmoke(t, args, 2*time.Minute, "luks")
+	out := runQEMUSmoke(t, args, 2*time.Minute, "luks", true)
 	t.Logf("LUKS QEMU output (last 500 bytes): %s", tail(out, 500))
 }

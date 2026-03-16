@@ -46,19 +46,20 @@ func TestTPMSmokeQEMU(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	args := []string{
+	args := make([]string, 0, 20)
+	args = append(args,
 		"-m", "512",
 		"-nographic",
 		"-no-reboot",
-		"-chardev", "socket,id=chrtpm,path=" + tpmSocket,
+		"-chardev", "socket,id=chrtpm,path="+tpmSocket,
 		"-tpmdev", "emulator,id=tpm0,chardev=chrtpm",
 		"-device", "tpm-tis,tpmdev=tpm0",
 		"-kernel", kernel,
 		"-initrd", initramfs,
 		"-append", "console=ttyS0 panic=1",
-	}
+	)
 	args = append(args, splitExtraArgs(envOrDefault("QEMU_EXTRA_ARGS", ""))...)
 
-	out := runQEMUSmoke(t, args, 2*time.Minute, "tpm")
+	out := runQEMUSmoke(t, args, 2*time.Minute, "tpm", true)
 	t.Logf("TPM QEMU output (last 500 bytes): %s", tail(out, 500))
 }

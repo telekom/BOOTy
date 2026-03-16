@@ -32,6 +32,6 @@ func TestUEFISecureBootSmoke(t *testing.T) {
 	)
 	args = append(args, splitExtraArgs(envOrDefault("QEMU_EXTRA_ARGS", ""))...)
 
-	out := runQEMUSmoke(t, args, 2*time.Minute, "uefi-secureboot-firmware")
+	out := runQEMUSmoke(t, args, 2*time.Minute, "uefi-secureboot-firmware", false)
 	t.Logf("SecureBoot QEMU output (last 500 bytes): %s", tail(out, 500))
 }

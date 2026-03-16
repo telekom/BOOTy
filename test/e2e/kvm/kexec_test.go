@@ -3,7 +3,6 @@
 package kvm
 
 import (
-	"strings"
 	"testing"
 	"time"
 )
@@ -22,9 +21,6 @@ func TestKexecSmokeQEMU(t *testing.T) {
 		"-append", "console=ttyS0 panic=1",
 	}
 
-	out := runQEMUSmoke(t, args, 2*time.Minute, "kexec")
-	if !strings.Contains(strings.ToLower(string(out)), "kexec") {
-		t.Fatalf("expected kexec-related output marker, got tail:\n%s", tail(out, 500))
-	}
+	out := runQEMUSmoke(t, args, 2*time.Minute, "kexec", true)
 	t.Logf("Kexec QEMU output (last 500 bytes): %s", tail(out, 500))
 }

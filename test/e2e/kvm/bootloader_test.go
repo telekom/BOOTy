@@ -32,6 +32,6 @@ func TestUEFIBootPathSmoke(t *testing.T) {
 	)
 	args = append(args, splitExtraArgs(envOrDefault("QEMU_EXTRA_ARGS", ""))...)
 
-	out := runQEMUSmoke(t, args, 2*time.Minute, "uefi-boot-path")
+	out := runQEMUSmoke(t, args, 2*time.Minute, "uefi-boot-path", true)
 	t.Logf("Bootloader QEMU output (last 500 bytes): %s", tail(out, 500))
 }
