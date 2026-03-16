@@ -20,10 +20,15 @@ type Device struct {
 }
 
 // Open connects to the TPM 2.0 resource manager device.
+// Falls back to the raw device path if the resource manager is unavailable.
 func Open() (*Device, error) {
 	t, err := linuxtpm.Open(tpmrmDevicePath)
 	if err != nil {
-		return nil, fmt.Errorf("opening TPM device %s: %w", tpmrmDevicePath, err)
+		// Fall back to raw TPM device if resource manager is unavailable.
+		t, err = linuxtpm.Open(tpmDevicePath)
+		if err != nil {
+			return nil, fmt.Errorf("opening TPM device (tried %s, %s): %w", tpmrmDevicePath, tpmDevicePath, err)
+		}
 	}
 	return &Device{
 		transport: t,
@@ -43,6 +48,9 @@ func (d *Device) Close() error {
 
 // ExtendPCR extends a PCR register with the SHA-256 hash of the given data.
 func (d *Device) ExtendPCR(pcrIndex int, data []byte) error {
+	if err := validatePCRIndex(pcrIndex); err != nil {
+		return err
+	}
 	digest := sha256.Sum256(data)
 
 	pcrHandle := tpm2.TPMHandle(uint32(pcrIndex))
@@ -70,6 +78,9 @@ func (d *Device) ExtendPCR(pcrIndex int, data []byte) error {
 
 // ReadPCRDevice reads a single PCR value using the TPM command interface.
 func (d *Device) ReadPCRDevice(pcrIndex int) ([]byte, error) {
+	if err := validatePCRIndex(pcrIndex); err != nil {
+		return nil, err
+	}
 	sel := tpm2.TPMLPCRSelection{
 		PCRSelections: []tpm2.TPMSPCRSelection{
 			{
@@ -94,6 +105,9 @@ func (d *Device) ReadPCRDevice(pcrIndex int) ([]byte, error) {
 // MeasureReader extends the given PCR with the SHA-256 hash of all data
 // read from r. Useful for measuring files or image streams inline.
 func (d *Device) MeasureReader(pcrIndex int, r io.Reader) error {
+	if err := validatePCRIndex(pcrIndex); err != nil {
+		return err
+	}
 	h := sha256.New()
 	if _, err := io.Copy(h, r); err != nil {
 		return fmt.Errorf("hashing data for PCR %d: %w", pcrIndex, err)
@@ -117,6 +131,14 @@ func (d *Device) MeasureReader(pcrIndex int, r io.Reader) error {
 	}.Execute(d.transport)
 	if err != nil {
 		return fmt.Errorf("extending PCR %d with stream digest: %w", pcrIndex, err)
+	}
+	return nil
+}
+
+// validatePCRIndex checks that a PCR index is within the valid TPM range (0-23).
+func validatePCRIndex(index int) error {
+	if index < 0 || index > 23 {
+		return fmt.Errorf("invalid PCR index %d: must be 0-23", index)
 	}
 	return nil
 }

@@ -2,10 +2,13 @@
 
 ## Status: Phase 1 Implemented
 
-All phases implemented: Phase 1 (sysfs detection + PCR reading), Phase 2 (go-tpm device operations: ExtendPCR, ReadPCR, MeasureReader), Phase 3 (attestation quote generation with ECC signing), Phase 4 (secret sealing/unsealing with PCR policy).
-Implemented: `pkg/tpm/` (sysfs-based `Detect()`, `ReadPCRs()`), `TPM_ENABLED` config variable.
-Future phases (not yet implemented): go-tpm integration, PCR extending, remote attestation,
-disk encryption key sealing, CAPRF quote verification.
+Implemented: Phase 1 — sysfs detection (`Detect()`), PCR reading (`ReadPCRs()`),
+go-tpm device operations (`ExtendPCR`, `ReadPCRDevice`, `MeasureReader`),
+attestation quote generation with ECC signing, and secret sealing/unsealing
+with PCR policy. See `pkg/tpm/`.
+
+Future phases (not yet implemented): remote attestation protocol,
+CAPRF quote verification, disk encryption key auto-sealing on provision.
 
 ## Priority: P4
 

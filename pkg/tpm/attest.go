@@ -7,6 +7,8 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"math/big"
+	"sort"
 
 	"github.com/google/go-tpm/tpm2"
 )
@@ -167,10 +169,15 @@ func (d *Device) readPCRDigest(pcrSelection []int, sel tpm2.TPMLPCRSelection) (p
 		return nil, nil, fmt.Errorf("reading PCR values for quote: %w", err)
 	}
 
+	// Map digests by reading individual PCRs to avoid ordering assumptions.
+	// TPM PCRRead returns digests in ascending PCR order which may differ
+	// from the requested pcrSelection order.
 	pcrValues = make(map[int][]byte, len(pcrSelection))
-	for i, idx := range pcrSelection {
-		if i < len(pcrReadResp.PCRValues.Digests) {
-			pcrValues[idx] = pcrReadResp.PCRValues.Digests[i].Buffer
+	digestIdx := 0
+	for _, idx := range sortedInts(pcrSelection) {
+		if digestIdx < len(pcrReadResp.PCRValues.Digests) {
+			pcrValues[idx] = pcrReadResp.PCRValues.Digests[digestIdx].Buffer
+			digestIdx++
 		}
 	}
 
@@ -187,10 +194,27 @@ func (d *Device) readPCRDigest(pcrSelection []int, sel tpm2.TPMLPCRSelection) (p
 }
 
 // VerifyQuoteSignature verifies an attestation quote signature using
-// the provided ECDSA public key.
+// the provided ECDSA public key. The signature is a TPM2-marshaled
+// TPMT_SIGNATURE structure that must be decoded to extract the raw
+// ECDSA (r, s) components.
 func VerifyQuoteSignature(quote *AttestationQuote, pubkey *ecdsa.PublicKey) error {
 	digest := sha256.Sum256(quote.QuoteData)
-	if !ecdsa.VerifyASN1(pubkey, digest[:], quote.Signature) {
+
+	// Decode TPM-marshaled TPMT_SIGNATURE to extract ECDSA r, s values.
+	sig, err := tpm2.Unmarshal[tpm2.TPMTSignature](quote.Signature)
+	if err != nil {
+		return fmt.Errorf("unmarshaling TPM signature: %w", err)
+	}
+	ecdsaSig, err := sig.Signature.ECDSA()
+	if err != nil {
+		return fmt.Errorf("extracting ECDSA signature: %w", err)
+	}
+
+	var r, s big.Int
+	r.SetBytes(ecdsaSig.SignatureR.Buffer)
+	s.SetBytes(ecdsaSig.SignatureS.Buffer)
+
+	if !ecdsa.Verify(pubkey, digest[:], &r, &s) {
 		return fmt.Errorf("TPM quote signature verification failed")
 	}
 	return nil
@@ -221,4 +245,12 @@ func pcrSelectMultiple(indices []int) []byte {
 		mask[idx/8] |= 1 << (idx % 8)
 	}
 	return mask
+}
+
+// sortedInts returns a sorted copy of the input slice.
+func sortedInts(a []int) []int {
+	c := make([]int, len(a))
+	copy(c, a)
+	sort.Ints(c)
+	return c
 }

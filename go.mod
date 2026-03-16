@@ -6,6 +6,7 @@ require (
 	github.com/digineo/go-dhclient v1.0.2
 	github.com/dustin/go-humanize v1.0.1
 	github.com/google/go-containerregistry v0.21.2
+	github.com/google/go-tpm v0.9.8
 	github.com/google/gopacket v1.1.19
 	github.com/klauspost/compress v1.18.4
 	github.com/osrg/gobgp/v3 v3.37.0
@@ -14,6 +15,7 @@ require (
 	github.com/ulikunitz/xz v0.5.15
 	github.com/vishvananda/netlink v1.3.1
 	github.com/zcalusic/sysinfo v1.1.3
+	golang.org/x/net v0.38.0
 	golang.org/x/sys v0.42.0
 	google.golang.org/protobuf v1.36.3
 	gopkg.in/yaml.v3 v3.0.1
@@ -29,7 +31,6 @@ require (
 	github.com/eapache/queue v1.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
-	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
@@ -50,7 +51,6 @@ require (
 	github.com/subosito/gotenv v1.4.2 // indirect
 	github.com/vbatts/tar-split v0.12.2 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
-	golang.org/x/net v0.38.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/text v0.23.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20230525234030-28d5490b6b19 // indirect

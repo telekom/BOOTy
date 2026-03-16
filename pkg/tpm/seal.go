@@ -96,6 +96,11 @@ func (d *Device) UnsealSecret(blob *SealedBlob, pcrSelection []int) ([]byte, err
 	if blob == nil {
 		return nil, fmt.Errorf("sealed blob must not be nil")
 	}
+	for _, idx := range pcrSelection {
+		if idx < 0 || idx > 23 {
+			return nil, fmt.Errorf("invalid PCR index %d: must be 0-23", idx)
+		}
+	}
 
 	// Recreate the SRK.
 	srkResp, err := d.createSRK()
