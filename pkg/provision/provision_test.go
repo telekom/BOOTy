@@ -524,6 +524,34 @@ func TestRedactURLs(t *testing.T) {
 	}
 }
 
+func TestIsSafeDeviceName(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"sda", true},
+		{"nvme0n1", true},
+		{"vd.a", true},
+		{"disk-0", true},
+		{"DISK_A", true},
+		{"", false},
+		{"sd a", false},
+		{"/dev/sda", false},
+		{"sda;rm", false},
+		{"sd$a", false},
+		{"name`cmd`", false},
+		{"../etc", false},
+		{"sda\n", false},
+	}
+	for _, tc := range tests {
+		t.Run(fmt.Sprintf("%q", tc.name), func(t *testing.T) {
+			if got := isSafeDeviceName(tc.name); got != tc.want {
+				t.Errorf("isSafeDeviceName(%q) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRequestSecureBootReEnable(t *testing.T) {
 	noopLog := slog.New(slog.NewTextHandler(io.Discard, nil))
 	tests := []struct {
@@ -552,6 +580,94 @@ func TestRequestSecureBootReEnable(t *testing.T) {
 				t.Errorf("message = %q, want %q", p.statuses[0].message, statusSecureBootReEnable)
 			}
 		})
+	}
+}
+
+func TestCopyTreeNormalFiles(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	// Create a simple file tree: dir/file.txt
+	subDir := filepath.Join(src, "sub")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(subDir, "file.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyTree(src, dst); err != nil {
+		t.Fatalf("copyTree() unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dst, "sub", "file.txt"))
+	if err != nil {
+		t.Fatalf("expected copied file: %v", err)
+	}
+	if string(data) != "hello" {
+		t.Errorf("file content = %q, want %q", data, "hello")
+	}
+}
+
+func TestCopyTreeSymlinksSkipped(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	// Create a real file and a symlink pointing to it.
+	realFile := filepath.Join(src, "real.txt")
+	if err := os.WriteFile(realFile, []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realFile, filepath.Join(src, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyTree(src, dst); err != nil {
+		t.Fatalf("copyTree() unexpected error: %v", err)
+	}
+
+	// Real file should exist, symlink should be skipped.
+	if _, err := os.Stat(filepath.Join(dst, "real.txt")); err != nil {
+		t.Errorf("expected real.txt to be copied: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "link.txt")); !os.IsNotExist(err) {
+		t.Error("expected symlink to be skipped, but it exists")
+	}
+}
+
+func TestCopyTreePathTraversal(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	// Create a normal file under src.
+	if err := os.WriteFile(filepath.Join(src, "ok.txt"), []byte("safe"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Normal copy should succeed.
+	if err := copyTree(src, dst); err != nil {
+		t.Fatalf("copyTree() on clean tree should succeed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "ok.txt")); err != nil {
+		t.Errorf("expected ok.txt to be copied: %v", err)
+	}
+
+	// Create a symlink inside src that points outside.
+	outsideFile := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outsideFile, []byte("escape"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(src, "escape")); err != nil {
+		t.Fatal(err)
+	}
+
+	dst2 := t.TempDir()
+	// Copy should skip the symlink (no error, but symlink not followed).
+	if err := copyTree(src, dst2); err != nil {
+		t.Fatalf("copyTree() should skip symlinks without error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst2, "escape")); !os.IsNotExist(err) {
+		t.Error("expected symlink target to not be copied")
 	}
 }
 
