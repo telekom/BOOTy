@@ -39,7 +39,7 @@ type DryRunResult struct {
 
 // DryRun executes the provisioning pipeline in simulation mode.
 func (o *Orchestrator) DryRun(ctx context.Context) error {
-	o.log.Info("Starting dry-run — no destructive changes will be made")
+	o.log.Info("starting dry-run - no destructive changes will be made")
 
 	checks := []struct {
 		name string
@@ -64,7 +64,7 @@ func (o *Orchestrator) DryRun(ctx context.Context) error {
 		if result.Status == DryRunFail {
 			failed++
 		}
-		o.log.Info("Dry-run check", "step", result.Step, "status", string(result.Status), "message", result.Message)
+		o.log.Info("dry-run check", "step", result.Step, "status", string(result.Status), "message", result.Message)
 	}
 
 	var summary strings.Builder
@@ -106,14 +106,25 @@ func (o *Orchestrator) dryRunImageReachability(ctx context.Context) DryRunResult
 	skippedOCI := 0
 	for _, imgURL := range o.cfg.ImageURLs {
 		redactedURL := redactImageURL(imgURL)
+		parsedURL, err := url.Parse(imgURL)
+		if err != nil || parsedURL.Scheme == "" {
+			errMsg := redactURLError(err, imgURL)
+			if errMsg == "" {
+				errMsg = "missing URL scheme"
+			}
+			return DryRunResult{Status: DryRunFail,
+				Message: fmt.Sprintf("invalid image URL %s: %s", redactedURL, errMsg)}
+		}
+
+		scheme := strings.ToLower(strings.TrimSpace(parsedURL.Scheme))
 		// Skip OCI sources until registry reachability checks are implemented.
-		if strings.HasPrefix(imgURL, "oci://") {
+		if scheme == "oci" {
 			skippedOCI++
-			o.log.Info("Skipping OCI image reachability check", "url", redactedURL)
+			o.log.Info("skipping oci image reachability check", "url", redactedURL)
 			continue
 		}
 		// Validate URL scheme is http/https before making outbound request.
-		if !strings.HasPrefix(imgURL, "http://") && !strings.HasPrefix(imgURL, "https://") {
+		if scheme != "http" && scheme != "https" {
 			return DryRunResult{Status: DryRunFail,
 				Message: fmt.Sprintf("unsupported URL scheme: %s", redactedURL)}
 		}
@@ -135,7 +146,7 @@ func (o *Orchestrator) dryRunImageReachability(ctx context.Context) DryRunResult
 				Message: fmt.Sprintf("image server returned %d for %s", resp.StatusCode, redactedURL)}
 		}
 		validated++
-		o.log.Info("Image reachable", "url", redactedURL, "status", resp.StatusCode)
+		o.log.Info("image reachable", "url", redactedURL, "status", resp.StatusCode)
 	}
 	if validated == 0 && skippedOCI > 0 {
 		return DryRunResult{
@@ -189,19 +200,20 @@ func (o *Orchestrator) dryRunHealthChecks(_ context.Context) DryRunResult {
 func (o *Orchestrator) dryRunImageChecksum(_ context.Context) DryRunResult {
 	if o.cfg.ImageChecksum == "" {
 		return DryRunResult{Status: DryRunWarn,
-			Message: "no image checksum configured — integrity cannot be verified"}
+			Message: "no image checksum configured - integrity cannot be verified"}
 	}
-	checkType := o.cfg.ImageChecksumType
+	checkType := strings.ToLower(strings.TrimSpace(o.cfg.ImageChecksumType))
 	if checkType == "" {
 		checkType = "sha256"
 	}
-	validTypes := map[string]bool{"sha256": true, "sha512": true}
-	if !validTypes[checkType] {
+	switch checkType {
+	case "sha256", "sha512":
+		return DryRunResult{Status: DryRunPass,
+			Message: fmt.Sprintf("checksum configured (%s)", checkType)}
+	default:
 		return DryRunResult{Status: DryRunFail,
 			Message: fmt.Sprintf("unsupported checksum type: %s", checkType)}
 	}
-	return DryRunResult{Status: DryRunPass,
-		Message: fmt.Sprintf("checksum configured (%s)", checkType)}
 }
 
 func (o *Orchestrator) dryRunNetworkLink(_ context.Context) DryRunResult {

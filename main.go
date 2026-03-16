@@ -195,9 +195,9 @@ func runCAPRF(ctx context.Context) {
 	case "dry-run":
 		cfg.DisableKexec = true
 		if err := orch.DryRun(ctx); err != nil {
-			slog.Error("Dry-run failed", "error", err)
+			slog.Error("dry-run failed", "error", err)
 		}
-		// Do not return here — continue with the normal lifecycle
+		// Do not return here - continue with the normal lifecycle
 		// (network teardown, reboot) so PID 1 exits cleanly.
 	case "deprovision", "soft-deprovision":
 		if cfg.Mode == "soft-deprovision" {

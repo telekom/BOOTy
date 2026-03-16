@@ -1,6 +1,6 @@
 # Proposal: Dry-Run Mode
 
-## Status: Phase 1 Implemented
+## Status: Accepted
 
 ## Priority: P3
 
@@ -10,6 +10,15 @@ Add a **dry-run mode** to BOOTy that simulates the full provisioning pipeline
 without making any destructive changes to disks, UEFI boot entries, or
 network configuration. This enables pre-flight validation of provisioning
 configurations on real hardware without risk.
+
+## Implementation Status
+
+Phase 1 is implemented in the BOOTy codebase: `MODE=dry-run` and `DRY_RUN=true`
+invoke non-destructive pre-flight checks via `Orchestrator.DryRun()` and report
+results through the existing provider status API.
+
+Full parity with every provisioning step in the scope table remains backlog
+work, so this proposal remains in `Accepted` status.
 
 ## Motivation
 
@@ -54,6 +63,9 @@ Each provisioning step has a dry-run equivalent:
 | Inventory | Collect hardware | Collect hardware (non-destructive) |
 
 ### Implementation
+
+Current implementation detail: dry-run execution lives in
+`pkg/provision/dryrun.go` and uses `ReportStatus` for summary reporting.
 
 ```go
 // pkg/provision/orchestrator.go
@@ -193,12 +205,14 @@ read-only/non-destructive mode.
 
 | File | Change |
 |------|--------|
-| `pkg/provision/orchestrator.go` | Add `executeDryRun()`, dry-run check methods |
 | `pkg/provision/dryrun.go` | New — dry-run result types and logic |
 | `pkg/provision/dryrun_test.go` | New — unit tests |
 | `main.go` | Handle `MODE=dry-run` |
 | `pkg/config/provider.go` | Add `DryRun bool` field |
-| `pkg/caprf/client.go` | Add `ReportDryRun()` |
+| `pkg/caprf/client.go` | Parse `DRY_RUN` from `/deploy/vars` |
+| `pkg/caprf/client_test.go` | Add tests for `DRY_RUN` and normalized boolean parsing |
+| `README.md` | Document `MODE=dry-run` and `DRY_RUN` variable |
+| `initrd.Dockerfile` | Add retry flags to BusyBox source download |
 
 ## Risks
 

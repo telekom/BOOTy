@@ -238,6 +238,39 @@ func TestDryRunImageReachability_UnsupportedScheme(t *testing.T) {
 	}
 }
 
+func TestDryRunImageReachability_InvalidURL(t *testing.T) {
+	o := NewOrchestrator(
+		&config.MachineConfig{ImageURLs: []string{"http://%zz"}},
+		&dryRunProvider{},
+		disk.NewManager(nil),
+	)
+	result := o.dryRunImageReachability(context.Background())
+	if result.Status != DryRunFail {
+		t.Errorf("got %s, want fail for invalid URL: %s", result.Status, result.Message)
+	}
+	if !strings.Contains(result.Message, "invalid image URL") {
+		t.Errorf("expected invalid URL error, got %q", result.Message)
+	}
+}
+
+func TestDryRunImageReachability_UppercaseScheme(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	upperURL := strings.Replace(srv.URL, "http://", "HTTP://", 1)
+	o := NewOrchestrator(
+		&config.MachineConfig{ImageURLs: []string{upperURL + "/image.raw"}},
+		&dryRunProvider{},
+		disk.NewManager(nil),
+	)
+	result := o.dryRunImageReachability(context.Background())
+	if result.Status != DryRunPass {
+		t.Errorf("got %s, want pass for uppercase scheme: %s", result.Status, result.Message)
+	}
+}
+
 func TestDryRunImageChecksum(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -248,6 +281,8 @@ func TestDryRunImageChecksum(t *testing.T) {
 		{"no checksum", "", "", DryRunWarn},
 		{"sha256", "abc123", "sha256", DryRunPass},
 		{"sha512", "abc123", "sha512", DryRunPass},
+		{"uppercase type", "abc123", "SHA512", DryRunPass},
+		{"trimmed uppercase type", "abc123", " SHA256 ", DryRunPass},
 		{"empty type defaults to sha256", "abc123", "", DryRunPass},
 		{"unsupported type", "abc123", "md5", DryRunFail},
 	}
@@ -374,7 +409,6 @@ func TestDryRunInventoryProbe(t *testing.T) {
 }
 
 func TestDryRunInventoryProbe_Enabled(t *testing.T) {
-	t.Helper()
 	cfg := &config.MachineConfig{InventoryEnabled: true}
 	o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
 
