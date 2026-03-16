@@ -2,7 +2,7 @@ name: KVM Test Matrix
 
 on:
   push:
-    branches: [master]
+    branches: [main]
     paths:
       - "pkg/secureboot/**"
       - "pkg/disk/**"
