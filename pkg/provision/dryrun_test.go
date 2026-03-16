@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
@@ -20,6 +21,15 @@ type dryRunProvider struct {
 	lastStatus  config.Status
 	lastMessage string
 }
+
+type fakeFileInfo struct{}
+
+func (fakeFileInfo) Name() string       { return "efi" }
+func (fakeFileInfo) Size() int64        { return 0 }
+func (fakeFileInfo) Mode() os.FileMode  { return os.ModeDir }
+func (fakeFileInfo) ModTime() time.Time { return time.Time{} }
+func (fakeFileInfo) IsDir() bool        { return true }
+func (fakeFileInfo) Sys() any           { return nil }
 
 func (p *dryRunProvider) GetConfig(_ context.Context) (*config.MachineConfig, error) {
 	return &config.MachineConfig{}, nil
@@ -329,7 +339,7 @@ func TestDryRunEFIBoot(t *testing.T) {
 				if tc.err != nil {
 					return nil, tc.err
 				}
-				return nil, nil
+				return fakeFileInfo{}, nil
 			})
 
 			o := NewOrchestrator(&config.MachineConfig{}, &dryRunProvider{}, disk.NewManager(nil))
