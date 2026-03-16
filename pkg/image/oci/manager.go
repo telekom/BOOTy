@@ -81,7 +81,7 @@ func New(log *slog.Logger, cfg *Config) *Manager {
 // ParsePlatform parses "linux/amd64" or "linux/arm64/v8" into a Platform.
 func ParsePlatform(s string) Platform {
 	parts := strings.SplitN(s, "/", 3)
-	p := Platform{OS: "linux", Architecture: "amd64"}
+	p := Platform{OS: "linux", Architecture: runtime.GOARCH}
 	if len(parts) >= 1 {
 		p.OS = parts[0]
 	}
@@ -116,8 +116,11 @@ func (m *Manager) IsCached(digest string) (bool, error) {
 func (m *Manager) AddToCache(digest, localPath string, size int64) error {
 	idx, err := m.loadCacheIndex()
 	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("load cache index: %w", err)
+		}
 		if m.log != nil {
-			m.log.Info("initializing new cache index", "reason", err)
+			m.log.Info("initializing new cache index")
 		}
 		idx = &CacheIndex{Entries: make(map[string]CacheEntry)}
 	}
@@ -140,6 +143,9 @@ func (m *Manager) loadCacheIndex() (*CacheIndex, error) {
 	if err := json.Unmarshal(data, &idx); err != nil {
 		return nil, fmt.Errorf("parse cache index: %w", err)
 	}
+	if idx.Entries == nil {
+		idx.Entries = make(map[string]CacheEntry)
+	}
 	return &idx, nil
 }
 
@@ -152,8 +158,13 @@ func (m *Manager) saveCacheIndex(idx *CacheIndex) error {
 		return fmt.Errorf("marshal cache index: %w", err)
 	}
 	path := filepath.Join(m.cacheDir, "index.json")
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return fmt.Errorf("write cache index: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("commit cache index: %w", err)
 	}
 	return nil
 }

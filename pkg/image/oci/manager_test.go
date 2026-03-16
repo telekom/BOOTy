@@ -3,6 +3,7 @@ package oci
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -16,7 +17,8 @@ func TestParsePlatform(t *testing.T) {
 		{"linux/amd64", "linux", "amd64", ""},
 		{"linux/arm64", "linux", "arm64", ""},
 		{"linux/arm64/v8", "linux", "arm64", "v8"},
-		{"linux", "linux", "amd64", ""},
+		// No arch specified: should default to runtime.GOARCH.
+		{"linux", "linux", runtime.GOARCH, ""},
 	}
 
 	for _, tc := range tests {
@@ -99,29 +101,5 @@ func TestNew_CustomCacheDir(t *testing.T) {
 	m := New(nil, &Config{CacheDir: "/custom/cache"})
 	if m.CacheDir() != "/custom/cache" {
 		t.Errorf("cacheDir = %q", m.CacheDir())
-	}
-}
-
-func TestLayerInfo_Types(t *testing.T) {
-	layer := LayerInfo{
-		Digest:    "sha256:abc123",
-		Size:      4096,
-		MediaType: "application/vnd.oci.image.layer.v1.tar+gzip",
-	}
-	if layer.Digest != "sha256:abc123" {
-		t.Error("wrong digest")
-	}
-}
-
-func TestImageManifest_Types(t *testing.T) {
-	manifest := ImageManifest{
-		SchemaVersion: 2,
-		MediaType:     "application/vnd.oci.image.manifest.v1+json",
-		Layers: []LayerInfo{
-			{Digest: "sha256:layer1", Size: 100},
-		},
-	}
-	if len(manifest.Layers) != 1 {
-		t.Error("wrong layer count")
 	}
 }
