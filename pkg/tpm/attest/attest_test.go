@@ -21,6 +21,14 @@ func TestMeasurementLog_Add(t *testing.T) {
 	}
 }
 
+func TestMeasurementLog_AddWithAlgorithm(t *testing.T) {
+	var log MeasurementLog
+	m := log.AddWithAlgorithm(PCRImage, "sha384-step", []byte("payload"), AlgSHA384)
+	if m.Algorithm != AlgSHA384 {
+		t.Errorf("Algorithm = %q, want %q", m.Algorithm, AlgSHA384)
+	}
+}
+
 func TestMeasurementLog_DigestsForPCR(t *testing.T) {
 	var log MeasurementLog
 	log.Add(PCRImage, "image-write", []byte("image-data"))
@@ -39,6 +47,9 @@ func TestMeasurementLog_DigestsForPCR(t *testing.T) {
 	if len(digests) != 0 {
 		t.Errorf("digests for unused PCR = %d, want 0", len(digests))
 	}
+	if digests == nil {
+		t.Error("digests for unused PCR should be empty slice, not nil")
+	}
 }
 
 func TestDefaultConfig(t *testing.T) {
@@ -46,8 +57,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Enabled {
 		t.Error("default config should be disabled")
 	}
-	if cfg.DevicePath != "/dev/tpmrm0" {
-		t.Errorf("DevicePath = %q, want /dev/tpmrm0", cfg.DevicePath)
+	if cfg.DevicePath != "" {
+		t.Errorf("DevicePath = %q, want empty", cfg.DevicePath)
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("default config validation failed: %v", err)
@@ -61,10 +72,10 @@ func TestConfig_Validate(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "disabled", cfg: Config{Enabled: false}},
-		{name: "valid enabled", cfg: Config{Enabled: true, DevicePath: "/dev/tpmrm0", AttestPCRs: []int{0, 7}}},
+		{name: "valid enabled", cfg: Config{Enabled: true, DevicePath: "/dev/tpmrm0", AttestPCRs: []PCRIndex{PCRFirmware, PCRSecureBoot}}},
 		{name: "empty device", cfg: Config{Enabled: true}, wantErr: true},
 		{name: "pcr out of range", cfg: Config{Enabled: true, DevicePath: "/dev/tpmrm0", PCRImageIdx: 30}, wantErr: true},
-		{name: "attest pcr bad", cfg: Config{Enabled: true, DevicePath: "/dev/tpmrm0", AttestPCRs: []int{25}}, wantErr: true},
+		{name: "attest pcr bad", cfg: Config{Enabled: true, DevicePath: "/dev/tpmrm0", AttestPCRs: []PCRIndex{25}}, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -78,24 +89,24 @@ func TestConfig_Validate(t *testing.T) {
 
 func TestVerifyPCRs(t *testing.T) {
 	t.Run("matching", func(t *testing.T) {
-		exp := map[int][]byte{0: {0x01, 0x02}, 7: {0x03, 0x04}}
-		act := map[int][]byte{0: {0x01, 0x02}, 7: {0x03, 0x04}}
+		exp := map[PCRIndex][]byte{PCRFirmware: {0x01, 0x02}, PCRSecureBoot: {0x03, 0x04}}
+		act := map[PCRIndex][]byte{PCRFirmware: {0x01, 0x02}, PCRSecureBoot: {0x03, 0x04}}
 		r := VerifyPCRs(exp, act)
 		if !r.Verified {
 			t.Errorf("expected verified, got errors: %v", r.Errors)
 		}
 	})
 	t.Run("mismatch", func(t *testing.T) {
-		exp := map[int][]byte{0: {0x01}}
-		act := map[int][]byte{0: {0xFF}}
+		exp := map[PCRIndex][]byte{PCRFirmware: {0x01}}
+		act := map[PCRIndex][]byte{PCRFirmware: {0xFF}}
 		r := VerifyPCRs(exp, act)
 		if r.Verified {
 			t.Error("expected verification to fail")
 		}
 	})
 	t.Run("missing", func(t *testing.T) {
-		exp := map[int][]byte{0: {0x01}, 7: {0x02}}
-		act := map[int][]byte{0: {0x01}}
+		exp := map[PCRIndex][]byte{PCRFirmware: {0x01}, PCRSecureBoot: {0x02}}
+		act := map[PCRIndex][]byte{PCRFirmware: {0x01}}
 		r := VerifyPCRs(exp, act)
 		if r.Verified {
 			t.Error("expected verification to fail for missing PCR")
