@@ -46,6 +46,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("invalid address %q: %w", c.Address, err)
 		}
 	}
+	if c.DHCP && c.Address != "" {
+		return fmt.Errorf("dhcp and static address are mutually exclusive")
+	}
 	if c.Gateway != "" {
 		if net.ParseIP(c.Gateway) == nil {
 			return fmt.Errorf("invalid gateway %q", c.Gateway)
@@ -86,6 +89,9 @@ func (c *TrunkConfig) Validate() error {
 	if c.NativeID != 0 && (c.NativeID < MinID || c.NativeID > MaxID) {
 		return fmt.Errorf("native vlan id %d out of range", c.NativeID)
 	}
+	if c.NativeID != 0 && !c.AllowAll && !seen[c.NativeID] {
+		return fmt.Errorf("native vlan id %d must be present in vlan list when allowAll is false", c.NativeID)
+	}
 	return nil
 }
 
@@ -97,6 +103,7 @@ type MultiConfig struct {
 // Validate checks all VLAN configs for validity and uniqueness.
 func (m *MultiConfig) Validate() error {
 	seen := make(map[string]bool)
+	seenNames := make(map[string]bool)
 	for i := range m.VLANs {
 		if err := m.VLANs[i].Validate(); err != nil {
 			return fmt.Errorf("vlan %d: %w", i, err)
@@ -106,6 +113,12 @@ func (m *MultiConfig) Validate() error {
 			return fmt.Errorf("duplicate vlan %s.%d", m.VLANs[i].Parent, m.VLANs[i].ID)
 		}
 		seen[key] = true
+
+		ifName := m.VLANs[i].InterfaceName()
+		if seenNames[ifName] {
+			return fmt.Errorf("duplicate vlan interface name %q", ifName)
+		}
+		seenNames[ifName] = true
 	}
 	return nil
 }

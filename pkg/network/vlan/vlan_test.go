@@ -27,6 +27,7 @@ func TestConfig_Validate(t *testing.T) {
 		{"with gw", Config{ID: 100, Parent: "eth0", Gateway: "10.0.0.1"}, false},
 		{"with mtu", Config{ID: 100, Parent: "eth0", MTU: 9000}, false},
 		{"dhcp", Config{ID: 100, Parent: "eth0", DHCP: true}, false},
+		{"dhcp and static conflict", Config{ID: 100, Parent: "eth0", DHCP: true, Address: "10.0.0.1/24"}, true},
 		{"id too low", Config{ID: 0, Parent: "eth0"}, true},
 		{"id too high", Config{ID: 5000, Parent: "eth0"}, true},
 		{"no parent", Config{ID: 100}, true},
@@ -52,12 +53,13 @@ func TestTrunkConfig_Validate(t *testing.T) {
 	}{
 		{"valid", TrunkConfig{Parent: "eth0", VLANs: []int{100, 200}}, false},
 		{"allow all", TrunkConfig{Parent: "eth0", AllowAll: true}, false},
-		{"native", TrunkConfig{Parent: "eth0", VLANs: []int{100}, NativeID: 1}, false},
+		{"native", TrunkConfig{Parent: "eth0", VLANs: []int{1, 100}, NativeID: 1}, false},
 		{"no parent", TrunkConfig{VLANs: []int{100}}, true},
 		{"no vlans", TrunkConfig{Parent: "eth0"}, true},
 		{"bad id", TrunkConfig{Parent: "eth0", VLANs: []int{5000}}, true},
 		{"dup id", TrunkConfig{Parent: "eth0", VLANs: []int{100, 100}}, true},
 		{"bad native", TrunkConfig{Parent: "eth0", VLANs: []int{100}, NativeID: 5000}, true},
+		{"native not present", TrunkConfig{Parent: "eth0", VLANs: []int{100, 200}, NativeID: 300}, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -98,6 +100,16 @@ func TestMultiConfig_Validate(t *testing.T) {
 	}
 	if err := diffParent.Validate(); err != nil {
 		t.Errorf("different parents same ID should be valid: %v", err)
+	}
+
+	dupName := MultiConfig{
+		VLANs: []Config{
+			{ID: 100, Parent: "eth0", Name: "mgmt"},
+			{ID: 200, Parent: "eth1", Name: "mgmt"},
+		},
+	}
+	if err := dupName.Validate(); err == nil {
+		t.Error("expected duplicate interface name error")
 	}
 }
 

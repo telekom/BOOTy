@@ -10,19 +10,33 @@ import (
 	"github.com/vishvananda/netlink"
 )
 
+var (
+	linkByName = netlink.LinkByName
+	linkSetUp  = netlink.LinkSetUp
+	linkSetMTU = netlink.LinkSetMTU
+	linkAdd    = netlink.LinkAdd
+	linkDel    = netlink.LinkDel
+	parseAddr  = netlink.ParseAddr
+	addrAdd    = netlink.AddrAdd
+	routeAdd   = netlink.RouteAdd
+)
+
 // Setup creates a VLAN interface on the given parent and optionally configures
 // an address and gateway route. It returns the name of the created interface.
 func Setup(cfg *Config) (string, error) {
-	if cfg.ID < MinID || cfg.ID > MaxID {
-		return "", fmt.Errorf("invalid VLAN ID %d: must be %d-%d", cfg.ID, MinID, MaxID)
+	if cfg == nil {
+		return "", fmt.Errorf("vlan config is nil")
+	}
+	if err := cfg.Validate(); err != nil {
+		return "", fmt.Errorf("validate vlan config: %w", err)
 	}
 
-	parent, err := netlink.LinkByName(cfg.Parent)
+	parent, err := linkByName(cfg.Parent)
 	if err != nil {
 		return "", fmt.Errorf("parent interface %s not found: %w", cfg.Parent, err)
 	}
 
-	if err := netlink.LinkSetUp(parent); err != nil {
+	if err := linkSetUp(parent); err != nil {
 		return "", fmt.Errorf("bring up parent %s: %w", cfg.Parent, err)
 	}
 
@@ -35,20 +49,26 @@ func Setup(cfg *Config) (string, error) {
 		VlanId: cfg.ID,
 	}
 
-	if err := netlink.LinkAdd(vlanLink); err != nil {
+	if err := linkAdd(vlanLink); err != nil {
 		return "", fmt.Errorf("create VLAN %d on %s: %w", cfg.ID, cfg.Parent, err)
 	}
 
-	if err := netlink.LinkSetUp(vlanLink); err != nil {
+	if cfg.MTU > 0 {
+		if err := linkSetMTU(vlanLink, cfg.MTU); err != nil {
+			return "", fmt.Errorf("set mtu %d on %s: %w", cfg.MTU, vlanName, err)
+		}
+	}
+
+	if err := linkSetUp(vlanLink); err != nil {
 		return "", fmt.Errorf("bring up VLAN interface %s: %w", vlanName, err)
 	}
 
 	if cfg.Address != "" {
-		addr, err := netlink.ParseAddr(cfg.Address)
+		addr, err := parseAddr(cfg.Address)
 		if err != nil {
 			return "", fmt.Errorf("parse VLAN address %q: %w", cfg.Address, err)
 		}
-		if err := netlink.AddrAdd(vlanLink, addr); err != nil {
+		if err := addrAdd(vlanLink, addr); err != nil {
 			return "", fmt.Errorf("assign address %s to %s: %w", cfg.Address, vlanName, err)
 		}
 	}
@@ -62,7 +82,7 @@ func Setup(cfg *Config) (string, error) {
 			LinkIndex: vlanLink.Attrs().Index,
 			Gw:        gw,
 		}
-		if err := netlink.RouteAdd(route); err != nil {
+		if err := routeAdd(route); err != nil {
 			return "", fmt.Errorf("add gateway route %s on %s: %w", cfg.Gateway, vlanName, err)
 		}
 	}
@@ -75,13 +95,16 @@ func Setup(cfg *Config) (string, error) {
 // It is safe to call if the interface has already been removed.
 func Teardown(parentName string, vlanID int) error {
 	vlanName := fmt.Sprintf("%s.%d", parentName, vlanID)
+	return teardownByName(vlanName)
+}
 
-	link, err := netlink.LinkByName(vlanName)
+func teardownByName(vlanName string) error {
+	link, err := linkByName(vlanName)
 	if err != nil {
 		return nil //nolint:nilerr // not-found means already removed
 	}
 
-	if err := netlink.LinkDel(link); err != nil {
+	if err := linkDel(link); err != nil {
 		return fmt.Errorf("delete VLAN interface %s: %w", vlanName, err)
 	}
 
@@ -96,7 +119,7 @@ func SetupAll(cfgs []Config) ([]string, error) {
 		name, err := Setup(&cfgs[i])
 		if err != nil {
 			for _, c := range cfgs[:len(names)] {
-				_ = Teardown(c.Parent, c.ID)
+				_ = teardownByName(c.InterfaceName())
 			}
 			return nil, fmt.Errorf("VLAN setup failed: %w", err)
 		}
@@ -108,7 +131,7 @@ func SetupAll(cfgs []Config) ([]string, error) {
 // TeardownAll removes all VLAN interfaces.
 func TeardownAll(cfgs []Config) {
 	for _, cfg := range cfgs {
-		if err := Teardown(cfg.Parent, cfg.ID); err != nil {
+		if err := teardownByName(cfg.InterfaceName()); err != nil {
 			slog.Warn("VLAN teardown error", "vlan", cfg.InterfaceName(), "error", err)
 		}
 	}
