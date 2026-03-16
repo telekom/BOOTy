@@ -365,6 +365,8 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"FIRMWARE_MIN_BMC":            &cfg.FirmwareMinBMC,
 		"HEALTH_SKIP_CHECKS":          &cfg.HealthSkipChecks,
 		"HEALTH_CHECK_URL":            &cfg.HealthCheckURL,
+		"IMAGE_SIGNATURE_URL":         &cfg.ImageSignatureURL,
+		"IMAGE_GPG_PUBKEY":            &cfg.ImageGPGPubKey,
 	}
 
 	if ptr, ok := strFields[key]; ok {
