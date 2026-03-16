@@ -3,6 +3,8 @@ package persist
 
 import (
 	"fmt"
+	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -107,16 +109,56 @@ var validName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
 // Validate checks the network configuration.
 func (c *NetworkConfig) Validate() error {
-	for i, iface := range c.Interfaces {
-		if err := validateInterface(i, &iface); err != nil {
+	if c == nil {
+		return fmt.Errorf("network config is nil")
+	}
+	if err := c.validateInterfaces(); err != nil {
+		return err
+	}
+	if err := c.validateBonds(); err != nil {
+		return err
+	}
+	if err := c.validateVLANs(); err != nil {
+		return err
+	}
+	if err := validateDNSConfig(&c.DNS); err != nil {
+		return err
+	}
+	if err := c.validateRoutes(); err != nil {
+		return err
+	}
+	if (len(c.DNS.Servers) > 0 || len(c.DNS.Search) > 0 || len(c.Routes) > 0) &&
+		len(c.Interfaces) == 0 && len(c.Bonds) == 0 && len(c.VLANs) == 0 {
+		return fmt.Errorf("dns/routes require at least one interface, bond, or vlan")
+	}
+	return nil
+}
+
+func (c *NetworkConfig) validateInterfaces() error {
+	ifaceNames := make(map[string]struct{}, len(c.Interfaces))
+	for i := range c.Interfaces {
+		iface := &c.Interfaces[i]
+		if _, exists := ifaceNames[iface.Name]; exists {
+			return fmt.Errorf("duplicate interface name %q", iface.Name)
+		}
+		ifaceNames[iface.Name] = struct{}{}
+		if err := validateInterface(i, iface); err != nil {
 			return err
 		}
 	}
+	return nil
+}
+
+func (c *NetworkConfig) validateBonds() error {
 	for i := range c.Bonds {
 		if err := validateBond(i, &c.Bonds[i]); err != nil {
 			return err
 		}
 	}
+	return nil
+}
+
+func (c *NetworkConfig) validateVLANs() error {
 	for i, vlan := range c.VLANs {
 		if vlan.Parent == "" {
 			return fmt.Errorf("vlan %d: parent required", i)
@@ -130,13 +172,36 @@ func (c *NetworkConfig) Validate() error {
 		if vlan.ID < 1 || vlan.ID > 4094 {
 			return fmt.Errorf("vlan %d: id must be 1-4094", i)
 		}
+		if vlan.DHCP && vlan.Address != "" {
+			return fmt.Errorf("vlan %d: dhcp and static address are mutually exclusive", i)
+		}
+		if vlan.Address != "" {
+			if err := validateCIDR(vlan.Address); err != nil {
+				return fmt.Errorf("vlan %d: invalid address: %w", i, err)
+			}
+		}
 	}
+	return nil
+}
+
+func (c *NetworkConfig) validateRoutes() error {
 	for i, route := range c.Routes {
 		if route.Destination == "" {
 			return fmt.Errorf("route %d: destination required", i)
 		}
 		if route.Gateway == "" {
 			return fmt.Errorf("route %d: gateway required", i)
+		}
+		if route.Destination != "default" {
+			if err := validateCIDR(route.Destination); err != nil {
+				return fmt.Errorf("route %d: invalid destination: %w", i, err)
+			}
+		}
+		if err := validateIP(route.Gateway); err != nil {
+			return fmt.Errorf("route %d: invalid gateway: %w", i, err)
+		}
+		if route.Metric < 0 {
+			return fmt.Errorf("route %d: metric must be >= 0", i)
 		}
 	}
 	return nil
@@ -149,8 +214,26 @@ func validateInterface(i int, iface *InterfaceConfig) error {
 	if !validName.MatchString(iface.Name) {
 		return fmt.Errorf("interface %q: invalid name", iface.Name)
 	}
+	if iface.DHCP && iface.Address != "" {
+		return fmt.Errorf("interface %q: dhcp and static address are mutually exclusive", iface.Name)
+	}
 	if !iface.DHCP && iface.Address == "" {
 		return fmt.Errorf("interface %q: address or dhcp required", iface.Name)
+	}
+	if iface.Address != "" {
+		if err := validateCIDR(iface.Address); err != nil {
+			return fmt.Errorf("interface %q: invalid address: %w", iface.Name, err)
+		}
+	}
+	if iface.Gateway != "" {
+		if err := validateIP(iface.Gateway); err != nil {
+			return fmt.Errorf("interface %q: invalid gateway: %w", iface.Name, err)
+		}
+	}
+	if iface.MAC != "" {
+		if _, err := net.ParseMAC(iface.MAC); err != nil {
+			return fmt.Errorf("interface %q: invalid mac %q", iface.Name, iface.MAC)
+		}
 	}
 	return nil
 }
@@ -176,6 +259,47 @@ func validateBond(i int, bond *BondConfig) error {
 	if bond.Mode == "" {
 		return fmt.Errorf("bond %q: mode required", bond.Name)
 	}
+	if bond.Address != "" {
+		if err := validateCIDR(bond.Address); err != nil {
+			return fmt.Errorf("bond %q: invalid address: %w", bond.Name, err)
+		}
+	}
+	if bond.Gateway != "" {
+		if err := validateIP(bond.Gateway); err != nil {
+			return fmt.Errorf("bond %q: invalid gateway: %w", bond.Name, err)
+		}
+	}
+	return nil
+}
+
+func validateDNSConfig(cfg *DNSConfig) error {
+	for i, s := range cfg.Servers {
+		if err := validateIP(s); err != nil {
+			return fmt.Errorf("dns server %d: %w", i, err)
+		}
+	}
+	for i, d := range cfg.Search {
+		if strings.TrimSpace(d) == "" {
+			return fmt.Errorf("dns search %d: empty domain", i)
+		}
+		if strings.ContainsAny(d, " \t\n\r") {
+			return fmt.Errorf("dns search %d: invalid domain %q", i, d)
+		}
+	}
+	return nil
+}
+
+func validateCIDR(v string) error {
+	if _, err := netip.ParsePrefix(v); err != nil {
+		return fmt.Errorf("invalid cidr %q", v)
+	}
+	return nil
+}
+
+func validateIP(v string) error {
+	if _, err := netip.ParseAddr(v); err != nil {
+		return fmt.Errorf("invalid ip %q", v)
+	}
 	return nil
 }
 
@@ -185,6 +309,7 @@ func RenderNetplan(cfg *NetworkConfig) string {
 	var b strings.Builder
 	b.WriteString("network:\n")
 	b.WriteString("  version: 2\n")
+	b.WriteString("  renderer: networkd\n")
 	renderNetplanEthernets(&b, cfg.Interfaces, &cfg.DNS, cfg.Routes)
 	renderNetplanBonds(&b, cfg.Bonds)
 	renderNetplanVLANs(&b, cfg.VLANs)
@@ -326,6 +451,9 @@ func RenderNetworkdUnit(iface *InterfaceConfig) string {
 // Write renders and writes the network configuration to the target OS root.
 // rootDir is the mount point of the target root filesystem (e.g., "/newroot").
 func Write(rootDir string, family OSFamily, cfg *NetworkConfig) error {
+	if cfg == nil {
+		return fmt.Errorf("network config is nil")
+	}
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("validate config: %w", err)
 	}
@@ -354,8 +482,7 @@ func Write(rootDir string, family OSFamily, cfg *NetworkConfig) error {
 
 func writeNetplan(dir string, cfg *NetworkConfig) error {
 	content := RenderNetplan(cfg)
-	path := filepath.Join(dir, "99-booty.yaml")
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := writeFileAtomic(dir, "01-booty-provisioned.yaml", []byte(content), 0o600); err != nil {
 		return fmt.Errorf("write netplan config: %w", err)
 	}
 	return nil
@@ -367,12 +494,11 @@ func writeNetworkd(dir string, cfg *NetworkConfig) error {
 	}
 	for i := range cfg.Interfaces {
 		content := RenderNetworkdUnit(&cfg.Interfaces[i])
-		if len(cfg.DNS.Servers) > 0 || len(cfg.Routes) > 0 {
+		if i == 0 && (len(cfg.DNS.Servers) > 0 || len(cfg.DNS.Search) > 0 || len(cfg.Routes) > 0) {
 			content = appendNetworkdDNSRoutes(content, &cfg.DNS, cfg.Routes)
 		}
 		filename := fmt.Sprintf("10-booty-%s.network", filepath.Base(cfg.Interfaces[i].Name))
-		path := filepath.Join(dir, filename)
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		if err := writeFileAtomic(dir, filename, []byte(content), 0o644); err != nil {
 			return fmt.Errorf("write networkd unit for %s: %w", cfg.Interfaces[i].Name, err)
 		}
 	}
@@ -452,10 +578,40 @@ func writeNMKeyfiles(dir string, cfg *NetworkConfig) error {
 	for i := range cfg.Interfaces {
 		content := renderNMKeyfile(&cfg.Interfaces[i], &cfg.DNS, cfg.Routes)
 		filename := fmt.Sprintf("booty-%s.nmconnection", filepath.Base(cfg.Interfaces[i].Name))
-		path := filepath.Join(dir, filename)
-		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		if err := writeFileAtomic(dir, filename, []byte(content), 0o600); err != nil {
 			return fmt.Errorf("write nm keyfile for %s: %w", cfg.Interfaces[i].Name, err)
 		}
+	}
+	return nil
+}
+
+func writeFileAtomic(dir, filename string, content []byte, perm os.FileMode) error {
+	safeName := filepath.Base(filename)
+	path := filepath.Join(dir, safeName)
+
+	tmp, err := os.CreateTemp(dir, ".booty-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		_ = os.Remove(tmpName)
+	}()
+
+	if _, err := tmp.Write(content); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write temp file: %w", err)
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("chmod temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp file: %w", err)
+	}
+	// #nosec G703 -- path uses sanitized basename within target config directory.
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("rename temp file: %w", err)
 	}
 	return nil
 }
