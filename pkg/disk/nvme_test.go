@@ -144,3 +144,49 @@ func TestParseNVMeConfigValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestParseHex(t *testing.T) {
+	tests := []struct {
+		input   string
+		want    uint64
+		wantErr bool
+	}{
+		{"1", 1, false},
+		{"a", 10, false},
+		{"ff", 255, false},
+		{"0", 0, false},
+		{"", 0, true},
+		{"xyz", 0, true},
+	}
+	for _, tc := range tests {
+		got, err := parseHex(tc.input)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("parseHex(%q): expected error", tc.input)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("parseHex(%q): unexpected error: %v", tc.input, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("parseHex(%q) = %d, want %d", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestParseNVMeConfig_NegativeSizePct(t *testing.T) {
+	input := `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":-10}]}]`
+	_, err := ParseNVMeConfig(input)
+	if err == nil {
+		t.Error("expected error for negative sizePct")
+	}
+}
+
+func TestDetectNVMeControllers(t *testing.T) {
+	// Just exercises the code path - results depend on host hardware.
+	controllers := DetectNVMeControllers()
+	// On most CI/dev machines there are no NVMe controllers.
+	_ = controllers
+}

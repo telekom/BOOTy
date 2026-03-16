@@ -63,6 +63,7 @@ func ParseNVMeConfig(data string) ([]NVMeNamespaceConfig, error) {
 func DetectNVMeControllers() []string {
 	entries, err := os.ReadDir("/dev/")
 	if err != nil {
+		slog.Warn("failed to read /dev/ for NVMe detection", "error", err)
 		return nil
 	}
 	var controllers []string
