@@ -11,6 +11,7 @@ func TestWipeFS(t *testing.T) {
 		name string
 		size int
 	}{
+		{name: "4MiB file", size: 4 << 20},
 		{name: "2MiB file", size: 2 << 20},
 		{name: "exactly 1MiB", size: 1 << 20},
 		{name: "small file under 1MiB", size: 512},
@@ -35,6 +36,9 @@ func TestWipeFS(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if len(wiped) != tt.size {
+				t.Fatalf("file size changed from %d to %d", tt.size, len(wiped))
+			}
 
 			// First wipeSize bytes (or all bytes if smaller) should be zero
 			checkLen := len(wiped)
@@ -53,6 +57,13 @@ func TestWipeFS(t *testing.T) {
 					if wiped[i] != 0 {
 						t.Fatalf("tail byte %d not zeroed: %02x", i, wiped[i])
 					}
+				}
+			}
+
+			if tt.size > 2*wipeSize {
+				mid := wipeSize
+				if wiped[mid] != 0xFF {
+					t.Fatalf("middle byte %d unexpectedly modified: %02x", mid, wiped[mid])
 				}
 			}
 		})

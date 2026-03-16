@@ -3,7 +3,7 @@ package efi
 import (
 	"encoding/binary"
 	"fmt"
-	"path/filepath"
+	"path"
 	"unicode/utf16"
 )
 
@@ -44,7 +44,7 @@ func (e *BootEntry) VarName() string {
 
 // VarPath returns the full sysfs path for this boot entry.
 func (e *BootEntry) VarPath() string {
-	return filepath.Join(EFIVarsPath, e.VarName())
+	return path.Join(EFIVarsPath, e.VarName())
 }
 
 // BuildLoadOption constructs the raw EFI_LOAD_OPTION binary data for a
@@ -69,8 +69,14 @@ func BuildLoadOption(entry *BootEntry) ([]byte, error) {
 	desc := encodeUCS2(entry.Label)
 
 	// FilePathListLength
-	devPath := buildFileDevicePath(entry.LoaderPath)
-	buf = binary.LittleEndian.AppendUint16(buf, uint16(len(devPath))) //nolint:gosec // len fits uint16
+	devPath, err := buildFileDevicePath(entry.LoaderPath)
+	if err != nil {
+		return nil, fmt.Errorf("build file device path: %w", err)
+	}
+	if len(devPath) > 0xFFFF {
+		return nil, fmt.Errorf("device path length %d exceeds EFI uint16 limit", len(devPath))
+	}
+	buf = binary.LittleEndian.AppendUint16(buf, uint16(len(devPath)))
 
 	buf = append(buf, desc...)
 	buf = append(buf, devPath...)
@@ -78,7 +84,7 @@ func BuildLoadOption(entry *BootEntry) ([]byte, error) {
 	return buf, nil
 }
 
-// encodeUCS2 encodes a Go string to UCS-2LE with null terminator.
+// encodeUCS2 encodes a Go string to UTF-16LE with null terminator.
 func encodeUCS2(s string) []byte {
 	runes := []rune(s)
 	utf16Encoded := utf16.Encode(runes)
@@ -90,22 +96,25 @@ func encodeUCS2(s string) []byte {
 	return buf
 }
 
-// buildFileDevicePath creates a minimal EFI device path for a file.
+// buildFileDevicePath creates a minimal EFI file-path device path for a loader.
 // Type 0x04 (Media), Sub-Type 0x04 (File Path).
-func buildFileDevicePath(loaderPath string) []byte {
+func buildFileDevicePath(loaderPath string) ([]byte, error) {
 	pathUCS2 := encodeUCS2(loaderPath)
 
 	// Device path node: Type(1) + SubType(1) + Length(2) + path data
 	nodeLen := 4 + len(pathUCS2)
+	if nodeLen > 0xFFFF {
+		return nil, fmt.Errorf("file device path node length %d exceeds EFI uint16 limit", nodeLen)
+	}
 	node := make([]byte, nodeLen)
-	node[0] = 0x04                                           // Media Device Path
-	node[1] = 0x04                                           // File Path
-	binary.LittleEndian.PutUint16(node[2:], uint16(nodeLen)) //nolint:gosec // fits uint16
+	node[0] = 0x04 // Media Device Path
+	node[1] = 0x04 // File Path
+	binary.LittleEndian.PutUint16(node[2:], uint16(nodeLen))
 
 	copy(node[4:], pathUCS2)
 
 	// End device path node: Type 0x7F, Sub-Type 0xFF, Length 4
 	end := []byte{0x7F, 0xFF, 0x04, 0x00}
 
-	return append(node, end...)
+	return append(node, end...), nil
 }

@@ -366,11 +366,12 @@ func (m *Manager) ResizeFilesystem(ctx context.Context, device string) error {
 // Tries the pure Go ioctl approach first, falls back to external partprobe.
 func (m *Manager) PartProbe(ctx context.Context, disk string) error {
 	slog.Info("Re-reading partition table", "disk", disk)
-	if err := RereadPartitions(disk); err == nil {
+	err := RereadPartitions(disk)
+	if err == nil {
 		slog.Info("Partition table re-read via ioctl", "disk", disk)
 		return nil
 	}
-	slog.Debug("ioctl re-read failed, falling back to partprobe", "disk", disk)
+	slog.Debug("ioctl re-read failed, falling back to partprobe", "disk", disk, "error", err)
 	out, err := m.cmd.Run(ctx, "partprobe", disk)
 	if err != nil {
 		return fmt.Errorf("partprobe %s: %s: %w", disk, string(out), err)

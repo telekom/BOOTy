@@ -2,6 +2,7 @@ package efi
 
 import (
 	"encoding/binary"
+	"strings"
 	"testing"
 )
 
@@ -58,6 +59,14 @@ func TestBootEntry_Validate(t *testing.T) {
 	}
 }
 
+func TestBootEntry_VarPath(t *testing.T) {
+	e := &BootEntry{Num: 1, Label: "test", LoaderPath: `\EFI\test`}
+	got := e.VarPath()
+	if !strings.HasPrefix(got, EFIVarsPath+"/") {
+		t.Fatalf("VarPath() = %q, expected EFIVarsPath prefix", got)
+	}
+}
+
 func TestBuildLoadOption(t *testing.T) {
 	entry := &BootEntry{
 		Num:        0,
@@ -110,6 +119,17 @@ func TestBuildLoadOption_invalid(t *testing.T) {
 	_, err := BuildLoadOption(entry)
 	if err == nil {
 		t.Fatal("expected error for invalid entry")
+	}
+}
+
+func TestBuildLoadOption_LongLoaderPath(t *testing.T) {
+	entry := &BootEntry{
+		Num:        1,
+		Label:      "Test",
+		LoaderPath: strings.Repeat("A", 70000),
+	}
+	if _, err := BuildLoadOption(entry); err == nil {
+		t.Fatal("expected error for oversized loader path")
 	}
 }
 
