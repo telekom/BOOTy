@@ -28,18 +28,21 @@ func (m *Manager) Vendor() nic.Vendor { return nic.VendorBroadcom }
 
 // Supported checks if this is a Broadcom NIC.
 func (m *Manager) Supported(n *nic.Identifier) bool {
-	return n.VendorID == "0x14e4"
+	return n != nil && n.VendorID == "0x14e4"
 }
 
 // Capture reads firmware parameters from a Broadcom NIC via ethtool.
-func (m *Manager) Capture(n *nic.Identifier) (*nic.FirmwareState, error) {
+func (m *Manager) Capture(ctx context.Context, n *nic.Identifier) (*nic.FirmwareState, error) {
+	if n == nil {
+		return nil, fmt.Errorf("nic identifier required")
+	}
 	state := &nic.FirmwareState{
 		NIC:        *n,
 		Parameters: make(map[string]nic.Parameter),
 	}
 
 	if n.Interface != "" {
-		if err := m.captureViaEthtool(context.Background(), n.Interface, state); err != nil {
+		if err := m.captureViaEthtool(ctx, n.Interface, state); err != nil {
 			m.log.Warn("ethtool capture failed", "err", err)
 		}
 	}
@@ -49,12 +52,15 @@ func (m *Manager) Capture(n *nic.Identifier) (*nic.FirmwareState, error) {
 }
 
 // Apply sets firmware parameters on a Broadcom NIC.
-func (m *Manager) Apply(n *nic.Identifier, changes []nic.FlagChange) error {
+func (m *Manager) Apply(ctx context.Context, n *nic.Identifier, changes []nic.FlagChange) error {
+	if n == nil {
+		return fmt.Errorf("nic identifier required")
+	}
 	if n.Interface == "" {
 		return fmt.Errorf("interface name required for ethtool operations")
 	}
 	for _, change := range changes {
-		if err := m.applyViaEthtool(context.Background(), n.Interface, change); err != nil {
+		if err := m.applyViaEthtool(ctx, n.Interface, change); err != nil {
 			return fmt.Errorf("set %s=%s: %w", change.Name, change.Value, err)
 		}
 	}

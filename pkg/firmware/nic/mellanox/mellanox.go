@@ -28,18 +28,21 @@ func (m *Manager) Vendor() nic.Vendor { return nic.VendorMellanox }
 
 // Supported checks if this is a Mellanox NIC.
 func (m *Manager) Supported(n *nic.Identifier) bool {
-	return n.VendorID == "0x15b3"
+	return n != nil && n.VendorID == "0x15b3"
 }
 
 // Capture reads firmware parameters from a Mellanox NIC via mstconfig.
-func (m *Manager) Capture(n *nic.Identifier) (*nic.FirmwareState, error) {
+func (m *Manager) Capture(ctx context.Context, n *nic.Identifier) (*nic.FirmwareState, error) {
+	if n == nil {
+		return nil, fmt.Errorf("nic identifier required")
+	}
 	state := &nic.FirmwareState{
 		NIC:        *n,
 		Parameters: make(map[string]nic.Parameter),
 	}
 
 	// Try mstconfig query
-	out, err := m.mstconfigQuery(context.Background(), n.PCIAddress)
+	out, err := m.mstconfigQuery(ctx, n.PCIAddress)
 	if err != nil {
 		return nil, fmt.Errorf("mstconfig query: %w", err)
 	}
@@ -56,9 +59,12 @@ func (m *Manager) Capture(n *nic.Identifier) (*nic.FirmwareState, error) {
 }
 
 // Apply sets firmware parameters on a Mellanox NIC via mstconfig.
-func (m *Manager) Apply(n *nic.Identifier, changes []nic.FlagChange) error {
+func (m *Manager) Apply(ctx context.Context, n *nic.Identifier, changes []nic.FlagChange) error {
+	if n == nil {
+		return fmt.Errorf("nic identifier required")
+	}
 	for _, change := range changes {
-		if err := m.mstconfigSet(context.Background(), n.PCIAddress, change.Name, change.Value); err != nil {
+		if err := m.mstconfigSet(ctx, n.PCIAddress, change.Name, change.Value); err != nil {
 			return fmt.Errorf("set %s=%s: %w", change.Name, change.Value, err)
 		}
 		m.log.Info("applied Mellanox FW param", "param", change.Name, "value", change.Value)

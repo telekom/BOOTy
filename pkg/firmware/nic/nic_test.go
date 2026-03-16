@@ -1,6 +1,7 @@
 package nic
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -109,6 +110,9 @@ func TestCompare_MissingParam(t *testing.T) {
 	if diff.Match {
 		t.Error("expected mismatch")
 	}
+	if len(diff.Changes) == 0 {
+		t.Fatal("expected at least one change")
+	}
 	if diff.Changes[0].Actual != "(missing)" {
 		t.Errorf("actual = %q, want (missing)", diff.Changes[0].Actual)
 	}
@@ -142,6 +146,13 @@ func TestRegistry_ForNIC_NotFound(t *testing.T) {
 	}
 }
 
+func TestRegistry_ForNIC_Nil(t *testing.T) {
+	reg := NewRegistry()
+	if _, err := reg.ForNIC(nil); err == nil {
+		t.Fatal("expected error for nil NIC")
+	}
+}
+
 func TestVendorConstants(t *testing.T) {
 	if string(VendorMellanox) != "mellanox" {
 		t.Error("VendorMellanox wrong")
@@ -162,7 +173,9 @@ func (m *mockManager) Vendor() Vendor { return m.vendor }
 func (m *mockManager) Supported(nic *Identifier) bool {
 	return pciVendorMap[nic.VendorID] == m.vendor
 }
-func (m *mockManager) Capture(_ *Identifier) (*FirmwareState, error) {
+func (m *mockManager) Capture(_ context.Context, _ *Identifier) (*FirmwareState, error) {
 	return &FirmwareState{}, nil
 }
-func (m *mockManager) Apply(_ *Identifier, _ []FlagChange) error { return nil }
+func (m *mockManager) Apply(_ context.Context, _ *Identifier, _ []FlagChange) error {
+	return nil
+}

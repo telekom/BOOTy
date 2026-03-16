@@ -1,6 +1,7 @@
 package nic
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -37,10 +38,10 @@ type FirmwareManager interface {
 	Supported(nic *Identifier) bool
 
 	// Capture reads all firmware parameters from the NIC.
-	Capture(nic *Identifier) (*FirmwareState, error)
+	Capture(ctx context.Context, nic *Identifier) (*FirmwareState, error)
 
 	// Apply sets firmware parameters on the NIC.
-	Apply(nic *Identifier, changes []FlagChange) error
+	Apply(ctx context.Context, nic *Identifier, changes []FlagChange) error
 }
 
 // Identifier identifies a NIC.
@@ -164,6 +165,9 @@ func NewRegistry(managers ...FirmwareManager) *Registry {
 
 // ForNIC returns the appropriate firmware manager for a NIC.
 func (r *Registry) ForNIC(nic *Identifier) (FirmwareManager, error) {
+	if nic == nil {
+		return nil, fmt.Errorf("nic must not be nil")
+	}
 	for _, mgr := range r.managers {
 		if mgr.Supported(nic) {
 			return mgr, nil
