@@ -130,7 +130,7 @@ func parseLanPrint(output string) map[string]string {
 	return result
 }
 
-func parseVLAN(fields map[string]string) (bool, int) {
+func parseVLAN(fields map[string]string) (enabled bool, vlanID int) {
 	raw := strings.TrimSpace(fields["802.1q VLAN ID"])
 	if raw == "" {
 		return false, 0
