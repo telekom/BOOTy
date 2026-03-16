@@ -130,3 +130,46 @@ func TestReadSysfsMissing(t *testing.T) {
 		t.Errorf("readSysfs(missing) = %q, want empty", got)
 	}
 }
+
+func TestPCRSelectMultiple(t *testing.T) {
+	tests := []struct {
+		name    string
+		indices []int
+		want    []byte
+	}{
+		{"empty", nil, []byte{0}},
+		{"pcr0", []int{0}, []byte{0x01}},
+		{"pcr7", []int{7}, []byte{0x80}},
+		{"pcr0_7", []int{0, 7}, []byte{0x81}},
+		{"pcr8", []int{8}, []byte{0x00, 0x01}},
+		{"pcr0_8", []int{0, 8}, []byte{0x01, 0x01}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := pcrSelectMultiple(tc.indices)
+			if len(got) != len(tc.want) {
+				t.Fatalf("len = %d, want %d", len(got), len(tc.want))
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("byte[%d] = %x, want %x", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestMarshalQuote(t *testing.T) {
+	q := &AttestationQuote{
+		QuoteData: []byte{1, 2, 3},
+		Signature: []byte{4, 5, 6},
+		Nonce:     []byte{7, 8, 9},
+	}
+	data, err := MarshalQuote(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) == 0 {
+		t.Error("expected non-empty JSON")
+	}
+}

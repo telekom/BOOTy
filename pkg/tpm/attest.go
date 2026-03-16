@@ -32,24 +32,33 @@ type AttestationQuote struct {
 // Quote generates a TPM 2.0 attestation quote over the selected PCRs
 // using an Attestation Key created in the TPM.
 func (d *Device) Quote(pcrSelection []int, nonce []byte) (*AttestationQuote, error) {
+	for _, idx := range pcrSelection {
+		if idx < 0 || idx > 23 {
+			return nil, fmt.Errorf("invalid PCR index %d: must be 0-23", idx)
+		}
+	}
+	if len(nonce) == 0 {
+		return nil, fmt.Errorf("nonce must not be empty")
+	}
+
 	createResp, err := d.createAttestationKey()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating attestation key: %w", err)
 	}
 	defer func() {
 		flushCtx := tpm2.FlushContext{FlushHandle: createResp.ObjectHandle}
-		_, _ = flushCtx.Execute(d.transport) //nolint:errcheck // best-effort cleanup
+		_, _ = flushCtx.Execute(d.transport) //nolint:errcheck // best-effort TPM cleanup
 	}()
 
 	sel := buildPCRSelection(pcrSelection)
 	quoteResp, err := d.generateQuote(createResp.ObjectHandle, nonce, sel)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("generating quote: %w", err)
 	}
 
 	pcrValues, pcrDigest, err := d.readPCRDigest(pcrSelection, sel)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("reading PCR digest: %w", err)
 	}
 
 	result := &AttestationQuote{

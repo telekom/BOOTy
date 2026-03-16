@@ -17,10 +17,19 @@ type SealedBlob struct {
 // SealSecret seals data to the current values of the specified PCR registers.
 // The secret can only be unsealed when the PCRs match the values at seal time.
 func (d *Device) SealSecret(secret []byte, pcrSelection []int) (*SealedBlob, error) {
+	if len(secret) == 0 {
+		return nil, fmt.Errorf("secret must not be empty")
+	}
+	for _, idx := range pcrSelection {
+		if idx < 0 || idx > 23 {
+			return nil, fmt.Errorf("invalid PCR index %d: must be 0-23", idx)
+		}
+	}
+
 	// Create a primary storage key in the owner hierarchy.
 	srkResp, err := d.createSRK()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating storage root key: %w", err)
 	}
 	defer func() {
 		flushCtx := tpm2.FlushContext{FlushHandle: srkResp.ObjectHandle}
@@ -84,10 +93,14 @@ func (d *Device) SealSecret(secret []byte, pcrSelection []int) (*SealedBlob, err
 // UnsealSecret recovers a previously sealed secret. The operation will
 // fail if the current PCR values do not match those at seal time.
 func (d *Device) UnsealSecret(blob *SealedBlob, pcrSelection []int) ([]byte, error) {
+	if blob == nil {
+		return nil, fmt.Errorf("sealed blob must not be nil")
+	}
+
 	// Recreate the SRK.
 	srkResp, err := d.createSRK()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating storage root key: %w", err)
 	}
 	defer func() {
 		flushCtx := tpm2.FlushContext{FlushHandle: srkResp.ObjectHandle}
