@@ -43,23 +43,21 @@ But BOOTy only builds for AMD64 today.
 ### Build Changes
 
 ```makefile
-# Makefile
-ARCH ?= amd64
+# Makefile (current implementation)
+TARGETARCH ?= $(shell go env GOARCH)
 
 .PHONY: build
 build:
-    CGO_ENABLED=0 GOARCH=$(ARCH) go build -o bin/booty-$(ARCH) .
+    CGO_ENABLED=0 GOOS=linux GOARCH=$(TARGETARCH) go build -o dist/$(TARGETARCH)/booty .
 
 .PHONY: build-all
 build-all:
-    $(MAKE) build ARCH=amd64
-    $(MAKE) build ARCH=arm64
+    $(MAKE) build TARGETARCH=amd64
+    $(MAKE) build TARGETARCH=arm64
 
-.PHONY: initrd
-initrd:
-    docker buildx build --platform linux/$(ARCH) \
-        -f initrd.Dockerfile \
-        -t booty-initrd:$(ARCH) .
+# Initramfs targets per arch:
+#   make gobgp           (current TARGETARCH)
+#   make arm64-gobgp     (ARM64 variant)
 ```
 
 ### Kernel + Initramfs
@@ -146,8 +144,8 @@ jobs:
         arch: [amd64, arm64]
     steps:
       - uses: docker/setup-qemu-action@v3  # for ARM64 cross-build
-      - run: make build ARCH=${{ matrix.arch }}
-      - run: make initrd ARCH=${{ matrix.arch }}
+      - run: make build TARGETARCH=${{ matrix.arch }}
+      - run: make gobgp TARGETARCH=${{ matrix.arch }}
 ```
 
 ## Required Binaries in Initramfs
@@ -177,7 +175,7 @@ FROM --platform=$TARGETPLATFORM alpine:3.19 AS base
 
 | File | Change |
 |------|--------|
-| `Makefile` | Add `ARCH` variable, `build-all` target |
+| `Makefile` | Added `TARGETARCH` variable, `build-all` target (implemented) |
 | `initrd.Dockerfile` | Multi-arch base image, arch-specific modules |
 | `main.go` | Architecture-conditional module loading |
 | `pkg/disk/manager.go` | ARM64 EFI bootloader paths |

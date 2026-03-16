@@ -71,4 +71,17 @@ func TestEfiLoaderPath(t *testing.T) {
 	if loader != wantArm {
 		t.Errorf("got %q, want arm64 grub fallback %q", loader, wantArm)
 	}
+
+	// ARM64 with shim -> should prefer shimaa64.
+	if err := os.WriteFile(filepath.Join(efiDir, "shimaa64.efi"), []byte("shim-arm64"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loader, err = efiLoaderPath(root, "arm64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantArmShim := "\\EFI\\ubuntu\\shimaa64.efi"
+	if loader != wantArmShim {
+		t.Errorf("got %q, want arm64 shim %q", loader, wantArmShim)
+	}
 }
