@@ -20,6 +20,9 @@ func (d *Device) SealSecret(secret []byte, pcrSelection []int) (*SealedBlob, err
 	if len(secret) == 0 {
 		return nil, fmt.Errorf("secret must not be empty")
 	}
+	if len(pcrSelection) == 0 {
+		return nil, fmt.Errorf("pcrSelection must not be empty: sealing without PCR binding provides no security")
+	}
 	for _, idx := range pcrSelection {
 		if idx < 0 || idx > 23 {
 			return nil, fmt.Errorf("invalid PCR index %d: must be 0-23", idx)
@@ -95,6 +98,9 @@ func (d *Device) SealSecret(secret []byte, pcrSelection []int) (*SealedBlob, err
 func (d *Device) UnsealSecret(blob *SealedBlob, pcrSelection []int) ([]byte, error) {
 	if blob == nil {
 		return nil, fmt.Errorf("sealed blob must not be nil")
+	}
+	if len(pcrSelection) == 0 {
+		return nil, fmt.Errorf("pcrSelection must not be empty: unsealing without PCR binding provides no security")
 	}
 	for _, idx := range pcrSelection {
 		if idx < 0 || idx > 23 {

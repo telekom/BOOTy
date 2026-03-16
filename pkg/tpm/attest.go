@@ -34,6 +34,9 @@ type AttestationQuote struct {
 // Quote generates a TPM 2.0 attestation quote over the selected PCRs
 // using an Attestation Key created in the TPM.
 func (d *Device) Quote(pcrSelection []int, nonce []byte) (*AttestationQuote, error) {
+	if len(pcrSelection) == 0 {
+		return nil, fmt.Errorf("pcrSelection must not be empty for attestation quote")
+	}
 	for _, idx := range pcrSelection {
 		if idx < 0 || idx > 23 {
 			return nil, fmt.Errorf("invalid PCR index %d: must be 0-23", idx)
@@ -169,21 +172,23 @@ func (d *Device) readPCRDigest(pcrSelection []int, sel tpm2.TPMLPCRSelection) (p
 		return nil, nil, fmt.Errorf("reading PCR values for quote: %w", err)
 	}
 
-	// Map digests by reading individual PCRs to avoid ordering assumptions.
-	// TPM PCRRead returns digests in ascending PCR order which may differ
-	// from the requested pcrSelection order.
-	pcrValues = make(map[int][]byte, len(pcrSelection))
-	digestIdx := 0
-	for _, idx := range sortedInts(pcrSelection) {
-		if digestIdx < len(pcrReadResp.PCRValues.Digests) {
-			pcrValues[idx] = pcrReadResp.PCRValues.Digests[digestIdx].Buffer
-			digestIdx++
-		}
+	// TPM PCRRead returns digests in ascending PCR order matching the sorted
+	// selection. Validate that we received exactly the expected number of digests.
+	sortedPCRs := sortedInts(pcrSelection)
+	expectedDigests := len(sortedPCRs)
+	actualDigests := len(pcrReadResp.PCRValues.Digests)
+	if actualDigests != expectedDigests {
+		return nil, nil, fmt.Errorf("PCR read returned %d digests, expected %d for PCR selection %v", actualDigests, expectedDigests, pcrSelection)
+	}
+	pcrValues = make(map[int][]byte, len(sortedPCRs))
+	for i, idx := range sortedPCRs {
+		pcrValues[idx] = pcrReadResp.PCRValues.Digests[i].Buffer
 	}
 
-	// Compute PCR composite digest.
+	// Compute PCR composite digest over deterministic sorted order to ensure
+	// consistent results regardless of the pcrSelection argument ordering.
 	h := sha256.New()
-	for _, idx := range pcrSelection {
+	for _, idx := range sortedPCRs {
 		if v, ok := pcrValues[idx]; ok {
 			h.Write(v)
 		}
@@ -198,6 +203,12 @@ func (d *Device) readPCRDigest(pcrSelection []int, sel tpm2.TPMLPCRSelection) (p
 // TPMT_SIGNATURE structure that must be decoded to extract the raw
 // ECDSA (r, s) components.
 func VerifyQuoteSignature(quote *AttestationQuote, pubkey *ecdsa.PublicKey) error {
+	if quote == nil {
+		return fmt.Errorf("quote must not be nil")
+	}
+	if pubkey == nil {
+		return fmt.Errorf("public key must not be nil")
+	}
 	digest := sha256.Sum256(quote.QuoteData)
 
 	// Decode TPM-marshaled TPMT_SIGNATURE to extract ECDSA r, s values.
@@ -215,7 +226,7 @@ func VerifyQuoteSignature(quote *AttestationQuote, pubkey *ecdsa.PublicKey) erro
 	s.SetBytes(ecdsaSig.SignatureS.Buffer)
 
 	if !ecdsa.Verify(pubkey, digest[:], &r, &s) {
-		return fmt.Errorf("TPM quote signature verification failed")
+		return fmt.Errorf("tpm quote signature verification failed")
 	}
 	return nil
 }

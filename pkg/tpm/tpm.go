@@ -32,11 +32,11 @@ type Info struct {
 func Detect() Info {
 	info := Info{}
 
-	if _, err := os.Stat(tpmDevicePath); err == nil {
+	if fi, err := os.Stat(tpmDevicePath); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
 		info.DevicePresent = true
 		info.Present = true
 	}
-	if _, err := os.Stat(tpmrmDevicePath); err == nil {
+	if fi, err := os.Stat(tpmrmDevicePath); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
 		info.RMPresent = true
 		info.Present = true
 	}
