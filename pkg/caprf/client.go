@@ -286,8 +286,8 @@ func ParseVars(r io.Reader) (*config.MachineConfig, error) {
 			continue
 		}
 
-		// Unquote value (remove surrounding double quotes).
-		value = strings.Trim(value, `"`)
+		// Unquote value (remove surrounding quotes).
+		value = strings.Trim(value, `"'`)
 
 		applyVar(cfg, key, value)
 	}

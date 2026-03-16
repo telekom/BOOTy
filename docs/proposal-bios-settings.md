@@ -1,11 +1,12 @@
 # Proposal: BIOS Settings Management via Redfish
 
-## Status: Fully Implemented
+## Status: Phases 1 & 2 Implemented
 
 Phase 1 implements BIOS information collection in debug dump output.
 Phase 2 adds BIOS settings reporting to CAPRF via the `report-bios-settings`
 provisioning step, which validates desired settings JSON and ships a report
 including current BIOS version/vendor info alongside desired configuration.
+Both phases are delivered in this PR.
 
 ## Priority: P2
 

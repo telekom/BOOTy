@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
@@ -57,9 +58,9 @@ func NewOrchestrator(cfg *config.MachineConfig, provider config.Provider, diskMg
 	}
 }
 
-// Provision runs all provisioning steps sequentially.
-func (o *Orchestrator) Provision(ctx context.Context) error {
-	steps := []Step{
+// provisionSteps returns the ordered list of provisioning steps.
+func (o *Orchestrator) provisionSteps() []Step {
+	return []Step{
 		{"report-init", o.reportInit},
 		{"collect-inventory", o.collectInventory},
 		{"collect-firmware", o.collectFirmware},
@@ -72,7 +73,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		{"disable-lvm", o.disableLVM},
 		{"remove-efi-entries", o.removeEFIBootEntries},
 		{"setup-mellanox", o.setupMellanox},
-		{"wipe-disks", o.wipeDisks},
+		{"wipe-disks", o.wipeOrSecureEraseDisks},
 		{"detect-disk", o.detectDisk},
 		{"stream-image", o.streamImage},
 		{"partprobe", o.partprobe},
@@ -92,6 +93,11 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		{"teardown-chroot", o.teardownChroot},
 		{"report-success", o.reportSuccess},
 	}
+}
+
+// Provision runs all provisioning steps sequentially.
+func (o *Orchestrator) Provision(ctx context.Context) error {
+	steps := o.provisionSteps()
 
 	for i, step := range steps {
 		o.log.Info("Provisioning step", "step", step.Name, "index", i+1, "total", len(steps))
@@ -100,7 +106,9 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 			o.log.Error("Provisioning step failed", "step", step.Name, "error", err)
 			DumpDebugState(step.Name)
 			dumpConfig(o.cfg)
-			_ = o.provider.ReportStatus(ctx, config.StatusError, msg)
+			if reportErr := o.provider.ReportStatus(ctx, config.StatusError, msg); reportErr != nil {
+				o.log.Error("Failed to report error status", "error", reportErr)
+			}
 			return fmt.Errorf("provision step %s: %w", step.Name, err)
 		}
 	}
@@ -195,13 +203,13 @@ func (o *Orchestrator) reportBIOSSettings(ctx context.Context) error {
 		return nil
 	}
 
-	o.log.Info("Reporting desired BIOS settings to CAPRF", "count", len(desired))
-
 	reporter, ok := o.provider.(BIOSSettingsReporter)
 	if !ok {
 		o.log.Debug("Provider does not support BIOS settings reporting")
 		return nil
 	}
+
+	o.log.Info("Reporting desired BIOS settings to CAPRF", "count", len(desired))
 
 	// Build report with current BIOS info alongside desired settings
 	report := map[string]interface{}{
@@ -273,12 +281,12 @@ func (o *Orchestrator) FirmwareChanged() bool {
 	return o.firmwareChanged
 }
 
-func (o *Orchestrator) wipeDisks(ctx context.Context) error {
+func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
+	if o.cfg.SecureErase {
+		o.log.Info("Secure erase enabled, performing hardware-level erase")
+		return o.disk.SecureEraseAllDisks(ctx)
+	}
 	return o.disk.WipeAllDisks(ctx)
-}
-
-func (o *Orchestrator) secureEraseDisks(ctx context.Context) error {
-	return o.disk.SecureEraseAllDisks(ctx)
 }
 
 func (o *Orchestrator) detectDisk(ctx context.Context) error {
@@ -534,9 +542,17 @@ func DumpDebugState(failedStep string) {
 	slog.Error("=== DEBUG DUMP END ===", "failedStep", failedStep)
 }
 
+// debugCtx returns a context with a 10-second timeout for debug commands,
+// preventing them from blocking shutdown indefinitely.
+func debugCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 10*time.Second) //nolint:mnd // fixed debug timeout
+}
+
 // runDebugCmd executes a single debug command and logs its output.
 func runDebugCmd(label, cmd string) {
-	out, err := exec.CommandContext(context.Background(), "sh", "-c", cmd).CombinedOutput() //nolint:gosec // debug cmds are hardcoded
+	ctx, cancel := debugCtx()
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "sh", "-c", cmd).CombinedOutput() //nolint:gosec // debug cmds are hardcoded
 	trimmed := strings.TrimSpace(string(out))
 	if trimmed != "" {
 		for _, line := range strings.Split(trimmed, "\n") {

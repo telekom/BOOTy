@@ -85,6 +85,17 @@ BOOTy operates in two modes depending on the boot environment:
 - Docker (for building the initramfs)
 - A DHCP/PXE environment (legacy mode) or Redfish BMC with ISO virtual media (CAPRF mode)
 
+### Build Environment
+
+| Requirement          | Version | Notes |
+|----------------------|---------|-------|
+| Go                   | 1.26+   | `GOOS=linux` for cross-compilation on macOS/Windows |
+| Docker / Buildx      | 20.10+  | Multi-arch builds (`linux/amd64`, `linux/arm64`) |
+| golangci-lint        | v2.10+  | `make lint` — config in `.golangci.yml` |
+| GNU Make             | 4.0+    | Build automation |
+| ContainerLab         | 0.44+   | E2E tests only (Linux) |
+| KVM / QEMU           | —       | E2E boot tests only (Linux) |
+
 ## Building
 
 ### Initramfs (recommended)
