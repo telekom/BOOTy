@@ -166,6 +166,28 @@ func (c *Client) FetchCommands(ctx context.Context) ([]config.Command, error) {
 	return cmds, nil
 }
 
+// AcknowledgeCommand reports command execution result back to the CAPRF server.
+func (c *Client) AcknowledgeCommand(ctx context.Context, cmdID, status, message string) error {
+	if c.cfg.CommandsURL == "" {
+		return nil
+	}
+	ack := struct {
+		ID      string `json:"id"`
+		Status  string `json:"status"`
+		Message string `json:"message,omitempty"`
+	}{
+		ID:      cmdID,
+		Status:  status,
+		Message: message,
+	}
+	data, err := json.Marshal(ack)
+	if err != nil {
+		return fmt.Errorf("marshal command ack: %w", err)
+	}
+	ackURL := strings.TrimRight(c.cfg.CommandsURL, "/") + "/ack"
+	return c.postJSONWithAuth(ctx, ackURL, data)
+}
+
 // ReportInventory posts a hardware inventory JSON payload to the CAPRF server.
 func (c *Client) ReportInventory(ctx context.Context, data []byte) error {
 	if c.cfg.InventoryURL == "" {
