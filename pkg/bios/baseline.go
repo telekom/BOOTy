@@ -21,7 +21,7 @@ type DiffEntry struct {
 }
 
 // Compare compares a baseline against a live BIOS state.
-// Returns an empty match if either argument is nil.
+// Returns Matches=true only when both arguments are nil.
 func Compare(baseline *Baseline, state *State) *Diff {
 	if baseline == nil || state == nil {
 		return &Diff{Matches: baseline == nil && state == nil}

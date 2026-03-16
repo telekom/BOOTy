@@ -12,14 +12,13 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/telekom/BOOTy/pkg/bios"
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/firmware"
 	"github.com/telekom/BOOTy/pkg/health"
 	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/inventory"
-
-	"github.com/telekom/BOOTy/pkg/bios"
 )
 
 // Step represents a named provisioning step.

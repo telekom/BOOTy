@@ -24,16 +24,15 @@ import (
 	"github.com/telekom/BOOTy/pkg/plunderclient"
 	"github.com/telekom/BOOTy/pkg/plunderclient/types"
 	"github.com/telekom/BOOTy/pkg/provision"
+	"github.com/telekom/BOOTy/pkg/realm"
 	"github.com/telekom/BOOTy/pkg/utils"
+	"github.com/telekom/BOOTy/pkg/ux"
 	"golang.org/x/sys/unix"
 
-	_ "github.com/telekom/BOOTy/pkg/bios/dell"       // register Dell BIOS manager
-	_ "github.com/telekom/BOOTy/pkg/bios/hpe"        // register HPE BIOS manager
-	_ "github.com/telekom/BOOTy/pkg/bios/lenovo"     // register Lenovo BIOS manager
-	_ "github.com/telekom/BOOTy/pkg/bios/supermicro" // register Supermicro BIOS manager
-
-	"github.com/telekom/BOOTy/pkg/realm"
-	"github.com/telekom/BOOTy/pkg/ux"
+	_ "github.com/telekom/BOOTy/pkg/bios/dell"       //nolint:revive // register Dell BIOS manager
+	_ "github.com/telekom/BOOTy/pkg/bios/hpe"        //nolint:revive // register HPE BIOS manager
+	_ "github.com/telekom/BOOTy/pkg/bios/lenovo"     //nolint:revive // register Lenovo BIOS manager
+	_ "github.com/telekom/BOOTy/pkg/bios/supermicro" //nolint:revive // register Supermicro BIOS manager
 )
 
 // Version and Build are set via -ldflags at build time.
