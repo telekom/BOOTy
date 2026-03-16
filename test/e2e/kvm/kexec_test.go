@@ -7,6 +7,10 @@ import (
 	"time"
 )
 
+// TestKexecSmokeQEMU boots BOOTy and confirms it reaches the startup marker.
+// This is a prerequisite smoke test ensuring the initramfs boots successfully on a
+// kexec-capable kernel. Actual kexec execution (loading a new kernel via kexec_load)
+// requires a second kernel image and is not exercised here.
 func TestKexecSmokeQEMU(t *testing.T) {
 	qemuAvailable(t)
 	initramfs := envOrDefault("BOOTY_INITRAMFS", "test-initramfs.cpio.gz")

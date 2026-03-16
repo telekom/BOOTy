@@ -19,7 +19,10 @@ func TestUEFIBootPathSmoke(t *testing.T) {
 	initramfs := envOrDefault("BOOTY_INITRAMFS", "test-initramfs.cpio.gz")
 	kernel := envOrDefault("BOOTY_KERNEL", "vmlinuz")
 	requireKVMAssets(t, initramfs, kernel)
-	ovmf := envOrDefault("OVMF_CODE", "/usr/share/OVMF/OVMF_CODE.fd")
+	ovmf := envOrDefault("OVMF_CODE", findOVMF(
+		"/usr/share/OVMF/OVMF_CODE_4M.fd",
+		"/usr/share/OVMF/OVMF_CODE.fd",
+	))
 	ovmfVars := envOrDefault("OVMF_VARS", "")
 
 	if _, err := os.Stat(ovmf); err != nil {

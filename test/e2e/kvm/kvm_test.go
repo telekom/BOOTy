@@ -40,6 +40,16 @@ func requireKVMAssets(t *testing.T, initramfs, kernel string) {
 	}
 }
 
+// findOVMF returns the first existing path from candidates, or the first candidate if none exist.
+func findOVMF(candidates ...string) string {
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return candidates[0]
+}
+
 // splitExtraArgs splits a shell-style argument string into separate arguments,
 // respecting single and double quotes so values like "-append 'console=ttyS0 panic=1'"
 // are parsed correctly.
