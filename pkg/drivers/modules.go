@@ -4,6 +4,7 @@ package drivers
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -98,7 +99,7 @@ func runningKernelRelease() string {
 			return kernel
 		}
 	}
-	out, err := exec.Command("uname", "-r").Output()
+	out, err := exec.CommandContext(context.Background(), "uname", "-r").Output()
 	if err != nil {
 		return ""
 	}
