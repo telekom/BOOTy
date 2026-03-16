@@ -30,6 +30,15 @@ func TestInfo_JSON(t *testing.T) {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatal(err)
 	}
+	if decoded.Version != info.Version {
+		t.Errorf("Version = %q, want %q", decoded.Version, info.Version)
+	}
+	if decoded.Commit != info.Commit {
+		t.Errorf("Commit = %q, want %q", decoded.Commit, info.Commit)
+	}
+	if decoded.BuildDate != info.BuildDate {
+		t.Errorf("BuildDate = %q, want %q", decoded.BuildDate, info.BuildDate)
+	}
 	if decoded.GoVersion != info.GoVersion {
 		t.Errorf("GoVersion = %q, want %q", decoded.GoVersion, info.GoVersion)
 	}
@@ -38,6 +47,9 @@ func TestInfo_JSON(t *testing.T) {
 	}
 	if decoded.Arch != info.Arch {
 		t.Errorf("Arch = %q, want %q", decoded.Arch, info.Arch)
+	}
+	if decoded.Flavor != info.Flavor {
+		t.Errorf("Flavor = %q, want %q", decoded.Flavor, info.Flavor)
 	}
 }
 
@@ -112,5 +124,48 @@ func TestTotalEstimate_Empty(t *testing.T) {
 	total := TotalEstimate(nil)
 	if total != 0 {
 		t.Errorf("total = %f, want 0", total)
+	}
+}
+
+func TestGet_Defaults(t *testing.T) {
+	info := Get()
+	if info.Version != "dev" {
+		t.Errorf("default Version = %q, want %q", info.Version, "dev")
+	}
+	if info.Commit != "unknown" {
+		t.Errorf("default Commit = %q, want %q", info.Commit, "unknown")
+	}
+	if info.BuildDate != "unknown" {
+		t.Errorf("default BuildDate = %q, want %q", info.BuildDate, "unknown")
+	}
+	if info.Flavor != FlavorFull {
+		t.Errorf("default Flavor = %q, want %q", info.Flavor, FlavorFull)
+	}
+}
+
+func TestLDFlags_AllFields(t *testing.T) {
+	flags := LDFlags("v2.0.0", "def456", "2026-01-15", "micro")
+	expected := []string{
+		"version=v2.0.0",
+		"commit=def456",
+		"buildDate=2026-01-15",
+		"flavor=micro",
+		"-s -w",
+	}
+	for _, want := range expected {
+		if !strings.Contains(flags, want) {
+			t.Errorf("LDFlags missing %q in %q", want, flags)
+		}
+	}
+}
+
+func TestEstimateComponents_Fields(t *testing.T) {
+	for _, c := range EstimateComponents() {
+		if c.Component == "" {
+			t.Error("component has empty name")
+		}
+		if c.SizeMB <= 0 {
+			t.Errorf("component %q has non-positive size: %f", c.Component, c.SizeMB)
+		}
 	}
 }
