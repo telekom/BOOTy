@@ -196,7 +196,19 @@ func (s *SystemdBoot) SetDefault(ctx context.Context, entryID string) error {
 	loaderConf := filepath.Join(s.espPath, "loader", "loader.conf")
 	data, err := os.ReadFile(loaderConf)
 	if err != nil {
-		return fmt.Errorf("read loader.conf for set-default: %w", err)
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("read loader.conf for set-default: %w", err)
+		}
+		// loader.conf doesn't exist yet — create it with just the default line.
+		loaderDir := filepath.Join(s.espPath, "loader")
+		if mkErr := os.MkdirAll(loaderDir, 0o755); mkErr != nil {
+			return fmt.Errorf("create loader dir: %w", mkErr)
+		}
+		content := "default " + entryID + ".conf\n"
+		if wErr := os.WriteFile(loaderConf, []byte(content), 0o644); wErr != nil {
+			return fmt.Errorf("write loader.conf: %w", wErr)
+		}
+		return nil
 	}
 	lines := strings.Split(string(data), "\n")
 	found := false
@@ -245,14 +257,17 @@ func (s *SystemdBoot) generateLoaderConf(cfg *BootConfig) error {
 }
 
 func (s *SystemdBoot) generateEntry(entry *BootEntry) error {
+	// Normalize entry ID: strip any .conf suffix callers may pass to avoid
+	// creating <id>.conf.conf filenames.
+	normID := strings.TrimSuffix(entry.ID, ".conf")
 	// Sanitize entry ID to prevent path traversal.
-	if !isValidLoaderEntryID(entry.ID) {
-		return fmt.Errorf("invalid entry ID: %q", entry.ID)
+	if !isValidLoaderEntryID(normID) {
+		return fmt.Errorf("invalid entry ID: %q", normID)
 	}
 	if entry.Kernel == "" {
-		return fmt.Errorf("entry %q: kernel path required", entry.ID)
+		return fmt.Errorf("entry %q: kernel path required", normID)
 	}
-	safeID := entry.ID
+	safeID := normID
 	entriesDir := filepath.Join(s.espPath, "loader", "entries")
 	if err := os.MkdirAll(entriesDir, 0o755); err != nil {
 		return fmt.Errorf("create entries dir: %w", err)

@@ -31,6 +31,10 @@ func NewGRUB(log *slog.Logger) *GRUB {
 func (g *GRUB) Name() string { return "grub" }
 
 // Install installs GRUB into the provisioned OS via chroot.
+// NOTE: espPath must be a subdirectory of rootPath (e.g., rootPath/boot/efi),
+// because GRUB is installed via chroot and the ESP path is computed relative
+// to rootPath. This differs from SystemdBoot.Install, which passes espPath
+// directly to bootctl as a host filesystem path.
 func (g *GRUB) Install(ctx context.Context, rootPath, espPath string) error {
 	g.rootPath = rootPath
 	g.espPath = espPath
@@ -198,6 +202,11 @@ func parseGRUBConfig(path string) ([]BootEntry, error) {
 
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scan grub config: %w", err)
+	}
+	// Append the last entry if the file ended without a standalone "}" line
+	// (e.g., truncated config), consistent with pkg/kexec.ParseGrubCfg behavior.
+	if current != nil && current.Kernel != "" {
+		entries = append(entries, *current)
 	}
 	return entries, nil
 }
