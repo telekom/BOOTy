@@ -9,10 +9,21 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/telekom/BOOTy/pkg/config"
 )
+
+// safeNetName validates that a network name (interface, VLAN ID) is safe for use in file paths.
+var safeNetName = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+
+func validateNetName(name string) error {
+	if name == "" || !safeNetName.MatchString(name) || strings.Contains(name, "..") {
+		return fmt.Errorf("invalid network name %q: must contain only alphanumeric, dot, dash, underscore", name)
+	}
+	return nil
+}
 
 // persistNetworkStep is the provisioning step wrapper for network persistence.
 func (o *Orchestrator) persistNetworkStep(_ context.Context) error {
@@ -26,7 +37,7 @@ func (o *Orchestrator) persistNetworkConfig() error {
 		return nil
 	}
 
-	rootDir := "/newroot"
+	rootDir := newroot
 	osFamily := o.cfg.OSFamily
 	if osFamily == "" {
 		osFamily = detectOSFamily(rootDir)
@@ -39,8 +50,11 @@ func (o *Orchestrator) persistNetworkConfig() error {
 		iface = detectPrimaryInterface()
 	}
 
-	if err := writeNetworkForOS(rootDir, osFamily, iface, o.cfg.StaticIP, o.cfg.StaticGateway, o.cfg.DNSResolvers); err != nil {
-		return err
+	// When bonding is enabled, skip per-interface config — IP goes on bond0.
+	if o.cfg.BondInterfaces == "" {
+		if err := writeNetworkForOS(rootDir, osFamily, iface, o.cfg.StaticIP, o.cfg.StaticGateway, o.cfg.DNSResolvers); err != nil {
+			return err
+		}
 	}
 
 	// Persist bond configuration if present.
@@ -62,6 +76,9 @@ func (o *Orchestrator) persistNetworkConfig() error {
 
 // writeNetworkForOS dispatches to the correct network config writer for the OS family.
 func writeNetworkForOS(rootDir, osFamily, iface, staticIP, gateway, dnsResolvers string) error {
+	if err := validateNetName(iface); err != nil {
+		return fmt.Errorf("network interface: %w", err)
+	}
 	switch osFamily {
 	case "ubuntu":
 		return writeNetplan(rootDir, iface, staticIP, gateway, dnsResolvers)
@@ -200,13 +217,13 @@ func writeNetworkdStatic(buf *strings.Builder, staticIP, gateway, dnsResolvers s
 	}
 }
 
-// parseGateway extracts a net.IP from a gateway string or CIDR.
+// parseGateway extracts a net.IP from a gateway string, stripping any CIDR mask.
 func parseGateway(gateway string) net.IP {
-	ip, _, err := net.ParseCIDR(gateway)
-	if err != nil {
-		ip = net.ParseIP(gateway)
+	// Strip CIDR mask if present (e.g. "10.0.1.1/24" -> "10.0.1.1").
+	if idx := strings.IndexByte(gateway, '/'); idx >= 0 {
+		gateway = gateway[:idx]
 	}
-	return ip
+	return net.ParseIP(gateway)
 }
 
 // detectPrimaryInterface returns the name of the first non-loopback interface.
@@ -272,9 +289,21 @@ func writeNMGateway(buf *strings.Builder, gateway string) {
 
 // persistBondConfig writes bond configuration into the target OS.
 func persistBondConfig(rootDir, osFamily string, cfg *config.MachineConfig) error {
-	bondIfaces := strings.Split(cfg.BondInterfaces, ",")
+	var bondIfaces []string
+	for _, iface := range strings.Split(cfg.BondInterfaces, ",") {
+		iface = strings.TrimSpace(iface)
+		if iface == "" {
+			continue
+		}
+		bondIfaces = append(bondIfaces, iface)
+	}
 	if len(bondIfaces) < 2 {
 		return nil
+	}
+	for _, iface := range bondIfaces {
+		if err := validateNetName(iface); err != nil {
+			return fmt.Errorf("bond interface: %w", err)
+		}
 	}
 	bondMode := cfg.BondMode
 	if bondMode == "" {
@@ -313,6 +342,16 @@ func writeBondNetplan(rootDir string, ifaces []string, mode string, cfg *config.
 
 	if cfg.StaticIP != "" {
 		fmt.Fprintf(&buf, "      addresses: [%q]\n", cfg.StaticIP)
+		if gw := parseGateway(cfg.StaticGateway); gw != nil {
+			if gw.To4() != nil {
+				fmt.Fprintf(&buf, "      gateway4: %s\n", gw)
+			} else {
+				fmt.Fprintf(&buf, "      gateway6: %s\n", gw)
+			}
+		}
+		if cfg.DNSResolvers != "" {
+			fmt.Fprintf(&buf, "      nameservers:\n        addresses: [%s]\n", cfg.DNSResolvers)
+		}
 	} else {
 		buf.WriteString("      dhcp4: true\n")
 	}
@@ -356,6 +395,14 @@ func writeBondSystemd(rootDir string, ifaces []string, mode string, cfg *config.
 	bondNet.WriteString("[Match]\nName=bond0\n\n[Network]\n")
 	if cfg.StaticIP != "" {
 		fmt.Fprintf(&bondNet, "Address=%s\n", cfg.StaticIP)
+		if gw := parseGateway(cfg.StaticGateway); gw != nil {
+			fmt.Fprintf(&bondNet, "Gateway=%s\n", gw)
+		}
+		if cfg.DNSResolvers != "" {
+			for _, dns := range strings.Split(cfg.DNSResolvers, ",") {
+				fmt.Fprintf(&bondNet, "DNS=%s\n", strings.TrimSpace(dns))
+			}
+		}
 	} else {
 		bondNet.WriteString("DHCP=yes\n")
 	}
@@ -415,6 +462,13 @@ func persistVLANConfig(rootDir, osFamily string, cfg *config.MachineConfig) erro
 			ip = parts[2]
 		}
 
+		if err := validateNetName(vlanID); err != nil {
+			return fmt.Errorf("VLAN ID: %w", err)
+		}
+		if err := validateNetName(parentIface); err != nil {
+			return fmt.Errorf("VLAN parent interface: %w", err)
+		}
+
 		switch osFamily {
 		case "ubuntu":
 			if err := writeVLANNetplan(rootDir, vlanID, parentIface, ip); err != nil {
@@ -444,6 +498,8 @@ func writeVLANNetplan(rootDir, vlanID, parent, ip string) error {
 	fmt.Fprintf(&buf, "    vlan%s:\n      id: %s\n      link: %s\n", vlanID, vlanID, parent)
 	if ip != "" {
 		fmt.Fprintf(&buf, "      addresses: [%q]\n", ip)
+	} else {
+		buf.WriteString("      dhcp4: true\n")
 	}
 
 	path := filepath.Join(netplanDir, fmt.Sprintf("03-booty-vlan%s.yaml", vlanID))
@@ -482,8 +538,9 @@ func writeVLANSystemd(rootDir, vlanID, parent, ip string) error {
 		return fmt.Errorf("writing VLAN network: %w", err)
 	}
 
-	// Add VLAN to parent interface
-	parentNetPath := filepath.Join(networkDir, fmt.Sprintf("20-%s-vlan.network", parent))
+	// Add VLAN to parent interface. Use 05- prefix so this file takes
+	// precedence over the base 10-booty.network for the same interface name.
+	parentNetPath := filepath.Join(networkDir, fmt.Sprintf("05-%s-vlan.network", parent))
 	var parentNet strings.Builder
 	fmt.Fprintf(&parentNet, "[Match]\nName=%s\n\n[Network]\nVLAN=%s\n", parent, vlanName)
 	if err := os.WriteFile(parentNetPath, []byte(parentNet.String()), 0o644); err != nil {

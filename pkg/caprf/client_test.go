@@ -966,3 +966,31 @@ func TestClientReportHealthChecksNoURL(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestParseVarsOSFamily(t *testing.T) {
+	cfg, err := ParseVars(strings.NewReader("OS_FAMILY=rhel"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.OSFamily != "rhel" {
+		t.Errorf("OSFamily = %q, want %q", cfg.OSFamily, "rhel")
+	}
+}
+
+func TestParseVarsPersistNetwork(t *testing.T) {
+	cfg, err := ParseVars(strings.NewReader("PERSIST_NETWORK=true"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.PersistNetwork {
+		t.Error("PersistNetwork = false, want true")
+	}
+
+	cfg2, err := ParseVars(strings.NewReader("PERSIST_NETWORK=false"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg2.PersistNetwork {
+		t.Error("PersistNetwork = true, want false")
+	}
+}

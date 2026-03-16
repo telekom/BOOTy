@@ -102,7 +102,7 @@ type MachineConfig struct {
 
 	// Network persistence.
 	PersistNetwork bool   // PERSIST_NETWORK: write network config into target OS
-	OSFamily       string // OS_FAMILY: "ubuntu" or "flatcar" (auto-detected if empty; "rhel" detected but not yet supported for network persistence)
+	OSFamily       string // OS_FAMILY: "ubuntu", "flatcar", or "rhel" (auto-detected if empty)
 
 	// Files and commands from ISO /deploy/ directories.
 	ProvisionerFiles []string // Paths to files in /deploy/file-system/
