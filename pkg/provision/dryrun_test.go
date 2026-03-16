@@ -28,8 +28,9 @@ func (p *dryRunProvider) ReportStatus(_ context.Context, s config.Status, msg st
 func (p *dryRunProvider) ShipLog(_ context.Context, _ string) error                 { return nil }
 func (p *dryRunProvider) Heartbeat(_ context.Context) error                         { return nil }
 func (p *dryRunProvider) FetchCommands(_ context.Context) ([]config.Command, error) { return nil, nil }
-func (p *dryRunProvider) ReportInventory(_ context.Context, _ []byte) error         { return nil }
-func (p *dryRunProvider) ReportFirmware(_ context.Context, _ []byte) error          { return nil }
+func (p *dryRunProvider) AcknowledgeCommand(_ context.Context, _, _, _ string) error { return nil }
+func (p *dryRunProvider) ReportInventory(_ context.Context, _ []byte) error          { return nil }
+func (p *dryRunProvider) ReportFirmware(_ context.Context, _ []byte) error           { return nil }
 
 func TestDryRunConfigValidation(t *testing.T) {
 	tests := []struct {
