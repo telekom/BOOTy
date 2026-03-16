@@ -48,7 +48,7 @@ const (
 
 // ParseUnderlayAF parses an address family string.
 func ParseUnderlayAF(s string) (UnderlayAF, error) {
-	switch strings.ToLower(s) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "ipv4", "":
 		return AFIPv4, nil
 	case "ipv6":
@@ -74,7 +74,7 @@ const (
 
 // ParseOverlayType parses an overlay type string.
 func ParseOverlayType(s string) (OverlayType, error) {
-	switch strings.ToLower(s) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "evpn-vxlan", "":
 		return OverlayEVPNVXLAN, nil
 	case "l3vpn":
@@ -109,12 +109,12 @@ func ValidateCommunities(cfg *CommunityConfig) error {
 		return nil
 	}
 	for _, c := range cfg.Standard {
-		if _, _, err := ParseStandardCommunity(c); err != nil {
+		if _, _, err := ParseStandardCommunity(strings.TrimSpace(c)); err != nil {
 			return err
 		}
 	}
 	for _, c := range cfg.Extended {
-		parts := strings.SplitN(c, ":", 3)
+		parts := strings.SplitN(strings.TrimSpace(c), ":", 3)
 		if len(parts) != 3 {
 			return fmt.Errorf("invalid extended community %q, expected TYPE:ASN:value", c)
 		}
@@ -126,7 +126,7 @@ func ValidateCommunities(cfg *CommunityConfig) error {
 		}
 	}
 	for _, c := range cfg.Large {
-		parts := strings.SplitN(c, ":", 3)
+		parts := strings.SplitN(strings.TrimSpace(c), ":", 3)
 		if len(parts) != 3 {
 			return fmt.Errorf("invalid large community %q, expected GA:LD1:LD2", c)
 		}
