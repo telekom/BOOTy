@@ -5,6 +5,7 @@ package bootloader
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -88,5 +89,30 @@ func TestExtractQuoted(t *testing.T) {
 		if got != tc.expected {
 			t.Errorf("extractQuoted(%q) = %q, want %q", tc.input, got, tc.expected)
 		}
+	}
+}
+
+func TestParseGRUBConfig_LongKernelLine(t *testing.T) {
+	longArg := strings.Repeat("a", 70*1024)
+	grubCfg := "menuentry 'Long Kernel' {\n" +
+		"\tlinux /vmlinuz root=UUID=abc ro extra=" + longArg + "\n" +
+		"\tinitrd /initrd.img\n" +
+		"}\n"
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "grub.cfg")
+	if err := os.WriteFile(cfgPath, []byte(grubCfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := parseGRUBConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parseGRUBConfig: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	if entries[0].Title != "Long Kernel" {
+		t.Fatalf("title = %q, want Long Kernel", entries[0].Title)
 	}
 }

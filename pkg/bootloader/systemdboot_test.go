@@ -204,3 +204,55 @@ func TestSystemdBoot_SetDefaultFallback(t *testing.T) {
 		t.Errorf("loader.conf still has old-entry: %q", string(data))
 	}
 }
+
+func TestSystemdBoot_SetDefaultRejectsInvalidIDs(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	esp := t.TempDir()
+	loaderDir := filepath.Join(esp, "loader")
+	if err := os.MkdirAll(loaderDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(loaderDir, "loader.conf"), []byte("default old.conf\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sb := &SystemdBoot{Log: slog.Default(), espPath: esp}
+	tests := []string{"bad id", "bad\nid", "bad\tid", "bad\\id", "../bad", ""}
+	for _, id := range tests {
+		id := id
+		t.Run(id, func(t *testing.T) {
+			if err := sb.SetDefault(context.Background(), id); err == nil {
+				t.Fatalf("expected error for invalid id %q", id)
+			}
+		})
+	}
+}
+
+func TestSystemdBoot_GenerateLoaderConfValidation(t *testing.T) {
+	sb := &SystemdBoot{Log: slog.Default(), espPath: t.TempDir()}
+
+	if err := sb.generateLoaderConf(&BootConfig{DefaultEntry: "ubuntu", Timeout: -1}); err == nil {
+		t.Fatal("expected error for negative timeout")
+	}
+	if err := sb.generateLoaderConf(&BootConfig{DefaultEntry: "bad entry", Timeout: 5}); err == nil {
+		t.Fatal("expected error for whitespace default entry")
+	}
+	if err := sb.generateLoaderConf(&BootConfig{DefaultEntry: "bad\\entry", Timeout: 5}); err == nil {
+		t.Fatal("expected error for path-like default entry")
+	}
+}
+
+func TestSystemdBoot_GenerateEntryRejectsInvalidID(t *testing.T) {
+	sb := &SystemdBoot{Log: slog.Default(), espPath: t.TempDir()}
+	tests := []string{"bad id", "bad\nentry", "bad\\entry", "../entry"}
+	for _, id := range tests {
+		id := id
+		t.Run(id, func(t *testing.T) {
+			err := sb.generateEntry(&BootEntry{ID: id, Kernel: "/vmlinuz", Title: "x"})
+			if err == nil {
+				t.Fatalf("expected invalid id error for %q", id)
+			}
+		})
+	}
+}

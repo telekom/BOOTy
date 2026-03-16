@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"unicode"
 )
 
 // SystemdBoot implements the Bootloader interface for systemd-boot.
@@ -175,13 +176,12 @@ func (s *SystemdBoot) SetDefault(ctx context.Context, entryID string) error {
 	if s.espPath == "" {
 		return fmt.Errorf("esp path not set, call Install first")
 	}
-	// Validate entryID to prevent path traversal and invalid loader.conf entries.
-	safeID := filepath.Base(entryID)
-	if safeID != entryID || safeID == "." || safeID == ".." || strings.ContainsAny(entryID, "/\\") {
-		return fmt.Errorf("invalid entry ID: %q", entryID)
-	}
 	// Strip trailing .conf if caller accidentally included it.
 	entryID = strings.TrimSuffix(entryID, ".conf")
+	// Validate entryID to prevent path traversal and invalid loader.conf entries.
+	if !isValidLoaderEntryID(entryID) {
+		return fmt.Errorf("invalid entry ID: %q", entryID)
+	}
 	if _, err := exec.LookPath("bootctl"); err == nil {
 		cmd := exec.CommandContext(ctx, "bootctl", "set-default",
 			"--esp-path="+s.espPath, entryID+".conf")
@@ -228,10 +228,13 @@ func (s *SystemdBoot) generateLoaderConf(cfg *BootConfig) error {
 	if defaultEntry == "" {
 		return fmt.Errorf("default entry must not be empty")
 	}
-	if strings.ContainsAny(defaultEntry, "/\\") || defaultEntry == ".." || defaultEntry == "." {
+	defaultEntry = strings.TrimSuffix(defaultEntry, ".conf")
+	if !isValidLoaderEntryID(defaultEntry) {
 		return fmt.Errorf("invalid default entry: %q", defaultEntry)
 	}
-	defaultEntry = strings.TrimSuffix(defaultEntry, ".conf")
+	if cfg.Timeout < 0 {
+		return fmt.Errorf("timeout must be >= 0")
+	}
 	content := fmt.Sprintf("default %s.conf\ntimeout %d\nconsole-mode max\n",
 		defaultEntry, cfg.Timeout)
 	loaderPath := filepath.Join(loaderDir, "loader.conf")
@@ -243,13 +246,13 @@ func (s *SystemdBoot) generateLoaderConf(cfg *BootConfig) error {
 
 func (s *SystemdBoot) generateEntry(entry *BootEntry) error {
 	// Sanitize entry ID to prevent path traversal.
-	safeID := filepath.Base(entry.ID)
-	if safeID != entry.ID || safeID == "." || safeID == ".." {
+	if !isValidLoaderEntryID(entry.ID) {
 		return fmt.Errorf("invalid entry ID: %q", entry.ID)
 	}
 	if entry.Kernel == "" {
 		return fmt.Errorf("entry %q: kernel path required", entry.ID)
 	}
+	safeID := entry.ID
 	entriesDir := filepath.Join(s.espPath, "loader", "entries")
 	if err := os.MkdirAll(entriesDir, 0o755); err != nil {
 		return fmt.Errorf("create entries dir: %w", err)
@@ -272,6 +275,24 @@ func (s *SystemdBoot) generateEntry(entry *BootEntry) error {
 		return fmt.Errorf("write entry %s: %w", entry.ID, err)
 	}
 	return nil
+}
+
+func isValidLoaderEntryID(id string) bool {
+	if id == "" {
+		return false
+	}
+	if filepath.Base(id) != id || id == "." || id == ".." {
+		return false
+	}
+	if strings.ContainsAny(id, "/\\") {
+		return false
+	}
+	for _, r := range id {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // parseLoaderEntry reads a systemd-boot loader entry file.

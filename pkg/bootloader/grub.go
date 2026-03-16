@@ -154,6 +154,9 @@ func parseGRUBConfig(path string) ([]BootEntry, error) {
 	var entries []BootEntry
 	var current *BootEntry
 	scanner := bufio.NewScanner(f)
+	// Some real-world kernel command lines in grub.cfg can exceed Scanner's
+	// default 64KiB token limit.
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
