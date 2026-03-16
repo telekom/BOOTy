@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -79,12 +80,15 @@ func (m *Manager) GetBMCNetwork(ctx context.Context, channel int) (*BMCNetConfig
 	}
 
 	fields := parseLanPrint(out)
+	vlanEnabled, vlanID := parseVLAN(fields)
 	return &BMCNetConfig{
-		IPAddress:  fields["IP Address"],
-		Netmask:    fields["Subnet Mask"],
-		Gateway:    fields["Default Gateway IP"],
-		MACAddress: fields["MAC Address"],
-		DHCP:       strings.Contains(strings.ToLower(fields["IP Address Source"]), "dhcp"),
+		IPAddress:   fields["IP Address"],
+		Netmask:     fields["Subnet Mask"],
+		Gateway:     fields["Default Gateway IP"],
+		MACAddress:  fields["MAC Address"],
+		DHCP:        strings.Contains(strings.ToLower(fields["IP Address Source"]), "dhcp"),
+		VLANEnabled: vlanEnabled,
+		VLANID:      vlanID,
 	}, nil
 }
 
@@ -98,14 +102,12 @@ func (m *Manager) SetNextBoot(ctx context.Context, device BootDevice) error {
 
 // ChassisControl sends a chassis control command (power on/off/cycle/reset).
 func (m *Manager) ChassisControl(ctx context.Context, action string) error {
-	validActions := map[string]bool{
-		"on": true, "off": true, "cycle": true,
-		"reset": true, "soft": true,
+	switch action {
+	case "on", "off", "cycle", "reset", "soft":
+		return m.run(ctx, "chassis", "power", action)
+	default:
+		return fmt.Errorf("invalid chassis action: %q", action)
 	}
-	if !validActions[action] {
-		return fmt.Errorf("invalid chassis action: %s", action)
-	}
-	return m.run(ctx, "chassis", "power", action)
 }
 
 // DevicePath returns the IPMI device path.
@@ -128,17 +130,40 @@ func parseLanPrint(output string) map[string]string {
 	return result
 }
 
+func parseVLAN(fields map[string]string) (bool, int) {
+	raw := strings.TrimSpace(fields["802.1q VLAN ID"])
+	if raw == "" {
+		return false, 0
+	}
+	lower := strings.ToLower(raw)
+	if strings.Contains(lower, "disabled") || lower == "off" || lower == "0" {
+		return false, 0
+	}
+	if strings.HasPrefix(lower, "0x") {
+		if value, err := strconv.ParseInt(raw[2:], 16, 64); err == nil {
+			return true, int(value)
+		}
+	}
+	if value, err := strconv.Atoi(raw); err == nil {
+		return value > 0, value
+	}
+	// Unknown but present value is treated as enabled with unspecified VLAN ID.
+	return true, 0
+}
+
 func (m *Manager) run(ctx context.Context, args ...string) error {
-	fullArgs := append([]string{"-d", m.device}, args...)
-	cmd := exec.CommandContext(ctx, "ipmitool", fullArgs...)
-	out, err := cmd.CombinedOutput()
+	_, err := m.execIPMITool(ctx, args...)
 	if err != nil {
-		return fmt.Errorf("ipmitool %s: %s: %w", strings.Join(args, " "), string(out), err)
+		return err
 	}
 	return nil
 }
 
 func (m *Manager) output(ctx context.Context, args ...string) (string, error) {
+	return m.execIPMITool(ctx, args...)
+}
+
+func (m *Manager) execIPMITool(ctx context.Context, args ...string) (string, error) {
 	fullArgs := append([]string{"-d", m.device}, args...)
 	cmd := exec.CommandContext(ctx, "ipmitool", fullArgs...)
 	out, err := cmd.CombinedOutput()

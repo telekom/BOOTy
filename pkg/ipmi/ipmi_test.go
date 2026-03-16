@@ -3,6 +3,8 @@
 package ipmi
 
 import (
+	"context"
+	"strings"
 	"testing"
 )
 
@@ -94,59 +96,14 @@ func TestParseBMCMAC(t *testing.T) {
 	}
 }
 
-func TestChassisStatus_Fields(t *testing.T) {
-	status := ChassisStatus{
-		PowerOn:    true,
-		PowerFault: false,
-		Intrusion:  false,
-		LastEvent:  "power-on",
+func TestChassisControlInvalidAction(t *testing.T) {
+	m := New(nil)
+	err := m.ChassisControl(context.Background(), "bad action")
+	if err == nil {
+		t.Fatal("expected error for invalid action")
 	}
-
-	if !status.PowerOn {
-		t.Error("PowerOn should be true")
-	}
-	if status.PowerFault {
-		t.Error("PowerFault should be false")
-	}
-}
-
-func TestBMCNetConfig_Fields(t *testing.T) {
-	cfg := BMCNetConfig{
-		IPAddress:   "10.0.0.100",
-		Netmask:     "255.255.255.0",
-		Gateway:     "10.0.0.1",
-		MACAddress:  "aa:bb:cc:dd:ee:ff",
-		DHCP:        false,
-		VLANEnabled: true,
-		VLANID:      100,
-	}
-
-	if cfg.DHCP {
-		t.Error("DHCP should be false")
-	}
-	if !cfg.VLANEnabled {
-		t.Error("VLANEnabled should be true")
-	}
-	if cfg.VLANID != 100 {
-		t.Errorf("VLANID = %d, want 100", cfg.VLANID)
-	}
-}
-
-func TestSensorReading_Fields(t *testing.T) {
-	reading := SensorReading{
-		Name:      "CPU Temp",
-		Value:     45.0,
-		Unit:      "C",
-		Status:    "ok",
-		LowerCrit: 5.0,
-		UpperCrit: 95.0,
-	}
-
-	if reading.Value != 45.0 {
-		t.Errorf("Value = %f, want 45.0", reading.Value)
-	}
-	if reading.Status != "ok" {
-		t.Errorf("Status = %q, want ok", reading.Status)
+	if !strings.Contains(err.Error(), `"bad action"`) {
+		t.Fatalf("expected quoted action in error, got %q", err)
 	}
 }
 
@@ -157,6 +114,7 @@ IP Address              : 10.0.0.100
 Subnet Mask             : 255.255.255.0
 MAC Address             : aa:bb:cc:dd:ee:ff
 Default Gateway IP      : 10.0.0.1
+802.1q VLAN ID          : 100
 `
 
 	fields := parseLanPrint(output)
@@ -168,5 +126,33 @@ Default Gateway IP      : 10.0.0.1
 	}
 	if fields["MAC Address"] != "aa:bb:cc:dd:ee:ff" {
 		t.Errorf("MAC Address = %q", fields["MAC Address"])
+	}
+	vlanEnabled, vlanID := parseVLAN(fields)
+	if !vlanEnabled || vlanID != 100 {
+		t.Errorf("parseVLAN = (%v, %d), want (true, 100)", vlanEnabled, vlanID)
+	}
+}
+
+func TestParseVLAN(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		enabled bool
+		id      int
+	}{
+		{name: "disabled", value: "Disabled", enabled: false, id: 0},
+		{name: "decimal", value: "123", enabled: true, id: 123},
+		{name: "hex", value: "0x64", enabled: true, id: 100},
+		{name: "unknown text", value: "Enabled", enabled: true, id: 0},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			enabled, id := parseVLAN(map[string]string{"802.1q VLAN ID": tc.value})
+			if enabled != tc.enabled || id != tc.id {
+				t.Fatalf("parseVLAN(%q) = (%v, %d), want (%v, %d)", tc.value, enabled, id, tc.enabled, tc.id)
+			}
+		})
 	}
 }
