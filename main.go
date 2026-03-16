@@ -256,7 +256,14 @@ func runCAPRF(ctx context.Context) {
 			case rescue.ModeRetry:
 				retryState.RecordAttempt(err)
 				slog.Info("Retrying provisioning", "attempt", retryState.Attempts, "delay", rescueCfg.RetryDelay)
-				time.Sleep(rescueCfg.RetryDelay)
+				if !sleepWithContext(ctx, rescueCfg.RetryDelay) {
+					slog.Info("Retry sleep canceled by context")
+					if err := netMode.Teardown(ctx); err != nil {
+						slog.Warn("Network teardown error", "error", err)
+					}
+					realm.Reboot()
+					return
+				}
 				continue
 			case rescue.ModeShell:
 				slog.Info("Dropping to rescue shell")
@@ -268,6 +275,7 @@ func runCAPRF(ctx context.Context) {
 				if err := netMode.Teardown(ctx); err != nil {
 					slog.Warn("Network teardown error", "error", err)
 				}
+				realm.Reboot()
 				return
 			default:
 				// ModeReboot: fall through to reboot
@@ -522,6 +530,27 @@ func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) {
 	}
 }
 
+func sleepWithContext(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		select {
+		case <-ctx.Done():
+			return false
+		default:
+			return true
+		}
+	}
+
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
 // runStandby keeps the machine in a hot standby loop. It sends periodic
 // heartbeats to the CAPRF server and polls for commands. When a "provision"
 // or "deprovision" command arrives, it re-enters the normal CAPRF flow.
@@ -547,6 +576,7 @@ func runStandby(ctx context.Context, client config.Provider, cfg *config.Machine
 			if err := netMode.Teardown(ctx); err != nil {
 				slog.Warn("Network teardown error", "error", err)
 			}
+			realm.Reboot()
 			return
 
 		case <-heartbeatTicker.C:
@@ -582,16 +612,31 @@ func runStandby(ctx context.Context, client config.Provider, cfg *config.Machine
 						switch action.Type {
 						case rescue.ModeRetry:
 							retryState.RecordAttempt(provErr)
-							time.Sleep(rescueCfg.RetryDelay)
+							if !sleepWithContext(ctx, rescueCfg.RetryDelay) {
+								slog.Info("Retry sleep canceled by context")
+								if err := netMode.Teardown(ctx); err != nil {
+									slog.Warn("Network teardown error", "error", err)
+								}
+								realm.Reboot()
+								return
+							}
 							continue
 						case rescue.ModeShell:
 							slog.Info("Dropping to rescue shell")
 							realm.Shell()
+							if err := netMode.Teardown(ctx); err != nil {
+								slog.Warn("Network teardown error", "error", err)
+							}
+							realm.Reboot()
 							return
 						case rescue.ModeWait:
 							slog.Info("Waiting for manual intervention")
 							<-ctx.Done()
 							slog.Info("Standby context canceled while waiting in rescue mode")
+							if err := netMode.Teardown(ctx); err != nil {
+								slog.Warn("Network teardown error", "error", err)
+							}
+							realm.Reboot()
 							return
 						default:
 							// ModeReboot
