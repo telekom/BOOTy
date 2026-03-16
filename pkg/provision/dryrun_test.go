@@ -233,7 +233,8 @@ func TestDryRunEFIBoot(t *testing.T) {
 		disk.NewManager(nil),
 	)
 	result := o.dryRunEFIBoot(context.Background())
-	// macOS / non-EFI systems should return warn; EFI systems return pass.
+	// Non-EFI Linux environments (e.g. BIOS boot or containers) should return
+	// warn; EFI systems return pass.
 	if result.Status != DryRunPass && result.Status != DryRunWarn {
 		t.Errorf("unexpected status %s: %s", result.Status, result.Message)
 	}
@@ -311,5 +312,46 @@ func TestDryRunImageReachability_ServerError(t *testing.T) {
 	result := o.dryRunImageReachability(context.Background())
 	if result.Status != DryRunFail {
 		t.Errorf("got %s, want fail for 404: %s", result.Status, result.Message)
+	}
+}
+
+func TestDryRunAggregation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	provider := &dryRunProvider{}
+
+	// All checks should pass with valid config and reachable image server.
+	o := NewOrchestrator(
+		&config.MachineConfig{
+			ImageURLs: []string{srv.URL + "/image.raw"},
+			Hostname:  "test-host",
+		},
+		provider,
+		disk.NewManager(nil),
+	)
+
+	_ = o.DryRun(context.Background())
+	// Some checks may warn/fail in test environments (e.g. no EFI, no disk),
+	// but the aggregation and status reporting must not panic.
+	if provider.lastStatus == "" {
+		t.Error("DryRun did not report status to provider")
+	}
+
+	// Verify that a fully missing config fails with error.
+	provFail := &dryRunProvider{}
+	oFail := NewOrchestrator(
+		&config.MachineConfig{},
+		provFail,
+		disk.NewManager(nil),
+	)
+	err := oFail.DryRun(context.Background())
+	if err == nil {
+		t.Error("expected DryRun to fail with empty config")
+	}
+	if provFail.lastStatus != config.StatusError {
+		t.Errorf("expected StatusError, got %s", provFail.lastStatus)
 	}
 }

@@ -1,6 +1,6 @@
 # Proposal: Dry-Run Mode
 
-## Status: Phase 2 Implemented
+## Status: Phase 1 Implemented
 
 ## Priority: P3
 
