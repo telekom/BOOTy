@@ -75,6 +75,15 @@ func TestFindModule_NotFound(t *testing.T) {
 	}
 }
 
+func TestFindModule_InvalidName(t *testing.T) {
+	mgr := &Manager{log: slog.Default(), modulesDir: t.TempDir()}
+	for _, name := range []string{"", "   ", "../e1000e", "foo/bar"} {
+		if _, err := mgr.FindModule(name); err == nil {
+			t.Fatalf("expected error for invalid module name %q", name)
+		}
+	}
+}
+
 func TestIsLoaded(t *testing.T) {
 	dir := t.TempDir()
 	procPath := filepath.Join(dir, "modules")

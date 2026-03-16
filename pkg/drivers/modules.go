@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -78,11 +79,7 @@ func NewManager(log *slog.Logger) *Manager {
 }
 
 func defaultModulesDir() string {
-	release, err := os.ReadFile("/proc/sys/kernel/osrelease")
-	if err != nil {
-		return "/lib/modules"
-	}
-	kernel := strings.TrimSpace(string(release))
+	kernel := runningKernelRelease()
 	if kernel == "" {
 		return "/lib/modules"
 	}
@@ -91,6 +88,21 @@ func defaultModulesDir() string {
 		return path
 	}
 	return "/lib/modules"
+}
+
+func runningKernelRelease() string {
+	release, err := os.ReadFile("/proc/sys/kernel/osrelease")
+	if err == nil {
+		kernel := strings.TrimSpace(string(release))
+		if kernel != "" {
+			return kernel
+		}
+	}
+	out, err := exec.Command("uname", "-r").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // ListLoaded returns currently loaded kernel modules from /proc/modules.
@@ -138,7 +150,23 @@ func (m *Manager) ListLoaded() ([]Module, error) {
 
 // FindModule searches for a .ko file in the modules directory.
 func (m *Manager) FindModule(name string) (string, error) {
-	for _, root := range []string{filepath.Join(m.modulesDir, "kernel"), m.modulesDir} {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.ContainsAny(name, "/\\") {
+		return "", fmt.Errorf("invalid module name: %q", name)
+	}
+
+	roots := make([]string, 0, 2)
+	if filepath.Clean(m.modulesDir) == "/lib/modules" {
+		kernel := runningKernelRelease()
+		if kernel != "" {
+			roots = append(roots, filepath.Join(m.modulesDir, kernel))
+		}
+	}
+	if len(roots) == 0 {
+		roots = append(roots, filepath.Join(m.modulesDir, "kernel"), m.modulesDir)
+	}
+
+	for _, root := range roots {
 		info, err := os.Stat(root)
 		if err != nil || !info.IsDir() {
 			continue

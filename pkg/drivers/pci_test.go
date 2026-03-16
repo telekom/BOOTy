@@ -89,6 +89,40 @@ func TestScanPCIDevicesFrom_NoSuchDir(t *testing.T) {
 	}
 }
 
+func TestScanPCIDevicesFrom_DriverFallbackModule(t *testing.T) {
+	root := t.TempDir()
+	devDir := filepath.Join(root, "0000:00:02.0")
+	if err := os.MkdirAll(devDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	for name, data := range map[string]string{
+		"vendor": "0x1234\n",
+		"device": "0xabcd\n",
+		"class":  "0x020000\n",
+	} {
+		if err := os.WriteFile(filepath.Join(devDir, name), []byte(data), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	if err := os.Symlink(filepath.Join("/sys/bus/pci/drivers", "ixgbe"), filepath.Join(devDir, "driver")); err != nil {
+		t.Fatalf("symlink driver: %v", err)
+	}
+
+	devices, err := scanPCIDevicesFrom(root)
+	if err != nil {
+		t.Fatalf("scanPCIDevicesFrom: %v", err)
+	}
+	if len(devices) != 1 {
+		t.Fatalf("devices = %d, want 1", len(devices))
+	}
+	if devices[0].Driver != "ixgbe" {
+		t.Fatalf("driver = %q, want ixgbe", devices[0].Driver)
+	}
+	if devices[0].Module != "ixgbe" {
+		t.Fatalf("module fallback = %q, want ixgbe", devices[0].Module)
+	}
+}
+
 func TestPCIDevice_Fields(t *testing.T) {
 	dev := PCIDevice{
 		Address:  "0000:00:1f.0",

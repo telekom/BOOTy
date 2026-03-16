@@ -85,6 +85,9 @@ func scanPCIDevicesFrom(basePath string) ([]PCIDevice, error) {
 		pciID := formatPCIID(dev.VendorID, dev.DeviceID)
 		if mod, ok := pciModuleMap[pciID]; ok {
 			dev.Module = mod
+		} else if dev.Driver != "" {
+			// Fallback to the currently bound driver when no static mapping exists.
+			dev.Module = dev.Driver
 		}
 
 		devices = append(devices, dev)
