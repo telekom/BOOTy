@@ -4,61 +4,75 @@ package luks
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
 	"strings"
 )
 
-// UnlockMethod specifies how LUKS volumes auto-unlock on boot.
-type UnlockMethod string
-
-const (
-	// UnlockPassphrase requires manual passphrase entry at boot.
-	UnlockPassphrase UnlockMethod = "passphrase"
-	// UnlockTPM2 binds the key to TPM2 PCR values.
-	UnlockTPM2 UnlockMethod = "tpm2"
-	// UnlockClevis uses network-bound decryption via tang server.
-	UnlockClevis UnlockMethod = "clevis"
-	// UnlockKeyFile uses a key file embedded in the initramfs.
-	UnlockKeyFile UnlockMethod = "keyfile"
-)
-
-// Config holds LUKS encryption configuration.
-type Config struct {
-	Enabled      bool         `json:"enabled"`
-	Partitions   []Target     `json:"partitions"`
-	UnlockMethod UnlockMethod `json:"unlockMethod"`
-	Passphrase   string       `json:"passphrase,omitempty"`
-	TangURL      string       `json:"tangUrl,omitempty"`
-	TPMPCRs      []int        `json:"tpmPcrs,omitempty"`
-	Cipher       string       `json:"cipher,omitempty"`
-	KeySize      int          `json:"keySize,omitempty"`
-	Hash         string       `json:"hash,omitempty"`
+// Commander abstracts command execution for easier unit testing.
+type Commander interface {
+	Run(ctx context.Context, name string, args ...string) ([]byte, error)
+	RunWithInput(ctx context.Context, input, name string, args ...string) ([]byte, error)
 }
 
-// Target identifies a partition to encrypt.
-type Target struct {
-	Device     string `json:"device"`
-	MappedName string `json:"mappedName"`
-	MountPoint string `json:"mountPoint"`
+// ExecCommander executes real system commands.
+type ExecCommander struct{}
+
+// Run executes a command and returns combined stdout/stderr.
+func (e *ExecCommander) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	if err != nil {
+		return out, fmt.Errorf("exec %s: %w", name, err)
+	}
+	return out, nil
+}
+
+// RunWithInput executes a command with stdin input.
+func (e *ExecCommander) RunWithInput(ctx context.Context, input, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdin = strings.NewReader(input)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return out, fmt.Errorf("exec %s: %w", name, err)
+	}
+	return out, nil
 }
 
 // Manager handles LUKS encryption operations.
 type Manager struct {
 	log *slog.Logger
+	cmd Commander
 }
 
 // New creates a LUKS encryption manager.
 func New(log *slog.Logger) *Manager {
+	return NewWithCommander(log, nil)
+}
+
+// NewWithCommander creates a manager with a custom commander for tests.
+func NewWithCommander(log *slog.Logger, cmd Commander) *Manager {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Manager{log: log}
+	if cmd == nil {
+		cmd = &ExecCommander{}
+	}
+	return &Manager{log: log, cmd: cmd}
 }
 
 // Format creates a LUKS2 volume on the target device.
 func (m *Manager) Format(ctx context.Context, target *Target, cfg *Config) error {
+	if target == nil {
+		return fmt.Errorf("target required")
+	}
+	if cfg == nil {
+		return fmt.Errorf("config required")
+	}
+	if strings.TrimSpace(target.Device) == "" {
+		return fmt.Errorf("target device required")
+	}
 	if cfg.Passphrase == "" {
 		return fmt.Errorf("passphrase required for LUKS format")
 	}
@@ -86,10 +100,7 @@ func (m *Manager) Format(ctx context.Context, target *Target, cfg *Config) error
 		"--batch-mode",
 		target.Device,
 	}
-
-	cmd := exec.CommandContext(ctx, "cryptsetup", args...)
-	cmd.Stdin = strings.NewReader(cfg.Passphrase + "\n")
-	out, err := cmd.CombinedOutput()
+	out, err := m.cmd.RunWithInput(ctx, cfg.Passphrase+"\n", "cryptsetup", args...)
 	if err != nil {
 		return fmt.Errorf("cryptsetup luksFormat %s: %s: %w", target.Device, string(out), err)
 	}
@@ -99,12 +110,19 @@ func (m *Manager) Format(ctx context.Context, target *Target, cfg *Config) error
 
 // Open maps a LUKS volume to /dev/mapper/<name>.
 func (m *Manager) Open(ctx context.Context, target *Target, passphrase string) error {
-	cmd := exec.CommandContext(ctx, "cryptsetup", "luksOpen",
+	if target == nil {
+		return fmt.Errorf("target required")
+	}
+	if strings.TrimSpace(target.Device) == "" || strings.TrimSpace(target.MappedName) == "" {
+		return fmt.Errorf("target device and mapped name required")
+	}
+	if passphrase == "" {
+		return fmt.Errorf("passphrase required for LUKS open")
+	}
+	out, err := m.cmd.RunWithInput(ctx, passphrase+"\n", "cryptsetup", "luksOpen",
 		"--key-file", "-",
 		target.Device, target.MappedName,
 	)
-	cmd.Stdin = strings.NewReader(passphrase + "\n")
-	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("cryptsetup luksOpen %s: %s: %w", target.Device, string(out), err)
 	}
@@ -114,8 +132,10 @@ func (m *Manager) Open(ctx context.Context, target *Target, passphrase string) e
 
 // Close unmaps a LUKS volume.
 func (m *Manager) Close(ctx context.Context, mappedName string) error {
-	cmd := exec.CommandContext(ctx, "cryptsetup", "luksClose", mappedName)
-	out, err := cmd.CombinedOutput()
+	if strings.TrimSpace(mappedName) == "" {
+		return fmt.Errorf("mapped name required")
+	}
+	out, err := m.cmd.Run(ctx, "cryptsetup", "luksClose", mappedName)
 	if err != nil {
 		return fmt.Errorf("cryptsetup luksClose %s: %s: %w", mappedName, string(out), err)
 	}
@@ -125,11 +145,26 @@ func (m *Manager) Close(ctx context.Context, mappedName string) error {
 
 // IsLUKS checks if a device contains a LUKS header.
 func (m *Manager) IsLUKS(ctx context.Context, device string) bool {
-	cmd := exec.CommandContext(ctx, "cryptsetup", "isLuks", device)
-	return cmd.Run() == nil
+	ok, err := m.IsLUKSWithError(ctx, device)
+	if err != nil {
+		m.log.Warn("isLUKS check failed", "device", device, "error", err)
+	}
+	return ok
 }
 
-// MappedPath returns the /dev/mapper path for a mapped LUKS volume.
-func MappedPath(mappedName string) string {
-	return "/dev/mapper/" + mappedName
+// IsLUKSWithError checks if a device contains a LUKS header and returns errors.
+func (m *Manager) IsLUKSWithError(ctx context.Context, device string) (bool, error) {
+	if strings.TrimSpace(device) == "" {
+		return false, fmt.Errorf("device required")
+	}
+	out, err := m.cmd.Run(ctx, "cryptsetup", "isLuks", device)
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			// cryptsetup returns exit code 1 when device is not LUKS.
+			return false, nil
+		}
+		return false, fmt.Errorf("cryptsetup isLuks %s: %s: %w", device, strings.TrimSpace(string(out)), err)
+	}
+	return true, nil
 }
