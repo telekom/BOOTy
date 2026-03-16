@@ -5,6 +5,7 @@ package provision
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -437,8 +438,9 @@ func TestDryRunAggregation(t *testing.T) {
 	// All checks should pass with valid config and reachable image server.
 	o := NewOrchestrator(
 		&config.MachineConfig{
-			ImageURLs: []string{srv.URL + "/image.raw"},
-			Hostname:  "test-host",
+			ImageURLs:  []string{srv.URL + "/image.raw"},
+			Hostname:   "test-host",
+			DiskDevice: "/dev/null",
 		},
 		provider,
 		disk.NewManager(nil),
@@ -493,5 +495,18 @@ func TestRedactImageURL(t *testing.T) {
 				t.Errorf("redactImageURL(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRedactURLError(t *testing.T) {
+	raw := "https://user:secret@example.com/image.raw?token=abc"
+	err := fmt.Errorf("request failed for %s", raw)
+
+	redacted := redactURLError(err, raw)
+	if strings.Contains(redacted, "secret") || strings.Contains(redacted, "token=abc") {
+		t.Fatalf("redacted error leaked sensitive data: %q", redacted)
+	}
+	if !strings.Contains(redacted, "https://example.com/image.raw") {
+		t.Fatalf("expected redacted URL in error, got %q", redacted)
 	}
 }

@@ -119,13 +119,15 @@ func (o *Orchestrator) dryRunImageReachability(ctx context.Context) DryRunResult
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodHead, imgURL, http.NoBody)
 		if err != nil {
+			errMsg := redactURLError(err, imgURL)
 			return DryRunResult{Status: DryRunFail,
-				Message: fmt.Sprintf("invalid image URL %s: %v", redactedURL, err)}
+				Message: fmt.Sprintf("invalid image URL %s: %s", redactedURL, errMsg)}
 		}
 		resp, err := httpClient.Do(req) //nolint:gosec // URL from trusted config
 		if err != nil {
+			errMsg := redactURLError(err, imgURL)
 			return DryRunResult{Status: DryRunFail,
-				Message: fmt.Sprintf("image unreachable %s: %v", redactedURL, err)}
+				Message: fmt.Sprintf("image unreachable %s: %s", redactedURL, errMsg)}
 		}
 		_ = resp.Body.Close()
 		if resp.StatusCode >= 400 {
@@ -152,7 +154,7 @@ func (o *Orchestrator) dryRunImageReachability(ctx context.Context) DryRunResult
 
 func (o *Orchestrator) dryRunDiskDetection(ctx context.Context) DryRunResult {
 	if o.cfg.DiskDevice != "" {
-		info, err := os.Stat(o.cfg.DiskDevice)
+		info, err := statPath(o.cfg.DiskDevice)
 		if err != nil {
 			return DryRunResult{Status: DryRunFail,
 				Message: fmt.Sprintf("configured disk %s not found: %v", o.cfg.DiskDevice, err)}
@@ -261,6 +263,17 @@ func redactImageURL(rawURL string) string {
 	u.RawQuery = ""
 	u.Fragment = ""
 	return u.String()
+}
+
+func redactURLError(err error, rawURL string) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	if rawURL == "" {
+		return msg
+	}
+	return strings.ReplaceAll(msg, rawURL, redactImageURL(rawURL))
 }
 
 func (o *Orchestrator) dryRunInventoryProbe(_ context.Context) DryRunResult {
