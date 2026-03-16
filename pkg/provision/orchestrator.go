@@ -359,6 +359,15 @@ func (o *Orchestrator) setupNVMeNamespaces(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Verify at least one namespace was created across all controllers.
+	totalCreated := 0
+	for _, nsids := range created {
+		totalCreated += len(nsids)
+	}
+	if totalCreated == 0 {
+		return fmt.Errorf("NVMe namespace layout applied but no namespaces were created; check controller support and configuration")
+	}
+
 	// After namespace creation set DiskDevice to the first created namespace on
 	// the first configured controller so DetectDisk targets the intended OS disk.
 	if len(cfgs) > 0 && o.cfg.DiskDevice == "" {

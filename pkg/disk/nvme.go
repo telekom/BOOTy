@@ -27,16 +27,36 @@ type NVMeNamespace struct {
 	Label     string `json:"label"`               // Human-readable label
 	SizePct   int    `json:"sizePct"`             // Percentage of total capacity
 	BlockSize int    `json:"blockSize,omitempty"` // 512 or 4096 (default: 512)
+	LBAFIndex int    `json:"lbafIndex,omitempty"` // Explicit LBA format index (overrides blockSize heuristic)
 }
 
 // nvmeControllerPathRE validates that a controller path looks like /dev/nvme0, /dev/nvme1, etc.
 var nvmeControllerPathRE = regexp.MustCompile(`^/dev/nvme\d+$`)
 
 // ParseNVMeConfig parses a JSON NVMe namespace configuration string.
+// checkNVMeControllerUniqueness returns an error if any controller path appears more than once.
+func checkNVMeControllerUniqueness(configs []NVMeNamespaceConfig) error {
+	seen := make(map[string]bool, len(configs))
+	for _, cfg := range configs {
+		if seen[cfg.Controller] {
+			return fmt.Errorf("duplicate controller %q in NVMe namespace config", cfg.Controller)
+		}
+		seen[cfg.Controller] = true
+	}
+	return nil
+}
+
+// ParseNVMeConfig parses a JSON NVMe namespace configuration string.
 func ParseNVMeConfig(data string) ([]NVMeNamespaceConfig, error) {
 	var configs []NVMeNamespaceConfig
 	if err := json.Unmarshal([]byte(data), &configs); err != nil {
 		return nil, fmt.Errorf("parsing NVMe namespace config: %w", err)
+	}
+	if len(configs) == 0 {
+		return nil, fmt.Errorf("NVMe namespace config must contain at least one controller entry")
+	}
+	if err := checkNVMeControllerUniqueness(configs); err != nil {
+		return nil, err
 	}
 	for i, cfg := range configs {
 		if cfg.Controller == "" {
@@ -193,10 +213,18 @@ func (m *Manager) AttachNVMeNamespace(ctx context.Context, controller, nsid stri
 }
 
 // FormatNVMeNamespace performs a secure erase and reformat of a namespace.
-func (m *Manager) FormatNVMeNamespace(ctx context.Context, device string, blockSize int) error {
-	lbaf := "0" // 512-byte LBA format
-	if blockSize == 4096 {
-		lbaf = "1"
+// lbafIndex selects the device LBA format; use -1 to auto-select based on blockSize
+// (0=512-byte sectors, 1=4096-byte sectors — valid only when the device LBAF table
+// matches this common ordering; prefer explicit lbafIndex from nvme id-ns when possible).
+func (m *Manager) FormatNVMeNamespace(ctx context.Context, device string, blockSize, lbafIndex int) error {
+	var lbaf string
+	switch {
+	case lbafIndex >= 0:
+		lbaf = fmt.Sprintf("%d", lbafIndex)
+	case blockSize == 4096:
+		lbaf = "1" // common LBAF index for 4096-byte sectors; may differ by device
+	default:
+		lbaf = "0" // common LBAF index for 512-byte sectors
 	}
 
 	slog.Info("Formatting NVMe namespace", "device", device, "blockSize", blockSize)
@@ -230,8 +258,7 @@ func (m *Manager) applyControllerLayout(ctx context.Context, cfg NVMeNamespaceCo
 		return nil, fmt.Errorf("checking NVMe multi-namespace support: %w", err)
 	}
 	if !supported {
-		slog.Warn("Controller does not support multiple namespaces, skipping", "controller", controller)
-		return nil, nil
+		return nil, fmt.Errorf("controller %s does not support multiple namespaces; cannot apply requested layout", controller)
 	}
 
 	totalBytes, err := m.nvmeControllerCapacity(ctx, controller)
@@ -251,6 +278,9 @@ func (m *Manager) applyControllerLayout(ctx context.Context, cfg NVMeNamespaceCo
 			bs = 512
 		}
 		sizeBlocks := (totalBytes * uint64(ns.SizePct)) / (100 * uint64(bs))
+		if sizeBlocks == 0 {
+			return nil, fmt.Errorf("controller %s namespace %q: computed size is 0 blocks (device too small for sizePct=%d%% with blockSize=%d)", controller, ns.Label, ns.SizePct, bs)
+		}
 
 		nsid, err := m.CreateNVMeNamespace(ctx, controller, sizeBlocks, bs)
 		if err != nil {
