@@ -22,10 +22,12 @@ var ErrNoCheckpoint = errors.New("no checkpoint found")
 type Checkpoint struct {
 	LastCompletedStep string   `json:"lastCompletedStep"`
 	CompletedSteps    []string `json:"completedSteps"`
-	AttemptCount      int      `json:"attemptCount"`
-	Errors            []string `json:"errors,omitempty"`
-	path              string   // configurable checkpoint file path
-	persist           bool     // only write to disk when true (BOOTY_RESUME)
+	// FailureCount is the number of steps that failed at least once
+	// (incremented per executeStep error, not per retry attempt).
+	FailureCount int      `json:"failureCount"`
+	Errors       []string `json:"errors,omitempty"`
+	path         string   // configurable checkpoint file path
+	persist      bool     // only write to disk when true (BOOTY_RESUME)
 }
 
 const defaultCheckpointPath = "/tmp/booty-checkpoint.json"

@@ -218,3 +218,128 @@ func TestFirmwareChanged(t *testing.T) {
 		t.Error("expected firmware change after setting flag")
 	}
 }
+
+func TestCheckpointResume_SkipsCompleted(t *testing.T) {
+	// Steps: first two are marked done in checkpoint; only the third should run.
+	dir := t.TempDir()
+	cpPath := dir + "/checkpoint.json"
+
+	// Pre-create a checkpoint with the first two steps completed.
+	cp := &Checkpoint{
+		CompletedSteps: []string{"step-one", "step-two"},
+		persist:        true,
+		path:           cpPath,
+	}
+	if err := cp.Save(); err != nil {
+		t.Fatalf("save checkpoint: %v", err)
+	}
+
+	loadedCP, err := LoadCheckpointFrom(cpPath)
+	if err != nil {
+		t.Fatalf("load checkpoint: %v", err)
+	}
+
+	var ran []string
+	steps := []Step{
+		{"step-one", func(_ context.Context) error { ran = append(ran, "step-one"); return nil }},
+		{"step-two", func(_ context.Context) error { ran = append(ran, "step-two"); return nil }},
+		{"step-three", func(_ context.Context) error { ran = append(ran, "step-three"); return nil }},
+	}
+
+	stateSteps := map[string]struct{}{}
+	for _, step := range steps {
+		_, mustRun := stateSteps[step.Name]
+		if loadedCP.IsCompleted(step.Name) && !mustRun {
+			continue
+		}
+		if err := step.Fn(context.Background()); err != nil {
+			t.Fatalf("step %s failed: %v", step.Name, err)
+		}
+	}
+
+	if len(ran) != 1 || ran[0] != "step-three" {
+		t.Errorf("expected only step-three to run on resume, got %v", ran)
+	}
+}
+
+func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
+	// stateSteps (detect-disk, parse-partitions) must re-run even if marked complete.
+	dir := t.TempDir()
+	cpPath := dir + "/checkpoint.json"
+
+	cp := &Checkpoint{
+		CompletedSteps: []string{"detect-disk", "parse-partitions", "stream-image"},
+		persist:        true,
+		path:           cpPath,
+	}
+	if err := cp.Save(); err != nil {
+		t.Fatalf("save checkpoint: %v", err)
+	}
+
+	t.Setenv("BOOTY_RESUME", "1")
+
+	loadedCP, err := LoadCheckpointFrom(cpPath)
+	if err != nil {
+		t.Fatalf("load checkpoint: %v", err)
+	}
+
+	stateSteps := map[string]struct{}{
+		"detect-disk":      {},
+		"parse-partitions": {},
+	}
+
+	var ran []string
+	steps := []Step{
+		{"detect-disk", func(_ context.Context) error { ran = append(ran, "detect-disk"); return nil }},
+		{"parse-partitions", func(_ context.Context) error { ran = append(ran, "parse-partitions"); return nil }},
+		{"stream-image", func(_ context.Context) error { ran = append(ran, "stream-image"); return nil }},
+		{"configure-ssh", func(_ context.Context) error { ran = append(ran, "configure-ssh"); return nil }},
+	}
+
+	for _, step := range steps {
+		_, mustRun := stateSteps[step.Name]
+		if loadedCP.IsCompleted(step.Name) && !mustRun {
+			continue
+		}
+		if err := step.Fn(context.Background()); err != nil {
+			t.Fatalf("step %s failed: %v", step.Name, err)
+		}
+	}
+
+	// detect-disk and parse-partitions re-run; stream-image and configure-ssh skip
+	// (stream-image completed, configure-ssh completed)
+	if len(ran) != 2 {
+		t.Errorf("expected 2 runs (detect-disk, parse-partitions), got %v", ran)
+	}
+	for _, name := range []string{"detect-disk", "parse-partitions"} {
+		found := false
+		for _, r := range ran {
+			if r == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected %s to re-run on resume", name)
+		}
+	}
+}
+
+func TestCheckpoint_FailureCountIncrements(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	cp := &Checkpoint{}
+	testErr := fmt.Errorf("simulated transient failure")
+	step := Step{"failing-step", func(_ context.Context) error { return testErr }}
+
+	_ = o.executeStep(context.Background(), step, cp)
+
+	if cp.FailureCount != 1 {
+		t.Errorf("expected FailureCount=1, got %d", cp.FailureCount)
+	}
+	if len(cp.Errors) != 1 {
+		t.Errorf("expected 1 error recorded, got %d", len(cp.Errors))
+	}
+}

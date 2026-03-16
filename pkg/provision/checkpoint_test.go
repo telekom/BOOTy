@@ -16,7 +16,7 @@ func TestCheckpoint_SaveLoad(t *testing.T) {
 	cp := &Checkpoint{
 		LastCompletedStep: "stream-image",
 		CompletedSteps:    []string{"report-init", "configure-dns", "stream-image"},
-		AttemptCount:      1,
+		FailureCount:      1,
 		path:              path,
 		persist:           true,
 	}
@@ -131,7 +131,7 @@ func TestCheckpoint_ResumeFlow(t *testing.T) {
 	cp := &Checkpoint{
 		LastCompletedStep: "configure-dns",
 		CompletedSteps:    []string{"report-init", "configure-dns"},
-		AttemptCount:      1,
+		FailureCount:      1,
 	}
 	if !cp.IsCompleted("report-init") {
 		t.Error("expected report-init to be completed")

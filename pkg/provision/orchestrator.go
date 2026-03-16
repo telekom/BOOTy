@@ -102,11 +102,16 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 
 	cp := o.loadOrCreateCheckpoint()
 
+	// stateSteps must always re-run on resume because they rebuild in-memory
+	// fields (targetDisk, rootPartition) that later steps depend on.
+	stateSteps := map[string]struct{}{
+		"detect-disk":      {},
+		"parse-partitions": {},
+	}
+
 	for i, step := range steps {
-		if cp.IsCompleted(step.Name) {
-			// NOTE: skipped steps that set in-memory state (targetDisk,
-			// rootPartition, etc.) will leave those fields empty. See
-			// Checkpoint struct doc for the current resume limitation.
+		_, mustRun := stateSteps[step.Name]
+		if cp.IsCompleted(step.Name) && !mustRun {
 			o.log.Info("Skipping completed step", "step", step.Name)
 			continue
 		}
@@ -153,7 +158,7 @@ func (o *Orchestrator) executeStep(ctx context.Context, step Step, cp *Checkpoin
 		msg := fmt.Sprintf("step %s failed: %v", step.Name, err)
 		o.log.Error("Provisioning step failed", "step", step.Name, "error", err)
 		cp.Errors = append(cp.Errors, msg)
-		cp.AttemptCount++
+		cp.FailureCount++
 		if saveErr := cp.Save(); saveErr != nil {
 			o.log.Warn("Failed to save checkpoint", "error", saveErr)
 		}

@@ -44,6 +44,9 @@ func WithRetry(ctx context.Context, name string, policy RetryPolicy, fn func(ctx
 	}
 	var lastErr error
 	for attempt := range policy.MaxRetries + 1 {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("retry canceled: %w", err)
+		}
 		if attempt > 0 {
 			delay := backoffDelay(policy, attempt)
 			slog.Warn("Retrying step", "step", name, "attempt", attempt, "delay", delay)
