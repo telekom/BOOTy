@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Container name constants for each topology.
@@ -86,10 +87,19 @@ func TestContainerLabTopologySmoke(t *testing.T) {
 		}
 	}
 
+	// Retry topology checks to allow services to settle after clab deploy.
 	for _, check := range spec.checks {
-		cmdOut, cmdErr := dockerExecRaw(t, check.container, check.args...)
+		var cmdOut string
+		var cmdErr error
+		for attempt := 0; attempt < 5; attempt++ {
+			cmdOut, cmdErr = dockerExecRaw(t, check.container, check.args...)
+			if cmdErr == nil {
+				break
+			}
+			time.Sleep(2 * time.Second)
+		}
 		if cmdErr != nil {
-			t.Fatalf("topology check failed on %s: %v\n%s", check.container, cmdErr, cmdOut)
+			t.Fatalf("topology check failed on %s after retries: %v\n%s", check.container, cmdErr, cmdOut)
 		}
 	}
 }

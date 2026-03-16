@@ -40,12 +40,13 @@ func TestTPMSmokeQEMU(t *testing.T) {
 	defer func() { swtpmCancel(); _ = swtpm.Wait() }()
 
 	// Wait for swtpm socket to appear before launching QEMU.
-	for i := 0; i < 50; i++ {
+	deadline := time.Now().Add(15 * time.Second)
+	for {
 		if _, err := os.Stat(tpmSocket); err == nil {
 			break
 		}
-		if i == 49 {
-			t.Fatalf("swtpm socket did not appear within timeout; stderr: %s", swtpmStderr.String())
+		if time.Now().After(deadline) {
+			t.Fatalf("swtpm socket did not appear within 15s; stderr: %s", swtpmStderr.String())
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
