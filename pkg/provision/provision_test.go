@@ -5,6 +5,7 @@ package provision
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -524,6 +525,7 @@ func TestRedactURLs(t *testing.T) {
 }
 
 func TestRequestSecureBootReEnable(t *testing.T) {
+	noopLog := slog.New(slog.NewTextHandler(io.Discard, nil))
 	tests := []struct {
 		name       string
 		reEnable   bool
@@ -538,7 +540,7 @@ func TestRequestSecureBootReEnable(t *testing.T) {
 			o := &Orchestrator{
 				cfg:      &config.MachineConfig{SecureBootReEnable: tc.reEnable},
 				provider: p,
-				log:      slog.Default(),
+				log:      noopLog,
 			}
 			if err := o.requestSecureBootReEnable(context.Background()); err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -546,9 +548,55 @@ func TestRequestSecureBootReEnable(t *testing.T) {
 			if len(p.statuses) != tc.wantStatus {
 				t.Errorf("status reports = %d, want %d", len(p.statuses), tc.wantStatus)
 			}
-			if tc.wantStatus > 0 && p.statuses[0].message != "secureboot-reenable-requested" {
-				t.Errorf("message = %q, want %q", p.statuses[0].message, "secureboot-reenable-requested")
+			if tc.wantStatus > 0 && p.statuses[0].message != statusSecureBootReEnable {
+				t.Errorf("message = %q, want %q", p.statuses[0].message, statusSecureBootReEnable)
 			}
 		})
 	}
+}
+
+func TestEnrollMOK(t *testing.T) {
+	noopLog := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	t.Run("empty cert path skips enrollment", func(t *testing.T) {
+		o := &Orchestrator{
+			cfg: &config.MachineConfig{MOKCertPath: ""},
+			log: noopLog,
+		}
+		if err := o.enrollMOK(context.Background()); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("missing cert returns error", func(t *testing.T) {
+		o := &Orchestrator{
+			cfg: &config.MachineConfig{
+				MOKCertPath: "/nonexistent/cert.der",
+				MOKPassword: "test",
+			},
+			log: noopLog,
+		}
+		err := o.enrollMOK(context.Background())
+		if err == nil {
+			t.Fatal("expected error for missing cert")
+		}
+	})
+
+	t.Run("missing password returns error", func(t *testing.T) {
+		certFile := filepath.Join(t.TempDir(), "mok.der")
+		if err := os.WriteFile(certFile, []byte("fake-cert"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		o := &Orchestrator{
+			cfg: &config.MachineConfig{
+				MOKCertPath: certFile,
+				MOKPassword: "",
+			},
+			log: noopLog,
+		}
+		err := o.enrollMOK(context.Background())
+		if err == nil {
+			t.Fatal("expected error for missing password")
+		}
+	})
 }

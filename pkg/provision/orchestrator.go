@@ -413,30 +413,28 @@ func (o *Orchestrator) enrollMOK(ctx context.Context) error {
 
 	certPath := o.cfg.MOKCertPath
 	if _, err := os.Stat(certPath); err != nil {
-		if os.IsNotExist(err) {
-			o.log.Warn("MOK certificate not found, skipping enrollment", "path", certPath)
-			return nil
-		}
-		return fmt.Errorf("stat MOK certificate: %w", err)
+		return fmt.Errorf("MOK certificate not accessible: %w", err)
+	}
+
+	if o.cfg.MOKPassword == "" {
+		return fmt.Errorf("MOK_PASSWORD is required for MOK enrollment")
 	}
 
 	o.log.Info("Enrolling MOK certificate", "cert", certPath)
 
-	// Copy cert into chroot so mokutil can access it
+	// Copy cert into chroot so mokutil can access it.
+	// Use "--" to prevent option injection if certPath starts with "-".
 	chrootCert := newroot + "/tmp/mok.der"
-	cpOut, cpErr := exec.CommandContext(ctx, "cp", certPath, chrootCert).CombinedOutput() //nolint:gosec // trusted provisioning path
+	cpOut, cpErr := exec.CommandContext(ctx, "cp", "--", certPath, chrootCert).CombinedOutput() //nolint:gosec // trusted provisioning path
 	if cpErr != nil {
 		return fmt.Errorf("copy MOK cert into chroot: %s: %w", string(cpOut), cpErr)
 	}
+	defer os.Remove(chrootCert) // clean up cert from target filesystem
 
 	// mokutil --import requires password piped via stdin
 	mokCmd := exec.CommandContext(ctx, "chroot", newroot, //nolint:gosec // trusted provisioning command
 		"mokutil", "--import", "/tmp/mok.der")
-	if o.cfg.MOKPassword != "" {
-		mokCmd.Stdin = strings.NewReader(o.cfg.MOKPassword + "\n" + o.cfg.MOKPassword + "\n")
-	} else {
-		mokCmd.Args = append(mokCmd.Args, "--root-pw")
-	}
+	mokCmd.Stdin = strings.NewReader(o.cfg.MOKPassword + "\n" + o.cfg.MOKPassword + "\n")
 	out, err := mokCmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("MOK enrollment failed: %s: %w", string(out), err)
@@ -446,12 +444,14 @@ func (o *Orchestrator) enrollMOK(ctx context.Context) error {
 	return nil
 }
 
+const statusSecureBootReEnable = "secureboot-reenable-requested"
+
 func (o *Orchestrator) requestSecureBootReEnable(ctx context.Context) error {
 	if !o.cfg.SecureBootReEnable {
 		return nil
 	}
 	o.log.Info("Requesting CAPRF to re-enable SecureBoot after reboot")
-	return o.provider.ReportStatus(ctx, config.StatusInit, "secureboot-reenable-requested")
+	return o.provider.ReportStatus(ctx, config.StatusInit, statusSecureBootReEnable)
 }
 
 func (o *Orchestrator) reportSuccess(ctx context.Context) error {
