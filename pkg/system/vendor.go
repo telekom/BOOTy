@@ -20,12 +20,12 @@ const dmiSysVendorPath = "/sys/class/dmi/id/sys_vendor"
 
 // DetectVendor reads the system vendor from DMI/SMBIOS sysfs data.
 func DetectVendor() Vendor {
-	return DetectVendorFromPath(dmiSysVendorPath)
+	return detectVendorFromPath(dmiSysVendorPath)
 }
 
-// DetectVendorFromPath reads vendor info from the given path.
-// Exported for testing with alternative sysfs roots.
-func DetectVendorFromPath(path string) Vendor {
+// detectVendorFromPath reads vendor info from the given path.
+// Kept unexported; tests in the same package can call it directly.
+func detectVendorFromPath(path string) Vendor {
 	data, err := os.ReadFile(path) //nolint:gosec // intentional sysfs read
 	if err != nil {
 		return VendorGeneric
@@ -35,14 +35,15 @@ func DetectVendorFromPath(path string) Vendor {
 
 // ParseVendor maps a raw DMI sys_vendor string to a known Vendor.
 func ParseVendor(raw string) Vendor {
-	lower := strings.ToLower(raw)
+	normalized := strings.Join(strings.Fields(strings.ToLower(raw)), " ")
 	switch {
-	case strings.Contains(lower, "hpe"),
-		strings.Contains(lower, "hewlett"):
+	case normalized == "hp", normalized == "hpe",
+		normalized == "hewlett packard enterprise",
+		strings.Contains(normalized, "hewlett packard enterprise"):
 		return VendorHPE
-	case strings.Contains(lower, "lenovo"):
+	case strings.Contains(normalized, "lenovo"):
 		return VendorLenovo
-	case strings.Contains(lower, "dell"):
+	case strings.Contains(normalized, "dell"):
 		return VendorDell
 	default:
 		return VendorGeneric
@@ -59,6 +60,6 @@ func KernelModules(v Vendor) []string {
 	case VendorDell:
 		return []string{"dell_rbu", "ipmi_si", "ipmi_devintf"}
 	default:
-		return nil
+		return []string{}
 	}
 }
