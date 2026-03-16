@@ -17,7 +17,7 @@ topology:
 
     booty:
       kind: linux
-      image: ghcr.io/srl-labs/network-multitool:latest
+      image: ghcr.io/srl-labs/network-multitool:v0.5.0
       cmd: sleep infinity
       exec:
         - ip link set dev eth1 up

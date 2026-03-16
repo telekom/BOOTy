@@ -8,7 +8,11 @@ import (
 )
 
 // TestUEFIBootPathSmoke verifies BOOTy starts under OVMF firmware.
-// It is a smoke check, not full GRUB/systemd-boot chain validation.
+// Note: This uses QEMU's -kernel/-initrd direct Linux boot path which bypasses the
+// UEFI firmware boot flow (GRUB/systemd-boot). This is intentional — the test validates
+// that BOOTy's initramfs starts correctly with OVMF firmware present (exercising EFI
+// variable access and firmware device exposure), not the full bootloader chain. Full
+// UEFI boot-path validation is covered by the ISO boot tests (UEFI ISO Boot Validation).
 func TestUEFIBootPathSmoke(t *testing.T) {
 	qemuAvailable(t)
 	initramfs := envOrDefault("BOOTY_INITRAMFS", "test-initramfs.cpio.gz")

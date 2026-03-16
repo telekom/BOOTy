@@ -4,7 +4,7 @@ topology:
   nodes:
     switch:
       kind: linux
-      image: ghcr.io/srl-labs/network-multitool:latest
+      image: ghcr.io/srl-labs/network-multitool:v0.5.0
       cmd: sleep infinity
       exec:
         # Management network on eth1
@@ -24,7 +24,7 @@ topology:
 
     booty:
       kind: linux
-      image: ghcr.io/srl-labs/network-multitool:latest
+      image: ghcr.io/srl-labs/network-multitool:v0.5.0
       cmd: sleep infinity
       exec:
         # Management

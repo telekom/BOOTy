@@ -8,7 +8,12 @@ import (
 )
 
 // TestUEFISecureBootSmoke verifies BOOTy starts with secureboot-enabled OVMF firmware.
-// It is a firmware-path smoke test, not full Secure Boot signature-chain validation.
+// Note: This uses QEMU's -kernel/-initrd direct Linux boot path which bypasses the
+// UEFI firmware Secure Boot signature-chain. This is intentional — the test validates
+// that BOOTy's initramfs functions in the presence of Secure Boot firmware (e.g. efivar
+// visibility, TPM interactions), not that the boot chain itself is signed. Full
+// bootloader-chain validation requires a signed shim/GRUB and a bootable disk image,
+// which is covered by the ISO boot tests.
 func TestUEFISecureBootSmoke(t *testing.T) {
 	qemuAvailable(t)
 	initramfs := envOrDefault("BOOTY_INITRAMFS", "test-initramfs.cpio.gz")

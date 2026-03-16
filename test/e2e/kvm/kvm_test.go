@@ -29,12 +29,40 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
-// splitExtraArgs splits an environment variable into separate arguments.
+// splitExtraArgs splits a shell-style argument string into separate arguments,
+// respecting single and double quotes so values like "-append 'console=ttyS0 panic=1'"
+// are parsed correctly.
 func splitExtraArgs(env string) []string {
 	if env == "" {
 		return nil
 	}
-	return strings.Fields(env)
+
+	var args []string
+	var current strings.Builder
+	var quote rune
+	for _, r := range env {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				current.WriteRune(r)
+			}
+		case r == '\'' || r == '"':
+			quote = r
+		case r == ' ' || r == '\t':
+			if current.Len() > 0 {
+				args = append(args, current.String())
+				current.Reset()
+			}
+		default:
+			current.WriteRune(r)
+		}
+	}
+	if current.Len() > 0 {
+		args = append(args, current.String())
+	}
+	return args
 }
 
 // tail returns the last n bytes of data.
