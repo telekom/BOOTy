@@ -111,10 +111,13 @@ func NewChecksumReader(r io.Reader, checksum string) (*ChecksumReader, error) {
 // Read implements io.Reader.
 func (c *ChecksumReader) Read(p []byte) (int, error) {
 	n, err := c.reader.Read(p)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return n, fmt.Errorf("checksum read: %w", err)
+	if err == nil {
+		return n, nil
 	}
-	return n, err
+	if errors.Is(err, io.EOF) {
+		return n, io.EOF
+	}
+	return n, fmt.Errorf("checksum read: %w", err)
 }
 
 // Verify checks the computed checksum against expected.
