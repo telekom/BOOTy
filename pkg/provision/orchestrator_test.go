@@ -82,7 +82,7 @@ func TestSetupNVMeNamespaces_HappyPathSetsDiskDevice(t *testing.T) {
 	provider := &mockProvider{}
 	o, cmd := newTestOrchestratorWithCommander(t, cfg, provider)
 
-	cmd.setResult("nvme id-ctrl", []byte("nn : 32\ntnvmcap : 1024000\n"), nil)
+	cmd.setResult("nvme id-ctrl", []byte(`{"nn":32,"tnvmcap":1024000}`), nil)
 	cmd.setResult("nvme create-ns", []byte("create-ns: Success, created nsid:5\n"), nil)
 
 	if err := o.setupNVMeNamespaces(context.Background()); err != nil {

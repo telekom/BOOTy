@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -70,11 +69,17 @@ func ParseNVMeConfig(data string) ([]NVMeNamespaceConfig, error) {
 		}
 		totalPct := 0
 		for j, ns := range cfg.Namespaces {
+			if ns.Label == "" {
+				return nil, fmt.Errorf("config[%d].namespaces[%d]: label must not be empty", i, j)
+			}
 			if ns.SizePct <= 0 || ns.SizePct > 100 {
 				return nil, fmt.Errorf("config[%d].namespaces[%d]: sizePct %d out of range 1-100", i, j, ns.SizePct)
 			}
 			if ns.BlockSize != 0 && ns.BlockSize != 512 && ns.BlockSize != 4096 {
 				return nil, fmt.Errorf("config[%d].namespaces[%d]: blockSize %d must be 512 or 4096", i, j, ns.BlockSize)
+			}
+			if ns.BlockSize == 0 {
+				configs[i].Namespaces[j].BlockSize = 512
 			}
 			totalPct += ns.SizePct
 		}
@@ -86,11 +91,10 @@ func ParseNVMeConfig(data string) ([]NVMeNamespaceConfig, error) {
 }
 
 // DetectNVMeControllers lists NVMe controllers in /dev/.
-func DetectNVMeControllers() []string {
+func DetectNVMeControllers() ([]string, error) {
 	entries, err := os.ReadDir("/dev/")
 	if err != nil {
-		slog.Warn("failed to read /dev/ for NVMe detection", "error", err)
-		return nil
+		return nil, fmt.Errorf("reading /dev/ for NVMe detection: %w", err)
 	}
 	var controllers []string
 	for _, e := range entries {
@@ -100,7 +104,7 @@ func DetectNVMeControllers() []string {
 			controllers = append(controllers, "/dev/"+name)
 		}
 	}
-	return controllers
+	return controllers, nil
 }
 
 // NVMeIdentifyController returns basic controller info via nvme id-ctrl.
@@ -108,61 +112,64 @@ func (m *Manager) NVMeIdentifyController(ctx context.Context, controller string)
 	if !nvmeControllerPathRE.MatchString(controller) {
 		return nil, fmt.Errorf("invalid NVMe controller path %q", controller)
 	}
-	out, err := m.cmd.Run(ctx, "nvme", "id-ctrl", controller, "-o", "normal")
+	out, err := m.cmd.Run(ctx, "nvme", "id-ctrl", controller, "-o", "json")
 	if err != nil {
 		return nil, fmt.Errorf("nvme id-ctrl %s: %w", controller, err)
 	}
 
-	info := make(map[string]string)
-	for _, line := range strings.Split(string(out), "\n") {
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) == 2 {
-			key := strings.TrimSpace(parts[0])
-			val := strings.TrimSpace(parts[1])
-			info[key] = val
+	var raw map[string]any
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("parsing nvme id-ctrl JSON for %s: %w", controller, err)
+	}
+
+	info := make(map[string]string, len(raw))
+	for k, v := range raw {
+		switch val := v.(type) {
+		case string:
+			info[k] = val
+		case float64:
+			if val == float64(int64(val)) {
+				info[k] = fmt.Sprintf("%d", int64(val))
+			} else {
+				info[k] = fmt.Sprintf("%g", val)
+			}
+		default:
+			info[k] = fmt.Sprintf("%v", v)
 		}
 	}
 	return info, nil
 }
 
-// nsidRE extracts namespace IDs from nvme list-ns output (e.g., "[   0]:0x1" → "1").
-var nsidRE = regexp.MustCompile(`0x([0-9a-fA-F]+)`)
+// nvmeNSEntry represents a single namespace entry in nvme list-ns JSON output.
+type nvmeNSEntry struct {
+	NSID int `json:"nsid"`
+}
 
 // NVMeListNamespaces lists existing namespace IDs on a controller.
 func (m *Manager) NVMeListNamespaces(ctx context.Context, controller string) ([]string, error) {
 	if !nvmeControllerPathRE.MatchString(controller) {
 		return nil, fmt.Errorf("invalid NVMe controller path %q", controller)
 	}
-	out, err := m.cmd.Run(ctx, "nvme", "list-ns", controller)
+	out, err := m.cmd.Run(ctx, "nvme", "list-ns", controller, "-o", "json")
 	if err != nil {
 		return nil, fmt.Errorf("nvme list-ns %s: %w", controller, err)
 	}
 
-	var nsids []string
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if match := nsidRE.FindStringSubmatch(line); match != nil {
-			// Parse hex NSID to decimal.
-			nsid, err := parseHex(match[1])
-			if err != nil {
-				continue
-			}
-			nsidStr := fmt.Sprintf("%d", nsid)
-			nsids = append(nsids, nsidStr)
-		}
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" || trimmed == "[]" {
+		return nil, nil
+	}
+
+	var entries []nvmeNSEntry
+	if err := json.Unmarshal(out, &entries); err != nil {
+		return nil, fmt.Errorf("parsing nvme list-ns JSON for %s: %w", controller, err)
+	}
+
+	nsids := make([]string, 0, len(entries))
+	for _, e := range entries {
+		nsids = append(nsids, fmt.Sprintf("%d", e.NSID))
 	}
 	return nsids, nil
-}
-
-func parseHex(s string) (uint64, error) {
-	val, err := strconv.ParseUint(s, 16, 64)
-	if err != nil {
-		return 0, fmt.Errorf("parsing hex NSID %q: %w", s, err)
-	}
-	return val, nil
 }
 
 // NVMeSupportsMultiNS checks whether the controller supports multiple namespaces.
@@ -222,6 +229,10 @@ func (m *Manager) AttachNVMeNamespace(ctx context.Context, controller, nsid stri
 // lbafIndex selects the device LBA format; use -1 to auto-select based on blockSize
 // (0=512-byte sectors, 1=4096-byte sectors — valid only when the device LBAF table
 // matches this common ordering; prefer explicit lbafIndex from nvme id-ns when possible).
+//
+// TODO: LBAF index-to-block-size mapping is hard-coded (0→512, 1→4096). NVMe drives
+// can have different orderings. Query supported formats via "nvme id-ns" to determine
+// the correct LBAF index for the desired block size.
 func (m *Manager) FormatNVMeNamespace(ctx context.Context, device string, blockSize, lbafIndex int) error {
 	var lbaf string
 	switch {
@@ -317,8 +328,9 @@ func (m *Manager) nvmeControllerCapacity(ctx context.Context, controller string)
 	return totalBytes, nil
 }
 
-// NVMeResetNamespaces deletes all namespaces and recreates a single default namespace.
-// Used during deprovisioning to return disk to factory state.
+// NVMeResetNamespaces deletes all namespaces and recreates a single default namespace
+// using the controller's full capacity at 512-byte block size. Used during deprovisioning
+// to return the drive to a single-namespace factory state.
 func (m *Manager) NVMeResetNamespaces(ctx context.Context, controller string) error {
 	slog.Info("Resetting NVMe namespaces to factory default", "controller", controller)
 

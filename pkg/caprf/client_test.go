@@ -870,6 +870,31 @@ func TestParseVarsFirmwareConfig(t *testing.T) {
 	}
 }
 
+func TestParseVarsNVMeNamespaces(t *testing.T) {
+	input := `NVME_NAMESPACES="[{\"controller\":\"/dev/nvme0\",\"namespaces\":[{\"label\":\"os\",\"sizePct\":100}]}]"`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.NVMeNamespaces == "" {
+		t.Fatal("NVMeNamespaces should be populated")
+	}
+	if !strings.Contains(cfg.NVMeNamespaces, "/dev/nvme0") {
+		t.Errorf("NVMeNamespaces = %q, want controller /dev/nvme0", cfg.NVMeNamespaces)
+	}
+}
+
+func TestParseVarsSingleQuoteStripping(t *testing.T) {
+	input := `NVME_NAMESPACES='[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":100}]}]'`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(cfg.NVMeNamespaces, "/dev/nvme0") {
+		t.Errorf("single-quoted value not parsed correctly: NVMeNamespaces = %q", cfg.NVMeNamespaces)
+	}
+}
+
 func TestReportFirmware(t *testing.T) {
 	var received []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
