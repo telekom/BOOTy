@@ -168,7 +168,7 @@ func (o *Orchestrator) dryRunImageReachability(ctx context.Context) DryRunResult
 	return DryRunResult{Status: DryRunPass, Message: "all HTTP image URLs reachable"}
 }
 
-func validateDryRunImageURL(imgURL string) (scheme string, redactedURL string, invalidResult *DryRunResult) {
+func validateDryRunImageURL(imgURL string) (scheme, redactedURL string, invalidResult *DryRunResult) {
 	redactedURL = redactImageURL(imgURL)
 	parsedURL, err := url.Parse(imgURL)
 	if err != nil || parsedURL.Scheme == "" {
