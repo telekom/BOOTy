@@ -3,6 +3,7 @@
 package disk
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -15,18 +16,21 @@ func TestParsePartitionLayout(t *testing.T) {
 		input   string
 		wantErr bool
 		parts   int
+		table   string
 	}{
 		{
 			name:    "valid layout",
 			input:   `{"table":"gpt","partitions":[{"label":"efi","sizeMB":512,"filesystem":"vfat","mountpoint":"/boot/efi"},{"label":"root","filesystem":"ext4","mountpoint":"/"}]}`,
 			wantErr: false,
 			parts:   2,
+			table:   "gpt",
 		},
 		{
 			name:    "default table type",
 			input:   `{"partitions":[{"label":"root","filesystem":"ext4","mountpoint":"/"}]}`,
 			wantErr: false,
 			parts:   1,
+			table:   "gpt",
 		},
 		{
 			name:    "empty partitions",
@@ -54,6 +58,9 @@ func TestParsePartitionLayout(t *testing.T) {
 			}
 			if len(layout.Partitions) != tc.parts {
 				t.Errorf("got %d partitions, want %d", len(layout.Partitions), tc.parts)
+			}
+			if tc.table != "" && layout.Table != tc.table {
+				t.Errorf("got table %q, want %q", layout.Table, tc.table)
 			}
 			if layout.Table == "" {
 				t.Error("expected default table to be set, got empty")
@@ -331,6 +338,14 @@ func TestParsePartitionLayout_MultipleFillRemaining(t *testing.T) {
 	}
 }
 
+func TestParsePartitionLayout_FillRemainingNotLast(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"root","filesystem":"ext4","mountpoint":"/"},{"label":"data","sizeMB":1024,"filesystem":"xfs","mountpoint":"/data"}]}`
+	_, err := config.ParsePartitionLayout(input)
+	if err == nil {
+		t.Error("expected error when sizeMB=0 is not the last partition")
+	}
+}
+
 func TestParsePartitionLayout_InvalidPVPartition(t *testing.T) {
 	input := `{"table":"gpt","partitions":[{"label":"root","sizeMB":1024,"filesystem":"ext4","mountpoint":"/"}],"lvm":{"volumeGroup":"sysvg","pvPartition":0,"volumes":[{"name":"root","filesystem":"ext4","mountpoint":"/"}]}}`
 	_, err := config.ParsePartitionLayout(input)
@@ -479,5 +494,254 @@ func TestApplyLVMConfig_PVPartitionExceedsCount(t *testing.T) {
 	err := mgr.ApplyLVMConfig(t.Context(), "/dev/sda", layout)
 	if err == nil {
 		t.Error("expected error for PVPartition exceeding partition count")
+	}
+}
+
+func TestApplyPartitionLayoutEmptyPartitions(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+	layout := &config.PartitionLayout{
+		Table:      "gpt",
+		Partitions: []config.Partition{},
+	}
+	err := mgr.ApplyPartitionLayout(t.Context(), "/dev/sda", layout)
+	if err == nil {
+		t.Error("expected error for empty partitions")
+	}
+}
+
+func TestApplyPartitionLayoutCommandSequence(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+	layout := &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "efi", SizeMB: 512, Filesystem: "vfat", Mountpoint: "/boot/efi"},
+			{Label: "root", Filesystem: "ext4", Mountpoint: "/"},
+		},
+	}
+
+	err := mgr.ApplyPartitionLayout(t.Context(), "/dev/sda", layout)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify command sequence: sgdisk --zap-all, sgdisk --new (x2), partprobe, mkfs.vfat, mkfs.ext4.
+	expected := []struct {
+		name   string
+		argSub string // substring that must appear in any arg
+	}{
+		{"sgdisk", "--zap-all"},
+		{"sgdisk", "--new=1:"},
+		{"sgdisk", "--new=2:"},
+		{"partprobe", "/dev/sda"},
+		{"mkfs.vfat", "/dev/sda1"},
+		{"mkfs.ext4", "/dev/sda2"},
+	}
+
+	if len(cmd.calls) < len(expected) {
+		t.Fatalf("expected at least %d commands, got %d", len(expected), len(cmd.calls))
+	}
+
+	idx := 0
+	for _, call := range cmd.calls {
+		if idx >= len(expected) {
+			break
+		}
+		exp := expected[idx]
+		if call.name != exp.name {
+			continue
+		}
+		found := false
+		// Check command name match with arg substring.
+		allArgs := strings.Join(call.args, " ")
+		if strings.Contains(allArgs, exp.argSub) || exp.argSub == "" {
+			found = true
+		}
+		if found {
+			idx++
+		}
+	}
+	if idx != len(expected) {
+		var got []string
+		for _, c := range cmd.calls {
+			got = append(got, c.name+" "+strings.Join(c.args, " "))
+		}
+		t.Errorf("command sequence mismatch, matched %d/%d expected commands.\nGot calls:\n%s",
+			idx, len(expected), strings.Join(got, "\n"))
+	}
+}
+
+func TestApplyPartitionLayoutZapError(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("sgdisk --zap-all", []byte("zap error output"), fmt.Errorf("sgdisk failed"))
+	mgr := NewManager(cmd)
+	layout := &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "root", Filesystem: "ext4", Mountpoint: "/"},
+		},
+	}
+
+	err := mgr.ApplyPartitionLayout(t.Context(), "/dev/sda", layout)
+	if err == nil {
+		t.Fatal("expected error when sgdisk --zap-all fails")
+	}
+	if !strings.Contains(err.Error(), "zapping partition table") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestApplyPartitionLayoutPartprobeError(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("partprobe /dev/sda", nil, fmt.Errorf("partprobe failed"))
+	mgr := NewManager(cmd)
+	layout := &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "root", SizeMB: 8192, Filesystem: "ext4", Mountpoint: "/"},
+		},
+	}
+
+	err := mgr.ApplyPartitionLayout(t.Context(), "/dev/sda", layout)
+	if err == nil {
+		t.Fatal("expected error when partprobe fails")
+	}
+	if !strings.Contains(err.Error(), "partprobe") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestApplyPartitionLayoutFormatError(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("mkfs.ext4 -F", []byte("format error"), fmt.Errorf("mkfs failed"))
+	mgr := NewManager(cmd)
+	layout := &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "root", SizeMB: 8192, Filesystem: "ext4", Mountpoint: "/"},
+		},
+	}
+
+	err := mgr.ApplyPartitionLayout(t.Context(), "/dev/sda", layout)
+	if err == nil {
+		t.Fatal("expected error when mkfs fails")
+	}
+	if !strings.Contains(err.Error(), "formatting partition") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestApplyLVMConfigCommandSequence(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+	layout := &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "pv", SizeMB: 8192},
+			{Label: "efi", SizeMB: 512, Filesystem: "vfat", Mountpoint: "/boot/efi"},
+		},
+		LVM: &config.LVMConfig{
+			VolumeGroup: "sysvg",
+			PVPartition: 1,
+			Volumes: []config.LVVolume{
+				{Name: "root", SizeMB: 4096, Filesystem: "ext4", Mountpoint: "/"},
+				{Name: "var", Extents: "100%FREE", Filesystem: "xfs", Mountpoint: "/var"},
+			},
+		},
+	}
+
+	err := mgr.ApplyLVMConfig(t.Context(), "/dev/sda", layout)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify: pvcreate, vgcreate, lvcreate (x2), mkfs.ext4, mkfs.xfs.
+	expected := []string{"pvcreate", "vgcreate", "lvcreate", "lvcreate", "mkfs.ext4", "mkfs.xfs"}
+	idx := 0
+	for _, call := range cmd.calls {
+		if idx >= len(expected) {
+			break
+		}
+		if call.name == expected[idx] {
+			idx++
+		}
+	}
+	if idx != len(expected) {
+		var got []string
+		for _, c := range cmd.calls {
+			got = append(got, c.name+" "+strings.Join(c.args, " "))
+		}
+		t.Errorf("expected commands %v, matched %d/%d.\nGot:\n%s",
+			expected, idx, len(expected), strings.Join(got, "\n"))
+	}
+}
+
+func TestApplyLVMConfigPvcreateError(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("pvcreate -f", []byte("pv error"), fmt.Errorf("pvcreate failed"))
+	mgr := NewManager(cmd)
+	layout := &config.PartitionLayout{
+		Table:      "gpt",
+		Partitions: []config.Partition{{Label: "pv", SizeMB: 8192}},
+		LVM: &config.LVMConfig{
+			VolumeGroup: "sysvg",
+			PVPartition: 1,
+			Volumes:     []config.LVVolume{{Name: "root", Filesystem: "ext4", Mountpoint: "/"}},
+		},
+	}
+
+	err := mgr.ApplyLVMConfig(t.Context(), "/dev/sda", layout)
+	if err == nil {
+		t.Fatal("expected error when pvcreate fails")
+	}
+	if !strings.Contains(err.Error(), "pvcreate") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestApplyLVMConfigVgcreateError(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("vgcreate sysvg", []byte("vg error"), fmt.Errorf("vgcreate failed"))
+	mgr := NewManager(cmd)
+	layout := &config.PartitionLayout{
+		Table:      "gpt",
+		Partitions: []config.Partition{{Label: "pv", SizeMB: 8192}},
+		LVM: &config.LVMConfig{
+			VolumeGroup: "sysvg",
+			PVPartition: 1,
+			Volumes:     []config.LVVolume{{Name: "root", Filesystem: "ext4", Mountpoint: "/"}},
+		},
+	}
+
+	err := mgr.ApplyLVMConfig(t.Context(), "/dev/sda", layout)
+	if err == nil {
+		t.Fatal("expected error when vgcreate fails")
+	}
+	if !strings.Contains(err.Error(), "vgcreate") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestApplyLVMConfigLvcreateError(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("lvcreate -L", []byte("lv error"), fmt.Errorf("lvcreate failed"))
+	mgr := NewManager(cmd)
+	layout := &config.PartitionLayout{
+		Table:      "gpt",
+		Partitions: []config.Partition{{Label: "pv", SizeMB: 8192}},
+		LVM: &config.LVMConfig{
+			VolumeGroup: "sysvg",
+			PVPartition: 1,
+			Volumes:     []config.LVVolume{{Name: "root", SizeMB: 4096, Filesystem: "ext4", Mountpoint: "/"}},
+		},
+	}
+
+	err := mgr.ApplyLVMConfig(t.Context(), "/dev/sda", layout)
+	if err == nil {
+		t.Fatal("expected error when lvcreate fails")
+	}
+	if !strings.Contains(err.Error(), "lvcreate") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }

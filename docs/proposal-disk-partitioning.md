@@ -1,14 +1,19 @@
 # Proposal: Custom Disk Partitioning
 
-## Status: Accepted
+## Status: Phase 1 Implemented
 
-Implemented so far (including incremental hardening beyond the initial Phase 1 scope):
-- `ParsePartitionLayout` validation (GPT-only schema, root/mountpoint checks)
-- `ApplyPartitionLayout` (sgdisk + filesystem formatting)
-- Optional LVM creation from layout (`pvcreate`/`vgcreate`/`lvcreate`)
-- `GenerateFstab` + `GenerateLVMFstab`
-- Orchestrator integration (`apply-partition-layout`, layout-based root/ESP resolution,
-  image streaming to the resolved root partition/LV)
+Phase 1 is fully implemented and reviewed:
+- `ParsePartitionLayout` validation (GPT-only schema, root/mountpoint checks,
+  fill-remaining position validation)
+- `ApplyPartitionLayout` with input guards (nil, empty, device validation)
+  and sgdisk-based GPT partitioning + filesystem formatting
+- Optional LVM creation from layout (`pvcreate`/`vgcreate`/`lvcreate`) with
+  full input validation (PV bounds, VG/LV name checks)
+- `GenerateFstab` + `GenerateLVMFstab` using strings.Builder
+- Orchestrator integration: `apply-partition-layout` step, layout-based
+  root/ESP resolution, stream-image skip when no image URLs configured,
+  write-fstab after mount-root
+- Comprehensive unit tests with mockCommander for command-sequence verification
 
 Still pending for full proposal closure:
 - End-to-end rootfs tarball extraction flow (instead of raw image assumptions)

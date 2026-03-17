@@ -24,6 +24,9 @@ func (m *Manager) ApplyPartitionLayout(ctx context.Context, device string, layou
 	if device == "" {
 		return fmt.Errorf("device path is empty")
 	}
+	if len(layout.Partitions) == 0 {
+		return fmt.Errorf("partition layout has no partitions")
+	}
 	if layout.Table != "" && layout.Table != "gpt" {
 		return fmt.Errorf("unsupported partition table type %q, only \"gpt\" is supported", layout.Table)
 	}

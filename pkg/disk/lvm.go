@@ -29,6 +29,14 @@ func (m *Manager) ApplyLVMConfig(ctx context.Context, device string, layout *con
 	if lvm.PVPartition > len(layout.Partitions) {
 		return fmt.Errorf("lvm.pvPartition %d exceeds partition count %d", lvm.PVPartition, len(layout.Partitions))
 	}
+	if strings.TrimSpace(lvm.VolumeGroup) == "" {
+		return fmt.Errorf("lvm volumeGroup name is empty")
+	}
+	for i, vol := range lvm.Volumes {
+		if strings.TrimSpace(vol.Name) == "" {
+			return fmt.Errorf("lvm volume %d: name is empty", i+1)
+		}
+	}
 	pvDev := partitionDevice(device, lvm.PVPartition)
 
 	slog.Info("Setting up LVM", "vg", lvm.VolumeGroup, "pv", pvDev, "volumes", len(lvm.Volumes))

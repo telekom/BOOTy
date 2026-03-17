@@ -460,9 +460,15 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 		})
 	}
 
-	// With a custom partition layout, stream image data to the resolved root
-	// partition/LV instead of the whole disk so the partition table is preserved.
+	// With a custom partition layout, skip image streaming when no image URLs
+	// are configured (the layout handles partitioning/formatting directly).
+	// When image URLs are present, stream to the resolved root partition/LV
+	// instead of the whole disk so the partition table is preserved.
 	if o.cfg.PartitionLayout != nil {
+		if len(o.cfg.ImageURLs) == 0 {
+			o.log.Info("Partition layout set with no image URLs, skipping image streaming")
+			return nil
+		}
 		if err := o.resolveRootFromLayout(o.cfg.PartitionLayout); err != nil {
 			return fmt.Errorf("resolve root from partition layout: %w", err)
 		}

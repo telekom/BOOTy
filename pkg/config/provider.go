@@ -238,6 +238,9 @@ func validatePartitions(partitions []Partition) error {
 		}
 		if part.SizeMB == 0 {
 			fillCount++
+			if i != len(partitions)-1 {
+				return fmt.Errorf("partition %d (%s): sizeMB=0 (fill remaining) must be the last partition", i+1, part.Label)
+			}
 		}
 	}
 	if fillCount > 1 {

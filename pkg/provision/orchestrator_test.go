@@ -557,7 +557,7 @@ func TestResolveRootFromLayoutMissingRoot(t *testing.T) {
 	}
 }
 
-func TestStreamImagePartitionLayoutRequiresImage(t *testing.T) {
+func TestStreamImagePartitionLayoutSkipsWithNoImages(t *testing.T) {
 	cfg := &config.MachineConfig{
 		PartitionLayout: &config.PartitionLayout{
 			Table: "gpt",
@@ -571,11 +571,8 @@ func TestStreamImagePartitionLayoutRequiresImage(t *testing.T) {
 	o.targetDisk = "/dev/sda"
 
 	err := o.streamImage(context.Background())
-	if err == nil {
-		t.Fatal("expected error when partition layout has no image URL")
-	}
-	if !strings.Contains(err.Error(), "selecting image source") {
-		t.Errorf("unexpected error: %v", err)
+	if err != nil {
+		t.Fatalf("expected stream-image to skip with no image URLs and partition layout, got: %v", err)
 	}
 }
 
