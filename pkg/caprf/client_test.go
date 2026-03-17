@@ -1077,6 +1077,38 @@ func TestAcquireTokenNoURL(t *testing.T) {
 	}
 }
 
+func TestAcquireTokenRequiresHostname(t *testing.T) {
+	client := NewFromConfig(&config.MachineConfig{
+		Token:    "bootstrap-token",
+		TokenURL: "https://auth.example.com/token",
+	})
+
+	err := client.AcquireToken(context.Background())
+	if err == nil {
+		t.Fatal("expected error when TokenURL is configured and Hostname is empty")
+	}
+	if !strings.Contains(err.Error(), "hostname is empty") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAcquireTokenRejectsInvalidAlgorithm(t *testing.T) {
+	client := NewFromConfig(&config.MachineConfig{
+		Token:          "bootstrap-token",
+		TokenURL:       "https://auth.example.com/token",
+		Hostname:       "worker-01",
+		TokenAlgorithm: "HS256",
+	})
+
+	err := client.AcquireToken(context.Background())
+	if err == nil {
+		t.Fatal("expected error for unsupported token algorithm")
+	}
+	if !strings.Contains(err.Error(), "unsupported token algorithm") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestAcquireTokenWithServer(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer bootstrap-token" {

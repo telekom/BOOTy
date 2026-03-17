@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -41,7 +42,7 @@ type TokenManager struct {
 	backoff        func(attempt int) time.Duration
 	algorithm      string
 	acquired       bool
-	renewalStarted bool // true after a successful Acquire call
+	renewalStarted bool // true once StartRenewal launches renewLoop
 }
 
 // NewTokenManager creates a token manager with an initial bootstrap token.
@@ -130,7 +131,7 @@ func (tm *TokenManager) Acquire(ctx context.Context, serial, bmcMAC string) erro
 	tm.acquired = true
 	tm.mu.Unlock()
 
-	tm.log.Info("JWT acquired", "expiresIn", tokenResp.ExpiresIn)
+	tm.log.Info("jwt acquired", "expiresIn", tokenResp.ExpiresIn)
 
 	return nil
 }
@@ -150,7 +151,7 @@ func (tm *TokenManager) StartRenewal(ctx context.Context) error {
 	tm.mu.Lock()
 	if !tm.acquired {
 		tm.mu.Unlock()
-		return fmt.Errorf("cannot start renewal: Acquire has not been called")
+		return fmt.Errorf("cannot start renewal: acquire has not been called")
 	}
 	if tm.renewalStarted {
 		tm.mu.Unlock()
@@ -184,15 +185,19 @@ func (tm *TokenManager) renewLoop(ctx context.Context) {
 		select {
 		case <-timer.C:
 			if err := tm.renewWithRetry(ctx); err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					tm.log.Debug("token renewal stopped", "reason", err)
+					return
+				}
 				tm.log.Error("token renewal exhausted", "error", err)
 				tm.mu.RLock()
 				fatal := tm.onFatal
 				tm.mu.RUnlock()
 				if fatal != nil {
 					fatal()
+					return
 				}
-
-				return
+				tm.log.Warn("token renewal exhausted without fatal handler, continuing retry loop")
 			}
 		case <-ctx.Done():
 			return
@@ -255,7 +260,7 @@ func (tm *TokenManager) renew(ctx context.Context) error {
 	tm.expiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 	tm.mu.Unlock()
 
-	tm.log.Info("JWT renewed", "expiresIn", tokenResp.ExpiresIn)
+	tm.log.Info("jwt renewed", "expiresIn", tokenResp.ExpiresIn)
 
 	return nil
 }

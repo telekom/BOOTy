@@ -68,6 +68,9 @@ func (c *Client) AcquireToken(ctx context.Context) error {
 		c.log.Warn("token URL configured but no bootstrap token, skipping JWT acquisition")
 		return nil
 	}
+	if strings.TrimSpace(c.cfg.Hostname) == "" {
+		return fmt.Errorf("token URL configured but hostname is empty")
+	}
 
 	tm := auth.NewTokenManager(c.cfg.TokenURL, c.cfg.Token, c.log)
 	if c.cfg.TokenAlgorithm != "" {
@@ -90,8 +93,17 @@ func (c *Client) AcquireToken(ctx context.Context) error {
 	// source — cfg.Token will hold the first-acquired JWT, not the latest.
 	c.cfg.Token = tm.Token()
 	c.tokenManager = tm
-	c.log.Info("JWT token acquired, using for subsequent API calls")
+	c.log.Info("jwt token acquired, using for subsequent API calls")
 	return nil
+}
+
+// SetTokenRenewalFatalHandler sets the callback invoked when token renewal
+// is permanently exhausted.
+func (c *Client) SetTokenRenewalFatalHandler(fn func()) {
+	if c.tokenManager == nil {
+		return
+	}
+	c.tokenManager.SetOnFatal(fn)
 }
 
 // StartTokenRenewal begins background JWT renewal if a token was acquired.

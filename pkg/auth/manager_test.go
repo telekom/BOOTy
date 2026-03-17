@@ -234,14 +234,103 @@ func TestTokenManager_StartRenewal_RenewsBeforeExpiry(t *testing.T) {
 	}
 
 	// Poll briefly: the goroutine needs to read and apply the HTTP response.
-	deadline := time.Now().Add(500 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		if tm.Token() == "renewed" {
-			return
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	timeout := time.After(500 * time.Millisecond)
+	for {
+		select {
+		case <-ticker.C:
+			if tm.Token() == "renewed" {
+				return
+			}
+		case <-timeout:
+			t.Fatalf("expected token 'renewed', got %q", tm.Token())
 		}
-		time.Sleep(5 * time.Millisecond)
 	}
-	t.Errorf("expected token 'renewed', got %q", tm.Token())
+}
+
+func TestTokenManager_StartRenewal_OnFatalCalledOnExhaustion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	tm := NewTokenManager(server.URL, "bootstrap", slog.Default())
+	tm.mu.Lock()
+	tm.token = "initial-jwt"
+	tm.refreshToken = "refresh"
+	tm.expiresAt = time.Now().Add(-time.Second)
+	tm.acquired = true
+	tm.mu.Unlock()
+	tm.backoff = func(_ int) time.Duration { return time.Millisecond }
+
+	var fatalCalls atomic.Int32
+	fatalCalled := make(chan struct{})
+	tm.SetOnFatal(func() {
+		if fatalCalls.Add(1) == 1 {
+			close(fatalCalled)
+		}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := tm.StartRenewal(ctx); err != nil {
+		t.Fatalf("StartRenewal failed: %v", err)
+	}
+
+	select {
+	case <-fatalCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for fatal callback")
+	}
+}
+
+func TestTokenManager_StartRenewal_ContextCancelDoesNotCallOnFatal(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	requestStarted := make(chan struct{})
+	var once sync.Once
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		once.Do(func() {
+			close(requestStarted)
+			cancel()
+		})
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	tm := NewTokenManager(server.URL, "bootstrap", slog.Default())
+	tm.mu.Lock()
+	tm.token = "initial-jwt"
+	tm.refreshToken = "refresh"
+	tm.expiresAt = time.Now().Add(-time.Second)
+	tm.acquired = true
+	tm.mu.Unlock()
+	tm.backoff = func(_ int) time.Duration { return time.Hour }
+
+	fatalCalled := make(chan struct{}, 1)
+	tm.SetOnFatal(func() {
+		select {
+		case fatalCalled <- struct{}{}:
+		default:
+		}
+	})
+
+	if err := tm.StartRenewal(ctx); err != nil {
+		t.Fatalf("StartRenewal failed: %v", err)
+	}
+
+	select {
+	case <-requestStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for renewal request")
+	}
+
+	select {
+	case <-fatalCalled:
+		t.Fatal("onFatal should not be called on context cancellation")
+	case <-time.After(200 * time.Millisecond):
+	}
 }
 
 func TestTokenManager_SetAlgorithm_ThreadSafe(t *testing.T) {

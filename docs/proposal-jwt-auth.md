@@ -1,6 +1,6 @@
 # Proposal: JWT Token Authentication for CAPRF
 
-## Status: Phase 1 Implemented
+## Status: Accepted
 
 ## Priority: P1
 
@@ -11,6 +11,14 @@ Tokens) for BOOTy ↔ CAPRF communication. BOOTy acquires a JWT at startup,
 a background goroutine renews before expiry, and failure to renew triggers
 escalating recovery (retry → reboot). CAPRF validates JWT signatures and
 claims (machine identity, session ID, expiry).
+
+## Implementation Status
+
+Phase 1 (BOOTy-side token acquisition/renewal and CAPRF client integration)
+is implemented in PR #40.
+
+Remaining scope in this proposal includes CAPRF-side JWT issuance/validation,
+claims wiring, and end-to-end validation of server-enforced JWT semantics.
 
 ## Motivation
 
