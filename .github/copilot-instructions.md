@@ -14,7 +14,7 @@ Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, orch
 - `pkg/network/vlan/` — VLAN 802.1Q tagging via netlink
 - `pkg/network/vrf/` — VRF configuration types and validation for multi-VRF network isolation
 - `pkg/image/` — Multi-format image streaming (gzip, lz4, xz, zstd) + OCI registry
-- `pkg/disk/` — Disk detection, partitioning, RAID, LVM, mount
+- `pkg/disk/` — Disk detection, partitioning, RAID, LVM, mount, NVMe namespace management
 - `pkg/auth/` — JWT token manager (acquisition, renewal, backoff)
 - `pkg/caprf/` — CAPRF controller client (status/log shipping)
 - `pkg/cloudinit/` — Cloud-init NoCloud/ConfigDrive generation
@@ -55,10 +55,6 @@ make slim               # DHCP-only (~15 MB)
 make micro              # Pure Go (~10 MB)
 make iso                # Bootable ISO
 make gobgp-iso          # GoBGP ISO
-make build-all          # Cross-compile binary for amd64+arm64
-make arm64              # Full ARM64 initramfs image
-make arm64-slim         # ARM64 slim initramfs
-make arm64-gobgp        # ARM64 GoBGP initramfs
 
 # E2E tests (require ContainerLab, Linux only)
 make clab-up && make test-e2e-integration

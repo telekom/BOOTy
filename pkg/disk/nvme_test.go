@@ -277,3 +277,42 @@ func TestNVMeSupportsMultiNS_Single(t *testing.T) {
 		t.Error("expected no multi-NS support for nn=1")
 	}
 }
+
+func TestParseNVMeConfig_DuplicateController(t *testing.T) {
+	input := `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":100}]},{"controller":"/dev/nvme0","namespaces":[{"label":"data","sizePct":100}]}]`
+	_, err := ParseNVMeConfig(input)
+	if err == nil {
+		t.Error("expected error for duplicate controller")
+	}
+}
+
+func TestNVMeResetNamespaces(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("nvme list-ns", []byte("[   0]:0x1\n[   1]:0x2\n"), nil)
+	cmd.setResult("nvme delete-ns", []byte(""), nil)
+	cmd.setResult("nvme id-ctrl", []byte("tnvmcap : 1024000\n"), nil)
+	cmd.setResult("nvme create-ns", []byte("create-ns: Success, created nsid:1\n"), nil)
+	cmd.setResult("nvme attach-ns", []byte(""), nil)
+	mgr := NewManager(cmd)
+
+	err := mgr.NVMeResetNamespaces(t.Context(), "/dev/nvme0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNVMeIdentifyController_InvalidPath(t *testing.T) {
+	mgr := NewManager(newMockCommander())
+	_, err := mgr.NVMeIdentifyController(t.Context(), "/dev/sda")
+	if err == nil {
+		t.Error("expected error for invalid controller path")
+	}
+}
+
+func TestNVMeListNamespaces_InvalidPath(t *testing.T) {
+	mgr := NewManager(newMockCommander())
+	_, err := mgr.NVMeListNamespaces(t.Context(), "/dev/sda")
+	if err == nil {
+		t.Error("expected error for invalid controller path")
+	}
+}

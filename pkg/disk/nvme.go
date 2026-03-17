@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -33,7 +34,6 @@ type NVMeNamespace struct {
 // nvmeControllerPathRE validates that a controller path looks like /dev/nvme0, /dev/nvme1, etc.
 var nvmeControllerPathRE = regexp.MustCompile(`^/dev/nvme\d+$`)
 
-// ParseNVMeConfig parses a JSON NVMe namespace configuration string.
 // checkNVMeControllerUniqueness returns an error if any controller path appears more than once.
 func checkNVMeControllerUniqueness(configs []NVMeNamespaceConfig) error {
 	seen := make(map[string]bool, len(configs))
@@ -105,6 +105,9 @@ func DetectNVMeControllers() []string {
 
 // NVMeIdentifyController returns basic controller info via nvme id-ctrl.
 func (m *Manager) NVMeIdentifyController(ctx context.Context, controller string) (map[string]string, error) {
+	if !nvmeControllerPathRE.MatchString(controller) {
+		return nil, fmt.Errorf("invalid NVMe controller path %q", controller)
+	}
 	out, err := m.cmd.Run(ctx, "nvme", "id-ctrl", controller, "-o", "normal")
 	if err != nil {
 		return nil, fmt.Errorf("nvme id-ctrl %s: %w", controller, err)
@@ -127,6 +130,9 @@ var nsidRE = regexp.MustCompile(`0x([0-9a-fA-F]+)`)
 
 // NVMeListNamespaces lists existing namespace IDs on a controller.
 func (m *Manager) NVMeListNamespaces(ctx context.Context, controller string) ([]string, error) {
+	if !nvmeControllerPathRE.MatchString(controller) {
+		return nil, fmt.Errorf("invalid NVMe controller path %q", controller)
+	}
 	out, err := m.cmd.Run(ctx, "nvme", "list-ns", controller)
 	if err != nil {
 		return nil, fmt.Errorf("nvme list-ns %s: %w", controller, err)
@@ -152,8 +158,8 @@ func (m *Manager) NVMeListNamespaces(ctx context.Context, controller string) ([]
 }
 
 func parseHex(s string) (uint64, error) {
-	var val uint64
-	if _, err := fmt.Sscanf(s, "%x", &val); err != nil {
+	val, err := strconv.ParseUint(s, 16, 64)
+	if err != nil {
 		return 0, fmt.Errorf("parsing hex NSID %q: %w", s, err)
 	}
 	return val, nil
