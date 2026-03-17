@@ -223,6 +223,9 @@ func (c *Configurator) ConfigureDNS(cfg *config.MachineConfig) error {
 		return nil
 	}
 	path := filepath.Join(c.rootDir, "etc", "resolv.conf")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("creating resolv.conf directory: %w", err)
+	}
 	slog.Info("Configuring DNS", "resolvers", cfg.DNSResolvers)
 	var lines []string
 	for _, r := range strings.Split(cfg.DNSResolvers, ",") {

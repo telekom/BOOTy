@@ -172,10 +172,6 @@ func TestConfigureKubeletNoLabels(t *testing.T) {
 func TestConfigureDNS(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
-	// Create etc/ directory (in production it exists from the mounted root).
-	if err := os.MkdirAll(filepath.Join(c.rootDir, "etc"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	cfg := &config.MachineConfig{DNSResolvers: "8.8.8.8,1.1.1.1"}
 	if err := c.ConfigureDNS(cfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
