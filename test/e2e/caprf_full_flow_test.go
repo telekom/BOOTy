@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1665,12 +1666,17 @@ func TestCreateEFIBootEntryE2E(t *testing.T) {
 	root := t.TempDir()
 	c.SetRootDir(root)
 
-	// Create shimx64.efi so loader detection works.
+	shimName := "shimx64.efi"
+	if runtime.GOARCH == "arm64" {
+		shimName = "shimaa64.efi"
+	}
+
+	// Create arch-specific shim so loader detection works.
 	efiDir := filepath.Join(root, "boot", "efi", "EFI", "ubuntu")
 	if err := os.MkdirAll(efiDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(efiDir, "shimx64.efi"), []byte("shim"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(efiDir, shimName), []byte("shim"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1689,8 +1695,8 @@ func TestCreateEFIBootEntryE2E(t *testing.T) {
 			if !strings.Contains(call.String(), "-p 1") {
 				t.Errorf("expected -p 1 in call: %s", call)
 			}
-			if !strings.Contains(call.String(), "shimx64.efi") {
-				t.Errorf("expected shimx64.efi in call: %s", call)
+			if !strings.Contains(call.String(), shimName) {
+				t.Errorf("expected %s in call: %s", shimName, call)
 			}
 		}
 	}
@@ -1708,12 +1714,17 @@ func TestCreateEFIBootEntryGrubFallbackE2E(t *testing.T) {
 	root := t.TempDir()
 	c.SetRootDir(root)
 
-	// No shimx64.efi but grubx64.efi present — should fallback to grubx64.efi.
+	grubName := "grubx64.efi"
+	if runtime.GOARCH == "arm64" {
+		grubName = "grubaa64.efi"
+	}
+
+	// No shim but arch-specific grub present — should fallback to grub.
 	efiDir := filepath.Join(root, "boot", "efi", "EFI", "ubuntu")
 	if err := os.MkdirAll(efiDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(efiDir, "grubx64.efi"), []byte("grub"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(efiDir, grubName), []byte("grub"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1726,8 +1737,8 @@ func TestCreateEFIBootEntryGrubFallbackE2E(t *testing.T) {
 	for _, call := range calls {
 		if strings.Contains(call.String(), "efibootmgr -c") {
 			found = true
-			if !strings.Contains(call.String(), "grubx64.efi") {
-				t.Errorf("expected grubx64.efi fallback in call: %s", call)
+			if !strings.Contains(call.String(), grubName) {
+				t.Errorf("expected %s fallback in call: %s", grubName, call)
 			}
 			if !strings.Contains(call.String(), "-p 1") {
 				t.Errorf("expected -p 1 for nvme0n1p1 in call: %s", call)

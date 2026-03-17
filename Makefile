@@ -34,6 +34,7 @@ build-all: $(SRC)
 
 clean:
 	@rm -f $(TARGET)
+	@rm -rf dist
 
 install:
 	@echo Building and Installing project

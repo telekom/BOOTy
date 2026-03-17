@@ -11,18 +11,21 @@ import (
 
 func TestEfiLoaderNames(t *testing.T) {
 	tests := []struct {
+		name     string
 		arch     string
 		wantShim string
 		wantGrub string
 	}{
-		{"amd64", "shimx64.efi", "grubx64.efi"},
-		{"arm64", "shimaa64.efi", "grubaa64.efi"},
-		{"", "shimx64.efi", "grubx64.efi"},
+		{"amd64", "amd64", "shimx64.efi", "grubx64.efi"},
+		{"arm64", "arm64", "shimaa64.efi", "grubaa64.efi"},
 	}
 
 	for _, tc := range tests {
-		t.Run(tc.arch, func(t *testing.T) {
-			shim, grub := efiLoaderNames(tc.arch)
+		t.Run(tc.name, func(t *testing.T) {
+			shim, grub, err := efiLoaderNames(tc.arch)
+			if err != nil {
+				t.Fatalf("efiLoaderNames(%q): %v", tc.arch, err)
+			}
 			if shim != tc.wantShim {
 				t.Errorf("shim = %q, want %q", shim, tc.wantShim)
 			}
@@ -30,6 +33,16 @@ func TestEfiLoaderNames(t *testing.T) {
 				t.Errorf("grub = %q, want %q", grub, tc.wantGrub)
 			}
 		})
+	}
+}
+
+func TestEfiLoaderNamesUnsupported(t *testing.T) {
+	_, _, err := efiLoaderNames("s390x")
+	if err == nil {
+		t.Fatal("expected error for unsupported architecture")
+	}
+	if !strings.Contains(err.Error(), "unsupported architecture") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

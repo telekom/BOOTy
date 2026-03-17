@@ -293,19 +293,26 @@ func (c *Configurator) CreateEFIBootEntry(ctx context.Context, diskDev, bootPart
 }
 
 // efiLoaderNames returns the shim and grub EFI binary names for the given architecture.
-func efiLoaderNames(arch string) (shimName, grubName string) {
-	if arch == "arm64" {
-		return "shimaa64.efi", "grubaa64.efi"
+func efiLoaderNames(arch string) (shimName, grubName string, err error) {
+	switch arch {
+	case "amd64":
+		return "shimx64.efi", "grubx64.efi", nil
+	case "arm64":
+		return "shimaa64.efi", "grubaa64.efi", nil
+	default:
+		return "", "", fmt.Errorf("unsupported architecture: %s", arch)
 	}
-	return "shimx64.efi", "grubx64.efi"
 }
 
 // efiLoaderPath determines the EFI loader path, preferring shim with grub fallback.
 func efiLoaderPath(rootDir, arch string) (string, error) {
-	shimName, grubName := efiLoaderNames(arch)
+	shimName, grubName, err := efiLoaderNames(arch)
+	if err != nil {
+		return "", fmt.Errorf("resolve efi loader names: %w", err)
+	}
 	shimPath := filepath.Join(rootDir, "boot", "efi", "EFI", "ubuntu", shimName)
 	grubPath := filepath.Join(rootDir, "boot", "efi", "EFI", "ubuntu", grubName)
-	_, err := os.Stat(shimPath)
+	_, err = os.Stat(shimPath)
 	if err == nil {
 		return `\EFI\ubuntu\` + shimName, nil
 	}
