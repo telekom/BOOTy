@@ -165,7 +165,7 @@ func (o *Orchestrator) executeStep(ctx context.Context, step Step, cp *Checkpoin
 		DumpDebugState(step.Name)
 		dumpConfig(o.cfg)
 		if reportErr := o.provider.ReportStatus(ctx, config.StatusError, msg); reportErr != nil {
-			o.log.Error("failed to report error status", "error", reportErr)
+			o.log.Error("Failed to report error status", "error", reportErr)
 		}
 		return fmt.Errorf("provision step %s: %w", step.Name, err)
 	}

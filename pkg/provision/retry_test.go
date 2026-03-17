@@ -196,3 +196,28 @@ func TestWithRetry_NonTransientFailure(t *testing.T) {
 		t.Errorf("expected 1 call (no retry on non-transient), got %d", calls)
 	}
 }
+
+func TestWithRetry_TransientErrorType(t *testing.T) {
+	// When fn returns a TransientError, retry should happen even with
+	// policy.Transient=false because isTransient(err) returns true.
+	policy := RetryPolicy{
+		MaxRetries:   3,
+		InitialDelay: time.Millisecond,
+		MaxDelay:     5 * time.Millisecond,
+		Transient:    false,
+	}
+	calls := 0
+	err := WithRetry(context.Background(), "test-step", policy, func(_ context.Context) error {
+		calls++
+		if calls < 3 {
+			return &TransientError{Err: errors.New("temporary issue")}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if calls != 3 {
+		t.Errorf("expected 3 calls (retried TransientError), got %d", calls)
+	}
+}

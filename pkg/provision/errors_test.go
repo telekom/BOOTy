@@ -52,6 +52,26 @@ func TestIsTransient(t *testing.T) {
 	}
 }
 
+func TestIsPermanent(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"permanent error", &PermanentError{Err: errors.New("disk")}, true},
+		{"transient error", &TransientError{Err: errors.New("timeout")}, false},
+		{"plain error", errors.New("generic"), false},
+		{"wrapped permanent", fmt.Errorf("wrap: %w", &PermanentError{Err: errors.New("p")}), true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isPermanent(tc.err); got != tc.want {
+				t.Errorf("isPermanent(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestTransientError_NilErr(t *testing.T) {
 	err := &TransientError{}
 	if err.Error() != "transient error" {

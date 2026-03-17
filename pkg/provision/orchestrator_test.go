@@ -268,7 +268,7 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 	cpPath := dir + "/checkpoint.json"
 
 	cp := &Checkpoint{
-		CompletedSteps: []string{"detect-disk", "parse-partitions", "stream-image"},
+		CompletedSteps: []string{"detect-disk", "parse-partitions", "stream-image", "configure-ssh"},
 		persist:        true,
 		path:           cpPath,
 	}
@@ -306,8 +306,8 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 		}
 	}
 
-	// detect-disk and parse-partitions re-run; stream-image and configure-ssh skip
-	// (stream-image completed, configure-ssh completed)
+	// detect-disk and parse-partitions re-run (stateSteps); stream-image and
+	// configure-ssh skip (completed, non-state).
 	if len(ran) != 2 {
 		t.Errorf("expected 2 runs (detect-disk, parse-partitions), got %v", ran)
 	}
