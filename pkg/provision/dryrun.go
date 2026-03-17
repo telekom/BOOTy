@@ -168,8 +168,8 @@ func (o *Orchestrator) dryRunImageReachability(ctx context.Context) DryRunResult
 	return DryRunResult{Status: DryRunPass, Message: "all HTTP image URLs reachable"}
 }
 
-func validateDryRunImageURL(imgURL string) (string, string, *DryRunResult) {
-	redactedURL := redactImageURL(imgURL)
+func validateDryRunImageURL(imgURL string) (scheme string, redactedURL string, invalidResult *DryRunResult) {
+	redactedURL = redactImageURL(imgURL)
 	parsedURL, err := url.Parse(imgURL)
 	if err != nil || parsedURL.Scheme == "" {
 		errMsg := redactURLError(err, imgURL)
@@ -180,7 +180,7 @@ func validateDryRunImageURL(imgURL string) (string, string, *DryRunResult) {
 			Message: fmt.Sprintf("invalid image URL %s: %s", redactedURL, errMsg)}
 	}
 
-	scheme := strings.ToLower(strings.TrimSpace(parsedURL.Scheme))
+	scheme = strings.ToLower(strings.TrimSpace(parsedURL.Scheme))
 	if scheme != "http" && scheme != "https" && scheme != "oci" {
 		return "", redactedURL, &DryRunResult{Status: DryRunFail,
 			Message: fmt.Sprintf("unsupported URL scheme: %s", redactedURL)}
