@@ -197,6 +197,23 @@ func (c *Client) ReportInventory(ctx context.Context, data []byte) error {
 	return c.postJSONWithAuth(ctx, c.cfg.InventoryURL, data)
 }
 
+// ReportMetrics posts provisioning metrics to the CAPRF server.
+func (c *Client) ReportMetrics(ctx context.Context, data []byte) error {
+	if c.cfg.MetricsURL == "" {
+		c.log.Debug("no metrics URL configured, skipping")
+		return nil
+	}
+	return c.postJSONWithAuth(ctx, c.cfg.MetricsURL, data)
+}
+
+// SendEvent posts a single provisioning event to the CAPRF server.
+func (c *Client) SendEvent(ctx context.Context, data []byte) error {
+	if c.cfg.EventURL == "" {
+		return nil
+	}
+	return c.postJSONWithAuth(ctx, c.cfg.EventURL, data)
+}
+
 func (c *Client) postWithAuth(ctx context.Context, url, body string) error {
 	return c.withRetry(ctx, url, func() error {
 		return c.doPost(ctx, url, body)
@@ -368,6 +385,11 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"HEALTH_CHECK_URL":            &cfg.HealthCheckURL,
 		"IMAGE_SIGNATURE_URL":         &cfg.ImageSignatureURL,
 		"IMAGE_GPG_PUBKEY":            &cfg.ImageGPGPubKey,
+		"TELEMETRY_URL":               &cfg.TelemetryURL,
+		"METRICS_URL":                 &cfg.MetricsURL,
+		"EVENT_URL":                   &cfg.EventURL,
+		"MOK_CERT_PATH":               &cfg.MOKCertPath,
+		"MOK_PASSWORD":                &cfg.MOKPassword,
 	}
 
 	if ptr, ok := strFields[key]; ok {
@@ -426,6 +448,10 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) {
 		setIntField(&cfg.HealthMinCPUs, value)
 	case "DRY_RUN":
 		cfg.DryRun = parseBoolVar(value)
+	case "TELEMETRY_ENABLED":
+		cfg.TelemetryEnabled = parseBoolVar(value)
+	case "SECUREBOOT_REENABLE":
+		cfg.SecureBootReEnable = parseBoolVar(value)
 	}
 }
 

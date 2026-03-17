@@ -108,6 +108,19 @@ type MachineConfig struct {
 	// Network mode override.
 	NetworkMode string // NETWORK_MODE: "gobgp" to use in-process GoBGP instead of FRR
 
+	// Telemetry configuration.
+	TelemetryEnabled bool   // TELEMETRY_ENABLED: enable provisioning metrics collection
+	TelemetryURL     string // TELEMETRY_URL: POST endpoint for metrics snapshot
+
+	// Observability fields.
+	MetricsURL string // METRICS_URL: POST endpoint for provisioning metrics
+	EventURL   string // EVENT_URL: POST endpoint for provisioning events
+
+	// SecureBoot lifecycle fields.
+	SecureBootReEnable bool   // SECUREBOOT_REENABLE: signal CAPRF to re-enable SecureBoot after provisioning
+	MOKCertPath        string // MOK_CERT_PATH: path to DER-encoded MOK certificate for enrollment
+	MOKPassword        string // MOK_PASSWORD: one-time password for MokManager confirmation
+
 	// Files and commands from ISO /deploy/ directories.
 	ProvisionerFiles []string // Paths to files in /deploy/file-system/
 	MachineFiles     []string // Paths to files in /deploy/machine-files/
