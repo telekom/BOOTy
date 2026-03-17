@@ -14,13 +14,21 @@ import (
 func TestDetectWithFixture(t *testing.T) {
 	// Save and restore original paths.
 	origDev, origRM, origSys := tpmDevicePath, tpmrmDevicePath, sysTPMPath
+	origIsChar := isCharDevice
 	defer func() {
 		tpmDevicePath = origDev
 		tpmrmDevicePath = origRM
 		sysTPMPath = origSys
+		isCharDevice = origIsChar
 	}()
 
 	dir := t.TempDir()
+
+	// Override char device check — creating real char devices requires root.
+	isCharDevice = func(path string) bool {
+		_, err := os.Stat(path)
+		return err == nil
+	}
 
 	// Create fake /dev/tpm0 and sysfs tree.
 	devPath := filepath.Join(dir, "tpm0")
@@ -62,11 +70,19 @@ func TestDetectWithFixture(t *testing.T) {
 
 func TestDetectNoTPM(t *testing.T) {
 	origDev, origRM, origSys := tpmDevicePath, tpmrmDevicePath, sysTPMPath
+	origIsChar := isCharDevice
 	defer func() {
 		tpmDevicePath = origDev
 		tpmrmDevicePath = origRM
 		sysTPMPath = origSys
+		isCharDevice = origIsChar
 	}()
+
+	// Override char device check for consistency with TestDetectWithFixture.
+	isCharDevice = func(path string) bool {
+		_, err := os.Stat(path)
+		return err == nil
+	}
 
 	dir := t.TempDir()
 	tpmDevicePath = filepath.Join(dir, "tpm0")

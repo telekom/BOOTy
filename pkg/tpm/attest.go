@@ -38,8 +38,8 @@ func (d *Device) Quote(pcrSelection []int, nonce []byte) (*AttestationQuote, err
 		return nil, fmt.Errorf("pcrSelection must not be empty for attestation quote")
 	}
 	for _, idx := range pcrSelection {
-		if idx < 0 || idx > 23 {
-			return nil, fmt.Errorf("invalid PCR index %d: must be 0-23", idx)
+		if err := validatePCRIndex(idx); err != nil {
+			return nil, err
 		}
 	}
 	if len(nonce) == 0 {

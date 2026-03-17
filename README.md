@@ -270,6 +270,10 @@ go run server/server.go \
 | `BOND_INTERFACES` | — | Comma-separated interfaces for LACP bond (e.g. `eth0,eth1`) |
 | `BOND_MODE` | `802.3ad` | Bond mode: `802.3ad`/`lacp`, `balance-rr`, `active-backup`, `balance-xor` |
 | `POST_PROVISION_CMDS` | — | Semicolon-separated commands to run in chroot after provisioning |
+| `TPM_ENABLED` | `false` | Detect and report TPM 2.0 presence during provisioning |
+| `TPM_ATTESTATION_URL` | — | POST endpoint for TPM attestation quotes |
+| `TPM_PCR_SELECTION` | — | Comma-separated PCR indices to include in attestation quotes |
+| `TPM_SEAL_PCRS` | — | Comma-separated PCR indices for secret sealing |
 
 ### Debugging
 
@@ -423,6 +427,7 @@ and the PR process.
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
 │   ├── plunderclient/          # Legacy HTTP client for config retrieval
 │   ├── realm/                  # Device, mount, network, shell operations
+│   ├── tpm/                    # TPM 2.0 detection, PCR reading, attestation, sealing
 │   ├── utils/                  # Cmdline parsing, helpers
 │   └── ux/                     # ASCII art & system info display
 ├── test/e2e/                   # E2E tests (ContainerLab + vrnetlab EVPN fabric)

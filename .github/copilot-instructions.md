@@ -21,6 +21,7 @@ Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, orch
 - `pkg/inventory/` — Hardware inventory from sysfs/procfs
 - `pkg/kexec/` — GRUB config parsing, kexec load/execute
 - `pkg/realm/` — Low-level syscalls (devices, mounts, networking)
+- `pkg/tpm/` — TPM 2.0 detection, PCR reading, attestation quotes, secret sealing
 - `pkg/ux/` — ASCII art and system info display
 - `server/` — Legacy HTTP provisioning server
 - `test/e2e/` — E2E tests with ContainerLab and vrnetlab topologies

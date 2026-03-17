@@ -1041,7 +1041,10 @@ func TestParseVarsTPMEnabled(t *testing.T) {
 	}{
 		{`TPM_ENABLED="true"`, true},
 		{`TPM_ENABLED="1"`, true},
+		{`TPM_ENABLED="yes"`, true},
+		{`TPM_ENABLED=" True "`, true},
 		{`TPM_ENABLED="false"`, false},
+		{`TPM_ENABLED="no"`, false},
 	}
 	for _, tt := range tests {
 		cfg, err := ParseVars(strings.NewReader(tt.input))

@@ -15,6 +15,13 @@ var (
 	tpmDevicePath   = "/dev/tpm0"
 	tpmrmDevicePath = "/dev/tpmrm0"
 	sysTPMPath      = "/sys/class/tpm/tpm0"
+
+	// isCharDevice checks whether path is a character device.
+	// Overridden in tests where creating real char devices requires root.
+	isCharDevice = func(path string) bool {
+		fi, err := os.Stat(path)
+		return err == nil && fi.Mode()&os.ModeCharDevice != 0
+	}
 )
 
 // Info holds TPM device information detected from sysfs.
@@ -32,11 +39,11 @@ type Info struct {
 func Detect() Info {
 	info := Info{}
 
-	if fi, err := os.Stat(tpmDevicePath); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
+	if isCharDevice(tpmDevicePath) {
 		info.DevicePresent = true
 		info.Present = true
 	}
-	if fi, err := os.Stat(tpmrmDevicePath); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
+	if isCharDevice(tpmrmDevicePath) {
 		info.RMPresent = true
 		info.Present = true
 	}
