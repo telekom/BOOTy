@@ -58,37 +58,54 @@ func ParseNVMeConfig(data string) ([]NVMeNamespaceConfig, error) {
 	if err := checkNVMeControllerUniqueness(configs); err != nil {
 		return nil, err
 	}
-	for i, cfg := range configs {
-		if cfg.Controller == "" {
-			return nil, fmt.Errorf("config[%d]: controller must not be empty", i)
-		}
-		if !nvmeControllerPathRE.MatchString(cfg.Controller) {
-			return nil, fmt.Errorf("config[%d]: controller %q must be an NVMe controller path (e.g. /dev/nvme0)", i, cfg.Controller)
-		}
-		if len(cfg.Namespaces) == 0 {
-			return nil, fmt.Errorf("config[%d]: namespaces must not be empty", i)
-		}
-		totalPct := 0
-		for j, ns := range cfg.Namespaces {
-			if ns.Label == "" {
-				return nil, fmt.Errorf("config[%d].namespaces[%d]: label must not be empty", i, j)
-			}
-			if ns.SizePct <= 0 || ns.SizePct > 100 {
-				return nil, fmt.Errorf("config[%d].namespaces[%d]: sizePct %d out of range 1-100", i, j, ns.SizePct)
-			}
-			if ns.BlockSize != 0 && ns.BlockSize != 512 && ns.BlockSize != 4096 {
-				return nil, fmt.Errorf("config[%d].namespaces[%d]: blockSize %d must be 512 or 4096", i, j, ns.BlockSize)
-			}
-			if ns.BlockSize == 0 {
-				configs[i].Namespaces[j].BlockSize = 512
-			}
-			totalPct += ns.SizePct
-		}
-		if totalPct > 100 {
-			return nil, fmt.Errorf("config[%d]: total sizePct %d exceeds 100%%", i, totalPct)
+	for i := range configs {
+		if err := validateNVMeControllerConfig(i, &configs[i]); err != nil {
+			return nil, err
 		}
 	}
 	return configs, nil
+}
+
+func validateNVMeControllerConfig(index int, cfg *NVMeNamespaceConfig) error {
+	if cfg.Controller == "" {
+		return fmt.Errorf("config[%d]: controller must not be empty", index)
+	}
+	if !nvmeControllerPathRE.MatchString(cfg.Controller) {
+		return fmt.Errorf("config[%d]: controller %q must be an NVMe controller path (e.g. /dev/nvme0)", index, cfg.Controller)
+	}
+	if len(cfg.Namespaces) == 0 {
+		return fmt.Errorf("config[%d]: namespaces must not be empty", index)
+	}
+
+	totalPct := 0
+	for j := range cfg.Namespaces {
+		ns := &cfg.Namespaces[j]
+		if err := validateNVMeNamespace(index, j, ns); err != nil {
+			return err
+		}
+		totalPct += ns.SizePct
+	}
+	if totalPct > 100 {
+		return fmt.Errorf("config[%d]: total sizePct %d exceeds 100%%", index, totalPct)
+	}
+
+	return nil
+}
+
+func validateNVMeNamespace(cfgIndex, nsIndex int, ns *NVMeNamespace) error {
+	if ns.Label == "" {
+		return fmt.Errorf("config[%d].namespaces[%d]: label must not be empty", cfgIndex, nsIndex)
+	}
+	if ns.SizePct <= 0 || ns.SizePct > 100 {
+		return fmt.Errorf("config[%d].namespaces[%d]: sizePct %d out of range 1-100", cfgIndex, nsIndex, ns.SizePct)
+	}
+	if ns.BlockSize != 0 && ns.BlockSize != 512 && ns.BlockSize != 4096 {
+		return fmt.Errorf("config[%d].namespaces[%d]: blockSize %d must be 512 or 4096", cfgIndex, nsIndex, ns.BlockSize)
+	}
+	if ns.BlockSize == 0 {
+		ns.BlockSize = 512
+	}
+	return nil
 }
 
 // DetectNVMeControllers lists NVMe controllers in /dev/.
