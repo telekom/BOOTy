@@ -304,6 +304,7 @@ func efiLoaderNames(arch string) (shimName, grubName string) {
 func efiLoaderPath(rootDir, arch string) (string, error) {
 	shimName, grubName := efiLoaderNames(arch)
 	shimPath := filepath.Join(rootDir, "boot", "efi", "EFI", "ubuntu", shimName)
+	grubPath := filepath.Join(rootDir, "boot", "efi", "EFI", "ubuntu", grubName)
 	_, err := os.Stat(shimPath)
 	if err == nil {
 		return `\EFI\ubuntu\` + shimName, nil
@@ -311,7 +312,14 @@ func efiLoaderPath(rootDir, arch string) (string, error) {
 	if !os.IsNotExist(err) {
 		return "", fmt.Errorf("stat shim %s: %w", shimPath, err)
 	}
-	return `\EFI\ubuntu\` + grubName, nil
+	_, err = os.Stat(grubPath)
+	if err == nil {
+		return `\EFI\ubuntu\` + grubName, nil
+	}
+	if !os.IsNotExist(err) {
+		return "", fmt.Errorf("stat grub %s: %w", grubPath, err)
+	}
+	return "", fmt.Errorf("no EFI loader found: checked %s and %s", shimPath, grubPath)
 }
 
 // partNumberFromDevice extracts the partition number from a device path.

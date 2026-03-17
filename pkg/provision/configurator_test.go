@@ -5,6 +5,7 @@ package provision
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -39,7 +40,10 @@ func TestEfiLoaderPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// No shim -> falls back to grub.
+	// No shim but grub present -> falls back to grub.
+	if err := os.WriteFile(filepath.Join(efiDir, "grubx64.efi"), []byte("grub"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	loader, err := efiLoaderPath(root, "amd64")
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +66,10 @@ func TestEfiLoaderPath(t *testing.T) {
 		t.Errorf("got %q, want shim %q", loader, wantShim)
 	}
 
-	// ARM64 without shim -> grub fallback.
+	// ARM64 without shim but with grub -> grub fallback.
+	if err := os.WriteFile(filepath.Join(efiDir, "grubaa64.efi"), []byte("grub-arm64"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	loader, err = efiLoaderPath(root, "arm64")
 	if err != nil {
 		t.Fatal(err)
@@ -83,5 +90,21 @@ func TestEfiLoaderPath(t *testing.T) {
 	wantArmShim := "\\EFI\\ubuntu\\shimaa64.efi"
 	if loader != wantArmShim {
 		t.Errorf("got %q, want arm64 shim %q", loader, wantArmShim)
+	}
+}
+
+func TestEfiLoaderPath_MissingLoaders(t *testing.T) {
+	root := t.TempDir()
+	efiDir := filepath.Join(root, "boot", "efi", "EFI", "ubuntu")
+	if err := os.MkdirAll(efiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := efiLoaderPath(root, "amd64")
+	if err == nil {
+		t.Fatal("expected error when both shim and grub are missing")
+	}
+	if !strings.Contains(err.Error(), "no EFI loader found") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
