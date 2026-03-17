@@ -134,3 +134,9 @@ Only then move to the next PR.
 - Process PRs in **dependency order** — if PR B depends on PR A's branch, process A first.
 - Each PR subagent must **checkout the PR branch**, not work on `main`.
 - If a fix in one PR affects another open PR, note it but do not cross-contaminate — each subagent owns exactly one PR.
+- Do not use the shell to write files, use your model's editing capabilities to modify code, documentation, and instructions.
+- Do not use the --watch feature of the gh CLI, this WILL crash the shell
+- Make sure lint and tests pass locally before pushing, do not rely on CI for this validation.
+- Do not use --watch or any other long-running gh CLI features, they are not stable in this environment and will crash the shell. Instead, after pushing, manually fetch CI results and review comments via `gh pr view` and `gh run list` / `gh run view`.
+- Make sure to resolve all review comment threads after fixing them, using `gh api graphql` with the `resolveReviewThread` mutation. Do not leave any threads unresolved.
+- If a PR has merge conflicts, rebase onto the target branch (`git fetch origin && git rebase origin/main`), fix any conflicts, and push the rebased branch.
