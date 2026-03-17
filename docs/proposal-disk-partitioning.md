@@ -1,11 +1,18 @@
 # Proposal: Custom Disk Partitioning
 
-## Status: Phase 1 Implemented
+## Status: In Progress (Core Layout + LVM Implemented)
 
-Phase 1 implements: `ParsePartitionLayout`, `ApplyPartitionLayout` (GPT only via sgdisk),
-`GenerateFstab`, partition type GUID resolution, device naming.
-Wired into the provisioning orchestrator as the `apply-partition-layout` step — when `PARTITION_LAYOUT` is set,
-`ApplyPartitionLayout` is called before image streaming.
+Implemented so far:
+- `ParsePartitionLayout` validation (GPT-only schema, root/mountpoint checks)
+- `ApplyPartitionLayout` (sgdisk + filesystem formatting)
+- Optional LVM creation from layout (`pvcreate`/`vgcreate`/`lvcreate`)
+- `GenerateFstab` + `GenerateLVMFstab`
+- Orchestrator integration (`apply-partition-layout`, layout-based root/ESP resolution,
+  image streaming to the resolved root partition/LV)
+
+Still pending for full proposal closure:
+- End-to-end rootfs tarball extraction flow (instead of raw image assumptions)
+- Explicit mount orchestration for all non-root declared mountpoints during provisioning
 
 ## Priority: P3
 

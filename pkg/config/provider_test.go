@@ -32,3 +32,46 @@ func TestMachineConfigDefaults(t *testing.T) {
 		t.Errorf("expected nil image URLs, got %v", cfg.ImageURLs)
 	}
 }
+
+func TestParsePartitionLayoutRootInLVM(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"pv","sizeMB":8192,"filesystem":"ext4","mountpoint":"/var"}],"lvm":{"volumeGroup":"sysvg","pvPartition":1,"volumes":[{"name":"root","filesystem":"ext4","mountpoint":"/"}]}}`
+	layout, err := ParsePartitionLayout(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if layout.LVM == nil {
+		t.Fatal("expected lvm config")
+	}
+}
+
+func TestParsePartitionLayoutMissingRootEverywhere(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"pv","sizeMB":8192,"filesystem":"ext4","mountpoint":"/var"}],"lvm":{"volumeGroup":"sysvg","pvPartition":1,"volumes":[{"name":"data","filesystem":"xfs","mountpoint":"/data"}]}}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Fatal("expected error when no root mountpoint exists")
+	}
+}
+
+func TestParsePartitionLayoutUnsupportedPartitionFilesystem(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"root","filesystem":"ntfs","mountpoint":"/"}]}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Fatal("expected error for unsupported partition filesystem")
+	}
+}
+
+func TestParsePartitionLayoutUnsupportedLVMFilesystem(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"pv","sizeMB":8192,"filesystem":"ext4","mountpoint":"/var"}],"lvm":{"volumeGroup":"sysvg","pvPartition":1,"volumes":[{"name":"root","filesystem":"btrfs","mountpoint":"/"}]}}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Fatal("expected error for unsupported lvm filesystem")
+	}
+}
+
+func TestParsePartitionLayoutMountpointWhitespace(t *testing.T) {
+	input := "{\"table\":\"gpt\",\"partitions\":[{\"label\":\"root\",\"filesystem\":\"ext4\",\"mountpoint\":\"/bad path\"}]}"
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Fatal("expected error for mountpoint with whitespace")
+	}
+}

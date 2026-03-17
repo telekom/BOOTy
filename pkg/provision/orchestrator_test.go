@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -470,5 +471,110 @@ func TestDryRunImageMode(t *testing.T) {
 				t.Errorf("dryRunImageMode(%q) status = %s, want %s", tt.mode, result.Status, tt.status)
 			}
 		})
+	}
+}
+
+func TestResolveRootFromLayoutPrefersLVMRoot(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+	o.targetDisk = "/dev/sda"
+
+	layout := &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "pv", Mountpoint: "/var"},
+		},
+		LVM: &config.LVMConfig{
+			VolumeGroup: "sysvg",
+			Volumes: []config.LVVolume{
+				{Name: "root", Mountpoint: "/"},
+			},
+		},
+	}
+
+	if err := o.resolveRootFromLayout(layout); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if o.rootPartition != "/dev/sysvg/root" {
+		t.Errorf("rootPartition = %q, want /dev/sysvg/root", o.rootPartition)
+	}
+}
+
+func TestResolveRootFromLayoutFallsBackToPartitionRoot(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+	o.targetDisk = "/dev/sda"
+
+	layout := &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "data", Mountpoint: "/var"},
+			{Label: "root", Mountpoint: "/"},
+		},
+		LVM: &config.LVMConfig{
+			VolumeGroup: "sysvg",
+			Volumes: []config.LVVolume{
+				{Name: "var", Mountpoint: "/var/lib"},
+			},
+		},
+	}
+
+	if err := o.resolveRootFromLayout(layout); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if o.rootPartition != "/dev/sda2" {
+		t.Errorf("rootPartition = %q, want /dev/sda2", o.rootPartition)
+	}
+}
+
+func TestResolveRootFromLayoutMissingRoot(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+	o.targetDisk = "/dev/sda"
+
+	layout := &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "data", Mountpoint: "/var"},
+		},
+		LVM: &config.LVMConfig{
+			VolumeGroup: "sysvg",
+			Volumes: []config.LVVolume{
+				{Name: "data", Mountpoint: "/data"},
+			},
+		},
+	}
+
+	err := o.resolveRootFromLayout(layout)
+	if err == nil {
+		t.Fatal("expected error when no root mountpoint is defined")
+	}
+	if !strings.Contains(err.Error(), "mountpoint \"/\"") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestStreamImagePartitionLayoutRequiresImage(t *testing.T) {
+	cfg := &config.MachineConfig{
+		PartitionLayout: &config.PartitionLayout{
+			Table: "gpt",
+			Partitions: []config.Partition{
+				{Label: "root", Mountpoint: "/"},
+			},
+		},
+	}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+	o.targetDisk = "/dev/sda"
+
+	err := o.streamImage(context.Background())
+	if err == nil {
+		t.Fatal("expected error when partition layout has no image URL")
+	}
+	if !strings.Contains(err.Error(), "selecting image source") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }

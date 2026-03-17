@@ -152,6 +152,34 @@ export HOSTNAME="test-host"
 	}
 }
 
+func TestParseVarsPartitionLayoutSingleQuoted(t *testing.T) {
+	input := `export PARTITION_LAYOUT='{"table":"gpt","partitions":[{"label":"root","filesystem":"ext4","mountpoint":"/"}]}'`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PartitionLayout == nil {
+		t.Fatal("expected partition layout to be parsed")
+	}
+	if len(cfg.PartitionLayout.Partitions) != 1 {
+		t.Fatalf("expected 1 partition, got %d", len(cfg.PartitionLayout.Partitions))
+	}
+	if cfg.PartitionLayout.Partitions[0].Label != "root" {
+		t.Errorf("partition label = %q, want root", cfg.PartitionLayout.Partitions[0].Label)
+	}
+}
+
+func TestParseVarsPartitionLayoutInvalidIgnored(t *testing.T) {
+	input := `export PARTITION_LAYOUT='{"table":"gpt","partitions":[{"filesystem":"ext4","mountpoint":"/"}]}'`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PartitionLayout != nil {
+		t.Fatalf("expected invalid partition layout to be ignored, got %+v", cfg.PartitionLayout)
+	}
+}
+
 func TestClientReportStatus(t *testing.T) {
 	ts := newTestServer(t)
 

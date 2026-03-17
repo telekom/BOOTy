@@ -194,20 +194,20 @@ func ParsePartitionLayout(data string) (*PartitionLayout, error) {
 	if layout.Table != "gpt" {
 		return nil, fmt.Errorf("unsupported partition table %q, only \"gpt\" is supported", layout.Table)
 	}
-	if err := validatePartitions(layout.Partitions, layout.LVM != nil); err != nil {
+	if err := validatePartitions(layout.Partitions); err != nil {
 		return nil, err
 	}
 	if err := validateLVMConfig(layout.LVM); err != nil {
+		return nil, err
+	}
+	if err := validateRootPresence(layout.Partitions, layout.LVM); err != nil {
 		return nil, err
 	}
 	return &layout, nil
 }
 
 // validatePartitions checks partition definitions for required fields.
-// When hasLVM is true, the root mountpoint "/" may be provided by an LV
-// instead of a partition, so the root-presence check is skipped.
-func validatePartitions(partitions []Partition, hasLVM bool) error {
-	hasRoot := false
+func validatePartitions(partitions []Partition) error {
 	fillCount := 0
 	for i, part := range partitions {
 		if part.Label == "" {
@@ -216,18 +216,18 @@ func validatePartitions(partitions []Partition, hasLVM bool) error {
 		if part.Mountpoint != "" && !strings.HasPrefix(part.Mountpoint, "/") {
 			return fmt.Errorf("partition %d (%s): mountpoint %q must be an absolute path", i+1, part.Label, part.Mountpoint)
 		}
+		if strings.ContainsAny(part.Mountpoint, " \t\n\r") {
+			return fmt.Errorf("partition %d (%s): mountpoint %q must not contain whitespace", i+1, part.Label, part.Mountpoint)
+		}
 		if part.SizeMB < 0 {
 			return fmt.Errorf("partition %d (%s): sizeMB must be non-negative", i+1, part.Label)
 		}
-		if part.Mountpoint == "/" {
-			hasRoot = true
+		if !isSupportedFilesystem(part.Filesystem) {
+			return fmt.Errorf("partition %d (%s): unsupported filesystem %q", i+1, part.Label, part.Filesystem)
 		}
 		if part.SizeMB == 0 {
 			fillCount++
 		}
-	}
-	if !hasRoot && !hasLVM {
-		return fmt.Errorf("partition layout must include a partition with mountpoint \"/\"; use LVM volumes for LVM-backed root filesystems")
 	}
 	if fillCount > 1 {
 		return fmt.Errorf("only one partition may use sizeMB=0 (fill remaining), got %d", fillCount)
@@ -258,8 +258,39 @@ func validateLVMConfig(lvm *LVMConfig) error {
 		if vol.Mountpoint != "" && !strings.HasPrefix(vol.Mountpoint, "/") {
 			return fmt.Errorf("lvm volume %d (%s): mountpoint %q must be an absolute path", i+1, vol.Name, vol.Mountpoint)
 		}
+		if strings.ContainsAny(vol.Mountpoint, " \t\n\r") {
+			return fmt.Errorf("lvm volume %d (%s): mountpoint %q must not contain whitespace", i+1, vol.Name, vol.Mountpoint)
+		}
+		if !isSupportedFilesystem(vol.Filesystem) {
+			return fmt.Errorf("lvm volume %d (%s): unsupported filesystem %q", i+1, vol.Name, vol.Filesystem)
+		}
 	}
 	return nil
+}
+
+func validateRootPresence(partitions []Partition, lvm *LVMConfig) error {
+	for _, part := range partitions {
+		if part.Mountpoint == "/" {
+			return nil
+		}
+	}
+	if lvm != nil {
+		for _, vol := range lvm.Volumes {
+			if vol.Mountpoint == "/" {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("partition layout must include mountpoint \"/\" in either a partition or an lvm volume")
+}
+
+func isSupportedFilesystem(fs string) bool {
+	switch fs {
+	case "", "vfat", "ext4", "xfs", "swap":
+		return true
+	default:
+		return false
+	}
 }
 
 // isValidLVMName checks that a name contains only safe characters for LVM identifiers.

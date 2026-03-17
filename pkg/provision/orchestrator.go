@@ -388,7 +388,7 @@ func (o *Orchestrator) applyPartitionLayout(ctx context.Context) error {
 	// Validate the target device exists and is a block device.
 	if info, err := os.Stat(device); err != nil {
 		return fmt.Errorf("partition layout device %q: %w", device, err)
-	} else if info.Mode()&os.ModeDevice == 0 {
+	} else if info.Mode()&os.ModeDevice == 0 || info.Mode()&os.ModeCharDevice != 0 {
 		return fmt.Errorf("partition layout device %q is not a block device", device)
 	}
 
@@ -436,19 +436,6 @@ func (o *Orchestrator) writeFstab() error {
 }
 
 func (o *Orchestrator) streamImage(ctx context.Context) error {
-	// When using a custom partition layout, the partitions are already created
-	// and formatted — streaming a raw image would overwrite the table.
-	// Warn if image URLs were also provided, since that is almost certainly a
-	// misconfiguration (the partition table would be destroyed).
-	if o.cfg.PartitionLayout != nil {
-		if len(o.cfg.ImageURLs) > 0 {
-			o.log.Warn("Custom partition layout is active; image URLs are ignored to prevent overwriting the partition table", "urls", o.cfg.ImageURLs)
-		} else {
-			o.log.Info("Skipping image streaming: custom partition layout is active")
-		}
-		return nil
-	}
-
 	bestURL := o.bestImageURL
 	if bestURL == "" {
 		// verify-image may have skipped URL resolution; resolve it now.
@@ -465,7 +452,6 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 		return image.StreamPartitions(ctx, bestURL, o.targetDisk)
 	}
 
-	// Default whole-disk mode.
 	var opts []image.StreamOpts
 	if o.cfg.ImageChecksum != "" {
 		opts = append(opts, image.StreamOpts{
@@ -474,6 +460,20 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 		})
 	}
 
+	// With a custom partition layout, stream image data to the resolved root
+	// partition/LV instead of the whole disk so the partition table is preserved.
+	if o.cfg.PartitionLayout != nil {
+		if err := o.resolveRootFromLayout(o.cfg.PartitionLayout); err != nil {
+			return fmt.Errorf("resolve root from partition layout: %w", err)
+		}
+		o.log.Info("Streaming image to custom layout root", "url", bestURL, "target", o.rootPartition)
+		if err := image.Stream(ctx, bestURL, o.rootPartition, opts...); err != nil {
+			return fmt.Errorf("streaming %s to %s: %w", bestURL, o.rootPartition, err)
+		}
+		return nil
+	}
+
+	// Default whole-disk mode.
 	o.log.Info("Streaming image", "url", bestURL, "disk", o.targetDisk)
 	if err := image.Stream(ctx, bestURL, o.targetDisk, opts...); err != nil {
 		return fmt.Errorf("streaming %s: %w", bestURL, err)
@@ -581,6 +581,10 @@ func (o *Orchestrator) parsePartitionsFromLayout(_ context.Context) error {
 }
 
 func (o *Orchestrator) resolveRootFromLayout(layout *config.PartitionLayout) error {
+	if layout == nil {
+		return fmt.Errorf("partition layout is nil")
+	}
+
 	// When LVM is configured, use the LV with mountpoint "/" as root.
 	if layout.LVM != nil {
 		for _, vol := range layout.LVM.Volumes {
@@ -590,7 +594,6 @@ func (o *Orchestrator) resolveRootFromLayout(layout *config.PartitionLayout) err
 				return nil
 			}
 		}
-		return fmt.Errorf("LVM config has no volume with mountpoint \"/\"")
 	}
 
 	// Find the partition with mountpoint "/" from the layout definition.
@@ -601,7 +604,7 @@ func (o *Orchestrator) resolveRootFromLayout(layout *config.PartitionLayout) err
 			return nil
 		}
 	}
-	return fmt.Errorf("partition layout has no partition with mountpoint \"/\"")
+	return fmt.Errorf("partition layout has no mountpoint \"/\" in partitions or lvm volumes")
 }
 
 func (o *Orchestrator) checkFilesystem(ctx context.Context) error {

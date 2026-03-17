@@ -292,9 +292,8 @@ func TestGenerateLVMFstab(t *testing.T) {
 	if !strings.Contains(fstab, "/dev/sysvg/var") {
 		t.Errorf("fstab missing var LV:\n%s", fstab)
 	}
-	// swap has no mountpoint, should be excluded
-	if strings.Contains(fstab, "swap") {
-		t.Errorf("fstab should not include volumes without mountpoint:\n%s", fstab)
+	if !strings.Contains(fstab, "/dev/sysvg/swap\tnone\tswap\tsw") {
+		t.Errorf("fstab missing swap LV entry:\n%s", fstab)
 	}
 }
 
