@@ -33,6 +33,33 @@ var DefaultPolicies = map[string]RetryPolicy{
 
 // WithRetry executes fn with the given retry policy.
 func WithRetry(ctx context.Context, name string, policy RetryPolicy, fn func(ctx context.Context) error) error {
+	policy = normalizePolicy(policy)
+
+	var lastErr error
+	for attempt := range policy.MaxRetries + 1 {
+		if err := retryCanceledErr(ctx); err != nil {
+			return err
+		}
+		if err := waitRetryDelay(ctx, name, policy, attempt); err != nil {
+			return err
+		}
+		if err := retryCanceledErr(ctx); err != nil {
+			return err
+		}
+
+		if err := fn(ctx); err != nil {
+			lastErr = err
+			if shouldRetry, classifyErr := classifyRetryError(err, policy); !shouldRetry {
+				return classifyErr
+			}
+			continue
+		}
+		return nil
+	}
+	return fmt.Errorf("exhausted %d retries: %w", policy.MaxRetries, lastErr)
+}
+
+func normalizePolicy(policy RetryPolicy) RetryPolicy {
 	if policy.MaxRetries < 0 {
 		policy.MaxRetries = 0
 	}
@@ -42,41 +69,46 @@ func WithRetry(ctx context.Context, name string, policy RetryPolicy, fn func(ctx
 	if policy.Jitter > 1 {
 		policy.Jitter = 1
 	}
-	var lastErr error
-	for attempt := range policy.MaxRetries + 1 {
-		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("retry canceled: %w", err)
-		}
-		if attempt > 0 {
-			delay := backoffDelay(policy, attempt)
-			slog.Warn("retrying step", "step", name, "attempt", attempt, "delay", delay)
-			if delay > 0 {
-				timer := time.NewTimer(delay)
-				select {
-				case <-timer.C:
-				case <-ctx.Done():
-					timer.Stop()
-					return fmt.Errorf("retry canceled: %w", ctx.Err())
-				}
-			}
-		}
-		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("retry canceled: %w", err)
-		}
+	return policy
+}
 
-		if err := fn(ctx); err != nil {
-			lastErr = err
-			if isPermanent(err) {
-				return fmt.Errorf("permanent failure: %w", err)
-			}
-			if !isTransient(err) && !policy.Transient {
-				return fmt.Errorf("non-transient failure: %w", err)
-			}
-			continue
-		}
+func retryCanceledErr(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("retry canceled: %w", err)
+	}
+	return nil
+}
+
+func waitRetryDelay(ctx context.Context, name string, policy RetryPolicy, attempt int) error {
+	if attempt == 0 {
 		return nil
 	}
-	return fmt.Errorf("exhausted %d retries: %w", policy.MaxRetries, lastErr)
+
+	delay := backoffDelay(policy, attempt)
+	slog.Warn("retrying step", "step", name, "attempt", attempt, "delay", delay)
+	if delay <= 0 {
+		return nil
+	}
+
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("retry canceled: %w", ctx.Err())
+	}
+}
+
+func classifyRetryError(err error, policy RetryPolicy) (bool, error) {
+	if isPermanent(err) {
+		return false, fmt.Errorf("permanent failure: %w", err)
+	}
+	if !isTransient(err) && !policy.Transient {
+		return false, fmt.Errorf("non-transient failure: %w", err)
+	}
+	return true, nil
 }
 
 func backoffDelay(policy RetryPolicy, attempt int) time.Duration {
