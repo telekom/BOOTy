@@ -19,7 +19,6 @@ import (
 type GRUB struct {
 	Log      *slog.Logger
 	rootPath string
-	espPath  string
 }
 
 // NewGRUB creates a new GRUB bootloader manager.
@@ -37,7 +36,6 @@ func (g *GRUB) Name() string { return "grub" }
 // directly to bootctl as a host filesystem path.
 func (g *GRUB) Install(ctx context.Context, rootPath, espPath string) error {
 	g.rootPath = rootPath
-	g.espPath = espPath
 
 	// Detect grub vs grub2 binary name
 	grubBin := "grub-install"
@@ -204,9 +202,9 @@ func parseGRUBConfig(path string) ([]BootEntry, error) {
 
 func consumeGRUBEntryLine(line string, current *BootEntry) (*BootEntry, bool) {
 	switch {
-	case strings.HasPrefix(line, "linux ") || strings.HasPrefix(line, "linuxefi "):
+	case strings.HasPrefix(line, "linux ") || strings.HasPrefix(line, "linuxefi ") || strings.HasPrefix(line, "linux16 "):
 		parseGRUBKernelLine(line, current)
-	case strings.HasPrefix(line, "initrd ") || strings.HasPrefix(line, "initrdefi "):
+	case strings.HasPrefix(line, "initrd ") || strings.HasPrefix(line, "initrdefi ") || strings.HasPrefix(line, "initrd16 "):
 		parseGRUBInitrdLine(line, current)
 	case line == "}":
 		return current, true

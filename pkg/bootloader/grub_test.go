@@ -148,6 +148,35 @@ menuentry 'RHEL 9.4' {
 	}
 }
 
+func TestParseGRUBConfig_Linux16(t *testing.T) {
+	grubCfg := `
+menuentry 'Legacy BIOS' {
+	linux16 /vmlinuz-legacy root=/dev/sda1 ro
+	initrd16 /initrd-legacy.img
+}
+`
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "grub.cfg")
+	if err := os.WriteFile(cfgPath, []byte(grubCfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := parseGRUBConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parseGRUBConfig: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	if entries[0].Kernel != "/vmlinuz-legacy" {
+		t.Fatalf("kernel = %q, want /vmlinuz-legacy", entries[0].Kernel)
+	}
+	if entries[0].Initrd != "/initrd-legacy.img" {
+		t.Fatalf("initrd = %q, want /initrd-legacy.img", entries[0].Initrd)
+	}
+}
+
 func TestGRUBConfigure_NilConfig(t *testing.T) {
 	g := &GRUB{Log: slog.Default(), rootPath: t.TempDir()}
 	if err := g.Configure(context.Background(), nil); err == nil {

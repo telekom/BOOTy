@@ -1,6 +1,6 @@
 # Proposal: Bootloader Management — GRUB Enhancement + systemd-boot
 
-## Status: Implemented (PR #43)
+## Status: Implemented
 
 ## Priority: P2
 
@@ -12,8 +12,8 @@ adds GRUB installation into provisioned OS, and introduces full systemd-boot
 support as an alternative. Auto-detects which bootloader the provisioned OS
 image uses.
 
-Phase 1 is implemented in PR #43 (`pkg/bootloader/*`), with provisioning
-pipeline wiring and Dockerfile integration tracked as follow-up work.
+Phase 1 is implemented in `pkg/bootloader/*`, with provisioning pipeline wiring
+and Dockerfile integration tracked as follow-up work.
 
 ## Motivation
 

@@ -92,6 +92,31 @@ func TestSystemdBoot_ListEntries(t *testing.T) {
 	}
 }
 
+func TestSystemdBoot_ListEntriesUsesESPPath(t *testing.T) {
+	root := t.TempDir()
+	esp := t.TempDir()
+	entriesDir := filepath.Join(esp, "loader", "entries")
+	if err := os.MkdirAll(entriesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entry := "title   From ESP\nlinux   /vmlinuz-esp\noptions root=UUID=esp ro\n"
+	if err := os.WriteFile(filepath.Join(entriesDir, "esp.conf"), []byte(entry), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sb := &SystemdBoot{Log: slog.Default(), espPath: esp}
+	entries, err := sb.ListEntries(context.Background(), root)
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	if entries[0].ID != "esp" || entries[0].Kernel != "/vmlinuz-esp" {
+		t.Fatalf("unexpected entry: %+v", entries[0])
+	}
+}
+
 func TestParseLoaderEntry(t *testing.T) {
 	dir := t.TempDir()
 	content := "title   Test Entry\nlinux   /vmlinuz\ninitrd  /initrd.img\noptions root=UUID=test ro\n"

@@ -18,7 +18,6 @@ import (
 // SystemdBoot implements the Bootloader interface for systemd-boot.
 type SystemdBoot struct {
 	Log      *slog.Logger
-	rootPath string
 	espPath  string
 }
 
@@ -33,7 +32,6 @@ func (s *SystemdBoot) Name() string { return "systemd-boot" }
 // Install installs systemd-boot via bootctl, falling back to manual EFI
 // binary copy when bootctl is not available in the initramfs.
 func (s *SystemdBoot) Install(ctx context.Context, rootPath, espPath string) error {
-	s.rootPath = rootPath
 	s.espPath = espPath
 
 	if _, err := exec.LookPath("bootctl"); err == nil {
@@ -134,8 +132,8 @@ func (s *SystemdBoot) Configure(_ context.Context, cfg *BootConfig) error {
 	}
 
 	// Generate boot entries
-	for _, entry := range entries {
-		if err := s.generateEntry(&entry); err != nil {
+	for i := range entries {
+		if err := s.generateEntry(&entries[i]); err != nil {
 			return err
 		}
 	}
@@ -144,13 +142,25 @@ func (s *SystemdBoot) Configure(_ context.Context, cfg *BootConfig) error {
 
 // ListEntries returns available boot entries from the loader entries directory.
 func (s *SystemdBoot) ListEntries(_ context.Context, rootPath string) ([]BootEntry, error) {
-	entriesDir := filepath.Join(rootPath, "boot", "efi", "loader", "entries")
-	if _, err := os.Stat(entriesDir); err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
+	candidates := []string{
+		filepath.Join(rootPath, "boot", "efi", "loader", "entries"),
+		filepath.Join(rootPath, "boot", "loader", "entries"),
+	}
+	if s.espPath != "" {
+		candidates = append([]string{filepath.Join(s.espPath, "loader", "entries")}, candidates...)
+	}
+
+	entriesDir := ""
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			entriesDir = candidate
+			break
+		} else if !errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("stat entries dir: %w", err)
 		}
-		// Try alternative path
-		entriesDir = filepath.Join(rootPath, "boot", "loader", "entries")
+	}
+	if entriesDir == "" {
+		entriesDir = candidates[len(candidates)-1]
 	}
 
 	dirEntries, err := os.ReadDir(entriesDir)
