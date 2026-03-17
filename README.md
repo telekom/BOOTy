@@ -207,7 +207,7 @@ export dns_resolver="8.8.8.8"
 |----------|---------|-------------|
 | `MODE` | `provision` | `provision`, `deprovision`, `soft-deprovision`, `standby`, or `dry-run` |
 | `DRY_RUN` | `false` | When `true`, forces `MODE=dry-run`: validates prerequisites without destructive writes |
-| `BOOTY_RESUME` | `false` | When non-empty, enables checkpoint persistence at `/tmp/booty-checkpoint.json` and resume mode that skips previously completed non-state steps |
+| `BOOTY_RESUME` | `false` | When non-empty, enables checkpoint persistence at `/tmp/booty-checkpoint.json` and resume mode that skips previously completed non-state steps (runtime-state steps like `setup-mellanox`, `detect-disk`, and `parse-partitions` always rerun) |
 | `DISABLE_KEXEC` | `false` | Skip kexec, always hard-reboot |
 | `MIN_DISK_SIZE_GB` | `0` | Minimum disk size filter (0 = no minimum) |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters |

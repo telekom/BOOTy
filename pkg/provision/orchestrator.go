@@ -103,11 +103,9 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 	cp := o.loadOrCreateCheckpoint()
 
 	// stateSteps must always re-run on resume because they rebuild in-memory
-	// fields (targetDisk, rootPartition) that later steps depend on.
-	stateSteps := map[string]struct{}{
-		"detect-disk":      {},
-		"parse-partitions": {},
-	}
+	// runtime fields that later steps depend on (firmwareChanged, targetDisk,
+	// rootPartition/bootPartition).
+	stateSteps := resumeStateSteps()
 
 	for i, step := range steps {
 		_, mustRun := stateSteps[step.Name]
@@ -125,6 +123,14 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		o.log.Warn("failed to remove checkpoint", "error", rmErr)
 	}
 	return nil
+}
+
+func resumeStateSteps() map[string]struct{} {
+	return map[string]struct{}{
+		"setup-mellanox":   {},
+		"detect-disk":      {},
+		"parse-partitions": {},
+	}
 }
 
 // loadOrCreateCheckpoint loads an existing checkpoint when BOOTY_RESUME is set,
