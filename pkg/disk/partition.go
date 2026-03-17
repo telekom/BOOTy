@@ -31,7 +31,7 @@ func (m *Manager) ApplyPartitionLayout(ctx context.Context, device string, layou
 		return fmt.Errorf("unsupported partition table type %q, only \"gpt\" is supported", layout.Table)
 	}
 
-	slog.Info("Applying partition layout", "device", device, "table", layout.Table, "partitions", len(layout.Partitions))
+	slog.Info("applying partition layout", "device", device, "table", layout.Table, "partitions", len(layout.Partitions))
 
 	// Zap existing partition table.
 	if out, err := m.cmd.Run(ctx, "sgdisk", "--zap-all", device); err != nil {
@@ -65,7 +65,7 @@ func (m *Manager) ApplyPartitionLayout(ctx context.Context, device string, layou
 		if out, err := m.cmd.Run(ctx, "sgdisk", args...); err != nil {
 			return fmt.Errorf("creating partition %d (%s): %s: %w", num, part.Label, string(out), err)
 		}
-		slog.Info("Created partition", "num", num, "label", part.Label, "sizeMB", part.SizeMB, "fs", part.Filesystem)
+		slog.Info("created partition", "num", num, "label", part.Label, "sizeMB", part.SizeMB, "fs", part.Filesystem)
 	}
 
 	// Re-read partition table.
@@ -84,7 +84,7 @@ func (m *Manager) formatLayoutPartitions(ctx context.Context, device string, lay
 	for i, part := range layout.Partitions {
 		partNum := i + 1
 		if isLVMPVPartition(layout, partNum) {
-			slog.Info("Skipping format for LVM PV partition", "partition", partNum, "label", part.Label)
+			slog.Info("skipping format for lvm pv partition", "partition", partNum, "label", part.Label)
 			continue
 		}
 		if part.Filesystem == "" {
@@ -191,7 +191,7 @@ func partitionDevice(device string, num int) string {
 
 // formatPartition runs mkfs for the given filesystem type.
 func (m *Manager) formatPartition(ctx context.Context, device, fsType string) error {
-	slog.Info("Formatting partition", "device", device, "filesystem", fsType)
+	slog.Info("formatting partition", "device", device, "filesystem", fsType)
 	var out []byte
 	var err error
 	switch fsType {

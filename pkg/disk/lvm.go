@@ -39,7 +39,7 @@ func (m *Manager) ApplyLVMConfig(ctx context.Context, device string, layout *con
 	}
 	pvDev := partitionDevice(device, lvm.PVPartition)
 
-	slog.Info("Setting up LVM", "vg", lvm.VolumeGroup, "pv", pvDev, "volumes", len(lvm.Volumes))
+	slog.Info("setting up lvm", "vg", lvm.VolumeGroup, "pv", pvDev, "volumes", len(lvm.Volumes))
 
 	// Create physical volume.
 	if out, err := m.cmd.Run(ctx, "pvcreate", "-f", pvDev); err != nil {
@@ -67,7 +67,7 @@ func (m *Manager) ApplyLVMConfig(ctx context.Context, device string, layout *con
 		if out, err := m.cmd.Run(ctx, "lvcreate", args...); err != nil {
 			return fmt.Errorf("lvcreate %s/%s: %s: %w", lvm.VolumeGroup, vol.Name, string(out), err)
 		}
-		slog.Info("Created logical volume", "vg", lvm.VolumeGroup, "lv", vol.Name)
+		slog.Info("created logical volume", "vg", lvm.VolumeGroup, "lv", vol.Name)
 
 		// Format LV if filesystem specified.
 		if vol.Filesystem != "" {

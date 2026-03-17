@@ -391,15 +391,32 @@ func isValidPartitionLabel(label string) bool {
 
 // isValidLVMName checks that a name contains only safe characters for LVM identifiers.
 func isValidLVMName(name string) bool {
-	if name == "" {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	// Reject option-like and hidden-like names to avoid CLI arg ambiguity.
+	if strings.HasPrefix(name, "-") || strings.HasPrefix(name, ".") {
 		return false
 	}
 	for _, c := range name {
-		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '_' && c != '-' && c != '.' {
+		if !isValidLVMNameChar(c) {
 			return false
 		}
 	}
 	return true
+}
+
+func isValidLVMNameChar(c rune) bool {
+	if c >= 'a' && c <= 'z' {
+		return true
+	}
+	if c >= 'A' && c <= 'Z' {
+		return true
+	}
+	if c >= '0' && c <= '9' {
+		return true
+	}
+	return c == '_' || c == '-' || c == '.'
 }
 
 // Command represents a server-issued command (future agent mode).

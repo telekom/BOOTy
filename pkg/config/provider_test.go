@@ -147,3 +147,27 @@ func TestParsePartitionLayoutLabelTooLong(t *testing.T) {
 		t.Error("expected error for label exceeding 36 characters")
 	}
 }
+
+func TestParsePartitionLayoutLvmVGNameMustNotStartWithDashOrDot(t *testing.T) {
+	tests := []string{"-sysvg", ".sysvg", ".."}
+
+	for _, vgName := range tests {
+		input := `{"table":"gpt","partitions":[{"label":"pv","sizeMB":8192},{"label":"root","filesystem":"ext4","mountpoint":"/"}],"lvm":{"volumeGroup":"` + vgName + `","pvPartition":1,"volumes":[{"name":"root","filesystem":"ext4","mountpoint":"/"}]}}`
+		_, err := ParsePartitionLayout(input)
+		if err == nil {
+			t.Fatalf("expected error for invalid volumeGroup %q", vgName)
+		}
+	}
+}
+
+func TestParsePartitionLayoutLvmLVNameMustNotStartWithDashOrDot(t *testing.T) {
+	tests := []string{"-root", ".root", ".."}
+
+	for _, lvName := range tests {
+		input := `{"table":"gpt","partitions":[{"label":"pv","sizeMB":8192}],"lvm":{"volumeGroup":"sysvg","pvPartition":1,"volumes":[{"name":"` + lvName + `","filesystem":"ext4","mountpoint":"/"}]}}`
+		_, err := ParsePartitionLayout(input)
+		if err == nil {
+			t.Fatalf("expected error for invalid lvm volume name %q", lvName)
+		}
+	}
+}

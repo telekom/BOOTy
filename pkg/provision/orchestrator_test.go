@@ -576,6 +576,29 @@ func TestStreamImagePartitionLayoutSkipsWithNoImages(t *testing.T) {
 	}
 }
 
+func TestStreamImagePartitionLayoutRejectsImageURLs(t *testing.T) {
+	cfg := &config.MachineConfig{
+		ImageURLs: []string{"http://images.local/node.img.zst"},
+		PartitionLayout: &config.PartitionLayout{
+			Table: "gpt",
+			Partitions: []config.Partition{
+				{Label: "root", Mountpoint: "/"},
+			},
+		},
+	}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+	o.targetDisk = "/dev/sda"
+
+	err := o.streamImage(context.Background())
+	if err == nil {
+		t.Fatal("expected error when partition layout is combined with image urls")
+	}
+	if !strings.Contains(err.Error(), "partition layout with image urls is not supported yet") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestParsePartitionsFromLayoutNoBootEFIMountpoint(t *testing.T) {
 	cfg := &config.MachineConfig{
 		PartitionLayout: &config.PartitionLayout{

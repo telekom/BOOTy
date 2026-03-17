@@ -392,7 +392,7 @@ func (o *Orchestrator) applyPartitionLayout(ctx context.Context) error {
 		return fmt.Errorf("partition layout device %q is not a block device", device)
 	}
 
-	o.log.Info("Applying custom partition layout", "device", device, "partitions", len(o.cfg.PartitionLayout.Partitions))
+	o.log.Info("applying custom partition layout", "device", device, "partitions", len(o.cfg.PartitionLayout.Partitions))
 
 	if err := o.disk.ApplyPartitionLayout(ctx, device, o.cfg.PartitionLayout); err != nil {
 		return fmt.Errorf("apply partition layout: %w", err)
@@ -405,7 +405,7 @@ func (o *Orchestrator) applyPartitionLayout(ctx context.Context) error {
 		}
 	}
 
-	o.log.Info("Custom partition layout applied")
+	o.log.Info("custom partition layout applied")
 	return nil
 }
 
@@ -431,7 +431,7 @@ func (o *Orchestrator) writeFstab() error {
 	if err := os.WriteFile(fstabPath, []byte(fstab), 0o644); err != nil {
 		return fmt.Errorf("writing fstab: %w", err)
 	}
-	o.log.Info("Generated fstab for custom layout")
+	o.log.Info("generated fstab for custom layout")
 	return nil
 }
 
@@ -462,11 +462,11 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 
 	// With a custom partition layout, skip image streaming when no image URLs
 	// are configured (the layout handles partitioning/formatting directly).
-	// When image URLs are present, stream to the resolved root partition/LV
-	// instead of the whole disk so the partition table is preserved.
+	// Rootfs extraction for layout mode is not implemented yet. Refuse IMAGE
+	// values to avoid writing raw whole-disk images into a single partition.
 	if o.cfg.PartitionLayout != nil {
 		if len(o.cfg.ImageURLs) == 0 {
-			o.log.Info("Partition layout set with no image URLs, skipping image streaming")
+			o.log.Info("partition layout set with no image urls, skipping image streaming")
 			return nil
 		}
 		if err := o.resolveRootFromLayout(o.cfg.PartitionLayout); err != nil {
@@ -569,11 +569,11 @@ func (o *Orchestrator) parsePartitionsFromLayout(_ context.Context) error {
 		}
 	}
 	if espIdx == -1 {
-		o.log.Warn("No /boot/efi mountpoint found in partition layout; EFI boot entry creation may be skipped")
+		o.log.Warn("no /boot/efi mountpoint found in partition layout; efi boot entry creation may be skipped")
 		return nil
 	}
 	o.bootPartition = disk.PartitionDevicePath(o.targetDisk, espIdx+1)
-	o.log.Info("Boot partition from layout", "device", o.bootPartition)
+	o.log.Info("boot partition from layout", "device", o.bootPartition)
 
 	return nil
 }
@@ -588,7 +588,7 @@ func (o *Orchestrator) resolveRootFromLayout(layout *config.PartitionLayout) err
 		for _, vol := range layout.LVM.Volumes {
 			if vol.Mountpoint == "/" {
 				o.rootPartition = fmt.Sprintf("/dev/%s/%s", layout.LVM.VolumeGroup, vol.Name)
-				o.log.Info("Root from LVM", "device", o.rootPartition)
+				o.log.Info("root from lvm", "device", o.rootPartition)
 				return nil
 			}
 		}
@@ -598,7 +598,7 @@ func (o *Orchestrator) resolveRootFromLayout(layout *config.PartitionLayout) err
 	for i, part := range layout.Partitions {
 		if part.Mountpoint == "/" {
 			o.rootPartition = disk.PartitionDevicePath(o.targetDisk, i+1)
-			o.log.Info("Root from partition layout", "device", o.rootPartition)
+			o.log.Info("root from partition layout", "device", o.rootPartition)
 			return nil
 		}
 	}

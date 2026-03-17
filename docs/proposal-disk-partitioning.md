@@ -1,8 +1,10 @@
 # Proposal: Custom Disk Partitioning
 
-## Status: Phase 1 Implemented
+## Status: Accepted
 
-Phase 1 is fully implemented and reviewed:
+Implementation status (current PR scope): Phase 1 implemented and reviewed.
+
+Implemented in Phase 1:
 - `ParsePartitionLayout` validation (GPT-only schema, root/mountpoint checks,
   fill-remaining position validation)
 - `ApplyPartitionLayout` with input guards (nil, empty, device validation)
