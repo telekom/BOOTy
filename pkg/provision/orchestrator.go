@@ -553,9 +553,8 @@ func (o *Orchestrator) parsePartitionsFromLayout(_ context.Context) error {
 	}
 
 	// Find boot/EFI partition from the layout.
-	// Prefer explicit /boot/efi mountpoint; only fall back to vfat filesystem
-	// when no partition has a /boot/efi mountpoint, to avoid picking the wrong
-	// vfat partition in layouts that have multiple vfat partitions.
+	// Require an explicit /boot/efi mountpoint to avoid choosing the wrong
+	// partition in layouts with multiple vfat filesystems.
 	espIdx := -1
 	for i, part := range layout.Partitions {
 		if part.Mountpoint == "/boot/efi" {
@@ -564,18 +563,11 @@ func (o *Orchestrator) parsePartitionsFromLayout(_ context.Context) error {
 		}
 	}
 	if espIdx == -1 {
-		for i, part := range layout.Partitions {
-			if part.Filesystem == "vfat" {
-				espIdx = i
-				o.log.Warn("No /boot/efi mountpoint found; selecting first vfat partition as ESP", "index", i+1)
-				break
-			}
-		}
+		o.log.Warn("No /boot/efi mountpoint found in partition layout; EFI boot entry creation may be skipped")
+		return nil
 	}
-	if espIdx != -1 {
-		o.bootPartition = disk.PartitionDevicePath(o.targetDisk, espIdx+1)
-		o.log.Info("Boot partition from layout", "device", o.bootPartition)
-	}
+	o.bootPartition = disk.PartitionDevicePath(o.targetDisk, espIdx+1)
+	o.log.Info("Boot partition from layout", "device", o.bootPartition)
 
 	return nil
 }

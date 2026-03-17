@@ -1,8 +1,8 @@
 # Proposal: Custom Disk Partitioning
 
-## Status: In Progress (Core Layout + LVM Implemented)
+## Status: Phase 1 Implemented
 
-Implemented so far:
+Implemented so far (including incremental hardening beyond the initial Phase 1 scope):
 - `ParsePartitionLayout` validation (GPT-only schema, root/mountpoint checks)
 - `ApplyPartitionLayout` (sgdisk + filesystem formatting)
 - Optional LVM creation from layout (`pvcreate`/`vgcreate`/`lvcreate`)

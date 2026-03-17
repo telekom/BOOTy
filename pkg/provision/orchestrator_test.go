@@ -578,3 +578,29 @@ func TestStreamImagePartitionLayoutRequiresImage(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+func TestParsePartitionsFromLayoutNoBootEFIMountpoint(t *testing.T) {
+	cfg := &config.MachineConfig{
+		PartitionLayout: &config.PartitionLayout{
+			Table: "gpt",
+			Partitions: []config.Partition{
+				{Label: "data", Filesystem: "vfat", Mountpoint: "/boot"},
+				{Label: "root", Filesystem: "ext4", Mountpoint: "/"},
+			},
+		},
+	}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+	o.targetDisk = "/dev/sda"
+
+	err := o.parsePartitionsFromLayout(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if o.rootPartition != "/dev/sda2" {
+		t.Errorf("rootPartition = %q, want /dev/sda2", o.rootPartition)
+	}
+	if o.bootPartition != "" {
+		t.Errorf("bootPartition = %q, want empty when /boot/efi is not declared", o.bootPartition)
+	}
+}

@@ -197,7 +197,7 @@ func ParsePartitionLayout(data string) (*PartitionLayout, error) {
 	if err := validatePartitions(layout.Partitions); err != nil {
 		return nil, err
 	}
-	if err := validateLVMConfig(layout.LVM); err != nil {
+	if err := validateLVMConfig(layout.LVM, len(layout.Partitions)); err != nil {
 		return nil, err
 	}
 	if err := validateRootPresence(layout.Partitions, layout.LVM); err != nil {
@@ -235,7 +235,7 @@ func validatePartitions(partitions []Partition) error {
 	return nil
 }
 
-func validateLVMConfig(lvm *LVMConfig) error {
+func validateLVMConfig(lvm *LVMConfig, partitionCount int) error {
 	if lvm == nil {
 		return nil
 	}
@@ -247,6 +247,9 @@ func validateLVMConfig(lvm *LVMConfig) error {
 	}
 	if lvm.PVPartition < 1 {
 		return fmt.Errorf("lvm: pvPartition must be >= 1, got %d", lvm.PVPartition)
+	}
+	if lvm.PVPartition > partitionCount {
+		return fmt.Errorf("lvm: pvPartition %d exceeds partition count %d", lvm.PVPartition, partitionCount)
 	}
 	for i, vol := range lvm.Volumes {
 		if vol.Name == "" {

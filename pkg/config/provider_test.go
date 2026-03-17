@@ -68,6 +68,14 @@ func TestParsePartitionLayoutUnsupportedLVMFilesystem(t *testing.T) {
 	}
 }
 
+func TestParsePartitionLayoutLvmPVPartitionExceedsCount(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"pv","sizeMB":8192,"filesystem":"ext4","mountpoint":"/var"}],"lvm":{"volumeGroup":"sysvg","pvPartition":2,"volumes":[{"name":"root","filesystem":"ext4","mountpoint":"/"}]}}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Fatal("expected error for pvPartition exceeding partition count")
+	}
+}
+
 func TestParsePartitionLayoutMountpointWhitespace(t *testing.T) {
 	input := "{\"table\":\"gpt\",\"partitions\":[{\"label\":\"root\",\"filesystem\":\"ext4\",\"mountpoint\":\"/bad path\"}]}"
 	_, err := ParsePartitionLayout(input)
