@@ -712,7 +712,7 @@ func (o *Orchestrator) injectCloudInit(_ context.Context) error {
 	}
 
 	// Validate datasource — only NoCloud is supported.
-	ds := o.cfg.CloudInitDatasource
+	ds := strings.ToLower(strings.TrimSpace(o.cfg.CloudInitDatasource))
 	if ds == "" {
 		ds = "nocloud"
 	}
@@ -736,9 +736,18 @@ func (o *Orchestrator) injectCloudInit(_ context.Context) error {
 		}
 	}
 
+	// Cloud-init expects a stable, non-empty instance-id for first-boot identity.
+	instanceID := strings.TrimSpace(o.cfg.ProviderID)
+	if instanceID == "" {
+		instanceID = strings.TrimSpace(o.cfg.Hostname)
+	}
+	if instanceID == "" {
+		instanceID = "booty"
+	}
+
 	ciCfg := &cloudinit.Config{
 		Hostname:   o.cfg.Hostname,
-		FQDN:       o.cfg.Hostname, // no separate FQDN config field yet
+		Serial:     instanceID,
 		StaticIP:   o.cfg.StaticIP,
 		Gateway:    o.cfg.StaticGateway,
 		BondIfaces: bondIfaces,
