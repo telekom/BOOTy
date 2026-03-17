@@ -18,6 +18,9 @@ func (m *Manager) ApplyLVMConfig(ctx context.Context, device string, layout *con
 	if layout == nil || layout.LVM == nil || len(layout.LVM.Volumes) == 0 {
 		return nil
 	}
+	if device == "" {
+		return fmt.Errorf("lvm device path is empty")
+	}
 
 	lvm := layout.LVM
 	if lvm.PVPartition < 1 {

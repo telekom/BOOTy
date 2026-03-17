@@ -120,11 +120,25 @@ func TestGenerateFstab(t *testing.T) {
 	if fstab == "" {
 		t.Fatal("fstab is empty")
 	}
-	if !strings.Contains(fstab, "/dev/sda1") || !strings.Contains(fstab, "/boot/efi") {
+	if !strings.Contains(fstab, "PARTLABEL=efi") || !strings.Contains(fstab, "/boot/efi") {
 		t.Errorf("fstab missing EFI entry:\n%s", fstab)
 	}
-	if !strings.Contains(fstab, "/dev/sda2") || !strings.Contains(fstab, "ext4") {
+	if !strings.Contains(fstab, "PARTLABEL=root") || !strings.Contains(fstab, "ext4") {
 		t.Errorf("fstab missing root entry:\n%s", fstab)
+	}
+}
+
+func TestGenerateFstabEscapesPartlabel(t *testing.T) {
+	layout := &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "root data", Filesystem: "ext4", Mountpoint: "/"},
+		},
+	}
+
+	fstab := GenerateFstab(layout, "/dev/sda")
+	if !strings.Contains(fstab, "PARTLABEL=root\\040data") {
+		t.Errorf("fstab missing escaped PARTLABEL entry:\n%s", fstab)
 	}
 }
 
@@ -278,7 +292,7 @@ func TestGenerateFstabSwap(t *testing.T) {
 	if !strings.Contains(fstab, "none\tswap\tsw") {
 		t.Errorf("fstab missing swap entry:\n%s", fstab)
 	}
-	if !strings.Contains(fstab, "/dev/sda2") {
+	if !strings.Contains(fstab, "PARTLABEL=swap") {
 		t.Errorf("fstab missing swap device:\n%s", fstab)
 	}
 }
@@ -370,6 +384,23 @@ func TestApplyLVMConfig_InvalidPVPartition(t *testing.T) {
 	err := mgr.ApplyLVMConfig(t.Context(), "/dev/sda", layout)
 	if err == nil {
 		t.Error("expected error for PVPartition < 1")
+	}
+}
+
+func TestApplyLVMConfig_EmptyDevice(t *testing.T) {
+	mgr := &Manager{}
+	layout := &config.PartitionLayout{
+		Table:      "gpt",
+		Partitions: []config.Partition{{Label: "pv", SizeMB: 8192}},
+		LVM: &config.LVMConfig{
+			VolumeGroup: "sysvg",
+			PVPartition: 1,
+			Volumes:     []config.LVVolume{{Name: "root", Filesystem: "ext4", Mountpoint: "/"}},
+		},
+	}
+	err := mgr.ApplyLVMConfig(t.Context(), "", layout)
+	if err == nil {
+		t.Error("expected error for empty device")
 	}
 }
 

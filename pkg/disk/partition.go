@@ -105,13 +105,14 @@ func GenerateFstab(layout *config.PartitionLayout, device string) string {
 			continue
 		}
 		partDev := partitionDevice(device, i+1)
+		fsSpec := partitionFstabSpec(part, partDev)
 		fsType := part.Filesystem
 		if fsType == "" {
 			fsType = "auto"
 		}
 		// Swap partitions use "none" as mountpoint and "sw" as options.
 		if fsType == "swap" {
-			fmt.Fprintf(&sb, "%s\tnone\tswap\tsw\t0\t0\n", partDev)
+			fmt.Fprintf(&sb, "%s\tnone\tswap\tsw\t0\t0\n", fsSpec)
 			continue
 		}
 		opts := "defaults"
@@ -125,9 +126,26 @@ func GenerateFstab(layout *config.PartitionLayout, device string) string {
 		default:
 			pass = 2
 		}
-		fmt.Fprintf(&sb, "%s\t%s\t%s\t%s\t%d\t%d\n", partDev, part.Mountpoint, fsType, opts, dump, pass)
+		fmt.Fprintf(&sb, "%s\t%s\t%s\t%s\t%d\t%d\n", fsSpec, part.Mountpoint, fsType, opts, dump, pass)
 	}
 	return sb.String()
+}
+
+func partitionFstabSpec(part config.Partition, fallbackDevice string) string {
+	if part.Label == "" {
+		return fallbackDevice
+	}
+	return "PARTLABEL=" + escapeFstabValue(part.Label)
+}
+
+func escapeFstabValue(value string) string {
+	replacer := strings.NewReplacer(
+		"\\", "\\\\",
+		" ", "\\040",
+		"\t", "\\011",
+		"\n", "\\012",
+	)
+	return replacer.Replace(value)
 }
 
 // resolveTypeGUID returns the GPT type GUID for a partition.
