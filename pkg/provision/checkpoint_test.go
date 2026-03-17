@@ -40,6 +40,7 @@ func TestCheckpoint_MarkStep(t *testing.T) {
 	cp := &Checkpoint{}
 	cp.MarkStep("report-init")
 	cp.MarkStep("configure-dns")
+	cp.MarkStep("configure-dns")
 	if cp.LastCompletedStep != "configure-dns" {
 		t.Errorf("LastCompletedStep = %q, want %q", cp.LastCompletedStep, "configure-dns")
 	}
@@ -122,6 +123,27 @@ func TestCheckpoint_AtomicSave(t *testing.T) {
 	}
 	if len(loaded.CompletedSteps) != 1 || loaded.CompletedSteps[0] != "step-1" {
 		t.Errorf("loaded steps = %v, want [step-1]", loaded.CompletedSteps)
+	}
+}
+
+func TestCheckpoint_SaveRenameFailureCleansTemp(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "checkpoint-dir")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+
+	cp := &Checkpoint{
+		CompletedSteps: []string{"step-1"},
+		path:           path,
+		persist:        true,
+	}
+	if err := cp.Save(); err == nil {
+		t.Fatal("expected Save to fail when checkpoint path is an existing directory")
+	}
+
+	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
+		t.Errorf("expected temp file to be removed on rename failure, stat err=%v", err)
 	}
 }
 

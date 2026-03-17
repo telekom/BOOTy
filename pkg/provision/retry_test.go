@@ -89,19 +89,19 @@ func TestWithRetry_PermanentError(t *testing.T) {
 
 func TestWithRetry_ContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	policy := RetryPolicy{
 		MaxRetries:   10,
-		InitialDelay: time.Second,
-		MaxDelay:     time.Second,
+		InitialDelay: 0,
+		MaxDelay:     0,
 		Transient:    true,
 	}
 	calls := 0
-	go func() {
-		time.Sleep(5 * time.Millisecond)
-		cancel()
-	}()
 	err := WithRetry(ctx, "test-step", policy, func(_ context.Context) error {
 		calls++
+		if calls == 1 {
+			cancel()
+		}
 		return errors.New("fail")
 	})
 	if err == nil {
@@ -109,6 +109,9 @@ func TestWithRetry_ContextCancel(t *testing.T) {
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("expected 1 call after cancellation, got %d", calls)
 	}
 }
 

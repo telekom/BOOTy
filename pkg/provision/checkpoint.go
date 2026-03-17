@@ -51,6 +51,7 @@ func (c *Checkpoint) Save() error {
 		return fmt.Errorf("write checkpoint tmp: %w", err)
 	}
 	if err := os.Rename(tmp, p); err != nil {
+		_ = os.Remove(tmp)
 		return fmt.Errorf("rename checkpoint: %w", err)
 	}
 	return nil
@@ -100,6 +101,9 @@ func (c *Checkpoint) Remove() error {
 // MarkStep records a completed step in the checkpoint.
 func (c *Checkpoint) MarkStep(name string) {
 	c.LastCompletedStep = name
+	if c.IsCompleted(name) {
+		return
+	}
 	c.CompletedSteps = append(c.CompletedSteps, name)
 }
 

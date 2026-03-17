@@ -49,14 +49,19 @@ func WithRetry(ctx context.Context, name string, policy RetryPolicy, fn func(ctx
 		}
 		if attempt > 0 {
 			delay := backoffDelay(policy, attempt)
-			slog.Warn("Retrying step", "step", name, "attempt", attempt, "delay", delay)
-			timer := time.NewTimer(delay)
-			select {
-			case <-timer.C:
-			case <-ctx.Done():
-				timer.Stop()
-				return fmt.Errorf("retry canceled: %w", ctx.Err())
+			slog.Warn("retrying step", "step", name, "attempt", attempt, "delay", delay)
+			if delay > 0 {
+				timer := time.NewTimer(delay)
+				select {
+				case <-timer.C:
+				case <-ctx.Done():
+					timer.Stop()
+					return fmt.Errorf("retry canceled: %w", ctx.Err())
+				}
 			}
+		}
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("retry canceled: %w", err)
 		}
 
 		if err := fn(ctx); err != nil {

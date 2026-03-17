@@ -1,6 +1,6 @@
 # Proposal: Resilient Provisioning — Self-Healing Error Recovery
 
-## Status: Partially Implemented (PR #41 — retry, checkpoint, error taxonomy)
+## Status: Phase 1 Implemented (PR #41 — retry, checkpoint, error taxonomy)
 
 ## Priority: P1
 

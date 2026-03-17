@@ -112,17 +112,17 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 	for i, step := range steps {
 		_, mustRun := stateSteps[step.Name]
 		if cp.IsCompleted(step.Name) && !mustRun {
-			o.log.Info("Skipping completed step", "step", step.Name)
+			o.log.Info("skipping completed step", "step", step.Name)
 			continue
 		}
-		o.log.Info("Provisioning step", "step", step.Name, "index", i+1, "total", len(steps))
+		o.log.Info("provisioning step", "step", step.Name, "index", i+1, "total", len(steps))
 		if err := o.executeStep(ctx, step, cp); err != nil {
 			return err
 		}
 	}
 
 	if rmErr := cp.Remove(); rmErr != nil {
-		o.log.Warn("Failed to remove checkpoint", "error", rmErr)
+		o.log.Warn("failed to remove checkpoint", "error", rmErr)
 	}
 	return nil
 }
@@ -134,7 +134,7 @@ func (o *Orchestrator) loadOrCreateCheckpoint() *Checkpoint {
 	if os.Getenv("BOOTY_RESUME") != "" {
 		cp, cpErr := LoadCheckpoint()
 		if cpErr != nil && !errors.Is(cpErr, ErrNoCheckpoint) {
-			o.log.Warn("Failed to load checkpoint, starting fresh", "error", cpErr)
+			o.log.Warn("failed to load checkpoint, starting fresh", "error", cpErr)
 		}
 		if cp != nil {
 			return cp
@@ -156,23 +156,23 @@ func (o *Orchestrator) executeStep(ctx context.Context, step Step, cp *Checkpoin
 
 	if err != nil {
 		msg := fmt.Sprintf("step %s failed: %v", step.Name, err)
-		o.log.Error("Provisioning step failed", "step", step.Name, "error", err)
+		o.log.Error("provisioning step failed", "step", step.Name, "error", err)
 		cp.Errors = append(cp.Errors, msg)
 		cp.FailureCount++
 		if saveErr := cp.Save(); saveErr != nil {
-			o.log.Warn("Failed to save checkpoint", "error", saveErr)
+			o.log.Warn("failed to save checkpoint", "error", saveErr)
 		}
 		DumpDebugState(step.Name)
 		dumpConfig(o.cfg)
 		if reportErr := o.provider.ReportStatus(ctx, config.StatusError, msg); reportErr != nil {
-			o.log.Error("Failed to report error status", "error", reportErr)
+			o.log.Error("failed to report error status", "error", reportErr)
 		}
 		return fmt.Errorf("provision step %s: %w", step.Name, err)
 	}
 
 	cp.MarkStep(step.Name)
 	if saveErr := cp.Save(); saveErr != nil {
-		o.log.Warn("Failed to save checkpoint", "error", saveErr)
+		o.log.Warn("failed to save checkpoint", "error", saveErr)
 	}
 	return nil
 }

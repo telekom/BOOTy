@@ -276,8 +276,6 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 		t.Fatalf("save checkpoint: %v", err)
 	}
 
-	t.Setenv("BOOTY_RESUME", "1")
-
 	loadedCP, err := LoadCheckpointFrom(cpPath)
 	if err != nil {
 		t.Fatalf("load checkpoint: %v", err)
