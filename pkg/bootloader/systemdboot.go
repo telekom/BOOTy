@@ -111,6 +111,9 @@ func (s *SystemdBoot) Configure(_ context.Context, cfg *BootConfig) error {
 	if s.espPath == "" {
 		return fmt.Errorf("esp path not set, call Install first")
 	}
+	if cfg == nil {
+		return fmt.Errorf("boot config must not be nil")
+	}
 	// Generate loader.conf
 	if err := s.generateLoaderConf(cfg); err != nil {
 		return err
@@ -182,6 +185,9 @@ func (s *SystemdBoot) SetDefault(ctx context.Context, entryID string) error {
 	if !isValidLoaderEntryID(entryID) {
 		return fmt.Errorf("invalid entry ID: %q", entryID)
 	}
+	if err := s.validateDefaultEntryExists(entryID); err != nil {
+		return err
+	}
 	if _, err := exec.LookPath("bootctl"); err == nil {
 		cmd := exec.CommandContext(ctx, "bootctl", "set-default",
 			"--esp-path="+s.espPath, entryID+".conf")
@@ -231,6 +237,9 @@ func (s *SystemdBoot) SetDefault(ctx context.Context, entryID string) error {
 }
 
 func (s *SystemdBoot) generateLoaderConf(cfg *BootConfig) error {
+	if cfg == nil {
+		return fmt.Errorf("boot config must not be nil")
+	}
 	loaderDir := filepath.Join(s.espPath, "loader")
 	if err := os.MkdirAll(loaderDir, 0o755); err != nil {
 		return fmt.Errorf("create loader dir: %w", err)
@@ -310,6 +319,26 @@ func isValidLoaderEntryID(id string) bool {
 	return true
 }
 
+func (s *SystemdBoot) validateDefaultEntryExists(entryID string) error {
+	entriesDir := filepath.Join(s.espPath, "loader", "entries")
+	if _, err := os.Stat(entriesDir); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// Allow setting defaults before entries are materialized.
+			return nil
+		}
+		return fmt.Errorf("stat entries dir: %w", err)
+	}
+
+	entryPath := filepath.Join(entriesDir, entryID+".conf")
+	if _, err := os.Stat(entryPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("default entry not found: %s", entryID+".conf")
+		}
+		return fmt.Errorf("stat default entry: %w", err)
+	}
+	return nil
+}
+
 // parseLoaderEntry reads a systemd-boot loader entry file.
 func parseLoaderEntry(path string) (BootEntry, error) {
 	data, err := os.ReadFile(path)
@@ -339,6 +368,9 @@ func parseLoaderEntry(path string) (BootEntry, error) {
 		case "options":
 			entry.Cmdline = val
 		}
+	}
+	if entry.Kernel == "" {
+		return BootEntry{}, fmt.Errorf("entry %s missing linux kernel line", path)
 	}
 	return entry, nil
 }

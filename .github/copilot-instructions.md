@@ -5,6 +5,7 @@ Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, orch
 ## Architecture
 
 - `cmd/` — CLI entry point (Cobra)
+- `pkg/bootloader/` — Unified GRUB/systemd-boot installation and entry management
 - `pkg/provision/` — 25-step provisioning orchestrator
 - `pkg/config/` — MachineConfig, Provider interface, Status types
 - `pkg/network/` — Pluggable networking: DHCP, static, FRR/EVPN, GoBGP, LACP bonds

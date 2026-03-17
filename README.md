@@ -71,6 +71,7 @@ BOOTy operates in two modes depending on the boot environment:
 - **Filesystem support** — ext2, ext3, ext4, xfs, btrfs, vfat mount/resize
 - **LLDP discovery** — Raw AF_PACKET-based LLDP listener for switch topology discovery
 - **Post-provision hooks** — Execute arbitrary commands in chroot after OS configuration
+- **Bootloader management** — Unified GRUB and systemd-boot install/configure/entry handling
 - **25-step provisioning pipeline** — RAID cleanup, disk detection, image streaming, partition growth, LVM, filesystem resize, OS configuration, EFI boot, Mellanox SR-IOV, post-provision hooks
 - **Kexec support** — Fast reboot into installed kernel without full BIOS POST (auto-disabled after firmware changes)
 - **Remote logging** — Real-time log and debug shipping to CAPRF controller
@@ -406,6 +407,7 @@ and the PR process.
 ├── initrd.Dockerfile           # Multi-stage initramfs build (default, iso, slim, micro)
 ├── pkg/
 │   ├── caprf/                  # CAPRF client (status, log, debug, vars parsing)
+│   ├── bootloader/             # Unified GRUB/systemd-boot install, config, entry management
 │   ├── cloudinit/              # Cloud-init NoCloud/ConfigDrive generation
 │   ├── config/                 # MachineConfig, Provider interface, Status types
 │   ├── disk/                   # Disk detection, partitioning, RAID, LVM, mount

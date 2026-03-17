@@ -3,6 +3,8 @@
 package bootloader
 
 import (
+	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,5 +116,41 @@ func TestParseGRUBConfig_LongKernelLine(t *testing.T) {
 	}
 	if entries[0].Title != "Long Kernel" {
 		t.Fatalf("title = %q, want Long Kernel", entries[0].Title)
+	}
+}
+
+func TestParseGRUBConfig_LinuxEFI(t *testing.T) {
+	grubCfg := `
+menuentry 'RHEL 9.4' {
+	linuxefi /vmlinuz-5.14 root=UUID=abc ro quiet
+	initrdefi /initramfs-5.14.img
+}
+`
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "grub.cfg")
+	if err := os.WriteFile(cfgPath, []byte(grubCfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := parseGRUBConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parseGRUBConfig: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	if entries[0].Kernel != "/vmlinuz-5.14" {
+		t.Fatalf("kernel = %q, want /vmlinuz-5.14", entries[0].Kernel)
+	}
+	if entries[0].Initrd != "/initramfs-5.14.img" {
+		t.Fatalf("initrd = %q, want /initramfs-5.14.img", entries[0].Initrd)
+	}
+}
+
+func TestGRUBConfigure_NilConfig(t *testing.T) {
+	g := &GRUB{Log: slog.Default(), rootPath: t.TempDir()}
+	if err := g.Configure(context.Background(), nil); err == nil {
+		t.Fatal("expected error for nil config")
 	}
 }

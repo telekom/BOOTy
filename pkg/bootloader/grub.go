@@ -81,6 +81,9 @@ func (g *GRUB) Configure(ctx context.Context, cfg *BootConfig) error {
 	if g.rootPath == "" {
 		return fmt.Errorf("root path not set, call Install first")
 	}
+	if cfg == nil {
+		return fmt.Errorf("boot config must not be nil")
+	}
 	grubDefault := filepath.Join(g.rootPath, "etc", "default", "grub")
 
 	lines := []string{
@@ -113,7 +116,7 @@ func (g *GRUB) Configure(ctx context.Context, cfg *BootConfig) error {
 	if err != nil {
 		return fmt.Errorf("%s: %s: %w", mkconfig, string(out), err)
 	}
-	g.Log.Info("grub configured", "cmdline", cfg.KernelCmdline)
+	g.Log.Info("grub configured", "defaultEntry", cfg.DefaultEntry)
 	return nil
 }
 
@@ -179,7 +182,7 @@ func parseGRUBConfig(path string) ([]BootEntry, error) {
 		}
 
 		switch {
-		case strings.HasPrefix(line, "linux"):
+		case strings.HasPrefix(line, "linux ") || strings.HasPrefix(line, "linuxefi "):
 			parts := strings.Fields(line)
 			if len(parts) >= 2 {
 				current.Kernel = parts[1]
@@ -187,7 +190,7 @@ func parseGRUBConfig(path string) ([]BootEntry, error) {
 			if len(parts) >= 3 {
 				current.Cmdline = strings.Join(parts[2:], " ")
 			}
-		case strings.HasPrefix(line, "initrd"):
+		case strings.HasPrefix(line, "initrd ") || strings.HasPrefix(line, "initrdefi "):
 			parts := strings.Fields(line)
 			if len(parts) >= 2 {
 				current.Initrd = parts[1]

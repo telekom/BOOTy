@@ -12,6 +12,9 @@ adds GRUB installation into provisioned OS, and introduces full systemd-boot
 support as an alternative. Auto-detects which bootloader the provisioned OS
 image uses.
 
+Phase 1 is implemented in PR #43 (`pkg/bootloader/*`), with provisioning
+pipeline wiring and Dockerfile integration tracked as follow-up work.
+
 ## Motivation
 
 BOOTy currently has basic GRUB config parsing in `pkg/kexec/grub.go` for
@@ -221,11 +224,11 @@ COPY --from=tools /usr/bin/bootctl bin/bootctl
 |------|--------|
 | `pkg/bootloader/bootloader.go` | Common `Bootloader` interface |
 | `pkg/bootloader/detect.go` | Auto-detection logic |
-| `pkg/bootloader/grub/grub.go` | GRUB manager |
-| `pkg/bootloader/systemdboot/systemdboot.go` | systemd-boot manager |
-| `pkg/kexec/grub.go` | Enhanced GRUB config parsing |
-| `pkg/provision/orchestrator.go` | `configureBootloader()` step |
-| `initrd.Dockerfile` | Add `bootctl` binary |
+| `pkg/bootloader/grub.go` | GRUB manager (implemented) |
+| `pkg/bootloader/systemdboot.go` | systemd-boot manager (implemented) |
+| `pkg/kexec/grub.go` | Enhanced GRUB config parsing (pending) |
+| `pkg/provision/orchestrator.go` | `configureBootloader()` step (pending) |
+| `initrd.Dockerfile` | Add `bootctl` binary (pending) |
 
 ## Testing
 

@@ -174,7 +174,11 @@ func TestSystemdBoot_SetDefaultFallback(t *testing.T) {
 
 	esp := t.TempDir()
 	loaderDir := filepath.Join(esp, "loader")
+	entriesDir := filepath.Join(loaderDir, "entries")
 	if err := os.MkdirAll(loaderDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(entriesDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -183,13 +187,16 @@ func TestSystemdBoot_SetDefaultFallback(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(loaderDir, "loader.conf"), []byte(initial), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(entriesDir, "new-entry.conf"), []byte("title x\nlinux /vmlinuz\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	sb := &SystemdBoot{
 		Log:     slog.Default(),
 		espPath: esp,
 	}
 
-	if err := sb.SetDefault(context.Background(), "new-entry"); err != nil {
+	if err := sb.SetDefault(context.Background(), "new-entry.conf"); err != nil {
 		t.Fatalf("SetDefault fallback: %v", err)
 	}
 
@@ -229,6 +236,32 @@ func TestSystemdBoot_SetDefaultRejectsInvalidIDs(t *testing.T) {
 	}
 }
 
+func TestSystemdBoot_SetDefaultRequiresExistingEntryWhenEntriesDirExists(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	esp := t.TempDir()
+	loaderDir := filepath.Join(esp, "loader")
+	entriesDir := filepath.Join(loaderDir, "entries")
+	if err := os.MkdirAll(entriesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(loaderDir, "loader.conf"), []byte("default old.conf\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sb := &SystemdBoot{Log: slog.Default(), espPath: esp}
+	if err := sb.SetDefault(context.Background(), "missing-entry"); err == nil {
+		t.Fatal("expected error for missing entry file")
+	}
+}
+
+func TestSystemdBoot_ConfigureNilConfig(t *testing.T) {
+	sb := &SystemdBoot{Log: slog.Default(), espPath: t.TempDir()}
+	if err := sb.Configure(context.Background(), nil); err == nil {
+		t.Fatal("expected error for nil config")
+	}
+}
+
 func TestSystemdBoot_GenerateLoaderConfValidation(t *testing.T) {
 	sb := &SystemdBoot{Log: slog.Default(), espPath: t.TempDir()}
 
@@ -254,5 +287,17 @@ func TestSystemdBoot_GenerateEntryRejectsInvalidID(t *testing.T) {
 				t.Fatalf("expected invalid id error for %q", id)
 			}
 		})
+	}
+}
+
+func TestParseLoaderEntry_MissingKernel(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "broken.conf")
+	if err := os.WriteFile(path, []byte("title Broken\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := parseLoaderEntry(path); err == nil {
+		t.Fatal("expected error for entry without linux line")
 	}
 }

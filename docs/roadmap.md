@@ -97,6 +97,7 @@ Design, Affected Files, Risks, and Effort Estimate.
 | [VLAN Support](proposal-vlan-support.md) | Implemented |
 | [Firmware Reporting](proposal-firmware-reporting.md) | Implemented |
 | [Observability (Debug Dump)](proposal-observability.md) | Implemented |
+| [Bootloaders](proposal-bootloaders.md) | In progress (phase 1 implemented) |
 
 ## Total Estimated Effort
 
