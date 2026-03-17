@@ -5,17 +5,14 @@ Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, orch
 ## Architecture
 
 - `cmd/` — CLI entry point (Cobra)
-- `pkg/provision/` — 32-step provisioning orchestrator
+- `pkg/provision/` — 33-step provisioning orchestrator
 - `pkg/config/` — MachineConfig, Provider interface, Status types
 - `pkg/network/` — Pluggable networking: DHCP, static, FRR/EVPN, GoBGP, LACP bonds
 - `pkg/network/gobgp/` — Pure-Go BGP stack (underlay eBGP + overlay EVPN), three peering modes: unnumbered, dual, numbered; processes received Type-2/3 routes to install FDB entries via `watchRoutes()`
 - `pkg/network/frr/` — FRR config rendering
 - `pkg/network/lldp/` — LLDP frame listener (raw AF_PACKET)
-- `pkg/network/netplan/` — Netplan YAML + FRR config parser for EVPN auto-detection (ASN, VNI, bonds, bridges)
-- `pkg/network/persist/` — Network configuration persistence across reboots
 - `pkg/network/vlan/` — VLAN 802.1Q tagging via netlink
 - `pkg/image/` — Multi-format image streaming (gzip, lz4, xz, zstd) + OCI registry
-- `pkg/executil/` — Centralized command execution with output sanitization and PATH diagnostics
 - `pkg/disk/` — Disk detection, partitioning, RAID, LVM, mount
 - `pkg/caprf/` — CAPRF controller client (status/log shipping)
 - `pkg/firmware/` — Firmware version collection from sysfs

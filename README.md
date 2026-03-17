@@ -31,7 +31,7 @@ BOOTy boots as the init process inside a minimal initramfs, contacts a provision
 1. A Redfish BMC mounts an ISO containing a kernel, BOOTy initramfs, and `/deploy/vars` config.
 2. BOOTy reads `/deploy/vars` for machine config, image URLs, and CAPRF server endpoints.
 3. Network connectivity is established via **FRR/EVPN** (BGP underlay) or **DHCP** fallback.
-4. The provisioning pipeline runs 32 steps: status reporting → RAID cleanup → disk detection → EFI setup → image verification (signature/checksum) → image streaming → partition management → OS configuration → kexec.
+4. The provisioning pipeline runs 33 steps: status reporting → RAID cleanup → disk detection → EFI setup → partition layout → image streaming → partition management → OS configuration → kexec.
 5. Status, logs, and debug info are shipped back to the CAPRF controller throughout.
 
 ## Features
@@ -50,7 +50,7 @@ BOOTy boots as the init process inside a minimal initramfs, contacts a provision
 - **Filesystem support** — ext2, ext3, ext4, xfs, btrfs, vfat mount/resize
 - **LLDP discovery** — Raw AF_PACKET-based LLDP listener for switch topology discovery
 - **Post-provision hooks** — Execute arbitrary commands in chroot after OS configuration
-- **32-step provisioning pipeline** — RAID cleanup, disk detection, EFI variable setup, image verification (signature/checksum), image streaming, partition growth, LVM, filesystem resize, OS configuration, EFI boot, Mellanox SR-IOV, post-provision hooks
+- **33-step provisioning pipeline** — RAID cleanup, disk detection, EFI variable setup, partition layout, image streaming, fstab generation, partition growth, LVM, filesystem resize, OS configuration, EFI boot, Mellanox SR-IOV, post-provision hooks
 - **Kexec support** — Fast reboot into installed kernel without full BIOS POST (auto-disabled after firmware changes)
 - **Remote logging** — Real-time log and debug shipping to CAPRF controller
 - **Hard/soft deprovisioning** — Full disk wipe or GRUB rename for reprovisioning
@@ -235,7 +235,7 @@ export dns_resolver="8.8.8.8"
 | `RESCUE_TIMEOUT` | `0` | *(Phase 2)* Rescue wait timeout in seconds (0 = indefinite) |
 | `RESCUE_SSH_PUBKEY` | — | *(Phase 2)* SSH public key for rescue shell access |
 | `RESCUE_AUTO_MOUNT` | `false` | *(Phase 2)* Auto-mount disks in rescue shell mode |
-| `EVPN_L2_ENABLED` | `false` | Enable EVPN L2 overlay (Type-2/3 route origination and handling) in GoBGP mode. Default is Type-5 only (L3) |
+| `EVPN_L2_ENABLED` | `false` | Enable EVPN L2 overlay (Type-2/3 route handling) in GoBGP mode. Default is Type-5 only (L3) |
 | `HEALTH_CHECKS_ENABLED` | `false` | Run pre-provisioning hardware health checks |
 | `HEALTH_MIN_MEMORY_GB` | `0` | Minimum RAM (GiB) for health check (0 = skip check) |
 | `HEALTH_MIN_CPUS` | `0` | Minimum CPU count for health check (0 = skip check) |
@@ -540,28 +540,6 @@ The overlay tier advertises Type-5 (IP Prefix) routes and processes incoming EVP
 - **Type-3 (Inclusive Multicast)** routes install BUM FDB entries for flood replication
 - A static BUM FDB entry and /32 kernel route to `provision_gateway` ensure baseline connectivity
 
-#### EVPN L2 Overlay
-
-Set `EVPN_L2_ENABLED=true` to enable full L2 EVPN overlay support. When enabled,
-BOOTy additionally **originates** Type-2 and Type-3 routes:
-
-- **Type-3 (IMET)** — Announces this VTEP for BUM flooding via ingress replication,
-  so remote VTEPs include it in broadcast/unknown-unicast/multicast flooding
-- **Type-2 (MAC/IP)** — Advertises the local bridge MAC and provision IP so remote
-  VTEPs learn the FDB entry via BGP control-plane rather than data-plane flooding
-
-Without `EVPN_L2_ENABLED`, the overlay only advertises Type-5 routes and processes
-incoming Type-2/3 routes passively (receive-only mode).
-
-```bash
-# Enable L2 EVPN overlay (GoBGP mode)
-export NETWORK_MODE=gobgp
-export EVPN_L2_ENABLED=true
-export provision_vni=4000
-export provision_ip=10.100.0.20/24
-export provision_gateway=10.0.0.1
-```
-
 The `BGP_PEER_MODE` environment variable controls session establishment:
 
 | Mode | Description |
@@ -660,7 +638,6 @@ and the PR process.
 │   ├── disk/                   # Disk detection, partitioning, RAID, LVM, mount
 │   ├── drivers/                # Architecture-aware kernel driver management
 │   ├── efi/                    # EFI variable operations
-│   ├── executil/               # Centralized command execution + PATH diagnostics
 │   ├── firmware/               # Firmware version collection from sysfs
 │   │   └── nic/               # NIC firmware (Broadcom, Intel, Mellanox)
 │   ├── grubcfg/                # GRUB config file parsing
@@ -674,10 +651,8 @@ and the PR process.
 │   │   ├── frr/               # FRR/EVPN: config rendering, address derivation
 │   │   ├── gobgp/             # Pure-Go BGP stack (3-tier: Underlay, Overlay, IPMI)
 │   │   ├── lldp/              # LLDP frame listener (raw AF_PACKET sockets)
-│   │   ├── netplan/           # Netplan YAML + FRR config parser for EVPN auto-detection
-│   │   ├── persist/           # Network configuration persistence across reboots
 │   │   └── vlan/              # VLAN 802.1Q tagging via netlink
-│   ├── provision/              # Orchestrator (32-step provision, deprovision)
+│   ├── provision/              # Orchestrator (33-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
 │   ├── realm/                  # Device, mount, shell operations
 │   ├── rescue/                 # Rescue mode types, retry state, action resolution
