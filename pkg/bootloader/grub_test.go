@@ -177,6 +177,42 @@ menuentry 'Legacy BIOS' {
 	}
 }
 
+func TestParseGRUBConfig_ClosingBraceComment(t *testing.T) {
+	grubCfg := `
+menuentry 'Commented close' {
+	linux /vmlinuz-comment root=UUID=abc ro
+	initrd /initrd-comment.img
+} # end of entry
+`
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "grub.cfg")
+	if err := os.WriteFile(cfgPath, []byte(grubCfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := parseGRUBConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parseGRUBConfig: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	if entries[0].Kernel != "/vmlinuz-comment" {
+		t.Fatalf("kernel = %q, want /vmlinuz-comment", entries[0].Kernel)
+	}
+}
+
+func TestGRUBInstallRejectsRootAsESP(t *testing.T) {
+	root := t.TempDir()
+	g := &GRUB{Log: slog.Default()}
+
+	err := g.Install(context.Background(), root, root)
+	if err == nil {
+		t.Fatal("expected error when espPath equals rootPath")
+	}
+}
+
 func TestGRUBConfigure_NilConfig(t *testing.T) {
 	g := &GRUB{Log: slog.Default(), rootPath: t.TempDir()}
 	if err := g.Configure(context.Background(), nil); err == nil {

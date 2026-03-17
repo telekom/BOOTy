@@ -57,6 +57,41 @@ func TestDetectBootloader(t *testing.T) {
 			expected: "grub",
 		},
 		{
+			name: "prefer grub when both generic binaries exist",
+			setup: func(root string) error {
+				grubDir := filepath.Join(root, "usr", "sbin")
+				if err := os.MkdirAll(grubDir, 0o755); err != nil {
+					return err
+				}
+				if err := os.WriteFile(filepath.Join(grubDir, "grub-install"), []byte("stub"), 0o755); err != nil {
+					return err
+				}
+				sdDir := filepath.Join(root, "usr", "lib", "systemd", "boot", "efi")
+				if err := os.MkdirAll(sdDir, 0o755); err != nil {
+					return err
+				}
+				return os.WriteFile(filepath.Join(sdDir, "systemd-bootx64.efi"), []byte("stub"), 0o644)
+			},
+			expected: "grub",
+		},
+		{
+			name: "prefer systemd-boot artifact over grub binary",
+			setup: func(root string) error {
+				if err := os.MkdirAll(filepath.Join(root, "boot", "efi", "loader"), 0o755); err != nil {
+					return err
+				}
+				if err := os.WriteFile(filepath.Join(root, "boot", "efi", "loader", "loader.conf"), []byte("default test.conf\n"), 0o644); err != nil {
+					return err
+				}
+				grubDir := filepath.Join(root, "usr", "sbin")
+				if err := os.MkdirAll(grubDir, 0o755); err != nil {
+					return err
+				}
+				return os.WriteFile(filepath.Join(grubDir, "grub-install"), []byte("stub"), 0o755)
+			},
+			expected: "systemd-boot",
+		},
+		{
 			name:     "unknown",
 			setup:    func(_ string) error { return nil },
 			expected: "unknown",

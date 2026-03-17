@@ -117,6 +117,19 @@ func TestSystemdBoot_ListEntriesUsesESPPath(t *testing.T) {
 	}
 }
 
+func TestSystemdBoot_ListEntriesMissingDir(t *testing.T) {
+	root := t.TempDir()
+	sb := &SystemdBoot{Log: slog.Default()}
+
+	entries, err := sb.ListEntries(context.Background(), root)
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("entries = %d, want 0", len(entries))
+	}
+}
+
 func TestParseLoaderEntry(t *testing.T) {
 	dir := t.TempDir()
 	content := "title   Test Entry\nlinux   /vmlinuz\ninitrd  /initrd.img\noptions root=UUID=test ro\n"

@@ -160,7 +160,7 @@ func (s *SystemdBoot) ListEntries(_ context.Context, rootPath string) ([]BootEnt
 		}
 	}
 	if entriesDir == "" {
-		entriesDir = candidates[len(candidates)-1]
+		return []BootEntry{}, nil
 	}
 
 	dirEntries, err := os.ReadDir(entriesDir)

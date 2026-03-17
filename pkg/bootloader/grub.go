@@ -3,7 +3,6 @@
 package bootloader
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +12,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/telekom/BOOTy/pkg/grubcfg"
 )
 
 // GRUB implements the Bootloader interface for GRUB2.
@@ -55,7 +56,7 @@ func (g *GRUB) Install(ctx context.Context, rootPath, espPath string) error {
 	rootClean := filepath.Clean(rootPath)
 	espClean := filepath.Clean(espPath)
 	rel, relErr := filepath.Rel(rootClean, espClean)
-	if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if relErr != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("esp path %q is not inside root %q", espPath, rootPath)
 	}
 	chrootESP := "/" + rel
@@ -150,84 +151,26 @@ func (g *GRUB) SetDefault(ctx context.Context, entryID string) error {
 
 // parseGRUBConfig extracts boot entries from a grub.cfg file.
 func parseGRUBConfig(path string) ([]BootEntry, error) {
-	f, err := os.Open(path)
+	parsedEntries, err := grubcfg.ParseFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("open grub config: %w", err)
+		return nil, err
 	}
-	defer func() { _ = f.Close() }()
 
-	var entries []BootEntry
-	var current *BootEntry
-	scanner := bufio.NewScanner(f)
-	// Some real-world kernel command lines in grub.cfg can exceed Scanner's
-	// default 64KiB token limit.
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-
-		if strings.HasPrefix(line, "menuentry ") {
-			title := extractQuoted(line)
-			current = &BootEntry{
-				ID:    fmt.Sprintf("%d", len(entries)),
-				Title: title,
-			}
+	entries := make([]BootEntry, 0, len(parsedEntries))
+	for _, entry := range parsedEntries {
+		if entry.Kernel == "" {
 			continue
 		}
-
-		if current == nil {
-			continue
-		}
-
-		entry, closed := consumeGRUBEntryLine(line, current)
-		if !closed {
-			continue
-		}
-		if entry.Kernel != "" {
-			entries = append(entries, *entry)
-		}
-		current = nil
+		entries = append(entries, BootEntry{
+			ID:      fmt.Sprintf("%d", len(entries)),
+			Title:   entry.Title,
+			Kernel:  entry.Kernel,
+			Initrd:  entry.Initrd,
+			Cmdline: entry.Cmdline,
+		})
 	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan grub config: %w", err)
-	}
-	// Append the last entry if the file ended without a standalone "}" line
-	// (e.g., truncated config), consistent with pkg/kexec.ParseGrubCfg behavior.
-	if current != nil && current.Kernel != "" {
-		entries = append(entries, *current)
-	}
 	return entries, nil
-}
-
-func consumeGRUBEntryLine(line string, current *BootEntry) (*BootEntry, bool) {
-	switch {
-	case strings.HasPrefix(line, "linux ") || strings.HasPrefix(line, "linuxefi ") || strings.HasPrefix(line, "linux16 "):
-		parseGRUBKernelLine(line, current)
-	case strings.HasPrefix(line, "initrd ") || strings.HasPrefix(line, "initrdefi ") || strings.HasPrefix(line, "initrd16 "):
-		parseGRUBInitrdLine(line, current)
-	case line == "}":
-		return current, true
-	}
-
-	return current, false
-}
-
-func parseGRUBKernelLine(line string, current *BootEntry) {
-	parts := strings.Fields(line)
-	if len(parts) >= 2 {
-		current.Kernel = parts[1]
-	}
-	if len(parts) >= 3 {
-		current.Cmdline = strings.Join(parts[2:], " ")
-	}
-}
-
-func parseGRUBInitrdLine(line string, current *BootEntry) {
-	parts := strings.Fields(line)
-	if len(parts) >= 2 {
-		current.Initrd = parts[1]
-	}
 }
 
 // extractQuoted extracts the first quoted string (single or double) from a line.
