@@ -421,12 +421,15 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) {
 		setIntField(&cfg.HealthMinMemoryGB, value)
 	case "HEALTH_MIN_CPUS":
 		setIntField(&cfg.HealthMinCPUs, value)
+	case "DRY_RUN":
+		cfg.DryRun = parseBoolVar(value)
 	}
 }
 
-// parseBoolVar interprets common truthy string values.
+// parseBoolVar interprets common truthy string values (case-insensitive).
 func parseBoolVar(value string) bool {
-	return value == "true" || value == "1" || value == "yes"
+	v := strings.ToLower(strings.TrimSpace(value))
+	return v == "true" || v == "1" || v == "yes"
 }
 
 // setIntField sets an int field from a string value, ignoring parse errors.

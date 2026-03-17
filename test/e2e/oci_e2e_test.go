@@ -348,9 +348,9 @@ func TestOCIStreamContextCancellationE2E(t *testing.T) {
 
 func TestOCIReferenceHelpersE2E(t *testing.T) {
 	tests := []struct {
-		url    string
-		isOCI  bool
-		trim   string
+		url   string
+		isOCI bool
+		trim  string
 	}{
 		{"oci://ghcr.io/org/img:latest", true, "ghcr.io/org/img:latest"},
 		{"oci://localhost:5000/test:v1", true, "localhost:5000/test:v1"},

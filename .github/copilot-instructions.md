@@ -1,6 +1,6 @@
 # BOOTy — Project Guidelines
 
-Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, orchestrates disk imaging, network setup, and OS configuration. Two modes: **CAPRF** (Cluster API + Redfish) and **Legacy** (standalone HTTP server).
+Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, orchestrates disk imaging, network setup, and OS configuration. Two modes: **CAPRF** (Cluster API + Redfish) and **Legacy** (standalone HTTP server). Supports **dry-run** (`MODE=dry-run` or `DRY_RUN=true`) for non-destructive pre-flight validation.
 
 ## Architecture
 

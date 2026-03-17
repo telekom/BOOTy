@@ -81,7 +81,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Build Busybox
 FROM gcc:15 AS busybox
 RUN apt-get update && apt-get install -y cpio
-RUN curl -O https://busybox.net/downloads/busybox-1.37.0.tar.bz2
+RUN curl --retry 5 --retry-delay 10 --retry-connrefused -fSL -O https://busybox.net/downloads/busybox-1.37.0.tar.bz2
 RUN tar -xf busybox*bz2
 WORKDIR busybox-1.37.0
 RUN make defconfig \
