@@ -96,6 +96,8 @@ func TestPartitionDevice(t *testing.T) {
 		{"/dev/nvme0n1", 3, "/dev/nvme0n1p3"},
 		{"/dev/loop0", 1, "/dev/loop0p1"},
 		{"/dev/mmcblk0", 1, "/dev/mmcblk0p1"},
+		{"/dev/md0", 1, "/dev/md0p1"},
+		{"/dev/nbd0", 1, "/dev/nbd0p1"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.device, func(t *testing.T) {
@@ -139,6 +141,26 @@ func TestGenerateFstabEscapesPartlabel(t *testing.T) {
 	fstab := GenerateFstab(layout, "/dev/sda")
 	if !strings.Contains(fstab, "PARTLABEL=root\\040data") {
 		t.Errorf("fstab missing escaped PARTLABEL entry:\n%s", fstab)
+	}
+}
+
+func TestEscapeFstabValue(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"root", "root"},
+		{"root data", "root\\040data"},
+		{"back\\slash", "back\\\\slash"},
+		{"hash#value", "hash\\043value"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			got := escapeFstabValue(tc.input)
+			if got != tc.want {
+				t.Errorf("escapeFstabValue(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -224,6 +246,43 @@ func TestApplyPartitionLayoutSkipsFormattingLvmPVPartition(t *testing.T) {
 	}
 }
 
+func TestApplyPartitionLayoutSetsLVMTypeGUID(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+	layout := &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "pv", SizeMB: 8192},
+			{Label: "root", Filesystem: "ext4", Mountpoint: "/"},
+		},
+		LVM: &config.LVMConfig{
+			VolumeGroup: "sysvg",
+			PVPartition: 1,
+		},
+	}
+
+	err := mgr.ApplyPartitionLayout(t.Context(), "/dev/sda", layout)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expectedArg := "--typecode=1:" + LinuxLVMGUID
+	found := false
+	for _, call := range cmd.calls {
+		if call.name != "sgdisk" {
+			continue
+		}
+		for _, arg := range call.args {
+			if arg == expectedArg {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected sgdisk called with %s for LVM PV partition", expectedArg)
+	}
+}
+
 func TestParsePartitionLayout_MissingLabel(t *testing.T) {
 	input := `{"table":"gpt","partitions":[{"sizeMB":512,"filesystem":"vfat"}]}`
 	_, err := config.ParsePartitionLayout(input)
@@ -306,6 +365,8 @@ func TestPartitionDevicePath(t *testing.T) {
 		{"/dev/sda", 1, "/dev/sda1"},
 		{"/dev/nvme0n1", 1, "/dev/nvme0n1p1"},
 		{"/tmp/nvme-dir/sda", 1, "/tmp/nvme-dir/sda1"},
+		{"/dev/md0", 1, "/dev/md0p1"},
+		{"/dev/nbd0", 2, "/dev/nbd0p2"},
 	}
 	for _, tc := range tests {
 		got := PartitionDevicePath(tc.device, tc.num)

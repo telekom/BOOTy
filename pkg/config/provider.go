@@ -212,10 +212,18 @@ func ParsePartitionLayout(data string) (*PartitionLayout, error) {
 // validatePartitions checks partition definitions for required fields.
 func validatePartitions(partitions []Partition) error {
 	fillCount := 0
+	seen := make(map[string]bool)
 	for i, part := range partitions {
 		if part.Label == "" {
 			return fmt.Errorf("partition %d: label is required", i+1)
 		}
+		if !isValidPartitionLabel(part.Label) {
+			return fmt.Errorf("partition %d: label %q contains invalid characters or exceeds 36 characters", i+1, part.Label)
+		}
+		if seen[part.Label] {
+			return fmt.Errorf("partition %d: duplicate label %q", i+1, part.Label)
+		}
+		seen[part.Label] = true
 		if part.Mountpoint != "" && !strings.HasPrefix(part.Mountpoint, "/") {
 			return fmt.Errorf("partition %d (%s): mountpoint %q must be an absolute path", i+1, part.Label, part.Mountpoint)
 		}
@@ -360,6 +368,22 @@ func isSupportedFilesystem(fs string) bool {
 	default:
 		return false
 	}
+}
+
+// isValidPartitionLabel checks that a label is safe for GPT and fstab use.
+// GPT labels are limited to 36 UTF-16 characters; only printable ASCII
+// (alphanumeric, space, hyphen, underscore, dot) is accepted.
+func isValidPartitionLabel(label string) bool {
+	if len(label) > 36 {
+		return false
+	}
+	for _, c := range label {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') &&
+			c != '_' && c != '-' && c != '.' && c != ' ' {
+			return false
+		}
+	}
+	return true
 }
 
 // isValidLVMName checks that a name contains only safe characters for LVM identifiers.

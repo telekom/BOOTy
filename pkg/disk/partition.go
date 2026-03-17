@@ -12,6 +12,9 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 )
 
+// LinuxLVMGUID is the GPT type GUID for Linux LVM partitions.
+const LinuxLVMGUID = "E6D6D379-F507-44C2-A23C-238F2A3DF928"
+
 // ApplyPartitionLayout creates partitions on a disk according to the layout.
 // Only GPT partition tables are supported (via sgdisk).
 func (m *Manager) ApplyPartitionLayout(ctx context.Context, device string, layout *config.PartitionLayout) error {
@@ -35,6 +38,9 @@ func (m *Manager) ApplyPartitionLayout(ctx context.Context, device string, layou
 	for i, part := range layout.Partitions {
 		num := i + 1
 		typeGUID := resolveTypeGUID(part)
+		if isLVMPVPartition(layout, num) {
+			typeGUID = LinuxLVMGUID
+		}
 
 		// Build sgdisk --new argument: partnum:start:end
 		var sizeArg string
@@ -144,6 +150,7 @@ func escapeFstabValue(value string) string {
 		" ", "\\040",
 		"\t", "\\011",
 		"\n", "\\012",
+		"#", "\\043",
 	)
 	return replacer.Replace(value)
 }
@@ -168,7 +175,7 @@ func PartitionDevicePath(device string, num int) string {
 	// NVMe: /dev/nvme0n1 → /dev/nvme0n1p1
 	// SATA: /dev/sda → /dev/sda1
 	devName := filepath.Base(device)
-	if strings.HasPrefix(devName, "nvme") || strings.HasPrefix(devName, "loop") || strings.HasPrefix(devName, "mmcblk") {
+	if strings.HasPrefix(devName, "nvme") || strings.HasPrefix(devName, "loop") || strings.HasPrefix(devName, "mmcblk") || strings.HasPrefix(devName, "md") || strings.HasPrefix(devName, "nbd") {
 		return fmt.Sprintf("%sp%d", device, num)
 	}
 	return fmt.Sprintf("%s%d", device, num)

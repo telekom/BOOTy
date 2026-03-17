@@ -123,3 +123,27 @@ func TestParsePartitionLayoutDuplicateMountpointAcrossPartitionAndLVM(t *testing
 		t.Fatal("expected error for duplicate mountpoint across partition and lvm volume")
 	}
 }
+
+func TestParsePartitionLayoutSpecialCharLabel(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"root#1","filesystem":"ext4","mountpoint":"/"}]}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Error("expected error for label with special characters")
+	}
+}
+
+func TestParsePartitionLayoutDuplicateLabels(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"root","sizeMB":4096,"filesystem":"ext4","mountpoint":"/"},{"label":"root","sizeMB":4096,"filesystem":"xfs","mountpoint":"/data"}]}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Error("expected error for duplicate partition labels")
+	}
+}
+
+func TestParsePartitionLayoutLabelTooLong(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"this-label-is-way-too-long-for-a-gpt-partition-label-maximum","filesystem":"ext4","mountpoint":"/"}]}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Error("expected error for label exceeding 36 characters")
+	}
+}
