@@ -368,6 +368,9 @@ func validateLVMVolume(index int, vol LVVolume) error {
 	if vol.Extents != "" && vol.SizeMB > 0 {
 		return fmt.Errorf("lvm volume %d (%s): specify either sizeMB or extents, not both", index+1, vol.Name)
 	}
+	if vol.Extents != "" && !isValidLVMExtents(vol.Extents) {
+		return fmt.Errorf("lvm volume %d (%s): invalid extents format %q", index+1, vol.Name, vol.Extents)
+	}
 	return nil
 }
 
@@ -440,6 +443,20 @@ func isValidLVMNameChar(c rune) bool {
 		return true
 	}
 	return c == '_' || c == '-' || c == '.'
+}
+
+// isValidLVMExtents checks that an extents value contains only characters
+// valid for lvcreate -l arguments (digits, letters, %, +).
+func isValidLVMExtents(extents string) bool {
+	if extents == "" {
+		return false
+	}
+	for _, c := range extents {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && c != '%' && c != '+' {
+			return false
+		}
+	}
+	return true
 }
 
 // Command represents a server-issued command (future agent mode).

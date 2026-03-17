@@ -503,6 +503,8 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 	// are configured (the layout handles partitioning/formatting directly).
 	// Rootfs extraction for layout mode is not implemented yet. Refuse IMAGE
 	// values to avoid writing raw whole-disk images into a single partition.
+	// Note: this duplicates the check in validatePartitionLayoutConfig for
+	// defense-in-depth — both checks are intentional.
 	if o.cfg.PartitionLayout != nil {
 		if len(o.cfg.ImageURLs) == 0 {
 			o.log.Info("partition layout set with no image urls, skipping image streaming")

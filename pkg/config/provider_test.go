@@ -195,3 +195,19 @@ func TestParsePartitionLayoutFillRemainingLVMVolumeMustBeLast(t *testing.T) {
 		t.Fatal("expected error when fill-remaining lvm volume is not last")
 	}
 }
+
+func TestParsePartitionLayoutTrailingContent(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"root","filesystem":"ext4","mountpoint":"/"}]}{"extra":true}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Fatal("expected error for trailing JSON content")
+	}
+}
+
+func TestParsePartitionLayoutInvalidExtentsFormat(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"pv","sizeMB":8192}],"lvm":{"volumeGroup":"sysvg","pvPartition":1,"volumes":[{"name":"root","extents":"foo bar","filesystem":"ext4","mountpoint":"/"}]}}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Fatal("expected error for invalid extents format")
+	}
+}
