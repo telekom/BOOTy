@@ -175,10 +175,11 @@ FROM --platform=$TARGETPLATFORM alpine:3.19 AS base
 
 | File | Change |
 |------|--------|
-| `Makefile` | Added `TARGETARCH` variable, `build-all` target (implemented) |
-| `initrd.Dockerfile` | Multi-arch base image, arch-specific modules |
+| `Makefile` | Added `TARGETARCH` variable, `build-all`, `arm64-*` targets (implemented) |
+| `initrd.Dockerfile` | Multi-arch kernel package selection (implemented) |
 | `main.go` | Architecture-conditional module loading |
-| `pkg/disk/manager.go` | ARM64 EFI bootloader paths |
+| `pkg/provision/configurator.go` | ARM64 EFI bootloader paths — `efiLoaderPath()` (implemented) |
+| `pkg/provision/configurator_test.go` | EFI loader path tests for amd64/arm64 (implemented) |
 | `pkg/provision/orchestrator.go` | Architecture-aware image selection |
 | `.github/workflows/` | Multi-arch CI matrix |
 | CAPRF `internal/ramdisk/builder.go` | Architecture-aware image building |

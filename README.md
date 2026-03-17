@@ -127,12 +127,24 @@ The `initrd.Dockerfile` supports multiple build targets via `--target`:
 | `slim` | ~15 MB | DHCP only | Minimal (e2fsck, resize2fs) | Lightweight provisioning without BGP |
 | `micro` | ~10 MB | None (pure Go) | None | Minimal agent, custom network stack |
 
+#### ARM64 Targets
+
+| Make Target | Description |
+|-------------|-------------|
+| `make arm64` | Full initramfs Docker image for ARM64 |
+| `make arm64-slim` | Slim initramfs for ARM64 (output to `dist/arm64/`) |
+| `make arm64-gobgp` | GoBGP initramfs for ARM64 (output to `dist/arm64/`) |
+| `make build-all` | Cross-compile Go binary for both amd64 and arm64 |
+
 ```bash
 # Build ISO (for Redfish BMC virtual media boot)
 docker build --target=iso -f initrd.Dockerfile -o type=local,dest=. .
 
 # Build slim initramfs
 docker build --target=slim -f initrd.Dockerfile -o type=local,dest=. .
+
+# Build ARM64 GoBGP initramfs
+make arm64-gobgp
 ```
 
 ### Binary only

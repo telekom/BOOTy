@@ -40,6 +40,10 @@ make slim               # DHCP-only (~15 MB)
 make micro              # Pure Go (~10 MB)
 make iso                # Bootable ISO
 make gobgp-iso          # GoBGP ISO
+make build-all          # Cross-compile binary for amd64+arm64
+make arm64              # Full ARM64 initramfs image
+make arm64-slim         # ARM64 slim initramfs
+make arm64-gobgp        # ARM64 GoBGP initramfs
 
 # E2E tests (require ContainerLab, Linux only)
 make clab-up && make test-e2e-integration
