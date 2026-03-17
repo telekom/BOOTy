@@ -30,11 +30,11 @@ type Manager interface {
 
 // State represents the full BIOS configuration snapshot.
 type State struct {
-	Vendor   system.Vendor       `json:"vendor"`
-	Model    string              `json:"model"`
-	Version  string              `json:"biosVersion"`
-	Settings map[string]Setting  `json:"settings"`
-	OEMData  map[string]string   `json:"oemData,omitempty"`
+	Vendor   system.Vendor      `json:"vendor"`
+	Model    string             `json:"model"`
+	Version  string             `json:"biosVersion"`
+	Settings map[string]Setting `json:"settings"`
+	OEMData  map[string]string  `json:"oemData,omitempty"`
 }
 
 // Setting represents a single BIOS attribute.

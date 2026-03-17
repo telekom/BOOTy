@@ -64,3 +64,61 @@ func TestExtractMenuEntryTitle(t *testing.T) {
 		}
 	}
 }
+
+func TestParseCommentWithBrace(t *testing.T) {
+	text := `
+menuentry 'Ubuntu' {
+    # closing brace in comment: }
+    linux /vmlinuz root=/dev/sda1
+    initrd /initrd.img
+}
+`
+	entries, err := Parse(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	if entries[0].Linux != "/vmlinuz" {
+		t.Errorf("linux = %q, want /vmlinuz", entries[0].Linux)
+	}
+}
+
+func TestParseLinuxefi(t *testing.T) {
+	text := `
+menuentry 'EFI Boot' {
+    linuxefi /vmlinuz root=/dev/sda1 ro
+    initrd /initrd.img
+}
+`
+	entries, err := Parse(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	// linuxefi starts with "linux" so the prefix match should still work.
+	if entries[0].Linux != "/vmlinuz" {
+		t.Errorf("linux = %q, want /vmlinuz", entries[0].Linux)
+	}
+}
+
+func TestParseNoInitrd(t *testing.T) {
+	text := `
+menuentry 'Kernel Only' {
+    linux /vmlinuz root=/dev/sda1
+}
+`
+	entries, err := Parse(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	if entries[0].Initrd != "" {
+		t.Errorf("initrd = %q, want empty", entries[0].Initrd)
+	}
+}

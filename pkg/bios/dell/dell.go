@@ -8,8 +8,8 @@ import (
 	"github.com/telekom/BOOTy/pkg/system"
 )
 
-// CriticalSettings contains Dell-recommended BIOS settings.
-var CriticalSettings = map[string]string{
+// criticalSettings contains Dell-recommended BIOS settings.
+var criticalSettings = map[string]string{
 	"LogicalProc":              "Enabled",
 	"VirtualizationTechnology": "Enabled",
 	"SriovGlobalEnable":        "Enabled",
@@ -46,7 +46,7 @@ func (m *Manager) Capture(_ context.Context) (*bios.State, error) {
 		Vendor:   system.VendorDell,
 		Settings: make(map[string]bios.Setting),
 	}
-	for name, val := range CriticalSettings {
+	for name, val := range criticalSettings {
 		state.Settings[name] = bios.Setting{
 			Name:         name,
 			CurrentValue: val,

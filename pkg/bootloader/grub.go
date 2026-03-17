@@ -23,7 +23,7 @@ func (g *GRUB) Install(rootPath, diskDevice string) error {
 		return fmt.Errorf("grub-install: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 
-	out, err = exec.Command("chroot", rootPath, "update-grub").CombinedOutput()
+	out, err = exec.Command("chroot", rootPath, "update-grub").CombinedOutput() //nolint:gosec // trusted root path
 	if err != nil {
 		return fmt.Errorf("update-grub: %s: %w", strings.TrimSpace(string(out)), err)
 	}

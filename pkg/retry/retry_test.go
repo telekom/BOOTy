@@ -47,8 +47,8 @@ func TestDoAllFail(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !errors.Is(err, errors.Unwrap(err)) && err.Error() != "after 2 attempts: permanent" {
-		// Just check non-nil, the wrapping is tested via message
+	if got := err.Error(); got != "after 2 attempts: permanent" {
+		t.Errorf("error = %q, want 'after 2 attempts: permanent'", got)
 	}
 }
 

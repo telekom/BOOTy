@@ -33,7 +33,7 @@ type VerificationResult struct {
 func VerifyQuoteAgainstPolicy(pcrValues map[int][]byte, policy *GoldenPolicy) *VerificationResult {
 	result := &VerificationResult{
 		Timestamp: time.Now(),
-		Valid:    true,
+		Valid:     true,
 	}
 	if policy == nil {
 		result.Error = "nil policy"

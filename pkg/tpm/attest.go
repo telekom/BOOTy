@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/sha256"
+	"encoding/asn1"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -15,13 +16,13 @@ import (
 
 // AttestationQuote holds a TPM2 quote and associated metadata.
 type AttestationQuote struct {
-	QuoteData  []byte         `json:"quoteData"`
-	Signature  []byte         `json:"signature"`
-	PCRDigest  []byte         `json:"pcrDigest"`
-	PCRValues  map[int][]byte `json:"pcrValues"`
-	Nonce      []byte         `json:"nonce"`
-	PubKeyX    []byte         `json:"pubKeyX"`
-	PubKeyY    []byte         `json:"pubKeyY"`
+	QuoteData []byte         `json:"quoteData"`
+	Signature []byte         `json:"signature"`
+	PCRDigest []byte         `json:"pcrDigest"`
+	PCRValues map[int][]byte `json:"pcrValues"`
+	Nonce     []byte         `json:"nonce"`
+	PubKeyX   []byte         `json:"pubKeyX"`
+	PubKeyY   []byte         `json:"pubKeyY"`
 }
 
 // Quote generates a TPM2 attestation quote over the specified PCRs.
@@ -174,10 +175,12 @@ func marshalECDSASig(sig tpm2.TPMTSignature) []byte {
 	}
 	r := new(big.Int).SetBytes(ecdsaSig.SignatureR.Buffer)
 	s := new(big.Int).SetBytes(ecdsaSig.SignatureS.Buffer)
-	var b []byte
-	b = append(b, r.Bytes()...)
-	b = append(b, s.Bytes()...)
-	return b
+	// Encode as ASN.1 DER to match ecdsa.VerifyASN1 expectation.
+	der, err := asn1.Marshal(struct{ R, S *big.Int }{r, s})
+	if err != nil {
+		return nil
+	}
+	return der
 }
 
 func compositePCRDigest(vals map[int][]byte, indices []int) []byte {

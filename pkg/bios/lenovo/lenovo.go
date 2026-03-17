@@ -8,8 +8,8 @@ import (
 	"github.com/telekom/BOOTy/pkg/system"
 )
 
-// CriticalSettings contains Lenovo-recommended BIOS settings.
-var CriticalSettings = map[string]string{
+// criticalSettings contains Lenovo-recommended BIOS settings.
+var criticalSettings = map[string]string{
 	"OperatingMode":            "MaximumPerformance",
 	"HyperThreading":           "Enable",
 	"VirtualizationTechnology": "Enable",
@@ -47,7 +47,7 @@ func (m *Manager) Capture(_ context.Context) (*bios.State, error) {
 		Vendor:   system.VendorLenovo,
 		Settings: make(map[string]bios.Setting),
 	}
-	for name, val := range CriticalSettings {
+	for name, val := range criticalSettings {
 		state.Settings[name] = bios.Setting{
 			Name:         name,
 			CurrentValue: val,

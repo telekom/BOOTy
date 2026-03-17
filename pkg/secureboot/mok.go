@@ -35,7 +35,12 @@ func (m *MOKEnroller) Enroll() error {
 	if m.password != "" {
 		args = append(args, "--root-pw", "--simple-hash")
 	}
-	out, err := exec.Command("mokutil", args...).CombinedOutput() //nolint:gosec // trusted cert path
+	cmd := exec.Command("mokutil", args...) //nolint:gosec // trusted cert path
+	if m.password != "" {
+		// mokutil reads the password from stdin when --root-pw is used.
+		cmd.Stdin = strings.NewReader(m.password + "\n" + m.password + "\n")
+	}
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("mokutil enroll: %s: %w", strings.TrimSpace(string(out)), err)
 	}
@@ -43,12 +48,17 @@ func (m *MOKEnroller) Enroll() error {
 	return nil
 }
 
-// IsEnrolled checks if the MOK certificate is already enrolled.
+// IsEnrolled checks if the MOK certificate is pending or already enrolled
+// by using mokutil --test-key, which directly validates the key against the MOK list.
 func (m *MOKEnroller) IsEnrolled() (bool, error) {
-	out, err := exec.Command("mokutil", "--list-enrolled").CombinedOutput()
+	out, err := exec.Command("mokutil", "--test-key", m.certPath).CombinedOutput() //nolint:gosec // trusted cert path
 	if err != nil {
-		return false, fmt.Errorf("mokutil list-enrolled: %w", err)
+		// mokutil --test-key exits non-zero when the key is not enrolled.
+		outStr := strings.TrimSpace(string(out))
+		if strings.Contains(outStr, "is not enrolled") {
+			return false, nil
+		}
+		return false, fmt.Errorf("mokutil test-key: %s: %w", outStr, err)
 	}
-	// Simple heuristic: check if cert filename appears in output
-	return strings.Contains(string(out), m.certPath), nil
+	return true, nil
 }

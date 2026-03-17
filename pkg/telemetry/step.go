@@ -10,6 +10,7 @@ import (
 // StepStatus is the status of a provisioning step.
 type StepStatus string
 
+// Step status constants.
 const (
 	StatusPending StepStatus = "pending"
 	StatusRunning StepStatus = "running"

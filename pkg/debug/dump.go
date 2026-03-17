@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package debug provides structured debug dump collection.
 package debug
 

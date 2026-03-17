@@ -17,12 +17,12 @@ const (
 
 // Info holds TPM metadata from sysfs.
 type Info struct {
-	Present      bool              `json:"present"`
-	Version      string            `json:"version"`
-	Manufacturer string            `json:"manufacturer"`
-	Firmware     string            `json:"firmware,omitempty"`
-	DevicePath   string            `json:"devicePath,omitempty"`
-	PCRs         map[int][]byte    `json:"pcrs,omitempty"`
+	Present      bool           `json:"present"`
+	Version      string         `json:"version"`
+	Manufacturer string         `json:"manufacturer"`
+	Firmware     string         `json:"firmware,omitempty"`
+	DevicePath   string         `json:"devicePath,omitempty"`
+	PCRs         map[int][]byte `json:"pcrs,omitempty"`
 }
 
 // Detect checks for TPM presence via sysfs and reads basic metadata.
@@ -87,7 +87,7 @@ func readSysfsPCRs(base string) map[int][]byte {
 func readSysfsFile(path string) (string, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // intentional sysfs read
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("reading %s: %w", path, err)
 	}
 	return string(data), nil
 }

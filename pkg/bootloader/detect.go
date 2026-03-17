@@ -2,15 +2,17 @@
 
 package bootloader
 
-import "os"
+import (
+	"os"
+	"path/filepath"
+)
 
 // DetectBootloader examines rootPath and returns the appropriate Bootloader.
-// It checks for systemd-boot first, then falls back to GRUB.
+// It checks for the systemd-boot binary specifically; BOOTX64.EFI is not used
+// because on most systems it is the shim loader (Secure Boot), not systemd-boot.
 func DetectBootloader(rootPath string) Bootloader {
-	if stat, err := os.Stat(rootPath + "/boot/efi/EFI/systemd/systemd-bootx64.efi"); err == nil && !stat.IsDir() {
-		return &SystemdBoot{}
-	}
-	if stat, err := os.Stat(rootPath + "/boot/efi/EFI/BOOT/BOOTX64.EFI"); err == nil && !stat.IsDir() {
+	sdBoot := filepath.Join(rootPath, "boot", "efi", "EFI", "systemd", "systemd-bootx64.efi")
+	if stat, err := os.Stat(sdBoot); err == nil && !stat.IsDir() {
 		return &SystemdBoot{}
 	}
 	return &GRUB{}

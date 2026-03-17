@@ -38,7 +38,6 @@ func ParseVendor(raw string) Vendor {
 	normalized := strings.Join(strings.Fields(strings.ToLower(raw)), " ")
 	switch {
 	case normalized == "hp", normalized == "hpe",
-		normalized == "hewlett packard enterprise",
 		strings.Contains(normalized, "hewlett packard enterprise"):
 		return VendorHPE
 	case strings.Contains(normalized, "lenovo"):

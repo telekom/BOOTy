@@ -48,7 +48,7 @@ func (c *Config) ApplyDefaults() {
 // Validate checks the enrollment configuration.
 func (c *Config) Validate() error {
 	if c.LUKSDevice == "" {
-		return fmt.Errorf("LUKS device path required")
+		return fmt.Errorf("missing LUKS device path")
 	}
 	for _, pcr := range c.PCRs {
 		if pcr < 0 || pcr > 23 {
@@ -63,9 +63,9 @@ func (c *Config) Validate() error {
 
 // PCRPolicy describes a PCR-based policy for enrollment.
 type PCRPolicy struct {
-	PCRs       []int             `json:"pcrs"`
-	Bank       string            `json:"bank"`
-	Descriptions map[int]string  `json:"descriptions"`
+	PCRs         []int          `json:"pcrs"`
+	Bank         string         `json:"bank"`
+	Descriptions map[int]string `json:"descriptions"`
 }
 
 // BuildPCRPolicy creates a policy description from the config.
@@ -95,9 +95,9 @@ func FormatPCRSelection(pcrs []int) string {
 
 // EnrollResult holds the outcome of a TPM enrollment operation.
 type EnrollResult struct {
-	Success  bool   `json:"success"`
-	KeySlot  int    `json:"keySlot"`
-	PCRs     []int  `json:"pcrs"`
-	TPMPath  string `json:"tpmPath"`
-	Message  string `json:"message,omitempty"`
+	Success bool   `json:"success"`
+	KeySlot int    `json:"keySlot"`
+	PCRs    []int  `json:"pcrs"`
+	TPMPath string `json:"tpmPath"`
+	Message string `json:"message,omitempty"`
 }

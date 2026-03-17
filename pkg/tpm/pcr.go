@@ -2,11 +2,12 @@ package tpm
 
 // PCR register assignments for the BOOTy provisioning pipeline.
 // These follow the TCG specification layout where possible:
-//   PCR 0-6:   Platform firmware (measured by hardware/firmware)
-//   PCR 7:     Secure Boot policy
-//   PCR 8-13:  BOOTy provisioning measurements
-//   PCR 14:    BOOTy identity / provisioner measurement
-//   PCR 15:    OS image measurement
+//
+//	PCR 0-6:   Platform firmware (measured by hardware/firmware)
+//	PCR 7:     Secure Boot policy
+//	PCR 8-13:  BOOTy provisioning measurements
+//	PCR 14:    BOOTy identity / provisioner measurement
+//	PCR 15:    OS image measurement
 const (
 	PCRFirmware    = 0  // Platform firmware measurements
 	PCRFirmwareCfg = 1  // Firmware configuration

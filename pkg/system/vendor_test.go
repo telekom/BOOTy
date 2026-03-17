@@ -24,7 +24,6 @@ func TestParseVendor(t *testing.T) {
 		{name: "unknown-generic", raw: "ACME Corp", want: VendorGeneric},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			if got := ParseVendor(tt.raw); got != tt.want {
 				t.Errorf("ParseVendor(%q) = %q, want %q", tt.raw, got, tt.want)
@@ -59,7 +58,6 @@ func TestKernelModules(t *testing.T) {
 		{vendor: VendorGeneric, want: []string{}},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(string(tt.vendor), func(t *testing.T) {
 			mods := KernelModules(tt.vendor)
 			if !reflect.DeepEqual(mods, tt.want) {

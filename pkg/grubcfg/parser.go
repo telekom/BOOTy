@@ -31,9 +31,7 @@ func Parse(data string) ([]MenuEntry, error) {
 
 		if m := menuEntryRe.FindStringSubmatch(line); m != nil {
 			current = &MenuEntry{Title: m[1]}
-			if strings.Contains(line, "{") {
-				depth++
-			}
+			depth += countBraces(line)
 			continue
 		}
 
@@ -41,34 +39,7 @@ func Parse(data string) ([]MenuEntry, error) {
 			continue
 		}
 
-		if strings.Contains(line, "{") {
-			depth++
-		}
-		if strings.Contains(line, "}") {
-			depth--
-			if depth <= 0 {
-				entries = append(entries, *current)
-				current = nil
-				depth = 0
-			}
-			continue
-		}
-
-		switch {
-		case strings.HasPrefix(line, "linux"):
-			parts := strings.SplitN(line, " ", 3)
-			if len(parts) >= 2 {
-				current.Linux = parts[1]
-			}
-			if len(parts) >= 3 {
-				current.Args = parts[2]
-			}
-		case strings.HasPrefix(line, "initrd"):
-			fields := strings.Fields(line)
-			if len(fields) >= 2 {
-				current.Initrd = fields[1]
-			}
-		}
+		depth, current, entries = processLine(line, depth, current, entries)
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -76,6 +47,56 @@ func Parse(data string) ([]MenuEntry, error) {
 	}
 
 	return entries, nil
+}
+
+func countBraces(line string) int {
+	n := 0
+	if strings.Contains(line, "{") {
+		n++
+	}
+	if strings.Contains(line, "}") {
+		n--
+	}
+	return n
+}
+
+func processLine(line string, depth int, current *MenuEntry, entries []MenuEntry) (newDepth int, newCurrent *MenuEntry, newEntries []MenuEntry) {
+	// Skip comment lines to avoid braces in comments breaking depth tracking.
+	if strings.HasPrefix(line, "#") {
+		return depth, current, entries
+	}
+	if strings.Contains(line, "{") {
+		depth++
+	}
+	if strings.Contains(line, "}") {
+		depth--
+		if depth <= 0 {
+			entries = append(entries, *current)
+			return 0, nil, entries
+		}
+		return depth, current, entries
+	}
+
+	parseLinuxOrInitrd(line, current)
+	return depth, current, entries
+}
+
+func parseLinuxOrInitrd(line string, entry *MenuEntry) {
+	switch {
+	case strings.HasPrefix(line, "linux"):
+		parts := strings.SplitN(line, " ", 3)
+		if len(parts) >= 2 {
+			entry.Linux = parts[1]
+		}
+		if len(parts) >= 3 {
+			entry.Args = parts[2]
+		}
+	case strings.HasPrefix(line, "initrd"):
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			entry.Initrd = fields[1]
+		}
+	}
 }
 
 // ParseFile reads and parses a grub.cfg from disk.

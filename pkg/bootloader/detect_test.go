@@ -9,7 +9,6 @@ import (
 )
 
 func TestDetectBootloader_GRUB(t *testing.T) {
-	t.Helper()
 	root := t.TempDir()
 	b := DetectBootloader(root)
 	if _, ok := b.(*GRUB); !ok {
@@ -18,7 +17,6 @@ func TestDetectBootloader_GRUB(t *testing.T) {
 }
 
 func TestDetectBootloader_SystemdBoot(t *testing.T) {
-	t.Helper()
 	root := t.TempDir()
 	path := filepath.Join(root, "boot", "efi", "EFI", "systemd")
 	if err := os.MkdirAll(path, 0o755); err != nil {

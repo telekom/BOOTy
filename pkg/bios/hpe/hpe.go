@@ -8,8 +8,8 @@ import (
 	"github.com/telekom/BOOTy/pkg/system"
 )
 
-// CriticalSettings contains HPE-recommended BIOS settings.
-var CriticalSettings = map[string]string{
+// criticalSettings contains HPE-recommended BIOS settings.
+var criticalSettings = map[string]string{
 	"ProcHyperthreading":      "Enabled",
 	"ProcVirtualization":      "Enabled",
 	"Sriov":                   "Enabled",
@@ -47,7 +47,7 @@ func (m *Manager) Capture(_ context.Context) (*bios.State, error) {
 		Vendor:   system.VendorHPE,
 		Settings: make(map[string]bios.Setting),
 	}
-	for name, val := range CriticalSettings {
+	for name, val := range criticalSettings {
 		state.Settings[name] = bios.Setting{
 			Name:         name,
 			CurrentValue: val,

@@ -90,8 +90,8 @@ func (r *EFIVarReader) IsSetupMode() (bool, error) {
 
 // BootEntry represents an EFI boot entry for NVRAM management.
 type BootEntry struct {
-	Description string
-	Loader      string
+	Description  string
+	Loader       string
 	OptionalData []byte
 }
 

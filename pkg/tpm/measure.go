@@ -14,6 +14,7 @@ import (
 // HashAlgorithm identifies the digest algorithm.
 type HashAlgorithm string
 
+// Hash algorithm constants.
 const (
 	HashSHA256 HashAlgorithm = "sha256"
 )
@@ -72,7 +73,9 @@ func (l *MeasurementLog) DigestsForPCR(pcr int) [][]byte {
 	var digests [][]byte
 	for _, m := range l.entries {
 		if m.PCR == pcr {
-			digests = append(digests, m.Digest)
+			d := make([]byte, len(m.Digest))
+			copy(d, m.Digest)
+			digests = append(digests, d)
 		}
 	}
 	return digests
@@ -84,7 +87,7 @@ func HashFile(path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", path, err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck // best-effort close on read-only file
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
 		return nil, fmt.Errorf("hashing %s: %w", path, err)

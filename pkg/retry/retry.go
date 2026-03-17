@@ -41,7 +41,7 @@ func Do(ctx context.Context, cfg Config, fn func() error) error {
 
 	for attempt := 1; attempt <= cfg.MaxAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("retry cancelled: %w", err)
+			return fmt.Errorf("retry canceled: %w", err)
 		}
 
 		lastErr = fn()
@@ -61,7 +61,7 @@ func Do(ctx context.Context, cfg Config, fn func() error) error {
 
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("retry cancelled: %w", ctx.Err())
+			return fmt.Errorf("retry canceled: %w", ctx.Err())
 		case <-time.After(wait):
 		}
 
