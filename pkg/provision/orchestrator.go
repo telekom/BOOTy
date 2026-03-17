@@ -747,7 +747,7 @@ func (o *Orchestrator) injectCloudInit(_ context.Context) error {
 
 	ciCfg := &cloudinit.Config{
 		Hostname:   o.cfg.Hostname,
-		Serial:     instanceID,
+		InstanceID: instanceID,
 		StaticIP:   o.cfg.StaticIP,
 		Gateway:    o.cfg.StaticGateway,
 		BondIfaces: bondIfaces,
@@ -760,7 +760,7 @@ func (o *Orchestrator) injectCloudInit(_ context.Context) error {
 	if err := cloudinit.InjectNoCloud(rootPath, ud, md, nc); err != nil {
 		return fmt.Errorf("inject cloud-init: %w", err)
 	}
-	o.log.Info("Cloud-init NoCloud seed injected", "root", rootPath)
+	o.log.Info("cloud-init nocloud seed injected", "root", rootPath)
 	return nil
 }
 

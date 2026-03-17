@@ -104,7 +104,7 @@ type NSConfig struct {
 type Config struct {
 	Hostname    string
 	FQDN        string
-	Serial      string
+	InstanceID  string
 	SSHKeys     []string
 	Users       []User
 	Packages    []string
@@ -139,7 +139,7 @@ func Generate(cfg *Config) (*UserData, *MetaData, *NetworkConfig) {
 	}
 
 	metaData := &MetaData{
-		InstanceID:    cfg.Serial,
+		InstanceID:    cfg.InstanceID,
 		LocalHostname: cfg.Hostname,
 		Platform:      "booty",
 	}
@@ -171,7 +171,9 @@ func generateNetworkConfig(cfg *Config) *NetworkConfig {
 			Parameters: &BondParams{Mode: bondMode},
 			Addresses:  addressList(cfg.StaticIP),
 			DHCP4:      cfg.StaticIP == "",
-			Gateway4:   cfg.Gateway,
+		}
+		if cfg.StaticIP != "" {
+			bond.Gateway4 = cfg.Gateway
 		}
 		if len(cfg.DNS) > 0 {
 			bond.Nameservers = &NSConfig{Addresses: cfg.DNS}

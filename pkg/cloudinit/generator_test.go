@@ -9,11 +9,11 @@ import (
 
 func TestGenerate_Basic(t *testing.T) {
 	cfg := &Config{
-		Hostname: "worker-001",
-		FQDN:     "worker-001.example.com",
-		Serial:   "SN123456",
-		SSHKeys:  []string{"ssh-ed25519 AAAA..."},
-		Timezone: "UTC",
+		Hostname:   "worker-001",
+		FQDN:       "worker-001.example.com",
+		InstanceID: "SN123456",
+		SSHKeys:    []string{"ssh-ed25519 AAAA..."},
+		Timezone:   "UTC",
 	}
 
 	ud, md, nc := Generate(cfg)
@@ -37,11 +37,11 @@ func TestGenerate_Basic(t *testing.T) {
 
 func TestGenerate_StaticIP(t *testing.T) {
 	cfg := &Config{
-		Hostname: "node-1",
-		Serial:   "SN1",
-		StaticIP: "10.0.0.5/24",
-		Gateway:  "10.0.0.1",
-		DNS:      []string{"8.8.8.8", "8.8.4.4"},
+		Hostname:   "node-1",
+		InstanceID: "SN1",
+		StaticIP:   "10.0.0.5/24",
+		Gateway:    "10.0.0.1",
+		DNS:        []string{"8.8.8.8", "8.8.4.4"},
 	}
 
 	_, _, nc := Generate(cfg)
@@ -60,8 +60,8 @@ func TestGenerate_StaticIP(t *testing.T) {
 
 func TestGenerate_DHCP(t *testing.T) {
 	cfg := &Config{
-		Hostname: "dhcp-node",
-		Serial:   "SN2",
+		Hostname:   "dhcp-node",
+		InstanceID: "SN2",
 	}
 
 	_, _, nc := Generate(cfg)
@@ -78,7 +78,7 @@ func TestGenerate_DHCP(t *testing.T) {
 func TestGenerate_Bond(t *testing.T) {
 	cfg := &Config{
 		Hostname:   "bond-node",
-		Serial:     "SN3",
+		InstanceID: "SN3",
 		BondIfaces: []string{"eth0", "eth1"},
 		BondMode:   "802.3ad",
 		StaticIP:   "10.0.0.10/24",
@@ -103,8 +103,8 @@ func TestGenerate_Bond(t *testing.T) {
 
 func TestGenerate_WithUsers(t *testing.T) {
 	cfg := &Config{
-		Hostname: "user-node",
-		Serial:   "SN4",
+		Hostname:   "user-node",
+		InstanceID: "SN4",
 		Users: []User{
 			{Name: "admin", Groups: "sudo", Shell: "/bin/bash", Sudo: "ALL=(ALL) NOPASSWD:ALL"},
 		},
@@ -219,7 +219,7 @@ func TestAddressList(t *testing.T) {
 func TestGenerate_BondIfaces_EmptyStringsFiltered(t *testing.T) {
 	cfg := &Config{
 		Hostname:   "node-1",
-		Serial:     "SN1",
+		InstanceID: "SN1",
 		BondIfaces: []string{"", " ", ""},
 	}
 
@@ -240,11 +240,11 @@ func TestGenerate_BondIfaces_EmptyStringsFiltered(t *testing.T) {
 
 func TestGenerate_StaticIP_NoDNS_NoNameservers(t *testing.T) {
 	cfg := &Config{
-		Hostname: "node-1",
-		Serial:   "SN1",
-		StaticIP: "10.0.0.5/24",
-		Gateway:  "10.0.0.1",
-		DNS:      nil,
+		Hostname:   "node-1",
+		InstanceID: "SN1",
+		StaticIP:   "10.0.0.5/24",
+		Gateway:    "10.0.0.1",
+		DNS:        nil,
 	}
 
 	_, _, nc := Generate(cfg)
@@ -252,6 +252,28 @@ func TestGenerate_StaticIP_NoDNS_NoNameservers(t *testing.T) {
 	eth := nc.Ethernets["id0"]
 	if eth.Nameservers != nil {
 		t.Error("Nameservers should be nil when DNS is empty")
+	}
+}
+
+func TestGenerate_BondDHCP_NoGateway(t *testing.T) {
+	cfg := &Config{
+		Hostname:   "bond-dhcp",
+		InstanceID: "SN5",
+		BondIfaces: []string{"eth0", "eth1"},
+		Gateway:    "10.0.0.1",
+	}
+
+	_, _, nc := Generate(cfg)
+
+	bond, ok := nc.Bonds["bond0"]
+	if !ok {
+		t.Fatal("expected bonds[bond0]")
+	}
+	if !bond.DHCP4 {
+		t.Error("DHCP4 should be true when static IP is not set")
+	}
+	if bond.Gateway4 != "" {
+		t.Errorf("gateway4 = %q, want empty for DHCP bond", bond.Gateway4)
 	}
 }
 
