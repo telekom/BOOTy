@@ -1,6 +1,6 @@
 # Proposal: Dry-Run Mode
 
-## Status: Accepted
+## Status: Implemented
 
 ## Priority: P3
 
@@ -13,12 +13,12 @@ configurations on real hardware without risk.
 
 ## Implementation Status
 
-Phase 1 is implemented in the BOOTy codebase: `MODE=dry-run` and `DRY_RUN=true`
+Dry-run mode is implemented in the BOOTy codebase: `MODE=dry-run` and `DRY_RUN=true`
 invoke non-destructive pre-flight checks via `Orchestrator.DryRun()` and report
 results through the existing provider status API.
 
-Full parity with every provisioning step in the scope table remains backlog
-work, so this proposal remains in `Accepted` status.
+Optional enhancements from the original scope table can be tracked in follow-up
+proposals/issues without changing this status.
 
 ## Motivation
 

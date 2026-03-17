@@ -23,13 +23,29 @@ type dryRunProvider struct {
 	lastMessage string
 }
 
-type fakeFileInfo struct{}
+type fakeFileInfo struct {
+	name string
+	mode os.FileMode
+}
 
-func (fakeFileInfo) Name() string       { return "efi" }
-func (fakeFileInfo) Size() int64        { return 0 }
-func (fakeFileInfo) Mode() os.FileMode  { return os.ModeDir }
+func (f fakeFileInfo) Name() string {
+	if f.name != "" {
+		return f.name
+	}
+	return "mock"
+}
+
+func (fakeFileInfo) Size() int64 { return 0 }
+
+func (f fakeFileInfo) Mode() os.FileMode {
+	if f.mode != 0 {
+		return f.mode
+	}
+	return os.ModeDir
+}
+
 func (fakeFileInfo) ModTime() time.Time { return time.Time{} }
-func (fakeFileInfo) IsDir() bool        { return true }
+func (f fakeFileInfo) IsDir() bool      { return f.Mode().IsDir() }
 func (fakeFileInfo) Sys() any           { return nil }
 
 func (p *dryRunProvider) GetConfig(_ context.Context) (*config.MachineConfig, error) {
@@ -630,6 +646,116 @@ func TestDryRunAggregation(t *testing.T) {
 	}
 	if provFail.lastStatus != config.StatusError {
 		t.Errorf("expected StatusError, got %s", provFail.lastStatus)
+	}
+}
+
+func TestDryRunAggregation_WarningsReported(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	provider := &dryRunProvider{}
+
+	withMockStat(t, func(path string) (os.FileInfo, error) {
+		switch path {
+		case "/dev/mock0":
+			return fakeFileInfo{name: "mock0", mode: os.ModeDevice}, nil
+		case "/sys/firmware/efi":
+			return fakeFileInfo{name: "efi", mode: os.ModeDir}, nil
+		default:
+			return nil, os.ErrNotExist
+		}
+	})
+	withMockInterfaces(t, func() ([]net.Interface, error) {
+		return []net.Interface{{Name: "eth0", Flags: net.FlagUp}}, nil
+	})
+	withMockReadPath(t, func(path string) ([]byte, error) {
+		if strings.HasSuffix(path, "/carrier") {
+			return []byte("1\n"), nil
+		}
+		return nil, os.ErrNotExist
+	})
+
+	o := NewOrchestrator(
+		&config.MachineConfig{
+			ImageURLs:           []string{srv.URL + "/image.raw"},
+			Hostname:            "test-host",
+			DiskDevice:          "/dev/mock0",
+			HealthChecksEnabled: false,
+			InventoryEnabled:    false,
+			ImageChecksum:       "",
+			ImageChecksumType:   "",
+		},
+		provider,
+		disk.NewManager(nil),
+	)
+
+	err := o.DryRun(context.Background())
+	if err != nil {
+		t.Fatalf("expected nil error with warnings only, got %v", err)
+	}
+	if provider.lastStatus != config.StatusSuccess {
+		t.Fatalf("expected StatusSuccess, got %s", provider.lastStatus)
+	}
+	if !strings.Contains(provider.lastMessage, "warning(s)") {
+		t.Fatalf("expected warning summary, got %q", provider.lastMessage)
+	}
+}
+
+func TestDryRun_AllPass(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	provider := &dryRunProvider{}
+
+	withMockStat(t, func(path string) (os.FileInfo, error) {
+		switch path {
+		case "/dev/mock0":
+			return fakeFileInfo{name: "mock0", mode: os.ModeDevice}, nil
+		case "/sys/firmware/efi":
+			return fakeFileInfo{name: "efi", mode: os.ModeDir}, nil
+		case "/sys/class/dmi/id/sys_vendor":
+			return fakeFileInfo{name: "sys_vendor", mode: os.ModeDir}, nil
+		default:
+			return nil, os.ErrNotExist
+		}
+	})
+	withMockInterfaces(t, func() ([]net.Interface, error) {
+		return []net.Interface{{Name: "eth0", Flags: net.FlagUp}}, nil
+	})
+	withMockReadPath(t, func(path string) ([]byte, error) {
+		if strings.HasSuffix(path, "/carrier") {
+			return []byte("1\n"), nil
+		}
+		return nil, os.ErrNotExist
+	})
+
+	o := NewOrchestrator(
+		&config.MachineConfig{
+			ImageURLs:           []string{srv.URL + "/image.raw"},
+			Hostname:            "test-host",
+			DiskDevice:          "/dev/mock0",
+			HealthChecksEnabled: true,
+			InventoryEnabled:    true,
+			ImageChecksum:       "abc123",
+			ImageChecksumType:   "sha256",
+		},
+		provider,
+		disk.NewManager(nil),
+	)
+
+	err := o.DryRun(context.Background())
+	if err != nil {
+		t.Fatalf("expected dry-run to pass, got %v", err)
+	}
+	if provider.lastStatus != config.StatusSuccess {
+		t.Fatalf("expected StatusSuccess, got %s", provider.lastStatus)
+	}
+	if !strings.Contains(provider.lastMessage, "passed all checks") {
+		t.Fatalf("expected pass summary, got %q", provider.lastMessage)
 	}
 }
 

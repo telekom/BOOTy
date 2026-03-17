@@ -58,12 +58,16 @@ func (o *Orchestrator) DryRun(ctx context.Context) error {
 
 	results := make([]DryRunResult, 0, len(checks))
 	var failed int
+	var warned int
 	for _, c := range checks {
 		result := c.fn(ctx)
 		result.Step = c.name // authoritative step name from the check table
 		results = append(results, result)
-		if result.Status == DryRunFail {
+		switch result.Status {
+		case DryRunFail:
 			failed++
+		case DryRunWarn:
+			warned++
 		}
 		o.log.Info("dry-run check", "step", result.Step, "status", string(result.Status), "message", result.Message)
 	}
@@ -79,6 +83,14 @@ func (o *Orchestrator) DryRun(ctx context.Context) error {
 			o.log.Warn("failed to report dry-run status", "error", err)
 		}
 		return fmt.Errorf("dry-run: %d check(s) failed", failed)
+	}
+
+	if warned > 0 {
+		msg := fmt.Sprintf("dry-run completed with %d warning(s):\n%s", warned, summary.String())
+		if err := o.provider.ReportStatus(ctx, config.StatusSuccess, msg); err != nil {
+			o.log.Warn("failed to report dry-run status", "error", err)
+		}
+		return nil
 	}
 
 	msg := fmt.Sprintf("dry-run passed all checks:\n%s", summary.String())
