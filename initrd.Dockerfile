@@ -45,8 +45,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Extract kernel and NIC driver modules for bare-metal servers
 FROM debian:bookworm-slim AS kernel
+ARG TARGETARCH
 RUN apt-get update && \
-    REAL_PKG=$(apt-cache depends linux-image-amd64 | awk '/Depends:/{print $2}' | head -1) && \
+    KERNEL_PKG=$([ "$TARGETARCH" = "arm64" ] && echo "linux-image-arm64" || echo "linux-image-amd64") && \
+    REAL_PKG=$(apt-cache depends "$KERNEL_PKG" | awk '/Depends:/{print $2}' | head -1) && \
     apt-get download "$REAL_PKG" && \
     dpkg-deb -x linux-image-*.deb /tmp/kernel && \
     cp /tmp/kernel/boot/vmlinuz-* /vmlinuz && \

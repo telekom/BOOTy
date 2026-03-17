@@ -1,6 +1,6 @@
 # Proposal: ARM64 / Multi-Architecture Support
 
-## Status: Phase 1 Implemented
+## Status: Phase 1 Implemented (Phases 2-4 pending)
 
 ## Priority: P4
 
@@ -43,23 +43,23 @@ But BOOTy only builds for AMD64 today.
 ### Build Changes
 
 ```makefile
-# Makefile
-ARCH ?= amd64
+# Makefile (current implementation)
+TARGETOS=linux
+TARGETARCH ?= $(shell go env GOARCH)
 
 .PHONY: build
 build:
-    CGO_ENABLED=0 GOARCH=$(ARCH) go build -o bin/booty-$(ARCH) .
+  GOOS=$(TARGETOS) GOARCH=$(TARGETARCH) go build -o booty .
 
 .PHONY: build-all
 build-all:
-    $(MAKE) build ARCH=amd64
-    $(MAKE) build ARCH=arm64
+  mkdir -p dist/amd64 dist/arm64
+  GOOS=$(TARGETOS) GOARCH=amd64 go build -o dist/amd64/booty .
+  GOOS=$(TARGETOS) GOARCH=arm64 go build -o dist/arm64/booty .
 
-.PHONY: initrd
-initrd:
-    docker buildx build --platform linux/$(ARCH) \
-        -f initrd.Dockerfile \
-        -t booty-initrd:$(ARCH) .
+# Initramfs targets per arch:
+#   make gobgp           (AMD64)
+#   make arm64-gobgp     (ARM64 variant)
 ```
 
 ### Kernel + Initramfs
@@ -146,8 +146,13 @@ jobs:
         arch: [amd64, arm64]
     steps:
       - uses: docker/setup-qemu-action@v3  # for ARM64 cross-build
-      - run: make build ARCH=${{ matrix.arch }}
-      - run: make initrd ARCH=${{ matrix.arch }}
+      - run: make build TARGETARCH=${{ matrix.arch }}
+      - run: |
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            make arm64-gobgp
+          else
+            make gobgp
+          fi
 ```
 
 ## Required Binaries in Initramfs
@@ -177,13 +182,14 @@ FROM --platform=$TARGETPLATFORM alpine:3.19 AS base
 
 | File | Change |
 |------|--------|
-| `Makefile` | Add `ARCH` variable, `build-all` target |
-| `initrd.Dockerfile` | Multi-arch base image, arch-specific modules |
-| `main.go` | Architecture-conditional module loading |
-| `pkg/disk/manager.go` | ARM64 EFI bootloader paths |
-| `pkg/provision/orchestrator.go` | Architecture-aware image selection |
-| `.github/workflows/` | Multi-arch CI matrix |
-| CAPRF `internal/ramdisk/builder.go` | Architecture-aware image building |
+| `Makefile` | Added `TARGETARCH` variable, `build-all`, `arm64-*` targets (implemented) |
+| `initrd.Dockerfile` | Multi-arch kernel package selection (implemented) |
+| `main.go` | Architecture-conditional module loading (planned, not yet implemented in this proposal phase) |
+| `pkg/provision/configurator.go` | ARM64 EFI bootloader paths — `efiLoaderPath()` (implemented) |
+| `pkg/provision/configurator_test.go` | EFI loader path tests for amd64/arm64 (implemented) |
+| `pkg/provision/orchestrator.go` | Architecture-aware image selection (planned, not yet implemented in this proposal phase) |
+| `.github/workflows/` | Multi-arch CI matrix (partially implemented) |
+| CAPRF `internal/ramdisk/builder.go` | Architecture-aware image building (cross-repo follow-up) |
 
 ## Risks
 

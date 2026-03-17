@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -366,18 +367,22 @@ func TestCreateEFIBootEntry(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
 
-	// Create the shim EFI loader file so it's detected.
+	// Create the arch-specific shim EFI loader file so it's detected.
 	efiDir := filepath.Join(c.rootDir, "boot", "efi", "EFI", "ubuntu")
 	if err := os.MkdirAll(efiDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(efiDir, "shimx64.efi"), []byte("shim"), 0o644); err != nil {
+	shimName, _, err := efiLoaderNames(runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(efiDir, shimName), []byte("shim"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	cmd.setResult("chroot "+c.rootDir, []byte("Boot0001* ubuntu"), nil)
 
-	err := c.CreateEFIBootEntry(context.Background(), "/dev/sda", "/dev/sda1")
+	err = c.CreateEFIBootEntry(context.Background(), "/dev/sda", "/dev/sda1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
