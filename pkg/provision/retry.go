@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"math"
 	"math/rand/v2"
 	"time"
 )
@@ -112,7 +111,25 @@ func classifyRetryError(err error, policy RetryPolicy) (bool, error) {
 }
 
 func backoffDelay(policy RetryPolicy, attempt int) time.Duration {
-	delay := time.Duration(float64(policy.InitialDelay) * math.Pow(2, float64(attempt-1)))
+	const maxDuration = time.Duration(1<<63 - 1)
+
+	delay := policy.InitialDelay
+	if delay < 0 {
+		delay = 0
+	}
+
+	for i := 1; i < attempt; i++ {
+		if delay > maxDuration/2 {
+			delay = maxDuration
+		} else {
+			delay *= 2
+		}
+		if policy.MaxDelay > 0 && delay >= policy.MaxDelay {
+			delay = policy.MaxDelay
+			break
+		}
+	}
+
 	if policy.MaxDelay > 0 && delay > policy.MaxDelay {
 		delay = policy.MaxDelay
 	}
