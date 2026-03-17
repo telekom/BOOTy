@@ -222,10 +222,10 @@ func runCAPRF(ctx context.Context) {
 
 	// Acquire JWT after network is ready so the token endpoint is reachable.
 	if err := client.AcquireToken(ctx); err != nil {
-		slog.Error("Failed to acquire JWT token", "error", err)
+		slog.Error("failed to acquire JWT token", "error", err)
 	}
 	if err := client.StartTokenRenewal(ctx); err != nil {
-		slog.Error("Failed to start token renewal", "error", err)
+		slog.Error("failed to start token renewal", "error", err)
 	}
 
 	// Run provisioning, deprovisioning, or standby based on mode.

@@ -732,6 +732,10 @@ and the PR process.
 ├── server/server.go            # Legacy provisioning server
 ├── initrd.Dockerfile           # Multi-stage initramfs build (default, iso, slim, micro)
 ├── pkg/
+│   ├── auth/                   # JWT token manager (acquisition, renewal, backoff)
+│   ├── bios/                   # BIOS settings management (Dell, HPE, Lenovo, Supermicro)
+│   ├── bootloader/             # Bootloader detection (GRUB, systemd-boot)
+│   ├── buildinfo/              # Binary build information (version, commit, date)
 │   ├── caprf/                  # CAPRF client (status, log, debug, vars parsing)
 │   ├── cloudinit/              # Cloud-init NoCloud/ConfigDrive generation
 │   ├── config/                 # MachineConfig, Provider interface, Status types

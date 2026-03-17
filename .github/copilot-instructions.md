@@ -15,6 +15,7 @@ Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, orch
 - `pkg/network/vrf/` — VRF configuration types and validation for multi-VRF network isolation
 - `pkg/image/` — Multi-format image streaming (gzip, lz4, xz, zstd) + OCI registry
 - `pkg/disk/` — Disk detection, partitioning, RAID, LVM, mount
+- `pkg/auth/` — JWT token manager (acquisition, renewal, backoff)
 - `pkg/caprf/` — CAPRF controller client (status/log shipping)
 - `pkg/cloudinit/` — Cloud-init NoCloud/ConfigDrive generation
 - `pkg/firmware/` — Firmware version collection from sysfs

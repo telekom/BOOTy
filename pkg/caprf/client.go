@@ -65,7 +65,7 @@ func (c *Client) AcquireToken(ctx context.Context) error {
 		return nil
 	}
 	if c.cfg.Token == "" {
-		c.log.Warn("Token URL configured but no bootstrap token, skipping JWT acquisition")
+		c.log.Warn("token URL configured but no bootstrap token, skipping JWT acquisition")
 		return nil
 	}
 
@@ -85,6 +85,9 @@ func (c *Client) AcquireToken(ctx context.Context) error {
 	if err := tm.Acquire(ctx, c.cfg.Hostname, ""); err != nil {
 		return fmt.Errorf("acquire jwt: %w", err)
 	}
+	// Snapshot the initial JWT into cfg.Token for backward compatibility with
+	// GetConfig callers. After renewal, CurrentToken() is the authoritative
+	// source — cfg.Token will hold the first-acquired JWT, not the latest.
 	c.cfg.Token = tm.Token()
 	c.tokenManager = tm
 	c.log.Info("JWT token acquired, using for subsequent API calls")
