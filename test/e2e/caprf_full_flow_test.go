@@ -129,7 +129,7 @@ func (p *mockProvider) FetchCommands(_ context.Context) ([]config.Command, error
 	return nil, nil
 }
 func (p *mockProvider) AcknowledgeCommand(_ context.Context, _, _, _ string) error { return nil }
-func (p *mockProvider) ReportInventory(_ context.Context, _ []byte) error { return nil }
+func (p *mockProvider) ReportInventory(_ context.Context, _ []byte) error          { return nil }
 
 func (p *mockProvider) getStatuses() []statusEntry {
 	p.mu.Lock()

@@ -114,7 +114,6 @@ func TestDryRunConfigValidation(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			o := NewOrchestrator(tc.cfg, &dryRunProvider{}, disk.NewManager(nil))
 			result := o.dryRunConfigValidation(context.Background())
@@ -312,7 +311,6 @@ func TestDryRunImageChecksum(t *testing.T) {
 		{"unsupported type", "abc123", "md5", DryRunFail},
 	}
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.MachineConfig{
 				ImageChecksum:     tc.checksum,
@@ -362,7 +360,6 @@ func TestDryRunNetworkLink(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			withMockReadPath(t, func(string) ([]byte, error) {
 				return []byte("1\n"), nil
@@ -467,7 +464,6 @@ func TestInterfaceHasCarrier(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			withMockReadPath(t, tc.readPath)
 			if got := interfaceHasCarrier("eth0"); got != tc.expected {
@@ -488,7 +484,6 @@ func TestDryRunEFIBoot(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			withMockStat(t, func(string) (os.FileInfo, error) {
 				if tc.err != nil {
@@ -515,7 +510,6 @@ func TestDryRunInventoryProbe(t *testing.T) {
 		{"disabled", false, DryRunWarn},
 	}
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.MachineConfig{InventoryEnabled: tc.enabled}
 			o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
@@ -531,11 +525,8 @@ func TestDryRunInventoryProbe_Enabled(t *testing.T) {
 	cfg := &config.MachineConfig{InventoryEnabled: true}
 	o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
 
-	origStatPath := statPath
-	defer func() { statPath = origStatPath }()
-
 	t.Run("dmi accessible", func(t *testing.T) {
-		statPath = func(p string) (os.FileInfo, error) { return os.Stat(os.DevNull) }
+		withMockStat(t, func(_ string) (os.FileInfo, error) { return os.Stat(os.DevNull) })
 		result := o.dryRunInventoryProbe(context.Background())
 		if result.Status != DryRunPass {
 			t.Errorf("expected pass when DMI accessible, got %s: %s", result.Status, result.Message)
@@ -543,7 +534,7 @@ func TestDryRunInventoryProbe_Enabled(t *testing.T) {
 	})
 
 	t.Run("dmi not accessible", func(t *testing.T) {
-		statPath = func(_ string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+		withMockStat(t, func(_ string) (os.FileInfo, error) { return nil, os.ErrNotExist })
 		result := o.dryRunInventoryProbe(context.Background())
 		if result.Status != DryRunWarn {
 			t.Errorf("expected warn when DMI not accessible, got %s: %s", result.Status, result.Message)
@@ -566,7 +557,6 @@ func TestIsVirtualInterface(t *testing.T) {
 		{"cni0", true},
 	}
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			if got := isVirtualInterface(tc.name); got != tc.virtual {
 				t.Errorf("isVirtualInterface(%q) = %v, want %v", tc.name, got, tc.virtual)
@@ -778,7 +768,6 @@ func TestRedactImageURL(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			got := redactImageURL(tc.in)
 			if got != tc.want {

@@ -340,5 +340,3 @@ func TestBuildFlavourSizeOrderE2E(t *testing.T) {
 		t.Error("slim should be smaller than default")
 	}
 }
-
-
