@@ -216,7 +216,7 @@ func TestNVMeIdentifyController(t *testing.T) {
 
 func TestNVMeListNamespaces(t *testing.T) {
 	cmd := newMockCommander()
-	cmd.setResult("nvme list-ns", []byte(`[{"nsid":1},{"nsid":2},{"nsid":10}]`), nil)
+	cmd.setResult("nvme list-ns", []byte(`{"nsid_list":[{"nsid":1},{"nsid":2},{"nsid":10}]}`), nil)
 	mgr := NewManager(cmd)
 
 	nsids, err := mgr.NVMeListNamespaces(t.Context(), "/dev/nvme0")
@@ -231,6 +231,31 @@ func TestNVMeListNamespaces(t *testing.T) {
 		if nsids[i] != w {
 			t.Errorf("nsid[%d] = %q, want %q", i, nsids[i], w)
 		}
+	}
+}
+
+func TestNVMeListNamespacesLegacyArrayOutput(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("nvme list-ns", []byte(`[{"nsid":1},{"nsid":2}]`), nil)
+	mgr := NewManager(cmd)
+
+	nsids, err := mgr.NVMeListNamespaces(t.Context(), "/dev/nvme0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(nsids) != 2 {
+		t.Fatalf("got %d NSIDs, want 2", len(nsids))
+	}
+}
+
+func TestNVMeListNamespaces_InvalidOutput(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("nvme list-ns", []byte(`{"unexpected":true}`), nil)
+	mgr := NewManager(cmd)
+
+	_, err := mgr.NVMeListNamespaces(t.Context(), "/dev/nvme0")
+	if err == nil {
+		t.Fatal("expected parse error for invalid list-ns output")
 	}
 }
 
@@ -272,7 +297,7 @@ func TestParseNVMeConfig_DuplicateController(t *testing.T) {
 
 func TestNVMeResetNamespaces(t *testing.T) {
 	cmd := newMockCommander()
-	cmd.setResult("nvme list-ns", []byte(`[{"nsid":1},{"nsid":2}]`), nil)
+	cmd.setResult("nvme list-ns", []byte(`{"nsid_list":[{"nsid":1},{"nsid":2}]}`), nil)
 	cmd.setResult("nvme delete-ns", []byte(""), nil)
 	cmd.setResult("nvme id-ctrl", []byte(`{"tnvmcap":1024000}`), nil)
 	cmd.setResult("nvme create-ns", []byte("create-ns: Success, created nsid:1\n"), nil)
@@ -338,7 +363,7 @@ func TestApplyNVMeNamespaceLayout(t *testing.T) {
 			}},
 			mocks: map[string]mockResult{
 				"nvme id-ctrl":   {output: []byte(`{"nn":32,"tnvmcap":1024000}`)},
-				"nvme list-ns":   {output: []byte(`[]`)},
+				"nvme list-ns":   {output: []byte(`{"nsid_list":[]}`)},
 				"nvme create-ns": {output: []byte("create-ns: Success, created nsid:1\n")},
 				"nvme attach-ns": {output: []byte("")},
 			},
@@ -366,7 +391,7 @@ func TestApplyNVMeNamespaceLayout(t *testing.T) {
 			}},
 			mocks: map[string]mockResult{
 				"nvme id-ctrl":   {output: []byte(`{"nn":32,"tnvmcap":1024000}`)},
-				"nvme list-ns":   {output: []byte(`[]`)},
+				"nvme list-ns":   {output: []byte(`{"nsid_list":[]}`)},
 				"nvme create-ns": {err: fmt.Errorf("device busy")},
 			},
 			wantErr: true,
@@ -381,7 +406,7 @@ func TestApplyNVMeNamespaceLayout(t *testing.T) {
 			}},
 			mocks: map[string]mockResult{
 				"nvme id-ctrl":   {output: []byte(`{"nn":32,"tnvmcap":1024000}`)},
-				"nvme list-ns":   {output: []byte(`[{"nsid":1}]`)},
+				"nvme list-ns":   {output: []byte(`{"nsid_list":[{"nsid":1}]}`)},
 				"nvme delete-ns": {output: []byte("")},
 				"nvme create-ns": {output: []byte("create-ns: Success, created nsid:2\n")},
 				"nvme attach-ns": {output: []byte("")},
@@ -416,7 +441,7 @@ func TestApplyNVMeNamespaceLayout(t *testing.T) {
 
 func TestNVMeResetNamespaces_DeleteFails(t *testing.T) {
 	cmd := newMockCommander()
-	cmd.setResult("nvme list-ns", []byte(`[{"nsid":1}]`), nil)
+	cmd.setResult("nvme list-ns", []byte(`{"nsid_list":[{"nsid":1}]}`), nil)
 	cmd.setResult("nvme delete-ns", nil, fmt.Errorf("delete failed"))
 	mgr := NewManager(cmd)
 
@@ -428,7 +453,7 @@ func TestNVMeResetNamespaces_DeleteFails(t *testing.T) {
 
 func TestNVMeResetNamespaces_CreateFails(t *testing.T) {
 	cmd := newMockCommander()
-	cmd.setResult("nvme list-ns", []byte(`[]`), nil)
+	cmd.setResult("nvme list-ns", []byte(`{"nsid_list":[]}`), nil)
 	cmd.setResult("nvme id-ctrl", []byte(`{"tnvmcap":1024000}`), nil)
 	cmd.setResult("nvme create-ns", nil, fmt.Errorf("create failed"))
 	mgr := NewManager(cmd)
@@ -441,7 +466,7 @@ func TestNVMeResetNamespaces_CreateFails(t *testing.T) {
 
 func TestNVMeListNamespaces_EmptyOutput(t *testing.T) {
 	cmd := newMockCommander()
-	cmd.setResult("nvme list-ns", []byte("[]"), nil)
+	cmd.setResult("nvme list-ns", []byte(`{"nsid_list":[]}`), nil)
 	mgr := NewManager(cmd)
 
 	nsids, err := mgr.NVMeListNamespaces(t.Context(), "/dev/nvme0")

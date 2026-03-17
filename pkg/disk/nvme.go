@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -145,6 +146,10 @@ type nvmeNSEntry struct {
 	NSID int `json:"nsid"`
 }
 
+type nvmeNSListOutput struct {
+	NSIDList []nvmeNSEntry `json:"nsid_list"`
+}
+
 // NVMeListNamespaces lists existing namespace IDs on a controller.
 func (m *Manager) NVMeListNamespaces(ctx context.Context, controller string) ([]string, error) {
 	if !nvmeControllerPathRE.MatchString(controller) {
@@ -161,13 +166,22 @@ func (m *Manager) NVMeListNamespaces(ctx context.Context, controller string) ([]
 	}
 
 	var entries []nvmeNSEntry
-	if err := json.Unmarshal(out, &entries); err != nil {
+
+	// nvme-cli JSON output is wrapped as {"nsid_list":[{"nsid":1}, ...]}
+	// in modern versions. Keep compatibility with legacy array output.
+	var wrapped nvmeNSListOutput
+	if err := json.Unmarshal(out, &wrapped); err == nil && wrapped.NSIDList != nil {
+		entries = wrapped.NSIDList
+	} else if err := json.Unmarshal(out, &entries); err != nil {
 		return nil, fmt.Errorf("parsing nvme list-ns JSON for %s: %w", controller, err)
 	}
 
 	nsids := make([]string, 0, len(entries))
 	for _, e := range entries {
-		nsids = append(nsids, fmt.Sprintf("%d", e.NSID))
+		if e.NSID <= 0 {
+			continue
+		}
+		nsids = append(nsids, strconv.Itoa(e.NSID))
 	}
 	return nsids, nil
 }

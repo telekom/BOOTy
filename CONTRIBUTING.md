@@ -21,16 +21,8 @@ Thank you for your interest in contributing! This document covers the developmen
 # Build the binary
 make build
 
-# Cross-compile binaries for amd64 + arm64
-make build-all
-
 # Build the initramfs Docker image (default: full FRR+tools)
 docker build -t booty -f initrd.Dockerfile .
-
-# Build ARM64 initramfs Docker image/flavors
-make arm64
-make arm64-slim
-make arm64-gobgp
 
 # Build bootable ISO (for Redfish virtual media)
 docker build --target=iso -f initrd.Dockerfile -o type=local,dest=. .

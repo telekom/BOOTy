@@ -779,7 +779,7 @@ and the PR process.
 │   ├── caprf/                  # CAPRF client (status, log, debug, vars parsing)
 │   ├── cloudinit/              # Cloud-init NoCloud/ConfigDrive generation
 │   ├── config/                 # MachineConfig, Provider interface, Status types
-│   ├── disk/                   # Disk detection, partitioning, RAID, LVM, mount
+│   ├── disk/                   # Disk detection, partitioning, RAID, LVM, mount, NVMe namespaces
 │   ├── firmware/               # Firmware version collection from sysfs
 │   ├── health/                 # Pre-provisioning hardware health checks
 │   ├── image/                  # Image streaming (HTTP, OCI, gzip/lz4/xz/zstd auto-detect)
@@ -790,6 +790,7 @@ and the PR process.
 │   │   ├── gobgp/             # Pure-Go BGP stack (3-tier: Underlay, Overlay, IPMI)
 │   │   ├── lldp/              # LLDP frame listener (raw AF_PACKET sockets)
 │   │   └── vlan/              # VLAN 802.1Q tagging via netlink
+<<<<<<< HEAD
 │   ├── provision/              # Orchestrator (36-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
 │   ├── plunderclient/          # Legacy HTTP client for config retrieval
