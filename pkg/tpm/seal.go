@@ -82,7 +82,7 @@ func (d *Device) SealSecret(secret []byte, pcrSelection []int) (*SealedBlob, err
 		return nil, fmt.Errorf("sealing secret: %w", err)
 	}
 
-	d.log.Info("Sealed secret to TPM PCR policy",
+	d.log.Info("sealed secret to tpm pcr policy",
 		"pcrs", pcrSelection,
 		"secret_len", len(secret),
 	)
@@ -175,7 +175,7 @@ func (d *Device) UnsealSecret(blob *SealedBlob, pcrSelection []int) ([]byte, err
 		return nil, fmt.Errorf("unsealing secret (PCR mismatch?): %w", err)
 	}
 
-	d.log.Info("Unsealed secret from TPM", "pcrs", pcrSelection)
+	d.log.Info("unsealed secret from tpm", "pcrs", pcrSelection)
 	return unsealResp.OutData.Buffer, nil
 }
 

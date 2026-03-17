@@ -162,6 +162,7 @@ func TestPCRSelectMultiple(t *testing.T) {
 		{"pcr0_7", []int{0, 7}, []byte{0x81}},
 		{"pcr8", []int{8}, []byte{0x00, 0x01}},
 		{"pcr0_8", []int{0, 8}, []byte{0x01, 0x01}},
+		{"duplicates", []int{8, 8, 0}, []byte{0x01, 0x01}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -175,6 +176,24 @@ func TestPCRSelectMultiple(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestUniqueSortedInts(t *testing.T) {
+	input := []int{10, 7, 10, 0, 7, 4}
+	got := uniqueSortedInts(input)
+	want := []int{0, 4, 7, 10}
+
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d", len(got), len(want))
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Fatalf("got[%d] = %d, want %d", i, got[i], want[i])
+		}
+	}
+	if input[0] != 10 {
+		t.Fatal("uniqueSortedInts modified original slice")
 	}
 }
 

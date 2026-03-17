@@ -64,7 +64,7 @@ func Detect() Info {
 
 	info.FirmwareVer = readSysfs(filepath.Join(sysTPMPath, "device", "firmware_node", "description"))
 
-	slog.Info("TPM detected",
+	slog.Info("tpm detected",
 		"version", info.Version,
 		"manufacturer", info.Manufacturer,
 		"device", info.DevicePresent,
@@ -93,7 +93,7 @@ func ReadPCRs() (map[int]string, error) {
 		}
 		data, err := os.ReadFile(filepath.Join(pcrDir, e.Name()))
 		if err != nil {
-			slog.Warn("Failed to read PCR", "index", idx, "error", err)
+			slog.Warn("failed to read pcr", "index", idx, "error", err)
 			continue
 		}
 		// sysfs PCR values are already ASCII hex with a trailing newline.

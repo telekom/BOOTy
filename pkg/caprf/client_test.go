@@ -275,6 +275,41 @@ func TestClientReportInventoryNoURL(t *testing.T) {
 	}
 }
 
+func TestClientSubmitAttestation(t *testing.T) {
+	var receivedBody []byte
+	var receivedContentType string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedContentType = r.Header.Get("Content-Type")
+		body, _ := io.ReadAll(r.Body)
+		receivedBody = body
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewFromConfig(&config.MachineConfig{
+		Token:             "test-token",
+		TPMAttestationURL: srv.URL + "/attestation",
+	})
+
+	data := []byte(`{"quote":"abc123"}`)
+	if err := client.SubmitAttestation(context.Background(), data); err != nil {
+		t.Fatalf("SubmitAttestation() error: %v", err)
+	}
+	if receivedContentType != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", receivedContentType)
+	}
+	if string(receivedBody) != string(data) {
+		t.Errorf("body = %q, want %q", receivedBody, data)
+	}
+}
+
+func TestClientSubmitAttestationNoURL(t *testing.T) {
+	client := NewFromConfig(&config.MachineConfig{})
+	if err := client.SubmitAttestation(context.Background(), []byte(`{"quote":"noop"}`)); err != nil {
+		t.Fatalf("SubmitAttestation() with no URL should not error: %v", err)
+	}
+}
+
 func TestClientNoURLSkips(t *testing.T) {
 	client := NewFromConfig(&config.MachineConfig{})
 
@@ -1054,5 +1089,26 @@ func TestParseVarsTPMEnabled(t *testing.T) {
 		if cfg.TPMEnabled != tt.want {
 			t.Errorf("TPMEnabled for %q = %v, want %v", tt.input, cfg.TPMEnabled, tt.want)
 		}
+	}
+}
+
+func TestParseVarsTPMFields(t *testing.T) {
+	input := `TPM_ATTESTATION_URL="https://example.invalid/attest"
+TPM_PCR_SELECTION="0,1,4,7"
+TPM_SEAL_PCRS="7,9,10"
+`
+
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TPMAttestationURL != "https://example.invalid/attest" {
+		t.Fatalf("TPMAttestationURL = %q", cfg.TPMAttestationURL)
+	}
+	if cfg.TPMPCRSelection != "0,1,4,7" {
+		t.Fatalf("TPMPCRSelection = %q", cfg.TPMPCRSelection)
+	}
+	if cfg.TPMSealPCRs != "7,9,10" {
+		t.Fatalf("TPMSealPCRs = %q", cfg.TPMSealPCRs)
 	}
 }

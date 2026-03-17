@@ -200,7 +200,7 @@ func (c *Client) ReportInventory(ctx context.Context, data []byte) error {
 // SubmitAttestation posts a TPM attestation quote to the CAPRF server.
 func (c *Client) SubmitAttestation(ctx context.Context, data []byte) error {
 	if c.cfg.TPMAttestationURL == "" {
-		c.log.Debug("No TPM attestation URL configured, skipping")
+		c.log.Debug("no tpm attestation URL configured, skipping")
 		return nil
 	}
 	return c.postJSONWithAuth(ctx, c.cfg.TPMAttestationURL, data)

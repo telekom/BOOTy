@@ -189,24 +189,28 @@ func (o *Orchestrator) collectFirmware(ctx context.Context) error {
 
 func (o *Orchestrator) detectTPM(ctx context.Context) error {
 	if !o.cfg.TPMEnabled {
-		o.log.Info("TPM detection disabled, skipping")
+		o.log.Info("tpm detection disabled, skipping")
 		return nil
 	}
 
 	info := tpm.Detect()
-	o.log.Info("TPM detection result", "present", info.Present, "version", info.Version,
+	o.log.Info("tpm detection result", "present", info.Present, "version", info.Version,
 		"manufacturer", info.Manufacturer)
-
-	if !info.Present {
-		o.log.Info("No TPM device found")
-		return nil
-	}
 
 	data, err := json.Marshal(info)
 	if err != nil {
-		return fmt.Errorf("marshal tpm info: %w", err)
+		o.log.Warn("failed to marshal tpm info", "error", err)
+		return nil
 	}
-	return o.provider.ReportStatus(ctx, config.StatusInit, "tpm: "+string(data))
+	if err := o.provider.ReportStatus(ctx, config.StatusInit, "tpm: "+string(data)); err != nil {
+		o.log.Warn("failed to report tpm status", "error", err)
+	}
+
+	if !info.Present {
+		o.log.Info("no tpm device found")
+	}
+
+	return nil
 }
 
 func (o *Orchestrator) setHostname(_ context.Context) error {

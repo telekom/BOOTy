@@ -50,8 +50,9 @@ func (m *mockCommander) setResult(key string, output []byte, err error) {
 }
 
 type mockProvider struct {
-	statuses []statusReport
-	configs  []*config.MachineConfig
+	statuses        []statusReport
+	configs         []*config.MachineConfig
+	reportStatusErr error
 }
 
 type statusReport struct {
@@ -68,7 +69,7 @@ func (p *mockProvider) GetConfig(_ context.Context) (*config.MachineConfig, erro
 
 func (p *mockProvider) ReportStatus(_ context.Context, status config.Status, message string) error {
 	p.statuses = append(p.statuses, statusReport{status: status, message: message})
-	return nil
+	return p.reportStatusErr
 }
 
 func (p *mockProvider) ShipLog(_ context.Context, _ string) error { return nil }

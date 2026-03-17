@@ -42,6 +42,7 @@ func (d *Device) Quote(pcrSelection []int, nonce []byte) (*AttestationQuote, err
 			return nil, err
 		}
 	}
+	selectedPCRs := uniqueSortedInts(pcrSelection)
 	if len(nonce) == 0 {
 		return nil, fmt.Errorf("nonce must not be empty")
 	}
@@ -55,13 +56,13 @@ func (d *Device) Quote(pcrSelection []int, nonce []byte) (*AttestationQuote, err
 		_, _ = flushCtx.Execute(d.transport) //nolint:errcheck // best-effort TPM cleanup
 	}()
 
-	sel := buildPCRSelection(pcrSelection)
+	sel := buildPCRSelection(selectedPCRs)
 	quoteResp, err := d.generateQuote(createResp.ObjectHandle, nonce, sel)
 	if err != nil {
 		return nil, fmt.Errorf("generating quote: %w", err)
 	}
 
-	pcrValues, pcrDigest, err := d.readPCRDigest(pcrSelection, sel)
+	pcrValues, pcrDigest, err := d.readPCRDigest(selectedPCRs, sel)
 	if err != nil {
 		return nil, fmt.Errorf("reading PCR digest: %w", err)
 	}
@@ -74,8 +75,8 @@ func (d *Device) Quote(pcrSelection []int, nonce []byte) (*AttestationQuote, err
 		Nonce:     nonce,
 	}
 
-	d.log.Info("Generated TPM attestation quote",
-		"pcrs", pcrSelection,
+	d.log.Info("generated tpm attestation quote",
+		"pcrs", selectedPCRs,
 		"nonce_len", len(nonce),
 	)
 
@@ -174,21 +175,21 @@ func (d *Device) readPCRDigest(pcrSelection []int, sel tpm2.TPMLPCRSelection) (p
 
 	// TPM PCRRead returns digests in ascending PCR order matching the sorted
 	// selection. Validate that we received exactly the expected number of digests.
-	sortedPCRs := sortedInts(pcrSelection)
-	expectedDigests := len(sortedPCRs)
+	selectedPCRs := uniqueSortedInts(pcrSelection)
+	expectedDigests := len(selectedPCRs)
 	actualDigests := len(pcrReadResp.PCRValues.Digests)
 	if actualDigests != expectedDigests {
-		return nil, nil, fmt.Errorf("PCR read returned %d digests, expected %d for PCR selection %v", actualDigests, expectedDigests, pcrSelection)
+		return nil, nil, fmt.Errorf("pcr read returned %d digests, expected %d for PCR selection %v", actualDigests, expectedDigests, selectedPCRs)
 	}
-	pcrValues = make(map[int][]byte, len(sortedPCRs))
-	for i, idx := range sortedPCRs {
+	pcrValues = make(map[int][]byte, len(selectedPCRs))
+	for i, idx := range selectedPCRs {
 		pcrValues[idx] = pcrReadResp.PCRValues.Digests[i].Buffer
 	}
 
 	// Compute PCR composite digest over deterministic sorted order to ensure
 	// consistent results regardless of the pcrSelection argument ordering.
 	h := sha256.New()
-	for _, idx := range sortedPCRs {
+	for _, idx := range selectedPCRs {
 		if v, ok := pcrValues[idx]; ok {
 			h.Write(v)
 		}
@@ -264,4 +265,20 @@ func sortedInts(a []int) []int {
 	copy(c, a)
 	sort.Ints(c)
 	return c
+}
+
+// uniqueSortedInts returns a deduplicated sorted copy of the input slice.
+func uniqueSortedInts(a []int) []int {
+	sorted := sortedInts(a)
+	if len(sorted) <= 1 {
+		return sorted
+	}
+
+	unique := make([]int, 0, len(sorted))
+	for i, v := range sorted {
+		if i == 0 || v != sorted[i-1] {
+			unique = append(unique, v)
+		}
+	}
+	return unique
 }

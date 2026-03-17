@@ -1,14 +1,20 @@
 # Proposal: TPM Measured Boot and Attestation
 
-## Status: Phase 1 Implemented
+## Status: Phase 1 Implemented (detection + TPM primitives)
 
-Implemented: Phase 1 — sysfs detection (`Detect()`), PCR reading (`ReadPCRs()`),
-go-tpm device operations (`ExtendPCR`, `ReadPCRDevice`, `MeasureReader`),
-attestation quote generation with ECC signing, and secret sealing/unsealing
-with PCR policy. See `pkg/tpm/`.
+Implemented now:
 
-Future phases (not yet implemented): remote attestation protocol,
-CAPRF quote verification, disk encryption key auto-sealing on provision.
+- Linux TPM discovery via sysfs/device nodes (`Detect()`) and sysfs PCR reads (`ReadPCRs()`)
+- Go TPM device operations (`Open`, `ExtendPCR`, `ReadPCRDevice`, `MeasureReader`)
+- Quote/signature helper primitives (`Quote`, `VerifyQuoteSignature`, `MarshalQuote`)
+- Secret seal/unseal primitives with PCR policy (`SealSecret`, `UnsealSecret`)
+- Provisioning integration for TPM presence reporting (`detect-tpm` step in orchestrator)
+
+Not yet implemented end-to-end:
+
+- CAPRF nonce/verification workflow for remote attestation admission control
+- Automatic quote submission from the provisioning success path
+- Automatic LUKS key sealing during provisioning
 
 ## Priority: P4
 
@@ -234,11 +240,14 @@ func (t *TPM) UnsealSecret(sealedBlob []byte) ([]byte, error) {
 ```bash
 # /deploy/vars
 export TPM_ENABLED="true"
-export TPM_ATTEST="true"           # Send attestation quote to CAPRF
-export TPM_PCR_IMAGE="9"           # PCR index for image hash
-export TPM_PCR_CONFIG="10"         # PCR index for config hash
-export TPM_PCR_PROVISIONER="14"    # PCR index for provisioner steps
+export TPM_ATTESTATION_URL="https://caprf.example/attestation"
+export TPM_PCR_SELECTION="0,1,4,7,8,9,10,14"
+export TPM_SEAL_PCRS="7,9,10"
 ```
+
+Current runtime usage: `TPM_ENABLED` is consumed by provisioning for TPM
+presence detection/reporting. The other variables are parsed and stored in
+`MachineConfig` for upcoming attestation/sealing workflow integration.
 
 ## Required Binaries in Initramfs
 
@@ -255,8 +264,8 @@ userspace binaries are strictly required. Debug/fallback tools are optional:
 
 | Package | Purpose |
 |---------|---------|
-| `github.com/google/go-tpm/v2` | Pure Go TPM 2.0 operations |
-| `github.com/google/go-tpm-tools` | Higher-level helpers |
+| `github.com/google/go-tpm` | Pure Go TPM 2.0 operations |
+| `golang.org/x/net` | Required by go-tpm transport dependencies |
 
 **Kernel modules** (must be loaded):
 
@@ -270,14 +279,16 @@ userspace binaries are strictly required. Debug/fallback tools are optional:
 
 | File | Change |
 |------|--------|
-| `pkg/tpm/tpm.go` | New — TPM 2.0 operations |
-| `pkg/tpm/tpm_test.go` | New — unit tests (with TPM simulator) |
-| `pkg/provision/orchestrator.go` | Add `MeasureProvisioningStep()`, `Attest()` |
-| `pkg/caprf/client.go` | Add `GetAttestationNonce()`, `SubmitAttestation()` |
+| `pkg/tpm/tpm.go` | New — sysfs-based TPM detection and PCR reading |
+| `pkg/tpm/device.go` | New — TPM device open + PCR extend/read/measure operations |
+| `pkg/tpm/attest.go` | New — attestation quote/signature helper primitives |
+| `pkg/tpm/seal.go` | New — secret sealing/unsealing with PCR policy |
+| `pkg/tpm/tpm_test.go` | New — Linux fixture tests for TPM helpers |
+| `pkg/provision/orchestrator.go` | Add `detect-tpm` provisioning step and status reporting |
+| `pkg/caprf/client.go` | Add `SubmitAttestation()` and TPM vars parsing |
+| `pkg/caprf/client_test.go` | Add TPM parser and attestation client coverage |
 | `pkg/config/provider.go` | Add TPM config fields |
-| `go.mod` | Add `github.com/google/go-tpm` |
-| `initrd.Dockerfile` | Ensure `/dev/tpmrm0` device available |
-| CAPRF `internal/provision/attestation.go` | New — attestation verification |
+| `go.mod` / `go.sum` | Add TPM dependencies |
 
 ## Risks
 
@@ -287,15 +298,14 @@ userspace binaries are strictly required. Debug/fallback tools are optional:
   sealed keys and expected attestation values. Need a PCR policy update
   workflow.
 - **go-tpm maturity**: The `google/go-tpm` library is well-maintained but
-  TPM operations are inherently complex. Use the `go-tpm-tools` higher-level
-  library for common operations.
+    TPM operations are inherently complex. Keep wrappers small and heavily tested.
 - **Performance**: TPM operations are slow (~100ms per operation). Batch PCR
   extends where possible.
 
 ## Dependencies
 
-- `github.com/google/go-tpm/v2` — pure Go TPM 2.0 library
-- `github.com/google/go-tpm-tools` — higher-level helpers
+- `github.com/google/go-tpm` — pure Go TPM 2.0 library
+- `golang.org/x/net` — transport dependency used by go-tpm
 - Kernel: `tpm_tis`, `tpm_crb` modules loaded
 - Device: `/dev/tpmrm0` (resource manager interface)
 
@@ -305,5 +315,5 @@ userspace binaries are strictly required. Debug/fallback tools are optional:
 - Attestation quote generation: **3-4 days**
 - CAPRF attestation verification: **3-4 days**
 - Disk encryption integration: **5-7 days** (separate phase)
-- Testing (TPM simulator): **3 days**
+- Testing (fixtures + hardware-backed validation): **3 days**
 - Total: **17-22 days**

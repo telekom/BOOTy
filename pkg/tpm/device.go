@@ -72,7 +72,7 @@ func (d *Device) ExtendPCR(pcrIndex int, data []byte) error {
 		return fmt.Errorf("extending PCR %d: %w", pcrIndex, err)
 	}
 
-	d.log.Info("Extended PCR", "index", pcrIndex, "digest_len", len(digest))
+	d.log.Info("extended pcr", "index", pcrIndex, "digest_len", len(digest))
 	return nil
 }
 

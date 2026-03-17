@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -31,8 +32,43 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 30 {
-		t.Fatalf("expected 30 provisioning steps, got %d", len(steps))
+	if len(steps) != 31 {
+		t.Fatalf("expected 31 provisioning steps, got %d", len(steps))
+	}
+	if steps[3].Name != "detect-tpm" {
+		t.Fatalf("expected detect-tpm at index 4, got %q", steps[3].Name)
+	}
+}
+
+func TestDetectTPMDisabledSkips(t *testing.T) {
+	cfg := &config.MachineConfig{TPMEnabled: false}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	if err := o.detectTPM(context.Background()); err != nil {
+		t.Fatalf("detectTPM() returned error when disabled: %v", err)
+	}
+	if len(provider.statuses) != 0 {
+		t.Fatalf("expected no status reports when TPM disabled, got %d", len(provider.statuses))
+	}
+}
+
+func TestDetectTPMReportStatusErrorIsNonFatal(t *testing.T) {
+	cfg := &config.MachineConfig{TPMEnabled: true}
+	provider := &mockProvider{reportStatusErr: errors.New("report failed")}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	if err := o.detectTPM(context.Background()); err != nil {
+		t.Fatalf("detectTPM() should be non-fatal when status reporting fails: %v", err)
+	}
+	if len(provider.statuses) != 1 {
+		t.Fatalf("expected one TPM status report, got %d", len(provider.statuses))
+	}
+	if provider.statuses[0].status != config.StatusInit {
+		t.Fatalf("expected status init, got %q", provider.statuses[0].status)
+	}
+	if !strings.HasPrefix(provider.statuses[0].message, "tpm: ") {
+		t.Fatalf("expected tpm status message prefix, got %q", provider.statuses[0].message)
 	}
 }
 

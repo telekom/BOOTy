@@ -71,7 +71,7 @@ BOOTy operates in two modes depending on the boot environment:
 - **Filesystem support** — ext2, ext3, ext4, xfs, btrfs, vfat mount/resize
 - **LLDP discovery** — Raw AF_PACKET-based LLDP listener for switch topology discovery
 - **Post-provision hooks** — Execute arbitrary commands in chroot after OS configuration
-- **25-step provisioning pipeline** — RAID cleanup, disk detection, image streaming, partition growth, LVM, filesystem resize, OS configuration, EFI boot, Mellanox SR-IOV, post-provision hooks
+- **31-step provisioning pipeline** — inventory/firmware reporting, TPM detection, RAID cleanup, disk detection, image streaming, partition growth, LVM, filesystem resize, OS configuration, EFI boot, Mellanox SR-IOV, post-provision hooks
 - **Kexec support** — Fast reboot into installed kernel without full BIOS POST (auto-disabled after firmware changes)
 - **Remote logging** — Real-time log and debug shipping to CAPRF controller
 - **Hard/soft deprovisioning** — Full disk wipe or GRUB rename for reprovisioning
@@ -423,7 +423,7 @@ and the PR process.
 │   │   ├── gobgp/             # Pure-Go BGP stack (3-tier: Underlay, Overlay, IPMI)
 │   │   ├── lldp/              # LLDP frame listener (raw AF_PACKET sockets)
 │   │   └── vlan/              # VLAN 802.1Q tagging via netlink
-│   ├── provision/              # Orchestrator (25-step provision, deprovision)
+│   ├── provision/              # Orchestrator (31-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
 │   ├── plunderclient/          # Legacy HTTP client for config retrieval
 │   ├── realm/                  # Device, mount, network, shell operations
