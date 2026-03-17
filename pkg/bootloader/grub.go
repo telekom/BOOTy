@@ -181,26 +181,14 @@ func parseGRUBConfig(path string) ([]BootEntry, error) {
 			continue
 		}
 
-		switch {
-		case strings.HasPrefix(line, "linux ") || strings.HasPrefix(line, "linuxefi "):
-			parts := strings.Fields(line)
-			if len(parts) >= 2 {
-				current.Kernel = parts[1]
-			}
-			if len(parts) >= 3 {
-				current.Cmdline = strings.Join(parts[2:], " ")
-			}
-		case strings.HasPrefix(line, "initrd ") || strings.HasPrefix(line, "initrdefi "):
-			parts := strings.Fields(line)
-			if len(parts) >= 2 {
-				current.Initrd = parts[1]
-			}
-		case line == "}":
-			if current.Kernel != "" {
-				entries = append(entries, *current)
-			}
-			current = nil
+		entry, closed := consumeGRUBEntryLine(line, current)
+		if !closed {
+			continue
 		}
+		if entry.Kernel != "" {
+			entries = append(entries, *entry)
+		}
+		current = nil
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -212,6 +200,36 @@ func parseGRUBConfig(path string) ([]BootEntry, error) {
 		entries = append(entries, *current)
 	}
 	return entries, nil
+}
+
+func consumeGRUBEntryLine(line string, current *BootEntry) (*BootEntry, bool) {
+	switch {
+	case strings.HasPrefix(line, "linux ") || strings.HasPrefix(line, "linuxefi "):
+		parseGRUBKernelLine(line, current)
+	case strings.HasPrefix(line, "initrd ") || strings.HasPrefix(line, "initrdefi "):
+		parseGRUBInitrdLine(line, current)
+	case line == "}":
+		return current, true
+	}
+
+	return current, false
+}
+
+func parseGRUBKernelLine(line string, current *BootEntry) {
+	parts := strings.Fields(line)
+	if len(parts) >= 2 {
+		current.Kernel = parts[1]
+	}
+	if len(parts) >= 3 {
+		current.Cmdline = strings.Join(parts[2:], " ")
+	}
+}
+
+func parseGRUBInitrdLine(line string, current *BootEntry) {
+	parts := strings.Fields(line)
+	if len(parts) >= 2 {
+		current.Initrd = parts[1]
+	}
 }
 
 // extractQuoted extracts the first quoted string (single or double) from a line.
