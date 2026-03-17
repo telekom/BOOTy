@@ -15,69 +15,110 @@ import (
 
 // ApplyLVMConfig creates PV, VG, and LVs according to the LVM config.
 func (m *Manager) ApplyLVMConfig(ctx context.Context, device string, layout *config.PartitionLayout) error {
-	if layout == nil || layout.LVM == nil || len(layout.LVM.Volumes) == 0 {
+	lvm, pvDev, err := validateLVMApplyInputs(device, layout)
+	if err != nil {
+		return err
+	}
+	if lvm == nil {
 		return nil
 	}
+
+	slog.Info("setting up lvm", "vg", lvm.VolumeGroup, "pv", pvDev, "volumes", len(lvm.Volumes))
+
+	if err := m.createPhysicalVolume(ctx, pvDev); err != nil {
+		return err
+	}
+
+	if err := m.createVolumeGroup(ctx, lvm.VolumeGroup, pvDev); err != nil {
+		return err
+	}
+
+	for _, vol := range lvm.Volumes {
+		if err := m.createLogicalVolume(ctx, lvm.VolumeGroup, vol); err != nil {
+			return err
+		}
+		slog.Info("created logical volume", "vg", lvm.VolumeGroup, "lv", vol.Name)
+
+		if err := m.formatLogicalVolume(ctx, lvm.VolumeGroup, vol); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateLVMApplyInputs(device string, layout *config.PartitionLayout) (*config.LVMConfig, string, error) {
+	if layout == nil || layout.LVM == nil || len(layout.LVM.Volumes) == 0 {
+		return nil, "", nil
+	}
 	if device == "" {
-		return fmt.Errorf("lvm device path is empty")
+		return nil, "", fmt.Errorf("lvm device path is empty")
 	}
 
 	lvm := layout.LVM
 	if lvm.PVPartition < 1 {
-		return fmt.Errorf("lvm.pvPartition must be >= 1, got %d", lvm.PVPartition)
+		return nil, "", fmt.Errorf("lvm.pvPartition must be >= 1, got %d", lvm.PVPartition)
 	}
 	if lvm.PVPartition > len(layout.Partitions) {
-		return fmt.Errorf("lvm.pvPartition %d exceeds partition count %d", lvm.PVPartition, len(layout.Partitions))
+		return nil, "", fmt.Errorf("lvm.pvPartition %d exceeds partition count %d", lvm.PVPartition, len(layout.Partitions))
 	}
 	if strings.TrimSpace(lvm.VolumeGroup) == "" {
-		return fmt.Errorf("lvm volumeGroup name is empty")
+		return nil, "", fmt.Errorf("lvm volumeGroup name is empty")
 	}
 	for i, vol := range lvm.Volumes {
 		if strings.TrimSpace(vol.Name) == "" {
-			return fmt.Errorf("lvm volume %d: name is empty", i+1)
+			return nil, "", fmt.Errorf("lvm volume %d: name is empty", i+1)
 		}
 	}
-	pvDev := partitionDevice(device, lvm.PVPartition)
 
-	slog.Info("setting up lvm", "vg", lvm.VolumeGroup, "pv", pvDev, "volumes", len(lvm.Volumes))
+	return lvm, partitionDevice(device, lvm.PVPartition), nil
+}
 
-	// Create physical volume.
-	if out, err := m.cmd.Run(ctx, "pvcreate", "-f", pvDev); err != nil {
+func (m *Manager) createPhysicalVolume(ctx context.Context, pvDev string) error {
+	out, err := m.cmd.Run(ctx, "pvcreate", "-f", pvDev)
+	if err != nil {
 		return fmt.Errorf("pvcreate %s: %s: %w", pvDev, string(out), err)
 	}
+	return nil
+}
 
-	// Create volume group.
-	if out, err := m.cmd.Run(ctx, "vgcreate", lvm.VolumeGroup, pvDev); err != nil {
-		return fmt.Errorf("vgcreate %s: %s: %w", lvm.VolumeGroup, string(out), err)
+func (m *Manager) createVolumeGroup(ctx context.Context, vg, pvDev string) error {
+	out, err := m.cmd.Run(ctx, "vgcreate", vg, pvDev)
+	if err != nil {
+		return fmt.Errorf("vgcreate %s: %s: %w", vg, string(out), err)
 	}
+	return nil
+}
 
-	// Create logical volumes.
-	for _, vol := range lvm.Volumes {
-		args := []string{}
-		switch {
-		case vol.Extents != "":
-			args = append(args, "-l", vol.Extents)
-		case vol.SizeMB > 0:
-			args = append(args, "-L", fmt.Sprintf("%dM", vol.SizeMB))
-		default:
-			args = append(args, "-l", "100%FREE")
-		}
-		args = append(args, "-n", vol.Name, lvm.VolumeGroup)
-
-		if out, err := m.cmd.Run(ctx, "lvcreate", args...); err != nil {
-			return fmt.Errorf("lvcreate %s/%s: %s: %w", lvm.VolumeGroup, vol.Name, string(out), err)
-		}
-		slog.Info("created logical volume", "vg", lvm.VolumeGroup, "lv", vol.Name)
-
-		// Format LV if filesystem specified.
-		if vol.Filesystem != "" {
-			lvDev := fmt.Sprintf("/dev/%s/%s", lvm.VolumeGroup, vol.Name)
-			if err := m.formatPartition(ctx, lvDev, vol.Filesystem); err != nil {
-				return fmt.Errorf("formatting LV %s: %w", vol.Name, err)
-			}
-		}
+func (m *Manager) createLogicalVolume(ctx context.Context, vg string, vol config.LVVolume) error {
+	out, err := m.cmd.Run(ctx, "lvcreate", buildLVCreateArgs(vg, vol)...)
+	if err != nil {
+		return fmt.Errorf("lvcreate %s/%s: %s: %w", vg, vol.Name, string(out), err)
 	}
+	return nil
+}
 
+func buildLVCreateArgs(vg string, vol config.LVVolume) []string {
+	args := make([]string, 0, 6)
+	switch {
+	case vol.Extents != "":
+		args = append(args, "-l", vol.Extents)
+	case vol.SizeMB > 0:
+		args = append(args, "-L", fmt.Sprintf("%dM", vol.SizeMB))
+	default:
+		args = append(args, "-l", "100%FREE")
+	}
+	return append(args, "-n", vol.Name, vg)
+}
+
+func (m *Manager) formatLogicalVolume(ctx context.Context, vg string, vol config.LVVolume) error {
+	if vol.Filesystem == "" {
+		return nil
+	}
+	lvDev := fmt.Sprintf("/dev/%s/%s", vg, vol.Name)
+	if err := m.formatPartition(ctx, lvDev, vol.Filesystem); err != nil {
+		return fmt.Errorf("formatting LV %s: %w", vol.Name, err)
+	}
 	return nil
 }
 

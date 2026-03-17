@@ -563,7 +563,7 @@ func TestApplyPartitionLayoutCommandSequence(t *testing.T) {
 		}
 	}
 	if idx != len(expected) {
-		var got []string
+		got := make([]string, 0, len(cmd.calls))
 		for _, c := range cmd.calls {
 			got = append(got, c.name+" "+strings.Join(c.args, " "))
 		}
@@ -656,8 +656,8 @@ func TestApplyLVMConfigCommandSequence(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Verify: pvcreate, vgcreate, lvcreate (x2), mkfs.ext4, mkfs.xfs.
-	expected := []string{"pvcreate", "vgcreate", "lvcreate", "lvcreate", "mkfs.ext4", "mkfs.xfs"}
+	// Verify: pvcreate, vgcreate, and per-LV create+format ordering.
+	expected := []string{"pvcreate", "vgcreate", "lvcreate", "mkfs.ext4", "lvcreate", "mkfs.xfs"}
 	idx := 0
 	for _, call := range cmd.calls {
 		if idx >= len(expected) {
@@ -668,7 +668,7 @@ func TestApplyLVMConfigCommandSequence(t *testing.T) {
 		}
 	}
 	if idx != len(expected) {
-		var got []string
+		got := make([]string, 0, len(cmd.calls))
 		for _, c := range cmd.calls {
 			got = append(got, c.name+" "+strings.Join(c.args, " "))
 		}
