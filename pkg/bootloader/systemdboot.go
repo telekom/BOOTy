@@ -17,8 +17,8 @@ import (
 
 // SystemdBoot implements the Bootloader interface for systemd-boot.
 type SystemdBoot struct {
-	Log      *slog.Logger
-	espPath  string
+	Log     *slog.Logger
+	espPath string
 }
 
 // NewSystemdBoot creates a new systemd-boot bootloader manager.
