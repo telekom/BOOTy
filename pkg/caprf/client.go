@@ -17,6 +17,7 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/health"
+	"github.com/telekom/BOOTy/pkg/retry"
 )
 
 // Client communicates with the CAPRF provisioning server.
@@ -210,25 +211,21 @@ func (c *Client) postJSONWithAuth(ctx context.Context, url string, data []byte) 
 }
 
 func (c *Client) withRetry(ctx context.Context, url string, fn func() error) error {
-	var lastErr error
-	for attempt := range 3 {
-		if attempt > 0 {
-			backoff := time.Duration(1<<(attempt-1)) * time.Second
-			c.log.Info("Retrying request", "url", url, "attempt", attempt+1, "backoff", backoff)
-			select {
-			case <-time.After(backoff):
-			case <-ctx.Done():
-				return fmt.Errorf("request retry canceled: %w", ctx.Err())
-			}
-		}
+	const maxRetries = 3
 
-		lastErr = fn()
-		if lastErr == nil {
-			return nil
+	return retry.Do(ctx, retry.Policy{
+		Attempts:       maxRetries,
+		InitialBackoff: time.Second,
+	}, func(attempt int) (bool, error) {
+		err := fn()
+		if err == nil {
+			return false, nil
 		}
-		c.log.Warn("Request failed", "url", url, "attempt", attempt+1, "error", lastErr)
-	}
-	return lastErr
+		c.log.Warn("Request failed", "url", url, "attempt", attempt, "error", err)
+		return true, err
+	}, func(attempt int, backoff time.Duration, _ error) {
+		c.log.Info("Retrying request", "url", url, "attempt", attempt+1, "backoff", backoff)
+	})
 }
 
 func (c *Client) doPost(ctx context.Context, url, body string) error {

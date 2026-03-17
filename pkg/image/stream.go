@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/telekom/BOOTy/pkg/retry"
 )
 
 // StreamOpts are optional parameters for Stream.
@@ -119,74 +121,79 @@ func openSource(ctx context.Context, url string) (io.ReadCloser, error) {
 // httpGetWithRetry performs an HTTP GET with retry and exponential backoff.
 func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 	const maxRetries = 3
-	backoff := time.Second
 
-	var lastErr error
-	for attempt := range maxRetries {
+	var body io.ReadCloser
+	var retryReason string
+	var retryStatus int
+	err := retry.Do(ctx, retry.Policy{
+		Attempts:       maxRetries,
+		InitialBackoff: time.Second,
+	}, func(attempt int) (bool, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 		if err != nil {
-			return nil, fmt.Errorf("creating request: %w", err)
+			return false, fmt.Errorf("creating request: %w", err)
 		}
 
 		resp, err := http.DefaultClient.Do(req) //nolint:gosec // URL from trusted config
 		if err != nil {
-			lastErr = fmt.Errorf("fetching image (attempt %d/%d): %w", attempt+1, maxRetries, err)
-			slog.Warn("HTTP request failed, retrying", "attempt", attempt+1, "error", err, "backoff", backoff)
-			select {
-			case <-ctx.Done():
-				return nil, fmt.Errorf("context canceled: %w", ctx.Err())
-			case <-time.After(backoff):
-			}
-			backoff *= 2
-			continue
+			retryReason = "request"
+			retryStatus = 0
+			return true, fmt.Errorf("fetching image (attempt %d/%d): %w", attempt, maxRetries, err)
 		}
 
 		if resp.StatusCode == http.StatusOK {
-			return resp.Body, nil
+			body = resp.Body
+			return false, nil
 		}
 		_ = resp.Body.Close()
 
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("image not found: %s", url)
+			return false, fmt.Errorf("image not found: %s", url)
 		}
-		// Retry on 5xx server errors.
 		if resp.StatusCode >= 500 {
-			lastErr = fmt.Errorf("server error %d for %s (attempt %d/%d)", resp.StatusCode, url, attempt+1, maxRetries)
-			slog.Warn("HTTP server error, retrying", "attempt", attempt+1, "status", resp.StatusCode, "backoff", backoff)
-			select {
-			case <-ctx.Done():
-				return nil, fmt.Errorf("context canceled: %w", ctx.Err())
-			case <-time.After(backoff):
-			}
-			backoff *= 2
-			continue
+			retryReason = "server"
+			retryStatus = resp.StatusCode
+			return true, fmt.Errorf("server error %d for %s (attempt %d/%d)", resp.StatusCode, url, attempt, maxRetries)
 		}
-		return nil, fmt.Errorf("unexpected status %d for %s", resp.StatusCode, url)
+
+		return false, fmt.Errorf("unexpected status %d for %s", resp.StatusCode, url)
+	}, func(attempt int, backoff time.Duration, err error) {
+		if retryReason == "server" {
+			slog.Warn("HTTP server error, retrying", "attempt", attempt, "status", retryStatus, "backoff", backoff)
+			return
+		}
+		slog.Warn("HTTP request failed, retrying", "attempt", attempt, "error", err, "backoff", backoff)
+	})
+	if err != nil {
+		return nil, err
 	}
-	return nil, lastErr
+
+	return body, nil
 }
 
 // fetchOCIWithRetry retries OCI layer fetch with exponential backoff.
 func fetchOCIWithRetry(ctx context.Context, ref string) (io.ReadCloser, error) {
 	const maxRetries = 3
-	backoff := time.Second
 
-	var lastErr error
-	for attempt := range maxRetries {
+	var body io.ReadCloser
+	err := retry.Do(ctx, retry.Policy{
+		Attempts:       maxRetries,
+		InitialBackoff: time.Second,
+	}, func(attempt int) (bool, error) {
 		rc, err := FetchOCILayer(ctx, ref)
 		if err == nil {
-			return rc, nil
+			body = rc
+			return false, nil
 		}
-		lastErr = fmt.Errorf("OCI pull (attempt %d/%d): %w", attempt+1, maxRetries, err)
-		slog.Warn("OCI pull failed, retrying", "attempt", attempt+1, "error", err, "backoff", backoff)
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
-		case <-time.After(backoff):
-		}
-		backoff *= 2
+		return true, fmt.Errorf("OCI pull (attempt %d/%d): %w", attempt, maxRetries, err)
+	}, func(attempt int, backoff time.Duration, err error) {
+		slog.Warn("OCI pull failed, retrying", "attempt", attempt, "error", err, "backoff", backoff)
+	})
+	if err != nil {
+		return nil, err
 	}
-	return nil, lastErr
+
+	return body, nil
 }
 
 func newHash(checksumType string) (hash.Hash, error) {
