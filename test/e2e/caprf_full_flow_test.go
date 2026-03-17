@@ -1708,7 +1708,15 @@ func TestCreateEFIBootEntryGrubFallbackE2E(t *testing.T) {
 	root := t.TempDir()
 	c.SetRootDir(root)
 
-	// No shimx64.efi — should fallback to grubx64.efi.
+	// No shimx64.efi but grubx64.efi present — should fallback to grubx64.efi.
+	efiDir := filepath.Join(root, "boot", "efi", "EFI", "ubuntu")
+	if err := os.MkdirAll(efiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(efiDir, "grubx64.efi"), []byte("grub"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	if err := c.CreateEFIBootEntry(context.Background(), "/dev/nvme0n1", "/dev/nvme0n1p1"); err != nil {
 		t.Fatalf("CreateEFIBootEntry: %v", err)
 	}
