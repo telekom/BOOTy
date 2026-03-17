@@ -200,6 +200,9 @@ func ParsePartitionLayout(data string) (*PartitionLayout, error) {
 	if err := validateLVMConfig(layout.LVM, layout.Partitions); err != nil {
 		return nil, err
 	}
+	if err := validateUniqueMountpoints(layout.Partitions, layout.LVM); err != nil {
+		return nil, err
+	}
 	if err := validateRootPresence(layout.Partitions, layout.LVM); err != nil {
 		return nil, err
 	}
@@ -247,6 +250,41 @@ func validateLVMConfig(lvm *LVMConfig, partitions []Partition) error {
 			return err
 		}
 	}
+	return nil
+}
+
+func validateUniqueMountpoints(partitions []Partition, lvm *LVMConfig) error {
+	seen := make(map[string]string)
+
+	addMountpoint := func(mountpoint, location string) error {
+		if mountpoint == "" {
+			return nil
+		}
+		if prev, ok := seen[mountpoint]; ok {
+			return fmt.Errorf("mountpoint %q is defined multiple times (%s, %s)", mountpoint, prev, location)
+		}
+		seen[mountpoint] = location
+		return nil
+	}
+
+	for i, part := range partitions {
+		location := fmt.Sprintf("partition %d (%s)", i+1, part.Label)
+		if err := addMountpoint(part.Mountpoint, location); err != nil {
+			return err
+		}
+	}
+
+	if lvm == nil {
+		return nil
+	}
+
+	for i, vol := range lvm.Volumes {
+		location := fmt.Sprintf("lvm volume %d (%s)", i+1, vol.Name)
+		if err := addMountpoint(vol.Mountpoint, location); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

@@ -107,3 +107,19 @@ func TestParsePartitionLayoutMountpointWhitespace(t *testing.T) {
 		t.Fatal("expected error for mountpoint with whitespace")
 	}
 }
+
+func TestParsePartitionLayoutDuplicatePartitionMountpoints(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"root1","filesystem":"ext4","mountpoint":"/"},{"label":"root2","filesystem":"xfs","mountpoint":"/"}]}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Fatal("expected error for duplicate partition mountpoints")
+	}
+}
+
+func TestParsePartitionLayoutDuplicateMountpointAcrossPartitionAndLVM(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"root","filesystem":"ext4","mountpoint":"/"},{"label":"pv","sizeMB":8192}],"lvm":{"volumeGroup":"sysvg","pvPartition":2,"volumes":[{"name":"root","filesystem":"ext4","mountpoint":"/"}]}}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Fatal("expected error for duplicate mountpoint across partition and lvm volume")
+	}
+}

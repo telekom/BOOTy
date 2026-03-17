@@ -1,6 +1,6 @@
 # Proposal: Custom Disk Partitioning
 
-## Status: Phase 1 Implemented
+## Status: Accepted
 
 Implemented so far (including incremental hardening beyond the initial Phase 1 scope):
 - `ParsePartitionLayout` validation (GPT-only schema, root/mountpoint checks)
