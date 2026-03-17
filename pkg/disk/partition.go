@@ -175,6 +175,10 @@ func resolveTypeGUID(part config.Partition) string {
 
 // PartitionDevicePath returns the device path for a specific partition number.
 func PartitionDevicePath(device string, num int) string {
+	if strings.HasPrefix(device, "/dev/disk/by-") {
+		return fmt.Sprintf("%s-part%d", device, num)
+	}
+
 	// NVMe: /dev/nvme0n1 → /dev/nvme0n1p1
 	// SATA: /dev/sda → /dev/sda1
 	devName := filepath.Base(device)

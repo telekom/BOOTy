@@ -382,6 +382,8 @@ func TestPartitionDevicePath(t *testing.T) {
 		{"/tmp/nvme-dir/sda", 1, "/tmp/nvme-dir/sda1"},
 		{"/dev/md0", 1, "/dev/md0p1"},
 		{"/dev/nbd0", 2, "/dev/nbd0p2"},
+		{"/dev/disk/by-id/nvme-eui.0011223344556677", 1, "/dev/disk/by-id/nvme-eui.0011223344556677-part1"},
+		{"/dev/disk/by-path/pci-0000:00:1f.2-ata-1", 2, "/dev/disk/by-path/pci-0000:00:1f.2-ata-1-part2"},
 	}
 	for _, tc := range tests {
 		got := PartitionDevicePath(tc.device, tc.num)

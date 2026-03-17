@@ -171,3 +171,27 @@ func TestParsePartitionLayoutLvmLVNameMustNotStartWithDashOrDot(t *testing.T) {
 		}
 	}
 }
+
+func TestParsePartitionLayoutRejectsUnknownFields(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"root","filesytem":"ext4","mountpoint":"/"}]}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Fatal("expected error for unknown field in partition layout")
+	}
+}
+
+func TestParsePartitionLayoutDuplicateLVMVolumeNames(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"pv","sizeMB":8192}],"lvm":{"volumeGroup":"sysvg","pvPartition":1,"volumes":[{"name":"root","filesystem":"ext4","mountpoint":"/"},{"name":"root","filesystem":"xfs","mountpoint":"/var"}]}}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Fatal("expected error for duplicate lvm volume names")
+	}
+}
+
+func TestParsePartitionLayoutFillRemainingLVMVolumeMustBeLast(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"pv","sizeMB":8192}],"lvm":{"volumeGroup":"sysvg","pvPartition":1,"volumes":[{"name":"root","filesystem":"ext4","mountpoint":"/"},{"name":"var","sizeMB":1024,"filesystem":"xfs","mountpoint":"/var"}]}}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Fatal("expected error when fill-remaining lvm volume is not last")
+	}
+}

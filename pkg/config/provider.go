@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -182,9 +183,15 @@ type LVVolume struct {
 // ParsePartitionLayout parses a JSON partition layout string.
 func ParsePartitionLayout(data string) (*PartitionLayout, error) {
 	var layout PartitionLayout
-	if err := json.Unmarshal([]byte(data), &layout); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&layout); err != nil {
 		return nil, fmt.Errorf("parsing partition layout: %w", err)
 	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return nil, fmt.Errorf("parsing partition layout: unexpected trailing content")
+	}
+
 	if len(layout.Partitions) == 0 {
 		return nil, fmt.Errorf("partition layout has no partitions")
 	}
@@ -256,12 +263,28 @@ func validateLVMConfig(lvm *LVMConfig, partitions []Partition) error {
 	if err := validateLVMPVPartition(lvm, partitions); err != nil {
 		return err
 	}
+	seenNames := make(map[string]bool)
 	for i, vol := range lvm.Volumes {
 		if err := validateLVMVolume(i, vol); err != nil {
 			return err
 		}
+		if seenNames[vol.Name] {
+			return fmt.Errorf("lvm volume %d: duplicate name %q", i+1, vol.Name)
+		}
+		seenNames[vol.Name] = true
+		if usesAllRemainingLVMExtents(vol) && i != len(lvm.Volumes)-1 {
+			return fmt.Errorf("lvm volume %d (%s): fill-remaining volume must be the last lvm volume", i+1, vol.Name)
+		}
 	}
 	return nil
+}
+
+func usesAllRemainingLVMExtents(vol LVVolume) bool {
+	if vol.SizeMB > 0 {
+		return false
+	}
+	extents := strings.TrimSpace(vol.Extents)
+	return extents == "" || strings.EqualFold(extents, "100%FREE")
 }
 
 func validateUniqueMountpoints(partitions []Partition, lvm *LVMConfig) error {

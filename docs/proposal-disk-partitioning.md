@@ -1,13 +1,14 @@
 # Proposal: Custom Disk Partitioning
 
-## Status: Accepted
+## Status: Implemented
 
 Implementation status (current PR scope): Phase 1 implemented and reviewed.
 
 Implemented in Phase 1:
 - `ParsePartitionLayout` validation (GPT-only schema, root/mountpoint checks,
   fill-remaining position validation)
-- `ApplyPartitionLayout` with input guards (nil, empty, device validation)
+- `ApplyPartitionLayout` with input guards (nil, empty) plus orchestrator-side
+  device validation before destructive steps
   and sgdisk-based GPT partitioning + filesystem formatting
 - Optional LVM creation from layout (`pvcreate`/`vgcreate`/`lvcreate`) with
   full input validation (PV bounds, VG/LV name checks)

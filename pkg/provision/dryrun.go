@@ -104,6 +104,14 @@ func (o *Orchestrator) DryRun(ctx context.Context) error {
 
 func (o *Orchestrator) dryRunConfigValidation(_ context.Context) DryRunResult {
 	if len(o.cfg.ImageURLs) == 0 {
+		if o.cfg.PartitionLayout != nil {
+			if o.cfg.Hostname == "" {
+				return DryRunResult{Status: DryRunWarn,
+					Message: "layout-only mode configured with no image URLs; hostname not set"}
+			}
+			return DryRunResult{Status: DryRunPass,
+				Message: "configuration valid (layout-only mode; image streaming disabled)"}
+		}
 		return DryRunResult{Status: DryRunFail, Message: "no image URLs configured"}
 	}
 	if o.cfg.Hostname == "" {
@@ -114,6 +122,9 @@ func (o *Orchestrator) dryRunConfigValidation(_ context.Context) DryRunResult {
 
 func (o *Orchestrator) dryRunImageReachability(ctx context.Context) DryRunResult {
 	if len(o.cfg.ImageURLs) == 0 {
+		if o.cfg.PartitionLayout != nil {
+			return DryRunResult{Status: DryRunWarn, Message: "layout-only mode: skipping image reachability check"}
+		}
 		return DryRunResult{Status: DryRunFail, Message: "no image URLs configured"}
 	}
 	httpClient := &http.Client{Timeout: 10 * time.Second}
@@ -213,6 +224,9 @@ func (o *Orchestrator) dryRunHealthChecks(_ context.Context) DryRunResult {
 }
 
 func (o *Orchestrator) dryRunImageChecksum(_ context.Context) DryRunResult {
+	if len(o.cfg.ImageURLs) == 0 && o.cfg.PartitionLayout != nil {
+		return DryRunResult{Status: DryRunWarn, Message: "layout-only mode: skipping image checksum check"}
+	}
 	if o.cfg.ImageChecksum == "" {
 		return DryRunResult{Status: DryRunWarn,
 			Message: "no image checksum configured - integrity cannot be verified"}

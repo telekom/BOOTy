@@ -345,6 +345,10 @@ func (o *Orchestrator) FirmwareChanged() bool {
 }
 
 func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
+	if err := o.validatePartitionLayoutConfig(); err != nil {
+		return err
+	}
+
 	if o.cfg.SecureErase {
 		o.log.Info("Secure erase enabled, performing hardware-level erase")
 		return o.disk.SecureEraseAllDisks(ctx)
@@ -352,7 +356,42 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 	return o.disk.WipeAllDisks(ctx)
 }
 
+func (o *Orchestrator) validatePartitionLayoutConfig() error {
+	if o.cfg.PartitionLayout == nil {
+		return nil
+	}
+
+	if len(o.cfg.ImageURLs) > 0 {
+		return fmt.Errorf("partition layout with image urls is not supported yet; leave IMAGE unset until rootfs extraction support is implemented")
+	}
+
+	layoutDevice := strings.TrimSpace(o.cfg.PartitionLayout.Device)
+	if layoutDevice == "" {
+		return nil
+	}
+
+	if o.cfg.DiskDevice != "" && o.cfg.DiskDevice != layoutDevice {
+		return fmt.Errorf("disk device conflict: DISK_DEVICE=%q differs from PARTITION_LAYOUT.device=%q", o.cfg.DiskDevice, layoutDevice)
+	}
+
+	info, err := os.Stat(layoutDevice)
+	if err != nil {
+		return fmt.Errorf("partition layout device %q: %w", layoutDevice, err)
+	}
+	if info.Mode()&os.ModeDevice == 0 || info.Mode()&os.ModeCharDevice != 0 {
+		return fmt.Errorf("partition layout device %q is not a block device", layoutDevice)
+	}
+
+	return nil
+}
+
 func (o *Orchestrator) detectDisk(ctx context.Context) error {
+	if o.cfg.PartitionLayout != nil && o.cfg.PartitionLayout.Device != "" {
+		o.targetDisk = o.cfg.PartitionLayout.Device
+		o.log.Info("using partition layout device override", "device", o.targetDisk)
+		return nil
+	}
+
 	// If a specific disk device is configured, validate and use it directly.
 	if o.cfg.DiskDevice != "" {
 		info, err := os.Stat(o.cfg.DiskDevice)

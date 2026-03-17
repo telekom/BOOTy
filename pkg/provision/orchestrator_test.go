@@ -156,6 +156,49 @@ func TestWipeOrSecureEraseDisks(t *testing.T) {
 	}
 }
 
+func TestWipeOrSecureEraseDisksRejectsPartitionLayoutWithImageURLs(t *testing.T) {
+	cfg := &config.MachineConfig{
+		ImageURLs: []string{"http://images.local/node.img.zst"},
+		PartitionLayout: &config.PartitionLayout{
+			Table: "gpt",
+			Partitions: []config.Partition{
+				{Label: "root", Mountpoint: "/"},
+			},
+		},
+	}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err := o.wipeOrSecureEraseDisks(context.Background())
+	if err == nil {
+		t.Fatal("expected error when partition layout is combined with image urls")
+	}
+	if !strings.Contains(err.Error(), "partition layout with image urls is not supported yet") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestWipeOrSecureEraseDisksRejectsConflictingDeviceOverrides(t *testing.T) {
+	cfg := &config.MachineConfig{
+		DiskDevice: "/dev/sda",
+		PartitionLayout: &config.PartitionLayout{
+			Device: "/dev/sdb",
+			Table:  "gpt",
+			Partitions: []config.Partition{
+				{Label: "root", Mountpoint: "/"},
+			},
+		},
+	}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err := o.wipeOrSecureEraseDisks(context.Background())
+	if err == nil {
+		t.Fatal("expected error for conflicting disk device overrides")
+	}
+	if !strings.Contains(err.Error(), "disk device conflict") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestCollectInventoryDisabled(t *testing.T) {
 	cfg := &config.MachineConfig{InventoryEnabled: false}
 	provider := &mockProvider{}
@@ -498,6 +541,26 @@ func TestResolveRootFromLayoutPrefersLVMRoot(t *testing.T) {
 	}
 	if o.rootPartition != "/dev/sysvg/root" {
 		t.Errorf("rootPartition = %q, want /dev/sysvg/root", o.rootPartition)
+	}
+}
+
+func TestDetectDiskUsesPartitionLayoutDeviceOverride(t *testing.T) {
+	cfg := &config.MachineConfig{
+		PartitionLayout: &config.PartitionLayout{
+			Device: "/dev/disk/by-id/test-disk",
+			Table:  "gpt",
+			Partitions: []config.Partition{
+				{Label: "root", Mountpoint: "/"},
+			},
+		},
+	}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	if err := o.detectDisk(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if o.targetDisk != "/dev/disk/by-id/test-disk" {
+		t.Fatalf("targetDisk = %q, want /dev/disk/by-id/test-disk", o.targetDisk)
 	}
 }
 
