@@ -197,7 +197,7 @@ func ParsePartitionLayout(data string) (*PartitionLayout, error) {
 	if err := validatePartitions(layout.Partitions); err != nil {
 		return nil, err
 	}
-	if err := validateLVMConfig(layout.LVM, len(layout.Partitions)); err != nil {
+	if err := validateLVMConfig(layout.LVM, layout.Partitions); err != nil {
 		return nil, err
 	}
 	if err := validateRootPresence(layout.Partitions, layout.LVM); err != nil {
@@ -235,10 +235,22 @@ func validatePartitions(partitions []Partition) error {
 	return nil
 }
 
-func validateLVMConfig(lvm *LVMConfig, partitionCount int) error {
+func validateLVMConfig(lvm *LVMConfig, partitions []Partition) error {
 	if lvm == nil {
 		return nil
 	}
+	if err := validateLVMPVPartition(lvm, partitions); err != nil {
+		return err
+	}
+	for i, vol := range lvm.Volumes {
+		if err := validateLVMVolume(i, vol); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateLVMPVPartition(lvm *LVMConfig, partitions []Partition) error {
 	if lvm.VolumeGroup == "" {
 		return fmt.Errorf("lvm: volumeGroup is required")
 	}
@@ -248,25 +260,41 @@ func validateLVMConfig(lvm *LVMConfig, partitionCount int) error {
 	if lvm.PVPartition < 1 {
 		return fmt.Errorf("lvm: pvPartition must be >= 1, got %d", lvm.PVPartition)
 	}
-	if lvm.PVPartition > partitionCount {
-		return fmt.Errorf("lvm: pvPartition %d exceeds partition count %d", lvm.PVPartition, partitionCount)
+	if lvm.PVPartition > len(partitions) {
+		return fmt.Errorf("lvm: pvPartition %d exceeds partition count %d", lvm.PVPartition, len(partitions))
 	}
-	for i, vol := range lvm.Volumes {
-		if vol.Name == "" {
-			return fmt.Errorf("lvm volume %d: name is required", i+1)
-		}
-		if !isValidLVMName(vol.Name) {
-			return fmt.Errorf("lvm volume %d: invalid name %q", i+1, vol.Name)
-		}
-		if vol.Mountpoint != "" && !strings.HasPrefix(vol.Mountpoint, "/") {
-			return fmt.Errorf("lvm volume %d (%s): mountpoint %q must be an absolute path", i+1, vol.Name, vol.Mountpoint)
-		}
-		if strings.ContainsAny(vol.Mountpoint, " \t\n\r") {
-			return fmt.Errorf("lvm volume %d (%s): mountpoint %q must not contain whitespace", i+1, vol.Name, vol.Mountpoint)
-		}
-		if !isSupportedFilesystem(vol.Filesystem) {
-			return fmt.Errorf("lvm volume %d (%s): unsupported filesystem %q", i+1, vol.Name, vol.Filesystem)
-		}
+
+	pvPart := partitions[lvm.PVPartition-1]
+	if pvPart.Mountpoint != "" {
+		return fmt.Errorf("lvm: pvPartition %d (%s) must not define mountpoint %q", lvm.PVPartition, pvPart.Label, pvPart.Mountpoint)
+	}
+	if pvPart.Filesystem != "" {
+		return fmt.Errorf("lvm: pvPartition %d (%s) must not define filesystem %q", lvm.PVPartition, pvPart.Label, pvPart.Filesystem)
+	}
+	return nil
+}
+
+func validateLVMVolume(index int, vol LVVolume) error {
+	if vol.Name == "" {
+		return fmt.Errorf("lvm volume %d: name is required", index+1)
+	}
+	if !isValidLVMName(vol.Name) {
+		return fmt.Errorf("lvm volume %d: invalid name %q", index+1, vol.Name)
+	}
+	if vol.Mountpoint != "" && !strings.HasPrefix(vol.Mountpoint, "/") {
+		return fmt.Errorf("lvm volume %d (%s): mountpoint %q must be an absolute path", index+1, vol.Name, vol.Mountpoint)
+	}
+	if strings.ContainsAny(vol.Mountpoint, " \t\n\r") {
+		return fmt.Errorf("lvm volume %d (%s): mountpoint %q must not contain whitespace", index+1, vol.Name, vol.Mountpoint)
+	}
+	if !isSupportedFilesystem(vol.Filesystem) {
+		return fmt.Errorf("lvm volume %d (%s): unsupported filesystem %q", index+1, vol.Name, vol.Filesystem)
+	}
+	if vol.SizeMB < 0 {
+		return fmt.Errorf("lvm volume %d (%s): sizeMB must be non-negative", index+1, vol.Name)
+	}
+	if vol.Extents != "" && vol.SizeMB > 0 {
+		return fmt.Errorf("lvm volume %d (%s): specify either sizeMB or extents, not both", index+1, vol.Name)
 	}
 	return nil
 }

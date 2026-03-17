@@ -167,6 +167,49 @@ func TestApplyPartitionLayoutEmptyDevice(t *testing.T) {
 	}
 }
 
+func TestApplyPartitionLayoutSkipsFormattingLvmPVPartition(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+	layout := &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "pv", SizeMB: 8192},
+			{Label: "root", Filesystem: "ext4", Mountpoint: "/"},
+		},
+		LVM: &config.LVMConfig{
+			VolumeGroup: "sysvg",
+			PVPartition: 1,
+		},
+	}
+
+	err := mgr.ApplyPartitionLayout(t.Context(), "/dev/sda", layout)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	formattedPV := false
+	formattedRoot := false
+	for _, call := range cmd.calls {
+		if call.name != "mkfs.ext4" || len(call.args) == 0 {
+			continue
+		}
+		target := call.args[len(call.args)-1]
+		if target == "/dev/sda1" {
+			formattedPV = true
+		}
+		if target == "/dev/sda2" {
+			formattedRoot = true
+		}
+	}
+
+	if formattedPV {
+		t.Fatal("expected LVM PV partition to be skipped for formatting")
+	}
+	if !formattedRoot {
+		t.Fatal("expected non-PV partition with filesystem to be formatted")
+	}
+}
+
 func TestParsePartitionLayout_MissingLabel(t *testing.T) {
 	input := `{"table":"gpt","partitions":[{"sizeMB":512,"filesystem":"vfat"}]}`
 	_, err := config.ParsePartitionLayout(input)
@@ -248,6 +291,7 @@ func TestPartitionDevicePath(t *testing.T) {
 	}{
 		{"/dev/sda", 1, "/dev/sda1"},
 		{"/dev/nvme0n1", 1, "/dev/nvme0n1p1"},
+		{"/tmp/nvme-dir/sda", 1, "/tmp/nvme-dir/sda1"},
 	}
 	for _, tc := range tests {
 		got := PartitionDevicePath(tc.device, tc.num)

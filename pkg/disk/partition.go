@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -65,6 +66,10 @@ func (m *Manager) ApplyPartitionLayout(ctx context.Context, device string, layou
 
 	// Format partitions.
 	for i, part := range layout.Partitions {
+		if layout.LVM != nil && layout.LVM.PVPartition == i+1 {
+			slog.Info("Skipping format for LVM PV partition", "partition", i+1, "label", part.Label)
+			continue
+		}
 		if part.Filesystem == "" {
 			continue
 		}
@@ -133,7 +138,8 @@ func resolveTypeGUID(part config.Partition) string {
 func PartitionDevicePath(device string, num int) string {
 	// NVMe: /dev/nvme0n1 → /dev/nvme0n1p1
 	// SATA: /dev/sda → /dev/sda1
-	if strings.Contains(device, "nvme") || strings.Contains(device, "loop") || strings.Contains(device, "mmcblk") {
+	devName := filepath.Base(device)
+	if strings.HasPrefix(devName, "nvme") || strings.HasPrefix(devName, "loop") || strings.HasPrefix(devName, "mmcblk") {
 		return fmt.Sprintf("%sp%d", device, num)
 	}
 	return fmt.Sprintf("%s%d", device, num)
