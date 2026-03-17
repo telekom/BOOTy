@@ -353,7 +353,7 @@ func (o *Orchestrator) setupNVMeNamespaces(ctx context.Context) error {
 	}
 	cfgs, err := disk.ParseNVMeConfig(o.cfg.NVMeNamespaces)
 	if err != nil {
-		return fmt.Errorf("parsing NVMe namespace layout: %w", err)
+		return fmt.Errorf("parsing nvme namespace layout: %w", err)
 	}
 	created, err := o.disk.ApplyNVMeNamespaceLayout(ctx, cfgs)
 	if err != nil {
@@ -365,7 +365,7 @@ func (o *Orchestrator) setupNVMeNamespaces(ctx context.Context) error {
 		totalCreated += len(nsids)
 	}
 	if totalCreated == 0 {
-		return fmt.Errorf("NVMe namespace layout applied but no namespaces were created; check controller support and configuration")
+		return fmt.Errorf("nvme namespace layout applied but no namespaces were created; check controller support and configuration")
 	}
 
 	// After namespace creation set DiskDevice to the first created namespace on
@@ -375,7 +375,7 @@ func (o *Orchestrator) setupNVMeNamespaces(ctx context.Context) error {
 		nsids := created[firstController]
 		if len(nsids) > 0 {
 			o.cfg.DiskDevice = firstController + "n" + nsids[0]
-			o.log.Info("Set disk device from NVMe namespace layout", "device", o.cfg.DiskDevice)
+			o.log.Info("set disk device from nvme namespace layout", "device", o.cfg.DiskDevice)
 		}
 	}
 	return nil

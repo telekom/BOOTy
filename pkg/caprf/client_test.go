@@ -895,6 +895,37 @@ func TestParseVarsSingleQuoteStripping(t *testing.T) {
 	}
 }
 
+func TestParseVarsUnmatchedQuotesPreserved(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "single-leading double-trailing",
+			input: `TOKEN='abc"`,
+			want:  `'abc"`,
+		},
+		{
+			name:  "double-leading single-trailing",
+			input: `TOKEN="abc'`,
+			want:  `"abc'`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := ParseVars(strings.NewReader(tc.input))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Token != tc.want {
+				t.Fatalf("Token = %q, want %q", cfg.Token, tc.want)
+			}
+		})
+	}
+}
+
 func TestReportFirmware(t *testing.T) {
 	var received []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

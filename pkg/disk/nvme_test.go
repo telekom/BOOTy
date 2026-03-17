@@ -151,12 +151,6 @@ func TestParseNVMeConfigValidation(t *testing.T) {
 	}
 }
 
-func TestParseHex(t *testing.T) {
-	// parseHex was removed in favor of JSON-based namespace listing.
-	// This test is retained as a placeholder to document the change.
-	t.Skip("parseHex removed: NVMeListNamespaces now uses JSON output")
-}
-
 func TestParseNVMeConfig_NegativeSizePct(t *testing.T) {
 	input := `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":-10}]}]`
 	_, err := ParseNVMeConfig(input)

@@ -28,7 +28,6 @@ type NVMeNamespace struct {
 	Label     string `json:"label"`               // Human-readable label
 	SizePct   int    `json:"sizePct"`             // Percentage of total capacity
 	BlockSize int    `json:"blockSize,omitempty"` // 512 or 4096 (default: 512)
-	LBAFIndex int    `json:"lbafIndex,omitempty"` // Explicit LBA format index (overrides blockSize heuristic)
 }
 
 // nvmeControllerPathRE validates that a controller path looks like /dev/nvme0, /dev/nvme1, etc.
@@ -39,7 +38,7 @@ func checkNVMeControllerUniqueness(configs []NVMeNamespaceConfig) error {
 	seen := make(map[string]bool, len(configs))
 	for _, cfg := range configs {
 		if seen[cfg.Controller] {
-			return fmt.Errorf("duplicate controller %q in NVMe namespace config", cfg.Controller)
+			return fmt.Errorf("duplicate controller %q in nvme namespace config", cfg.Controller)
 		}
 		seen[cfg.Controller] = true
 	}
@@ -50,10 +49,10 @@ func checkNVMeControllerUniqueness(configs []NVMeNamespaceConfig) error {
 func ParseNVMeConfig(data string) ([]NVMeNamespaceConfig, error) {
 	var configs []NVMeNamespaceConfig
 	if err := json.Unmarshal([]byte(data), &configs); err != nil {
-		return nil, fmt.Errorf("parsing NVMe namespace config: %w", err)
+		return nil, fmt.Errorf("parsing nvme namespace config: %w", err)
 	}
 	if len(configs) == 0 {
-		return nil, fmt.Errorf("NVMe namespace config must contain at least one controller entry")
+		return nil, fmt.Errorf("nvme namespace config must contain at least one controller entry")
 	}
 	if err := checkNVMeControllerUniqueness(configs); err != nil {
 		return nil, err
@@ -228,7 +227,7 @@ func (m *Manager) CreateNVMeNamespace(ctx context.Context, controller string, si
 		bs = 512
 	}
 
-	slog.Info("Creating NVMe namespace", "controller", controller, "blocks", sizeBlocks, "blockSize", bs)
+	slog.Info("creating nvme namespace", "controller", controller, "blocks", sizeBlocks, "blockSize", bs)
 
 	out, err := m.cmd.Run(ctx, "nvme", "create-ns", controller,
 		"-s", fmt.Sprintf("%d", sizeBlocks),
@@ -275,7 +274,7 @@ func (m *Manager) FormatNVMeNamespace(ctx context.Context, device string, blockS
 		lbaf = "0" // common LBAF index for 512-byte sectors
 	}
 
-	slog.Info("Formatting NVMe namespace", "device", device, "blockSize", blockSize)
+	slog.Info("formatting nvme namespace", "device", device, "blockSize", blockSize)
 
 	out, err := m.cmd.Run(ctx, "nvme", "format", device, "-l", lbaf, "-s", "1")
 	if err != nil {
@@ -338,7 +337,7 @@ func (m *Manager) applyControllerLayout(ctx context.Context, cfg NVMeNamespaceCo
 			return nil, err
 		}
 		created = append(created, nsid)
-		slog.Info("Created NVMe namespace", "controller", controller, "nsid", nsid, "label", ns.Label, "sizePct", ns.SizePct)
+		slog.Info("created nvme namespace", "controller", controller, "nsid", nsid, "label", ns.Label, "sizePct", ns.SizePct)
 	}
 	return created, nil
 }
@@ -363,7 +362,7 @@ func (m *Manager) nvmeControllerCapacity(ctx context.Context, controller string)
 // using the controller's full capacity at 512-byte block size. Used during deprovisioning
 // to return the drive to a single-namespace factory state.
 func (m *Manager) NVMeResetNamespaces(ctx context.Context, controller string) error {
-	slog.Info("Resetting NVMe namespaces to factory default", "controller", controller)
+	slog.Info("resetting nvme namespaces to factory default", "controller", controller)
 
 	if err := m.deleteAllNamespaces(ctx, controller); err != nil {
 		return err
@@ -385,7 +384,7 @@ func (m *Manager) NVMeResetNamespaces(ctx context.Context, controller string) er
 		return fmt.Errorf("attaching default namespace: %w", err)
 	}
 
-	slog.Info("NVMe namespaces reset to factory default", "controller", controller)
+	slog.Info("nvme namespaces reset to factory default", "controller", controller)
 	return nil
 }
 
