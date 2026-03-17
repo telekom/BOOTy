@@ -64,22 +64,33 @@ func (m *Manager) ApplyPartitionLayout(ctx context.Context, device string, layou
 		return fmt.Errorf("partprobe after layout: %w", err)
 	}
 
-	// Format partitions.
+	if err := m.formatLayoutPartitions(ctx, device, layout); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (m *Manager) formatLayoutPartitions(ctx context.Context, device string, layout *config.PartitionLayout) error {
 	for i, part := range layout.Partitions {
-		if layout.LVM != nil && layout.LVM.PVPartition == i+1 {
-			slog.Info("Skipping format for LVM PV partition", "partition", i+1, "label", part.Label)
+		partNum := i + 1
+		if isLVMPVPartition(layout, partNum) {
+			slog.Info("Skipping format for LVM PV partition", "partition", partNum, "label", part.Label)
 			continue
 		}
 		if part.Filesystem == "" {
 			continue
 		}
-		partDev := partitionDevice(device, i+1)
+		partDev := partitionDevice(device, partNum)
 		if err := m.formatPartition(ctx, partDev, part.Filesystem); err != nil {
-			return fmt.Errorf("formatting partition %d: %w", i+1, err)
+			return fmt.Errorf("formatting partition %d: %w", partNum, err)
 		}
 	}
-
 	return nil
+}
+
+func isLVMPVPartition(layout *config.PartitionLayout, partNum int) bool {
+	return layout != nil && layout.LVM != nil && layout.LVM.PVPartition == partNum
 }
 
 // GenerateFstab creates an fstab file for the partition layout.
