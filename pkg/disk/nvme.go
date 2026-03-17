@@ -256,23 +256,13 @@ func (m *Manager) AttachNVMeNamespace(ctx context.Context, controller, nsid stri
 }
 
 // FormatNVMeNamespace performs a secure erase and reformat of a namespace.
-// lbafIndex selects the device LBA format; use -1 to auto-select based on blockSize
-// (0=512-byte sectors, 1=4096-byte sectors — valid only when the device LBAF table
-// matches this common ordering; prefer explicit lbafIndex from nvme id-ns when possible).
-//
-// TODO: LBAF index-to-block-size mapping is hard-coded (0→512, 1→4096). NVMe drives
-// can have different orderings. Query supported formats via "nvme id-ns" to determine
-// the correct LBAF index for the desired block size.
+// lbafIndex must be provided explicitly from device capabilities (e.g. nvme id-ns),
+// because LBAF index ordering is vendor/device-specific.
 func (m *Manager) FormatNVMeNamespace(ctx context.Context, device string, blockSize, lbafIndex int) error {
-	var lbaf string
-	switch {
-	case lbafIndex >= 0:
-		lbaf = fmt.Sprintf("%d", lbafIndex)
-	case blockSize == 4096:
-		lbaf = "1" // common LBAF index for 4096-byte sectors; may differ by device
-	default:
-		lbaf = "0" // common LBAF index for 512-byte sectors
+	if lbafIndex < 0 {
+		return fmt.Errorf("formatting %s: explicit lbafIndex is required", device)
 	}
+	lbaf := fmt.Sprintf("%d", lbafIndex)
 
 	slog.Info("formatting nvme namespace", "device", device, "blockSize", blockSize)
 

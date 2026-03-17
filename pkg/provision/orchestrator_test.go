@@ -70,7 +70,7 @@ func TestSetupNVMeNamespaces_InvalidJSON(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), "parsing NVMe namespace layout") {
+	if !strings.Contains(err.Error(), "parsing nvme namespace layout") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

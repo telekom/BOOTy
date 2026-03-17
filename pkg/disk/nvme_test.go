@@ -281,6 +281,26 @@ func TestNVMeSupportsMultiNS_Single(t *testing.T) {
 	}
 }
 
+func TestFormatNVMeNamespaceRequiresExplicitLBAFIndex(t *testing.T) {
+	mgr := NewManager(newMockCommander())
+
+	err := mgr.FormatNVMeNamespace(t.Context(), "/dev/nvme0n1", 4096, -1)
+	if err == nil {
+		t.Fatal("expected error when lbafIndex is omitted")
+	}
+}
+
+func TestFormatNVMeNamespaceWithExplicitLBAFIndex(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("nvme format", []byte(""), nil)
+	mgr := NewManager(cmd)
+
+	err := mgr.FormatNVMeNamespace(t.Context(), "/dev/nvme0n1", 4096, 3)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestParseNVMeConfig_DuplicateController(t *testing.T) {
 	input := `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":100}]},{"controller":"/dev/nvme0","namespaces":[{"label":"data","sizePct":100}]}]`
 	_, err := ParseNVMeConfig(input)
