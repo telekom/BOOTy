@@ -336,7 +336,9 @@ func ParseVars(r io.Reader) (*config.MachineConfig, error) {
 			}
 		}
 
-		applyVar(cfg, key, value)
+		if err := applyVar(cfg, key, value); err != nil {
+			return nil, fmt.Errorf("parse var %s: %w", key, err)
+		}
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -346,14 +348,14 @@ func ParseVars(r io.Reader) (*config.MachineConfig, error) {
 	return cfg, nil
 }
 
-func applyVar(cfg *config.MachineConfig, key, value string) {
+func applyVar(cfg *config.MachineConfig, key, value string) error {
 	if applyStringVar(cfg, key, value) {
-		return
+		return nil
 	}
 	if applyUint32Var(cfg, key, value) {
-		return
+		return nil
 	}
-	applySpecialVar(cfg, key, value)
+	return applySpecialVar(cfg, key, value)
 }
 
 func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
@@ -443,9 +445,9 @@ func applyUint32Var(cfg *config.MachineConfig, key, value string) bool {
 	return false
 }
 
-func applySpecialVar(cfg *config.MachineConfig, key, value string) {
+func applySpecialVar(cfg *config.MachineConfig, key, value string) error {
 	if applyBoolIntVar(cfg, key, value) {
-		return
+		return nil
 	}
 
 	switch key {
@@ -454,6 +456,8 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) {
 	case "POST_PROVISION_CMDS":
 		cfg.PostProvisionCmds = strings.Split(value, ";")
 	}
+
+	return nil
 }
 
 // applyBoolIntVar handles boolean and integer special vars. Returns true if handled.

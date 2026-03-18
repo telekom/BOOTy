@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 )
 
@@ -201,6 +202,11 @@ func ParsePartitionLayout(data string) (*PartitionLayout, error) {
 	if layout.Table != "gpt" {
 		return nil, fmt.Errorf("unsupported partition table %q, only \"gpt\" is supported", layout.Table)
 	}
+	device, err := normalizePartitionLayoutDevice(layout.Device)
+	if err != nil {
+		return nil, err
+	}
+	layout.Device = device
 	if err := validatePartitions(layout.Partitions); err != nil {
 		return nil, err
 	}
@@ -216,42 +222,90 @@ func ParsePartitionLayout(data string) (*PartitionLayout, error) {
 	return &layout, nil
 }
 
+func normalizePartitionLayoutDevice(device string) (string, error) {
+	trimmed := strings.TrimSpace(device)
+	if trimmed == "" {
+		return "", nil
+	}
+	if strings.ContainsAny(trimmed, " \t\n\r") {
+		return "", fmt.Errorf("partition layout device %q must not contain whitespace", device)
+	}
+	if !filepath.IsAbs(trimmed) {
+		return "", fmt.Errorf("partition layout device %q must be an absolute path", device)
+	}
+	return trimmed, nil
+}
+
 // validatePartitions checks partition definitions for required fields.
 func validatePartitions(partitions []Partition) error {
 	fillCount := 0
 	seen := make(map[string]bool)
 	for i, part := range partitions {
-		if part.Label == "" {
-			return fmt.Errorf("partition %d: label is required", i+1)
-		}
-		if !isValidPartitionLabel(part.Label) {
-			return fmt.Errorf("partition %d: label %q contains invalid characters or exceeds 36 characters", i+1, part.Label)
-		}
-		if seen[part.Label] {
-			return fmt.Errorf("partition %d: duplicate label %q", i+1, part.Label)
-		}
-		seen[part.Label] = true
-		if part.Mountpoint != "" && !strings.HasPrefix(part.Mountpoint, "/") {
-			return fmt.Errorf("partition %d (%s): mountpoint %q must be an absolute path", i+1, part.Label, part.Mountpoint)
-		}
-		if strings.ContainsAny(part.Mountpoint, " \t\n\r") {
-			return fmt.Errorf("partition %d (%s): mountpoint %q must not contain whitespace", i+1, part.Label, part.Mountpoint)
-		}
-		if part.SizeMB < 0 {
-			return fmt.Errorf("partition %d (%s): sizeMB must be non-negative", i+1, part.Label)
-		}
-		if !isSupportedFilesystem(part.Filesystem) {
-			return fmt.Errorf("partition %d (%s): unsupported filesystem %q", i+1, part.Label, part.Filesystem)
+		if err := validatePartitionEntry(i, part, len(partitions), seen); err != nil {
+			return err
 		}
 		if part.SizeMB == 0 {
 			fillCount++
-			if i != len(partitions)-1 {
-				return fmt.Errorf("partition %d (%s): sizeMB=0 (fill remaining) must be the last partition", i+1, part.Label)
-			}
 		}
 	}
 	if fillCount > 1 {
 		return fmt.Errorf("only one partition may use sizeMB=0 (fill remaining), got %d", fillCount)
+	}
+	return nil
+}
+
+func validatePartitionEntry(index int, part Partition, partitionCount int, seen map[string]bool) error {
+	if err := validatePartitionLabel(index, part.Label, seen); err != nil {
+		return err
+	}
+	if err := validatePartitionMountpoint(index, part); err != nil {
+		return err
+	}
+	if !isSupportedFilesystem(part.Filesystem) {
+		return fmt.Errorf("partition %d (%s): unsupported filesystem %q", index+1, part.Label, part.Filesystem)
+	}
+	if err := validatePartitionSize(index, part, partitionCount); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validatePartitionLabel(index int, label string, seen map[string]bool) error {
+	if label == "" {
+		return fmt.Errorf("partition %d: label is required", index+1)
+	}
+	if !isValidPartitionLabel(label) {
+		return fmt.Errorf("partition %d: label %q contains invalid characters or exceeds 36 characters", index+1, label)
+	}
+	if seen[label] {
+		return fmt.Errorf("partition %d: duplicate label %q", index+1, label)
+	}
+	seen[label] = true
+	return nil
+}
+
+func validatePartitionMountpoint(index int, part Partition) error {
+	if part.Mountpoint != "" && !strings.HasPrefix(part.Mountpoint, "/") {
+		return fmt.Errorf("partition %d (%s): mountpoint %q must be an absolute path", index+1, part.Label, part.Mountpoint)
+	}
+	if strings.ContainsAny(part.Mountpoint, " \t\n\r") {
+		return fmt.Errorf("partition %d (%s): mountpoint %q must not contain whitespace", index+1, part.Label, part.Mountpoint)
+	}
+	if part.Mountpoint != "" && part.Filesystem == "" {
+		return fmt.Errorf("partition %d (%s): mountpoint %q requires a filesystem", index+1, part.Label, part.Mountpoint)
+	}
+	if part.Filesystem == "swap" && part.Mountpoint != "" {
+		return fmt.Errorf("partition %d (%s): swap partition must not define mountpoint %q", index+1, part.Label, part.Mountpoint)
+	}
+	return nil
+}
+
+func validatePartitionSize(index int, part Partition, partitionCount int) error {
+	if part.SizeMB < 0 {
+		return fmt.Errorf("partition %d (%s): sizeMB must be non-negative", index+1, part.Label)
+	}
+	if part.SizeMB == 0 && index != partitionCount-1 {
+		return fmt.Errorf("partition %d (%s): sizeMB=0 (fill remaining) must be the last partition", index+1, part.Label)
 	}
 	return nil
 }
@@ -353,15 +407,35 @@ func validateLVMVolume(index int, vol LVVolume) error {
 	if !isValidLVMName(vol.Name) {
 		return fmt.Errorf("lvm volume %d: invalid name %q", index+1, vol.Name)
 	}
+	if err := validateLVMVolumeMountpoint(index, vol); err != nil {
+		return err
+	}
+	if !isSupportedFilesystem(vol.Filesystem) {
+		return fmt.Errorf("lvm volume %d (%s): unsupported filesystem %q", index+1, vol.Name, vol.Filesystem)
+	}
+	if err := validateLVMVolumeSize(index, vol); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateLVMVolumeMountpoint(index int, vol LVVolume) error {
 	if vol.Mountpoint != "" && !strings.HasPrefix(vol.Mountpoint, "/") {
 		return fmt.Errorf("lvm volume %d (%s): mountpoint %q must be an absolute path", index+1, vol.Name, vol.Mountpoint)
 	}
 	if strings.ContainsAny(vol.Mountpoint, " \t\n\r") {
 		return fmt.Errorf("lvm volume %d (%s): mountpoint %q must not contain whitespace", index+1, vol.Name, vol.Mountpoint)
 	}
-	if !isSupportedFilesystem(vol.Filesystem) {
-		return fmt.Errorf("lvm volume %d (%s): unsupported filesystem %q", index+1, vol.Name, vol.Filesystem)
+	if vol.Mountpoint != "" && vol.Filesystem == "" {
+		return fmt.Errorf("lvm volume %d (%s): mountpoint %q requires a filesystem", index+1, vol.Name, vol.Mountpoint)
 	}
+	if vol.Filesystem == "swap" && vol.Mountpoint != "" {
+		return fmt.Errorf("lvm volume %d (%s): swap volume must not define mountpoint %q", index+1, vol.Name, vol.Mountpoint)
+	}
+	return nil
+}
+
+func validateLVMVolumeSize(index int, vol LVVolume) error {
 	if vol.SizeMB < 0 {
 		return fmt.Errorf("lvm volume %d (%s): sizeMB must be non-negative", index+1, vol.Name)
 	}

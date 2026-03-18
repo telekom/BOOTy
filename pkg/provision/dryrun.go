@@ -103,15 +103,16 @@ func (o *Orchestrator) DryRun(ctx context.Context) error {
 }
 
 func (o *Orchestrator) dryRunConfigValidation(_ context.Context) DryRunResult {
-	if len(o.cfg.ImageURLs) == 0 {
-		if o.cfg.PartitionLayout != nil {
-			if o.cfg.Hostname == "" {
-				return DryRunResult{Status: DryRunWarn,
-					Message: "layout-only mode configured with no image URLs; hostname not set"}
-			}
-			return DryRunResult{Status: DryRunPass,
-				Message: "configuration valid (layout-only mode; image streaming disabled)"}
+	if o.cfg.PartitionLayout != nil {
+		if len(o.cfg.ImageURLs) == 0 {
+			return DryRunResult{Status: DryRunFail,
+				Message: "partition layout without image urls is not supported yet; rootfs extraction support is still pending"}
 		}
+		return DryRunResult{Status: DryRunFail,
+			Message: "partition layout with image urls is not supported yet; leave IMAGE unset until rootfs extraction support is implemented"}
+	}
+
+	if len(o.cfg.ImageURLs) == 0 {
 		return DryRunResult{Status: DryRunFail, Message: "no image URLs configured"}
 	}
 	if o.cfg.Hostname == "" {
@@ -183,7 +184,7 @@ func validateDryRunImageURL(imgURL string) (scheme, redactedURL string, invalidR
 	scheme = strings.ToLower(strings.TrimSpace(parsedURL.Scheme))
 	if scheme != "http" && scheme != "https" && scheme != "oci" {
 		return "", redactedURL, &DryRunResult{Status: DryRunFail,
-			Message: fmt.Sprintf("unsupported URL scheme: %s", redactedURL)}
+			Message: fmt.Sprintf("unsupported URL scheme %q for %s", scheme, redactedURL)}
 	}
 
 	return scheme, redactedURL, nil

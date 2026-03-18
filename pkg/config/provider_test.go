@@ -211,3 +211,46 @@ func TestParsePartitionLayoutInvalidExtentsFormat(t *testing.T) {
 		t.Fatal("expected error for invalid extents format")
 	}
 }
+
+func TestParsePartitionLayoutTrimmedDevice(t *testing.T) {
+	input := `{"table":"gpt","device":"  /dev/sda  ","partitions":[{"label":"root","filesystem":"ext4","mountpoint":"/"}]}`
+	layout, err := ParsePartitionLayout(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if layout.Device != "/dev/sda" {
+		t.Fatalf("device = %q, want /dev/sda", layout.Device)
+	}
+}
+
+func TestParsePartitionLayoutRejectsRelativeDevice(t *testing.T) {
+	input := `{"table":"gpt","device":"dev/sda","partitions":[{"label":"root","filesystem":"ext4","mountpoint":"/"}]}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Fatal("expected error for relative device path")
+	}
+}
+
+func TestParsePartitionLayoutRejectsDeviceWithWhitespace(t *testing.T) {
+	input := `{"table":"gpt","device":"/dev/my disk","partitions":[{"label":"root","filesystem":"ext4","mountpoint":"/"}]}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Fatal("expected error for whitespace in device path")
+	}
+}
+
+func TestParsePartitionLayoutMountpointRequiresFilesystem(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"root","mountpoint":"/"}]}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Fatal("expected error when mountpoint is set without filesystem")
+	}
+}
+
+func TestParsePartitionLayoutLVMMountpointRequiresFilesystem(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"pv","sizeMB":8192}],"lvm":{"volumeGroup":"sysvg","pvPartition":1,"volumes":[{"name":"root","mountpoint":"/"}]}}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Fatal("expected error when lvm mountpoint is set without filesystem")
+	}
+}

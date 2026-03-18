@@ -1,8 +1,8 @@
 # Proposal: Custom Disk Partitioning
 
-## Status: Implemented
+## Status: Accepted
 
-Implementation status (current PR scope): Phase 1 implemented and reviewed.
+Implementation status (current PR scope): Phase 1 groundwork implemented; end-to-end partition-layout provisioning remains pending.
 
 Implemented in Phase 1:
 - `ParsePartitionLayout` validation (GPT-only schema, root/mountpoint checks,
@@ -17,6 +17,10 @@ Implemented in Phase 1:
   root/ESP resolution, stream-image skip when no image URLs configured,
   write-fstab after mount-root
 - Comprehensive unit tests with mockCommander for command-sequence verification
+
+Current runtime behavior:
+- BOOTy now fails fast when `PARTITION_LAYOUT` is set (with or without `IMAGE`)
+  to avoid destructive disk writes until rootfs extraction support is available.
 
 Still pending for full proposal closure:
 - End-to-end rootfs tarball extraction flow (instead of raw image assumptions)

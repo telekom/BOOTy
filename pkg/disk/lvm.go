@@ -62,16 +62,39 @@ func validateLVMApplyInputs(device string, layout *config.PartitionLayout) (*con
 	if lvm.PVPartition > len(layout.Partitions) {
 		return nil, "", fmt.Errorf("lvm.pvPartition %d exceeds partition count %d", lvm.PVPartition, len(layout.Partitions))
 	}
-	if strings.TrimSpace(lvm.VolumeGroup) == "" {
+	vgName := strings.TrimSpace(lvm.VolumeGroup)
+	if vgName == "" {
 		return nil, "", fmt.Errorf("lvm volumeGroup name is empty")
 	}
+	if !isValidLVMRuntimeName(vgName) {
+		return nil, "", fmt.Errorf("lvm volumeGroup name %q is invalid", lvm.VolumeGroup)
+	}
 	for i, vol := range lvm.Volumes {
-		if strings.TrimSpace(vol.Name) == "" {
+		lvName := strings.TrimSpace(vol.Name)
+		if lvName == "" {
 			return nil, "", fmt.Errorf("lvm volume %d: name is empty", i+1)
+		}
+		if !isValidLVMRuntimeName(lvName) {
+			return nil, "", fmt.Errorf("lvm volume %d: invalid name %q", i+1, vol.Name)
 		}
 	}
 
 	return lvm, partitionDevice(device, lvm.PVPartition), nil
+}
+
+func isValidLVMRuntimeName(name string) bool {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	if strings.HasPrefix(name, "-") || strings.HasPrefix(name, ".") {
+		return false
+	}
+	for _, c := range name {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '_' && c != '-' && c != '.' {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *Manager) createPhysicalVolume(ctx context.Context, pvDev string) error {

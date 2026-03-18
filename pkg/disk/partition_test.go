@@ -747,3 +747,45 @@ func TestApplyLVMConfigLvcreateError(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+func TestApplyLVMConfigRejectsUnsafeVGName(t *testing.T) {
+	mgr := NewManager(newMockCommander())
+	layout := &config.PartitionLayout{
+		Table:      "gpt",
+		Partitions: []config.Partition{{Label: "pv", SizeMB: 8192}},
+		LVM: &config.LVMConfig{
+			VolumeGroup: "-sysvg",
+			PVPartition: 1,
+			Volumes:     []config.LVVolume{{Name: "root", Filesystem: "ext4", Mountpoint: "/"}},
+		},
+	}
+
+	err := mgr.ApplyLVMConfig(t.Context(), "/dev/sda", layout)
+	if err == nil {
+		t.Fatal("expected error for unsafe volume group name")
+	}
+	if !strings.Contains(err.Error(), "invalid") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestApplyLVMConfigRejectsUnsafeLVName(t *testing.T) {
+	mgr := NewManager(newMockCommander())
+	layout := &config.PartitionLayout{
+		Table:      "gpt",
+		Partitions: []config.Partition{{Label: "pv", SizeMB: 8192}},
+		LVM: &config.LVMConfig{
+			VolumeGroup: "sysvg",
+			PVPartition: 1,
+			Volumes:     []config.LVVolume{{Name: "-root", Filesystem: "ext4", Mountpoint: "/"}},
+		},
+	}
+
+	err := mgr.ApplyLVMConfig(t.Context(), "/dev/sda", layout)
+	if err == nil {
+		t.Fatal("expected error for unsafe logical volume name")
+	}
+	if !strings.Contains(err.Error(), "invalid") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

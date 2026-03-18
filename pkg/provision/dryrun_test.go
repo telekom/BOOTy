@@ -118,7 +118,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 				Table:      "gpt",
 				Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
 			}},
-			expect: DryRunWarn,
+			expect: DryRunFail,
 		},
 		{
 			name: "layout-only with hostname",
@@ -129,7 +129,18 @@ func TestDryRunConfigValidation(t *testing.T) {
 					Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
 				},
 			},
-			expect: DryRunPass,
+			expect: DryRunFail,
+		},
+		{
+			name: "layout with image url",
+			cfg: &config.MachineConfig{
+				ImageURLs: []string{"http://example.com/img"},
+				PartitionLayout: &config.PartitionLayout{
+					Table:      "gpt",
+					Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
+				},
+			},
+			expect: DryRunFail,
 		},
 	}
 
@@ -294,6 +305,9 @@ func TestDryRunImageReachability_UnsupportedScheme(t *testing.T) {
 	result := o.dryRunImageReachability(context.Background())
 	if result.Status != DryRunFail {
 		t.Errorf("got %s, want fail for unsupported scheme: %s", result.Status, result.Message)
+	}
+	if !strings.Contains(result.Message, "ftp") {
+		t.Errorf("expected unsupported scheme in message, got %q", result.Message)
 	}
 }
 

@@ -169,14 +169,14 @@ func TestParseVarsPartitionLayoutSingleQuoted(t *testing.T) {
 	}
 }
 
-func TestParseVarsPartitionLayoutInvalidIgnored(t *testing.T) {
+func TestParseVarsPartitionLayoutInvalidFails(t *testing.T) {
 	input := `export PARTITION_LAYOUT='{"table":"gpt","partitions":[{"filesystem":"ext4","mountpoint":"/"}]}'`
-	cfg, err := ParseVars(strings.NewReader(input))
-	if err != nil {
-		t.Fatal(err)
+	_, err := ParseVars(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("expected error for invalid partition layout")
 	}
-	if cfg.PartitionLayout != nil {
-		t.Fatalf("expected invalid partition layout to be ignored, got %+v", cfg.PartitionLayout)
+	if !strings.Contains(err.Error(), "invalid PARTITION_LAYOUT") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

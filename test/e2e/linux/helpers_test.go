@@ -92,7 +92,7 @@ func createRawLoopDevice(t *testing.T, sizeMB int) string {
 		t.Fatalf("truncate: %s: %v", out, err)
 	}
 
-	out, err := exec.CommandContext(ctx, "losetup", "--find", "--show", f.Name()).Output()
+	out, err := exec.CommandContext(ctx, "losetup", "--find", "--show", "--partscan", f.Name()).Output()
 	if err != nil {
 		os.Remove(f.Name())
 		t.Fatalf("losetup: %v", err)
