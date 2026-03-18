@@ -186,7 +186,7 @@ jobs:
             TARGET_ARG="--target=gobgp"
             IMAGE_TAG="${VERSION}-gobgp"
           fi
-          IMAGE=ghcr.io/${{ github.repository }}:${IMAGE_TAG}
+          IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]'):${IMAGE_TAG}
           docker buildx build --platform linux/amd64,linux/arm64 \
             ${TARGET_ARG} \
             --push \
@@ -203,7 +203,7 @@ jobs:
           if [ "${{ matrix.flavor }}" = "gobgp" ]; then
             IMAGE_TAG="${VERSION}-gobgp"
           fi
-          IMAGE=ghcr.io/${{ github.repository }}:${IMAGE_TAG}
+          IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]'):${IMAGE_TAG}
           cosign sign --yes "${IMAGE}"
 
   changelog:
