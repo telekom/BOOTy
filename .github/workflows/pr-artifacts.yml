@@ -1,0 +1,47 @@
+name: PR Artifact Publishing
+
+on:
+  push:
+    branches-ignore:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish-pr-iso:
+    name: Publish PR BOOTy GoBGP ISO
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build GoBGP ISO artifact
+        run: |
+          docker buildx build --platform linux/amd64 --target gobgp-iso \
+            --output type=local,dest=out-gobgp-iso -f initrd.Dockerfile .
+
+          test -f out-gobgp-iso/booty-gobgp.iso
+          sha256sum out-gobgp-iso/booty-gobgp.iso > out-gobgp-iso/booty-gobgp.iso.sha256
+
+      - name: Publish artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: booty-gobgp-pr-iso
+          path: |
+            out-gobgp-iso/booty-gobgp.iso
+            out-gobgp-iso/booty-gobgp.iso.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Print download hint
+        run: |
+          echo "nightly.link URL (latest artifact on branch):"
+          echo "https://nightly.link/${{ github.repository }}/workflows/pr-artifacts.yml/${{ github.ref_name }}/booty-gobgp-pr-iso.zip"

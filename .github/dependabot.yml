@@ -21,6 +21,11 @@ updates:
     schedule:
       interval: weekly
 
+  - package-ecosystem: docker
+    directory: /test/e2e/assets/busybox
+    schedule:
+      interval: weekly
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

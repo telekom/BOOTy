@@ -27,6 +27,10 @@ on:
 permissions:
   contents: read
 
+env:
+  BUSYBOX_ASSET: test/e2e/assets/busybox/v1.36.1/busybox-linux-amd64
+  BUSYBOX_SHA256: dbac288c29ba568459550a2da9e7ae0ded6b1fc728ee9fad3044c44e62d6ac14
+
 jobs:
   kvm-tests:
     name: KVM ${{ matrix.scenario }}
@@ -67,6 +71,16 @@ jobs:
             ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.fd
             setup: |
               cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
+          - scenario: iso-headless-q35
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestISOBootHeadlessQ35$"
+            setup: ""
+          - scenario: iso-headless-q35-noserial
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestISOBootHeadlessQ35NoSerial$"
+            setup: ""
       fail-fast: false
 
     steps:
@@ -79,7 +93,7 @@ jobs:
       - name: Install KVM dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 ovmf swtpm swtpm-tools cpio busybox-static zstd linux-image-generic
+          sudo apt-get install -y qemu-system-x86 ovmf swtpm swtpm-tools cpio zstd linux-image-generic xorriso isolinux syslinux-common
 
       - name: Scenario-specific setup
         if: matrix.setup != ''
@@ -95,14 +109,19 @@ jobs:
           sudo mknod initramfs/dev/ttyS0 c 4 64
           sudo mknod initramfs/dev/null c 1 3
 
-          BB_BIN="$(command -v busybox-static || command -v busybox)"
-          if ! ldd "$BB_BIN" 2>&1 | grep -q "not a dynamic executable"; then
-            echo "::error::busybox binary is dynamically linked: $BB_BIN"
-            ldd "$BB_BIN" || true
+          if [ ! -f "$BUSYBOX_ASSET" ]; then
+            echo "::error::Busybox asset not found: $BUSYBOX_ASSET"
+            exit 1
+          fi
+          echo "$BUSYBOX_SHA256  $BUSYBOX_ASSET" | sha256sum -c -
+
+          if ! ldd "$BUSYBOX_ASSET" 2>&1 | grep -q "not a dynamic executable"; then
+            echo "::error::busybox asset is dynamically linked: $BUSYBOX_ASSET"
+            ldd "$BUSYBOX_ASSET" || true
             exit 1
           fi
 
-          cp "$BB_BIN" initramfs/bin/busybox
+          cp "$BUSYBOX_ASSET" initramfs/bin/busybox
           cd initramfs/bin
           for cmd in sh mount umount insmod setsid cttyhack chroot; do
             ln -sf busybox "$cmd"
