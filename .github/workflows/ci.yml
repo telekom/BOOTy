@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
@@ -258,9 +259,9 @@ jobs:
             exit 1
           fi
           echo "$BUSYBOX_SHA256  $BUSYBOX_ASSET" | sha256sum -c -
-          if ! ldd "$BUSYBOX_ASSET" 2>&1 | grep -q "not a dynamic executable"; then
-            echo "::error::busybox asset is dynamically linked: $BUSYBOX_ASSET"
-            ldd "$BUSYBOX_ASSET" || true
+          if ! file "$BUSYBOX_ASSET" | grep -qi "statically linked"; then
+            echo "::error::busybox asset is not statically linked: $BUSYBOX_ASSET"
+            file "$BUSYBOX_ASSET" || true
             exit 1
           fi
 
@@ -545,9 +546,9 @@ jobs:
             exit 1
           fi
           echo "$BUSYBOX_SHA256  $BUSYBOX_ASSET" | sha256sum -c -
-          if ! ldd "$BUSYBOX_ASSET" 2>&1 | grep -q "not a dynamic executable"; then
-            echo "::error::busybox asset is dynamically linked: $BUSYBOX_ASSET"
-            ldd "$BUSYBOX_ASSET" || true
+          if ! file "$BUSYBOX_ASSET" | grep -qi "statically linked"; then
+            echo "::error::busybox asset is not statically linked: $BUSYBOX_ASSET"
+            file "$BUSYBOX_ASSET" || true
             exit 1
           fi
 

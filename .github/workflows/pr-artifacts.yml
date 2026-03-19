@@ -9,6 +9,10 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: pr-artifacts-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -42,6 +46,9 @@ jobs:
           retention-days: 14
 
       - name: Print download hint
+        env:
+          REF_NAME: ${{ github.head_ref || github.ref_name }}
         run: |
+          ENCODED_REF=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['REF_NAME'], safe=''))")
           echo "nightly.link URL (latest artifact on branch):"
-          echo "https://nightly.link/${{ github.repository }}/workflows/pr-artifacts.yml/${{ github.ref_name }}/booty-gobgp-pr-iso.zip"
+          echo "https://nightly.link/${{ github.repository }}/workflows/pr-artifacts.yml/${ENCODED_REF}/booty-gobgp-pr-iso.zip"

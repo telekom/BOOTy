@@ -1,8 +1,8 @@
 {
   "version": "1.36.1",
-  "packageRevision": "1:1.36.1-6ubuntu3.1",
+  "imageTag": "busybox:1.36.1-musl",
   "platform": "linux-amd64",
   "binaryPath": "test/e2e/assets/busybox/v1.36.1/busybox-linux-amd64",
   "sha256": "dbac288c29ba568459550a2da9e7ae0ded6b1fc728ee9fad3044c44e62d6ac14",
-  "source": "Ubuntu busybox-static package"
+  "source": "busybox:1.36.1-musl Docker image"
 }

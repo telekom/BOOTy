@@ -408,19 +408,16 @@ and the PR process.
 │   ├── caprf/                  # CAPRF client (status, log, debug, vars parsing)
 │   ├── config/                 # MachineConfig, Provider interface, Status types
 │   ├── disk/                   # Disk detection, partitioning, RAID, LVM, mount
-│   ├── events/                 # Provisioning event types and emitters
 │   ├── firmware/               # Firmware version collection from sysfs
 │   ├── health/                 # Pre-provisioning hardware health checks
 │   ├── image/                  # Image streaming (HTTP, OCI, gzip/lz4/xz/zstd auto-detect)
 │   ├── inventory/              # Hardware inventory from sysfs/procfs
 │   ├── kexec/                  # GRUB parsing, kexec load/execute
-│   ├── metrics/                # Provisioning metrics collection
 │   ├── network/                # Network mode abstraction (FRR, GoBGP, DHCP, Static, Bond)
 │   │   ├── frr/               # FRR/EVPN: config rendering, address derivation
 │   │   ├── gobgp/             # Pure-Go BGP stack (3-tier: Underlay, Overlay, IPMI)
 │   │   ├── lldp/              # LLDP frame listener (raw AF_PACKET sockets)
 │   │   └── vlan/              # VLAN 802.1Q tagging via netlink
-│   ├── observability/          # Logging, tracing, and observability helpers
 │   ├── provision/              # Orchestrator (30-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
 │   ├── plunderclient/          # Legacy HTTP client for config retrieval
