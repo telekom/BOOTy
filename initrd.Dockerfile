@@ -93,8 +93,8 @@ WORKDIR /build/initramfs
 # Pre-built static busybox binary from Docker Hub (cached by Docker layer cache)
 COPY --from=busybox-bin /bin/busybox bin/busybox
 
-# Create standard applet symlinks using BusyBox's built-in installer
-RUN bin/busybox --install -s .
+# Create standard applet symlinks into bin/ using BusyBox's built-in installer
+RUN bin/busybox --install -s bin
 
 # cloud-utils growpart
 RUN curl -fsSL https://github.com/canonical/cloud-utils/archive/refs/tags/0.33.tar.gz | tar -xz -C /tmp \
