@@ -78,6 +78,9 @@ func TestISOBootHeadlessQ35(t *testing.T) {
 // The test is informational — it does not fail because behavior is QEMU-version-
 // dependent.  The positive test (TestISOBootHeadlessQ35) is the strict validation.
 func TestISOBootHeadlessQ35NoSerial(t *testing.T) {
+	if os.Getenv("KVM_NOSERIAL_TEST") == "" {
+		t.Skip("skipped by default — set KVM_NOSERIAL_TEST=1 to run this diagnostic test")
+	}
 	qemuAvailable(t)
 	requireXorrisofs(t)
 
@@ -354,11 +357,13 @@ func buildStubDeployCpio(t *testing.T, cpioPath string) {
 	if err := cpioCmd.Start(); err != nil {
 		t.Fatalf("cpio start: %v", err)
 	}
-	if err := findCmd.Wait(); err != nil {
-		t.Fatalf("find: %v", err)
-	}
+	// Wait on cpio first so its errors are reported before find's SIGPIPE.
 	if err := cpioCmd.Wait(); err != nil {
 		t.Fatalf("cpio: %v\n%s", err, cpioErr.String())
+	}
+	// find may fail with SIGPIPE if cpio closes early — tolerate it.
+	if err := findCmd.Wait(); err != nil {
+		t.Logf("find exited with: %v (non-fatal after cpio success)", err)
 	}
 
 	fi, err := os.Stat(cpioPath)
