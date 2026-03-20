@@ -1531,10 +1531,10 @@ func TestMellanoxNoNICsE2E(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 33: DHCP WaitForConnectivity Timeout
+// Test 33: DHCP WaitForConnectivity Any HTTP Response
 // ---------------------------------------------------------------------------
 
-func TestDHCPWaitForConnectivityTimeoutE2E(t *testing.T) {
+func TestDHCPWaitForConnectivityAnyHTTPResponseE2E(t *testing.T) {
 	// A server returning any HTTP response (even 503) proves network
 	// connectivity — WaitForConnectivity should succeed.
 	mux := http.NewServeMux()

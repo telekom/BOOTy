@@ -164,11 +164,11 @@ func WaitForHTTP(ctx context.Context, target string, timeout time.Duration) erro
 			// Any HTTP response proves the network path works.  The server
 			// may return 401 (auth required) or other non-2xx codes, but
 			// that still means connectivity is established.
-			slog.Info("Network connectivity established", "target", target, "status", resp.StatusCode, "attempt", attempt)
+			slog.Info("network connectivity established", "target", target, "status", resp.StatusCode, "attempt", attempt)
 			return nil
 		}
 
-		slog.Debug("Connectivity check failed", "target", target, "attempt", attempt, "error", err)
+		slog.Debug("connectivity check failed", "target", target, "attempt", attempt, "error", err)
 
 		select {
 		case <-ctx.Done():
