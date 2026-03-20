@@ -22,8 +22,11 @@ import (
 //   - q35 machine type, -display none -nodefaults, isa-serial on ttyS0
 //   - SCSI CD-ROM at bootindex=1 (same as kindmetal's libvirt domain)
 //
-// This catches ISOLINUX boot failures on headless VMs before they reach
-// the full E2E pipeline.
+// The test deliberately builds a custom ISO from BOOTY_KERNEL/BOOTY_INITRAMFS
+// rather than using the published gobgp-iso artifact.  This isolates the
+// ISOLINUX + serial console boot chain from initramfs content, catching
+// packaging regressions on every push (the published artifact is validated
+// separately in the CAPRF kindmetal E2E pipeline).
 func TestISOBootHeadlessQ35(t *testing.T) {
 	qemuAvailable(t)
 	requireXorrisofs(t)
@@ -61,15 +64,16 @@ func TestISOBootHeadlessQ35(t *testing.T) {
 	t.Logf("ISO boot QEMU output (last 2000 bytes):\n%s", tail(out, 2000))
 	outStr := string(out)
 
-	// Verify ISOLINUX loaded (its banner appears on serial when SERIAL is set).
+	// Assert ISOLINUX loaded (its banner appears on serial when SERIAL is set).
 	if !strings.Contains(outStr, "ISOLINUX") && !strings.Contains(outStr, "SYSLINUX") {
-		t.Logf("WARNING: no ISOLINUX/SYSLINUX banner found in serial output")
+		t.Fatal("ISOLINUX/SYSLINUX banner not found in serial output — ISO boot failed")
 	}
 
-	// The kernel's earlycon output should appear.
-	if strings.Contains(outStr, "Linux version") {
-		t.Logf("Kernel boot confirmed via 'Linux version' string")
+	// Assert the kernel started — earlycon output must appear.
+	if !strings.Contains(outStr, "Linux version") {
+		t.Fatal("'Linux version' not found in serial output — kernel did not boot")
 	}
+	t.Logf("Kernel boot confirmed via 'Linux version' string")
 }
 
 // TestISOBootHeadlessQ35NoSerial is an observational test that checks whether

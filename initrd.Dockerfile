@@ -185,7 +185,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends cpio \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
 
-# Copy ONLY busybox binary + symlinks (not FRR/LVM binaries from busybox stage)
+# Copy busybox binary and recreate applet symlinks for the slim variant
 COPY --from=busybox /build/initramfs/bin/busybox bin/busybox
 RUN for cmd in sh mount umount insmod ash ls cat echo grep mkdir rm cp mv \
       sleep date df du find head wc sort uniq tr sed awk ping wget ifconfig \
@@ -221,7 +221,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends cpio \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
 
-# Copy busybox base (without FRR binaries from the busybox stage)
+# Copy busybox binary and recreate applet symlinks for the gobgp variant
 COPY --from=busybox /build/initramfs/bin/busybox bin/busybox
 RUN for cmd in sh mount umount insmod ash ls cat echo grep mkdir rm cp mv \
       sleep date df du find head wc sort uniq tr sed awk ping wget ifconfig \

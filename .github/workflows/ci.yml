@@ -13,8 +13,6 @@ concurrency:
 
 env:
   CONTAINERLAB_VERSION: "0.62.2"
-  BUSYBOX_ASSET: test/e2e/assets/busybox/v1.36.1/busybox-linux-amd64
-  BUSYBOX_SHA256: dbac288c29ba568459550a2da9e7ae0ded6b1fc728ee9fad3044c44e62d6ac14
 
 permissions:
   contents: read
