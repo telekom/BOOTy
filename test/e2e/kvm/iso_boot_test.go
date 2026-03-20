@@ -326,7 +326,9 @@ func buildStubDeployCpio(t *testing.T, cpioPath string) {
 		t.Fatalf("mkdir deploy: %v", err)
 	}
 
-	vars := "MODE=dry-run\nBOOTYURL=http://10.0.2.2:3000/booty\n"
+	// Keep /deploy/vars minimal so this test focuses on ISO + serial boot path.
+	// The headless QEMU config intentionally has no NIC, so BOOTYURL is omitted.
+	vars := "MODE=dry-run\n"
 	if err := os.WriteFile(filepath.Join(deployDir, "vars"), []byte(vars), 0644); err != nil {
 		t.Fatalf("write vars: %v", err)
 	}

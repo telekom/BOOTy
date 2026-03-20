@@ -41,6 +41,12 @@ jobs:
           BUSYBOX_IMAGE=$(grep '^FROM' test/e2e/assets/busybox/Dockerfile | awk '{print $2}')
           docker run --rm --platform=linux/amd64 "$BUSYBOX_IMAGE" cat /bin/busybox > initramfs/bin/busybox
           chmod +x initramfs/bin/busybox
+          # Verify that busybox is statically linked to avoid non-bootable initramfs output.
+          if ! file initramfs/bin/busybox | grep -qi 'statically linked'; then
+            echo "ERROR: extracted /bin/busybox is not statically linked"
+            file initramfs/bin/busybox || true
+            exit 1
+          fi
           cd initramfs/bin
           for cmd in sh mount umount insmod setsid cttyhack chroot; do
             ln -sf busybox "$cmd"
