@@ -80,21 +80,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     hdparm nvme-cli mstflint lldpd \
     && rm -rf /var/lib/apt/lists/*
 
-# Build Busybox
-FROM gcc:15 AS busybox
-RUN apt-get update && apt-get install -y cpio
-RUN curl --retry 5 --retry-delay 10 --retry-connrefused -fSL -O https://busybox.net/downloads/busybox-1.37.0.tar.bz2
-RUN tar -xf busybox*bz2
-WORKDIR busybox-1.37.0
-RUN make defconfig \
-    && sed -i 's/CONFIG_TC=y/# CONFIG_TC is not set/' .config \
-    && make LDFLAGS=-static CONFIG_PREFIX=./initramfs install
+# Busybox static binary — sourced from Docker Hub for reliability and
+# Dependabot version tracking.  Eliminates the fragile busybox.net download
+# that caused CI failures when the site was unreachable.
+FROM busybox:1.37.0-musl AS busybox-bin
 
-WORKDIR initramfs
-RUN curl -fsSL https://github.com/canonical/cloud-utils/archive/refs/tags/0.33.tar.gz | tar -xz -C /tmp && mv /tmp/cloud-utils-0.33/bin/growpart ./bin
+FROM debian:bookworm-slim AS busybox
+RUN apt-get update && apt-get install -y --no-install-recommends cpio curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /build/initramfs
+
+# Pre-built static busybox binary from Docker Hub (cached by Docker layer cache)
+COPY --from=busybox-bin /bin/busybox bin/busybox
+
+# Create standard applet symlinks into bin/ using BusyBox's built-in installer
+RUN bin/busybox --install -s bin
+
+# cloud-utils growpart
+RUN curl -fsSL https://github.com/canonical/cloud-utils/archive/refs/tags/0.33.tar.gz | tar -xz -C /tmp \
+    && mv /tmp/cloud-utils-0.33/bin/growpart bin/
 
 # Copy build contents from previous builds
-COPY --from=lvm /LVM2.2.03.27/tools/lvm sbin
+COPY --from=lvm /LVM2.2.03.27/tools/lvm sbin/
 COPY --from=sfdisk /util-linux/sfdisk.static bin/sfdisk
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
 
@@ -178,14 +185,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends cpio \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
 
-# Copy ONLY busybox binary + symlinks (not FRR/LVM binaries from busybox stage)
-COPY --from=busybox /busybox-1.37.0/initramfs/bin/busybox bin/busybox
-RUN for cmd in sh mount umount insmod ash ls cat echo grep mkdir rm cp mv \
-      sleep date df du find head wc sort uniq tr sed awk ping wget ifconfig \
-      route telnet vi chmod chown ln test expr chroot; do \
-      ln -sf busybox bin/$cmd; \
-    done
-COPY --from=busybox /busybox-1.37.0/initramfs/bin/growpart bin/growpart
+# Copy busybox binary and create all applet symlinks (same as default variant).
+# This ensures utilities like tail, grep, dmesg, hostname, ps, and xargs are
+# available for debug diagnostics and shell commands.
+COPY --from=busybox-bin /bin/busybox bin/busybox
+RUN for cmd in $(bin/busybox --list); do if [ "$cmd" != "busybox" ]; then ln -sf busybox "bin/$cmd"; fi; done
+COPY --from=busybox /build/initramfs/bin/growpart bin/growpart
 
 # BOOTy init binary (static, CGO-enabled)
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
@@ -196,6 +201,7 @@ COPY --from=tools /usr/sbin/ethtool bin/ethtool
 COPY --from=tools /usr/bin/curl bin/curl
 
 # Basic disk tools (filesystem check + resize only)
+RUN mkdir -p sbin
 COPY --from=tools /sbin/partprobe bin/partprobe
 COPY --from=tools /sbin/e2fsck sbin/e2fsck
 COPY --from=tools /sbin/resize2fs sbin/resize2fs
@@ -213,19 +219,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends cpio \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
 
-# Copy busybox base (without FRR binaries from the busybox stage)
-COPY --from=busybox /busybox-1.37.0/initramfs/bin/busybox bin/busybox
-RUN for cmd in sh mount umount insmod ash ls cat echo grep mkdir rm cp mv \
-      sleep date df du find head wc sort uniq tr sed awk ping wget ifconfig \
-      route telnet vi chmod chown ln test expr chroot; do \
-      ln -sf busybox bin/$cmd; \
-    done
-COPY --from=busybox /busybox-1.37.0/initramfs/bin/growpart bin/growpart
+# Copy busybox binary and create all applet symlinks (same as default variant).
+# This ensures utilities like tail, pgrep, dmesg, lsblk, hostname, ps, grep,
+# kill, id, and xargs are available for debug diagnostics and shell commands.
+COPY --from=busybox-bin /bin/busybox bin/busybox
+RUN for cmd in $(bin/busybox --list); do if [ "$cmd" != "busybox" ]; then ln -sf busybox "bin/$cmd"; fi; done
+COPY --from=busybox /build/initramfs/bin/growpart bin/growpart
 
 # BOOTy init binary (with GoBGP compiled in)
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
 
 # LVM + sfdisk for disk management
+RUN mkdir -p sbin
 COPY --from=lvm /LVM2.2.03.27/tools/lvm sbin/lvm
 COPY --from=sfdisk /util-linux/sfdisk.static bin/sfdisk
 

@@ -4,11 +4,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -42,6 +44,11 @@ const varsPath = "/deploy/vars"
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 
+	// Ensure PATH includes standard binary directories. As PID 1 in an
+	// initramfs the kernel default may only contain /sbin:/bin; make sure
+	// /usr/bin, /usr/sbin, and /usr/local/bin are also reachable.
+	ensurePATH("/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/local/sbin")
+
 	setupMountsAndDevices()
 	loadModules()
 
@@ -65,6 +72,28 @@ func main() {
 			realm.Reboot()
 		}
 		runLegacy()
+	}
+}
+
+// ensurePATH adds each dir to PATH if not already present, preserving any
+// directories the build environment or initramfs may have set.
+func ensurePATH(dirs ...string) {
+	existing := os.Getenv("PATH")
+	have := make(map[string]bool)
+	for _, d := range strings.Split(existing, ":") {
+		have[d] = true
+	}
+	for _, d := range dirs {
+		if !have[d] {
+			if existing != "" {
+				existing += ":"
+			}
+			existing += d
+			have[d] = true
+		}
+	}
+	if err := os.Setenv("PATH", existing); err != nil {
+		slog.Warn("failed to set PATH", "error", err)
 	}
 }
 
@@ -96,6 +125,10 @@ func setupMountsAndDevices() {
 // loadModules loads kernel modules from /modules/ for common server NICs.
 // Uses the finit_module syscall directly instead of shelling out to insmod.
 // Errors are non-fatal: modules may already be built-in or not needed.
+//
+// Module dependencies are resolved by retrying: modules that fail on the
+// first pass (e.g. virtio_net depends on virtio_pci → virtio → virtio_ring)
+// succeed on subsequent passes once their dependencies have been loaded.
 func loadModules() {
 	const moduleDir = "/modules"
 	entries, err := os.ReadDir(moduleDir)
@@ -103,20 +136,39 @@ func loadModules() {
 		slog.Debug("No kernel modules directory, skipping", "path", moduleDir)
 		return
 	}
+
+	// Collect all module paths.
+	var pending []string
 	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
+		if !entry.IsDir() {
+			pending = append(pending, entry.Name())
 		}
-		ko := filepath.Join(moduleDir, entry.Name())
-		if err := loadModule(ko); err != nil {
-			slog.Debug("Module load skipped", "module", entry.Name(), "error", err)
-			continue
+	}
+
+	// Retry up to 5 passes to resolve dependency ordering.
+	const maxPasses = 5
+	for pass := range maxPasses {
+		var failed []string
+		for _, name := range pending {
+			ko := filepath.Join(moduleDir, name)
+			if err := loadModule(ko); err != nil {
+				failed = append(failed, name)
+				if pass == maxPasses-1 {
+					slog.Debug("Module load skipped", "module", name, "error", err)
+				}
+				continue
+			}
+			slog.Info("Loaded kernel module", "module", name)
 		}
-		slog.Info("Loaded kernel module", "module", entry.Name())
+		if len(failed) == 0 {
+			break
+		}
+		pending = failed
 	}
 }
 
 // loadModule loads a single kernel module via the finit_module syscall.
+// Returns nil when the module is already loaded or built-in (EEXIST).
 func loadModule(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -125,6 +177,9 @@ func loadModule(path string) error {
 	defer func() { _ = f.Close() }()
 
 	if err := unix.FinitModule(int(f.Fd()), "", 0); err != nil {
+		if errors.Is(err, unix.EEXIST) {
+			return nil
+		}
 		return fmt.Errorf("finit_module %s: %w", filepath.Base(path), err)
 	}
 	return nil
@@ -168,18 +223,15 @@ func runCAPRF(ctx context.Context) {
 		"image_count", len(cfg.ImageURLs),
 	)
 
-	// Set up networking based on configuration.
+	// Set up networking with retry — if connectivity fails, teardown and
+	// rebuild the entire network stack before giving up.
 	netMode := setupNetworkMode(ctx, cfg)
-
-	// Wait for network connectivity before proceeding.
 	connectivityTarget := cfg.InitURL
 	if connectivityTarget == "" {
 		connectivityTarget = cfg.SuccessURL
 	}
 	if connectivityTarget != "" {
-		slog.Info("Waiting for network connectivity", "target", connectivityTarget)
-		if err := netMode.WaitForConnectivity(ctx, connectivityTarget, 5*time.Minute); err != nil {
-			slog.Error("Network connectivity timeout", "error", err)
+		if err := ensureNetworkConnectivity(ctx, cfg, netMode, connectivityTarget); err != nil {
 			realm.Reboot()
 		}
 	}
@@ -223,6 +275,29 @@ func runCAPRF(ctx context.Context) {
 	}
 	time.Sleep(time.Second * 2)
 	realm.Reboot()
+}
+
+// ensureNetworkConnectivity retries network setup up to 3 times on connectivity failure.
+// Returns error only if all retries exhausted (for caller to decide reboot behavior).
+func ensureNetworkConnectivity(ctx context.Context, cfg *config.MachineConfig, netMode network.Mode, target string) error {
+	const maxRetries = 3
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		slog.Info("Waiting for network connectivity", "target", target, "attempt", attempt)
+		if err := netMode.WaitForConnectivity(ctx, target, 5*time.Minute); err == nil {
+			slog.Info("Network connectivity established", "target", target)
+			return nil
+		}
+		slog.Error("Network connectivity timeout", "attempt", attempt)
+		if attempt < maxRetries {
+			slog.Info("Tearing down network for retry", "attempt", attempt)
+			if tErr := netMode.Teardown(ctx); tErr != nil {
+				slog.Warn("Network teardown failed", "error", tErr)
+			}
+			netMode = setupNetworkMode(ctx, cfg)
+		}
+	}
+	slog.Error("Network connectivity failed after all retries", "attempts", maxRetries)
+	return fmt.Errorf("network connectivity timeout after %d attempts", maxRetries)
 }
 
 // setupNetworkMode detects and configures the appropriate network mode.

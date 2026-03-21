@@ -1,3 +1,5 @@
+//go:build linux
+
 package network
 
 import (
@@ -55,6 +57,20 @@ func TestWaitForHTTP_ContextCancel(t *testing.T) {
 	err := WaitForHTTP(ctx, "http://192.0.2.1:1", 5*time.Second)
 	if err == nil {
 		t.Fatal("expected context cancel error")
+	}
+}
+
+func TestWaitForHTTP_AuthUnauthorized(t *testing.T) {
+	// A 401 response proves network connectivity — the server is reachable
+	// even though the request is not authenticated.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	err := WaitForHTTP(context.Background(), srv.URL, 5*time.Second)
+	if err != nil {
+		t.Fatalf("expected 401 to count as connectivity, got error: %v", err)
 	}
 }
 

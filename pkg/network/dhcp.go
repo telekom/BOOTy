@@ -1,3 +1,5 @@
+//go:build linux
+
 package network
 
 import (
@@ -159,14 +161,14 @@ func WaitForHTTP(ctx context.Context, target string, timeout time.Duration) erro
 		resp, err := client.Do(req) //nolint:gosec // target is from trusted config
 		if err == nil {
 			_ = resp.Body.Close()
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				slog.Info("Network connectivity established", "target", target, "attempt", attempt)
-				return nil
-			}
-			slog.Debug("Connectivity check: server not ready", "target", target, "status", resp.StatusCode)
+			// Any HTTP response proves the network path works.  The server
+			// may return 401 (auth required) or other non-2xx codes, but
+			// that still means connectivity is established.
+			slog.Info("network connectivity established", "target", target, "status", resp.StatusCode, "attempt", attempt)
+			return nil
 		}
 
-		slog.Debug("Connectivity check failed", "target", target, "attempt", attempt, "error", err)
+		slog.Debug("connectivity check failed", "target", target, "attempt", attempt, "error", err)
 
 		select {
 		case <-ctx.Done():

@@ -16,7 +16,7 @@ hardware or corrupt disks.
 - **Wrong disk target**: any code that writes to a disk device without first
   verifying it matches the expected target — writing to the wrong disk
   destroys data permanently
-- **Step ordering violation**: provisioning steps have a defined order (25
+- **Step ordering violation**: provisioning steps have a defined order (30
   steps) — adding or reordering steps without updating the orchestrator can
   leave disks in an inconsistent state
 - **Missing error propagation**: a failed disk or image operation that is
@@ -53,7 +53,7 @@ hardware or corrupt disks.
 
 ## BOOTy-Specific Context
 
-- `pkg/provision/orchestrator.go` defines the 25-step provisioning sequence
+- `pkg/provision/orchestrator.go` defines the 30-step provisioning sequence
 - `pkg/disk/` handles detection, partitioning (sfdisk), RAID (mdadm), and
   LVM (lvm2 commands via exec)
 - `pkg/image/` streams compressed images directly to block devices — no

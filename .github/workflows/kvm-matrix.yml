@@ -67,6 +67,11 @@ jobs:
             ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.fd
             setup: |
               cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
+          - scenario: iso-headless-q35
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestISOBootHeadlessQ35$"
+            setup: ""
       fail-fast: false
 
     steps:
@@ -79,7 +84,7 @@ jobs:
       - name: Install KVM dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 ovmf swtpm swtpm-tools cpio busybox-static zstd linux-image-generic
+          sudo apt-get install -y qemu-system-x86 ovmf swtpm swtpm-tools cpio zstd linux-image-generic xorriso isolinux syslinux-common
 
       - name: Scenario-specific setup
         if: matrix.setup != ''
@@ -95,14 +100,16 @@ jobs:
           sudo mknod initramfs/dev/ttyS0 c 4 64
           sudo mknod initramfs/dev/null c 1 3
 
-          BB_BIN="$(command -v busybox-static || command -v busybox)"
-          if ! ldd "$BB_BIN" 2>&1 | grep -q "not a dynamic executable"; then
-            echo "::error::busybox binary is dynamically linked: $BB_BIN"
-            ldd "$BB_BIN" || true
+          # Extract busybox from the Dependabot-tracked Docker image
+          BUSYBOX_IMAGE=$(grep '^FROM' test/e2e/assets/busybox/Dockerfile | awk '{print $2}')
+          docker run --rm --platform=linux/amd64 "$BUSYBOX_IMAGE" cat /bin/busybox > initramfs/bin/busybox
+          chmod +x initramfs/bin/busybox
+          # Verify that busybox is statically linked to avoid non-bootable initramfs output.
+          if ! file initramfs/bin/busybox | grep -Eqi 'statically linked|static-pie linked'; then
+            echo "ERROR: extracted /bin/busybox is not statically linked"
+            file initramfs/bin/busybox || true
             exit 1
           fi
-
-          cp "$BB_BIN" initramfs/bin/busybox
           cd initramfs/bin
           for cmd in sh mount umount insmod setsid cttyhack chroot; do
             ln -sf busybox "$cmd"
