@@ -320,6 +320,9 @@ func buildStubDeployCpio(t *testing.T, cpioPath string) {
 	if _, err := exec.LookPath("cpio"); err != nil {
 		t.Skip("cpio not available — skipping deploy.cpio build")
 	}
+	if _, err := exec.LookPath("find"); err != nil {
+		t.Skip("find not available — skipping deploy.cpio build")
+	}
 
 	deployDir := filepath.Join(t.TempDir(), "deploy-root", "deploy")
 	if err := os.MkdirAll(deployDir, 0755); err != nil {

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -45,9 +46,7 @@ func main() {
 	// Ensure PATH includes standard binary directories. As PID 1 in an
 	// initramfs the kernel default may only contain /sbin:/bin; make sure
 	// /usr/bin, /usr/sbin, and /usr/local/bin are also reachable.
-	if err := os.Setenv("PATH", "/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin"); err != nil {
-		slog.Warn("failed to set PATH", "error", err)
-	}
+	ensurePATH("/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/local/sbin")
 
 	setupMountsAndDevices()
 	loadModules()
@@ -72,6 +71,28 @@ func main() {
 			realm.Reboot()
 		}
 		runLegacy()
+	}
+}
+
+// ensurePATH adds each dir to PATH if not already present, preserving any
+// directories the build environment or initramfs may have set.
+func ensurePATH(dirs ...string) {
+	existing := os.Getenv("PATH")
+	have := make(map[string]bool)
+	for _, d := range strings.Split(existing, ":") {
+		have[d] = true
+	}
+	for _, d := range dirs {
+		if !have[d] {
+			if existing != "" {
+				existing += ":"
+			}
+			existing += d
+			have[d] = true
+		}
+	}
+	if err := os.Setenv("PATH", existing); err != nil {
+		slog.Warn("failed to set PATH", "error", err)
 	}
 }
 
