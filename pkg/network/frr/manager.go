@@ -185,7 +185,7 @@ func (m *Manager) DumpFRRState() {
 		{"bfd peers", []string{"-c", "show bfd peers"}},
 		{"interface brief", []string{"-c", "show interface brief"}},
 	}
-	m.log.Error("=== FRR STATE DUMP START ===")
+	m.log.Warn("=== FRR STATE DUMP START ===")
 	for _, c := range cmds {
 		out, err := m.commander.Run(ctx, "vtysh", c.args...)
 		if err != nil {
@@ -194,11 +194,11 @@ func (m *Manager) DumpFRRState() {
 		}
 		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 			if line != "" {
-				m.log.Error("FRR", "label", c.label, "data", line)
+				m.log.Warn("FRR", "label", c.label, "data", line)
 			}
 		}
 	}
-	m.log.Error("=== FRR STATE DUMP END ===")
+	m.log.Warn("=== FRR STATE DUMP END ===")
 }
 
 // ensureFRRDirs creates runtime directories that FRR daemons expect.

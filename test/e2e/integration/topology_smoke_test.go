@@ -34,6 +34,16 @@ type topologySpec struct {
 }
 
 var topologySpecs = map[string]topologySpec{
+	"lab": {
+		containers: []string{
+			"clab-booty-lab-spine01",
+			"clab-booty-lab-leaf01",
+			"clab-booty-lab-caprf-mock",
+		},
+		checks: []topologyCheck{
+			{container: "clab-booty-lab-spine01", args: []string{"vtysh", "-c", "show ip route"}},
+		},
+	},
 	"dhcp": {
 		containers: []string{dhcpServer, dhcpBooty},
 		checks: []topologyCheck{
@@ -64,7 +74,7 @@ var topologySpecs = map[string]topologySpec{
 func TestContainerLabTopologySmoke(t *testing.T) {
 	topo := strings.TrimSpace(os.Getenv("BOOTY_TOPOLOGY"))
 	if topo == "" {
-		t.Skip("BOOTY_TOPOLOGY not set")
+		t.Fatal("BOOTY_TOPOLOGY not set")
 	}
 
 	spec, ok := topologySpecs[topo]
@@ -74,7 +84,7 @@ func TestContainerLabTopologySmoke(t *testing.T) {
 
 	out, err := exec.CommandContext(context.Background(), "docker", "ps", "--format", "{{.Names}}").Output()
 	if err != nil {
-		t.Skipf("docker not available: %v", err)
+		t.Fatalf("docker not available: %v", err)
 	}
 	running := strings.Split(strings.TrimSpace(string(out)), "\n")
 	runningSet := make(map[string]bool, len(running))

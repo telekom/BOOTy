@@ -9,13 +9,13 @@ import (
 	"time"
 )
 
-// requireNetworkLab skips the test if the full network topology is not deployed.
+// requireNetworkLab fails the test if the full network topology is not deployed.
 func requireNetworkLab(t *testing.T) {
 	t.Helper()
 	requireContainerLab(t)
 	out, _ := dockerExecRaw(t, "clab-booty-lab-client", "echo", "ok")
 	if !strings.Contains(out, "ok") {
-		t.Skip("client container not available in topology")
+		t.Fatal("client container not available in topology")
 	}
 }
 

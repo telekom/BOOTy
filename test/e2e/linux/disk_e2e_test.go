@@ -229,7 +229,7 @@ func TestGrowPartitionAndResize(t *testing.T) {
 
 	// Check if growpart is available.
 	if _, err := exec.LookPath("growpart"); err != nil {
-		t.Skip("growpart not available")
+		t.Fatal("growpart not available")
 	}
 
 	ctx := context.Background()

@@ -11,15 +11,15 @@ import (
 	"time"
 )
 
-// requireContainerLab skips the test if ContainerLab containers are not running.
+// requireContainerLab fails the test if ContainerLab containers are not running.
 func requireContainerLab(t *testing.T) {
 	t.Helper()
 	out, err := exec.Command("docker", "ps", "--format", "{{.Names}}").Output()
 	if err != nil {
-		t.Skipf("docker not available: %v", err)
+		t.Fatalf("docker not available: %v", err)
 	}
 	if !strings.Contains(string(out), "clab-booty-lab-spine01") {
-		t.Skip("ContainerLab topology not deployed (clab-booty-lab-spine01 not found)")
+		t.Fatal("ContainerLab topology not deployed (clab-booty-lab-spine01 not found)")
 	}
 }
 

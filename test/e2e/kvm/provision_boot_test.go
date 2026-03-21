@@ -55,7 +55,7 @@ func TestProvisionAndBootOS(t *testing.T) {
 	cleanup()
 
 	if vmlinuz == "" {
-		t.Skip("no kernel found in provisioned disk, cannot boot")
+		t.Fatal("no kernel found in provisioned disk, cannot boot")
 	}
 
 	// Phase 3: Boot the provisioned OS and check serial output.

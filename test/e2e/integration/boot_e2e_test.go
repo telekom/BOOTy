@@ -26,15 +26,15 @@ const (
 	nginxContainer       = labPrefix + "-nginx"
 )
 
-// requireBootLab skips the test if the boot topology is not deployed.
+// requireBootLab fails the test if the boot topology is not deployed.
 func requireBootLab(t *testing.T) {
 	t.Helper()
 	out, err := exec.Command("docker", "ps", "--format", "{{.Names}}").Output()
 	if err != nil {
-		t.Skipf("docker not available: %v", err)
+		t.Fatalf("docker not available: %v", err)
 	}
 	if !strings.Contains(string(out), provisionContainer) {
-		t.Skip("Boot topology not deployed (" + provisionContainer + " not found)")
+		t.Fatal("Boot topology not deployed (" + provisionContainer + " not found)")
 	}
 }
 

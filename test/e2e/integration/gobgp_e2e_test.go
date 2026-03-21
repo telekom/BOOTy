@@ -28,15 +28,15 @@ const (
 	bgpConvergeInterval = 2 * time.Second
 )
 
-// requireGoBGPLab skips the test if the GoBGP topology is not deployed.
+// requireGoBGPLab fails the test if the GoBGP topology is not deployed.
 func requireGoBGPLab(t *testing.T) {
 	t.Helper()
 	out, err := exec.CommandContext(context.Background(), "docker", "ps", "--format", "{{.Names}}").Output()
 	if err != nil {
-		t.Skipf("docker not available: %v", err)
+		t.Fatalf("docker not available: %v", err)
 	}
 	if !strings.Contains(string(out), gobgpLabSpine) {
-		t.Skip("GoBGP topology not deployed (run: make clab-gobgp-up)")
+		t.Fatal("GoBGP topology not deployed (run: make clab-gobgp-up)")
 	}
 }
 

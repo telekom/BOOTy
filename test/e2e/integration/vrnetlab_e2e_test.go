@@ -36,10 +36,10 @@ func requireVrnetlabLab(t *testing.T) {
 	t.Helper()
 	out, err := exec.Command("docker", "ps", "--format", "{{.Names}}").Output()
 	if err != nil {
-		t.Skipf("docker not available: %v", err)
+		t.Fatalf("docker not available: %v", err)
 	}
 	if !strings.Contains(string(out), vmProvision) {
-		t.Skip("vrnetlab topology not deployed (" + vmProvision + " not found)")
+		t.Fatal("vrnetlab topology not deployed (" + vmProvision + " not found)")
 	}
 }
 
