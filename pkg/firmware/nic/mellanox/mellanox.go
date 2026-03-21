@@ -10,9 +10,27 @@ import (
 	"github.com/telekom/BOOTy/pkg/firmware/nic"
 )
 
+// Commander abstracts command execution for testing.
+type Commander interface {
+	CombinedOutput(ctx context.Context, cmd string, args ...string) ([]byte, error)
+}
+
+// OSCommander implements Commander using os/exec.
+type OSCommander struct{}
+
+// CombinedOutput runs a command and returns combined stdout/stderr.
+func (OSCommander) CombinedOutput(ctx context.Context, cmd string, args ...string) ([]byte, error) {
+	out, err := exec.CommandContext(ctx, cmd, args...).CombinedOutput()
+	if err != nil {
+		return out, fmt.Errorf("command %s: %w", cmd, err)
+	}
+	return out, nil
+}
+
 // Manager handles Mellanox ConnectX NIC firmware operations.
 type Manager struct {
-	log *slog.Logger
+	log       *slog.Logger
+	commander Commander
 }
 
 // New creates a Mellanox firmware manager.
@@ -20,7 +38,18 @@ func New(log *slog.Logger) *Manager {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Manager{log: log}
+	return &Manager{log: log, commander: OSCommander{}}
+}
+
+// NewWithCommander creates a Mellanox firmware manager with a custom commander (for testing).
+func NewWithCommander(log *slog.Logger, commander Commander) *Manager {
+	if log == nil {
+		log = slog.Default()
+	}
+	if commander == nil {
+		commander = OSCommander{}
+	}
+	return &Manager{log: log, commander: commander}
 }
 
 // Vendor returns the Mellanox vendor constant.
@@ -73,17 +102,15 @@ func (m *Manager) Apply(ctx context.Context, n *nic.Identifier, changes []nic.Fl
 }
 
 func (m *Manager) mstconfigQuery(ctx context.Context, pciAddr string) (string, error) {
-	cmd := exec.CommandContext(ctx, "mstconfig", "-d", pciAddr, "query")
-	out, err := cmd.CombinedOutput()
+	out, err := m.commander.CombinedOutput(ctx, "mstconfig", "-d", pciAddr, "query")
 	if err != nil {
-		return "", fmt.Errorf("mstconfig query %s: %s: %w", pciAddr, string(out), err)
+		return "", fmt.Errorf("mstconfig query %s: %w", pciAddr, err)
 	}
 	return string(out), nil
 }
 
 func (m *Manager) mstconfigSet(ctx context.Context, pciAddr, param, value string) error {
-	cmd := exec.CommandContext(ctx, "mstconfig", "-d", pciAddr, "-y", "set", param+"="+value)
-	out, err := cmd.CombinedOutput()
+	out, err := m.commander.CombinedOutput(ctx, "mstconfig", "-d", pciAddr, "-y", "set", param+"="+value)
 	if err != nil {
 		return fmt.Errorf("mstconfig set %s: %s: %w", param, string(out), err)
 	}

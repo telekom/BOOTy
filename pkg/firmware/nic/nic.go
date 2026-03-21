@@ -46,10 +46,10 @@ type FirmwareManager interface {
 
 // Identifier identifies a NIC.
 type Identifier struct {
-	PCIAddress string `json:"pciAddress"`
+	PCIAddress string `json:"pciAddr"`
 	Interface  string `json:"interface,omitempty"`
-	VendorID   string `json:"vendorId"`
-	DeviceID   string `json:"deviceId"`
+	VendorID   string `json:"vendorID"`
+	DeviceID   string `json:"deviceID"`
 	Driver     string `json:"driver,omitempty"`
 }
 
@@ -105,6 +105,19 @@ func Compare(baseline *Baseline, state *FirmwareState) *Diff {
 	diff := &Diff{
 		NIC:   state.NIC,
 		Match: true,
+	}
+
+	// Validate vendor/device ID consistency only if baseline specifies them
+	if baseline.Vendor != VendorUnknown && state.NIC.PCIAddress != "" {
+		detectedVendor := DetectVendor(state.NIC.PCIAddress)
+		if detectedVendor != baseline.Vendor {
+			diff.Match = false
+			return diff
+		}
+	}
+	if baseline.DeviceID != "" && baseline.DeviceID != state.NIC.DeviceID {
+		diff.Match = false
+		return diff
 	}
 
 	if baseline.Parameters == nil || state.Parameters == nil {
@@ -173,5 +186,5 @@ func (r *Registry) ForNIC(nic *Identifier) (FirmwareManager, error) {
 			return mgr, nil
 		}
 	}
-	return nil, fmt.Errorf("no firmware manager for NIC %s (vendor=%s)", nic.PCIAddress, nic.VendorID)
+	return nil, fmt.Errorf("no firmware manager for NIC %s (vendorID=%s, detected=%s)", nic.PCIAddress, nic.VendorID, DetectVendor(nic.PCIAddress))
 }
