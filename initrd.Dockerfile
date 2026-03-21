@@ -185,13 +185,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends cpio \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
 
-# Copy busybox binary and recreate applet symlinks for the slim variant
+# Copy busybox binary and create all applet symlinks (same as default variant).
+# This ensures utilities like tail, grep, dmesg, hostname, ps, and xargs are
+# available for debug diagnostics and shell commands.
 COPY --from=busybox /build/initramfs/bin/busybox bin/busybox
-RUN for cmd in sh mount umount insmod ash ls cat echo grep mkdir rm cp mv \
-      sleep date df du find head wc sort uniq tr sed awk ping wget ifconfig \
-      route telnet vi chmod chown ln test expr chroot; do \
-      ln -sf busybox bin/$cmd; \
-    done
+RUN bin/busybox --install -s bin
 COPY --from=busybox /build/initramfs/bin/growpart bin/growpart
 
 # BOOTy init binary (static, CGO-enabled)
@@ -221,13 +219,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends cpio \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
 
-# Copy busybox binary and recreate applet symlinks for the gobgp variant
+# Copy busybox binary and create all applet symlinks (same as default variant).
+# This ensures utilities like tail, pgrep, dmesg, lsblk, hostname, ps, grep,
+# kill, id, and xargs are available for debug diagnostics and shell commands.
 COPY --from=busybox /build/initramfs/bin/busybox bin/busybox
-RUN for cmd in sh mount umount insmod ash ls cat echo grep mkdir rm cp mv \
-      sleep date df du find head wc sort uniq tr sed awk ping wget ifconfig \
-      route telnet vi chmod chown ln test expr chroot; do \
-      ln -sf busybox bin/$cmd; \
-    done
+RUN bin/busybox --install -s bin
 COPY --from=busybox /build/initramfs/bin/growpart bin/growpart
 
 # BOOTy init binary (with GoBGP compiled in)

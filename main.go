@@ -42,6 +42,11 @@ const varsPath = "/deploy/vars"
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 
+	// Ensure PATH includes standard binary directories. As PID 1 in an
+	// initramfs the kernel default may only contain /sbin:/bin; make sure
+	// /usr/bin, /usr/sbin, and /usr/local/bin are also reachable.
+	os.Setenv("PATH", "/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin")
+
 	setupMountsAndDevices()
 	loadModules()
 

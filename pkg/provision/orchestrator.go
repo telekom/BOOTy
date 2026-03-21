@@ -420,6 +420,8 @@ func (o *Orchestrator) reportSuccess(ctx context.Context) error {
 // BOOTy runs as PID 1 in an initramfs — this dump is the only diagnostic
 // data available before reboot, so it must be comprehensive.
 // Step-specific debug commands are run first, followed by comprehensive dump.
+// Automatically detects whether FRR (vtysh) or GoBGP is in use and runs
+// the appropriate network diagnostics.
 func DumpDebugState(failedStep string) {
 	slog.Error("=== DEBUG DUMP START ===", "failedStep", failedStep)
 
@@ -453,8 +455,39 @@ func DumpDebugState(failedStep string) {
 		{"routes v6", "ip -6 route"},
 		{"bridge fdb", "bridge fdb show"},
 		{"vxlan interfaces", "ip link show type vxlan"},
+	}
 
-		// FRR state.
+	for _, dc := range debugCmds {
+		runDebugCmd(dc.label, dc.cmd)
+	}
+
+	// Network mode–specific diagnostics: FRR (vtysh) vs GoBGP (in-process).
+	if hasBinary("vtysh") {
+		frrDebugCmds(failedStep)
+	} else {
+		gobgpDebugCmds()
+	}
+
+	// Log environment.
+	for _, env := range os.Environ() {
+		if strings.HasPrefix(env, "BOOTY_") || strings.HasPrefix(env, "MODE=") ||
+			strings.HasPrefix(env, "NETWORK_MODE=") {
+			slog.Error("DEBUG env", "var", env)
+		}
+	}
+
+	slog.Error("=== DEBUG DUMP END ===", "failedStep", failedStep)
+}
+
+// hasBinary reports whether the named binary exists in PATH.
+func hasBinary(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+// frrDebugCmds dumps FRR-specific state using vtysh.
+func frrDebugCmds(_ string) {
+	cmds := []debugCmd{
 		{"frr config", "cat /etc/frr/frr.conf"},
 		{"frr daemons", "pgrep -la 'bgpd|zebra|bfdd|mgmtd|staticd'"},
 		{"frr log tail", "tail -100 /var/log/frr/frr.log"},
@@ -465,19 +498,35 @@ func DumpDebugState(failedStep string) {
 		{"bfd peers", "vtysh -c 'show bfd peers'"},
 		{"frr interfaces", "vtysh -c 'show interface brief'"},
 	}
-
-	for _, dc := range debugCmds {
+	for _, dc := range cmds {
 		runDebugCmd(dc.label, dc.cmd)
 	}
+}
 
-	// Log environment.
-	for _, env := range os.Environ() {
-		if strings.HasPrefix(env, "BOOTY_") || strings.HasPrefix(env, "MODE=") {
-			slog.Error("DEBUG env", "var", env)
-		}
+// gobgpDebugCmds dumps network state available without FRR/vtysh.
+// GoBGP runs in-process so there is no CLI to query; instead we dump
+// kernel state that reflects what the GoBGP stack has programmed.
+func gobgpDebugCmds() {
+	slog.Error("DEBUG", "label", "network-mode", "data", "GoBGP (in-process, no vtysh)")
+	cmds := []debugCmd{
+		// VRF state — GoBGP programs routes into a VRF.
+		{"vrf devices", "ip -d link show type vrf"},
+		{"vrf routes", "ip route show vrf provision 2>/dev/null || ip route show table all"},
+		{"vrf neighbors", "ip neigh show vrf provision 2>/dev/null || ip neigh show"},
+		// VXLAN tunnel state.
+		{"vxlan details", "ip -d link show type vxlan"},
+		{"vxlan fdb", "bridge fdb show dev vx100 2>/dev/null || true"},
+		// Bridge state.
+		{"bridge links", "ip -d link show type bridge"},
+		{"bridge vlan", "bridge vlan show 2>/dev/null || true"},
+		// General neighbor/ARP state.
+		{"arp table", "ip neigh show"},
+		// Routing tables.
+		{"all routes", "ip route show table all 2>/dev/null | head -80"},
 	}
-
-	slog.Error("=== DEBUG DUMP END ===", "failedStep", failedStep)
+	for _, dc := range cmds {
+		runDebugCmd(dc.label, dc.cmd)
+	}
 }
 
 // debugCtx returns a context with a 10-second timeout for debug commands,
