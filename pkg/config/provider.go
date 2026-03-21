@@ -32,6 +32,10 @@ type MachineConfig struct {
 	SecureErase       bool     // SECURE_ERASE: use ATA/NVMe secure erase instead of wipefs
 	PostProvisionCmds []string // POST_PROVISION_CMDS: commands to run in chroot after provisioning
 
+	// Image verification fields.
+	ImageSignatureURL string // IMAGE_SIGNATURE_URL: detached GPG signature URL
+	ImageGPGPubKey    string // IMAGE_GPG_PUBKEY: path to GPG public key for image verification
+
 	// Status URLs parsed from /deploy/vars.
 	LogURL       string
 	InitURL      string
