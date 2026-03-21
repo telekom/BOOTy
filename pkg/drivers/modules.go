@@ -38,7 +38,7 @@ type Manifest struct {
 
 // AllModules returns all modules from the manifest in load order.
 func (m *Manifest) AllModules() []string {
-	seen := make(map[string]bool)
+	seen := make(map[string]struct{})
 	var result []string
 
 	for _, list := range [][]string{m.Common, m.NICs, m.Storage, m.USB, m.Custom} {
@@ -47,8 +47,8 @@ func (m *Manifest) AllModules() []string {
 			if mod == "" {
 				continue
 			}
-			if !seen[mod] {
-				seen[mod] = true
+			if _, ok := seen[mod]; !ok {
+				seen[mod] = struct{}{}
 				result = append(result, mod)
 			}
 		}

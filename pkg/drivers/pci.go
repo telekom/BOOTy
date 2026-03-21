@@ -11,12 +11,12 @@ import (
 
 // PCIDevice represents a PCI device found in sysfs.
 type PCIDevice struct {
-	Address  string `json:"address"`
-	VendorID string `json:"vendorId"`
-	DeviceID string `json:"deviceId"`
-	Class    string `json:"class"`
-	Driver   string `json:"driver,omitempty"`
-	Module   string `json:"module,omitempty"`
+	Address string `json:"address"`
+	Vendor  string `json:"vendor"`
+	Device  string `json:"device"`
+	Class   string `json:"class"`
+	Driver  string `json:"driver,omitempty"`
+	Module  string `json:"module,omitempty"`
 }
 
 // pciModuleMap maps PCI vendor:device IDs to kernel module names.
@@ -69,10 +69,10 @@ func scanPCIDevicesFrom(basePath string) ([]PCIDevice, error) {
 	for _, entry := range entries {
 		devPath := filepath.Join(basePath, entry.Name())
 		dev := PCIDevice{
-			Address:  entry.Name(),
-			VendorID: readSysfsFile(filepath.Join(devPath, "vendor")),
-			DeviceID: readSysfsFile(filepath.Join(devPath, "device")),
-			Class:    readSysfsFile(filepath.Join(devPath, "class")),
+			Address: entry.Name(),
+			Vendor:  readSysfsFile(filepath.Join(devPath, "vendor")),
+			Device:  readSysfsFile(filepath.Join(devPath, "device")),
+			Class:   readSysfsFile(filepath.Join(devPath, "class")),
 		}
 
 		// Check if driver is bound
@@ -82,7 +82,7 @@ func scanPCIDevicesFrom(basePath string) ([]PCIDevice, error) {
 		}
 
 		// Map PCI ID to module
-		pciID := formatPCIID(dev.VendorID, dev.DeviceID)
+		pciID := formatPCIID(dev.Vendor, dev.Device)
 		if mod, ok := pciModuleMap[pciID]; ok {
 			dev.Module = mod
 		} else if dev.Driver != "" {
@@ -106,12 +106,14 @@ func RequiredModules() ([]string, error) {
 
 // UniqueModulesFrom extracts unique module names from a list of PCI devices.
 func UniqueModulesFrom(devices []PCIDevice) []string {
-	seen := make(map[string]bool)
+	seen := make(map[string]struct{})
 	var modules []string
 	for _, dev := range devices {
-		if dev.Module != "" && !seen[dev.Module] {
-			seen[dev.Module] = true
-			modules = append(modules, dev.Module)
+		if dev.Module != "" {
+			if _, ok := seen[dev.Module]; !ok {
+				seen[dev.Module] = struct{}{}
+				modules = append(modules, dev.Module)
+			}
 		}
 	}
 	return modules
