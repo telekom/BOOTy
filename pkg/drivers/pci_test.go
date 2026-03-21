@@ -125,12 +125,12 @@ func TestScanPCIDevicesFrom_DriverFallbackModule(t *testing.T) {
 
 func TestPCIDevice_Fields(t *testing.T) {
 	dev := PCIDevice{
-		Address:  "0000:00:1f.0",
-		VendorID: "0x8086",
-		DeviceID: "0x15b8",
-		Class:    "0x020000",
-		Driver:   "e1000e",
-		Module:   "e1000e",
+		Address: "0000:00:1f.0",
+		Vendor:  "0x8086",
+		Device:  "0x15b8",
+		Class:   "0x020000",
+		Driver:  "e1000e",
+		Module:  "e1000e",
 	}
 
 	if dev.Address != "0000:00:1f.0" {
