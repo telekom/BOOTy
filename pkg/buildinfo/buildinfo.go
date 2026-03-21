@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"runtime"
 	"runtime/debug"
+	"strings"
 )
 
 // Flavor represents an initramfs build flavor.
@@ -41,8 +42,20 @@ var (
 	flavor    = "full"
 )
 
+// validFlavors is the set of known build flavors.
+var validFlavors = map[Flavor]bool{
+	FlavorFull:  true,
+	FlavorGoBGP: true,
+	FlavorSlim:  true,
+	FlavorMicro: true,
+}
+
 // Get returns the current build info.
 func Get() *Info {
+	f := Flavor(flavor)
+	if !validFlavors[f] {
+		f = FlavorFull
+	}
 	return &Info{
 		Version:   version,
 		Commit:    commit,
@@ -50,7 +63,7 @@ func Get() *Info {
 		GoVersion: runtime.Version(),
 		OS:        runtime.GOOS,
 		Arch:      runtime.GOARCH,
-		Flavor:    Flavor(flavor),
+		Flavor:    f,
 	}
 }
 
@@ -62,19 +75,24 @@ type DepInfo struct {
 }
 
 // Dependencies returns the list of compiled-in Go module dependencies.
+// Returns an empty slice (never nil) when build info is unavailable.
 func Dependencies() []DepInfo {
 	bi, ok := debug.ReadBuildInfo()
 	if !ok {
-		return nil
+		return []DepInfo{}
 	}
 	deps := make([]DepInfo, 0, len(bi.Deps))
 	for _, d := range bi.Deps {
-		dep := DepInfo{
-			Path:    d.Path,
-			Version: d.Version,
+		mod := d
+		if d.Replace != nil {
+			mod = d.Replace
 		}
-		if d.Sum != "" {
-			dep.Sum = d.Sum
+		dep := DepInfo{
+			Path:    mod.Path,
+			Version: mod.Version,
+		}
+		if mod.Sum != "" {
+			dep.Sum = mod.Sum
 		}
 		deps = append(deps, dep)
 	}
@@ -92,11 +110,11 @@ type SizeEstimate struct {
 // EstimateComponents returns known size estimates for major dependencies.
 func EstimateComponents() []SizeEstimate {
 	return []SizeEstimate{
-		{"go-runtime", 5.0, true, ""},
-		{"gobgp-v3", 8.0, false, "!micro,!slim"},
-		{"go-containerregistry", 3.0, false, "!micro"},
-		{"cobra+viper", 1.0, true, ""},
-		{"crypto/tls", 1.5, true, ""},
+		{Component: "go-runtime", SizeMB: 5.0, Required: true},
+		{Component: "gobgp-v3", SizeMB: 8.0, BuildTag: "!micro,!slim"},
+		{Component: "go-containerregistry", SizeMB: 3.0, BuildTag: "!micro"},
+		{Component: "cobra+viper", SizeMB: 1.0, Required: true},
+		{Component: "crypto/tls", SizeMB: 1.5, Required: true},
 	}
 }
 
@@ -118,9 +136,49 @@ func (i *Info) JSON() ([]byte, error) {
 	return data, nil
 }
 
+// sanitizeLDFlagValue ensures a value is safe for use in -ldflags -X assignments.
+// It rejects values containing whitespace, quotes, or shell metacharacters.
+func sanitizeLDFlagValue(v string) string {
+	for _, c := range v {
+		if c == ' ' || c == '\t' || c == '"' || c == '\'' || c == '`' || c == '$' || c == '\\' {
+			return ""
+		}
+	}
+	return v
+}
+
 // LDFlags returns the recommended ldflags for a production build.
+// Values are validated and empty/unsafe inputs are replaced with defaults.
 func LDFlags(ver, sha, date, flv string) string {
 	pkg := "github.com/telekom/BOOTy/pkg/buildinfo"
-	return fmt.Sprintf("-s -w -X %s.version=%s -X %s.commit=%s -X %s.buildDate=%s -X %s.flavor=%s",
-		pkg, ver, pkg, sha, pkg, date, pkg, flv)
+
+	if v := sanitizeLDFlagValue(ver); v != "" {
+		ver = v
+	} else {
+		ver = "dev"
+	}
+	if v := sanitizeLDFlagValue(sha); v != "" {
+		sha = v
+	} else {
+		sha = "unknown"
+	}
+	if v := sanitizeLDFlagValue(date); v != "" {
+		date = v
+	} else {
+		date = "unknown"
+	}
+	if v := sanitizeLDFlagValue(flv); v != "" {
+		flv = v
+	} else {
+		flv = "full"
+	}
+
+	parts := []string{
+		"-s", "-w",
+		fmt.Sprintf("-X %s.version=%s", pkg, ver),
+		fmt.Sprintf("-X %s.commit=%s", pkg, sha),
+		fmt.Sprintf("-X %s.buildDate=%s", pkg, date),
+		fmt.Sprintf("-X %s.flavor=%s", pkg, flv),
+	}
+	return strings.Join(parts, " ")
 }

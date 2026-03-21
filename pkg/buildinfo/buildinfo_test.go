@@ -55,9 +55,21 @@ func TestInfo_JSON(t *testing.T) {
 
 func TestDependencies(t *testing.T) {
 	deps := Dependencies()
-	// In test binary, should have at least some deps.
+	// Dependencies always returns non-nil (empty slice, not nil).
 	if deps == nil {
-		t.Skip("no build info available")
+		t.Fatal("Dependencies() returned nil, want non-nil slice")
+	}
+	// In a test binary, we expect at least the testing stdlib deps.
+	if len(deps) == 0 {
+		t.Skip("no build info available in test binary")
+	}
+	for i, d := range deps {
+		if d.Path == "" {
+			t.Errorf("deps[%d].Path is empty", i)
+		}
+		if d.Version == "" {
+			t.Errorf("deps[%d].Version is empty for %s", i, d.Path)
+		}
 	}
 }
 
@@ -156,6 +168,44 @@ func TestLDFlags_AllFields(t *testing.T) {
 		if !strings.Contains(flags, want) {
 			t.Errorf("LDFlags missing %q in %q", want, flags)
 		}
+	}
+}
+
+func TestLDFlags_Sanitization(t *testing.T) {
+	tests := []struct {
+		name    string
+		ver     string
+		sha     string
+		date    string
+		flv     string
+		wantVer string
+		wantFlv string
+	}{
+		{"clean values", "v1.0.0", "abc", "2026-01-01", "gobgp", "v1.0.0", "gobgp"},
+		{"space in version", "v1 0", "abc", "2026-01-01", "full", "dev", "full"},
+		{"quote in sha", "v1.0.0", `ab"c`, "2026-01-01", "full", "v1.0.0", "full"},
+		{"dollar in date", "v1.0.0", "abc", "$HOME", "full", "v1.0.0", "full"},
+		{"empty inputs", "", "", "", "", "dev", "full"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			flags := LDFlags(tt.ver, tt.sha, tt.date, tt.flv)
+			if !strings.Contains(flags, "version="+tt.wantVer) {
+				t.Errorf("expected version=%s in %q", tt.wantVer, flags)
+			}
+			if !strings.Contains(flags, "flavor="+tt.wantFlv) {
+				t.Errorf("expected flavor=%s in %q", tt.wantFlv, flags)
+			}
+		})
+	}
+}
+
+func TestGet_InvalidFlavor(t *testing.T) {
+	// The package-level var is set via ldflags; in tests it's "full" by default.
+	// We verify that Get() returns a valid flavor.
+	info := Get()
+	if !validFlavors[info.Flavor] {
+		t.Errorf("Get() returned invalid flavor %q", info.Flavor)
 	}
 }
 

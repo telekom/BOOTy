@@ -21,10 +21,10 @@ fmt.Println(string(data))
 
 ### Setting Build Variables via LDFlags
 
-Use `LDFlags()` to generate the correct `-ldflags` string:
+Use `LDFlags()` in the Makefile or set flags directly:
 
 ```bash
-go build -ldflags "$(go run ./cmd/ldflags v1.2.3 abc123 2026-01-01 gobgp)" -o booty
+go build -ldflags "$(go run -e -p buildinfo.LDFlags v1.2.3 abc123 2026-01-01 gobgp)" -o booty
 ```
 
 Or directly:
