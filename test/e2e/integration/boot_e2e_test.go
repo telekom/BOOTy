@@ -82,6 +82,14 @@ func waitForLogEntry(t *testing.T, container, entry string, timeout time.Duratio
 	return false
 }
 
+// bootyNetworkFailed checks if BOOTy has already logged a network timeout,
+// meaning the EVPN overlay never converged and further retries are futile.
+func bootyNetworkFailed(t *testing.T, container string) bool {
+	t.Helper()
+	logs := getBootyLogs(t, container)
+	return strings.Contains(logs, "Network connectivity timeout")
+}
+
 // waitForAccessLogEntry polls a container's file until it contains the expected string.
 func waitForAccessLogEntry(t *testing.T, container, logPath, entry string, timeout time.Duration) (string, bool) {
 	t.Helper()
@@ -119,7 +127,12 @@ func TestBootAllNodesReachCAPRF(t *testing.T) {
 			// EVPN data-plane convergence can take several minutes in CI;
 			// run all 3 connectivity checks in parallel with a generous budget.
 			var reachable bool
-			for i := 0; i < 360; i++ {
+			for i := 0; i < 180; i++ {
+				// If BOOTy itself gave up on networking, stop retrying.
+				if bootyNetworkFailed(t, c.name) {
+					t.Logf("%s BOOTy reported network failure, skipping further retries", c.desc)
+					break
+				}
 				_, err := bootDockerExec(t, c.name, "wget", "-q", "-O", "/dev/null", "--timeout=2", "http://10.100.0.11/health")
 				if err == nil {
 					reachable = true
@@ -154,6 +167,10 @@ func TestBootAllNodesReachNginx(t *testing.T) {
 			t.Parallel()
 			var reachable bool
 			for i := 0; i < 120; i++ {
+				if bootyNetworkFailed(t, c.name) {
+					t.Logf("%s BOOTy reported network failure, skipping further retries", c.desc)
+					break
+				}
 				_, err := bootDockerExec(t, c.name, "wget", "-q", "-O", "/dev/null", "--timeout=2", "http://10.100.0.10/")
 				if err == nil {
 					reachable = true
@@ -316,6 +333,10 @@ func TestBootAllNodesImageReachableThroughEVPN(t *testing.T) {
 			t.Parallel()
 			var ok bool
 			for i := 0; i < 90; i++ {
+				if bootyNetworkFailed(t, c.name) {
+					t.Logf("%s BOOTy reported network failure, skipping further retries", c.desc)
+					break
+				}
 				_, err := bootDockerExec(t, c.name, "wget", "-q", "-O", "/dev/null", "http://10.100.0.10/images/test.img")
 				if err == nil {
 					ok = true

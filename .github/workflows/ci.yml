@@ -829,7 +829,7 @@ jobs:
           exit 1
 
       - name: Run BOOTy boot E2E tests
-        run: go test -tags e2e_boot -v -race -count=1 -timeout 15m ./test/e2e/integration/...
+        run: go test -tags e2e_boot -v -race -count=1 -timeout 20m ./test/e2e/integration/...
 
       - name: Collect BOOTy container logs
         if: always()
