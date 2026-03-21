@@ -7,7 +7,7 @@ require (
 	github.com/dustin/go-humanize v1.0.1
 	github.com/google/go-containerregistry v0.21.3
 	github.com/google/gopacket v1.1.19
-	github.com/klauspost/compress v1.18.4
+	github.com/klauspost/compress v1.18.5
 	github.com/osrg/gobgp/v3 v3.37.0
 	github.com/pierrec/lz4/v4 v4.1.26
 	github.com/spf13/cobra v1.10.2
