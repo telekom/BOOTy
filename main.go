@@ -96,6 +96,10 @@ func setupMountsAndDevices() {
 // loadModules loads kernel modules from /modules/ for common server NICs.
 // Uses the finit_module syscall directly instead of shelling out to insmod.
 // Errors are non-fatal: modules may already be built-in or not needed.
+//
+// Module dependencies are resolved by retrying: modules that fail on the
+// first pass (e.g. virtio_net depends on virtio_pci → virtio → virtio_ring)
+// succeed on subsequent passes once their dependencies have been loaded.
 func loadModules() {
 	const moduleDir = "/modules"
 	entries, err := os.ReadDir(moduleDir)
@@ -103,16 +107,34 @@ func loadModules() {
 		slog.Debug("No kernel modules directory, skipping", "path", moduleDir)
 		return
 	}
+
+	// Collect all module paths.
+	var pending []string
 	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
+		if !entry.IsDir() {
+			pending = append(pending, entry.Name())
 		}
-		ko := filepath.Join(moduleDir, entry.Name())
-		if err := loadModule(ko); err != nil {
-			slog.Debug("Module load skipped", "module", entry.Name(), "error", err)
-			continue
+	}
+
+	// Retry up to 5 passes to resolve dependency ordering.
+	const maxPasses = 5
+	for pass := range maxPasses {
+		var failed []string
+		for _, name := range pending {
+			ko := filepath.Join(moduleDir, name)
+			if err := loadModule(ko); err != nil {
+				failed = append(failed, name)
+				if pass == maxPasses-1 {
+					slog.Debug("Module load skipped", "module", name, "error", err)
+				}
+				continue
+			}
+			slog.Info("Loaded kernel module", "module", name)
 		}
-		slog.Info("Loaded kernel module", "module", entry.Name())
+		if len(failed) == 0 {
+			break
+		}
+		pending = failed
 	}
 }
 
