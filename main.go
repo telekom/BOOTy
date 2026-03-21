@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -167,6 +168,7 @@ func loadModules() {
 }
 
 // loadModule loads a single kernel module via the finit_module syscall.
+// Returns nil when the module is already loaded or built-in (EEXIST).
 func loadModule(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -175,6 +177,9 @@ func loadModule(path string) error {
 	defer func() { _ = f.Close() }()
 
 	if err := unix.FinitModule(int(f.Fd()), "", 0); err != nil {
+		if errors.Is(err, unix.EEXIST) {
+			return nil
+		}
 		return fmt.Errorf("finit_module %s: %w", filepath.Base(path), err)
 	}
 	return nil

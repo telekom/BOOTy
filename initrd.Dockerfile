@@ -189,7 +189,7 @@ WORKDIR /build/initramfs
 # This ensures utilities like tail, grep, dmesg, hostname, ps, and xargs are
 # available for debug diagnostics and shell commands.
 COPY --from=busybox-bin /bin/busybox bin/busybox
-RUN for cmd in $(bin/busybox --list); do [ "$cmd" != "busybox" ] && ln -sf busybox "bin/$cmd"; done || true
+RUN for cmd in $(bin/busybox --list); do if [ "$cmd" != "busybox" ]; then ln -sf busybox "bin/$cmd"; fi; done
 COPY --from=busybox /build/initramfs/bin/growpart bin/growpart
 
 # BOOTy init binary (static, CGO-enabled)
@@ -223,7 +223,7 @@ WORKDIR /build/initramfs
 # This ensures utilities like tail, pgrep, dmesg, lsblk, hostname, ps, grep,
 # kill, id, and xargs are available for debug diagnostics and shell commands.
 COPY --from=busybox-bin /bin/busybox bin/busybox
-RUN for cmd in $(bin/busybox --list); do [ "$cmd" != "busybox" ] && ln -sf busybox "bin/$cmd"; done || true
+RUN for cmd in $(bin/busybox --list); do if [ "$cmd" != "busybox" ]; then ln -sf busybox "bin/$cmd"; fi; done
 COPY --from=busybox /build/initramfs/bin/growpart bin/growpart
 
 # BOOTy init binary (with GoBGP compiled in)

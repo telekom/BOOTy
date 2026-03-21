@@ -8,7 +8,6 @@ import (
 )
 
 func TestHasBinary(t *testing.T) {
-	t.Helper()
 	tests := []struct {
 		name   string
 		binary string
