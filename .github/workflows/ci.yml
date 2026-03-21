@@ -428,6 +428,8 @@ jobs:
           exit 1
 
       - name: Run E2E integration tests
+        env:
+          BOOTY_TOPOLOGY: lab
         run: go test -tags e2e_integration -v -race -count=1 -timeout 10m ./test/e2e/integration/...
 
       - name: Collect container logs
@@ -480,7 +482,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y qemu-system-x86 ovmf xorriso grub-efi-amd64-bin \
-            grub-common mtools cpio zstd dosfstools
+            grub-common mtools cpio zstd dosfstools \
+            isolinux syslinux-common swtpm swtpm-tools
 
       - name: Build initramfs image
         run: |

@@ -18,7 +18,7 @@ func TestLUKSSmokeQEMU(t *testing.T) {
 	requireKVMAssets(t, initramfs, kernel)
 	diskImg := envOrDefault("LUKS_DISK_IMAGE", "")
 	if diskImg == "" {
-		t.Skip("LUKS_DISK_IMAGE not set")
+		t.Fatal("LUKS_DISK_IMAGE not set")
 	}
 
 	extra := splitExtraArgs(envOrDefault("QEMU_EXTRA_ARGS", ""))
@@ -44,7 +44,7 @@ func TestLUKSSmokeQEMU(t *testing.T) {
 func TestLUKSVerifyHeader(t *testing.T) {
 	diskImg := envOrDefault("LUKS_DISK_IMAGE", "")
 	if diskImg == "" {
-		t.Skip("LUKS_DISK_IMAGE not set")
+		t.Fatal("LUKS_DISK_IMAGE not set")
 	}
 
 	if _, err := os.Stat(diskImg); err != nil {
@@ -52,13 +52,13 @@ func TestLUKSVerifyHeader(t *testing.T) {
 	}
 
 	if _, err := exec.LookPath("cryptsetup"); err != nil {
-		t.Skip("cryptsetup not available")
+		t.Fatal("cryptsetup not available")
 	}
 
 	// Verify LUKS header via cryptsetup luksDump (works on disk images directly).
 	// For qcow2, we need to use qemu-nbd first.
 	if _, err := exec.LookPath("qemu-nbd"); err != nil {
-		t.Skip("qemu-nbd not available for LUKS header inspection")
+		t.Fatal("qemu-nbd not available for LUKS header inspection")
 	}
 
 	requireRoot(t)

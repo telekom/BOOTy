@@ -151,11 +151,11 @@ func TestProvisionVerifyKubeletConfig(t *testing.T) {
 
 // --- Helpers ---
 
-// requireRoot skips if not running as root.
+// requireRoot fails if not running as root.
 func requireRoot(t *testing.T) {
 	t.Helper()
 	if os.Getuid() != 0 {
-		t.Skip("requires root")
+		t.Fatal("requires root")
 	}
 }
 
@@ -175,7 +175,7 @@ func findKernel(t *testing.T) string {
 			return c
 		}
 	}
-	t.Skip("no Linux kernel found for QEMU boot")
+	t.Fatal("no Linux kernel found for QEMU boot")
 	return ""
 }
 

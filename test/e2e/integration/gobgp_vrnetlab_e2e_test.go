@@ -30,10 +30,10 @@ func requireGoBGPVRLab(t *testing.T) {
 	t.Helper()
 	out, err := exec.CommandContext(context.Background(), "docker", "ps", "--format", "{{.Names}}").Output()
 	if err != nil {
-		t.Skipf("docker not available: %v", err)
+		t.Fatalf("docker not available: %v", err)
 	}
 	if !strings.Contains(string(out), gobgpVRSpine) {
-		t.Skip("GoBGP vrnetlab topology not deployed (run: make clab-gobgp-vrnetlab-up)")
+		t.Fatal("GoBGP vrnetlab topology not deployed (run: make clab-gobgp-vrnetlab-up)")
 	}
 }
 

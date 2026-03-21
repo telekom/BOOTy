@@ -17,22 +17,22 @@ import (
 	"time"
 )
 
-// requireProvisionTools skips the test if essential provisioning tools are missing.
+// requireProvisionTools fails the test if essential provisioning tools are missing.
 func requireProvisionTools(t *testing.T) {
 	t.Helper()
 	for _, tool := range []string{"sfdisk", "mkfs.ext4", "qemu-img", "losetup", "dd", "mount", "umount"} {
 		if _, err := exec.LookPath(tool); err != nil {
-			t.Skipf("%s not available, skipping provision test", tool)
+			t.Fatalf("%s not available", tool)
 		}
 	}
 }
 
-// requireDiskInspectTools skips if tools needed for post-provision inspection are missing.
+// requireDiskInspectTools fails if tools needed for post-provision inspection are missing.
 func requireDiskInspectTools(t *testing.T) {
 	t.Helper()
 	for _, tool := range []string{"qemu-nbd", "partprobe"} {
 		if _, err := exec.LookPath(tool); err != nil {
-			t.Skipf("%s not available, skipping provision inspection", tool)
+			t.Fatalf("%s not available", tool)
 		}
 	}
 }
@@ -431,7 +431,7 @@ func findBusybox(t *testing.T) string {
 	if p, err := exec.LookPath("busybox"); err == nil {
 		return p
 	}
-	t.Skip("busybox not found, skipping provision test")
+	t.Fatal("busybox not found")
 	return ""
 }
 

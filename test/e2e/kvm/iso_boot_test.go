@@ -83,7 +83,7 @@ func TestISOBootHeadlessQ35(t *testing.T) {
 // dependent.  The positive test (TestISOBootHeadlessQ35) is the strict validation.
 func TestISOBootHeadlessQ35NoSerial(t *testing.T) {
 	if os.Getenv("KVM_NOSERIAL_TEST") == "" {
-		t.Skip("skipped by default — set KVM_NOSERIAL_TEST=1 to run this diagnostic test")
+		t.Fatal("KVM_NOSERIAL_TEST not set — set KVM_NOSERIAL_TEST=1 to run this diagnostic test")
 	}
 	qemuAvailable(t)
 	requireXorrisofs(t)
@@ -138,7 +138,7 @@ func TestISOBootHeadlessQ35NoSerial(t *testing.T) {
 func requireXorrisofs(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("xorrisofs"); err != nil {
-		t.Skip("xorrisofs not available")
+		t.Fatal("xorrisofs not available")
 	}
 }
 
@@ -149,10 +149,10 @@ func requireISOLINUX(t *testing.T) (string, string) {
 	ldlinuxC32 := envOrDefault("LDLINUX_C32", "/usr/lib/syslinux/modules/bios/ldlinux.c32")
 
 	if _, err := os.Stat(isolinuxBin); err != nil {
-		t.Skipf("isolinux.bin not found at %s — install isolinux package", isolinuxBin)
+		t.Fatalf("isolinux.bin not found at %s — install isolinux package", isolinuxBin)
 	}
 	if _, err := os.Stat(ldlinuxC32); err != nil {
-		t.Skipf("ldlinux.c32 not found at %s — install syslinux-common package", ldlinuxC32)
+		t.Fatalf("ldlinux.c32 not found at %s — install syslinux-common package", ldlinuxC32)
 	}
 	return isolinuxBin, ldlinuxC32
 }
@@ -318,10 +318,10 @@ func buildStubDeployCpio(t *testing.T, cpioPath string) {
 	t.Helper()
 
 	if _, err := exec.LookPath("cpio"); err != nil {
-		t.Skip("cpio not available")
+		t.Fatal("cpio not available")
 	}
 	if _, err := exec.LookPath("find"); err != nil {
-		t.Skip("find not available")
+		t.Fatal("find not available")
 	}
 
 	deployDir := filepath.Join(t.TempDir(), "deploy-root", "deploy")

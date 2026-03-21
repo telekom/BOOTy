@@ -13,7 +13,7 @@ import (
 func dockerAvailable(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker not available, skipping build flavour test")
+		t.Fatal("docker not available")
 	}
 }
 
@@ -80,7 +80,7 @@ func listCPIOContents(t *testing.T, cpioGzPath string) map[string]bool {
 	out, err := cmd.Output()
 	if err != nil {
 		// Try alternative: use tar if cpio not available (shouldn't happen on Linux CI)
-		t.Skipf("cpio command not available: %v", err)
+		t.Fatalf("cpio command not available: %v", err)
 	}
 
 	files := make(map[string]bool)
