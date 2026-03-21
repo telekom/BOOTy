@@ -119,10 +119,11 @@ func TestBootAllNodesReachCAPRF(t *testing.T) {
 			// EVPN data-plane convergence can take several minutes in CI;
 			// run all 3 connectivity checks in parallel with a generous budget.
 			var reachable bool
-			for i := 0; i < 420; i++ {
+			for i := 0; i < 360; i++ {
 				_, err := bootDockerExec(t, c.name, "wget", "-q", "-O", "/dev/null", "--timeout=2", "http://10.100.0.11/health")
 				if err == nil {
 					reachable = true
+					t.Logf("%s node reached CAPRF after %d attempts", c.desc, i+1)
 					break
 				}
 				time.Sleep(1 * time.Second)
@@ -314,7 +315,7 @@ func TestBootAllNodesImageReachableThroughEVPN(t *testing.T) {
 		t.Run(c.desc, func(t *testing.T) {
 			t.Parallel()
 			var ok bool
-			for i := 0; i < 30; i++ {
+			for i := 0; i < 90; i++ {
 				_, err := bootDockerExec(t, c.name, "wget", "-q", "-O", "/dev/null", "http://10.100.0.10/images/test.img")
 				if err == nil {
 					ok = true
@@ -361,8 +362,11 @@ func TestBootProvisionShowsProvisioningSteps(t *testing.T) {
 		t.Fatal("provision node did not reach report-init")
 	}
 
-	// Wait for provisioning steps to execute and (likely) fail at disk ops
-	time.Sleep(15 * time.Second)
+	// Wait for provisioning to progress past detect-disk (or fail at disk ops).
+	// Poll instead of sleeping to avoid wasting time when the step completes quickly.
+	if !waitForLogEntry(t, provisionContainer, "detect-disk", 30*time.Second) {
+		t.Log("provision node: detect-disk not found, checking for other step activity")
+	}
 
 	logs := getBootyLogs(t, provisionContainer)
 
@@ -428,8 +432,11 @@ var allowedErrorPatterns = []string{
 func TestBootNoUnexpectedErrors(t *testing.T) {
 	requireBootLab(t)
 
-	// Wait for BOOTy to have progressed through provisioning attempt
-	time.Sleep(15 * time.Second)
+	// Wait for BOOTy to have progressed through provisioning attempt.
+	// Poll for a known terminal state instead of sleeping a fixed duration.
+	if !waitForLogEntry(t, provisionContainer, "Provisioning failed", 90*time.Second) {
+		t.Log("provision node: 'Provisioning failed' not found within 90s, checking available logs")
+	}
 
 	containers := []struct {
 		name string
@@ -465,8 +472,10 @@ func TestBootNoUnexpectedErrors(t *testing.T) {
 func TestBootZZZDumpAllLogs(t *testing.T) {
 	requireBootLab(t)
 
-	// Wait for BOOTy processes to have run
-	time.Sleep(10 * time.Second)
+	// Wait for BOOTy processes to have run — poll for a terminal state.
+	if !waitForLogEntry(t, provisionContainer, "Provisioning failed", 60*time.Second) {
+		t.Log("provision node: 'Provisioning failed' not found, dumping available logs")
+	}
 
 	containers := []struct {
 		name string

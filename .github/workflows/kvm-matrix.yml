@@ -105,7 +105,7 @@ jobs:
           docker run --rm --platform=linux/amd64 "$BUSYBOX_IMAGE" cat /bin/busybox > initramfs/bin/busybox
           chmod +x initramfs/bin/busybox
           # Verify that busybox is statically linked to avoid non-bootable initramfs output.
-          if ! file initramfs/bin/busybox | grep -qi 'statically linked'; then
+          if ! file initramfs/bin/busybox | grep -Eqi 'statically linked|static-pie linked'; then
             echo "ERROR: extracted /bin/busybox is not statically linked"
             file initramfs/bin/busybox || true
             exit 1
