@@ -225,33 +225,13 @@ func runCAPRF(ctx context.Context) {
 
 	// Set up networking with retry — if connectivity fails, teardown and
 	// rebuild the entire network stack before giving up.
-	const maxNetRetries = 3
 	netMode := setupNetworkMode(ctx, cfg)
-
 	connectivityTarget := cfg.InitURL
 	if connectivityTarget == "" {
 		connectivityTarget = cfg.SuccessURL
 	}
 	if connectivityTarget != "" {
-		var connected bool
-		for attempt := 1; attempt <= maxNetRetries; attempt++ {
-			slog.Info("Waiting for network connectivity", "target", connectivityTarget, "attempt", attempt)
-			if err := netMode.WaitForConnectivity(ctx, connectivityTarget, 5*time.Minute); err != nil {
-				slog.Error("Network connectivity timeout", "error", err, "attempt", attempt)
-				if attempt < maxNetRetries {
-					slog.Info("Tearing down network for retry", "attempt", attempt)
-					if tErr := netMode.Teardown(ctx); tErr != nil {
-						slog.Warn("Network teardown failed", "error", tErr)
-					}
-					netMode = setupNetworkMode(ctx, cfg)
-				}
-				continue
-			}
-			connected = true
-			break
-		}
-		if !connected {
-			slog.Error("Network connectivity failed after all retries", "attempts", maxNetRetries)
+		if err := ensureNetworkConnectivity(ctx, cfg, &netMode, connectivityTarget); err != nil {
 			realm.Reboot()
 		}
 	}
@@ -295,6 +275,29 @@ func runCAPRF(ctx context.Context) {
 	}
 	time.Sleep(time.Second * 2)
 	realm.Reboot()
+}
+
+// ensureNetworkConnectivity retries network setup up to 3 times on connectivity failure.
+// Returns error only if all retries exhausted (for caller to decide reboot behavior).
+func ensureNetworkConnectivity(ctx context.Context, cfg *config.MachineConfig, netMode *network.Mode, target string) error {
+	const maxRetries = 3
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		slog.Info("Waiting for network connectivity", "target", target, "attempt", attempt)
+		if err := (*netMode).WaitForConnectivity(ctx, target, 5*time.Minute); err == nil {
+			slog.Info("Network connectivity established", "target", target)
+			return nil
+		}
+		slog.Error("Network connectivity timeout", "attempt", attempt)
+		if attempt < maxRetries {
+			slog.Info("Tearing down network for retry", "attempt", attempt)
+			if tErr := (*netMode).Teardown(ctx); tErr != nil {
+				slog.Warn("Network teardown failed", "error", tErr)
+			}
+			*netMode = setupNetworkMode(ctx, cfg)
+		}
+	}
+	slog.Error("Network connectivity failed after all retries", "attempts", maxRetries)
+	return fmt.Errorf("network connectivity timeout after %d attempts", maxRetries)
 }
 
 // setupNetworkMode detects and configures the appropriate network mode.
