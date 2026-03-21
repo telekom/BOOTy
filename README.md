@@ -6,13 +6,11 @@
 
 A lightweight initramfs agent for bare-metal OS provisioning over the network.
 
-BOOTy boots as the init process inside a minimal initramfs, contacts a provisioning server, and orchestrates the full lifecycle of a bare-metal machine: disk imaging, OS configuration, network setup, and reboot. It supports two operating modes — **CAPRF integration** for Kubernetes cluster provisioning and **legacy mode** for standalone image deployment.
+BOOTy boots as the init process inside a minimal initramfs, contacts a provisioning server, and orchestrates the full lifecycle of a bare-metal machine: disk imaging, OS configuration, network setup, and reboot. It uses **CAPRF** (Cluster API Provider Redfish) for Kubernetes cluster provisioning.
 
 > **Warning** — This software has **no guard rails**. Incorrect use can overwrite an existing Operating System.
 
 ## Architecture
-
-BOOTy operates in two modes depending on the boot environment:
 
 ### CAPRF Mode (Cluster API Provider Redfish)
 
@@ -36,27 +34,7 @@ BOOTy operates in two modes depending on the boot environment:
 4. The provisioning pipeline runs 30 steps: status reporting → RAID cleanup → disk detection → image streaming → partition management → OS configuration → kexec.
 5. Status, logs, and debug info are shipped back to the CAPRF controller throughout.
 
-### Legacy Mode
-
-```
-┌──────────────┐         ┌──────────────────┐
-│  PXE / iPXE  │────────▶│   BOOTy initrd   │
-│  Boot loader │         │  (kernel + cpio)  │
-└──────────────┘         └───────┬──────────┘
-                                 │ DHCP / HTTP
-                         ┌───────▼──────────┐
-                         │  BOOTy Server     │
-                         │  (config + images)│
-                         └──────────────────┘
-```
-
-1. A bare-metal server PXE-boots with a kernel and the BOOTy initramfs.
-2. BOOTy obtains an IP via DHCP and fetches its configuration from the provisioning server using its MAC address.
-3. Depending on the `action` field in the config, BOOTy either writes an image to disk or reads a disk and uploads it.
-
 ## Features
-
-- **Dual-mode provisioning** — CAPRF (Kubernetes) and legacy (standalone) modes
 - **FRR/EVPN networking** — BGP underlay with VXLAN overlay for data center fabrics (FRR-based)
 - **GoBGP/EVPN networking** — Pure-Go BGP stack with VXLAN overlay (no external daemons)
 - **Static IP networking** — Direct IP assignment via netlink (no external tools)
@@ -83,7 +61,7 @@ BOOTy operates in two modes depending on the boot environment:
 
 - Go **1.26+**
 - Docker (for building the initramfs)
-- A DHCP/PXE environment (legacy mode) or Redfish BMC with ISO virtual media (CAPRF mode)
+- A Redfish BMC with ISO virtual media (CAPRF mode)
 
 ### Build Environment
 
@@ -211,45 +189,6 @@ asn_server="65001"
 provision_vni="10100"
 overlay_subnet="fd00::/64"
 dns_resolver="8.8.8.8"
-```
-
-### Legacy Mode
-
-The provisioning server serves configuration files and (optionally) disk images over HTTP.
-
-#### Write an image to a remote server
-
-```bash
-go run server/server.go \
-  -action writeImage \
-  -mac 00:50:56:a5:0e:0f \
-  -sourceImage http://192.168.0.95:3000/images/ubuntu.img \
-  -destinationDevice /dev/sda
-```
-
-#### Read a disk from a remote server
-
-```bash
-go run server/server.go \
-  -action readImage \
-  -mac 00:50:56:a5:0e:0f \
-  -destinationAddress http://192.168.0.95:3000/image \
-  -sourceDevice /dev/sda
-```
-
-### LVM & Disk Growth
-
-Write an image, grow partition 1, and expand the root LVM volume:
-
-```bash
-go run server/server.go \
-  -action writeImage \
-  -mac 00:50:56:a5:0e:0f \
-  -sourceImage http://192.168.0.95:3000/images/ubuntu.img \
-  -destinationDevice /dev/sda \
-  -growPartition 1 \
-  -lvmRoot /dev/ubuntu-vg/root \
-  -shell
 ```
 
 ### Feature Gates
@@ -400,9 +339,8 @@ and the PR process.
 ## Project Structure
 
 ```
-├── main.go                     # Entry point: CAPRF vs legacy mode, kernel module loading
-├── cmd/booty.go                # Legacy CLI orchestration
-├── server/server.go            # Legacy provisioning server
+├── main.go                     # Entry point: CAPRF mode, kernel module loading
+├── cmd/booty.go                # CLI version command
 ├── initrd.Dockerfile           # Multi-stage initramfs build (default, iso, slim, micro)
 ├── pkg/
 │   ├── caprf/                  # CAPRF client (status, log, debug, vars parsing)
@@ -420,8 +358,7 @@ and the PR process.
 │   │   └── vlan/              # VLAN 802.1Q tagging via netlink
 │   ├── provision/              # Orchestrator (30-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
-│   ├── plunderclient/          # Legacy HTTP client for config retrieval
-│   ├── realm/                  # Device, mount, network, shell operations
+│   ├── realm/                  # Device, mount, shell operations
 │   ├── utils/                  # Cmdline parsing, helpers
 │   └── ux/                     # ASCII art & system info display
 ├── test/e2e/                   # E2E tests (ContainerLab + vrnetlab EVPN fabric)

@@ -119,7 +119,6 @@ jobs:
           cp booty initramfs/booty
           cat > initramfs/init << 'INITEOF'
           #!/bin/sh
-          export BOOTYURL="http://10.0.2.2:3000/booty"
           exec /booty
           INITEOF
           chmod +x initramfs/init

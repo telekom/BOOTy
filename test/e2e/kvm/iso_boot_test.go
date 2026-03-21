@@ -138,21 +138,21 @@ func TestISOBootHeadlessQ35NoSerial(t *testing.T) {
 func requireXorrisofs(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("xorrisofs"); err != nil {
-		t.Skip("xorrisofs not available — skipping ISO boot test")
+		t.Fatal("xorrisofs not available")
 	}
 }
 
-// requireISOLINUX returns paths to isolinux.bin and ldlinux.c32, or skips.
+// requireISOLINUX returns paths to isolinux.bin and ldlinux.c32, or fails.
 func requireISOLINUX(t *testing.T) (string, string) {
 	t.Helper()
 	isolinuxBin := envOrDefault("ISOLINUX_BIN", "/usr/lib/ISOLINUX/isolinux.bin")
 	ldlinuxC32 := envOrDefault("LDLINUX_C32", "/usr/lib/syslinux/modules/bios/ldlinux.c32")
 
 	if _, err := os.Stat(isolinuxBin); err != nil {
-		t.Skipf("isolinux.bin not found at %s — install isolinux package", isolinuxBin)
+		t.Fatalf("isolinux.bin not found at %s — install isolinux package", isolinuxBin)
 	}
 	if _, err := os.Stat(ldlinuxC32); err != nil {
-		t.Skipf("ldlinux.c32 not found at %s — install syslinux-common package", ldlinuxC32)
+		t.Fatalf("ldlinux.c32 not found at %s — install syslinux-common package", ldlinuxC32)
 	}
 	return isolinuxBin, ldlinuxC32
 }
@@ -318,10 +318,10 @@ func buildStubDeployCpio(t *testing.T, cpioPath string) {
 	t.Helper()
 
 	if _, err := exec.LookPath("cpio"); err != nil {
-		t.Skip("cpio not available — skipping deploy.cpio build")
+		t.Fatal("cpio not available")
 	}
 	if _, err := exec.LookPath("find"); err != nil {
-		t.Skip("find not available — skipping deploy.cpio build")
+		t.Fatal("find not available")
 	}
 
 	deployDir := filepath.Join(t.TempDir(), "deploy-root", "deploy")

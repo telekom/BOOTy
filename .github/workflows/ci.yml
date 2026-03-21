@@ -285,11 +285,10 @@ jobs:
             echo "WARNING: e1000 module not found"
           fi
 
-          # Create init wrapper: loads NIC driver and sets BOOTYURL before starting BOOTy
+          # Create init wrapper: loads NIC driver before starting BOOTy
           cat > initramfs/init << 'INITEOF'
           #!/bin/sh
           /bin/insmod /lib/modules/e1000.ko 2>/dev/null || true
-          export BOOTYURL="http://10.0.2.2:3000/booty"
           exec /booty
           INITEOF
           chmod +x initramfs/init
@@ -570,7 +569,6 @@ jobs:
           cat > initramfs/init << 'INITEOF'
           #!/bin/sh
           /bin/insmod /lib/modules/e1000.ko 2>/dev/null || true
-          export BOOTYURL="http://10.0.2.2:3000/booty"
           exec /booty
           INITEOF
           chmod +x initramfs/init

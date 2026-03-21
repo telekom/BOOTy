@@ -17,7 +17,7 @@ const bootyStartMarker = "Starting BOOTy"
 func qemuAvailable(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("qemu-system-x86_64"); err != nil {
-		t.Skip("qemu-system-x86_64 not available")
+		t.Fatal("qemu-system-x86_64 not available")
 	}
 }
 
@@ -29,14 +29,14 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
-// requireKVMAssets skips the test if the initramfs or kernel files are not present.
+// requireKVMAssets fails the test if the initramfs or kernel files are not present.
 func requireKVMAssets(t *testing.T, initramfs, kernel string) {
 	t.Helper()
 	if _, err := os.Stat(initramfs); err != nil {
-		t.Skipf("initramfs %s not found — skipping KVM test", initramfs)
+		t.Fatalf("initramfs %s not found", initramfs)
 	}
 	if _, err := os.Stat(kernel); err != nil {
-		t.Skipf("kernel %s not found — skipping KVM test", kernel)
+		t.Fatalf("kernel %s not found", kernel)
 	}
 }
 

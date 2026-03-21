@@ -1,6 +1,6 @@
 # BOOTy — Project Guidelines
 
-Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, orchestrates disk imaging, network setup, and OS configuration. Two modes: **CAPRF** (Cluster API + Redfish) and **Legacy** (standalone HTTP server). Supports **dry-run** (`MODE=dry-run` or `DRY_RUN=true`) for non-destructive pre-flight validation.
+Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, orchestrates disk imaging, network setup, and OS configuration via **CAPRF** (Cluster API + Redfish). Supports **dry-run** (`MODE=dry-run` or `DRY_RUN=true`) for non-destructive pre-flight validation.
 
 ## Architecture
 
@@ -9,7 +9,7 @@ Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, orch
 - `pkg/config/` — MachineConfig, Provider interface, Status types
 - `pkg/network/` — Pluggable networking: DHCP, static, FRR/EVPN, GoBGP, LACP bonds
 - `pkg/network/gobgp/` — Pure-Go BGP stack (underlay eBGP + overlay EVPN), three peering modes: unnumbered, dual, numbered
-- `pkg/network/frr/` — FRR config rendering (legacy)
+- `pkg/network/frr/` — FRR config rendering
 - `pkg/network/lldp/` — LLDP frame listener (raw AF_PACKET)
 - `pkg/network/vlan/` — VLAN 802.1Q tagging via netlink
 - `pkg/image/` — Multi-format image streaming (gzip, lz4, xz, zstd) + OCI registry
@@ -19,9 +19,8 @@ Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, orch
 - `pkg/health/` — Pre-provisioning hardware health checks
 - `pkg/inventory/` — Hardware inventory from sysfs/procfs
 - `pkg/kexec/` — GRUB config parsing, kexec load/execute
-- `pkg/realm/` — Low-level syscalls (devices, mounts, networking)
+- `pkg/realm/` — Low-level syscalls (devices, mounts)
 - `pkg/ux/` — ASCII art and system info display
-- `server/` — Legacy HTTP provisioning server
 - `test/e2e/` — E2E tests with ContainerLab and vrnetlab topologies
 
 ## Build and Test

@@ -17,16 +17,12 @@ import (
 	"github.com/telekom/BOOTy/pkg/caprf"
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
-	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/kexec"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/frr"
 	"github.com/telekom/BOOTy/pkg/network/gobgp"
 	"github.com/telekom/BOOTy/pkg/network/vlan"
-	"github.com/telekom/BOOTy/pkg/plunderclient"
-	"github.com/telekom/BOOTy/pkg/plunderclient/types"
 	"github.com/telekom/BOOTy/pkg/provision"
-	"github.com/telekom/BOOTy/pkg/utils"
 	"golang.org/x/sys/unix"
 
 	"github.com/telekom/BOOTy/pkg/realm"
@@ -58,21 +54,7 @@ func main() {
 
 	slog.Info("Beginning provisioning process")
 	ctx := context.Background()
-
-	// Detect mode: CAPRF (ISO with /deploy/vars) or legacy (BOOTYURL env).
-	if _, err := os.Stat(varsPath); err == nil {
-		runCAPRF(ctx)
-	} else {
-		// Legacy mode: use proper DHCP mode to get network connectivity,
-		// then proceed with plunder client provisioning.
-		slog.Info("Legacy mode — starting DHCP for network connectivity")
-		dhcp := network.NewDHCPMode()
-		if err := dhcp.Setup(ctx, nil); err != nil {
-			slog.Error("DHCP setup failed", "error", err)
-			realm.Reboot()
-		}
-		runLegacy()
-	}
+	runCAPRF(ctx)
 }
 
 // ensurePATH adds each dir to PATH if not already present, preserving any
@@ -614,125 +596,4 @@ func runStandby(ctx context.Context, client config.Provider, cfg *config.Machine
 			}
 		}
 	}
-}
-
-// runLegacy runs the original BOOTy flow using BOOTYURL environment variable.
-func runLegacy() {
-	mac, err := realm.GetMAC()
-	if err != nil {
-		slog.Error("Failed to get MAC address", "error", err)
-		realm.Shell()
-	}
-
-	cfg, err := plunderclient.GetConfigForAddress(utils.DashMac(mac))
-	if err != nil {
-		slog.Error("Error with remote server", "error", err)
-		slog.Info("Rebooting in 10 seconds")
-		time.Sleep(time.Second * 10)
-		realm.Reboot()
-	}
-
-	switch cfg.Action {
-	case types.ReadImage:
-		err = image.Read(cfg.SourceDevice, cfg.DestinationAddress, mac, cfg.Compressed)
-		if err != nil {
-			slog.Error("Read Image Error", "error", err)
-			onError(cfg)
-		}
-		slog.Info("Image written successfully, restarting in 5 seconds")
-		time.Sleep(time.Second * 5)
-		realm.Reboot()
-
-	case types.WriteImage:
-		err = image.Write(cfg.SourceImage, cfg.DestinationDevice, cfg.Compressed)
-		if err != nil {
-			slog.Error("Write Image Error", "error", err)
-			onError(cfg)
-		}
-
-	default:
-		slog.Error("Unknown action passed to deployment image, restarting in 10 seconds", "action", cfg.Action)
-		time.Sleep(time.Second * 10)
-		realm.Reboot()
-	}
-
-	slog.Info("Beginning Disk Management")
-
-	err = realm.PartProbe(cfg.DestinationDevice)
-	if err != nil {
-		slog.Error("Disk Error", "error", err)
-		onError(cfg)
-	}
-
-	err = realm.EnableLVM()
-	if err != nil {
-		slog.Error("Disk Error", "error", err)
-		onError(cfg)
-	}
-
-	rv, err := realm.MountRootVolume(cfg.LVMRootName)
-	if err != nil {
-		slog.Error("Disk Error", "error", err)
-		onError(cfg)
-	}
-
-	err = realm.GrowLVMRoot(cfg.DestinationDevice, cfg.LVMRootName, cfg.GrowPartition)
-	if err != nil {
-		slog.Error("Disk Error", "error", err)
-		onError(cfg)
-	}
-
-	slog.Info("Starting Networking configuration")
-	err = realm.WriteNetPlan("/mnt", cfg)
-	if err != nil {
-		slog.Error("Network Error", "error", err)
-		onError(cfg)
-	}
-
-	slog.Info("Applying Networking configuration")
-	err = realm.ApplyNetplan("/mnt")
-	if err != nil {
-		slog.Error("Network Error", "error", err)
-		onError(cfg)
-	}
-
-	slog.Info("Un Mounting boot volume")
-	err = rv.UnMountNamed("dev")
-	if err != nil {
-		slog.Error("UnMounting Error", "error", err)
-		onError(cfg)
-	}
-	err = rv.UnMountNamed("proc")
-	if err != nil {
-		slog.Error("UnMounting Error", "error", err)
-		onError(cfg)
-	}
-	err = rv.UnMountAll()
-	if err != nil {
-		slog.Error("UnMounting Error", "error", err)
-		onError(cfg)
-	}
-
-	if cfg.DropToShell {
-		realm.Shell()
-	}
-
-	slog.Info("BOOTy is now exiting, system will reboot")
-	time.Sleep(time.Second * 2)
-	realm.Reboot()
-}
-
-// onError handles error recovery in legacy mode.
-func onError(cfg *types.BootyConfig) {
-	if cfg.WipeDevice {
-		if err := realm.Wipe(cfg.DestinationDevice); err != nil {
-			slog.Error("Wipe error", "error", err)
-		}
-	}
-
-	if cfg.DropToShell {
-		realm.Shell()
-	}
-	time.Sleep(time.Second * 2)
-	realm.Reboot()
 }
