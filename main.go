@@ -223,18 +223,35 @@ func runCAPRF(ctx context.Context) {
 		"image_count", len(cfg.ImageURLs),
 	)
 
-	// Set up networking based on configuration.
+	// Set up networking with retry — if connectivity fails, teardown and
+	// rebuild the entire network stack before giving up.
+	const maxNetRetries = 3
 	netMode := setupNetworkMode(ctx, cfg)
 
-	// Wait for network connectivity before proceeding.
 	connectivityTarget := cfg.InitURL
 	if connectivityTarget == "" {
 		connectivityTarget = cfg.SuccessURL
 	}
 	if connectivityTarget != "" {
-		slog.Info("Waiting for network connectivity", "target", connectivityTarget)
-		if err := netMode.WaitForConnectivity(ctx, connectivityTarget, 5*time.Minute); err != nil {
-			slog.Error("Network connectivity timeout", "error", err)
+		var connected bool
+		for attempt := 1; attempt <= maxNetRetries; attempt++ {
+			slog.Info("Waiting for network connectivity", "target", connectivityTarget, "attempt", attempt)
+			if err := netMode.WaitForConnectivity(ctx, connectivityTarget, 5*time.Minute); err != nil {
+				slog.Error("Network connectivity timeout", "error", err, "attempt", attempt)
+				if attempt < maxNetRetries {
+					slog.Info("Tearing down network for retry", "attempt", attempt)
+					if tErr := netMode.Teardown(ctx); tErr != nil {
+						slog.Warn("Network teardown failed", "error", tErr)
+					}
+					netMode = setupNetworkMode(ctx, cfg)
+				}
+				continue
+			}
+			connected = true
+			break
+		}
+		if !connected {
+			slog.Error("Network connectivity failed after all retries", "attempts", maxNetRetries)
 			realm.Reboot()
 		}
 	}
