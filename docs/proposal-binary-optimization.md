@@ -1,8 +1,62 @@
 # Proposal: Binary Optimization — Go Build Slimming
 
-## Status: Implemented (PR #58)
+## Status: Phase 1 Implemented (Build Metadata)
 
 ## Priority: P2
+
+## Usage (Phase 1)
+
+### Build Info
+
+Import `github.com/telekom/BOOTy/pkg/buildinfo` for build metadata:
+
+```go
+info := buildinfo.Get()
+fmt.Printf("Version: %s, Commit: %s, Flavor: %s\n", info.Version, info.Commit, info.Flavor)
+
+// JSON output
+data, _ := info.JSON()
+fmt.Println(string(data))
+```
+
+### Setting Build Variables via LDFlags
+
+Use `LDFlags()` in the Makefile or set flags directly:
+
+```bash
+go build -ldflags "$(go run -e -p buildinfo.LDFlags v1.2.3 abc123 2026-01-01 gobgp)" -o booty
+```
+
+Or directly:
+
+```bash
+go build -ldflags "-s -w \
+  -X github.com/telekom/BOOTy/pkg/buildinfo.version=v1.2.3 \
+  -X github.com/telekom/BOOTy/pkg/buildinfo.commit=abc123 \
+  -X github.com/telekom/BOOTy/pkg/buildinfo.buildDate=2026-01-01 \
+  -X github.com/telekom/BOOTy/pkg/buildinfo.flavor=gobgp" -o booty
+```
+
+### Flavor Constants
+
+Available flavors: `full`, `gobgp`, `slim`, `micro`.
+
+### Size Analysis
+
+```go
+components := buildinfo.EstimateComponents()
+total := buildinfo.TotalEstimate(components)
+fmt.Printf("Estimated binary size: %.1f MB\n", total)
+```
+
+### Dependencies
+
+```go
+deps := buildinfo.Dependencies()
+for _, d := range deps {
+    fmt.Printf("%s %s\n", d.Path, d.Version)
+}
+```
 
 ## Summary
 
