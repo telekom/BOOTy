@@ -1,6 +1,5 @@
 //go:build linux
 
-// Package vlan provides IEEE 802.1Q VLAN interface management for BOOTy.
 package vlan
 
 import (
@@ -10,24 +9,6 @@ import (
 
 	"github.com/vishvananda/netlink"
 )
-
-// Config holds configuration for a single VLAN interface.
-type Config struct {
-	// ID is the 802.1Q VLAN identifier (1-4094).
-	ID int
-	// Parent is the name of the physical interface (e.g. "eno1").
-	Parent string
-	// Address is the static IP/CIDR to assign (e.g. "10.200.0.42/24").
-	// When empty, the VLAN interface is left unconfigured for DHCP.
-	Address string
-	// Gateway is the default gateway IP for this VLAN (optional).
-	Gateway string
-}
-
-// InterfaceName returns the conventional VLAN interface name (e.g. "eno1.200").
-func (c *Config) InterfaceName() string {
-	return fmt.Sprintf("%s.%d", c.Parent, c.ID)
-}
 
 // Setup creates a VLAN interface on the given parent and optionally configures
 // an address and gateway route. It returns the name of the created interface.
@@ -59,16 +40,26 @@ func Setup(cfg Config) (string, error) {
 		return "", fmt.Errorf("create VLAN %d on %s: %w", cfg.ID, cfg.Parent, err)
 	}
 
+	// Clean up the link if any subsequent configuration step fails.
+	cleanup := func() {
+		if link, lerr := netlink.LinkByName(vlanName); lerr == nil {
+			_ = netlink.LinkDel(link)
+		}
+	}
+
 	if err := netlink.LinkSetUp(vlanLink); err != nil {
+		cleanup()
 		return "", fmt.Errorf("bring up VLAN interface %s: %w", vlanName, err)
 	}
 
 	if cfg.Address != "" {
 		addr, err := netlink.ParseAddr(cfg.Address)
 		if err != nil {
+			cleanup()
 			return "", fmt.Errorf("parse VLAN address %q: %w", cfg.Address, err)
 		}
 		if err := netlink.AddrAdd(vlanLink, addr); err != nil {
+			cleanup()
 			return "", fmt.Errorf("assign address %s to %s: %w", cfg.Address, vlanName, err)
 		}
 	}
@@ -76,6 +67,7 @@ func Setup(cfg Config) (string, error) {
 	if cfg.Gateway != "" {
 		gw := net.ParseIP(cfg.Gateway)
 		if gw == nil {
+			cleanup()
 			return "", fmt.Errorf("invalid gateway IP %q", cfg.Gateway)
 		}
 		route := &netlink.Route{
@@ -83,11 +75,12 @@ func Setup(cfg Config) (string, error) {
 			Gw:        gw,
 		}
 		if err := netlink.RouteAdd(route); err != nil {
+			cleanup()
 			return "", fmt.Errorf("add gateway route %s on %s: %w", cfg.Gateway, vlanName, err)
 		}
 	}
 
-	slog.Info("VLAN interface created", "name", vlanName, "id", cfg.ID, "parent", cfg.Parent)
+	slog.Info("vlan interface created", "name", vlanName, "id", cfg.ID, "parent", cfg.Parent)
 	return vlanName, nil
 }
 
@@ -106,7 +99,21 @@ func Teardown(parentName string, vlanID int) error {
 		return fmt.Errorf("delete VLAN interface %s: %w", vlanName, err)
 	}
 
-	slog.Info("VLAN interface removed", "name", vlanName)
+	slog.Info("vlan interface removed", "name", vlanName)
+	return nil
+}
+
+// TeardownConfig removes the VLAN interface identified by cfg.InterfaceName().
+func TeardownConfig(cfg *Config) error {
+	vlanName := cfg.InterfaceName()
+	link, err := netlink.LinkByName(vlanName)
+	if err != nil {
+		return nil //nolint:nilerr // not-found means already removed
+	}
+	if err := netlink.LinkDel(link); err != nil {
+		return fmt.Errorf("delete VLAN interface %s: %w", vlanName, err)
+	}
+	slog.Info("vlan interface removed", "name", vlanName)
 	return nil
 }
 
@@ -119,10 +126,10 @@ func SetupAll(cfgs []Config) ([]string, error) {
 		name, err := Setup(cfg)
 		if err != nil {
 			// Roll back already-created VLANs.
-			for _, c := range cfgs[:len(names)] {
-				_ = Teardown(c.Parent, c.ID)
+			for i := range cfgs[:len(names)] {
+				_ = TeardownConfig(&cfgs[i])
 			}
-			return nil, fmt.Errorf("VLAN setup failed: %w", err)
+			return nil, fmt.Errorf("vlan setup failed: %w", err)
 		}
 		names = append(names, name)
 	}
@@ -132,9 +139,9 @@ func SetupAll(cfgs []Config) ([]string, error) {
 // TeardownAll removes all VLAN interfaces. Errors are logged but do not
 // stop teardown of remaining interfaces.
 func TeardownAll(cfgs []Config) {
-	for _, cfg := range cfgs {
-		if err := Teardown(cfg.Parent, cfg.ID); err != nil {
-			slog.Warn("VLAN teardown error", "vlan", cfg.InterfaceName(), "error", err)
+	for i := range cfgs {
+		if err := TeardownConfig(&cfgs[i]); err != nil {
+			slog.Warn("vlan teardown error", "vlan", cfgs[i].InterfaceName(), "error", err)
 		}
 	}
 }

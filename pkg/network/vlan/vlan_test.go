@@ -18,7 +18,8 @@ func TestConfigInterfaceName(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.cfg.InterfaceName(); got != tt.want {
+			got := tt.cfg.InterfaceName()
+			if got != tt.want {
 				t.Errorf("InterfaceName() = %q, want %q", got, tt.want)
 			}
 		})
