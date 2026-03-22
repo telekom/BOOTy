@@ -354,6 +354,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		BGPPeerMode:      network.ParsePeerMode(cfg.BGPPeerMode),
 		BGPNeighbors:     cfg.BGPNeighbors,
 		BGPRemoteASN:     cfg.BGPRemoteASN,
+		EVPNL2Enabled:    cfg.EVPNL2Enabled,
 	}
 
 	// Parse VLAN configuration.

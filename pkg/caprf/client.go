@@ -487,6 +487,8 @@ func applyFeatureToggle(cfg *config.MachineConfig, key, value string) bool {
 		setIntField(&cfg.RescueTimeout, value)
 	case "RESCUE_AUTO_MOUNT":
 		cfg.RescueAutoMountDisks = parseBoolVar(value)
+	case "EVPN_L2_ENABLED":
+		cfg.EVPNL2Enabled = parseBoolVar(value)
 	default:
 		return false
 	}

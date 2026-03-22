@@ -71,6 +71,9 @@ type Config struct {
 	MTU         int    // Default: 9000
 	NetworkMode string // "gobgp" to use in-process GoBGP instead of FRR
 
+	// EVPN L2 overlay (Type-2/3 route processing) — disabled by default.
+	EVPNL2Enabled bool // Enable L2 overlay route handling
+
 	// VLAN configuration.
 	VLANs []VLANConfig // 802.1Q VLAN interfaces to create before network mode setup
 }
