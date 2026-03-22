@@ -254,7 +254,7 @@ func (c *Client) withRetry(ctx context.Context, url string, fn func() error) err
 		}
 		c.log.Warn("Request failed", "url", url, "attempt", attempt+1, "error", lastErr)
 	}
-	return lastErr
+	return fmt.Errorf("request failed after 3 attempts to %s: %w", url, lastErr)
 }
 
 func (c *Client) doPost(ctx context.Context, url, body string) error {

@@ -63,14 +63,8 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 	defer func() { _ = out.Close() }()
 
 	counter := &WriteCounter{}
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	go func() {
-		for range ticker.C {
-			tickerProgress(counter.Total.Load())
-		}
-	}()
+	stopProgress := startProgressTicker(counter)
+	defer stopProgress()
 
 	// If checksum is requested, tee through a hash writer.
 	var h hash.Hash

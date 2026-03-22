@@ -1,6 +1,6 @@
 # Proposal: Hardware Inventory and Inspection
 
-## Status: Fully Implemented (Phases 1-2)
+## Status: Phase 1 Implemented (DIMM-level, GPU, hardware validation, CAPRF storage pending)
 
 ## Priority: P1
 

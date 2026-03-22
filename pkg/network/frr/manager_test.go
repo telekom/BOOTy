@@ -111,13 +111,6 @@ func TestWaitForConnectivityEmptyTarget(t *testing.T) {
 }
 
 func TestWaitForConnectivityContextCancel(t *testing.T) {
-	// Server always fails.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(5 * time.Second) // slow response
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
 	cmd := newMockFRRCommander()
 	mgr := NewManager(cmd)
 

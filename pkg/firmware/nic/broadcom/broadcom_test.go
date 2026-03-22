@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/firmware/nic"
+	"github.com/telekom/BOOTy/pkg/firmware/nic/ethtool"
 )
 
 func TestSupported(t *testing.T) {
@@ -172,7 +173,7 @@ func TestApply_Success(t *testing.T) {
 
 // trackingCommander records args from CombinedOutput calls.
 type trackingCommander struct {
-	delegate Commander
+	delegate ethtool.Commander
 	args     []string
 }
 

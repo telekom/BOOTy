@@ -56,6 +56,18 @@ BOOTy boots as the init process inside a minimal initramfs, contacts a provision
 - **Standby mode** — Hot standby with heartbeats and command polling for sub-second provisioning
 - **Multi-architecture** — Builds for `linux/amd64` and `linux/arm64`
 - **Multiple build flavors** — Full (FRR+tools), GoBGP (pure Go BGP), slim (DHCP-only), micro (pure Go), ISO (bootable)
+- **BIOS settings management** — Vendor-specific BIOS capture, apply, and reset (Dell, HPE, Lenovo, Supermicro)
+- **Bootloader detection** — Automatic detection and configuration for GRUB and systemd-boot
+- **Secure Boot** — Full Secure Boot chain setup with EFI variable management
+- **TPM/TPM2 support** — TPM attestation and LUKS cryptenroll for disk encryption
+- **Kernel driver management** — Architecture-aware module loading from initramfs
+- **Telemetry** — Provisioning metrics collection and reporting
+- **Hardware inventory** — CPU, memory, disk, NIC, and NVMe enumeration from sysfs/procfs
+- **Hardware health checks** — Pre-provisioning validation of CPU, memory, disk, network, and thermal state
+- **NIC firmware collection** — Firmware version reporting for Broadcom, Intel, and Mellanox NICs
+- **Rescue mode** — Configurable failure recovery: reboot, retry with backoff, interactive shell, or wait
+- **Checkpoint resume** — Persist provisioning progress and skip completed steps on restart
+- **Dry-run mode** — Non-destructive pre-flight validation of provisioning prerequisites
 
 ## Prerequisites
 
@@ -210,26 +222,63 @@ export dns_resolver="8.8.8.8"
 | `BOOTY_RESUME` | `false` | When `true`, enables checkpoint persistence at `/tmp/booty-checkpoint.json` and resume mode that skips previously completed non-state steps (runtime-state steps like `setup-mellanox`, `detect-disk`, and `parse-partitions` always rerun). Parsed via `strconv.ParseBool` — accepts `1`, `t`, `true`, `TRUE`, `0`, `f`, `false`, `FALSE` |
 | `DISABLE_KEXEC` | `false` | Skip kexec, always hard-reboot |
 | `MIN_DISK_SIZE_GB` | `0` | Minimum disk size filter (0 = no minimum) |
+| `DISK_DEVICE` | — | Override auto-detected target disk (e.g., `/dev/sda`, `/dev/loop0`) |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters |
 | `HEARTBEAT_URL` | — | Standby mode: URL for periodic keepalives |
 | `COMMANDS_URL` | — | Standby mode: URL to poll for pending commands |
 | `SECURE_ERASE` | `false` | Use NVMe format / ATA secure erase instead of partition wipe |
+| `POST_PROVISION_CMDS` | — | Semicolon-separated commands to run in chroot after provisioning |
+| `RESCUE_MODE` | `reboot` | Failure recovery strategy: `reboot`, `retry`, `shell`, `wait` |
+| `RESCUE_TIMEOUT` | `0` | *(Phase 2)* Rescue wait timeout in seconds (0 = indefinite) |
+| `RESCUE_SSH_PUBKEY` | — | *(Phase 2)* SSH public key for rescue shell access |
+| `RESCUE_AUTO_MOUNT` | `false` | *(Phase 2)* Auto-mount disks in rescue shell mode |
+| `EVPN_L2_ENABLED` | `false` | Enable EVPN L2 overlay (Type-2/3 route handling) in GoBGP mode. Default is Type-5 only (L3) |
+| `HEALTH_CHECKS_ENABLED` | `false` | Run pre-provisioning hardware health checks |
+| `HEALTH_MIN_MEMORY_GB` | `0` | Minimum RAM (GiB) for health check (0 = skip check) |
+| `HEALTH_MIN_CPUS` | `0` | Minimum CPU count for health check (0 = skip check) |
+| `HEALTH_SKIP_CHECKS` | — | Comma-separated check names to skip (e.g., `thermal,disk-smart`) |
+| `HEALTH_CHECK_URL` | — | POST endpoint for health check results |
+| `INVENTORY_ENABLED` | `false` | Collect and report hardware inventory to CAPRF |
+| `INVENTORY_URL` | — | POST endpoint for hardware inventory JSON |
+| `FIRMWARE_REPORT` | `false` | Enable firmware version collection and reporting |
+| `FIRMWARE_URL` | — | POST endpoint for firmware report |
+| `FIRMWARE_MIN_BIOS` | — | Minimum BIOS version (vendor-specific string) |
+| `FIRMWARE_MIN_BMC` | — | Minimum BMC version (vendor-specific string) |
+| `TELEMETRY_ENABLED` | `false` | Enable provisioning metrics and telemetry collection |
+| `TELEMETRY_URL` | — | POST endpoint for telemetry snapshot |
+| `METRICS_URL` | — | POST endpoint for provisioning metrics |
+| `EVENT_URL` | — | POST endpoint for provisioning lifecycle events |
+| `SECUREBOOT_REENABLE` | `false` | Signal CAPRF to re-enable Secure Boot after provisioning |
+| `MOK_CERT_PATH` | — | *(Phase 2)* Path to DER-encoded MOK certificate for custom kernel signing |
+| `MOK_PASSWORD` | — | *(Phase 2)* One-time password for MokManager confirmation |
+| `IMAGE_CHECKSUM` | — | Expected hex digest of the raw disk image |
+| `IMAGE_CHECKSUM_TYPE` | — | Checksum algorithm: `sha256` or `sha512` |
+| `IMAGE_SIGNATURE_URL` | — | URL to detached GPG signature for image verification |
+| `IMAGE_GPG_PUBKEY` | — | Path to GPG public key for image signature verification |
+| `NUM_VFS` | `0` | Number of SR-IOV virtual functions for Mellanox NICs (0 = skip) |
+
+#### Network Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NETWORK_MODE` | — | Network mode override: `gobgp` for pure-Go BGP stack |
 | `STATIC_IP` | — | Static IP in CIDR notation (e.g. `10.0.0.5/24`) |
 | `STATIC_GATEWAY` | — | Default gateway for static networking |
 | `STATIC_IFACE` | — | Interface for static IP (auto-detect if empty) |
 | `BOND_INTERFACES` | — | Comma-separated interfaces for LACP bond (e.g. `eth0,eth1`) |
 | `BOND_MODE` | `802.3ad` | Bond mode: `802.3ad`/`lacp`, `balance-rr`, `active-backup`, `balance-xor` |
-| `POST_PROVISION_CMDS` | — | Semicolon-separated commands to run in chroot after provisioning |
-| `NETWORK_MODE` | — | Network mode override: `gobgp` for pure-Go BGP stack |
+| `VLANS` | — | Multi-VLAN config (e.g. `200:eno1:10.200.0.42/24,300:eno2`) |
 | `BGP_PEER_MODE` | `unnumbered` | GoBGP peering mode: `unnumbered`, `dual`, `numbered` |
 | `BGP_NEIGHBORS` | — | Comma-separated peer IPs (required for `dual` and `numbered` modes) |
 | `BGP_REMOTE_ASN` | — | Remote ASN for numbered peers (0 or omitted = iBGP) |
-| `provision_gateway` | — | Gateway VTEP IP for VXLAN BUM flooding and kernel route installation |
-| `RESCUE_MODE` | `reboot` | Failure recovery strategy: `reboot`, `retry`, `shell`, `wait` |
-| `RESCUE_SSH_PUBKEY` | — | *(Phase 2)* SSH public key for rescue shell access |
-| `RESCUE_TIMEOUT` | `0` | *(Phase 2)* Rescue wait timeout in seconds (0 = indefinite) |
-| `RESCUE_AUTO_MOUNT` | `false` | *(Phase 2)* Auto-mount disks in rescue shell mode |
-| `EVPN_L2_ENABLED` | `false` | Enable EVPN L2 overlay (Type-2/3 route handling) in GoBGP mode. Default is Type-5 only (L3) |
+| `underlay_subnet` | — | Underlay CIDR for FRR mode (e.g. `192.168.4.0/24`) |
+| `underlay_ip` | — | Underlay loopback / router-ID for GoBGP mode |
+| `asn_server` | — | Local BGP autonomous system number |
+| `provision_vni` | — | VXLAN VNI for the provisioning network |
+| `provision_ip` | — | IP/mask on the provisioning bridge (e.g. `10.100.0.20/24`) |
+| `provision_gateway` | — | Gateway VTEP IP for VXLAN BUM flooding and kernel route |
+| `overlay_subnet` | — | Overlay CIDR (e.g. `2a01:598:40a:5481::/64`) |
+| `dns_resolver` | — | Comma-separated DNS server IPs |
 
 ### Debugging
 
@@ -298,6 +347,145 @@ export RESCUE_MODE=shell
 In standby mode (agent mode), rescue actions also apply to hot-provisioning
 commands received via the command poll loop. Failed provisions are ACKed back
 to the controller with the error message.
+
+### Dry-Run Mode
+
+Dry-run mode runs the full provisioning pipeline without making destructive
+changes to disk or EFI. Use it for pre-flight validation of machine
+configuration, network connectivity, and image availability.
+
+```bash
+export MODE="dry-run"
+# or
+export DRY_RUN=true
+```
+
+Dry-run validates: network connectivity, image URL reachability, disk detection,
+partition layout fit, EFI variable access, and health checks. Results are
+reported back to the CAPRF controller as a structured validation report.
+
+### Health Checks
+
+Pre-provisioning hardware health checks validate the machine before any
+destructive operations. Enable with `HEALTH_CHECKS_ENABLED=true`.
+
+```bash
+export HEALTH_CHECKS_ENABLED=true
+export HEALTH_MIN_MEMORY_GB=64     # Abort if less than 64 GiB RAM
+export HEALTH_MIN_CPUS=16          # Abort if fewer than 16 CPUs
+export HEALTH_SKIP_CHECKS=thermal  # Skip thermal checks (comma-separated)
+export HEALTH_CHECK_URL="http://caprf:8080/health"
+```
+
+| Check | Type | Behavior |
+|-------|------|----------|
+| `disk-presence` | Critical | Abort if no eligible disk found |
+| `minimum-memory` | Critical | Abort if RAM < `HEALTH_MIN_MEMORY_GB` |
+| `minimum-cpu` | Critical | Abort if CPUs < `HEALTH_MIN_CPUS` |
+| `memory-ecc` | Warning | Log if ECC errors detected |
+| `nic-link-state` | Warning | Log if no NIC link detected |
+| `disk-smart` | Warning | Log SMART health status |
+| `thermal-state` | Warning | Log thermal sensor readings |
+
+Health check results are posted to `HEALTH_CHECK_URL` (if set). Critical
+failures abort provisioning; warnings are logged but do not block.
+
+### Hardware Inventory
+
+Collects CPU, memory, disk, NIC, and NVMe hardware details from sysfs/procfs
+and reports them to the CAPRF controller. Runs as an early provisioning step.
+
+```bash
+export INVENTORY_ENABLED=true
+export INVENTORY_URL="http://caprf:8080/inventory"
+```
+
+Inventory collection is best-effort — failures are logged but do not block
+provisioning. The JSON payload includes: CPU model/count/cores, total memory,
+disk devices (size, model, serial, transport), NIC details (driver, MAC, speed,
+firmware), and NVMe namespaces.
+
+### Firmware Reporting
+
+Collects BIOS, BMC, and NIC firmware versions and optionally enforces minimum
+version requirements.
+
+```bash
+export FIRMWARE_REPORT=true
+export FIRMWARE_URL="http://caprf:8080/firmware"
+export FIRMWARE_MIN_BIOS="U46"           # Abort if BIOS older than U46
+export FIRMWARE_MIN_BMC="2.72"           # Abort if BMC older than 2.72
+```
+
+Firmware versions are read from sysfs (`/sys/class/dmi/id/`). NIC firmware
+is collected per-driver for Broadcom, Intel, and Mellanox adapters via ethtool.
+When minimum versions are set, provisioning aborts if the running firmware is
+below the threshold.
+
+### Image Verification
+
+BOOTy supports checksum and GPG signature verification for streamed images.
+
+```bash
+export IMAGE_CHECKSUM="sha256:a1b2c3d4..."
+export IMAGE_CHECKSUM_TYPE="sha256"           # sha256 or sha512
+
+# GPG signature verification (optional)
+export IMAGE_SIGNATURE_URL="http://images.local/ubuntu.img.gz.sig"
+export IMAGE_GPG_PUBKEY="/deploy/signing-key.gpg"
+```
+
+Checksum verification runs after image streaming — the raw bytes are hashed
+during the write and compared against the expected digest. GPG verification
+downloads the detached signature and verifies it against the provided public key.
+
+### Telemetry and Metrics
+
+Provisioning telemetry tracks step-level timing, image throughput, retry
+counts, and error rates. Enable with `TELEMETRY_ENABLED=true`.
+
+```bash
+export TELEMETRY_ENABLED=true
+export TELEMETRY_URL="http://caprf:8080/telemetry"
+export METRICS_URL="http://caprf:8080/metrics"
+export EVENT_URL="http://caprf:8080/events"
+```
+
+| Endpoint | Payload | Frequency |
+|----------|---------|-----------|
+| `TELEMETRY_URL` | Full metrics snapshot (JSON) | On completion/failure |
+| `METRICS_URL` | Step timing, throughput, error counts | On completion/failure |
+| `EVENT_URL` | Step progress events | Per-step |
+
+Telemetry reporting is best-effort — failures do not block provisioning.
+
+### Secure Boot
+
+BOOTy can signal the CAPRF controller to re-enable Secure Boot after
+provisioning completes. The OS image must include signed bootloaders.
+
+```bash
+export SECUREBOOT_REENABLE=true
+```
+
+When enabled, BOOTy reports `SECUREBOOT_REENABLE=true` in its provisioning
+success status. The CAPRF controller then re-enables Secure Boot via Redfish
+before the final reboot. If the installed OS does not have signed bootloaders,
+the machine will fail to boot.
+
+### VLAN Support
+
+BOOTy supports 802.1Q VLAN tagging via netlink. Configure VLANs with the
+`VLANS` variable as a comma-separated list of `VID:IFACE:IP/MASK` tuples:
+
+```bash
+export VLANS="200:eno1:10.200.0.42/24,300:eno2"
+```
+
+Each VLAN creates a tagged sub-interface (`eno1.200`), assigns the IP address
+(if provided), and brings the link up. VLANs are created after the primary
+network mode is established.
+
 ## OCI Image Sources
 
 BOOTy supports pulling disk images from OCI-compliant container registries. Use the
@@ -436,12 +624,22 @@ and the PR process.
 ├── cmd/booty.go                # CLI version command
 ├── initrd.Dockerfile           # Multi-stage initramfs build (default, iso, slim, micro)
 ├── pkg/
+│   ├── bios/                   # BIOS settings management (Dell, HPE, Lenovo, Supermicro)
+│   ├── bootloader/             # Bootloader detection (GRUB, systemd-boot)
+│   ├── buildinfo/              # Binary build information (version, commit, date)
 │   ├── caprf/                  # CAPRF client (status, log, debug, vars parsing)
 │   ├── config/                 # MachineConfig, Provider interface, Status types
+│   ├── debug/                  # Debug dump utilities
 │   ├── disk/                   # Disk detection, partitioning, RAID, LVM, mount
+│   ├── drivers/                # Architecture-aware kernel driver management
+│   ├── efi/                    # EFI variable operations
 │   ├── firmware/               # Firmware version collection from sysfs
+│   │   └── nic/               # NIC firmware (Broadcom, Intel, Mellanox)
+│   ├── grubcfg/                # GRUB config file parsing
 │   ├── health/                 # Pre-provisioning hardware health checks
 │   ├── image/                  # Image streaming (HTTP, OCI, gzip/lz4/xz/zstd auto-detect)
+│   │   ├── oci/               # OCI registry client
+│   │   └── verify/            # Image checksum and GPG signature verification
 │   ├── inventory/              # Hardware inventory from sysfs/procfs
 │   ├── kexec/                  # GRUB parsing, kexec load/execute
 │   ├── network/                # Network mode abstraction (FRR, GoBGP, DHCP, Static, Bond)
@@ -453,6 +651,12 @@ and the PR process.
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
 │   ├── realm/                  # Device, mount, shell operations
 │   ├── rescue/                 # Rescue mode types, retry state, action resolution
+│   ├── retry/                  # Retry policy framework with exponential backoff
+│   ├── secureboot/             # Secure Boot chain setup
+│   ├── system/                 # System-level operations
+│   ├── telemetry/              # Provisioning metrics and telemetry collection
+│   ├── tpm/                    # TPM/TPM2 operations
+│   │   └── cryptenroll/       # LUKS key sealing to TPM2 PCR policies
 │   ├── utils/                  # Cmdline parsing, helpers
 │   └── ux/                     # ASCII art & system info display
 ├── test/e2e/                   # E2E tests (ContainerLab + vrnetlab EVPN fabric)

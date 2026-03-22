@@ -60,10 +60,13 @@ func TestSelectBestSource(t *testing.T) {
 func TestSelectBestSourcePicksFastest(t *testing.T) {
 	t.Helper()
 
-	// Slow server — adds 200ms delay.
+	// Slow server — delays response using a channel.
 	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(200 * time.Millisecond)
-		w.WriteHeader(http.StatusOK)
+		select {
+		case <-time.After(200 * time.Millisecond):
+			w.WriteHeader(http.StatusOK)
+		case <-r.Context().Done():
+		}
 	}))
 	defer slow.Close()
 

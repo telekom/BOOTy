@@ -1,6 +1,6 @@
 # Proposal: Kafka Structured Logging
 
-## Status: Implemented (PR #54)
+## Status: Proposed
 
 ## Priority: P2
 
