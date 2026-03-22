@@ -3,6 +3,7 @@
 package gobgp
 
 import (
+	"errors"
 	"log/slog"
 	"net"
 	"testing"
@@ -15,12 +16,14 @@ import (
 
 // mockFDB records FDB operations for assertion in unit tests.
 type mockFDB struct {
-	linkName string
-	linkErr  error
-	sets     []*netlink.Neigh
-	dels     []*netlink.Neigh
-	setErr   error
-	delErr   error
+	linkName  string
+	linkErr   error
+	sets      []*netlink.Neigh
+	appends   []*netlink.Neigh
+	dels      []*netlink.Neigh
+	setErr    error
+	appendErr error
+	delErr    error
 }
 
 func (m *mockFDB) LinkByName(name string) (netlink.Link, error) {
@@ -34,6 +37,11 @@ func (m *mockFDB) LinkByName(name string) (netlink.Link, error) {
 func (m *mockFDB) NeighSet(n *netlink.Neigh) error {
 	m.sets = append(m.sets, n)
 	return m.setErr
+}
+
+func (m *mockFDB) NeighAppend(n *netlink.Neigh) error {
+	m.appends = append(m.appends, n)
+	return m.appendErr
 }
 
 func (m *mockFDB) NeighDel(n *netlink.Neigh) error {
@@ -529,15 +537,15 @@ func TestHandleType3RouteFDBInstall(t *testing.T) {
 
 	overlay.handleType3Route(route, "10.0.0.1", false)
 
-	if len(mock.sets) != 1 {
-		t.Fatalf("expected 1 NeighSet call, got %d", len(mock.sets))
+	if len(mock.appends) != 1 {
+		t.Fatalf("expected 1 NeighAppend call, got %d", len(mock.appends))
 	}
 	wantMAC := net.HardwareAddr{0, 0, 0, 0, 0, 0}
-	if mock.sets[0].HardwareAddr.String() != wantMAC.String() {
-		t.Errorf("BUM FDB MAC = %s, want %s", mock.sets[0].HardwareAddr, wantMAC)
+	if mock.appends[0].HardwareAddr.String() != wantMAC.String() {
+		t.Errorf("BUM FDB MAC = %s, want %s", mock.appends[0].HardwareAddr, wantMAC)
 	}
-	if !mock.sets[0].IP.Equal(net.ParseIP("10.0.0.1")) {
-		t.Errorf("BUM FDB VTEP = %s, want 10.0.0.1", mock.sets[0].IP)
+	if !mock.appends[0].IP.Equal(net.ParseIP("10.0.0.1")) {
+		t.Errorf("BUM FDB VTEP = %s, want 10.0.0.1", mock.appends[0].IP)
 	}
 }
 
@@ -561,5 +569,53 @@ func TestHandleType3RouteWithdraw(t *testing.T) {
 	}
 	if !mock.dels[0].IP.Equal(net.ParseIP("10.0.0.1")) {
 		t.Errorf("BUM FDB del VTEP = %s, want 10.0.0.1", mock.dels[0].IP)
+	}
+}
+
+func TestAddGatewayFDB(t *testing.T) {
+	tests := []struct {
+		name      string
+		gateway   string
+		appendErr error
+		wantErr   bool
+		wantMAC   net.HardwareAddr
+	}{
+		{
+			name:    "success",
+			gateway: "10.0.0.1",
+			wantMAC: net.HardwareAddr{0, 0, 0, 0, 0, 0},
+		},
+		{
+			name:      "neigh append error",
+			gateway:   "10.0.0.1",
+			appendErr: errors.New("operation not supported"),
+			wantErr:   true,
+		},
+		{
+			name:    "invalid gateway IP",
+			gateway: "not-an-ip",
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockFDB{}
+			mock.appendErr = tt.appendErr
+			overlay := &OverlayTier{
+				cfg: &Config{ProvisionGateway: tt.gateway, ProvisionVNI: 100},
+				log: slog.Default(),
+				fdb: mock,
+			}
+			vxLink := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Index: 42, Name: "vxlan100"}}
+			err := overlay.addGatewayFDB(vxLink)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("addGatewayFDB() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && len(mock.appends) == 1 {
+				if mock.appends[0].HardwareAddr.String() != tt.wantMAC.String() {
+					t.Errorf("BUM FDB MAC = %s, want %s", mock.appends[0].HardwareAddr, tt.wantMAC)
+				}
+			}
+		})
 	}
 }

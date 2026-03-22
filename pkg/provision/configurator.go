@@ -257,7 +257,8 @@ func (c *Configurator) MountEFIVars(ctx context.Context) error {
 	}
 
 	if err := os.MkdirAll(efiPath, 0o755); err != nil {
-		return fmt.Errorf("creating efivarfs mountpoint: %w", err)
+		slog.Warn("Cannot create efivarfs mountpoint (non-EFI system?)", "error", err)
+		return nil
 	}
 	if err := syscall.Mount("efivarfs", efiPath, "efivarfs", 0, ""); err != nil {
 		slog.Warn("Failed to mount efivarfs (non-EFI system?)", "error", err)

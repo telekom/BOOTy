@@ -37,6 +37,7 @@ const (
 type fdbInstaller interface {
 	LinkByName(name string) (netlink.Link, error)
 	NeighSet(neigh *netlink.Neigh) error
+	NeighAppend(neigh *netlink.Neigh) error
 	NeighDel(neigh *netlink.Neigh) error
 }
 
@@ -54,6 +55,13 @@ func (netlinkFDB) LinkByName(name string) (netlink.Link, error) {
 func (netlinkFDB) NeighSet(n *netlink.Neigh) error {
 	if err := netlink.NeighSet(n); err != nil {
 		return fmt.Errorf("neigh set: %w", err)
+	}
+	return nil
+}
+
+func (netlinkFDB) NeighAppend(n *netlink.Neigh) error {
+	if err := netlink.NeighAppend(n); err != nil {
+		return fmt.Errorf("neigh append: %w", err)
 	}
 	return nil
 }
@@ -371,8 +379,8 @@ func (o *OverlayTier) addGatewayFDB(vxLink netlink.Link) error {
 		Flags:        netlink.NTF_SELF,
 		State:        netlink.NUD_PERMANENT,
 	}
-	if err := netlink.NeighSet(fdb); err != nil {
-		return fmt.Errorf("set BUM FDB entry for %s: %w", o.cfg.ProvisionGateway, err)
+	if err := o.fdb.NeighAppend(fdb); err != nil {
+		return fmt.Errorf("append BUM FDB entry for %s: %w", o.cfg.ProvisionGateway, err)
 	}
 
 	o.log.Info("added gateway BUM FDB entry", "vxlan", vxLink.Attrs().Name, "vtep", o.cfg.ProvisionGateway)
@@ -604,7 +612,7 @@ func (o *OverlayTier) handleType3Route(route *apipb.EVPNInclusiveMulticastEthern
 		return
 	}
 
-	if err := o.fdb.NeighSet(fdb); err != nil {
+	if err := o.fdb.NeighAppend(fdb); err != nil {
 		o.log.Debug("failed to add/update BUM FDB entry", "vtep", remoteIP, "error", err)
 	} else {
 		o.log.Info("installed BUM FDB entry from type-3 route", "vtep", remoteIP)
