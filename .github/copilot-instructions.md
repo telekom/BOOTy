@@ -47,6 +47,9 @@ make arm64-gobgp        # ARM64 GoBGP initramfs
 make clab-up && make test-e2e-integration
 make clab-gobgp-up && make test-e2e-gobgp
 make clab-vrnetlab-up && make test-e2e-vrnetlab
+
+# KVM E2E tests (provisioning, LUKS, boot — requires QEMU, KVM, root)
+make test-kvm
 ```
 
 ## Code Style

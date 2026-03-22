@@ -454,7 +454,7 @@ func TestProvisionStepsContainEFIVars(t *testing.T) {
 	steps := orch.provisionSteps()
 
 	// Verify mount-efivarfs appears before remove-efi-entries.
-	var mountIdx, removeIdx int
+	mountIdx, removeIdx := -1, -1
 	for i, step := range steps {
 		switch step.Name {
 		case "mount-efivarfs":
@@ -463,7 +463,7 @@ func TestProvisionStepsContainEFIVars(t *testing.T) {
 			removeIdx = i
 		}
 	}
-	if mountIdx == 0 && removeIdx == 0 {
+	if mountIdx == -1 || removeIdx == -1 {
 		t.Fatal("mount-efivarfs and remove-efi-entries not found in steps")
 	}
 	if mountIdx >= removeIdx {

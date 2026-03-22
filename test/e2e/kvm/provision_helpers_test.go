@@ -65,8 +65,9 @@ func createTestDiskImage(t *testing.T, sizeMB int) string {
 		_ = exec.Command("losetup", "-d", loopDev).Run()
 	})
 
-	// Wait briefly for partition devices to appear.
-	time.Sleep(500 * time.Millisecond)
+	// Wait for partition devices to appear.
+	rootDev := loopDev + "p2"
+	waitForDevice(t, rootDev, 5*time.Second)
 
 	// Format EFI partition as FAT32 (if mkfs.vfat available).
 	efiDev := loopDev + "p1"
@@ -77,7 +78,6 @@ func createTestDiskImage(t *testing.T, sizeMB int) string {
 	}
 
 	// Format root partition as ext4.
-	rootDev := loopDev + "p2"
 	run(t, "format root partition", "mkfs.ext4", "-F", "-q", rootDev)
 
 	// Mount root and create minimal directory structure.
@@ -343,16 +343,10 @@ func mountQcow2(t *testing.T, qcow2Path string) (rootMount string, cleanup func(
 		t.Fatal("no free nbd device found")
 	}
 
-	// Wait for partitions.
-	time.Sleep(time.Second)
+	// Wait for partitions after qemu-nbd attach.
 	run(t, "partprobe nbd", "partprobe", nbdDev)
-	time.Sleep(500 * time.Millisecond)
-
-	// Find root partition (p2).
 	rootPart := nbdDev + "p2"
-	if _, err := os.Stat(rootPart); err != nil {
-		t.Fatalf("root partition %s not found after qemu-nbd", rootPart)
-	}
+	waitForDevice(t, rootPart, 10*time.Second)
 
 	// Mount root partition.
 	mountDir := t.TempDir()
@@ -391,6 +385,19 @@ func writeFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+// waitForDevice polls for a device node to appear, with a timeout.
+func waitForDevice(t *testing.T, devPath string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(devPath); err == nil {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("device %s did not appear within %s", devPath, timeout)
 }
 
 func buildBooty(t *testing.T, output string) {

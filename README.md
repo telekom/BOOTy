@@ -329,6 +329,9 @@ make clab-boot-up && make test-e2e-boot          # Boot orchestrator
 make clab-vrnetlab-up && make test-e2e-vrnetlab   # Full EVPN boot flow
 make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab  # GoBGP + real switches
 
+# KVM E2E tests — provisioning, LUKS, boot (Linux + KVM + root)
+make test-kvm
+
 # Linux-only E2E (disk/mount/loop device, requires root)
 go test -tags linux_e2e -v ./pkg/disk/...
 ```
