@@ -207,7 +207,7 @@ export dns_resolver="8.8.8.8"
 |----------|---------|-------------|
 | `MODE` | `provision` | `provision`, `deprovision`, `soft-deprovision`, `standby`, or `dry-run` |
 | `DRY_RUN` | `false` | When `true`, forces `MODE=dry-run`: validates prerequisites without destructive writes |
-| `BOOTY_RESUME` | `false` | When non-empty, enables checkpoint persistence at `/tmp/booty-checkpoint.json` and resume mode that skips previously completed non-state steps (runtime-state steps like `setup-mellanox`, `detect-disk`, and `parse-partitions` always rerun) |
+| `BOOTY_RESUME` | `false` | When `true`, enables checkpoint persistence at `/tmp/booty-checkpoint.json` and resume mode that skips previously completed non-state steps (runtime-state steps like `setup-mellanox`, `detect-disk`, and `parse-partitions` always rerun). Parsed via `strconv.ParseBool` — accepts `1`, `t`, `true`, `TRUE`, `0`, `f`, `false`, `FALSE` |
 | `DISABLE_KEXEC` | `false` | Skip kexec, always hard-reboot |
 | `MIN_DISK_SIZE_GB` | `0` | Minimum disk size filter (0 = no minimum) |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters |
@@ -233,6 +233,38 @@ export dns_resolver="8.8.8.8"
 | `-shell` | Drop to a BusyBox shell if something fails |
 | `-wipe` | Wipe the provisioned disk on failure |
 | `-dryRun` | Log actions without writing to disk |
+
+### Resilient Provisioning
+
+BOOTy includes built-in retry and checkpoint support ensuring provisioning
+survives transient failures (network timeouts, temporary disk errors).
+
+**Automatic retries** — Steps with known transient failure modes (DNS, image
+streaming, disk detection, status reporting) use exponential backoff with jitter.
+Policies are configured in `DefaultPolicies`:
+
+| Step | Max Retries | Initial Delay | Max Delay |
+|------|-------------|---------------|-----------|
+| `report-init` | 5 | 2 s | 30 s |
+| `configure-dns` | 5 | 1 s | 15 s |
+| `stream-image` | 3 | 5 s | 60 s |
+| `detect-disk` | 3 | 2 s | 10 s |
+| `partprobe` | 3 | 1 s | 5 s |
+| `report-success` | 5 | 2 s | 30 s |
+
+Permanent errors (e.g., `PermanentError`) are never retried. Unclassified errors
+are retried only when the step policy has `Transient: true`.
+
+**Checkpoint resume** — Enable with `BOOTY_RESUME=true`. On each step
+completion/failure the checkpoint is persisted to `/tmp/booty-checkpoint.json`.
+On restart, previously completed steps are skipped — except runtime-state steps
+(`setup-mellanox`, `detect-disk`, `parse-partitions`) which always re-execute to
+rebuild in-memory state (target disk path, partition info).
+
+```bash
+# Enable checkpoint resume
+export BOOTY_RESUME=true
+```
 
 ## OCI Image Sources
 

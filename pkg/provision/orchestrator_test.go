@@ -340,3 +340,39 @@ func TestCheckpoint_FailureCountIncrements(t *testing.T) {
 		t.Errorf("expected 1 error recorded, got %d", len(cp.Errors))
 	}
 }
+
+func TestLoadOrCreateCheckpoint(t *testing.T) {
+	tests := []struct {
+		name        string
+		envValue    string
+		wantPersist bool
+	}{
+		{name: "unset env returns non-persistent", envValue: "", wantPersist: false},
+		{name: "true enables persistence", envValue: "true", wantPersist: true},
+		{name: "1 enables persistence", envValue: "1", wantPersist: true},
+		{name: "false disables persistence", envValue: "false", wantPersist: false},
+		{name: "0 disables persistence", envValue: "0", wantPersist: false},
+		{name: "random string disables persistence", envValue: "notabool", wantPersist: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.MachineConfig{}
+			provider := &mockProvider{}
+			o := newTestOrchestrator(t, cfg, provider)
+
+			if tc.envValue != "" {
+				t.Setenv("BOOTY_RESUME", tc.envValue)
+			} else {
+				t.Setenv("BOOTY_RESUME", "")
+			}
+
+			cp := o.loadOrCreateCheckpoint()
+			if cp == nil {
+				t.Fatal("expected non-nil checkpoint")
+			}
+			if cp.persist != tc.wantPersist {
+				t.Errorf("persist = %v, want %v", cp.persist, tc.wantPersist)
+			}
+		})
+	}
+}

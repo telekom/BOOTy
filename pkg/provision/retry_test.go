@@ -200,6 +200,53 @@ func TestWithRetry_NonTransientFailure(t *testing.T) {
 	}
 }
 
+func TestNormalizePolicy(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  RetryPolicy
+		expect RetryPolicy
+	}{
+		{
+			name:   "clamps negative MaxRetries",
+			input:  RetryPolicy{MaxRetries: -5, InitialDelay: time.Second, MaxDelay: time.Second, Jitter: 0.5},
+			expect: RetryPolicy{MaxRetries: 0, InitialDelay: time.Second, MaxDelay: time.Second, Jitter: 0.5},
+		},
+		{
+			name:   "clamps negative InitialDelay",
+			input:  RetryPolicy{MaxRetries: 1, InitialDelay: -time.Second, MaxDelay: time.Second, Jitter: 0.1},
+			expect: RetryPolicy{MaxRetries: 1, InitialDelay: 0, MaxDelay: time.Second, Jitter: 0.1},
+		},
+		{
+			name:   "clamps negative MaxDelay",
+			input:  RetryPolicy{MaxRetries: 1, InitialDelay: time.Second, MaxDelay: -time.Second, Jitter: 0.1},
+			expect: RetryPolicy{MaxRetries: 1, InitialDelay: time.Second, MaxDelay: 0, Jitter: 0.1},
+		},
+		{
+			name:   "clamps jitter below 0",
+			input:  RetryPolicy{Jitter: -0.5},
+			expect: RetryPolicy{Jitter: 0},
+		},
+		{
+			name:   "clamps jitter above 1",
+			input:  RetryPolicy{Jitter: 2.0},
+			expect: RetryPolicy{Jitter: 1.0},
+		},
+		{
+			name:   "valid values unchanged",
+			input:  RetryPolicy{MaxRetries: 3, InitialDelay: time.Second, MaxDelay: 10 * time.Second, Jitter: 0.3},
+			expect: RetryPolicy{MaxRetries: 3, InitialDelay: time.Second, MaxDelay: 10 * time.Second, Jitter: 0.3},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := normalizePolicy(tc.input)
+			if got != tc.expect {
+				t.Errorf("normalizePolicy() = %+v, want %+v", got, tc.expect)
+			}
+		})
+	}
+}
+
 func TestWithRetry_TransientErrorType(t *testing.T) {
 	// When fn returns a TransientError, retry should happen even with
 	// policy.Transient=false because isTransient(err) returns true.

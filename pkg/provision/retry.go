@@ -62,6 +62,12 @@ func normalizePolicy(policy RetryPolicy) RetryPolicy {
 	if policy.MaxRetries < 0 {
 		policy.MaxRetries = 0
 	}
+	if policy.InitialDelay < 0 {
+		policy.InitialDelay = 0
+	}
+	if policy.MaxDelay < 0 {
+		policy.MaxDelay = 0
+	}
 	if policy.Jitter < 0 {
 		policy.Jitter = 0
 	}
@@ -84,10 +90,11 @@ func waitRetryDelay(ctx context.Context, name string, policy RetryPolicy, attemp
 	}
 
 	delay := backoffDelay(policy, attempt)
-	slog.Warn("retrying step", "step", name, "attempt", attempt, "delay", delay)
 	if delay <= 0 {
+		slog.Debug("retrying step immediately", "step", name, "attempt", attempt)
 		return nil
 	}
+	slog.Warn("retrying step", "step", name, "attempt", attempt, "delay", delay)
 
 	timer := time.NewTimer(delay)
 	defer timer.Stop()

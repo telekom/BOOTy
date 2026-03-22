@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -137,7 +138,7 @@ func resumeStateSteps() map[string]struct{} {
 // or returns a fresh checkpoint. Only checkpoints created via BOOTY_RESUME
 // persist to disk; otherwise Save/Remove are no-ops.
 func (o *Orchestrator) loadOrCreateCheckpoint() *Checkpoint {
-	if os.Getenv("BOOTY_RESUME") != "" {
+	if enabled, _ := strconv.ParseBool(os.Getenv("BOOTY_RESUME")); enabled {
 		cp, cpErr := LoadCheckpoint()
 		if cpErr != nil && !errors.Is(cpErr, ErrNoCheckpoint) {
 			o.log.Warn("failed to load checkpoint, starting fresh", "error", cpErr)
