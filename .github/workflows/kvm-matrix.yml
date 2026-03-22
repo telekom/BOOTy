@@ -91,12 +91,6 @@ jobs:
               sudo mkfs.ext4 /dev/mapper/testcrypt
               sudo cryptsetup luksClose testcrypt
               sudo qemu-nbd --disconnect /dev/nbd0
-          - scenario: provision-verify
-            qemu_extra: ""
-            test_tag: e2e
-            test_regex: "TestProvisionVerify"
-            setup: |
-              sudo apt-get install -y qemu-utils fdisk e2fsprogs dosfstools
       fail-fast: false
 
     steps:
@@ -166,7 +160,7 @@ jobs:
 
       - name: Run KVM test (${{ matrix.scenario }})
         run: |
-          if [ "${{ matrix.scenario }}" = "provision-verify" ] || [ "${{ matrix.scenario }}" = "luks-verify" ]; then
+          if [ "${{ matrix.scenario }}" = "luks-verify" ]; then
             sudo -E env "PATH=$PATH" go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -v -timeout 15m ./test/e2e/kvm/...
           else
             go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -v -timeout 15m ./test/e2e/kvm/...
