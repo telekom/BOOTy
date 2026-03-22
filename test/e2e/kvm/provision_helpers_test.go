@@ -147,7 +147,8 @@ func startImageServer(t *testing.T, imagePath string) string {
 		http.ServeFile(w, r, imagePath)
 	})
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	// Listen on all interfaces so QEMU guest can reach us via 10.0.2.2.
+	listener, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -156,7 +157,8 @@ func startImageServer(t *testing.T, imagePath string) string {
 	go func() { _ = srv.Serve(listener) }()
 	t.Cleanup(func() { _ = srv.Close() })
 
-	return fmt.Sprintf("http://127.0.0.1:%d", listener.Addr().(*net.TCPAddr).Port)
+	// QEMU user-mode networking maps the host to 10.0.2.2.
+	return fmt.Sprintf("http://10.0.2.2:%d", listener.Addr().(*net.TCPAddr).Port)
 }
 
 // writeDeployVars creates a /deploy/vars file from a map of key=value pairs.
@@ -299,7 +301,6 @@ func runQEMUProvision(t *testing.T, kernel, initramfs, disk string, timeoutDur t
 		"-net", "nic,model=e1000,macaddr=52:54:00:12:34:56",
 		"-net", "user",
 		"-append", "console=ttyS0 panic=1",
-		"-serial", "stdio",
 	}
 	args = append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)
 

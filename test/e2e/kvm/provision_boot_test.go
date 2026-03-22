@@ -121,7 +121,6 @@ func bootProvisionedDisk(t *testing.T, vmlinuz, initrd, disk string, timeout tim
 		"-kernel", vmlinuz,
 		"-drive", fmt.Sprintf("file=%s,format=qcow2,if=virtio", disk),
 		"-append", "root=/dev/vda2 console=ttyS0 panic=1",
-		"-serial", "stdio",
 	}
 	if initrd != "" {
 		args = append(args, "-initrd", initrd)
