@@ -547,6 +547,28 @@ enrollment (TPM2 PCR binding, clevis tang enrollment) is handled separately afte
 the OS is installed. Invalid targets (empty device or mapped name) are silently
 skipped during crypttab generation.
 
+### JWT Authentication
+
+BOOTy supports JWT-based authentication with the CAPRF controller. Set
+`TOKEN_URL` to enable automatic token acquisition and background renewal:
+
+```bash
+export TOKEN="bootstrap-token"                    # Initial bootstrap token
+export TOKEN_URL="http://caprf:8080/auth/token"   # JWT token endpoint
+export TOKEN_ALGORITHM="RS256"                    # Optional: RS256 (default) or ES256
+```
+
+**Lifecycle:**
+1. BOOTy starts with the bootstrap `TOKEN` for initial authentication
+2. After network connectivity is established, `TOKEN_URL` is called to exchange
+   the bootstrap token for a short-lived JWT
+3. A background goroutine renews the JWT at 80% of its lifetime
+4. On renewal failure, exponential backoff retries up to 5 times before rebooting
+
+When `TOKEN_URL` is not set, BOOTy uses the static `TOKEN` for all requests
+(no renewal). When `TOKEN_URL` is set, acquisition and renewal failures are
+fatal — BOOTy reboots to avoid operating with stale credentials.
+
 ### VLAN Support
 
 BOOTy supports 802.1Q VLAN tagging via netlink. Configure VLANs with the
