@@ -43,9 +43,27 @@ type fdbInstaller interface {
 // netlinkFDB is the production implementation using real netlink calls.
 type netlinkFDB struct{}
 
-func (netlinkFDB) LinkByName(name string) (netlink.Link, error) { return netlink.LinkByName(name) }
-func (netlinkFDB) NeighSet(n *netlink.Neigh) error              { return netlink.NeighSet(n) }
-func (netlinkFDB) NeighDel(n *netlink.Neigh) error              { return netlink.NeighDel(n) }
+func (netlinkFDB) LinkByName(name string) (netlink.Link, error) {
+	link, err := netlink.LinkByName(name)
+	if err != nil {
+		return nil, fmt.Errorf("link by name %s: %w", name, err)
+	}
+	return link, nil
+}
+
+func (netlinkFDB) NeighSet(n *netlink.Neigh) error {
+	if err := netlink.NeighSet(n); err != nil {
+		return fmt.Errorf("neigh set: %w", err)
+	}
+	return nil
+}
+
+func (netlinkFDB) NeighDel(n *netlink.Neigh) error {
+	if err := netlink.NeighDel(n); err != nil {
+		return fmt.Errorf("neigh del: %w", err)
+	}
+	return nil
+}
 
 // OverlayTier manages EVPN Type-5 routes and VXLAN encapsulation.
 type OverlayTier struct {
