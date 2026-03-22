@@ -41,11 +41,16 @@ topology:
       exec:
         # eth1 → leaf01 (eBGP underlay)
         - ip link set dev eth1 mtu 9000
-        - ip link add vxlan100 type vxlan id 100 dstport 4789 local 10.0.0.1 nolearning
+        - ip link add vxlan100 type vxlan id 100 dstport 4789 local 10.0.0.1
         - ip link add br100 type bridge
         - ip link set vxlan100 master br100
         - ip link set vxlan100 up
         - ip link set br100 up
+        - ip addr add 10.100.0.1/24 dev br100
+        # BUM FDB entries for BOOTy VTEPs (BOOTy only advertises Type-5)
+        - bridge fdb append 00:00:00:00:00:00 dev vxlan100 dst 10.0.0.20
+        - bridge fdb append 00:00:00:00:00:00 dev vxlan100 dst 10.0.0.21
+        - bridge fdb append 00:00:00:00:00:00 dev vxlan100 dst 10.0.0.22
         # eth2 → client (L2 on br100)
         - ip link set dev eth2 master br100
         - ip link set dev eth2 up
@@ -70,7 +75,7 @@ topology:
         - daemons:/etc/frr/daemons:ro
       exec:
         - ip link set dev eth1 mtu 9000
-        - ip link add vxlan100 type vxlan id 100 dstport 4789 local 10.0.0.2 nolearning
+        - ip link add vxlan100 type vxlan id 100 dstport 4789 local 10.0.0.2
         - ip link add br100 type bridge
         - ip link set vxlan100 master br100
         - ip link set vxlan100 up
@@ -95,7 +100,7 @@ topology:
         - ip link set dev eth2 mtu 9000
         - ip link set dev eth2 up
         # VXLAN for L2VPN-EVPN
-        - ip link add vxlan100 type vxlan id 100 dstport 4789 local 10.0.0.3 nolearning
+        - ip link add vxlan100 type vxlan id 100 dstport 4789 local 10.0.0.3
         - ip link add br100 type bridge
         - ip link set vxlan100 master br100
         - ip link set vxlan100 up
