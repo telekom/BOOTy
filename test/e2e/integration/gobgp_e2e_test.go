@@ -396,7 +396,7 @@ func TestGoBGPRR01SpineBGPEstablished(t *testing.T) {
 
 // TestGoBGPUnnumberedEVPNType5OnSpine verifies that the spine receives an EVPN
 // Type-5 (IP Prefix) route from the unnumbered BOOTy node after BGP converges.
-// BOOTy advertises its provision subnet so the fabric can route to it.
+// BOOTy advertises its provision host IP as a /32 so the fabric can route to it.
 func TestGoBGPUnnumberedEVPNType5OnSpine(t *testing.T) {
 	requireGoBGPLab(t)
 	t.Cleanup(func() { dumpDebugState(t) })
@@ -421,11 +421,14 @@ func TestGoBGPUnnumberedEVPNType5OnSpine(t *testing.T) {
 
 // TestGoBGPDualEVPNType5OnSpine verifies that the spine receives an EVPN
 // Type-5 (IP Prefix) route from the dual-mode BOOTy node.
+// Dual's EVPN routes flow via: dual → rr01 (numbered eBGP) → spine (iBGP).
 func TestGoBGPDualEVPNType5OnSpine(t *testing.T) {
 	requireGoBGPLab(t)
 	t.Cleanup(func() { dumpDebugState(t) })
 
-	waitForBGPPeer(t, "10.0.3.2")
+	// Dual connects to the spine via unnumbered (eth4) for IPv4 underlay.
+	// EVPN routes arrive at spine via rr01 iBGP reflection.
+	waitForBGPInterface(t, "eth4")
 
 	deadline := time.Now().Add(bgpConvergeTimeout)
 	for {

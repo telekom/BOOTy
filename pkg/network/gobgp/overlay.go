@@ -427,6 +427,11 @@ func (o *OverlayTier) addOverlayLoopback() error {
 // The /32 is required because multiple BOOTy nodes may share the same /24
 // provision subnet — only unique host routes allow per-node reachability.
 func (o *OverlayTier) advertiseType5(ctx context.Context) error {
+	if o.cfg.ProvisionIP == "" {
+		o.log.Warn("provision IP not set, skipping EVPN Type-5 advertisement")
+		return nil
+	}
+
 	rd, err := buildRouteDistinguisher(o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
 	if err != nil {
 		return fmt.Errorf("build route distinguisher: %w", err)
@@ -529,6 +534,13 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 // received via EVPN Type-5 (IP Prefix) route. This is how BOOTy learns
 // the default route (and any other prefixes) from the fabric.
 func (o *OverlayTier) handleType5Route(route *apipb.EVPNIPPrefixRoute, vtep string, withdraw bool) {
+	// Skip routes originated by this node (e.g., reflected back by the RR).
+	// Installing our own route would override the connected route and break
+	// provisioning connectivity.
+	if vtep == o.cfg.RouterID {
+		return
+	}
+
 	prefix := route.GetIpPrefix()
 	prefixLen := route.GetIpPrefixLen()
 
@@ -751,8 +763,9 @@ func buildRouteDistinguisher(asn, vni uint32) (*anypb.Any, error) {
 	return a, nil
 }
 
-// buildEVPNType5NLRI builds an EVPN IP Prefix (Type-5) NLRI for the
-// provision subnet, so the fabric can route overlay traffic to this VTEP.
+// buildEVPNType5NLRI builds an EVPN IP Prefix (Type-5) NLRI for the given
+// IP prefix (typically a /32 host route), so the fabric can route overlay
+// traffic to this VTEP.
 func buildEVPNType5NLRI(rd *anypb.Any, provisionIP, gwIP string, label uint32) (*anypb.Any, error) {
 	_, ipNet, err := net.ParseCIDR(provisionIP)
 	if err != nil {

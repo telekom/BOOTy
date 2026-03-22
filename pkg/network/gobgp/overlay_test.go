@@ -501,6 +501,28 @@ func TestHandleType5RouteInvalidPrefix(t *testing.T) {
 	overlay.handleType5Route(route, "10.0.0.1", false)
 }
 
+func TestHandleType5RouteSelfRoute(t *testing.T) {
+	mock := &mockFDB{}
+	overlay := &OverlayTier{
+		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision"},
+		log: slog.Default(),
+		fdb: mock,
+	}
+
+	route := &apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "10.100.0.0",
+		IpPrefixLen: 24,
+		GwAddress:   "10.0.0.99",
+	}
+
+	// Self-originated route (vtep == RouterID) — should be silently skipped.
+	overlay.handleType5Route(route, "10.0.0.99", false)
+	// No route operations should have been attempted.
+	if len(mock.appends) != 0 || len(mock.sets) != 0 {
+		t.Error("self-originated type-5 route should be skipped")
+	}
+}
+
 func TestHandleType5RouteNoGateway(t *testing.T) {
 	overlay := &OverlayTier{
 		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision"},
@@ -516,4 +538,160 @@ func TestHandleType5RouteNoGateway(t *testing.T) {
 
 	// No gateway and no next-hop — should return early.
 	overlay.handleType5Route(route, "", false)
+}
+
+// --- Type-2 handler tests ---------------------------------------------------
+
+func TestHandleType2RouteInstallsFDB(t *testing.T) {
+	mock := &mockFDB{}
+	overlay := &OverlayTier{
+		cfg:     &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log:     slog.Default(),
+		fdb:     mock,
+		macVTEP: make(map[string]string),
+	}
+
+	route := &apipb.EVPNMACIPAdvertisementRoute{
+		MacAddress: "aa:bb:cc:dd:ee:ff",
+	}
+	overlay.handleType2Route(route, "10.0.0.1", false)
+
+	if len(mock.sets) != 1 {
+		t.Fatalf("expected 1 NeighSet call, got %d", len(mock.sets))
+	}
+	if mock.sets[0].HardwareAddr.String() != "aa:bb:cc:dd:ee:ff" {
+		t.Errorf("MAC = %s, want aa:bb:cc:dd:ee:ff", mock.sets[0].HardwareAddr)
+	}
+	if !mock.sets[0].IP.Equal(net.ParseIP("10.0.0.1")) {
+		t.Errorf("VTEP IP = %s, want 10.0.0.1", mock.sets[0].IP)
+	}
+	if overlay.macVTEP["aa:bb:cc:dd:ee:ff"] != "10.0.0.1" {
+		t.Errorf("macVTEP not tracked")
+	}
+}
+
+func TestHandleType2RouteSelfSkipped(t *testing.T) {
+	mock := &mockFDB{}
+	overlay := &OverlayTier{
+		cfg:     &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log:     slog.Default(),
+		fdb:     mock,
+		macVTEP: make(map[string]string),
+	}
+
+	route := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:dd:ee:ff"}
+	overlay.handleType2Route(route, "10.0.0.99", false)
+
+	if len(mock.sets) != 0 {
+		t.Error("self-originated type-2 route should be skipped")
+	}
+}
+
+func TestHandleType2RouteWithdraw(t *testing.T) {
+	mock := &mockFDB{}
+	overlay := &OverlayTier{
+		cfg:     &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log:     slog.Default(),
+		fdb:     mock,
+		macVTEP: map[string]string{"aa:bb:cc:dd:ee:ff": "10.0.0.1"},
+	}
+
+	route := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:dd:ee:ff"}
+	overlay.handleType2Route(route, "", true)
+
+	if len(mock.dels) != 1 {
+		t.Fatalf("expected 1 NeighDel call, got %d", len(mock.dels))
+	}
+	if _, ok := overlay.macVTEP["aa:bb:cc:dd:ee:ff"]; ok {
+		t.Error("macVTEP entry should be removed on withdraw")
+	}
+}
+
+func TestHandleType2RouteInvalidMAC(t *testing.T) {
+	mock := &mockFDB{}
+	overlay := &OverlayTier{
+		cfg:     &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log:     slog.Default(),
+		fdb:     mock,
+		macVTEP: make(map[string]string),
+	}
+
+	route := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "not-a-mac"}
+	overlay.handleType2Route(route, "10.0.0.1", false)
+
+	if len(mock.sets) != 0 {
+		t.Error("invalid MAC should be skipped")
+	}
+}
+
+// --- Type-3 handler tests ---------------------------------------------------
+
+func TestHandleType3RouteAppendsBUM(t *testing.T) {
+	mock := &mockFDB{}
+	overlay := &OverlayTier{
+		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log: slog.Default(),
+		fdb: mock,
+	}
+
+	route := &apipb.EVPNInclusiveMulticastEthernetTagRoute{IpAddress: "10.0.0.1"}
+	overlay.handleType3Route(route, "10.0.0.1", false)
+
+	if len(mock.appends) != 1 {
+		t.Fatalf("expected 1 NeighAppend call, got %d", len(mock.appends))
+	}
+	if mock.appends[0].HardwareAddr.String() != "00:00:00:00:00:00" {
+		t.Errorf("BUM MAC = %s, want 00:00:00:00:00:00", mock.appends[0].HardwareAddr)
+	}
+	if !mock.appends[0].IP.Equal(net.ParseIP("10.0.0.1")) {
+		t.Errorf("VTEP IP = %s, want 10.0.0.1", mock.appends[0].IP)
+	}
+}
+
+func TestHandleType3RouteSelfSkipped(t *testing.T) {
+	mock := &mockFDB{}
+	overlay := &OverlayTier{
+		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log: slog.Default(),
+		fdb: mock,
+	}
+
+	route := &apipb.EVPNInclusiveMulticastEthernetTagRoute{IpAddress: "10.0.0.99"}
+	overlay.handleType3Route(route, "10.0.0.99", false)
+
+	if len(mock.appends) != 0 {
+		t.Error("self-originated type-3 route should be skipped")
+	}
+}
+
+func TestHandleType3RouteWithdraw(t *testing.T) {
+	mock := &mockFDB{}
+	overlay := &OverlayTier{
+		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log: slog.Default(),
+		fdb: mock,
+	}
+
+	route := &apipb.EVPNInclusiveMulticastEthernetTagRoute{IpAddress: "10.0.0.1"}
+	overlay.handleType3Route(route, "10.0.0.1", true)
+
+	if len(mock.dels) != 1 {
+		t.Fatalf("expected 1 NeighDel call, got %d", len(mock.dels))
+	}
+}
+
+func TestHandleType3RouteNoVTEP(t *testing.T) {
+	mock := &mockFDB{}
+	overlay := &OverlayTier{
+		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log: slog.Default(),
+		fdb: mock,
+	}
+
+	route := &apipb.EVPNInclusiveMulticastEthernetTagRoute{IpAddress: ""}
+	overlay.handleType3Route(route, "", false)
+
+	if len(mock.appends) != 0 {
+		t.Error("type-3 route with no VTEP should be skipped")
+	}
 }

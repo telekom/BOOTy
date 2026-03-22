@@ -263,10 +263,12 @@ func (c *Configurator) MountEFIVars(ctx context.Context) error {
 	}
 
 	if err := os.MkdirAll(efiPath, 0o755); err != nil {
-		return fmt.Errorf("create efivarfs mountpoint: %w", err)
+		slog.Warn("create efivarfs mountpoint failed, continuing without EFI variable access", "error", err, "path", efiPath)
+		return nil
 	}
 	if err := syscall.Mount("efivarfs", efiPath, "efivarfs", 0, ""); err != nil {
-		return fmt.Errorf("mount efivarfs: %w", err)
+		slog.Warn("mount efivarfs failed, continuing without EFI variable access", "error", err, "path", efiPath)
+		return nil
 	}
 	slog.Info("mounted efivarfs", "path", efiPath)
 	return nil
