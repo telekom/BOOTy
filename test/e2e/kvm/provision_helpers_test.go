@@ -397,7 +397,7 @@ func buildBooty(t *testing.T, output string) {
 	t.Helper()
 	cmd := exec.Command("go", "build",
 		"-ldflags", "-linkmode external -extldflags '-static' -s -w",
-		"-o", output, ".")
+		"-o", output, "github.com/telekom/BOOTy")
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=1", "GOOS=linux", "GOARCH=amd64")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build booty: %v\n%s", err, out)
