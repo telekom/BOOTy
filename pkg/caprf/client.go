@@ -381,6 +381,9 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"BOND_MODE":                   &cfg.BondMode,
 		"VLANS":                       &cfg.VLANs,
 		"NETWORK_MODE":                &cfg.NetworkMode,
+		"RESCUE_MODE":                 &cfg.RescueMode,
+		"RESCUE_SSH_PUBKEY":           &cfg.RescueSSHPubKey,
+		"RESCUE_PASSWORD_HASH":        &cfg.RescuePasswordHash,
 		"BGP_PEER_MODE":               &cfg.BGPPeerMode,
 		"BGP_NEIGHBORS":               &cfg.BGPNeighbors,
 		"IMAGE_CHECKSUM":              &cfg.ImageChecksum,
@@ -432,17 +435,27 @@ func applyUint32Var(cfg *config.MachineConfig, key, value string) bool {
 }
 
 func applySpecialVar(cfg *config.MachineConfig, key, value string) {
+	if applyBoolIntVar(cfg, key, value) {
+		return
+	}
+
 	switch key {
 	case "IMAGE":
 		cfg.ImageURLs = strings.Fields(strings.ReplaceAll(value, ",", " "))
+	case "POST_PROVISION_CMDS":
+		cfg.PostProvisionCmds = strings.Split(value, ";")
+	}
+}
+
+// applyBoolIntVar handles boolean and integer special vars. Returns true if handled.
+func applyBoolIntVar(cfg *config.MachineConfig, key, value string) bool {
+	switch key {
 	case "MIN_DISK_SIZE_GB":
 		setIntField(&cfg.MinDiskSizeGB, value)
 	case "DISABLE_KEXEC":
 		cfg.DisableKexec = parseBoolVar(value)
 	case "SECURE_ERASE":
 		cfg.SecureErase = parseBoolVar(value)
-	case "POST_PROVISION_CMDS":
-		cfg.PostProvisionCmds = strings.Split(value, ";")
 	case "NUM_VFS":
 		setIntField(&cfg.NumVFs, value)
 	case "INVENTORY_ENABLED":
@@ -457,11 +470,27 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) {
 		setIntField(&cfg.HealthMinCPUs, value)
 	case "DRY_RUN":
 		cfg.DryRun = parseBoolVar(value)
+	default:
+		return applyFeatureToggle(cfg, key, value)
+	}
+	return true
+}
+
+// applyFeatureToggle handles feature-specific boolean/int vars.
+func applyFeatureToggle(cfg *config.MachineConfig, key, value string) bool {
+	switch key {
 	case "TELEMETRY_ENABLED":
 		cfg.TelemetryEnabled = parseBoolVar(value)
 	case "SECUREBOOT_REENABLE":
 		cfg.SecureBootReEnable = parseBoolVar(value)
+	case "RESCUE_TIMEOUT":
+		setIntField(&cfg.RescueTimeout, value)
+	case "RESCUE_AUTO_MOUNT":
+		cfg.RescueAutoMountDisks = parseBoolVar(value)
+	default:
+		return false
 	}
+	return true
 }
 
 // parseBoolVar interprets common truthy string values (case-insensitive).

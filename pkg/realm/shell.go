@@ -9,11 +9,13 @@ import (
 	"os/exec"
 )
 
-// Shell will Start a userland shell.
+// Shell starts a userland shell. It uses BusyBox setsid + cttyhack to
+// attach the shell to the controlling terminal so interactive input works.
+// Paths use /bin/ because BusyBox applets are installed there in the initramfs.
 func Shell() {
 	slog.Info("Starting Shell")
 
-	cmd := exec.CommandContext(context.Background(), "/usr/bin/setsid", "cttyhack", "/bin/sh")
+	cmd := exec.CommandContext(context.Background(), "/bin/setsid", "cttyhack", "/bin/sh")
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 
 	err := cmd.Start()

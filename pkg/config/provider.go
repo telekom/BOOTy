@@ -121,6 +121,13 @@ type MachineConfig struct {
 	MOKCertPath        string // MOK_CERT_PATH: path to DER-encoded MOK certificate for enrollment
 	MOKPassword        string // MOK_PASSWORD: one-time password for MokManager confirmation
 
+	// Rescue mode configuration.
+	RescueMode           string // RESCUE_MODE: "reboot" (default), "retry", "shell", "wait"
+	RescueSSHPubKey      string // RESCUE_SSH_PUBKEY: authorized SSH public key for rescue shell (Phase 2 — parsed but not yet wired)
+	RescuePasswordHash   string // RESCUE_PASSWORD_HASH: crypt(3) password hash for rescue shell (Phase 2 — parsed but not yet wired)
+	RescueTimeout        int    // RESCUE_TIMEOUT: seconds before rescue auto-action, 0 = infinite (Phase 2 — parsed but not yet wired)
+	RescueAutoMountDisks bool   // RESCUE_AUTO_MOUNT: auto-mount discovered disks in rescue mode (Phase 2 — parsed but not yet wired)
+
 	// Files and commands from ISO /deploy/ directories.
 	ProvisionerFiles []string // Paths to files in /deploy/file-system/
 	MachineFiles     []string // Paths to files in /deploy/machine-files/
