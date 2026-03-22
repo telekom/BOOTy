@@ -383,7 +383,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [build, iso, iso-oci, sbom, scan, sign, container-manifest, changelog]
+    needs: [build, iso, iso-oci, sbom, scan, sign, container-manifest, changelog, oci-artifacts]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -403,3 +403,101 @@ jobs:
         with:
           body_path: artifacts/changelog/CHANGELOG.md
           files: release-files/*
+
+  oci-artifacts:
+    name: Publish OCI Artifacts (${{ matrix.arch }})
+    needs: [build, sbom, sign]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Install ORAS
+        uses: oras-project/setup-oras@v1
+        with:
+          version: "1.2.2"
+
+      - name: Login to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Publish initramfs artifacts
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          REPO=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+
+          for flavor in default gobgp slim micro; do
+            INITRAMFS="artifacts/release-${flavor}-${{ matrix.arch }}/${flavor}-${{ matrix.arch }}-initramfs.cpio.gz"
+            CHECKSUM="artifacts/release-${flavor}-${{ matrix.arch }}/${flavor}-${{ matrix.arch }}-initramfs.cpio.gz.sha256"
+
+            if [ ! -f "${INITRAMFS}" ]; then
+              echo "Skipping ${flavor}/${{ matrix.arch }}: no initramfs found"
+              continue
+            fi
+
+            TAG="${VERSION}-${flavor}-${{ matrix.arch }}"
+            echo "Publishing ${REPO}/initramfs:${TAG}"
+
+            ARGS="${INITRAMFS}:application/vnd.cncf.initramfs.layer.v1+gzip"
+            if [ -f "${CHECKSUM}" ]; then
+              ARGS="${ARGS} ${CHECKSUM}:text/plain"
+            fi
+
+            oras push "${REPO}/initramfs:${TAG}" \
+              --annotation "org.opencontainers.image.title=BOOTy initramfs (${flavor}/${{ matrix.arch }})" \
+              --annotation "org.opencontainers.image.version=${VERSION}" \
+              --annotation "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+              --annotation "io.booty.flavor=${flavor}" \
+              --annotation "io.booty.arch=${{ matrix.arch }}" \
+              ${ARGS}
+          done
+
+      - name: Publish binary artifact
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          REPO=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          BINARY="artifacts/release-default-${{ matrix.arch }}/booty-${{ matrix.arch }}"
+          CHECKSUM="artifacts/release-default-${{ matrix.arch }}/booty-${{ matrix.arch }}.sha256"
+
+          if [ ! -f "${BINARY}" ]; then
+            echo "No binary found for ${{ matrix.arch }}, skipping"
+            exit 0
+          fi
+
+          TAG="${VERSION}-${{ matrix.arch }}"
+          echo "Publishing ${REPO}/binary:${TAG}"
+
+          ARGS="${BINARY}:application/vnd.cncf.binary.layer.v1"
+          if [ -f "${CHECKSUM}" ]; then
+            ARGS="${ARGS} ${CHECKSUM}:text/plain"
+          fi
+
+          oras push "${REPO}/binary:${TAG}" \
+            --annotation "org.opencontainers.image.title=BOOTy binary (${{ matrix.arch }})" \
+            --annotation "org.opencontainers.image.version=${VERSION}" \
+            --annotation "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            --annotation "io.booty.arch=${{ matrix.arch }}" \
+            ${ARGS}
+
+      - name: Publish SBOM artifact
+        if: matrix.arch == 'amd64'
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          REPO=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          SBOM="artifacts/sbom/sbom.spdx.json"
+
+          if [ ! -f "${SBOM}" ]; then
+            echo "No SBOM found, skipping"
+            exit 0
+          fi
+
+          echo "Publishing ${REPO}/sbom:${VERSION}"
+          oras push "${REPO}/sbom:${VERSION}" \
+            --annotation "org.opencontainers.image.title=BOOTy SBOM" \
+            --annotation "org.opencontainers.image.version=${VERSION}" \
+            --annotation "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            "${SBOM}:application/spdx+json"

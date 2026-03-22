@@ -17,7 +17,7 @@ SRC = $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 DOCKERTAG ?= $(VERSION)
 REPOSITORY = ghcr.io/telekom/booty
 
-.PHONY: all build build-all clean install uninstall fmt lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic
+.PHONY: all build build-all clean install uninstall fmt lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic oci-push oci-push-initramfs oci-push-binary
 
 all: lint test install
 
@@ -272,4 +272,33 @@ check:
 	@go vet ./...
 
 run: install
+
+# --- OCI artifact publishing (requires: oras, ghcr.io login) ---
+
+OCI_FLAVOR ?= default
+OCI_ARCH ?= $(TARGETARCH)
+
+oci-push: oci-push-initramfs oci-push-binary
+	@echo All OCI artifacts pushed for $(OCI_FLAVOR)/$(OCI_ARCH)
+
+oci-push-initramfs:
+	@test -f initramfs.cpio.gz || (echo "ERROR: initramfs.cpio.gz not found — build with 'make gobgp' or 'make slim' first"; exit 1)
+	@sha256sum initramfs.cpio.gz > initramfs.cpio.gz.sha256
+	@oras push $(REPOSITORY)/initramfs:$(DOCKERTAG)-$(OCI_FLAVOR)-$(OCI_ARCH) \
+		--annotation "org.opencontainers.image.version=$(VERSION)" \
+		--annotation "io.booty.flavor=$(OCI_FLAVOR)" \
+		--annotation "io.booty.arch=$(OCI_ARCH)" \
+		initramfs.cpio.gz:application/vnd.cncf.initramfs.layer.v1+gzip \
+		initramfs.cpio.gz.sha256:text/plain
+	@echo Pushed $(REPOSITORY)/initramfs:$(DOCKERTAG)-$(OCI_FLAVOR)-$(OCI_ARCH)
+
+oci-push-binary:
+	@test -f $(TARGET) || (echo "ERROR: $(TARGET) binary not found — run 'make build' first"; exit 1)
+	@sha256sum $(TARGET) > $(TARGET).sha256
+	@oras push $(REPOSITORY)/binary:$(DOCKERTAG)-$(OCI_ARCH) \
+		--annotation "org.opencontainers.image.version=$(VERSION)" \
+		--annotation "io.booty.arch=$(OCI_ARCH)" \
+		$(TARGET):application/vnd.cncf.binary.layer.v1 \
+		$(TARGET).sha256:text/plain
+	@echo Pushed $(REPOSITORY)/binary:$(DOCKERTAG)-$(OCI_ARCH)
 	@$(TARGET)
