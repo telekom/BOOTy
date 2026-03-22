@@ -108,7 +108,9 @@ func (o *OverlayTier) SetBgpServer(s *server.BgpServer) {
 	o.bgp = s
 }
 
-// Setup creates VXLAN, bridge, and advertises EVPN Type-5 routes.
+// Setup creates VXLAN, bridge, and advertises the local MAC/IP as an
+// EVPN Type-2 route so the fabric can reach this node. Incoming Type-5
+// routes from the fabric are installed as kernel routes by watchRoutes.
 // VRF creation is handled by the stack before underlay/overlay setup.
 func (o *OverlayTier) Setup(ctx context.Context) error {
 	if o.bgp == nil {
@@ -127,8 +129,8 @@ func (o *OverlayTier) Setup(ctx context.Context) error {
 		return fmt.Errorf("add overlay loopback: %w", err)
 	}
 
-	if err := o.advertiseType5(ctx); err != nil {
-		return fmt.Errorf("advertise EVPN Type-5: %w", err)
+	if err := o.advertiseType2(ctx); err != nil {
+		return fmt.Errorf("advertise EVPN Type-2: %w", err)
 	}
 
 	watchCtx, cancel := context.WithCancel(ctx)
@@ -415,18 +417,21 @@ func (o *OverlayTier) addOverlayLoopback() error {
 	return nil
 }
 
-func (o *OverlayTier) advertiseType5(ctx context.Context) error {
+// advertiseType2 advertises this node's bridge MAC + provision IP as an
+// EVPN Type-2 (MAC/IP Advertisement) route so the fabric knows how to
+// forward overlay traffic to this VTEP.
+func (o *OverlayTier) advertiseType2(ctx context.Context) error {
 	rd, err := buildRouteDistinguisher(o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
 	if err != nil {
 		return fmt.Errorf("build route distinguisher: %w", err)
 	}
 
-	nlri, err := buildEVPNType5NLRI(rd, o.cfg.RouterID, uint32(o.cfg.ProvisionVNI))
+	nlri, err := buildEVPNType2NLRI(rd, o.cfg.BridgeMAC, o.cfg.ProvisionIP, uint32(o.cfg.ProvisionVNI))
 	if err != nil {
 		return fmt.Errorf("build EVPN NLRI: %w", err)
 	}
 
-	pattrs, err := buildType5PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
+	pattrs, err := buildType2PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
 	if err != nil {
 		return fmt.Errorf("build path attributes: %w", err)
 	}
@@ -439,10 +444,11 @@ func (o *OverlayTier) advertiseType5(ctx context.Context) error {
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("add EVPN Type-5 path: %w", err)
+		return fmt.Errorf("add EVPN Type-2 path: %w", err)
 	}
 
-	o.log.Info("advertised EVPN type-5 default route", "vni", o.cfg.ProvisionVNI)
+	o.log.Info("advertised EVPN type-2 MAC/IP route",
+		"mac", o.cfg.BridgeMAC, "ip", o.cfg.ProvisionIP, "vni", o.cfg.ProvisionVNI)
 	return nil
 }
 
@@ -495,6 +501,8 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 		o.handleType2Route(route, vtep, withdraw)
 	case *apipb.EVPNInclusiveMulticastEthernetTagRoute:
 		o.handleType3Route(route, vtep, withdraw)
+	case *apipb.EVPNIPPrefixRoute:
+		o.handleType5Route(route, vtep, withdraw)
 	default:
 		o.log.Debug("route update", "action", action, "type", nlri.GetTypeUrl())
 	}
@@ -619,6 +627,71 @@ func (o *OverlayTier) handleType3Route(route *apipb.EVPNInclusiveMulticastEthern
 	}
 }
 
+// handleType5Route installs or removes a kernel route for an IP prefix
+// received via EVPN Type-5 (IP Prefix) route. This is how BOOTy learns
+// the default route (and any other prefixes) from the fabric.
+func (o *OverlayTier) handleType5Route(route *apipb.EVPNIPPrefixRoute, vtep string, withdraw bool) {
+	prefix := route.GetIpPrefix()
+	prefixLen := route.GetIpPrefixLen()
+
+	dst, err := parsePrefixRoute(prefix, prefixLen)
+	if err != nil {
+		o.log.Debug("type-5 route with invalid prefix", "prefix", prefix, "len", prefixLen, "error", err)
+		return
+	}
+
+	// Resolve the gateway: prefer the NLRI's GwAddress, fall back to next-hop.
+	gwStr := route.GetGwAddress()
+	if gwStr == "" || gwStr == "0.0.0.0" {
+		gwStr = vtep
+	}
+	gw := net.ParseIP(gwStr)
+	if gw == nil {
+		o.log.Debug("type-5 route with no valid gateway", "prefix", dst, "gw", gwStr)
+		return
+	}
+
+	link, err := netlink.LinkByName(o.cfg.BridgeName)
+	if err != nil {
+		o.log.Warn("cannot find bridge for route install", "bridge", o.cfg.BridgeName, "error", err)
+		return
+	}
+
+	kr := &netlink.Route{
+		LinkIndex: link.Attrs().Index,
+		Dst:       dst,
+		Gw:        gw,
+	}
+
+	if withdraw {
+		if err := netlink.RouteDel(kr); err != nil {
+			o.log.Debug("failed to delete route from type-5 withdraw", "dst", dst, "gw", gw, "error", err)
+		} else {
+			o.log.Info("removed route from type-5 withdraw", "dst", dst, "gw", gw)
+		}
+		return
+	}
+
+	if err := netlink.RouteReplace(kr); err != nil {
+		o.log.Warn("failed to install route from type-5", "dst", dst, "gw", gw, "error", err)
+	} else {
+		o.log.Info("installed route from type-5", "dst", dst, "gw", gw)
+	}
+}
+
+// parsePrefixRoute parses a prefix string and length into a *net.IPNet.
+func parsePrefixRoute(prefix string, prefixLen uint32) (*net.IPNet, error) {
+	ip := net.ParseIP(prefix)
+	if ip == nil {
+		return nil, fmt.Errorf("invalid IP %q", prefix)
+	}
+	mask := net.CIDRMask(int(prefixLen), 32)
+	if ip.To4() == nil {
+		mask = net.CIDRMask(int(prefixLen), 128)
+	}
+	return &net.IPNet{IP: ip.Mask(mask), Mask: mask}, nil
+}
+
 // extractNextHop returns the first next-hop IP from a path's MpReachNLRI
 // attribute. Returns empty string if not found.
 func extractNextHop(p *apipb.Path) string {
@@ -657,29 +730,34 @@ func buildRouteDistinguisher(asn, vni uint32) (*anypb.Any, error) {
 	return a, nil
 }
 
-// buildEVPNType5NLRI builds an EVPN IP Prefix (Type-5) NLRI for default route.
-func buildEVPNType5NLRI(rd *anypb.Any, gwAddr string, label uint32) (*anypb.Any, error) {
-	route := &apipb.EVPNIPPrefixRoute{
+// buildEVPNType2NLRI builds an EVPN MAC/IP Advertisement (Type-2) NLRI
+// for the local bridge MAC and provision IP.
+func buildEVPNType2NLRI(rd *anypb.Any, mac, ipWithMask string, label uint32) (*anypb.Any, error) {
+	ip, _, err := net.ParseCIDR(ipWithMask)
+	if err != nil {
+		return nil, fmt.Errorf("parse provision IP %s: %w", ipWithMask, err)
+	}
+
+	route := &apipb.EVPNMACIPAdvertisementRoute{
 		Rd: rd,
 		Esi: &apipb.EthernetSegmentIdentifier{
 			Type:  0,
 			Value: make([]byte, 9),
 		},
 		EthernetTag: 0,
-		IpPrefix:    "0.0.0.0",
-		IpPrefixLen: 0,
-		GwAddress:   gwAddr,
-		Label:       label,
+		MacAddress:  mac,
+		IpAddress:   ip.String(),
+		Labels:      []uint32{label},
 	}
 	a, err := anypb.New(route)
 	if err != nil {
-		return nil, fmt.Errorf("marshal EVPN type-5 NLRI: %w", err)
+		return nil, fmt.Errorf("marshal EVPN type-2 NLRI: %w", err)
 	}
 	return a, nil
 }
 
-// buildType5PathAttrs builds BGP path attributes for EVPN Type-5 advertisement.
-func buildType5PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32) ([]*anypb.Any, error) {
+// buildType2PathAttrs builds BGP path attributes for EVPN Type-2 advertisement.
+func buildType2PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32) ([]*anypb.Any, error) {
 	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0}) // IGP
 	if err != nil {
 		return nil, fmt.Errorf("marshal origin: %w", err)

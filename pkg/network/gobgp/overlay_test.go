@@ -163,39 +163,67 @@ func TestBuildRouteTarget(t *testing.T) {
 	}
 }
 
-func TestBuildEVPNType5NLRI(t *testing.T) {
+func TestBuildEVPNType2NLRI(t *testing.T) {
 	rd, err := buildRouteDistinguisher(65000, 4000)
 	if err != nil {
 		t.Fatalf("build RD: %v", err)
 	}
 
-	nlri, err := buildEVPNType5NLRI(rd, "10.0.0.1", 4000)
+	nlri, err := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20/24", 4000)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if nlri == nil {
 		t.Fatal("expected non-nil NLRI")
 	}
+
+	// Unmarshal and verify fields.
+	msg, err := nlri.UnmarshalNew()
+	if err != nil {
+		t.Fatalf("unmarshal NLRI: %v", err)
+	}
+	route, ok := msg.(*apipb.EVPNMACIPAdvertisementRoute)
+	if !ok {
+		t.Fatalf("expected EVPNMACIPAdvertisementRoute, got %T", msg)
+	}
+	if route.MacAddress != "aa:bb:cc:dd:ee:ff" {
+		t.Errorf("MAC = %s, want aa:bb:cc:dd:ee:ff", route.MacAddress)
+	}
+	if route.IpAddress != "10.100.0.20" {
+		t.Errorf("IP = %s, want 10.100.0.20", route.IpAddress)
+	}
 }
 
-func TestBuildType5PathAttrs(t *testing.T) {
+func TestBuildType2PathAttrs(t *testing.T) {
 	rd, err := buildRouteDistinguisher(65000, 4000)
 	if err != nil {
 		t.Fatalf("build RD: %v", err)
 	}
 
-	nlri, err := buildEVPNType5NLRI(rd, "10.0.0.1", 4000)
+	nlri, err := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20/24", 4000)
 	if err != nil {
 		t.Fatalf("build NLRI: %v", err)
 	}
 
-	pattrs, err := buildType5PathAttrs(nlri, "10.0.0.1", 65000, 4000)
+	pattrs, err := buildType2PathAttrs(nlri, "10.0.0.1", 65000, 4000)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Expect 3 attributes: origin, mp-reach, ext-communities.
 	if len(pattrs) != 3 {
 		t.Errorf("got %d path attrs, want 3", len(pattrs))
+	}
+}
+
+func TestBuildEVPNType2NLRIInvalidIP(t *testing.T) {
+	rd, err := buildRouteDistinguisher(65000, 4000)
+	if err != nil {
+		t.Fatalf("build RD: %v", err)
+	}
+
+	_, err = buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "not-a-cidr", 4000)
+	if err == nil {
+		t.Fatal("expected error for invalid CIDR")
 	}
 }
 
@@ -259,10 +287,11 @@ func TestProcessRouteUpdateDispatch(t *testing.T) {
 			}, "10.0.0.1", false),
 		},
 		{
-			name: "type-5 route dispatches to default (no panic)",
+			name: "type-5 route dispatches to handler",
 			path: mustMarshalPath(t, &apipb.EVPNIPPrefixRoute{
 				IpPrefix:    "10.100.0.0",
 				IpPrefixLen: 24,
+				GwAddress:   "10.0.0.1",
 			}, "10.0.0.1", false),
 		},
 		{
@@ -618,4 +647,65 @@ func TestAddGatewayFDB(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParsePrefixRoute(t *testing.T) {
+	tests := []struct {
+		name      string
+		prefix    string
+		prefixLen uint32
+		wantStr   string
+		wantErr   bool
+	}{
+		{"default route", "0.0.0.0", 0, "0.0.0.0/0", false},
+		{"subnet", "10.100.0.0", 24, "10.100.0.0/24", false},
+		{"host route", "10.0.0.1", 32, "10.0.0.1/32", false},
+		{"invalid IP", "not-an-ip", 0, "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parsePrefixRoute(tt.prefix, tt.prefixLen)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("parsePrefixRoute() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && got.String() != tt.wantStr {
+				t.Errorf("parsePrefixRoute() = %s, want %s", got, tt.wantStr)
+			}
+		})
+	}
+}
+
+func TestHandleType5RouteInvalidPrefix(t *testing.T) {
+	overlay := &OverlayTier{
+		cfg:     &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision"},
+		log:     slog.Default(),
+		fdb:     &mockFDB{},
+		macVTEP: make(map[string]string),
+	}
+
+	route := &apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "not-an-ip",
+		IpPrefixLen: 0,
+	}
+
+	// Should return early due to invalid prefix — no panic.
+	overlay.handleType5Route(route, "10.0.0.1", false)
+}
+
+func TestHandleType5RouteNoGateway(t *testing.T) {
+	overlay := &OverlayTier{
+		cfg:     &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision"},
+		log:     slog.Default(),
+		fdb:     &mockFDB{},
+		macVTEP: make(map[string]string),
+	}
+
+	route := &apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "0.0.0.0",
+		IpPrefixLen: 0,
+		GwAddress:   "",
+	}
+
+	// No gateway and no next-hop — should return early.
+	overlay.handleType5Route(route, "", false)
 }

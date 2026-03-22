@@ -394,9 +394,10 @@ func TestGoBGPRR01SpineBGPEstablished(t *testing.T) {
 
 // --- EVPN Data Plane --------------------------------------------------------
 
-// TestGoBGPUnnumberedEVPNType5OnSpine verifies that the spine receives an EVPN
-// Type-5 route from the unnumbered BOOTy node after BGP converges.
-func TestGoBGPUnnumberedEVPNType5OnSpine(t *testing.T) {
+// TestGoBGPUnnumberedEVPNType2OnSpine verifies that the spine receives an EVPN
+// Type-2 (MAC/IP) route from the unnumbered BOOTy node after BGP converges.
+// BOOTy advertises its bridge MAC + provision IP so the fabric can reach it.
+func TestGoBGPUnnumberedEVPNType2OnSpine(t *testing.T) {
 	requireGoBGPLab(t)
 	t.Cleanup(func() { dumpDebugState(t) })
 
@@ -406,20 +407,21 @@ func TestGoBGPUnnumberedEVPNType5OnSpine(t *testing.T) {
 	for {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabSpine,
 			"vtysh", "-c", "show bgp l2vpn evpn")
-		if strings.Contains(out, "10.0.0.20") {
-			t.Log("EVPN Type-5 route from booty-unnumbered visible on spine")
+		// BOOTy-unnumbered advertises its provision IP (10.100.0.20).
+		if strings.Contains(out, "10.100.0.20") {
+			t.Log("EVPN Type-2 route from booty-unnumbered visible on spine")
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("EVPN Type-5 route from booty-unnumbered not on spine:\n%s", out)
+			t.Fatalf("EVPN Type-2 route from booty-unnumbered not on spine:\n%s", out)
 		}
 		time.Sleep(bgpConvergeInterval)
 	}
 }
 
-// TestGoBGPDualEVPNType5OnSpine verifies that the spine receives an EVPN
-// Type-5 route from the dual-mode BOOTy node after BGP converges.
-func TestGoBGPDualEVPNType5OnSpine(t *testing.T) {
+// TestGoBGPDualEVPNType2OnSpine verifies that the spine receives an EVPN
+// Type-2 (MAC/IP) route from the dual-mode BOOTy node.
+func TestGoBGPDualEVPNType2OnSpine(t *testing.T) {
 	requireGoBGPLab(t)
 	t.Cleanup(func() { dumpDebugState(t) })
 
@@ -429,20 +431,21 @@ func TestGoBGPDualEVPNType5OnSpine(t *testing.T) {
 	for {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabSpine,
 			"vtysh", "-c", "show bgp l2vpn evpn")
-		if strings.Contains(out, "10.0.0.21") {
-			t.Log("EVPN Type-5 route from booty-dual visible on spine")
+		// BOOTy-dual advertises its provision IP (10.100.0.21).
+		if strings.Contains(out, "10.100.0.21") {
+			t.Log("EVPN Type-2 route from booty-dual visible on spine")
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("EVPN Type-5 route from booty-dual not on spine:\n%s", out)
+			t.Fatalf("EVPN Type-2 route from booty-dual not on spine:\n%s", out)
 		}
 		time.Sleep(bgpConvergeInterval)
 	}
 }
 
-// TestGoBGPNumberedEVPNType5OnSpine verifies that the spine receives an EVPN
-// Type-5 route from the numbered-mode BOOTy node after BGP converges.
-func TestGoBGPNumberedEVPNType5OnSpine(t *testing.T) {
+// TestGoBGPNumberedEVPNType2OnSpine verifies that the spine receives an EVPN
+// Type-2 (MAC/IP) route from the numbered-mode BOOTy node.
+func TestGoBGPNumberedEVPNType2OnSpine(t *testing.T) {
 	requireGoBGPLab(t)
 	t.Cleanup(func() { dumpDebugState(t) })
 
@@ -452,12 +455,13 @@ func TestGoBGPNumberedEVPNType5OnSpine(t *testing.T) {
 	for {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabSpine,
 			"vtysh", "-c", "show bgp l2vpn evpn")
-		if strings.Contains(out, "10.0.0.22") {
-			t.Log("EVPN Type-5 route from booty-numbered visible on spine")
+		// BOOTy-numbered advertises its provision IP (10.100.0.22).
+		if strings.Contains(out, "10.100.0.22") {
+			t.Log("EVPN Type-2 route from booty-numbered visible on spine")
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("EVPN Type-5 route from booty-numbered not on spine:\n%s", out)
+			t.Fatalf("EVPN Type-2 route from booty-numbered not on spine:\n%s", out)
 		}
 		time.Sleep(bgpConvergeInterval)
 	}
