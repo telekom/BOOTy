@@ -14,7 +14,7 @@ func TestLUKSSmokeQEMU(t *testing.T) {
 	requireKVMAssets(t, initramfs, kernel)
 	diskImg := envOrDefault("LUKS_DISK_IMAGE", "")
 	if diskImg == "" {
-		t.Fatal("LUKS_DISK_IMAGE not set")
+		t.Skip("LUKS_DISK_IMAGE not set")
 	}
 
 	extra := splitExtraArgs(envOrDefault("QEMU_EXTRA_ARGS", ""))
