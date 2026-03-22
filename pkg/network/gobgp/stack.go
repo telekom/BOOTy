@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/network"
@@ -66,6 +67,15 @@ func (s *Stack) Setup(ctx context.Context, _ *network.Config) error {
 		return fmt.Errorf("overlay setup: %w", err)
 	}
 
+	// Install a kernel route to the gateway VTEP so VXLAN outer packets
+	// can reach the spine switch. GoBGP does not install received BGP
+	// routes into the kernel FIB, so this explicit route is required.
+	if s.cfg.ProvisionGateway != "" {
+		if err := s.installGatewayRoute(); err != nil {
+			s.log.Warn("Failed to install gateway route", "error", err)
+		}
+	}
+
 	s.log.Info("GoBGP network stack ready")
 	return nil
 }
@@ -86,6 +96,39 @@ func (s *Stack) WaitForConnectivity(ctx context.Context, target string, timeout 
 		}
 	}
 
+	return nil
+}
+
+// installGatewayRoute adds a /32 kernel route to the gateway VTEP via the
+// first physical NIC. On the point-to-point link between the VM and the
+// spine switch, the kernel will ARP for the destination directly on the
+// interface and the spine will respond (arp_ignore defaults to 0).
+func (s *Stack) installGatewayRoute() error {
+	if len(s.underlay.nics) == 0 {
+		return fmt.Errorf("no underlay NICs available")
+	}
+
+	nic := s.underlay.nics[0]
+	link, err := netlink.LinkByName(nic)
+	if err != nil {
+		return fmt.Errorf("find NIC %s: %w", nic, err)
+	}
+
+	gwIP := net.ParseIP(s.cfg.ProvisionGateway).To4()
+	if gwIP == nil {
+		return fmt.Errorf("invalid gateway IP %q", s.cfg.ProvisionGateway)
+	}
+
+	route := &netlink.Route{
+		Dst:       &net.IPNet{IP: gwIP, Mask: net.CIDRMask(32, 32)},
+		LinkIndex: link.Attrs().Index,
+		Scope:     netlink.SCOPE_LINK,
+	}
+	if err := netlink.RouteAdd(route); err != nil {
+		return fmt.Errorf("add route to %s via %s: %w", s.cfg.ProvisionGateway, nic, err)
+	}
+
+	s.log.Info("Installed gateway VTEP route", "gateway", s.cfg.ProvisionGateway, "nic", nic)
 	return nil
 }
 

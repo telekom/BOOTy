@@ -21,11 +21,15 @@ const (
 	staticBooty  = "clab-booty-static-lab-booty"
 	multiSwitch  = "clab-booty-multi-nic-lab-switch"
 	multiBooty   = "clab-booty-multi-nic-lab-booty"
+	labSpine     = "clab-booty-lab-spine01"
+	labLeaf      = "clab-booty-lab-leaf01"
+	labCaprf     = "clab-booty-lab-caprf-mock"
 )
 
 type topologyCheck struct {
-	container string
-	args      []string
+	container     string
+	args          []string
+	expectContain string // if non-empty, output must contain this substring
 }
 
 type topologySpec struct {
@@ -35,13 +39,10 @@ type topologySpec struct {
 
 var topologySpecs = map[string]topologySpec{
 	"lab": {
-		containers: []string{
-			"clab-booty-lab-spine01",
-			"clab-booty-lab-leaf01",
-			"clab-booty-lab-caprf-mock",
-		},
+		containers: []string{labSpine, labLeaf, labCaprf},
 		checks: []topologyCheck{
-			{container: "clab-booty-lab-spine01", args: []string{"vtysh", "-c", "show ip route"}},
+			{container: labSpine, args: []string{"vtysh", "-c", "show bgp summary"}, expectContain: "Estab"},
+			{container: labSpine, args: []string{"vtysh", "-c", "show ip route"}, expectContain: "known"},
 		},
 	},
 	"dhcp": {
@@ -110,6 +111,9 @@ func TestContainerLabTopologySmoke(t *testing.T) {
 		}
 		if cmdErr != nil {
 			t.Fatalf("topology check failed on %s after retries: %v\n%s", check.container, cmdErr, cmdOut)
+		}
+		if check.expectContain != "" && !strings.Contains(cmdOut, check.expectContain) {
+			t.Fatalf("topology check on %s: output missing %q\n%s", check.container, check.expectContain, cmdOut)
 		}
 	}
 }
