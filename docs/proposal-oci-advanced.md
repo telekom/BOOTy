@@ -652,6 +652,73 @@ export OCI_PARALLEL="4"                           # concurrent layer downloads
   - Cache GC → verify unreferenced layers removed, referenced preserved
   - Cache corruption → verify re-download on digest mismatch
 
+## Usage Guide
+
+### Overview
+
+The OCI image manager extends BOOTy's image streaming with multi-arch
+platform selection, layer caching, and image signature verification.
+
+### Configuration
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `reference` | string | OCI image reference (e.g., `ghcr.io/org/os-image:v1.0`) |
+| `platform` | string | Target platform in `os/arch[/variant]` format (default: `linux/<host arch>`) |
+| `verifySignature` | bool | Enable Cosign/Notation signature verification |
+| `cosignKey` | string | Path to Cosign public key for verification |
+| `cacheEnabled` | bool | Enable layer caching across provisions |
+| `cacheDir` | string | Cache directory (default: `/mnt/target/.booty-cache/oci`) |
+| `parallel` | int | Parallel layer downloads |
+
+### Platform Selection
+
+ParsePlatform accepts case-insensitive `os/arch/variant` strings:
+
+```go
+import "github.com/telekom/BOOTy/pkg/image/oci"
+
+// Standard format — automatically lowercased.
+p := oci.ParsePlatform("linux/amd64")
+p = oci.ParsePlatform("Linux/ARM64/V8")  // → linux/arm64/v8
+
+// Create manager with platform.
+mgr := oci.New(log, &oci.Config{
+    Platform: "linux/arm64/v8",
+    CacheDir: "/tmp/oci-cache",
+})
+```
+
+### Layer Caching
+
+The cache stores downloaded layers locally for reuse across provisions:
+
+```go
+// Check if a layer is cached.
+cached, err := mgr.IsCached("sha256:abc123...")
+
+// Add a layer to cache (validates inputs).
+err = mgr.AddToCache("sha256:abc123...", "/layers/abc.tar", 1048576)
+
+// Validation: empty digest, empty path, or negative size → error.
+// Zero size is valid (empty layers).
+```
+
+Cache operations are thread-safe (mutex-protected). The cache index is
+stored as `index.json` in the cache directory with atomic write
+(write to `.tmp`, then rename).
+
+### Platform Matching
+
+```go
+// Check if an image platform matches the configured target.
+matches := mgr.MatchesPlatform(oci.Platform{
+    OS:           "linux",
+    Architecture: "arm64",
+    Variant:      "v8",
+})
+```
+
 ## Risks
 
 | Risk | Mitigation |
