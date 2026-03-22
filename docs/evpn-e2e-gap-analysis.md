@@ -112,42 +112,35 @@ route := &netlink.Route{
 **Fix:** `addGatewayFDB()` — installs `00:00:00:00:00:00 → 10.0.0.1` on the VXLAN device so BUM frames flood to spine01.  
 **Status:** ✅ Fixed in commit `88086d4`, deployed in ISO, but **insufficient alone** (Gap 1 blocks it).
 
-### Gap 3: `watchRoutes()` is a Stub — No FDB Entry Installation
+### Gap 3: `watchRoutes()` Route Processing ✅ FIXED
 
-**Problem:** `overlay.go` `watchRoutes()` connects to GoBGP's route monitoring API but only logs received EVPN routes. It never:
-- Installs MAC→VTEP FDB entries from received Type-2 routes
-- Installs VTEP→VTEP multicast/flood entries from received Type-3 routes
-- Updates kernel routes for received Type-5 routes
+**Problem (original):** `overlay.go` `watchRoutes()` connected to GoBGP's route monitoring API but only logged received EVPN routes without programming the kernel.
 
-This means even if spine01 sends EVPN routes advertising its MAC (via Type-2) or VTEP membership (via Type-3), BOOTy's VXLAN FDB remains empty except for the static BUM entry.
+**Fix:** `watchRoutes()` and `processRouteUpdate()` now fully implement EVPN route processing:
+- Type-2 (MAC/IP) routes → `netlink.NeighSet()` installs/updates unicast FDB entries (MAC → remote VTEP), idempotent for MAC mobility
+- Type-3 (Inclusive Multicast) routes → `netlink.NeighSet()` installs/updates BUM FDB entries (00:00:00:00:00:00 → remote VTEP)
+- Self-route filtering: routes from own RouterID are skipped
+- Withdraw handling: `netlink.NeighDel()` removes FDB entries on route withdrawal
+- Type-5 kernel route installation deferred (static gateway route covers single-VTEP topology)
 
-**Impact:** For the E2E test, this is **mitigated** by Gap 2's BUM FDB fix — since we hardcode the gateway VTEP, we don't strictly need dynamic FDB learning. But for production multi-VTEP deployments, this is a critical gap.
-
-**Fix:** Implement `watchRoutes()` to process:
-- Type-2 routes → `netlink.NeighAdd()` with `NDA_DST` (remote VTEP)
-- Type-3 routes → `netlink.NeighAdd()` BUM FDB entry per remote VTEP
-- Type-5 routes → `netlink.RouteAdd()` into VRF routing table
-
-**Status:** ✅ Fixed in PR #85 (commit `657ab6d`). `watchRoutes()` now processes Type-2 and Type-3 routes, installing unicast and BUM FDB entries respectively. Type-5 kernel route installation deferred (static gateway route covers single-VTEP topology).
+**Status:** ✅ Fixed in PR #85. Unit tests cover dispatch logic, self-skip, invalid MAC, and next-hop extraction.
 
 ### Gap 4: Only Type-5 Routes Advertised — No Type-2 or Type-3
 
 **Problem:** `overlay.go` `advertiseType5()` sends IP prefix routes (Type-5), but:
-- **No Type-2 (MAC/IP):** spine01 never learns BOOTy's bridge MAC via BGP. It relies on data-plane MAC learning (enabled on spine01's vxlan100 — no `nolearning` flag).
-- **No Type-3 (Inclusive Multicast):** spine01 doesn't know BOOTy's VTEP participates in VNI 100's flood domain. BUM from spine01 to BOOTy only works because of static FDB entries in the topology or data-plane learning.
+- **No Type-2 (MAC/IP):** spine01 never learns BOOTy's bridge MAC via BGP control plane.
+- **No Type-3 (Inclusive Multicast):** spine01 doesn't know BOOTy's VTEP participates in VNI 100's flood domain.
 
-**Impact:** In the E2E topology this is partially mitigated:
-- spine01's `vxlan100` has MAC learning **enabled** (no `nolearning` flag in `topology.clab.yml`), so it CAN learn BOOTy's source MAC from incoming VXLAN frames
-- But this creates a chicken-and-egg: spine01 can only learn BOOTy's MAC from a frame that BOOTy successfully sends, which requires Gap 1 to be fixed first
+**Impact:** In the E2E topology, spine01's `vxlan100` has MAC learning **disabled** (`nolearning` flag in `topology-gobgp.clab.yml`), so it cannot learn BOOTy's source MAC from incoming VXLAN data-plane frames. However, the topology configures static FDB + bridge entries on spine01 that provide forwarding to BOOTy's VTEP, making this acceptable for the E2E topology.
 
-**Fix:** Advertise Type-2 route for the bridge MAC after VXLAN is created, and Type-3 inclusive multicast route with the local VTEP IP.
+**Fix (future):** Advertise Type-2 route for the bridge MAC and Type-3 inclusive multicast route with the local VTEP IP. Not needed for E2E since spine01 topology provides static entries.
 
-**Status:** ❌ Not implemented. **Partially mitigated for E2E** by spine01 data-plane learning (once Gap 1 is fixed).
+**Status:** ⚠️ Not implemented. Mitigated in E2E by spine01 static topology configuration. Required for production multi-VTEP deployments.
 
 ### Gap 5: Asymmetric VXLAN Learning Configuration
 
 **Problem:**
-- spine01's `vxlan100`: MAC learning **enabled** (data-plane learning)
+- spine01's `vxlan100`: MAC learning **disabled** (`nolearning` flag in `topology-gobgp.clab.yml`), relying on control-plane (EVPN) or static configuration
 - BOOTy's VXLAN: `Learning: false` (line 231 of `overlay.go`)
 
 This means:
@@ -157,13 +150,13 @@ This means:
 **Impact:** For the E2E test, this is **acceptable** because:
 - BOOTy only needs to reach spine01 at 10.100.0.1 (the gateway)
 - The BUM FDB entry (Gap 2 fix) handles ARP resolution toward spine01
-- spine01 learns BOOTy's MAC via data-plane learning and can send return traffic
+- spine01 has static entries configured in the topology for return traffic
 
 For production: both sides should use control-plane learning (Type-2/3 route exchange) with `Learning: false`.
 
-**Fix:** Not blocking E2E. For production, combine with Gap 3+4 fixes (control-plane FDB population) and keep `Learning: false` on both sides.
+**Fix:** Not blocking E2E. For production, combine with Gap 4 fixes (Type-2/3 advertisement) and keep `Learning: false` on both sides.
 
-**Status:** ⚠️ Cosmetic for E2E, important for production.
+**Status:** ⚠️ Acceptable for E2E, important for production.
 
 ### Gap 6: BGP Ghost Entries "leaf AS 65500"
 

@@ -394,7 +394,7 @@ func (o *OverlayTier) advertiseType5(ctx context.Context) error {
 		return fmt.Errorf("add EVPN Type-5 path: %w", err)
 	}
 
-	o.log.Info("Advertised EVPN Type-5 default route", "vni", o.cfg.ProvisionVNI)
+	o.log.Info("advertised EVPN type-5 default route", "vni", o.cfg.ProvisionVNI)
 	return nil
 }
 
@@ -436,7 +436,7 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 
 	msg, err := nlri.UnmarshalNew()
 	if err != nil {
-		o.log.Debug("Route update unmarshal failed", "error", err)
+		o.log.Debug("route update unmarshal failed", "error", err)
 		return
 	}
 
@@ -448,7 +448,7 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 	case *apipb.EVPNInclusiveMulticastEthernetTagRoute:
 		o.handleType3Route(route, vtep, withdraw)
 	default:
-		o.log.Debug("Route update", "action", action, "type", nlri.GetTypeUrl())
+		o.log.Debug("route update", "action", action, "type", nlri.GetTypeUrl())
 	}
 }
 
@@ -458,13 +458,13 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute, vtep string, withdraw bool) {
 	mac, err := net.ParseMAC(route.GetMacAddress())
 	if err != nil {
-		o.log.Debug("Type-2 route with invalid MAC", "mac", route.GetMacAddress(), "error", err)
+		o.log.Debug("type-2 route with invalid MAC", "mac", route.GetMacAddress(), "error", err)
 		return
 	}
 
 	remoteIP := net.ParseIP(vtep)
 	if remoteIP == nil {
-		o.log.Debug("Type-2 route with no valid next-hop", "vtep", vtep)
+		o.log.Debug("type-2 route with no valid next-hop", "vtep", vtep)
 		return
 	}
 
@@ -476,7 +476,7 @@ func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute,
 	vxlanName := o.vxlanName()
 	vxLink, err := netlink.LinkByName(vxlanName)
 	if err != nil {
-		o.log.Warn("Cannot find VXLAN for FDB update", "vxlan", vxlanName, "error", err)
+		o.log.Warn("cannot find VXLAN for FDB update", "vxlan", vxlanName, "error", err)
 		return
 	}
 
@@ -491,17 +491,17 @@ func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute,
 
 	if withdraw {
 		if err := netlink.NeighDel(fdb); err != nil {
-			o.log.Debug("Failed to delete FDB entry", "mac", mac, "vtep", vtep, "error", err)
+			o.log.Debug("failed to delete FDB entry", "mac", mac, "vtep", vtep, "error", err)
 		} else {
-			o.log.Info("Removed FDB entry from Type-2 withdraw", "mac", mac, "vtep", vtep)
+			o.log.Info("removed FDB entry from type-2 withdraw", "mac", mac, "vtep", vtep)
 		}
 		return
 	}
 
-	if err := netlink.NeighAppend(fdb); err != nil {
-		o.log.Debug("Failed to add FDB entry", "mac", mac, "vtep", vtep, "error", err)
+	if err := netlink.NeighSet(fdb); err != nil {
+		o.log.Debug("failed to add/update FDB entry", "mac", mac, "vtep", vtep, "error", err)
 	} else {
-		o.log.Info("Installed FDB entry from Type-2 route", "mac", mac, "vtep", vtep)
+		o.log.Info("installed FDB entry from type-2 route", "mac", mac, "vtep", vtep)
 	}
 }
 
@@ -515,7 +515,7 @@ func (o *OverlayTier) handleType3Route(route *apipb.EVPNInclusiveMulticastEthern
 		remoteIP = net.ParseIP(vtep)
 	}
 	if remoteIP == nil {
-		o.log.Debug("Type-3 route with no valid VTEP IP")
+		o.log.Debug("type-3 route with no valid VTEP IP")
 		return
 	}
 
@@ -527,7 +527,7 @@ func (o *OverlayTier) handleType3Route(route *apipb.EVPNInclusiveMulticastEthern
 	vxlanName := o.vxlanName()
 	vxLink, err := netlink.LinkByName(vxlanName)
 	if err != nil {
-		o.log.Warn("Cannot find VXLAN for BUM update", "vxlan", vxlanName, "error", err)
+		o.log.Warn("cannot find VXLAN for BUM update", "vxlan", vxlanName, "error", err)
 		return
 	}
 
@@ -542,17 +542,17 @@ func (o *OverlayTier) handleType3Route(route *apipb.EVPNInclusiveMulticastEthern
 
 	if withdraw {
 		if err := netlink.NeighDel(fdb); err != nil {
-			o.log.Debug("Failed to delete BUM FDB entry", "vtep", remoteIP, "error", err)
+			o.log.Debug("failed to delete BUM FDB entry", "vtep", remoteIP, "error", err)
 		} else {
-			o.log.Info("Removed BUM FDB entry from Type-3 withdraw", "vtep", remoteIP)
+			o.log.Info("removed BUM FDB entry from type-3 withdraw", "vtep", remoteIP)
 		}
 		return
 	}
 
-	if err := netlink.NeighAppend(fdb); err != nil {
-		o.log.Debug("Failed to add BUM FDB entry", "vtep", remoteIP, "error", err)
+	if err := netlink.NeighSet(fdb); err != nil {
+		o.log.Debug("failed to add/update BUM FDB entry", "vtep", remoteIP, "error", err)
 	} else {
-		o.log.Info("Installed BUM FDB entry from Type-3 route", "vtep", remoteIP)
+		o.log.Info("installed BUM FDB entry from type-3 route", "vtep", remoteIP)
 	}
 }
 

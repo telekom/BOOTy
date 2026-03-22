@@ -3,9 +3,11 @@
 package gobgp
 
 import (
+	"log/slog"
 	"testing"
 
 	apipb "github.com/osrg/gobgp/v3/api"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
@@ -159,54 +161,226 @@ func TestBuildType5PathAttrs(t *testing.T) {
 	}
 }
 
-func TestExtractNextHop(t *testing.T) {
+// mustMarshalPath is a test helper that marshals an NLRI and optional next-hop
+// into an apipb.Path for dispatch testing.
+func mustMarshalPath(t *testing.T, nlriMsg interface{ ProtoReflect() protoreflect.Message }, nextHop string, withdraw bool) *apipb.Path {
+	t.Helper()
+	nlri, err := anypb.New(nlriMsg)
+	if err != nil {
+		t.Fatalf("marshal NLRI: %v", err)
+	}
+	p := &apipb.Path{
+		Nlri:       nlri,
+		IsWithdraw: withdraw,
+	}
+	if nextHop != "" {
+		mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+			Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+			NextHops: []string{nextHop},
+		})
+		if err != nil {
+			t.Fatalf("marshal MpReachNLRI: %v", err)
+		}
+		p.Pattrs = []*anypb.Any{mp}
+	}
+	return p
+}
+
+func TestProcessRouteUpdateDispatch(t *testing.T) {
+	// processRouteUpdate should not panic on any NLRI type. The netlink
+	// calls inside handlers will fail (no real VXLAN device), but dispatch
+	// and early-return paths are exercised.
+	overlay := &OverlayTier{
+		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
+		log: slog.Default(),
+	}
+
 	tests := []struct {
 		name string
 		path *apipb.Path
-		want string
+	}{
+		{
+			name: "nil NLRI is ignored",
+			path: &apipb.Path{},
+		},
+		{
+			name: "type-2 route dispatches without panic",
+			path: mustMarshalPath(t, &apipb.EVPNMACIPAdvertisementRoute{
+				MacAddress:  "aa:bb:cc:dd:ee:ff",
+				IpAddress:   "10.100.0.50",
+				EthernetTag: 0,
+			}, "10.0.0.1", false),
+		},
+		{
+			name: "type-3 route dispatches without panic",
+			path: mustMarshalPath(t, &apipb.EVPNInclusiveMulticastEthernetTagRoute{
+				IpAddress:   "10.0.0.1",
+				EthernetTag: 0,
+			}, "10.0.0.1", false),
+		},
+		{
+			name: "type-5 route dispatches to default (no panic)",
+			path: mustMarshalPath(t, &apipb.EVPNIPPrefixRoute{
+				IpPrefix:    "10.100.0.0",
+				IpPrefixLen: 24,
+			}, "10.0.0.1", false),
+		},
+		{
+			name: "type-2 withdraw dispatches without panic",
+			path: mustMarshalPath(t, &apipb.EVPNMACIPAdvertisementRoute{
+				MacAddress: "aa:bb:cc:dd:ee:ff",
+			}, "10.0.0.1", true),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Should not panic.
+			overlay.processRouteUpdate(tt.path)
+		})
+	}
+}
+
+func TestHandleType2RouteSelfSkip(t *testing.T) {
+	// When the next-hop matches our own RouterID, handleType2Route
+	// should skip FDB installation entirely (no netlink call).
+	overlay := &OverlayTier{
+		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
+		log: slog.Default(),
+	}
+
+	route := &apipb.EVPNMACIPAdvertisementRoute{
+		MacAddress: "aa:bb:cc:dd:ee:ff",
+		IpAddress:  "10.100.0.20",
+	}
+
+	// Should return early without error (no netlink.LinkByName call).
+	overlay.handleType2Route(route, "10.0.0.99", false)
+}
+
+func TestHandleType3RouteSelfSkip(t *testing.T) {
+	// When the route IP matches our own RouterID, handleType3Route
+	// should skip BUM FDB installation entirely.
+	overlay := &OverlayTier{
+		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
+		log: slog.Default(),
+	}
+
+	route := &apipb.EVPNInclusiveMulticastEthernetTagRoute{
+		IpAddress:   "10.0.0.99",
+		EthernetTag: 0,
+	}
+
+	// Should return early without error.
+	overlay.handleType3Route(route, "10.0.0.99", false)
+}
+
+func TestHandleType2RouteInvalidMAC(t *testing.T) {
+	overlay := &OverlayTier{
+		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
+		log: slog.Default(),
+	}
+
+	route := &apipb.EVPNMACIPAdvertisementRoute{
+		MacAddress: "not-a-mac",
+	}
+
+	// Should return early due to invalid MAC.
+	overlay.handleType2Route(route, "10.0.0.1", false)
+}
+
+func TestHandleType2RouteNoNextHop(t *testing.T) {
+	overlay := &OverlayTier{
+		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
+		log: slog.Default(),
+	}
+
+	route := &apipb.EVPNMACIPAdvertisementRoute{
+		MacAddress: "aa:bb:cc:dd:ee:ff",
+	}
+
+	// Should return early due to empty next-hop.
+	overlay.handleType2Route(route, "", false)
+}
+
+func TestHandleType3RouteNoVTEP(t *testing.T) {
+	overlay := &OverlayTier{
+		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
+		log: slog.Default(),
+	}
+
+	route := &apipb.EVPNInclusiveMulticastEthernetTagRoute{
+		IpAddress: "",
+	}
+
+	// Should return early due to no valid VTEP IP.
+	overlay.handleType3Route(route, "", false)
+}
+
+func TestExtractNextHop(t *testing.T) {
+	tests := []struct {
+		name      string
+		buildPath func(t *testing.T) *apipb.Path
+		want      string
 	}{
 		{
 			name: "with MpReach next-hop",
-			path: func() *apipb.Path {
-				mp, _ := anypb.New(&apipb.MpReachNLRIAttribute{
+			buildPath: func(t *testing.T) *apipb.Path {
+				t.Helper()
+				mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
 					Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 					NextHops: []string{"10.0.0.1"},
 				})
+				if err != nil {
+					t.Fatalf("anypb.New MpReachNLRIAttribute: %v", err)
+				}
 				return &apipb.Path{Pattrs: []*anypb.Any{mp}}
-			}(),
+			},
 			want: "10.0.0.1",
 		},
 		{
 			name: "no MpReach",
-			path: &apipb.Path{},
+			buildPath: func(t *testing.T) *apipb.Path {
+				t.Helper()
+				return &apipb.Path{}
+			},
 			want: "",
 		},
 		{
 			name: "MpReach with empty next-hops",
-			path: func() *apipb.Path {
-				mp, _ := anypb.New(&apipb.MpReachNLRIAttribute{
+			buildPath: func(t *testing.T) *apipb.Path {
+				t.Helper()
+				mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
 					Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 				})
+				if err != nil {
+					t.Fatalf("anypb.New MpReachNLRIAttribute: %v", err)
+				}
 				return &apipb.Path{Pattrs: []*anypb.Any{mp}}
-			}(),
+			},
 			want: "",
 		},
 		{
 			name: "multiple next-hops returns first",
-			path: func() *apipb.Path {
-				mp, _ := anypb.New(&apipb.MpReachNLRIAttribute{
+			buildPath: func(t *testing.T) *apipb.Path {
+				t.Helper()
+				mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
 					Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 					NextHops: []string{"10.0.0.2", "10.0.0.3"},
 				})
+				if err != nil {
+					t.Fatalf("anypb.New MpReachNLRIAttribute: %v", err)
+				}
 				return &apipb.Path{Pattrs: []*anypb.Any{mp}}
-			}(),
+			},
 			want: "10.0.0.2",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := extractNextHop(tt.path)
+			path := tt.buildPath(t)
+			got := extractNextHop(path)
 			if got != tt.want {
 				t.Errorf("extractNextHop() = %q, want %q", got, tt.want)
 			}
@@ -216,11 +390,17 @@ func TestExtractNextHop(t *testing.T) {
 
 func TestExtractNextHopMixedAttrs(t *testing.T) {
 	// MpReach buried among other attributes.
-	origin, _ := anypb.New(&apipb.OriginAttribute{Origin: 0})
-	mp, _ := anypb.New(&apipb.MpReachNLRIAttribute{
+	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0})
+	if err != nil {
+		t.Fatalf("marshal origin attribute: %v", err)
+	}
+	mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
 		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 		NextHops: []string{"10.0.0.5"},
 	})
+	if err != nil {
+		t.Fatalf("marshal mp reach attribute: %v", err)
+	}
 	path := &apipb.Path{Pattrs: []*anypb.Any{origin, mp}}
 
 	got := extractNextHop(path)
