@@ -75,7 +75,7 @@ func Setup(cfg *Config) (string, error) {
 		return "", err
 	}
 
-	slog.Info("VLAN interface created", "name", vlanName, "id", cfg.ID, "parent", cfg.Parent)
+	slog.Info("vlan interface created", "name", vlanName, "id", cfg.ID, "parent", cfg.Parent)
 	return vlanName, nil
 }
 
@@ -150,7 +150,7 @@ func teardownByName(vlanName string) error {
 		return fmt.Errorf("delete VLAN interface %s: %w", vlanName, err)
 	}
 
-	slog.Info("VLAN interface removed", "name", vlanName)
+	slog.Info("vlan interface removed", "name", vlanName)
 	return nil
 }
 
@@ -174,7 +174,7 @@ func SetupAll(cfgs []Config) ([]string, error) {
 func TeardownAll(cfgs []Config) {
 	for i := range cfgs {
 		if err := TeardownConfig(&cfgs[i]); err != nil {
-			slog.Warn("VLAN teardown error", "vlan", cfgs[i].InterfaceName(), "error", err)
+			slog.Warn("vlan teardown error", "vlan", cfgs[i].InterfaceName(), "error", err)
 		}
 	}
 }

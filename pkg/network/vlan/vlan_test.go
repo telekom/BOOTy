@@ -6,13 +6,13 @@ import (
 
 func TestConfig_InterfaceName(t *testing.T) {
 	c := &Config{Parent: "eth0", ID: 100}
-	if c.InterfaceName() != "eth0.100" {
-		t.Errorf("got %q", c.InterfaceName())
+	if got := c.InterfaceName(); got != "eth0.100" {
+		t.Errorf("InterfaceName() = %q, want %q", got, "eth0.100")
 	}
 
 	c2 := &Config{Parent: "eth0", ID: 100, Name: "mgmt"}
-	if c2.InterfaceName() != "mgmt" {
-		t.Errorf("got %q", c2.InterfaceName())
+	if got := c2.InterfaceName(); got != "mgmt" {
+		t.Errorf("InterfaceName() = %q, want %q", got, "mgmt")
 	}
 }
 
@@ -125,21 +125,21 @@ func TestMultiConfig_Names(t *testing.T) {
 		t.Fatalf("names = %d", len(names))
 	}
 	if names[0] != "eth0.100" {
-		t.Errorf("names[0] = %q", names[0])
+		t.Errorf("names[0] = %q, want %q", names[0], "eth0.100")
 	}
 	if names[1] != "mgmt" {
-		t.Errorf("names[1] = %q", names[1])
+		t.Errorf("names[1] = %q, want %q", names[1], "mgmt")
 	}
 }
 
 func TestFormatVLANList(t *testing.T) {
 	result := FormatVLANList([]int{100, 200, 300})
 	if result != "100, 200, 300" {
-		t.Errorf("got %q", result)
+		t.Errorf("FormatVLANList() = %q, want %q", result, "100, 200, 300")
 	}
 
-	if FormatVLANList(nil) != "" {
-		t.Error("nil should be empty")
+	if got := FormatVLANList(nil); got != "" {
+		t.Errorf("FormatVLANList(nil) = %q, want empty", got)
 	}
 }
 

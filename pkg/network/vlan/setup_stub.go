@@ -14,6 +14,11 @@ func Teardown(_ string, _ int) error {
 	return fmt.Errorf("vlan teardown is only supported on linux")
 }
 
+// TeardownConfig is not supported on non-Linux platforms.
+func TeardownConfig(_ *Config) error {
+	return fmt.Errorf("vlan teardown is only supported on linux")
+}
+
 // SetupAll is not supported on non-Linux platforms.
 func SetupAll(_ []Config) ([]string, error) {
 	return nil, fmt.Errorf("vlan setup is only supported on linux")
