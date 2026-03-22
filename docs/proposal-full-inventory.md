@@ -1,6 +1,6 @@
 # Proposal: Full Server Inventory — Extended Collection
 
-## Status: Implemented (PR #50)
+## Status: Partially Implemented
 
 ## Priority: P1
 
@@ -51,7 +51,7 @@ package inventory
 
 // ExtendedInventory adds operational data to the base HardwareInventory.
 type ExtendedInventory struct {
-    HardwareInventory                                 // embed base inventory
+    Base HardwareInventory `json:"base"`
 
     GPUs               []GPUInfo              `json:"gpus,omitempty"`
     StorageControllers []StorageControllerInfo `json:"storageControllers,omitempty"`
@@ -172,42 +172,30 @@ type ChassisInfo struct {
 ### Collection Implementation
 
 ```go
-// pkg/inventory/collector.go
+// pkg/inventory/collector.go — base inventory
 package inventory
 
-// CollectExtended gathers all inventory data.
-func (c *Collector) CollectExtended(ctx context.Context) (*ExtendedInventory, error) {
-    inv := &ExtendedInventory{}
+// Collect gathers a full hardware inventory from sysfs and procfs.
+func Collect() (*HardwareInventory, error) { ... }
 
-    // Base inventory (existing implementation)
-    base, err := c.Collect(ctx)
-    if err != nil {
-        return nil, fmt.Errorf("collect base inventory: %w", err)
-    }
-    inv.HardwareInventory = *base
+// Extended collection uses standalone functions (best-effort, sysfs-based):
+// pkg/inventory/gpu.go
+func ScanGPUs() []GPUInfo { ... }
 
-    // Extended data (best-effort — log and continue on errors)
-    inv.GPUs = c.collectGPUs(ctx)
-    inv.StorageControllers = c.collectStorageControllers(ctx)
-    inv.Thermal = c.collectThermal(ctx)
-    inv.PowerSupplies = c.collectPSUs(ctx)
-    inv.USBDevices = c.collectUSBDevices(ctx)
-    inv.PCITopology = c.collectPCITopology(ctx)
-    inv.Transceivers = c.collectTransceivers(ctx)
-    inv.Chassis = c.collectChassis(ctx)
+// pkg/inventory/usb.go
+func ScanUSBDevices() []USBDeviceInfo { ... }
 
-    return inv, nil
-}
+// pkg/inventory/thermal.go
+func CollectThermal() ThermalInfo { ... }
+```
 
-// All collection methods use sysfs/procfs first, binary tools as fallback.
-// GPU: /sys/bus/pci/devices/*/class (0x0300 = display controller)
-// Storage: /sys/class/scsi_host/ + SMBIOS Type 7
-// Thermal: /sys/class/thermal/ + /sys/class/hwmon/
-// PSU: SMBIOS Type 39
+All collection functions use testable `*From()` variants that accept custom sysfs
+paths, with the public functions pointing to production sysfs locations.
+
+```go
+// GPU: /sys/bus/pci/devices/*/class (0x0300xx = display/3D/accelerator)
 // USB: /sys/bus/usb/devices/
-// PCI: /sys/bus/pci/devices/ (already used in base inventory)
-// Transceivers: ethtool --module-info <iface>
-// Chassis: SMBIOS Type 3
+// Thermal: /sys/class/thermal/ + /sys/class/hwmon/
 ```
 
 ### Required Binaries in Initramfs
@@ -255,6 +243,73 @@ kernel-drivers proposal. All collection is Go-first using sysfs/procfs.
   - QEMU with multiple virtio devices → verify PCI topology
   - QEMU with emulated NVMe controller → verify storage controller detection
   - QEMU with USB pass-through → verify USB enumeration
+
+## Usage Guide
+
+### Overview
+
+The extended inventory types and per-subsystem collectors are available
+in `pkg/inventory/`. Each subsystem (GPUs, USB, thermal) has its own
+scan function. The `ExtendedInventory` struct aggregates these results.
+
+**Note**: There is no `CollectExtended()` convenience function yet —
+callers populate `ExtendedInventory` by calling individual scan functions.
+
+### What Gets Collected
+
+| Category | Source | Scan Function | Data |
+|----------|--------|---------------|------|
+| **GPUs/Accelerators** | `/sys/bus/pci/devices/` | `ScanGPUs()` | PCI addr, vendor/device ID, driver, NUMA, SR-IOV |
+| **USB Devices** | `/sys/bus/usb/devices/` | `ScanUSBDevices()` | Vendor/product ID, class name, manufacturer |
+| **Thermal** | `/sys/class/thermal/`, `/sys/class/hwmon/` | `CollectThermal()` | CPU temps (°C), fan RPMs, fan health status |
+
+Additional subsystems listed in the proposal (power supplies, storage
+controllers, PCI topology) are planned but not yet implemented.
+
+### Programmatic Access
+
+```go
+import "github.com/telekom/BOOTy/pkg/inventory"
+
+// Scan individual subsystems.
+gpus := inventory.ScanGPUs()
+usbs := inventory.ScanUSBDevices()
+thermal := inventory.CollectThermal()
+
+// Populate the extended inventory manually.
+ext := &inventory.ExtendedInventory{
+    GPUs:       gpus,
+    USBDevices: usbs,
+    Thermal:    thermal,
+}
+```
+
+### GPU Detection
+
+GPUs are detected by PCI class codes:
+- `0x030000` — VGA compatible controller
+- `0x030100` — XGA compatible controller
+- `0x030200` — 3D controller (compute GPUs like A100/H100)
+- `0x030800` — Display controller (other)
+- `0x120000` — Processing accelerator
+- `0x120100` — AI inference accelerator
+
+Known GPU models are resolved to human-readable names (e.g.,
+`NVIDIA H100-SXM5-80GB`). Unknown devices show the PCI device ID.
+
+### USB Classification
+
+USB devices are classified by bDeviceClass:
+- `03` → HID (keyboards, mice)
+- `08` → Mass Storage
+- `09` → Hub
+- `0e` → Video
+- Empty/unrecognized → `Unknown` or `Unknown (XX)`
+
+### CAPRF Reporting
+
+The inventory data can be serialized to JSON and included in CAPRF
+status reports.
 
 ## Risks
 

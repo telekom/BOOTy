@@ -19,6 +19,9 @@ var (
 	SysDMIPath       = "/sys/class/dmi/id"
 	SysPCIPath       = "/sys/bus/pci/devices"
 	SysDMIMemoryPath = "/sys/firmware/dmi/entries/17-0"
+	SysThermalPath   = "/sys/class/thermal"
+	SysHwmonPath     = "/sys/class/hwmon"
+	SysUSBPath       = "/sys/bus/usb/devices"
 )
 
 // Collect gathers a full hardware inventory from sysfs and procfs.
@@ -362,6 +365,11 @@ func readSysFile(path string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
+}
+
+// readSysfs reads a named attribute from a sysfs device directory.
+func readSysfs(devPath, attr string) string {
+	return readSysFile(filepath.Join(devPath, attr))
 }
 
 func fileExists(path string) bool {
