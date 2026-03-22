@@ -122,3 +122,27 @@ menuentry 'Kernel Only' {
 		t.Errorf("initrd = %q, want empty", entries[0].Initrd)
 	}
 }
+
+func TestParse_TabsAndMultipleSpaces(t *testing.T) {
+	// Tabs and multiple spaces should be handled correctly.
+	text := "menuentry 'Tab Test' {\n" +
+		"\tlinux\t/vmlinuz  root=/dev/sda1\tro  quiet\n" +
+		"\tinitrd\t\t/initrd.img\n" +
+		"}\n"
+	entries, err := Parse(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	if entries[0].Linux != "/vmlinuz" {
+		t.Errorf("linux = %q, want /vmlinuz", entries[0].Linux)
+	}
+	if entries[0].Args != "root=/dev/sda1 ro quiet" {
+		t.Errorf("args = %q, want 'root=/dev/sda1 ro quiet'", entries[0].Args)
+	}
+	if entries[0].Initrd != "/initrd.img" {
+		t.Errorf("initrd = %q, want /initrd.img", entries[0].Initrd)
+	}
+}

@@ -37,11 +37,10 @@ func (d *Device) Close() error {
 	return nil
 }
 
-// ExtendPCR extends a hardware PCR with SHA-256 data.
-func (d *Device) ExtendPCR(pcrIndex int, data []byte) error {
-	hash := sha256.Sum256(data)
+// ExtendPCR extends a hardware PCR with a pre-computed SHA-256 digest.
+// Callers (MeasureReader, MeasureFile) must hash their data before calling.
+func (d *Device) ExtendPCR(pcrIndex int, digest []byte) error {
 	pcrHandle := tpm2.TPMHandle(pcrIndex)
-	digest := tpm2.TPM2BDigest{Buffer: hash[:]}
 
 	cmd := tpm2.PCRExtend{
 		PCRHandle: tpm2.AuthHandle{
@@ -50,12 +49,15 @@ func (d *Device) ExtendPCR(pcrIndex int, data []byte) error {
 		},
 		Digests: tpm2.TPMLDigestValues{
 			Digests: []tpm2.TPMTHA{
-				{HashAlg: tpm2.TPMAlgSHA256, Digest: digest.Buffer},
+				{HashAlg: tpm2.TPMAlgSHA256, Digest: digest},
 			},
 		},
 	}
 	_, err := cmd.Execute(d.tpm)
-	return err
+	if err != nil {
+		return fmt.Errorf("extending pcr %d: %w", pcrIndex, err)
+	}
+	return nil
 }
 
 // ReadPCR reads the current value of a hardware PCR (SHA-256).
@@ -71,10 +73,10 @@ func (d *Device) ReadPCR(pcrIndex int) ([]byte, error) {
 	cmd := tpm2.PCRRead{PCRSelectionIn: sel}
 	rsp, err := cmd.Execute(d.tpm)
 	if err != nil {
-		return nil, fmt.Errorf("PCR read failed: %w", err)
+		return nil, fmt.Errorf("pcr read failed: %w", err)
 	}
 	if len(rsp.PCRValues.Digests) == 0 {
-		return nil, fmt.Errorf("no PCR digest returned for index %d", pcrIndex)
+		return nil, fmt.Errorf("no pcr digest returned for index %d", pcrIndex)
 	}
 	return rsp.PCRValues.Digests[0].Buffer, nil
 }

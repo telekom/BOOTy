@@ -84,12 +84,12 @@ func processLine(line string, depth int, current *MenuEntry, entries []MenuEntry
 func parseLinuxOrInitrd(line string, entry *MenuEntry) {
 	switch {
 	case strings.HasPrefix(line, "linux"):
-		parts := strings.SplitN(line, " ", 3)
-		if len(parts) >= 2 {
-			entry.Linux = parts[1]
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			entry.Linux = fields[1]
 		}
-		if len(parts) >= 3 {
-			entry.Args = parts[2]
+		if len(fields) >= 3 {
+			entry.Args = strings.Join(fields[2:], " ")
 		}
 	case strings.HasPrefix(line, "initrd"):
 		fields := strings.Fields(line)

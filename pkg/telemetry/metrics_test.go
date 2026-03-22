@@ -188,3 +188,41 @@ func TestStepTracker_TotalDuration(t *testing.T) {
 		t.Error("total duration should be > 0")
 	}
 }
+
+func TestCounter_AddNegativeIgnored(t *testing.T) {
+	c := &Counter{}
+	c.Add(5)
+	c.Add(-3) // should be ignored
+	if got := c.Value(); got != 5 {
+		t.Errorf("Counter.Add(-3) changed value: got %d, want 5", got)
+	}
+}
+
+func TestCounter_AddZeroIgnored(t *testing.T) {
+	c := &Counter{}
+	c.Add(5)
+	c.Add(0) // should be ignored (not positive)
+	if got := c.Value(); got != 5 {
+		t.Errorf("Counter.Add(0) changed value: got %d, want 5", got)
+	}
+}
+
+func TestStepTracker_EndUnknownStep(t *testing.T) {
+	// EndStep for a step that was never started should not panic.
+	tr := NewStepTracker(nil, nil)
+	tr.EndStep("nonexistent", nil)
+	steps := tr.Steps()
+	if len(steps) != 0 {
+		t.Errorf("expected 0 steps, got %d", len(steps))
+	}
+}
+
+func TestStepTracker_RecordRetryUnknownStep(t *testing.T) {
+	// RecordRetry for a step that was never started should not panic.
+	tr := NewStepTracker(nil, nil)
+	tr.RecordRetry("nonexistent")
+	steps := tr.Steps()
+	if len(steps) != 0 {
+		t.Errorf("expected 0 steps, got %d", len(steps))
+	}
+}

@@ -62,3 +62,23 @@ func TestMarshalSummary(t *testing.T) {
 		t.Error("expected non-empty JSON")
 	}
 }
+
+func TestSummarize_NoPointerAliasing(t *testing.T) {
+	c := NewCollector()
+	c.RecordImage("http://example.com/img.gz", 1024, time.Second, true)
+	c.RecordDisk("/dev/sda", 2048, 2*time.Second)
+
+	s1 := c.Summarize()
+	s2 := c.Summarize()
+
+	// Mutating the returned summary should not affect future calls.
+	s1.Image.SizeBytes = 999
+	s1.Disk.WrittenBytes = 999
+
+	if s2.Image.SizeBytes == 999 {
+		t.Error("Summarize returned aliased Image pointer")
+	}
+	if s2.Disk.WrittenBytes == 999 {
+		t.Error("Summarize returned aliased Disk pointer")
+	}
+}

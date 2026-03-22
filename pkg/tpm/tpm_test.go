@@ -31,11 +31,17 @@ func TestPCRDescription(t *testing.T) {
 
 func TestDetect_NoTPM(t *testing.T) {
 	info := Detect()
-	// On systems without TPM, Present should be false
 	if info == nil {
 		t.Fatal("Detect() returned nil")
 	}
-	// Test passes regardless; we just verify it does not panic
+	// On CI/dev systems without /sys/class/tpm/tpm0, Present must be false.
+	if _, err := os.Stat("/sys/class/tpm/tpm0"); err != nil && !info.Present {
+		return // no sysfs TPM → correctly reports not present
+	}
+	// If sysfs TPM exists, Present should be true.
+	if _, err := os.Stat("/sys/class/tpm/tpm0"); err == nil && !info.Present {
+		t.Error("sysfs TPM exists but Detect() reports Present=false")
+	}
 }
 
 func TestReadSysfsPCRs_Empty(t *testing.T) {

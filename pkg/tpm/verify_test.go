@@ -55,3 +55,14 @@ func TestVerifyQuoteAgainstPolicy_MissingPCR(t *testing.T) {
 		t.Error("expected invalid for missing PCR")
 	}
 }
+
+func TestVerifyQuoteAgainstPolicy_EmptyPolicy(t *testing.T) {
+	policy := &GoldenPolicy{Name: "empty", PCRs: []GoldenPCR{}}
+	result := VerifyQuoteAgainstPolicy(map[int][]byte{0: HashBytes([]byte("x"))}, policy)
+	if result.Valid {
+		t.Error("expected invalid for empty policy PCRs")
+	}
+	if result.Error == "" {
+		t.Error("expected error message for empty policy")
+	}
+}

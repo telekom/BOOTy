@@ -23,9 +23,11 @@ func (d *Device) SealSecret(data []byte, pcrs []int) (*SealedBlob, error) {
 	}
 	defer d.flushContext(srk)
 
-	session, err := d.createPCRPolicySession(pcrs)
+	// Derive the policy digest via a trial session so the sealed object
+	// can later be unsealed only when the same PCR values are present.
+	policyDigest, err := d.policyDigestForPCRs(pcrs)
 	if err != nil {
-		return nil, fmt.Errorf("creating PCR policy: %w", err)
+		return nil, fmt.Errorf("computing pcr policy digest: %w", err)
 	}
 
 	sensitive := tpm2.TPM2BSensitiveCreate{
@@ -50,7 +52,7 @@ func (d *Device) SealSecret(data []byte, pcrs []int) (*SealedBlob, error) {
 				FixedParent:  true,
 				UserWithAuth: true,
 			},
-			AuthPolicy: session.NonceTPM,
+			AuthPolicy: policyDigest,
 		}),
 	}
 
@@ -87,10 +89,11 @@ func (d *Device) UnsealSecret(blob *SealedBlob) ([]byte, error) {
 	}
 	defer d.flushContext(loadRsp.ObjectHandle)
 
-	session, err := d.createPCRPolicySession(blob.PCRs)
+	session, cleanup, err := d.createPCRPolicySession(blob.PCRs)
 	if err != nil {
 		return nil, fmt.Errorf("creating policy session: %w", err)
 	}
+	defer cleanup() //nolint:errcheck // best-effort session cleanup
 
 	unsealCmd := tpm2.Unseal{
 		ItemHandle: tpm2.AuthHandle{
@@ -124,7 +127,7 @@ func (d *Device) createSRK() (tpm2.TPMHandle, error) {
 			},
 			Parameters: tpm2.NewTPMUPublicParms(tpm2.TPMAlgRSA,
 				&tpm2.TPMSRSAParms{
-					Symmetric: &tpm2.TPMTSymDefObject{
+					Symmetric: tpm2.TPMTSymDefObject{
 						Algorithm: tpm2.TPMAlgAES,
 						KeyBits:   tpm2.NewTPMUSymKeyBits(tpm2.TPMAlgAES, tpm2.TPMKeyBits(128)),
 						Mode:      tpm2.NewTPMUSymMode(tpm2.TPMAlgAES, tpm2.TPMAlgCFB),
@@ -140,19 +143,45 @@ func (d *Device) createSRK() (tpm2.TPMHandle, error) {
 	return rsp.ObjectHandle, nil
 }
 
-func (d *Device) createPCRPolicySession(pcrs []int) (tpm2.Session, error) {
+func (d *Device) createPCRPolicySession(pcrs []int) (tpm2.Session, func() error, error) {
 	sel := buildPCRSelection(pcrs)
-	sess, _, err := tpm2.PolicySession(d.tpm, tpm2.TPMAlgSHA256, 16)
+	sess, cleanup, err := tpm2.PolicySession(d.tpm, tpm2.TPMAlgSHA256, 16)
 	if err != nil {
-		return nil, fmt.Errorf("starting policy session: %w", err)
+		return nil, nil, fmt.Errorf("starting policy session: %w", err)
 	}
 	policyPCR := tpm2.PolicyPCR{
 		PolicySession: sess.Handle(),
 		Pcrs:          sel,
 	}
-	_, err = policyPCR.Execute(d.tpm)
-	if err != nil {
-		return nil, fmt.Errorf("policy PCR: %w", err)
+	if _, err := policyPCR.Execute(d.tpm); err != nil {
+		cleanup() //nolint:errcheck // best-effort cleanup
+		return nil, nil, fmt.Errorf("policy pcr: %w", err)
 	}
-	return sess, nil
+	return sess, cleanup, nil
+}
+
+// policyDigestForPCRs derives the PCR policy digest using a trial session.
+// The resulting digest is used as AuthPolicy when sealing objects.
+func (d *Device) policyDigestForPCRs(pcrs []int) (tpm2.TPM2BDigest, error) {
+	sel := buildPCRSelection(pcrs)
+	sess, cleanup, err := tpm2.PolicySession(d.tpm, tpm2.TPMAlgSHA256, 16, tpm2.Trial())
+	if err != nil {
+		return tpm2.TPM2BDigest{}, fmt.Errorf("starting trial session: %w", err)
+	}
+	defer cleanup() //nolint:errcheck // best-effort cleanup
+
+	policyPCR := tpm2.PolicyPCR{
+		PolicySession: sess.Handle(),
+		Pcrs:          sel,
+	}
+	if _, err := policyPCR.Execute(d.tpm); err != nil {
+		return tpm2.TPM2BDigest{}, fmt.Errorf("trial policy pcr: %w", err)
+	}
+
+	pgd := tpm2.PolicyGetDigest{PolicySession: sess.Handle()}
+	rsp, err := pgd.Execute(d.tpm)
+	if err != nil {
+		return tpm2.TPM2BDigest{}, fmt.Errorf("getting policy digest: %w", err)
+	}
+	return rsp.PolicyDigest, nil
 }

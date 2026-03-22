@@ -198,17 +198,26 @@ func (c *Client) ReportInventory(ctx context.Context, data []byte) error {
 }
 
 // ReportMetrics posts provisioning metrics to the CAPRF server.
+// Requires TelemetryEnabled. Uses MetricsURL, falling back to TelemetryURL.
 func (c *Client) ReportMetrics(ctx context.Context, data []byte) error {
-	if c.cfg.MetricsURL == "" {
+	if !c.cfg.TelemetryEnabled {
+		c.log.Debug("telemetry disabled, skipping metrics")
+		return nil
+	}
+	url := c.cfg.MetricsURL
+	if url == "" {
+		url = c.cfg.TelemetryURL
+	}
+	if url == "" {
 		c.log.Debug("no metrics URL configured, skipping")
 		return nil
 	}
-	return c.postJSONWithAuth(ctx, c.cfg.MetricsURL, data)
+	return c.postJSONWithAuth(ctx, url, data)
 }
 
 // SendEvent posts a single provisioning event to the CAPRF server.
 func (c *Client) SendEvent(ctx context.Context, data []byte) error {
-	if c.cfg.EventURL == "" {
+	if !c.cfg.TelemetryEnabled || c.cfg.EventURL == "" {
 		return nil
 	}
 	return c.postJSONWithAuth(ctx, c.cfg.EventURL, data)

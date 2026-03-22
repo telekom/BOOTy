@@ -41,7 +41,7 @@ func (d *Device) Quote(pcrIndices []int, nonce []byte) (*AttestationQuote, error
 	qualifying := tpm2.TPM2BData{Buffer: nonce}
 
 	quoteCmd := tpm2.Quote{
-		SignKey: tpm2.AuthHandle{
+		SignHandle: tpm2.AuthHandle{
 			Handle: ak,
 			Auth:   tpm2.PasswordAuth(nil),
 		},
@@ -119,7 +119,7 @@ func (d *Device) createAK() (tpm2.TPMHandle, *ecdsa.PublicKey, error) {
 					Scheme: tpm2.TPMTECCScheme{
 						Scheme: tpm2.TPMAlgECDSA,
 						Details: tpm2.NewTPMUAsymScheme(tpm2.TPMAlgECDSA,
-							&tpm2.TPMSSchemeHash{HashAlg: tpm2.TPMAlgSHA256}),
+							&tpm2.TPMSSigSchemeECDSA{HashAlg: tpm2.TPMAlgSHA256}),
 					},
 					CurveID: tpm2.TPMECCNistP256,
 				}),

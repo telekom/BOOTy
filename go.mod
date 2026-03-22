@@ -6,6 +6,7 @@ require (
 	github.com/digineo/go-dhclient v1.0.2
 	github.com/dustin/go-humanize v1.0.1
 	github.com/google/go-containerregistry v0.21.3
+	github.com/google/go-tpm v0.9.8
 	github.com/google/gopacket v1.1.19
 	github.com/klauspost/compress v1.18.5
 	github.com/osrg/gobgp/v3 v3.37.0
@@ -28,7 +29,6 @@ require (
 	github.com/eapache/channels v1.1.0 // indirect
 	github.com/eapache/queue v1.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
-	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

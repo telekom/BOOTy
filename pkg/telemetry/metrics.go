@@ -16,8 +16,13 @@ type Counter struct {
 // Inc increments the counter by 1.
 func (c *Counter) Inc() { c.value.Add(1) }
 
-// Add adds delta to the counter.
-func (c *Counter) Add(delta int64) { c.value.Add(delta) }
+// Add adds delta to the counter. Negative deltas are ignored
+// because counters are monotonically increasing.
+func (c *Counter) Add(delta int64) {
+	if delta > 0 {
+		c.value.Add(delta)
+	}
+}
 
 // Value returns the current counter value.
 func (c *Counter) Value() int64 { return c.value.Load() }

@@ -40,6 +40,11 @@ func VerifyQuoteAgainstPolicy(pcrValues map[int][]byte, policy *GoldenPolicy) *V
 		result.Valid = false
 		return result
 	}
+	if len(policy.PCRs) == 0 {
+		result.Error = "empty policy: no PCRs to verify"
+		result.Valid = false
+		return result
+	}
 	for _, golden := range policy.PCRs {
 		expected, err := hex.DecodeString(golden.Digest)
 		if err != nil {

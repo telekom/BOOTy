@@ -97,16 +97,26 @@ func (c *Collector) RecordDisk(devicePath string, writtenBytes int64, duration t
 }
 
 // Summarize returns the collected metrics as a Summary.
+// Returns copies of internal state to prevent aliasing.
 func (c *Collector) Summarize() Summary {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := time.Now()
 	steps := make([]StepMetrics, len(c.steps))
 	copy(steps, c.steps)
-	return Summary{
+	s := Summary{
 		StartTime: c.startTime, EndTime: now, TotalDurMs: now.Sub(c.startTime).Milliseconds(),
-		Steps: steps, Image: c.image, Disk: c.disk,
+		Steps: steps,
 	}
+	if c.image != nil {
+		img := *c.image
+		s.Image = &img
+	}
+	if c.disk != nil {
+		d := *c.disk
+		s.Disk = &d
+	}
+	return s
 }
 
 // MarshalSummary returns the metrics summary as JSON bytes.

@@ -98,7 +98,7 @@ func (t *StepTracker) EndStep(name string, err error) {
 	}
 
 	if t.log != nil {
-		t.log.Warn("EndStep called for unknown or non-running step", "step", name)
+		t.log.Warn("endStep called for unknown or non-running step", "step", name)
 	}
 }
 
@@ -129,7 +129,7 @@ func (t *StepTracker) RecordRetry(name string) {
 	}
 
 	if t.log != nil {
-		t.log.Warn("RecordRetry called for unknown step", "step", name)
+		t.log.Warn("recordRetry called for unknown step", "step", name)
 	}
 }
 
