@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	apipb "github.com/osrg/gobgp/v3/api"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
 func TestBuildRouteDistinguisher(t *testing.T) {
@@ -155,5 +156,75 @@ func TestBuildType5PathAttrs(t *testing.T) {
 	// Expect 3 attributes: origin, mp-reach, ext-communities.
 	if len(pattrs) != 3 {
 		t.Errorf("got %d path attrs, want 3", len(pattrs))
+	}
+}
+
+func TestExtractNextHop(t *testing.T) {
+	tests := []struct {
+		name string
+		path *apipb.Path
+		want string
+	}{
+		{
+			name: "with MpReach next-hop",
+			path: func() *apipb.Path {
+				mp, _ := anypb.New(&apipb.MpReachNLRIAttribute{
+					Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+					NextHops: []string{"10.0.0.1"},
+				})
+				return &apipb.Path{Pattrs: []*anypb.Any{mp}}
+			}(),
+			want: "10.0.0.1",
+		},
+		{
+			name: "no MpReach",
+			path: &apipb.Path{},
+			want: "",
+		},
+		{
+			name: "MpReach with empty next-hops",
+			path: func() *apipb.Path {
+				mp, _ := anypb.New(&apipb.MpReachNLRIAttribute{
+					Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+				})
+				return &apipb.Path{Pattrs: []*anypb.Any{mp}}
+			}(),
+			want: "",
+		},
+		{
+			name: "multiple next-hops returns first",
+			path: func() *apipb.Path {
+				mp, _ := anypb.New(&apipb.MpReachNLRIAttribute{
+					Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+					NextHops: []string{"10.0.0.2", "10.0.0.3"},
+				})
+				return &apipb.Path{Pattrs: []*anypb.Any{mp}}
+			}(),
+			want: "10.0.0.2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractNextHop(tt.path)
+			if got != tt.want {
+				t.Errorf("extractNextHop() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExtractNextHopMixedAttrs(t *testing.T) {
+	// MpReach buried among other attributes.
+	origin, _ := anypb.New(&apipb.OriginAttribute{Origin: 0})
+	mp, _ := anypb.New(&apipb.MpReachNLRIAttribute{
+		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+		NextHops: []string{"10.0.0.5"},
+	})
+	path := &apipb.Path{Pattrs: []*anypb.Any{origin, mp}}
+
+	got := extractNextHop(path)
+	if got != "10.0.0.5" {
+		t.Errorf("extractNextHop() = %q, want 10.0.0.5", got)
 	}
 }

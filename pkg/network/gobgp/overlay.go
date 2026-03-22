@@ -411,17 +411,166 @@ func (o *OverlayTier) watchRoutes(ctx context.Context) {
 	}, func(resp *apipb.WatchEventResponse) {
 		if t := resp.GetTable(); t != nil {
 			for _, p := range t.GetPaths() {
-				action := "add"
-				if p.GetIsWithdraw() {
-					action = "withdraw"
-				}
-				o.log.Debug("Route update", "action", action, "family", p.GetFamily())
+				o.processRouteUpdate(p)
 			}
 		}
 	})
 	if err != nil {
 		o.log.Warn("Route watcher stopped", "error", err)
 	}
+}
+
+// processRouteUpdate handles a single BGP path update by dispatching to the
+// appropriate handler based on NLRI type.
+func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
+	withdraw := p.GetIsWithdraw()
+	action := "add"
+	if withdraw {
+		action = "withdraw"
+	}
+
+	nlri := p.GetNlri()
+	if nlri == nil {
+		return
+	}
+
+	msg, err := nlri.UnmarshalNew()
+	if err != nil {
+		o.log.Debug("Route update unmarshal failed", "error", err)
+		return
+	}
+
+	vtep := extractNextHop(p)
+
+	switch route := msg.(type) {
+	case *apipb.EVPNMACIPAdvertisementRoute:
+		o.handleType2Route(route, vtep, withdraw)
+	case *apipb.EVPNInclusiveMulticastEthernetTagRoute:
+		o.handleType3Route(route, vtep, withdraw)
+	default:
+		o.log.Debug("Route update", "action", action, "type", nlri.GetTypeUrl())
+	}
+}
+
+// handleType2Route installs or removes an FDB entry for a remote MAC learned
+// via EVPN Type-2 (MAC/IP Advertisement) route. This enables unicast VXLAN
+// forwarding to remote VTEPs without data-plane MAC learning.
+func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute, vtep string, withdraw bool) {
+	mac, err := net.ParseMAC(route.GetMacAddress())
+	if err != nil {
+		o.log.Debug("Type-2 route with invalid MAC", "mac", route.GetMacAddress(), "error", err)
+		return
+	}
+
+	remoteIP := net.ParseIP(vtep)
+	if remoteIP == nil {
+		o.log.Debug("Type-2 route with no valid next-hop", "vtep", vtep)
+		return
+	}
+
+	// Skip FDB entries for our own VTEP.
+	if vtep == o.cfg.RouterID {
+		return
+	}
+
+	vxlanName := o.vxlanName()
+	vxLink, err := netlink.LinkByName(vxlanName)
+	if err != nil {
+		o.log.Warn("Cannot find VXLAN for FDB update", "vxlan", vxlanName, "error", err)
+		return
+	}
+
+	fdb := &netlink.Neigh{
+		LinkIndex:    vxLink.Attrs().Index,
+		Family:       syscall.AF_BRIDGE,
+		HardwareAddr: mac,
+		IP:           remoteIP,
+		Flags:        netlink.NTF_SELF,
+		State:        netlink.NUD_PERMANENT,
+	}
+
+	if withdraw {
+		if err := netlink.NeighDel(fdb); err != nil {
+			o.log.Debug("Failed to delete FDB entry", "mac", mac, "vtep", vtep, "error", err)
+		} else {
+			o.log.Info("Removed FDB entry from Type-2 withdraw", "mac", mac, "vtep", vtep)
+		}
+		return
+	}
+
+	if err := netlink.NeighAppend(fdb); err != nil {
+		o.log.Debug("Failed to add FDB entry", "mac", mac, "vtep", vtep, "error", err)
+	} else {
+		o.log.Info("Installed FDB entry from Type-2 route", "mac", mac, "vtep", vtep)
+	}
+}
+
+// handleType3Route installs or removes a BUM FDB entry for a remote VTEP
+// learned via EVPN Type-3 (Inclusive Multicast Ethernet Tag) route.
+// This ensures broadcast/unknown/multicast traffic is flooded to all
+// participating VTEPs in the VNI.
+func (o *OverlayTier) handleType3Route(route *apipb.EVPNInclusiveMulticastEthernetTagRoute, vtep string, withdraw bool) {
+	remoteIP := net.ParseIP(route.GetIpAddress())
+	if remoteIP == nil {
+		remoteIP = net.ParseIP(vtep)
+	}
+	if remoteIP == nil {
+		o.log.Debug("Type-3 route with no valid VTEP IP")
+		return
+	}
+
+	// Skip BUM entries for our own VTEP.
+	if remoteIP.String() == o.cfg.RouterID {
+		return
+	}
+
+	vxlanName := o.vxlanName()
+	vxLink, err := netlink.LinkByName(vxlanName)
+	if err != nil {
+		o.log.Warn("Cannot find VXLAN for BUM update", "vxlan", vxlanName, "error", err)
+		return
+	}
+
+	fdb := &netlink.Neigh{
+		LinkIndex:    vxLink.Attrs().Index,
+		Family:       syscall.AF_BRIDGE,
+		HardwareAddr: net.HardwareAddr{0, 0, 0, 0, 0, 0},
+		IP:           remoteIP,
+		Flags:        netlink.NTF_SELF,
+		State:        netlink.NUD_PERMANENT,
+	}
+
+	if withdraw {
+		if err := netlink.NeighDel(fdb); err != nil {
+			o.log.Debug("Failed to delete BUM FDB entry", "vtep", remoteIP, "error", err)
+		} else {
+			o.log.Info("Removed BUM FDB entry from Type-3 withdraw", "vtep", remoteIP)
+		}
+		return
+	}
+
+	if err := netlink.NeighAppend(fdb); err != nil {
+		o.log.Debug("Failed to add BUM FDB entry", "vtep", remoteIP, "error", err)
+	} else {
+		o.log.Info("Installed BUM FDB entry from Type-3 route", "vtep", remoteIP)
+	}
+}
+
+// extractNextHop returns the first next-hop IP from a path's MpReachNLRI
+// attribute. Returns empty string if not found.
+func extractNextHop(p *apipb.Path) string {
+	for _, attr := range p.GetPattrs() {
+		msg, err := attr.UnmarshalNew()
+		if err != nil {
+			continue
+		}
+		if mpReach, ok := msg.(*apipb.MpReachNLRIAttribute); ok {
+			if hops := mpReach.GetNextHops(); len(hops) > 0 {
+				return hops[0]
+			}
+		}
+	}
+	return ""
 }
 
 // buildRouteDistinguisher builds an RD, selecting 2-octet or 4-octet ASN type.
