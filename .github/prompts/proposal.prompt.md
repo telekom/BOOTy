@@ -61,4 +61,4 @@ ${input:priority:P1|P2|P3}
 - Reference existing packages when extending them (e.g., `pkg/network/`, `pkg/provision/`)
 - Include a "Files Changed" table listing every file that would be added or modified
 - For network features: describe interaction with the three-tier GoBGP architecture
-- For provisioning features: identify which of the 30 steps are affected
+- For provisioning features: identify which of the 31 steps are affected

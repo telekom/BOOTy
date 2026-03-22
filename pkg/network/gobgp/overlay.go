@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"syscall"
 	"time"
 
 	apipb "github.com/osrg/gobgp/v3/api"
@@ -209,6 +210,15 @@ func (o *OverlayTier) createVXLANAndBridge() error {
 		return fmt.Errorf("bring up VXLAN: %w", err)
 	}
 
+	// Install a BUM FDB entry so broadcast/unknown/multicast traffic
+	// (e.g. ARP for the gateway) is flooded to the gateway VTEP.
+	// Without this, the VXLAN FDB is empty and BUM frames are dropped.
+	if o.cfg.ProvisionGateway != "" {
+		if err := o.addGatewayFDB(vxLink); err != nil {
+			return fmt.Errorf("add gateway FDB entry: %w", err)
+		}
+	}
+
 	o.log.Info("Created VXLAN and bridge",
 		"vxlan", vxlanName, "vni", o.cfg.ProvisionVNI,
 		"bridge", o.cfg.BridgeName,
@@ -297,6 +307,35 @@ func (o *OverlayTier) addProvisionIP() error {
 	}
 
 	o.log.Info("Assigned provision IP", "bridge", o.cfg.BridgeName, "ip", o.cfg.ProvisionIP)
+	return nil
+}
+
+// addGatewayFDB installs a BUM (broadcast/unknown/multicast) FDB entry on the
+// VXLAN interface pointing to the gateway's VTEP. This is equivalent to:
+//
+//	bridge fdb append 00:00:00:00:00:00 dev vxlanXXX dst <gateway> self permanent
+//
+// Without this entry the VXLAN has no remote VTEP and drops all BUM frames,
+// making ARP resolution impossible.
+func (o *OverlayTier) addGatewayFDB(vxLink netlink.Link) error {
+	gwIP := net.ParseIP(o.cfg.ProvisionGateway)
+	if gwIP == nil {
+		return fmt.Errorf("parse gateway VTEP IP %q", o.cfg.ProvisionGateway)
+	}
+
+	fdb := &netlink.Neigh{
+		LinkIndex:    vxLink.Attrs().Index,
+		Family:       syscall.AF_BRIDGE,
+		HardwareAddr: net.HardwareAddr{0, 0, 0, 0, 0, 0},
+		IP:           gwIP,
+		Flags:        netlink.NTF_SELF,
+		State:        netlink.NUD_PERMANENT,
+	}
+	if err := netlink.NeighAppend(fdb); err != nil {
+		return fmt.Errorf("append BUM FDB entry for %s: %w", o.cfg.ProvisionGateway, err)
+	}
+
+	o.log.Info("Added gateway BUM FDB entry", "vxlan", vxLink.Attrs().Name, "vtep", o.cfg.ProvisionGateway)
 	return nil
 }
 

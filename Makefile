@@ -17,7 +17,7 @@ SRC = $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 DOCKERTAG ?= $(VERSION)
 REPOSITORY = ghcr.io/telekom/booty
 
-.PHONY: all build build-all clean install uninstall fmt lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic
+.PHONY: all build build-all clean install uninstall fmt lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic
 
 all: lint test install
 
@@ -126,7 +126,11 @@ simplify:
 
 test-e2e:
 	@echo Running E2E tests
-	@go test -tags e2e -race -v ./test/e2e/...
+	@go test -tags e2e -race -v $(shell go list -tags e2e ./test/e2e/... | grep -v /kvm)
+
+test-kvm:
+	@echo Running KVM E2E tests (requires QEMU, root, and KVM assets)
+	@go test -tags e2e -race -v -timeout 15m ./test/e2e/kvm/...
 
 clab-up:
 	@echo Deploying ContainerLab topology

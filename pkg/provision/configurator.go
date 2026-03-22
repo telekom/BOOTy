@@ -8,9 +8,11 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
@@ -237,12 +239,57 @@ func (c *Configurator) ConfigureDNS(cfg *config.MachineConfig) error {
 	return nil
 }
 
+// MountEFIVars loads the efivarfs kernel module and mounts the efivarfs
+// filesystem at /sys/firmware/efi/efivars if not already mounted.
+// This is required before any efibootmgr operations.
+func (c *Configurator) MountEFIVars(ctx context.Context) error {
+	// Load the efivarfs module (best-effort — may already be built-in).
+	if out, err := exec.CommandContext(ctx, "modprobe", "efivarfs").CombinedOutput(); err != nil { //nolint:gosec // fixed command
+		slog.Info("modprobe efivarfs failed (may be built-in)", "output", strings.TrimSpace(string(out)))
+	}
+
+	efiPath := "/sys/firmware/efi/efivars"
+
+	// Check if already mounted.
+	if isMountPoint(efiPath) {
+		slog.Info("efivarfs already mounted")
+		return nil
+	}
+
+	if err := os.MkdirAll(efiPath, 0o755); err != nil {
+		return fmt.Errorf("creating efivarfs mountpoint: %w", err)
+	}
+	if err := syscall.Mount("efivarfs", efiPath, "efivarfs", 0, ""); err != nil {
+		slog.Warn("Failed to mount efivarfs (non-EFI system?)", "error", err)
+		return nil
+	}
+	slog.Info("Mounted efivarfs", "path", efiPath)
+	return nil
+}
+
+// isMountPoint checks whether a path is already a mount point by reading /proc/mounts.
+func isMountPoint(path string) bool {
+	data, err := os.ReadFile("/proc/mounts")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == path {
+			return true
+		}
+	}
+	return false
+}
+
 // RemoveEFIBootEntries removes old EFI boot entries matching "ubuntu".
+// Runs efibootmgr directly on the host (not in chroot) since it operates
+// on the host's EFI variables via /sys/firmware/efi/efivars.
 func (c *Configurator) RemoveEFIBootEntries(ctx context.Context) error {
 	slog.Info("Removing old EFI boot entries")
-	out, err := c.disk.ChrootRun(ctx, c.rootDir, "efibootmgr")
+	out, err := exec.CommandContext(ctx, "efibootmgr").CombinedOutput() //nolint:gosec // fixed command
 	if err != nil {
-		slog.Warn("efibootmgr list failed", "output", string(out), "error", err)
+		slog.Warn("efibootmgr list failed (non-EFI system?)", "output", string(out), "error", err)
 		return nil
 	}
 	for _, line := range strings.Split(string(out), "\n") {
@@ -252,7 +299,7 @@ func (c *Configurator) RemoveEFIBootEntries(ctx context.Context) error {
 		if len(line) > 8 && strings.HasPrefix(line, "Boot") {
 			bootNum := line[4:8]
 			slog.Info("Removing EFI boot entry", "entry", bootNum)
-			if out, err := c.disk.ChrootRun(ctx, c.rootDir, "efibootmgr -b "+bootNum+" -B"); err != nil {
+			if out, err := exec.CommandContext(ctx, "efibootmgr", "-b", bootNum, "-B").CombinedOutput(); err != nil { //nolint:gosec // boot entry ID from efibootmgr output
 				slog.Warn("Failed to remove EFI entry", "entry", bootNum, "output", string(out))
 			}
 		}
@@ -267,12 +314,6 @@ func (c *Configurator) CreateEFIBootEntry(ctx context.Context, diskDev, bootPart
 		return nil
 	}
 	slog.Info("Creating EFI boot entry", "disk", diskDev, "partition", bootPart)
-
-	// Mount efivarfs if not mounted.
-	efivarfs := filepath.Join(c.rootDir, "sys", "firmware", "efi", "efivars")
-	if err := os.MkdirAll(efivarfs, 0o755); err != nil {
-		return fmt.Errorf("creating efivarfs mountpoint: %w", err)
-	}
 
 	// Detect EFI loader path — architecture-aware shimx64/shimaa64 with grub fallback.
 	loader, err := efiLoaderPath(c.rootDir, runtime.GOARCH)

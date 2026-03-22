@@ -323,21 +323,41 @@ func TestSetupMellanoxMstconfigFails(t *testing.T) {
 	}
 }
 
-func TestRemoveEFIBootEntriesNoEntries(t *testing.T) {
+func TestRemoveEFIBootEntriesGracefulOnMissing(t *testing.T) {
+	// RemoveEFIBootEntries runs efibootmgr directly on the host.
+	// Skip when running as root to avoid modifying real EFI variables.
+	if os.Getuid() == 0 {
+		t.Skip("skipping under root to avoid touching real EFI boot entries")
+	}
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
-	cmd.setResult("chroot "+c.rootDir, []byte("BootCurrent: 0001\nBootOrder: 0001\n"), nil)
 	if err := c.RemoveEFIBootEntries(context.Background()); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("expected nil error when efibootmgr unavailable, got: %v", err)
 	}
 }
 
-func TestRemoveEFIBootEntriesFailure(t *testing.T) {
+func TestMountEFIVarsReturnsNilOnHost(t *testing.T) {
+	// MountEFIVars calls modprobe + syscall.Mount directly (not via Commander).
+	// Skip when running as root to avoid side effects on the host.
+	if os.Getuid() == 0 {
+		t.Skip("skipping under root to avoid mounting efivarfs on the host")
+	}
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
-	cmd.setResult("chroot "+c.rootDir, nil, fmt.Errorf("efibootmgr not found"))
-	if err := c.RemoveEFIBootEntries(context.Background()); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	err := c.MountEFIVars(context.Background())
+	if err != nil {
+		t.Fatalf("expected nil error on non-EFI test system, got: %v", err)
+	}
+}
+
+func TestIsMountPoint(t *testing.T) {
+	// /proc should be a mount point on Linux.
+	if !isMountPoint("/proc") {
+		t.Error("/proc should be a mount point")
+	}
+	// Nonexistent path should not be a mount point.
+	if isMountPoint("/nonexistent/path/12345") {
+		t.Error("/nonexistent/path/12345 should not be a mount point")
 	}
 }
 
@@ -432,6 +452,34 @@ func TestNewOrchestrator(t *testing.T) {
 	orch := NewOrchestrator(cfg, provider, mgr)
 	if orch == nil {
 		t.Fatal("expected non-nil orchestrator")
+	}
+}
+
+func TestProvisionStepsContainEFIVars(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	orch := NewOrchestrator(cfg, &mockProvider{}, disk.NewManager(newMockCommander()))
+	steps := orch.provisionSteps()
+
+	// Verify mount-efivarfs appears before remove-efi-entries.
+	mountIdx, removeIdx := -1, -1
+	for i, step := range steps {
+		switch step.Name {
+		case "mount-efivarfs":
+			mountIdx = i
+		case "remove-efi-entries":
+			removeIdx = i
+		}
+	}
+	if mountIdx == -1 || removeIdx == -1 {
+		t.Fatal("mount-efivarfs and remove-efi-entries not found in steps")
+	}
+	if mountIdx >= removeIdx {
+		t.Errorf("mount-efivarfs (idx %d) must come before remove-efi-entries (idx %d)", mountIdx, removeIdx)
+	}
+
+	// Verify total step count is 31 (30 original + mount-efivarfs).
+	if len(steps) != 31 {
+		t.Errorf("expected 31 provisioning steps, got %d", len(steps))
 	}
 }
 

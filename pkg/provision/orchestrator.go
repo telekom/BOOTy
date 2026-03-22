@@ -70,6 +70,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"configure-dns", o.configureDNS},
 		{"stop-raid", o.stopRAID},
 		{"disable-lvm", o.disableLVM},
+		{"mount-efivarfs", o.mountEFIVars},
 		{"remove-efi-entries", o.removeEFIBootEntries},
 		{"setup-mellanox", o.setupMellanox},
 		{"wipe-disks", o.wipeOrSecureEraseDisks},
@@ -210,6 +211,10 @@ func (o *Orchestrator) disableLVM(ctx context.Context) error {
 
 func (o *Orchestrator) removeEFIBootEntries(ctx context.Context) error {
 	return o.config.RemoveEFIBootEntries(ctx)
+}
+
+func (o *Orchestrator) mountEFIVars(ctx context.Context) error {
+	return o.config.MountEFIVars(ctx)
 }
 
 func (o *Orchestrator) createEFIBootEntry(ctx context.Context) error {
@@ -584,10 +589,11 @@ func stepDebugCmds(step string) []debugCmd {
 			{"chroot boot", "ls -la /newroot/boot/ 2>/dev/null || echo '/newroot/boot not found'"},
 			{"chroot mounts", "cat /proc/mounts | grep newroot || true"},
 		}
-	case "remove-efi-entries", "create-efi-boot-entry":
+	case "remove-efi-entries", "create-efi-boot-entry", "mount-efivarfs":
 		return []debugCmd{
 			{"efivarfs", "ls /sys/firmware/efi/efivars/ 2>/dev/null | head -20 || echo 'no EFI'"},
 			{"efibootmgr", "efibootmgr -v 2>/dev/null || echo 'efibootmgr not available'"},
+			{"proc mounts efi", "grep efi /proc/mounts 2>/dev/null || echo 'no efi mounts'"},
 		}
 	default:
 		return nil

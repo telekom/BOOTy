@@ -53,7 +53,7 @@ hardware or corrupt disks.
 
 ## BOOTy-Specific Context
 
-- `pkg/provision/orchestrator.go` defines the 30-step provisioning sequence
+- `pkg/provision/orchestrator.go` defines the 31-step provisioning sequence
 - `pkg/disk/` handles detection, partitioning (sfdisk), RAID (mdadm), and
   LVM (lvm2 commands via exec)
 - `pkg/image/` streams compressed images directly to block devices — no

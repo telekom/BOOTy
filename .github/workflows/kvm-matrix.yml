@@ -10,6 +10,8 @@ on:
       - "pkg/kexec/**"
       - "pkg/bios/**"
       - "pkg/bootloader/**"
+      - "pkg/provision/**"
+      - "pkg/image/**"
       - "test/e2e/kvm/**"
       - ".github/workflows/kvm-matrix.yml"
   pull_request:
@@ -20,6 +22,8 @@ on:
       - "pkg/kexec/**"
       - "pkg/bios/**"
       - "pkg/bootloader/**"
+      - "pkg/provision/**"
+      - "pkg/image/**"
       - "test/e2e/kvm/**"
       - ".github/workflows/kvm-matrix.yml"
   workflow_dispatch:
@@ -72,6 +76,21 @@ jobs:
             test_tag: e2e
             test_regex: "^TestISOBootHeadlessQ35$"
             setup: ""
+          - scenario: luks-verify
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: TestLUKSVerifyHeader
+            luks_disk: test-luks.qcow2
+            setup: |
+              sudo apt-get install -y qemu-utils cryptsetup
+              qemu-img create -f qcow2 test-luks.qcow2 2G
+              sudo modprobe nbd max_part=8
+              sudo qemu-nbd --connect=/dev/nbd0 test-luks.qcow2
+              echo -n "booty-test" | sudo cryptsetup luksFormat /dev/nbd0 -
+              echo -n "booty-test" | sudo cryptsetup luksOpen /dev/nbd0 testcrypt -
+              sudo mkfs.ext4 /dev/mapper/testcrypt
+              sudo cryptsetup luksClose testcrypt
+              sudo qemu-nbd --disconnect /dev/nbd0
       fail-fast: false
 
     steps:
@@ -119,7 +138,6 @@ jobs:
           cp booty initramfs/booty
           cat > initramfs/init << 'INITEOF'
           #!/bin/sh
-          export BOOTYURL="http://10.0.2.2:3000/booty"
           exec /booty
           INITEOF
           chmod +x initramfs/init
@@ -142,7 +160,11 @@ jobs:
 
       - name: Run KVM test (${{ matrix.scenario }})
         run: |
-          go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -v -timeout 15m ./test/e2e/kvm/...
+          if [ "${{ matrix.scenario }}" = "luks-verify" ]; then
+            sudo -E env "PATH=$PATH" go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -v -timeout 15m ./test/e2e/kvm/...
+          else
+            go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -v -timeout 15m ./test/e2e/kvm/...
+          fi
         env:
           QEMU_EXTRA_ARGS: ${{ matrix.qemu_extra }}
           BOOTY_INITRAMFS: ${{ github.workspace }}/test-initramfs.cpio.gz

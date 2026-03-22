@@ -138,7 +138,7 @@ func TestISOBootHeadlessQ35NoSerial(t *testing.T) {
 func requireXorrisofs(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("xorrisofs"); err != nil {
-		t.Skip("xorrisofs not available — skipping ISO boot test")
+		t.Skip("xorrisofs not available")
 	}
 }
 
@@ -318,10 +318,10 @@ func buildStubDeployCpio(t *testing.T, cpioPath string) {
 	t.Helper()
 
 	if _, err := exec.LookPath("cpio"); err != nil {
-		t.Skip("cpio not available — skipping deploy.cpio build")
+		t.Skip("cpio not available")
 	}
 	if _, err := exec.LookPath("find"); err != nil {
-		t.Skip("find not available — skipping deploy.cpio build")
+		t.Skip("find not available")
 	}
 
 	deployDir := filepath.Join(t.TempDir(), "deploy-root", "deploy")
