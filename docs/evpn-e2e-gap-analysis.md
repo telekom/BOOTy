@@ -1,6 +1,6 @@
 # EVPN E2E Gap Analysis — BOOTy GoBGP Data Plane
 
-> **Status:** Investigation only — no code changes  
+> **Status:** Gaps 1–3 fixed — see PR #85 and main commits `fdafdb4`, `657ab6d`  
 > **Date:** 2026-03-22  
 > **Pipeline:** 60178989 (CAPRF MR #69, branch `feat/e2e-virtual-bm4x`)  
 > **Result:** `e2e-kindmetal` ✅ (12m17s) | `e2e-kindmetal-evpn` ❌ (39m59s, test timeout)
@@ -94,7 +94,7 @@ The VXLAN overlay is non-functional because of multiple compounding gaps. Each g
 - `pkg/network/gobgp/overlay.go` — `watchRoutes()` (line ~340) is a **log-only stub**: it receives EVPN routes from GoBGP but only logs them, never install kernel routes or FDB entries
 
 **Fix:** `installGatewayRoute()` — add a /32 host route to the gateway VTEP via the first physical NIC.  
-**Status:** ⚠️ Coded locally in `stack.go` (commit `ad34c5f`), but **NOT pushed** (non-fast-forward rejection) and **NOT in the CI ISO**.
+**Status:** ✅ Fixed in commit `fdafdb4` on main. Requires `provision_gateway` env var to be set.
 
 ```go
 // Needed: netlink.RouteAdd for 10.0.0.1/32 via first NIC
@@ -128,7 +128,7 @@ This means even if spine01 sends EVPN routes advertising its MAC (via Type-2) or
 - Type-3 routes → `netlink.NeighAdd()` BUM FDB entry per remote VTEP
 - Type-5 routes → `netlink.RouteAdd()` into VRF routing table
 
-**Status:** ❌ Not implemented. **Not blocking E2E** (single-VTEP topology uses static BUM entry).
+**Status:** ✅ Fixed in PR #85 (commit `657ab6d`). `watchRoutes()` now processes Type-2 and Type-3 routes, installing unicast and BUM FDB entries respectively. Type-5 kernel route installation deferred (static gateway route covers single-VTEP topology).
 
 ### Gap 4: Only Type-5 Routes Advertised — No Type-2 or Type-3
 
@@ -214,10 +214,10 @@ BOOTy boots → GoBGP underlay ESTABLISHED ✅
 
 | # | Gap | Severity | E2E Blocking? | Fix Exists? | Effort |
 |---|-----|----------|---------------|-------------|--------|
-| 1 | No kernel route to VTEP | **CRITICAL** | **YES** | ⚠️ Coded, not deployed | Small — push + rebuild ISO |
-| 2 | BUM FDB missing | CRITICAL | Was blocking | ✅ Deployed | Done |
-| 3 | `watchRoutes()` stub | High | No (single VTEP) | ❌ Not started | Medium |
-| 4 | No Type-2/3 adverts | High | No (spine learns via data-plane) | ❌ Not started | Medium |
+| 1 | No kernel route to VTEP | **CRITICAL** | **YES** | ✅ Fixed (`fdafdb4`) | Done |
+| 2 | BUM FDB missing | CRITICAL | Was blocking | ✅ Fixed | Done |
+| 3 | `watchRoutes()` stub | High | No (single VTEP) | ✅ Fixed (PR #85) | Done |
+| 4 | No Type-2/3 adverts | High | No (spine learns via data-plane) | N/A (design choice) | N/A |
 | 5 | Asymmetric learning | Low | No | N/A (design choice) | N/A |
 | 6 | BGP ghost entries | Unknown | Unlikely | Needs investigation | Small |
 
@@ -253,9 +253,6 @@ Expect `e2e-kindmetal-evpn` test #12 to pass within ~5 minutes (BGP converge + A
 
 | Item | Description | Priority |
 |------|-------------|----------|
-| Implement `watchRoutes()` | Process received Type-2/3 EVPN routes → install FDB entries | High (multi-VTEP) |
-| Advertise Type-2 routes | Announce bridge MAC so remote VTEPs learn via control plane | High (multi-VTEP) |
-| Advertise Type-3 routes | Announce VTEP membership for proper BUM flooding | High (multi-VTEP) |
 | Investigate ghost BGP entries | Determine if base VM ISO starts BGP with wrong config | Medium |
 | Add VXLAN data-plane unit tests | Test FDB installation, route installation, encap/decap | Medium |
 | Consider `nolearning` on spine01 | Match BOOTy's `Learning: false` for symmetric design | Low |

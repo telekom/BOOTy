@@ -43,4 +43,28 @@ apipb "github.com/osrg/gobgp/v3/api"     // Protobuf API (always aliased as apip
 
 - FRR manager uses a `Commander` interface to mock `exec.CommandContext`
 - GoBGP peering tests live in `gobgp/peering_test.go`; config tests in `gobgp/config_test.go`
+- Overlay tests (Type-5 builders, `extractNextHop`) live in `gobgp/overlay_test.go`
 - E2E network tests require ContainerLab — see `test/e2e/integration/`
+
+## EVPN Route Processing
+
+`watchRoutes()` in `overlay.go` monitors GoBGP's `WatchEvent` stream for EVPN routes
+and installs corresponding kernel state:
+
+- **Type-2 (MAC/IP Advertisement)** — installs unicast FDB entries (`MAC → remote VTEP`) via
+  `netlink.NeighAppend` on the VXLAN device; skips routes from our own RouterID
+- **Type-3 (Inclusive Multicast)** — installs BUM FDB entries (`00:00:00:00:00:00 → remote VTEP`)
+  for flood replication; skips own RouterID
+- **NextHop extraction** — `extractNextHop()` walks `MpReachNLRIAttribute` path attributes
+  to find the originating VTEP IP
+
+BOOTy only **advertises** Type-5 (IP Prefix) routes. Type-2/3 routes are received from
+the spine/fabric for dynamic FDB population. A static BUM FDB entry and /32 kernel route
+to `provision_gateway` ensure baseline connectivity before dynamic routes arrive.
+
+### provision_gateway
+
+Set `provision_gateway` in the vars file to the spine/DCGW loopback IP (VTEP address).
+This triggers:
+1. `installGatewayRoute()` — /32 host route to the VTEP via the first physical NIC
+2. `addGatewayFDB()` — BUM FDB entry on the VXLAN device for ARP flooding

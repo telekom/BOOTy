@@ -235,16 +235,26 @@ If sub-second failover is required in the future, options are:
    but are not directly importable.
 3. **Accept 9s failover**: Appropriate for provisioning workloads.
 
-### EVPN Type-5 with LWT Encap
+### EVPN Route Types
 
-The overlay tier uses **EVPN Type-5 (IP Prefix)** routes exclusively.
-No Type-2 (MAC/IP) or Type-3 (IMET) routes are needed — the design
-avoids L2 flooding entirely.
+The overlay tier **advertises** EVPN Type-5 (IP Prefix) routes and
+**processes** incoming Type-2 (MAC/IP) and Type-3 (Inclusive Multicast)
+routes from the fabric.
 
-**Why Type-5**: BOOTy only needs L3 reachability to the provisioning
-network. Type-5 routes advertise IP prefixes with VXLAN encap info,
-avoiding the complexity of MAC learning (Type-2) and BUM flooding
-(Type-3). This results in a simpler, more predictable data plane.
+**Type-5 (advertised):** BOOTy announces its provisioning subnet
+reachability so the spine/fabric can route traffic toward the BOOTy
+VTEP.
+
+**Type-2/3 (received via `watchRoutes()`):** The overlay's
+`watchRoutes()` monitors GoBGP's route stream and installs FDB entries:
+- **Type-2** — unicast FDB entries (`MAC → remote VTEP`) via `netlink.NeighAppend`
+- **Type-3** — BUM FDB entries (`00:00:00:00:00:00 → remote VTEP`) for flood replication
+
+Routes from BOOTy's own RouterID are skipped to avoid self-referential entries.
+
+**Baseline connectivity:** A static BUM FDB entry (`addGatewayFDB`) and
+a /32 kernel route (`installGatewayRoute`) to the `provision_gateway`
+VTEP ensure data-plane connectivity before dynamic EVPN routes arrive.
 
 **Data plane**: Instead of a full bridge + FDB approach, the overlay
 uses:
@@ -597,9 +607,9 @@ without SSH or `vtysh`.
   is less mature than GoBGP. Also no BFD support.
 - **Partial migration**: Use GoBGP for BGP only, keep FRR zebra for
   VXLAN kernel programming. Reduces complexity incrementally.
-- **Type-2/3 fallback**: If Type-5 with LWT proves insufficient for
-  certain topologies, fall back to Type-2/3 with bridge+FDB. This is
-  unlikely since BOOTy only needs L3 reachability.
+- **Type-2/3 route processing**: `watchRoutes()` now processes incoming
+  Type-2/3 routes and installs FDB entries dynamically. BOOTy still only
+  advertises Type-5; the spine/fabric handles L2/L3 advertisement.
 
 ## Rollback Plan
 
