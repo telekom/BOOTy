@@ -270,7 +270,7 @@ func (o *OverlayTier) createVXLANAndBridge() error {
 	// Without this, the VXLAN FDB is empty and BUM frames are dropped.
 	if o.cfg.ProvisionGateway != "" {
 		if err := o.addGatewayFDB(vxLink); err != nil {
-			return fmt.Errorf("add gateway FDB entry: %w", err)
+			o.log.Warn("gateway BUM FDB entry failed (non-fatal)", "error", err)
 		}
 	}
 
@@ -390,7 +390,7 @@ func (o *OverlayTier) addGatewayFDB(vxLink netlink.Link) error {
 		return fmt.Errorf("append BUM FDB entry for %s: %w", o.cfg.ProvisionGateway, err)
 	}
 
-	o.log.Info("added gateway BUM FDB entry", "vxlan", vxLink.Attrs().Name, "vtep", o.cfg.ProvisionGateway)
+	o.log.Info("installed gateway BUM FDB entry", "vxlan", vxLink.Attrs().Name, "vtep", o.cfg.ProvisionGateway)
 	return nil
 }
 
@@ -675,7 +675,7 @@ func (o *OverlayTier) handleType3Route(route *apipb.EVPNInclusiveMulticastEthern
 	}
 
 	if err := o.fdb.NeighAppend(fdb); err != nil {
-		o.log.Debug("failed to add/update BUM FDB entry", "vtep", remoteIP, "error", err)
+		o.log.Debug("failed to append BUM FDB entry", "vtep", remoteIP, "error", err)
 	} else {
 		o.log.Info("installed BUM FDB entry from type-3 route", "vtep", remoteIP)
 	}
@@ -687,10 +687,20 @@ func parsePrefixRoute(prefix string, prefixLen uint32) (*net.IPNet, error) {
 	if ip == nil {
 		return nil, fmt.Errorf("invalid IP %q", prefix)
 	}
-	mask := net.CIDRMask(int(prefixLen), 32)
-	if ip.To4() == nil {
+
+	var mask net.IPMask
+	if ip.To4() != nil {
+		if prefixLen > 32 {
+			return nil, fmt.Errorf("invalid IPv4 prefix length %d", prefixLen)
+		}
+		mask = net.CIDRMask(int(prefixLen), 32)
+	} else {
+		if prefixLen > 128 {
+			return nil, fmt.Errorf("invalid IPv6 prefix length %d", prefixLen)
+		}
 		mask = net.CIDRMask(int(prefixLen), 128)
 	}
+
 	return &net.IPNet{IP: ip.Mask(mask), Mask: mask}, nil
 }
 

@@ -273,7 +273,7 @@ func TestProcessRouteUpdateDispatch(t *testing.T) {
 			path: &apipb.Path{},
 		},
 		{
-			name: "type-2 route logged at debug (not handled)",
+			name: "type-2 route ignored when EnableL2 false",
 			path: mustMarshalPath(t, &apipb.EVPNMACIPAdvertisementRoute{
 				MacAddress:  "aa:bb:cc:dd:ee:ff",
 				IpAddress:   "10.100.0.50",
@@ -281,7 +281,7 @@ func TestProcessRouteUpdateDispatch(t *testing.T) {
 			}, "10.0.0.1", false),
 		},
 		{
-			name: "type-3 route logged at debug (not handled)",
+			name: "type-3 route ignored when EnableL2 false",
 			path: mustMarshalPath(t, &apipb.EVPNInclusiveMulticastEthernetTagRoute{
 				IpAddress:   "10.0.0.1",
 				EthernetTag: 0,
@@ -436,10 +436,21 @@ func TestAddGatewayFDB(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("addGatewayFDB() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if !tt.wantErr && len(mock.appends) == 1 {
-				if mock.appends[0].HardwareAddr.String() != tt.wantMAC.String() {
-					t.Errorf("BUM FDB MAC = %s, want %s", mock.appends[0].HardwareAddr, tt.wantMAC)
-				}
+			if tt.wantErr {
+				return
+			}
+			if len(mock.appends) != 1 {
+				t.Fatalf("expected 1 NeighAppend call, got %d", len(mock.appends))
+			}
+			neigh := mock.appends[0]
+			if neigh.HardwareAddr.String() != tt.wantMAC.String() {
+				t.Errorf("BUM FDB MAC = %s, want %s", neigh.HardwareAddr, tt.wantMAC)
+			}
+			if !neigh.IP.Equal(net.ParseIP(tt.gateway)) {
+				t.Errorf("BUM FDB VTEP IP = %s, want %s", neigh.IP, tt.gateway)
+			}
+			if neigh.LinkIndex != vxLink.Index {
+				t.Errorf("BUM FDB LinkIndex = %d, want %d", neigh.LinkIndex, vxLink.Index)
 			}
 		})
 	}
@@ -457,6 +468,8 @@ func TestParsePrefixRoute(t *testing.T) {
 		{"subnet", "10.100.0.0", 24, "10.100.0.0/24", false},
 		{"host route", "10.0.0.1", 32, "10.0.0.1/32", false},
 		{"invalid IP", "not-an-ip", 0, "", true},
+		{"IPv4 prefix length too large", "10.0.0.0", 33, "", true},
+		{"IPv6 prefix length too large", "2001:db8::", 129, "", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

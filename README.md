@@ -229,6 +229,7 @@ export dns_resolver="8.8.8.8"
 | `RESCUE_SSH_PUBKEY` | — | *(Phase 2)* SSH public key for rescue shell access |
 | `RESCUE_TIMEOUT` | `0` | *(Phase 2)* Rescue wait timeout in seconds (0 = indefinite) |
 | `RESCUE_AUTO_MOUNT` | `false` | *(Phase 2)* Auto-mount disks in rescue shell mode |
+| `EVPN_L2_ENABLED` | `false` | Enable EVPN L2 overlay (Type-2/3 route handling) in GoBGP mode. Default is Type-5 only (L3) |
 
 ### Debugging
 

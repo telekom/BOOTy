@@ -56,7 +56,7 @@ type Config struct {
 	PeerMode          network.PeerMode // BGP session establishment mode
 	NeighborAddrs     []string         // Explicit numbered peer IPs (dual/numbered modes)
 	RemoteASN         uint32           // Remote ASN for numbered peers (0 = same ASN → iBGP)
-	EnableL2          bool             // Enable L2 overlay (Type-2/3 route handling) — future use
+	EnableL2          bool             // Enable L2 EVPN overlay (gate Type-2/3 route handling)
 }
 
 // NewConfig creates a GoBGP Config from network configuration.
