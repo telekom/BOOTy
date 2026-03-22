@@ -351,6 +351,7 @@ export RESCUE_MODE=shell
 In standby mode (agent mode), rescue actions also apply to hot-provisioning
 commands received via the command poll loop. Failed provisions are ACKed back
 to the controller with the error message.
+<<<<<<< HEAD
 
 ### Dry-Run Mode
 
@@ -490,6 +491,71 @@ export VLANS="200:eno1:10.200.0.42/24,300:eno2"
 Each VLAN creates a tagged sub-interface (`eno1.200`), assigns the IP address
 (if provided), and brings the link up. VLANs are created after the primary
 network mode is established.
+
+### Declarative Disk Partitioning (Preview)
+
+> **Status**: Schema validation and LVM configuration are implemented. The
+> provisioning pipeline currently **fails fast** when `PARTITION_LAYOUT` is set
+> because rootfs extraction support has not landed yet. This is safe to use for
+> testing validation behaviour in dry-run mode.
+
+Set `PARTITION_LAYOUT` to a JSON object describing the target disk layout.
+BOOTy validates the schema up-front and rejects invalid configurations before
+any disk operations begin.
+
+**GPT-only layout (no LVM)**
+
+```bash
+export PARTITION_LAYOUT='{
+  "table": "gpt",
+  "partitions": [
+    {"label": "efi",  "sizeMB": 512, "filesystem": "vfat", "mountpoint": "/boot/efi"},
+    {"label": "boot", "sizeMB": 1024, "filesystem": "ext4", "mountpoint": "/boot"},
+    {"label": "root", "filesystem": "ext4", "mountpoint": "/"}
+  ]
+}'
+```
+
+| Partition Field | Required | Description |
+|-----------------|----------|-------------|
+| `label` | yes | GPT partition label |
+| `sizeMB` | no | Size in MiB; `0` or omitted fills remaining space |
+| `filesystem` | no | `vfat`, `ext4`, `xfs`, `swap` |
+| `mountpoint` | no | Target mount path after provisioning |
+| `typeGUID` | no | GPT type GUID; auto-set from filesystem if omitted |
+
+**GPT + LVM layout**
+
+```bash
+export PARTITION_LAYOUT='{
+  "table": "gpt",
+  "partitions": [
+    {"label": "efi",  "sizeMB": 512, "filesystem": "vfat", "mountpoint": "/boot/efi"},
+    {"label": "boot", "sizeMB": 1024, "filesystem": "ext4", "mountpoint": "/boot"},
+    {"label": "pv",   "sizeMB": 0}
+  ],
+  "lvm": {
+    "volumeGroup": "sysvg",
+    "pvPartition": 3,
+    "volumes": [
+      {"name": "root", "sizeMB": 20480, "filesystem": "ext4", "mountpoint": "/"},
+      {"name": "var",  "extents": "100%FREE", "filesystem": "ext4", "mountpoint": "/var"}
+    ]
+  }
+}'
+```
+
+| LVM Field | Required | Description |
+|-----------|----------|-------------|
+| `volumeGroup` | yes | VG name (alphanumeric, `_`, `-`, `.`) |
+| `pvPartition` | yes | 1-based index into `partitions` for the PV |
+| `volumes[].name` | yes | LV name |
+| `volumes[].sizeMB` | no | Size in MiB |
+| `volumes[].extents` | no | Size as LV extents (e.g. `100%FREE`) |
+
+**Device override**: Set `"device": "/dev/nvme0n1"` in the layout JSON to
+target a specific block device. When omitted, BOOTy auto-detects the target.
+If `DISK_DEVICE` is also set, both must match or provisioning fails.
 
 ## OCI Image Sources
 

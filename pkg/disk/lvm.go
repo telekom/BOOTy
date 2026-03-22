@@ -90,11 +90,17 @@ func isValidLVMRuntimeName(name string) bool {
 		return false
 	}
 	for _, c := range name {
-		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '_' && c != '-' && c != '.' {
+		if !isValidLVMChar(c) {
 			return false
 		}
 	}
 	return true
+}
+
+// isValidLVMChar returns true if c is allowed in an LVM volume/group name.
+func isValidLVMChar(c rune) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+		(c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.'
 }
 
 func (m *Manager) createPhysicalVolume(ctx context.Context, pvDev string) error {

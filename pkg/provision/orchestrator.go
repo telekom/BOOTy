@@ -377,18 +377,21 @@ func (o *Orchestrator) validatePartitionLayoutConfig() error {
 		return nil
 	}
 
+	layoutDevice := strings.TrimSpace(o.cfg.PartitionLayout.Device)
+	o.cfg.PartitionLayout.Device = layoutDevice
+
+	// Check device conflicts before mode compatibility so that
+	// configuration errors surface immediately.
+	if layoutDevice != "" && o.cfg.DiskDevice != "" && o.cfg.DiskDevice != layoutDevice {
+		return fmt.Errorf("disk device conflict: DISK_DEVICE=%q differs from PARTITION_LAYOUT.device=%q", o.cfg.DiskDevice, layoutDevice)
+	}
+
 	if err := o.validatePartitionLayoutModeCompatibility(); err != nil {
 		return err
 	}
 
-	layoutDevice := strings.TrimSpace(o.cfg.PartitionLayout.Device)
-	o.cfg.PartitionLayout.Device = layoutDevice
 	if layoutDevice == "" {
 		return nil
-	}
-
-	if o.cfg.DiskDevice != "" && o.cfg.DiskDevice != layoutDevice {
-		return fmt.Errorf("disk device conflict: DISK_DEVICE=%q differs from PARTITION_LAYOUT.device=%q", o.cfg.DiskDevice, layoutDevice)
 	}
 
 	info, err := os.Stat(layoutDevice)

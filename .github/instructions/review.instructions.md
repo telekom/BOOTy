@@ -145,11 +145,7 @@ Key checks:
 - [ ] New Make targets documented in `README.md` and `CONTRIBUTING.md`
 - [ ] New build tags documented in E2E test instructions
 - [ ] `copilot-instructions.md` architecture section matches actual packages
-<<<<<<< HEAD
-- [ ] Step count references consistent across all docs (currently 31 steps)
-=======
-- [ ] Step count references consistent across all docs (currently 32 steps)
->>>>>>> 0ea7bdf (fix partition layout validation and doc consistency)
+- [ ] Step count references consistent across all docs (currently 33 steps)
 - [ ] Code comments on exported types and functions are accurate
 - [ ] Proposal files in `docs/` have correct Status field (Proposal, Accepted,
       Implemented, Rejected)
