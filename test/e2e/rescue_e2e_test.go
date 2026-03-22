@@ -64,7 +64,7 @@ func TestRescueModeStatusReporting(t *testing.T) {
 	received := make(chan struct{}, 2)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/status/init", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /status/init", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		mu.Lock()
 		statuses = append(statuses, "init:"+string(body))
@@ -72,7 +72,7 @@ func TestRescueModeStatusReporting(t *testing.T) {
 		received <- struct{}{}
 		w.WriteHeader(http.StatusOK)
 	})
-	mux.HandleFunc("/heartbeat", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("POST /heartbeat", func(w http.ResponseWriter, _ *http.Request) {
 		mu.Lock()
 		statuses = append(statuses, "heartbeat")
 		mu.Unlock()
@@ -129,7 +129,7 @@ func TestRescueModeStatusReporting(t *testing.T) {
 
 func TestRescueModeCommandPolling(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/commands", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /commands", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		cmds := []map[string]string{
 			{"ID": "cmd-1", "Type": "reboot"},
