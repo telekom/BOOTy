@@ -1,7 +1,6 @@
 package lenovo
 
 import (
-	"context"
 	"log/slog"
 
 	"github.com/telekom/BOOTy/pkg/bios"
@@ -24,55 +23,6 @@ var criticalSettings = map[string]string{
 
 func init() {
 	bios.RegisterManager(system.VendorLenovo, func(log *slog.Logger) bios.Manager {
-		return New(log)
+		return bios.NewBaseManager(system.VendorLenovo, log, criticalSettings)
 	})
-}
-
-// Manager handles Lenovo ThinkSystem BIOS operations.
-type Manager struct {
-	log *slog.Logger
-}
-
-// New creates a Lenovo BIOS manager.
-func New(log *slog.Logger) *Manager {
-	return &Manager{log: log}
-}
-
-// Vendor returns the Lenovo vendor constant.
-func (m *Manager) Vendor() system.Vendor { return system.VendorLenovo }
-
-// Capture reads BIOS settings from a Lenovo server.
-func (m *Manager) Capture(_ context.Context) (*bios.State, error) {
-	state := &bios.State{
-		Vendor:   system.VendorLenovo,
-		Settings: make(map[string]bios.Setting),
-	}
-	for name, val := range criticalSettings {
-		state.Settings[name] = bios.Setting{
-			Name:         name,
-			CurrentValue: val,
-			Type:         "enum",
-		}
-	}
-	if m.log != nil {
-		m.log.Info("captured Lenovo BIOS settings", "count", len(state.Settings))
-	}
-	return state, nil
-}
-
-// Apply sets BIOS attributes on a Lenovo server.
-func (m *Manager) Apply(_ context.Context, changes []bios.SettingChange) ([]string, error) {
-	reboot := make([]string, 0, len(changes))
-	for _, c := range changes {
-		if m.log != nil {
-			m.log.Info("apply Lenovo BIOS setting", "name", c.Name, "value", c.Value)
-		}
-		reboot = append(reboot, c.Name)
-	}
-	return reboot, nil
-}
-
-// Reset restores Lenovo BIOS to factory defaults.
-func (m *Manager) Reset(_ context.Context) error {
-	return bios.ErrNotImplemented
 }

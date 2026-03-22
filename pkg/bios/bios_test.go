@@ -6,36 +6,36 @@ import (
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/bios"
-	"github.com/telekom/BOOTy/pkg/bios/dell"
-	"github.com/telekom/BOOTy/pkg/bios/hpe"
-	"github.com/telekom/BOOTy/pkg/bios/lenovo"
-	"github.com/telekom/BOOTy/pkg/bios/supermicro"
 	"github.com/telekom/BOOTy/pkg/system"
+
+	// Blank imports trigger vendor init() registration.
+	_ "github.com/telekom/BOOTy/pkg/bios/dell"
+	_ "github.com/telekom/BOOTy/pkg/bios/hpe"
+	_ "github.com/telekom/BOOTy/pkg/bios/lenovo"
+	_ "github.com/telekom/BOOTy/pkg/bios/supermicro"
 )
 
 func TestVendorManagers(t *testing.T) {
-	managers := []bios.Manager{
-		hpe.New(nil),
-		dell.New(nil),
-		lenovo.New(nil),
-		supermicro.New(nil),
-	}
-	expectedVendors := []system.Vendor{
+	vendors := []system.Vendor{
 		system.VendorHPE,
 		system.VendorDell,
 		system.VendorLenovo,
 		system.VendorSupermicro,
 	}
-	for i, mgr := range managers {
-		t.Run(string(expectedVendors[i]), func(t *testing.T) {
-			if mgr.Vendor() != expectedVendors[i] {
-				t.Errorf("vendor = %q, want %q", mgr.Vendor(), expectedVendors[i])
+	for _, vendor := range vendors {
+		t.Run(string(vendor), func(t *testing.T) {
+			mgr, err := bios.NewManager(vendor, nil)
+			if err != nil {
+				t.Fatalf("NewManager(%s): %v", vendor, err)
+			}
+			if mgr.Vendor() != vendor {
+				t.Errorf("vendor = %q, want %q", mgr.Vendor(), vendor)
 			}
 			state, err := mgr.Capture(context.Background())
 			if err != nil {
 				t.Fatalf("Capture: %v", err)
 			}
-			if state.Vendor != expectedVendors[i] {
+			if state.Vendor != vendor {
 				t.Errorf("state vendor = %q", state.Vendor)
 			}
 			changes := []bios.SettingChange{{Name: "Test", Value: "Value"}}
@@ -87,5 +87,23 @@ func TestCompare_BothNil(t *testing.T) {
 	diff := bios.Compare(nil, nil)
 	if !diff.Matches {
 		t.Error("both nil should match")
+	}
+}
+
+func TestNewManager_Unregistered(t *testing.T) {
+	_, err := bios.NewManager("unknown-vendor", nil)
+	if err == nil {
+		t.Error("expected error for unregistered vendor")
+	}
+}
+
+func TestBaseManager_NilSettings(t *testing.T) {
+	mgr := bios.NewBaseManager(system.VendorSupermicro, nil, nil)
+	state, err := mgr.Capture(context.Background())
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	if len(state.Settings) != 0 {
+		t.Errorf("expected 0 settings, got %d", len(state.Settings))
 	}
 }

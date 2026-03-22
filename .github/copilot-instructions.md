@@ -16,12 +16,26 @@ Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, orch
 - `pkg/disk/` — Disk detection, partitioning, RAID, LVM, mount
 - `pkg/caprf/` — CAPRF controller client (status/log shipping)
 - `pkg/firmware/` — Firmware version collection from sysfs
+- `pkg/firmware/nic/` — NIC firmware collection (Broadcom, Intel, Mellanox)
 - `pkg/health/` — Pre-provisioning hardware health checks
 - `pkg/inventory/` — Hardware inventory from sysfs/procfs
 - `pkg/kexec/` — GRUB config parsing, kexec load/execute
 - `pkg/realm/` — Low-level syscalls (devices, mounts)
 - `pkg/rescue/` — Rescue mode types, retry state, action resolution
 - `pkg/ux/` — ASCII art and system info display
+- `pkg/bios/` — BIOS settings management (Dell, HPE, Lenovo, Supermicro)
+- `pkg/bootloader/` — Bootloader detection (GRUB, systemd-boot)
+- `pkg/buildinfo/` — Binary build information
+- `pkg/debug/` — Debug utilities
+- `pkg/drivers/` — Architecture-aware kernel driver management
+- `pkg/efi/` — EFI variable operations
+- `pkg/grubcfg/` — GRUB config file parsing
+- `pkg/retry/` — Retry policy framework with exponential backoff
+- `pkg/secureboot/` — Secure Boot chain setup
+- `pkg/system/` — System-level operations
+- `pkg/telemetry/` — Telemetry and metrics collection
+- `pkg/tpm/` — TPM/TPM2 operations and cryptenroll
+- `pkg/utils/` — Shared utility functions
 - `test/e2e/` — E2E tests with ContainerLab and vrnetlab topologies
 
 ## Build and Test
