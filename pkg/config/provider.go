@@ -53,6 +53,7 @@ type MachineConfig struct {
 	ASN              uint32 // asn_server: BGP AS number
 	ProvisionVNI     uint32 // provision_vni: VXLAN VNI
 	ProvisionIP      string // provision_ip: IP/mask for provision bridge
+	ProvisionGateway string // provision_gateway: gateway VTEP IP for BUM flooding
 	DNSResolvers     string // dns_resolver: comma-separated DNS servers
 	DCGWIPs          string // dcgw_ips: Data Center Gateway IPs (onefabric)
 	LeafASN          uint32 // leaf_asn: Leaf switch AS

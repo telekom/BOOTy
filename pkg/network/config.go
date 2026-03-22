@@ -32,8 +32,9 @@ type Config struct {
 	IPMIMAC        string // IPMI MAC for IP derivation
 	IPMIIP         string // IPMI IP for offset calculation
 	ASN            uint32 // BGP ASN for underlay
-	ProvisionVNI   uint32 // VXLAN VNI for provision network
-	ProvisionIP    string // IP/mask to assign to provision bridge (e.g. "10.100.0.20/24")
+	ProvisionVNI     uint32 // VXLAN VNI for provision network
+	ProvisionIP      string // IP/mask to assign to provision bridge (e.g. "10.100.0.20/24")
+	ProvisionGateway string // Gateway VTEP IP for VXLAN BUM flooding
 	DNSResolvers   string // Comma-separated DNS servers
 
 	// Optional FRR onefabric mode fields.

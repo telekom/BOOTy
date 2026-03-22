@@ -292,6 +292,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		ASN:              cfg.ASN,
 		ProvisionVNI:     cfg.ProvisionVNI,
 		ProvisionIP:      cfg.ProvisionIP,
+		ProvisionGateway: cfg.ProvisionGateway,
 		DNSResolvers:     cfg.DNSResolvers,
 		DCGWIPs:          cfg.DCGWIPs,
 		LeafASN:          cfg.LeafASN,

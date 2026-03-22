@@ -343,6 +343,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"overlay_subnet":              &cfg.OverlaySubnet,
 		"ipmi_subnet":                 &cfg.IPMISubnet,
 		"provision_ip":                &cfg.ProvisionIP,
+		"provision_gateway":           &cfg.ProvisionGateway,
 		"dns_resolver":                &cfg.DNSResolvers,
 		"dcgw_ips":                    &cfg.DCGWIPs,
 		"overlay_aggregate":           &cfg.OverlayAggregate,

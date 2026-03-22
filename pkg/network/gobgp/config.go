@@ -41,6 +41,7 @@ type Config struct {
 	ListenPort        int32            // BGP listen port (default: 179)
 	ProvisionVNI      int              // VXLAN VNI for provisioning network
 	ProvisionIP       string           // IP/mask for provision bridge
+	ProvisionGateway  string           // Gateway VTEP IP for VXLAN BUM flooding
 	DNSResolvers      string           // Comma-separated DNS servers
 	BridgeName        string           // Bridge device name (default: "br.provision")
 	VRFName           string           // VRF name (default: empty, same as FRR)
@@ -73,6 +74,7 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		RouterID:          underlayIP,
 		ProvisionVNI:      int(netCfg.ProvisionVNI),
 		ProvisionIP:       netCfg.ProvisionIP,
+		ProvisionGateway:  netCfg.ProvisionGateway,
 		DNSResolvers:      netCfg.DNSResolvers,
 		BridgeName:        netCfg.BridgeName,
 		VRFName:           netCfg.VRFName,
