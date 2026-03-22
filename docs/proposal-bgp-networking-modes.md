@@ -315,3 +315,92 @@ export BGP_RESTART_TIME="120"
 
 10–14 engineering days (Multi-VRF + IPv6 + communities + graceful restart +
 E2E topologies).
+
+## Usage Guide: EVPN Data Plane
+
+### Overview
+
+The EVPN data plane processes BGP route advertisements received from the
+spine and installs forwarding database (FDB) entries on the VXLAN
+interface. This enables L2 overlay forwarding: unicast frames go to the
+correct VTEP, and BUM (Broadcast/Unknown/Multicast) frames are flooded
+to all participating VTEPs.
+
+### How It Works
+
+```
+Remote VTEP advertises EVPN routes via BGP spine
+    ↓
+watchRoutes() receives EVPN paths from GoBGP
+    ↓
+processRouteUpdate() unmarshals NLRI, extracts next-hop VTEP IP
+    ↓
+Type-2 (MAC/IP) → handleType2Route() → unicast FDB entry
+Type-3 (Inclusive Multicast) → handleType3Route() → BUM FDB entry
+    ↓
+VXLAN kernel driver uses FDB entries to forward L2 frames
+```
+
+### Route Types
+
+| EVPN Type | Name | FDB Entry | MAC | Purpose |
+|-----------|------|-----------|-----|---------|
+| Type-2 | MAC/IP Advertisement | Unicast | Remote host MAC | Forward frames to specific VTEP |
+| Type-3 | Inclusive Multicast | BUM flood | `00:00:00:00:00:00` | Flood unknown/broadcast to all VTEPs |
+
+### MAC→VTEP Tracking
+
+The `macVTEP` map tracks which VTEP owns each MAC address. This is
+needed because BGP route withdrawals (MP_UNREACH_NLRI) do not include
+a next-hop — the map allows the correct FDB entry to be deleted when
+a route is withdrawn, preventing orphaned entries.
+
+### FDB Entry Management
+
+FDB entries are installed via netlink:
+
+```go
+// Unicast entry (Type-2): MAC → VTEP
+fdb := &netlink.Neigh{
+    LinkIndex:    vxlanLink.Index,
+    Family:       unix.AF_BRIDGE,
+    HardwareAddr: remoteMAC,
+    IP:           net.ParseIP(vtepIP),
+    State:        netlink.NUD_PERMANENT,
+}
+netlink.NeighSet(fdb)
+
+// BUM entry (Type-3): zero-MAC → VTEP
+fdb.HardwareAddr = net.HardwareAddr{0, 0, 0, 0, 0, 0}
+netlink.NeighSet(fdb)
+```
+
+Entries use `NUD_PERMANENT` state (static, does not age out).
+
+### Safety
+
+- **Local VTEP skip**: FDB entries for the local VTEP IP are skipped to
+  prevent loopback forwarding
+- **Withdrawal cleanup**: Route withdrawals trigger FDB deletion via the
+  MAC→VTEP map lookup
+- **Graceful shutdown**: `watchRoutes()` exits when the context is cancelled
+
+### Verification
+
+After overlay setup, check FDB entries:
+
+```bash
+# List VXLAN FDB entries
+bridge fdb show dev vxlan100
+
+# Expected:
+# 00:11:22:33:44:55 dst 10.0.0.2 self permanent   ← unicast (Type-2)
+# 00:00:00:00:00:00 dst 10.0.0.2 self permanent   ← BUM flood (Type-3)
+```
+
+Check overlay reachability:
+
+```bash
+# Ping the gateway through the VXLAN overlay
+ping -c3 10.100.0.1
+```
