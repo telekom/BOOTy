@@ -85,18 +85,22 @@ func TestLUKSVerifyHeader(t *testing.T) {
 		_ = exec.Command("qemu-nbd", "--disconnect", nbdDev).Run()
 	})
 
-	// Wait for the nbd device to become ready.
-	waitForDevice(t, nbdDev, 10*time.Second)
-
-	// Run cryptsetup luksDump to verify LUKS header.
-	out, err := exec.Command("cryptsetup", "luksDump", nbdDev).CombinedOutput()
-	if err != nil {
-		t.Fatalf("cryptsetup luksDump failed: %v\n%s", err, out)
+	// Poll cryptsetup luksDump until the nbd device is ready (qemu-nbd connect
+	// is async — the block device exists but may not serve data immediately).
+	var out []byte
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		var err error
+		out, err = exec.Command("cryptsetup", "luksDump", nbdDev).CombinedOutput()
+		if err == nil {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 
 	output := string(out)
 	if !strings.Contains(output, "LUKS header information") {
-		t.Errorf("LUKS header not found in luksDump output:\n%s", output)
+		t.Fatalf("LUKS header not found in luksDump output:\n%s", output)
 	}
 
 	t.Logf("LUKS header verified:\n%s", output[:min(len(output), 500)])
