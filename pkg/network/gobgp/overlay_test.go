@@ -4,12 +4,42 @@ package gobgp
 
 import (
 	"log/slog"
+	"net"
 	"testing"
 
 	apipb "github.com/osrg/gobgp/v3/api"
+	"github.com/vishvananda/netlink"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/anypb"
 )
+
+// mockFDB records FDB operations for assertion in unit tests.
+type mockFDB struct {
+	linkName string
+	linkErr  error
+	sets     []*netlink.Neigh
+	dels     []*netlink.Neigh
+	setErr   error
+	delErr   error
+}
+
+func (m *mockFDB) LinkByName(name string) (netlink.Link, error) {
+	m.linkName = name
+	if m.linkErr != nil {
+		return nil, m.linkErr
+	}
+	return &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Index: 42, Name: name}}, nil
+}
+
+func (m *mockFDB) NeighSet(n *netlink.Neigh) error {
+	m.sets = append(m.sets, n)
+	return m.setErr
+}
+
+func (m *mockFDB) NeighDel(n *netlink.Neigh) error {
+	m.dels = append(m.dels, n)
+	return m.delErr
+}
 
 func TestBuildRouteDistinguisher(t *testing.T) {
 	tests := []struct {
@@ -187,12 +217,14 @@ func mustMarshalPath(t *testing.T, nlriMsg interface{ ProtoReflect() protoreflec
 }
 
 func TestProcessRouteUpdateDispatch(t *testing.T) {
-	// processRouteUpdate should not panic on any NLRI type. The netlink
-	// calls inside handlers will fail (no real VXLAN device), but dispatch
-	// and early-return paths are exercised.
+	// processRouteUpdate should not panic on any NLRI type. With a mock FDB,
+	// we can verify dispatch reaches handlers without needing real netlink.
+	mock := &mockFDB{}
 	overlay := &OverlayTier{
-		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
-		log: slog.Default(),
+		cfg:     &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
+		log:     slog.Default(),
+		fdb:     mock,
+		macVTEP: make(map[string]string),
 	}
 
 	tests := []struct {
@@ -244,9 +276,12 @@ func TestProcessRouteUpdateDispatch(t *testing.T) {
 func TestHandleType2RouteSelfSkip(t *testing.T) {
 	// When the next-hop matches our own RouterID, handleType2Route
 	// should skip FDB installation entirely (no netlink call).
+	mock := &mockFDB{}
 	overlay := &OverlayTier{
-		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
-		log: slog.Default(),
+		cfg:     &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
+		log:     slog.Default(),
+		fdb:     mock,
+		macVTEP: make(map[string]string),
 	}
 
 	route := &apipb.EVPNMACIPAdvertisementRoute{
@@ -261,9 +296,12 @@ func TestHandleType2RouteSelfSkip(t *testing.T) {
 func TestHandleType3RouteSelfSkip(t *testing.T) {
 	// When the route IP matches our own RouterID, handleType3Route
 	// should skip BUM FDB installation entirely.
+	mock := &mockFDB{}
 	overlay := &OverlayTier{
-		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
-		log: slog.Default(),
+		cfg:     &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
+		log:     slog.Default(),
+		fdb:     mock,
+		macVTEP: make(map[string]string),
 	}
 
 	route := &apipb.EVPNInclusiveMulticastEthernetTagRoute{
@@ -276,9 +314,12 @@ func TestHandleType3RouteSelfSkip(t *testing.T) {
 }
 
 func TestHandleType2RouteInvalidMAC(t *testing.T) {
+	mock := &mockFDB{}
 	overlay := &OverlayTier{
-		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
-		log: slog.Default(),
+		cfg:     &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
+		log:     slog.Default(),
+		fdb:     mock,
+		macVTEP: make(map[string]string),
 	}
 
 	route := &apipb.EVPNMACIPAdvertisementRoute{
@@ -290,9 +331,12 @@ func TestHandleType2RouteInvalidMAC(t *testing.T) {
 }
 
 func TestHandleType2RouteNoNextHop(t *testing.T) {
+	mock := &mockFDB{}
 	overlay := &OverlayTier{
-		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
-		log: slog.Default(),
+		cfg:     &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
+		log:     slog.Default(),
+		fdb:     mock,
+		macVTEP: make(map[string]string),
 	}
 
 	route := &apipb.EVPNMACIPAdvertisementRoute{
@@ -304,9 +348,12 @@ func TestHandleType2RouteNoNextHop(t *testing.T) {
 }
 
 func TestHandleType3RouteNoVTEP(t *testing.T) {
+	mock := &mockFDB{}
 	overlay := &OverlayTier{
-		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
-		log: slog.Default(),
+		cfg:     &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
+		log:     slog.Default(),
+		fdb:     mock,
+		macVTEP: make(map[string]string),
 	}
 
 	route := &apipb.EVPNInclusiveMulticastEthernetTagRoute{
@@ -406,5 +453,113 @@ func TestExtractNextHopMixedAttrs(t *testing.T) {
 	got := extractNextHop(path)
 	if got != "10.0.0.5" {
 		t.Errorf("extractNextHop() = %q, want 10.0.0.5", got)
+	}
+}
+
+func TestHandleType2RouteFDBInstall(t *testing.T) {
+	mock := &mockFDB{}
+	overlay := &OverlayTier{
+		cfg:     &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
+		log:     slog.Default(),
+		fdb:     mock,
+		macVTEP: make(map[string]string),
+	}
+
+	route := &apipb.EVPNMACIPAdvertisementRoute{
+		MacAddress: "aa:bb:cc:dd:ee:ff",
+		IpAddress:  "10.100.0.50",
+	}
+
+	overlay.handleType2Route(route, "10.0.0.1", false)
+
+	if len(mock.sets) != 1 {
+		t.Fatalf("expected 1 NeighSet call, got %d", len(mock.sets))
+	}
+	wantMAC, _ := net.ParseMAC("aa:bb:cc:dd:ee:ff")
+	if mock.sets[0].HardwareAddr.String() != wantMAC.String() {
+		t.Errorf("FDB MAC = %s, want %s", mock.sets[0].HardwareAddr, wantMAC)
+	}
+	if !mock.sets[0].IP.Equal(net.ParseIP("10.0.0.1")) {
+		t.Errorf("FDB VTEP = %s, want 10.0.0.1", mock.sets[0].IP)
+	}
+	if overlay.macVTEP["aa:bb:cc:dd:ee:ff"] != "10.0.0.1" {
+		t.Errorf("macVTEP not tracked")
+	}
+}
+
+func TestHandleType2RouteWithdraw(t *testing.T) {
+	mock := &mockFDB{}
+	overlay := &OverlayTier{
+		cfg:     &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
+		log:     slog.Default(),
+		fdb:     mock,
+		macVTEP: map[string]string{"aa:bb:cc:dd:ee:ff": "10.0.0.1"},
+	}
+
+	route := &apipb.EVPNMACIPAdvertisementRoute{
+		MacAddress: "aa:bb:cc:dd:ee:ff",
+	}
+
+	// Withdraw with empty next-hop — should look up stored VTEP.
+	overlay.handleType2Route(route, "", true)
+
+	if len(mock.dels) != 1 {
+		t.Fatalf("expected 1 NeighDel call, got %d", len(mock.dels))
+	}
+	if !mock.dels[0].IP.Equal(net.ParseIP("10.0.0.1")) {
+		t.Errorf("FDB del VTEP = %s, want 10.0.0.1", mock.dels[0].IP)
+	}
+	if _, ok := overlay.macVTEP["aa:bb:cc:dd:ee:ff"]; ok {
+		t.Error("macVTEP should be deleted after withdraw")
+	}
+}
+
+func TestHandleType3RouteFDBInstall(t *testing.T) {
+	mock := &mockFDB{}
+	overlay := &OverlayTier{
+		cfg:     &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
+		log:     slog.Default(),
+		fdb:     mock,
+		macVTEP: make(map[string]string),
+	}
+
+	route := &apipb.EVPNInclusiveMulticastEthernetTagRoute{
+		IpAddress: "10.0.0.1",
+	}
+
+	overlay.handleType3Route(route, "10.0.0.1", false)
+
+	if len(mock.sets) != 1 {
+		t.Fatalf("expected 1 NeighSet call, got %d", len(mock.sets))
+	}
+	wantMAC := net.HardwareAddr{0, 0, 0, 0, 0, 0}
+	if mock.sets[0].HardwareAddr.String() != wantMAC.String() {
+		t.Errorf("BUM FDB MAC = %s, want %s", mock.sets[0].HardwareAddr, wantMAC)
+	}
+	if !mock.sets[0].IP.Equal(net.ParseIP("10.0.0.1")) {
+		t.Errorf("BUM FDB VTEP = %s, want 10.0.0.1", mock.sets[0].IP)
+	}
+}
+
+func TestHandleType3RouteWithdraw(t *testing.T) {
+	mock := &mockFDB{}
+	overlay := &OverlayTier{
+		cfg:     &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
+		log:     slog.Default(),
+		fdb:     mock,
+		macVTEP: make(map[string]string),
+	}
+
+	route := &apipb.EVPNInclusiveMulticastEthernetTagRoute{
+		IpAddress: "10.0.0.1",
+	}
+
+	overlay.handleType3Route(route, "10.0.0.1", true)
+
+	if len(mock.dels) != 1 {
+		t.Fatalf("expected 1 NeighDel call, got %d", len(mock.dels))
+	}
+	if !mock.dels[0].IP.Equal(net.ParseIP("10.0.0.1")) {
+		t.Errorf("BUM FDB del VTEP = %s, want 10.0.0.1", mock.dels[0].IP)
 	}
 }

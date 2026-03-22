@@ -33,12 +33,27 @@ const (
 	asnMax2Byte = 65535
 )
 
+// fdbInstaller abstracts netlink FDB operations for testability.
+type fdbInstaller interface {
+	LinkByName(name string) (netlink.Link, error)
+	NeighSet(neigh *netlink.Neigh) error
+	NeighDel(neigh *netlink.Neigh) error
+}
+
+// netlinkFDB is the production implementation using real netlink calls.
+type netlinkFDB struct{}
+
+func (netlinkFDB) LinkByName(name string) (netlink.Link, error) { return netlink.LinkByName(name) }
+func (netlinkFDB) NeighSet(n *netlink.Neigh) error              { return netlink.NeighSet(n) }
+func (netlinkFDB) NeighDel(n *netlink.Neigh) error              { return netlink.NeighDel(n) }
+
 // OverlayTier manages EVPN Type-5 routes and VXLAN encapsulation.
 type OverlayTier struct {
 	bgp    *server.BgpServer
 	cfg    *Config
 	log    *slog.Logger
 	cancel context.CancelFunc
+	fdb    fdbInstaller
 
 	// Track resources created by us for clean teardown.
 	createdVRF      bool
@@ -58,6 +73,7 @@ func NewOverlayTier(cfg *Config) *OverlayTier {
 		cfg:     cfg,
 		log:     slog.With("tier", "overlay"),
 		macVTEP: make(map[string]string),
+		fdb:     netlinkFDB{},
 	}
 }
 
@@ -115,7 +131,7 @@ func (o *OverlayTier) Teardown(_ context.Context) error {
 		lo, err := netlink.LinkByName("lo")
 		if err == nil {
 			if err := netlink.AddrDel(lo, o.addedLoopbackIP); err != nil {
-				o.log.Warn("Failed to remove overlay loopback IP", "ip", o.addedLoopbackIP, "error", err)
+				o.log.Warn("failed to remove overlay loopback IP", "ip", o.addedLoopbackIP, "error", err)
 			}
 		}
 	}
@@ -138,7 +154,7 @@ func (o *OverlayTier) Teardown(_ context.Context) error {
 			continue
 		}
 		if err := netlink.LinkDel(link); err != nil {
-			o.log.Warn("Failed to remove interface", "name", res.name, "error", err)
+			o.log.Warn("failed to remove interface", "name", res.name, "error", err)
 		}
 	}
 
@@ -172,7 +188,7 @@ func (o *OverlayTier) CreateVRF() error {
 		return fmt.Errorf("bring up VRF %s: %w", o.cfg.VRFName, err)
 	}
 
-	o.log.Info("VRF ready", "name", o.cfg.VRFName, "table", o.cfg.VRFTableID)
+	o.log.Info("vrf ready", "name", o.cfg.VRFName, "table", o.cfg.VRFTableID)
 	return nil
 }
 
@@ -225,7 +241,7 @@ func (o *OverlayTier) createVXLANAndBridge() error {
 		}
 	}
 
-	o.log.Info("Created VXLAN and bridge",
+	o.log.Info("created VXLAN and bridge",
 		"vxlan", vxlanName, "vni", o.cfg.ProvisionVNI,
 		"bridge", o.cfg.BridgeName,
 	)
@@ -312,7 +328,7 @@ func (o *OverlayTier) addProvisionIP() error {
 		return fmt.Errorf("add provision IP to bridge: %w", err)
 	}
 
-	o.log.Info("Assigned provision IP", "bridge", o.cfg.BridgeName, "ip", o.cfg.ProvisionIP)
+	o.log.Info("assigned provision IP", "bridge", o.cfg.BridgeName, "ip", o.cfg.ProvisionIP)
 	return nil
 }
 
@@ -337,11 +353,11 @@ func (o *OverlayTier) addGatewayFDB(vxLink netlink.Link) error {
 		Flags:        netlink.NTF_SELF,
 		State:        netlink.NUD_PERMANENT,
 	}
-	if err := netlink.NeighAppend(fdb); err != nil {
-		return fmt.Errorf("append BUM FDB entry for %s: %w", o.cfg.ProvisionGateway, err)
+	if err := netlink.NeighSet(fdb); err != nil {
+		return fmt.Errorf("set BUM FDB entry for %s: %w", o.cfg.ProvisionGateway, err)
 	}
 
-	o.log.Info("Added gateway BUM FDB entry", "vxlan", vxLink.Attrs().Name, "vtep", o.cfg.ProvisionGateway)
+	o.log.Info("added gateway BUM FDB entry", "vxlan", vxLink.Attrs().Name, "vtep", o.cfg.ProvisionGateway)
 	return nil
 }
 
@@ -369,7 +385,7 @@ func (o *OverlayTier) addOverlayLoopback() error {
 	}
 	o.addedLoopbackIP = addr
 
-	o.log.Info("Added overlay loopback", "ip", o.cfg.OverlayIP)
+	o.log.Info("added overlay loopback", "ip", o.cfg.OverlayIP)
 	return nil
 }
 
@@ -422,7 +438,7 @@ func (o *OverlayTier) watchRoutes(ctx context.Context) {
 		}
 	})
 	if err != nil {
-		o.log.Warn("Route watcher stopped", "error", err)
+		o.log.Warn("route watcher stopped", "error", err)
 	}
 }
 
@@ -493,7 +509,7 @@ func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute,
 	}
 
 	vxlanName := o.vxlanName()
-	vxLink, err := netlink.LinkByName(vxlanName)
+	vxLink, err := o.fdb.LinkByName(vxlanName)
 	if err != nil {
 		o.log.Warn("cannot find VXLAN for FDB update", "vxlan", vxlanName, "error", err)
 		return
@@ -509,7 +525,7 @@ func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute,
 	}
 
 	if withdraw {
-		if err := netlink.NeighDel(fdb); err != nil {
+		if err := o.fdb.NeighDel(fdb); err != nil {
 			o.log.Debug("failed to delete FDB entry", "mac", mac, "vtep", vtep, "error", err)
 		} else {
 			o.log.Info("removed FDB entry from type-2 withdraw", "mac", mac, "vtep", vtep)
@@ -518,7 +534,7 @@ func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute,
 		return
 	}
 
-	if err := netlink.NeighSet(fdb); err != nil {
+	if err := o.fdb.NeighSet(fdb); err != nil {
 		o.log.Debug("failed to add/update FDB entry", "mac", mac, "vtep", vtep, "error", err)
 	} else {
 		o.log.Info("installed FDB entry from type-2 route", "mac", mac, "vtep", vtep)
@@ -546,7 +562,7 @@ func (o *OverlayTier) handleType3Route(route *apipb.EVPNInclusiveMulticastEthern
 	}
 
 	vxlanName := o.vxlanName()
-	vxLink, err := netlink.LinkByName(vxlanName)
+	vxLink, err := o.fdb.LinkByName(vxlanName)
 	if err != nil {
 		o.log.Warn("cannot find VXLAN for BUM update", "vxlan", vxlanName, "error", err)
 		return
@@ -562,7 +578,7 @@ func (o *OverlayTier) handleType3Route(route *apipb.EVPNInclusiveMulticastEthern
 	}
 
 	if withdraw {
-		if err := netlink.NeighDel(fdb); err != nil {
+		if err := o.fdb.NeighDel(fdb); err != nil {
 			o.log.Debug("failed to delete BUM FDB entry", "vtep", remoteIP, "error", err)
 		} else {
 			o.log.Info("removed BUM FDB entry from type-3 withdraw", "vtep", remoteIP)
@@ -570,7 +586,7 @@ func (o *OverlayTier) handleType3Route(route *apipb.EVPNInclusiveMulticastEthern
 		return
 	}
 
-	if err := netlink.NeighSet(fdb); err != nil {
+	if err := o.fdb.NeighSet(fdb); err != nil {
 		o.log.Debug("failed to add/update BUM FDB entry", "vtep", remoteIP, "error", err)
 	} else {
 		o.log.Info("installed BUM FDB entry from type-3 route", "vtep", remoteIP)

@@ -91,7 +91,7 @@ The VXLAN overlay is non-functional because of multiple compounding gaps. Each g
 
 **Evidence:**
 - `pkg/network/gobgp/underlay.go` — `discoverLinkLocalPeer()` discovers the link-local neighbor and establishes BGP, but the underlay only advertises the local RouterID /32 — it never installs received routes
-- `pkg/network/gobgp/overlay.go` — `watchRoutes()` (line ~340) is a **log-only stub**: it receives EVPN routes from GoBGP but only logs them, never install kernel routes or FDB entries
+- `pkg/network/gobgp/overlay.go` — `watchRoutes()` now processes Type-2/3 EVPN routes and programs FDB entries (fixed in PR #85), but kernel FIB route installation for remote VTEPs is not automatic — a static gateway route is still required
 
 **Fix:** `installGatewayRoute()` — add a /32 host route to the gateway VTEP via the first physical NIC.  
 **Status:** ✅ Fixed in commit `fdafdb4` on main. Requires `provision_gateway` env var to be set.
