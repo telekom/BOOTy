@@ -83,7 +83,7 @@ func TestClassifyUSBDevice(t *testing.T) {
 		{" 0x08 ", "Mass Storage"},
 		{"0E", "Video"},
 		{"zz", "Unknown (zz)"},
-		{"", "Unknown ()"},
+		{"", "Unknown"},
 	}
 	for _, tc := range tests {
 		got := ClassifyUSBDevice(tc.code)
@@ -161,8 +161,13 @@ func TestResolveGPUName(t *testing.T) {
 	}
 
 	emptyDev := resolveGPUName("0x9999", "")
-	if emptyDev != "GPU 0x9999:" {
-		t.Errorf("emptyDev = %q, want %q", emptyDev, "GPU 0x9999:")
+	if emptyDev != "GPU 0x9999" {
+		t.Errorf("emptyDev = %q, want %q", emptyDev, "GPU 0x9999")
+	}
+
+	bothEmpty := resolveGPUName("", "")
+	if bothEmpty != "GPU unknown" {
+		t.Errorf("bothEmpty = %q, want %q", bothEmpty, "GPU unknown")
 	}
 }
 

@@ -9,8 +9,11 @@ import (
 // gpuPCIClasses identifies GPU/accelerator PCI class codes.
 var gpuPCIClasses = map[string]bool{
 	"0x030000": true, // VGA compatible controller
+	"0x030100": true, // XGA compatible controller
 	"0x030200": true, // 3D controller (compute GPUs like A100)
+	"0x030800": true, // Display controller (other)
 	"0x120000": true, // Processing accelerator
+	"0x120100": true, // AI inference accelerator
 }
 
 // ScanGPUs enumerates GPU/accelerator devices from sysfs.
@@ -69,11 +72,13 @@ func resolveGPUName(vendorID, deviceID string) string {
 	if name, ok := knownGPUNames[key]; ok {
 		return name
 	}
-	// Prefer device ID if available; fall back to vendor+device key.
 	if deviceID != "" {
 		return "GPU " + deviceID
 	}
-	return "GPU " + key
+	if vendorID != "" {
+		return "GPU " + vendorID
+	}
+	return "GPU unknown"
 }
 
 func readDriverName(devPath string) string {

@@ -69,6 +69,9 @@ var usbClassNames = map[string]string{
 // ClassifyUSBDevice returns a human-readable class name.
 func ClassifyUSBDevice(classCode string) string {
 	classCode = strings.TrimPrefix(strings.TrimSpace(strings.ToLower(classCode)), "0x")
+	if classCode == "" {
+		return "Unknown"
+	}
 	if name, ok := usbClassNames[classCode]; ok {
 		return name
 	}
