@@ -1033,3 +1033,94 @@ func TestClientAcknowledgeCommandNoURL(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestReportMetrics_TelemetryDisabled(t *testing.T) {
+	client := NewFromConfig(&config.MachineConfig{
+		TelemetryEnabled: false,
+		MetricsURL:       "http://example.com/metrics",
+	})
+	// Should no-op when telemetry is disabled.
+	if err := client.ReportMetrics(context.Background(), []byte(`{}`)); err != nil {
+		t.Fatalf("ReportMetrics() error: %v", err)
+	}
+}
+
+func TestReportMetrics_TelemetryEnabled(t *testing.T) {
+	var receivedBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		receivedBody = string(body)
+	}))
+	defer srv.Close()
+
+	client := NewFromConfig(&config.MachineConfig{
+		TelemetryEnabled: true,
+		MetricsURL:       srv.URL + "/metrics",
+		Token:            "test-token",
+	})
+	data := []byte(`{"stepRetries":3}`)
+	if err := client.ReportMetrics(context.Background(), data); err != nil {
+		t.Fatalf("ReportMetrics() error: %v", err)
+	}
+	if receivedBody != string(data) {
+		t.Errorf("body = %q, want %q", receivedBody, data)
+	}
+}
+
+func TestReportMetrics_FallbackToTelemetryURL(t *testing.T) {
+	var received bool
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		received = true
+	}))
+	defer srv.Close()
+
+	client := NewFromConfig(&config.MachineConfig{
+		TelemetryEnabled: true,
+		TelemetryURL:     srv.URL + "/telemetry",
+		// MetricsURL intentionally empty — should fall back to TelemetryURL.
+	})
+	if err := client.ReportMetrics(context.Background(), []byte(`{}`)); err != nil {
+		t.Fatalf("ReportMetrics() error: %v", err)
+	}
+	if !received {
+		t.Error("expected request to TelemetryURL fallback")
+	}
+}
+
+func TestReportMetrics_NoURL(t *testing.T) {
+	client := NewFromConfig(&config.MachineConfig{TelemetryEnabled: true})
+	// No MetricsURL or TelemetryURL — should silently no-op.
+	if err := client.ReportMetrics(context.Background(), []byte(`{}`)); err != nil {
+		t.Fatalf("ReportMetrics() error: %v", err)
+	}
+}
+
+func TestSendEvent_TelemetryDisabled(t *testing.T) {
+	client := NewFromConfig(&config.MachineConfig{
+		TelemetryEnabled: false,
+		EventURL:         "http://example.com/events",
+	})
+	if err := client.SendEvent(context.Background(), []byte(`{}`)); err != nil {
+		t.Fatalf("SendEvent() error: %v", err)
+	}
+}
+
+func TestSendEvent_TelemetryEnabled(t *testing.T) {
+	var received bool
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		received = true
+	}))
+	defer srv.Close()
+
+	client := NewFromConfig(&config.MachineConfig{
+		TelemetryEnabled: true,
+		EventURL:         srv.URL + "/events",
+		Token:            "test-token",
+	})
+	if err := client.SendEvent(context.Background(), []byte(`{"event":"started"}`)); err != nil {
+		t.Fatalf("SendEvent() error: %v", err)
+	}
+	if !received {
+		t.Error("expected event to be sent")
+	}
+}

@@ -1,0 +1,86 @@
+package tpm
+
+import (
+	"encoding/hex"
+	"testing"
+)
+
+func TestVerifyQuoteAgainstPolicy_NilPolicy(t *testing.T) {
+	result := VerifyQuoteAgainstPolicy(nil, nil)
+	if result.Valid {
+		t.Error("expected invalid for nil policy")
+	}
+}
+
+func TestVerifyQuoteAgainstPolicy_Match(t *testing.T) {
+	digest := HashBytes([]byte("test"))
+	policy := &GoldenPolicy{
+		Name:    "test-policy",
+		Version: "1.0",
+		PCRs: []GoldenPCR{
+			{PCR: 0, Algorithm: "sha256", Digest: hex.EncodeToString(digest)},
+		},
+	}
+	actual := map[int][]byte{0: digest}
+	result := VerifyQuoteAgainstPolicy(actual, policy)
+	if !result.Valid {
+		t.Errorf("expected valid, got mismatches: %v", result.Mismatches)
+	}
+}
+
+func TestVerifyQuoteAgainstPolicy_Mismatch(t *testing.T) {
+	policy := &GoldenPolicy{
+		PCRs: []GoldenPCR{
+			{PCR: 0, Algorithm: "sha256", Digest: hex.EncodeToString(HashBytes([]byte("expected")))},
+		},
+	}
+	actual := map[int][]byte{0: HashBytes([]byte("actual"))}
+	result := VerifyQuoteAgainstPolicy(actual, policy)
+	if result.Valid {
+		t.Error("expected invalid")
+	}
+	if len(result.Mismatches) != 1 {
+		t.Errorf("expected 1 mismatch, got %d", len(result.Mismatches))
+	}
+}
+
+func TestVerifyQuoteAgainstPolicy_MissingPCR(t *testing.T) {
+	policy := &GoldenPolicy{
+		PCRs: []GoldenPCR{
+			{PCR: 7, Digest: hex.EncodeToString(HashBytes([]byte("data")))},
+		},
+	}
+	result := VerifyQuoteAgainstPolicy(map[int][]byte{}, policy)
+	if result.Valid {
+		t.Error("expected invalid for missing PCR")
+	}
+}
+
+func TestVerifyQuoteAgainstPolicy_EmptyPolicy(t *testing.T) {
+	policy := &GoldenPolicy{Name: "empty", PCRs: []GoldenPCR{}}
+	result := VerifyQuoteAgainstPolicy(map[int][]byte{0: HashBytes([]byte("x"))}, policy)
+	if result.Valid {
+		t.Error("expected invalid for empty policy PCRs")
+	}
+	if result.Error == "" {
+		t.Error("expected error message for empty policy")
+	}
+}
+
+func TestVerifyQuoteAgainstPolicy_UnsupportedAlgorithm(t *testing.T) {
+	policy := &GoldenPolicy{
+		PCRs: []GoldenPCR{
+			{PCR: 0, Algorithm: "sha512", Digest: "aabbccdd"},
+		},
+	}
+	result := VerifyQuoteAgainstPolicy(map[int][]byte{0: HashBytes([]byte("data"))}, policy)
+	if result.Valid {
+		t.Error("expected invalid for unsupported algorithm")
+	}
+	if len(result.Mismatches) != 1 {
+		t.Fatalf("expected 1 mismatch, got %d", len(result.Mismatches))
+	}
+	if result.Mismatches[0].Actual != "unsupported algorithm: sha512" {
+		t.Errorf("unexpected actual: %s", result.Mismatches[0].Actual)
+	}
+}
