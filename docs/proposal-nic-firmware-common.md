@@ -345,34 +345,41 @@ NICs are matched by PCI vendor ID:
 
 | Vendor ID | Vendor | Manager | Tool |
 |-----------|--------|---------|------|
-| `0x15b3` | Mellanox | `mellanox.Manager` | mstconfig |
-| `0x8086` | Intel | `intel.Manager` | devlink, ethtool |
-| `0x14e4` | Broadcom | `broadcom.Manager` | ethtool, bnxtnvm |
+| `0x15b3` | Mellanox | `mellanox.Manager` | mstconfig, ethtool |
+| `0x8086` | Intel | `intel.Manager` | ethtool |
+| `0x14e4` | Broadcom | `broadcom.Manager` | ethtool |
 
 ### Programmatic Access
 
 ```go
-import "github.com/telekom/BOOTy/pkg/firmware/nic"
+import (
+    "github.com/telekom/BOOTy/pkg/firmware/nic"
+    "github.com/telekom/BOOTy/pkg/firmware/nic/intel"
+)
 
 // Detect vendor from PCI address.
-vendor := nic.DetectVendor("0000:3b:00.0")  // → VendorMellanox
+vendor := nic.DetectVendor("0000:3b:00.0")  // → VendorIntel
 
 // Create a vendor-specific firmware manager.
-mgr, err := nic.NewManager(log, &nic.Identifier{
+mgr := intel.New(log)
+
+// Build an identifier.
+id := &nic.Identifier{
     PCIAddress: "0000:3b:00.0",
-    VendorID:   "0x15b3",
-})
+    VendorID:   "0x8086",
+    Interface:  "eno1",
+}
 
 // Capture current firmware state.
 state, err := mgr.Capture(ctx, id)
 
 // Compare against baseline.
 baseline := &nic.Baseline{
-    Vendor:          nic.VendorMellanox,
-    MinVersion:      "16.35.1012",
-    RequiredParams:  map[string]string{"SRIOV_EN": "True"},
+    Vendor:     nic.VendorIntel,
+    Parameters: map[string]string{"disable-fw-lldp": "on"},
 }
-diff := nic.DiffBaseline(baseline, state)
+diff := nic.Compare(baseline, state)
+// diff.Match, diff.Changes (deterministically sorted)
 ```
 
 ### Baseline Matching

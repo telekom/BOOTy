@@ -1,3 +1,5 @@
+//go:build linux
+
 package intel
 
 import (
@@ -125,7 +127,7 @@ func (m *Manager) captureViaEthtool(ctx context.Context, iface string, state *ni
 	// Capture modifiable private flags via "ethtool --show-priv-flags"
 	out, err = m.commander.CombinedOutput(ctx, "ethtool", "--show-priv-flags", iface)
 	if err != nil {
-		m.log.Debug("ethtool --show-priv-flags failed (optional)", "err", err)
+		m.log.Debug("ethtool --show-priv-flags failed (optional)", "error", err)
 		// Non-fatal: some drivers don't support private flags
 		return nil
 	}
@@ -162,6 +164,9 @@ func (m *Manager) applyViaEthtool(ctx context.Context, iface string, change nic.
 
 // DisableFWLLDP disables the firmware-managed LLDP agent on Intel ice NICs.
 func (m *Manager) DisableFWLLDP(ctx context.Context, iface string) error {
+	if iface == "" {
+		return fmt.Errorf("interface name required")
+	}
 	return m.applyViaEthtool(ctx, iface, nic.FlagChange{
 		Name:  "disable-fw-lldp",
 		Value: "on",

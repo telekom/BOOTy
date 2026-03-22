@@ -1,3 +1,5 @@
+//go:build linux
+
 package broadcom
 
 import (
@@ -126,7 +128,7 @@ func (m *Manager) captureViaEthtool(ctx context.Context, iface string, state *ni
 	// Capture modifiable private flags via "ethtool --show-priv-flags"
 	out, err = m.commander.CombinedOutput(ctx, "ethtool", "--show-priv-flags", iface)
 	if err != nil {
-		m.log.Debug("ethtool --show-priv-flags failed (optional)", "err", err)
+		m.log.Debug("ethtool --show-priv-flags failed (optional)", "error", err)
 		// Non-fatal: some drivers don't support private flags
 		return nil
 	}

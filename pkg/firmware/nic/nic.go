@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -117,7 +118,15 @@ func Compare(baseline *Baseline, state *FirmwareState) *Diff {
 		return diff
 	}
 
-	for name, expected := range baseline.Parameters {
+	// Sort baseline parameter names for deterministic diff output.
+	names := make([]string, 0, len(baseline.Parameters))
+	for name := range baseline.Parameters {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		expected := baseline.Parameters[name]
 		param, ok := state.Parameters[name]
 		if !ok {
 			diff.Changes = append(diff.Changes, DiffChange{
