@@ -31,7 +31,7 @@ func (d *Device) Quote(pcrIndices []int, nonce []byte) (*AttestationQuote, error
 		return nil, fmt.Errorf("no PCR indices specified")
 	}
 
-	ak, akPub, err := d.createAK()
+	ak, akX, akY, err := d.createAK()
 	if err != nil {
 		return nil, fmt.Errorf("creating attestation key: %w", err)
 	}
@@ -73,8 +73,8 @@ func (d *Device) Quote(pcrIndices []int, nonce []byte) (*AttestationQuote, error
 		PCRDigest: compositePCRDigest(pcrValues, pcrIndices),
 		PCRValues: pcrValues,
 		Nonce:     nonce,
-		PubKeyX:   akPub.X.Bytes(),
-		PubKeyY:   akPub.Y.Bytes(),
+		PubKeyX:   akX,
+		PubKeyY:   akY,
 	}, nil
 }
 
@@ -95,10 +95,14 @@ func VerifyQuoteSignature(quote *AttestationQuote) (bool, error) {
 
 // MarshalQuote serializes a quote to JSON.
 func MarshalQuote(quote *AttestationQuote) ([]byte, error) {
-	return json.Marshal(quote)
+	data, err := json.Marshal(quote)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling quote: %w", err)
+	}
+	return data, nil
 }
 
-func (d *Device) createAK() (tpm2.TPMHandle, *ecdsa.PublicKey, error) {
+func (d *Device) createAK() (tpm2.TPMHandle, []byte, []byte, error) {
 	primary := tpm2.CreatePrimary{
 		PrimaryHandle: tpm2.AuthHandle{
 			Handle: tpm2.TPMRHEndorsement,
@@ -127,26 +131,21 @@ func (d *Device) createAK() (tpm2.TPMHandle, *ecdsa.PublicKey, error) {
 	}
 	rsp, err := primary.Execute(d.tpm)
 	if err != nil {
-		return 0, nil, fmt.Errorf("creating AK primary: %w", err)
+		return 0, nil, nil, fmt.Errorf("creating AK primary: %w", err)
 	}
 
 	pub, err := rsp.OutPublic.Contents()
 	if err != nil {
 		d.flushContext(rsp.ObjectHandle)
-		return 0, nil, fmt.Errorf("reading AK public: %w", err)
+		return 0, nil, nil, fmt.Errorf("reading AK public: %w", err)
 	}
 	ecc, err := pub.Unique.ECC()
 	if err != nil {
 		d.flushContext(rsp.ObjectHandle)
-		return 0, nil, fmt.Errorf("reading ECC params: %w", err)
+		return 0, nil, nil, fmt.Errorf("reading ECC params: %w", err)
 	}
 
-	pubKey := &ecdsa.PublicKey{
-		Curve: elliptic.P256(),
-		X:     new(big.Int).SetBytes(ecc.X.Buffer),
-		Y:     new(big.Int).SetBytes(ecc.Y.Buffer),
-	}
-	return rsp.ObjectHandle, pubKey, nil
+	return rsp.ObjectHandle, ecc.X.Buffer, ecc.Y.Buffer, nil
 }
 
 func (d *Device) flushContext(handle tpm2.TPMHandle) {

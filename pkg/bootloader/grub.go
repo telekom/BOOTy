@@ -3,6 +3,7 @@
 package bootloader
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -17,13 +18,14 @@ type GRUB struct{}
 // Install installs GRUB onto diskDevice targeting rootPath.
 func (g *GRUB) Install(rootPath, diskDevice string) error {
 	slog.Info("installing grub", "root", rootPath, "disk", diskDevice)
+	ctx := context.Background()
 
-	out, err := exec.Command("chroot", rootPath, "grub-install", diskDevice).CombinedOutput() //nolint:gosec // trusted disk path
+	out, err := exec.CommandContext(ctx, "chroot", rootPath, "grub-install", diskDevice).CombinedOutput() //nolint:gosec // trusted disk path
 	if err != nil {
 		return fmt.Errorf("grub-install: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 
-	out, err = exec.Command("chroot", rootPath, "update-grub").CombinedOutput() //nolint:gosec // trusted root path
+	out, err = exec.CommandContext(ctx, "chroot", rootPath, "update-grub").CombinedOutput() //nolint:gosec // trusted root path
 	if err != nil {
 		return fmt.Errorf("update-grub: %s: %w", strings.TrimSpace(string(out)), err)
 	}
@@ -33,7 +35,7 @@ func (g *GRUB) Install(rootPath, diskDevice string) error {
 // Configure sets the default boot entry and kernel command line.
 func (g *GRUB) Configure(rootPath string, cfg BootConfig) error {
 	if cfg.DefaultEntry != "" {
-		out, err := exec.Command("chroot", rootPath,
+		out, err := exec.CommandContext(context.Background(), "chroot", rootPath,
 			"grub-set-default", cfg.DefaultEntry).CombinedOutput() //nolint:gosec // trusted config
 		if err != nil {
 			return fmt.Errorf("grub-set-default: %s: %w", strings.TrimSpace(string(out)), err)
@@ -60,7 +62,7 @@ func (g *GRUB) ListEntries(rootPath string) ([]BootEntry, error) {
 
 // SetDefault sets a GRUB default entry by title.
 func (g *GRUB) SetDefault(rootPath, title string) error {
-	out, err := exec.Command("chroot", rootPath,
+	out, err := exec.CommandContext(context.Background(), "chroot", rootPath,
 		"grub-set-default", title).CombinedOutput() //nolint:gosec // trusted title
 	if err != nil {
 		return fmt.Errorf("grub-set-default: %s: %w", strings.TrimSpace(string(out)), err)

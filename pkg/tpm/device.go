@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
+	"github.com/google/go-tpm/tpm2/transport/linuxtpm"
 )
 
 // Device wraps a TPM2 device handle for hardware operations.
@@ -21,7 +22,7 @@ type Device struct {
 // Open opens the TPM device, preferring the resource-managed path.
 func Open() (*Device, error) {
 	for _, path := range []string{devTPMRM, devTPM} {
-		tpm, err := transport.OpenTPM(path)
+		tpm, err := linuxtpm.Open(path)
 		if err == nil {
 			return &Device{tpm: tpm}, nil
 		}
@@ -32,7 +33,9 @@ func Open() (*Device, error) {
 // Close releases the TPM device.
 func (d *Device) Close() error {
 	if d.tpm != nil {
-		return d.tpm.Close()
+		if err := d.tpm.Close(); err != nil {
+			return fmt.Errorf("closing tpm: %w", err)
+		}
 	}
 	return nil
 }
@@ -100,7 +103,7 @@ func (d *Device) MeasureFile(pcrIndex int, path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return d.MeasureReader(pcrIndex, f)
 }
 

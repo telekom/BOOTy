@@ -154,7 +154,7 @@ func (d *Device) createPCRPolicySession(pcrs []int) (tpm2.Session, func() error,
 		Pcrs:          sel,
 	}
 	if _, err := policyPCR.Execute(d.tpm); err != nil {
-		cleanup() //nolint:errcheck // best-effort cleanup
+		cleanup() //nolint:errcheck,gosec // best-effort cleanup
 		return nil, nil, fmt.Errorf("policy pcr: %w", err)
 	}
 	return sess, cleanup, nil

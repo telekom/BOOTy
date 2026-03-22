@@ -3,6 +3,7 @@
 package secureboot
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -35,7 +36,7 @@ func (m *MOKEnroller) Enroll() error {
 	if m.password != "" {
 		args = append(args, "--root-pw", "--simple-hash")
 	}
-	cmd := exec.Command("mokutil", args...) //nolint:gosec // trusted cert path
+	cmd := exec.CommandContext(context.Background(), "mokutil", args...) //nolint:gosec // trusted cert path
 	if m.password != "" {
 		// mokutil reads the password from stdin when --root-pw is used.
 		cmd.Stdin = strings.NewReader(m.password + "\n" + m.password + "\n")
@@ -51,7 +52,7 @@ func (m *MOKEnroller) Enroll() error {
 // IsEnrolled checks if the MOK certificate is pending or already enrolled
 // by using mokutil --test-key, which directly validates the key against the MOK list.
 func (m *MOKEnroller) IsEnrolled() (bool, error) {
-	out, err := exec.Command("mokutil", "--test-key", m.certPath).CombinedOutput() //nolint:gosec // trusted cert path
+	out, err := exec.CommandContext(context.Background(), "mokutil", "--test-key", m.certPath).CombinedOutput() //nolint:gosec // trusted cert path
 	if err != nil {
 		// mokutil --test-key exits non-zero when the key is not enrolled.
 		outStr := strings.TrimSpace(string(out))
