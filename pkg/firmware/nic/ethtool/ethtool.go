@@ -33,7 +33,7 @@ func (OSCommander) CombinedOutput(ctx context.Context, cmd string, args ...strin
 // for vendors that use ethtool (Broadcom, Intel).
 type Manager struct {
 	Log       *slog.Logger
-	Vendor_   nic.Vendor
+	NICVendor nic.Vendor
 	VendorID  string
 	Commander Commander
 }
@@ -43,7 +43,7 @@ func New(vendor nic.Vendor, vendorID string, log *slog.Logger) *Manager {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Manager{Log: log, Vendor_: vendor, VendorID: vendorID, Commander: OSCommander{}}
+	return &Manager{Log: log, NICVendor: vendor, VendorID: vendorID, Commander: OSCommander{}}
 }
 
 // NewWithCommander creates an ethtool-based Manager with a custom Commander.
@@ -54,11 +54,11 @@ func NewWithCommander(vendor nic.Vendor, vendorID string, log *slog.Logger, cmd 
 	if cmd == nil {
 		cmd = OSCommander{}
 	}
-	return &Manager{Log: log, Vendor_: vendor, VendorID: vendorID, Commander: cmd}
+	return &Manager{Log: log, NICVendor: vendor, VendorID: vendorID, Commander: cmd}
 }
 
 // Vendor returns the NIC vendor this manager handles.
-func (m *Manager) Vendor() nic.Vendor { return m.Vendor_ }
+func (m *Manager) Vendor() nic.Vendor { return m.NICVendor }
 
 // Supported checks if this manager can handle the given NIC.
 func (m *Manager) Supported(n *nic.Identifier) bool {
@@ -80,7 +80,7 @@ func (m *Manager) Capture(ctx context.Context, n *nic.Identifier) (*nic.Firmware
 	if err := m.CaptureViaEthtool(ctx, n.Interface, state); err != nil {
 		return nil, fmt.Errorf("capture firmware from %s: %w", n.Interface, err)
 	}
-	m.Log.Info("captured NIC firmware", "vendor", m.Vendor_, "pci", n.PCIAddress, "params", len(state.Parameters))
+	m.Log.Info("captured NIC firmware", "vendor", m.NICVendor, "pci", n.PCIAddress, "params", len(state.Parameters))
 	return state, nil
 }
 
