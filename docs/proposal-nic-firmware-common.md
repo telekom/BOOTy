@@ -317,6 +317,77 @@ COPY --from=tools /sbin/devlink bin/devlink
   - BOOTy boots, runs NIC firmware capture, reports to mock CAPRF server
   - Verify JSON inventory contains NIC firmware state
 
+## Usage Guide
+
+### Overview
+
+NIC firmware management detects network adapters, reads current firmware
+state, compares against baselines, and optionally applies firmware parameter
+changes. Supported vendors: Mellanox (ConnectX), Intel (E810/X710),
+Broadcom (NetXtreme/BCM57xxx).
+
+### Workflow
+
+```
+Detect NICs → Capture State → Compare Baseline → Diff → Apply Changes
+```
+
+1. **Detect** — BOOTy scans `/sys/bus/pci/devices/` for known NIC vendor IDs
+2. **Capture** — Reads firmware version, parameters, and flags via
+   vendor-specific tools (mstconfig, devlink, ethtool)
+3. **Baseline** — Compares current state against a desired baseline
+4. **Diff** — Produces a list of parameter changes needed
+5. **Apply** — Applies firmware parameter changes (optional, requires reboot)
+
+### Vendor Detection
+
+NICs are matched by PCI vendor ID:
+
+| Vendor ID | Vendor | Manager | Tool |
+|-----------|--------|---------|------|
+| `0x15b3` | Mellanox | `mellanox.Manager` | mstconfig |
+| `0x8086` | Intel | `intel.Manager` | devlink, ethtool |
+| `0x14e4` | Broadcom | `broadcom.Manager` | ethtool, bnxtnvm |
+
+### Programmatic Access
+
+```go
+import "github.com/telekom/BOOTy/pkg/firmware/nic"
+
+// Detect vendor from PCI address.
+vendor := nic.DetectVendor("0000:3b:00.0")  // → VendorMellanox
+
+// Create a vendor-specific firmware manager.
+mgr, err := nic.NewManager(log, &nic.Identifier{
+    PCIAddress: "0000:3b:00.0",
+    VendorID:   "0x15b3",
+})
+
+// Capture current firmware state.
+state, err := mgr.Capture(ctx, id)
+
+// Compare against baseline.
+baseline := &nic.Baseline{
+    Vendor:          nic.VendorMellanox,
+    MinVersion:      "16.35.1012",
+    RequiredParams:  map[string]string{"SRIOV_EN": "True"},
+}
+diff := nic.DiffBaseline(baseline, state)
+```
+
+### Baseline Matching
+
+A baseline matches a NIC when:
+- Baseline vendor matches the NIC's PCI vendor ID (empty vendor matches all)
+- Baseline device ID matches if specified
+- **Important**: If the baseline specifies a vendor but the NIC has no
+  vendor ID (e.g., sysfs read failure), the baseline will **not** match
+
+### CAPRF Integration
+
+Firmware state is reported as part of the inventory status. Diffs are
+logged so operators can see which NICs need firmware updates.
+
 ## Risks
 
 | Risk | Mitigation |
