@@ -142,7 +142,10 @@ func Compare(baseline *Baseline, state *FirmwareState) *Diff {
 
 // baselineMatchesNIC checks vendor/device ID consistency.
 func baselineMatchesNIC(baseline *Baseline, id *Identifier) bool {
-	if baseline.Vendor != "" && baseline.Vendor != VendorUnknown && id.VendorID != "" {
+	if baseline.Vendor != "" && baseline.Vendor != VendorUnknown {
+		if id.VendorID == "" {
+			return false // cannot match baseline vendor without a NIC vendor ID
+		}
 		if pciVendorMap[id.VendorID] != baseline.Vendor {
 			return false
 		}

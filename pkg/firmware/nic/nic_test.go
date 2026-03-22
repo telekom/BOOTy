@@ -211,3 +211,18 @@ func (m *mockManager) Capture(_ context.Context, _ *Identifier) (*FirmwareState,
 func (m *mockManager) Apply(_ context.Context, _ *Identifier, _ []FlagChange) error {
 	return nil
 }
+
+func TestBaselineMatchesNIC_EmptyVendorID(t *testing.T) {
+	// When baseline specifies a vendor but NIC has no vendorID, should not match.
+	baseline := &Baseline{Vendor: VendorMellanox}
+	id := &Identifier{VendorID: "", DeviceID: "0x1234"}
+	if baselineMatchesNIC(baseline, id) {
+		t.Error("expected no match when NIC vendorID is empty and baseline has vendor")
+	}
+
+	// When baseline vendor is empty, should match regardless of NIC vendorID.
+	baseline = &Baseline{Vendor: ""}
+	if !baselineMatchesNIC(baseline, id) {
+		t.Error("expected match when baseline vendor is empty")
+	}
+}
