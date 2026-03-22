@@ -97,9 +97,40 @@ func TestNew_Defaults(t *testing.T) {
 	}
 }
 
+func TestNew_NilConfig(t *testing.T) {
+	m := New(nil, nil)
+	if m.CacheDir() != "/mnt/target/.booty-cache/oci" {
+		t.Errorf("nil cfg cacheDir = %q", m.CacheDir())
+	}
+	if m.platform.OS != "linux" {
+		t.Errorf("nil cfg OS = %q", m.platform.OS)
+	}
+}
+
 func TestNew_CustomCacheDir(t *testing.T) {
 	m := New(nil, &Config{CacheDir: "/custom/cache"})
 	if m.CacheDir() != "/custom/cache" {
 		t.Errorf("cacheDir = %q", m.CacheDir())
+	}
+}
+
+func TestParsePlatform_EmptySegments(t *testing.T) {
+	tests := []struct {
+		input string
+		os    string
+		arch  string
+	}{
+		{"", "linux", runtime.GOARCH},
+		{"linux/", "linux", runtime.GOARCH},
+		{"/amd64", "linux", "amd64"},
+	}
+	for _, tc := range tests {
+		p := ParsePlatform(tc.input)
+		if p.OS != tc.os {
+			t.Errorf("ParsePlatform(%q).OS = %q, want %q", tc.input, p.OS, tc.os)
+		}
+		if p.Architecture != tc.arch {
+			t.Errorf("ParsePlatform(%q).Architecture = %q, want %q", tc.input, p.Architecture, tc.arch)
+		}
 	}
 }

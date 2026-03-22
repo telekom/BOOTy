@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -17,6 +18,7 @@ type Manager struct {
 	log      *slog.Logger
 	cacheDir string
 	platform Platform
+	mu       sync.Mutex
 }
 
 // Platform identifies the target platform for multi-arch images.
@@ -37,21 +39,6 @@ type Config struct {
 	Parallel        int    `json:"parallel"`
 }
 
-// LayerInfo describes a single OCI layer.
-type LayerInfo struct {
-	Digest    string `json:"digest"`
-	Size      int64  `json:"size"`
-	MediaType string `json:"mediaType"`
-}
-
-// ImageManifest is a simplified OCI image manifest.
-type ImageManifest struct {
-	SchemaVersion int         `json:"schemaVersion"`
-	MediaType     string      `json:"mediaType"`
-	Config        LayerInfo   `json:"config"`
-	Layers        []LayerInfo `json:"layers"`
-}
-
 // CacheEntry records a cached layer.
 type CacheEntry struct {
 	Digest    string    `json:"digest"`
@@ -68,28 +55,30 @@ type CacheIndex struct {
 // New creates an OCI image manager.
 func New(log *slog.Logger, cfg *Config) *Manager {
 	p := Platform{OS: "linux", Architecture: runtime.GOARCH}
-	if cfg.Platform != "" {
-		p = ParsePlatform(cfg.Platform)
-	}
-	cacheDir := cfg.CacheDir
-	if cacheDir == "" {
-		cacheDir = "/mnt/target/.booty-cache/oci"
+	cacheDir := "/mnt/target/.booty-cache/oci"
+	if cfg != nil {
+		if cfg.Platform != "" {
+			p = ParsePlatform(cfg.Platform)
+		}
+		if cfg.CacheDir != "" {
+			cacheDir = cfg.CacheDir
+		}
 	}
 	return &Manager{log: log, cacheDir: cacheDir, platform: p}
 }
 
 // ParsePlatform parses "linux/amd64" or "linux/arm64/v8" into a Platform.
 func ParsePlatform(s string) Platform {
-	parts := strings.SplitN(s, "/", 3)
 	p := Platform{OS: "linux", Architecture: runtime.GOARCH}
-	if len(parts) >= 1 {
-		p.OS = parts[0]
+	parts := strings.SplitN(s, "/", 3)
+	if len(parts) >= 1 && strings.TrimSpace(parts[0]) != "" {
+		p.OS = strings.TrimSpace(parts[0])
 	}
-	if len(parts) >= 2 {
-		p.Architecture = parts[1]
+	if len(parts) >= 2 && strings.TrimSpace(parts[1]) != "" {
+		p.Architecture = strings.TrimSpace(parts[1])
 	}
-	if len(parts) >= 3 {
-		p.Variant = parts[2]
+	if len(parts) >= 3 && strings.TrimSpace(parts[2]) != "" {
+		p.Variant = strings.TrimSpace(parts[2])
 	}
 	return p
 }
@@ -114,6 +103,9 @@ func (m *Manager) IsCached(digest string) (bool, error) {
 
 // AddToCache records a layer in the cache index.
 func (m *Manager) AddToCache(digest, localPath string, size int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	idx, err := m.loadCacheIndex()
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
