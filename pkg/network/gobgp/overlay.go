@@ -45,13 +45,19 @@ type OverlayTier struct {
 	createdBridge   bool
 	createdVXLAN    bool
 	addedLoopbackIP *netlink.Addr
+
+	// macVTEP tracks MAC → VTEP mappings learned from Type-2 routes
+	// so that withdrawals (which lack next-hop) can still delete the
+	// correct FDB entry.
+	macVTEP map[string]string
 }
 
 // NewOverlayTier creates a new overlay tier.
 func NewOverlayTier(cfg *Config) *OverlayTier {
 	return &OverlayTier{
-		cfg: cfg,
-		log: slog.With("tier", "overlay"),
+		cfg:     cfg,
+		log:     slog.With("tier", "overlay"),
+		macVTEP: make(map[string]string),
 	}
 }
 
@@ -462,6 +468,19 @@ func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute,
 		return
 	}
 
+	macStr := mac.String()
+
+	// For withdrawals, BGP uses MP_UNREACH_NLRI which has no next-hop.
+	// Look up the previously stored VTEP for this MAC.
+	if withdraw && vtep == "" {
+		if stored, ok := o.macVTEP[macStr]; ok {
+			vtep = stored
+		} else {
+			o.log.Debug("type-2 withdraw with no tracked VTEP", "mac", macStr)
+			return
+		}
+	}
+
 	remoteIP := net.ParseIP(vtep)
 	if remoteIP == nil {
 		o.log.Debug("type-2 route with no valid next-hop", "vtep", vtep)
@@ -495,6 +514,7 @@ func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute,
 		} else {
 			o.log.Info("removed FDB entry from type-2 withdraw", "mac", mac, "vtep", vtep)
 		}
+		delete(o.macVTEP, macStr)
 		return
 	}
 
@@ -503,6 +523,7 @@ func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute,
 	} else {
 		o.log.Info("installed FDB entry from type-2 route", "mac", mac, "vtep", vtep)
 	}
+	o.macVTEP[macStr] = vtep
 }
 
 // handleType3Route installs or removes a BUM FDB entry for a remote VTEP

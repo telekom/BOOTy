@@ -445,15 +445,24 @@ jobs:
 
           echo ""
           echo "=== FRR Routing State (spine01) ==="
-          timeout 15 sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp summary" 2>/dev/null | tee clab-logs/spine01-bgp-summary.txt || true
+          timeout 15 sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp summary json" 2>/dev/null | tee clab-logs/spine01-bgp-summary.txt || true
           timeout 15 sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null | tee clab-logs/spine01-evpn.txt || true
           timeout 15 sudo docker exec clab-booty-lab-spine01 vtysh -c "show ip route" 2>/dev/null | tee clab-logs/spine01-routes.txt || true
 
           echo ""
           echo "=== FRR Routing State (leaf01) ==="
-          timeout 15 sudo docker exec clab-booty-lab-leaf01 vtysh -c "show bgp summary" 2>/dev/null | tee clab-logs/leaf01-bgp-summary.txt || true
+          timeout 15 sudo docker exec clab-booty-lab-leaf01 vtysh -c "show bgp summary json" 2>/dev/null | tee clab-logs/leaf01-bgp-summary.txt || true
           timeout 15 sudo docker exec clab-booty-lab-leaf01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null | tee clab-logs/leaf01-evpn.txt || true
           timeout 15 sudo docker exec clab-booty-lab-leaf01 vtysh -c "show ip route" 2>/dev/null | tee clab-logs/leaf01-routes.txt || true
+
+          echo ""
+          echo "=== EVPN Data Plane State ==="
+          for c in spine01 leaf01; do
+            name="clab-booty-lab-${c}"
+            timeout 5 sudo docker exec "${name}" bridge fdb show 2>/dev/null | tee clab-logs/${c}-fdb.txt || true
+            timeout 5 sudo docker exec "${name}" ip -d link show type vxlan 2>/dev/null | tee clab-logs/${c}-vxlan.txt || true
+            timeout 5 sudo docker exec "${name}" ip neigh show 2>/dev/null | tee clab-logs/${c}-neigh.txt || true
+          done
 
       - name: Upload ContainerLab logs
         if: always()
@@ -849,14 +858,13 @@ jobs:
             timeout 30 sudo docker logs "${name}" >> gobgp-logs/${node}.log 2>&1 || echo "(no logs)"
           done
 
-          # FRR BGP state on spine01.
+          # FRR BGP state on spine01 (JSON where possible for structured debugging).
           for cmd in \
-            "show bgp summary" \
-            "show bgp neighbors eth3 json" \
-            "show bgp neighbors eth4 json" \
-            "show bgp neighbors 10.0.2.2 json" \
+            "show bgp summary json" \
             "show bgp l2vpn evpn" \
-            "show ip route"; do
+            "show bgp l2vpn evpn json" \
+            "show ip route" \
+            "show evpn vni"; do
             slug=$(echo "$cmd" | tr ' ' '-')
             timeout 15 sudo docker exec clab-booty-gobgp-lab-spine01 \
               vtysh -c "$cmd" 2>/dev/null | tee gobgp-logs/spine01-${slug}.txt || true
@@ -864,25 +872,33 @@ jobs:
 
           # FRR BGP state on rr01.
           for cmd in \
-            "show bgp summary" \
-            "show bgp neighbors 10.0.3.2 json"; do
+            "show bgp summary json" \
+            "show bgp neighbors 10.0.1.1 json"; do
             slug=$(echo "$cmd" | tr ' ' '-')
             timeout 15 sudo docker exec clab-booty-gobgp-lab-rr01 \
               vtysh -c "$cmd" 2>/dev/null | tee gobgp-logs/rr01-${slug}.txt || true
           done
 
-          # Network state from each container (IPv6 addrs, NDP, routes).
-          for node in spine01 booty-unnumbered booty-dual booty-numbered; do
+          # Network + EVPN data plane state from each container.
+          for node in spine01 leaf01 booty-unnumbered booty-dual booty-numbered; do
             name="clab-booty-gobgp-lab-${node}"
             {
-              echo "=== ip -6 addr ==="
+              echo "=== ip -d link show type vxlan ==="
+              timeout 5 sudo docker exec "${name}" ip -d link show type vxlan 2>&1 || true
+              echo "=== ip addr show ==="
+              timeout 5 sudo docker exec "${name}" ip addr show 2>&1 || true
+              echo "=== ip -6 addr show ==="
               timeout 5 sudo docker exec "${name}" ip -6 addr show 2>&1 || true
-              echo "=== ip -6 neigh ==="
+              echo "=== ip -6 neigh show ==="
               timeout 5 sudo docker exec "${name}" ip -6 neigh show 2>&1 || true
-              echo "=== ip route ==="
+              echo "=== ip neigh show ==="
+              timeout 5 sudo docker exec "${name}" ip neigh show 2>&1 || true
+              echo "=== ip route show ==="
               timeout 5 sudo docker exec "${name}" ip route show 2>&1 || true
-              echo "=== ip -6 route ==="
+              echo "=== ip -6 route show ==="
               timeout 5 sudo docker exec "${name}" ip -6 route show 2>&1 || true
+              echo "=== bridge fdb show ==="
+              timeout 5 sudo docker exec "${name}" bridge fdb show 2>&1 || true
             } > gobgp-logs/${node}-network.txt 2>&1
           done
 

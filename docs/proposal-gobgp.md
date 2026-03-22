@@ -246,9 +246,9 @@ reachability so the spine/fabric can route traffic toward the BOOTy
 VTEP.
 
 **Type-2/3 (received via `watchRoutes()`):** The overlay's
-`watchRoutes()` monitors GoBGP's route stream and installs FDB entries:
-- **Type-2** — unicast FDB entries (`MAC → remote VTEP`) via `netlink.NeighAppend`
-- **Type-3** — BUM FDB entries (`00:00:00:00:00:00 → remote VTEP`) for flood replication
+`watchRoutes()` monitors GoBGP's route stream and installs/updates FDB entries:
+- **Type-2** — unicast FDB entries (`MAC → remote VTEP`) via `netlink.NeighSet` (idempotent add/update) and `netlink.NeighDel` on withdrawal; tracks MAC→VTEP mappings so withdrawals without next-hop can still clean up
+- **Type-3** — BUM FDB entries (`00:00:00:00:00:00 → remote VTEP`) for flood replication via `netlink.NeighSet`/`netlink.NeighDel`
 
 Routes from BOOTy's own RouterID are skipped to avoid self-referential entries.
 

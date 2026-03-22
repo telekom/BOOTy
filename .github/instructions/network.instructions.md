@@ -51,10 +51,11 @@ apipb "github.com/osrg/gobgp/v3/api"     // Protobuf API (always aliased as apip
 `watchRoutes()` in `overlay.go` monitors GoBGP's `WatchEvent` stream for EVPN routes
 and installs corresponding kernel state:
 
-- **Type-2 (MAC/IP Advertisement)** — installs unicast FDB entries (`MAC → remote VTEP`) via
-  `netlink.NeighAppend` on the VXLAN device; skips routes from our own RouterID
+- **Type-2 (MAC/IP Advertisement)** — installs/updates unicast FDB entries (`MAC → remote VTEP`) via
+  `netlink.NeighSet` on the VXLAN device (and `netlink.NeighDel` on withdraw); tracks MAC→VTEP
+  mappings so withdrawals without next-hop can still clean up; skips routes from our own RouterID
 - **Type-3 (Inclusive Multicast)** — installs BUM FDB entries (`00:00:00:00:00:00 → remote VTEP`)
-  for flood replication; skips own RouterID
+  for flood replication via `netlink.NeighSet` (and `netlink.NeighDel` on withdraw); skips own RouterID
 - **NextHop extraction** — `extractNextHop()` walks `MpReachNLRIAttribute` path attributes
   to find the originating VTEP IP
 

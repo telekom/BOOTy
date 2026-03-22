@@ -66,6 +66,7 @@ func gobgpDockerExecRaw(t *testing.T, container string, args ...string) (string,
 
 // dumpDebugState collects comprehensive network and BGP debug info from all
 // containers and logs it. Called automatically via t.Cleanup when a test fails.
+// Inspired by das-schiff-network-operator E2E debug collection patterns.
 func dumpDebugState(t *testing.T) {
 	t.Helper()
 	if !t.Failed() {
@@ -74,23 +75,33 @@ func dumpDebugState(t *testing.T) {
 
 	t.Log("=== DEBUG STATE DUMP (test failed) ===")
 
-	// Spine BGP state.
+	// Spine BGP and EVPN state (use JSON for structured output where possible).
 	for _, cmd := range []string{
-		"show bgp summary",
-		"show bgp neighbors eth3 json",
-		"show bgp neighbors eth4 json",
-		"show bgp neighbors 10.0.2.2 json",
+		"show bgp summary json",
 		"show bgp l2vpn evpn",
+		"show bgp l2vpn evpn json",
 		"show ip route",
+		"show evpn vni",
 	} {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabSpine, "vtysh", "-c", cmd)
 		t.Logf("[spine01] %s:\n%s", cmd, out)
 	}
 
+	// Spine bridge/FDB/VXLAN state.
+	for _, cmd := range [][]string{
+		{"bridge", "fdb", "show"},
+		{"ip", "-d", "link", "show", "type", "vxlan"},
+		{"ip", "addr", "show"},
+		{"ip", "neigh", "show"},
+	} {
+		out, _ := gobgpDockerExecRaw(t, gobgpLabSpine, cmd...)
+		t.Logf("[spine01] %s:\n%s", strings.Join(cmd, " "), out)
+	}
+
 	// RR01 BGP state.
 	for _, cmd := range []string{
-		"show bgp summary",
-		"show bgp neighbors 10.0.3.2 json",
+		"show bgp summary json",
+		"show bgp neighbors 10.0.1.1 json",
 	} {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabRR, "vtysh", "-c", cmd)
 		t.Logf("[rr01] %s:\n%s", cmd, out)
@@ -103,10 +114,14 @@ func dumpDebugState(t *testing.T) {
 		{"booty-numbered", gobgpLabNumbered},
 	} {
 		for _, cmd := range [][]string{
+			{"ip", "-d", "link", "show", "type", "vxlan"},
+			{"ip", "addr", "show"},
 			{"ip", "-6", "addr", "show"},
 			{"ip", "-6", "neigh", "show"},
 			{"ip", "route", "show"},
 			{"ip", "-6", "route", "show"},
+			{"bridge", "fdb", "show"},
+			{"ip", "neigh", "show"},
 		} {
 			out, _ := gobgpDockerExecRaw(t, node.container, cmd...)
 			t.Logf("[%s] %s:\n%s", node.name, strings.Join(cmd, " "), out)
