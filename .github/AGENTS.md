@@ -49,7 +49,7 @@ applies to every PR:
 - New feature gates → update `README.md` Feature Gates table
 - New Make targets → update `README.md` + `CONTRIBUTING.md`
 - New build tags → update `instructions/e2e-tests.instructions.md`
-- Step count changes → update all references (currently 30 steps)
+- Step count changes → update all references (currently 31 steps)
 - New agents/prompts/instructions → update this file (`AGENTS.md`)
 
 Documentation gaps are flagged as `🟡 WARNING` — PRs should not merge without

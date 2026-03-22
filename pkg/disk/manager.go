@@ -488,12 +488,29 @@ func (m *Manager) SetupChrootBindMounts(root string) error {
 			return fmt.Errorf("bind mount %s: %w", b.src, err)
 		}
 	}
+
+	// MS_BIND is non-recursive — efivarfs (under /sys) is not propagated.
+	// Bind it separately so chroot efibootmgr can access EFI variables.
+	efiSrc := "/sys/firmware/efi/efivars"
+	efiDst := root + "/sys/firmware/efi/efivars"
+	if _, err := os.Stat(efiSrc); err == nil {
+		if err := os.MkdirAll(efiDst, 0o755); err != nil {
+			slog.Debug("Cannot create efivarfs mount target", "path", efiDst, "error", err)
+		} else if err := m.BindMount(efiSrc, efiDst); err != nil {
+			slog.Debug("Cannot bind-mount efivarfs into chroot", "error", err)
+		}
+	}
 	return nil
 }
 
 // TeardownChrootBindMounts unmounts standard bind mounts.
 // Errors are logged to aid debugging of stale mount points.
 func (m *Manager) TeardownChrootBindMounts(root string) {
+	// Unmount efivarfs first (sub-mount under /sys).
+	efiPath := root + "/sys/firmware/efi/efivars"
+	if err := m.Unmount(efiPath); err != nil {
+		slog.Debug("Chroot efivarfs unmount skipped", "path", efiPath, "error", err)
+	}
 	for _, rel := range []string{"run", "sys", "proc", "dev"} {
 		if err := m.Unmount(root + "/" + rel); err != nil {
 			slog.Warn("Chroot unmount failed", "path", root+"/"+rel, "error", err)
