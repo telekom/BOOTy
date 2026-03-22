@@ -48,8 +48,8 @@ type FirmwareManager interface {
 type Identifier struct {
 	PCIAddress string `json:"pciAddr"`
 	Interface  string `json:"interface,omitempty"`
-	VendorID   string `json:"vendorID"`
-	DeviceID   string `json:"deviceID"`
+	VendorID   string `json:"vendorId"`
+	DeviceID   string `json:"deviceId"`
 	Driver     string `json:"driver,omitempty"`
 }
 
@@ -107,15 +107,7 @@ func Compare(baseline *Baseline, state *FirmwareState) *Diff {
 		Match: true,
 	}
 
-	// Validate vendor/device ID consistency only if baseline specifies them
-	if baseline.Vendor != VendorUnknown && state.NIC.PCIAddress != "" {
-		detectedVendor := DetectVendor(state.NIC.PCIAddress)
-		if detectedVendor != baseline.Vendor {
-			diff.Match = false
-			return diff
-		}
-	}
-	if baseline.DeviceID != "" && baseline.DeviceID != state.NIC.DeviceID {
+	if !baselineMatchesNIC(baseline, &state.NIC) {
 		diff.Match = false
 		return diff
 	}
@@ -146,6 +138,19 @@ func Compare(baseline *Baseline, state *FirmwareState) *Diff {
 		}
 	}
 	return diff
+}
+
+// baselineMatchesNIC checks vendor/device ID consistency.
+func baselineMatchesNIC(baseline *Baseline, id *Identifier) bool {
+	if baseline.Vendor != "" && baseline.Vendor != VendorUnknown && id.VendorID != "" {
+		if pciVendorMap[id.VendorID] != baseline.Vendor {
+			return false
+		}
+	}
+	if baseline.DeviceID != "" && baseline.DeviceID != id.DeviceID {
+		return false
+	}
+	return true
 }
 
 // DetectVendor reads the PCI vendor ID from sysfs.
@@ -186,5 +191,5 @@ func (r *Registry) ForNIC(nic *Identifier) (FirmwareManager, error) {
 			return mgr, nil
 		}
 	}
-	return nil, fmt.Errorf("no firmware manager for NIC %s (vendorID=%s, detected=%s)", nic.PCIAddress, nic.VendorID, DetectVendor(nic.PCIAddress))
+	return nil, fmt.Errorf("no firmware manager for NIC %s (vendorId=%s)", nic.PCIAddress, nic.VendorID)
 }

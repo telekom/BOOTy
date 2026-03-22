@@ -137,13 +137,16 @@ func TestCapture_NoInterface(t *testing.T) {
 }
 
 func TestApply_Success(t *testing.T) {
-	setCalled := false
+	var appliedArgs []string
 	mock := &MockCommander{
 		ethtoolOut:   "",
 		privFlagsOut: "Private flags for eth0:\ndisable-rrc: off\n",
 	}
+	// Override CombinedOutput to track set-priv-flags calls.
+	origMock := mock
+	trackMock := &trackingCommander{delegate: origMock}
 
-	m := NewWithCommander(nil, mock)
+	m := NewWithCommander(nil, trackMock)
 
 	nicID := &nic.Identifier{
 		PCIAddress: "0000:01:00.0",
@@ -155,10 +158,23 @@ func TestApply_Success(t *testing.T) {
 		{Name: "disable-rrc", Value: "on"},
 	}
 
-	// We're testing that Apply succeeds; the mock will be called
-	_ = setCalled
 	err := m.Apply(context.Background(), nicID, changes)
 	if err != nil {
 		t.Fatalf("Apply failed: %v", err)
 	}
+	appliedArgs = trackMock.args
+	if len(appliedArgs) == 0 {
+		t.Fatal("Apply did not invoke any commands")
+	}
+}
+
+// trackingCommander records args from CombinedOutput calls.
+type trackingCommander struct {
+	delegate Commander
+	args     []string
+}
+
+func (t *trackingCommander) CombinedOutput(ctx context.Context, cmd string, args ...string) ([]byte, error) {
+	t.args = append(t.args, args...)
+	return t.delegate.CombinedOutput(ctx, cmd, args...)
 }

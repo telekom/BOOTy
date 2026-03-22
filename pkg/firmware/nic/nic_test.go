@@ -118,6 +118,38 @@ func TestCompare_MissingParam(t *testing.T) {
 	}
 }
 
+func TestCompare_EmptyVendorTreatedAsUnspecified(t *testing.T) {
+	baseline := &Baseline{
+		Vendor:     "", // zero value — should be treated as unspecified
+		Parameters: map[string]string{"X": "1"},
+	}
+	state := &FirmwareState{
+		NIC:        Identifier{VendorID: "0x8086"},
+		Parameters: map[string]Parameter{"X": {Current: "1"}},
+	}
+
+	diff := Compare(baseline, state)
+	if !diff.Match {
+		t.Error("empty vendor should be treated as unspecified")
+	}
+}
+
+func TestCompare_VendorMismatch(t *testing.T) {
+	baseline := &Baseline{
+		Vendor:     VendorMellanox,
+		Parameters: map[string]string{"X": "1"},
+	}
+	state := &FirmwareState{
+		NIC:        Identifier{VendorID: "0x8086"}, // Intel
+		Parameters: map[string]Parameter{"X": {Current: "1"}},
+	}
+
+	diff := Compare(baseline, state)
+	if diff.Match {
+		t.Error("expected vendor mismatch")
+	}
+}
+
 func TestRegistry_ForNIC(t *testing.T) {
 	mockMgr := &mockManager{vendor: VendorMellanox}
 	reg := NewRegistry(mockMgr)

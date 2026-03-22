@@ -1,6 +1,8 @@
 package mellanox
 
 import (
+	"context"
+	"fmt"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/firmware/nic"
@@ -70,5 +72,97 @@ func TestCriticalParams(t *testing.T) {
 	}
 	if !found {
 		t.Error("CriticalParams should contain SRIOV_EN")
+	}
+}
+
+// MockCommander returns pre-canned outputs for testing.
+type MockCommander struct {
+	queryOut string
+	setOut   string
+	err      error
+	called   []string
+}
+
+func (m *MockCommander) CombinedOutput(_ context.Context, cmd string, args ...string) ([]byte, error) {
+	m.called = append(m.called, cmd)
+	if m.err != nil {
+		return nil, m.err
+	}
+	for _, a := range args {
+		if a == "set" {
+			return []byte(m.setOut), nil
+		}
+	}
+	return []byte(m.queryOut), nil
+}
+
+func TestCapture_Success(t *testing.T) {
+	mock := &MockCommander{
+		queryOut: "Device #1:\nConfigurations:\nSRIOV_EN                    True(True)\nNUM_OF_VFS                  16(0)\n",
+	}
+	m := NewWithCommander(nil, mock)
+
+	id := &nic.Identifier{PCIAddress: "0000:03:00.0", VendorID: "0x15b3"}
+
+	state, err := m.Capture(context.Background(), id)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	if p, ok := state.Parameters["SRIOV_EN"]; !ok || p.Current != "True" {
+		t.Error("SRIOV_EN not captured")
+	}
+	if p, ok := state.Parameters["NUM_OF_VFS"]; !ok || p.Current != "16" {
+		t.Error("NUM_OF_VFS not captured")
+	}
+}
+
+func TestCapture_NilNIC(t *testing.T) {
+	m := New(nil)
+	if _, err := m.Capture(context.Background(), nil); err == nil {
+		t.Fatal("expected error for nil NIC")
+	}
+}
+
+func TestCapture_MstconfigError(t *testing.T) {
+	mock := &MockCommander{err: fmt.Errorf("mstconfig not found")}
+	m := NewWithCommander(nil, mock)
+
+	id := &nic.Identifier{PCIAddress: "0000:03:00.0", VendorID: "0x15b3"}
+	if _, err := m.Capture(context.Background(), id); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestApply_Success(t *testing.T) {
+	mock := &MockCommander{}
+	m := NewWithCommander(nil, mock)
+
+	id := &nic.Identifier{PCIAddress: "0000:03:00.0", VendorID: "0x15b3"}
+	changes := []nic.FlagChange{{Name: "SRIOV_EN", Value: "True"}}
+
+	if err := m.Apply(context.Background(), id, changes); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(mock.called) == 0 {
+		t.Fatal("Apply did not invoke mstconfig")
+	}
+}
+
+func TestApply_Error(t *testing.T) {
+	mock := &MockCommander{err: fmt.Errorf("permission denied")}
+	m := NewWithCommander(nil, mock)
+
+	id := &nic.Identifier{PCIAddress: "0000:03:00.0", VendorID: "0x15b3"}
+	changes := []nic.FlagChange{{Name: "SRIOV_EN", Value: "True"}}
+
+	if err := m.Apply(context.Background(), id, changes); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestApply_NilNIC(t *testing.T) {
+	m := New(nil)
+	if err := m.Apply(context.Background(), nil, nil); err == nil {
+		t.Fatal("expected error for nil NIC")
 	}
 }
