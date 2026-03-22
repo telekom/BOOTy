@@ -118,10 +118,10 @@ func ValidateCommunities(cfg *CommunityConfig) error {
 		if len(parts) != 3 {
 			return fmt.Errorf("invalid extended community %q, expected TYPE:ASN:value", c)
 		}
-		if _, err := strconv.ParseUint(parts[1], 10, 16); err != nil {
+		if _, err := strconv.ParseUint(parts[1], 10, 32); err != nil {
 			return fmt.Errorf("invalid extended community ASN %q: %w", parts[1], err)
 		}
-		if _, err := strconv.ParseUint(parts[2], 10, 16); err != nil {
+		if _, err := strconv.ParseUint(parts[2], 10, 32); err != nil {
 			return fmt.Errorf("invalid extended community value %q: %w", parts[2], err)
 		}
 	}

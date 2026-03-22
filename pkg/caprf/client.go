@@ -490,6 +490,10 @@ func applyFeatureToggle(cfg *config.MachineConfig, key, value string) bool {
 		cfg.RescueAutoMountDisks = parseBoolVar(value)
 	case "EVPN_L2_ENABLED":
 		cfg.EVPNL2Enabled = parseBoolVar(value)
+	case "BGP_UNDERLAY_AF":
+		cfg.BGPUnderlayAF = value
+	case "BGP_OVERLAY_TYPE":
+		cfg.BGPOverlayType = value
 	default:
 		return false
 	}

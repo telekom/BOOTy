@@ -1,5 +1,5 @@
-// Package vrf provides VRF (Virtual Routing and Forwarding) management
-// for multi-VRF network isolation.
+// Package vrf provides VRF (Virtual Routing and Forwarding) configuration types
+// and validation for multi-VRF network isolation.
 package vrf
 
 import (

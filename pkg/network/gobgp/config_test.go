@@ -120,6 +120,26 @@ func TestNewConfig(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "underlay_af_and_overlay_type_wired",
+			netCfg: &network.Config{
+				UnderlayIP:     "10.0.0.1",
+				ASN:            65000,
+				ProvisionVNI:   4000,
+				BGPPeerMode:    network.PeerModeUnnumbered,
+				BGPUnderlayAF:  "ipv6",
+				BGPOverlayType: "l3vpn",
+			},
+			check: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				if cfg.UnderlayAF != "ipv6" {
+					t.Errorf("UnderlayAF = %q, want ipv6", cfg.UnderlayAF)
+				}
+				if cfg.OverlayType != "l3vpn" {
+					t.Errorf("OverlayType = %q, want l3vpn", cfg.OverlayType)
+				}
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

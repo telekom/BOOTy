@@ -96,6 +96,8 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		NeighborAddrs:     parseNeighborAddrs(netCfg.BGPNeighbors),
 		RemoteASN:         netCfg.BGPRemoteASN,
 		EnableL2:          netCfg.EVPNL2Enabled,
+		UnderlayAF:        netCfg.BGPUnderlayAF,
+		OverlayType:       netCfg.BGPOverlayType,
 	}
 
 	cfg.ApplyDefaults()
