@@ -253,5 +253,63 @@ Go library (pure Go netlink). The `8021q` kernel module must be available:
 - VLAN setup/teardown: **2 days**
 - Integration with network modes: **1-2 days**
 - Kernel module verification: **1 day**
+
+## Usage Guide
+
+### Quick Start
+
+Set VLAN environment variables in `/deploy/vars` before BOOTy runs:
+
+```bash
+# Single VLAN — provisioning network on VLAN 200
+export VLAN_ID="200"
+export VLAN_PARENT="eno1"
+export VLAN_IP="10.200.0.42/24"    # optional — uses DHCP if empty
+export VLAN_GATEWAY="10.200.0.1"   # optional — from DHCP if empty
+```
+
+BOOTy creates `eno1.200`, assigns the IP, and uses it for all subsequent
+network operations (DHCP, CAPRF communication, image downloads).
+
+### Multi-VLAN Configuration
+
+For trunk ports with multiple VLANs:
+
+```bash
+# Compact format: VLAN_ID:PARENT:IP (IP optional)
+export VLANS="200:eno1:10.200.0.42/24,300:eno2"
+```
+
+This creates `eno1.200` (static IP) and `eno2.300` (DHCP).
+
+### Programmatic Access
+
+```go
+import "github.com/telekom/BOOTy/pkg/network/vlan"
+
+// Create a VLAN interface.
+cfg := &vlan.Config{
+    ID:       200,
+    Parent:   "eno1",
+    IP:       "10.200.0.42/24",
+    Gateway:  "10.200.0.1",
+}
+ifName, err := vlan.Setup(cfg)  // → "eno1.200"
+
+// Teardown — removes interface and routes.
+err = vlan.Teardown("eno1.200")
+```
+
+### Prerequisites
+
+- Kernel module `8021q` must be available (compiled as module in initramfs)
+- Physical parent interface must be UP before VLAN creation
+- Switch port must be configured as trunk allowing the VLAN ID
+
+### MTU Considerations
+
+VLAN tagging adds 4 bytes to frame size. If the physical NIC MTU is 1500,
+the effective VLAN MTU is 1496. For VXLAN-over-VLAN setups, use jumbo
+frames (MTU 9000) on the physical interface.
 - Testing (tagged switch port): **2 days**
 - Total: **6-8 days**
