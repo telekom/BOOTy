@@ -78,6 +78,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     mdadm util-linux e2fsprogs xfsprogs btrfs-progs parted gdisk kpartx dosfstools \
     efibootmgr dmidecode ethtool curl iproute2 bridge-utils \
     hdparm nvme-cli mstflint lldpd \
+    dropbear-bin \
     && rm -rf /var/lib/apt/lists/*
 
 # Busybox static binary — sourced from Docker Hub for reliability and
