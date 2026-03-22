@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"time"
@@ -37,7 +38,7 @@ func SelectBestSource(ctx context.Context, urls []string) (string, error) {
 	}
 
 	var bestURL string
-	var bestTime time.Duration = 1<<63 - 1
+	var bestTime = time.Duration(math.MaxInt64)
 
 	slog.Info("Selecting best image source", "candidates", len(httpURLs))
 	for _, rawURL := range httpURLs {

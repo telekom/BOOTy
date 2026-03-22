@@ -324,8 +324,11 @@ func TestSetupMellanoxMstconfigFails(t *testing.T) {
 }
 
 func TestRemoveEFIBootEntriesGracefulOnMissing(t *testing.T) {
-	// RemoveEFIBootEntries now runs efibootmgr directly on the host.
-	// On test systems without efibootmgr, it should return nil (graceful skip).
+	// RemoveEFIBootEntries runs efibootmgr directly on the host.
+	// Skip when running as root to avoid modifying real EFI variables.
+	if os.Getuid() == 0 {
+		t.Skip("skipping under root to avoid touching real EFI boot entries")
+	}
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
 	if err := c.RemoveEFIBootEntries(context.Background()); err != nil {
@@ -334,9 +337,11 @@ func TestRemoveEFIBootEntriesGracefulOnMissing(t *testing.T) {
 }
 
 func TestMountEFIVarsReturnsNilOnHost(t *testing.T) {
-	// MountEFIVars should not return an error on the current host regardless
-	// of whether it has EFI support. On non-EFI systems efivarfs simply
-	// won't be mounted; on EFI systems it may already be mounted.
+	// MountEFIVars calls modprobe + syscall.Mount directly (not via Commander).
+	// Skip when running as root to avoid side effects on the host.
+	if os.Getuid() == 0 {
+		t.Skip("skipping under root to avoid mounting efivarfs on the host")
+	}
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
 	err := c.MountEFIVars(context.Background())

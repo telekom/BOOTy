@@ -171,7 +171,8 @@ func writeDeployVars(t *testing.T, dir string, vars map[string]string) string {
 
 	var b strings.Builder
 	for k, v := range vars {
-		fmt.Fprintf(&b, "%s=\"%s\"\n", k, v)
+		escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`).Replace(v)
+		fmt.Fprintf(&b, "%s=\"%s\"\n", k, escaped)
 	}
 	varsPath := filepath.Join(deployDir, "vars")
 	writeFile(t, varsPath, b.String())
@@ -222,7 +223,7 @@ func buildProvisionInitramfs(t *testing.T, vars map[string]string) string {
 
 	// Copy essential provisioning tools from host with their shared libraries.
 	essentialTools := []string{
-		"partprobe", "sfdisk", "e2fsck", "resize2fs", "wipefs",
+		"partprobe", "sfdisk", "e2fsck", "resize2fs", "wipefs", "lvm",
 	}
 	for _, tool := range essentialTools {
 		toolPath, err := exec.LookPath(tool)
@@ -344,6 +345,11 @@ func mountQcow2(t *testing.T, qcow2Path string) (rootMount string, cleanup func(
 		t.Fatal("no free nbd device found")
 	}
 
+	// Register disconnect immediately so it runs even if partprobe/mount fail.
+	t.Cleanup(func() {
+		_ = exec.Command("qemu-nbd", "--disconnect", nbdDev).Run()
+	})
+
 	// Wait for partitions after qemu-nbd attach.
 	run(t, "partprobe nbd", "partprobe", nbdDev)
 	rootPart := nbdDev + "p2"
@@ -355,7 +361,6 @@ func mountQcow2(t *testing.T, qcow2Path string) (rootMount string, cleanup func(
 
 	cleanup = func() {
 		_ = exec.Command("umount", mountDir).Run()
-		_ = exec.Command("qemu-nbd", "--disconnect", nbdDev).Run()
 	}
 
 	return mountDir, cleanup
