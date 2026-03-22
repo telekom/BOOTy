@@ -105,7 +105,7 @@ func MarshalQuote(quote *AttestationQuote) ([]byte, error) {
 	return data, nil
 }
 
-func (d *Device) createAK() (tpm2.TPMHandle, []byte, []byte, error) {
+func (d *Device) createAK() (handle tpm2.TPMHandle, pubX, pubY []byte, err error) {
 	primary := tpm2.CreatePrimary{
 		PrimaryHandle: tpm2.AuthHandle{
 			Handle: tpm2.TPMRHEndorsement,
