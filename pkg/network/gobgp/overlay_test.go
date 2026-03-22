@@ -695,3 +695,251 @@ func TestHandleType3RouteNoVTEP(t *testing.T) {
 		t.Error("type-3 route with no VTEP should be skipped")
 	}
 }
+
+// --- Type-3 NLRI builder tests -----------------------------------------------
+
+func TestBuildEVPNType3NLRI(t *testing.T) {
+	rd, err := buildRouteDistinguisher(65000, 4000)
+	if err != nil {
+		t.Fatalf("build RD: %v", err)
+	}
+
+	nlri, err := buildEVPNType3NLRI(rd, "10.0.0.1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	msg, err := nlri.UnmarshalNew()
+	if err != nil {
+		t.Fatalf("unmarshal NLRI: %v", err)
+	}
+	route, ok := msg.(*apipb.EVPNInclusiveMulticastEthernetTagRoute)
+	if !ok {
+		t.Fatalf("expected EVPNInclusiveMulticastEthernetTagRoute, got %T", msg)
+	}
+	if route.IpAddress != "10.0.0.1" {
+		t.Errorf("IpAddress = %s, want 10.0.0.1", route.IpAddress)
+	}
+	if route.EthernetTag != 0 {
+		t.Errorf("EthernetTag = %d, want 0", route.EthernetTag)
+	}
+}
+
+func TestBuildType3PathAttrs(t *testing.T) {
+	rd, err := buildRouteDistinguisher(65000, 4000)
+	if err != nil {
+		t.Fatalf("build RD: %v", err)
+	}
+
+	nlri, err := buildEVPNType3NLRI(rd, "10.0.0.1")
+	if err != nil {
+		t.Fatalf("build NLRI: %v", err)
+	}
+
+	pattrs, err := buildType3PathAttrs(nlri, "10.0.0.1", 65000, 4000)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Expect 4 attributes: origin, mp-reach, ext-communities, pmsi-tunnel.
+	if len(pattrs) != 4 {
+		t.Errorf("got %d path attrs, want 4", len(pattrs))
+	}
+
+	// Verify PMSI tunnel attribute is present and correct.
+	pmsiFound := false
+	for _, attr := range pattrs {
+		msg, err := attr.UnmarshalNew()
+		if err != nil {
+			continue
+		}
+		if pmsi, ok := msg.(*apipb.PmsiTunnelAttribute); ok {
+			pmsiFound = true
+			if pmsi.Type != pmsiTunnelTypeIngressReplication {
+				t.Errorf("PMSI tunnel type = %d, want %d", pmsi.Type, pmsiTunnelTypeIngressReplication)
+			}
+			if pmsi.Label != 4000 {
+				t.Errorf("PMSI label = %d, want 4000", pmsi.Label)
+			}
+		}
+	}
+	if !pmsiFound {
+		t.Error("PMSI tunnel attribute not found in path attrs")
+	}
+}
+
+func TestBuildType3PathAttrs4ByteASN(t *testing.T) {
+	rd, err := buildRouteDistinguisher(70000, 5000)
+	if err != nil {
+		t.Fatalf("build RD: %v", err)
+	}
+
+	nlri, err := buildEVPNType3NLRI(rd, "10.0.0.1")
+	if err != nil {
+		t.Fatalf("build NLRI: %v", err)
+	}
+
+	pattrs, err := buildType3PathAttrs(nlri, "10.0.0.1", 70000, 5000)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(pattrs) != 4 {
+		t.Errorf("got %d path attrs, want 4", len(pattrs))
+	}
+}
+
+// --- Type-2 NLRI builder tests -----------------------------------------------
+
+func TestBuildEVPNType2NLRI(t *testing.T) {
+	rd, err := buildRouteDistinguisher(65000, 4000)
+	if err != nil {
+		t.Fatalf("build RD: %v", err)
+	}
+
+	nlri, err := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 4000)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	msg, err := nlri.UnmarshalNew()
+	if err != nil {
+		t.Fatalf("unmarshal NLRI: %v", err)
+	}
+	route, ok := msg.(*apipb.EVPNMACIPAdvertisementRoute)
+	if !ok {
+		t.Fatalf("expected EVPNMACIPAdvertisementRoute, got %T", msg)
+	}
+	if route.MacAddress != "aa:bb:cc:dd:ee:ff" {
+		t.Errorf("MacAddress = %s, want aa:bb:cc:dd:ee:ff", route.MacAddress)
+	}
+	if route.IpAddress != "10.100.0.20" {
+		t.Errorf("IpAddress = %s, want 10.100.0.20", route.IpAddress)
+	}
+	if len(route.Labels) != 1 || route.Labels[0] != 4000 {
+		t.Errorf("Labels = %v, want [4000]", route.Labels)
+	}
+	if route.EthernetTag != 0 {
+		t.Errorf("EthernetTag = %d, want 0", route.EthernetTag)
+	}
+}
+
+func TestBuildEVPNType2NLRINoIP(t *testing.T) {
+	rd, err := buildRouteDistinguisher(65000, 4000)
+	if err != nil {
+		t.Fatalf("build RD: %v", err)
+	}
+
+	nlri, err := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "", 4000)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	msg, err := nlri.UnmarshalNew()
+	if err != nil {
+		t.Fatalf("unmarshal NLRI: %v", err)
+	}
+	route, ok := msg.(*apipb.EVPNMACIPAdvertisementRoute)
+	if !ok {
+		t.Fatalf("expected EVPNMACIPAdvertisementRoute, got %T", msg)
+	}
+	if route.IpAddress != "" {
+		t.Errorf("IpAddress = %s, want empty", route.IpAddress)
+	}
+}
+
+func TestBuildType2PathAttrs(t *testing.T) {
+	rd, err := buildRouteDistinguisher(65000, 4000)
+	if err != nil {
+		t.Fatalf("build RD: %v", err)
+	}
+
+	nlri, err := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 4000)
+	if err != nil {
+		t.Fatalf("build NLRI: %v", err)
+	}
+
+	pattrs, err := buildType2PathAttrs(nlri, "10.0.0.1", 65000, 4000)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Expect 3 attributes: origin, mp-reach, ext-communities.
+	if len(pattrs) != 3 {
+		t.Errorf("got %d path attrs, want 3", len(pattrs))
+	}
+
+	// Verify MpReach next-hop is RouterID.
+	for _, attr := range pattrs {
+		msg, err := attr.UnmarshalNew()
+		if err != nil {
+			continue
+		}
+		if mp, ok := msg.(*apipb.MpReachNLRIAttribute); ok {
+			if len(mp.NextHops) != 1 || mp.NextHops[0] != "10.0.0.1" {
+				t.Errorf("NextHops = %v, want [10.0.0.1]", mp.NextHops)
+			}
+		}
+	}
+}
+
+func TestBuildType2PathAttrs4ByteASN(t *testing.T) {
+	rd, err := buildRouteDistinguisher(70000, 5000)
+	if err != nil {
+		t.Fatalf("build RD: %v", err)
+	}
+
+	nlri, err := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 5000)
+	if err != nil {
+		t.Fatalf("build NLRI: %v", err)
+	}
+
+	pattrs, err := buildType2PathAttrs(nlri, "10.0.0.1", 70000, 5000)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(pattrs) != 3 {
+		t.Errorf("got %d path attrs, want 3", len(pattrs))
+	}
+}
+
+// --- advertiseType2 / advertiseType3 unit tests (skip verification) ----------
+
+func TestAdvertiseType2SkipsWhenBridgeMACEmpty(t *testing.T) {
+	overlay := &OverlayTier{
+		cfg: &Config{BridgeMAC: "", ProvisionIP: "10.100.0.20/24"},
+		log: slog.Default(),
+	}
+	if err := overlay.advertiseType2(nil); err != nil {
+		t.Errorf("expected nil error when BridgeMAC empty, got: %v", err)
+	}
+}
+
+func TestAdvertiseType2SkipsWhenProvisionIPEmpty(t *testing.T) {
+	overlay := &OverlayTier{
+		cfg: &Config{BridgeMAC: "aa:bb:cc:dd:ee:ff", ProvisionIP: ""},
+		log: slog.Default(),
+	}
+	if err := overlay.advertiseType2(nil); err != nil {
+		t.Errorf("expected nil error when ProvisionIP empty, got: %v", err)
+	}
+}
+
+func TestAdvertiseType2InvalidBridgeMAC(t *testing.T) {
+	overlay := &OverlayTier{
+		cfg: &Config{BridgeMAC: "not-a-mac", ProvisionIP: "10.100.0.20/24"},
+		log: slog.Default(),
+	}
+	err := overlay.advertiseType2(nil)
+	if err == nil {
+		t.Fatal("expected error for invalid bridge MAC")
+	}
+}
+
+func TestAdvertiseType2InvalidProvisionIP(t *testing.T) {
+	overlay := &OverlayTier{
+		cfg: &Config{BridgeMAC: "aa:bb:cc:dd:ee:ff", ProvisionIP: "not-a-cidr", ASN: 65000, ProvisionVNI: 100},
+		log: slog.Default(),
+	}
+	err := overlay.advertiseType2(nil)
+	if err == nil {
+		t.Fatal("expected error for invalid provision IP")
+	}
+}
