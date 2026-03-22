@@ -126,7 +126,7 @@ simplify:
 
 test-e2e:
 	@echo Running E2E tests
-	@go test -tags e2e -race -v ./test/e2e/...
+	@go test -tags e2e -race -v $(shell go list -tags e2e ./test/e2e/... | grep -v /kvm)
 
 test-kvm:
 	@echo Running KVM E2E tests (requires QEMU, root, and KVM assets)

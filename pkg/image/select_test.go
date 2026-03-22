@@ -129,6 +129,35 @@ func TestSelectBestSourceAllFailed(t *testing.T) {
 	}
 }
 
+func TestProbeURLTreats405And501AsReachable(t *testing.T) {
+	t.Helper()
+
+	tests := []struct {
+		name   string
+		status int
+	}{
+		{"405 Method Not Allowed", http.StatusMethodNotAllowed},
+		{"501 Not Implemented", http.StatusNotImplemented},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+			}))
+			defer srv.Close()
+
+			elapsed, err := probeURL(context.Background(), srv.URL+"/image.raw")
+			if err != nil {
+				t.Errorf("probeURL should treat %d as reachable, got error: %v", tc.status, err)
+			}
+			if elapsed <= 0 {
+				t.Error("expected positive elapsed duration")
+			}
+		})
+	}
+}
+
 func TestRedactHost(t *testing.T) {
 	t.Helper()
 

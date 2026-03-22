@@ -85,7 +85,8 @@ func TestLUKSVerifyHeader(t *testing.T) {
 		_ = exec.Command("qemu-nbd", "--disconnect", nbdDev).Run()
 	})
 
-	time.Sleep(time.Second)
+	// Wait for the nbd device to become ready.
+	waitForDevice(t, nbdDev, 10*time.Second)
 
 	// Run cryptsetup luksDump to verify LUKS header.
 	out, err := exec.Command("cryptsetup", "luksDump", nbdDev).CombinedOutput()

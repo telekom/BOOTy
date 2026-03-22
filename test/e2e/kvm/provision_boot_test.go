@@ -15,6 +15,12 @@ import (
 
 // TestProvisionAndBootOS provisions a disk via BOOTy in QEMU, then boots the
 // provisioned disk directly to verify the OS starts successfully.
+//
+// NOTE: createTestDiskImage produces a minimal GPT/ext4 disk without a real
+// kernel or initrd under /boot.  When the provisioning step doesn't stream
+// a full OS image into the disk, extractKernelFromDisk returns "" and the
+// test gracefully skips the boot phase.  To exercise the full boot path,
+// set IMAGE to a URL serving a real OS image that includes /boot/vmlinuz*.
 func TestProvisionAndBootOS(t *testing.T) {
 	requireRoot(t)
 	qemuAvailable(t)

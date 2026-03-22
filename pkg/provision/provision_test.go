@@ -333,8 +333,10 @@ func TestRemoveEFIBootEntriesGracefulOnMissing(t *testing.T) {
 	}
 }
 
-func TestMountEFIVarsGracefulOnNonEFI(t *testing.T) {
-	// MountEFIVars should handle non-EFI systems gracefully (no panic, returns nil).
+func TestMountEFIVarsReturnsNilOnHost(t *testing.T) {
+	// MountEFIVars should not return an error on the current host regardless
+	// of whether it has EFI support. On non-EFI systems efivarfs simply
+	// won't be mounted; on EFI systems it may already be mounted.
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
 	err := c.MountEFIVars(context.Background())

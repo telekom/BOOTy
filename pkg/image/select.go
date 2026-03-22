@@ -83,7 +83,9 @@ func probeURL(ctx context.Context, rawURL string) (time.Duration, error) {
 	defer func() { _ = resp.Body.Close() }()
 	elapsed := time.Since(start)
 
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode >= 400 &&
+		resp.StatusCode != http.StatusMethodNotAllowed &&
+		resp.StatusCode != http.StatusNotImplemented {
 		return 0, fmt.Errorf("probe returned status %d", resp.StatusCode)
 	}
 	return elapsed, nil
