@@ -172,42 +172,30 @@ type ChassisInfo struct {
 ### Collection Implementation
 
 ```go
-// pkg/inventory/collector.go
+// pkg/inventory/collector.go — base inventory
 package inventory
 
-// CollectExtended gathers all inventory data.
-func (c *Collector) CollectExtended(ctx context.Context) (*ExtendedInventory, error) {
-    inv := &ExtendedInventory{}
+// Collect gathers a full hardware inventory from sysfs and procfs.
+func Collect() (*HardwareInventory, error) { ... }
 
-    // Base inventory (existing implementation)
-    base, err := c.Collect(ctx)
-    if err != nil {
-        return nil, fmt.Errorf("collect base inventory: %w", err)
-    }
-    inv.Base = *base
+// Extended collection uses standalone functions (best-effort, sysfs-based):
+// pkg/inventory/gpu.go
+func ScanGPUs() []GPUInfo { ... }
 
-    // Extended data (best-effort — log and continue on errors)
-    inv.GPUs = c.collectGPUs(ctx)
-    inv.StorageControllers = c.collectStorageControllers(ctx)
-    inv.Thermal = c.collectThermal(ctx)
-    inv.PowerSupplies = c.collectPSUs(ctx)
-    inv.USBDevices = c.collectUSBDevices(ctx)
-    inv.PCITopology = c.collectPCITopology(ctx)
-    inv.Transceivers = c.collectTransceivers(ctx)
-    inv.Chassis = c.collectChassis(ctx)
+// pkg/inventory/usb.go
+func ScanUSBDevices() []USBDeviceInfo { ... }
 
-    return inv, nil
-}
+// pkg/inventory/thermal.go
+func CollectThermal() ThermalInfo { ... }
+```
 
-// All collection methods use sysfs/procfs first, binary tools as fallback.
-// GPU: /sys/bus/pci/devices/*/class (0x0300 = display controller)
-// Storage: /sys/class/scsi_host/ + SMBIOS Type 7
-// Thermal: /sys/class/thermal/ + /sys/class/hwmon/
-// PSU: SMBIOS Type 39
+All collection functions use testable `*From()` variants that accept custom sysfs
+paths, with the public functions pointing to production sysfs locations.
+
+```go
+// GPU: /sys/bus/pci/devices/*/class (0x0300xx = display/3D/accelerator)
 // USB: /sys/bus/usb/devices/
-// PCI: /sys/bus/pci/devices/ (already used in base inventory)
-// Transceivers: ethtool --module-info <iface>
-// Chassis: SMBIOS Type 3
+// Thermal: /sys/class/thermal/ + /sys/class/hwmon/
 ```
 
 ### Required Binaries in Initramfs

@@ -76,10 +76,6 @@ func resolveGPUName(vendorID, deviceID string) string {
 	return "GPU " + key
 }
 
-func readSysfs(devPath, attr string) string {
-	return readSysFile(filepath.Join(devPath, attr))
-}
-
 func readDriverName(devPath string) string {
 	link, err := os.Readlink(filepath.Join(devPath, "driver"))
 	if err != nil {

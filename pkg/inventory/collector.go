@@ -367,6 +367,11 @@ func readSysFile(path string) string {
 	return strings.TrimSpace(string(data))
 }
 
+// readSysfs reads a named attribute from a sysfs device directory.
+func readSysfs(devPath, attr string) string {
+	return readSysFile(filepath.Join(devPath, attr))
+}
+
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
