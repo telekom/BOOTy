@@ -244,6 +244,68 @@ kernel-drivers proposal. All collection is Go-first using sysfs/procfs.
   - QEMU with emulated NVMe controller → verify storage controller detection
   - QEMU with USB pass-through → verify USB enumeration
 
+## Usage Guide
+
+### Overview
+
+The extended inventory runs automatically during provisioning (step
+`collect-inventory`). BOOTy scans sysfs, procfs, and hwmon to collect
+hardware details and reports them to CAPRF.
+
+### What Gets Collected
+
+| Category | Source | Data Examples |
+|----------|--------|---------------|
+| **GPUs/Accelerators** | `/sys/bus/pci/devices/` | NVIDIA A100, AMD MI300X, Intel Max 1550 — PCI addr, driver, NUMA, SR-IOV |
+| **USB Devices** | `/sys/bus/usb/devices/` | Vendor/product ID, class (HID, Mass Storage, Hub), serial |
+| **Thermal** | `/sys/class/thermal/`, `/sys/class/hwmon/` | CPU temps (°C), fan RPMs, fan health status |
+| **Power Supplies** | SMBIOS Type 39 via `/sys/class/dmi/` | Wattage, status, model name |
+| **Storage Controllers** | `/sys/bus/pci/devices/` | RAID, NVMe, SAS/SATA controllers |
+| **PCI Topology** | `/sys/bus/pci/devices/` | Full PCI tree with class/vendor/device IDs |
+
+### Programmatic Access
+
+```go
+import "github.com/telekom/BOOTy/pkg/inventory"
+
+// Scan individual subsystems.
+gpus := inventory.ScanGPUs()
+usbs := inventory.ScanUSBDevices()
+thermal := inventory.CollectThermal()
+
+// Full extended inventory.
+ext := inventory.CollectExtended()
+fmt.Printf("GPUs: %d, USB: %d, PSUs: %d\n",
+    len(ext.GPUs), len(ext.USBDevices), len(ext.PowerSupplies))
+```
+
+### GPU Detection
+
+GPUs are detected by PCI class codes:
+- `0x030000` — VGA compatible controller
+- `0x030100` — XGA compatible controller
+- `0x030200` — 3D controller (compute GPUs like A100/H100)
+- `0x030800` — Display controller (other)
+- `0x120000` — Processing accelerator
+- `0x120100` — AI inference accelerator
+
+Known GPU models are resolved to human-readable names (e.g.,
+`NVIDIA H100-SXM5-80GB`). Unknown devices show the PCI device ID.
+
+### USB Classification
+
+USB devices are classified by bDeviceClass:
+- `03` → HID (keyboards, mice)
+- `08` → Mass Storage
+- `09` → Hub
+- `0e` → Video
+- Empty/unrecognized → `Unknown` or `Unknown (XX)`
+
+### CAPRF Reporting
+
+The extended inventory is automatically serialized to JSON and shipped to
+CAPRF as part of the status report. Large payloads are gzip-compressed.
+
 ## Risks
 
 | Risk | Mitigation |
