@@ -74,6 +74,8 @@ func (netlinkFDB) NeighDel(n *netlink.Neigh) error {
 }
 
 // OverlayTier manages EVPN Type-5 routes and VXLAN encapsulation.
+// When EnableL2 is set, it also handles Type-2 (MAC/IP) and Type-3
+// (Inclusive Multicast) routes for L2 overlay use cases.
 type OverlayTier struct {
 	bgp    *server.BgpServer
 	cfg    *Config
@@ -89,18 +91,21 @@ type OverlayTier struct {
 
 	// macVTEP tracks MAC → VTEP mappings learned from Type-2 routes
 	// so that withdrawals (which lack next-hop) can still delete the
-	// correct FDB entry.
+	// correct FDB entry. Only populated when EnableL2 is set.
 	macVTEP map[string]string
 }
 
 // NewOverlayTier creates a new overlay tier.
 func NewOverlayTier(cfg *Config) *OverlayTier {
-	return &OverlayTier{
-		cfg:     cfg,
-		log:     slog.With("tier", "overlay"),
-		macVTEP: make(map[string]string),
-		fdb:     netlinkFDB{},
+	o := &OverlayTier{
+		cfg: cfg,
+		log: slog.With("tier", "overlay"),
+		fdb: netlinkFDB{},
 	}
+	if cfg.EnableL2 {
+		o.macVTEP = make(map[string]string)
+	}
+	return o
 }
 
 // SetBgpServer sets the shared BGP server from the underlay tier.
@@ -108,10 +113,10 @@ func (o *OverlayTier) SetBgpServer(s *server.BgpServer) {
 	o.bgp = s
 }
 
-// Setup creates VXLAN, bridge, and advertises the local MAC/IP as an
-// EVPN Type-2 route so the fabric can reach this node. Incoming Type-5
-// routes from the fabric are installed as kernel routes by watchRoutes.
-// VRF creation is handled by the stack before underlay/overlay setup.
+// Setup creates VXLAN, bridge, and advertises the provision subnet as an
+// EVPN Type-5 (IP Prefix) route so the fabric can route to this node.
+// Incoming Type-5 routes from the fabric are installed as kernel routes
+// by watchRoutes. VRF creation is handled by the stack before setup.
 func (o *OverlayTier) Setup(ctx context.Context) error {
 	if o.bgp == nil {
 		return fmt.Errorf("BGP server not set: call SetBgpServer before Setup")
@@ -129,8 +134,8 @@ func (o *OverlayTier) Setup(ctx context.Context) error {
 		return fmt.Errorf("add overlay loopback: %w", err)
 	}
 
-	if err := o.advertiseType2(ctx); err != nil {
-		return fmt.Errorf("advertise EVPN Type-2: %w", err)
+	if err := o.advertiseType5(ctx); err != nil {
+		return fmt.Errorf("advertise EVPN Type-5: %w", err)
 	}
 
 	watchCtx, cancel := context.WithCancel(ctx)
@@ -417,21 +422,20 @@ func (o *OverlayTier) addOverlayLoopback() error {
 	return nil
 }
 
-// advertiseType2 advertises this node's bridge MAC + provision IP as an
-// EVPN Type-2 (MAC/IP Advertisement) route so the fabric knows how to
-// forward overlay traffic to this VTEP.
-func (o *OverlayTier) advertiseType2(ctx context.Context) error {
+// advertiseType5 advertises this node's provision subnet as an EVPN Type-5
+// (IP Prefix) route so the fabric can route overlay traffic to this VTEP.
+func (o *OverlayTier) advertiseType5(ctx context.Context) error {
 	rd, err := buildRouteDistinguisher(o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
 	if err != nil {
 		return fmt.Errorf("build route distinguisher: %w", err)
 	}
 
-	nlri, err := buildEVPNType2NLRI(rd, o.cfg.BridgeMAC, o.cfg.ProvisionIP, uint32(o.cfg.ProvisionVNI))
+	nlri, err := buildEVPNType5NLRI(rd, o.cfg.ProvisionIP, o.cfg.RouterID, uint32(o.cfg.ProvisionVNI))
 	if err != nil {
 		return fmt.Errorf("build EVPN NLRI: %w", err)
 	}
 
-	pattrs, err := buildType2PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
+	pattrs, err := buildType5PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
 	if err != nil {
 		return fmt.Errorf("build path attributes: %w", err)
 	}
@@ -444,11 +448,11 @@ func (o *OverlayTier) advertiseType2(ctx context.Context) error {
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("add EVPN Type-2 path: %w", err)
+		return fmt.Errorf("add EVPN Type-5 path: %w", err)
 	}
 
-	o.log.Info("advertised EVPN type-2 MAC/IP route",
-		"mac", o.cfg.BridgeMAC, "ip", o.cfg.ProvisionIP, "vni", o.cfg.ProvisionVNI)
+	o.log.Info("advertised EVPN type-5 provision subnet",
+		"ip", o.cfg.ProvisionIP, "vni", o.cfg.ProvisionVNI)
 	return nil
 }
 
@@ -497,133 +501,18 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 	vtep := extractNextHop(p)
 
 	switch route := msg.(type) {
-	case *apipb.EVPNMACIPAdvertisementRoute:
-		o.handleType2Route(route, vtep, withdraw)
-	case *apipb.EVPNInclusiveMulticastEthernetTagRoute:
-		o.handleType3Route(route, vtep, withdraw)
 	case *apipb.EVPNIPPrefixRoute:
 		o.handleType5Route(route, vtep, withdraw)
+	case *apipb.EVPNMACIPAdvertisementRoute:
+		if o.cfg.EnableL2 {
+			o.handleType2Route(route, vtep, withdraw)
+		}
+	case *apipb.EVPNInclusiveMulticastEthernetTagRoute:
+		if o.cfg.EnableL2 {
+			o.handleType3Route(route, vtep, withdraw)
+		}
 	default:
 		o.log.Debug("route update", "action", action, "type", nlri.GetTypeUrl())
-	}
-}
-
-// handleType2Route installs or removes an FDB entry for a remote MAC learned
-// via EVPN Type-2 (MAC/IP Advertisement) route. This enables unicast VXLAN
-// forwarding to remote VTEPs without data-plane MAC learning.
-func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute, vtep string, withdraw bool) {
-	mac, err := net.ParseMAC(route.GetMacAddress())
-	if err != nil {
-		o.log.Debug("type-2 route with invalid MAC", "mac", route.GetMacAddress(), "error", err)
-		return
-	}
-
-	macStr := mac.String()
-
-	// For withdrawals, BGP uses MP_UNREACH_NLRI which has no next-hop.
-	// Look up the previously stored VTEP for this MAC.
-	if withdraw && vtep == "" {
-		if stored, ok := o.macVTEP[macStr]; ok {
-			vtep = stored
-		} else {
-			o.log.Debug("type-2 withdraw with no tracked VTEP", "mac", macStr)
-			return
-		}
-	}
-
-	remoteIP := net.ParseIP(vtep)
-	if remoteIP == nil {
-		o.log.Debug("type-2 route with no valid next-hop", "vtep", vtep)
-		return
-	}
-
-	// Skip FDB entries for our own VTEP.
-	if vtep == o.cfg.RouterID {
-		return
-	}
-
-	vxlanName := o.vxlanName()
-	vxLink, err := o.fdb.LinkByName(vxlanName)
-	if err != nil {
-		o.log.Warn("cannot find VXLAN for FDB update", "vxlan", vxlanName, "error", err)
-		return
-	}
-
-	fdb := &netlink.Neigh{
-		LinkIndex:    vxLink.Attrs().Index,
-		Family:       syscall.AF_BRIDGE,
-		HardwareAddr: mac,
-		IP:           remoteIP,
-		Flags:        netlink.NTF_SELF,
-		State:        netlink.NUD_PERMANENT,
-	}
-
-	if withdraw {
-		if err := o.fdb.NeighDel(fdb); err != nil {
-			o.log.Debug("failed to delete FDB entry", "mac", mac, "vtep", vtep, "error", err)
-		} else {
-			o.log.Info("removed FDB entry from type-2 withdraw", "mac", mac, "vtep", vtep)
-		}
-		delete(o.macVTEP, macStr)
-		return
-	}
-
-	if err := o.fdb.NeighSet(fdb); err != nil {
-		o.log.Debug("failed to add/update FDB entry", "mac", mac, "vtep", vtep, "error", err)
-	} else {
-		o.log.Info("installed FDB entry from type-2 route", "mac", mac, "vtep", vtep)
-	}
-	o.macVTEP[macStr] = vtep
-}
-
-// handleType3Route installs or removes a BUM FDB entry for a remote VTEP
-// learned via EVPN Type-3 (Inclusive Multicast Ethernet Tag) route.
-// This ensures broadcast/unknown/multicast traffic is flooded to all
-// participating VTEPs in the VNI.
-func (o *OverlayTier) handleType3Route(route *apipb.EVPNInclusiveMulticastEthernetTagRoute, vtep string, withdraw bool) {
-	remoteIP := net.ParseIP(route.GetIpAddress())
-	if remoteIP == nil {
-		remoteIP = net.ParseIP(vtep)
-	}
-	if remoteIP == nil {
-		o.log.Debug("type-3 route with no valid VTEP IP")
-		return
-	}
-
-	// Skip BUM entries for our own VTEP.
-	if remoteIP.String() == o.cfg.RouterID {
-		return
-	}
-
-	vxlanName := o.vxlanName()
-	vxLink, err := o.fdb.LinkByName(vxlanName)
-	if err != nil {
-		o.log.Warn("cannot find VXLAN for BUM update", "vxlan", vxlanName, "error", err)
-		return
-	}
-
-	fdb := &netlink.Neigh{
-		LinkIndex:    vxLink.Attrs().Index,
-		Family:       syscall.AF_BRIDGE,
-		HardwareAddr: net.HardwareAddr{0, 0, 0, 0, 0, 0},
-		IP:           remoteIP,
-		Flags:        netlink.NTF_SELF,
-		State:        netlink.NUD_PERMANENT,
-	}
-
-	if withdraw {
-		if err := o.fdb.NeighDel(fdb); err != nil {
-			o.log.Debug("failed to delete BUM FDB entry", "vtep", remoteIP, "error", err)
-		} else {
-			o.log.Info("removed BUM FDB entry from type-3 withdraw", "vtep", remoteIP)
-		}
-		return
-	}
-
-	if err := o.fdb.NeighAppend(fdb); err != nil {
-		o.log.Debug("failed to add/update BUM FDB entry", "vtep", remoteIP, "error", err)
-	} else {
-		o.log.Info("installed BUM FDB entry from type-3 route", "vtep", remoteIP)
 	}
 }
 
@@ -679,6 +568,119 @@ func (o *OverlayTier) handleType5Route(route *apipb.EVPNIPPrefixRoute, vtep stri
 	}
 }
 
+// handleType2Route installs or removes an FDB entry for a remote MAC learned
+// via EVPN Type-2 (MAC/IP Advertisement) route. Only active when EnableL2 is set.
+func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute, vtep string, withdraw bool) {
+	mac, err := net.ParseMAC(route.GetMacAddress())
+	if err != nil {
+		o.log.Debug("type-2 route with invalid MAC", "mac", route.GetMacAddress(), "error", err)
+		return
+	}
+
+	macStr := mac.String()
+
+	if withdraw && vtep == "" {
+		if stored, ok := o.macVTEP[macStr]; ok {
+			vtep = stored
+		} else {
+			o.log.Debug("type-2 withdraw with no tracked VTEP", "mac", macStr)
+			return
+		}
+	}
+
+	remoteIP := net.ParseIP(vtep)
+	if remoteIP == nil {
+		o.log.Debug("type-2 route with no valid next-hop", "vtep", vtep)
+		return
+	}
+
+	if vtep == o.cfg.RouterID {
+		return
+	}
+
+	vxlanName := o.vxlanName()
+	vxLink, err := o.fdb.LinkByName(vxlanName)
+	if err != nil {
+		o.log.Warn("cannot find VXLAN for FDB update", "vxlan", vxlanName, "error", err)
+		return
+	}
+
+	fdb := &netlink.Neigh{
+		LinkIndex:    vxLink.Attrs().Index,
+		Family:       syscall.AF_BRIDGE,
+		HardwareAddr: mac,
+		IP:           remoteIP,
+		Flags:        netlink.NTF_SELF,
+		State:        netlink.NUD_PERMANENT,
+	}
+
+	if withdraw {
+		if err := o.fdb.NeighDel(fdb); err != nil {
+			o.log.Debug("failed to delete FDB entry", "mac", mac, "vtep", vtep, "error", err)
+		} else {
+			o.log.Info("removed FDB entry from type-2 withdraw", "mac", mac, "vtep", vtep)
+		}
+		delete(o.macVTEP, macStr)
+		return
+	}
+
+	if err := o.fdb.NeighSet(fdb); err != nil {
+		o.log.Debug("failed to add/update FDB entry", "mac", mac, "vtep", vtep, "error", err)
+	} else {
+		o.log.Info("installed FDB entry from type-2 route", "mac", mac, "vtep", vtep)
+	}
+	o.macVTEP[macStr] = vtep
+}
+
+// handleType3Route installs or removes a BUM FDB entry for a remote VTEP
+// learned via EVPN Type-3 (Inclusive Multicast Ethernet Tag) route.
+// Only active when EnableL2 is set.
+func (o *OverlayTier) handleType3Route(route *apipb.EVPNInclusiveMulticastEthernetTagRoute, vtep string, withdraw bool) {
+	remoteIP := net.ParseIP(route.GetIpAddress())
+	if remoteIP == nil {
+		remoteIP = net.ParseIP(vtep)
+	}
+	if remoteIP == nil {
+		o.log.Debug("type-3 route with no valid VTEP IP")
+		return
+	}
+
+	if remoteIP.String() == o.cfg.RouterID {
+		return
+	}
+
+	vxlanName := o.vxlanName()
+	vxLink, err := o.fdb.LinkByName(vxlanName)
+	if err != nil {
+		o.log.Warn("cannot find VXLAN for BUM update", "vxlan", vxlanName, "error", err)
+		return
+	}
+
+	fdb := &netlink.Neigh{
+		LinkIndex:    vxLink.Attrs().Index,
+		Family:       syscall.AF_BRIDGE,
+		HardwareAddr: net.HardwareAddr{0, 0, 0, 0, 0, 0},
+		IP:           remoteIP,
+		Flags:        netlink.NTF_SELF,
+		State:        netlink.NUD_PERMANENT,
+	}
+
+	if withdraw {
+		if err := o.fdb.NeighDel(fdb); err != nil {
+			o.log.Debug("failed to delete BUM FDB entry", "vtep", remoteIP, "error", err)
+		} else {
+			o.log.Info("removed BUM FDB entry from type-3 withdraw", "vtep", remoteIP)
+		}
+		return
+	}
+
+	if err := o.fdb.NeighAppend(fdb); err != nil {
+		o.log.Debug("failed to add/update BUM FDB entry", "vtep", remoteIP, "error", err)
+	} else {
+		o.log.Info("installed BUM FDB entry from type-3 route", "vtep", remoteIP)
+	}
+}
+
 // parsePrefixRoute parses a prefix string and length into a *net.IPNet.
 func parsePrefixRoute(prefix string, prefixLen uint32) (*net.IPNet, error) {
 	ip := net.ParseIP(prefix)
@@ -730,34 +732,37 @@ func buildRouteDistinguisher(asn, vni uint32) (*anypb.Any, error) {
 	return a, nil
 }
 
-// buildEVPNType2NLRI builds an EVPN MAC/IP Advertisement (Type-2) NLRI
-// for the local bridge MAC and provision IP.
-func buildEVPNType2NLRI(rd *anypb.Any, mac, ipWithMask string, label uint32) (*anypb.Any, error) {
-	ip, _, err := net.ParseCIDR(ipWithMask)
+// buildEVPNType5NLRI builds an EVPN IP Prefix (Type-5) NLRI for the
+// provision subnet, so the fabric can route overlay traffic to this VTEP.
+func buildEVPNType5NLRI(rd *anypb.Any, provisionIP, gwIP string, label uint32) (*anypb.Any, error) {
+	_, ipNet, err := net.ParseCIDR(provisionIP)
 	if err != nil {
-		return nil, fmt.Errorf("parse provision IP %s: %w", ipWithMask, err)
+		return nil, fmt.Errorf("parse provision IP %s: %w", provisionIP, err)
 	}
 
-	route := &apipb.EVPNMACIPAdvertisementRoute{
+	ones, _ := ipNet.Mask.Size()
+
+	route := &apipb.EVPNIPPrefixRoute{
 		Rd: rd,
 		Esi: &apipb.EthernetSegmentIdentifier{
 			Type:  0,
 			Value: make([]byte, 9),
 		},
 		EthernetTag: 0,
-		MacAddress:  mac,
-		IpAddress:   ip.String(),
-		Labels:      []uint32{label},
+		IpPrefixLen: uint32(ones),
+		IpPrefix:    ipNet.IP.String(),
+		GwAddress:   gwIP,
+		Label:       label,
 	}
 	a, err := anypb.New(route)
 	if err != nil {
-		return nil, fmt.Errorf("marshal EVPN type-2 NLRI: %w", err)
+		return nil, fmt.Errorf("marshal EVPN type-5 NLRI: %w", err)
 	}
 	return a, nil
 }
 
-// buildType2PathAttrs builds BGP path attributes for EVPN Type-2 advertisement.
-func buildType2PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32) ([]*anypb.Any, error) {
+// buildType5PathAttrs builds BGP path attributes for EVPN Type-5 advertisement.
+func buildType5PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32) ([]*anypb.Any, error) {
 	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0}) // IGP
 	if err != nil {
 		return nil, fmt.Errorf("marshal origin: %w", err)
