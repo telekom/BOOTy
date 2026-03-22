@@ -160,8 +160,8 @@ func SetupAll(cfgs []Config) ([]string, error) {
 	for i := range cfgs {
 		name, err := Setup(&cfgs[i])
 		if err != nil {
-			for _, c := range cfgs[:len(names)] {
-				_ = TeardownConfig(&c)
+			for j := range cfgs[:len(names)] {
+				_ = TeardownConfig(&cfgs[j])
 			}
 			return nil, fmt.Errorf("vlan setup failed: %w", err)
 		}
@@ -172,9 +172,9 @@ func SetupAll(cfgs []Config) ([]string, error) {
 
 // TeardownAll removes all VLAN interfaces.
 func TeardownAll(cfgs []Config) {
-	for _, cfg := range cfgs {
-		if err := TeardownConfig(&cfg); err != nil {
-			slog.Warn("VLAN teardown error", "vlan", cfg.InterfaceName(), "error", err)
+	for i := range cfgs {
+		if err := TeardownConfig(&cfgs[i]); err != nil {
+			slog.Warn("VLAN teardown error", "vlan", cfgs[i].InterfaceName(), "error", err)
 		}
 	}
 }
