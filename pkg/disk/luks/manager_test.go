@@ -97,3 +97,77 @@ func TestIsLUKSWithError(t *testing.T) {
 		}
 	})
 }
+
+func TestFormatSuccess(t *testing.T) {
+	var gotName string
+	var gotArgs []string
+	var gotInput string
+	cmd := &fakeCommander{runWithInputFn: func(_ context.Context, input, name string, args ...string) ([]byte, error) {
+		gotName = name
+		gotArgs = args
+		gotInput = input
+		return nil, nil
+	}}
+	mgr := NewWithCommander(nil, cmd)
+
+	target := &Target{Device: "/dev/sda3", MappedName: "root_crypt"}
+	cfg := &Config{Passphrase: "secret123"}
+	if err := mgr.Format(context.Background(), target, cfg); err != nil {
+		t.Fatalf("Format() error: %v", err)
+	}
+	if gotName != "cryptsetup" {
+		t.Errorf("command = %q, want cryptsetup", gotName)
+	}
+	if gotArgs[0] != "luksFormat" {
+		t.Errorf("subcommand = %q, want luksFormat", gotArgs[0])
+	}
+	if gotInput != "secret123\n" {
+		t.Errorf("stdin = %q, want passphrase", gotInput)
+	}
+}
+
+func TestOpenSuccess(t *testing.T) {
+	var gotName string
+	var gotArgs []string
+	cmd := &fakeCommander{runWithInputFn: func(_ context.Context, _, name string, args ...string) ([]byte, error) {
+		gotName = name
+		gotArgs = args
+		return nil, nil
+	}}
+	mgr := NewWithCommander(nil, cmd)
+
+	target := &Target{Device: "/dev/sda3", MappedName: "root_crypt"}
+	if err := mgr.Open(context.Background(), target, "pass"); err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	if gotName != "cryptsetup" {
+		t.Errorf("command = %q, want cryptsetup", gotName)
+	}
+	if gotArgs[0] != "luksOpen" {
+		t.Errorf("subcommand = %q, want luksOpen", gotArgs[0])
+	}
+}
+
+func TestCloseSuccess(t *testing.T) {
+	var gotName string
+	var gotArgs []string
+	cmd := &fakeCommander{runFn: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		gotName = name
+		gotArgs = args
+		return nil, nil
+	}}
+	mgr := NewWithCommander(nil, cmd)
+
+	if err := mgr.Close(context.Background(), "root_crypt"); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
+	if gotName != "cryptsetup" {
+		t.Errorf("command = %q, want cryptsetup", gotName)
+	}
+	if gotArgs[0] != "luksClose" {
+		t.Errorf("subcommand = %q, want luksClose", gotArgs[0])
+	}
+	if gotArgs[1] != "root_crypt" {
+		t.Errorf("mapped name = %q, want root_crypt", gotArgs[1])
+	}
+}

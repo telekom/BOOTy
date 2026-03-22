@@ -73,6 +73,8 @@ func (m *Manager) Format(ctx context.Context, target *Target, cfg *Config) error
 	if strings.TrimSpace(target.Device) == "" {
 		return fmt.Errorf("target device required")
 	}
+	// LUKS format always requires a passphrase for initial volume creation.
+	// Post-format enrollment (TPM2, clevis, keyfile) is a separate step.
 	if cfg.Passphrase == "" {
 		return fmt.Errorf("passphrase required for LUKS format")
 	}

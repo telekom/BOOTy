@@ -20,8 +20,8 @@ type Config struct {
 	Partitions   []Target     `json:"partitions"`
 	UnlockMethod UnlockMethod `json:"unlockMethod"`
 	Passphrase   string       `json:"passphrase,omitempty"`
-	TangURL      string       `json:"tangUrl,omitempty"`
-	TPMPCRs      []int        `json:"tpmPcrs,omitempty"`
+	TangURL      string       `json:"tangUrl,omitempty"` // Phase 2: tang server URL for clevis enrollment
+	TPMPCRs      []int        `json:"tpmPcrs,omitempty"` // Phase 2: PCR values for TPM2 enrollment
 	Cipher       string       `json:"cipher,omitempty"`
 	KeySize      int          `json:"keySize,omitempty"`
 	Hash         string       `json:"hash,omitempty"`
@@ -31,7 +31,6 @@ type Config struct {
 type Target struct {
 	Device     string `json:"device"`
 	MappedName string `json:"mappedName"`
-	MountPoint string `json:"mountPoint"`
 }
 
 // MappedPath returns the /dev/mapper path for a mapped LUKS volume.

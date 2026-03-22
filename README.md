@@ -255,6 +255,12 @@ export dns_resolver="8.8.8.8"
 | `IMAGE_CHECKSUM_TYPE` | — | Checksum algorithm: `sha256` or `sha512` |
 | `IMAGE_SIGNATURE_URL` | — | URL to detached GPG signature for image verification |
 | `IMAGE_GPG_PUBKEY` | — | Path to GPG public key for image signature verification |
+| `LUKS_ENABLED` | `false` | Enable LUKS2 encryption for target partitions |
+| `LUKS_PASSPHRASE` | — | Passphrase for initial LUKS volume creation |
+| `LUKS_UNLOCK_METHOD` | `passphrase` | Unlock method: `passphrase`, `tpm2`, `clevis`, `keyfile` |
+| `LUKS_CIPHER` | `aes-xts-plain64` | LUKS2 cipher algorithm |
+| `LUKS_KEY_SIZE` | `512` | LUKS2 key size in bits |
+| `LUKS_HASH` | `sha256` | LUKS2 hash algorithm |
 | `NUM_VFS` | `0` | Number of SR-IOV virtual functions for Mellanox NICs (0 = skip) |
 
 #### Network Variables
@@ -473,6 +479,42 @@ When enabled, BOOTy reports `SECUREBOOT_REENABLE=true` in its provisioning
 success status. The CAPRF controller then re-enables Secure Boot via Redfish
 before the final reboot. If the installed OS does not have signed bootloaders,
 the machine will fail to boot.
+
+### LUKS Encryption
+
+BOOTy supports LUKS2 full-disk encryption for provisioned volumes. When enabled,
+target partitions are formatted as LUKS2 volumes and unlocked before filesystem
+creation.
+
+```bash
+export LUKS_ENABLED=true
+export LUKS_PASSPHRASE="initial-setup-passphrase"
+export LUKS_UNLOCK_METHOD=tpm2       # passphrase | tpm2 | clevis | keyfile
+export LUKS_CIPHER=aes-xts-plain64   # optional, default: aes-xts-plain64
+export LUKS_KEY_SIZE=512              # optional, default: 512
+export LUKS_HASH=sha256              # optional, default: sha256
+```
+
+**Lifecycle:**
+
+1. **Format** — Creates LUKS2 volume on target device (`cryptsetup luksFormat --type luks2`)
+2. **Open** — Maps the encrypted volume to `/dev/mapper/<name>` for filesystem creation
+3. **Crypttab** — Generates `/etc/crypttab` with the appropriate unlock method options
+4. **Close** — Unmaps volume after provisioning completes; OS unlocks on next boot
+
+**Unlock Methods:**
+
+| Method | Description | Crypttab Options |
+|--------|-------------|-----------------|
+| `passphrase` | Manual entry at boot | `luks,discard` |
+| `tpm2` | TPM2 PCR-bound key (Phase 2: enrollment) | `tpm2-device=auto,discard` |
+| `clevis` | Network-bound via tang server (Phase 2: enrollment) | `_netdev,discard` |
+| `keyfile` | Key file in initramfs | `luks,discard,keyscript=/etc/luks/keyfile` |
+
+LUKS format always requires a passphrase for initial volume creation. Post-format
+enrollment (TPM2 PCR binding, clevis tang enrollment) is handled separately after
+the OS is installed. Invalid targets (empty device or mapped name) are silently
+skipped during crypttab generation.
 
 ### VLAN Support
 

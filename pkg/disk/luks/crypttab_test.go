@@ -7,7 +7,7 @@ import (
 
 func TestGenerateCrypttab_Passphrase(t *testing.T) {
 	targets := []Target{
-		{Device: "/dev/sda3", MappedName: "root_crypt", MountPoint: "/"},
+		{Device: "/dev/sda3", MappedName: "root_crypt"},
 	}
 
 	result := GenerateCrypttab(targets, UnlockPassphrase)
@@ -28,7 +28,7 @@ func TestGenerateCrypttab_Passphrase(t *testing.T) {
 
 func TestGenerateCrypttab_TPM2(t *testing.T) {
 	targets := []Target{
-		{Device: "/dev/sda3", MappedName: "root_crypt", MountPoint: "/"},
+		{Device: "/dev/sda3", MappedName: "root_crypt"},
 	}
 
 	result := GenerateCrypttab(targets, UnlockTPM2)
@@ -40,7 +40,7 @@ func TestGenerateCrypttab_TPM2(t *testing.T) {
 
 func TestGenerateCrypttab_Clevis(t *testing.T) {
 	targets := []Target{
-		{Device: "/dev/nvme0n1p3", MappedName: "data_crypt", MountPoint: "/data"},
+		{Device: "/dev/nvme0n1p3", MappedName: "data_crypt"},
 	}
 
 	result := GenerateCrypttab(targets, UnlockClevis)
@@ -52,7 +52,7 @@ func TestGenerateCrypttab_Clevis(t *testing.T) {
 
 func TestGenerateCrypttab_KeyFile(t *testing.T) {
 	targets := []Target{
-		{Device: "/dev/sda3", MappedName: "root_crypt", MountPoint: "/"},
+		{Device: "/dev/sda3", MappedName: "root_crypt"},
 	}
 
 	result := GenerateCrypttab(targets, UnlockKeyFile)
@@ -70,8 +70,8 @@ func TestGenerateCrypttab_KeyFile(t *testing.T) {
 
 func TestGenerateCrypttab_MultipleTargets(t *testing.T) {
 	targets := []Target{
-		{Device: "/dev/sda3", MappedName: "root_crypt", MountPoint: "/"},
-		{Device: "/dev/sda4", MappedName: "data_crypt", MountPoint: "/data"},
+		{Device: "/dev/sda3", MappedName: "root_crypt"},
+		{Device: "/dev/sda4", MappedName: "data_crypt"},
 	}
 
 	result := GenerateCrypttab(targets, UnlockPassphrase)
@@ -86,13 +86,41 @@ func TestGenerateCrypttab_MultipleTargets(t *testing.T) {
 
 func TestGenerateCrypttab_DefaultMethod(t *testing.T) {
 	targets := []Target{
-		{Device: "/dev/sda3", MappedName: "root_crypt", MountPoint: "/"},
+		{Device: "/dev/sda3", MappedName: "root_crypt"},
 	}
 
 	result := GenerateCrypttab(targets, UnlockMethod("unknown"))
 
 	if !strings.Contains(result, "luks,discard") {
 		t.Error("unknown method should default to luks,discard")
+	}
+}
+
+func TestGenerateCrypttab_SkipsEmptyTargets(t *testing.T) {
+	targets := []Target{
+		{Device: "", MappedName: "root_crypt"},
+		{Device: "/dev/sda3", MappedName: ""},
+		{Device: "/dev/sda4", MappedName: "data_crypt"},
+	}
+
+	result := GenerateCrypttab(targets, UnlockPassphrase)
+
+	if strings.Contains(result, "root_crypt") {
+		t.Error("should skip target with empty device")
+	}
+	if !strings.Contains(result, "data_crypt") {
+		t.Error("should include valid target")
+	}
+	// Count non-comment lines
+	lines := strings.Split(strings.TrimSpace(result), "\n")
+	dataLines := 0
+	for _, l := range lines {
+		if !strings.HasPrefix(l, "#") {
+			dataLines++
+		}
+	}
+	if dataLines != 1 {
+		t.Errorf("expected 1 data line, got %d", dataLines)
 	}
 }
 
