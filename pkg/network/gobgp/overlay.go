@@ -422,15 +422,24 @@ func (o *OverlayTier) addOverlayLoopback() error {
 	return nil
 }
 
-// advertiseType5 advertises this node's provision subnet as an EVPN Type-5
-// (IP Prefix) route so the fabric can route overlay traffic to this VTEP.
+// advertiseType5 advertises this node's provision host IP as an EVPN Type-5
+// (IP Prefix) /32 route so the fabric can route overlay traffic to this VTEP.
+// The /32 is required because multiple BOOTy nodes may share the same /24
+// provision subnet — only unique host routes allow per-node reachability.
 func (o *OverlayTier) advertiseType5(ctx context.Context) error {
 	rd, err := buildRouteDistinguisher(o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
 	if err != nil {
 		return fmt.Errorf("build route distinguisher: %w", err)
 	}
 
-	nlri, err := buildEVPNType5NLRI(rd, o.cfg.ProvisionIP, o.cfg.RouterID, uint32(o.cfg.ProvisionVNI))
+	// Extract the host IP from the CIDR and advertise it as a /32 host route.
+	ip, _, err := net.ParseCIDR(o.cfg.ProvisionIP)
+	if err != nil {
+		return fmt.Errorf("parse provision IP %s: %w", o.cfg.ProvisionIP, err)
+	}
+	hostRoute := ip.String() + "/32"
+
+	nlri, err := buildEVPNType5NLRI(rd, hostRoute, o.cfg.RouterID, uint32(o.cfg.ProvisionVNI))
 	if err != nil {
 		return fmt.Errorf("build EVPN NLRI: %w", err)
 	}
@@ -451,8 +460,8 @@ func (o *OverlayTier) advertiseType5(ctx context.Context) error {
 		return fmt.Errorf("add EVPN Type-5 path: %w", err)
 	}
 
-	o.log.Info("advertised EVPN type-5 provision subnet",
-		"ip", o.cfg.ProvisionIP, "vni", o.cfg.ProvisionVNI)
+	o.log.Info("advertised EVPN type-5 host route",
+		"ip", hostRoute, "vni", o.cfg.ProvisionVNI)
 	return nil
 }
 

@@ -407,8 +407,8 @@ func TestGoBGPUnnumberedEVPNType5OnSpine(t *testing.T) {
 	for {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabSpine,
 			"vtysh", "-c", "show bgp l2vpn evpn")
-		// BOOTy-unnumbered (ASN 65020) advertises subnet via RD 65020:100.
-		if strings.Contains(out, "65020:100") {
+		// BOOTy-unnumbered advertises its host IP as a /32 Type-5 route.
+		if strings.Contains(out, "10.100.0.20") {
 			t.Log("EVPN Type-5 route from booty-unnumbered visible on spine")
 			return
 		}
@@ -431,8 +431,8 @@ func TestGoBGPDualEVPNType5OnSpine(t *testing.T) {
 	for {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabSpine,
 			"vtysh", "-c", "show bgp l2vpn evpn")
-		// BOOTy-dual (ASN 65010) advertises subnet via RD 65010:100.
-		if strings.Contains(out, "65010:100") {
+		// BOOTy-dual advertises its host IP as a /32 Type-5 route.
+		if strings.Contains(out, "10.100.0.21") {
 			t.Log("EVPN Type-5 route from booty-dual visible on spine")
 			return
 		}
@@ -455,8 +455,8 @@ func TestGoBGPNumberedEVPNType5OnSpine(t *testing.T) {
 	for {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabSpine,
 			"vtysh", "-c", "show bgp l2vpn evpn")
-		// BOOTy-numbered (ASN 65030) advertises subnet via RD 65030:100.
-		if strings.Contains(out, "65030:100") {
+		// BOOTy-numbered advertises its host IP as a /32 Type-5 route.
+		if strings.Contains(out, "10.100.0.22") {
 			t.Log("EVPN Type-5 route from booty-numbered visible on spine")
 			return
 		}

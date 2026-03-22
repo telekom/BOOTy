@@ -169,7 +169,8 @@ func TestBuildEVPNType5NLRI(t *testing.T) {
 		t.Fatalf("build RD: %v", err)
 	}
 
-	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/24", "10.0.0.1", 4000)
+	// Passing a /32 host route (as advertiseType5 now does).
+	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -186,11 +187,11 @@ func TestBuildEVPNType5NLRI(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected EVPNIPPrefixRoute, got %T", msg)
 	}
-	if route.IpPrefix != "10.100.0.0" {
-		t.Errorf("IpPrefix = %s, want 10.100.0.0", route.IpPrefix)
+	if route.IpPrefix != "10.100.0.20" {
+		t.Errorf("IpPrefix = %s, want 10.100.0.20", route.IpPrefix)
 	}
-	if route.IpPrefixLen != 24 {
-		t.Errorf("IpPrefixLen = %d, want 24", route.IpPrefixLen)
+	if route.IpPrefixLen != 32 {
+		t.Errorf("IpPrefixLen = %d, want 32", route.IpPrefixLen)
 	}
 	if route.GwAddress != "10.0.0.1" {
 		t.Errorf("GwAddress = %s, want 10.0.0.1", route.GwAddress)
@@ -203,7 +204,7 @@ func TestBuildType5PathAttrs(t *testing.T) {
 		t.Fatalf("build RD: %v", err)
 	}
 
-	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/24", "10.0.0.1", 4000)
+	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
 	if err != nil {
 		t.Fatalf("build NLRI: %v", err)
 	}
