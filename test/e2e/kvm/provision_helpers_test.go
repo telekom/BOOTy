@@ -20,7 +20,7 @@ import (
 // requireProvisionTools skips the test if essential provisioning tools are missing.
 func requireProvisionTools(t *testing.T) {
 	t.Helper()
-	for _, tool := range []string{"sfdisk", "mkfs.ext4", "qemu-img", "losetup"} {
+	for _, tool := range []string{"sfdisk", "mkfs.ext4", "qemu-img", "losetup", "dd", "mount", "umount"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("%s not available, skipping provision test", tool)
 		}
