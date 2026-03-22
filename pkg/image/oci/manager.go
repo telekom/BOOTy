@@ -72,13 +72,13 @@ func ParsePlatform(s string) Platform {
 	p := Platform{OS: "linux", Architecture: runtime.GOARCH}
 	parts := strings.SplitN(s, "/", 3)
 	if len(parts) >= 1 && strings.TrimSpace(parts[0]) != "" {
-		p.OS = strings.TrimSpace(parts[0])
+		p.OS = strings.ToLower(strings.TrimSpace(parts[0]))
 	}
 	if len(parts) >= 2 && strings.TrimSpace(parts[1]) != "" {
-		p.Architecture = strings.TrimSpace(parts[1])
+		p.Architecture = strings.ToLower(strings.TrimSpace(parts[1]))
 	}
 	if len(parts) >= 3 && strings.TrimSpace(parts[2]) != "" {
-		p.Variant = strings.TrimSpace(parts[2])
+		p.Variant = strings.ToLower(strings.TrimSpace(parts[2]))
 	}
 	return p
 }
@@ -90,6 +90,9 @@ func (m *Manager) CacheDir() string {
 
 // IsCached checks if a layer digest is in the cache.
 func (m *Manager) IsCached(digest string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	idx, err := m.loadCacheIndex()
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -103,6 +106,16 @@ func (m *Manager) IsCached(digest string) (bool, error) {
 
 // AddToCache records a layer in the cache index.
 func (m *Manager) AddToCache(digest, localPath string, size int64) error {
+	if digest == "" {
+		return fmt.Errorf("empty digest")
+	}
+	if localPath == "" {
+		return fmt.Errorf("empty local path")
+	}
+	if size < 0 {
+		return fmt.Errorf("negative size: %d", size)
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

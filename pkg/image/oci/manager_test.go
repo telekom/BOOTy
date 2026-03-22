@@ -116,21 +116,43 @@ func TestNew_CustomCacheDir(t *testing.T) {
 
 func TestParsePlatform_EmptySegments(t *testing.T) {
 	tests := []struct {
+		name  string
 		input string
 		os    string
 		arch  string
 	}{
-		{"", "linux", runtime.GOARCH},
-		{"linux/", "linux", runtime.GOARCH},
-		{"/amd64", "linux", "amd64"},
+		{"empty string", "", "linux", runtime.GOARCH},
+		{"trailing slash", "linux/", "linux", runtime.GOARCH},
+		{"leading slash", "/amd64", "linux", "amd64"},
 	}
 	for _, tc := range tests {
-		p := ParsePlatform(tc.input)
-		if p.OS != tc.os {
-			t.Errorf("ParsePlatform(%q).OS = %q, want %q", tc.input, p.OS, tc.os)
-		}
-		if p.Architecture != tc.arch {
-			t.Errorf("ParsePlatform(%q).Architecture = %q, want %q", tc.input, p.Architecture, tc.arch)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			p := ParsePlatform(tc.input)
+			if p.OS != tc.os {
+				t.Errorf("ParsePlatform(%q).OS = %q, want %q", tc.input, p.OS, tc.os)
+			}
+			if p.Architecture != tc.arch {
+				t.Errorf("ParsePlatform(%q).Architecture = %q, want %q", tc.input, p.Architecture, tc.arch)
+			}
+		})
+	}
+}
+
+func TestAddToCache_Validation(t *testing.T) {
+	dir := t.TempDir()
+	m := New(nil, &Config{CacheDir: dir})
+
+	if err := m.AddToCache("", "/path", 100); err == nil {
+		t.Error("expected error for empty digest")
+	}
+	if err := m.AddToCache("sha256:abc", "", 100); err == nil {
+		t.Error("expected error for empty path")
+	}
+	if err := m.AddToCache("sha256:abc", "/path", -1); err == nil {
+		t.Error("expected error for negative size")
+	}
+	// Zero size is valid (empty layer).
+	if err := m.AddToCache("sha256:abc", "/path", 0); err != nil {
+		t.Errorf("zero size should be valid: %v", err)
 	}
 }
