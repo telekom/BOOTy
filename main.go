@@ -223,6 +223,8 @@ func runCAPRF(ctx context.Context) {
 	diskMgr := disk.NewManager(nil)
 	orch := provision.NewOrchestrator(cfg, client, diskMgr)
 
+	provisionSucceeded := false
+
 	switch cfg.Mode {
 	case "standby":
 		runStandby(ctx, client, cfg, netMode, diskMgr)
@@ -247,6 +249,7 @@ func runCAPRF(ctx context.Context) {
 		for {
 			err := orch.Provision(ctx)
 			if err == nil {
+				provisionSucceeded = true
 				break
 			}
 			slog.Error("Provisioning failed", "error", err)
@@ -290,7 +293,7 @@ func runCAPRF(ctx context.Context) {
 	}
 
 	// Attempt kexec into installed kernel; fall back to normal reboot.
-	if cfg.Mode != "deprovision" && cfg.Mode != "soft" {
+	if cfg.Mode != "deprovision" && cfg.Mode != "soft" && provisionSucceeded {
 		tryKexec(cfg, orch.FirmwareChanged())
 	}
 	time.Sleep(time.Second * 2)

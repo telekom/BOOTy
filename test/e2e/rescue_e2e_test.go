@@ -17,7 +17,8 @@ import (
 )
 
 func TestRescueModeVarsParsing(t *testing.T) {
-	vars := "export MODE=\"rescue\"\n" +
+	vars := "export MODE=\"provision\"\n" +
+		"export RESCUE_MODE=\"shell\"\n" +
 		"export HOSTNAME=\"rescue-host\"\n" +
 		"export RESCUE_SSH_PUBKEY=\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest admin@ops\"\n" +
 		"export RESCUE_PASSWORD_HASH=\"$6$rounds=5000$salt$hash\"\n" +
@@ -32,8 +33,11 @@ func TestRescueModeVarsParsing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if cfg.Mode != "rescue" {
-		t.Errorf("Mode = %q, want %q", cfg.Mode, "rescue")
+	if cfg.Mode != "provision" {
+		t.Errorf("Mode = %q, want %q", cfg.Mode, "provision")
+	}
+	if cfg.RescueMode != "shell" {
+		t.Errorf("RescueMode = %q, want %q", cfg.RescueMode, "shell")
 	}
 	if cfg.Hostname != "rescue-host" {
 		t.Errorf("Hostname = %q, want %q", cfg.Hostname, "rescue-host")
@@ -77,7 +81,8 @@ func TestRescueModeStatusReporting(t *testing.T) {
 	})
 	base := startServer(t, mux)
 
-	vars := "export MODE=\"rescue\"\n" +
+	vars := "export MODE=\"provision\"\n" +
+		"export RESCUE_MODE=\"reboot\"\n" +
 		"export HOSTNAME=\"rescue-e2e\"\n" +
 		"export INIT_URL=\"" + base + "/status/init\"\n" +
 		"export HEARTBEAT_URL=\"" + base + "/heartbeat\"\n"
@@ -86,8 +91,8 @@ func TestRescueModeStatusReporting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Mode != "rescue" {
-		t.Fatalf("Mode = %q, want rescue", cfg.Mode)
+	if cfg.Mode != "provision" {
+		t.Fatalf("Mode = %q, want provision", cfg.Mode)
 	}
 
 	client := caprf.NewFromConfig(cfg)
@@ -135,7 +140,8 @@ func TestRescueModeCommandPolling(t *testing.T) {
 
 	base := startServer(t, mux)
 
-	vars := "export MODE=\"rescue\"\n" +
+	vars := "export MODE=\"provision\"\n" +
+		"export RESCUE_MODE=\"reboot\"\n" +
 		"export HOSTNAME=\"rescue-cmd\"\n" +
 		"export COMMANDS_URL=\"" + base + "/commands\"\n"
 

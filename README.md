@@ -225,6 +225,10 @@ export dns_resolver="8.8.8.8"
 | `BGP_NEIGHBORS` | — | Comma-separated peer IPs (required for `dual` and `numbered` modes) |
 | `BGP_REMOTE_ASN` | — | Remote ASN for numbered peers (0 or omitted = iBGP) |
 | `provision_gateway` | — | Gateway VTEP IP for VXLAN BUM flooding and kernel route installation |
+| `RESCUE_MODE` | `reboot` | Failure recovery strategy: `reboot`, `retry`, `shell`, `wait` |
+| `RESCUE_SSH_PUBKEY` | — | SSH public key for rescue shell access (dropbear) |
+| `RESCUE_TIMEOUT` | `0` | Rescue wait timeout in seconds (0 = indefinite) |
+| `RESCUE_AUTO_MOUNT` | `false` | Auto-mount disks in rescue shell mode |
 
 ### Debugging
 
@@ -266,6 +270,33 @@ rebuild in-memory state (target disk path, partition info).
 export BOOTY_RESUME=true
 ```
 
+### Rescue Mode
+
+When provisioning fails, BOOTy's rescue mode determines what happens next.
+Configure via `RESCUE_MODE`:
+
+| Mode | Behavior |
+|------|----------|
+| `reboot` | (Default) Reboot immediately — relies on external retry orchestration |
+| `retry` | Retry provisioning with a 30-second delay between attempts (max 3 retries before falling back to reboot) |
+| `shell` | Drop to an interactive rescue shell on the console |
+| `wait` | Hold the system up and wait for manual intervention; reboots on context cancellation |
+
+```bash
+# Retry up to 3 times before rebooting
+export RESCUE_MODE=retry
+
+# Drop to interactive rescue shell
+export RESCUE_MODE=shell
+
+# Phase 2 (planned): SSH access and disk auto-mount
+# export RESCUE_SSH_PUBKEY="ssh-ed25519 AAAAC3NzaC1... admin@ops"
+# export RESCUE_AUTO_MOUNT=true
+```
+
+In standby mode (agent mode), rescue actions also apply to hot-provisioning
+commands received via the command poll loop. Failed provisions are ACKed back
+to the controller with the error message.
 ## OCI Image Sources
 
 BOOTy supports pulling disk images from OCI-compliant container registries. Use the
@@ -420,6 +451,7 @@ and the PR process.
 │   ├── provision/              # Orchestrator (31-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
 │   ├── realm/                  # Device, mount, shell operations
+│   ├── rescue/                 # Rescue mode types, retry state, action resolution
 │   ├── utils/                  # Cmdline parsing, helpers
 │   └── ux/                     # ASCII art & system info display
 ├── test/e2e/                   # E2E tests (ContainerLab + vrnetlab EVPN fabric)
