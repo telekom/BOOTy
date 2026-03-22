@@ -248,20 +248,23 @@ kernel-drivers proposal. All collection is Go-first using sysfs/procfs.
 
 ### Overview
 
-The extended inventory runs automatically during provisioning (step
-`collect-inventory`). BOOTy scans sysfs, procfs, and hwmon to collect
-hardware details and reports them to CAPRF.
+The extended inventory types and per-subsystem collectors are available
+in `pkg/inventory/`. Each subsystem (GPUs, USB, thermal) has its own
+scan function. The `ExtendedInventory` struct aggregates these results.
+
+**Note**: There is no `CollectExtended()` convenience function yet —
+callers populate `ExtendedInventory` by calling individual scan functions.
 
 ### What Gets Collected
 
-| Category | Source | Data Examples |
-|----------|--------|---------------|
-| **GPUs/Accelerators** | `/sys/bus/pci/devices/` | NVIDIA A100, AMD MI300X, Intel Max 1550 — PCI addr, driver, NUMA, SR-IOV |
-| **USB Devices** | `/sys/bus/usb/devices/` | Vendor/product ID, class (HID, Mass Storage, Hub), serial |
-| **Thermal** | `/sys/class/thermal/`, `/sys/class/hwmon/` | CPU temps (°C), fan RPMs, fan health status |
-| **Power Supplies** | SMBIOS Type 39 via `/sys/class/dmi/` | Wattage, status, model name |
-| **Storage Controllers** | `/sys/bus/pci/devices/` | RAID, NVMe, SAS/SATA controllers |
-| **PCI Topology** | `/sys/bus/pci/devices/` | Full PCI tree with class/vendor/device IDs |
+| Category | Source | Scan Function | Data |
+|----------|--------|---------------|------|
+| **GPUs/Accelerators** | `/sys/bus/pci/devices/` | `ScanGPUs()` | PCI addr, vendor/device ID, driver, NUMA, SR-IOV |
+| **USB Devices** | `/sys/bus/usb/devices/` | `ScanUSBDevices()` | Vendor/product ID, class name, manufacturer |
+| **Thermal** | `/sys/class/thermal/`, `/sys/class/hwmon/` | `CollectThermal()` | CPU temps (°C), fan RPMs, fan health status |
+
+Additional subsystems listed in the proposal (power supplies, storage
+controllers, PCI topology) are planned but not yet implemented.
 
 ### Programmatic Access
 
@@ -273,10 +276,12 @@ gpus := inventory.ScanGPUs()
 usbs := inventory.ScanUSBDevices()
 thermal := inventory.CollectThermal()
 
-// Full extended inventory.
-ext := inventory.CollectExtended()
-fmt.Printf("GPUs: %d, USB: %d, PSUs: %d\n",
-    len(ext.GPUs), len(ext.USBDevices), len(ext.PowerSupplies))
+// Populate the extended inventory manually.
+ext := &inventory.ExtendedInventory{
+    GPUs:       gpus,
+    USBDevices: usbs,
+    Thermal:    thermal,
+}
 ```
 
 ### GPU Detection
@@ -303,8 +308,8 @@ USB devices are classified by bDeviceClass:
 
 ### CAPRF Reporting
 
-The extended inventory is automatically serialized to JSON and shipped to
-CAPRF as part of the status report. Large payloads are gzip-compressed.
+The inventory data can be serialized to JSON and included in CAPRF
+status reports.
 
 ## Risks
 
