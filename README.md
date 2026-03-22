@@ -189,6 +189,16 @@ asn_server="65001"
 provision_vni="10100"
 overlay_subnet="fd00::/64"
 dns_resolver="8.8.8.8"
+
+# GoBGP/EVPN mode (alternative to FRR)
+export NETWORK_MODE="gobgp"
+export BGP_PEER_MODE="unnumbered"
+export underlay_ip="10.0.0.20"
+export asn_server="65020"
+export provision_vni="100"
+export provision_ip="10.100.0.20/24"
+export provision_gateway="10.0.0.1"      # Gateway VTEP for VXLAN data plane
+export dns_resolver="8.8.8.8"
 ```
 
 ### Feature Gates
@@ -209,6 +219,11 @@ dns_resolver="8.8.8.8"
 | `BOND_INTERFACES` | — | Comma-separated interfaces for LACP bond (e.g. `eth0,eth1`) |
 | `BOND_MODE` | `802.3ad` | Bond mode: `802.3ad`/`lacp`, `balance-rr`, `active-backup`, `balance-xor` |
 | `POST_PROVISION_CMDS` | — | Semicolon-separated commands to run in chroot after provisioning |
+| `NETWORK_MODE` | — | Network mode override: `gobgp` for pure-Go BGP stack |
+| `BGP_PEER_MODE` | `unnumbered` | GoBGP peering mode: `unnumbered`, `dual`, `numbered` |
+| `BGP_NEIGHBORS` | — | Comma-separated peer IPs (required for `dual` and `numbered` modes) |
+| `BGP_REMOTE_ASN` | — | Remote ASN for numbered peers (0 or omitted = iBGP) |
+| `provision_gateway` | — | Gateway VTEP IP for VXLAN BUM flooding and kernel route installation |
 
 ### Debugging
 
@@ -259,8 +274,13 @@ Set `NETWORK_MODE=gobgp` to use the pure-Go BGP stack instead of FRR. GoBGP mode
 uses a three-tier architecture:
 
 1. **Underlay** — eBGP peering with leaf switches for VXLAN reachability
-2. **Overlay** — EVPN Type-5 routes with VXLAN encapsulation
+2. **Overlay** — EVPN Type-5 route advertisement with VXLAN encapsulation; dynamic FDB installation from received Type-2/3 routes via `watchRoutes()`
 3. **IPMI** — Optional L3 path to the BMC (planned)
+
+The overlay tier advertises Type-5 (IP Prefix) routes and processes incoming EVPN routes:
+- **Type-2 (MAC/IP)** routes install unicast FDB entries (MAC → remote VTEP)
+- **Type-3 (Inclusive Multicast)** routes install BUM FDB entries for flood replication
+- A static BUM FDB entry and /32 kernel route to `provision_gateway` ensure baseline connectivity
 
 The `BGP_PEER_MODE` environment variable controls session establishment:
 
@@ -273,6 +293,11 @@ The `BGP_PEER_MODE` environment variable controls session establishment:
 Additional environment variables for GoBGP mode:
 - `BGP_NEIGHBORS` — Comma-separated peer IPs (required for `dual` and `numbered` modes)
 - `BGP_REMOTE_ASN` — Remote ASN for numbered peers (0 or omitted = iBGP)
+- `provision_gateway` — Gateway VTEP IP (e.g. spine loopback) for BUM flooding and kernel route
+- `underlay_ip` — Local VTEP / router-ID IP
+- `provision_ip` — Provisioning overlay IP in CIDR (e.g. `10.100.0.20/24`)
+- `provision_vni` — VXLAN VNI for the provisioning network
+- `asn_server` — Local BGP ASN
 
 ## Extending Bundled Binaries
 

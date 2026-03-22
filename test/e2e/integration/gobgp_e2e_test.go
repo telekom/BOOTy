@@ -66,6 +66,7 @@ func gobgpDockerExecRaw(t *testing.T, container string, args ...string) (string,
 
 // dumpDebugState collects comprehensive network and BGP debug info from all
 // containers and logs it. Called automatically via t.Cleanup when a test fails.
+// Inspired by das-schiff-network-operator E2E debug collection patterns.
 func dumpDebugState(t *testing.T) {
 	t.Helper()
 	if !t.Failed() {
@@ -74,23 +75,33 @@ func dumpDebugState(t *testing.T) {
 
 	t.Log("=== DEBUG STATE DUMP (test failed) ===")
 
-	// Spine BGP state.
+	// Spine BGP and EVPN state (use JSON for structured output where possible).
 	for _, cmd := range []string{
-		"show bgp summary",
-		"show bgp neighbors eth3 json",
-		"show bgp neighbors eth4 json",
-		"show bgp neighbors 10.0.2.2 json",
+		"show bgp summary json",
 		"show bgp l2vpn evpn",
+		"show bgp l2vpn evpn json",
 		"show ip route",
+		"show evpn vni",
 	} {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabSpine, "vtysh", "-c", cmd)
 		t.Logf("[spine01] %s:\n%s", cmd, out)
 	}
 
+	// Spine bridge/FDB/VXLAN state.
+	for _, cmd := range [][]string{
+		{"bridge", "fdb", "show"},
+		{"ip", "-d", "link", "show", "type", "vxlan"},
+		{"ip", "addr", "show"},
+		{"ip", "neigh", "show"},
+	} {
+		out, _ := gobgpDockerExecRaw(t, gobgpLabSpine, cmd...)
+		t.Logf("[spine01] %s:\n%s", strings.Join(cmd, " "), out)
+	}
+
 	// RR01 BGP state.
 	for _, cmd := range []string{
-		"show bgp summary",
-		"show bgp neighbors 10.0.3.2 json",
+		"show bgp summary json",
+		"show bgp neighbors 10.0.1.1 json",
 	} {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabRR, "vtysh", "-c", cmd)
 		t.Logf("[rr01] %s:\n%s", cmd, out)
@@ -103,10 +114,14 @@ func dumpDebugState(t *testing.T) {
 		{"booty-numbered", gobgpLabNumbered},
 	} {
 		for _, cmd := range [][]string{
+			{"ip", "-d", "link", "show", "type", "vxlan"},
+			{"ip", "addr", "show"},
 			{"ip", "-6", "addr", "show"},
 			{"ip", "-6", "neigh", "show"},
 			{"ip", "route", "show"},
 			{"ip", "-6", "route", "show"},
+			{"bridge", "fdb", "show"},
+			{"ip", "neigh", "show"},
 		} {
 			out, _ := gobgpDockerExecRaw(t, node.container, cmd...)
 			t.Logf("[%s] %s:\n%s", node.name, strings.Join(cmd, " "), out)
@@ -372,6 +387,173 @@ func TestGoBGPRR01SpineBGPEstablished(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("RR01→spine iBGP not ESTABLISHED:\n%s", out)
+		}
+		time.Sleep(bgpConvergeInterval)
+	}
+}
+
+// --- EVPN Data Plane --------------------------------------------------------
+
+// TestGoBGPUnnumberedEVPNType5OnSpine verifies that the spine receives an EVPN
+// Type-5 route from the unnumbered BOOTy node after BGP converges.
+func TestGoBGPUnnumberedEVPNType5OnSpine(t *testing.T) {
+	requireGoBGPLab(t)
+	t.Cleanup(func() { dumpDebugState(t) })
+
+	waitForBGPInterface(t, "eth3")
+
+	deadline := time.Now().Add(bgpConvergeTimeout)
+	for {
+		out, _ := gobgpDockerExecRaw(t, gobgpLabSpine,
+			"vtysh", "-c", "show bgp l2vpn evpn")
+		if strings.Contains(out, "10.0.0.20") {
+			t.Log("EVPN Type-5 route from booty-unnumbered visible on spine")
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("EVPN Type-5 route from booty-unnumbered not on spine:\n%s", out)
+		}
+		time.Sleep(bgpConvergeInterval)
+	}
+}
+
+// TestGoBGPUnnumberedVXLANInterface verifies the VXLAN interface is created
+// inside the booty-unnumbered container with the correct VNI.
+func TestGoBGPUnnumberedVXLANInterface(t *testing.T) {
+	requireGoBGPLab(t)
+	t.Cleanup(func() { dumpDebugState(t) })
+
+	waitForBGPInterface(t, "eth3")
+
+	// Allow time for overlay setup after BGP establishes.
+	deadline := time.Now().Add(bgpConvergeTimeout)
+	for {
+		out, _ := gobgpDockerExecRaw(t, gobgpLabUnnumbered, "ip", "-d", "link", "show", "type", "vxlan")
+		if strings.Contains(out, "vxlan") && strings.Contains(out, "id 100") {
+			t.Log("VXLAN interface with VNI 100 present on booty-unnumbered")
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("VXLAN interface not found on booty-unnumbered:\n%s", out)
+		}
+		time.Sleep(bgpConvergeInterval)
+	}
+}
+
+// TestGoBGPUnnumberedBridgeProvisionIP verifies the provision IP is assigned
+// on the bridge interface inside the booty-unnumbered container.
+func TestGoBGPUnnumberedBridgeProvisionIP(t *testing.T) {
+	requireGoBGPLab(t)
+	t.Cleanup(func() { dumpDebugState(t) })
+
+	waitForBGPInterface(t, "eth3")
+
+	deadline := time.Now().Add(bgpConvergeTimeout)
+	for {
+		out, _ := gobgpDockerExecRaw(t, gobgpLabUnnumbered, "ip", "addr", "show", "dev", "br.provision")
+		if strings.Contains(out, "10.100.0.20") {
+			t.Log("Provision IP 10.100.0.20 assigned on br.provision")
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("provision IP not on bridge:\n%s", out)
+		}
+		time.Sleep(bgpConvergeInterval)
+	}
+}
+
+// TestGoBGPUnnumberedGatewayFDB verifies the BUM FDB entry for the gateway
+// VTEP is installed on the VXLAN interface.
+func TestGoBGPUnnumberedGatewayFDB(t *testing.T) {
+	requireGoBGPLab(t)
+	t.Cleanup(func() { dumpDebugState(t) })
+
+	waitForBGPInterface(t, "eth3")
+
+	deadline := time.Now().Add(bgpConvergeTimeout)
+	for {
+		out, _ := gobgpDockerExecRaw(t, gobgpLabUnnumbered, "bridge", "fdb", "show", "dev", "vx100")
+		if strings.Contains(out, "00:00:00:00:00:00") && strings.Contains(out, "10.0.0.1") {
+			t.Log("Gateway BUM FDB entry present: 00:00:00:00:00:00 → 10.0.0.1")
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("BUM FDB entry for gateway not found:\n%s", out)
+		}
+		time.Sleep(bgpConvergeInterval)
+	}
+}
+
+// TestGoBGPUnnumberedGatewayRoute verifies the /32 kernel route to the
+// gateway VTEP is installed via the first physical NIC.
+func TestGoBGPUnnumberedGatewayRoute(t *testing.T) {
+	requireGoBGPLab(t)
+	t.Cleanup(func() { dumpDebugState(t) })
+
+	waitForBGPInterface(t, "eth3")
+
+	deadline := time.Now().Add(bgpConvergeTimeout)
+	for {
+		out, _ := gobgpDockerExecRaw(t, gobgpLabUnnumbered, "ip", "route", "show", "10.0.0.1/32")
+		if strings.Contains(out, "10.0.0.1") {
+			t.Log("Gateway route 10.0.0.1/32 present in kernel")
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("gateway /32 route not in kernel:\n%s", out)
+		}
+		time.Sleep(bgpConvergeInterval)
+	}
+}
+
+// TestGoBGPUnnumberedVXLANPingGateway verifies end-to-end VXLAN data plane
+// connectivity by pinging the spine's bridge IP (10.100.0.1) from inside
+// the booty-unnumbered container over the VXLAN overlay.
+func TestGoBGPUnnumberedVXLANPingGateway(t *testing.T) {
+	requireGoBGPLab(t)
+	t.Cleanup(func() { dumpDebugState(t) })
+
+	waitForBGPInterface(t, "eth3")
+
+	// Give overlay stack time to fully initialize.
+	deadline := time.Now().Add(bgpConvergeTimeout)
+	for {
+		out, err := gobgpDockerExecRaw(t, gobgpLabUnnumbered,
+			"ping", "-c", "1", "-W", "2", "-I", "br.provision", "10.100.0.1")
+		if err == nil && strings.Contains(out, "1 packets received") {
+			t.Log("VXLAN overlay ping to gateway 10.100.0.1 succeeded")
+			return
+		}
+		if time.Now().After(deadline) {
+			// Dump diagnostic state before failing.
+			routes, _ := gobgpDockerExecRaw(t, gobgpLabUnnumbered, "ip", "route")
+			fdb, _ := gobgpDockerExecRaw(t, gobgpLabUnnumbered, "bridge", "fdb", "show")
+			t.Fatalf("VXLAN ping to 10.100.0.1 failed after %s:\nping: %s\nroutes: %s\nfdb: %s",
+				bgpConvergeTimeout, out, routes, fdb)
+		}
+		time.Sleep(bgpConvergeInterval)
+	}
+}
+
+// TestGoBGPUnnumberedOverlayReachClient verifies that the booty-unnumbered
+// node can reach the client container (10.100.0.100) through the VXLAN
+// overlay via the spine's bridge.
+func TestGoBGPUnnumberedOverlayReachClient(t *testing.T) {
+	requireGoBGPLab(t)
+	t.Cleanup(func() { dumpDebugState(t) })
+
+	waitForBGPInterface(t, "eth3")
+
+	deadline := time.Now().Add(bgpConvergeTimeout)
+	for {
+		out, err := gobgpDockerExecRaw(t, gobgpLabUnnumbered,
+			"ping", "-c", "1", "-W", "2", "-I", "br.provision", "10.100.0.100")
+		if err == nil && strings.Contains(out, "1 packets received") {
+			t.Log("Overlay connectivity to client 10.100.0.100 verified")
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("cannot reach client 10.100.0.100 from booty-unnumbered:\n%s", out)
 		}
 		time.Sleep(bgpConvergeInterval)
 	}

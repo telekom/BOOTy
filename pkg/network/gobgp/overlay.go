@@ -33,25 +33,65 @@ const (
 	asnMax2Byte = 65535
 )
 
+// fdbInstaller abstracts netlink FDB operations for testability.
+type fdbInstaller interface {
+	LinkByName(name string) (netlink.Link, error)
+	NeighSet(neigh *netlink.Neigh) error
+	NeighDel(neigh *netlink.Neigh) error
+}
+
+// netlinkFDB is the production implementation using real netlink calls.
+type netlinkFDB struct{}
+
+func (netlinkFDB) LinkByName(name string) (netlink.Link, error) {
+	link, err := netlink.LinkByName(name)
+	if err != nil {
+		return nil, fmt.Errorf("link by name %s: %w", name, err)
+	}
+	return link, nil
+}
+
+func (netlinkFDB) NeighSet(n *netlink.Neigh) error {
+	if err := netlink.NeighSet(n); err != nil {
+		return fmt.Errorf("neigh set: %w", err)
+	}
+	return nil
+}
+
+func (netlinkFDB) NeighDel(n *netlink.Neigh) error {
+	if err := netlink.NeighDel(n); err != nil {
+		return fmt.Errorf("neigh del: %w", err)
+	}
+	return nil
+}
+
 // OverlayTier manages EVPN Type-5 routes and VXLAN encapsulation.
 type OverlayTier struct {
 	bgp    *server.BgpServer
 	cfg    *Config
 	log    *slog.Logger
 	cancel context.CancelFunc
+	fdb    fdbInstaller
 
 	// Track resources created by us for clean teardown.
 	createdVRF      bool
 	createdBridge   bool
 	createdVXLAN    bool
 	addedLoopbackIP *netlink.Addr
+
+	// macVTEP tracks MAC → VTEP mappings learned from Type-2 routes
+	// so that withdrawals (which lack next-hop) can still delete the
+	// correct FDB entry.
+	macVTEP map[string]string
 }
 
 // NewOverlayTier creates a new overlay tier.
 func NewOverlayTier(cfg *Config) *OverlayTier {
 	return &OverlayTier{
-		cfg: cfg,
-		log: slog.With("tier", "overlay"),
+		cfg:     cfg,
+		log:     slog.With("tier", "overlay"),
+		macVTEP: make(map[string]string),
+		fdb:     netlinkFDB{},
 	}
 }
 
@@ -109,7 +149,7 @@ func (o *OverlayTier) Teardown(_ context.Context) error {
 		lo, err := netlink.LinkByName("lo")
 		if err == nil {
 			if err := netlink.AddrDel(lo, o.addedLoopbackIP); err != nil {
-				o.log.Warn("Failed to remove overlay loopback IP", "ip", o.addedLoopbackIP, "error", err)
+				o.log.Warn("failed to remove overlay loopback IP", "ip", o.addedLoopbackIP, "error", err)
 			}
 		}
 	}
@@ -132,7 +172,7 @@ func (o *OverlayTier) Teardown(_ context.Context) error {
 			continue
 		}
 		if err := netlink.LinkDel(link); err != nil {
-			o.log.Warn("Failed to remove interface", "name", res.name, "error", err)
+			o.log.Warn("failed to remove interface", "name", res.name, "error", err)
 		}
 	}
 
@@ -166,7 +206,7 @@ func (o *OverlayTier) CreateVRF() error {
 		return fmt.Errorf("bring up VRF %s: %w", o.cfg.VRFName, err)
 	}
 
-	o.log.Info("VRF ready", "name", o.cfg.VRFName, "table", o.cfg.VRFTableID)
+	o.log.Info("vrf ready", "name", o.cfg.VRFName, "table", o.cfg.VRFTableID)
 	return nil
 }
 
@@ -219,7 +259,7 @@ func (o *OverlayTier) createVXLANAndBridge() error {
 		}
 	}
 
-	o.log.Info("Created VXLAN and bridge",
+	o.log.Info("created VXLAN and bridge",
 		"vxlan", vxlanName, "vni", o.cfg.ProvisionVNI,
 		"bridge", o.cfg.BridgeName,
 	)
@@ -306,7 +346,7 @@ func (o *OverlayTier) addProvisionIP() error {
 		return fmt.Errorf("add provision IP to bridge: %w", err)
 	}
 
-	o.log.Info("Assigned provision IP", "bridge", o.cfg.BridgeName, "ip", o.cfg.ProvisionIP)
+	o.log.Info("assigned provision IP", "bridge", o.cfg.BridgeName, "ip", o.cfg.ProvisionIP)
 	return nil
 }
 
@@ -331,11 +371,11 @@ func (o *OverlayTier) addGatewayFDB(vxLink netlink.Link) error {
 		Flags:        netlink.NTF_SELF,
 		State:        netlink.NUD_PERMANENT,
 	}
-	if err := netlink.NeighAppend(fdb); err != nil {
-		return fmt.Errorf("append BUM FDB entry for %s: %w", o.cfg.ProvisionGateway, err)
+	if err := netlink.NeighSet(fdb); err != nil {
+		return fmt.Errorf("set BUM FDB entry for %s: %w", o.cfg.ProvisionGateway, err)
 	}
 
-	o.log.Info("Added gateway BUM FDB entry", "vxlan", vxLink.Attrs().Name, "vtep", o.cfg.ProvisionGateway)
+	o.log.Info("added gateway BUM FDB entry", "vxlan", vxLink.Attrs().Name, "vtep", o.cfg.ProvisionGateway)
 	return nil
 }
 
@@ -363,7 +403,7 @@ func (o *OverlayTier) addOverlayLoopback() error {
 	}
 	o.addedLoopbackIP = addr
 
-	o.log.Info("Added overlay loopback", "ip", o.cfg.OverlayIP)
+	o.log.Info("added overlay loopback", "ip", o.cfg.OverlayIP)
 	return nil
 }
 
@@ -394,7 +434,7 @@ func (o *OverlayTier) advertiseType5(ctx context.Context) error {
 		return fmt.Errorf("add EVPN Type-5 path: %w", err)
 	}
 
-	o.log.Info("Advertised EVPN Type-5 default route", "vni", o.cfg.ProvisionVNI)
+	o.log.Info("advertised EVPN type-5 default route", "vni", o.cfg.ProvisionVNI)
 	return nil
 }
 
@@ -411,17 +451,181 @@ func (o *OverlayTier) watchRoutes(ctx context.Context) {
 	}, func(resp *apipb.WatchEventResponse) {
 		if t := resp.GetTable(); t != nil {
 			for _, p := range t.GetPaths() {
-				action := "add"
-				if p.GetIsWithdraw() {
-					action = "withdraw"
-				}
-				o.log.Debug("Route update", "action", action, "family", p.GetFamily())
+				o.processRouteUpdate(p)
 			}
 		}
 	})
 	if err != nil {
-		o.log.Warn("Route watcher stopped", "error", err)
+		o.log.Warn("route watcher stopped", "error", err)
 	}
+}
+
+// processRouteUpdate handles a single BGP path update by dispatching to the
+// appropriate handler based on NLRI type.
+func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
+	withdraw := p.GetIsWithdraw()
+	action := "add"
+	if withdraw {
+		action = "withdraw"
+	}
+
+	nlri := p.GetNlri()
+	if nlri == nil {
+		return
+	}
+
+	msg, err := nlri.UnmarshalNew()
+	if err != nil {
+		o.log.Debug("route update unmarshal failed", "error", err)
+		return
+	}
+
+	vtep := extractNextHop(p)
+
+	switch route := msg.(type) {
+	case *apipb.EVPNMACIPAdvertisementRoute:
+		o.handleType2Route(route, vtep, withdraw)
+	case *apipb.EVPNInclusiveMulticastEthernetTagRoute:
+		o.handleType3Route(route, vtep, withdraw)
+	default:
+		o.log.Debug("route update", "action", action, "type", nlri.GetTypeUrl())
+	}
+}
+
+// handleType2Route installs or removes an FDB entry for a remote MAC learned
+// via EVPN Type-2 (MAC/IP Advertisement) route. This enables unicast VXLAN
+// forwarding to remote VTEPs without data-plane MAC learning.
+func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute, vtep string, withdraw bool) {
+	mac, err := net.ParseMAC(route.GetMacAddress())
+	if err != nil {
+		o.log.Debug("type-2 route with invalid MAC", "mac", route.GetMacAddress(), "error", err)
+		return
+	}
+
+	macStr := mac.String()
+
+	// For withdrawals, BGP uses MP_UNREACH_NLRI which has no next-hop.
+	// Look up the previously stored VTEP for this MAC.
+	if withdraw && vtep == "" {
+		if stored, ok := o.macVTEP[macStr]; ok {
+			vtep = stored
+		} else {
+			o.log.Debug("type-2 withdraw with no tracked VTEP", "mac", macStr)
+			return
+		}
+	}
+
+	remoteIP := net.ParseIP(vtep)
+	if remoteIP == nil {
+		o.log.Debug("type-2 route with no valid next-hop", "vtep", vtep)
+		return
+	}
+
+	// Skip FDB entries for our own VTEP.
+	if vtep == o.cfg.RouterID {
+		return
+	}
+
+	vxlanName := o.vxlanName()
+	vxLink, err := o.fdb.LinkByName(vxlanName)
+	if err != nil {
+		o.log.Warn("cannot find VXLAN for FDB update", "vxlan", vxlanName, "error", err)
+		return
+	}
+
+	fdb := &netlink.Neigh{
+		LinkIndex:    vxLink.Attrs().Index,
+		Family:       syscall.AF_BRIDGE,
+		HardwareAddr: mac,
+		IP:           remoteIP,
+		Flags:        netlink.NTF_SELF,
+		State:        netlink.NUD_PERMANENT,
+	}
+
+	if withdraw {
+		if err := o.fdb.NeighDel(fdb); err != nil {
+			o.log.Debug("failed to delete FDB entry", "mac", mac, "vtep", vtep, "error", err)
+		} else {
+			o.log.Info("removed FDB entry from type-2 withdraw", "mac", mac, "vtep", vtep)
+		}
+		delete(o.macVTEP, macStr)
+		return
+	}
+
+	if err := o.fdb.NeighSet(fdb); err != nil {
+		o.log.Debug("failed to add/update FDB entry", "mac", mac, "vtep", vtep, "error", err)
+	} else {
+		o.log.Info("installed FDB entry from type-2 route", "mac", mac, "vtep", vtep)
+	}
+	o.macVTEP[macStr] = vtep
+}
+
+// handleType3Route installs or removes a BUM FDB entry for a remote VTEP
+// learned via EVPN Type-3 (Inclusive Multicast Ethernet Tag) route.
+// This ensures broadcast/unknown/multicast traffic is flooded to all
+// participating VTEPs in the VNI.
+func (o *OverlayTier) handleType3Route(route *apipb.EVPNInclusiveMulticastEthernetTagRoute, vtep string, withdraw bool) {
+	remoteIP := net.ParseIP(route.GetIpAddress())
+	if remoteIP == nil {
+		remoteIP = net.ParseIP(vtep)
+	}
+	if remoteIP == nil {
+		o.log.Debug("type-3 route with no valid VTEP IP")
+		return
+	}
+
+	// Skip BUM entries for our own VTEP.
+	if remoteIP.String() == o.cfg.RouterID {
+		return
+	}
+
+	vxlanName := o.vxlanName()
+	vxLink, err := o.fdb.LinkByName(vxlanName)
+	if err != nil {
+		o.log.Warn("cannot find VXLAN for BUM update", "vxlan", vxlanName, "error", err)
+		return
+	}
+
+	fdb := &netlink.Neigh{
+		LinkIndex:    vxLink.Attrs().Index,
+		Family:       syscall.AF_BRIDGE,
+		HardwareAddr: net.HardwareAddr{0, 0, 0, 0, 0, 0},
+		IP:           remoteIP,
+		Flags:        netlink.NTF_SELF,
+		State:        netlink.NUD_PERMANENT,
+	}
+
+	if withdraw {
+		if err := o.fdb.NeighDel(fdb); err != nil {
+			o.log.Debug("failed to delete BUM FDB entry", "vtep", remoteIP, "error", err)
+		} else {
+			o.log.Info("removed BUM FDB entry from type-3 withdraw", "vtep", remoteIP)
+		}
+		return
+	}
+
+	if err := o.fdb.NeighSet(fdb); err != nil {
+		o.log.Debug("failed to add/update BUM FDB entry", "vtep", remoteIP, "error", err)
+	} else {
+		o.log.Info("installed BUM FDB entry from type-3 route", "vtep", remoteIP)
+	}
+}
+
+// extractNextHop returns the first next-hop IP from a path's MpReachNLRI
+// attribute. Returns empty string if not found.
+func extractNextHop(p *apipb.Path) string {
+	for _, attr := range p.GetPattrs() {
+		msg, err := attr.UnmarshalNew()
+		if err != nil {
+			continue
+		}
+		if mpReach, ok := msg.(*apipb.MpReachNLRIAttribute); ok {
+			if hops := mpReach.GetNextHops(); len(hops) > 0 {
+				return hops[0]
+			}
+		}
+	}
+	return ""
 }
 
 // buildRouteDistinguisher builds an RD, selecting 2-octet or 4-octet ASN type.

@@ -41,8 +41,8 @@ var topologySpecs = map[string]topologySpec{
 	"lab": {
 		containers: []string{labSpine, labLeaf, labCaprf},
 		checks: []topologyCheck{
-			{container: labSpine, args: []string{"vtysh", "-c", "show bgp summary"}, expectContain: "Estab"},
-			{container: labSpine, args: []string{"vtysh", "-c", "show ip route"}, expectContain: "known"},
+			{container: labSpine, args: []string{"vtysh", "-c", "show bgp summary established"}, expectContain: "leaf01"},
+			{container: labSpine, args: []string{"vtysh", "-c", "show ip route"}, expectContain: "10.0.0.1"},
 		},
 	},
 	"dhcp": {
