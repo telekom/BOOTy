@@ -49,9 +49,7 @@ func createTestDiskImage(t *testing.T, sizeMB int) string {
 		"dd", "if=/dev/zero", "of="+rawPath, "bs=1M", fmt.Sprintf("count=%d", sizeMB))
 
 	// Create GPT partition table: 50M EFI + rest root.
-	run(t, "create GPT partition table",
-		"sfdisk", rawPath)
-	// sfdisk reads stdin for partition definitions — use a command with stdin.
+	// sfdisk reads partition definitions from stdin.
 	sfdiskInput := "label: gpt\nsize=50M, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B\ntype=0FC63DAF-8483-4772-8E79-3D69D8477DE4\n"
 	cmd := exec.Command("sfdisk", rawPath)
 	cmd.Stdin = strings.NewReader(sfdiskInput)
