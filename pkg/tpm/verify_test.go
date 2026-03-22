@@ -66,3 +66,21 @@ func TestVerifyQuoteAgainstPolicy_EmptyPolicy(t *testing.T) {
 		t.Error("expected error message for empty policy")
 	}
 }
+
+func TestVerifyQuoteAgainstPolicy_UnsupportedAlgorithm(t *testing.T) {
+	policy := &GoldenPolicy{
+		PCRs: []GoldenPCR{
+			{PCR: 0, Algorithm: "sha512", Digest: "aabbccdd"},
+		},
+	}
+	result := VerifyQuoteAgainstPolicy(map[int][]byte{0: HashBytes([]byte("data"))}, policy)
+	if result.Valid {
+		t.Error("expected invalid for unsupported algorithm")
+	}
+	if len(result.Mismatches) != 1 {
+		t.Fatalf("expected 1 mismatch, got %d", len(result.Mismatches))
+	}
+	if result.Mismatches[0].Actual != "unsupported algorithm: sha512" {
+		t.Errorf("unexpected actual: %s", result.Mismatches[0].Actual)
+	}
+}

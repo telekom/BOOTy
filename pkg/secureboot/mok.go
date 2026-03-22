@@ -55,6 +55,9 @@ func (m *MOKEnroller) IsEnrolled() (bool, error) {
 	if m.certPath == "" {
 		return false, fmt.Errorf("mok certificate path is empty")
 	}
+	if _, err := os.Stat(m.certPath); err != nil {
+		return false, fmt.Errorf("mok certificate not found: %w", err)
+	}
 	out, err := exec.CommandContext(context.Background(), "mokutil", "--test-key", m.certPath).CombinedOutput() //nolint:gosec // trusted cert path
 	if err != nil {
 		// mokutil --test-key exits non-zero when the key is not enrolled.

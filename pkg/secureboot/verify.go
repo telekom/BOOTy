@@ -48,6 +48,9 @@ func (cv *ChainVerifier) Verify() (*ChainResult, error) {
 // checkComponentPresence checks that expected Secure Boot chain components exist.
 // NOTE: This is a presence check only — it does not verify cryptographic signatures.
 // Full PE/COFF signature verification is planned but not yet implemented.
+// checkComponentPresence checks whether boot chain binaries exist on disk.
+// This is intentionally a presence-only check — actual signature verification
+// would require parsing PE/COFF and validating against db/dbx EFI variables.
 func (cv *ChainVerifier) checkComponentPresence() []ComponentStatus {
 	paths := []struct {
 		name  string

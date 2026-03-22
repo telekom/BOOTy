@@ -46,6 +46,15 @@ func VerifyQuoteAgainstPolicy(pcrValues map[int][]byte, policy *GoldenPolicy) *V
 		return result
 	}
 	for _, golden := range policy.PCRs {
+		if golden.Algorithm != "" && golden.Algorithm != "sha256" {
+			result.Mismatches = append(result.Mismatches, PCRMismatch{
+				PCR:      golden.PCR,
+				Expected: golden.Digest,
+				Actual:   fmt.Sprintf("unsupported algorithm: %s", golden.Algorithm),
+			})
+			result.Valid = false
+			continue
+		}
 		expected, err := hex.DecodeString(golden.Digest)
 		if err != nil {
 			result.Mismatches = append(result.Mismatches, PCRMismatch{

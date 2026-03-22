@@ -34,12 +34,20 @@ func TestDetect_NoTPM(t *testing.T) {
 	if info == nil {
 		t.Fatal("Detect() returned nil")
 	}
-	// On CI/dev systems without /sys/class/tpm/tpm0, Present must be false.
-	if _, err := os.Stat("/sys/class/tpm/tpm0"); err != nil && !info.Present {
-		return // no sysfs TPM → correctly reports not present
+	_, sysfsErr := os.Stat("/sys/class/tpm/tpm0")
+	sysfsExists := sysfsErr == nil
+	if !sysfsExists {
+		// No sysfs TPM → Present must be false and Version empty.
+		if info.Present {
+			t.Error("no sysfs TPM but Detect() reports Present=true")
+		}
+		if info.Version != "" {
+			t.Errorf("no sysfs TPM but Version = %q", info.Version)
+		}
+		return
 	}
 	// If sysfs TPM exists, Present should be true.
-	if _, err := os.Stat("/sys/class/tpm/tpm0"); err == nil && !info.Present {
+	if !info.Present {
 		t.Error("sysfs TPM exists but Detect() reports Present=false")
 	}
 }
