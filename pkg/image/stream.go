@@ -48,14 +48,15 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 
 	counter := &WriteCounter{}
 	stopProgress := startProgressTicker(counter)
-	defer stopProgress()
 
 	src, h, err := wrapChecksum(decompressed, opt)
 	if err != nil {
+		stopProgress()
 		return err
 	}
 
 	written, err := io.Copy(out, io.TeeReader(src, counter))
+	stopProgress()
 	if err != nil {
 		return fmt.Errorf("writing to device: %w", err)
 	}

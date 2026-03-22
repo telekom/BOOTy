@@ -32,10 +32,10 @@ func (OSCommander) CombinedOutput(ctx context.Context, cmd string, args ...strin
 // Manager provides a shared ethtool-based NIC firmware implementation
 // for vendors that use ethtool (Broadcom, Intel).
 type Manager struct {
-	Log       *slog.Logger
-	NICVendor nic.Vendor
-	VendorID  string
-	Commander Commander
+	log       *slog.Logger
+	vendor    nic.Vendor
+	vendorID  string
+	commander Commander
 }
 
 // New creates an ethtool-based Manager for the given vendor.
@@ -43,7 +43,7 @@ func New(vendor nic.Vendor, vendorID string, log *slog.Logger) *Manager {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Manager{Log: log, NICVendor: vendor, VendorID: vendorID, Commander: OSCommander{}}
+	return &Manager{log: log, vendor: vendor, vendorID: vendorID, commander: OSCommander{}}
 }
 
 // NewWithCommander creates an ethtool-based Manager with a custom Commander.
@@ -54,15 +54,15 @@ func NewWithCommander(vendor nic.Vendor, vendorID string, log *slog.Logger, cmd 
 	if cmd == nil {
 		cmd = OSCommander{}
 	}
-	return &Manager{Log: log, NICVendor: vendor, VendorID: vendorID, Commander: cmd}
+	return &Manager{log: log, vendor: vendor, vendorID: vendorID, commander: cmd}
 }
 
 // Vendor returns the NIC vendor this manager handles.
-func (m *Manager) Vendor() nic.Vendor { return m.NICVendor }
+func (m *Manager) Vendor() nic.Vendor { return m.vendor }
 
 // Supported checks if this manager can handle the given NIC.
 func (m *Manager) Supported(n *nic.Identifier) bool {
-	return n != nil && n.VendorID == m.VendorID
+	return n != nil && n.VendorID == m.vendorID
 }
 
 // Capture reads firmware parameters from a NIC via ethtool.
@@ -80,7 +80,7 @@ func (m *Manager) Capture(ctx context.Context, n *nic.Identifier) (*nic.Firmware
 	if err := m.CaptureViaEthtool(ctx, n.Interface, state); err != nil {
 		return nil, fmt.Errorf("capture firmware from %s: %w", n.Interface, err)
 	}
-	m.Log.Info("captured NIC firmware", "vendor", m.NICVendor, "pci", n.PCIAddress, "params", len(state.Parameters))
+	m.log.Info("captured NIC firmware", "vendor", m.vendor, "pci", n.PCIAddress, "params", len(state.Parameters))
 	return state, nil
 }
 
@@ -102,7 +102,7 @@ func (m *Manager) Apply(ctx context.Context, n *nic.Identifier, changes []nic.Fl
 
 // CaptureViaEthtool captures metadata and private flags via ethtool.
 func (m *Manager) CaptureViaEthtool(ctx context.Context, iface string, state *nic.FirmwareState) error {
-	out, err := m.Commander.CombinedOutput(ctx, "ethtool", "-i", iface)
+	out, err := m.commander.CombinedOutput(ctx, "ethtool", "-i", iface)
 	if err != nil {
 		return fmt.Errorf("ethtool -i %s: %w", iface, err)
 	}
@@ -123,9 +123,9 @@ func (m *Manager) CaptureViaEthtool(ctx context.Context, iface string, state *ni
 		}
 	}
 
-	out, err = m.Commander.CombinedOutput(ctx, "ethtool", "--show-priv-flags", iface)
+	out, err = m.commander.CombinedOutput(ctx, "ethtool", "--show-priv-flags", iface)
 	if err != nil {
-		m.Log.Debug("ethtool --show-priv-flags failed (optional)", "error", err)
+		m.log.Debug("ethtool --show-priv-flags failed (optional)", "error", err)
 		return nil
 	}
 	for _, line := range strings.Split(string(out), "\n") {
@@ -150,7 +150,7 @@ func (m *Manager) CaptureViaEthtool(ctx context.Context, iface string, state *ni
 
 // ApplyViaEthtool sets a private flag via ethtool.
 func (m *Manager) ApplyViaEthtool(ctx context.Context, iface string, change nic.FlagChange) error {
-	out, err := m.Commander.CombinedOutput(ctx, "ethtool", "--set-priv-flags", iface, change.Name, change.Value)
+	out, err := m.commander.CombinedOutput(ctx, "ethtool", "--set-priv-flags", iface, change.Name, change.Value)
 	if err != nil {
 		return fmt.Errorf("ethtool set-priv-flags %s %s: %s: %w", iface, change.Name, string(out), err)
 	}

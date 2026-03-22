@@ -427,7 +427,8 @@ below the threshold.
 BOOTy supports checksum and GPG signature verification for streamed images.
 
 ```bash
-export IMAGE_CHECKSUM="sha256:a1b2c3d4..."
+# IMAGE_CHECKSUM must be the raw hex digest (no "sha256:" prefix)
+export IMAGE_CHECKSUM="a1b2c3d4e5f6..."
 export IMAGE_CHECKSUM_TYPE="sha256"           # sha256 or sha512
 
 # GPG signature verification (optional)
