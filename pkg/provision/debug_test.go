@@ -45,8 +45,9 @@ func TestStepDebugCmds(t *testing.T) {
 		{"mount-root", 2},
 		{"setup-chroot-binds", 2},
 		{"configure-grub", 3},
-		{"remove-efi-entries", 2},
-		{"create-efi-boot-entry", 2},
+		{"remove-efi-entries", 3},
+		{"create-efi-boot-entry", 3},
+		{"mount-efivarfs", 3},
 		{"unknown-step", 0},
 		{"", 0},
 	}

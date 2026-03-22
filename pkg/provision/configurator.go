@@ -242,9 +242,9 @@ func (c *Configurator) ConfigureDNS(cfg *config.MachineConfig) error {
 // MountEFIVars loads the efivarfs kernel module and mounts the efivarfs
 // filesystem at /sys/firmware/efi/efivars if not already mounted.
 // This is required before any efibootmgr operations.
-func (c *Configurator) MountEFIVars() error {
+func (c *Configurator) MountEFIVars(ctx context.Context) error {
 	// Load the efivarfs module (best-effort — may already be built-in).
-	if out, err := exec.Command("modprobe", "efivarfs").CombinedOutput(); err != nil { //nolint:gosec // fixed command
+	if out, err := exec.CommandContext(ctx, "modprobe", "efivarfs").CombinedOutput(); err != nil { //nolint:gosec // fixed command
 		slog.Info("modprobe efivarfs failed (may be built-in)", "output", strings.TrimSpace(string(out)))
 	}
 

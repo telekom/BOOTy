@@ -1335,20 +1335,16 @@ func TestCAPRFImageServeAndStreamE2E(t *testing.T) {
 
 func TestRemoveEFIBootEntriesE2E(t *testing.T) {
 	cmd := newMockCommander()
-	cmd.set("chroot", []byte("Boot0001* ubuntu\nBoot0002* other"), nil)
 
 	diskMgr := disk.NewManager(cmd)
 	c := provision.NewConfigurator(diskMgr)
 	root := t.TempDir()
 	c.SetRootDir(root)
 
+	// RemoveEFIBootEntries now runs efibootmgr directly on the host
+	// (not via chroot). On non-EFI systems it logs a warning and returns nil.
 	if err := c.RemoveEFIBootEntries(context.Background()); err != nil {
 		t.Fatalf("RemoveEFIBootEntries: %v", err)
-	}
-
-	calls := cmd.getCalls()
-	if len(calls) == 0 {
-		t.Fatal("expected chroot calls for efibootmgr")
 	}
 }
 

@@ -70,6 +70,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"configure-dns", o.configureDNS},
 		{"stop-raid", o.stopRAID},
 		{"disable-lvm", o.disableLVM},
+		{"mount-efivarfs", o.mountEFIVars},
 		{"remove-efi-entries", o.removeEFIBootEntries},
 		{"setup-mellanox", o.setupMellanox},
 		{"wipe-disks", o.wipeOrSecureEraseDisks},
@@ -212,8 +213,8 @@ func (o *Orchestrator) removeEFIBootEntries(ctx context.Context) error {
 	return o.config.RemoveEFIBootEntries(ctx)
 }
 
-func (o *Orchestrator) mountEFIVars(_ context.Context) error {
-	return o.config.MountEFIVars()
+func (o *Orchestrator) mountEFIVars(ctx context.Context) error {
+	return o.config.MountEFIVars(ctx)
 }
 
 func (o *Orchestrator) createEFIBootEntry(ctx context.Context) error {

@@ -337,7 +337,7 @@ func TestMountEFIVarsGracefulOnNonEFI(t *testing.T) {
 	// MountEFIVars should handle non-EFI systems gracefully (no panic, returns nil).
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
-	err := c.MountEFIVars()
+	err := c.MountEFIVars(context.Background())
 	if err != nil {
 		t.Fatalf("expected nil error on non-EFI test system, got: %v", err)
 	}
