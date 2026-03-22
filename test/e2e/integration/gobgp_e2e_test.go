@@ -417,6 +417,52 @@ func TestGoBGPUnnumberedEVPNType5OnSpine(t *testing.T) {
 	}
 }
 
+// TestGoBGPDualEVPNType5OnSpine verifies that the spine receives an EVPN
+// Type-5 route from the dual-mode BOOTy node after BGP converges.
+func TestGoBGPDualEVPNType5OnSpine(t *testing.T) {
+	requireGoBGPLab(t)
+	t.Cleanup(func() { dumpDebugState(t) })
+
+	waitForBGPPeer(t, "10.0.3.2")
+
+	deadline := time.Now().Add(bgpConvergeTimeout)
+	for {
+		out, _ := gobgpDockerExecRaw(t, gobgpLabSpine,
+			"vtysh", "-c", "show bgp l2vpn evpn")
+		if strings.Contains(out, "10.0.0.21") {
+			t.Log("EVPN Type-5 route from booty-dual visible on spine")
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("EVPN Type-5 route from booty-dual not on spine:\n%s", out)
+		}
+		time.Sleep(bgpConvergeInterval)
+	}
+}
+
+// TestGoBGPNumberedEVPNType5OnSpine verifies that the spine receives an EVPN
+// Type-5 route from the numbered-mode BOOTy node after BGP converges.
+func TestGoBGPNumberedEVPNType5OnSpine(t *testing.T) {
+	requireGoBGPLab(t)
+	t.Cleanup(func() { dumpDebugState(t) })
+
+	waitForBGPPeer(t, "10.0.2.2")
+
+	deadline := time.Now().Add(bgpConvergeTimeout)
+	for {
+		out, _ := gobgpDockerExecRaw(t, gobgpLabSpine,
+			"vtysh", "-c", "show bgp l2vpn evpn")
+		if strings.Contains(out, "10.0.0.22") {
+			t.Log("EVPN Type-5 route from booty-numbered visible on spine")
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("EVPN Type-5 route from booty-numbered not on spine:\n%s", out)
+		}
+		time.Sleep(bgpConvergeInterval)
+	}
+}
+
 // TestGoBGPUnnumberedVXLANInterface verifies the VXLAN interface is created
 // inside the booty-unnumbered container with the correct VNI.
 func TestGoBGPUnnumberedVXLANInterface(t *testing.T) {
