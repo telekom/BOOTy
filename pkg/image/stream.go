@@ -34,27 +34,11 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 		opt = opts[0]
 	}
 
-	// Protocol dispatch: OCI registry or HTTP.
-	body, err := openSource(ctx, url)
+	decompressed, cleanup, err := openAndDecompress(ctx, url)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = body.Close() }()
-
-	// Auto-detect compression format via magic bytes.
-	format, reader, err := DetectFormat(body)
-	if err != nil {
-		return fmt.Errorf("detect format: %w", err)
-	}
-	slog.Info("Detected image format", "format", format)
-
-	decompressed, closer, err := Decompressor(reader, format)
-	if err != nil {
-		return err
-	}
-	if closer != nil {
-		defer func() { _ = closer.Close() }()
-	}
+	defer cleanup()
 
 	out, err := os.OpenFile(device, os.O_WRONLY, 0) //nolint:gosec // device path from config
 	if err != nil {
@@ -66,15 +50,9 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 	stopProgress := startProgressTicker(counter)
 	defer stopProgress()
 
-	// If checksum is requested, tee through a hash writer.
-	var h hash.Hash
-	src := decompressed
-	if opt.Checksum != "" {
-		h, err = newHash(opt.ChecksumType)
-		if err != nil {
-			return err
-		}
-		src = io.TeeReader(decompressed, h)
+	src, h, err := wrapChecksum(decompressed, opt)
+	if err != nil {
+		return err
 	}
 
 	written, err := io.Copy(out, io.TeeReader(src, counter))
@@ -85,15 +63,61 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 	fmt.Println()
 	slog.Info("Image written", "bytes", written, "device", device) //nolint:gosec // trusted config values
 
-	// Verify checksum.
-	if h != nil {
-		got := hex.EncodeToString(h.Sum(nil))
-		if got != opt.Checksum {
-			return fmt.Errorf("checksum mismatch: got %s, want %s", got, opt.Checksum)
-		}
-		slog.Info("Checksum verified", "type", opt.ChecksumType)
+	return verifyChecksum(h, opt)
+}
+
+// openAndDecompress opens the image source, detects compression, and returns
+// the decompressed reader along with a cleanup function.
+func openAndDecompress(ctx context.Context, url string) (io.Reader, func(), error) {
+	body, err := openSource(ctx, url)
+	if err != nil {
+		return nil, nil, err
 	}
 
+	format, reader, err := DetectFormat(body)
+	if err != nil {
+		_ = body.Close()
+		return nil, nil, fmt.Errorf("detect format: %w", err)
+	}
+	slog.Info("Detected image format", "format", format)
+
+	decompressed, closer, err := Decompressor(reader, format)
+	if err != nil {
+		_ = body.Close()
+		return nil, nil, err
+	}
+
+	cleanup := func() {
+		if closer != nil {
+			_ = closer.Close()
+		}
+		_ = body.Close()
+	}
+	return decompressed, cleanup, nil
+}
+
+// wrapChecksum wraps the reader with a checksum hash if requested.
+func wrapChecksum(r io.Reader, opt StreamOpts) (io.Reader, hash.Hash, error) {
+	if opt.Checksum == "" {
+		return r, nil, nil
+	}
+	h, err := newHash(opt.ChecksumType)
+	if err != nil {
+		return nil, nil, err
+	}
+	return io.TeeReader(r, h), h, nil
+}
+
+// verifyChecksum validates the hash digest against the expected checksum.
+func verifyChecksum(h hash.Hash, opt StreamOpts) error {
+	if h == nil {
+		return nil
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	if got != opt.Checksum {
+		return fmt.Errorf("checksum mismatch: got %s, want %s", got, opt.Checksum)
+	}
+	slog.Info("Checksum verified", "type", opt.ChecksumType)
 	return nil
 }
 
