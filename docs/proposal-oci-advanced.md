@@ -657,19 +657,18 @@ export OCI_PARALLEL="4"                           # concurrent layer downloads
 ### Overview
 
 The OCI image manager extends BOOTy's image streaming with multi-arch
-platform selection, layer caching, and image signature verification.
+platform selection and layer caching.
 
 ### Configuration
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `reference` | string | OCI image reference (e.g., `ghcr.io/org/os-image:v1.0`) |
 | `platform` | string | Target platform in `os/arch[/variant]` format (default: `linux/<host arch>`) |
-| `verifySignature` | bool | Enable Cosign/Notation signature verification |
-| `cosignKey` | string | Path to Cosign public key for verification |
-| `cacheEnabled` | bool | Enable layer caching across provisions |
 | `cacheDir` | string | Cache directory (default: `/mnt/target/.booty-cache/oci`) |
-| `parallel` | int | Parallel layer downloads |
+
+**Note**: Signature verification, parallel downloads, and other advanced
+features listed in the proposal are not yet implemented. Only platform
+matching and layer caching are available in this PR.
 
 ### Platform Selection
 

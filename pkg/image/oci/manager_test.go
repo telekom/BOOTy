@@ -156,3 +156,13 @@ func TestAddToCache_Validation(t *testing.T) {
 		t.Errorf("zero size should be valid: %v", err)
 	}
 }
+
+func TestIsCached_EmptyDigest(t *testing.T) {
+	dir := t.TempDir()
+	m := New(nil, &Config{CacheDir: dir})
+
+	_, err := m.IsCached("")
+	if err == nil {
+		t.Error("expected error for empty digest")
+	}
+}

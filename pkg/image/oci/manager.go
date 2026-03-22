@@ -30,13 +30,8 @@ type Platform struct {
 
 // Config holds OCI image configuration.
 type Config struct {
-	Reference       string `json:"reference"`
-	Platform        string `json:"platform"`
-	VerifySignature bool   `json:"verifySignature"`
-	CosignKey       string `json:"cosignKey,omitempty"`
-	CacheEnabled    bool   `json:"cacheEnabled"`
-	CacheDir        string `json:"cacheDir,omitempty"`
-	Parallel        int    `json:"parallel"`
+	Platform string `json:"platform"`
+	CacheDir string `json:"cacheDir,omitempty"`
 }
 
 // CacheEntry records a cached layer.
@@ -90,6 +85,10 @@ func (m *Manager) CacheDir() string {
 
 // IsCached checks if a layer digest is in the cache.
 func (m *Manager) IsCached(digest string) (bool, error) {
+	if digest == "" {
+		return false, fmt.Errorf("empty digest")
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
