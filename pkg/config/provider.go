@@ -314,6 +314,9 @@ func validateLVMConfig(lvm *LVMConfig, partitions []Partition) error {
 	if lvm == nil {
 		return nil
 	}
+	if len(lvm.Volumes) == 0 {
+		return fmt.Errorf("lvm: at least one volume is required")
+	}
 	if err := validateLVMPVPartition(lvm, partitions); err != nil {
 		return err
 	}

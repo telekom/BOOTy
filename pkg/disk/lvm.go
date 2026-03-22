@@ -62,20 +62,20 @@ func validateLVMApplyInputs(device string, layout *config.PartitionLayout) (*con
 	if lvm.PVPartition > len(layout.Partitions) {
 		return nil, "", fmt.Errorf("lvm.pvPartition %d exceeds partition count %d", lvm.PVPartition, len(layout.Partitions))
 	}
-	vgName := strings.TrimSpace(lvm.VolumeGroup)
-	if vgName == "" {
+	lvm.VolumeGroup = strings.TrimSpace(lvm.VolumeGroup)
+	if lvm.VolumeGroup == "" {
 		return nil, "", fmt.Errorf("lvm volumeGroup name is empty")
 	}
-	if !isValidLVMRuntimeName(vgName) {
+	if !isValidLVMRuntimeName(lvm.VolumeGroup) {
 		return nil, "", fmt.Errorf("lvm volumeGroup name %q is invalid", lvm.VolumeGroup)
 	}
-	for i, vol := range lvm.Volumes {
-		lvName := strings.TrimSpace(vol.Name)
-		if lvName == "" {
+	for i := range lvm.Volumes {
+		lvm.Volumes[i].Name = strings.TrimSpace(lvm.Volumes[i].Name)
+		if lvm.Volumes[i].Name == "" {
 			return nil, "", fmt.Errorf("lvm volume %d: name is empty", i+1)
 		}
-		if !isValidLVMRuntimeName(lvName) {
-			return nil, "", fmt.Errorf("lvm volume %d: invalid name %q", i+1, vol.Name)
+		if !isValidLVMRuntimeName(lvm.Volumes[i].Name) {
+			return nil, "", fmt.Errorf("lvm volume %d: invalid name %q", i+1, lvm.Volumes[i].Name)
 		}
 	}
 

@@ -14,11 +14,11 @@ import (
 	"testing"
 )
 
-// requireRoot fails the test if not running as root.
+// requireRoot skips the test if not running as root.
 func requireRoot(t *testing.T) {
 	t.Helper()
 	if os.Getuid() != 0 {
-		t.Fatal("test requires root (run with sudo)")
+		t.Skip("test requires root (run with sudo)")
 	}
 }
 

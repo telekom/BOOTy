@@ -356,6 +356,9 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 	return o.disk.WipeAllDisks(ctx)
 }
 
+// errPartitionLayoutNotSupported is the shared error for layout-mode gating.
+const errPartitionLayoutNotSupported = "partition layout provisioning is not supported yet; rootfs extraction support is still pending"
+
 func (o *Orchestrator) validatePartitionLayoutModeCompatibility() error {
 	if o.cfg.PartitionLayout == nil {
 		return nil
@@ -366,10 +369,7 @@ func (o *Orchestrator) validatePartitionLayoutModeCompatibility() error {
 		return nil
 	}
 
-	if len(o.cfg.ImageURLs) == 0 {
-		return fmt.Errorf("partition layout without image urls is not supported yet; rootfs extraction support is still pending")
-	}
-	return fmt.Errorf("partition layout with image urls is not supported yet; leave IMAGE unset until rootfs extraction support is implemented")
+	return fmt.Errorf("%s", errPartitionLayoutNotSupported)
 }
 
 func (o *Orchestrator) validatePartitionLayoutConfig() error {
@@ -525,23 +525,11 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 		})
 	}
 
-	// With a custom partition layout, skip image streaming when no image URLs
-	// are configured (the layout handles partitioning/formatting directly).
-	// Rootfs extraction for layout mode is not implemented yet. Fail fast for
-	// both layout-only and layout+image configurations to avoid destructive
-	// disk changes followed by deterministic chroot failures.
+	// With a custom partition layout, fail fast — rootfs extraction for
+	// layout mode is not implemented yet.
+	// Partition-layout provisioning is gated until rootfs extraction is implemented.
 	if o.cfg.PartitionLayout != nil {
-		if len(o.cfg.ImageURLs) == 0 {
-			return fmt.Errorf("partition layout without image urls is not supported yet; rootfs extraction support is still pending")
-		}
-		if err := o.resolveRootFromLayout(o.cfg.PartitionLayout); err != nil {
-			return fmt.Errorf("resolve root from partition layout: %w", err)
-		}
-		o.log.Info("Streaming image to custom layout root", "url", bestURL, "target", o.rootPartition)
-		if err := image.Stream(ctx, bestURL, o.rootPartition, opts...); err != nil {
-			return fmt.Errorf("streaming %s to %s: %w", bestURL, o.rootPartition, err)
-		}
-		return nil
+		return fmt.Errorf("%s", errPartitionLayoutNotSupported)
 	}
 
 	// Default whole-disk mode.

@@ -104,12 +104,8 @@ func (o *Orchestrator) DryRun(ctx context.Context) error {
 
 func (o *Orchestrator) dryRunConfigValidation(_ context.Context) DryRunResult {
 	if o.cfg.PartitionLayout != nil {
-		if len(o.cfg.ImageURLs) == 0 {
-			return DryRunResult{Status: DryRunFail,
-				Message: "partition layout without image urls is not supported yet; rootfs extraction support is still pending"}
-		}
 		return DryRunResult{Status: DryRunFail,
-			Message: "partition layout with image urls is not supported yet; leave IMAGE unset until rootfs extraction support is implemented"}
+			Message: errPartitionLayoutNotSupported}
 	}
 
 	if len(o.cfg.ImageURLs) == 0 {

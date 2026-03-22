@@ -351,7 +351,6 @@ export RESCUE_MODE=shell
 In standby mode (agent mode), rescue actions also apply to hot-provisioning
 commands received via the command poll loop. Failed provisions are ACKed back
 to the controller with the error message.
-<<<<<<< HEAD
 
 ### Dry-Run Mode
 

@@ -304,7 +304,7 @@ func TestPartProbeRefreshes(t *testing.T) {
 func TestApplyPartitionLayoutOnRawLoopDevice(t *testing.T) {
 	requireRoot(t)
 
-	for _, bin := range []string{"sgdisk", "partprobe", "sfdisk", "mkfs.ext4", "blkid"} {
+	for _, bin := range []string{"sgdisk", "partprobe", "mkfs.ext4", "blkid"} {
 		if _, err := exec.LookPath(bin); err != nil {
 			t.Skipf("%s not available", bin)
 		}

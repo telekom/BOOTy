@@ -455,6 +455,12 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) error {
 		cfg.ImageURLs = strings.Fields(strings.ReplaceAll(value, ",", " "))
 	case "POST_PROVISION_CMDS":
 		cfg.PostProvisionCmds = strings.Split(value, ";")
+	case "PARTITION_LAYOUT":
+		layout, err := config.ParsePartitionLayout(value)
+		if err != nil {
+			return fmt.Errorf("invalid PARTITION_LAYOUT: %w", err)
+		}
+		cfg.PartitionLayout = layout
 	}
 
 	return nil
@@ -502,13 +508,6 @@ func applyFeatureToggle(cfg *config.MachineConfig, key, value string) bool {
 		cfg.RescueAutoMountDisks = parseBoolVar(value)
 	case "EVPN_L2_ENABLED":
 		cfg.EVPNL2Enabled = parseBoolVar(value)
-	case "PARTITION_LAYOUT":
-		layout, err := config.ParsePartitionLayout(value)
-		if err != nil {
-			slog.Warn("invalid partition layout, ignoring", "error", err)
-		} else {
-			cfg.PartitionLayout = layout
-		}
 	default:
 		return false
 	}

@@ -14,7 +14,7 @@ Implemented in Phase 1:
   full input validation (PV bounds, VG/LV name checks)
 - `GenerateFstab` + `GenerateLVMFstab` using strings.Builder
 - Orchestrator integration: `apply-partition-layout` step, layout-based
-  root/ESP resolution, stream-image skip when no image URLs configured,
+  root/ESP resolution, fail-fast gating when `PARTITION_LAYOUT` is set,
   write-fstab after mount-root
 - Comprehensive unit tests with mockCommander for command-sequence verification
 
