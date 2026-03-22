@@ -253,7 +253,7 @@ func runCAPRF(ctx context.Context) {
 				break
 			}
 			slog.Error("Provisioning failed", "error", err)
-			action := orch.RescueAction(&retryState)
+			action := rescue.Decide(rescueCfg, &retryState)
 			slog.Info("Rescue action", "type", action.Type, "message", action.Message)
 			switch action.Type {
 			case rescue.ModeRetry:

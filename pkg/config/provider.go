@@ -123,10 +123,10 @@ type MachineConfig struct {
 
 	// Rescue mode configuration.
 	RescueMode           string // RESCUE_MODE: "reboot" (default), "retry", "shell", "wait"
-	RescueSSHPubKey      string // RESCUE_SSH_PUBKEY: authorized SSH public key for rescue shell
-	RescuePasswordHash   string // RESCUE_PASSWORD_HASH: crypt(3) password hash for rescue shell
-	RescueTimeout        int    // RESCUE_TIMEOUT: seconds before rescue auto-action (0 = infinite)
-	RescueAutoMountDisks bool   // RESCUE_AUTO_MOUNT: auto-mount discovered disks in rescue mode
+	RescueSSHPubKey      string // RESCUE_SSH_PUBKEY: authorized SSH public key for rescue shell (Phase 2 — parsed but not yet wired)
+	RescuePasswordHash   string // RESCUE_PASSWORD_HASH: crypt(3) password hash for rescue shell (Phase 2 — parsed but not yet wired)
+	RescueTimeout        int    // RESCUE_TIMEOUT: seconds before rescue auto-action, 0 = infinite (Phase 2 — parsed but not yet wired)
+	RescueAutoMountDisks bool   // RESCUE_AUTO_MOUNT: auto-mount discovered disks in rescue mode (Phase 2 — parsed but not yet wired)
 
 	// Files and commands from ISO /deploy/ directories.
 	ProvisionerFiles []string // Paths to files in /deploy/file-system/

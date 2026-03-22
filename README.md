@@ -226,9 +226,9 @@ export dns_resolver="8.8.8.8"
 | `BGP_REMOTE_ASN` | — | Remote ASN for numbered peers (0 or omitted = iBGP) |
 | `provision_gateway` | — | Gateway VTEP IP for VXLAN BUM flooding and kernel route installation |
 | `RESCUE_MODE` | `reboot` | Failure recovery strategy: `reboot`, `retry`, `shell`, `wait` |
-| `RESCUE_SSH_PUBKEY` | — | SSH public key for rescue shell access (dropbear) |
-| `RESCUE_TIMEOUT` | `0` | Rescue wait timeout in seconds (0 = indefinite) |
-| `RESCUE_AUTO_MOUNT` | `false` | Auto-mount disks in rescue shell mode |
+| `RESCUE_SSH_PUBKEY` | — | *(Phase 2)* SSH public key for rescue shell access |
+| `RESCUE_TIMEOUT` | `0` | *(Phase 2)* Rescue wait timeout in seconds (0 = indefinite) |
+| `RESCUE_AUTO_MOUNT` | `false` | *(Phase 2)* Auto-mount disks in rescue shell mode |
 
 ### Debugging
 
