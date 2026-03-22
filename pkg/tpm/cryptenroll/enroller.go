@@ -29,6 +29,7 @@ func DefaultConfig() *Config {
 }
 
 // ApplyDefaults fills zero-valued fields with defaults.
+// Note: KeySlot uses -1 as sentinel for "unset" to allow slot 0.
 func (c *Config) ApplyDefaults() {
 	d := DefaultConfig()
 	if len(c.PCRs) == 0 {
@@ -37,7 +38,7 @@ func (c *Config) ApplyDefaults() {
 	if c.PCRBank == "" {
 		c.PCRBank = d.PCRBank
 	}
-	if c.KeySlot == 0 {
+	if c.KeySlot < 0 {
 		c.KeySlot = d.KeySlot
 	}
 	if c.TPMPath == "" {

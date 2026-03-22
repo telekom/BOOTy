@@ -50,21 +50,39 @@ func (cv *ChainVerifier) Verify() (*ChainResult, error) {
 // Full PE/COFF signature verification is planned but not yet implemented.
 func (cv *ChainVerifier) checkComponentPresence() []ComponentStatus {
 	paths := []struct {
-		name string
-		path string
+		name  string
+		paths []string
 	}{
-		{"shim", "/boot/efi/EFI/BOOT/BOOTX64.EFI"},
-		{"grub", "/boot/efi/EFI/ubuntu/grubx64.efi"},
-		{"kernel", "/boot/vmlinuz"},
+		{"shim", []string{
+			"/boot/efi/EFI/BOOT/BOOTX64.EFI",
+			"/boot/efi/EFI/BOOT/BOOTAA64.EFI",
+		}},
+		{"grub", []string{
+			"/boot/efi/EFI/ubuntu/grubx64.efi",
+			"/boot/efi/EFI/centos/grubx64.efi",
+			"/boot/efi/EFI/redhat/grubx64.efi",
+			"/boot/efi/EFI/fedora/grubx64.efi",
+			"/boot/efi/EFI/sles/grubx64.efi",
+			"/boot/efi/EFI/debian/grubx64.efi",
+		}},
+		{"kernel", []string{
+			"/boot/vmlinuz",
+			"/boot/vmlinuz-linux",
+		}},
 	}
 	components := make([]ComponentStatus, 0, len(paths))
 	for _, p := range paths {
 		status := ComponentStatus{Name: p.name}
-		if _, err := os.Stat(p.path); err != nil {
-			status.Error = fmt.Sprintf("not found: %s", p.path)
+		found := false
+		for _, path := range p.paths {
+			if _, err := os.Stat(path); err == nil {
+				found = true
+				break
+			}
 		}
-		// Signed/Trusted remain false — presence alone does not imply trust.
-		// Cryptographic signature verification is not yet implemented.
+		if !found {
+			status.Error = fmt.Sprintf("not found: tried %v", p.paths)
+		}
 		components = append(components, status)
 	}
 	return components

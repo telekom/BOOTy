@@ -4,6 +4,18 @@ This guide covers features introduced in PR #71: TPM attestation and
 sealing, Secure Boot verification, MOK enrollment, telemetry collection,
 bootloader detection, GRUB config parsing, and retry utilities.
 
+## Environment Variables
+
+| Variable | Type | Description |
+|----------|------|-------------|
+| `TELEMETRY_ENABLED` | bool | Enable provisioning metrics collection |
+| `TELEMETRY_URL` | string | POST endpoint for metrics snapshot |
+| `METRICS_URL` | string | POST endpoint for provisioning metrics (overrides TELEMETRY_URL) |
+| `EVENT_URL` | string | POST endpoint for provisioning events |
+| `SECUREBOOT_REENABLE` | bool | Signal CAPRF to re-enable Secure Boot after provisioning |
+| `MOK_CERT_PATH` | string | Path to DER-encoded MOK certificate for enrollment |
+| `MOK_PASSWORD` | string | One-time password for MokManager confirmation |
+
 ## TPM Operations (`pkg/tpm/`)
 
 ### Detection

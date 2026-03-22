@@ -37,7 +37,10 @@ func (d *Device) Quote(pcrIndices []int, nonce []byte) (*AttestationQuote, error
 	}
 	defer d.flushContext(ak)
 
-	sel := buildPCRSelection(pcrIndices)
+	sel, err := buildPCRSelection(pcrIndices)
+	if err != nil {
+		return nil, err
+	}
 	qualifying := tpm2.TPM2BData{Buffer: nonce}
 
 	quoteCmd := tpm2.Quote{
@@ -153,18 +156,19 @@ func (d *Device) flushContext(handle tpm2.TPMHandle) {
 	_, _ = cmd.Execute(d.tpm)
 }
 
-func buildPCRSelection(indices []int) tpm2.TPMLPCRSelection {
+func buildPCRSelection(indices []int) (tpm2.TPMLPCRSelection, error) {
 	sel := make([]byte, 3)
 	for _, idx := range indices {
-		if idx < 24 {
-			sel[idx/8] |= 1 << (idx % 8)
+		if idx < 0 || idx > 23 {
+			return tpm2.TPMLPCRSelection{}, fmt.Errorf("invalid PCR index %d: must be 0-23", idx)
 		}
+		sel[idx/8] |= 1 << (idx % 8)
 	}
 	return tpm2.TPMLPCRSelection{
 		PCRSelections: []tpm2.TPMSPCRSelection{
 			{Hash: tpm2.TPMAlgSHA256, PCRSelect: sel},
 		},
-	}
+	}, nil
 }
 
 func marshalECDSASig(sig tpm2.TPMTSignature) []byte {

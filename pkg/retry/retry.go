@@ -35,6 +35,9 @@ func Do(ctx context.Context, cfg Config, fn func() error) error {
 	if cfg.Multiplier <= 0 {
 		cfg.Multiplier = 2.0
 	}
+	if cfg.MaxWait <= 0 {
+		cfg.MaxWait = 30 * time.Second
+	}
 
 	wait := cfg.InitialWait
 	var lastErr error

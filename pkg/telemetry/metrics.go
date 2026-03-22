@@ -69,6 +69,17 @@ func (h *Histogram) Sum() float64 {
 	return s
 }
 
+// CountAndSum atomically returns both count and sum in a single lock acquisition.
+func (h *Histogram) CountAndSum() (count int, sum float64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var s float64
+	for _, v := range h.values {
+		s += v
+	}
+	return len(h.values), s
+}
+
 // Metrics holds all provisioning metrics.
 type Metrics struct {
 	StepDuration      Histogram // seconds per step.
@@ -89,13 +100,15 @@ func NewMetrics() *Metrics {
 
 // Snapshot returns a JSON-serializable snapshot of all metrics.
 func (m *Metrics) Snapshot() *MetricSnapshot {
+	stepCount, stepSum := m.StepDuration.CountAndSum()
+	provCount, provSum := m.ProvisionDuration.CountAndSum()
 	return &MetricSnapshot{
-		StepDurationCount:     m.StepDuration.Count(),
-		StepDurationSumS:      m.StepDuration.Sum(),
+		StepDurationCount:     stepCount,
+		StepDurationSumS:      stepSum,
 		StepRetries:           m.StepRetries.Value(),
 		StepErrors:            m.StepErrors.Value(),
-		ProvisionCount:        m.ProvisionDuration.Count(),
-		ProvisionDurationSumS: m.ProvisionDuration.Sum(),
+		ProvisionCount:        provCount,
+		ProvisionDurationSumS: provSum,
 		ImageBytes:            m.ImageBytes.Value(),
 		DiskCount:             m.DiskCount.Value(),
 		NICCount:              m.NICCount.Value(),

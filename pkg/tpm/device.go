@@ -65,11 +65,15 @@ func (d *Device) ExtendPCR(pcrIndex int, digest []byte) error {
 
 // ReadPCR reads the current value of a hardware PCR (SHA-256).
 func (d *Device) ReadPCR(pcrIndex int) ([]byte, error) {
+	pcrSel, err := pcrSelectSingle(pcrIndex)
+	if err != nil {
+		return nil, err
+	}
 	sel := tpm2.TPMLPCRSelection{
 		PCRSelections: []tpm2.TPMSPCRSelection{
 			{
 				Hash:      tpm2.TPMAlgSHA256,
-				PCRSelect: pcrSelectSingle(pcrIndex),
+				PCRSelect: pcrSel,
 			},
 		},
 	}
@@ -107,8 +111,11 @@ func (d *Device) MeasureFile(pcrIndex int, path string) ([]byte, error) {
 	return d.MeasureReader(pcrIndex, f)
 }
 
-func pcrSelectSingle(index int) []byte {
-	mask := make([]byte, (index/8)+1)
+func pcrSelectSingle(index int) ([]byte, error) {
+	if index < 0 || index > 23 {
+		return nil, fmt.Errorf("invalid PCR index %d: must be 0-23", index)
+	}
+	mask := make([]byte, 3) // fixed 3 bytes for PCR 0-23
 	mask[index/8] |= 1 << (index % 8)
-	return mask
+	return mask, nil
 }

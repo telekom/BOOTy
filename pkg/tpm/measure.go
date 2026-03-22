@@ -62,7 +62,15 @@ func (l *MeasurementLog) Entries() []Measurement {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	out := make([]Measurement, len(l.entries))
-	copy(out, l.entries)
+	for i, m := range l.entries {
+		out[i] = Measurement{
+			PCR:       m.PCR,
+			Algorithm: m.Algorithm,
+			Digest:    append([]byte(nil), m.Digest...),
+			Label:     m.Label,
+			Timestamp: m.Timestamp,
+		}
+	}
 	return out
 }
 

@@ -18,13 +18,22 @@ func TestDefaultConfig(t *testing.T) {
 }
 
 func TestConfig_ApplyDefaults(t *testing.T) {
-	c := &Config{LUKSDevice: "/dev/sda1"}
+	c := &Config{LUKSDevice: "/dev/sda1", KeySlot: -1}
 	c.ApplyDefaults()
 	if len(c.PCRs) == 0 {
 		t.Error("PCRs should be set after ApplyDefaults")
 	}
 	if c.KeySlot != 2 {
 		t.Errorf("keySlot = %d", c.KeySlot)
+	}
+}
+
+func TestConfig_ApplyDefaults_KeySlotZeroPreserved(t *testing.T) {
+	t.Helper()
+	c := &Config{LUKSDevice: "/dev/sda1", KeySlot: 0}
+	c.ApplyDefaults()
+	if c.KeySlot != 0 {
+		t.Errorf("keySlot 0 should be preserved, got %d", c.KeySlot)
 	}
 }
 

@@ -144,7 +144,10 @@ func (d *Device) createSRK() (tpm2.TPMHandle, error) {
 }
 
 func (d *Device) createPCRPolicySession(pcrs []int) (tpm2.Session, func() error, error) {
-	sel := buildPCRSelection(pcrs)
+	sel, err := buildPCRSelection(pcrs)
+	if err != nil {
+		return nil, nil, err
+	}
 	sess, cleanup, err := tpm2.PolicySession(d.tpm, tpm2.TPMAlgSHA256, 16)
 	if err != nil {
 		return nil, nil, fmt.Errorf("starting policy session: %w", err)
@@ -163,7 +166,10 @@ func (d *Device) createPCRPolicySession(pcrs []int) (tpm2.Session, func() error,
 // policyDigestForPCRs derives the PCR policy digest using a trial session.
 // The resulting digest is used as AuthPolicy when sealing objects.
 func (d *Device) policyDigestForPCRs(pcrs []int) (tpm2.TPM2BDigest, error) {
-	sel := buildPCRSelection(pcrs)
+	sel, err := buildPCRSelection(pcrs)
+	if err != nil {
+		return tpm2.TPM2BDigest{}, err
+	}
 	sess, cleanup, err := tpm2.PolicySession(d.tpm, tpm2.TPMAlgSHA256, 16, tpm2.Trial())
 	if err != nil {
 		return tpm2.TPM2BDigest{}, fmt.Errorf("starting trial session: %w", err)

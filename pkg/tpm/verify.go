@@ -57,7 +57,16 @@ func VerifyQuoteAgainstPolicy(pcrValues map[int][]byte, policy *GoldenPolicy) *V
 			continue
 		}
 		actual, ok := pcrValues[golden.PCR]
-		if !ok || subtle.ConstantTimeCompare(expected, actual) != 1 {
+		if !ok {
+			result.Mismatches = append(result.Mismatches, PCRMismatch{
+				PCR:      golden.PCR,
+				Expected: golden.Digest,
+				Actual:   "(missing)",
+			})
+			result.Valid = false
+			continue
+		}
+		if subtle.ConstantTimeCompare(expected, actual) != 1 {
 			result.Mismatches = append(result.Mismatches, PCRMismatch{
 				PCR:      golden.PCR,
 				Expected: golden.Digest,
