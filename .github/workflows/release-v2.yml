@@ -15,12 +15,30 @@ jobs:
     name: Build (${{ matrix.arch }}/${{ matrix.flavor }})
     strategy:
       matrix:
-        arch: [amd64, arm64]
-        flavor: [default, gobgp, slim, micro]
         include:
           - arch: amd64
+            flavor: default
+            runner: ubuntu-latest
+          - arch: amd64
+            flavor: gobgp
+            runner: ubuntu-latest
+          - arch: amd64
+            flavor: slim
+            runner: ubuntu-latest
+          - arch: amd64
+            flavor: micro
             runner: ubuntu-latest
           - arch: arm64
+            flavor: default
+            runner: ubuntu-24.04-arm
+          - arch: arm64
+            flavor: gobgp
+            runner: ubuntu-24.04-arm
+          - arch: arm64
+            flavor: slim
+            runner: ubuntu-24.04-arm
+          - arch: arm64
+            flavor: micro
             runner: ubuntu-24.04-arm
       fail-fast: false
     runs-on: ${{ matrix.runner }}
@@ -151,12 +169,18 @@ jobs:
     needs: build
     strategy:
       matrix:
-        flavor: [default, gobgp]
-        arch: [amd64, arm64]
         include:
-          - arch: amd64
+          - flavor: default
+            arch: amd64
             runner: ubuntu-latest
-          - arch: arm64
+          - flavor: default
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - flavor: gobgp
+            arch: amd64
+            runner: ubuntu-latest
+          - flavor: gobgp
+            arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
