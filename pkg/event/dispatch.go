@@ -30,7 +30,8 @@ type Dispatcher struct {
 // NewDispatcher creates a webhook event dispatcher.
 // It validates the webhook URL at construction time.
 func NewDispatcher(webhookURL string, log *slog.Logger) (*Dispatcher, error) {
-	if strings.TrimSpace(webhookURL) == "" {
+	webhookURL = strings.TrimSpace(webhookURL)
+	if webhookURL == "" {
 		return nil, fmt.Errorf("webhook URL must not be empty")
 	}
 
@@ -47,7 +48,7 @@ func NewDispatcher(webhookURL string, log *slog.Logger) (*Dispatcher, error) {
 	if u.Host == "" {
 		return nil, fmt.Errorf("webhook URL must have a host")
 	}
-	if isPrivateIPHost(u.Hostname()) {
+	if (u.Scheme != "http" || !isLocalHost(u.Hostname())) && isPrivateIPHost(u.Hostname()) {
 		return nil, fmt.Errorf("webhook URL host %q is not allowed", u.Hostname())
 	}
 	if u.User != nil {
@@ -112,10 +113,8 @@ func isLocalHost(host string) bool {
 func isPrivateIPHost(host string) bool {
 	ip := net.ParseIP(host)
 	if ip == nil {
-		return false
-	}
-	if ip.IsPrivate() || ip.IsLinkLocalUnicast() {
+		// Reject hostnames — only allow resolved IPs to prevent DNS rebinding.
 		return true
 	}
-	return false
+	return ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLoopback()
 }

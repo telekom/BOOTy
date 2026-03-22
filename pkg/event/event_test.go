@@ -3,6 +3,7 @@ package event
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -46,6 +47,19 @@ func TestWithDetails_NormalizesNonJSONValue(t *testing.T) {
 	}
 	if _, err := json.Marshal(e); err != nil {
 		t.Fatalf("event should marshal after normalization: %v", err)
+	}
+}
+
+func TestWithDetails_ErrorValuePreservesMessage(t *testing.T) {
+	e := New(ProvisionFailed, Machine{Name: "worker-1"}).WithDetails(map[string]any{
+		"error": fmt.Errorf("connection refused"),
+	})
+	got, ok := e.Details["error"].(string)
+	if !ok {
+		t.Fatalf("error value should be converted to string, got %T", e.Details["error"])
+	}
+	if got != "connection refused" {
+		t.Errorf("error message = %q, want %q", got, "connection refused")
 	}
 }
 
@@ -182,9 +196,12 @@ func TestNewDispatcher_InvalidURL(t *testing.T) {
 	}{
 		{"no scheme", "example.com/webhook"},
 		{"empty", ""},
+		{"whitespace only", "   "},
 		{"ftp scheme", "ftp://example.com/webhook"},
 		{"http external disallowed", "http://example.com/webhook"},
 		{"private ip disallowed", "https://10.0.0.1/webhook"},
+		{"loopback https disallowed", "https://127.0.0.1/webhook"},
+		{"hostname rejected", "https://evil.example.com/webhook"},
 		{"userinfo", "https://user:pass@example.com/webhook"},
 	}
 	for _, tc := range tests {

@@ -57,11 +57,16 @@ func (e *Event) WithDetails(details map[string]any) *Event {
 
 	normalized := make(map[string]any, len(details))
 	for k, v := range details {
-		if _, err := json.Marshal(v); err != nil {
-			normalized[k] = fmt.Sprintf("%v", v)
-			continue
+		switch val := v.(type) {
+		case error:
+			normalized[k] = val.Error()
+		default:
+			if _, err := json.Marshal(v); err != nil {
+				normalized[k] = fmt.Sprintf("%v", v)
+				continue
+			}
+			normalized[k] = v
 		}
-		normalized[k] = v
 	}
 
 	e.Details = normalized

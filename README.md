@@ -248,6 +248,7 @@ export dns_resolver="8.8.8.8"
 | `TELEMETRY_URL` | — | POST endpoint for telemetry snapshot |
 | `METRICS_URL` | — | POST endpoint for provisioning metrics |
 | `EVENT_URL` | — | POST endpoint for provisioning lifecycle events |
+| `WEBHOOK_URL` | — | HTTPS endpoint for webhook event notifications (SSRF-protected) |
 | `SECUREBOOT_REENABLE` | `false` | Signal CAPRF to re-enable Secure Boot after provisioning |
 | `MOK_CERT_PATH` | — | *(Phase 2)* Path to DER-encoded MOK certificate for custom kernel signing |
 | `MOK_PASSWORD` | — | *(Phase 2)* One-time password for MokManager confirmation |
@@ -486,6 +487,58 @@ export VLANS="200:eno1:10.200.0.42/24,300:eno2"
 Each VLAN creates a tagged sub-interface (`eno1.200`), assigns the IP address
 (if provided), and brings the link up. VLANs are created after the primary
 network mode is established.
+
+### Webhooks
+
+BOOTy can send provisioning lifecycle events to a webhook endpoint for external
+integration (alerting, auditing, CMDB updates). Events are dispatched as JSON
+POST requests.
+
+**Configuration:**
+
+```bash
+export WEBHOOK_URL="https://hooks.example.com/booty/events"
+```
+
+**Supported Event Types:**
+
+| Event | Trigger |
+|-------|---------|
+| `provision.started` | Provisioning begins |
+| `provision.completed` | Provisioning succeeds |
+| `provision.failed` | Provisioning fails (includes step and error) |
+| `deprovision.started` | Deprovisioning begins |
+| `deprovision.completed` | Deprovisioning succeeds |
+| `health.critical` | Critical health check failure |
+| `health.warning` | Health check warning |
+| `rescue.activated` | Rescue mode activated |
+| `firmware.mismatch` | Firmware version mismatch detected |
+| `attestation.failed` | TPM attestation failed |
+
+**Event Payload Example:**
+
+```json
+{
+  "event": "provision.failed",
+  "timestamp": "2026-03-22T12:00:00Z",
+  "machine": {
+    "name": "worker-42",
+    "namespace": "cluster-prod",
+    "redfishHost": "rfh-rack3-u42",
+    "address": "10.0.1.42"
+  },
+  "details": {
+    "step": "image-streaming",
+    "error": "connection reset"
+  }
+}
+```
+
+**Security:**
+- Only HTTPS URLs are allowed (HTTP permitted for `localhost`/`127.0.0.1` only)
+- Private/link-local IPs and unresolved hostnames are blocked (SSRF protection)
+- Credentials in webhook URLs are rejected
+- Request timeout: 10 seconds
 
 ## OCI Image Sources
 
