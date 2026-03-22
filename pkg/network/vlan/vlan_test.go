@@ -1,74 +1,153 @@
-//go:build linux
-
 package vlan
 
 import (
 	"testing"
 )
 
-func TestConfigInterfaceName(t *testing.T) {
-	tests := []struct {
-		name string
-		cfg  Config
-		want string
-	}{
-		{"standard", Config{ID: 200, Parent: "eno1"}, "eno1.200"},
-		{"vlan1", Config{ID: 1, Parent: "eth0"}, "eth0.1"},
-		{"high_id", Config{ID: 4094, Parent: "ens3f0"}, "ens3f0.4094"},
+func TestConfig_InterfaceName(t *testing.T) {
+	c := &Config{Parent: "eth0", ID: 100}
+	if got := c.InterfaceName(); got != "eth0.100" {
+		t.Errorf("InterfaceName() = %q, want %q", got, "eth0.100")
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.cfg.InterfaceName(); got != tt.want {
-				t.Errorf("InterfaceName() = %q, want %q", got, tt.want)
+
+	c2 := &Config{Parent: "eth0", ID: 100, Name: "mgmt"}
+	if got := c2.InterfaceName(); got != "mgmt" {
+		t.Errorf("InterfaceName() = %q, want %q", got, "mgmt")
+	}
+}
+
+func TestConfig_Validate(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     Config
+		wantErr bool
+	}{
+		{"valid", Config{ID: 100, Parent: "eth0"}, false},
+		{"with addr", Config{ID: 100, Parent: "eth0", Address: "10.0.0.1/24"}, false},
+		{"with gw", Config{ID: 100, Parent: "eth0", Gateway: "10.0.0.1"}, false},
+		{"with mtu", Config{ID: 100, Parent: "eth0", MTU: 9000}, false},
+		{"dhcp", Config{ID: 100, Parent: "eth0", DHCP: true}, false},
+		{"dhcp and static conflict", Config{ID: 100, Parent: "eth0", DHCP: true, Address: "10.0.0.1/24"}, true},
+		{"id too low", Config{ID: 0, Parent: "eth0"}, true},
+		{"id too high", Config{ID: 5000, Parent: "eth0"}, true},
+		{"no parent", Config{ID: 100}, true},
+		{"bad addr", Config{ID: 100, Parent: "eth0", Address: "bad"}, true},
+		{"bad gw", Config{ID: 100, Parent: "eth0", Gateway: "bad"}, true},
+		{"bad mtu", Config{ID: 100, Parent: "eth0", MTU: 10000}, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.cfg.Validate()
+			if (err != nil) != tc.wantErr {
+				t.Errorf("Validate() err = %v, wantErr %v", err, tc.wantErr)
 			}
 		})
 	}
 }
 
-func TestSetupInvalidVLANID(t *testing.T) {
+func TestTrunkConfig_Validate(t *testing.T) {
 	tests := []struct {
-		name string
-		id   int
+		name    string
+		cfg     TrunkConfig
+		wantErr bool
 	}{
-		{"zero", 0},
-		{"negative", -1},
-		{"too_high", 4095},
+		{"valid", TrunkConfig{Parent: "eth0", VLANs: []int{100, 200}}, false},
+		{"allow all", TrunkConfig{Parent: "eth0", AllowAll: true}, false},
+		{"native", TrunkConfig{Parent: "eth0", VLANs: []int{1, 100}, NativeID: 1}, false},
+		{"no parent", TrunkConfig{VLANs: []int{100}}, true},
+		{"no vlans", TrunkConfig{Parent: "eth0"}, true},
+		{"bad id", TrunkConfig{Parent: "eth0", VLANs: []int{5000}}, true},
+		{"dup id", TrunkConfig{Parent: "eth0", VLANs: []int{100, 100}}, true},
+		{"bad native", TrunkConfig{Parent: "eth0", VLANs: []int{100}, NativeID: 5000}, true},
+		{"native not present", TrunkConfig{Parent: "eth0", VLANs: []int{100, 200}, NativeID: 300}, true},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := Setup(Config{ID: tt.id, Parent: "eth0"})
-			if err == nil {
-				t.Error("Setup() should fail for invalid VLAN ID")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.cfg.Validate()
+			if (err != nil) != tc.wantErr {
+				t.Errorf("Validate() err = %v, wantErr %v", err, tc.wantErr)
 			}
 		})
 	}
 }
 
-func TestSetupParentNotFound(t *testing.T) {
-	_, err := Setup(Config{ID: 100, Parent: "nonexistent_iface_xyz"})
-	if err == nil {
-		t.Error("Setup() should fail when parent interface does not exist")
+func TestMultiConfig_Validate(t *testing.T) {
+	valid := MultiConfig{
+		VLANs: []Config{
+			{ID: 100, Parent: "eth0"},
+			{ID: 200, Parent: "eth0"},
+		},
+	}
+	if err := valid.Validate(); err != nil {
+		t.Errorf("valid config: %v", err)
+	}
+
+	dup := MultiConfig{
+		VLANs: []Config{
+			{ID: 100, Parent: "eth0"},
+			{ID: 100, Parent: "eth0"},
+		},
+	}
+	if err := dup.Validate(); err == nil {
+		t.Error("expected duplicate error")
+	}
+
+	diffParent := MultiConfig{
+		VLANs: []Config{
+			{ID: 100, Parent: "eth0"},
+			{ID: 100, Parent: "eth1"},
+		},
+	}
+	if err := diffParent.Validate(); err != nil {
+		t.Errorf("different parents same ID should be valid: %v", err)
+	}
+
+	dupName := MultiConfig{
+		VLANs: []Config{
+			{ID: 100, Parent: "eth0", Name: "mgmt"},
+			{ID: 200, Parent: "eth1", Name: "mgmt"},
+		},
+	}
+	if err := dupName.Validate(); err == nil {
+		t.Error("expected duplicate interface name error")
 	}
 }
 
-func TestTeardownNonexistent(t *testing.T) {
-	// Teardown of a non-existent interface should succeed silently.
-	if err := Teardown("nonexistent_parent_xyz", 999); err != nil {
-		t.Errorf("Teardown() of nonexistent interface should return nil, got: %v", err)
+func TestMultiConfig_Names(t *testing.T) {
+	m := MultiConfig{
+		VLANs: []Config{
+			{ID: 100, Parent: "eth0"},
+			{ID: 200, Parent: "eth0", Name: "mgmt"},
+		},
+	}
+	names := m.Names()
+	if len(names) != 2 {
+		t.Fatalf("names = %d", len(names))
+	}
+	if names[0] != "eth0.100" {
+		t.Errorf("names[0] = %q, want %q", names[0], "eth0.100")
+	}
+	if names[1] != "mgmt" {
+		t.Errorf("names[1] = %q, want %q", names[1], "mgmt")
 	}
 }
 
-func TestSetupAllEmpty(t *testing.T) {
-	names, err := SetupAll(nil)
-	if err != nil {
-		t.Errorf("SetupAll(nil) returned error: %v", err)
+func TestFormatVLANList(t *testing.T) {
+	result := FormatVLANList([]int{100, 200, 300})
+	if result != "100, 200, 300" {
+		t.Errorf("FormatVLANList() = %q, want %q", result, "100, 200, 300")
 	}
-	if len(names) != 0 {
-		t.Errorf("SetupAll(nil) returned %d names, want 0", len(names))
+
+	if got := FormatVLANList(nil); got != "" {
+		t.Errorf("FormatVLANList(nil) = %q, want empty", got)
 	}
 }
 
-func TestTeardownAllEmpty(t *testing.T) {
-	// Should not panic on empty input.
-	TeardownAll(nil)
+func TestConstants(t *testing.T) {
+	if MinID != 1 {
+		t.Error("MinID")
+	}
+	if MaxID != 4094 {
+		t.Error("MaxID")
+	}
 }
