@@ -138,13 +138,13 @@ func (c *NetworkConfig) validateInterfaces() error {
 	ifaceNames := make(map[string]struct{}, len(c.Interfaces))
 	for i := range c.Interfaces {
 		iface := &c.Interfaces[i]
+		if err := validateInterface(i, iface); err != nil {
+			return err
+		}
 		if _, exists := ifaceNames[iface.Name]; exists {
 			return fmt.Errorf("duplicate interface name %q", iface.Name)
 		}
 		ifaceNames[iface.Name] = struct{}{}
-		if err := validateInterface(i, iface); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -290,15 +290,23 @@ func validateDNSConfig(cfg *DNSConfig) error {
 }
 
 func validateCIDR(v string) error {
-	if _, err := netip.ParsePrefix(v); err != nil {
+	prefix, err := netip.ParsePrefix(v)
+	if err != nil {
 		return fmt.Errorf("invalid cidr %q", v)
+	}
+	if prefix.Addr().Is6() {
+		return fmt.Errorf("ipv6 cidr %q not supported (renderers are ipv4-only)", v)
 	}
 	return nil
 }
 
 func validateIP(v string) error {
-	if _, err := netip.ParseAddr(v); err != nil {
+	addr, err := netip.ParseAddr(v)
+	if err != nil {
 		return fmt.Errorf("invalid ip %q", v)
+	}
+	if addr.Is6() {
+		return fmt.Errorf("ipv6 address %q not supported (renderers are ipv4-only)", v)
 	}
 	return nil
 }
@@ -307,26 +315,27 @@ func validateIP(v string) error {
 // DNS and routes are placed under the first interface for netplan compatibility.
 func RenderNetplan(cfg *NetworkConfig) string {
 	var b strings.Builder
+	dnsAttached := false
 	b.WriteString("network:\n")
 	b.WriteString("  version: 2\n")
 	b.WriteString("  renderer: networkd\n")
-	renderNetplanEthernets(&b, cfg.Interfaces, &cfg.DNS, cfg.Routes)
-	renderNetplanBonds(&b, cfg.Bonds)
-	renderNetplanVLANs(&b, cfg.VLANs)
+	renderNetplanEthernets(&b, cfg.Interfaces, &cfg.DNS, cfg.Routes, &dnsAttached)
+	renderNetplanBonds(&b, cfg.Bonds, &cfg.DNS, cfg.Routes, &dnsAttached)
+	renderNetplanVLANs(&b, cfg.VLANs, &cfg.DNS, cfg.Routes, &dnsAttached)
 	return b.String()
 }
 
-func renderNetplanEthernets(b *strings.Builder, ifaces []InterfaceConfig, dns *DNSConfig, routes []RouteConfig) {
+func renderNetplanEthernets(b *strings.Builder, ifaces []InterfaceConfig, dns *DNSConfig, routes []RouteConfig, dnsAttached *bool) {
 	if len(ifaces) == 0 {
 		return
 	}
 	b.WriteString("  ethernets:\n")
 	for i := range ifaces {
 		renderNetplanInterface(b, &ifaces[i])
-		// Attach DNS and routes to the first interface.
-		if i == 0 {
+		if !*dnsAttached {
 			renderNetplanIfaceDNS(b, dns)
 			renderNetplanIfaceRoutes(b, routes)
+			*dnsAttached = true
 		}
 	}
 }
@@ -349,7 +358,7 @@ func renderNetplanInterface(b *strings.Builder, iface *InterfaceConfig) {
 	}
 }
 
-func renderNetplanBonds(b *strings.Builder, bonds []BondConfig) {
+func renderNetplanBonds(b *strings.Builder, bonds []BondConfig, dns *DNSConfig, routes []RouteConfig, dnsAttached *bool) {
 	if len(bonds) == 0 {
 		return
 	}
@@ -373,10 +382,15 @@ func renderNetplanBonds(b *strings.Builder, bonds []BondConfig) {
 		if bonds[i].HashPolicy != "" {
 			fmt.Fprintf(b, "        transmit-hash-policy: %s\n", bonds[i].HashPolicy)
 		}
+		if !*dnsAttached {
+			renderNetplanIfaceDNS(b, dns)
+			renderNetplanIfaceRoutes(b, routes)
+			*dnsAttached = true
+		}
 	}
 }
 
-func renderNetplanVLANs(b *strings.Builder, vlans []VLANConfig) {
+func renderNetplanVLANs(b *strings.Builder, vlans []VLANConfig, dns *DNSConfig, routes []RouteConfig, dnsAttached *bool) {
 	if len(vlans) == 0 {
 		return
 	}
@@ -393,6 +407,11 @@ func renderNetplanVLANs(b *strings.Builder, vlans []VLANConfig) {
 			b.WriteString("      dhcp4: true\n")
 		} else if vlans[i].Address != "" {
 			fmt.Fprintf(b, "      addresses: [%s]\n", vlans[i].Address)
+		}
+		if !*dnsAttached {
+			renderNetplanIfaceDNS(b, dns)
+			renderNetplanIfaceRoutes(b, routes)
+			*dnsAttached = true
 		}
 	}
 }
@@ -526,7 +545,11 @@ func appendNetworkdDNSRoutes(content string, dns *DNSConfig, routes []RouteConfi
 	b.WriteString(content)
 	for _, r := range routes {
 		b.WriteString("\n[Route]\n")
-		fmt.Fprintf(&b, "Destination=%s\n", r.Destination)
+		dst := r.Destination
+		if dst == "default" {
+			dst = "0.0.0.0/0"
+		}
+		fmt.Fprintf(&b, "Destination=%s\n", dst)
 		fmt.Fprintf(&b, "Gateway=%s\n", r.Gateway)
 		if r.Metric > 0 {
 			fmt.Fprintf(&b, "Metric=%d\n", r.Metric)
@@ -562,7 +585,11 @@ func renderNMKeyfile(iface *InterfaceConfig, dns *DNSConfig, routes []RouteConfi
 		fmt.Fprintf(&b, "dns-search=%s\n", strings.Join(dns.Search, ";"))
 	}
 	for i, r := range routes {
-		fmt.Fprintf(&b, "route%d=%s,%s", i+1, r.Destination, r.Gateway)
+		dst := r.Destination
+		if dst == "default" {
+			dst = "0.0.0.0/0"
+		}
+		fmt.Fprintf(&b, "route%d=%s,%s", i+1, dst, r.Gateway)
 		if r.Metric > 0 {
 			fmt.Fprintf(&b, ",%d", r.Metric)
 		}
