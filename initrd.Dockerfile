@@ -163,14 +163,16 @@ COPY --from=tools /usr/sbin/lldpd sbin/lldpd
 COPY --from=tools /usr/sbin/dropbear bin/dropbear
 COPY --from=tools /usr/bin/dropbearkey bin/dropbearkey
 
-# Copy runtime libs required by rescue SSH binaries.
+# Copy runtime shared libs required by all dynamically linked binaries.
 RUN set -eux; \
-        ldd bin/dropbear bin/dropbearkey \
-            | awk '/=> \/|^\/lib/{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
-            | sort -u > /tmp/rescue-libs.txt; \
+        find bin/ sbin/ -type f | while read -r f; do \
+            ldd "$f" 2>/dev/null || true; \
+        done \
+            | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
+            | sort -u > /tmp/all-libs.txt; \
         while read -r lib; do \
-            [ -n "$lib" ] && cp --parents "$lib" .; \
-        done < /tmp/rescue-libs.txt
+            [ -n "$lib" ] && cp --parents "$lib" . 2>/dev/null || true; \
+        done < /tmp/all-libs.txt
 
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
@@ -301,14 +303,16 @@ COPY --from=tools /usr/bin/dropbearkey bin/dropbearkey
 # lsblk for rescue mode disk auto-mount
 COPY --from=tools /bin/lsblk bin/lsblk
 
-# Copy runtime libs required by rescue binaries (dropbear + lsblk).
+# Copy runtime shared libs required by all dynamically linked binaries.
 RUN set -eux; \
-        ldd bin/dropbear bin/dropbearkey bin/lsblk \
-            | awk '/=> \/|^\/lib/{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
-            | sort -u > /tmp/rescue-libs.txt; \
+        find bin/ sbin/ -type f | while read -r f; do \
+            ldd "$f" 2>/dev/null || true; \
+        done \
+            | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
+            | sort -u > /tmp/all-libs.txt; \
         while read -r lib; do \
-            [ -n "$lib" ] && cp --parents "$lib" .; \
-        done < /tmp/rescue-libs.txt
+            [ -n "$lib" ] && cp --parents "$lib" . 2>/dev/null || true; \
+        done < /tmp/all-libs.txt
 
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
