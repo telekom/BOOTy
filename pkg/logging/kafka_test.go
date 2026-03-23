@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -19,6 +20,9 @@ func TestKafkaConfig_Validate(t *testing.T) {
 		{"no brokers", KafkaConfig{Topic: "t"}, true},
 		{"no topic", KafkaConfig{Brokers: []string{"localhost:9092"}}, true},
 		{"empty broker", KafkaConfig{Brokers: []string{""}, Topic: "t"}, true},
+		{"sasl user without password", KafkaConfig{Brokers: []string{"localhost:9092"}, Topic: "t", SASLUser: "user"}, true},
+		{"sasl password without user", KafkaConfig{Brokers: []string{"localhost:9092"}, Topic: "t", SASLPassword: "pass"}, true},
+		{"sasl complete", KafkaConfig{Brokers: []string{"localhost:9092"}, Topic: "t", SASLUser: "user", SASLPassword: "pass"}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -115,9 +119,31 @@ func TestKafkaHandler_WithAttrs(t *testing.T) {
 func TestKafkaHandler_WithGroup(t *testing.T) {
 	mw := &mockWriter{}
 	h := NewKafkaHandler(mw, "t", MachineIdentity{})
-	h2 := h.WithGroup("sub")
-	if h2 == nil {
-		t.Error("WithGroup returned nil")
+
+	// Empty group should be a no-op.
+	h2 := h.WithGroup("")
+	if h2 != h {
+		t.Error("WithGroup(\"\") should return same handler")
+	}
+
+	// Named group should prefix attrs.
+	h3 := h.WithGroup("sub")
+	if h3 == nil {
+		t.Fatal("WithGroup returned nil")
+	}
+
+	r := slog.NewRecord(time.Now(), slog.LevelInfo, "grouped", 0)
+	r.AddAttrs(slog.String("key", "val"))
+	if err := h3.Handle(context.Background(), r); err != nil {
+		t.Fatal(err)
+	}
+
+	var msg LogMessage
+	if err := json.Unmarshal(mw.messages[0], &msg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := msg.Attrs["sub.key"]; !ok {
+		t.Errorf("expected grouped attr sub.key, got attrs: %v", msg.Attrs)
 	}
 }
 
@@ -165,6 +191,32 @@ func TestMultiHandler(t *testing.T) {
 	}
 	if len(mw2.messages) != 1 {
 		t.Errorf("mw2 = %d", len(mw2.messages))
+	}
+}
+
+type failingHandler struct{}
+
+func (f *failingHandler) Enabled(_ context.Context, _ slog.Level) bool { return true }
+func (f *failingHandler) Handle(_ context.Context, _ slog.Record) error {
+	return fmt.Errorf("sink down")
+}
+func (f *failingHandler) WithAttrs(_ []slog.Attr) slog.Handler { return f }
+func (f *failingHandler) WithGroup(_ string) slog.Handler      { return f }
+
+func TestMultiHandler_ErrorContinues(t *testing.T) {
+	mw := &mockWriter{}
+	good := NewKafkaHandler(mw, "t", MachineIdentity{Serial: "OK"})
+	bad := &failingHandler{}
+
+	// bad handler first, good handler second — good should still receive the log.
+	multi := NewMultiHandler(bad, good)
+	r := slog.NewRecord(time.Now(), slog.LevelInfo, "test", 0)
+	err := multi.Handle(context.Background(), r)
+	if err == nil {
+		t.Error("expected error from failing handler")
+	}
+	if len(mw.messages) != 1 {
+		t.Errorf("good handler should have received log, got %d messages", len(mw.messages))
 	}
 }
 

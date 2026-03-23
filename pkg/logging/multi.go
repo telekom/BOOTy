@@ -26,14 +26,21 @@ func (m *MultiHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	return false
 }
 
-// Handle sends the record to all handlers, returning the first error.
+// Handle sends the record to all enabled handlers, collecting errors.
 func (m *MultiHandler) Handle(ctx context.Context, r slog.Record) error { //nolint:gocritic // slog.Record is passed by value per slog.Handler interface.
+	var errs []error
 	for idx, h := range m.handlers {
 		if h.Enabled(ctx, r.Level) {
 			if err := h.Handle(ctx, r); err != nil {
-				return fmt.Errorf("handler %d: %w", idx, err)
+				errs = append(errs, fmt.Errorf("handler %d: %w", idx, err))
 			}
 		}
+	}
+	if len(errs) == 1 {
+		return errs[0]
+	}
+	if len(errs) > 1 {
+		return fmt.Errorf("%d handlers failed: %v", len(errs), errs)
 	}
 	return nil
 }

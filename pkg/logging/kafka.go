@@ -13,11 +13,13 @@ import (
 
 // KafkaConfig holds Kafka connection settings.
 type KafkaConfig struct {
-	Brokers     []string `json:"brokers"`
-	Topic       string   `json:"topic"`
-	TLS         bool     `json:"tls,omitempty"`
-	SASLUser    string   `json:"saslUser,omitempty"`
-	Compression string   `json:"compression,omitempty"` // "snappy", "lz4", "zstd", "none".
+	Brokers       []string `json:"brokers"`
+	Topic         string   `json:"topic"`
+	TLS           bool     `json:"tls,omitempty"`
+	SASLUser      string   `json:"saslUser,omitempty"`
+	SASLPassword  string   `json:"saslPassword,omitempty"`
+	SASLMechanism string   `json:"saslMechanism,omitempty"` // "PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512".
+	Compression   string   `json:"compression,omitempty"`   // "snappy", "lz4", "zstd", "none".
 }
 
 // Validate checks KafkaConfig for required fields.
@@ -32,6 +34,12 @@ func (c *KafkaConfig) Validate() error {
 		if b == "" {
 			return fmt.Errorf("empty broker address")
 		}
+	}
+	if c.SASLUser != "" && c.SASLPassword == "" {
+		return fmt.Errorf("sasl password required when sasl user is set")
+	}
+	if c.SASLPassword != "" && c.SASLUser == "" {
+		return fmt.Errorf("sasl user required when sasl password is set")
 	}
 	return nil
 }
@@ -88,6 +96,7 @@ func (a *writerAdapter) Close() error { return nil }
 
 // KafkaHandler implements slog.Handler for structured log output.
 type KafkaHandler struct {
+	mu       sync.Mutex
 	writer   MessageWriter
 	topic    string
 	identity MachineIdentity
@@ -133,7 +142,7 @@ func (h *KafkaHandler) Handle(_ context.Context, r slog.Record) error { //nolint
 		if a.Key == "step" {
 			msg.Step = a.Value.String()
 		} else {
-			msg.Attrs[groupPrefix+a.Key] = a.Value.Any()
+			msg.Attrs[groupPrefix+a.Key] = resolveValue(a.Value)
 		}
 	}
 
@@ -142,7 +151,7 @@ func (h *KafkaHandler) Handle(_ context.Context, r slog.Record) error { //nolint
 		if a.Key == "step" {
 			msg.Step = a.Value.String()
 		} else {
-			msg.Attrs[groupPrefix+a.Key] = a.Value.Any()
+			msg.Attrs[groupPrefix+a.Key] = resolveValue(a.Value)
 		}
 		return true
 	})
@@ -151,6 +160,9 @@ func (h *KafkaHandler) Handle(_ context.Context, r slog.Record) error { //nolint
 	if err != nil {
 		return fmt.Errorf("marshal log message: %w", err)
 	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
 	return h.writer.WriteMessage(h.topic, msg.MachineSerial, data)
 }
@@ -181,6 +193,9 @@ func (h *KafkaHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 
 // WithGroup returns a new handler with the given group name.
 func (h *KafkaHandler) WithGroup(name string) slog.Handler {
+	if name == "" {
+		return h
+	}
 	newGroups := make([]string, len(h.groups)+1)
 	copy(newGroups, h.groups)
 	newGroups[len(h.groups)] = name
@@ -197,4 +212,19 @@ func (h *KafkaHandler) WithGroup(name string) slog.Handler {
 // Close flushes and closes the underlying writer.
 func (h *KafkaHandler) Close() error {
 	return h.writer.Close()
+}
+
+// resolveValue converts a slog.Value to a JSON-safe representation.
+func resolveValue(v slog.Value) any {
+	v = v.Resolve()
+	switch v.Kind() {
+	case slog.KindGroup:
+		m := make(map[string]any)
+		for _, a := range v.Group() {
+			m[a.Key] = resolveValue(a.Value)
+		}
+		return m
+	default:
+		return v.Any()
+	}
 }
