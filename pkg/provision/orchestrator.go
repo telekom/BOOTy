@@ -686,7 +686,7 @@ func stepDebugCmds(step string) []debugCmd {
 	case "parse-partitions", "apply-partition-layout":
 		return []debugCmd{
 			{"sfdisk version", "sfdisk --version 2>&1 || echo 'sfdisk not found'"},
-			{"sfdisk raw", "sfdisk --json /dev/sda 2>&1 | head -30 || true"},
+			{"sfdisk raw", "for d in /dev/sd[a-z] /dev/nvme*n1 /dev/vd[a-z]; do if [ -b \"$d\" ]; then sfdisk --json \"$d\"; break; fi; done 2>&1 | head -30 || true"},
 			{"fdisk list", "fdisk -l 2>/dev/null | head -40 || true"},
 			{"partitions", "cat /proc/partitions"},
 			{"shared libs sfdisk", "ldd $(which sfdisk) 2>&1 || echo 'ldd not found'"},
