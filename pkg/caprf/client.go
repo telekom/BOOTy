@@ -65,8 +65,7 @@ func (c *Client) AcquireToken(ctx context.Context) error {
 		return nil
 	}
 	if c.cfg.Token == "" {
-		c.log.Warn("token URL configured but no bootstrap token, skipping JWT acquisition")
-		return nil
+		return fmt.Errorf("token URL configured but no bootstrap token")
 	}
 	if strings.TrimSpace(c.cfg.Hostname) == "" {
 		return fmt.Errorf("token URL configured but hostname is empty")

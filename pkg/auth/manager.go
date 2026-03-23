@@ -54,7 +54,7 @@ func NewTokenManager(tokenURL, bootstrapToken string, log *slog.Logger) *TokenMa
 		tokenURL: tokenURL,
 		token:    bootstrapToken,
 		client:   &http.Client{Timeout: 15 * time.Second},
-		log:      log.With("component", "auth"),
+		log:      log.WithGroup("auth"),
 		backoff:  defaultBackoff,
 	}
 }

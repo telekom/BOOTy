@@ -1092,6 +1092,20 @@ func TestAcquireTokenRequiresHostname(t *testing.T) {
 	}
 }
 
+func TestAcquireTokenRequiresBootstrapToken(t *testing.T) {
+	client := NewFromConfig(&config.MachineConfig{
+		TokenURL: "https://auth.example.com/token",
+		Hostname: "test-host",
+	})
+	err := client.AcquireToken(context.Background())
+	if err == nil {
+		t.Fatal("expected error when Token is empty but TokenURL is set")
+	}
+	if !strings.Contains(err.Error(), "no bootstrap token") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestAcquireTokenRejectsInvalidAlgorithm(t *testing.T) {
 	client := NewFromConfig(&config.MachineConfig{
 		Token:          "bootstrap-token",

@@ -1,6 +1,6 @@
 # Proposal: JWT Token Authentication for CAPRF
 
-## Status: Accepted
+## Status: Phase 1 Implemented
 
 ## Priority: P1
 
