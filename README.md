@@ -634,6 +634,7 @@ and the PR process.
 │   ├── disk/                   # Disk detection, partitioning, RAID, LVM, mount
 │   ├── drivers/                # Architecture-aware kernel driver management
 │   ├── efi/                    # EFI variable operations
+│   ├── executil/               # Centralized command execution + PATH diagnostics
 │   ├── firmware/               # Firmware version collection from sysfs
 │   │   └── nic/               # NIC firmware (Broadcom, Intel, Mellanox)
 │   ├── grubcfg/                # GRUB config file parsing
@@ -647,6 +648,7 @@ and the PR process.
 │   │   ├── frr/               # FRR/EVPN: config rendering, address derivation
 │   │   ├── gobgp/             # Pure-Go BGP stack (3-tier: Underlay, Overlay, IPMI)
 │   │   ├── lldp/              # LLDP frame listener (raw AF_PACKET sockets)
+│   │   ├── netplan/           # Netplan YAML + FRR config parser for EVPN auto-detection
 │   │   └── vlan/              # VLAN 802.1Q tagging via netlink
 │   ├── provision/              # Orchestrator (31-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
