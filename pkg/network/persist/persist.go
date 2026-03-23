@@ -150,15 +150,21 @@ func (c *NetworkConfig) validateInterfaces() error {
 }
 
 func (c *NetworkConfig) validateBonds() error {
+	bondNames := make(map[string]struct{}, len(c.Bonds))
 	for i := range c.Bonds {
 		if err := validateBond(i, &c.Bonds[i]); err != nil {
 			return err
 		}
+		if _, exists := bondNames[c.Bonds[i].Name]; exists {
+			return fmt.Errorf("duplicate bond name %q", c.Bonds[i].Name)
+		}
+		bondNames[c.Bonds[i].Name] = struct{}{}
 	}
 	return nil
 }
 
 func (c *NetworkConfig) validateVLANs() error {
+	vlanNames := make(map[string]struct{}, len(c.VLANs))
 	for i, vlan := range c.VLANs {
 		if vlan.Parent == "" {
 			return fmt.Errorf("vlan %d: parent required", i)
@@ -180,6 +186,14 @@ func (c *NetworkConfig) validateVLANs() error {
 				return fmt.Errorf("vlan %d: invalid address: %w", i, err)
 			}
 		}
+		effName := vlan.Name
+		if effName == "" {
+			effName = fmt.Sprintf("%s.%d", vlan.Parent, vlan.ID)
+		}
+		if _, exists := vlanNames[effName]; exists {
+			return fmt.Errorf("vlan %d: duplicate vlan name %q", i, effName)
+		}
+		vlanNames[effName] = struct{}{}
 	}
 	return nil
 }
@@ -312,7 +326,8 @@ func validateIP(v string) error {
 }
 
 // RenderNetplan renders the configuration as netplan YAML.
-// DNS and routes are placed under the first interface for netplan compatibility.
+// DNS and routes are placed under the first rendered stanza:
+// ethernet if present, otherwise bond, otherwise VLAN.
 func RenderNetplan(cfg *NetworkConfig) string {
 	var b strings.Builder
 	dnsAttached := false
@@ -470,6 +485,12 @@ func RenderNetworkdUnit(iface *InterfaceConfig) string {
 // Write renders and writes the network configuration to the target OS root.
 // rootDir is the mount point of the target root filesystem (e.g., "/newroot").
 func Write(rootDir string, family OSFamily, cfg *NetworkConfig) error {
+	if rootDir == "" {
+		return fmt.Errorf("rootDir is empty")
+	}
+	if !filepath.IsAbs(rootDir) {
+		return fmt.Errorf("rootDir must be absolute, got %q", rootDir)
+	}
 	if cfg == nil {
 		return fmt.Errorf("network config is nil")
 	}
@@ -602,8 +623,17 @@ func writeNMKeyfiles(dir string, cfg *NetworkConfig) error {
 	if len(cfg.Bonds) > 0 || len(cfg.VLANs) > 0 {
 		return fmt.Errorf("networkmanager renderer does not yet support bonds or vlans")
 	}
+	var emptyDNS DNSConfig
 	for i := range cfg.Interfaces {
-		content := renderNMKeyfile(&cfg.Interfaces[i], &cfg.DNS, cfg.Routes)
+		var dns *DNSConfig
+		var routes []RouteConfig
+		if i == 0 {
+			dns = &cfg.DNS
+			routes = cfg.Routes
+		} else {
+			dns = &emptyDNS
+		}
+		content := renderNMKeyfile(&cfg.Interfaces[i], dns, routes)
 		filename := fmt.Sprintf("booty-%s.nmconnection", filepath.Base(cfg.Interfaces[i].Name))
 		if err := writeFileAtomic(dir, filename, []byte(content), 0o600); err != nil {
 			return fmt.Errorf("write nm keyfile for %s: %w", cfg.Interfaces[i].Name, err)

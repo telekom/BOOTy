@@ -149,6 +149,18 @@ func TestNetworkConfig_Validate(t *testing.T) {
 		{"dns without any interface", NetworkConfig{
 			DNS: DNSConfig{Servers: []string{"8.8.8.8"}},
 		}, true},
+		{"duplicate bond names", NetworkConfig{
+			Bonds: []BondConfig{
+				{Name: "bond0", Members: []string{"eth0", "eth1"}, Mode: "802.3ad"},
+				{Name: "bond0", Members: []string{"eth2", "eth3"}, Mode: "802.3ad"},
+			},
+		}, true},
+		{"duplicate vlan names", NetworkConfig{
+			VLANs: []VLANConfig{
+				{Parent: "eth0", ID: 100},
+				{Parent: "eth0", ID: 100},
+			},
+		}, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -610,5 +622,56 @@ func TestWriteNMKeyfiles_DNSAndRoutes(t *testing.T) {
 	}
 	if !strings.Contains(content, "route1=172.16.0.0/12,10.0.0.1") {
 		t.Error("missing route")
+	}
+}
+
+func TestWriteNMKeyfiles_MultiInterfaceDNSOnce(t *testing.T) {
+	root := t.TempDir()
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{
+			{Name: "enp1s0", Address: "10.0.0.5/24", Gateway: "10.0.0.1"},
+			{Name: "enp2s0", Address: "10.0.1.5/24"},
+		},
+		DNS: DNSConfig{
+			Servers: []string{"8.8.8.8"},
+		},
+		Routes: []RouteConfig{
+			{Destination: "172.16.0.0/12", Gateway: "10.0.0.1"},
+		},
+	}
+	if err := Write(root, RHEL, cfg); err != nil {
+		t.Fatalf("Write() error: %v", err)
+	}
+	first, err := os.ReadFile(filepath.Join(root, "etc/NetworkManager/system-connections/booty-enp1s0.nmconnection"))
+	if err != nil {
+		t.Fatalf("ReadFile() error: %v", err)
+	}
+	if !strings.Contains(string(first), "dns=8.8.8.8") {
+		t.Error("first interface should have dns")
+	}
+	if !strings.Contains(string(first), "route1=172.16.0.0/12,10.0.0.1") {
+		t.Error("first interface should have routes")
+	}
+	second, err := os.ReadFile(filepath.Join(root, "etc/NetworkManager/system-connections/booty-enp2s0.nmconnection"))
+	if err != nil {
+		t.Fatalf("ReadFile() error: %v", err)
+	}
+	if strings.Contains(string(second), "dns=") {
+		t.Error("second interface should not have dns")
+	}
+	if strings.Contains(string(second), "route1=") {
+		t.Error("second interface should not have routes")
+	}
+}
+
+func TestWrite_InvalidRootDir(t *testing.T) {
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
+	}
+	if err := Write("", Ubuntu, cfg); err == nil {
+		t.Error("expected error for empty rootDir")
+	}
+	if err := Write("relative/path", Ubuntu, cfg); err == nil {
+		t.Error("expected error for relative rootDir")
 	}
 }
