@@ -487,14 +487,16 @@ func TestBootStandbyHeartbeatsSentToCAPRF(t *testing.T) {
 // critical for storage, filesystems, and basic networking. If the Dockerfile
 // module copy loop breaks (e.g. shell parsing), this test catches it.
 var requiredModulePrefixes = []string{
-	"ext4",      // filesystem
-	"xfs",       // filesystem
-	"vfat",      // ESP / EFI partition
-	"scsi_mod",  // SCSI subsystem
-	"sd_mod",    // SCSI disk driver
-	"virtio_pci", // PCI virtio transport
-	"virtio_net", // virtio NIC
-	"vxlan",     // VXLAN overlay
+	"ext4",        // filesystem
+	"xfs",         // filesystem
+	"vfat",        // ESP / EFI partition
+	"scsi_mod",    // SCSI subsystem
+	"sd_mod",      // SCSI disk driver
+	"virtio_blk",  // virtio block storage (QEMU)
+	"virtio_scsi", // virtio SCSI controller
+	"virtio_pci",  // PCI virtio transport
+	"virtio_net",  // virtio NIC
+	"vxlan",       // VXLAN overlay
 }
 
 func TestBootModulesPresent(t *testing.T) {

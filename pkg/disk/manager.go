@@ -390,11 +390,11 @@ var supportedFilesystems = []string{"ext4", "xfs", "btrfs", "ext3", "ext2", "vfa
 // MountPartition mounts a device at the given mountpoint.
 // Tries all supported filesystem types in order: ext4, xfs, btrfs, ext3, ext2, vfat.
 // Waits up to 3 seconds for the device node to appear (devtmpfs may lag after partprobe).
-func (m *Manager) MountPartition(_ context.Context, device, mountpoint string) error {
+func (m *Manager) MountPartition(ctx context.Context, device, mountpoint string) error {
 	slog.Info("Mounting partition", "device", device, "mountpoint", mountpoint)
 
 	// Wait for the device node to appear — devtmpfs can lag after partprobe.
-	if err := waitForDevice(device); err != nil {
+	if err := waitForDevice(ctx, device); err != nil {
 		return fmt.Errorf("device %s not available: %w", device, err)
 	}
 
@@ -414,13 +414,21 @@ func (m *Manager) MountPartition(_ context.Context, device, mountpoint string) e
 }
 
 // waitForDevice polls for a device node to appear, retrying up to 3 seconds.
-func waitForDevice(device string) error {
+// Respects context cancellation for clean shutdown.
+func waitForDevice(ctx context.Context, device string) error {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
 	for range 6 {
 		if _, err := os.Stat(device); err == nil {
 			return nil
 		}
 		slog.Debug("waiting for device node", "device", device)
-		time.Sleep(500 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("device %s wait canceled: %w", device, ctx.Err())
+		case <-ticker.C:
+		}
 	}
 	return fmt.Errorf("device %s did not appear after 3s", device)
 }
