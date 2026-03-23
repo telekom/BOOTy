@@ -127,6 +127,28 @@ func TestParsePartitionsInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestParsePartitionsWithGPTWarningPrefix(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+
+	sfdisk := sfdiskOutput{}
+	sfdisk.PartitionTable.Partitions = []Partition{
+		{Node: "/dev/sda1", Type: EFISystemPartitionGUID},
+	}
+	data, _ := json.Marshal(sfdisk)
+	// Simulate sfdisk stderr warning merged before JSON via CombinedOutput.
+	prefixed := append([]byte("GPT PMBR size mismatch (7340031 != 488397167) will be corrected by write.\n"), data...)
+	cmd.setResult("sfdisk --json", prefixed, nil)
+
+	parts, err := mgr.ParsePartitions(context.Background(), "/dev/sda")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(parts) != 1 || parts[0].Node != "/dev/sda1" {
+		t.Errorf("expected 1 partition /dev/sda1, got %v", parts)
+	}
+}
+
 func TestFindBootPartition(t *testing.T) {
 	mgr := NewManager(newMockCommander())
 	parts := []Partition{

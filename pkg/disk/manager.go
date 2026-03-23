@@ -3,6 +3,7 @@
 package disk
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -281,13 +282,20 @@ func readDiskSizeGB(name string) (int, error) {
 }
 
 // ParsePartitions reads the partition table using sfdisk --json.
+//
+// sfdisk may emit non-JSON warnings (e.g. "GPT PMBR size mismatch") on
+// stderr which CombinedOutput merges before the JSON body. We strip
+// everything before the first '{' so the JSON decoder sees clean input.
 func (m *Manager) ParsePartitions(ctx context.Context, disk string) ([]Partition, error) {
 	out, err := m.cmd.Run(ctx, "sfdisk", "--json", disk)
 	if err != nil {
 		return nil, fmt.Errorf("sfdisk %s: %s: %w", disk, string(out), err)
 	}
+
+	jsonBytes := stripNonJSONPrefix(out)
+
 	var result sfdiskOutput
-	if err := json.Unmarshal(out, &result); err != nil {
+	if err := json.Unmarshal(jsonBytes, &result); err != nil {
 		raw := string(out)
 		if len(raw) > 512 {
 			raw = raw[:512] + "...(truncated)"
@@ -295,6 +303,16 @@ func (m *Manager) ParsePartitions(ctx context.Context, disk string) ([]Partition
 		return nil, fmt.Errorf("parsing sfdisk output: %w [raw: %s]", err, raw)
 	}
 	return result.PartitionTable.Partitions, nil
+}
+
+// stripNonJSONPrefix returns the slice starting at the first '{'.
+// sfdisk --json may prepend stderr warnings (e.g. GPT geometry messages)
+// when captured via CombinedOutput.
+func stripNonJSONPrefix(b []byte) []byte {
+	if idx := bytes.IndexByte(b, '{'); idx > 0 {
+		return b[idx:]
+	}
+	return b
 }
 
 // FindBootPartition finds the EFI System Partition.
