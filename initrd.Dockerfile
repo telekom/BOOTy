@@ -65,6 +65,8 @@ RUN apt-get update && \
         virtio_pci virtio_net failover net_failover \
     # Storage: SCSI subsystem + virtio-blk/scsi + SCSI disk driver
         scsi_mod sd_mod virtio_blk virtio_scsi \
+    # Filesystems (ext4, xfs, btrfs for root; vfat for EFI partition)
+        ext4 xfs btrfs vfat \
     # VXLAN/bridge networking (FRR/EVPN)
         dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc \
     # Intel: e1000e (1G), igb (1G), igc (i225/i226), ixgbe (10G), i40e (10/25/40G), ice (25/50/100G), iavf (VF)
