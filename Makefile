@@ -277,19 +277,20 @@ run: install
 
 OCI_FLAVOR ?= default
 OCI_ARCH ?= $(TARGETARCH)
+INITRAMFS_PATH ?= $(if $(filter arm64,$(OCI_ARCH)),dist/arm64/initramfs.cpio.gz,initramfs.cpio.gz)
 
 oci-push: oci-push-initramfs oci-push-binary
-	@echo All OCI artifacts pushed for $(OCI_FLAVOR)/$(OCI_ARCH)
+	@echo Initramfs and binary OCI artifacts pushed for $(OCI_FLAVOR)/$(OCI_ARCH)
 
 oci-push-initramfs:
-	@test -f initramfs.cpio.gz || (echo "ERROR: initramfs.cpio.gz not found — build with 'make gobgp' or 'make slim' first"; exit 1)
-	@sha256sum initramfs.cpio.gz > initramfs.cpio.gz.sha256
+	@test -f $(INITRAMFS_PATH) || (echo "ERROR: $(INITRAMFS_PATH) not found — build with 'make gobgp' or 'make slim' first"; exit 1)
+	@sha256sum $(INITRAMFS_PATH) > $(INITRAMFS_PATH).sha256
 	@oras push $(REPOSITORY)/initramfs:$(DOCKERTAG)-$(OCI_FLAVOR)-$(OCI_ARCH) \
 		--annotation "org.opencontainers.image.version=$(VERSION)" \
 		--annotation "io.booty.flavor=$(OCI_FLAVOR)" \
 		--annotation "io.booty.arch=$(OCI_ARCH)" \
-		initramfs.cpio.gz:application/vnd.cncf.initramfs.layer.v1+gzip \
-		initramfs.cpio.gz.sha256:text/plain
+		$(INITRAMFS_PATH):application/vnd.cncf.initramfs.layer.v1+gzip \
+		$(INITRAMFS_PATH).sha256:text/plain
 	@echo Pushed $(REPOSITORY)/initramfs:$(DOCKERTAG)-$(OCI_FLAVOR)-$(OCI_ARCH)
 
 oci-push-binary:
@@ -301,4 +302,3 @@ oci-push-binary:
 		$(TARGET):application/vnd.cncf.binary.layer.v1 \
 		$(TARGET).sha256:text/plain
 	@echo Pushed $(REPOSITORY)/binary:$(DOCKERTAG)-$(OCI_ARCH)
-	@$(TARGET)

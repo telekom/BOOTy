@@ -620,7 +620,7 @@ to cache and distribute all BOOTy artifacts using standard OCI tooling.
 | Binary | `ghcr.io/telekom/booty/binary:<version>-<arch>` | `application/vnd.cncf.binary.layer.v1` |
 | SBOM | `ghcr.io/telekom/booty/sbom:<version>` | `application/spdx+json` |
 
-Each artifact includes SHA-256 checksums as a `text/plain` layer.
+Initramfs and binary artifacts include SHA-256 checksums as a `text/plain` layer.
 
 **Pull artifacts with ORAS:**
 
