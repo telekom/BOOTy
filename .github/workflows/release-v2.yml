@@ -43,6 +43,22 @@ jobs:
       fail-fast: false
     runs-on: ${{ matrix.runner }}
     steps:
+      - name: Assert runner architecture
+        run: |
+          RUNNER_ARCH="$(uname -m)"
+          case "${RUNNER_ARCH}" in
+            x86_64)  EXPECTED="amd64" ;;
+            aarch64) EXPECTED="arm64" ;;
+            *)
+              echo "::error::unsupported runner architecture: ${RUNNER_ARCH}"
+              exit 1
+              ;;
+          esac
+          if [ "${EXPECTED}" != "${{ matrix.arch }}" ]; then
+            echo "::error::runner architecture ${EXPECTED} does not match matrix.arch ${{ matrix.arch }}"
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -58,7 +74,7 @@ jobs:
         if: matrix.flavor == 'default'
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          CGO_ENABLED=1 GOOS=linux GOARCH=${{ matrix.arch }} \
+          CGO_ENABLED=1 GOOS=linux GOARCH=${{ matrix.arch }} CC=gcc \
             go build -ldflags "-s -w \
               -X main.Version=${VERSION} \
               -X main.Build=${{ github.sha }} \
