@@ -138,6 +138,15 @@ func (o *OverlayTier) Setup(ctx context.Context) error {
 		return fmt.Errorf("advertise EVPN Type-5: %w", err)
 	}
 
+	if o.cfg.EnableL2 {
+		if err := o.advertiseType3(ctx); err != nil {
+			return fmt.Errorf("advertise EVPN Type-3: %w", err)
+		}
+		if err := o.advertiseType2(ctx); err != nil {
+			return fmt.Errorf("advertise EVPN Type-2: %w", err)
+		}
+	}
+
 	watchCtx, cancel := context.WithCancel(ctx)
 	o.cancel = cancel
 	go o.watchRoutes(watchCtx)
@@ -467,6 +476,91 @@ func (o *OverlayTier) advertiseType5(ctx context.Context) error {
 
 	o.log.Info("advertised EVPN type-5 host route",
 		"ip", hostRoute, "vni", o.cfg.ProvisionVNI)
+	return nil
+}
+
+// advertiseType3 originates an EVPN Type-3 (Inclusive Multicast Ethernet Tag)
+// route so that remote VTEPs in the fabric include this node as a BUM flooding
+// target. The IMET route carries a PMSI tunnel attribute (ingress replication)
+// telling peers to use unicast VXLAN encapsulation for BUM traffic.
+func (o *OverlayTier) advertiseType3(ctx context.Context) error {
+	rd, err := buildRouteDistinguisher(o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
+	if err != nil {
+		return fmt.Errorf("build route distinguisher: %w", err)
+	}
+
+	nlri, err := buildEVPNType3NLRI(rd, o.cfg.RouterID)
+	if err != nil {
+		return fmt.Errorf("build EVPN type-3 NLRI: %w", err)
+	}
+
+	pattrs, err := buildType3PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
+	if err != nil {
+		return fmt.Errorf("build type-3 path attributes: %w", err)
+	}
+
+	_, err = o.bgp.AddPath(ctx, &apipb.AddPathRequest{
+		Path: &apipb.Path{
+			Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+			Nlri:   nlri,
+			Pattrs: pattrs,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("add EVPN type-3 path: %w", err)
+	}
+
+	o.log.Info("advertised EVPN type-3 IMET route",
+		"vtep", o.cfg.RouterID, "vni", o.cfg.ProvisionVNI)
+	return nil
+}
+
+// advertiseType2 originates an EVPN Type-2 (MAC/IP Advertisement) route for
+// the local bridge MAC and provision IP. This lets remote VTEPs install an FDB
+// entry via BGP control-plane learning instead of relying on data-plane flooding.
+func (o *OverlayTier) advertiseType2(ctx context.Context) error {
+	if o.cfg.BridgeMAC == "" || o.cfg.ProvisionIP == "" {
+		o.log.Warn("bridge MAC or provision IP not set, skipping type-2 advertisement")
+		return nil
+	}
+
+	if _, err := net.ParseMAC(o.cfg.BridgeMAC); err != nil {
+		return fmt.Errorf("parse bridge MAC %s: %w", o.cfg.BridgeMAC, err)
+	}
+
+	ip, _, err := net.ParseCIDR(o.cfg.ProvisionIP)
+	if err != nil {
+		return fmt.Errorf("parse provision IP %s: %w", o.cfg.ProvisionIP, err)
+	}
+
+	rd, err := buildRouteDistinguisher(o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
+	if err != nil {
+		return fmt.Errorf("build route distinguisher: %w", err)
+	}
+
+	nlri, err := buildEVPNType2NLRI(rd, o.cfg.BridgeMAC, ip.String(), uint32(o.cfg.ProvisionVNI))
+	if err != nil {
+		return fmt.Errorf("build EVPN type-2 NLRI: %w", err)
+	}
+
+	pattrs, err := buildType2PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
+	if err != nil {
+		return fmt.Errorf("build type-2 path attributes: %w", err)
+	}
+
+	_, err = o.bgp.AddPath(ctx, &apipb.AddPathRequest{
+		Path: &apipb.Path{
+			Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+			Nlri:   nlri,
+			Pattrs: pattrs,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("add EVPN type-2 path: %w", err)
+	}
+
+	o.log.Info("advertised EVPN type-2 MAC/IP route",
+		"mac", o.cfg.BridgeMAC, "ip", ip, "vni", o.cfg.ProvisionVNI)
 	return nil
 }
 
@@ -850,4 +944,119 @@ func buildRouteTarget(asn, vni uint32) (*anypb.Any, error) {
 		return nil, fmt.Errorf("marshal route target: %w", err)
 	}
 	return a, nil
+}
+
+// pmsiTunnelTypeIngressReplication is the PMSI tunnel type for ingress
+// replication (RFC 6514 §5). Remote VTEPs replicate BUM frames to this VTEP.
+const pmsiTunnelTypeIngressReplication = 6
+
+// buildEVPNType3NLRI builds an EVPN Inclusive Multicast Ethernet Tag (Type-3)
+// NLRI. The IMET route tells the fabric to send BUM traffic to this VTEP.
+func buildEVPNType3NLRI(rd *anypb.Any, routerID string) (*anypb.Any, error) {
+	route := &apipb.EVPNInclusiveMulticastEthernetTagRoute{
+		Rd:          rd,
+		EthernetTag: 0,
+		IpAddress:   routerID,
+	}
+	a, err := anypb.New(route)
+	if err != nil {
+		return nil, fmt.Errorf("marshal EVPN type-3 NLRI: %w", err)
+	}
+	return a, nil
+}
+
+// buildType3PathAttrs builds BGP path attributes for EVPN Type-3 (IMET)
+// advertisement, including Origin, MpReach, Route Target, and PMSI Tunnel.
+func buildType3PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32) ([]*anypb.Any, error) {
+	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0})
+	if err != nil {
+		return nil, fmt.Errorf("marshal origin: %w", err)
+	}
+
+	mpReach, err := anypb.New(&apipb.MpReachNLRIAttribute{
+		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+		NextHops: []string{nextHop},
+		Nlris:    []*anypb.Any{nlri},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal mp-reach: %w", err)
+	}
+
+	rt, err := buildRouteTarget(asn, vni)
+	if err != nil {
+		return nil, fmt.Errorf("build route target: %w", err)
+	}
+
+	extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
+		Communities: []*anypb.Any{rt},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal ext-communities: %w", err)
+	}
+
+	pmsi, err := anypb.New(&apipb.PmsiTunnelAttribute{
+		Flags: 0,
+		Type:  pmsiTunnelTypeIngressReplication,
+		Label: vni,
+		Id:    net.ParseIP(nextHop).To4(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal pmsi tunnel: %w", err)
+	}
+
+	return []*anypb.Any{origin, mpReach, extComm, pmsi}, nil
+}
+
+// buildEVPNType2NLRI builds an EVPN MAC/IP Advertisement (Type-2) NLRI for
+// the given MAC address and optional IP. Used to announce the local bridge
+// MAC so remote VTEPs learn the FDB entry via control-plane.
+func buildEVPNType2NLRI(rd *anypb.Any, mac, ip string, label uint32) (*anypb.Any, error) {
+	route := &apipb.EVPNMACIPAdvertisementRoute{
+		Rd: rd,
+		Esi: &apipb.EthernetSegmentIdentifier{
+			Type:  0,
+			Value: make([]byte, 9),
+		},
+		EthernetTag: 0,
+		MacAddress:  mac,
+		IpAddress:   ip,
+		Labels:      []uint32{label},
+	}
+	a, err := anypb.New(route)
+	if err != nil {
+		return nil, fmt.Errorf("marshal EVPN type-2 NLRI: %w", err)
+	}
+	return a, nil
+}
+
+// buildType2PathAttrs builds BGP path attributes for EVPN Type-2 (MAC/IP)
+// advertisement, including Origin, MpReach, and Route Target.
+func buildType2PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32) ([]*anypb.Any, error) {
+	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0})
+	if err != nil {
+		return nil, fmt.Errorf("marshal origin: %w", err)
+	}
+
+	mpReach, err := anypb.New(&apipb.MpReachNLRIAttribute{
+		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+		NextHops: []string{nextHop},
+		Nlris:    []*anypb.Any{nlri},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal mp-reach: %w", err)
+	}
+
+	rt, err := buildRouteTarget(asn, vni)
+	if err != nil {
+		return nil, fmt.Errorf("build route target: %w", err)
+	}
+
+	extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
+		Communities: []*anypb.Any{rt},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal ext-communities: %w", err)
+	}
+
+	return []*anypb.Any{origin, mpReach, extComm}, nil
 }

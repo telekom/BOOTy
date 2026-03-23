@@ -59,9 +59,14 @@ and installs corresponding kernel state:
 - **NextHop extraction** — `extractNextHop()` walks `MpReachNLRIAttribute` path attributes
   to find the originating VTEP IP
 
-BOOTy only **advertises** Type-5 (IP Prefix) routes. Type-2/3 routes are received from
-the spine/fabric for dynamic FDB population. A static BUM FDB entry and /32 kernel route
-to `provision_gateway` ensure baseline connectivity before dynamic routes arrive.
+BOOTy **advertises** Type-5 (IP Prefix) routes for provisioning subnet reachability.
+When `EVPN_L2_ENABLED` is set, it also **advertises**:
+- **Type-3** (IMET) route so remote VTEPs include this node in BUM flooding
+- **Type-2** (MAC/IP) route for the local bridge MAC and provision IP
+
+Type-2/3 routes are also **received** from the spine/fabric for dynamic FDB population.
+A static BUM FDB entry and /32 kernel route to `provision_gateway` ensure baseline
+connectivity before dynamic routes arrive.
 
 ### provision_gateway
 

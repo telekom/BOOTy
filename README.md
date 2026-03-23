@@ -232,7 +232,7 @@ export dns_resolver="8.8.8.8"
 | `RESCUE_TIMEOUT` | `0` | *(Phase 2)* Rescue wait timeout in seconds (0 = indefinite) |
 | `RESCUE_SSH_PUBKEY` | — | *(Phase 2)* SSH public key for rescue shell access |
 | `RESCUE_AUTO_MOUNT` | `false` | *(Phase 2)* Auto-mount disks in rescue shell mode |
-| `EVPN_L2_ENABLED` | `false` | Enable EVPN L2 overlay (Type-2/3 route handling) in GoBGP mode. Default is Type-5 only (L3) |
+| `EVPN_L2_ENABLED` | `false` | Enable EVPN L2 overlay (Type-2/3 route origination and handling) in GoBGP mode. Default is Type-5 only (L3) |
 | `HEALTH_CHECKS_ENABLED` | `false` | Run pre-provisioning hardware health checks |
 | `HEALTH_MIN_MEMORY_GB` | `0` | Minimum RAM (GiB) for health check (0 = skip check) |
 | `HEALTH_MIN_CPUS` | `0` | Minimum CPU count for health check (0 = skip check) |
@@ -535,6 +535,28 @@ The overlay tier advertises Type-5 (IP Prefix) routes and processes incoming EVP
 - **Type-2 (MAC/IP)** routes install unicast FDB entries (MAC → remote VTEP)
 - **Type-3 (Inclusive Multicast)** routes install BUM FDB entries for flood replication
 - A static BUM FDB entry and /32 kernel route to `provision_gateway` ensure baseline connectivity
+
+#### EVPN L2 Overlay
+
+Set `EVPN_L2_ENABLED=true` to enable full L2 EVPN overlay support. When enabled,
+BOOTy additionally **originates** Type-2 and Type-3 routes:
+
+- **Type-3 (IMET)** — Announces this VTEP for BUM flooding via ingress replication,
+  so remote VTEPs include it in broadcast/unknown-unicast/multicast flooding
+- **Type-2 (MAC/IP)** — Advertises the local bridge MAC and provision IP so remote
+  VTEPs learn the FDB entry via BGP control-plane rather than data-plane flooding
+
+Without `EVPN_L2_ENABLED`, the overlay only advertises Type-5 routes and processes
+incoming Type-2/3 routes passively (receive-only mode).
+
+```bash
+# Enable L2 EVPN overlay (GoBGP mode)
+export NETWORK_MODE=gobgp
+export EVPN_L2_ENABLED=true
+export provision_vni=4000
+export provision_ip=10.100.0.20/24
+export provision_gateway=10.0.0.1
+```
 
 The `BGP_PEER_MODE` environment variable controls session establishment:
 
