@@ -192,7 +192,7 @@ func TestWipeOrSecureEraseDisksRejectsPartitionLayoutWithImageURLsInProvisionMod
 	if err == nil {
 		t.Fatal("expected error when partition layout is combined with image urls in provision mode")
 	}
-	if !strings.Contains(err.Error(), "partition layout with image urls is not supported yet") {
+	if !strings.Contains(err.Error(), "partition layout provisioning is not supported yet") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -213,7 +213,7 @@ func TestWipeOrSecureEraseDisksRejectsPartitionLayoutWithoutImageURLsInProvision
 	if err == nil {
 		t.Fatal("expected error when partition layout is set without image urls in provision mode")
 	}
-	if !strings.Contains(err.Error(), "partition layout without image urls is not supported yet") {
+	if !strings.Contains(err.Error(), "partition layout provisioning is not supported yet") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -698,7 +698,7 @@ func TestStreamImagePartitionLayoutFailsWithoutImages(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when partition layout is used without image urls")
 	}
-	if !strings.Contains(err.Error(), "without image urls is not supported yet") {
+	if !strings.Contains(err.Error(), "partition layout provisioning is not supported yet") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -721,7 +721,7 @@ func TestStreamImagePartitionLayoutRejectsImageURLs(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when partition layout is combined with image urls")
 	}
-	if !strings.Contains(err.Error(), "partition layout with image urls is not supported yet") {
+	if !strings.Contains(err.Error(), "partition layout provisioning is not supported yet") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
