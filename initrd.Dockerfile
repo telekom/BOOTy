@@ -56,9 +56,9 @@ RUN apt-get update && \
     KVER=$(ls /tmp/kernel/lib/modules/ | head -1) && \
     MDIR="/tmp/kernel/lib/modules/$KVER" && \
     mkdir -p /modules && \
-    # Generate modules.dep for transitive dependency resolution
+    # Generate modules.dep for modprobe dependency resolution
     depmod -b /tmp/kernel "$KVER" && \
-    # Target modules — all transitive dependencies resolved via modules.dep
+    # Target modules — transitive dependencies resolved via modprobe --show-depends
     for m in \
     # QEMU/KVM virtio
         virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
@@ -75,16 +75,14 @@ RUN apt-get update && \
         mlx4_core mlx4_en mlx5_core mlxfw \
     # Emulex/Broadcom: be2net (OneConnect)
         be2net; do \
-        # Copy the module itself
+        # Copy module + all transitive dependencies via modprobe
+        modprobe --show-depends -d /tmp/kernel -S "$KVER" "$m" 2>/dev/null \
+            | awk '/^insmod /{print $2}' \
+            | while read -r dep; do \
+                [ -f "$dep" ] && cp -n "$dep" /modules/ 2>/dev/null || true; \
+            done; \
+        # Fallback: direct find if modprobe doesn't resolve (builtin or alias)
         find "$MDIR" -name "${m}.ko*" -exec cp -n {} /modules/ \; 2>/dev/null || true; \
-        # Copy all transitive dependencies listed in modules.dep
-        # modules.dep format: path/mod.ko: path/dep1.ko path/dep2.ko ...
-        # Normalize underscores/hyphens for matching (kernel treats them equivalently)
-        FLEX=$(echo "$m" | sed 's/[-_]/[-_]/g'); \
-        DEPS=$(grep -E "/${FLEX}\.ko" "$MDIR/modules.dep" 2>/dev/null | head -1 | sed 's/^[^:]*://'); \
-        for dep in $DEPS; do \
-            [ -f "$MDIR/$dep" ] && cp -n "$MDIR/$dep" /modules/ 2>/dev/null || true; \
-        done; \
     done && \
     echo "Extracted $(ls /modules/*.ko* 2>/dev/null | wc -l) kernel modules" && \
     rm -rf /tmp/kernel *.deb /var/lib/apt/lists/*
