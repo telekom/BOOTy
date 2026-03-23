@@ -140,11 +140,11 @@ func parseVLAN(fields map[string]string) (enabled bool, vlanID int) {
 		return false, 0
 	}
 	if strings.HasPrefix(lower, "0x") {
-		if value, err := strconv.ParseUint(raw[2:], 16, strconv.IntSize); err == nil {
+		if value, err := strconv.ParseUint(raw[2:], 16, 16); err == nil {
 			return true, int(value)
 		}
 	}
-	if value, err := strconv.ParseUint(raw, 10, strconv.IntSize); err == nil {
+	if value, err := strconv.ParseUint(raw, 10, 16); err == nil {
 		if value == 0 {
 			return false, 0
 		}
