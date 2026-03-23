@@ -105,7 +105,7 @@ func setupMountsAndDevices() {
 	}
 }
 
-// loadModules loads kernel modules from /modules/ for common server NICs.
+// loadModules loads kernel modules from /modules/ for server NICs and storage controllers.
 // Uses the finit_module syscall directly instead of shelling out to insmod.
 // Errors are non-fatal: modules may already be built-in or not needed.
 //

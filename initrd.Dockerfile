@@ -43,10 +43,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     frr frr-pythontools && \
     rm -rf /var/lib/apt/lists/*
 
-# Extract kernel and NIC driver modules for bare-metal servers
+# Extract kernel, storage, and NIC driver modules for bare-metal servers
 FROM debian:bookworm-slim AS kernel
 ARG TARGETARCH
 RUN apt-get update && \
+    apt-get install -y --no-install-recommends kmod && \
     KERNEL_PKG=$([ "$TARGETARCH" = "arm64" ] && echo "linux-image-arm64" || echo "linux-image-amd64") && \
     REAL_PKG=$(apt-cache depends "$KERNEL_PKG" | awk '/Depends:/{print $2}' | head -1) && \
     apt-get download "$REAL_PKG" && \
@@ -55,21 +56,37 @@ RUN apt-get update && \
     KVER=$(ls /tmp/kernel/lib/modules/ | head -1) && \
     MDIR="/tmp/kernel/lib/modules/$KVER" && \
     mkdir -p /modules && \
+    # Generate modules.dep for transitive dependency resolution
+    depmod -b /tmp/kernel "$KVER" && \
+    # Target modules — all transitive dependencies resolved via modules.dep
+    for m in \
     # QEMU/KVM virtio
-    for m in virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
-             virtio_pci virtio_net failover net_failover \
+        virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
+        virtio_pci virtio_net failover net_failover \
+    # Storage: SCSI subsystem + virtio-blk/scsi + SCSI disk driver
+        scsi_mod sd_mod virtio_blk virtio_scsi \
     # VXLAN/bridge networking (FRR/EVPN)
-             dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc \
+        dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc \
     # Intel: e1000e (1G), igb (1G), igc (i225/i226), ixgbe (10G), i40e (10/25/40G), ice (25/50/100G), iavf (VF)
-             e1000e igb igc ixgbe i40e ice iavf \
+        e1000e igb igc ixgbe i40e ice iavf \
     # Broadcom: tg3 (legacy NetXtreme 1G), bnxt_en (NetXtreme-E/C 10/25/50/100G)
-             tg3 bnxt_en \
+        tg3 bnxt_en \
     # Mellanox/NVIDIA: mlx4 (ConnectX-3), mlx5 (ConnectX-4/5/6/7)
-             mlx4_core mlx4_en mlx5_core mlxfw \
+        mlx4_core mlx4_en mlx5_core mlxfw \
     # Emulex/Broadcom: be2net (OneConnect)
-             be2net; do \
-        find "$MDIR" -name "${m}.ko*" -exec cp {} /modules/ \; 2>/dev/null || true; \
+        be2net; do \
+        # Copy the module itself
+        find "$MDIR" -name "${m}.ko*" -exec cp -n {} /modules/ \; 2>/dev/null || true; \
+        # Copy all transitive dependencies listed in modules.dep
+        # modules.dep format: path/mod.ko: path/dep1.ko path/dep2.ko ...
+        # Normalize underscores/hyphens for matching (kernel treats them equivalently)
+        FLEX=$(echo "$m" | sed 's/[-_]/[-_]/g'); \
+        DEPS=$(grep -E "/${FLEX}\.ko" "$MDIR/modules.dep" 2>/dev/null | head -1 | sed 's/^[^:]*://'); \
+        for dep in $DEPS; do \
+            [ -f "$MDIR/$dep" ] && cp -n "$MDIR/$dep" /modules/ 2>/dev/null || true; \
+        done; \
     done && \
+    echo "Extracted $(ls /modules/*.ko* 2>/dev/null | wc -l) kernel modules" && \
     rm -rf /tmp/kernel *.deb /var/lib/apt/lists/*
 
 # Build disk, system, and firmware tools
