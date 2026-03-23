@@ -4,20 +4,20 @@ package ipmi
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"testing"
 )
 
 func TestNew(t *testing.T) {
-	t.Helper()
 	m := New(nil)
-	if m.device != "/dev/ipmi0" {
-		t.Errorf("device = %q, want /dev/ipmi0", m.device)
+	if m.deviceNum != "0" {
+		t.Errorf("deviceNum = %q, want \"0\"", m.deviceNum)
 	}
 }
 
 func TestDevicePath(t *testing.T) {
-	m := &Manager{device: "/dev/ipmi0"}
+	m := &Manager{deviceNum: "0"}
 	if got := m.DevicePath(); got != "/dev/ipmi0" {
 		t.Errorf("DevicePath = %q, want /dev/ipmi0", got)
 	}
@@ -96,6 +96,49 @@ func TestParseBMCMAC(t *testing.T) {
 	}
 }
 
+func TestParseBMCMAC_TrimSpace(t *testing.T) {
+	hw, err := ParseBMCMAC("  aa:bb:cc:dd:ee:ff  ")
+	if err != nil {
+		t.Fatalf("ParseBMCMAC with whitespace: %v", err)
+	}
+	if hw == nil {
+		t.Error("expected non-nil result")
+	}
+}
+
+func TestValidateBootDevice_TrimSpace(t *testing.T) {
+	if err := ValidateBootDevice(" disk\n"); err != nil {
+		t.Errorf("ValidateBootDevice with whitespace: %v", err)
+	}
+}
+
+type fakeRunner struct {
+	output []byte
+	err    error
+	args   []string
+}
+
+func (f *fakeRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	f.args = append([]string{name}, args...)
+	return f.output, f.err
+}
+
+func TestExecIPMITool_UsesRunner(t *testing.T) {
+	r := &fakeRunner{output: []byte("ok\n")}
+	m := &Manager{deviceNum: "0", runner: r, log: slog.Default()}
+	out, err := m.execIPMITool(context.Background(), "chassis", "status")
+	if err != nil {
+		t.Fatalf("execIPMITool: %v", err)
+	}
+	if out != "ok\n" {
+		t.Errorf("output = %q, want %q", out, "ok\n")
+	}
+	// Verify -I open -d 0 is passed
+	if len(r.args) < 5 || r.args[1] != "-I" || r.args[2] != "open" || r.args[3] != "-d" || r.args[4] != "0" {
+		t.Errorf("expected [-I open -d 0] in args, got %v", r.args)
+	}
+}
+
 func TestChassisControlInvalidAction(t *testing.T) {
 	m := New(nil)
 	err := m.ChassisControl(context.Background(), "bad action")
@@ -103,7 +146,7 @@ func TestChassisControlInvalidAction(t *testing.T) {
 		t.Fatal("expected error for invalid action")
 	}
 	if !strings.Contains(err.Error(), `"bad action"`) {
-		t.Fatalf("expected quoted action in error, got %q", err)
+		t.Fatalf("expected quoted action in error, got %v", err)
 	}
 }
 

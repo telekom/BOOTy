@@ -14,8 +14,20 @@ import (
 
 // Manager handles local IPMI operations via ipmitool.
 type Manager struct {
-	device string
-	log    *slog.Logger
+	deviceNum string
+	runner    CommandRunner
+	log       *slog.Logger
+}
+
+// CommandRunner abstracts exec.Command for testability.
+type CommandRunner interface {
+	Run(ctx context.Context, name string, args ...string) ([]byte, error)
+}
+
+type execRunner struct{}
+
+func (execRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
 // New creates an IPMI manager.
@@ -24,8 +36,9 @@ func New(log *slog.Logger) *Manager {
 		log = slog.Default()
 	}
 	return &Manager{
-		device: "/dev/ipmi0",
-		log:    log,
+		deviceNum: "0",
+		runner:    execRunner{},
+		log:       log,
 	}
 }
 
@@ -112,7 +125,7 @@ func (m *Manager) ChassisControl(ctx context.Context, action string) error {
 
 // DevicePath returns the IPMI device path.
 func (m *Manager) DevicePath() string {
-	return m.device
+	return "/dev/ipmi" + m.deviceNum
 }
 
 // parseLanPrint parses "ipmitool lan print" output into a key-value map.
@@ -150,9 +163,6 @@ func parseVLAN(fields map[string]string) (enabled bool, vlanID int) {
 		}
 		return true, int(value)
 	}
-	if value, err := strconv.Atoi(raw); err == nil {
-		return value > 0, value
-	}
 	// Unknown but present value is treated as enabled with unspecified VLAN ID.
 	return true, 0
 }
@@ -170,18 +180,18 @@ func (m *Manager) output(ctx context.Context, args ...string) (string, error) {
 }
 
 func (m *Manager) execIPMITool(ctx context.Context, args ...string) (string, error) {
-	fullArgs := append([]string{"-d", m.device}, args...)
-	cmd := exec.CommandContext(ctx, "ipmitool", fullArgs...)
-	out, err := cmd.CombinedOutput()
+	fullArgs := append([]string{"-I", "open", "-d", m.deviceNum}, args...)
+	m.log.Debug("executing ipmitool", "args", fullArgs)
+	out, err := m.runner.Run(ctx, "ipmitool", fullArgs...)
 	if err != nil {
-		return "", fmt.Errorf("ipmitool %s: %s: %w", strings.Join(args, " "), string(out), err)
+		return "", fmt.Errorf("ipmitool %s: %s: %w", strings.Join(args, " "), strings.TrimSpace(string(out)), err)
 	}
 	return string(out), nil
 }
 
 // ParseBMCMAC parses a MAC address string into net.HardwareAddr.
 func ParseBMCMAC(mac string) (net.HardwareAddr, error) {
-	hw, err := net.ParseMAC(mac)
+	hw, err := net.ParseMAC(strings.TrimSpace(mac))
 	if err != nil {
 		return nil, fmt.Errorf("parse BMC MAC %q: %w", mac, err)
 	}
@@ -190,7 +200,7 @@ func ParseBMCMAC(mac string) (net.HardwareAddr, error) {
 
 // ValidateBootDevice checks if a boot device string is valid.
 func ValidateBootDevice(device string) error {
-	switch BootDevice(device) {
+	switch BootDevice(strings.TrimSpace(device)) {
 	case BootPXE, BootDisk, BootCDROM, BootBIOS:
 		return nil
 	default:

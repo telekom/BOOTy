@@ -78,6 +78,7 @@ RUN apt-get update && \
     #   Mellanox/NVIDIA:  mlx4_core mlx4_en mlx5_core mlxfw
     #   Emulex/Broadcom:  be2net
     #   Device-mapper:    dm_mod dm_crypt (LUKS encryption)
+    #   IPMI:             ipmi_msghandler ipmi_devintf ipmi_si ipmi_ssif
     for m in \
         virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
         virtio_pci virtio_net failover net_failover \
@@ -88,7 +89,8 @@ RUN apt-get update && \
         tg3 bnxt_en \
         mlx4_core mlx4_en mlx5_core mlxfw \
         be2net \
-        dm_mod dm_crypt; do \
+        dm_mod dm_crypt \
+        ipmi_msghandler ipmi_devintf ipmi_si ipmi_ssif; do \
         # Copy module + all transitive dependencies via modprobe
         modprobe --show-depends -d /tmp/kernel -S "$KVER" "$m" 2>/dev/null \
             | awk '/^insmod /{print $2}' \
