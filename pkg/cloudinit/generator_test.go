@@ -285,7 +285,20 @@ func TestInjectNoCloud_NilInput(t *testing.T) {
 	}
 }
 
-func TestInjectNoCloud_ErrorContext(t *testing.T) {
+func TestInjectNoCloud_InvalidRootPath(t *testing.T) {
+	ud := &UserData{Hostname: "test"}
+	md := &MetaData{InstanceID: "id", LocalHostname: "test", Platform: "booty"}
+	nc := &NetworkConfig{Version: 2}
+
+	if err := InjectNoCloud("", ud, md, nc); err == nil {
+		t.Error("expected error for empty rootPath")
+	}
+	if err := InjectNoCloud("relative/path", ud, md, nc); err == nil {
+		t.Error("expected error for relative rootPath")
+	}
+}
+
+func TestInjectNoCloud_AtomicWriteCleanup(t *testing.T) {
 	root := t.TempDir()
 	ud := &UserData{Hostname: "test"}
 	md := &MetaData{InstanceID: "id", LocalHostname: "test", Platform: "booty"}
