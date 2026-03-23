@@ -13,13 +13,52 @@ permissions:
 jobs:
   build:
     name: Build (${{ matrix.arch }}/${{ matrix.flavor }})
-    runs-on: ubuntu-latest
     strategy:
       matrix:
-        arch: [amd64, arm64]
-        flavor: [default, gobgp, slim, micro]
+        include:
+          - arch: amd64
+            flavor: default
+            runner: ubuntu-latest
+          - arch: amd64
+            flavor: gobgp
+            runner: ubuntu-latest
+          - arch: amd64
+            flavor: slim
+            runner: ubuntu-latest
+          - arch: amd64
+            flavor: micro
+            runner: ubuntu-latest
+          - arch: arm64
+            flavor: default
+            runner: ubuntu-24.04-arm
+          - arch: arm64
+            flavor: gobgp
+            runner: ubuntu-24.04-arm
+          - arch: arm64
+            flavor: slim
+            runner: ubuntu-24.04-arm
+          - arch: arm64
+            flavor: micro
+            runner: ubuntu-24.04-arm
       fail-fast: false
+    runs-on: ${{ matrix.runner }}
     steps:
+      - name: Assert runner architecture
+        run: |
+          RUNNER_ARCH="$(uname -m)"
+          case "${RUNNER_ARCH}" in
+            x86_64)  EXPECTED="amd64" ;;
+            aarch64) EXPECTED="arm64" ;;
+            *)
+              echo "::error::unsupported runner architecture: ${RUNNER_ARCH}"
+              exit 1
+              ;;
+          esac
+          if [ "${EXPECTED}" != "${{ matrix.arch }}" ]; then
+            echo "::error::runner architecture ${EXPECTED} does not match matrix.arch ${{ matrix.arch }}"
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -28,25 +67,14 @@ jobs:
         with:
           go-version: "1.26"
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-        with:
-          platforms: arm64
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Install cross-compilation tools
-        if: matrix.arch == 'arm64'
-        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
-
       - name: Build binary
         if: matrix.flavor == 'default'
-        env:
-          CC: ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          CGO_ENABLED=1 GOOS=linux GOARCH=${{ matrix.arch }} CC=$CC \
+          CGO_ENABLED=1 GOOS=linux GOARCH=${{ matrix.arch }} CC=gcc \
             go build -ldflags "-s -w \
               -X main.Version=${VERSION} \
               -X main.Build=${{ github.sha }} \
@@ -59,8 +87,9 @@ jobs:
           if [ "${{ matrix.flavor }}" != "default" ]; then
             TARGET_ARG="--target=${{ matrix.flavor }}"
           fi
-          docker buildx build --platform linux/${{ matrix.arch }} \
+          docker buildx build \
             ${TARGET_ARG} \
+            --platform linux/${{ matrix.arch }} \
             --output type=local,dest=out-${{ matrix.flavor }} \
             -f initrd.Dockerfile .
 
@@ -122,7 +151,7 @@ jobs:
 
   sign:
     name: Sign Artifacts
-    needs: [build, sbom]
+    needs: [build, iso, sbom]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -153,19 +182,26 @@ jobs:
             artifacts/**/*.bundle
 
   container:
-    name: Container Image (${{ matrix.flavor }})
+    name: Container Image (${{ matrix.flavor }}/${{ matrix.arch }})
     needs: build
-    runs-on: ubuntu-latest
     strategy:
       matrix:
-        flavor: [default, gobgp]
+        include:
+          - flavor: default
+            arch: amd64
+            runner: ubuntu-latest
+          - flavor: default
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - flavor: gobgp
+            arch: amd64
+            runner: ubuntu-latest
+          - flavor: gobgp
+            arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v6
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-        with:
-          platforms: arm64,amd64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -177,7 +213,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push container image
+      - name: Build and push per-arch image
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           TARGET_ARG=""
@@ -186,12 +222,42 @@ jobs:
             TARGET_ARG="--target=gobgp"
             IMAGE_TAG="${VERSION}-gobgp"
           fi
-          IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]'):${IMAGE_TAG}
-          docker buildx build --platform linux/amd64,linux/arm64 \
+          IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          docker buildx build \
             ${TARGET_ARG} \
+            --platform "linux/${{ matrix.arch }}" \
+            --provenance=false \
             --push \
-            -t "${IMAGE}" \
+            -t "${IMAGE}:${IMAGE_TAG}-${{ matrix.arch }}" \
             -f initrd.Dockerfile .
+
+  container-manifest:
+    name: Container Manifest (${{ matrix.flavor }})
+    needs: container
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        flavor: [default, gobgp]
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push multi-arch manifest
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          IMAGE_TAG="${VERSION}"
+          if [ "${{ matrix.flavor }}" = "gobgp" ]; then
+            IMAGE_TAG="${VERSION}-gobgp"
+          fi
+          IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          docker manifest create "${IMAGE}:${IMAGE_TAG}" \
+            "${IMAGE}:${IMAGE_TAG}-amd64" \
+            "${IMAGE}:${IMAGE_TAG}-arm64"
+          docker manifest push "${IMAGE}:${IMAGE_TAG}"
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
@@ -205,6 +271,93 @@ jobs:
           fi
           IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]'):${IMAGE_TAG}
           cosign sign --yes "${IMAGE}"
+
+  iso:
+    name: ISO (${{ matrix.flavor }})
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - flavor: default
+            target: iso
+            output: booty.iso
+            artifact: booty-amd64.iso
+          - flavor: gobgp
+            target: gobgp-iso
+            output: booty-gobgp.iso
+            artifact: booty-gobgp-amd64.iso
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build ISO
+        run: |
+          docker buildx build \
+            --target ${{ matrix.target }} \
+            --platform linux/amd64 \
+            --output type=local,dest=out-iso \
+            -f initrd.Dockerfile .
+          mv out-iso/${{ matrix.output }} ${{ matrix.artifact }}
+
+      - name: Generate checksums
+        run: sha256sum ${{ matrix.artifact }} > ${{ matrix.artifact }}.sha256
+
+      - name: Upload ISO artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-iso-${{ matrix.flavor }}
+          path: |
+            ${{ matrix.artifact }}
+            ${{ matrix.artifact }}.sha256
+
+  iso-oci:
+    name: ISO OCI (${{ matrix.flavor }})
+    needs: iso
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - flavor: default
+            artifact: booty-amd64.iso
+            tag_suffix: ""
+          - flavor: gobgp
+            artifact: booty-gobgp-amd64.iso
+            tag_suffix: "-gobgp"
+    steps:
+      - name: Install ORAS
+        uses: oras-project/setup-oras@v1
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download ISO artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: release-iso-${{ matrix.flavor }}
+
+      - name: Push ISO as OCI artifact
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          REPO=$(echo "ghcr.io/${{ github.repository }}-iso" | tr '[:upper:]' '[:lower:]')
+          oras push "${REPO}:${VERSION}${{ matrix.tag_suffix }}" \
+            --artifact-type application/vnd.booty.iso.v1 \
+            "${{ matrix.artifact }}:application/octet-stream"
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign OCI artifact
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          REPO=$(echo "ghcr.io/${{ github.repository }}-iso" | tr '[:upper:]' '[:lower:]')
+          cosign sign --yes "${REPO}:${VERSION}${{ matrix.tag_suffix }}"
 
   changelog:
     name: Generate Changelog
@@ -230,7 +383,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [build, sbom, scan, sign, container, changelog]
+    needs: [build, iso, iso-oci, sbom, scan, sign, container-manifest, changelog]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -241,7 +394,7 @@ jobs:
       - name: Collect release files
         run: |
           mkdir release-files
-          find artifacts -type f \( -name "booty-*" -o -name "*.cpio.gz" -o -name "*.sha256" -o -name "*.sig" -o -name "*.bundle" -o -name "*.spdx.json" \) \
+          find artifacts -type f \( -name "booty-*" -o -name "*.cpio.gz" -o -name "*.iso" -o -name "*.sha256" -o -name "*.sig" -o -name "*.bundle" -o -name "*.spdx.json" \) \
             -exec cp {} release-files/ \;
           ls -lh release-files/
 
