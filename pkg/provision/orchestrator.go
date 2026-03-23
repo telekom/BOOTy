@@ -17,6 +17,7 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
+	"github.com/telekom/BOOTy/pkg/executil"
 	"github.com/telekom/BOOTy/pkg/firmware"
 	"github.com/telekom/BOOTy/pkg/health"
 	"github.com/telekom/BOOTy/pkg/image"
@@ -522,6 +523,13 @@ func (o *Orchestrator) reportSuccess(ctx context.Context) error {
 func DumpDebugState(failedStep string) {
 	slog.Error("=== DEBUG DUMP START ===", "failedStep", failedStep)
 
+	// PATH and available binaries — critical for diagnosing missing-binary issues.
+	executil.DumpPATH()
+
+	// Shared library availability — dynamically-linked tools fail silently without these.
+	runDebugCmd("shared libs", "ls -la /lib64/ld-linux-x86-64.so* /lib/ld-linux-x86-64.so* /lib/x86_64-linux-gnu/lib*.so* /usr/lib/x86_64-linux-gnu/lib*.so* 2>/dev/null | head -40 || echo 'no shared libs found'")
+	runDebugCmd("ld.so.cache", "ldconfig -p 2>/dev/null | head -20 || echo 'ldconfig not available'")
+
 	// Step-specific commands run first for targeted diagnostics.
 	stepCmds := stepDebugCmds(failedStep)
 	for _, dc := range stepCmds {
@@ -646,7 +654,7 @@ func runDebugCmd(label, cmd string) {
 		}
 	}
 	if err != nil {
-		slog.Error("Debug command failed", "label", label, "cmd", cmd, "error", err, "output", trimmed)
+		slog.Error("Debug command failed", "label", label, "cmd", cmd, "error", err)
 	}
 }
 
