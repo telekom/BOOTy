@@ -131,7 +131,7 @@ func (m *Manager) NVMeIdentifyController(ctx context.Context, controller string)
 	}
 	out, err := m.cmd.Run(ctx, "nvme", "id-ctrl", controller, "-o", "json")
 	if err != nil {
-		return nil, fmt.Errorf("nvme id-ctrl %s: %w", controller, err)
+		return nil, fmt.Errorf("nvme id-ctrl %s: %s: %w", controller, strings.TrimSpace(string(out)), err)
 	}
 
 	var raw map[string]any
@@ -384,8 +384,8 @@ func (m *Manager) deleteAllNamespaces(ctx context.Context, controller string) er
 		return err
 	}
 	for _, nsid := range nsids {
-		if _, err := m.cmd.Run(ctx, "nvme", "delete-ns", controller, "-n", nsid); err != nil {
-			return fmt.Errorf("deleting namespace %s on %s: %w", nsid, controller, err)
+		if out, err := m.cmd.Run(ctx, "nvme", "delete-ns", controller, "-n", nsid); err != nil {
+			return fmt.Errorf("deleting namespace %s on %s: %s: %w", nsid, controller, strings.TrimSpace(string(out)), err)
 		}
 	}
 	return nil
