@@ -3,6 +3,7 @@
 package gobgp
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net"
@@ -907,7 +908,7 @@ func TestAdvertiseType2SkipsWhenBridgeMACEmpty(t *testing.T) {
 		cfg: &Config{BridgeMAC: "", ProvisionIP: "10.100.0.20/24"},
 		log: slog.Default(),
 	}
-	if err := overlay.advertiseType2(nil); err != nil {
+	if err := overlay.advertiseType2(context.TODO()); err != nil {
 		t.Errorf("expected nil error when BridgeMAC empty, got: %v", err)
 	}
 }
@@ -917,7 +918,7 @@ func TestAdvertiseType2SkipsWhenProvisionIPEmpty(t *testing.T) {
 		cfg: &Config{BridgeMAC: "aa:bb:cc:dd:ee:ff", ProvisionIP: ""},
 		log: slog.Default(),
 	}
-	if err := overlay.advertiseType2(nil); err != nil {
+	if err := overlay.advertiseType2(context.TODO()); err != nil {
 		t.Errorf("expected nil error when ProvisionIP empty, got: %v", err)
 	}
 }
@@ -927,7 +928,7 @@ func TestAdvertiseType2InvalidBridgeMAC(t *testing.T) {
 		cfg: &Config{BridgeMAC: "not-a-mac", ProvisionIP: "10.100.0.20/24"},
 		log: slog.Default(),
 	}
-	err := overlay.advertiseType2(nil)
+	err := overlay.advertiseType2(context.TODO())
 	if err == nil {
 		t.Fatal("expected error for invalid bridge MAC")
 	}
@@ -938,7 +939,7 @@ func TestAdvertiseType2InvalidProvisionIP(t *testing.T) {
 		cfg: &Config{BridgeMAC: "aa:bb:cc:dd:ee:ff", ProvisionIP: "not-a-cidr", ASN: 65000, ProvisionVNI: 100},
 		log: slog.Default(),
 	}
-	err := overlay.advertiseType2(nil)
+	err := overlay.advertiseType2(context.TODO())
 	if err == nil {
 		t.Fatal("expected error for invalid provision IP")
 	}
