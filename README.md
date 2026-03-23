@@ -255,12 +255,12 @@ export dns_resolver="8.8.8.8"
 | `IMAGE_CHECKSUM_TYPE` | — | Checksum algorithm: `sha256` or `sha512` |
 | `IMAGE_SIGNATURE_URL` | — | URL to detached GPG signature for image verification |
 | `IMAGE_GPG_PUBKEY` | — | Path to GPG public key for image signature verification |
-| `LUKS_ENABLED` | `false` | Enable LUKS2 encryption for target partitions |
-| `LUKS_PASSPHRASE` | — | Passphrase for initial LUKS volume creation |
-| `LUKS_UNLOCK_METHOD` | `passphrase` | Unlock method: `passphrase`, `tpm2`, `clevis`, `keyfile` |
-| `LUKS_CIPHER` | `aes-xts-plain64` | LUKS2 cipher algorithm |
-| `LUKS_KEY_SIZE` | `512` | LUKS2 key size in bits |
-| `LUKS_HASH` | `sha256` | LUKS2 hash algorithm |
+| `LUKS_ENABLED` | `false` | *(Planned)* Enable LUKS2 encryption for target partitions |
+| `LUKS_PASSPHRASE` | — | *(Planned)* Passphrase for initial LUKS volume creation |
+| `LUKS_UNLOCK_METHOD` | `passphrase` | *(Planned)* Unlock method: `passphrase`, `tpm2`, `clevis`, `keyfile` |
+| `LUKS_CIPHER` | `aes-xts-plain64` | *(Planned)* LUKS2 cipher algorithm |
+| `LUKS_KEY_SIZE` | `512` | *(Planned)* LUKS2 key size in bits |
+| `LUKS_HASH` | `sha256` | *(Planned)* LUKS2 hash algorithm |
 | `NUM_VFS` | `0` | Number of SR-IOV virtual functions for Mellanox NICs (0 = skip) |
 
 #### Network Variables
@@ -480,13 +480,15 @@ success status. The CAPRF controller then re-enables Secure Boot via Redfish
 before the final reboot. If the installed OS does not have signed bootloaders,
 the machine will fail to boot.
 
-### LUKS Encryption
+### LUKS Encryption (Experimental)
 
-BOOTy supports LUKS2 full-disk encryption for provisioned volumes. When enabled,
-target partitions are formatted as LUKS2 volumes and unlocked before filesystem
-creation.
+BOOTy includes a `pkg/disk/luks` library for LUKS2 full-disk encryption of
+provisioned volumes. The library is functional but **not yet integrated into the
+provisioning orchestrator** — environment variable wiring and step ordering are
+planned for a future release.
 
 ```bash
+# Planned environment variables (not yet wired):
 export LUKS_ENABLED=true
 export LUKS_PASSPHRASE="initial-setup-passphrase"
 export LUKS_UNLOCK_METHOD=tpm2       # passphrase | tpm2 | clevis | keyfile
@@ -509,7 +511,7 @@ export LUKS_HASH=sha256              # optional, default: sha256
 | `passphrase` | Manual entry at boot | `luks,discard` |
 | `tpm2` | TPM2 PCR-bound key (Phase 2: enrollment) | `tpm2-device=auto,discard` |
 | `clevis` | Network-bound via tang server (Phase 2: enrollment) | `_netdev,discard` |
-| `keyfile` | Key file in initramfs | `luks,discard,keyscript=/etc/luks/keyfile` |
+| `keyfile` | Key file at path | `luks,discard,keyfile-timeout=30s` |
 
 LUKS format always requires a passphrase for initial volume creation. Post-format
 enrollment (TPM2 PCR binding, clevis tang enrollment) is handled separately after
