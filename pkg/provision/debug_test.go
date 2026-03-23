@@ -40,7 +40,7 @@ func TestStepDebugCmds(t *testing.T) {
 		step    string
 		wantLen int
 	}{
-		{"detect-disk", 3},
+		{"detect-disk", 5},
 		{"stream-image", 3},
 		{"mount-root", 2},
 		{"setup-chroot-binds", 2},
