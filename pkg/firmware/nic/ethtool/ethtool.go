@@ -21,9 +21,17 @@ type Commander interface {
 type OSCommander struct{}
 
 // CombinedOutput runs a command and returns combined stdout/stderr.
+// On failure the error includes truncated command output for diagnostics.
 func (OSCommander) CombinedOutput(ctx context.Context, cmd string, args ...string) ([]byte, error) {
 	out, err := exec.CommandContext(ctx, cmd, args...).CombinedOutput()
 	if err != nil {
+		raw := strings.TrimSpace(string(out))
+		if len(raw) > 512 {
+			raw = raw[:512] + "...(truncated)"
+		}
+		if raw != "" {
+			return out, fmt.Errorf("command %s: %w [output: %s]", cmd, err, raw)
+		}
 		return out, fmt.Errorf("command %s: %w", cmd, err)
 	}
 	return out, nil

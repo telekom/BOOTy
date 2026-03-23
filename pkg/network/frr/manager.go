@@ -34,9 +34,17 @@ type Commander interface {
 type ExecCommander struct{}
 
 // Run executes a command and returns combined output.
+// On failure the error includes truncated command output for diagnostics.
 func (e *ExecCommander) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
 	if err != nil {
+		raw := strings.TrimSpace(string(out))
+		if len(raw) > 512 {
+			raw = raw[:512] + "...(truncated)"
+		}
+		if raw != "" {
+			return out, fmt.Errorf("exec %s: %w [output: %s]", name, err, raw)
+		}
 		return out, fmt.Errorf("exec %s: %w", name, err)
 	}
 	return out, nil

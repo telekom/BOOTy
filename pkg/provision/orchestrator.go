@@ -646,7 +646,7 @@ func runDebugCmd(label, cmd string) {
 		}
 	}
 	if err != nil {
-		slog.Error("Debug command failed", "label", label, "cmd", cmd, "error", err)
+		slog.Error("Debug command failed", "label", label, "cmd", cmd, "error", err, "output", trimmed)
 	}
 }
 
@@ -663,6 +663,25 @@ func stepDebugCmds(step string) []debugCmd {
 			{"sysblock entries", "ls -la /sys/block/"},
 			{"sysblock sizes", "for d in /sys/block/*/size; do echo \"$d: $(cat $d)\"; done"},
 			{"dev devices", "ls -la /dev/sd* /dev/nvme* /dev/vd* /dev/loop* 2>/dev/null || true"},
+			{"loaded modules", "lsmod 2>/dev/null || cat /proc/modules | head -30"},
+			{"scsi devices", "cat /proc/scsi/scsi 2>/dev/null || echo 'no SCSI info'"},
+		}
+	case "wipe-disks":
+		return []debugCmd{
+			{"wipefs version", "wipefs --version 2>&1 || echo 'wipefs not available'"},
+			{"sgdisk version", "sgdisk --version 2>&1 || echo 'sgdisk not available'"},
+			{"shared libs wipefs", "ldd $(which wipefs 2>/dev/null) 2>&1 || echo 'ldd/wipefs not found'"},
+			{"shared libs sgdisk", "ldd $(which sgdisk 2>/dev/null) 2>&1 || echo 'ldd/sgdisk not found'"},
+			{"ld.so check", "ls -la /lib64/ld-linux-x86-64.so.2 /lib/ld-linux-x86-64.so.2 2>/dev/null || echo 'dynamic linker not found'"},
+			{"dev devices", "ls -la /dev/sd* /dev/nvme* /dev/vd* 2>/dev/null || true"},
+		}
+	case "parse-partitions", "apply-partition-layout":
+		return []debugCmd{
+			{"sfdisk version", "sfdisk --version 2>&1 || echo 'sfdisk not found'"},
+			{"sfdisk raw", "sfdisk --json /dev/sda 2>&1 | head -30 || true"},
+			{"fdisk list", "fdisk -l 2>/dev/null | head -40 || true"},
+			{"partitions", "cat /proc/partitions"},
+			{"shared libs sfdisk", "ldd $(which sfdisk) 2>&1 || echo 'ldd not found'"},
 		}
 	case "stream-image":
 		return []debugCmd{

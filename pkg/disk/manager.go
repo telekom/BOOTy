@@ -24,9 +24,17 @@ type Commander interface {
 type ExecCommander struct{}
 
 // Run executes a system command and returns its combined output.
+// On failure the error includes truncated command output for diagnostics.
 func (e *ExecCommander) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
 	if err != nil {
+		raw := strings.TrimSpace(string(out))
+		if len(raw) > 512 {
+			raw = raw[:512] + "...(truncated)"
+		}
+		if raw != "" {
+			return out, fmt.Errorf("exec %s: %w [output: %s]", name, err, raw)
+		}
 		return out, fmt.Errorf("exec %s: %w", name, err)
 	}
 	return out, nil
@@ -89,7 +97,7 @@ func (m *Manager) WipeAllDisks(ctx context.Context) error {
 	}
 	var (
 		wiped  int
-		failed int
+		errs   []error
 	)
 	for _, entry := range entries {
 		name := entry.Name()
@@ -104,13 +112,13 @@ func (m *Manager) WipeAllDisks(ctx context.Context) error {
 		}
 		if out, err := m.cmd.Run(ctx, "wipefs", "-af", dev); err != nil {
 			slog.Warn("wipefs failed", "device", dev, "output", string(out), "error", err)
-			failed++
+			errs = append(errs, fmt.Errorf("%s: %w", dev, err))
 		} else {
 			wiped++
 		}
 	}
-	if wiped == 0 && failed > 0 {
-		return fmt.Errorf("all %d disk wipe(s) failed", failed)
+	if wiped == 0 && len(errs) > 0 {
+		return fmt.Errorf("all %d disk wipe(s) failed: %w", len(errs), errors.Join(errs...))
 	}
 	return nil
 }
@@ -297,7 +305,11 @@ func (m *Manager) ParsePartitions(ctx context.Context, disk string) ([]Partition
 	}
 	var result sfdiskOutput
 	if err := json.Unmarshal(out, &result); err != nil {
-		return nil, fmt.Errorf("parsing sfdisk output: %w", err)
+		raw := string(out)
+		if len(raw) > 512 {
+			raw = raw[:512] + "...(truncated)"
+		}
+		return nil, fmt.Errorf("parsing sfdisk output: %w [raw: %s]", err, raw)
 	}
 	return result.PartitionTable.Partitions, nil
 }
@@ -450,7 +462,7 @@ func (m *Manager) ChrootRun(ctx context.Context, root, command string) ([]byte, 
 			slog.Info("chroot binary not found, using syscall fallback", "root", root)
 			return m.chrootSyscall(ctx, root, command)
 		}
-		return out, fmt.Errorf("chroot exec in %s: %w", root, err)
+		return out, fmt.Errorf("chroot exec in %s: %s: %w", root, strings.TrimSpace(string(out)), err)
 	}
 	return out, nil
 }
@@ -461,7 +473,7 @@ func (m *Manager) chrootSyscall(ctx context.Context, root, command string) ([]by
 	cmd.SysProcAttr = &syscall.SysProcAttr{Chroot: root}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return out, fmt.Errorf("chroot syscall in %s: %w", root, err)
+		return out, fmt.Errorf("chroot syscall in %s: %s: %w", root, strings.TrimSpace(string(out)), err)
 	}
 	return out, nil
 }
