@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/telekom/BOOTy/pkg/executil"
 )
@@ -94,8 +95,8 @@ func (m *Manager) WipeAllDisks(ctx context.Context) error {
 		if out, err := m.cmd.Run(ctx, "sgdisk", "--zap-all", dev); err != nil {
 			slog.Debug("sgdisk zap failed (may not be GPT)", "device", dev, "output", string(out))
 		}
-		if out, err := m.cmd.Run(ctx, "wipefs", "-af", dev); err != nil {
-			slog.Warn("wipefs failed", "device", dev, "output", string(out), "error", err)
+		if _, err := m.cmd.Run(ctx, "wipefs", "-af", dev); err != nil {
+			slog.Warn("wipefs failed", "device", dev, "error", err)
 			errs = append(errs, fmt.Errorf("%s: %w", dev, err))
 		} else {
 			wiped++
@@ -289,14 +290,14 @@ func readDiskSizeGB(name string) (int, error) {
 func (m *Manager) ParsePartitions(ctx context.Context, disk string) ([]Partition, error) {
 	out, err := m.cmd.Run(ctx, "sfdisk", "--json", disk)
 	if err != nil {
-		return nil, fmt.Errorf("sfdisk %s: %s: %w", disk, string(out), err)
+		return nil, fmt.Errorf("sfdisk %s: %w", disk, err)
 	}
 
 	jsonBytes := stripNonJSONPrefix(out)
 
 	var result sfdiskOutput
 	if err := json.Unmarshal(jsonBytes, &result); err != nil {
-		raw := string(out)
+		raw := strings.Join(strings.Fields(string(out)), " ")
 		if len(raw) > 512 {
 			raw = raw[:512] + "...(truncated)"
 		}
@@ -384,8 +385,15 @@ var supportedFilesystems = []string{"ext4", "xfs", "btrfs", "ext3", "ext2", "vfa
 
 // MountPartition mounts a device at the given mountpoint.
 // Tries all supported filesystem types in order: ext4, xfs, btrfs, ext3, ext2, vfat.
+// Waits up to 3 seconds for the device node to appear (devtmpfs may lag after partprobe).
 func (m *Manager) MountPartition(_ context.Context, device, mountpoint string) error {
 	slog.Info("Mounting partition", "device", device, "mountpoint", mountpoint)
+
+	// Wait for the device node to appear — devtmpfs can lag after partprobe.
+	if err := waitForDevice(device); err != nil {
+		return fmt.Errorf("device %s not available: %w", device, err)
+	}
+
 	if err := os.MkdirAll(mountpoint, 0o755); err != nil {
 		return fmt.Errorf("creating mountpoint %s: %w", mountpoint, err)
 	}
@@ -399,6 +407,18 @@ func (m *Manager) MountPartition(_ context.Context, device, mountpoint string) e
 		errs = append(errs, fmt.Sprintf("%s=%v", fsType, err))
 	}
 	return fmt.Errorf("mounting %s at %s: tried %s", device, mountpoint, strings.Join(errs, ", "))
+}
+
+// waitForDevice polls for a device node to appear, retrying up to 3 seconds.
+func waitForDevice(device string) error {
+	for range 6 {
+		if _, err := os.Stat(device); err == nil {
+			return nil
+		}
+		slog.Debug("waiting for device node", "device", device)
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("device %s did not appear after 3s", device)
 }
 
 // BindMount performs a bind mount.

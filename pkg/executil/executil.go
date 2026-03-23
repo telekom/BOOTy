@@ -52,23 +52,50 @@ func (e *ExecCommander) Run(ctx context.Context, name string, args ...string) ([
 // obvious from the logs alone.
 func DumpPATH() {
 	pathEnv := os.Getenv("PATH")
-	slog.Error("DEBUG", "label", "PATH", "data", pathEnv)
+	slog.Error("debug dump", "label", "PATH", "data", pathEnv)
 
-	dirs := filepath.SplitList(pathEnv)
-	for _, dir := range dirs {
-		entries, err := os.ReadDir(dir)
+	for _, dir := range filepath.SplitList(pathEnv) {
+		bins, err := listExecutables(dir)
 		if err != nil {
-			slog.Error("DEBUG", "label", "PATH dir unreadable", "dir", dir, "error", err)
+			slog.Error("debug dump", "label", "PATH dir unreadable", "dir", dir, "error", err)
 			continue
 		}
-		var bins []string
-		for _, e := range entries {
-			if e.Type().IsRegular() || e.Type()&os.ModeSymlink != 0 {
-				bins = append(bins, e.Name())
-			}
-		}
-		sort.Strings(bins)
-		slog.Error("DEBUG", "label", "PATH binaries", "dir", dir, "count", len(bins),
+		slog.Error("debug dump", "label", "PATH binaries", "dir", dir, "count", len(bins),
 			"data", strings.Join(bins, " "))
 	}
+}
+
+// listExecutables returns sorted names of executable files in dir.
+func listExecutables(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", dir, err)
+	}
+	var bins []string
+	for _, e := range entries {
+		if isExecutable(dir, e) {
+			bins = append(bins, e.Name())
+		}
+	}
+	sort.Strings(bins)
+	return bins, nil
+}
+
+// isExecutable checks if a directory entry is an executable file.
+func isExecutable(dir string, e os.DirEntry) bool {
+	if e.Type()&os.ModeSymlink != 0 {
+		fi, err := os.Stat(filepath.Join(dir, e.Name())) //nolint:gosec // intentional PATH directory traversal for diagnostics
+		if err != nil {
+			return false
+		}
+		return fi.Mode().IsRegular() && fi.Mode()&0o111 != 0
+	}
+	if !e.Type().IsRegular() {
+		return false
+	}
+	fi, err := e.Info()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&0o111 != 0
 }

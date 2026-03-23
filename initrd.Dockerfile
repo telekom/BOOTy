@@ -58,24 +58,25 @@ RUN apt-get update && \
     mkdir -p /modules && \
     # Generate modules.dep for modprobe dependency resolution
     depmod -b /tmp/kernel "$KVER" && \
-    # Target modules — transitive dependencies resolved via modprobe --show-depends
+    # Target modules — transitive dependencies resolved via modprobe --show-depends.
+    # Module categories:
+    #   QEMU/KVM virtio:  virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev virtio_pci virtio_net failover net_failover
+    #   Storage (SCSI):   scsi_mod sd_mod virtio_blk virtio_scsi
+    #   Filesystems:      ext4 jbd2 mbcache crc32c_generic xfs btrfs vfat
+    #   VXLAN/bridge:     dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc
+    #   Intel NICs:       e1000e igb igc ixgbe i40e ice iavf
+    #   Broadcom NICs:    tg3 bnxt_en
+    #   Mellanox/NVIDIA:  mlx4_core mlx4_en mlx5_core mlxfw
+    #   Emulex/Broadcom:  be2net
     for m in \
-    # QEMU/KVM virtio
         virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
         virtio_pci virtio_net failover net_failover \
-    # Storage: SCSI subsystem + virtio-blk/scsi + SCSI disk driver
         scsi_mod sd_mod virtio_blk virtio_scsi \
-    # Filesystems (ext4, xfs, btrfs for root; vfat for EFI partition)
-        ext4 xfs btrfs vfat \
-    # VXLAN/bridge networking (FRR/EVPN)
+        ext4 jbd2 mbcache crc32c_generic xfs btrfs vfat \
         dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc \
-    # Intel: e1000e (1G), igb (1G), igc (i225/i226), ixgbe (10G), i40e (10/25/40G), ice (25/50/100G), iavf (VF)
         e1000e igb igc ixgbe i40e ice iavf \
-    # Broadcom: tg3 (legacy NetXtreme 1G), bnxt_en (NetXtreme-E/C 10/25/50/100G)
         tg3 bnxt_en \
-    # Mellanox/NVIDIA: mlx4 (ConnectX-3), mlx5 (ConnectX-4/5/6/7)
         mlx4_core mlx4_en mlx5_core mlxfw \
-    # Emulex/Broadcom: be2net (OneConnect)
         be2net; do \
         # Copy module + all transitive dependencies via modprobe
         modprobe --show-depends -d /tmp/kernel -S "$KVER" "$m" 2>/dev/null \

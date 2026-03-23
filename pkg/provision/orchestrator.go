@@ -527,7 +527,7 @@ func DumpDebugState(failedStep string) {
 	executil.DumpPATH()
 
 	// Shared library availability — dynamically-linked tools fail silently without these.
-	runDebugCmd("shared libs", "ls -la /lib64/ld-linux-x86-64.so* /lib/ld-linux-x86-64.so* /lib/x86_64-linux-gnu/lib*.so* /usr/lib/x86_64-linux-gnu/lib*.so* 2>/dev/null | head -40 || echo 'no shared libs found'")
+	runDebugCmd("shared libs", "ls -la /lib64/ld-linux-x86-64.so* /lib/ld-linux-x86-64.so* /lib/x86_64-linux-gnu/lib*.so* /usr/lib/x86_64-linux-gnu/lib*.so* /lib64/ld-linux-aarch64.so* /lib/ld-linux-aarch64.so* /lib/aarch64-linux-gnu/lib*.so* /usr/lib/aarch64-linux-gnu/lib*.so* 2>/dev/null | head -40 || echo 'no shared libs found'")
 	runDebugCmd("ld.so.cache", "ldconfig -p 2>/dev/null | head -20 || echo 'ldconfig not available'")
 
 	// Step-specific commands run first for targeted diagnostics.
@@ -680,7 +680,7 @@ func stepDebugCmds(step string) []debugCmd {
 			{"sgdisk version", "sgdisk --version 2>&1 || echo 'sgdisk not available'"},
 			{"shared libs wipefs", "ldd $(which wipefs 2>/dev/null) 2>&1 || echo 'ldd/wipefs not found'"},
 			{"shared libs sgdisk", "ldd $(which sgdisk 2>/dev/null) 2>&1 || echo 'ldd/sgdisk not found'"},
-			{"ld.so check", "ls -la /lib64/ld-linux-x86-64.so.2 /lib/ld-linux-x86-64.so.2 2>/dev/null || echo 'dynamic linker not found'"},
+			{"ld.so check", "ls -la /lib64/ld-linux-x86-64.so.2 /lib/ld-linux-x86-64.so.2 /lib64/ld-linux-aarch64.so.1 /lib/ld-linux-aarch64.so.1 2>/dev/null || echo 'dynamic linker not found'"},
 			{"dev devices", "ls -la /dev/sd* /dev/nvme* /dev/vd* 2>/dev/null || true"},
 		}
 	case "parse-partitions", "apply-partition-layout":

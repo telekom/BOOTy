@@ -109,13 +109,15 @@ func ToNetworkConfig(np *Config, frr *FRRParams) *network.Config {
 		cfg.NetworkMode = "gobgp"
 	}
 	if dhcpCount > 0 && cfg.ASN == 0 && cfg.ProvisionVNI == 0 {
-		slog.Info("netplan: all interfaces use DHCP, using DHCP mode")
+		slog.Info("netplan: DHCP interface(s) found, no EVPN config, using DHCP mode", "dhcpCount", dhcpCount)
 	}
 	return cfg
 }
 
 func extractTunnels(np *Config, cfg *network.Config) {
-	for _, t := range np.Network.Tunnels {
+	names := sortedKeys(np.Network.Tunnels)
+	for _, name := range names {
+		t := np.Network.Tunnels[name]
 		if !strings.EqualFold(t.Mode, "vxlan") {
 			continue
 		}
@@ -143,7 +145,9 @@ func extractDummyDevices(np *Config, cfg *network.Config) {
 }
 
 func extractBridges(np *Config, cfg *network.Config) {
-	for _, br := range np.Network.Bridges {
+	names := sortedKeys(np.Network.Bridges)
+	for _, name := range names {
+		br := np.Network.Bridges[name]
 		if len(br.Addresses) == 0 {
 			continue
 		}
@@ -161,10 +165,9 @@ func extractBridges(np *Config, cfg *network.Config) {
 	}
 }
 
-func extractEthernets(np *Config, cfg *network.Config) (int, []string) {
-	dhcpCount := 0
-	var dnsList []string
-	for name, eth := range np.Network.Ethernets {
+func extractEthernets(np *Config, cfg *network.Config) (dhcpCount int, dnsList []string) {
+	for name := range np.Network.Ethernets {
+		eth := np.Network.Ethernets[name]
 		if eth.DHCP4 != nil && *eth.DHCP4 {
 			dhcpCount++
 		}
@@ -211,7 +214,9 @@ func extractVLANs(np *Config, cfg *network.Config, dnsList []string) []string {
 }
 
 func extractBonds(np *Config, cfg *network.Config) {
-	for name, bond := range np.Network.Bonds {
+	names := sortedKeys(np.Network.Bonds)
+	for _, name := range names {
+		bond := np.Network.Bonds[name]
 		if len(bond.Interfaces) == 0 {
 			continue
 		}
@@ -256,6 +261,16 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 		cfg.BGPPeerMode = network.PeerModeNumbered
 		cfg.BGPNeighbors = strings.Join(frr.NumberedPeers, ",")
 	}
+}
+
+// sortedKeys returns the keys of a map in sorted order for deterministic iteration.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // joinUnique deduplicates a string slice and joins with commas.
