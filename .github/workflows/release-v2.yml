@@ -226,6 +226,7 @@ jobs:
           docker buildx build \
             ${TARGET_ARG} \
             --platform "linux/${{ matrix.arch }}" \
+            --provenance=false \
             --push \
             -t "${IMAGE}:${IMAGE_TAG}-${{ matrix.arch }}" \
             -f initrd.Dockerfile .
