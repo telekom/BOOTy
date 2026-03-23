@@ -73,6 +73,7 @@ jobs:
           fi
           docker buildx build \
             ${TARGET_ARG} \
+            --platform linux/${{ matrix.arch }} \
             --output type=local,dest=out-${{ matrix.flavor }} \
             -f initrd.Dockerfile .
 
@@ -208,6 +209,7 @@ jobs:
           IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           docker buildx build \
             ${TARGET_ARG} \
+            --platform "linux/${{ matrix.arch }}" \
             --push \
             -t "${IMAGE}:${IMAGE_TAG}-${{ matrix.arch }}" \
             -f initrd.Dockerfile .
