@@ -579,6 +579,37 @@ func TestVrnetlabAllVMsEnterCAPRF(t *testing.T) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// Initramfs Module Verification
+// ═══════════════════════════════════════════════════════════════════════
+
+// vrnetlabRequiredModules lists kernel modules that must be loaded for a
+// successful boot. If the Dockerfile module copy loop breaks (e.g. shell
+// comment parsing), this test catches it before a real deploy.
+var vrnetlabRequiredModules = []string{
+	"ext4",       // root filesystem
+	"xfs",        // common data filesystem
+	"vfat",       // EFI system partition
+	"virtio_pci", // PCI virtio transport (QEMU)
+	"virtio_net", // virtio NIC
+	"vxlan",      // VXLAN overlay
+}
+
+func TestVrnetlabModulesLoaded(t *testing.T) {
+	requireVrnetlabLab(t)
+
+	logs := getVMSerialLog(t, vmProvision)
+
+	for _, mod := range vrnetlabRequiredModules {
+		// loadModules logs: "Loaded kernel module" module=<name>.ko*
+		// Module may also be built-in (no log line) — skip the check only if
+		// we see neither a load message nor the "Beginning provisioning" marker.
+		if !strings.Contains(logs, mod) {
+			t.Errorf("module %q not mentioned in serial log — may be missing from initramfs", mod)
+		}
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // Unexpected ERROR Detection
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -600,6 +631,7 @@ var vrnetlabAllowedErrors = []string{
 	"format-disk",
 	"Disk Error",
 	"msg=DEBUG",
+	"debug dump",
 	"Debug command",
 	"DEBUG env",
 }

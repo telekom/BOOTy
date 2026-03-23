@@ -103,7 +103,11 @@ func (m *Manager) WipeAllDisks(ctx context.Context) error {
 		}
 	}
 	if wiped == 0 && len(errs) > 0 {
-		return fmt.Errorf("all %d disk wipe(s) failed: %w", len(errs), errors.Join(errs...))
+		msgs := make([]string, len(errs))
+		for i, e := range errs {
+			msgs[i] = e.Error()
+		}
+		return fmt.Errorf("all %d disk wipe(s) failed: %s", len(errs), strings.Join(msgs, "; "))
 	}
 	return nil
 }

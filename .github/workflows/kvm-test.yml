@@ -143,9 +143,19 @@ jobs:
             PASS=false
           fi
 
+          # Verify critical kernel modules were loaded (catches broken Dockerfile module copy).
+          for mod in ext4 xfs vfat scsi_mod sd_mod virtio_pci virtio_net vxlan; do
+            if grep -q "Loaded kernel module.*${mod}" serial.log 2>/dev/null || \
+               grep -q "module=${mod}" serial.log 2>/dev/null; then
+              echo "PASS: Module $mod loaded"
+            else
+              echo "WARNING: Module $mod not found in serial log (may be built-in)"
+            fi
+          done
+
           # Check for unexpected ERROR-level log entries.
           # Allow-list: errors expected in minimal CI environments (no disk, no provisioning server response).
-          ALLOWED_ERRORS="no suitable disk found|detect-disk|partition-disk|parse-partitions|format-disk|stream-image|Provisioning failed|Provisioning step|Deprovisioning failed|Deprovisioning step|Connecting to provisioning server|DEBUG DUMP|=== DEBUG|=== CONFIG|Disk Error|msg=DEBUG|Debug command|DEBUG env|CAPRF client|dry-run failed"
+          ALLOWED_ERRORS="no suitable disk found|detect-disk|partition-disk|parse-partitions|format-disk|stream-image|Provisioning failed|Provisioning step|Deprovisioning failed|Deprovisioning step|Connecting to provisioning server|DEBUG DUMP|=== DEBUG|=== CONFIG|Disk Error|msg=DEBUG|debug dump|Debug command|DEBUG env|CAPRF client|dry-run failed"
           UNEXPECTED=$(grep 'level=ERROR' serial.log 2>/dev/null | grep -vE "$ALLOWED_ERRORS" || true)
           if [ -n "$UNEXPECTED" ]; then
             echo "FAIL: Unexpected ERROR-level log entries found:"

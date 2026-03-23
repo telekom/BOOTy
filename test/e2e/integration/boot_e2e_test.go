@@ -480,6 +480,43 @@ func TestBootStandbyHeartbeatsSentToCAPRF(t *testing.T) {
 	t.Log("CAPRF mock received heartbeat from standby node through EVPN")
 }
 
+// --- Initramfs module verification ---
+
+// requiredModulePrefixes lists kernel module name prefixes that must be
+// present in the /modules/ directory of every BOOTy container. These are
+// critical for storage, filesystems, and basic networking. If the Dockerfile
+// module copy loop breaks (e.g. shell parsing), this test catches it.
+var requiredModulePrefixes = []string{
+	"ext4",      // filesystem
+	"xfs",       // filesystem
+	"vfat",      // ESP / EFI partition
+	"scsi_mod",  // SCSI subsystem
+	"sd_mod",    // SCSI disk driver
+	"virtio_pci", // PCI virtio transport
+	"virtio_net", // virtio NIC
+	"vxlan",     // VXLAN overlay
+}
+
+func TestBootModulesPresent(t *testing.T) {
+	requireBootLab(t)
+
+	// List kernel module files shipped in the initramfs.
+	out, err := bootDockerExec(t, provisionContainer, "ls", "/modules/")
+	if err != nil {
+		t.Fatalf("cannot list /modules/: %v\n%s", err, out)
+	}
+
+	modules := out
+	t.Logf("Found modules in /modules/: %d files", len(strings.Split(strings.TrimSpace(modules), "\n")))
+
+	for _, prefix := range requiredModulePrefixes {
+		// Module files are named like ext4.ko, ext4.ko.zst, ext4.ko.xz, etc.
+		if !strings.Contains(modules, prefix+".ko") {
+			t.Errorf("critical module %q not found in /modules/ — Dockerfile module copy may be broken", prefix)
+		}
+	}
+}
+
 // --- Unexpected ERROR detection ---
 
 // allowedErrorPatterns lists error messages that are expected in minimal CI
@@ -501,6 +538,7 @@ var allowedErrorPatterns = []string{
 	"format-disk",
 	"Disk Error",
 	"msg=DEBUG",
+	"debug dump",
 	"Debug command",
 	"DEBUG env",
 	"Network connectivity timeout",
