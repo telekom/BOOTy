@@ -255,6 +255,9 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 	if frr.ASN > 0 {
 		cfg.ASN = frr.ASN
 	}
+	if frr.LocalASN > 0 && cfg.LocalASN == 0 {
+		cfg.LocalASN = frr.LocalASN
+	}
 	if frr.RouterID != "" && cfg.UnderlayIP == "" {
 		cfg.UnderlayIP = frr.RouterID
 	}

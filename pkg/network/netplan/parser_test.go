@@ -457,6 +457,9 @@ func TestToNetworkConfig_BM4XEVPN(t *testing.T) {
 	if netCfg.ASN != 65501 {
 		t.Errorf("ASN = %d, want 65501", netCfg.ASN)
 	}
+	if netCfg.LocalASN != 65501 {
+		t.Errorf("LocalASN = %d, want 65501", netCfg.LocalASN)
+	}
 	if netCfg.ProvisionVNI == 0 {
 		t.Error("ProvisionVNI should be > 0")
 	}
