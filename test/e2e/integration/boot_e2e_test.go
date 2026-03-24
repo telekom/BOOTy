@@ -528,42 +528,19 @@ func TestBootModulesPresent(t *testing.T) {
 
 // allowedErrorPatterns lists error messages that are expected in minimal CI
 // environments (no real disk, provisioning failure at disk ops, etc.).
+// Debug dumps (DumpDebugState, DumpPATH, dumpConfig) log at WARN level and
+// are invisible to this check — only genuine ERROR-level messages remain.
 var allowedErrorPatterns = []string{
-	"no suitable disk found",
-	"detect-disk",
-	"wipe-disks",
-	"configure-dns",
-	"Connecting to provisioning server",
-	"DEBUG DUMP",
-	"=== DEBUG",
-	"=== CONFIG",
+	// Top-level provisioning/deprovisioning failure.
 	"Provisioning failed",
-	"provisioning step",
 	"Deprovisioning failed",
-	"Deprovisioning step",
-	"stream-image",
-	"partition-disk",
-	"parse-partitions",
-	"format-disk",
-	"mount-root",
-	"apply-partition-layout",
-	"write-fstab",
-	"install-bootloader",
-	"Disk Error",
-	"msg=DEBUG",
-	"debug dump",
-	"Debug command",
-	"DEBUG env",
-	"Network connectivity timeout",
+	// Individual step failures.
+	"provisioning step failed",
+	"Deprovisioning step failed",
+	// Expected in CI without real disks or network.
+	"no suitable disk found",
 	"Connectivity timeout",
-	"network connectivity timeout",
-	"dumping FRR state",
-	"PATH dir unreadable",
-	"/newroot not found",
-	"/newroot/boot not found",
-	"efibootmgr not available",
-	"dynamic linker not found",
-	"no shared libs found",
+	"Connecting to provisioning server",
 }
 
 func TestBootNoUnexpectedErrors(t *testing.T) {

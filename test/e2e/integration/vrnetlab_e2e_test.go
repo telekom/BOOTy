@@ -626,38 +626,19 @@ func TestVrnetlabModulesLoaded(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 // vrnetlabAllowedErrors lists error messages expected in CI (no real disk, etc.).
+// Debug dumps (DumpDebugState, DumpPATH, dumpConfig) log at WARN level and
+// are invisible to this check — only genuine ERROR-level messages remain.
 var vrnetlabAllowedErrors = []string{
-	"no suitable disk found",
-	"detect-disk",
-	"wipe-disks",
-	"configure-dns",
-	"Connecting to provisioning server",
-	"DEBUG DUMP",
-	"=== DEBUG",
-	"=== CONFIG",
+	// Top-level provisioning/deprovisioning failure.
 	"Provisioning failed",
-	"provisioning step",
 	"Deprovisioning failed",
-	"Deprovisioning step",
-	"stream-image",
-	"partition-disk",
-	"parse-partitions",
-	"format-disk",
-	"mount-root",
-	"apply-partition-layout",
-	"write-fstab",
-	"install-bootloader",
-	"Disk Error",
-	"msg=DEBUG",
-	"debug dump",
-	"Debug command",
-	"DEBUG env",
-	"PATH dir unreadable",
-	"/newroot not found",
-	"/newroot/boot not found",
-	"efibootmgr not available",
-	"dynamic linker not found",
-	"no shared libs found",
+	// Individual step failures.
+	"provisioning step failed",
+	"Deprovisioning step failed",
+	// Expected in CI without real disks or network.
+	"no suitable disk found",
+	"Connectivity timeout",
+	"Connecting to provisioning server",
 }
 
 func TestVrnetlabNoUnexpectedErrors(t *testing.T) {

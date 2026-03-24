@@ -52,13 +52,13 @@ func (e *ExecCommander) Run(ctx context.Context, name string, args ...string) ([
 // obvious from the logs alone.
 func DumpPATH() {
 	pathEnv := os.Getenv("PATH")
-	slog.Error("debug dump", "label", "PATH", "data", pathEnv)
+	slog.Warn("debug dump", "label", "PATH", "data", pathEnv)
 
 	const maxBinsPerDir = 200
 	for _, dir := range filepath.SplitList(pathEnv) {
 		bins, err := listExecutables(dir)
 		if err != nil {
-			slog.Error("debug dump", "label", "PATH dir unreadable", "dir", dir, "error", err)
+			slog.Warn("debug dump", "label", "PATH dir unreadable", "dir", dir, "error", err)
 			continue
 		}
 		display := bins
@@ -71,7 +71,7 @@ func DumpPATH() {
 		if truncated {
 			data += fmt.Sprintf(" ...(%d more)", len(bins)-maxBinsPerDir)
 		}
-		slog.Error("debug dump", "label", "PATH binaries", "dir", dir, "count", len(bins),
+		slog.Warn("debug dump", "label", "PATH binaries", "dir", dir, "count", len(bins),
 			"data", data)
 	}
 }

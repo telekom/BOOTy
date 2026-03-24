@@ -599,7 +599,7 @@ func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duratio
 	}
 
 	if mgr != nil {
-		log.Error("Connectivity timeout — dumping FRR state for diagnostics")
+		log.Warn("connectivity timeout — dumping FRR state for diagnostics")
 		mgr.DumpFRRState()
 	}
 	return fmt.Errorf("network connectivity timeout after %s (%d attempts)", timeout, attempt)

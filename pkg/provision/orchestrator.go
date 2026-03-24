@@ -521,7 +521,7 @@ func (o *Orchestrator) reportSuccess(ctx context.Context) error {
 // Automatically detects whether FRR (vtysh) or GoBGP is in use and runs
 // the appropriate network diagnostics.
 func DumpDebugState(failedStep string) {
-	slog.Error("=== DEBUG DUMP START ===", "failedStep", failedStep)
+	slog.Warn("=== DEBUG DUMP START ===", "failedStep", failedStep)
 
 	// PATH and available binaries — critical for diagnosing missing-binary issues.
 	executil.DumpPATH()
@@ -577,11 +577,11 @@ func DumpDebugState(failedStep string) {
 	for _, env := range os.Environ() {
 		if strings.HasPrefix(env, "BOOTY_") || strings.HasPrefix(env, "MODE=") ||
 			strings.HasPrefix(env, "NETWORK_MODE=") {
-			slog.Error("DEBUG env", "var", env)
+			slog.Warn("debug env", "var", env)
 		}
 	}
 
-	slog.Error("=== DEBUG DUMP END ===", "failedStep", failedStep)
+	slog.Warn("=== DEBUG DUMP END ===", "failedStep", failedStep)
 }
 
 // hasBinary reports whether the named binary exists in PATH.
@@ -612,7 +612,7 @@ func frrDebugCmds(_ string) {
 // GoBGP runs in-process so there is no CLI to query; instead we dump
 // kernel state that reflects what the GoBGP stack has programmed.
 func gobgpDebugCmds() {
-	slog.Error("DEBUG", "label", "network-mode", "data", "GoBGP (in-process, no vtysh)")
+	slog.Warn("debug", "label", "network-mode", "data", "GoBGP (in-process, no vtysh)")
 	cmds := []debugCmd{
 		// VRF state — GoBGP programs routes into a VRF.
 		{"vrf devices", "ip -d link show type vrf"},
@@ -649,12 +649,12 @@ func runDebugCmd(label, cmd string) {
 	if trimmed != "" {
 		for _, line := range strings.Split(trimmed, "\n") {
 			if line != "" {
-				slog.Error("DEBUG", "label", label, "data", line)
+				slog.Warn("debug", "label", label, "data", line)
 			}
 		}
 	}
 	if err != nil {
-		slog.Error("Debug command failed", "label", label, "cmd", cmd, "error", err)
+		slog.Warn("debug command failed", "label", label, "cmd", cmd, "error", err)
 	}
 }
 
@@ -725,7 +725,7 @@ func dumpConfig(cfg *config.MachineConfig) {
 	if cfg == nil {
 		return
 	}
-	slog.Error("=== CONFIG DUMP ===",
+	slog.Warn("=== CONFIG DUMP ===",
 		"hostname", cfg.Hostname,
 		"mode", cfg.Mode,
 		"images", redactURLs(cfg.ImageURLs),
