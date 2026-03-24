@@ -254,6 +254,9 @@ func runCAPRF(ctx context.Context) {
 				break
 			}
 			slog.Error("Provisioning failed", "error", err)
+			if setupErr := rescue.Setup(ctx, rescueCfg); setupErr != nil {
+				slog.Warn("Rescue setup error", "error", setupErr)
+			}
 			action := rescue.Decide(rescueCfg, &retryState)
 			slog.Info("Rescue action", "type", action.Type, "message", action.Message)
 			switch action.Type {
@@ -713,6 +716,9 @@ func runStandby(ctx context.Context, client config.Provider, cfg *config.Machine
 							break
 						}
 						slog.Error("Hot provision failed", "error", provErr)
+						if setupErr := rescue.Setup(ctx, rescueCfg); setupErr != nil {
+							slog.Warn("Rescue setup error", "error", setupErr)
+						}
 						action := rescue.Decide(rescueCfg, &retryState)
 						slog.Info("Rescue action", "type", action.Type, "message", action.Message)
 						switch action.Type {

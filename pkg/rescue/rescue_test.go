@@ -1,6 +1,7 @@
 package rescue
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -221,5 +222,65 @@ func TestDecide_CfgMaxRetriesOverridesState(t *testing.T) {
 	}
 	if state.MaxRetries != 5 {
 		t.Errorf("state.MaxRetries = %d, want 5", state.MaxRetries)
+	}
+}
+
+func TestSetup_SkipsNonInteractiveModes(t *testing.T) {
+	t.Helper()
+	tests := []struct {
+		name string
+		mode Mode
+	}{
+		{"reboot mode skips setup", ModeReboot},
+		{"retry mode skips setup", ModeRetry},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{
+				Mode:         tc.mode,
+				SSHKeys:      []string{"ssh-rsa AAAA..."},
+				PasswordHash: "$6$rounds=4096$salt$hash",
+			}
+			// Should return nil immediately without touching filesystem.
+			if err := Setup(context.Background(), cfg); err != nil {
+				t.Errorf("Setup() err = %v, want nil", err)
+			}
+		})
+	}
+}
+
+func TestConfig_NewFieldsPreserved(t *testing.T) {
+	cfg := &Config{
+		Mode:           ModeShell,
+		SSHKeys:        []string{"ssh-rsa key1", "ssh-ed25519 key2"},
+		PasswordHash:   "$6$rounds=4096$salt$hash",
+		AutoMountDisks: true,
+		ShellTimeout:   5 * time.Minute,
+	}
+	cfg.ApplyDefaults()
+
+	if len(cfg.SSHKeys) != 2 {
+		t.Errorf("SSHKeys length = %d, want 2", len(cfg.SSHKeys))
+	}
+	if cfg.PasswordHash != "$6$rounds=4096$salt$hash" {
+		t.Errorf("PasswordHash = %q", cfg.PasswordHash)
+	}
+	if !cfg.AutoMountDisks {
+		t.Error("AutoMountDisks should be true")
+	}
+	if cfg.ShellTimeout != 5*time.Minute {
+		t.Errorf("ShellTimeout = %v, want 5m", cfg.ShellTimeout)
+	}
+}
+
+func TestSetupSSHKeys_Empty(t *testing.T) {
+	if err := setupSSHKeys(nil); err != nil {
+		t.Errorf("setupSSHKeys(nil) = %v", err)
+	}
+}
+
+func TestSetupPasswordHash_Empty(t *testing.T) {
+	if err := setupPasswordHash(""); err != nil {
+		t.Errorf("setupPasswordHash(\"\") = %v", err)
 	}
 }

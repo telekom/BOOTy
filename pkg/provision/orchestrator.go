@@ -80,6 +80,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"wipe-disks", o.wipeOrSecureEraseDisks},
 		{"detect-disk", o.detectDisk},
 		{"stream-image", o.streamImage},
+		{"verify-image", o.verifyImageSignature},
 		{"partprobe", o.partprobe},
 		{"parse-partitions", o.parsePartitions},
 		{"check-filesystem", o.checkFilesystem},
@@ -197,6 +198,14 @@ func (o *Orchestrator) RescueConfig() *rescue.Config {
 			cfg.Mode = mode
 		}
 	}
+	if o.cfg.RescueSSHPubKey != "" {
+		cfg.SSHKeys = []string{o.cfg.RescueSSHPubKey}
+	}
+	cfg.PasswordHash = o.cfg.RescuePasswordHash
+	if o.cfg.RescueTimeout > 0 {
+		cfg.ShellTimeout = time.Duration(o.cfg.RescueTimeout) * time.Second
+	}
+	cfg.AutoMountDisks = o.cfg.RescueAutoMountDisks
 	cfg.ApplyDefaults()
 	return cfg
 }
@@ -362,6 +371,11 @@ func (o *Orchestrator) detectDisk(ctx context.Context) error {
 }
 
 func (o *Orchestrator) streamImage(ctx context.Context) error {
+	bestURL, err := image.SelectBestSource(ctx, o.cfg.ImageURLs)
+	if err != nil {
+		return fmt.Errorf("selecting image source: %w", err)
+	}
+
 	var opts []image.StreamOpts
 	if o.cfg.ImageChecksum != "" {
 		opts = append(opts, image.StreamOpts{
@@ -369,13 +383,24 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 			ChecksumType: o.cfg.ImageChecksumType,
 		})
 	}
-	for _, imgURL := range o.cfg.ImageURLs {
-		o.log.Info("Streaming image", "url", imgURL, "disk", o.targetDisk)
-		if err := image.Stream(ctx, imgURL, o.targetDisk, opts...); err != nil {
-			return fmt.Errorf("streaming %s: %w", imgURL, err)
-		}
+
+	o.log.Info("Streaming image", "url", bestURL, "disk", o.targetDisk)
+	if err := image.Stream(ctx, bestURL, o.targetDisk, opts...); err != nil {
+		return fmt.Errorf("streaming %s: %w", bestURL, err)
 	}
 	return nil
+}
+
+func (o *Orchestrator) verifyImageSignature(ctx context.Context) error {
+	if o.cfg.ImageSignatureURL == "" {
+		o.log.Info("No image signature URL configured, skipping verification")
+		return nil
+	}
+	if o.cfg.ImageGPGPubKey == "" {
+		return fmt.Errorf("image signature URL set but no GPG public key path configured")
+	}
+
+	return image.VerifyGPGSignature(ctx, o.cfg.ImageURLs[0], o.cfg.ImageSignatureURL, o.cfg.ImageGPGPubKey)
 }
 
 func (o *Orchestrator) partprobe(ctx context.Context) error {

@@ -5,7 +5,7 @@ Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, orch
 ## Architecture
 
 - `cmd/` — CLI entry point (Cobra)
-- `pkg/provision/` — 31-step provisioning orchestrator
+- `pkg/provision/` — 32-step provisioning orchestrator
 - `pkg/config/` — MachineConfig, Provider interface, Status types
 - `pkg/network/` — Pluggable networking: DHCP, static, FRR/EVPN, GoBGP, LACP bonds
 - `pkg/network/gobgp/` — Pure-Go BGP stack (underlay eBGP + overlay EVPN), three peering modes: unnumbered, dual, numbered; processes received Type-2/3 routes to install FDB entries via `watchRoutes()`

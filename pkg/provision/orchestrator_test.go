@@ -31,8 +31,8 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 31 {
-		t.Fatalf("expected 31 provisioning steps, got %d", len(steps))
+	if len(steps) != 32 {
+		t.Fatalf("expected 32 provisioning steps, got %d", len(steps))
 	}
 }
 
@@ -374,5 +374,76 @@ func TestLoadOrCreateCheckpoint(t *testing.T) {
 				t.Errorf("persist = %v, want %v", cp.persist, tc.wantPersist)
 			}
 		})
+	}
+}
+
+func TestRescueConfig_WiresAllFields(t *testing.T) {
+	cfg := &config.MachineConfig{
+		RescueMode:           "shell",
+		RescueSSHPubKey:      "ssh-ed25519 AAAA...",
+		RescuePasswordHash:   "$6$rounds=4096$salt$hash",
+		RescueTimeout:        120,
+		RescueAutoMountDisks: true,
+	}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+	rc := o.RescueConfig()
+
+	if rc.Mode != "shell" {
+		t.Errorf("Mode = %q, want shell", rc.Mode)
+	}
+	if len(rc.SSHKeys) != 1 || rc.SSHKeys[0] != "ssh-ed25519 AAAA..." {
+		t.Errorf("SSHKeys = %v, want [ssh-ed25519 AAAA...]", rc.SSHKeys)
+	}
+	if rc.PasswordHash != "$6$rounds=4096$salt$hash" {
+		t.Errorf("PasswordHash = %q", rc.PasswordHash)
+	}
+	if rc.ShellTimeout.Seconds() != 120 {
+		t.Errorf("ShellTimeout = %v, want 2m", rc.ShellTimeout)
+	}
+	if !rc.AutoMountDisks {
+		t.Error("AutoMountDisks should be true")
+	}
+}
+
+func TestRescueConfig_DefaultsApplied(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+	rc := o.RescueConfig()
+
+	if rc.Mode != "reboot" {
+		t.Errorf("Mode = %q, want reboot", rc.Mode)
+	}
+	if rc.RetryDelay == 0 {
+		t.Error("RetryDelay should have a default")
+	}
+	if rc.ShellTimeout == 0 {
+		t.Error("ShellTimeout should have a default")
+	}
+}
+
+func TestVerifyImageSignature_Skipped(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	// No signature URL → should skip without error.
+	if err := o.verifyImageSignature(context.Background()); err != nil {
+		t.Errorf("expected nil, got %v", err)
+	}
+}
+
+func TestVerifyImageSignature_MissingPubKey(t *testing.T) {
+	cfg := &config.MachineConfig{
+		ImageSignatureURL: "https://example.com/image.sig",
+		ImageGPGPubKey:    "",
+	}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	err := o.verifyImageSignature(context.Background())
+	if err == nil {
+		t.Error("expected error for missing pub key")
 	}
 }
