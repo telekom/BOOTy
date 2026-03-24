@@ -396,6 +396,11 @@ func (m *Manager) PartProbe(ctx context.Context, disk string) error {
 			return fmt.Errorf("re-read partition table %s: %s: %w", disk, string(out), err)
 		}
 	}
+	// Brief settle time for the kernel to populate /sys/block/ partition entries
+	// after BLKRRPART ioctl. On QEMU/KVM virtio disks the partition scan can be
+	// asynchronous and /sys entries may not exist immediately.
+	time.Sleep(200 * time.Millisecond)
+
 	// Trigger device node creation for partitions. In initramfs environments
 	// without udevd, devtmpfs may not auto-create partition nodes after the
 	// kernel re-reads the partition table. mdev -s scans /sys and creates
@@ -436,12 +441,22 @@ func (m *Manager) MountPartition(ctx context.Context, device, mountpoint string)
 }
 
 // waitForDevice polls for a device node to appear, retrying up to 10 seconds.
+// On each iteration, runs mdev -s to trigger device node creation in initramfs
+// environments without udevd, where the kernel may update /sys/block/ partition
+// entries asynchronously after BLKRRPART.
 // Respects context cancellation for clean shutdown.
 func waitForDevice(ctx context.Context, device string) error {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
 	for range 20 {
+		if _, err := os.Stat(device); err == nil {
+			return nil
+		}
+		// Trigger device node creation from /sys entries that may have appeared
+		// since the last poll. mdev -s is fast (~10ms) and idempotent.
+		//nolint:gosec // mdev is a fixed busybox command, no user input
+		_ = exec.CommandContext(ctx, "mdev", "-s").Run()
 		if _, err := os.Stat(device); err == nil {
 			return nil
 		}
