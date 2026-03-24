@@ -275,6 +275,9 @@ func startDropbear(ctx context.Context) error {
 		return fmt.Errorf("starting dropbear: %w", err)
 	}
 
+	// Reap the child process in the background to avoid zombies (BOOTy is PID 1).
+	go func() { _ = cmd.Wait() }()
+
 	fmt.Printf("SSH daemon started on port 22 (PID %d)\n", cmd.Process.Pid) //nolint:forbidigo // rescue mode output
 	return nil
 }

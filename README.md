@@ -31,7 +31,7 @@ BOOTy boots as the init process inside a minimal initramfs, contacts a provision
 1. A Redfish BMC mounts an ISO containing a kernel, BOOTy initramfs, and `/deploy/vars` config.
 2. BOOTy reads `/deploy/vars` for machine config, image URLs, and CAPRF server endpoints.
 3. Network connectivity is established via **FRR/EVPN** (BGP underlay) or **DHCP** fallback.
-4. The provisioning pipeline runs 32 steps: status reporting → RAID cleanup → disk detection → EFI setup → image streaming → signature verification → partition management → OS configuration → kexec.
+4. The provisioning pipeline runs 32 steps: status reporting → RAID cleanup → disk detection → EFI setup → image verification (signature/checksum) → image streaming → partition management → OS configuration → kexec.
 5. Status, logs, and debug info are shipped back to the CAPRF controller throughout.
 
 ## Features

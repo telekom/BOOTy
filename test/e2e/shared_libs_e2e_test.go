@@ -1,4 +1,4 @@
-//go:build e2e_build
+//go:build e2e
 
 package e2e
 
@@ -41,7 +41,13 @@ func buildStageImage(t *testing.T, stage string) string {
 // reported as "not found".
 func lddCheck(t *testing.T, image, binary string) []string {
 	t.Helper()
-	args := []string{"run", "--rm", "--entrypoint", "", image, "ldd", binary}
+	// Set LD_LIBRARY_PATH so ldd can find libs copied into the initramfs workdir.
+	// The Dockerfile copies shared libraries with --parents, preserving their
+	// /lib/... and /usr/lib/... paths under /build/initramfs/.
+	ldPaths := "/build/initramfs/lib:/build/initramfs/usr/lib:" +
+		"/build/initramfs/lib/x86_64-linux-gnu:/build/initramfs/usr/lib/x86_64-linux-gnu"
+	args := []string{"run", "--rm", "--entrypoint", "",
+		"-e", "LD_LIBRARY_PATH=" + ldPaths, image, "ldd", binary}
 	cmd := exec.Command("docker", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

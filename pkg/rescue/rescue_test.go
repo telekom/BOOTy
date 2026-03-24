@@ -226,7 +226,6 @@ func TestDecide_CfgMaxRetriesOverridesState(t *testing.T) {
 }
 
 func TestSetup_SkipsNonInteractiveModes(t *testing.T) {
-	t.Helper()
 	tests := []struct {
 		name string
 		mode Mode

@@ -1,4 +1,4 @@
-//go:build e2e_build
+//go:build e2e
 
 package e2e
 
@@ -422,7 +422,7 @@ func TestDefaultContainsKernelModulesE2E(t *testing.T) {
 	// At least one .ko or .ko.zst file should exist under lib/modules/
 	hasModules := false
 	for path := range files {
-		if strings.HasPrefix(path, "lib/modules/") &&
+		if strings.HasPrefix(path, "modules/") &&
 			(strings.HasSuffix(path, ".ko") || strings.HasSuffix(path, ".ko.zst") ||
 				strings.HasSuffix(path, ".ko.xz") || strings.HasSuffix(path, ".ko.gz")) {
 			hasModules = true
@@ -430,7 +430,7 @@ func TestDefaultContainsKernelModulesE2E(t *testing.T) {
 		}
 	}
 	if !hasModules {
-		t.Error("no kernel modules found under lib/modules/ in default initramfs")
+		t.Error("no kernel modules found under modules/ in default initramfs")
 	}
 }
 
@@ -508,7 +508,7 @@ func TestGoBGPContainsKernelModulesE2E(t *testing.T) {
 
 	hasModules := false
 	for path := range files {
-		if strings.HasPrefix(path, "lib/modules/") &&
+		if strings.HasPrefix(path, "modules/") &&
 			(strings.HasSuffix(path, ".ko") || strings.HasSuffix(path, ".ko.zst") ||
 				strings.HasSuffix(path, ".ko.xz") || strings.HasSuffix(path, ".ko.gz")) {
 			hasModules = true
@@ -516,7 +516,7 @@ func TestGoBGPContainsKernelModulesE2E(t *testing.T) {
 		}
 	}
 	if !hasModules {
-		t.Error("no kernel modules found under lib/modules/ in gobgp initramfs")
+		t.Error("no kernel modules found under modules/ in gobgp initramfs")
 	}
 }
 

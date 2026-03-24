@@ -69,7 +69,7 @@ func TestRunGPGVerifyStream_NoBinaryAvailable(t *testing.T) {
 	defer func() { _ = os.Setenv("PATH", origPath) }()
 
 	err := runGPGVerifyStream(context.Background(), "/tmp/key", "/tmp/sig", strings.NewReader("dummy"))
-	if err != nil {
-		t.Errorf("should succeed with warning when no GPG binary, got %v", err)
+	if err == nil {
+		t.Error("expected error when no GPG binary is available")
 	}
 }

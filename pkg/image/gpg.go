@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // VerifyGPGSignature downloads a detached GPG signature from sigURL and
@@ -39,6 +40,10 @@ func VerifyGPGSignature(ctx context.Context, imageURL, sigURL, pubKeyPath string
 // verifyWithStream opens an HTTP stream for the image and pipes it into
 // gpgv/gpg --verify via stdin, avoiding a full download to disk/tmpfs.
 func verifyWithStream(ctx context.Context, imageURL, keyring, sigFile string) error {
+	if strings.HasPrefix(imageURL, "oci://") {
+		return fmt.Errorf("GPG signature verification is not supported for OCI images (%s)", imageURL)
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("creating image request: %w", err)
@@ -96,7 +101,11 @@ func runGPGVerifyStream(ctx context.Context, keyring, sigFile string, data io.Re
 		cmd.Stdin = data
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("gpgv verification failed: %w\noutput: %s", err, string(out))
+			output := strings.ReplaceAll(strings.TrimSpace(string(out)), "\n", " | ")
+			if len(output) > 256 {
+				output = output[:256] + "..."
+			}
+			return fmt.Errorf("gpgv verification failed: %w (output: %s)", err, output)
 		}
 		slog.Info("GPG signature verified successfully (gpgv)")
 		return nil
@@ -109,12 +118,15 @@ func runGPGVerifyStream(ctx context.Context, keyring, sigFile string, data io.Re
 		cmd.Stdin = data
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("gpg signature verification failed: %w\noutput: %s", err, string(out))
+			output := strings.ReplaceAll(strings.TrimSpace(string(out)), "\n", " | ")
+			if len(output) > 256 {
+				output = output[:256] + "..."
+			}
+			return fmt.Errorf("gpg signature verification failed: %w (output: %s)", err, output)
 		}
 		slog.Info("GPG signature verified successfully (gpg)")
 		return nil
 	}
 
-	slog.Warn("Neither gpgv nor gpg available, skipping signature verification")
-	return nil
+	return fmt.Errorf("gpg tools not available: neither gpgv nor gpg found in PATH")
 }

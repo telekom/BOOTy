@@ -406,6 +406,11 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 
 func (o *Orchestrator) verifyImageSignature(ctx context.Context) error {
 	// Resolve the best image URL so stream-image reuses the same source.
+	// NOTE: This step streams the image content for GPG verification. The
+	// subsequent stream-image step downloads the same URL again. This is an
+	// intentional tradeoff: signature verification must complete before
+	// writing to disk, and piping the same stream into both GPG and the
+	// block device would require buffering multi-GB images in memory.
 	bestURL, err := image.SelectBestSource(ctx, o.cfg.ImageURLs)
 	if err != nil {
 		// If signature verification is not configured, URL resolution failures
