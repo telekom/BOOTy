@@ -649,6 +649,7 @@ and the PR process.
 │   │   ├── gobgp/             # Pure-Go BGP stack (3-tier: Underlay, Overlay, IPMI)
 │   │   ├── lldp/              # LLDP frame listener (raw AF_PACKET sockets)
 │   │   ├── netplan/           # Netplan YAML + FRR config parser for EVPN auto-detection
+│   │   ├── persist/           # Network configuration persistence across reboots
 │   │   └── vlan/              # VLAN 802.1Q tagging via netlink
 │   ├── provision/              # Orchestrator (31-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
