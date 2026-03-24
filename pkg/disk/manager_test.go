@@ -116,6 +116,25 @@ func TestParsePartitionsError(t *testing.T) {
 	}
 }
 
+func TestParsePartitionsNoPartitionTable(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+
+	// sfdisk reports "does not contain a recognized partition table" for empty disks.
+	// ParsePartitions should return nil (empty list), not an error.
+	cmd.setResult("sfdisk --json",
+		[]byte("sfdisk: /dev/loop0: does not contain a recognized partition table"),
+		fmt.Errorf("exec sfdisk: exit status 1"),
+	)
+	parts, err := mgr.ParsePartitions(context.Background(), "/dev/loop0")
+	if err != nil {
+		t.Fatalf("expected nil error for empty partition table, got: %v", err)
+	}
+	if len(parts) != 0 {
+		t.Errorf("expected 0 partitions, got %d", len(parts))
+	}
+}
+
 func TestParsePartitionsInvalidJSON(t *testing.T) {
 	cmd := newMockCommander()
 	mgr := NewManager(cmd)
@@ -283,6 +302,58 @@ func TestIsExecNotFound(t *testing.T) {
 	}
 	if isExecNotFound(fmt.Errorf("some other error")) {
 		t.Error("expected false for unrelated error")
+	}
+}
+
+func TestIsBashNotFound(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"bash missing in chroot", fmt.Errorf("exec chroot: exit status 127 [output: chroot: can't execute '/bin/bash': No such file or directory]"), true},
+		{"exit 127 without no such file", fmt.Errorf("exit status 127"), false},
+		{"no such file without 127", fmt.Errorf("No such file or directory"), false},
+		{"normal error", fmt.Errorf("exec chroot: exit status 1"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isBashNotFound(tt.err); got != tt.want {
+				t.Errorf("isBashNotFound() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestChrootRunBashNotFoundFallsBackToSh(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+
+	// Simulate bash not found inside chroot (exit status 127).
+	bashErr := fmt.Errorf("exec chroot: exit status 127 [output: chroot: can't execute '/bin/bash': No such file or directory]")
+	cmd.setResult("chroot /newroot", nil, bashErr)
+
+	// The fallback /bin/sh call uses the same mock key, so it also errors.
+	// We verify that isBashNotFound triggers and /bin/sh is attempted.
+	_, _ = mgr.ChrootRun(context.Background(), "/newroot", "ls /dev/mst/")
+
+	// Verify both /bin/bash and /bin/sh were attempted.
+	var bashCall, shCall bool
+	for _, c := range cmd.calls {
+		if c.name == "chroot" && len(c.args) >= 2 {
+			switch c.args[1] {
+			case "/bin/bash":
+				bashCall = true
+			case "/bin/sh":
+				shCall = true
+			}
+		}
+	}
+	if !bashCall {
+		t.Error("expected /bin/bash attempt")
+	}
+	if !shCall {
+		t.Error("expected /bin/sh fallback attempt after bash not found")
 	}
 }
 

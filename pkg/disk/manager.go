@@ -294,6 +294,12 @@ func readDiskSizeGB(name string) (int, error) {
 func (m *Manager) ParsePartitions(ctx context.Context, disk string) ([]Partition, error) {
 	out, err := m.cmd.Run(ctx, "sfdisk", "--json", disk)
 	if err != nil {
+		// A disk with no partition table is not an error — return empty list
+		// so the caller can decide what to do (e.g. create partitions).
+		if strings.Contains(string(out), "does not contain a recognized partition table") {
+			slog.Warn("disk has no partition table", "disk", disk)
+			return nil, nil
+		}
 		return nil, fmt.Errorf("sfdisk %s: %w", disk, err)
 	}
 
@@ -490,10 +496,15 @@ func (m *Manager) EnableLVM(ctx context.Context) error {
 func (m *Manager) ChrootRun(ctx context.Context, root, command string) ([]byte, error) {
 	out, err := m.cmd.Run(ctx, "chroot", root, "/bin/bash", "-c", command)
 	if err != nil {
-		// If chroot binary is missing, fall back to syscall-based chroot.
+		// If chroot binary itself is missing, fall back to syscall-based chroot.
 		if isExecNotFound(err) {
 			slog.Info("chroot binary not found, using syscall fallback", "root", root)
 			return m.chrootSyscall(ctx, root, command)
+		}
+		// If /bin/bash is missing inside the chroot target, try /bin/sh.
+		if isBashNotFound(err) {
+			slog.Info("bash not found in chroot, trying /bin/sh", "root", root)
+			return m.cmd.Run(ctx, "chroot", root, "/bin/sh", "-c", command)
 		}
 		return out, fmt.Errorf("chroot exec in %s: %w", root, err)
 	}
@@ -526,6 +537,14 @@ func isExecNotFound(err error) bool {
 	}
 	// The Commander wraps errors, so also check the message.
 	return strings.Contains(err.Error(), "executable file not found")
+}
+
+// isBashNotFound checks whether the error indicates /bin/bash was not found
+// inside a chroot target (exit status 127 with "No such file or directory").
+func isBashNotFound(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "exit status 127") &&
+		strings.Contains(msg, "No such file or directory")
 }
 
 // SetupChrootBindMounts creates standard bind mounts for chroot operations.

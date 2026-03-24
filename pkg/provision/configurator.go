@@ -224,7 +224,12 @@ func (c *Configurator) ConfigureDNS(cfg *config.MachineConfig) error {
 	if cfg.DNSResolvers == "" {
 		return nil
 	}
-	path := filepath.Join(c.rootDir, "etc", "resolv.conf")
+	etcDir := filepath.Join(c.rootDir, "etc")
+	if _, err := os.Stat(etcDir); os.IsNotExist(err) {
+		slog.Warn("root /etc/ not mounted, skipping DNS configuration", "path", etcDir)
+		return nil
+	}
+	path := filepath.Join(etcDir, "resolv.conf")
 	slog.Info("Configuring DNS", "resolvers", cfg.DNSResolvers)
 	var lines []string
 	for _, r := range strings.Split(cfg.DNSResolvers, ",") {

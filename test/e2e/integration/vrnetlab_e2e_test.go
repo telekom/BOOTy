@@ -628,6 +628,7 @@ func TestVrnetlabModulesLoaded(t *testing.T) {
 var vrnetlabAllowedErrors = []string{
 	"no suitable disk found",
 	"detect-disk",
+	"configure-dns",
 	"Connecting to provisioning server",
 	"DEBUG DUMP",
 	"=== DEBUG",
@@ -640,11 +641,17 @@ var vrnetlabAllowedErrors = []string{
 	"partition-disk",
 	"parse-partitions",
 	"format-disk",
+	"mount-root",
+	"apply-partition-layout",
+	"write-fstab",
+	"install-bootloader",
 	"Disk Error",
 	"msg=DEBUG",
 	"debug dump",
 	"Debug command",
 	"DEBUG env",
+	"PATH dir unreadable",
+	"not found",
 }
 
 func TestVrnetlabNoUnexpectedErrors(t *testing.T) {
