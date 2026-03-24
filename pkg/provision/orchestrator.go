@@ -48,7 +48,8 @@ type Orchestrator struct {
 	targetDisk      string
 	rootPartition   string
 	bootPartition   string
-	firmwareChanged bool // true if any step changed firmware values requiring hard reboot
+	bestImageURL    string // resolved by verify-image, reused by stream-image
+	firmwareChanged bool   // true if any step changed firmware values requiring hard reboot
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
@@ -79,8 +80,8 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"setup-mellanox", o.setupMellanox},
 		{"wipe-disks", o.wipeOrSecureEraseDisks},
 		{"detect-disk", o.detectDisk},
-		{"stream-image", o.streamImage},
 		{"verify-image", o.verifyImageSignature},
+		{"stream-image", o.streamImage},
 		{"partprobe", o.partprobe},
 		{"parse-partitions", o.parsePartitions},
 		{"check-filesystem", o.checkFilesystem},
@@ -371,22 +372,15 @@ func (o *Orchestrator) detectDisk(ctx context.Context) error {
 }
 
 func (o *Orchestrator) streamImage(ctx context.Context) error {
+	bestURL := o.bestImageURL
+
 	// Partition-by-partition mode: download to ramdisk, copy each partition individually.
 	if strings.EqualFold(o.cfg.ImageMode, "partition") {
-		bestURL, err := image.SelectBestSource(ctx, o.cfg.ImageURLs)
-		if err != nil {
-			return fmt.Errorf("selecting image source: %w", err)
-		}
 		o.log.Info("Streaming image partition-by-partition", "url", bestURL, "disk", o.targetDisk)
 		return image.StreamPartitions(ctx, bestURL, o.targetDisk)
 	}
 
 	// Default whole-disk mode.
-	bestURL, err := image.SelectBestSource(ctx, o.cfg.ImageURLs)
-	if err != nil {
-		return fmt.Errorf("selecting image source: %w", err)
-	}
-
 	var opts []image.StreamOpts
 	if o.cfg.ImageChecksum != "" {
 		opts = append(opts, image.StreamOpts{
@@ -403,6 +397,13 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 }
 
 func (o *Orchestrator) verifyImageSignature(ctx context.Context) error {
+	// Resolve the best image URL so stream-image reuses the same source.
+	bestURL, err := image.SelectBestSource(ctx, o.cfg.ImageURLs)
+	if err != nil {
+		return fmt.Errorf("selecting image source: %w", err)
+	}
+	o.bestImageURL = bestURL
+
 	if o.cfg.ImageSignatureURL == "" {
 		o.log.Info("No image signature URL configured, skipping verification")
 		return nil
@@ -411,7 +412,7 @@ func (o *Orchestrator) verifyImageSignature(ctx context.Context) error {
 		return fmt.Errorf("image signature URL set but no GPG public key path configured")
 	}
 
-	return image.VerifyGPGSignature(ctx, o.cfg.ImageURLs[0], o.cfg.ImageSignatureURL, o.cfg.ImageGPGPubKey)
+	return image.VerifyGPGSignature(ctx, bestURL, o.cfg.ImageSignatureURL, o.cfg.ImageGPGPubKey)
 }
 
 func (o *Orchestrator) partprobe(ctx context.Context) error {

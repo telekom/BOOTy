@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -61,13 +62,13 @@ func TestDownloadToTemp_ServerError(t *testing.T) {
 	}
 }
 
-func TestRunGPGVerify_NoBinaryAvailable(t *testing.T) {
+func TestRunGPGVerifyStream_NoBinaryAvailable(t *testing.T) {
 	// Save and clear PATH so neither gpgv nor gpg is found.
 	origPath := os.Getenv("PATH")
 	t.Setenv("PATH", "/nonexistent")
 	defer func() { _ = os.Setenv("PATH", origPath) }()
 
-	err := runGPGVerify(context.Background(), "/tmp/key", "/tmp/sig", "/tmp/data")
+	err := runGPGVerifyStream(context.Background(), "/tmp/key", "/tmp/sig", strings.NewReader("dummy"))
 	if err != nil {
 		t.Errorf("should succeed with warning when no GPG binary, got %v", err)
 	}

@@ -238,12 +238,15 @@ func teardownLoopDevice(ctx context.Context, dev string) {
 
 // ddPartition copies data from src partition device to dst partition device.
 func ddPartition(ctx context.Context, src, dst string) error {
-	cmd := exec.CommandContext(ctx, "dd",
+	cmd := exec.CommandContext(ctx, "dd", //nolint:gosec // controlled device paths from partition table
 		"if="+src, "of="+dst, "bs=4M", "conv=fsync", "status=progress",
-	) //nolint:gosec // controlled device paths from partition table
+	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("dd %s to %s: %w", src, dst, err)
+	}
+	return nil
 }
 
 // targetPartitionNode derives the partition device node for a given disk and
@@ -260,5 +263,9 @@ func targetPartitionNode(disk string, partNum int) string {
 // runCmd executes a command and returns its combined output.
 func runCmd(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // controlled arguments
-	return cmd.CombinedOutput()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return out, fmt.Errorf("%s: %w", name, err)
+	}
+	return out, nil
 }

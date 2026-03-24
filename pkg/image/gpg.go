@@ -14,7 +14,8 @@ import (
 // VerifyGPGSignature downloads a detached GPG signature from sigURL and
 // verifies it against the image at imageURL using the public key at
 // pubKeyPath. It uses gpgv (preferred) or gpg --verify as fallback.
-// The image is downloaded to a temporary file for verification.
+// The image body is streamed directly into GPG's stdin to avoid storing
+// multi-GB images in memory.
 func VerifyGPGSignature(ctx context.Context, imageURL, sigURL, pubKeyPath string) error {
 	slog.Info("Verifying image GPG signature",
 		"image", filepath.Base(imageURL),
@@ -32,13 +33,28 @@ func VerifyGPGSignature(ctx context.Context, imageURL, sigURL, pubKeyPath string
 	}
 	defer func() { _ = os.Remove(sigFile) }()
 
-	imgFile, err := downloadToTemp(ctx, imageURL, "booty-img-*")
-	if err != nil {
-		return fmt.Errorf("downloading image for verification: %w", err)
-	}
-	defer func() { _ = os.Remove(imgFile) }()
+	return verifyWithStream(ctx, imageURL, pubKeyPath, sigFile)
+}
 
-	return runGPGVerify(ctx, pubKeyPath, sigFile, imgFile)
+// verifyWithStream opens an HTTP stream for the image and pipes it into
+// gpgv/gpg --verify via stdin, avoiding a full download to disk/tmpfs.
+func verifyWithStream(ctx context.Context, imageURL, keyring, sigFile string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, http.NoBody)
+	if err != nil {
+		return fmt.Errorf("creating image request: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // URL from trusted config
+	if err != nil {
+		return fmt.Errorf("streaming image for verification: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("image download for verification: status %d", resp.StatusCode)
+	}
+
+	return runGPGVerifyStream(ctx, keyring, sigFile, resp.Body)
 }
 
 // downloadToTemp downloads a URL to a temporary file and returns the path.
@@ -71,11 +87,13 @@ func downloadToTemp(ctx context.Context, rawURL, pattern string) (string, error)
 	return f.Name(), nil
 }
 
-// runGPGVerify executes gpgv or gpg --verify to check the detached signature.
-func runGPGVerify(ctx context.Context, keyring, sigFile, dataFile string) error {
+// runGPGVerifyStream executes gpgv or gpg --verify with the image data piped
+// via stdin (using "-" as the data file argument) to avoid writing to disk.
+func runGPGVerifyStream(ctx context.Context, keyring, sigFile string, data io.Reader) error {
 	// Prefer gpgv (lightweight, no keyring management).
-	if path, err := exec.LookPath("gpgv"); err == nil {
-		cmd := exec.CommandContext(ctx, path, "--keyring", keyring, sigFile, dataFile)
+	if binPath, err := exec.LookPath("gpgv"); err == nil {
+		cmd := exec.CommandContext(ctx, binPath, "--keyring", keyring, sigFile, "-")
+		cmd.Stdin = data
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("gpgv verification failed: %w\noutput: %s", err, string(out))
@@ -85,9 +103,10 @@ func runGPGVerify(ctx context.Context, keyring, sigFile, dataFile string) error 
 	}
 
 	// Fall back to gpg --verify.
-	if path, err := exec.LookPath("gpg"); err == nil {
-		cmd := exec.CommandContext(ctx, path, "--no-default-keyring",
-			"--keyring", keyring, "--verify", sigFile, dataFile)
+	if binPath, err := exec.LookPath("gpg"); err == nil {
+		cmd := exec.CommandContext(ctx, binPath, "--no-default-keyring",
+			"--keyring", keyring, "--verify", sigFile, "-")
+		cmd.Stdin = data
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("gpg signature verification failed: %w\noutput: %s", err, string(out))
