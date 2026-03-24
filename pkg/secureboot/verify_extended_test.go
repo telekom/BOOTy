@@ -1,8 +1,6 @@
 package secureboot
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/efi"
@@ -29,30 +27,6 @@ func TestChainVerifier_ComponentPresence_AllMissing(t *testing.T) {
 	for name, found := range names {
 		if !found {
 			t.Errorf("missing component %q in results", name)
-		}
-	}
-}
-
-func TestChainVerifier_ComponentPresence_ShimPresent(t *testing.T) {
-	root := t.TempDir()
-	shimPath := filepath.Join(root, "boot", "efi", "EFI", "BOOT")
-	if err := os.MkdirAll(shimPath, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(shimPath, "BOOTX64.EFI"), []byte("shim"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// ChainVerifier checks absolute paths, so this only works
-	// if the paths match. Since checkComponentPresence uses hardcoded
-	// /boot/efi paths, we test the logic rather than real paths.
-	vars := efi.NewEFIVarReader(root)
-	cv := NewChainVerifier(vars)
-	components := cv.checkComponentPresence()
-	// All should report not found since we can't override the hardcoded paths
-	for _, c := range components {
-		if c.Error == "" {
-			t.Logf("component %q found (running on system with real EFI files)", c.Name)
 		}
 	}
 }

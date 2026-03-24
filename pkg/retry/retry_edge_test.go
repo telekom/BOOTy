@@ -67,14 +67,10 @@ func TestDoContextCancelledDuringWait(t *testing.T) {
 		return errors.New("always fail")
 	})
 	if err == nil {
-		t.Error("expected error")
+		t.Fatal("expected error")
 	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		// Could also be a wrapped "retry canceled" error.
-		if !errors.Is(err, context.DeadlineExceeded) {
-			// Accept "retry canceled: context deadline exceeded" format.
-			t.Logf("error = %v (acceptable)", err)
-		}
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context error, got: %v", err)
 	}
 }
 

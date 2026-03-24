@@ -13,24 +13,6 @@ func TestGetBlockDeviceSize_NotExist(t *testing.T) {
 	}
 }
 
-func TestGetBlockDeviceSize_InvalidContent(t *testing.T) {
-	// Create a mock sysfs file with non-numeric content.
-	tmpDir := t.TempDir()
-	devDir := filepath.Join(tmpDir, "sys", "block", "testdev")
-	if err := os.MkdirAll(devDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(devDir, "size"), []byte("notanumber"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// GetBlockDeviceSize uses hardcoded /sys/block path so we can't override it.
-	// Just test the error path for non-existent devices.
-	_, err := GetBlockDeviceSize("testdev_nonexist")
-	if err == nil {
-		t.Error("expected error")
-	}
-}
-
 func TestClearDir_NonExistent(t *testing.T) {
 	err := ClearDir("/nonexistent/path/cleardir")
 	if err == nil {

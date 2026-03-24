@@ -16,8 +16,8 @@ import (
 const (
 	// ramdiskPath is the tmpfs mount point for qcow2 conversion scratch space.
 	ramdiskPath = "/tmp/booty-ramdisk"
-	// ramdiskSizeOpt is the tmpfs size option — "0" means use all available RAM.
-	ramdiskSizeOpt = "size=0"
+	// ramdiskSizeOpt is the tmpfs size option — bounded to avoid OOM.
+	ramdiskSizeOpt = "size=4G"
 )
 
 func init() {
