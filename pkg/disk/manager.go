@@ -380,12 +380,28 @@ func (m *Manager) ResizeFilesystem(ctx context.Context, device string) error {
 	return nil
 }
 
-// PartProbe re-reads partition table.
+// PartProbe re-reads partition table and triggers device node creation.
+//
+// Calls partprobe first; falls back to blockdev --rereadpt if partprobe fails.
+// After re-reading, runs mdev -s (busybox mini-udev) to ensure partition
+// device nodes are created — devtmpfs alone may not create them in minimal
+// initramfs environments without udevd.
 func (m *Manager) PartProbe(ctx context.Context, disk string) error {
 	slog.Info("Re-reading partition table", "disk", disk)
 	out, err := m.cmd.Run(ctx, "partprobe", disk)
 	if err != nil {
-		return fmt.Errorf("partprobe %s: %s: %w", disk, string(out), err)
+		slog.Warn("partprobe failed, trying blockdev --rereadpt", "disk", disk, "error", err)
+		out, err = m.cmd.Run(ctx, "blockdev", "--rereadpt", disk)
+		if err != nil {
+			return fmt.Errorf("re-read partition table %s: %s: %w", disk, string(out), err)
+		}
+	}
+	// Trigger device node creation for partitions. In initramfs environments
+	// without udevd, devtmpfs may not auto-create partition nodes after the
+	// kernel re-reads the partition table. mdev -s scans /sys and creates
+	// missing device nodes.
+	if mdevOut, mdevErr := m.cmd.Run(ctx, "mdev", "-s"); mdevErr != nil {
+		slog.Debug("mdev -s not available or failed", "error", mdevErr, "output", string(mdevOut))
 	}
 	return nil
 }
@@ -395,7 +411,7 @@ var supportedFilesystems = []string{"ext4", "xfs", "btrfs", "ext3", "ext2", "vfa
 
 // MountPartition mounts a device at the given mountpoint.
 // Tries all supported filesystem types in order: ext4, xfs, btrfs, ext3, ext2, vfat.
-// Waits up to 3 seconds for the device node to appear (devtmpfs may lag after partprobe).
+// Waits up to 10 seconds for the device node to appear (devtmpfs may lag after partprobe).
 func (m *Manager) MountPartition(ctx context.Context, device, mountpoint string) error {
 	slog.Info("Mounting partition", "device", device, "mountpoint", mountpoint)
 
@@ -419,13 +435,13 @@ func (m *Manager) MountPartition(ctx context.Context, device, mountpoint string)
 	return fmt.Errorf("mounting %s at %s: tried %s", device, mountpoint, strings.Join(errs, ", "))
 }
 
-// waitForDevice polls for a device node to appear, retrying up to 3 seconds.
+// waitForDevice polls for a device node to appear, retrying up to 10 seconds.
 // Respects context cancellation for clean shutdown.
 func waitForDevice(ctx context.Context, device string) error {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
-	for range 6 {
+	for range 20 {
 		if _, err := os.Stat(device); err == nil {
 			return nil
 		}
@@ -436,7 +452,7 @@ func waitForDevice(ctx context.Context, device string) error {
 		case <-ticker.C:
 		}
 	}
-	return fmt.Errorf("device %s did not appear after 3s", device)
+	return fmt.Errorf("device %s did not appear after 10s", device)
 }
 
 // BindMount performs a bind mount.

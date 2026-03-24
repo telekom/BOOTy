@@ -420,9 +420,22 @@ func TestPartProbeError(t *testing.T) {
 	cmd := newMockCommander()
 	mgr := NewManager(cmd)
 
+	// Both partprobe and blockdev fallback fail → error expected.
 	cmd.setResult("partprobe /dev/sda", nil, fmt.Errorf("exit 1"))
+	cmd.setResult("blockdev --rereadpt", nil, fmt.Errorf("exit 1"))
 	if err := mgr.PartProbe(context.Background(), "/dev/sda"); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestPartProbeFallback(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+
+	// partprobe fails but blockdev --rereadpt succeeds → no error.
+	cmd.setResult("partprobe /dev/sda", nil, fmt.Errorf("exit 1"))
+	if err := mgr.PartProbe(context.Background(), "/dev/sda"); err != nil {
+		t.Fatalf("expected fallback to succeed: %v", err)
 	}
 }
 
