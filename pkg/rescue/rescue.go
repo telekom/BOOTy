@@ -219,6 +219,9 @@ func setupPasswordHash(hash string) error {
 
 	shadow, err := os.ReadFile("/etc/shadow")
 	if err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("reading shadow: %w", err)
+		}
 		entry := fmt.Sprintf("root:%s:19000:0:99999:7:::\n", hash)
 		if wErr := os.WriteFile("/etc/shadow", []byte(entry), 0o600); wErr != nil {
 			return fmt.Errorf("writing shadow: %w", wErr)

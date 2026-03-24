@@ -25,7 +25,7 @@ func VerifyGPGSignature(ctx context.Context, imageURL, sigURL, pubKeyPath string
 	)
 
 	if _, err := os.Stat(pubKeyPath); err != nil {
-		return fmt.Errorf("GPG public key not found at %s: %w", pubKeyPath, err)
+		return fmt.Errorf("gpg public key not found at %s: %w", pubKeyPath, err)
 	}
 
 	sigFile, err := downloadToTemp(ctx, sigURL, "booty-sig-*.sig")
@@ -41,7 +41,7 @@ func VerifyGPGSignature(ctx context.Context, imageURL, sigURL, pubKeyPath string
 // gpgv/gpg --verify via stdin, avoiding a full download to disk/tmpfs.
 func verifyWithStream(ctx context.Context, imageURL, keyring, sigFile string) error {
 	if strings.HasPrefix(imageURL, "oci://") {
-		return fmt.Errorf("GPG signature verification is not supported for OCI images (%s)", imageURL)
+		return fmt.Errorf("gpg signature verification is not supported for OCI images (%s)", imageURL)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, http.NoBody)

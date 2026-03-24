@@ -49,7 +49,7 @@ BOOTy boots as the init process inside a minimal initramfs, contacts a provision
 - **Filesystem support** — ext2, ext3, ext4, xfs, btrfs, vfat mount/resize
 - **LLDP discovery** — Raw AF_PACKET-based LLDP listener for switch topology discovery
 - **Post-provision hooks** — Execute arbitrary commands in chroot after OS configuration
-- **32-step provisioning pipeline** — RAID cleanup, disk detection, EFI variable setup, image streaming, signature verification, partition growth, LVM, filesystem resize, OS configuration, EFI boot, Mellanox SR-IOV, post-provision hooks
+- **32-step provisioning pipeline** — RAID cleanup, disk detection, EFI variable setup, image verification (signature/checksum), image streaming, partition growth, LVM, filesystem resize, OS configuration, EFI boot, Mellanox SR-IOV, post-provision hooks
 - **Kexec support** — Fast reboot into installed kernel without full BIOS POST (auto-disabled after firmware changes)
 - **Remote logging** — Real-time log and debug shipping to CAPRF controller
 - **Hard/soft deprovisioning** — Full disk wipe or GRUB rename for reprovisioning
