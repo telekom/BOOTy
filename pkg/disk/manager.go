@@ -297,7 +297,7 @@ func (m *Manager) ParsePartitions(ctx context.Context, disk string) ([]Partition
 		// A disk with no partition table is not an error — return empty list
 		// so the caller can decide what to do (e.g. create partitions).
 		if strings.Contains(string(out), "does not contain a recognized partition table") {
-			slog.Warn("disk has no partition table", "disk", disk)
+			slog.Info("disk has no partition table", "disk", disk)
 			return nil, nil
 		}
 		return nil, fmt.Errorf("sfdisk %s: %w", disk, err)

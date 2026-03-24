@@ -131,10 +131,11 @@ func extractTunnels(np *Config, cfg *network.Config) {
 }
 
 func extractDummyDevices(np *Config, cfg *network.Config) {
-	for _, d := range np.Network.DummyDevices {
+	for _, name := range sortedKeys(np.Network.DummyDevices) {
 		if cfg.UnderlayIP != "" {
 			break
 		}
+		d := np.Network.DummyDevices[name]
 		for _, addr := range d.Addresses {
 			if strings.HasSuffix(addr, "/32") {
 				cfg.UnderlayIP = strings.TrimSuffix(addr, "/32")
@@ -260,10 +261,16 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 	if frr.EVPN {
 		cfg.EVPNL2Enabled = true
 	}
-	if len(frr.UnnumberedPeers) > 0 {
+	hasUnnumbered := len(frr.UnnumberedPeers) > 0
+	hasNumbered := len(frr.NumberedPeers) > 0
+
+	switch {
+	case hasUnnumbered && hasNumbered:
+		cfg.BGPPeerMode = network.PeerModeDual
+		cfg.BGPNeighbors = strings.Join(frr.NumberedPeers, ",")
+	case hasUnnumbered:
 		cfg.BGPPeerMode = network.PeerModeUnnumbered
-	}
-	if len(frr.NumberedPeers) > 0 && len(frr.UnnumberedPeers) == 0 {
+	case hasNumbered:
 		cfg.BGPPeerMode = network.PeerModeNumbered
 		cfg.BGPNeighbors = strings.Join(frr.NumberedPeers, ",")
 	}

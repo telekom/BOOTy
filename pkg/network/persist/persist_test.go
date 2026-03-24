@@ -70,6 +70,9 @@ func TestNetworkConfig_Validate(t *testing.T) {
 		{"dhcp and static address conflict", NetworkConfig{
 			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true, Address: "10.0.0.5/24"}},
 		}, true},
+		{"dhcp with gateway rejected", NetworkConfig{
+			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true, Gateway: "10.0.0.1"}},
+		}, true},
 		{"invalid interface mac", NetworkConfig{
 			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true, MAC: "bad-mac"}},
 		}, true},

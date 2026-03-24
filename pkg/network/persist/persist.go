@@ -231,6 +231,9 @@ func validateInterface(i int, iface *InterfaceConfig) error {
 	if iface.DHCP && iface.Address != "" {
 		return fmt.Errorf("interface %q: dhcp and static address are mutually exclusive", iface.Name)
 	}
+	if iface.DHCP && iface.Gateway != "" {
+		return fmt.Errorf("interface %q: gateway is ignored with dhcp, use static address instead", iface.Name)
+	}
 	if !iface.DHCP && iface.Address == "" {
 		return fmt.Errorf("interface %q: address or dhcp required", iface.Name)
 	}

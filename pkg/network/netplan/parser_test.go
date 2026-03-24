@@ -584,6 +584,29 @@ func TestToNetworkConfig_DNSDedup(t *testing.T) {
 
 // --- HasNetplanFiles tests ---
 
+func TestToNetworkConfig_PeerModeDual(t *testing.T) {
+	np := &Config{
+		Network: NetworkSection{
+			Tunnels: map[string]TunnelConfig{
+				"vx100": {Mode: "vxlan", ID: 100, Local: "10.0.0.1"},
+			},
+		},
+	}
+	frr := &FRRParams{
+		ASN:             65001,
+		UnnumberedPeers: []string{"eth0"},
+		NumberedPeers:   []string{"10.0.0.2"},
+		EVPN:            true,
+	}
+	netCfg := ToNetworkConfig(np, frr)
+	if netCfg.BGPPeerMode != network.PeerModeDual {
+		t.Errorf("BGPPeerMode = %q, want dual", netCfg.BGPPeerMode)
+	}
+	if netCfg.BGPNeighbors != "10.0.0.2" {
+		t.Errorf("BGPNeighbors = %q, want 10.0.0.2", netCfg.BGPNeighbors)
+	}
+}
+
 func TestHasNetplanFiles(t *testing.T) {
 	tests := []struct {
 		name  string

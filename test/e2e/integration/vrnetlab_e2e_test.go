@@ -653,7 +653,11 @@ var vrnetlabAllowedErrors = []string{
 	"Debug command",
 	"DEBUG env",
 	"PATH dir unreadable",
-	"not found",
+	"/newroot not found",
+	"/newroot/boot not found",
+	"efibootmgr not available",
+	"dynamic linker not found",
+	"no shared libs found",
 }
 
 func TestVrnetlabNoUnexpectedErrors(t *testing.T) {

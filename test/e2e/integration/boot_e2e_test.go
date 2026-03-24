@@ -559,7 +559,11 @@ var allowedErrorPatterns = []string{
 	"network connectivity timeout",
 	"dumping FRR state",
 	"PATH dir unreadable",
-	"not found",
+	"/newroot not found",
+	"/newroot/boot not found",
+	"efibootmgr not available",
+	"dynamic linker not found",
+	"no shared libs found",
 }
 
 func TestBootNoUnexpectedErrors(t *testing.T) {

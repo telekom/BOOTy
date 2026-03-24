@@ -54,14 +54,25 @@ func DumpPATH() {
 	pathEnv := os.Getenv("PATH")
 	slog.Error("debug dump", "label", "PATH", "data", pathEnv)
 
+	const maxBinsPerDir = 200
 	for _, dir := range filepath.SplitList(pathEnv) {
 		bins, err := listExecutables(dir)
 		if err != nil {
 			slog.Error("debug dump", "label", "PATH dir unreadable", "dir", dir, "error", err)
 			continue
 		}
+		display := bins
+		truncated := false
+		if len(bins) > maxBinsPerDir {
+			display = bins[:maxBinsPerDir]
+			truncated = true
+		}
+		data := strings.Join(display, " ")
+		if truncated {
+			data += fmt.Sprintf(" ...(%d more)", len(bins)-maxBinsPerDir)
+		}
 		slog.Error("debug dump", "label", "PATH binaries", "dir", dir, "count", len(bins),
-			"data", strings.Join(bins, " "))
+			"data", data)
 	}
 }
 
