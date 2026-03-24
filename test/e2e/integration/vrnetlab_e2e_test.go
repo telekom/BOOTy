@@ -613,9 +613,10 @@ func TestVrnetlabModulesLoaded(t *testing.T) {
 	}
 
 	for _, mod := range vrnetlabRequiredModules {
-		// loadModules logs: "Loaded kernel module" module=<name>.ko*
-		if !strings.Contains(logs, mod) {
-			t.Errorf("module %q not mentioned in serial log — may be missing from initramfs", mod)
+		// loadModules logs: "Loaded kernel module" with a "module=<name>.ko*" field.
+		field := "module=" + mod + ".ko"
+		if !strings.Contains(logs, "Loaded kernel module") || !strings.Contains(logs, field) {
+			t.Errorf("module %q not loaded according to serial log — expected log entry with 'Loaded kernel module' and %q", mod, field)
 		}
 	}
 }

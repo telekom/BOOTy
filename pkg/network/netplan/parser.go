@@ -166,7 +166,7 @@ func extractBridges(np *Config, cfg *network.Config) {
 }
 
 func extractEthernets(np *Config, cfg *network.Config) (dhcpCount int, dnsList []string) {
-	for name := range np.Network.Ethernets {
+	for _, name := range sortedKeys(np.Network.Ethernets) {
 		eth := np.Network.Ethernets[name]
 		if eth.DHCP4 != nil && *eth.DHCP4 {
 			dhcpCount++
@@ -194,7 +194,8 @@ func extractEthernets(np *Config, cfg *network.Config) (dhcpCount int, dnsList [
 }
 
 func extractVLANs(np *Config, cfg *network.Config, dnsList []string) []string {
-	for vlanName, v := range np.Network.VLANs {
+	for _, vlanName := range sortedKeys(np.Network.VLANs) {
+		v := np.Network.VLANs[vlanName]
 		vc := network.VLANConfig{ID: v.ID, Parent: v.Link}
 		if len(v.Addresses) > 0 {
 			vc.Address = v.Addresses[0]
@@ -233,10 +234,15 @@ func extractBonds(np *Config, cfg *network.Config) {
 }
 
 func extractVRFs(np *Config, cfg *network.Config) {
-	for name, vrf := range np.Network.VRFs {
-		if vrf.Table > 0 && cfg.VRFTableID == 0 {
+	if cfg.VRFTableID != 0 {
+		return
+	}
+	for _, name := range sortedKeys(np.Network.VRFs) {
+		vrf := np.Network.VRFs[name]
+		if vrf.Table > 0 {
 			cfg.VRFTableID = uint32(vrf.Table)
 			cfg.VRFName = name
+			return
 		}
 	}
 }

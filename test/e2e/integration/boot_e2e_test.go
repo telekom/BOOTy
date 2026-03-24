@@ -482,11 +482,11 @@ func TestBootStandbyHeartbeatsSentToCAPRF(t *testing.T) {
 
 // --- Initramfs module verification ---
 
-// requiredModulePrefixes lists kernel module name prefixes that must be
+// requiredModules lists kernel module names that must be
 // present in the /modules/ directory of every BOOTy container. These are
 // critical for storage, filesystems, and basic networking. If the Dockerfile
 // module copy loop breaks (e.g. shell parsing), this test catches it.
-var requiredModulePrefixes = []string{
+var requiredModules = []string{
 	"ext4",        // filesystem
 	"xfs",         // filesystem
 	"vfat",        // ESP / EFI partition
@@ -516,10 +516,10 @@ func TestBootModulesPresent(t *testing.T) {
 	modules := out
 	t.Logf("Found modules in /modules/: %d files", len(strings.Split(strings.TrimSpace(modules), "\n")))
 
-	for _, prefix := range requiredModulePrefixes {
+	for _, mod := range requiredModules {
 		// Module files are named like ext4.ko, ext4.ko.zst, ext4.ko.xz, etc.
-		if !strings.Contains(modules, prefix+".ko") {
-			t.Errorf("critical module %q not found in /modules/ — Dockerfile module copy may be broken", prefix)
+		if !strings.Contains(modules, mod+".ko") {
+			t.Errorf("critical module %q not found in /modules/ — Dockerfile module copy may be broken", mod)
 		}
 	}
 }
