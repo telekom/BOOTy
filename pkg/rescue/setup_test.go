@@ -7,19 +7,14 @@ import (
 )
 
 func TestSetupSSHKeys_WritesKeys(t *testing.T) {
-	if os.Getuid() != 0 {
-		// Not root — expect permission error writing to /root/.ssh.
-		keys := []string{"ssh-rsa AAAA... user@host"}
-		err := setupSSHKeys(keys)
-		if err == nil {
-			t.Error("expected permission error when not running as root")
-		}
-		return
+	if os.Getuid() == 0 {
+		t.Skip("skipping: running as root would write to real /root/.ssh/authorized_keys")
 	}
-	// Running as root — function should succeed.
-	keys := []string{"ssh-rsa AAAA... user@host", "ssh-ed25519 BBBB... user2@host"}
-	if err := setupSSHKeys(keys); err != nil {
-		t.Errorf("setupSSHKeys() = %v", err)
+	// Not root — expect permission error writing to /root/.ssh.
+	keys := []string{"ssh-rsa AAAA... user@host"}
+	err := setupSSHKeys(keys)
+	if err == nil {
+		t.Error("expected permission error when not running as root")
 	}
 }
 
