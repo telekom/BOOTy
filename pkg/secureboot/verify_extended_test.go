@@ -14,19 +14,27 @@ func TestChainVerifier_ComponentPresence_AllMissing(t *testing.T) {
 	if len(components) != 3 {
 		t.Fatalf("expected 3 components, got %d", len(components))
 	}
+	// Verify all three component names are returned.
 	names := map[string]bool{"shim": false, "grub": false, "kernel": false}
 	for _, c := range components {
 		if _, ok := names[c.Name]; !ok {
 			t.Errorf("unexpected component %q", c.Name)
-		}
-		if c.Error == "" {
-			t.Errorf("component %q should have error when files missing", c.Name)
 		}
 		names[c.Name] = true
 	}
 	for name, found := range names {
 		if !found {
 			t.Errorf("missing component %q in results", name)
+		}
+	}
+	// Shim and grub should always be missing on CI/dev hosts (no EFI partition).
+	// Kernel may be present on Linux hosts (/boot/vmlinuz), so we only assert
+	// that shim and grub report errors.
+	for _, c := range components {
+		if c.Name == "shim" || c.Name == "grub" {
+			if c.Error == "" {
+				t.Errorf("component %q should have error when EFI files missing", c.Name)
+			}
 		}
 	}
 }
