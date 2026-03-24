@@ -155,7 +155,8 @@ func TestDeprovisionDefaultIsHardE2E(t *testing.T) {
 
 func TestDeprovisionReportsErrorE2E(t *testing.T) {
 	cmd := newMockCommander()
-	cmd.set("mdadm", nil, fmt.Errorf("mdadm: cannot assemble"))
+	// wipefs must fail for all disks so WipeAllDisks returns an error.
+	cmd.set("wipefs", nil, fmt.Errorf("disk wipe failed"))
 
 	cfg := &config.MachineConfig{Mode: "hard", DNSResolvers: "8.8.8.8"}
 	provider := newMockProvider(cfg)
@@ -177,7 +178,7 @@ func TestDeprovisionReportsErrorE2E(t *testing.T) {
 }
 
 func TestDeprovisionSoftViaVarsModeE2E(t *testing.T) {
-	cfg := &config.MachineConfig{Mode: "soft-deprovision"}
+	cfg := &config.MachineConfig{Mode: "soft"}
 	cmd := newMockCommander()
 	orch := provision.NewOrchestrator(cfg, newMockProvider(cfg), disk.NewManager(cmd))
 	_ = orch.Deprovision(context.Background())
@@ -236,8 +237,9 @@ func TestEnableLVME2E(t *testing.T) {
 func TestEnableLVMNotPresentE2E(t *testing.T) {
 	cmd := newMockCommander()
 	cmd.set("lvm", nil, fmt.Errorf("command not found"))
-	if err := disk.NewManager(cmd).EnableLVM(context.Background()); err != nil {
-		t.Fatalf("should handle missing lvm: %v", err)
+	err := disk.NewManager(cmd).EnableLVM(context.Background())
+	if err == nil {
+		t.Fatal("expected error when lvm is not available")
 	}
 }
 

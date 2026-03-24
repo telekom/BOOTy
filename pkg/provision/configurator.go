@@ -225,9 +225,12 @@ func (c *Configurator) ConfigureDNS(cfg *config.MachineConfig) error {
 		return nil
 	}
 	etcDir := filepath.Join(c.rootDir, "etc")
-	if _, err := os.Stat(etcDir); os.IsNotExist(err) {
-		slog.Warn("root /etc/ not mounted, skipping DNS configuration", "path", etcDir)
-		return nil
+	if _, err := os.Stat(etcDir); err != nil {
+		if os.IsNotExist(err) {
+			slog.Warn("root /etc/ not mounted, skipping DNS configuration", "path", etcDir)
+			return nil
+		}
+		return fmt.Errorf("stat etc dir %s: %w", etcDir, err)
 	}
 	path := filepath.Join(etcDir, "resolv.conf")
 	slog.Info("Configuring DNS", "resolvers", cfg.DNSResolvers)

@@ -1,4 +1,4 @@
-//go:build e2e_build
+//go:build e2e
 
 package e2e
 
@@ -43,7 +43,10 @@ func lddCheck(t *testing.T, image, binary string) []string {
 	t.Helper()
 	args := []string{"run", "--rm", "--entrypoint", "", image, "ldd", binary}
 	cmd := exec.Command("docker", args...)
-	out, _ := cmd.CombinedOutput()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker run ldd %s failed: %v\n%s", binary, err, out)
+	}
 
 	var missing []string
 	for _, line := range strings.Split(string(out), "\n") {

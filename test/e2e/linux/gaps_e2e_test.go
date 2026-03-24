@@ -45,7 +45,8 @@ func TestRAIDArrayCreationAndStop(t *testing.T) {
 	exec.Command("mdadm", "--zero-superblock", dev2).Run() //nolint:errcheck
 
 	// Create RAID1 array.
-	err := mgr.CreateRAIDArray(ctx, "/dev/md/test-raid1", 1, []string{dev1, dev2})
+	// CreateRAIDArray prepends /dev/ to the name, so pass without /dev/ prefix.
+	err := mgr.CreateRAIDArray(ctx, "md/test-raid1", 1, []string{dev1, dev2})
 	if err != nil {
 		t.Fatalf("CreateRAIDArray: %v", err)
 	}
@@ -81,7 +82,7 @@ func TestRAIDArrayRequiresMinDevices(t *testing.T) {
 
 	// RAID with only 1 device should fail.
 	dev := createRawLoopDevice(t, 50)
-	err := mgr.CreateRAIDArray(ctx, "/dev/md/test-single", 1, []string{dev})
+	err := mgr.CreateRAIDArray(ctx, "md/test-single", 1, []string{dev})
 	if err == nil {
 		t.Fatal("expected error for single-device RAID")
 	}

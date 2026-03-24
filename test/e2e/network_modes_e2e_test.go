@@ -346,7 +346,7 @@ func TestVarsParsingBGPPeerMode(t *testing.T) {
 export HOSTNAME="bgp-node"
 export BGP_PEER_MODE="numbered"
 export BGP_NEIGHBORS="10.0.0.1,10.0.0.2"
-export BGP_REMOTE_ASN="65200"
+bgp_remote_asn="65200"
 export IMAGE="http://img.local/test.gz"
 underlay_subnet="10.0.0.0/24"
 asn_server="65001"

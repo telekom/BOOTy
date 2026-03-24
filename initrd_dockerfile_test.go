@@ -41,8 +41,19 @@ func checkDockerfileModules(t *testing.T, path string, critical []string) {
 		}
 	}
 
+	// Build a set of tokens to avoid substring false positives
+	// (e.g. "virtio_pci" matching "virtio_pci_modern_dev").
+	tokens := make(map[string]struct{})
+	for _, line := range strings.Split(wordList, "\n") {
+		for _, field := range strings.Fields(line) {
+			// Strip shell continuation characters.
+			field = strings.TrimRight(field, "\\")
+			tokens[field] = struct{}{}
+		}
+	}
+
 	for _, mod := range critical {
-		if !strings.Contains(wordList, mod) {
+		if _, ok := tokens[mod]; !ok {
 			t.Errorf("critical module %q missing from %s for-loop", mod, path)
 		}
 	}
