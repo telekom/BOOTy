@@ -43,6 +43,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     frr frr-pythontools && \
     rm -rf /var/lib/apt/lists/*
 
+# Collect shared libraries for FRR binaries (same rationale as tools stage).
+RUN mkdir -p /frr-libs && \
+    ldd /usr/lib/frr/bgpd /usr/lib/frr/zebra /usr/lib/frr/bfdd \
+        /usr/bin/vtysh /usr/lib/frr/watchfrr 2>/dev/null \
+    | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
+    | sort -u | while read -r lib; do \
+        [ -n "$lib" ] && [ -f "$lib" ] && cp -L --parents "$lib" /frr-libs/ 2>/dev/null || true; \
+    done
+
 # Extract kernel, storage, and NIC driver modules for bare-metal servers
 FROM debian:bookworm-slim AS kernel
 ARG TARGETARCH
@@ -98,6 +107,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     hdparm nvme-cli mstflint lldpd \
     dropbear-bin \
     && rm -rf /var/lib/apt/lists/*
+
+# Collect shared libraries for all tool binaries while their packages are
+# installed.  Running ldd here (instead of in the final assembly stage)
+# ensures every transitive dependency is resolved — the assembly stages
+# only have base Debian libs and would report package-specific libs as
+# "not found", silently dropping them from the initramfs.
+RUN mkdir -p /tool-libs && \
+    ldd /sbin/mdadm /usr/sbin/wipefs /sbin/resize2fs /sbin/e2fsck \
+        /usr/sbin/xfs_growfs /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk \
+        /sbin/partprobe /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
+        /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
+        /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
+        /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk 2>/dev/null \
+    | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
+    | sort -u | while read -r lib; do \
+        [ -n "$lib" ] && [ -f "$lib" ] && cp -L --parents "$lib" /tool-libs/ 2>/dev/null || true; \
+    done
 
 # Busybox static binary — sourced from Docker Hub for reliability and
 # Dependabot version tracking.  Eliminates the fragile busybox.net download
@@ -164,16 +190,12 @@ COPY --from=tools /usr/sbin/lldpd sbin/lldpd
 COPY --from=tools /usr/sbin/dropbear bin/dropbear
 COPY --from=tools /usr/bin/dropbearkey bin/dropbearkey
 
-# Copy runtime shared libs required by all dynamically linked binaries.
-RUN set -eux; \
-        find bin/ sbin/ -type f | while read -r f; do \
-            ldd "$f" 2>/dev/null || true; \
-        done \
-            | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
-            | sort -u > /tmp/all-libs.txt; \
-        while read -r lib; do \
-            [ -n "$lib" ] && cp --parents "$lib" . 2>/dev/null || true; \
-        done < /tmp/all-libs.txt
+# Copy pre-collected shared libraries from stages where packages are installed.
+# This replaces the previous ldd scan that ran in this stage — that approach
+# missed package-specific libs (libefivar, libmnl, etc.) because they were
+# not installed here and ldd reported them as "not found".
+COPY --from=tools /tool-libs/ .
+COPY --from=frr /frr-libs/ .
 
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
@@ -240,6 +262,10 @@ COPY --from=tools /sbin/partprobe bin/partprobe
 COPY --from=tools /sbin/e2fsck sbin/e2fsck
 COPY --from=tools /sbin/resize2fs sbin/resize2fs
 
+# Copy pre-collected shared libraries (slim was previously missing lib copying
+# entirely, breaking all dynamically linked tool binaries at runtime).
+COPY --from=tools /tool-libs/ .
+
 # Package slim initramfs
 RUN find . -print0 | cpio --null -ov --format=newc > ../initramfs.cpio \
     && gzip ../initramfs.cpio && mv ../initramfs.cpio.gz /
@@ -304,16 +330,8 @@ COPY --from=tools /usr/bin/dropbearkey bin/dropbearkey
 # lsblk for rescue mode disk auto-mount
 COPY --from=tools /bin/lsblk bin/lsblk
 
-# Copy runtime shared libs required by all dynamically linked binaries.
-RUN set -eux; \
-        find bin/ sbin/ -type f | while read -r f; do \
-            ldd "$f" 2>/dev/null || true; \
-        done \
-            | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
-            | sort -u > /tmp/all-libs.txt; \
-        while read -r lib; do \
-            [ -n "$lib" ] && cp --parents "$lib" . 2>/dev/null || true; \
-        done < /tmp/all-libs.txt
+# Copy pre-collected shared libraries from the tools stage.
+COPY --from=tools /tool-libs/ .
 
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
