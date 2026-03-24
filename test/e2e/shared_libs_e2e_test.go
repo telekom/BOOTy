@@ -44,8 +44,14 @@ func lddCheck(t *testing.T, image, binary string) []string {
 	// Set LD_LIBRARY_PATH so ldd can find libs copied into the initramfs workdir.
 	// The Dockerfile copies shared libraries with --parents, preserving their
 	// /lib/... and /usr/lib/... paths under /build/initramfs/.
-	ldPaths := "/build/initramfs/lib:/build/initramfs/usr/lib:" +
-		"/build/initramfs/lib/x86_64-linux-gnu:/build/initramfs/usr/lib/x86_64-linux-gnu"
+	// FRR libraries live in a frr/ subdirectory (e.g., /usr/lib/x86_64-linux-gnu/frr/).
+	ldPaths := strings.Join([]string{
+		"/build/initramfs/lib",
+		"/build/initramfs/usr/lib",
+		"/build/initramfs/lib/x86_64-linux-gnu",
+		"/build/initramfs/usr/lib/x86_64-linux-gnu",
+		"/build/initramfs/usr/lib/x86_64-linux-gnu/frr",
+	}, ":")
 	args := []string{"run", "--rm", "--entrypoint", "",
 		"-e", "LD_LIBRARY_PATH=" + ldPaths, image, "ldd", binary}
 	cmd := exec.Command("docker", args...)
