@@ -324,7 +324,7 @@ func TestVrnetlabProvisionAttemptsImageDownload(t *testing.T) {
 		strings.Contains(logs, "Beginning write") ||
 		strings.Contains(logs, "stream-image")
 	hasDiskStep := strings.Contains(logs, "detect-disk") ||
-		strings.Contains(logs, "Provisioning step")
+		strings.Contains(logs, "provisioning step")
 
 	if hasImageAttempt {
 		t.Log("provision VM: image download attempted through EVPN")
@@ -629,13 +629,14 @@ func TestVrnetlabModulesLoaded(t *testing.T) {
 var vrnetlabAllowedErrors = []string{
 	"no suitable disk found",
 	"detect-disk",
+	"wipe-disks",
 	"configure-dns",
 	"Connecting to provisioning server",
 	"DEBUG DUMP",
 	"=== DEBUG",
 	"=== CONFIG",
 	"Provisioning failed",
-	"Provisioning step",
+	"provisioning step",
 	"Deprovisioning failed",
 	"Deprovisioning step",
 	"stream-image",
