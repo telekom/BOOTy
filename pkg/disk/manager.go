@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -388,27 +389,86 @@ func (m *Manager) ResizeFilesystem(ctx context.Context, device string) error {
 // initramfs environments without udevd.
 func (m *Manager) PartProbe(ctx context.Context, disk string) error {
 	slog.Info("Re-reading partition table", "disk", disk)
+
+	// Diagnostic: show device state before partprobe.
+	logDeviceState(disk, "before-partprobe")
+
 	out, err := m.cmd.Run(ctx, "partprobe", disk)
 	if err != nil {
-		slog.Warn("partprobe failed, trying blockdev --rereadpt", "disk", disk, "error", err)
+		slog.Warn("partprobe failed, trying blockdev --rereadpt", "disk", disk, "error", err, "output", string(out))
 		out, err = m.cmd.Run(ctx, "blockdev", "--rereadpt", disk)
 		if err != nil {
 			return fmt.Errorf("re-read partition table %s: %s: %w", disk, string(out), err)
 		}
+		slog.Info("blockdev --rereadpt succeeded", "disk", disk)
 	}
+
 	// Brief settle time for the kernel to populate /sys/block/ partition entries
 	// after BLKRRPART ioctl. On QEMU/KVM virtio disks the partition scan can be
 	// asynchronous and /sys entries may not exist immediately.
 	time.Sleep(200 * time.Millisecond)
+
+	// Diagnostic: show device state after partprobe + settle.
+	logDeviceState(disk, "after-partprobe")
 
 	// Trigger device node creation for partitions. In initramfs environments
 	// without udevd, devtmpfs may not auto-create partition nodes after the
 	// kernel re-reads the partition table. mdev -s scans /sys and creates
 	// missing device nodes.
 	if mdevOut, mdevErr := m.cmd.Run(ctx, "mdev", "-s"); mdevErr != nil {
-		slog.Debug("mdev -s not available or failed", "error", mdevErr, "output", string(mdevOut))
+		slog.Warn("mdev -s failed", "error", mdevErr, "output", string(mdevOut))
 	}
+
+	// Diagnostic: show device state after mdev -s.
+	logDeviceState(disk, "after-mdev")
 	return nil
+}
+
+// logDeviceState logs /dev/sd*, /sys/block/ entries, and /proc/partitions
+// for debugging partition node creation in initramfs environments.
+func logDeviceState(disk, label string) {
+	// List /dev/sd* (or /dev/vd* etc) device nodes.
+	base := filepath.Dir(disk) // /dev
+	prefix := filepath.Base(disk)
+	devNodes := listGlob(filepath.Join(base, prefix+"*"))
+	slog.Info("device state", "label", label, "dev_nodes", devNodes)
+
+	// List /sys/block/<disk>/ partition entries.
+	sysBase := filepath.Base(disk)
+	sysDir := "/sys/block/" + sysBase
+	sysEntries := listDir(sysDir)
+	slog.Info("device state", "label", label, "sys_entries", sysEntries)
+
+	// Read /proc/partitions for the disk.
+	if data, err := os.ReadFile("/proc/partitions"); err != nil {
+		slog.Warn("device state: cannot read /proc/partitions", "label", label, "error", err)
+	} else {
+		lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+		var relevant []string
+		for _, line := range lines {
+			if strings.Contains(line, sysBase) || strings.HasPrefix(line, "major") {
+				relevant = append(relevant, strings.TrimSpace(line))
+			}
+		}
+		slog.Info("device state", "label", label, "proc_partitions", relevant)
+	}
+}
+
+func listGlob(pattern string) []string {
+	matches, _ := filepath.Glob(pattern)
+	return matches
+}
+
+func listDir(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return []string{"error: " + err.Error()}
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
 }
 
 // supportedFilesystems lists filesystem types to try when mounting, in priority order.
@@ -449,8 +509,9 @@ func waitForDevice(ctx context.Context, device string) error {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
-	for range 20 {
+	for i := range 20 {
 		if _, err := os.Stat(device); err == nil {
+			slog.Info("device appeared", "device", device, "iteration", i)
 			return nil
 		}
 		// Trigger device node creation from /sys entries that may have appeared
@@ -458,9 +519,15 @@ func waitForDevice(ctx context.Context, device string) error {
 		//nolint:gosec // mdev is a fixed busybox command, no user input
 		_ = exec.CommandContext(ctx, "mdev", "-s").Run()
 		if _, err := os.Stat(device); err == nil {
+			slog.Info("device appeared after mdev", "device", device, "iteration", i)
 			return nil
 		}
-		slog.Debug("waiting for device node", "device", device)
+		if i == 0 || i == 9 || i == 19 {
+			// Log device state on first, middle, and last iteration.
+			disk := strings.TrimRight(device, "0123456789")
+			logDeviceState(disk, fmt.Sprintf("waitForDevice-iter%d", i))
+		}
+		slog.Debug("waiting for device node", "device", device, "iteration", i)
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("device %s wait canceled: %w", device, ctx.Err())
