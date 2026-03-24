@@ -18,6 +18,7 @@ type MachineConfig struct {
 	ImageURLs         []string // Space-separated IMAGE field from /deploy/vars
 	ImageChecksum     string   // IMAGE_CHECKSUM: expected hex digest of the raw image
 	ImageChecksumType string   // IMAGE_CHECKSUM_TYPE: "sha256" or "sha512"
+	ImageMode         string   // IMAGE_MODE: "whole-disk" (default) or "partition" for partition-by-partition
 	Hostname          string   // HOSTNAME
 	Token             string   // TOKEN (Bearer auth for CAPRF server)
 	ExtraKernelParams string   // MACHINE_EXTRA_KERNEL_PARAMS

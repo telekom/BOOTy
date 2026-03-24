@@ -50,6 +50,7 @@ func (o *Orchestrator) DryRun(ctx context.Context) error {
 		{"image-reachability", o.dryRunImageReachability},
 		{"image-checksum", o.dryRunImageChecksum},
 		{"image-signature", o.dryRunImageSignature},
+		{"image-mode", o.dryRunImageMode},
 		{"disk-detection", o.dryRunDiskDetection},
 		{"network-link", o.dryRunNetworkLink},
 		{"efi-boot", o.dryRunEFIBoot},
@@ -245,6 +246,19 @@ func (o *Orchestrator) dryRunImageSignature(_ context.Context) DryRunResult {
 	}
 	return DryRunResult{Status: DryRunPass,
 		Message: "image signature verification configured"}
+}
+
+func (o *Orchestrator) dryRunImageMode(_ context.Context) DryRunResult {
+	mode := strings.ToLower(strings.TrimSpace(o.cfg.ImageMode))
+	if mode == "" || mode == "whole-disk" {
+		return DryRunResult{Status: DryRunPass, Message: "image mode: whole-disk (default)"}
+	}
+	if mode == "partition" {
+		return DryRunResult{Status: DryRunPass,
+			Message: "image mode: partition-by-partition (requires ramdisk + losetup)"}
+	}
+	return DryRunResult{Status: DryRunFail,
+		Message: fmt.Sprintf("unknown IMAGE_MODE: %q (valid: whole-disk, partition)", o.cfg.ImageMode)}
 }
 
 func (o *Orchestrator) dryRunNetworkLink(_ context.Context) DryRunResult {

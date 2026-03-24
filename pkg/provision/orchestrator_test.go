@@ -447,3 +447,28 @@ func TestVerifyImageSignature_MissingPubKey(t *testing.T) {
 		t.Error("expected error for missing pub key")
 	}
 }
+
+func TestDryRunImageMode(t *testing.T) {
+	tests := []struct {
+		name   string
+		mode   string
+		status DryRunStatus
+	}{
+		{"default empty", "", DryRunPass},
+		{"whole-disk", "whole-disk", DryRunPass},
+		{"partition", "partition", DryRunPass},
+		{"PARTITION caps", "PARTITION", DryRunPass},
+		{"invalid", "invalid-mode", DryRunFail},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.MachineConfig{ImageMode: tt.mode}
+			provider := &mockProvider{}
+			o := newTestOrchestrator(t, cfg, provider)
+			result := o.dryRunImageMode(context.Background())
+			if result.Status != tt.status {
+				t.Errorf("dryRunImageMode(%q) status = %s, want %s", tt.mode, result.Status, tt.status)
+			}
+		})
+	}
+}

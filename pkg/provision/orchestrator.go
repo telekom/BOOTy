@@ -371,6 +371,17 @@ func (o *Orchestrator) detectDisk(ctx context.Context) error {
 }
 
 func (o *Orchestrator) streamImage(ctx context.Context) error {
+	// Partition-by-partition mode: download to ramdisk, copy each partition individually.
+	if strings.EqualFold(o.cfg.ImageMode, "partition") {
+		bestURL, err := image.SelectBestSource(ctx, o.cfg.ImageURLs)
+		if err != nil {
+			return fmt.Errorf("selecting image source: %w", err)
+		}
+		o.log.Info("Streaming image partition-by-partition", "url", bestURL, "disk", o.targetDisk)
+		return image.StreamPartitions(ctx, bestURL, o.targetDisk)
+	}
+
+	// Default whole-disk mode.
 	bestURL, err := image.SelectBestSource(ctx, o.cfg.ImageURLs)
 	if err != nil {
 		return fmt.Errorf("selecting image source: %w", err)

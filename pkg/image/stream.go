@@ -25,7 +25,8 @@ type StreamOpts struct {
 
 // Stream downloads an image from a URL (http/https or oci://) and writes it
 // to a block device. Compression is auto-detected via magic bytes (gzip, zstd,
-// lz4, xz, bzip2). Optional checksum validation is performed after write.
+// lz4, xz, bzip2). qcow2 images are detected and converted via ramdisk.
+// Optional checksum validation is performed after write.
 func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 	slog.Info("Streaming image", "url", filepath.Base(url), "device", device) //nolint:gosec // trusted config values
 
@@ -34,9 +35,15 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 		opt = opts[0]
 	}
 
-	decompressed, cleanup, err := openAndDecompress(ctx, url)
+	decompressed, cleanup, format, err := openAndDecompress(ctx, url)
 	if err != nil {
 		return err
+	}
+
+	// qcow2 images require download → convert → stream via ramdisk.
+	if format == FormatQCOW2 {
+		cleanup()
+		return convertQCOW2Hook(ctx, url, device)
 	}
 	defer cleanup()
 
@@ -67,25 +74,37 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 	return verifyChecksum(h, opt)
 }
 
+// convertQCOW2Hook is set by the linux build to call ConvertQCOW2.
+// On non-linux platforms, qcow2 conversion is unsupported.
+var convertQCOW2Hook = func(_ context.Context, _, _ string) error {
+	return fmt.Errorf("qcow2 conversion requires linux (tmpfs ramdisk + qemu-img)")
+}
+
 // openAndDecompress opens the image source, detects compression, and returns
-// the decompressed reader along with a cleanup function.
-func openAndDecompress(ctx context.Context, url string) (io.Reader, func(), error) {
+// the decompressed reader along with a cleanup function and detected format.
+func openAndDecompress(ctx context.Context, url string) (io.Reader, func(), Format, error) {
 	body, err := openSource(ctx, url)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, FormatRaw, err
 	}
 
 	format, reader, err := DetectFormat(body)
 	if err != nil {
 		_ = body.Close()
-		return nil, nil, fmt.Errorf("detect format: %w", err)
+		return nil, nil, FormatRaw, fmt.Errorf("detect format: %w", err)
 	}
 	slog.Info("Detected image format", "format", format)
+
+	// qcow2 cannot be decompressed inline — return early so caller can route.
+	if format == FormatQCOW2 {
+		cleanup := func() { _ = body.Close() }
+		return nil, cleanup, FormatQCOW2, nil
+	}
 
 	decompressed, closer, err := Decompressor(reader, format)
 	if err != nil {
 		_ = body.Close()
-		return nil, nil, err
+		return nil, nil, format, err
 	}
 
 	cleanup := func() {
@@ -94,7 +113,7 @@ func openAndDecompress(ctx context.Context, url string) (io.Reader, func(), erro
 		}
 		_ = body.Close()
 	}
-	return decompressed, cleanup, nil
+	return decompressed, cleanup, format, nil
 }
 
 // wrapChecksum wraps the reader with a checksum hash if requested.
