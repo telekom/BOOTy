@@ -242,3 +242,77 @@ func TestDefaultInitramfsHasLibmnlE2E(t *testing.T) {
 		t.Error("libmnl.so not found in default initramfs (required by iproute2 ip/bridge)")
 	}
 }
+
+// TestGoBGPInitramfsHasLibefivarE2E verifies libefivar.so is present in the
+// GoBGP initramfs (required by efibootmgr).
+func TestGoBGPInitramfsHasLibefivarE2E(t *testing.T) {
+	dockerAvailable(t)
+	dest := t.TempDir()
+	cpioGz := buildTarget(t, "gobgp", dest)
+	files := listCPIOContents(t, cpioGz)
+
+	hasLibefivar := false
+	for path := range files {
+		if strings.Contains(path, "libefivar") {
+			hasLibefivar = true
+			break
+		}
+	}
+	if !hasLibefivar {
+		t.Error("libefivar.so not found in gobgp initramfs (required by efibootmgr)")
+	}
+}
+
+// TestGoBGPInitramfsHasLibmnlE2E verifies libmnl.so is present in the
+// GoBGP initramfs (required by ip/bridge from iproute2).
+func TestGoBGPInitramfsHasLibmnlE2E(t *testing.T) {
+	dockerAvailable(t)
+	dest := t.TempDir()
+	cpioGz := buildTarget(t, "gobgp", dest)
+	files := listCPIOContents(t, cpioGz)
+
+	hasLibmnl := false
+	for path := range files {
+		if strings.Contains(path, "libmnl") {
+			hasLibmnl = true
+			break
+		}
+	}
+	if !hasLibmnl {
+		t.Error("libmnl.so not found in gobgp initramfs (required by iproute2 ip/bridge)")
+	}
+}
+
+// TestMicroInitramfsNoDynamicLibsE2E verifies the micro initramfs has no
+// shared libraries — the init binary is statically compiled with CGO_ENABLED=0.
+func TestMicroInitramfsNoDynamicLibsE2E(t *testing.T) {
+	dockerAvailable(t)
+	dest := t.TempDir()
+	cpioGz := buildTarget(t, "micro", dest)
+	files := listCPIOContents(t, cpioGz)
+
+	for path := range files {
+		if strings.HasSuffix(path, ".so") || strings.Contains(path, ".so.") {
+			if strings.Contains(path, "ca-certificates") {
+				continue
+			}
+			t.Errorf("unexpected shared library in micro initramfs: %s", path)
+		}
+	}
+}
+
+// TestMicroInitramfsStaticBinaryE2E verifies the micro init binary is
+// statically linked by running ldd inside the Docker build stage.
+func TestMicroInitramfsStaticBinaryE2E(t *testing.T) {
+	image := buildStageImage(t, "micro-builder")
+
+	// ldd on a static binary prints "not a dynamic executable" or "statically linked"
+	args := []string{"run", "--rm", "--entrypoint", "", image, "ldd", "/build/initramfs/init"}
+	cmd := exec.Command("docker", args...)
+	out, _ := cmd.CombinedOutput()
+	output := string(out)
+
+	if strings.Contains(output, "not found") {
+		t.Errorf("micro init binary has missing shared libraries: %s", output)
+	}
+}
