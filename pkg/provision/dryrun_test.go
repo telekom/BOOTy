@@ -716,6 +716,8 @@ func TestDryRun_AllPass(t *testing.T) {
 			return fakeFileInfo{name: "efi", mode: os.ModeDir}, nil
 		case "/sys/class/dmi/id/sys_vendor":
 			return fakeFileInfo{name: "sys_vendor", mode: os.ModeDir}, nil
+		case pubKey:
+			return fakeFileInfo{name: "pub.gpg", mode: 0o600}, nil
 		default:
 			return nil, os.ErrNotExist
 		}

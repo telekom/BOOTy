@@ -373,6 +373,14 @@ func (o *Orchestrator) detectDisk(ctx context.Context) error {
 
 func (o *Orchestrator) streamImage(ctx context.Context) error {
 	bestURL := o.bestImageURL
+	if bestURL == "" {
+		// verify-image may have skipped URL resolution; resolve it now.
+		var err error
+		bestURL, err = image.SelectBestSource(ctx, o.cfg.ImageURLs)
+		if err != nil {
+			return fmt.Errorf("selecting image source: %w", err)
+		}
+	}
 
 	// Partition-by-partition mode: download to ramdisk, copy each partition individually.
 	if strings.EqualFold(o.cfg.ImageMode, "partition") {
@@ -400,12 +408,18 @@ func (o *Orchestrator) verifyImageSignature(ctx context.Context) error {
 	// Resolve the best image URL so stream-image reuses the same source.
 	bestURL, err := image.SelectBestSource(ctx, o.cfg.ImageURLs)
 	if err != nil {
+		// If signature verification is not configured, URL resolution failures
+		// will be caught by stream-image. Don't block provisioning here.
+		if o.cfg.ImageSignatureURL == "" {
+			o.log.Info("no image signature URL configured, skipping verification")
+			return nil
+		}
 		return fmt.Errorf("selecting image source: %w", err)
 	}
 	o.bestImageURL = bestURL
 
 	if o.cfg.ImageSignatureURL == "" {
-		o.log.Info("No image signature URL configured, skipping verification")
+		o.log.Info("no image signature URL configured, skipping verification")
 		return nil
 	}
 	if o.cfg.ImageGPGPubKey == "" {
