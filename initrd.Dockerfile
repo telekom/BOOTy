@@ -141,6 +141,11 @@ COPY --from=busybox-bin /bin/busybox bin/busybox
 # Create standard applet symlinks into bin/ using BusyBox's built-in installer
 RUN bin/busybox --install -s bin
 
+# Docker COPY follows destination symlinks: if bin/X -> busybox exists, COPY
+# writes the source file content into the busybox binary instead of replacing
+# the symlink.  Remove busybox symlinks that collide with real tool binaries.
+RUN rm -f bin/partprobe bin/hdparm bin/ip
+
 # cloud-utils growpart
 RUN curl -fsSL https://github.com/canonical/cloud-utils/archive/refs/tags/0.33.tar.gz | tar -xz -C /tmp \
     && mv /tmp/cloud-utils-0.33/bin/growpart bin/
@@ -246,6 +251,8 @@ WORKDIR /build/initramfs
 # available for debug diagnostics and shell commands.
 COPY --from=busybox-bin /bin/busybox bin/busybox
 RUN for cmd in $(bin/busybox --list); do if [ "$cmd" != "busybox" ]; then ln -sf busybox "bin/$cmd"; fi; done
+# Docker COPY follows destination symlinks — remove colliding busybox symlinks.
+RUN rm -f bin/partprobe bin/ip
 COPY --from=busybox /build/initramfs/bin/growpart bin/growpart
 
 # BOOTy init binary (static, CGO-enabled)
@@ -284,6 +291,8 @@ WORKDIR /build/initramfs
 # kill, id, and xargs are available for debug diagnostics and shell commands.
 COPY --from=busybox-bin /bin/busybox bin/busybox
 RUN for cmd in $(bin/busybox --list); do if [ "$cmd" != "busybox" ]; then ln -sf busybox "bin/$cmd"; fi; done
+# Docker COPY follows destination symlinks — remove colliding busybox symlinks.
+RUN rm -f bin/partprobe bin/hdparm bin/ip
 COPY --from=busybox /build/initramfs/bin/growpart bin/growpart
 
 # BOOTy init binary (with GoBGP compiled in)
