@@ -323,11 +323,21 @@ func (c *Configurator) RemoveEFIBootEntries(ctx context.Context) error {
 }
 
 // CreateEFIBootEntry creates a new EFI boot entry for the installed OS.
+// Skips gracefully when the system is not booted in EFI mode (e.g. BIOS VMs),
+// since efibootmgr requires EFI firmware NVRAM access.
 func (c *Configurator) CreateEFIBootEntry(ctx context.Context, diskDev, bootPart string) error {
 	if bootPart == "" {
 		slog.Warn("No EFI partition found, skipping EFI boot entry creation")
 		return nil
 	}
+
+	// efibootmgr communicates with EFI firmware NVRAM; on BIOS systems the
+	// sysfs EFI directory does not exist and the tool cannot function.
+	if _, err := os.Stat("/sys/firmware/efi"); os.IsNotExist(err) {
+		slog.Warn("System not booted in EFI mode, skipping EFI boot entry creation")
+		return nil
+	}
+
 	slog.Info("Creating EFI boot entry", "disk", diskDev, "partition", bootPart)
 
 	// Detect EFI loader path — architecture-aware shimx64/shimaa64 with grub fallback.
