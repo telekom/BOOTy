@@ -68,6 +68,15 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 		return fmt.Errorf("writing to device: %w", err)
 	}
 
+	// Flush all written data to the underlying block device before returning.
+	// Without this, subsequent partition table re-reads (BLKRRPART ioctl via
+	// partprobe/blockdev) may not see the new partition table because dirty
+	// pages haven't reached the disk backend (especially on QEMU/KVM where
+	// the guest kernel's writeback queue may lag behind).
+	if err := out.Sync(); err != nil {
+		slog.Warn("sync to device failed", "device", device, "error", err)
+	}
+
 	fmt.Println()
 	slog.Info("Image written", "bytes", written, "device", device) //nolint:gosec // trusted config values
 

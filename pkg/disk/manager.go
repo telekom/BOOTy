@@ -390,6 +390,13 @@ func (m *Manager) ResizeFilesystem(ctx context.Context, device string) error {
 func (m *Manager) PartProbe(ctx context.Context, disk string) error {
 	slog.Info("Re-reading partition table", "disk", disk)
 
+	// Flush all pending writes to the block device backend before re-reading
+	// the partition table. On QEMU/KVM, BLKRRPART may invalidate the page
+	// cache and read stale data from the virtual disk if writeback is pending.
+	if syncOut, syncErr := m.cmd.Run(ctx, "sync"); syncErr != nil {
+		slog.Warn("sync before partprobe failed", "error", syncErr, "output", string(syncOut))
+	}
+
 	// Diagnostic: show device state before partprobe.
 	logDeviceState(disk, "before-partprobe")
 
