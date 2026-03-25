@@ -296,11 +296,16 @@ func runCAPRF(ctx context.Context) {
 		slog.Warn("Network teardown error", "error", err)
 	}
 
-	// Attempt kexec into installed kernel; fall back to normal reboot.
+	// Attempt kexec into installed kernel; fall back to power off so
+	// the orchestrator (CAPRF) can eject media and reboot from disk.
 	if cfg.Mode != "deprovision" && cfg.Mode != "soft" && provisionSucceeded {
 		tryKexec(cfg, orch.FirmwareChanged())
 	}
 	time.Sleep(time.Second * 2)
+	if provisionSucceeded {
+		slog.Info("Provisioning succeeded, powering off for orchestrator to manage boot")
+		realm.PowerOff()
+	}
 	realm.Reboot()
 }
 
