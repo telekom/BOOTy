@@ -15,7 +15,7 @@ RUN gcc -O2 -fPIC -static -L command.o dumpconfig.o formats.o lvchange.o lvconve
 # Build scripted fdisk (sfdisk)
 FROM gcc:15 AS sfdisk
 RUN apt-get update -y && apt-get install -y bison autopoint gettext flex
-RUN git clone https://github.com/karelzak/util-linux.git
+RUN git clone --branch v2.41.3 --depth 1 https://github.com/util-linux/util-linux.git
 WORKDIR util-linux
 RUN ./autogen.sh && ./configure --enable-static-programs=sfdisk && make
 
