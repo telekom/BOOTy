@@ -338,6 +338,14 @@ func (c *Configurator) CreateEFIBootEntry(ctx context.Context, diskDev, bootPart
 		return nil
 	}
 
+	// efibootmgr requires efivarfs to read/write NVRAM variables.  When the
+	// kernel lacks CONFIG_EFIVAR_FS (common in minimal initramfs kernels),
+	// efivarfs cannot be mounted and the tool will fail.  Skip gracefully.
+	if !isMountPoint("/sys/firmware/efi/efivars") {
+		slog.Warn("efivarfs not mounted, skipping EFI boot entry creation (efibootmgr requires efivarfs)")
+		return nil
+	}
+
 	slog.Info("Creating EFI boot entry", "disk", diskDev, "partition", bootPart)
 
 	// Detect EFI loader path — architecture-aware shimx64/shimaa64 with grub fallback.
