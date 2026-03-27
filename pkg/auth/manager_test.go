@@ -13,6 +13,15 @@ import (
 	"time"
 )
 
+func mustNewTokenManager(t *testing.T, url, token string, log *slog.Logger) *TokenManager {
+	t.Helper()
+	tm, err := NewTokenManager(url, token, log)
+	if err != nil {
+		t.Fatalf("NewTokenManager(%q): %v", url, err)
+	}
+	return tm
+}
+
 func TestTokenManager_Acquire(t *testing.T) {
 	var callCount atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +42,7 @@ func TestTokenManager_Acquire(t *testing.T) {
 	}))
 	defer server.Close()
 
-	tm := NewTokenManager(server.URL, "bootstrap-token", slog.Default())
+	tm := mustNewTokenManager(t, server.URL, "bootstrap-token", slog.Default())
 	if err := tm.Acquire(context.Background(), "SN123", "aa:bb:cc:dd:ee:ff"); err != nil {
 		t.Fatalf("Acquire failed: %v", err)
 	}
@@ -53,14 +62,14 @@ func TestTokenManager_Acquire_ServerError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	tm := NewTokenManager(server.URL, "bad-token", slog.Default())
+	tm := mustNewTokenManager(t, server.URL, "bad-token", slog.Default())
 	if err := tm.Acquire(context.Background(), "SN123", "aa:bb:cc:dd:ee:ff"); err == nil {
 		t.Fatal("expected error for 401 response")
 	}
 }
 
 func TestTokenManager_Token_ThreadSafe(t *testing.T) {
-	tm := NewTokenManager("http://unused", "initial", slog.Default())
+	tm := mustNewTokenManager(t, "http://127.0.0.1", "initial", slog.Default())
 
 	var wg sync.WaitGroup
 	for range 10 {
@@ -110,7 +119,7 @@ func TestTokenManager_Renew(t *testing.T) {
 	}))
 	defer server.Close()
 
-	tm := NewTokenManager(server.URL, "old-token", slog.Default())
+	tm := mustNewTokenManager(t, server.URL, "old-token", slog.Default())
 	tm.refreshToken = "old-refresh"
 	tm.expiresAt = time.Now().Add(time.Hour)
 
@@ -139,7 +148,7 @@ func TestTokenManager_RenewWithRetry_EventualSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	tm := NewTokenManager(server.URL, "token", slog.Default())
+	tm := mustNewTokenManager(t, server.URL, "token", slog.Default())
 	tm.refreshToken = "refresh"
 	tm.expiresAt = time.Now().Add(time.Hour)
 	tm.backoff = func(_ int) time.Duration { return time.Millisecond }
@@ -159,7 +168,7 @@ func TestTokenManager_RenewWithRetry_Exhausted(t *testing.T) {
 	}))
 	defer server.Close()
 
-	tm := NewTokenManager(server.URL, "token", slog.Default())
+	tm := mustNewTokenManager(t, server.URL, "token", slog.Default())
 	tm.refreshToken = "refresh"
 	tm.expiresAt = time.Now().Add(time.Hour)
 	tm.backoff = func(_ int) time.Duration { return time.Millisecond }
@@ -178,7 +187,7 @@ func TestTokenManager_RenewWithRetry_ContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	tm := NewTokenManager(server.URL, "token", slog.Default())
+	tm := mustNewTokenManager(t, server.URL, "token", slog.Default())
 	tm.refreshToken = "refresh"
 	tm.expiresAt = time.Now().Add(time.Hour)
 
@@ -188,7 +197,7 @@ func TestTokenManager_RenewWithRetry_ContextCancel(t *testing.T) {
 }
 
 func TestTokenManager_StartRenewal_NotAcquired(t *testing.T) {
-	tm := NewTokenManager("http://unused", "token", slog.Default())
+	tm := mustNewTokenManager(t, "http://127.0.0.1", "token", slog.Default())
 	if err := tm.StartRenewal(context.Background()); err == nil {
 		t.Fatal("expected error starting renewal without Acquire")
 	}
@@ -210,7 +219,7 @@ func TestTokenManager_StartRenewal_RenewsBeforeExpiry(t *testing.T) {
 	}))
 	defer server.Close()
 
-	tm := NewTokenManager(server.URL, "bootstrap", slog.Default())
+	tm := mustNewTokenManager(t, server.URL, "bootstrap", slog.Default())
 	// Set an already-expired token so renewLoop fires the immediate path (timer.Reset(0)).
 	tm.mu.Lock()
 	tm.token = "initial-jwt"
@@ -255,7 +264,7 @@ func TestTokenManager_StartRenewal_OnFatalCalledOnExhaustion(t *testing.T) {
 	}))
 	defer server.Close()
 
-	tm := NewTokenManager(server.URL, "bootstrap", slog.Default())
+	tm := mustNewTokenManager(t, server.URL, "bootstrap", slog.Default())
 	tm.mu.Lock()
 	tm.token = "initial-jwt"
 	tm.refreshToken = "refresh"
@@ -299,7 +308,7 @@ func TestTokenManager_StartRenewal_ContextCancelDoesNotCallOnFatal(t *testing.T)
 	}))
 	defer server.Close()
 
-	tm := NewTokenManager(server.URL, "bootstrap", slog.Default())
+	tm := mustNewTokenManager(t, server.URL, "bootstrap", slog.Default())
 	tm.mu.Lock()
 	tm.token = "initial-jwt"
 	tm.refreshToken = "refresh"
@@ -334,7 +343,7 @@ func TestTokenManager_StartRenewal_ContextCancelDoesNotCallOnFatal(t *testing.T)
 }
 
 func TestTokenManager_SetAlgorithm_ThreadSafe(t *testing.T) {
-	tm := NewTokenManager("http://unused", "token", slog.Default())
+	tm := mustNewTokenManager(t, "http://127.0.0.1", "token", slog.Default())
 	var wg sync.WaitGroup
 	for range 10 {
 		wg.Add(1)
@@ -352,5 +361,32 @@ func TestTokenManager_SetAlgorithm_ThreadSafe(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("concurrent SetAlgorithm timed out")
+	}
+}
+
+func TestNewTokenManager_RejectsPlainHTTP(t *testing.T) {
+	_, err := NewTokenManager("http://example.com/token", "token", nil)
+	if err == nil {
+		t.Fatal("expected error for non-localhost HTTP URL")
+	}
+}
+
+func TestNewTokenManager_AllowsLocalhostHTTP(t *testing.T) {
+	tm, err := NewTokenManager("http://localhost/token", "token", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tm == nil {
+		t.Fatal("expected non-nil TokenManager")
+	}
+}
+
+func TestNewTokenManager_AllowsHTTPS(t *testing.T) {
+	tm, err := NewTokenManager("https://api.example.com/token", "token", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tm == nil {
+		t.Fatal("expected non-nil TokenManager")
 	}
 }

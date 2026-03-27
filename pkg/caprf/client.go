@@ -71,7 +71,10 @@ func (c *Client) AcquireToken(ctx context.Context) error {
 		return fmt.Errorf("token URL configured but hostname is empty")
 	}
 
-	tm := auth.NewTokenManager(c.cfg.TokenURL, c.cfg.Token, c.log)
+	tm, err := auth.NewTokenManager(c.cfg.TokenURL, c.cfg.Token, c.log)
+	if err != nil {
+		return fmt.Errorf("initialize token manager: %w", err)
+	}
 	if c.cfg.TokenAlgorithm != "" {
 		switch c.cfg.TokenAlgorithm {
 		case "RS256", "ES256":

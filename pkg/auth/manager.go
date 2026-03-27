@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 )
@@ -46,9 +47,17 @@ type TokenManager struct {
 }
 
 // NewTokenManager creates a token manager with an initial bootstrap token.
-func NewTokenManager(tokenURL, bootstrapToken string, log *slog.Logger) *TokenManager {
+// The tokenURL must use HTTPS unless it targets localhost for testing.
+func NewTokenManager(tokenURL, bootstrapToken string, log *slog.Logger) (*TokenManager, error) {
 	if log == nil {
 		log = slog.Default()
+	}
+	u, err := url.Parse(tokenURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse token URL: %w", err)
+	}
+	if u.Scheme != "https" && (u.Scheme != "http" || (u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1" && u.Hostname() != "::1")) {
+		return nil, fmt.Errorf("token URL must use HTTPS (http allowed only for localhost), got %q", u.Scheme)
 	}
 	return &TokenManager{
 		tokenURL: tokenURL,
@@ -56,7 +65,7 @@ func NewTokenManager(tokenURL, bootstrapToken string, log *slog.Logger) *TokenMa
 		client:   &http.Client{Timeout: 15 * time.Second},
 		log:      log.WithGroup("auth"),
 		backoff:  defaultBackoff,
-	}
+	}, nil
 }
 
 // SetAlgorithm configures the token algorithm (e.g. RS256, ES256) sent in requests.
