@@ -57,6 +57,19 @@ func TestOpenValidatesInputs(t *testing.T) {
 	if err := mgr.Open(context.Background(), &Target{Device: "/dev/sda3", MappedName: "root_crypt"}, ""); err == nil {
 		t.Fatal("expected error for empty passphrase")
 	}
+	if err := mgr.Open(context.Background(), &Target{Device: "/dev/sda3", MappedName: "../escape"}, "x"); err == nil {
+		t.Fatal("expected error for mapped name with path traversal")
+	}
+	if err := mgr.Open(context.Background(), &Target{Device: "/dev/sda3", MappedName: "has space"}, "x"); err == nil {
+		t.Fatal("expected error for mapped name with spaces")
+	}
+}
+
+func TestCloseRejectsInvalidMappedName(t *testing.T) {
+	mgr := NewWithCommander(nil, &fakeCommander{})
+	if err := mgr.Close(context.Background(), "../escape"); err == nil {
+		t.Fatal("expected error for mapped name with path traversal")
+	}
 }
 
 func TestIsLUKSWithError(t *testing.T) {

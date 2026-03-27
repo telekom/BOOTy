@@ -8,8 +8,13 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"regexp"
 	"strings"
 )
+
+// validMappedName only allows alphanumeric, dash, and underscore characters—
+// safe for use as a device-mapper name.
+var validMappedName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
 
 // Commander abstracts command execution for easier unit testing.
 type Commander interface {
@@ -118,6 +123,9 @@ func (m *Manager) Open(ctx context.Context, target *Target, passphrase string) e
 	if strings.TrimSpace(target.Device) == "" || strings.TrimSpace(target.MappedName) == "" {
 		return fmt.Errorf("target device and mapped name required")
 	}
+	if !validMappedName.MatchString(target.MappedName) {
+		return fmt.Errorf("invalid mapped name %q: must contain only alphanumeric, dash, or underscore", target.MappedName)
+	}
 	if passphrase == "" {
 		return fmt.Errorf("passphrase required for LUKS open")
 	}
@@ -136,6 +144,9 @@ func (m *Manager) Open(ctx context.Context, target *Target, passphrase string) e
 func (m *Manager) Close(ctx context.Context, mappedName string) error {
 	if strings.TrimSpace(mappedName) == "" {
 		return fmt.Errorf("mapped name required")
+	}
+	if !validMappedName.MatchString(mappedName) {
+		return fmt.Errorf("invalid mapped name %q: must contain only alphanumeric, dash, or underscore", mappedName)
 	}
 	out, err := m.cmd.Run(ctx, "cryptsetup", "luksClose", mappedName)
 	if err != nil {

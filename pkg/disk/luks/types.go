@@ -19,7 +19,7 @@ type Config struct {
 	Enabled      bool         `json:"enabled"`
 	Partitions   []Target     `json:"partitions"`
 	UnlockMethod UnlockMethod `json:"unlockMethod"`
-	Passphrase   string       `json:"passphrase,omitempty"`
+	Passphrase   string       `json:"-"`
 	TangURL      string       `json:"tangUrl,omitempty"` // Phase 2: tang server URL for clevis enrollment
 	TPMPCRs      []int        `json:"tpmPcrs,omitempty"` // Phase 2: PCR values for TPM2 enrollment
 	Cipher       string       `json:"cipher,omitempty"`
