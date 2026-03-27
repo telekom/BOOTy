@@ -625,14 +625,15 @@ jobs:
       - name: Boot ISO with UEFI firmware (OVMF) and validate
         timeout-minutes: 5
         run: |
-          # Find OVMF firmware — OVMF requires pflash, not -bios.
-          OVMF_CODE=$(find /usr/share -name "OVMF_CODE*.fd" ! -name "*snakeoil*" 2>/dev/null | head -1)
+          # Find OVMF firmware — prefer non-secboot 4M variant for reliable unsigned GRUB boot.
+          # The secboot variant rejects unsigned EFI binaries, causing silent boot failure.
+          OVMF_CODE=$(find /usr/share -name "OVMF_CODE_4M.fd" 2>/dev/null | head -1)
           if [ -z "$OVMF_CODE" ]; then
-            OVMF_CODE=$(find /usr/share -name "OVMF_CODE*.fd" 2>/dev/null | head -1)
+            OVMF_CODE=$(find /usr/share -name "OVMF_CODE.fd" 2>/dev/null | head -1)
           fi
-          OVMF_VARS=$(find /usr/share -name "OVMF_VARS*.fd" ! -name "*snakeoil*" 2>/dev/null | head -1)
+          OVMF_VARS=$(find /usr/share -name "OVMF_VARS_4M.fd" 2>/dev/null | head -1)
           if [ -z "$OVMF_VARS" ]; then
-            OVMF_VARS=$(find /usr/share -name "OVMF_VARS*.fd" 2>/dev/null | head -1)
+            OVMF_VARS=$(find /usr/share -name "OVMF_VARS.fd" 2>/dev/null | head -1)
           fi
           if [ -z "$OVMF_CODE" ] || [ -z "$OVMF_VARS" ]; then
             echo "OVMF firmware not found"
