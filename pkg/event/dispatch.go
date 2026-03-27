@@ -112,9 +112,23 @@ func isLocalHost(host string) bool {
 
 func isPrivateIPHost(host string) bool {
 	ip := net.ParseIP(host)
-	if ip == nil {
-		// Reject hostnames — only allow resolved IPs to prevent DNS rebinding.
+	if ip != nil {
+		return ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLoopback()
+	}
+	// Resolve hostname and check all resulting IPs.
+	addrs, err := net.LookupHost(host)
+	if err != nil {
+		// If resolution fails, block the host as a precaution.
 		return true
 	}
-	return ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLoopback()
+	for _, addr := range addrs {
+		resolved := net.ParseIP(addr)
+		if resolved == nil {
+			return true
+		}
+		if resolved.IsPrivate() || resolved.IsLinkLocalUnicast() || resolved.IsLoopback() {
+			return true
+		}
+	}
+	return false
 }

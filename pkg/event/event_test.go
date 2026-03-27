@@ -201,7 +201,7 @@ func TestNewDispatcher_InvalidURL(t *testing.T) {
 		{"http external disallowed", "http://example.com/webhook"},
 		{"private ip disallowed", "https://10.0.0.1/webhook"},
 		{"loopback https disallowed", "https://127.0.0.1/webhook"},
-		{"hostname rejected", "https://evil.example.com/webhook"},
+		{"hostname resolves to loopback", "https://localhost/webhook"},
 		{"userinfo", "https://user:pass@example.com/webhook"},
 	}
 	for _, tc := range tests {
