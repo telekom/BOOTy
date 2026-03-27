@@ -17,6 +17,7 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
+	"github.com/telekom/BOOTy/pkg/executil"
 	"github.com/telekom/BOOTy/pkg/firmware"
 	"github.com/telekom/BOOTy/pkg/health"
 	"github.com/telekom/BOOTy/pkg/image"
@@ -47,7 +48,8 @@ type Orchestrator struct {
 	targetDisk      string
 	rootPartition   string
 	bootPartition   string
-	firmwareChanged bool // true if any step changed firmware values requiring hard reboot
+	bestImageURL    string // resolved by verify-image, reused by stream-image
+	firmwareChanged bool   // true if any step changed firmware values requiring hard reboot
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
@@ -78,6 +80,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"setup-mellanox", o.setupMellanox},
 		{"wipe-disks", o.wipeOrSecureEraseDisks},
 		{"detect-disk", o.detectDisk},
+		{"verify-image", o.verifyImageSignature},
 		{"stream-image", o.streamImage},
 		{"partprobe", o.partprobe},
 		{"parse-partitions", o.parsePartitions},
@@ -196,6 +199,14 @@ func (o *Orchestrator) RescueConfig() *rescue.Config {
 			cfg.Mode = mode
 		}
 	}
+	if o.cfg.RescueSSHPubKey != "" {
+		cfg.SSHKeys = []string{o.cfg.RescueSSHPubKey}
+	}
+	cfg.PasswordHash = o.cfg.RescuePasswordHash
+	if o.cfg.RescueTimeout > 0 {
+		cfg.ShellTimeout = time.Duration(o.cfg.RescueTimeout) * time.Second
+	}
+	cfg.AutoMountDisks = o.cfg.RescueAutoMountDisks
 	cfg.ApplyDefaults()
 	return cfg
 }
@@ -361,6 +372,23 @@ func (o *Orchestrator) detectDisk(ctx context.Context) error {
 }
 
 func (o *Orchestrator) streamImage(ctx context.Context) error {
+	bestURL := o.bestImageURL
+	if bestURL == "" {
+		// verify-image may have skipped URL resolution; resolve it now.
+		var err error
+		bestURL, err = image.SelectBestSource(ctx, o.cfg.ImageURLs)
+		if err != nil {
+			return fmt.Errorf("selecting image source: %w", err)
+		}
+	}
+
+	// Partition-by-partition mode: download to ramdisk, copy each partition individually.
+	if strings.EqualFold(o.cfg.ImageMode, "partition") {
+		o.log.Info("Streaming image partition-by-partition", "url", bestURL, "disk", o.targetDisk)
+		return image.StreamPartitions(ctx, bestURL, o.targetDisk)
+	}
+
+	// Default whole-disk mode.
 	var opts []image.StreamOpts
 	if o.cfg.ImageChecksum != "" {
 		opts = append(opts, image.StreamOpts{
@@ -368,13 +396,42 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 			ChecksumType: o.cfg.ImageChecksumType,
 		})
 	}
-	for _, imgURL := range o.cfg.ImageURLs {
-		o.log.Info("Streaming image", "url", imgURL, "disk", o.targetDisk)
-		if err := image.Stream(ctx, imgURL, o.targetDisk, opts...); err != nil {
-			return fmt.Errorf("streaming %s: %w", imgURL, err)
-		}
+
+	o.log.Info("Streaming image", "url", bestURL, "disk", o.targetDisk)
+	if err := image.Stream(ctx, bestURL, o.targetDisk, opts...); err != nil {
+		return fmt.Errorf("streaming %s: %w", bestURL, err)
 	}
 	return nil
+}
+
+func (o *Orchestrator) verifyImageSignature(ctx context.Context) error {
+	// Resolve the best image URL so stream-image reuses the same source.
+	// NOTE: This step streams the image content for GPG verification. The
+	// subsequent stream-image step downloads the same URL again. This is an
+	// intentional tradeoff: signature verification must complete before
+	// writing to disk, and piping the same stream into both GPG and the
+	// block device would require buffering multi-GB images in memory.
+	bestURL, err := image.SelectBestSource(ctx, o.cfg.ImageURLs)
+	if err != nil {
+		// If signature verification is not configured, URL resolution failures
+		// will be caught by stream-image. Don't block provisioning here.
+		if o.cfg.ImageSignatureURL == "" {
+			o.log.Info("no image signature URL configured, skipping verification")
+			return nil
+		}
+		return fmt.Errorf("selecting image source: %w", err)
+	}
+	o.bestImageURL = bestURL
+
+	if o.cfg.ImageSignatureURL == "" {
+		o.log.Info("no image signature URL configured, skipping verification")
+		return nil
+	}
+	if o.cfg.ImageGPGPubKey == "" {
+		return fmt.Errorf("image signature URL set but no GPG public key path configured")
+	}
+
+	return image.VerifyGPGSignature(ctx, bestURL, o.cfg.ImageSignatureURL, o.cfg.ImageGPGPubKey)
 }
 
 func (o *Orchestrator) partprobe(ctx context.Context) error {
@@ -520,7 +577,14 @@ func (o *Orchestrator) reportSuccess(ctx context.Context) error {
 // Automatically detects whether FRR (vtysh) or GoBGP is in use and runs
 // the appropriate network diagnostics.
 func DumpDebugState(failedStep string) {
-	slog.Error("=== DEBUG DUMP START ===", "failedStep", failedStep)
+	slog.Warn("=== DEBUG DUMP START ===", "failedStep", failedStep)
+
+	// PATH and available binaries — critical for diagnosing missing-binary issues.
+	executil.DumpPATH()
+
+	// Shared library availability — dynamically-linked tools fail silently without these.
+	runDebugCmd("shared libs", "ls -la /lib64/ld-linux-x86-64.so* /lib/ld-linux-x86-64.so* /lib/x86_64-linux-gnu/lib*.so* /usr/lib/x86_64-linux-gnu/lib*.so* /lib64/ld-linux-aarch64.so* /lib/ld-linux-aarch64.so* /lib/aarch64-linux-gnu/lib*.so* /usr/lib/aarch64-linux-gnu/lib*.so* 2>/dev/null | head -40 || echo 'no shared libs found'")
+	runDebugCmd("ld.so.cache", "ldconfig -p 2>/dev/null | head -20 || echo 'ldconfig not available'")
 
 	// Step-specific commands run first for targeted diagnostics.
 	stepCmds := stepDebugCmds(failedStep)
@@ -569,11 +633,11 @@ func DumpDebugState(failedStep string) {
 	for _, env := range os.Environ() {
 		if strings.HasPrefix(env, "BOOTY_") || strings.HasPrefix(env, "MODE=") ||
 			strings.HasPrefix(env, "NETWORK_MODE=") {
-			slog.Error("DEBUG env", "var", env)
+			slog.Warn("debug env", "var", env)
 		}
 	}
 
-	slog.Error("=== DEBUG DUMP END ===", "failedStep", failedStep)
+	slog.Warn("=== DEBUG DUMP END ===", "failedStep", failedStep)
 }
 
 // hasBinary reports whether the named binary exists in PATH.
@@ -604,7 +668,7 @@ func frrDebugCmds(_ string) {
 // GoBGP runs in-process so there is no CLI to query; instead we dump
 // kernel state that reflects what the GoBGP stack has programmed.
 func gobgpDebugCmds() {
-	slog.Error("DEBUG", "label", "network-mode", "data", "GoBGP (in-process, no vtysh)")
+	slog.Warn("debug", "label", "network-mode", "data", "GoBGP (in-process, no vtysh)")
 	cmds := []debugCmd{
 		// VRF state — GoBGP programs routes into a VRF.
 		{"vrf devices", "ip -d link show type vrf"},
@@ -641,12 +705,12 @@ func runDebugCmd(label, cmd string) {
 	if trimmed != "" {
 		for _, line := range strings.Split(trimmed, "\n") {
 			if line != "" {
-				slog.Error("DEBUG", "label", label, "data", line)
+				slog.Warn("debug", "label", label, "data", line)
 			}
 		}
 	}
 	if err != nil {
-		slog.Error("Debug command failed", "label", label, "cmd", cmd, "error", err)
+		slog.Warn("debug command failed", "label", label, "cmd", cmd, "error", err)
 	}
 }
 
@@ -663,6 +727,25 @@ func stepDebugCmds(step string) []debugCmd {
 			{"sysblock entries", "ls -la /sys/block/"},
 			{"sysblock sizes", "for d in /sys/block/*/size; do echo \"$d: $(cat $d)\"; done"},
 			{"dev devices", "ls -la /dev/sd* /dev/nvme* /dev/vd* /dev/loop* 2>/dev/null || true"},
+			{"loaded modules", "lsmod 2>/dev/null || cat /proc/modules | head -30"},
+			{"scsi devices", "cat /proc/scsi/scsi 2>/dev/null || echo 'no SCSI info'"},
+		}
+	case "wipe-disks":
+		return []debugCmd{
+			{"wipefs version", "wipefs --version 2>&1 || echo 'wipefs not available'"},
+			{"sgdisk version", "sgdisk --version 2>&1 || echo 'sgdisk not available'"},
+			{"shared libs wipefs", "ldd $(which wipefs 2>/dev/null) 2>&1 || echo 'ldd/wipefs not found'"},
+			{"shared libs sgdisk", "ldd $(which sgdisk 2>/dev/null) 2>&1 || echo 'ldd/sgdisk not found'"},
+			{"ld.so check", "ls -la /lib64/ld-linux-x86-64.so.2 /lib/ld-linux-x86-64.so.2 /lib64/ld-linux-aarch64.so.1 /lib/ld-linux-aarch64.so.1 2>/dev/null || echo 'dynamic linker not found'"},
+			{"dev devices", "ls -la /dev/sd* /dev/nvme* /dev/vd* 2>/dev/null || true"},
+		}
+	case "parse-partitions", "apply-partition-layout":
+		return []debugCmd{
+			{"sfdisk version", "sfdisk --version 2>&1 || echo 'sfdisk not found'"},
+			{"sfdisk raw", "for d in /dev/sd[a-z] /dev/nvme*n1 /dev/vd[a-z]; do if [ -b \"$d\" ]; then sfdisk --json \"$d\"; break; fi; done 2>&1 | head -30 || true"},
+			{"fdisk list", "fdisk -l 2>/dev/null | head -40 || true"},
+			{"partitions", "cat /proc/partitions"},
+			{"shared libs sfdisk", "ldd $(which sfdisk) 2>&1 || echo 'ldd not found'"},
 		}
 	case "stream-image":
 		return []debugCmd{
@@ -698,7 +781,7 @@ func dumpConfig(cfg *config.MachineConfig) {
 	if cfg == nil {
 		return
 	}
-	slog.Error("=== CONFIG DUMP ===",
+	slog.Warn("=== CONFIG DUMP ===",
 		"hostname", cfg.Hostname,
 		"mode", cfg.Mode,
 		"images", redactURLs(cfg.ImageURLs),

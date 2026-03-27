@@ -388,6 +388,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"BGP_NEIGHBORS":               &cfg.BGPNeighbors,
 		"IMAGE_CHECKSUM":              &cfg.ImageChecksum,
 		"IMAGE_CHECKSUM_TYPE":         &cfg.ImageChecksumType,
+		"IMAGE_MODE":                  &cfg.ImageMode,
 		"DISK_DEVICE":                 &cfg.DiskDevice,
 		"INVENTORY_URL":               &cfg.InventoryURL,
 		"FIRMWARE_URL":                &cfg.FirmwareURL,

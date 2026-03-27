@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/telekom/BOOTy/pkg/config"
 )
 
 func TestEfiLoaderNames(t *testing.T) {
@@ -119,5 +121,47 @@ func TestEfiLoaderPath_MissingLoaders(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no EFI loader found") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestConfigureDNSEmptyResolvers(t *testing.T) {
+	t.Helper()
+	c := &Configurator{rootDir: t.TempDir()}
+	cfg := &config.MachineConfig{DNSResolvers: ""}
+	if err := c.ConfigureDNS(cfg); err != nil {
+		t.Fatalf("expected nil for empty resolvers, got: %v", err)
+	}
+}
+
+func TestConfigureDNSSuccess(t *testing.T) {
+	root := t.TempDir()
+	etcDir := filepath.Join(root, "etc")
+	if err := os.MkdirAll(etcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := &Configurator{rootDir: root}
+	cfg := &config.MachineConfig{DNSResolvers: "8.8.8.8, 1.1.1.1"}
+	if err := c.ConfigureDNS(cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(etcDir, "resolv.conf"))
+	if err != nil {
+		t.Fatalf("cannot read resolv.conf: %v", err)
+	}
+	if !strings.Contains(string(data), "nameserver 8.8.8.8") {
+		t.Errorf("missing nameserver 8.8.8.8 in %s", data)
+	}
+	if !strings.Contains(string(data), "nameserver 1.1.1.1") {
+		t.Errorf("missing nameserver 1.1.1.1 in %s", data)
+	}
+}
+
+func TestConfigureDNSMissingEtcDir(t *testing.T) {
+	root := t.TempDir()
+	// Don't create /etc — ConfigureDNS should skip gracefully.
+	c := &Configurator{rootDir: root}
+	cfg := &config.MachineConfig{DNSResolvers: "8.8.8.8"}
+	if err := c.ConfigureDNS(cfg); err != nil {
+		t.Fatalf("expected nil when etc/ doesn't exist, got: %v", err)
 	}
 }

@@ -18,6 +18,7 @@ type MachineConfig struct {
 	ImageURLs         []string // Space-separated IMAGE field from /deploy/vars
 	ImageChecksum     string   // IMAGE_CHECKSUM: expected hex digest of the raw image
 	ImageChecksumType string   // IMAGE_CHECKSUM_TYPE: "sha256" or "sha512"
+	ImageMode         string   // IMAGE_MODE: "whole-disk" (default) or "partition" for partition-by-partition
 	Hostname          string   // HOSTNAME
 	Token             string   // TOKEN (Bearer auth for CAPRF server)
 	ExtraKernelParams string   // MACHINE_EXTRA_KERNEL_PARAMS
@@ -123,10 +124,10 @@ type MachineConfig struct {
 
 	// Rescue mode configuration.
 	RescueMode           string // RESCUE_MODE: "reboot" (default), "retry", "shell", "wait"
-	RescueSSHPubKey      string // RESCUE_SSH_PUBKEY: authorized SSH public key for rescue shell (Phase 2 — parsed but not yet wired)
-	RescuePasswordHash   string // RESCUE_PASSWORD_HASH: crypt(3) password hash for rescue shell (Phase 2 — parsed but not yet wired)
-	RescueTimeout        int    // RESCUE_TIMEOUT: seconds before rescue auto-action, 0 = infinite (Phase 2 — parsed but not yet wired)
-	RescueAutoMountDisks bool   // RESCUE_AUTO_MOUNT: auto-mount discovered disks in rescue mode (Phase 2 — parsed but not yet wired)
+	RescueSSHPubKey      string // RESCUE_SSH_PUBKEY: authorized SSH public key for rescue shell
+	RescuePasswordHash   string // RESCUE_PASSWORD_HASH: crypt(3) password hash for rescue shell
+	RescueTimeout        int    // RESCUE_TIMEOUT: seconds before rescue auto-action, 0 = infinite
+	RescueAutoMountDisks bool   // RESCUE_AUTO_MOUNT: auto-mount discovered disks in rescue mode
 
 	// EVPN L2 overlay (Type-2/3 route processing) — disabled by default.
 	EVPNL2Enabled bool // EVPN_L2_ENABLED: enable Type-2/3 route handling for L2 overlay

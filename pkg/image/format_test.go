@@ -246,3 +246,22 @@ func TestMatchBytes(t *testing.T) {
 		}
 	}
 }
+
+func TestDetectFormatQCOW2(t *testing.T) {
+	// qcow2 magic: QFI\xfb (0x51 0x46 0x49 0xfb)
+	data := []byte{0x51, 0x46, 0x49, 0xfb, 0x00, 0x00}
+	f, _, err := DetectFormat(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f != FormatQCOW2 {
+		t.Errorf("got %s, want %s", f, FormatQCOW2)
+	}
+}
+
+func TestDecompressorQCOW2_ReturnsError(t *testing.T) {
+	_, _, err := Decompressor(bytes.NewReader(nil), FormatQCOW2)
+	if err == nil {
+		t.Fatal("expected error for qcow2 decompressor, got nil")
+	}
+}

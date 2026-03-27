@@ -346,3 +346,39 @@ func TestTrimOCIScheme(t *testing.T) {
 		}
 	}
 }
+
+func TestStreamQCOW2Detection(t *testing.T) {
+	// Serve qcow2 magic bytes — Stream should detect and redirect to qcow2 hook.
+	data := append([]byte{0x51, 0x46, 0x49, 0xfb}, make([]byte, 100)...)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	}))
+	defer srv.Close()
+
+	tmpFile, err := os.CreateTemp(t.TempDir(), "disk-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = tmpFile.Close()
+
+	// Override hook to verify it's called.
+	called := false
+	orig := convertQCOW2Hook
+	convertQCOW2Hook = func(_ context.Context, url, device string) error {
+		called = true
+		if !strings.Contains(url, srv.URL) {
+			t.Errorf("expected hook URL to contain %s, got %s", srv.URL, url)
+		}
+		return nil
+	}
+	defer func() { convertQCOW2Hook = orig }()
+
+	err = Stream(context.Background(), srv.URL+"/image.qcow2", tmpFile.Name())
+	if err != nil {
+		t.Fatalf("Stream() = %v", err)
+	}
+	if !called {
+		t.Error("convertQCOW2Hook was not invoked for qcow2 image")
+	}
+}

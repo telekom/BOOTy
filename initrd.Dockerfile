@@ -15,7 +15,7 @@ RUN gcc -O2 -fPIC -static -L command.o dumpconfig.o formats.o lvchange.o lvconve
 # Build scripted fdisk (sfdisk)
 FROM gcc:15 AS sfdisk
 RUN apt-get update -y && apt-get install -y bison autopoint gettext flex
-RUN git clone https://github.com/karelzak/util-linux.git
+RUN git clone --branch v2.41.3 --depth 1 https://github.com/util-linux/util-linux.git
 WORKDIR util-linux
 RUN ./autogen.sh && ./configure --enable-static-programs=sfdisk && make
 
@@ -43,10 +43,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     frr frr-pythontools && \
     rm -rf /var/lib/apt/lists/*
 
-# Extract kernel and NIC driver modules for bare-metal servers
+# Collect shared libraries for FRR binaries (same rationale as tools stage).
+RUN mkdir -p /frr-libs && \
+    ldd /usr/lib/frr/bgpd /usr/lib/frr/zebra /usr/lib/frr/bfdd \
+        /usr/bin/vtysh /usr/lib/frr/watchfrr 2>/dev/null \
+    | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
+    | sort -u | while read -r lib; do \
+        [ -n "$lib" ] && [ -f "$lib" ] && cp -L --parents "$lib" /frr-libs/ 2>/dev/null || true; \
+    done
+
+# Extract kernel, storage, and NIC driver modules for bare-metal servers
 FROM debian:bookworm-slim AS kernel
 ARG TARGETARCH
 RUN apt-get update && \
+    apt-get install -y --no-install-recommends kmod && \
     KERNEL_PKG=$([ "$TARGETARCH" = "arm64" ] && echo "linux-image-arm64" || echo "linux-image-amd64") && \
     REAL_PKG=$(apt-cache depends "$KERNEL_PKG" | awk '/Depends:/{print $2}' | head -1) && \
     apt-get download "$REAL_PKG" && \
@@ -55,21 +65,38 @@ RUN apt-get update && \
     KVER=$(ls /tmp/kernel/lib/modules/ | head -1) && \
     MDIR="/tmp/kernel/lib/modules/$KVER" && \
     mkdir -p /modules && \
-    # QEMU/KVM virtio
-    for m in virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
-             virtio_pci virtio_net failover net_failover \
-    # VXLAN/bridge networking (FRR/EVPN)
-             dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc \
-    # Intel: e1000e (1G), igb (1G), igc (i225/i226), ixgbe (10G), i40e (10/25/40G), ice (25/50/100G), iavf (VF)
-             e1000e igb igc ixgbe i40e ice iavf \
-    # Broadcom: tg3 (legacy NetXtreme 1G), bnxt_en (NetXtreme-E/C 10/25/50/100G)
-             tg3 bnxt_en \
-    # Mellanox/NVIDIA: mlx4 (ConnectX-3), mlx5 (ConnectX-4/5/6/7)
-             mlx4_core mlx4_en mlx5_core mlxfw \
-    # Emulex/Broadcom: be2net (OneConnect)
-             be2net; do \
-        find "$MDIR" -name "${m}.ko*" -exec cp {} /modules/ \; 2>/dev/null || true; \
+    # Generate modules.dep for modprobe dependency resolution
+    depmod -b /tmp/kernel "$KVER" && \
+    # Target modules — transitive dependencies resolved via modprobe --show-depends.
+    # Module categories:
+    #   QEMU/KVM virtio:  virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev virtio_pci virtio_net failover net_failover
+    #   Storage (SCSI):   scsi_mod sd_mod virtio_blk virtio_scsi
+    #   Filesystems:      ext4 jbd2 mbcache crc32c_generic xfs btrfs vfat
+    #   VXLAN/bridge:     dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc
+    #   Intel NICs:       e1000e igb igc ixgbe i40e ice iavf
+    #   Broadcom NICs:    tg3 bnxt_en
+    #   Mellanox/NVIDIA:  mlx4_core mlx4_en mlx5_core mlxfw
+    #   Emulex/Broadcom:  be2net
+    for m in \
+        virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
+        virtio_pci virtio_net failover net_failover \
+        scsi_mod sd_mod virtio_blk virtio_scsi \
+        ext4 jbd2 mbcache crc32c_generic xfs btrfs vfat \
+        dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc \
+        e1000e igb igc ixgbe i40e ice iavf \
+        tg3 bnxt_en \
+        mlx4_core mlx4_en mlx5_core mlxfw \
+        be2net; do \
+        # Copy module + all transitive dependencies via modprobe
+        modprobe --show-depends -d /tmp/kernel -S "$KVER" "$m" 2>/dev/null \
+            | awk '/^insmod /{print $2}' \
+            | while read -r dep; do \
+                [ -f "$dep" ] && cp -n "$dep" /modules/ 2>/dev/null || true; \
+            done; \
+        # Fallback: direct find if modprobe doesn't resolve (builtin or alias)
+        find "$MDIR" -name "${m}.ko*" -exec cp -n {} /modules/ \; 2>/dev/null || true; \
     done && \
+    echo "Extracted $(ls /modules/*.ko* 2>/dev/null | wc -l) kernel modules" && \
     rm -rf /tmp/kernel *.deb /var/lib/apt/lists/*
 
 # Build disk, system, and firmware tools
@@ -80,6 +107,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     hdparm nvme-cli mstflint lldpd \
     dropbear-bin \
     && rm -rf /var/lib/apt/lists/*
+
+# Collect shared libraries for all tool binaries while their packages are
+# installed.  Running ldd here (instead of in the final assembly stage)
+# ensures every transitive dependency is resolved — the assembly stages
+# only have base Debian libs and would report package-specific libs as
+# "not found", silently dropping them from the initramfs.
+RUN mkdir -p /tool-libs && \
+    ldd /sbin/mdadm /usr/sbin/wipefs /sbin/resize2fs /sbin/e2fsck \
+        /usr/sbin/xfs_growfs /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk \
+        /sbin/partprobe /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
+        /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
+        /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
+        /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk 2>/dev/null \
+    | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
+    | sort -u | while read -r lib; do \
+        [ -n "$lib" ] && [ -f "$lib" ] && cp -L --parents "$lib" /tool-libs/ 2>/dev/null || true; \
+    done
 
 # Busybox static binary — sourced from Docker Hub for reliability and
 # Dependabot version tracking.  Eliminates the fragile busybox.net download
@@ -96,6 +140,11 @@ COPY --from=busybox-bin /bin/busybox bin/busybox
 
 # Create standard applet symlinks into bin/ using BusyBox's built-in installer
 RUN bin/busybox --install -s bin
+
+# Docker COPY follows destination symlinks: if bin/X -> busybox exists, COPY
+# writes the source file content into the busybox binary instead of replacing
+# the symlink.  Remove busybox symlinks that collide with real tool binaries.
+RUN rm -f bin/partprobe bin/hdparm bin/ip
 
 # cloud-utils growpart
 RUN curl -fsSL https://github.com/canonical/cloud-utils/archive/refs/tags/0.33.tar.gz | tar -xz -C /tmp \
@@ -146,14 +195,12 @@ COPY --from=tools /usr/sbin/lldpd sbin/lldpd
 COPY --from=tools /usr/sbin/dropbear bin/dropbear
 COPY --from=tools /usr/bin/dropbearkey bin/dropbearkey
 
-# Copy runtime libs required by rescue SSH binaries.
-RUN set -eux; \
-        ldd bin/dropbear bin/dropbearkey \
-            | awk '/=> \/|^\/lib/{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
-            | sort -u > /tmp/rescue-libs.txt; \
-        while read -r lib; do \
-            [ -n "$lib" ] && cp --parents "$lib" .; \
-        done < /tmp/rescue-libs.txt
+# Copy pre-collected shared libraries from stages where packages are installed.
+# This replaces the previous ldd scan that ran in this stage — that approach
+# missed package-specific libs (libefivar, libmnl, etc.) because they were
+# not installed here and ldd reported them as "not found".
+COPY --from=tools /tool-libs/ .
+COPY --from=frr /frr-libs/ .
 
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
@@ -204,6 +251,8 @@ WORKDIR /build/initramfs
 # available for debug diagnostics and shell commands.
 COPY --from=busybox-bin /bin/busybox bin/busybox
 RUN for cmd in $(bin/busybox --list); do if [ "$cmd" != "busybox" ]; then ln -sf busybox "bin/$cmd"; fi; done
+# Docker COPY follows destination symlinks — remove colliding busybox symlinks.
+RUN rm -f bin/partprobe bin/ip
 COPY --from=busybox /build/initramfs/bin/growpart bin/growpart
 
 # BOOTy init binary (static, CGO-enabled)
@@ -219,6 +268,10 @@ RUN mkdir -p sbin
 COPY --from=tools /sbin/partprobe bin/partprobe
 COPY --from=tools /sbin/e2fsck sbin/e2fsck
 COPY --from=tools /sbin/resize2fs sbin/resize2fs
+
+# Copy pre-collected shared libraries (slim was previously missing lib copying
+# entirely, breaking all dynamically linked tool binaries at runtime).
+COPY --from=tools /tool-libs/ .
 
 # Package slim initramfs
 RUN find . -print0 | cpio --null -ov --format=newc > ../initramfs.cpio \
@@ -238,6 +291,8 @@ WORKDIR /build/initramfs
 # kill, id, and xargs are available for debug diagnostics and shell commands.
 COPY --from=busybox-bin /bin/busybox bin/busybox
 RUN for cmd in $(bin/busybox --list); do if [ "$cmd" != "busybox" ]; then ln -sf busybox "bin/$cmd"; fi; done
+# Docker COPY follows destination symlinks — remove colliding busybox symlinks.
+RUN rm -f bin/partprobe bin/hdparm bin/ip
 COPY --from=busybox /build/initramfs/bin/growpart bin/growpart
 
 # BOOTy init binary (with GoBGP compiled in)
@@ -284,14 +339,8 @@ COPY --from=tools /usr/bin/dropbearkey bin/dropbearkey
 # lsblk for rescue mode disk auto-mount
 COPY --from=tools /bin/lsblk bin/lsblk
 
-# Copy runtime libs required by rescue binaries (dropbear + lsblk).
-RUN set -eux; \
-        ldd bin/dropbear bin/dropbearkey bin/lsblk \
-            | awk '/=> \/|^\/lib/{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
-            | sort -u > /tmp/rescue-libs.txt; \
-        while read -r lib; do \
-            [ -n "$lib" ] && cp --parents "$lib" .; \
-        done < /tmp/rescue-libs.txt
+# Copy pre-collected shared libraries from the tools stage.
+COPY --from=tools /tool-libs/ .
 
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/

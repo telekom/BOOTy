@@ -480,33 +480,67 @@ func TestBootStandbyHeartbeatsSentToCAPRF(t *testing.T) {
 	t.Log("CAPRF mock received heartbeat from standby node through EVPN")
 }
 
+// --- Initramfs module verification ---
+
+// requiredModules lists kernel module names that must be
+// present in the /modules/ directory of every BOOTy container. These are
+// critical for storage, filesystems, and basic networking. If the Dockerfile
+// module copy loop breaks (e.g. shell parsing), this test catches it.
+var requiredModules = []string{
+	"ext4",        // filesystem
+	"xfs",         // filesystem
+	"vfat",        // ESP / EFI partition
+	"scsi_mod",    // SCSI subsystem
+	"sd_mod",      // SCSI disk driver
+	"virtio_blk",  // virtio block storage (QEMU)
+	"virtio_scsi", // virtio SCSI controller
+	"virtio_pci",  // PCI virtio transport
+	"virtio_net",  // virtio NIC
+	"vxlan",       // VXLAN overlay
+}
+
+func TestBootModulesPresent(t *testing.T) {
+	requireBootLab(t)
+
+	// List kernel module files shipped in the initramfs.
+	// ContainerLab containers use booty-test.Dockerfile (no /modules/ dir);
+	// only the real initramfs (KVM/vrnetlab) has /modules/.
+	out, err := bootDockerExec(t, provisionContainer, "ls", "/modules/")
+	if err != nil {
+		if strings.Contains(out, "No such file or directory") {
+			t.Skip("/modules/ not present in container image — module validation covered by KVM and vrnetlab tests")
+		}
+		t.Fatalf("cannot list /modules/: %v\n%s", err, out)
+	}
+
+	modules := out
+	t.Logf("Found modules in /modules/: %d files", len(strings.Split(strings.TrimSpace(modules), "\n")))
+
+	for _, mod := range requiredModules {
+		// Module files are named like ext4.ko, ext4.ko.zst, ext4.ko.xz, etc.
+		if !strings.Contains(modules, mod+".ko") {
+			t.Errorf("critical module %q not found in /modules/ — Dockerfile module copy may be broken", mod)
+		}
+	}
+}
+
 // --- Unexpected ERROR detection ---
 
 // allowedErrorPatterns lists error messages that are expected in minimal CI
 // environments (no real disk, provisioning failure at disk ops, etc.).
+// Debug dumps (DumpDebugState, DumpPATH, dumpConfig) log at WARN level and
+// are invisible to this check — only genuine ERROR-level messages remain.
 var allowedErrorPatterns = []string{
-	"no suitable disk found",
-	"detect-disk",
-	"Connecting to provisioning server",
-	"DEBUG DUMP",
-	"=== DEBUG",
-	"=== CONFIG",
+	// Top-level provisioning/deprovisioning failure.
 	"Provisioning failed",
-	"Provisioning step",
 	"Deprovisioning failed",
-	"Deprovisioning step",
-	"stream-image",
-	"partition-disk",
-	"parse-partitions",
-	"format-disk",
-	"Disk Error",
-	"msg=DEBUG",
-	"Debug command",
-	"DEBUG env",
-	"Network connectivity timeout",
+	// Individual step failures.
+	"provisioning step failed",
+	"Deprovisioning step failed",
+	// Expected in CI without real disks or network.
+	"no suitable disk found",
 	"Connectivity timeout",
-	"network connectivity timeout",
-	"dumping FRR state",
+	"Connecting to provisioning server",
 }
 
 func TestBootNoUnexpectedErrors(t *testing.T) {

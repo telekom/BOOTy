@@ -324,7 +324,7 @@ func TestVrnetlabProvisionAttemptsImageDownload(t *testing.T) {
 		strings.Contains(logs, "Beginning write") ||
 		strings.Contains(logs, "stream-image")
 	hasDiskStep := strings.Contains(logs, "detect-disk") ||
-		strings.Contains(logs, "Provisioning step")
+		strings.Contains(logs, "provisioning step")
 
 	if hasImageAttempt {
 		t.Log("provision VM: image download attempted through EVPN")
@@ -579,29 +579,66 @@ func TestVrnetlabAllVMsEnterCAPRF(t *testing.T) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// Initramfs Module Verification
+// ═══════════════════════════════════════════════════════════════════════
+
+// vrnetlabRequiredModules lists kernel modules that must be loaded for a
+// successful boot. If the Dockerfile module copy loop breaks (e.g. shell
+// comment parsing), this test catches it before a real deploy.
+var vrnetlabRequiredModules = []string{
+	"ext4",        // root filesystem
+	"xfs",         // common data filesystem
+	"vfat",        // EFI system partition
+	"scsi_mod",    // SCSI subsystem
+	"sd_mod",      // SCSI disk driver
+	"virtio_blk",  // virtio block storage (QEMU)
+	"virtio_scsi", // virtio SCSI controller
+	"virtio_pci",  // PCI virtio transport (QEMU)
+	"virtio_net",  // virtio NIC
+	"vxlan",       // VXLAN overlay
+}
+
+func TestVrnetlabModulesLoaded(t *testing.T) {
+	requireVrnetlabLab(t)
+
+	logs := getVMSerialLog(t, vmProvision)
+
+	if logs == "" {
+		t.Fatalf("serial log for %s is empty; cannot verify required kernel modules (check docker logs / VM state)", vmProvision)
+	}
+
+	const provisioningMarker = "Beginning provisioning"
+	if !strings.Contains(logs, provisioningMarker) {
+		t.Skipf("serial log for %s does not contain %q; skipping module load verification", vmProvision, provisioningMarker)
+	}
+
+	for _, mod := range vrnetlabRequiredModules {
+		// loadModules logs: "Loaded kernel module" with a "module=<name>.ko*" field.
+		field := "module=" + mod + ".ko"
+		if !strings.Contains(logs, "Loaded kernel module") || !strings.Contains(logs, field) {
+			t.Errorf("module %q not loaded according to serial log — expected log entry with 'Loaded kernel module' and %q", mod, field)
+		}
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // Unexpected ERROR Detection
 // ═══════════════════════════════════════════════════════════════════════
 
 // vrnetlabAllowedErrors lists error messages expected in CI (no real disk, etc.).
+// Debug dumps (DumpDebugState, DumpPATH, dumpConfig) log at WARN level and
+// are invisible to this check — only genuine ERROR-level messages remain.
 var vrnetlabAllowedErrors = []string{
-	"no suitable disk found",
-	"detect-disk",
-	"Connecting to provisioning server",
-	"DEBUG DUMP",
-	"=== DEBUG",
-	"=== CONFIG",
+	// Top-level provisioning/deprovisioning failure.
 	"Provisioning failed",
-	"Provisioning step",
 	"Deprovisioning failed",
-	"Deprovisioning step",
-	"stream-image",
-	"partition-disk",
-	"parse-partitions",
-	"format-disk",
-	"Disk Error",
-	"msg=DEBUG",
-	"Debug command",
-	"DEBUG env",
+	// Individual step failures.
+	"provisioning step failed",
+	"Deprovisioning step failed",
+	// Expected in CI without real disks or network.
+	"no suitable disk found",
+	"Connectivity timeout",
+	"Connecting to provisioning server",
 }
 
 func TestVrnetlabNoUnexpectedErrors(t *testing.T) {

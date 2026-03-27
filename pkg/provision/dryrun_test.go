@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -699,6 +700,12 @@ func TestDryRun_AllPass(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	// Create a dummy GPG pubkey file so the image-signature check passes.
+	pubKey := filepath.Join(t.TempDir(), "pub.gpg")
+	if err := os.WriteFile(pubKey, []byte("dummy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	provider := &dryRunProvider{}
 
 	withMockStat(t, func(path string) (os.FileInfo, error) {
@@ -709,6 +716,8 @@ func TestDryRun_AllPass(t *testing.T) {
 			return fakeFileInfo{name: "efi", mode: os.ModeDir}, nil
 		case "/sys/class/dmi/id/sys_vendor":
 			return fakeFileInfo{name: "sys_vendor", mode: os.ModeDir}, nil
+		case pubKey:
+			return fakeFileInfo{name: "pub.gpg", mode: 0o600}, nil
 		default:
 			return nil, os.ErrNotExist
 		}
@@ -726,6 +735,8 @@ func TestDryRun_AllPass(t *testing.T) {
 	o := NewOrchestrator(
 		&config.MachineConfig{
 			ImageURLs:           []string{srv.URL + "/image.raw"},
+			ImageSignatureURL:   srv.URL + "/image.raw.sig",
+			ImageGPGPubKey:      pubKey,
 			Hostname:            "test-host",
 			DiskDevice:          "/dev/mock0",
 			HealthChecksEnabled: true,

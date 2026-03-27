@@ -116,6 +116,25 @@ func TestParsePartitionsError(t *testing.T) {
 	}
 }
 
+func TestParsePartitionsNoPartitionTable(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+
+	// sfdisk reports "does not contain a recognized partition table" for empty disks.
+	// ParsePartitions should return nil (empty list), not an error.
+	cmd.setResult("sfdisk --json",
+		[]byte("sfdisk: /dev/loop0: does not contain a recognized partition table"),
+		fmt.Errorf("exec sfdisk: exit status 1"),
+	)
+	parts, err := mgr.ParsePartitions(context.Background(), "/dev/loop0")
+	if err != nil {
+		t.Fatalf("expected nil error for empty partition table, got: %v", err)
+	}
+	if len(parts) != 0 {
+		t.Errorf("expected 0 partitions, got %d", len(parts))
+	}
+}
+
 func TestParsePartitionsInvalidJSON(t *testing.T) {
 	cmd := newMockCommander()
 	mgr := NewManager(cmd)
@@ -124,6 +143,28 @@ func TestParsePartitionsInvalidJSON(t *testing.T) {
 	_, err := mgr.ParsePartitions(context.Background(), "/dev/sda")
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestParsePartitionsWithGPTWarningPrefix(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+
+	sfdisk := sfdiskOutput{}
+	sfdisk.PartitionTable.Partitions = []Partition{
+		{Node: "/dev/sda1", Type: EFISystemPartitionGUID},
+	}
+	data, _ := json.Marshal(sfdisk)
+	// Simulate sfdisk stderr warning merged before JSON via CombinedOutput.
+	prefixed := append([]byte("GPT PMBR size mismatch (7340031 != 488397167) will be corrected by write.\n"), data...)
+	cmd.setResult("sfdisk --json", prefixed, nil)
+
+	parts, err := mgr.ParsePartitions(context.Background(), "/dev/sda")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(parts) != 1 || parts[0].Node != "/dev/sda1" {
+		t.Errorf("expected 1 partition /dev/sda1, got %v", parts)
 	}
 }
 
@@ -264,6 +305,58 @@ func TestIsExecNotFound(t *testing.T) {
 	}
 }
 
+func TestIsBashNotFound(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"bash missing in chroot", fmt.Errorf("exec chroot: exit status 127 [output: chroot: can't execute '/bin/bash': No such file or directory]"), true},
+		{"exit 127 without no such file", fmt.Errorf("exit status 127"), false},
+		{"no such file without 127", fmt.Errorf("No such file or directory"), false},
+		{"normal error", fmt.Errorf("exec chroot: exit status 1"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isBashNotFound(tt.err); got != tt.want {
+				t.Errorf("isBashNotFound() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestChrootRunBashNotFoundFallsBackToSh(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+
+	// Simulate bash not found inside chroot (exit status 127).
+	bashErr := fmt.Errorf("exec chroot: exit status 127 [output: chroot: can't execute '/bin/bash': No such file or directory]")
+	cmd.setResult("chroot /newroot", nil, bashErr)
+
+	// The fallback /bin/sh call uses the same mock key, so it also errors.
+	// We verify that isBashNotFound triggers and /bin/sh is attempted.
+	_, _ = mgr.ChrootRun(context.Background(), "/newroot", "ls /dev/mst/")
+
+	// Verify both /bin/bash and /bin/sh were attempted.
+	var bashCall, shCall bool
+	for _, c := range cmd.calls {
+		if c.name == "chroot" && len(c.args) >= 2 {
+			switch c.args[1] {
+			case "/bin/bash":
+				bashCall = true
+			case "/bin/sh":
+				shCall = true
+			}
+		}
+	}
+	if !bashCall {
+		t.Error("expected /bin/bash attempt")
+	}
+	if !shCall {
+		t.Error("expected /bin/sh fallback attempt after bash not found")
+	}
+}
+
 func TestGrowPartitionError(t *testing.T) {
 	cmd := newMockCommander()
 	mgr := NewManager(cmd)
@@ -327,9 +420,22 @@ func TestPartProbeError(t *testing.T) {
 	cmd := newMockCommander()
 	mgr := NewManager(cmd)
 
+	// Both partprobe and blockdev fallback fail → error expected.
 	cmd.setResult("partprobe /dev/sda", nil, fmt.Errorf("exit 1"))
+	cmd.setResult("blockdev --rereadpt", nil, fmt.Errorf("exit 1"))
 	if err := mgr.PartProbe(context.Background(), "/dev/sda"); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestPartProbeFallback(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+
+	// partprobe fails but blockdev --rereadpt succeeds → no error.
+	cmd.setResult("partprobe /dev/sda", nil, fmt.Errorf("exit 1"))
+	if err := mgr.PartProbe(context.Background(), "/dev/sda"); err != nil {
+		t.Fatalf("expected fallback to succeed: %v", err)
 	}
 }
 

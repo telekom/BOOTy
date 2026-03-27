@@ -224,7 +224,15 @@ func (c *Configurator) ConfigureDNS(cfg *config.MachineConfig) error {
 	if cfg.DNSResolvers == "" {
 		return nil
 	}
-	path := filepath.Join(c.rootDir, "etc", "resolv.conf")
+	etcDir := filepath.Join(c.rootDir, "etc")
+	if _, err := os.Stat(etcDir); err != nil {
+		if os.IsNotExist(err) {
+			slog.Warn("root /etc/ not mounted, skipping DNS configuration", "path", etcDir)
+			return nil
+		}
+		return fmt.Errorf("stat etc dir %s: %w", etcDir, err)
+	}
+	path := filepath.Join(etcDir, "resolv.conf")
 	slog.Info("Configuring DNS", "resolvers", cfg.DNSResolvers)
 	var lines []string
 	for _, r := range strings.Split(cfg.DNSResolvers, ",") {
@@ -315,11 +323,29 @@ func (c *Configurator) RemoveEFIBootEntries(ctx context.Context) error {
 }
 
 // CreateEFIBootEntry creates a new EFI boot entry for the installed OS.
+// Skips gracefully when the system is not booted in EFI mode (e.g. BIOS VMs),
+// since efibootmgr requires EFI firmware NVRAM access.
 func (c *Configurator) CreateEFIBootEntry(ctx context.Context, diskDev, bootPart string) error {
 	if bootPart == "" {
 		slog.Warn("No EFI partition found, skipping EFI boot entry creation")
 		return nil
 	}
+
+	// efibootmgr communicates with EFI firmware NVRAM; on BIOS systems the
+	// sysfs EFI directory does not exist and the tool cannot function.
+	if _, err := os.Stat("/sys/firmware/efi"); os.IsNotExist(err) {
+		slog.Warn("System not booted in EFI mode, skipping EFI boot entry creation")
+		return nil
+	}
+
+	// efibootmgr requires efivarfs to read/write NVRAM variables.  When the
+	// kernel lacks CONFIG_EFIVAR_FS (common in minimal initramfs kernels),
+	// efivarfs cannot be mounted and the tool will fail.  Skip gracefully.
+	if !isMountPoint("/sys/firmware/efi/efivars") {
+		slog.Warn("efivarfs not mounted, skipping EFI boot entry creation (efibootmgr requires efivarfs)")
+		return nil
+	}
+
 	slog.Info("Creating EFI boot entry", "disk", diskDev, "partition", bootPart)
 
 	// Detect EFI loader path — architecture-aware shimx64/shimaa64 with grub fallback.

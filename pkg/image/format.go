@@ -15,7 +15,7 @@ import (
 // Format represents a detected compression format.
 type Format string
 
-// Supported compression formats.
+// Supported compression and image formats.
 const (
 	FormatRaw   Format = "raw"
 	FormatGzip  Format = "gzip"
@@ -23,6 +23,7 @@ const (
 	FormatLZ4   Format = "lz4"
 	FormatXZ    Format = "xz"
 	FormatBzip2 Format = "bzip2"
+	FormatQCOW2 Format = "qcow2"
 )
 
 // Magic byte signatures for auto-detection.
@@ -35,6 +36,7 @@ var magicBytes = []struct {
 	{FormatLZ4, []byte{0x04, 0x22, 0x4d, 0x18}},
 	{FormatXZ, []byte{0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00}},
 	{FormatBzip2, []byte{0x42, 0x5a, 0x68}},
+	{FormatQCOW2, []byte{0x51, 0x46, 0x49, 0xfb}}, // "QFI\xfb"
 }
 
 // DetectFormat peeks at the first bytes of the reader to determine
@@ -97,6 +99,9 @@ func Decompressor(r io.Reader, f Format) (io.Reader, io.Closer, error) {
 
 	case FormatBzip2:
 		return bzip2.NewReader(r), nil, nil
+
+	case FormatQCOW2:
+		return nil, nil, fmt.Errorf("qcow2 images cannot be streamed directly; use ConvertQCOW2 first")
 
 	case FormatRaw:
 		return r, nil, nil

@@ -21,6 +21,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/frr"
 	"github.com/telekom/BOOTy/pkg/network/gobgp"
+	"github.com/telekom/BOOTy/pkg/network/netplan"
 	"github.com/telekom/BOOTy/pkg/network/vlan"
 	"github.com/telekom/BOOTy/pkg/provision"
 	"github.com/telekom/BOOTy/pkg/rescue"
@@ -105,7 +106,7 @@ func setupMountsAndDevices() {
 	}
 }
 
-// loadModules loads kernel modules from /modules/ for common server NICs.
+// loadModules loads kernel modules from /modules/ for server NICs and storage controllers.
 // Uses the finit_module syscall directly instead of shelling out to insmod.
 // Errors are non-fatal: modules may already be built-in or not needed.
 //
@@ -253,6 +254,9 @@ func runCAPRF(ctx context.Context) {
 				break
 			}
 			slog.Error("Provisioning failed", "error", err)
+			if setupErr := rescue.Setup(ctx, rescueCfg); setupErr != nil {
+				slog.Warn("Rescue setup error", "error", setupErr)
+			}
 			action := rescue.Decide(rescueCfg, &retryState)
 			slog.Info("Rescue action", "type", action.Type, "message", action.Message)
 			switch action.Type {
@@ -292,11 +296,16 @@ func runCAPRF(ctx context.Context) {
 		slog.Warn("Network teardown error", "error", err)
 	}
 
-	// Attempt kexec into installed kernel; fall back to normal reboot.
+	// Attempt kexec into installed kernel; fall back to power off so
+	// the orchestrator (CAPRF) can eject media and reboot from disk.
 	if cfg.Mode != "deprovision" && cfg.Mode != "soft" && provisionSucceeded {
 		tryKexec(cfg, orch.FirmwareChanged())
 	}
 	time.Sleep(time.Second * 2)
+	if provisionSucceeded {
+		slog.Info("Provisioning succeeded, powering off for orchestrator to manage boot")
+		realm.PowerOff()
+	}
 	realm.Reboot()
 }
 
@@ -355,6 +364,13 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		BGPNeighbors:     cfg.BGPNeighbors,
 		BGPRemoteASN:     cfg.BGPRemoteASN,
 		EVPNL2Enabled:    cfg.EVPNL2Enabled,
+	}
+
+	// Auto-detect netplan configuration files injected by the provisioner.
+	// Netplan-derived values override vars-based values, allowing the same
+	// config format used by the old deployer to work as a drop-in with BOOTy.
+	if npCfg := detectNetplanConfig(); npCfg != nil {
+		mergeNetplanConfig(netCfg, npCfg)
 	}
 
 	// Parse VLAN configuration.
@@ -451,6 +467,100 @@ func dhcpFallback(ctx context.Context, netCfg *network.Config) network.Mode {
 		slog.Error("DHCP setup failed", "error", err)
 	}
 	return dhcp
+}
+
+// detectNetplanConfig checks for netplan YAML files in the provisioner's
+// file-system overlay. If found, it parses them (and any FRR config) into
+// a network.Config. Returns nil if no netplan files are present.
+func detectNetplanConfig() *network.Config {
+	const netplanDir = "/deploy/file-system/etc/netplan"
+	const frrConfPath = "/deploy/file-system/etc/frr/frr.conf"
+
+	if !netplan.HasNetplanFiles(netplanDir) {
+		return nil
+	}
+	slog.Info("detected netplan configuration files", "dir", netplanDir)
+
+	np, err := netplan.ParseDir(netplanDir)
+	if err != nil {
+		slog.Warn("failed to parse netplan files, falling back to vars", "error", err)
+		return nil
+	}
+
+	var frrParams *netplan.FRRParams
+	if data, frrErr := os.ReadFile(frrConfPath); frrErr == nil {
+		parsed, parseErr := netplan.ParseFRRConfigBytes(data)
+		if parseErr != nil {
+			slog.Warn("failed to parse FRR config", "error", parseErr)
+		} else {
+			frrParams = parsed
+			slog.Info("parsed FRR configuration", "asn", frrParams.ASN, "evpn", frrParams.EVPN)
+		}
+	}
+
+	cfg := netplan.ToNetworkConfig(np, frrParams)
+	slog.Info("netplan config loaded",
+		"mode", cfg.NetworkMode, "asn", cfg.ASN,
+		"vni", cfg.ProvisionVNI, "underlay", cfg.UnderlayIP,
+	)
+	return cfg
+}
+
+// mergeNetplanConfig overrides dst fields with values from the netplan-derived
+// src config. Fields that netplan doesn't provide (zero/empty) are left
+// unchanged so vars-based operational parameters are preserved.
+func mergeNetplanConfig(dst, src *network.Config) {
+	if src.ASN > 0 {
+		dst.ASN = src.ASN
+	}
+	if src.ProvisionVNI > 0 {
+		dst.ProvisionVNI = src.ProvisionVNI
+	}
+	if src.UnderlayIP != "" {
+		dst.UnderlayIP = src.UnderlayIP
+	}
+	if src.ProvisionIP != "" {
+		dst.ProvisionIP = src.ProvisionIP
+	}
+	if src.NetworkMode != "" {
+		dst.NetworkMode = src.NetworkMode
+	}
+	if src.BGPPeerMode != "" {
+		dst.BGPPeerMode = src.BGPPeerMode
+	}
+	if src.BGPNeighbors != "" {
+		dst.BGPNeighbors = src.BGPNeighbors
+	}
+	if src.EVPNL2Enabled {
+		dst.EVPNL2Enabled = true
+	}
+	if src.BondInterfaces != "" {
+		dst.BondInterfaces = src.BondInterfaces
+	}
+	if src.BondMode != "" {
+		dst.BondMode = src.BondMode
+	}
+	if src.VRFTableID > 0 {
+		dst.VRFTableID = src.VRFTableID
+	}
+	if src.VRFName != "" {
+		dst.VRFName = src.VRFName
+	}
+	if src.MTU > 0 {
+		dst.MTU = src.MTU
+	}
+	if src.DNSResolvers != "" {
+		dst.DNSResolvers = src.DNSResolvers
+	}
+	if src.StaticGateway != "" {
+		dst.StaticGateway = src.StaticGateway
+	}
+	if len(src.VLANs) > 0 {
+		dst.VLANs = src.VLANs
+	}
+	if len(src.Interfaces) > 0 {
+		dst.Interfaces = src.Interfaces
+	}
 }
 
 // setupGoBGPStack creates and sets up a GoBGP/EVPN network stack.
@@ -611,6 +721,9 @@ func runStandby(ctx context.Context, client config.Provider, cfg *config.Machine
 							break
 						}
 						slog.Error("Hot provision failed", "error", provErr)
+						if setupErr := rescue.Setup(ctx, rescueCfg); setupErr != nil {
+							slog.Warn("Rescue setup error", "error", setupErr)
+						}
 						action := rescue.Decide(rescueCfg, &retryState)
 						slog.Info("Rescue action", "type", action.Type, "message", action.Message)
 						switch action.Type {

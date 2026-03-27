@@ -6,9 +6,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os/exec"
 	"strings"
 
+	"github.com/telekom/BOOTy/pkg/executil"
 	"github.com/telekom/BOOTy/pkg/firmware/nic"
 )
 
@@ -17,16 +17,13 @@ type Commander interface {
 	CombinedOutput(ctx context.Context, cmd string, args ...string) ([]byte, error)
 }
 
-// OSCommander implements Commander using os/exec.
-type OSCommander struct{}
+// OSCommander implements Commander using executil.
+type OSCommander struct{ inner executil.ExecCommander }
 
 // CombinedOutput runs a command and returns combined stdout/stderr.
-func (OSCommander) CombinedOutput(ctx context.Context, cmd string, args ...string) ([]byte, error) {
-	out, err := exec.CommandContext(ctx, cmd, args...).CombinedOutput()
-	if err != nil {
-		return out, fmt.Errorf("command %s: %w", cmd, err)
-	}
-	return out, nil
+// Delegates to executil.ExecCommander for consistent error formatting.
+func (o OSCommander) CombinedOutput(ctx context.Context, cmd string, args ...string) ([]byte, error) {
+	return o.inner.Run(ctx, cmd, args...)
 }
 
 // Manager handles Mellanox ConnectX NIC firmware operations.

@@ -18,6 +18,7 @@ RUN CGO_ENABLED=1 GOOS=linux go build -a \
 # ── Stage 2: Extract a bootable kernel ────────────────────────────────
 FROM debian:bookworm-slim AS kernel
 RUN apt-get update && \
+    apt-get install -y --no-install-recommends kmod && \
     REAL_PKG=$(apt-cache depends linux-image-amd64 | awk '/Depends:/{print $2}' | head -1) && \
     apt-get download "$REAL_PKG" && \
     dpkg-deb -x linux-image-*.deb /tmp/kernel && \
@@ -25,23 +26,32 @@ RUN apt-get update && \
     KVER=$(ls /tmp/kernel/lib/modules/ | head -1) && \
     MDIR="/tmp/kernel/lib/modules/$KVER" && \
     mkdir -p /modules && \
-    for m in virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
-             virtio_pci virtio_net failover net_failover \
-             dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc \
-    # Common server NIC drivers (Intel, Broadcom, Mellanox/NVIDIA)
-             e1000e igb igc ixgbe i40e ice iavf \
-             tg3 bnxt_en \
-             mlx4_core mlx4_en mlx5_core mlxfw \
-             be2net; do \
-        find "$MDIR" -name "${m}.ko*" -exec cp {} /modules/ \; ; \
+    depmod -b /tmp/kernel "$KVER" && \
+    for m in \
+        virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
+        virtio_pci virtio_net failover net_failover \
+        scsi_mod sd_mod virtio_blk virtio_scsi \
+        ext4 jbd2 mbcache crc32c_generic xfs btrfs vfat \
+        dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc \
+        e1000e igb igc ixgbe i40e ice iavf \
+        tg3 bnxt_en \
+        mlx4_core mlx4_en mlx5_core mlxfw \
+        be2net; do \
+        modprobe --show-depends -d /tmp/kernel -S "$KVER" "$m" 2>/dev/null \
+            | awk '/^insmod /{print $2}' \
+            | while read -r dep; do \
+                [ -f "$dep" ] && cp -n "$dep" /modules/ 2>/dev/null || true; \
+            done; \
+        find "$MDIR" -name "${m}.ko*" -exec cp -n {} /modules/ \; 2>/dev/null || true; \
     done && \
+    echo "Extracted $(ls /modules/*.ko* 2>/dev/null | wc -l) kernel modules" && \
     rm -rf /tmp/kernel *.deb /var/lib/apt/lists/*
 
 # ── Stage 3: Assemble initramfs ───────────────────────────────────────
 FROM debian:bookworm-slim AS initramfs
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cpio busybox-static curl gnupg lsb-release ca-certificates \
-    e2fsprogs dosfstools gdisk parted lvm2 \
+    e2fsprogs dosfstools gdisk parted lvm2 fdisk util-linux \
     && rm -rf /var/lib/apt/lists/*
 
 # Install FRR for EVPN networking support inside the VM.
@@ -87,7 +97,8 @@ COPY --from=kernel /modules/ /initramfs/modules/
 RUN mkdir -p /initramfs/lib64 /initramfs/lib/x86_64-linux-gnu && \
     for bin in /usr/lib/frr/mgmtd /usr/lib/frr/zebra /usr/lib/frr/bgpd /usr/lib/frr/bfdd /usr/bin/vtysh \
                /usr/sbin/sgdisk /usr/sbin/mkfs.ext4 /usr/sbin/mkfs.vfat /usr/sbin/parted \
-               /usr/sbin/pvcreate /usr/sbin/vgcreate /usr/sbin/lvcreate; do \
+               /usr/sbin/pvcreate /usr/sbin/vgcreate /usr/sbin/lvcreate \
+               /usr/sbin/wipefs /usr/sbin/sfdisk /usr/bin/lsblk /usr/sbin/blkid; do \
         dest="/initramfs$(dirname $bin)"; \
         mkdir -p "$dest"; \
         cp "$bin" "/initramfs${bin}"; \

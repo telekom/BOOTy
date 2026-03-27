@@ -3,6 +3,7 @@
 package disk
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,27 +11,20 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
+
+	"github.com/telekom/BOOTy/pkg/executil"
 )
 
 // Commander abstracts command execution for testing.
-type Commander interface {
-	Run(ctx context.Context, name string, args ...string) ([]byte, error)
-}
+type Commander = executil.Commander
 
 // ExecCommander executes real system commands.
-type ExecCommander struct{}
-
-// Run executes a system command and returns its combined output.
-func (e *ExecCommander) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
-	if err != nil {
-		return out, fmt.Errorf("exec %s: %w", name, err)
-	}
-	return out, nil
-}
+type ExecCommander = executil.ExecCommander
 
 // Manager handles disk operations for provisioning.
 type Manager struct {
@@ -88,8 +82,8 @@ func (m *Manager) WipeAllDisks(ctx context.Context) error {
 		return fmt.Errorf("reading /sys/block: %w", err)
 	}
 	var (
-		wiped  int
-		failed int
+		wiped int
+		errs  []error
 	)
 	for _, entry := range entries {
 		name := entry.Name()
@@ -102,15 +96,19 @@ func (m *Manager) WipeAllDisks(ctx context.Context) error {
 		if out, err := m.cmd.Run(ctx, "sgdisk", "--zap-all", dev); err != nil {
 			slog.Debug("sgdisk zap failed (may not be GPT)", "device", dev, "output", string(out))
 		}
-		if out, err := m.cmd.Run(ctx, "wipefs", "-af", dev); err != nil {
-			slog.Warn("wipefs failed", "device", dev, "output", string(out), "error", err)
-			failed++
+		if _, err := m.cmd.Run(ctx, "wipefs", "-af", dev); err != nil {
+			slog.Warn("wipefs failed", "device", dev, "error", err)
+			errs = append(errs, fmt.Errorf("%s: %w", dev, err))
 		} else {
 			wiped++
 		}
 	}
-	if wiped == 0 && failed > 0 {
-		return fmt.Errorf("all %d disk wipe(s) failed", failed)
+	if wiped == 0 && len(errs) > 0 {
+		msgs := make([]string, len(errs))
+		for i, e := range errs {
+			msgs[i] = e.Error()
+		}
+		return fmt.Errorf("all %d disk wipe(s) failed: %s", len(errs), strings.Join(msgs, "; "))
 	}
 	return nil
 }
@@ -290,16 +288,43 @@ func readDiskSizeGB(name string) (int, error) {
 }
 
 // ParsePartitions reads the partition table using sfdisk --json.
+//
+// sfdisk may emit non-JSON warnings (e.g. "GPT PMBR size mismatch") on
+// stderr which CombinedOutput merges before the JSON body. We strip
+// everything before the first '{' so the JSON decoder sees clean input.
 func (m *Manager) ParsePartitions(ctx context.Context, disk string) ([]Partition, error) {
 	out, err := m.cmd.Run(ctx, "sfdisk", "--json", disk)
 	if err != nil {
-		return nil, fmt.Errorf("sfdisk %s: %s: %w", disk, string(out), err)
+		// A disk with no partition table is not an error — return empty list
+		// so the caller can decide what to do (e.g. create partitions).
+		if strings.Contains(string(out), "does not contain a recognized partition table") {
+			slog.Info("disk has no partition table", "disk", disk)
+			return nil, nil
+		}
+		return nil, fmt.Errorf("sfdisk %s: %w", disk, err)
 	}
+
+	jsonBytes := stripNonJSONPrefix(out)
+
 	var result sfdiskOutput
-	if err := json.Unmarshal(out, &result); err != nil {
-		return nil, fmt.Errorf("parsing sfdisk output: %w", err)
+	if err := json.Unmarshal(jsonBytes, &result); err != nil {
+		raw := strings.Join(strings.Fields(string(out)), " ")
+		if len(raw) > 512 {
+			raw = raw[:512] + "...(truncated)"
+		}
+		return nil, fmt.Errorf("parsing sfdisk output: %w [raw: %s]", err, raw)
 	}
 	return result.PartitionTable.Partitions, nil
+}
+
+// stripNonJSONPrefix returns the slice starting at the first '{'.
+// sfdisk --json may prepend stderr warnings (e.g. GPT geometry messages)
+// when captured via CombinedOutput.
+func stripNonJSONPrefix(b []byte) []byte {
+	if idx := bytes.IndexByte(b, '{'); idx > 0 {
+		return b[idx:]
+	}
+	return b
 }
 
 // FindBootPartition finds the EFI System Partition.
@@ -356,14 +381,101 @@ func (m *Manager) ResizeFilesystem(ctx context.Context, device string) error {
 	return nil
 }
 
-// PartProbe re-reads partition table.
+// PartProbe re-reads partition table and triggers device node creation.
+//
+// Calls partprobe first; falls back to blockdev --rereadpt if partprobe fails.
+// After re-reading, runs mdev -s (busybox mini-udev) to ensure partition
+// device nodes are created — devtmpfs alone may not create them in minimal
+// initramfs environments without udevd.
 func (m *Manager) PartProbe(ctx context.Context, disk string) error {
 	slog.Info("Re-reading partition table", "disk", disk)
+
+	// Flush all pending writes to the block device backend before re-reading
+	// the partition table. On QEMU/KVM, BLKRRPART may invalidate the page
+	// cache and read stale data from the virtual disk if writeback is pending.
+	if syncOut, syncErr := m.cmd.Run(ctx, "sync"); syncErr != nil {
+		slog.Warn("sync before partprobe failed", "error", syncErr, "output", string(syncOut))
+	}
+
+	// Diagnostic: show device state before partprobe.
+	logDeviceState(disk, "before-partprobe")
+
 	out, err := m.cmd.Run(ctx, "partprobe", disk)
 	if err != nil {
-		return fmt.Errorf("partprobe %s: %s: %w", disk, string(out), err)
+		slog.Warn("partprobe failed, trying blockdev --rereadpt", "disk", disk, "error", err, "output", string(out))
+		out, err = m.cmd.Run(ctx, "blockdev", "--rereadpt", disk)
+		if err != nil {
+			return fmt.Errorf("re-read partition table %s: %s: %w", disk, string(out), err)
+		}
+		slog.Info("blockdev --rereadpt succeeded", "disk", disk)
 	}
+
+	// Brief settle time for the kernel to populate /sys/block/ partition entries
+	// after BLKRRPART ioctl. On QEMU/KVM virtio disks the partition scan can be
+	// asynchronous and /sys entries may not exist immediately.
+	time.Sleep(200 * time.Millisecond)
+
+	// Diagnostic: show device state after partprobe + settle.
+	logDeviceState(disk, "after-partprobe")
+
+	// Trigger device node creation for partitions. In initramfs environments
+	// without udevd, devtmpfs may not auto-create partition nodes after the
+	// kernel re-reads the partition table. mdev -s scans /sys and creates
+	// missing device nodes.
+	if mdevOut, mdevErr := m.cmd.Run(ctx, "mdev", "-s"); mdevErr != nil {
+		slog.Warn("mdev -s failed", "error", mdevErr, "output", string(mdevOut))
+	}
+
+	// Diagnostic: show device state after mdev -s.
+	logDeviceState(disk, "after-mdev")
 	return nil
+}
+
+// logDeviceState logs /dev/sd*, /sys/block/ entries, and /proc/partitions
+// for debugging partition node creation in initramfs environments.
+func logDeviceState(disk, label string) {
+	// List /dev/sd* (or /dev/vd* etc) device nodes.
+	base := filepath.Dir(disk) // /dev
+	prefix := filepath.Base(disk)
+	devNodes := listGlob(filepath.Join(base, prefix+"*"))
+	slog.Info("device state", "label", label, "dev_nodes", devNodes)
+
+	// List /sys/block/<disk>/ partition entries.
+	sysBase := filepath.Base(disk)
+	sysDir := "/sys/block/" + sysBase
+	sysEntries := listDir(sysDir)
+	slog.Info("device state", "label", label, "sys_entries", sysEntries)
+
+	// Read /proc/partitions for the disk.
+	if data, err := os.ReadFile("/proc/partitions"); err != nil {
+		slog.Warn("device state: cannot read /proc/partitions", "label", label, "error", err)
+	} else {
+		lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+		var relevant []string
+		for _, line := range lines {
+			if strings.Contains(line, sysBase) || strings.HasPrefix(line, "major") {
+				relevant = append(relevant, strings.TrimSpace(line))
+			}
+		}
+		slog.Info("device state", "label", label, "proc_partitions", relevant)
+	}
+}
+
+func listGlob(pattern string) []string {
+	matches, _ := filepath.Glob(pattern)
+	return matches
+}
+
+func listDir(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return []string{"error: " + err.Error()}
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
 }
 
 // supportedFilesystems lists filesystem types to try when mounting, in priority order.
@@ -371,8 +483,15 @@ var supportedFilesystems = []string{"ext4", "xfs", "btrfs", "ext3", "ext2", "vfa
 
 // MountPartition mounts a device at the given mountpoint.
 // Tries all supported filesystem types in order: ext4, xfs, btrfs, ext3, ext2, vfat.
-func (m *Manager) MountPartition(_ context.Context, device, mountpoint string) error {
+// Waits up to 10 seconds for the device node to appear (devtmpfs may lag after partprobe).
+func (m *Manager) MountPartition(ctx context.Context, device, mountpoint string) error {
 	slog.Info("Mounting partition", "device", device, "mountpoint", mountpoint)
+
+	// Wait for the device node to appear — devtmpfs can lag after partprobe.
+	if err := waitForDevice(ctx, device); err != nil {
+		return fmt.Errorf("device %s not available: %w", device, err)
+	}
+
 	if err := os.MkdirAll(mountpoint, 0o755); err != nil {
 		return fmt.Errorf("creating mountpoint %s: %w", mountpoint, err)
 	}
@@ -386,6 +505,43 @@ func (m *Manager) MountPartition(_ context.Context, device, mountpoint string) e
 		errs = append(errs, fmt.Sprintf("%s=%v", fsType, err))
 	}
 	return fmt.Errorf("mounting %s at %s: tried %s", device, mountpoint, strings.Join(errs, ", "))
+}
+
+// waitForDevice polls for a device node to appear, retrying up to 10 seconds.
+// On each iteration, runs mdev -s to trigger device node creation in initramfs
+// environments without udevd, where the kernel may update /sys/block/ partition
+// entries asynchronously after BLKRRPART.
+// Respects context cancellation for clean shutdown.
+func waitForDevice(ctx context.Context, device string) error {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for i := range 20 {
+		if _, err := os.Stat(device); err == nil {
+			slog.Info("device appeared", "device", device, "iteration", i)
+			return nil
+		}
+		// Trigger device node creation from /sys entries that may have appeared
+		// since the last poll. mdev -s is fast (~10ms) and idempotent.
+		//nolint:gosec // mdev is a fixed busybox command, no user input
+		_ = exec.CommandContext(ctx, "mdev", "-s").Run()
+		if _, err := os.Stat(device); err == nil {
+			slog.Info("device appeared after mdev", "device", device, "iteration", i)
+			return nil
+		}
+		if i == 0 || i == 9 || i == 19 {
+			// Log device state on first, middle, and last iteration.
+			disk := strings.TrimRight(device, "0123456789")
+			logDeviceState(disk, fmt.Sprintf("waitForDevice-iter%d", i))
+		}
+		slog.Debug("waiting for device node", "device", device, "iteration", i)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("device %s wait canceled: %w", device, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+	return fmt.Errorf("device %s did not appear after 10s", device)
 }
 
 // BindMount performs a bind mount.
@@ -445,10 +601,15 @@ func (m *Manager) EnableLVM(ctx context.Context) error {
 func (m *Manager) ChrootRun(ctx context.Context, root, command string) ([]byte, error) {
 	out, err := m.cmd.Run(ctx, "chroot", root, "/bin/bash", "-c", command)
 	if err != nil {
-		// If chroot binary is missing, fall back to syscall-based chroot.
+		// If chroot binary itself is missing, fall back to syscall-based chroot.
 		if isExecNotFound(err) {
 			slog.Info("chroot binary not found, using syscall fallback", "root", root)
 			return m.chrootSyscall(ctx, root, command)
+		}
+		// If /bin/bash is missing inside the chroot target, try /bin/sh.
+		if isBashNotFound(err) {
+			slog.Info("bash not found in chroot, trying /bin/sh", "root", root)
+			return m.cmd.Run(ctx, "chroot", root, "/bin/sh", "-c", command)
 		}
 		return out, fmt.Errorf("chroot exec in %s: %w", root, err)
 	}
@@ -461,6 +622,14 @@ func (m *Manager) chrootSyscall(ctx context.Context, root, command string) ([]by
 	cmd.SysProcAttr = &syscall.SysProcAttr{Chroot: root}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		raw := strings.TrimSpace(string(out))
+		if len(raw) > 512 {
+			raw = raw[:512] + "...(truncated)"
+		}
+		raw = strings.NewReplacer("\n", " ", "\r", " ").Replace(raw)
+		if raw != "" {
+			return out, fmt.Errorf("chroot syscall in %s: %w [output: %s]", root, err, raw)
+		}
 		return out, fmt.Errorf("chroot syscall in %s: %w", root, err)
 	}
 	return out, nil
@@ -473,6 +642,14 @@ func isExecNotFound(err error) bool {
 	}
 	// The Commander wraps errors, so also check the message.
 	return strings.Contains(err.Error(), "executable file not found")
+}
+
+// isBashNotFound checks whether the error indicates /bin/bash was not found
+// inside a chroot target (exit status 127 with "No such file or directory").
+func isBashNotFound(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "exit status 127") &&
+		strings.Contains(msg, "No such file or directory")
 }
 
 // SetupChrootBindMounts creates standard bind mounts for chroot operations.
