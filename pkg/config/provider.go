@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -196,6 +197,9 @@ func ParsePartitionLayout(data string) (*PartitionLayout, error) {
 	if len(layout.Partitions) == 0 {
 		return nil, fmt.Errorf("partition layout has no partitions")
 	}
+	if len(layout.Partitions) > maxPartitions {
+		return nil, fmt.Errorf("partition layout has %d partitions, maximum is %d", len(layout.Partitions), maxPartitions)
+	}
 	if layout.Table == "" {
 		layout.Table = "gpt"
 	}
@@ -233,7 +237,11 @@ func normalizePartitionLayoutDevice(device string) (string, error) {
 	if !filepath.IsAbs(trimmed) {
 		return "", fmt.Errorf("partition layout device %q must be an absolute path", device)
 	}
-	return trimmed, nil
+	cleaned := filepath.Clean(trimmed)
+	if cleaned != trimmed {
+		return "", fmt.Errorf("partition layout device %q must be a clean path (got %q after normalization)", device, cleaned)
+	}
+	return cleaned, nil
 }
 
 // validatePartitions checks partition definitions for required fields.
@@ -267,6 +275,9 @@ func validatePartitionEntry(index int, part Partition, partitionCount int, seen 
 	if err := validatePartitionSize(index, part, partitionCount); err != nil {
 		return err
 	}
+	if part.TypeGUID != "" && !typeGUIDRE.MatchString(part.TypeGUID) {
+		return fmt.Errorf("partition %d (%s): invalid typeGUID %q, must be a UUID", index+1, part.Label, part.TypeGUID)
+	}
 	return nil
 }
 
@@ -290,6 +301,9 @@ func validatePartitionMountpoint(index int, part Partition) error {
 	}
 	if strings.ContainsAny(part.Mountpoint, " \t\n\r") {
 		return fmt.Errorf("partition %d (%s): mountpoint %q must not contain whitespace", index+1, part.Label, part.Mountpoint)
+	}
+	if part.Mountpoint != "" && strings.Contains(filepath.Clean(part.Mountpoint), "..") {
+		return fmt.Errorf("partition %d (%s): mountpoint %q must not contain path traversal", index+1, part.Label, part.Mountpoint)
 	}
 	if part.Mountpoint != "" && part.Filesystem == "" {
 		return fmt.Errorf("partition %d (%s): mountpoint %q requires a filesystem", index+1, part.Label, part.Mountpoint)
@@ -316,6 +330,9 @@ func validateLVMConfig(lvm *LVMConfig, partitions []Partition) error {
 	}
 	if len(lvm.Volumes) == 0 {
 		return fmt.Errorf("lvm: at least one volume is required")
+	}
+	if len(lvm.Volumes) > maxLVMVolumes {
+		return fmt.Errorf("lvm: %d volumes exceeds maximum of %d", len(lvm.Volumes), maxLVMVolumes)
 	}
 	if err := validateLVMPVPartition(lvm, partitions); err != nil {
 		return err
@@ -429,6 +446,9 @@ func validateLVMVolumeMountpoint(index int, vol LVVolume) error {
 	if strings.ContainsAny(vol.Mountpoint, " \t\n\r") {
 		return fmt.Errorf("lvm volume %d (%s): mountpoint %q must not contain whitespace", index+1, vol.Name, vol.Mountpoint)
 	}
+	if vol.Mountpoint != "" && strings.Contains(filepath.Clean(vol.Mountpoint), "..") {
+		return fmt.Errorf("lvm volume %d (%s): mountpoint %q must not contain path traversal", index+1, vol.Name, vol.Mountpoint)
+	}
 	if vol.Mountpoint != "" && vol.Filesystem == "" {
 		return fmt.Errorf("lvm volume %d (%s): mountpoint %q requires a filesystem", index+1, vol.Name, vol.Mountpoint)
 	}
@@ -475,6 +495,15 @@ func isSupportedFilesystem(fs string) bool {
 		return false
 	}
 }
+
+// typeGUIDRE validates GPT type GUID format.
+var typeGUIDRE = regexp.MustCompile(`^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$`)
+
+// maxPartitions is the GPT maximum partition count.
+const maxPartitions = 128
+
+// maxLVMVolumes is a reasonable upper bound for LVM logical volumes.
+const maxLVMVolumes = 256
 
 // isValidPartitionLabel checks that a label is safe for GPT and fstab use.
 // GPT labels are limited to 36 UTF-16 characters; only printable ASCII

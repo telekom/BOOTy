@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestStatusConstants(t *testing.T) {
 	tests := []struct {
@@ -252,5 +255,58 @@ func TestParsePartitionLayoutLVMMountpointRequiresFilesystem(t *testing.T) {
 	_, err := ParsePartitionLayout(input)
 	if err == nil {
 		t.Fatal("expected error when lvm mountpoint is set without filesystem")
+	}
+}
+
+func TestParsePartitionLayoutInvalidTypeGUID(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"root","sizeMB":0,"mountpoint":"/","filesystem":"ext4","typeGUID":"not-a-guid"}]}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Fatal("expected error for invalid typeGUID")
+	}
+}
+
+func TestParsePartitionLayoutValidTypeGUID(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"root","sizeMB":0,"mountpoint":"/","filesystem":"ext4","typeGUID":"0FC63DAF-8483-4772-8E79-3D69D8477DE4"}]}`
+	layout, err := ParsePartitionLayout(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if layout.Partitions[0].TypeGUID != "0FC63DAF-8483-4772-8E79-3D69D8477DE4" {
+		t.Errorf("TypeGUID = %q, want valid UUID", layout.Partitions[0].TypeGUID)
+	}
+}
+
+func TestParsePartitionLayoutRejectsDeviceTraversal(t *testing.T) {
+	input := `{"table":"gpt","device":"/dev/../etc/passwd","partitions":[{"label":"root","sizeMB":0,"mountpoint":"/","filesystem":"ext4"}]}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Fatal("expected error for device path with ..")
+	}
+}
+
+func TestParsePartitionLayoutRejectsMountpointTraversal(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"root","sizeMB":0,"mountpoint":"/boot/../../etc","filesystem":"ext4"}]}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Fatal("expected error for mountpoint with ..")
+	}
+}
+
+func TestParsePartitionLayoutTooManyPartitions(t *testing.T) {
+	// Build JSON with 129 partitions (exceeds GPT max of 128).
+	parts := `{"table":"gpt","partitions":[`
+	for i := range 129 {
+		if i > 0 {
+			parts += ","
+		}
+		parts += fmt.Sprintf(`{"label":"p%d","sizeMB":100,"filesystem":"ext4","mountpoint":"/mnt/p%d"}`, i, i)
+	}
+	// Replace the last mountpoint with "/" to pass root presence validation.
+	parts += `]}`
+
+	_, err := ParsePartitionLayout(parts)
+	if err == nil {
+		t.Fatal("expected error for too many partitions")
 	}
 }

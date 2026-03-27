@@ -511,6 +511,12 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 		}
 	}
 
+	// With a custom partition layout, fail fast — rootfs extraction for
+	// layout mode is not implemented yet.
+	if o.cfg.PartitionLayout != nil {
+		return fmt.Errorf("%s", errPartitionLayoutNotSupported)
+	}
+
 	// Partition-by-partition mode: download to ramdisk, copy each partition individually.
 	if strings.EqualFold(o.cfg.ImageMode, "partition") {
 		o.log.Info("Streaming image partition-by-partition", "url", bestURL, "disk", o.targetDisk)
@@ -523,13 +529,6 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 			Checksum:     o.cfg.ImageChecksum,
 			ChecksumType: o.cfg.ImageChecksumType,
 		})
-	}
-
-	// With a custom partition layout, fail fast — rootfs extraction for
-	// layout mode is not implemented yet.
-	// Partition-layout provisioning is gated until rootfs extraction is implemented.
-	if o.cfg.PartitionLayout != nil {
-		return fmt.Errorf("%s", errPartitionLayoutNotSupported)
 	}
 
 	// Default whole-disk mode.
