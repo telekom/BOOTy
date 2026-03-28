@@ -377,8 +377,8 @@ func TestBootAllNodesImageReachableThroughEVPN(t *testing.T) {
 						t.Logf("%s BOOTy exhausted network retries (round %d)", c.desc, round)
 						break
 					}
-					_, err := bootDockerExec(t, c.name, "wget", "-q", "--spider", "http://10.100.0.10/images/test.img.gz")
-					if err == nil {
+					out, err := bootDockerExec(t, c.name, "wget", "-qO-", "--timeout=3", "http://10.100.0.10/images/")
+					if err == nil && strings.Contains(out, "test.img.gz") {
 						ok = true
 						break
 					}
@@ -389,9 +389,9 @@ func TestBootAllNodesImageReachableThroughEVPN(t *testing.T) {
 				}
 			}
 			if !ok {
-				t.Fatalf("%s node cannot download image from nginx (10.100.0.10) through EVPN after restart", c.desc)
+				t.Fatalf("%s node cannot reach nginx images (10.100.0.10) through EVPN after restart", c.desc)
 			}
-			t.Logf("%s node: image download from nginx through EVPN succeeded", c.desc)
+			t.Logf("%s node: nginx image listing through EVPN succeeded", c.desc)
 		})
 	}
 }
