@@ -501,6 +501,12 @@ func (o *Orchestrator) writeFstab() error {
 }
 
 func (o *Orchestrator) streamImage(ctx context.Context) error {
+	// With a custom partition layout, fail fast — rootfs extraction for
+	// layout mode is not implemented yet.
+	if o.cfg.PartitionLayout != nil {
+		return fmt.Errorf("%s", errPartitionLayoutNotSupported)
+	}
+
 	bestURL := o.bestImageURL
 	if bestURL == "" {
 		// verify-image may have skipped URL resolution; resolve it now.
@@ -509,12 +515,6 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("selecting image source: %w", err)
 		}
-	}
-
-	// With a custom partition layout, fail fast — rootfs extraction for
-	// layout mode is not implemented yet.
-	if o.cfg.PartitionLayout != nil {
-		return fmt.Errorf("%s", errPartitionLayoutNotSupported)
 	}
 
 	// Partition-by-partition mode: download to ramdisk, copy each partition individually.
