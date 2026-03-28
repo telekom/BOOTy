@@ -43,8 +43,8 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 35 {
-		t.Fatalf("expected 35 provisioning steps, got %d", len(steps))
+	if len(steps) != 36 {
+		t.Fatalf("expected 36 provisioning steps, got %d", len(steps))
 	}
 }
 
