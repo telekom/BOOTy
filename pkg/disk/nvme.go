@@ -33,6 +33,12 @@ type NVMeNamespace struct {
 // nvmeControllerPathRE validates that a controller path looks like /dev/nvme0, /dev/nvme1, etc.
 var nvmeControllerPathRE = regexp.MustCompile(`^/dev/nvme\d+$`)
 
+// nsidRE validates a namespace ID (positive integer like "1", "2", etc.).
+var nsidRE = regexp.MustCompile(`^[1-9]\d*$`)
+
+// nvmeDevicePathRE validates NVMe namespace device paths like /dev/nvme0n1.
+var nvmeDevicePathRE = regexp.MustCompile(`^/dev/nvme\d+n\d+$`)
+
 // checkNVMeControllerUniqueness returns an error if any controller path appears more than once.
 func checkNVMeControllerUniqueness(configs []NVMeNamespaceConfig) error {
 	seen := make(map[string]bool, len(configs))
@@ -222,6 +228,9 @@ func (m *Manager) NVMeSupportsMultiNS(ctx context.Context, controller string) (b
 
 // CreateNVMeNamespace creates a namespace with the given size in blocks and block size.
 func (m *Manager) CreateNVMeNamespace(ctx context.Context, controller string, sizeBlocks uint64, blockSize int) (string, error) {
+	if !nvmeControllerPathRE.MatchString(controller) {
+		return "", fmt.Errorf("invalid NVMe controller path %q", controller)
+	}
 	bs := blockSize
 	if bs == 0 {
 		bs = 512
@@ -248,6 +257,12 @@ func (m *Manager) CreateNVMeNamespace(ctx context.Context, controller string, si
 
 // AttachNVMeNamespace attaches a namespace to controller 0.
 func (m *Manager) AttachNVMeNamespace(ctx context.Context, controller, nsid string) error {
+	if !nvmeControllerPathRE.MatchString(controller) {
+		return fmt.Errorf("invalid NVMe controller path %q", controller)
+	}
+	if !nsidRE.MatchString(nsid) {
+		return fmt.Errorf("invalid NVMe namespace ID %q", nsid)
+	}
 	out, err := m.cmd.Run(ctx, "nvme", "attach-ns", controller, "-n", nsid, "-c", "0")
 	if err != nil {
 		return fmt.Errorf("nvme attach-ns %s -n %s: %s: %w", controller, nsid, string(out), err)
@@ -259,6 +274,9 @@ func (m *Manager) AttachNVMeNamespace(ctx context.Context, controller, nsid stri
 // lbafIndex must be provided explicitly from device capabilities (e.g. nvme id-ns),
 // because LBAF index ordering is vendor/device-specific.
 func (m *Manager) FormatNVMeNamespace(ctx context.Context, device string, blockSize, lbafIndex int) error {
+	if !nvmeDevicePathRE.MatchString(device) {
+		return fmt.Errorf("invalid NVMe device path %q", device)
+	}
 	if lbafIndex < 0 {
 		return fmt.Errorf("formatting %s: explicit lbafIndex is required", device)
 	}
@@ -352,6 +370,9 @@ func (m *Manager) nvmeControllerCapacity(ctx context.Context, controller string)
 // using the controller's full capacity at 512-byte block size. Used during deprovisioning
 // to return the drive to a single-namespace factory state.
 func (m *Manager) NVMeResetNamespaces(ctx context.Context, controller string) error {
+	if !nvmeControllerPathRE.MatchString(controller) {
+		return fmt.Errorf("invalid NVMe controller path %q", controller)
+	}
 	slog.Info("resetting nvme namespaces to factory default", "controller", controller)
 
 	if err := m.deleteAllNamespaces(ctx, controller); err != nil {

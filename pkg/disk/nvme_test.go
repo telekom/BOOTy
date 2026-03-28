@@ -491,3 +491,42 @@ func TestNVMeListNamespaces_EmptyOutput(t *testing.T) {
 		t.Errorf("expected 0 NSIDs, got %d", len(nsids))
 	}
 }
+
+func TestNVMeCreateNamespaceRejectsInvalidController(t *testing.T) {
+	mgr := NewManager(newMockCommander())
+	_, err := mgr.CreateNVMeNamespace(t.Context(), "../escape", 1000, 512)
+	if err == nil {
+		t.Fatal("expected error for invalid controller path")
+	}
+}
+
+func TestNVMeAttachNamespaceRejectsInvalidInputs(t *testing.T) {
+	mgr := NewManager(newMockCommander())
+
+	if err := mgr.AttachNVMeNamespace(t.Context(), "bad", "1"); err == nil {
+		t.Fatal("expected error for invalid controller")
+	}
+	if err := mgr.AttachNVMeNamespace(t.Context(), "/dev/nvme0", "0"); err == nil {
+		t.Fatal("expected error for zero nsid")
+	}
+	if err := mgr.AttachNVMeNamespace(t.Context(), "/dev/nvme0", "-1"); err == nil {
+		t.Fatal("expected error for negative nsid")
+	}
+	if err := mgr.AttachNVMeNamespace(t.Context(), "/dev/nvme0", "abc"); err == nil {
+		t.Fatal("expected error for non-numeric nsid")
+	}
+}
+
+func TestNVMeFormatNamespaceRejectsInvalidDevice(t *testing.T) {
+	mgr := NewManager(newMockCommander())
+	if err := mgr.FormatNVMeNamespace(t.Context(), "/dev/sda", 512, 0); err == nil {
+		t.Fatal("expected error for non-NVMe device path")
+	}
+}
+
+func TestNVMeResetNamespacesRejectsInvalidController(t *testing.T) {
+	mgr := NewManager(newMockCommander())
+	if err := mgr.NVMeResetNamespaces(t.Context(), "/dev/sda"); err == nil {
+		t.Fatal("expected error for invalid controller path")
+	}
+}
