@@ -420,6 +420,9 @@ jobs:
         with:
           go-version: "1.26"
 
+      - name: Generate test disk image
+        run: sudo test/e2e/clab/create-test-image.sh test/e2e/clab/images
+
       - name: Install ContainerLab
         run: curl -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}
 

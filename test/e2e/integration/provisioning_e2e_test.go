@@ -211,9 +211,9 @@ func TestImageDownloadViaGoClient(t *testing.T) {
 	requireNetworkLab(t)
 
 	ip := containerMgmtIP(t, "clab-booty-lab-nginx")
-	resp, err := http.Get(fmt.Sprintf("http://%s/images/test.img", ip)) //nolint:gosec // test URL
+	resp, err := http.Get(fmt.Sprintf("http://%s/images/test.img.gz", ip)) //nolint:gosec // test URL
 	if err != nil {
-		t.Fatalf("GET /images/test.img: %v", err)
+		t.Fatalf("GET /images/test.img.gz: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -221,29 +221,28 @@ func TestImageDownloadViaGoClient(t *testing.T) {
 		t.Fatalf("image download status: %d", resp.StatusCode)
 	}
 
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read image: %v", err)
+	// Read first 4 bytes to verify gzip magic number (1f 8b).
+	header := make([]byte, 4)
+	if _, err := io.ReadFull(resp.Body, header); err != nil {
+		t.Fatalf("read image header: %v", err)
 	}
-	if !strings.Contains(string(data), "BOOTY-TEST-IMAGE-CONTENT") {
-		t.Fatalf("image content mismatch: %s", string(data))
+	if header[0] != 0x1f || header[1] != 0x8b {
+		t.Fatalf("image is not gzip: magic=%x%x", header[0], header[1])
 	}
-	t.Logf("Image downloaded via Go HTTP client (%d bytes)", len(data))
+	t.Logf("Image downloaded via Go HTTP client (gzip, content-length: %s)", resp.Header.Get("Content-Length"))
 }
 
 func TestImageDownloadViaOverlayFromClient(t *testing.T) {
 	requireNetworkLab(t)
 
-	body := wgetFromClient(t, "http://10.100.0.10/images/test.img")
-	if !strings.Contains(body, "BOOTY-TEST-IMAGE-CONTENT") {
-		t.Fatalf("overlay image mismatch: %s", body)
-	}
+	// Use --spider to verify image reachability without downloading full GPT image.
+	wgetSpiderFromClient(t, "http://10.100.0.10/images/test.img.gz")
 
 	html := wgetFromClient(t, "http://10.100.0.10/")
 	if !strings.Contains(html, "booty-lab") {
 		t.Fatalf("overlay static content mismatch: %s", html)
 	}
-	t.Log("Image + static content downloaded through EVPN overlay")
+	t.Log("Image reachable + static content downloaded through EVPN overlay")
 }
 
 func TestWaitForHTTPAgainstNginx(t *testing.T) {
@@ -508,27 +507,28 @@ func TestFullProvisioningFlow(t *testing.T) {
 	}
 
 	// Step 4: Download image from nginx via management network
-	t.Log("Step 4: Downloading test image from nginx")
-	imgResp, err := http.Get(fmt.Sprintf("http://%s/images/test.img", ngxIP)) //nolint:gosec // test URL
+	t.Log("Step 4: Downloading test image header from nginx")
+	imgResp, err := http.Get(fmt.Sprintf("http://%s/images/test.img.gz", ngxIP)) //nolint:gosec // test URL
 	if err != nil {
 		t.Fatalf("image download: %v", err)
 	}
 	defer imgResp.Body.Close()
 
-	imgData, err := io.ReadAll(imgResp.Body)
-	if err != nil {
-		t.Fatalf("read image body: %v", err)
+	if imgResp.StatusCode != http.StatusOK {
+		t.Fatalf("image download status: %d", imgResp.StatusCode)
 	}
-	if !strings.Contains(string(imgData), "BOOTY-TEST-IMAGE-CONTENT") {
-		t.Fatalf("image content mismatch: %s", string(imgData))
+	// Verify gzip magic number.
+	header := make([]byte, 2)
+	if _, err := io.ReadFull(imgResp.Body, header); err != nil {
+		t.Fatalf("read image header: %v", err)
+	}
+	if header[0] != 0x1f || header[1] != 0x8b {
+		t.Fatalf("image is not gzip: magic=%x%x", header[0], header[1])
 	}
 
-	// Step 5: Also verify image download through EVPN overlay
-	t.Log("Step 5: Verifying image download through EVPN overlay")
-	overlayBody := wgetFromClient(t, "http://10.100.0.10/images/test.img")
-	if !strings.Contains(overlayBody, "BOOTY-TEST-IMAGE-CONTENT") {
-		t.Fatalf("overlay image mismatch: %s", overlayBody)
-	}
+	// Step 5: Also verify image reachable through EVPN overlay
+	t.Log("Step 5: Verifying image reachable through EVPN overlay")
+	wgetSpiderFromClient(t, "http://10.100.0.10/images/test.img.gz")
 
 	// Step 6: Report success
 	t.Log("Step 6: Reporting success via CAPRF client")

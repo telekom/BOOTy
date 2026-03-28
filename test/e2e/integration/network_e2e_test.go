@@ -36,6 +36,22 @@ func wgetFromClient(t *testing.T, url string) string {
 	}
 }
 
+// wgetSpiderFromClient verifies a URL is reachable (HEAD request) without downloading the body.
+func wgetSpiderFromClient(t *testing.T, url string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		_, err := dockerExecRaw(t, "clab-booty-lab-client", "wget", "-q", "--spider", "--timeout=3", url)
+		if err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("wget --spider %s failed after 30s: %v", url, err)
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
 // wgetPostFromClient executes a POST via wget inside the client container with retry.
 // Busybox wget supports --post-data for POST requests.
 func wgetPostFromClient(t *testing.T, url string) int {
@@ -128,12 +144,9 @@ func TestNginxStaticContentThroughFabric(t *testing.T) {
 func TestImageDownloadThroughFabric(t *testing.T) {
 	requireNetworkLab(t)
 
-	body := wgetFromClient(t, "http://10.100.0.10/images/test.img")
-	expected := "BOOTY-TEST-IMAGE-CONTENT-e2e-verification-payload"
-	if !strings.Contains(body, expected) {
-		t.Fatalf("image content mismatch:\nexpected: %s\ngot: %s", expected, body)
-	}
-	t.Log("test image downloaded through EVPN fabric")
+	// Use --spider (HEAD) to check reachability without downloading full GPT image.
+	wgetSpiderFromClient(t, "http://10.100.0.10/images/test.img.gz")
+	t.Log("test image reachable through EVPN fabric")
 }
 
 func TestCAPRFStatusReportingThroughFabric(t *testing.T) {
