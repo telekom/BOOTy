@@ -23,6 +23,10 @@ type TokenResponse struct {
 	TokenType    string `json:"token_type"`
 }
 
+// maxTokenResponseBytes caps the token endpoint response body at 64 KiB
+// to prevent OOM from a malicious or misconfigured server.
+const maxTokenResponseBytes = 64 << 10
+
 // tokenRequest is the JSON body sent to the token endpoint.
 type tokenRequest struct {
 	MachineSerial string `json:"machineSerial"`
@@ -122,7 +126,7 @@ func (tm *TokenManager) Acquire(ctx context.Context, serial, bmcMAC string) erro
 	}
 
 	var tokenResp TokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxTokenResponseBytes)).Decode(&tokenResp); err != nil {
 		return fmt.Errorf("decode token response: %w", err)
 	}
 
@@ -250,7 +254,7 @@ func (tm *TokenManager) renew(ctx context.Context) error {
 	}
 
 	var tokenResp TokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxTokenResponseBytes)).Decode(&tokenResp); err != nil {
 		return fmt.Errorf("decode renewal response: %w", err)
 	}
 
