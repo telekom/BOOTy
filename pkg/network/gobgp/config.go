@@ -133,6 +133,14 @@ func (c *Config) ApplyDefaults() {
 	if c.VRFTableID == 0 || c.VRFTableID == 1 {
 		c.VRFTableID = 1000
 	}
+	// Normalize UnderlayAF and OverlayType to their canonical lowercase forms
+	// so downstream comparisons don't need case-insensitive matching.
+	if af, err := ParseUnderlayAF(c.UnderlayAF); err == nil {
+		c.UnderlayAF = string(af)
+	}
+	if ot, err := ParseOverlayType(c.OverlayType); err == nil {
+		c.OverlayType = string(ot)
+	}
 }
 
 // Validate checks that required configuration fields are present.

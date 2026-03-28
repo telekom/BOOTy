@@ -404,3 +404,30 @@ func TestIsiBGP(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyDefaultsNormalizesUnderlayAFAndOverlayType(t *testing.T) {
+	tests := []struct {
+		name        string
+		underlayAF  string
+		overlayType string
+		wantAF      string
+		wantOT      string
+	}{
+		{"empty defaults", "", "", "ipv4", "evpn-vxlan"},
+		{"uppercase AF", "IPV4", "EVPN-VXLAN", "ipv4", "evpn-vxlan"},
+		{"mixed case", "DualStack", "L3VPN", "dual-stack", "l3vpn"},
+		{"already canonical", "ipv6", "none", "ipv6", "none"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{UnderlayAF: tt.underlayAF, OverlayType: tt.overlayType}
+			cfg.ApplyDefaults()
+			if cfg.UnderlayAF != tt.wantAF {
+				t.Errorf("UnderlayAF = %q, want %q", cfg.UnderlayAF, tt.wantAF)
+			}
+			if cfg.OverlayType != tt.wantOT {
+				t.Errorf("OverlayType = %q, want %q", cfg.OverlayType, tt.wantOT)
+			}
+		})
+	}
+}
