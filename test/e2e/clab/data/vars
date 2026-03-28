@@ -1,4 +1,4 @@
-export IMAGE="http://10.100.0.10/images/test.img"
+export IMAGE="http://10.100.0.10/images/test.img.gz"
 export HOSTNAME="clab-e2e-host"
 export TOKEN="e2e-fabric-token"
 export MODE="provision"

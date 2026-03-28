@@ -377,7 +377,7 @@ func TestBootAllNodesImageReachableThroughEVPN(t *testing.T) {
 						t.Logf("%s BOOTy exhausted network retries (round %d)", c.desc, round)
 						break
 					}
-					_, err := bootDockerExec(t, c.name, "wget", "-q", "-O", "/dev/null", "http://10.100.0.10/images/test.img")
+					_, err := bootDockerExec(t, c.name, "wget", "-q", "--spider", "http://10.100.0.10/images/test.img.gz")
 					if err == nil {
 						ok = true
 						break
@@ -399,10 +399,10 @@ func TestBootAllNodesImageReachableThroughEVPN(t *testing.T) {
 func TestBootNginxAccessLogShowsImageRequest(t *testing.T) {
 	requireBootLab(t)
 
-	out, ok := waitForAccessLogEntry(t, nginxContainer, "/var/log/nginx/access.log", "/images/test.img", 60*time.Second)
+	out, ok := waitForAccessLogEntry(t, nginxContainer, "/var/log/nginx/access.log", "/images/test.img.gz", 60*time.Second)
 	if !ok {
 		t.Logf("Nginx access log:\n%s", out)
-		t.Fatal("nginx did not receive /images/test.img request through EVPN")
+		t.Fatal("nginx did not receive /images/test.img.gz request through EVPN")
 	}
 	t.Logf("Nginx received image request through EVPN:\n%s", out)
 }
@@ -427,27 +427,33 @@ func TestBootProvisionShowsProvisioningSteps(t *testing.T) {
 		t.Fatal("provision node did not reach report-init")
 	}
 
-	// Wait for provisioning to progress past detect-disk (or fail at disk ops).
-	// Poll instead of sleeping to avoid wasting time when the step completes quickly.
-	if !waitForLogEntry(t, provisionContainer, "detect-disk", 30*time.Second) {
-		t.Log("provision node: detect-disk not found, checking for other step activity")
+	// Wait for provisioning to finish (success or failure).
+	if !waitForLogEntry(t, provisionContainer, "Provisioning failed", 120*time.Second) {
+		t.Log("provision node: 'Provisioning failed' not found within 120s")
 	}
 
 	logs := getBootyLogs(t, provisionContainer)
 
-	// Provisioning should log step names and eventually fail
-	if strings.Contains(logs, "Provisioning step") || strings.Contains(logs, "detect-disk") {
-		t.Log("provision node: provisioning steps visible in logs (full orchestrator lifecycle)")
-	} else {
-		t.Logf("Full logs:\n%s", logs)
-		t.Fatal("provision node: no provisioning step activity found in logs")
+	// With a real disk image, provisioning should progress through disk ops.
+	// Verify the key provisioning steps appear in logs.
+	requiredSteps := []string{
+		"detect-disk",
+		"stream-image",
+		"partprobe",
+		"parse-partitions",
+		"mount-root",
+	}
+	for _, step := range requiredSteps {
+		if !strings.Contains(logs, step) {
+			t.Errorf("provision node: expected step %q not found in logs", step)
+		}
 	}
 
-	// If a disk is available (e.g. loop device), provisioning may progress past detect-disk.
-	if strings.Contains(logs, "stream-image") || strings.Contains(logs, "Using configured disk device") {
-		t.Log("provision node: provisioning progressed past disk detection")
-	} else {
-		t.Log("provision node: provisioning did not reach stream-image (disk may not be available)")
+	if strings.Contains(logs, "Image written") {
+		t.Log("provision node: image streaming to disk completed successfully")
+	}
+	if strings.Contains(logs, "Using configured disk device") {
+		t.Log("provision node: using configured disk device /dev/loop0")
 	}
 }
 
@@ -541,6 +547,13 @@ var allowedErrorPatterns = []string{
 	"no suitable disk found",
 	"Connectivity timeout",
 	"Connecting to provisioning server",
+	// Expected when provisioning with real image in container (no growpart, no update-grub).
+	"failed to report error status",
+	"growpart",
+	"update-grub",
+	"configure-kubelet",
+	"resize2fs",
+	"xfs_growfs",
 }
 
 func TestBootNoUnexpectedErrors(t *testing.T) {

@@ -149,6 +149,8 @@ booty-test-image:
 	@docker build -t booty-test:latest -f test/e2e/clab/booty-test.Dockerfile .
 
 clab-boot-up: booty-test-image
+	@echo Generating test disk image (requires root)
+	@sudo test/e2e/clab/create-test-image.sh test/e2e/clab/images
 	@echo Deploying boot test topology (includes BOOTy nodes)
 	@cd test/e2e/clab && sudo clab deploy --topo topology-boot.clab.yml
 

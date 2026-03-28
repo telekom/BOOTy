@@ -752,6 +752,9 @@ jobs:
       - name: Build BOOTy test container image
         run: docker build -t booty-test:latest -f test/e2e/clab/booty-test.Dockerfile .
 
+      - name: Generate test disk image
+        run: sudo test/e2e/clab/create-test-image.sh test/e2e/clab/images
+
       - name: Install ContainerLab
         run: curl -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}
 
@@ -944,6 +947,9 @@ jobs:
 
       - name: Build BOOTy vrnetlab VM image
         run: docker build -t booty-vrnetlab:latest -f test/e2e/clab/vrnetlab/Dockerfile .
+
+      - name: Generate test disk image
+        run: sudo test/e2e/clab/create-test-image.sh test/e2e/clab/images
 
       - name: Install ContainerLab
         run: curl -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}
