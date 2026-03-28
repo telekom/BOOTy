@@ -131,6 +131,9 @@ The `initrd.Dockerfile` supports multiple build targets via `--target`:
 | `make arm64-slim` | Slim initramfs for ARM64 (output to `dist/arm64/`) |
 | `make arm64-gobgp` | GoBGP initramfs for ARM64 (output to `dist/arm64/`) |
 | `make build-all` | Cross-compile Go binary for both amd64 and arm64 |
+| `make oci-push` | Push binary + initramfs as OCI artifacts to GHCR |
+| `make oci-push-initramfs` | Push initramfs only as OCI artifact |
+| `make oci-push-binary` | Push binary only as OCI artifact |
 
 ```bash
 # Build ISO (for Redfish BMC virtual media boot)
@@ -248,7 +251,6 @@ export dns_resolver="8.8.8.8"
 | `TELEMETRY_URL` | — | POST endpoint for telemetry snapshot |
 | `METRICS_URL` | — | POST endpoint for provisioning metrics |
 | `EVENT_URL` | — | POST endpoint for provisioning lifecycle events |
-| `WEBHOOK_URL` | — | HTTPS endpoint for webhook event notifications (SSRF-protected) |
 | `SECUREBOOT_REENABLE` | `false` | Signal CAPRF to re-enable Secure Boot after provisioning |
 | `MOK_CERT_PATH` | — | *(Phase 2)* Path to DER-encoded MOK certificate for custom kernel signing |
 | `MOK_PASSWORD` | — | *(Phase 2)* One-time password for MokManager confirmation |
@@ -488,57 +490,101 @@ Each VLAN creates a tagged sub-interface (`eno1.200`), assigns the IP address
 (if provided), and brings the link up. VLANs are created after the primary
 network mode is established.
 
-### Webhooks
+### Kexec Boot
 
-BOOTy can send provisioning lifecycle events to a webhook endpoint for external
-integration (alerting, auditing, CMDB updates). Events are dispatched as JSON
-POST requests.
-
-**Configuration:**
+BOOTy uses kexec for fast reboots into the provisioned OS without full firmware
+re-initialization. After provisioning, BOOTy parses the installed GRUB config,
+loads the kernel and initramfs, then executes the kexec syscall.
 
 ```bash
-export WEBHOOK_URL="https://hooks.example.com/booty/events"
+# Disable kexec (force hard reboot via firmware)
+export DISABLE_KEXEC=true
 ```
 
-**Supported Event Types:**
+Kexec is automatically disabled when firmware changes are detected (e.g.,
+Mellanox SR-IOV configuration), since firmware re-initialization is required.
+If GRUB parsing fails or the kernel/initramfs is not found, BOOTy falls back
+to a standard `reboot(2)` syscall.
 
-| Event | Trigger |
-|-------|---------|
-| `provision.started` | Provisioning begins |
-| `provision.completed` | Provisioning succeeds |
-| `provision.failed` | Provisioning fails (includes step and error) |
-| `deprovision.started` | Deprovisioning begins |
-| `deprovision.completed` | Deprovisioning succeeds |
-| `health.critical` | Critical health check failure |
-| `health.warning` | Health check warning |
-| `rescue.activated` | Rescue mode activated |
-| `firmware.mismatch` | Firmware version mismatch detected |
-| `attestation.failed` | TPM attestation failed |
+### SR-IOV Configuration
 
-**Event Payload Example:**
+BOOTy automatically detects Mellanox ConnectX NICs via PCI vendor ID and
+configures SR-IOV virtual functions using `mstconfig`:
 
-```json
-{
-  "event": "provision.failed",
-  "timestamp": "2026-03-22T12:00:00Z",
-  "machine": {
-    "name": "worker-42",
-    "namespace": "cluster-prod",
-    "redfishHost": "rfh-rack3-u42",
-    "address": "10.0.1.42"
-  },
-  "details": {
-    "step": "image-streaming",
-    "error": "connection reset"
-  }
-}
+```bash
+# Set number of virtual functions (default: 32 when Mellanox detected)
+export NUM_VFS=16
 ```
 
-**Security:**
-- Only HTTPS URLs are allowed (HTTP permitted for `localhost`/`127.0.0.1` only)
-- Private/link-local IPs and unresolved hostnames are blocked (SSRF protection)
-- Credentials in webhook URLs are rejected
-- Request timeout: 10 seconds
+For each detected Mellanox device, BOOTy runs
+`mstconfig -d <device> set NUM_OF_VFS=<n>`. This modifies NIC firmware and
+requires a hard reboot — kexec is automatically disabled when SR-IOV is
+configured. If `mstconfig` fails or no Mellanox NICs are found, provisioning
+continues normally.
+
+### Secure Erase
+
+BOOTy supports hardware-level disk erasure before provisioning. When enabled,
+it uses NVMe format or ATA Security Erase instead of quick partition table
+clearing:
+
+```bash
+export SECURE_ERASE=true
+```
+
+| Drive Type | Erase Method |
+|-----------|--------------|
+| NVMe | `nvme format --ses=1` (User Data Erase) |
+| SATA/SAS | ATA Security Erase via `hdparm` |
+| Fallback | `wipefs -af` (partition table + filesystem signatures) |
+
+Secure erase is non-fatal — if hardware erase fails on a drive (e.g., SATA
+security state is frozen), BOOTy falls back to `wipefs` and continues.
+
+### Post-Provision Commands
+
+Execute custom shell commands in the provisioned rootfs chroot after all
+provisioning steps complete:
+
+```bash
+# Semicolon-separated list of commands
+export POST_PROVISION_CMDS="apt-get update; apt-get install -y custom-pkg; systemctl enable my-service"
+```
+
+Commands run as root inside the chroot (`/newroot/`). If any command fails,
+provisioning is marked as failed. Use this for OS customizations that don't
+warrant rebuilding the entire disk image (hostname, packages, service enablement).
+
+### Standby Mode
+
+Persistent agent mode that polls for provisioning commands from CAPRF:
+
+```bash
+export MODE=standby
+export HEARTBEAT_URL="http://caprf-server/status/heartbeat"
+export COMMANDS_URL="http://caprf-server/commands"
+```
+
+In standby mode, BOOTy sends periodic heartbeats (every 30s) and polls for
+pending commands (every 10s). When a `provision` command is received, the full
+provisioning orchestrator runs. On failure, the configured `RESCUE_MODE` policy
+applies (retry, shell, wait, or reboot).
+
+### BIOS Settings
+
+BOOTy captures BIOS configuration state from vendor-specific sysfs paths.
+Supported vendors are auto-detected via DMI (`/sys/class/dmi/id/sys_vendor`):
+
+| Vendor | Key Settings Captured |
+|--------|----------------------|
+| Dell | LogicalProc, VirtualizationTechnology, SriovGlobalEnable, BootMode, SecureBoot |
+| HPE | Hyperthreading, Virtualization, SRIOV, BootMode, SecureBootStatus |
+| Lenovo | OperatingMode, HyperThreading, VirtualizationTechnology, SRIOVSupport, BootMode |
+| Supermicro | Generic BIOS capture |
+
+BIOS state is collected early in provisioning and reported to the CAPRF
+controller. No environment variables are required — vendor detection is
+automatic.
 
 ## OCI Image Sources
 
@@ -559,6 +605,47 @@ Authentication uses the standard Docker credential chain (`~/.docker/config.json
 supported via [go-containerregistry](https://github.com/google/go-containerregistry).
 
 HTTP and OCI fetches are retried up to 3 times with exponential backoff (1s, 2s, 4s).
+
+### OCI Artifact Publishing
+
+Release artifacts (binaries, initramfs images, SBOMs) are published as OCI artifacts
+to GHCR alongside traditional GitHub Release assets. This enables container registries
+to cache and distribute all BOOTy artifacts using standard OCI tooling.
+
+**Artifact references:**
+
+| Artifact | OCI Reference | Media Type |
+|----------|---------------|-----------|
+| Initramfs | `ghcr.io/telekom/booty/initramfs:<version>-<flavor>-<arch>` | `application/vnd.cncf.initramfs.layer.v1+gzip` |
+| Binary | `ghcr.io/telekom/booty/binary:<version>-<arch>` | `application/vnd.cncf.binary.layer.v1` |
+| SBOM | `ghcr.io/telekom/booty/sbom:<version>` | `application/spdx+json` |
+
+Initramfs and binary artifacts include SHA-256 checksums as a `text/plain` layer.
+
+**Pull artifacts with ORAS:**
+
+```bash
+# Pull a specific initramfs
+oras pull ghcr.io/telekom/booty/initramfs:0.1.0-gobgp-amd64
+
+# Pull the binary
+oras pull ghcr.io/telekom/booty/binary:0.1.0-amd64
+
+# Pull the SBOM
+oras pull ghcr.io/telekom/booty/sbom:0.1.0
+```
+
+**Local publishing (requires `oras` CLI and GHCR login):**
+
+```bash
+# Build and push initramfs as OCI artifact
+make gobgp
+make oci-push-initramfs OCI_FLAVOR=gobgp
+
+# Push everything
+make build && make gobgp
+make oci-push OCI_FLAVOR=gobgp
+```
 
 ## Network Modes
 
