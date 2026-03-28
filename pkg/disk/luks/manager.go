@@ -7,9 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
+
+	"github.com/telekom/BOOTy/pkg/executil"
 )
 
 // validMappedName only allows alphanumeric, dash, and underscore characters—
@@ -17,21 +20,15 @@ import (
 var validMappedName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
 
 // Commander abstracts command execution for easier unit testing.
+// Extends executil.Commander with stdin support required by cryptsetup.
 type Commander interface {
-	Run(ctx context.Context, name string, args ...string) ([]byte, error)
+	executil.Commander
 	RunWithInput(ctx context.Context, input, name string, args ...string) ([]byte, error)
 }
 
-// ExecCommander executes real system commands.
-type ExecCommander struct{}
-
-// Run executes a command and returns combined stdout/stderr.
-func (e *ExecCommander) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
-	if err != nil {
-		return out, fmt.Errorf("exec %s: %w", name, err)
-	}
-	return out, nil
+// ExecCommander executes real system commands with sanitized error output.
+type ExecCommander struct {
+	executil.ExecCommander
 }
 
 // RunWithInput executes a command with stdin input.
@@ -40,7 +37,7 @@ func (e *ExecCommander) RunWithInput(ctx context.Context, input, name string, ar
 	cmd.Stdin = strings.NewReader(input)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return out, fmt.Errorf("exec %s: %w", name, err)
+		return out, fmt.Errorf("exec %s: %w [PATH: %s]", name, err, os.Getenv("PATH"))
 	}
 	return out, nil
 }
