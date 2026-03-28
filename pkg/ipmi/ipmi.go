@@ -7,27 +7,17 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/telekom/BOOTy/pkg/executil"
 )
 
 // Manager handles local IPMI operations via ipmitool.
 type Manager struct {
 	deviceNum string
-	runner    CommandRunner
+	runner    executil.Commander
 	log       *slog.Logger
-}
-
-// CommandRunner abstracts exec.Command for testability.
-type CommandRunner interface {
-	Run(ctx context.Context, name string, args ...string) ([]byte, error)
-}
-
-type execRunner struct{}
-
-func (execRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
 // New creates an IPMI manager.
@@ -37,7 +27,7 @@ func New(log *slog.Logger) *Manager {
 	}
 	return &Manager{
 		deviceNum: "0",
-		runner:    execRunner{},
+		runner:    &executil.ExecCommander{},
 		log:       log,
 	}
 }
