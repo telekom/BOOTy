@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -100,7 +101,8 @@ func (d *Dispatcher) Send(ctx context.Context, e *Event) error {
 		}
 
 		// Only retry transient (5xx / network) errors.
-		if _, ok := lastErr.(*retryableError); !ok {
+		var re *retryableError
+		if !errors.As(lastErr, &re) {
 			return lastErr
 		}
 
@@ -163,7 +165,7 @@ func isPrivateIPHost(host string) bool {
 		return ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLoopback()
 	}
 	// Resolve hostname and check all resulting IPs.
-	addrs, err := net.LookupHost(host)
+	addrs, err := net.DefaultResolver.LookupHost(context.Background(), host)
 	if err != nil {
 		// If resolution fails, block the host as a precaution.
 		return true
