@@ -569,8 +569,9 @@ var allowedErrorPatterns = []string{
 	"configure-kubelet",
 	"resize2fs",
 	"xfs_growfs",
-	// Image streaming through EVPN can fail with connection resets.
+	// Image streaming through EVPN can fail with connection resets or timeouts.
 	"connection reset by peer",
+	"timeout awaiting response headers",
 	"HTTP request failed, retrying",
 	"retrying step",
 	"stream-image",
