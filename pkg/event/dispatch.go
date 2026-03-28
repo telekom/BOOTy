@@ -66,7 +66,14 @@ func NewDispatcher(webhookURL string, log *slog.Logger) (*Dispatcher, error) {
 	}, nil
 }
 
-// Send dispatches an event to the webhook URL.
+// retryableError wraps a transient error that should be retried.
+type retryableError struct{ err error }
+
+func (e *retryableError) Error() string { return e.err.Error() }
+func (e *retryableError) Unwrap() error { return e.err }
+
+// Send dispatches an event to the webhook URL with retry for transient failures.
+// 5xx responses and network errors are retried; 4xx errors are not.
 func (d *Dispatcher) Send(ctx context.Context, e *Event) error {
 	if e == nil {
 		return fmt.Errorf("event must not be nil")
@@ -77,6 +84,39 @@ func (d *Dispatcher) Send(ctx context.Context, e *Event) error {
 		return fmt.Errorf("marshal event (details must be JSON-serializable): %w", err)
 	}
 
+	const maxAttempts = 3
+	wait := time.Second
+	var lastErr error
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("send canceled: %w", err)
+		}
+
+		lastErr = d.doSend(ctx, data)
+		if lastErr == nil {
+			d.log.Debug("Event dispatched", "type", e.Type, "machine", e.Machine.Name)
+			return nil
+		}
+
+		// Only retry transient (5xx / network) errors.
+		if _, ok := lastErr.(*retryableError); !ok {
+			return lastErr
+		}
+
+		if attempt < maxAttempts {
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("send canceled: %w", ctx.Err())
+			case <-time.After(wait):
+			}
+			wait *= 2
+		}
+	}
+	return fmt.Errorf("after %d attempts: %w", maxAttempts, lastErr)
+}
+
+func (d *Dispatcher) doSend(ctx context.Context, data []byte) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.url.String(), bytes.NewReader(data)) //nolint:gosec // G107: webhook URL validated at dispatcher creation
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
@@ -85,9 +125,18 @@ func (d *Dispatcher) Send(ctx context.Context, e *Event) error {
 
 	resp, err := d.client.Do(req) //nolint:gosec // G704: webhook URL is validated and host-restricted at dispatcher creation
 	if err != nil {
-		return fmt.Errorf("send webhook: %w", err)
+		return &retryableError{err: fmt.Errorf("send webhook: %w", err)}
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
+
+	if resp.StatusCode >= http.StatusInternalServerError {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+		bodySnippet := strings.TrimSpace(string(msg))
+		if bodySnippet == "" {
+			return &retryableError{err: fmt.Errorf("webhook returned %s", resp.Status)}
+		}
+		return &retryableError{err: fmt.Errorf("webhook returned %s: %s", resp.Status, bodySnippet)}
+	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
@@ -98,8 +147,6 @@ func (d *Dispatcher) Send(ctx context.Context, e *Event) error {
 		return fmt.Errorf("webhook returned non-2xx status %s: %s", resp.Status, bodySnippet)
 	}
 	_, _ = io.CopyN(io.Discard, resp.Body, maxDrainBytes)
-
-	d.log.Debug("Event dispatched", "type", e.Type, "machine", e.Machine.Name)
 	return nil
 }
 

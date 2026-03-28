@@ -229,3 +229,51 @@ func TestNewDispatcher_NilLogger(t *testing.T) {
 		t.Errorf("Send() with nil logger: %v", err)
 	}
 }
+
+func TestDispatcherSend_RetriesOn5xx(t *testing.T) {
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		if attempts < 3 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	d, err := NewDispatcher(srv.URL, slog.Default())
+	if err != nil {
+		t.Fatalf("NewDispatcher() error: %v", err)
+	}
+
+	e := New(ProvisionStarted, Machine{Name: "retry-test"})
+	if err := d.Send(context.Background(), e); err != nil {
+		t.Errorf("Send() should succeed after retries: %v", err)
+	}
+	if attempts != 3 {
+		t.Errorf("expected 3 attempts, got %d", attempts)
+	}
+}
+
+func TestDispatcherSend_No4xxRetry(t *testing.T) {
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	d, err := NewDispatcher(srv.URL, slog.Default())
+	if err != nil {
+		t.Fatalf("NewDispatcher() error: %v", err)
+	}
+
+	e := New(ProvisionStarted, Machine{Name: "no-retry"})
+	if err := d.Send(context.Background(), e); err == nil {
+		t.Error("expected error for 400 response")
+	}
+	if attempts != 1 {
+		t.Errorf("expected 1 attempt for 4xx (no retry), got %d", attempts)
+	}
+}
