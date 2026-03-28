@@ -597,6 +597,7 @@ func TestApplyPartitionLayoutZapError(t *testing.T) {
 func TestApplyPartitionLayoutPartprobeError(t *testing.T) {
 	cmd := newMockCommander()
 	cmd.setResult("partprobe /dev/sda", nil, fmt.Errorf("partprobe failed"))
+	cmd.setResult("blockdev --rereadpt", nil, fmt.Errorf("blockdev rereadpt failed"))
 	mgr := NewManager(cmd)
 	layout := &config.PartitionLayout{
 		Table: "gpt",
@@ -607,9 +608,9 @@ func TestApplyPartitionLayoutPartprobeError(t *testing.T) {
 
 	err := mgr.ApplyPartitionLayout(t.Context(), "/dev/sda", layout)
 	if err == nil {
-		t.Fatal("expected error when partprobe fails")
+		t.Fatal("expected error when partprobe and blockdev --rereadpt both fail")
 	}
-	if !strings.Contains(err.Error(), "partprobe") {
+	if !strings.Contains(err.Error(), "re-read partition table") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }

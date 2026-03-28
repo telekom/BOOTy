@@ -31,7 +31,7 @@ BOOTy boots as the init process inside a minimal initramfs, contacts a provision
 1. A Redfish BMC mounts an ISO containing a kernel, BOOTy initramfs, and `/deploy/vars` config.
 2. BOOTy reads `/deploy/vars` for machine config, image URLs, and CAPRF server endpoints.
 3. Network connectivity is established via **FRR/EVPN** (BGP underlay) or **DHCP** fallback.
-4. The provisioning pipeline runs 33 steps: status reporting → RAID cleanup → disk detection → EFI setup → partition layout → image streaming → partition management → OS configuration → kexec.
+4. The provisioning pipeline runs 32 steps: status reporting → RAID cleanup → disk detection → EFI setup → image verification (signature/checksum) → image streaming → partition management → OS configuration → kexec.
 5. Status, logs, and debug info are shipped back to the CAPRF controller throughout.
 
 ## Features
@@ -45,12 +45,11 @@ BOOTy boots as the init process inside a minimal initramfs, contacts a provision
 - **OCI registry support** — Pull images from OCI registries (authenticated & unauthenticated) via `oci://` URLs
 - **HTTP retry with backoff** — Automatic exponential backoff retry for image downloads and OCI pulls
 - **Secure erase** — NVMe format (SES1) and ATA Security Erase for full disk sanitization
-- **Declarative partition layouts (preview)** — GPT + optional LVM schema/validation is implemented; provisioning currently fails fast when `PARTITION_LAYOUT` is set until rootfs extraction support lands
 - **Software RAID** — mdadm array creation (RAID 0/1/5/6/10)
 - **Filesystem support** — ext2, ext3, ext4, xfs, btrfs, vfat mount/resize
 - **LLDP discovery** — Raw AF_PACKET-based LLDP listener for switch topology discovery
 - **Post-provision hooks** — Execute arbitrary commands in chroot after OS configuration
-- **33-step provisioning pipeline** — RAID cleanup, disk detection, EFI variable setup, partition layout, image streaming, fstab generation, partition growth, LVM, filesystem resize, OS configuration, EFI boot, Mellanox SR-IOV, post-provision hooks
+- **32-step provisioning pipeline** — RAID cleanup, disk detection, EFI variable setup, image verification (signature/checksum), image streaming, partition growth, LVM, filesystem resize, OS configuration, EFI boot, Mellanox SR-IOV, post-provision hooks
 - **Kexec support** — Fast reboot into installed kernel without full BIOS POST (auto-disabled after firmware changes)
 - **Remote logging** — Real-time log and debug shipping to CAPRF controller
 - **Hard/soft deprovisioning** — Full disk wipe or GRUB rename for reprovisioning
@@ -132,6 +131,9 @@ The `initrd.Dockerfile` supports multiple build targets via `--target`:
 | `make arm64-slim` | Slim initramfs for ARM64 (output to `dist/arm64/`) |
 | `make arm64-gobgp` | GoBGP initramfs for ARM64 (output to `dist/arm64/`) |
 | `make build-all` | Cross-compile Go binary for both amd64 and arm64 |
+| `make oci-push` | Push binary + initramfs as OCI artifacts to GHCR |
+| `make oci-push-initramfs` | Push initramfs only as OCI artifact |
+| `make oci-push-binary` | Push binary only as OCI artifact |
 
 ```bash
 # Build ISO (for Redfish BMC virtual media boot)
@@ -195,8 +197,6 @@ export INIT_URL="http://caprf:8080/status/init"
 export SUCCESS_URL="http://caprf:8080/status/success"
 export ERROR_URL="http://caprf:8080/status/error"
 export LOG_URL="http://caprf:8080/log"
-# Optional declarative layout (currently fail-fast gated until rootfs extraction is implemented)
-export PARTITION_LAYOUT='{"table":"gpt","partitions":[{"label":"root","filesystem":"ext4","mountpoint":"/"}]}'
 
 # Network (FRR/EVPN mode — omit for DHCP fallback)
 underlay_subnet="10.0.0.0/24"
@@ -235,7 +235,7 @@ export dns_resolver="8.8.8.8"
 | `RESCUE_TIMEOUT` | `0` | *(Phase 2)* Rescue wait timeout in seconds (0 = indefinite) |
 | `RESCUE_SSH_PUBKEY` | — | *(Phase 2)* SSH public key for rescue shell access |
 | `RESCUE_AUTO_MOUNT` | `false` | *(Phase 2)* Auto-mount disks in rescue shell mode |
-| `EVPN_L2_ENABLED` | `false` | Enable EVPN L2 overlay (Type-2/3 route handling) in GoBGP mode. Default is Type-5 only (L3) |
+| `EVPN_L2_ENABLED` | `false` | Enable EVPN L2 overlay (Type-2/3 route origination and handling) in GoBGP mode. Default is Type-5 only (L3) |
 | `HEALTH_CHECKS_ENABLED` | `false` | Run pre-provisioning hardware health checks |
 | `HEALTH_MIN_MEMORY_GB` | `0` | Minimum RAM (GiB) for health check (0 = skip check) |
 | `HEALTH_MIN_CPUS` | `0` | Minimum CPU count for health check (0 = skip check) |
@@ -259,7 +259,6 @@ export dns_resolver="8.8.8.8"
 | `IMAGE_SIGNATURE_URL` | — | URL to detached GPG signature for image verification |
 | `IMAGE_GPG_PUBKEY` | — | Path to GPG public key for image signature verification |
 | `NUM_VFS` | `0` | Number of SR-IOV virtual functions for Mellanox NICs (0 = skip) |
-| `PARTITION_LAYOUT` | — | Optional JSON layout (single-quoted in shell) for GPT partitions and LVM; currently rejected at runtime until rootfs extraction support is implemented |
 
 #### Network Variables
 
@@ -491,70 +490,101 @@ Each VLAN creates a tagged sub-interface (`eno1.200`), assigns the IP address
 (if provided), and brings the link up. VLANs are created after the primary
 network mode is established.
 
-### Declarative Disk Partitioning (Preview)
+### Kexec Boot
 
-> **Status**: Schema validation and LVM configuration are implemented. The
-> provisioning pipeline currently **fails fast** when `PARTITION_LAYOUT` is set
-> because rootfs extraction support has not landed yet. This is safe to use for
-> testing validation behaviour in dry-run mode.
-
-Set `PARTITION_LAYOUT` to a JSON object describing the target disk layout.
-BOOTy validates the schema up-front and rejects invalid configurations before
-any disk operations begin.
-
-**GPT-only layout (no LVM)**
+BOOTy uses kexec for fast reboots into the provisioned OS without full firmware
+re-initialization. After provisioning, BOOTy parses the installed GRUB config,
+loads the kernel and initramfs, then executes the kexec syscall.
 
 ```bash
-export PARTITION_LAYOUT='{
-  "table": "gpt",
-  "partitions": [
-    {"label": "efi",  "sizeMB": 512, "filesystem": "vfat", "mountpoint": "/boot/efi"},
-    {"label": "boot", "sizeMB": 1024, "filesystem": "ext4", "mountpoint": "/boot"},
-    {"label": "root", "filesystem": "ext4", "mountpoint": "/"}
-  ]
-}'
+# Disable kexec (force hard reboot via firmware)
+export DISABLE_KEXEC=true
 ```
 
-| Partition Field | Required | Description |
-|-----------------|----------|-------------|
-| `label` | yes | GPT partition label |
-| `sizeMB` | no | Size in MiB; `0` or omitted fills remaining space |
-| `filesystem` | no | `vfat`, `ext4`, `xfs`, `swap` |
-| `mountpoint` | no | Target mount path after provisioning |
-| `typeGUID` | no | GPT type GUID; auto-set from filesystem if omitted |
+Kexec is automatically disabled when firmware changes are detected (e.g.,
+Mellanox SR-IOV configuration), since firmware re-initialization is required.
+If GRUB parsing fails or the kernel/initramfs is not found, BOOTy falls back
+to a standard `reboot(2)` syscall.
 
-**GPT + LVM layout**
+### SR-IOV Configuration
+
+BOOTy automatically detects Mellanox ConnectX NICs via PCI vendor ID and
+configures SR-IOV virtual functions using `mstconfig`:
 
 ```bash
-export PARTITION_LAYOUT='{
-  "table": "gpt",
-  "partitions": [
-    {"label": "efi",  "sizeMB": 512, "filesystem": "vfat", "mountpoint": "/boot/efi"},
-    {"label": "boot", "sizeMB": 1024, "filesystem": "ext4", "mountpoint": "/boot"},
-    {"label": "pv",   "sizeMB": 0}
-  ],
-  "lvm": {
-    "volumeGroup": "sysvg",
-    "pvPartition": 3,
-    "volumes": [
-      {"name": "root", "sizeMB": 20480, "filesystem": "ext4", "mountpoint": "/"},
-      {"name": "var",  "extents": "100%FREE", "filesystem": "ext4", "mountpoint": "/var"}
-    ]
-  }
-}'
+# Set number of virtual functions (default: 32 when Mellanox detected)
+export NUM_VFS=16
 ```
 
-| LVM Field | Required | Description |
-|-----------|----------|-------------|
-| `volumeGroup` | yes | VG name (alphanumeric, `_`, `-`, `.`) |
-| `pvPartition` | yes | 1-based index into `partitions` for the PV |
-| `volumes[].name` | yes | LV name |
-| `volumes[].sizeMB` | no | Size in MiB |
-| `volumes[].extents` | no | Size as LV extents (e.g. `100%FREE`) |
+For each detected Mellanox device, BOOTy runs
+`mstconfig -d <device> set NUM_OF_VFS=<n>`. This modifies NIC firmware and
+requires a hard reboot — kexec is automatically disabled when SR-IOV is
+configured. If `mstconfig` fails or no Mellanox NICs are found, provisioning
+continues normally.
 
-**Device override**: Set `"device": "/dev/nvme0n1"` in the layout JSON to
-target a specific block device. When omitted, BOOTy auto-detects the target.
-If `DISK_DEVICE` is also set, both must match or provisioning fails.
+### Secure Erase
+
+BOOTy supports hardware-level disk erasure before provisioning. When enabled,
+it uses NVMe format or ATA Security Erase instead of quick partition table
+clearing:
+
+```bash
+export SECURE_ERASE=true
+```
+
+| Drive Type | Erase Method |
+|-----------|--------------|
+| NVMe | `nvme format --ses=1` (User Data Erase) |
+| SATA/SAS | ATA Security Erase via `hdparm` |
+| Fallback | `wipefs -af` (partition table + filesystem signatures) |
+
+Secure erase is non-fatal — if hardware erase fails on a drive (e.g., SATA
+security state is frozen), BOOTy falls back to `wipefs` and continues.
+
+### Post-Provision Commands
+
+Execute custom shell commands in the provisioned rootfs chroot after all
+provisioning steps complete:
+
+```bash
+# Semicolon-separated list of commands
+export POST_PROVISION_CMDS="apt-get update; apt-get install -y custom-pkg; systemctl enable my-service"
+```
+
+Commands run as root inside the chroot (`/newroot/`). If any command fails,
+provisioning is marked as failed. Use this for OS customizations that don't
+warrant rebuilding the entire disk image (hostname, packages, service enablement).
+
+### Standby Mode
+
+Persistent agent mode that polls for provisioning commands from CAPRF:
+
+```bash
+export MODE=standby
+export HEARTBEAT_URL="http://caprf-server/status/heartbeat"
+export COMMANDS_URL="http://caprf-server/commands"
+```
+
+In standby mode, BOOTy sends periodic heartbeats (every 30s) and polls for
+pending commands (every 10s). When a `provision` command is received, the full
+provisioning orchestrator runs. On failure, the configured `RESCUE_MODE` policy
+applies (retry, shell, wait, or reboot).
+
+### BIOS Settings
+
+BOOTy captures BIOS configuration state from vendor-specific sysfs paths.
+Supported vendors are auto-detected via DMI (`/sys/class/dmi/id/sys_vendor`):
+
+| Vendor | Key Settings Captured |
+|--------|----------------------|
+| Dell | LogicalProc, VirtualizationTechnology, SriovGlobalEnable, BootMode, SecureBoot |
+| HPE | Hyperthreading, Virtualization, SRIOV, BootMode, SecureBootStatus |
+| Lenovo | OperatingMode, HyperThreading, VirtualizationTechnology, SRIOVSupport, BootMode |
+| Supermicro | Generic BIOS capture |
+
+BIOS state is collected early in provisioning and reported to the CAPRF
+controller. No environment variables are required — vendor detection is
+automatic.
 
 ## OCI Image Sources
 
@@ -575,6 +605,47 @@ Authentication uses the standard Docker credential chain (`~/.docker/config.json
 supported via [go-containerregistry](https://github.com/google/go-containerregistry).
 
 HTTP and OCI fetches are retried up to 3 times with exponential backoff (1s, 2s, 4s).
+
+### OCI Artifact Publishing
+
+Release artifacts (binaries, initramfs images, SBOMs) are published as OCI artifacts
+to GHCR alongside traditional GitHub Release assets. This enables container registries
+to cache and distribute all BOOTy artifacts using standard OCI tooling.
+
+**Artifact references:**
+
+| Artifact | OCI Reference | Media Type |
+|----------|---------------|-----------|
+| Initramfs | `ghcr.io/telekom/booty/initramfs:<version>-<flavor>-<arch>` | `application/vnd.cncf.initramfs.layer.v1+gzip` |
+| Binary | `ghcr.io/telekom/booty/binary:<version>-<arch>` | `application/vnd.cncf.binary.layer.v1` |
+| SBOM | `ghcr.io/telekom/booty/sbom:<version>` | `application/spdx+json` |
+
+Initramfs and binary artifacts include SHA-256 checksums as a `text/plain` layer.
+
+**Pull artifacts with ORAS:**
+
+```bash
+# Pull a specific initramfs
+oras pull ghcr.io/telekom/booty/initramfs:0.1.0-gobgp-amd64
+
+# Pull the binary
+oras pull ghcr.io/telekom/booty/binary:0.1.0-amd64
+
+# Pull the SBOM
+oras pull ghcr.io/telekom/booty/sbom:0.1.0
+```
+
+**Local publishing (requires `oras` CLI and GHCR login):**
+
+```bash
+# Build and push initramfs as OCI artifact
+make gobgp
+make oci-push-initramfs OCI_FLAVOR=gobgp
+
+# Push everything
+make build && make gobgp
+make oci-push OCI_FLAVOR=gobgp
+```
 
 ## Network Modes
 
@@ -604,6 +675,28 @@ The overlay tier advertises Type-5 (IP Prefix) routes and processes incoming EVP
 - **Type-2 (MAC/IP)** routes install unicast FDB entries (MAC → remote VTEP)
 - **Type-3 (Inclusive Multicast)** routes install BUM FDB entries for flood replication
 - A static BUM FDB entry and /32 kernel route to `provision_gateway` ensure baseline connectivity
+
+#### EVPN L2 Overlay
+
+Set `EVPN_L2_ENABLED=true` to enable full L2 EVPN overlay support. When enabled,
+BOOTy additionally **originates** Type-2 and Type-3 routes:
+
+- **Type-3 (IMET)** — Announces this VTEP for BUM flooding via ingress replication,
+  so remote VTEPs include it in broadcast/unknown-unicast/multicast flooding
+- **Type-2 (MAC/IP)** — Advertises the local bridge MAC and provision IP so remote
+  VTEPs learn the FDB entry via BGP control-plane rather than data-plane flooding
+
+Without `EVPN_L2_ENABLED`, the overlay only advertises Type-5 routes and processes
+incoming Type-2/3 routes passively (receive-only mode).
+
+```bash
+# Enable L2 EVPN overlay (GoBGP mode)
+export NETWORK_MODE=gobgp
+export EVPN_L2_ENABLED=true
+export provision_vni=4000
+export provision_ip=10.100.0.20/24
+export provision_gateway=10.0.0.1
+```
 
 The `BGP_PEER_MODE` environment variable controls session establishment:
 
@@ -703,6 +796,7 @@ and the PR process.
 │   ├── disk/                   # Disk detection, partitioning, RAID, LVM, mount
 │   ├── drivers/                # Architecture-aware kernel driver management
 │   ├── efi/                    # EFI variable operations
+│   ├── executil/               # Centralized command execution + PATH diagnostics
 │   ├── firmware/               # Firmware version collection from sysfs
 │   │   └── nic/               # NIC firmware (Broadcom, Intel, Mellanox)
 │   ├── grubcfg/                # GRUB config file parsing
@@ -716,8 +810,10 @@ and the PR process.
 │   │   ├── frr/               # FRR/EVPN: config rendering, address derivation
 │   │   ├── gobgp/             # Pure-Go BGP stack (3-tier: Underlay, Overlay, IPMI)
 │   │   ├── lldp/              # LLDP frame listener (raw AF_PACKET sockets)
+│   │   ├── netplan/           # Netplan YAML + FRR config parser for EVPN auto-detection
+│   │   ├── persist/           # Network configuration persistence across reboots
 │   │   └── vlan/              # VLAN 802.1Q tagging via netlink
-│   ├── provision/              # Orchestrator (33-step provision, deprovision)
+│   ├── provision/              # Orchestrator (32-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
 │   ├── realm/                  # Device, mount, shell operations
 │   ├── rescue/                 # Rescue mode types, retry state, action resolution
