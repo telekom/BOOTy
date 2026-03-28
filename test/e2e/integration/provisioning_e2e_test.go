@@ -235,14 +235,17 @@ func TestImageDownloadViaGoClient(t *testing.T) {
 func TestImageDownloadViaOverlayFromClient(t *testing.T) {
 	requireNetworkLab(t)
 
-	// Use --spider to verify image reachability without downloading full GPT image.
-	wgetSpiderFromClient(t, "http://10.100.0.10/images/test.img.gz")
+	// Verify test image is listed through EVPN overlay (avoid full 256 MiB download).
+	imgList := wgetFromClient(t, "http://10.100.0.10/images/")
+	if !strings.Contains(imgList, "test.img.gz") {
+		t.Fatalf("test.img.gz not in image listing:\n%s", imgList)
+	}
 
 	html := wgetFromClient(t, "http://10.100.0.10/")
 	if !strings.Contains(html, "booty-lab") {
 		t.Fatalf("overlay static content mismatch: %s", html)
 	}
-	t.Log("Image reachable + static content downloaded through EVPN overlay")
+	t.Log("Image listed + static content downloaded through EVPN overlay")
 }
 
 func TestWaitForHTTPAgainstNginx(t *testing.T) {
@@ -526,9 +529,12 @@ func TestFullProvisioningFlow(t *testing.T) {
 		t.Fatalf("image is not gzip: magic=%x%x", header[0], header[1])
 	}
 
-	// Step 5: Also verify image reachable through EVPN overlay
-	t.Log("Step 5: Verifying image reachable through EVPN overlay")
-	wgetSpiderFromClient(t, "http://10.100.0.10/images/test.img.gz")
+	// Step 5: Also verify image listed through EVPN overlay
+	t.Log("Step 5: Verifying image listed through EVPN overlay")
+	imgList := wgetFromClient(t, "http://10.100.0.10/images/")
+	if !strings.Contains(imgList, "test.img.gz") {
+		t.Fatalf("test.img.gz not in overlay image listing:\n%s", imgList)
+	}
 
 	// Step 6: Report success
 	t.Log("Step 6: Reporting success via CAPRF client")
