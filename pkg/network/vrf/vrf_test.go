@@ -25,6 +25,21 @@ func TestConfig_Validate(t *testing.T) {
 			Config{Name: "mgmt", TableID: 0},
 			true,
 		},
+		{
+			"reserved table 253",
+			Config{Name: "mgmt", TableID: 253},
+			true,
+		},
+		{
+			"reserved table 254",
+			Config{Name: "mgmt", TableID: 254},
+			true,
+		},
+		{
+			"reserved table 255",
+			Config{Name: "mgmt", TableID: 255},
+			true,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

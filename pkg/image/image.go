@@ -3,6 +3,7 @@ package image
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -38,6 +39,7 @@ func tickerProgress(byteCounter uint64) {
 func startProgressTicker(counter *WriteCounter) func() {
 	ticker := time.NewTicker(2 * time.Second)
 	done := make(chan struct{})
+	var once sync.Once
 	go func() {
 		for {
 			select {
@@ -49,7 +51,9 @@ func startProgressTicker(counter *WriteCounter) func() {
 		}
 	}()
 	return func() {
-		ticker.Stop()
-		close(done)
+		once.Do(func() {
+			ticker.Stop()
+			close(done)
+		})
 	}
 }

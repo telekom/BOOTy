@@ -215,6 +215,17 @@ func TestApplyDefaultsPreservesValues(t *testing.T) {
 	}
 }
 
+func TestApplyDefaultsPropagatesGracefulRestart(t *testing.T) {
+	cfg := &Config{
+		GracefulRestart: &GracefulRestartConfig{Enabled: true},
+	}
+	cfg.ApplyDefaults()
+
+	if cfg.GracefulRestart.RestartTime != 120 {
+		t.Errorf("GracefulRestart.RestartTime = %d, want 120", cfg.GracefulRestart.RestartTime)
+	}
+}
+
 func TestValidateRequiresASN(t *testing.T) {
 	cfg := &Config{RouterID: "10.0.0.1"}
 	if err := cfg.Validate(); err == nil {
@@ -336,6 +347,28 @@ func TestValidateRejectsUnknownPeerMode(t *testing.T) {
 	}
 	if err := cfg.Validate(); err == nil {
 		t.Error("unknown peer mode should fail validation")
+	}
+}
+
+func TestValidateRejectsHoldTimeLessThan3(t *testing.T) {
+	cfg := &Config{ASN: 65000, RouterID: "10.0.0.1", PeerMode: network.PeerModeUnnumbered, ProvisionVNI: 100, HoldTime: 2, KeepaliveInterval: 1}
+	if err := cfg.Validate(); err == nil {
+		t.Error("HoldTime < 3 should fail RFC 4271 validation")
+	}
+}
+
+func TestValidateAcceptsHoldTimeZero(t *testing.T) {
+	cfg := &Config{ASN: 65000, RouterID: "10.0.0.1", PeerMode: network.PeerModeUnnumbered, ProvisionVNI: 100, HoldTime: 0}
+	cfg.ApplyDefaults()
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("HoldTime 0 (defaulted) should pass: %v", err)
+	}
+}
+
+func TestValidateRejectsKeepaliveExceedingHoldTime(t *testing.T) {
+	cfg := &Config{ASN: 65000, RouterID: "10.0.0.1", PeerMode: network.PeerModeUnnumbered, ProvisionVNI: 100, HoldTime: 9, KeepaliveInterval: 4}
+	if err := cfg.Validate(); err == nil {
+		t.Error("KeepaliveInterval > HoldTime/3 should fail validation")
 	}
 }
 

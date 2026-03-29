@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/sha512"
+	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"hash"
@@ -157,7 +158,7 @@ func verifyChecksum(h hash.Hash, opt StreamOpts) error {
 		return nil
 	}
 	got := hex.EncodeToString(h.Sum(nil))
-	if got != opt.Checksum {
+	if subtle.ConstantTimeCompare([]byte(got), []byte(opt.Checksum)) != 1 {
 		return fmt.Errorf("checksum mismatch: got %s, want %s", got, opt.Checksum)
 	}
 	slog.Info("Checksum verified", "type", opt.ChecksumType)

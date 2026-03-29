@@ -4,7 +4,7 @@ SHELL := /bin/sh
 TARGET := booty
 .DEFAULT_GOAL: $(TARGET)
 
-VERSION := 0.0.0
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0)
 BUILD := `git rev-parse HEAD`
 
 TARGETOS=linux

@@ -33,6 +33,10 @@ func (c *Config) Validate() error {
 	if c.TableID == 0 {
 		return fmt.Errorf("vrf %s: table ID must be > 0", c.Name)
 	}
+	// Linux kernel reserves table IDs 253 (default), 254 (main), 255 (local).
+	if c.TableID >= 253 && c.TableID <= 255 {
+		return fmt.Errorf("vrf %s: table ID %d is reserved by the Linux kernel", c.Name, c.TableID)
+	}
 	if c.TableID > maxTableID {
 		return fmt.Errorf("vrf %s: table ID %d exceeds maximum", c.Name, c.TableID)
 	}

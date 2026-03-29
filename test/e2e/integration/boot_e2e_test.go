@@ -562,6 +562,7 @@ var allowedErrorPatterns = []string{
 	"no suitable disk found",
 	"Connectivity timeout",
 	"Connecting to provisioning server",
+	"Network connectivity timeout",
 	// Expected when provisioning with real image in container (no growpart, no update-grub).
 	"failed to report error status",
 	"growpart",

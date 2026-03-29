@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"syscall"
@@ -19,6 +20,9 @@ import (
 )
 
 const newroot = "/newroot"
+
+// safeKernelParams matches only safe characters for kernel command line parameters.
+var safeKernelParams = regexp.MustCompile(`^[a-zA-Z0-9=._\-/ ]*$`)
 
 // Configurator handles post-image OS configuration.
 type Configurator struct {
@@ -96,7 +100,14 @@ func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineCon
 		}
 	}
 
-	grubLine := fmt.Sprintf("GRUB_CMDLINE_LINUX=\"ds=nocloud console=%s %s\"\n", console, cfg.ExtraKernelParams)
+	grubLine := fmt.Sprintf("GRUB_CMDLINE_LINUX=\"ds=nocloud console=%s", console)
+	if cfg.ExtraKernelParams != "" {
+		if !safeKernelParams.MatchString(cfg.ExtraKernelParams) {
+			return fmt.Errorf("unsafe characters in ExtraKernelParams: %q", cfg.ExtraKernelParams)
+		}
+		grubLine += " " + cfg.ExtraKernelParams
+	}
+	grubLine += "\"\n"
 	grubPath := filepath.Join(grubDir, "10-caprf-kernel-params.cfg")
 	slog.Info("Writing GRUB config", "path", grubPath, "console", console)
 	if err := os.WriteFile(grubPath, []byte(grubLine), 0o644); err != nil {

@@ -22,8 +22,8 @@ func SelectBestSource(ctx context.Context, urls []string) (string, error) {
 	}
 
 	// OCI references are not probeable via HEAD.
-	ociURLs := make([]string, 0)
-	httpURLs := make([]string, 0)
+	ociURLs := make([]string, 0, len(urls))
+	httpURLs := make([]string, 0, len(urls))
 	for _, u := range urls {
 		if IsOCIReference(u) {
 			ociURLs = append(ociURLs, u)
