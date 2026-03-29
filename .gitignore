@@ -22,3 +22,4 @@ test/e2e/clab/images/test.img.gz
 .DS_Store
 Thumbs.db
 .worktrees/
+findings.md
