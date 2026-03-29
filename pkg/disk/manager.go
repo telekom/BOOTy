@@ -63,7 +63,7 @@ const (
 
 // StopRAIDArrays stops all RAID arrays via mdadm.
 func (m *Manager) StopRAIDArrays(ctx context.Context) error {
-	slog.Info("Stopping RAID arrays")
+	slog.Info("stopping RAID arrays")
 	out, err := m.cmd.Run(ctx, "mdadm", "--stop", "--scan")
 	if err != nil {
 		// mdadm returns error if no arrays found, which is fine.
@@ -76,7 +76,7 @@ func (m *Manager) StopRAIDArrays(ctx context.Context) error {
 // This performs a quick erase: clears partition tables and filesystem signatures
 // without overwriting data.
 func (m *Manager) WipeAllDisks(ctx context.Context) error {
-	slog.Info("Wiping all disk signatures (quick erase)")
+	slog.Info("wiping all disk signatures (quick erase)")
 	entries, err := os.ReadDir("/sys/block")
 	if err != nil {
 		return fmt.Errorf("reading /sys/block: %w", err)
@@ -91,7 +91,7 @@ func (m *Manager) WipeAllDisks(ctx context.Context) error {
 			continue
 		}
 		dev := "/dev/" + name
-		slog.Info("Wiping disk", "device", dev)
+		slog.Info("wiping disk", "device", dev)
 		// Clear partition table with sgdisk --zap-all first, then wipefs.
 		if out, err := m.cmd.Run(ctx, "sgdisk", "--zap-all", dev); err != nil {
 			slog.Debug("sgdisk zap failed (may not be GPT)", "device", dev, "output", string(out))
@@ -121,7 +121,7 @@ func (m *Manager) WipeAllDisks(ctx context.Context) error {
 // For SATA/SAS drives: uses ATA SECURITY ERASE UNIT via hdparm.
 // Falls back to quick erase (wipefs) if secure erase is not supported.
 func (m *Manager) SecureEraseAllDisks(ctx context.Context) error {
-	slog.Info("Performing secure erase on all disks")
+	slog.Info("performing secure erase on all disks")
 	entries, err := os.ReadDir("/sys/block")
 	if err != nil {
 		return fmt.Errorf("reading /sys/block: %w", err)
@@ -174,14 +174,14 @@ func (m *Manager) secureEraseSATA(ctx context.Context, dev string) error {
 	// Step 1: Check if security is supported.
 	out, err := m.cmd.Run(ctx, "hdparm", "-I", dev)
 	if err != nil || !strings.Contains(string(out), "Security:") {
-		slog.Info("Drive does not support ATA security, using wipefs", "device", dev)
+		slog.Info("drive does not support ATA security, using wipefs", "device", dev)
 		if out, err := m.cmd.Run(ctx, "wipefs", "-af", dev); err != nil {
 			return fmt.Errorf("%s: hdparm and wipefs fallback failed: %s: %w", dev, string(out), err)
 		}
 		return nil
 	}
 	if strings.Contains(string(out), "frozen") {
-		slog.Warn("Drive is security-frozen, cannot secure erase, using wipefs", "device", dev)
+		slog.Warn("drive is security-frozen, cannot secure erase, using wipefs", "device", dev)
 		if out, err := m.cmd.Run(ctx, "wipefs", "-af", dev); err != nil {
 			return fmt.Errorf("%s: frozen drive wipefs fallback failed: %s: %w", dev, string(out), err)
 		}
@@ -209,7 +209,7 @@ func (m *Manager) CreateRAIDArray(ctx context.Context, name string, level int, d
 		return fmt.Errorf("RAID requires at least 2 devices, got %d", len(devices))
 	}
 
-	slog.Info("Creating RAID array", "name", name, "level", level, "devices", devices)
+	slog.Info("creating RAID array", "name", name, "level", level, "devices", devices)
 
 	args := make([]string, 0, 10+len(devices))
 	args = append(args,
@@ -233,7 +233,7 @@ func (m *Manager) CreateRAIDArray(ctx context.Context, name string, level int, d
 
 // DetectDisk finds the target disk for provisioning. Prefers NVMe, falls back to SATA/SAS.
 func (m *Manager) DetectDisk(_ context.Context, minSizeGB int) (string, error) {
-	slog.Info("Detecting target disk", "minSizeGB", minSizeGB)
+	slog.Info("detecting target disk", "minSizeGB", minSizeGB)
 	entries, err := os.ReadDir("/sys/block")
 	if err != nil {
 		return "", fmt.Errorf("reading /sys/block: %w", err)
@@ -280,7 +280,7 @@ func (m *Manager) DetectDisk(_ context.Context, minSizeGB int) (string, error) {
 		}
 	}
 
-	slog.Info("Selected disk", "device", best.path, "sizeGB", best.sizeGB, "nvme", best.isNVMe)
+	slog.Info("selected disk", "device", best.path, "sizeGB", best.sizeGB, "nvme", best.isNVMe)
 	return best.path, nil
 }
 
@@ -383,12 +383,12 @@ func (m *Manager) FindRootPartition(parts []Partition) (*Partition, error) {
 
 // GrowPartition grows a partition to fill available space using growpart.
 func (m *Manager) GrowPartition(ctx context.Context, disk string, partNum int) error {
-	slog.Info("Growing partition", "disk", disk, "partition", partNum)
+	slog.Info("growing partition", "disk", disk, "partition", partNum)
 	out, err := m.cmd.Run(ctx, "growpart", disk, strconv.Itoa(partNum))
 	if err != nil {
 		// growpart exits 1 if partition already fills the disk.
 		if strings.Contains(string(out), "NOCHANGE") {
-			slog.Info("Partition already at max size")
+			slog.Info("partition already at max size")
 			return nil
 		}
 		return fmt.Errorf("growpart %s %d: %s: %w", disk, partNum, string(out), err)
@@ -399,7 +399,7 @@ func (m *Manager) GrowPartition(ctx context.Context, disk string, partNum int) e
 // ResizeFilesystem resizes the filesystem on the given device.
 // Supports ext2/3/4 (resize2fs), XFS (xfs_growfs), and btrfs.
 func (m *Manager) ResizeFilesystem(ctx context.Context, device string) error {
-	slog.Info("Resizing filesystem", "device", device)
+	slog.Info("resizing filesystem", "device", device)
 	// Try resize2fs for ext2/3/4 first.
 	if out, err := m.cmd.Run(ctx, "resize2fs", device); err != nil {
 		slog.Debug("resize2fs failed, trying xfs_growfs", "output", string(out))
@@ -422,7 +422,7 @@ func (m *Manager) ResizeFilesystem(ctx context.Context, device string) error {
 // device nodes are created — devtmpfs alone may not create them in minimal
 // initramfs environments without udevd.
 func (m *Manager) PartProbe(ctx context.Context, disk string) error {
-	slog.Info("Re-reading partition table", "disk", disk)
+	slog.Info("re-reading partition table", "disk", disk)
 
 	// Flush all pending writes to the block device backend before re-reading
 	// the partition table. On QEMU/KVM, BLKRRPART may invalidate the page
@@ -519,7 +519,7 @@ var supportedFilesystems = []string{"ext4", "xfs", "btrfs", "ext3", "ext2", "vfa
 // Tries all supported filesystem types in order: ext4, xfs, btrfs, ext3, ext2, vfat.
 // Waits up to 10 seconds for the device node to appear (devtmpfs may lag after partprobe).
 func (m *Manager) MountPartition(ctx context.Context, device, mountpoint string) error {
-	slog.Info("Mounting partition", "device", device, "mountpoint", mountpoint)
+	slog.Info("mounting partition", "device", device, "mountpoint", mountpoint)
 
 	// Wait for the device node to appear — devtmpfs can lag after partprobe.
 	if err := waitForDevice(ctx, device); err != nil {
@@ -533,7 +533,7 @@ func (m *Manager) MountPartition(ctx context.Context, device, mountpoint string)
 	for _, fsType := range supportedFilesystems {
 		err := syscall.Mount(device, mountpoint, fsType, 0, "")
 		if err == nil {
-			slog.Info("Mounted partition", "device", device, "fsType", fsType)
+			slog.Info("mounted partition", "device", device, "fsType", fsType)
 			return nil
 		}
 		errs = append(errs, fmt.Sprintf("%s=%v", fsType, err))
@@ -625,7 +625,7 @@ func (m *Manager) CheckFilesystem(ctx context.Context, device string) error {
 
 // DisableLVM deactivates LVM volume groups before disk wipe.
 func (m *Manager) DisableLVM(ctx context.Context) error {
-	slog.Info("Deactivating LVM volume groups")
+	slog.Info("deactivating LVM volume groups")
 	out, err := m.cmd.Run(ctx, "lvm", "vgchange", "-an")
 	if err != nil {
 		// Not fatal — LVM may not be present.
@@ -636,7 +636,7 @@ func (m *Manager) DisableLVM(ctx context.Context) error {
 
 // EnableLVM activates LVM volume groups.
 func (m *Manager) EnableLVM(ctx context.Context) error {
-	slog.Info("Activating LVM volume groups")
+	slog.Info("activating LVM volume groups")
 	out, err := m.cmd.Run(ctx, "lvm", "vgchange", "-ay")
 	if err != nil {
 		return fmt.Errorf("lvm vgchange: %s: %w", string(out), err)
@@ -722,9 +722,9 @@ func (m *Manager) SetupChrootBindMounts(root string) error {
 	efiDst := root + "/sys/firmware/efi/efivars"
 	if _, err := os.Stat(efiSrc); err == nil {
 		if err := os.MkdirAll(efiDst, 0o755); err != nil {
-			slog.Debug("Cannot create efivarfs mount target", "path", efiDst, "error", err)
+			slog.Debug("cannot create efivarfs mount target", "path", efiDst, "error", err)
 		} else if err := m.BindMount(efiSrc, efiDst); err != nil {
-			slog.Debug("Cannot bind-mount efivarfs into chroot", "error", err)
+			slog.Debug("cannot bind-mount efivarfs into chroot", "error", err)
 		}
 	}
 	return nil
@@ -736,11 +736,11 @@ func (m *Manager) TeardownChrootBindMounts(root string) {
 	// Unmount efivarfs first (sub-mount under /sys).
 	efiPath := root + "/sys/firmware/efi/efivars"
 	if err := m.Unmount(efiPath); err != nil {
-		slog.Debug("Chroot efivarfs unmount skipped", "path", efiPath, "error", err)
+		slog.Debug("chroot efivarfs unmount skipped", "path", efiPath, "error", err)
 	}
 	for _, rel := range []string{"run", "sys", "proc", "dev"} {
 		if err := m.Unmount(root + "/" + rel); err != nil {
-			slog.Warn("Chroot unmount failed", "path", root+"/"+rel, "error", err)
+			slog.Warn("chroot unmount failed", "path", root+"/"+rel, "error", err)
 		}
 	}
 }

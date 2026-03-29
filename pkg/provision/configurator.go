@@ -41,7 +41,7 @@ func (c *Configurator) SetRootDir(dir string) { c.rootDir = dir }
 // SetHostname writes the hostname to /etc/hostname.
 func (c *Configurator) SetHostname(cfg *config.MachineConfig) error {
 	path := filepath.Join(c.rootDir, "etc", "hostname")
-	slog.Info("Setting hostname", "hostname", cfg.Hostname, "path", path)
+	slog.Info("setting hostname", "hostname", cfg.Hostname, "path", path)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("creating hostname dir: %w", err)
 	}
@@ -61,7 +61,7 @@ func (c *Configurator) ConfigureKubelet(cfg *config.MachineConfig) error {
 	if cfg.ProviderID != "" {
 		content := fmt.Sprintf("KUBELET_EXTRA_ARGS=\"--provider-id=%s\"\n", cfg.ProviderID)
 		path := filepath.Join(confDir, "10-caprf-provider-id.conf")
-		slog.Info("Writing kubelet provider-id config", "path", path)
+		slog.Info("writing kubelet provider-id config", "path", path)
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			return fmt.Errorf("writing provider-id conf: %w", err)
 		}
@@ -77,7 +77,7 @@ func (c *Configurator) ConfigureKubelet(cfg *config.MachineConfig) error {
 	if len(labels) > 0 {
 		content := fmt.Sprintf("KUBELET_EXTRA_ARGS=\"--node-labels=%s\"\n", strings.Join(labels, ","))
 		path := filepath.Join(confDir, "20-caprf-node-labels.conf")
-		slog.Info("Writing kubelet node labels config", "path", path)
+		slog.Info("writing kubelet node labels config", "path", path)
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			return fmt.Errorf("writing node-labels conf: %w", err)
 		}
@@ -109,7 +109,7 @@ func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineCon
 	}
 	grubLine += "\"\n"
 	grubPath := filepath.Join(grubDir, "10-caprf-kernel-params.cfg")
-	slog.Info("Writing GRUB config", "path", grubPath, "console", console)
+	slog.Info("writing GRUB config", "path", grubPath, "console", console)
 	if err := os.WriteFile(grubPath, []byte(grubLine), 0o644); err != nil {
 		return fmt.Errorf("writing grub config: %w", err)
 	}
@@ -136,10 +136,10 @@ func (c *Configurator) CopyMachineFiles() error {
 // If srcBase does not exist, it logs and returns nil.
 func (c *Configurator) copyTreeIntoChroot(srcBase, label string) error {
 	if _, err := os.Stat(srcBase); os.IsNotExist(err) {
-		slog.Info("No directory found", "label", label, "path", srcBase)
+		slog.Info("no directory found", "label", label, "path", srcBase)
 		return nil
 	}
-	slog.Info("Copying files", "label", label, "src", srcBase)
+	slog.Info("copying files", "label", label, "src", srcBase)
 	return copyTree(srcBase, c.rootDir)
 }
 
@@ -156,7 +156,7 @@ func copyTree(srcBase, destRoot string) error {
 		}
 		// Reject symlinks to prevent following links that escape the tree.
 		if d.Type()&os.ModeSymlink != 0 {
-			slog.Warn("Skipping symlink in copy tree", "path", path)
+			slog.Warn("skipping symlink in copy tree", "path", path)
 			return nil
 		}
 		relPath, _ := filepath.Rel(srcBase, path)
@@ -182,7 +182,7 @@ func copyTree(srcBase, destRoot string) error {
 func (c *Configurator) RunMachineCommands(ctx context.Context) error {
 	cmdDir := "/deploy/machine-commands"
 	if _, err := os.Stat(cmdDir); os.IsNotExist(err) {
-		slog.Info("No machine commands directory found", "path", cmdDir)
+		slog.Info("no machine commands directory found", "path", cmdDir)
 		return nil
 	}
 	entries, err := os.ReadDir(cmdDir)
@@ -201,7 +201,7 @@ func (c *Configurator) RunMachineCommands(ctx context.Context) error {
 		if cmd == "" {
 			continue
 		}
-		slog.Info("Running machine command", "file", entry.Name(), "command", cmd)
+		slog.Info("running machine command", "file", entry.Name(), "command", cmd)
 		out, err := c.disk.ChrootRun(ctx, c.rootDir, cmd)
 		if err != nil {
 			return fmt.Errorf("machine command %s: %s: %w", entry.Name(), string(out), err)
@@ -218,13 +218,13 @@ func (c *Configurator) RunPostProvisionCmds(ctx context.Context, cmds []string) 
 		if cmd == "" {
 			continue
 		}
-		slog.Info("Running post-provision command", "index", i, "command", cmd)
+		slog.Info("running post-provision command", "index", i, "command", cmd)
 		out, err := c.disk.ChrootRun(ctx, c.rootDir, cmd)
 		if err != nil {
 			return fmt.Errorf("post-provision cmd %d (%s): %s: %w", i, cmd, string(out), err)
 		}
 		if len(out) > 0 {
-			slog.Debug("Post-provision command output", "index", i, "output", string(out))
+			slog.Debug("post-provision command output", "index", i, "output", string(out))
 		}
 	}
 	return nil
@@ -244,7 +244,7 @@ func (c *Configurator) ConfigureDNS(cfg *config.MachineConfig) error {
 		return fmt.Errorf("stat etc dir %s: %w", etcDir, err)
 	}
 	path := filepath.Join(etcDir, "resolv.conf")
-	slog.Info("Configuring DNS", "resolvers", cfg.DNSResolvers)
+	slog.Info("configuring DNS", "resolvers", cfg.DNSResolvers)
 	var lines []string
 	for _, r := range strings.Split(cfg.DNSResolvers, ",") {
 		r = strings.TrimSpace(r)
@@ -312,7 +312,7 @@ func isMountPoint(path string) bool {
 // Runs efibootmgr directly on the host (not in chroot) since it operates
 // on the host's EFI variables via /sys/firmware/efi/efivars.
 func (c *Configurator) RemoveEFIBootEntries(ctx context.Context) error {
-	slog.Info("Removing old EFI boot entries")
+	slog.Info("removing old EFI boot entries")
 	out, err := exec.CommandContext(ctx, "efibootmgr").CombinedOutput() //nolint:gosec // fixed command
 	if err != nil {
 		slog.Warn("efibootmgr list failed (non-EFI system?)", "output", string(out), "error", err)
@@ -324,9 +324,9 @@ func (c *Configurator) RemoveEFIBootEntries(ctx context.Context) error {
 		}
 		if len(line) > 8 && strings.HasPrefix(line, "Boot") {
 			bootNum := line[4:8]
-			slog.Info("Removing EFI boot entry", "entry", bootNum)
+			slog.Info("removing EFI boot entry", "entry", bootNum)
 			if out, err := exec.CommandContext(ctx, "efibootmgr", "-b", bootNum, "-B").CombinedOutput(); err != nil { //nolint:gosec // boot entry ID from efibootmgr output
-				slog.Warn("Failed to remove EFI entry", "entry", bootNum, "output", string(out))
+				slog.Warn("failed to remove EFI entry", "entry", bootNum, "output", string(out))
 			}
 		}
 	}
@@ -338,14 +338,14 @@ func (c *Configurator) RemoveEFIBootEntries(ctx context.Context) error {
 // since efibootmgr requires EFI firmware NVRAM access.
 func (c *Configurator) CreateEFIBootEntry(ctx context.Context, diskDev, bootPart string) error {
 	if bootPart == "" {
-		slog.Warn("No EFI partition found, skipping EFI boot entry creation")
+		slog.Warn("no EFI partition found, skipping EFI boot entry creation")
 		return nil
 	}
 
 	// efibootmgr communicates with EFI firmware NVRAM; on BIOS systems the
 	// sysfs EFI directory does not exist and the tool cannot function.
 	if _, err := os.Stat("/sys/firmware/efi"); os.IsNotExist(err) {
-		slog.Warn("System not booted in EFI mode, skipping EFI boot entry creation")
+		slog.Warn("system not booted in EFI mode, skipping EFI boot entry creation")
 		return nil
 	}
 
@@ -357,7 +357,7 @@ func (c *Configurator) CreateEFIBootEntry(ctx context.Context, diskDev, bootPart
 		return nil
 	}
 
-	slog.Info("Creating EFI boot entry", "disk", diskDev, "partition", bootPart)
+	slog.Info("creating EFI boot entry", "disk", diskDev, "partition", bootPart)
 
 	// Detect EFI loader path — architecture-aware shimx64/shimaa64 with grub fallback.
 	loader, err := efiLoaderPath(c.rootDir, runtime.GOARCH)
@@ -428,7 +428,7 @@ func partNumberFromDevice(dev string) string {
 // SetupMellanox detects and configures Mellanox ConnectX NICs.
 // Returns true if firmware values were changed (requiring a hard reboot for reinit).
 func (c *Configurator) SetupMellanox(ctx context.Context, numVFs int) (bool, error) {
-	slog.Info("Checking for Mellanox NICs")
+	slog.Info("checking for Mellanox NICs")
 
 	// Detect Mellanox NICs via sysfs (vendor 0x15b3) instead of lspci.
 	found, err := hasPCIVendorFunc("15b3")
@@ -437,7 +437,7 @@ func (c *Configurator) SetupMellanox(ctx context.Context, numVFs int) (bool, err
 		return false, nil
 	}
 	if !found {
-		slog.Info("No Mellanox NICs found")
+		slog.Info("no Mellanox NICs found")
 		return false, nil
 	}
 
@@ -448,7 +448,7 @@ func (c *Configurator) SetupMellanox(ctx context.Context, numVFs int) (bool, err
 	// Enumerate all Mellanox mst pciconf devices dynamically.
 	listOut, err := c.disk.ChrootRun(ctx, c.rootDir, "ls /dev/mst/")
 	if err != nil {
-		slog.Warn("Cannot list /dev/mst/ devices", "error", err)
+		slog.Warn("cannot list /dev/mst/ devices", "error", err)
 		return false, nil
 	}
 
@@ -459,12 +459,12 @@ func (c *Configurator) SetupMellanox(ctx context.Context, numVFs int) (bool, err
 		}
 		// Validate device name with allowlist to prevent shell injection.
 		if !isSafeDeviceName(entry) {
-			slog.Warn("Skipping mst device with invalid characters", "entry", entry)
+			slog.Warn("skipping mst device with invalid characters", "entry", entry)
 			continue
 		}
 		devPath := "/dev/mst/" + entry
 		cmd := fmt.Sprintf("mstconfig -d %s set NUM_OF_VFS=%d", devPath, numVFs)
-		slog.Info("Configuring Mellanox SR-IOV", "device", devPath, "numVFs", numVFs)
+		slog.Info("configuring Mellanox SR-IOV", "device", devPath, "numVFs", numVFs)
 		out, err := c.disk.ChrootRun(ctx, c.rootDir, cmd)
 		if err != nil {
 			slog.Warn("mstconfig failed", "device", devPath, "output", string(out), "error", err)
@@ -474,7 +474,7 @@ func (c *Configurator) SetupMellanox(ctx context.Context, numVFs int) (bool, err
 	}
 
 	if changed {
-		slog.Info("Mellanox firmware values changed, hard reboot required")
+		slog.Info("mellanox firmware values changed, hard reboot required")
 	}
 	return changed, nil
 }

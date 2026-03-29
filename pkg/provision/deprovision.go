@@ -83,7 +83,7 @@ func (o *Orchestrator) softDeprovision(ctx context.Context) error {
 	grubCfg := filepath.Join(newroot, "boot", "grub", "grub.cfg")
 	grubBak := grubCfg + ".bak"
 	if _, err := os.Stat(grubCfg); err == nil {
-		slog.Info("Renaming grub.cfg", "from", grubCfg, "to", grubBak)
+		slog.Info("renaming grub.cfg", "from", grubCfg, "to", grubBak)
 		if err := os.Rename(grubCfg, grubBak); err != nil {
 			return fmt.Errorf("renaming grub.cfg: %w", err)
 		}

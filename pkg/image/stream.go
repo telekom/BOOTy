@@ -43,7 +43,7 @@ type StreamOpts struct {
 // lz4, xz, bzip2). qcow2 images are detected and converted via ramdisk.
 // Optional checksum validation is performed after write.
 func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
-	slog.Info("Streaming image", "url", filepath.Base(url), "device", device) //nolint:gosec // trusted config values
+	slog.Info("streaming image", "url", filepath.Base(url), "device", device) //nolint:gosec // trusted config values
 
 	var opt StreamOpts
 	if len(opts) > 0 {
@@ -93,7 +93,7 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 	}
 
 	fmt.Println()
-	slog.Info("Image written", "bytes", written, "device", device) //nolint:gosec // trusted config values
+	slog.Info("image written", "bytes", written, "device", device) //nolint:gosec // trusted config values
 
 	if err := verifyChecksum(h, opt); err != nil {
 		slog.Error("checksum mismatch: wiping partition table to prevent booting corrupt image",
@@ -143,7 +143,7 @@ func openAndDecompress(ctx context.Context, url string) (io.Reader, func(), Form
 		_ = body.Close()
 		return nil, nil, FormatRaw, fmt.Errorf("detect format: %w", err)
 	}
-	slog.Info("Detected image format", "format", format)
+	slog.Info("detected image format", "format", format)
 
 	// qcow2 cannot be decompressed inline — return early so caller can route.
 	if format == FormatQCOW2 {
@@ -188,7 +188,7 @@ func verifyChecksum(h hash.Hash, opt StreamOpts) error {
 		return fmt.Errorf("checksum mismatch: computed=%s want=%s",
 			got[:min(8, len(got))], opt.Checksum[:min(8, len(opt.Checksum))])
 	}
-	slog.Info("Checksum verified", "type", opt.ChecksumType)
+	slog.Info("checksum verified", "type", opt.ChecksumType)
 	return nil
 }
 
@@ -198,7 +198,7 @@ func verifyChecksum(h hash.Hash, opt StreamOpts) error {
 func openSource(ctx context.Context, url string) (io.ReadCloser, error) {
 	if IsOCIReference(url) {
 		ref := TrimOCIScheme(url)
-		slog.Info("Pulling OCI image", "ref", ref)
+		slog.Info("pulling OCI image", "ref", ref)
 		return fetchOCIWithRetry(ctx, ref)
 	}
 

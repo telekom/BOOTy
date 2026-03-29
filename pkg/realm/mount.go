@@ -59,7 +59,7 @@ func (m *Mounts) CreateFolder() error {
 			if err != nil {
 				return fmt.Errorf("folder [%s] create error: %w", m.Mount[x].Path, err)
 			}
-			slog.Info("Folder created", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
+			slog.Info("folder created", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
 		}
 	}
 	return nil
@@ -72,14 +72,14 @@ func (m *Mounts) MountAll() error {
 			continue
 		}
 		if isMounted(m.Mount[x].Path) {
-			slog.Info("Already mounted, skipping", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
+			slog.Info("already mounted, skipping", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
 			continue
 		}
 		err := syscall.Mount(m.Mount[x].Source, m.Mount[x].Path, m.Mount[x].FSType, m.Mount[x].Flags, m.Mount[x].Options)
 		if err != nil {
 			return fmt.Errorf("mounting [%s] -> [%s]: %w", m.Mount[x].Source, m.Mount[x].Path, err)
 		}
-		slog.Info("Mounted", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
+		slog.Info("mounted", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
 	}
 	return nil
 }
@@ -92,13 +92,13 @@ func (m *Mounts) MountNamed(name string, remove bool) error {
 		}
 
 		if isMounted(m.Mount[x].Path) {
-			slog.Info("Already mounted, skipping", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
+			slog.Info("already mounted, skipping", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
 		} else {
 			err := syscall.Mount(m.Mount[x].Source, m.Mount[x].Path, m.Mount[x].FSType, m.Mount[x].Flags, m.Mount[x].Options)
 			if err != nil {
 				return fmt.Errorf("mounting [%s] -> [%s]: %w", m.Mount[x].Source, m.Mount[x].Path, err)
 			}
-			slog.Info("Mounted", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
+			slog.Info("mounted", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
 		}
 
 		if remove {
@@ -118,7 +118,7 @@ func (m *Mounts) UnMountAll() error {
 		if err != nil {
 			return fmt.Errorf("unmounting [%s] -> [%s]: %w", m.Mount[x].Source, m.Mount[x].Path, err)
 		}
-		slog.Info("Unmounted", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
+		slog.Info("unmounted", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
 	}
 
 	return nil
@@ -137,7 +137,7 @@ func (m *Mounts) UnMountNamed(name string) error {
 			return fmt.Errorf("unmounting [%s] -> [%s]: %w", m.Mount[x].Source, m.Mount[x].Path, err)
 		}
 
-		slog.Info("Unmounted", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
+		slog.Info("unmounted", "name", m.Mount[x].Name, "path", m.Mount[x].Path)
 		// Remove this element
 		m.Mount = append(m.Mount[:x], m.Mount[x+1:]...)
 		return nil

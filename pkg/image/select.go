@@ -40,14 +40,14 @@ func SelectBestSource(ctx context.Context, urls []string) (string, error) {
 	var bestURL string
 	var bestTime = time.Duration(math.MaxInt64)
 
-	slog.Info("Selecting best image source", "candidates", len(httpURLs))
+	slog.Info("selecting best image source", "candidates", len(httpURLs))
 	for _, rawURL := range httpURLs {
 		elapsed, err := probeURL(ctx, rawURL)
 		if err != nil {
-			slog.Warn("Image source probe failed", "url", redactHost(rawURL), "error", err)
+			slog.Warn("image source probe failed", "url", redactHost(rawURL), "error", err)
 			continue
 		}
-		slog.Info("Image source probe result", "url", redactHost(rawURL), "response_time", elapsed)
+		slog.Info("image source probe result", "url", redactHost(rawURL), "response_time", elapsed)
 		if elapsed < bestTime {
 			bestTime = elapsed
 			bestURL = rawURL
@@ -55,7 +55,7 @@ func SelectBestSource(ctx context.Context, urls []string) (string, error) {
 	}
 
 	if bestURL != "" {
-		slog.Info("Selected best image source", "url", redactHost(bestURL), "response_time", bestTime)
+		slog.Info("selected best image source", "url", redactHost(bestURL), "response_time", bestTime)
 		return bestURL, nil
 	}
 

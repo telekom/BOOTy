@@ -13,18 +13,18 @@ import (
 // attach the shell to the controlling terminal so interactive input works.
 // Paths use /bin/ because BusyBox applets are installed there in the initramfs.
 func Shell() {
-	slog.Info("Starting Shell")
+	slog.Info("starting Shell")
 
 	cmd := exec.CommandContext(context.Background(), "/bin/setsid", "cttyhack", "/bin/sh")
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 
 	err := cmd.Start()
 	if err != nil {
-		slog.Error("Shell error", "error", err)
+		slog.Error("shell error", "error", err)
 	}
-	slog.Info("Waiting for command to finish...")
+	slog.Info("waiting for command to finish...")
 	err = cmd.Wait()
 	if err != nil {
-		slog.Error("Shell error", "error", err)
+		slog.Error("shell error", "error", err)
 	}
 }

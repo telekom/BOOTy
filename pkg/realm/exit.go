@@ -12,12 +12,12 @@ import (
 // the process exits instead of issuing a reboot syscall (used in test containers).
 func Reboot() {
 	if os.Getenv("BOOTY_NO_REBOOT") != "" {
-		slog.Info("Reboot suppressed (BOOTY_NO_REBOOT set)")
+		slog.Info("reboot suppressed (BOOTY_NO_REBOOT set)")
 		os.Exit(0)
 	}
 	err := syscall.Reboot(syscall.LINUX_REBOOT_CMD_RESTART)
 	if err != nil {
-		slog.Error("Reboot failed", "error", err)
+		slog.Error("reboot failed", "error", err)
 		Shell()
 	}
 	os.Exit(1)
@@ -27,7 +27,7 @@ func Reboot() {
 func PowerOff() {
 	err := syscall.Reboot(syscall.LINUX_REBOOT_CMD_POWER_OFF)
 	if err != nil {
-		slog.Error("Power off failed", "error", err)
+		slog.Error("power off failed", "error", err)
 		Shell()
 	}
 	os.Exit(1)
@@ -37,7 +37,7 @@ func PowerOff() {
 func Halt() {
 	err := syscall.Reboot(syscall.LINUX_REBOOT_CMD_HALT)
 	if err != nil {
-		slog.Error("Halt failed", "error", err)
+		slog.Error("halt failed", "error", err)
 		Shell()
 	}
 	os.Exit(1)
@@ -47,9 +47,9 @@ func Halt() {
 func Suspend() {
 	err := syscall.Reboot(syscall.LINUX_REBOOT_CMD_SW_SUSPEND)
 	if err != nil {
-		slog.Error("Suspend failed", "error", err)
+		slog.Error("suspend failed", "error", err)
 		Shell()
-		slog.Warn("Attempting a reboot")
+		slog.Warn("attempting a reboot")
 		Reboot()
 	}
 }

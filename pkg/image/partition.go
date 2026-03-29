@@ -21,7 +21,7 @@ import (
 // This preserves the partition table on the target disk and allows the source
 // image partitions to differ in size from the target.
 func StreamPartitions(ctx context.Context, url, device string) error {
-	slog.Info("Partition-by-partition imaging", "url", url, "device", device)
+	slog.Info("partition-by-partition imaging", "url", url, "device", device)
 
 	if err := setupRamdisk(); err != nil {
 		return fmt.Errorf("setting up ramdisk: %w", err)
@@ -55,7 +55,7 @@ func downloadAndPrepareRaw(ctx context.Context, url string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("detecting image format: %w", err)
 	}
-	slog.Info("Downloaded image format", "format", format)
+	slog.Info("downloaded image format", "format", format)
 
 	rawPath := ramdiskPath + "/image.raw"
 
@@ -87,7 +87,7 @@ func downloadAndPrepareRaw(ctx context.Context, url string) (string, error) {
 
 // decompressFile decompresses a file on the ramdisk to a new output file.
 func decompressFile(_ context.Context, src, dst string, format Format) error {
-	slog.Info("Decompressing image on ramdisk", "format", format, "src", src)
+	slog.Info("decompressing image on ramdisk", "format", format, "src", src)
 
 	in, err := os.Open(src) //nolint:gosec // controlled ramdisk path
 	if err != nil {
@@ -113,7 +113,7 @@ func decompressFile(_ context.Context, src, dst string, format Format) error {
 	if err != nil {
 		return fmt.Errorf("decompressing: %w", err)
 	}
-	slog.Info("Decompression complete", "bytes", written)
+	slog.Info("decompression complete", "bytes", written)
 	return nil
 }
 
@@ -134,7 +134,7 @@ func copyPartitions(ctx context.Context, rawPath, targetDisk string) error {
 	}
 
 	// Copy partition table from source to target.
-	slog.Info("Copying partition table to target disk", "target", targetDisk)
+	slog.Info("copying partition table to target disk", "target", targetDisk)
 	if err := copyPartitionTable(ctx, loopDev, targetDisk); err != nil {
 		return fmt.Errorf("copying partition table: %w", err)
 	}
@@ -159,7 +159,7 @@ func copyPartitions(ctx context.Context, rawPath, targetDisk string) error {
 		srcNode := sp.Node
 		// Derive target partition node from target disk.
 		tgtNode := targetPartitionNode(targetDisk, i+1)
-		slog.Info("Copying partition",
+		slog.Info("copying partition",
 			"index", i+1, "src", srcNode, "dst", tgtNode,
 			"type", sp.Type, "sectors", sp.Size)
 
@@ -168,7 +168,7 @@ func copyPartitions(ctx context.Context, rawPath, targetDisk string) error {
 		}
 	}
 
-	slog.Info("Partition-by-partition imaging complete", "partitions", len(srcParts))
+	slog.Info("partition-by-partition imaging complete", "partitions", len(srcParts))
 	return nil
 }
 
@@ -225,14 +225,14 @@ func setupLoopDevice(ctx context.Context, imagePath string) (string, error) {
 		return "", fmt.Errorf("losetup: %w", err)
 	}
 	dev := strings.TrimSpace(string(out))
-	slog.Info("Loop device attached", "device", dev, "image", imagePath)
+	slog.Info("loop device attached", "device", dev, "image", imagePath)
 	return dev, nil
 }
 
 // teardownLoopDevice detaches a loop device.
 func teardownLoopDevice(ctx context.Context, dev string) {
 	if _, err := runCmd(ctx, "losetup", "--detach", dev); err != nil {
-		slog.Warn("Failed to detach loop device", "device", dev, "error", err)
+		slog.Warn("failed to detach loop device", "device", dev, "error", err)
 	}
 }
 

@@ -34,7 +34,7 @@ var gpgHTTPClient = &http.Client{
 // The image body is streamed directly into GPG's stdin to avoid storing
 // multi-GB images in memory.
 func VerifyGPGSignature(ctx context.Context, imageURL, sigURL, pubKeyPath string) error {
-	slog.Info("Verifying image GPG signature",
+	slog.Info("verifying image GPG signature",
 		"image", filepath.Base(imageURL),
 		"signature", filepath.Base(sigURL),
 		"pubkey", pubKeyPath,

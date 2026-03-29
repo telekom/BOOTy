@@ -63,7 +63,7 @@ func (s *StaticMode) Setup(_ context.Context, cfg *Config) error {
 	}
 
 	// Assign the static IP.
-	if err := netlink.AddrAdd(link, addr); err != nil {
+		if err := netlink.AddrAdd(link, addr); err != nil {
 		if !errors.Is(err, syscall.EEXIST) {
 			return fmt.Errorf("assigning address to %s: %w", ifaceName, err)
 		}
@@ -77,7 +77,7 @@ func (s *StaticMode) Setup(_ context.Context, cfg *Config) error {
 			LinkIndex: link.Attrs().Index,
 			Gw:        s.gateway,
 		}
-		if err := netlink.RouteAdd(route); err != nil {
+				if err := netlink.RouteAdd(route); err != nil {
 			if !errors.Is(err, syscall.EEXIST) {
 				return fmt.Errorf("adding default route via %s: %w", s.gateway, err)
 			}
@@ -116,6 +116,6 @@ func (s *StaticMode) Teardown(_ context.Context) error {
 	if s.address != nil {
 		_ = netlink.AddrDel(link, s.address)
 	}
-	slog.Info("Static network teardown complete", "iface", s.iface)
+	slog.Info("static network teardown complete", "iface", s.iface)
 	return nil
 }

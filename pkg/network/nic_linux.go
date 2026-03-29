@@ -35,7 +35,7 @@ func DetectPhysicalNICs() ([]string, error) {
 			return nics, nil
 		}
 		if i == 0 {
-			slog.Info("Waiting for interface names to stabilize (clab-* detected)")
+			slog.Info("waiting for interface names to stabilize (clab-* detected)")
 		}
 		time.Sleep(retryInterval)
 	}

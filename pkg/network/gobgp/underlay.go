@@ -552,11 +552,11 @@ func sendRouterAdvertisement(iface string) {
 	// FRR's zebra silently drops RAs with any other hop limit.
 	pc := ipv6.NewPacketConn(conn)
 	if err := pc.SetMulticastHopLimit(mandatedHopLimit); err != nil {
-		slog.Warn("Failed to set multicast hop limit", "iface", iface, "error", err)
+		slog.Warn("failed to set multicast hop limit", "iface", iface, "error", err)
 		return
 	}
 	if err := pc.SetHopLimit(mandatedHopLimit); err != nil {
-		slog.Warn("Failed to set hop limit", "iface", iface, "error", err)
+		slog.Warn("failed to set hop limit", "iface", iface, "error", err)
 		return
 	}
 

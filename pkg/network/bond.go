@@ -44,6 +44,7 @@ func (b *BondMode) Setup(_ context.Context, cfg *Config) error {
 		return fmt.Errorf("bond mode requires BondInterfaces")
 	}
 
+
 	bond := netlink.NewLinkBond(netlink.LinkAttrs{Name: "bond0"})
 	bond.Mode = parseBondMode(cfg.BondMode)
 	bond.Miimon = 100 // 100 ms link monitoring interval for failure detection
@@ -67,18 +68,18 @@ func (b *BondMode) Setup(_ context.Context, cfg *Config) error {
 		}
 		link, err := netlink.LinkByName(ifName)
 		if err != nil {
-			slog.Warn("Slave interface not found", "name", ifName, "error", err)
+			slog.Warn("slave interface not found", "name", ifName, "error", err)
 			continue
 		}
 		// Interface must be down to be enslaved.
 		if err := netlink.LinkSetDown(link); err != nil {
-			slog.Warn("Failed to bring down slave", "name", ifName, "error", err)
+			slog.Warn("failed to bring down slave", "name", ifName, "error", err)
 		}
 		if err := netlink.LinkSetBondSlave(link, &netlink.Bond{LinkAttrs: *bond.Attrs()}); err != nil {
-			slog.Warn("Failed to enslave interface", "name", ifName, "error", err)
+			slog.Warn("failed to enslave interface", "name", ifName, "error", err)
 			continue
 		}
-		slog.Info("Enslaved interface to bond", "slave", ifName)
+		slog.Info("enslaved interface to bond", "slave", ifName)
 	}
 
 	// Bring the bond up.
@@ -99,7 +100,7 @@ func (b *BondMode) WaitForConnectivity(ctx context.Context, target string, timeo
 func (b *BondMode) Teardown(_ context.Context) error {
 	if b.bond != nil {
 		if err := netlink.LinkDel(b.bond); err != nil {
-			slog.Warn("Failed to remove bond", "error", err)
+			slog.Warn("failed to remove bond", "error", err)
 		}
 	}
 	return nil
