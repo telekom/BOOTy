@@ -1,6 +1,8 @@
 // Package bootloader provides a unified interface for bootloader management.
 package bootloader
 
+import "context"
+
 // BootConfig holds kernel parameters for bootloader configuration.
 type BootConfig struct {
 	KernelPath   string
@@ -20,11 +22,11 @@ type BootEntry struct {
 // Bootloader defines operations for managing a bootloader.
 type Bootloader interface {
 	// Install sets up the bootloader on the target disk.
-	Install(rootPath, diskDevice string) error
+	Install(ctx context.Context, rootPath, diskDevice string) error
 	// Configure sets kernel parameters and default entry.
-	Configure(rootPath string, cfg BootConfig) error
+	Configure(ctx context.Context, rootPath string, cfg BootConfig) error
 	// ListEntries returns the available boot entries.
-	ListEntries(rootPath string) ([]BootEntry, error)
+	ListEntries(ctx context.Context, rootPath string) ([]BootEntry, error)
 	// SetDefault sets the default boot entry by title.
-	SetDefault(rootPath, title string) error
+	SetDefault(ctx context.Context, rootPath, title string) error
 }

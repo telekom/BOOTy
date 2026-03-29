@@ -14,9 +14,9 @@ import (
 type SystemdBoot struct{}
 
 // Install installs systemd-boot into the ESP at rootPath.
-func (s *SystemdBoot) Install(rootPath, _ string) error {
+func (s *SystemdBoot) Install(ctx context.Context, rootPath, _ string) error {
 	slog.Info("installing systemd-boot", "root", rootPath)
-	out, err := exec.CommandContext(context.Background(), "chroot", rootPath, "bootctl", "install").CombinedOutput()
+	out, err := exec.CommandContext(ctx, "chroot", rootPath, "bootctl", "install").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("bootctl install: %s: %w", strings.TrimSpace(string(out)), err)
 	}
@@ -24,13 +24,13 @@ func (s *SystemdBoot) Install(rootPath, _ string) error {
 }
 
 // Configure is currently a no-op for systemd-boot (uses Type #1 BLS entries).
-func (s *SystemdBoot) Configure(_ string, _ BootConfig) error {
+func (s *SystemdBoot) Configure(_ context.Context, _ string, _ BootConfig) error {
 	return nil
 }
 
 // ListEntries enumerates boot entries via bootctl.
-func (s *SystemdBoot) ListEntries(rootPath string) ([]BootEntry, error) {
-	out, err := exec.CommandContext(context.Background(), "chroot", rootPath, "bootctl", "list", "--no-pager").CombinedOutput()
+func (s *SystemdBoot) ListEntries(ctx context.Context, rootPath string) ([]BootEntry, error) {
+	out, err := exec.CommandContext(ctx, "chroot", rootPath, "bootctl", "list", "--no-pager").CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("bootctl list: %s: %w", strings.TrimSpace(string(out)), err)
 	}
@@ -59,8 +59,8 @@ func (s *SystemdBoot) ListEntries(rootPath string) ([]BootEntry, error) {
 }
 
 // SetDefault sets the default boot entry via bootctl.
-func (s *SystemdBoot) SetDefault(rootPath, title string) error {
-	out, err := exec.CommandContext(context.Background(), "chroot", rootPath,
+func (s *SystemdBoot) SetDefault(ctx context.Context, rootPath, title string) error {
+	out, err := exec.CommandContext(ctx, "chroot", rootPath,
 		"bootctl", "set-default", title).CombinedOutput() //nolint:gosec // trusted config
 	if err != nil {
 		return fmt.Errorf("bootctl set-default: %s: %w", strings.TrimSpace(string(out)), err)
