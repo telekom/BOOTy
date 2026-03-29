@@ -3,6 +3,7 @@
 package lldp
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/gopacket"
@@ -78,8 +79,8 @@ func TestSanitizeLLDP(t *testing.T) {
 		want string
 	}{
 		{"clean", "switch-leaf01", "switch-leaf01"},
-		{"control chars", "bad\x00\x1f\x7fname", "bad??name"},
-		{"long string", string(make([]byte, 300)), string(make([]byte, maxLLDPFieldLen))},
+		{"control chars", "bad\x00\x1f\x7fname", "bad???name"},
+		{"long string", string(make([]byte, 300)), strings.Repeat("?", maxLLDPFieldLen)},
 		{"empty", "", ""},
 	}
 	for _, tt := range tests {
