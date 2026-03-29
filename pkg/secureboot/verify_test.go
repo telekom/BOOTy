@@ -18,7 +18,7 @@ func TestChainVerifier_Verify(t *testing.T) {
 	if result.SecureBootEnabled {
 		t.Error("expected SecureBoot disabled in temp dir")
 	}
-	if result.Valid {
-		t.Error("expected chain not valid without real EFI vars")
+	if result.PreconditionsMet {
+		t.Error("expected preconditions not met without real EFI vars")
 	}
 }

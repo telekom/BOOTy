@@ -87,7 +87,7 @@ func TestChainVerifier_VerifyResult(t *testing.T) {
 		t.Error("SecureBoot should not be enabled in temp dir")
 	}
 	// Valid should be false (no SecureBoot + missing components).
-	if result.Valid {
+	if result.PreconditionsMet {
 		t.Error("chain should not be valid without SecureBoot")
 	}
 	// Components should be populated.
