@@ -139,8 +139,8 @@ func TestNetworkConfigApplyDefaults(t *testing.T) {
 	if cfg.MTU != 9000 {
 		t.Errorf("default MTU = %d, want 9000", cfg.MTU)
 	}
-	if cfg.VRFTableID != 1 {
-		t.Errorf("default VRFTableID = %d, want 1", cfg.VRFTableID)
+	if cfg.VRFTableID != 1000 {
+		t.Errorf("default VRFTableID = %d, want 1000", cfg.VRFTableID)
 	}
 }
 

@@ -21,30 +21,31 @@ type BondMode struct {
 	bond netlink.Link
 }
 
+// parseBondMode converts a bond mode string to a netlink constant.
+func parseBondMode(mode string) netlink.BondMode {
+	switch strings.ToLower(mode) {
+	case "802.3ad", "lacp", "":
+		return netlink.BOND_MODE_802_3AD
+	case "balance-rr":
+		return netlink.BOND_MODE_BALANCE_RR
+	case "active-backup":
+		return netlink.BOND_MODE_ACTIVE_BACKUP
+	case "balance-xor":
+		return netlink.BOND_MODE_BALANCE_XOR
+	default:
+		slog.Warn("unknown bond mode, using 802.3ad", "mode", mode)
+		return netlink.BOND_MODE_802_3AD
+	}
+}
+
 // Setup creates a bond interface from the configured interfaces.
 func (b *BondMode) Setup(_ context.Context, cfg *Config) error {
 	if cfg.BondInterfaces == "" {
 		return fmt.Errorf("bond mode requires BondInterfaces")
 	}
 
-	mode := netlink.BOND_MODE_802_3AD // default: LACP
-	if cfg.BondMode != "" {
-		switch strings.ToLower(cfg.BondMode) {
-		case "802.3ad", "lacp":
-			mode = netlink.BOND_MODE_802_3AD
-		case "balance-rr":
-			mode = netlink.BOND_MODE_BALANCE_RR
-		case "active-backup":
-			mode = netlink.BOND_MODE_ACTIVE_BACKUP
-		case "balance-xor":
-			mode = netlink.BOND_MODE_BALANCE_XOR
-		default:
-			slog.Warn("Unknown bond mode, using 802.3ad", "mode", cfg.BondMode)
-		}
-	}
-
 	bond := netlink.NewLinkBond(netlink.LinkAttrs{Name: "bond0"})
-	bond.Mode = mode
+	bond.Mode = parseBondMode(cfg.BondMode)
 	bond.Miimon = 100 // 100 ms link monitoring interval for failure detection
 	bond.LacpRate = netlink.BOND_LACP_RATE_FAST
 	bond.XmitHashPolicy = netlink.BOND_XMIT_HASH_POLICY_LAYER3_4
@@ -55,7 +56,7 @@ func (b *BondMode) Setup(_ context.Context, cfg *Config) error {
 		}
 		slog.Info("bond interface already exists, reusing", "name", "bond0")
 	} else {
-		slog.Info("created bond interface", "name", "bond0", "mode", mode)
+		slog.Info("created bond interface", "name", "bond0", "mode", bond.Mode)
 	}
 
 	// Add slave interfaces.

@@ -54,7 +54,7 @@ type Config struct {
 	BondMode       string // Bonding mode (default: "802.3ad" for LACP)
 
 	// BGP/BFD tuning fields.
-	VRFTableID    uint32 // Routing table ID for VRF (default: 1)
+	VRFTableID    uint32 // Routing table ID for VRF (default: 1000)
 	BGPKeepalive  uint32 // BGP keepalive interval in seconds (0 = FRR default)
 	BGPHold       uint32 // BGP hold timer in seconds (0 = FRR default)
 	BFDTransmitMS uint32 // BFD transmit interval in ms (default: 300)
