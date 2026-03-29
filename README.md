@@ -208,6 +208,12 @@ export SUCCESS_URL="http://caprf:8080/status/success"
 export ERROR_URL="http://caprf:8080/status/error"
 export LOG_URL="http://caprf:8080/log"
 
+# JWT authentication (optional — omit for static bearer token)
+export TOKEN_URL="http://caprf:8080/auth/token"  # JWT token endpoint
+export TOKEN_ALGORITHM="RS256"                    # RS256 or ES256
+# When TOKEN_URL is set, JWT acquisition/renewal failures are treated as fatal
+# and BOOTy reboots to avoid running with stale credentials.
+
 # Network (FRR/EVPN mode — omit for DHCP fallback)
 underlay_subnet="10.0.0.0/24"
 asn_server="65001"
@@ -541,6 +547,28 @@ enrollment (TPM2 PCR binding, clevis tang enrollment) is handled separately afte
 the OS is installed. Invalid targets (empty device or mapped name) are silently
 skipped during crypttab generation.
 
+### JWT Authentication
+
+BOOTy supports JWT-based authentication with the CAPRF controller. Set
+`TOKEN_URL` to enable automatic token acquisition and background renewal:
+
+```bash
+export TOKEN="bootstrap-token"                    # Initial bootstrap token
+export TOKEN_URL="http://caprf:8080/auth/token"   # JWT token endpoint
+export TOKEN_ALGORITHM="RS256"                    # Optional: RS256 (default) or ES256
+```
+
+**Lifecycle:**
+1. BOOTy starts with the bootstrap `TOKEN` for initial authentication
+2. After network connectivity is established, `TOKEN_URL` is called to exchange
+   the bootstrap token for a short-lived JWT
+3. A background goroutine renews the JWT at 80% of its lifetime
+4. On renewal failure, exponential backoff retries up to 5 times before rebooting
+
+When `TOKEN_URL` is not set, BOOTy uses the static `TOKEN` for all requests
+(no renewal). When `TOKEN_URL` is set, acquisition and renewal failures are
+fatal — BOOTy reboots to avoid operating with stale credentials.
+
 ### VLAN Support
 
 BOOTy supports 802.1Q VLAN tagging via netlink. Configure VLANs with the
@@ -728,6 +756,10 @@ and the PR process.
 ├── server/server.go            # Legacy provisioning server
 ├── initrd.Dockerfile           # Multi-stage initramfs build (default, iso, slim, micro)
 ├── pkg/
+│   ├── auth/                   # JWT token manager (acquisition, renewal, backoff)
+│   ├── bios/                   # BIOS settings management (Dell, HPE, Lenovo, Supermicro)
+│   ├── bootloader/             # Bootloader detection (GRUB, systemd-boot)
+│   ├── buildinfo/              # Binary build information (version, commit, date)
 │   ├── caprf/                  # CAPRF client (status, log, debug, vars parsing)
 │   ├── cloudinit/              # Cloud-init NoCloud/ConfigDrive generation
 │   ├── config/                 # MachineConfig, Provider interface, Status types

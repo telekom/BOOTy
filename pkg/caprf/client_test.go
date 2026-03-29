@@ -1070,6 +1070,84 @@ func TestClientAcknowledgeCommandNoURL(t *testing.T) {
 	}
 }
 
+func TestAcquireTokenNoURL(t *testing.T) {
+	client := NewFromConfig(&config.MachineConfig{Token: "bootstrap"})
+	if err := client.AcquireToken(context.Background()); err != nil {
+		t.Fatalf("AcquireToken() with no URL should succeed: %v", err)
+	}
+}
+
+func TestAcquireTokenRequiresHostname(t *testing.T) {
+	client := NewFromConfig(&config.MachineConfig{
+		Token:    "bootstrap-token",
+		TokenURL: "https://auth.example.com/token",
+	})
+
+	err := client.AcquireToken(context.Background())
+	if err == nil {
+		t.Fatal("expected error when TokenURL is configured and Hostname is empty")
+	}
+	if !strings.Contains(err.Error(), "hostname is empty") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAcquireTokenRequiresBootstrapToken(t *testing.T) {
+	client := NewFromConfig(&config.MachineConfig{
+		TokenURL: "https://auth.example.com/token",
+		Hostname: "test-host",
+	})
+	err := client.AcquireToken(context.Background())
+	if err == nil {
+		t.Fatal("expected error when Token is empty but TokenURL is set")
+	}
+	if !strings.Contains(err.Error(), "no bootstrap token") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAcquireTokenRejectsInvalidAlgorithm(t *testing.T) {
+	client := NewFromConfig(&config.MachineConfig{
+		Token:          "bootstrap-token",
+		TokenURL:       "https://auth.example.com/token",
+		Hostname:       "worker-01",
+		TokenAlgorithm: "HS256",
+	})
+
+	err := client.AcquireToken(context.Background())
+	if err == nil {
+		t.Fatal("expected error for unsupported token algorithm")
+	}
+	if !strings.Contains(err.Error(), "unsupported token algorithm") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAcquireTokenWithServer(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer bootstrap-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"access_token":"jwt-token-123","token_type":"Bearer","expires_in":3600}`)
+	}))
+	defer srv.Close()
+
+	client := NewFromConfig(&config.MachineConfig{
+		Token:    "bootstrap-token",
+		TokenURL: srv.URL,
+		Hostname: "test-host",
+	})
+	if err := client.AcquireToken(context.Background()); err != nil {
+		t.Fatalf("AcquireToken() error: %v", err)
+	}
+	cfg, _ := client.GetConfig(context.Background())
+	if cfg.Token != "jwt-token-123" {
+		t.Errorf("Token = %q, want %q", cfg.Token, "jwt-token-123")
+	}
+}
+
 func TestReportMetrics_TelemetryDisabled(t *testing.T) {
 	client := NewFromConfig(&config.MachineConfig{
 		TelemetryEnabled: false,
@@ -1158,6 +1236,22 @@ func TestSendEvent_TelemetryEnabled(t *testing.T) {
 	}
 	if !received {
 		t.Error("expected event to be sent")
+	}
+}
+
+func TestParseVarsTokenFields(t *testing.T) {
+	input := `export TOKEN_URL="https://auth.example.com/token"
+export TOKEN_ALGORITHM="ES256"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TokenURL != "https://auth.example.com/token" {
+		t.Errorf("TokenURL = %q, want %q", cfg.TokenURL, "https://auth.example.com/token")
+	}
+	if cfg.TokenAlgorithm != "ES256" {
+		t.Errorf("TokenAlgorithm = %q, want %q", cfg.TokenAlgorithm, "ES256")
 	}
 }
 

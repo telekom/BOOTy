@@ -15,15 +15,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/telekom/BOOTy/pkg/auth"
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/health"
 )
 
 // Client communicates with the CAPRF provisioning server.
 type Client struct {
-	httpClient *http.Client
-	cfg        *config.MachineConfig
-	log        *slog.Logger
+	httpClient   *http.Client
+	cfg          *config.MachineConfig
+	log          *slog.Logger
+	tokenManager *auth.TokenManager
 }
 
 // New creates a CAPRF client by parsing the vars file at the given path.
@@ -53,6 +55,73 @@ func NewFromConfig(cfg *config.MachineConfig) *Client {
 		cfg:        cfg,
 		log:        slog.Default().With("component", "caprf"),
 	}
+}
+
+// AcquireToken exchanges the bootstrap token for a JWT if a token URL
+// is configured. The acquired JWT replaces the bootstrap token for all
+// subsequent API calls. The TokenManager is retained for background renewal.
+func (c *Client) AcquireToken(ctx context.Context) error {
+	if c.cfg.TokenURL == "" {
+		return nil
+	}
+	if c.cfg.Token == "" {
+		return fmt.Errorf("token URL configured but no bootstrap token")
+	}
+	if strings.TrimSpace(c.cfg.Hostname) == "" {
+		return fmt.Errorf("token URL configured but hostname is empty")
+	}
+
+	tm, err := auth.NewTokenManager(c.cfg.TokenURL, c.cfg.Token, c.log)
+	if err != nil {
+		return fmt.Errorf("initialize token manager: %w", err)
+	}
+	if c.cfg.TokenAlgorithm != "" {
+		switch c.cfg.TokenAlgorithm {
+		case "RS256", "ES256":
+			// Valid algorithms.
+		default:
+			return fmt.Errorf("unsupported token algorithm %q, must be RS256 or ES256", c.cfg.TokenAlgorithm)
+		}
+		tm.SetAlgorithm(c.cfg.TokenAlgorithm)
+	}
+	// bmcMAC is intentionally empty — the token endpoint identifies the
+	// machine by serial (hostname). BMC MAC is only required for PXE
+	// bootstrap flows that are not yet implemented.
+	if err := tm.Acquire(ctx, c.cfg.Hostname, ""); err != nil {
+		return fmt.Errorf("acquire jwt: %w", err)
+	}
+	// Snapshot the initial JWT into cfg.Token for backward compatibility with
+	// GetConfig callers. After renewal, CurrentToken() is the authoritative
+	// source — cfg.Token will hold the first-acquired JWT, not the latest.
+	c.cfg.Token = tm.Token()
+	c.tokenManager = tm
+	c.log.Info("jwt token acquired, using for subsequent API calls")
+	return nil
+}
+
+// SetTokenRenewalFatalHandler sets the callback invoked when token renewal
+// is permanently exhausted.
+func (c *Client) SetTokenRenewalFatalHandler(fn func()) {
+	if c.tokenManager == nil {
+		return
+	}
+	c.tokenManager.SetOnFatal(fn)
+}
+
+// StartTokenRenewal begins background JWT renewal if a token was acquired.
+func (c *Client) StartTokenRenewal(ctx context.Context) error {
+	if c.tokenManager == nil {
+		return nil
+	}
+	return c.tokenManager.StartRenewal(ctx)
+}
+
+// CurrentToken returns the latest token, preferring the token manager if active.
+func (c *Client) CurrentToken() string {
+	if c.tokenManager != nil {
+		return c.tokenManager.Token()
+	}
+	return c.cfg.Token
 }
 
 // GetConfig returns the parsed machine configuration.
@@ -142,8 +211,8 @@ func (c *Client) FetchCommands(ctx context.Context) ([]config.Command, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create commands request: %w", err)
 	}
-	if c.cfg.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
+	if tok := c.CurrentToken(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
@@ -264,8 +333,8 @@ func (c *Client) doPost(ctx context.Context, url, body string) error {
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "text/plain")
-	if c.cfg.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
+	if tok := c.CurrentToken(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
@@ -288,8 +357,8 @@ func (c *Client) doPostJSON(ctx context.Context, url string, data []byte) error 
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if c.cfg.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
+	if tok := c.CurrentToken(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
@@ -414,6 +483,8 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"EVENT_URL":                   &cfg.EventURL,
 		"MOK_CERT_PATH":               &cfg.MOKCertPath,
 		"MOK_PASSWORD":                &cfg.MOKPassword,
+		"TOKEN_URL":                   &cfg.TokenURL,
+		"TOKEN_ALGORITHM":             &cfg.TokenAlgorithm,
 	}
 
 	if ptr, ok := strFields[key]; ok {

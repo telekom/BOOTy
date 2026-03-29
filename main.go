@@ -220,6 +220,27 @@ func runCAPRF(ctx context.Context) {
 		}
 	}
 
+	// Acquire JWT after network is ready so the token endpoint is reachable.
+	if err := client.AcquireToken(ctx); err != nil {
+		slog.Error("failed to acquire jwt token", "error", err)
+		if cfg.TokenURL != "" {
+			provision.DumpDebugState("jwt-acquire")
+			realm.Reboot()
+		}
+	}
+	client.SetTokenRenewalFatalHandler(func() {
+		slog.Error("token renewal exhausted, rebooting")
+		provision.DumpDebugState("jwt-renewal-exhausted")
+		realm.Reboot()
+	})
+	if err := client.StartTokenRenewal(ctx); err != nil {
+		slog.Error("failed to start token renewal", "error", err)
+		if cfg.TokenURL != "" {
+			provision.DumpDebugState("jwt-renewal-start")
+			realm.Reboot()
+		}
+	}
+
 	// Run provisioning, deprovisioning, or standby based on mode.
 	diskMgr := disk.NewManager(nil)
 	orch := provision.NewOrchestrator(cfg, client, diskMgr)

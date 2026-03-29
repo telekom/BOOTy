@@ -153,6 +153,10 @@ type MachineConfig struct {
 
 	// Declarative disk partitioning (JSON from PARTITION_LAYOUT).
 	PartitionLayout *PartitionLayout
+
+	// JWT token management.
+	TokenURL       string // TOKEN_URL: JWT token endpoint
+	TokenAlgorithm string // TOKEN_ALGORITHM: RS256 or ES256
 }
 
 // PartitionLayout defines a declarative partitioning scheme for the target disk.
