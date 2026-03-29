@@ -485,6 +485,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"MOK_PASSWORD":                &cfg.MOKPassword,
 		"TOKEN_URL":                   &cfg.TokenURL,
 		"TOKEN_ALGORITHM":             &cfg.TokenAlgorithm,
+		"NVME_NAMESPACES":             &cfg.NVMeNamespaces,
 	}
 
 	if ptr, ok := strFields[key]; ok {

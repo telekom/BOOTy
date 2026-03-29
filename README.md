@@ -33,7 +33,7 @@ BOOTy operates in two modes depending on the boot environment:
 1. A Redfish BMC mounts an ISO containing a kernel, BOOTy initramfs, and `/deploy/vars` config.
 2. BOOTy reads `/deploy/vars` for machine config, image URLs, and CAPRF server endpoints.
 3. Network connectivity is established via **FRR/EVPN** (BGP underlay) or **DHCP** fallback.
-4. The provisioning pipeline runs 31 steps: status reporting → RAID cleanup → disk detection → image streaming → partition management → OS configuration → cloud-init injection → kexec.
+4. The provisioning pipeline runs 36 steps: status reporting → RAID cleanup → disk detection → NVMe namespace setup → image streaming → partition management → OS configuration → cloud-init injection → kexec.
 5. Status, logs, and debug info are shipped back to the CAPRF controller throughout.
 
 ### Legacy Mode
@@ -71,7 +71,7 @@ BOOTy operates in two modes depending on the boot environment:
 - **Filesystem support** — ext2, ext3, ext4, xfs, btrfs, vfat mount/resize
 - **LLDP discovery** — Raw AF_PACKET-based LLDP listener for switch topology discovery
 - **Post-provision hooks** — Execute arbitrary commands in chroot after OS configuration
-- **31-step provisioning pipeline** — RAID cleanup, disk detection, image streaming, partition growth, LVM, filesystem resize, OS configuration, cloud-init injection, EFI boot, Mellanox SR-IOV, post-provision hooks
+- **36-step provisioning pipeline** — RAID cleanup, disk detection, NVMe namespace setup, image streaming, partition growth, LVM, filesystem resize, OS configuration, cloud-init injection, EFI boot, Mellanox SR-IOV, post-provision hooks
 - **Kexec support** — Fast reboot into installed kernel without full BIOS POST (auto-disabled after firmware changes)
 - **Remote logging** — Real-time log and debug shipping to CAPRF controller
 - **Hard/soft deprovisioning** — Full disk wipe or GRUB rename for reprovisioning
@@ -98,23 +98,17 @@ BOOTy operates in two modes depending on the boot environment:
 
 ## Building
 
-### Build Binary
+### Initramfs (recommended)
 
-Compile BOOTy for a single target architecture (defaults to host `GOARCH`):
+Build the complete initramfs with Docker:
 
 ```bash
 make build
 ```
 
-Cross-compile BOOTy for both supported architectures:
+This compiles BOOTy for `linux/amd64` and `linux/arm64`, then packages BusyBox, LVM2, FRR, and kernel modules for common server NICs into a bootable initramfs.
 
-```bash
-make build-all
-```
-
-`make build-all` writes binaries to `dist/amd64/booty` and `dist/arm64/booty`.
-
-To extract an initramfs from a published image:
+To extract the initramfs to the local filesystem:
 
 ```bash
 docker run ghcr.io/telekom/booty:latest tar -cf - /initramfs.cpio.gz | tar xf -
@@ -308,12 +302,34 @@ go run server/server.go \
 | `LUKS_KEY_SIZE` | `512` | *(Planned)* LUKS2 key size in bits |
 | `LUKS_HASH` | `sha256` | *(Planned)* LUKS2 hash algorithm |
 | `NUM_VFS` | `0` | Number of SR-IOV virtual functions for Mellanox NICs (0 = skip) |
+| `NVME_NAMESPACES` | — | JSON config for NVMe namespace creation (e.g. `[{"device":"/dev/nvme0","namespaces":[{"size_gb":100}]}]`) |
+| `CLOUDINIT_ENABLED` | `false` | Generate and inject cloud-init NoCloud/ConfigDrive config |
+| `CLOUDINIT_DATASOURCE` | `nocloud` | Cloud-init datasource type |
 
 #### Network Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NETWORK_MODE` | — | Network mode override: `gobgp` for pure-Go BGP stack |
+| `STATIC_IP` | — | Static IP in CIDR notation (e.g. `10.0.0.5/24`) |
+| `STATIC_GATEWAY` | — | Default gateway for static networking |
+| `STATIC_IFACE` | — | Interface for static IP (auto-detect if empty) |
+| `BOND_INTERFACES` | — | Comma-separated interfaces for LACP bond (e.g. `eth0,eth1`) |
+| `BOND_MODE` | `802.3ad` | Bond mode: `802.3ad`/`lacp`, `balance-rr`, `active-backup`, `balance-xor` |
+| `VLANS` | — | Multi-VLAN config (e.g. `200:eno1:10.200.0.42/24,300:eno2`) |
+| `BGP_PEER_MODE` | `unnumbered` | GoBGP peering mode: `unnumbered`, `dual`, `numbered` |
+| `BGP_NEIGHBORS` | — | Comma-separated peer IPs (required for `dual` and `numbered` modes) |
+| `BGP_REMOTE_ASN` | — | Remote ASN for numbered peers (0 or omitted = iBGP) |
+| `BGP_UNDERLAY_AF` | `ipv4` | Underlay address family: `ipv4`, `ipv6`, `dual-stack` |
+| `BGP_OVERLAY_TYPE` | `evpn-vxlan` | Overlay encapsulation: `evpn-vxlan`, `l3vpn`, `none` |
+| `underlay_subnet` | — | Underlay CIDR for FRR mode (e.g. `192.168.4.0/24`) |
+| `underlay_ip` | — | Underlay loopback / router-ID for GoBGP mode |
+| `asn_server` | — | Local BGP autonomous system number |
+| `provision_vni` | — | VXLAN VNI for the provisioning network |
+| `provision_ip` | — | IP/mask on the provisioning bridge (e.g. `10.100.0.20/24`) |
+| `provision_gateway` | — | Gateway VTEP IP for VXLAN BUM flooding and kernel route |
+| `overlay_subnet` | — | Overlay CIDR (e.g. `2a01:598:40a:5481::/64`) |
+| `dns_resolver` | — | Comma-separated DNS server IPs |
 
 ### Debugging
 
@@ -763,7 +779,7 @@ and the PR process.
 │   ├── caprf/                  # CAPRF client (status, log, debug, vars parsing)
 │   ├── cloudinit/              # Cloud-init NoCloud/ConfigDrive generation
 │   ├── config/                 # MachineConfig, Provider interface, Status types
-│   ├── disk/                   # Disk detection, partitioning, RAID, LVM, mount
+│   ├── disk/                   # Disk detection, partitioning, RAID, LVM, mount, NVMe namespaces
 │   ├── firmware/               # Firmware version collection from sysfs
 │   ├── health/                 # Pre-provisioning hardware health checks
 │   ├── image/                  # Image streaming (HTTP, OCI, gzip/lz4/xz/zstd auto-detect)
@@ -774,7 +790,8 @@ and the PR process.
 │   │   ├── gobgp/             # Pure-Go BGP stack (3-tier: Underlay, Overlay, IPMI)
 │   │   ├── lldp/              # LLDP frame listener (raw AF_PACKET sockets)
 │   │   └── vlan/              # VLAN 802.1Q tagging via netlink
-│   ├── provision/              # Orchestrator (31-step provision, deprovision)
+<<<<<<< HEAD
+│   ├── provision/              # Orchestrator (36-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
 │   ├── plunderclient/          # Legacy HTTP client for config retrieval
 │   ├── realm/                  # Device, mount, network, shell operations

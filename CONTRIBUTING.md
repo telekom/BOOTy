@@ -21,16 +21,8 @@ Thank you for your interest in contributing! This document covers the developmen
 # Build the binary
 make build
 
-# Cross-compile binaries for amd64 + arm64
-make build-all
-
 # Build the initramfs Docker image (default: full FRR+tools)
 docker build -t booty -f initrd.Dockerfile .
-
-# Build ARM64 initramfs Docker image/flavors
-make arm64
-make arm64-slim
-make arm64-gobgp
 
 # Build bootable ISO (for Redfish virtual media)
 docker build --target=iso -f initrd.Dockerfile -o type=local,dest=. .
@@ -134,7 +126,7 @@ When your PR introduces new functionality, verify:
 - [ ] New build tags are added to `.github/instructions/e2e-tests.instructions.md`
 - [ ] `.github/copilot-instructions.md` architecture section is up to date
 - [ ] Step count references are consistent across `README.md`,
-      `copilot-instructions.md`, and `CONTRIBUTING.md` (currently 33 steps)
+      `copilot-instructions.md`, and `CONTRIBUTING.md` (currently 36 steps)
 - [ ] New agents/prompts/instructions are listed in `.github/AGENTS.md`
 
 ## License

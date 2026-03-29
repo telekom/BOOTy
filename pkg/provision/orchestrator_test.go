@@ -22,11 +22,17 @@ import (
 // suitable for unit testing individual steps.
 func newTestOrchestrator(t *testing.T, cfg *config.MachineConfig, provider *mockProvider) *Orchestrator {
 	t.Helper()
+	o, _ := newTestOrchestratorWithCommander(t, cfg, provider)
+	return o
+}
+
+func newTestOrchestratorWithCommander(t *testing.T, cfg *config.MachineConfig, provider *mockProvider) (*Orchestrator, *mockCommander) {
+	t.Helper()
 	cmd := newMockCommander()
 	mgr := disk.NewManager(cmd)
 	o := NewOrchestrator(cfg, provider, mgr)
 	o.config.rootDir = t.TempDir()
-	return o
+	return o, cmd
 }
 
 func TestProvisionStepCount(t *testing.T) {
@@ -37,8 +43,53 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 35 {
-		t.Fatalf("expected 35 provisioning steps, got %d", len(steps))
+	if len(steps) != 36 {
+		t.Fatalf("expected 36 provisioning steps, got %d", len(steps))
+	}
+}
+
+func TestSetupNVMeNamespaces_NoOp(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	if err := o.setupNVMeNamespaces(context.Background()); err != nil {
+		t.Fatalf("setupNVMeNamespaces no-op: %v", err)
+	}
+	if cfg.DiskDevice != "" {
+		t.Fatalf("DiskDevice = %q, want empty", cfg.DiskDevice)
+	}
+}
+
+func TestSetupNVMeNamespaces_InvalidJSON(t *testing.T) {
+	cfg := &config.MachineConfig{NVMeNamespaces: `{bad}`}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	err := o.setupNVMeNamespaces(context.Background())
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "parsing nvme namespace layout") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSetupNVMeNamespaces_HappyPathSetsDiskDevice(t *testing.T) {
+	cfg := &config.MachineConfig{
+		NVMeNamespaces: `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":100}]}]`,
+	}
+	provider := &mockProvider{}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, provider)
+
+	cmd.setResult("nvme id-ctrl", []byte(`{"nn":32,"tnvmcap":1024000}`), nil)
+	cmd.setResult("nvme create-ns", []byte("create-ns: Success, created nsid:5\n"), nil)
+
+	if err := o.setupNVMeNamespaces(context.Background()); err != nil {
+		t.Fatalf("setupNVMeNamespaces: %v", err)
+	}
+	if cfg.DiskDevice != "/dev/nvme0n5" {
+		t.Fatalf("DiskDevice = %q, want /dev/nvme0n5", cfg.DiskDevice)
 	}
 }
 

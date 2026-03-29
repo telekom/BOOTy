@@ -80,6 +80,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"mount-efivarfs", o.mountEFIVars},
 		{"remove-efi-entries", o.removeEFIBootEntries},
 		{"setup-mellanox", o.setupMellanox},
+		{"setup-nvme-namespaces", o.setupNVMeNamespaces},
 		{"wipe-disks", o.wipeOrSecureEraseDisks},
 		{"detect-disk", o.detectDisk},
 		{"verify-image", o.verifyImageSignature},
@@ -344,6 +345,40 @@ func (o *Orchestrator) setupMellanox(ctx context.Context) error {
 // that require a hard reboot (not kexec) to reinitialize.
 func (o *Orchestrator) FirmwareChanged() bool {
 	return o.firmwareChanged
+}
+
+func (o *Orchestrator) setupNVMeNamespaces(ctx context.Context) error {
+	if o.cfg.NVMeNamespaces == "" {
+		return nil
+	}
+	cfgs, err := disk.ParseNVMeConfig(o.cfg.NVMeNamespaces)
+	if err != nil {
+		return fmt.Errorf("parsing nvme namespace layout: %w", err)
+	}
+	created, err := o.disk.ApplyNVMeNamespaceLayout(ctx, cfgs)
+	if err != nil {
+		return err
+	}
+	// Verify at least one namespace was created across all controllers.
+	totalCreated := 0
+	for _, nsids := range created {
+		totalCreated += len(nsids)
+	}
+	if totalCreated == 0 {
+		return fmt.Errorf("nvme namespace layout applied but no namespaces were created; check controller support and configuration")
+	}
+
+	// After namespace creation set DiskDevice to the first created namespace on
+	// the first configured controller so DetectDisk targets the intended OS disk.
+	if len(cfgs) > 0 && o.cfg.DiskDevice == "" {
+		firstController := cfgs[0].Controller
+		nsids := created[firstController]
+		if len(nsids) > 0 {
+			o.cfg.DiskDevice = firstController + "n" + nsids[0]
+			o.log.Info("set disk device from nvme namespace layout", "device", o.cfg.DiskDevice)
+		}
+	}
+	return nil
 }
 
 func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {

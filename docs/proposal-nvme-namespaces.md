@@ -142,7 +142,7 @@ func (m *Manager) FormatNVMeNamespace(ctx context.Context, device string, blockS
 
 ```bash
 # /deploy/vars
-export NVME_NAMESPACE_LAYOUT='[
+export NVME_NAMESPACES='[
   {"controller": "/dev/nvme0", "namespaces": [
     {"sizePct": 10, "blockSize": 512, "label": "os"},
     {"sizePct": 90, "blockSize": 4096, "label": "data"}
@@ -202,7 +202,7 @@ No new binaries needed. All NVMe namespace operations use the existing
 | `pkg/disk/nvme_test.go` | New — unit tests with mock commander |
 | `pkg/disk/manager.go` | Wire NVMe operations |
 | `pkg/provision/orchestrator.go` | Add `SetupNVMeNamespaces()` step |
-| `pkg/config/provider.go` | Add `NVMeNamespaceLayout` config |
+| `pkg/config/provider.go` | Add `NVMeNamespaces` config field |
 | `initrd.Dockerfile` | Ensure `nvme-cli` is available |
 
 ## Risks
