@@ -231,9 +231,6 @@ func validateInterface(i int, iface *InterfaceConfig) error {
 	if iface.DHCP && iface.Address != "" {
 		return fmt.Errorf("interface %q: dhcp and static address are mutually exclusive", iface.Name)
 	}
-	if iface.DHCP && iface.Gateway != "" {
-		return fmt.Errorf("interface %q: gateway is ignored with dhcp, use static address instead", iface.Name)
-	}
 	if !iface.DHCP && iface.Address == "" {
 		return fmt.Errorf("interface %q: address or dhcp required", iface.Name)
 	}
@@ -366,7 +363,8 @@ func renderNetplanInterface(b *strings.Builder, iface *InterfaceConfig) {
 		fmt.Fprintf(b, "      addresses: [%s]\n", iface.Address)
 	}
 	if iface.Gateway != "" {
-		fmt.Fprintf(b, "      gateway4: %s\n", iface.Gateway)
+		b.WriteString("      routes:\n")
+		fmt.Fprintf(b, "        - to: default\n          via: %s\n", iface.Gateway)
 	}
 	if iface.MTU > 0 {
 		fmt.Fprintf(b, "      mtu: %d\n", iface.MTU)
@@ -388,7 +386,8 @@ func renderNetplanBonds(b *strings.Builder, bonds []BondConfig, dns *DNSConfig, 
 			fmt.Fprintf(b, "      addresses: [%s]\n", bonds[i].Address)
 		}
 		if bonds[i].Gateway != "" {
-			fmt.Fprintf(b, "      gateway4: %s\n", bonds[i].Gateway)
+			b.WriteString("      routes:\n")
+			fmt.Fprintf(b, "        - to: default\n          via: %s\n", bonds[i].Gateway)
 		}
 		if bonds[i].MTU > 0 {
 			fmt.Fprintf(b, "      mtu: %d\n", bonds[i].MTU)
@@ -619,6 +618,7 @@ func renderNMKeyfile(iface *InterfaceConfig, dns *DNSConfig, routes []RouteConfi
 		}
 		b.WriteByte('\n')
 	}
+	b.WriteString("\n[ipv6]\nmethod=disabled\n")
 	return b.String()
 }
 

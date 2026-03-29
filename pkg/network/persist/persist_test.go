@@ -70,9 +70,6 @@ func TestNetworkConfig_Validate(t *testing.T) {
 		{"dhcp and static address conflict", NetworkConfig{
 			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true, Address: "10.0.0.5/24"}},
 		}, true},
-		{"dhcp with gateway rejected", NetworkConfig{
-			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true, Gateway: "10.0.0.1"}},
-		}, true},
 		{"invalid interface mac", NetworkConfig{
 			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true, MAC: "bad-mac"}},
 		}, true},
@@ -360,6 +357,9 @@ func TestWriteNMKeyfiles(t *testing.T) {
 	if !strings.Contains(content, "mac-address=aa:bb:cc:dd:ee:ff") {
 		t.Error("missing mac")
 	}
+	if !strings.Contains(content, "[ipv6]\nmethod=disabled") {
+		t.Error("missing ipv6 disabled section")
+	}
 }
 
 func TestWriteValidationError(t *testing.T) {
@@ -458,7 +458,7 @@ func TestRenderNetplan_BondAllFields(t *testing.T) {
 	}
 	result := RenderNetplan(cfg)
 	for _, want := range []string{
-		"gateway4: 10.0.0.254",
+		"- to: default\n          via: 10.0.0.254",
 		"mtu: 9000",
 		"lacp-rate: fast",
 		"transmit-hash-policy: layer3+4",
