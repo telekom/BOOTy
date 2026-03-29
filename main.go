@@ -363,6 +363,8 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		BGPPeerMode:      network.ParsePeerMode(cfg.BGPPeerMode),
 		BGPNeighbors:     cfg.BGPNeighbors,
 		BGPRemoteASN:     cfg.BGPRemoteASN,
+		BGPUnderlayAF:    cfg.BGPUnderlayAF,
+		BGPOverlayType:   cfg.BGPOverlayType,
 		EVPNL2Enabled:    cfg.EVPNL2Enabled,
 	}
 

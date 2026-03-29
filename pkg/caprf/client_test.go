@@ -570,6 +570,8 @@ func TestParseVarsBGPPeering(t *testing.T) {
 	input := `BGP_PEER_MODE="dual"
 BGP_NEIGHBORS="10.0.0.1,10.0.0.2"
 bgp_remote_asn="65100"
+BGP_UNDERLAY_AF="ipv6"
+BGP_OVERLAY_TYPE="l3vpn"
 `
 	cfg, err := ParseVars(strings.NewReader(input))
 	if err != nil {
@@ -583,6 +585,12 @@ bgp_remote_asn="65100"
 	}
 	if cfg.BGPRemoteASN != 65100 {
 		t.Errorf("BGPRemoteASN = %d, want 65100", cfg.BGPRemoteASN)
+	}
+	if cfg.BGPUnderlayAF != "ipv6" {
+		t.Errorf("BGPUnderlayAF = %q, want ipv6", cfg.BGPUnderlayAF)
+	}
+	if cfg.BGPOverlayType != "l3vpn" {
+		t.Errorf("BGPOverlayType = %q, want l3vpn", cfg.BGPOverlayType)
 	}
 }
 

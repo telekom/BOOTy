@@ -316,6 +316,8 @@ func (u *UnderlayTier) addPeers(ctx context.Context) error {
 		}
 	case network.PeerModeNumbered:
 		added, lastErr = u.addNumberedPeers(ctx, allFamilies())
+	default:
+		return fmt.Errorf("unsupported peer mode: %q", u.cfg.PeerMode)
 	}
 
 	if added == 0 && lastErr != nil {

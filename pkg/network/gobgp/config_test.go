@@ -120,6 +120,26 @@ func TestNewConfig(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "underlay_af_and_overlay_type_wired",
+			netCfg: &network.Config{
+				UnderlayIP:     "10.0.0.1",
+				ASN:            65000,
+				ProvisionVNI:   4000,
+				BGPPeerMode:    network.PeerModeUnnumbered,
+				BGPUnderlayAF:  "ipv6",
+				BGPOverlayType: "l3vpn",
+			},
+			check: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				if cfg.UnderlayAF != "ipv6" {
+					t.Errorf("UnderlayAF = %q, want ipv6", cfg.UnderlayAF)
+				}
+				if cfg.OverlayType != "l3vpn" {
+					t.Errorf("OverlayType = %q, want l3vpn", cfg.OverlayType)
+				}
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -380,6 +400,33 @@ func TestIsiBGP(t *testing.T) {
 			cfg := &Config{ASN: tt.asn, RemoteASN: tt.remoteASN}
 			if got := cfg.IsiBGP(); got != tt.want {
 				t.Errorf("IsiBGP() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyDefaultsNormalizesUnderlayAFAndOverlayType(t *testing.T) {
+	tests := []struct {
+		name        string
+		underlayAF  string
+		overlayType string
+		wantAF      string
+		wantOT      string
+	}{
+		{"empty defaults", "", "", "ipv4", "evpn-vxlan"},
+		{"uppercase AF", "IPV4", "EVPN-VXLAN", "ipv4", "evpn-vxlan"},
+		{"mixed case", "DualStack", "L3VPN", "dual-stack", "l3vpn"},
+		{"already canonical", "ipv6", "none", "ipv6", "none"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{UnderlayAF: tt.underlayAF, OverlayType: tt.overlayType}
+			cfg.ApplyDefaults()
+			if cfg.UnderlayAF != tt.wantAF {
+				t.Errorf("UnderlayAF = %q, want %q", cfg.UnderlayAF, tt.wantAF)
+			}
+			if cfg.OverlayType != tt.wantOT {
+				t.Errorf("OverlayType = %q, want %q", cfg.OverlayType, tt.wantOT)
 			}
 		})
 	}

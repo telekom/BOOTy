@@ -14,6 +14,7 @@ Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, orch
 - `pkg/network/netplan/` — Netplan YAML + FRR config parser for EVPN auto-detection (ASN, VNI, bonds, bridges)
 - `pkg/network/persist/` — Network configuration persistence across reboots
 - `pkg/network/vlan/` — VLAN 802.1Q tagging via netlink
+- `pkg/network/vrf/` — VRF configuration types and validation for multi-VRF network isolation
 - `pkg/image/` — Multi-format image streaming (gzip, lz4, xz, zstd) + OCI registry
 - `pkg/executil/` — Centralized command execution with output sanitization and PATH diagnostics
 - `pkg/disk/` — Disk detection, partitioning, RAID, LVM, mount

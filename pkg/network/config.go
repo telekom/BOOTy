@@ -61,9 +61,11 @@ type Config struct {
 	BFDReceiveMS  uint32 // BFD receive interval in ms (default: 300)
 
 	// BGP peering mode (GoBGP).
-	BGPPeerMode  PeerMode // Unnumbered (default), dual, or numbered
-	BGPNeighbors string   // Comma-separated numbered peer IPs
-	BGPRemoteASN uint32   // Remote ASN for numbered peers (0 = iBGP)
+	BGPPeerMode    PeerMode // Unnumbered (default), dual, or numbered
+	BGPNeighbors   string   // Comma-separated numbered peer IPs
+	BGPRemoteASN   uint32   // Remote ASN for numbered peers (0 = iBGP)
+	BGPUnderlayAF  string   // Underlay address family: ipv4, ipv6, dual-stack (default: ipv4)
+	BGPOverlayType string   // Overlay encapsulation: evpn-vxlan, l3vpn, none (default: evpn-vxlan)
 
 	// Common fields.
 	BridgeName  string // Default: "br.provision"

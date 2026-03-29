@@ -57,6 +57,12 @@ type Config struct {
 	NeighborAddrs     []string         // Explicit numbered peer IPs (dual/numbered modes)
 	RemoteASN         uint32           // Remote ASN for numbered peers (0 = same ASN → iBGP)
 	EnableL2          bool             // Enable L2 EVPN overlay (gate Type-2/3 route handling)
+	// UnderlayAF selects the BGP address family for underlay sessions (ipv4/ipv6/dual-stack).
+	UnderlayAF string
+	// OverlayType selects the BGP overlay encapsulation (evpn-vxlan/l3vpn/none).
+	OverlayType string
+	// Policy configures BGP import/export communities and route attributes.
+	Policy *PolicyConfig
 }
 
 // NewConfig creates a GoBGP Config from network configuration.
@@ -90,6 +96,8 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		NeighborAddrs:     parseNeighborAddrs(netCfg.BGPNeighbors),
 		RemoteASN:         netCfg.BGPRemoteASN,
 		EnableL2:          netCfg.EVPNL2Enabled,
+		UnderlayAF:        netCfg.BGPUnderlayAF,
+		OverlayType:       netCfg.BGPOverlayType,
 	}
 
 	cfg.ApplyDefaults()
@@ -125,6 +133,14 @@ func (c *Config) ApplyDefaults() {
 	if c.VRFTableID == 0 || c.VRFTableID == 1 {
 		c.VRFTableID = 1000
 	}
+	// Normalize UnderlayAF and OverlayType to their canonical lowercase forms
+	// so downstream comparisons don't need case-insensitive matching.
+	if af, err := ParseUnderlayAF(c.UnderlayAF); err == nil {
+		c.UnderlayAF = string(af)
+	}
+	if ot, err := ParseOverlayType(c.OverlayType); err == nil {
+		c.OverlayType = string(ot)
+	}
 }
 
 // Validate checks that required configuration fields are present.
@@ -153,6 +169,21 @@ func (c *Config) Validate() error {
 	const minMTU = 576 + 50 // minIP + vxlanOverhead
 	if c.MTU > 0 && c.MTU < minMTU {
 		return fmt.Errorf("MTU %d too low (minimum %d = 576 IP + 50 VXLAN overhead)", c.MTU, minMTU)
+	}
+
+	if _, err := ParseUnderlayAF(c.UnderlayAF); err != nil {
+		return fmt.Errorf("invalid underlay AF: %w", err)
+	}
+	if _, err := ParseOverlayType(c.OverlayType); err != nil {
+		return fmt.Errorf("invalid overlay type: %w", err)
+	}
+	if c.Policy != nil {
+		if err := ValidateCommunities(&c.Policy.ImportCommunities); err != nil {
+			return fmt.Errorf("import communities: %w", err)
+		}
+		if err := ValidateCommunities(&c.Policy.ExportCommunities); err != nil {
+			return fmt.Errorf("export communities: %w", err)
+		}
 	}
 
 	return nil

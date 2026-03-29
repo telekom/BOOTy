@@ -99,9 +99,11 @@ type MachineConfig struct {
 	HealthCheckURL      string // HEALTH_CHECK_URL: POST endpoint for health results
 
 	// BGP peering mode and numbered peer configuration.
-	BGPPeerMode  string // BGP_PEER_MODE: "unnumbered" (default), "dual", "numbered"
-	BGPNeighbors string // BGP_NEIGHBORS: comma-separated numbered peer IPs
-	BGPRemoteASN uint32 // bgp_remote_asn: remote ASN for numbered peers (0 = iBGP)
+	BGPPeerMode    string // BGP_PEER_MODE: "unnumbered" (default), "dual", "numbered"
+	BGPNeighbors   string // BGP_NEIGHBORS: comma-separated numbered peer IPs
+	BGPRemoteASN   uint32 // bgp_remote_asn: remote ASN for numbered peers (0 = iBGP)
+	BGPUnderlayAF  string // BGP_UNDERLAY_AF: underlay address family (ipv4/ipv6/dual-stack)
+	BGPOverlayType string // BGP_OVERLAY_TYPE: overlay encapsulation (evpn-vxlan/l3vpn/none)
 
 	// Dry-run mode.
 	DryRun bool // DRY_RUN: simulate provisioning without destructive changes

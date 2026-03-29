@@ -274,6 +274,8 @@ export dns_resolver="8.8.8.8"
 | `BGP_PEER_MODE` | `unnumbered` | GoBGP peering mode: `unnumbered`, `dual`, `numbered` |
 | `BGP_NEIGHBORS` | — | Comma-separated peer IPs (required for `dual` and `numbered` modes) |
 | `BGP_REMOTE_ASN` | — | Remote ASN for numbered peers (0 or omitted = iBGP) |
+| `BGP_UNDERLAY_AF` | `ipv4` | Underlay address family: `ipv4`, `ipv6`, `dual-stack` |
+| `BGP_OVERLAY_TYPE` | `evpn-vxlan` | Overlay encapsulation: `evpn-vxlan`, `l3vpn`, `none` |
 | `underlay_subnet` | — | Underlay CIDR for FRR mode (e.g. `192.168.4.0/24`) |
 | `underlay_ip` | — | Underlay loopback / router-ID for GoBGP mode |
 | `asn_server` | — | Local BGP autonomous system number |
@@ -709,11 +711,20 @@ The `BGP_PEER_MODE` environment variable controls session establishment:
 Additional environment variables for GoBGP mode:
 - `BGP_NEIGHBORS` — Comma-separated peer IPs (required for `dual` and `numbered` modes)
 - `BGP_REMOTE_ASN` — Remote ASN for numbered peers (0 or omitted = iBGP)
+- `BGP_UNDERLAY_AF` — Underlay address family: `ipv4` (default), `ipv6`, or `dual-stack`
+- `BGP_OVERLAY_TYPE` — Overlay encapsulation: `evpn-vxlan` (default), `l3vpn`, or `none`
 - `provision_gateway` — Gateway VTEP IP (e.g. spine loopback) for BUM flooding and kernel route
 - `underlay_ip` — Local VTEP / router-ID IP
 - `provision_ip` — Provisioning overlay IP in CIDR (e.g. `10.100.0.20/24`)
 - `provision_vni` — VXLAN VNI for the provisioning network
 - `asn_server` — Local BGP ASN
+
+**BGP Policy** configuration supports community tagging on import/export routes:
+- **Standard communities**: `ASN:value` (16-bit each, e.g. `65000:100`)
+- **Extended communities**: `TYPE:ASN:value` with 4-octet ASN support (e.g. `RT:4200000001:100`)
+- **Large communities**: `GA:LD1:LD2` (32-bit each, e.g. `65000:1:100`)
+
+**VRF isolation** supports multi-VRF configurations with separate management and provisioning routing tables. VRF configs are validated for unique names, non-zero table IDs, and no conflicts.
 
 ## Extending Bundled Binaries
 
