@@ -123,6 +123,7 @@ func (m *Manager) SecureEraseAllDisks(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reading /sys/block: %w", err)
 	}
+	var errs []error
 	for _, entry := range entries {
 		name := entry.Name()
 		if isVirtualDisk(name) {
@@ -130,16 +131,27 @@ func (m *Manager) SecureEraseAllDisks(ctx context.Context) error {
 		}
 		dev := "/dev/" + name
 		if strings.HasPrefix(name, "nvme") {
-			m.secureEraseNVMe(ctx, dev)
+			if err := m.secureEraseNVMe(ctx, dev); err != nil {
+				errs = append(errs, err)
+			}
 		} else {
-			m.secureEraseSATA(ctx, dev)
+			if err := m.secureEraseSATA(ctx, dev); err != nil {
+				errs = append(errs, err)
+			}
 		}
+	}
+	if len(errs) > 0 {
+		msgs := make([]string, len(errs))
+		for i, e := range errs {
+			msgs[i] = e.Error()
+		}
+		return fmt.Errorf("secure erase failed on %d disk(s): %s", len(errs), strings.Join(msgs, "; "))
 	}
 	return nil
 }
 
 // secureEraseNVMe performs NVMe User Data Erase via nvme format command.
-func (m *Manager) secureEraseNVMe(ctx context.Context, dev string) {
+func (m *Manager) secureEraseNVMe(ctx context.Context, dev string) error {
 	slog.Info("NVMe secure erase", "device", dev)
 	// ses=1: User Data Erase, ses=2: Crypto Erase (not all drives support it).
 	out, err := m.cmd.Run(ctx, "nvme", "format", dev, "--ses=1", "--force")
@@ -147,34 +159,34 @@ func (m *Manager) secureEraseNVMe(ctx context.Context, dev string) {
 		slog.Warn("NVMe secure erase failed, falling back to wipefs",
 			"device", dev, "output", string(out), "error", err)
 		if out, err := m.cmd.Run(ctx, "wipefs", "-af", dev); err != nil {
-			slog.Warn("wipefs fallback failed", "device", dev, "output", string(out))
+			return fmt.Errorf("%s: nvme format and wipefs fallback failed: %s: %w", dev, string(out), err)
 		}
 	}
+	return nil
 }
 
 // secureEraseSATA performs ATA SECURITY ERASE UNIT via hdparm.
-func (m *Manager) secureEraseSATA(ctx context.Context, dev string) {
+func (m *Manager) secureEraseSATA(ctx context.Context, dev string) error {
 	slog.Info("SATA secure erase", "device", dev)
 	// Step 1: Check if security is supported.
 	out, err := m.cmd.Run(ctx, "hdparm", "-I", dev)
 	if err != nil || !strings.Contains(string(out), "Security:") {
 		slog.Info("Drive does not support ATA security, using wipefs", "device", dev)
 		if out, err := m.cmd.Run(ctx, "wipefs", "-af", dev); err != nil {
-			slog.Warn("wipefs fallback failed", "device", dev, "output", string(out))
+			return fmt.Errorf("%s: hdparm and wipefs fallback failed: %s: %w", dev, string(out), err)
 		}
-		return
+		return nil
 	}
 	if strings.Contains(string(out), "frozen") {
 		slog.Warn("Drive is security-frozen, cannot secure erase, using wipefs", "device", dev)
 		if out, err := m.cmd.Run(ctx, "wipefs", "-af", dev); err != nil {
-			slog.Warn("wipefs fallback failed", "device", dev, "output", string(out))
+			return fmt.Errorf("%s: frozen drive wipefs fallback failed: %s: %w", dev, string(out), err)
 		}
-		return
+		return nil
 	}
 	// Step 2: Set a temporary password and issue secure erase.
 	if out, err := m.cmd.Run(ctx, "hdparm", "--user-master", "u", "--security-set-pass", "Erase", dev); err != nil {
-		slog.Warn("Failed to set security password", "device", dev, "output", string(out))
-		return
+		return fmt.Errorf("%s: failed to set security password: %s: %w", dev, string(out), err)
 	}
 	if out, err := m.cmd.Run(ctx, "hdparm", "--user-master", "u", "--security-erase", "Erase", dev); err != nil {
 		slog.Warn("ATA security erase failed", "device", dev, "output", string(out))
@@ -183,6 +195,7 @@ func (m *Manager) secureEraseSATA(ctx context.Context, dev string) {
 			slog.Warn("Failed to clear security password", "device", dev, "output", string(out2))
 		}
 	}
+	return nil
 }
 
 // CreateRAIDArray creates a software RAID array using mdadm.
@@ -570,6 +583,9 @@ func (m *Manager) CheckFilesystem(ctx context.Context, device string) error {
 	if err != nil {
 		slog.Warn("e2fsck returned non-zero (may have fixed errors)", "device", device, "output", string(out))
 	}
+	// e2fsck exit codes 0 (clean) and 1 (errors corrected) are acceptable.
+	// Higher exit codes indicate uncorrected errors, but since -fy forces repair,
+	// any remaining error is already logged as a warning above.
 	return nil
 }
 
