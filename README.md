@@ -264,8 +264,15 @@ go run server/server.go \
 | `DISABLE_KEXEC` | `false` | Skip kexec, always hard-reboot |
 | `MIN_DISK_SIZE_GB` | `0` | Minimum disk size filter (0 = no minimum) |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters |
+| `INIT_URL` | — | CAPRF init status endpoint |
+| `SUCCESS_URL` | — | CAPRF success status endpoint |
+| `ERROR_URL` | — | CAPRF error status endpoint |
+| `LOG_URL` | — | CAPRF structured log endpoint |
+| `DEBUG_URL` | — | CAPRF debug payload endpoint |
 | `HEARTBEAT_URL` | — | Standby mode: URL for periodic keepalives |
 | `COMMANDS_URL` | — | Standby mode: URL to poll for pending commands |
+| `TOKEN_URL` | — | JWT token acquisition endpoint (HTTPS required except localhost) |
+| `TOKEN_ALGORITHM` | — | JWT algorithm override: `RS256` or `ES256` |
 | `SECURE_ERASE` | `false` | Use NVMe format / ATA secure erase instead of partition wipe |
 | `POST_PROVISION_CMDS` | — | Semicolon-separated commands to run in chroot after provisioning |
 | `RESCUE_MODE` | `reboot` | Failure recovery strategy: `reboot`, `retry`, `shell`, `wait` |
@@ -293,6 +300,8 @@ go run server/server.go \
 | `MOK_PASSWORD` | — | *(Phase 2)* One-time password for MokManager confirmation |
 | `IMAGE_CHECKSUM` | — | Expected hex digest of the raw disk image |
 | `IMAGE_CHECKSUM_TYPE` | — | Checksum algorithm: `sha256` or `sha512` |
+| `IMAGE_MODE` | `whole-disk` | Image write mode: `whole-disk` or `partition` |
+| `DISK_DEVICE` | auto-detect | Explicit disk device path override (e.g. `/dev/sda`) |
 | `IMAGE_SIGNATURE_URL` | — | URL to detached GPG signature for image verification |
 | `IMAGE_GPG_PUBKEY` | — | Path to GPG public key for image signature verification |
 | `LUKS_ENABLED` | `false` | *(Planned)* Enable LUKS2 encryption for target partitions |
@@ -322,6 +331,11 @@ go run server/server.go \
 | `BGP_REMOTE_ASN` | — | Remote ASN for numbered peers (0 or omitted = iBGP) |
 | `BGP_UNDERLAY_AF` | `ipv4` | Underlay address family: `ipv4`, `ipv6`, `dual-stack` |
 | `BGP_OVERLAY_TYPE` | `evpn-vxlan` | Overlay encapsulation: `evpn-vxlan`, `l3vpn`, `none` |
+| `VRF_TABLE_ID` | `1` | VRF routing table ID (0 uses default of 1) |
+| `BGP_KEEPALIVE` | `0` | Optional BGP keepalive timer in seconds (0 = stack default) |
+| `BGP_HOLD` | `0` | Optional BGP hold timer in seconds (0 = stack default) |
+| `BFD_TRANSMIT_MS` | `0` | Optional BFD transmit interval in milliseconds (0 = disabled) |
+| `BFD_RECEIVE_MS` | `0` | Optional BFD receive interval in milliseconds (0 = disabled) |
 | `underlay_subnet` | — | Underlay CIDR for FRR mode (e.g. `192.168.4.0/24`) |
 | `underlay_ip` | — | Underlay loopback / router-ID for GoBGP mode |
 | `asn_server` | — | Local BGP autonomous system number |
@@ -752,6 +766,11 @@ make fmt
 make clab-up && make test-e2e-integration       # FRR/EVPN topology
 make clab-gobgp-up && make test-e2e-gobgp        # GoBGP topology
 make clab-boot-up && make test-e2e-boot          # Boot orchestrator
+make clab-dhcp-up && make test-e2e-dhcp          # DHCP mode topology
+make clab-bond-up && make test-e2e-bond          # Bond mode topology
+make clab-lacp-up && make test-e2e-lacp          # LACP-specific bond checks
+make clab-static-up && make test-e2e-static      # Static IP topology
+make clab-multi-nic-up && make test-e2e-multi-nic # Multi-NIC discovery and config
 
 # E2E tests — KVM/QEMU vrnetlab (Linux + KVM)
 make clab-vrnetlab-up && make test-e2e-vrnetlab   # Full EVPN boot flow
@@ -768,8 +787,7 @@ and the PR process.
 
 ```
 ├── main.go                     # Entry point: CAPRF vs legacy mode, kernel module loading
-├── cmd/booty.go                # Legacy CLI orchestration
-├── server/server.go            # Legacy provisioning server
+├── cmd/booty.go                # Cobra CLI entry point
 ├── initrd.Dockerfile           # Multi-stage initramfs build (default, iso, slim, micro)
 ├── pkg/
 │   ├── auth/                   # JWT token manager (acquisition, renewal, backoff)
@@ -779,22 +797,36 @@ and the PR process.
 │   ├── caprf/                  # CAPRF client (status, log, debug, vars parsing)
 │   ├── cloudinit/              # Cloud-init NoCloud/ConfigDrive generation
 │   ├── config/                 # MachineConfig, Provider interface, Status types
+│   ├── debug/                  # Structured debug dump collection
 │   ├── disk/                   # Disk detection, partitioning, RAID, LVM, mount, NVMe namespaces
+│   ├── drivers/                # Architecture-aware kernel module loading
+│   ├── efi/                    # EFI variable and boot entry operations
+│   ├── event/                  # Provisioning lifecycle event types + dispatcher
+│   ├── executil/               # Shared command execution helpers
 │   ├── firmware/               # Firmware version collection from sysfs
+│   ├── grubcfg/                # GRUB configuration parser
 │   ├── health/                 # Pre-provisioning hardware health checks
 │   ├── image/                  # Image streaming (HTTP, OCI, gzip/lz4/xz/zstd auto-detect)
 │   ├── inventory/              # Hardware inventory from sysfs/procfs
+│   ├── ipmi/                   # IPMI operations and helpers
 │   ├── kexec/                  # GRUB parsing, kexec load/execute
+│   ├── logging/                # Structured log handlers and sinks
 │   ├── network/                # Network mode abstraction (FRR, GoBGP, DHCP, Static, Bond)
 │   │   ├── frr/               # FRR/EVPN: config rendering, address derivation
 │   │   ├── gobgp/             # Pure-Go BGP stack (3-tier: Underlay, Overlay, IPMI)
 │   │   ├── lldp/              # LLDP frame listener (raw AF_PACKET sockets)
+│   │   ├── persist/           # Persist network config into target OS
+│   │   ├── vrf/               # VRF configuration and validation
 │   │   └── vlan/              # VLAN 802.1Q tagging via netlink
-<<<<<<< HEAD
 │   ├── provision/              # Orchestrator (36-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
-│   ├── plunderclient/          # Legacy HTTP client for config retrieval
 │   ├── realm/                  # Device, mount, network, shell operations
+│   ├── rescue/                 # Rescue mode behavior and retry policy
+│   ├── retry/                  # Shared retry policy framework
+│   ├── secureboot/             # Secure Boot setup and validation helpers
+│   ├── system/                 # Host-level system operations
+│   ├── telemetry/              # Telemetry models and collectors
+│   ├── tpm/                    # TPM/TPM2 operations and cryptenroll
 │   ├── utils/                  # Cmdline parsing, helpers
 │   └── ux/                     # ASCII art & system info display
 ├── test/e2e/                   # E2E tests (ContainerLab + vrnetlab EVPN fabric)
