@@ -8,23 +8,14 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/telekom/BOOTy/pkg/executil"
 	"github.com/telekom/BOOTy/pkg/firmware/nic"
 )
 
-// Commander abstracts command execution for testing.
-type Commander interface {
-	CombinedOutput(ctx context.Context, cmd string, args ...string) ([]byte, error)
-}
+// Commander is an alias for nic.Commander for backward compatibility.
+type Commander = nic.Commander
 
-// OSCommander implements Commander using executil.
-type OSCommander struct{ inner executil.ExecCommander }
-
-// CombinedOutput runs a command and returns combined stdout/stderr.
-// Delegates to executil.ExecCommander for consistent error formatting.
-func (o OSCommander) CombinedOutput(ctx context.Context, cmd string, args ...string) ([]byte, error) {
-	return o.inner.Run(ctx, cmd, args...)
-}
+// OSCommander is an alias for nic.OSCommander for backward compatibility.
+type OSCommander = nic.OSCommander
 
 // Manager handles Mellanox ConnectX NIC firmware operations.
 type Manager struct {

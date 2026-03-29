@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/telekom/BOOTy/pkg/executil"
 )
 
 // Vendor identifies a NIC vendor.
@@ -74,6 +76,19 @@ type Parameter struct {
 type FlagChange struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
+}
+
+// Commander abstracts command execution for testing.
+type Commander interface {
+	CombinedOutput(ctx context.Context, cmd string, args ...string) ([]byte, error)
+}
+
+// OSCommander implements Commander using executil.ExecCommander.
+type OSCommander struct{ inner executil.ExecCommander }
+
+// CombinedOutput runs a command and returns combined stdout/stderr.
+func (o OSCommander) CombinedOutput(ctx context.Context, cmd string, args ...string) ([]byte, error) {
+	return o.inner.Run(ctx, cmd, args...)
 }
 
 // Baseline is a golden firmware configuration.
