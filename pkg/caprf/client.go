@@ -211,9 +211,7 @@ func (c *Client) FetchCommands(ctx context.Context) ([]config.Command, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create commands request: %w", err)
 	}
-	if tok := c.CurrentToken(); tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
-	}
+	c.setAuth(req)
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
@@ -327,6 +325,27 @@ func (c *Client) withRetry(ctx context.Context, url string, fn func() error) err
 	return fmt.Errorf("request failed after 3 attempts to %s: %w", url, lastErr)
 }
 
+// setAuth attaches the Bearer token only when the request URL uses HTTPS
+// or targets loopback (localhost/127.x). Bare-metal PXE environments may
+// legitimately use HTTP on isolated networks, but sending credentials over
+// plaintext to remote hosts is logged as a warning.
+func (c *Client) setAuth(req *http.Request) {
+	tok := c.CurrentToken()
+	if tok == "" {
+		return
+	}
+	if req.URL != nil && req.URL.Scheme != "https" && !isLoopback(req.URL.Hostname()) {
+		c.log.Warn("skipping bearer token on non-HTTPS request", "url", req.URL.Redacted())
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+}
+
+// isLoopback returns true for localhost, 127.x.x.x, and [::1].
+func isLoopback(host string) bool {
+	return host == "localhost" || strings.HasPrefix(host, "127.") || host == "::1"
+}
+
 func (c *Client) doPost(ctx context.Context, url, body string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url,
 		strings.NewReader(body))
@@ -334,9 +353,7 @@ func (c *Client) doPost(ctx context.Context, url, body string) error {
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "text/plain")
-	if tok := c.CurrentToken(); tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
-	}
+	c.setAuth(req)
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
@@ -358,9 +375,7 @@ func (c *Client) doPostJSON(ctx context.Context, url string, data []byte) error 
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if tok := c.CurrentToken(); tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
-	}
+	c.setAuth(req)
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {

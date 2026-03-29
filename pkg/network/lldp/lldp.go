@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/google/gopacket"
@@ -142,16 +143,16 @@ func parseLLDP(data []byte, iface string) *Neighbor {
 			n.ChassisID = net.HardwareAddr(lldp.ChassisID.ID).String()
 		}
 	default:
-		n.ChassisID = string(lldp.ChassisID.ID)
+		n.ChassisID = sanitizeLLDP(string(lldp.ChassisID.ID))
 	}
 
-	n.PortID = string(lldp.PortID.ID)
+	n.PortID = sanitizeLLDP(string(lldp.PortID.ID))
 
 	infoLayer := pkt.Layer(layers.LayerTypeLinkLayerDiscoveryInfo)
 	if infoLayer != nil {
 		if info, ok := infoLayer.(*layers.LinkLayerDiscoveryInfo); ok {
-			n.SystemName = info.SysName
-			n.Description = info.SysDescription
+			n.SystemName = sanitizeLLDP(info.SysName)
+			n.Description = sanitizeLLDP(info.SysDescription)
 		}
 	}
 
@@ -172,6 +173,22 @@ func GetInterfaceNames() ([]string, error) {
 		names = append(names, i.Name)
 	}
 	return names, nil
+}
+
+const maxLLDPFieldLen = 255
+
+// sanitizeLLDP replaces control characters in untrusted LLDP TLV strings
+// to prevent log injection and terminal escape sequence attacks.
+func sanitizeLLDP(s string) string {
+	if len(s) > maxLLDPFieldLen {
+		s = s[:maxLLDPFieldLen]
+	}
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return '?'
+		}
+		return r
+	}, s)
 }
 
 func htons(v uint16) uint16 {
