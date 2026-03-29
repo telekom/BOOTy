@@ -44,7 +44,7 @@ func TestSupported(t *testing.T) {
 func TestCaptureParsesInfoAndPrivateFlags(t *testing.T) {
 	fake := &fakeCommander{
 		outputs: map[string][]byte{
-			"ethtool -i eth0": []byte("driver: ixgbe\nfirmware-version: 1.2.3\nbus-info: 0000:01:00.0\n"),
+			"ethtool -i eth0":                []byte("driver: ixgbe\nfirmware-version: 1.2.3\nbus-info: 0000:01:00.0\n"),
 			"ethtool --show-priv-flags eth0": []byte("Private flags for eth0:\nflag_a: on\nflag_b: off\n"),
 		},
 		errs: map[string]error{},
