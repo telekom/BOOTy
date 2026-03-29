@@ -7,5 +7,6 @@ coverage.html
 findings.md
 docs/
 test/
+!test/e2e/clab/vrnetlab/
 vendor/
 BOOTy
