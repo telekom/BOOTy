@@ -5,12 +5,28 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+// gpgHTTPClient is a dedicated HTTP client for GPG-related downloads
+// (signatures = small, image streams = large). It sets connection and
+// TLS timeouts but no overall deadline so image verification can
+// stream arbitrarily large images.
+var gpgHTTPClient = &http.Client{
+	Transport: &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+	},
+}
 
 // VerifyGPGSignature downloads a detached GPG signature from sigURL and
 // verifies it against the image at imageURL using the public key at
@@ -49,7 +65,7 @@ func verifyWithStream(ctx context.Context, imageURL, keyring, sigFile string) er
 		return fmt.Errorf("creating image request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // URL from trusted config
+	resp, err := gpgHTTPClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
 		return fmt.Errorf("streaming image for verification: %w", err)
 	}
@@ -69,7 +85,7 @@ func downloadToTemp(ctx context.Context, rawURL, pattern string) (string, error)
 		return "", fmt.Errorf("creating request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // URL from trusted config
+	resp, err := gpgHTTPClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
 		return "", fmt.Errorf("downloading %s: %w", filepath.Base(rawURL), err)
 	}
@@ -85,7 +101,8 @@ func downloadToTemp(ctx context.Context, rawURL, pattern string) (string, error)
 	}
 	defer func() { _ = f.Close() }()
 
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	// Limit signature downloads to 10 MiB — signatures should be tiny.
+	if _, err := io.Copy(f, io.LimitReader(resp.Body, 10<<20)); err != nil {
 		_ = os.Remove(f.Name()) //nolint:gosec // self-created temp file, no traversal risk
 		return "", fmt.Errorf("writing temp file: %w", err)
 	}
