@@ -112,6 +112,11 @@ func (m *Manager) createPhysicalVolume(ctx context.Context, pvDev string) error 
 }
 
 func (m *Manager) createVolumeGroup(ctx context.Context, vg, pvDev string) error {
+	// Check if VG already exists (idempotent for BOOTY_RESUME).
+	if _, err := m.cmd.Run(ctx, "vgs", vg, "--noheadings"); err == nil {
+		slog.Info("volume group already exists, skipping create", "vg", vg)
+		return nil
+	}
 	out, err := m.cmd.Run(ctx, "vgcreate", vg, pvDev)
 	if err != nil {
 		return fmt.Errorf("vgcreate %s: %s: %w", vg, string(out), err)
