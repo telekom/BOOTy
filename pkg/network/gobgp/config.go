@@ -16,6 +16,7 @@ package gobgp
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"strings"
 	"time"
@@ -133,6 +134,9 @@ func (c *Config) ApplyDefaults() {
 		c.MTU = 9000
 	}
 	if c.VRFTableID == 0 || c.VRFTableID == 1 {
+		if c.VRFTableID == 1 {
+			slog.Warn("vrf_table_id=1 conflicts with default routing table, overriding to 1000")
+		}
 		c.VRFTableID = 1000
 	}
 	// Normalize UnderlayAF and OverlayType to their canonical lowercase forms

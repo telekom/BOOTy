@@ -69,9 +69,11 @@ func (d *DHCPMode) Setup(ctx context.Context, _ *Config) error {
 				} else {
 					d.log.Info("DHCP lease obtained", "iface", iface.Name, "addr", cidr.String())
 				}
-				// Default gateway.
-				if lease.ServerID != nil {
-					_ = netlink.RouteAdd(&netlink.Route{Gw: lease.ServerID})
+				// Default gateway from DHCP option 3 (routers).
+				if len(lease.Router) > 0 {
+					if err := netlink.RouteAdd(&netlink.Route{Gw: lease.Router[0]}); err != nil {
+						d.log.Warn("failed to add default route", "gw", lease.Router[0], "error", err)
+					}
 				}
 				select {
 				case leased <- struct{}{}:
