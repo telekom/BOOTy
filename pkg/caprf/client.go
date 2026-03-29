@@ -229,7 +229,8 @@ func (c *Client) FetchCommands(ctx context.Context) ([]config.Command, error) {
 	}
 
 	var cmds []config.Command
-	if err := json.NewDecoder(resp.Body).Decode(&cmds); err != nil {
+	// Limit response body to 1 MiB to prevent OOM from an oversized response.
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&cmds); err != nil {
 		return nil, fmt.Errorf("decode commands: %w", err)
 	}
 	return cmds, nil
