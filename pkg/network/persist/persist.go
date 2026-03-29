@@ -666,6 +666,10 @@ func writeFileAtomic(dir, filename string, content []byte, perm os.FileMode) err
 		_ = tmp.Close()
 		return fmt.Errorf("chmod temp file: %w", err)
 	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("fsync temp file: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close temp file: %w", err)
 	}

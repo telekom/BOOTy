@@ -1,0 +1,11 @@
+.git
+.github
+.gitignore
+*.md
+!README.md
+coverage.html
+findings.md
+docs/
+test/
+vendor/
+BOOTy

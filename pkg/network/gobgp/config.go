@@ -156,6 +156,9 @@ func (c *Config) Validate() error {
 	if err := c.validatePeerMode(); err != nil {
 		return err
 	}
+	if err := c.validateTimers(); err != nil {
+		return err
+	}
 
 	if c.ProvisionVNI == 0 || c.ProvisionVNI > 16777215 {
 		return fmt.Errorf("ProvisionVNI %d out of range (must be 1..16777215)", c.ProvisionVNI)
@@ -179,15 +182,19 @@ func (c *Config) Validate() error {
 	if _, err := ParseOverlayType(c.OverlayType); err != nil {
 		return fmt.Errorf("invalid overlay type: %w", err)
 	}
-	if c.Policy != nil {
-		if err := ValidateCommunities(&c.Policy.ImportCommunities); err != nil {
-			return fmt.Errorf("import communities: %w", err)
-		}
-		if err := ValidateCommunities(&c.Policy.ExportCommunities); err != nil {
-			return fmt.Errorf("export communities: %w", err)
-		}
-	}
+	return c.validatePolicy()
+}
 
+func (c *Config) validatePolicy() error {
+	if c.Policy == nil {
+		return nil
+	}
+	if err := ValidateCommunities(&c.Policy.ImportCommunities); err != nil {
+		return fmt.Errorf("import communities: %w", err)
+	}
+	if err := ValidateCommunities(&c.Policy.ExportCommunities); err != nil {
+		return fmt.Errorf("export communities: %w", err)
+	}
 	return nil
 }
 
@@ -216,6 +223,17 @@ func (c *Config) validatePeerMode() error {
 		// No extra validation needed.
 	default:
 		return fmt.Errorf("unknown peer mode %q", c.PeerMode)
+	}
+	return nil
+}
+
+// validateTimers checks BGP timer constraints per RFC 4271 §4.2.
+func (c *Config) validateTimers() error {
+	if c.HoldTime != 0 && c.HoldTime < 3 {
+		return fmt.Errorf("HoldTime %d violates RFC 4271 (must be 0 or >= 3)", c.HoldTime)
+	}
+	if c.HoldTime > 0 && c.KeepaliveInterval > c.HoldTime/3 {
+		return fmt.Errorf("KeepaliveInterval %d exceeds HoldTime/3 (%d)", c.KeepaliveInterval, c.HoldTime/3)
 	}
 	return nil
 }

@@ -339,6 +339,28 @@ func TestValidateRejectsUnknownPeerMode(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsHoldTimeLessThan3(t *testing.T) {
+	cfg := &Config{ASN: 65000, RouterID: "10.0.0.1", PeerMode: network.PeerModeUnnumbered, ProvisionVNI: 100, HoldTime: 2, KeepaliveInterval: 1}
+	if err := cfg.Validate(); err == nil {
+		t.Error("HoldTime < 3 should fail RFC 4271 validation")
+	}
+}
+
+func TestValidateAcceptsHoldTimeZero(t *testing.T) {
+	cfg := &Config{ASN: 65000, RouterID: "10.0.0.1", PeerMode: network.PeerModeUnnumbered, ProvisionVNI: 100, HoldTime: 0}
+	cfg.ApplyDefaults()
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("HoldTime 0 (defaulted) should pass: %v", err)
+	}
+}
+
+func TestValidateRejectsKeepaliveExceedingHoldTime(t *testing.T) {
+	cfg := &Config{ASN: 65000, RouterID: "10.0.0.1", PeerMode: network.PeerModeUnnumbered, ProvisionVNI: 100, HoldTime: 9, KeepaliveInterval: 4}
+	if err := cfg.Validate(); err == nil {
+		t.Error("KeepaliveInterval > HoldTime/3 should fail validation")
+	}
+}
+
 func TestParsePeerMode(t *testing.T) {
 	tests := []struct {
 		input string
