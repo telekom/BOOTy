@@ -215,6 +215,17 @@ func TestApplyDefaultsPreservesValues(t *testing.T) {
 	}
 }
 
+func TestApplyDefaultsPropagatesGracefulRestart(t *testing.T) {
+	cfg := &Config{
+		GracefulRestart: &GracefulRestartConfig{Enabled: true},
+	}
+	cfg.ApplyDefaults()
+
+	if cfg.GracefulRestart.RestartTime != 120 {
+		t.Errorf("GracefulRestart.RestartTime = %d, want 120", cfg.GracefulRestart.RestartTime)
+	}
+}
+
 func TestValidateRequiresASN(t *testing.T) {
 	cfg := &Config{RouterID: "10.0.0.1"}
 	if err := cfg.Validate(); err == nil {

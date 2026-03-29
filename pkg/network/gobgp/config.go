@@ -143,6 +143,9 @@ func (c *Config) ApplyDefaults() {
 	if ot, err := ParseOverlayType(c.OverlayType); err == nil {
 		c.OverlayType = string(ot)
 	}
+	if c.GracefulRestart != nil {
+		c.GracefulRestart.ApplyDefaults()
+	}
 }
 
 // Validate checks that required configuration fields are present.
