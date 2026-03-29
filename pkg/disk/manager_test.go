@@ -50,7 +50,7 @@ func (m *mockCommander) setResult(key string, output []byte, err error) {
 
 // makeExitError creates an *exec.ExitError with the given exit code.
 func makeExitError(code int) error {
-	err := exec.Command("sh", "-c", fmt.Sprintf("exit %d", code)).Run()
+	err := exec.CommandContext(context.Background(), "sh", "-c", fmt.Sprintf("exit %d", code)).Run()
 	return err
 }
 
