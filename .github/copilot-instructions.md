@@ -32,6 +32,7 @@ Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, orch
 - `pkg/debug/` — Debug utilities
 - `pkg/drivers/` — Architecture-aware kernel driver management
 - `pkg/efi/` — EFI variable operations
+- `pkg/event/` — Provisioning lifecycle webhook events and dispatcher
 - `pkg/grubcfg/` — GRUB config file parsing
 - `pkg/retry/` — Retry policy framework with exponential backoff
 - `pkg/secureboot/` — Secure Boot chain setup
