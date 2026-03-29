@@ -4,6 +4,7 @@ package rescue
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -177,13 +178,12 @@ func Setup(ctx context.Context, cfg *Config) error {
 	}
 
 	if err := startDropbear(ctx); err != nil {
-		// SSH is optional — log and continue.
-		fmt.Printf("warning: could not start SSH daemon: %v\n", err) //nolint:forbidigo // rescue mode output
+		slog.Warn("could not start SSH daemon", "error", err)
 	}
 
 	if cfg.AutoMountDisks {
 		if err := autoMountDisks(ctx); err != nil {
-			fmt.Printf("warning: auto-mount failed: %v\n", err) //nolint:forbidigo // rescue mode output
+			slog.Warn("auto-mount failed", "error", err)
 		}
 	}
 

@@ -117,8 +117,8 @@ func (h *RemoteHandler) Close() {
 func (h *RemoteHandler) drain(ctx context.Context) {
 	defer close(h.done)
 	for msg := range h.buf {
-		if err := h.client.ShipLog(ctx, msg); err != nil {
-			slog.Warn("log shipping failed", "error", err)
+		if err := h.client.ShipLog(context.Background(), msg); err != nil {
+			slog.Warn("failed to ship log to caprf", "error", err)
 		}
 	}
 }
