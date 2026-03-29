@@ -97,7 +97,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Generate SBOM
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@v0.24.0
         with:
           format: spdx-json
           output-file: sbom-nightly.spdx.json
@@ -129,6 +129,7 @@ jobs:
         run: |
           IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]'):${{ needs.version.outputs.version }}
           docker buildx build --platform linux/amd64 \
+            --provenance=true \
             --push \
             -t "${IMAGE}" \
             -f initrd.Dockerfile .
