@@ -280,10 +280,15 @@ func (m *Manager) DetectDisk(_ context.Context, minSizeGB int) (string, error) {
 	return best.path, nil
 }
 
-// isVirtualDisk checks if a block device name is virtual (loop, cdrom, ram, device-mapper).
+// isVirtualDisk checks if a block device name is virtual and should be
+// excluded from physical disk selection. Covers: loop devices, CD-ROMs,
+// RAM disks, compressed RAM (zram), device-mapper, software RAID (md),
+// ZFS zvols (zd), and network block devices (nbd).
 func isVirtualDisk(name string) bool {
 	return strings.HasPrefix(name, "loop") || strings.HasPrefix(name, "sr") ||
-		strings.HasPrefix(name, "ram") || strings.HasPrefix(name, "dm-")
+		strings.HasPrefix(name, "ram") || strings.HasPrefix(name, "zram") ||
+		strings.HasPrefix(name, "dm-") || strings.HasPrefix(name, "md") ||
+		strings.HasPrefix(name, "zd") || strings.HasPrefix(name, "nbd")
 }
 
 // readDiskSizeGB reads the size of a block device in GB from sysfs.
@@ -482,7 +487,7 @@ func listGlob(pattern string) []string {
 func listDir(dir string) []string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return []string{"error: " + err.Error()}
+		return nil
 	}
 	var names []string
 	for _, e := range entries {
