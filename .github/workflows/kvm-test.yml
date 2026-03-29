@@ -122,7 +122,7 @@ jobs:
 
           PASS=true
 
-          if grep -q "Starting BOOTy" serial.log 2>/dev/null; then
+          if grep -q "starting BOOTy\|Starting BOOTy" serial.log 2>/dev/null; then
             echo "PASS: BOOTy main flow reached"
           else
             echo "FAIL: BOOTy did not reach main flow"

@@ -361,7 +361,7 @@ jobs:
 
           PASS=true
 
-          if grep -q "Starting BOOTy" serial.log 2>/dev/null; then
+          if grep -q "starting BOOTy\|Starting BOOTy" serial.log 2>/dev/null; then
             echo "PASS: BOOTy main flow reached"
           else
             echo "FAIL: BOOTy did not reach main flow"
@@ -677,7 +677,7 @@ jobs:
           PASS=true
 
           # Primary check: BOOTy binary started (proves UEFI firmware → GRUB → kernel → initramfs → BOOTy)
-          if grep -q "Starting BOOTy" serial-uefi.log 2>/dev/null; then
+          if grep -q "starting BOOTy\|Starting BOOTy" serial-uefi.log 2>/dev/null; then
             echo "PASS: BOOTy started under UEFI — full EFI boot chain working"
           else
             echo "FAIL: BOOTy did not start under UEFI"
@@ -685,7 +685,7 @@ jobs:
           fi
 
           # Secondary check: provisioning flow reached
-          if grep -q "Beginning provisioning process" serial-uefi.log 2>/dev/null; then
+          if grep -q "beginning provisioning process\|Beginning provisioning process" serial-uefi.log 2>/dev/null; then
             echo "PASS: BOOTy provisioning flow reached under UEFI"
           else
             echo "FAIL: BOOTy provisioning flow not reached under UEFI"
@@ -987,7 +987,7 @@ jobs:
         run: |
           echo "Waiting for BOOTy QEMU VM to start..."
           for i in $(seq 1 120); do
-            if sudo docker logs clab-booty-vrnetlab-lab-booty-provision 2>&1 | grep -q "Starting BOOTy"; then
+            if sudo docker logs clab-booty-vrnetlab-lab-booty-provision 2>&1 | grep -q "starting BOOTy\|Starting BOOTy"; then
               echo "BOOTy VM started after ${i}s"
               exit 0
             fi
