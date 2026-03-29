@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
 )
 
@@ -297,5 +298,47 @@ func TestPartProbeRefreshes(t *testing.T) {
 	}
 	if len(parts) != 2 {
 		t.Errorf("expected 2 partitions after PartProbe, got %d", len(parts))
+	}
+}
+
+func TestApplyPartitionLayoutOnRawLoopDevice(t *testing.T) {
+	requireRoot(t)
+
+	for _, bin := range []string{"sgdisk", "partprobe", "mkfs.ext4", "blkid"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not available", bin)
+		}
+	}
+
+	ctx := context.Background()
+	loopDev := createRawLoopDevice(t, 512)
+	mgr := disk.NewManager(nil)
+
+	layout := &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "root", SizeMB: 128, Filesystem: "ext4", Mountpoint: "/"},
+			{Label: "var", Filesystem: "ext4", Mountpoint: "/var"},
+		},
+	}
+
+	if err := mgr.ApplyPartitionLayout(ctx, loopDev, layout); err != nil {
+		t.Fatalf("ApplyPartitionLayout: %v", err)
+	}
+
+	parts, err := mgr.ParsePartitions(ctx, loopDev)
+	if err != nil {
+		t.Fatalf("ParsePartitions after ApplyPartitionLayout: %v", err)
+	}
+	if len(parts) != 2 {
+		t.Fatalf("expected 2 partitions after layout apply, got %d", len(parts))
+	}
+
+	for i := 1; i <= 2; i++ {
+		partDev := disk.PartitionDevicePath(loopDev, i)
+		fsType := strings.TrimSpace(runCmd(t, "blkid", "-o", "value", "-s", "TYPE", partDev))
+		if fsType != "ext4" {
+			t.Fatalf("partition %s fs type = %q, want ext4", partDev, fsType)
+		}
 	}
 }

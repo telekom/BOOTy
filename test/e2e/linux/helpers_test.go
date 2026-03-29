@@ -14,11 +14,11 @@ import (
 	"testing"
 )
 
-// requireRoot fails the test if not running as root.
+// requireRoot skips the test if not running as root.
 func requireRoot(t *testing.T) {
 	t.Helper()
 	if os.Getuid() != 0 {
-		t.Fatal("test requires root (run with sudo)")
+		t.Skip("test requires root (run with sudo)")
 	}
 }
 
@@ -92,7 +92,7 @@ func createRawLoopDevice(t *testing.T, sizeMB int) string {
 		t.Fatalf("truncate: %s: %v", out, err)
 	}
 
-	out, err := exec.CommandContext(ctx, "losetup", "--find", "--show", f.Name()).Output()
+	out, err := exec.CommandContext(ctx, "losetup", "--find", "--show", "--partscan", f.Name()).Output()
 	if err != nil {
 		os.Remove(f.Name())
 		t.Fatalf("losetup: %v", err)

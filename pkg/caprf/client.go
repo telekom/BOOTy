@@ -325,10 +325,20 @@ func ParseVars(r io.Reader) (*config.MachineConfig, error) {
 			continue
 		}
 
-		// Unquote value (remove surrounding double quotes).
-		value = strings.Trim(value, `"`)
+		// Unquote value: strip surrounding double quotes or single quotes.
+		// Single quotes are common for JSON values in shell-style var files.
+		if len(value) >= 2 {
+			switch {
+			case value[0] == '"' && value[len(value)-1] == '"':
+				value = value[1 : len(value)-1]
+			case value[0] == '\'' && value[len(value)-1] == '\'':
+				value = value[1 : len(value)-1]
+			}
+		}
 
-		applyVar(cfg, key, value)
+		if err := applyVar(cfg, key, value); err != nil {
+			return nil, fmt.Errorf("parse var %s: %w", key, err)
+		}
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -338,14 +348,14 @@ func ParseVars(r io.Reader) (*config.MachineConfig, error) {
 	return cfg, nil
 }
 
-func applyVar(cfg *config.MachineConfig, key, value string) {
+func applyVar(cfg *config.MachineConfig, key, value string) error {
 	if applyStringVar(cfg, key, value) {
-		return
+		return nil
 	}
 	if applyUint32Var(cfg, key, value) {
-		return
+		return nil
 	}
-	applySpecialVar(cfg, key, value)
+	return applySpecialVar(cfg, key, value)
 }
 
 func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
@@ -435,9 +445,9 @@ func applyUint32Var(cfg *config.MachineConfig, key, value string) bool {
 	return false
 }
 
-func applySpecialVar(cfg *config.MachineConfig, key, value string) {
+func applySpecialVar(cfg *config.MachineConfig, key, value string) error {
 	if applyBoolIntVar(cfg, key, value) {
-		return
+		return nil
 	}
 
 	switch key {
@@ -445,7 +455,15 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) {
 		cfg.ImageURLs = strings.Fields(strings.ReplaceAll(value, ",", " "))
 	case "POST_PROVISION_CMDS":
 		cfg.PostProvisionCmds = strings.Split(value, ";")
+	case "PARTITION_LAYOUT":
+		layout, err := config.ParsePartitionLayout(value)
+		if err != nil {
+			return fmt.Errorf("invalid PARTITION_LAYOUT: %w", err)
+		}
+		cfg.PartitionLayout = layout
 	}
+
+	return nil
 }
 
 // applyBoolIntVar handles boolean and integer special vars. Returns true if handled.

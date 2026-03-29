@@ -103,6 +103,11 @@ func (o *Orchestrator) DryRun(ctx context.Context) error {
 }
 
 func (o *Orchestrator) dryRunConfigValidation(_ context.Context) DryRunResult {
+	if o.cfg.PartitionLayout != nil {
+		return DryRunResult{Status: DryRunFail,
+			Message: errPartitionLayoutNotSupported}
+	}
+
 	if len(o.cfg.ImageURLs) == 0 {
 		return DryRunResult{Status: DryRunFail, Message: "no image URLs configured"}
 	}
@@ -114,55 +119,37 @@ func (o *Orchestrator) dryRunConfigValidation(_ context.Context) DryRunResult {
 
 func (o *Orchestrator) dryRunImageReachability(ctx context.Context) DryRunResult {
 	if len(o.cfg.ImageURLs) == 0 {
+		if o.cfg.PartitionLayout != nil {
+			return DryRunResult{Status: DryRunWarn, Message: "layout-only mode: skipping image reachability check"}
+		}
 		return DryRunResult{Status: DryRunFail, Message: "no image URLs configured"}
 	}
+
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 	validated := 0
 	skippedOCI := 0
 	for _, imgURL := range o.cfg.ImageURLs {
-		redactedURL := redactImageURL(imgURL)
-		parsedURL, err := url.Parse(imgURL)
-		if err != nil || parsedURL.Scheme == "" {
-			errMsg := redactURLError(err, imgURL)
-			if errMsg == "" {
-				errMsg = "missing URL scheme"
-			}
-			return DryRunResult{Status: DryRunFail,
-				Message: fmt.Sprintf("invalid image URL %s: %s", redactedURL, errMsg)}
+		scheme, redactedURL, invalidResult := validateDryRunImageURL(imgURL)
+		if invalidResult != nil {
+			return *invalidResult
 		}
 
-		scheme := strings.ToLower(strings.TrimSpace(parsedURL.Scheme))
 		// Skip OCI sources until registry reachability checks are implemented.
 		if scheme == "oci" {
 			skippedOCI++
 			o.log.Info("skipping oci image reachability check", "url", redactedURL)
 			continue
 		}
-		// Validate URL scheme is http/https before making outbound request.
-		if scheme != "http" && scheme != "https" {
-			return DryRunResult{Status: DryRunFail,
-				Message: fmt.Sprintf("unsupported URL scheme: %s", redactedURL)}
+
+		probeResult := probeHTTPImageReachability(ctx, httpClient, imgURL, redactedURL)
+		if probeResult != nil {
+			return *probeResult
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodHead, imgURL, http.NoBody)
-		if err != nil {
-			errMsg := redactURLError(err, imgURL)
-			return DryRunResult{Status: DryRunFail,
-				Message: fmt.Sprintf("invalid image URL %s: %s", redactedURL, errMsg)}
-		}
-		resp, err := httpClient.Do(req) //nolint:gosec // URL from trusted config
-		if err != nil {
-			errMsg := redactURLError(err, imgURL)
-			return DryRunResult{Status: DryRunFail,
-				Message: fmt.Sprintf("image unreachable %s: %s", redactedURL, errMsg)}
-		}
-		_ = resp.Body.Close()
-		if resp.StatusCode >= 400 {
-			return DryRunResult{Status: DryRunFail,
-				Message: fmt.Sprintf("image server returned %d for %s", resp.StatusCode, redactedURL)}
-		}
+
 		validated++
-		o.log.Info("image reachable", "url", redactedURL, "status", resp.StatusCode)
+		o.log.Info("image reachable", "url", redactedURL)
 	}
+
 	if validated == 0 && skippedOCI > 0 {
 		return DryRunResult{
 			Status:  DryRunWarn,
@@ -176,6 +163,51 @@ func (o *Orchestrator) dryRunImageReachability(ctx context.Context) DryRunResult
 		}
 	}
 	return DryRunResult{Status: DryRunPass, Message: "all HTTP image URLs reachable"}
+}
+
+func validateDryRunImageURL(imgURL string) (scheme, redactedURL string, invalidResult *DryRunResult) {
+	redactedURL = redactImageURL(imgURL)
+	parsedURL, err := url.Parse(imgURL)
+	if err != nil || parsedURL.Scheme == "" {
+		errMsg := redactURLError(err, imgURL)
+		if errMsg == "" {
+			errMsg = "missing URL scheme"
+		}
+		return "", redactedURL, &DryRunResult{Status: DryRunFail,
+			Message: fmt.Sprintf("invalid image URL %s: %s", redactedURL, errMsg)}
+	}
+
+	scheme = strings.ToLower(strings.TrimSpace(parsedURL.Scheme))
+	if scheme != "http" && scheme != "https" && scheme != "oci" {
+		return "", redactedURL, &DryRunResult{Status: DryRunFail,
+			Message: fmt.Sprintf("unsupported URL scheme %q for %s", scheme, redactedURL)}
+	}
+
+	return scheme, redactedURL, nil
+}
+
+func probeHTTPImageReachability(ctx context.Context, httpClient *http.Client, imgURL, redactedURL string) *DryRunResult {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, imgURL, http.NoBody)
+	if err != nil {
+		errMsg := redactURLError(err, imgURL)
+		return &DryRunResult{Status: DryRunFail,
+			Message: fmt.Sprintf("invalid image URL %s: %s", redactedURL, errMsg)}
+	}
+
+	resp, err := httpClient.Do(req) //nolint:gosec // URL from trusted config
+	if err != nil {
+		errMsg := redactURLError(err, imgURL)
+		return &DryRunResult{Status: DryRunFail,
+			Message: fmt.Sprintf("image unreachable %s: %s", redactedURL, errMsg)}
+	}
+	defer resp.Body.Close() //nolint:errcheck // best-effort close for validation probe
+
+	if resp.StatusCode >= 400 {
+		return &DryRunResult{Status: DryRunFail,
+			Message: fmt.Sprintf("image server returned %d for %s", resp.StatusCode, redactedURL)}
+	}
+
+	return nil
 }
 
 func (o *Orchestrator) dryRunDiskDetection(ctx context.Context) DryRunResult {
@@ -213,6 +245,9 @@ func (o *Orchestrator) dryRunHealthChecks(_ context.Context) DryRunResult {
 }
 
 func (o *Orchestrator) dryRunImageChecksum(_ context.Context) DryRunResult {
+	if len(o.cfg.ImageURLs) == 0 && o.cfg.PartitionLayout != nil {
+		return DryRunResult{Status: DryRunWarn, Message: "layout-only mode: skipping image checksum check"}
+	}
 	if o.cfg.ImageChecksum == "" {
 		return DryRunResult{Status: DryRunWarn,
 			Message: "no image checksum configured - integrity cannot be verified"}

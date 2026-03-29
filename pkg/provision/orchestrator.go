@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -81,12 +82,14 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"wipe-disks", o.wipeOrSecureEraseDisks},
 		{"detect-disk", o.detectDisk},
 		{"verify-image", o.verifyImageSignature},
+		{"apply-partition-layout", o.applyPartitionLayout},
 		{"stream-image", o.streamImage},
 		{"partprobe", o.partprobe},
 		{"parse-partitions", o.parsePartitions},
 		{"check-filesystem", o.checkFilesystem},
 		{"enable-lvm", o.enableLVM},
 		{"mount-root", o.mountRoot},
+		{"write-fstab", o.writeFstabStep},
 		{"setup-chroot-binds", o.setupChrootBinds},
 		{"grow-partition", o.growPartition},
 		{"resize-filesystem", o.resizeFilesystem},
@@ -342,6 +345,10 @@ func (o *Orchestrator) FirmwareChanged() bool {
 }
 
 func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
+	if err := o.validatePartitionLayoutConfig(); err != nil {
+		return err
+	}
+
 	if o.cfg.SecureErase {
 		o.log.Info("Secure erase enabled, performing hardware-level erase")
 		return o.disk.SecureEraseAllDisks(ctx)
@@ -349,7 +356,66 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 	return o.disk.WipeAllDisks(ctx)
 }
 
+// errPartitionLayoutNotSupported is the shared error for layout-mode gating.
+const errPartitionLayoutNotSupported = "partition layout provisioning is not supported yet; rootfs extraction support is still pending"
+
+func (o *Orchestrator) validatePartitionLayoutModeCompatibility() error {
+	if o.cfg.PartitionLayout == nil {
+		return nil
+	}
+
+	// Deprovisioning is allowed to wipe disks even when PARTITION_LAYOUT is set.
+	if o.cfg.Mode == "deprovision" || o.cfg.Mode == "soft" || o.cfg.Mode == "soft-deprovision" {
+		return nil
+	}
+
+	return fmt.Errorf("%s", errPartitionLayoutNotSupported)
+}
+
+func (o *Orchestrator) validatePartitionLayoutConfig() error {
+	if o.cfg.PartitionLayout == nil {
+		return nil
+	}
+
+	layoutDevice := strings.TrimSpace(o.cfg.PartitionLayout.Device)
+	o.cfg.PartitionLayout.Device = layoutDevice
+
+	// Check device conflicts before mode compatibility so that
+	// configuration errors surface immediately.
+	if layoutDevice != "" && o.cfg.DiskDevice != "" && o.cfg.DiskDevice != layoutDevice {
+		return fmt.Errorf("disk device conflict: DISK_DEVICE=%q differs from PARTITION_LAYOUT.device=%q", o.cfg.DiskDevice, layoutDevice)
+	}
+
+	if err := o.validatePartitionLayoutModeCompatibility(); err != nil {
+		return err
+	}
+
+	if layoutDevice == "" {
+		return nil
+	}
+
+	info, err := os.Stat(layoutDevice)
+	if err != nil {
+		return fmt.Errorf("partition layout device %q: %w", layoutDevice, err)
+	}
+	if info.Mode()&os.ModeDevice == 0 || info.Mode()&os.ModeCharDevice != 0 {
+		return fmt.Errorf("partition layout device %q is not a block device", layoutDevice)
+	}
+
+	return nil
+}
+
 func (o *Orchestrator) detectDisk(ctx context.Context) error {
+	if o.cfg.PartitionLayout != nil {
+		layoutDevice := strings.TrimSpace(o.cfg.PartitionLayout.Device)
+		o.cfg.PartitionLayout.Device = layoutDevice
+		if layoutDevice != "" {
+			o.targetDisk = layoutDevice
+			o.log.Info("using partition layout device override", "device", o.targetDisk)
+			return nil
+		}
+	}
+
 	// If a specific disk device is configured, validate and use it directly.
 	if o.cfg.DiskDevice != "" {
 		info, err := os.Stat(o.cfg.DiskDevice)
@@ -371,7 +437,76 @@ func (o *Orchestrator) detectDisk(ctx context.Context) error {
 	return nil
 }
 
+func (o *Orchestrator) applyPartitionLayout(ctx context.Context) error {
+	if o.cfg.PartitionLayout == nil {
+		return nil
+	}
+
+	device := o.targetDisk
+	layoutDevice := strings.TrimSpace(o.cfg.PartitionLayout.Device)
+	o.cfg.PartitionLayout.Device = layoutDevice
+	if layoutDevice != "" {
+		device = layoutDevice
+		o.targetDisk = device
+	}
+
+	// Validate the target device exists and is a block device.
+	if info, err := os.Stat(device); err != nil {
+		return fmt.Errorf("partition layout device %q: %w", device, err)
+	} else if info.Mode()&os.ModeDevice == 0 || info.Mode()&os.ModeCharDevice != 0 {
+		return fmt.Errorf("partition layout device %q is not a block device", device)
+	}
+
+	o.log.Info("applying custom partition layout", "device", device, "partitions", len(o.cfg.PartitionLayout.Partitions))
+
+	if err := o.disk.ApplyPartitionLayout(ctx, device, o.cfg.PartitionLayout); err != nil {
+		return fmt.Errorf("apply partition layout: %w", err)
+	}
+
+	// Apply LVM if configured.
+	if o.cfg.PartitionLayout.LVM != nil {
+		if err := o.disk.ApplyLVMConfig(ctx, device, o.cfg.PartitionLayout); err != nil {
+			return fmt.Errorf("apply LVM config: %w", err)
+		}
+	}
+
+	o.log.Info("custom partition layout applied")
+	return nil
+}
+
+// writeFstab generates and writes fstab after root is mounted.
+func (o *Orchestrator) writeFstabStep(_ context.Context) error {
+	return o.writeFstab()
+}
+
+func (o *Orchestrator) writeFstab() error {
+	if o.cfg.PartitionLayout == nil {
+		return nil
+	}
+	device := o.targetDisk
+	fstab := disk.GenerateFstab(o.cfg.PartitionLayout, device)
+	if o.cfg.PartitionLayout.LVM != nil {
+		fstab += disk.GenerateLVMFstab(o.cfg.PartitionLayout.LVM)
+	}
+
+	fstabPath := filepath.Join(o.config.rootDir, "etc", "fstab")
+	if err := os.MkdirAll(filepath.Dir(fstabPath), 0o755); err != nil {
+		return fmt.Errorf("creating fstab directory: %w", err)
+	}
+	if err := os.WriteFile(fstabPath, []byte(fstab), 0o644); err != nil {
+		return fmt.Errorf("writing fstab: %w", err)
+	}
+	o.log.Info("generated fstab for custom layout")
+	return nil
+}
+
 func (o *Orchestrator) streamImage(ctx context.Context) error {
+	// With a custom partition layout, fail fast — rootfs extraction for
+	// layout mode is not implemented yet.
+	if o.cfg.PartitionLayout != nil {
+		return fmt.Errorf("%s", errPartitionLayoutNotSupported)
+	}
+
 	bestURL := o.bestImageURL
 	if bestURL == "" {
 		// verify-image may have skipped URL resolution; resolve it now.
@@ -388,7 +523,6 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 		return image.StreamPartitions(ctx, bestURL, o.targetDisk)
 	}
 
-	// Default whole-disk mode.
 	var opts []image.StreamOpts
 	if o.cfg.ImageChecksum != "" {
 		opts = append(opts, image.StreamOpts{
@@ -397,6 +531,7 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 		})
 	}
 
+	// Default whole-disk mode.
 	o.log.Info("Streaming image", "url", bestURL, "disk", o.targetDisk)
 	if err := image.Stream(ctx, bestURL, o.targetDisk, opts...); err != nil {
 		return fmt.Errorf("streaming %s: %w", bestURL, err)
@@ -439,6 +574,13 @@ func (o *Orchestrator) partprobe(ctx context.Context) error {
 }
 
 func (o *Orchestrator) parsePartitions(ctx context.Context) error {
+	// With a custom partition layout, derive root from the layout definition
+	// rather than scanning by GUID (which can pick the wrong partition when
+	// multiple Linux-type partitions exist).
+	if o.cfg.PartitionLayout != nil {
+		return o.parsePartitionsFromLayout(ctx)
+	}
+
 	parts, err := o.disk.ParsePartitions(ctx, o.targetDisk)
 	if err != nil {
 		return err
@@ -459,6 +601,62 @@ func (o *Orchestrator) parsePartitions(ctx context.Context) error {
 	return nil
 }
 
+// parsePartitionsFromLayout determines boot/root partitions from the declared
+// partition layout instead of scanning GPT type GUIDs.
+func (o *Orchestrator) parsePartitionsFromLayout(_ context.Context) error {
+	layout := o.cfg.PartitionLayout
+
+	if err := o.resolveRootFromLayout(layout); err != nil {
+		return err
+	}
+
+	// Find boot/EFI partition from the layout.
+	// Require an explicit /boot/efi mountpoint to avoid choosing the wrong
+	// partition in layouts with multiple vfat filesystems.
+	espIdx := -1
+	for i, part := range layout.Partitions {
+		if part.Mountpoint == "/boot/efi" {
+			espIdx = i
+			break
+		}
+	}
+	if espIdx == -1 {
+		o.log.Warn("no /boot/efi mountpoint found in partition layout; efi boot entry creation may be skipped")
+		return nil
+	}
+	o.bootPartition = disk.PartitionDevicePath(o.targetDisk, espIdx+1)
+	o.log.Info("boot partition from layout", "device", o.bootPartition)
+
+	return nil
+}
+
+func (o *Orchestrator) resolveRootFromLayout(layout *config.PartitionLayout) error {
+	if layout == nil {
+		return fmt.Errorf("partition layout is nil")
+	}
+
+	// When LVM is configured, use the LV with mountpoint "/" as root.
+	if layout.LVM != nil {
+		for _, vol := range layout.LVM.Volumes {
+			if vol.Mountpoint == "/" {
+				o.rootPartition = fmt.Sprintf("/dev/%s/%s", layout.LVM.VolumeGroup, vol.Name)
+				o.log.Info("root from lvm", "device", o.rootPartition)
+				return nil
+			}
+		}
+	}
+
+	// Find the partition with mountpoint "/" from the layout definition.
+	for i, part := range layout.Partitions {
+		if part.Mountpoint == "/" {
+			o.rootPartition = disk.PartitionDevicePath(o.targetDisk, i+1)
+			o.log.Info("root from partition layout", "device", o.rootPartition)
+			return nil
+		}
+	}
+	return fmt.Errorf("partition layout has no mountpoint \"/\" in partitions or lvm volumes")
+}
+
 func (o *Orchestrator) checkFilesystem(ctx context.Context) error {
 	return o.disk.CheckFilesystem(ctx, o.rootPartition)
 }
@@ -476,6 +674,11 @@ func (o *Orchestrator) setupChrootBinds(_ context.Context) error {
 }
 
 func (o *Orchestrator) growPartition(ctx context.Context) error {
+	if o.cfg.PartitionLayout != nil {
+		o.log.Info("skipping grow-partition for declarative partition layout")
+		return nil
+	}
+
 	partNum := disk.PartitionNumber(o.rootPartition, o.targetDisk)
 	if partNum == 0 {
 		o.log.Warn("Could not determine partition number, skipping grow")
@@ -485,6 +688,11 @@ func (o *Orchestrator) growPartition(ctx context.Context) error {
 }
 
 func (o *Orchestrator) resizeFilesystem(ctx context.Context) error {
+	if o.cfg.PartitionLayout != nil {
+		o.log.Info("skipping resize-filesystem for declarative partition layout")
+		return nil
+	}
+
 	return o.disk.ResizeFilesystem(ctx, o.rootPartition)
 }
 

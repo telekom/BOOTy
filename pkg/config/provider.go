@@ -1,7 +1,15 @@
 // Package config defines the provisioning configuration provider interface.
 package config
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"path/filepath"
+	"regexp"
+	"strings"
+)
 
 // Status represents the provisioning status reported to the server.
 type Status string
@@ -138,6 +146,425 @@ type MachineConfig struct {
 	ProvisionerFiles []string // Paths to files in /deploy/file-system/
 	MachineFiles     []string // Paths to files in /deploy/machine-files/
 	MachineCommands  []string // Commands from /deploy/machine-commands/
+
+	// Declarative disk partitioning (JSON from PARTITION_LAYOUT).
+	PartitionLayout *PartitionLayout
+}
+
+// PartitionLayout defines a declarative partitioning scheme for the target disk.
+type PartitionLayout struct {
+	Table      string      `json:"table"`            // "gpt" (default: "gpt") — only GPT is supported
+	Device     string      `json:"device,omitempty"` // Device override (empty = auto-detect)
+	Partitions []Partition `json:"partitions"`       // Ordered list of partitions to create
+	LVM        *LVMConfig  `json:"lvm,omitempty"`    // Optional LVM configuration
+}
+
+// Partition defines a single partition in a PartitionLayout.
+type Partition struct {
+	Label      string `json:"label"`                // GPT partition label (e.g. "efi", "root", "data")
+	SizeMB     int    `json:"sizeMB,omitempty"`     // Size in MiB (0 = fill remaining space)
+	TypeGUID   string `json:"typeGUID,omitempty"`   // GPT type GUID (auto-set from fsType if omitted)
+	Filesystem string `json:"filesystem,omitempty"` // mkfs type: "vfat", "ext4", "xfs", "swap"
+	Mountpoint string `json:"mountpoint,omitempty"` // Target mount path (e.g. "/", "/boot/efi")
+}
+
+// LVMConfig defines LVM volume group and logical volume configuration.
+type LVMConfig struct {
+	VolumeGroup string     `json:"volumeGroup"` // VG name (e.g. "sysvg")
+	PVPartition int        `json:"pvPartition"` // 1-based partition index for the PV
+	Volumes     []LVVolume `json:"volumes"`     // Logical volumes to create
+}
+
+// LVVolume defines a single logical volume within an LVM volume group.
+type LVVolume struct {
+	Name       string `json:"name"`                 // LV name (e.g. "root", "var")
+	SizeMB     int    `json:"sizeMB,omitempty"`     // Size in MiB (0 = fill remaining)
+	Extents    string `json:"extents,omitempty"`    // Size as extents (e.g. "100%FREE")
+	Filesystem string `json:"filesystem,omitempty"` // mkfs type
+	Mountpoint string `json:"mountpoint,omitempty"` // Target mount path
+}
+
+// ParsePartitionLayout parses a JSON partition layout string.
+func ParsePartitionLayout(data string) (*PartitionLayout, error) {
+	var layout PartitionLayout
+	decoder := json.NewDecoder(strings.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&layout); err != nil {
+		return nil, fmt.Errorf("parsing partition layout: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return nil, fmt.Errorf("parsing partition layout: unexpected trailing content")
+	}
+
+	if len(layout.Partitions) == 0 {
+		return nil, fmt.Errorf("partition layout has no partitions")
+	}
+	if len(layout.Partitions) > maxPartitions {
+		return nil, fmt.Errorf("partition layout has %d partitions, maximum is %d", len(layout.Partitions), maxPartitions)
+	}
+	if layout.Table == "" {
+		layout.Table = "gpt"
+	}
+	if layout.Table != "gpt" {
+		return nil, fmt.Errorf("unsupported partition table %q, only \"gpt\" is supported", layout.Table)
+	}
+	device, err := normalizePartitionLayoutDevice(layout.Device)
+	if err != nil {
+		return nil, err
+	}
+	layout.Device = device
+	if err := validatePartitions(layout.Partitions); err != nil {
+		return nil, err
+	}
+	if err := validateLVMConfig(layout.LVM, layout.Partitions); err != nil {
+		return nil, err
+	}
+	if err := validateUniqueMountpoints(layout.Partitions, layout.LVM); err != nil {
+		return nil, err
+	}
+	if err := validateRootPresence(layout.Partitions, layout.LVM); err != nil {
+		return nil, err
+	}
+	return &layout, nil
+}
+
+func normalizePartitionLayoutDevice(device string) (string, error) {
+	trimmed := strings.TrimSpace(device)
+	if trimmed == "" {
+		return "", nil
+	}
+	if strings.ContainsAny(trimmed, " \t\n\r") {
+		return "", fmt.Errorf("partition layout device %q must not contain whitespace", device)
+	}
+	if !filepath.IsAbs(trimmed) {
+		return "", fmt.Errorf("partition layout device %q must be an absolute path", device)
+	}
+	cleaned := filepath.Clean(trimmed)
+	if cleaned != trimmed {
+		return "", fmt.Errorf("partition layout device %q must be a clean path (got %q after normalization)", device, cleaned)
+	}
+	return cleaned, nil
+}
+
+// validatePartitions checks partition definitions for required fields.
+func validatePartitions(partitions []Partition) error {
+	fillCount := 0
+	seen := make(map[string]bool)
+	for i, part := range partitions {
+		if err := validatePartitionEntry(i, part, len(partitions), seen); err != nil {
+			return err
+		}
+		if part.SizeMB == 0 {
+			fillCount++
+		}
+	}
+	if fillCount > 1 {
+		return fmt.Errorf("only one partition may use sizeMB=0 (fill remaining), got %d", fillCount)
+	}
+	return nil
+}
+
+func validatePartitionEntry(index int, part Partition, partitionCount int, seen map[string]bool) error {
+	if err := validatePartitionLabel(index, part.Label, seen); err != nil {
+		return err
+	}
+	if err := validatePartitionMountpoint(index, part); err != nil {
+		return err
+	}
+	if !isSupportedFilesystem(part.Filesystem) {
+		return fmt.Errorf("partition %d (%s): unsupported filesystem %q", index+1, part.Label, part.Filesystem)
+	}
+	if err := validatePartitionSize(index, part, partitionCount); err != nil {
+		return err
+	}
+	if part.TypeGUID != "" && !typeGUIDRE.MatchString(part.TypeGUID) {
+		return fmt.Errorf("partition %d (%s): invalid typeGUID %q, must be a UUID", index+1, part.Label, part.TypeGUID)
+	}
+	return nil
+}
+
+func validatePartitionLabel(index int, label string, seen map[string]bool) error {
+	if label == "" {
+		return fmt.Errorf("partition %d: label is required", index+1)
+	}
+	if !isValidPartitionLabel(label) {
+		return fmt.Errorf("partition %d: label %q contains invalid characters or exceeds 36 characters", index+1, label)
+	}
+	if seen[label] {
+		return fmt.Errorf("partition %d: duplicate label %q", index+1, label)
+	}
+	seen[label] = true
+	return nil
+}
+
+func validatePartitionMountpoint(index int, part Partition) error {
+	if part.Mountpoint != "" && !strings.HasPrefix(part.Mountpoint, "/") {
+		return fmt.Errorf("partition %d (%s): mountpoint %q must be an absolute path", index+1, part.Label, part.Mountpoint)
+	}
+	if strings.ContainsAny(part.Mountpoint, " \t\n\r") {
+		return fmt.Errorf("partition %d (%s): mountpoint %q must not contain whitespace", index+1, part.Label, part.Mountpoint)
+	}
+	if part.Mountpoint != "" && strings.Contains(filepath.Clean(part.Mountpoint), "..") {
+		return fmt.Errorf("partition %d (%s): mountpoint %q must not contain path traversal", index+1, part.Label, part.Mountpoint)
+	}
+	if part.Mountpoint != "" && part.Filesystem == "" {
+		return fmt.Errorf("partition %d (%s): mountpoint %q requires a filesystem", index+1, part.Label, part.Mountpoint)
+	}
+	if part.Filesystem == "swap" && part.Mountpoint != "" {
+		return fmt.Errorf("partition %d (%s): swap partition must not define mountpoint %q", index+1, part.Label, part.Mountpoint)
+	}
+	return nil
+}
+
+func validatePartitionSize(index int, part Partition, partitionCount int) error {
+	if part.SizeMB < 0 {
+		return fmt.Errorf("partition %d (%s): sizeMB must be non-negative", index+1, part.Label)
+	}
+	if part.SizeMB == 0 && index != partitionCount-1 {
+		return fmt.Errorf("partition %d (%s): sizeMB=0 (fill remaining) must be the last partition", index+1, part.Label)
+	}
+	return nil
+}
+
+func validateLVMConfig(lvm *LVMConfig, partitions []Partition) error {
+	if lvm == nil {
+		return nil
+	}
+	if len(lvm.Volumes) == 0 {
+		return fmt.Errorf("lvm: at least one volume is required")
+	}
+	if len(lvm.Volumes) > maxLVMVolumes {
+		return fmt.Errorf("lvm: %d volumes exceeds maximum of %d", len(lvm.Volumes), maxLVMVolumes)
+	}
+	if err := validateLVMPVPartition(lvm, partitions); err != nil {
+		return err
+	}
+	seenNames := make(map[string]bool)
+	for i, vol := range lvm.Volumes {
+		if err := validateLVMVolume(i, vol); err != nil {
+			return err
+		}
+		if seenNames[vol.Name] {
+			return fmt.Errorf("lvm volume %d: duplicate name %q", i+1, vol.Name)
+		}
+		seenNames[vol.Name] = true
+		if usesAllRemainingLVMExtents(vol) && i != len(lvm.Volumes)-1 {
+			return fmt.Errorf("lvm volume %d (%s): fill-remaining volume must be the last lvm volume", i+1, vol.Name)
+		}
+	}
+	return nil
+}
+
+func usesAllRemainingLVMExtents(vol LVVolume) bool {
+	if vol.SizeMB > 0 {
+		return false
+	}
+	extents := strings.TrimSpace(vol.Extents)
+	return extents == "" || strings.EqualFold(extents, "100%FREE")
+}
+
+func validateUniqueMountpoints(partitions []Partition, lvm *LVMConfig) error {
+	seen := make(map[string]string)
+
+	addMountpoint := func(mountpoint, location string) error {
+		if mountpoint == "" {
+			return nil
+		}
+		if prev, ok := seen[mountpoint]; ok {
+			return fmt.Errorf("mountpoint %q is defined multiple times (%s, %s)", mountpoint, prev, location)
+		}
+		seen[mountpoint] = location
+		return nil
+	}
+
+	for i, part := range partitions {
+		location := fmt.Sprintf("partition %d (%s)", i+1, part.Label)
+		if err := addMountpoint(part.Mountpoint, location); err != nil {
+			return err
+		}
+	}
+
+	if lvm == nil {
+		return nil
+	}
+
+	for i, vol := range lvm.Volumes {
+		location := fmt.Sprintf("lvm volume %d (%s)", i+1, vol.Name)
+		if err := addMountpoint(vol.Mountpoint, location); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateLVMPVPartition(lvm *LVMConfig, partitions []Partition) error {
+	if lvm.VolumeGroup == "" {
+		return fmt.Errorf("lvm: volumeGroup is required")
+	}
+	if !isValidLVMName(lvm.VolumeGroup) {
+		return fmt.Errorf("lvm: invalid volumeGroup name %q", lvm.VolumeGroup)
+	}
+	if lvm.PVPartition < 1 {
+		return fmt.Errorf("lvm: pvPartition must be >= 1, got %d", lvm.PVPartition)
+	}
+	if lvm.PVPartition > len(partitions) {
+		return fmt.Errorf("lvm: pvPartition %d exceeds partition count %d", lvm.PVPartition, len(partitions))
+	}
+
+	pvPart := partitions[lvm.PVPartition-1]
+	if pvPart.Mountpoint != "" {
+		return fmt.Errorf("lvm: pvPartition %d (%s) must not define mountpoint %q", lvm.PVPartition, pvPart.Label, pvPart.Mountpoint)
+	}
+	if pvPart.Filesystem != "" {
+		return fmt.Errorf("lvm: pvPartition %d (%s) must not define filesystem %q", lvm.PVPartition, pvPart.Label, pvPart.Filesystem)
+	}
+	return nil
+}
+
+func validateLVMVolume(index int, vol LVVolume) error {
+	if vol.Name == "" {
+		return fmt.Errorf("lvm volume %d: name is required", index+1)
+	}
+	if !isValidLVMName(vol.Name) {
+		return fmt.Errorf("lvm volume %d: invalid name %q", index+1, vol.Name)
+	}
+	if err := validateLVMVolumeMountpoint(index, vol); err != nil {
+		return err
+	}
+	if !isSupportedFilesystem(vol.Filesystem) {
+		return fmt.Errorf("lvm volume %d (%s): unsupported filesystem %q", index+1, vol.Name, vol.Filesystem)
+	}
+	if err := validateLVMVolumeSize(index, vol); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateLVMVolumeMountpoint(index int, vol LVVolume) error {
+	if vol.Mountpoint != "" && !strings.HasPrefix(vol.Mountpoint, "/") {
+		return fmt.Errorf("lvm volume %d (%s): mountpoint %q must be an absolute path", index+1, vol.Name, vol.Mountpoint)
+	}
+	if strings.ContainsAny(vol.Mountpoint, " \t\n\r") {
+		return fmt.Errorf("lvm volume %d (%s): mountpoint %q must not contain whitespace", index+1, vol.Name, vol.Mountpoint)
+	}
+	if vol.Mountpoint != "" && strings.Contains(filepath.Clean(vol.Mountpoint), "..") {
+		return fmt.Errorf("lvm volume %d (%s): mountpoint %q must not contain path traversal", index+1, vol.Name, vol.Mountpoint)
+	}
+	if vol.Mountpoint != "" && vol.Filesystem == "" {
+		return fmt.Errorf("lvm volume %d (%s): mountpoint %q requires a filesystem", index+1, vol.Name, vol.Mountpoint)
+	}
+	if vol.Filesystem == "swap" && vol.Mountpoint != "" {
+		return fmt.Errorf("lvm volume %d (%s): swap volume must not define mountpoint %q", index+1, vol.Name, vol.Mountpoint)
+	}
+	return nil
+}
+
+func validateLVMVolumeSize(index int, vol LVVolume) error {
+	if vol.SizeMB < 0 {
+		return fmt.Errorf("lvm volume %d (%s): sizeMB must be non-negative", index+1, vol.Name)
+	}
+	if vol.Extents != "" && vol.SizeMB > 0 {
+		return fmt.Errorf("lvm volume %d (%s): specify either sizeMB or extents, not both", index+1, vol.Name)
+	}
+	if vol.Extents != "" && !isValidLVMExtents(vol.Extents) {
+		return fmt.Errorf("lvm volume %d (%s): invalid extents format %q", index+1, vol.Name, vol.Extents)
+	}
+	return nil
+}
+
+func validateRootPresence(partitions []Partition, lvm *LVMConfig) error {
+	for _, part := range partitions {
+		if part.Mountpoint == "/" {
+			return nil
+		}
+	}
+	if lvm != nil {
+		for _, vol := range lvm.Volumes {
+			if vol.Mountpoint == "/" {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("partition layout must include mountpoint \"/\" in either a partition or an lvm volume")
+}
+
+func isSupportedFilesystem(fs string) bool {
+	switch fs {
+	case "", "vfat", "ext4", "xfs", "swap":
+		return true
+	default:
+		return false
+	}
+}
+
+// typeGUIDRE validates GPT type GUID format.
+var typeGUIDRE = regexp.MustCompile(`^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$`)
+
+// maxPartitions is the GPT maximum partition count.
+const maxPartitions = 128
+
+// maxLVMVolumes is a reasonable upper bound for LVM logical volumes.
+const maxLVMVolumes = 256
+
+// isValidPartitionLabel checks that a label is safe for GPT and fstab use.
+// GPT labels are limited to 36 UTF-16 characters; only printable ASCII
+// (alphanumeric, space, hyphen, underscore, dot) is accepted.
+func isValidPartitionLabel(label string) bool {
+	if len(label) > 36 {
+		return false
+	}
+	for _, c := range label {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') &&
+			c != '_' && c != '-' && c != '.' && c != ' ' {
+			return false
+		}
+	}
+	return true
+}
+
+// isValidLVMName checks that a name contains only safe characters for LVM identifiers.
+func isValidLVMName(name string) bool {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	// Reject option-like and hidden-like names to avoid CLI arg ambiguity.
+	if strings.HasPrefix(name, "-") || strings.HasPrefix(name, ".") {
+		return false
+	}
+	for _, c := range name {
+		if !isValidLVMNameChar(c) {
+			return false
+		}
+	}
+	return true
+}
+
+func isValidLVMNameChar(c rune) bool {
+	if c >= 'a' && c <= 'z' {
+		return true
+	}
+	if c >= 'A' && c <= 'Z' {
+		return true
+	}
+	if c >= '0' && c <= '9' {
+		return true
+	}
+	return c == '_' || c == '-' || c == '.'
+}
+
+// isValidLVMExtents checks that an extents value contains only characters
+// valid for lvcreate -l arguments (digits, letters, %, +).
+func isValidLVMExtents(extents string) bool {
+	if extents == "" {
+		return false
+	}
+	for _, c := range extents {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && c != '%' && c != '+' {
+			return false
+		}
+	}
+	return true
 }
 
 // Command represents a server-issued command (future agent mode).

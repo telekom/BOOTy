@@ -112,6 +112,36 @@ func TestDryRunConfigValidation(t *testing.T) {
 			cfg:    &config.MachineConfig{ImageURLs: []string{"http://example.com/img"}, Hostname: "node1"},
 			expect: DryRunPass,
 		},
+		{
+			name: "layout-only without hostname",
+			cfg: &config.MachineConfig{PartitionLayout: &config.PartitionLayout{
+				Table:      "gpt",
+				Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
+			}},
+			expect: DryRunFail,
+		},
+		{
+			name: "layout-only with hostname",
+			cfg: &config.MachineConfig{
+				Hostname: "node1",
+				PartitionLayout: &config.PartitionLayout{
+					Table:      "gpt",
+					Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
+				},
+			},
+			expect: DryRunFail,
+		},
+		{
+			name: "layout with image url",
+			cfg: &config.MachineConfig{
+				ImageURLs: []string{"http://example.com/img"},
+				PartitionLayout: &config.PartitionLayout{
+					Table:      "gpt",
+					Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
+				},
+			},
+			expect: DryRunFail,
+		},
 	}
 
 	for _, tc := range tests {
@@ -219,6 +249,21 @@ func TestDryRunImageReachability_NoURLs(t *testing.T) {
 	}
 }
 
+func TestDryRunImageReachability_NoURLsLayoutOnly(t *testing.T) {
+	o := NewOrchestrator(
+		&config.MachineConfig{PartitionLayout: &config.PartitionLayout{
+			Table:      "gpt",
+			Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
+		}},
+		&dryRunProvider{},
+		disk.NewManager(nil),
+	)
+	result := o.dryRunImageReachability(context.Background())
+	if result.Status != DryRunWarn {
+		t.Errorf("got %s, want warn for layout-only empty URLs: %s", result.Status, result.Message)
+	}
+}
+
 func TestDryRunImageReachability_OCI(t *testing.T) {
 	o := NewOrchestrator(
 		&config.MachineConfig{ImageURLs: []string{"oci://registry.example.com/image:latest"}},
@@ -261,6 +306,9 @@ func TestDryRunImageReachability_UnsupportedScheme(t *testing.T) {
 	if result.Status != DryRunFail {
 		t.Errorf("got %s, want fail for unsupported scheme: %s", result.Status, result.Message)
 	}
+	if !strings.Contains(result.Message, "ftp") {
+		t.Errorf("expected unsupported scheme in message, got %q", result.Message)
+	}
 }
 
 func TestDryRunImageReachability_InvalidURL(t *testing.T) {
@@ -301,22 +349,26 @@ func TestDryRunImageChecksum(t *testing.T) {
 		name         string
 		checksum     string
 		checksumType string
+		cfg          *config.MachineConfig
 		expect       DryRunStatus
 	}{
-		{"no checksum", "", "", DryRunWarn},
-		{"sha256", "abc123", "sha256", DryRunPass},
-		{"sha512", "abc123", "sha512", DryRunPass},
-		{"uppercase type", "abc123", "SHA512", DryRunPass},
-		{"trimmed uppercase type", "abc123", " SHA256 ", DryRunPass},
-		{"empty type defaults to sha256", "abc123", "", DryRunPass},
-		{"unsupported type", "abc123", "md5", DryRunFail},
+		{"no checksum", "", "", nil, DryRunWarn},
+		{"sha256", "abc123", "sha256", nil, DryRunPass},
+		{"sha512", "abc123", "sha512", nil, DryRunPass},
+		{"uppercase type", "abc123", "SHA512", nil, DryRunPass},
+		{"trimmed uppercase type", "abc123", " SHA256 ", nil, DryRunPass},
+		{"empty type defaults to sha256", "abc123", "", nil, DryRunPass},
+		{"unsupported type", "abc123", "md5", nil, DryRunFail},
+		{"layout-only skips checksum", "", "", &config.MachineConfig{PartitionLayout: &config.PartitionLayout{Table: "gpt", Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}}}}, DryRunWarn},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := &config.MachineConfig{
-				ImageChecksum:     tc.checksum,
-				ImageChecksumType: tc.checksumType,
+			cfg := tc.cfg
+			if cfg == nil {
+				cfg = &config.MachineConfig{}
 			}
+			cfg.ImageChecksum = tc.checksum
+			cfg.ImageChecksumType = tc.checksumType
 			o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
 			result := o.dryRunImageChecksum(context.Background())
 			if result.Status != tc.expect {
