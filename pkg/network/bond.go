@@ -43,6 +43,7 @@ func (b *BondMode) Setup(_ context.Context, cfg *Config) error {
 
 	bond := netlink.NewLinkBond(netlink.LinkAttrs{Name: "bond0"})
 	bond.Mode = mode
+	bond.Miimon = 100 // 100 ms link monitoring interval for failure detection
 	bond.LacpRate = netlink.BOND_LACP_RATE_FAST
 	bond.XmitHashPolicy = netlink.BOND_XMIT_HASH_POLICY_LAYER3_4
 
