@@ -122,6 +122,18 @@ func (o *OverlayTier) Setup(ctx context.Context) error {
 		return fmt.Errorf("BGP server not set: call SetBgpServer before Setup")
 	}
 
+	switch OverlayType(o.cfg.OverlayType) {
+	case OverlayNone:
+		o.log.Info("overlay type is none, skipping overlay setup")
+		return nil
+	case OverlayL3VPN:
+		return fmt.Errorf("overlay type %q is not yet implemented", o.cfg.OverlayType)
+	case OverlayEVPNVXLAN:
+		// default — continue with EVPN-VXLAN setup below
+	default:
+		return fmt.Errorf("unknown overlay type %q", o.cfg.OverlayType)
+	}
+
 	if err := o.createVXLANAndBridge(); err != nil {
 		return fmt.Errorf("create VXLAN/bridge: %w", err)
 	}
