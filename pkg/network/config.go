@@ -101,7 +101,7 @@ func (c *Config) ApplyDefaults() {
 		c.MTU = 9000
 	}
 	if c.VRFTableID == 0 {
-		c.VRFTableID = 1
+		c.VRFTableID = 1000
 	}
 	// BFD is opt-in: only enabled when bfd_transmit_ms / bfd_receive_ms
 	// are explicitly set via environment variables.

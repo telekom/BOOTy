@@ -4,9 +4,11 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/vishvananda/netlink"
@@ -48,9 +50,13 @@ func (b *BondMode) Setup(_ context.Context, cfg *Config) error {
 	bond.XmitHashPolicy = netlink.BOND_XMIT_HASH_POLICY_LAYER3_4
 
 	if err := netlink.LinkAdd(bond); err != nil {
-		return fmt.Errorf("creating bond0: %w", err)
+		if !errors.Is(err, syscall.EEXIST) {
+			return fmt.Errorf("creating bond0: %w", err)
+		}
+		slog.Info("bond interface already exists, reusing", "name", "bond0")
+	} else {
+		slog.Info("created bond interface", "name", "bond0", "mode", mode)
 	}
-	slog.Info("Created bond interface", "name", "bond0", "mode", mode)
 
 	// Add slave interfaces.
 	for _, ifName := range strings.Split(cfg.BondInterfaces, ",") {

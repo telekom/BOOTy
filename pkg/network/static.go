@@ -4,9 +4,11 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
+	"syscall"
 	"time"
 
 	"github.com/vishvananda/netlink"
@@ -62,9 +64,12 @@ func (s *StaticMode) Setup(_ context.Context, cfg *Config) error {
 
 	// Assign the static IP.
 	if err := netlink.AddrAdd(link, addr); err != nil {
-		slog.Warn("Address may already exist", "iface", ifaceName, "addr", addr, "error", err)
+		if !errors.Is(err, syscall.EEXIST) {
+			return fmt.Errorf("assigning address to %s: %w", ifaceName, err)
+		}
+		slog.Info("address already assigned", "iface", ifaceName, "addr", addr)
 	}
-	slog.Info("Static IP configured", "iface", ifaceName, "address", cfg.StaticIP)
+	slog.Info("static IP configured", "iface", ifaceName, "address", cfg.StaticIP)
 
 	// Add default route via gateway.
 	if s.gateway != nil {
@@ -73,9 +78,12 @@ func (s *StaticMode) Setup(_ context.Context, cfg *Config) error {
 			Gw:        s.gateway,
 		}
 		if err := netlink.RouteAdd(route); err != nil {
-			slog.Warn("Default route may already exist", "gateway", s.gateway, "error", err)
+			if !errors.Is(err, syscall.EEXIST) {
+				return fmt.Errorf("adding default route via %s: %w", s.gateway, err)
+			}
+			slog.Info("default route already exists", "gateway", s.gateway)
 		}
-		slog.Info("Default route configured", "gateway", cfg.StaticGateway)
+		slog.Info("default route configured", "gateway", cfg.StaticGateway)
 	}
 
 	return nil
