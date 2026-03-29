@@ -100,7 +100,7 @@ func (h *RemoteHandler) WithGroup(name string) slog.Handler {
 
 // Close stops the background drain goroutine and flushes remaining logs.
 // It closes the buffer to signal drain to finish, then waits up to 5s.
-// If drain does not finish in time, the context is cancelled to abort
+// If drain does not finish in time, the context is canceled to abort
 // any in-flight HTTP requests.
 func (h *RemoteHandler) Close() {
 	h.once.Do(func() {
