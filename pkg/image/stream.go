@@ -95,7 +95,33 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 	fmt.Println()
 	slog.Info("Image written", "bytes", written, "device", device) //nolint:gosec // trusted config values
 
-	return verifyChecksum(h, opt)
+	if err := verifyChecksum(h, opt); err != nil {
+		slog.Error("checksum mismatch: wiping partition table to prevent booting corrupt image",
+			"device", device, "error", err)
+		wipeLeadingSectors(device)
+		return err
+	}
+	return nil
+}
+
+// wipeLeadingSectors zeroes the first 1 MiB of a device to invalidate the
+// partition table and filesystem superblocks after a failed checksum
+// verification. This is best-effort — errors are logged but not returned
+// because the real error (checksum mismatch) is already being propagated.
+func wipeLeadingSectors(device string) {
+	f, err := os.OpenFile(device, os.O_WRONLY, 0) //nolint:gosec // trusted config value
+	if err != nil {
+		slog.Warn("failed to open device for wipe", "device", device, "error", err)
+		return
+	}
+	defer f.Close() //nolint:errcheck // best-effort close
+	if _, err := f.Write(make([]byte, 1<<20)); err != nil {
+		slog.Warn("failed to wipe partition table", "device", device, "error", err)
+		return
+	}
+	if err := f.Sync(); err != nil {
+		slog.Warn("failed to sync wipe", "device", device, "error", err)
+	}
 }
 
 // convertQCOW2Hook is set by the linux build to call ConvertQCOW2.
