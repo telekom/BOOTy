@@ -1,6 +1,6 @@
 # Proposal: Full LUKS Disk Encryption
 
-## Status: Phase 1 Implemented (PR #44)
+## Status: In Progress (library implemented in pkg/disk/luks — orchestrator integration pending)
 
 ## Priority: P1
 
