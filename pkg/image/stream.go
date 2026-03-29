@@ -9,11 +9,25 @@ import (
 	"hash"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 )
+
+// imageHTTPClient is the HTTP client used for image downloads.
+// It sets connect and TLS timeouts to prevent hanging on broken connections
+// while leaving the response body read timeout unlimited (for large images).
+var imageHTTPClient = &http.Client{
+	Transport: &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+	},
+}
 
 // StreamOpts are optional parameters for Stream.
 type StreamOpts struct {
@@ -175,7 +189,7 @@ func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 			return nil, fmt.Errorf("creating request: %w", err)
 		}
 
-		resp, err := http.DefaultClient.Do(req) //nolint:gosec // URL from trusted config
+		resp, err := imageHTTPClient.Do(req) //nolint:gosec // URL from trusted config
 		if err != nil {
 			lastErr = fmt.Errorf("fetching image (attempt %d/%d): %w", attempt+1, maxRetries, err)
 			slog.Warn("HTTP request failed, retrying", "attempt", attempt+1, "error", err, "backoff", backoff)

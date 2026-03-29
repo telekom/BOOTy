@@ -128,12 +128,13 @@ func TestNginxStaticContentThroughFabric(t *testing.T) {
 func TestImageDownloadThroughFabric(t *testing.T) {
 	requireNetworkLab(t)
 
-	body := wgetFromClient(t, "http://10.100.0.10/images/test.img")
-	expected := "BOOTY-TEST-IMAGE-CONTENT-e2e-verification-payload"
-	if !strings.Contains(body, expected) {
-		t.Fatalf("image content mismatch:\nexpected: %s\ngot: %s", expected, body)
+	// Verify test image is served through EVPN overlay by checking the nginx
+	// directory listing — avoids downloading the full 256 MiB GPT image.
+	body := wgetFromClient(t, "http://10.100.0.10/images/")
+	if !strings.Contains(body, "test.img.gz") {
+		t.Fatalf("test.img.gz not found in image listing:\n%s", body)
 	}
-	t.Log("test image downloaded through EVPN fabric")
+	t.Log("test image available through EVPN fabric")
 }
 
 func TestCAPRFStatusReportingThroughFabric(t *testing.T) {

@@ -351,7 +351,7 @@ func TestVrnetlabNginxReceivedImageRequest(t *testing.T) {
 func TestVrnetlabCAPRFMockReceivedErrorFromProvision(t *testing.T) {
 	requireVrnetlabLab(t)
 
-	out, ok := waitForVMAccessLog(t, vmCAPRF, "/var/log/nginx/access.log", "/status/error", 180*time.Second)
+	out, ok := waitForVMAccessLog(t, vmCAPRF, "/var/log/nginx/access.log", "/status/error", 900*time.Second)
 	if !ok {
 		t.Logf("CAPRF access log:\n%s", out)
 		t.Fatal("CAPRF mock did not receive /status/error — provision should fail at disk ops")

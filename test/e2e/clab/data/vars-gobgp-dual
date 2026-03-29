@@ -1,4 +1,4 @@
-export IMAGE="http://10.100.0.10/images/test.img"
+export IMAGE="http://10.100.0.10/images/test.img.gz"
 export HOSTNAME="booty-gobgp-dual-e2e"
 export TOKEN="e2e-fabric-token"
 export MODE="standby"

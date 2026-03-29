@@ -8,6 +8,10 @@ images/*
 coverage.out
 coverage.html
 
+# Generated E2E test disk images (created by create-test-image.sh)
+test/e2e/clab/images/test.img
+test/e2e/clab/images/test.img.gz
+
 # IDE
 .idea/
 .vscode/

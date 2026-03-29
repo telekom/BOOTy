@@ -420,6 +420,9 @@ jobs:
         with:
           go-version: "1.26"
 
+      - name: Generate test disk image
+        run: sudo test/e2e/clab/create-test-image.sh test/e2e/clab/images
+
       - name: Install ContainerLab
         run: curl -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}
 
@@ -752,6 +755,9 @@ jobs:
       - name: Build BOOTy test container image
         run: docker build -t booty-test:latest -f test/e2e/clab/booty-test.Dockerfile .
 
+      - name: Generate test disk image
+        run: sudo test/e2e/clab/create-test-image.sh test/e2e/clab/images
+
       - name: Install ContainerLab
         run: curl -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}
 
@@ -774,7 +780,7 @@ jobs:
           exit 1
 
       - name: Run BOOTy boot E2E tests
-        run: go test -tags e2e_boot -v -race -count=1 -timeout 20m ./test/e2e/integration/...
+        run: go test -tags e2e_boot -v -race -count=1 -timeout 30m ./test/e2e/integration/...
 
       - name: Collect BOOTy container logs
         if: always()
@@ -945,6 +951,9 @@ jobs:
       - name: Build BOOTy vrnetlab VM image
         run: docker build -t booty-vrnetlab:latest -f test/e2e/clab/vrnetlab/Dockerfile .
 
+      - name: Generate test disk image
+        run: sudo test/e2e/clab/create-test-image.sh test/e2e/clab/images
+
       - name: Install ContainerLab
         run: curl -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}
 
@@ -982,7 +991,7 @@ jobs:
           exit 1
 
       - name: Run vrnetlab EVPN E2E tests
-        run: go test -tags e2e_vrnetlab -v -race -count=1 -timeout 20m ./test/e2e/integration/...
+        run: go test -tags e2e_vrnetlab -v -race -count=1 -timeout 30m ./test/e2e/integration/...
 
       - name: Collect vrnetlab logs
         if: always()

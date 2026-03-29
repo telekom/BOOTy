@@ -1,7 +1,8 @@
 # Test container that runs BOOTy in CAPRF mode inside containerlab.
 # BOOTy is built from source and runs as a regular process (not PID 1 init).
-# Mount/device setup will fail gracefully. It will reach CAPRF, report init,
-# then fail at disk operations (expected in container context).
+# With a real GPT disk image (created by create-test-image.sh), provisioning
+# progresses through stream-image, partprobe, parse-partitions, mount-root,
+# and fails at grow-partition (growpart not available in Alpine).
 FROM golang:1.26-alpine AS builder
 RUN apk add --no-cache git ca-certificates gcc linux-headers musl-dev
 COPY go.mod go.sum /go/src/github.com/telekom/BOOTy/
