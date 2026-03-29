@@ -118,10 +118,6 @@ func (o *OverlayTier) SetBgpServer(s *server.BgpServer) {
 // Incoming Type-5 routes from the fabric are installed as kernel routes
 // by watchRoutes. VRF creation is handled by the stack before setup.
 func (o *OverlayTier) Setup(ctx context.Context) error {
-	if o.bgp == nil {
-		return fmt.Errorf("BGP server not set: call SetBgpServer before Setup")
-	}
-
 	switch OverlayType(o.cfg.OverlayType) {
 	case OverlayNone:
 		o.log.Info("overlay type is none, skipping overlay setup")
@@ -132,6 +128,10 @@ func (o *OverlayTier) Setup(ctx context.Context) error {
 		// default — continue with EVPN-VXLAN setup below
 	default:
 		return fmt.Errorf("unknown overlay type %q", o.cfg.OverlayType)
+	}
+
+	if o.bgp == nil {
+		return fmt.Errorf("BGP server not set: call SetBgpServer before Setup")
 	}
 
 	if err := o.createVXLANAndBridge(); err != nil {
