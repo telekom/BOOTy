@@ -34,9 +34,15 @@ func (s *SystemdBoot) ListEntries(rootPath string) ([]BootEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bootctl list: %s: %w", strings.TrimSpace(string(out)), err)
 	}
+	return parseBootctlOutput(string(out)), nil
+}
+
+// parseBootctlOutput parses the text output of bootctl list into BootEntry
+// structs. Each entry block starts with a "title:" line.
+func parseBootctlOutput(output string) []BootEntry {
 	var entries []BootEntry
 	var current BootEntry
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		switch {
 		case strings.HasPrefix(line, "title:"):
@@ -55,7 +61,7 @@ func (s *SystemdBoot) ListEntries(rootPath string) ([]BootEntry, error) {
 	if current.Title != "" {
 		entries = append(entries, current)
 	}
-	return entries, nil
+	return entries
 }
 
 // SetDefault sets the default boot entry via bootctl.
