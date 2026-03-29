@@ -102,7 +102,7 @@ func restartContainer(t *testing.T, container string) {
 	// Wait for BOOTy to start inside the container.
 	for i := 0; i < 30; i++ {
 		logs := getBootyLogs(t, container)
-		if strings.Contains(logs, "Starting BOOTy") {
+		if strings.Contains(logs, "starting BOOTy") {
 			t.Logf("Container %s restarted and BOOTy started", container)
 			return
 		}
@@ -228,7 +228,7 @@ func TestBootProvisionStartsAndReportsInit(t *testing.T) {
 	requireBootLab(t)
 
 	// Wait for BOOTy to produce its startup banner
-	if !waitForLogEntry(t, provisionContainer, "Starting BOOTy", 60*time.Second) {
+	if !waitForLogEntry(t, provisionContainer, "starting BOOTy", 60*time.Second) {
 		logs := getBootyLogs(t, provisionContainer)
 		t.Fatalf("provision node did not start BOOTy within 60s\nFull logs:\n%s", logs)
 	}
@@ -258,7 +258,7 @@ func TestBootProvisionStartsAndReportsInit(t *testing.T) {
 func TestBootDeprovisionStartsAndReportsInit(t *testing.T) {
 	requireBootLab(t)
 
-	if !waitForLogEntry(t, deprovisionContainer, "Starting BOOTy", 60*time.Second) {
+	if !waitForLogEntry(t, deprovisionContainer, "starting BOOTy", 60*time.Second) {
 		logs := getBootyLogs(t, deprovisionContainer)
 		t.Fatalf("deprovision node did not start BOOTy within 60s\nFull logs:\n%s", logs)
 	}
@@ -280,7 +280,7 @@ func TestBootDeprovisionStartsAndReportsInit(t *testing.T) {
 func TestBootStandbyEntersStandbyLoop(t *testing.T) {
 	requireBootLab(t)
 
-	if !waitForLogEntry(t, standbyContainer, "Starting BOOTy", 60*time.Second) {
+	if !waitForLogEntry(t, standbyContainer, "starting BOOTy", 60*time.Second) {
 		logs := getBootyLogs(t, standbyContainer)
 		t.Fatalf("standby node did not start BOOTy within 60s\nFull logs:\n%s", logs)
 	}

@@ -214,7 +214,7 @@ func TestVrnetlabClientReachesCAPRFThroughEVPN(t *testing.T) {
 func TestVrnetlabVMBootStarted(t *testing.T) {
 	requireVrnetlabLab(t)
 
-	if !waitForVMLog(t, vmProvision, "Starting BOOTy", 120*time.Second) {
+	if !waitForVMLog(t, vmProvision, "starting BOOTy", 120*time.Second) {
 		logs := getVMSerialLog(t, vmProvision)
 		t.Fatalf("provision VM did not start BOOTy within 120s\nSerial log:\n%s", logs)
 	}
@@ -224,8 +224,8 @@ func TestVrnetlabVMBootStarted(t *testing.T) {
 func TestVrnetlabVMMountsSuccessful(t *testing.T) {
 	requireVrnetlabLab(t)
 
-	// BOOTy logs "Beginning provisioning process" after setupMountsAndDevices() and loadModules() complete
-	if !waitForVMLog(t, vmProvision, "Beginning provisioning process", 120*time.Second) {
+	// BOOTy logs "beginning provisioning process" after setupMountsAndDevices() and loadModules() complete
+	if !waitForVMLog(t, vmProvision, "beginning provisioning process", 120*time.Second) {
 		logs := getVMSerialLog(t, vmProvision)
 		t.Fatalf("provision VM did not reach provisioning stage (mounts may have failed)\n%s", logs)
 	}
@@ -371,7 +371,7 @@ func TestVrnetlabProvisionFullLifecycleViaEVPN(t *testing.T) {
 		timeout time.Duration
 		desc    string
 	}{
-		{"Starting BOOTy", 120 * time.Second, "BOOTy started as PID 1"},
+		{"starting BOOTy", 120 * time.Second, "BOOTy started as PID 1"},
 		{"CAPRF mode active", 60 * time.Second, "CAPRF mode detected from /deploy/vars"},
 		{"Using FRR/EVPN network mode", 30 * time.Second, "FRR/EVPN network mode active"},
 		{"report-init", 60 * time.Second, "init reported to CAPRF through EVPN"},
@@ -403,7 +403,7 @@ func TestVrnetlabProvisionFullLifecycleViaEVPN(t *testing.T) {
 func TestVrnetlabDeprovisionFullLifecycleViaEVPN(t *testing.T) {
 	requireVrnetlabLab(t)
 
-	if !waitForVMLog(t, vmDeprovision, "Starting BOOTy", 120*time.Second) {
+	if !waitForVMLog(t, vmDeprovision, "starting BOOTy", 120*time.Second) {
 		logs := getVMSerialLog(t, vmDeprovision)
 		t.Fatalf("deprovision VM did not start BOOTy\n%s", logs)
 	}
@@ -434,7 +434,7 @@ func TestVrnetlabDeprovisionFullLifecycleViaEVPN(t *testing.T) {
 func TestVrnetlabStandbyFullLifecycleViaEVPN(t *testing.T) {
 	requireVrnetlabLab(t)
 
-	if !waitForVMLog(t, vmStandby, "Starting BOOTy", 120*time.Second) {
+	if !waitForVMLog(t, vmStandby, "starting BOOTy", 120*time.Second) {
 		logs := getVMSerialLog(t, vmStandby)
 		t.Fatalf("standby VM did not start BOOTy\n%s", logs)
 	}
@@ -544,7 +544,7 @@ func TestVrnetlabAllVMsBootSuccessfully(t *testing.T) {
 		vm := vm
 		t.Run(vm.desc, func(t *testing.T) {
 			t.Parallel()
-			if !waitForVMLog(t, vm.container, "Starting BOOTy", 120*time.Second) {
+			if !waitForVMLog(t, vm.container, "starting BOOTy", 120*time.Second) {
 				logs := getVMSerialLog(t, vm.container)
 				t.Fatalf("%s VM did not start BOOTy\n%s", vm.desc, logs)
 			}
@@ -607,7 +607,7 @@ func TestVrnetlabModulesLoaded(t *testing.T) {
 		t.Fatalf("serial log for %s is empty; cannot verify required kernel modules (check docker logs / VM state)", vmProvision)
 	}
 
-	const provisioningMarker = "Beginning provisioning"
+	const provisioningMarker = "beginning provisioning"
 	if !strings.Contains(logs, provisioningMarker) {
 		t.Skipf("serial log for %s does not contain %q; skipping module load verification", vmProvision, provisioningMarker)
 	}
