@@ -48,6 +48,34 @@ func (m *mockCommander) setResult(key string, output []byte, err error) {
 	m.results[key] = mockResult{output: output, err: err}
 }
 
+// makeExitError creates an *exec.ExitError with the given exit code.
+func makeExitError(code int) error {
+	err := exec.Command("sh", "-c", fmt.Sprintf("exit %d", code)).Run()
+	return err
+}
+
+func TestExitCodeFromError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected int
+	}{
+		{"exit 1", makeExitError(1), 1},
+		{"exit 4", makeExitError(4), 4},
+		{"exit 8", makeExitError(8), 8},
+		{"plain error", fmt.Errorf("not an exit error"), -1},
+		{"wrapped exit error", fmt.Errorf("wrapped: %w", makeExitError(4)), 4},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := exitCodeFromError(tt.err)
+			if got != tt.expected {
+				t.Errorf("exitCodeFromError() = %d, want %d", got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestNewManagerDefault(t *testing.T) {
 	mgr := NewManager(nil)
 	if mgr == nil {
@@ -439,15 +467,92 @@ func TestPartProbeFallback(t *testing.T) {
 	}
 }
 
-func TestCheckFilesystem(t *testing.T) {
-	cmd := newMockCommander()
-	mgr := NewManager(cmd)
+func TestSecureEraseSATA(t *testing.T) {
+	t.Run("erase succeeds", func(t *testing.T) {
+		cmd := newMockCommander()
+		mgr := NewManager(cmd)
+		cmd.setResult("hdparm -I", []byte("Security:\n  supported"), nil)
+		if err := mgr.secureEraseSATA(context.Background(), "/dev/sda"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
 
-	// e2fsck always returns nil even on error (by design).
-	cmd.setResult("e2fsck -fy", nil, fmt.Errorf("exit 1"))
-	if err := mgr.CheckFilesystem(context.Background(), "/dev/sda2"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	t.Run("no security support falls back to wipefs", func(t *testing.T) {
+		cmd := newMockCommander()
+		mgr := NewManager(cmd)
+		cmd.setResult("hdparm -I", []byte("no security here"), nil)
+		if err := mgr.secureEraseSATA(context.Background(), "/dev/sda"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("set-pass failure returns error", func(t *testing.T) {
+		cmd := newMockCommander()
+		mgr := NewManager(cmd)
+		cmd.setResult("hdparm -I", []byte("Security:\n  supported"), nil)
+		cmd.setResult("hdparm --user-master", nil, fmt.Errorf("set-pass failed"))
+		err := mgr.secureEraseSATA(context.Background(), "/dev/sda")
+		if err == nil {
+			t.Fatal("expected error when set-pass fails")
+		}
+		if !strings.Contains(err.Error(), "failed to set security password") {
+			t.Fatalf("error should mention security password: %v", err)
+		}
+	})
+
+	t.Run("frozen drive falls back to wipefs", func(t *testing.T) {
+		cmd := newMockCommander()
+		mgr := NewManager(cmd)
+		cmd.setResult("hdparm -I", []byte("Security:\n  frozen"), nil)
+		if err := mgr.secureEraseSATA(context.Background(), "/dev/sda"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestCheckFilesystem(t *testing.T) {
+	t.Run("exit 0 clean", func(t *testing.T) {
+		cmd := newMockCommander()
+		mgr := NewManager(cmd)
+		if err := mgr.CheckFilesystem(context.Background(), "/dev/sda2"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("exit 1 errors corrected", func(t *testing.T) {
+		cmd := newMockCommander()
+		mgr := NewManager(cmd)
+		exitErr := makeExitError(1)
+		cmd.setResult("e2fsck -fy", nil, exitErr)
+		if err := mgr.CheckFilesystem(context.Background(), "/dev/sda2"); err != nil {
+			t.Fatalf("exit code 1 should be acceptable: %v", err)
+		}
+	})
+
+	t.Run("exit 4 uncorrectable", func(t *testing.T) {
+		cmd := newMockCommander()
+		mgr := NewManager(cmd)
+		exitErr := makeExitError(4)
+		cmd.setResult("e2fsck -fy", nil, exitErr)
+		err := mgr.CheckFilesystem(context.Background(), "/dev/sda2")
+		if err == nil {
+			t.Fatal("expected error for exit code 4 (uncorrectable)")
+		}
+		if !strings.Contains(err.Error(), "uncorrectable") {
+			t.Fatalf("error should mention uncorrectable: %v", err)
+		}
+	})
+
+	t.Run("exit 8 operational failure", func(t *testing.T) {
+		cmd := newMockCommander()
+		mgr := NewManager(cmd)
+		exitErr := makeExitError(8)
+		cmd.setResult("e2fsck -fy", nil, exitErr)
+		err := mgr.CheckFilesystem(context.Background(), "/dev/sda2")
+		if err == nil {
+			t.Fatal("expected error for exit code 8")
+		}
+	})
 }
 
 func TestEnableLVM(t *testing.T) {

@@ -192,8 +192,9 @@ func (m *Manager) secureEraseSATA(ctx context.Context, dev string) error {
 		slog.Warn("ATA security erase failed", "device", dev, "output", string(out))
 		// Clear the password we just set.
 		if out2, err2 := m.cmd.Run(ctx, "hdparm", "--user-master", "u", "--security-disable", "Erase", dev); err2 != nil {
-			slog.Warn("Failed to clear security password", "device", dev, "output", string(out2))
+			slog.Warn("failed to clear security password", "device", dev, "output", string(out2))
 		}
+		return fmt.Errorf("%s: ATA security erase failed: %w", dev, err)
 	}
 	return nil
 }
@@ -576,16 +577,29 @@ func (m *Manager) Unmount(target string) error {
 	return nil
 }
 
+// exitCodeFromError extracts the process exit code from an error chain.
+// Returns -1 if no exit code is found.
+func exitCodeFromError(err error) int {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return -1
+}
+
 // CheckFilesystem runs e2fsck on the device.
+// Exit codes 0 (clean) and 1 (errors corrected) are acceptable.
+// Exit code >= 4 indicates uncorrectable errors and returns an error.
 func (m *Manager) CheckFilesystem(ctx context.Context, device string) error {
-	slog.Info("Checking filesystem", "device", device)
+	slog.Info("checking filesystem", "device", device)
 	out, err := m.cmd.Run(ctx, "e2fsck", "-fy", device)
 	if err != nil {
-		slog.Warn("e2fsck returned non-zero (may have fixed errors)", "device", device, "output", string(out))
+		exitCode := exitCodeFromError(err)
+		if exitCode >= 4 {
+			return fmt.Errorf("e2fsck: uncorrectable filesystem errors on %s (exit %d): %w", device, exitCode, err)
+		}
+		slog.Warn("e2fsck returned non-zero (errors corrected)", "device", device, "exit_code", exitCode, "output", string(out))
 	}
-	// e2fsck exit codes 0 (clean) and 1 (errors corrected) are acceptable.
-	// Higher exit codes indicate uncorrected errors, but since -fy forces repair,
-	// any remaining error is already logged as a warning above.
 	return nil
 }
 
