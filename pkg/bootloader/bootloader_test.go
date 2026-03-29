@@ -67,9 +67,9 @@ func TestSystemdBootConfigure_NoOp(t *testing.T) {
 
 func TestParseBootctlOutput(t *testing.T) {
 	tests := []struct {
-		name string
+		name   string
 		output string
-		want int
+		want   int
 	}{
 		{
 			name:   "empty output",
