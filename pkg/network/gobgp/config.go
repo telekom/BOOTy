@@ -63,6 +63,8 @@ type Config struct {
 	OverlayType string
 	// Policy configures BGP import/export communities and route attributes.
 	Policy *PolicyConfig
+	// GracefulRestart configures BGP graceful restart behavior.
+	GracefulRestart *GracefulRestartConfig
 }
 
 // NewConfig creates a GoBGP Config from network configuration.
