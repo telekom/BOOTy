@@ -394,6 +394,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"RESCUE_MODE":                 &cfg.RescueMode,
 		"RESCUE_SSH_PUBKEY":           &cfg.RescueSSHPubKey,
 		"RESCUE_PASSWORD_HASH":        &cfg.RescuePasswordHash,
+		"CLOUDINIT_DATASOURCE":        &cfg.CloudInitDatasource,
 		"BGP_PEER_MODE":               &cfg.BGPPeerMode,
 		"BGP_NEIGHBORS":               &cfg.BGPNeighbors,
 		"IMAGE_CHECKSUM":              &cfg.ImageChecksum,
@@ -483,6 +484,8 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) bool {
 		cfg.FirmwareEnabled = parseBoolVar(value)
 	case "HEALTH_CHECKS_ENABLED":
 		cfg.HealthChecksEnabled = parseBoolVar(value)
+	case "CLOUDINIT_ENABLED":
+		cfg.CloudInitEnabled = parseBoolVar(value)
 	case "HEALTH_MIN_MEMORY_GB":
 		setIntField(&cfg.HealthMinMemoryGB, value)
 	case "HEALTH_MIN_CPUS":

@@ -479,9 +479,9 @@ func TestProvisionStepsContainEFIVars(t *testing.T) {
 		t.Errorf("mount-efivarfs (idx %d) must come before remove-efi-entries (idx %d)", mountIdx, removeIdx)
 	}
 
-	// Verify total step count is 34 (30 original + mount-efivarfs + verify-image + apply-partition-layout + partprobe).
-	if len(steps) != 34 {
-		t.Errorf("expected 34 provisioning steps, got %d", len(steps))
+	// Verify total step count is 35 (includes inject-cloudinit + apply-partition-layout + partprobe).
+	if len(steps) != 35 {
+		t.Errorf("expected 35 provisioning steps, got %d", len(steps))
 	}
 }
 

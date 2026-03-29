@@ -1188,3 +1188,20 @@ func TestParseVarsRescueMode(t *testing.T) {
 		t.Error("RescueAutoMountDisks = false, want true")
 	}
 }
+
+func TestParseVarsCloudInitConfig(t *testing.T) {
+	input := strings.Join([]string{
+		`CLOUDINIT_ENABLED="true"`,
+		`CLOUDINIT_DATASOURCE="nocloud"`,
+	}, "\n")
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.CloudInitEnabled {
+		t.Error("CloudInitEnabled should be true")
+	}
+	if cfg.CloudInitDatasource != "nocloud" {
+		t.Errorf("CloudInitDatasource = %q, want nocloud", cfg.CloudInitDatasource)
+	}
+}

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/telekom/BOOTy/pkg/cloudinit"
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/executil"
@@ -95,6 +96,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"resize-filesystem", o.resizeFilesystem},
 		{"configure-kubelet", o.configureKubelet},
 		{"configure-grub", o.configureGRUB},
+		{"inject-cloudinit", o.injectCloudInit},
 		{"copy-machine-files", o.copyMachineFiles},
 		{"run-machine-commands", o.runMachineCommands},
 		{"run-post-provision-cmds", o.runPostProvisionCmds},
@@ -702,6 +704,64 @@ func (o *Orchestrator) configureKubelet(_ context.Context) error {
 
 func (o *Orchestrator) configureGRUB(ctx context.Context) error {
 	return o.config.ConfigureGRUB(ctx, o.cfg)
+}
+
+func (o *Orchestrator) injectCloudInit(_ context.Context) error {
+	if !o.cfg.CloudInitEnabled {
+		return nil
+	}
+
+	// Validate datasource — only NoCloud is supported.
+	ds := strings.ToLower(strings.TrimSpace(o.cfg.CloudInitDatasource))
+	if ds == "" {
+		ds = "nocloud"
+	}
+	if ds != "nocloud" {
+		return fmt.Errorf("unsupported cloud-init datasource %q, only \"nocloud\" is supported", ds)
+	}
+
+	// Split bond interfaces, trimming spaces and filtering empty entries.
+	var bondIfaces []string
+	for _, iface := range strings.Split(o.cfg.BondInterfaces, ",") {
+		if s := strings.TrimSpace(iface); s != "" {
+			bondIfaces = append(bondIfaces, s)
+		}
+	}
+
+	// Parse DNS resolvers, trimming spaces and filtering empty entries.
+	var dns []string
+	for _, r := range strings.Split(o.cfg.DNSResolvers, ",") {
+		if s := strings.TrimSpace(r); s != "" {
+			dns = append(dns, s)
+		}
+	}
+
+	// Cloud-init expects a stable, non-empty instance-id for first-boot identity.
+	instanceID := strings.TrimSpace(o.cfg.ProviderID)
+	if instanceID == "" {
+		instanceID = strings.TrimSpace(o.cfg.Hostname)
+	}
+	if instanceID == "" {
+		instanceID = "booty"
+	}
+
+	ciCfg := &cloudinit.Config{
+		Hostname:   o.cfg.Hostname,
+		InstanceID: instanceID,
+		StaticIP:   o.cfg.StaticIP,
+		Gateway:    o.cfg.StaticGateway,
+		BondIfaces: bondIfaces,
+		BondMode:   o.cfg.BondMode,
+		DNS:        dns,
+	}
+
+	ud, md, nc := cloudinit.Generate(ciCfg)
+	rootPath := o.config.rootDir
+	if err := cloudinit.InjectNoCloud(rootPath, ud, md, nc); err != nil {
+		return fmt.Errorf("inject cloud-init: %w", err)
+	}
+	o.log.Info("cloud-init nocloud seed injected", "root", rootPath)
+	return nil
 }
 
 func (o *Orchestrator) copyMachineFiles(_ context.Context) error {

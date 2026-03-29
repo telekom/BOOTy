@@ -6,9 +6,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
+	"github.com/telekom/BOOTy/pkg/cloudinit"
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
 )
@@ -32,8 +37,8 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 34 {
-		t.Fatalf("expected 34 provisioning steps, got %d", len(steps))
+	if len(steps) != 35 {
+		t.Fatalf("expected 35 provisioning steps, got %d", len(steps))
 	}
 }
 
@@ -784,5 +789,137 @@ func TestResizeFilesystemSkippedForPartitionLayout(t *testing.T) {
 	}
 	if len(cmd.calls) != 0 {
 		t.Fatalf("expected no commands when resize-filesystem is skipped, got %d", len(cmd.calls))
+	}
+}
+
+func TestInjectCloudInit_Disabled(t *testing.T) {
+	cfg := &config.MachineConfig{CloudInitEnabled: false}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	if err := o.injectCloudInit(context.Background()); err != nil {
+		t.Fatalf("expected no error when CloudInit disabled, got %v", err)
+	}
+}
+
+func TestInjectCloudInit_UnsupportedDatasource(t *testing.T) {
+	cfg := &config.MachineConfig{
+		CloudInitEnabled:    true,
+		CloudInitDatasource: "openstack",
+	}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	err := o.injectCloudInit(context.Background())
+	if err == nil {
+		t.Fatal("expected error for unsupported datasource")
+	}
+	if !strings.Contains(err.Error(), "unsupported") {
+		t.Errorf("expected 'unsupported' in error, got %v", err)
+	}
+}
+
+func TestInjectCloudInit_NoCloudInject(t *testing.T) {
+	cfg := &config.MachineConfig{
+		CloudInitEnabled:    true,
+		CloudInitDatasource: "nocloud",
+		Hostname:            "test-host",
+	}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	if err := o.injectCloudInit(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify the seed files were created under rootDir.
+	seedDir := filepath.Join(o.config.rootDir, "var", "lib", "cloud", "seed", "nocloud")
+	for _, name := range []string{"user-data", "meta-data", "network-config"} {
+		if _, err := os.Stat(filepath.Join(seedDir, name)); err != nil {
+			t.Errorf("expected seed file %s to exist: %v", name, err)
+		}
+	}
+}
+
+func TestInjectCloudInit_DefaultDatasourceAndStableInstanceID(t *testing.T) {
+	cfg := &config.MachineConfig{
+		CloudInitEnabled: true,
+		Hostname:         "test-host",
+		ProviderID:       "redfish://bmc.example/Systems/1",
+	}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	if err := o.injectCloudInit(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	metaPath := filepath.Join(o.config.rootDir, "var", "lib", "cloud", "seed", "nocloud", "meta-data")
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("read meta-data: %v", err)
+	}
+	if !strings.Contains(string(data), "instance-id: redfish://bmc.example/Systems/1") {
+		t.Fatalf("meta-data missing stable instance-id, got: %s", string(data))
+	}
+}
+
+func TestInjectCloudInit_DatasourceCaseInsensitiveAndTrimmed(t *testing.T) {
+	cfg := &config.MachineConfig{
+		CloudInitEnabled:    true,
+		CloudInitDatasource: " NoCloud ",
+		Hostname:            "test-host",
+	}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	if err := o.injectCloudInit(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestInjectCloudInit_TrimmedBondAndDNSValues(t *testing.T) {
+	cfg := &config.MachineConfig{
+		CloudInitEnabled:    true,
+		CloudInitDatasource: "nocloud",
+		Hostname:            "test-host",
+		StaticIP:            "10.0.0.10/24",
+		StaticGateway:       "10.0.0.1",
+		BondInterfaces:      "eth0, eth1, ,",
+		BondMode:            "802.3ad",
+		DNSResolvers:        "8.8.8.8, 1.1.1.1, ,",
+	}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	if err := o.injectCloudInit(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	netPath := filepath.Join(o.config.rootDir, "var", "lib", "cloud", "seed", "nocloud", "network-config")
+	data, err := os.ReadFile(netPath)
+	if err != nil {
+		t.Fatalf("read network-config: %v", err)
+	}
+
+	var nc cloudinit.NetworkConfig
+	if err := yaml.Unmarshal(data, &nc); err != nil {
+		t.Fatalf("unmarshal network-config: %v", err)
+	}
+
+	bond, ok := nc.Bonds["bond0"]
+	if !ok {
+		t.Fatal("expected bond0 in network-config")
+	}
+	if len(bond.Interfaces) != 2 || bond.Interfaces[0] != "eth0" || bond.Interfaces[1] != "eth1" {
+		t.Fatalf("unexpected bond interfaces: %v", bond.Interfaces)
+	}
+	if bond.Nameservers == nil || len(bond.Nameservers.Addresses) != 2 {
+		t.Fatalf("unexpected nameservers: %+v", bond.Nameservers)
+	}
+	for _, addr := range bond.Nameservers.Addresses {
+		if strings.TrimSpace(addr) != addr {
+			t.Fatalf("nameserver has whitespace: %q", addr)
+		}
 	}
 }

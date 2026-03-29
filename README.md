@@ -6,11 +6,13 @@
 
 A lightweight initramfs agent for bare-metal OS provisioning over the network.
 
-BOOTy boots as the init process inside a minimal initramfs, contacts a provisioning server, and orchestrates the full lifecycle of a bare-metal machine: disk imaging, OS configuration, network setup, and reboot. It uses **CAPRF** (Cluster API Provider Redfish) for Kubernetes cluster provisioning.
+BOOTy boots as the init process inside a minimal initramfs, contacts a provisioning server, and orchestrates the full lifecycle of a bare-metal machine: disk imaging, OS configuration, network setup, and reboot. It supports two operating modes — **CAPRF integration** for Kubernetes cluster provisioning and **legacy mode** for standalone image deployment.
 
 > **Warning** — This software has **no guard rails**. Incorrect use can overwrite an existing Operating System.
 
 ## Architecture
+
+BOOTy operates in two modes depending on the boot environment:
 
 ### CAPRF Mode (Cluster API Provider Redfish)
 
@@ -31,10 +33,30 @@ BOOTy boots as the init process inside a minimal initramfs, contacts a provision
 1. A Redfish BMC mounts an ISO containing a kernel, BOOTy initramfs, and `/deploy/vars` config.
 2. BOOTy reads `/deploy/vars` for machine config, image URLs, and CAPRF server endpoints.
 3. Network connectivity is established via **FRR/EVPN** (BGP underlay) or **DHCP** fallback.
-4. The provisioning pipeline runs 32 steps: status reporting → RAID cleanup → disk detection → EFI setup → image verification (signature/checksum) → image streaming → partition management → OS configuration → kexec.
+4. The provisioning pipeline runs 31 steps: status reporting → RAID cleanup → disk detection → image streaming → partition management → OS configuration → cloud-init injection → kexec.
 5. Status, logs, and debug info are shipped back to the CAPRF controller throughout.
 
+### Legacy Mode
+
+```
+┌──────────────┐         ┌──────────────────┐
+│  PXE / iPXE  │────────▶│   BOOTy initrd   │
+│  Boot loader │         │  (kernel + cpio)  │
+└──────────────┘         └───────┬──────────┘
+                                 │ DHCP / HTTP
+                         ┌───────▼──────────┐
+                         │  BOOTy Server     │
+                         │  (config + images)│
+                         └──────────────────┘
+```
+
+1. A bare-metal server PXE-boots with a kernel and the BOOTy initramfs.
+2. BOOTy obtains an IP via DHCP and fetches its configuration from the provisioning server using its MAC address.
+3. Depending on the `action` field in the config, BOOTy either writes an image to disk or reads a disk and uploads it.
+
 ## Features
+
+- **Dual-mode provisioning** — CAPRF (Kubernetes) and legacy (standalone) modes
 - **FRR/EVPN networking** — BGP underlay with VXLAN overlay for data center fabrics (FRR-based)
 - **GoBGP/EVPN networking** — Pure-Go BGP stack with VXLAN overlay (no external daemons)
 - **Static IP networking** — Direct IP assignment via netlink (no external tools)
@@ -49,31 +71,19 @@ BOOTy boots as the init process inside a minimal initramfs, contacts a provision
 - **Filesystem support** — ext2, ext3, ext4, xfs, btrfs, vfat mount/resize
 - **LLDP discovery** — Raw AF_PACKET-based LLDP listener for switch topology discovery
 - **Post-provision hooks** — Execute arbitrary commands in chroot after OS configuration
-- **32-step provisioning pipeline** — RAID cleanup, disk detection, EFI variable setup, image verification (signature/checksum), image streaming, partition growth, LVM, filesystem resize, OS configuration, EFI boot, Mellanox SR-IOV, post-provision hooks
+- **31-step provisioning pipeline** — RAID cleanup, disk detection, image streaming, partition growth, LVM, filesystem resize, OS configuration, cloud-init injection, EFI boot, Mellanox SR-IOV, post-provision hooks
 - **Kexec support** — Fast reboot into installed kernel without full BIOS POST (auto-disabled after firmware changes)
 - **Remote logging** — Real-time log and debug shipping to CAPRF controller
 - **Hard/soft deprovisioning** — Full disk wipe or GRUB rename for reprovisioning
 - **Standby mode** — Hot standby with heartbeats and command polling for sub-second provisioning
 - **Multi-architecture** — Builds for `linux/amd64` and `linux/arm64`
 - **Multiple build flavors** — Full (FRR+tools), GoBGP (pure Go BGP), slim (DHCP-only), micro (pure Go), ISO (bootable)
-- **BIOS settings management** — Vendor-specific BIOS capture, apply, and reset (Dell, HPE, Lenovo, Supermicro)
-- **Bootloader detection** — Automatic detection and configuration for GRUB and systemd-boot
-- **Secure Boot** — Full Secure Boot chain setup with EFI variable management
-- **TPM/TPM2 support** — TPM attestation and LUKS cryptenroll for disk encryption
-- **Kernel driver management** — Architecture-aware module loading from initramfs
-- **Telemetry** — Provisioning metrics collection and reporting
-- **Hardware inventory** — CPU, memory, disk, NIC, and NVMe enumeration from sysfs/procfs
-- **Hardware health checks** — Pre-provisioning validation of CPU, memory, disk, network, and thermal state
-- **NIC firmware collection** — Firmware version reporting for Broadcom, Intel, and Mellanox NICs
-- **Rescue mode** — Configurable failure recovery: reboot, retry with backoff, interactive shell, or wait
-- **Checkpoint resume** — Persist provisioning progress and skip completed steps on restart
-- **Dry-run mode** — Non-destructive pre-flight validation of provisioning prerequisites
 
 ## Prerequisites
 
 - Go **1.26+**
 - Docker (for building the initramfs)
-- A Redfish BMC with ISO virtual media (CAPRF mode)
+- A DHCP/PXE environment (legacy mode) or Redfish BMC with ISO virtual media (CAPRF mode)
 
 ### Build Environment
 
@@ -204,16 +214,45 @@ asn_server="65001"
 provision_vni="10100"
 overlay_subnet="fd00::/64"
 dns_resolver="8.8.8.8"
+```
 
-# GoBGP/EVPN mode (alternative to FRR)
-export NETWORK_MODE="gobgp"
-export BGP_PEER_MODE="unnumbered"
-export underlay_ip="10.0.0.20"
-export asn_server="65020"
-export provision_vni="100"
-export provision_ip="10.100.0.20/24"
-export provision_gateway="10.0.0.1"      # Gateway VTEP for VXLAN data plane
-export dns_resolver="8.8.8.8"
+### Legacy Mode
+
+The provisioning server serves configuration files and (optionally) disk images over HTTP.
+
+#### Write an image to a remote server
+
+```bash
+go run server/server.go \
+  -action writeImage \
+  -mac 00:50:56:a5:0e:0f \
+  -sourceImage http://192.168.0.95:3000/images/ubuntu.img \
+  -destinationDevice /dev/sda
+```
+
+#### Read a disk from a remote server
+
+```bash
+go run server/server.go \
+  -action readImage \
+  -mac 00:50:56:a5:0e:0f \
+  -destinationAddress http://192.168.0.95:3000/image \
+  -sourceDevice /dev/sda
+```
+
+### LVM & Disk Growth
+
+Write an image, grow partition 1, and expand the root LVM volume:
+
+```bash
+go run server/server.go \
+  -action writeImage \
+  -mac 00:50:56:a5:0e:0f \
+  -sourceImage http://192.168.0.95:3000/images/ubuntu.img \
+  -destinationDevice /dev/sda \
+  -growPartition 1 \
+  -lvmRoot /dev/ubuntu-vg/root \
+  -shell
 ```
 
 ### Feature Gates
@@ -222,10 +261,8 @@ export dns_resolver="8.8.8.8"
 |----------|---------|-------------|
 | `MODE` | `provision` | `provision`, `deprovision`, `soft-deprovision`, `standby`, or `dry-run` |
 | `DRY_RUN` | `false` | When `true`, forces `MODE=dry-run`: validates prerequisites without destructive writes |
-| `BOOTY_RESUME` | `false` | When `true`, enables checkpoint persistence at `/tmp/booty-checkpoint.json` and resume mode that skips previously completed non-state steps (runtime-state steps like `setup-mellanox`, `detect-disk`, and `parse-partitions` always rerun). Parsed via `strconv.ParseBool` — accepts `1`, `t`, `true`, `TRUE`, `0`, `f`, `false`, `FALSE` |
 | `DISABLE_KEXEC` | `false` | Skip kexec, always hard-reboot |
 | `MIN_DISK_SIZE_GB` | `0` | Minimum disk size filter (0 = no minimum) |
-| `DISK_DEVICE` | — | Override auto-detected target disk (e.g., `/dev/sda`, `/dev/loop0`) |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters |
 | `HEARTBEAT_URL` | — | Standby mode: URL for periodic keepalives |
 | `COMMANDS_URL` | — | Standby mode: URL to poll for pending commands |
@@ -271,25 +308,6 @@ export dns_resolver="8.8.8.8"
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NETWORK_MODE` | — | Network mode override: `gobgp` for pure-Go BGP stack |
-| `STATIC_IP` | — | Static IP in CIDR notation (e.g. `10.0.0.5/24`) |
-| `STATIC_GATEWAY` | — | Default gateway for static networking |
-| `STATIC_IFACE` | — | Interface for static IP (auto-detect if empty) |
-| `BOND_INTERFACES` | — | Comma-separated interfaces for LACP bond (e.g. `eth0,eth1`) |
-| `BOND_MODE` | `802.3ad` | Bond mode: `802.3ad`/`lacp`, `balance-rr`, `active-backup`, `balance-xor` |
-| `VLANS` | — | Multi-VLAN config (e.g. `200:eno1:10.200.0.42/24,300:eno2`) |
-| `BGP_PEER_MODE` | `unnumbered` | GoBGP peering mode: `unnumbered`, `dual`, `numbered` |
-| `BGP_NEIGHBORS` | — | Comma-separated peer IPs (required for `dual` and `numbered` modes) |
-| `BGP_REMOTE_ASN` | — | Remote ASN for numbered peers (0 or omitted = iBGP) |
-| `BGP_UNDERLAY_AF` | `ipv4` | Underlay address family: `ipv4`, `ipv6`, `dual-stack` |
-| `BGP_OVERLAY_TYPE` | `evpn-vxlan` | Overlay encapsulation: `evpn-vxlan`, `l3vpn`, `none` |
-| `underlay_subnet` | — | Underlay CIDR for FRR mode (e.g. `192.168.4.0/24`) |
-| `underlay_ip` | — | Underlay loopback / router-ID for GoBGP mode |
-| `asn_server` | — | Local BGP autonomous system number |
-| `provision_vni` | — | VXLAN VNI for the provisioning network |
-| `provision_ip` | — | IP/mask on the provisioning bridge (e.g. `10.100.0.20/24`) |
-| `provision_gateway` | — | Gateway VTEP IP for VXLAN BUM flooding and kernel route |
-| `overlay_subnet` | — | Overlay CIDR (e.g. `2a01:598:40a:5481::/64`) |
-| `dns_resolver` | — | Comma-separated DNS server IPs |
 
 ### Debugging
 
@@ -632,136 +650,6 @@ BIOS state is collected early in provisioning and reported to the CAPRF
 controller. No environment variables are required — vendor detection is
 automatic.
 
-## OCI Image Sources
-
-BOOTy supports pulling disk images from OCI-compliant container registries. Use the
-`oci://` URL scheme in the `IMAGE` variable:
-
-```bash
-# Unauthenticated registry
-export IMAGE="oci://ghcr.io/myorg/os-images:ubuntu-22.04"
-
-# Authenticated registry (credentials from standard Docker config)
-export IMAGE="oci://registry.example.com/images:rhel-9"
-```
-
-The OCI image must contain exactly one layer with the disk image (optionally compressed).
-Authentication uses the standard Docker credential chain (`~/.docker/config.json`,
-`DOCKER_CONFIG`, credential helpers). Both `docker.io` and OCI-spec registries are
-supported via [go-containerregistry](https://github.com/google/go-containerregistry).
-
-HTTP and OCI fetches are retried up to 3 times with exponential backoff (1s, 2s, 4s).
-
-### OCI Artifact Publishing
-
-Release artifacts (binaries, initramfs images, SBOMs) are published as OCI artifacts
-to GHCR alongside traditional GitHub Release assets. This enables container registries
-to cache and distribute all BOOTy artifacts using standard OCI tooling.
-
-**Artifact references:**
-
-| Artifact | OCI Reference | Media Type |
-|----------|---------------|-----------|
-| Initramfs | `ghcr.io/telekom/booty/initramfs:<version>-<flavor>-<arch>` | `application/vnd.cncf.initramfs.layer.v1+gzip` |
-| Binary | `ghcr.io/telekom/booty/binary:<version>-<arch>` | `application/vnd.cncf.binary.layer.v1` |
-| SBOM | `ghcr.io/telekom/booty/sbom:<version>` | `application/spdx+json` |
-
-Initramfs and binary artifacts include SHA-256 checksums as a `text/plain` layer.
-
-**Pull artifacts with ORAS:**
-
-```bash
-# Pull a specific initramfs
-oras pull ghcr.io/telekom/booty/initramfs:0.1.0-gobgp-amd64
-
-# Pull the binary
-oras pull ghcr.io/telekom/booty/binary:0.1.0-amd64
-
-# Pull the SBOM
-oras pull ghcr.io/telekom/booty/sbom:0.1.0
-```
-
-**Local publishing (requires `oras` CLI and GHCR login):**
-
-```bash
-# Build and push initramfs as OCI artifact
-make gobgp
-make oci-push-initramfs OCI_FLAVOR=gobgp
-
-# Push everything
-make build && make gobgp
-make oci-push OCI_FLAVOR=gobgp
-```
-
-## Network Modes
-
-BOOTy supports multiple network modes with automatic fallback:
-
-| Priority | Mode | Trigger | Description |
-|----------|------|---------|-------------|
-| 1 | **Bond** | `BOND_INTERFACES` set | Creates bond0 (LACP/802.3ad) from listed interfaces |
-| 2 | **GoBGP/EVPN** | `NETWORK_MODE=gobgp` | Pure-Go BGP+EVPN via GoBGP (see below) |
-| 3 | **FRR/EVPN** | `underlay_subnet`+`asn_server` set | BGP underlay with VXLAN overlay (FRR) |
-| 4 | **Static** | `STATIC_IP` set | Assigns IP via netlink, adds default route |
-| 5 | **DHCP** | Default | Tries DHCP on all physical interfaces |
-
-Bond mode creates the bond interface first, then the selected upper mode (FRR/Static/DHCP)
-runs on top of it. Each mode falls back to DHCP on failure.
-
-### GoBGP Mode
-
-Set `NETWORK_MODE=gobgp` to use the pure-Go BGP stack instead of FRR. GoBGP mode
-uses a three-tier architecture:
-
-1. **Underlay** — eBGP peering with leaf switches for VXLAN reachability
-2. **Overlay** — EVPN Type-5 route advertisement with VXLAN encapsulation; dynamic FDB installation from received Type-2/3 routes via `watchRoutes()`
-3. **IPMI** — Optional L3 path to the BMC (planned)
-
-The overlay tier advertises Type-5 (IP Prefix) routes and processes incoming EVPN routes:
-- **Type-2 (MAC/IP)** routes install unicast FDB entries (MAC → remote VTEP)
-- **Type-3 (Inclusive Multicast)** routes install BUM FDB entries for flood replication
-- A static BUM FDB entry and /32 kernel route to `provision_gateway` ensure baseline connectivity
-
-#### EVPN L2 Overlay
-
-Set `EVPN_L2_ENABLED=true` to enable full L2 EVPN overlay support. When enabled,
-BOOTy additionally **originates** Type-2 and Type-3 routes:
-
-- **Type-3 (IMET)** — Announces this VTEP for BUM flooding via ingress replication,
-  so remote VTEPs include it in broadcast/unknown-unicast/multicast flooding
-- **Type-2 (MAC/IP)** — Advertises the local bridge MAC and provision IP so remote
-  VTEPs learn the FDB entry via BGP control-plane rather than data-plane flooding
-
-Without `EVPN_L2_ENABLED`, the overlay only advertises Type-5 routes and processes
-incoming Type-2/3 routes passively (receive-only mode).
-
-```bash
-# Enable L2 EVPN overlay (GoBGP mode)
-export NETWORK_MODE=gobgp
-export EVPN_L2_ENABLED=true
-export provision_vni=4000
-export provision_ip=10.100.0.20/24
-export provision_gateway=10.0.0.1
-```
-
-The `BGP_PEER_MODE` environment variable controls session establishment:
-
-| Mode | Description |
-|------|-------------|
-| `unnumbered` (default) | Link-local interface peers — IPv4 + L2VPN-EVPN over unnumbered sessions |
-| `dual` | Unnumbered underlay (IPv4) + numbered peers for L2VPN-EVPN (route reflectors or DCGWs) |
-| `numbered` | Explicit neighbor IPs only — requires DHCP or static underlay for initial connectivity |
-
-Additional environment variables for GoBGP mode:
-- `BGP_NEIGHBORS` — Comma-separated peer IPs (required for `dual` and `numbered` modes)
-- `BGP_REMOTE_ASN` — Remote ASN for numbered peers (0 or omitted = iBGP)
-- `BGP_UNDERLAY_AF` — Underlay address family: `ipv4` (default), `ipv6`, or `dual-stack`
-- `BGP_OVERLAY_TYPE` — Overlay encapsulation: `evpn-vxlan` (default), `l3vpn`, or `none`
-- `provision_gateway` — Gateway VTEP IP (e.g. spine loopback) for BUM flooding and kernel route
-- `underlay_ip` — Local VTEP / router-ID IP
-- `provision_ip` — Provisioning overlay IP in CIDR (e.g. `10.100.0.20/24`)
-- `provision_vni` — VXLAN VNI for the provisioning network
-- `asn_server` — Local BGP ASN
 
 **BGP Policy** configuration supports community tagging on import/export routes:
 - **Standard communities**: `ASN:value` (16-bit each, e.g. `65000:100`)
@@ -825,9 +713,6 @@ make clab-boot-up && make test-e2e-boot          # Boot orchestrator
 make clab-vrnetlab-up && make test-e2e-vrnetlab   # Full EVPN boot flow
 make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab  # GoBGP + real switches
 
-# KVM E2E tests — provisioning, LUKS, boot (Linux + KVM + root)
-make test-kvm
-
 # Linux-only E2E (disk/mount/loop device, requires root)
 go test -tags linux_e2e -v ./pkg/disk/...
 ```
@@ -838,46 +723,29 @@ and the PR process.
 ## Project Structure
 
 ```
-├── main.go                     # Entry point: CAPRF mode, kernel module loading
-├── cmd/booty.go                # CLI version command
+├── main.go                     # Entry point: CAPRF vs legacy mode, kernel module loading
+├── cmd/booty.go                # Legacy CLI orchestration
+├── server/server.go            # Legacy provisioning server
 ├── initrd.Dockerfile           # Multi-stage initramfs build (default, iso, slim, micro)
 ├── pkg/
-│   ├── bios/                   # BIOS settings management (Dell, HPE, Lenovo, Supermicro)
-│   ├── bootloader/             # Bootloader detection (GRUB, systemd-boot)
-│   ├── buildinfo/              # Binary build information (version, commit, date)
 │   ├── caprf/                  # CAPRF client (status, log, debug, vars parsing)
+│   ├── cloudinit/              # Cloud-init NoCloud/ConfigDrive generation
 │   ├── config/                 # MachineConfig, Provider interface, Status types
-│   ├── debug/                  # Debug dump utilities
 │   ├── disk/                   # Disk detection, partitioning, RAID, LVM, mount
-│   ├── drivers/                # Architecture-aware kernel driver management
-│   ├── efi/                    # EFI variable operations
-│   ├── executil/               # Centralized command execution + PATH diagnostics
 │   ├── firmware/               # Firmware version collection from sysfs
-│   │   └── nic/               # NIC firmware (Broadcom, Intel, Mellanox)
-│   ├── grubcfg/                # GRUB config file parsing
 │   ├── health/                 # Pre-provisioning hardware health checks
 │   ├── image/                  # Image streaming (HTTP, OCI, gzip/lz4/xz/zstd auto-detect)
-│   │   ├── oci/               # OCI registry client
-│   │   └── verify/            # Image checksum and GPG signature verification
 │   ├── inventory/              # Hardware inventory from sysfs/procfs
 │   ├── kexec/                  # GRUB parsing, kexec load/execute
 │   ├── network/                # Network mode abstraction (FRR, GoBGP, DHCP, Static, Bond)
 │   │   ├── frr/               # FRR/EVPN: config rendering, address derivation
 │   │   ├── gobgp/             # Pure-Go BGP stack (3-tier: Underlay, Overlay, IPMI)
 │   │   ├── lldp/              # LLDP frame listener (raw AF_PACKET sockets)
-│   │   ├── netplan/           # Netplan YAML + FRR config parser for EVPN auto-detection
-│   │   ├── persist/           # Network configuration persistence across reboots
 │   │   └── vlan/              # VLAN 802.1Q tagging via netlink
-│   ├── provision/              # Orchestrator (32-step provision, deprovision)
+│   ├── provision/              # Orchestrator (31-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
-│   ├── realm/                  # Device, mount, shell operations
-│   ├── rescue/                 # Rescue mode types, retry state, action resolution
-│   ├── retry/                  # Retry policy framework with exponential backoff
-│   ├── secureboot/             # Secure Boot chain setup
-│   ├── system/                 # System-level operations
-│   ├── telemetry/              # Provisioning metrics and telemetry collection
-│   ├── tpm/                    # TPM/TPM2 operations
-│   │   └── cryptenroll/       # LUKS key sealing to TPM2 PCR policies
+│   ├── plunderclient/          # Legacy HTTP client for config retrieval
+│   ├── realm/                  # Device, mount, network, shell operations
 │   ├── utils/                  # Cmdline parsing, helpers
 │   └── ux/                     # ASCII art & system info display
 ├── test/e2e/                   # E2E tests (ContainerLab + vrnetlab EVPN fabric)
