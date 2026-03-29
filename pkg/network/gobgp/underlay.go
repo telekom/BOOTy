@@ -279,12 +279,20 @@ func (u *UnderlayTier) startBgpServer(ctx context.Context) error {
 	u.bgp = server.NewBgpServer()
 	go u.bgp.Serve()
 
+	global := &apipb.Global{
+		Asn:        u.cfg.ASN,
+		RouterId:   u.cfg.RouterID,
+		ListenPort: u.cfg.ListenPort,
+	}
+	if gr := u.cfg.GracefulRestart; gr != nil && gr.Enabled {
+		global.GracefulRestart = &apipb.GracefulRestart{
+			Enabled:     true,
+			RestartTime: gr.RestartTime,
+		}
+	}
+
 	if err := u.bgp.StartBgp(ctx, &apipb.StartBgpRequest{
-		Global: &apipb.Global{
-			Asn:        u.cfg.ASN,
-			RouterId:   u.cfg.RouterID,
-			ListenPort: u.cfg.ListenPort,
-		},
+		Global: global,
 	}); err != nil {
 		u.bgp.Stop()
 		u.bgp = nil
