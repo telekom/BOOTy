@@ -158,6 +158,8 @@ type MachineConfig struct {
 	TokenURL       string // TOKEN_URL: JWT token endpoint
 	TokenAlgorithm string // TOKEN_ALGORITHM: RS256 or ES256
 }
+
+// PartitionLayout defines a declarative partitioning scheme for the target disk.
 type PartitionLayout struct {
 	Table      string      `json:"table"`            // "gpt" (default: "gpt") — only GPT is supported
 	Device     string      `json:"device,omitempty"` // Device override (empty = auto-detect)
