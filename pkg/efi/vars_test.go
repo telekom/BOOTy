@@ -103,7 +103,10 @@ func TestIsSetupMode(t *testing.T) {
 
 func TestBuildLoadOption(t *testing.T) {
 	entry := BootEntry{Description: "Linux", Loader: "/EFI/BOOT/linux.efi"}
-	opt := BuildLoadOption(entry)
+	opt, err := BuildLoadOption(entry)
+	if err != nil {
+		t.Fatalf("BuildLoadOption: %v", err)
+	}
 	if len(opt) < 6 {
 		t.Fatalf("load option too short: %d bytes", len(opt))
 	}

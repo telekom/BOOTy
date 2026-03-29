@@ -75,12 +75,28 @@ func findRepoRoot(t *testing.T) string {
 func listCPIOContents(t *testing.T, cpioGzPath string) map[string]bool {
 	t.Helper()
 
-	// Use: gzip -dc file | cpio -t
-	cmd := exec.Command("sh", "-c", "gzip -dc "+cpioGzPath+" | cpio -t 2>/dev/null")
-	out, err := cmd.Output()
+	// Use an explicit pipe instead of shell string concatenation to avoid injection.
+	gzipCmd := exec.Command("gzip", "-dc", cpioGzPath)
+	cpioCmd := exec.Command("cpio", "-t")
+	cpioCmd.Stderr = nil // suppress cpio block count
+
+	var err error
+	cpioCmd.Stdin, err = gzipCmd.StdoutPipe()
 	if err != nil {
-		// Try alternative: use tar if cpio not available (shouldn't happen on Linux CI)
-		t.Fatalf("cpio command not available: %v", err)
+		t.Fatalf("pipe setup: %v", err)
+	}
+
+	if err := gzipCmd.Start(); err != nil {
+		t.Fatalf("gzip start: %v", err)
+	}
+
+	out, err := cpioCmd.Output()
+	if err != nil {
+		t.Fatalf("cpio: %v", err)
+	}
+
+	if err := gzipCmd.Wait(); err != nil {
+		t.Fatalf("gzip: %v", err)
 	}
 
 	files := make(map[string]bool)

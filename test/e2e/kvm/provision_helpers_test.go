@@ -275,14 +275,40 @@ func buildProvisionInitramfs(t *testing.T, vars map[string]string) string {
 		}
 	}
 
-	// Package as cpio.gz.
+	// Package as cpio.gz using explicit pipes instead of shell concatenation.
 	cpioPath := filepath.Join(dir, "provision-initramfs.cpio.gz")
-	packCmd := fmt.Sprintf("cd %s && find . -print0 | cpio --null -ov --format=newc 2>/dev/null | gzip > %s",
-		rootDir, cpioPath)
-	cmd := exec.Command("sh", "-c", packCmd)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("pack initramfs: %v\n%s", err, out)
+
+	findCmd := exec.Command("find", ".", "-print0")
+	findCmd.Dir = rootDir
+
+	cpioCmd := exec.Command("cpio", "--null", "-ov", "--format=newc")
+	cpioCmd.Dir = rootDir
+	cpioCmd.Stderr = nil
+
+	gzipCmd := exec.Command("gzip")
+
+	cpioCmd.Stdin, _ = findCmd.StdoutPipe()
+	gzipCmd.Stdin, _ = cpioCmd.StdoutPipe()
+
+	outFile, err := os.Create(cpioPath)
+	if err != nil {
+		t.Fatalf("create cpio.gz: %v", err)
 	}
+	gzipCmd.Stdout = outFile
+
+	for _, c := range []*exec.Cmd{gzipCmd, cpioCmd, findCmd} {
+		if err := c.Start(); err != nil {
+			_ = outFile.Close()
+			t.Fatalf("start %s: %v", c.Path, err)
+		}
+	}
+	for _, c := range []*exec.Cmd{findCmd, cpioCmd, gzipCmd} {
+		if err := c.Wait(); err != nil {
+			_ = outFile.Close()
+			t.Fatalf("wait %s: %v", c.Path, err)
+		}
+	}
+	_ = outFile.Close()
 
 	return cpioPath
 }
