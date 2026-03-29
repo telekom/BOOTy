@@ -13,6 +13,8 @@ Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, orch
 - `pkg/network/lldp/` — LLDP frame listener (raw AF_PACKET)
 - `pkg/network/vlan/` — VLAN 802.1Q tagging via netlink
 - `pkg/network/vrf/` — VRF configuration types and validation for multi-VRF network isolation
+- `pkg/network/netplan/` — Netplan parsing and merge helpers
+- `pkg/network/persist/` — Persist rendered network config into target OS
 - `pkg/image/` — Multi-format image streaming (gzip, lz4, xz, zstd) + OCI registry
 - `pkg/disk/` — Disk detection, partitioning, RAID, LVM, mount, NVMe namespace management
 - `pkg/auth/` — JWT token manager (acquisition, renewal, backoff)
@@ -21,8 +23,11 @@ Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, orch
 - `pkg/firmware/` — Firmware version collection from sysfs
 - `pkg/health/` — Pre-provisioning hardware health checks
 - `pkg/inventory/` — Hardware inventory from sysfs/procfs
+- `pkg/ipmi/` — IPMI operations and helpers
 - `pkg/kexec/` — GRUB config parsing, kexec load/execute
+- `pkg/logging/` — Structured logging adapters and sinks
 - `pkg/realm/` — Low-level syscalls (devices, mounts, networking)
+- `pkg/rescue/` — Rescue mode policy and failure handling
 - `pkg/ux/` — ASCII art and system info display
 - `pkg/bios/` — BIOS settings management (Dell, HPE, Lenovo, Supermicro)
 - `pkg/bootloader/` — Bootloader detection (GRUB, systemd-boot)
@@ -31,6 +36,7 @@ Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, orch
 - `pkg/drivers/` — Architecture-aware kernel driver management
 - `pkg/efi/` — EFI variable operations
 - `pkg/event/` — Provisioning lifecycle webhook events and dispatcher
+- `pkg/executil/` — Shared command execution wrappers
 - `pkg/grubcfg/` — GRUB config file parsing
 - `pkg/retry/` — Retry policy framework with exponential backoff
 - `pkg/secureboot/` — Secure Boot chain setup

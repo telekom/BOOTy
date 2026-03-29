@@ -44,7 +44,16 @@ go test -cover ./...
 go test ./pkg/image/...
 
 # Run E2E integration tests (requires ContainerLab, Linux only)
-go test -tags e2e_integration -v -race -count=1 ./test/e2e/integration/...
+make clab-up && make test-e2e-integration
+make clab-gobgp-up && make test-e2e-gobgp
+make clab-boot-up && make test-e2e-boot
+make clab-dhcp-up && make test-e2e-dhcp
+make clab-bond-up && make test-e2e-bond
+make clab-lacp-up && make test-e2e-lacp
+make clab-static-up && make test-e2e-static
+make clab-multi-nic-up && make test-e2e-multi-nic
+make clab-vrnetlab-up && make test-e2e-vrnetlab
+make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab
 ```
 
 ### Test Requirements
