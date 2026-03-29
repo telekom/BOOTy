@@ -95,6 +95,16 @@ func (s *StaticMode) Teardown(_ context.Context) error {
 	if err != nil {
 		return nil //nolint:nilerr // interface may already be gone
 	}
+	// Remove default route before address to avoid routing table inconsistency.
+	if s.gateway != nil {
+		route := &netlink.Route{
+			LinkIndex: link.Attrs().Index,
+			Gw:        s.gateway,
+		}
+		if err := netlink.RouteDel(route); err != nil {
+			slog.Debug("route deletion (may already be gone)", "gateway", s.gateway, "error", err)
+		}
+	}
 	if s.address != nil {
 		_ = netlink.AddrDel(link, s.address)
 	}
