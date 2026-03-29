@@ -185,9 +185,9 @@ func TestWipeOrSecureEraseDisks(t *testing.T) {
 			name:        "secure erase error",
 			secureErase: true,
 			secureErr:   fmt.Errorf("secure erase failed"),
-			// NOTE: /sys/block is empty in tests, so the mocked wipefs error
-			// is never reached. wantErr=false reflects the no-op behavior.
-			wantErr: false,
+			// SecureEraseAllDisks reads /sys/block; if the host has real
+			// (non-virtual) disks the mocked wipefs error propagates.
+			wantErr: hasRealBlockDevices(),
 		},
 	}
 	for _, tc := range tests {
