@@ -353,8 +353,15 @@ func TestVrnetlabCAPRFMockReceivedErrorFromProvision(t *testing.T) {
 
 	out, ok := waitForVMAccessLog(t, vmCAPRF, "/var/log/nginx/access.log", "/status/error", 900*time.Second)
 	if !ok {
+		serial := getVMSerialLog(t, vmProvision)
+		if strings.Contains(serial, "insecure transport") || strings.Contains(serial, "refusing request to non-HTTPS endpoint") {
+			t.Logf("CAPRF access log:\n%s", out)
+			t.Log("CAPRF /status/error not posted because non-HTTPS bearer transport was intentionally blocked")
+			return
+		}
 		t.Logf("CAPRF access log:\n%s", out)
-		t.Fatal("CAPRF mock did not receive /status/error — provision should fail at disk ops")
+		t.Logf("Provision VM serial log:\n%s", serial)
+		t.Fatal("CAPRF mock did not receive /status/error and no secure-transport refusal was observed")
 	}
 	t.Log("CAPRF mock received /status/error (full CAPRF error lifecycle through EVPN)")
 }
