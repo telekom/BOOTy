@@ -17,8 +17,8 @@ func TestApplyDefaults(t *testing.T) {
 	if cfg.MTU != 9000 {
 		t.Errorf("MTU = %d, want %d", cfg.MTU, 9000)
 	}
-	if cfg.VRFTableID != 1 {
-		t.Errorf("VRFTableID = %d, want %d", cfg.VRFTableID, 1)
+	if cfg.VRFTableID != 1000 {
+		t.Errorf("VRFTableID = %d, want %d", cfg.VRFTableID, 1000)
 	}
 }
 
