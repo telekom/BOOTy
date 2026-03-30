@@ -306,7 +306,7 @@ func runCAPRF(ctx context.Context) {
 func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, client *caprf.Client) (network.Mode, error) {
 	if cfg.Mode == "dry-run" {
 		slog.Info("dry-run mode: skipping active network setup and token renewal")
-		return nil, nil
+		return noopNetworkMode{}, nil
 	}
 
 	// Set up networking with retry — if connectivity fails, teardown and
@@ -349,6 +349,14 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 
 	return netMode, nil
 }
+
+type noopNetworkMode struct{}
+
+func (noopNetworkMode) Setup(context.Context, *network.Config) error { return nil }
+
+func (noopNetworkMode) WaitForConnectivity(context.Context, string, time.Duration) error { return nil }
+
+func (noopNetworkMode) Teardown(context.Context) error { return nil }
 
 // ensureNetworkConnectivity retries network setup up to 3 times on connectivity failure.
 // It returns the active network mode so callers can tear down the latest instance.
