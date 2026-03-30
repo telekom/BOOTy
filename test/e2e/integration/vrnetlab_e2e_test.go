@@ -245,7 +245,7 @@ func TestVrnetlabVMCAPRFModeDetected(t *testing.T) {
 func TestVrnetlabVMFRRNetworkModeDetected(t *testing.T) {
 	requireVrnetlabLab(t)
 
-	if !waitForVMLog(t, vmProvision, "Using FRR/EVPN network mode", 150*time.Second) {
+	if !waitForVMLog(t, vmProvision, "using FRR/EVPN network mode", 150*time.Second) {
 		logs := getVMSerialLog(t, vmProvision)
 		t.Fatalf("provision VM did not enter FRR/EVPN network mode\n%s", logs)
 	}
@@ -373,7 +373,7 @@ func TestVrnetlabProvisionFullLifecycleViaEVPN(t *testing.T) {
 	}{
 		{"starting BOOTy", 120 * time.Second, "BOOTy started as PID 1"},
 		{"CAPRF mode active", 60 * time.Second, "CAPRF mode detected from /deploy/vars"},
-		{"Using FRR/EVPN network mode", 30 * time.Second, "FRR/EVPN network mode active"},
+		{"using FRR/EVPN network mode", 30 * time.Second, "FRR/EVPN network mode active"},
 		{"report-init", 60 * time.Second, "init reported to CAPRF through EVPN"},
 	}
 
@@ -415,7 +415,7 @@ func TestVrnetlabDeprovisionFullLifecycleViaEVPN(t *testing.T) {
 	}
 	t.Log("deprovision VM: CAPRF mode active")
 
-	if !waitForVMLog(t, vmDeprovision, "Using FRR/EVPN network mode", 60*time.Second) {
+	if !waitForVMLog(t, vmDeprovision, "using FRR/EVPN network mode", 60*time.Second) {
 		logs := getVMSerialLog(t, vmDeprovision)
 		t.Fatalf("deprovision VM did not enter FRR/EVPN mode\n%s", logs)
 	}
@@ -446,7 +446,7 @@ func TestVrnetlabStandbyFullLifecycleViaEVPN(t *testing.T) {
 	}
 	t.Log("standby VM: CAPRF mode active")
 
-	if !waitForVMLog(t, vmStandby, "Using FRR/EVPN network mode", 60*time.Second) {
+	if !waitForVMLog(t, vmStandby, "using FRR/EVPN network mode", 60*time.Second) {
 		logs := getVMSerialLog(t, vmStandby)
 		t.Fatalf("standby VM did not enter FRR/EVPN mode\n%s", logs)
 	}
@@ -613,10 +613,10 @@ func TestVrnetlabModulesLoaded(t *testing.T) {
 	}
 
 	for _, mod := range vrnetlabRequiredModules {
-		// loadModules logs: "Loaded kernel module" with a "module=<name>.ko*" field.
+		// loadModules logs: "loaded kernel module" with a "module=<name>.ko*" field.
 		field := "module=" + mod + ".ko"
-		if !strings.Contains(logs, "Loaded kernel module") || !strings.Contains(logs, field) {
-			t.Errorf("module %q not loaded according to serial log — expected log entry with 'Loaded kernel module' and %q", mod, field)
+		if !strings.Contains(logs, "loaded kernel module") || !strings.Contains(logs, field) {
+			t.Errorf("module %q not loaded according to serial log — expected log entry with 'loaded kernel module' and %q", mod, field)
 		}
 	}
 }
@@ -630,8 +630,8 @@ func TestVrnetlabModulesLoaded(t *testing.T) {
 // are invisible to this check — only genuine ERROR-level messages remain.
 var vrnetlabAllowedErrors = []string{
 	// Top-level provisioning/deprovisioning failure.
-	"Provisioning failed",
-	"Deprovisioning failed",
+	"provisioning failed",
+	"deprovisioning failed",
 	// Individual step failures.
 	"provisioning step failed",
 	"Deprovisioning step failed",

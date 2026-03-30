@@ -240,7 +240,7 @@ func TestBootProvisionStartsAndReportsInit(t *testing.T) {
 	}
 
 	// Verify FRR/EVPN network mode (not DHCP)
-	if !waitForLogEntry(t, provisionContainer, "Using FRR/EVPN network mode", 30*time.Second) {
+	if !waitForLogEntry(t, provisionContainer, "using FRR/EVPN network mode", 30*time.Second) {
 		logs := getBootyLogs(t, provisionContainer)
 		t.Fatalf("provision node did not enter FRR/EVPN network mode\nFull logs:\n%s", logs)
 	}
@@ -269,7 +269,7 @@ func TestBootDeprovisionStartsAndReportsInit(t *testing.T) {
 	}
 
 	// Verify FRR/EVPN network mode (not DHCP)
-	if !waitForLogEntry(t, deprovisionContainer, "Using FRR/EVPN network mode", 30*time.Second) {
+	if !waitForLogEntry(t, deprovisionContainer, "using FRR/EVPN network mode", 30*time.Second) {
 		logs := getBootyLogs(t, deprovisionContainer)
 		t.Fatalf("deprovision node did not enter FRR/EVPN network mode\nFull logs:\n%s", logs)
 	}
@@ -291,7 +291,7 @@ func TestBootStandbyEntersStandbyLoop(t *testing.T) {
 	}
 
 	// Verify FRR/EVPN network mode (not DHCP)
-	if !waitForLogEntry(t, standbyContainer, "Using FRR/EVPN network mode", 30*time.Second) {
+	if !waitForLogEntry(t, standbyContainer, "using FRR/EVPN network mode", 30*time.Second) {
 		logs := getBootyLogs(t, standbyContainer)
 		t.Fatalf("standby node did not enter FRR/EVPN network mode\nFull logs:\n%s", logs)
 	}
@@ -553,8 +553,8 @@ func TestBootModulesPresent(t *testing.T) {
 // are invisible to this check — only genuine ERROR-level messages remain.
 var allowedErrorPatterns = []string{
 	// Top-level provisioning/deprovisioning failure.
-	"Provisioning failed",
-	"Deprovisioning failed",
+	"provisioning failed",
+	"deprovisioning failed",
 	// Individual step failures.
 	"provisioning step failed",
 	"Deprovisioning step failed",
@@ -583,8 +583,8 @@ func TestBootNoUnexpectedErrors(t *testing.T) {
 
 	// Wait for BOOTy to have progressed through provisioning attempt.
 	// Poll for a known terminal state instead of sleeping a fixed duration.
-	if !waitForLogEntry(t, provisionContainer, "Provisioning failed", 600*time.Second) {
-		t.Log("provision node: 'Provisioning failed' not found within 600s, checking available logs")
+	if !waitForLogEntry(t, provisionContainer, "provisioning failed", 600*time.Second) {
+		t.Log("provision node: 'provisioning failed' not found within 600s, checking available logs")
 	}
 
 	containers := []struct {
@@ -622,8 +622,8 @@ func TestBootZZZDumpAllLogs(t *testing.T) {
 	requireBootLab(t)
 
 	// Wait for BOOTy processes to have run — poll for a terminal state.
-	if !waitForLogEntry(t, provisionContainer, "Provisioning failed", 60*time.Second) {
-		t.Log("provision node: 'Provisioning failed' not found, dumping available logs")
+	if !waitForLogEntry(t, provisionContainer, "provisioning failed", 60*time.Second) {
+		t.Log("provision node: 'provisioning failed' not found, dumping available logs")
 	}
 
 	containers := []struct {
