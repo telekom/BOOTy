@@ -558,7 +558,9 @@ func waitForDevice(ctx context.Context, device string) error {
 		// Trigger device node creation from /sys entries that may have appeared
 		// since the last poll. mdev -s is fast (~10ms) and idempotent.
 		//nolint:gosec // mdev is a fixed busybox command, no user input
-		_ = exec.CommandContext(ctx, "mdev", "-s").Run()
+		if err := exec.CommandContext(ctx, "mdev", "-s").Run(); err != nil {
+			slog.Debug("mdev -s failed during device wait", "device", device, "error", err)
+		}
 		if _, err := os.Stat(device); err == nil {
 			slog.Info("device appeared after mdev", "device", device, "iteration", i)
 			return nil
