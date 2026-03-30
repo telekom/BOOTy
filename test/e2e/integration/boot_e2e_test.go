@@ -86,7 +86,7 @@ func waitForLogEntry(t *testing.T, container, entry string, timeout time.Duratio
 func bootyNetworkFailed(t *testing.T, container string) bool {
 	t.Helper()
 	logs := getBootyLogs(t, container)
-	return strings.Contains(logs, "Network connectivity failed after all retries")
+	return strings.Contains(logs, "network connectivity failed after all retries")
 }
 
 // restartContainer restarts a docker container and waits for it to be running.
@@ -431,8 +431,8 @@ func TestBootProvisionShowsProvisioningSteps(t *testing.T) {
 
 	// Wait for provisioning to finish (success or failure).
 	// With real image streaming through EVPN, retries can take several minutes.
-	if !waitForLogEntry(t, provisionContainer, "Provisioning failed", 600*time.Second) {
-		t.Log("provision node: 'Provisioning failed' not found within 600s")
+	if !waitForLogEntry(t, provisionContainer, "provisioning failed", 600*time.Second) {
+		t.Log("provision node: 'provisioning failed' not found within 600s")
 	}
 
 	logs := getBootyLogs(t, provisionContainer)

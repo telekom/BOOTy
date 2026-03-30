@@ -255,8 +255,8 @@ func TestVrnetlabVMFRRNetworkModeDetected(t *testing.T) {
 func TestVrnetlabVMNetworkConnectivity(t *testing.T) {
 	requireVrnetlabLab(t)
 
-	// BOOTy logs "Waiting for network connectivity" before polling
-	if !waitForVMLog(t, vmProvision, "Waiting for network connectivity", 150*time.Second) {
+	// BOOTy logs "waiting for network connectivity" before polling
+	if !waitForVMLog(t, vmProvision, "waiting for network connectivity", 150*time.Second) {
 		logs := getVMSerialLog(t, vmProvision)
 		t.Fatalf("provision VM did not reach connectivity check\n%s", logs)
 	}
@@ -389,7 +389,7 @@ func TestVrnetlabProvisionFullLifecycleViaEVPN(t *testing.T) {
 	time.Sleep(15 * time.Second)
 	logs := getVMSerialLog(t, vmProvision)
 
-	if strings.Contains(logs, "Provisioning step") || strings.Contains(logs, "detect-disk") {
+	if strings.Contains(logs, "provisioning step") || strings.Contains(logs, "detect-disk") {
 		t.Log("provision VM: provisioning orchestrator executing steps through EVPN")
 	}
 
