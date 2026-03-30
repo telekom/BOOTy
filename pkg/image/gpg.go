@@ -2,6 +2,7 @@ package image
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"log/slog"
@@ -20,6 +21,7 @@ import (
 // stream arbitrarily large images.
 var gpgHTTPClient = &http.Client{
 	Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 		DialContext: (&net.Dialer{
 			Timeout: 30 * time.Second,
 		}).DialContext,
@@ -98,6 +100,11 @@ func downloadToTemp(ctx context.Context, rawURL, pattern string) (string, error)
 	f, err := os.CreateTemp("", pattern)
 	if err != nil {
 		return "", fmt.Errorf("creating temp file: %w", err)
+	}
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name()) //nolint:gosec // self-created temp file, no traversal risk
+		return "", fmt.Errorf("setting temp file permissions: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/hex"
 	"fmt"
 	"hash"
@@ -17,11 +18,14 @@ import (
 	"time"
 )
 
+const imageCopyBufferSize = 16 << 20 // 16 MiB
+
 // imageHTTPClient is the HTTP client used for image downloads.
 // It sets connect and TLS timeouts to prevent hanging on broken connections
 // while leaving the response body read timeout unlimited (for large images).
 var imageHTTPClient = &http.Client{
 	Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 		DialContext: (&net.Dialer{
 			Timeout: 30 * time.Second,
 		}).DialContext,
@@ -77,9 +81,12 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 		return err
 	}
 
-	written, err := io.Copy(out, io.TeeReader(src, counter))
+	buf := make([]byte, imageCopyBufferSize)
+	written, err := io.CopyBuffer(out, io.TeeReader(src, counter), buf)
 	stopProgress()
 	if err != nil {
+		slog.Error("image write failed: wiping partial image", "device", device, "error", err)
+		wipeLeadingSectors(device)
 		return fmt.Errorf("writing to device: %w", err)
 	}
 

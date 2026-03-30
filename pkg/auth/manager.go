@@ -4,6 +4,7 @@ package auth
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -66,9 +67,14 @@ func NewTokenManager(tokenURL, bootstrapToken string, log *slog.Logger) (*TokenM
 	return &TokenManager{
 		tokenURL: tokenURL,
 		token:    bootstrapToken,
-		client:   &http.Client{Timeout: 15 * time.Second},
-		log:      log.WithGroup("auth"),
-		backoff:  defaultBackoff,
+		client: &http.Client{
+			Timeout: 15 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+			},
+		},
+		log:     log.WithGroup("auth"),
+		backoff: defaultBackoff,
 	}, nil
 }
 
