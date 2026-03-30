@@ -19,6 +19,7 @@ type Stack struct {
 	overlay  *OverlayTier
 	cfg      *Config
 	log      *slog.Logger
+	gateway  *netlink.Route
 }
 
 // NewStack creates a GoBGP stack from the given configuration.
@@ -118,22 +119,38 @@ func (s *Stack) installGatewayRoute() error {
 		return fmt.Errorf("find NIC %s: %w", nic, err)
 	}
 
-	gwIP := net.ParseIP(s.cfg.ProvisionGateway).To4()
+	gwIP := net.ParseIP(s.cfg.ProvisionGateway)
 	if gwIP == nil {
 		return fmt.Errorf("invalid gateway IP %q", s.cfg.ProvisionGateway)
 	}
 
+	maskBits := 32
+	if gwIP.To4() == nil {
+		maskBits = 128
+	}
+
 	route := &netlink.Route{
-		Dst:       &net.IPNet{IP: gwIP, Mask: net.CIDRMask(32, 32)},
+		Dst:       &net.IPNet{IP: gwIP, Mask: net.CIDRMask(maskBits, maskBits)},
 		LinkIndex: link.Attrs().Index,
 		Scope:     netlink.SCOPE_LINK,
 	}
-	if err := netlink.RouteAdd(route); err != nil {
-		return fmt.Errorf("add route to %s via %s: %w", s.cfg.ProvisionGateway, nic, err)
+	if err := netlink.RouteReplace(route); err != nil {
+		return fmt.Errorf("replace route to %s via %s: %w", s.cfg.ProvisionGateway, nic, err)
 	}
+	s.gateway = route
 
 	s.log.Info("Installed gateway VTEP route", "gateway", s.cfg.ProvisionGateway, "nic", nic)
 	return nil
+}
+
+func (s *Stack) teardownGatewayRoute() {
+	if s.gateway == nil {
+		return
+	}
+	if err := netlink.RouteDel(s.gateway); err != nil {
+		s.log.Debug("failed to delete gateway VTEP route", "gateway", s.cfg.ProvisionGateway, "error", err)
+	}
+	s.gateway = nil
 }
 
 // cleanupVRF removes the VRF link if it was created by the overlay tier.
@@ -157,6 +174,8 @@ func (s *Stack) Teardown(ctx context.Context) error {
 	s.log.Info("Tearing down GoBGP network stack")
 
 	var firstErr error
+
+	s.teardownGatewayRoute()
 
 	if err := s.overlay.Teardown(ctx); err != nil {
 		s.log.Warn("Overlay teardown error", "error", err)

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"sync"
 	"syscall"
 	"time"
 
@@ -88,24 +89,21 @@ type OverlayTier struct {
 	createdBridge   bool
 	createdVXLAN    bool
 	addedLoopbackIP *netlink.Addr
+	gatewayFDB      *netlink.Neigh
 
 	// macVTEP tracks MAC → VTEP mappings learned from Type-2 routes
-	// so that withdrawals (which lack next-hop) can still delete the
-	// correct FDB entry. Only populated when EnableL2 is set.
-	macVTEP map[string]string
+	// so withdrawals (which lack next-hop) can still delete the right
+	// FDB entry. WatchEvent callbacks may run concurrently.
+	macVTEP sync.Map
 }
 
 // NewOverlayTier creates a new overlay tier.
 func NewOverlayTier(cfg *Config) *OverlayTier {
-	o := &OverlayTier{
+	return &OverlayTier{
 		cfg: cfg,
 		log: slog.With("tier", "overlay"),
 		fdb: netlinkFDB{},
 	}
-	if cfg.EnableL2 {
-		o.macVTEP = make(map[string]string)
-	}
-	return o
 }
 
 // SetBgpServer sets the shared BGP server from the underlay tier.
@@ -178,6 +176,15 @@ func (o *OverlayTier) Ready(_ context.Context, _ time.Duration) error {
 func (o *OverlayTier) Teardown(_ context.Context) error {
 	if o.cancel != nil {
 		o.cancel()
+	}
+
+	if o.gatewayFDB != nil {
+		if err := o.fdb.NeighDel(o.gatewayFDB); err != nil {
+			o.log.Debug("failed to remove gateway BUM FDB entry", "vtep", o.gatewayFDB.IP, "error", err)
+		} else {
+			o.log.Info("removed gateway BUM FDB entry", "vtep", o.gatewayFDB.IP)
+		}
+		o.gatewayFDB = nil
 	}
 
 	// Remove overlay loopback IP from lo.
@@ -410,6 +417,7 @@ func (o *OverlayTier) addGatewayFDB(vxLink netlink.Link) error {
 	if err := o.fdb.NeighAppend(fdb); err != nil {
 		return fmt.Errorf("append BUM FDB entry for %s: %w", o.cfg.ProvisionGateway, err)
 	}
+	o.gatewayFDB = fdb
 
 	o.log.Info("installed gateway BUM FDB entry", "vxlan", vxLink.Attrs().Name, "vtep", o.cfg.ProvisionGateway)
 	return nil
@@ -707,8 +715,10 @@ func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute,
 	macStr := mac.String()
 
 	if withdraw && vtep == "" {
-		if stored, ok := o.macVTEP[macStr]; ok {
-			vtep = stored
+		if stored, ok := o.macVTEP.Load(macStr); ok {
+			if storedVTEP, ok := stored.(string); ok {
+				vtep = storedVTEP
+			}
 		} else {
 			o.log.Debug("type-2 withdraw with no tracked VTEP", "mac", macStr)
 			return
@@ -747,7 +757,7 @@ func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute,
 		} else {
 			o.log.Info("removed FDB entry from type-2 withdraw", "mac", mac, "vtep", vtep)
 		}
-		delete(o.macVTEP, macStr)
+		o.macVTEP.Delete(macStr)
 		return
 	}
 
@@ -756,7 +766,7 @@ func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute,
 	} else {
 		o.log.Info("installed FDB entry from type-2 route", "mac", mac, "vtep", vtep)
 	}
-	o.macVTEP[macStr] = vtep
+	o.macVTEP.Store(macStr, vtep)
 }
 
 // handleType3Route installs or removes a BUM FDB entry for a remote VTEP

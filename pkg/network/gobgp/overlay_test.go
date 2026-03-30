@@ -547,10 +547,9 @@ func TestHandleType5RouteNoGateway(t *testing.T) {
 func TestHandleType2RouteInstallsFDB(t *testing.T) {
 	mock := &mockFDB{}
 	overlay := &OverlayTier{
-		cfg:     &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
-		log:     slog.Default(),
-		fdb:     mock,
-		macVTEP: make(map[string]string),
+		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log: slog.Default(),
+		fdb: mock,
 	}
 
 	route := &apipb.EVPNMACIPAdvertisementRoute{
@@ -567,7 +566,7 @@ func TestHandleType2RouteInstallsFDB(t *testing.T) {
 	if !mock.sets[0].IP.Equal(net.ParseIP("10.0.0.1")) {
 		t.Errorf("VTEP IP = %s, want 10.0.0.1", mock.sets[0].IP)
 	}
-	if overlay.macVTEP["aa:bb:cc:dd:ee:ff"] != "10.0.0.1" {
+	if got, ok := overlay.macVTEP.Load("aa:bb:cc:dd:ee:ff"); !ok || got != "10.0.0.1" {
 		t.Errorf("macVTEP not tracked")
 	}
 }
@@ -575,10 +574,9 @@ func TestHandleType2RouteInstallsFDB(t *testing.T) {
 func TestHandleType2RouteSelfSkipped(t *testing.T) {
 	mock := &mockFDB{}
 	overlay := &OverlayTier{
-		cfg:     &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
-		log:     slog.Default(),
-		fdb:     mock,
-		macVTEP: make(map[string]string),
+		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log: slog.Default(),
+		fdb: mock,
 	}
 
 	route := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:dd:ee:ff"}
@@ -592,11 +590,11 @@ func TestHandleType2RouteSelfSkipped(t *testing.T) {
 func TestHandleType2RouteWithdraw(t *testing.T) {
 	mock := &mockFDB{}
 	overlay := &OverlayTier{
-		cfg:     &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
-		log:     slog.Default(),
-		fdb:     mock,
-		macVTEP: map[string]string{"aa:bb:cc:dd:ee:ff": "10.0.0.1"},
+		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log: slog.Default(),
+		fdb: mock,
 	}
+	overlay.macVTEP.Store("aa:bb:cc:dd:ee:ff", "10.0.0.1")
 
 	route := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:dd:ee:ff"}
 	overlay.handleType2Route(route, "", true)
@@ -604,7 +602,7 @@ func TestHandleType2RouteWithdraw(t *testing.T) {
 	if len(mock.dels) != 1 {
 		t.Fatalf("expected 1 NeighDel call, got %d", len(mock.dels))
 	}
-	if _, ok := overlay.macVTEP["aa:bb:cc:dd:ee:ff"]; ok {
+	if _, ok := overlay.macVTEP.Load("aa:bb:cc:dd:ee:ff"); ok {
 		t.Error("macVTEP entry should be removed on withdraw")
 	}
 }
@@ -612,10 +610,9 @@ func TestHandleType2RouteWithdraw(t *testing.T) {
 func TestHandleType2RouteInvalidMAC(t *testing.T) {
 	mock := &mockFDB{}
 	overlay := &OverlayTier{
-		cfg:     &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
-		log:     slog.Default(),
-		fdb:     mock,
-		macVTEP: make(map[string]string),
+		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log: slog.Default(),
+		fdb: mock,
 	}
 
 	route := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "not-a-mac"}

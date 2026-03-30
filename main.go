@@ -215,7 +215,8 @@ func runCAPRF(ctx context.Context) {
 		connectivityTarget = cfg.SuccessURL
 	}
 	if connectivityTarget != "" {
-		if err := ensureNetworkConnectivity(ctx, cfg, netMode, connectivityTarget); err != nil {
+		netMode, err = ensureNetworkConnectivity(ctx, cfg, netMode, connectivityTarget)
+		if err != nil {
 			realm.Reboot()
 		}
 	}
@@ -331,14 +332,14 @@ func runCAPRF(ctx context.Context) {
 }
 
 // ensureNetworkConnectivity retries network setup up to 3 times on connectivity failure.
-// Returns error only if all retries exhausted (for caller to decide reboot behavior).
-func ensureNetworkConnectivity(ctx context.Context, cfg *config.MachineConfig, netMode network.Mode, target string) error {
+// It returns the active network mode so callers can tear down the latest instance.
+func ensureNetworkConnectivity(ctx context.Context, cfg *config.MachineConfig, netMode network.Mode, target string) (network.Mode, error) {
 	const maxRetries = 3
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		slog.Info("waiting for network connectivity", "target", target, "attempt", attempt)
 		if err := netMode.WaitForConnectivity(ctx, target, 5*time.Minute); err == nil {
 			slog.Info("network connectivity established", "target", target)
-			return nil
+			return netMode, nil
 		}
 		slog.Error("network connectivity timeout", "attempt", attempt)
 		if attempt < maxRetries {
@@ -350,7 +351,7 @@ func ensureNetworkConnectivity(ctx context.Context, cfg *config.MachineConfig, n
 		}
 	}
 	slog.Error("network connectivity failed after all retries", "attempts", maxRetries)
-	return fmt.Errorf("network connectivity timeout after %d attempts", maxRetries)
+	return netMode, fmt.Errorf("network connectivity timeout after %d attempts", maxRetries)
 }
 
 // setupNetworkMode detects and configures the appropriate network mode.
