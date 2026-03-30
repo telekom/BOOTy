@@ -5,6 +5,8 @@ package disk
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -66,8 +68,12 @@ func (m *Manager) StopRAIDArrays(ctx context.Context) error {
 	slog.Info("stopping RAID arrays")
 	out, err := m.cmd.Run(ctx, "mdadm", "--stop", "--scan")
 	if err != nil {
-		// mdadm returns error if no arrays found, which is fine.
-		slog.Debug("mdadm stop (may be expected if no arrays)", "output", string(out), "error", err)
+		lowerOut := strings.ToLower(string(out))
+		if strings.Contains(lowerOut, "no arrays found") {
+			slog.Debug("mdadm stop reported no arrays", "output", strings.TrimSpace(string(out)))
+			return nil
+		}
+		return fmt.Errorf("stop raid arrays: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }
@@ -171,6 +177,11 @@ func (m *Manager) secureEraseNVMe(ctx context.Context, dev string) error {
 // secureEraseSATA performs ATA SECURITY ERASE UNIT via hdparm.
 func (m *Manager) secureEraseSATA(ctx context.Context, dev string) error {
 	slog.Info("SATA secure erase", "device", dev)
+	pwd, err := temporaryErasePassword()
+	if err != nil {
+		return fmt.Errorf("generate temporary erase password for %s: %w", dev, err)
+	}
+
 	// Step 1: Check if security is supported.
 	out, err := m.cmd.Run(ctx, "hdparm", "-I", dev)
 	if err != nil || !strings.Contains(string(out), "Security:") {
@@ -188,18 +199,29 @@ func (m *Manager) secureEraseSATA(ctx context.Context, dev string) error {
 		return nil
 	}
 	// Step 2: Set a temporary password and issue secure erase.
-	if out, err := m.cmd.Run(ctx, "hdparm", "--user-master", "u", "--security-set-pass", "Erase", dev); err != nil {
+	if out, err := m.cmd.Run(ctx, "hdparm", "--user-master", "u", "--security-set-pass", pwd, dev); err != nil {
 		return fmt.Errorf("%s: failed to set security password: %s: %w", dev, string(out), err)
 	}
-	if out, err := m.cmd.Run(ctx, "hdparm", "--user-master", "u", "--security-erase", "Erase", dev); err != nil {
+	if out, err := m.cmd.Run(ctx, "hdparm", "--user-master", "u", "--security-erase", pwd, dev); err != nil {
 		slog.Warn("ATA security erase failed", "device", dev, "output", string(out))
 		// Clear the password we just set.
-		if out2, err2 := m.cmd.Run(ctx, "hdparm", "--user-master", "u", "--security-disable", "Erase", dev); err2 != nil {
+		if out2, err2 := m.cmd.Run(ctx, "hdparm", "--user-master", "u", "--security-disable", pwd, dev); err2 != nil {
 			slog.Warn("failed to clear security password", "device", dev, "output", string(out2))
 		}
 		return fmt.Errorf("%s: ATA security erase failed: %w", dev, err)
 	}
+	if out, err := m.cmd.Run(ctx, "hdparm", "--user-master", "u", "--security-disable", pwd, dev); err != nil {
+		slog.Warn("failed to clear temporary security password after erase", "device", dev, "output", string(out), "error", err)
+	}
 	return nil
+}
+
+func temporaryErasePassword() (string, error) {
+	b := make([]byte, 12)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return "Erase-" + hex.EncodeToString(b), nil
 }
 
 // CreateRAIDArray creates a software RAID array using mdadm.
@@ -614,6 +636,26 @@ func exitCodeFromError(err error) int {
 // Exit code >= 4 indicates uncorrectable errors and returns an error.
 func (m *Manager) CheckFilesystem(ctx context.Context, device string) error {
 	slog.Info("checking filesystem", "device", device)
+	fsType, fsErr := m.fsType(ctx, device)
+	if fsErr != nil {
+		slog.Debug("failed to detect filesystem type, falling back to ext check", "device", device, "error", fsErr)
+	}
+
+	switch fsType {
+	case "xfs":
+		out, err := m.cmd.Run(ctx, "xfs_repair", "-n", device)
+		if err != nil {
+			return fmt.Errorf("xfs_repair check failed on %s: %s: %w", device, strings.TrimSpace(string(out)), err)
+		}
+		return nil
+	case "btrfs":
+		out, err := m.cmd.Run(ctx, "btrfs", "check", "--readonly", device)
+		if err != nil {
+			return fmt.Errorf("btrfs check failed on %s: %s: %w", device, strings.TrimSpace(string(out)), err)
+		}
+		return nil
+	}
+
 	out, err := m.cmd.Run(ctx, "e2fsck", "-fy", device)
 	if err != nil {
 		exitCode := exitCodeFromError(err)
@@ -623,6 +665,14 @@ func (m *Manager) CheckFilesystem(ctx context.Context, device string) error {
 		slog.Warn("e2fsck returned non-zero (errors corrected)", "device", device, "exit_code", exitCode, "output", string(out))
 	}
 	return nil
+}
+
+func (m *Manager) fsType(ctx context.Context, device string) (string, error) {
+	out, err := m.cmd.Run(ctx, "blkid", "-o", "value", "-s", "TYPE", device)
+	if err != nil {
+		return "", err
+	}
+	return strings.ToLower(strings.TrimSpace(string(out))), nil
 }
 
 // DisableLVM deactivates LVM volume groups before disk wipe.

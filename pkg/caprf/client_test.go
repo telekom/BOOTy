@@ -802,6 +802,17 @@ func TestParseVarsPostProvisionCmds(t *testing.T) {
 	}
 }
 
+func TestParseVarsUnsupportedLUKSVar(t *testing.T) {
+	input := `LUKS_ENABLE="true"`
+	_, err := ParseVars(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("expected error for unsupported LUKS var")
+	}
+	if !strings.Contains(err.Error(), "LUKS_ENABLE is not supported yet") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestParseVarsImageChecksum(t *testing.T) {
 	input := `IMAGE_CHECKSUM="abc123def456"
 IMAGE_CHECKSUM_TYPE="sha256"

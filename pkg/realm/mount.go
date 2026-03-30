@@ -37,15 +37,15 @@ func isMounted(path string) bool {
 func DefaultMounts() *Mounts {
 	return &Mounts{
 		Mount: []Mount{
-			{Name: "bin", Path: "/bin", Mode: 0o777},
-			{Name: "dev", Source: "devtmpfs", Path: "/dev", FSType: "devtmpfs", Flags: syscall.MS_MGC_VAL, Mode: 0o777},
-			{Name: "etc", Path: "/etc", Mode: 0o777},
-			{Name: "home", Path: "/home", Mode: 0o777},
-			{Name: "mnt", Path: "/mnt", Mode: 0o777},
-			{Name: "proc", Source: "proc", Path: "/proc", FSType: "proc", Mode: 0o777},
-			{Name: "sys", Source: "sysfs", Path: "/sys", FSType: "sysfs", Mode: 0o777},
-			{Name: "tmp", Source: "tmpfs", Path: "/tmp", FSType: "tmpfs", Mode: 0o777},
-			{Name: "usr", Path: "/usr", Mode: 0o777},
+			{Name: "bin", Path: "/bin", Mode: 0o755},
+			{Name: "dev", Source: "devtmpfs", Path: "/dev", FSType: "devtmpfs", Flags: syscall.MS_MGC_VAL, Mode: 0o755},
+			{Name: "etc", Path: "/etc", Mode: 0o755},
+			{Name: "home", Path: "/home", Mode: 0o755},
+			{Name: "mnt", Path: "/mnt", Mode: 0o755},
+			{Name: "proc", Source: "proc", Path: "/proc", FSType: "proc", Mode: 0o755},
+			{Name: "sys", Source: "sysfs", Path: "/sys", FSType: "sysfs", Mode: 0o755},
+			{Name: "tmp", Source: "tmpfs", Path: "/tmp", FSType: "tmpfs", Mode: 0o1777},
+			{Name: "usr", Path: "/usr", Mode: 0o755},
 		},
 	}
 }

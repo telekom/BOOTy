@@ -207,39 +207,44 @@ func runCAPRF(ctx context.Context) {
 		"image_count", len(cfg.ImageURLs),
 	)
 
-	// Set up networking with retry — if connectivity fails, teardown and
-	// rebuild the entire network stack before giving up.
-	netMode := setupNetworkMode(ctx, cfg)
-	connectivityTarget := cfg.InitURL
-	if connectivityTarget == "" {
-		connectivityTarget = cfg.SuccessURL
-	}
-	if connectivityTarget != "" {
-		netMode, err = ensureNetworkConnectivity(ctx, cfg, netMode, connectivityTarget)
-		if err != nil {
-			realm.Reboot()
+	var netMode network.Mode
+	if cfg.Mode != "dry-run" {
+		// Set up networking with retry — if connectivity fails, teardown and
+		// rebuild the entire network stack before giving up.
+		netMode = setupNetworkMode(ctx, cfg)
+		connectivityTarget := cfg.InitURL
+		if connectivityTarget == "" {
+			connectivityTarget = cfg.SuccessURL
 		}
-	}
+		if connectivityTarget != "" {
+			netMode, err = ensureNetworkConnectivity(ctx, cfg, netMode, connectivityTarget)
+			if err != nil {
+				realm.Reboot()
+			}
+		}
 
-	// Acquire JWT after network is ready so the token endpoint is reachable.
-	if err := client.AcquireToken(ctx); err != nil {
-		slog.Error("failed to acquire jwt token", "error", err)
-		if cfg.TokenURL != "" {
-			provision.DumpDebugState("jwt-acquire")
-			realm.Reboot()
+		// Acquire JWT after network is ready so the token endpoint is reachable.
+		if err := client.AcquireToken(ctx); err != nil {
+			slog.Error("failed to acquire jwt token", "error", err)
+			if cfg.TokenURL != "" {
+				provision.DumpDebugState("jwt-acquire")
+				realm.Reboot()
+			}
 		}
-	}
-	client.SetTokenRenewalFatalHandler(func() {
-		slog.Error("token renewal exhausted, rebooting")
-		provision.DumpDebugState("jwt-renewal-exhausted")
-		realm.Reboot()
-	})
-	if err := client.StartTokenRenewal(ctx); err != nil {
-		slog.Error("failed to start token renewal", "error", err)
-		if cfg.TokenURL != "" {
-			provision.DumpDebugState("jwt-renewal-start")
+		client.SetTokenRenewalFatalHandler(func() {
+			slog.Error("token renewal exhausted, rebooting")
+			provision.DumpDebugState("jwt-renewal-exhausted")
 			realm.Reboot()
+		})
+		if err := client.StartTokenRenewal(ctx); err != nil {
+			slog.Error("failed to start token renewal", "error", err)
+			if cfg.TokenURL != "" {
+				provision.DumpDebugState("jwt-renewal-start")
+				realm.Reboot()
+			}
 		}
+	} else {
+		slog.Info("dry-run mode: skipping active network setup and token renewal")
 	}
 
 	// Run provisioning, deprovisioning, or standby based on mode.
@@ -314,8 +319,10 @@ func runCAPRF(ctx context.Context) {
 	}
 
 	slog.Info("BOOTy CAPRF complete")
-	if err := netMode.Teardown(ctx); err != nil {
-		slog.Warn("network teardown error", "error", err)
+	if netMode != nil {
+		if err := netMode.Teardown(ctx); err != nil {
+			slog.Warn("network teardown error", "error", err)
+		}
 	}
 
 	// Attempt kexec into installed kernel; fall back to power off so
@@ -785,7 +792,7 @@ func runStandby(ctx context.Context, client config.Provider, cfg *config.Machine
 						break
 					}
 					if !provisionSucceeded {
-						if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "failed", provErr.Error()); ackErr != nil {
+						if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "failed", fmt.Sprintf("provision command failed: %v", provErr)); ackErr != nil {
 							slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
 						}
 						if err := netMode.Teardown(ctx); err != nil {
@@ -809,7 +816,7 @@ func runStandby(ctx context.Context, client config.Provider, cfg *config.Machine
 					orch := provision.NewOrchestrator(cfg, client, diskMgr)
 					if err := orch.Deprovision(ctx); err != nil {
 						slog.Error("hot deprovision failed", "error", err)
-						if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "failed", err.Error()); ackErr != nil {
+						if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "failed", fmt.Sprintf("deprovision command failed: %v", err)); ackErr != nil {
 							slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
 						}
 					} else {

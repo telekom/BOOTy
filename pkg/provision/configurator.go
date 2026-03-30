@@ -24,6 +24,12 @@ const newroot = "/newroot"
 // safeKernelParams matches only safe characters for kernel command line parameters.
 var safeKernelParams = regexp.MustCompile(`^[a-zA-Z0-9=._\-/ ]*$`)
 
+// safeProvisionCommand matches basic command/argument characters while
+// rejecting shell metacharacters that enable command chaining or substitution.
+var safeProvisionCommand = regexp.MustCompile(`^[a-zA-Z0-9_./:=,@%+\-\s]+$`)
+
+var blockedShellTokens = []string{"&&", "||", "|", "`", "$(", ")", ">", "<", "\n", "\r"}
+
 // Configurator handles post-image OS configuration.
 type Configurator struct {
 	disk    *disk.Manager
@@ -58,6 +64,25 @@ func (c *Configurator) ConfigureKubelet(cfg *config.MachineConfig) error {
 		return fmt.Errorf("creating kubelet conf dir: %w", err)
 	}
 
+	var labels []string
+	if cfg.FailureDomain != "" {
+		labels = append(labels, "topology.kubernetes.io/zone="+cfg.FailureDomain)
+	}
+	if cfg.Region != "" {
+		labels = append(labels, "topology.kubernetes.io/region="+cfg.Region)
+	}
+
+	if cfg.ProviderID != "" && len(labels) > 0 {
+		combined := []string{fmt.Sprintf("--provider-id=%s", cfg.ProviderID), fmt.Sprintf("--node-labels=%s", strings.Join(labels, ","))}
+		content := fmt.Sprintf("KUBELET_EXTRA_ARGS=\"%s\"\n", strings.Join(combined, " "))
+		path := filepath.Join(confDir, "10-caprf-kubelet-extra-args.conf")
+		slog.Info("writing combined kubelet extra args", "path", path)
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			return fmt.Errorf("writing combined kubelet conf: %w", err)
+		}
+		return nil
+	}
+
 	if cfg.ProviderID != "" {
 		content := fmt.Sprintf("KUBELET_EXTRA_ARGS=\"--provider-id=%s\"\n", cfg.ProviderID)
 		path := filepath.Join(confDir, "10-caprf-provider-id.conf")
@@ -67,13 +92,6 @@ func (c *Configurator) ConfigureKubelet(cfg *config.MachineConfig) error {
 		}
 	}
 
-	var labels []string
-	if cfg.FailureDomain != "" {
-		labels = append(labels, "topology.kubernetes.io/zone="+cfg.FailureDomain)
-	}
-	if cfg.Region != "" {
-		labels = append(labels, "topology.kubernetes.io/region="+cfg.Region)
-	}
 	if len(labels) > 0 {
 		content := fmt.Sprintf("KUBELET_EXTRA_ARGS=\"--node-labels=%s\"\n", strings.Join(labels, ","))
 		path := filepath.Join(confDir, "20-caprf-node-labels.conf")
@@ -201,6 +219,9 @@ func (c *Configurator) RunMachineCommands(ctx context.Context) error {
 		if cmd == "" {
 			continue
 		}
+		if err := validateProvisionCommand(cmd); err != nil {
+			return fmt.Errorf("machine command %s rejected: %w", entry.Name(), err)
+		}
 		slog.Info("running machine command", "file", entry.Name(), "command", cmd)
 		out, err := c.disk.ChrootRun(ctx, c.rootDir, cmd)
 		if err != nil {
@@ -218,6 +239,9 @@ func (c *Configurator) RunPostProvisionCmds(ctx context.Context, cmds []string) 
 		if cmd == "" {
 			continue
 		}
+		if err := validateProvisionCommand(cmd); err != nil {
+			return fmt.Errorf("post-provision cmd %d rejected: %w", i, err)
+		}
 		slog.Info("running post-provision command", "index", i, "command", cmd)
 		out, err := c.disk.ChrootRun(ctx, c.rootDir, cmd)
 		if err != nil {
@@ -225,6 +249,18 @@ func (c *Configurator) RunPostProvisionCmds(ctx context.Context, cmds []string) 
 		}
 		if len(out) > 0 {
 			slog.Debug("post-provision command output", "index", i, "output", string(out))
+		}
+	}
+	return nil
+}
+
+func validateProvisionCommand(cmd string) error {
+	if !safeProvisionCommand.MatchString(cmd) {
+		return fmt.Errorf("contains unsupported characters")
+	}
+	for _, token := range blockedShellTokens {
+		if strings.Contains(cmd, token) {
+			return fmt.Errorf("contains blocked shell token %q", token)
 		}
 	}
 	return nil

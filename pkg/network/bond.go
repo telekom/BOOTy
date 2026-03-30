@@ -60,6 +60,7 @@ func (b *BondMode) Setup(_ context.Context, cfg *Config) error {
 	}
 
 	// Add slave interfaces.
+	enslaved := 0
 	for _, ifName := range strings.Split(cfg.BondInterfaces, ",") {
 		ifName = strings.TrimSpace(ifName)
 		if ifName == "" {
@@ -79,6 +80,11 @@ func (b *BondMode) Setup(_ context.Context, cfg *Config) error {
 			continue
 		}
 		slog.Info("enslaved interface to bond", "slave", ifName)
+		enslaved++
+	}
+
+	if enslaved == 0 {
+		return fmt.Errorf("no interfaces were enslaved to bond0")
 	}
 
 	// Bring the bond up.

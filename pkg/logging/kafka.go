@@ -17,7 +17,7 @@ type KafkaConfig struct {
 	Topic         string   `json:"topic"`
 	TLS           bool     `json:"tls,omitempty"`
 	SASLUser      string   `json:"saslUser,omitempty"`
-	SASLPassword  string   `json:"saslPassword,omitempty"`
+	SASLPassword  string   `json:"-"`
 	SASLMechanism string   `json:"saslMechanism,omitempty"` // "PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512".
 	Compression   string   `json:"compression,omitempty"`   // "snappy", "lz4", "zstd", "none".
 }

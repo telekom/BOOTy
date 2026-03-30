@@ -191,6 +191,40 @@ func TestConfigureKubeletNoLabels(t *testing.T) {
 	}
 }
 
+func TestConfigureKubeletCombinedExtraArgs(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+	cfg := &config.MachineConfig{
+		ProviderID:    "redfish://host/sys/1",
+		FailureDomain: "dc1-az1",
+		Region:        "eu-central",
+	}
+
+	if err := c.ConfigureKubelet(cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	combinedPath := filepath.Join(c.rootDir, "etc", "kubernetes", "kubelet.conf.d", "10-caprf-kubelet-extra-args.conf")
+	data, err := os.ReadFile(combinedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "--provider-id=redfish://host/sys/1") {
+		t.Fatalf("combined config missing provider-id: %q", content)
+	}
+	if !strings.Contains(content, "--node-labels=topology.kubernetes.io/zone=dc1-az1,topology.kubernetes.io/region=eu-central") {
+		t.Fatalf("combined config missing node-labels: %q", content)
+	}
+
+	if _, err := os.Stat(filepath.Join(c.rootDir, "etc", "kubernetes", "kubelet.conf.d", "10-caprf-provider-id.conf")); !os.IsNotExist(err) {
+		t.Fatal("provider-id file should not exist when combined config is written")
+	}
+	if _, err := os.Stat(filepath.Join(c.rootDir, "etc", "kubernetes", "kubelet.conf.d", "20-caprf-node-labels.conf")); !os.IsNotExist(err) {
+		t.Fatal("node-label file should not exist when combined config is written")
+	}
+}
+
 func TestConfigureDNS(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
@@ -464,6 +498,20 @@ func TestRunPostProvisionCmdsError(t *testing.T) {
 	err := c.RunPostProvisionCmds(context.Background(), cmds)
 	if err == nil {
 		t.Fatal("expected error when command fails")
+	}
+}
+
+func TestRunPostProvisionCmdsRejectsUnsafeCommand(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+
+	cmds := []string{"echo ok && rm -rf /"}
+	err := c.RunPostProvisionCmds(context.Background(), cmds)
+	if err == nil {
+		t.Fatal("expected validation error for unsafe command")
+	}
+	if !strings.Contains(err.Error(), "blocked shell token") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

@@ -154,8 +154,110 @@ func (m *Manager) WaitForConnectivity(ctx context.Context, target string, timeou
 
 // Teardown removes the FRR network configuration.
 func (m *Manager) Teardown(ctx context.Context) error {
-	_, _ = m.commander.Run(ctx, "systemctl", "stop", "frr")
+	var firstErr error
+
+	if _, err := m.commander.Run(ctx, "systemctl", "stop", "frr"); err != nil {
+		m.log.Warn("failed to stop FRR", "error", err)
+		firstErr = err
+	}
+
+	if err := m.cleanupNetworkState(); err != nil {
+		m.log.Warn("failed to fully clean FRR network resources", "error", err)
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+
 	m.log.Info("FRR teardown complete")
+	return firstErr
+}
+
+func (m *Manager) cleanupNetworkState() error {
+	var firstErr error
+
+	underlayIP, overlayIP, _, err := DeriveAddresses(&m.cfg)
+	if err == nil {
+		for _, ip := range []string{underlayIP, overlayIP} {
+			if remErr := removeAddrFromLink("lo", ip+"/32"); remErr != nil {
+				if firstErr == nil {
+					firstErr = remErr
+				}
+				m.log.Debug("failed to remove loopback /32 address", "ip", ip, "error", remErr)
+			}
+			if remErr := removeAddrFromLink("lo", ip+"/128"); remErr != nil {
+				if firstErr == nil {
+					firstErr = remErr
+				}
+				m.log.Debug("failed to remove loopback /128 address", "ip", ip, "error", remErr)
+			}
+		}
+	} else {
+		m.log.Debug("skipping loopback cleanup; failed to derive addresses", "error", err)
+	}
+
+	if m.cfg.BridgeName != "" && m.cfg.ProvisionIP != "" {
+		if remErr := removeAddrFromLink(m.cfg.BridgeName, m.cfg.ProvisionIP); remErr != nil {
+			if firstErr == nil {
+				firstErr = remErr
+			}
+			m.log.Debug("failed to remove bridge provision address", "bridge", m.cfg.BridgeName, "addr", m.cfg.ProvisionIP, "error", remErr)
+		}
+	}
+
+	if m.cfg.ProvisionVNI > 0 {
+		vxName := fmt.Sprintf("vx%d", m.cfg.ProvisionVNI)
+		if delErr := removeLinkByName(vxName); delErr != nil {
+			if firstErr == nil {
+				firstErr = delErr
+			}
+			m.log.Debug("failed to remove VXLAN", "name", vxName, "error", delErr)
+		}
+	}
+
+	for _, name := range []string{m.cfg.BridgeName, "dummy.underlay", m.cfg.VRFName} {
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		if delErr := removeLinkByName(name); delErr != nil {
+			if firstErr == nil {
+				firstErr = delErr
+			}
+			m.log.Debug("failed to remove link", "name", name, "error", delErr)
+		}
+	}
+
+	return firstErr
+}
+
+func removeAddrFromLink(linkName, cidr string) error {
+	link, err := netlink.LinkByName(linkName)
+	if err != nil {
+		return nil
+	}
+	addr, err := netlink.ParseAddr(cidr)
+	if err != nil {
+		return fmt.Errorf("parse addr %s: %w", cidr, err)
+	}
+	if err := netlink.AddrDel(link, addr); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "no such") {
+			return nil
+		}
+		return fmt.Errorf("delete addr %s from %s: %w", cidr, linkName, err)
+	}
+	return nil
+}
+
+func removeLinkByName(name string) error {
+	link, err := netlink.LinkByName(name)
+	if err != nil {
+		return nil
+	}
+	if err := netlink.LinkDel(link); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "no such") {
+			return nil
+		}
+		return fmt.Errorf("delete link %s: %w", name, err)
+	}
 	return nil
 }
 

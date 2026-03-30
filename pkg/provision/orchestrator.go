@@ -81,8 +81,8 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"remove-efi-entries", o.removeEFIBootEntries},
 		{"setup-mellanox", o.setupMellanox},
 		{"setup-nvme-namespaces", o.setupNVMeNamespaces},
-		{"wipe-disks", o.wipeOrSecureEraseDisks},
 		{"detect-disk", o.detectDisk},
+		{"wipe-disks", o.wipeOrSecureEraseDisks},
 		{"verify-image", o.verifyImageSignature},
 		{"apply-partition-layout", o.applyPartitionLayout},
 		{"stream-image", o.streamImage},
@@ -571,6 +571,9 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 	// Default whole-disk mode.
 	o.log.Info("Streaming image", "url", bestURL, "disk", o.targetDisk)
 	if err := image.Stream(ctx, bestURL, o.targetDisk, opts...); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "checksum mismatch") {
+			return &PermanentError{Err: fmt.Errorf("streaming %s: %w", bestURL, err)}
+		}
 		return fmt.Errorf("streaming %s: %w", bestURL, err)
 	}
 	return nil

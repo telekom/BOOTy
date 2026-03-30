@@ -41,6 +41,23 @@ func TestDefaultMountsContainsExpected(t *testing.T) {
 			t.Errorf("mount[%d]: expected %q, got %q", i, name, mounts.Mount[i].Name)
 		}
 	}
+
+	modes := map[string]os.FileMode{
+		"bin":  0o755,
+		"dev":  0o755,
+		"etc":  0o755,
+		"home": 0o755,
+		"mnt":  0o755,
+		"proc": 0o755,
+		"sys":  0o755,
+		"tmp":  0o1777,
+		"usr":  0o755,
+	}
+	for _, m := range mounts.Mount {
+		if want, ok := modes[m.Name]; ok && m.Mode != want {
+			t.Errorf("mount %q mode = %#o, want %#o", m.Name, m.Mode, want)
+		}
+	}
 }
 
 func TestGetMount(t *testing.T) {

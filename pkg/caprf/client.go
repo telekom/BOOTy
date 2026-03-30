@@ -610,6 +610,10 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) error {
 			return fmt.Errorf("invalid PARTITION_LAYOUT: %w", err)
 		}
 		cfg.PartitionLayout = layout
+	default:
+		if strings.HasPrefix(key, "LUKS_") {
+			return fmt.Errorf("%s is not supported yet", key)
+		}
 	}
 
 	return nil

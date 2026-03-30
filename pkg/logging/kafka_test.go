@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 )
@@ -31,6 +32,23 @@ func TestKafkaConfig_Validate(t *testing.T) {
 				t.Errorf("Validate() err = %v, wantErr %v", err, tc.err)
 			}
 		})
+	}
+}
+
+func TestKafkaConfig_JSONOmitsPassword(t *testing.T) {
+	cfg := KafkaConfig{
+		Brokers:      []string{"localhost:9092"},
+		Topic:        "t",
+		SASLUser:     "user",
+		SASLPassword: "super-secret",
+	}
+
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(data), "saslPassword") || strings.Contains(string(data), "super-secret") {
+		t.Fatalf("password leaked in json: %s", string(data))
 	}
 }
 

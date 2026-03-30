@@ -99,6 +99,13 @@ func DiscoverAll(ctx context.Context, ifaces []string, timeout time.Duration) []
 	results := make(chan result, len(ifaces))
 	for _, iface := range ifaces {
 		go func(ifName string) {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("panic in LLDP listener goroutine", "interface", ifName, "panic", r)
+					results <- result{nil}
+				}
+			}()
+
 			n, err := Listen(ctx, ifName, timeout)
 			if err != nil {
 				slog.Debug("LLDP listen failed", "interface", ifName, "error", err)

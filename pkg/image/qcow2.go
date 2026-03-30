@@ -96,7 +96,8 @@ func downloadToFile(ctx context.Context, url, dest string) error {
 	counter := &WriteCounter{}
 	stopProgress := startProgressTicker(counter)
 
-	written, err := io.Copy(f, io.TeeReader(body, counter))
+	buf := make([]byte, imageCopyBufferSize)
+	written, err := io.CopyBuffer(f, io.TeeReader(body, counter), buf)
 	stopProgress()
 	if err != nil {
 		return fmt.Errorf("writing to file: %w", err)
@@ -144,9 +145,12 @@ func streamRawToDevice(rawPath, device string) error {
 	counter := &WriteCounter{}
 	stopProgress := startProgressTicker(counter)
 
-	written, err := io.Copy(dst, io.TeeReader(src, counter))
+	buf := make([]byte, imageCopyBufferSize)
+	written, err := io.CopyBuffer(dst, io.TeeReader(src, counter), buf)
 	stopProgress()
 	if err != nil {
+		slog.Error("qcow2 write failed: wiping partial image", "device", device, "error", err)
+		wipeLeadingSectors(device)
 		return fmt.Errorf("writing raw to device: %w", err)
 	}
 	fmt.Println()
