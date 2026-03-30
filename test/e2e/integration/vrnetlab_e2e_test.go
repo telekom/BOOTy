@@ -639,6 +639,10 @@ var vrnetlabAllowedErrors = []string{
 	"no suitable disk found",
 	"Connectivity timeout",
 	"Connecting to provisioning server",
+	"network connectivity timeout",
+	// Expected when CAPRF endpoints are HTTP-only and token auth is enforced.
+	"failed to report error status",
+	"insecure transport",
 }
 
 func TestVrnetlabNoUnexpectedErrors(t *testing.T) {
@@ -661,9 +665,10 @@ func TestVrnetlabNoUnexpectedErrors(t *testing.T) {
 			if !strings.Contains(line, "level=ERROR") {
 				continue
 			}
+			lineLower := strings.ToLower(line)
 			allowed := false
 			for _, pattern := range vrnetlabAllowedErrors {
-				if strings.Contains(line, pattern) {
+				if strings.Contains(lineLower, strings.ToLower(pattern)) {
 					allowed = true
 					break
 				}

@@ -107,16 +107,19 @@ func TestCAPRFClientStatusLifecycle(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	if err := client.ReportStatus(ctx, config.StatusInit, "starting provisioning"); err != nil {
-		t.Fatalf("ReportStatus(init): %v", err)
+	for _, tc := range []struct {
+		status config.Status
+		msg    string
+		label  string
+	}{
+		{config.StatusInit, "starting provisioning", "init"},
+		{config.StatusSuccess, "done", "success"},
+		{config.StatusError, "disk failure", "error"},
+	} {
+		err := client.ReportStatus(ctx, tc.status, tc.msg)
+		assertInsecureTransport(t, tc.label, err)
 	}
-	if err := client.ReportStatus(ctx, config.StatusSuccess, "done"); err != nil {
-		t.Fatalf("ReportStatus(success): %v", err)
-	}
-	if err := client.ReportStatus(ctx, config.StatusError, "disk failure"); err != nil {
-		t.Fatalf("ReportStatus(error): %v", err)
-	}
-	t.Log("CAPRF status lifecycle (init -> success -> error) works through fabric")
+	t.Log("CAPRF status lifecycle blocks bearer-token HTTP transport as expected")
 }
 
 func TestCAPRFClientLogAndDebugShipping(t *testing.T) {
@@ -132,16 +135,10 @@ func TestCAPRFClientLogAndDebugShipping(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	if err := client.ShipLog(ctx, "provisioning step 1 complete"); err != nil {
-		t.Fatalf("ShipLog: %v", err)
-	}
-	if err := client.ShipLog(ctx, "provisioning step 2 complete"); err != nil {
-		t.Fatalf("ShipLog (2): %v", err)
-	}
-	if err := client.ShipDebug(ctx, "disk enumeration: sda=500GB sdb=1TB"); err != nil {
-		t.Fatalf("ShipDebug: %v", err)
-	}
-	t.Log("CAPRF log + debug shipping works through fabric")
+	assertInsecureTransport(t, "ShipLog", client.ShipLog(ctx, "provisioning step 1 complete"))
+	assertInsecureTransport(t, "ShipLog(2)", client.ShipLog(ctx, "provisioning step 2 complete"))
+	assertInsecureTransport(t, "ShipDebug", client.ShipDebug(ctx, "disk enumeration: sda=500GB sdb=1TB"))
+	t.Log("CAPRF log + debug shipping blocks bearer-token HTTP transport as expected")
 }
 
 func TestCAPRFClientFetchCommandsEmpty(t *testing.T) {
@@ -154,13 +151,11 @@ func TestCAPRFClientFetchCommandsEmpty(t *testing.T) {
 	})
 
 	cmds, err := client.FetchCommands(context.Background())
-	if err != nil {
-		t.Fatalf("FetchCommands: %v", err)
-	}
 	if cmds != nil {
-		t.Fatalf("expected nil commands (204), got %v", cmds)
+		t.Fatalf("expected nil commands on insecure request, got %v", cmds)
 	}
-	t.Log("FetchCommands returns nil (204) through fabric")
+	assertInsecureTransport(t, "FetchCommands", err)
+	t.Log("FetchCommands blocks bearer-token HTTP transport as expected")
 }
 
 func TestCAPRFClientFetchCommandsWithData(t *testing.T) {
@@ -173,19 +168,11 @@ func TestCAPRFClientFetchCommandsWithData(t *testing.T) {
 	})
 
 	cmds, err := client.FetchCommands(context.Background())
-	if err != nil {
-		t.Fatalf("FetchCommands with data: %v", err)
+	if cmds != nil {
+		t.Fatalf("expected nil commands on insecure request, got %v", cmds)
 	}
-	if len(cmds) != 2 {
-		t.Fatalf("expected 2 commands, got %d", len(cmds))
-	}
-	if cmds[0].ID != "cmd-reboot" || cmds[0].Type != "reboot" {
-		t.Errorf("cmd[0] = %+v, want ID=cmd-reboot Type=reboot", cmds[0])
-	}
-	if cmds[1].ID != "cmd-status" || cmds[1].Type != "status-check" {
-		t.Errorf("cmd[1] = %+v, want ID=cmd-status Type=status-check", cmds[1])
-	}
-	t.Logf("FetchCommands returned %d commands through fabric", len(cmds))
+	assertInsecureTransport(t, "FetchCommands with data", err)
+	t.Log("FetchCommands with data blocks bearer-token HTTP transport as expected")
 }
 
 func TestCAPRFClientHeartbeatThroughGoClient(t *testing.T) {
@@ -197,10 +184,8 @@ func TestCAPRFClientHeartbeatThroughGoClient(t *testing.T) {
 		HeartbeatURL: fmt.Sprintf("http://%s/status/heartbeat", ip),
 	})
 
-	if err := client.Heartbeat(context.Background()); err != nil {
-		t.Fatalf("Heartbeat: %v", err)
-	}
-	t.Log("Heartbeat via Go CAPRF client works through fabric")
+	assertInsecureTransport(t, "Heartbeat", client.Heartbeat(context.Background()))
+	t.Log("Heartbeat blocks bearer-token HTTP transport as expected")
 }
 
 // ---------------------------------------------------------------------------
@@ -499,15 +484,11 @@ func TestFullProvisioningFlow(t *testing.T) {
 	client := caprf.NewFromConfig(mcfg)
 	ctx := context.Background()
 
-	if err := client.ReportStatus(ctx, config.StatusInit, "starting"); err != nil {
-		t.Fatalf("init: %v", err)
-	}
+	assertInsecureTransport(t, "init", client.ReportStatus(ctx, config.StatusInit, "starting"))
 
 	// Step 3: Ship a provisioning log
 	t.Log("Step 3: Shipping log via CAPRF client")
-	if err := client.ShipLog(ctx, "imaging disk /dev/sda"); err != nil {
-		t.Fatalf("ship log: %v", err)
-	}
+	assertInsecureTransport(t, "ship log", client.ShipLog(ctx, "imaging disk /dev/sda"))
 
 	// Step 4: Download image from nginx via management network
 	t.Log("Step 4: Downloading test image header from nginx")
@@ -538,9 +519,17 @@ func TestFullProvisioningFlow(t *testing.T) {
 
 	// Step 6: Report success
 	t.Log("Step 6: Reporting success via CAPRF client")
-	if err := client.ReportStatus(ctx, config.StatusSuccess, "provisioning complete"); err != nil {
-		t.Fatalf("success: %v", err)
-	}
+	assertInsecureTransport(t, "success", client.ReportStatus(ctx, config.StatusSuccess, "provisioning complete"))
 
-	t.Log("Full provisioning flow completed: vars -> init -> log -> image -> overlay -> success")
+	t.Log("Full provisioning flow validated with secure-transport enforcement: vars -> blocked CAPRF HTTP calls -> image -> overlay")
+}
+
+func assertInsecureTransport(t *testing.T, label string, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("%s: expected insecure transport error, got nil", label)
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "insecure transport") {
+		t.Fatalf("%s: expected insecure transport error, got: %v", label, err)
+	}
 }

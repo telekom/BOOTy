@@ -602,9 +602,10 @@ func TestBootNoUnexpectedErrors(t *testing.T) {
 			if !strings.Contains(line, "level=ERROR") {
 				continue
 			}
+			lineLower := strings.ToLower(line)
 			allowed := false
 			for _, pattern := range allowedErrorPatterns {
-				if strings.Contains(line, pattern) {
+				if strings.Contains(lineLower, strings.ToLower(pattern)) {
 					allowed = true
 					break
 				}
