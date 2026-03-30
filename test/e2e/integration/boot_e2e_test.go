@@ -408,12 +408,18 @@ func TestBootNginxAccessLogShowsImageRequest(t *testing.T) {
 func TestBootCAPRFMockReceivedErrorFromProvision(t *testing.T) {
 	requireBootLab(t)
 
-	// Image streaming through EVPN may retry multiple times before failing,
-	// so allow generous timeout for the error report to arrive.
-	out, ok := waitForAccessLogEntry(t, caprfContainer, "/var/log/nginx/access.log", "/status/error", 600*time.Second)
+	// Image streaming through EVPN may retry before failing, but secure transport
+	// hardening can intentionally block posting /status/error to non-HTTPS CAPRF.
+	out, ok := waitForAccessLogEntry(t, caprfContainer, "/var/log/nginx/access.log", "/status/error", 120*time.Second)
 	if !ok {
+		serial := getBootyLogs(t, provisionContainer)
+		if strings.Contains(serial, "insecure transport") || strings.Contains(serial, "refusing request to non-HTTPS endpoint") {
+			t.Logf("CAPRF access log:\n%s", out)
+			t.Log("CAPRF /status/error not posted because non-HTTPS bearer transport was intentionally blocked")
+			return
+		}
 		t.Logf("CAPRF access log:\n%s", out)
-		t.Fatal("CAPRF mock did not receive /status/error — provision should fail at disk ops")
+		t.Fatal("CAPRF mock did not receive /status/error within 120s")
 	}
 	t.Log("CAPRF mock received /status/error (provision failed at disk ops as expected)")
 }
@@ -427,8 +433,8 @@ func TestBootProvisionShowsProvisioningSteps(t *testing.T) {
 
 	// Wait for provisioning to finish (success or failure).
 	// With real image streaming through EVPN, retries can take several minutes.
-	if !waitForLogEntry(t, provisionContainer, "provisioning failed", 600*time.Second) {
-		t.Log("provision node: 'provisioning failed' not found within 600s")
+	if !waitForLogEntry(t, provisionContainer, "provisioning failed", 180*time.Second) {
+		t.Log("provision node: 'provisioning failed' not found within 180s")
 	}
 
 	logs := getBootyLogs(t, provisionContainer)
@@ -579,8 +585,8 @@ func TestBootNoUnexpectedErrors(t *testing.T) {
 
 	// Wait for BOOTy to have progressed through provisioning attempt.
 	// Poll for a known terminal state instead of sleeping a fixed duration.
-	if !waitForLogEntry(t, provisionContainer, "provisioning failed", 600*time.Second) {
-		t.Log("provision node: 'provisioning failed' not found within 600s, checking available logs")
+	if !waitForLogEntry(t, provisionContainer, "provisioning failed", 180*time.Second) {
+		t.Log("provision node: 'provisioning failed' not found within 180s, checking available logs")
 	}
 
 	containers := []struct {

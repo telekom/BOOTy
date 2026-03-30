@@ -351,7 +351,7 @@ func TestVrnetlabNginxReceivedImageRequest(t *testing.T) {
 func TestVrnetlabCAPRFMockReceivedErrorFromProvision(t *testing.T) {
 	requireVrnetlabLab(t)
 
-	out, ok := waitForVMAccessLog(t, vmCAPRF, "/var/log/nginx/access.log", "/status/error", 900*time.Second)
+	out, ok := waitForVMAccessLog(t, vmCAPRF, "/var/log/nginx/access.log", "/status/error", 180*time.Second)
 	if !ok {
 		serial := getVMSerialLog(t, vmProvision)
 		if strings.Contains(serial, "insecure transport") || strings.Contains(serial, "refusing request to non-HTTPS endpoint") {
