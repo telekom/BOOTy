@@ -173,3 +173,24 @@ func TestRemoteHandlerCloseIdempotent(t *testing.T) {
 		t.Fatal("Close() deadlocked")
 	}
 }
+
+func TestRemoteHandlerCloseFromDerivedHandlers(t *testing.T) {
+	ts := newTestServer(t)
+
+	cfg := &config.MachineConfig{
+		Token:  "derived-close-token",
+		LogURL: ts.server.URL + "/log",
+	}
+	client := NewFromConfig(cfg)
+
+	inner := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+	root := NewRemoteHandler(client, inner, slog.LevelInfo, 10)
+	derived := root.WithAttrs([]slog.Attr{slog.String("component", "test")}).(*RemoteHandler)
+
+	logger := slog.New(derived)
+	logger.Info("log from derived handler")
+
+	// Closing both handlers should not panic or deadlock.
+	root.Close()
+	derived.Close()
+}
