@@ -82,6 +82,15 @@ func (u *UnderlayTier) NICs() []string {
 // Setup creates the underlay loopback, detects NICs (when needed), starts the
 // BGP server, and adds peers according to the configured PeerMode.
 func (u *UnderlayTier) Setup(ctx context.Context) error {
+	switch UnderlayAF(u.cfg.UnderlayAF) {
+	case AFIPv4:
+		// default — continue with IPv4 underlay
+	case AFIPv6:
+		return fmt.Errorf("underlay address family %q is not yet implemented", u.cfg.UnderlayAF)
+	case AFDualStack:
+		return fmt.Errorf("underlay address family %q is not yet implemented", u.cfg.UnderlayAF)
+	}
+
 	if err := u.createUnderlayDummy(); err != nil {
 		return fmt.Errorf("create underlay dummy: %w", err)
 	}

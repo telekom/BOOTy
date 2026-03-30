@@ -44,6 +44,10 @@ func (s *Stack) Setup(ctx context.Context, _ *network.Config) error {
 		"vni", s.cfg.ProvisionVNI,
 	)
 
+	if s.cfg.Policy != nil {
+		s.log.Warn("policy config (communities, local-pref, MED) is configured but not yet applied to BGP sessions")
+	}
+
 	// Create VRF first so underlay can assign dummy/NICs to it.
 	if err := s.overlay.CreateVRF(); err != nil {
 		return fmt.Errorf("create VRF: %w", err)

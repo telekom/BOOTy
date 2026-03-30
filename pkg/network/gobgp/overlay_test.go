@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"strings"
 	"testing"
 
 	apipb "github.com/osrg/gobgp/v3/api"
@@ -942,5 +943,63 @@ func TestAdvertiseType2InvalidProvisionIP(t *testing.T) {
 	err := overlay.advertiseType2(context.TODO())
 	if err == nil {
 		t.Fatal("expected error for invalid provision IP")
+	}
+}
+
+func TestOverlaySetupRejectsUnimplementedTypes(t *testing.T) {
+	tests := []struct {
+		name        string
+		overlayType string
+		wantErr     string
+	}{
+		{"l3vpn not implemented", string(OverlayL3VPN), "not yet implemented"},
+		{"unknown type", "invalid", "unknown overlay type"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			overlay := &OverlayTier{
+				cfg: &Config{OverlayType: tt.overlayType},
+				log: slog.Default(),
+			}
+			err := overlay.Setup(context.Background())
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !errors.Is(err, err) || err.Error() == "" {
+				t.Fatal("error should not be empty")
+			}
+		})
+	}
+}
+
+func TestOverlaySetupSkipsOverlayNone(t *testing.T) {
+	overlay := &OverlayTier{
+		cfg: &Config{OverlayType: string(OverlayNone)},
+		log: slog.Default(),
+	}
+	if err := overlay.Setup(context.Background()); err != nil {
+		t.Fatalf("overlay none should succeed with no-op: %v", err)
+	}
+}
+
+func TestUnderlaySetupRejectsUnimplementedAF(t *testing.T) {
+	tests := []struct {
+		name string
+		af   string
+	}{
+		{"ipv6", string(AFIPv6)},
+		{"dual-stack", string(AFDualStack)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tier := NewUnderlayTier(&Config{UnderlayAF: tt.af})
+			err := tier.Setup(context.Background())
+			if err == nil {
+				t.Fatalf("expected error for underlay AF %q", tt.af)
+			}
+			if !strings.Contains(err.Error(), "not yet implemented") {
+				t.Fatalf("expected 'not yet implemented' error, got: %v", err)
+			}
+		})
 	}
 }
