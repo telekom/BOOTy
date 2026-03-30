@@ -184,6 +184,15 @@ func TestApplyDefaults(t *testing.T) {
 	}
 }
 
+func TestApplyDefaultsVRFTableIDOneOverridden(t *testing.T) {
+	cfg := &Config{VRFTableID: 1}
+	cfg.ApplyDefaults()
+
+	if cfg.VRFTableID != 1000 {
+		t.Errorf("VRFTableID = %d, want 1000 (table 1 conflicts with default)", cfg.VRFTableID)
+	}
+}
+
 func TestApplyDefaultsPreservesValues(t *testing.T) {
 	cfg := &Config{
 		ListenPort:        1179,

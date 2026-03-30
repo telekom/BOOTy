@@ -96,8 +96,9 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 	}
 
 	// Unnumbered and dual modes need physical NICs for interface-based peering.
-	// Numbered mode uses explicit IP addresses so NIC detection, link-up, and
-	// MTU configuration are not required — the OS network stack handles that.
+	// Numbered mode uses explicit IP addresses so NIC detection and link-up
+	// are not required — but MTU must be set on physical NICs in all modes
+	// to avoid VXLAN fragmentation (50-byte overhead).
 	if u.cfg.PeerMode != network.PeerModeNumbered {
 		nics, err := u.waitForNICs()
 		if err != nil {
@@ -112,6 +113,8 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 		if err := u.configureNICs(); err != nil {
 			return fmt.Errorf("configure NICs: %w", err)
 		}
+	} else {
+		u.setNICMTU()
 	}
 
 	if err := enableForwarding(u.log); err != nil {
@@ -282,6 +285,27 @@ func (u *UnderlayTier) configureNICs() error {
 		}
 	}
 	return nil
+}
+
+// setNICMTU sets the MTU on all detected physical NICs without performing
+// link-up or VRF assignment. Used in PeerModeNumbered where the OS manages
+// interface state but MTU must still account for VXLAN overhead.
+func (u *UnderlayTier) setNICMTU() {
+	nics, err := network.DetectPhysicalNICs()
+	if err != nil {
+		u.log.Warn("failed to detect physical NICs for MTU setup", "error", err)
+		return
+	}
+	for _, nic := range nics {
+		link, err := netlink.LinkByName(nic)
+		if err != nil {
+			u.log.Warn("failed to find NIC for MTU", "nic", nic, "error", err)
+			continue
+		}
+		if err := netlink.LinkSetMTU(link, u.cfg.MTU); err != nil {
+			u.log.Warn("failed to set MTU", "nic", nic, "mtu", u.cfg.MTU, "error", err)
+		}
+	}
 }
 
 func (u *UnderlayTier) startBgpServer(ctx context.Context) error {
