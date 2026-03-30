@@ -659,8 +659,9 @@ func TestApplyLVMConfigCommandSequence(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Verify: pvcreate, vgcreate, and per-LV create+format ordering.
-	expected := []string{"pvcreate", "vgcreate", "lvcreate", "mkfs.ext4", "lvcreate", "mkfs.xfs"}
+	// Verify: pvcreate, vgs (check), then per-LV create+format ordering.
+	// vgs succeeds (mock default), so vgcreate is skipped.
+	expected := []string{"pvcreate", "vgs", "lvcreate", "mkfs.ext4", "lvcreate", "mkfs.xfs"}
 	idx := 0
 	for _, call := range cmd.calls {
 		if idx >= len(expected) {
@@ -705,6 +706,8 @@ func TestApplyLVMConfigPvcreateError(t *testing.T) {
 
 func TestApplyLVMConfigVgcreateError(t *testing.T) {
 	cmd := newMockCommander()
+	// vgs must fail (VG does not exist) so vgcreate is attempted.
+	cmd.setResult("vgs sysvg", nil, fmt.Errorf("vgs: VG not found"))
 	cmd.setResult("vgcreate sysvg", []byte("vg error"), fmt.Errorf("vgcreate failed"))
 	mgr := NewManager(cmd)
 	layout := &config.PartitionLayout{
@@ -788,5 +791,31 @@ func TestApplyLVMConfigRejectsUnsafeLVName(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "invalid") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestApplyLVMConfigVGAlreadyExists(t *testing.T) {
+	cmd := newMockCommander()
+	// vgs succeeds → VG already exists, vgcreate should be skipped.
+	cmd.setResult("vgs sysvg", []byte("  sysvg"), nil)
+	mgr := NewManager(cmd)
+	layout := &config.PartitionLayout{
+		Table:      "gpt",
+		Partitions: []config.Partition{{Label: "pv", SizeMB: 8192}},
+		LVM: &config.LVMConfig{
+			VolumeGroup: "sysvg",
+			PVPartition: 1,
+			Volumes:     []config.LVVolume{{Name: "root", SizeMB: 4096, Filesystem: "ext4", Mountpoint: "/"}},
+		},
+	}
+
+	err := mgr.ApplyLVMConfig(t.Context(), "/dev/sda", layout)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, c := range cmd.calls {
+		if c.name == "vgcreate" {
+			t.Error("vgcreate should not be called when VG already exists")
+		}
 	}
 }

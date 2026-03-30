@@ -103,12 +103,15 @@ func (m *Manager) WipeAllDisks(ctx context.Context) error {
 			wiped++
 		}
 	}
-	if wiped == 0 && len(errs) > 0 {
+	if len(errs) > 0 {
 		msgs := make([]string, len(errs))
 		for i, e := range errs {
 			msgs[i] = e.Error()
 		}
-		return fmt.Errorf("all %d disk wipe(s) failed: %s", len(errs), strings.Join(msgs, "; "))
+		if wiped == 0 {
+			return fmt.Errorf("all %d disk wipe(s) failed: %s", len(errs), strings.Join(msgs, "; "))
+		}
+		return fmt.Errorf("wiped %d disk(s) but %d failed: %s", wiped, len(errs), strings.Join(msgs, "; "))
 	}
 	return nil
 }
@@ -352,11 +355,23 @@ func (m *Manager) FindBootPartition(parts []Partition) (*Partition, error) {
 }
 
 // FindRootPartition finds the primary Linux filesystem partition.
+// When multiple partitions share the LinuxFilesystemGUID, it prefers one
+// with a "root" or "/" GPT name, otherwise returns the last match (root
+// is typically after /boot in the partition table).
 func (m *Manager) FindRootPartition(parts []Partition) (*Partition, error) {
+	var last *Partition
 	for i := range parts {
-		if strings.EqualFold(parts[i].Type, LinuxFilesystemGUID) {
+		if !strings.EqualFold(parts[i].Type, LinuxFilesystemGUID) {
+			continue
+		}
+		lower := strings.ToLower(parts[i].Name)
+		if lower == "root" || lower == "/" {
 			return &parts[i], nil
 		}
+		last = &parts[i]
+	}
+	if last != nil {
+		return last, nil
 	}
 	return nil, fmt.Errorf("no Linux filesystem partition found")
 }

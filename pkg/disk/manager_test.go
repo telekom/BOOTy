@@ -248,6 +248,39 @@ func TestFindRootPartitionNotFound(t *testing.T) {
 	}
 }
 
+func TestFindRootPartitionPrefersLast(t *testing.T) {
+	mgr := NewManager(newMockCommander())
+	parts := []Partition{
+		{Node: "/dev/sda1", Type: EFISystemPartitionGUID},
+		{Node: "/dev/sda2", Type: LinuxFilesystemGUID, Name: "boot"},
+		{Node: "/dev/sda3", Type: LinuxFilesystemGUID, Name: ""},
+	}
+	root, err := mgr.FindRootPartition(parts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if root.Node != "/dev/sda3" {
+		t.Errorf("expected /dev/sda3 (last linux partition), got %s", root.Node)
+	}
+}
+
+func TestFindRootPartitionPrefersNamed(t *testing.T) {
+	mgr := NewManager(newMockCommander())
+	parts := []Partition{
+		{Node: "/dev/sda1", Type: EFISystemPartitionGUID},
+		{Node: "/dev/sda2", Type: LinuxFilesystemGUID, Name: "boot"},
+		{Node: "/dev/sda3", Type: LinuxFilesystemGUID, Name: "root"},
+		{Node: "/dev/sda4", Type: LinuxFilesystemGUID, Name: "data"},
+	}
+	root, err := mgr.FindRootPartition(parts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if root.Node != "/dev/sda3" {
+		t.Errorf("expected /dev/sda3 (named root), got %s", root.Node)
+	}
+}
+
 func TestGrowPartitionSuccess(t *testing.T) {
 	cmd := newMockCommander()
 	mgr := NewManager(cmd)
