@@ -44,7 +44,6 @@ func (b *BondMode) Setup(_ context.Context, cfg *Config) error {
 		return fmt.Errorf("bond mode requires BondInterfaces")
 	}
 
-
 	bond := netlink.NewLinkBond(netlink.LinkAttrs{Name: "bond0"})
 	bond.Mode = parseBondMode(cfg.BondMode)
 	bond.Miimon = 100 // 100 ms link monitoring interval for failure detection
