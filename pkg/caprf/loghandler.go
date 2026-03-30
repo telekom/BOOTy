@@ -18,7 +18,7 @@ type RemoteHandler struct {
 	attrs  []slog.Attr
 	groups []string
 	done   chan struct{}
-	once   sync.Once
+	once   *sync.Once
 	cancel context.CancelFunc
 }
 
@@ -36,6 +36,7 @@ func NewRemoteHandler(client *Client, inner slog.Handler, level slog.Leveler, bu
 		level:  level,
 		buf:    make(chan string, bufSize),
 		done:   make(chan struct{}),
+		once:   &sync.Once{},
 		cancel: cancel,
 	}
 	go h.drain(ctx)
@@ -80,6 +81,7 @@ func (h *RemoteHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 		attrs:  append(append([]slog.Attr{}, h.attrs...), attrs...),
 		groups: h.groups,
 		done:   h.done,
+		once:   h.once,
 		cancel: h.cancel,
 	}
 }
@@ -94,6 +96,7 @@ func (h *RemoteHandler) WithGroup(name string) slog.Handler {
 		attrs:  h.attrs,
 		groups: append(append([]string{}, h.groups...), name),
 		done:   h.done,
+		once:   h.once,
 		cancel: h.cancel,
 	}
 }
@@ -103,13 +106,18 @@ func (h *RemoteHandler) WithGroup(name string) slog.Handler {
 // If drain does not finish in time, the context is canceled to abort
 // any in-flight HTTP requests.
 func (h *RemoteHandler) Close() {
+	if h.once == nil {
+		h.once = &sync.Once{}
+	}
 	h.once.Do(func() {
 		close(h.buf)
 		select {
 		case <-h.done:
 		case <-time.After(5 * time.Second): //nolint:mnd // fixed drain timeout
 			slog.Warn("log handler drain timed out after 5s")
-			h.cancel()
+			if h.cancel != nil {
+				h.cancel()
+			}
 		}
 	})
 }
@@ -117,7 +125,7 @@ func (h *RemoteHandler) Close() {
 func (h *RemoteHandler) drain(ctx context.Context) {
 	defer close(h.done)
 	for msg := range h.buf {
-		if err := h.client.ShipLog(context.Background(), msg); err != nil {
+		if err := h.client.ShipLog(ctx, msg); err != nil {
 			slog.Warn("failed to ship log to caprf", "error", err)
 		}
 	}
