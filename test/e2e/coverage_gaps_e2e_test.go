@@ -439,7 +439,10 @@ func TestEFISetupModeDetectionE2E(t *testing.T) {
 }
 
 func TestEFIBuildLoadOptionE2E(t *testing.T) {
-	opt := efi.BuildLoadOption(efi.BootEntry{Description: "Ubuntu", Loader: "/EFI/ubuntu/shimx64.efi"})
+	opt, err := efi.BuildLoadOption(efi.BootEntry{Description: "Ubuntu", Loader: "/EFI/ubuntu/shimx64.efi"})
+	if err != nil {
+		t.Fatalf("BuildLoadOption: %v", err)
+	}
 	if len(opt) < 6 {
 		t.Fatalf("too short: %d bytes", len(opt))
 	}

@@ -4,6 +4,7 @@ package efi
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -96,11 +97,14 @@ type BootEntry struct {
 }
 
 // BuildLoadOption constructs a raw EFI_LOAD_OPTION from a BootEntry.
-func BuildLoadOption(entry BootEntry) []byte {
+func BuildLoadOption(entry BootEntry) ([]byte, error) {
 	const efiLoadOptionActive = 0x00000001
 	desc := encodeUTF16LE(entry.Description)
 	filePath := buildFileDevicePath(entry.Loader)
 	optSize := len(entry.OptionalData)
+	if len(filePath) > math.MaxUint16 {
+		return nil, fmt.Errorf("file path too long: %d bytes exceeds uint16 max", len(filePath))
+	}
 	pathLen := uint16(len(filePath))
 
 	// EFI_LOAD_OPTION: Attributes(4) + FilePathListLength(2) + Description(utf16) + FilePath + OptionalData
@@ -119,7 +123,7 @@ func BuildLoadOption(entry BootEntry) []byte {
 	buf = append(buf, desc...)
 	buf = append(buf, filePath...)
 	buf = append(buf, entry.OptionalData...)
-	return buf
+	return buf, nil
 }
 
 // encodeUTF16LE converts a Go string to a null-terminated UTF-16LE byte slice.
@@ -146,7 +150,12 @@ func buildFileDevicePath(loader string) []byte {
 
 	pathData := encodeUTF16LE(loader)
 	// Device path node: Type(1) + SubType(1) + Length(2) + PathData
-	nodeLen := uint16(4 + len(pathData))
+	rawLen := 4 + len(pathData)
+	if rawLen > math.MaxUint16 {
+		// Caller validates via BuildLoadOption; this is a safety net.
+		rawLen = math.MaxUint16
+	}
+	nodeLen := uint16(rawLen)
 
 	buf := make([]byte, 0, int(nodeLen)+4) // +4 for end device path
 	buf = append(buf, mediaType, filePathType)
