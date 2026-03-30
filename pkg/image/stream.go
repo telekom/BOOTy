@@ -185,7 +185,8 @@ func verifyChecksum(h hash.Hash, opt StreamOpts) error {
 	}
 	got := hex.EncodeToString(h.Sum(nil))
 	if subtle.ConstantTimeCompare([]byte(got), []byte(opt.Checksum)) != 1 {
-		return fmt.Errorf("checksum mismatch: got %s, want %s", got, opt.Checksum)
+		return fmt.Errorf("checksum mismatch: computed=%s want=%s",
+			got[:min(8, len(got))], opt.Checksum[:min(8, len(opt.Checksum))])
 	}
 	slog.Info("Checksum verified", "type", opt.ChecksumType)
 	return nil
