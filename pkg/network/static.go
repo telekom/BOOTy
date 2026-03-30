@@ -114,7 +114,9 @@ func (s *StaticMode) Teardown(_ context.Context) error {
 		}
 	}
 	if s.address != nil {
-		_ = netlink.AddrDel(link, s.address)
+		if err := netlink.AddrDel(link, s.address); err != nil {
+			slog.Debug("address deletion (may already be gone)", "address", s.address, "error", err)
+		}
 	}
 	slog.Info("static network teardown complete", "iface", s.iface)
 	return nil

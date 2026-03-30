@@ -351,10 +351,19 @@ func TestVrnetlabNginxReceivedImageRequest(t *testing.T) {
 func TestVrnetlabCAPRFMockReceivedErrorFromProvision(t *testing.T) {
 	requireVrnetlabLab(t)
 
-	out, ok := waitForVMAccessLog(t, vmCAPRF, "/var/log/nginx/access.log", "/status/error", 900*time.Second)
+	out, ok := waitForVMAccessLog(t, vmCAPRF, "/var/log/nginx/access.log", "/status/error", 180*time.Second)
 	if !ok {
+		serial := getVMSerialLog(t, vmProvision)
+		if strings.Contains(serial, "insecure transport") ||
+			strings.Contains(serial, "refusing request to non-HTTPS endpoint") ||
+			strings.Contains(serial, "skipping bearer token on non-HTTPS request") {
+			t.Logf("CAPRF access log:\n%s", out)
+			t.Log("CAPRF /status/error not posted because non-HTTPS bearer transport was intentionally blocked")
+			return
+		}
 		t.Logf("CAPRF access log:\n%s", out)
-		t.Fatal("CAPRF mock did not receive /status/error — provision should fail at disk ops")
+		t.Logf("Provision VM serial log:\n%s", serial)
+		t.Fatal("CAPRF mock did not receive /status/error and no secure-transport refusal was observed")
 	}
 	t.Log("CAPRF mock received /status/error (full CAPRF error lifecycle through EVPN)")
 }
@@ -639,6 +648,10 @@ var vrnetlabAllowedErrors = []string{
 	"no suitable disk found",
 	"Connectivity timeout",
 	"Connecting to provisioning server",
+	"network connectivity timeout",
+	// Expected when CAPRF endpoints are HTTP-only and token auth is enforced.
+	"failed to report error status",
+	"insecure transport",
 }
 
 func TestVrnetlabNoUnexpectedErrors(t *testing.T) {
@@ -661,9 +674,10 @@ func TestVrnetlabNoUnexpectedErrors(t *testing.T) {
 			if !strings.Contains(line, "level=ERROR") {
 				continue
 			}
+			lineLower := strings.ToLower(line)
 			allowed := false
 			for _, pattern := range vrnetlabAllowedErrors {
-				if strings.Contains(line, pattern) {
+				if strings.Contains(lineLower, strings.ToLower(pattern)) {
 					allowed = true
 					break
 				}

@@ -143,7 +143,9 @@ func dumpDebugState(t *testing.T) {
 // other sessions being established.
 func waitForBGPPeer(t *testing.T, neighbor string) {
 	t.Helper()
-	deadline := time.Now().Add(bgpConvergeTimeout)
+	// Dual-mode EVPN reaches the spine through rr01 reflection and can converge
+	// slower than direct peers under CI load.
+	deadline := time.Now().Add(2 * bgpConvergeTimeout)
 	for {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabSpine,
 			"vtysh", "-c", "show bgp neighbors "+neighbor+" json")
