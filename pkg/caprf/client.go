@@ -415,6 +415,10 @@ func ParseVars(r io.Reader) (*config.MachineConfig, error) {
 		return nil, fmt.Errorf("scan vars: %w", err)
 	}
 
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+
 	return cfg, nil
 }
 
@@ -422,8 +426,8 @@ func applyVar(cfg *config.MachineConfig, key, value string) error {
 	if applyStringVar(cfg, key, value) {
 		return nil
 	}
-	if applyUint32Var(cfg, key, value) {
-		return nil
+	if handled, err := applyUint32Var(cfg, key, value); handled {
+		return err
 	}
 	return applySpecialVar(cfg, key, value)
 }
@@ -496,7 +500,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 	return false
 }
 
-func applyUint32Var(cfg *config.MachineConfig, key, value string) bool {
+func applyUint32Var(cfg *config.MachineConfig, key, value string) (bool, error) {
 	uint32Fields := map[string]*uint32{
 		"asn_server":      &cfg.ASN,
 		"provision_vni":   &cfg.ProvisionVNI,
@@ -511,17 +515,19 @@ func applyUint32Var(cfg *config.MachineConfig, key, value string) bool {
 	}
 
 	if ptr, ok := uint32Fields[key]; ok {
-		if n, err := strconv.ParseUint(value, 10, 32); err == nil {
-			*ptr = uint32(n)
+		n, err := strconv.ParseUint(value, 10, 32)
+		if err != nil {
+			return true, fmt.Errorf("invalid uint32 value for %s=%q: %w", key, value, err)
 		}
-		return true
+		*ptr = uint32(n)
+		return true, nil
 	}
-	return false
+	return false, nil
 }
 
 func applySpecialVar(cfg *config.MachineConfig, key, value string) error {
-	if applyBoolIntVar(cfg, key, value) {
-		return nil
+	if handled, err := applyBoolIntVar(cfg, key, value); handled {
+		return err
 	}
 
 	switch key {
@@ -540,17 +546,17 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) error {
 	return nil
 }
 
-// applyBoolIntVar handles boolean and integer special vars. Returns true if handled.
-func applyBoolIntVar(cfg *config.MachineConfig, key, value string) bool {
+// applyBoolIntVar handles boolean and integer special vars.
+func applyBoolIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
+	if handled, err := applyIntVar(cfg, key, value); handled {
+		return true, err
+	}
+
 	switch key {
-	case "MIN_DISK_SIZE_GB":
-		setIntField(&cfg.MinDiskSizeGB, value)
 	case "DISABLE_KEXEC":
 		cfg.DisableKexec = parseBoolVar(value)
 	case "SECURE_ERASE":
 		cfg.SecureErase = parseBoolVar(value)
-	case "NUM_VFS":
-		setIntField(&cfg.NumVFs, value)
 	case "INVENTORY_ENABLED":
 		cfg.InventoryEnabled = parseBoolVar(value)
 	case "FIRMWARE_REPORT":
@@ -559,27 +565,43 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) bool {
 		cfg.HealthChecksEnabled = parseBoolVar(value)
 	case "CLOUDINIT_ENABLED":
 		cfg.CloudInitEnabled = parseBoolVar(value)
-	case "HEALTH_MIN_MEMORY_GB":
-		setIntField(&cfg.HealthMinMemoryGB, value)
-	case "HEALTH_MIN_CPUS":
-		setIntField(&cfg.HealthMinCPUs, value)
 	case "DRY_RUN":
 		cfg.DryRun = parseBoolVar(value)
 	default:
 		return applyFeatureToggle(cfg, key, value)
 	}
-	return true
+	return true, nil
+}
+
+// applyIntVar handles integer special vars.
+func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
+	intFields := map[string]*int{
+		"MIN_DISK_SIZE_GB":     &cfg.MinDiskSizeGB,
+		"NUM_VFS":              &cfg.NumVFs,
+		"HEALTH_MIN_MEMORY_GB": &cfg.HealthMinMemoryGB,
+		"HEALTH_MIN_CPUS":      &cfg.HealthMinCPUs,
+	}
+
+	if ptr, ok := intFields[key]; ok {
+		if err := setIntField(ptr, value); err != nil {
+			return true, fmt.Errorf("invalid %s: %w", key, err)
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 // applyFeatureToggle handles feature-specific boolean/int vars.
-func applyFeatureToggle(cfg *config.MachineConfig, key, value string) bool {
+func applyFeatureToggle(cfg *config.MachineConfig, key, value string) (bool, error) {
 	switch key {
 	case "TELEMETRY_ENABLED":
 		cfg.TelemetryEnabled = parseBoolVar(value)
 	case "SECUREBOOT_REENABLE":
 		cfg.SecureBootReEnable = parseBoolVar(value)
 	case "RESCUE_TIMEOUT":
-		setIntField(&cfg.RescueTimeout, value)
+		if err := setIntField(&cfg.RescueTimeout, value); err != nil {
+			return true, fmt.Errorf("invalid %s: %w", key, err)
+		}
 	case "RESCUE_AUTO_MOUNT":
 		cfg.RescueAutoMountDisks = parseBoolVar(value)
 	case "EVPN_L2_ENABLED":
@@ -589,9 +611,9 @@ func applyFeatureToggle(cfg *config.MachineConfig, key, value string) bool {
 	case "BGP_OVERLAY_TYPE":
 		cfg.BGPOverlayType = value
 	default:
-		return false
+		return false, nil
 	}
-	return true
+	return true, nil
 }
 
 // parseBoolVar interprets common truthy string values (case-insensitive).
@@ -600,9 +622,12 @@ func parseBoolVar(value string) bool {
 	return v == "true" || v == "1" || v == "yes"
 }
 
-// setIntField sets an int field from a string value, ignoring parse errors.
-func setIntField(field *int, value string) {
-	if n, err := strconv.Atoi(value); err == nil {
-		*field = n
+// setIntField sets an int field from a string value.
+func setIntField(field *int, value string) error {
+	n, err := strconv.Atoi(value)
+	if err != nil {
+		return fmt.Errorf("invalid integer value %q: %w", value, err)
 	}
+	*field = n
+	return nil
 }

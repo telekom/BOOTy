@@ -493,16 +493,36 @@ func TestParseVarsInvalidDiskSize(t *testing.T) {
 	input := `export MIN_DISK_SIZE_GB="notanumber"
 export HOSTNAME="host"
 `
-	cfg, err := ParseVars(strings.NewReader(input))
-	if err != nil {
-		t.Fatal(err)
+	_, err := ParseVars(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("expected error for invalid MIN_DISK_SIZE_GB, got nil")
 	}
-	// Invalid number should be silently ignored (stays 0).
-	if cfg.MinDiskSizeGB != 0 {
-		t.Fatalf("expected 0 for invalid disk size, got %d", cfg.MinDiskSizeGB)
+	if !strings.Contains(err.Error(), "MIN_DISK_SIZE_GB") {
+		t.Fatalf("expected error to mention MIN_DISK_SIZE_GB, got: %v", err)
 	}
-	if cfg.Hostname != "host" {
-		t.Fatalf("expected host, got %s", cfg.Hostname)
+}
+
+func TestParseVarsInvalidUint32(t *testing.T) {
+	input := `export asn_server="notanumber"
+`
+	_, err := ParseVars(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("expected error for invalid asn_server, got nil")
+	}
+	if !strings.Contains(err.Error(), "asn_server") {
+		t.Fatalf("expected error to mention asn_server, got: %v", err)
+	}
+}
+
+func TestParseVarsInvalidMode(t *testing.T) {
+	input := `export MODE="invalid-mode"
+`
+	_, err := ParseVars(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("expected error for invalid MODE, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid MODE") {
+		t.Fatalf("expected error to mention 'invalid MODE', got: %v", err)
 	}
 }
 

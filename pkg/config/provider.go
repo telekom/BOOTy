@@ -162,6 +162,74 @@ type MachineConfig struct {
 	TokenAlgorithm string // TOKEN_ALGORITHM: RS256 or ES256
 }
 
+// Validate checks that enum-like config fields contain known values.
+// Empty strings are accepted (will use defaults downstream).
+func (c *MachineConfig) Validate() error {
+	validators := []func() string{
+		func() string {
+			return validateEnum(c.Mode, "MODE", "provision", "deprovision", "soft-deprovision", "standby", "dry-run")
+		},
+		func() string { return validateEnum(c.ImageMode, "IMAGE_MODE", "whole-disk", "partition") },
+		func() string { return validateEnumLower(c.NetworkMode, "NETWORK_MODE", "gobgp") },
+		func() string {
+			return validateEnumLower(c.ImageChecksumType, "IMAGE_CHECKSUM_TYPE", "sha256", "sha512")
+		},
+		func() string {
+			return validateEnumLower(c.RescueMode, "RESCUE_MODE", "reboot", "retry", "shell", "wait")
+		},
+		func() string {
+			return validateEnumLower(c.BGPPeerMode, "BGP_PEER_MODE", "unnumbered", "dual", "numbered")
+		},
+		func() string {
+			return validateEnumLower(c.BGPUnderlayAF, "BGP_UNDERLAY_AF", "ipv4", "ipv6", "dual-stack")
+		},
+		func() string {
+			return validateEnumLower(c.BGPOverlayType, "BGP_OVERLAY_TYPE", "evpn-vxlan", "l3vpn", "none")
+		},
+		func() string {
+			return validateEnumLower(c.CloudInitDatasource, "CLOUDINIT_DATASOURCE", "nocloud", "configdrive")
+		},
+		func() string { return validateEnumUpper(c.TokenAlgorithm, "TOKEN_ALGORITHM", "RS256", "ES256") },
+	}
+
+	var errs []string
+	for _, v := range validators {
+		if msg := v(); msg != "" {
+			errs = append(errs, msg)
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("config validation: %s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func validateEnum(value, name string, allowed ...string) string {
+	if value == "" {
+		return ""
+	}
+	for _, a := range allowed {
+		if value == a {
+			return ""
+		}
+	}
+	return fmt.Sprintf("invalid %s %q", name, value)
+}
+
+func validateEnumLower(value, name string, allowed ...string) string {
+	if value == "" {
+		return ""
+	}
+	return validateEnum(strings.ToLower(value), name, allowed...)
+}
+
+func validateEnumUpper(value, name string, allowed ...string) string {
+	if value == "" {
+		return ""
+	}
+	return validateEnum(strings.ToUpper(value), name, allowed...)
+}
+
 // PartitionLayout defines a declarative partitioning scheme for the target disk.
 type PartitionLayout struct {
 	Table      string      `json:"table"`            // "gpt" (default: "gpt") — only GPT is supported

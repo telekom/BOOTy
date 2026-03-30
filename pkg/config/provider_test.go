@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -308,5 +309,59 @@ func TestParsePartitionLayoutTooManyPartitions(t *testing.T) {
 	_, err := ParsePartitionLayout(parts)
 	if err == nil {
 		t.Fatal("expected error for too many partitions")
+	}
+}
+
+func TestValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     MachineConfig
+		wantErr string
+	}{
+		{name: "empty config is valid", cfg: MachineConfig{}},
+		{name: "valid mode provision", cfg: MachineConfig{Mode: "provision"}},
+		{name: "valid mode dry-run", cfg: MachineConfig{Mode: "dry-run"}},
+		{name: "invalid mode", cfg: MachineConfig{Mode: "invalid"}, wantErr: "invalid MODE"},
+		{name: "valid image mode", cfg: MachineConfig{ImageMode: "whole-disk"}},
+		{name: "invalid image mode", cfg: MachineConfig{ImageMode: "raw"}, wantErr: "invalid IMAGE_MODE"},
+		{name: "valid network mode", cfg: MachineConfig{NetworkMode: "GoBGP"}, wantErr: ""},
+		{name: "invalid network mode", cfg: MachineConfig{NetworkMode: "ospf"}, wantErr: "invalid NETWORK_MODE"},
+		{name: "valid checksum type", cfg: MachineConfig{ImageChecksumType: "sha256"}},
+		{name: "invalid checksum type", cfg: MachineConfig{ImageChecksumType: "md5"}, wantErr: "invalid IMAGE_CHECKSUM_TYPE"},
+		{name: "valid rescue mode", cfg: MachineConfig{RescueMode: "shell"}},
+		{name: "invalid rescue mode", cfg: MachineConfig{RescueMode: "panic"}, wantErr: "invalid RESCUE_MODE"},
+		{name: "valid peer mode", cfg: MachineConfig{BGPPeerMode: "dual"}},
+		{name: "invalid peer mode", cfg: MachineConfig{BGPPeerMode: "mesh"}, wantErr: "invalid BGP_PEER_MODE"},
+		{name: "valid underlay AF", cfg: MachineConfig{BGPUnderlayAF: "ipv4"}},
+		{name: "invalid underlay AF", cfg: MachineConfig{BGPUnderlayAF: "ipv3"}, wantErr: "invalid BGP_UNDERLAY_AF"},
+		{name: "valid overlay type", cfg: MachineConfig{BGPOverlayType: "evpn-vxlan"}},
+		{name: "invalid overlay type", cfg: MachineConfig{BGPOverlayType: "gre"}, wantErr: "invalid BGP_OVERLAY_TYPE"},
+		{name: "valid cloud-init ds", cfg: MachineConfig{CloudInitDatasource: "nocloud"}},
+		{name: "invalid cloud-init ds", cfg: MachineConfig{CloudInitDatasource: "ec2"}, wantErr: "invalid CLOUDINIT_DATASOURCE"},
+		{name: "valid token algorithm", cfg: MachineConfig{TokenAlgorithm: "ES256"}},
+		{name: "invalid token algorithm", cfg: MachineConfig{TokenAlgorithm: "HS256"}, wantErr: "invalid TOKEN_ALGORITHM"},
+		{
+			name:    "multiple errors",
+			cfg:     MachineConfig{Mode: "bad", ImageMode: "bad"},
+			wantErr: "invalid MODE",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.cfg.Validate()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected error containing %q, got: %v", tc.wantErr, err)
+			}
+		})
 	}
 }
