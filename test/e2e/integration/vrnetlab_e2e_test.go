@@ -64,8 +64,14 @@ func vmDockerExecOrFail(t *testing.T, container string, args ...string) string {
 // getVMSerialLog retrieves QEMU serial console output from docker logs.
 func getVMSerialLog(t *testing.T, container string) string {
 	t.Helper()
-	out, err := exec.Command("docker", "logs", container).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", "logs", container).CombinedOutput()
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			t.Logf("timeout getting logs for %s", container)
+			return string(out)
+		}
 		t.Logf("could not get logs for %s: %v", container, err)
 		return ""
 	}
