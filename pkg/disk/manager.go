@@ -68,14 +68,25 @@ func (m *Manager) StopRAIDArrays(ctx context.Context) error {
 	slog.Info("stopping RAID arrays")
 	out, err := m.cmd.Run(ctx, "mdadm", "--stop", "--scan")
 	if err != nil {
-		lowerOut := strings.ToLower(string(out))
-		if strings.Contains(lowerOut, "no arrays found") {
-			slog.Debug("mdadm stop reported no arrays", "output", strings.TrimSpace(string(out)))
+		if isNoArraysFound(out, err) {
+			slog.Debug("mdadm stop reported no arrays", "output", strings.TrimSpace(string(out)), "error", err)
 			return nil
 		}
-		return fmt.Errorf("stop raid arrays: %s: %w", strings.TrimSpace(string(out)), err)
+		trimmed := strings.TrimSpace(string(out))
+		if trimmed == "" {
+			return fmt.Errorf("stop raid arrays: %w", err)
+		}
+		return fmt.Errorf("stop raid arrays: %s: %w", trimmed, err)
 	}
 	return nil
+}
+
+func isNoArraysFound(out []byte, err error) bool {
+	combined := strings.ToLower(strings.TrimSpace(string(out)))
+	if err != nil {
+		combined = strings.TrimSpace(combined + " " + strings.ToLower(err.Error()))
+	}
+	return strings.Contains(combined, "no arrays found")
 }
 
 // WipeAllDisks runs wipefs on all block devices excluding loop and CD-ROM.
@@ -219,7 +230,7 @@ func (m *Manager) secureEraseSATA(ctx context.Context, dev string) error {
 func temporaryErasePassword() (string, error) {
 	b := make([]byte, 12)
 	if _, err := rand.Read(b); err != nil {
-		return "", err
+		return "", fmt.Errorf("read random bytes: %w", err)
 	}
 	return "Erase-" + hex.EncodeToString(b), nil
 }

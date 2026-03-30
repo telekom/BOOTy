@@ -207,44 +207,9 @@ func runCAPRF(ctx context.Context) {
 		"image_count", len(cfg.ImageURLs),
 	)
 
-	var netMode network.Mode
-	if cfg.Mode != "dry-run" {
-		// Set up networking with retry — if connectivity fails, teardown and
-		// rebuild the entire network stack before giving up.
-		netMode = setupNetworkMode(ctx, cfg)
-		connectivityTarget := cfg.InitURL
-		if connectivityTarget == "" {
-			connectivityTarget = cfg.SuccessURL
-		}
-		if connectivityTarget != "" {
-			netMode, err = ensureNetworkConnectivity(ctx, cfg, netMode, connectivityTarget)
-			if err != nil {
-				realm.Reboot()
-			}
-		}
-
-		// Acquire JWT after network is ready so the token endpoint is reachable.
-		if err := client.AcquireToken(ctx); err != nil {
-			slog.Error("failed to acquire jwt token", "error", err)
-			if cfg.TokenURL != "" {
-				provision.DumpDebugState("jwt-acquire")
-				realm.Reboot()
-			}
-		}
-		client.SetTokenRenewalFatalHandler(func() {
-			slog.Error("token renewal exhausted, rebooting")
-			provision.DumpDebugState("jwt-renewal-exhausted")
-			realm.Reboot()
-		})
-		if err := client.StartTokenRenewal(ctx); err != nil {
-			slog.Error("failed to start token renewal", "error", err)
-			if cfg.TokenURL != "" {
-				provision.DumpDebugState("jwt-renewal-start")
-				realm.Reboot()
-			}
-		}
-	} else {
-		slog.Info("dry-run mode: skipping active network setup and token renewal")
+	netMode, err := setupNetworkAndTokenFlow(ctx, cfg, client)
+	if err != nil {
+		realm.Reboot()
 	}
 
 	// Run provisioning, deprovisioning, or standby based on mode.
@@ -336,6 +301,53 @@ func runCAPRF(ctx context.Context) {
 		realm.PowerOff()
 	}
 	realm.Reboot()
+}
+
+func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, client *caprf.Client) (network.Mode, error) {
+	if cfg.Mode == "dry-run" {
+		slog.Info("dry-run mode: skipping active network setup and token renewal")
+		return nil, nil
+	}
+
+	// Set up networking with retry — if connectivity fails, teardown and
+	// rebuild the entire network stack before giving up.
+	netMode := setupNetworkMode(ctx, cfg)
+	connectivityTarget := cfg.InitURL
+	if connectivityTarget == "" {
+		connectivityTarget = cfg.SuccessURL
+	}
+	if connectivityTarget != "" {
+		activeMode, err := ensureNetworkConnectivity(ctx, cfg, netMode, connectivityTarget)
+		if err != nil {
+			return nil, err
+		}
+		netMode = activeMode
+	}
+
+	// Acquire JWT after network is ready so the token endpoint is reachable.
+	if err := client.AcquireToken(ctx); err != nil {
+		slog.Error("failed to acquire jwt token", "error", err)
+		if cfg.TokenURL != "" {
+			provision.DumpDebugState("jwt-acquire")
+			return nil, err
+		}
+	}
+
+	client.SetTokenRenewalFatalHandler(func() {
+		slog.Error("token renewal exhausted, rebooting")
+		provision.DumpDebugState("jwt-renewal-exhausted")
+		realm.Reboot()
+	})
+
+	if err := client.StartTokenRenewal(ctx); err != nil {
+		slog.Error("failed to start token renewal", "error", err)
+		if cfg.TokenURL != "" {
+			provision.DumpDebugState("jwt-renewal-start")
+			return nil, err
+		}
+	}
+
+	return netMode, nil
 }
 
 // ensureNetworkConnectivity retries network setup up to 3 times on connectivity failure.

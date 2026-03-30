@@ -74,7 +74,7 @@ func (c *Configurator) ConfigureKubelet(cfg *config.MachineConfig) error {
 
 	if cfg.ProviderID != "" && len(labels) > 0 {
 		combined := []string{fmt.Sprintf("--provider-id=%s", cfg.ProviderID), fmt.Sprintf("--node-labels=%s", strings.Join(labels, ","))}
-		content := fmt.Sprintf("KUBELET_EXTRA_ARGS=\"%s\"\n", strings.Join(combined, " "))
+		content := fmt.Sprintf("KUBELET_EXTRA_ARGS=%q\n", strings.Join(combined, " "))
 		path := filepath.Join(confDir, "10-caprf-kubelet-extra-args.conf")
 		slog.Info("writing combined kubelet extra args", "path", path)
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -255,13 +255,13 @@ func (c *Configurator) RunPostProvisionCmds(ctx context.Context, cmds []string) 
 }
 
 func validateProvisionCommand(cmd string) error {
-	if !safeProvisionCommand.MatchString(cmd) {
-		return fmt.Errorf("contains unsupported characters")
-	}
 	for _, token := range blockedShellTokens {
 		if strings.Contains(cmd, token) {
 			return fmt.Errorf("contains blocked shell token %q", token)
 		}
+	}
+	if !safeProvisionCommand.MatchString(cmd) {
+		return fmt.Errorf("contains unsupported characters")
 	}
 	return nil
 }

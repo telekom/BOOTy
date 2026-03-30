@@ -4,6 +4,7 @@ package frr
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -173,73 +174,98 @@ func (m *Manager) Teardown(ctx context.Context) error {
 }
 
 func (m *Manager) cleanupNetworkState() error {
-	var firstErr error
+	var errs []error
+	for _, err := range []error{
+		m.cleanupLoopbackAddresses(),
+		m.cleanupBridgeProvisionAddress(),
+		m.cleanupVXLANLink(),
+		m.cleanupNamedLinks(),
+	} {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
 
+func (m *Manager) cleanupLoopbackAddresses() error {
 	underlayIP, overlayIP, _, err := DeriveAddresses(&m.cfg)
-	if err == nil {
-		for _, ip := range []string{underlayIP, overlayIP} {
-			if remErr := removeAddrFromLink("lo", ip+"/32"); remErr != nil {
-				if firstErr == nil {
-					firstErr = remErr
-				}
-				m.log.Debug("failed to remove loopback /32 address", "ip", ip, "error", remErr)
-			}
-			if remErr := removeAddrFromLink("lo", ip+"/128"); remErr != nil {
-				if firstErr == nil {
-					firstErr = remErr
-				}
-				m.log.Debug("failed to remove loopback /128 address", "ip", ip, "error", remErr)
-			}
-		}
-	} else {
+	if err != nil {
 		m.log.Debug("skipping loopback cleanup; failed to derive addresses", "error", err)
+		return nil
 	}
 
-	if m.cfg.BridgeName != "" && m.cfg.ProvisionIP != "" {
-		if remErr := removeAddrFromLink(m.cfg.BridgeName, m.cfg.ProvisionIP); remErr != nil {
-			if firstErr == nil {
-				firstErr = remErr
-			}
-			m.log.Debug("failed to remove bridge provision address", "bridge", m.cfg.BridgeName, "addr", m.cfg.ProvisionIP, "error", remErr)
+	var errs []error
+	for _, ip := range []string{underlayIP, overlayIP} {
+		cidr := loopbackCIDR(ip)
+		if remErr := removeAddrFromLink("lo", cidr); remErr != nil {
+			errs = append(errs, remErr)
+			m.log.Debug("failed to remove loopback address", "ip", ip, "cidr", cidr, "error", remErr)
 		}
 	}
+	return errors.Join(errs...)
+}
 
-	if m.cfg.ProvisionVNI > 0 {
-		vxName := fmt.Sprintf("vx%d", m.cfg.ProvisionVNI)
-		if delErr := removeLinkByName(vxName); delErr != nil {
-			if firstErr == nil {
-				firstErr = delErr
-			}
-			m.log.Debug("failed to remove VXLAN", "name", vxName, "error", delErr)
-		}
+func (m *Manager) cleanupBridgeProvisionAddress() error {
+	if m.cfg.BridgeName == "" || m.cfg.ProvisionIP == "" {
+		return nil
 	}
 
+	if err := removeAddrFromLink(m.cfg.BridgeName, m.cfg.ProvisionIP); err != nil {
+		m.log.Debug("failed to remove bridge provision address", "bridge", m.cfg.BridgeName, "addr", m.cfg.ProvisionIP, "error", err)
+		return err
+	}
+	return nil
+}
+
+func (m *Manager) cleanupVXLANLink() error {
+	if m.cfg.ProvisionVNI == 0 {
+		return nil
+	}
+
+	vxName := fmt.Sprintf("vx%d", m.cfg.ProvisionVNI)
+	if err := removeLinkByName(vxName); err != nil {
+		m.log.Debug("failed to remove VXLAN", "name", vxName, "error", err)
+		return err
+	}
+	return nil
+}
+
+func (m *Manager) cleanupNamedLinks() error {
+	var errs []error
 	for _, name := range []string{m.cfg.BridgeName, "dummy.underlay", m.cfg.VRFName} {
 		if strings.TrimSpace(name) == "" {
 			continue
 		}
-		if delErr := removeLinkByName(name); delErr != nil {
-			if firstErr == nil {
-				firstErr = delErr
-			}
-			m.log.Debug("failed to remove link", "name", name, "error", delErr)
+		if err := removeLinkByName(name); err != nil {
+			errs = append(errs, err)
+			m.log.Debug("failed to remove link", "name", name, "error", err)
 		}
 	}
+	return errors.Join(errs...)
+}
 
-	return firstErr
+func loopbackCIDR(ip string) string {
+	if strings.Contains(ip, ":") {
+		return ip + "/128"
+	}
+	return ip + "/32"
 }
 
 func removeAddrFromLink(linkName, cidr string) error {
 	link, err := netlink.LinkByName(linkName)
 	if err != nil {
-		return nil
+		if isMissingNetlinkObject(err) {
+			return nil
+		}
+		return fmt.Errorf("find link %s: %w", linkName, err)
 	}
 	addr, err := netlink.ParseAddr(cidr)
 	if err != nil {
 		return fmt.Errorf("parse addr %s: %w", cidr, err)
 	}
 	if err := netlink.AddrDel(link, addr); err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "no such") {
+		if isMissingNetlinkObject(err) {
 			return nil
 		}
 		return fmt.Errorf("delete addr %s from %s: %w", cidr, linkName, err)
@@ -250,15 +276,25 @@ func removeAddrFromLink(linkName, cidr string) error {
 func removeLinkByName(name string) error {
 	link, err := netlink.LinkByName(name)
 	if err != nil {
-		return nil
+		if isMissingNetlinkObject(err) {
+			return nil
+		}
+		return fmt.Errorf("find link %s: %w", name, err)
 	}
 	if err := netlink.LinkDel(link); err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "no such") {
+		if isMissingNetlinkObject(err) {
 			return nil
 		}
 		return fmt.Errorf("delete link %s: %w", name, err)
 	}
 	return nil
+}
+
+func isMissingNetlinkObject(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no such") ||
+		strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "cannot find")
 }
 
 // DumpFRRState logs FRR diagnostic state via the commander abstraction.
