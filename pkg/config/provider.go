@@ -198,6 +198,12 @@ func (c *MachineConfig) Validate() error {
 			errs = append(errs, msg)
 		}
 	}
+
+	peerMode := strings.ToLower(strings.TrimSpace(c.BGPPeerMode))
+	if (peerMode == "dual" || peerMode == "numbered") && strings.TrimSpace(c.BGPNeighbors) == "" {
+		errs = append(errs, "BGP_NEIGHBORS required when BGP_PEER_MODE is dual or numbered")
+	}
+
 	if len(errs) > 0 {
 		return fmt.Errorf("config validation: %s", strings.Join(errs, "; "))
 	}
