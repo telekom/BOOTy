@@ -108,7 +108,7 @@ func (h *RemoteHandler) Close() {
 		select {
 		case <-h.done:
 		case <-time.After(5 * time.Second): //nolint:mnd // fixed drain timeout
-			slog.Warn("Log handler drain timed out after 5s")
+			slog.Warn("log handler drain timed out after 5s")
 			h.cancel()
 		}
 	})

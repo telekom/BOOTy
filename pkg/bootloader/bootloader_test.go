@@ -3,6 +3,7 @@
 package bootloader
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,7 +29,7 @@ menuentry 'Ubuntu (recovery mode)' {
 	}
 
 	g := &GRUB{}
-	entries, err := g.ListEntries(root)
+	entries, err := g.ListEntries(context.Background(), root)
 	if err != nil {
 		t.Fatalf("ListEntries: %v", err)
 	}
@@ -46,7 +47,7 @@ menuentry 'Ubuntu (recovery mode)' {
 func TestGRUBListEntries_MissingFile(t *testing.T) {
 	root := t.TempDir()
 	g := &GRUB{}
-	_, err := g.ListEntries(root)
+	_, err := g.ListEntries(context.Background(), root)
 	if err == nil {
 		t.Error("expected error for missing grub.cfg")
 	}
@@ -54,7 +55,7 @@ func TestGRUBListEntries_MissingFile(t *testing.T) {
 
 func TestSystemdBootConfigure_NoOp(t *testing.T) {
 	s := &SystemdBoot{}
-	err := s.Configure("/nonexistent", BootConfig{
+	err := s.Configure(context.Background(), "/nonexistent", BootConfig{
 		DefaultEntry: "test",
 		Cmdline:      "root=/dev/sda1",
 		KernelPath:   "/boot/vmlinuz",

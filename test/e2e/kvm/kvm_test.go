@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const bootyStartMarker = "Starting BOOTy"
+const bootyStartMarker = "starting BOOTy"
 
 // qemuAvailable checks if qemu-system-x86_64 is installed.
 func qemuAvailable(t *testing.T) {

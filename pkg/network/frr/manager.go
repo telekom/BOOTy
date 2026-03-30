@@ -197,7 +197,7 @@ func (m *Manager) DumpFRRState() {
 func ensureFRRDirs() {
 	for _, d := range []string{"/var/run/frr", "/var/tmp/frr", "/var/lib/frr"} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
-			slog.Warn("Failed to create FRR directory", "path", d, "error", err)
+			slog.Warn("failed to create FRR directory", "path", d, "error", err)
 		}
 	}
 }

@@ -214,7 +214,7 @@ func TestVrnetlabClientReachesCAPRFThroughEVPN(t *testing.T) {
 func TestVrnetlabVMBootStarted(t *testing.T) {
 	requireVrnetlabLab(t)
 
-	if !waitForVMLog(t, vmProvision, "Starting BOOTy", 120*time.Second) {
+	if !waitForVMLog(t, vmProvision, "starting BOOTy", 120*time.Second) {
 		logs := getVMSerialLog(t, vmProvision)
 		t.Fatalf("provision VM did not start BOOTy within 120s\nSerial log:\n%s", logs)
 	}
@@ -224,8 +224,8 @@ func TestVrnetlabVMBootStarted(t *testing.T) {
 func TestVrnetlabVMMountsSuccessful(t *testing.T) {
 	requireVrnetlabLab(t)
 
-	// BOOTy logs "Beginning provisioning process" after setupMountsAndDevices() and loadModules() complete
-	if !waitForVMLog(t, vmProvision, "Beginning provisioning process", 120*time.Second) {
+	// BOOTy logs "beginning provisioning process" after setupMountsAndDevices() and loadModules() complete
+	if !waitForVMLog(t, vmProvision, "beginning provisioning process", 120*time.Second) {
 		logs := getVMSerialLog(t, vmProvision)
 		t.Fatalf("provision VM did not reach provisioning stage (mounts may have failed)\n%s", logs)
 	}
@@ -245,7 +245,7 @@ func TestVrnetlabVMCAPRFModeDetected(t *testing.T) {
 func TestVrnetlabVMFRRNetworkModeDetected(t *testing.T) {
 	requireVrnetlabLab(t)
 
-	if !waitForVMLog(t, vmProvision, "Using FRR/EVPN network mode", 150*time.Second) {
+	if !waitForVMLog(t, vmProvision, "using FRR/EVPN network mode", 150*time.Second) {
 		logs := getVMSerialLog(t, vmProvision)
 		t.Fatalf("provision VM did not enter FRR/EVPN network mode\n%s", logs)
 	}
@@ -255,8 +255,8 @@ func TestVrnetlabVMFRRNetworkModeDetected(t *testing.T) {
 func TestVrnetlabVMNetworkConnectivity(t *testing.T) {
 	requireVrnetlabLab(t)
 
-	// BOOTy logs "Waiting for network connectivity" before polling
-	if !waitForVMLog(t, vmProvision, "Waiting for network connectivity", 150*time.Second) {
+	// BOOTy logs "waiting for network connectivity" before polling
+	if !waitForVMLog(t, vmProvision, "waiting for network connectivity", 150*time.Second) {
 		logs := getVMSerialLog(t, vmProvision)
 		t.Fatalf("provision VM did not reach connectivity check\n%s", logs)
 	}
@@ -371,9 +371,9 @@ func TestVrnetlabProvisionFullLifecycleViaEVPN(t *testing.T) {
 		timeout time.Duration
 		desc    string
 	}{
-		{"Starting BOOTy", 120 * time.Second, "BOOTy started as PID 1"},
+		{"starting BOOTy", 120 * time.Second, "BOOTy started as PID 1"},
 		{"CAPRF mode active", 60 * time.Second, "CAPRF mode detected from /deploy/vars"},
-		{"Using FRR/EVPN network mode", 30 * time.Second, "FRR/EVPN network mode active"},
+		{"using FRR/EVPN network mode", 30 * time.Second, "FRR/EVPN network mode active"},
 		{"report-init", 60 * time.Second, "init reported to CAPRF through EVPN"},
 	}
 
@@ -389,7 +389,7 @@ func TestVrnetlabProvisionFullLifecycleViaEVPN(t *testing.T) {
 	time.Sleep(15 * time.Second)
 	logs := getVMSerialLog(t, vmProvision)
 
-	if strings.Contains(logs, "Provisioning step") || strings.Contains(logs, "detect-disk") {
+	if strings.Contains(logs, "provisioning step") || strings.Contains(logs, "detect-disk") {
 		t.Log("provision VM: provisioning orchestrator executing steps through EVPN")
 	}
 
@@ -403,7 +403,7 @@ func TestVrnetlabProvisionFullLifecycleViaEVPN(t *testing.T) {
 func TestVrnetlabDeprovisionFullLifecycleViaEVPN(t *testing.T) {
 	requireVrnetlabLab(t)
 
-	if !waitForVMLog(t, vmDeprovision, "Starting BOOTy", 120*time.Second) {
+	if !waitForVMLog(t, vmDeprovision, "starting BOOTy", 120*time.Second) {
 		logs := getVMSerialLog(t, vmDeprovision)
 		t.Fatalf("deprovision VM did not start BOOTy\n%s", logs)
 	}
@@ -415,7 +415,7 @@ func TestVrnetlabDeprovisionFullLifecycleViaEVPN(t *testing.T) {
 	}
 	t.Log("deprovision VM: CAPRF mode active")
 
-	if !waitForVMLog(t, vmDeprovision, "Using FRR/EVPN network mode", 60*time.Second) {
+	if !waitForVMLog(t, vmDeprovision, "using FRR/EVPN network mode", 60*time.Second) {
 		logs := getVMSerialLog(t, vmDeprovision)
 		t.Fatalf("deprovision VM did not enter FRR/EVPN mode\n%s", logs)
 	}
@@ -434,7 +434,7 @@ func TestVrnetlabDeprovisionFullLifecycleViaEVPN(t *testing.T) {
 func TestVrnetlabStandbyFullLifecycleViaEVPN(t *testing.T) {
 	requireVrnetlabLab(t)
 
-	if !waitForVMLog(t, vmStandby, "Starting BOOTy", 120*time.Second) {
+	if !waitForVMLog(t, vmStandby, "starting BOOTy", 120*time.Second) {
 		logs := getVMSerialLog(t, vmStandby)
 		t.Fatalf("standby VM did not start BOOTy\n%s", logs)
 	}
@@ -446,7 +446,7 @@ func TestVrnetlabStandbyFullLifecycleViaEVPN(t *testing.T) {
 	}
 	t.Log("standby VM: CAPRF mode active")
 
-	if !waitForVMLog(t, vmStandby, "Using FRR/EVPN network mode", 60*time.Second) {
+	if !waitForVMLog(t, vmStandby, "using FRR/EVPN network mode", 60*time.Second) {
 		logs := getVMSerialLog(t, vmStandby)
 		t.Fatalf("standby VM did not enter FRR/EVPN mode\n%s", logs)
 	}
@@ -544,7 +544,7 @@ func TestVrnetlabAllVMsBootSuccessfully(t *testing.T) {
 		vm := vm
 		t.Run(vm.desc, func(t *testing.T) {
 			t.Parallel()
-			if !waitForVMLog(t, vm.container, "Starting BOOTy", 120*time.Second) {
+			if !waitForVMLog(t, vm.container, "starting BOOTy", 120*time.Second) {
 				logs := getVMSerialLog(t, vm.container)
 				t.Fatalf("%s VM did not start BOOTy\n%s", vm.desc, logs)
 			}
@@ -607,16 +607,16 @@ func TestVrnetlabModulesLoaded(t *testing.T) {
 		t.Fatalf("serial log for %s is empty; cannot verify required kernel modules (check docker logs / VM state)", vmProvision)
 	}
 
-	const provisioningMarker = "Beginning provisioning"
+	const provisioningMarker = "beginning provisioning"
 	if !strings.Contains(logs, provisioningMarker) {
 		t.Skipf("serial log for %s does not contain %q; skipping module load verification", vmProvision, provisioningMarker)
 	}
 
 	for _, mod := range vrnetlabRequiredModules {
-		// loadModules logs: "Loaded kernel module" with a "module=<name>.ko*" field.
+		// loadModules logs: "loaded kernel module" with a "module=<name>.ko*" field.
 		field := "module=" + mod + ".ko"
-		if !strings.Contains(logs, "Loaded kernel module") || !strings.Contains(logs, field) {
-			t.Errorf("module %q not loaded according to serial log — expected log entry with 'Loaded kernel module' and %q", mod, field)
+		if !strings.Contains(logs, "loaded kernel module") || !strings.Contains(logs, field) {
+			t.Errorf("module %q not loaded according to serial log — expected log entry with 'loaded kernel module' and %q", mod, field)
 		}
 	}
 }
@@ -630,8 +630,8 @@ func TestVrnetlabModulesLoaded(t *testing.T) {
 // are invisible to this check — only genuine ERROR-level messages remain.
 var vrnetlabAllowedErrors = []string{
 	// Top-level provisioning/deprovisioning failure.
-	"Provisioning failed",
-	"Deprovisioning failed",
+	"provisioning failed",
+	"deprovisioning failed",
 	// Individual step failures.
 	"provisioning step failed",
 	"Deprovisioning step failed",

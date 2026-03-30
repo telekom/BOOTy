@@ -50,11 +50,11 @@ func main() {
 	setupMountsAndDevices()
 	loadModules()
 
-	slog.Info("Starting BOOTy", "version", Version, "build", Build)
+	slog.Info("starting BOOTy", "version", Version, "build", Build)
 	ux.Captain()
 	ux.SysInfo()
 
-	slog.Info("Beginning provisioning process")
+	slog.Info("beginning provisioning process")
 	ctx := context.Background()
 	runCAPRF(ctx)
 }
@@ -93,16 +93,16 @@ func setupMountsAndDevices() {
 	}
 
 	if err := m.CreateFolder(); err != nil {
-		slog.Error("Failed to create folders", "error", err)
+		slog.Error("failed to create folders", "error", err)
 	}
 	if err := m.MountNamed("dev", true); err != nil {
-		slog.Error("Failed to mount dev", "error", err)
+		slog.Error("failed to mount dev", "error", err)
 	}
 	if err := d.CreateDevice(); err != nil {
-		slog.Error("Failed to create devices", "error", err)
+		slog.Error("failed to create devices", "error", err)
 	}
 	if err := m.MountAll(); err != nil {
-		slog.Error("Failed to mount filesystems", "error", err)
+		slog.Error("failed to mount filesystems", "error", err)
 	}
 }
 
@@ -117,7 +117,7 @@ func loadModules() {
 	const moduleDir = "/modules"
 	entries, err := os.ReadDir(moduleDir)
 	if err != nil {
-		slog.Debug("No kernel modules directory, skipping", "path", moduleDir)
+		slog.Debug("no kernel modules directory, skipping", "path", moduleDir)
 		return
 	}
 
@@ -138,11 +138,11 @@ func loadModules() {
 			if err := loadModule(ko); err != nil {
 				failed = append(failed, name)
 				if pass == maxPasses-1 {
-					slog.Debug("Module load skipped", "module", name, "error", err)
+					slog.Debug("module load skipped", "module", name, "error", err)
 				}
 				continue
 			}
-			slog.Info("Loaded kernel module", "module", name)
+			slog.Info("loaded kernel module", "module", name)
 		}
 		if len(failed) == 0 {
 			break
@@ -177,14 +177,14 @@ func runCAPRF(ctx context.Context) {
 
 	client, err := caprf.New(varsPath)
 	if err != nil {
-		slog.Error("Failed to create CAPRF client", "error", err)
+		slog.Error("failed to create CAPRF client", "error", err)
 		provision.DumpDebugState("caprf-init")
 		realm.Reboot()
 	}
 
 	cfg, err := client.GetConfig(ctx)
 	if err != nil {
-		slog.Error("Failed to get CAPRF config", "error", err)
+		slog.Error("failed to get CAPRF config", "error", err)
 		provision.DumpDebugState("config-fetch")
 		realm.Reboot()
 	}
@@ -263,7 +263,7 @@ func runCAPRF(ctx context.Context) {
 			cfg.Mode = "soft"
 		}
 		if err := orch.Deprovision(ctx); err != nil {
-			slog.Error("Deprovisioning failed", "error", err)
+			slog.Error("deprovisioning failed", "error", err)
 		}
 	default:
 		var retryState rescue.RetryState
@@ -274,34 +274,34 @@ func runCAPRF(ctx context.Context) {
 				provisionSucceeded = true
 				break
 			}
-			slog.Error("Provisioning failed", "error", err)
+			slog.Error("provisioning failed", "error", err)
 			if setupErr := rescue.Setup(ctx, rescueCfg); setupErr != nil {
-				slog.Warn("Rescue setup error", "error", setupErr)
+				slog.Warn("rescue setup error", "error", setupErr)
 			}
 			action := rescue.Decide(rescueCfg, &retryState)
-			slog.Info("Rescue action", "type", action.Type, "message", action.Message)
+			slog.Info("rescue action", "type", action.Type, "message", action.Message)
 			switch action.Type {
 			case rescue.ModeRetry:
 				retryState.RecordAttempt(err)
-				slog.Info("Retrying provisioning", "attempt", retryState.Attempts, "delay", rescueCfg.RetryDelay)
+				slog.Info("retrying provisioning", "attempt", retryState.Attempts, "delay", rescueCfg.RetryDelay)
 				if !sleepWithContext(ctx, rescueCfg.RetryDelay) {
-					slog.Info("Retry sleep canceled by context")
+					slog.Info("retry sleep canceled by context")
 					if err := netMode.Teardown(ctx); err != nil {
-						slog.Warn("Network teardown error", "error", err)
+						slog.Warn("network teardown error", "error", err)
 					}
 					realm.Reboot()
 					return
 				}
 				continue
 			case rescue.ModeShell:
-				slog.Info("Dropping to rescue shell")
+				slog.Info("dropping to rescue shell")
 				realm.Shell()
 			case rescue.ModeWait:
-				slog.Info("Waiting for manual intervention")
+				slog.Info("waiting for manual intervention")
 				<-ctx.Done()
-				slog.Info("Context canceled while waiting in rescue mode")
+				slog.Info("context canceled while waiting in rescue mode")
 				if err := netMode.Teardown(ctx); err != nil {
-					slog.Warn("Network teardown error", "error", err)
+					slog.Warn("network teardown error", "error", err)
 				}
 				realm.Reboot()
 				return
@@ -314,7 +314,7 @@ func runCAPRF(ctx context.Context) {
 
 	slog.Info("BOOTy CAPRF complete")
 	if err := netMode.Teardown(ctx); err != nil {
-		slog.Warn("Network teardown error", "error", err)
+		slog.Warn("network teardown error", "error", err)
 	}
 
 	// Attempt kexec into installed kernel; fall back to power off so
@@ -324,7 +324,7 @@ func runCAPRF(ctx context.Context) {
 	}
 	time.Sleep(time.Second * 2)
 	if provisionSucceeded {
-		slog.Info("Provisioning succeeded, powering off for orchestrator to manage boot")
+		slog.Info("provisioning succeeded, powering off for orchestrator to manage boot")
 		realm.PowerOff()
 	}
 	realm.Reboot()
@@ -335,21 +335,21 @@ func runCAPRF(ctx context.Context) {
 func ensureNetworkConnectivity(ctx context.Context, cfg *config.MachineConfig, netMode network.Mode, target string) error {
 	const maxRetries = 3
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		slog.Info("Waiting for network connectivity", "target", target, "attempt", attempt)
+		slog.Info("waiting for network connectivity", "target", target, "attempt", attempt)
 		if err := netMode.WaitForConnectivity(ctx, target, 5*time.Minute); err == nil {
-			slog.Info("Network connectivity established", "target", target)
+			slog.Info("network connectivity established", "target", target)
 			return nil
 		}
-		slog.Error("Network connectivity timeout", "attempt", attempt)
+		slog.Error("network connectivity timeout", "attempt", attempt)
 		if attempt < maxRetries {
-			slog.Info("Tearing down network for retry", "attempt", attempt)
+			slog.Info("tearing down network for retry", "attempt", attempt)
 			if tErr := netMode.Teardown(ctx); tErr != nil {
-				slog.Warn("Network teardown failed", "error", tErr)
+				slog.Warn("network teardown failed", "error", tErr)
 			}
 			netMode = setupNetworkMode(ctx, cfg)
 		}
 	}
-	slog.Error("Network connectivity failed after all retries", "attempts", maxRetries)
+	slog.Error("network connectivity failed after all retries", "attempts", maxRetries)
 	return fmt.Errorf("network connectivity timeout after %d attempts", maxRetries)
 }
 
@@ -400,7 +400,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 	if cfg.VLANs != "" {
 		vlans, err := network.ParseVLANs(cfg.VLANs)
 		if err != nil {
-			slog.Error("Invalid VLAN configuration", "error", err)
+			slog.Error("invalid VLAN configuration", "error", err)
 		} else {
 			netCfg.VLANs = vlans
 		}
@@ -408,7 +408,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 
 	// Set up VLANs first — they create sub-interfaces that other modes use.
 	if netCfg.IsVLANMode() {
-		slog.Info("Setting up VLAN interfaces", "count", len(netCfg.VLANs))
+		slog.Info("setting up VLAN interfaces", "count", len(netCfg.VLANs))
 		for _, v := range netCfg.VLANs {
 			name, err := vlan.Setup(&vlan.Config{
 				ID:      v.ID,
@@ -429,10 +429,10 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 
 	// Set up bonding if configured (bond becomes the interface for other modes).
 	if netCfg.IsBondMode() {
-		slog.Info("Setting up LACP bond")
+		slog.Info("setting up LACP bond")
 		bond := &network.BondMode{}
 		if err := bond.Setup(ctx, netCfg); err != nil {
-			slog.Error("Bond setup failed", "error", err)
+			slog.Error("bond setup failed", "error", err)
 		} else if netCfg.StaticIface == "" {
 			netCfg.StaticIface = "bond0"
 		}
@@ -441,10 +441,10 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 	// Priority: GoBGP > FRR > Static > DHCP.
 	if netCfg.IsGoBGPMode() {
 		detectIPMI(netCfg)
-		slog.Info("Using GoBGP/EVPN network mode", "asn", cfg.ASN)
+		slog.Info("using GoBGP/EVPN network mode", "asn", cfg.ASN)
 		stack, err := setupGoBGPStack(ctx, netCfg)
 		if err != nil {
-			slog.Error("GoBGP setup failed, falling back to FRR", "error", err)
+			slog.Error("goBGP setup failed, falling back to FRR", "error", err)
 			mgr := frr.NewManager(nil)
 			if frrErr := mgr.Setup(ctx, netCfg); frrErr != nil {
 				slog.Error("FRR fallback also failed", "error", frrErr)
@@ -458,7 +458,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 
 	if netCfg.IsFRRMode() {
 		detectIPMI(netCfg)
-		slog.Info("Using FRR/EVPN network mode", "asn", cfg.ASN)
+		slog.Info("using FRR/EVPN network mode", "asn", cfg.ASN)
 		mgr := frr.NewManager(nil)
 		if err := mgr.Setup(ctx, netCfg); err != nil {
 			slog.Error("FRR network setup failed, falling back to DHCP", "error", err)
@@ -469,16 +469,16 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 	}
 
 	if netCfg.IsStaticMode() {
-		slog.Info("Using static network mode", "ip", cfg.StaticIP)
+		slog.Info("using static network mode", "ip", cfg.StaticIP)
 		mode := &network.StaticMode{}
 		if err := mode.Setup(ctx, netCfg); err != nil {
-			slog.Error("Static network setup failed, falling back to DHCP", "error", err)
+			slog.Error("static network setup failed, falling back to DHCP", "error", err)
 			return dhcpFallback(ctx, netCfg)
 		}
 		return mode
 	}
 
-	slog.Info("Using DHCP network mode")
+	slog.Info("using DHCP network mode")
 	return dhcpFallback(ctx, netCfg)
 }
 
@@ -608,7 +608,7 @@ func detectIPMI(netCfg *network.Config) {
 	}
 	mac, ip, err := network.GetIPMIInfo()
 	if err != nil {
-		slog.Warn("Failed to detect IPMI info", "error", err)
+		slog.Warn("failed to detect IPMI info", "error", err)
 		return
 	}
 	if netCfg.IPMIMAC == "" {
@@ -617,7 +617,7 @@ func detectIPMI(netCfg *network.Config) {
 	if netCfg.IPMIIP == "" {
 		netCfg.IPMIIP = ip
 	}
-	slog.Info("Detected IPMI info", "mac", mac, "ip", ip)
+	slog.Info("detected IPMI info", "mac", mac, "ip", ip)
 }
 
 // tryKexec attempts to kexec into the installed kernel.
@@ -626,37 +626,37 @@ func detectIPMI(netCfg *network.Config) {
 // provisioning (e.g. Mellanox SR-IOV), since firmware reinit requires a hard reboot.
 func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) {
 	if cfg.DisableKexec {
-		slog.Info("Kexec disabled by configuration, skipping")
+		slog.Info("kexec disabled by configuration, skipping")
 		return
 	}
 
 	if firmwareChanged {
-		slog.Info("Firmware values changed during provisioning, hard reboot required — skipping kexec")
+		slog.Info("firmware values changed during provisioning, hard reboot required — skipping kexec")
 		return
 	}
 
 	const grubPath = "/newroot/boot/grub/grub.cfg"
 	f, err := os.Open(grubPath)
 	if err != nil {
-		slog.Warn("Cannot open grub.cfg, skipping kexec", "error", err)
+		slog.Warn("cannot open grub.cfg, skipping kexec", "error", err)
 		return
 	}
 	defer func() { _ = f.Close() }()
 
 	entries, err := kexec.ParseGrubCfg(f)
 	if err != nil {
-		slog.Warn("Failed to parse grub.cfg", "error", err)
+		slog.Warn("failed to parse grub.cfg", "error", err)
 		return
 	}
 	entry, err := kexec.GetDefaultEntry(entries)
 	if err != nil {
-		slog.Warn("No default boot entry found", "error", err)
+		slog.Warn("no default boot entry found", "error", err)
 		return
 	}
 
 	kernel := "/newroot" + entry.Kernel
 	initrd := "/newroot" + entry.Initramfs
-	slog.Info("Attempting kexec", "kernel", kernel, "initrd", initrd)
+	slog.Info("attempting kexec", "kernel", kernel, "initrd", initrd)
 
 	if err := kexec.Load(kernel, initrd, entry.KernelArgs); err != nil {
 		slog.Warn("kexec load failed, falling back to reboot", "error", err)
@@ -697,7 +697,7 @@ func runStandby(ctx context.Context, client config.Provider, cfg *config.Machine
 		pollInterval      = 10 * time.Second
 	)
 
-	slog.Info("Entering standby mode")
+	slog.Info("entering standby mode")
 	_ = client.ReportStatus(ctx, config.StatusInit, "standby")
 
 	heartbeatTicker := time.NewTicker(heartbeatInterval)
@@ -709,26 +709,26 @@ func runStandby(ctx context.Context, client config.Provider, cfg *config.Machine
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("Standby context canceled, shutting down")
+			slog.Info("standby context canceled, shutting down")
 			if err := netMode.Teardown(ctx); err != nil {
-				slog.Warn("Network teardown error", "error", err)
+				slog.Warn("network teardown error", "error", err)
 			}
 			realm.Reboot()
 			return
 
 		case <-heartbeatTicker.C:
 			if err := client.Heartbeat(ctx); err != nil {
-				slog.Warn("Heartbeat failed", "error", err)
+				slog.Warn("heartbeat failed", "error", err)
 			}
 
 		case <-pollTicker.C:
 			cmds, err := client.FetchCommands(ctx)
 			if err != nil {
-				slog.Warn("Command poll failed", "error", err)
+				slog.Warn("command poll failed", "error", err)
 				continue
 			}
 			for _, cmd := range cmds {
-				slog.Info("Received command", "id", cmd.ID, "type", cmd.Type)
+				slog.Info("received command", "id", cmd.ID, "type", cmd.Type)
 				switch cmd.Type {
 				case "provision":
 					cfg.Mode = "provision"
@@ -743,38 +743,38 @@ func runStandby(ctx context.Context, client config.Provider, cfg *config.Machine
 							provisionSucceeded = true
 							break
 						}
-						slog.Error("Hot provision failed", "error", provErr)
+						slog.Error("hot provision failed", "error", provErr)
 						if setupErr := rescue.Setup(ctx, rescueCfg); setupErr != nil {
-							slog.Warn("Rescue setup error", "error", setupErr)
+							slog.Warn("rescue setup error", "error", setupErr)
 						}
 						action := rescue.Decide(rescueCfg, &retryState)
-						slog.Info("Rescue action", "type", action.Type, "message", action.Message)
+						slog.Info("rescue action", "type", action.Type, "message", action.Message)
 						switch action.Type {
 						case rescue.ModeRetry:
 							retryState.RecordAttempt(provErr)
 							if !sleepWithContext(ctx, rescueCfg.RetryDelay) {
-								slog.Info("Retry sleep canceled by context")
+								slog.Info("retry sleep canceled by context")
 								if err := netMode.Teardown(ctx); err != nil {
-									slog.Warn("Network teardown error", "error", err)
+									slog.Warn("network teardown error", "error", err)
 								}
 								realm.Reboot()
 								return
 							}
 							continue
 						case rescue.ModeShell:
-							slog.Info("Dropping to rescue shell")
+							slog.Info("dropping to rescue shell")
 							realm.Shell()
 							if err := netMode.Teardown(ctx); err != nil {
-								slog.Warn("Network teardown error", "error", err)
+								slog.Warn("network teardown error", "error", err)
 							}
 							realm.Reboot()
 							return
 						case rescue.ModeWait:
-							slog.Info("Waiting for manual intervention")
+							slog.Info("waiting for manual intervention")
 							<-ctx.Done()
-							slog.Info("Standby context canceled while waiting in rescue mode")
+							slog.Info("standby context canceled while waiting in rescue mode")
 							if err := netMode.Teardown(ctx); err != nil {
-								slog.Warn("Network teardown error", "error", err)
+								slog.Warn("network teardown error", "error", err)
 							}
 							realm.Reboot()
 							return
@@ -785,19 +785,19 @@ func runStandby(ctx context.Context, client config.Provider, cfg *config.Machine
 					}
 					if !provisionSucceeded {
 						if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "failed", provErr.Error()); ackErr != nil {
-							slog.Warn("Failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
+							slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
 						}
 						if err := netMode.Teardown(ctx); err != nil {
-							slog.Warn("Network teardown error", "error", err)
+							slog.Warn("network teardown error", "error", err)
 						}
 						realm.Reboot()
 						return
 					}
 					if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "completed", ""); ackErr != nil {
-						slog.Warn("Failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
+						slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
 					}
 					if err := netMode.Teardown(ctx); err != nil {
-						slog.Warn("Network teardown error", "error", err)
+						slog.Warn("network teardown error", "error", err)
 					}
 					tryKexec(cfg, orch.FirmwareChanged())
 					time.Sleep(2 * time.Second)
@@ -807,41 +807,41 @@ func runStandby(ctx context.Context, client config.Provider, cfg *config.Machine
 					cfg.Mode = "deprovision"
 					orch := provision.NewOrchestrator(cfg, client, diskMgr)
 					if err := orch.Deprovision(ctx); err != nil {
-						slog.Error("Hot deprovision failed", "error", err)
+						slog.Error("hot deprovision failed", "error", err)
 						if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "failed", err.Error()); ackErr != nil {
-							slog.Warn("Failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
+							slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
 						}
 					} else {
 						if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "completed", ""); ackErr != nil {
-							slog.Warn("Failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
+							slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
 						}
 					}
 					if err := netMode.Teardown(ctx); err != nil {
-						slog.Warn("Network teardown error", "error", err)
+						slog.Warn("network teardown error", "error", err)
 					}
 					time.Sleep(2 * time.Second)
 					realm.Reboot()
 					return
 				case "reboot":
-					slog.Info("Reboot command received")
+					slog.Info("reboot command received")
 					if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "completed", ""); ackErr != nil {
-						slog.Warn("Failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
+						slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
 					}
 					if err := netMode.Teardown(ctx); err != nil {
-						slog.Warn("Network teardown error", "error", err)
+						slog.Warn("network teardown error", "error", err)
 					}
 					realm.Reboot()
 					return
 				case "health-check":
 					// Liveness probe — confirms agent is responsive.
-					slog.Info("Health-check command received")
+					slog.Info("health-check command received")
 					if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "completed", "healthy"); ackErr != nil {
-						slog.Warn("Failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
+						slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
 					}
 				default:
-					slog.Warn("Unknown command type", "type", cmd.Type)
+					slog.Warn("unknown command type", "type", cmd.Type)
 					if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "failed", "unknown command type"); ackErr != nil {
-						slog.Warn("Failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
+						slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
 					}
 				}
 			}

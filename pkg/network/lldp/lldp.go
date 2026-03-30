@@ -53,7 +53,7 @@ func Listen(ctx context.Context, iface string, timeout time.Duration) (*Neighbor
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	slog.Info("Listening for LLDP frames", "interface", iface, "timeout", timeout)
+	slog.Info("listening for LLDP frames", "interface", iface, "timeout", timeout)
 
 	buf := make([]byte, 1600)
 	for {

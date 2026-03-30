@@ -67,14 +67,14 @@ func setupRamdisk() error {
 	if err := syscall.Mount("tmpfs", ramdiskPath, "tmpfs", 0, ramdiskSizeOpt); err != nil {
 		return fmt.Errorf("mounting tmpfs at %s: %w", ramdiskPath, err)
 	}
-	slog.Info("Ramdisk mounted", "path", ramdiskPath)
+	slog.Info("ramdisk mounted", "path", ramdiskPath)
 	return nil
 }
 
 // cleanupRamdisk unmounts and removes the tmpfs ramdisk.
 func cleanupRamdisk() {
 	if err := syscall.Unmount(ramdiskPath, 0); err != nil {
-		slog.Warn("Failed to unmount ramdisk", "error", err)
+		slog.Warn("failed to unmount ramdisk", "error", err)
 	}
 	_ = os.RemoveAll(ramdiskPath)
 }
@@ -113,7 +113,7 @@ func convertQCOW2ToRaw(ctx context.Context, src, dst string) error {
 		return fmt.Errorf("qemu-img not found (install qemu-utils): %w", err)
 	}
 
-	slog.Info("Converting qcow2 to raw", "src", src, "dst", dst)
+	slog.Info("converting qcow2 to raw", "src", src, "dst", dst)
 	cmd := exec.CommandContext(ctx, qemuImg, "convert", "-f", "qcow2", "-O", "raw", src, dst) //nolint:gosec // controlled paths
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -127,7 +127,7 @@ func convertQCOW2ToRaw(ctx context.Context, src, dst string) error {
 
 // streamRawToDevice streams a raw image file to a block device.
 func streamRawToDevice(rawPath, device string) error {
-	slog.Info("Streaming raw image to device", "src", rawPath, "device", device)
+	slog.Info("streaming raw image to device", "src", rawPath, "device", device)
 
 	src, err := os.Open(rawPath) //nolint:gosec // controlled ramdisk path
 	if err != nil {
@@ -150,6 +150,6 @@ func streamRawToDevice(rawPath, device string) error {
 		return fmt.Errorf("writing raw to device: %w", err)
 	}
 	fmt.Println()
-	slog.Info("Raw image written to device", "bytes", written)
+	slog.Info("raw image written to device", "bytes", written)
 	return nil
 }
