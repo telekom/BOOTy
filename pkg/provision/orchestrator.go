@@ -932,11 +932,16 @@ func DumpDebugState(failedStep string) {
 		gobgpDebugCmds()
 	}
 
-	// Log environment.
+	// Log environment (redact sensitive values).
 	for _, env := range os.Environ() {
 		if strings.HasPrefix(env, "BOOTY_") || strings.HasPrefix(env, "MODE=") ||
 			strings.HasPrefix(env, "NETWORK_MODE=") {
-			slog.Warn("debug env", "var", env)
+			key, _, _ := strings.Cut(env, "=")
+			if isSensitiveEnvKey(key) {
+				slog.Warn("debug env", "var", key+"=REDACTED")
+			} else {
+				slog.Warn("debug env", "var", env)
+			}
 		}
 	}
 
@@ -947,6 +952,17 @@ func DumpDebugState(failedStep string) {
 func hasBinary(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
+}
+
+// isSensitiveEnvKey returns true if the key likely contains credentials.
+func isSensitiveEnvKey(key string) bool {
+	upper := strings.ToUpper(key)
+	for _, s := range []string{"TOKEN", "SECRET", "PASSWORD", "KEY", "CREDENTIAL"} {
+		if strings.Contains(upper, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // frrDebugCmds dumps FRR-specific state using vtysh.

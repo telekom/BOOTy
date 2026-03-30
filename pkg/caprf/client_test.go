@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1373,5 +1374,40 @@ func TestParseVarsCloudInitConfig(t *testing.T) {
 	}
 	if cfg.CloudInitDatasource != "nocloud" {
 		t.Errorf("CloudInitDatasource = %q, want nocloud", cfg.CloudInitDatasource)
+	}
+}
+
+func TestSetAuth(t *testing.T) {
+	tests := []struct {
+		name     string
+		token    string
+		url      string
+		wantAuth bool
+	}{
+		{"https with token", "tok", "https://example.com/status", true},
+		{"http remote skipped", "tok", "http://10.0.0.1/status", false},
+		{"http localhost allowed", "tok", "http://127.0.0.1/status", true},
+		{"http ::1 allowed", "tok", "http://[::1]/status", true},
+		{"no token", "", "https://example.com/status", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Client{
+				log: slog.Default().With("component", "caprf"),
+				cfg: &config.MachineConfig{Token: tt.token},
+			}
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, tt.url, http.NoBody)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.setAuth(req)
+			got := req.Header.Get("Authorization")
+			if tt.wantAuth && got == "" {
+				t.Error("expected Authorization header, got none")
+			}
+			if !tt.wantAuth && got != "" {
+				t.Errorf("expected no Authorization header, got %q", got)
+			}
+		})
 	}
 }

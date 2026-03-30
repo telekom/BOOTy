@@ -974,3 +974,26 @@ func TestInjectCloudInit_TrimmedBondAndDNSValues(t *testing.T) {
 		}
 	}
 }
+
+func TestIsSensitiveEnvKey(t *testing.T) {
+	tests := []struct {
+		key  string
+		want bool
+	}{
+		{"AUTH_TOKEN", true},
+		{"SECRET_VALUE", true},
+		{"DB_PASSWORD", true},
+		{"API_KEY", true},
+		{"MY_CREDENTIAL", true},
+		{"HOME", false},
+		{"PATH", false},
+		{"NETWORK_MODE", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			if got := isSensitiveEnvKey(tt.key); got != tt.want {
+				t.Errorf("isSensitiveEnvKey(%q) = %v, want %v", tt.key, got, tt.want)
+			}
+		})
+	}
+}

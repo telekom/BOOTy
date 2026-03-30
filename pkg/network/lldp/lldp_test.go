@@ -3,6 +3,7 @@
 package lldp
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/gopacket"
@@ -68,5 +69,26 @@ func TestParseLLDPInvalidPayload(t *testing.T) {
 func TestHTONS(t *testing.T) {
 	if got := htons(0x88cc); got != 0xcc88 {
 		t.Fatalf("htons(0x88cc) = 0x%x, want 0xcc88", got)
+	}
+}
+
+func TestSanitizeLLDP(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"clean", "switch-leaf01", "switch-leaf01"},
+		{"control chars", "bad\x00\x1f\x7fname", "bad???name"},
+		{"long string", string(make([]byte, 300)), strings.Repeat("?", maxLLDPFieldLen)},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeLLDP(tt.in)
+			if got != tt.want {
+				t.Errorf("sanitizeLLDP(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
 	}
 }
