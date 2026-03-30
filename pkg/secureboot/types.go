@@ -15,5 +15,8 @@ type ChainResult struct {
 	SecureBootEnabled bool              `json:"secureBootEnabled"`
 	SetupMode         bool              `json:"setupMode"`
 	Components        []ComponentStatus `json:"components"`
-	Valid             bool              `json:"valid"`
+	// PreconditionsMet is true when Secure Boot is enabled, setup mode is off,
+	// and all expected boot-chain files exist on disk. It does NOT verify
+	// cryptographic signatures.
+	PreconditionsMet bool `json:"preconditionsMet"`
 }

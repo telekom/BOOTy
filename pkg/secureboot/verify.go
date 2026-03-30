@@ -37,11 +37,11 @@ func (cv *ChainVerifier) Verify() (*ChainResult, error) {
 	}
 
 	result.Components = cv.checkComponentPresence()
-	// Valid requires SecureBoot enabled, not in setup mode, and all required
+	// PreconditionsMet requires SecureBoot enabled, not in setup mode, and all required
 	// components present on disk. NOTE: this does NOT verify cryptographic
 	// signatures — it only confirms expected files exist. Full PE/COFF
 	// signature verification is planned but not yet implemented.
-	result.Valid = result.SecureBootEnabled && !result.SetupMode && cv.allComponentsPresent(result.Components)
+	result.PreconditionsMet = result.SecureBootEnabled && !result.SetupMode && cv.allComponentsPresent(result.Components)
 	return result, nil
 }
 
