@@ -181,6 +181,19 @@ func TestParseVarsPartitionLayoutInvalidFails(t *testing.T) {
 	}
 }
 
+func TestParseVarsInsecureTransport(t *testing.T) {
+	input := `export INSECURE_TRANSPORT="true"
+export HOSTNAME="worker-01"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.InsecureTransport {
+		t.Fatal("expected InsecureTransport=true")
+	}
+}
+
 func TestClientReportStatus(t *testing.T) {
 	ts := newTestServer(t)
 
@@ -1414,23 +1427,25 @@ func TestParseVarsCloudInitConfig(t *testing.T) {
 
 func TestSetAuth(t *testing.T) {
 	tests := []struct {
-		name     string
-		token    string
-		url      string
-		wantAuth bool
-		wantErr  bool
+		name              string
+		token             string
+		url               string
+		insecureTransport bool
+		wantAuth          bool
+		wantErr           bool
 	}{
-		{"https with token", "tok", "https://example.com/status", true, false},
-		{"http remote rejected", "tok", "http://10.0.0.1/status", false, true},
-		{"http localhost allowed", "tok", "http://127.0.0.1/status", true, false},
-		{"http ::1 allowed", "tok", "http://[::1]/status", true, false},
-		{"no token", "", "https://example.com/status", false, false},
+		{"https with token", "tok", "https://example.com/status", false, true, false},
+		{"http remote rejected", "tok", "http://10.0.0.1/status", false, false, true},
+		{"http localhost allowed", "tok", "http://127.0.0.1/status", false, true, false},
+		{"http ::1 allowed", "tok", "http://[::1]/status", false, true, false},
+		{"no token", "", "https://example.com/status", false, false, false},
+		{"http remote allowed with insecure transport", "tok", "http://10.0.0.1/status", true, true, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := &Client{
 				log: slog.Default().With("component", "caprf"),
-				cfg: &config.MachineConfig{Token: tt.token},
+				cfg: &config.MachineConfig{Token: tt.token, InsecureTransport: tt.insecureTransport},
 			}
 			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, tt.url, http.NoBody)
 			if err != nil {
