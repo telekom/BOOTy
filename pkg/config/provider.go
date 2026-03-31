@@ -116,6 +116,9 @@ type MachineConfig struct {
 	// Dry-run mode.
 	DryRun bool // DRY_RUN: simulate provisioning without destructive changes
 
+	// Transport security override (testing only).
+	InsecureTransport bool // INSECURE_TRANSPORT: allow bearer tokens over plain HTTP (testing only)
+
 	// Network mode override.
 	NetworkMode string // NETWORK_MODE: "gobgp" to use in-process GoBGP instead of FRR
 

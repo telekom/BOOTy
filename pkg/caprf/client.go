@@ -48,20 +48,28 @@ func New(varsPath string) (*Client, error) {
 		return nil, fmt.Errorf("parse vars: %w", err)
 	}
 
-	return &Client{
-		httpClient: newHTTPClient(30 * time.Second),
-		cfg:        cfg,
-		log:        slog.Default().With("component", "caprf"),
-	}, nil
-}
-
-// NewFromConfig creates a CAPRF client from an already-parsed config.
-func NewFromConfig(cfg *config.MachineConfig) *Client {
-	return &Client{
+	c := &Client{
 		httpClient: newHTTPClient(30 * time.Second),
 		cfg:        cfg,
 		log:        slog.Default().With("component", "caprf"),
 	}
+	if cfg.InsecureTransport {
+		c.log.Warn("insecure transport enabled: bearer tokens will be sent over plain HTTP")
+	}
+	return c, nil
+}
+
+// NewFromConfig creates a CAPRF client from an already-parsed config.
+func NewFromConfig(cfg *config.MachineConfig) *Client {
+	c := &Client{
+		httpClient: newHTTPClient(30 * time.Second),
+		cfg:        cfg,
+		log:        slog.Default().With("component", "caprf"),
+	}
+	if cfg.InsecureTransport {
+		c.log.Warn("insecure transport enabled: bearer tokens will be sent over plain HTTP")
+	}
+	return c
 }
 
 // AcquireToken exchanges the bootstrap token for a JWT if a token URL
@@ -349,12 +357,13 @@ func (c *Client) withRetry(ctx context.Context, url string, fn func() error) err
 // setAuth attaches the Bearer token only when the request URL uses HTTPS
 // or targets loopback (localhost/127.x). Non-HTTPS remote endpoints fail
 // closed to avoid credential leakage over plaintext transport.
+// When InsecureTransport is set, the HTTPS requirement is bypassed.
 func (c *Client) setAuth(req *http.Request) error {
 	tok := c.CurrentToken()
 	if tok == "" {
 		return nil
 	}
-	if req.URL != nil && req.URL.Scheme != "https" && !isLoopback(req.URL.Hostname()) {
+	if req.URL != nil && req.URL.Scheme != "https" && !isLoopback(req.URL.Hostname()) && !c.cfg.InsecureTransport {
 		c.warnInsecureOnce(req.URL.Redacted())
 		return fmt.Errorf("%w: refusing bearer token on non-HTTPS request %s", errInsecureTransport, req.URL.Redacted())
 	}
@@ -384,6 +393,9 @@ func (c *Client) warnInsecureOnce(rawURL string) {
 }
 
 func (c *Client) requireSecureEndpoint(rawURL, purpose string) error {
+	if c.cfg.InsecureTransport {
+		return nil
+	}
 	u, err := neturl.Parse(rawURL)
 	if err != nil {
 		return fmt.Errorf("parse %s URL: %w", purpose, err)
@@ -640,6 +652,8 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) (bool, error)
 		cfg.CloudInitEnabled = parseBoolVar(value)
 	case "DRY_RUN":
 		cfg.DryRun = parseBoolVar(value)
+	case "INSECURE_TRANSPORT":
+		cfg.InsecureTransport = parseBoolVar(value)
 	default:
 		return applyFeatureToggle(cfg, key, value)
 	}
