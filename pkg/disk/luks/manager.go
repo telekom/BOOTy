@@ -106,7 +106,8 @@ func (m *Manager) Format(ctx context.Context, target *Target, cfg *Config) error
 	}
 	out, err := m.cmd.RunWithInput(ctx, cfg.Passphrase+"\n", "cryptsetup", args...)
 	if err != nil {
-		return fmt.Errorf("cryptsetup luksFormat %s: %s: %w", target.Device, strings.TrimSpace(string(out)), err)
+		_ = out
+		return fmt.Errorf("cryptsetup luksFormat %s failed: %w", target.Device, err)
 	}
 	m.log.Info("LUKS volume formatted", "device", target.Device, "cipher", cipher)
 	return nil
@@ -131,7 +132,8 @@ func (m *Manager) Open(ctx context.Context, target *Target, passphrase string) e
 		target.Device, target.MappedName,
 	)
 	if err != nil {
-		return fmt.Errorf("cryptsetup luksOpen %s: %s: %w", target.Device, strings.TrimSpace(string(out)), err)
+		_ = out
+		return fmt.Errorf("cryptsetup luksOpen %s failed: %w", target.Device, err)
 	}
 	m.log.Info("LUKS volume opened", "device", target.Device, "mapped", target.MappedName)
 	return nil

@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/digineo/go-dhclient"
@@ -97,9 +96,9 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struc
 		addr, _ := netlink.ParseAddr(cidr.String())
 		if err := netlink.AddrAdd(link, addr); err != nil {
 			d.log.Warn("Failed to assign DHCP address", "iface", ifName, "error", err)
-		} else {
-			d.log.Info("DHCP lease obtained", "iface", ifName, "addr", cidr.String())
+			return
 		}
+		d.log.Info("DHCP lease obtained", "iface", ifName, "addr", cidr.String())
 		// Default gateway from DHCP option 3 (routers).
 		if len(lease.Router) > 0 {
 			if err := netlink.RouteAdd(&netlink.Route{Gw: lease.Router[0]}); err != nil {
@@ -128,22 +127,19 @@ func (d *DHCPMode) Teardown(_ context.Context) error {
 
 // physicalInterfaces returns non-loopback, non-virtual interfaces.
 func physicalInterfaces() ([]net.Interface, error) {
-	all, err := net.Interfaces()
+	nicNames, err := DetectPhysicalNICs()
 	if err != nil {
-		return nil, fmt.Errorf("listing interfaces: %w", err)
+		return nil, fmt.Errorf("detect physical nics: %w", err)
 	}
-	var result []net.Interface
-	for _, i := range all {
-		if i.Flags&net.FlagLoopback != 0 {
+
+	result := make([]net.Interface, 0, len(nicNames))
+	for _, name := range nicNames {
+		iface, ifErr := net.InterfaceByName(name)
+		if ifErr != nil {
+			slog.Debug("skipping NIC missing during DHCP scan", "interface", name, "error", ifErr)
 			continue
 		}
-		// Skip virtual interfaces (veth, docker, bridge, bond slaves).
-		if strings.HasPrefix(i.Name, "veth") ||
-			strings.HasPrefix(i.Name, "docker") ||
-			strings.HasPrefix(i.Name, "br-") {
-			continue
-		}
-		result = append(result, i)
+		result = append(result, *iface)
 	}
 	return result, nil
 }
@@ -157,6 +153,8 @@ func WaitForHTTP(ctx context.Context, target string, timeout time.Duration) erro
 	deadline := time.Now().Add(timeout)
 	client := &http.Client{Timeout: 10 * time.Second}
 	attempt := 0
+	retryTicker := time.NewTicker(1 * time.Second)
+	defer retryTicker.Stop()
 
 	for time.Now().Before(deadline) {
 		attempt++
@@ -180,7 +178,7 @@ func WaitForHTTP(ctx context.Context, target string, timeout time.Duration) erro
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("context canceled: %w", ctx.Err())
-		case <-time.After(1 * time.Second):
+		case <-retryTicker.C:
 		}
 	}
 

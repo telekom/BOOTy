@@ -99,13 +99,23 @@ func TestStopRAIDArrays(t *testing.T) {
 	cmd := newMockCommander()
 	mgr := NewManager(cmd)
 
-	// Should succeed even if mdadm fails (no arrays).
-	cmd.setResult("mdadm --stop", nil, fmt.Errorf("exec mdadm: exit 1"))
+	// Should succeed if mdadm reports that no arrays exist.
+	cmd.setResult("mdadm --stop", []byte("mdadm: No arrays found in config file or automatically"), fmt.Errorf("exec mdadm: exit 1"))
 	if err := mgr.StopRAIDArrays(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(cmd.calls) != 1 || cmd.calls[0].name != "mdadm" {
 		t.Fatalf("expected mdadm call, got %v", cmd.calls)
+	}
+}
+
+func TestStopRAIDArraysError(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+
+	cmd.setResult("mdadm --stop", []byte("mdadm: cannot stop /dev/md0: Device or resource busy"), fmt.Errorf("exec mdadm: exit 1"))
+	if err := mgr.StopRAIDArrays(context.Background()); err == nil {
+		t.Fatal("expected error for genuine mdadm stop failure")
 	}
 }
 

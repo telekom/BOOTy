@@ -802,6 +802,17 @@ func TestParseVarsPostProvisionCmds(t *testing.T) {
 	}
 }
 
+func TestParseVarsUnsupportedLUKSVar(t *testing.T) {
+	input := `LUKS_ENABLE="true"`
+	_, err := ParseVars(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("expected error for unsupported LUKS var")
+	}
+	if !strings.Contains(err.Error(), "LUKS_ENABLE is not supported yet") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestParseVarsImageChecksum(t *testing.T) {
 	input := `IMAGE_CHECKSUM="abc123def456"
 IMAGE_CHECKSUM_TYPE="sha256"
@@ -1147,6 +1158,30 @@ func TestClientAcknowledgeCommandNoURL(t *testing.T) {
 	}
 }
 
+func TestClientFetchCommandsRejectsInsecureRemoteURL(t *testing.T) {
+	client := NewFromConfig(&config.MachineConfig{CommandsURL: "http://caprf.example.com/commands"})
+
+	_, err := client.FetchCommands(context.Background())
+	if err == nil {
+		t.Fatal("expected error for insecure commands URL")
+	}
+	if !strings.Contains(err.Error(), "requires HTTPS") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestClientAcknowledgeCommandRejectsInsecureRemoteURL(t *testing.T) {
+	client := NewFromConfig(&config.MachineConfig{CommandsURL: "http://caprf.example.com/commands"})
+
+	err := client.AcknowledgeCommand(context.Background(), "cmd-1", "completed", "")
+	if err == nil {
+		t.Fatal("expected error for insecure commands URL")
+	}
+	if !strings.Contains(err.Error(), "requires HTTPS") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestAcquireTokenNoURL(t *testing.T) {
 	client := NewFromConfig(&config.MachineConfig{Token: "bootstrap"})
 	if err := client.AcquireToken(context.Background()); err != nil {
@@ -1383,12 +1418,13 @@ func TestSetAuth(t *testing.T) {
 		token    string
 		url      string
 		wantAuth bool
+		wantErr  bool
 	}{
-		{"https with token", "tok", "https://example.com/status", true},
-		{"http remote skipped", "tok", "http://10.0.0.1/status", false},
-		{"http localhost allowed", "tok", "http://127.0.0.1/status", true},
-		{"http ::1 allowed", "tok", "http://[::1]/status", true},
-		{"no token", "", "https://example.com/status", false},
+		{"https with token", "tok", "https://example.com/status", true, false},
+		{"http remote rejected", "tok", "http://10.0.0.1/status", false, true},
+		{"http localhost allowed", "tok", "http://127.0.0.1/status", true, false},
+		{"http ::1 allowed", "tok", "http://[::1]/status", true, false},
+		{"no token", "", "https://example.com/status", false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1400,7 +1436,13 @@ func TestSetAuth(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			c.setAuth(req)
+			err = c.setAuth(req)
+			if tt.wantErr && err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 			got := req.Header.Get("Authorization")
 			if tt.wantAuth && got == "" {
 				t.Error("expected Authorization header, got none")

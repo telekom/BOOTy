@@ -5,14 +5,18 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/auth"
@@ -26,7 +30,10 @@ type Client struct {
 	cfg          *config.MachineConfig
 	log          *slog.Logger
 	tokenManager *auth.TokenManager
+	insecureWarn sync.Map
 }
+
+var errInsecureTransport = errors.New("insecure transport")
 
 // New creates a CAPRF client by parsing the vars file at the given path.
 func New(varsPath string) (*Client, error) {
@@ -42,7 +49,7 @@ func New(varsPath string) (*Client, error) {
 	}
 
 	return &Client{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: newHTTPClient(30 * time.Second),
 		cfg:        cfg,
 		log:        slog.Default().With("component", "caprf"),
 	}, nil
@@ -51,7 +58,7 @@ func New(varsPath string) (*Client, error) {
 // NewFromConfig creates a CAPRF client from an already-parsed config.
 func NewFromConfig(cfg *config.MachineConfig) *Client {
 	return &Client{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: newHTTPClient(30 * time.Second),
 		cfg:        cfg,
 		log:        slog.Default().With("component", "caprf"),
 	}
@@ -206,12 +213,17 @@ func (c *Client) FetchCommands(ctx context.Context) ([]config.Command, error) {
 	if c.cfg.CommandsURL == "" {
 		return nil, nil
 	}
+	if err := c.requireSecureEndpoint(c.cfg.CommandsURL, "commands polling"); err != nil {
+		return nil, err
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.cfg.CommandsURL, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("create commands request: %w", err)
 	}
-	c.setAuth(req)
+	if err := c.setAuth(req); err != nil {
+		return nil, err
+	}
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
@@ -239,6 +251,9 @@ func (c *Client) AcknowledgeCommand(ctx context.Context, cmdID, status, message 
 	if c.cfg.CommandsURL == "" {
 		return nil
 	}
+	if err := c.requireSecureEndpoint(c.cfg.CommandsURL, "commands acknowledgement"); err != nil {
+		return err
+	}
 	ack := struct {
 		ID      string `json:"id"`
 		Status  string `json:"status"`
@@ -252,7 +267,10 @@ func (c *Client) AcknowledgeCommand(ctx context.Context, cmdID, status, message 
 	if err != nil {
 		return fmt.Errorf("marshal command ack: %w", err)
 	}
-	ackURL := strings.TrimRight(c.cfg.CommandsURL, "/") + "/ack"
+	ackURL, err := neturl.JoinPath(c.cfg.CommandsURL, "ack")
+	if err != nil {
+		return fmt.Errorf("build command ack URL: %w", err)
+	}
 	return c.postJSONWithAuth(ctx, ackURL, data)
 }
 
@@ -320,30 +338,62 @@ func (c *Client) withRetry(ctx context.Context, url string, fn func() error) err
 		if lastErr == nil {
 			return nil
 		}
+		if errors.Is(lastErr, errInsecureTransport) {
+			return lastErr
+		}
 		c.log.Warn("Request failed", "url", url, "attempt", attempt+1, "error", lastErr)
 	}
 	return fmt.Errorf("request failed after 3 attempts to %s: %w", url, lastErr)
 }
 
 // setAuth attaches the Bearer token only when the request URL uses HTTPS
-// or targets loopback (localhost/127.x). Bare-metal PXE environments may
-// legitimately use HTTP on isolated networks, but sending credentials over
-// plaintext to remote hosts is logged as a warning.
-func (c *Client) setAuth(req *http.Request) {
+// or targets loopback (localhost/127.x). Non-HTTPS remote endpoints fail
+// closed to avoid credential leakage over plaintext transport.
+func (c *Client) setAuth(req *http.Request) error {
 	tok := c.CurrentToken()
 	if tok == "" {
-		return
+		return nil
 	}
 	if req.URL != nil && req.URL.Scheme != "https" && !isLoopback(req.URL.Hostname()) {
-		c.log.Warn("skipping bearer token on non-HTTPS request", "url", req.URL.Redacted())
-		return
+		c.warnInsecureOnce(req.URL.Redacted())
+		return fmt.Errorf("%w: refusing bearer token on non-HTTPS request %s", errInsecureTransport, req.URL.Redacted())
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
+	return nil
 }
 
 // isLoopback returns true for localhost, 127.x.x.x, and [::1].
 func isLoopback(host string) bool {
 	return host == "localhost" || strings.HasPrefix(host, "127.") || host == "::1"
+}
+
+func newHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+		},
+	}
+}
+
+func (c *Client) warnInsecureOnce(rawURL string) {
+	if _, loaded := c.insecureWarn.LoadOrStore(rawURL, struct{}{}); loaded {
+		return
+	}
+	c.log.Warn("refusing request to non-HTTPS endpoint", "url", rawURL)
+}
+
+func (c *Client) requireSecureEndpoint(rawURL, purpose string) error {
+	u, err := neturl.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("parse %s URL: %w", purpose, err)
+	}
+	if u.Scheme == "https" || isLoopback(u.Hostname()) {
+		return nil
+	}
+	redacted := u.Redacted()
+	c.warnInsecureOnce(redacted)
+	return fmt.Errorf("%w: %s requires HTTPS, got %s", errInsecureTransport, purpose, redacted)
 }
 
 func (c *Client) doPost(ctx context.Context, url, body string) error {
@@ -353,7 +403,9 @@ func (c *Client) doPost(ctx context.Context, url, body string) error {
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "text/plain")
-	c.setAuth(req)
+	if err := c.setAuth(req); err != nil {
+		return err
+	}
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
@@ -375,7 +427,9 @@ func (c *Client) doPostJSON(ctx context.Context, url string, data []byte) error 
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	c.setAuth(req)
+	if err := c.setAuth(req); err != nil {
+		return err
+	}
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
@@ -556,6 +610,10 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) error {
 			return fmt.Errorf("invalid PARTITION_LAYOUT: %w", err)
 		}
 		cfg.PartitionLayout = layout
+	default:
+		if strings.HasPrefix(key, "LUKS_") {
+			return fmt.Errorf("%s is not supported yet", key)
+		}
 	}
 
 	return nil

@@ -791,7 +791,7 @@ jobs:
 
       - name: Collect BOOTy container logs
         if: always()
-        timeout-minutes: 3
+        timeout-minutes: 8
         run: |
           mkdir -p boot-logs
 
@@ -1002,7 +1002,7 @@ jobs:
 
       - name: Collect vrnetlab logs
         if: always()
-        timeout-minutes: 3
+        timeout-minutes: 8
         run: |
           mkdir -p vrnetlab-logs
 
