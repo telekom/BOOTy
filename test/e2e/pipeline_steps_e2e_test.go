@@ -9,6 +9,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -38,6 +39,23 @@ func newInventoryTrackingProvider(cfg *config.MachineConfig) *inventoryTrackingP
 	return &inventoryTrackingProvider{mockProvider: newMockProvider(cfg)}
 }
 
+// failingInventoryProvider wraps mockProvider but always returns an error from
+// ReportInventory. Used to verify that inventory failures are non-fatal and do
+// not propagate to the caller as an inventory error.
+type failingInventoryProvider struct {
+	*mockProvider
+	calls atomic.Int64
+}
+
+func (p *failingInventoryProvider) ReportInventory(_ context.Context, _ []byte) error {
+	p.calls.Add(1)
+	return fmt.Errorf("injected inventory failure")
+}
+
+func newFailingInventoryProvider(cfg *config.MachineConfig) *failingInventoryProvider {
+	return &failingInventoryProvider{mockProvider: newMockProvider(cfg)}
+}
+
 // ---------------------------------------------------------------------------
 // Gap 1: collect-inventory
 // ---------------------------------------------------------------------------
@@ -57,7 +75,10 @@ func TestCollectInventoryDisabledE2E(t *testing.T) {
 	cmd := newMockCommander()
 	orch := provision.NewOrchestrator(cfg, provider, disk.NewManager(cmd))
 
-	_ = orch.Provision(context.Background())
+	err := orch.Provision(context.Background())
+	if err != nil && strings.Contains(err.Error(), "inventory") {
+		t.Fatalf("inventory step should not cause error when disabled: %v", err)
+	}
 
 	if provider.calls.Load() != 0 {
 		t.Errorf("ReportInventory called %d time(s), want 0 when inventory is disabled",
@@ -85,27 +106,26 @@ func TestCollectInventoryEnabledNonFatalE2E(t *testing.T) {
 		ImageURLs:           []string{"http://img.local/test.gz"},
 		DNSResolvers:        "8.8.8.8",
 	}
-	provider := newMockProvider(cfg)
+	provider := newFailingInventoryProvider(cfg)
 	cmd := newMockCommander()
 	orch := provision.NewOrchestrator(cfg, provider, disk.NewManager(cmd))
 
-	// inventory.Collect() treats missing sysfs as best-effort; orchestrator continues.
 	err := orch.Provision(context.Background())
-	// Whether provision succeeds or fails overall, inventory must not be the cause.
 	if err != nil && strings.Contains(err.Error(), "inventory") {
-		t.Fatalf("inventory step should not cause fatal error: %v", err)
+		t.Fatalf("inventory failure should be non-fatal, got: %v", err)
+	}
+
+	if got := provider.calls.Load(); got != 1 {
+		t.Errorf("ReportInventory called %d time(s), want 1", got)
 	}
 
 	statuses := provider.getStatuses()
 	if len(statuses) == 0 {
 		t.Fatal("expected at least one status report")
 	}
-	// Verify the first status is "init" — inventory step comes after init.
 	if statuses[0].Status != config.StatusInit {
 		t.Errorf("first status = %q, want init", statuses[0].Status)
 	}
-	// At least two statuses mean the pipeline progressed past collect-inventory
-	// into a subsequent step (e.g. collect-firmware, health-checks, set-hostname…).
 	if len(statuses) < 2 {
 		t.Error("expected pipeline to progress past collect-inventory (at least 2 status reports)")
 	}
@@ -159,6 +179,7 @@ func TestCollectInventoryDoesNotCauseErrorE2E(t *testing.T) {
 func TestHealthChecksDisabledE2E(t *testing.T) {
 	cfg := &config.MachineConfig{
 		HealthChecksEnabled: false,
+		HealthMinCPUs:       999999, // impossibly high — would fail if checks ran
 		InventoryEnabled:    false,
 		Hostname:            "health-disabled",
 		ImageURLs:           []string{"http://img.local/test.gz"},
@@ -168,7 +189,10 @@ func TestHealthChecksDisabledE2E(t *testing.T) {
 	cmd := newMockCommander()
 	orch := provision.NewOrchestrator(cfg, provider, disk.NewManager(cmd))
 
-	_ = orch.Provision(context.Background())
+	err := orch.Provision(context.Background())
+	if err != nil && strings.Contains(err.Error(), "minimum-cpu") {
+		t.Fatalf("health check ran despite HealthChecksEnabled=false: %v", err)
+	}
 
 	statuses := provider.getStatuses()
 	if len(statuses) == 0 {
@@ -176,6 +200,11 @@ func TestHealthChecksDisabledE2E(t *testing.T) {
 	}
 	if statuses[0].Status != config.StatusInit {
 		t.Errorf("first status = %q, want init", statuses[0].Status)
+	}
+	for _, s := range statuses {
+		if s.Status == config.StatusError && strings.Contains(s.Message, "minimum-cpu") {
+			t.Errorf("health check emitted error status despite being disabled: %q", s.Message)
+		}
 	}
 }
 
@@ -202,7 +231,7 @@ func TestHealthChecksPassE2E(t *testing.T) {
 	cmd := newMockCommander()
 	orch := provision.NewOrchestrator(cfg, provider, disk.NewManager(cmd))
 
-	_ = orch.Provision(context.Background())
+	err := orch.Provision(context.Background())
 
 	statuses := provider.getStatuses()
 	if len(statuses) == 0 {
@@ -214,6 +243,9 @@ func TestHealthChecksPassE2E(t *testing.T) {
 			strings.Contains(s.Message, "critical health check") {
 			t.Errorf("health checks should not fail with zero thresholds: %q", s.Message)
 		}
+	}
+	if err != nil && strings.Contains(err.Error(), "health") {
+		t.Errorf("health-check step should not cause error with zero thresholds: %v", err)
 	}
 }
 
@@ -391,11 +423,58 @@ func TestSetupNVMeNamespacesCommandsCalledE2E(t *testing.T) {
 		t.Error("expected nvme attach-ns to be called")
 	}
 
+	assertNVMeOrder(t, calls)
+	assertNVMeControllerRef(t, calls, "/dev/nvme0")
+
 	// DiskDevice must be set to the first created namespace.
 	if cfg.DiskDevice == "" {
 		t.Error("expected cfg.DiskDevice to be set after namespace creation")
 	}
 	if !strings.HasPrefix(cfg.DiskDevice, "/dev/nvme0n") {
 		t.Errorf("DiskDevice = %q, want /dev/nvme0n<N>", cfg.DiskDevice)
+	}
+}
+
+// assertNVMeOrder verifies that NVMe subcommands appear in the expected
+// provisioning sequence: id-ctrl → list-ns → create-ns → attach-ns.
+func assertNVMeOrder(t *testing.T, calls []cmdCall) {
+	t.Helper()
+	var nvmeSubs []string
+	for _, c := range calls {
+		if c.Name == "nvme" && len(c.Args) > 0 {
+			nvmeSubs = append(nvmeSubs, c.Args[0])
+		}
+	}
+	want := []string{"id-ctrl", "list-ns", "create-ns", "attach-ns"}
+	idx := 0
+	for _, sub := range nvmeSubs {
+		if idx < len(want) && sub == want[idx] {
+			idx++
+		}
+	}
+	if idx != len(want) {
+		t.Errorf("NVMe commands not in expected order; got %v, want subsequence %v", nvmeSubs, want)
+	}
+}
+
+// assertNVMeControllerRef verifies that id-ctrl, create-ns and attach-ns each
+// reference the configured controller path in their arguments.
+func assertNVMeControllerRef(t *testing.T, calls []cmdCall, controller string) {
+	t.Helper()
+	checkSubs := map[string]bool{"id-ctrl": true, "create-ns": true, "attach-ns": true}
+	for _, c := range calls {
+		if c.Name != "nvme" || len(c.Args) == 0 || !checkSubs[c.Args[0]] {
+			continue
+		}
+		found := false
+		for _, arg := range c.Args {
+			if strings.HasPrefix(arg, controller) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("nvme %s: expected argument referencing %s, got %v", c.Args[0], controller, c.Args)
+		}
 	}
 }
