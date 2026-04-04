@@ -104,6 +104,11 @@ func TestCollectInventoryEnabledNonFatalE2E(t *testing.T) {
 	if statuses[0].Status != config.StatusInit {
 		t.Errorf("first status = %q, want init", statuses[0].Status)
 	}
+	// At least two statuses mean the pipeline progressed past collect-inventory
+	// into a subsequent step (e.g. collect-firmware, health-checks, set-hostname…).
+	if len(statuses) < 2 {
+		t.Error("expected pipeline to progress past collect-inventory (at least 2 status reports)")
+	}
 }
 
 // TestCollectInventoryDoesNotCauseErrorE2E verifies that when InventoryEnabled=true
@@ -134,6 +139,10 @@ func TestCollectInventoryDoesNotCauseErrorE2E(t *testing.T) {
 			strings.Contains(s.Message, "inventory") {
 			t.Errorf("inventory step should not report error status: %q", s.Message)
 		}
+	}
+	// Pipeline progressed past collect-inventory when at least two steps ran.
+	if len(statuses) < 2 {
+		t.Error("expected pipeline to progress past collect-inventory (at least 2 status reports)")
 	}
 	// Positive assertion: ReportInventory must have been called exactly once.
 	if got := provider.calls.Load(); got != 1 {
@@ -261,7 +270,7 @@ func TestSetupNVMeNamespacesSkippedWhenEmptyE2E(t *testing.T) {
 	cmd := newMockCommander()
 	orch := provision.NewOrchestrator(cfg, provider, disk.NewManager(cmd))
 
-	_ = orch.Provision(context.Background())
+	err := orch.Provision(context.Background())
 
 	statuses := provider.getStatuses()
 	if len(statuses) == 0 {
@@ -271,6 +280,12 @@ func TestSetupNVMeNamespacesSkippedWhenEmptyE2E(t *testing.T) {
 	// encountered (and skipped) rather than the pipeline aborting before it.
 	if statuses[0].Status != config.StatusInit {
 		t.Errorf("first status = %q, want init — pipeline did not progress to nvme step", statuses[0].Status)
+	}
+	// The pipeline must have progressed past setup-nvme-namespaces into detect-disk
+	// (or beyond). An error from setup-nvme-namespaces itself would mean the skip
+	// logic did not work.
+	if err != nil && strings.Contains(err.Error(), "setup-nvme-namespaces") {
+		t.Errorf("pipeline should have skipped setup-nvme-namespaces, got: %v", err)
 	}
 	for _, c := range cmd.getCalls() {
 		if c.Name == "nvme" {
