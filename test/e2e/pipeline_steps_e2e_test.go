@@ -74,13 +74,9 @@ func TestCollectInventoryDisabledE2E(t *testing.T) {
 }
 
 // TestCollectInventoryEnabledNonFatalE2E verifies that when InventoryEnabled=true
-// the step is non-fatal even if inventory.Collect() fails in a CI environment
-// (no real hardware sysfs). The pipeline must continue past the inventory step.
-//
-// NOTE: inventory.Collect() reads real sysfs paths (/sys/bus, /proc/cpuinfo,
-// etc.) that are absent in a containerised CI runner. The expected outcome is
-// that the step silently absorbs the error — the test asserts non-fatality, not
-// successful data collection.
+// the step is non-fatal. inventory.Collect() treats missing sysfs/procfs data as
+// best-effort (returns nil error even without hardware), so the pipeline always
+// continues past the inventory step.
 func TestCollectInventoryEnabledNonFatalE2E(t *testing.T) {
 	cfg := &config.MachineConfig{
 		InventoryEnabled:    true,
@@ -93,8 +89,7 @@ func TestCollectInventoryEnabledNonFatalE2E(t *testing.T) {
 	cmd := newMockCommander()
 	orch := provision.NewOrchestrator(cfg, provider, disk.NewManager(cmd))
 
-	// inventory.Collect() reads real sysfs; it may fail in a test environment.
-	// The step must NOT propagate that error — orchestrator continues.
+	// inventory.Collect() treats missing sysfs as best-effort; orchestrator continues.
 	err := orch.Provision(context.Background())
 	// Whether provision succeeds or fails overall, inventory must not be the cause.
 	if err != nil && strings.Contains(err.Error(), "inventory") {
@@ -278,7 +273,7 @@ func TestSetupNVMeNamespacesSkippedWhenEmptyE2E(t *testing.T) {
 		t.Errorf("first status = %q, want init — pipeline did not progress to nvme step", statuses[0].Status)
 	}
 	for _, c := range cmd.getCalls() {
-		if strings.Contains(c.String(), "nvme") {
+		if c.Name == "nvme" {
 			t.Errorf("nvme should NOT be called when NVMeNamespaces is empty: %s", c)
 		}
 	}
@@ -346,24 +341,33 @@ func TestSetupNVMeNamespacesCommandsCalledE2E(t *testing.T) {
 	cmd.set("nvme attach-ns", []byte(""), nil)
 
 	orch := provision.NewOrchestrator(cfg, provider, disk.NewManager(cmd))
-	_ = orch.Provision(context.Background())
+	err := orch.Provision(context.Background())
+	if err != nil && strings.Contains(err.Error(), "nvme namespace") {
+		t.Fatalf("pipeline failed at the NVMe namespace step itself: %v", err)
+	}
 
 	calls := cmd.getCalls()
-	var idCtrlCalled, createNSCalled, attachNSCalled bool
+	var idCtrlCalled, listNSCalled, createNSCalled, attachNSCalled bool
 	for _, c := range calls {
-		s := c.String()
-		if strings.Contains(s, "nvme id-ctrl") {
+		if c.Name != "nvme" || len(c.Args) == 0 {
+			continue
+		}
+		switch c.Args[0] {
+		case "id-ctrl":
 			idCtrlCalled = true
-		}
-		if strings.Contains(s, "nvme create-ns") {
+		case "list-ns":
+			listNSCalled = true
+		case "create-ns":
 			createNSCalled = true
-		}
-		if strings.Contains(s, "nvme attach-ns") {
+		case "attach-ns":
 			attachNSCalled = true
 		}
 	}
 	if !idCtrlCalled {
 		t.Error("expected nvme id-ctrl to be called")
+	}
+	if !listNSCalled {
+		t.Error("expected nvme list-ns to be called")
 	}
 	if !createNSCalled {
 		t.Error("expected nvme create-ns to be called")
