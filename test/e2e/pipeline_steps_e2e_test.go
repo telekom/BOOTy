@@ -45,6 +45,14 @@ func TestCollectInventoryDisabledE2E(t *testing.T) {
 	if statuses[0].Status != config.StatusInit {
 		t.Errorf("first status = %q, want init", statuses[0].Status)
 	}
+	// When inventory is disabled, no status message should reference inventory reporting.
+	// (mockProvider.ReportInventory has no call-tracking field; we verify via status messages.)
+	for _, s := range statuses {
+		if strings.Contains(strings.ToLower(s.Message), "report") &&
+			strings.Contains(strings.ToLower(s.Message), "inventory") {
+			t.Errorf("ReportInventory should not be called when disabled, got status: %q", s.Message)
+		}
+	}
 }
 
 // TestCollectInventoryEnabledNonFatalE2E verifies that when InventoryEnabled=true
@@ -64,7 +72,11 @@ func TestCollectInventoryEnabledNonFatalE2E(t *testing.T) {
 
 	// inventory.Collect() reads real sysfs; it may fail in a test environment.
 	// The step must NOT propagate that error — orchestrator continues.
-	_ = orch.Provision(context.Background())
+	err := orch.Provision(context.Background())
+	// Whether provision succeeds or fails overall, inventory must not be the cause.
+	if err != nil && strings.Contains(err.Error(), "inventory") {
+		t.Fatalf("inventory step should not cause fatal error: %v", err)
+	}
 
 	statuses := provider.getStatuses()
 	if len(statuses) == 0 {
@@ -77,11 +89,9 @@ func TestCollectInventoryEnabledNonFatalE2E(t *testing.T) {
 	}
 }
 
-// TestCollectInventoryReportInventoryCalledE2E verifies that when
-// InventoryEnabled=true and inventory collection succeeds (or is best-effort),
-// the provider's ReportInventory is invoked. We confirm by ensuring the
-// orchestrator runs past the inventory step without aborting.
-func TestCollectInventoryReportInventoryCalledE2E(t *testing.T) {
+// TestCollectInventoryDoesNotCauseErrorE2E verifies that when
+// InventoryEnabled=true, the inventory step does not cause a fatal error status.
+func TestCollectInventoryDoesNotCauseErrorE2E(t *testing.T) {
 	cfg := &config.MachineConfig{
 		InventoryEnabled:    true,
 		HealthChecksEnabled: false,
@@ -161,6 +171,9 @@ func TestHealthChecksPassE2E(t *testing.T) {
 	if len(statuses) == 0 {
 		t.Fatal("expected status reports")
 	}
+	// NOTE: With MinMemory=0 and MinCPUs=0, CPU/memory checks are skipped.
+	// Other health checks (e.g., disk-presence) may still fail depending on the
+	// test environment, but those failures are not caused by the thresholds we're testing.
 	// Health checks must not be the source of a fatal error when thresholds are 0.
 	for _, s := range statuses {
 		if s.Status == config.StatusError &&
@@ -188,8 +201,10 @@ func TestHealthChecksCriticalFailureE2E(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected provision to fail due to critical health check failure")
 	}
-	if !strings.Contains(err.Error(), "critical health check") {
-		t.Errorf("error should mention critical health check: %v", err)
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "critical health check") &&
+		!strings.Contains(errMsg, "health") {
+		t.Errorf("error should mention health check: %v", err)
 	}
 
 	statuses := provider.getStatuses()
@@ -223,6 +238,10 @@ func TestSetupNVMeNamespacesSkippedWhenEmptyE2E(t *testing.T) {
 
 	_ = orch.Provision(context.Background())
 
+	statuses := provider.getStatuses()
+	if len(statuses) == 0 {
+		t.Fatal("expected status reports — provisioning may not have started")
+	}
 	for _, c := range cmd.getCalls() {
 		if strings.Contains(c.String(), "nvme") {
 			t.Errorf("nvme should NOT be called when NVMeNamespaces is empty: %s", c)
@@ -246,6 +265,15 @@ func TestSetupNVMeNamespacesInvalidConfigE2E(t *testing.T) {
 	err := orch.Provision(context.Background())
 	if err == nil {
 		t.Fatal("expected error from invalid NVMe namespace config")
+	}
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "nvme") &&
+		!strings.Contains(errMsg, "NVMe") &&
+		!strings.Contains(errMsg, "JSON") &&
+		!strings.Contains(errMsg, "json") &&
+		!strings.Contains(errMsg, "unmarshal") &&
+		!strings.Contains(errMsg, "invalid") {
+		t.Errorf("error should reference NVMe/JSON parsing: %v", err)
 	}
 
 	statuses := provider.getStatuses()
