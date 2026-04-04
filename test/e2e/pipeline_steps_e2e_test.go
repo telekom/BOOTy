@@ -10,6 +10,7 @@ package e2e
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -18,11 +19,32 @@ import (
 )
 
 // ---------------------------------------------------------------------------
+// inventoryTrackingProvider wraps mockProvider and counts ReportInventory calls.
+// Defined at package level (not inside a test function) so it satisfies
+// config.Provider without the funlen linter penalising a per-function type.
+// ---------------------------------------------------------------------------
+
+type inventoryTrackingProvider struct {
+	*mockProvider
+	calls atomic.Int64
+}
+
+func (p *inventoryTrackingProvider) ReportInventory(ctx context.Context, data []byte) error {
+	p.calls.Add(1)
+	return p.mockProvider.ReportInventory(ctx, data)
+}
+
+func newInventoryTrackingProvider(cfg *config.MachineConfig) *inventoryTrackingProvider {
+	return &inventoryTrackingProvider{mockProvider: newMockProvider(cfg)}
+}
+
+// ---------------------------------------------------------------------------
 // Gap 1: collect-inventory
 // ---------------------------------------------------------------------------
 
-// TestCollectInventoryDisabledE2E verifies that when InventoryEnabled=false
-// the orchestrator skips the step and proceeds (no calls to ReportInventory).
+// TestCollectInventoryDisabledE2E verifies that when InventoryEnabled=false the
+// orchestrator skips ReportInventory entirely (zero calls) and still reaches the
+// init status.
 func TestCollectInventoryDisabledE2E(t *testing.T) {
 	cfg := &config.MachineConfig{
 		InventoryEnabled:    false,
@@ -31,13 +53,17 @@ func TestCollectInventoryDisabledE2E(t *testing.T) {
 		ImageURLs:           []string{"http://img.local/test.gz"},
 		DNSResolvers:        "8.8.8.8",
 	}
-	provider := newMockProvider(cfg)
+	provider := newInventoryTrackingProvider(cfg)
 	cmd := newMockCommander()
 	orch := provision.NewOrchestrator(cfg, provider, disk.NewManager(cmd))
 
 	_ = orch.Provision(context.Background())
 
-	// No error expected from the inventory step itself; verify status was reported.
+	if provider.calls.Load() != 0 {
+		t.Errorf("ReportInventory called %d time(s), want 0 when inventory is disabled",
+			provider.calls.Load())
+	}
+
 	statuses := provider.getStatuses()
 	if len(statuses) == 0 {
 		t.Fatal("expected at least one status report")
@@ -45,19 +71,16 @@ func TestCollectInventoryDisabledE2E(t *testing.T) {
 	if statuses[0].Status != config.StatusInit {
 		t.Errorf("first status = %q, want init", statuses[0].Status)
 	}
-	// When inventory is disabled, no status message should reference inventory reporting.
-	// (mockProvider.ReportInventory has no call-tracking field; we verify via status messages.)
-	for _, s := range statuses {
-		if strings.Contains(strings.ToLower(s.Message), "report") &&
-			strings.Contains(strings.ToLower(s.Message), "inventory") {
-			t.Errorf("ReportInventory should not be called when disabled, got status: %q", s.Message)
-		}
-	}
 }
 
 // TestCollectInventoryEnabledNonFatalE2E verifies that when InventoryEnabled=true
-// the step is non-fatal even if inventory.Collect() fails in a test environment
-// (no real hardware sysfs). The orchestrator must continue past the step.
+// the step is non-fatal even if inventory.Collect() fails in a CI environment
+// (no real hardware sysfs). The pipeline must continue past the inventory step.
+//
+// NOTE: inventory.Collect() reads real sysfs paths (/sys/bus, /proc/cpuinfo,
+// etc.) that are absent in a containerised CI runner. The expected outcome is
+// that the step silently absorbs the error — the test asserts non-fatality, not
+// successful data collection.
 func TestCollectInventoryEnabledNonFatalE2E(t *testing.T) {
 	cfg := &config.MachineConfig{
 		InventoryEnabled:    true,
@@ -82,15 +105,16 @@ func TestCollectInventoryEnabledNonFatalE2E(t *testing.T) {
 	if len(statuses) == 0 {
 		t.Fatal("expected at least one status report")
 	}
-	// If provision fails, it must be a step AFTER collect-inventory, not inventory itself.
-	// Verify the first status is always "init" (inventory step comes after init).
+	// Verify the first status is "init" — inventory step comes after init.
 	if statuses[0].Status != config.StatusInit {
 		t.Errorf("first status = %q, want init", statuses[0].Status)
 	}
 }
 
-// TestCollectInventoryDoesNotCauseErrorE2E verifies that when
-// InventoryEnabled=true, the inventory step does not cause a fatal error status.
+// TestCollectInventoryDoesNotCauseErrorE2E verifies that when InventoryEnabled=true
+// and inventory collection succeeds (or is silently skipped in CI), no
+// StatusError referencing inventory is ever emitted AND ReportInventory is
+// called exactly once.
 func TestCollectInventoryDoesNotCauseErrorE2E(t *testing.T) {
 	cfg := &config.MachineConfig{
 		InventoryEnabled:    true,
@@ -99,13 +123,12 @@ func TestCollectInventoryDoesNotCauseErrorE2E(t *testing.T) {
 		ImageURLs:           []string{"http://img.local/test.gz"},
 		DNSResolvers:        "8.8.8.8",
 	}
-	provider := newMockProvider(cfg)
+	provider := newInventoryTrackingProvider(cfg)
 	cmd := newMockCommander()
 	orch := provision.NewOrchestrator(cfg, provider, disk.NewManager(cmd))
 
 	_ = orch.Provision(context.Background())
 
-	// The step is non-fatal and must not cause StatusError due to inventory failure.
 	statuses := provider.getStatuses()
 	if len(statuses) == 0 {
 		t.Fatal("expected status reports")
@@ -116,6 +139,10 @@ func TestCollectInventoryDoesNotCauseErrorE2E(t *testing.T) {
 			strings.Contains(s.Message, "inventory") {
 			t.Errorf("inventory step should not report error status: %q", s.Message)
 		}
+	}
+	// Positive assertion: ReportInventory must have been called exactly once.
+	if got := provider.calls.Load(); got != 1 {
+		t.Errorf("ReportInventory called %d time(s), want 1", got)
 	}
 }
 
@@ -148,15 +175,21 @@ func TestHealthChecksDisabledE2E(t *testing.T) {
 	}
 }
 
-// TestHealthChecksPassE2E verifies that when HealthChecksEnabled=true and no
-// minimum thresholds are set, the health check step passes (MinCPUs=0,
-// MinMemory=0 skip those sub-checks) and provisioning continues.
+// healthSkipHardware is the set of checks that depend on real kernel sysfs/
+// thermal/NIC devices unavailable in a CI environment. Skipping them ensures
+// TestHealthChecksPassE2E does not fail due to absent hardware.
+const healthSkipHardware = "disk-presence,disk-ioerr,memory-ecc,nic-link-state,thermal-state"
+
+// TestHealthChecksPassE2E verifies that the health check step passes when
+// MinCPUs=0 and MinMemory=0 (thresholds disabled) and all hardware-dependent
+// checks are skipped via HealthSkipChecks.
 func TestHealthChecksPassE2E(t *testing.T) {
 	cfg := &config.MachineConfig{
 		HealthChecksEnabled: true,
 		InventoryEnabled:    false,
-		HealthMinMemoryGB:   0, // disabled
-		HealthMinCPUs:       0, // disabled
+		HealthMinMemoryGB:   0,                  // threshold disabled
+		HealthMinCPUs:       0,                  // threshold disabled
+		HealthSkipChecks:    healthSkipHardware, // skip CI-incompatible checks
 		Hostname:            "health-pass",
 		ImageURLs:           []string{"http://img.local/test.gz"},
 		DNSResolvers:        "8.8.8.8",
@@ -171,10 +204,7 @@ func TestHealthChecksPassE2E(t *testing.T) {
 	if len(statuses) == 0 {
 		t.Fatal("expected status reports")
 	}
-	// NOTE: With MinMemory=0 and MinCPUs=0, CPU/memory checks are skipped.
-	// Other health checks (e.g., disk-presence) may still fail depending on the
-	// test environment, but those failures are not caused by the thresholds we're testing.
-	// Health checks must not be the source of a fatal error when thresholds are 0.
+	// With zero thresholds and hardware checks skipped, no critical failure should occur.
 	for _, s := range statuses {
 		if s.Status == config.StatusError &&
 			strings.Contains(s.Message, "critical health check") {
@@ -185,12 +215,13 @@ func TestHealthChecksPassE2E(t *testing.T) {
 
 // TestHealthChecksCriticalFailureE2E verifies that when a critical health check
 // fails (HealthMinCPUs set impossibly high), the orchestrator returns an error
-// and reports StatusError.
+// and reports StatusError mentioning minimum-cpu.
 func TestHealthChecksCriticalFailureE2E(t *testing.T) {
 	cfg := &config.MachineConfig{
 		HealthChecksEnabled: true,
 		InventoryEnabled:    false,
-		HealthMinCPUs:       999999, // impossible: forces minimum-cpu to fail
+		HealthMinCPUs:       999999,             // impossible: forces minimum-cpu to fail
+		HealthSkipChecks:    healthSkipHardware, // isolate minimum-cpu as the only failing check
 		DNSResolvers:        "8.8.8.8",
 	}
 	provider := newMockProvider(cfg)
@@ -202,9 +233,8 @@ func TestHealthChecksCriticalFailureE2E(t *testing.T) {
 		t.Fatal("expected provision to fail due to critical health check failure")
 	}
 	errMsg := err.Error()
-	if !strings.Contains(errMsg, "critical health check") &&
-		!strings.Contains(errMsg, "health") {
-		t.Errorf("error should mention health check: %v", err)
+	if !strings.Contains(errMsg, "minimum-cpu") {
+		t.Errorf("error should mention minimum-cpu check: %v", err)
 	}
 
 	statuses := provider.getStatuses()
@@ -242,6 +272,11 @@ func TestSetupNVMeNamespacesSkippedWhenEmptyE2E(t *testing.T) {
 	if len(statuses) == 0 {
 		t.Fatal("expected status reports — provisioning may not have started")
 	}
+	// Pipeline must have at least reached init, confirming the nvme step was
+	// encountered (and skipped) rather than the pipeline aborting before it.
+	if statuses[0].Status != config.StatusInit {
+		t.Errorf("first status = %q, want init — pipeline did not progress to nvme step", statuses[0].Status)
+	}
 	for _, c := range cmd.getCalls() {
 		if strings.Contains(c.String(), "nvme") {
 			t.Errorf("nvme should NOT be called when NVMeNamespaces is empty: %s", c)
@@ -250,7 +285,8 @@ func TestSetupNVMeNamespacesSkippedWhenEmptyE2E(t *testing.T) {
 }
 
 // TestSetupNVMeNamespacesInvalidConfigE2E verifies that a malformed JSON config
-// causes a parse error that propagates as a fatal provisioning failure.
+// causes a parse error at the nvme namespace layout step, propagating as a
+// fatal provisioning failure with the specific error text.
 func TestSetupNVMeNamespacesInvalidConfigE2E(t *testing.T) {
 	cfg := &config.MachineConfig{
 		NVMeNamespaces:      "{not valid json",
@@ -267,13 +303,9 @@ func TestSetupNVMeNamespacesInvalidConfigE2E(t *testing.T) {
 		t.Fatal("expected error from invalid NVMe namespace config")
 	}
 	errMsg := err.Error()
-	if !strings.Contains(errMsg, "nvme") &&
-		!strings.Contains(errMsg, "NVMe") &&
-		!strings.Contains(errMsg, "JSON") &&
-		!strings.Contains(errMsg, "json") &&
-		!strings.Contains(errMsg, "unmarshal") &&
-		!strings.Contains(errMsg, "invalid") {
-		t.Errorf("error should reference NVMe/JSON parsing: %v", err)
+	// The orchestrator wraps the JSON parse error with "parsing nvme namespace layout".
+	if !strings.Contains(errMsg, "parsing nvme namespace layout") {
+		t.Errorf("error should reference NVMe namespace layout parsing, got: %v", err)
 	}
 
 	statuses := provider.getStatuses()
