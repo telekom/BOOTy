@@ -95,9 +95,10 @@ func TestCollectInventoryDisabledE2E(t *testing.T) {
 }
 
 // TestCollectInventoryEnabledNonFatalE2E verifies that when InventoryEnabled=true
-// the step is non-fatal. inventory.Collect() treats missing sysfs/procfs data as
-// best-effort (returns nil error even without hardware), so the pipeline always
-// continues past the inventory step.
+// a ReportInventory error is non-fatal and the pipeline continues.
+// inventory.Collect() always returns nil (missing sysfs/procfs data is treated
+// as empty fields rather than errors), so only ReportInventory — pre-wired here
+// to return an error — exercises the non-fatal code path.
 func TestCollectInventoryEnabledNonFatalE2E(t *testing.T) {
 	cfg := &config.MachineConfig{
 		InventoryEnabled:    true,
@@ -131,11 +132,10 @@ func TestCollectInventoryEnabledNonFatalE2E(t *testing.T) {
 	}
 }
 
-// TestCollectInventoryDoesNotCauseErrorE2E verifies that when InventoryEnabled=true
-// and inventory collection succeeds (or is silently skipped in CI), no
-// StatusError referencing inventory is ever emitted AND ReportInventory is
-// called exactly once.
-func TestCollectInventoryDoesNotCauseErrorE2E(t *testing.T) {
+// TestCollectInventoryReportInventoryCalledE2E verifies that when InventoryEnabled=true
+// ReportInventory is called exactly once and no inventory-related error status
+// is emitted.
+func TestCollectInventoryReportInventoryCalledE2E(t *testing.T) {
 	cfg := &config.MachineConfig{
 		InventoryEnabled:    true,
 		HealthChecksEnabled: false,
@@ -289,12 +289,13 @@ func TestHealthChecksCriticalFailureE2E(t *testing.T) {
 
 // TestSetupNVMeNamespacesSkippedWhenEmptyE2E verifies that when
 // NVMeNamespaces="" the step is skipped and no nvme commands are run.
+// No Hostname is set to avoid the set-hostname step writing to /newroot before
+// the nvme step, which would cause a filesystem error unrelated to nvme.
 func TestSetupNVMeNamespacesSkippedWhenEmptyE2E(t *testing.T) {
 	cfg := &config.MachineConfig{
 		NVMeNamespaces:      "",
 		HealthChecksEnabled: false,
 		InventoryEnabled:    false,
-		Hostname:            "nvme-skip",
 		ImageURLs:           []string{"http://img.local/test.gz"},
 		DNSResolvers:        "8.8.8.8",
 	}
@@ -313,11 +314,15 @@ func TestSetupNVMeNamespacesSkippedWhenEmptyE2E(t *testing.T) {
 	if statuses[0].Status != config.StatusInit {
 		t.Errorf("first status = %q, want init — pipeline did not progress to nvme step", statuses[0].Status)
 	}
-	// The pipeline must have progressed past setup-nvme-namespaces into detect-disk
-	// (or beyond). An error from setup-nvme-namespaces itself would mean the skip
-	// logic did not work.
+	// The pipeline must have progressed past setup-nvme-namespaces. An error
+	// from the nvme step itself would mean the skip logic did not work.
 	if err != nil && strings.Contains(err.Error(), "setup-nvme-namespaces") {
 		t.Errorf("pipeline should have skipped setup-nvme-namespaces, got: %v", err)
+	}
+	// Pipeline progressed past setup-nvme-namespaces when at least two steps ran
+	// (init + at least one subsequent step such as detect-disk).
+	if len(statuses) < 2 {
+		t.Error("expected pipeline to progress past setup-nvme-namespaces (at least 2 status reports)")
 	}
 	for _, c := range cmd.getCalls() {
 		if c.Name == "nvme" {
