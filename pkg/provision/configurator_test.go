@@ -230,6 +230,16 @@ func TestRedactCommand(t *testing.T) {
 			input: `--password "abc:def"`,
 			want:  `--password [REDACTED]`,
 		},
+		{
+			name:  "no redaction for substring match in key",
+			input: "monkey=banana",
+			want:  "monkey=banana",
+		},
+		{
+			name:  "no redaction for monkey prefix",
+			input: "cmd --monkey=banana",
+			want:  "cmd --monkey=banana",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

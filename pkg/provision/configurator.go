@@ -31,15 +31,18 @@ var safeProvisionCommand = regexp.MustCompile(`^[a-zA-Z0-9_./:=,@%+\-\s]+$`)
 var blockedShellTokens = []string{"&&", "||", "|", "`", "$(", ")", ">", "<", "\n", "\r"}
 
 // sensitiveKeyPattern matches sensitive key-value pairs in two forms:
-//  1. CLI flag format: --key value or -key value (space/tab-delimited, value
-//     may be a bare word or a single- or double-quoted string)
-//  2. Assignment format: key=value or key: value (same value alternatives)
+//  1. CLI flag format: --key=value, -key=value, or --key value / -key value
+//     (quoted values are recognized in the pattern but will be rejected earlier
+//     by validateProvisionCommand which does not allow quote characters)
+//  2. Assignment format: key=value or key: value, where key must appear as a
+//     complete token (preceded by whitespace or start of string) to avoid
+//     false positives from embedded substrings like "monkey=banana"
 //
 // The value portion is replaced with [REDACTED] in logs.
 var sensitiveKeyPattern = regexp.MustCompile(
 	`(?i)(?:` +
-		`(--?)(password|token|secret|key|credential|auth)[\t ]+(?:"[^"]*"|'[^']*'|\S+)` +
-		`|(password|token|secret|key|credential|auth)\s*[=:]\s*(?:"[^"]*"|'[^']*'|\S+)` +
+		`(--?)(password|token|secret|key|credential|auth)(?:=(?:"[^"]*"|'[^']*'|\S+)|[\t ]+(?:"[^"]*"|'[^']*'|\S+))` +
+		`|(?:^|(?P<pre>[\s]))(password|token|secret|key|credential|auth)\s*[=:]\s*(?:"[^"]*"|'[^']*'|\S+)` +
 		`)`,
 )
 
@@ -47,16 +50,17 @@ var sensitiveKeyPattern = regexp.MustCompile(
 // so that credentials are not written to the system log verbatim.
 func redactCommand(cmd string) string {
 	return sensitiveKeyPattern.ReplaceAllStringFunc(cmd, func(match string) string {
-		// Flag form (--key value / -key value): always split on the
-		// first whitespace, regardless of what the value contains.
 		if strings.HasPrefix(match, "-") {
-			if wsIdx := strings.IndexAny(match, " \t"); wsIdx >= 0 {
+			eqIdx := strings.Index(match, "=")
+			wsIdx := strings.IndexAny(match, " \t")
+			if eqIdx >= 0 && (wsIdx < 0 || eqIdx < wsIdx) {
+				return match[:eqIdx+1] + "[REDACTED]"
+			}
+			if wsIdx >= 0 {
 				return match[:wsIdx] + " [REDACTED]"
 			}
 			return match
 		}
-		// Assignment form (key=value / key:value): split on the first
-		// delimiter that sits between the keyword and the value.
 		if eqIdx := strings.IndexAny(match, "=:"); eqIdx >= 0 {
 			return match[:eqIdx+1] + "[REDACTED]"
 		}
@@ -282,7 +286,7 @@ func (c *Configurator) RunPostProvisionCmds(ctx context.Context, cmds []string) 
 			return fmt.Errorf("post-provision cmd %d (%s): %s: %w", i, redactCommand(cmd), redactCommand(string(out)), err)
 		}
 		if len(out) > 0 {
-			slog.Debug("post-provision command output", "index", i, "output", string(out))
+			slog.Debug("post-provision command output", "index", i, "output", redactCommand(string(out)))
 		}
 	}
 	return nil
