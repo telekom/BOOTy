@@ -220,6 +220,10 @@ func TestRedactAttr(t *testing.T) {
 		{"authorization_header", "Bearer xyz", "[REDACTED]", true},
 		{"Authorization_header", "Bearer xyz", "[REDACTED]", true},
 		{"authorizationToken", "Bearer xyz", "[REDACTED]", true},
+		{"oauth2Token", "tok_abc123", "[REDACTED]", true},
+		{"x509Cert", "PEM", "[REDACTED]", true},
+		{"pkcs12Password", "hunter2", "[REDACTED]", true},
+		{"db2Password", "hunter2", "[REDACTED]", true},
 		{"session", "sess_123", "[REDACTED]", true},
 		{"bearer", "eyJ...", "[REDACTED]", true},
 		{"cert", "PEM", "[REDACTED]", true},
@@ -284,6 +288,28 @@ func TestRedactAttr_GroupedAttrs(t *testing.T) {
 	}
 	if attrs[1].Value.String() != "example.com" {
 		t.Errorf("nested host should pass through, got %q", attrs[1].Value.String())
+	}
+}
+
+func TestRedactAttr_SensitiveGroupKeyRedactsChildren(t *testing.T) {
+	group := slog.Group("authorization",
+		slog.String("value", "bearer-xyz"),
+		slog.String("scheme", "Bearer"),
+	)
+
+	got := redactAttr(group)
+	if got.Value.Kind() != slog.KindGroup {
+		t.Fatal("expected group kind back")
+	}
+
+	attrs := got.Value.Group()
+	if len(attrs) != 2 {
+		t.Fatalf("expected 2 attrs, got %d", len(attrs))
+	}
+	for _, attr := range attrs {
+		if attr.Value.String() != "[REDACTED]" {
+			t.Fatalf("expected all child values redacted, got %q for key %q", attr.Value.String(), attr.Key)
+		}
 	}
 }
 

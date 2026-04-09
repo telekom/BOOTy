@@ -44,8 +44,6 @@ func splitKeySegments(key string) []string {
 	return segs
 }
 
-// splitCamel splits s on transitions from a lower-case rune to an upper-case rune.
-// "privateKey" → ["private","Key"], "MOKPassword" → ["MOK","Password"].
 func splitCamel(s string) []string {
 	if s == "" {
 		return nil
@@ -57,6 +55,9 @@ func splitCamel(s string) []string {
 		prev, cur := runes[i-1], runes[i]
 		// Boundary: lower→upper  or  upper+upper→upper+lower (e.g. "MOKPassword").
 		if unicode.IsLower(prev) && unicode.IsUpper(cur) {
+			segs = append(segs, string(runes[start:i]))
+			start = i
+		} else if unicode.IsDigit(prev) && unicode.IsUpper(cur) {
 			segs = append(segs, string(runes[start:i]))
 			start = i
 		} else if i >= 2 && unicode.IsUpper(runes[i-2]) && unicode.IsUpper(prev) && unicode.IsLower(cur) {
@@ -117,6 +118,14 @@ func NewRemoteHandler(client *Client, inner slog.Handler, level slog.Leveler, bu
 // It recurses into slog groups so nested keys are also protected.
 func redactAttr(a slog.Attr) slog.Attr {
 	if a.Value.Kind() == slog.KindGroup {
+		if isSensitiveKey(a.Key) {
+			group := a.Value.Group()
+			redacted := make([]slog.Attr, len(group))
+			for i, ga := range group {
+				redacted[i] = slog.String(ga.Key, "[REDACTED]")
+			}
+			return slog.Attr{Key: a.Key, Value: slog.GroupValue(redacted...)}
+		}
 		group := a.Value.Group()
 		redacted := make([]slog.Attr, len(group))
 		for i, ga := range group {
