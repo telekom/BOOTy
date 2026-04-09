@@ -1,6 +1,7 @@
 package gobgp
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/network"
@@ -367,8 +368,12 @@ func TestValidateRejectsUnsupportedOverlayType(t *testing.T) {
 		ProvisionVNI: 100,
 		OverlayType:  string(OverlayL3VPN),
 	}
-	if err := cfg.Validate(); err == nil {
+	err := cfg.Validate()
+	if err == nil {
 		t.Error("l3vpn overlay type should fail validation")
+	}
+	if !strings.Contains(err.Error(), "overlay type") {
+		t.Errorf("expected error to mention \"overlay type\", got: %v", err)
 	}
 }
 
