@@ -682,7 +682,7 @@ func (o *OverlayTier) handleType5Route(route *apipb.EVPNIPPrefixRoute, vtep stri
 		return
 	}
 
-	link, err := netlink.LinkByName(o.cfg.BridgeName)
+	link, err := o.fdb.LinkByName(o.cfg.BridgeName)
 	if err != nil {
 		o.log.Warn("cannot find bridge for route install", "bridge", o.cfg.BridgeName, "error", err)
 		return
