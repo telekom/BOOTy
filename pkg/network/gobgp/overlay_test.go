@@ -1132,6 +1132,7 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 				RouterID:     "10.0.0.99",
 				ASN:          65000,
 				ProvisionVNI: 4000,
+				BridgeName:   "br-test",
 			},
 			log: slog.Default(),
 			fdb: mock,
