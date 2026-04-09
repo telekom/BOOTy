@@ -5,14 +5,84 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 )
 
 // dropWarnEvery controls how often we emit a warning about dropped messages.
 // A warning is logged after every Nth drop (or at Close).
 const dropWarnEvery = 100
+
+// sensitiveWords is the set of exact key segments that trigger redaction.
+var sensitiveWords = map[string]struct{}{
+	"password":      {},
+	"token":         {},
+	"secret":        {},
+	"key":           {},
+	"credential":    {},
+	"auth":          {},
+	"authorization": {},
+	"cert":          {},
+	"private":       {},
+	"bearer":        {},
+	"session":       {},
+}
+
+// splitKeySegments splits a slog attribute key on common separators (_  .  -)
+// and on camelCase boundaries so that segment matching is precise.
+// Examples: "privateKey" → ["private","Key"], "access_token" → ["access","token"].
+func splitKeySegments(key string) []string {
+	// First split on explicit separators.
+	parts := strings.FieldsFunc(key, func(r rune) bool {
+		return r == '_' || r == '.' || r == '-'
+	})
+	// Then expand each part on camelCase boundaries.
+	var segs []string
+	for _, p := range parts {
+		segs = append(segs, splitCamel(p)...)
+	}
+	if len(segs) == 0 {
+		return []string{key}
+	}
+	return segs
+}
+
+// splitCamel splits s on transitions from a lower-case rune to an upper-case rune.
+// "privateKey" → ["private","Key"], "MOKPassword" → ["MOK","Password"].
+func splitCamel(s string) []string {
+	if s == "" {
+		return nil
+	}
+	runes := []rune(s)
+	var segs []string
+	start := 0
+	for i := 1; i < len(runes); i++ {
+		prev, cur := runes[i-1], runes[i]
+		// Boundary: lower→upper  or  upper+upper→upper+lower (e.g. "MOKPassword").
+		if unicode.IsLower(prev) && unicode.IsUpper(cur) {
+			segs = append(segs, string(runes[start:i]))
+			start = i
+		} else if i >= 2 && unicode.IsUpper(runes[i-2]) && unicode.IsUpper(prev) && unicode.IsLower(cur) {
+			segs = append(segs, string(runes[start:i-1]))
+			start = i - 1
+		}
+	}
+	segs = append(segs, string(runes[start:]))
+	return segs
+}
+
+// isSensitiveKey reports whether any segment of key exactly matches a sensitive word.
+func isSensitiveKey(key string) bool {
+	for _, seg := range splitKeySegments(key) {
+		if _, ok := sensitiveWords[strings.ToLower(seg)]; ok {
+			return true
+		}
+	}
+	return false
+}
 
 // RemoteHandler is a slog.Handler that ships log lines to the CAPRF /log endpoint.
 // It wraps another handler so logs appear both in the console and remotely.
@@ -53,6 +123,23 @@ func NewRemoteHandler(client *Client, inner slog.Handler, level slog.Leveler, bu
 	return h
 }
 
+// redactAttr replaces sensitive attribute values with [REDACTED].
+// It recurses into slog groups so nested keys are also protected.
+func redactAttr(a slog.Attr) slog.Attr {
+	if a.Value.Kind() == slog.KindGroup {
+		group := a.Value.Group()
+		redacted := make([]slog.Attr, len(group))
+		for i, ga := range group {
+			redacted[i] = redactAttr(ga)
+		}
+		return slog.Attr{Key: a.Key, Value: slog.GroupValue(redacted...)}
+	}
+	if isSensitiveKey(a.Key) {
+		return slog.String(a.Key, "[REDACTED]")
+	}
+	return a
+}
+
 // Enabled reports whether the handler handles records at the given level.
 func (h *RemoteHandler) Enabled(_ context.Context, level slog.Level) bool {
 	return level >= h.level.Level()
@@ -73,6 +160,7 @@ func (h *RemoteHandler) Handle(ctx context.Context, r slog.Record) error { //nol
 	// Format message for remote shipping.
 	msg := fmt.Sprintf("[%s] %s", r.Level, r.Message)
 	r.Attrs(func(a slog.Attr) bool {
+		a = redactAttr(a)
 		msg += fmt.Sprintf(" %s=%v", a.Key, a.Value)
 		return true
 	})
