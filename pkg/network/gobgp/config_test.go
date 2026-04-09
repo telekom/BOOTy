@@ -128,15 +128,15 @@ func TestNewConfig(t *testing.T) {
 				ProvisionVNI:   4000,
 				BGPPeerMode:    network.PeerModeUnnumbered,
 				BGPUnderlayAF:  "ipv6",
-				BGPOverlayType: "l3vpn",
+				BGPOverlayType: "evpn-vxlan",
 			},
 			check: func(t *testing.T, cfg *Config) {
 				t.Helper()
 				if cfg.UnderlayAF != "ipv6" {
 					t.Errorf("UnderlayAF = %q, want ipv6", cfg.UnderlayAF)
 				}
-				if cfg.OverlayType != "l3vpn" {
-					t.Errorf("OverlayType = %q, want l3vpn", cfg.OverlayType)
+				if cfg.OverlayType != "evpn-vxlan" {
+					t.Errorf("OverlayType = %q, want evpn-vxlan", cfg.OverlayType)
 				}
 			},
 		},
@@ -356,6 +356,19 @@ func TestValidateRejectsUnknownPeerMode(t *testing.T) {
 	}
 	if err := cfg.Validate(); err == nil {
 		t.Error("unknown peer mode should fail validation")
+	}
+}
+
+func TestValidateRejectsUnsupportedOverlayType(t *testing.T) {
+	cfg := &Config{
+		ASN:          65000,
+		RouterID:     "10.0.0.1",
+		PeerMode:     network.PeerModeUnnumbered,
+		ProvisionVNI: 100,
+		OverlayType:  string(OverlayL3VPN),
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Error("l3vpn overlay type should fail validation")
 	}
 }
 
