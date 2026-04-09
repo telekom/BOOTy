@@ -34,7 +34,7 @@ func splitKeySegments(key string) []string {
 		return r == '_' || r == '.' || r == '-'
 	})
 	// Then expand each part on camelCase boundaries.
-	var segs []string
+	segs := make([]string, 0, len(parts))
 	for _, p := range parts {
 		segs = append(segs, splitCamel(p)...)
 	}
