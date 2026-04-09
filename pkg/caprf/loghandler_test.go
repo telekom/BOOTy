@@ -131,6 +131,7 @@ func TestDropCounterIncrementsOnFullBuffer(t *testing.T) {
 		defer close(done)
 		<-blocker
 		for range buf {
+			// drain the buffered channel so Close() can complete
 		}
 	}()
 
