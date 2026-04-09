@@ -622,7 +622,7 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 		return
 	}
 
-	if !matchesLocalRT(p, o.cfg.ASN, uint32(o.cfg.ProvisionVNI)) {
+	if !p.GetIsWithdraw() && !matchesLocalRT(p, o.cfg.ASN, uint32(o.cfg.ProvisionVNI)) {
 		o.log.Debug("route update skipped: RT mismatch", "action", action, "type", nlri.GetTypeUrl())
 		return
 	}
@@ -953,7 +953,7 @@ func buildType5PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32) ([]*a
 // matching the given localASN and localVNI. It iterates path attributes looking
 // for an ExtendedCommunitiesAttribute and checks each community entry against
 // the expected RT value (same logic as buildRouteTarget).
-func matchesLocalRT(path *apipb.Path, localASN uint32, localVNI uint32) bool {
+func matchesLocalRT(path *apipb.Path, localASN, localVNI uint32) bool {
 	for _, attr := range path.GetPattrs() {
 		msg, err := attr.UnmarshalNew()
 		if err != nil {
