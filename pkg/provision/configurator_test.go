@@ -215,6 +215,21 @@ func TestRedactCommand(t *testing.T) {
 			input: `password="secret with space"`,
 			want:  `password=[REDACTED]`,
 		},
+		{
+			name:  "flag value containing colon",
+			input: "--password abc:def --verbose",
+			want:  "--password [REDACTED] --verbose",
+		},
+		{
+			name:  "flag value containing equals",
+			input: "--token foo=bar",
+			want:  "--token [REDACTED]",
+		},
+		{
+			name:  "flag quoted value containing colon",
+			input: `--password "abc:def"`,
+			want:  `--password [REDACTED]`,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -47,13 +47,18 @@ var sensitiveKeyPattern = regexp.MustCompile(
 // so that credentials are not written to the system log verbatim.
 func redactCommand(cmd string) string {
 	return sensitiveKeyPattern.ReplaceAllStringFunc(cmd, func(match string) string {
-		eqIdx := strings.IndexAny(match, "=:")
-		if eqIdx >= 0 {
-			return match[:eqIdx+1] + "[REDACTED]"
+		// Flag form (--key value / -key value): always split on the
+		// first whitespace, regardless of what the value contains.
+		if strings.HasPrefix(match, "-") {
+			if wsIdx := strings.IndexAny(match, " \t"); wsIdx >= 0 {
+				return match[:wsIdx] + " [REDACTED]"
+			}
+			return match
 		}
-		// CLI flag form: key and value are separated by the first whitespace.
-		if wsIdx := strings.IndexAny(match, " \t"); wsIdx >= 0 {
-			return match[:wsIdx] + " [REDACTED]"
+		// Assignment form (key=value / key:value): split on the first
+		// delimiter that sits between the keyword and the value.
+		if eqIdx := strings.IndexAny(match, "=:"); eqIdx >= 0 {
+			return match[:eqIdx+1] + "[REDACTED]"
 		}
 		return match
 	})
