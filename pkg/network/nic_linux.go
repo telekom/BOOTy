@@ -98,13 +98,49 @@ func isExcluded(name string) bool {
 	return false
 }
 
-// GetIPMIInfo reads the IPMI MAC and IP from the system.
-func GetIPMIInfo() (mac, ip string, err error) {
-	ifaces, err := listInterfaces()
-	if err != nil {
-		return "", "", fmt.Errorf("list interfaces: %w", err)
+// bmcPrefixes are interface name prefixes that strongly suggest a BMC/IPMI NIC.
+var bmcPrefixes = []string{"ipmi", "bmc", "idrac", "ilo", "imm"}
+
+// mgmtPrefixes are interface name prefixes that suggest a management NIC.
+var mgmtPrefixes = []string{"mgmt", "management"}
+
+// selectIPMIInterface picks the best interface for IPMI info from the provided list.
+// It applies a three-pass ranked selection:
+//  1. BMC-specific name prefixes (ipmi*, bmc*, idrac*, ilo*, imm*)
+//  2. Management name prefixes (mgmt*, management*)
+//  3. First non-loopback interface with a MAC and an IP (fallback, logs a warning)
+func selectIPMIInterface(ifaces []net.Interface) (*net.Interface, error) {
+	return selectIPMIInterfaceWith(ifaces, func(i net.Interface) ([]net.Addr, error) {
+		return i.Addrs()
+	})
+}
+
+func selectIPMIInterfaceWith(ifaces []net.Interface, getAddrs func(net.Interface) ([]net.Addr, error)) (*net.Interface, error) {
+	candidates := filterAddressed(ifaces, getAddrs)
+
+	for _, prefix := range bmcPrefixes {
+		if iface := firstWithPrefix(candidates, prefix); iface != nil {
+			return iface, nil
+		}
 	}
 
+	for _, prefix := range mgmtPrefixes {
+		if iface := firstWithPrefix(candidates, prefix); iface != nil {
+			return iface, nil
+		}
+	}
+
+	if len(candidates) > 0 {
+		slog.Warn("IPMI autodetection fell back to first available NIC; consider naming the BMC interface with a bmc/ipmi/idrac/ilo/imm prefix",
+			"interface", candidates[0].Name)
+		return &candidates[0], nil
+	}
+
+	return nil, fmt.Errorf("no suitable interface found for IPMI info")
+}
+
+func filterAddressed(ifaces []net.Interface, getAddrs func(net.Interface) ([]net.Addr, error)) []net.Interface {
+	var out []net.Interface
 	for _, iface := range ifaces {
 		if iface.Flags&net.FlagLoopback != 0 {
 			continue
@@ -112,16 +148,44 @@ func GetIPMIInfo() (mac, ip string, err error) {
 		if len(iface.HardwareAddr) == 0 {
 			continue
 		}
-		addrs, err := ifaceAddrs(iface)
+		addrs, err := getAddrs(iface)
 		if err != nil || len(addrs) == 0 {
 			continue
 		}
-		ipNet, ok := addrs[0].(*net.IPNet)
-		if !ok {
+		if _, ok := addrs[0].(*net.IPNet); !ok {
 			continue
 		}
-		return iface.HardwareAddr.String(), ipNet.IP.String(), nil
+		out = append(out, iface)
+	}
+	return out
+}
+
+func firstWithPrefix(ifaces []net.Interface, prefix string) *net.Interface {
+	for i := range ifaces {
+		if strings.HasPrefix(strings.ToLower(ifaces[i].Name), prefix) {
+			return &ifaces[i]
+		}
+	}
+	return nil
+}
+
+// GetIPMIInfo reads the IPMI MAC and IP from the system.
+func GetIPMIInfo() (mac, ip string, err error) {
+	ifaces, err := listInterfaces()
+	if err != nil {
+		return "", "", fmt.Errorf("list interfaces: %w", err)
 	}
 
-	return "", "", fmt.Errorf("no suitable interface found for IPMI info")
+	iface, err := selectIPMIInterface(ifaces)
+	if err != nil {
+		return "", "", err
+	}
+
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return "", "", fmt.Errorf("get addresses for %s: %w", iface.Name, err)
+	}
+
+	ipNet := addrs[0].(*net.IPNet) //nolint:forcetypeassert // guaranteed by filterAddressed
+	return iface.HardwareAddr.String(), ipNet.IP.String(), nil
 }
