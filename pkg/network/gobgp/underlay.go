@@ -414,7 +414,7 @@ func (u *UnderlayTier) addInterfacePeer(ctx context.Context, iface string, famil
 		return fmt.Errorf("add peer on %s: %w", iface, err)
 	}
 
-	u.log.Info("Added unnumbered BGP peer", "interface", iface, "address", addr)
+	u.log.Info("added unnumbered BGP peer", "interface", iface, "address", addr)
 	return nil
 }
 
@@ -434,7 +434,7 @@ func (u *UnderlayTier) addNumberedPeer(ctx context.Context, addr string, familie
 		return fmt.Errorf("add %s peer %s: %w", sessionType, addr, err)
 	}
 
-	u.log.Info("Added numbered BGP peer", "address", addr, "type", sessionType, "remoteASN", peer.Conf.PeerAsn)
+	u.log.Info("added numbered BGP peer", "address", addr, "type", sessionType, "remoteASN", peer.Conf.PeerAsn)
 	return nil
 }
 
