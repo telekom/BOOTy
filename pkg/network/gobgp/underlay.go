@@ -404,23 +404,9 @@ func (u *UnderlayTier) addInterfacePeer(ctx context.Context, iface string, famil
 		return fmt.Errorf("discover link-local peer on %s: %w", iface, err)
 	}
 
-	peer := &apipb.Peer{
-		Conf: &apipb.PeerConf{
-			NeighborAddress: addr,
-			PeerAsn:         0, // External peer, ASN learned via open
-		},
-		Timers:   bgpTimers(u.cfg),
-		AfiSafis: families,
-		Transport: &apipb.Transport{
-			MtuDiscovery:  true,
-			LocalAddress:  "::",
-			BindInterface: iface,
-			RemoteAddress: addr,
-		},
-	}
+	peer := buildInterfacePeer(u.cfg, iface, addr, families)
 
 	if u.cfg.AuthPassword != "" {
-		peer.Conf.AuthPassword = u.cfg.AuthPassword
 		u.log.Info("TCP-MD5 authentication configured for BGP peer", "interface", iface)
 	}
 
@@ -433,30 +419,14 @@ func (u *UnderlayTier) addInterfacePeer(ctx context.Context, iface string, famil
 }
 
 func (u *UnderlayTier) addNumberedPeer(ctx context.Context, addr string, families []*apipb.AfiSafi) error {
-	remoteASN := u.cfg.RemoteASN
-	if remoteASN == 0 {
-		remoteASN = u.cfg.ASN // iBGP
-	}
-
-	peer := &apipb.Peer{
-		Conf: &apipb.PeerConf{
-			NeighborAddress: addr,
-			PeerAsn:         remoteASN,
-		},
-		Timers:   bgpTimers(u.cfg),
-		AfiSafis: families,
-		Transport: &apipb.Transport{
-			MtuDiscovery: true,
-		},
-	}
+	peer := buildNumberedPeer(u.cfg, addr, families)
 
 	if u.cfg.AuthPassword != "" {
-		peer.Conf.AuthPassword = u.cfg.AuthPassword
 		u.log.Info("TCP-MD5 authentication configured for BGP peer", "address", addr)
 	}
 
 	sessionType := "iBGP"
-	if remoteASN != u.cfg.ASN {
+	if peer.Conf.PeerAsn != u.cfg.ASN {
 		sessionType = "eBGP"
 	}
 
@@ -464,7 +434,7 @@ func (u *UnderlayTier) addNumberedPeer(ctx context.Context, addr string, familie
 		return fmt.Errorf("add %s peer %s: %w", sessionType, addr, err)
 	}
 
-	u.log.Info("Added numbered BGP peer", "address", addr, "type", sessionType, "remoteASN", remoteASN)
+	u.log.Info("Added numbered BGP peer", "address", addr, "type", sessionType, "remoteASN", peer.Conf.PeerAsn)
 	return nil
 }
 
