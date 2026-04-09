@@ -124,6 +124,108 @@ func TestEfiLoaderPath_MissingLoaders(t *testing.T) {
 	}
 }
 
+func TestRedactCommand(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "password equals",
+			input: "setup --password=s3cr3t --user=admin",
+			want:  "setup --password=[REDACTED] --user=admin",
+		},
+		{
+			name:  "token colon",
+			input: "curl -H token:myBearerXYZ http://example.com",
+			want:  "curl -H token:[REDACTED] http://example.com",
+		},
+		{
+			name:  "secret uppercase",
+			input: "configure SECRET=abc123",
+			want:  "configure SECRET=[REDACTED]",
+		},
+		{
+			name:  "key equals",
+			input: "deploy key=opensesame region=us-east-1",
+			want:  "deploy key=[REDACTED] region=us-east-1",
+		},
+		{
+			name:  "credential equals",
+			input: "connect credential=user:pass@host",
+			want:  "connect credential=[REDACTED]",
+		},
+		{
+			name:  "auth equals",
+			input: "login auth=Bearer_token123",
+			want:  "login auth=[REDACTED]",
+		},
+		{
+			name:  "no sensitive data",
+			input: "apt-get install -y curl",
+			want:  "apt-get install -y curl",
+		},
+		{
+			name:  "multiple sensitive keys",
+			input: "setup password=abc token=xyz region=eu",
+			want:  "setup password=[REDACTED] token=[REDACTED] region=eu",
+		},
+		{
+			name:  "empty string",
+			input: "",
+			want:  "",
+		},
+		{
+			name:  "spaces around equals",
+			input: "run password = secret123 --verbose",
+			want:  "run password =[REDACTED] --verbose",
+		},
+		{
+			name:  "double-dash password space",
+			input: "--password secret --verbose",
+			want:  "--password [REDACTED] --verbose",
+		},
+		{
+			name:  "double-dash token space",
+			input: "--token mytoken",
+			want:  "--token [REDACTED]",
+		},
+		{
+			name:  "single-dash password space",
+			input: "-password s3cr3t",
+			want:  "-password [REDACTED]",
+		},
+		{
+			name:  "double-quoted value with spaces",
+			input: `--password "very secret" --verbose`,
+			want:  `--password [REDACTED] --verbose`,
+		},
+		{
+			name:  "single-quoted value with spaces",
+			input: "--password 'secret value'",
+			want:  "--password [REDACTED]",
+		},
+		{
+			name:  "tab-delimited flag value",
+			input: "--password\tsecret",
+			want:  "--password [REDACTED]",
+		},
+		{
+			name:  "assignment with double-quoted spaced value",
+			input: `password="secret with space"`,
+			want:  `password=[REDACTED]`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := redactCommand(tc.input)
+			if got != tc.want {
+				t.Errorf("redactCommand(%q)\n got  %q\n want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestConfigureDNSEmptyResolvers(t *testing.T) {
 	t.Helper()
 	c := &Configurator{rootDir: t.TempDir()}

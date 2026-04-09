@@ -30,6 +30,33 @@ var safeProvisionCommand = regexp.MustCompile(`^[a-zA-Z0-9_./:=,@%+\-\s]+$`)
 
 var blockedShellTokens = []string{"&&", "||", "|", "`", "$(", ")", ">", "<", "\n", "\r"}
 
+// sensitiveKeyPattern matches sensitive key-value pairs in two forms:
+//  1. CLI flag format: --key value or -key value (space/tab-delimited, value
+//     may be a bare word or a single- or double-quoted string)
+//  2. Assignment format: key=value or key: value (same value alternatives)
+//
+// The value portion is replaced with [REDACTED] in logs.
+var sensitiveKeyPattern = regexp.MustCompile(
+	`(?i)(--?)(password|token|secret|key|credential|auth)[\t ]+(?:"[^"]*"|'[^']*'|\S+)` +
+		`|(?i)(password|token|secret|key|credential|auth)\s*[=:]\s*(?:"[^"]*"|'[^']*'|\S+)`,
+)
+
+// redactCommand replaces sensitive key-value patterns in cmd with [REDACTED]
+// so that credentials are not written to the system log verbatim.
+func redactCommand(cmd string) string {
+	return sensitiveKeyPattern.ReplaceAllStringFunc(cmd, func(match string) string {
+		eqIdx := strings.IndexAny(match, "=:")
+		if eqIdx >= 0 {
+			return match[:eqIdx+1] + "[REDACTED]"
+		}
+		// CLI flag form: key and value are separated by the first whitespace.
+		if wsIdx := strings.IndexAny(match, " \t"); wsIdx >= 0 {
+			return match[:wsIdx] + " [REDACTED]"
+		}
+		return match
+	})
+}
+
 // Configurator handles post-image OS configuration.
 type Configurator struct {
 	disk    *disk.Manager
@@ -222,10 +249,10 @@ func (c *Configurator) RunMachineCommands(ctx context.Context) error {
 		if err := validateProvisionCommand(cmd); err != nil {
 			return fmt.Errorf("machine command %s rejected: %w", entry.Name(), err)
 		}
-		slog.Info("running machine command", "file", entry.Name(), "command", cmd)
+		slog.Info("running machine command", "file", entry.Name(), "command", redactCommand(cmd))
 		out, err := c.disk.ChrootRun(ctx, c.rootDir, cmd)
 		if err != nil {
-			return fmt.Errorf("machine command %s: %s: %w", entry.Name(), string(out), err)
+			return fmt.Errorf("machine command %s: %s: %w", entry.Name(), redactCommand(string(out)), err)
 		}
 	}
 	return nil
@@ -242,10 +269,10 @@ func (c *Configurator) RunPostProvisionCmds(ctx context.Context, cmds []string) 
 		if err := validateProvisionCommand(cmd); err != nil {
 			return fmt.Errorf("post-provision cmd %d rejected: %w", i, err)
 		}
-		slog.Info("running post-provision command", "index", i, "command", cmd)
+		slog.Info("running post-provision command", "index", i, "command", redactCommand(cmd))
 		out, err := c.disk.ChrootRun(ctx, c.rootDir, cmd)
 		if err != nil {
-			return fmt.Errorf("post-provision cmd %d (%s): %s: %w", i, cmd, string(out), err)
+			return fmt.Errorf("post-provision cmd %d (%s): %s: %w", i, redactCommand(cmd), redactCommand(string(out)), err)
 		}
 		if len(out) > 0 {
 			slog.Debug("post-provision command output", "index", i, "output", string(out))
