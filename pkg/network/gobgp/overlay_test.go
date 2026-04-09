@@ -1109,17 +1109,6 @@ func TestMatchesLocalRT(t *testing.T) {
 }
 
 func TestProcessRouteUpdateRTFilter(t *testing.T) {
-	mock := &mockFDB{}
-	overlay := &OverlayTier{
-		cfg: &Config{
-			RouterID:     "10.0.0.99",
-			ASN:          65000,
-			ProvisionVNI: 4000,
-		},
-		log: slog.Default(),
-		fdb: mock,
-	}
-
 	nlri, err := anypb.New(&apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
@@ -1129,14 +1118,29 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 		t.Fatalf("marshal NLRI: %v", err)
 	}
 
-	t.Run("route with matching RT is not silently dropped", func(t *testing.T) {
-		mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
-			Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
-			NextHops: []string{"10.0.0.1"},
-		})
-		if err != nil {
-			t.Fatalf("marshal MpReachNLRI: %v", err)
+	mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+		NextHops: []string{"10.0.0.1"},
+	})
+	if err != nil {
+		t.Fatalf("marshal MpReachNLRI: %v", err)
+	}
+
+	newOverlay := func(mock *mockFDB) *OverlayTier {
+		return &OverlayTier{
+			cfg: &Config{
+				RouterID:     "10.0.0.99",
+				ASN:          65000,
+				ProvisionVNI: 4000,
+			},
+			log: slog.Default(),
+			fdb: mock,
 		}
+	}
+
+	t.Run("route with matching RT is dispatched to FDB", func(t *testing.T) {
+		mock := &mockFDB{}
+		overlay := newOverlay(mock)
 		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
 			Communities: []*anypb.Any{mustRT2(t, 65000, 4000)},
 		})
@@ -1148,9 +1152,15 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 			Pattrs: []*anypb.Any{mp, extComm},
 		}
 		overlay.processRouteUpdate(path)
+		// Matching RT must reach FDB dispatch (LinkByName is called for Type-5 installs).
+		if mock.linkName == "" {
+			t.Error("matching RT: expected FDB dispatch (LinkByName called), but it was not")
+		}
 	})
 
-	t.Run("route with non-matching RT is skipped without panic", func(t *testing.T) {
+	t.Run("route with non-matching RT is skipped", func(t *testing.T) {
+		mock := &mockFDB{}
+		overlay := newOverlay(mock)
 		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
 			Communities: []*anypb.Any{mustRT2(t, 99999, 1111)},
 		})
@@ -1162,5 +1172,31 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 			Pattrs: []*anypb.Any{extComm},
 		}
 		overlay.processRouteUpdate(path)
+		// Non-matching RT must not reach FDB dispatch.
+		if mock.linkName != "" {
+			t.Errorf("non-matching RT: unexpected FDB dispatch via LinkByName(%q)", mock.linkName)
+		}
+	})
+
+	t.Run("withdrawal with non-matching RT is not skipped", func(t *testing.T) {
+		mock := &mockFDB{}
+		overlay := newOverlay(mock)
+		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*anypb.Any{mustRT2(t, 99999, 1111)},
+		})
+		if err != nil {
+			t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
+		}
+		// Withdrawals carry no RT in practice; we must not filter them on RT.
+		path := &apipb.Path{
+			IsWithdraw: true,
+			Nlri:       nlri,
+			Pattrs:     []*anypb.Any{extComm},
+		}
+		overlay.processRouteUpdate(path)
+		// Withdrawal must reach FDB dispatch regardless of RT mismatch.
+		if mock.linkName == "" {
+			t.Error("withdrawal: expected FDB dispatch (LinkByName called) even with RT mismatch, but it was not")
+		}
 	})
 }
