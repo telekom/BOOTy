@@ -687,7 +687,7 @@ func (m *Manager) addBGPPeer(ctx context.Context, vrfName string, asn uint32, ni
 	return nil
 }
 
-// waitForHTTPWithFRR polls target, restarting FRR every 20s if needed.
+// waitForHTTPWithFRR polls target, restarting FRR every 120s if needed.
 func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duration, mgr *Manager) error {
 	log := slog.Default().With("component", "frr")
 	if mgr != nil {
