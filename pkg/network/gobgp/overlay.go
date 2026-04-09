@@ -607,7 +607,9 @@ func (o *OverlayTier) watchRoutes(ctx context.Context) {
 }
 
 // processRouteUpdate handles a single BGP path update by dispatching to the
-// appropriate handler based on NLRI type.
+// appropriate handler based on NLRI type. Routes whose extended communities do
+// not carry a Route Target matching the local ASN+VNI are silently skipped so
+// that foreign-tenant routes are never installed into the kernel.
 func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 	withdraw := p.GetIsWithdraw()
 	action := "add"
@@ -617,6 +619,11 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 
 	nlri := p.GetNlri()
 	if nlri == nil {
+		return
+	}
+
+	if !matchesLocalRT(p, o.cfg.ASN, uint32(o.cfg.ProvisionVNI)) {
+		o.log.Debug("route update skipped: RT mismatch", "action", action, "type", nlri.GetTypeUrl())
 		return
 	}
 
@@ -940,6 +947,60 @@ func buildType5PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32) ([]*a
 	}
 
 	return []*anypb.Any{origin, mpReach, extComm}, nil
+}
+
+// matchesLocalRT reports whether path carries an extended community Route Target
+// matching the given localASN and localVNI. It iterates path attributes looking
+// for an ExtendedCommunitiesAttribute and checks each community entry against
+// the expected RT value (same logic as buildRouteTarget).
+func matchesLocalRT(path *apipb.Path, localASN uint32, localVNI uint32) bool {
+	for _, attr := range path.GetPattrs() {
+		msg, err := attr.UnmarshalNew()
+		if err != nil {
+			continue
+		}
+		extComm, ok := msg.(*apipb.ExtendedCommunitiesAttribute)
+		if !ok {
+			continue
+		}
+		if rtFoundInCommunities(extComm.GetCommunities(), localASN, localVNI) {
+			return true
+		}
+	}
+	return false
+}
+
+// rtFoundInCommunities checks a slice of extended community Any values for a
+// Route Target matching localASN and localVNI.
+func rtFoundInCommunities(communities []*anypb.Any, localASN, localVNI uint32) bool {
+	for _, c := range communities {
+		msg, err := c.UnmarshalNew()
+		if err != nil {
+			continue
+		}
+		if rtCommunityMatches(msg, localASN, localVNI) {
+			return true
+		}
+	}
+	return false
+}
+
+// rtCommunityMatches returns true if the proto message represents a Route
+// Target extended community (SubType 0x02) matching the given ASN and VNI.
+// For 4-octet ASN the VNI is masked to 16 bits, mirroring buildRouteTarget.
+func rtCommunityMatches(msg interface{}, localASN, localVNI uint32) bool {
+	const rtSubType = uint32(0x02)
+	switch v := msg.(type) {
+	case *apipb.TwoOctetAsSpecificExtended:
+		return v.GetSubType() == rtSubType &&
+			v.GetAsn() == localASN &&
+			v.GetLocalAdmin() == localVNI
+	case *apipb.FourOctetAsSpecificExtended:
+		return v.GetSubType() == rtSubType &&
+			v.GetAsn() == localASN &&
+			v.GetLocalAdmin() == localVNI&0xFFFF
+	}
+	return false
 }
 
 // buildRouteTarget builds a route target extended community (Type 0x02),

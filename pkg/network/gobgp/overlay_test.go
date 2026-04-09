@@ -1000,3 +1000,167 @@ func TestUnderlaySetupRejectsUnimplementedAF(t *testing.T) {
 		})
 	}
 }
+
+func mustPathWithRT(t *testing.T, rts ...*anypb.Any) *apipb.Path {
+	t.Helper()
+	extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
+		Communities: rts,
+	})
+	if err != nil {
+		t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
+	}
+	return &apipb.Path{Pattrs: []*anypb.Any{extComm}}
+}
+
+func mustRT2(t *testing.T, asn, vni uint32) *anypb.Any {
+	t.Helper()
+	a, err := anypb.New(&apipb.TwoOctetAsSpecificExtended{
+		IsTransitive: true,
+		SubType:      0x02,
+		Asn:          asn,
+		LocalAdmin:   vni,
+	})
+	if err != nil {
+		t.Fatalf("marshal TwoOctetAsSpecificExtended: %v", err)
+	}
+	return a
+}
+
+func mustRT4(t *testing.T, asn, vni uint32) *anypb.Any {
+	t.Helper()
+	a, err := anypb.New(&apipb.FourOctetAsSpecificExtended{
+		IsTransitive: true,
+		SubType:      0x02,
+		Asn:          asn,
+		LocalAdmin:   vni & 0xFFFF,
+	})
+	if err != nil {
+		t.Fatalf("marshal FourOctetAsSpecificExtended: %v", err)
+	}
+	return a
+}
+
+func TestMatchesLocalRT(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     *apipb.Path
+		localASN uint32
+		localVNI uint32
+		want     bool
+	}{
+		{
+			name:     "matching 2-byte RT returns true",
+			path:     mustPathWithRT(t, mustRT2(t, 65000, 4000)),
+			localASN: 65000,
+			localVNI: 4000,
+			want:     true,
+		},
+		{
+			name:     "non-matching ASN returns false",
+			path:     mustPathWithRT(t, mustRT2(t, 65001, 4000)),
+			localASN: 65000,
+			localVNI: 4000,
+			want:     false,
+		},
+		{
+			name:     "non-matching VNI returns false",
+			path:     mustPathWithRT(t, mustRT2(t, 65000, 9999)),
+			localASN: 65000,
+			localVNI: 4000,
+			want:     false,
+		},
+		{
+			name:     "path with no extended communities returns false",
+			path:     &apipb.Path{},
+			localASN: 65000,
+			localVNI: 4000,
+			want:     false,
+		},
+		{
+			name:     "matching 4-byte RT returns true",
+			path:     mustPathWithRT(t, mustRT4(t, 70000, 5000)),
+			localASN: 70000,
+			localVNI: 5000,
+			want:     true,
+		},
+		{
+			name:     "multiple communities one matching returns true",
+			path:     mustPathWithRT(t, mustRT2(t, 65001, 4000), mustRT2(t, 65000, 4000)),
+			localASN: 65000,
+			localVNI: 4000,
+			want:     true,
+		},
+		{
+			name:     "multiple communities none matching returns false",
+			path:     mustPathWithRT(t, mustRT2(t, 65001, 4000), mustRT2(t, 65002, 4000)),
+			localASN: 65000,
+			localVNI: 4000,
+			want:     false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matchesLocalRT(tt.path, tt.localASN, tt.localVNI)
+			if got != tt.want {
+				t.Errorf("matchesLocalRT() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestProcessRouteUpdateRTFilter(t *testing.T) {
+	mock := &mockFDB{}
+	overlay := &OverlayTier{
+		cfg: &Config{
+			RouterID:     "10.0.0.99",
+			ASN:          65000,
+			ProvisionVNI: 4000,
+		},
+		log: slog.Default(),
+		fdb: mock,
+	}
+
+	nlri, err := anypb.New(&apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "10.100.0.0",
+		IpPrefixLen: 24,
+		GwAddress:   "10.0.0.1",
+	})
+	if err != nil {
+		t.Fatalf("marshal NLRI: %v", err)
+	}
+
+	t.Run("route with matching RT is not silently dropped", func(t *testing.T) {
+		mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+			Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+			NextHops: []string{"10.0.0.1"},
+		})
+		if err != nil {
+			t.Fatalf("marshal MpReachNLRI: %v", err)
+		}
+		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*anypb.Any{mustRT2(t, 65000, 4000)},
+		})
+		if err != nil {
+			t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
+		}
+		path := &apipb.Path{
+			Nlri:   nlri,
+			Pattrs: []*anypb.Any{mp, extComm},
+		}
+		overlay.processRouteUpdate(path)
+	})
+
+	t.Run("route with non-matching RT is skipped without panic", func(t *testing.T) {
+		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*anypb.Any{mustRT2(t, 99999, 1111)},
+		})
+		if err != nil {
+			t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
+		}
+		path := &apipb.Path{
+			Nlri:   nlri,
+			Pattrs: []*anypb.Any{extComm},
+		}
+		overlay.processRouteUpdate(path)
+	})
+}
