@@ -7,13 +7,21 @@ import (
 	"testing"
 )
 
-func mockAddr(ip string) []net.Addr {
-	_, ipNet, _ := net.ParseCIDR(ip)
+func mockAddr(t *testing.T, ip string) []net.Addr {
+	t.Helper()
+	_, ipNet, err := net.ParseCIDR(ip)
+	if err != nil {
+		t.Fatalf("mockAddr: invalid CIDR %q: %v", ip, err)
+	}
 	return []net.Addr{ipNet}
 }
 
-func makeIface(name string, mac string, flags net.Flags) net.Interface {
-	hw, _ := net.ParseMAC(mac)
+func makeIface(t *testing.T, name string, mac string, flags net.Flags) net.Interface {
+	t.Helper()
+	hw, err := net.ParseMAC(mac)
+	if err != nil {
+		t.Fatalf("makeIface: invalid MAC %q: %v", mac, err)
+	}
 	return net.Interface{
 		Name:         name,
 		HardwareAddr: hw,
@@ -29,12 +37,12 @@ func addrFor(addrs map[string][]net.Addr) func(net.Interface) ([]net.Addr, error
 
 func TestSelectIPMIInterface_BMCNameWins(t *testing.T) {
 	ifaces := []net.Interface{
-		makeIface("eth0", "aa:bb:cc:dd:ee:01", net.FlagUp),
-		makeIface("ipmi0", "aa:bb:cc:dd:ee:02", net.FlagUp),
+		makeIface(t, "eth0", "aa:bb:cc:dd:ee:01", net.FlagUp),
+		makeIface(t, "ipmi0", "aa:bb:cc:dd:ee:02", net.FlagUp),
 	}
 	addrs := map[string][]net.Addr{
-		"eth0":  mockAddr("192.168.1.1/24"),
-		"ipmi0": mockAddr("192.168.2.1/24"),
+		"eth0":  mockAddr(t, "192.168.1.1/24"),
+		"ipmi0": mockAddr(t, "192.168.2.1/24"),
 	}
 
 	got, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs))
@@ -48,12 +56,12 @@ func TestSelectIPMIInterface_BMCNameWins(t *testing.T) {
 
 func TestSelectIPMIInterface_BMCBeatsEth(t *testing.T) {
 	ifaces := []net.Interface{
-		makeIface("eth0", "aa:bb:cc:dd:ee:01", net.FlagUp),
-		makeIface("bmc0", "aa:bb:cc:dd:ee:02", net.FlagUp),
+		makeIface(t, "eth0", "aa:bb:cc:dd:ee:01", net.FlagUp),
+		makeIface(t, "bmc0", "aa:bb:cc:dd:ee:02", net.FlagUp),
 	}
 	addrs := map[string][]net.Addr{
-		"eth0": mockAddr("10.0.0.1/24"),
-		"bmc0": mockAddr("10.0.0.2/24"),
+		"eth0": mockAddr(t, "10.0.0.1/24"),
+		"bmc0": mockAddr(t, "10.0.0.2/24"),
 	}
 
 	got, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs))
@@ -67,10 +75,10 @@ func TestSelectIPMIInterface_BMCBeatsEth(t *testing.T) {
 
 func TestSelectIPMIInterface_FallbackToFirstWithWarning(t *testing.T) {
 	ifaces := []net.Interface{
-		makeIface("eth0", "aa:bb:cc:dd:ee:01", net.FlagUp),
+		makeIface(t, "eth0", "aa:bb:cc:dd:ee:01", net.FlagUp),
 	}
 	addrs := map[string][]net.Addr{
-		"eth0": mockAddr("10.0.0.1/24"),
+		"eth0": mockAddr(t, "10.0.0.1/24"),
 	}
 
 	got, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs))
@@ -84,7 +92,7 @@ func TestSelectIPMIInterface_FallbackToFirstWithWarning(t *testing.T) {
 
 func TestSelectIPMIInterface_NoAddressesReturnsError(t *testing.T) {
 	ifaces := []net.Interface{
-		makeIface("eth0", "aa:bb:cc:dd:ee:01", net.FlagUp),
+		makeIface(t, "eth0", "aa:bb:cc:dd:ee:01", net.FlagUp),
 	}
 	addrs := map[string][]net.Addr{}
 
@@ -96,12 +104,12 @@ func TestSelectIPMIInterface_NoAddressesReturnsError(t *testing.T) {
 
 func TestSelectIPMIInterface_MgmtBeatsEth(t *testing.T) {
 	ifaces := []net.Interface{
-		makeIface("eth0", "aa:bb:cc:dd:ee:01", net.FlagUp),
-		makeIface("mgmt0", "aa:bb:cc:dd:ee:02", net.FlagUp),
+		makeIface(t, "eth0", "aa:bb:cc:dd:ee:01", net.FlagUp),
+		makeIface(t, "mgmt0", "aa:bb:cc:dd:ee:02", net.FlagUp),
 	}
 	addrs := map[string][]net.Addr{
-		"eth0":  mockAddr("10.0.0.1/24"),
-		"mgmt0": mockAddr("10.0.0.2/24"),
+		"eth0":  mockAddr(t, "10.0.0.1/24"),
+		"mgmt0": mockAddr(t, "10.0.0.2/24"),
 	}
 
 	got, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs))
@@ -115,10 +123,10 @@ func TestSelectIPMIInterface_MgmtBeatsEth(t *testing.T) {
 
 func TestSelectIPMIInterface_CaseInsensitive(t *testing.T) {
 	ifaces := []net.Interface{
-		makeIface("IPMI0", "aa:bb:cc:dd:ee:01", net.FlagUp),
+		makeIface(t, "IPMI0", "aa:bb:cc:dd:ee:01", net.FlagUp),
 	}
 	addrs := map[string][]net.Addr{
-		"IPMI0": mockAddr("192.168.0.1/24"),
+		"IPMI0": mockAddr(t, "192.168.0.1/24"),
 	}
 
 	got, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs))
@@ -132,12 +140,12 @@ func TestSelectIPMIInterface_CaseInsensitive(t *testing.T) {
 
 func TestSelectIPMIInterface_LoopbackExcluded(t *testing.T) {
 	ifaces := []net.Interface{
-		makeIface("lo", "00:00:00:00:00:00", net.FlagLoopback),
-		makeIface("ipmi0", "aa:bb:cc:dd:ee:01", net.FlagUp),
+		makeIface(t, "lo", "00:00:00:00:00:00", net.FlagLoopback),
+		makeIface(t, "ipmi0", "aa:bb:cc:dd:ee:01", net.FlagUp),
 	}
 	addrs := map[string][]net.Addr{
-		"lo":    mockAddr("127.0.0.1/8"),
-		"ipmi0": mockAddr("192.168.1.1/24"),
+		"lo":    mockAddr(t, "127.0.0.1/8"),
+		"ipmi0": mockAddr(t, "192.168.1.1/24"),
 	}
 
 	got, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs))
@@ -152,11 +160,11 @@ func TestSelectIPMIInterface_LoopbackExcluded(t *testing.T) {
 func TestFilterAddressed_NoMACInterface(t *testing.T) {
 	ifaces := []net.Interface{
 		{Name: "eth0", HardwareAddr: nil, Flags: net.FlagUp},
-		makeIface("eth1", "aa:bb:cc:dd:ee:01", net.FlagUp),
+		makeIface(t, "eth1", "aa:bb:cc:dd:ee:01", net.FlagUp),
 	}
 	addrs := map[string][]net.Addr{
-		"eth0": mockAddr("10.0.0.1/24"),
-		"eth1": mockAddr("10.0.0.2/24"),
+		"eth0": mockAddr(t, "10.0.0.1/24"),
+		"eth1": mockAddr(t, "10.0.0.2/24"),
 	}
 
 	got := filterAddressed(ifaces, addrFor(addrs))
@@ -169,7 +177,7 @@ func TestFilterAddressed_ValidIPInLaterEntry(t *testing.T) {
 	_, linkLocal, _ := net.ParseCIDR("169.254.0.1/16")
 	_, validIP, _ := net.ParseCIDR("10.0.0.1/24")
 	ifaces := []net.Interface{
-		makeIface("eth0", "aa:bb:cc:dd:ee:01", net.FlagUp),
+		makeIface(t, "eth0", "aa:bb:cc:dd:ee:01", net.FlagUp),
 	}
 	addrs := map[string][]net.Addr{
 		"eth0": {linkLocal, validIP},
@@ -185,7 +193,7 @@ func TestFilterAddressed_NoValidIPExcluded(t *testing.T) {
 	_, linkLocal, _ := net.ParseCIDR("169.254.1.1/16")
 	_, loopback, _ := net.ParseCIDR("127.0.0.1/8")
 	ifaces := []net.Interface{
-		makeIface("eth0", "aa:bb:cc:dd:ee:01", net.FlagUp),
+		makeIface(t, "eth0", "aa:bb:cc:dd:ee:01", net.FlagUp),
 	}
 	addrs := map[string][]net.Addr{
 		"eth0": {linkLocal, loopback},
