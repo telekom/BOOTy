@@ -136,7 +136,7 @@ func selectIPMIInterfaceWith(ifaces []net.Interface, getAddrs func(net.Interface
 		// mis-select a data-plane NIC if the BMC NIC uses an unrecognized name.
 		// Operators should name the BMC interface with a bmc/ipmi/idrac/ilo/imm
 		// prefix to avoid relying on this heuristic.
-		slog.Warn("IPMI autodetection fell back to first available NIC; consider naming the BMC interface with a bmc/ipmi/idrac/ilo/imm prefix",
+		slog.Warn("ipmi autodetection fell back to first available NIC; consider naming the BMC interface with a bmc/ipmi/idrac/ilo/imm prefix",
 			"interface", candidates[0].Name)
 		return &candidates[0], nil
 	}
@@ -208,6 +208,9 @@ func GetIPMIInfo() (mac, ip string, err error) {
 	addrs, err := iface.Addrs()
 	if err != nil {
 		return "", "", fmt.Errorf("get addresses for %s: %w", iface.Name, err)
+	}
+	if len(addrs) == 0 {
+		return "", "", fmt.Errorf("no addresses on interface %s", iface.Name)
 	}
 
 	for _, addr := range addrs {
