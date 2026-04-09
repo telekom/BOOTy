@@ -105,11 +105,15 @@ func (h *RemoteHandler) maybeWarnDropped(total int64) {
 // warnViaInner emits a Warn-level record directly through the inner handler,
 // bypassing RemoteHandler.Handle to prevent re-entry into the buffer channel.
 func (h *RemoteHandler) warnViaInner(msg string, attrs ...slog.Attr) {
+	ctx := context.Background()
+	if h.inner == nil || !h.inner.Enabled(ctx, slog.LevelWarn) {
+		return
+	}
 	var pcs [1]uintptr
 	runtime.Callers(2, pcs[:])
 	r := slog.NewRecord(time.Now(), slog.LevelWarn, msg, pcs[0])
 	r.AddAttrs(attrs...)
-	_ = h.inner.Handle(context.Background(), r)
+	_ = h.inner.Handle(ctx, r)
 }
 
 // WithAttrs returns a new handler with the given attributes.
@@ -176,7 +180,7 @@ func (h *RemoteHandler) drain(ctx context.Context) {
 	defer close(h.done)
 	for msg := range h.buf {
 		if err := h.client.ShipLog(ctx, msg); err != nil {
-			slog.Warn("failed to ship log to caprf", "error", err)
+			h.warnViaInner("failed to ship log to caprf", slog.Any("error", err))
 		}
 	}
 }
