@@ -148,3 +148,51 @@ func TestSelectIPMIInterface_LoopbackExcluded(t *testing.T) {
 		t.Errorf("got interface %q, want %q", got.Name, "ipmi0")
 	}
 }
+
+func TestFilterAddressed_NoMACInterface(t *testing.T) {
+	ifaces := []net.Interface{
+		{Name: "eth0", HardwareAddr: nil, Flags: net.FlagUp},
+		makeIface("eth1", "aa:bb:cc:dd:ee:01", net.FlagUp),
+	}
+	addrs := map[string][]net.Addr{
+		"eth0": mockAddr("10.0.0.1/24"),
+		"eth1": mockAddr("10.0.0.2/24"),
+	}
+
+	got := filterAddressed(ifaces, addrFor(addrs))
+	if len(got) != 1 || got[0].Name != "eth1" {
+		t.Errorf("got %v, want only eth1", got)
+	}
+}
+
+func TestFilterAddressed_ValidIPInLaterEntry(t *testing.T) {
+	_, linkLocal, _ := net.ParseCIDR("169.254.0.1/16")
+	_, validIP, _ := net.ParseCIDR("10.0.0.1/24")
+	ifaces := []net.Interface{
+		makeIface("eth0", "aa:bb:cc:dd:ee:01", net.FlagUp),
+	}
+	addrs := map[string][]net.Addr{
+		"eth0": {linkLocal, validIP},
+	}
+
+	got := filterAddressed(ifaces, addrFor(addrs))
+	if len(got) != 1 || got[0].Name != "eth0" {
+		t.Errorf("got %v, want eth0 (valid IP in later addr entry)", got)
+	}
+}
+
+func TestFilterAddressed_NoValidIPExcluded(t *testing.T) {
+	_, linkLocal, _ := net.ParseCIDR("169.254.1.1/16")
+	_, loopback, _ := net.ParseCIDR("127.0.0.1/8")
+	ifaces := []net.Interface{
+		makeIface("eth0", "aa:bb:cc:dd:ee:01", net.FlagUp),
+	}
+	addrs := map[string][]net.Addr{
+		"eth0": {linkLocal, loopback},
+	}
+
+	got := filterAddressed(ifaces, addrFor(addrs))
+	if len(got) != 0 {
+		t.Errorf("got %v, want empty (all addrs are link-local or loopback)", got)
+	}
+}
