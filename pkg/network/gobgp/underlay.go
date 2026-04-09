@@ -419,6 +419,11 @@ func (u *UnderlayTier) addInterfacePeer(ctx context.Context, iface string, famil
 		},
 	}
 
+	if u.cfg.AuthPassword != "" {
+		peer.Conf.AuthPassword = u.cfg.AuthPassword
+		u.log.Info("TCP-MD5 authentication configured for BGP peer", "interface", iface)
+	}
+
 	if err := u.bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: peer}); err != nil {
 		return fmt.Errorf("add peer on %s: %w", iface, err)
 	}
@@ -443,6 +448,11 @@ func (u *UnderlayTier) addNumberedPeer(ctx context.Context, addr string, familie
 		Transport: &apipb.Transport{
 			MtuDiscovery: true,
 		},
+	}
+
+	if u.cfg.AuthPassword != "" {
+		peer.Conf.AuthPassword = u.cfg.AuthPassword
+		u.log.Info("TCP-MD5 authentication configured for BGP peer", "address", addr)
 	}
 
 	sessionType := "iBGP"

@@ -3,6 +3,7 @@ package gobgp
 import (
 	"testing"
 
+	apipb "github.com/osrg/gobgp/v3/api"
 	"github.com/telekom/BOOTy/pkg/network"
 )
 
@@ -246,4 +247,52 @@ func TestScenarioBGPTimers(t *testing.T) {
 	if timers.Config.HoldTime != 9 {
 		t.Errorf("hold = %d, want 9", timers.Config.HoldTime)
 	}
+}
+
+// TestBGPAuthPasswordPeer verifies that the apipb.Peer.Conf.AuthPassword field
+// is set when Config.AuthPassword is non-empty, and absent when it is empty.
+// This mirrors the construction logic in addInterfacePeer and addNumberedPeer.
+func TestBGPAuthPasswordPeer(t *testing.T) {
+	buildNumberedPeer := func(cfg *Config, addr string) *apipb.Peer {
+		remoteASN := cfg.RemoteASN
+		if remoteASN == 0 {
+			remoteASN = cfg.ASN
+		}
+		peer := &apipb.Peer{
+			Conf: &apipb.PeerConf{
+				NeighborAddress: addr,
+				PeerAsn:         remoteASN,
+			},
+		}
+		if cfg.AuthPassword != "" {
+			peer.Conf.AuthPassword = cfg.AuthPassword
+		}
+		return peer
+	}
+
+	t.Run("auth_set_when_configured", func(t *testing.T) {
+		cfg := &Config{
+			ASN:           65000,
+			RemoteASN:     65001,
+			AuthPassword:  "hunter2",
+			NeighborAddrs: []string{"10.0.0.1"},
+		}
+		peer := buildNumberedPeer(cfg, "10.0.0.1")
+		if peer.Conf.AuthPassword != "hunter2" {
+			t.Errorf("AuthPassword = %q, want hunter2", peer.Conf.AuthPassword)
+		}
+	})
+
+	t.Run("no_auth_when_password_empty", func(t *testing.T) {
+		cfg := &Config{
+			ASN:           65000,
+			RemoteASN:     65001,
+			AuthPassword:  "",
+			NeighborAddrs: []string{"10.0.0.1"},
+		}
+		peer := buildNumberedPeer(cfg, "10.0.0.1")
+		if peer.Conf.AuthPassword != "" {
+			t.Errorf("AuthPassword = %q, want empty (no auth)", peer.Conf.AuthPassword)
+		}
+	})
 }
