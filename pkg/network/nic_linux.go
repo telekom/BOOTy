@@ -131,6 +131,11 @@ func selectIPMIInterfaceWith(ifaces []net.Interface, getAddrs func(net.Interface
 	}
 
 	if len(candidates) > 0 {
+		// Fallback assumption: when no BMC/management-named interface is found,
+		// the first addressed NIC is assumed to be the IPMI interface. This may
+		// mis-select a data-plane NIC if the BMC NIC uses an unrecognized name.
+		// Operators should name the BMC interface with a bmc/ipmi/idrac/ilo/imm
+		// prefix to avoid relying on this heuristic.
 		slog.Warn("IPMI autodetection fell back to first available NIC; consider naming the BMC interface with a bmc/ipmi/idrac/ilo/imm prefix",
 			"interface", candidates[0].Name)
 		return &candidates[0], nil
@@ -152,12 +157,31 @@ func filterAddressed(ifaces []net.Interface, getAddrs func(net.Interface) ([]net
 		if err != nil || len(addrs) == 0 {
 			continue
 		}
-		if _, ok := addrs[0].(*net.IPNet); !ok {
-			continue
+		if hasValidIP(addrs) {
+			out = append(out, iface)
 		}
-		out = append(out, iface)
 	}
 	return out
+}
+
+// hasValidIP reports whether any address in addrs is a non-link-local,
+// non-loopback IPv4 address assigned via a *net.IPNet.
+func hasValidIP(addrs []net.Addr) bool {
+	for _, addr := range addrs {
+		ipNet, ok := addr.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		ip := ipNet.IP.To4()
+		if ip == nil {
+			continue
+		}
+		if ip.IsLinkLocalUnicast() || ip.IsLoopback() {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func firstWithPrefix(ifaces []net.Interface, prefix string) *net.Interface {
@@ -186,6 +210,17 @@ func GetIPMIInfo() (mac, ip string, err error) {
 		return "", "", fmt.Errorf("get addresses for %s: %w", iface.Name, err)
 	}
 
-	ipNet := addrs[0].(*net.IPNet) //nolint:forcetypeassert // guaranteed by filterAddressed
-	return iface.HardwareAddr.String(), ipNet.IP.String(), nil
+	for _, addr := range addrs {
+		ipNet, ok := addr.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		v4 := ipNet.IP.To4()
+		if v4 == nil || v4.IsLinkLocalUnicast() || v4.IsLoopback() {
+			continue
+		}
+		return iface.HardwareAddr.String(), v4.String(), nil
+	}
+
+	return "", "", fmt.Errorf("no valid IPv4 address on interface %s", iface.Name)
 }
