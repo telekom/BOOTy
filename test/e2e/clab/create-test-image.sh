@@ -42,7 +42,7 @@ LOOP_DEV=$(losetup --find --show --partscan "${IMAGE_RAW}")
 echo "    Loop device: ${LOOP_DEV}"
 
 # Wait for partition devices to appear.
-for i in $(seq 1 10); do
+for i in $(seq 1 30); do
     if [ -b "${LOOP_DEV}p2" ]; then
         break
     fi
