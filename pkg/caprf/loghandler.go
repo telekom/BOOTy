@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -88,15 +89,27 @@ func (h *RemoteHandler) Handle(ctx context.Context, r slog.Record) error { //nol
 }
 
 // maybeWarnDropped emits a periodic warning every dropWarnEvery drops.
+// It uses h.inner directly to avoid re-entering RemoteHandler when it is the
+// default slog handler, which would attempt to send to a (potentially full)
+// channel from within Handle itself.
 func (h *RemoteHandler) maybeWarnDropped(total int64) {
 	prev := h.reported.Load()
 	if total-prev >= dropWarnEvery {
-		// Attempt to claim this reporting slot; only one goroutine wins.
 		if h.reported.CompareAndSwap(prev, total) {
-			slog.Warn("remote log handler is dropping entries: buffer full",
-				"total_dropped", total)
+			h.warnViaInner("remote log handler is dropping entries: buffer full",
+				slog.Int64("total_dropped", total))
 		}
 	}
+}
+
+// warnViaInner emits a Warn-level record directly through the inner handler,
+// bypassing RemoteHandler.Handle to prevent re-entry into the buffer channel.
+func (h *RemoteHandler) warnViaInner(msg string, attrs ...slog.Attr) {
+	var pcs [1]uintptr
+	runtime.Callers(2, pcs[:])
+	r := slog.NewRecord(time.Now(), slog.LevelWarn, msg, pcs[0])
+	r.AddAttrs(attrs...)
+	_ = h.inner.Handle(context.Background(), r)
 }
 
 // WithAttrs returns a new handler with the given attributes.
@@ -142,17 +155,16 @@ func (h *RemoteHandler) Close() {
 		h.once = &sync.Once{}
 	}
 	h.once.Do(func() {
-		// Log final drop count before closing if any entries were dropped.
 		if n := h.dropped.Load(); n > 0 {
-			slog.Warn("remote log handler: entries were dropped during session",
-				"total_dropped", n)
+			h.warnViaInner("remote log handler: entries were dropped during session",
+				slog.Int64("total_dropped", n))
 		}
 		close(h.buf)
 		select {
 		case <-h.done:
 		case <-time.After(5 * time.Second): //nolint:mnd // fixed drain timeout
-			drained := h.dropped.Load()
-			slog.Warn("log handler drain timed out after 5s", "total_dropped", drained)
+			totalDropped := h.dropped.Load()
+			h.warnViaInner("log handler drain timed out after 5s", slog.Int64("total_dropped", totalDropped))
 			if h.cancel != nil {
 				h.cancel()
 			}
