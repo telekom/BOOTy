@@ -2,7 +2,6 @@ package caprf
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -11,6 +10,10 @@ import (
 )
 
 // sensitiveWords is the set of exact key segments that trigger redaction.
+// The implementation uses segment-based matching: a key is split on separators
+// (_  .  -) and camelCase boundaries, then each segment is checked against this
+// set. Additionally, a substring fallback catches all-lowercase concatenated keys
+// such as "apikey", "secretkey", or "privatekey".
 var sensitiveWords = map[string]struct{}{
 	"password":      {},
 	"token":         {},
@@ -23,6 +26,14 @@ var sensitiveWords = map[string]struct{}{
 	"private":       {},
 	"bearer":        {},
 	"session":       {},
+}
+
+// highSignalWords are high-confidence sensitive substrings used as a fallback
+// for all-lowercase concatenated keys that splitCamel cannot split
+// (e.g. "apikey", "secretkey", "privatekey"). "key" is matched as a suffix only
+// to avoid false positives from words like "keyboard".
+var highSignalWords = []string{
+	"password", "token", "secret", "credential", "bearer", "private", "session",
 }
 
 // splitKeySegments splits a slog attribute key on common separators (_  .  -)
@@ -53,14 +64,14 @@ func splitCamel(s string) []string {
 	start := 0
 	for i := 1; i < len(runes); i++ {
 		prev, cur := runes[i-1], runes[i]
-		// Boundary: lower→upper  or  upper+upper→upper+lower (e.g. "MOKPassword").
-		if unicode.IsLower(prev) && unicode.IsUpper(cur) {
+		switch {
+		case unicode.IsLower(prev) && unicode.IsUpper(cur):
 			segs = append(segs, string(runes[start:i]))
 			start = i
-		} else if unicode.IsDigit(prev) && unicode.IsUpper(cur) {
+		case unicode.IsDigit(prev) && unicode.IsUpper(cur):
 			segs = append(segs, string(runes[start:i]))
 			start = i
-		} else if i >= 2 && unicode.IsUpper(runes[i-2]) && unicode.IsUpper(prev) && unicode.IsLower(cur) {
+		case i >= 2 && unicode.IsUpper(runes[i-2]) && unicode.IsUpper(prev) && unicode.IsLower(cur):
 			segs = append(segs, string(runes[start:i-1]))
 			start = i - 1
 		}
@@ -69,10 +80,21 @@ func splitCamel(s string) []string {
 	return segs
 }
 
-// isSensitiveKey reports whether any segment of key exactly matches a sensitive word.
+// isSensitiveKey reports whether any segment of key exactly matches a sensitive
+// word, or the full lowercased key contains a high-signal substring (fallback for
+// all-lowercase concatenated forms like "apikey", "secretkey", "privatekey").
 func isSensitiveKey(key string) bool {
 	for _, seg := range splitKeySegments(key) {
 		if _, ok := sensitiveWords[strings.ToLower(seg)]; ok {
+			return true
+		}
+	}
+	lower := strings.ToLower(key)
+	if strings.HasSuffix(lower, "key") {
+		return true
+	}
+	for _, word := range highSignalWords {
+		if strings.Contains(lower, word) {
 			return true
 		}
 	}
@@ -146,22 +168,41 @@ func (h *RemoteHandler) Enabled(_ context.Context, level slog.Level) bool {
 
 // Handle sends the log record to both the inner handler and the remote buffer.
 func (h *RemoteHandler) Handle(ctx context.Context, r slog.Record) error { //nolint:gocritic // slog.Handler interface requires value receiver
-	// Always forward to inner handler.
 	if err := h.inner.Handle(ctx, r); err != nil {
 		return err //nolint:wrapcheck // slog.Handler.Handle must return unwrapped errors
 	}
 
-	// Format message for remote shipping.
-	msg := fmt.Sprintf("[%s] %s", r.Level, r.Message)
+	var sb strings.Builder
+	sb.WriteString("[")
+	sb.WriteString(r.Level.String())
+	sb.WriteString("] ")
+	sb.WriteString(r.Message)
+
+	prefix := ""
+	if len(h.groups) > 0 {
+		prefix = strings.Join(h.groups, ".") + "."
+	}
+	for _, a := range h.attrs {
+		a = redactAttr(a)
+		sb.WriteString(" ")
+		sb.WriteString(prefix)
+		sb.WriteString(a.Key)
+		sb.WriteString("=")
+		sb.WriteString(a.Value.String())
+	}
+
 	r.Attrs(func(a slog.Attr) bool {
 		a = redactAttr(a)
-		msg += fmt.Sprintf(" %s=%v", a.Key, a.Value)
+		sb.WriteString(" ")
+		sb.WriteString(prefix)
+		sb.WriteString(a.Key)
+		sb.WriteString("=")
+		sb.WriteString(a.Value.String())
 		return true
 	})
 
-	// Non-blocking send: drop if buffer is full.
 	select {
-	case h.buf <- msg:
+	case h.buf <- sb.String():
 	default:
 	}
 

@@ -227,6 +227,9 @@ func TestRedactAttr(t *testing.T) {
 		{"session", "sess_123", "[REDACTED]", true},
 		{"bearer", "eyJ...", "[REDACTED]", true},
 		{"cert", "PEM", "[REDACTED]", true},
+		{"apikey", "abc123", "[REDACTED]", true},
+		{"secretkey", "abc123", "[REDACTED]", true},
+		{"privatekey", "abc123", "[REDACTED]", true},
 		{"message", "hello", "hello", false},
 		{"component", "provision", "provision", false},
 		{"ip", "192.168.0.1", "192.168.0.1", false},
@@ -327,7 +330,7 @@ func TestHandleRedactsSensitiveAttrs_Grouped(t *testing.T) {
 
 	cfg := &config.MachineConfig{
 		Token:  "redact-group-token",
-		LogURL: srv.URL,
+		LogURL: srv.URL + "/log",
 	}
 	client := NewFromConfig(cfg)
 
@@ -357,7 +360,10 @@ func TestHandleRedactsSensitiveAttrs(t *testing.T) {
 	var bodies []string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			return
+		}
 		mu.Lock()
 		bodies = append(bodies, string(body))
 		mu.Unlock()
