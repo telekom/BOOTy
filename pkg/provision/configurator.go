@@ -37,8 +37,10 @@ var blockedShellTokens = []string{"&&", "||", "|", "`", "$(", ")", ">", "<", "\n
 //
 // The value portion is replaced with [REDACTED] in logs.
 var sensitiveKeyPattern = regexp.MustCompile(
-	`(?i)(--?)(password|token|secret|key|credential|auth)[\t ]+(?:"[^"]*"|'[^']*'|\S+)` +
-		`|(?i)(password|token|secret|key|credential|auth)\s*[=:]\s*(?:"[^"]*"|'[^']*'|\S+)`,
+	`(?i)(?:` +
+		`(--?)(password|token|secret|key|credential|auth)[\t ]+(?:"[^"]*"|'[^']*'|\S+)` +
+		`|(password|token|secret|key|credential|auth)\s*[=:]\s*(?:"[^"]*"|'[^']*'|\S+)` +
+		`)`,
 )
 
 // redactCommand replaces sensitive key-value patterns in cmd with [REDACTED]
