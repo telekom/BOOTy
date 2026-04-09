@@ -17,6 +17,14 @@ var excludedPrefixes = []string{
 	"lo", "docker", "veth", "vx", "br", "dummy", "virbr", "bond", "tun", "tap",
 }
 
+// Package-level function variables allow tests to inject fakes without build constraints.
+var (
+	linkList       = netlink.LinkList
+	listInterfaces = net.Interfaces
+	ifaceAddrs     = func(iface net.Interface) ([]net.Addr, error) { return iface.Addrs() }
+	sleepFunc      = time.Sleep
+)
+
 // DetectPhysicalNICs returns the names of all physical network interfaces,
 // excluding loopback, virtual, bridge, and VXLAN interfaces.
 // In containerlab environments, interfaces may initially appear with temporary
@@ -37,7 +45,7 @@ func DetectPhysicalNICs() ([]string, error) {
 		if i == 0 {
 			slog.Info("waiting for interface names to stabilize (clab-* detected)")
 		}
-		time.Sleep(retryInterval)
+		sleepFunc(retryInterval)
 	}
 
 	// Final attempt: return whatever we have, excluding any remaining clab-* names.
@@ -57,7 +65,7 @@ func DetectPhysicalNICs() ([]string, error) {
 // detectNICsOnce performs a single scan of network interfaces and reports
 // whether any temporary containerlab names (clab-*) were found.
 func detectNICsOnce() (nics []string, hasTemp bool, err error) {
-	links, err := netlink.LinkList()
+	links, err := linkList()
 	if err != nil {
 		return nil, false, fmt.Errorf("list links: %w", err)
 	}
@@ -92,7 +100,7 @@ func isExcluded(name string) bool {
 
 // GetIPMIInfo reads the IPMI MAC and IP from the system.
 func GetIPMIInfo() (mac, ip string, err error) {
-	ifaces, err := net.Interfaces()
+	ifaces, err := listInterfaces()
 	if err != nil {
 		return "", "", fmt.Errorf("list interfaces: %w", err)
 	}
@@ -104,7 +112,7 @@ func GetIPMIInfo() (mac, ip string, err error) {
 		if len(iface.HardwareAddr) == 0 {
 			continue
 		}
-		addrs, err := iface.Addrs()
+		addrs, err := ifaceAddrs(iface)
 		if err != nil || len(addrs) == 0 {
 			continue
 		}
