@@ -2,8 +2,12 @@ package caprf
 
 import (
 	"context"
+	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -193,4 +197,176 @@ func TestRemoteHandlerCloseFromDerivedHandlers(t *testing.T) {
 	// Closing both handlers should not panic or deadlock.
 	root.Close()
 	derived.Close()
+}
+
+func TestRedactAttr(t *testing.T) {
+	tests := []struct {
+		key     string
+		value   string
+		want    string
+		redacts bool
+	}{
+		{"password", "s3cr3t", "[REDACTED]", true},
+		{"MOKPassword", "hunter2", "[REDACTED]", true},
+		{"token", "tok_abc123", "[REDACTED]", true},
+		{"access_token", "tok_abc123", "[REDACTED]", true},
+		{"secret", "mysecret", "[REDACTED]", true},
+		{"api_key", "key123", "[REDACTED]", true},
+		{"privateKey", "-----BEGIN", "[REDACTED]", true},
+		{"credential", "mycred", "[REDACTED]", true},
+		{"auth", "Basic xyz", "[REDACTED]", true},
+		{"authorization", "Bearer xyz", "[REDACTED]", true},
+		{"Authorization", "Bearer xyz", "[REDACTED]", true},
+		{"authorization_header", "Bearer xyz", "[REDACTED]", true},
+		{"Authorization_header", "Bearer xyz", "[REDACTED]", true},
+		{"authorizationToken", "Bearer xyz", "[REDACTED]", true},
+		{"session", "sess_123", "[REDACTED]", true},
+		{"bearer", "eyJ...", "[REDACTED]", true},
+		{"cert", "PEM", "[REDACTED]", true},
+		{"message", "hello", "hello", false},
+		{"component", "provision", "provision", false},
+		{"ip", "192.168.0.1", "192.168.0.1", false},
+		{"count", "42", "42", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.key, func(t *testing.T) {
+			attr := slog.String(tc.key, tc.value)
+			got := redactAttr(attr)
+			if got.Value.String() != tc.want {
+				t.Errorf("redactAttr(%q, %q) = %q, want %q",
+					tc.key, tc.value, got.Value.String(), tc.want)
+			}
+			if tc.redacts && got.Key != tc.key {
+				t.Errorf("redactAttr should preserve key %q, got %q", tc.key, got.Key)
+			}
+		})
+	}
+}
+
+func TestRedactAttr_FalsePositives(t *testing.T) {
+	keys := []string{"author", "keyboard", "certainty"}
+	for _, key := range keys {
+		t.Run(key, func(t *testing.T) {
+			attr := slog.String(key, "value")
+			got := redactAttr(attr)
+			if got.Value.String() == "[REDACTED]" {
+				t.Errorf("key %q should NOT be redacted (false positive)", key)
+			}
+		})
+	}
+}
+
+func TestRedactAttr_CamelCase(t *testing.T) {
+	if got := redactAttr(slog.String("privateKey", "val")); got.Value.String() != "[REDACTED]" {
+		t.Errorf("privateKey should be redacted, got %q", got.Value.String())
+	}
+	if got := redactAttr(slog.String("authorName", "val")); got.Value.String() == "[REDACTED]" {
+		t.Errorf("authorName should NOT be redacted")
+	}
+}
+
+func TestRedactAttr_GroupedAttrs(t *testing.T) {
+	group := slog.Group("config",
+		slog.String("password", "s3cr3t"),
+		slog.String("host", "example.com"),
+	)
+	got := redactAttr(group)
+	if got.Value.Kind() != slog.KindGroup {
+		t.Fatal("expected group kind back")
+	}
+	attrs := got.Value.Group()
+	if len(attrs) != 2 {
+		t.Fatalf("expected 2 attrs, got %d", len(attrs))
+	}
+	if attrs[0].Value.String() != "[REDACTED]" {
+		t.Errorf("nested password should be redacted, got %q", attrs[0].Value.String())
+	}
+	if attrs[1].Value.String() != "example.com" {
+		t.Errorf("nested host should pass through, got %q", attrs[1].Value.String())
+	}
+}
+
+func TestHandleRedactsSensitiveAttrs_Grouped(t *testing.T) {
+	var mu sync.Mutex
+	var bodies []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(body))
+		mu.Unlock()
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := &config.MachineConfig{
+		Token:  "redact-group-token",
+		LogURL: srv.URL,
+	}
+	client := NewFromConfig(cfg)
+
+	inner := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+	handler := NewRemoteHandler(client, inner, slog.LevelInfo, 100)
+
+	logger := slog.New(handler)
+	logger.Info("provisioning",
+		slog.Group("creds", slog.String("password", "s3cr3t"), slog.String("user", "admin")),
+	)
+	handler.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(bodies) != 1 {
+		t.Fatalf("expected 1 log shipped, got %d", len(bodies))
+	}
+	shipped := bodies[0]
+	if strings.Contains(shipped, "s3cr3t") {
+		t.Errorf("nested password value must be redacted in shipped log, got: %s", shipped)
+	}
+}
+
+func TestHandleRedactsSensitiveAttrs(t *testing.T) {
+	var mu sync.Mutex
+	var bodies []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(body))
+		mu.Unlock()
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := &config.MachineConfig{
+		Token:  "redact-test-token",
+		LogURL: srv.URL,
+	}
+	client := NewFromConfig(cfg)
+
+	inner := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+	handler := NewRemoteHandler(client, inner, slog.LevelInfo, 100)
+
+	logger := slog.New(handler)
+	logger.Info("provisioning", "password", "s3cr3t", "component", "provision")
+
+	handler.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(bodies) != 1 {
+		t.Fatalf("expected 1 log shipped, got %d", len(bodies))
+	}
+
+	shipped := bodies[0]
+	if !strings.Contains(shipped, "[REDACTED]") {
+		t.Errorf("expected [REDACTED] in shipped log, got: %s", shipped)
+	}
+	if strings.Contains(shipped, "s3cr3t") {
+		t.Errorf("expected password value to be redacted, got: %s", shipped)
+	}
+	if !strings.Contains(shipped, "component=provision") {
+		t.Errorf("expected non-sensitive attr to pass through, got: %s", shipped)
+	}
 }
