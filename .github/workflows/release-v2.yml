@@ -340,7 +340,7 @@ jobs:
       id-token: write
     steps:
       - name: Install ORAS
-        uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6
+        uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3
 
       - name: Login to GHCR
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
@@ -430,7 +430,7 @@ jobs:
       packages: write
     steps:
       - name: Install ORAS
-        uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6
+        uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3
         with:
           version: "1.2.2"
 
