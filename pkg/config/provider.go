@@ -113,6 +113,7 @@ type MachineConfig struct {
 	BGPUnderlayAF   string // BGP_UNDERLAY_AF: underlay address family (ipv4/ipv6/dual-stack)
 	BGPOverlayType  string // BGP_OVERLAY_TYPE: overlay encapsulation (evpn-vxlan/l3vpn/none)
 	BGPAuthPassword string // BGP_AUTH_PASSWORD: optional TCP-MD5 password for all BGP peers
+	BGPMinPeers     int    // BGP_MIN_PEERS: minimum established BGP peers for underlay readiness (default: 1)
 
 	// Dry-run mode.
 	DryRun bool // DRY_RUN: simulate provisioning without destructive changes

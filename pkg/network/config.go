@@ -67,6 +67,7 @@ type Config struct {
 	BGPUnderlayAF   string   // Underlay address family: ipv4, ipv6, dual-stack (default: ipv4)
 	BGPOverlayType  string   // Overlay encapsulation: evpn-vxlan, l3vpn, none (default: evpn-vxlan)
 	BGPAuthPassword string   // Optional TCP-MD5 password for all BGP peers (empty = no auth)
+	BGPMinPeers     int      // Minimum established BGP peers for underlay readiness (default: 1)
 
 	// Common fields.
 	BridgeName  string // Default: "br.provision"

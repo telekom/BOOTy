@@ -143,7 +143,7 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 	return nil
 }
 
-// Ready waits until at least one BGP peer reaches ESTABLISHED state.
+// Ready waits until at least MinEstablishedPeers BGP peers reach ESTABLISHED state.
 func (u *UnderlayTier) Ready(ctx context.Context, timeout time.Duration) error {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
@@ -151,15 +151,16 @@ func (u *UnderlayTier) Ready(ctx context.Context, timeout time.Duration) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
+	min := u.cfg.MinEstablishedPeers
 	for {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("context canceled: %w", ctx.Err())
 		case <-timer.C:
-			return fmt.Errorf("timed out waiting for BGP peers to establish")
+			return fmt.Errorf("timed out waiting for %d BGP peer(s) to establish", min)
 		case <-ticker.C:
-			if u.hasEstablishedPeer(ctx) {
-				u.log.Info("underlay BGP peer established")
+			if n := u.countEstablishedPeers(ctx); n >= min {
+				u.log.Info("Underlay BGP peers established", "count", n, "required", min)
 				return nil
 			}
 		}
@@ -438,22 +439,21 @@ func (u *UnderlayTier) addNumberedPeer(ctx context.Context, addr string, familie
 	return nil
 }
 
-func (u *UnderlayTier) hasEstablishedPeer(ctx context.Context) bool {
-	established := false
+func (u *UnderlayTier) countEstablishedPeers(ctx context.Context) int {
+	var count int
 
 	fn := func(p *apipb.Peer) {
 		if p.GetState().GetSessionState() == apipb.PeerState_ESTABLISHED {
-			established = true
+			count++
 		}
 	}
 
-	err := u.bgp.ListPeer(ctx, &apipb.ListPeerRequest{}, fn)
-	if err != nil {
+	if err := u.bgp.ListPeer(ctx, &apipb.ListPeerRequest{}, fn); err != nil {
 		u.log.Debug("Failed to list peers", "error", err)
-		return false
+		return 0
 	}
 
-	return established
+	return count
 }
 
 // announceUnderlayRoute advertises the RouterID /32 via IPv4 unicast so that
