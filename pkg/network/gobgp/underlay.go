@@ -151,16 +151,16 @@ func (u *UnderlayTier) Ready(ctx context.Context, timeout time.Duration) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
-	min := u.cfg.MinEstablishedPeers
+	minPeers := u.cfg.MinEstablishedPeers
 	for {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("context canceled: %w", ctx.Err())
 		case <-timer.C:
-			return fmt.Errorf("timed out waiting for %d BGP peer(s) to establish", min)
+			return fmt.Errorf("timed out waiting for %d BGP peer(s) to establish", minPeers)
 		case <-ticker.C:
-			if n := u.countEstablishedPeers(ctx); n >= min {
-				u.log.Info("Underlay BGP peers established", "count", n, "required", min)
+			if n := u.countEstablishedPeers(ctx); n >= minPeers {
+				u.log.Info("underlay BGP peers established", "count", n, "required", minPeers)
 				return nil
 			}
 		}

@@ -105,6 +105,9 @@ func (c *Config) ApplyDefaults() {
 	if c.VRFTableID == 0 {
 		c.VRFTableID = 1000
 	}
+	if c.BGPMinPeers == 0 {
+		c.BGPMinPeers = 1
+	}
 	// BFD is opt-in: only enabled when bfd_transmit_ms / bfd_receive_ms
 	// are explicitly set via environment variables.
 }
