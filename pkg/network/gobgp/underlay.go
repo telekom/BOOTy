@@ -407,7 +407,7 @@ func (u *UnderlayTier) addInterfacePeer(ctx context.Context, iface string, famil
 	peer := buildInterfacePeer(u.cfg, iface, addr, families)
 
 	if u.cfg.AuthPassword != "" {
-		u.log.Info("TCP-MD5 authentication configured for BGP peer", "interface", iface)
+		u.log.Info("tcp-md5 authentication configured for BGP peer", "interface", iface)
 	}
 
 	if err := u.bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: peer}); err != nil {
