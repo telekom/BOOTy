@@ -30,7 +30,8 @@ type ExecCommander = executil.ExecCommander
 
 // Manager handles disk operations for provisioning.
 type Manager struct {
-	cmd Commander
+	cmd       Commander
+	sysfsRoot string // path to sysfs root, defaults to "/sys"
 }
 
 // NewManager creates a Manager with the given Commander (nil = ExecCommander).
@@ -38,7 +39,15 @@ func NewManager(cmd Commander) *Manager {
 	if cmd == nil {
 		cmd = &ExecCommander{}
 	}
-	return &Manager{cmd: cmd}
+	return &Manager{cmd: cmd, sysfsRoot: "/sys"}
+}
+
+// newManagerWithSysfs creates a Manager with a custom sysfs root for testing.
+func newManagerWithSysfs(cmd Commander, sysfsRoot string) *Manager {
+	if cmd == nil {
+		cmd = &ExecCommander{}
+	}
+	return &Manager{cmd: cmd, sysfsRoot: sysfsRoot}
 }
 
 // Partition represents a single disk partition from sfdisk output.
@@ -265,12 +274,15 @@ func (m *Manager) CreateRAIDArray(ctx context.Context, name string, level int, d
 }
 
 // DetectDisk finds the target disk for provisioning. Prefers NVMe, falls back to SATA/SAS.
+// Removable media (USB drives, SD cards) are rejected unless BOOTY_ALLOW_REMOVABLE=true.
 func (m *Manager) DetectDisk(_ context.Context, minSizeGB int) (string, error) {
 	slog.Info("detecting target disk", "minSizeGB", minSizeGB)
 	entries, err := os.ReadDir("/sys/block")
 	if err != nil {
 		return "", fmt.Errorf("reading /sys/block: %w", err)
 	}
+
+	allowRemovable := os.Getenv("BOOTY_ALLOW_REMOVABLE") == "true"
 
 	type candidate struct {
 		path   string
@@ -282,6 +294,11 @@ func (m *Manager) DetectDisk(_ context.Context, minSizeGB int) (string, error) {
 	for _, entry := range entries {
 		name := entry.Name()
 		if isVirtualDisk(name) {
+			continue
+		}
+
+		if !allowRemovable && m.isRemovableMedia(name) {
+			slog.Warn("skipping removable media device", "device", "/dev/"+name)
 			continue
 		}
 
@@ -315,6 +332,16 @@ func (m *Manager) DetectDisk(_ context.Context, minSizeGB int) (string, error) {
 
 	slog.Info("selected disk", "device", best.path, "sizeGB", best.sizeGB, "nvme", best.isNVMe)
 	return best.path, nil
+}
+
+// isRemovableMedia reports whether the block device is removable (USB, SD card).
+func (m *Manager) isRemovableMedia(name string) bool {
+	path := m.sysfsRoot + "/block/" + name + "/removable"
+	data, err := os.ReadFile(path) //nolint:gocritic // path join not needed for sysfs
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(data)) == "1"
 }
 
 // isVirtualDisk checks if a block device name is virtual and should be

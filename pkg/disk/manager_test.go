@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -706,6 +707,57 @@ func TestDisableLVMSuccess(t *testing.T) {
 
 	if err := mgr.DisableLVM(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestIsRemovableMedia(t *testing.T) {
+	sysfs := t.TempDir()
+
+	writeRemovable := func(dev, value string) {
+		dir := sysfs + "/block/" + dev
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+		if err := os.WriteFile(dir+"/removable", []byte(value), 0o644); err != nil {
+			t.Fatalf("write removable: %v", err)
+		}
+	}
+
+	writeRemovable("sda", "0\n")
+	writeRemovable("sdb", "1\n")
+	writeRemovable("sdc", "1")
+
+	mgr := newManagerWithSysfs(newMockCommander(), sysfs)
+
+	if mgr.isRemovableMedia("sda") {
+		t.Error("sda: expected non-removable (value 0)")
+	}
+	if !mgr.isRemovableMedia("sdb") {
+		t.Error("sdb: expected removable (value 1)")
+	}
+	if !mgr.isRemovableMedia("sdc") {
+		t.Error("sdc: expected removable (value 1, no newline)")
+	}
+	if mgr.isRemovableMedia("sdz") {
+		t.Error("sdz: missing sysfs file should not be removable")
+	}
+}
+
+func TestIsRemovableMediaAllowEnv(t *testing.T) {
+	sysfs := t.TempDir()
+
+	dir := sysfs + "/block/sda"
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(dir+"/removable", []byte("1\n"), 0o644); err != nil {
+		t.Fatalf("write removable: %v", err)
+	}
+
+	mgr := newManagerWithSysfs(newMockCommander(), sysfs)
+
+	if !mgr.isRemovableMedia("sda") {
+		t.Fatal("expected sda to be removable")
 	}
 }
 
