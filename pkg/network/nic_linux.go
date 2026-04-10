@@ -110,9 +110,7 @@ var mgmtPrefixes = []string{"mgmt", "management"}
 //  2. Management name prefixes (mgmt*, management*)
 //  3. First non-loopback interface with a MAC and an IP (fallback, logs a warning)
 func selectIPMIInterface(ifaces []net.Interface) (*net.Interface, error) {
-	return selectIPMIInterfaceWith(ifaces, func(i net.Interface) ([]net.Addr, error) {
-		return i.Addrs()
-	})
+	return selectIPMIInterfaceWith(ifaces, ifaceAddrs)
 }
 
 func selectIPMIInterfaceWith(ifaces []net.Interface, getAddrs func(net.Interface) ([]net.Addr, error)) (*net.Interface, error) {
