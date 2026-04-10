@@ -975,6 +975,33 @@ func TestInjectCloudInit_TrimmedBondAndDNSValues(t *testing.T) {
 	}
 }
 
+// TestDetectDisk_CharDeviceRejected verifies that detectDisk rejects a character
+// device when DiskDevice is explicitly configured. Both the validatePartitionLayoutDevice
+// and detectDisk code paths must reject character devices consistently.
+func TestDetectDisk_CharDeviceRejected(t *testing.T) {
+	// /dev/null is always a character device on Linux; use it as a stand-in for
+	// a misconfigured char device path.
+	charDevice := "/dev/null"
+	info, err := os.Stat(charDevice)
+	if err != nil {
+		t.Skipf("cannot stat %s: %v", charDevice, err)
+	}
+	if info.Mode()&os.ModeCharDevice == 0 {
+		t.Skipf("%s is not a character device on this host", charDevice)
+	}
+
+	cfg := &config.MachineConfig{DiskDevice: charDevice}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err = o.detectDisk(context.Background())
+	if err == nil {
+		t.Fatal("expected error when DiskDevice is a character device, got nil")
+	}
+	if !strings.Contains(err.Error(), "not a block device") {
+		t.Fatalf("expected 'not a block device' in error, got: %v", err)
+	}
+}
+
 func TestIsSensitiveEnvKey(t *testing.T) {
 	tests := []struct {
 		key  string
