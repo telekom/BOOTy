@@ -634,6 +634,7 @@ BGP_NEIGHBORS="10.0.0.1,10.0.0.2"
 bgp_remote_asn="65100"
 BGP_UNDERLAY_AF="ipv6"
 BGP_OVERLAY_TYPE="l3vpn"
+BGP_AUTH_PASSWORD="s3cr3t"
 `
 	cfg, err := ParseVars(strings.NewReader(input))
 	if err != nil {
@@ -653,6 +654,9 @@ BGP_OVERLAY_TYPE="l3vpn"
 	}
 	if cfg.BGPOverlayType != "l3vpn" {
 		t.Errorf("BGPOverlayType = %q, want l3vpn", cfg.BGPOverlayType)
+	}
+	if cfg.BGPAuthPassword != "s3cr3t" {
+		t.Errorf("BGPAuthPassword = %q, want s3cr3t", cfg.BGPAuthPassword)
 	}
 }
 

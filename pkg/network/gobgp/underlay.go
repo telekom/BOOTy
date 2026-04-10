@@ -422,7 +422,7 @@ func (u *UnderlayTier) addNumberedPeer(ctx context.Context, addr string, familie
 	peer := buildNumberedPeer(u.cfg, addr, families)
 
 	if u.cfg.AuthPassword != "" {
-		u.log.Info("TCP-MD5 authentication configured for BGP peer", "address", addr)
+		u.log.Info("tcp-md5 authentication configured for BGP peer", "address", addr)
 	}
 
 	sessionType := "iBGP"
