@@ -163,7 +163,7 @@ func TestBootAllNodesReachCAPRF(t *testing.T) {
 						t.Logf("%s BOOTy exhausted network retries (round %d)", c.desc, round)
 						break
 					}
-					_, err := bootDockerExec(t, c.name, "wget", "-q", "-O", "/dev/null", "--timeout=5", "http://10.100.0.11/health")
+					_, err := bootDockerExec(t, c.name, "wget", "-q", "-O", "/dev/null", "--tries=1", "--timeout=5", "http://10.100.0.11/health")
 					if err == nil {
 						reachable = true
 						t.Logf("%s node reached CAPRF after %d attempts (round %d)", c.desc, i+1, round)
@@ -209,7 +209,7 @@ func TestBootAllNodesReachNginx(t *testing.T) {
 						t.Logf("%s BOOTy exhausted network retries (round %d)", c.desc, round)
 						break
 					}
-					_, err := bootDockerExec(t, c.name, "wget", "-q", "-O", "/dev/null", "--timeout=5", "http://10.100.0.10/")
+					_, err := bootDockerExec(t, c.name, "wget", "-q", "-O", "/dev/null", "--tries=1", "--timeout=5", "http://10.100.0.10/")
 					if err == nil {
 						reachable = true
 						break
@@ -379,7 +379,7 @@ func TestBootAllNodesImageReachableThroughEVPN(t *testing.T) {
 						t.Logf("%s BOOTy exhausted network retries (round %d)", c.desc, round)
 						break
 					}
-					out, err := bootDockerExec(t, c.name, "wget", "-qO-", "--timeout=5", "http://10.100.0.10/images/")
+					out, err := bootDockerExec(t, c.name, "wget", "-qO-", "--tries=1", "--timeout=5", "http://10.100.0.10/images/")
 					if err == nil && strings.Contains(out, "test.img.gz") {
 						ok = true
 						break
