@@ -17,6 +17,9 @@ func TestTargetPartitionNode(t *testing.T) {
 		{"nvme partition 3", "/dev/nvme0n1", 3, "/dev/nvme0n1p3"},
 		{"loop partition 1", "/dev/loop0", 1, "/dev/loop0p1"},
 		{"vda partition 2", "/dev/vda", 2, "/dev/vda2"},
+		{"mmcblk partition 1", "/dev/mmcblk0", 1, "/dev/mmcblk0p1"},
+		{"mmcblk partition 2", "/dev/mmcblk0", 2, "/dev/mmcblk0p2"},
+		{"mmcblk1 partition 3", "/dev/mmcblk1", 3, "/dev/mmcblk1p3"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

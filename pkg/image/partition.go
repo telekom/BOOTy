@@ -250,10 +250,10 @@ func ddPartition(ctx context.Context, src, dst string) error {
 }
 
 // targetPartitionNode derives the partition device node for a given disk and
-// partition number. Handles both /dev/sdX and /dev/nvme0n1 naming.
+// partition number. Handles /dev/sdX, /dev/nvme0n1, and /dev/mmcblk0 naming.
 func targetPartitionNode(disk string, partNum int) string {
-	// NVMe devices use "p" separator: /dev/nvme0n1p1.
-	if strings.Contains(disk, "nvme") || strings.Contains(disk, "loop") {
+	// NVMe, MMC, and loop devices use "p" separator: /dev/nvme0n1p1, /dev/mmcblk0p1, /dev/loop0p1.
+	if strings.Contains(disk, "nvme") || strings.Contains(disk, "mmcblk") || strings.Contains(disk, "loop") {
 		return fmt.Sprintf("%sp%d", disk, partNum)
 	}
 	// SCSI/SATA: /dev/sda1.
