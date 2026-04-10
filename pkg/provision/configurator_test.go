@@ -3,6 +3,8 @@
 package provision
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -290,5 +292,40 @@ func TestConfigureDNSMissingEtcDir(t *testing.T) {
 	cfg := &config.MachineConfig{DNSResolvers: "8.8.8.8"}
 	if err := c.ConfigureDNS(cfg); err != nil {
 		t.Fatalf("expected nil when etc/ doesn't exist, got: %v", err)
+	}
+}
+
+func TestCopyTreeCancelledBeforeStart(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(src, "file.txt"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := copyTree(ctx, src, dst)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got: %v", err)
+	}
+}
+
+func TestCopyFileCancelledBeforeStart(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	srcFile := filepath.Join(src, "file.txt")
+	if err := os.WriteFile(srcFile, []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := copyFile(ctx, srcFile, filepath.Join(dst, "file.txt"))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got: %v", err)
 	}
 }

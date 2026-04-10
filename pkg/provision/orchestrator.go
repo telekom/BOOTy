@@ -302,8 +302,8 @@ func (o *Orchestrator) setHostname(_ context.Context) error {
 	return o.config.SetHostname(o.cfg)
 }
 
-func (o *Orchestrator) copyProvisionerFiles(_ context.Context) error {
-	return o.config.CopyProvisionerFiles()
+func (o *Orchestrator) copyProvisionerFiles(ctx context.Context) error {
+	return o.config.CopyProvisionerFiles(ctx)
 }
 
 func (o *Orchestrator) configureDNS(_ context.Context) error {
@@ -802,8 +802,8 @@ func (o *Orchestrator) injectCloudInit(_ context.Context) error {
 	return nil
 }
 
-func (o *Orchestrator) copyMachineFiles(_ context.Context) error {
-	return o.config.CopyMachineFiles()
+func (o *Orchestrator) copyMachineFiles(ctx context.Context) error {
+	return o.config.CopyMachineFiles(ctx)
 }
 
 func (o *Orchestrator) runMachineCommands(ctx context.Context) error {

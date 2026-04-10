@@ -1207,10 +1207,10 @@ func TestMachineFilesAndCommandsNoopE2E(t *testing.T) {
 	root := t.TempDir()
 	c.SetRootDir(root)
 
-	if err := c.CopyProvisionerFiles(); err != nil {
+	if err := c.CopyProvisionerFiles(context.Background()); err != nil {
 		t.Fatalf("CopyProvisionerFiles: %v", err)
 	}
-	if err := c.CopyMachineFiles(); err != nil {
+	if err := c.CopyMachineFiles(context.Background()); err != nil {
 		t.Fatalf("CopyMachineFiles: %v", err)
 	}
 	if err := c.RunMachineCommands(context.Background()); err != nil {
