@@ -714,6 +714,7 @@ func TestIsRemovableMedia(t *testing.T) {
 	sysfs := t.TempDir()
 
 	writeRemovable := func(dev, value string) {
+		t.Helper()
 		dir := sysfs + "/block/" + dev
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", dir, err)
@@ -738,26 +739,40 @@ func TestIsRemovableMedia(t *testing.T) {
 	if !mgr.isRemovableMedia("sdc") {
 		t.Error("sdc: expected removable (value 1, no newline)")
 	}
-	if mgr.isRemovableMedia("sdz") {
-		t.Error("sdz: missing sysfs file should not be removable")
+	if !mgr.isRemovableMedia("sdz") {
+		t.Error("sdz: missing sysfs file should be treated as removable (fail closed)")
 	}
 }
 
 func TestIsRemovableMediaAllowEnv(t *testing.T) {
 	sysfs := t.TempDir()
 
-	dir := sysfs + "/block/sda"
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
+	writeDevice := func(dev, removable, sectors string) {
+		t.Helper()
+		dir := sysfs + "/block/" + dev
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+		if err := os.WriteFile(dir+"/removable", []byte(removable), 0o644); err != nil {
+			t.Fatalf("write removable: %v", err)
+		}
+		if err := os.WriteFile(dir+"/size", []byte(sectors), 0o644); err != nil {
+			t.Fatalf("write size: %v", err)
+		}
 	}
-	if err := os.WriteFile(dir+"/removable", []byte("1\n"), 0o644); err != nil {
-		t.Fatalf("write removable: %v", err)
-	}
+
+	// sda is removable; large enough to be selected if env var is set.
+	writeDevice("sda", "1\n", "419430400\n") // 200 GB in 512-byte sectors
+
+	t.Setenv("BOOTY_ALLOW_REMOVABLE", "true")
 
 	mgr := newManagerWithSysfs(newMockCommander(), sysfs)
-
-	if !mgr.isRemovableMedia("sda") {
-		t.Fatal("expected sda to be removable")
+	disk, err := mgr.DetectDisk(t.Context(), 0)
+	if err != nil {
+		t.Fatalf("DetectDisk: unexpected error: %v", err)
+	}
+	if disk != "/dev/sda" {
+		t.Errorf("expected /dev/sda to be selected, got %q", disk)
 	}
 }
 

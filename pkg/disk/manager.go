@@ -277,9 +277,10 @@ func (m *Manager) CreateRAIDArray(ctx context.Context, name string, level int, d
 // Removable media (USB drives, SD cards) are rejected unless BOOTY_ALLOW_REMOVABLE=true.
 func (m *Manager) DetectDisk(_ context.Context, minSizeGB int) (string, error) {
 	slog.Info("detecting target disk", "minSizeGB", minSizeGB)
-	entries, err := os.ReadDir("/sys/block")
+	blockDir := m.sysfsRoot + "/block"
+	entries, err := os.ReadDir(blockDir)
 	if err != nil {
-		return "", fmt.Errorf("reading /sys/block: %w", err)
+		return "", fmt.Errorf("reading %s: %w", blockDir, err)
 	}
 
 	allowRemovable := os.Getenv("BOOTY_ALLOW_REMOVABLE") == "true"
@@ -302,7 +303,7 @@ func (m *Manager) DetectDisk(_ context.Context, minSizeGB int) (string, error) {
 			continue
 		}
 
-		sizeGB, err := readDiskSizeGB(name)
+		sizeGB, err := m.readDiskSizeGB(name)
 		if err != nil {
 			continue
 		}
@@ -335,11 +336,14 @@ func (m *Manager) DetectDisk(_ context.Context, minSizeGB int) (string, error) {
 }
 
 // isRemovableMedia reports whether the block device is removable (USB, SD card).
+// Fails closed: if the sysfs attribute cannot be read, the device is treated as
+// removable to err on the side of caution.
 func (m *Manager) isRemovableMedia(name string) bool {
 	path := m.sysfsRoot + "/block/" + name + "/removable"
 	data, err := os.ReadFile(path) //nolint:gocritic // path join not needed for sysfs
 	if err != nil {
-		return false
+		slog.Warn("cannot read removable attribute; treating as removable", "device", name, "err", err)
+		return true
 	}
 	return strings.TrimSpace(string(data)) == "1"
 }
@@ -356,8 +360,8 @@ func isVirtualDisk(name string) bool {
 }
 
 // readDiskSizeGB reads the size of a block device in GB from sysfs.
-func readDiskSizeGB(name string) (int, error) {
-	sizePath := "/sys/block/" + name + "/size" //nolint:gocritic // path join not needed for sysfs
+func (m *Manager) readDiskSizeGB(name string) (int, error) {
+	sizePath := m.sysfsRoot + "/block/" + name + "/size" //nolint:gocritic // path join not needed for sysfs
 	data, err := os.ReadFile(sizePath)
 	if err != nil {
 		return 0, fmt.Errorf("read disk size %s: %w", name, err)
