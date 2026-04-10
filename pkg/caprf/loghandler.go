@@ -80,6 +80,21 @@ func splitCamel(s string) []string {
 	return segs
 }
 
+// endsWithWordKey reports whether s ends with "key" as a whole word, meaning
+// the "key" suffix is preceded by a non-letter character or "key" is the entire
+// string. This avoids false positives from words like "monkey" or "hockey".
+func endsWithWordKey(s string) bool {
+	if !strings.HasSuffix(s, "key") {
+		return false
+	}
+	before := s[:len(s)-3]
+	if before == "" {
+		return true
+	}
+	runes := []rune(before)
+	return !unicode.IsLetter(runes[len(runes)-1])
+}
+
 // isSensitiveKey reports whether any segment of key exactly matches a sensitive
 // word, or the full lowercased key contains a high-signal substring (fallback for
 // all-lowercase concatenated forms like "apikey", "secretkey", "privatekey").
@@ -90,7 +105,7 @@ func isSensitiveKey(key string) bool {
 		}
 	}
 	lower := strings.ToLower(key)
-	if strings.HasSuffix(lower, "key") {
+	if endsWithWordKey(lower) {
 		return true
 	}
 	for _, word := range highSignalWords {

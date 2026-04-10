@@ -320,8 +320,12 @@ func TestHandleRedactsSensitiveAttrs_Grouped(t *testing.T) {
 	var mu sync.Mutex
 	var bodies []string
 
-	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "read error", http.StatusInternalServerError)
+			return
+		}
 		mu.Lock()
 		bodies = append(bodies, string(body))
 		mu.Unlock()
@@ -372,7 +376,7 @@ func TestHandleRedactsSensitiveAttrs(t *testing.T) {
 
 	cfg := &config.MachineConfig{
 		Token:  "redact-test-token",
-		LogURL: srv.URL,
+		LogURL: srv.URL + "/log",
 	}
 	client := NewFromConfig(cfg)
 
