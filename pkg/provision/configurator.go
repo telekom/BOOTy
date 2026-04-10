@@ -200,7 +200,7 @@ func (c *Configurator) copyTreeIntoChroot(ctx context.Context, srcBase, label st
 }
 
 // copyTree copies all files from srcBase into destRoot, preserving directory structure.
-// Symlinks and paths that escape destRoot are rejected to prevent path traversal.
+// Symlinks are skipped with a warning; paths that escape destRoot are rejected to prevent path traversal.
 func copyTree(ctx context.Context, srcBase, destRoot string) error {
 	cleanDest, err := filepath.Abs(destRoot)
 	if err != nil {
@@ -211,9 +211,9 @@ func copyTree(ctx context.Context, srcBase, destRoot string) error {
 			return fmt.Errorf("walk %s: %w", path, walkErr)
 		}
 		if err := ctx.Err(); err != nil {
-			return err
+			return fmt.Errorf("copy tree canceled: %w", err)
 		}
-		// Reject symlinks to prevent following links that escape the tree.
+		// Skip symlinks with a warning to prevent following links that escape the tree.
 		if d.Type()&os.ModeSymlink != 0 {
 			slog.Warn("skipping symlink in copy tree", "path", path)
 			return nil
@@ -600,10 +600,12 @@ func hasPCIVendor(vendorID string) (bool, error) {
 	return false, nil
 }
 
-// copyFile copies a file preserving permissions.
+// copyFile copies a file preserving permissions. The copy respects context
+// cancellation: if ctx is canceled mid-copy, the source file is closed which
+// terminates the in-progress io.Copy and the error is returned.
 func copyFile(ctx context.Context, src, dst string) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("copy file canceled: %w", err)
 	}
 	info, err := os.Stat(src)
 	if err != nil {
@@ -624,8 +626,20 @@ func copyFile(ctx context.Context, src, dst string) error {
 	}
 	defer func() { _ = out.Close() }()
 
-	if _, err = io.Copy(out, in); err != nil {
-		return fmt.Errorf("copy %s -> %s: %w", src, dst, err)
+	copyDone := make(chan error, 1)
+	go func() {
+		_, cpErr := io.Copy(out, in)
+		copyDone <- cpErr
+	}()
+
+	select {
+	case <-ctx.Done():
+		_ = in.Close()
+		return fmt.Errorf("copy %s -> %s canceled: %w", src, dst, ctx.Err())
+	case cpErr := <-copyDone:
+		if cpErr != nil {
+			return fmt.Errorf("copy %s -> %s: %w", src, dst, cpErr)
+		}
+		return nil
 	}
-	return nil
 }
