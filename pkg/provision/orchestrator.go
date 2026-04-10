@@ -459,8 +459,8 @@ func (o *Orchestrator) detectDisk(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("configured disk device %s: %w", o.cfg.DiskDevice, err)
 		}
-		if info.Mode()&os.ModeDevice == 0 {
-			return fmt.Errorf("configured disk device %s is not a device node", o.cfg.DiskDevice)
+		if info.Mode()&os.ModeDevice == 0 || info.Mode()&os.ModeCharDevice != 0 {
+			return fmt.Errorf("configured disk device %s is not a block device", o.cfg.DiskDevice)
 		}
 		o.log.Info("Using configured disk device", "device", o.cfg.DiskDevice)
 		o.targetDisk = o.cfg.DiskDevice
