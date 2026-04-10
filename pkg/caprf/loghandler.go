@@ -80,9 +80,17 @@ func splitCamel(s string) []string {
 	return segs
 }
 
+// sensitiveKeyPrefixes are known sensitive prefixes that form a sensitive
+// compound key when directly concatenated with "key" (no separator), e.g.
+// "apikey". Separator-delimited forms like "api_key" are already caught by
+// the word-boundary check in endsWithWordKey.
+var sensitiveKeyPrefixes = []string{"api"}
+
 // endsWithWordKey reports whether s ends with "key" as a whole word, meaning
-// the "key" suffix is preceded by a non-letter character or "key" is the entire
-// string. This avoids false positives from words like "monkey" or "hockey".
+// the "key" suffix is preceded by a non-letter character, "key" is the entire
+// string, or the prefix before "key" is a known sensitive keyword. This avoids
+// false positives from common words like "monkey" or "hockey" while correctly
+// matching compound forms like "apikey".
 func endsWithWordKey(s string) bool {
 	if !strings.HasSuffix(s, "key") {
 		return false
@@ -92,7 +100,16 @@ func endsWithWordKey(s string) bool {
 		return true
 	}
 	runes := []rune(before)
-	return !unicode.IsLetter(runes[len(runes)-1])
+	if !unicode.IsLetter(runes[len(runes)-1]) {
+		return true
+	}
+	// Check known sensitive prefixes that compound directly with "key".
+	for _, prefix := range sensitiveKeyPrefixes {
+		if strings.HasSuffix(before, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // isSensitiveKey reports whether any segment of key exactly matches a sensitive
