@@ -179,29 +179,29 @@ func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineCon
 }
 
 // CopyProvisionerFiles copies files from /deploy/file-system/ to the root.
-func (c *Configurator) CopyProvisionerFiles() error {
-	return c.copyTreeIntoChroot("/deploy/file-system", "provisioner files")
+func (c *Configurator) CopyProvisionerFiles(ctx context.Context) error {
+	return c.copyTreeIntoChroot(ctx, "/deploy/file-system", "provisioner files")
 }
 
 // CopyMachineFiles copies files from /deploy/machine-files/ to the root.
-func (c *Configurator) CopyMachineFiles() error {
-	return c.copyTreeIntoChroot("/deploy/machine-files", "machine files")
+func (c *Configurator) CopyMachineFiles(ctx context.Context) error {
+	return c.copyTreeIntoChroot(ctx, "/deploy/machine-files", "machine files")
 }
 
 // copyTreeIntoChroot copies all files from srcBase into the chroot root.
 // If srcBase does not exist, it logs and returns nil.
-func (c *Configurator) copyTreeIntoChroot(srcBase, label string) error {
+func (c *Configurator) copyTreeIntoChroot(ctx context.Context, srcBase, label string) error {
 	if _, err := os.Stat(srcBase); os.IsNotExist(err) {
 		slog.Info("no directory found", "label", label, "path", srcBase)
 		return nil
 	}
 	slog.Info("copying files", "label", label, "src", srcBase)
-	return copyTree(srcBase, c.rootDir)
+	return copyTree(ctx, srcBase, c.rootDir)
 }
 
 // copyTree copies all files from srcBase into destRoot, preserving directory structure.
 // Symlinks and paths that escape destRoot are rejected to prevent path traversal.
-func copyTree(srcBase, destRoot string) error {
+func copyTree(ctx context.Context, srcBase, destRoot string) error {
 	cleanDest, err := filepath.Abs(destRoot)
 	if err != nil {
 		return fmt.Errorf("resolve dest root: %w", err)
@@ -209,6 +209,9 @@ func copyTree(srcBase, destRoot string) error {
 	if err := filepath.WalkDir(srcBase, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return fmt.Errorf("walk %s: %w", path, walkErr)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		// Reject symlinks to prevent following links that escape the tree.
 		if d.Type()&os.ModeSymlink != 0 {
@@ -227,7 +230,7 @@ func copyTree(srcBase, destRoot string) error {
 		if d.IsDir() {
 			return os.MkdirAll(destPath, 0o755)
 		}
-		return copyFile(path, destPath)
+		return copyFile(ctx, path, destPath)
 	}); err != nil {
 		return fmt.Errorf("copy tree from %s: %w", srcBase, err)
 	}
@@ -598,7 +601,10 @@ func hasPCIVendor(vendorID string) (bool, error) {
 }
 
 // copyFile copies a file preserving permissions.
-func copyFile(src, dst string) error {
+func copyFile(ctx context.Context, src, dst string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	info, err := os.Stat(src)
 	if err != nil {
 		return fmt.Errorf("stat %s: %w", src, err)

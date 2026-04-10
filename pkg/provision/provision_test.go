@@ -278,7 +278,7 @@ func TestConfigureGRUB(t *testing.T) {
 func TestCopyProvisionerFilesNotExist(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
-	if err := c.CopyProvisionerFiles(); err != nil {
+	if err := c.CopyProvisionerFiles(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -286,7 +286,7 @@ func TestCopyProvisionerFilesNotExist(t *testing.T) {
 func TestCopyMachineFilesNotExist(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
-	if err := c.CopyMachineFiles(); err != nil {
+	if err := c.CopyMachineFiles(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -717,7 +717,7 @@ func TestCopyTreeNormalFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := copyTree(src, dst); err != nil {
+	if err := copyTree(context.Background(), src, dst); err != nil {
 		t.Fatalf("copyTree() unexpected error: %v", err)
 	}
 
@@ -743,7 +743,7 @@ func TestCopyTreeSymlinksSkipped(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := copyTree(src, dst); err != nil {
+	if err := copyTree(context.Background(), src, dst); err != nil {
 		t.Fatalf("copyTree() unexpected error: %v", err)
 	}
 
@@ -766,7 +766,7 @@ func TestCopyTreePathTraversal(t *testing.T) {
 	}
 
 	// Normal copy should succeed.
-	if err := copyTree(src, dst); err != nil {
+	if err := copyTree(context.Background(), src, dst); err != nil {
 		t.Fatalf("copyTree() on clean tree should succeed: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dst, "ok.txt")); err != nil {
@@ -784,7 +784,7 @@ func TestCopyTreePathTraversal(t *testing.T) {
 
 	dst2 := t.TempDir()
 	// Copy should skip the symlink (no error, but symlink not followed).
-	if err := copyTree(src, dst2); err != nil {
+	if err := copyTree(context.Background(), src, dst2); err != nil {
 		t.Fatalf("copyTree() should skip symlinks without error: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dst2, "escape")); !os.IsNotExist(err) {
