@@ -19,7 +19,7 @@ find . -print0 | cpio --null -ov --format=newc 2>/dev/null | gzip > /tmp/initram
 # ── Set up QEMU networking ─────────────────────────────────────────────
 # Wait for eth1 (containerlab data interface)
 ETH1_READY=false
-for i in $(seq 1 60); do
+for i in $(seq 1 180); do
     if ip link show eth1 >/dev/null 2>&1; then
         ETH1_READY=true
         break
@@ -28,7 +28,7 @@ for i in $(seq 1 60); do
 done
 
 if [ "$ETH1_READY" != "true" ]; then
-    echo "[boot.sh] ERROR: eth1 not found after 30s — containerlab link not ready" >&2
+    echo "[boot.sh] ERROR: eth1 not found after 90s — containerlab link not ready" >&2
     exit 1
 fi
 
