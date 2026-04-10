@@ -159,7 +159,7 @@ func (u *UnderlayTier) Ready(ctx context.Context, timeout time.Duration) error {
 			return fmt.Errorf("timed out waiting for BGP peers to establish")
 		case <-ticker.C:
 			if u.hasEstablishedPeer(ctx) {
-				u.log.Info("Underlay BGP peer established")
+				u.log.Info("underlay BGP peer established")
 				return nil
 			}
 		}
