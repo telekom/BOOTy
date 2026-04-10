@@ -200,7 +200,7 @@ func GetIPMIInfo() (mac, ip string, err error) {
 
 	iface, err := selectIPMIInterface(ifaces)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("select IPMI interface: %w", err)
 	}
 
 	addrs, err := iface.Addrs()
