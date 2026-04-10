@@ -976,7 +976,7 @@ func TestInjectCloudInit_TrimmedBondAndDNSValues(t *testing.T) {
 }
 
 // TestDetectDisk_CharDeviceRejected verifies that detectDisk rejects a character
-// device when DiskDevice is explicitly configured. Both the validatePartitionLayoutDevice
+// device when DiskDevice is explicitly configured. Both the validatePartitionLayoutConfig
 // and detectDisk code paths must reject character devices consistently.
 func TestDetectDisk_CharDeviceRejected(t *testing.T) {
 	// /dev/null is always a character device on Linux; use it as a stand-in for
