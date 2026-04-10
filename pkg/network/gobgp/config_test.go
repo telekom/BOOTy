@@ -1,8 +1,10 @@
 package gobgp
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/telekom/BOOTy/pkg/network"
 )
@@ -601,4 +603,72 @@ func TestApplyDefaultsNormalizesUnderlayAFAndOverlayType(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUnderlayTierReady(t *testing.T) {
+	makeUnderlay := func(minPeers int, countFn func(context.Context) int) *UnderlayTier {
+		cfg := &Config{MinEstablishedPeers: minPeers}
+		u := NewUnderlayTier(cfg)
+		u.peerCountFn = countFn
+		return u
+	}
+
+	t.Run("succeeds_when_threshold_met_immediately", func(t *testing.T) {
+		u := makeUnderlay(1, func(_ context.Context) int { return 1 })
+		ctx := context.Background()
+		if err := u.Ready(ctx, 5*time.Second); err != nil {
+			t.Fatalf("Ready() = %v, want nil", err)
+		}
+	})
+
+	t.Run("succeeds_when_threshold_met_on_second_tick", func(t *testing.T) {
+		calls := 0
+		u := makeUnderlay(2, func(_ context.Context) int {
+			calls++
+			if calls >= 2 {
+				return 2
+			}
+			return 0
+		})
+		ctx := context.Background()
+		if err := u.Ready(ctx, 5*time.Second); err != nil {
+			t.Fatalf("Ready() = %v, want nil", err)
+		}
+	})
+
+	t.Run("returns_error_on_timeout", func(t *testing.T) {
+		u := makeUnderlay(3, func(_ context.Context) int { return 0 })
+		ctx := context.Background()
+		err := u.Ready(ctx, 1100*time.Millisecond)
+		if err == nil {
+			t.Fatal("Ready() = nil, want timeout error")
+		}
+	})
+
+	t.Run("returns_error_on_context_cancel", func(t *testing.T) {
+		u := makeUnderlay(1, func(_ context.Context) int { return 0 })
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		err := u.Ready(ctx, 5*time.Second)
+		if err == nil {
+			t.Fatal("Ready() = nil, want context error")
+		}
+	})
+
+	t.Run("min_peers_greater_than_one", func(t *testing.T) {
+		u := makeUnderlay(3, func(_ context.Context) int { return 3 })
+		ctx := context.Background()
+		if err := u.Ready(ctx, 5*time.Second); err != nil {
+			t.Fatalf("Ready() = %v, want nil", err)
+		}
+	})
+
+	t.Run("count_below_threshold_does_not_succeed", func(t *testing.T) {
+		u := makeUnderlay(3, func(_ context.Context) int { return 2 })
+		ctx := context.Background()
+		err := u.Ready(ctx, 1100*time.Millisecond)
+		if err == nil {
+			t.Fatal("Ready() = nil, want timeout error when count < min")
+		}
+	})
 }

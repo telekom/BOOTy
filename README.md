@@ -335,6 +335,7 @@ go run server/server.go \
 | `VRF_TABLE_ID` | `1` | VRF routing table ID (0 uses default of 1) |
 | `BGP_KEEPALIVE` | `0` | Optional BGP keepalive timer in seconds (0 = stack default) |
 | `BGP_HOLD` | `0` | Optional BGP hold timer in seconds (0 = stack default) |
+| `BGP_MIN_PEERS` | `1` | Minimum number of BGP peers that must reach ESTABLISHED state before underlay is considered ready |
 | `BFD_TRANSMIT_MS` | `0` | Optional BFD transmit interval in milliseconds (0 = disabled) |
 | `BFD_RECEIVE_MS` | `0` | Optional BFD receive interval in milliseconds (0 = disabled) |
 | `underlay_subnet` | — | Underlay CIDR for FRR mode (e.g. `192.168.4.0/24`) |
