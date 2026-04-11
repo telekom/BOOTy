@@ -463,6 +463,23 @@ jobs:
             sleep 1
           done
 
+          # Check for EVPN routes on the control plane (FRR) instead of sleeping unconditionally.
+          echo "Waiting for EVPN routes to appear on spine01 (up to 60s)..."
+          for j in $(seq 1 60); do
+            if sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null | grep -qE "\[[0-9]+\]:\[[0-9]+\]"; then
+              echo "EVPN routes detected after ${j}s"
+              sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp l2vpn evpn"
+              break
+            fi
+            sleep 1
+          done
+          if ! sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null | grep -qE "\[[0-9]+\]:\[[0-9]+\]"; then
+            echo "EVPN routes did not appear in 60s after BGP convergence"
+            sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp summary" || true
+            sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp l2vpn evpn" || true
+            exit 1
+          fi
+
       - name: Run E2E integration tests
         env:
           BOOTY_TOPOLOGY: lab
