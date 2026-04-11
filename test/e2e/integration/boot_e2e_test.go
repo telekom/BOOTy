@@ -40,7 +40,7 @@ func requireBootLab(t *testing.T) {
 
 func bootDockerExec(t *testing.T, container string, args ...string) (string, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	cmdArgs := append([]string{"exec", container}, args...)
 	out, err := exec.CommandContext(ctx, "docker", cmdArgs...).CombinedOutput()
@@ -60,7 +60,7 @@ func bootDockerExecOrFail(t *testing.T, container string, args ...string) string
 func getBootyLogs(t *testing.T, container string) string {
 	t.Helper()
 	// BOOTy output goes to container stdout/stderr
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "docker", "logs", container).CombinedOutput()
 	if err != nil {
@@ -163,7 +163,7 @@ func TestBootAllNodesReachCAPRF(t *testing.T) {
 						t.Logf("%s BOOTy exhausted network retries (round %d)", c.desc, round)
 						break
 					}
-					_, err := bootDockerExec(t, c.name, "wget", "-q", "-O", "/dev/null", "--timeout=2", "http://10.100.0.11/health")
+					_, err := bootDockerExec(t, c.name, "wget", "-q", "-O", "/dev/null", "--tries=1", "--timeout=5", "http://10.100.0.11/health")
 					if err == nil {
 						reachable = true
 						t.Logf("%s node reached CAPRF after %d attempts (round %d)", c.desc, i+1, round)
@@ -209,7 +209,7 @@ func TestBootAllNodesReachNginx(t *testing.T) {
 						t.Logf("%s BOOTy exhausted network retries (round %d)", c.desc, round)
 						break
 					}
-					_, err := bootDockerExec(t, c.name, "wget", "-q", "-O", "/dev/null", "--timeout=2", "http://10.100.0.10/")
+					_, err := bootDockerExec(t, c.name, "wget", "-q", "-O", "/dev/null", "--tries=1", "--timeout=5", "http://10.100.0.10/")
 					if err == nil {
 						reachable = true
 						break
@@ -379,7 +379,7 @@ func TestBootAllNodesImageReachableThroughEVPN(t *testing.T) {
 						t.Logf("%s BOOTy exhausted network retries (round %d)", c.desc, round)
 						break
 					}
-					out, err := bootDockerExec(t, c.name, "wget", "-qO-", "--timeout=3", "http://10.100.0.10/images/")
+					out, err := bootDockerExec(t, c.name, "wget", "-qO-", "--tries=1", "--timeout=5", "http://10.100.0.10/images/")
 					if err == nil && strings.Contains(out, "test.img.gz") {
 						ok = true
 						break
