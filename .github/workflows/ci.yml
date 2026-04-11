@@ -811,11 +811,27 @@ jobs:
             sudo docker exec clab-booty-boot-lab-spine01 vtysh -c "show bgp summary" || true
             exit 1
           fi
-          echo "Waiting 10s for EVPN data-plane to stabilize after BGP convergence..."
-          sleep 10
+          echo "Waiting for EVPN routes to appear after BGP convergence..."
+          for i in $(seq 1 60); do
+            if sudo docker exec clab-booty-boot-lab-spine01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null | grep -qE "\[[0-9]+\]:\[[0-9]+\]"; then
+              echo "EVPN routes detected after ${i}s"
+              sudo docker exec clab-booty-boot-lab-spine01 vtysh -c "show bgp l2vpn evpn"
+              break
+            fi
+            sleep 1
+          done
+          if ! sudo docker exec clab-booty-boot-lab-spine01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null | grep -qE "\[[0-9]+\]:\[[0-9]+\]"; then
+            echo "EVPN routes did not appear in 60s after BGP convergence"
+            sudo docker exec clab-booty-boot-lab-spine01 vtysh -c "show bgp summary" || true
+            sudo docker exec clab-booty-boot-lab-spine01 vtysh -c "show bgp l2vpn evpn" || true
+            exit 1
+          fi
 
       - name: Run BOOTy boot E2E tests
-        run: go test -tags e2e_boot -v -race -count=1 -timeout 30m -parallel=2 ./test/e2e/integration/...
+        # -parallel=2 is a no-op without t.Parallel(); use GOMAXPROCS to cap OS threads.
+        env:
+          GOMAXPROCS: "2"
+        run: go test -tags e2e_boot -v -race -count=1 -timeout 30m ./test/e2e/integration/...
 
       - name: Collect BOOTy container logs
         if: always()
@@ -1028,8 +1044,21 @@ jobs:
             sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp summary" || true
             exit 1
           fi
-          echo "Waiting 10s for EVPN data-plane to stabilize after BGP convergence..."
-          sleep 10
+          echo "Waiting for EVPN routes to appear after BGP convergence..."
+          for i in $(seq 1 60); do
+            if sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null | grep -qE "\[[0-9]+\]:\[[0-9]+\]"; then
+              echo "EVPN routes detected after ${i}s"
+              sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp l2vpn evpn"
+              break
+            fi
+            sleep 1
+          done
+          if ! sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp l2vpn evpn" 2>/dev/null | grep -qE "\[[0-9]+\]:\[[0-9]+\]"; then
+            echo "EVPN routes did not appear in 60s after BGP convergence"
+            sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp summary" || true
+            sudo docker exec clab-booty-vrnetlab-lab-spine01 vtysh -c "show bgp l2vpn evpn" || true
+            exit 1
+          fi
 
       - name: Wait for VM boot
         run: |
@@ -1046,7 +1075,10 @@ jobs:
           exit 1
 
       - name: Run vrnetlab EVPN E2E tests
-        run: go test -tags e2e_vrnetlab -v -race -count=1 -timeout 30m -parallel=2 ./test/e2e/integration/...
+        # -parallel=2 is a no-op without t.Parallel(); use GOMAXPROCS to cap OS threads.
+        env:
+          GOMAXPROCS: "2"
+        run: go test -tags e2e_vrnetlab -v -race -count=1 -timeout 30m ./test/e2e/integration/...
 
       - name: Collect vrnetlab logs
         if: always()
