@@ -454,13 +454,22 @@ jobs:
             sudo docker exec clab-booty-lab-spine01 vtysh -c "show bgp summary" || true
             exit 1
           fi
-          echo "Waiting 10s for EVPN data-plane to stabilize after BGP convergence..."
-          sleep 10
+          echo "Polling for EVPN routes on leaf01 (up to 30s)..."
+          for i in $(seq 1 30); do
+            if sudo docker exec clab-booty-lab-leaf01 ip -d link show type vxlan 2>/dev/null | grep -q "vxlan"; then
+              echo "EVPN data-plane ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
 
       - name: Run E2E integration tests
         env:
           BOOTY_TOPOLOGY: lab
-        run: go test -tags e2e_integration -v -race -count=1 -timeout 10m -parallel=2 ./test/e2e/integration/...
+          # -parallel limits t.Parallel() subtests (not used in e2e_integration); GOMAXPROCS caps
+          # OS threads to reduce runner contention.
+          GOMAXPROCS: "2"
+        run: go test -tags e2e_integration -v -race -count=1 -timeout 10m ./test/e2e/integration/...
 
       - name: Collect container logs
         if: always()
@@ -895,11 +904,21 @@ jobs:
             sudo docker exec clab-booty-gobgp-lab-spine01 vtysh -c "show bgp summary" || true
             exit 1
           fi
-          echo "Waiting 10s for EVPN data-plane to stabilize after BGP convergence..."
-          sleep 10
+          echo "Polling for EVPN routes on booty-unnumbered (up to 30s)..."
+          for i in $(seq 1 30); do
+            if sudo docker exec clab-booty-gobgp-lab-booty-unnumbered ip -d link show type vxlan 2>/dev/null | grep -q "vxlan"; then
+              echo "EVPN data-plane ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
 
       - name: Run GoBGP E2E tests
-        run: go test -tags e2e_gobgp -v -race -count=1 -timeout 10m -parallel=2 ./test/e2e/integration/...
+        # -parallel limits t.Parallel() subtests (not used in e2e_gobgp); GOMAXPROCS caps
+        # OS threads to reduce runner contention.
+        env:
+          GOMAXPROCS: "2"
+        run: go test -tags e2e_gobgp -v -race -count=1 -timeout 10m ./test/e2e/integration/...
 
       - name: Collect GoBGP logs
         if: always()
