@@ -80,7 +80,8 @@ func (cv *ChainVerifier) checkComponentPresence() []ComponentStatus {
 
 // findValidCandidate scans candidates in order, returning the first that exists
 // and passes PE/COFF validation (for .efi paths). If no candidate passes,
-// the returned ComponentStatus carries an error string.
+// the returned ComponentStatus carries an error string that distinguishes
+// "invalid PE/COFF header" (files found but corrupt) from "not found".
 func findValidCandidate(name string, candidates []string) ComponentStatus {
 	status := ComponentStatus{Name: name}
 	var lastValidationErr error
