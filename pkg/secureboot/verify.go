@@ -88,7 +88,13 @@ func findValidCandidate(name string, candidates []string) ComponentStatus {
 	anyFound := false
 	for _, path := range candidates {
 		if _, err := os.Stat(path); err != nil {
-			continue
+			// Distinguish between "not exists" (expected) and real IO/permission
+			// errors which should fail fast and be reported to the caller.
+			if os.IsNotExist(err) {
+				continue
+			}
+			status.Error = fmt.Sprintf("stat %s: %v", path, err)
+			return status
 		}
 		anyFound = true
 		if isEFIPath(path) {
@@ -124,7 +130,7 @@ func validatePEHeader(path string) error {
 		return fmt.Errorf("pe/coff parse failed: %w", err)
 	}
 	if err := f.Close(); err != nil {
-		slog.Warn("failed to close PE file", "path", path, "error", err)
+		return fmt.Errorf("close pe/coff file: %w", err)
 	}
 	return nil
 }
