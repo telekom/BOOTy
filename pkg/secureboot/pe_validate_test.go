@@ -1,29 +1,45 @@
 package secureboot
 
 import (
+	"debug/pe"
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
 // peOptionalHeader32PlusMinSize is the minimum size of a PE32+ optional header
-// (IMAGE_OPTIONAL_HEADER64), as required by the PE/COFF specification.
+// (IMAGE_OPTIONAL_HEADER64 = 112 bytes), as defined in the PE/COFF specification
+// §3.4. Note: PE32 (32-bit) uses IMAGE_OPTIONAL_HEADER32 (96 bytes); this
+// constant targets 64-bit EFI binaries which always use the 112-byte variant.
 const peOptionalHeader32PlusMinSize = 112
 
-// minimalValidPE returns a minimal PE32+ (64-bit) binary for use in tests.
-// PE32+ uses magic 0x020b and machine type AMD64 (0x8664), matching the
-// format used by real x86_64 EFI binaries such as shim and GRUB.
+// hostMachineType returns the PE machine type constant matching the host arch.
+// Tests use this to build minimal PE binaries that pass the arch validation added
+// to validatePEHeader.
+func hostMachineType() uint16 {
+	switch runtime.GOARCH {
+	case "arm64":
+		return pe.IMAGE_FILE_MACHINE_ARM64
+	default:
+		return pe.IMAGE_FILE_MACHINE_AMD64
+	}
+}
+
+// minimalValidPE returns a minimal PE32+ (64-bit) binary whose machine type
+// matches the host architecture, for use in tests that exercise validatePEHeader.
+// PE32+ uses magic 0x020b; the machine field is set from hostMachineType().
 func minimalValidPE() []byte {
 	const (
 		dosStubSize   = 64
 		peSignature   = 4
 		coffHdrSize   = 20
 		optHdrOffset  = dosStubSize + peSignature + coffHdrSize
-		machineAMD64  = uint16(0x8664)
 		magicPE32Plus = uint16(0x020b)
 	)
+	machine := hostMachineType()
 	buf := make([]byte, optHdrOffset+peOptionalHeader32PlusMinSize)
 
 	buf[0] = 'M'
@@ -33,7 +49,7 @@ func minimalValidPE() []byte {
 	copy(buf[dosStubSize:], []byte("PE\x00\x00"))
 
 	coffBase := dosStubSize + peSignature
-	binary.LittleEndian.PutUint16(buf[coffBase:], machineAMD64)
+	binary.LittleEndian.PutUint16(buf[coffBase:], machine)
 	binary.LittleEndian.PutUint16(buf[coffBase+16:], peOptionalHeader32PlusMinSize)
 	binary.LittleEndian.PutUint16(buf[coffBase+18:], 0x0002)
 

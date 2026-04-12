@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/telekom/BOOTy/pkg/efi"
@@ -123,14 +124,44 @@ func isEFIPath(path string) bool {
 }
 
 // validatePEHeader opens path as a PE/COFF binary using debug/pe and
-// returns an error if the file is missing, truncated, or has an invalid header.
+// returns an error if the file is missing, truncated, has an invalid header,
+// or has a machine type that does not match the host architecture.
 func validatePEHeader(path string) error {
 	f, err := pe.Open(path)
 	if err != nil {
 		return fmt.Errorf("pe/coff parse failed: %w", err)
 	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("close pe/coff file: %w", err)
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			slog.Debug("pe/coff close failed", "path", path, "error", cerr)
+		}
+	}()
+
+	if err := validatePEMachineType(f); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validatePEMachineType returns an error if the PE machine type does not match
+// the host architecture. Only amd64 and arm64 are validated; unknown host
+// architectures are accepted without error to avoid false negatives.
+func validatePEMachineType(f *pe.File) error {
+	var wantMachine uint16
+	switch runtime.GOARCH {
+	case "amd64":
+		wantMachine = pe.IMAGE_FILE_MACHINE_AMD64
+	case "arm64":
+		wantMachine = pe.IMAGE_FILE_MACHINE_ARM64
+	default:
+		// Unknown host arch — skip machine type check.
+		return nil
+	}
+
+	got := f.FileHeader.Machine
+	if got != wantMachine {
+		return fmt.Errorf("pe/coff machine type 0x%04x does not match host arch %s (want 0x%04x)",
+			got, runtime.GOARCH, wantMachine)
 	}
 	return nil
 }
