@@ -152,7 +152,12 @@ func filterAddressed(ifaces []net.Interface, getAddrs func(net.Interface) ([]net
 			continue
 		}
 		addrs, err := getAddrs(iface)
-		if err != nil || len(addrs) == 0 {
+		if err != nil {
+			slog.Debug("skipping interface: address enumeration failed",
+				"interface", iface.Name, "error", err)
+			continue
+		}
+		if len(addrs) == 0 {
 			continue
 		}
 		if hasValidIP(addrs) {
