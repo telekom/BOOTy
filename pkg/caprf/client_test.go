@@ -857,6 +857,17 @@ func TestParseVarsNumVFs(t *testing.T) {
 	}
 }
 
+func TestParseVarsBGPMinPeers(t *testing.T) {
+	input := `BGP_MIN_PEERS="3"`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BGPMinPeers != 3 {
+		t.Errorf("BGPMinPeers = %d, want 3", cfg.BGPMinPeers)
+	}
+}
+
 func TestParseVarsDisableKexec(t *testing.T) {
 	input := `DISABLE_KEXEC="true"`
 	cfg, err := ParseVars(strings.NewReader(input))

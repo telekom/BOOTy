@@ -54,12 +54,13 @@ const (
 // Depending on PeerMode it establishes unnumbered (link-local),
 // numbered (explicit IP), or a combination of both session types.
 type UnderlayTier struct {
-	bgp         *server.BgpServer
-	cfg         *Config
-	nics        []string
-	log         *slog.Logger
-	stopRA      chan struct{}                 // signals the periodic RA goroutine to stop
-	peerCountFn func(ctx context.Context) int // overridable in tests; nil = use countEstablishedPeers
+	bgp          *server.BgpServer
+	cfg          *Config
+	nics         []string
+	log          *slog.Logger
+	stopRA       chan struct{}                 // signals the periodic RA goroutine to stop
+	peerCountFn  func(ctx context.Context) int // overridable in tests; nil = use countEstablishedPeers
+	pollInterval time.Duration                 // overridable in tests; zero = use default (1s)
 }
 
 // NewUnderlayTier creates a new underlay tier.
@@ -149,7 +150,11 @@ func (u *UnderlayTier) Ready(ctx context.Context, timeout time.Duration) error {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
-	ticker := time.NewTicker(time.Second)
+	interval := u.pollInterval
+	if interval <= 0 {
+		interval = time.Second
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	countPeers := u.countEstablishedPeers

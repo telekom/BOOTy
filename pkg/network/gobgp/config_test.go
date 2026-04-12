@@ -610,6 +610,7 @@ func TestUnderlayTierReady(t *testing.T) {
 		cfg := &Config{MinEstablishedPeers: minPeers}
 		u := NewUnderlayTier(cfg)
 		u.peerCountFn = countFn
+		u.pollInterval = time.Millisecond
 		return u
 	}
 
@@ -639,7 +640,7 @@ func TestUnderlayTierReady(t *testing.T) {
 	t.Run("returns_error_on_timeout", func(t *testing.T) {
 		u := makeUnderlay(3, func(_ context.Context) int { return 0 })
 		ctx := context.Background()
-		err := u.Ready(ctx, 1100*time.Millisecond)
+		err := u.Ready(ctx, 50*time.Millisecond)
 		if err == nil {
 			t.Fatal("Ready() = nil, want timeout error")
 		}
@@ -666,7 +667,7 @@ func TestUnderlayTierReady(t *testing.T) {
 	t.Run("count_below_threshold_does_not_succeed", func(t *testing.T) {
 		u := makeUnderlay(3, func(_ context.Context) int { return 2 })
 		ctx := context.Background()
-		err := u.Ready(ctx, 1100*time.Millisecond)
+		err := u.Ready(ctx, 50*time.Millisecond)
 		if err == nil {
 			t.Fatal("Ready() = nil, want timeout error when count < min")
 		}

@@ -205,7 +205,7 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("overlay type %q is not yet implemented", ot)
 	}
 	if c.MinEstablishedPeers < 1 {
-		return fmt.Errorf("min established peers %d is invalid (must be >= 1)", c.MinEstablishedPeers)
+		return fmt.Errorf("BGP_MIN_PEERS %d is invalid (must be >= 1)", c.MinEstablishedPeers)
 	}
 	return c.validatePolicy()
 }
