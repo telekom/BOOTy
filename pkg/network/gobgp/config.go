@@ -188,8 +188,12 @@ func (c *Config) Validate() error {
 	if _, err := ParseUnderlayAF(c.UnderlayAF); err != nil {
 		return fmt.Errorf("invalid underlay AF: %w", err)
 	}
-	if _, err := ParseOverlayType(c.OverlayType); err != nil {
+	ot, err := ParseOverlayType(c.OverlayType)
+	if err != nil {
 		return fmt.Errorf("invalid overlay type: %w", err)
+	}
+	if ot == OverlayL3VPN {
+		return fmt.Errorf("overlay type %q is not yet implemented", ot)
 	}
 	return c.validatePolicy()
 }
