@@ -158,7 +158,7 @@ func validatePEMachineType(f *pe.File) error {
 		return nil
 	}
 
-	got := f.FileHeader.Machine
+	got := f.Machine
 	if got != wantMachine {
 		return fmt.Errorf("pe/coff machine type 0x%04x does not match host arch %s (want 0x%04x)",
 			got, runtime.GOARCH, wantMachine)
