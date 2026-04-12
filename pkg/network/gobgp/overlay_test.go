@@ -1163,7 +1163,7 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 		mock := &mockFDB{}
 		overlay := newOverlay(mock)
 		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-			Communities: []*anypb.Any{mustRT2(t, 99999, 1111)},
+			Communities: []*anypb.Any{mustRT2(t, 65001, 1111)},
 		})
 		if err != nil {
 			t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
@@ -1183,7 +1183,7 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 		mock := &mockFDB{}
 		overlay := newOverlay(mock)
 		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-			Communities: []*anypb.Any{mustRT2(t, 99999, 1111)},
+			Communities: []*anypb.Any{mustRT2(t, 65001, 1111)},
 		})
 		if err != nil {
 			t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
