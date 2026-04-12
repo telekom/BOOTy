@@ -247,3 +247,89 @@ func TestScenarioBGPTimers(t *testing.T) {
 		t.Errorf("hold = %d, want 9", timers.Config.HoldTime)
 	}
 }
+
+func TestBGPAuthNumberedPeer(t *testing.T) {
+	families := allFamilies()
+
+	t.Run("auth_set_when_configured", func(t *testing.T) {
+		cfg := &Config{
+			ASN:          65000,
+			RemoteASN:    65001,
+			AuthPassword: "hunter2",
+		}
+		peer := buildNumberedPeer(cfg, "10.0.0.1", families)
+		if peer.Conf.AuthPassword != "hunter2" {
+			t.Errorf("AuthPassword = %q, want hunter2", peer.Conf.AuthPassword)
+		}
+		if peer.Conf.NeighborAddress != "10.0.0.1" {
+			t.Errorf("NeighborAddress = %q, want 10.0.0.1", peer.Conf.NeighborAddress)
+		}
+		if peer.Conf.PeerAsn != 65001 {
+			t.Errorf("PeerAsn = %d, want 65001", peer.Conf.PeerAsn)
+		}
+	})
+
+	t.Run("no_auth_when_password_empty", func(t *testing.T) {
+		cfg := &Config{
+			ASN:          65000,
+			RemoteASN:    65001,
+			AuthPassword: "",
+		}
+		peer := buildNumberedPeer(cfg, "10.0.0.1", families)
+		if peer.Conf.AuthPassword != "" {
+			t.Errorf("AuthPassword = %q, want empty", peer.Conf.AuthPassword)
+		}
+	})
+
+	t.Run("ibgp_uses_local_asn_when_remote_zero", func(t *testing.T) {
+		cfg := &Config{
+			ASN:          65000,
+			RemoteASN:    0,
+			AuthPassword: "secret",
+		}
+		peer := buildNumberedPeer(cfg, "10.0.0.2", families)
+		if peer.Conf.PeerAsn != 65000 {
+			t.Errorf("PeerAsn = %d, want 65000 (iBGP)", peer.Conf.PeerAsn)
+		}
+		if peer.Conf.AuthPassword != "secret" {
+			t.Errorf("AuthPassword = %q, want secret", peer.Conf.AuthPassword)
+		}
+	})
+}
+
+func TestBGPAuthInterfacePeer(t *testing.T) {
+	families := allFamilies()
+	const iface = "eth0"
+	const addr = "fe80::1%eth0"
+
+	t.Run("auth_set_when_configured", func(t *testing.T) {
+		cfg := &Config{
+			ASN:          65000,
+			AuthPassword: "hunter2",
+		}
+		peer := buildInterfacePeer(cfg, iface, addr, families)
+		if peer.Conf.AuthPassword != "hunter2" {
+			t.Errorf("AuthPassword = %q, want hunter2", peer.Conf.AuthPassword)
+		}
+		if peer.Transport.BindInterface != iface {
+			t.Errorf("BindInterface = %q, want %q", peer.Transport.BindInterface, iface)
+		}
+		if peer.Transport.RemoteAddress != addr {
+			t.Errorf("RemoteAddress = %q, want %q", peer.Transport.RemoteAddress, addr)
+		}
+		if peer.Conf.PeerAsn != 0 {
+			t.Errorf("PeerAsn = %d, want 0 (learned via open)", peer.Conf.PeerAsn)
+		}
+	})
+
+	t.Run("no_auth_when_password_empty", func(t *testing.T) {
+		cfg := &Config{
+			ASN:          65000,
+			AuthPassword: "",
+		}
+		peer := buildInterfacePeer(cfg, iface, addr, families)
+		if peer.Conf.AuthPassword != "" {
+			t.Errorf("AuthPassword = %q, want empty", peer.Conf.AuthPassword)
+		}
+	})
+}

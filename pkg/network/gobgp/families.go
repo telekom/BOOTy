@@ -15,6 +15,56 @@ func bgpTimers(cfg *Config) *apipb.Timers {
 	}
 }
 
+// buildNumberedPeer constructs a GoBGP peer config for a numbered (IP-based) session.
+func buildNumberedPeer(cfg *Config, addr string, families []*apipb.AfiSafi) *apipb.Peer {
+	remoteASN := cfg.RemoteASN
+	if remoteASN == 0 {
+		remoteASN = cfg.ASN // iBGP
+	}
+
+	peer := &apipb.Peer{
+		Conf: &apipb.PeerConf{
+			NeighborAddress: addr,
+			PeerAsn:         remoteASN,
+		},
+		Timers:   bgpTimers(cfg),
+		AfiSafis: families,
+		Transport: &apipb.Transport{
+			MtuDiscovery: true,
+		},
+	}
+
+	if cfg.AuthPassword != "" {
+		peer.Conf.AuthPassword = cfg.AuthPassword
+	}
+
+	return peer
+}
+
+// buildInterfacePeer constructs a GoBGP peer config for an unnumbered (link-local) session.
+func buildInterfacePeer(cfg *Config, iface, addr string, families []*apipb.AfiSafi) *apipb.Peer {
+	peer := &apipb.Peer{
+		Conf: &apipb.PeerConf{
+			NeighborAddress: addr,
+			PeerAsn:         0, // External peer, ASN learned via open
+		},
+		Timers:   bgpTimers(cfg),
+		AfiSafis: families,
+		Transport: &apipb.Transport{
+			MtuDiscovery:  true,
+			LocalAddress:  "::",
+			BindInterface: iface,
+			RemoteAddress: addr,
+		},
+	}
+
+	if cfg.AuthPassword != "" {
+		peer.Conf.AuthPassword = cfg.AuthPassword
+	}
+
+	return peer
+}
+
 // allFamilies returns IPv4 unicast + L2VPN-EVPN address families.
 func allFamilies() []*apipb.AfiSafi {
 	return []*apipb.AfiSafi{

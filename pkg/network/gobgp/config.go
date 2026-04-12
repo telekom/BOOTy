@@ -58,6 +58,7 @@ type Config struct {
 	NeighborAddrs     []string         // Explicit numbered peer IPs (dual/numbered modes)
 	RemoteASN         uint32           // Remote ASN for numbered peers (0 = same ASN → iBGP)
 	EnableL2          bool             // Enable L2 EVPN overlay (gate Type-2/3 route handling)
+	AuthPassword      string           // Optional TCP-MD5 password for BGP peers (empty = no auth)
 	// UnderlayAF selects the BGP address family for underlay sessions (ipv4/ipv6/dual-stack).
 	UnderlayAF string
 	// OverlayType selects the BGP overlay encapsulation (evpn-vxlan/l3vpn/none).
@@ -99,6 +100,7 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		NeighborAddrs:     parseNeighborAddrs(netCfg.BGPNeighbors),
 		RemoteASN:         netCfg.BGPRemoteASN,
 		EnableL2:          netCfg.EVPNL2Enabled,
+		AuthPassword:      netCfg.BGPAuthPassword,
 		UnderlayAF:        netCfg.BGPUnderlayAF,
 		OverlayType:       netCfg.BGPOverlayType,
 	}

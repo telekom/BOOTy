@@ -572,6 +572,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"TOKEN_URL":                   &cfg.TokenURL,
 		"TOKEN_ALGORITHM":             &cfg.TokenAlgorithm,
 		"NVME_NAMESPACES":             &cfg.NVMeNamespaces,
+		"BGP_AUTH_PASSWORD":           &cfg.BGPAuthPassword,
 	}
 
 	if ptr, ok := strFields[key]; ok {

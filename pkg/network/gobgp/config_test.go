@@ -140,6 +140,37 @@ func TestNewConfig(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "auth_password_flows_from_network_config",
+			netCfg: &network.Config{
+				UnderlayIP:      "10.0.0.1",
+				ASN:             65000,
+				ProvisionVNI:    4000,
+				BGPPeerMode:     network.PeerModeUnnumbered,
+				BGPAuthPassword: "s3cret",
+			},
+			check: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				if cfg.AuthPassword != "s3cret" {
+					t.Errorf("AuthPassword = %q, want s3cret", cfg.AuthPassword)
+				}
+			},
+		},
+		{
+			name: "auth_password_empty_by_default",
+			netCfg: &network.Config{
+				UnderlayIP:   "10.0.0.1",
+				ASN:          65000,
+				ProvisionVNI: 4000,
+				BGPPeerMode:  network.PeerModeUnnumbered,
+			},
+			check: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				if cfg.AuthPassword != "" {
+					t.Errorf("AuthPassword = %q, want empty (no auth)", cfg.AuthPassword)
+				}
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
