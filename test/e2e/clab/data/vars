@@ -1,6 +1,7 @@
 export IMAGE="http://10.100.0.10/images/test.img.gz"
 export HOSTNAME="clab-e2e-host"
 export TOKEN="e2e-fabric-token"
+export INSECURE_TRANSPORT="true"
 export MODE="provision"
 export MIN_DISK_SIZE_GB="50"
 export LOG_URL="http://10.100.0.11/log"
