@@ -1,9 +1,12 @@
 package secureboot
 
 import (
+	"debug/pe"
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
+	"strings"
 
 	"github.com/telekom/BOOTy/pkg/efi"
 )
@@ -45,14 +48,10 @@ func (cv *ChainVerifier) Verify() (*ChainResult, error) {
 	return result, nil
 }
 
-// checkComponentPresence checks that expected Secure Boot chain components exist.
-// NOTE: This is a presence check only — it does not verify cryptographic signatures.
-// Full PE/COFF signature verification is planned but not yet implemented.
-// checkComponentPresence checks whether boot chain binaries exist on disk.
-// This is intentionally a presence-only check — actual signature verification
-// would require parsing PE/COFF and validating against db/dbx EFI variables.
+// checkComponentPresence checks whether boot chain binaries exist on disk
+// and validates PE/COFF headers for EFI binaries.
 func (cv *ChainVerifier) checkComponentPresence() []ComponentStatus {
-	paths := []struct {
+	specs := []struct {
 		name  string
 		paths []string
 	}{
@@ -73,22 +72,101 @@ func (cv *ChainVerifier) checkComponentPresence() []ComponentStatus {
 			"/boot/vmlinuz-linux",
 		}},
 	}
-	components := make([]ComponentStatus, 0, len(paths))
-	for _, p := range paths {
-		status := ComponentStatus{Name: p.name}
-		found := false
-		for _, path := range p.paths {
-			if _, err := os.Stat(path); err == nil {
-				found = true
-				break
-			}
-		}
-		if !found {
-			status.Error = fmt.Sprintf("not found: tried %v", p.paths)
-		}
-		components = append(components, status)
+	components := make([]ComponentStatus, 0, len(specs))
+	for _, s := range specs {
+		components = append(components, findValidCandidate(s.name, s.paths))
 	}
 	return components
+}
+
+// findValidCandidate scans candidates in order, returning the first that exists
+// and passes PE/COFF validation (for .efi paths). If no candidate passes,
+// the returned ComponentStatus carries an error string that distinguishes
+// "invalid PE/COFF header" (files found but corrupt) from "not found".
+func findValidCandidate(name string, candidates []string) ComponentStatus {
+	status := ComponentStatus{Name: name}
+	var lastValidationErr error
+	anyFound := false
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err != nil {
+			// Distinguish between "not exists" (expected) and real IO/permission
+			// errors which should fail fast and be reported to the caller.
+			if os.IsNotExist(err) {
+				continue
+			}
+			status.Error = fmt.Sprintf("stat %s: %v", path, err)
+			return status
+		}
+		anyFound = true
+		if isEFIPath(path) {
+			if err := validatePEHeader(path); err != nil {
+				slog.Warn("pe/coff validation failed, trying next candidate",
+					"path", path, "error", err)
+				lastValidationErr = err
+				continue
+			}
+		}
+		return status
+	}
+	if anyFound && lastValidationErr != nil {
+		status.Error = fmt.Sprintf("pe/coff validation failed for all candidates %v: %v", candidates, lastValidationErr)
+	} else {
+		status.Error = fmt.Sprintf("not found: tried %v", candidates)
+	}
+	return status
+}
+
+// isEFIPath reports whether path points to a PE/COFF EFI binary.
+// Kernel vmlinuz paths are excluded — they are not PE binaries.
+func isEFIPath(path string) bool {
+	lower := strings.ToLower(path)
+	return strings.HasSuffix(lower, ".efi")
+}
+
+// validatePEHeader opens path as a PE/COFF binary using debug/pe and
+// returns an error if the file is missing, truncated, has an invalid header,
+// or has a machine type that does not match the host architecture.
+// Close errors are propagated when no earlier error occurred, so I/O
+// failures on flaky storage cannot be silently ignored.
+func validatePEHeader(path string) (retErr error) {
+	f, err := pe.Open(path)
+	if err != nil {
+		return fmt.Errorf("pe/coff parse failed: %w", err)
+	}
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			if retErr == nil {
+				retErr = fmt.Errorf("pe/coff close: %w", cerr)
+			} else {
+				slog.Debug("pe/coff close also failed", "path", path, "error", cerr)
+			}
+		}
+	}()
+
+	return validatePEMachineType(f)
+}
+
+// validatePEMachineType returns an error if the PE machine type does not match
+// the host architecture. Only amd64 and arm64 are validated; unknown host
+// architectures are accepted without error to avoid false negatives.
+func validatePEMachineType(f *pe.File) error {
+	var wantMachine uint16
+	switch runtime.GOARCH {
+	case "amd64":
+		wantMachine = pe.IMAGE_FILE_MACHINE_AMD64
+	case "arm64":
+		wantMachine = pe.IMAGE_FILE_MACHINE_ARM64
+	default:
+		// Unknown host arch — skip machine type check.
+		return nil
+	}
+
+	got := f.Machine
+	if got != wantMachine {
+		return fmt.Errorf("pe/coff machine type 0x%04x does not match host arch %s (want 0x%04x)",
+			got, runtime.GOARCH, wantMachine)
+	}
+	return nil
 }
 
 func (cv *ChainVerifier) allComponentsPresent(components []ComponentStatus) bool {
