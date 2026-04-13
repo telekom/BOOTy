@@ -416,6 +416,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		BGPOverlayType:   cfg.BGPOverlayType,
 		EVPNL2Enabled:    cfg.EVPNL2Enabled,
 		BGPAuthPassword:  cfg.BGPAuthPassword,
+		BGPMinPeers:      cfg.BGPMinPeers,
 	}
 
 	// Auto-detect netplan configuration files injected by the provisioner.

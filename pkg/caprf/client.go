@@ -668,6 +668,7 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		"NUM_VFS":              &cfg.NumVFs,
 		"HEALTH_MIN_MEMORY_GB": &cfg.HealthMinMemoryGB,
 		"HEALTH_MIN_CPUS":      &cfg.HealthMinCPUs,
+		"BGP_MIN_PEERS":        &cfg.BGPMinPeers,
 	}
 
 	if ptr, ok := intFields[key]; ok {

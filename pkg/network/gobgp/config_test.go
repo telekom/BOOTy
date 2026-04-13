@@ -1,8 +1,12 @@
+//go:build linux
+
 package gobgp
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/telekom/BOOTy/pkg/network"
 )
@@ -282,7 +286,7 @@ func TestValidateRequiresRouterID(t *testing.T) {
 }
 
 func TestValidateAcceptsValid(t *testing.T) {
-	cfg := &Config{ASN: 65000, RouterID: "10.0.0.1", PeerMode: network.PeerModeUnnumbered, ProvisionVNI: 100}
+	cfg := &Config{ASN: 65000, RouterID: "10.0.0.1", PeerMode: network.PeerModeUnnumbered, ProvisionVNI: 100, MinEstablishedPeers: 1}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -309,10 +313,11 @@ func TestValidateRejectsNonIPv4RouterID(t *testing.T) {
 
 func TestValidatePeerModeUnnumbered(t *testing.T) {
 	cfg := &Config{
-		ASN:          65000,
-		RouterID:     "10.0.0.1",
-		PeerMode:     network.PeerModeUnnumbered,
-		ProvisionVNI: 100,
+		ASN:                 65000,
+		RouterID:            "10.0.0.1",
+		PeerMode:            network.PeerModeUnnumbered,
+		ProvisionVNI:        100,
+		MinEstablishedPeers: 1,
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("unnumbered mode should not require neighbors: %v", err)
@@ -343,11 +348,12 @@ func TestValidatePeerModeNumberedRequiresNeighbors(t *testing.T) {
 
 func TestValidatePeerModeDualWithNeighbors(t *testing.T) {
 	cfg := &Config{
-		ASN:           65000,
-		RouterID:      "10.0.0.1",
-		PeerMode:      network.PeerModeDual,
-		NeighborAddrs: []string{"10.0.0.100", "10.0.0.101"},
-		ProvisionVNI:  100,
+		ASN:                 65000,
+		RouterID:            "10.0.0.1",
+		PeerMode:            network.PeerModeDual,
+		NeighborAddrs:       []string{"10.0.0.100", "10.0.0.101"},
+		ProvisionVNI:        100,
+		MinEstablishedPeers: 1,
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("dual mode with valid neighbors should pass: %v", err)
@@ -356,12 +362,13 @@ func TestValidatePeerModeDualWithNeighbors(t *testing.T) {
 
 func TestValidatePeerModeNumberedWithNeighbors(t *testing.T) {
 	cfg := &Config{
-		ASN:           65000,
-		RouterID:      "10.0.0.1",
-		PeerMode:      network.PeerModeNumbered,
-		NeighborAddrs: []string{"10.0.0.50"},
-		RemoteASN:     65001,
-		ProvisionVNI:  100,
+		ASN:                 65000,
+		RouterID:            "10.0.0.1",
+		PeerMode:            network.PeerModeNumbered,
+		NeighborAddrs:       []string{"10.0.0.50"},
+		RemoteASN:           65001,
+		ProvisionVNI:        100,
+		MinEstablishedPeers: 1,
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("numbered mode with valid neighbors should pass: %v", err)
@@ -475,6 +482,83 @@ func TestParseNeighborAddrs(t *testing.T) {
 	}
 }
 
+func TestApplyDefaultsSetsMinEstablishedPeersToOne(t *testing.T) {
+	cfg := &Config{}
+	cfg.ApplyDefaults()
+
+	if cfg.MinEstablishedPeers != 1 {
+		t.Errorf("MinEstablishedPeers = %d, want 1 (default)", cfg.MinEstablishedPeers)
+	}
+}
+
+func TestApplyDefaultsPreservesNonZeroMinEstablishedPeers(t *testing.T) {
+	cfg := &Config{MinEstablishedPeers: 2}
+	cfg.ApplyDefaults()
+
+	if cfg.MinEstablishedPeers != 2 {
+		t.Errorf("MinEstablishedPeers = %d, want 2 (preserved)", cfg.MinEstablishedPeers)
+	}
+}
+
+func TestValidateRejectsZeroMinEstablishedPeers(t *testing.T) {
+	cfg := &Config{
+		ASN:                 65000,
+		RouterID:            "10.0.0.1",
+		PeerMode:            network.PeerModeUnnumbered,
+		ProvisionVNI:        100,
+		MinEstablishedPeers: 0,
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Error("MinEstablishedPeers=0 should fail validation")
+	}
+}
+
+func TestValidateAcceptsMinEstablishedPeersGreaterThanOne(t *testing.T) {
+	cfg := &Config{
+		ASN:                 65000,
+		RouterID:            "10.0.0.1",
+		PeerMode:            network.PeerModeUnnumbered,
+		ProvisionVNI:        100,
+		MinEstablishedPeers: 2,
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("MinEstablishedPeers=2 should pass validation: %v", err)
+	}
+}
+
+func TestNewConfigMapsMinEstablishedPeers(t *testing.T) {
+	netCfg := &network.Config{
+		UnderlayIP:   "10.0.0.1",
+		ASN:          65000,
+		ProvisionVNI: 4000,
+		BGPPeerMode:  network.PeerModeUnnumbered,
+		BGPMinPeers:  2,
+	}
+	cfg, err := NewConfig(netCfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.MinEstablishedPeers != 2 {
+		t.Errorf("MinEstablishedPeers = %d, want 2", cfg.MinEstablishedPeers)
+	}
+}
+
+func TestNewConfigDefaultsMinEstablishedPeersToOne(t *testing.T) {
+	netCfg := &network.Config{
+		UnderlayIP:   "10.0.0.1",
+		ASN:          65000,
+		ProvisionVNI: 4000,
+		BGPPeerMode:  network.PeerModeUnnumbered,
+	}
+	cfg, err := NewConfig(netCfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.MinEstablishedPeers != 1 {
+		t.Errorf("MinEstablishedPeers = %d, want 1 (default when BGPMinPeers=0)", cfg.MinEstablishedPeers)
+	}
+}
+
 func TestIsiBGP(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -521,4 +605,73 @@ func TestApplyDefaultsNormalizesUnderlayAFAndOverlayType(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUnderlayTierReady(t *testing.T) {
+	makeUnderlay := func(minPeers int, countFn func(context.Context) int) *UnderlayTier {
+		cfg := &Config{MinEstablishedPeers: minPeers}
+		u := NewUnderlayTier(cfg)
+		u.peerCountFn = countFn
+		u.pollInterval = time.Millisecond
+		return u
+	}
+
+	t.Run("succeeds_when_threshold_met_immediately", func(t *testing.T) {
+		u := makeUnderlay(1, func(_ context.Context) int { return 1 })
+		ctx := context.Background()
+		if err := u.Ready(ctx, 5*time.Second); err != nil {
+			t.Fatalf("Ready() = %v, want nil", err)
+		}
+	})
+
+	t.Run("succeeds_when_threshold_met_on_second_tick", func(t *testing.T) {
+		calls := 0
+		u := makeUnderlay(2, func(_ context.Context) int {
+			calls++
+			if calls >= 2 {
+				return 2
+			}
+			return 0
+		})
+		ctx := context.Background()
+		if err := u.Ready(ctx, 5*time.Second); err != nil {
+			t.Fatalf("Ready() = %v, want nil", err)
+		}
+	})
+
+	t.Run("returns_error_on_timeout", func(t *testing.T) {
+		u := makeUnderlay(3, func(_ context.Context) int { return 0 })
+		ctx := context.Background()
+		err := u.Ready(ctx, 50*time.Millisecond)
+		if err == nil {
+			t.Fatal("Ready() = nil, want timeout error")
+		}
+	})
+
+	t.Run("returns_error_on_context_cancel", func(t *testing.T) {
+		u := makeUnderlay(1, func(_ context.Context) int { return 0 })
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		err := u.Ready(ctx, 5*time.Second)
+		if err == nil {
+			t.Fatal("Ready() = nil, want context error")
+		}
+	})
+
+	t.Run("min_peers_greater_than_one", func(t *testing.T) {
+		u := makeUnderlay(3, func(_ context.Context) int { return 3 })
+		ctx := context.Background()
+		if err := u.Ready(ctx, 5*time.Second); err != nil {
+			t.Fatalf("Ready() = %v, want nil", err)
+		}
+	})
+
+	t.Run("count_below_threshold_does_not_succeed", func(t *testing.T) {
+		u := makeUnderlay(3, func(_ context.Context) int { return 2 })
+		ctx := context.Background()
+		err := u.Ready(ctx, 50*time.Millisecond)
+		if err == nil {
+			t.Fatal("Ready() = nil, want timeout error when count < min")
+		}
+	})
 }
