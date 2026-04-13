@@ -133,8 +133,8 @@ func TestFindValidCandidate_AllInvalidPEReturnsError(t *testing.T) {
 	if status.Error == "" {
 		t.Error("expected error when all candidates have invalid PE headers")
 	}
-	if !strings.Contains(status.Error, "pe/coff") {
-		t.Errorf("expected pe/coff validation error, got misleading message: %q", status.Error)
+	if !strings.HasPrefix(status.Error, "pe/coff validation failed for all candidates") {
+		t.Errorf("expected pe/coff validation failure prefix, got misleading message: %q", status.Error)
 	}
 }
 
