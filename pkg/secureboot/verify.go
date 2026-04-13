@@ -126,21 +126,24 @@ func isEFIPath(path string) bool {
 // validatePEHeader opens path as a PE/COFF binary using debug/pe and
 // returns an error if the file is missing, truncated, has an invalid header,
 // or has a machine type that does not match the host architecture.
-func validatePEHeader(path string) error {
+// Close errors are propagated when no earlier error occurred, so I/O
+// failures on flaky storage cannot be silently ignored.
+func validatePEHeader(path string) (retErr error) {
 	f, err := pe.Open(path)
 	if err != nil {
 		return fmt.Errorf("pe/coff parse failed: %w", err)
 	}
 	defer func() {
 		if cerr := f.Close(); cerr != nil {
-			slog.Debug("pe/coff close failed", "path", path, "error", cerr)
+			if retErr == nil {
+				retErr = fmt.Errorf("pe/coff close: %w", cerr)
+			} else {
+				slog.Debug("pe/coff close also failed", "path", path, "error", cerr)
+			}
 		}
 	}()
 
-	if err := validatePEMachineType(f); err != nil {
-		return err
-	}
-	return nil
+	return validatePEMachineType(f)
 }
 
 // validatePEMachineType returns an error if the PE machine type does not match
