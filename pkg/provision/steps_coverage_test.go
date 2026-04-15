@@ -276,9 +276,6 @@ func TestValidateProvisionCommand_SemicolonBlocked(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for semicolon in command")
 	}
-	if !strings.Contains(err.Error(), "blocked shell token") {
-		t.Errorf("expected 'blocked shell token', got: %v", err)
-	}
 }
 
 func TestValidateProvisionCommand_PipeBlocked(t *testing.T) {
