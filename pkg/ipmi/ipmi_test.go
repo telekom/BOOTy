@@ -235,9 +235,16 @@ func TestRedactIPMIArgs(t *testing.T) {
 			name:  "empty args",
 			input: []string{},
 		},
+		{
+			name:     "consecutive sensitive flags: value not re-treated as flag",
+			input:    []string{"-P", "-H", "host"},
+			absent:   "host",
+			contains: "[REDACTED]",
+		},
 	}
 
 	for _, tc := range tests {
+		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			got := redactIPMIArgs(tc.input)
 			joined := strings.Join(got, " ")
