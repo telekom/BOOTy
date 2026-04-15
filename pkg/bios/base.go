@@ -28,7 +28,8 @@ func NewBaseManager(vendor system.Vendor, log *slog.Logger, settings map[string]
 // Vendor returns the server vendor this manager handles.
 func (m *BaseManager) Vendor() system.Vendor { return m.vendor }
 
-// Capture returns a State snapshot populated from the critical settings map.
+// Capture returns a State snapshot populated from the configured critical-settings
+// map. It does not read live hardware state.
 func (m *BaseManager) Capture(_ context.Context) (*State, error) {
 	state := &State{
 		Vendor:   m.vendor,
@@ -45,14 +46,9 @@ func (m *BaseManager) Capture(_ context.Context) (*State, error) {
 	return state, nil
 }
 
-// Apply logs each change and returns all names as requiring reboot.
-func (m *BaseManager) Apply(_ context.Context, changes []SettingChange) ([]string, error) {
-	reboot := make([]string, 0, len(changes))
-	for _, c := range changes {
-		m.log.Info("apply BIOS setting", "vendor", m.vendor, "name", c.Name, "value", c.Value)
-		reboot = append(reboot, c.Name)
-	}
-	return reboot, nil
+// Apply is not implemented for the generic base manager.
+func (m *BaseManager) Apply(_ context.Context, _ []SettingChange) ([]string, error) {
+	return nil, ErrNotImplemented
 }
 
 // Reset is not implemented for the generic base manager.

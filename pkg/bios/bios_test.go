@@ -39,12 +39,9 @@ func TestVendorManagers(t *testing.T) {
 				t.Errorf("state vendor = %q", state.Vendor)
 			}
 			changes := []bios.SettingChange{{Name: "Test", Value: "Value"}}
-			reboot, err := mgr.Apply(context.Background(), changes)
-			if err != nil {
-				t.Fatalf("Apply: %v", err)
-			}
-			if len(reboot) != 1 {
-				t.Errorf("reboot = %d", len(reboot))
+			_, err = mgr.Apply(context.Background(), changes)
+			if !errors.Is(err, bios.ErrNotImplemented) {
+				t.Errorf("Apply error = %v, want ErrNotImplemented", err)
 			}
 			err = mgr.Reset(context.Background())
 			if !errors.Is(err, bios.ErrNotImplemented) {
