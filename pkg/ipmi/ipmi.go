@@ -171,12 +171,30 @@ func (m *Manager) output(ctx context.Context, args ...string) (string, error) {
 
 func (m *Manager) execIPMITool(ctx context.Context, args ...string) (string, error) {
 	fullArgs := append([]string{"-I", "open", "-d", m.deviceNum}, args...)
-	m.log.Debug("executing ipmitool", "args", fullArgs)
+	m.log.Debug("executing ipmitool", "args", redactIPMIArgs(fullArgs))
 	out, err := m.runner.Run(ctx, "ipmitool", fullArgs...)
 	if err != nil {
-		return "", fmt.Errorf("ipmitool %s: %s: %w", strings.Join(args, " "), strings.TrimSpace(string(out)), err)
+		return "", fmt.Errorf("ipmitool %s: %s: %w", strings.Join(redactIPMIArgs(args), " "), strings.TrimSpace(string(out)), err)
 	}
 	return string(out), nil
+}
+
+var sensitiveIPMIFlags = map[string]bool{
+	"-P": true, "--password": true,
+	"-U": true, "--username": true,
+	"-H": true, "--hostname": true,
+	"-K": true, "--kg-key": true,
+}
+
+func redactIPMIArgs(args []string) []string {
+	out := make([]string, len(args))
+	copy(out, args)
+	for i, arg := range out {
+		if sensitiveIPMIFlags[arg] && i+1 < len(out) {
+			out[i+1] = "[REDACTED]"
+		}
+	}
+	return out
 }
 
 // ParseBMCMAC parses a MAC address string into net.HardwareAddr.
