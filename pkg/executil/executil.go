@@ -27,10 +27,12 @@ const maxOutputLen = 1024
 var sanitizer = strings.NewReplacer("\n", " ", "\r", " ", "\t", " ")
 
 // Run executes a system command and returns its combined output.
-// On failure the error includes the sanitized, truncated raw command output
-// and the resolved PATH so that missing-binary issues are immediately
-// diagnosable. Newlines in the output are replaced with spaces to keep
-// structured log values single-line.
+// On failure the error includes the sanitized, truncated raw command output.
+// Newlines in the output are replaced with spaces to keep structured log
+// values single-line. The resolved PATH is intentionally excluded from the
+// returned error to avoid leaking environment layout into logs; call
+// DumpPATH() explicitly during debug sessions when binary-not-found issues
+// need to be diagnosed.
 func (e *ExecCommander) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
 	if err != nil {
@@ -38,11 +40,10 @@ func (e *ExecCommander) Run(ctx context.Context, name string, args ...string) ([
 		if len(raw) > maxOutputLen {
 			raw = raw[:maxOutputLen] + "...(truncated)"
 		}
-		pathEnv := os.Getenv("PATH")
 		if raw != "" {
-			return out, fmt.Errorf("exec %s: %w [output: %s] [PATH: %s]", name, err, raw, pathEnv)
+			return out, fmt.Errorf("exec %s: %w [output: %s]", name, err, raw)
 		}
-		return out, fmt.Errorf("exec %s: %w [PATH: %s]", name, err, pathEnv)
+		return out, fmt.Errorf("exec %s: %w", name, err)
 	}
 	return out, nil
 }
