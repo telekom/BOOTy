@@ -230,6 +230,8 @@ func TestRedactAttr(t *testing.T) {
 		{"apikey", "abc123", "[REDACTED]", true},
 		{"secretkey", "abc123", "[REDACTED]", true},
 		{"privatekey", "abc123", "[REDACTED]", true},
+		{"authorizationheader", "Bearer xyz", "[REDACTED]", true},
+		{"x509cert", "PEM", "[REDACTED]", true},
 		{"message", "hello", "hello", false},
 		{"component", "provision", "provision", false},
 		{"ip", "192.168.0.1", "192.168.0.1", false},

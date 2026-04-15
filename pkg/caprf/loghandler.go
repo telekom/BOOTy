@@ -30,10 +30,15 @@ var sensitiveWords = map[string]struct{}{
 
 // highSignalWords are high-confidence sensitive substrings used as a fallback
 // for all-lowercase concatenated keys that splitCamel cannot split
-// (e.g. "apikey", "secretkey", "privatekey"). "key" is matched as a suffix only
-// to avoid false positives from words like "keyboard".
+// (e.g. "apikey", "secretkey", "privatekey", "authorizationheader").
+// "key" is matched as a suffix only (via endsWithWordKey) to avoid false positives
+// from words like "keyboard". Short words like "cert" are intentionally absent here
+// because they appear in too many non-sensitive words (e.g. "certainty"); they are
+// instead caught via segment matching once splitCamel splits digit-letter boundaries
+// (e.g. "x509cert" → ["x509", "cert"]).
 var highSignalWords = []string{
 	"password", "token", "secret", "credential", "bearer", "private", "session",
+	"authorization",
 }
 
 // splitKeySegments splits a slog attribute key on common separators (_  .  -)
@@ -69,6 +74,9 @@ func splitCamel(s string) []string {
 			segs = append(segs, string(runes[start:i]))
 			start = i
 		case unicode.IsDigit(prev) && unicode.IsUpper(cur):
+			segs = append(segs, string(runes[start:i]))
+			start = i
+		case unicode.IsDigit(prev) && unicode.IsLower(cur):
 			segs = append(segs, string(runes[start:i]))
 			start = i
 		case i >= 2 && unicode.IsUpper(runes[i-2]) && unicode.IsUpper(prev) && unicode.IsLower(cur):
