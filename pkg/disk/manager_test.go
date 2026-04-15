@@ -688,8 +688,6 @@ func TestDisableLVM(t *testing.T) {
 	cmd := newMockCommander()
 	mgr := NewManager(cmd)
 
-	// DisableLVM should succeed even if lvm fails (no LVM present).
-	cmd.setResult("lvm vgchange", nil, fmt.Errorf("exec lvm: exit 5"))
 	if err := mgr.DisableLVM(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -807,5 +805,23 @@ func TestCreateRAIDArrayError(t *testing.T) {
 	err := mgr.CreateRAIDArray(context.Background(), "md0", 1, []string{"/dev/sda", "/dev/sdb"})
 	if err == nil {
 		t.Fatal("expected error when mdadm fails")
+	}
+}
+
+func TestDisableLVMNotFound(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+	cmd.setResult("lvm vgchange", nil, fmt.Errorf("executable file not found in $PATH"))
+	if err := mgr.DisableLVM(context.Background()); err != nil {
+		t.Fatalf("DisableLVM should not fail when lvm binary is absent: %v", err)
+	}
+}
+
+func TestDisableLVMError(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+	cmd.setResult("lvm vgchange", nil, fmt.Errorf("lvm: device busy"))
+	if err := mgr.DisableLVM(context.Background()); err == nil {
+		t.Fatal("expected error when lvm vgchange fails")
 	}
 }
