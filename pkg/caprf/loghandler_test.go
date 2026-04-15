@@ -247,3 +247,103 @@ func TestRemoteHandlerCloseFromDerivedHandlers(t *testing.T) {
 	root.Close()
 	derived.Close()
 }
+
+func TestMaybeWarnDroppedCadence(t *testing.T) {
+	var warningCount atomic.Int64
+
+	inner := &countingHandler{level: slog.LevelWarn, count: &warningCount}
+
+	h := &RemoteHandler{
+		inner:    inner,
+		dropped:  &atomic.Int64{},
+		reported: &atomic.Int64{},
+	}
+
+	for i := int64(1); i <= dropWarnEvery; i++ {
+		h.maybeWarnDropped(i)
+	}
+	if got := warningCount.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 warning after %d drops, got %d", dropWarnEvery, got)
+	}
+
+	for i := int64(1); i <= dropWarnEvery; i++ {
+		h.maybeWarnDropped(dropWarnEvery + i)
+	}
+	if got := warningCount.Load(); got != 2 {
+		t.Fatalf("expected exactly 2 warnings after %d drops, got %d", 2*dropWarnEvery, got)
+	}
+}
+
+func TestDropCounterHighVolume(t *testing.T) {
+	const messages = 1000
+	const bufSize = 2
+
+	cfg := &config.MachineConfig{Token: "highvol-token"}
+	client := NewFromConfig(cfg)
+	inner := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})
+
+	buf := make(chan string, bufSize)
+	done := make(chan struct{})
+	blocker := make(chan struct{})
+
+	h := &RemoteHandler{
+		client:   client,
+		inner:    inner,
+		level:    slog.LevelInfo,
+		buf:      buf,
+		done:     done,
+		once:     &sync.Once{},
+		dropped:  &atomic.Int64{},
+		reported: &atomic.Int64{},
+	}
+
+	go func() {
+		defer close(done)
+		<-blocker
+		for v := range buf {
+			_ = v
+		}
+	}()
+
+	logger := slog.New(h)
+	for i := range messages {
+		logger.Info("msg", "i", i)
+	}
+
+	dropped := h.DroppedCount()
+	shipped := int64(messages) - dropped
+	if dropped+shipped != messages {
+		t.Fatalf("invariant: dropped(%d) + shipped(%d) != messages(%d)", dropped, shipped, messages)
+	}
+	if dropped < int64(messages-bufSize) {
+		t.Fatalf("expected at least %d drops with blocked drain, got %d", messages-bufSize, dropped)
+	}
+	t.Logf("high-volume: %d messages, %d dropped, %d in buffer", messages, dropped, shipped)
+
+	close(blocker)
+	h.Close()
+}
+
+func TestWarnViaInnerNilInner(t *testing.T) {
+	h := &RemoteHandler{inner: nil}
+	h.warnViaInner("should be silently dropped")
+}
+
+type countingHandler struct {
+	level slog.Leveler
+	count *atomic.Int64
+}
+
+func (c *countingHandler) Enabled(_ context.Context, level slog.Level) bool {
+	return level >= c.level.Level()
+}
+
+func (c *countingHandler) Handle(_ context.Context, r slog.Record) error {
+	if r.Level >= c.level.Level() {
+		c.count.Add(1)
+	}
+	return nil
+}
+
+func (c *countingHandler) WithAttrs(_ []slog.Attr) slog.Handler { return c }
+func (c *countingHandler) WithGroup(_ string) slog.Handler      { return c }
