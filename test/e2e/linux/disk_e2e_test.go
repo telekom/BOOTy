@@ -223,7 +223,7 @@ func TestBindMountAndTeardown(t *testing.T) {
 
 	// Teardown.
 	if err := mgr.TeardownChrootBindMounts(mountpoint); err != nil {
-		t.Errorf("TeardownChrootBindMounts: %v", err)
+		t.Fatalf("TeardownChrootBindMounts: %v", err)
 	}
 }
 
