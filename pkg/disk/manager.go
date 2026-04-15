@@ -824,9 +824,10 @@ func (m *Manager) SetupChrootBindMounts(root string) error {
 	return nil
 }
 
-// TeardownChrootBindMounts unmounts standard bind mounts.
-// Errors are logged to aid debugging of stale mount points.
-func (m *Manager) TeardownChrootBindMounts(root string) {
+// TeardownChrootBindMounts unmounts standard bind mounts and returns any
+// errors encountered so callers can surface teardown failures.
+func (m *Manager) TeardownChrootBindMounts(root string) error {
+	var errs []error
 	// Unmount efivarfs first (sub-mount under /sys).
 	efiPath := root + "/sys/firmware/efi/efivars"
 	if err := m.Unmount(efiPath); err != nil {
@@ -835,6 +836,8 @@ func (m *Manager) TeardownChrootBindMounts(root string) {
 	for _, rel := range []string{"run", "sys", "proc", "dev"} {
 		if err := m.Unmount(root + "/" + rel); err != nil {
 			slog.Warn("chroot unmount failed", "path", root+"/"+rel, "error", err)
+			errs = append(errs, err)
 		}
 	}
+	return errors.Join(errs...)
 }

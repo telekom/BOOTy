@@ -222,7 +222,9 @@ func TestBindMountAndTeardown(t *testing.T) {
 	}
 
 	// Teardown.
-	mgr.TeardownChrootBindMounts(mountpoint)
+	if err := mgr.TeardownChrootBindMounts(mountpoint); err != nil {
+		t.Errorf("TeardownChrootBindMounts: %v", err)
+	}
 }
 
 func TestGrowPartitionAndResize(t *testing.T) {
