@@ -818,8 +818,9 @@ func (o *Orchestrator) runPostProvisionCmds(ctx context.Context) error {
 }
 
 func (o *Orchestrator) teardownChroot(_ context.Context) error {
-	o.disk.TeardownChrootBindMounts(newroot)
-	return o.disk.Unmount(newroot)
+	bindErr := o.disk.TeardownChrootBindMounts(newroot)
+	unmountErr := o.disk.Unmount(newroot)
+	return errors.Join(bindErr, unmountErr)
 }
 
 func (o *Orchestrator) runHealthChecks(ctx context.Context) error {
