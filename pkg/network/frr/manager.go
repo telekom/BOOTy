@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/vishvananda/netlink"
@@ -346,7 +347,7 @@ func (m *Manager) createVRF(name string, tableID uint32) error {
 		Table:     tableID,
 	}
 	if err := netlink.LinkAdd(vrf); err != nil {
-		if os.IsExist(err) {
+		if errors.Is(err, syscall.EEXIST) {
 			m.log.Debug("VRF already exists", "name", name)
 			return nil
 		}
@@ -362,7 +363,7 @@ func (m *Manager) createDummy(name, vrfName, addr string) error {
 	dummy := &netlink.Dummy{
 		LinkAttrs: netlink.LinkAttrs{Name: name},
 	}
-	if err := netlink.LinkAdd(dummy); err != nil && !os.IsExist(err) {
+	if err := netlink.LinkAdd(dummy); err != nil && !errors.Is(err, syscall.EEXIST) {
 		return fmt.Errorf("add dummy %s: %w", name, err)
 	}
 
@@ -385,7 +386,7 @@ func (m *Manager) createDummy(name, vrfName, addr string) error {
 	if err != nil {
 		return fmt.Errorf("parse addr %s: %w", addr, err)
 	}
-	if err := netlink.AddrAdd(link, nlAddr); err != nil && !os.IsExist(err) {
+	if err := netlink.AddrAdd(link, nlAddr); err != nil && !errors.Is(err, syscall.EEXIST) {
 		return fmt.Errorf("add addr to dummy: %w", err)
 	}
 
@@ -414,7 +415,7 @@ func (m *Manager) createVXLAN(vni uint32, srcIP, bridgeName, bridgeMAC string, p
 		VtepDevIndex: 0,
 	}
 
-	if err := netlink.LinkAdd(vxlan); err != nil && !os.IsExist(err) {
+	if err := netlink.LinkAdd(vxlan); err != nil && !errors.Is(err, syscall.EEXIST) {
 		return fmt.Errorf("add VXLAN %s: %w", vxlanName, err)
 	}
 
@@ -437,7 +438,7 @@ func (m *Manager) createVXLAN(vni uint32, srcIP, bridgeName, bridgeMAC string, p
 			HardwareAddr: hwAddr,
 		},
 	}
-	if err := netlink.LinkAdd(bridge); err != nil && !os.IsExist(err) {
+	if err := netlink.LinkAdd(bridge); err != nil && !errors.Is(err, syscall.EEXIST) {
 		return fmt.Errorf("add bridge %s: %w", bridgeName, err)
 	}
 
@@ -473,7 +474,7 @@ func (m *Manager) addLoopbackAddress(ip string) error {
 		}
 	}
 
-	if err := netlink.AddrAdd(lo, addr); err != nil && !os.IsExist(err) {
+	if err := netlink.AddrAdd(lo, addr); err != nil && !errors.Is(err, syscall.EEXIST) {
 		return fmt.Errorf("add overlay IP to loopback: %w", err)
 	}
 
@@ -491,7 +492,7 @@ func (m *Manager) addBridgeAddress(bridgeName, addr string) error {
 		return fmt.Errorf("parse provision IP %s: %w", addr, err)
 	}
 
-	if err := netlink.AddrAdd(link, nlAddr); err != nil && !os.IsExist(err) {
+	if err := netlink.AddrAdd(link, nlAddr); err != nil && !errors.Is(err, syscall.EEXIST) {
 		return fmt.Errorf("add provision IP to bridge: %w", err)
 	}
 

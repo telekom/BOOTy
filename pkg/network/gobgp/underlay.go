@@ -4,11 +4,12 @@ package gobgp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
-	"os"
 	"os/exec"
+	"syscall"
 	"time"
 
 	apipb "github.com/osrg/gobgp/v3/api"
@@ -203,7 +204,7 @@ func (u *UnderlayTier) createUnderlayDummy() error {
 	dummy := &netlink.Dummy{
 		LinkAttrs: netlink.LinkAttrs{Name: "dummy.underlay"},
 	}
-	if err := netlink.LinkAdd(dummy); err != nil && !os.IsExist(err) {
+	if err := netlink.LinkAdd(dummy); err != nil && !errors.Is(err, syscall.EEXIST) {
 		return fmt.Errorf("add dummy.underlay: %w", err)
 	}
 
@@ -217,7 +218,7 @@ func (u *UnderlayTier) createUnderlayDummy() error {
 		return fmt.Errorf("parse router ID %s: %w", u.cfg.RouterID, err)
 	}
 
-	if err := netlink.AddrAdd(link, addr); err != nil && !os.IsExist(err) {
+	if err := netlink.AddrAdd(link, addr); err != nil && !errors.Is(err, syscall.EEXIST) {
 		return fmt.Errorf("add addr to dummy.underlay: %w", err)
 	}
 
