@@ -702,11 +702,11 @@ func TestBIOSApplyE2E(t *testing.T) {
 			mgr, _ := bios.NewManager(v, nil)
 			changes := []bios.SettingChange{{Name: "BootMode", Value: "Uefi"}, {Name: "SecureBoot", Value: "Enabled"}}
 			reboot, err := mgr.Apply(context.Background(), changes)
-			if err != nil {
-				t.Fatal(err)
+			if err == nil {
+				t.Errorf("Apply should return not-implemented error, got nil; reboot=%v", reboot)
 			}
-			if len(reboot) != 2 {
-				t.Errorf("reboot count = %d", len(reboot))
+			if !strings.Contains(err.Error(), "not implemented") {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
 	}
