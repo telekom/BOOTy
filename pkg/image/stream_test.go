@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -344,6 +345,52 @@ func TestTrimOCIScheme(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("TrimOCIScheme(%q) = %q, want %q", tt.url, got, tt.want)
 		}
+	}
+}
+
+func TestHTTPGetWithRetry_TransientErrorsThenSuccess(t *testing.T) {
+	const wantAttempts = 2
+	attempts := 0
+	data := []byte("image content")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		if attempts < wantAttempts {
+			w.WriteHeader(http.StatusServiceUnavailable) // 503 → triggers retry
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	}))
+	defer srv.Close()
+
+	rc, err := httpGetWithRetry(context.Background(), srv.URL+"/image.img")
+	if err != nil {
+		t.Fatalf("httpGetWithRetry() returned error: %v", err)
+	}
+	defer rc.Close()
+
+	buf := new(strings.Builder)
+	if _, err := io.Copy(buf, rc); err != nil {
+		t.Fatalf("reading body: %v", err)
+	}
+	if buf.String() != string(data) {
+		t.Errorf("body = %q, want %q", buf.String(), data)
+	}
+	if attempts != wantAttempts {
+		t.Errorf("server received %d requests, want %d", attempts, wantAttempts)
+	}
+}
+
+func TestHTTPGetWithRetry_AllFail(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway) // 502 → always retried, exhausts retries
+	}))
+	defer srv.Close()
+
+	_, err := httpGetWithRetry(context.Background(), srv.URL+"/image.img")
+	if err == nil {
+		t.Fatal("expected error after exhausting all retries")
 	}
 }
 
