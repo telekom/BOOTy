@@ -1024,3 +1024,78 @@ func TestIsSensitiveEnvKey(t *testing.T) {
 		})
 	}
 }
+
+func TestStopRAID(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	cmd.setResult("mdadm --stop", nil, nil)
+	if err := o.stopRAID(context.Background()); err != nil {
+		t.Fatalf("stopRAID: %v", err)
+	}
+}
+
+func TestStopRAIDError(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	cmd.setResult("mdadm --stop", nil, fmt.Errorf("stop failed"))
+	if err := o.stopRAID(context.Background()); err == nil {
+		t.Fatal("expected error from stopRAID")
+	}
+}
+
+func TestDisableLVMStep(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	if err := o.disableLVM(context.Background()); err != nil {
+		t.Fatalf("disableLVM: %v", err)
+	}
+}
+
+func TestEnableLVMStep(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	if err := o.enableLVM(context.Background()); err != nil {
+		t.Fatalf("enableLVM: %v", err)
+	}
+}
+
+func TestPartprobe(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	cmd.setResult("partprobe /dev/sda", nil, nil)
+	if err := o.partprobe(context.Background()); err != nil {
+		t.Fatalf("partprobe: %v", err)
+	}
+}
+
+func TestPartprobeError(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	cmd.setResult("partprobe /dev/sda", nil, fmt.Errorf("partprobe: device busy"))
+	cmd.setResult("blockdev --rereadpt", nil, fmt.Errorf("blockdev: device busy"))
+	if err := o.partprobe(context.Background()); err == nil {
+		t.Fatal("expected error from partprobe when both partprobe and blockdev fail")
+	}
+}
+
+func TestCheckFilesystem(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.rootPartition = "/dev/sda2"
+	cmd.setResult("blkid -o", nil, nil)
+	cmd.setResult("e2fsck -fy", nil, nil)
+	if err := o.checkFilesystem(context.Background()); err != nil {
+		t.Fatalf("checkFilesystem: %v", err)
+	}
+}
+
+func TestTeardownChrootReturnsJoinedErrors(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o, _ := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	err := o.teardownChroot(context.Background())
+	if err == nil {
+		t.Fatal("expected error from teardownChroot when unmount fails on non-root host")
+	}
+}
