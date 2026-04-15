@@ -187,18 +187,16 @@ var sensitiveIPMIFlags = map[string]bool{
 }
 
 func redactIPMIArgs(args []string) []string {
-	var out []string
-	for i := 0; i < len(args); i++ {
-		if sensitiveIPMIFlags[args[i]] && i+1 < len(args) {
-			if out == nil {
-				out = make([]string, len(args))
-				copy(out, args)
-			}
-			i++ // skip the value so it is not itself treated as a flag
-			out[i] = "[REDACTED]"
+	out := append([]string(nil), args...)
+	redacted := false
+	for i := 0; i < len(out)-1; i++ {
+		if !sensitiveIPMIFlags[out[i]] {
+			continue
 		}
+		out[i+1] = "[REDACTED]"
+		redacted = true
 	}
-	if out == nil {
+	if !redacted {
 		return args
 	}
 	return out
