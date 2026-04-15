@@ -723,10 +723,10 @@ func (m *Manager) DisableLVM(ctx context.Context) error {
 	out, err := m.cmd.Run(ctx, "lvm", "vgchange", "-an")
 	if err != nil {
 		if isExecNotFound(err) {
-			slog.Debug("lvm binary not found, skipping deactivation")
+			slog.Debug("lvm binary not found, skipping deactivation", "err", err)
 			return nil
 		}
-		return fmt.Errorf("lvm vgchange: %s: %w", string(out), err)
+		return fmt.Errorf("lvm vgchange: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }
