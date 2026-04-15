@@ -3,6 +3,7 @@
 package network
 
 import (
+	"errors"
 	"net"
 	"testing"
 )
@@ -31,6 +32,15 @@ func makeIface(t *testing.T, name string, mac string, flags net.Flags) net.Inter
 
 func addrFor(addrs map[string][]net.Addr) func(net.Interface) ([]net.Addr, error) {
 	return func(i net.Interface) ([]net.Addr, error) {
+		return addrs[i.Name], nil
+	}
+}
+
+func addrForWithErr(addrs map[string][]net.Addr, errIface string, errVal error) func(net.Interface) ([]net.Addr, error) {
+	return func(i net.Interface) ([]net.Addr, error) {
+		if i.Name == errIface {
+			return nil, errVal
+		}
 		return addrs[i.Name], nil
 	}
 }
@@ -202,5 +212,20 @@ func TestFilterAddressed_NoValidIPExcluded(t *testing.T) {
 	got := filterAddressed(ifaces, addrFor(addrs))
 	if len(got) != 0 {
 		t.Errorf("got %v, want empty (all addrs are link-local or loopback)", got)
+	}
+}
+
+func TestFilterAddressed_AddrErrorSkipsInterface(t *testing.T) {
+	ifaces := []net.Interface{
+		makeIface(t, "eth0", "aa:bb:cc:dd:ee:01", net.FlagUp),
+		makeIface(t, "eth1", "aa:bb:cc:dd:ee:02", net.FlagUp),
+	}
+	addrs := map[string][]net.Addr{
+		"eth1": mockAddr(t, "10.0.0.2/24"),
+	}
+
+	got := filterAddressed(ifaces, addrForWithErr(addrs, "eth0", errors.New("addr enumeration failed")))
+	if len(got) != 1 || got[0].Name != "eth1" {
+		t.Errorf("got %v, want only eth1 (eth0 skipped due to addr error)", got)
 	}
 }
