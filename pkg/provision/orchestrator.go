@@ -554,9 +554,13 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 		}
 	}
 
-	// Partition-by-partition mode: download to ramdisk, copy each partition individually.
+	// Partition-by-partition mode: wipe first to ensure a clean slate on any
+	// retry attempt, then download and copy each partition individually.
 	if strings.EqualFold(o.cfg.ImageMode, "partition") {
 		o.log.Info("Streaming image partition-by-partition", "url", bestURL, "disk", o.targetDisk)
+		if err := o.disk.WipeDisk(ctx, o.targetDisk); err != nil {
+			return fmt.Errorf("wiping disk before partition stream: %w", err)
+		}
 		return image.StreamPartitions(ctx, bestURL, o.targetDisk)
 	}
 
