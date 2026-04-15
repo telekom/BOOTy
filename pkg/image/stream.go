@@ -212,10 +212,14 @@ func openSource(ctx context.Context, url string) (io.ReadCloser, error) {
 	return httpGetWithRetry(ctx, url)
 }
 
+// retryBackoffBase is the initial backoff duration for retry loops.
+// It is a package-level variable so tests can override it for fast execution.
+var retryBackoffBase = time.Second
+
 // httpGetWithRetry performs an HTTP GET with retry and exponential backoff.
 func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 	const maxRetries = 3
-	backoff := time.Second
+	backoff := retryBackoffBase
 
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -228,12 +232,14 @@ func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 		if err != nil {
 			lastErr = fmt.Errorf("fetching image (attempt %d/%d): %w", attempt+1, maxRetries, err)
 			slog.Warn("HTTP request failed, retrying", "attempt", attempt+1, "error", err, "backoff", backoff)
-			select {
-			case <-ctx.Done():
-				return nil, fmt.Errorf("context canceled: %w", ctx.Err())
-			case <-time.After(backoff):
+			if attempt < maxRetries-1 {
+				select {
+				case <-ctx.Done():
+					return nil, fmt.Errorf("context canceled: %w", ctx.Err())
+				case <-time.After(backoff):
+				}
+				backoff *= 2
 			}
-			backoff *= 2
 			continue
 		}
 
@@ -249,12 +255,14 @@ func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 		if resp.StatusCode >= 500 {
 			lastErr = fmt.Errorf("server error %d for %s (attempt %d/%d)", resp.StatusCode, url, attempt+1, maxRetries)
 			slog.Warn("HTTP server error, retrying", "attempt", attempt+1, "status", resp.StatusCode, "backoff", backoff)
-			select {
-			case <-ctx.Done():
-				return nil, fmt.Errorf("context canceled: %w", ctx.Err())
-			case <-time.After(backoff):
+			if attempt < maxRetries-1 {
+				select {
+				case <-ctx.Done():
+					return nil, fmt.Errorf("context canceled: %w", ctx.Err())
+				case <-time.After(backoff):
+				}
+				backoff *= 2
 			}
-			backoff *= 2
 			continue
 		}
 		return nil, fmt.Errorf("unexpected status %d for %s", resp.StatusCode, url)
@@ -265,7 +273,7 @@ func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 // fetchOCIWithRetry retries OCI layer fetch with exponential backoff.
 func fetchOCIWithRetry(ctx context.Context, ref string) (io.ReadCloser, error) {
 	const maxRetries = 3
-	backoff := time.Second
+	backoff := retryBackoffBase
 
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -275,12 +283,14 @@ func fetchOCIWithRetry(ctx context.Context, ref string) (io.ReadCloser, error) {
 		}
 		lastErr = fmt.Errorf("OCI pull (attempt %d/%d): %w", attempt+1, maxRetries, err)
 		slog.Warn("OCI pull failed, retrying", "attempt", attempt+1, "error", err, "backoff", backoff)
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
-		case <-time.After(backoff):
+		if attempt < maxRetries-1 {
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("context canceled: %w", ctx.Err())
+			case <-time.After(backoff):
+			}
+			backoff *= 2
 		}
-		backoff *= 2
 	}
 	return nil, lastErr
 }

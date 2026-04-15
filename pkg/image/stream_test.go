@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/pierrec/lz4/v4"
@@ -349,6 +350,9 @@ func TestTrimOCIScheme(t *testing.T) {
 }
 
 func TestHTTPGetWithRetry_TransientErrorsThenSuccess(t *testing.T) {
+	retryBackoffBase = 0
+	t.Cleanup(func() { retryBackoffBase = time.Second })
+
 	const wantAttempts = 2
 	attempts := 0
 	data := []byte("image content")
@@ -383,7 +387,14 @@ func TestHTTPGetWithRetry_TransientErrorsThenSuccess(t *testing.T) {
 }
 
 func TestHTTPGetWithRetry_AllFail(t *testing.T) {
+	retryBackoffBase = 0
+	t.Cleanup(func() { retryBackoffBase = time.Second })
+
+	const maxRetries = 3
+	attempts := 0
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
 		w.WriteHeader(http.StatusBadGateway) // 502 → always retried, exhausts retries
 	}))
 	defer srv.Close()
@@ -391,6 +402,9 @@ func TestHTTPGetWithRetry_AllFail(t *testing.T) {
 	_, err := httpGetWithRetry(context.Background(), srv.URL+"/image.img")
 	if err == nil {
 		t.Fatal("expected error after exhausting all retries")
+	}
+	if attempts != maxRetries {
+		t.Errorf("server received %d requests, want %d (maxRetries)", attempts, maxRetries)
 	}
 }
 
