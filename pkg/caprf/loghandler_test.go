@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,7 +27,6 @@ func TestRemoteHandlerShipsLogs(t *testing.T) {
 	logger := slog.New(handler)
 	logger.Info("test message", "key", "value")
 
-	// Close flushes the buffer.
 	handler.Close()
 
 	ts.mu.Lock()
@@ -47,7 +47,6 @@ func TestRemoteHandlerLevelFilter(t *testing.T) {
 	client := NewFromConfig(cfg)
 
 	inner := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
-	// Only ship WARN and above.
 	handler := NewRemoteHandler(client, inner, slog.LevelWarn, 100)
 
 	logger := slog.New(handler)
@@ -65,27 +64,24 @@ func TestRemoteHandlerLevelFilter(t *testing.T) {
 }
 
 func TestRemoteHandlerDropsWhenFull(t *testing.T) {
-	cfg := &config.MachineConfig{
-		Token: "drop-token",
-		// Use a non-existent URL so we can test buffer behavior without draining.
-	}
+	cfg := &config.MachineConfig{Token: "drop-token"}
 	client := NewFromConfig(cfg)
 
-	// Very small buffer to trigger overflow.
 	var mu sync.Mutex
 	var shipped int
 
-	// We'll use a real handler but with a logger that counts.
 	inner := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
 	handler := &RemoteHandler{
-		client: client,
-		inner:  inner,
-		level:  slog.LevelInfo,
-		buf:    make(chan string, 2), // Only 2 slots.
-		done:   make(chan struct{}),
+		client:   client,
+		inner:    inner,
+		level:    slog.LevelInfo,
+		buf:      make(chan string, 2),
+		done:     make(chan struct{}),
+		once:     &sync.Once{},
+		dropped:  &atomic.Int64{},
+		reported: &atomic.Int64{},
 	}
 
-	// Count messages that make it through.
 	go func() {
 		defer close(handler.done)
 		for range handler.buf {
@@ -96,7 +92,6 @@ func TestRemoteHandlerDropsWhenFull(t *testing.T) {
 	}()
 
 	logger := slog.New(handler)
-	// Fire more logs than buffer can hold rapidly.
 	for i := range 10 {
 		logger.Info("message", "i", i)
 	}
@@ -106,11 +101,71 @@ func TestRemoteHandlerDropsWhenFull(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// At least some should have been delivered, but not necessarily all 10.
 	if shipped == 0 {
 		t.Fatal("expected at least some messages to be shipped")
 	}
 	t.Logf("shipped %d of 10 messages", shipped)
+}
+
+func TestDropCounterIncrementsOnFullBuffer(t *testing.T) {
+	cfg := &config.MachineConfig{Token: "counter-token"}
+	client := NewFromConfig(cfg)
+	inner := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+
+	buf := make(chan string, 2)
+	done := make(chan struct{})
+	blocker := make(chan struct{})
+
+	handler := &RemoteHandler{
+		client:   client,
+		inner:    inner,
+		level:    slog.LevelInfo,
+		buf:      buf,
+		done:     done,
+		once:     &sync.Once{},
+		dropped:  &atomic.Int64{},
+		reported: &atomic.Int64{},
+	}
+
+	go func() {
+		defer close(done)
+		<-blocker
+		for v := range buf {
+			_ = v // drain the buffered channel so Close() can complete
+		}
+	}()
+
+	logger := slog.New(handler)
+	for i := range 10 {
+		logger.Info("msg", "i", i)
+	}
+
+	n := handler.DroppedCount()
+	if n == 0 {
+		t.Fatal("expected drop counter > 0 when buffer is full and drain is blocked")
+	}
+	t.Logf("drop counter = %d after sending 10 messages to buffer-of-2", n)
+
+	close(blocker)
+	handler.Close()
+}
+
+func TestDropCounterAccessibleFromDerivedHandler(t *testing.T) {
+	cfg := &config.MachineConfig{Token: "derived-counter-token"}
+	client := NewFromConfig(cfg)
+	inner := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+
+	root := NewRemoteHandler(client, inner, slog.LevelInfo, 1)
+	derived := root.WithAttrs([]slog.Attr{slog.String("k", "v")}).(*RemoteHandler)
+
+	if root.dropped != derived.dropped {
+		t.Fatal("expected root and derived handler to share the same drop counter")
+	}
+	if root.reported != derived.reported {
+		t.Fatal("expected root and derived handler to share the same reported counter")
+	}
+
+	root.Close()
 }
 
 func TestRemoteHandlerWithAttrsAndGroups(t *testing.T) {
@@ -158,7 +213,6 @@ func TestRemoteHandlerCloseIdempotent(t *testing.T) {
 	inner := slog.NewTextHandler(os.Stderr, nil)
 	handler := NewRemoteHandler(client, inner, slog.LevelInfo, 10)
 
-	// Close multiple times should not panic.
 	done := make(chan struct{})
 	go func() {
 		handler.Close()
@@ -190,7 +244,106 @@ func TestRemoteHandlerCloseFromDerivedHandlers(t *testing.T) {
 	logger := slog.New(derived)
 	logger.Info("log from derived handler")
 
-	// Closing both handlers should not panic or deadlock.
 	root.Close()
 	derived.Close()
 }
+
+func TestMaybeWarnDroppedCadence(t *testing.T) {
+	var warningCount atomic.Int64
+
+	inner := &countingHandler{level: slog.LevelWarn, count: &warningCount}
+
+	h := &RemoteHandler{
+		inner:    inner,
+		dropped:  &atomic.Int64{},
+		reported: &atomic.Int64{},
+	}
+
+	for i := int64(1); i <= dropWarnEvery; i++ {
+		h.maybeWarnDropped(i)
+	}
+	if got := warningCount.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 warning after %d drops, got %d", dropWarnEvery, got)
+	}
+
+	for i := int64(1); i <= dropWarnEvery; i++ {
+		h.maybeWarnDropped(dropWarnEvery + i)
+	}
+	if got := warningCount.Load(); got != 2 {
+		t.Fatalf("expected exactly 2 warnings after %d drops, got %d", 2*dropWarnEvery, got)
+	}
+}
+
+func TestDropCounterHighVolume(t *testing.T) {
+	const messages = 1000
+	const bufSize = 2
+
+	cfg := &config.MachineConfig{Token: "highvol-token"}
+	client := NewFromConfig(cfg)
+	inner := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})
+
+	buf := make(chan string, bufSize)
+	done := make(chan struct{})
+	blocker := make(chan struct{})
+
+	h := &RemoteHandler{
+		client:   client,
+		inner:    inner,
+		level:    slog.LevelInfo,
+		buf:      buf,
+		done:     done,
+		once:     &sync.Once{},
+		dropped:  &atomic.Int64{},
+		reported: &atomic.Int64{},
+	}
+
+	go func() {
+		defer close(done)
+		<-blocker
+		for v := range buf {
+			_ = v
+		}
+	}()
+
+	logger := slog.New(h)
+	for i := range messages {
+		logger.Info("msg", "i", i)
+	}
+
+	dropped := h.DroppedCount()
+	shipped := int64(messages) - dropped
+	if dropped+shipped != messages {
+		t.Fatalf("invariant: dropped(%d) + shipped(%d) != messages(%d)", dropped, shipped, messages)
+	}
+	if dropped < int64(messages-bufSize) {
+		t.Fatalf("expected at least %d drops with blocked drain, got %d", messages-bufSize, dropped)
+	}
+	t.Logf("high-volume: %d messages, %d dropped, %d in buffer", messages, dropped, shipped)
+
+	close(blocker)
+	h.Close()
+}
+
+func TestWarnViaInnerNilInner(t *testing.T) {
+	h := &RemoteHandler{inner: nil}
+	h.warnViaInner("should be silently dropped")
+}
+
+type countingHandler struct {
+	level slog.Leveler
+	count *atomic.Int64
+}
+
+func (c *countingHandler) Enabled(_ context.Context, level slog.Level) bool {
+	return level >= c.level.Level()
+}
+
+func (c *countingHandler) Handle(_ context.Context, r slog.Record) error {
+	if r.Level >= c.level.Level() {
+		c.count.Add(1)
+	}
+	return nil
+}
+
+func (c *countingHandler) WithAttrs(_ []slog.Attr) slog.Handler { return c }
+func (c *countingHandler) WithGroup(_ string) slog.Handler      { return c }
