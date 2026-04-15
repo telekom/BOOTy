@@ -740,7 +740,15 @@ func (m *Manager) EnableLVM(ctx context.Context) error {
 	slog.Info("activating LVM volume groups")
 	out, err := m.cmd.Run(ctx, "lvm", "vgchange", "-ay")
 	if err != nil {
-		return fmt.Errorf("lvm vgchange: %s: %w", string(out), err)
+		if isExecNotFound(err) {
+			slog.Debug("lvm binary not found, skipping activation", "error", err)
+			return nil
+		}
+		trimmed := strings.TrimSpace(string(out))
+		if trimmed != "" {
+			return fmt.Errorf("lvm vgchange: %s: %w", trimmed, err)
+		}
+		return fmt.Errorf("lvm vgchange: %w", err)
 	}
 	return nil
 }
