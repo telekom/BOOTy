@@ -1024,3 +1024,35 @@ func TestIsSensitiveEnvKey(t *testing.T) {
 		})
 	}
 }
+
+func TestStreamImagePartitionModeWipesDiskFirst(t *testing.T) {
+	// Verify that WipeDisk is called before StreamPartitions in partition mode.
+	// This ensures a clean slate on any retry and prevents data corruption.
+	cmd := newMockCommander()
+	wipeErr := fmt.Errorf("wipe failed")
+	cmd.setResult("wipefs -af", nil, wipeErr)
+
+	cfg := &config.MachineConfig{
+		ImageMode: "partition",
+	}
+	o := NewOrchestrator(cfg, &mockProvider{}, disk.NewManager(cmd))
+	o.targetDisk = "/dev/sda"
+	o.bestImageURL = "http://images.local/node.img.zst"
+
+	err := o.streamImage(context.Background())
+	if err == nil {
+		t.Fatal("expected error when wipefs fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "wiping disk before partition stream") {
+		t.Fatalf("expected 'wiping disk before partition stream' in error, got: %v", err)
+	}
+
+	// sgdisk is called first by WipeDisk (before wipefs), so it must appear
+	// as the first recorded command.
+	if len(cmd.calls) < 1 {
+		t.Fatal("expected at least one command to be recorded")
+	}
+	if cmd.calls[0].name != "sgdisk" {
+		t.Fatalf("expected first command to be 'sgdisk' (WipeDisk), got %q", cmd.calls[0].name)
+	}
+}
