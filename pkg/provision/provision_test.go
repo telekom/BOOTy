@@ -17,25 +17,6 @@ import (
 	"github.com/telekom/BOOTy/pkg/rescue"
 )
 
-// hasRealBlockDevices returns true if /sys/block contains non-virtual disks
-// (i.e. entries that are not loop, sr, ram, or dm- devices). This is used to
-// set test expectations for SecureEraseAllDisks which reads /sys/block directly.
-func hasRealBlockDevices() bool {
-	entries, err := os.ReadDir("/sys/block")
-	if err != nil {
-		return false
-	}
-	for _, e := range entries {
-		n := e.Name()
-		if strings.HasPrefix(n, "loop") || strings.HasPrefix(n, "sr") ||
-			strings.HasPrefix(n, "ram") || strings.HasPrefix(n, "dm-") {
-			continue
-		}
-		return true
-	}
-	return false
-}
-
 type mockCommander struct {
 	calls   []mockCall
 	results map[string]mockResult
