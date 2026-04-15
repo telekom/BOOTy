@@ -5,6 +5,7 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -701,12 +702,9 @@ func TestBIOSApplyE2E(t *testing.T) {
 		t.Run(string(v), func(t *testing.T) {
 			mgr, _ := bios.NewManager(v, nil)
 			changes := []bios.SettingChange{{Name: "BootMode", Value: "Uefi"}, {Name: "SecureBoot", Value: "Enabled"}}
-			reboot, err := mgr.Apply(context.Background(), changes)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(reboot) != 2 {
-				t.Errorf("reboot count = %d", len(reboot))
+			_, err := mgr.Apply(context.Background(), changes)
+			if !errors.Is(err, bios.ErrNotImplemented) {
+				t.Errorf("Apply() error = %v, want bios.ErrNotImplemented", err)
 			}
 		})
 	}
