@@ -237,7 +237,7 @@ func TestRedactIPMIArgs(t *testing.T) {
 		},
 		{
 			name:     "consecutive sensitive flags: value not re-treated as flag",
-			input:    []string{"-P", "-H", "host"},
+			input:    []string{"-P", "pass", "-H", "host"},
 			absent:   "host",
 			contains: "[REDACTED]",
 		},
