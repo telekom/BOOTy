@@ -28,8 +28,8 @@ func TestExecCommanderFailure(t *testing.T) {
 	if !strings.Contains(errStr, "exec false") {
 		t.Fatalf("error should mention command name, got: %s", errStr)
 	}
-	if !strings.Contains(errStr, "PATH:") {
-		t.Fatalf("error should include PATH, got: %s", errStr)
+	if strings.Contains(errStr, "[PATH:") {
+		t.Fatalf("error must not include [PATH: ...] annotation, got: %s", errStr)
 	}
 }
 
@@ -39,8 +39,8 @@ func TestExecCommanderNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing binary")
 	}
-	if !strings.Contains(err.Error(), "PATH:") {
-		t.Fatalf("error should include PATH, got: %s", err.Error())
+	if strings.Contains(err.Error(), "[PATH:") {
+		t.Fatalf("error must not include [PATH: ...] annotation, got: %s", err.Error())
 	}
 }
 
