@@ -355,6 +355,18 @@ func TestValidateProvisionCommandBlockedTokens(t *testing.T) {
 		})
 	}
 
+	// Explicitly verify the blocked-token error message for semicolon so this
+	// test fails if ";" is ever removed from blockedShellTokens.
+	t.Run("semicolon-error-message", func(t *testing.T) {
+		err := validateProvisionCommand("/bin/true; /bin/false")
+		if err == nil {
+			t.Fatal("expected error for semicolon command, got nil")
+		}
+		if !strings.Contains(err.Error(), `blocked shell token ";"`) {
+			t.Errorf("expected error to mention blocked shell token, got: %v", err)
+		}
+	})
+
 	if err := validateProvisionCommand("/bin/echo hello"); err != nil {
 		t.Errorf("validateProvisionCommand safe command: unexpected error: %v", err)
 	}
