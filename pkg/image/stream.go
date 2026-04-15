@@ -218,7 +218,7 @@ func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 	backoff := time.Second
 
 	var lastErr error
-	for attempt := range maxRetries {
+	for attempt := 0; attempt < maxRetries; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 		if err != nil {
 			return nil, fmt.Errorf("creating request: %w", err)
@@ -268,7 +268,7 @@ func fetchOCIWithRetry(ctx context.Context, ref string) (io.ReadCloser, error) {
 	backoff := time.Second
 
 	var lastErr error
-	for attempt := range maxRetries {
+	for attempt := 0; attempt < maxRetries; attempt++ {
 		rc, err := FetchOCILayer(ctx, ref)
 		if err == nil {
 			return rc, nil
