@@ -65,7 +65,7 @@ jobs:
             -f initrd.Dockerfile .
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: nightly-${{ matrix.flavor }}-${{ matrix.arch }}
           path: |
@@ -103,7 +103,7 @@ jobs:
           output-file: sbom-nightly.spdx.json
 
       - name: Upload SBOM
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: sbom-nightly
           path: sbom-nightly.spdx.json
