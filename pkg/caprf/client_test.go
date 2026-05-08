@@ -3,6 +3,7 @@ package caprf
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -407,8 +408,17 @@ func TestReportCrashArtifactsDirectCAPRFUploadUsesBearer(t *testing.T) {
 
 func TestReportCrashArtifactsNoURLNoop(t *testing.T) {
 	client := NewFromConfig(&config.MachineConfig{})
-	if err := client.ReportCrashArtifacts(context.Background(), crashRequestFixture(), writeCrashArchiveFixture(t)); err != nil {
-		t.Fatalf("ReportCrashArtifacts() with no URL should not error: %v", err)
+	err := client.ReportCrashArtifacts(context.Background(), crashRequestFixture(), writeCrashArchiveFixture(t))
+	if !errors.Is(err, crash.ErrNoUploadURL) {
+		t.Fatalf("ReportCrashArtifacts() error = %v, want ErrNoUploadURL", err)
+	}
+}
+
+func TestReportCrashArtifactsRejectsInsecureRemoteUpload(t *testing.T) {
+	client := NewFromConfig(&config.MachineConfig{CrashArtifactsUploadURL: "http://example.com/crash/upload"})
+	err := client.ReportCrashArtifacts(context.Background(), crashRequestFixture(), writeCrashArchiveFixture(t))
+	if !errors.Is(err, errInsecureTransport) {
+		t.Fatalf("ReportCrashArtifacts() error = %v, want errInsecureTransport", err)
 	}
 }
 

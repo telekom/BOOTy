@@ -324,7 +324,7 @@ func (c *Client) SendEvent(ctx context.Context, data []byte) error {
 func (c *Client) ReportCrashArtifacts(ctx context.Context, req *crash.PrepareRequest, archivePath string) error {
 	if c.cfg.CrashArtifactsPrepareURL == "" && c.cfg.CrashArtifactsUploadURL == "" {
 		c.log.Debug("no crash artifact URL configured, skipping")
-		return nil
+		return crash.ErrNoUploadURL
 	}
 	if req == nil {
 		return fmt.Errorf("crash artifact prepare request is nil")
@@ -355,6 +355,9 @@ func (c *Client) crashUploadTimeout() time.Duration {
 }
 
 func (c *Client) prepareCrashArtifactUpload(ctx context.Context, req *crash.PrepareRequest) (*crash.PrepareResponse, error) {
+	if err := c.requireSecureEndpoint(c.cfg.CrashArtifactsPrepareURL, "crash artifact prepare"); err != nil {
+		return nil, err
+	}
 	data, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal crash artifact prepare request: %w", err)
@@ -393,16 +396,16 @@ func (c *Client) doPrepareCrashArtifactUpload(ctx context.Context, data []byte) 
 	}
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
-		return nil, true, fmt.Errorf("POST %s: %w", redacted, err)
+		return nil, true, fmt.Errorf("post %s: %w", redacted, err)
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return nil, false, fmt.Errorf("POST %s: status %d", redacted, resp.StatusCode)
+		return nil, false, fmt.Errorf("post %s: status %d", redacted, resp.StatusCode)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return nil, true, fmt.Errorf("POST %s: status %d", redacted, resp.StatusCode)
+		return nil, true, fmt.Errorf("post %s: status %d", redacted, resp.StatusCode)
 	}
 	var instructions crash.PrepareResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&instructions); err != nil {
@@ -428,6 +431,9 @@ func (c *Client) uploadCrashArchive(ctx context.Context, instructions *crash.Pre
 	}
 	if instructions.UploadURL == "" {
 		return fmt.Errorf("crash artifact upload URL is empty")
+	}
+	if err := c.requireSecureEndpoint(instructions.UploadURL, "crash artifact upload"); err != nil {
+		return err
 	}
 	if instructions.MaxBytes > 0 {
 		info, err := os.Stat(archivePath)
@@ -485,7 +491,7 @@ func (c *Client) uploadCrashRaw(ctx context.Context, instructions *crash.Prepare
 func (c *Client) uploadCrashPresignedForm(ctx context.Context, instructions *crash.PrepareResponse, archivePath string) error {
 	redacted := redactedURL(instructions.UploadURL)
 	return c.uploadCrashWithRetry(ctx, redacted, func() error {
-		reader, contentType := multipartArchiveReader(archivePath, instructions.FormFields, "file")
+		reader, contentType := multipartArchiveReader(ctx, archivePath, instructions.FormFields, "file")
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, instructions.UploadURL, reader)
 		if err != nil {
 			return fmt.Errorf("create crash artifact form upload request %s: %w", redacted, err)
@@ -502,6 +508,9 @@ func (c *Client) uploadCrashPresignedForm(ctx context.Context, instructions *cra
 }
 
 func (c *Client) uploadCrashProxyMultipart(ctx context.Context, rawURL string, reqPayload *crash.PrepareRequest, archivePath string) error {
+	if err := c.requireSecureEndpoint(rawURL, "crash artifact upload"); err != nil {
+		return err
+	}
 	redacted := redactedURL(rawURL)
 	manifest, err := json.Marshal(reqPayload)
 	if err != nil {
@@ -509,7 +518,7 @@ func (c *Client) uploadCrashProxyMultipart(ctx context.Context, rawURL string, r
 	}
 	instructions := &crash.PrepareResponse{UploadURL: rawURL, AuthMode: crash.AuthModeBearer, UploadMode: crash.UploadModeCAPRFProxy}
 	return c.uploadCrashWithRetry(ctx, redacted, func() error {
-		reader, contentType := multipartArchiveReader(archivePath, map[string]string{"manifest": string(manifest)}, "archive")
+		reader, contentType := multipartArchiveReader(ctx, archivePath, map[string]string{"manifest": string(manifest)}, "archive")
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, reader)
 		if err != nil {
 			return fmt.Errorf("create crash artifact proxy upload request %s: %w", redacted, err)
@@ -522,10 +531,13 @@ func (c *Client) uploadCrashProxyMultipart(ctx context.Context, rawURL string, r
 	})
 }
 
-func multipartArchiveReader(archivePath string, fields map[string]string, fileField string) (io.Reader, string) {
+func multipartArchiveReader(ctx context.Context, archivePath string, fields map[string]string, fileField string) (body io.ReadCloser, contentType string) {
 	pr, pw := io.Pipe()
 	writer := multipart.NewWriter(pw)
+	contentType = writer.FormDataContentType()
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		defer pw.Close()     //nolint:errcheck // best-effort close
 		defer writer.Close() //nolint:errcheck // CloseWithError reports failures
 		for key, value := range fields {
@@ -550,7 +562,14 @@ func multipartArchiveReader(archivePath string, fields map[string]string, fileFi
 			return
 		}
 	}()
-	return pr, writer.FormDataContentType()
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = pr.CloseWithError(ctx.Err())
+		case <-done:
+		}
+	}()
+	return pr, contentType
 }
 
 func (c *Client) applyCrashUploadAuth(req *http.Request, instructions *crash.PrepareResponse) error {
@@ -593,6 +612,9 @@ func (c *Client) uploadCrashWithRetry(ctx context.Context, redacted string, fn f
 }
 
 func (c *Client) doCrashUploadRequest(req *http.Request, redacted string) error {
+	if req.Body != nil {
+		defer req.Body.Close() //nolint:errcheck // close multipart pipe on early transport failures
+	}
 	client := newHTTPClient(c.crashUploadTimeout())
 	resp, err := client.Do(req) //nolint:gosec // URL from trusted config or CAPRF response
 	if err != nil {

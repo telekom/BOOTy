@@ -4,11 +4,15 @@ package crash
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 )
 
 // DefaultMaxBytes is the fallback archive payload cap used by the collector.
 const DefaultMaxBytes int64 = 256 * 1024 * 1024
+
+// ErrNoUploadURL is returned when crash artifact upload is requested without an endpoint.
+var ErrNoUploadURL = errors.New("no crash artifact upload URL configured")
 
 // Upload modes supported by CAPRF crash artifact upload instructions.
 const (

@@ -26,7 +26,7 @@ type InspectOptions struct {
 }
 
 // ShouldInspect reports whether crash inspection should run for cfg.
-func ShouldInspect(cfg *config.MachineConfig) (bool, string) {
+func ShouldInspect(cfg *config.MachineConfig) (ok bool, reason string) {
 	if cfg == nil || !cfg.CrashArtifactsEnabled {
 		return false, "disabled"
 	}
@@ -55,6 +55,9 @@ func InspectStartup(ctx context.Context, cfg *config.MachineConfig, diskMgr *dis
 	if ok, reason := ShouldInspect(cfg); !ok {
 		return &InspectResult{SkipReason: reason}, nil
 	}
+	if !hasUploadEndpoint(cfg) {
+		return &InspectResult{Ran: true, SkipReason: "missing-upload-url"}, nil
+	}
 	if diskMgr == nil {
 		return &InspectResult{Ran: true, SkipReason: "missing-disk-manager"}, nil
 	}
@@ -65,22 +68,10 @@ func InspectStartup(ctx context.Context, cfg *config.MachineConfig, diskMgr *dis
 		return nil, fmt.Errorf("crash inspection canceled: %w", err)
 	}
 
-	targetDisk, err := resolveTargetDisk(ctx, cfg, diskMgr)
+	targetDisk, root, skipReason, err := resolveRootPartition(ctx, cfg, diskMgr)
 	if err != nil {
-		log.Warn("crash artifact disk detection failed", "error", err)
-		return &InspectResult{Ran: true, SkipReason: "disk-detection-failed"}, nil
-	}
-
-	parts, err := diskMgr.ParsePartitions(ctx, targetDisk)
-	if err != nil {
-		log.Warn("crash artifact partition parsing failed", "disk", targetDisk, "error", err)
-		return &InspectResult{Ran: true, SkipReason: "partition-parse-failed"}, nil
-	}
-	root, err := diskMgr.FindRootPartition(parts)
-	if err != nil {
-		reason := unsupportedPartitionReason(parts)
-		log.Warn("crash artifact root partition not found", "disk", targetDisk, "reason", reason, "error", err)
-		return &InspectResult{Ran: true, SkipReason: reason}, nil
+		log.Warn("crash artifact root partition resolution failed", "reason", skipReason, "error", err)
+		return &InspectResult{Ran: true, SkipReason: skipReason}, nil
 	}
 
 	mountPoint := opts.MountPoint
@@ -100,16 +91,7 @@ func InspectStartup(ctx context.Context, cfg *config.MachineConfig, diskMgr *dis
 		}
 	}()
 
-	collectResult, err := Collect(ctx, CollectOptions{
-		RootPath:      mountPoint,
-		PstorePath:    opts.PstorePath,
-		OutputDir:     opts.OutputDir,
-		TargetDisk:    targetDisk,
-		RootPartition: root.Node,
-		MountPoint:    mountPoint,
-		MaxBytes:      int64(cfg.CrashArtifactsMaxMB) * 1024 * 1024,
-		Config:        cfg,
-	})
+	collectResult, err := collectMountedRoot(ctx, cfg, targetDisk, root.Node, mountPoint, opts)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
@@ -117,10 +99,54 @@ func InspectStartup(ctx context.Context, cfg *config.MachineConfig, diskMgr *dis
 		log.Warn("crash artifact collection failed", "error", err)
 		return &InspectResult{Ran: true, SkipReason: "collection-failed"}, nil
 	}
+	return uploadCollectedCrash(ctx, uploader, collectResult, log), nil
+}
+
+func hasUploadEndpoint(cfg *config.MachineConfig) bool {
+	if cfg == nil {
+		return false
+	}
+	return strings.TrimSpace(cfg.CrashArtifactsPrepareURL) != "" || strings.TrimSpace(cfg.CrashArtifactsUploadURL) != ""
+}
+
+func resolveRootPartition(ctx context.Context, cfg *config.MachineConfig, diskMgr *disk.Manager) (targetDisk string, root *disk.Partition, skipReason string, err error) {
+	targetDisk, err = resolveTargetDisk(ctx, cfg, diskMgr)
+	if err != nil {
+		return "", nil, "disk-detection-failed", err
+	}
+	parts, err := diskMgr.ParsePartitions(ctx, targetDisk)
+	if err != nil {
+		return targetDisk, nil, "partition-parse-failed", err
+	}
+	root, err = diskMgr.FindRootPartition(parts)
+	if err != nil {
+		return targetDisk, nil, unsupportedPartitionReason(parts), err
+	}
+	return targetDisk, root, "", nil
+}
+
+func collectMountedRoot(ctx context.Context, cfg *config.MachineConfig, targetDisk, rootNode, mountPoint string, opts InspectOptions) (*CollectResult, error) {
+	maxMB := cfg.CrashArtifactsMaxMB
+	if maxMB <= 0 {
+		maxMB = config.DefaultCrashArtifactsMaxMB
+	}
+	return Collect(ctx, &CollectOptions{
+		RootPath:      mountPoint,
+		PstorePath:    opts.PstorePath,
+		OutputDir:     opts.OutputDir,
+		TargetDisk:    targetDisk,
+		RootPartition: rootNode,
+		MountPoint:    mountPoint,
+		MaxBytes:      int64(maxMB) * 1024 * 1024,
+		Config:        cfg,
+	})
+}
+
+func uploadCollectedCrash(ctx context.Context, uploader Uploader, collectResult *CollectResult, log *slog.Logger) *InspectResult {
 	result := &InspectResult{Ran: true, EvidenceFound: collectResult.EvidenceFound, ArchivePath: collectResult.ArchivePath, Manifest: &collectResult.Manifest}
 	if !collectResult.EvidenceFound {
 		result.SkipReason = "no-evidence"
-		return result, nil
+		return result
 	}
 
 	req := &PrepareRequest{
@@ -130,12 +156,16 @@ func InspectStartup(ctx context.Context, cfg *config.MachineConfig, diskMgr *dis
 		TotalBytes:    collectResult.Manifest.Scan.TotalBytes,
 	}
 	if err := uploader.ReportCrashArtifacts(ctx, req, collectResult.ArchivePath); err != nil {
+		if errors.Is(err, ErrNoUploadURL) {
+			result.SkipReason = "missing-upload-url"
+			return result
+		}
 		log.Warn("crash artifact upload failed", "error", err)
 		result.UploadError = err
-		return result, nil
+		return result
 	}
 	result.Uploaded = true
-	return result, nil
+	return result
 }
 
 func resolveTargetDisk(ctx context.Context, cfg *config.MachineConfig, diskMgr *disk.Manager) (string, error) {

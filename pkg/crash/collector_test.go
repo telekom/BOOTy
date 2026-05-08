@@ -7,6 +7,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -21,7 +22,7 @@ func TestCollectIncludesArtifactsAndMetadata(t *testing.T) {
 	writeTestFile(t, filepath.Join(root, "var", "log", "kern.log"), "kernel panic - not syncing: test")
 
 	outDir := t.TempDir()
-	result, err := Collect(context.Background(), CollectOptions{
+	result, err := Collect(context.Background(), &CollectOptions{
 		RootPath:      root,
 		PstorePath:    filepath.Join(t.TempDir(), "missing-pstore"),
 		OutputDir:     outDir,
@@ -63,7 +64,7 @@ func TestCollectNoEvidenceSkipsArchive(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "var", "log", "kern.log"), "normal boot log")
 
-	result, err := Collect(context.Background(), CollectOptions{
+	result, err := Collect(context.Background(), &CollectOptions{
 		RootPath:   root,
 		PstorePath: filepath.Join(t.TempDir(), "missing-pstore"),
 		OutputDir:  t.TempDir(),
@@ -88,7 +89,7 @@ func TestCollectSkipsSymlinksAndOversizedFiles(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 
-	result, err := Collect(context.Background(), CollectOptions{
+	result, err := Collect(context.Background(), &CollectOptions{
 		RootPath:   root,
 		PstorePath: filepath.Join(t.TempDir(), "missing-pstore"),
 		OutputDir:  t.TempDir(),
@@ -100,7 +101,7 @@ func TestCollectSkipsSymlinksAndOversizedFiles(t *testing.T) {
 	if !result.EvidenceFound {
 		t.Fatal("expected evidence")
 	}
-	var reasons []string
+	reasons := make([]string, 0, len(result.Manifest.Skipped))
 	for _, skipped := range result.Manifest.Skipped {
 		reasons = append(reasons, skipped.Reason)
 	}
@@ -161,7 +162,7 @@ func readArchive(t *testing.T, path string) map[string][]byte {
 	entries := make(map[string][]byte)
 	for {
 		header, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

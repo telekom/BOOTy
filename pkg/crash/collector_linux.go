@@ -74,9 +74,12 @@ type candidate struct {
 }
 
 // Collect gathers crash artifacts and metadata into a tar.gz archive.
-func Collect(ctx context.Context, opts CollectOptions) (*CollectResult, error) {
+func Collect(ctx context.Context, opts *CollectOptions) (*CollectResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("collect crash artifacts canceled: %w", err)
+	}
+	if opts == nil {
+		opts = &CollectOptions{}
 	}
 
 	if opts.PstorePath == "" {
@@ -117,19 +120,16 @@ func Collect(ctx context.Context, opts CollectOptions) (*CollectResult, error) {
 		manifest.Scan.TotalBytes += artifact.SizeBytes
 	}
 
-	archivePath, archiveBytes, err := writeArchive(opts.OutputDir, manifest)
+	archivePath, archiveBytes, err := writeArchive(opts.OutputDir, &manifest)
 	if err != nil {
 		return nil, err
 	}
 	manifest.Scan.ArchiveBytes = archiveBytes
-	if err := rewriteArchiveManifest(archivePath, manifest); err != nil {
-		return nil, err
-	}
 
 	return &CollectResult{Manifest: manifest, ArchivePath: archivePath, EvidenceFound: true}, nil
 }
 
-func collectCandidates(ctx context.Context, opts CollectOptions) ([]candidate, []SkippedArtifact) {
+func collectCandidates(ctx context.Context, opts *CollectOptions) ([]candidate, []SkippedArtifact) {
 	var candidates []candidate
 	var skipped []SkippedArtifact
 	if opts.RootPath != "" {
@@ -178,11 +178,10 @@ func walkCandidatePath(ctx context.Context, rootAbs, path, archivePrefix string)
 	var skipped []SkippedArtifact
 	err := filepath.WalkDir(path, func(current string, entry os.DirEntry, walkErr error) error {
 		if err := ctx.Err(); err != nil {
-			return err
+			return fmt.Errorf("walk candidate path canceled: %w", err)
 		}
 		if walkErr != nil {
-			skipped = append(skipped, SkippedArtifact{SourcePath: current, Reason: "walk_error", Error: walkErr.Error()})
-			return nil
+			return skipCandidate(&skipped, current, "walk_error", walkErr)
 		}
 		if entry.IsDir() {
 			return nil
@@ -191,10 +190,9 @@ func walkCandidatePath(ctx context.Context, rootAbs, path, archivePrefix string)
 			skipped = append(skipped, SkippedArtifact{SourcePath: current, Reason: "symlink_skipped"})
 			return nil
 		}
-		info, err := entry.Info()
-		if err != nil {
-			skipped = append(skipped, SkippedArtifact{SourcePath: current, Reason: "stat_error", Error: err.Error()})
-			return nil
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			return skipCandidate(&skipped, current, "stat_error", infoErr)
 		}
 		if !info.Mode().IsRegular() {
 			skipped = append(skipped, SkippedArtifact{SourcePath: current, Reason: "not_regular"})
@@ -221,6 +219,11 @@ func walkCandidatePath(ctx context.Context, rootAbs, path, archivePrefix string)
 	return candidates, skipped
 }
 
+func skipCandidate(skipped *[]SkippedArtifact, sourcePath, reason string, err error) error {
+	*skipped = append(*skipped, SkippedArtifact{SourcePath: sourcePath, Reason: reason, Error: err.Error()})
+	return nil
+}
+
 func safeRel(rootAbs, current string) (string, bool) {
 	absCurrent, err := filepath.Abs(current)
 	if err != nil {
@@ -233,7 +236,7 @@ func safeRel(rootAbs, current string) (string, bool) {
 	return rel, true
 }
 
-func classifyArtifact(path, rel, archivePrefix string) (string, []string) {
+func classifyArtifact(path, rel, archivePrefix string) (kind string, evidence []string) {
 	lowerRel := strings.ToLower(filepath.ToSlash(rel))
 	lowerBase := strings.ToLower(filepath.Base(path))
 	switch {
@@ -360,7 +363,7 @@ func marshalValue(name string, value any, errs *[]MetadataError) json.RawMessage
 	return data
 }
 
-func writeArchive(outputDir string, manifest Manifest) (string, int64, error) {
+func writeArchive(outputDir string, manifest *Manifest) (archivePath string, archiveBytes int64, err error) {
 	if outputDir == "" {
 		dir, err := os.MkdirTemp("", "booty-crash-*")
 		if err != nil {
@@ -371,9 +374,19 @@ func writeArchive(outputDir string, manifest Manifest) (string, int64, error) {
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return "", 0, fmt.Errorf("create crash archive dir: %w", err)
 	}
-	archivePath := filepath.Join(outputDir, "crash-artifacts.tar.gz")
-	if err := writeArchiveFile(archivePath, manifest); err != nil {
-		return "", 0, err
+	archivePath = filepath.Join(outputDir, "crash-artifacts.tar.gz")
+	for range 4 {
+		if err := writeArchiveFile(archivePath, manifest); err != nil {
+			return "", 0, err
+		}
+		info, err := os.Stat(archivePath)
+		if err != nil {
+			return "", 0, fmt.Errorf("stat crash archive: %w", err)
+		}
+		if manifest.Scan.ArchiveBytes == info.Size() {
+			return archivePath, info.Size(), nil
+		}
+		manifest.Scan.ArchiveBytes = info.Size()
 	}
 	info, err := os.Stat(archivePath)
 	if err != nil {
@@ -382,11 +395,7 @@ func writeArchive(outputDir string, manifest Manifest) (string, int64, error) {
 	return archivePath, info.Size(), nil
 }
 
-func rewriteArchiveManifest(archivePath string, manifest Manifest) error {
-	return writeArchiveFile(archivePath, manifest)
-}
-
-func writeArchiveFile(archivePath string, manifest Manifest) error {
+func writeArchiveFile(archivePath string, manifest *Manifest) error {
 	out, err := os.Create(archivePath) //nolint:gosec // path is configured output directory
 	if err != nil {
 		return fmt.Errorf("create crash archive: %w", err)
@@ -394,6 +403,7 @@ func writeArchiveFile(archivePath string, manifest Manifest) error {
 	defer out.Close() //nolint:errcheck // best-effort close on error path
 
 	gz := gzip.NewWriter(out)
+	gz.ModTime = manifest.CreatedAt
 	defer gz.Close() //nolint:errcheck // close checked by caller through tar writes
 	tw := tar.NewWriter(gz)
 	defer tw.Close() //nolint:errcheck // close checked by caller through tar writes
@@ -417,7 +427,7 @@ func addJSON(tw *tar.Writer, name string, value any) error {
 	if err != nil {
 		return fmt.Errorf("marshal %s: %w", name, err)
 	}
-	header := &tar.Header{Name: name, Mode: 0o600, Size: int64(len(data)), ModTime: time.Now()}
+	header := &tar.Header{Name: name, Mode: 0o600, Size: int64(len(data)), ModTime: time.Unix(0, 0).UTC()}
 	if err := tw.WriteHeader(header); err != nil {
 		return fmt.Errorf("write tar header %s: %w", name, err)
 	}
