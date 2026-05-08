@@ -16,6 +16,7 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/caprf"
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/crash"
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/kexec"
 	"github.com/telekom/BOOTy/pkg/network"
@@ -212,8 +213,17 @@ func runCAPRF(ctx context.Context) {
 		realm.Reboot()
 	}
 
-	// Run provisioning, deprovisioning, or standby based on mode.
 	diskMgr := disk.NewManager(nil)
+	if result, inspectErr := crash.InspectStartup(ctx, cfg, diskMgr, client, crash.InspectOptions{}); inspectErr != nil {
+		slog.Warn("startup crash artifact inspection failed", "error", inspectErr)
+	} else if result != nil && result.Ran {
+		slog.Info("startup crash artifact inspection complete",
+			"evidence", result.EvidenceFound,
+			"uploaded", result.Uploaded,
+			"skip_reason", result.SkipReason)
+	}
+
+	// Run provisioning, deprovisioning, or standby based on mode.
 	orch := provision.NewOrchestrator(cfg, client, diskMgr)
 
 	provisionSucceeded := false
@@ -315,6 +325,12 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	connectivityTarget := cfg.InitURL
 	if connectivityTarget == "" {
 		connectivityTarget = cfg.SuccessURL
+	}
+	if connectivityTarget == "" && cfg.CrashArtifactsEnabled {
+		connectivityTarget = cfg.CrashArtifactsPrepareURL
+		if connectivityTarget == "" {
+			connectivityTarget = cfg.CrashArtifactsUploadURL
+		}
 	}
 	if connectivityTarget != "" {
 		activeMode, err := ensureNetworkConnectivity(ctx, cfg, netMode, connectivityTarget)

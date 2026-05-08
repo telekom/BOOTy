@@ -11,9 +11,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	neturl "net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +23,7 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/auth"
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/crash"
 	"github.com/telekom/BOOTy/pkg/health"
 )
 
@@ -317,6 +320,303 @@ func (c *Client) SendEvent(ctx context.Context, data []byte) error {
 	return c.postJSONWithAuth(ctx, c.cfg.EventURL, data)
 }
 
+// ReportCrashArtifacts uploads a crash artifact archive using CAPRF-provided instructions.
+func (c *Client) ReportCrashArtifacts(ctx context.Context, req *crash.PrepareRequest, archivePath string) error {
+	if c.cfg.CrashArtifactsPrepareURL == "" && c.cfg.CrashArtifactsUploadURL == "" {
+		c.log.Debug("no crash artifact URL configured, skipping")
+		return nil
+	}
+	if req == nil {
+		return fmt.Errorf("crash artifact prepare request is nil")
+	}
+	if archivePath == "" {
+		return fmt.Errorf("crash artifact archive path is empty")
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.crashUploadTimeout())
+	defer cancel()
+
+	if c.cfg.CrashArtifactsPrepareURL != "" {
+		instructions, err := c.prepareCrashArtifactUpload(ctx, req)
+		if err != nil {
+			return err
+		}
+		return c.uploadCrashArchive(ctx, instructions, archivePath)
+	}
+
+	return c.uploadCrashProxyMultipart(ctx, c.cfg.CrashArtifactsUploadURL, req, archivePath)
+}
+
+func (c *Client) crashUploadTimeout() time.Duration {
+	seconds := c.cfg.CrashArtifactsUploadTimeoutSec
+	if seconds <= 0 {
+		seconds = config.DefaultCrashArtifactsUploadTimeoutSec
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func (c *Client) prepareCrashArtifactUpload(ctx context.Context, req *crash.PrepareRequest) (*crash.PrepareResponse, error) {
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal crash artifact prepare request: %w", err)
+	}
+	redacted := redactedURL(c.cfg.CrashArtifactsPrepareURL)
+	var lastErr error
+	for attempt := range 3 {
+		if attempt > 0 {
+			if !sleepForRetry(ctx, attempt, c.log, redacted) {
+				return nil, fmt.Errorf("crash artifact prepare retry canceled: %w", ctx.Err())
+			}
+		}
+		resp, retry, err := c.doPrepareCrashArtifactUpload(ctx, data)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !retry || errors.Is(err, errInsecureTransport) {
+			return nil, err
+		}
+		c.log.Warn("crash artifact prepare failed", "url", redacted, "attempt", attempt+1, "error", err)
+	}
+	return nil, fmt.Errorf("crash artifact prepare failed after 3 attempts to %s: %w", redacted, lastErr)
+}
+
+func (c *Client) doPrepareCrashArtifactUpload(ctx context.Context, data []byte) (*crash.PrepareResponse, bool, error) {
+	rawURL := c.cfg.CrashArtifactsPrepareURL
+	redacted := redactedURL(rawURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, bytes.NewReader(data))
+	if err != nil {
+		return nil, false, fmt.Errorf("create crash artifact prepare request %s: %w", redacted, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if err := c.setAuth(req); err != nil {
+		return nil, false, err
+	}
+	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
+	if err != nil {
+		return nil, true, fmt.Errorf("POST %s: %w", redacted, err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // best-effort close
+	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return nil, false, fmt.Errorf("POST %s: status %d", redacted, resp.StatusCode)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return nil, true, fmt.Errorf("POST %s: status %d", redacted, resp.StatusCode)
+	}
+	var instructions crash.PrepareResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&instructions); err != nil {
+		return nil, false, fmt.Errorf("decode crash artifact prepare response: %w", err)
+	}
+	return &instructions, false, nil
+}
+
+func sleepForRetry(ctx context.Context, attempt int, log *slog.Logger, redacted string) bool {
+	backoff := time.Duration(1<<(attempt-1)) * time.Second
+	log.Info("retrying crash artifact request", "url", redacted, "attempt", attempt+1, "backoff", backoff)
+	select {
+	case <-time.After(backoff):
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (c *Client) uploadCrashArchive(ctx context.Context, instructions *crash.PrepareResponse, archivePath string) error {
+	if instructions == nil {
+		return fmt.Errorf("crash artifact upload instructions are nil")
+	}
+	if instructions.UploadURL == "" {
+		return fmt.Errorf("crash artifact upload URL is empty")
+	}
+	if instructions.MaxBytes > 0 {
+		info, err := os.Stat(archivePath)
+		if err != nil {
+			return fmt.Errorf("stat crash artifact archive: %w", err)
+		}
+		if info.Size() > instructions.MaxBytes {
+			return fmt.Errorf("crash artifact archive exceeds upload limit: %d > %d", info.Size(), instructions.MaxBytes)
+		}
+	}
+	mode := instructions.UploadMode
+	if mode == "" {
+		mode = crash.UploadModePresignedPUT
+		if len(instructions.FormFields) > 0 {
+			mode = crash.UploadModePresignedPOST
+		}
+	}
+	switch mode {
+	case crash.UploadModePresignedPUT, crash.UploadModeCAPRFProxy:
+		return c.uploadCrashRaw(ctx, instructions, archivePath)
+	case crash.UploadModePresignedPOST:
+		return c.uploadCrashPresignedForm(ctx, instructions, archivePath)
+	default:
+		return fmt.Errorf("unsupported crash artifact upload mode %q", mode)
+	}
+}
+
+func (c *Client) uploadCrashRaw(ctx context.Context, instructions *crash.PrepareResponse, archivePath string) error {
+	method := instructions.Method
+	if method == "" {
+		method = http.MethodPut
+	}
+	redacted := redactedURL(instructions.UploadURL)
+	return c.uploadCrashWithRetry(ctx, redacted, func() error {
+		body, err := os.Open(archivePath) //nolint:gosec // archive path created by BOOTy
+		if err != nil {
+			return fmt.Errorf("open crash artifact archive: %w", err)
+		}
+		defer body.Close() //nolint:errcheck // best-effort close
+		req, err := http.NewRequestWithContext(ctx, method, instructions.UploadURL, body)
+		if err != nil {
+			return fmt.Errorf("create crash artifact upload request %s: %w", redacted, err)
+		}
+		req.Header.Set("Content-Type", "application/gzip")
+		for key, value := range instructions.Headers {
+			req.Header.Set(key, value)
+		}
+		if err := c.applyCrashUploadAuth(req, instructions); err != nil {
+			return err
+		}
+		return c.doCrashUploadRequest(req, redacted)
+	})
+}
+
+func (c *Client) uploadCrashPresignedForm(ctx context.Context, instructions *crash.PrepareResponse, archivePath string) error {
+	redacted := redactedURL(instructions.UploadURL)
+	return c.uploadCrashWithRetry(ctx, redacted, func() error {
+		reader, contentType := multipartArchiveReader(archivePath, instructions.FormFields, "file")
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, instructions.UploadURL, reader)
+		if err != nil {
+			return fmt.Errorf("create crash artifact form upload request %s: %w", redacted, err)
+		}
+		req.Header.Set("Content-Type", contentType)
+		for key, value := range instructions.Headers {
+			req.Header.Set(key, value)
+		}
+		if err := c.applyCrashUploadAuth(req, instructions); err != nil {
+			return err
+		}
+		return c.doCrashUploadRequest(req, redacted)
+	})
+}
+
+func (c *Client) uploadCrashProxyMultipart(ctx context.Context, rawURL string, reqPayload *crash.PrepareRequest, archivePath string) error {
+	redacted := redactedURL(rawURL)
+	manifest, err := json.Marshal(reqPayload)
+	if err != nil {
+		return fmt.Errorf("marshal crash artifact manifest: %w", err)
+	}
+	instructions := &crash.PrepareResponse{UploadURL: rawURL, AuthMode: crash.AuthModeBearer, UploadMode: crash.UploadModeCAPRFProxy}
+	return c.uploadCrashWithRetry(ctx, redacted, func() error {
+		reader, contentType := multipartArchiveReader(archivePath, map[string]string{"manifest": string(manifest)}, "archive")
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, reader)
+		if err != nil {
+			return fmt.Errorf("create crash artifact proxy upload request %s: %w", redacted, err)
+		}
+		req.Header.Set("Content-Type", contentType)
+		if err := c.applyCrashUploadAuth(req, instructions); err != nil {
+			return err
+		}
+		return c.doCrashUploadRequest(req, redacted)
+	})
+}
+
+func multipartArchiveReader(archivePath string, fields map[string]string, fileField string) (io.Reader, string) {
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+	go func() {
+		defer pw.Close()     //nolint:errcheck // best-effort close
+		defer writer.Close() //nolint:errcheck // CloseWithError reports failures
+		for key, value := range fields {
+			if err := writer.WriteField(key, value); err != nil {
+				_ = pw.CloseWithError(err)
+				return
+			}
+		}
+		file, err := os.Open(archivePath) //nolint:gosec // archive path created by BOOTy
+		if err != nil {
+			_ = pw.CloseWithError(err)
+			return
+		}
+		defer file.Close() //nolint:errcheck // best-effort close
+		part, err := writer.CreateFormFile(fileField, filepath.Base(archivePath))
+		if err != nil {
+			_ = pw.CloseWithError(err)
+			return
+		}
+		if _, err := io.Copy(part, file); err != nil {
+			_ = pw.CloseWithError(err)
+			return
+		}
+	}()
+	return pr, writer.FormDataContentType()
+}
+
+func (c *Client) applyCrashUploadAuth(req *http.Request, instructions *crash.PrepareResponse) error {
+	authMode := instructions.AuthMode
+	if authMode == "" {
+		if instructions.UploadMode == crash.UploadModeCAPRFProxy {
+			authMode = crash.AuthModeBearer
+		} else {
+			authMode = crash.AuthModeNone
+		}
+	}
+	switch authMode {
+	case crash.AuthModeNone:
+		return nil
+	case crash.AuthModeBearer:
+		return c.setAuth(req)
+	default:
+		return fmt.Errorf("unsupported crash artifact auth mode %q", authMode)
+	}
+}
+
+func (c *Client) uploadCrashWithRetry(ctx context.Context, redacted string, fn func() error) error {
+	var lastErr error
+	for attempt := range 3 {
+		if attempt > 0 {
+			if !sleepForRetry(ctx, attempt, c.log, redacted) {
+				return fmt.Errorf("crash artifact upload retry canceled: %w", ctx.Err())
+			}
+		}
+		lastErr = fn()
+		if lastErr == nil {
+			return nil
+		}
+		if errors.Is(lastErr, errInsecureTransport) {
+			return lastErr
+		}
+		c.log.Warn("crash artifact upload failed", "url", redacted, "attempt", attempt+1, "error", lastErr)
+	}
+	return fmt.Errorf("crash artifact upload failed after 3 attempts to %s: %w", redacted, lastErr)
+}
+
+func (c *Client) doCrashUploadRequest(req *http.Request, redacted string) error {
+	client := newHTTPClient(c.crashUploadTimeout())
+	resp, err := client.Do(req) //nolint:gosec // URL from trusted config or CAPRF response
+	if err != nil {
+		return fmt.Errorf("upload crash artifact to %s: %w", redacted, err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // best-effort close
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("upload crash artifact to %s: status %d", redacted, resp.StatusCode)
+	}
+	return nil
+}
+
+func redactedURL(raw string) string {
+	u, err := neturl.Parse(raw)
+	if err != nil {
+		return "<invalid-url>"
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	u.User = nil
+	return u.String()
+}
+
 func (c *Client) postWithAuth(ctx context.Context, url, body string) error {
 	return c.withRetry(ctx, url, func() error {
 		return c.doPost(ctx, url, body)
@@ -567,6 +867,8 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"TELEMETRY_URL":               &cfg.TelemetryURL,
 		"METRICS_URL":                 &cfg.MetricsURL,
 		"EVENT_URL":                   &cfg.EventURL,
+		"CRASH_ARTIFACTS_PREPARE_URL": &cfg.CrashArtifactsPrepareURL,
+		"CRASH_ARTIFACTS_UPLOAD_URL":  &cfg.CrashArtifactsUploadURL,
 		"MOK_CERT_PATH":               &cfg.MOKCertPath,
 		"MOK_PASSWORD":                &cfg.MOKPassword,
 		"TOKEN_URL":                   &cfg.TokenURL,
@@ -655,6 +957,8 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) (bool, error)
 		cfg.DryRun = parseBoolVar(value)
 	case "INSECURE_TRANSPORT":
 		cfg.InsecureTransport = parseBoolVar(value)
+	case "CRASH_ARTIFACTS_ENABLED":
+		cfg.CrashArtifactsEnabled = parseBoolVar(value)
 	default:
 		return applyFeatureToggle(cfg, key, value)
 	}
@@ -664,10 +968,12 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) (bool, error)
 // applyIntVar handles integer special vars.
 func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 	intFields := map[string]*int{
-		"MIN_DISK_SIZE_GB":     &cfg.MinDiskSizeGB,
-		"NUM_VFS":              &cfg.NumVFs,
-		"HEALTH_MIN_MEMORY_GB": &cfg.HealthMinMemoryGB,
-		"HEALTH_MIN_CPUS":      &cfg.HealthMinCPUs,
+		"MIN_DISK_SIZE_GB":                   &cfg.MinDiskSizeGB,
+		"NUM_VFS":                            &cfg.NumVFs,
+		"HEALTH_MIN_MEMORY_GB":               &cfg.HealthMinMemoryGB,
+		"HEALTH_MIN_CPUS":                    &cfg.HealthMinCPUs,
+		"CRASH_ARTIFACTS_MAX_MB":             &cfg.CrashArtifactsMaxMB,
+		"CRASH_ARTIFACTS_UPLOAD_TIMEOUT_SEC": &cfg.CrashArtifactsUploadTimeoutSec,
 	}
 
 	if ptr, ok := intFields[key]; ok {

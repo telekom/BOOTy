@@ -74,6 +74,7 @@ BOOTy operates in two modes depending on the boot environment:
 - **36-step provisioning pipeline** — RAID cleanup, disk detection, NVMe namespace setup, image streaming, partition growth, LVM, filesystem resize, OS configuration, cloud-init injection, EFI boot, Mellanox SR-IOV, post-provision hooks
 - **Kexec support** — Fast reboot into installed kernel without full BIOS POST (auto-disabled after firmware changes)
 - **Remote logging** — Real-time log and debug shipping to CAPRF controller
+- **Startup crash artifact upload** — Best-effort pre-wipe collection of existing OS crash logs, dumps, and host metadata for CAPRF/S3 correlation
 - **Hard/soft deprovisioning** — Full disk wipe or GRUB rename for reprovisioning
 - **Standby mode** — Hot standby with heartbeats and command polling for sub-second provisioning
 - **Multi-architecture** — Builds for `linux/amd64` and `linux/arm64`
@@ -295,6 +296,11 @@ go run server/server.go \
 | `TELEMETRY_URL` | — | POST endpoint for telemetry snapshot |
 | `METRICS_URL` | — | POST endpoint for provisioning metrics |
 | `EVENT_URL` | — | POST endpoint for provisioning lifecycle events |
+| `CRASH_ARTIFACTS_ENABLED` | `false` | Inspect the existing OS before destructive actions and upload crash artifacts when evidence is found |
+| `CRASH_ARTIFACTS_PREPARE_URL` | — | CAPRF endpoint that receives crash metadata and returns upload instructions |
+| `CRASH_ARTIFACTS_UPLOAD_URL` | — | Direct CAPRF proxy endpoint for crash archive uploads when no prepare endpoint is used |
+| `CRASH_ARTIFACTS_MAX_MB` | `256` | Maximum crash artifact payload size in MiB |
+| `CRASH_ARTIFACTS_UPLOAD_TIMEOUT_SEC` | `120` | Timeout for crash artifact prepare/upload requests |
 | `SECUREBOOT_REENABLE` | `false` | Signal CAPRF to re-enable Secure Boot after provisioning |
 | `MOK_CERT_PATH` | — | *(Phase 2)* Path to DER-encoded MOK certificate for custom kernel signing |
 | `MOK_PASSWORD` | — | *(Phase 2)* One-time password for MokManager confirmation |
@@ -525,6 +531,30 @@ export EVENT_URL="http://caprf:8080/events"
 | `EVENT_URL` | Step progress events | Per-step |
 
 Telemetry reporting is best-effort — failures do not block provisioning.
+
+### Startup Crash Artifact Upload
+
+BOOTy can inspect the existing OS on the target disk before provisioning or
+deprovisioning performs destructive disk operations. When crash evidence is
+found, BOOTy uploads a `tar.gz` archive containing allowlisted crash artifacts
+plus `manifest.json` and `metadata.json` for fleet correlation.
+
+```bash
+export CRASH_ARTIFACTS_ENABLED=true
+export CRASH_ARTIFACTS_PREPARE_URL="https://caprf.example.com/crash-artifacts/prepare"
+export CRASH_ARTIFACTS_MAX_MB=256
+```
+
+The collector searches for kernel crash and dump evidence in paths such as
+`/var/crash`, `/var/lib/systemd/coredump`, `/var/log/journal`, kernel logs, and
+`/sys/fs/pstore`. The archive metadata reuses BOOTy's hardware inventory,
+firmware report, debug dump, and build information. Upload failures are
+best-effort and do not block provisioning.
+
+CAPRF can either return presigned S3 upload instructions from
+`CRASH_ARTIFACTS_PREPARE_URL` or accept direct proxy uploads at
+`CRASH_ARTIFACTS_UPLOAD_URL`. BOOTy never sends its bearer token to presigned
+S3 URLs and does not log presigned query strings.
 
 ### Secure Boot
 
@@ -798,6 +828,7 @@ and the PR process.
 │   ├── caprf/                  # CAPRF client (status, log, debug, vars parsing)
 │   ├── cloudinit/              # Cloud-init NoCloud/ConfigDrive generation
 │   ├── config/                 # MachineConfig, Provider interface, Status types
+│   ├── crash/                  # Startup crash artifact collection, metadata, upload contracts
 │   ├── debug/                  # Structured debug dump collection
 │   ├── disk/                   # Disk detection, partitioning, RAID, LVM, mount, NVMe namespaces
 │   ├── drivers/                # Architecture-aware kernel module loading

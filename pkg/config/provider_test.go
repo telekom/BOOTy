@@ -35,6 +35,12 @@ func TestMachineConfigDefaults(t *testing.T) {
 	if cfg.ImageURLs != nil {
 		t.Errorf("expected nil image URLs, got %v", cfg.ImageURLs)
 	}
+	if DefaultCrashArtifactsMaxMB != 256 {
+		t.Errorf("DefaultCrashArtifactsMaxMB = %d, want 256", DefaultCrashArtifactsMaxMB)
+	}
+	if DefaultCrashArtifactsUploadTimeoutSec != 120 {
+		t.Errorf("DefaultCrashArtifactsUploadTimeoutSec = %d, want 120", DefaultCrashArtifactsUploadTimeoutSec)
+	}
 }
 
 func TestParsePartitionLayoutRootInLVM(t *testing.T) {

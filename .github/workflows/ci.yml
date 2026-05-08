@@ -746,7 +746,7 @@ jobs:
           sudo apt-get install -y fdisk gdisk e2fsprogs xfsprogs cloud-guest-utils parted util-linux
 
       - name: Run Linux E2E tests
-        run: sudo -E $(which go) test -tags linux_e2e -v -count=1 -timeout 5m ./test/e2e/linux/...
+        run: sudo -E env "PATH=$PATH:/usr/sbin:/sbin" $(which go) test -tags linux_e2e -v -count=1 -timeout 5m ./test/e2e/linux/...
 
   e2e-boot:
     name: E2E Boot (ContainerLab)

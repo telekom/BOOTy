@@ -2,6 +2,7 @@ package caprf
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/crash"
 	"github.com/telekom/BOOTy/pkg/health"
 )
 
@@ -315,6 +317,120 @@ func TestClientReportInventoryNoURL(t *testing.T) {
 	if err := client.ReportInventory(context.Background(), []byte(`{}`)); err != nil {
 		t.Fatalf("ReportInventory() with no URL should not error: %v", err)
 	}
+}
+
+func TestReportCrashArtifactsPreparePresignedPUTNoAuthorization(t *testing.T) {
+	archivePath := writeCrashArchiveFixture(t)
+	var uploadAuth string
+	var uploadBody string
+	var prepareAuth string
+
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	mux.HandleFunc("POST /crash/prepare", func(w http.ResponseWriter, r *http.Request) {
+		prepareAuth = r.Header.Get("Authorization")
+		var req crash.PrepareRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode prepare request: %v", err)
+		}
+		if req.Manifest.Metadata.Machine.Hostname != "node-1" {
+			t.Fatalf("prepare hostname = %q, want node-1", req.Manifest.Metadata.Machine.Hostname)
+		}
+		resp := crash.PrepareResponse{
+			UploadMode: crash.UploadModePresignedPUT,
+			AuthMode:   crash.AuthModeNone,
+			Method:     http.MethodPut,
+			UploadURL:  srv.URL + "/upload?X-Amz-Signature=secret-signature",
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+	mux.HandleFunc("PUT /upload", func(w http.ResponseWriter, r *http.Request) {
+		uploadAuth = r.Header.Get("Authorization")
+		body, _ := io.ReadAll(r.Body)
+		uploadBody = string(body)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	client := NewFromConfig(&config.MachineConfig{
+		Token:                    "crash-token",
+		CrashArtifactsPrepareURL: srv.URL + "/crash/prepare",
+	})
+	err := client.ReportCrashArtifacts(context.Background(), crashRequestFixture(), archivePath)
+	if err != nil {
+		t.Fatalf("ReportCrashArtifacts() error: %v", err)
+	}
+	if prepareAuth != "Bearer crash-token" {
+		t.Fatalf("prepare auth = %q, want bearer", prepareAuth)
+	}
+	if uploadAuth != "" {
+		t.Fatalf("presigned upload auth = %q, want empty", uploadAuth)
+	}
+	if uploadBody != "archive-bytes" {
+		t.Fatalf("upload body = %q, want archive-bytes", uploadBody)
+	}
+}
+
+func TestReportCrashArtifactsDirectCAPRFUploadUsesBearer(t *testing.T) {
+	archivePath := writeCrashArchiveFixture(t)
+	var uploadAuth string
+	var contentType string
+	var body string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		uploadAuth = r.Header.Get("Authorization")
+		contentType = r.Header.Get("Content-Type")
+		data, _ := io.ReadAll(r.Body)
+		body = string(data)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewFromConfig(&config.MachineConfig{
+		Token:                   "crash-token",
+		CrashArtifactsUploadURL: srv.URL + "/crash/upload",
+	})
+	if err := client.ReportCrashArtifacts(context.Background(), crashRequestFixture(), archivePath); err != nil {
+		t.Fatalf("ReportCrashArtifacts() error: %v", err)
+	}
+	if uploadAuth != "Bearer crash-token" {
+		t.Fatalf("upload auth = %q, want bearer", uploadAuth)
+	}
+	if !strings.HasPrefix(contentType, "multipart/form-data") {
+		t.Fatalf("Content-Type = %q, want multipart/form-data", contentType)
+	}
+	if !strings.Contains(body, "node-1") || !strings.Contains(body, "archive-bytes") {
+		t.Fatalf("multipart body missing manifest or archive: %q", body)
+	}
+}
+
+func TestReportCrashArtifactsNoURLNoop(t *testing.T) {
+	client := NewFromConfig(&config.MachineConfig{})
+	if err := client.ReportCrashArtifacts(context.Background(), crashRequestFixture(), writeCrashArchiveFixture(t)); err != nil {
+		t.Fatalf("ReportCrashArtifacts() with no URL should not error: %v", err)
+	}
+}
+
+func crashRequestFixture() *crash.PrepareRequest {
+	manifest := crash.Manifest{
+		Version: 1,
+		Metadata: crash.HostMetadata{Machine: crash.MachineMetadata{
+			Hostname: "node-1",
+			Mode:     "provision",
+		}},
+		Artifacts: []crash.Artifact{{ArchivePath: "target-root/var/crash/vmcore", SizeBytes: 13}},
+	}
+	return &crash.PrepareRequest{Manifest: manifest, ArchiveBytes: 13, ArtifactCount: 1, TotalBytes: 13}
+}
+
+func writeCrashArchiveFixture(t *testing.T) string {
+	t.Helper()
+	path := t.TempDir() + "/crash.tar.gz"
+	if err := os.WriteFile(path, []byte("archive-bytes"), 0o600); err != nil {
+		t.Fatalf("write archive fixture: %v", err)
+	}
+	return path
 }
 
 func TestClientNoURLSkips(t *testing.T) {
@@ -916,6 +1032,35 @@ func TestParseVarsFirmwareConfig(t *testing.T) {
 	}
 	if cfg.FirmwareMinBMC != "2.72" {
 		t.Errorf("FirmwareMinBMC = %q", cfg.FirmwareMinBMC)
+	}
+}
+
+func TestParseVarsCrashArtifactsConfig(t *testing.T) {
+	input := strings.Join([]string{
+		`CRASH_ARTIFACTS_ENABLED="true"`,
+		`CRASH_ARTIFACTS_PREPARE_URL="https://caprf.example.com/crash/prepare"`,
+		`CRASH_ARTIFACTS_UPLOAD_URL="https://caprf.example.com/crash/upload"`,
+		`CRASH_ARTIFACTS_MAX_MB="128"`,
+		`CRASH_ARTIFACTS_UPLOAD_TIMEOUT_SEC="180"`,
+	}, "\n")
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.CrashArtifactsEnabled {
+		t.Error("CrashArtifactsEnabled should be true")
+	}
+	if cfg.CrashArtifactsPrepareURL != "https://caprf.example.com/crash/prepare" {
+		t.Errorf("CrashArtifactsPrepareURL = %q", cfg.CrashArtifactsPrepareURL)
+	}
+	if cfg.CrashArtifactsUploadURL != "https://caprf.example.com/crash/upload" {
+		t.Errorf("CrashArtifactsUploadURL = %q", cfg.CrashArtifactsUploadURL)
+	}
+	if cfg.CrashArtifactsMaxMB != 128 {
+		t.Errorf("CrashArtifactsMaxMB = %d, want 128", cfg.CrashArtifactsMaxMB)
+	}
+	if cfg.CrashArtifactsUploadTimeoutSec != 180 {
+		t.Errorf("CrashArtifactsUploadTimeoutSec = %d, want 180", cfg.CrashArtifactsUploadTimeoutSec)
 	}
 }
 

@@ -583,6 +583,16 @@ var supportedFilesystems = []string{"ext4", "xfs", "btrfs", "ext3", "ext2", "vfa
 // Tries all supported filesystem types in order: ext4, xfs, btrfs, ext3, ext2, vfat.
 // Waits up to 10 seconds for the device node to appear (devtmpfs may lag after partprobe).
 func (m *Manager) MountPartition(ctx context.Context, device, mountpoint string) error {
+	return m.mountPartition(ctx, device, mountpoint, 0, "")
+}
+
+// MountPartitionReadOnly mounts a device read-only at the given mountpoint.
+// It tries the same supported filesystem list as MountPartition.
+func (m *Manager) MountPartitionReadOnly(ctx context.Context, device, mountpoint string) error {
+	return m.mountPartition(ctx, device, mountpoint, syscall.MS_RDONLY, "ro")
+}
+
+func (m *Manager) mountPartition(ctx context.Context, device, mountpoint string, flags uintptr, data string) error {
 	slog.Info("mounting partition", "device", device, "mountpoint", mountpoint)
 
 	// Wait for the device node to appear — devtmpfs can lag after partprobe.
@@ -595,7 +605,7 @@ func (m *Manager) MountPartition(ctx context.Context, device, mountpoint string)
 	}
 	var errs []string
 	for _, fsType := range supportedFilesystems {
-		err := syscall.Mount(device, mountpoint, fsType, 0, "")
+		err := syscall.Mount(device, mountpoint, fsType, flags, data)
 		if err == nil {
 			slog.Info("mounted partition", "device", device, "fsType", fsType)
 			return nil
