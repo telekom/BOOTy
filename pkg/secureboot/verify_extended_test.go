@@ -9,6 +9,7 @@ import (
 func TestChainVerifier_ComponentPresence_AllMissing(t *testing.T) {
 	vars := efi.NewEFIVarReader(t.TempDir())
 	cv := NewChainVerifier(vars)
+	cv.root = t.TempDir()
 	components := cv.checkComponentPresence()
 
 	if len(components) != 3 {

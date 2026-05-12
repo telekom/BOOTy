@@ -10,8 +10,12 @@ on:
       - "pkg/kexec/**"
       - "pkg/bios/**"
       - "pkg/bootloader/**"
+      - "pkg/caprf/**"
+      - "pkg/config/**"
+      - "pkg/crash/**"
       - "pkg/provision/**"
       - "pkg/image/**"
+      - "main.go"
       - "test/e2e/kvm/**"
       - ".github/workflows/kvm-matrix.yml"
   pull_request:
@@ -22,8 +26,12 @@ on:
       - "pkg/kexec/**"
       - "pkg/bios/**"
       - "pkg/bootloader/**"
+      - "pkg/caprf/**"
+      - "pkg/config/**"
+      - "pkg/crash/**"
       - "pkg/provision/**"
       - "pkg/image/**"
+      - "main.go"
       - "test/e2e/kvm/**"
       - ".github/workflows/kvm-matrix.yml"
   workflow_dispatch:
@@ -62,6 +70,12 @@ jobs:
             qemu_extra: ""
             test_tag: e2e
             test_regex: TestKexecSmokeQEMU
+            setup: ""
+          - scenario: crash-artifacts
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: TestCrashArtifactsStartupUploadBeforeImageDownload
+            privileged: true
             setup: ""
           - scenario: bootloader-smoke
             qemu_extra: ""
@@ -103,7 +117,7 @@ jobs:
       - name: Install KVM dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 ovmf swtpm swtpm-tools cpio zstd linux-image-generic xorriso isolinux syslinux-common
+          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools cpio zstd linux-image-generic xorriso isolinux syslinux-common fdisk util-linux e2fsprogs parted mdadm lvm2
 
       - name: Scenario-specific setup
         if: matrix.setup != ''
@@ -160,8 +174,8 @@ jobs:
 
       - name: Run KVM test (${{ matrix.scenario }})
         run: |
-          if [ "${{ matrix.scenario }}" = "luks-verify" ]; then
-            sudo -E env "PATH=$PATH" go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -v -timeout 15m ./test/e2e/kvm/...
+          if [ "${{ matrix.privileged }}" = "true" ] || [ "${{ matrix.scenario }}" = "luks-verify" ]; then
+            sudo -E env "PATH=$PATH:/usr/sbin:/sbin" go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -v -timeout 15m ./test/e2e/kvm/...
           else
             go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -v -timeout 15m ./test/e2e/kvm/...
           fi

@@ -8,6 +8,7 @@ Lightweight initramfs agent for bare-metal OS provisioning (not a K8s operator).
 |-----------|---------|
 | `pkg/network/` | Pluggable networking: `gobgp` (pure Go), `frr` (legacy), `lldp` (raw frames) |
 | `pkg/provision/` | The 36-step state machine for image/disk/network/kexec flow |
+| `pkg/crash/` | Startup crash artifact collection and host metadata correlation |
 | `pkg/realm/` | Low-level Linux primitives: syscalls, mounts, device creation |
 | `pkg/bios/` | Vendor-specific BIOS management (Dell, HPE, Lenovo, Supermicro) |
 | `test/e2e/clab/` | ContainerLab topologies for network/provisioning integration tests |

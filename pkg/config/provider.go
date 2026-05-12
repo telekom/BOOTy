@@ -21,6 +21,12 @@ const (
 	StatusError   Status = "error"
 )
 
+// Crash artifact collection defaults.
+const (
+	DefaultCrashArtifactsMaxMB            = 256
+	DefaultCrashArtifactsUploadTimeoutSec = 120
+)
+
 // MachineConfig holds all configuration needed for provisioning a machine.
 type MachineConfig struct {
 	ImageURLs         []string // Space-separated IMAGE field from /deploy/vars
@@ -130,6 +136,13 @@ type MachineConfig struct {
 	// Observability fields.
 	MetricsURL string // METRICS_URL: POST endpoint for provisioning metrics
 	EventURL   string // EVENT_URL: POST endpoint for provisioning events
+
+	// Startup crash artifact collection.
+	CrashArtifactsEnabled          bool   // CRASH_ARTIFACTS_ENABLED: inspect existing OS for crash artifacts before destructive actions
+	CrashArtifactsPrepareURL       string // CRASH_ARTIFACTS_PREPARE_URL: CAPRF endpoint that returns upload instructions
+	CrashArtifactsUploadURL        string // CRASH_ARTIFACTS_UPLOAD_URL: direct CAPRF proxy upload endpoint
+	CrashArtifactsMaxMB            int    // CRASH_ARTIFACTS_MAX_MB: max archive payload in MiB (0 = default)
+	CrashArtifactsUploadTimeoutSec int    // CRASH_ARTIFACTS_UPLOAD_TIMEOUT_SEC: upload timeout seconds (0 = default)
 
 	// SecureBoot lifecycle fields.
 	SecureBootReEnable bool   // SECUREBOOT_REENABLE: signal CAPRF to re-enable SecureBoot after provisioning

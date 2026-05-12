@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/telekom/BOOTy/pkg/efi"
 )
@@ -11,11 +13,12 @@ import (
 // ChainVerifier validates the Secure Boot chain using EFI variables.
 type ChainVerifier struct {
 	vars *efi.EFIVarReader
+	root string
 }
 
 // NewChainVerifier creates a chain verifier with the given EFI variable reader.
 func NewChainVerifier(vars *efi.EFIVarReader) *ChainVerifier {
-	return &ChainVerifier{vars: vars}
+	return &ChainVerifier{vars: vars, root: "/"}
 }
 
 // Verify checks the Secure Boot chain and returns a result.
@@ -78,7 +81,7 @@ func (cv *ChainVerifier) checkComponentPresence() []ComponentStatus {
 		status := ComponentStatus{Name: p.name}
 		found := false
 		for _, path := range p.paths {
-			if _, err := os.Stat(path); err == nil {
+			if _, err := os.Stat(cv.absPath(path)); err == nil {
 				found = true
 				break
 			}
@@ -89,6 +92,17 @@ func (cv *ChainVerifier) checkComponentPresence() []ComponentStatus {
 		components = append(components, status)
 	}
 	return components
+}
+
+func (cv *ChainVerifier) absPath(path string) string {
+	root := cv.root
+	if root == "" {
+		root = "/"
+	}
+	if root == "/" {
+		return path
+	}
+	return filepath.Join(root, strings.TrimPrefix(path, "/"))
 }
 
 func (cv *ChainVerifier) allComponentsPresent(components []ComponentStatus) bool {
