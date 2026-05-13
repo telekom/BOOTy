@@ -28,7 +28,7 @@ var safeKernelParams = regexp.MustCompile(`^[a-zA-Z0-9=._\-/ ]*$`)
 // rejecting shell metacharacters that enable command chaining or substitution.
 var safeProvisionCommand = regexp.MustCompile(`^[a-zA-Z0-9_./:=,@%+\-\s]+$`)
 
-var blockedShellTokens = []string{"&&", "||", "|", "`", "$(", ")", ">", "<", "\n", "\r"}
+var blockedShellTokens = []string{"&&", "||", "|", "`", "$(", ")", ">", "<", ";", "\n", "\r"}
 
 // sensitiveKeyPattern matches sensitive key-value pairs in two forms:
 //  1. CLI flag format: --key=value, -key=value, or --key value / -key value

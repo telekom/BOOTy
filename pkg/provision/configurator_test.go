@@ -329,3 +329,45 @@ func TestCopyFileCancelledBeforeStart(t *testing.T) {
 		t.Fatalf("expected context.Canceled, got: %v", err)
 	}
 }
+
+func TestValidateProvisionCommandBlockedTokens(t *testing.T) {
+	// Semicolon and other shell metacharacters must be rejected to prevent
+	// command chaining (e.g. "/bin/true; /bin/rm -rf /").
+	blocked := []struct {
+		name string
+		cmd  string
+	}{
+		{"semicolon", "/bin/true; /bin/false"},
+		{"pipe", "/bin/true | /bin/false"},
+		{"and", "/bin/true && /bin/false"},
+		{"or", "/bin/true || /bin/false"},
+		{"backtick", "/bin/true `id`"},
+		{"dollar-paren", "/bin/true $(id)"},
+		{"redirect-out", "/bin/true > /tmp/x"},
+		{"redirect-in", "/bin/true < /tmp/x"},
+		{"newline", "/bin/true\n/bin/false"},
+	}
+	for _, tc := range blocked {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateProvisionCommand(tc.cmd); err == nil {
+				t.Errorf("validateProvisionCommand(%q): expected error, got nil", tc.cmd)
+			}
+		})
+	}
+
+	// Explicitly verify the blocked-token error message for semicolon so this
+	// test fails if ";" is ever removed from blockedShellTokens.
+	t.Run("semicolon-error-message", func(t *testing.T) {
+		err := validateProvisionCommand("/bin/true; /bin/false")
+		if err == nil {
+			t.Fatal("expected error for semicolon command, got nil")
+		}
+		if !strings.Contains(err.Error(), `blocked shell token ";"`) {
+			t.Errorf("expected error to mention blocked shell token, got: %v", err)
+		}
+	})
+
+	if err := validateProvisionCommand("/bin/echo hello"); err != nil {
+		t.Errorf("validateProvisionCommand safe command: unexpected error: %v", err)
+	}
+}
