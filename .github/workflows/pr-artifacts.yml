@@ -33,7 +33,7 @@ jobs:
           sha256sum out-gobgp-iso/booty-gobgp.iso > out-gobgp-iso/booty-gobgp.iso.sha256
 
       - name: Publish artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: booty-gobgp-pr-iso
           path: |
