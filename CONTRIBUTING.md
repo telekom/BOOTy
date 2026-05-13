@@ -77,6 +77,7 @@ Every feature or bug fix **must** include tests at the appropriate level:
 | **Boot** | `e2e_boot` | Provisioning orchestrator, step ordering | `make clab-boot-up && make test-e2e-boot` |
 | **vrnetlab (QEMU)** | `e2e_vrnetlab` | Full boot flow, kexec, EVPN fabric, ISO | `make clab-vrnetlab-up && make test-e2e-vrnetlab` |
 | **GoBGP vrnetlab** | `e2e_gobgp_vrnetlab` | GoBGP with real switch VMs | `make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab` |
+| **Production** | `e2e_production` | VRF, DCGW, BFD, production-like topology | `make clab-production-up && make test-e2e-production` |
 
 ### When to Use KVM / QEMU Tests
 

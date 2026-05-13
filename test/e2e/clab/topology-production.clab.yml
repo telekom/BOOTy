@@ -7,7 +7,6 @@
 #   - eBGP unnumbered to leaf switch (AS 65500) with local-as 65501
 #   - iBGP to DCGW route reflector (AS 65188) with BFD profile (150ms)
 #   - EVPN VXLAN VNI 2002002 (production-scale VNI)
-#   - Route-maps (TAG-FABRIC-IN / DENY-TAG-FABRIC-OUT)
 #   - BGP timers (keepalive 30s, hold 90s)
 #
 # Network topology:

@@ -91,6 +91,7 @@ consider work complete until tests are written, passing, and cover the change.
 | **Boot E2E** (`e2e_boot`) | Provisioning orchestrator, step ordering | `make clab-boot-up && make test-e2e-boot` |
 | **vrnetlab / QEMU** (`e2e_vrnetlab`) | Full boot flow, kexec, EVPN fabric, ISO boot | `make clab-vrnetlab-up && make test-e2e-vrnetlab` |
 | **GoBGP vrnetlab** (`e2e_gobgp_vrnetlab`) | GoBGP with real switch VMs (all PeerModes) | `make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab` |
+| **Production** (`e2e_production`) | VRF, DCGW, BFD, production-like topology | `make clab-production-up && make test-e2e-production` |
 
 ### When to Use KVM / QEMU Testing
 

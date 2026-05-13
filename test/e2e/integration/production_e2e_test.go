@@ -87,12 +87,15 @@ func prodGetBootyLogs(t *testing.T) string {
 }
 
 // prodWaitForLogEntry waits for a log line in the booty-prod container.
+// Uses --tail to limit output scanned per poll.
 func prodWaitForLogEntry(t *testing.T, entry string, timeout time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		logs := prodGetBootyLogs(t)
-		if strings.Contains(logs, entry) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		out, err := exec.CommandContext(ctx, "docker", "logs", "--tail", "200", prodBootyContainer).CombinedOutput()
+		cancel()
+		if err == nil && strings.Contains(string(out), entry) {
 			return true
 		}
 		time.Sleep(2 * time.Second)
@@ -231,10 +234,11 @@ func TestProductionSpineBGPEstablished(t *testing.T) {
 			"vtysh", "-c", "show bgp neighbors eth1 json")
 		if strings.Contains(out, "Established") {
 			t.Log("Spine ↔ BOOTy eBGP unnumbered session ESTABLISHED")
-			// Verify the remote AS is 65501 (BOOTy's local-as override).
-			if strings.Contains(out, "65501") {
-				t.Log("Spine sees BOOTy with local-as 65501 (correct)")
+			// Assert the remote AS is 65501 (BOOTy's local-as override).
+			if !strings.Contains(out, "65501") {
+				t.Fatal("Spine sees BOOTy ESTABLISHED but remote AS is not 65501 — local-as override may have regressed")
 			}
+			t.Log("Spine sees BOOTy with local-as 65501 (correct)")
 			return
 		}
 		time.Sleep(prodBGPConvergeInterval)
@@ -305,9 +309,8 @@ func TestProductionBFDActiveOnDCGW(t *testing.T) {
 		}
 		time.Sleep(2 * time.Second)
 	}
-	// BFD may not be configured on BOOTy's FRR yet — log warning instead of hard fail.
 	out, _ := prodDockerExecRaw(t, prodDCGWContainer, "vtysh", "-c", "show bfd peers")
-	t.Logf("BFD peers on DCGW (may not be up if BOOTy FRR doesn't enable BFD): %s", out)
+	t.Fatalf("BFD session to BOOTy (10.10.10.2) not UP on DCGW after 30s:\n%s", out)
 }
 
 // --- EVPN tests ---

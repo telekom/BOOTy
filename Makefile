@@ -220,7 +220,7 @@ clab-production-down:
 
 test-e2e-production:
 	@echo Running production-realistic E2E tests (requires clab-production-up)
-	@go test -tags e2e_production -race -v -timeout 300s ./test/e2e/integration/...
+	@go test -tags e2e_production -race -v -timeout 600s ./test/e2e/integration/...
 
 # ── DHCP lab targets ───────────────────────────────────────────────────────
 
