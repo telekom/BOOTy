@@ -56,11 +56,22 @@ func bootDockerExecOrFail(t *testing.T, container string, args ...string) string
 	return out
 }
 
-// getBootyLogs retrieves recent BOOTy log output from a container.
-// It uses --tail to avoid fetching massive logs that can block CI pipes.
+// getBootyLogs retrieves all BOOTy log output from a container.
+// For bounded output (e.g. CI dump tests), use getBootyLogsTail instead.
 func getBootyLogs(t *testing.T, container string) string {
 	t.Helper()
-	return getBootyLogsTail(t, container, "500")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", "logs", container).CombinedOutput()
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			t.Logf("Warning: timed out retrieving logs for %s", container)
+			return string(out)
+		}
+		t.Logf("Warning: could not get logs for %s: %v", container, err)
+		return ""
+	}
+	return string(out)
 }
 
 // getBootyLogsTail retrieves the last N lines of BOOTy log output from a container.
