@@ -86,13 +86,14 @@ func prodGetBootyLogs(t *testing.T) string {
 }
 
 // prodWaitForLogEntry waits for a log line in the booty-prod container.
-// Uses --tail to limit output scanned per poll.
+// Fetches the full log each poll to avoid missing entries that scroll past a
+// --tail window — same approach as the boot E2E helper.
 func prodWaitForLogEntry(t *testing.T, entry string, timeout time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		out, err := exec.CommandContext(ctx, "docker", "logs", "--tail", "200", prodBootyContainer).CombinedOutput()
+		out, err := exec.CommandContext(ctx, "docker", "logs", prodBootyContainer).CombinedOutput()
 		cancel()
 		if err == nil && strings.Contains(string(out), entry) {
 			return true
@@ -126,7 +127,7 @@ func prodDumpDebugState(t *testing.T) {
 	// DCGW BGP state.
 	for _, cmd := range []string{
 		"show bgp summary json",
-		"show bgp neighbors 10.10.10.2 json",
+		"show bgp neighbors 10.50.0.140 json",
 		"show bfd peers",
 		"show bgp l2vpn evpn",
 	} {
@@ -249,11 +250,11 @@ func TestProductionDCGWBGPEstablished(t *testing.T) {
 	requireProductionLab(t)
 	t.Cleanup(func() { prodDumpDebugState(t) })
 
-	// BOOTy peers with dcgw01 via iBGP (AS 65188) at 10.10.10.2 → 10.10.10.1.
+	// BOOTy peers with dcgw01 via iBGP (AS 65188) from underlay IP 10.50.0.140.
 	deadline := time.Now().Add(prodBGPConvergeTimeout)
 	for time.Now().Before(deadline) {
 		out, _ := prodDockerExecRaw(t, prodDCGWContainer,
-			"vtysh", "-c", "show bgp neighbors 10.10.10.2 json")
+			"vtysh", "-c", "show bgp neighbors 10.50.0.140 json")
 		if strings.Contains(out, "Established") {
 			t.Log("DCGW ↔ BOOTy iBGP session ESTABLISHED")
 			return
@@ -291,7 +292,7 @@ func TestProductionBFDActiveOnDCGW(t *testing.T) {
 	deadline := time.Now().Add(prodBGPConvergeTimeout)
 	for time.Now().Before(deadline) {
 		out, _ := prodDockerExecRaw(t, prodDCGWContainer,
-			"vtysh", "-c", "show bgp neighbors 10.10.10.2 json")
+			"vtysh", "-c", "show bgp neighbors 10.50.0.140 json")
 		if strings.Contains(out, "Established") {
 			break
 		}
@@ -302,14 +303,14 @@ func TestProductionBFDActiveOnDCGW(t *testing.T) {
 	deadline = time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		out, _ := prodDockerExecRaw(t, prodDCGWContainer, "vtysh", "-c", "show bfd peers")
-		if strings.Contains(out, "10.10.10.2") && strings.Contains(out, "up") {
-			t.Log("BFD session to BOOTy (10.10.10.2) is UP on DCGW")
+		if strings.Contains(out, "10.50.0.140") && strings.Contains(out, "up") {
+			t.Log("BFD session to BOOTy (10.50.0.140) is UP on DCGW")
 			return
 		}
 		time.Sleep(2 * time.Second)
 	}
 	out, _ := prodDockerExecRaw(t, prodDCGWContainer, "vtysh", "-c", "show bfd peers")
-	t.Fatalf("BFD session to BOOTy (10.10.10.2) not UP on DCGW after 30s:\n%s", out)
+	t.Fatalf("BFD session to BOOTy (10.50.0.140) not UP on DCGW after 30s:\n%s", out)
 }
 
 // --- EVPN tests ---
@@ -341,7 +342,7 @@ func TestProductionEVPNAddressFamilyOnDCGW(t *testing.T) {
 	deadline := time.Now().Add(prodBGPConvergeTimeout)
 	for time.Now().Before(deadline) {
 		out, _ := prodDockerExecRaw(t, prodDCGWContainer,
-			"vtysh", "-c", "show bgp neighbors 10.10.10.2 json")
+			"vtysh", "-c", "show bgp neighbors 10.50.0.140 json")
 		if strings.Contains(out, "Established") &&
 			strings.Contains(strings.ToLower(out), "l2vpnevpn") {
 			t.Log("L2VPN-EVPN address family active on DCGW toward BOOTy")
