@@ -98,6 +98,23 @@ func isNoArraysFound(out []byte, err error) bool {
 	return strings.Contains(combined, "no arrays found")
 }
 
+// WipeDisk clears partition-table and filesystem signatures on a single device.
+// This is a quick erase (no data overwrite) suitable for pre-streaming cleanup.
+func (m *Manager) WipeDisk(ctx context.Context, device string) error {
+	device = strings.TrimSpace(device)
+	if device == "" {
+		return fmt.Errorf("wipe disk: device is required")
+	}
+	slog.Info("wiping disk signatures", "device", device)
+	if out, err := m.cmd.Run(ctx, "sgdisk", "--zap-all", device); err != nil {
+		slog.Debug("sgdisk zap failed (may not be GPT)", "device", device, "output", string(out), "err", err)
+	}
+	if _, err := m.cmd.Run(ctx, "wipefs", "-af", device); err != nil {
+		return fmt.Errorf("wipefs %s: %w", device, err)
+	}
+	return nil
+}
+
 // WipeAllDisks runs wipefs on all block devices excluding loop and CD-ROM.
 // This performs a quick erase: clears partition tables and filesystem signatures
 // without overwriting data.

@@ -120,6 +120,50 @@ func TestStopRAIDArraysError(t *testing.T) {
 	}
 }
 
+func TestWipeDiskValidationAndCommands(t *testing.T) {
+	tests := []struct {
+		name      string
+		device    string
+		wantErr   string
+		wantCalls int
+	}{
+		{name: "empty device", device: "", wantErr: "wipe disk: device is required"},
+		{name: "whitespace device", device: " \t ", wantErr: "wipe disk: device is required"},
+		{name: "valid device", device: " /dev/sda ", wantCalls: 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newMockCommander()
+			mgr := NewManager(cmd)
+
+			err := mgr.WipeDisk(context.Background(), tt.device)
+			if tt.wantErr != "" {
+				if err == nil || err.Error() != tt.wantErr {
+					t.Fatalf("WipeDisk() error = %v, want %q", err, tt.wantErr)
+				}
+				if len(cmd.calls) != 0 {
+					t.Fatalf("expected no command calls, got %d", len(cmd.calls))
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("WipeDisk() unexpected error = %v", err)
+			}
+			if got := len(cmd.calls); got != tt.wantCalls {
+				t.Fatalf("expected %d command calls, got %d", tt.wantCalls, got)
+			}
+			if cmd.calls[0].name != "sgdisk" || strings.Join(cmd.calls[0].args, " ") != "--zap-all /dev/sda" {
+				t.Fatalf("first command = %s %v, want sgdisk --zap-all /dev/sda", cmd.calls[0].name, cmd.calls[0].args)
+			}
+			if cmd.calls[1].name != "wipefs" || strings.Join(cmd.calls[1].args, " ") != "-af /dev/sda" {
+				t.Fatalf("second command = %s %v, want wipefs -af /dev/sda", cmd.calls[1].name, cmd.calls[1].args)
+			}
+		})
+	}
+}
+
 func TestParsePartitions(t *testing.T) {
 	cmd := newMockCommander()
 	mgr := NewManager(cmd)
