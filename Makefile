@@ -208,6 +208,20 @@ test-e2e-gobgp-vrnetlab:
 	@echo Running GoBGP vrnetlab E2E tests (requires clab-gobgp-vrnetlab-up)
 	@go test -tags e2e_gobgp_vrnetlab -race -v -timeout 600s ./test/e2e/integration/...
 
+# ── Production-realistic e2e targets ───────────────────────────────────────
+
+clab-production-up: booty-test-image
+	@echo Deploying production-realistic topology (VRF + DCGW + BFD)
+	@cd test/e2e/clab && sudo clab deploy --topo topology-production.clab.yml
+
+clab-production-down:
+	@echo Destroying production-realistic topology
+	@cd test/e2e/clab && sudo clab destroy --topo topology-production.clab.yml
+
+test-e2e-production:
+	@echo Running production-realistic E2E tests (requires clab-production-up)
+	@go test -tags e2e_production -race -v -timeout 600s ./test/e2e/integration/...
+
 # ── DHCP lab targets ───────────────────────────────────────────────────────
 
 clab-dhcp-up:

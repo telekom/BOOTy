@@ -1,0 +1,43 @@
+export IMAGE="http://10.100.0.10/images/test.img.gz"
+export HOSTNAME="booty-production-e2e"
+export TOKEN="e2e-fabric-token"
+export MODE="standby"
+export MIN_DISK_SIZE_GB="1"
+export LOG_URL="http://10.100.0.11/log"
+export INIT_URL="http://10.100.0.11/status/init"
+export ERROR_URL="http://10.100.0.11/status/error"
+export SUCCESS_URL="http://10.100.0.11/status/success"
+export DEBUG_URL="http://10.100.0.11/debug"
+export HEARTBEAT_URL="http://10.100.0.11/status/heartbeat"
+export COMMANDS_URL="http://10.100.0.11/commands"
+export INSECURE_TRANSPORT="true"
+export DISK_DEVICE="/dev/loop0"
+export dns_resolver="8.8.8.8"
+# ── Underlay / BGP ────────────────────────────────────────────────
+# Production uses AS 65188 for underlay, leaf_asn 65500, local_asn 65501.
+# BOOTy peers with the leaf via eBGP unnumbered (using local-as 65501)
+# and with the DCGW via iBGP (AS 65188).
+export underlay_ip="10.50.0.140"
+export asn_server="65188"
+export leaf_asn="65500"
+export local_asn="65501"
+export overlay_subnet="2a01:598:40a:549b::/64"
+# ── DCGW / Route Reflector ────────────────────────────────────────
+# Production has two DCGWs at 10.10.10.1 and 10.10.10.2.
+# This lab uses one DCGW at 10.10.10.1.
+export dcgw_ips="10.10.10.1"
+# ── EVPN / VXLAN ──────────────────────────────────────────────────
+# Production VNI 2002002 with VPN route target 65188:2002.
+export provision_vni="2002002"
+export vpn_rt="65188:2002"
+export provision_ip="10.100.0.20/24"
+export provision_gateway="10.0.0.1"
+# ── VRF ───────────────────────────────────────────────────────────
+# Production uses Vrf_underlay with routing table 10.
+export vrf_table_id="10"
+# ── BGP / BFD Timers ─────────────────────────────────────────────
+# Production: keepalive 30s, hold 90s, BFD 150ms (profile "fabric").
+export bgp_keepalive="30"
+export bgp_hold="90"
+export bfd_transmit_ms="150"
+export bfd_receive_ms="150"
