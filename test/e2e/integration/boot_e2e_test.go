@@ -56,13 +56,20 @@ func bootDockerExecOrFail(t *testing.T, container string, args ...string) string
 	return out
 }
 
-// getBootyLogs retrieves the full BOOTy log output from a container.
+// getBootyLogs retrieves recent BOOTy log output from a container.
+// It uses --tail to avoid fetching massive logs that can block CI pipes.
 func getBootyLogs(t *testing.T, container string) string {
+	t.Helper()
+	return getBootyLogsTail(t, container, "500")
+}
+
+// getBootyLogsTail retrieves the last N lines of BOOTy log output from a container.
+func getBootyLogsTail(t *testing.T, container, tail string) string {
 	t.Helper()
 	// BOOTy output goes to container stdout/stderr
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", "logs", container).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "docker", "logs", "--tail", tail, container).CombinedOutput()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			t.Logf("Warning: timed out retrieving logs for %s", container)
@@ -659,9 +666,10 @@ func TestBootZZZDumpAllLogs(t *testing.T) {
 	}
 
 	for _, c := range containers {
-		logs := getBootyLogs(t, c.name)
+		// Use --tail 2000 to avoid dumping 100s of MBs that block CI stdout pipes.
+		logs := getBootyLogsTail(t, c.name, "2000")
 		t.Logf("\n========================================\n"+
-			"  %s NODE FULL BOOTY LOGS\n"+
+			"  %s NODE BOOTY LOGS (last 2000 lines)\n"+
 			"========================================\n%s\n"+
 			"========================================\n",
 			c.desc, logs)
