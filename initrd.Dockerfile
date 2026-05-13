@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:experimental
 
 # Build LVM2 as an init
-FROM gcc:15 AS lvm
+FROM gcc:16 AS lvm
 RUN wget https://mirrors.kernel.org/sourceware/lvm2/LVM2.2.03.27.tgz
 RUN tar -xf LVM2.2.03.27.tgz
 WORKDIR LVM2.2.03.27
@@ -13,7 +13,7 @@ WORKDIR tools
 RUN gcc -O2 -fPIC -static -L command.o dumpconfig.o formats.o lvchange.o lvconvert.o lvconvert_poll.o lvcreate.o lvdisplay.o lvextend.o lvmcmdline.o lvmdiskscan.o lvpoll.o lvreduce.o lvremove.o lvrename.o lvresize.o lvscan.o polldaemon.o pvchange.o pvck.o pvcreate.o pvdisplay.o pvmove.o pvmove_poll.o pvremove.o pvresize.o pvscan.o reporter.o segtypes.o tags.o toollib.o vgcfgbackup.o vgcfgrestore.o vgchange.o vgck.o vgcreate.o vgdisplay.o vgexport.o vgextend.o vgimport.o vgimportclone.o vgmerge.o vgmknodes.o vgreduce.o vgremove.o vgrename.o vgscan.o vgsplit.o lvm-static.o ../lib/liblvm-internal.a ../libdaemon/client/libdaemonclient.a ../device_mapper/libdevice-mapper.a ../base/libbase.a -lm -lblkid -laio -o lvm -lpthread -luuid ./liblvm2cmd.a
 
 # Build scripted fdisk (sfdisk)
-FROM gcc:15 AS sfdisk
+FROM gcc:16 AS sfdisk
 RUN apt-get update -y && apt-get install -y bison autopoint gettext flex
 RUN git clone --branch v2.41.3 --depth 1 https://github.com/util-linux/util-linux.git
 WORKDIR util-linux
