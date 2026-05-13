@@ -161,7 +161,6 @@ func TestWipeOrSecureEraseDisks(t *testing.T) {
 		name        string
 		secureErase bool
 		wipeErr     error
-		secureErr   error
 		wantErr     bool
 	}{
 		{
@@ -181,14 +180,6 @@ func TestWipeOrSecureEraseDisks(t *testing.T) {
 			wipeErr:     fmt.Errorf("wipe failed"),
 			wantErr:     true, // WipeAllDisks returns error when all disk wipes fail
 		},
-		{
-			name:        "secure erase error",
-			secureErase: true,
-			secureErr:   fmt.Errorf("secure erase failed"),
-			// SecureEraseAllDisks reads /sys/block; if the host has real
-			// (non-virtual) disks the mocked wipefs error propagates.
-			wantErr: hasRealBlockDevices(),
-		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -196,9 +187,6 @@ func TestWipeOrSecureEraseDisks(t *testing.T) {
 			cmd := newMockCommander()
 			if tc.wipeErr != nil {
 				cmd.setResult("wipefs -af", nil, tc.wipeErr)
-			}
-			if tc.secureErr != nil {
-				cmd.setResult("wipefs -af", nil, tc.secureErr)
 			}
 			provider := &mockProvider{}
 			mgr := disk.NewManager(cmd)

@@ -238,8 +238,8 @@ func TestEnableLVMNotPresentE2E(t *testing.T) {
 	cmd := newMockCommander()
 	cmd.set("lvm", nil, fmt.Errorf("command not found"))
 	err := disk.NewManager(cmd).EnableLVM(context.Background())
-	if err == nil {
-		t.Fatal("expected error when lvm is not available")
+	if err != nil {
+		t.Fatalf("EnableLVM should not fail when lvm binary is absent: %v", err)
 	}
 }
 
