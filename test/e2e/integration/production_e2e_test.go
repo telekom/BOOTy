@@ -8,7 +8,6 @@
 //   - iBGP to DCGW route reflector with BFD (150ms)
 //   - EVPN VXLAN with production-scale VNI (2002002)
 //   - BGP timers (keepalive 30s, hold 90s)
-//   - Route-maps for community tagging
 //
 // Prerequisites:
 //
