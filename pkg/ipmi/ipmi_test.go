@@ -4,6 +4,7 @@ package ipmi
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -197,5 +198,87 @@ func TestParseVLAN(t *testing.T) {
 				t.Fatalf("parseVLAN(%q) = (%v, %d), want (%v, %d)", tc.value, enabled, id, tc.enabled, tc.id)
 			}
 		})
+	}
+}
+
+func TestRedactIPMIArgs(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []string
+		contains string
+		absent   string
+	}{
+		{
+			name:     "redacts -P value",
+			input:    []string{"-H", "10.0.0.1", "-U", "admin", "-P", "s3cr3t", "chassis", "status"},
+			absent:   "s3cr3t",
+			contains: "[REDACTED]",
+		},
+		{
+			name:     "redacts --password value",
+			input:    []string{"--password", "topsecret", "lan", "print"},
+			absent:   "topsecret",
+			contains: "[REDACTED]",
+		},
+		{
+			name:     "redacts -U value",
+			input:    []string{"-U", "myuser", "chassis", "power", "status"},
+			absent:   "myuser",
+			contains: "[REDACTED]",
+		},
+		{
+			name:     "preserves non-sensitive args",
+			input:    []string{"-I", "open", "-d", "0", "chassis", "status"},
+			contains: "open",
+		},
+		{
+			name:  "empty args",
+			input: []string{},
+		},
+		{
+			name:     "consecutive sensitive flags: value not re-treated as flag",
+			input:    []string{"-P", "pass", "-H", "host"},
+			absent:   "host",
+			contains: "[REDACTED]",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := redactIPMIArgs(tc.input)
+			joined := strings.Join(got, " ")
+			if tc.absent != "" && strings.Contains(joined, tc.absent) {
+				t.Errorf("redactIPMIArgs output contains sensitive value %q: %v", tc.absent, got)
+			}
+			if tc.contains != "" && !strings.Contains(joined, tc.contains) {
+				t.Errorf("redactIPMIArgs output missing expected value %q: %v", tc.contains, got)
+			}
+		})
+	}
+}
+
+func TestRedactIPMIArgs_DoesNotMutateInput(t *testing.T) {
+	input := []string{"-P", "secret"}
+	original := make([]string, len(input))
+	copy(original, input)
+	redactIPMIArgs(input)
+	for i, v := range input {
+		if v != original[i] {
+			t.Errorf("input mutated at index %d: got %q, want %q", i, v, original[i])
+		}
+	}
+}
+
+func TestExecIPMITool_ErrorDoesNotContainPassword(t *testing.T) {
+	runErr := fmt.Errorf("exit status 1")
+	r := &fakeRunner{output: []byte("error output"), err: runErr}
+	m := &Manager{deviceNum: "0", runner: r, log: slog.Default()}
+	_, err := m.execIPMITool(context.Background(), "-P", "topsecret", "chassis", "status")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.Contains(err.Error(), "topsecret") {
+		t.Errorf("error message contains sensitive value: %v", err)
 	}
 }
