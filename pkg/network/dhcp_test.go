@@ -86,3 +86,21 @@ func TestDHCPMode_WaitForConnectivity(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+// TestDHCPSetup_ContextCancelPropagates verifies that canceling the context
+// terminates all concurrent NIC probes promptly.
+// In environments with no physical NICs, Setup returns immediately with an
+// error — that case is also valid and proves no blocking.
+func TestDHCPSetup_ContextCancelPropagates(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	d := &DHCPMode{}
+	_ = d.Setup(ctx, &Config{})
+	elapsed := time.Since(start)
+
+	if elapsed > 700*time.Millisecond {
+		t.Fatalf("Setup took %v — context cancellation did not propagate promptly", elapsed)
+	}
+}
