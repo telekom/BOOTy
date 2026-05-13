@@ -852,11 +852,14 @@ func (m *Manager) SetupChrootBindMounts(root string) error {
 	return nil
 }
 
-// TeardownChrootBindMounts unmounts standard bind mounts and returns any
-// errors encountered so callers can surface teardown failures.
+// TeardownChrootBindMounts unmounts the standard chroot bind mounts and
+// returns a joined error from the mandatory unmounts (/run, /sys, /proc,
+// /dev). The efivarfs unmount is best-effort because efivarfs is only
+// bind-mounted when /sys/firmware/efi/efivars exists on the host; failures
+// there are logged at Debug level and never returned.
 func (m *Manager) TeardownChrootBindMounts(root string) error {
 	var errs []error
-	// Unmount efivarfs first (sub-mount under /sys).
+	// efivarfs is best-effort: it may legitimately not have been mounted.
 	efiPath := root + "/sys/firmware/efi/efivars"
 	if err := m.Unmount(efiPath); err != nil {
 		slog.Debug("chroot efivarfs unmount skipped", "path", efiPath, "error", err)
