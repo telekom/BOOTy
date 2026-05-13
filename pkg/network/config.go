@@ -67,6 +67,7 @@ type Config struct {
 	BGPUnderlayAF   string   // Underlay address family: ipv4, ipv6, dual-stack (default: ipv4)
 	BGPOverlayType  string   // Overlay encapsulation: evpn-vxlan, l3vpn, none (default: evpn-vxlan)
 	BGPAuthPassword string   // Optional TCP-MD5 password for all BGP peers (empty = no auth)
+	BGPMinPeers     int      // Minimum established BGP peers for underlay readiness (default: 1)
 
 	// Common fields.
 	BridgeName  string // Default: "br.provision"
@@ -103,6 +104,9 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.VRFTableID == 0 {
 		c.VRFTableID = 1000
+	}
+	if c.BGPMinPeers == 0 {
+		c.BGPMinPeers = 1
 	}
 	// BFD is opt-in: only enabled when bfd_transmit_ms / bfd_receive_ms
 	// are explicitly set via environment variables.

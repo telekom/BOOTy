@@ -63,6 +63,11 @@ type Config struct {
 	UnderlayAF string
 	// OverlayType selects the BGP overlay encapsulation (evpn-vxlan/l3vpn/none).
 	OverlayType string
+	// MinEstablishedPeers is the minimum number of BGP peers that must reach
+	// ESTABLISHED state before Ready() reports the underlay as ready.
+	// In dual-homed EVPN fabrics, set this to 2 to ensure full-fabric
+	// connectivity before provisioning proceeds.  Default: 1.
+	MinEstablishedPeers int
 	// Policy configures BGP import/export communities and route attributes.
 	Policy *PolicyConfig
 	// GracefulRestart configures BGP graceful restart behavior.
@@ -81,28 +86,29 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 	}
 
 	cfg := &Config{
-		ASN:               netCfg.ASN,
-		RouterID:          underlayIP,
-		ProvisionVNI:      int(netCfg.ProvisionVNI),
-		ProvisionIP:       netCfg.ProvisionIP,
-		ProvisionGateway:  netCfg.ProvisionGateway,
-		DNSResolvers:      netCfg.DNSResolvers,
-		BridgeName:        netCfg.BridgeName,
-		VRFName:           netCfg.VRFName,
-		VRFTableID:        netCfg.VRFTableID,
-		MTU:               netCfg.MTU,
-		KeepaliveInterval: uint64(netCfg.BGPKeepalive),
-		HoldTime:          uint64(netCfg.BGPHold),
-		OverlayIP:         overlayIP,
-		BridgeMAC:         bridgeMAC,
-		IPMIMAC:           netCfg.IPMIMAC,
-		PeerMode:          netCfg.BGPPeerMode,
-		NeighborAddrs:     parseNeighborAddrs(netCfg.BGPNeighbors),
-		RemoteASN:         netCfg.BGPRemoteASN,
-		EnableL2:          netCfg.EVPNL2Enabled,
-		AuthPassword:      netCfg.BGPAuthPassword,
-		UnderlayAF:        netCfg.BGPUnderlayAF,
-		OverlayType:       netCfg.BGPOverlayType,
+		ASN:                 netCfg.ASN,
+		RouterID:            underlayIP,
+		ProvisionVNI:        int(netCfg.ProvisionVNI),
+		ProvisionIP:         netCfg.ProvisionIP,
+		ProvisionGateway:    netCfg.ProvisionGateway,
+		DNSResolvers:        netCfg.DNSResolvers,
+		BridgeName:          netCfg.BridgeName,
+		VRFName:             netCfg.VRFName,
+		VRFTableID:          netCfg.VRFTableID,
+		MTU:                 netCfg.MTU,
+		KeepaliveInterval:   uint64(netCfg.BGPKeepalive),
+		HoldTime:            uint64(netCfg.BGPHold),
+		OverlayIP:           overlayIP,
+		BridgeMAC:           bridgeMAC,
+		IPMIMAC:             netCfg.IPMIMAC,
+		PeerMode:            netCfg.BGPPeerMode,
+		NeighborAddrs:       parseNeighborAddrs(netCfg.BGPNeighbors),
+		RemoteASN:           netCfg.BGPRemoteASN,
+		EnableL2:            netCfg.EVPNL2Enabled,
+		AuthPassword:        netCfg.BGPAuthPassword,
+		UnderlayAF:          netCfg.BGPUnderlayAF,
+		OverlayType:         netCfg.BGPOverlayType,
+		MinEstablishedPeers: netCfg.BGPMinPeers,
 	}
 
 	cfg.ApplyDefaults()
@@ -149,6 +155,9 @@ func (c *Config) ApplyDefaults() {
 	if ot, err := ParseOverlayType(c.OverlayType); err == nil {
 		c.OverlayType = string(ot)
 	}
+	if c.MinEstablishedPeers == 0 {
+		c.MinEstablishedPeers = 1
+	}
 	if c.GracefulRestart != nil {
 		c.GracefulRestart.ApplyDefaults()
 	}
@@ -194,6 +203,9 @@ func (c *Config) Validate() error {
 	}
 	if ot == OverlayL3VPN {
 		return fmt.Errorf("overlay type %q is not yet implemented", ot)
+	}
+	if c.MinEstablishedPeers < 1 {
+		return fmt.Errorf("BGP_MIN_PEERS %d is invalid (must be >= 1)", c.MinEstablishedPeers)
 	}
 	return c.validatePolicy()
 }

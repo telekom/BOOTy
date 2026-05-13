@@ -996,6 +996,7 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		"HEALTH_MIN_CPUS":                    &cfg.HealthMinCPUs,
 		"CRASH_ARTIFACTS_MAX_MB":             &cfg.CrashArtifactsMaxMB,
 		"CRASH_ARTIFACTS_UPLOAD_TIMEOUT_SEC": &cfg.CrashArtifactsUploadTimeoutSec,
+		"BGP_MIN_PEERS":                      &cfg.BGPMinPeers,
 	}
 
 	if ptr, ok := intFields[key]; ok {
