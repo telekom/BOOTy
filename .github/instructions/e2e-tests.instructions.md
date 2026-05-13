@@ -17,6 +17,7 @@ Every E2E test file **must** start with a build tag matching its topology:
 | `e2e_gobgp` | GoBGP ContainerLab | `make clab-gobgp-up && make test-e2e-gobgp` |
 | `e2e_vrnetlab` | QEMU vrnetlab | `make clab-vrnetlab-up && make test-e2e-vrnetlab` |
 | `e2e_gobgp_vrnetlab` | GoBGP QEMU vrnetlab | `make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab` |
+| `e2e_production` | Production-realistic (VRF+DCGW+BFD) | `make clab-production-up && make test-e2e-production` |
 | `linux_e2e` | Linux root access | Direct `go test -tags linux_e2e` |
 
 ## Helper Functions

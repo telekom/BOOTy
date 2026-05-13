@@ -1,0 +1,154 @@
+# Production-realistic E2E topology for BOOTy.
+#
+# This topology tests the production networking patterns observed in real
+# CAPRF-managed deployments:
+#
+#   - VRF isolation (Vrf_underlay, table 10)
+#   - eBGP unnumbered to leaf switch (AS 65500) with local-as 65501
+#   - iBGP to DCGW route reflector (AS 65188) with BFD profile (150ms)
+#   - EVPN VXLAN VNI 2002002 (production-scale VNI)
+#   - Route-maps (TAG-FABRIC-IN / DENY-TAG-FABRIC-OUT)
+#   - BGP timers (keepalive 30s, hold 90s)
+#
+# Network topology:
+#
+#   ┌──────────┐  eBGP   ┌──────────┐  iBGP   ┌────────────┐
+#   │ spine01  │◄───────►│ dcgw01   │◄───────►│ booty-prod │
+#   │ AS 65500 │ 10.0.1  │ AS 65188 │ 10.10.10│ AS 65188   │
+#   │          │ .1↔.2   │  RR+BFD  │ .1↔.2   │ VRF tbl=10 │
+#   └────┬─────┘         └──────────┘         └────┬───────┘
+#        │ eth3                                     │ eth1
+#   ┌────▼─────┐                              eBGP unnumbered
+#   │ client   │                              (local-as 65501)
+#   │10.100.0. │                                    │
+#   │   100    │                              ┌─────▼──────┐
+#   └──────────┘                              │  spine01   │
+#                                             │  (eth1)    │
+#                                             └────────────┘
+#
+# Overlay: spine01 runs VXLAN VNI 2002002 bridge (br2002002) with
+# the client and service containers on it.
+#
+# Build the test image first:
+#   docker build -t booty-test:latest -f test/e2e/clab/booty-test.Dockerfile .
+name: booty-production-lab
+
+topology:
+  nodes:
+    # ── Leaf switch (simulates production leaf, AS 65500) ──────────────
+    spine01:
+      kind: linux
+      image: quay.io/frrouting/frr:10.3.1
+      binds:
+        - spine01-production.frr.conf:/etc/frr/frr.conf:ro
+        - daemons:/etc/frr/daemons:ro
+      exec:
+        # eth1 → booty-prod (eBGP unnumbered)
+        - ip link set dev eth1 mtu 9000
+        - ip link set dev eth1 up
+        # eth2 → dcgw01 (eBGP numbered)
+        - ip link set dev eth2 mtu 9000
+        - ip link set dev eth2 up
+        # VXLAN VNI 2002002 — production-scale VNI
+        - ip link add vxlan2002002 type vxlan id 2002002 dstport 4789 local 10.0.0.1 nolearning
+        - ip link add br2002002 type bridge
+        - ip link set vxlan2002002 master br2002002
+        - ip link set vxlan2002002 up
+        - ip link set br2002002 up
+        - ip addr add 10.100.0.1/24 dev br2002002
+        # BUM FDB entry for BOOTy VTEP (BOOTy only advertises Type-5)
+        - bridge fdb append 00:00:00:00:00:00 dev vxlan2002002 dst 10.50.0.140
+        # eth3 → client (L2 on br2002002)
+        - ip link set dev eth3 master br2002002
+        - ip link set dev eth3 up
+        # eth4 → nginx (L2 on br2002002)
+        - ip link set dev eth4 master br2002002
+        - ip link set dev eth4 up
+        # eth5 → caprf-mock (L2 on br2002002)
+        - ip link set dev eth5 master br2002002
+        - ip link set dev eth5 up
+
+    # ── DCGW / Route Reflector (AS 65188, BFD) ────────────────────────
+    dcgw01:
+      kind: linux
+      image: quay.io/frrouting/frr:10.3.1
+      binds:
+        - dcgw01.frr.conf:/etc/frr/frr.conf:ro
+        - daemons:/etc/frr/daemons:ro
+      exec:
+        # eth1 → spine01 (eBGP, 10.0.1.2/30)
+        - ip link set dev eth1 mtu 9000
+        - ip link set dev eth1 up
+        # eth2 → booty-prod (iBGP, 10.10.10.1/30)
+        - ip link set dev eth2 mtu 9000
+        - ip link set dev eth2 up
+        # VXLAN for EVPN route reflection
+        - ip link add vxlan2002002 type vxlan id 2002002 dstport 4789 local 10.10.10.1 nolearning
+        - ip link add br2002002 type bridge
+        - ip link set vxlan2002002 master br2002002
+        - ip link set vxlan2002002 up
+        - ip link set br2002002 up
+
+    # ── BOOTy production node (FRR mode, VRF, DCGW peering) ───────────
+    booty-prod:
+      kind: linux
+      image: booty-test:latest
+      binds:
+        - data/vars-production:/deploy/vars:ro
+      env:
+        BOOTY_NO_REBOOT: "1"
+      exec:
+        # eth1 → spine01 (eBGP unnumbered fabric link)
+        # eth2 → dcgw01 (iBGP numbered, 10.10.10.2/30)
+        - ip addr add 10.10.10.2/30 dev eth2
+        - ip link set dev eth2 mtu 9000
+        - ip link set dev eth2 up
+        # Create sparse disk image for provisioning
+        - dd if=/dev/zero of=/tmp/disk.img bs=1M count=0 seek=2048
+        - losetup /dev/loop0 /tmp/disk.img
+
+    # ── Service containers ─────────────────────────────────────────────
+    client:
+      kind: linux
+      image: alpine:3.20
+      exec:
+        - ip addr add 10.100.0.100/24 dev eth1
+        - ip link set dev eth1 up
+      cmd: sleep infinity
+
+    nginx:
+      kind: linux
+      image: nginx:alpine
+      binds:
+        - nginx.conf:/etc/nginx/nginx.conf:ro
+        - html:/usr/share/nginx/html:ro
+        - images:/srv/images:ro
+      exec:
+        - ip addr add 10.100.0.10/24 dev eth1
+        - ip link set dev eth1 up
+
+    caprf-mock:
+      kind: linux
+      image: nginx:alpine
+      binds:
+        - caprf-mock.conf:/etc/nginx/nginx.conf:ro
+        - images:/srv/images:ro
+        - data:/srv/data:ro
+      exec:
+        - ip addr add 10.100.0.11/24 dev eth1
+        - ip link set dev eth1 up
+
+  links:
+    # ── Fabric: spine ↔ booty (eBGP unnumbered) ───────────────────
+    - endpoints: ["spine01:eth1", "booty-prod:eth1"]
+
+    # ── Fabric: spine ↔ dcgw (eBGP numbered) ──────────────────────
+    - endpoints: ["spine01:eth2", "dcgw01:eth1"]
+
+    # ── DCGW ↔ booty (iBGP numbered) ──────────────────────────────
+    - endpoints: ["dcgw01:eth2", "booty-prod:eth2"]
+
+    # ── Spine-side L2 segment (br2002002, VXLAN VNI 2002002) ──────
+    - endpoints: ["spine01:eth3", "client:eth1"]
+    - endpoints: ["spine01:eth4", "nginx:eth1"]
+    - endpoints: ["spine01:eth5", "caprf-mock:eth1"]
