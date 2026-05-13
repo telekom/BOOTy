@@ -54,11 +54,13 @@ const (
 // Depending on PeerMode it establishes unnumbered (link-local),
 // numbered (explicit IP), or a combination of both session types.
 type UnderlayTier struct {
-	bgp    *server.BgpServer
-	cfg    *Config
-	nics   []string
-	log    *slog.Logger
-	stopRA chan struct{} // signals the periodic RA goroutine to stop
+	bgp          *server.BgpServer
+	cfg          *Config
+	nics         []string
+	log          *slog.Logger
+	stopRA       chan struct{}                 // signals the periodic RA goroutine to stop
+	peerCountFn  func(ctx context.Context) int // overridable in tests; nil = use countEstablishedPeers
+	pollInterval time.Duration                 // overridable in tests; zero = use default (1s)
 }
 
 // NewUnderlayTier creates a new underlay tier.
@@ -143,23 +145,33 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 	return nil
 }
 
-// Ready waits until at least one BGP peer reaches ESTABLISHED state.
+// Ready waits until at least MinEstablishedPeers BGP peers reach ESTABLISHED state.
 func (u *UnderlayTier) Ready(ctx context.Context, timeout time.Duration) error {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
-	ticker := time.NewTicker(time.Second)
+	interval := u.pollInterval
+	if interval <= 0 {
+		interval = time.Second
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	countPeers := u.countEstablishedPeers
+	if u.peerCountFn != nil {
+		countPeers = u.peerCountFn
+	}
+
+	minPeers := u.cfg.MinEstablishedPeers
 	for {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("context canceled: %w", ctx.Err())
 		case <-timer.C:
-			return fmt.Errorf("timed out waiting for BGP peers to establish")
+			return fmt.Errorf("timed out waiting for %d BGP peer(s) to establish", minPeers)
 		case <-ticker.C:
-			if u.hasEstablishedPeer(ctx) {
-				u.log.Info("underlay BGP peer established")
+			if n := countPeers(ctx); n >= minPeers {
+				u.log.Info("underlay BGP peers established", "count", n, "required", minPeers)
 				return nil
 			}
 		}
@@ -438,22 +450,21 @@ func (u *UnderlayTier) addNumberedPeer(ctx context.Context, addr string, familie
 	return nil
 }
 
-func (u *UnderlayTier) hasEstablishedPeer(ctx context.Context) bool {
-	established := false
+func (u *UnderlayTier) countEstablishedPeers(ctx context.Context) int {
+	var count int
 
 	fn := func(p *apipb.Peer) {
 		if p.GetState().GetSessionState() == apipb.PeerState_ESTABLISHED {
-			established = true
+			count++
 		}
 	}
 
-	err := u.bgp.ListPeer(ctx, &apipb.ListPeerRequest{}, fn)
-	if err != nil {
-		u.log.Debug("Failed to list peers", "error", err)
-		return false
+	if err := u.bgp.ListPeer(ctx, &apipb.ListPeerRequest{}, fn); err != nil {
+		u.log.Debug("failed to list peers", "error", err)
+		return 0
 	}
 
-	return established
+	return count
 }
 
 // announceUnderlayRoute advertises the RouterID /32 via IPv4 unicast so that

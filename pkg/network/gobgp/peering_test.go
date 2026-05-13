@@ -14,15 +14,16 @@ import (
 // unnumbered interface sessions.
 func TestScenarioUnnumberedEVPN(t *testing.T) {
 	cfg := &Config{
-		ASN:               65000,
-		RouterID:          "192.168.4.10",
-		PeerMode:          network.PeerModeUnnumbered,
-		ProvisionVNI:      4000,
-		ProvisionIP:       "10.100.0.10/24",
-		MTU:               9000,
-		KeepaliveInterval: 3,
-		HoldTime:          9,
-		BridgeName:        "br.provision",
+		ASN:                 65000,
+		RouterID:            "192.168.4.10",
+		PeerMode:            network.PeerModeUnnumbered,
+		ProvisionVNI:        4000,
+		ProvisionIP:         "10.100.0.10/24",
+		MTU:                 9000,
+		KeepaliveInterval:   3,
+		HoldTime:            9,
+		BridgeName:          "br.provision",
+		MinEstablishedPeers: 1,
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -55,17 +56,18 @@ func TestScenarioUnnumberedEVPN(t *testing.T) {
 func TestScenarioDualUnnumberedAndNumbered(t *testing.T) {
 	t.Run("iBGP_to_RR", func(t *testing.T) {
 		cfg := &Config{
-			ASN:               65000,
-			RouterID:          "192.168.4.10",
-			PeerMode:          network.PeerModeDual,
-			NeighborAddrs:     []string{"192.168.4.1", "192.168.4.2"},
-			RemoteASN:         0, // 0 = same as local = iBGP
-			ProvisionVNI:      4000,
-			ProvisionIP:       "10.100.0.10/24",
-			MTU:               9000,
-			KeepaliveInterval: 3,
-			HoldTime:          9,
-			BridgeName:        "br.provision",
+			ASN:                 65000,
+			RouterID:            "192.168.4.10",
+			PeerMode:            network.PeerModeDual,
+			NeighborAddrs:       []string{"192.168.4.1", "192.168.4.2"},
+			RemoteASN:           0, // 0 = same as local = iBGP
+			ProvisionVNI:        4000,
+			ProvisionIP:         "10.100.0.10/24",
+			MTU:                 9000,
+			KeepaliveInterval:   3,
+			HoldTime:            9,
+			BridgeName:          "br.provision",
+			MinEstablishedPeers: 1,
 		}
 
 		if err := cfg.Validate(); err != nil {
@@ -90,17 +92,18 @@ func TestScenarioDualUnnumberedAndNumbered(t *testing.T) {
 
 	t.Run("eBGP_to_DCGW", func(t *testing.T) {
 		cfg := &Config{
-			ASN:               65000,
-			RouterID:          "192.168.4.10",
-			PeerMode:          network.PeerModeDual,
-			NeighborAddrs:     []string{"10.255.0.1", "10.255.0.2"},
-			RemoteASN:         65100, // Different ASN = eBGP
-			ProvisionVNI:      4000,
-			ProvisionIP:       "10.100.0.10/24",
-			MTU:               9000,
-			KeepaliveInterval: 3,
-			HoldTime:          9,
-			BridgeName:        "br.provision",
+			ASN:                 65000,
+			RouterID:            "192.168.4.10",
+			PeerMode:            network.PeerModeDual,
+			NeighborAddrs:       []string{"10.255.0.1", "10.255.0.2"},
+			RemoteASN:           65100, // Different ASN = eBGP
+			ProvisionVNI:        4000,
+			ProvisionIP:         "10.100.0.10/24",
+			MTU:                 9000,
+			KeepaliveInterval:   3,
+			HoldTime:            9,
+			BridgeName:          "br.provision",
+			MinEstablishedPeers: 1,
 		}
 
 		if err := cfg.Validate(); err != nil {
@@ -122,17 +125,18 @@ func TestScenarioDualUnnumberedAndNumbered(t *testing.T) {
 func TestScenarioNumberedOnly(t *testing.T) {
 	t.Run("iBGP_numbered", func(t *testing.T) {
 		cfg := &Config{
-			ASN:               65000,
-			RouterID:          "10.0.0.5",
-			PeerMode:          network.PeerModeNumbered,
-			NeighborAddrs:     []string{"10.0.0.1", "10.0.0.2"},
-			RemoteASN:         65000, // Same ASN = iBGP
-			ProvisionVNI:      4000,
-			ProvisionIP:       "10.100.0.10/24",
-			MTU:               9000,
-			KeepaliveInterval: 3,
-			HoldTime:          9,
-			BridgeName:        "br.provision",
+			ASN:                 65000,
+			RouterID:            "10.0.0.5",
+			PeerMode:            network.PeerModeNumbered,
+			NeighborAddrs:       []string{"10.0.0.1", "10.0.0.2"},
+			RemoteASN:           65000, // Same ASN = iBGP
+			ProvisionVNI:        4000,
+			ProvisionIP:         "10.100.0.10/24",
+			MTU:                 9000,
+			KeepaliveInterval:   3,
+			HoldTime:            9,
+			BridgeName:          "br.provision",
+			MinEstablishedPeers: 1,
 		}
 
 		if err := cfg.Validate(); err != nil {
@@ -148,17 +152,18 @@ func TestScenarioNumberedOnly(t *testing.T) {
 
 	t.Run("eBGP_numbered", func(t *testing.T) {
 		cfg := &Config{
-			ASN:               65010,
-			RouterID:          "10.0.0.5",
-			PeerMode:          network.PeerModeNumbered,
-			NeighborAddrs:     []string{"10.0.0.1"},
-			RemoteASN:         65020, // Different ASN = eBGP
-			ProvisionVNI:      4000,
-			ProvisionIP:       "10.100.0.10/24",
-			MTU:               9000,
-			KeepaliveInterval: 3,
-			HoldTime:          9,
-			BridgeName:        "br.provision",
+			ASN:                 65010,
+			RouterID:            "10.0.0.5",
+			PeerMode:            network.PeerModeNumbered,
+			NeighborAddrs:       []string{"10.0.0.1"},
+			RemoteASN:           65020, // Different ASN = eBGP
+			ProvisionVNI:        4000,
+			ProvisionIP:         "10.100.0.10/24",
+			MTU:                 9000,
+			KeepaliveInterval:   3,
+			HoldTime:            9,
+			BridgeName:          "br.provision",
+			MinEstablishedPeers: 1,
 		}
 
 		if err := cfg.Validate(); err != nil {
@@ -183,12 +188,13 @@ func TestScenarioNumberedOnly(t *testing.T) {
 
 	t.Run("numbered_with_ipv6_peer", func(t *testing.T) {
 		cfg := &Config{
-			ASN:           65000,
-			RouterID:      "10.0.0.5",
-			PeerMode:      network.PeerModeNumbered,
-			NeighborAddrs: []string{"fd00::1"},
-			RemoteASN:     65000,
-			ProvisionVNI:  100,
+			ASN:                 65000,
+			RouterID:            "10.0.0.5",
+			PeerMode:            network.PeerModeNumbered,
+			NeighborAddrs:       []string{"fd00::1"},
+			RemoteASN:           65000,
+			ProvisionVNI:        100,
+			MinEstablishedPeers: 1,
 		}
 
 		if err := cfg.Validate(); err != nil {
