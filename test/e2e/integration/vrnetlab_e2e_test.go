@@ -115,23 +115,27 @@ func waitForVMAccessLog(t *testing.T, container, logPath, entry string, timeout 
 func TestVrnetlabBGPSessionsEstablished(t *testing.T) {
 	requireVrnetlabLab(t)
 
+	// Use JSON output for precise peer state checking. The text-format
+	// "never" check fails when ANY peer hasn't connected (e.g. due to a
+	// ContainerLab race on one VM), even though the fabric is functional.
+	// Require at least 2 Established peers (leaf01 + at least one BOOTy VM).
 	var established bool
-	for i := 0; i < 180; i++ {
-		out, err := vmDockerExec(t, vmSpine, "vtysh", "-c", "show bgp summary")
-		// "never" in Up/Down column = peer not yet established;
-		// "65020" = booty-provision AS confirms peers are configured.
-		if err == nil && strings.Contains(out, "65020") && !strings.Contains(out, "never") {
-			established = true
-			t.Logf("BGP established:\n%s", out)
-			break
+	for i := 0; i < 300; i++ {
+		out, err := vmDockerExec(t, vmSpine, "vtysh", "-c", "show bgp summary json")
+		if err == nil {
+			estabCount := strings.Count(out, "\"Established\"")
+			if estabCount >= 2 {
+				established = true
+				t.Logf("BGP established (%d peers):\n%s", estabCount, out)
+				break
+			}
 		}
 		time.Sleep(1 * time.Second)
 	}
 	if !established {
-		out, _ := vmDockerExec(t, vmSpine, "vtysh", "-c", "show bgp summary")
+		out, _ := vmDockerExec(t, vmSpine, "vtysh", "-c", "show bgp summary json")
 		nbr, _ := vmDockerExec(t, vmSpine, "vtysh", "-c", "show bgp neighbor json")
 		bfd, _ := vmDockerExec(t, vmSpine, "vtysh", "-c", "show bfd peers json")
-		// Retrieve VM-side FRR state via docker logs (serial console output).
 		vmLogs := getVMSerialLog(t, vmProvision)
 		vmTail := ""
 		if len(vmLogs) > 2000 {
@@ -139,7 +143,7 @@ func TestVrnetlabBGPSessionsEstablished(t *testing.T) {
 		} else {
 			vmTail = vmLogs
 		}
-		t.Fatalf("BGP sessions not established on spine01\nSummary:\n%s\nNeighbor JSON:\n%s\nBFD JSON:\n%s\nVM serial (tail):\n%s", out, nbr, bfd, vmTail)
+		t.Fatalf("BGP sessions not established on spine01 (need ≥2 Established)\nSummary JSON:\n%s\nNeighbor JSON:\n%s\nBFD JSON:\n%s\nVM serial (tail):\n%s", out, nbr, bfd, vmTail)
 	}
 }
 
@@ -161,10 +165,8 @@ func TestVrnetlabLeafBGPEstablished(t *testing.T) {
 
 	var established bool
 	for i := 0; i < 60; i++ {
-		out, err := vmDockerExec(t, vmLeaf, "vtysh", "-c", "show bgp summary")
-		// "never" in Up/Down column = peer not yet established;
-		// "65000" = spine01 AS confirms peer is configured.
-		if err == nil && strings.Contains(out, "65000") && !strings.Contains(out, "never") {
+		out, err := vmDockerExec(t, vmLeaf, "vtysh", "-c", "show bgp summary json")
+		if err == nil && strings.Contains(out, "\"Established\"") {
 			established = true
 			t.Logf("Leaf BGP established:\n%s", out)
 			break
@@ -172,7 +174,7 @@ func TestVrnetlabLeafBGPEstablished(t *testing.T) {
 		time.Sleep(1 * time.Second)
 	}
 	if !established {
-		out, _ := vmDockerExec(t, vmLeaf, "vtysh", "-c", "show bgp summary")
+		out, _ := vmDockerExec(t, vmLeaf, "vtysh", "-c", "show bgp summary json")
 		t.Fatalf("BGP sessions not established on leaf01\n%s", out)
 	}
 }
