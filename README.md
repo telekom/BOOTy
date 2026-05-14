@@ -77,6 +77,13 @@ BOOTy operates in two modes depending on the boot environment:
 - **Startup crash artifact upload** — Best-effort pre-wipe collection of existing OS crash logs, dumps, and host metadata for CAPRF/S3 correlation
 - **Hard/soft deprovisioning** — Full disk wipe or GRUB rename for reprovisioning
 - **Standby mode** — Hot standby with heartbeats and command polling for sub-second provisioning
+- **Cloud-init injection** — NoCloud and ConfigDrive datasource generation (users, packages, NTP, runcmd)
+- **Netplan overlay** — Drop-in netplan YAML config from provisioner overrides `/deploy/vars` network settings
+- **Network persistence** — Auto-generates OS-native network config (netplan, NetworkManager, systemd-networkd)
+- **IPMI operations** — BMC network config, boot device control, chassis power, sensor readings
+- **TPM 2.0 support** — Detection, PCR reading, metadata collection, LUKS2 TPM enrollment (Phase 2)
+- **Bootloader auto-detection** — Automatic GRUB vs systemd-boot selection (x86_64 and ARM64)
+- **BGP policy engine** — Import/export filtering, community tagging, graceful restart
 - **Multi-architecture** — Builds for `linux/amd64` and `linux/arm64`
 - **Multiple build flavors** — Full (FRR+tools), GoBGP (pure Go BGP), slim (DHCP-only), micro (pure Go), ISO (bootable)
 
@@ -262,8 +269,10 @@ go run server/server.go \
 |----------|---------|-------------|
 | `MODE` | `provision` | `provision`, `deprovision`, `soft-deprovision`, `standby`, or `dry-run` |
 | `DRY_RUN` | `false` | When `true`, forces `MODE=dry-run`: validates prerequisites without destructive writes |
+| `BOOTY_RESUME` | `false` | Enable checkpoint resume — skip previously completed steps on restart |
 | `DISABLE_KEXEC` | `false` | Skip kexec, always hard-reboot |
 | `MIN_DISK_SIZE_GB` | `0` | Minimum disk size filter (0 = no minimum) |
+| `BOOTY_ALLOW_REMOVABLE` | `false` | Allow USB/removable media as provisioning target |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters |
 | `INIT_URL` | — | CAPRF init status endpoint |
 | `SUCCESS_URL` | — | CAPRF success status endpoint |
@@ -339,6 +348,7 @@ go run server/server.go \
 | `BGP_OVERLAY_TYPE` | `evpn-vxlan` | Overlay encapsulation: `evpn-vxlan`, `l3vpn`, `none` |
 | `BGP_AUTH_PASSWORD` | — | Optional TCP-MD5 password for all BGP peers (empty = no authentication) |
 | `VRF_TABLE_ID` | `1` | VRF routing table ID (0 uses default of 1) |
+| `VRF_NAME` | — | Explicit VRF name for GoBGP stack isolation (auto-generated if empty) |
 | `BGP_KEEPALIVE` | `0` | Optional BGP keepalive timer in seconds (0 = stack default) |
 | `BGP_HOLD` | `0` | Optional BGP hold timer in seconds (0 = stack default) |
 | `BGP_MIN_PEERS` | `1` | Minimum number of BGP peers that must reach ESTABLISHED state before underlay is considered ready |
@@ -720,9 +730,18 @@ export COMMANDS_URL="http://caprf-server/commands"
 ```
 
 In standby mode, BOOTy sends periodic heartbeats (every 30s) and polls for
-pending commands (every 10s). When a `provision` command is received, the full
-provisioning orchestrator runs. On failure, the configured `RESCUE_MODE` policy
+pending commands (every 10s). On failure, the configured `RESCUE_MODE` policy
 applies (retry, shell, wait, or reboot).
+
+| Command | Behavior |
+|---------|----------|
+| `provision` | Run the full provisioning orchestrator, then kexec/reboot |
+| `deprovision` | Run deprovisioning (hard or soft), then reboot |
+| `reboot` | Immediate reboot |
+| `health-check` | Liveness probe — ACKs with `"healthy"` to confirm agent is responsive |
+
+Each command is acknowledged back to the controller with its completion
+status (`completed` or `failed` with error message).
 
 ### BIOS Settings
 
@@ -741,12 +760,133 @@ controller. No environment variables are required — vendor detection is
 automatic.
 
 
-**BGP Policy** configuration supports community tagging on import/export routes:
+### BGP Policy
+
+GoBGP mode supports BGP policy configuration with community tagging on
+import/export routes. Policies are applied to control route distribution
+across the EVPN fabric.
+
+**Community formats:**
 - **Standard communities**: `ASN:value` (16-bit each, e.g. `65000:100`)
 - **Extended communities**: `TYPE:ASN:value` with 4-octet ASN support (e.g. `RT:4200000001:100`)
 - **Large communities**: `GA:LD1:LD2` (32-bit each, e.g. `65000:1:100`)
 
-**VRF isolation** supports multi-VRF configurations with separate management and provisioning routing tables. VRF configs are validated for unique names, non-zero table IDs, and no conflicts.
+The policy engine in `pkg/network/gobgp/policy.go` supports import/export
+filtering, community attachment, and graceful restart configuration for
+session resilience.
+
+**VRF isolation** supports multi-VRF configurations with separate management
+and provisioning routing tables. VRF configs are validated for unique names,
+non-zero table IDs, and no conflicts. Set `VRF_NAME` to explicitly name the
+VRF (auto-generated if empty) and `VRF_TABLE_ID` to assign the routing
+table.
+
+### Cloud-Init
+
+BOOTy generates and injects cloud-init configuration into the provisioned
+OS. Two datasource types are supported: `nocloud` and `configdrive`.
+
+```bash
+export CLOUDINIT_ENABLED=true
+export CLOUDINIT_DATASOURCE=nocloud    # nocloud (default) or configdrive
+```
+
+When enabled, BOOTy writes cloud-init seed data to the appropriate path
+on the provisioned root filesystem. The generated config includes:
+
+- **Instance metadata** — instance-id, hostname, provider-id
+- **User data** — user management (groups, shell, sudo, SSH keys), package
+  installation, NTP servers, timezone, file writing, and arbitrary `runcmd`
+  commands
+- **Network config v2** — bonds, addresses, gateways, nameservers
+  (generated from the active provisioning network config)
+
+### Netplan Overlay
+
+BOOTy supports provisioner-supplied netplan configuration as a drop-in
+alternative to `/deploy/vars` network settings. When netplan YAML files
+are present in `/deploy/file-system/etc/netplan/`, BOOTy parses them
+and uses the derived network config, with netplan values overriding
+`/deploy/vars` settings.
+
+```
+/deploy/file-system/
+├── etc/
+│   ├── netplan/
+│   │   └── 01-network.yaml    # Netplan config (bonds, bridges, VLANs, tunnels, static routes)
+│   └── frr/
+│       └── frr.conf           # Optional FRR config (ASN, peers, EVPN settings)
+```
+
+The netplan parser supports ethernets, bonds, bridges, VLANs, tunnels
+(VXLAN/GRE), dummy devices, VRFs, and static routes. When an FRR config
+file is also present, BOOTy extracts BGP parameters (ASN, router-ID,
+peers, EVPN settings) from it.
+
+### Network Persistence
+
+After provisioning, BOOTy writes persistent network configuration to the
+target OS filesystem so the installed OS boots with the correct network
+settings. The output format is auto-detected based on the OS family:
+
+| OS Family | Format | Config Path |
+|-----------|--------|-------------|
+| Ubuntu | Netplan YAML | `/etc/netplan/` |
+| RHEL | NetworkManager keyfiles | `/etc/NetworkManager/system-connections/` |
+| Flatcar | systemd-networkd units | `/etc/systemd/network/` |
+
+Network persistence runs automatically as part of the provisioning
+pipeline. It writes interface configs, bond settings, addresses,
+gateways, DNS, and VLAN assignments in the OS-native format.
+
+### IPMI Operations
+
+BOOTy includes an IPMI manager (`pkg/ipmi/`) for local BMC operations
+via `ipmitool`. IPMI capabilities are used during provisioning for
+auto-detecting the BMC MAC address and IP, which are included in
+debug/inventory payloads.
+
+| Operation | Description |
+|-----------|-------------|
+| `GetBMCNetwork` | Read BMC IP, netmask, gateway, MAC, DHCP, and VLAN settings |
+| `SetNextBoot` | Set next boot device: `pxe`, `disk`, `cdrom`, `bios` |
+| `ChassisControl` | Power on/off/cycle/reset/soft |
+| `GetChassisStatus` | Query power state, faults, and intrusion |
+| `GetSensors` | Read sensor values (temperature, voltage, fan) |
+
+No environment variables are required — IPMI is used automatically when
+`ipmitool` is available in the initramfs.
+
+### TPM Support
+
+BOOTy detects TPM 2.0 hardware via sysfs and collects metadata for
+inventory and debug payloads.
+
+| Capability | Description |
+|-----------|-------------|
+| Detection | Reads `/sys/class/tpm/tpm0` for presence, version, manufacturer, firmware |
+| PCR reading | Reads SHA256 PCR bank values from sysfs |
+| Attestation | Quote-based TPM attestation (Phase 2) |
+| Measurement | PCR extend operations (Phase 2) |
+| LUKS enrollment | `systemd-cryptenroll` integration for TPM2-bound LUKS2 unlock (Phase 2) |
+
+TPM info is included in hardware inventory and debug dumps when a TPM is
+present. No environment variables are required — detection is automatic.
+
+### Bootloader Detection
+
+BOOTy automatically detects the installed bootloader on the provisioned
+OS to configure the correct boot chain:
+
+| Bootloader | Detection | Architecture |
+|-----------|-----------|--------------|
+| systemd-boot | Presence of `EFI/systemd/systemd-bootx64.efi` | x86_64 |
+| systemd-boot | Presence of `EFI/systemd/systemd-bootaa64.efi` | ARM64 |
+| GRUB | Default fallback when systemd-boot is not found | All |
+
+Bootloader detection determines how kernel parameters are configured,
+how kexec parses the boot config, and how EFI boot entries are created.
+No environment variables are required — detection is automatic.
 
 ## Extending Bundled Binaries
 
@@ -848,7 +988,8 @@ and the PR process.
 │   │   ├── frr/               # FRR/EVPN: config rendering, address derivation
 │   │   ├── gobgp/             # Pure-Go BGP stack (3-tier: Underlay, Overlay, IPMI)
 │   │   ├── lldp/              # LLDP frame listener (raw AF_PACKET sockets)
-│   │   ├── persist/           # Persist network config into target OS
+│   │   ├── netplan/           # Netplan YAML + FRR config parser (provisioner overlay)
+│   │   ├── persist/           # Persist network config into target OS (netplan, NM, systemd-networkd)
 │   │   ├── vrf/               # VRF configuration and validation
 │   │   └── vlan/              # VLAN 802.1Q tagging via netlink
 │   ├── provision/              # Orchestrator (36-step provision, deprovision)
@@ -859,12 +1000,14 @@ and the PR process.
 │   ├── secureboot/             # Secure Boot setup and validation helpers
 │   ├── system/                 # Host-level system operations
 │   ├── telemetry/              # Telemetry models and collectors
-│   ├── tpm/                    # TPM/TPM2 operations and cryptenroll
+│   ├── tpm/                    # TPM/TPM2 detection, PCR reading, attestation
+│   │   └── cryptenroll/       # systemd-cryptenroll integration for TPM2 LUKS unlock
 │   ├── utils/                  # Cmdline parsing, helpers
 │   └── ux/                     # ASCII art & system info display
-├── test/e2e/                   # E2E tests (ContainerLab + vrnetlab EVPN fabric)
+├── test/e2e/                   # E2E tests (ContainerLab + vrnetlab + KVM)
 │   ├── clab/                   # ContainerLab topologies and FRR configs
 │   │   └── vrnetlab/          # QEMU VM image builder for vrnetlab testing
+│   ├── kvm/                    # KVM/QEMU boot tests (provisioning, network, hardware)
 │   └── integration/           # Integration test suites
 ├── docs/                       # Design documents and proposals
 ├── .github/workflows/          # CI (lint, test, build, E2E clab, E2E vrnetlab, KVM boot)
