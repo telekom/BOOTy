@@ -426,6 +426,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 		StaticIface:      cfg.StaticIface,
 		BondInterfaces:   cfg.BondInterfaces,
 		BondMode:         cfg.BondMode,
+		VRFName:          cfg.VRFName,
 		VRFTableID:       cfg.VRFTableID,
 		BGPKeepalive:     cfg.BGPKeepalive,
 		BGPHold:          cfg.BGPHold,

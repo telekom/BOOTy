@@ -872,6 +872,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"RESCUE_SSH_PUBKEY":           &cfg.RescueSSHPubKey,
 		"RESCUE_PASSWORD_HASH":        &cfg.RescuePasswordHash,
 		"CLOUDINIT_DATASOURCE":        &cfg.CloudInitDatasource,
+		"vrf_name":                    &cfg.VRFName,
 		"BGP_PEER_MODE":               &cfg.BGPPeerMode,
 		"BGP_NEIGHBORS":               &cfg.BGPNeighbors,
 		"IMAGE_CHECKSUM":              &cfg.ImageChecksum,

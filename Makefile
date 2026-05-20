@@ -208,6 +208,20 @@ test-e2e-gobgp-vrnetlab:
 	@echo Running GoBGP vrnetlab E2E tests (requires clab-gobgp-vrnetlab-up)
 	@go test -tags e2e_gobgp_vrnetlab -race -v -timeout 600s ./test/e2e/integration/...
 
+# ── Pure Type-5 e2e targets (CAPRF per-machine leaf fabric) ───────────────
+
+clab-type5-up: booty-gobgp-test-image
+	@echo Deploying pure Type-5 topology (spine + per-machine leaf, VNI 1000)
+	@cd test/e2e/clab && sudo clab deploy --topo topology-type5.clab.yml
+
+clab-type5-down:
+	@echo Destroying pure Type-5 topology
+	@cd test/e2e/clab && sudo clab destroy --topo topology-type5.clab.yml
+
+test-e2e-type5:
+	@echo Running pure Type-5 E2E tests (requires clab-type5-up)
+	@go test -tags e2e_gobgp_type5 -race -v -timeout 300s ./test/e2e/integration/...
+
 # ── Production-realistic e2e targets ───────────────────────────────────────
 
 clab-production-up: booty-test-image

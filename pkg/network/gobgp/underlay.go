@@ -287,8 +287,14 @@ func (u *UnderlayTier) configureNICs() error {
 			u.log.Warn("Failed to bring up NIC", "nic", nic, "error", err)
 		}
 
-		// Assign NIC to VRF for traffic isolation.
+		// Assign NIC to VRF for traffic isolation. Skip NICs that carry a
+		// default route — those are management interfaces whose connectivity
+		// must not be disrupted.
 		if u.cfg.VRFName != "" {
+			if hasDefaultRoute(link.Attrs().Index) {
+				u.log.Info("Skipping VRF assignment for management NIC", "nic", nic)
+				continue
+			}
 			vrfLink, err := netlink.LinkByName(u.cfg.VRFName)
 			if err != nil {
 				u.log.Warn("Failed to find VRF for NIC assignment", "nic", nic, "vrf", u.cfg.VRFName, "error", err)
@@ -298,6 +304,19 @@ func (u *UnderlayTier) configureNICs() error {
 		}
 	}
 	return nil
+}
+
+func hasDefaultRoute(linkIndex int) bool {
+	routes, err := netlink.RouteList(nil, netlink.FAMILY_V4)
+	if err != nil {
+		return true // conservative: treat as management NIC on error
+	}
+	for i := range routes {
+		if routes[i].Dst == nil && routes[i].LinkIndex == linkIndex {
+			return true
+		}
+	}
+	return false
 }
 
 // setNICMTU sets the MTU on all detected physical NICs without performing
