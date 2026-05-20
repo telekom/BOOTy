@@ -1038,12 +1038,18 @@ jobs:
       - name: Install ContainerLab
         run: curl -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}
 
+      - name: Load kernel modules for VXLAN/VRF
+        run: |
+          sudo modprobe vrf
+          sudo modprobe vxlan
+
       - name: Deploy Type-5 topology
         run: sudo containerlab deploy --topo test/e2e/clab/topology-type5.clab.yml
 
       - name: Wait for BGP convergence
         run: |
           echo "Waiting for Type-5 fabric BGP sessions to establish..."
+          CONVERGED=false
           for i in $(seq 1 120); do
             # Check spine Vrf_underlay sessions (2 leaves).
             SPINE_UP=$(sudo docker exec clab-booty-type5-lab-spine01 \
@@ -1059,12 +1065,21 @@ jobs:
             TOTAL=$((SPINE_UP + LEAF1_UP + LEAF2_UP))
             if [ "$TOTAL" -ge 6 ]; then
               echo "All BGP sessions established after ${i}s (spine=$SPINE_UP, leaf01=$LEAF1_UP, leaf02=$LEAF2_UP)"
+              CONVERGED=true
               break
             fi
             sleep 1
           done
-          echo "Polling for VXLAN VNI 1000 on booty-vm0 (up to 30s)..."
-          for i in $(seq 1 30); do
+          if [ "$CONVERGED" = "false" ]; then
+            echo "::error::BGP sessions did not converge in 120s (spine=$SPINE_UP, leaf01=$LEAF1_UP, leaf02=$LEAF2_UP)"
+            sudo docker exec clab-booty-type5-lab-spine01 vtysh -c "show bgp vrf Vrf_underlay summary" || true
+            sudo docker exec clab-booty-type5-lab-leaf01 vtysh -c "show bgp summary" || true
+            sudo docker exec clab-booty-type5-lab-leaf02 vtysh -c "show bgp summary" || true
+            sudo docker logs clab-booty-type5-lab-booty-vm0 2>&1 | tail -50 || true
+            exit 1
+          fi
+          echo "Polling for VXLAN VNI 1000 on booty-vm0 (up to 60s)..."
+          for i in $(seq 1 60); do
             if sudo docker exec clab-booty-type5-lab-booty-vm0 ip -d link show type vxlan 2>/dev/null | grep -q "id 1000"; then
               echo "EVPN data-plane ready (VNI 1000) after ${i}s"
               break
