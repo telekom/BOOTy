@@ -1040,8 +1040,8 @@ jobs:
 
       - name: Load kernel modules for VXLAN/VRF
         run: |
-          sudo modprobe vrf
-          sudo modprobe vxlan
+          sudo modprobe vrf || true
+          sudo modprobe vxlan || true
 
       - name: Deploy Type-5 topology
         run: sudo containerlab deploy --topo test/e2e/clab/topology-type5.clab.yml
