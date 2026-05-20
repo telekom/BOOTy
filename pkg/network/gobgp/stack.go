@@ -158,9 +158,19 @@ func (s *Stack) installGatewayRoute() error {
 // selectGatewayNIC picks the NIC to use for the gateway route. When a VRF
 // is configured, it picks the first NIC that is actually enslaved to the
 // VRF (skipping management interfaces like eth0 that may not be in the VRF).
-// Falls back to nics[0] if no VRF-enslaved NIC is found.
+// Without VRF, it skips NICs carrying a default route (management NICs).
+// Falls back to nics[0] if no better candidate is found.
 func (s *Stack) selectGatewayNIC() string {
 	if s.overlay.cfg.VRFName == "" {
+		for _, nic := range s.underlay.nics {
+			link, err := netlink.LinkByName(nic)
+			if err != nil {
+				continue
+			}
+			if !hasDefaultRoute(link.Attrs().Index) {
+				return nic
+			}
+		}
 		return s.underlay.nics[0]
 	}
 
