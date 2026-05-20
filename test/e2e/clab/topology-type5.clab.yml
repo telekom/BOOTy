@@ -66,6 +66,8 @@ topology:
         # eth2 → booty-vm0 (eBGP unnumbered)
         - ip link set dev eth2 mtu 9100
         - sh -c 'echo 1 > /proc/sys/net/ipv4/ip_forward'
+        # Proxy-ARP on VM-facing interface so VMs can resolve remote VTEPs.
+        - sh -c 'echo 1 > /proc/sys/net/ipv4/conf/eth2/proxy_arp'
 
     leaf02:
       kind: linux
@@ -79,6 +81,8 @@ topology:
         # eth2 → booty-vm1 (eBGP unnumbered)
         - ip link set dev eth2 mtu 9100
         - sh -c 'echo 1 > /proc/sys/net/ipv4/ip_forward'
+        # Proxy-ARP on VM-facing interface so VMs can resolve remote VTEPs.
+        - sh -c 'echo 1 > /proc/sys/net/ipv4/conf/eth2/proxy_arp'
 
     # Test client on the overlay (reaches VMs via VXLAN L3VNI)
     client:
