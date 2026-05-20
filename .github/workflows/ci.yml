@@ -1021,6 +1021,124 @@ jobs:
         if: always()
         run: sudo containerlab destroy --topo test/e2e/clab/topology-gobgp.clab.yml --cleanup
 
+  e2e-type5:
+    name: E2E Pure Type-5 Fabric
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+
+      - name: Build GoBGP test image
+        run: docker build -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
+
+      - name: Install ContainerLab
+        run: curl -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}
+
+      - name: Deploy Type-5 topology
+        run: sudo containerlab deploy --topo test/e2e/clab/topology-type5.clab.yml
+
+      - name: Wait for BGP convergence
+        run: |
+          echo "Waiting for Type-5 fabric BGP sessions to establish..."
+          for i in $(seq 1 120); do
+            # Check spine Vrf_underlay sessions (2 leaves).
+            SPINE_UP=$(sudo docker exec clab-booty-type5-lab-spine01 \
+              vtysh -c "show bgp vrf Vrf_underlay summary json" 2>/dev/null \
+              | grep -c '"state":"Established"' || true)
+            # Check leaf-VM sessions.
+            LEAF1_UP=$(sudo docker exec clab-booty-type5-lab-leaf01 \
+              vtysh -c "show bgp summary json" 2>/dev/null \
+              | grep -c '"state":"Established"' || true)
+            LEAF2_UP=$(sudo docker exec clab-booty-type5-lab-leaf02 \
+              vtysh -c "show bgp summary json" 2>/dev/null \
+              | grep -c '"state":"Established"' || true)
+            TOTAL=$((SPINE_UP + LEAF1_UP + LEAF2_UP))
+            if [ "$TOTAL" -ge 6 ]; then
+              echo "All BGP sessions established after ${i}s (spine=$SPINE_UP, leaf01=$LEAF1_UP, leaf02=$LEAF2_UP)"
+              break
+            fi
+            sleep 1
+          done
+          echo "Polling for VXLAN VNI 1000 on booty-vm0 (up to 30s)..."
+          for i in $(seq 1 30); do
+            if sudo docker exec clab-booty-type5-lab-booty-vm0 ip -d link show type vxlan 2>/dev/null | grep -q "id 1000"; then
+              echo "EVPN data-plane ready (VNI 1000) after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Run Type-5 E2E tests
+        env:
+          GOMAXPROCS: "2"
+        run: go test -tags e2e_gobgp_type5 -v -race -count=1 -timeout 10m ./test/e2e/integration/...
+
+      - name: Collect Type-5 logs
+        if: always()
+        timeout-minutes: 5
+        run: |
+          mkdir -p type5-logs
+
+          for node in spine01 leaf01 leaf02 booty-vm0 booty-vm1; do
+            name="clab-booty-type5-lab-${node}"
+            timeout 30 sudo docker logs "${name}" >> type5-logs/${node}.log 2>&1 || echo "(no logs)"
+          done
+
+          # FRR state on spine01.
+          for cmd in \
+            "show bgp vrf Vrf_underlay summary json" \
+            "show bgp vrf Vrf_underlay ipv4 unicast" \
+            "show bgp l2vpn evpn" \
+            "show bgp l2vpn evpn route type prefix" \
+            "show bgp l2vpn evpn route type macip" \
+            "show bgp l2vpn evpn route type multicast" \
+            "show evpn vni" \
+            "show ip route"; do
+            slug=$(echo "$cmd" | tr ' ' '-')
+            timeout 15 sudo docker exec clab-booty-type5-lab-spine01 \
+              vtysh -c "$cmd" 2>/dev/null | tee type5-logs/spine01-${slug}.txt || true
+          done
+
+          # FRR state on leaves.
+          for leaf in leaf01 leaf02; do
+            for cmd in "show bgp summary json" "show bgp l2vpn evpn" "show ip route"; do
+              slug=$(echo "$cmd" | tr ' ' '-')
+              timeout 15 sudo docker exec "clab-booty-type5-lab-${leaf}" \
+                vtysh -c "$cmd" 2>/dev/null | tee "type5-logs/${leaf}-${slug}.txt" || true
+            done
+          done
+
+          # Network state from each container.
+          for node in spine01 leaf01 leaf02 booty-vm0 booty-vm1; do
+            name="clab-booty-type5-lab-${node}"
+            {
+              echo "=== ip -d link show type vxlan ==="
+              timeout 5 sudo docker exec "${name}" ip -d link show type vxlan 2>&1 || true
+              echo "=== ip addr show ==="
+              timeout 5 sudo docker exec "${name}" ip addr show 2>&1 || true
+              echo "=== ip route show ==="
+              timeout 5 sudo docker exec "${name}" ip route show 2>&1 || true
+              echo "=== bridge fdb show ==="
+              timeout 5 sudo docker exec "${name}" bridge fdb show 2>&1 || true
+            } > type5-logs/${node}-network.txt 2>&1
+          done
+
+      - name: Upload Type-5 logs
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: type5-logs
+          path: type5-logs/
+          if-no-files-found: ignore
+
+      - name: Cleanup
+        if: always()
+        run: sudo containerlab destroy --topo test/e2e/clab/topology-type5.clab.yml --cleanup
+
   e2e-vrnetlab:
     name: E2E EVPN Boot (vrnetlab)
     runs-on: ubuntu-latest

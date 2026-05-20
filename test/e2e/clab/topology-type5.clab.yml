@@ -1,0 +1,167 @@
+# Pure Type-5 EVPN e2e topology — mirrors the CAPRF MR !124 per-machine leaf fabric.
+#
+# This topology validates BOOTy's GoBGP stack in the exact production layout:
+#   - spine01 (ASN 65000): Vrf_underlay + L3VNI 1000 + advertise ipv4 unicast
+#   - leaf01 (ASN 65001): pure L3 router for booty-vm0 (no VXLAN)
+#   - leaf02 (ASN 65002): pure L3 router for booty-vm1 (no VXLAN)
+#   - booty-vm0/vm1: GoBGP unnumbered peering with per-machine leaf
+#
+# EVPN model: pure Type-5 (L3VNI 1000 only, no L2VNI).
+#   - VMs advertise ipv4 unicast (Type-5 IP prefix routes) via L3VNI 1000.
+#   - spine01 uses advertise ipv4 unicast (Type-5) with L3VNI 1000.
+#   - Leaves are pure L3 routers forwarding EVPN + IPv4 between VMs and spine01.
+#   - NO Type-2 (MAC/IP) or Type-3 (IMET) routes should exist.
+#
+# Address plan (matches CAPRF e2e):
+#   Underlay (Vrf_underlay):
+#     192.168.4.0/24 — VTEP loopbacks
+#       spine01  192.168.4.1
+#       VM0      192.168.4.10
+#       VM1      192.168.4.11
+#
+#   Overlay (default VRF):
+#     10.0.0.0/24 — router-id loopbacks
+#       spine01  10.0.0.1   leaf01  10.0.0.2   leaf02  10.0.0.3
+#     10.100.0.0/24 — gateway/service subnet (spine01)
+#     10.200.0.0/24 — VM overlay IPs (on br.provision)
+#       VM0  10.200.0.10   VM1  10.200.0.11
+#
+# Network layout:
+#
+#   +---------------------------------------------------+
+#   |  spine01 (FRR, ASN 65000, VTEP 192.168.4.1)      |
+#   |  lo = 10.0.0.1/32 + 10.100.0.1/24 (gateway)     |
+#   |  dummy0 = 192.168.4.1/32 (VTEP, Vrf_underlay)    |
+#   |  vxlan1000 VNI 1000 nolearning (L3VNI)           |
+#   |  eth1->leaf01, eth2->leaf02                       |
+#   +-------+----------+-------------------------------+
+#           |eBGP      |eBGP
+#   +-------v---+  +---v-------+
+#   |  leaf01   |  |  leaf02   |
+#   | ASN 65001 |  | ASN 65002 |
+#   | pure L3   |  | pure L3   |
+#   +---+-------+  +---+-------+
+#       |eBGP          |eBGP
+#   +---v-------+  +---v-------+
+#   | booty-vm0 |  | booty-vm1 |
+#   | GoBGP     |  | GoBGP     |
+#   | unnumbered|  | unnumbered|
+#   +-----------+  +-----------+
+#
+# Build the test image first:
+#   docker build -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
+name: booty-type5-lab
+
+topology:
+  nodes:
+    spine01:
+      kind: linux
+      image: quay.io/frrouting/frr:10.3.1
+      binds:
+        - spine01-type5.frr.conf:/etc/frr/frr.conf:ro
+        - daemons:/etc/frr/daemons:ro
+      exec:
+        # Create Vrf_underlay and enslave underlay interfaces.
+        - ip link add Vrf_underlay type vrf table 10
+        - ip link set Vrf_underlay up
+        - ip link set eth1 vrf Vrf_underlay
+        - ip link set eth2 vrf Vrf_underlay
+        # Jumbo MTU on underlay links (matches production).
+        - ip link set dev eth1 mtu 9100
+        - ip link set dev eth2 mtu 9100
+        # VTEP source on dummy interface in Vrf_underlay.
+        - ip link add dummy0 type dummy
+        - ip link set dummy0 vrf Vrf_underlay
+        - ip link set dummy0 up
+        - ip addr add 192.168.4.1/32 dev dummy0
+        # L3VNI VXLAN device — nolearning (EVPN control-plane driven).
+        - ip link add vxlan1000 type vxlan id 1000 dstport 4789 local 192.168.4.1 dev dummy0 nolearning
+        - ip link add br1000 type bridge
+        - ip link set vxlan1000 master br1000
+        - ip link set vxlan1000 up
+        - ip link set br1000 up
+        # Gateway on lo (default VRF) — VMs reach via EVPN Type-5.
+        - ip addr add 10.100.0.1/24 dev lo
+        # Accept connections from any VRF.
+        - sh -c 'echo 1 > /proc/sys/net/ipv4/tcp_l3mdev_accept'
+        - sh -c 'echo 1 > /proc/sys/net/ipv4/udp_l3mdev_accept'
+        - sh -c 'echo 1 > /proc/sys/net/ipv4/ip_forward'
+        # BUM FDB entries for BOOTy VTEPs.
+        - bridge fdb append 00:00:00:00:00:00 dev vxlan1000 dst 192.168.4.10
+        - bridge fdb append 00:00:00:00:00:00 dev vxlan1000 dst 192.168.4.11
+        # eth3 → client (L2 on br1000 for test connectivity)
+        - ip link set dev eth3 master br1000
+        - ip link set dev eth3 up
+
+    leaf01:
+      kind: linux
+      image: quay.io/frrouting/frr:10.3.1
+      binds:
+        - leaf01-type5.frr.conf:/etc/frr/frr.conf:ro
+        - daemons:/etc/frr/daemons:ro
+      exec:
+        # eth1 → spine01 (eBGP underlay)
+        - ip link set dev eth1 mtu 9100
+        # eth2 → booty-vm0 (eBGP unnumbered)
+        - ip link set dev eth2 mtu 9100
+        - sh -c 'echo 1 > /proc/sys/net/ipv4/ip_forward'
+
+    leaf02:
+      kind: linux
+      image: quay.io/frrouting/frr:10.3.1
+      binds:
+        - leaf02-type5.frr.conf:/etc/frr/frr.conf:ro
+        - daemons:/etc/frr/daemons:ro
+      exec:
+        # eth1 → spine01 (eBGP underlay)
+        - ip link set dev eth1 mtu 9100
+        # eth2 → booty-vm1 (eBGP unnumbered)
+        - ip link set dev eth2 mtu 9100
+        - sh -c 'echo 1 > /proc/sys/net/ipv4/ip_forward'
+
+    # Test client on the overlay (reaches VMs via VXLAN L3VNI)
+    client:
+      kind: linux
+      image: alpine:3.20
+      exec:
+        - ip addr add 10.100.0.100/24 dev eth1
+        - ip link set dev eth1 up
+      cmd: sleep infinity
+
+    # BOOTy VM0 — GoBGP unnumbered peering with leaf01
+    booty-vm0:
+      kind: linux
+      image: booty-gobgp-test:latest
+      binds:
+        - data/vars-gobgp-type5-vm0:/deploy/vars:ro
+      env:
+        BOOTY_NO_REBOOT: "1"
+      exec:
+        - ip link set dev eth1 mtu 9100
+        - dd if=/dev/zero of=/tmp/disk.img bs=1M count=0 seek=2048
+        - losetup /dev/loop0 /tmp/disk.img
+
+    # BOOTy VM1 — GoBGP unnumbered peering with leaf02
+    booty-vm1:
+      kind: linux
+      image: booty-gobgp-test:latest
+      binds:
+        - data/vars-gobgp-type5-vm1:/deploy/vars:ro
+      env:
+        BOOTY_NO_REBOOT: "1"
+      exec:
+        - ip link set dev eth1 mtu 9100
+        - dd if=/dev/zero of=/tmp/disk.img bs=1M count=0 seek=2048
+        - losetup /dev/loop0 /tmp/disk.img
+
+  links:
+    # spine01:eth1 <-> leaf01:eth1 — eBGP underlay
+    - endpoints: ["spine01:eth1", "leaf01:eth1"]
+    # spine01:eth2 <-> leaf02:eth1 — eBGP underlay
+    - endpoints: ["spine01:eth2", "leaf02:eth1"]
+    # spine01:eth3 <-> client:eth1 — overlay test client
+    - endpoints: ["spine01:eth3", "client:eth1"]
+    # leaf01:eth2 <-> booty-vm0:eth1 — eBGP unnumbered
+    - endpoints: ["leaf01:eth2", "booty-vm0:eth1"]
+    # leaf02:eth2 <-> booty-vm1:eth1 — eBGP unnumbered
+    - endpoints: ["leaf02:eth2", "booty-vm1:eth1"]
