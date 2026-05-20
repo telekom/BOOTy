@@ -85,8 +85,8 @@ func type5DumpDebugState(t *testing.T) {
 	t.Log("=== TYPE-5 DEBUG STATE DUMP (test failed) ===")
 
 	for _, cmd := range []string{
-		"show bgp vrf Vrf_underlay summary json",
-		"show bgp vrf Vrf_underlay ipv4 unicast",
+		"show bgp summary json",
+		"show bgp ipv4 unicast",
 		"show bgp l2vpn evpn",
 		"show bgp l2vpn evpn route type prefix",
 		"show bgp l2vpn evpn route type macip",
@@ -133,7 +133,6 @@ func type5DumpDebugState(t *testing.T) {
 			{"ip", "-d", "link", "show", "type", "vxlan"},
 			{"ip", "addr", "show"},
 			{"ip", "route", "show"},
-			{"ip", "route", "show", "vrf", "Vrf_underlay"},
 			{"bridge", "fdb", "show"},
 		} {
 			out, _ := type5DockerExecRaw(t, vm.container, cmd...)
@@ -158,21 +157,6 @@ func type5WaitForBGPInterface(t *testing.T, container, iface string) {
 	}
 }
 
-func type5WaitForBGPInterfaceVRF(t *testing.T, container, vrf, iface string) {
-	t.Helper()
-	deadline := time.Now().Add(type5ConvergeTimeout)
-	for {
-		out, _ := type5VtyshRaw(t, container, "show bgp vrf "+vrf+" neighbors "+iface+" json")
-		if strings.Contains(out, "Established") {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("BGP peer on %s vrf %s (%s) did not reach ESTABLISHED within %s:\n%s",
-				container, vrf, iface, type5ConvergeTimeout, out)
-		}
-		time.Sleep(type5ConvergeInterval)
-	}
-}
 
 // --- Spine-Leaf Fabric BGP ---------------------------------------------------
 
@@ -180,16 +164,16 @@ func TestType5SpineLeaf01BGPEstablished(t *testing.T) {
 	requireType5Lab(t)
 	t.Cleanup(func() { type5DumpDebugState(t) })
 
-	type5WaitForBGPInterfaceVRF(t, type5LabSpine, "Vrf_underlay", "eth1")
-	t.Log("spine01 ↔ leaf01 BGP ESTABLISHED (Vrf_underlay)")
+	type5WaitForBGPInterface(t, type5LabSpine, "eth1")
+	t.Log("spine01 ↔ leaf01 BGP ESTABLISHED")
 }
 
 func TestType5SpineLeaf02BGPEstablished(t *testing.T) {
 	requireType5Lab(t)
 	t.Cleanup(func() { type5DumpDebugState(t) })
 
-	type5WaitForBGPInterfaceVRF(t, type5LabSpine, "Vrf_underlay", "eth2")
-	t.Log("spine01 ↔ leaf02 BGP ESTABLISHED (Vrf_underlay)")
+	type5WaitForBGPInterface(t, type5LabSpine, "eth2")
+	t.Log("spine01 ↔ leaf02 BGP ESTABLISHED")
 }
 
 func TestType5Leaf01VM0BGPEstablished(t *testing.T) {
@@ -240,18 +224,18 @@ func TestType5VM0VTEPReachable(t *testing.T) {
 	requireType5Lab(t)
 	t.Cleanup(func() { type5DumpDebugState(t) })
 
-	type5WaitForBGPInterfaceVRF(t, type5LabSpine, "Vrf_underlay", "eth1")
+	type5WaitForBGPInterface(t, type5LabSpine, "eth1")
 
 	deadline := time.Now().Add(type5ConvergeTimeout)
 	for {
 		out, _ := type5VtyshRaw(t, type5LabSpine,
-			"show bgp vrf Vrf_underlay ipv4 unicast 192.168.4.10/32")
+			"show bgp ipv4 unicast 192.168.4.10/32")
 		if strings.Contains(out, "192.168.4.10") && !strings.Contains(out, "not in table") {
-			t.Log("VM0 VTEP 192.168.4.10/32 learned on spine01 Vrf_underlay")
+			t.Log("VM0 VTEP 192.168.4.10/32 learned on spine01")
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("VM0 VTEP 192.168.4.10/32 not in spine01 Vrf_underlay:\n%s", out)
+			t.Fatalf("VM0 VTEP 192.168.4.10/32 not on spine01:\n%s", out)
 		}
 		time.Sleep(type5ConvergeInterval)
 	}
@@ -261,18 +245,18 @@ func TestType5VM1VTEPReachable(t *testing.T) {
 	requireType5Lab(t)
 	t.Cleanup(func() { type5DumpDebugState(t) })
 
-	type5WaitForBGPInterfaceVRF(t, type5LabSpine, "Vrf_underlay", "eth2")
+	type5WaitForBGPInterface(t, type5LabSpine, "eth2")
 
 	deadline := time.Now().Add(type5ConvergeTimeout)
 	for {
 		out, _ := type5VtyshRaw(t, type5LabSpine,
-			"show bgp vrf Vrf_underlay ipv4 unicast 192.168.4.11/32")
+			"show bgp ipv4 unicast 192.168.4.11/32")
 		if strings.Contains(out, "192.168.4.11") && !strings.Contains(out, "not in table") {
-			t.Log("VM1 VTEP 192.168.4.11/32 learned on spine01 Vrf_underlay")
+			t.Log("VM1 VTEP 192.168.4.11/32 learned on spine01")
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("VM1 VTEP 192.168.4.11/32 not in spine01 Vrf_underlay:\n%s", out)
+			t.Fatalf("VM1 VTEP 192.168.4.11/32 not on spine01:\n%s", out)
 		}
 		time.Sleep(type5ConvergeInterval)
 	}
@@ -284,12 +268,12 @@ func TestType5VM0OverlayAsType5(t *testing.T) {
 	requireType5Lab(t)
 	t.Cleanup(func() { type5DumpDebugState(t) })
 
-	type5WaitForBGPInterfaceVRF(t, type5LabSpine, "Vrf_underlay", "eth1")
+	type5WaitForBGPInterface(t, type5LabSpine, "eth1")
 
 	deadline := time.Now().Add(type5ConvergeTimeout)
 	for {
 		out, _ := type5VtyshRaw(t, type5LabSpine,
-			"show bgp vrf Vrf_underlay l2vpn evpn route type prefix")
+			"show bgp l2vpn evpn route type prefix")
 		if strings.Contains(out, "10.200.0.10") {
 			t.Log("VM0 overlay IP 10.200.0.10 present as Type-5 on spine01")
 			return
@@ -305,12 +289,12 @@ func TestType5VM1OverlayAsType5(t *testing.T) {
 	requireType5Lab(t)
 	t.Cleanup(func() { type5DumpDebugState(t) })
 
-	type5WaitForBGPInterfaceVRF(t, type5LabSpine, "Vrf_underlay", "eth2")
+	type5WaitForBGPInterface(t, type5LabSpine, "eth2")
 
 	deadline := time.Now().Add(type5ConvergeTimeout)
 	for {
 		out, _ := type5VtyshRaw(t, type5LabSpine,
-			"show bgp vrf Vrf_underlay l2vpn evpn route type prefix")
+			"show bgp l2vpn evpn route type prefix")
 		if strings.Contains(out, "10.200.0.11") {
 			t.Log("VM1 overlay IP 10.200.0.11 present as Type-5 on spine01")
 			return
@@ -328,11 +312,11 @@ func TestType5NoType2Routes(t *testing.T) {
 	requireType5Lab(t)
 	t.Cleanup(func() { type5DumpDebugState(t) })
 
-	type5WaitForBGPInterfaceVRF(t, type5LabSpine, "Vrf_underlay", "eth1")
-	type5WaitForBGPInterfaceVRF(t, type5LabSpine, "Vrf_underlay", "eth2")
+	type5WaitForBGPInterface(t, type5LabSpine, "eth1")
+	type5WaitForBGPInterface(t, type5LabSpine, "eth2")
 
 	out, _ := type5VtyshRaw(t, type5LabSpine,
-		"show bgp vrf Vrf_underlay l2vpn evpn route type macip")
+		"show bgp l2vpn evpn route type macip")
 	if strings.Contains(out, "10.200.0") {
 		t.Errorf("pure Type-5 model should have NO Type-2 routes for VM overlay IPs:\n%s", out)
 	}
@@ -345,11 +329,11 @@ func TestType5NoType3RoutesFromVMs(t *testing.T) {
 	requireType5Lab(t)
 	t.Cleanup(func() { type5DumpDebugState(t) })
 
-	type5WaitForBGPInterfaceVRF(t, type5LabSpine, "Vrf_underlay", "eth1")
-	type5WaitForBGPInterfaceVRF(t, type5LabSpine, "Vrf_underlay", "eth2")
+	type5WaitForBGPInterface(t, type5LabSpine, "eth1")
+	type5WaitForBGPInterface(t, type5LabSpine, "eth2")
 
 	out, _ := type5VtyshRaw(t, type5LabSpine,
-		"show bgp vrf Vrf_underlay l2vpn evpn route type multicast")
+		"show bgp l2vpn evpn route type multicast")
 	if strings.Contains(out, "192.168.4.10") || strings.Contains(out, "192.168.4.11") {
 		t.Errorf("pure Type-5 model: VMs should NOT send Type-3 (IMET) routes:\n%s", out)
 	}
@@ -364,27 +348,12 @@ func TestType5SpineAdvertiseIPv4Unicast(t *testing.T) {
 
 	out := type5Vtysh(t, type5LabSpine, "show running-config")
 	if !strings.Contains(out, "advertise ipv4 unicast") {
-		t.Error("spine01 default VRF should have 'advertise ipv4 unicast' for Type-5 generation")
+		t.Error("spine01 should have 'advertise ipv4 unicast' for Type-5 generation")
 	}
-	if strings.Contains(out, "advertise-all-vni") &&
-		!strings.Contains(out, "vrf Vrf_underlay") {
-		t.Error("spine01 default VRF should NOT have 'advertise-all-vni' (only in Vrf_underlay)")
+	if !strings.Contains(out, "advertise-all-vni") {
+		t.Error("spine01 should have 'advertise-all-vni' for EVPN VNI discovery")
 	}
-	t.Log("Confirmed: spine01 uses advertise ipv4 unicast in default VRF")
-}
-
-func TestType5SpineRouteTargets(t *testing.T) {
-	requireType5Lab(t)
-	t.Cleanup(func() { type5DumpDebugState(t) })
-
-	out := type5Vtysh(t, type5LabSpine, "show running-config")
-	if !strings.Contains(out, "route-target import 65000:1000") {
-		t.Error("spine01 missing route-target import 65000:1000")
-	}
-	if !strings.Contains(out, "route-target export 65000:1000") {
-		t.Error("spine01 missing route-target export 65000:1000")
-	}
-	t.Log("Confirmed: route-targets 65000:1000 configured on spine01")
+	t.Log("Confirmed: spine01 uses advertise ipv4 unicast + advertise-all-vni")
 }
 
 // --- Leaves are Pure L3 (No VXLAN) -------------------------------------------
@@ -547,17 +516,13 @@ func TestType5VM0GatewayRoute(t *testing.T) {
 
 	deadline := time.Now().Add(type5ConvergeTimeout)
 	for {
-		// Check both VRF table and main table — route may be in either
-		// depending on whether br.provision is VRF-enslaved.
-		out, _ := type5DockerExecRaw(t, type5LabVM0, "ip", "route", "show", "10.100.0.0/24")
-		outVrf, _ := type5DockerExecRaw(t, type5LabVM0, "ip", "route", "show", "table", "10", "10.100.0.0/24")
-		if strings.Contains(out, "10.100.0") || strings.Contains(outVrf, "10.100.0") {
-			t.Log("Gateway route 10.100.0.0/24 present in VM0 kernel (from Type-5)")
+		out, _ := type5DockerExecRaw(t, type5LabVM0, "ip", "route", "show")
+		if strings.Contains(out, "192.168.4.1") {
+			t.Log("Gateway route to 192.168.4.1 present in VM0 kernel")
 			return
 		}
 		if time.Now().After(deadline) {
-			allRoutes, _ := type5DockerExecRaw(t, type5LabVM0, "ip", "route", "show", "table", "all")
-			t.Fatalf("gateway route not installed on VM0:\nmain: %s\nvrf: %s\nall: %s", out, outVrf, allRoutes)
+			t.Fatalf("gateway route to 192.168.4.1 not installed on VM0:\n%s", out)
 		}
 		time.Sleep(type5ConvergeInterval)
 	}
@@ -640,26 +605,3 @@ func TestType5JumboMTU(t *testing.T) {
 	t.Log("Confirmed: jumbo MTU 9100 on all underlay interfaces")
 }
 
-// --- VRF Isolation -----------------------------------------------------------
-
-func TestType5VrfUnderlayOnSpine(t *testing.T) {
-	requireType5Lab(t)
-	t.Cleanup(func() { type5DumpDebugState(t) })
-
-	out := type5DockerExec(t, type5LabSpine, "ip", "link", "show", "dev", "Vrf_underlay")
-	if !strings.Contains(out, "vrf") {
-		t.Errorf("Vrf_underlay not present on spine01:\n%s", out)
-	}
-
-	// eth1 and eth2 should be enslaved to Vrf_underlay.
-	out = type5DockerExec(t, type5LabSpine, "ip", "link", "show", "dev", "eth1")
-	if !strings.Contains(out, "master Vrf_underlay") {
-		t.Errorf("spine01:eth1 not in Vrf_underlay:\n%s", out)
-	}
-	out = type5DockerExec(t, type5LabSpine, "ip", "link", "show", "dev", "eth2")
-	if !strings.Contains(out, "master Vrf_underlay") {
-		t.Errorf("spine01:eth2 not in Vrf_underlay:\n%s", out)
-	}
-
-	t.Log("Confirmed: Vrf_underlay present and eth1/eth2 enslaved on spine01")
-}

@@ -1038,11 +1038,6 @@ jobs:
       - name: Install ContainerLab
         run: curl -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}
 
-      - name: Load kernel modules for VXLAN/VRF
-        run: |
-          sudo modprobe vrf || true
-          sudo modprobe vxlan || true
-
       - name: Deploy Type-5 topology
         run: sudo containerlab deploy --topo test/e2e/clab/topology-type5.clab.yml
 
@@ -1051,9 +1046,9 @@ jobs:
           echo "Waiting for Type-5 fabric BGP sessions to establish..."
           CONVERGED=false
           for i in $(seq 1 120); do
-            # Check spine Vrf_underlay sessions (2 leaves).
+            # Check spine sessions (2 leaves).
             SPINE_UP=$(sudo docker exec clab-booty-type5-lab-spine01 \
-              vtysh -c "show bgp vrf Vrf_underlay summary json" 2>/dev/null \
+              vtysh -c "show bgp summary json" 2>/dev/null \
               | grep -c '"state":"Established"' || true)
             # Check leaf-VM sessions.
             LEAF1_UP=$(sudo docker exec clab-booty-type5-lab-leaf01 \
@@ -1072,7 +1067,7 @@ jobs:
           done
           if [ "$CONVERGED" = "false" ]; then
             echo "::error::BGP sessions did not converge in 120s (spine=$SPINE_UP, leaf01=$LEAF1_UP, leaf02=$LEAF2_UP)"
-            sudo docker exec clab-booty-type5-lab-spine01 vtysh -c "show bgp vrf Vrf_underlay summary" || true
+            sudo docker exec clab-booty-type5-lab-spine01 vtysh -c "show bgp summary" || true
             sudo docker exec clab-booty-type5-lab-leaf01 vtysh -c "show bgp summary" || true
             sudo docker exec clab-booty-type5-lab-leaf02 vtysh -c "show bgp summary" || true
             sudo docker logs clab-booty-type5-lab-booty-vm0 2>&1 | tail -50 || true
@@ -1105,8 +1100,8 @@ jobs:
 
           # FRR state on spine01.
           for cmd in \
-            "show bgp vrf Vrf_underlay summary json" \
-            "show bgp vrf Vrf_underlay ipv4 unicast" \
+            "show bgp summary json" \
+            "show bgp ipv4 unicast" \
             "show bgp l2vpn evpn" \
             "show bgp l2vpn evpn route type prefix" \
             "show bgp l2vpn evpn route type macip" \
