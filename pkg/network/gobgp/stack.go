@@ -166,20 +166,16 @@ func (s *Stack) selectGatewayNIC() string {
 		for _, nic := range s.underlay.nics {
 			link, err := netlink.LinkByName(nic)
 			if err != nil {
-				s.log.Debug("selectGatewayNIC: skip NIC (lookup failed)", "nic", nic, "error", err)
 				continue
 			}
 			addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
 			if err != nil {
-				s.log.Debug("selectGatewayNIC: skip NIC (addr list failed)", "nic", nic, "error", err)
 				continue
 			}
-			s.log.Debug("selectGatewayNIC: evaluating NIC", "nic", nic, "ipv4_addrs", len(addrs))
 			if len(addrs) == 0 {
 				return nic
 			}
 		}
-		s.log.Debug("selectGatewayNIC: no addr-less NIC found, falling back", "nics", s.underlay.nics)
 		return s.underlay.nics[0]
 	}
 
