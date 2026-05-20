@@ -158,19 +158,28 @@ func (s *Stack) installGatewayRoute() error {
 // selectGatewayNIC picks the NIC to use for the gateway route. When a VRF
 // is configured, it picks the first NIC that is actually enslaved to the
 // VRF (skipping management interfaces like eth0 that may not be in the VRF).
-// Without VRF, it skips NICs carrying a default route (management NICs).
+// Without VRF, it skips NICs that have an IPv4 address assigned (management
+// NICs have Docker-assigned IPs; fabric NICs in unnumbered mode have none).
 // Falls back to nics[0] if no better candidate is found.
 func (s *Stack) selectGatewayNIC() string {
 	if s.overlay.cfg.VRFName == "" {
 		for _, nic := range s.underlay.nics {
 			link, err := netlink.LinkByName(nic)
 			if err != nil {
+				s.log.Debug("selectGatewayNIC: skip NIC (lookup failed)", "nic", nic, "error", err)
 				continue
 			}
-			if !hasDefaultRoute(link.Attrs().Index) {
+			addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
+			if err != nil {
+				s.log.Debug("selectGatewayNIC: skip NIC (addr list failed)", "nic", nic, "error", err)
+				continue
+			}
+			s.log.Debug("selectGatewayNIC: evaluating NIC", "nic", nic, "ipv4_addrs", len(addrs))
+			if len(addrs) == 0 {
 				return nic
 			}
 		}
+		s.log.Debug("selectGatewayNIC: no addr-less NIC found, falling back", "nics", s.underlay.nics)
 		return s.underlay.nics[0]
 	}
 
