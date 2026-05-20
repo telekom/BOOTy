@@ -311,8 +311,8 @@ func hasDefaultRoute(linkIndex int) bool {
 	if err != nil {
 		return false
 	}
-	for _, r := range routes {
-		if r.Dst == nil && r.LinkIndex == linkIndex {
+	for i := range routes {
+		if routes[i].Dst == nil && routes[i].LinkIndex == linkIndex {
 			return true
 		}
 	}
