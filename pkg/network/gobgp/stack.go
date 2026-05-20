@@ -142,7 +142,7 @@ func (s *Stack) installGatewayRoute() error {
 
 	// When a VRF is active, install in the VRF's routing table so the
 	// route is visible to VXLAN outer packet forwarding.
-	if s.overlay.cfg.VRFTableID > 0 {
+	if s.overlay.cfg.VRFName != "" {
 		route.Table = int(s.overlay.cfg.VRFTableID)
 	}
 

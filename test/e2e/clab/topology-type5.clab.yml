@@ -61,11 +61,11 @@ topology:
         - spine01-type5.frr.conf:/etc/frr/frr.conf:ro
         - daemons:/etc/frr/daemons:ro
       exec:
-        # Create Vrf_underlay and enslave underlay interfaces.
-        - ip link add Vrf_underlay type vrf table 10
-        - ip link set Vrf_underlay up
-        - ip link set eth1 vrf Vrf_underlay
-        - ip link set eth2 vrf Vrf_underlay
+        # Wait for FRR to create the VRF (defined in frr.conf).
+        - sh -c 'for i in $(seq 1 30); do ip link show Vrf_underlay 2>/dev/null && break; sleep 1; done'
+        # Assign underlay links to VRF so BGP peering works in Vrf_underlay.
+        - ip link set dev eth1 vrf Vrf_underlay
+        - ip link set dev eth2 vrf Vrf_underlay
         # Jumbo MTU on underlay links (matches production).
         - ip link set dev eth1 mtu 9100
         - ip link set dev eth2 mtu 9100
