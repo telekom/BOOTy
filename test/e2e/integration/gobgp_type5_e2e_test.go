@@ -5,7 +5,6 @@
 //   - Per-machine leaf (pure L3, no VXLAN on leaf)
 //   - eBGP unnumbered peering between BOOTy and its dedicated leaf
 //   - L3VNI 1000 with nolearning (EVPN control-plane driven)
-//   - Vrf_underlay separation (table 10)
 //   - Pure Type-5 IP prefix routes (NO Type-2/Type-3)
 //   - Jumbo MTU 9100 on underlay
 //

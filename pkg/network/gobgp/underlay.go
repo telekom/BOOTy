@@ -309,7 +309,7 @@ func (u *UnderlayTier) configureNICs() error {
 func hasDefaultRoute(linkIndex int) bool {
 	routes, err := netlink.RouteList(nil, netlink.FAMILY_V4)
 	if err != nil {
-		return false
+		return true // conservative: treat as management NIC on error
 	}
 	for i := range routes {
 		if routes[i].Dst == nil && routes[i].LinkIndex == linkIndex {
