@@ -537,15 +537,15 @@ func TestType5PingGatewayFromVM0(t *testing.T) {
 	deadline := time.Now().Add(type5ConvergeTimeout)
 	for {
 		out, err := type5DockerExecRaw(t, type5LabVM0,
-			"ping", "-c", "1", "-W", "2", "-I", "br.provision", "10.100.0.1")
+			"ping", "-c", "1", "-W", "2", "-I", "br.provision", "10.200.0.1")
 		if err == nil && strings.Contains(out, "1 packets received") {
-			t.Log("VXLAN overlay ping from VM0 to spine gateway 10.100.0.1 succeeded")
+			t.Log("VXLAN overlay ping from VM0 to spine gateway 10.200.0.1 succeeded")
 			return
 		}
 		if time.Now().After(deadline) {
 			routes, _ := type5DockerExecRaw(t, type5LabVM0, "ip", "route")
 			fdb, _ := type5DockerExecRaw(t, type5LabVM0, "bridge", "fdb", "show")
-			t.Fatalf("overlay ping to 10.100.0.1 failed after %s:\nping: %s\nroutes: %s\nfdb: %s",
+			t.Fatalf("overlay ping to 10.200.0.1 failed after %s:\nping: %s\nroutes: %s\nfdb: %s",
 				type5ConvergeTimeout, out, routes, fdb)
 		}
 		time.Sleep(type5ConvergeInterval)
@@ -561,15 +561,15 @@ func TestType5PingGatewayFromVM1(t *testing.T) {
 	deadline := time.Now().Add(type5ConvergeTimeout)
 	for {
 		out, err := type5DockerExecRaw(t, type5LabVM1,
-			"ping", "-c", "1", "-W", "2", "-I", "br.provision", "10.100.0.1")
+			"ping", "-c", "1", "-W", "2", "-I", "br.provision", "10.200.0.1")
 		if err == nil && strings.Contains(out, "1 packets received") {
-			t.Log("VXLAN overlay ping from VM1 to spine gateway 10.100.0.1 succeeded")
+			t.Log("VXLAN overlay ping from VM1 to spine gateway 10.200.0.1 succeeded")
 			return
 		}
 		if time.Now().After(deadline) {
 			routes, _ := type5DockerExecRaw(t, type5LabVM1, "ip", "route")
 			fdb, _ := type5DockerExecRaw(t, type5LabVM1, "bridge", "fdb", "show")
-			t.Fatalf("overlay ping to 10.100.0.1 failed after %s:\nping: %s\nroutes: %s\nfdb: %s",
+			t.Fatalf("overlay ping to 10.200.0.1 failed after %s:\nping: %s\nroutes: %s\nfdb: %s",
 				type5ConvergeTimeout, out, routes, fdb)
 		}
 		time.Sleep(type5ConvergeInterval)

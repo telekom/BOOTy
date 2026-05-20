@@ -18,7 +18,7 @@
 # Address plan:
 #   Underlay: 192.168.4.0/24 (VTEP loopbacks on lo/dummy)
 #     spine01=192.168.4.1  VM0=192.168.4.10  VM1=192.168.4.11
-#   Overlay: 10.0.0.0/24 (router-id), 10.100.0.0/24 (gateway), 10.200.0.0/24 (VMs)
+#   Overlay: 10.0.0.0/24 (router-id), 10.200.0.0/24 (VMs + gateway)
 #
 # Build the test image first:
 #   docker build -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
@@ -44,8 +44,9 @@ topology:
         - ip link set vxlan1000 master br1000
         - ip link set vxlan1000 up
         - ip link set br1000 up
-        # Gateway IP for VMs (reachable via EVPN Type-5).
-        - ip addr add 10.100.0.1/24 dev br1000
+        # Gateway IP for VMs — same subnet as provision IPs so VMs can
+        # ARP directly over the VXLAN without a kernel route for a remote subnet.
+        - ip addr add 10.200.0.1/24 dev br1000
         - sh -c 'echo 1 > /proc/sys/net/ipv4/ip_forward'
         # BUM FDB entries for BOOTy VTEPs.
         - bridge fdb append 00:00:00:00:00:00 dev vxlan1000 dst 192.168.4.10
@@ -89,7 +90,7 @@ topology:
       kind: linux
       image: alpine:3.20
       exec:
-        - ip addr add 10.100.0.100/24 dev eth1
+        - ip addr add 10.200.0.100/24 dev eth1
         - ip link set dev eth1 up
       cmd: sleep infinity
 
