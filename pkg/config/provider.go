@@ -81,7 +81,8 @@ type MachineConfig struct {
 	StaticGateway string // STATIC_GATEWAY: default gateway IP
 	StaticIface   string // STATIC_IFACE: interface name (default: auto-detect first physical NIC)
 
-	// BGP/BFD tuning fields.
+	// VRF isolation fields.
+	VRFName       string // vrf_name: VRF interface name (e.g. "Vrf_underlay")
 	VRFTableID    uint32 // vrf_table_id: routing table ID for VRF (default: 1)
 	BGPKeepalive  uint32 // bgp_keepalive: BGP keepalive interval in seconds (0 = FRR default)
 	BGPHold       uint32 // bgp_hold: BGP hold timer in seconds (0 = FRR default)

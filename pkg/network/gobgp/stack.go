@@ -104,16 +104,21 @@ func (s *Stack) WaitForConnectivity(ctx context.Context, target string, timeout 
 	return nil
 }
 
-// installGatewayRoute adds a /32 kernel route to the gateway VTEP via the
-// first physical NIC. On the point-to-point link between the VM and the
-// spine switch, the kernel will ARP for the destination directly on the
-// interface and the spine will respond (arp_ignore defaults to 0).
+// installGatewayRoute adds a /32 kernel route to the gateway VTEP via a
+// physical NIC in the underlay VRF. On the point-to-point link between
+// the VM and the leaf/spine switch, the kernel will ARP for the destination
+// directly on the interface and the switch will respond (proxy-arp or
+// arp_ignore defaults to 0).
+//
+// When a VRF is configured, the route is installed in the VRF's routing
+// table using a NIC that is enslaved to that VRF, so VXLAN outer packets
+// (sourced from the VRF) can reach the remote VTEP.
 func (s *Stack) installGatewayRoute() error {
 	if len(s.underlay.nics) == 0 {
 		return fmt.Errorf("no underlay NICs available")
 	}
 
-	nic := s.underlay.nics[0]
+	nic := s.selectGatewayNIC()
 	link, err := netlink.LinkByName(nic)
 	if err != nil {
 		return fmt.Errorf("find NIC %s: %w", nic, err)
@@ -134,6 +139,13 @@ func (s *Stack) installGatewayRoute() error {
 		LinkIndex: link.Attrs().Index,
 		Scope:     netlink.SCOPE_LINK,
 	}
+
+	// When a VRF is active, install in the VRF's routing table so the
+	// route is visible to VXLAN outer packet forwarding.
+	if s.overlay.cfg.VRFTableID > 0 {
+		route.Table = int(s.overlay.cfg.VRFTableID)
+	}
+
 	if err := netlink.RouteReplace(route); err != nil {
 		return fmt.Errorf("replace route to %s via %s: %w", s.cfg.ProvisionGateway, nic, err)
 	}
@@ -141,6 +153,34 @@ func (s *Stack) installGatewayRoute() error {
 
 	s.log.Info("Installed gateway VTEP route", "gateway", s.cfg.ProvisionGateway, "nic", nic)
 	return nil
+}
+
+// selectGatewayNIC picks the NIC to use for the gateway route. When a VRF
+// is configured, it picks the first NIC that is actually enslaved to the
+// VRF (skipping management interfaces like eth0 that may not be in the VRF).
+// Falls back to nics[0] if no VRF-enslaved NIC is found.
+func (s *Stack) selectGatewayNIC() string {
+	if s.overlay.cfg.VRFName == "" {
+		return s.underlay.nics[0]
+	}
+
+	vrfLink, err := netlink.LinkByName(s.overlay.cfg.VRFName)
+	if err != nil {
+		return s.underlay.nics[0]
+	}
+	vrfIdx := vrfLink.Attrs().Index
+
+	for _, nic := range s.underlay.nics {
+		link, err := netlink.LinkByName(nic)
+		if err != nil {
+			continue
+		}
+		if link.Attrs().MasterIndex == vrfIdx {
+			return nic
+		}
+	}
+
+	return s.underlay.nics[0]
 }
 
 func (s *Stack) teardownGatewayRoute() {
