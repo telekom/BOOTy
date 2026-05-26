@@ -11,6 +11,7 @@ RUN sed -i '/DMLIBS = -ldevmapper/ s/$/ -lm -lpthread/' libdm/dm-tools/Makefile
 RUN make; exit 0
 WORKDIR tools
 RUN gcc -O2 -fPIC -static -L command.o dumpconfig.o formats.o lvchange.o lvconvert.o lvconvert_poll.o lvcreate.o lvdisplay.o lvextend.o lvmcmdline.o lvmdiskscan.o lvpoll.o lvreduce.o lvremove.o lvrename.o lvresize.o lvscan.o polldaemon.o pvchange.o pvck.o pvcreate.o pvdisplay.o pvmove.o pvmove_poll.o pvremove.o pvresize.o pvscan.o reporter.o segtypes.o tags.o toollib.o vgcfgbackup.o vgcfgrestore.o vgchange.o vgck.o vgcreate.o vgdisplay.o vgexport.o vgextend.o vgimport.o vgimportclone.o vgmerge.o vgmknodes.o vgreduce.o vgremove.o vgrename.o vgscan.o vgsplit.o lvm-static.o ../lib/liblvm-internal.a ../libdaemon/client/libdaemonclient.a ../device_mapper/libdevice-mapper.a ../base/libbase.a -lm -lblkid -laio -o lvm -lpthread -luuid ./liblvm2cmd.a
+RUN strip --strip-all lvm
 
 # Build scripted fdisk (sfdisk)
 FROM gcc:16 AS sfdisk
@@ -18,6 +19,7 @@ RUN apt-get update -y && apt-get install -y bison autopoint gettext flex
 RUN git clone --branch v2.41.3 --depth 1 https://github.com/util-linux/util-linux.git
 WORKDIR util-linux
 RUN ./autogen.sh && ./configure --enable-static-programs=sfdisk && make
+RUN strip --strip-all sfdisk.static
 
 # Build BOOTy as an init
 FROM golang:1.26-alpine AS dev
@@ -128,6 +130,18 @@ RUN mkdir -p /tool-libs && \
     | sort -u | while read -r lib; do \
         [ -n "$lib" ] && [ -f "$lib" ] && cp -L --parents "$lib" /tool-libs/ 2>/dev/null || true; \
     done
+
+# Strip debug symbols from tool binaries to reduce initramfs size (~20-40% per binary).
+# ldd must run first (above) so dynamic-library resolution is not affected by stripping.
+# Shared libs in /tool-libs are intentionally NOT stripped — that can corrupt them.
+RUN strip --strip-all \
+    /sbin/mdadm /usr/sbin/wipefs /sbin/resize2fs /sbin/e2fsck \
+    /usr/sbin/xfs_growfs /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk \
+    /sbin/partprobe /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
+    /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
+    /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
+    /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk \
+    /sbin/cryptsetup
 
 # Busybox static binary — sourced from Docker Hub for reliability and
 # Dependabot version tracking.  Eliminates the fragile busybox.net download
