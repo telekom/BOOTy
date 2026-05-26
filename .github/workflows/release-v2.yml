@@ -96,7 +96,10 @@ jobs:
           if [ -f booty-${{ matrix.arch }} ]; then
             sha256sum booty-${{ matrix.arch }} > booty-${{ matrix.arch }}.sha256
           fi
-          if [ -f out-${{ matrix.flavor }}/initramfs.cpio.gz ]; then
+          if [ -f out-${{ matrix.flavor }}/initramfs.cpio.zst ]; then
+            cp out-${{ matrix.flavor }}/initramfs.cpio.zst ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.zst
+            sha256sum ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.zst > ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.zst.sha256
+          elif [ -f out-${{ matrix.flavor }}/initramfs.cpio.gz ]; then
             cp out-${{ matrix.flavor }}/initramfs.cpio.gz ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.gz
             sha256sum ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.gz > ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.gz.sha256
           fi
@@ -110,6 +113,8 @@ jobs:
             booty-${{ matrix.arch }}.sha256
             ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.gz
             ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.gz.sha256
+            ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.zst
+            ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.zst.sha256
           if-no-files-found: ignore
 
   sbom:
@@ -449,8 +454,16 @@ jobs:
           REPO=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
 
           for flavor in default gobgp slim micro; do
-            INITRAMFS="artifacts/release-${flavor}-${{ matrix.arch }}/${flavor}-${{ matrix.arch }}-initramfs.cpio.gz"
-            CHECKSUM="artifacts/release-${flavor}-${{ matrix.arch }}/${flavor}-${{ matrix.arch }}-initramfs.cpio.gz.sha256"
+            # gobgp uses zstd compression; all other flavors use gzip.
+            if [ "${flavor}" = "gobgp" ]; then
+              EXT="cpio.zst"
+              MEDIA_TYPE="application/vnd.cncf.initramfs.layer.v1+zstd"
+            else
+              EXT="cpio.gz"
+              MEDIA_TYPE="application/vnd.cncf.initramfs.layer.v1+gzip"
+            fi
+            INITRAMFS="artifacts/release-${flavor}-${{ matrix.arch }}/${flavor}-${{ matrix.arch }}-initramfs.${EXT}"
+            CHECKSUM="artifacts/release-${flavor}-${{ matrix.arch }}/${flavor}-${{ matrix.arch }}-initramfs.${EXT}.sha256"
 
             if [ ! -f "${INITRAMFS}" ]; then
               echo "Skipping ${flavor}/${{ matrix.arch }}: no initramfs found"
@@ -460,7 +473,7 @@ jobs:
             TAG="${VERSION}-${flavor}-${{ matrix.arch }}"
             echo "Publishing ${REPO}/initramfs:${TAG}"
 
-            ARGS="${INITRAMFS}:application/vnd.cncf.initramfs.layer.v1+gzip"
+            ARGS="${INITRAMFS}:${MEDIA_TYPE}"
             if [ -f "${CHECKSUM}" ]; then
               ARGS="${ARGS} ${CHECKSUM}:text/plain"
             fi

@@ -160,7 +160,7 @@ jobs:
           docker buildx build --platform linux/amd64 --target gobgp \
             --output type=local,dest=out-gobgp -f initrd.Dockerfile .
           echo "GoBGP initramfs:"
-          ls -lh out-gobgp/initramfs.cpio.gz
+          ls -lh out-gobgp/initramfs.cpio.zst
 
       - name: Verify size ordering
         run: |
@@ -170,7 +170,7 @@ jobs:
           DEFAULT_SIZE=$(stat -c%s out-default/initramfs.cpio.gz)
           SLIM_SIZE=$(stat -c%s out-slim/initramfs.cpio.gz)
           MICRO_SIZE=$(stat -c%s out-micro/initramfs.cpio.gz)
-          GOBGP_SIZE=$(stat -c%s out-gobgp/initramfs.cpio.gz)
+          GOBGP_SIZE=$(stat -c%s out-gobgp/initramfs.cpio.zst)
 
           echo "Default: $(numfmt --to=iec $DEFAULT_SIZE)"
           echo "GoBGP:   $(numfmt --to=iec $GOBGP_SIZE)"
@@ -222,7 +222,7 @@ jobs:
 
       - name: Verify gobgp contents
         run: |
-          gzip -dc out-gobgp/initramfs.cpio.gz | cpio -t 2>/dev/null > gobgp-files.txt
+          zstd -dc out-gobgp/initramfs.cpio.zst | cpio -t 2>/dev/null > gobgp-files.txt
           echo "GoBGP file count: $(wc -l < gobgp-files.txt)"
 
           # Must contain BOOTy init, busybox, networking, and disk tools
@@ -244,7 +244,7 @@ jobs:
           path: |
             out-slim/initramfs.cpio.gz
             out-micro/initramfs.cpio.gz
-            out-gobgp/initramfs.cpio.gz
+            out-gobgp/initramfs.cpio.zst
 
   kvm-boot:
     name: KVM Boot Validation
