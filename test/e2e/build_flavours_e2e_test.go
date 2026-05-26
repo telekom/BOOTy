@@ -18,7 +18,7 @@ func dockerAvailable(t *testing.T) {
 }
 
 // buildTarget runs docker buildx build for the given Dockerfile target and
-// extracts the output to dest. Returns the path to initramfs.cpio.gz.
+// extracts the output to dest. Returns the path to the initramfs archive.
 func buildTarget(t *testing.T, target, dest string) string {
 	t.Helper()
 	dockerfile := filepath.Join(findRepoRoot(t), "initrd.Dockerfile")
@@ -42,7 +42,11 @@ func buildTarget(t *testing.T, target, dest string) string {
 		t.Fatalf("docker buildx build --target %s failed: %v", name, err)
 	}
 
+	// gobgp uses zstd compression; all other targets use gzip.
 	out := filepath.Join(dest, "initramfs.cpio.gz")
+	if target == "gobgp" {
+		out = filepath.Join(dest, "initramfs.cpio.zst")
+	}
 	if target == "iso" {
 		out = filepath.Join(dest, "booty.iso")
 	}
@@ -71,23 +75,29 @@ func findRepoRoot(t *testing.T) string {
 	}
 }
 
-// listCPIOContents uses gzip+cpio to list files in a cpio.gz archive.
+// listCPIOContents lists files in a cpio archive compressed with gzip or zstd.
 func listCPIOContents(t *testing.T, cpioGzPath string) map[string]bool {
 	t.Helper()
 
-	// Use an explicit pipe instead of shell string concatenation to avoid injection.
-	gzipCmd := exec.Command("gzip", "-dc", cpioGzPath)
+	// Choose decompressor based on file extension.
+	var decompCmd *exec.Cmd
+	if strings.HasSuffix(cpioGzPath, ".zst") {
+		decompCmd = exec.Command("zstd", "-dc", cpioGzPath)
+	} else {
+		decompCmd = exec.Command("gzip", "-dc", cpioGzPath)
+	}
+
 	cpioCmd := exec.Command("cpio", "-t")
 	cpioCmd.Stderr = nil // suppress cpio block count
 
 	var err error
-	cpioCmd.Stdin, err = gzipCmd.StdoutPipe()
+	cpioCmd.Stdin, err = decompCmd.StdoutPipe()
 	if err != nil {
 		t.Fatalf("pipe setup: %v", err)
 	}
 
-	if err := gzipCmd.Start(); err != nil {
-		t.Fatalf("gzip start: %v", err)
+	if err := decompCmd.Start(); err != nil {
+		t.Fatalf("decompressor start: %v", err)
 	}
 
 	out, err := cpioCmd.Output()
@@ -95,8 +105,8 @@ func listCPIOContents(t *testing.T, cpioGzPath string) map[string]bool {
 		t.Fatalf("cpio: %v", err)
 	}
 
-	if err := gzipCmd.Wait(); err != nil {
-		t.Fatalf("gzip: %v", err)
+	if err := decompCmd.Wait(); err != nil {
+		t.Fatalf("decompressor: %v", err)
 	}
 
 	files := make(map[string]bool)

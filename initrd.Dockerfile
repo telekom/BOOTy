@@ -307,7 +307,7 @@ COPY --from=slim-builder /initramfs.cpio.gz .
 
 # ── GoBGP target: like default but without FRR (GoBGP is in-process Go) ───
 FROM debian:bookworm-slim AS gobgp-builder
-RUN apt-get update && apt-get install -y --no-install-recommends cpio \
+RUN apt-get update && apt-get install -y --no-install-recommends cpio zstd \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
 
@@ -376,12 +376,15 @@ COPY --from=tools /tool-libs/ .
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
 
-# Package GoBGP initramfs (no FRR binaries — GoBGP runs in-process)
+# Package GoBGP initramfs with zstd compression (no FRR binaries — GoBGP runs in-process)
+# zstd -19 achieves ~10–20% better ratio than gzip with much faster decompression.
+# The Debian bookworm 6.1 kernel has CONFIG_RD_ZSTD=y built-in.
 RUN find . -print0 | cpio --null -ov --format=newc > ../initramfs.cpio \
-    && gzip ../initramfs.cpio && mv ../initramfs.cpio.gz /
+    && zstd -19 --long ../initramfs.cpio -o /initramfs.cpio.zst \
+    && rm ../initramfs.cpio
 
 FROM scratch AS gobgp
-COPY --from=gobgp-builder /initramfs.cpio.gz .
+COPY --from=gobgp-builder /initramfs.cpio.zst .
 
 # ── GoBGP ISO target ──────────────────────────────────────────────────────
 FROM debian:bookworm-slim AS gobgp-iso-builder
@@ -389,7 +392,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xorriso syslinux syslinux-common isolinux curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=gobgp-builder /initramfs.cpio.gz /iso/boot/initrd.img
+COPY --from=gobgp-builder /initramfs.cpio.zst /iso/boot/initrd.img
 COPY --from=kernel /vmlinuz /iso/boot/vmlinuz
 
 RUN mkdir -p /iso/isolinux && \
