@@ -42,9 +42,9 @@ func buildTarget(t *testing.T, target, dest string) string {
 		t.Fatalf("docker buildx build --target %s failed: %v", name, err)
 	}
 
-	// gobgp uses zstd compression; all other targets use gzip.
+	// gobgp, default, and slim use zstd compression; micro uses gzip.
 	out := filepath.Join(dest, "initramfs.cpio.gz")
-	if target == "gobgp" {
+	if target == "gobgp" || target == "" || target == "slim" {
 		out = filepath.Join(dest, "initramfs.cpio.zst")
 	}
 	if target == "iso" {

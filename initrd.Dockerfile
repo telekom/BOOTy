@@ -151,7 +151,7 @@ RUN strip --strip-all \
 FROM busybox:1.37.0-musl AS busybox-bin
 
 FROM debian:bookworm-slim AS busybox
-RUN apt-get update && apt-get install -y --no-install-recommends cpio curl ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends cpio curl ca-certificates zstd \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
 
@@ -232,9 +232,9 @@ COPY --from=frr /frr-libs/ .
 COPY --from=kernel /modules/ modules/
 
 # Package initramfs
-RUN find . -print0 | cpio --null -ov --format=newc > ../initramfs.cpio
-RUN gzip ../initramfs.cpio
-RUN mv ../initramfs.cpio.gz /
+RUN find . -print0 | cpio --null -ov --format=newc > ../initramfs.cpio \
+    && zstd -19 --long ../initramfs.cpio -o /initramfs.cpio.zst \
+    && rm ../initramfs.cpio
 
 # ── ISO build stage (optional, triggered by --target=iso) ──────────────────
 FROM debian:bookworm-slim AS iso-builder
@@ -242,7 +242,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xorriso syslinux syslinux-common isolinux curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=busybox /initramfs.cpio.gz /iso/boot/initrd.img
+COPY --from=busybox /initramfs.cpio.zst /iso/boot/initrd.img
 
 # Use the standard Debian kernel (has all common NIC drivers as modules)
 COPY --from=kernel /vmlinuz /iso/boot/vmlinuz
@@ -268,7 +268,7 @@ COPY --from=iso-builder /booty.iso .
 
 # ── Slim target: BOOTy + busybox shell + minimal tools, no FRR/LVM ────────
 FROM debian:bookworm-slim AS slim-builder
-RUN apt-get update && apt-get install -y --no-install-recommends cpio \
+RUN apt-get update && apt-get install -y --no-install-recommends cpio zstd \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
 
@@ -301,10 +301,11 @@ COPY --from=tools /tool-libs/ .
 
 # Package slim initramfs
 RUN find . -print0 | cpio --null -ov --format=newc > ../initramfs.cpio \
-    && gzip ../initramfs.cpio && mv ../initramfs.cpio.gz /
+    && zstd -19 --long ../initramfs.cpio -o /initramfs.cpio.zst \
+    && rm ../initramfs.cpio
 
 FROM scratch AS slim
-COPY --from=slim-builder /initramfs.cpio.gz .
+COPY --from=slim-builder /initramfs.cpio.zst .
 
 # ── GoBGP target: like default but without FRR (GoBGP is in-process Go) ───
 FROM debian:bookworm-slim AS gobgp-builder
@@ -454,4 +455,4 @@ COPY --from=micro-builder /initramfs.cpio.gz .
 
 # ── Default target: initramfs ──────────────────────────────────────────────
 FROM scratch
-COPY --from=busybox /initramfs.cpio.gz .
+COPY --from=busybox /initramfs.cpio.zst .
