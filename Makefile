@@ -10,7 +10,7 @@ BUILD := `git rev-parse HEAD`
 TARGETOS=linux
 TARGETARCH ?= $(shell go env GOARCH)
 
-LDFLAGS=-ldflags "-s -w -X=main.Version=$(VERSION) -X=main.Build=$(BUILD) -extldflags -static"
+LDFLAGS=-trimpath -ldflags "-s -w -X=main.Version=$(VERSION) -X=main.Build=$(BUILD) -extldflags -static"
 
 SRC = $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 

@@ -29,7 +29,7 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
 COPY . /go/src/github.com/telekom/BOOTy/
 RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
     --mount=type=cache,sharing=locked,id=goroot,target=/root/.cache/go-build \
-    CGO_ENABLED=1 GOOS=linux go build -a -ldflags "-linkmode external -extldflags '-static' -s -w" -o init
+    CGO_ENABLED=1 GOOS=linux go build -a -trimpath -ldflags "-linkmode external -extldflags '-static' -s -w" -o init
 
 # Build FRR (BGP/BFD/Zebra) for EVPN networking — use FRR official stable repo
 FROM debian:bookworm-slim AS frr
@@ -402,7 +402,7 @@ COPY . /go/src/github.com/telekom/BOOTy/
 WORKDIR /go/src/github.com/telekom/BOOTy
 RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
     --mount=type=cache,sharing=locked,id=goroot,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -a -ldflags "-s -w" -o init
+    CGO_ENABLED=0 GOOS=linux go build -a -trimpath -ldflags "-s -w" -o init
 
 FROM debian:bookworm-slim AS micro-builder
 RUN apt-get update && apt-get install -y --no-install-recommends cpio \
