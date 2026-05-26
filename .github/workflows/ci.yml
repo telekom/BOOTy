@@ -123,7 +123,7 @@ jobs:
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 1
           CC: gcc
-        run: go build -ldflags "-s -w -linkmode external -extldflags '-static'" -o booty-${{ matrix.arch }}
+        run: go build -trimpath -ldflags "-s -w -linkmode external -extldflags '-static'" -o booty-${{ matrix.arch }}
 
       - name: Upload binary
         uses: actions/upload-artifact@v7.0.1
@@ -266,7 +266,7 @@ jobs:
         run: |
           # Build BOOTy as a static binary for linux/amd64
           CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
-            go build -ldflags "-linkmode external -extldflags '-static' -s -w" -o booty
+            go build -trimpath -ldflags "-linkmode external -extldflags '-static' -s -w" -o booty
 
           # Create initramfs directory structure
           mkdir -p initramfs/{bin,sbin,dev,proc,sys,etc,tmp,usr/bin,lib/modules,mnt,home}
@@ -554,7 +554,7 @@ jobs:
         run: |
           # Build BOOTy as a static binary for linux/amd64
           CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
-            go build -ldflags "-linkmode external -extldflags '-static' -s -w" -o booty
+            go build -trimpath -ldflags "-linkmode external -extldflags '-static' -s -w" -o booty
 
           # Create initramfs directory structure
           mkdir -p initramfs/{bin,sbin,dev,proc,sys,etc,tmp,usr/bin,lib/modules,mnt,home}
