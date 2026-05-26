@@ -454,8 +454,8 @@ jobs:
           REPO=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
 
           for flavor in default gobgp slim micro; do
-            # gobgp uses zstd compression; all other flavors use gzip.
-            if [ "${flavor}" = "gobgp" ]; then
+            # gobgp, default, and slim use zstd compression; micro uses gzip.
+            if [ "${flavor}" = "gobgp" ] || [ "${flavor}" = "default" ] || [ "${flavor}" = "slim" ]; then
               EXT="cpio.zst"
               MEDIA_TYPE="application/vnd.cncf.initramfs.layer.v1+zstd"
             else

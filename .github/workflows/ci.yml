@@ -146,7 +146,7 @@ jobs:
           docker buildx build --platform linux/amd64 --target slim \
             --output type=local,dest=out-slim -f initrd.Dockerfile .
           echo "Slim initramfs:"
-          ls -lh out-slim/initramfs.cpio.gz
+          ls -lh out-slim/initramfs.cpio.zst
 
       - name: Build micro initramfs
         run: |
@@ -167,8 +167,8 @@ jobs:
           docker buildx build --platform linux/amd64 \
             --output type=local,dest=out-default -f initrd.Dockerfile .
 
-          DEFAULT_SIZE=$(stat -c%s out-default/initramfs.cpio.gz)
-          SLIM_SIZE=$(stat -c%s out-slim/initramfs.cpio.gz)
+          DEFAULT_SIZE=$(stat -c%s out-default/initramfs.cpio.zst)
+          SLIM_SIZE=$(stat -c%s out-slim/initramfs.cpio.zst)
           MICRO_SIZE=$(stat -c%s out-micro/initramfs.cpio.gz)
           GOBGP_SIZE=$(stat -c%s out-gobgp/initramfs.cpio.zst)
 
@@ -193,7 +193,7 @@ jobs:
 
       - name: Verify slim contents
         run: |
-          gzip -dc out-slim/initramfs.cpio.gz | cpio -t 2>/dev/null > slim-files.txt
+          zstd -dc out-slim/initramfs.cpio.zst | cpio -t 2>/dev/null > slim-files.txt
           echo "Slim file count: $(wc -l < slim-files.txt)"
 
           # Must contain BOOTy init and busybox
@@ -242,7 +242,7 @@ jobs:
         with:
           name: build-flavours
           path: |
-            out-slim/initramfs.cpio.gz
+            out-slim/initramfs.cpio.zst
             out-micro/initramfs.cpio.gz
             out-gobgp/initramfs.cpio.zst
 
