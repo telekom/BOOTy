@@ -231,6 +231,22 @@ COPY --from=frr /frr-libs/ .
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
 
+# Reuse upx from the dev (Alpine) stage — upx-ucl is not in Debian bookworm main
+COPY --from=dev /usr/bin/upx /usr/local/bin/upx
+
+# UPX-compress FRR binaries (~50-60% reduction each).
+# Skipped: busybox (multi-applet), .so shared libs, .ko kernel modules, init (already compressed in dev stage).
+RUN for b in \
+        sbin/bgpd sbin/zebra sbin/bfdd bin/vtysh sbin/watchfrr \
+        sbin/mdadm bin/wipefs sbin/resize2fs sbin/e2fsck \
+        bin/xfs_growfs bin/btrfs bin/parted bin/sgdisk bin/partprobe \
+        bin/efibootmgr bin/dmidecode bin/ethtool bin/curl bin/ip bin/bridge \
+        bin/hdparm bin/nvme bin/mstconfig bin/mstflint bin/ipmitool \
+        bin/lldpcli sbin/lldpd bin/dropbear bin/dropbearkey \
+        sbin/cryptsetup; do \
+    upx -9 "$b" 2>/dev/null || true; \
+done
+
 # Package initramfs
 RUN find . -print0 | cpio --null -ov --format=newc > ../initramfs.cpio
 RUN gzip ../initramfs.cpio
