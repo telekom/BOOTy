@@ -75,7 +75,7 @@ micro:
 
 gobgp:
 	@docker buildx build --platform linux/amd64 --target gobgp --output type=local,dest=. -f initrd.Dockerfile .
-	@echo GoBGP initramfs built: initramfs.cpio.gz
+	@echo GoBGP initramfs built: initramfs.cpio.zst
 
 gobgp-iso:
 	@docker buildx build --platform linux/amd64 --target gobgp-iso --output type=local,dest=. -f initrd.Dockerfile .
@@ -101,7 +101,7 @@ arm64-slim:
 arm64-gobgp:
 	@mkdir -p dist/arm64
 	@docker buildx build --platform linux/arm64 --target gobgp --output type=local,dest=dist/arm64 -f initrd.Dockerfile .
-	@echo ARM64 GoBGP initramfs built: dist/arm64/initramfs.cpio.gz
+	@echo ARM64 GoBGP initramfs built: dist/arm64/initramfs.cpio.zst
 
 test-iso:
 	@echo Verifying ISO hybrid boot record
@@ -307,10 +307,15 @@ run: install
 
 OCI_FLAVOR ?= default
 OCI_ARCH ?= $(TARGETARCH)
-INITRAMFS_PATH ?= $(if $(filter arm64,$(OCI_ARCH)),dist/arm64/initramfs.cpio.gz,initramfs.cpio.gz)
+# gobgp flavor uses zstd compression (.zst); all other flavors use gzip (.gz).
+INITRAMFS_PATH ?= $(if $(filter gobgp,$(OCI_FLAVOR)),\
+    $(if $(filter arm64,$(OCI_ARCH)),dist/arm64/initramfs.cpio.zst,initramfs.cpio.zst),\
+    $(if $(filter arm64,$(OCI_ARCH)),dist/arm64/initramfs.cpio.gz,initramfs.cpio.gz))
 
 oci-push: oci-push-initramfs oci-push-binary
 	@echo Initramfs and binary OCI artifacts pushed for $(OCI_FLAVOR)/$(OCI_ARCH)
+
+INITRAMFS_MEDIA_TYPE = $(if $(filter gobgp,$(OCI_FLAVOR)),application/vnd.cncf.initramfs.layer.v1+zstd,application/vnd.cncf.initramfs.layer.v1+gzip)
 
 oci-push-initramfs:
 	@test -f $(INITRAMFS_PATH) || (echo "ERROR: $(INITRAMFS_PATH) not found — build with 'make gobgp' or 'make slim' first"; exit 1)
@@ -319,7 +324,7 @@ oci-push-initramfs:
 		--annotation "org.opencontainers.image.version=$(VERSION)" \
 		--annotation "io.booty.flavor=$(OCI_FLAVOR)" \
 		--annotation "io.booty.arch=$(OCI_ARCH)" \
-		$(INITRAMFS_PATH):application/vnd.cncf.initramfs.layer.v1+gzip \
+		$(INITRAMFS_PATH):$(INITRAMFS_MEDIA_TYPE) \
 		$(INITRAMFS_PATH).sha256:text/plain
 	@echo Pushed $(REPOSITORY)/initramfs:$(DOCKERTAG)-$(OCI_FLAVOR)-$(OCI_ARCH)
 
