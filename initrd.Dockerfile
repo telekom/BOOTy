@@ -380,14 +380,14 @@ COPY --from=tools /tool-libs/ .
 COPY --from=kernel /modules/ modules/
 
 # UPX-compress tool binaries (~60% reduction per binary).
-# Skipped: busybox (multi-applet), .so shared libs, .ko kernel modules, lvm, sfdisk.static.
+# Skipped: busybox (multi-applet), .so shared libs, .ko kernel modules.
 RUN for b in \
         sbin/mdadm bin/wipefs sbin/resize2fs sbin/e2fsck \
         bin/xfs_growfs bin/btrfs bin/parted bin/sgdisk bin/partprobe \
         bin/efibootmgr bin/dmidecode bin/ethtool bin/curl bin/ip bin/bridge \
         bin/hdparm bin/nvme bin/mstconfig bin/mstflint bin/ipmitool \
         bin/lldpcli sbin/lldpd bin/dropbear bin/dropbearkey bin/lsblk \
-        sbin/cryptsetup; do \
+        sbin/cryptsetup sbin/lvm bin/sfdisk; do \
     upx -9 "$b" 2>/dev/null || true; \
 done
 
