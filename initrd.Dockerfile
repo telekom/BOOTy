@@ -23,7 +23,7 @@ RUN strip --strip-all sfdisk.static
 
 # Build BOOTy as an init
 FROM golang:1.26-alpine AS dev
-RUN apk add --no-cache git ca-certificates gcc linux-headers musl-dev
+RUN apk add --no-cache git ca-certificates gcc linux-headers musl-dev upx
 COPY go.mod go.sum /go/src/github.com/telekom/BOOTy/
 WORKDIR /go/src/github.com/telekom/BOOTy
 RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
@@ -32,6 +32,7 @@ COPY . /go/src/github.com/telekom/BOOTy/
 RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
     --mount=type=cache,sharing=locked,id=goroot,target=/root/.cache/go-build \
     CGO_ENABLED=1 GOOS=linux go build -a -trimpath -ldflags "-linkmode external -extldflags '-static' -s -w" -o init
+RUN upx -9 init
 
 # Build FRR (BGP/BFD/Zebra) for EVPN networking — use FRR official stable repo
 FROM debian:bookworm-slim AS frr
@@ -309,6 +310,8 @@ COPY --from=slim-builder /initramfs.cpio.gz .
 FROM debian:bookworm-slim AS gobgp-builder
 RUN apt-get update && apt-get install -y --no-install-recommends cpio zstd \
     && rm -rf /var/lib/apt/lists/*
+# Reuse upx from the dev (Alpine) stage — upx-ucl is not in Debian bookworm main
+COPY --from=dev /usr/bin/upx /usr/local/bin/upx
 WORKDIR /build/initramfs
 
 # Copy busybox binary and create all applet symlinks (same as default variant).
@@ -375,6 +378,18 @@ COPY --from=tools /tool-libs/ .
 
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
+
+# UPX-compress tool binaries (~60% reduction per binary).
+# Skipped: busybox (multi-applet), .so shared libs, .ko kernel modules, lvm, sfdisk.static.
+RUN for b in \
+        sbin/mdadm bin/wipefs sbin/resize2fs sbin/e2fsck \
+        bin/xfs_growfs bin/btrfs bin/parted bin/sgdisk bin/partprobe \
+        bin/efibootmgr bin/dmidecode bin/ethtool bin/curl bin/ip bin/bridge \
+        bin/hdparm bin/nvme bin/mstconfig bin/mstflint bin/ipmitool \
+        bin/lldpcli sbin/lldpd bin/dropbear bin/dropbearkey bin/lsblk \
+        sbin/cryptsetup; do \
+    upx -9 "$b" 2>/dev/null || true; \
+done
 
 # Package GoBGP initramfs with zstd compression (no FRR binaries — GoBGP runs in-process)
 # zstd -19 achieves ~10–20% better ratio than gzip with much faster decompression.
