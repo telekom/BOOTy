@@ -108,6 +108,7 @@ RUN apt-get update && \
 # Build disk, system, and firmware tools
 FROM debian:bookworm-slim AS tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    binutils \
     mdadm util-linux e2fsprogs xfsprogs btrfs-progs parted gdisk kpartx dosfstools \
     efibootmgr dmidecode ethtool curl iproute2 bridge-utils \
     hdparm nvme-cli mstflint lldpd \
