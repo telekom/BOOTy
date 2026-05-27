@@ -28,7 +28,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/network/vlan"
 	"github.com/telekom/BOOTy/pkg/provision"
 	"github.com/telekom/BOOTy/pkg/realm"
-	"github.com/telekom/BOOTy/pkg/rescue"
+	"github.com/telekom/BOOTy/pkg/runmode"
 	"github.com/telekom/BOOTy/pkg/ux"
 )
 
@@ -223,77 +223,26 @@ func runCAPRF(ctx context.Context) {
 			"skip_reason", result.SkipReason)
 	}
 
-	// Run provisioning, deprovisioning, or standby based on mode.
-	orch := provision.NewOrchestrator(cfg, client, diskMgr)
-
-	provisionSucceeded := false
-
-	switch cfg.Mode {
-	case "standby":
-		runStandby(ctx, client, cfg, netMode, diskMgr)
-		return // standby handles its own lifecycle
-	case "check":
-		if err := orch.RunCheck(ctx); err != nil {
-			slog.Error("health check failed", "error", err)
-		}
-		// Do not return here — continue to teardown and reboot.
-	case "dry-run":
-		cfg.Provision.DisableKexec = true
-		if err := orch.DryRun(ctx); err != nil {
-			slog.Error("dry-run failed", "error", err)
-		}
-		// Do not return here - continue with the normal lifecycle
-		// (network teardown, reboot) so PID 1 exits cleanly.
-	case "deprovision", "soft-deprovision":
-		if err := orch.Deprovision(ctx); err != nil {
-			slog.Error("deprovisioning failed", "error", err)
-		}
-	default:
-		var retryState rescue.RetryState
-		rescueCfg := orch.RescueConfig()
-		for {
-			err := orch.Provision(ctx)
-			if err == nil {
-				provisionSucceeded = true
-				break
+	// Resolve and run the operating mode.
+	mode, err := runmode.Resolve(runmode.Deps{
+		Cfg:     cfg,
+		Client:  client,
+		DiskMgr: diskMgr,
+		NetMode: netMode,
+	})
+	if err != nil {
+		slog.Error("unknown operating mode", "mode", cfg.Mode, "error", err)
+		if netMode != nil {
+			if tearErr := netMode.Teardown(ctx); tearErr != nil {
+				slog.Warn("network teardown error", "error", tearErr)
 			}
-			slog.Error("provisioning failed", "error", err)
-			if setupErr := rescue.Setup(ctx, rescueCfg); setupErr != nil {
-				slog.Warn("rescue setup error", "error", setupErr)
-			}
-			action := rescue.Decide(rescueCfg, &retryState)
-			slog.Info("rescue action", "type", action.Type, "message", action.Message)
-			switch action.Type {
-			case rescue.ModeRetry:
-				retryState.RecordAttempt(err)
-				slog.Info("retrying provisioning", "attempt", retryState.Attempts, "delay", rescueCfg.RetryDelay)
-				if !sleepWithContext(ctx, rescueCfg.RetryDelay) {
-					slog.Info("retry sleep canceled by context")
-					if err := netMode.Teardown(ctx); err != nil {
-						slog.Warn("network teardown error", "error", err)
-					}
-					realm.Reboot()
-					return
-				}
-				continue
-			case rescue.ModeShell:
-				slog.Info("dropping to rescue shell")
-				realm.Shell()
-			case rescue.ModeWait:
-				slog.Info("waiting for manual intervention")
-				<-ctx.Done()
-				slog.Info("context canceled while waiting in rescue mode")
-				if err := netMode.Teardown(ctx); err != nil {
-					slog.Warn("network teardown error", "error", err)
-				}
-				realm.Reboot()
-				return
-			default:
-				// ModeReboot: fall through to reboot
-			}
-			break
 		}
+		realm.Reboot()
+		return
 	}
+
+	slog.Info("executing mode", "mode", mode.Name())
+	modeErr := mode.Run(ctx)
 
 	slog.Info("BOOTy CAPRF complete")
 	if netMode != nil {
@@ -302,16 +251,32 @@ func runCAPRF(ctx context.Context) {
 		}
 	}
 
-	// Attempt kexec into installed kernel; fall back to power off so
-	// the orchestrator (CAPRF) can eject media and reboot from disk.
-	if cfg.Mode != "deprovision" && cfg.Mode != "soft" && provisionSucceeded {
-		tryKexec(cfg, orch.FirmwareChanged())
+	// Handle mode-specific exit behavior.
+	switch e := modeErr.(type) {
+	case *runmode.RescueShellError:
+		realm.Shell()
+		realm.Reboot()
+		return
+	case *runmode.RebootRequestedError:
+		realm.Reboot()
+		return
+	case *runmode.ProvisionCompleteError:
+		tryKexec(cfg, e.FirmwareChanged)
+		time.Sleep(2 * time.Second)
+		realm.Reboot()
+		return
 	}
-	time.Sleep(time.Second * 2)
-	if provisionSucceeded {
+
+	// Check if provision mode succeeded (for kexec + poweroff).
+	if pm, ok := mode.(*runmode.ProvisionMode); ok && pm.Succeeded() {
+		tryKexec(cfg, pm.FirmwareChanged())
+		time.Sleep(2 * time.Second)
 		slog.Info("provisioning succeeded, powering off for orchestrator to manage boot")
 		realm.PowerOff()
+		return
 	}
+
+	time.Sleep(2 * time.Second)
 	realm.Reboot()
 }
 
@@ -727,184 +692,3 @@ func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) {
 	}
 }
 
-func sleepWithContext(ctx context.Context, d time.Duration) bool {
-	if d <= 0 {
-		select {
-		case <-ctx.Done():
-			return false
-		default:
-			return true
-		}
-	}
-
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
-	}
-}
-
-// runStandby keeps the machine in a hot standby loop. It sends periodic
-// heartbeats to the CAPRF server and polls for commands. When a "provision"
-// or "deprovision" command arrives, it re-enters the normal CAPRF flow.
-func runStandby(ctx context.Context, client config.Provider, cfg *config.MachineConfig, netMode network.Mode, diskMgr *disk.Manager) {
-	const (
-		heartbeatInterval = 30 * time.Second
-		pollInterval      = 10 * time.Second
-	)
-
-	slog.Info("entering standby mode")
-	_ = client.ReportStatus(ctx, config.StatusInit, "standby")
-
-	heartbeatTicker := time.NewTicker(heartbeatInterval)
-	defer heartbeatTicker.Stop()
-
-	pollTicker := time.NewTicker(pollInterval)
-	defer pollTicker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			slog.Info("standby context canceled, shutting down")
-			if err := netMode.Teardown(ctx); err != nil {
-				slog.Warn("network teardown error", "error", err)
-			}
-			realm.Reboot()
-			return
-
-		case <-heartbeatTicker.C:
-			if err := client.Heartbeat(ctx); err != nil {
-				slog.Warn("heartbeat failed", "error", err)
-			}
-
-		case <-pollTicker.C:
-			cmds, err := client.FetchCommands(ctx)
-			if err != nil {
-				slog.Warn("command poll failed", "error", err)
-				continue
-			}
-			for _, cmd := range cmds {
-				slog.Info("received command", "id", cmd.ID, "type", cmd.Type)
-				switch cmd.Type {
-				case "provision":
-					cfg.Mode = "provision"
-					orch := provision.NewOrchestrator(cfg, client, diskMgr)
-					rescueCfg := orch.RescueConfig()
-					var retryState rescue.RetryState
-					var provErr error
-					provisionSucceeded := false
-					for {
-						provErr = orch.Provision(ctx)
-						if provErr == nil {
-							provisionSucceeded = true
-							break
-						}
-						slog.Error("hot provision failed", "error", provErr)
-						if setupErr := rescue.Setup(ctx, rescueCfg); setupErr != nil {
-							slog.Warn("rescue setup error", "error", setupErr)
-						}
-						action := rescue.Decide(rescueCfg, &retryState)
-						slog.Info("rescue action", "type", action.Type, "message", action.Message)
-						switch action.Type {
-						case rescue.ModeRetry:
-							retryState.RecordAttempt(provErr)
-							if !sleepWithContext(ctx, rescueCfg.RetryDelay) {
-								slog.Info("retry sleep canceled by context")
-								if err := netMode.Teardown(ctx); err != nil {
-									slog.Warn("network teardown error", "error", err)
-								}
-								realm.Reboot()
-								return
-							}
-							continue
-						case rescue.ModeShell:
-							slog.Info("dropping to rescue shell")
-							realm.Shell()
-							if err := netMode.Teardown(ctx); err != nil {
-								slog.Warn("network teardown error", "error", err)
-							}
-							realm.Reboot()
-							return
-						case rescue.ModeWait:
-							slog.Info("waiting for manual intervention")
-							<-ctx.Done()
-							slog.Info("standby context canceled while waiting in rescue mode")
-							if err := netMode.Teardown(ctx); err != nil {
-								slog.Warn("network teardown error", "error", err)
-							}
-							realm.Reboot()
-							return
-						default:
-							// ModeReboot
-						}
-						break
-					}
-					if !provisionSucceeded {
-						if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "failed", fmt.Sprintf("provision command failed: %v", provErr)); ackErr != nil {
-							slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
-						}
-						if err := netMode.Teardown(ctx); err != nil {
-							slog.Warn("network teardown error", "error", err)
-						}
-						realm.Reboot()
-						return
-					}
-					if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "completed", ""); ackErr != nil {
-						slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
-					}
-					if err := netMode.Teardown(ctx); err != nil {
-						slog.Warn("network teardown error", "error", err)
-					}
-					tryKexec(cfg, orch.FirmwareChanged())
-					time.Sleep(2 * time.Second)
-					realm.Reboot()
-					return
-				case "deprovision":
-					cfg.Mode = "deprovision"
-					orch := provision.NewOrchestrator(cfg, client, diskMgr)
-					if err := orch.Deprovision(ctx); err != nil {
-						slog.Error("hot deprovision failed", "error", err)
-						if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "failed", fmt.Sprintf("deprovision command failed: %v", err)); ackErr != nil {
-							slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
-						}
-					} else {
-						if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "completed", ""); ackErr != nil {
-							slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
-						}
-					}
-					if err := netMode.Teardown(ctx); err != nil {
-						slog.Warn("network teardown error", "error", err)
-					}
-					time.Sleep(2 * time.Second)
-					realm.Reboot()
-					return
-				case "reboot":
-					slog.Info("reboot command received")
-					if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "completed", ""); ackErr != nil {
-						slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
-					}
-					if err := netMode.Teardown(ctx); err != nil {
-						slog.Warn("network teardown error", "error", err)
-					}
-					realm.Reboot()
-					return
-				case "health-check":
-					// Liveness probe — confirms agent is responsive.
-					slog.Info("health-check command received")
-					if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "completed", "healthy"); ackErr != nil {
-						slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
-					}
-				default:
-					slog.Warn("unknown command type", "type", cmd.Type)
-					if ackErr := client.AcknowledgeCommand(ctx, cmd.ID, "failed", "unknown command type"); ackErr != nil {
-						slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
-					}
-				}
-			}
-		}
-	}
-}

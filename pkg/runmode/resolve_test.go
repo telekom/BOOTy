@@ -1,0 +1,57 @@
+//go:build linux
+
+package runmode
+
+import (
+	"testing"
+
+	"github.com/telekom/BOOTy/pkg/config"
+)
+
+func TestResolveProvision(t *testing.T) {
+	tests := []struct {
+		mode     string
+		wantName string
+		wantErr  bool
+	}{
+		{mode: "", wantName: "provision"},
+		{mode: "provision", wantName: "provision"},
+		{mode: "dry-run", wantName: "dry-run"},
+		{mode: "deprovision", wantName: "deprovision"},
+		{mode: "soft-deprovision", wantName: "deprovision"},
+		{mode: "standby", wantName: "standby"},
+		{mode: "check", wantName: "check"},
+		{mode: "invalid-mode", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			deps := Deps{Cfg: &config.MachineConfig{Mode: tt.mode}}
+			m, err := Resolve(deps)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if m.Name() != tt.wantName {
+				t.Errorf("Name() = %q, want %q", m.Name(), tt.wantName)
+			}
+		})
+	}
+}
+
+func TestProvisionModeInitialState(t *testing.T) {
+	deps := Deps{Cfg: &config.MachineConfig{}}
+	m, _ := Resolve(deps)
+	pm := m.(*ProvisionMode)
+	if pm.Succeeded() {
+		t.Error("Succeeded() should be false before Run")
+	}
+	if pm.FirmwareChanged() {
+		t.Error("FirmwareChanged() should be false before Run")
+	}
+}
