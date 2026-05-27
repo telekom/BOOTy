@@ -253,6 +253,8 @@ func runCAPRF(ctx context.Context) {
 	var provisionErr *runmode.ProvisionCompleteError
 	switch {
 	case errors.As(modeErr, &rescueErr):
+		// Network teardown is intentionally skipped here so SSH access
+		// remains available in the rescue shell.
 		realm.Shell()
 		realm.Reboot()
 		return
@@ -272,25 +274,23 @@ func runCAPRF(ctx context.Context) {
 		}
 		tryKexec(cfg, provisionErr.FirmwareChanged)
 		time.Sleep(2 * time.Second)
-		realm.Reboot()
+		if provisionErr.PowerOff {
+			slog.Info("provisioning succeeded, powering off for orchestrator to manage boot")
+			realm.PowerOff()
+		} else {
+			realm.Reboot()
+		}
 		return
 	}
 
+	if modeErr != nil {
+		slog.Error("mode exited with error", "mode", mode.Name(), "error", modeErr)
+	}
 	if netMode != nil {
 		if err := netMode.Teardown(ctx); err != nil {
 			slog.Warn("network teardown error", "error", err)
 		}
 	}
-
-	// Check if provision mode succeeded (for kexec + poweroff).
-	if pm, ok := mode.(*runmode.ProvisionMode); ok && pm.Succeeded() {
-		tryKexec(cfg, pm.FirmwareChanged())
-		time.Sleep(2 * time.Second)
-		slog.Info("provisioning succeeded, powering off for orchestrator to manage boot")
-		realm.PowerOff()
-		return
-	}
-
 	time.Sleep(2 * time.Second)
 	realm.Reboot()
 }
