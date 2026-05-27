@@ -462,7 +462,7 @@ func (o *Orchestrator) detectDisk(ctx context.Context) error {
 		if info.Mode()&os.ModeDevice == 0 || info.Mode()&os.ModeCharDevice != 0 {
 			return fmt.Errorf("configured disk device %s is not a block device", o.cfg.Provision.Disk.Device)
 		}
-		o.log.Info("Using configured disk device", "device", o.cfg.Provision.Disk.Device)
+		o.log.Info("using configured disk device", "device", o.cfg.Provision.Disk.Device)
 		o.targetDisk = o.cfg.Provision.Disk.Device
 		return nil
 	}
@@ -879,6 +879,19 @@ func (o *Orchestrator) runHealthChecks(ctx context.Context) error {
 
 func (o *Orchestrator) reportSuccess(ctx context.Context) error {
 	return o.provider.ReportStatus(ctx, config.StatusSuccess, "provisioning complete")
+}
+
+// RunCheck executes hardware health checks without provisioning prerequisites.
+// Unlike DryRun, it does not require image URLs or other provisioning config.
+func (o *Orchestrator) RunCheck(ctx context.Context) error {
+	_ = o.provider.ReportStatus(ctx, config.StatusInit, "health-check")
+	o.cfg.Health.Enabled = true
+	if err := o.runHealthChecks(ctx); err != nil {
+		_ = o.provider.ReportStatus(ctx, config.StatusError, err.Error())
+		return err
+	}
+	_ = o.provider.ReportStatus(ctx, config.StatusSuccess, "health checks passed")
+	return nil
 }
 
 // DumpDebugState logs system state useful for diagnosing failures.

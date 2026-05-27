@@ -233,7 +233,7 @@ func runCAPRF(ctx context.Context) {
 		runStandby(ctx, client, cfg, netMode, diskMgr)
 		return // standby handles its own lifecycle
 	case "check":
-		if err := orch.DryRun(ctx); err != nil {
+		if err := orch.RunCheck(ctx); err != nil {
 			slog.Error("health check failed", "error", err)
 		}
 		// Do not return here — continue to teardown and reboot.
