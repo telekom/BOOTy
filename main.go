@@ -244,7 +244,7 @@ func runCAPRF(ctx context.Context) {
 	slog.Info("executing mode", "mode", mode.Name())
 	modeErr := mode.Run(ctx)
 
-	slog.Info("BOOTy CAPRF complete")
+	slog.Info("CAPRF run complete")
 
 	// Handle mode-specific exit behavior before network teardown,
 	// so rescue shell SSH access remains available.

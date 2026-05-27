@@ -386,8 +386,15 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 		return err
 	}
 
-	if o.cfg.Provision.Disk.SecureErase {
-		o.log.Info("Secure erase enabled, performing hardware-level erase")
+	// Use deprovision-specific SecureErase when in a deprovision mode, otherwise
+	// fall back to the provision-level setting.
+	secureErase := o.cfg.Provision.Disk.SecureErase
+	mode := o.cfg.Mode
+	if mode == "deprovision" || mode == "soft-deprovision" || mode == "soft" || mode == "hard" {
+		secureErase = o.cfg.Deprovision.SecureErase || o.cfg.Provision.Disk.SecureErase
+	}
+	if secureErase {
+		o.log.Info("secure erase enabled, performing hardware-level erase")
 		return o.disk.SecureEraseAllDisks(ctx)
 	}
 	return o.disk.WipeAllDisks(ctx)
@@ -881,18 +888,6 @@ func (o *Orchestrator) reportSuccess(ctx context.Context) error {
 	return o.provider.ReportStatus(ctx, config.StatusSuccess, "provisioning complete")
 }
 
-// RunCheck executes hardware health checks without provisioning prerequisites.
-// Unlike DryRun, it does not require image URLs or other provisioning config.
-func (o *Orchestrator) RunCheck(ctx context.Context) error {
-	_ = o.provider.ReportStatus(ctx, config.StatusInit, "health-check")
-	o.cfg.Health.Enabled = true
-	if err := o.runHealthChecks(ctx); err != nil {
-		_ = o.provider.ReportStatus(ctx, config.StatusError, err.Error())
-		return err
-	}
-	_ = o.provider.ReportStatus(ctx, config.StatusSuccess, "health checks passed")
-	return nil
-}
 
 // DumpDebugState logs system state useful for diagnosing failures.
 // BOOTy runs as PID 1 in an initramfs — this dump is the only diagnostic
