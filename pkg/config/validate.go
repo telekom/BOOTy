@@ -61,32 +61,30 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("config validation: %s", strings.Join(errs, "; "))
 	}
 
-	// Normalize case-insensitive fields so downstream code can do plain equality checks.
-	if c.Provision.Image.ChecksumType != "" {
-		c.Provision.Image.ChecksumType = strings.ToLower(c.Provision.Image.ChecksumType)
+	c.normalize()
+	return nil
+}
+
+// normalize lowercases or uppercases case-insensitive enum fields so downstream
+// code can use plain equality comparisons without calling ToLower/ToUpper.
+func (c *Config) normalize() {
+	lowerFields := []*string{
+		&c.Provision.Image.ChecksumType,
+		&c.Network.Mode,
+		&c.Network.BGP.PeerMode,
+		&c.Network.BGP.UnderlayAF,
+		&c.Network.BGP.OverlayType,
+		&c.Provision.CloudInit.Datasource,
+		&c.Rescue.Mode,
 	}
-	if c.Network.Mode != "" {
-		c.Network.Mode = strings.ToLower(c.Network.Mode)
-	}
-	if c.Network.BGP.PeerMode != "" {
-		c.Network.BGP.PeerMode = strings.ToLower(c.Network.BGP.PeerMode)
-	}
-	if c.Network.BGP.UnderlayAF != "" {
-		c.Network.BGP.UnderlayAF = strings.ToLower(c.Network.BGP.UnderlayAF)
-	}
-	if c.Network.BGP.OverlayType != "" {
-		c.Network.BGP.OverlayType = strings.ToLower(c.Network.BGP.OverlayType)
-	}
-	if c.Provision.CloudInit.Datasource != "" {
-		c.Provision.CloudInit.Datasource = strings.ToLower(c.Provision.CloudInit.Datasource)
-	}
-	if c.Rescue.Mode != "" {
-		c.Rescue.Mode = strings.ToLower(c.Rescue.Mode)
+	for _, f := range lowerFields {
+		if *f != "" {
+			*f = strings.ToLower(*f)
+		}
 	}
 	if c.Transport.TokenAlgorithm != "" {
 		c.Transport.TokenAlgorithm = strings.ToUpper(c.Transport.TokenAlgorithm)
 	}
-	return nil
 }
 
 // minDevicesForLevel returns the minimum number of member devices required
