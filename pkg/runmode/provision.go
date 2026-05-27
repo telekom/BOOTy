@@ -4,6 +4,7 @@ package runmode
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/telekom/BOOTy/pkg/provision"
@@ -46,7 +47,7 @@ func (m *ProvisionMode) Run(ctx context.Context) error {
 			retryState.RecordAttempt(err)
 			slog.Info("retrying provisioning", "attempt", retryState.Attempts, "delay", rescueCfg.RetryDelay)
 			if !sleepWithContext(ctx, rescueCfg.RetryDelay) {
-				return ctx.Err()
+				return fmt.Errorf("retry canceled: %w", ctx.Err())
 			}
 			continue
 		case rescue.ModeShell:
@@ -55,7 +56,7 @@ func (m *ProvisionMode) Run(ctx context.Context) error {
 		case rescue.ModeWait:
 			slog.Info("waiting for manual intervention")
 			<-ctx.Done()
-			return ctx.Err()
+			return fmt.Errorf("wait mode canceled: %w", ctx.Err())
 		default:
 			return err
 		}

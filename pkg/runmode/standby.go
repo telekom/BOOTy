@@ -42,7 +42,7 @@ func (m *StandbyMode) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			slog.Info("standby context canceled, shutting down")
-			return ctx.Err()
+			return fmt.Errorf("standby canceled: %w", ctx.Err())
 
 		case <-heartbeatTicker.C:
 			if err := m.deps.Client.Heartbeat(ctx); err != nil {
@@ -123,7 +123,7 @@ func (m *StandbyMode) handleProvision(ctx context.Context, cmd config.Command) *
 		case rescue.ModeRetry:
 			retryState.RecordAttempt(provErr)
 			if !sleepWithContext(ctx, rescueCfg.RetryDelay) {
-				return &commandResult{err: ctx.Err()}
+				return &commandResult{err: fmt.Errorf("retry canceled: %w", ctx.Err())}
 			}
 			continue
 		case rescue.ModeShell:
@@ -132,7 +132,7 @@ func (m *StandbyMode) handleProvision(ctx context.Context, cmd config.Command) *
 		case rescue.ModeWait:
 			slog.Info("waiting for manual intervention")
 			<-ctx.Done()
-			return &commandResult{err: ctx.Err()}
+			return &commandResult{err: fmt.Errorf("wait mode canceled: %w", ctx.Err())}
 		default:
 			// ModeReboot
 		}
