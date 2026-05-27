@@ -25,8 +25,9 @@ type LoadOptions struct {
 // The format is detected from the file extension:
 //   - .yaml / .yml → YAML
 //   - .json → JSON
-//   - anything else → shell vars format (export KEY="VALUE")
 //
+// Other extensions return an error. Legacy shell vars files are handled
+// separately via the CAPRF client's ParseVars path.
 // The loaded config is validated before returning.
 func Load(path string) (*Config, error) {
 	return LoadWithOptions(LoadOptions{Path: path})
@@ -42,7 +43,7 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open config file: %w", err)
 	}
-	defer f.Close() //nolint:errcheck
+	defer f.Close() //nolint:errcheck // read-only file, close error is harmless
 
 	ext := strings.ToLower(filepath.Ext(opts.Path))
 	var cfg *Config
