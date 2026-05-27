@@ -62,14 +62,14 @@ func TestVarsParsingFromCAPRFMock(t *testing.T) {
 	if cfg.Mode != "provision" {
 		t.Errorf("mode = %q, want provision", cfg.Mode)
 	}
-	if cfg.Token != "e2e-fabric-token" {
-		t.Errorf("token = %q, want e2e-fabric-token", cfg.Token)
+	if cfg.Transport.Token != "e2e-fabric-token" {
+		t.Errorf("token = %q, want e2e-fabric-token", cfg.Transport.Token)
 	}
-	if len(cfg.ImageURLs) != 1 {
-		t.Errorf("image URLs = %v, want 1 entry", cfg.ImageURLs)
+	if len(cfg.Provision.Image.URLs) != 1 {
+		t.Errorf("image URLs = %v, want 1 entry", cfg.Provision.Image.URLs)
 	}
-	if cfg.MinDiskSizeGB != 50 {
-		t.Errorf("min disk = %d, want 50", cfg.MinDiskSizeGB)
+	if cfg.Provision.Disk.MinSizeGB != 50 {
+		t.Errorf("min disk = %d, want 50", cfg.Provision.Disk.MinSizeGB)
 	}
 	if cfg.UnderlaySubnet == "" {
 		t.Error("underlay_subnet should be set")
@@ -80,16 +80,16 @@ func TestVarsParsingFromCAPRFMock(t *testing.T) {
 	if cfg.IPMISubnet == "" {
 		t.Error("ipmi_subnet should be set")
 	}
-	if cfg.ProviderID != "redfish://clab-e2e/host-01" {
-		t.Errorf("provider_id = %q", cfg.ProviderID)
+	if cfg.Provision.ProviderID != "redfish://clab-e2e/host-01" {
+		t.Errorf("provider_id = %q", cfg.Provision.ProviderID)
 	}
-	if cfg.Region != "eu-central-1" {
-		t.Errorf("region = %q", cfg.Region)
+	if cfg.Provision.Region != "eu-central-1" {
+		t.Errorf("region = %q", cfg.Provision.Region)
 	}
-	if cfg.FailureDomain != "rack-a" {
-		t.Errorf("failure_domain = %q", cfg.FailureDomain)
+	if cfg.Provision.FailureDomain != "rack-a" {
+		t.Errorf("failure_domain = %q", cfg.Provision.FailureDomain)
 	}
-	t.Logf("Parsed vars: hostname=%s images=%v region=%s", cfg.Hostname, cfg.ImageURLs, cfg.Region)
+	t.Logf("Parsed vars: hostname=%s images=%v region=%s", cfg.Hostname, cfg.Provision.Image.URLs, cfg.Provision.Region)
 }
 
 func TestCAPRFClientStatusLifecycle(t *testing.T) {
@@ -99,11 +99,13 @@ func TestCAPRFClientStatusLifecycle(t *testing.T) {
 	base := fmt.Sprintf("http://%s", ip)
 
 	client := caprf.NewFromConfig(&config.MachineConfig{
-		Token:      "e2e-fabric-token",
-		InitURL:    base + "/status/init",
-		SuccessURL: base + "/status/success",
-		ErrorURL:   base + "/status/error",
-		LogURL:     base + "/log",
+		Transport: config.TransportConfig{
+			Token:      "e2e-fabric-token",
+			InitURL:    base + "/status/init",
+			SuccessURL: base + "/status/success",
+			ErrorURL:   base + "/status/error",
+			LogURL:     base + "/log",
+		},
 	})
 	ctx := context.Background()
 
@@ -129,9 +131,11 @@ func TestCAPRFClientLogAndDebugShipping(t *testing.T) {
 	base := fmt.Sprintf("http://%s", ip)
 
 	client := caprf.NewFromConfig(&config.MachineConfig{
-		Token:    "e2e-token",
-		LogURL:   base + "/log",
-		DebugURL: base + "/debug",
+		Transport: config.TransportConfig{
+			Token:    "e2e-token",
+			LogURL:   base + "/log",
+			DebugURL: base + "/debug",
+		},
 	})
 	ctx := context.Background()
 
@@ -146,8 +150,10 @@ func TestCAPRFClientFetchCommandsEmpty(t *testing.T) {
 
 	ip := containerMgmtIP(t, "clab-booty-lab-caprf-mock")
 	client := caprf.NewFromConfig(&config.MachineConfig{
-		Token:       "e2e-token",
-		CommandsURL: fmt.Sprintf("http://%s/commands", ip),
+		Transport: config.TransportConfig{
+			Token:       "e2e-token",
+			CommandsURL: fmt.Sprintf("http://%s/commands", ip),
+		},
 	})
 
 	cmds, err := client.FetchCommands(context.Background())
@@ -167,8 +173,10 @@ func TestCAPRFClientFetchCommandsWithData(t *testing.T) {
 
 	ip := containerMgmtIP(t, "clab-booty-lab-caprf-mock")
 	client := caprf.NewFromConfig(&config.MachineConfig{
-		Token:       "e2e-token",
-		CommandsURL: fmt.Sprintf("http://%s/commands-data", ip),
+		Transport: config.TransportConfig{
+			Token:       "e2e-token",
+			CommandsURL: fmt.Sprintf("http://%s/commands-data", ip),
+		},
 	})
 
 	cmds, err := client.FetchCommands(context.Background())
@@ -191,8 +199,10 @@ func TestCAPRFClientHeartbeatThroughGoClient(t *testing.T) {
 
 	ip := containerMgmtIP(t, "clab-booty-lab-caprf-mock")
 	client := caprf.NewFromConfig(&config.MachineConfig{
-		Token:        "e2e-token",
-		HeartbeatURL: fmt.Sprintf("http://%s/status/heartbeat", ip),
+		Transport: config.TransportConfig{
+			Token:        "e2e-token",
+			HeartbeatURL: fmt.Sprintf("http://%s/status/heartbeat", ip),
+		},
 	})
 
 	assertInsecureTransportBehavior(t, "Heartbeat", client.Heartbeat(context.Background()))
@@ -486,11 +496,11 @@ func TestFullProvisioningFlow(t *testing.T) {
 	// Step 2: Create CAPRF client, report init
 	// Override URLs to use management IPs (vars file has overlay IPs)
 	t.Log("Step 2: Reporting init status via CAPRF client")
-	mcfg.InitURL = fmt.Sprintf("http://%s/status/init", capIP)
-	mcfg.SuccessURL = fmt.Sprintf("http://%s/status/success", capIP)
-	mcfg.ErrorURL = fmt.Sprintf("http://%s/status/error", capIP)
-	mcfg.LogURL = fmt.Sprintf("http://%s/log", capIP)
-	mcfg.DebugURL = fmt.Sprintf("http://%s/debug", capIP)
+	mcfg.Transport.InitURL = fmt.Sprintf("http://%s/status/init", capIP)
+	mcfg.Transport.SuccessURL = fmt.Sprintf("http://%s/status/success", capIP)
+	mcfg.Transport.ErrorURL = fmt.Sprintf("http://%s/status/error", capIP)
+	mcfg.Transport.LogURL = fmt.Sprintf("http://%s/log", capIP)
+	mcfg.Transport.DebugURL = fmt.Sprintf("http://%s/debug", capIP)
 
 	client := caprf.NewFromConfig(mcfg)
 	ctx := context.Background()

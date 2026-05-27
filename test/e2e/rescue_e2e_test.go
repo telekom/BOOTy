@@ -36,22 +36,22 @@ func TestRescueModeVarsParsing(t *testing.T) {
 	if cfg.Mode != "provision" {
 		t.Errorf("Mode = %q, want %q", cfg.Mode, "provision")
 	}
-	if cfg.RescueMode != "shell" {
-		t.Errorf("RescueMode = %q, want %q", cfg.RescueMode, "shell")
+	if cfg.Rescue.Mode != "shell" {
+		t.Errorf("RescueMode = %q, want %q", cfg.Rescue.Mode, "shell")
 	}
 	if cfg.Hostname != "rescue-host" {
 		t.Errorf("Hostname = %q, want %q", cfg.Hostname, "rescue-host")
 	}
-	if cfg.RescueSSHPubKey != "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest admin@ops" {
-		t.Errorf("RescueSSHPubKey = %q", cfg.RescueSSHPubKey)
+	if cfg.Rescue.SSHPubKey != "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest admin@ops" {
+		t.Errorf("RescueSSHPubKey = %q", cfg.Rescue.SSHPubKey)
 	}
-	if cfg.RescuePasswordHash != "$6$rounds=5000$salt$hash" {
-		t.Errorf("RescuePasswordHash = %q", cfg.RescuePasswordHash)
+	if cfg.Rescue.PasswordHash != "$6$rounds=5000$salt$hash" {
+		t.Errorf("RescuePasswordHash = %q", cfg.Rescue.PasswordHash)
 	}
-	if cfg.RescueTimeout != 3600 {
-		t.Errorf("RescueTimeout = %d, want 3600", cfg.RescueTimeout)
+	if cfg.Rescue.Timeout != 3600 {
+		t.Errorf("RescueTimeout = %d, want 3600", cfg.Rescue.Timeout)
 	}
-	if !cfg.RescueAutoMountDisks {
+	if !cfg.Rescue.AutoMountDisks {
 		t.Error("RescueAutoMountDisks = false, want true")
 	}
 }
