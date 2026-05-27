@@ -10,7 +10,7 @@ import (
 func (c *Config) Validate() error {
 	validators := []func() string{
 		func() string {
-			return validateEnum(c.Mode, "mode", "provision", "deprovision", "soft-deprovision", "standby", "dry-run", "check")
+			return validateEnum(c.Mode, "mode", "provision", "deprovision", "soft-deprovision", "soft", "hard", "standby", "dry-run", "check")
 		},
 		func() string {
 			return validateEnum(c.Provision.Image.Mode, "provision.image.mode", "whole-disk", "partition")

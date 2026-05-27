@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/telekom/BOOTy/pkg/caprf"
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/crash"
@@ -25,10 +27,8 @@ import (
 	"github.com/telekom/BOOTy/pkg/network/netplan"
 	"github.com/telekom/BOOTy/pkg/network/vlan"
 	"github.com/telekom/BOOTy/pkg/provision"
-	"github.com/telekom/BOOTy/pkg/rescue"
-	"golang.org/x/sys/unix"
-
 	"github.com/telekom/BOOTy/pkg/realm"
+	"github.com/telekom/BOOTy/pkg/rescue"
 	"github.com/telekom/BOOTy/pkg/ux"
 )
 
@@ -233,7 +233,7 @@ func runCAPRF(ctx context.Context) {
 		runStandby(ctx, client, cfg, netMode, diskMgr)
 		return // standby handles its own lifecycle
 	case "check":
-		if err := orch.DryRun(ctx); err != nil {
+		if err := orch.RunCheck(ctx); err != nil {
 			slog.Error("health check failed", "error", err)
 		}
 		// Do not return here — continue to teardown and reboot.
