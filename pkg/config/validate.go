@@ -60,6 +60,32 @@ func (c *Config) Validate() error {
 	if len(errs) > 0 {
 		return fmt.Errorf("config validation: %s", strings.Join(errs, "; "))
 	}
+
+	// Normalize case-insensitive fields so downstream code can do plain equality checks.
+	if c.Provision.Image.ChecksumType != "" {
+		c.Provision.Image.ChecksumType = strings.ToLower(c.Provision.Image.ChecksumType)
+	}
+	if c.Network.Mode != "" {
+		c.Network.Mode = strings.ToLower(c.Network.Mode)
+	}
+	if c.Network.BGP.PeerMode != "" {
+		c.Network.BGP.PeerMode = strings.ToLower(c.Network.BGP.PeerMode)
+	}
+	if c.Network.BGP.UnderlayAF != "" {
+		c.Network.BGP.UnderlayAF = strings.ToLower(c.Network.BGP.UnderlayAF)
+	}
+	if c.Network.BGP.OverlayType != "" {
+		c.Network.BGP.OverlayType = strings.ToLower(c.Network.BGP.OverlayType)
+	}
+	if c.Provision.CloudInit.Datasource != "" {
+		c.Provision.CloudInit.Datasource = strings.ToLower(c.Provision.CloudInit.Datasource)
+	}
+	if c.Rescue.Mode != "" {
+		c.Rescue.Mode = strings.ToLower(c.Rescue.Mode)
+	}
+	if c.Transport.TokenAlgorithm != "" {
+		c.Transport.TokenAlgorithm = strings.ToUpper(c.Transport.TokenAlgorithm)
+	}
 	return nil
 }
 
