@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -78,7 +79,7 @@ func loadYAML(r io.Reader, strict bool) (*Config, error) {
 	// Reject multi-document YAML files to match JSON behavior and avoid
 	// silently ignoring extra configuration in trailing documents.
 	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("parsing YAML: unexpected trailing content after first document")
 	}
 	return &cfg, nil
