@@ -27,7 +27,7 @@ type InspectOptions struct {
 
 // ShouldInspect reports whether crash inspection should run for cfg.
 func ShouldInspect(cfg *config.MachineConfig) (ok bool, reason string) {
-	if cfg == nil || !cfg.CrashArtifactsEnabled {
+	if cfg == nil || !cfg.Provision.CrashArtifacts.Enabled {
 		return false, "disabled"
 	}
 	mode := strings.TrimSpace(cfg.Mode)
@@ -106,7 +106,7 @@ func hasUploadEndpoint(cfg *config.MachineConfig) bool {
 	if cfg == nil {
 		return false
 	}
-	return strings.TrimSpace(cfg.CrashArtifactsPrepareURL) != "" || strings.TrimSpace(cfg.CrashArtifactsUploadURL) != ""
+	return strings.TrimSpace(cfg.Provision.CrashArtifacts.PrepareURL) != "" || strings.TrimSpace(cfg.Provision.CrashArtifacts.UploadURL) != ""
 }
 
 func resolveRootPartition(ctx context.Context, cfg *config.MachineConfig, diskMgr *disk.Manager) (targetDisk string, root *disk.Partition, skipReason string, err error) {
@@ -126,7 +126,7 @@ func resolveRootPartition(ctx context.Context, cfg *config.MachineConfig, diskMg
 }
 
 func collectMountedRoot(ctx context.Context, cfg *config.MachineConfig, targetDisk, rootNode, mountPoint string, opts InspectOptions) (*CollectResult, error) {
-	maxMB := cfg.CrashArtifactsMaxMB
+	maxMB := cfg.Provision.CrashArtifacts.MaxMB
 	if maxMB <= 0 {
 		maxMB = config.DefaultCrashArtifactsMaxMB
 	}
@@ -169,17 +169,17 @@ func uploadCollectedCrash(ctx context.Context, uploader Uploader, collectResult 
 }
 
 func resolveTargetDisk(ctx context.Context, cfg *config.MachineConfig, diskMgr *disk.Manager) (string, error) {
-	if cfg != nil && cfg.PartitionLayout != nil {
-		if device := strings.TrimSpace(cfg.PartitionLayout.Device); device != "" {
+	if cfg != nil && cfg.Provision.Disk.PartitionLayout != nil {
+		if device := strings.TrimSpace(cfg.Provision.Disk.PartitionLayout.Device); device != "" {
 			return device, nil
 		}
 	}
-	if cfg != nil && strings.TrimSpace(cfg.DiskDevice) != "" {
-		return strings.TrimSpace(cfg.DiskDevice), nil
+	if cfg != nil && strings.TrimSpace(cfg.Provision.Disk.Device) != "" {
+		return strings.TrimSpace(cfg.Provision.Disk.Device), nil
 	}
 	minSize := 0
 	if cfg != nil {
-		minSize = cfg.MinDiskSizeGB
+		minSize = cfg.Provision.Disk.MinSizeGB
 	}
 	return diskMgr.DetectDisk(ctx, minSize)
 }

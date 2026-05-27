@@ -124,7 +124,8 @@ func TestSetHostnameEmpty(t *testing.T) {
 func TestConfigureKubeletProviderID(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
-	cfg := &config.MachineConfig{ProviderID: "redfish://host/sys/1"}
+	cfg := &config.MachineConfig{}
+	cfg.Provision.ProviderID = "redfish://host/sys/1"
 	if err := c.ConfigureKubelet(cfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -142,10 +143,9 @@ func TestConfigureKubeletProviderID(t *testing.T) {
 func TestConfigureKubeletNodeLabels(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
-	cfg := &config.MachineConfig{
-		FailureDomain: "dc1-az1",
-		Region:        "eu-central",
-	}
+	cfg := &config.MachineConfig{}
+	cfg.Provision.FailureDomain = "dc1-az1"
+	cfg.Provision.Region = "eu-central"
 	if err := c.ConfigureKubelet(cfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -175,11 +175,10 @@ func TestConfigureKubeletNoLabels(t *testing.T) {
 func TestConfigureKubeletCombinedExtraArgs(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
-	cfg := &config.MachineConfig{
-		ProviderID:    "redfish://host/sys/1",
-		FailureDomain: "dc1-az1",
-		Region:        "eu-central",
-	}
+	cfg := &config.MachineConfig{}
+	cfg.Provision.ProviderID = "redfish://host/sys/1"
+	cfg.Provision.FailureDomain = "dc1-az1"
+	cfg.Provision.Region = "eu-central"
 
 	if err := c.ConfigureKubelet(cfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -213,7 +212,8 @@ func TestConfigureDNS(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(c.rootDir, "etc"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cfg := &config.MachineConfig{DNSResolvers: "8.8.8.8,1.1.1.1"}
+	cfg := &config.MachineConfig{}
+	cfg.Network.DNSResolvers = "8.8.8.8,1.1.1.1"
 	if err := c.ConfigureDNS(cfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestConfigureDNS(t *testing.T) {
 func TestConfigureDNSEmpty(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
-	cfg := &config.MachineConfig{DNSResolvers: ""}
+	cfg := &config.MachineConfig{}
 	if err := c.ConfigureDNS(cfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -243,7 +243,8 @@ func TestConfigureDNSEmpty(t *testing.T) {
 func TestConfigureGRUB(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
-	cfg := &config.MachineConfig{ExtraKernelParams: "quiet splash"}
+	cfg := &config.MachineConfig{}
+	cfg.Provision.ExtraKernelParams = "quiet splash"
 	if err := c.ConfigureGRUB(context.Background(), cfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -644,8 +645,10 @@ func TestRescueAction(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.MachineConfig{}
+			cfg.Rescue.Mode = tc.rescueMode
 			orch := &Orchestrator{
-				cfg: &config.MachineConfig{RescueMode: tc.rescueMode},
+				cfg: cfg,
 				log: slog.Default(),
 			}
 			state := &rescue.RetryState{}
@@ -774,8 +777,10 @@ func TestCopyTreePathTraversal(t *testing.T) {
 }
 
 func TestRescueAction_RetryExhausted(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Rescue.Mode = "retry"
 	orch := &Orchestrator{
-		cfg: &config.MachineConfig{RescueMode: "retry"},
+		cfg: cfg,
 		log: slog.Default(),
 	}
 	state := &rescue.RetryState{Attempts: 3, MaxRetries: 3}

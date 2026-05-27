@@ -42,7 +42,7 @@ func TestDeprovisionHardStepSequenceE2E(t *testing.T) {
 	cmd.set("lvm", []byte(""), nil)
 	cmd.set("chroot", []byte("BootCurrent: 0001\nBootOrder: 0001"), nil)
 
-	cfg := &config.MachineConfig{Mode: "hard", DNSResolvers: "8.8.8.8"}
+	cfg := &config.MachineConfig{Mode: "hard", Network: config.NetworkConfig{DNSResolvers: "8.8.8.8"}}
 	provider := newMockProvider(cfg)
 	diskMgr := disk.NewManager(cmd)
 	orch := provision.NewOrchestrator(cfg, provider, diskMgr)
@@ -107,7 +107,7 @@ func TestDeprovisionSoftStepSequenceE2E(t *testing.T) {
 	cmd.set("mount", []byte(""), nil)
 	cmd.set("umount", []byte(""), nil)
 
-	cfg := &config.MachineConfig{Mode: "soft", DNSResolvers: "8.8.8.8"}
+	cfg := &config.MachineConfig{Mode: "soft", Network: config.NetworkConfig{DNSResolvers: "8.8.8.8"}}
 	provider := newMockProvider(cfg)
 	orch := provision.NewOrchestrator(cfg, provider, disk.NewManager(cmd))
 
@@ -139,7 +139,7 @@ func TestDeprovisionDefaultIsHardE2E(t *testing.T) {
 	cmd.set("lvm", []byte(""), nil)
 	cmd.set("chroot", []byte("BootCurrent: 0001"), nil)
 
-	cfg := &config.MachineConfig{Mode: "", DNSResolvers: "8.8.8.8"}
+	cfg := &config.MachineConfig{Mode: "", Network: config.NetworkConfig{DNSResolvers: "8.8.8.8"}}
 	orch := provision.NewOrchestrator(cfg, newMockProvider(cfg), disk.NewManager(cmd))
 	_ = orch.Deprovision(context.Background())
 
@@ -159,7 +159,7 @@ func TestDeprovisionReportsErrorE2E(t *testing.T) {
 	// wipefs must fail for all disks so WipeAllDisks returns an error.
 	cmd.set("wipefs", nil, fmt.Errorf("disk wipe failed"))
 
-	cfg := &config.MachineConfig{Mode: "hard", DNSResolvers: "8.8.8.8"}
+	cfg := &config.MachineConfig{Mode: "hard", Network: config.NetworkConfig{DNSResolvers: "8.8.8.8"}}
 	provider := newMockProvider(cfg)
 	orch := provision.NewOrchestrator(cfg, provider, disk.NewManager(cmd))
 
@@ -285,7 +285,7 @@ func TestRAIDLVMProvisionOrderE2E(t *testing.T) {
 	})
 	cmd.set("sfdisk", sfdiskOut, nil)
 
-	cfg := &config.MachineConfig{Mode: "provision", Hostname: "raid-node", DNSResolvers: "8.8.8.8", ImageURLs: []string{"http://img.local/test.gz"}}
+	cfg := &config.MachineConfig{Mode: "provision", Hostname: "raid-node", Network: config.NetworkConfig{DNSResolvers: "8.8.8.8"}, Provision: config.ProvisionConfig{Image: config.ImageConfig{URLs: []string{"http://img.local/test.gz"}}}}
 	orch := provision.NewOrchestrator(cfg, newMockProvider(cfg), disk.NewManager(cmd))
 	_ = orch.Provision(context.Background())
 
@@ -316,7 +316,7 @@ func TestRAIDLVMProvisionOrderE2E(t *testing.T) {
 func TestDryRunFullPassE2E(t *testing.T) {
 	provider := newMockProvider(&config.MachineConfig{})
 	cmd := newMockCommander()
-	cfg := &config.MachineConfig{DryRun: true, ImageURLs: []string{"http://example.com/test.img"}, Hostname: "dry-run-node", HealthChecksEnabled: false, InventoryEnabled: false}
+	cfg := &config.MachineConfig{DryRun: true, Hostname: "dry-run-node", Health: config.HealthConfig{Enabled: false}, Provision: config.ProvisionConfig{Image: config.ImageConfig{URLs: []string{"http://example.com/test.img"}}, Inventory: config.InventoryConfig{Enabled: false}}}
 	orch := provision.NewOrchestrator(cfg, provider, disk.NewManager(cmd))
 	_ = orch.DryRun(context.Background())
 	if len(provider.getStatuses()) == 0 {
@@ -343,7 +343,7 @@ func TestDryRunFailsWithoutImagesE2E(t *testing.T) {
 
 func TestDryRunReportsWarningsE2E(t *testing.T) {
 	provider := newMockProvider(&config.MachineConfig{})
-	cfg := &config.MachineConfig{DryRun: true, ImageURLs: []string{"http://example.com/test.img"}, Hostname: "warn-node", HealthChecksEnabled: false, InventoryEnabled: false}
+	cfg := &config.MachineConfig{DryRun: true, Hostname: "warn-node", Health: config.HealthConfig{Enabled: false}, Provision: config.ProvisionConfig{Image: config.ImageConfig{URLs: []string{"http://example.com/test.img"}}, Inventory: config.InventoryConfig{Enabled: false}}}
 	orch := provision.NewOrchestrator(cfg, provider, disk.NewManager(newMockCommander()))
 	_ = orch.DryRun(context.Background())
 	if len(provider.getStatuses()) == 0 {
@@ -620,7 +620,7 @@ func TestRescueApplyDefaultsRetryE2E(t *testing.T) {
 
 func TestRescueOrchestratorE2E(t *testing.T) {
 	cmd := newMockCommander()
-	cfg := &config.MachineConfig{Mode: "provision", RescueMode: "retry"}
+	cfg := &config.MachineConfig{Mode: "provision", Rescue: config.RescueConfig{Mode: "retry"}}
 	orch := provision.NewOrchestrator(cfg, newMockProvider(cfg), disk.NewManager(cmd))
 	if orch.RescueConfig().Mode != rescue.ModeRetry {
 		t.Errorf("mode = %q", orch.RescueConfig().Mode)
@@ -644,7 +644,7 @@ func TestRescueOrchestratorAllModesE2E(t *testing.T) {
 		{"wait", rescue.ModeWait}, {"retry", rescue.ModeRetry},
 	} {
 		t.Run(tc.in, func(t *testing.T) {
-			cfg := &config.MachineConfig{Mode: "provision", RescueMode: tc.in}
+			cfg := &config.MachineConfig{Mode: "provision", Rescue: config.RescueConfig{Mode: tc.in}}
 			orch := provision.NewOrchestrator(cfg, newMockProvider(cfg), disk.NewManager(newMockCommander()))
 			if orch.RescueConfig().Mode != tc.want {
 				t.Errorf("mode = %q", orch.RescueConfig().Mode)

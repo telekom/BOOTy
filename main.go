@@ -196,7 +196,7 @@ func runCAPRF(ctx context.Context) {
 	}
 
 	// Wire remote log shipping.
-	if cfg.LogURL != "" {
+	if cfg.Transport.LogURL != "" {
 		remote := caprf.NewRemoteHandler(client, slog.Default().Handler(), slog.LevelInfo, 256)
 		defer remote.Close()
 		slog.SetDefault(slog.New(remote))
@@ -205,7 +205,7 @@ func runCAPRF(ctx context.Context) {
 	slog.Info("CAPRF mode active",
 		"hostname", cfg.Hostname,
 		"mode", cfg.Mode,
-		"image_count", len(cfg.ImageURLs),
+		"image_count", len(cfg.Provision.Image.URLs),
 	)
 
 	netMode, err := setupNetworkAndTokenFlow(ctx, cfg, client)
@@ -232,17 +232,19 @@ func runCAPRF(ctx context.Context) {
 	case "standby":
 		runStandby(ctx, client, cfg, netMode, diskMgr)
 		return // standby handles its own lifecycle
+	case "check":
+		if err := orch.DryRun(ctx); err != nil {
+			slog.Error("health check failed", "error", err)
+		}
+		// Do not return here — continue to teardown and reboot.
 	case "dry-run":
-		cfg.DisableKexec = true
+		cfg.Provision.DisableKexec = true
 		if err := orch.DryRun(ctx); err != nil {
 			slog.Error("dry-run failed", "error", err)
 		}
 		// Do not return here - continue with the normal lifecycle
 		// (network teardown, reboot) so PID 1 exits cleanly.
 	case "deprovision", "soft-deprovision":
-		if cfg.Mode == "soft-deprovision" {
-			cfg.Mode = "soft"
-		}
 		if err := orch.Deprovision(ctx); err != nil {
 			slog.Error("deprovisioning failed", "error", err)
 		}
@@ -325,14 +327,14 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	if err != nil {
 		return nil, err
 	}
-	connectivityTarget := cfg.InitURL
+	connectivityTarget := cfg.Transport.InitURL
 	if connectivityTarget == "" {
-		connectivityTarget = cfg.SuccessURL
+		connectivityTarget = cfg.Transport.SuccessURL
 	}
-	if connectivityTarget == "" && cfg.CrashArtifactsEnabled {
-		connectivityTarget = cfg.CrashArtifactsPrepareURL
+	if connectivityTarget == "" && cfg.Provision.CrashArtifacts.Enabled {
+		connectivityTarget = cfg.Provision.CrashArtifacts.PrepareURL
 		if connectivityTarget == "" {
-			connectivityTarget = cfg.CrashArtifactsUploadURL
+			connectivityTarget = cfg.Provision.CrashArtifacts.UploadURL
 		}
 	}
 	if connectivityTarget != "" {
@@ -346,7 +348,7 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	// Acquire JWT after network is ready so the token endpoint is reachable.
 	if err := client.AcquireToken(ctx); err != nil {
 		slog.Error("failed to acquire jwt token", "error", err)
-		if cfg.TokenURL != "" {
+		if cfg.Transport.TokenURL != "" {
 			provision.DumpDebugState("jwt-acquire")
 			return nil, err
 		}
@@ -360,7 +362,7 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 
 	if err := client.StartTokenRenewal(ctx); err != nil {
 		slog.Error("failed to start token renewal", "error", err)
-		if cfg.TokenURL != "" {
+		if cfg.Transport.TokenURL != "" {
 			provision.DumpDebugState("jwt-renewal-start")
 			return nil, err
 		}
@@ -407,40 +409,40 @@ func ensureNetworkConnectivity(ctx context.Context, cfg *config.MachineConfig, n
 // setupNetworkMode detects and configures the appropriate network mode.
 func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.Mode, error) {
 	netCfg := &network.Config{
-		UnderlaySubnet:   cfg.UnderlaySubnet,
-		UnderlayIP:       cfg.UnderlayIP,
-		OverlaySubnet:    cfg.OverlaySubnet,
-		IPMISubnet:       cfg.IPMISubnet,
-		ASN:              cfg.ASN,
-		ProvisionVNI:     cfg.ProvisionVNI,
-		ProvisionIP:      cfg.ProvisionIP,
-		ProvisionGateway: cfg.ProvisionGateway,
-		DNSResolvers:     cfg.DNSResolvers,
-		DCGWIPs:          cfg.DCGWIPs,
-		LeafASN:          cfg.LeafASN,
-		LocalASN:         cfg.LocalASN,
-		OverlayAggregate: cfg.OverlayAggregate,
-		VPNRT:            cfg.VPNRT,
-		StaticIP:         cfg.StaticIP,
-		StaticGateway:    cfg.StaticGateway,
-		StaticIface:      cfg.StaticIface,
-		BondInterfaces:   cfg.BondInterfaces,
-		BondMode:         cfg.BondMode,
-		VRFName:          cfg.VRFName,
-		VRFTableID:       cfg.VRFTableID,
-		BGPKeepalive:     cfg.BGPKeepalive,
-		BGPHold:          cfg.BGPHold,
-		BFDTransmitMS:    cfg.BFDTransmitMS,
-		BFDReceiveMS:     cfg.BFDReceiveMS,
-		NetworkMode:      cfg.NetworkMode,
-		BGPPeerMode:      network.ParsePeerMode(cfg.BGPPeerMode),
-		BGPNeighbors:     cfg.BGPNeighbors,
-		BGPRemoteASN:     cfg.BGPRemoteASN,
-		BGPUnderlayAF:    cfg.BGPUnderlayAF,
-		BGPOverlayType:   cfg.BGPOverlayType,
-		EVPNL2Enabled:    cfg.EVPNL2Enabled,
-		BGPAuthPassword:  cfg.BGPAuthPassword,
-		BGPMinPeers:      cfg.BGPMinPeers,
+		UnderlaySubnet:   cfg.Network.EVPN.UnderlaySubnet,
+		UnderlayIP:       cfg.Network.EVPN.UnderlayIP,
+		OverlaySubnet:    cfg.Network.EVPN.OverlaySubnet,
+		IPMISubnet:       cfg.Network.IPMI.Subnet,
+		ASN:              cfg.Network.BGP.ASN,
+		ProvisionVNI:     cfg.Network.EVPN.ProvisionVNI,
+		ProvisionIP:      cfg.Network.EVPN.ProvisionIP,
+		ProvisionGateway: cfg.Network.EVPN.ProvisionGateway,
+		DNSResolvers:     cfg.Network.DNSResolvers,
+		DCGWIPs:          cfg.Network.EVPN.DCGWIPs,
+		LeafASN:          cfg.Network.EVPN.LeafASN,
+		LocalASN:         cfg.Network.EVPN.LocalASN,
+		OverlayAggregate: cfg.Network.EVPN.OverlayAggregate,
+		VPNRT:            cfg.Network.EVPN.VPNRT,
+		StaticIP:         cfg.Network.Static.IP,
+		StaticGateway:    cfg.Network.Static.Gateway,
+		StaticIface:      cfg.Network.Static.Iface,
+		BondInterfaces:   cfg.Network.Bond.Interfaces,
+		BondMode:         cfg.Network.Bond.Mode,
+		VRFName:          cfg.Network.VRF.Name,
+		VRFTableID:       cfg.Network.VRF.TableID,
+		BGPKeepalive:     cfg.Network.BGP.Keepalive,
+		BGPHold:          cfg.Network.BGP.Hold,
+		BFDTransmitMS:    cfg.Network.BGP.BFDTransmitMS,
+		BFDReceiveMS:     cfg.Network.BGP.BFDReceiveMS,
+		NetworkMode:      cfg.Network.Mode,
+		BGPPeerMode:      network.ParsePeerMode(cfg.Network.BGP.PeerMode),
+		BGPNeighbors:     cfg.Network.BGP.Neighbors,
+		BGPRemoteASN:     cfg.Network.BGP.RemoteASN,
+		BGPUnderlayAF:    cfg.Network.BGP.UnderlayAF,
+		BGPOverlayType:   cfg.Network.BGP.OverlayType,
+		EVPNL2Enabled:    cfg.Network.EVPN.L2Enabled,
+		BGPAuthPassword:  cfg.Network.BGP.AuthPassword,
+		BGPMinPeers:      cfg.Network.BGP.MinPeers,
 	}
 
 	// Auto-detect netplan configuration files injected by the provisioner.
@@ -451,8 +453,8 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 	}
 
 	// Parse VLAN configuration.
-	if cfg.VLANs != "" {
-		vlans, err := network.ParseVLANs(cfg.VLANs)
+	if cfg.Network.VLAN.Config != "" {
+		vlans, err := network.ParseVLANs(cfg.Network.VLAN.Config)
 		if err != nil {
 			return nil, fmt.Errorf("invalid VLAN configuration: %w", err)
 		}
@@ -499,7 +501,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 	// Priority: GoBGP > FRR > Static > DHCP.
 	if netCfg.IsGoBGPMode() {
 		detectIPMI(netCfg)
-		slog.Info("using GoBGP/EVPN network mode", "asn", cfg.ASN)
+		slog.Info("using GoBGP/EVPN network mode", "asn", cfg.Network.BGP.ASN)
 		stack, err := setupGoBGPStack(ctx, netCfg)
 		if err != nil {
 			slog.Error("goBGP setup failed, falling back to FRR", "error", err)
@@ -516,7 +518,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 
 	if netCfg.IsFRRMode() {
 		detectIPMI(netCfg)
-		slog.Info("using FRR/EVPN network mode", "asn", cfg.ASN)
+		slog.Info("using FRR/EVPN network mode", "asn", cfg.Network.BGP.ASN)
 		mgr := frr.NewManager(nil)
 		if err := mgr.Setup(ctx, netCfg); err != nil {
 			slog.Error("FRR network setup failed, falling back to DHCP", "error", err)
@@ -527,7 +529,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 	}
 
 	if netCfg.IsStaticMode() {
-		slog.Info("using static network mode", "ip", cfg.StaticIP)
+		slog.Info("using static network mode", "ip", cfg.Network.Static.IP)
 		mode := &network.StaticMode{}
 		if err := mode.Setup(ctx, netCfg); err != nil {
 			slog.Error("static network setup failed, falling back to DHCP", "error", err)
@@ -683,7 +685,7 @@ func detectIPMI(netCfg *network.Config) {
 // Skips kexec when disabled by config toggle or when firmware was changed during
 // provisioning (e.g. Mellanox SR-IOV), since firmware reinit requires a hard reboot.
 func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) {
-	if cfg.DisableKexec {
+	if cfg.Provision.DisableKexec {
 		slog.Info("kexec disabled by configuration, skipping")
 		return
 	}

@@ -30,7 +30,7 @@ func TestCollectIncludesArtifactsAndMetadata(t *testing.T) {
 		RootPartition: "/dev/sda2",
 		MountPoint:    root,
 		MaxBytes:      1024 * 1024,
-		Config:        &config.MachineConfig{Hostname: "node-1", ProviderID: "redfish://node-1", Mode: "provision"},
+		Config:        &config.MachineConfig{Hostname: "node-1", Provision: config.ProvisionConfig{ProviderID: "redfish://node-1"}, Mode: "provision"},
 	})
 	if err != nil {
 		t.Fatalf("Collect() error: %v", err)
@@ -121,10 +121,10 @@ func TestShouldInspectModeGuards(t *testing.T) {
 		reason string
 	}{
 		{name: "disabled", cfg: &config.MachineConfig{}, reason: "disabled"},
-		{name: "default provision", cfg: &config.MachineConfig{CrashArtifactsEnabled: true}, wantOK: true},
-		{name: "deprovision", cfg: &config.MachineConfig{CrashArtifactsEnabled: true, Mode: "deprovision"}, wantOK: true},
-		{name: "dry-run", cfg: &config.MachineConfig{CrashArtifactsEnabled: true, Mode: "dry-run"}, reason: "dry-run"},
-		{name: "standby", cfg: &config.MachineConfig{CrashArtifactsEnabled: true, Mode: "standby"}, reason: "standby"},
+		{name: "default provision", cfg: &config.MachineConfig{Provision: config.ProvisionConfig{CrashArtifacts: config.CrashArtifactsConfig{Enabled: true}}}, wantOK: true},
+		{name: "deprovision", cfg: &config.MachineConfig{Provision: config.ProvisionConfig{CrashArtifacts: config.CrashArtifactsConfig{Enabled: true}}, Mode: "deprovision"}, wantOK: true},
+		{name: "dry-run", cfg: &config.MachineConfig{Provision: config.ProvisionConfig{CrashArtifacts: config.CrashArtifactsConfig{Enabled: true}}, Mode: "dry-run"}, reason: "dry-run"},
+		{name: "standby", cfg: &config.MachineConfig{Provision: config.ProvisionConfig{CrashArtifacts: config.CrashArtifactsConfig{Enabled: true}}, Mode: "standby"}, reason: "standby"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

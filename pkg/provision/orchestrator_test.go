@@ -56,13 +56,14 @@ func TestSetupNVMeNamespaces_NoOp(t *testing.T) {
 	if err := o.setupNVMeNamespaces(context.Background()); err != nil {
 		t.Fatalf("setupNVMeNamespaces no-op: %v", err)
 	}
-	if cfg.DiskDevice != "" {
-		t.Fatalf("DiskDevice = %q, want empty", cfg.DiskDevice)
+	if cfg.Provision.Disk.Device != "" {
+		t.Fatalf("DiskDevice = %q, want empty", cfg.Provision.Disk.Device)
 	}
 }
 
 func TestSetupNVMeNamespaces_InvalidJSON(t *testing.T) {
-	cfg := &config.MachineConfig{NVMeNamespaces: `{bad}`}
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.NVMeNamespaces = `{bad}`
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
@@ -76,9 +77,8 @@ func TestSetupNVMeNamespaces_InvalidJSON(t *testing.T) {
 }
 
 func TestSetupNVMeNamespaces_HappyPathSetsDiskDevice(t *testing.T) {
-	cfg := &config.MachineConfig{
-		NVMeNamespaces: `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":100}]}]`,
-	}
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.NVMeNamespaces = `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":100}]}]`
 	provider := &mockProvider{}
 	o, cmd := newTestOrchestratorWithCommander(t, cfg, provider)
 
@@ -88,8 +88,8 @@ func TestSetupNVMeNamespaces_HappyPathSetsDiskDevice(t *testing.T) {
 	if err := o.setupNVMeNamespaces(context.Background()); err != nil {
 		t.Fatalf("setupNVMeNamespaces: %v", err)
 	}
-	if cfg.DiskDevice != "/dev/nvme0n5" {
-		t.Fatalf("DiskDevice = %q, want /dev/nvme0n5", cfg.DiskDevice)
+	if cfg.Provision.Disk.Device != "/dev/nvme0n5" {
+		t.Fatalf("DiskDevice = %q, want /dev/nvme0n5", cfg.Provision.Disk.Device)
 	}
 }
 
@@ -183,7 +183,8 @@ func TestWipeOrSecureEraseDisks(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := &config.MachineConfig{SecureErase: tc.secureErase}
+			cfg := &config.MachineConfig{}
+			cfg.Provision.Disk.SecureErase = tc.secureErase
 			cmd := newMockCommander()
 			if tc.wipeErr != nil {
 				cmd.setResult("wipefs -af", nil, tc.wipeErr)
@@ -202,13 +203,13 @@ func TestWipeOrSecureEraseDisks(t *testing.T) {
 
 func TestWipeOrSecureEraseDisksAllowsPartitionLayoutWithImageURLsInDeprovisionMode(t *testing.T) {
 	cfg := &config.MachineConfig{
-		Mode:      "deprovision",
-		ImageURLs: []string{"http://images.local/node.img.zst"},
-		PartitionLayout: &config.PartitionLayout{
-			Table: "gpt",
-			Partitions: []config.Partition{
-				{Label: "root", Mountpoint: "/"},
-			},
+		Mode: "deprovision",
+	}
+	cfg.Provision.Image.URLs = []string{"http://images.local/node.img.zst"}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "root", Mountpoint: "/"},
 		},
 	}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
@@ -221,13 +222,13 @@ func TestWipeOrSecureEraseDisksAllowsPartitionLayoutWithImageURLsInDeprovisionMo
 
 func TestWipeOrSecureEraseDisksRejectsPartitionLayoutWithImageURLsInProvisionMode(t *testing.T) {
 	cfg := &config.MachineConfig{
-		Mode:      "provision",
-		ImageURLs: []string{"http://images.local/node.img.zst"},
-		PartitionLayout: &config.PartitionLayout{
-			Table: "gpt",
-			Partitions: []config.Partition{
-				{Label: "root", Mountpoint: "/"},
-			},
+		Mode: "provision",
+	}
+	cfg.Provision.Image.URLs = []string{"http://images.local/node.img.zst"}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "root", Mountpoint: "/"},
 		},
 	}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
@@ -244,11 +245,11 @@ func TestWipeOrSecureEraseDisksRejectsPartitionLayoutWithImageURLsInProvisionMod
 func TestWipeOrSecureEraseDisksRejectsPartitionLayoutWithoutImageURLsInProvisionMode(t *testing.T) {
 	cfg := &config.MachineConfig{
 		Mode: "provision",
-		PartitionLayout: &config.PartitionLayout{
-			Table: "gpt",
-			Partitions: []config.Partition{
-				{Label: "root", Mountpoint: "/"},
-			},
+	}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "root", Mountpoint: "/"},
 		},
 	}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
@@ -263,14 +264,13 @@ func TestWipeOrSecureEraseDisksRejectsPartitionLayoutWithoutImageURLsInProvision
 }
 
 func TestWipeOrSecureEraseDisksRejectsConflictingDeviceOverrides(t *testing.T) {
-	cfg := &config.MachineConfig{
-		DiskDevice: "/dev/sda",
-		PartitionLayout: &config.PartitionLayout{
-			Device: "/dev/sdb",
-			Table:  "gpt",
-			Partitions: []config.Partition{
-				{Label: "root", Mountpoint: "/"},
-			},
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.Device = "/dev/sda"
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+		Device: "/dev/sdb",
+		Table:  "gpt",
+		Partitions: []config.Partition{
+			{Label: "root", Mountpoint: "/"},
 		},
 	}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
@@ -285,7 +285,7 @@ func TestWipeOrSecureEraseDisksRejectsConflictingDeviceOverrides(t *testing.T) {
 }
 
 func TestCollectInventoryDisabled(t *testing.T) {
-	cfg := &config.MachineConfig{InventoryEnabled: false}
+	cfg := &config.MachineConfig{}
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
@@ -295,7 +295,7 @@ func TestCollectInventoryDisabled(t *testing.T) {
 }
 
 func TestCollectFirmwareDisabled(t *testing.T) {
-	cfg := &config.MachineConfig{FirmwareEnabled: false}
+	cfg := &config.MachineConfig{}
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
@@ -315,7 +315,7 @@ func TestOrchestratorSetHostnameEmpty(t *testing.T) {
 }
 
 func TestHealthChecksDisabled(t *testing.T) {
-	cfg := &config.MachineConfig{HealthChecksEnabled: false}
+	cfg := &config.MachineConfig{}
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
@@ -507,13 +507,12 @@ func TestLoadOrCreateCheckpoint(t *testing.T) {
 }
 
 func TestRescueConfig_WiresAllFields(t *testing.T) {
-	cfg := &config.MachineConfig{
-		RescueMode:           "shell",
-		RescueSSHPubKey:      "ssh-ed25519 AAAA...",
-		RescuePasswordHash:   "$6$rounds=4096$salt$hash",
-		RescueTimeout:        120,
-		RescueAutoMountDisks: true,
-	}
+	cfg := &config.MachineConfig{}
+	cfg.Rescue.Mode = "shell"
+	cfg.Rescue.SSHPubKey = "ssh-ed25519 AAAA..."
+	cfg.Rescue.PasswordHash = "$6$rounds=4096$salt$hash"
+	cfg.Rescue.Timeout = 120
+	cfg.Rescue.AutoMountDisks = true
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 	rc := o.RescueConfig()
@@ -564,10 +563,9 @@ func TestVerifyImageSignature_Skipped(t *testing.T) {
 }
 
 func TestVerifyImageSignature_MissingPubKey(t *testing.T) {
-	cfg := &config.MachineConfig{
-		ImageSignatureURL: "https://example.com/image.sig",
-		ImageGPGPubKey:    "",
-	}
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.SignatureURL = "https://example.com/image.sig"
+	cfg.Provision.Image.GPGPubKey = ""
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
@@ -591,7 +589,8 @@ func TestDryRunImageMode(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.MachineConfig{ImageMode: tt.mode}
+			cfg := &config.MachineConfig{}
+			cfg.Provision.Image.Mode = tt.mode
 			provider := &mockProvider{}
 			o := newTestOrchestrator(t, cfg, provider)
 			result := o.dryRunImageMode(context.Background())
@@ -630,13 +629,12 @@ func TestResolveRootFromLayoutPrefersLVMRoot(t *testing.T) {
 }
 
 func TestDetectDiskUsesPartitionLayoutDeviceOverride(t *testing.T) {
-	cfg := &config.MachineConfig{
-		PartitionLayout: &config.PartitionLayout{
-			Device: "/dev/disk/by-id/test-disk",
-			Table:  "gpt",
-			Partitions: []config.Partition{
-				{Label: "root", Mountpoint: "/"},
-			},
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+		Device: "/dev/disk/by-id/test-disk",
+		Table:  "gpt",
+		Partitions: []config.Partition{
+			{Label: "root", Mountpoint: "/"},
 		},
 	}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
@@ -650,13 +648,12 @@ func TestDetectDiskUsesPartitionLayoutDeviceOverride(t *testing.T) {
 }
 
 func TestDetectDiskTrimsPartitionLayoutDeviceOverride(t *testing.T) {
-	cfg := &config.MachineConfig{
-		PartitionLayout: &config.PartitionLayout{
-			Device: "  /dev/disk/by-id/test-disk  ",
-			Table:  "gpt",
-			Partitions: []config.Partition{
-				{Label: "root", Mountpoint: "/"},
-			},
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+		Device: "  /dev/disk/by-id/test-disk  ",
+		Table:  "gpt",
+		Partitions: []config.Partition{
+			{Label: "root", Mountpoint: "/"},
 		},
 	}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
@@ -726,12 +723,11 @@ func TestResolveRootFromLayoutMissingRoot(t *testing.T) {
 }
 
 func TestStreamImagePartitionLayoutFailsWithoutImages(t *testing.T) {
-	cfg := &config.MachineConfig{
-		PartitionLayout: &config.PartitionLayout{
-			Table: "gpt",
-			Partitions: []config.Partition{
-				{Label: "root", Mountpoint: "/"},
-			},
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "root", Mountpoint: "/"},
 		},
 	}
 	provider := &mockProvider{}
@@ -748,13 +744,12 @@ func TestStreamImagePartitionLayoutFailsWithoutImages(t *testing.T) {
 }
 
 func TestStreamImagePartitionLayoutRejectsImageURLs(t *testing.T) {
-	cfg := &config.MachineConfig{
-		ImageURLs: []string{"http://images.local/node.img.zst"},
-		PartitionLayout: &config.PartitionLayout{
-			Table: "gpt",
-			Partitions: []config.Partition{
-				{Label: "root", Mountpoint: "/"},
-			},
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{"http://images.local/node.img.zst"}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "root", Mountpoint: "/"},
 		},
 	}
 	provider := &mockProvider{}
@@ -771,13 +766,12 @@ func TestStreamImagePartitionLayoutRejectsImageURLs(t *testing.T) {
 }
 
 func TestParsePartitionsFromLayoutNoBootEFIMountpoint(t *testing.T) {
-	cfg := &config.MachineConfig{
-		PartitionLayout: &config.PartitionLayout{
-			Table: "gpt",
-			Partitions: []config.Partition{
-				{Label: "data", Filesystem: "vfat", Mountpoint: "/boot"},
-				{Label: "root", Filesystem: "ext4", Mountpoint: "/"},
-			},
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "data", Filesystem: "vfat", Mountpoint: "/boot"},
+			{Label: "root", Filesystem: "ext4", Mountpoint: "/"},
 		},
 	}
 	provider := &mockProvider{}
@@ -798,8 +792,10 @@ func TestParsePartitionsFromLayoutNoBootEFIMountpoint(t *testing.T) {
 
 func TestGrowPartitionSkippedForPartitionLayout(t *testing.T) {
 	cmd := newMockCommander()
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{Table: "gpt", Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}}}
 	o := NewOrchestrator(
-		&config.MachineConfig{PartitionLayout: &config.PartitionLayout{Table: "gpt", Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}}}},
+		cfg,
 		&mockProvider{},
 		disk.NewManager(cmd),
 	)
@@ -816,8 +812,10 @@ func TestGrowPartitionSkippedForPartitionLayout(t *testing.T) {
 
 func TestResizeFilesystemSkippedForPartitionLayout(t *testing.T) {
 	cmd := newMockCommander()
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{Table: "gpt", Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}}}
 	o := NewOrchestrator(
-		&config.MachineConfig{PartitionLayout: &config.PartitionLayout{Table: "gpt", Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}}}},
+		cfg,
 		&mockProvider{},
 		disk.NewManager(cmd),
 	)
@@ -832,7 +830,7 @@ func TestResizeFilesystemSkippedForPartitionLayout(t *testing.T) {
 }
 
 func TestInjectCloudInit_Disabled(t *testing.T) {
-	cfg := &config.MachineConfig{CloudInitEnabled: false}
+	cfg := &config.MachineConfig{}
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
@@ -842,10 +840,9 @@ func TestInjectCloudInit_Disabled(t *testing.T) {
 }
 
 func TestInjectCloudInit_UnsupportedDatasource(t *testing.T) {
-	cfg := &config.MachineConfig{
-		CloudInitEnabled:    true,
-		CloudInitDatasource: "openstack",
-	}
+	cfg := &config.MachineConfig{}
+	cfg.Provision.CloudInit.Enabled = true
+	cfg.Provision.CloudInit.Datasource = "openstack"
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
@@ -860,10 +857,10 @@ func TestInjectCloudInit_UnsupportedDatasource(t *testing.T) {
 
 func TestInjectCloudInit_NoCloudInject(t *testing.T) {
 	cfg := &config.MachineConfig{
-		CloudInitEnabled:    true,
-		CloudInitDatasource: "nocloud",
-		Hostname:            "test-host",
+		Hostname: "test-host",
 	}
+	cfg.Provision.CloudInit.Enabled = true
+	cfg.Provision.CloudInit.Datasource = "nocloud"
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
@@ -882,10 +879,10 @@ func TestInjectCloudInit_NoCloudInject(t *testing.T) {
 
 func TestInjectCloudInit_DefaultDatasourceAndStableInstanceID(t *testing.T) {
 	cfg := &config.MachineConfig{
-		CloudInitEnabled: true,
-		Hostname:         "test-host",
-		ProviderID:       "redfish://bmc.example/Systems/1",
+		Hostname: "test-host",
 	}
+	cfg.Provision.CloudInit.Enabled = true
+	cfg.Provision.ProviderID = "redfish://bmc.example/Systems/1"
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
@@ -905,10 +902,10 @@ func TestInjectCloudInit_DefaultDatasourceAndStableInstanceID(t *testing.T) {
 
 func TestInjectCloudInit_DatasourceCaseInsensitiveAndTrimmed(t *testing.T) {
 	cfg := &config.MachineConfig{
-		CloudInitEnabled:    true,
-		CloudInitDatasource: " NoCloud ",
-		Hostname:            "test-host",
+		Hostname: "test-host",
 	}
+	cfg.Provision.CloudInit.Enabled = true
+	cfg.Provision.CloudInit.Datasource = " NoCloud "
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
@@ -919,15 +916,15 @@ func TestInjectCloudInit_DatasourceCaseInsensitiveAndTrimmed(t *testing.T) {
 
 func TestInjectCloudInit_TrimmedBondAndDNSValues(t *testing.T) {
 	cfg := &config.MachineConfig{
-		CloudInitEnabled:    true,
-		CloudInitDatasource: "nocloud",
-		Hostname:            "test-host",
-		StaticIP:            "10.0.0.10/24",
-		StaticGateway:       "10.0.0.1",
-		BondInterfaces:      "eth0, eth1, ,",
-		BondMode:            "802.3ad",
-		DNSResolvers:        "8.8.8.8, 1.1.1.1, ,",
+		Hostname: "test-host",
 	}
+	cfg.Provision.CloudInit.Enabled = true
+	cfg.Provision.CloudInit.Datasource = "nocloud"
+	cfg.Network.Static.IP = "10.0.0.10/24"
+	cfg.Network.Static.Gateway = "10.0.0.1"
+	cfg.Network.Bond.Interfaces = "eth0, eth1, ,"
+	cfg.Network.Bond.Mode = "802.3ad"
+	cfg.Network.DNSResolvers = "8.8.8.8, 1.1.1.1, ,"
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
@@ -978,7 +975,8 @@ func TestDetectDisk_CharDeviceRejected(t *testing.T) {
 		t.Skipf("%s is not a character device on this host", charDevice)
 	}
 
-	cfg := &config.MachineConfig{DiskDevice: charDevice}
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.Device = charDevice
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
 	err = o.detectDisk(context.Background())
@@ -1020,9 +1018,8 @@ func TestStreamImagePartitionModeWipesDiskFirst(t *testing.T) {
 	wipeErr := fmt.Errorf("wipe failed")
 	cmd.setResult("wipefs -af", nil, wipeErr)
 
-	cfg := &config.MachineConfig{
-		ImageMode: "partition",
-	}
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = "partition"
 	o := NewOrchestrator(cfg, &mockProvider{}, disk.NewManager(cmd))
 	o.targetDisk = "/dev/sda"
 	o.bestImageURL = "http://images.local/node.img.zst"

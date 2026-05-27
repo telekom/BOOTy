@@ -197,22 +197,22 @@ func (o *Orchestrator) executeStep(ctx context.Context, step Step, cp *Checkpoin
 // RescueConfig returns the normalized rescue config derived from machine config.
 func (o *Orchestrator) RescueConfig() *rescue.Config {
 	cfg := &rescue.Config{Mode: rescue.ModeReboot}
-	if o.cfg.RescueMode != "" {
-		mode, err := rescue.ParseMode(o.cfg.RescueMode)
+	if o.cfg.Rescue.Mode != "" {
+		mode, err := rescue.ParseMode(o.cfg.Rescue.Mode)
 		if err != nil {
-			o.log.Warn("invalid rescue mode, defaulting to reboot", "mode", o.cfg.RescueMode, "error", err)
+			o.log.Warn("invalid rescue mode, defaulting to reboot", "mode", o.cfg.Rescue.Mode, "error", err)
 		} else {
 			cfg.Mode = mode
 		}
 	}
-	if o.cfg.RescueSSHPubKey != "" {
-		cfg.SSHKeys = []string{o.cfg.RescueSSHPubKey}
+	if o.cfg.Rescue.SSHPubKey != "" {
+		cfg.SSHKeys = []string{o.cfg.Rescue.SSHPubKey}
 	}
-	cfg.PasswordHash = o.cfg.RescuePasswordHash
-	if o.cfg.RescueTimeout > 0 {
-		cfg.ShellTimeout = time.Duration(o.cfg.RescueTimeout) * time.Second
+	cfg.PasswordHash = o.cfg.Rescue.PasswordHash
+	if o.cfg.Rescue.Timeout > 0 {
+		cfg.ShellTimeout = time.Duration(o.cfg.Rescue.Timeout) * time.Second
 	}
-	cfg.AutoMountDisks = o.cfg.RescueAutoMountDisks
+	cfg.AutoMountDisks = o.cfg.Rescue.AutoMountDisks
 	cfg.ApplyDefaults()
 	return cfg
 }
@@ -229,7 +229,7 @@ func (o *Orchestrator) reportInit(ctx context.Context) error {
 }
 
 func (o *Orchestrator) collectInventory(ctx context.Context) error {
-	if !o.cfg.InventoryEnabled {
+	if !o.cfg.Provision.Inventory.Enabled {
 		o.log.Info("Hardware inventory collection disabled, skipping")
 		return nil
 	}
@@ -259,7 +259,7 @@ func (o *Orchestrator) collectInventory(ctx context.Context) error {
 }
 
 func (o *Orchestrator) collectFirmware(ctx context.Context) error {
-	if !o.cfg.FirmwareEnabled {
+	if !o.cfg.Provision.Firmware.Enabled {
 		o.log.Info("Firmware reporting disabled, skipping")
 		return nil
 	}
@@ -272,10 +272,10 @@ func (o *Orchestrator) collectFirmware(ctx context.Context) error {
 		return nil
 	}
 
-	if o.cfg.FirmwareMinBIOS != "" || o.cfg.FirmwareMinBMC != "" {
+	if o.cfg.Provision.Firmware.MinBIOS != "" || o.cfg.Provision.Firmware.MinBMC != "" {
 		policy := firmware.Policy{
-			MinBIOSVersion: o.cfg.FirmwareMinBIOS,
-			MinBMCVersion:  o.cfg.FirmwareMinBMC,
+			MinBIOSVersion: o.cfg.Provision.Firmware.MinBIOS,
+			MinBMCVersion:  o.cfg.Provision.Firmware.MinBMC,
 		}
 		results := firmware.Validate(report, policy)
 		for _, r := range results {
@@ -331,7 +331,7 @@ func (o *Orchestrator) createEFIBootEntry(ctx context.Context) error {
 }
 
 func (o *Orchestrator) setupMellanox(ctx context.Context) error {
-	changed, err := o.config.SetupMellanox(ctx, o.cfg.NumVFs)
+	changed, err := o.config.SetupMellanox(ctx, o.cfg.Provision.Disk.NumVFs)
 	if err != nil {
 		return err
 	}
@@ -348,10 +348,10 @@ func (o *Orchestrator) FirmwareChanged() bool {
 }
 
 func (o *Orchestrator) setupNVMeNamespaces(ctx context.Context) error {
-	if o.cfg.NVMeNamespaces == "" {
+	if o.cfg.Provision.Disk.NVMeNamespaces == "" {
 		return nil
 	}
-	cfgs, err := disk.ParseNVMeConfig(o.cfg.NVMeNamespaces)
+	cfgs, err := disk.ParseNVMeConfig(o.cfg.Provision.Disk.NVMeNamespaces)
 	if err != nil {
 		return fmt.Errorf("parsing nvme namespace layout: %w", err)
 	}
@@ -370,12 +370,12 @@ func (o *Orchestrator) setupNVMeNamespaces(ctx context.Context) error {
 
 	// After namespace creation set DiskDevice to the first created namespace on
 	// the first configured controller so DetectDisk targets the intended OS disk.
-	if len(cfgs) > 0 && o.cfg.DiskDevice == "" {
+	if len(cfgs) > 0 && o.cfg.Provision.Disk.Device == "" {
 		firstController := cfgs[0].Controller
 		nsids := created[firstController]
 		if len(nsids) > 0 {
-			o.cfg.DiskDevice = firstController + "n" + nsids[0]
-			o.log.Info("set disk device from nvme namespace layout", "device", o.cfg.DiskDevice)
+			o.cfg.Provision.Disk.Device = firstController + "n" + nsids[0]
+			o.log.Info("set disk device from nvme namespace layout", "device", o.cfg.Provision.Disk.Device)
 		}
 	}
 	return nil
@@ -386,7 +386,7 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 		return err
 	}
 
-	if o.cfg.SecureErase {
+	if o.cfg.Provision.Disk.SecureErase {
 		o.log.Info("Secure erase enabled, performing hardware-level erase")
 		return o.disk.SecureEraseAllDisks(ctx)
 	}
@@ -397,7 +397,7 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 const errPartitionLayoutNotSupported = "partition layout provisioning is not supported yet; rootfs extraction support is still pending"
 
 func (o *Orchestrator) validatePartitionLayoutModeCompatibility() error {
-	if o.cfg.PartitionLayout == nil {
+	if o.cfg.Provision.Disk.PartitionLayout == nil {
 		return nil
 	}
 
@@ -410,17 +410,17 @@ func (o *Orchestrator) validatePartitionLayoutModeCompatibility() error {
 }
 
 func (o *Orchestrator) validatePartitionLayoutConfig() error {
-	if o.cfg.PartitionLayout == nil {
+	if o.cfg.Provision.Disk.PartitionLayout == nil {
 		return nil
 	}
 
-	layoutDevice := strings.TrimSpace(o.cfg.PartitionLayout.Device)
-	o.cfg.PartitionLayout.Device = layoutDevice
+	layoutDevice := strings.TrimSpace(o.cfg.Provision.Disk.PartitionLayout.Device)
+	o.cfg.Provision.Disk.PartitionLayout.Device = layoutDevice
 
 	// Check device conflicts before mode compatibility so that
 	// configuration errors surface immediately.
-	if layoutDevice != "" && o.cfg.DiskDevice != "" && o.cfg.DiskDevice != layoutDevice {
-		return fmt.Errorf("disk device conflict: DISK_DEVICE=%q differs from PARTITION_LAYOUT.device=%q", o.cfg.DiskDevice, layoutDevice)
+	if layoutDevice != "" && o.cfg.Provision.Disk.Device != "" && o.cfg.Provision.Disk.Device != layoutDevice {
+		return fmt.Errorf("disk device conflict: DISK_DEVICE=%q differs from PARTITION_LAYOUT.device=%q", o.cfg.Provision.Disk.Device, layoutDevice)
 	}
 
 	if err := o.validatePartitionLayoutModeCompatibility(); err != nil {
@@ -443,9 +443,9 @@ func (o *Orchestrator) validatePartitionLayoutConfig() error {
 }
 
 func (o *Orchestrator) detectDisk(ctx context.Context) error {
-	if o.cfg.PartitionLayout != nil {
-		layoutDevice := strings.TrimSpace(o.cfg.PartitionLayout.Device)
-		o.cfg.PartitionLayout.Device = layoutDevice
+	if o.cfg.Provision.Disk.PartitionLayout != nil {
+		layoutDevice := strings.TrimSpace(o.cfg.Provision.Disk.PartitionLayout.Device)
+		o.cfg.Provision.Disk.PartitionLayout.Device = layoutDevice
 		if layoutDevice != "" {
 			o.targetDisk = layoutDevice
 			o.log.Info("using partition layout device override", "device", o.targetDisk)
@@ -454,19 +454,19 @@ func (o *Orchestrator) detectDisk(ctx context.Context) error {
 	}
 
 	// If a specific disk device is configured, validate and use it directly.
-	if o.cfg.DiskDevice != "" {
-		info, err := os.Stat(o.cfg.DiskDevice)
+	if o.cfg.Provision.Disk.Device != "" {
+		info, err := os.Stat(o.cfg.Provision.Disk.Device)
 		if err != nil {
-			return fmt.Errorf("configured disk device %s: %w", o.cfg.DiskDevice, err)
+			return fmt.Errorf("configured disk device %s: %w", o.cfg.Provision.Disk.Device, err)
 		}
 		if info.Mode()&os.ModeDevice == 0 || info.Mode()&os.ModeCharDevice != 0 {
-			return fmt.Errorf("configured disk device %s is not a block device", o.cfg.DiskDevice)
+			return fmt.Errorf("configured disk device %s is not a block device", o.cfg.Provision.Disk.Device)
 		}
-		o.log.Info("Using configured disk device", "device", o.cfg.DiskDevice)
-		o.targetDisk = o.cfg.DiskDevice
+		o.log.Info("Using configured disk device", "device", o.cfg.Provision.Disk.Device)
+		o.targetDisk = o.cfg.Provision.Disk.Device
 		return nil
 	}
-	d, err := o.disk.DetectDisk(ctx, o.cfg.MinDiskSizeGB)
+	d, err := o.disk.DetectDisk(ctx, o.cfg.Provision.Disk.MinSizeGB)
 	if err != nil {
 		return err
 	}
@@ -475,13 +475,13 @@ func (o *Orchestrator) detectDisk(ctx context.Context) error {
 }
 
 func (o *Orchestrator) applyPartitionLayout(ctx context.Context) error {
-	if o.cfg.PartitionLayout == nil {
+	if o.cfg.Provision.Disk.PartitionLayout == nil {
 		return nil
 	}
 
 	device := o.targetDisk
-	layoutDevice := strings.TrimSpace(o.cfg.PartitionLayout.Device)
-	o.cfg.PartitionLayout.Device = layoutDevice
+	layoutDevice := strings.TrimSpace(o.cfg.Provision.Disk.PartitionLayout.Device)
+	o.cfg.Provision.Disk.PartitionLayout.Device = layoutDevice
 	if layoutDevice != "" {
 		device = layoutDevice
 		o.targetDisk = device
@@ -494,15 +494,15 @@ func (o *Orchestrator) applyPartitionLayout(ctx context.Context) error {
 		return fmt.Errorf("partition layout device %q is not a block device", device)
 	}
 
-	o.log.Info("applying custom partition layout", "device", device, "partitions", len(o.cfg.PartitionLayout.Partitions))
+	o.log.Info("applying custom partition layout", "device", device, "partitions", len(o.cfg.Provision.Disk.PartitionLayout.Partitions))
 
-	if err := o.disk.ApplyPartitionLayout(ctx, device, o.cfg.PartitionLayout); err != nil {
+	if err := o.disk.ApplyPartitionLayout(ctx, device, o.cfg.Provision.Disk.PartitionLayout); err != nil {
 		return fmt.Errorf("apply partition layout: %w", err)
 	}
 
 	// Apply LVM if configured.
-	if o.cfg.PartitionLayout.LVM != nil {
-		if err := o.disk.ApplyLVMConfig(ctx, device, o.cfg.PartitionLayout); err != nil {
+	if o.cfg.Provision.Disk.PartitionLayout.LVM != nil {
+		if err := o.disk.ApplyLVMConfig(ctx, device, o.cfg.Provision.Disk.PartitionLayout); err != nil {
 			return fmt.Errorf("apply LVM config: %w", err)
 		}
 	}
@@ -517,13 +517,13 @@ func (o *Orchestrator) writeFstabStep(_ context.Context) error {
 }
 
 func (o *Orchestrator) writeFstab() error {
-	if o.cfg.PartitionLayout == nil {
+	if o.cfg.Provision.Disk.PartitionLayout == nil {
 		return nil
 	}
 	device := o.targetDisk
-	fstab := disk.GenerateFstab(o.cfg.PartitionLayout, device)
-	if o.cfg.PartitionLayout.LVM != nil {
-		fstab += disk.GenerateLVMFstab(o.cfg.PartitionLayout.LVM)
+	fstab := disk.GenerateFstab(o.cfg.Provision.Disk.PartitionLayout, device)
+	if o.cfg.Provision.Disk.PartitionLayout.LVM != nil {
+		fstab += disk.GenerateLVMFstab(o.cfg.Provision.Disk.PartitionLayout.LVM)
 	}
 
 	fstabPath := filepath.Join(o.config.rootDir, "etc", "fstab")
@@ -540,7 +540,7 @@ func (o *Orchestrator) writeFstab() error {
 func (o *Orchestrator) streamImage(ctx context.Context) error {
 	// With a custom partition layout, fail fast — rootfs extraction for
 	// layout mode is not implemented yet.
-	if o.cfg.PartitionLayout != nil {
+	if o.cfg.Provision.Disk.PartitionLayout != nil {
 		return fmt.Errorf("%s", errPartitionLayoutNotSupported)
 	}
 
@@ -548,7 +548,7 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 	if bestURL == "" {
 		// verify-image may have skipped URL resolution; resolve it now.
 		var err error
-		bestURL, err = image.SelectBestSource(ctx, o.cfg.ImageURLs)
+		bestURL, err = image.SelectBestSource(ctx, o.cfg.Provision.Image.URLs)
 		if err != nil {
 			return fmt.Errorf("selecting image source: %w", err)
 		}
@@ -556,7 +556,7 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 
 	// Partition-by-partition mode: wipe first to ensure a clean slate on any
 	// retry attempt, then download and copy each partition individually.
-	if strings.EqualFold(o.cfg.ImageMode, "partition") {
+	if strings.EqualFold(o.cfg.Provision.Image.Mode, "partition") {
 		o.log.Info("Streaming image partition-by-partition", "url", bestURL, "disk", o.targetDisk)
 		if err := o.disk.WipeDisk(ctx, o.targetDisk); err != nil {
 			return fmt.Errorf("wiping disk before partition stream: %w", err)
@@ -565,10 +565,10 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 	}
 
 	var opts []image.StreamOpts
-	if o.cfg.ImageChecksum != "" {
+	if o.cfg.Provision.Image.Checksum != "" {
 		opts = append(opts, image.StreamOpts{
-			Checksum:     o.cfg.ImageChecksum,
-			ChecksumType: o.cfg.ImageChecksumType,
+			Checksum:     o.cfg.Provision.Image.Checksum,
+			ChecksumType: o.cfg.Provision.Image.ChecksumType,
 		})
 	}
 
@@ -590,11 +590,11 @@ func (o *Orchestrator) verifyImageSignature(ctx context.Context) error {
 	// intentional tradeoff: signature verification must complete before
 	// writing to disk, and piping the same stream into both GPG and the
 	// block device would require buffering multi-GB images in memory.
-	bestURL, err := image.SelectBestSource(ctx, o.cfg.ImageURLs)
+	bestURL, err := image.SelectBestSource(ctx, o.cfg.Provision.Image.URLs)
 	if err != nil {
 		// If signature verification is not configured, URL resolution failures
 		// will be caught by stream-image. Don't block provisioning here.
-		if o.cfg.ImageSignatureURL == "" {
+		if o.cfg.Provision.Image.SignatureURL == "" {
 			o.log.Info("no image signature URL configured, skipping verification")
 			return nil
 		}
@@ -602,15 +602,15 @@ func (o *Orchestrator) verifyImageSignature(ctx context.Context) error {
 	}
 	o.bestImageURL = bestURL
 
-	if o.cfg.ImageSignatureURL == "" {
+	if o.cfg.Provision.Image.SignatureURL == "" {
 		o.log.Info("no image signature URL configured, skipping verification")
 		return nil
 	}
-	if o.cfg.ImageGPGPubKey == "" {
+	if o.cfg.Provision.Image.GPGPubKey == "" {
 		return fmt.Errorf("image signature URL set but no GPG public key path configured")
 	}
 
-	return image.VerifyGPGSignature(ctx, bestURL, o.cfg.ImageSignatureURL, o.cfg.ImageGPGPubKey)
+	return image.VerifyGPGSignature(ctx, bestURL, o.cfg.Provision.Image.SignatureURL, o.cfg.Provision.Image.GPGPubKey)
 }
 
 func (o *Orchestrator) partprobe(ctx context.Context) error {
@@ -621,7 +621,7 @@ func (o *Orchestrator) parsePartitions(ctx context.Context) error {
 	// With a custom partition layout, derive root from the layout definition
 	// rather than scanning by GUID (which can pick the wrong partition when
 	// multiple Linux-type partitions exist).
-	if o.cfg.PartitionLayout != nil {
+	if o.cfg.Provision.Disk.PartitionLayout != nil {
 		return o.parsePartitionsFromLayout(ctx)
 	}
 
@@ -648,7 +648,7 @@ func (o *Orchestrator) parsePartitions(ctx context.Context) error {
 // parsePartitionsFromLayout determines boot/root partitions from the declared
 // partition layout instead of scanning GPT type GUIDs.
 func (o *Orchestrator) parsePartitionsFromLayout(_ context.Context) error {
-	layout := o.cfg.PartitionLayout
+	layout := o.cfg.Provision.Disk.PartitionLayout
 
 	if err := o.resolveRootFromLayout(layout); err != nil {
 		return err
@@ -718,7 +718,7 @@ func (o *Orchestrator) setupChrootBinds(_ context.Context) error {
 }
 
 func (o *Orchestrator) growPartition(ctx context.Context) error {
-	if o.cfg.PartitionLayout != nil {
+	if o.cfg.Provision.Disk.PartitionLayout != nil {
 		o.log.Info("skipping grow-partition for declarative partition layout")
 		return nil
 	}
@@ -732,7 +732,7 @@ func (o *Orchestrator) growPartition(ctx context.Context) error {
 }
 
 func (o *Orchestrator) resizeFilesystem(ctx context.Context) error {
-	if o.cfg.PartitionLayout != nil {
+	if o.cfg.Provision.Disk.PartitionLayout != nil {
 		o.log.Info("skipping resize-filesystem for declarative partition layout")
 		return nil
 	}
@@ -749,12 +749,12 @@ func (o *Orchestrator) configureGRUB(ctx context.Context) error {
 }
 
 func (o *Orchestrator) injectCloudInit(_ context.Context) error {
-	if !o.cfg.CloudInitEnabled {
+	if !o.cfg.Provision.CloudInit.Enabled {
 		return nil
 	}
 
 	// Validate datasource — only NoCloud is supported.
-	ds := strings.ToLower(strings.TrimSpace(o.cfg.CloudInitDatasource))
+	ds := strings.ToLower(strings.TrimSpace(o.cfg.Provision.CloudInit.Datasource))
 	if ds == "" {
 		ds = "nocloud"
 	}
@@ -764,7 +764,7 @@ func (o *Orchestrator) injectCloudInit(_ context.Context) error {
 
 	// Split bond interfaces, trimming spaces and filtering empty entries.
 	var bondIfaces []string
-	for _, iface := range strings.Split(o.cfg.BondInterfaces, ",") {
+	for _, iface := range strings.Split(o.cfg.Network.Bond.Interfaces, ",") {
 		if s := strings.TrimSpace(iface); s != "" {
 			bondIfaces = append(bondIfaces, s)
 		}
@@ -772,14 +772,14 @@ func (o *Orchestrator) injectCloudInit(_ context.Context) error {
 
 	// Parse DNS resolvers, trimming spaces and filtering empty entries.
 	var dns []string
-	for _, r := range strings.Split(o.cfg.DNSResolvers, ",") {
+	for _, r := range strings.Split(o.cfg.Network.DNSResolvers, ",") {
 		if s := strings.TrimSpace(r); s != "" {
 			dns = append(dns, s)
 		}
 	}
 
 	// Cloud-init expects a stable, non-empty instance-id for first-boot identity.
-	instanceID := strings.TrimSpace(o.cfg.ProviderID)
+	instanceID := strings.TrimSpace(o.cfg.Provision.ProviderID)
 	if instanceID == "" {
 		instanceID = strings.TrimSpace(o.cfg.Hostname)
 	}
@@ -790,10 +790,10 @@ func (o *Orchestrator) injectCloudInit(_ context.Context) error {
 	ciCfg := &cloudinit.Config{
 		Hostname:   o.cfg.Hostname,
 		InstanceID: instanceID,
-		StaticIP:   o.cfg.StaticIP,
-		Gateway:    o.cfg.StaticGateway,
+		StaticIP:   o.cfg.Network.Static.IP,
+		Gateway:    o.cfg.Network.Static.Gateway,
 		BondIfaces: bondIfaces,
-		BondMode:   o.cfg.BondMode,
+		BondMode:   o.cfg.Network.Bond.Mode,
 		DNS:        dns,
 	}
 
@@ -815,10 +815,10 @@ func (o *Orchestrator) runMachineCommands(ctx context.Context) error {
 }
 
 func (o *Orchestrator) runPostProvisionCmds(ctx context.Context) error {
-	if len(o.cfg.PostProvisionCmds) == 0 {
+	if len(o.cfg.Provision.PostProvisionCmds) == 0 {
 		return nil
 	}
-	return o.config.RunPostProvisionCmds(ctx, o.cfg.PostProvisionCmds)
+	return o.config.RunPostProvisionCmds(ctx, o.cfg.Provision.PostProvisionCmds)
 }
 
 func (o *Orchestrator) teardownChroot(_ context.Context) error {
@@ -828,7 +828,7 @@ func (o *Orchestrator) teardownChroot(_ context.Context) error {
 }
 
 func (o *Orchestrator) runHealthChecks(ctx context.Context) error {
-	if !o.cfg.HealthChecksEnabled {
+	if !o.cfg.Health.Enabled {
 		o.log.Info("Health checks disabled, skipping")
 		return nil
 	}
@@ -837,13 +837,13 @@ func (o *Orchestrator) runHealthChecks(ctx context.Context) error {
 		&health.DiskPresenceCheck{},
 		&health.DiskIOErrorCheck{},
 		&health.MemoryECCCheck{},
-		&health.MinimumMemoryCheck{MinGiB: o.cfg.HealthMinMemoryGB},
-		&health.MinimumCPUCheck{MinCPUs: o.cfg.HealthMinCPUs},
+		&health.MinimumMemoryCheck{MinGiB: o.cfg.Health.MinMemoryGB},
+		&health.MinimumCPUCheck{MinCPUs: o.cfg.Health.MinCPUs},
 		&health.NICLinkStateCheck{},
 		&health.ThermalStateCheck{},
 	}
 
-	results, critical := health.RunAll(ctx, checks, o.cfg.HealthSkipChecks)
+	results, critical := health.RunAll(ctx, checks, o.cfg.Health.SkipChecks)
 
 	for _, r := range results {
 		logAttrs := []any{
@@ -1111,29 +1111,29 @@ func dumpConfig(cfg *config.MachineConfig) {
 	slog.Warn("=== CONFIG DUMP ===",
 		"hostname", cfg.Hostname,
 		"mode", cfg.Mode,
-		"images", redactURLs(cfg.ImageURLs),
-		"asn", cfg.ASN,
-		"provision_vni", cfg.ProvisionVNI,
-		"underlay_subnet", cfg.UnderlaySubnet,
-		"underlay_ip", cfg.UnderlayIP,
-		"overlay_subnet", cfg.OverlaySubnet,
-		"ipmi_subnet", cfg.IPMISubnet,
-		"dcgw_ips", cfg.DCGWIPs,
-		"leaf_asn", cfg.LeafASN,
-		"local_asn", cfg.LocalASN,
-		"vpn_rt", cfg.VPNRT,
-		"overlay_aggregate", cfg.OverlayAggregate,
-		"provision_ip", cfg.ProvisionIP,
-		"dns_resolver", cfg.DNSResolvers,
-		"vrf_table_id", cfg.VRFTableID,
-		"bgp_keepalive", cfg.BGPKeepalive,
-		"bgp_hold", cfg.BGPHold,
-		"bfd_transmit_ms", cfg.BFDTransmitMS,
-		"bfd_receive_ms", cfg.BFDReceiveMS,
-		"static_ip", cfg.StaticIP,
-		"static_gateway", cfg.StaticGateway,
-		"bond_interfaces", cfg.BondInterfaces,
-		"min_disk_size_gb", cfg.MinDiskSizeGB,
+		"images", redactURLs(cfg.Provision.Image.URLs),
+		"asn", cfg.Network.BGP.ASN,
+		"provision_vni", cfg.Network.EVPN.ProvisionVNI,
+		"underlay_subnet", cfg.Network.EVPN.UnderlaySubnet,
+		"underlay_ip", cfg.Network.EVPN.UnderlayIP,
+		"overlay_subnet", cfg.Network.EVPN.OverlaySubnet,
+		"ipmi_subnet", cfg.Network.IPMI.Subnet,
+		"dcgw_ips", cfg.Network.EVPN.DCGWIPs,
+		"leaf_asn", cfg.Network.EVPN.LeafASN,
+		"local_asn", cfg.Network.EVPN.LocalASN,
+		"vpn_rt", cfg.Network.EVPN.VPNRT,
+		"overlay_aggregate", cfg.Network.EVPN.OverlayAggregate,
+		"provision_ip", cfg.Network.EVPN.ProvisionIP,
+		"dns_resolver", cfg.Network.DNSResolvers,
+		"vrf_table_id", cfg.Network.VRF.TableID,
+		"bgp_keepalive", cfg.Network.BGP.Keepalive,
+		"bgp_hold", cfg.Network.BGP.Hold,
+		"bfd_transmit_ms", cfg.Network.BGP.BFDTransmitMS,
+		"bfd_receive_ms", cfg.Network.BGP.BFDReceiveMS,
+		"static_ip", cfg.Network.Static.IP,
+		"static_gateway", cfg.Network.Static.Gateway,
+		"bond_interfaces", cfg.Network.Bond.Interfaces,
+		"min_disk_size_gb", cfg.Provision.Disk.MinSizeGB,
 	)
 }
 

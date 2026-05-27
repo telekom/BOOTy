@@ -13,14 +13,14 @@ import (
 )
 
 // Deprovision runs the deprovisioning pipeline.
-// Mode "soft" renames grub.cfg to make the system unbootable.
-// Mode "hard" (default) wipes all disks and removes EFI boot entries.
+// Mode "soft-deprovision" (or "soft") renames grub.cfg to make the system unbootable.
+// Mode "deprovision" or "hard" (default) wipes all disks and removes EFI boot entries.
 func (o *Orchestrator) Deprovision(ctx context.Context) error {
 	mode := o.cfg.Mode
 	if mode == "" {
 		mode = "hard"
 	}
-	o.log.Info("Starting deprovisioning", "mode", mode)
+	o.log.Info("starting deprovisioning", "mode", mode)
 
 	steps := []Step{
 		{"report-init", o.reportInit},
@@ -28,7 +28,7 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 		{"configure-dns", o.configureDNS},
 	}
 
-	if mode == "soft" {
+	if mode == "soft" || mode == "soft-deprovision" {
 		steps = append(steps, Step{"soft-deprovision", o.softDeprovision})
 	} else {
 		steps = append(steps,
@@ -58,10 +58,16 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 
 // softDeprovision renames grub.cfg so the system won't boot.
 func (o *Orchestrator) softDeprovision(ctx context.Context) error {
-	// Detect disk and mount root.
-	d, err := o.disk.DetectDisk(ctx, o.cfg.MinDiskSizeGB)
-	if err != nil {
-		return fmt.Errorf("detecting disk: %w", err)
+	// Prefer deprovision-specific device if set; otherwise auto-detect.
+	var d string
+	var err error
+	if o.cfg.Deprovision.Device != "" {
+		d = o.cfg.Deprovision.Device
+	} else {
+		d, err = o.disk.DetectDisk(ctx, o.cfg.Provision.Disk.MinSizeGB)
+		if err != nil {
+			return fmt.Errorf("detecting disk: %w", err)
+		}
 	}
 	if err := o.disk.PartProbe(ctx, d); err != nil {
 		return fmt.Errorf("partprobe: %w", err)

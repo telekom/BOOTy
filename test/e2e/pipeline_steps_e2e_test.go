@@ -65,11 +65,13 @@ func newFailingInventoryProvider(cfg *config.MachineConfig) *failingInventoryPro
 // init status.
 func TestCollectInventoryDisabledE2E(t *testing.T) {
 	cfg := &config.MachineConfig{
-		InventoryEnabled:    false,
-		HealthChecksEnabled: false,
-		Hostname:            "inv-disabled-node",
-		ImageURLs:           []string{"http://img.local/test.gz"},
-		DNSResolvers:        "8.8.8.8",
+		Hostname: "inv-disabled-node",
+		Network:  config.NetworkConfig{DNSResolvers: "8.8.8.8"},
+		Health:   config.HealthConfig{Enabled: false},
+		Provision: config.ProvisionConfig{
+			Image:     config.ImageConfig{URLs: []string{"http://img.local/test.gz"}},
+			Inventory: config.InventoryConfig{Enabled: false},
+		},
 	}
 	provider := newInventoryTrackingProvider(cfg)
 	cmd := newMockCommander()
@@ -100,11 +102,13 @@ func TestCollectInventoryDisabledE2E(t *testing.T) {
 // continues past the inventory step.
 func TestCollectInventoryEnabledNonFatalE2E(t *testing.T) {
 	cfg := &config.MachineConfig{
-		InventoryEnabled:    true,
-		HealthChecksEnabled: false,
-		Hostname:            "inv-nonfatal-node",
-		ImageURLs:           []string{"http://img.local/test.gz"},
-		DNSResolvers:        "8.8.8.8",
+		Hostname: "inv-nonfatal-node",
+		Network:  config.NetworkConfig{DNSResolvers: "8.8.8.8"},
+		Health:   config.HealthConfig{Enabled: false},
+		Provision: config.ProvisionConfig{
+			Image:     config.ImageConfig{URLs: []string{"http://img.local/test.gz"}},
+			Inventory: config.InventoryConfig{Enabled: true},
+		},
 	}
 	provider := newFailingInventoryProvider(cfg)
 	cmd := newMockCommander()
@@ -137,11 +141,13 @@ func TestCollectInventoryEnabledNonFatalE2E(t *testing.T) {
 // called exactly once.
 func TestCollectInventoryDoesNotCauseErrorE2E(t *testing.T) {
 	cfg := &config.MachineConfig{
-		InventoryEnabled:    true,
-		HealthChecksEnabled: false,
-		Hostname:            "inv-report-node",
-		ImageURLs:           []string{"http://img.local/test.gz"},
-		DNSResolvers:        "8.8.8.8",
+		Hostname: "inv-report-node",
+		Network:  config.NetworkConfig{DNSResolvers: "8.8.8.8"},
+		Health:   config.HealthConfig{Enabled: false},
+		Provision: config.ProvisionConfig{
+			Image:     config.ImageConfig{URLs: []string{"http://img.local/test.gz"}},
+			Inventory: config.InventoryConfig{Enabled: true},
+		},
 	}
 	provider := newInventoryTrackingProvider(cfg)
 	cmd := newMockCommander()
@@ -178,12 +184,13 @@ func TestCollectInventoryDoesNotCauseErrorE2E(t *testing.T) {
 // the health-check step is skipped entirely and provisioning proceeds.
 func TestHealthChecksDisabledE2E(t *testing.T) {
 	cfg := &config.MachineConfig{
-		HealthChecksEnabled: false,
-		HealthMinCPUs:       999999, // impossibly high — would fail if checks ran
-		InventoryEnabled:    false,
-		Hostname:            "health-disabled",
-		ImageURLs:           []string{"http://img.local/test.gz"},
-		DNSResolvers:        "8.8.8.8",
+		Hostname: "health-disabled",
+		Network:  config.NetworkConfig{DNSResolvers: "8.8.8.8"},
+		Health:   config.HealthConfig{Enabled: false, MinCPUs: 999999},
+		Provision: config.ProvisionConfig{
+			Image:     config.ImageConfig{URLs: []string{"http://img.local/test.gz"}},
+			Inventory: config.InventoryConfig{Enabled: false},
+		},
 	}
 	provider := newMockProvider(cfg)
 	cmd := newMockCommander()
@@ -218,14 +225,18 @@ const healthSkipHardware = "disk-presence,disk-ioerr,memory-ecc,nic-link-state,t
 // checks are skipped via HealthSkipChecks.
 func TestHealthChecksPassE2E(t *testing.T) {
 	cfg := &config.MachineConfig{
-		HealthChecksEnabled: true,
-		InventoryEnabled:    false,
-		HealthMinMemoryGB:   0,                  // threshold disabled
-		HealthMinCPUs:       0,                  // threshold disabled
-		HealthSkipChecks:    healthSkipHardware, // skip CI-incompatible checks
-		Hostname:            "health-pass",
-		ImageURLs:           []string{"http://img.local/test.gz"},
-		DNSResolvers:        "8.8.8.8",
+		Hostname: "health-pass",
+		Network:  config.NetworkConfig{DNSResolvers: "8.8.8.8"},
+		Health: config.HealthConfig{
+			Enabled:     true,
+			MinMemoryGB: 0,
+			MinCPUs:     0,
+			SkipChecks:  healthSkipHardware,
+		},
+		Provision: config.ProvisionConfig{
+			Image:     config.ImageConfig{URLs: []string{"http://img.local/test.gz"}},
+			Inventory: config.InventoryConfig{Enabled: false},
+		},
 	}
 	provider := newMockProvider(cfg)
 	cmd := newMockCommander()
@@ -254,11 +265,15 @@ func TestHealthChecksPassE2E(t *testing.T) {
 // and reports StatusError mentioning minimum-cpu.
 func TestHealthChecksCriticalFailureE2E(t *testing.T) {
 	cfg := &config.MachineConfig{
-		HealthChecksEnabled: true,
-		InventoryEnabled:    false,
-		HealthMinCPUs:       999999,             // impossible: forces minimum-cpu to fail
-		HealthSkipChecks:    healthSkipHardware, // isolate minimum-cpu as the only failing check
-		DNSResolvers:        "8.8.8.8",
+		Network: config.NetworkConfig{DNSResolvers: "8.8.8.8"},
+		Health: config.HealthConfig{
+			Enabled:    true,
+			MinCPUs:    999999,
+			SkipChecks: healthSkipHardware,
+		},
+		Provision: config.ProvisionConfig{
+			Inventory: config.InventoryConfig{Enabled: false},
+		},
 	}
 	provider := newMockProvider(cfg)
 	cmd := newMockCommander()
@@ -291,12 +306,14 @@ func TestHealthChecksCriticalFailureE2E(t *testing.T) {
 // NVMeNamespaces="" the step is skipped and no nvme commands are run.
 func TestSetupNVMeNamespacesSkippedWhenEmptyE2E(t *testing.T) {
 	cfg := &config.MachineConfig{
-		NVMeNamespaces:      "",
-		HealthChecksEnabled: false,
-		InventoryEnabled:    false,
-		Hostname:            "nvme-skip",
-		ImageURLs:           []string{"http://img.local/test.gz"},
-		DNSResolvers:        "8.8.8.8",
+		Hostname: "nvme-skip",
+		Network:  config.NetworkConfig{DNSResolvers: "8.8.8.8"},
+		Health:   config.HealthConfig{Enabled: false},
+		Provision: config.ProvisionConfig{
+			Image:     config.ImageConfig{URLs: []string{"http://img.local/test.gz"}},
+			Disk:      config.DiskConfig{NVMeNamespaces: ""},
+			Inventory: config.InventoryConfig{Enabled: false},
+		},
 	}
 	provider := newMockProvider(cfg)
 	cmd := newMockCommander()
@@ -331,10 +348,12 @@ func TestSetupNVMeNamespacesSkippedWhenEmptyE2E(t *testing.T) {
 // fatal provisioning failure with the specific error text.
 func TestSetupNVMeNamespacesInvalidConfigE2E(t *testing.T) {
 	cfg := &config.MachineConfig{
-		NVMeNamespaces:      "{not valid json",
-		HealthChecksEnabled: false,
-		InventoryEnabled:    false,
-		DNSResolvers:        "8.8.8.8",
+		Network: config.NetworkConfig{DNSResolvers: "8.8.8.8"},
+		Health:  config.HealthConfig{Enabled: false},
+		Provision: config.ProvisionConfig{
+			Disk:      config.DiskConfig{NVMeNamespaces: "{not valid json"},
+			Inventory: config.InventoryConfig{Enabled: false},
+		},
 	}
 	provider := newMockProvider(cfg)
 	cmd := newMockCommander()
@@ -368,10 +387,12 @@ func TestSetupNVMeNamespacesCommandsCalledE2E(t *testing.T) {
 	nvmeCfg := `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":100}]}]`
 
 	cfg := &config.MachineConfig{
-		NVMeNamespaces:      nvmeCfg,
-		HealthChecksEnabled: false,
-		InventoryEnabled:    false,
-		DNSResolvers:        "8.8.8.8",
+		Network: config.NetworkConfig{DNSResolvers: "8.8.8.8"},
+		Health:  config.HealthConfig{Enabled: false},
+		Provision: config.ProvisionConfig{
+			Disk:      config.DiskConfig{NVMeNamespaces: nvmeCfg},
+			Inventory: config.InventoryConfig{Enabled: false},
+		},
 	}
 	provider := newMockProvider(cfg)
 	cmd := newMockCommander()
@@ -427,11 +448,11 @@ func TestSetupNVMeNamespacesCommandsCalledE2E(t *testing.T) {
 	assertNVMeControllerRef(t, calls, "/dev/nvme0")
 
 	// DiskDevice must be set to the first created namespace.
-	if cfg.DiskDevice == "" {
-		t.Error("expected cfg.DiskDevice to be set after namespace creation")
+	if cfg.Provision.Disk.Device == "" {
+		t.Error("expected cfg.Provision.Disk.Device to be set after namespace creation")
 	}
-	if !strings.HasPrefix(cfg.DiskDevice, "/dev/nvme0n") {
-		t.Errorf("DiskDevice = %q, want /dev/nvme0n<N>", cfg.DiskDevice)
+	if !strings.HasPrefix(cfg.Provision.Disk.Device, "/dev/nvme0n") {
+		t.Errorf("Provision.Disk.Device = %q, want /dev/nvme0n<N>", cfg.Provision.Disk.Device)
 	}
 }
 

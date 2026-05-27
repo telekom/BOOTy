@@ -26,14 +26,14 @@ func TestStatusConstants(t *testing.T) {
 func TestMachineConfigDefaults(t *testing.T) {
 	cfg := &MachineConfig{}
 
-	if cfg.MinDiskSizeGB != 0 {
-		t.Errorf("expected 0 min disk size, got %d", cfg.MinDiskSizeGB)
+	if cfg.Provision.Disk.MinSizeGB != 0 {
+		t.Errorf("expected 0 min disk size, got %d", cfg.Provision.Disk.MinSizeGB)
 	}
 	if cfg.Hostname != "" {
 		t.Errorf("expected empty hostname, got %s", cfg.Hostname)
 	}
-	if cfg.ImageURLs != nil {
-		t.Errorf("expected nil image URLs, got %v", cfg.ImageURLs)
+	if cfg.Provision.Image.URLs != nil {
+		t.Errorf("expected nil image URLs, got %v", cfg.Provision.Image.URLs)
 	}
 	if DefaultCrashArtifactsMaxMB != 256 {
 		t.Errorf("DefaultCrashArtifactsMaxMB = %d, want 256", DefaultCrashArtifactsMaxMB)
@@ -301,7 +301,6 @@ func TestParsePartitionLayoutRejectsMountpointTraversal(t *testing.T) {
 }
 
 func TestParsePartitionLayoutTooManyPartitions(t *testing.T) {
-	// Build JSON with 129 partitions (exceeds GPT max of 128).
 	parts := `{"table":"gpt","partitions":[`
 	for i := range 129 {
 		if i > 0 {
@@ -309,7 +308,6 @@ func TestParsePartitionLayoutTooManyPartitions(t *testing.T) {
 		}
 		parts += fmt.Sprintf(`{"label":"p%d","sizeMB":100,"filesystem":"ext4","mountpoint":"/mnt/p%d"}`, i, i)
 	}
-	// Replace the last mountpoint with "/" to pass root presence validation.
 	parts += `]}`
 
 	_, err := ParsePartitionLayout(parts)
@@ -321,39 +319,39 @@ func TestParsePartitionLayoutTooManyPartitions(t *testing.T) {
 func TestValidate(t *testing.T) {
 	tests := []struct {
 		name    string
-		cfg     MachineConfig
+		cfg     Config
 		wantErr string
 	}{
-		{name: "empty config is valid", cfg: MachineConfig{}},
-		{name: "valid mode provision", cfg: MachineConfig{Mode: "provision"}},
-		{name: "valid mode dry-run", cfg: MachineConfig{Mode: "dry-run"}},
-		{name: "invalid mode", cfg: MachineConfig{Mode: "invalid"}, wantErr: "invalid MODE"},
-		{name: "valid image mode", cfg: MachineConfig{ImageMode: "whole-disk"}},
-		{name: "invalid image mode", cfg: MachineConfig{ImageMode: "raw"}, wantErr: "invalid IMAGE_MODE"},
-		{name: "valid network mode", cfg: MachineConfig{NetworkMode: "GoBGP"}, wantErr: ""},
-		{name: "invalid network mode", cfg: MachineConfig{NetworkMode: "ospf"}, wantErr: "invalid NETWORK_MODE"},
-		{name: "valid checksum type", cfg: MachineConfig{ImageChecksumType: "sha256"}},
-		{name: "invalid checksum type", cfg: MachineConfig{ImageChecksumType: "md5"}, wantErr: "invalid IMAGE_CHECKSUM_TYPE"},
-		{name: "valid rescue mode", cfg: MachineConfig{RescueMode: "shell"}},
-		{name: "invalid rescue mode", cfg: MachineConfig{RescueMode: "panic"}, wantErr: "invalid RESCUE_MODE"},
-		{name: "valid peer mode", cfg: MachineConfig{BGPPeerMode: "unnumbered"}},
-		{name: "valid dual peer mode with neighbors", cfg: MachineConfig{BGPPeerMode: "dual", BGPNeighbors: "10.0.0.1"}},
-		{name: "valid numbered peer mode with neighbors", cfg: MachineConfig{BGPPeerMode: "numbered", BGPNeighbors: "10.0.0.1"}},
-		{name: "dual peer mode requires neighbors", cfg: MachineConfig{BGPPeerMode: "dual"}, wantErr: "BGP_NEIGHBORS required"},
-		{name: "numbered peer mode requires neighbors", cfg: MachineConfig{BGPPeerMode: "numbered"}, wantErr: "BGP_NEIGHBORS required"},
-		{name: "invalid peer mode", cfg: MachineConfig{BGPPeerMode: "mesh"}, wantErr: "invalid BGP_PEER_MODE"},
-		{name: "valid underlay AF", cfg: MachineConfig{BGPUnderlayAF: "ipv4"}},
-		{name: "invalid underlay AF", cfg: MachineConfig{BGPUnderlayAF: "ipv3"}, wantErr: "invalid BGP_UNDERLAY_AF"},
-		{name: "valid overlay type", cfg: MachineConfig{BGPOverlayType: "evpn-vxlan"}},
-		{name: "invalid overlay type", cfg: MachineConfig{BGPOverlayType: "gre"}, wantErr: "invalid BGP_OVERLAY_TYPE"},
-		{name: "valid cloud-init ds", cfg: MachineConfig{CloudInitDatasource: "nocloud"}},
-		{name: "invalid cloud-init ds", cfg: MachineConfig{CloudInitDatasource: "ec2"}, wantErr: "invalid CLOUDINIT_DATASOURCE"},
-		{name: "valid token algorithm", cfg: MachineConfig{TokenAlgorithm: "ES256"}},
-		{name: "invalid token algorithm", cfg: MachineConfig{TokenAlgorithm: "HS256"}, wantErr: "invalid TOKEN_ALGORITHM"},
+		{name: "empty config is valid", cfg: Config{}},
+		{name: "valid mode provision", cfg: Config{Mode: "provision"}},
+		{name: "valid mode dry-run", cfg: Config{Mode: "dry-run"}},
+		{name: "invalid mode", cfg: Config{Mode: "invalid"}, wantErr: "invalid mode"},
+		{name: "valid image mode", cfg: Config{Provision: ProvisionConfig{Image: ImageConfig{Mode: "whole-disk"}}}},
+		{name: "invalid image mode", cfg: Config{Provision: ProvisionConfig{Image: ImageConfig{Mode: "raw"}}}, wantErr: "invalid provision.image.mode"},
+		{name: "valid network mode", cfg: Config{Network: NetworkConfig{Mode: "gobgp"}}},
+		{name: "invalid network mode", cfg: Config{Network: NetworkConfig{Mode: "ospf"}}, wantErr: "invalid network.mode"},
+		{name: "valid checksum type", cfg: Config{Provision: ProvisionConfig{Image: ImageConfig{ChecksumType: "sha256"}}}},
+		{name: "invalid checksum type", cfg: Config{Provision: ProvisionConfig{Image: ImageConfig{ChecksumType: "md5"}}}, wantErr: "invalid provision.image.checksumType"},
+		{name: "valid rescue mode", cfg: Config{Rescue: RescueConfig{Mode: "shell"}}},
+		{name: "invalid rescue mode", cfg: Config{Rescue: RescueConfig{Mode: "panic"}}, wantErr: "invalid rescue.mode"},
+		{name: "valid peer mode", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{PeerMode: "unnumbered"}}}},
+		{name: "valid dual peer mode with neighbors", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{PeerMode: "dual", Neighbors: "10.0.0.1"}}}},
+		{name: "valid numbered peer mode with neighbors", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{PeerMode: "numbered", Neighbors: "10.0.0.1"}}}},
+		{name: "dual peer mode requires neighbors", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{PeerMode: "dual"}}}, wantErr: "network.bgp.neighbors required"},
+		{name: "numbered peer mode requires neighbors", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{PeerMode: "numbered"}}}, wantErr: "network.bgp.neighbors required"},
+		{name: "invalid peer mode", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{PeerMode: "mesh"}}}, wantErr: "invalid network.bgp.peerMode"},
+		{name: "valid underlay AF", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{UnderlayAF: "ipv4"}}}},
+		{name: "invalid underlay AF", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{UnderlayAF: "ipv3"}}}, wantErr: "invalid network.bgp.underlayAF"},
+		{name: "valid overlay type", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{OverlayType: "evpn-vxlan"}}}},
+		{name: "invalid overlay type", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{OverlayType: "gre"}}}, wantErr: "invalid network.bgp.overlayType"},
+		{name: "valid cloud-init ds", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: "nocloud"}}}},
+		{name: "invalid cloud-init ds", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: "ec2"}}}, wantErr: "invalid provision.cloudInit.datasource"},
+		{name: "valid token algorithm", cfg: Config{Transport: TransportConfig{TokenAlgorithm: "ES256"}}},
+		{name: "invalid token algorithm", cfg: Config{Transport: TransportConfig{TokenAlgorithm: "HS256"}}, wantErr: "invalid transport.tokenAlgorithm"},
 		{
 			name:    "multiple errors",
-			cfg:     MachineConfig{Mode: "bad", ImageMode: "bad"},
-			wantErr: "invalid MODE",
+			cfg:     Config{Mode: "bad", Provision: ProvisionConfig{Image: ImageConfig{Mode: "bad"}}},
+			wantErr: "invalid mode",
 		},
 	}
 

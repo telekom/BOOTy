@@ -103,12 +103,12 @@ func (o *Orchestrator) DryRun(ctx context.Context) error {
 }
 
 func (o *Orchestrator) dryRunConfigValidation(_ context.Context) DryRunResult {
-	if o.cfg.PartitionLayout != nil {
+	if o.cfg.Provision.Disk.PartitionLayout != nil {
 		return DryRunResult{Status: DryRunFail,
 			Message: errPartitionLayoutNotSupported}
 	}
 
-	if len(o.cfg.ImageURLs) == 0 {
+	if len(o.cfg.Provision.Image.URLs) == 0 {
 		return DryRunResult{Status: DryRunFail, Message: "no image URLs configured"}
 	}
 	if o.cfg.Hostname == "" {
@@ -118,8 +118,8 @@ func (o *Orchestrator) dryRunConfigValidation(_ context.Context) DryRunResult {
 }
 
 func (o *Orchestrator) dryRunImageReachability(ctx context.Context) DryRunResult {
-	if len(o.cfg.ImageURLs) == 0 {
-		if o.cfg.PartitionLayout != nil {
+	if len(o.cfg.Provision.Image.URLs) == 0 {
+		if o.cfg.Provision.Disk.PartitionLayout != nil {
 			return DryRunResult{Status: DryRunWarn, Message: "layout-only mode: skipping image reachability check"}
 		}
 		return DryRunResult{Status: DryRunFail, Message: "no image URLs configured"}
@@ -128,7 +128,7 @@ func (o *Orchestrator) dryRunImageReachability(ctx context.Context) DryRunResult
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 	validated := 0
 	skippedOCI := 0
-	for _, imgURL := range o.cfg.ImageURLs {
+	for _, imgURL := range o.cfg.Provision.Image.URLs {
 		scheme, redactedURL, invalidResult := validateDryRunImageURL(imgURL)
 		if invalidResult != nil {
 			return *invalidResult
@@ -211,24 +211,24 @@ func probeHTTPImageReachability(ctx context.Context, httpClient *http.Client, im
 }
 
 func (o *Orchestrator) dryRunDiskDetection(ctx context.Context) DryRunResult {
-	if o.cfg.DiskDevice != "" {
-		info, err := statPath(o.cfg.DiskDevice)
+	if o.cfg.Provision.Disk.Device != "" {
+		info, err := statPath(o.cfg.Provision.Disk.Device)
 		if err != nil {
 			return DryRunResult{Status: DryRunFail,
-				Message: fmt.Sprintf("configured disk %s not found: %v", o.cfg.DiskDevice, err)}
+				Message: fmt.Sprintf("configured disk %s not found: %v", o.cfg.Provision.Disk.Device, err)}
 		}
 		// Reject character devices (e.g. /dev/null). This is intentionally
 		// stricter than the real provisioning path to catch misconfigurations
 		// early during dry-run validation.
 		if info.Mode()&os.ModeDevice == 0 || info.Mode()&os.ModeCharDevice != 0 {
 			return DryRunResult{Status: DryRunFail,
-				Message: fmt.Sprintf("configured disk %s is not a block device", o.cfg.DiskDevice)}
+				Message: fmt.Sprintf("configured disk %s is not a block device", o.cfg.Provision.Disk.Device)}
 		}
 		return DryRunResult{Status: DryRunPass,
-			Message: fmt.Sprintf("configured disk %s exists", o.cfg.DiskDevice)}
+			Message: fmt.Sprintf("configured disk %s exists", o.cfg.Provision.Disk.Device)}
 	}
 
-	d, err := o.disk.DetectDisk(ctx, o.cfg.MinDiskSizeGB)
+	d, err := o.disk.DetectDisk(ctx, o.cfg.Provision.Disk.MinSizeGB)
 	if err != nil {
 		return DryRunResult{Status: DryRunFail,
 			Message: fmt.Sprintf("no suitable disk: %v", err)}
@@ -238,21 +238,21 @@ func (o *Orchestrator) dryRunDiskDetection(ctx context.Context) DryRunResult {
 }
 
 func (o *Orchestrator) dryRunHealthChecks(_ context.Context) DryRunResult {
-	if !o.cfg.HealthChecksEnabled {
+	if !o.cfg.Health.Enabled {
 		return DryRunResult{Status: DryRunWarn, Message: "health checks disabled"}
 	}
 	return DryRunResult{Status: DryRunPass, Message: "health checks enabled and will run"}
 }
 
 func (o *Orchestrator) dryRunImageChecksum(_ context.Context) DryRunResult {
-	if len(o.cfg.ImageURLs) == 0 && o.cfg.PartitionLayout != nil {
+	if len(o.cfg.Provision.Image.URLs) == 0 && o.cfg.Provision.Disk.PartitionLayout != nil {
 		return DryRunResult{Status: DryRunWarn, Message: "layout-only mode: skipping image checksum check"}
 	}
-	if o.cfg.ImageChecksum == "" {
+	if o.cfg.Provision.Image.Checksum == "" {
 		return DryRunResult{Status: DryRunWarn,
 			Message: "no image checksum configured - integrity cannot be verified"}
 	}
-	checkType := strings.ToLower(strings.TrimSpace(o.cfg.ImageChecksumType))
+	checkType := strings.ToLower(strings.TrimSpace(o.cfg.Provision.Image.ChecksumType))
 	if checkType == "" {
 		checkType = "sha256"
 	}
@@ -267,24 +267,24 @@ func (o *Orchestrator) dryRunImageChecksum(_ context.Context) DryRunResult {
 }
 
 func (o *Orchestrator) dryRunImageSignature(_ context.Context) DryRunResult {
-	if o.cfg.ImageSignatureURL == "" {
+	if o.cfg.Provision.Image.SignatureURL == "" {
 		return DryRunResult{Status: DryRunWarn,
 			Message: "no image signature URL configured - GPG verification disabled"}
 	}
-	if o.cfg.ImageGPGPubKey == "" {
+	if o.cfg.Provision.Image.GPGPubKey == "" {
 		return DryRunResult{Status: DryRunFail,
 			Message: "image signature URL set but no GPG public key path configured"}
 	}
-	if _, err := statPath(o.cfg.ImageGPGPubKey); err != nil {
+	if _, err := statPath(o.cfg.Provision.Image.GPGPubKey); err != nil {
 		return DryRunResult{Status: DryRunFail,
-			Message: fmt.Sprintf("GPG public key not found: %s", o.cfg.ImageGPGPubKey)}
+			Message: fmt.Sprintf("GPG public key not found: %s", o.cfg.Provision.Image.GPGPubKey)}
 	}
 	return DryRunResult{Status: DryRunPass,
 		Message: "image signature verification configured"}
 }
 
 func (o *Orchestrator) dryRunImageMode(_ context.Context) DryRunResult {
-	mode := strings.ToLower(strings.TrimSpace(o.cfg.ImageMode))
+	mode := strings.ToLower(strings.TrimSpace(o.cfg.Provision.Image.Mode))
 	if mode == "" || mode == "whole-disk" {
 		return DryRunResult{Status: DryRunPass, Message: "image mode: whole-disk (default)"}
 	}
@@ -293,7 +293,7 @@ func (o *Orchestrator) dryRunImageMode(_ context.Context) DryRunResult {
 			Message: "image mode: partition-by-partition (requires ramdisk + losetup)"}
 	}
 	return DryRunResult{Status: DryRunFail,
-		Message: fmt.Sprintf("unknown IMAGE_MODE: %q (valid: whole-disk, partition)", o.cfg.ImageMode)}
+		Message: fmt.Sprintf("unknown IMAGE_MODE: %q (valid: whole-disk, partition)", o.cfg.Provision.Image.Mode)}
 }
 
 func (o *Orchestrator) dryRunNetworkLink(_ context.Context) DryRunResult {
@@ -386,7 +386,7 @@ func redactURLError(err error, rawURL string) string {
 }
 
 func (o *Orchestrator) dryRunInventoryProbe(_ context.Context) DryRunResult {
-	if !o.cfg.InventoryEnabled {
+	if !o.cfg.Provision.Inventory.Enabled {
 		return DryRunResult{Status: DryRunWarn,
 			Message: "hardware inventory disabled"}
 	}

@@ -277,16 +277,16 @@ export IMAGE="http://img.local/test.gz"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.StaticIP != "10.1.0.5/24" {
-		t.Errorf("StaticIP = %q", cfg.StaticIP)
+	if cfg.Network.Static.IP != "10.1.0.5/24" {
+		t.Errorf("StaticIP = %q", cfg.Network.Static.IP)
 	}
-	if cfg.StaticGateway != "10.1.0.1" {
-		t.Errorf("StaticGateway = %q", cfg.StaticGateway)
+	if cfg.Network.Static.Gateway != "10.1.0.1" {
+		t.Errorf("StaticGateway = %q", cfg.Network.Static.Gateway)
 	}
-	if cfg.StaticIface != "eth0" {
-		t.Errorf("StaticIface = %q", cfg.StaticIface)
+	if cfg.Network.Static.Iface != "eth0" {
+		t.Errorf("StaticIface = %q", cfg.Network.Static.Iface)
 	}
-	netCfg := &network.Config{StaticIP: cfg.StaticIP}
+	netCfg := &network.Config{StaticIP: cfg.Network.Static.IP}
 	if !netCfg.IsStaticMode() {
 		t.Error("should be static mode")
 	}
@@ -303,13 +303,13 @@ export IMAGE="http://img.local/test.gz"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.BondInterfaces != "eth0,eth1" {
-		t.Errorf("BondInterfaces = %q", cfg.BondInterfaces)
+	if cfg.Network.Bond.Interfaces != "eth0,eth1" {
+		t.Errorf("BondInterfaces = %q", cfg.Network.Bond.Interfaces)
 	}
-	if cfg.BondMode != "802.3ad" {
-		t.Errorf("BondMode = %q", cfg.BondMode)
+	if cfg.Network.Bond.Mode != "802.3ad" {
+		t.Errorf("BondMode = %q", cfg.Network.Bond.Mode)
 	}
-	netCfg := &network.Config{BondInterfaces: cfg.BondInterfaces}
+	netCfg := &network.Config{BondInterfaces: cfg.Network.Bond.Interfaces}
 	if !netCfg.IsBondMode() {
 		t.Error("should be bond mode")
 	}
@@ -325,10 +325,10 @@ export IMAGE="http://img.local/test.gz"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.VLANs != "200:eno1:10.200.0.42/24,300:eno2" {
-		t.Errorf("VLANs = %q", cfg.VLANs)
+	if cfg.Network.VLAN.Config != "200:eno1:10.200.0.42/24,300:eno2" {
+		t.Errorf("VLANs = %q", cfg.Network.VLAN.Config)
 	}
-	vlans, err := network.ParseVLANs(cfg.VLANs)
+	vlans, err := network.ParseVLANs(cfg.Network.VLAN.Config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,16 +355,16 @@ asn_server="65001"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.BGPPeerMode != "numbered" {
-		t.Errorf("BGPPeerMode = %q", cfg.BGPPeerMode)
+	if cfg.Network.BGP.PeerMode != "numbered" {
+		t.Errorf("BGPPeerMode = %q", cfg.Network.BGP.PeerMode)
 	}
-	if cfg.BGPNeighbors != "10.0.0.1,10.0.0.2" {
-		t.Errorf("BGPNeighbors = %q", cfg.BGPNeighbors)
+	if cfg.Network.BGP.Neighbors != "10.0.0.1,10.0.0.2" {
+		t.Errorf("BGPNeighbors = %q", cfg.Network.BGP.Neighbors)
 	}
-	if cfg.BGPRemoteASN != 65200 {
-		t.Errorf("BGPRemoteASN = %d", cfg.BGPRemoteASN)
+	if cfg.Network.BGP.RemoteASN != 65200 {
+		t.Errorf("BGPRemoteASN = %d", cfg.Network.BGP.RemoteASN)
 	}
-	peerMode := network.ParsePeerMode(cfg.BGPPeerMode)
+	peerMode := network.ParsePeerMode(cfg.Network.BGP.PeerMode)
 	if peerMode != network.PeerModeNumbered {
 		t.Errorf("parsed PeerMode = %q", peerMode)
 	}
@@ -384,10 +384,10 @@ export IMAGE="http://img.local/test.gz"
 		t.Fatal(err)
 	}
 	netCfg := &network.Config{
-		StaticIP:       cfg.StaticIP,
-		StaticGateway:  cfg.StaticGateway,
-		BondInterfaces: cfg.BondInterfaces,
-		BondMode:       cfg.BondMode,
+		StaticIP:       cfg.Network.Static.IP,
+		StaticGateway:  cfg.Network.Static.Gateway,
+		BondInterfaces: cfg.Network.Bond.Interfaces,
+		BondMode:       cfg.Network.Bond.Mode,
 	}
 	if !netCfg.IsStaticMode() {
 		t.Error("combined config should be static mode")
@@ -410,7 +410,7 @@ dns_resolver="8.8.8.8,1.1.1.1"
 	if err != nil {
 		t.Fatal(err)
 	}
-	netCfg := &network.Config{DNSResolvers: cfg.DNSResolvers}
+	netCfg := &network.Config{DNSResolvers: cfg.Network.DNSResolvers}
 	if netCfg.IsFRRMode() {
 		t.Error("DHCP config should not be FRR mode")
 	}

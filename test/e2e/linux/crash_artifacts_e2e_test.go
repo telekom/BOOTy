@@ -28,12 +28,20 @@ func TestCrashArtifactsPreWipeUploadFromExistingRoot(t *testing.T) {
 
 	server := newCrashArtifactE2EServer(t, http.StatusOK)
 	cfg := &config.MachineConfig{
-		CrashArtifactsEnabled:    true,
-		CrashArtifactsPrepareURL: server.URL + "/crash/prepare",
-		DiskDevice:               loopDev,
-		Hostname:                 "linux-e2e-node",
-		Mode:                     "provision",
-		Token:                    "test-token",
+		Hostname: "linux-e2e-node",
+		Mode:     "provision",
+		Transport: config.TransportConfig{
+			Token: "test-token",
+		},
+		Provision: config.ProvisionConfig{
+			Disk: config.DiskConfig{
+				Device: loopDev,
+			},
+			CrashArtifacts: config.CrashArtifactsConfig{
+				Enabled:    true,
+				PrepareURL: server.URL + "/crash/prepare",
+			},
+		},
 	}
 	client := caprf.NewFromConfig(cfg)
 
@@ -109,10 +117,16 @@ func TestCrashArtifactsNoEvidenceSkipsUpload(t *testing.T) {
 
 	server := newCrashArtifactE2EServer(t, http.StatusOK)
 	cfg := &config.MachineConfig{
-		CrashArtifactsEnabled:    true,
-		CrashArtifactsPrepareURL: server.URL + "/crash/prepare",
-		DiskDevice:               loopDev,
-		Mode:                     "provision",
+		Mode: "provision",
+		Provision: config.ProvisionConfig{
+			Disk: config.DiskConfig{
+				Device: loopDev,
+			},
+			CrashArtifacts: config.CrashArtifactsConfig{
+				Enabled:    true,
+				PrepareURL: server.URL + "/crash/prepare",
+			},
+		},
 	}
 	client := caprf.NewFromConfig(cfg)
 	result, err := crash.InspectStartup(context.Background(), cfg, disk.NewManager(nil), client, crash.InspectOptions{
@@ -137,11 +151,17 @@ func TestCrashArtifactsUploadFailureIsNonFatal(t *testing.T) {
 
 	server := newCrashArtifactE2EServer(t, http.StatusInternalServerError)
 	cfg := &config.MachineConfig{
-		CrashArtifactsEnabled:          true,
-		CrashArtifactsPrepareURL:       server.URL + "/crash/prepare",
-		CrashArtifactsUploadTimeoutSec: 10,
-		DiskDevice:                     loopDev,
-		Mode:                           "provision",
+		Mode: "provision",
+		Provision: config.ProvisionConfig{
+			Disk: config.DiskConfig{
+				Device: loopDev,
+			},
+			CrashArtifacts: config.CrashArtifactsConfig{
+				Enabled:          true,
+				PrepareURL:       server.URL + "/crash/prepare",
+				UploadTimeoutSec: 10,
+			},
+		},
 	}
 	client := caprf.NewFromConfig(cfg)
 	result, err := crash.InspectStartup(context.Background(), cfg, disk.NewManager(nil), client, crash.InspectOptions{

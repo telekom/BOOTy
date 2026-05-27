@@ -71,10 +71,12 @@ func TestCAPRFClientStatusReporting(t *testing.T) {
 	srvURL := startTestServer(t, mux)
 
 	cfg := &config.MachineConfig{
-		Token:      "e2e-token",
-		InitURL:    srvURL + "/status/init",
-		SuccessURL: srvURL + "/status/success",
-		LogURL:     srvURL + "/log",
+		Transport: config.TransportConfig{
+			Token:      "e2e-token",
+			InitURL:    srvURL + "/status/init",
+			SuccessURL: srvURL + "/status/success",
+			LogURL:     srvURL + "/log",
+		},
 	}
 	client := caprf.NewFromConfig(cfg)
 	ctx := context.Background()
@@ -127,11 +129,11 @@ export DEBUG_URL="http://localhost:9999/debug"
 	if cfg.Mode != "provision" {
 		t.Fatalf("mode = %q, want provision", cfg.Mode)
 	}
-	if cfg.MinDiskSizeGB != 50 {
-		t.Fatalf("min disk = %d, want 50", cfg.MinDiskSizeGB)
+	if cfg.Provision.Disk.MinSizeGB != 50 {
+		t.Fatalf("min disk = %d, want 50", cfg.Provision.Disk.MinSizeGB)
 	}
-	if len(cfg.ImageURLs) != 1 || cfg.ImageURLs[0] != "http://example.com/image.gz" {
-		t.Fatalf("image URLs = %v", cfg.ImageURLs)
+	if len(cfg.Provision.Image.URLs) != 1 || cfg.Provision.Image.URLs[0] != "http://example.com/image.gz" {
+		t.Fatalf("image URLs = %v", cfg.Provision.Image.URLs)
 	}
 }
 

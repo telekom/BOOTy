@@ -89,30 +89,30 @@ vpn_rt="65001:10100"
 	}
 
 	// Multiple images split on whitespace.
-	if len(cfg.ImageURLs) != 2 {
-		t.Fatalf("expected 2 image URLs, got %d", len(cfg.ImageURLs))
+	if len(cfg.Provision.Image.URLs) != 2 {
+		t.Fatalf("expected 2 image URLs, got %d", len(cfg.Provision.Image.URLs))
 	}
-	if cfg.ImageURLs[0] != "http://img1.gz" || cfg.ImageURLs[1] != "http://img2.gz" {
-		t.Errorf("imageURLs = %v", cfg.ImageURLs)
+	if cfg.Provision.Image.URLs[0] != "http://img1.gz" || cfg.Provision.Image.URLs[1] != "http://img2.gz" {
+		t.Errorf("imageURLs = %v", cfg.Provision.Image.URLs)
 	}
 
 	// String fields.
 	checks := map[string]string{
 		"Hostname":          cfg.Hostname,
-		"Token":             cfg.Token,
+		"Token":             cfg.Transport.Token,
 		"Mode":              cfg.Mode,
-		"ExtraKernelParams": cfg.ExtraKernelParams,
-		"FailureDomain":     cfg.FailureDomain,
-		"Region":            cfg.Region,
-		"ProviderID":        cfg.ProviderID,
-		"UnderlaySubnet":    cfg.UnderlaySubnet,
-		"UnderlayIP":        cfg.UnderlayIP,
-		"OverlaySubnet":     cfg.OverlaySubnet,
-		"IPMISubnet":        cfg.IPMISubnet,
-		"DNSResolvers":      cfg.DNSResolvers,
-		"DCGWIPs":           cfg.DCGWIPs,
-		"OverlayAggregate":  cfg.OverlayAggregate,
-		"VPNRT":             cfg.VPNRT,
+		"ExtraKernelParams": cfg.Provision.ExtraKernelParams,
+		"FailureDomain":     cfg.Provision.FailureDomain,
+		"Region":            cfg.Provision.Region,
+		"ProviderID":        cfg.Provision.ProviderID,
+		"UnderlaySubnet":    cfg.Network.EVPN.UnderlaySubnet,
+		"UnderlayIP":        cfg.Network.EVPN.UnderlayIP,
+		"OverlaySubnet":     cfg.Network.EVPN.OverlaySubnet,
+		"IPMISubnet":        cfg.Network.IPMI.Subnet,
+		"DNSResolvers":      cfg.Network.DNSResolvers,
+		"DCGWIPs":           cfg.Network.EVPN.DCGWIPs,
+		"OverlayAggregate":  cfg.Network.EVPN.OverlayAggregate,
+		"VPNRT":             cfg.Network.EVPN.VPNRT,
 	}
 	expected := map[string]string{
 		"Hostname":          "node-42",
@@ -138,24 +138,24 @@ vpn_rt="65001:10100"
 	}
 
 	// Uint32 fields.
-	if cfg.ASN != 65001 {
-		t.Errorf("ASN = %d, want 65001", cfg.ASN)
+	if cfg.Network.BGP.ASN != 65001 {
+		t.Errorf("ASN = %d, want 65001", cfg.Network.BGP.ASN)
 	}
-	if cfg.ProvisionVNI != 10100 {
-		t.Errorf("ProvisionVNI = %d, want 10100", cfg.ProvisionVNI)
+	if cfg.Network.EVPN.ProvisionVNI != 10100 {
+		t.Errorf("ProvisionVNI = %d, want 10100", cfg.Network.EVPN.ProvisionVNI)
 	}
-	if cfg.LeafASN != 65100 {
-		t.Errorf("LeafASN = %d, want 65100", cfg.LeafASN)
+	if cfg.Network.EVPN.LeafASN != 65100 {
+		t.Errorf("LeafASN = %d, want 65100", cfg.Network.EVPN.LeafASN)
 	}
-	if cfg.LocalASN != 65200 {
-		t.Errorf("LocalASN = %d, want 65200", cfg.LocalASN)
+	if cfg.Network.EVPN.LocalASN != 65200 {
+		t.Errorf("LocalASN = %d, want 65200", cfg.Network.EVPN.LocalASN)
 	}
 
 	// Feature gates.
-	if cfg.MinDiskSizeGB != 100 {
-		t.Errorf("MinDiskSizeGB = %d, want 100", cfg.MinDiskSizeGB)
+	if cfg.Provision.Disk.MinSizeGB != 100 {
+		t.Errorf("MinDiskSizeGB = %d, want 100", cfg.Provision.Disk.MinSizeGB)
 	}
-	if !cfg.DisableKexec {
+	if !cfg.Provision.DisableKexec {
 		t.Error("DisableKexec should be true")
 	}
 }
@@ -166,7 +166,7 @@ func TestVarsParsingDisableKexecVariants(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !cfg.DisableKexec {
+		if !cfg.Provision.DisableKexec {
 			t.Errorf("DISABLE_KEXEC=%q should enable disable-kexec", val)
 		}
 	}
@@ -175,7 +175,7 @@ func TestVarsParsingDisableKexecVariants(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if cfg.DisableKexec {
+		if cfg.Provision.DisableKexec {
 			t.Errorf("DISABLE_KEXEC=%q should NOT enable disable-kexec", val)
 		}
 	}
@@ -186,8 +186,8 @@ func TestVarsParsingMinDiskSizeGBDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.MinDiskSizeGB != 0 {
-		t.Errorf("MinDiskSizeGB should default to 0, got %d", cfg.MinDiskSizeGB)
+	if cfg.Provision.Disk.MinSizeGB != 0 {
+		t.Errorf("MinDiskSizeGB should default to 0, got %d", cfg.Provision.Disk.MinSizeGB)
 	}
 }
 
@@ -277,11 +277,13 @@ func TestCAPRFProvisioningStatusFlow(t *testing.T) {
 
 	srvURL := startServer(t, mux)
 	cfg := &config.MachineConfig{
-		Token:      "prov-token",
-		InitURL:    srvURL + "/status/init",
-		SuccessURL: srvURL + "/status/success",
-		ErrorURL:   srvURL + "/status/error",
-		LogURL:     srvURL + "/log",
+		Transport: config.TransportConfig{
+			Token:      "prov-token",
+			InitURL:    srvURL + "/status/init",
+			SuccessURL: srvURL + "/status/success",
+			ErrorURL:   srvURL + "/status/error",
+			LogURL:     srvURL + "/log",
+		},
 	}
 	client := caprf.NewFromConfig(cfg)
 	ctx := context.Background()
@@ -325,10 +327,12 @@ func TestCAPRFDeprovisionStatusFlow(t *testing.T) {
 
 	srvURL := startServer(t, mux)
 	cfg := &config.MachineConfig{
-		Token:      "deprov-token",
-		InitURL:    srvURL + "/status/init",
-		SuccessURL: srvURL + "/status/success",
-		Mode:       "deprovision",
+		Mode: "deprovision",
+		Transport: config.TransportConfig{
+			Token:      "deprov-token",
+			InitURL:    srvURL + "/status/init",
+			SuccessURL: srvURL + "/status/success",
+		},
 	}
 	client := caprf.NewFromConfig(cfg)
 	ctx := context.Background()
@@ -369,9 +373,11 @@ func TestCAPRFErrorStatusFlow(t *testing.T) {
 
 	srvURL := startServer(t, mux)
 	cfg := &config.MachineConfig{
-		Token:    "err-token",
-		InitURL:  srvURL + "/status/init",
-		ErrorURL: srvURL + "/status/error",
+		Transport: config.TransportConfig{
+			Token:    "err-token",
+			InitURL:  srvURL + "/status/init",
+			ErrorURL: srvURL + "/status/error",
+		},
 	}
 	client := caprf.NewFromConfig(cfg)
 	ctx := context.Background()
@@ -414,8 +420,10 @@ func TestCAPRFServerRejectsAuth(t *testing.T) {
 
 	srvURL := startServer(t, mux)
 	cfg := &config.MachineConfig{
-		Token:   "bad-token",
-		InitURL: srvURL + "/status/init",
+		Transport: config.TransportConfig{
+			Token:   "bad-token",
+			InitURL: srvURL + "/status/init",
+		},
 	}
 	client := caprf.NewFromConfig(cfg)
 	ctx := context.Background()
@@ -549,14 +557,14 @@ dns_resolver="8.8.8.8"
 	if cfg.Hostname != "e2e-node-01" {
 		t.Errorf("hostname = %q", cfg.Hostname)
 	}
-	if cfg.MinDiskSizeGB != 50 {
-		t.Errorf("MinDiskSizeGB = %d", cfg.MinDiskSizeGB)
+	if cfg.Provision.Disk.MinSizeGB != 50 {
+		t.Errorf("MinDiskSizeGB = %d", cfg.Provision.Disk.MinSizeGB)
 	}
 
 	// Network mode should be FRR.
 	netCfg := &network.Config{
-		UnderlaySubnet: cfg.UnderlaySubnet,
-		ASN:            cfg.ASN,
+		UnderlaySubnet: cfg.Network.EVPN.UnderlaySubnet,
+		ASN:            cfg.Network.BGP.ASN,
 	}
 	if !netCfg.IsFRRMode() {
 		t.Error("expected FRR mode for this config")
@@ -685,8 +693,8 @@ func TestMultipleImageURLsParsing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.ImageURLs) != 3 {
-		t.Fatalf("expected 3 image URLs, got %d: %v", len(cfg.ImageURLs), cfg.ImageURLs)
+	if len(cfg.Provision.Image.URLs) != 3 {
+		t.Fatalf("expected 3 image URLs, got %d: %v", len(cfg.Provision.Image.URLs), cfg.Provision.Image.URLs)
 	}
 }
 
@@ -696,8 +704,8 @@ func TestSingleImageURLParsing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.ImageURLs) != 1 || cfg.ImageURLs[0] != "http://single.gz" {
-		t.Fatalf("expected 1 image URL, got %v", cfg.ImageURLs)
+	if len(cfg.Provision.Image.URLs) != 1 || cfg.Provision.Image.URLs[0] != "http://single.gz" {
+		t.Fatalf("expected 1 image URL, got %v", cfg.Provision.Image.URLs)
 	}
 }
 
@@ -714,8 +722,10 @@ func TestCAPRFDebugEndpoint(t *testing.T) {
 
 	srvURL := startServer(t, mux)
 	cfg := &config.MachineConfig{
-		Token:    "dbg-token",
-		DebugURL: srvURL + "/debug",
+		Transport: config.TransportConfig{
+			Token:    "dbg-token",
+			DebugURL: srvURL + "/debug",
+		},
 	}
 	client := caprf.NewFromConfig(cfg)
 	ctx := context.Background()
@@ -732,7 +742,9 @@ func TestCAPRFDebugEndpoint(t *testing.T) {
 
 func TestCAPRFUnknownStatusRejected(t *testing.T) {
 	cfg := &config.MachineConfig{
-		InitURL: "http://localhost:1/init",
+		Transport: config.TransportConfig{
+			InitURL: "http://localhost:1/init",
+		},
 	}
 	client := caprf.NewFromConfig(cfg)
 	ctx := context.Background()

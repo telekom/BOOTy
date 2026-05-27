@@ -167,24 +167,30 @@ func runMatrixCell(t *testing.T, useOCI, useRAID bool) {
 	// --- machine config -----------------------------------------------------
 
 	cfg := &config.MachineConfig{
-		Mode:              "provision",
-		Hostname:          "matrix-node",
-		Token:             "matrix-bearer",
-		ProviderID:        "redfish://" + strings.TrimPrefix(bmc.URL(), "http://") + "/Systems/1",
-		FailureDomain:     "az-1",
-		Region:            "eu-central",
-		ExtraKernelParams: "console=ttyS0",
-		DNSResolvers:      "8.8.8.8,1.1.1.1",
-		ImageURLs:         []string{imageURL},
-		ImageMode:         "whole-disk",
-		DiskDevice:        diskA,
-		InitURL:           caprfURL + "/status/init",
-		SuccessURL:        caprfURL + "/status/success",
-		ErrorURL:          caprfURL + "/status/error",
-		LogURL:            caprfURL + "/log",
-		DebugURL:          caprfURL + "/debug",
-		ImageChecksum:     hex.EncodeToString(rawSum[:]),
-		ImageChecksumType: "sha256",
+		Mode:     "provision",
+		Hostname: "matrix-node",
+		Network:  config.NetworkConfig{DNSResolvers: "8.8.8.8,1.1.1.1"},
+		Transport: config.TransportConfig{
+			Token:      "matrix-bearer",
+			InitURL:    caprfURL + "/status/init",
+			SuccessURL: caprfURL + "/status/success",
+			ErrorURL:   caprfURL + "/status/error",
+			LogURL:     caprfURL + "/log",
+			DebugURL:   caprfURL + "/debug",
+		},
+		Provision: config.ProvisionConfig{
+			ProviderID:        "redfish://" + strings.TrimPrefix(bmc.URL(), "http://") + "/Systems/1",
+			FailureDomain:     "az-1",
+			Region:            "eu-central",
+			ExtraKernelParams: "console=ttyS0",
+			Image: config.ImageConfig{
+				URLs:         []string{imageURL},
+				Mode:         "whole-disk",
+				Checksum:     hex.EncodeToString(rawSum[:]),
+				ChecksumType: "sha256",
+			},
+			Disk: config.DiskConfig{Device: diskA},
+		},
 	}
 
 	// Sanity-check that the orchestrator constructor accepts the config: this
@@ -223,8 +229,8 @@ func runMatrixCell(t *testing.T, useOCI, useRAID bool) {
 
 	// 3. stream the image to the target tmpfile (real image.Stream)
 	if err := image.Stream(ctx, imageURL, target, image.StreamOpts{
-		Checksum:     cfg.ImageChecksum,
-		ChecksumType: cfg.ImageChecksumType,
+		Checksum:     cfg.Provision.Image.Checksum,
+		ChecksumType: cfg.Provision.Image.ChecksumType,
 	}); err != nil {
 		t.Fatalf("image.Stream: %v", err)
 	}
@@ -479,12 +485,14 @@ func TestFullProvisioningMatrixCAPRFLifecycle(t *testing.T) {
 	url := startTestServer(t, srv.handler())
 
 	cfg := &config.MachineConfig{
-		Token:      "lifecycle-bearer",
-		InitURL:    url + "/status/init",
-		SuccessURL: url + "/status/success",
-		ErrorURL:   url + "/status/error",
-		LogURL:     url + "/log",
-		DebugURL:   url + "/debug",
+		Transport: config.TransportConfig{
+			Token:      "lifecycle-bearer",
+			InitURL:    url + "/status/init",
+			SuccessURL: url + "/status/success",
+			ErrorURL:   url + "/status/error",
+			LogURL:     url + "/log",
+			DebugURL:   url + "/debug",
+		},
 	}
 
 	provider := newMockProvider(cfg)

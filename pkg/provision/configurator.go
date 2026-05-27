@@ -103,15 +103,15 @@ func (c *Configurator) ConfigureKubelet(cfg *config.MachineConfig) error {
 	}
 
 	var labels []string
-	if cfg.FailureDomain != "" {
-		labels = append(labels, "topology.kubernetes.io/zone="+cfg.FailureDomain)
+	if cfg.Provision.FailureDomain != "" {
+		labels = append(labels, "topology.kubernetes.io/zone="+cfg.Provision.FailureDomain)
 	}
-	if cfg.Region != "" {
-		labels = append(labels, "topology.kubernetes.io/region="+cfg.Region)
+	if cfg.Provision.Region != "" {
+		labels = append(labels, "topology.kubernetes.io/region="+cfg.Provision.Region)
 	}
 
-	if cfg.ProviderID != "" && len(labels) > 0 {
-		combined := []string{fmt.Sprintf("--provider-id=%s", cfg.ProviderID), fmt.Sprintf("--node-labels=%s", strings.Join(labels, ","))}
+	if cfg.Provision.ProviderID != "" && len(labels) > 0 {
+		combined := []string{fmt.Sprintf("--provider-id=%s", cfg.Provision.ProviderID), fmt.Sprintf("--node-labels=%s", strings.Join(labels, ","))}
 		content := fmt.Sprintf("KUBELET_EXTRA_ARGS=%q\n", strings.Join(combined, " "))
 		path := filepath.Join(confDir, "10-caprf-kubelet-extra-args.conf")
 		slog.Info("writing combined kubelet extra args", "path", path)
@@ -121,8 +121,8 @@ func (c *Configurator) ConfigureKubelet(cfg *config.MachineConfig) error {
 		return nil
 	}
 
-	if cfg.ProviderID != "" {
-		content := fmt.Sprintf("KUBELET_EXTRA_ARGS=\"--provider-id=%s\"\n", cfg.ProviderID)
+	if cfg.Provision.ProviderID != "" {
+		content := fmt.Sprintf("KUBELET_EXTRA_ARGS=\"--provider-id=%s\"\n", cfg.Provision.ProviderID)
 		path := filepath.Join(confDir, "10-caprf-provider-id.conf")
 		slog.Info("writing kubelet provider-id config", "path", path)
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -157,11 +157,11 @@ func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineCon
 	}
 
 	grubLine := fmt.Sprintf("GRUB_CMDLINE_LINUX=\"ds=nocloud console=%s", console)
-	if cfg.ExtraKernelParams != "" {
-		if !safeKernelParams.MatchString(cfg.ExtraKernelParams) {
-			return fmt.Errorf("unsafe characters in ExtraKernelParams: %q", cfg.ExtraKernelParams)
+	if cfg.Provision.ExtraKernelParams != "" {
+		if !safeKernelParams.MatchString(cfg.Provision.ExtraKernelParams) {
+			return fmt.Errorf("unsafe characters in ExtraKernelParams: %q", cfg.Provision.ExtraKernelParams)
 		}
-		grubLine += " " + cfg.ExtraKernelParams
+		grubLine += " " + cfg.Provision.ExtraKernelParams
 	}
 	grubLine += "\"\n"
 	grubPath := filepath.Join(grubDir, "10-caprf-kernel-params.cfg")
@@ -309,7 +309,7 @@ func validateProvisionCommand(cmd string) error {
 
 // ConfigureDNS writes resolv.conf to the chroot.
 func (c *Configurator) ConfigureDNS(cfg *config.MachineConfig) error {
-	if cfg.DNSResolvers == "" {
+	if cfg.Network.DNSResolvers == "" {
 		return nil
 	}
 	etcDir := filepath.Join(c.rootDir, "etc")
@@ -321,9 +321,9 @@ func (c *Configurator) ConfigureDNS(cfg *config.MachineConfig) error {
 		return fmt.Errorf("stat etc dir %s: %w", etcDir, err)
 	}
 	path := filepath.Join(etcDir, "resolv.conf")
-	slog.Info("configuring DNS", "resolvers", cfg.DNSResolvers)
+	slog.Info("configuring DNS", "resolvers", cfg.Network.DNSResolvers)
 	var lines []string
-	for _, r := range strings.Split(cfg.DNSResolvers, ",") {
+	for _, r := range strings.Split(cfg.Network.DNSResolvers, ",") {
 		r = strings.TrimSpace(r)
 		if r != "" {
 			lines = append(lines, "nameserver "+r)
