@@ -245,26 +245,38 @@ func runCAPRF(ctx context.Context) {
 	modeErr := mode.Run(ctx)
 
 	slog.Info("BOOTy CAPRF complete")
-	if netMode != nil {
-		if err := netMode.Teardown(ctx); err != nil {
-			slog.Warn("network teardown error", "error", err)
-		}
-	}
 
-	// Handle mode-specific exit behavior.
+	// Handle mode-specific exit behavior before network teardown,
+	// so rescue shell SSH access remains available.
 	switch e := modeErr.(type) {
 	case *runmode.RescueShellError:
 		realm.Shell()
 		realm.Reboot()
 		return
 	case *runmode.RebootRequestedError:
+		if netMode != nil {
+			if err := netMode.Teardown(ctx); err != nil {
+				slog.Warn("network teardown error", "error", err)
+			}
+		}
 		realm.Reboot()
 		return
 	case *runmode.ProvisionCompleteError:
+		if netMode != nil {
+			if err := netMode.Teardown(ctx); err != nil {
+				slog.Warn("network teardown error", "error", err)
+			}
+		}
 		tryKexec(cfg, e.FirmwareChanged)
 		time.Sleep(2 * time.Second)
 		realm.Reboot()
 		return
+	}
+
+	if netMode != nil {
+		if err := netMode.Teardown(ctx); err != nil {
+			slog.Warn("network teardown error", "error", err)
+		}
 	}
 
 	// Check if provision mode succeeded (for kexec + poweroff).

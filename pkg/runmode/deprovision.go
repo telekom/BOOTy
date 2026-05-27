@@ -17,9 +17,6 @@ type DeprovisionMode struct {
 func (m *DeprovisionMode) Name() string { return "deprovision" }
 
 func (m *DeprovisionMode) Run(ctx context.Context) error {
-	if m.deps.Cfg.Mode == "soft-deprovision" {
-		m.deps.Cfg.Mode = "soft"
-	}
 	orch := provision.NewOrchestrator(m.deps.Cfg, m.deps.Client, m.deps.DiskMgr)
 	if err := orch.Deprovision(ctx); err != nil {
 		slog.Error("deprovisioning failed", "error", err)

@@ -25,7 +25,11 @@ func TestResolveProvision(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.mode, func(t *testing.T) {
+		name := tt.mode
+		if name == "" {
+			name = "(default)"
+		}
+		t.Run(name, func(t *testing.T) {
 			deps := Deps{Cfg: &config.MachineConfig{Mode: tt.mode}}
 			m, err := Resolve(deps)
 			if tt.wantErr {
