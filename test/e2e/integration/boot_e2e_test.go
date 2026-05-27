@@ -592,6 +592,8 @@ func TestBootModulesPresent(t *testing.T) {
 // Debug dumps (DumpDebugState, DumpPATH, dumpConfig) log at WARN level and
 // are invisible to this check — only genuine ERROR-level messages remain.
 var allowedErrorPatterns = []string{
+	// Top-level mode exit with error (logged by runmode dispatch in main.go).
+	"mode exited with error",
 	// Top-level provisioning/deprovisioning failure.
 	"provisioning failed",
 	"deprovisioning failed",

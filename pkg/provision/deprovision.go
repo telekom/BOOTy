@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/telekom/BOOTy/pkg/config"
 )
@@ -61,8 +62,11 @@ func (o *Orchestrator) softDeprovision(ctx context.Context) error {
 	// Prefer deprovision-specific device if set; otherwise auto-detect.
 	var d string
 	var err error
-	if o.cfg.Deprovision.Device != "" {
-		d = o.cfg.Deprovision.Device
+	if dev := strings.TrimSpace(o.cfg.Deprovision.Device); dev != "" {
+		if !strings.HasPrefix(dev, "/dev/") {
+			return fmt.Errorf("deprovision.device %q must be an absolute /dev/ path", dev)
+		}
+		d = dev
 	} else {
 		d, err = o.disk.DetectDisk(ctx, o.cfg.Provision.Disk.MinSizeGB)
 		if err != nil {

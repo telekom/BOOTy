@@ -19,6 +19,7 @@ type Config struct {
 	// section is active.
 	// Valid values: "provision", "deprovision", "soft-deprovision",
 	//              "standby", "dry-run", "check"
+	// Legacy aliases: "soft" (= soft-deprovision), "hard" (= deprovision)
 	// Default: "provision"
 	Mode string `yaml:"mode" json:"mode"`
 
