@@ -14,14 +14,14 @@ type PartitionLayout struct {
 	Table      string      `json:"table" yaml:"table"`                       // "gpt" (default: "gpt") — only GPT is supported
 	Device     string      `json:"device,omitempty" yaml:"device,omitempty"` // Device override (empty = auto-detect)
 	Partitions []Partition `json:"partitions" yaml:"partitions"`             // Ordered list of partitions to create
-	LVM        *LVMConfig  `json:"lvm,omitempty" yaml:"lvm,omitempty"`      // Optional LVM configuration
+	LVM        *LVMConfig  `json:"lvm,omitempty" yaml:"lvm,omitempty"`       // Optional LVM configuration
 }
 
 // Partition defines a single partition in a PartitionLayout.
 type Partition struct {
-	Label      string `json:"label" yaml:"label"`                             // GPT partition label (e.g. "efi", "root", "data")
-	SizeMB     int    `json:"sizeMB,omitempty" yaml:"sizeMB,omitempty"`       // Size in MiB (0 = fill remaining space)
-	TypeGUID   string `json:"typeGUID,omitempty" yaml:"typeGUID,omitempty"`   // GPT type GUID (auto-set from fsType if omitted)
+	Label      string `json:"label" yaml:"label"`                               // GPT partition label (e.g. "efi", "root", "data")
+	SizeMB     int    `json:"sizeMB,omitempty" yaml:"sizeMB,omitempty"`         // Size in MiB (0 = fill remaining space)
+	TypeGUID   string `json:"typeGUID,omitempty" yaml:"typeGUID,omitempty"`     // GPT type GUID (auto-set from fsType if omitted)
 	Filesystem string `json:"filesystem,omitempty" yaml:"filesystem,omitempty"` // mkfs type: "vfat", "ext4", "xfs", "swap"
 	Mountpoint string `json:"mountpoint,omitempty" yaml:"mountpoint,omitempty"` // Target mount path (e.g. "/", "/boot/efi")
 }
@@ -35,9 +35,9 @@ type LVMConfig struct {
 
 // LVVolume defines a single logical volume within an LVM volume group.
 type LVVolume struct {
-	Name       string `json:"name" yaml:"name"`                               // LV name (e.g. "root", "var")
-	SizeMB     int    `json:"sizeMB,omitempty" yaml:"sizeMB,omitempty"`       // Size in MiB (0 = fill remaining)
-	Extents    string `json:"extents,omitempty" yaml:"extents,omitempty"`     // Size as extents (e.g. "100%FREE")
+	Name       string `json:"name" yaml:"name"`                                 // LV name (e.g. "root", "var")
+	SizeMB     int    `json:"sizeMB,omitempty" yaml:"sizeMB,omitempty"`         // Size in MiB (0 = fill remaining)
+	Extents    string `json:"extents,omitempty" yaml:"extents,omitempty"`       // Size as extents (e.g. "100%FREE")
 	Filesystem string `json:"filesystem,omitempty" yaml:"filesystem,omitempty"` // mkfs type
 	Mountpoint string `json:"mountpoint,omitempty" yaml:"mountpoint,omitempty"` // Target mount path
 }

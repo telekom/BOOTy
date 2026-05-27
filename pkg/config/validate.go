@@ -12,7 +12,9 @@ func (c *Config) Validate() error {
 		func() string {
 			return validateEnum(c.Mode, "mode", "provision", "deprovision", "soft-deprovision", "standby", "dry-run", "check")
 		},
-		func() string { return validateEnum(c.Provision.Image.Mode, "provision.image.mode", "whole-disk", "partition") },
+		func() string {
+			return validateEnum(c.Provision.Image.Mode, "provision.image.mode", "whole-disk", "partition")
+		},
 		func() string {
 			return validateEnumLower(c.Network.Mode, "network.mode", "gobgp", "frr", "static", "dhcp")
 		},
