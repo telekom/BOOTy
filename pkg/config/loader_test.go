@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -366,6 +367,84 @@ func TestLoadValidationErrorIncludesPath(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), path) {
 		t.Fatalf("expected file path in error, got: %v", err)
+	}
+}
+
+// TestLoadFullYAMLReference loads testdata/full.yaml and verifies that all key
+// fields round-trip correctly. This acts as a canary: if a field is renamed or
+// removed in the structs, the reference YAML will stop loading correctly.
+func TestLoadFullYAMLReference(t *testing.T) {
+	cfg, err := Load("testdata/full.yaml")
+	if err != nil {
+		t.Fatalf("Load(testdata/full.yaml): %v", err)
+	}
+
+	checks := []struct {
+		name string
+		got  any
+		want any
+	}{
+		{"Hostname", cfg.Hostname, "node-01"},
+		{"Mode", cfg.Mode, "provision"},
+		{"Network.Mode", cfg.Network.Mode, "gobgp"},
+		{"Network.DNSResolvers", cfg.Network.DNSResolvers, "8.8.8.8,1.1.1.1"},
+		{"Network.BGP.ASN", cfg.Network.BGP.ASN, uint32(65001)},
+		{"Network.BGP.PeerMode", cfg.Network.BGP.PeerMode, "unnumbered"},
+		{"Network.BGP.MinPeers", cfg.Network.BGP.MinPeers, 2},
+		{"Network.BGP.BFDTransmitMS", cfg.Network.BGP.BFDTransmitMS, uint32(300)},
+		{"Network.EVPN.UnderlaySubnet", cfg.Network.EVPN.UnderlaySubnet, "192.168.4.0/24"},
+		{"Network.EVPN.ProvisionVNI", cfg.Network.EVPN.ProvisionVNI, uint32(100)},
+		{"Network.EVPN.ProvisionIP", cfg.Network.EVPN.ProvisionIP, "10.100.0.20/24"},
+		{"Network.Bond.Mode", cfg.Network.Bond.Mode, "802.3ad"},
+		{"Network.VRF.TableID", cfg.Network.VRF.TableID, uint32(1000)},
+		{"Network.IPMI.Subnet", cfg.Network.IPMI.Subnet, "172.30.0.0/24"},
+		{"Transport.Token", cfg.Transport.Token, "bootstrap-token-xyz"},
+		{"Transport.TokenAlgorithm", cfg.Transport.TokenAlgorithm, "RS256"},
+		{"Transport.InitURL", cfg.Transport.InitURL, "https://caprf.example.com/status/init"},
+		{"Health.Enabled", cfg.Health.Enabled, true},
+		{"Health.MinMemoryGB", cfg.Health.MinMemoryGB, 16},
+		{"Health.MinCPUs", cfg.Health.MinCPUs, 4},
+		{"Health.SkipChecks", cfg.Health.SkipChecks, "thermal"},
+		{"Telemetry.Enabled", cfg.Telemetry.Enabled, true},
+		{"Telemetry.MetricsURL", cfg.Telemetry.MetricsURL, "https://caprf.example.com/metrics"},
+		{"Rescue.Mode", cfg.Rescue.Mode, "retry"},
+		{"Rescue.Timeout", cfg.Rescue.Timeout, 300},
+		{"Provision.ExtraKernelParams", cfg.Provision.ExtraKernelParams, "console=ttyS0,115200"},
+		{"Provision.FailureDomain", cfg.Provision.FailureDomain, "zone-a"},
+		{"Provision.Region", cfg.Provision.Region, "eu-west-1"},
+		{"Provision.ProviderID", cfg.Provision.ProviderID, "metal://node-01"},
+		{"Provision.Image.ChecksumType", cfg.Provision.Image.ChecksumType, "sha256"},
+		{"Provision.Image.Mode", cfg.Provision.Image.Mode, "whole-disk"},
+		{"Provision.Disk.MinSizeGB", cfg.Provision.Disk.MinSizeGB, 100},
+		{"Provision.Disk.NumVFs", cfg.Provision.Disk.NumVFs, 32},
+		{"Provision.Firmware.MinBIOS", cfg.Provision.Firmware.MinBIOS, "2.10"},
+		{"Provision.Firmware.MinBMC", cfg.Provision.Firmware.MinBMC, "4.50"},
+		{"Provision.CrashArtifacts.MaxMB", cfg.Provision.CrashArtifacts.MaxMB, 256},
+		{"Provision.CrashArtifacts.UploadTimeoutSec", cfg.Provision.CrashArtifacts.UploadTimeoutSec, 120},
+		{"Agent.HeartbeatURL", cfg.Agent.HeartbeatURL, "https://caprf.example.com/heartbeat"},
+		{"Agent.CommandsURL", cfg.Agent.CommandsURL, "https://caprf.example.com/commands"},
+	}
+
+	for _, c := range checks {
+		if fmt.Sprintf("%v", c.got) != fmt.Sprintf("%v", c.want) {
+			t.Errorf("%s = %v, want %v", c.name, c.got, c.want)
+		}
+	}
+
+	if len(cfg.Provision.Image.URLs) != 1 {
+		t.Errorf("Provision.Image.URLs len = %d, want 1", len(cfg.Provision.Image.URLs))
+	}
+	if len(cfg.Provision.Disk.RAID) != 1 {
+		t.Errorf("Provision.Disk.RAID len = %d, want 1", len(cfg.Provision.Disk.RAID))
+	}
+	if cfg.Provision.Disk.RAID[0].Name != "md0" {
+		t.Errorf("RAID[0].Name = %q, want md0", cfg.Provision.Disk.RAID[0].Name)
+	}
+	if cfg.Provision.Disk.RAID[0].Level != 1 {
+		t.Errorf("RAID[0].Level = %d, want 1", cfg.Provision.Disk.RAID[0].Level)
+	}
+	if len(cfg.Provision.PostProvisionCmds) != 1 {
+		t.Errorf("PostProvisionCmds len = %d, want 1", len(cfg.Provision.PostProvisionCmds))
 	}
 }
 

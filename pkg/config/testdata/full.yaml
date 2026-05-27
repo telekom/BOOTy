@@ -1,0 +1,312 @@
+# full.yaml — complete BOOTy configuration reference.
+#
+# This file documents every supported field with its type, valid values, and
+# default. It is loaded by TestLoadYAMLFull in loader_test.go to verify that all
+# fields round-trip correctly.
+#
+# A production config only needs the fields relevant to the active mode — all
+# other sections are optional and default to zero values.
+
+hostname: node-01          # Machine hostname — used for logging and JWT acquisition
+mode: provision            # Operating mode: provision | deprovision | soft-deprovision |
+                           #   standby | dry-run | check (default: provision)
+dryRun: false              # Override mode to dry-run when true (default: false)
+
+# ---------------------------------------------------------------------------
+# Network — configures the in-ramdisk network stack.
+# All modes share this section since connectivity must be established first.
+# ---------------------------------------------------------------------------
+network:
+  # mode selects the network stack implementation.
+  # Valid values: gobgp | frr | static | dhcp | "" (auto-detect from fields)
+  mode: gobgp
+
+  # dnsResolvers is a comma-separated list of DNS server IPs.
+  dnsResolvers: "8.8.8.8,1.1.1.1"
+
+  bgp:
+    # asn is the local BGP Autonomous System Number. ASN > 0 activates BGP networking.
+    asn: 65001
+
+    # peerMode: unnumbered (default) | dual | numbered
+    #   unnumbered: link-local interface peers
+    #   dual:       unnumbered for IPv4 + numbered for L2VPN-EVPN
+    #   numbered:   explicit neighbor IPs (requires bgp.neighbors)
+    peerMode: unnumbered
+
+    # neighbors: comma-separated peer IPs (required for dual/numbered peerMode)
+    neighbors: ""
+
+    # remoteASN: 0 = iBGP (same AS), >0 = eBGP remote AS
+    remoteASN: 0
+
+    # underlayAF: ipv4 (default) | ipv6 | dual-stack
+    underlayAF: ipv4
+
+    # overlayType: evpn-vxlan (default) | l3vpn | none
+    overlayType: evpn-vxlan
+
+    # authPassword: TCP-MD5 password for all BGP peers (default: "" = no auth)
+    authPassword: ""
+
+    # minPeers: minimum established peers before underlay is ready (default: 1)
+    minPeers: 2
+
+    # keepalive/hold: BGP timer overrides in seconds (0 = FRR/GoBGP defaults)
+    keepalive: 0
+    hold: 0
+
+    # bfdTransmitMS/bfdReceiveMS: BFD intervals in milliseconds (0 = BFD disabled)
+    bfdTransmitMS: 300
+    bfdReceiveMS: 300
+
+  evpn:
+    # underlaySubnet: IPv4 subnet for loopback IP derivation (e.g. "192.168.4.0/24")
+    underlaySubnet: "192.168.4.0/24"
+
+    # underlayIP: direct loopback IP override; takes precedence over underlaySubnet
+    underlayIP: ""
+
+    # overlaySubnet: IPv6 subnet for overlay address assignment
+    overlaySubnet: "2a01:598:40a:5481::/64"
+
+    # provisionVNI: VXLAN Network Identifier for the provisioning overlay (0 = disabled)
+    provisionVNI: 100
+
+    # provisionIP: IP/CIDR to assign to the provisioning bridge
+    provisionIP: "10.100.0.20/24"
+
+    # provisionGateway: VTEP gateway IP for BUM traffic flooding
+    provisionGateway: "10.100.0.1"
+
+    # l2Enabled: enable Type-2/Type-3 EVPN route processing (default: false)
+    l2Enabled: false
+
+    # dcgwIPs: comma-separated Data Center Gateway IPs (OneFabric topologies)
+    dcgwIPs: ""
+
+    leafASN: 0
+    localASN: 0
+    overlayAggregate: ""
+    vpnRT: ""
+
+  static:
+    # ip: IP/CIDR to assign (activates static mode when BGP is not configured)
+    ip: ""
+    gateway: ""
+    iface: ""  # "" = auto-detect first physical NIC
+
+  bond:
+    # interfaces: comma-separated NICs to bond (activates LACP bonding when set)
+    interfaces: ""
+    # mode: Linux bonding mode (default: 802.3ad)
+    mode: "802.3ad"
+
+  vlan:
+    # config: multi-VLAN spec "ID:parent[:address[:gateway]],..."
+    # Example: "200:eno1:10.200.0.42/24,300:eno2"
+    config: ""
+
+  vrf:
+    # name: VRF interface name (default: "" = no VRF)
+    name: ""
+    # tableID: routing table ID for the VRF (default: 1000)
+    tableID: 1000
+
+  ipmi:
+    # subnet: IPMI/BMC management network subnet for underlay IP derivation
+    subnet: "172.30.0.0/24"
+
+# ---------------------------------------------------------------------------
+# Transport — CAPRF server communication settings.
+# ---------------------------------------------------------------------------
+transport:
+  # token: bearer token for CAPRF authentication (bootstrap token or direct JWT)
+  token: "bootstrap-token-xyz"
+
+  # tokenURL: JWT exchange endpoint; when set, token is exchanged for a JWT
+  tokenURL: ""
+
+  # tokenAlgorithm: RS256 | ES256 (default: server default)
+  tokenAlgorithm: RS256
+
+  initURL:    "https://caprf.example.com/status/init"
+  successURL: "https://caprf.example.com/status/success"
+  errorURL:   "https://caprf.example.com/status/error"
+  logURL:     "https://caprf.example.com/logs"
+  debugURL:   ""
+
+  # insecure: allow bearer token over plain HTTP — TESTING ONLY, never in production
+  insecure: false
+
+# ---------------------------------------------------------------------------
+# Health — pre-provisioning hardware health checks.
+# ---------------------------------------------------------------------------
+health:
+  # enabled: run the health check suite before provisioning (default: false)
+  enabled: true
+
+  # minMemoryGB: minimum RAM in GiB (0 = no minimum)
+  minMemoryGB: 16
+
+  # minCPUs: minimum CPU core count (0 = no minimum)
+  minCPUs: 4
+
+  # skipChecks: comma-separated check names to skip (e.g. "thermal,disk")
+  skipChecks: "thermal"
+
+  # reportURL: POST endpoint for health check results JSON
+  reportURL: "https://caprf.example.com/health"
+
+# ---------------------------------------------------------------------------
+# Telemetry — provisioning metrics and event reporting.
+# ---------------------------------------------------------------------------
+telemetry:
+  enabled: true
+  url: "https://caprf.example.com/telemetry"
+  metricsURL: "https://caprf.example.com/metrics"
+  eventURL: "https://caprf.example.com/events"
+
+# ---------------------------------------------------------------------------
+# Rescue — behavior when provisioning fails.
+# ---------------------------------------------------------------------------
+rescue:
+  # mode: reboot (default) | retry | shell | wait
+  mode: retry
+
+  # sshPubKey: authorized SSH public key for rescue shell access
+  sshPubKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG... admin@ops"
+
+  # passwordHash: crypt(3) hash for rescue shell login
+  passwordHash: ""
+
+  # timeout: seconds before the rescue auto-action fires (0 = wait indefinitely)
+  timeout: 300
+
+  # autoMountDisks: automatically mount discovered disks in rescue mode
+  autoMountDisks: false
+
+# ---------------------------------------------------------------------------
+# Provision — settings for the provisioning pipeline.
+# Only read when mode is "provision" or "dry-run".
+# ---------------------------------------------------------------------------
+provision:
+  # extraKernelParams: additional kernel command-line parameters for the installed OS
+  extraKernelParams: "console=ttyS0,115200"
+
+  # failureDomain maps to topology.kubernetes.io/zone on the provisioned node
+  failureDomain: zone-a
+
+  # region: geographic region identifier for the node
+  region: eu-west-1
+
+  # providerID: kubelet --provider-id value (e.g. "redfish://bmc/Systems/1")
+  providerID: "metal://node-01"
+
+  # disableKexec: skip kexec and force hard reboot after provisioning (default: false)
+  disableKexec: false
+
+  # postProvisionCmds: commands run in chroot after provisioning completes
+  postProvisionCmds:
+    - "systemctl enable kubelet"
+
+  image:
+    # urls: ordered list of image source URLs; multiple URLs enable fallback.
+    # Supports HTTPS URLs and OCI registry references (oci://host/repo:tag).
+    urls:
+      - "https://registry.example.com/os-image:v1.2.3"
+
+    # checksum: expected hex digest of the raw (decompressed) image
+    checksum: "abc123def456abc123def456abc123def456abc123def456abc123def456ab12"
+
+    # checksumType: sha256 | sha512 (default: inferred from checksum length)
+    checksumType: sha256
+
+    # mode: whole-disk (default) | partition
+    mode: whole-disk
+
+    signatureURL: ""
+    gpgPubKey: ""
+
+  disk:
+    # device: explicit block device path (default: auto-detect largest non-removable disk)
+    device: ""
+
+    # minSizeGB: minimum disk size in GiB for auto-detection (0 = no minimum)
+    minSizeGB: 100
+
+    # secureErase: use ATA Secure Erase / NVMe Format instead of wipefs (default: false)
+    secureErase: false
+
+    # numVFs: SR-IOV Virtual Functions to create on Mellanox NICs (default: 32)
+    numVFs: 32
+
+    # nvmeNamespaces: JSON configuration for NVMe namespace creation (default: "")
+    nvmeNamespaces: ""
+
+    # raid: software RAID arrays to create (default: none).
+    # Arrays are stopped first, then re-created in order.
+    # RAIDConfig.name must NOT include /dev/ prefix (e.g. "md0", not "/dev/md0").
+    raid:
+      - name: md0       # mdadm device name without /dev/ prefix
+        level: 1        # RAID level: 0, 1, 5, 6, 10
+        devices:
+          - /dev/sda
+          - /dev/sdb
+
+    # partitionLayout: declarative GPT partitioning (not yet active in provisioning).
+    # When set, use ParsePartitionLayout to validate the JSON form.
+    # partitionLayout: null  # reserved for future use
+
+  firmware:
+    enabled: true
+    url: "https://caprf.example.com/firmware"
+    # minBIOS/minBMC: minimum acceptable firmware versions (default: "" = no minimum)
+    minBIOS: "2.10"
+    minBMC: "4.50"
+
+  secureBoot:
+    # reEnable: signal CAPRF to re-enable Secure Boot after provisioning
+    reEnable: false
+    mokCertPath: ""
+    mokPassword: ""
+
+  cloudInit:
+    enabled: false
+    # datasource: nocloud (default) | configdrive
+    datasource: nocloud
+
+  crashArtifacts:
+    enabled: false
+    prepareURL: ""
+    uploadURL: ""
+    # maxMB: maximum archive size in MiB (default: 256)
+    maxMB: 256
+    # uploadTimeoutSec: upload timeout in seconds (default: 120)
+    uploadTimeoutSec: 120
+
+  inventory:
+    enabled: false
+    url: ""
+
+# ---------------------------------------------------------------------------
+# Deprovision — settings for the deprovisioning pipeline.
+# Only read when mode is "deprovision" or "soft-deprovision".
+# ---------------------------------------------------------------------------
+deprovision:
+  # secureErase: use ATA Secure Erase/NVMe Format instead of wipefs (default: false)
+  secureErase: false
+
+  # device: explicit block device to deprovision (default: "" = auto-detect)
+  device: ""
+
+# ---------------------------------------------------------------------------
+# Agent — standby/hot-standby mode settings.
+# Only read when mode is "standby".
+# ---------------------------------------------------------------------------
+agent:
+  # heartbeatURL: POST endpoint for periodic keepalive signals
+  heartbeatURL: "https://caprf.example.com/heartbeat"
+
+  # commandsURL: GET endpoint for polling pending commands
+  commandsURL: "https://caprf.example.com/commands"

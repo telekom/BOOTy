@@ -10,40 +10,122 @@ import (
 	"strings"
 )
 
-// PartitionLayout defines a declarative partitioning scheme for the target disk.
+// PartitionLayout defines a declarative GPT partitioning scheme for the target
+// disk. It supports plain partitions and an optional LVM layer on top of one of
+// the partitions.
+//
+// Constraints enforced by ParsePartitionLayout:
+//   - At most one partition may have SizeMB=0 (fill remaining), and it must be last.
+//   - Mountpoint "/" must appear in exactly one partition or LVM volume.
+//   - Mountpoints must be unique across partitions and LVM volumes.
+//   - Only "gpt" table type is supported.
+//
+// An external controller can embed this struct directly and call
+// ParsePartitionLayout to validate a JSON representation, or build the struct
+// programmatically and include it in DiskConfig.PartitionLayout.
 type PartitionLayout struct {
-	Table      string      `json:"table" yaml:"table"`                       // "gpt" (default: "gpt") — only GPT is supported
-	Device     string      `json:"device,omitempty" yaml:"device,omitempty"` // Device override (empty = auto-detect)
-	Partitions []Partition `json:"partitions" yaml:"partitions"`             // Ordered list of partitions to create
-	LVM        *LVMConfig  `json:"lvm,omitempty" yaml:"lvm,omitempty"`       // Optional LVM configuration
+	// Table is the partition table type.
+	// Only "gpt" is supported. Defaults to "gpt" when empty.
+	Table string `json:"table" yaml:"table"`
+
+	// Device overrides automatic disk detection.
+	// Must be an absolute, clean path (e.g. "/dev/sda"). Empty means auto-detect.
+	Device string `json:"device,omitempty" yaml:"device,omitempty"`
+
+	// Partitions is the ordered list of GPT partitions to create.
+	// At least one partition is required.
+	Partitions []Partition `json:"partitions" yaml:"partitions"`
+
+	// LVM optionally adds an LVM volume group on top of one of the partitions.
+	// When nil, no LVM is configured.
+	LVM *LVMConfig `json:"lvm,omitempty" yaml:"lvm,omitempty"`
 }
 
-// Partition defines a single partition in a PartitionLayout.
+// Partition defines a single GPT partition within a PartitionLayout.
 type Partition struct {
-	Label      string `json:"label" yaml:"label"`                               // GPT partition label (e.g. "efi", "root", "data")
-	SizeMB     int    `json:"sizeMB,omitempty" yaml:"sizeMB,omitempty"`         // Size in MiB (0 = fill remaining space)
-	TypeGUID   string `json:"typeGUID,omitempty" yaml:"typeGUID,omitempty"`     // GPT type GUID (auto-set from fsType if omitted)
-	Filesystem string `json:"filesystem,omitempty" yaml:"filesystem,omitempty"` // mkfs type: "vfat", "ext4", "xfs", "swap"
-	Mountpoint string `json:"mountpoint,omitempty" yaml:"mountpoint,omitempty"` // Target mount path (e.g. "/", "/boot/efi")
+	// Label is the GPT partition name. Must be unique, at most 36 characters,
+	// and contain only alphanumerics, hyphens, underscores, dots, or spaces.
+	// Required.
+	Label string `json:"label" yaml:"label"`
+
+	// SizeMB is the partition size in MiB. 0 means "fill remaining space" and
+	// must only appear on the last partition.
+	SizeMB int `json:"sizeMB,omitempty" yaml:"sizeMB,omitempty"`
+
+	// TypeGUID is the GPT partition type GUID (e.g. "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
+	// for EFI). When empty, the type is auto-set based on Filesystem.
+	TypeGUID string `json:"typeGUID,omitempty" yaml:"typeGUID,omitempty"`
+
+	// Filesystem is the filesystem type to create with mkfs.
+	// Supported values: "vfat", "ext4", "xfs", "swap", "" (no filesystem).
+	Filesystem string `json:"filesystem,omitempty" yaml:"filesystem,omitempty"`
+
+	// Mountpoint is the absolute path where the partition is mounted inside the
+	// installed OS (e.g. "/", "/boot", "/boot/efi").
+	// A Mountpoint requires a Filesystem. Swap partitions must not set a Mountpoint.
+	Mountpoint string `json:"mountpoint,omitempty" yaml:"mountpoint,omitempty"`
 }
 
-// LVMConfig defines LVM volume group and logical volume configuration.
+// LVMConfig defines an LVM volume group and its logical volumes.
+// The VG is created on top of a single partition (identified by PVPartition).
+// That partition must not define its own Filesystem or Mountpoint.
 type LVMConfig struct {
-	VolumeGroup string     `json:"volumeGroup" yaml:"volumeGroup"` // VG name (e.g. "sysvg")
-	PVPartition int        `json:"pvPartition" yaml:"pvPartition"` // 1-based partition index for the PV
-	Volumes     []LVVolume `json:"volumes" yaml:"volumes"`         // Logical volumes to create
+	// VolumeGroup is the LVM volume group name (e.g. "sysvg").
+	// Must be a valid LVM name: alphanumerics, hyphens, underscores, dots;
+	// must not start with a hyphen or dot. Required.
+	VolumeGroup string `json:"volumeGroup" yaml:"volumeGroup"`
+
+	// PVPartition is the 1-based index into PartitionLayout.Partitions that
+	// becomes the physical volume for this VG. Required (>= 1).
+	PVPartition int `json:"pvPartition" yaml:"pvPartition"`
+
+	// Volumes is the ordered list of logical volumes to create in this VG.
+	// At least one volume is required.
+	Volumes []LVVolume `json:"volumes" yaml:"volumes"`
 }
 
 // LVVolume defines a single logical volume within an LVM volume group.
 type LVVolume struct {
-	Name       string `json:"name" yaml:"name"`                                 // LV name (e.g. "root", "var")
-	SizeMB     int    `json:"sizeMB,omitempty" yaml:"sizeMB,omitempty"`         // Size in MiB (0 = fill remaining)
-	Extents    string `json:"extents,omitempty" yaml:"extents,omitempty"`       // Size as extents (e.g. "100%FREE")
-	Filesystem string `json:"filesystem,omitempty" yaml:"filesystem,omitempty"` // mkfs type
-	Mountpoint string `json:"mountpoint,omitempty" yaml:"mountpoint,omitempty"` // Target mount path
+	// Name is the logical volume name within the VG (e.g. "root", "var", "data").
+	// Must be a valid LVM name. Required.
+	Name string `json:"name" yaml:"name"`
+
+	// SizeMB is the volume size in MiB. 0 combined with an empty Extents means
+	// "fill remaining space" (equivalent to Extents="100%FREE"). Must be last.
+	SizeMB int `json:"sizeMB,omitempty" yaml:"sizeMB,omitempty"`
+
+	// Extents is the size expressed as LVM extent syntax (e.g. "100%FREE", "50%VG").
+	// Mutually exclusive with SizeMB.
+	Extents string `json:"extents,omitempty" yaml:"extents,omitempty"`
+
+	// Filesystem is the filesystem type to create with mkfs.
+	// Supported values: "vfat", "ext4", "xfs", "swap", "" (no filesystem).
+	Filesystem string `json:"filesystem,omitempty" yaml:"filesystem,omitempty"`
+
+	// Mountpoint is the absolute path where the volume is mounted inside the
+	// installed OS. A Mountpoint requires a Filesystem.
+	Mountpoint string `json:"mountpoint,omitempty" yaml:"mountpoint,omitempty"`
 }
 
-// ParsePartitionLayout parses a JSON partition layout string.
+// ParsePartitionLayout parses and validates a JSON partition layout string.
+//
+// Validation rules applied:
+//   - Table must be "gpt" or empty (defaults to "gpt")
+//   - Device, if set, must be an absolute, clean, whitespace-free path
+//   - At least one and at most 128 partitions required
+//   - Each partition label must be unique, ≤36 chars, alphanumeric/hyphen/underscore/dot/space
+//   - At most one partition may have SizeMB=0 (fill remaining), and it must be last
+//   - Mountpoints must be absolute, whitespace-free, path-traversal-free, and unique
+//   - A mountpoint requires a filesystem; swap partitions must not define a mountpoint
+//   - Supported filesystems: "vfat", "ext4", "xfs", "swap", "" (raw)
+//   - TypeGUID, when set, must be a valid UUID
+//   - LVM validation: volumeGroup and pvPartition required, pvPartition must not define
+//     filesystem or mountpoint, LV names must be unique valid LVM names, fill-remaining
+//     LV must be last, sizeMB and extents are mutually exclusive
+//   - Mountpoint "/" must appear in exactly one partition or LVM volume
+//
+// Returns a validated *PartitionLayout with Table defaulted to "gpt" and
+// Device trimmed. Returns an error describing the first validation failure.
 func ParsePartitionLayout(data string) (*PartitionLayout, error) {
 	var layout PartitionLayout
 	decoder := json.NewDecoder(strings.NewReader(data))

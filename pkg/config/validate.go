@@ -5,8 +5,32 @@ import (
 	"strings"
 )
 
-// Validate checks that enum-like config fields contain known values.
-// Empty strings are accepted (will use defaults downstream).
+// Validate checks that all enum-like config fields contain known values and
+// that cross-field constraints are satisfied. Empty strings are accepted
+// everywhere — unset fields fall back to documented defaults at runtime.
+//
+// Fields validated:
+//   - Mode: "provision", "deprovision", "soft-deprovision", "soft", "hard",
+//     "standby", "dry-run", "check"
+//   - Provision.Image.Mode: "whole-disk", "partition"
+//   - Provision.Image.ChecksumType: "sha256", "sha512"
+//   - Provision.CloudInit.Datasource: "nocloud", "configdrive"
+//   - Provision.Disk.RAID[*]: valid level, unique non-empty name without /dev/ prefix,
+//     minimum device count per RAID level
+//   - Network.Mode: "gobgp", "frr", "static", "dhcp"
+//   - Network.BGP.PeerMode: "unnumbered", "dual", "numbered"
+//   - Network.BGP.UnderlayAF: "ipv4", "ipv6", "dual-stack"
+//   - Network.BGP.OverlayType: "evpn-vxlan", "l3vpn", "none"
+//   - Rescue.Mode: "reboot", "retry", "shell", "wait"
+//   - Transport.TokenAlgorithm: "RS256", "ES256"
+//   - Cross-field: Network.BGP.Neighbors required when PeerMode is "dual" or "numbered"
+//
+// Validate also calls normalize(), which lowercases/uppercases case-insensitive
+// enum fields in place so that downstream code can use plain equality comparisons.
+// After a successful Validate call, string enums are in their canonical form.
+//
+// All validation errors are collected and returned as a single error. Returns
+// nil when the config is valid.
 func (c *Config) Validate() error {
 	validators := []func() string{
 		func() string {
