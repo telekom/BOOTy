@@ -13,14 +13,14 @@ import (
 )
 
 // Deprovision runs the deprovisioning pipeline.
-// Mode "soft" renames grub.cfg to make the system unbootable.
-// Mode "hard" (default) wipes all disks and removes EFI boot entries.
+// Mode "soft-deprovision" (or "soft") renames grub.cfg to make the system unbootable.
+// Mode "deprovision" or "hard" (default) wipes all disks and removes EFI boot entries.
 func (o *Orchestrator) Deprovision(ctx context.Context) error {
 	mode := o.cfg.Mode
 	if mode == "" {
 		mode = "hard"
 	}
-	o.log.Info("Starting deprovisioning", "mode", mode)
+	o.log.Info("starting deprovisioning", "mode", mode)
 
 	steps := []Step{
 		{"report-init", o.reportInit},
@@ -28,7 +28,7 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 		{"configure-dns", o.configureDNS},
 	}
 
-	if mode == "soft" {
+	if mode == "soft" || mode == "soft-deprovision" {
 		steps = append(steps, Step{"soft-deprovision", o.softDeprovision})
 	} else {
 		steps = append(steps,

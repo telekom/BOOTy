@@ -161,7 +161,7 @@ func validatePartitionMountpoint(index int, part Partition) error {
 	if strings.ContainsAny(part.Mountpoint, " \t\n\r") {
 		return fmt.Errorf("partition %d (%s): mountpoint %q must not contain whitespace", index+1, part.Label, part.Mountpoint)
 	}
-	if part.Mountpoint != "" && strings.Contains(filepath.Clean(part.Mountpoint), "..") {
+	if part.Mountpoint != "" && containsPathTraversal(part.Mountpoint) {
 		return fmt.Errorf("partition %d (%s): mountpoint %q must not contain path traversal", index+1, part.Label, part.Mountpoint)
 	}
 	if part.Mountpoint != "" && part.Filesystem == "" {
@@ -305,7 +305,7 @@ func validateLVMVolumeMountpoint(index int, vol LVVolume) error {
 	if strings.ContainsAny(vol.Mountpoint, " \t\n\r") {
 		return fmt.Errorf("lvm volume %d (%s): mountpoint %q must not contain whitespace", index+1, vol.Name, vol.Mountpoint)
 	}
-	if vol.Mountpoint != "" && strings.Contains(filepath.Clean(vol.Mountpoint), "..") {
+	if vol.Mountpoint != "" && containsPathTraversal(vol.Mountpoint) {
 		return fmt.Errorf("lvm volume %d (%s): mountpoint %q must not contain path traversal", index+1, vol.Name, vol.Mountpoint)
 	}
 	if vol.Mountpoint != "" && vol.Filesystem == "" {
@@ -315,6 +315,17 @@ func validateLVMVolumeMountpoint(index int, vol LVVolume) error {
 		return fmt.Errorf("lvm volume %d (%s): swap volume must not define mountpoint %q", index+1, vol.Name, vol.Mountpoint)
 	}
 	return nil
+}
+
+// containsPathTraversal detects ".." path components in a mountpoint string.
+// filepath.Clean collapses traversal sequences, so we check the raw components.
+func containsPathTraversal(path string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 func validateLVMVolumeSize(index int, vol LVVolume) error {

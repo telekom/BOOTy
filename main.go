@@ -245,9 +245,6 @@ func runCAPRF(ctx context.Context) {
 		// Do not return here - continue with the normal lifecycle
 		// (network teardown, reboot) so PID 1 exits cleanly.
 	case "deprovision", "soft-deprovision":
-		if cfg.Mode == "soft-deprovision" {
-			cfg.Mode = "soft"
-		}
 		if err := orch.Deprovision(ctx); err != nil {
 			slog.Error("deprovisioning failed", "error", err)
 		}
