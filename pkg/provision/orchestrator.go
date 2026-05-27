@@ -888,7 +888,6 @@ func (o *Orchestrator) reportSuccess(ctx context.Context) error {
 	return o.provider.ReportStatus(ctx, config.StatusSuccess, "provisioning complete")
 }
 
-
 // DumpDebugState logs system state useful for diagnosing failures.
 // BOOTy runs as PID 1 in an initramfs — this dump is the only diagnostic
 // data available before reboot, so it must be comprehensive.
