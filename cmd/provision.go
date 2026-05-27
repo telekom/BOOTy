@@ -10,8 +10,10 @@ import (
 var provisionCmd = &cobra.Command{
 	Use:   "provision",
 	Short: "Provision a bare-metal server with an OS image",
-	Long: `Runs the full provisioning pipeline: disk detection, image streaming,
-partitioning, OS configuration, cloud-init injection, and kexec/reboot.
+	Long: `Validates configuration for the provisioning pipeline.
+
+Currently validates and reports readiness. Full execution (disk detection,
+image streaming, partitioning, kexec/reboot) will be wired in a future release.
 
 Requires a configuration file with at minimum the image URL and transport
 endpoints configured.`,

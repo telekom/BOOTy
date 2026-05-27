@@ -11,7 +11,12 @@ var deprovisionSoft bool
 var deprovisionCmd = &cobra.Command{
 	Use:   "deprovision",
 	Short: "Wipe or disable the installed OS on a server",
-	Long: `Deprovisioning modes:
+	Long: `Validates configuration for deprovisioning.
+
+Currently validates and reports readiness. Full execution will be wired
+in a future release.
+
+Modes (via --soft flag):
   - Hard (default): Secure erase or wipefs on all target disks
   - Soft (--soft): Rename grub.cfg to make the OS unbootable without data loss`,
 	RunE: func(cmd *cobra.Command, args []string) error {

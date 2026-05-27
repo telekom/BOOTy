@@ -9,9 +9,10 @@ import (
 var standbyCmd = &cobra.Command{
 	Use:   "standby",
 	Short: "Enter hot-standby mode (heartbeat + command polling)",
-	Long: `Keeps the machine warm in the ramdisk. Sends periodic heartbeats
-to the CAPRF server and polls for commands. When a provision/deprovision/reboot
-command arrives, it executes immediately without a full PXE cycle.
+	Long: `Validates configuration for hot-standby mode.
+
+Currently validates and reports readiness. Full execution (heartbeat loop,
+command polling) will be wired in a future release.
 
 Requires agent.heartbeatURL and agent.commandsURL to be configured.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
