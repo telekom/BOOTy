@@ -133,6 +133,58 @@ func TestValidateWithInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestValidateStrictRejectsUnknownFields(t *testing.T) {
+	old := configPath
+	oldStrict := validateStrict
+	defer func() {
+		configPath = old
+		validateStrict = oldStrict
+	}()
+
+	f, err := os.CreateTemp(t.TempDir(), "config-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("hostname: test-node\nunknownFieldXYZ: bad\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	configPath = f.Name()
+	validateStrict = true
+	err = validateCmd.RunE(validateCmd, nil)
+	if err == nil {
+		t.Fatal("expected error for unknown field in strict mode")
+	}
+	if !strings.Contains(err.Error(), "unknownFieldXYZ") {
+		t.Fatalf("expected unknown field name in error: %v", err)
+	}
+}
+
+func TestValidateStrictAcceptsKnownFields(t *testing.T) {
+	old := configPath
+	oldStrict := validateStrict
+	defer func() {
+		configPath = old
+		validateStrict = oldStrict
+	}()
+
+	f, err := os.CreateTemp(t.TempDir(), "config-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("hostname: test-node\nmode: provision\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	configPath = f.Name()
+	validateStrict = true
+	if err := validateCmd.RunE(validateCmd, nil); err != nil {
+		t.Fatalf("unexpected error in strict mode with valid fields: %v", err)
+	}
+}
+
 func TestProvisionRequiresConfig(t *testing.T) {
 	old := configPath
 	defer func() { configPath = old }()

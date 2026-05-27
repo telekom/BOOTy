@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/telekom/BOOTy/pkg/config"
 )
 
 var provisionCmd = &cobra.Command{
@@ -26,11 +25,4 @@ endpoints configured.`,
 		fmt.Printf("provision mode ready (hostname=%s)\n", cfg.Hostname)
 		return nil
 	},
-}
-
-func loadConfig() (*config.MachineConfig, error) {
-	if configPath == "" {
-		return nil, fmt.Errorf("--config flag is required")
-	}
-	return config.Load(configPath)
 }
