@@ -81,7 +81,7 @@ provision:
     minSizeGB: 100
     numVFs: 32
     raid:
-      - name: /dev/md0
+      - name: md0
         level: 1
         devices:
           - /dev/sda
