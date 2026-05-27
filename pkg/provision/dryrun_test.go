@@ -103,43 +103,58 @@ func TestDryRunConfigValidation(t *testing.T) {
 			expect: DryRunFail,
 		},
 		{
-			name:   "no hostname",
-			cfg:    &config.MachineConfig{ImageURLs: []string{"http://example.com/img"}},
+			name: "no hostname",
+			cfg: func() *config.MachineConfig {
+				c := &config.MachineConfig{}
+				c.Provision.Image.URLs = []string{"http://example.com/img"}
+				return c
+			}(),
 			expect: DryRunWarn,
 		},
 		{
-			name:   "valid config",
-			cfg:    &config.MachineConfig{ImageURLs: []string{"http://example.com/img"}, Hostname: "node1"},
+			name: "valid config",
+			cfg: func() *config.MachineConfig {
+				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.Image.URLs = []string{"http://example.com/img"}
+				return c
+			}(),
 			expect: DryRunPass,
 		},
 		{
 			name: "layout-only without hostname",
-			cfg: &config.MachineConfig{PartitionLayout: &config.PartitionLayout{
-				Table:      "gpt",
-				Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
-			}},
+			cfg: func() *config.MachineConfig {
+				c := &config.MachineConfig{}
+				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+					Table:      "gpt",
+					Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
+				}
+				return c
+			}(),
 			expect: DryRunFail,
 		},
 		{
 			name: "layout-only with hostname",
-			cfg: &config.MachineConfig{
-				Hostname: "node1",
-				PartitionLayout: &config.PartitionLayout{
+			cfg: func() *config.MachineConfig {
+				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 					Table:      "gpt",
 					Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
-				},
-			},
+				}
+				return c
+			}(),
 			expect: DryRunFail,
 		},
 		{
 			name: "layout with image url",
-			cfg: &config.MachineConfig{
-				ImageURLs: []string{"http://example.com/img"},
-				PartitionLayout: &config.PartitionLayout{
+			cfg: func() *config.MachineConfig {
+				c := &config.MachineConfig{}
+				c.Provision.Image.URLs = []string{"http://example.com/img"}
+				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 					Table:      "gpt",
 					Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
-				},
-			},
+				}
+				return c
+			}(),
 			expect: DryRunFail,
 		},
 	}
@@ -164,8 +179,10 @@ func TestDryRunImageReachability(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{srv.URL + "/test.img"}
 	o := NewOrchestrator(
-		&config.MachineConfig{ImageURLs: []string{srv.URL + "/test.img"}},
+		cfg,
 		&dryRunProvider{},
 		disk.NewManager(nil),
 	)
@@ -180,8 +197,10 @@ func TestDryRunImageUnreachable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	srv.Close()
 
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{srv.URL + "/unreachable.img"}
 	o := NewOrchestrator(
-		&config.MachineConfig{ImageURLs: []string{srv.URL + "/unreachable.img"}},
+		cfg,
 		&dryRunProvider{},
 		disk.NewManager(nil),
 	)
@@ -202,7 +221,8 @@ func TestDryRunHealthChecks(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := &config.MachineConfig{HealthChecksEnabled: tc.enabled}
+			cfg := &config.MachineConfig{}
+			cfg.Health.Enabled = tc.enabled
 			o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
 			result := o.dryRunHealthChecks(context.Background())
 			if result.Status != tc.expect {
@@ -214,8 +234,10 @@ func TestDryRunHealthChecks(t *testing.T) {
 
 func TestDryRunDiskDetection_Configured(t *testing.T) {
 	// Non-device path should fail device-node check.
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.Device = "/tmp"
 	o := NewOrchestrator(
-		&config.MachineConfig{DiskDevice: "/tmp"},
+		cfg,
 		&dryRunProvider{},
 		disk.NewManager(nil),
 	)
@@ -226,8 +248,10 @@ func TestDryRunDiskDetection_Configured(t *testing.T) {
 }
 
 func TestDryRunDiskDetection_Missing(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.Device = "/dev/nonexistent-disk-xyz"
 	o := NewOrchestrator(
-		&config.MachineConfig{DiskDevice: "/dev/nonexistent-disk-xyz"},
+		cfg,
 		&dryRunProvider{},
 		disk.NewManager(nil),
 	)
@@ -250,11 +274,13 @@ func TestDryRunImageReachability_NoURLs(t *testing.T) {
 }
 
 func TestDryRunImageReachability_NoURLsLayoutOnly(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+		Table:      "gpt",
+		Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
+	}
 	o := NewOrchestrator(
-		&config.MachineConfig{PartitionLayout: &config.PartitionLayout{
-			Table:      "gpt",
-			Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
-		}},
+		cfg,
 		&dryRunProvider{},
 		disk.NewManager(nil),
 	)
@@ -265,8 +291,10 @@ func TestDryRunImageReachability_NoURLsLayoutOnly(t *testing.T) {
 }
 
 func TestDryRunImageReachability_OCI(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{"oci://registry.example.com/image:latest"}
 	o := NewOrchestrator(
-		&config.MachineConfig{ImageURLs: []string{"oci://registry.example.com/image:latest"}},
+		cfg,
 		&dryRunProvider{},
 		disk.NewManager(nil),
 	)
@@ -285,8 +313,10 @@ func TestDryRunImageReachability_MixedHTTPAndOCI(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{srv.URL + "/image.raw", "oci://registry.example.com/image:latest"}
 	o := NewOrchestrator(
-		&config.MachineConfig{ImageURLs: []string{srv.URL + "/image.raw", "oci://registry.example.com/image:latest"}},
+		cfg,
 		&dryRunProvider{},
 		disk.NewManager(nil),
 	)
@@ -297,8 +327,10 @@ func TestDryRunImageReachability_MixedHTTPAndOCI(t *testing.T) {
 }
 
 func TestDryRunImageReachability_UnsupportedScheme(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{"ftp://example.com/img"}
 	o := NewOrchestrator(
-		&config.MachineConfig{ImageURLs: []string{"ftp://example.com/img"}},
+		cfg,
 		&dryRunProvider{},
 		disk.NewManager(nil),
 	)
@@ -312,8 +344,10 @@ func TestDryRunImageReachability_UnsupportedScheme(t *testing.T) {
 }
 
 func TestDryRunImageReachability_InvalidURL(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{"http://%zz"}
 	o := NewOrchestrator(
-		&config.MachineConfig{ImageURLs: []string{"http://%zz"}},
+		cfg,
 		&dryRunProvider{},
 		disk.NewManager(nil),
 	)
@@ -333,8 +367,10 @@ func TestDryRunImageReachability_UppercaseScheme(t *testing.T) {
 	defer srv.Close()
 
 	upperURL := strings.Replace(srv.URL, "http://", "HTTP://", 1)
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{upperURL + "/image.raw"}
 	o := NewOrchestrator(
-		&config.MachineConfig{ImageURLs: []string{upperURL + "/image.raw"}},
+		cfg,
 		&dryRunProvider{},
 		disk.NewManager(nil),
 	)
@@ -359,7 +395,11 @@ func TestDryRunImageChecksum(t *testing.T) {
 		{"trimmed uppercase type", "abc123", " SHA256 ", nil, DryRunPass},
 		{"empty type defaults to sha256", "abc123", "", nil, DryRunPass},
 		{"unsupported type", "abc123", "md5", nil, DryRunFail},
-		{"layout-only skips checksum", "", "", &config.MachineConfig{PartitionLayout: &config.PartitionLayout{Table: "gpt", Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}}}}, DryRunWarn},
+		{"layout-only skips checksum", "", "", func() *config.MachineConfig {
+			c := &config.MachineConfig{}
+			c.Provision.Disk.PartitionLayout = &config.PartitionLayout{Table: "gpt", Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}}}
+			return c
+		}(), DryRunWarn},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -367,8 +407,8 @@ func TestDryRunImageChecksum(t *testing.T) {
 			if cfg == nil {
 				cfg = &config.MachineConfig{}
 			}
-			cfg.ImageChecksum = tc.checksum
-			cfg.ImageChecksumType = tc.checksumType
+			cfg.Provision.Image.Checksum = tc.checksum
+			cfg.Provision.Image.ChecksumType = tc.checksumType
 			o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
 			result := o.dryRunImageChecksum(context.Background())
 			if result.Status != tc.expect {
@@ -564,7 +604,8 @@ func TestDryRunInventoryProbe(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := &config.MachineConfig{InventoryEnabled: tc.enabled}
+			cfg := &config.MachineConfig{}
+			cfg.Provision.Inventory.Enabled = tc.enabled
 			o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
 			result := o.dryRunInventoryProbe(context.Background())
 			if result.Status != tc.expect {
@@ -575,7 +616,8 @@ func TestDryRunInventoryProbe(t *testing.T) {
 }
 
 func TestDryRunInventoryProbe_Enabled(t *testing.T) {
-	cfg := &config.MachineConfig{InventoryEnabled: true}
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Inventory.Enabled = true
 	o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
 
 	t.Run("dmi accessible", func(t *testing.T) {
@@ -620,8 +662,10 @@ func TestIsVirtualInterface(t *testing.T) {
 
 func TestDryRunDiskDetection_CharDevice(t *testing.T) {
 	// /dev/null is a character device and should fail the block device check.
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.Device = "/dev/null"
 	o := NewOrchestrator(
-		&config.MachineConfig{DiskDevice: "/dev/null"},
+		cfg,
 		&dryRunProvider{},
 		disk.NewManager(nil),
 	)
@@ -637,8 +681,10 @@ func TestDryRunImageReachability_ServerError(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{srv.URL + "/missing.img"}
 	o := NewOrchestrator(
-		&config.MachineConfig{ImageURLs: []string{srv.URL + "/missing.img"}},
+		cfg,
 		&dryRunProvider{},
 		disk.NewManager(nil),
 	)
@@ -659,12 +705,11 @@ func TestDryRunAggregation(t *testing.T) {
 	// DryRun with a reachable image server and valid hostname, but /dev/null
 	// as DiskDevice (a char device, not a block device) so disk check warns/fails.
 	// Verifies aggregation and provider status reporting run without panic.
+	aggCfg := &config.MachineConfig{Hostname: "test-host"}
+	aggCfg.Provision.Image.URLs = []string{srv.URL + "/image.raw"}
+	aggCfg.Provision.Disk.Device = "/dev/null"
 	o := NewOrchestrator(
-		&config.MachineConfig{
-			ImageURLs:  []string{srv.URL + "/image.raw"},
-			Hostname:   "test-host",
-			DiskDevice: "/dev/null",
-		},
+		aggCfg,
 		provider,
 		disk.NewManager(nil),
 	)
@@ -720,16 +765,11 @@ func TestDryRunAggregation_WarningsReported(t *testing.T) {
 		return nil, os.ErrNotExist
 	})
 
+	warnCfg := &config.MachineConfig{Hostname: "test-host"}
+	warnCfg.Provision.Image.URLs = []string{srv.URL + "/image.raw"}
+	warnCfg.Provision.Disk.Device = "/dev/mock0"
 	o := NewOrchestrator(
-		&config.MachineConfig{
-			ImageURLs:           []string{srv.URL + "/image.raw"},
-			Hostname:            "test-host",
-			DiskDevice:          "/dev/mock0",
-			HealthChecksEnabled: false,
-			InventoryEnabled:    false,
-			ImageChecksum:       "",
-			ImageChecksumType:   "",
-		},
+		warnCfg,
 		provider,
 		disk.NewManager(nil),
 	)
@@ -784,18 +824,17 @@ func TestDryRun_AllPass(t *testing.T) {
 		return nil, os.ErrNotExist
 	})
 
+	passCfg := &config.MachineConfig{Hostname: "test-host"}
+	passCfg.Provision.Image.URLs = []string{srv.URL + "/image.raw"}
+	passCfg.Provision.Image.SignatureURL = srv.URL + "/image.raw.sig"
+	passCfg.Provision.Image.GPGPubKey = pubKey
+	passCfg.Provision.Disk.Device = "/dev/mock0"
+	passCfg.Health.Enabled = true
+	passCfg.Provision.Inventory.Enabled = true
+	passCfg.Provision.Image.Checksum = "abc123"
+	passCfg.Provision.Image.ChecksumType = "sha256"
 	o := NewOrchestrator(
-		&config.MachineConfig{
-			ImageURLs:           []string{srv.URL + "/image.raw"},
-			ImageSignatureURL:   srv.URL + "/image.raw.sig",
-			ImageGPGPubKey:      pubKey,
-			Hostname:            "test-host",
-			DiskDevice:          "/dev/mock0",
-			HealthChecksEnabled: true,
-			InventoryEnabled:    true,
-			ImageChecksum:       "abc123",
-			ImageChecksumType:   "sha256",
-		},
+		passCfg,
 		provider,
 		disk.NewManager(nil),
 	)

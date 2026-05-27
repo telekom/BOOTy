@@ -20,8 +20,7 @@ func TestRemoteHandlerShipsLogs(t *testing.T) {
 	ts := newTestServer(t)
 
 	cfg := &config.MachineConfig{
-		Token:  "handler-token",
-		LogURL: ts.server.URL + "/log",
+		Transport: config.TransportConfig{Token: "handler-token", LogURL: ts.server.URL + "/log"},
 	}
 	client := NewFromConfig(cfg)
 
@@ -45,8 +44,7 @@ func TestRemoteHandlerLevelFilter(t *testing.T) {
 	ts := newTestServer(t)
 
 	cfg := &config.MachineConfig{
-		Token:  "filter-token",
-		LogURL: ts.server.URL + "/log",
+		Transport: config.TransportConfig{Token: "filter-token", LogURL: ts.server.URL + "/log"},
 	}
 	client := NewFromConfig(cfg)
 
@@ -68,7 +66,7 @@ func TestRemoteHandlerLevelFilter(t *testing.T) {
 }
 
 func TestRemoteHandlerDropsWhenFull(t *testing.T) {
-	cfg := &config.MachineConfig{Token: "drop-token"}
+	cfg := &config.MachineConfig{Transport: config.TransportConfig{Token: "drop-token"}}
 	client := NewFromConfig(cfg)
 
 	var mu sync.Mutex
@@ -112,7 +110,7 @@ func TestRemoteHandlerDropsWhenFull(t *testing.T) {
 }
 
 func TestDropCounterIncrementsOnFullBuffer(t *testing.T) {
-	cfg := &config.MachineConfig{Token: "counter-token"}
+	cfg := &config.MachineConfig{Transport: config.TransportConfig{Token: "counter-token"}}
 	client := NewFromConfig(cfg)
 	inner := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
 
@@ -155,7 +153,7 @@ func TestDropCounterIncrementsOnFullBuffer(t *testing.T) {
 }
 
 func TestDropCounterAccessibleFromDerivedHandler(t *testing.T) {
-	cfg := &config.MachineConfig{Token: "derived-counter-token"}
+	cfg := &config.MachineConfig{Transport: config.TransportConfig{Token: "derived-counter-token"}}
 	client := NewFromConfig(cfg)
 	inner := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
 
@@ -176,8 +174,7 @@ func TestRemoteHandlerWithAttrsAndGroups(t *testing.T) {
 	ts := newTestServer(t)
 
 	cfg := &config.MachineConfig{
-		Token:  "attrs-token",
-		LogURL: ts.server.URL + "/log",
+		Transport: config.TransportConfig{Token: "attrs-token", LogURL: ts.server.URL + "/log"},
 	}
 	client := NewFromConfig(cfg)
 
@@ -236,8 +233,7 @@ func TestRemoteHandlerCloseFromDerivedHandlers(t *testing.T) {
 	ts := newTestServer(t)
 
 	cfg := &config.MachineConfig{
-		Token:  "derived-close-token",
-		LogURL: ts.server.URL + "/log",
+		Transport: config.TransportConfig{Token: "derived-close-token", LogURL: ts.server.URL + "/log"},
 	}
 	client := NewFromConfig(cfg)
 
@@ -282,7 +278,7 @@ func TestDropCounterHighVolume(t *testing.T) {
 	const messages = 1000
 	const bufSize = 2
 
-	cfg := &config.MachineConfig{Token: "highvol-token"}
+	cfg := &config.MachineConfig{Transport: config.TransportConfig{Token: "highvol-token"}}
 	client := NewFromConfig(cfg)
 	inner := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})
 
@@ -488,8 +484,7 @@ func TestHandleRedactsSensitiveAttrs_Grouped(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	cfg := &config.MachineConfig{
-		Token:  "redact-group-token",
-		LogURL: srv.URL + "/log",
+		Transport: config.TransportConfig{Token: "redact-group-token", LogURL: srv.URL + "/log"},
 	}
 	client := NewFromConfig(cfg)
 
@@ -530,8 +525,7 @@ func TestHandleRedactsSensitiveAttrs(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	cfg := &config.MachineConfig{
-		Token:  "redact-test-token",
-		LogURL: srv.URL + "/log",
+		Transport: config.TransportConfig{Token: "redact-test-token", LogURL: srv.URL + "/log"},
 	}
 	client := NewFromConfig(cfg)
 

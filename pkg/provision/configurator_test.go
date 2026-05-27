@@ -256,7 +256,7 @@ func TestRedactCommand(t *testing.T) {
 func TestConfigureDNSEmptyResolvers(t *testing.T) {
 	t.Helper()
 	c := &Configurator{rootDir: t.TempDir()}
-	cfg := &config.MachineConfig{DNSResolvers: ""}
+	cfg := &config.MachineConfig{}
 	if err := c.ConfigureDNS(cfg); err != nil {
 		t.Fatalf("expected nil for empty resolvers, got: %v", err)
 	}
@@ -269,7 +269,8 @@ func TestConfigureDNSSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := &Configurator{rootDir: root}
-	cfg := &config.MachineConfig{DNSResolvers: "8.8.8.8, 1.1.1.1"}
+	cfg := &config.MachineConfig{}
+	cfg.Network.DNSResolvers = "8.8.8.8, 1.1.1.1"
 	if err := c.ConfigureDNS(cfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -289,7 +290,8 @@ func TestConfigureDNSMissingEtcDir(t *testing.T) {
 	root := t.TempDir()
 	// Don't create /etc — ConfigureDNS should skip gracefully.
 	c := &Configurator{rootDir: root}
-	cfg := &config.MachineConfig{DNSResolvers: "8.8.8.8"}
+	cfg := &config.MachineConfig{}
+	cfg.Network.DNSResolvers = "8.8.8.8"
 	if err := c.ConfigureDNS(cfg); err != nil {
 		t.Fatalf("expected nil when etc/ doesn't exist, got: %v", err)
 	}

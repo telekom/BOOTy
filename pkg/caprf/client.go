@@ -56,7 +56,7 @@ func New(varsPath string) (*Client, error) {
 		cfg:        cfg,
 		log:        slog.Default().With("component", "caprf"),
 	}
-	if cfg.InsecureTransport {
+	if cfg.Transport.Insecure {
 		c.log.Warn("insecure transport enabled: bearer tokens will be sent over plain HTTP")
 	}
 	return c, nil
@@ -69,7 +69,7 @@ func NewFromConfig(cfg *config.MachineConfig) *Client {
 		cfg:        cfg,
 		log:        slog.Default().With("component", "caprf"),
 	}
-	if cfg.InsecureTransport {
+	if cfg.Transport.Insecure {
 		c.log.Warn("insecure transport enabled: bearer tokens will be sent over plain HTTP")
 	}
 	return c
@@ -79,28 +79,28 @@ func NewFromConfig(cfg *config.MachineConfig) *Client {
 // is configured. The acquired JWT replaces the bootstrap token for all
 // subsequent API calls. The TokenManager is retained for background renewal.
 func (c *Client) AcquireToken(ctx context.Context) error {
-	if c.cfg.TokenURL == "" {
+	if c.cfg.Transport.TokenURL == "" {
 		return nil
 	}
-	if c.cfg.Token == "" {
+	if c.cfg.Transport.Token == "" {
 		return fmt.Errorf("token URL configured but no bootstrap token")
 	}
 	if strings.TrimSpace(c.cfg.Hostname) == "" {
 		return fmt.Errorf("token URL configured but hostname is empty")
 	}
 
-	tm, err := auth.NewTokenManager(c.cfg.TokenURL, c.cfg.Token, c.log)
+	tm, err := auth.NewTokenManager(c.cfg.Transport.TokenURL, c.cfg.Transport.Token, c.log)
 	if err != nil {
 		return fmt.Errorf("initialize token manager: %w", err)
 	}
-	if c.cfg.TokenAlgorithm != "" {
-		switch c.cfg.TokenAlgorithm {
+	if c.cfg.Transport.TokenAlgorithm != "" {
+		switch c.cfg.Transport.TokenAlgorithm {
 		case "RS256", "ES256":
 			// Valid algorithms.
 		default:
-			return fmt.Errorf("unsupported token algorithm %q, must be RS256 or ES256", c.cfg.TokenAlgorithm)
+			return fmt.Errorf("unsupported token algorithm %q, must be RS256 or ES256", c.cfg.Transport.TokenAlgorithm)
 		}
-		tm.SetAlgorithm(c.cfg.TokenAlgorithm)
+		tm.SetAlgorithm(c.cfg.Transport.TokenAlgorithm)
 	}
 	// bmcMAC is intentionally empty — the token endpoint identifies the
 	// machine by serial (hostname). BMC MAC is only required for PXE
@@ -108,10 +108,10 @@ func (c *Client) AcquireToken(ctx context.Context) error {
 	if err := tm.Acquire(ctx, c.cfg.Hostname, ""); err != nil {
 		return fmt.Errorf("acquire jwt: %w", err)
 	}
-	// Snapshot the initial JWT into cfg.Token for backward compatibility with
+	// Snapshot the initial JWT into cfg.Transport.Token for backward compatibility with
 	// GetConfig callers. After renewal, CurrentToken() is the authoritative
-	// source — cfg.Token will hold the first-acquired JWT, not the latest.
-	c.cfg.Token = tm.Token()
+	// source — cfg.Transport.Token will hold the first-acquired JWT, not the latest.
+	c.cfg.Transport.Token = tm.Token()
 	c.tokenManager = tm
 	c.log.Info("jwt token acquired, using for subsequent API calls")
 	return nil
@@ -139,7 +139,7 @@ func (c *Client) CurrentToken() string {
 	if c.tokenManager != nil {
 		return c.tokenManager.Token()
 	}
-	return c.cfg.Token
+	return c.cfg.Transport.Token
 }
 
 // GetConfig returns the parsed machine configuration.
@@ -152,11 +152,11 @@ func (c *Client) ReportStatus(ctx context.Context, status config.Status, message
 	var url string
 	switch status {
 	case config.StatusInit:
-		url = c.cfg.InitURL
+		url = c.cfg.Transport.InitURL
 	case config.StatusSuccess:
-		url = c.cfg.SuccessURL
+		url = c.cfg.Transport.SuccessURL
 	case config.StatusError:
-		url = c.cfg.ErrorURL
+		url = c.cfg.Transport.ErrorURL
 	default:
 		return fmt.Errorf("unknown status: %s", status)
 	}
@@ -171,23 +171,23 @@ func (c *Client) ReportStatus(ctx context.Context, status config.Status, message
 
 // ShipLog sends a log line to the CAPRF /log endpoint.
 func (c *Client) ShipLog(ctx context.Context, message string) error {
-	if c.cfg.LogURL == "" {
+	if c.cfg.Transport.LogURL == "" {
 		return nil
 	}
-	return c.postWithAuth(ctx, c.cfg.LogURL, message)
+	return c.postWithAuth(ctx, c.cfg.Transport.LogURL, message)
 }
 
 // ShipDebug sends a debug message to the CAPRF /debug endpoint.
 func (c *Client) ShipDebug(ctx context.Context, message string) error {
-	if c.cfg.DebugURL == "" {
+	if c.cfg.Transport.DebugURL == "" {
 		return nil
 	}
-	return c.postWithAuth(ctx, c.cfg.DebugURL, message)
+	return c.postWithAuth(ctx, c.cfg.Transport.DebugURL, message)
 }
 
 // ReportHealthChecks sends health check results to the CAPRF server.
 func (c *Client) ReportHealthChecks(ctx context.Context, results []health.CheckResult) error {
-	if c.cfg.HealthCheckURL == "" {
+	if c.cfg.Health.ReportURL == "" {
 		c.log.Warn("No health check URL configured, skipping report")
 		return nil
 	}
@@ -197,38 +197,38 @@ func (c *Client) ReportHealthChecks(ctx context.Context, results []health.CheckR
 		return fmt.Errorf("marshal health results: %w", err)
 	}
 
-	return c.postJSONWithAuth(ctx, c.cfg.HealthCheckURL, data)
+	return c.postJSONWithAuth(ctx, c.cfg.Health.ReportURL, data)
 }
 
 // Heartbeat sends a keepalive to the CAPRF server.
 // Returns nil if no heartbeat URL is configured (non-standby mode).
 func (c *Client) Heartbeat(ctx context.Context) error {
-	if c.cfg.HeartbeatURL == "" {
+	if c.cfg.Agent.HeartbeatURL == "" {
 		return nil
 	}
-	return c.postWithAuth(ctx, c.cfg.HeartbeatURL, "heartbeat")
+	return c.postWithAuth(ctx, c.cfg.Agent.HeartbeatURL, "heartbeat")
 }
 
 // ReportFirmware sends a JSON firmware report to the CAPRF server.
 func (c *Client) ReportFirmware(ctx context.Context, data []byte) error {
-	if c.cfg.FirmwareURL == "" {
+	if c.cfg.Provision.Firmware.URL == "" {
 		c.log.Debug("No firmware URL configured, skipping report")
 		return nil
 	}
-	return c.postJSONWithAuth(ctx, c.cfg.FirmwareURL, data)
+	return c.postJSONWithAuth(ctx, c.cfg.Provision.Firmware.URL, data)
 }
 
 // FetchCommands polls the CAPRF server for pending commands.
 // Returns nil if no commands URL is configured.
 func (c *Client) FetchCommands(ctx context.Context) ([]config.Command, error) {
-	if c.cfg.CommandsURL == "" {
+	if c.cfg.Agent.CommandsURL == "" {
 		return nil, nil
 	}
-	if err := c.requireSecureEndpoint(c.cfg.CommandsURL, "commands polling"); err != nil {
+	if err := c.requireSecureEndpoint(c.cfg.Agent.CommandsURL, "commands polling"); err != nil {
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.cfg.CommandsURL, http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.cfg.Agent.CommandsURL, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("create commands request: %w", err)
 	}
@@ -259,10 +259,10 @@ func (c *Client) FetchCommands(ctx context.Context) ([]config.Command, error) {
 
 // AcknowledgeCommand reports command execution result back to the CAPRF server.
 func (c *Client) AcknowledgeCommand(ctx context.Context, cmdID, status, message string) error {
-	if c.cfg.CommandsURL == "" {
+	if c.cfg.Agent.CommandsURL == "" {
 		return nil
 	}
-	if err := c.requireSecureEndpoint(c.cfg.CommandsURL, "commands acknowledgement"); err != nil {
+	if err := c.requireSecureEndpoint(c.cfg.Agent.CommandsURL, "commands acknowledgement"); err != nil {
 		return err
 	}
 	ack := struct {
@@ -278,7 +278,7 @@ func (c *Client) AcknowledgeCommand(ctx context.Context, cmdID, status, message 
 	if err != nil {
 		return fmt.Errorf("marshal command ack: %w", err)
 	}
-	ackURL, err := neturl.JoinPath(c.cfg.CommandsURL, "ack")
+	ackURL, err := neturl.JoinPath(c.cfg.Agent.CommandsURL, "ack")
 	if err != nil {
 		return fmt.Errorf("build command ack URL: %w", err)
 	}
@@ -287,23 +287,23 @@ func (c *Client) AcknowledgeCommand(ctx context.Context, cmdID, status, message 
 
 // ReportInventory posts a hardware inventory JSON payload to the CAPRF server.
 func (c *Client) ReportInventory(ctx context.Context, data []byte) error {
-	if c.cfg.InventoryURL == "" {
+	if c.cfg.Provision.Inventory.URL == "" {
 		c.log.Warn("No inventory URL configured, skipping inventory report")
 		return nil
 	}
-	return c.postJSONWithAuth(ctx, c.cfg.InventoryURL, data)
+	return c.postJSONWithAuth(ctx, c.cfg.Provision.Inventory.URL, data)
 }
 
 // ReportMetrics posts provisioning metrics to the CAPRF server.
 // Requires TelemetryEnabled. Uses MetricsURL, falling back to TelemetryURL.
 func (c *Client) ReportMetrics(ctx context.Context, data []byte) error {
-	if !c.cfg.TelemetryEnabled {
+	if !c.cfg.Telemetry.Enabled {
 		c.log.Debug("telemetry disabled, skipping metrics")
 		return nil
 	}
-	url := c.cfg.MetricsURL
+	url := c.cfg.Telemetry.MetricsURL
 	if url == "" {
-		url = c.cfg.TelemetryURL
+		url = c.cfg.Telemetry.URL
 	}
 	if url == "" {
 		c.log.Debug("no metrics URL configured, skipping")
@@ -314,15 +314,15 @@ func (c *Client) ReportMetrics(ctx context.Context, data []byte) error {
 
 // SendEvent posts a single provisioning event to the CAPRF server.
 func (c *Client) SendEvent(ctx context.Context, data []byte) error {
-	if !c.cfg.TelemetryEnabled || c.cfg.EventURL == "" {
+	if !c.cfg.Telemetry.Enabled || c.cfg.Telemetry.EventURL == "" {
 		return nil
 	}
-	return c.postJSONWithAuth(ctx, c.cfg.EventURL, data)
+	return c.postJSONWithAuth(ctx, c.cfg.Telemetry.EventURL, data)
 }
 
 // ReportCrashArtifacts uploads a crash artifact archive using CAPRF-provided instructions.
 func (c *Client) ReportCrashArtifacts(ctx context.Context, req *crash.PrepareRequest, archivePath string) error {
-	if c.cfg.CrashArtifactsPrepareURL == "" && c.cfg.CrashArtifactsUploadURL == "" {
+	if c.cfg.Provision.CrashArtifacts.PrepareURL == "" && c.cfg.Provision.CrashArtifacts.UploadURL == "" {
 		c.log.Debug("no crash artifact URL configured, skipping")
 		return crash.ErrNoUploadURL
 	}
@@ -335,7 +335,7 @@ func (c *Client) ReportCrashArtifacts(ctx context.Context, req *crash.PrepareReq
 	ctx, cancel := context.WithTimeout(ctx, c.crashUploadTimeout())
 	defer cancel()
 
-	if c.cfg.CrashArtifactsPrepareURL != "" {
+	if c.cfg.Provision.CrashArtifacts.PrepareURL != "" {
 		instructions, err := c.prepareCrashArtifactUpload(ctx, req)
 		if err != nil {
 			return err
@@ -343,11 +343,11 @@ func (c *Client) ReportCrashArtifacts(ctx context.Context, req *crash.PrepareReq
 		return c.uploadCrashArchive(ctx, instructions, archivePath)
 	}
 
-	return c.uploadCrashProxyMultipart(ctx, c.cfg.CrashArtifactsUploadURL, req, archivePath)
+	return c.uploadCrashProxyMultipart(ctx, c.cfg.Provision.CrashArtifacts.UploadURL, req, archivePath)
 }
 
 func (c *Client) crashUploadTimeout() time.Duration {
-	seconds := c.cfg.CrashArtifactsUploadTimeoutSec
+	seconds := c.cfg.Provision.CrashArtifacts.UploadTimeoutSec
 	if seconds <= 0 {
 		seconds = config.DefaultCrashArtifactsUploadTimeoutSec
 	}
@@ -355,14 +355,14 @@ func (c *Client) crashUploadTimeout() time.Duration {
 }
 
 func (c *Client) prepareCrashArtifactUpload(ctx context.Context, req *crash.PrepareRequest) (*crash.PrepareResponse, error) {
-	if err := c.requireSecureEndpoint(c.cfg.CrashArtifactsPrepareURL, "crash artifact prepare"); err != nil {
+	if err := c.requireSecureEndpoint(c.cfg.Provision.CrashArtifacts.PrepareURL, "crash artifact prepare"); err != nil {
 		return nil, err
 	}
 	data, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal crash artifact prepare request: %w", err)
 	}
-	redacted := redactedURL(c.cfg.CrashArtifactsPrepareURL)
+	redacted := redactedURL(c.cfg.Provision.CrashArtifacts.PrepareURL)
 	var lastErr error
 	for attempt := range 3 {
 		if attempt > 0 {
@@ -384,7 +384,7 @@ func (c *Client) prepareCrashArtifactUpload(ctx context.Context, req *crash.Prep
 }
 
 func (c *Client) doPrepareCrashArtifactUpload(ctx context.Context, data []byte) (*crash.PrepareResponse, bool, error) {
-	rawURL := c.cfg.CrashArtifactsPrepareURL
+	rawURL := c.cfg.Provision.CrashArtifacts.PrepareURL
 	redacted := redactedURL(rawURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, bytes.NewReader(data))
 	if err != nil {
@@ -685,7 +685,7 @@ func (c *Client) setAuth(req *http.Request) error {
 	if tok == "" {
 		return nil
 	}
-	if req.URL != nil && req.URL.Scheme != "https" && !isLoopback(req.URL.Hostname()) && !c.cfg.InsecureTransport {
+	if req.URL != nil && req.URL.Scheme != "https" && !isLoopback(req.URL.Hostname()) && !c.cfg.Transport.Insecure {
 		c.warnInsecureOnce(req.URL.Redacted())
 		return fmt.Errorf("%w: refusing bearer token on non-HTTPS request %s", errInsecureTransport, req.URL.Redacted())
 	}
@@ -715,7 +715,7 @@ func (c *Client) warnInsecureOnce(rawURL string) {
 }
 
 func (c *Client) requireSecureEndpoint(rawURL, purpose string) error {
-	if c.cfg.InsecureTransport {
+	if c.cfg.Transport.Insecure {
 		return nil
 	}
 	u, err := neturl.Parse(rawURL)
@@ -838,66 +838,66 @@ func applyVar(cfg *config.MachineConfig, key, value string) error {
 func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 	strFields := map[string]*string{
 		"HOSTNAME":                    &cfg.Hostname,
-		"TOKEN":                       &cfg.Token,
-		"MACHINE_EXTRA_KERNEL_PARAMS": &cfg.ExtraKernelParams,
-		"FAILURE_DOMAIN":              &cfg.FailureDomain,
-		"REGION":                      &cfg.Region,
-		"PROVIDER_ID":                 &cfg.ProviderID,
+		"TOKEN":                       &cfg.Transport.Token,
+		"MACHINE_EXTRA_KERNEL_PARAMS": &cfg.Provision.ExtraKernelParams,
+		"FAILURE_DOMAIN":              &cfg.Provision.FailureDomain,
+		"REGION":                      &cfg.Provision.Region,
+		"PROVIDER_ID":                 &cfg.Provision.ProviderID,
 		"MODE":                        &cfg.Mode,
-		"LOG_URL":                     &cfg.LogURL,
-		"INIT_URL":                    &cfg.InitURL,
-		"ERROR_URL":                   &cfg.ErrorURL,
-		"SUCCESS_URL":                 &cfg.SuccessURL,
-		"DEBUG_URL":                   &cfg.DebugURL,
-		"HEARTBEAT_URL":               &cfg.HeartbeatURL,
-		"COMMANDS_URL":                &cfg.CommandsURL,
-		"underlay_subnet":             &cfg.UnderlaySubnet,
-		"underlay_ip":                 &cfg.UnderlayIP,
-		"overlay_subnet":              &cfg.OverlaySubnet,
-		"ipmi_subnet":                 &cfg.IPMISubnet,
-		"provision_ip":                &cfg.ProvisionIP,
-		"provision_gateway":           &cfg.ProvisionGateway,
-		"dns_resolver":                &cfg.DNSResolvers,
-		"dcgw_ips":                    &cfg.DCGWIPs,
-		"overlay_aggregate":           &cfg.OverlayAggregate,
-		"vpn_rt":                      &cfg.VPNRT,
-		"STATIC_IP":                   &cfg.StaticIP,
-		"STATIC_GATEWAY":              &cfg.StaticGateway,
-		"STATIC_IFACE":                &cfg.StaticIface,
-		"BOND_INTERFACES":             &cfg.BondInterfaces,
-		"BOND_MODE":                   &cfg.BondMode,
-		"VLANS":                       &cfg.VLANs,
-		"NETWORK_MODE":                &cfg.NetworkMode,
-		"RESCUE_MODE":                 &cfg.RescueMode,
-		"RESCUE_SSH_PUBKEY":           &cfg.RescueSSHPubKey,
-		"RESCUE_PASSWORD_HASH":        &cfg.RescuePasswordHash,
-		"CLOUDINIT_DATASOURCE":        &cfg.CloudInitDatasource,
-		"vrf_name":                    &cfg.VRFName,
-		"BGP_PEER_MODE":               &cfg.BGPPeerMode,
-		"BGP_NEIGHBORS":               &cfg.BGPNeighbors,
-		"IMAGE_CHECKSUM":              &cfg.ImageChecksum,
-		"IMAGE_CHECKSUM_TYPE":         &cfg.ImageChecksumType,
-		"IMAGE_MODE":                  &cfg.ImageMode,
-		"DISK_DEVICE":                 &cfg.DiskDevice,
-		"INVENTORY_URL":               &cfg.InventoryURL,
-		"FIRMWARE_URL":                &cfg.FirmwareURL,
-		"FIRMWARE_MIN_BIOS":           &cfg.FirmwareMinBIOS,
-		"FIRMWARE_MIN_BMC":            &cfg.FirmwareMinBMC,
-		"HEALTH_SKIP_CHECKS":          &cfg.HealthSkipChecks,
-		"HEALTH_CHECK_URL":            &cfg.HealthCheckURL,
-		"IMAGE_SIGNATURE_URL":         &cfg.ImageSignatureURL,
-		"IMAGE_GPG_PUBKEY":            &cfg.ImageGPGPubKey,
-		"TELEMETRY_URL":               &cfg.TelemetryURL,
-		"METRICS_URL":                 &cfg.MetricsURL,
-		"EVENT_URL":                   &cfg.EventURL,
-		"CRASH_ARTIFACTS_PREPARE_URL": &cfg.CrashArtifactsPrepareURL,
-		"CRASH_ARTIFACTS_UPLOAD_URL":  &cfg.CrashArtifactsUploadURL,
-		"MOK_CERT_PATH":               &cfg.MOKCertPath,
-		"MOK_PASSWORD":                &cfg.MOKPassword,
-		"TOKEN_URL":                   &cfg.TokenURL,
-		"TOKEN_ALGORITHM":             &cfg.TokenAlgorithm,
-		"NVME_NAMESPACES":             &cfg.NVMeNamespaces,
-		"BGP_AUTH_PASSWORD":           &cfg.BGPAuthPassword,
+		"LOG_URL":                     &cfg.Transport.LogURL,
+		"INIT_URL":                    &cfg.Transport.InitURL,
+		"ERROR_URL":                   &cfg.Transport.ErrorURL,
+		"SUCCESS_URL":                 &cfg.Transport.SuccessURL,
+		"DEBUG_URL":                   &cfg.Transport.DebugURL,
+		"HEARTBEAT_URL":               &cfg.Agent.HeartbeatURL,
+		"COMMANDS_URL":                &cfg.Agent.CommandsURL,
+		"underlay_subnet":             &cfg.Network.EVPN.UnderlaySubnet,
+		"underlay_ip":                 &cfg.Network.EVPN.UnderlayIP,
+		"overlay_subnet":              &cfg.Network.EVPN.OverlaySubnet,
+		"ipmi_subnet":                 &cfg.Network.IPMI.Subnet,
+		"provision_ip":                &cfg.Network.EVPN.ProvisionIP,
+		"provision_gateway":           &cfg.Network.EVPN.ProvisionGateway,
+		"dns_resolver":                &cfg.Network.DNSResolvers,
+		"dcgw_ips":                    &cfg.Network.EVPN.DCGWIPs,
+		"overlay_aggregate":           &cfg.Network.EVPN.OverlayAggregate,
+		"vpn_rt":                      &cfg.Network.EVPN.VPNRT,
+		"STATIC_IP":                   &cfg.Network.Static.IP,
+		"STATIC_GATEWAY":              &cfg.Network.Static.Gateway,
+		"STATIC_IFACE":                &cfg.Network.Static.Iface,
+		"BOND_INTERFACES":             &cfg.Network.Bond.Interfaces,
+		"BOND_MODE":                   &cfg.Network.Bond.Mode,
+		"VLANS":                       &cfg.Network.VLAN.Config,
+		"NETWORK_MODE":                &cfg.Network.Mode,
+		"RESCUE_MODE":                 &cfg.Rescue.Mode,
+		"RESCUE_SSH_PUBKEY":           &cfg.Rescue.SSHPubKey,
+		"RESCUE_PASSWORD_HASH":        &cfg.Rescue.PasswordHash,
+		"CLOUDINIT_DATASOURCE":        &cfg.Provision.CloudInit.Datasource,
+		"vrf_name":                    &cfg.Network.VRF.Name,
+		"BGP_PEER_MODE":               &cfg.Network.BGP.PeerMode,
+		"BGP_NEIGHBORS":               &cfg.Network.BGP.Neighbors,
+		"IMAGE_CHECKSUM":              &cfg.Provision.Image.Checksum,
+		"IMAGE_CHECKSUM_TYPE":         &cfg.Provision.Image.ChecksumType,
+		"IMAGE_MODE":                  &cfg.Provision.Image.Mode,
+		"DISK_DEVICE":                 &cfg.Provision.Disk.Device,
+		"INVENTORY_URL":               &cfg.Provision.Inventory.URL,
+		"FIRMWARE_URL":                &cfg.Provision.Firmware.URL,
+		"FIRMWARE_MIN_BIOS":           &cfg.Provision.Firmware.MinBIOS,
+		"FIRMWARE_MIN_BMC":            &cfg.Provision.Firmware.MinBMC,
+		"HEALTH_SKIP_CHECKS":          &cfg.Health.SkipChecks,
+		"HEALTH_CHECK_URL":            &cfg.Health.ReportURL,
+		"IMAGE_SIGNATURE_URL":         &cfg.Provision.Image.SignatureURL,
+		"IMAGE_GPG_PUBKEY":            &cfg.Provision.Image.GPGPubKey,
+		"TELEMETRY_URL":               &cfg.Telemetry.URL,
+		"METRICS_URL":                 &cfg.Telemetry.MetricsURL,
+		"EVENT_URL":                   &cfg.Telemetry.EventURL,
+		"CRASH_ARTIFACTS_PREPARE_URL": &cfg.Provision.CrashArtifacts.PrepareURL,
+		"CRASH_ARTIFACTS_UPLOAD_URL":  &cfg.Provision.CrashArtifacts.UploadURL,
+		"MOK_CERT_PATH":               &cfg.Provision.SecureBoot.MOKCertPath,
+		"MOK_PASSWORD":                &cfg.Provision.SecureBoot.MOKPassword,
+		"TOKEN_URL":                   &cfg.Transport.TokenURL,
+		"TOKEN_ALGORITHM":             &cfg.Transport.TokenAlgorithm,
+		"NVME_NAMESPACES":             &cfg.Provision.Disk.NVMeNamespaces,
+		"BGP_AUTH_PASSWORD":           &cfg.Network.BGP.AuthPassword,
 	}
 
 	if ptr, ok := strFields[key]; ok {
@@ -909,16 +909,16 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 
 func applyUint32Var(cfg *config.MachineConfig, key, value string) (bool, error) {
 	uint32Fields := map[string]*uint32{
-		"asn_server":      &cfg.ASN,
-		"provision_vni":   &cfg.ProvisionVNI,
-		"leaf_asn":        &cfg.LeafASN,
-		"local_asn":       &cfg.LocalASN,
-		"vrf_table_id":    &cfg.VRFTableID,
-		"bgp_keepalive":   &cfg.BGPKeepalive,
-		"bgp_hold":        &cfg.BGPHold,
-		"bfd_transmit_ms": &cfg.BFDTransmitMS,
-		"bfd_receive_ms":  &cfg.BFDReceiveMS,
-		"bgp_remote_asn":  &cfg.BGPRemoteASN,
+		"asn_server":      &cfg.Network.BGP.ASN,
+		"provision_vni":   &cfg.Network.EVPN.ProvisionVNI,
+		"leaf_asn":        &cfg.Network.EVPN.LeafASN,
+		"local_asn":       &cfg.Network.EVPN.LocalASN,
+		"vrf_table_id":    &cfg.Network.VRF.TableID,
+		"bgp_keepalive":   &cfg.Network.BGP.Keepalive,
+		"bgp_hold":        &cfg.Network.BGP.Hold,
+		"bfd_transmit_ms": &cfg.Network.BGP.BFDTransmitMS,
+		"bfd_receive_ms":  &cfg.Network.BGP.BFDReceiveMS,
+		"bgp_remote_asn":  &cfg.Network.BGP.RemoteASN,
 	}
 
 	if ptr, ok := uint32Fields[key]; ok {
@@ -939,15 +939,15 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) error {
 
 	switch key {
 	case "IMAGE":
-		cfg.ImageURLs = strings.Fields(strings.ReplaceAll(value, ",", " "))
+		cfg.Provision.Image.URLs = strings.Fields(strings.ReplaceAll(value, ",", " "))
 	case "POST_PROVISION_CMDS":
-		cfg.PostProvisionCmds = strings.Split(value, ";")
+		cfg.Provision.PostProvisionCmds = strings.Split(value, ";")
 	case "PARTITION_LAYOUT":
 		layout, err := config.ParsePartitionLayout(value)
 		if err != nil {
 			return fmt.Errorf("invalid PARTITION_LAYOUT: %w", err)
 		}
-		cfg.PartitionLayout = layout
+		cfg.Provision.Disk.PartitionLayout = layout
 	default:
 		if strings.HasPrefix(key, "LUKS_") {
 			return fmt.Errorf("%s is not supported yet", key)
@@ -965,23 +965,23 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) (bool, error)
 
 	switch key {
 	case "DISABLE_KEXEC":
-		cfg.DisableKexec = parseBoolVar(value)
+		cfg.Provision.DisableKexec = parseBoolVar(value)
 	case "SECURE_ERASE":
-		cfg.SecureErase = parseBoolVar(value)
+		cfg.Provision.Disk.SecureErase = parseBoolVar(value)
 	case "INVENTORY_ENABLED":
-		cfg.InventoryEnabled = parseBoolVar(value)
+		cfg.Provision.Inventory.Enabled = parseBoolVar(value)
 	case "FIRMWARE_REPORT":
-		cfg.FirmwareEnabled = parseBoolVar(value)
+		cfg.Provision.Firmware.Enabled = parseBoolVar(value)
 	case "HEALTH_CHECKS_ENABLED":
-		cfg.HealthChecksEnabled = parseBoolVar(value)
+		cfg.Health.Enabled = parseBoolVar(value)
 	case "CLOUDINIT_ENABLED":
-		cfg.CloudInitEnabled = parseBoolVar(value)
+		cfg.Provision.CloudInit.Enabled = parseBoolVar(value)
 	case "DRY_RUN":
 		cfg.DryRun = parseBoolVar(value)
 	case "INSECURE_TRANSPORT":
-		cfg.InsecureTransport = parseBoolVar(value)
+		cfg.Transport.Insecure = parseBoolVar(value)
 	case "CRASH_ARTIFACTS_ENABLED":
-		cfg.CrashArtifactsEnabled = parseBoolVar(value)
+		cfg.Provision.CrashArtifacts.Enabled = parseBoolVar(value)
 	default:
 		return applyFeatureToggle(cfg, key, value)
 	}
@@ -991,13 +991,13 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) (bool, error)
 // applyIntVar handles integer special vars.
 func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 	intFields := map[string]*int{
-		"MIN_DISK_SIZE_GB":                   &cfg.MinDiskSizeGB,
-		"NUM_VFS":                            &cfg.NumVFs,
-		"HEALTH_MIN_MEMORY_GB":               &cfg.HealthMinMemoryGB,
-		"HEALTH_MIN_CPUS":                    &cfg.HealthMinCPUs,
-		"CRASH_ARTIFACTS_MAX_MB":             &cfg.CrashArtifactsMaxMB,
-		"CRASH_ARTIFACTS_UPLOAD_TIMEOUT_SEC": &cfg.CrashArtifactsUploadTimeoutSec,
-		"BGP_MIN_PEERS":                      &cfg.BGPMinPeers,
+		"MIN_DISK_SIZE_GB":                   &cfg.Provision.Disk.MinSizeGB,
+		"NUM_VFS":                            &cfg.Provision.Disk.NumVFs,
+		"HEALTH_MIN_MEMORY_GB":               &cfg.Health.MinMemoryGB,
+		"HEALTH_MIN_CPUS":                    &cfg.Health.MinCPUs,
+		"CRASH_ARTIFACTS_MAX_MB":             &cfg.Provision.CrashArtifacts.MaxMB,
+		"CRASH_ARTIFACTS_UPLOAD_TIMEOUT_SEC": &cfg.Provision.CrashArtifacts.UploadTimeoutSec,
+		"BGP_MIN_PEERS":                      &cfg.Network.BGP.MinPeers,
 	}
 
 	if ptr, ok := intFields[key]; ok {
@@ -1013,21 +1013,21 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 func applyFeatureToggle(cfg *config.MachineConfig, key, value string) (bool, error) {
 	switch key {
 	case "TELEMETRY_ENABLED":
-		cfg.TelemetryEnabled = parseBoolVar(value)
+		cfg.Telemetry.Enabled = parseBoolVar(value)
 	case "SECUREBOOT_REENABLE":
-		cfg.SecureBootReEnable = parseBoolVar(value)
+		cfg.Provision.SecureBoot.ReEnable = parseBoolVar(value)
 	case "RESCUE_TIMEOUT":
-		if err := setIntField(&cfg.RescueTimeout, value); err != nil {
+		if err := setIntField(&cfg.Rescue.Timeout, value); err != nil {
 			return true, fmt.Errorf("invalid %s: %w", key, err)
 		}
 	case "RESCUE_AUTO_MOUNT":
-		cfg.RescueAutoMountDisks = parseBoolVar(value)
+		cfg.Rescue.AutoMountDisks = parseBoolVar(value)
 	case "EVPN_L2_ENABLED":
-		cfg.EVPNL2Enabled = parseBoolVar(value)
+		cfg.Network.EVPN.L2Enabled = parseBoolVar(value)
 	case "BGP_UNDERLAY_AF":
-		cfg.BGPUnderlayAF = value
+		cfg.Network.BGP.UnderlayAF = value
 	case "BGP_OVERLAY_TYPE":
-		cfg.BGPOverlayType = value
+		cfg.Network.BGP.OverlayType = value
 	default:
 		return false, nil
 	}

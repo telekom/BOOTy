@@ -329,14 +329,14 @@ func machineMetadata(cfg *config.MachineConfig) MachineMetadata {
 		return meta
 	}
 	meta.Hostname = cfg.Hostname
-	meta.ProviderID = cfg.ProviderID
+	meta.ProviderID = cfg.Provision.ProviderID
 	meta.Mode = cfg.Mode
-	meta.Region = cfg.Region
-	meta.FailureDomain = cfg.FailureDomain
-	meta.ImageMode = cfg.ImageMode
-	meta.NetworkMode = cfg.NetworkMode
-	meta.BGPPeerMode = cfg.BGPPeerMode
-	meta.DiskDevice = cfg.DiskDevice
+	meta.Region = cfg.Provision.Region
+	meta.FailureDomain = cfg.Provision.FailureDomain
+	meta.ImageMode = cfg.Provision.Image.Mode
+	meta.NetworkMode = cfg.Network.Mode
+	meta.BGPPeerMode = cfg.Network.BGP.PeerMode
+	meta.DiskDevice = cfg.Provision.Disk.Device
 	if meta.Hostname == "" {
 		if hostname, err := os.Hostname(); err == nil {
 			meta.Hostname = hostname

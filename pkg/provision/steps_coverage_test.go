@@ -56,7 +56,8 @@ func TestOrchestratorSetHostname_EmptySkips(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestOrchestratorConfigureDNS_WritesResolvConf(t *testing.T) {
-	cfg := &config.MachineConfig{DNSResolvers: "8.8.8.8,8.8.4.4"}
+	cfg := &config.MachineConfig{}
+	cfg.Network.DNSResolvers = "8.8.8.8,8.8.4.4"
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
@@ -82,7 +83,7 @@ func TestOrchestratorConfigureDNS_WritesResolvConf(t *testing.T) {
 }
 
 func TestOrchestratorConfigureDNS_EmptySkips(t *testing.T) {
-	cfg := &config.MachineConfig{DNSResolvers: ""}
+	cfg := &config.MachineConfig{}
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
@@ -92,7 +93,8 @@ func TestOrchestratorConfigureDNS_EmptySkips(t *testing.T) {
 }
 
 func TestOrchestratorConfigureDNS_TrimsWhitespace(t *testing.T) {
-	cfg := &config.MachineConfig{DNSResolvers: "  1.1.1.1 ,  9.9.9.9  "}
+	cfg := &config.MachineConfig{}
+	cfg.Network.DNSResolvers = "  1.1.1.1 ,  9.9.9.9  "
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
@@ -145,7 +147,8 @@ func TestOrchestratorConfigureGRUB_WritesConfig(t *testing.T) {
 }
 
 func TestOrchestratorConfigureGRUB_WithExtraParams(t *testing.T) {
-	cfg := &config.MachineConfig{ExtraKernelParams: "quiet splash"}
+	cfg := &config.MachineConfig{}
+	cfg.Provision.ExtraKernelParams = "quiet splash"
 	provider := &mockProvider{}
 	o, _ := newTestOrchestratorWithCommander(t, cfg, provider)
 
@@ -164,7 +167,8 @@ func TestOrchestratorConfigureGRUB_WithExtraParams(t *testing.T) {
 }
 
 func TestOrchestratorConfigureGRUB_UnsafeParamsRejected(t *testing.T) {
-	cfg := &config.MachineConfig{ExtraKernelParams: "evil; rm -rf /"}
+	cfg := &config.MachineConfig{}
+	cfg.Provision.ExtraKernelParams = "evil; rm -rf /"
 	provider := &mockProvider{}
 	o, _ := newTestOrchestratorWithCommander(t, cfg, provider)
 
@@ -247,9 +251,8 @@ func TestOrchestratorCreateEFIBootEntry_SkipsWhenNoBootPartition(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestOrchestratorInjectCloudInit_FallbackInstanceID(t *testing.T) {
-	cfg := &config.MachineConfig{
-		CloudInitEnabled: true,
-	}
+	cfg := &config.MachineConfig{}
+	cfg.Provision.CloudInit.Enabled = true
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
@@ -392,7 +395,8 @@ func TestConfiguratorConfigureGRUB_UnsafeParamsRejected(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
 
-	cfg := &config.MachineConfig{ExtraKernelParams: "quiet; rm -rf /"}
+	cfg := &config.MachineConfig{}
+	cfg.Provision.ExtraKernelParams = "quiet; rm -rf /"
 	err := c.ConfigureGRUB(context.Background(), cfg)
 	if err == nil {
 		t.Fatal("expected error for unsafe ExtraKernelParams")

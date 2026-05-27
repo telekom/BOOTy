@@ -94,41 +94,41 @@ export DEBUG_URL="http://caprf.example.com/debug"
 		t.Fatal(err)
 	}
 
-	if len(cfg.ImageURLs) != 2 {
-		t.Fatalf("expected 2 image URLs, got %d", len(cfg.ImageURLs))
+	if len(cfg.Provision.Image.URLs) != 2 {
+		t.Fatalf("expected 2 image URLs, got %d", len(cfg.Provision.Image.URLs))
 	}
-	if cfg.ImageURLs[0] != "http://example.com/image1.gz" {
-		t.Fatalf("unexpected image URL 0: %s", cfg.ImageURLs[0])
+	if cfg.Provision.Image.URLs[0] != "http://example.com/image1.gz" {
+		t.Fatalf("unexpected image URL 0: %s", cfg.Provision.Image.URLs[0])
 	}
 	if cfg.Hostname != "worker-01" {
 		t.Fatalf("unexpected hostname: %s", cfg.Hostname)
 	}
-	if cfg.Token != "test-token-123" {
-		t.Fatalf("unexpected token: %s", cfg.Token)
+	if cfg.Transport.Token != "test-token-123" {
+		t.Fatalf("unexpected token: %s", cfg.Transport.Token)
 	}
-	if cfg.ExtraKernelParams != "console=ttyS0 net.ifnames=0" {
-		t.Fatalf("unexpected kernel params: %s", cfg.ExtraKernelParams)
+	if cfg.Provision.ExtraKernelParams != "console=ttyS0 net.ifnames=0" {
+		t.Fatalf("unexpected kernel params: %s", cfg.Provision.ExtraKernelParams)
 	}
-	if cfg.FailureDomain != "zone-a" {
-		t.Fatalf("unexpected failure domain: %s", cfg.FailureDomain)
+	if cfg.Provision.FailureDomain != "zone-a" {
+		t.Fatalf("unexpected failure domain: %s", cfg.Provision.FailureDomain)
 	}
-	if cfg.Region != "eu-central-1" {
-		t.Fatalf("unexpected region: %s", cfg.Region)
+	if cfg.Provision.Region != "eu-central-1" {
+		t.Fatalf("unexpected region: %s", cfg.Provision.Region)
 	}
-	if cfg.ProviderID != "redfish://bmc.example.com/Systems/1" {
-		t.Fatalf("unexpected provider ID: %s", cfg.ProviderID)
+	if cfg.Provision.ProviderID != "redfish://bmc.example.com/Systems/1" {
+		t.Fatalf("unexpected provider ID: %s", cfg.Provision.ProviderID)
 	}
 	if cfg.Mode != "provision" {
 		t.Fatalf("unexpected mode: %s", cfg.Mode)
 	}
-	if cfg.MinDiskSizeGB != 100 {
-		t.Fatalf("unexpected min disk size: %d", cfg.MinDiskSizeGB)
+	if cfg.Provision.Disk.MinSizeGB != 100 {
+		t.Fatalf("unexpected min disk size: %d", cfg.Provision.Disk.MinSizeGB)
 	}
-	if cfg.LogURL != "http://caprf.example.com/log" {
-		t.Fatalf("unexpected log URL: %s", cfg.LogURL)
+	if cfg.Transport.LogURL != "http://caprf.example.com/log" {
+		t.Fatalf("unexpected log URL: %s", cfg.Transport.LogURL)
 	}
-	if cfg.InitURL != "http://caprf.example.com/status/init" {
-		t.Fatalf("unexpected init URL: %s", cfg.InitURL)
+	if cfg.Transport.InitURL != "http://caprf.example.com/status/init" {
+		t.Fatalf("unexpected init URL: %s", cfg.Transport.InitURL)
 	}
 }
 
@@ -162,14 +162,14 @@ func TestParseVarsPartitionLayoutSingleQuoted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.PartitionLayout == nil {
+	if cfg.Provision.Disk.PartitionLayout == nil {
 		t.Fatal("expected partition layout to be parsed")
 	}
-	if len(cfg.PartitionLayout.Partitions) != 1 {
-		t.Fatalf("expected 1 partition, got %d", len(cfg.PartitionLayout.Partitions))
+	if len(cfg.Provision.Disk.PartitionLayout.Partitions) != 1 {
+		t.Fatalf("expected 1 partition, got %d", len(cfg.Provision.Disk.PartitionLayout.Partitions))
 	}
-	if cfg.PartitionLayout.Partitions[0].Label != "root" {
-		t.Errorf("partition label = %q, want root", cfg.PartitionLayout.Partitions[0].Label)
+	if cfg.Provision.Disk.PartitionLayout.Partitions[0].Label != "root" {
+		t.Errorf("partition label = %q, want root", cfg.Provision.Disk.PartitionLayout.Partitions[0].Label)
 	}
 }
 
@@ -192,7 +192,7 @@ export HOSTNAME="worker-01"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.InsecureTransport {
+	if !cfg.Transport.Insecure {
 		t.Fatal("expected InsecureTransport=true")
 	}
 }
@@ -201,12 +201,14 @@ func TestClientReportStatus(t *testing.T) {
 	ts := newTestServer(t)
 
 	cfg := &config.MachineConfig{
-		Token:      "my-token",
-		InitURL:    ts.server.URL + "/status/init",
-		SuccessURL: ts.server.URL + "/status/success",
-		ErrorURL:   ts.server.URL + "/status/error",
-		LogURL:     ts.server.URL + "/log",
-		DebugURL:   ts.server.URL + "/debug",
+		Transport: config.TransportConfig{
+			Token:      "my-token",
+			InitURL:    ts.server.URL + "/status/init",
+			SuccessURL: ts.server.URL + "/status/success",
+			ErrorURL:   ts.server.URL + "/status/error",
+			LogURL:     ts.server.URL + "/log",
+			DebugURL:   ts.server.URL + "/debug",
+		},
 	}
 
 	client := NewFromConfig(cfg)
@@ -246,8 +248,10 @@ func TestClientShipLog(t *testing.T) {
 	ts := newTestServer(t)
 
 	cfg := &config.MachineConfig{
-		Token:  "log-token",
-		LogURL: ts.server.URL + "/log",
+		Transport: config.TransportConfig{
+			Token:  "log-token",
+			LogURL: ts.server.URL + "/log",
+		},
 	}
 
 	client := NewFromConfig(cfg)
@@ -296,8 +300,8 @@ func TestClientReportInventory(t *testing.T) {
 	defer srv.Close()
 
 	client := NewFromConfig(&config.MachineConfig{
-		Token:        "test-token",
-		InventoryURL: srv.URL + "/inventory",
+		Transport: config.TransportConfig{Token: "test-token"},
+		Provision: config.ProvisionConfig{Inventory: config.InventoryConfig{URL: srv.URL + "/inventory"}},
 	})
 
 	data := []byte(`{"system":{"vendor":"Dell"}}`)
@@ -355,8 +359,8 @@ func TestReportCrashArtifactsPreparePresignedPUTNoAuthorization(t *testing.T) {
 	})
 
 	client := NewFromConfig(&config.MachineConfig{
-		Token:                    "crash-token",
-		CrashArtifactsPrepareURL: srv.URL + "/crash/prepare",
+		Transport: config.TransportConfig{Token: "crash-token"},
+		Provision: config.ProvisionConfig{CrashArtifacts: config.CrashArtifactsConfig{PrepareURL: srv.URL + "/crash/prepare"}},
 	})
 	err := client.ReportCrashArtifacts(context.Background(), crashRequestFixture(), archivePath)
 	if err != nil {
@@ -389,8 +393,8 @@ func TestReportCrashArtifactsDirectCAPRFUploadUsesBearer(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	client := NewFromConfig(&config.MachineConfig{
-		Token:                   "crash-token",
-		CrashArtifactsUploadURL: srv.URL + "/crash/upload",
+		Transport: config.TransportConfig{Token: "crash-token"},
+		Provision: config.ProvisionConfig{CrashArtifacts: config.CrashArtifactsConfig{UploadURL: srv.URL + "/crash/upload"}},
 	})
 	if err := client.ReportCrashArtifacts(context.Background(), crashRequestFixture(), archivePath); err != nil {
 		t.Fatalf("ReportCrashArtifacts() error: %v", err)
@@ -415,7 +419,7 @@ func TestReportCrashArtifactsNoURLNoop(t *testing.T) {
 }
 
 func TestReportCrashArtifactsRejectsInsecureRemoteUpload(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{CrashArtifactsUploadURL: "http://example.com/crash/upload"})
+	client := NewFromConfig(&config.MachineConfig{Provision: config.ProvisionConfig{CrashArtifacts: config.CrashArtifactsConfig{UploadURL: "http://example.com/crash/upload"}}})
 	err := client.ReportCrashArtifacts(context.Background(), crashRequestFixture(), writeCrashArchiveFixture(t))
 	if !errors.Is(err, errInsecureTransport) {
 		t.Fatalf("ReportCrashArtifacts() error = %v, want errInsecureTransport", err)
@@ -473,8 +477,8 @@ TOKEN="bare-token"
 	if cfg.Hostname != "bare-host" {
 		t.Fatalf("expected bare-host, got %s", cfg.Hostname)
 	}
-	if cfg.Token != "bare-token" {
-		t.Fatalf("expected bare-token, got %s", cfg.Token)
+	if cfg.Transport.Token != "bare-token" {
+		t.Fatalf("expected bare-token, got %s", cfg.Transport.Token)
 	}
 }
 
@@ -502,8 +506,8 @@ export MODE="provision"
 	if cfg.Hostname != "test-via-file" {
 		t.Fatalf("expected test-via-file, got %s", cfg.Hostname)
 	}
-	if cfg.Token != "file-token" {
-		t.Fatalf("expected file-token, got %s", cfg.Token)
+	if cfg.Transport.Token != "file-token" {
+		t.Fatalf("expected file-token, got %s", cfg.Transport.Token)
 	}
 }
 
@@ -531,32 +535,32 @@ export vpn_rt="64497:1000"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ASN != 64497 {
-		t.Errorf("ASN = %d, want 64497", cfg.ASN)
+	if cfg.Network.BGP.ASN != 64497 {
+		t.Errorf("ASN = %d, want 64497", cfg.Network.BGP.ASN)
 	}
-	if cfg.ProvisionVNI != 2001000 {
-		t.Errorf("ProvisionVNI = %d, want 2001000", cfg.ProvisionVNI)
+	if cfg.Network.EVPN.ProvisionVNI != 2001000 {
+		t.Errorf("ProvisionVNI = %d, want 2001000", cfg.Network.EVPN.ProvisionVNI)
 	}
-	if cfg.VRFTableID != 10 {
-		t.Errorf("VRFTableID = %d, want 10", cfg.VRFTableID)
+	if cfg.Network.VRF.TableID != 10 {
+		t.Errorf("VRFTableID = %d, want 10", cfg.Network.VRF.TableID)
 	}
-	if cfg.BGPKeepalive != 30 {
-		t.Errorf("BGPKeepalive = %d, want 30", cfg.BGPKeepalive)
+	if cfg.Network.BGP.Keepalive != 30 {
+		t.Errorf("BGPKeepalive = %d, want 30", cfg.Network.BGP.Keepalive)
 	}
-	if cfg.BGPHold != 90 {
-		t.Errorf("BGPHold = %d, want 90", cfg.BGPHold)
+	if cfg.Network.BGP.Hold != 90 {
+		t.Errorf("BGPHold = %d, want 90", cfg.Network.BGP.Hold)
 	}
-	if cfg.BFDTransmitMS != 150 {
-		t.Errorf("BFDTransmitMS = %d, want 150", cfg.BFDTransmitMS)
+	if cfg.Network.BGP.BFDTransmitMS != 150 {
+		t.Errorf("BFDTransmitMS = %d, want 150", cfg.Network.BGP.BFDTransmitMS)
 	}
-	if cfg.BFDReceiveMS != 150 {
-		t.Errorf("BFDReceiveMS = %d, want 150", cfg.BFDReceiveMS)
+	if cfg.Network.BGP.BFDReceiveMS != 150 {
+		t.Errorf("BFDReceiveMS = %d, want 150", cfg.Network.BGP.BFDReceiveMS)
 	}
-	if cfg.DCGWIPs != "10.10.10.1,10.10.10.2" {
-		t.Errorf("DCGWIPs = %q, want %q", cfg.DCGWIPs, "10.10.10.1,10.10.10.2")
+	if cfg.Network.EVPN.DCGWIPs != "10.10.10.1,10.10.10.2" {
+		t.Errorf("DCGWIPs = %q, want %q", cfg.Network.EVPN.DCGWIPs, "10.10.10.1,10.10.10.2")
 	}
-	if cfg.VPNRT != "64497:1000" {
-		t.Errorf("VPNRT = %q, want %q", cfg.VPNRT, "64497:1000")
+	if cfg.Network.EVPN.VPNRT != "64497:1000" {
+		t.Errorf("VPNRT = %q, want %q", cfg.Network.EVPN.VPNRT, "64497:1000")
 	}
 }
 
@@ -579,8 +583,10 @@ func TestClientShipDebug(t *testing.T) {
 	ts := newTestServer(t)
 
 	cfg := &config.MachineConfig{
-		Token:    "debug-token",
-		DebugURL: ts.server.URL + "/debug",
+		Transport: config.TransportConfig{
+			Token:    "debug-token",
+			DebugURL: ts.server.URL + "/debug",
+		},
 	}
 
 	client := NewFromConfig(cfg)
@@ -617,7 +623,7 @@ func TestPostWithAuthNon2xx(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	cfg := &config.MachineConfig{
-		InitURL: srv.URL + "/status/init",
+		Transport: config.TransportConfig{InitURL: srv.URL + "/status/init"},
 	}
 	client := NewFromConfig(cfg)
 	err := client.ReportStatus(context.Background(), config.StatusInit, "test")
@@ -661,8 +667,8 @@ func TestParseVarsInvalidMode(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid MODE, got nil")
 	}
-	if !strings.Contains(err.Error(), "invalid MODE") {
-		t.Fatalf("expected error to mention 'invalid MODE', got: %v", err)
+	if !strings.Contains(err.Error(), "invalid mode") {
+		t.Fatalf("expected error to mention 'invalid mode', got: %v", err)
 	}
 }
 
@@ -701,44 +707,44 @@ vpn_rt="65188:2002"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.UnderlaySubnet != "192.168.4.0/24" {
-		t.Errorf("UnderlaySubnet = %q", cfg.UnderlaySubnet)
+	if cfg.Network.EVPN.UnderlaySubnet != "192.168.4.0/24" {
+		t.Errorf("UnderlaySubnet = %q", cfg.Network.EVPN.UnderlaySubnet)
 	}
-	if cfg.UnderlayIP != "10.50.12.13" {
-		t.Errorf("UnderlayIP = %q", cfg.UnderlayIP)
+	if cfg.Network.EVPN.UnderlayIP != "10.50.12.13" {
+		t.Errorf("UnderlayIP = %q", cfg.Network.EVPN.UnderlayIP)
 	}
-	if cfg.OverlaySubnet != "2a01:598:40a:5481::/64" {
-		t.Errorf("OverlaySubnet = %q", cfg.OverlaySubnet)
+	if cfg.Network.EVPN.OverlaySubnet != "2a01:598:40a:5481::/64" {
+		t.Errorf("OverlaySubnet = %q", cfg.Network.EVPN.OverlaySubnet)
 	}
-	if cfg.IPMISubnet != "172.30.0.0/24" {
-		t.Errorf("IPMISubnet = %q", cfg.IPMISubnet)
+	if cfg.Network.IPMI.Subnet != "172.30.0.0/24" {
+		t.Errorf("IPMISubnet = %q", cfg.Network.IPMI.Subnet)
 	}
-	if cfg.ASN != 65188 {
-		t.Errorf("ASN = %d", cfg.ASN)
+	if cfg.Network.BGP.ASN != 65188 {
+		t.Errorf("ASN = %d", cfg.Network.BGP.ASN)
 	}
-	if cfg.ProvisionVNI != 2002002 {
-		t.Errorf("ProvisionVNI = %d", cfg.ProvisionVNI)
+	if cfg.Network.EVPN.ProvisionVNI != 2002002 {
+		t.Errorf("ProvisionVNI = %d", cfg.Network.EVPN.ProvisionVNI)
 	}
-	if cfg.ProvisionIP != "10.100.0.42/24" {
-		t.Errorf("ProvisionIP = %q", cfg.ProvisionIP)
+	if cfg.Network.EVPN.ProvisionIP != "10.100.0.42/24" {
+		t.Errorf("ProvisionIP = %q", cfg.Network.EVPN.ProvisionIP)
 	}
-	if cfg.DNSResolvers != "2003:0:af08:1005::1000" {
-		t.Errorf("DNSResolvers = %q", cfg.DNSResolvers)
+	if cfg.Network.DNSResolvers != "2003:0:af08:1005::1000" {
+		t.Errorf("DNSResolvers = %q", cfg.Network.DNSResolvers)
 	}
-	if cfg.DCGWIPs != "10.10.10.1,10.10.10.2" {
-		t.Errorf("DCGWIPs = %q", cfg.DCGWIPs)
+	if cfg.Network.EVPN.DCGWIPs != "10.10.10.1,10.10.10.2" {
+		t.Errorf("DCGWIPs = %q", cfg.Network.EVPN.DCGWIPs)
 	}
-	if cfg.LeafASN != 65500 {
-		t.Errorf("LeafASN = %d", cfg.LeafASN)
+	if cfg.Network.EVPN.LeafASN != 65500 {
+		t.Errorf("LeafASN = %d", cfg.Network.EVPN.LeafASN)
 	}
-	if cfg.LocalASN != 65501 {
-		t.Errorf("LocalASN = %d", cfg.LocalASN)
+	if cfg.Network.EVPN.LocalASN != 65501 {
+		t.Errorf("LocalASN = %d", cfg.Network.EVPN.LocalASN)
 	}
-	if cfg.OverlayAggregate != "2a01:598:40a:5481::/64" {
-		t.Errorf("OverlayAggregate = %q", cfg.OverlayAggregate)
+	if cfg.Network.EVPN.OverlayAggregate != "2a01:598:40a:5481::/64" {
+		t.Errorf("OverlayAggregate = %q", cfg.Network.EVPN.OverlayAggregate)
 	}
-	if cfg.VPNRT != "65188:2002" {
-		t.Errorf("VPNRT = %q", cfg.VPNRT)
+	if cfg.Network.EVPN.VPNRT != "65188:2002" {
+		t.Errorf("VPNRT = %q", cfg.Network.EVPN.VPNRT)
 	}
 }
 
@@ -749,8 +755,8 @@ func TestParseVarsNetworkMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.NetworkMode != "gobgp" {
-		t.Errorf("NetworkMode = %q, want gobgp", cfg.NetworkMode)
+	if cfg.Network.Mode != "gobgp" {
+		t.Errorf("NetworkMode = %q, want gobgp", cfg.Network.Mode)
 	}
 }
 
@@ -766,23 +772,23 @@ BGP_AUTH_PASSWORD="s3cr3t"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.BGPPeerMode != "dual" {
-		t.Errorf("BGPPeerMode = %q, want dual", cfg.BGPPeerMode)
+	if cfg.Network.BGP.PeerMode != "dual" {
+		t.Errorf("BGPPeerMode = %q, want dual", cfg.Network.BGP.PeerMode)
 	}
-	if cfg.BGPNeighbors != "10.0.0.1,10.0.0.2" {
-		t.Errorf("BGPNeighbors = %q, want 10.0.0.1,10.0.0.2", cfg.BGPNeighbors)
+	if cfg.Network.BGP.Neighbors != "10.0.0.1,10.0.0.2" {
+		t.Errorf("BGPNeighbors = %q, want 10.0.0.1,10.0.0.2", cfg.Network.BGP.Neighbors)
 	}
-	if cfg.BGPRemoteASN != 65100 {
-		t.Errorf("BGPRemoteASN = %d, want 65100", cfg.BGPRemoteASN)
+	if cfg.Network.BGP.RemoteASN != 65100 {
+		t.Errorf("BGPRemoteASN = %d, want 65100", cfg.Network.BGP.RemoteASN)
 	}
-	if cfg.BGPUnderlayAF != "ipv6" {
-		t.Errorf("BGPUnderlayAF = %q, want ipv6", cfg.BGPUnderlayAF)
+	if cfg.Network.BGP.UnderlayAF != "ipv6" {
+		t.Errorf("BGPUnderlayAF = %q, want ipv6", cfg.Network.BGP.UnderlayAF)
 	}
-	if cfg.BGPOverlayType != "l3vpn" {
-		t.Errorf("BGPOverlayType = %q, want l3vpn", cfg.BGPOverlayType)
+	if cfg.Network.BGP.OverlayType != "l3vpn" {
+		t.Errorf("BGPOverlayType = %q, want l3vpn", cfg.Network.BGP.OverlayType)
 	}
-	if cfg.BGPAuthPassword != "s3cr3t" {
-		t.Errorf("BGPAuthPassword = %q, want s3cr3t", cfg.BGPAuthPassword)
+	if cfg.Network.BGP.AuthPassword != "s3cr3t" {
+		t.Errorf("BGPAuthPassword = %q, want s3cr3t", cfg.Network.BGP.AuthPassword)
 	}
 }
 
@@ -795,7 +801,7 @@ func TestClientHeartbeat(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewFromConfig(&config.MachineConfig{HeartbeatURL: srv.URL})
+	client := NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{HeartbeatURL: srv.URL}})
 	if err := client.Heartbeat(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -811,7 +817,7 @@ func TestClientFetchCommands(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewFromConfig(&config.MachineConfig{CommandsURL: srv.URL})
+	client := NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: srv.URL}})
 	cmds, err := client.FetchCommands(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -830,7 +836,7 @@ func TestClientFetchCommandsNoContent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewFromConfig(&config.MachineConfig{CommandsURL: srv.URL})
+	client := NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: srv.URL}})
 	cmds, err := client.FetchCommands(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -846,7 +852,7 @@ func TestClientFetchCommandsError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewFromConfig(&config.MachineConfig{CommandsURL: srv.URL})
+	client := NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: srv.URL}})
 	_, err := client.FetchCommands(context.Background())
 	if err == nil {
 		t.Error("expected error on 500")
@@ -862,11 +868,11 @@ COMMANDS_URL="http://server/commands"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.HeartbeatURL != "http://server/status/heartbeat" {
-		t.Errorf("HeartbeatURL = %q", cfg.HeartbeatURL)
+	if cfg.Agent.HeartbeatURL != "http://server/status/heartbeat" {
+		t.Errorf("HeartbeatURL = %q", cfg.Agent.HeartbeatURL)
 	}
-	if cfg.CommandsURL != "http://server/commands" {
-		t.Errorf("CommandsURL = %q", cfg.CommandsURL)
+	if cfg.Agent.CommandsURL != "http://server/commands" {
+		t.Errorf("CommandsURL = %q", cfg.Agent.CommandsURL)
 	}
 }
 
@@ -879,14 +885,14 @@ STATIC_IFACE="eth0"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.StaticIP != "10.0.0.5/24" {
-		t.Errorf("StaticIP = %q, want %q", cfg.StaticIP, "10.0.0.5/24")
+	if cfg.Network.Static.IP != "10.0.0.5/24" {
+		t.Errorf("StaticIP = %q, want %q", cfg.Network.Static.IP, "10.0.0.5/24")
 	}
-	if cfg.StaticGateway != "10.0.0.1" {
-		t.Errorf("StaticGateway = %q, want %q", cfg.StaticGateway, "10.0.0.1")
+	if cfg.Network.Static.Gateway != "10.0.0.1" {
+		t.Errorf("StaticGateway = %q, want %q", cfg.Network.Static.Gateway, "10.0.0.1")
 	}
-	if cfg.StaticIface != "eth0" {
-		t.Errorf("StaticIface = %q, want %q", cfg.StaticIface, "eth0")
+	if cfg.Network.Static.Iface != "eth0" {
+		t.Errorf("StaticIface = %q, want %q", cfg.Network.Static.Iface, "eth0")
 	}
 }
 
@@ -898,11 +904,11 @@ BOND_MODE="802.3ad"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.BondInterfaces != "eth0,eth1" {
-		t.Errorf("BondInterfaces = %q, want %q", cfg.BondInterfaces, "eth0,eth1")
+	if cfg.Network.Bond.Interfaces != "eth0,eth1" {
+		t.Errorf("BondInterfaces = %q, want %q", cfg.Network.Bond.Interfaces, "eth0,eth1")
 	}
-	if cfg.BondMode != "802.3ad" {
-		t.Errorf("BondMode = %q, want %q", cfg.BondMode, "802.3ad")
+	if cfg.Network.Bond.Mode != "802.3ad" {
+		t.Errorf("BondMode = %q, want %q", cfg.Network.Bond.Mode, "802.3ad")
 	}
 }
 
@@ -922,8 +928,8 @@ func TestParseVarsSecureErase(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if cfg.SecureErase != tt.want {
-			t.Errorf("SecureErase for %q = %v, want %v", tt.input, cfg.SecureErase, tt.want)
+		if cfg.Provision.Disk.SecureErase != tt.want {
+			t.Errorf("SecureErase for %q = %v, want %v", tt.input, cfg.Provision.Disk.SecureErase, tt.want)
 		}
 	}
 }
@@ -934,14 +940,14 @@ func TestParseVarsPostProvisionCmds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.PostProvisionCmds) != 3 {
-		t.Fatalf("PostProvisionCmds len = %d, want 3", len(cfg.PostProvisionCmds))
+	if len(cfg.Provision.PostProvisionCmds) != 3 {
+		t.Fatalf("PostProvisionCmds len = %d, want 3", len(cfg.Provision.PostProvisionCmds))
 	}
-	if cfg.PostProvisionCmds[0] != "apt update" {
-		t.Errorf("cmd[0] = %q, want %q", cfg.PostProvisionCmds[0], "apt update")
+	if cfg.Provision.PostProvisionCmds[0] != "apt update" {
+		t.Errorf("cmd[0] = %q, want %q", cfg.Provision.PostProvisionCmds[0], "apt update")
 	}
-	if cfg.PostProvisionCmds[2] != "echo done" {
-		t.Errorf("cmd[2] = %q, want %q", cfg.PostProvisionCmds[2], "echo done")
+	if cfg.Provision.PostProvisionCmds[2] != "echo done" {
+		t.Errorf("cmd[2] = %q, want %q", cfg.Provision.PostProvisionCmds[2], "echo done")
 	}
 }
 
@@ -964,11 +970,11 @@ IMAGE_CHECKSUM_TYPE="sha256"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ImageChecksum != "abc123def456" {
-		t.Errorf("ImageChecksum = %q", cfg.ImageChecksum)
+	if cfg.Provision.Image.Checksum != "abc123def456" {
+		t.Errorf("ImageChecksum = %q", cfg.Provision.Image.Checksum)
 	}
-	if cfg.ImageChecksumType != "sha256" {
-		t.Errorf("ImageChecksumType = %q", cfg.ImageChecksumType)
+	if cfg.Provision.Image.ChecksumType != "sha256" {
+		t.Errorf("ImageChecksumType = %q", cfg.Provision.Image.ChecksumType)
 	}
 }
 
@@ -978,8 +984,8 @@ func TestParseVarsNumVFs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.NumVFs != 64 {
-		t.Errorf("NumVFs = %d, want 64", cfg.NumVFs)
+	if cfg.Provision.Disk.NumVFs != 64 {
+		t.Errorf("NumVFs = %d, want 64", cfg.Provision.Disk.NumVFs)
 	}
 }
 
@@ -989,8 +995,8 @@ func TestParseVarsBGPMinPeers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.BGPMinPeers != 3 {
-		t.Errorf("BGPMinPeers = %d, want 3", cfg.BGPMinPeers)
+	if cfg.Network.BGP.MinPeers != 3 {
+		t.Errorf("BGPMinPeers = %d, want 3", cfg.Network.BGP.MinPeers)
 	}
 }
 
@@ -1000,7 +1006,7 @@ func TestParseVarsDisableKexec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.DisableKexec {
+	if !cfg.Provision.DisableKexec {
 		t.Error("DisableKexec should be true")
 	}
 }
@@ -1011,8 +1017,8 @@ func TestParseVarsVLANs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.VLANs != "200:eno1:10.200.0.42/24,300:eno2" {
-		t.Errorf("VLANs = %q, want %q", cfg.VLANs, "200:eno1:10.200.0.42/24,300:eno2")
+	if cfg.Network.VLAN.Config != "200:eno1:10.200.0.42/24,300:eno2" {
+		t.Errorf("VLANs = %q, want %q", cfg.Network.VLAN.Config, "200:eno1:10.200.0.42/24,300:eno2")
 	}
 }
 
@@ -1023,11 +1029,11 @@ INVENTORY_URL="http://caprf.example.com/inventory"`
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.InventoryEnabled {
+	if !cfg.Provision.Inventory.Enabled {
 		t.Error("InventoryEnabled should be true")
 	}
-	if cfg.InventoryURL != "http://caprf.example.com/inventory" {
-		t.Errorf("InventoryURL = %q", cfg.InventoryURL)
+	if cfg.Provision.Inventory.URL != "http://caprf.example.com/inventory" {
+		t.Errorf("InventoryURL = %q", cfg.Provision.Inventory.URL)
 	}
 }
 
@@ -1042,17 +1048,17 @@ func TestParseVarsFirmwareConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.FirmwareEnabled {
+	if !cfg.Provision.Firmware.Enabled {
 		t.Error("FirmwareEnabled should be true")
 	}
-	if cfg.FirmwareURL != "http://caprf/firmware" {
-		t.Errorf("FirmwareURL = %q", cfg.FirmwareURL)
+	if cfg.Provision.Firmware.URL != "http://caprf/firmware" {
+		t.Errorf("FirmwareURL = %q", cfg.Provision.Firmware.URL)
 	}
-	if cfg.FirmwareMinBIOS != "U50" {
-		t.Errorf("FirmwareMinBIOS = %q", cfg.FirmwareMinBIOS)
+	if cfg.Provision.Firmware.MinBIOS != "U50" {
+		t.Errorf("FirmwareMinBIOS = %q", cfg.Provision.Firmware.MinBIOS)
 	}
-	if cfg.FirmwareMinBMC != "2.72" {
-		t.Errorf("FirmwareMinBMC = %q", cfg.FirmwareMinBMC)
+	if cfg.Provision.Firmware.MinBMC != "2.72" {
+		t.Errorf("FirmwareMinBMC = %q", cfg.Provision.Firmware.MinBMC)
 	}
 }
 
@@ -1068,20 +1074,20 @@ func TestParseVarsCrashArtifactsConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.CrashArtifactsEnabled {
+	if !cfg.Provision.CrashArtifacts.Enabled {
 		t.Error("CrashArtifactsEnabled should be true")
 	}
-	if cfg.CrashArtifactsPrepareURL != "https://caprf.example.com/crash/prepare" {
-		t.Errorf("CrashArtifactsPrepareURL = %q", cfg.CrashArtifactsPrepareURL)
+	if cfg.Provision.CrashArtifacts.PrepareURL != "https://caprf.example.com/crash/prepare" {
+		t.Errorf("CrashArtifactsPrepareURL = %q", cfg.Provision.CrashArtifacts.PrepareURL)
 	}
-	if cfg.CrashArtifactsUploadURL != "https://caprf.example.com/crash/upload" {
-		t.Errorf("CrashArtifactsUploadURL = %q", cfg.CrashArtifactsUploadURL)
+	if cfg.Provision.CrashArtifacts.UploadURL != "https://caprf.example.com/crash/upload" {
+		t.Errorf("CrashArtifactsUploadURL = %q", cfg.Provision.CrashArtifacts.UploadURL)
 	}
-	if cfg.CrashArtifactsMaxMB != 128 {
-		t.Errorf("CrashArtifactsMaxMB = %d, want 128", cfg.CrashArtifactsMaxMB)
+	if cfg.Provision.CrashArtifacts.MaxMB != 128 {
+		t.Errorf("CrashArtifactsMaxMB = %d, want 128", cfg.Provision.CrashArtifacts.MaxMB)
 	}
-	if cfg.CrashArtifactsUploadTimeoutSec != 180 {
-		t.Errorf("CrashArtifactsUploadTimeoutSec = %d, want 180", cfg.CrashArtifactsUploadTimeoutSec)
+	if cfg.Provision.CrashArtifacts.UploadTimeoutSec != 180 {
+		t.Errorf("CrashArtifactsUploadTimeoutSec = %d, want 180", cfg.Provision.CrashArtifacts.UploadTimeoutSec)
 	}
 }
 
@@ -1091,11 +1097,11 @@ func TestParseVarsNVMeNamespaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.NVMeNamespaces == "" {
+	if cfg.Provision.Disk.NVMeNamespaces == "" {
 		t.Fatal("NVMeNamespaces should be populated")
 	}
-	if !strings.Contains(cfg.NVMeNamespaces, "/dev/nvme0") {
-		t.Errorf("NVMeNamespaces = %q, want controller /dev/nvme0", cfg.NVMeNamespaces)
+	if !strings.Contains(cfg.Provision.Disk.NVMeNamespaces, "/dev/nvme0") {
+		t.Errorf("NVMeNamespaces = %q, want controller /dev/nvme0", cfg.Provision.Disk.NVMeNamespaces)
 	}
 }
 
@@ -1105,8 +1111,8 @@ func TestParseVarsSingleQuoteStripping(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(cfg.NVMeNamespaces, "/dev/nvme0") {
-		t.Errorf("single-quoted value not parsed correctly: NVMeNamespaces = %q", cfg.NVMeNamespaces)
+	if !strings.Contains(cfg.Provision.Disk.NVMeNamespaces, "/dev/nvme0") {
+		t.Errorf("single-quoted value not parsed correctly: NVMeNamespaces = %q", cfg.Provision.Disk.NVMeNamespaces)
 	}
 }
 
@@ -1134,8 +1140,8 @@ func TestParseVarsUnmatchedQuotesPreserved(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if cfg.Token != tc.want {
-				t.Fatalf("Token = %q, want %q", cfg.Token, tc.want)
+			if cfg.Transport.Token != tc.want {
+				t.Fatalf("Token = %q, want %q", cfg.Transport.Token, tc.want)
 			}
 		})
 	}
@@ -1157,8 +1163,8 @@ func TestReportFirmware(t *testing.T) {
 	defer srv.Close()
 
 	client := NewFromConfig(&config.MachineConfig{
-		Token:       "test-token",
-		FirmwareURL: srv.URL,
+		Transport: config.TransportConfig{Token: "test-token"},
+		Provision: config.ProvisionConfig{Firmware: config.FirmwareConfig{URL: srv.URL}},
 	})
 
 	data := []byte(`{"bios":{"version":"U50"}}`)
@@ -1215,20 +1221,20 @@ HEALTH_CHECK_URL="http://caprf.example.com/health"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.HealthChecksEnabled {
+	if !cfg.Health.Enabled {
 		t.Error("HealthChecksEnabled should be true")
 	}
-	if cfg.HealthMinMemoryGB != 16 {
-		t.Errorf("HealthMinMemoryGB = %d, want 16", cfg.HealthMinMemoryGB)
+	if cfg.Health.MinMemoryGB != 16 {
+		t.Errorf("HealthMinMemoryGB = %d, want 16", cfg.Health.MinMemoryGB)
 	}
-	if cfg.HealthMinCPUs != 4 {
-		t.Errorf("HealthMinCPUs = %d, want 4", cfg.HealthMinCPUs)
+	if cfg.Health.MinCPUs != 4 {
+		t.Errorf("HealthMinCPUs = %d, want 4", cfg.Health.MinCPUs)
 	}
-	if cfg.HealthSkipChecks != "disk-ioerr,thermal-state" {
-		t.Errorf("HealthSkipChecks = %q", cfg.HealthSkipChecks)
+	if cfg.Health.SkipChecks != "disk-ioerr,thermal-state" {
+		t.Errorf("HealthSkipChecks = %q", cfg.Health.SkipChecks)
 	}
-	if cfg.HealthCheckURL != "http://caprf.example.com/health" {
-		t.Errorf("HealthCheckURL = %q", cfg.HealthCheckURL)
+	if cfg.Health.ReportURL != "http://caprf.example.com/health" {
+		t.Errorf("HealthCheckURL = %q", cfg.Health.ReportURL)
 	}
 }
 
@@ -1238,7 +1244,7 @@ func TestParseVarsHealthChecksDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.HealthChecksEnabled {
+	if cfg.Health.Enabled {
 		t.Error("HealthChecksEnabled should be false")
 	}
 }
@@ -1276,7 +1282,7 @@ func TestClientReportHealthChecks(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewFromConfig(&config.MachineConfig{HealthCheckURL: srv.URL})
+	client := NewFromConfig(&config.MachineConfig{Health: config.HealthConfig{ReportURL: srv.URL}})
 	results := []health.CheckResult{
 		{Name: "disk-presence", Status: "pass", Severity: "critical", Message: "ok"},
 	}
@@ -1313,7 +1319,7 @@ func TestClientAcknowledgeCommand(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewFromConfig(&config.MachineConfig{CommandsURL: srv.URL + "/commands"})
+	client := NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: srv.URL + "/commands"}})
 	err := client.AcknowledgeCommand(context.Background(), "cmd-123", "completed", "done")
 	if err != nil {
 		t.Fatal(err)
@@ -1342,7 +1348,7 @@ func TestClientAcknowledgeCommandNoURL(t *testing.T) {
 }
 
 func TestClientFetchCommandsRejectsInsecureRemoteURL(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{CommandsURL: "http://caprf.example.com/commands"})
+	client := NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: "http://caprf.example.com/commands"}})
 
 	_, err := client.FetchCommands(context.Background())
 	if err == nil {
@@ -1354,7 +1360,7 @@ func TestClientFetchCommandsRejectsInsecureRemoteURL(t *testing.T) {
 }
 
 func TestClientAcknowledgeCommandRejectsInsecureRemoteURL(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{CommandsURL: "http://caprf.example.com/commands"})
+	client := NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: "http://caprf.example.com/commands"}})
 
 	err := client.AcknowledgeCommand(context.Background(), "cmd-1", "completed", "")
 	if err == nil {
@@ -1366,7 +1372,7 @@ func TestClientAcknowledgeCommandRejectsInsecureRemoteURL(t *testing.T) {
 }
 
 func TestAcquireTokenNoURL(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{Token: "bootstrap"})
+	client := NewFromConfig(&config.MachineConfig{Transport: config.TransportConfig{Token: "bootstrap"}})
 	if err := client.AcquireToken(context.Background()); err != nil {
 		t.Fatalf("AcquireToken() with no URL should succeed: %v", err)
 	}
@@ -1374,8 +1380,10 @@ func TestAcquireTokenNoURL(t *testing.T) {
 
 func TestAcquireTokenRequiresHostname(t *testing.T) {
 	client := NewFromConfig(&config.MachineConfig{
-		Token:    "bootstrap-token",
-		TokenURL: "https://auth.example.com/token",
+		Transport: config.TransportConfig{
+			Token:    "bootstrap-token",
+			TokenURL: "https://auth.example.com/token",
+		},
 	})
 
 	err := client.AcquireToken(context.Background())
@@ -1389,8 +1397,8 @@ func TestAcquireTokenRequiresHostname(t *testing.T) {
 
 func TestAcquireTokenRequiresBootstrapToken(t *testing.T) {
 	client := NewFromConfig(&config.MachineConfig{
-		TokenURL: "https://auth.example.com/token",
-		Hostname: "test-host",
+		Hostname:  "test-host",
+		Transport: config.TransportConfig{TokenURL: "https://auth.example.com/token"},
 	})
 	err := client.AcquireToken(context.Background())
 	if err == nil {
@@ -1403,10 +1411,12 @@ func TestAcquireTokenRequiresBootstrapToken(t *testing.T) {
 
 func TestAcquireTokenRejectsInvalidAlgorithm(t *testing.T) {
 	client := NewFromConfig(&config.MachineConfig{
-		Token:          "bootstrap-token",
-		TokenURL:       "https://auth.example.com/token",
-		Hostname:       "worker-01",
-		TokenAlgorithm: "HS256",
+		Hostname: "worker-01",
+		Transport: config.TransportConfig{
+			Token:          "bootstrap-token",
+			TokenURL:       "https://auth.example.com/token",
+			TokenAlgorithm: "HS256",
+		},
 	})
 
 	err := client.AcquireToken(context.Background())
@@ -1430,23 +1440,21 @@ func TestAcquireTokenWithServer(t *testing.T) {
 	defer srv.Close()
 
 	client := NewFromConfig(&config.MachineConfig{
-		Token:    "bootstrap-token",
-		TokenURL: srv.URL,
-		Hostname: "test-host",
+		Hostname:  "test-host",
+		Transport: config.TransportConfig{Token: "bootstrap-token", TokenURL: srv.URL},
 	})
 	if err := client.AcquireToken(context.Background()); err != nil {
 		t.Fatalf("AcquireToken() error: %v", err)
 	}
 	cfg, _ := client.GetConfig(context.Background())
-	if cfg.Token != "jwt-token-123" {
-		t.Errorf("Token = %q, want %q", cfg.Token, "jwt-token-123")
+	if cfg.Transport.Token != "jwt-token-123" {
+		t.Errorf("Token = %q, want %q", cfg.Transport.Token, "jwt-token-123")
 	}
 }
 
 func TestReportMetrics_TelemetryDisabled(t *testing.T) {
 	client := NewFromConfig(&config.MachineConfig{
-		TelemetryEnabled: false,
-		MetricsURL:       "http://example.com/metrics",
+		Telemetry: config.TelemetryConfig{Enabled: false, MetricsURL: "http://example.com/metrics"},
 	})
 	// Should no-op when telemetry is disabled.
 	if err := client.ReportMetrics(context.Background(), []byte(`{}`)); err != nil {
@@ -1463,9 +1471,8 @@ func TestReportMetrics_TelemetryEnabled(t *testing.T) {
 	defer srv.Close()
 
 	client := NewFromConfig(&config.MachineConfig{
-		TelemetryEnabled: true,
-		MetricsURL:       srv.URL + "/metrics",
-		Token:            "test-token",
+		Transport: config.TransportConfig{Token: "test-token"},
+		Telemetry: config.TelemetryConfig{Enabled: true, MetricsURL: srv.URL + "/metrics"},
 	})
 	data := []byte(`{"stepRetries":3}`)
 	if err := client.ReportMetrics(context.Background(), data); err != nil {
@@ -1484,9 +1491,7 @@ func TestReportMetrics_FallbackToTelemetryURL(t *testing.T) {
 	defer srv.Close()
 
 	client := NewFromConfig(&config.MachineConfig{
-		TelemetryEnabled: true,
-		TelemetryURL:     srv.URL + "/telemetry",
-		// MetricsURL intentionally empty — should fall back to TelemetryURL.
+		Telemetry: config.TelemetryConfig{Enabled: true, URL: srv.URL + "/telemetry"},
 	})
 	if err := client.ReportMetrics(context.Background(), []byte(`{}`)); err != nil {
 		t.Fatalf("ReportMetrics() error: %v", err)
@@ -1497,7 +1502,7 @@ func TestReportMetrics_FallbackToTelemetryURL(t *testing.T) {
 }
 
 func TestReportMetrics_NoURL(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{TelemetryEnabled: true})
+	client := NewFromConfig(&config.MachineConfig{Telemetry: config.TelemetryConfig{Enabled: true}})
 	// No MetricsURL or TelemetryURL — should silently no-op.
 	if err := client.ReportMetrics(context.Background(), []byte(`{}`)); err != nil {
 		t.Fatalf("ReportMetrics() error: %v", err)
@@ -1506,8 +1511,7 @@ func TestReportMetrics_NoURL(t *testing.T) {
 
 func TestSendEvent_TelemetryDisabled(t *testing.T) {
 	client := NewFromConfig(&config.MachineConfig{
-		TelemetryEnabled: false,
-		EventURL:         "http://example.com/events",
+		Telemetry: config.TelemetryConfig{Enabled: false, EventURL: "http://example.com/events"},
 	})
 	if err := client.SendEvent(context.Background(), []byte(`{}`)); err != nil {
 		t.Fatalf("SendEvent() error: %v", err)
@@ -1522,9 +1526,8 @@ func TestSendEvent_TelemetryEnabled(t *testing.T) {
 	defer srv.Close()
 
 	client := NewFromConfig(&config.MachineConfig{
-		TelemetryEnabled: true,
-		EventURL:         srv.URL + "/events",
-		Token:            "test-token",
+		Transport: config.TransportConfig{Token: "test-token"},
+		Telemetry: config.TelemetryConfig{Enabled: true, EventURL: srv.URL + "/events"},
 	})
 	if err := client.SendEvent(context.Background(), []byte(`{"event":"started"}`)); err != nil {
 		t.Fatalf("SendEvent() error: %v", err)
@@ -1542,11 +1545,11 @@ export TOKEN_ALGORITHM="ES256"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.TokenURL != "https://auth.example.com/token" {
-		t.Errorf("TokenURL = %q, want %q", cfg.TokenURL, "https://auth.example.com/token")
+	if cfg.Transport.TokenURL != "https://auth.example.com/token" {
+		t.Errorf("TokenURL = %q, want %q", cfg.Transport.TokenURL, "https://auth.example.com/token")
 	}
-	if cfg.TokenAlgorithm != "ES256" {
-		t.Errorf("TokenAlgorithm = %q, want %q", cfg.TokenAlgorithm, "ES256")
+	if cfg.Transport.TokenAlgorithm != "ES256" {
+		t.Errorf("TokenAlgorithm = %q, want %q", cfg.Transport.TokenAlgorithm, "ES256")
 	}
 }
 
@@ -1561,19 +1564,19 @@ func TestParseVarsRescueMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseVars() error: %v", err)
 	}
-	if cfg.RescueMode != "shell" {
-		t.Errorf("RescueMode = %q, want %q", cfg.RescueMode, "shell")
+	if cfg.Rescue.Mode != "shell" {
+		t.Errorf("RescueMode = %q, want %q", cfg.Rescue.Mode, "shell")
 	}
-	if cfg.RescueSSHPubKey != "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest admin@ops" {
-		t.Errorf("RescueSSHPubKey = %q", cfg.RescueSSHPubKey)
+	if cfg.Rescue.SSHPubKey != "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest admin@ops" {
+		t.Errorf("RescueSSHPubKey = %q", cfg.Rescue.SSHPubKey)
 	}
-	if cfg.RescuePasswordHash != "$6$rounds=5000$salt$hash" {
-		t.Errorf("RescuePasswordHash = %q", cfg.RescuePasswordHash)
+	if cfg.Rescue.PasswordHash != "$6$rounds=5000$salt$hash" {
+		t.Errorf("RescuePasswordHash = %q", cfg.Rescue.PasswordHash)
 	}
-	if cfg.RescueTimeout != 3600 {
-		t.Errorf("RescueTimeout = %d, want 3600", cfg.RescueTimeout)
+	if cfg.Rescue.Timeout != 3600 {
+		t.Errorf("RescueTimeout = %d, want 3600", cfg.Rescue.Timeout)
 	}
-	if !cfg.RescueAutoMountDisks {
+	if !cfg.Rescue.AutoMountDisks {
 		t.Error("RescueAutoMountDisks = false, want true")
 	}
 }
@@ -1587,11 +1590,11 @@ func TestParseVarsCloudInitConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.CloudInitEnabled {
+	if !cfg.Provision.CloudInit.Enabled {
 		t.Error("CloudInitEnabled should be true")
 	}
-	if cfg.CloudInitDatasource != "nocloud" {
-		t.Errorf("CloudInitDatasource = %q, want nocloud", cfg.CloudInitDatasource)
+	if cfg.Provision.CloudInit.Datasource != "nocloud" {
+		t.Errorf("CloudInitDatasource = %q, want nocloud", cfg.Provision.CloudInit.Datasource)
 	}
 }
 
@@ -1615,7 +1618,7 @@ func TestSetAuth(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c := &Client{
 				log: slog.Default().With("component", "caprf"),
-				cfg: &config.MachineConfig{Token: tt.token, InsecureTransport: tt.insecureTransport},
+				cfg: &config.MachineConfig{Transport: config.TransportConfig{Token: tt.token, Insecure: tt.insecureTransport}},
 			}
 			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, tt.url, http.NoBody)
 			if err != nil {
