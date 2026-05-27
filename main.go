@@ -283,7 +283,10 @@ func runCAPRF(ctx context.Context) {
 		return
 	}
 
-	if modeErr != nil {
+	// HealthCheckError is an expected non-fatal exit (checks ran but some failed).
+	// Log other unexpected errors at error level.
+	var healthErr *runmode.HealthCheckError
+	if modeErr != nil && !errors.As(modeErr, &healthErr) {
 		slog.Error("mode exited with error", "mode", mode.Name(), "error", modeErr)
 	}
 	if netMode != nil {
