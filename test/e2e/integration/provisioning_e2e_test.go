@@ -71,13 +71,13 @@ func TestVarsParsingFromCAPRFMock(t *testing.T) {
 	if cfg.Provision.Disk.MinSizeGB != 50 {
 		t.Errorf("min disk = %d, want 50", cfg.Provision.Disk.MinSizeGB)
 	}
-	if cfg.UnderlaySubnet == "" {
+	if cfg.Network.EVPN.UnderlaySubnet == "" {
 		t.Error("underlay_subnet should be set")
 	}
-	if cfg.OverlaySubnet == "" {
+	if cfg.Network.EVPN.OverlaySubnet == "" {
 		t.Error("overlay_subnet should be set")
 	}
-	if cfg.IPMISubnet == "" {
+	if cfg.Network.IPMI.Subnet == "" {
 		t.Error("ipmi_subnet should be set")
 	}
 	if cfg.Provision.ProviderID != "redfish://clab-e2e/host-01" {
@@ -150,10 +150,8 @@ func TestCAPRFClientFetchCommandsEmpty(t *testing.T) {
 
 	ip := containerMgmtIP(t, "clab-booty-lab-caprf-mock")
 	client := caprf.NewFromConfig(&config.MachineConfig{
-		Transport: config.TransportConfig{
-			Token:       "e2e-token",
-			CommandsURL: fmt.Sprintf("http://%s/commands", ip),
-		},
+		Transport: config.TransportConfig{Token: "e2e-token"},
+		Agent:     config.AgentConfig{CommandsURL: fmt.Sprintf("http://%s/commands", ip)},
 	})
 
 	cmds, err := client.FetchCommands(context.Background())
@@ -173,10 +171,8 @@ func TestCAPRFClientFetchCommandsWithData(t *testing.T) {
 
 	ip := containerMgmtIP(t, "clab-booty-lab-caprf-mock")
 	client := caprf.NewFromConfig(&config.MachineConfig{
-		Transport: config.TransportConfig{
-			Token:       "e2e-token",
-			CommandsURL: fmt.Sprintf("http://%s/commands-data", ip),
-		},
+		Transport: config.TransportConfig{Token: "e2e-token"},
+		Agent:     config.AgentConfig{CommandsURL: fmt.Sprintf("http://%s/commands-data", ip)},
 	})
 
 	cmds, err := client.FetchCommands(context.Background())
@@ -199,10 +195,8 @@ func TestCAPRFClientHeartbeatThroughGoClient(t *testing.T) {
 
 	ip := containerMgmtIP(t, "clab-booty-lab-caprf-mock")
 	client := caprf.NewFromConfig(&config.MachineConfig{
-		Transport: config.TransportConfig{
-			Token:        "e2e-token",
-			HeartbeatURL: fmt.Sprintf("http://%s/status/heartbeat", ip),
-		},
+		Transport: config.TransportConfig{Token: "e2e-token"},
+		Agent:     config.AgentConfig{HeartbeatURL: fmt.Sprintf("http://%s/status/heartbeat", ip)},
 	})
 
 	assertInsecureTransportBehavior(t, "Heartbeat", client.Heartbeat(context.Background()))
