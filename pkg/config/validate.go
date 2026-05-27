@@ -60,7 +60,31 @@ func (c *Config) Validate() error {
 	if len(errs) > 0 {
 		return fmt.Errorf("config validation: %s", strings.Join(errs, "; "))
 	}
+
+	c.normalize()
 	return nil
+}
+
+// normalize lowercases or uppercases case-insensitive enum fields so downstream
+// code can use plain equality comparisons without calling ToLower/ToUpper.
+func (c *Config) normalize() {
+	lowerFields := []*string{
+		&c.Provision.Image.ChecksumType,
+		&c.Network.Mode,
+		&c.Network.BGP.PeerMode,
+		&c.Network.BGP.UnderlayAF,
+		&c.Network.BGP.OverlayType,
+		&c.Provision.CloudInit.Datasource,
+		&c.Rescue.Mode,
+	}
+	for _, f := range lowerFields {
+		if *f != "" {
+			*f = strings.ToLower(*f)
+		}
+	}
+	if c.Transport.TokenAlgorithm != "" {
+		c.Transport.TokenAlgorithm = strings.ToUpper(c.Transport.TokenAlgorithm)
+	}
 }
 
 // minDevicesForLevel returns the minimum number of member devices required

@@ -13,13 +13,31 @@ var Release struct {
 	Build   string
 }
 
+var configPath string
+
 var bootyCmd = &cobra.Command{
 	Use:   "booty",
-	Short: "This is a tool for managing boot images for bare-metal servers",
+	Short: "Bare-metal provisioning agent for data center servers",
+	Long: `BOOTy (Bare-metal OS Orchestration Tool) manages the full lifecycle
+of physical servers: provisioning, deprovisioning, health checking, and
+hot-standby agent mode.
+
+Configuration is loaded from a single source file. Format is auto-detected
+from the file extension (.yaml, .yml, or .json).`,
 }
 
 func init() {
-	bootyCmd.AddCommand(bootyVersion)
+	bootyCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "",
+		"path to configuration file (YAML/JSON); auto-detects format from extension")
+
+	bootyCmd.AddCommand(
+		bootyVersion,
+		provisionCmd,
+		deprovisionCmd,
+		standbyCmd,
+		checkCmd,
+		validateCmd,
+	)
 }
 
 // Execute starts the command parsing process.
