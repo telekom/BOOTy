@@ -336,6 +336,39 @@ func TestLoadYMLExtension(t *testing.T) {
 	}
 }
 
+func TestLoadYAMLMultiDocumentRejected(t *testing.T) {
+	content := "hostname: first\n---\nhostname: second\n"
+	path := writeTestFile(t, "multi.yaml", content)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for multi-document YAML")
+	}
+	if !strings.Contains(err.Error(), "trailing") {
+		t.Fatalf("expected 'trailing' in error: %v", err)
+	}
+}
+
+func TestLoadJSONTrailingNull(t *testing.T) {
+	content := `{"hostname":"test"} null`
+	path := writeTestFile(t, "trailing-null.json", content)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for trailing null in JSON")
+	}
+}
+
+func TestLoadValidationErrorIncludesPath(t *testing.T) {
+	content := "hostname: test\nmode: totally-invalid\n"
+	path := writeTestFile(t, "invalid.yaml", content)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Fatalf("expected file path in error, got: %v", err)
+	}
+}
+
 func writeTestFile(t *testing.T, name, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name)

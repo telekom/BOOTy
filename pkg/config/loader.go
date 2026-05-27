@@ -62,7 +62,7 @@ func LoadWithOptions(opts LoadOptions) (*Config, error) {
 	}
 
 	if err := cfg.Validate(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load config from %s: %w", opts.Path, err)
 	}
 	return cfg, nil
 }
@@ -79,8 +79,11 @@ func loadYAML(r io.Reader, strict bool) (*Config, error) {
 	// Reject multi-document YAML files to match JSON behavior and avoid
 	// silently ignoring extra configuration in trailing documents.
 	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("parsing YAML: unexpected trailing content after first document")
+	if decErr := decoder.Decode(&extra); !errors.Is(decErr, io.EOF) {
+		if decErr != nil {
+			return nil, fmt.Errorf("parsing YAML: unexpected content after first document: %w", decErr)
+		}
+		return nil, fmt.Errorf("parsing YAML: unexpected trailing document")
 	}
 	return &cfg, nil
 }
@@ -94,7 +97,9 @@ func loadJSON(r io.Reader, strict bool) (*Config, error) {
 	if err := decoder.Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("parsing JSON: %w", err)
 	}
-	if tok, err := decoder.Token(); err != io.EOF || tok != nil {
+	// Any successful Token() read (err == nil) means there is trailing content.
+	// Only io.EOF (no more tokens) is the expected termination.
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("parsing JSON: unexpected trailing content")
 	}
 	return &cfg, nil
