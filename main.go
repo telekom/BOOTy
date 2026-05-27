@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/telekom/BOOTy/pkg/caprf"
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/crash"
@@ -25,10 +27,8 @@ import (
 	"github.com/telekom/BOOTy/pkg/network/netplan"
 	"github.com/telekom/BOOTy/pkg/network/vlan"
 	"github.com/telekom/BOOTy/pkg/provision"
-	"github.com/telekom/BOOTy/pkg/rescue"
-	"golang.org/x/sys/unix"
-
 	"github.com/telekom/BOOTy/pkg/realm"
+	"github.com/telekom/BOOTy/pkg/rescue"
 	"github.com/telekom/BOOTy/pkg/ux"
 )
 
