@@ -5,9 +5,10 @@ package config
 // It contains the machine identity, operating mode selector, and
 // references to cross-cutting and per-mode configuration sections.
 //
-// Only the section matching the active Mode is read at runtime.
 // Cross-cutting sections (Network, Transport, Health, Telemetry, Rescue)
-// are shared across all modes.
+// are shared across all modes. Per-mode sections (Provision, Deprovision, Agent)
+// contain settings specific to that mode, but some paths (e.g. disk detection)
+// currently reuse Provision.Disk for consistency across modes.
 type Config struct {
 	// Hostname is the machine's network hostname, used for logging,
 	// JWT token acquisition, and status reporting.

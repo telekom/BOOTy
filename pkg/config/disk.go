@@ -39,17 +39,19 @@ type DiskConfig struct {
 	// Default: [] (no RAID)
 	RAID []RAIDConfig `yaml:"raid" json:"raid"`
 
-	// PartitionLayout defines declarative GPT partitioning when Image.Mode is "partition".
-	// Applied to the target device (auto-detected or explicit) after RAID setup.
-	// Default: nil (use whole-disk image mode)
+	// PartitionLayout defines declarative GPT partitioning.
+	// Note: provisioning via PartitionLayout is not yet supported; this field is
+	// reserved for a future release.
+	// Default: nil
 	PartitionLayout *PartitionLayout `yaml:"partitionLayout" json:"partitionLayout"`
 }
 
 // RAIDConfig defines a single software RAID array to create via mdadm.
 // Arrays are created in order after existing arrays are stopped.
 type RAIDConfig struct {
-	// Name is the device name for the array.
-	// Example: "/dev/md0", "/dev/md/boot"
+	// Name is the mdadm array name WITHOUT the /dev/ prefix.
+	// The disk manager prepends /dev/ automatically.
+	// Example: "md0", "md/boot"
 	// Required.
 	Name string `yaml:"name" json:"name"`
 

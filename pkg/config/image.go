@@ -22,7 +22,8 @@ type ImageConfig struct {
 	// Mode controls how the image is written to disk.
 	// Valid values: "whole-disk" (default), "partition"
 	//   - whole-disk: dd-style write of the entire image to the block device
-	//   - partition: per-partition extraction (requires PartitionLayout)
+	//   - partition: per-partition extraction (streams each partition independently;
+	//     does NOT use Provision.Disk.PartitionLayout, which is not yet supported)
 	// Default: "whole-disk"
 	Mode string `yaml:"mode" json:"mode"`
 

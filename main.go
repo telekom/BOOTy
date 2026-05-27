@@ -232,6 +232,11 @@ func runCAPRF(ctx context.Context) {
 	case "standby":
 		runStandby(ctx, client, cfg, netMode, diskMgr)
 		return // standby handles its own lifecycle
+	case "check":
+		if err := orch.DryRun(ctx); err != nil {
+			slog.Error("health check failed", "error", err)
+		}
+		// Do not return here — continue to teardown and reboot.
 	case "dry-run":
 		cfg.Provision.DisableKexec = true
 		if err := orch.DryRun(ctx); err != nil {

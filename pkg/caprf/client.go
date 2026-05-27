@@ -162,7 +162,7 @@ func (c *Client) ReportStatus(ctx context.Context, status config.Status, message
 	}
 
 	if url == "" {
-		c.log.Warn("No URL configured for status, skipping", "status", status)
+		c.log.Warn("no URL configured for status, skipping", "status", status)
 		return nil
 	}
 
@@ -188,7 +188,7 @@ func (c *Client) ShipDebug(ctx context.Context, message string) error {
 // ReportHealthChecks sends health check results to the CAPRF server.
 func (c *Client) ReportHealthChecks(ctx context.Context, results []health.CheckResult) error {
 	if c.cfg.Health.ReportURL == "" {
-		c.log.Warn("No health check URL configured, skipping report")
+		c.log.Warn("no health check URL configured, skipping report")
 		return nil
 	}
 
@@ -212,7 +212,7 @@ func (c *Client) Heartbeat(ctx context.Context) error {
 // ReportFirmware sends a JSON firmware report to the CAPRF server.
 func (c *Client) ReportFirmware(ctx context.Context, data []byte) error {
 	if c.cfg.Provision.Firmware.URL == "" {
-		c.log.Debug("No firmware URL configured, skipping report")
+		c.log.Debug("no firmware URL configured, skipping report")
 		return nil
 	}
 	return c.postJSONWithAuth(ctx, c.cfg.Provision.Firmware.URL, data)
@@ -288,7 +288,7 @@ func (c *Client) AcknowledgeCommand(ctx context.Context, cmdID, status, message 
 // ReportInventory posts a hardware inventory JSON payload to the CAPRF server.
 func (c *Client) ReportInventory(ctx context.Context, data []byte) error {
 	if c.cfg.Provision.Inventory.URL == "" {
-		c.log.Warn("No inventory URL configured, skipping inventory report")
+		c.log.Warn("no inventory URL configured, skipping inventory report")
 		return nil
 	}
 	return c.postJSONWithAuth(ctx, c.cfg.Provision.Inventory.URL, data)
@@ -656,7 +656,7 @@ func (c *Client) withRetry(ctx context.Context, url string, fn func() error) err
 	for attempt := range 3 {
 		if attempt > 0 {
 			backoff := time.Duration(1<<(attempt-1)) * time.Second
-			c.log.Info("Retrying request", "url", url, "attempt", attempt+1, "backoff", backoff)
+			c.log.Info("retrying request", "url", url, "attempt", attempt+1, "backoff", backoff)
 			select {
 			case <-time.After(backoff):
 			case <-ctx.Done():
@@ -671,7 +671,7 @@ func (c *Client) withRetry(ctx context.Context, url string, fn func() error) err
 		if errors.Is(lastErr, errInsecureTransport) {
 			return lastErr
 		}
-		c.log.Warn("Request failed", "url", url, "attempt", attempt+1, "error", lastErr)
+		c.log.Warn("request failed", "url", url, "attempt", attempt+1, "error", lastErr)
 	}
 	return fmt.Errorf("request failed after 3 attempts to %s: %w", url, lastErr)
 }

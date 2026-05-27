@@ -63,17 +63,40 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// minDevicesForLevel returns the minimum number of member devices required
+// for a given RAID level. Returns 2 for unknown levels as a safe default.
+func minDevicesForLevel(level int) int {
+	switch level {
+	case 0, 1:
+		return 2
+	case 5:
+		return 3
+	case 6, 10:
+		return 4
+	default:
+		return 2
+	}
+}
+
 func validateRAIDConfig(raids []RAIDConfig) error {
 	var errs []string
 	for i, r := range raids {
-		if r.Name == "" {
+		if strings.TrimSpace(r.Name) == "" {
 			errs = append(errs, fmt.Sprintf("provision.disk.raid[%d]: name is required", i))
+		} else if strings.HasPrefix(r.Name, "/dev/") {
+			errs = append(errs, fmt.Sprintf("provision.disk.raid[%d]: name must not include /dev/ prefix (got %q); use e.g. \"md0\"", i, r.Name))
 		}
 		if r.Level != 0 && r.Level != 1 && r.Level != 5 && r.Level != 6 && r.Level != 10 {
 			errs = append(errs, fmt.Sprintf("provision.disk.raid[%d]: invalid level %d (valid: 0, 1, 5, 6, 10)", i, r.Level))
 		}
-		if len(r.Devices) < 2 {
-			errs = append(errs, fmt.Sprintf("provision.disk.raid[%d]: at least 2 devices required, got %d", i, len(r.Devices)))
+		minDevices := minDevicesForLevel(r.Level)
+		if len(r.Devices) < minDevices {
+			errs = append(errs, fmt.Sprintf("provision.disk.raid[%d]: level %d requires at least %d devices, got %d", i, r.Level, minDevices, len(r.Devices)))
+		}
+		for j, dev := range r.Devices {
+			if strings.TrimSpace(dev) == "" {
+				errs = append(errs, fmt.Sprintf("provision.disk.raid[%d].devices[%d]: device path must not be empty", i, j))
+			}
 		}
 	}
 	if len(errs) > 0 {

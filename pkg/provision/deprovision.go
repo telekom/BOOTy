@@ -58,10 +58,16 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 
 // softDeprovision renames grub.cfg so the system won't boot.
 func (o *Orchestrator) softDeprovision(ctx context.Context) error {
-	// Detect disk and mount root.
-	d, err := o.disk.DetectDisk(ctx, o.cfg.Provision.Disk.MinSizeGB)
-	if err != nil {
-		return fmt.Errorf("detecting disk: %w", err)
+	// Prefer deprovision-specific device if set; otherwise auto-detect.
+	var d string
+	var err error
+	if o.cfg.Deprovision.Device != "" {
+		d = o.cfg.Deprovision.Device
+	} else {
+		d, err = o.disk.DetectDisk(ctx, o.cfg.Provision.Disk.MinSizeGB)
+		if err != nil {
+			return fmt.Errorf("detecting disk: %w", err)
+		}
 	}
 	if err := o.disk.PartProbe(ctx, d); err != nil {
 		return fmt.Errorf("partprobe: %w", err)
