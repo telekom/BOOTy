@@ -11,7 +11,7 @@ func Resolve(deps Deps) (Mode, error) {
 		return &StandbyMode{deps: deps}, nil
 	case "dry-run":
 		return &DryRunMode{deps: deps}, nil
-	case "deprovision", "soft-deprovision":
+	case "deprovision", "soft-deprovision", "soft", "hard":
 		return &DeprovisionMode{deps: deps}, nil
 	case "check":
 		return &CheckMode{deps: deps}, nil
