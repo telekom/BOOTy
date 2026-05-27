@@ -4,8 +4,10 @@ package runmode
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
+	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/health"
 )
 
@@ -20,6 +22,7 @@ func (m *CheckMode) Name() string { return "check" }
 // Run executes health checks and returns a HealthCheckError if any critical check fails.
 func (m *CheckMode) Run(ctx context.Context) error {
 	cfg := m.deps.Cfg
+	_ = m.deps.Client.ReportStatus(ctx, config.StatusInit, "health-check")
 
 	checks := []health.Check{
 		&health.DiskPresenceCheck{},
@@ -48,7 +51,10 @@ func (m *CheckMode) Run(ctx context.Context) error {
 				failed++
 			}
 		}
+		msg := fmt.Sprintf("%d/%d health checks failed", failed, len(results))
+		_ = m.deps.Client.ReportStatus(ctx, config.StatusError, msg)
 		return &HealthCheckError{Failed: failed, Total: len(results)}
 	}
+	_ = m.deps.Client.ReportStatus(ctx, config.StatusSuccess, fmt.Sprintf("all %d health checks passed", len(results)))
 	return nil
 }
