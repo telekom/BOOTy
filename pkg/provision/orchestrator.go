@@ -386,12 +386,12 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 		return err
 	}
 
-	// Use deprovision-specific SecureErase when in a deprovision mode, otherwise
-	// fall back to the provision-level setting.
+	// In deprovision modes use the deprovision-specific SecureErase setting.
+	// In all other modes (provision, dry-run) use the provision setting.
 	secureErase := o.cfg.Provision.Disk.SecureErase
 	mode := o.cfg.Mode
 	if mode == "deprovision" || mode == "soft-deprovision" || mode == "soft" || mode == "hard" {
-		secureErase = o.cfg.Deprovision.SecureErase || o.cfg.Provision.Disk.SecureErase
+		secureErase = o.cfg.Deprovision.SecureErase
 	}
 	if secureErase {
 		o.log.Info("secure erase enabled, performing hardware-level erase")

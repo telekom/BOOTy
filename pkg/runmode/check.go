@@ -36,25 +36,31 @@ func (m *CheckMode) Run(ctx context.Context) error {
 
 	results, critical := health.RunAll(ctx, checks, cfg.Health.SkipChecks)
 
+	var failed, warned int
 	for _, r := range results {
-		if r.Status == health.StatusFail {
+		switch {
+		case r.Status == health.StatusFail && r.Severity == health.SeverityCritical:
+			failed++
 			slog.Error("health check failed", "check", r.Name, "severity", r.Severity, "message", r.Message)
-		} else {
-			slog.Info("health check passed", "check", r.Name, "status", r.Status)
+		case r.Status == health.StatusFail:
+			warned++
+			slog.Warn("health check warning", "check", r.Name, "severity", r.Severity, "message", r.Message)
+		case r.Status == health.StatusSkip:
+			slog.Info("health check skipped", "check", r.Name)
+		default:
+			slog.Info("health check passed", "check", r.Name)
 		}
 	}
 
 	if critical {
-		failed := 0
-		for _, r := range results {
-			if r.Status == health.StatusFail {
-				failed++
-			}
-		}
 		msg := fmt.Sprintf("%d/%d health checks failed", failed, len(results))
 		_ = m.deps.Client.ReportStatus(ctx, config.StatusError, msg)
 		return &HealthCheckError{Failed: failed, Total: len(results)}
 	}
-	_ = m.deps.Client.ReportStatus(ctx, config.StatusSuccess, fmt.Sprintf("all %d health checks passed", len(results)))
+	summary := fmt.Sprintf("%d/%d health checks passed", len(results)-failed-warned, len(results))
+	if warned > 0 {
+		summary = fmt.Sprintf("%s (%d warnings)", summary, warned)
+	}
+	_ = m.deps.Client.ReportStatus(ctx, config.StatusSuccess, summary)
 	return nil
 }

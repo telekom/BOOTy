@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"errors"
 	"io"
 	"path/filepath"
 	"regexp"
@@ -50,7 +51,7 @@ func ParsePartitionLayout(data string) (*PartitionLayout, error) {
 	if err := decoder.Decode(&layout); err != nil {
 		return nil, fmt.Errorf("parsing partition layout: %w", err)
 	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("parsing partition layout: unexpected trailing content")
 	}
 
