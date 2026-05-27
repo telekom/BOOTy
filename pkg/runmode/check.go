@@ -14,8 +14,10 @@ type CheckMode struct {
 	deps Deps
 }
 
+// Name returns the mode identifier.
 func (m *CheckMode) Name() string { return "check" }
 
+// Run executes health checks and returns a HealthCheckError if any critical check fails.
 func (m *CheckMode) Run(ctx context.Context) error {
 	cfg := m.deps.Cfg
 

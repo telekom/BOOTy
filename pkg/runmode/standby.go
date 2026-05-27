@@ -24,8 +24,10 @@ type StandbyMode struct {
 	deps Deps
 }
 
+// Name returns the mode identifier.
 func (m *StandbyMode) Name() string { return "standby" }
 
+// Run enters the standby heartbeat/command polling loop until the context is canceled.
 func (m *StandbyMode) Run(ctx context.Context) error {
 	slog.Info("entering standby mode")
 	_ = m.deps.Client.ReportStatus(ctx, config.StatusInit, "standby")

@@ -248,12 +248,15 @@ func runCAPRF(ctx context.Context) {
 
 	// Handle mode-specific exit behavior before network teardown,
 	// so rescue shell SSH access remains available.
-	switch e := modeErr.(type) {
-	case *runmode.RescueShellError:
+	var rescueErr *runmode.RescueShellError
+	var rebootErr *runmode.RebootRequestedError
+	var provisionErr *runmode.ProvisionCompleteError
+	switch {
+	case errors.As(modeErr, &rescueErr):
 		realm.Shell()
 		realm.Reboot()
 		return
-	case *runmode.RebootRequestedError:
+	case errors.As(modeErr, &rebootErr):
 		if netMode != nil {
 			if err := netMode.Teardown(ctx); err != nil {
 				slog.Warn("network teardown error", "error", err)
@@ -261,13 +264,13 @@ func runCAPRF(ctx context.Context) {
 		}
 		realm.Reboot()
 		return
-	case *runmode.ProvisionCompleteError:
+	case errors.As(modeErr, &provisionErr):
 		if netMode != nil {
 			if err := netMode.Teardown(ctx); err != nil {
 				slog.Warn("network teardown error", "error", err)
 			}
 		}
-		tryKexec(cfg, e.FirmwareChanged)
+		tryKexec(cfg, provisionErr.FirmwareChanged)
 		time.Sleep(2 * time.Second)
 		realm.Reboot()
 		return
@@ -703,4 +706,3 @@ func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) {
 		slog.Warn("kexec execute failed, falling back to reboot", "error", err)
 	}
 }
-

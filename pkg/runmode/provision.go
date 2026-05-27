@@ -17,8 +17,10 @@ type ProvisionMode struct {
 	firmwareChanged bool
 }
 
+// Name returns the mode identifier.
 func (m *ProvisionMode) Name() string { return "provision" }
 
+// Run executes the provisioning pipeline with rescue/retry handling.
 func (m *ProvisionMode) Run(ctx context.Context) error {
 	orch := provision.NewOrchestrator(m.deps.Cfg, m.deps.Client, m.deps.DiskMgr)
 	rescueCfg := orch.RescueConfig()
