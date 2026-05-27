@@ -660,6 +660,8 @@ var vrnetlabAllowedErrors = []string{
 	// Expected when CAPRF endpoints are HTTP-only and token auth is enforced.
 	"failed to report error status",
 	"insecure transport",
+	// Top-level mode exit error logged by main.go after any mode failure.
+	"mode exited with error",
 }
 
 func TestVrnetlabNoUnexpectedErrors(t *testing.T) {
