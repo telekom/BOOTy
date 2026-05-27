@@ -2,8 +2,8 @@ package config
 
 import (
 	"encoding/json"
-	"fmt"
 	"errors"
+	"fmt"
 	"io"
 	"path/filepath"
 	"regexp"
