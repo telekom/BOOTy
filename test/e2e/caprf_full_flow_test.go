@@ -263,16 +263,26 @@ func (s *sequentialCmd) Run(_ context.Context, _ string, _ ...string) ([]byte, e
 func TestFullProvisionFlow(t *testing.T) {
 	cmd := newMockCommander()
 	cfg := &config.MachineConfig{
-		Mode:              "provision",
-		Hostname:          "e2e-node-01",
-		Token:             "bearer-token-42",
-		ProviderID:        "redfish://10.0.0.1/Systems/1",
-		FailureDomain:     "az-1",
-		Region:            "eu-central",
-		ExtraKernelParams: "console=ttyS0",
-		DNSResolvers:      "8.8.8.8,1.1.1.1",
-		ImageURLs:         []string{"http://images.local/ubuntu.gz"},
-		MinDiskSizeGB:     0,
+		Mode:     "provision",
+		Hostname: "e2e-node-01",
+		Transport: config.TransportConfig{
+			Token: "bearer-token-42",
+		},
+		Provision: config.ProvisionConfig{
+			ProviderID:        "redfish://10.0.0.1/Systems/1",
+			FailureDomain:     "az-1",
+			Region:            "eu-central",
+			ExtraKernelParams: "console=ttyS0",
+			Image: config.ImageConfig{
+				URLs: []string{"http://images.local/ubuntu.gz"},
+			},
+			Disk: config.DiskConfig{
+				MinSizeGB: 0,
+			},
+		},
+		Network: config.NetworkConfig{
+			DNSResolvers: "8.8.8.8,1.1.1.1",
+		},
 	}
 	provider := newMockProvider(cfg)
 
@@ -338,7 +348,12 @@ func TestFullDeprovisionHardFlow(t *testing.T) {
 	cmd.set("wipefs", []byte(""), nil)
 	cmd.set("chroot", []byte("BootCurrent: 0001\nBootOrder: 0001"), nil)
 
-	cfg := &config.MachineConfig{Mode: "hard", DNSResolvers: "8.8.8.8"}
+	cfg := &config.MachineConfig{
+		Mode: "hard",
+		Network: config.NetworkConfig{
+			DNSResolvers: "8.8.8.8",
+		},
+	}
 	provider := newMockProvider(cfg)
 	diskMgr := disk.NewManager(cmd)
 
@@ -364,7 +379,12 @@ func TestFullDeprovisionHardFlow(t *testing.T) {
 
 func TestFullDeprovisionSoftFlow(t *testing.T) {
 	cmd := newMockCommander()
-	cfg := &config.MachineConfig{Mode: "soft", DNSResolvers: "8.8.8.8"}
+	cfg := &config.MachineConfig{
+		Mode: "soft",
+		Network: config.NetworkConfig{
+			DNSResolvers: "8.8.8.8",
+		},
+	}
 	provider := newMockProvider(cfg)
 	diskMgr := disk.NewManager(cmd)
 
@@ -397,12 +417,14 @@ func TestCAPRFServerFullProtocol(t *testing.T) {
 	ctx := context.Background()
 
 	cfg := &config.MachineConfig{
-		Token:      "e2e-token",
-		InitURL:    baseURL + "/status/init",
-		SuccessURL: baseURL + "/status/success",
-		ErrorURL:   baseURL + "/status/error",
-		LogURL:     baseURL + "/log",
-		DebugURL:   baseURL + "/debug",
+		Transport: config.TransportConfig{
+			Token:      "e2e-token",
+			InitURL:    baseURL + "/status/init",
+			SuccessURL: baseURL + "/status/success",
+			ErrorURL:   baseURL + "/status/error",
+			LogURL:     baseURL + "/log",
+			DebugURL:   baseURL + "/debug",
+		},
 	}
 	client := caprf.NewFromConfig(cfg)
 
@@ -460,9 +482,11 @@ func TestCAPRFErrorFlowWithServer(t *testing.T) {
 	ctx := context.Background()
 
 	cfg := &config.MachineConfig{
-		Token:    "err-token",
-		InitURL:  baseURL + "/status/init",
-		ErrorURL: baseURL + "/status/error",
+		Transport: config.TransportConfig{
+			Token:    "err-token",
+			InitURL:  baseURL + "/status/init",
+			ErrorURL: baseURL + "/status/error",
+		},
 	}
 	client := caprf.NewFromConfig(cfg)
 
@@ -693,9 +717,11 @@ func TestProvisionStepFailureReportsError(t *testing.T) {
 	cmd.set("mdadm", nil, fmt.Errorf("mdadm: no arrays found"))
 
 	cfg := &config.MachineConfig{
-		Mode:         "provision",
-		Hostname:     "fail-node",
-		DNSResolvers: "8.8.8.8",
+		Mode:     "provision",
+		Hostname: "fail-node",
+		Network: config.NetworkConfig{
+			DNSResolvers: "8.8.8.8",
+		},
 	}
 	provider := newMockProvider(cfg)
 	diskMgr := disk.NewManager(cmd)
@@ -734,12 +760,16 @@ func TestConfiguratorFileOperationsE2E(t *testing.T) {
 	c.SetRootDir(root)
 
 	cfg := &config.MachineConfig{
-		Hostname:          "config-node",
-		ProviderID:        "redfish://bmc/Systems/1",
-		FailureDomain:     "dc1-az2",
-		Region:            "eu-west",
-		ExtraKernelParams: "audit=0 quiet",
-		DNSResolvers:      "8.8.8.8,1.1.1.1",
+		Hostname: "config-node",
+		Provision: config.ProvisionConfig{
+			ProviderID:        "redfish://bmc/Systems/1",
+			FailureDomain:     "dc1-az2",
+			Region:            "eu-west",
+			ExtraKernelParams: "audit=0 quiet",
+		},
+		Network: config.NetworkConfig{
+			DNSResolvers: "8.8.8.8,1.1.1.1",
+		},
 	}
 
 	// SetHostname
@@ -920,20 +950,20 @@ dns_resolver="8.8.8.8,1.1.1.1"
 	}
 
 	netCfg := &network.Config{
-		UnderlaySubnet: cfg.UnderlaySubnet,
-		UnderlayIP:     cfg.UnderlayIP,
-		OverlaySubnet:  cfg.OverlaySubnet,
-		IPMISubnet:     cfg.IPMISubnet,
-		ASN:            cfg.ASN,
-		ProvisionVNI:   cfg.ProvisionVNI,
-		DNSResolvers:   cfg.DNSResolvers,
+		UnderlaySubnet: cfg.Network.EVPN.UnderlaySubnet,
+		UnderlayIP:     cfg.Network.EVPN.UnderlayIP,
+		OverlaySubnet:  cfg.Network.EVPN.OverlaySubnet,
+		IPMISubnet:     cfg.Network.IPMI.Subnet,
+		ASN:            cfg.Network.BGP.ASN,
+		ProvisionVNI:   cfg.Network.EVPN.ProvisionVNI,
+		DNSResolvers:   cfg.Network.DNSResolvers,
 	}
 
 	if !netCfg.IsFRRMode() {
 		t.Error("expected FRR mode with underlay+ASN")
 	}
 
-	dhcpCfg := &network.Config{UnderlaySubnet: cfg.UnderlaySubnet}
+	dhcpCfg := &network.Config{UnderlaySubnet: cfg.Network.EVPN.UnderlaySubnet}
 	if dhcpCfg.IsFRRMode() {
 		t.Error("expected DHCP mode without ASN")
 	}
@@ -948,11 +978,13 @@ func TestConcurrentStatusReportingE2E(t *testing.T) {
 	baseURL := startTestServer(t, srv.handler())
 
 	cfg := &config.MachineConfig{
-		Token:      "race-token",
-		InitURL:    baseURL + "/status/init",
-		SuccessURL: baseURL + "/status/success",
-		ErrorURL:   baseURL + "/status/error",
-		LogURL:     baseURL + "/log",
+		Transport: config.TransportConfig{
+			Token:      "race-token",
+			InitURL:    baseURL + "/status/init",
+			SuccessURL: baseURL + "/status/success",
+			ErrorURL:   baseURL + "/status/error",
+			LogURL:     baseURL + "/log",
+		},
 	}
 	client := caprf.NewFromConfig(cfg)
 	ctx := context.Background()
@@ -1031,16 +1063,16 @@ dns_resolver="8.8.8.8"
 	if cfg.Hostname != "pipeline-node" {
 		t.Errorf("hostname = %q", cfg.Hostname)
 	}
-	if cfg.Token != "pipeline-token" {
-		t.Errorf("token = %q", cfg.Token)
+	if cfg.Transport.Token != "pipeline-token" {
+		t.Errorf("token = %q", cfg.Transport.Token)
 	}
-	if cfg.ProviderID != "redfish://10.0.0.1/Systems/1" {
-		t.Errorf("providerID = %q", cfg.ProviderID)
+	if cfg.Provision.ProviderID != "redfish://10.0.0.1/Systems/1" {
+		t.Errorf("providerID = %q", cfg.Provision.ProviderID)
 	}
 
 	netCfg := &network.Config{
-		UnderlaySubnet: cfg.UnderlaySubnet,
-		ASN:            cfg.ASN,
+		UnderlaySubnet: cfg.Network.EVPN.UnderlaySubnet,
+		ASN:            cfg.Network.BGP.ASN,
 	}
 	if netCfg.IsFRRMode() {
 		t.Error("expected DHCP mode (no ASN in vars)")
@@ -1270,7 +1302,11 @@ func TestBridgeMACDerivationE2E(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCAPRFClientEmptyURLs(t *testing.T) {
-	cfg := &config.MachineConfig{Token: "test-token"}
+	cfg := &config.MachineConfig{
+		Transport: config.TransportConfig{
+			Token: "test-token",
+		},
+	}
 	client := caprf.NewFromConfig(cfg)
 	ctx := context.Background()
 
@@ -1325,8 +1361,10 @@ func TestCAPRFImageServeAndStreamE2E(t *testing.T) {
 	}
 
 	cfg := &config.MachineConfig{
-		Token:      "img-token",
-		SuccessURL: baseURL + "/status/success",
+		Transport: config.TransportConfig{
+			Token:      "img-token",
+			SuccessURL: baseURL + "/status/success",
+		},
 	}
 	client := caprf.NewFromConfig(cfg)
 	if err := client.ReportStatus(context.Background(), config.StatusSuccess, "image written"); err != nil {
@@ -1415,32 +1453,32 @@ vpn_rt="65001:10100"
 		want  string
 	}{
 		{"Hostname", cfg.Hostname, "full-node"},
-		{"Token", cfg.Token, "full-token"},
+		{"Token", cfg.Transport.Token, "full-token"},
 		{"Mode", cfg.Mode, "provision"},
-		{"ProviderID", cfg.ProviderID, "redfish://bmc/Systems/1"},
-		{"FailureDomain", cfg.FailureDomain, "az-2"},
-		{"Region", cfg.Region, "eu-central"},
-		{"ExtraKernelParams", cfg.ExtraKernelParams, "audit=0"},
-		{"InitURL", cfg.InitURL, "http://caprf/init"},
-		{"SuccessURL", cfg.SuccessURL, "http://caprf/success"},
-		{"ErrorURL", cfg.ErrorURL, "http://caprf/error"},
-		{"LogURL", cfg.LogURL, "http://caprf/log"},
-		{"DebugURL", cfg.DebugURL, "http://caprf/debug"},
-		{"UnderlaySubnet", cfg.UnderlaySubnet, "10.0.0.0/24"},
-		{"UnderlayIP", cfg.UnderlayIP, "10.0.0.5"},
-		{"OverlaySubnet", cfg.OverlaySubnet, "fd00::/64"},
-		{"IPMISubnet", cfg.IPMISubnet, "172.16.0.0/24"},
-		{"DNSResolvers", cfg.DNSResolvers, "8.8.8.8"},
-		{"DCGWIPs", cfg.DCGWIPs, "10.99.0.1,10.99.0.2"},
-		{"OverlayAggregate", cfg.OverlayAggregate, "fd00::/48"},
-		{"VPNRT", cfg.VPNRT, "65001:10100"},
-		{"StaticIP", cfg.StaticIP, "10.1.0.5/24"},
-		{"StaticGateway", cfg.StaticGateway, "10.1.0.1"},
-		{"StaticIface", cfg.StaticIface, "eth0"},
-		{"BondInterfaces", cfg.BondInterfaces, "eth0,eth1"},
-		{"BondMode", cfg.BondMode, "802.3ad"},
-		{"ImageChecksum", cfg.ImageChecksum, "sha256hash"},
-		{"ImageChecksumType", cfg.ImageChecksumType, "sha256"},
+		{"ProviderID", cfg.Provision.ProviderID, "redfish://bmc/Systems/1"},
+		{"FailureDomain", cfg.Provision.FailureDomain, "az-2"},
+		{"Region", cfg.Provision.Region, "eu-central"},
+		{"ExtraKernelParams", cfg.Provision.ExtraKernelParams, "audit=0"},
+		{"InitURL", cfg.Transport.InitURL, "http://caprf/init"},
+		{"SuccessURL", cfg.Transport.SuccessURL, "http://caprf/success"},
+		{"ErrorURL", cfg.Transport.ErrorURL, "http://caprf/error"},
+		{"LogURL", cfg.Transport.LogURL, "http://caprf/log"},
+		{"DebugURL", cfg.Transport.DebugURL, "http://caprf/debug"},
+		{"UnderlaySubnet", cfg.Network.EVPN.UnderlaySubnet, "10.0.0.0/24"},
+		{"UnderlayIP", cfg.Network.EVPN.UnderlayIP, "10.0.0.5"},
+		{"OverlaySubnet", cfg.Network.EVPN.OverlaySubnet, "fd00::/64"},
+		{"IPMISubnet", cfg.Network.IPMI.Subnet, "172.16.0.0/24"},
+		{"DNSResolvers", cfg.Network.DNSResolvers, "8.8.8.8"},
+		{"DCGWIPs", cfg.Network.EVPN.DCGWIPs, "10.99.0.1,10.99.0.2"},
+		{"OverlayAggregate", cfg.Network.EVPN.OverlayAggregate, "fd00::/48"},
+		{"VPNRT", cfg.Network.EVPN.VPNRT, "65001:10100"},
+		{"StaticIP", cfg.Network.Static.IP, "10.1.0.5/24"},
+		{"StaticGateway", cfg.Network.Static.Gateway, "10.1.0.1"},
+		{"StaticIface", cfg.Network.Static.Iface, "eth0"},
+		{"BondInterfaces", cfg.Network.Bond.Interfaces, "eth0,eth1"},
+		{"BondMode", cfg.Network.Bond.Mode, "802.3ad"},
+		{"ImageChecksum", cfg.Provision.Image.Checksum, "sha256hash"},
+		{"ImageChecksumType", cfg.Provision.Image.ChecksumType, "sha256"},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
@@ -1448,35 +1486,35 @@ vpn_rt="65001:10100"
 		}
 	}
 
-	if cfg.MinDiskSizeGB != 100 {
-		t.Errorf("MinDiskSizeGB = %d, want 100", cfg.MinDiskSizeGB)
+	if cfg.Provision.Disk.MinSizeGB != 100 {
+		t.Errorf("MinDiskSizeGB = %d, want 100", cfg.Provision.Disk.MinSizeGB)
 	}
-	if !cfg.DisableKexec {
+	if !cfg.Provision.DisableKexec {
 		t.Error("DisableKexec should be true")
 	}
-	if cfg.ASN != 65001 {
-		t.Errorf("ASN = %d, want 65001", cfg.ASN)
+	if cfg.Network.BGP.ASN != 65001 {
+		t.Errorf("ASN = %d, want 65001", cfg.Network.BGP.ASN)
 	}
-	if cfg.ProvisionVNI != 10100 {
-		t.Errorf("ProvisionVNI = %d, want 10100", cfg.ProvisionVNI)
+	if cfg.Network.EVPN.ProvisionVNI != 10100 {
+		t.Errorf("ProvisionVNI = %d, want 10100", cfg.Network.EVPN.ProvisionVNI)
 	}
-	if cfg.LeafASN != 65100 {
-		t.Errorf("LeafASN = %d, want 65100", cfg.LeafASN)
+	if cfg.Network.EVPN.LeafASN != 65100 {
+		t.Errorf("LeafASN = %d, want 65100", cfg.Network.EVPN.LeafASN)
 	}
-	if cfg.LocalASN != 65200 {
-		t.Errorf("LocalASN = %d, want 65200", cfg.LocalASN)
+	if cfg.Network.EVPN.LocalASN != 65200 {
+		t.Errorf("LocalASN = %d, want 65200", cfg.Network.EVPN.LocalASN)
 	}
-	if cfg.NumVFs != 64 {
-		t.Errorf("NumVFs = %d, want 64", cfg.NumVFs)
+	if cfg.Provision.Disk.NumVFs != 64 {
+		t.Errorf("NumVFs = %d, want 64", cfg.Provision.Disk.NumVFs)
 	}
-	if !cfg.SecureErase {
+	if !cfg.Provision.Disk.SecureErase {
 		t.Error("SecureErase should be true")
 	}
-	if len(cfg.PostProvisionCmds) != 2 {
-		t.Errorf("PostProvisionCmds len = %d, want 2", len(cfg.PostProvisionCmds))
+	if len(cfg.Provision.PostProvisionCmds) != 2 {
+		t.Errorf("PostProvisionCmds len = %d, want 2", len(cfg.Provision.PostProvisionCmds))
 	}
-	if len(cfg.ImageURLs) != 2 {
-		t.Errorf("ImageURLs = %v, want 2 entries", cfg.ImageURLs)
+	if len(cfg.Provision.Image.URLs) != 2 {
+		t.Errorf("ImageURLs = %v, want 2 entries", cfg.Provision.Image.URLs)
 	}
 }
 
@@ -1508,8 +1546,10 @@ func TestFRRIPDerivationE2E(t *testing.T) {
 
 func TestCAPRFServerUnreachable(t *testing.T) {
 	cfg := &config.MachineConfig{
-		Token:   "test-token",
-		InitURL: "http://127.0.0.1:1/status/init",
+		Transport: config.TransportConfig{
+			Token:   "test-token",
+			InitURL: "http://127.0.0.1:1/status/init",
+		},
 	}
 	client := caprf.NewFromConfig(cfg)
 	err := client.ReportStatus(context.Background(), config.StatusInit, "test")
@@ -1570,7 +1610,11 @@ func TestConfigureDNSNoResolversE2E(t *testing.T) {
 	root := t.TempDir()
 	c.SetRootDir(root)
 
-	cfg := &config.MachineConfig{DNSResolvers: ""}
+	cfg := &config.MachineConfig{
+		Network: config.NetworkConfig{
+			DNSResolvers: "",
+		},
+	}
 	if err := c.ConfigureDNS(cfg); err != nil {
 		t.Fatalf("ConfigureDNS with empty resolvers should succeed: %v", err)
 	}
@@ -1613,8 +1657,12 @@ func TestImageStreamingContextCancellationE2E(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestKexecDisabledViaConfigE2E(t *testing.T) {
-	cfg := &config.MachineConfig{DisableKexec: true}
-	if !cfg.DisableKexec {
+	cfg := &config.MachineConfig{
+		Provision: config.ProvisionConfig{
+			DisableKexec: true,
+		},
+	}
+	if !cfg.Provision.DisableKexec {
 		t.Error("DisableKexec should be true")
 	}
 
@@ -1626,7 +1674,7 @@ export HOSTNAME="kexec-node"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !parsed.DisableKexec {
+	if !parsed.Provision.DisableKexec {
 		t.Error("parsed DisableKexec should be true")
 	}
 }
@@ -1643,7 +1691,9 @@ func TestConfiguratorKubeletNoLabelsE2E(t *testing.T) {
 	c.SetRootDir(root)
 
 	cfg := &config.MachineConfig{
-		ProviderID: "redfish://bmc/Systems/1",
+		Provision: config.ProvisionConfig{
+			ProviderID: "redfish://bmc/Systems/1",
+		},
 	}
 
 	if err := c.ConfigureKubelet(cfg); err != nil {
