@@ -33,7 +33,7 @@ BOOTy operates in two modes depending on the boot environment:
 1. A Redfish BMC mounts an ISO containing a kernel, BOOTy initramfs, and `/deploy/vars` config.
 2. BOOTy reads `/deploy/vars` for machine config, image URLs, and CAPRF server endpoints.
 3. Network connectivity is established via **FRR/EVPN** (BGP underlay) or **DHCP** fallback.
-4. The provisioning pipeline runs 36 steps: status reporting → RAID cleanup → disk detection → NVMe namespace setup → image streaming → partition management → OS configuration → cloud-init injection → kexec.
+4. The provisioning pipeline runs 37 steps: status reporting → RAID cleanup → disk detection → NVMe namespace setup → image streaming → partition management → optional sysext loading → OS configuration → cloud-init injection → kexec.
 5. Status, logs, and debug info are shipped back to the CAPRF controller throughout.
 
 ### Legacy Mode
@@ -71,7 +71,8 @@ BOOTy operates in two modes depending on the boot environment:
 - **Filesystem support** — ext2, ext3, ext4, xfs, btrfs, vfat mount/resize
 - **LLDP discovery** — Raw AF_PACKET-based LLDP listener for switch topology discovery
 - **Post-provision hooks** — Execute arbitrary commands in chroot after OS configuration
-- **36-step provisioning pipeline** — RAID cleanup, disk detection, NVMe namespace setup, image streaming, partition growth, LVM, filesystem resize, OS configuration, cloud-init injection, EFI boot, Mellanox SR-IOV, post-provision hooks
+- **37-step provisioning pipeline** — RAID cleanup, disk detection, NVMe namespace setup, image streaming, partition growth, LVM, filesystem resize, optional sysext loading, OS configuration, cloud-init injection, EFI boot, Mellanox SR-IOV, post-provision hooks
+- **systemd-sysext provisioning** — Optional digest-checked sysext preload or active loading into the provisioned OS image
 - **Kexec support** — Fast reboot into installed kernel without full BIOS POST (auto-disabled after firmware changes)
 - **Remote logging** — Real-time log and debug shipping to CAPRF controller
 - **Startup crash artifact upload** — Best-effort pre-wipe collection of existing OS crash logs, dumps, and host metadata for CAPRF/S3 correlation
@@ -992,7 +993,7 @@ and the PR process.
 │   │   ├── persist/           # Persist network config into target OS (netplan, NM, systemd-networkd)
 │   │   ├── vrf/               # VRF configuration and validation
 │   │   └── vlan/              # VLAN 802.1Q tagging via netlink
-│   ├── provision/              # Orchestrator (36-step provision, deprovision)
+│   ├── provision/              # Orchestrator (37-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
 │   ├── realm/                  # Device, mount, network, shell operations
 │   ├── rescue/                 # Rescue mode behavior and retry policy
@@ -1023,6 +1024,7 @@ full feature roadmap with priorities and status tracking.
 |----------|-------------|
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup, coding standards, PR process |
 | [docs/roadmap.md](docs/roadmap.md) | Feature roadmap (P0–P4 priorities) |
+| [docs/sysext-provisioning.md](docs/sysext-provisioning.md) | Optional systemd-sysext loading while provisioning |
 | [.github/AGENTS.md](.github/AGENTS.md) | Copilot agents, review personas, prompts |
 | [.github/copilot-instructions.md](.github/copilot-instructions.md) | Project guidelines for Copilot |
 

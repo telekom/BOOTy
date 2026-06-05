@@ -346,6 +346,13 @@ func TestValidate(t *testing.T) {
 		{name: "invalid overlay type", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{OverlayType: "gre"}}}, wantErr: "invalid network.bgp.overlayType"},
 		{name: "valid cloud-init ds", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: "nocloud"}}}},
 		{name: "invalid cloud-init ds", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: "ec2"}}}, wantErr: "invalid provision.cloudInit.datasource"},
+		{name: "valid sysext preload mode", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{DefaultMode: "preload"}}}},
+		{name: "invalid sysext default mode", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{DefaultMode: "enabled"}}}, wantErr: "invalid provision.sysext.defaultMode"},
+		{name: "invalid sysext catalog dir", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{CatalogDir: "var/lib/sysext"}}}, wantErr: "provision.sysext.catalogDir"},
+		{name: "invalid sysext active dir", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{ActiveDir: "/"}}}, wantErr: "provision.sysext.activeDir"},
+		{name: "invalid sysext layer mode", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Layers: []SysextLayerConfig{{Name: "debug", Mode: "now"}}}}}, wantErr: "invalid provision.sysext.layers[0].mode"},
+		{name: "invalid sysext filename", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Layers: []SysextLayerConfig{{Name: "debug", FileName: "../debug.raw"}}}}}, wantErr: "provision.sysext.layers[0].fileName"},
+		{name: "enabled sysext layer requires source", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug"}}}}}, wantErr: "source is required"},
 		{name: "valid token algorithm", cfg: Config{Transport: TransportConfig{TokenAlgorithm: "ES256"}}},
 		{name: "invalid token algorithm", cfg: Config{Transport: TransportConfig{TokenAlgorithm: "HS256"}}, wantErr: "invalid transport.tokenAlgorithm"},
 		{

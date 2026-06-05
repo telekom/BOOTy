@@ -80,6 +80,9 @@ func (c *Config) Validate() error {
 	if err := validateRAIDConfig(c.Provision.Disk.RAID); err != nil {
 		errs = append(errs, err.Error())
 	}
+	if err := validateSysextConfig(&c.Provision.Sysext); err != nil {
+		errs = append(errs, err.Error())
+	}
 
 	if len(errs) > 0 {
 		return fmt.Errorf("config validation: %s", strings.Join(errs, "; "))
@@ -149,6 +152,94 @@ func validateRAIDConfig(raids []RAIDConfig) error {
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func validateSysextConfig(cfg *SysextConfig) error {
+	var errs []string
+	defaultMode := strings.ToLower(strings.TrimSpace(cfg.DefaultMode))
+	if defaultMode != "" && defaultMode != "preload" && defaultMode != "active" {
+		errs = append(errs, fmt.Sprintf("invalid provision.sysext.defaultMode %q", cfg.DefaultMode))
+	}
+	if err := validateSysextTargetDir(cfg.CatalogDir); err != nil {
+		errs = append(errs, fmt.Sprintf("provision.sysext.catalogDir: %v", err))
+	}
+	if err := validateSysextTargetDir(cfg.ActiveDir); err != nil {
+		errs = append(errs, fmt.Sprintf("provision.sysext.activeDir: %v", err))
+	}
+	for i := range cfg.Layers {
+		errs = append(errs, validateSysextLayerConfig(cfg.Enabled, i, &cfg.Layers[i])...)
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func validateSysextLayerConfig(enabled bool, index int, layer *SysextLayerConfig) []string {
+	prefix := fmt.Sprintf("provision.sysext.layers[%d]", index)
+	var errs []string
+	if strings.TrimSpace(layer.Name) == "" {
+		errs = append(errs, prefix+": name is required")
+	}
+	if enabled && strings.TrimSpace(layer.Source) == "" {
+		errs = append(errs, prefix+": source is required when provision.sysext.enabled is true")
+	}
+	mode := strings.ToLower(strings.TrimSpace(layer.Mode))
+	if mode != "" && mode != "preload" && mode != "active" {
+		errs = append(errs, fmt.Sprintf("invalid %s.mode %q", prefix, layer.Mode))
+	}
+	if err := validateSysextFileName(layer.FileName); err != nil {
+		errs = append(errs, fmt.Sprintf("%s.fileName: %v", prefix, err))
+	}
+	if err := validateSysextSHA256(layer.SHA256); err != nil {
+		errs = append(errs, fmt.Sprintf("%s.sha256: %v", prefix, err))
+	}
+	return errs
+}
+
+func validateSysextTargetDir(value string) error {
+	dir := strings.TrimSpace(value)
+	if dir == "" {
+		return nil
+	}
+	if !strings.HasPrefix(dir, "/") {
+		return fmt.Errorf("must be an absolute path")
+	}
+	if dir == "/" {
+		return fmt.Errorf("must not be root")
+	}
+	for _, part := range strings.Split(dir, "/") {
+		if part == ".." {
+			return fmt.Errorf("must not contain parent-directory segments")
+		}
+	}
+	return nil
+}
+
+func validateSysextFileName(name string) error {
+	if name == "" {
+		return nil
+	}
+	if strings.Contains(name, "/") || strings.Contains(name, "\\") || name == "." || name == ".." || strings.Contains(name, "..") {
+		return fmt.Errorf("must be a plain file name")
+	}
+	return nil
+}
+
+func validateSysextSHA256(value string) error {
+	value = strings.TrimPrefix(strings.TrimSpace(strings.ToLower(value)), "sha256:")
+	if value == "" {
+		return nil
+	}
+	if len(value) != 64 {
+		return fmt.Errorf("must be 64 hex characters")
+	}
+	for _, r := range value {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return fmt.Errorf("must be lowercase or uppercase hex")
+		}
 	}
 	return nil
 }

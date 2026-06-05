@@ -91,6 +91,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"check-filesystem", o.checkFilesystem},
 		{"enable-lvm", o.enableLVM},
 		{"mount-root", o.mountRoot},
+		{"apply-sysexts", o.applySysexts},
 		{"write-fstab", o.writeFstabStep},
 		{"setup-chroot-binds", o.setupChrootBinds},
 		{"grow-partition", o.growPartition},
@@ -720,6 +721,10 @@ func (o *Orchestrator) mountRoot(ctx context.Context) error {
 	return o.disk.MountPartition(ctx, o.rootPartition, newroot)
 }
 
+func (o *Orchestrator) applySysexts(ctx context.Context) error {
+	return o.config.ApplySysexts(ctx, &o.cfg.Provision.Sysext)
+}
+
 func (o *Orchestrator) setupChrootBinds(_ context.Context) error {
 	return o.disk.SetupChrootBindMounts(newroot)
 }
@@ -1087,7 +1092,7 @@ func stepDebugCmds(step string) []debugCmd {
 			{"disk space", "df -h"},
 			{"partitions", "cat /proc/partitions"},
 		}
-	case "mount-root", "setup-chroot-binds":
+	case "mount-root", "apply-sysexts", "setup-chroot-binds":
 		return []debugCmd{
 			{"proc mounts", "cat /proc/mounts"},
 			{"newroot contents", "ls -la /newroot/ 2>/dev/null || echo '/newroot not found'"},

@@ -529,9 +529,33 @@ func TestProvisionStepsContainEFIVars(t *testing.T) {
 		t.Errorf("mount-efivarfs (idx %d) must come before remove-efi-entries (idx %d)", mountIdx, removeIdx)
 	}
 
-	// Verify total step count is 36 (35 base + setup-nvme-namespaces).
-	if len(steps) != 36 {
-		t.Errorf("expected 36 provisioning steps, got %d", len(steps))
+	// Verify total step count is 37 (35 base + setup-nvme-namespaces + apply-sysexts).
+	if len(steps) != 37 {
+		t.Errorf("expected 37 provisioning steps, got %d", len(steps))
+	}
+}
+
+func TestProvisionStepsApplySysextsAfterMountRoot(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	orch := NewOrchestrator(cfg, &mockProvider{}, disk.NewManager(newMockCommander()))
+	steps := orch.provisionSteps()
+
+	mountIdx, sysextIdx, fstabIdx := -1, -1, -1
+	for i, step := range steps {
+		switch step.Name {
+		case "mount-root":
+			mountIdx = i
+		case "apply-sysexts":
+			sysextIdx = i
+		case "write-fstab":
+			fstabIdx = i
+		}
+	}
+	if mountIdx == -1 || sysextIdx == -1 || fstabIdx == -1 {
+		t.Fatalf("missing mount-root/apply-sysexts/write-fstab in steps")
+	}
+	if mountIdx >= sysextIdx || sysextIdx >= fstabIdx {
+		t.Fatalf("unexpected sysext step order: mount=%d sysext=%d fstab=%d", mountIdx, sysextIdx, fstabIdx)
 	}
 }
 

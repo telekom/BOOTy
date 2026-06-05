@@ -1,0 +1,328 @@
+//go:build linux
+
+package provision
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
+
+	"github.com/telekom/BOOTy/pkg/config"
+)
+
+const (
+	defaultSysextCatalogDir = "/usr/lib/tcaas-sysext/preloaded"
+	defaultSysextActiveDir  = "/var/lib/extensions"
+	sysextModePreload       = "preload"
+	sysextModeActive        = "active"
+)
+
+type sysextCatalog struct {
+	APIVersion string               `json:"apiVersion"`
+	Kind       string               `json:"kind"`
+	Layers     []sysextCatalogLayer `json:"layers"`
+}
+
+type sysextCatalogLayer struct {
+	Name     string `json:"name"`
+	Version  string `json:"version"`
+	FileName string `json:"fileName"`
+	Path     string `json:"path"`
+	Digest   string `json:"digest,omitempty"`
+}
+
+// ApplySysexts loads configured sysext artifacts into the provisioned root.
+func (c *Configurator) ApplySysexts(ctx context.Context, cfg *config.SysextConfig) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	if len(cfg.Layers) == 0 {
+		slog.Info("sysext provisioning enabled with no layers")
+		return nil
+	}
+
+	catalog, err := c.readSysextCatalog(cfg)
+	if err != nil {
+		return err
+	}
+	for i := range cfg.Layers {
+		if err := c.applySysextLayer(ctx, cfg, &cfg.Layers[i], catalog); err != nil {
+			return err
+		}
+	}
+	return c.writeSysextCatalog(cfg, catalog)
+}
+
+func (c *Configurator) applySysextLayer(ctx context.Context, cfg *config.SysextConfig, layer *config.SysextLayerConfig, catalog *sysextCatalog) error {
+	mode := sysextLayerMode(cfg, layer)
+	fileName := sysextFileName(layer)
+	targetDir := sysextTargetDir(cfg, mode)
+	target, imagePath, err := sysextTargetPath(c.rootDir, targetDir, fileName)
+	if err != nil {
+		return fmt.Errorf("sysext %s target: %w", layer.Name, err)
+	}
+
+	digest, err := copySysextSource(ctx, layer.Source, target, layer.SHA256)
+	if err != nil {
+		return fmt.Errorf("sysext %s: %w", layer.Name, err)
+	}
+	slog.Info("sysext layer loaded", "name", layer.Name, "mode", mode, "path", imagePath)
+
+	if mode == sysextModePreload {
+		catalog.upsert(&sysextCatalogLayer{
+			Name:     layer.Name,
+			Version:  sysextVersion(layer),
+			FileName: fileName,
+			Path:     imagePath,
+			Digest:   "sha256:" + digest,
+		})
+	}
+	return nil
+}
+
+func (c *Configurator) readSysextCatalog(cfg *config.SysextConfig) (*sysextCatalog, error) {
+	catalog := &sysextCatalog{
+		APIVersion: "imagebuilding.tcaas.telekom.de/v1alpha1",
+		Kind:       "SysextPreloadCatalog",
+	}
+	catalogPath, _, err := sysextTargetPath(c.rootDir, sysextCatalogDir(cfg), "catalog.json")
+	if err != nil {
+		return nil, fmt.Errorf("sysext catalog path: %w", err)
+	}
+	data, err := os.ReadFile(catalogPath) //nolint:gosec // path constrained to provisioned root
+	if os.IsNotExist(err) {
+		return catalog, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read sysext catalog: %w", err)
+	}
+	if err := json.Unmarshal(data, catalog); err != nil {
+		return nil, fmt.Errorf("parse sysext catalog: %w", err)
+	}
+	return catalog, nil
+}
+
+func (c *Configurator) writeSysextCatalog(cfg *config.SysextConfig, catalog *sysextCatalog) error {
+	if len(catalog.Layers) == 0 {
+		return nil
+	}
+	catalogPath, _, err := sysextTargetPath(c.rootDir, sysextCatalogDir(cfg), "catalog.json")
+	if err != nil {
+		return fmt.Errorf("sysext catalog path: %w", err)
+	}
+	data, err := json.MarshalIndent(catalog, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal sysext catalog: %w", err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(catalogPath, data, 0o644); err != nil {
+		return fmt.Errorf("write sysext catalog: %w", err)
+	}
+	return nil
+}
+
+func (c *sysextCatalog) upsert(layer *sysextCatalogLayer) {
+	for i, existing := range c.Layers {
+		if existing.Name == layer.Name && existing.Version == layer.Version && existing.FileName == layer.FileName {
+			c.Layers[i] = *layer
+			return
+		}
+	}
+	c.Layers = append(c.Layers, *layer)
+}
+
+func sysextLayerMode(cfg *config.SysextConfig, layer *config.SysextLayerConfig) string {
+	if mode := strings.ToLower(strings.TrimSpace(layer.Mode)); mode != "" {
+		return mode
+	}
+	if mode := strings.ToLower(strings.TrimSpace(cfg.DefaultMode)); mode != "" {
+		return mode
+	}
+	return sysextModePreload
+}
+
+func sysextTargetDir(cfg *config.SysextConfig, mode string) string {
+	if mode == sysextModeActive {
+		if cfg.ActiveDir != "" {
+			return cfg.ActiveDir
+		}
+		return defaultSysextActiveDir
+	}
+	return sysextCatalogDir(cfg)
+}
+
+func sysextCatalogDir(cfg *config.SysextConfig) string {
+	if cfg.CatalogDir != "" {
+		return cfg.CatalogDir
+	}
+	return defaultSysextCatalogDir
+}
+
+func sysextVersion(layer *config.SysextLayerConfig) string {
+	if strings.TrimSpace(layer.Version) != "" {
+		return strings.TrimSpace(layer.Version)
+	}
+	return "unknown"
+}
+
+func sysextFileName(layer *config.SysextLayerConfig) string {
+	if strings.TrimSpace(layer.FileName) != "" {
+		return strings.TrimSpace(layer.FileName)
+	}
+	if name := sourceBaseName(layer.Source); name != "" && name != "." && name != "/" {
+		return name
+	}
+	return strings.TrimSpace(layer.Name) + ".raw"
+}
+
+func sourceBaseName(source string) string {
+	if u, err := url.Parse(source); err == nil && u.Scheme != "" {
+		return path.Base(u.Path)
+	}
+	return filepath.Base(source)
+}
+
+func sysextTargetPath(root, dir, fileName string) (hostPath, imagePath string, err error) {
+	if !isPlainFileName(fileName) {
+		return "", "", fmt.Errorf("unsafe fileName %q", fileName)
+	}
+	cleanDir := path.Clean("/" + strings.TrimSpace(dir))
+	if cleanDir == "/" {
+		return "", "", fmt.Errorf("target directory must not be root")
+	}
+	imagePath = path.Join(cleanDir, fileName)
+	hostPath = filepath.Join(root, filepath.FromSlash(imagePath))
+	if err := os.MkdirAll(filepath.Dir(hostPath), 0o755); err != nil {
+		return "", "", fmt.Errorf("create target directory: %w", err)
+	}
+	if err := ensureWithinRoot(root, hostPath); err != nil {
+		return "", "", err
+	}
+	return hostPath, imagePath, nil
+}
+
+func isPlainFileName(name string) bool {
+	return name != "" && name != "." && name != ".." &&
+		!strings.Contains(name, "/") &&
+		!strings.Contains(name, "\\") &&
+		!strings.Contains(name, "..")
+}
+
+func ensureWithinRoot(root, target string) error {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve root: %w", err)
+	}
+	absTarget, err := filepath.Abs(target)
+	if err != nil {
+		return fmt.Errorf("resolve target: %w", err)
+	}
+	if absTarget != absRoot && !strings.HasPrefix(absTarget, absRoot+string(filepath.Separator)) {
+		return fmt.Errorf("target escapes provisioned root: %s", target)
+	}
+	return nil
+}
+
+func copySysextSource(ctx context.Context, source, target, expected string) (string, error) {
+	src, err := openSysextSource(ctx, source)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = src.Close() }()
+
+	tmp := target + ".tmp"
+	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644) //nolint:gosec // target constrained to provisioned root
+	if err != nil {
+		return "", fmt.Errorf("create target: %w", err)
+	}
+	digest, copyErr := writeAndHash(ctx, src, out)
+	closeErr := out.Close()
+	if copyErr != nil {
+		_ = os.Remove(tmp)
+		return "", copyErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(tmp)
+		return "", fmt.Errorf("close target: %w", closeErr)
+	}
+	if err := verifySysextDigest(digest, expected); err != nil {
+		_ = os.Remove(tmp)
+		return "", err
+	}
+	if err := os.Rename(tmp, target); err != nil {
+		_ = os.Remove(tmp)
+		return "", fmt.Errorf("install target: %w", err)
+	}
+	return digest, nil
+}
+
+func openSysextSource(ctx context.Context, source string) (io.ReadCloser, error) {
+	u, err := url.Parse(source)
+	if err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, http.NoBody)
+		if err != nil {
+			return nil, fmt.Errorf("create sysext request: %w", err)
+		}
+		resp, err := http.DefaultClient.Do(req) //nolint:gosec // configured sysext source URL
+		if err != nil {
+			return nil, fmt.Errorf("fetch sysext: %w", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("fetch sysext: HTTP %d", resp.StatusCode)
+		}
+		return resp.Body, nil
+	}
+	file, err := os.Open(source) //nolint:gosec // configured source path
+	if err != nil {
+		return nil, fmt.Errorf("open sysext source: %w", err)
+	}
+	return file, nil
+}
+
+func writeAndHash(ctx context.Context, src io.Reader, dst io.Writer) (string, error) {
+	hash := sha256.New()
+	buf := make([]byte, 1024*1024)
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", fmt.Errorf("copy sysext canceled: %w", err)
+		}
+		n, readErr := src.Read(buf)
+		if n > 0 {
+			chunk := buf[:n]
+			if _, err := hash.Write(chunk); err != nil {
+				return "", fmt.Errorf("hash sysext: %w", err)
+			}
+			if _, err := dst.Write(chunk); err != nil {
+				return "", fmt.Errorf("write sysext: %w", err)
+			}
+		}
+		if readErr == io.EOF {
+			return hex.EncodeToString(hash.Sum(nil)), nil
+		}
+		if readErr != nil {
+			return "", fmt.Errorf("read sysext: %w", readErr)
+		}
+	}
+}
+
+func verifySysextDigest(got, expected string) error {
+	expected = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(expected)), "sha256:")
+	if expected == "" {
+		return nil
+	}
+	if got != expected {
+		return fmt.Errorf("sysext digest mismatch: got sha256:%s want sha256:%s", got, expected)
+	}
+	return nil
+}
