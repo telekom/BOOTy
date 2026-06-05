@@ -659,6 +659,8 @@ var vrnetlabAllowedErrorRootCauses = []string{
 	// Expected in CI without real disks or network.
 	"no suitable disk found",
 	`exec: "mdadm": executable file not found in $PATH`,
+	"stop raid arrays",
+	"exec mdadm",
 	"Connectivity timeout",
 	"Connecting to provisioning server",
 	"network connectivity timeout",
