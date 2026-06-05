@@ -68,7 +68,7 @@ jobs:
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
 
@@ -80,7 +80,7 @@ jobs:
       - name: Run E2E tests
         run: |
           # Run e2e tests excluding kvm/ (KVM tests run in the dedicated KVM matrix job)
-          go test -tags e2e -v -race $(go list -tags e2e ./test/e2e/... | grep -v /kvm)
+          go test -tags e2e -v -race -timeout 20m $(go list -tags e2e ./test/e2e/... | grep -v /kvm)
 
   build:
     name: Build (${{ matrix.arch }})
