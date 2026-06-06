@@ -301,10 +301,15 @@ func copySysextSource(ctx context.Context, source, target, expected string) (str
 	}
 	defer func() { _ = src.Close() }()
 
-	tmp := target + ".tmp"
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644) //nolint:gosec // target constrained to provisioned root
+	out, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".*.tmp") //nolint:gosec // target directory constrained to provisioned root
 	if err != nil {
 		return "", fmt.Errorf("create target: %w", err)
+	}
+	tmp := out.Name()
+	if err := out.Chmod(0o644); err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmp)
+		return "", fmt.Errorf("chmod target: %w", err)
 	}
 	digest, copyErr := writeAndHash(ctx, src, out)
 	closeErr := out.Close()
@@ -376,8 +381,12 @@ func writeAndHash(ctx context.Context, src io.Reader, dst io.Writer) (string, er
 			if _, err := hash.Write(chunk); err != nil {
 				return "", fmt.Errorf("hash sysext: %w", err)
 			}
-			if _, err := dst.Write(chunk); err != nil {
+			written, err := dst.Write(chunk)
+			if err != nil {
 				return "", fmt.Errorf("write sysext: %w", err)
+			}
+			if written != len(chunk) {
+				return "", io.ErrShortWrite
 			}
 		}
 		if readErr == io.EOF {

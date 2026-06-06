@@ -211,6 +211,39 @@ func TestApplySysextsRejectsSymlinkEscape(t *testing.T) {
 	}
 }
 
+func TestApplySysextsDoesNotFollowPredictableTempSymlink(t *testing.T) {
+	c := newTestConfigurator(t, newMockCommander())
+	source, digest := writeSysextSource(t, "safe temp")
+	targetDir := filepath.Join(c.rootDir, "usr/lib/tcaas-sysext/preloaded")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.raw")
+	if err := os.Symlink(outside, filepath.Join(targetDir, "layer.raw.tmp")); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.SysextConfig{
+		Enabled: true,
+		Layers: []config.SysextLayerConfig{{
+			Name:     "safe-temp",
+			Source:   source,
+			FileName: "layer.raw",
+			SHA256:   digest,
+		}},
+	}
+
+	if err := c.ApplySysexts(context.Background(), &cfg); err != nil {
+		t.Fatalf("ApplySysexts() error: %v", err)
+	}
+	if got := readFile(t, filepath.Join(targetDir, "layer.raw")); got != "safe temp" {
+		t.Fatalf("sysext content = %q", got)
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("predictable temp symlink target was written")
+	}
+}
+
 func TestApplySysextsRejectsNonRegularLocalSource(t *testing.T) {
 	c := newTestConfigurator(t, newMockCommander())
 	sourceDir := t.TempDir()
@@ -229,6 +262,16 @@ func TestApplySysextsRejectsNonRegularLocalSource(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "regular file") {
 		t.Fatalf("expected regular file error, got %v", err)
+	}
+}
+
+func TestWriteAndHashRejectsShortWrite(t *testing.T) {
+	_, err := writeAndHash(context.Background(), strings.NewReader("short"), shortWriter{})
+	if err == nil {
+		t.Fatal("expected short write error")
+	}
+	if err != io.ErrShortWrite {
+		t.Fatalf("error = %v, want %v", err, io.ErrShortWrite)
 	}
 }
 
@@ -276,6 +319,12 @@ func pushSysextOCI(t *testing.T, repoTag string, data []byte) string {
 		t.Fatalf("remote.Write: %v", err)
 	}
 	return ref.String()
+}
+
+type shortWriter struct{}
+
+func (shortWriter) Write(p []byte) (int, error) {
+	return len(p) - 1, nil
 }
 
 func readFile(t *testing.T, path string) string {
