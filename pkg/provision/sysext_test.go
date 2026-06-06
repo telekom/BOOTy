@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -270,7 +271,7 @@ func TestWriteAndHashRejectsShortWrite(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected short write error")
 	}
-	if err != io.ErrShortWrite {
+	if !errors.Is(err, io.ErrShortWrite) {
 		t.Fatalf("error = %v, want %v", err, io.ErrShortWrite)
 	}
 }

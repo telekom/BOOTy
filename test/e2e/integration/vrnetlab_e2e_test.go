@@ -34,7 +34,9 @@ const (
 
 func requireVrnetlabLab(t *testing.T) {
 	t.Helper()
-	out, err := exec.Command("docker", "ps", "--format", "{{.Names}}").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", "ps", "--format", "{{.Names}}").Output()
 	if err != nil {
 		t.Fatalf("docker not available: %v", err)
 	}

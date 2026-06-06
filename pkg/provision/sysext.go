@@ -308,25 +308,25 @@ func copySysextSource(ctx context.Context, source, target, expected string) (str
 	tmp := out.Name()
 	if err := out.Chmod(0o644); err != nil {
 		_ = out.Close()
-		_ = os.Remove(tmp)
+		_ = os.Remove(tmp) //nolint:gosec // tmp was created in the constrained sysext target directory
 		return "", fmt.Errorf("chmod target: %w", err)
 	}
 	digest, copyErr := writeAndHash(ctx, src, out)
 	closeErr := out.Close()
 	if copyErr != nil {
-		_ = os.Remove(tmp)
+		_ = os.Remove(tmp) //nolint:gosec // tmp was created in the constrained sysext target directory
 		return "", copyErr
 	}
 	if closeErr != nil {
-		_ = os.Remove(tmp)
+		_ = os.Remove(tmp) //nolint:gosec // tmp was created in the constrained sysext target directory
 		return "", fmt.Errorf("close target: %w", closeErr)
 	}
 	if err := verifySysextDigest(digest, expected); err != nil {
-		_ = os.Remove(tmp)
+		_ = os.Remove(tmp) //nolint:gosec // tmp was created in the constrained sysext target directory
 		return "", err
 	}
-	if err := os.Rename(tmp, target); err != nil {
-		_ = os.Remove(tmp)
+	if err := os.Rename(tmp, target); err != nil { //nolint:gosec // both paths are in the constrained sysext target directory
+		_ = os.Remove(tmp) //nolint:gosec // tmp was created in the constrained sysext target directory
 		return "", fmt.Errorf("install target: %w", err)
 	}
 	return digest, nil
