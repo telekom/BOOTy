@@ -898,6 +898,9 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"TOKEN_ALGORITHM":             &cfg.Transport.TokenAlgorithm,
 		"NVME_NAMESPACES":             &cfg.Provision.Disk.NVMeNamespaces,
 		"BGP_AUTH_PASSWORD":           &cfg.Network.BGP.AuthPassword,
+		"SYSEXT_DEFAULT_MODE":         &cfg.Provision.Sysext.DefaultMode,
+		"SYSEXT_CATALOG_DIR":          &cfg.Provision.Sysext.CatalogDir,
+		"SYSEXT_ACTIVE_DIR":           &cfg.Provision.Sysext.ActiveDir,
 	}
 
 	if ptr, ok := strFields[key]; ok {
@@ -948,6 +951,12 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) error {
 			return fmt.Errorf("invalid PARTITION_LAYOUT: %w", err)
 		}
 		cfg.Provision.Disk.PartitionLayout = layout
+	case "SYSEXT_LAYERS":
+		var layers []config.SysextLayerConfig
+		if err := json.Unmarshal([]byte(value), &layers); err != nil {
+			return fmt.Errorf("invalid SYSEXT_LAYERS: %w", err)
+		}
+		cfg.Provision.Sysext.Layers = layers
 	default:
 		if strings.HasPrefix(key, "LUKS_") {
 			return fmt.Errorf("%s is not supported yet", key)
@@ -982,6 +991,8 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) (bool, error)
 		cfg.Transport.Insecure = parseBoolVar(value)
 	case "CRASH_ARTIFACTS_ENABLED":
 		cfg.Provision.CrashArtifacts.Enabled = parseBoolVar(value)
+	case "SYSEXT_ENABLED":
+		cfg.Provision.Sysext.Enabled = parseBoolVar(value)
 	default:
 		return applyFeatureToggle(cfg, key, value)
 	}

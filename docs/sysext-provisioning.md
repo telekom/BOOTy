@@ -85,6 +85,21 @@ has already streamed.
 BOOTy streams each sysext through SHA256 while copying. If `sha256` is set, a
 mismatch aborts provisioning and removes the temporary target file.
 
+## CAPRF vars
+
+When BOOTy is launched through CAPRF, the same config can be delivered through
+`/deploy/vars`:
+
+```sh
+export SYSEXT_ENABLED="true"
+export SYSEXT_DEFAULT_MODE="preload"
+export SYSEXT_CATALOG_DIR="/usr/lib/tcaas-sysext/preloaded"
+export SYSEXT_LAYERS='[{"name":"node-tuning","version":"v1","source":"https://registry.example/sysext/node-tuning.raw","fileName":"node-tuning.raw","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mode":"preload"}]'
+```
+
+`SYSEXT_LAYERS` is a JSON array using the same layer fields as the YAML
+configuration. `SYSEXT_ACTIVE_DIR` is also supported for `active` mode.
+
 ## Best practices
 
 - Prefer `defaultMode: preload`; activate layers through boot config or a

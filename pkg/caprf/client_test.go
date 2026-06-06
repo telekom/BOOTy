@@ -978,6 +978,49 @@ IMAGE_CHECKSUM_TYPE="sha256"
 	}
 }
 
+func TestParseVarsSysextConfig(t *testing.T) {
+	input := `SYSEXT_ENABLED="true"
+SYSEXT_DEFAULT_MODE="preload"
+SYSEXT_CATALOG_DIR="/usr/lib/tcaas-sysext/preloaded"
+SYSEXT_ACTIVE_DIR="/var/lib/extensions"
+SYSEXT_LAYERS='[{"name":"node-tuning","version":"v1","source":"https://example.invalid/node-tuning.raw","fileName":"node-tuning.raw","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mode":"preload"}]'
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Provision.Sysext.Enabled {
+		t.Fatal("Sysext.Enabled should be true")
+	}
+	if cfg.Provision.Sysext.DefaultMode != "preload" {
+		t.Errorf("Sysext.DefaultMode = %q", cfg.Provision.Sysext.DefaultMode)
+	}
+	if cfg.Provision.Sysext.CatalogDir != "/usr/lib/tcaas-sysext/preloaded" {
+		t.Errorf("Sysext.CatalogDir = %q", cfg.Provision.Sysext.CatalogDir)
+	}
+	if cfg.Provision.Sysext.ActiveDir != "/var/lib/extensions" {
+		t.Errorf("Sysext.ActiveDir = %q", cfg.Provision.Sysext.ActiveDir)
+	}
+	if len(cfg.Provision.Sysext.Layers) != 1 {
+		t.Fatalf("Sysext.Layers len = %d, want 1", len(cfg.Provision.Sysext.Layers))
+	}
+	layer := cfg.Provision.Sysext.Layers[0]
+	if layer.Name != "node-tuning" || layer.Source != "https://example.invalid/node-tuning.raw" {
+		t.Fatalf("unexpected sysext layer: %#v", layer)
+	}
+}
+
+func TestParseVarsSysextLayersInvalidJSON(t *testing.T) {
+	input := `SYSEXT_LAYERS="not-json"`
+	_, err := ParseVars(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("expected invalid SYSEXT_LAYERS error")
+	}
+	if !strings.Contains(err.Error(), "invalid SYSEXT_LAYERS") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestParseVarsNumVFs(t *testing.T) {
 	input := `NUM_VFS="64"`
 	cfg, err := ParseVars(strings.NewReader(input))
