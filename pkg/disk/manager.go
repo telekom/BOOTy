@@ -115,6 +115,20 @@ func (m *Manager) WipeDisk(ctx context.Context, device string) error {
 	return nil
 }
 
+// WipeFilesystemSignatures clears filesystem signatures on an existing
+// partition without touching the parent disk partition table.
+func (m *Manager) WipeFilesystemSignatures(ctx context.Context, device string) error {
+	device = strings.TrimSpace(device)
+	if device == "" {
+		return fmt.Errorf("wipe filesystem signatures: device is required")
+	}
+	slog.Info("wiping filesystem signatures", "device", device)
+	if _, err := m.cmd.Run(ctx, "wipefs", "-af", device); err != nil {
+		return fmt.Errorf("wipefs %s: %w", device, err)
+	}
+	return nil
+}
+
 // WipeAllDisks runs wipefs on all block devices excluding loop and CD-ROM.
 // This performs a quick erase: clears partition tables and filesystem signatures
 // without overwriting data.

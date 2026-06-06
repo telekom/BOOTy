@@ -224,6 +224,7 @@ func buildProvisionInitramfs(t *testing.T, vars map[string]string) string {
 	// Copy essential provisioning tools from host with their shared libraries.
 	essentialTools := []string{
 		"partprobe", "sfdisk", "e2fsck", "resize2fs", "wipefs", "mdadm", "lvm",
+		"losetup", "dd",
 	}
 	for _, tool := range essentialTools {
 		toolPath, err := exec.LookPath(tool)

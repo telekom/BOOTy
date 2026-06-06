@@ -383,8 +383,15 @@ func (o *Orchestrator) setupNVMeNamespaces(ctx context.Context) error {
 }
 
 func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
+	if err := o.ensureABPartitionLayout(); err != nil {
+		return err
+	}
 	if err := o.validatePartitionLayoutConfig(); err != nil {
 		return err
+	}
+	if o.isABImageMode() && o.cfg.Provision.AB.PreserveExisting {
+		o.log.Info("A/B preserveExisting enabled, skipping whole-disk wipe")
+		return nil
 	}
 
 	// In deprovision modes use the deprovision-specific SecureErase setting.
@@ -411,6 +418,9 @@ func (o *Orchestrator) validatePartitionLayoutModeCompatibility() error {
 
 	// Deprovisioning is allowed to wipe disks even when PARTITION_LAYOUT is set.
 	if o.cfg.Mode == "deprovision" || o.cfg.Mode == "soft" || o.cfg.Mode == "soft-deprovision" {
+		return nil
+	}
+	if o.isABImageMode() {
 		return nil
 	}
 
@@ -483,7 +493,14 @@ func (o *Orchestrator) detectDisk(ctx context.Context) error {
 }
 
 func (o *Orchestrator) applyPartitionLayout(ctx context.Context) error {
+	if err := o.ensureABPartitionLayout(); err != nil {
+		return err
+	}
 	if o.cfg.Provision.Disk.PartitionLayout == nil {
+		return nil
+	}
+	if o.isABImageMode() && o.cfg.Provision.AB.PreserveExisting {
+		o.log.Info("A/B preserveExisting enabled, reusing existing partition layout")
 		return nil
 	}
 
@@ -521,7 +538,10 @@ func (o *Orchestrator) applyPartitionLayout(ctx context.Context) error {
 
 // writeFstab generates and writes fstab after root is mounted.
 func (o *Orchestrator) writeFstabStep(_ context.Context) error {
-	return o.writeFstab()
+	if err := o.writeFstab(); err != nil {
+		return err
+	}
+	return o.writeABSlotState()
 }
 
 func (o *Orchestrator) writeFstab() error {
@@ -548,7 +568,7 @@ func (o *Orchestrator) writeFstab() error {
 func (o *Orchestrator) streamImage(ctx context.Context) error {
 	// With a custom partition layout, fail fast — rootfs extraction for
 	// layout mode is not implemented yet.
-	if o.cfg.Provision.Disk.PartitionLayout != nil {
+	if o.cfg.Provision.Disk.PartitionLayout != nil && !o.isABImageMode() {
 		return fmt.Errorf("%s", errPartitionLayoutNotSupported)
 	}
 
@@ -580,6 +600,10 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 		})
 	}
 
+	if o.isABImageMode() {
+		return o.streamABImage(ctx, bestURL, opts)
+	}
+
 	// Default whole-disk mode.
 	o.log.Info("Streaming image", "url", bestURL, "disk", o.targetDisk)
 	if err := image.Stream(ctx, bestURL, o.targetDisk, opts...); err != nil {
@@ -587,6 +611,82 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 			return &PermanentError{Err: fmt.Errorf("streaming %s: %w", bestURL, err)}
 		}
 		return fmt.Errorf("streaming %s: %w", bestURL, err)
+	}
+	return nil
+}
+
+func (o *Orchestrator) streamABImage(ctx context.Context, bestURL string, opts []image.StreamOpts) error {
+	if err := o.ensureABPartitionLayout(); err != nil {
+		return err
+	}
+	if err := o.parsePartitionsFromLayout(ctx); err != nil {
+		return err
+	}
+	if err := o.prepareABTargetSlot(ctx); err != nil {
+		return err
+	}
+
+	o.log.Info("Streaming image into A/B target slot", "url", bestURL, "disk", o.targetDisk, "root", o.rootPartition, "boot", o.bootPartition)
+	return image.StreamAB(ctx, bestURL, image.ABTargets{
+		Disk:          o.targetDisk,
+		BootPartition: o.bootPartition,
+		RootPartition: o.rootPartition,
+	}, opts...)
+}
+
+func (o *Orchestrator) prepareABTargetSlot(ctx context.Context) error {
+	if !o.cfg.Provision.AB.PreserveExisting {
+		return nil
+	}
+	if err := o.disk.WipeFilesystemSignatures(ctx, o.rootPartition); err != nil {
+		return fmt.Errorf("wiping A/B target slot before stream: %w", err)
+	}
+	return nil
+}
+
+func (o *Orchestrator) isABImageMode() bool {
+	return strings.EqualFold(strings.TrimSpace(o.cfg.Provision.Image.Mode), config.ImageModeAB)
+}
+
+func (o *Orchestrator) ensureABPartitionLayout() error {
+	if !o.isABImageMode() {
+		return nil
+	}
+	device := strings.TrimSpace(o.targetDisk)
+	if device == "" {
+		device = strings.TrimSpace(o.cfg.Provision.Disk.Device)
+	}
+	layout, err := o.cfg.Provision.AB.PartitionLayout(device)
+	if err != nil {
+		return fmt.Errorf("A/B partition layout: %w", err)
+	}
+	o.cfg.Provision.Disk.PartitionLayout = layout
+	return nil
+}
+
+func (o *Orchestrator) writeABSlotState() error {
+	if !o.isABImageMode() {
+		return nil
+	}
+	ab := o.cfg.Provision.AB.WithDefaults()
+	targetSlot, err := ab.ResolvedTargetSlot()
+	if err != nil {
+		return err
+	}
+	stateDir := filepath.Join(o.config.rootDir, "etc", "booty")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		return fmt.Errorf("creating A/B state directory: %w", err)
+	}
+	content := fmt.Sprintf(
+		"BOOTY_AB_SCHEME=%s\nBOOTY_AB_TARGET_SLOT=%s\nBOOTY_AB_ACTIVE_SLOT=%s\nBOOTY_AB_PRESERVE_EXISTING=%t\nBOOTY_AB_ROOT_PARTITION=%s\n",
+		ab.Scheme,
+		targetSlot,
+		ab.ActiveSlot,
+		ab.PreserveExisting,
+		o.rootPartition,
+	)
+	if err := os.WriteFile(filepath.Join(stateDir, "ab-slot.env"), []byte(content), 0o644); err != nil {
+		return fmt.Errorf("writing A/B slot state: %w", err)
 	}
 	return nil
 }

@@ -266,6 +266,35 @@ func TestApplySysextsRejectsNonRegularLocalSource(t *testing.T) {
 	}
 }
 
+func TestApplySysextsRejectsInvalidLayerModeAtApplyTime(t *testing.T) {
+	c := newTestConfigurator(t, newMockCommander())
+	source, digest := writeSysextSource(t, "invalid mode")
+
+	cfg := config.SysextConfig{
+		Enabled: true,
+		Layers: []config.SysextLayerConfig{{
+			Name:   "node-tuning",
+			Mode:   "actve",
+			Source: source,
+			SHA256: digest,
+		}},
+	}
+
+	err := c.ApplySysexts(context.Background(), &cfg)
+	if err == nil {
+		t.Fatal("expected invalid sysext mode error")
+	}
+	if !strings.Contains(err.Error(), `invalid sysext mode "actve"`) {
+		t.Fatalf("expected invalid mode error, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(c.rootDir, "usr/lib/tcaas-sysext/preloaded")); !os.IsNotExist(err) {
+		t.Fatalf("invalid mode should not create preload directory")
+	}
+	if _, err := os.Stat(filepath.Join(c.rootDir, "var/lib/extensions")); !os.IsNotExist(err) {
+		t.Fatalf("invalid mode should not create active directory")
+	}
+}
+
 func TestWriteAndHashRejectsShortWrite(t *testing.T) {
 	_, err := writeAndHash(context.Background(), strings.NewReader("short"), shortWriter{})
 	if err == nil {
@@ -286,6 +315,36 @@ func TestSysextHTTPClientBoundsHeaderWait(t *testing.T) {
 	}
 	if transport.TLSHandshakeTimeout <= 0 {
 		t.Fatal("TLSHandshakeTimeout must be bounded")
+	}
+	if sysextHTTPClient.Timeout <= 0 {
+		t.Fatal("client Timeout must bound body reads")
+	}
+}
+
+func TestOpenSysextSourceHTTPBodyTimeout(t *testing.T) {
+	oldClient := sysextHTTPClient
+	sysextHTTPClient = &http.Client{Timeout: 100 * time.Millisecond}
+	t.Cleanup(func() { sysextHTTPClient = oldClient })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		time.Sleep(time.Second)
+		_, _ = w.Write([]byte("late"))
+	}))
+	t.Cleanup(srv.Close)
+
+	rc, err := openSysextSource(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatalf("openSysextSource() error: %v", err)
+	}
+	defer rc.Close()
+
+	_, err = io.ReadAll(rc)
+	if err == nil {
+		t.Fatal("expected body read timeout")
 	}
 }
 

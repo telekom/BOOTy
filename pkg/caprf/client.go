@@ -914,6 +914,9 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"SYSEXT_DEFAULT_MODE":         &cfg.Provision.Sysext.DefaultMode,
 		"SYSEXT_CATALOG_DIR":          &cfg.Provision.Sysext.CatalogDir,
 		"SYSEXT_ACTIVE_DIR":           &cfg.Provision.Sysext.ActiveDir,
+		"AB_SCHEME":                   &cfg.Provision.AB.Scheme,
+		"AB_ACTIVE_SLOT":              &cfg.Provision.AB.ActiveSlot,
+		"AB_TARGET_SLOT":              &cfg.Provision.AB.TargetSlot,
 	}
 
 	if ptr, ok := strFields[key]; ok {
@@ -1006,6 +1009,8 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) (bool, error)
 		cfg.Provision.CrashArtifacts.Enabled = parseBoolVar(value)
 	case "SYSEXT_ENABLED":
 		cfg.Provision.Sysext.Enabled = parseBoolVar(value)
+	case "AB_PRESERVE_EXISTING":
+		cfg.Provision.AB.PreserveExisting = parseBoolVar(value)
 	default:
 		return applyFeatureToggle(cfg, key, value)
 	}
@@ -1022,6 +1027,9 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		"CRASH_ARTIFACTS_MAX_MB":             &cfg.Provision.CrashArtifacts.MaxMB,
 		"CRASH_ARTIFACTS_UPLOAD_TIMEOUT_SEC": &cfg.Provision.CrashArtifacts.UploadTimeoutSec,
 		"BGP_MIN_PEERS":                      &cfg.Network.BGP.MinPeers,
+		"AB_BOOT_SIZE_MB":                    &cfg.Provision.AB.BootSizeMB,
+		"AB_ROOT_SIZE_MB":                    &cfg.Provision.AB.RootSizeMB,
+		"AB_STATE_SIZE_MB":                   &cfg.Provision.AB.StateSizeMB,
 	}
 
 	if ptr, ok := intFields[key]; ok {

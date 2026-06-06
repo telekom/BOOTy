@@ -12,7 +12,7 @@ import (
 // Fields validated:
 //   - Mode: "provision", "deprovision", "soft-deprovision", "soft", "hard",
 //     "standby", "dry-run", "check"
-//   - Provision.Image.Mode: "whole-disk", "partition"
+//   - Provision.Image.Mode: "whole-disk", "partition", "ab"
 //   - Provision.Image.ChecksumType: "sha256", "sha512"
 //   - Provision.CloudInit.Datasource: "nocloud", "configdrive"
 //   - Provision.Disk.RAID[*]: valid level, unique non-empty name without /dev/ prefix,
@@ -37,7 +37,7 @@ func (c *Config) Validate() error {
 			return validateEnum(c.Mode, "mode", "provision", "deprovision", "soft-deprovision", "soft", "hard", "standby", "dry-run", "check")
 		},
 		func() string {
-			return validateEnum(c.Provision.Image.Mode, "provision.image.mode", "whole-disk", "partition")
+			return validateEnum(c.Provision.Image.Mode, "provision.image.mode", ImageModeWholeDisk, ImageModePartition, ImageModeAB)
 		},
 		func() string {
 			return validateEnumLower(c.Network.Mode, "network.mode", "gobgp", "frr", "static", "dhcp")
@@ -83,6 +83,9 @@ func (c *Config) Validate() error {
 	if err := validateSysextConfig(&c.Provision.Sysext); err != nil {
 		errs = append(errs, err.Error())
 	}
+	if err := validateABConfig(c.Provision.Image.Mode, &c.Provision.AB); err != nil {
+		errs = append(errs, err.Error())
+	}
 
 	if len(errs) > 0 {
 		return fmt.Errorf("config validation: %s", strings.Join(errs, "; "))
@@ -103,6 +106,9 @@ func (c *Config) normalize() {
 		&c.Network.BGP.OverlayType,
 		&c.Provision.CloudInit.Datasource,
 		&c.Provision.Sysext.DefaultMode,
+		&c.Provision.AB.Scheme,
+		&c.Provision.AB.ActiveSlot,
+		&c.Provision.AB.TargetSlot,
 		&c.Rescue.Mode,
 	}
 	for _, f := range lowerFields {
@@ -113,6 +119,73 @@ func (c *Config) normalize() {
 	if c.Transport.TokenAlgorithm != "" {
 		c.Transport.TokenAlgorithm = strings.ToUpper(c.Transport.TokenAlgorithm)
 	}
+}
+
+func validateABConfig(imageMode string, cfg *ABConfig) error {
+	errs := make([]string, 0, 5)
+	mode := strings.ToLower(strings.TrimSpace(imageMode))
+	abMode := mode == ImageModeAB
+
+	errs = append(errs, validateABEnums(cfg)...)
+	errs = append(errs, validateABSizeFields(cfg)...)
+	errs = append(errs, validateABModeConstraints(abMode, cfg)...)
+
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func validateABEnums(cfg *ABConfig) []string {
+	var errs []string
+	scheme := normalizeABScheme(cfg.Scheme)
+	if scheme != "" && scheme != ABSchemeDualRoot {
+		errs = append(errs, fmt.Sprintf("invalid provision.ab.scheme %q", cfg.Scheme))
+	}
+
+	activeSlot := normalizeABSlot(cfg.ActiveSlot)
+	if activeSlot != "" && activeSlot != ABSlotA && activeSlot != ABSlotB {
+		errs = append(errs, fmt.Sprintf("invalid provision.ab.activeSlot %q", cfg.ActiveSlot))
+	}
+
+	targetSlot := strings.ToLower(strings.TrimSpace(cfg.TargetSlot))
+	if targetSlot != "" && targetSlot != ABSlotA && targetSlot != ABSlotB && targetSlot != ABTargetInactive {
+		errs = append(errs, fmt.Sprintf("invalid provision.ab.targetSlot %q", cfg.TargetSlot))
+	}
+	return errs
+}
+
+func validateABSizeFields(cfg *ABConfig) []string {
+	var errs []string
+	if cfg.BootSizeMB < 0 {
+		errs = append(errs, "provision.ab.bootSizeMB must be non-negative")
+	}
+	if cfg.RootSizeMB < 0 {
+		errs = append(errs, "provision.ab.rootSizeMB must be non-negative")
+	}
+	if cfg.StateSizeMB < 0 {
+		errs = append(errs, "provision.ab.stateSizeMB must be non-negative")
+	}
+	return errs
+}
+
+func validateABModeConstraints(abMode bool, cfg *ABConfig) []string {
+	var errs []string
+	if cfg.PreserveExisting && !abMode {
+		errs = append(errs, "provision.ab.preserveExisting requires provision.image.mode=ab")
+	}
+	if !abMode {
+		return errs
+	}
+
+	withDefaults := cfg.WithDefaults()
+	if withDefaults.RootSizeMB <= 0 {
+		errs = append(errs, "provision.ab.rootSizeMB must be positive in ab image mode")
+	}
+	if _, err := withDefaults.ResolvedTargetSlot(); err != nil {
+		errs = append(errs, fmt.Sprintf("provision.ab: %v", err))
+	}
+	return errs
 }
 
 // minDevicesForLevel returns the minimum number of member devices required

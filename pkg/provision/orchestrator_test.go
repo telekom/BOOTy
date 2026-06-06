@@ -585,6 +585,7 @@ func TestDryRunImageMode(t *testing.T) {
 		{"whole-disk", "whole-disk", DryRunPass},
 		{"partition", "partition", DryRunPass},
 		{"PARTITION caps", "PARTITION", DryRunPass},
+		{"ab", "ab", DryRunPass},
 		{"invalid", "invalid-mode", DryRunFail},
 	}
 	for _, tt := range tests {
@@ -598,6 +599,73 @@ func TestDryRunImageMode(t *testing.T) {
 				t.Errorf("dryRunImageMode(%q) status = %s, want %s", tt.mode, result.Status, tt.status)
 			}
 		})
+	}
+}
+
+func TestEnsureABPartitionLayoutTargetsInactiveSlot(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.ActiveSlot = config.ABSlotA
+	cfg.Provision.AB.TargetSlot = config.ABTargetInactive
+	cfg.Provision.AB.RootSizeMB = 8192
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+
+	if err := o.ensureABPartitionLayout(); err != nil {
+		t.Fatalf("ensureABPartitionLayout: %v", err)
+	}
+	layout := cfg.Provision.Disk.PartitionLayout
+	if layout == nil {
+		t.Fatal("expected partition layout")
+	}
+	if layout.Partitions[1].Mountpoint != "" {
+		t.Fatalf("slot A mountpoint = %q, want empty", layout.Partitions[1].Mountpoint)
+	}
+	if layout.Partitions[2].Mountpoint != "/" {
+		t.Fatalf("slot B mountpoint = %q, want /", layout.Partitions[2].Mountpoint)
+	}
+}
+
+func TestWriteABSlotState(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.ActiveSlot = config.ABSlotB
+	cfg.Provision.AB.TargetSlot = config.ABTargetInactive
+	cfg.Provision.AB.PreserveExisting = true
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.rootPartition = "/dev/sda2"
+
+	if err := o.writeABSlotState(); err != nil {
+		t.Fatalf("writeABSlotState: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(o.config.rootDir, "etc", "booty", "ab-slot.env"))
+	if err != nil {
+		t.Fatalf("read ab-slot.env: %v", err)
+	}
+	content := string(data)
+	for _, want := range []string{
+		"BOOTY_AB_TARGET_SLOT=a",
+		"BOOTY_AB_ACTIVE_SLOT=b",
+		"BOOTY_AB_PRESERVE_EXISTING=true",
+		"BOOTY_AB_ROOT_PARTITION=/dev/sda2",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("ab-slot.env missing %q in:\n%s", want, content)
+		}
+	}
+}
+
+func TestWipeOrSecureEraseDisksSkipsWholeDiskWipeForABPreserveExisting(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.PreserveExisting = true
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	if err := o.wipeOrSecureEraseDisks(context.Background()); err != nil {
+		t.Fatalf("wipeOrSecureEraseDisks: %v", err)
+	}
+	if len(cmd.calls) != 0 {
+		t.Fatalf("expected no wipe commands, got %#v", cmd.calls)
 	}
 }
 

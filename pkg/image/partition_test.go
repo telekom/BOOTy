@@ -37,3 +37,31 @@ func TestConvertQCOW2HookRegistered(t *testing.T) {
 		t.Fatal("convertQCOW2Hook is nil on linux")
 	}
 }
+
+func TestSelectSourcePartitionsForAB(t *testing.T) {
+	parts := []sfdiskPartition{
+		{Node: "/dev/loop0p1", Type: efiSystemPartitionGUID, Size: 1024},
+		{Node: "/dev/loop0p2", Type: linuxFilesystemGUID, Size: 2048},
+		{Node: "/dev/loop0p3", Type: linuxFilesystemGUID, Size: 4096},
+	}
+	boot, ok := selectSourceBootPartition(parts)
+	if !ok || boot.Node != "/dev/loop0p1" {
+		t.Fatalf("boot = %#v, ok=%v", boot, ok)
+	}
+	root, ok := selectSourceRootPartition(parts)
+	if !ok || root.Node != "/dev/loop0p3" {
+		t.Fatalf("root = %#v, ok=%v", root, ok)
+	}
+}
+
+func TestSelectSourceRootPartitionFallsBackToLargestNonEFI(t *testing.T) {
+	parts := []sfdiskPartition{
+		{Node: "/dev/loop0p1", Type: efiSystemPartitionGUID, Size: 1024},
+		{Node: "/dev/loop0p2", Type: "unknown", Size: 8192},
+		{Node: "/dev/loop0p3", Type: "unknown", Size: 4096},
+	}
+	root, ok := selectSourceRootPartition(parts)
+	if !ok || root.Node != "/dev/loop0p2" {
+		t.Fatalf("root = %#v, ok=%v", root, ok)
+	}
+}

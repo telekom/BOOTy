@@ -222,11 +222,27 @@ provision:
     # checksumType: sha256 | sha512 (default: inferred from checksum length)
     checksumType: sha256
 
-    # mode: whole-disk (default) | partition
+    # mode: whole-disk (default) | partition | ab
     mode: whole-disk
 
     signatureURL: ""
     gpgPubKey: ""
+
+  ab:
+    # scheme: dual-root (default). Used only when provision.image.mode=ab.
+    scheme: dual-root
+    # activeSlot: currently booted slot, a | b. Empty means initial provision.
+    activeSlot: a
+    # targetSlot: inactive (default) | a | b.
+    targetSlot: inactive
+    # preserveExisting: true for OS upgrades; skips disk-wide wipe and layout creation.
+    preserveExisting: false
+    # bootSizeMB: shared EFI system partition size (default: 512).
+    bootSizeMB: 512
+    # rootSizeMB: size of each root slot (default: 32768).
+    rootSizeMB: 32768
+    # stateSizeMB: persistent state partition size; 0 fills remaining space.
+    stateSizeMB: 0
 
   disk:
     # device: explicit block device path (default: auto-detect largest non-removable disk)

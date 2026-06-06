@@ -32,6 +32,7 @@ const (
 )
 
 var sysextHTTPClient = &http.Client{
+	Timeout: 30 * time.Minute,
 	Transport: &http.Transport{
 		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 		DialContext: (&net.Dialer{
@@ -97,7 +98,10 @@ func sysextHasPreloadLayers(cfg *config.SysextConfig) bool {
 func (c *Configurator) applySysextLayer(ctx context.Context, cfg *config.SysextConfig, layer *config.SysextLayerConfig, catalog *sysextCatalog) error {
 	mode := sysextLayerMode(cfg, layer)
 	fileName := sysextFileName(layer)
-	targetDir := sysextTargetDir(cfg, mode)
+	targetDir, err := sysextTargetDir(cfg, mode)
+	if err != nil {
+		return fmt.Errorf("sysext %s: %w", layer.Name, err)
+	}
 	target, imagePath, err := sysextTargetPath(c.rootDir, targetDir, fileName)
 	if err != nil {
 		return fmt.Errorf("sysext %s target: %w", layer.Name, err)
@@ -182,14 +186,18 @@ func sysextLayerMode(cfg *config.SysextConfig, layer *config.SysextLayerConfig) 
 	return sysextModePreload
 }
 
-func sysextTargetDir(cfg *config.SysextConfig, mode string) string {
-	if mode == sysextModeActive {
+func sysextTargetDir(cfg *config.SysextConfig, mode string) (string, error) {
+	switch mode {
+	case sysextModeActive:
 		if cfg.ActiveDir != "" {
-			return cfg.ActiveDir
+			return cfg.ActiveDir, nil
 		}
-		return defaultSysextActiveDir
+		return defaultSysextActiveDir, nil
+	case sysextModePreload:
+		return sysextCatalogDir(cfg), nil
+	default:
+		return "", fmt.Errorf("invalid sysext mode %q", mode)
 	}
-	return sysextCatalogDir(cfg)
 }
 
 func sysextCatalogDir(cfg *config.SysextConfig) string {

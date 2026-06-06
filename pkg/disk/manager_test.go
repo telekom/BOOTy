@@ -164,6 +164,21 @@ func TestWipeDiskValidationAndCommands(t *testing.T) {
 	}
 }
 
+func TestWipeFilesystemSignaturesOnlyUsesWipefs(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+
+	if err := mgr.WipeFilesystemSignatures(context.Background(), "/dev/sda3"); err != nil {
+		t.Fatalf("WipeFilesystemSignatures: %v", err)
+	}
+	if len(cmd.calls) != 1 {
+		t.Fatalf("calls = %d, want 1: %#v", len(cmd.calls), cmd.calls)
+	}
+	if cmd.calls[0].name != "wipefs" || strings.Join(cmd.calls[0].args, " ") != "-af /dev/sda3" {
+		t.Fatalf("call = %s %v, want wipefs -af /dev/sda3", cmd.calls[0].name, cmd.calls[0].args)
+	}
+}
+
 func TestParsePartitions(t *testing.T) {
 	cmd := newMockCommander()
 	mgr := NewManager(cmd)

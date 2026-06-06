@@ -121,6 +121,9 @@ configuration. `SYSEXT_ACTIVE_DIR` is also supported for `active` mode.
 
 - Prefer `defaultMode: preload`; activate layers through boot config or a
   higher-level controller only when needed.
+- For A/B OS updates, keep sysexts independently versioned. BOOTy can preload
+  selected sysexts into the target root slot while `IMAGE_MODE=ab` writes the
+  inactive OS slot.
 - Pin every layer with `name`, `version`, `fileName`, and `sha256`.
 - Keep kernel, firmware, bootloader, users, `/etc`, `/var`, and provider state
   in the base image or regular provisioning config, not in sysext.
