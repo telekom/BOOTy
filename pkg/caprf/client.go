@@ -798,15 +798,10 @@ func ParseVars(r io.Reader) (*config.MachineConfig, error) {
 			continue
 		}
 
-		// Unquote value: strip surrounding double quotes or single quotes.
-		// Single quotes are common for JSON values in shell-style var files.
-		if len(value) >= 2 {
-			switch {
-			case value[0] == '"' && value[len(value)-1] == '"':
-				value = value[1 : len(value)-1]
-			case value[0] == '\'' && value[len(value)-1] == '\'':
-				value = value[1 : len(value)-1]
-			}
+		var err error
+		value, err = unquoteVarValue(value)
+		if err != nil {
+			return nil, fmt.Errorf("parse var %s: %w", key, err)
 		}
 
 		if err := applyVar(cfg, key, value); err != nil {
@@ -823,6 +818,24 @@ func ParseVars(r io.Reader) (*config.MachineConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+func unquoteVarValue(value string) (string, error) {
+	if len(value) < 2 {
+		return value, nil
+	}
+	switch {
+	case value[0] == '"' && value[len(value)-1] == '"':
+		unquoted, err := strconv.Unquote(value)
+		if err != nil {
+			return "", fmt.Errorf("unquote value: %w", err)
+		}
+		return unquoted, nil
+	case value[0] == '\'' && value[len(value)-1] == '\'':
+		return value[1 : len(value)-1], nil
+	default:
+		return value, nil
+	}
 }
 
 func applyVar(cfg *config.MachineConfig, key, value string) error {

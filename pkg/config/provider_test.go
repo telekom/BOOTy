@@ -318,9 +318,10 @@ func TestParsePartitionLayoutTooManyPartitions(t *testing.T) {
 
 func TestValidate(t *testing.T) {
 	tests := []struct {
-		name    string
-		cfg     Config
-		wantErr string
+		name           string
+		cfg            Config
+		wantErr        string
+		wantNormalized func(t *testing.T, cfg *Config)
 	}{
 		{name: "empty config is valid", cfg: Config{}},
 		{name: "valid mode provision", cfg: Config{Mode: "provision"}},
@@ -347,6 +348,12 @@ func TestValidate(t *testing.T) {
 		{name: "valid cloud-init ds", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: "nocloud"}}}},
 		{name: "invalid cloud-init ds", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: "ec2"}}}, wantErr: "invalid provision.cloudInit.datasource"},
 		{name: "valid sysext preload mode", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{DefaultMode: "preload"}}}},
+		{name: "normalizes sysext default mode", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{DefaultMode: "PreLoad"}}}, wantNormalized: func(t *testing.T, cfg *Config) {
+			t.Helper()
+			if cfg.Provision.Sysext.DefaultMode != "preload" {
+				t.Fatalf("DefaultMode = %q, want preload", cfg.Provision.Sysext.DefaultMode)
+			}
+		}},
 		{name: "invalid sysext default mode", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{DefaultMode: "enabled"}}}, wantErr: "invalid provision.sysext.defaultMode"},
 		{name: "invalid sysext catalog dir", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{CatalogDir: "var/lib/sysext"}}}, wantErr: "provision.sysext.catalogDir"},
 		{name: "invalid sysext active dir", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{ActiveDir: "/"}}}, wantErr: "provision.sysext.activeDir"},
@@ -368,6 +375,9 @@ func TestValidate(t *testing.T) {
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
+				}
+				if tc.wantNormalized != nil {
+					tc.wantNormalized(t, &tc.cfg)
 				}
 				return
 			}

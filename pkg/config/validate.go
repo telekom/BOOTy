@@ -102,6 +102,7 @@ func (c *Config) normalize() {
 		&c.Network.BGP.UnderlayAF,
 		&c.Network.BGP.OverlayType,
 		&c.Provision.CloudInit.Datasource,
+		&c.Provision.Sysext.DefaultMode,
 		&c.Rescue.Mode,
 	}
 	for _, f := range lowerFields {

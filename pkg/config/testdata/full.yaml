@@ -287,7 +287,7 @@ provision:
     layers:
       - name: node-tuning
         version: v1
-        source: /deploy/sysext/node-tuning.raw
+        source: oci://registry.example.com/tcaas/sysext-node-tuning:v1
         fileName: node-tuning.raw
         sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         mode: preload

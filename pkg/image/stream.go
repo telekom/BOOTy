@@ -206,7 +206,7 @@ func openSource(ctx context.Context, url string) (io.ReadCloser, error) {
 	if IsOCIReference(url) {
 		ref := TrimOCIScheme(url)
 		slog.Info("pulling OCI image", "ref", ref)
-		return fetchOCIWithRetry(ctx, ref)
+		return FetchOCILayerWithRetry(ctx, ref)
 	}
 
 	return httpGetWithRetry(ctx, url)
@@ -270,8 +270,8 @@ func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 	return nil, lastErr
 }
 
-// fetchOCIWithRetry retries OCI layer fetch with exponential backoff.
-func fetchOCIWithRetry(ctx context.Context, ref string) (io.ReadCloser, error) {
+// FetchOCILayerWithRetry retries OCI layer fetch with exponential backoff.
+func FetchOCILayerWithRetry(ctx context.Context, ref string) (io.ReadCloser, error) {
 	const maxRetries = 3
 	backoff := retryBackoffBase
 

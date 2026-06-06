@@ -7,11 +7,22 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/registry"
+	"github.com/google/go-containerregistry/pkg/v1/empty"
+	"github.com/google/go-containerregistry/pkg/v1/mutate"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/stream"
 	"github.com/telekom/BOOTy/pkg/config"
 )
 
@@ -84,6 +95,45 @@ func TestApplySysextsActiveModeDoesNotWriteCatalog(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(c.rootDir, "usr/lib/tcaas-sysext/preloaded/catalog.json")); !os.IsNotExist(err) {
 		t.Fatalf("preload catalog should not exist for active-only layers")
 	}
+	if _, err := os.Stat(filepath.Join(c.rootDir, "usr/lib/tcaas-sysext/preloaded")); !os.IsNotExist(err) {
+		t.Fatalf("preload directory should not exist for active-only layers")
+	}
+}
+
+func TestApplySysextsPullsOCILayer(t *testing.T) {
+	c := newTestConfigurator(t, newMockCommander())
+	content := []byte("oci sysext")
+	ref := pushSysextOCI(t, "test/sysext:v1", content)
+	sum := sha256.Sum256(content)
+	digest := hex.EncodeToString(sum[:])
+
+	cfg := config.SysextConfig{
+		Enabled: true,
+		Layers: []config.SysextLayerConfig{{
+			Name:    "node-tuning",
+			Version: "v1",
+			Source:  "oci://" + ref,
+			SHA256:  digest,
+		}},
+	}
+
+	if err := c.ApplySysexts(context.Background(), &cfg); err != nil {
+		t.Fatalf("ApplySysexts() error: %v", err)
+	}
+
+	target := filepath.Join(c.rootDir, "usr/lib/tcaas-sysext/preloaded/node-tuning.raw")
+	if got := readFile(t, target); got != string(content) {
+		t.Fatalf("OCI sysext content = %q", got)
+	}
+
+	var catalog sysextCatalog
+	readJSON(t, filepath.Join(c.rootDir, "usr/lib/tcaas-sysext/preloaded/catalog.json"), &catalog)
+	if len(catalog.Layers) != 1 {
+		t.Fatalf("catalog layers = %d, want 1", len(catalog.Layers))
+	}
+	if catalog.Layers[0].FileName != "node-tuning.raw" {
+		t.Fatalf("catalog fileName = %q", catalog.Layers[0].FileName)
+	}
 }
 
 func TestApplySysextsDigestMismatch(t *testing.T) {
@@ -131,6 +181,70 @@ func TestApplySysextsRejectsUnsafeFileName(t *testing.T) {
 	}
 }
 
+func TestApplySysextsRejectsSymlinkEscape(t *testing.T) {
+	c := newTestConfigurator(t, newMockCommander())
+	source, digest := writeSysextSource(t, "escape")
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(c.rootDir, "usr")); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.SysextConfig{
+		Enabled: true,
+		Layers: []config.SysextLayerConfig{{
+			Name:     "escape",
+			Source:   source,
+			FileName: "escape.raw",
+			SHA256:   digest,
+		}},
+	}
+
+	err := c.ApplySysexts(context.Background(), &cfg)
+	if err == nil {
+		t.Fatal("expected symlink escape error")
+	}
+	if !strings.Contains(err.Error(), "target escapes provisioned root") {
+		t.Fatalf("expected target escape error, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "lib")); !os.IsNotExist(err) {
+		t.Fatalf("sysext provisioning created content outside root")
+	}
+}
+
+func TestApplySysextsRejectsNonRegularLocalSource(t *testing.T) {
+	c := newTestConfigurator(t, newMockCommander())
+	sourceDir := t.TempDir()
+
+	cfg := config.SysextConfig{
+		Enabled: true,
+		Layers: []config.SysextLayerConfig{{
+			Name:   "directory",
+			Source: sourceDir,
+		}},
+	}
+
+	err := c.ApplySysexts(context.Background(), &cfg)
+	if err == nil {
+		t.Fatal("expected non-regular source error")
+	}
+	if !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("expected regular file error, got %v", err)
+	}
+}
+
+func TestSysextHTTPClientBoundsHeaderWait(t *testing.T) {
+	transport, ok := sysextHTTPClient.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("sysextHTTPClient transport = %T", sysextHTTPClient.Transport)
+	}
+	if transport.ResponseHeaderTimeout <= 0 {
+		t.Fatal("ResponseHeaderTimeout must be bounded")
+	}
+	if transport.TLSHandshakeTimeout <= 0 {
+		t.Fatal("TLSHandshakeTimeout must be bounded")
+	}
+}
+
 func writeSysextSource(t *testing.T, content string) (string, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "layer.raw")
@@ -139,6 +253,29 @@ func writeSysextSource(t *testing.T, content string) (string, string) {
 	}
 	sum := sha256.Sum256([]byte(content))
 	return path, hex.EncodeToString(sum[:])
+}
+
+func pushSysextOCI(t *testing.T, repoTag string, data []byte) string {
+	t.Helper()
+	srv := httptest.NewServer(registry.New())
+	t.Cleanup(srv.Close)
+
+	layer := stream.NewLayer(io.NopCloser(strings.NewReader(string(data))))
+	img, err := mutate.AppendLayers(empty.Image, layer)
+	if err != nil {
+		t.Fatalf("mutate.AppendLayers: %v", err)
+	}
+
+	ref, err := name.ParseReference(fmt.Sprintf("%s/%s", strings.TrimPrefix(srv.URL, "http://"), repoTag))
+	if err != nil {
+		t.Fatalf("parse OCI ref: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := remote.Write(ref, img, remote.WithContext(ctx)); err != nil {
+		t.Fatalf("remote.Write: %v", err)
+	}
+	return ref.String()
 }
 
 func readFile(t *testing.T, path string) string {

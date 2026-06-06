@@ -1010,6 +1010,29 @@ SYSEXT_LAYERS='[{"name":"node-tuning","version":"v1","source":"https://example.i
 	}
 }
 
+func TestParseVarsSysextConfigGoQuotedJSON(t *testing.T) {
+	layersJSON := `[{"name":"node-tuning","version":"v1","source":"oci://registry.example.com/tcaas/sysext-node-tuning:v1","fileName":"node-tuning.raw","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mode":"preload"}]`
+	input := fmt.Sprintf("export SYSEXT_ENABLED=%q\nexport SYSEXT_LAYERS=%q\n", "true", layersJSON)
+
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Provision.Sysext.Enabled {
+		t.Fatal("Sysext.Enabled should be true")
+	}
+	if len(cfg.Provision.Sysext.Layers) != 1 {
+		t.Fatalf("Sysext.Layers len = %d, want 1", len(cfg.Provision.Sysext.Layers))
+	}
+	layer := cfg.Provision.Sysext.Layers[0]
+	if layer.Source != "oci://registry.example.com/tcaas/sysext-node-tuning:v1" {
+		t.Fatalf("Source = %q", layer.Source)
+	}
+	if layer.FileName != "node-tuning.raw" {
+		t.Fatalf("FileName = %q", layer.FileName)
+	}
+}
+
 func TestParseVarsSysextLayersInvalidJSON(t *testing.T) {
 	input := `SYSEXT_LAYERS="not-json"`
 	_, err := ParseVars(strings.NewReader(input))
