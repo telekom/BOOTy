@@ -204,10 +204,7 @@ func repeatedPayload(seed string, size int) []byte {
 
 func writePartitionPrefix(t *testing.T, dev string, data []byte) {
 	t.Helper()
-	f, err := os.OpenFile(dev, os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatalf("open %s for write: %v", dev, err)
-	}
+	f := openPartitionForWrite(t, dev, 5*time.Second)
 	defer f.Close()
 	if _, err := f.Write(data); err != nil {
 		t.Fatalf("write %s: %v", dev, err)
@@ -215,6 +212,22 @@ func writePartitionPrefix(t *testing.T, dev string, data []byte) {
 	if err := f.Sync(); err != nil {
 		t.Fatalf("sync %s: %v", dev, err)
 	}
+}
+
+func openPartitionForWrite(t *testing.T, dev string, timeout time.Duration) *os.File {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		f, err := os.OpenFile(dev, os.O_WRONLY, 0)
+		if err == nil {
+			return f
+		}
+		lastErr = err
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("open %s for write within %s: %v", dev, timeout, lastErr)
+	return nil
 }
 
 func assertPartitionPrefix(t *testing.T, dev string, want []byte) {
