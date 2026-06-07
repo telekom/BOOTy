@@ -642,24 +642,53 @@ func TestVrnetlabModulesLoaded(t *testing.T) {
 // Unexpected ERROR Detection
 // ═══════════════════════════════════════════════════════════════════════
 
-// vrnetlabAllowedErrors lists error messages expected in CI (no real disk, etc.).
+// vrnetlabAllowedErrorWrappers and vrnetlabAllowedErrorRootCauses list error
+// messages expected in CI (no real disk, etc.).
 // Debug dumps (DumpDebugState, DumpPATH, dumpConfig) log at WARN level and
 // are invisible to this check — only genuine ERROR-level messages remain.
-var vrnetlabAllowedErrors = []string{
+var vrnetlabAllowedErrorWrappers = []string{
 	// Top-level provisioning/deprovisioning failure.
 	"provisioning failed",
 	"deprovisioning failed",
 	// Individual step failures.
 	"provisioning step failed",
 	"Deprovisioning step failed",
+}
+
+var vrnetlabAllowedErrorRootCauses = []string{
 	// Expected in CI without real disks or network.
 	"no suitable disk found",
+	`exec: "mdadm": executable file not found in $PATH`,
 	"Connectivity timeout",
 	"Connecting to provisioning server",
 	"network connectivity timeout",
 	// Expected when CAPRF endpoints are HTTP-only and token auth is enforced.
 	"failed to report error status",
 	"insecure transport",
+}
+
+func vrnetlabAllowedErrorLine(line string) bool {
+	lineLower := strings.ToLower(line)
+	lineLower = strings.ReplaceAll(lineLower, `\"`, `"`)
+	if strings.Contains(lineLower, `msg="mode exited with error"`) {
+		return vrnetlabAllowedErrorRootCause(lineLower)
+	}
+
+	for _, pattern := range vrnetlabAllowedErrorWrappers {
+		if strings.Contains(lineLower, strings.ToLower(pattern)) {
+			return true
+		}
+	}
+	return vrnetlabAllowedErrorRootCause(lineLower)
+}
+
+func vrnetlabAllowedErrorRootCause(lineLower string) bool {
+	for _, pattern := range vrnetlabAllowedErrorRootCauses {
+		if strings.Contains(lineLower, strings.ToLower(pattern)) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestVrnetlabNoUnexpectedErrors(t *testing.T) {
@@ -682,18 +711,52 @@ func TestVrnetlabNoUnexpectedErrors(t *testing.T) {
 			if !strings.Contains(line, "level=ERROR") {
 				continue
 			}
-			lineLower := strings.ToLower(line)
-			allowed := false
-			for _, pattern := range vrnetlabAllowedErrors {
-				if strings.Contains(lineLower, strings.ToLower(pattern)) {
-					allowed = true
-					break
-				}
-			}
-			if !allowed {
+			if !vrnetlabAllowedErrorLine(line) {
 				t.Errorf("%s: unexpected ERROR log: %s", vm.desc, line)
 			}
 		}
+	}
+}
+
+func TestVrnetlabAllowedErrorLineRequiresExpectedModeFailureCause(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{
+			name: "direct allowed provisioning failure",
+			line: `level=ERROR msg="provisioning failed" error="no suitable disk found"`,
+			want: true,
+		},
+		{
+			name: "mode exit allowed with wrapped expected cause",
+			line: `level=ERROR msg="mode exited with error" error="provisioning failed: no suitable disk found"`,
+			want: true,
+		},
+		{
+			name: "mode exit allowed with stable mdadm exec cause",
+			line: `level=ERROR msg="mode exited with error" mode=deprovision error="deprovision step stop-raid: stop raid arrays: exec mdadm: exec: \"mdadm\": executable file not found in $PATH"`,
+			want: true,
+		},
+		{
+			name: "mode exit rejected with generic wrapper and unexpected cause",
+			line: `level=ERROR msg="mode exited with error" error="provisioning failed: unexpected storage corruption"`,
+			want: false,
+		},
+		{
+			name: "mode exit rejected without expected cause",
+			line: `level=ERROR msg="mode exited with error" error="unexpected storage corruption"`,
+			want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := vrnetlabAllowedErrorLine(tc.line); got != tc.want {
+				t.Fatalf("vrnetlabAllowedErrorLine() = %t, want %t", got, tc.want)
+			}
+		})
 	}
 }
 
