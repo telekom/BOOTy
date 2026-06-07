@@ -668,6 +668,7 @@ var vrnetlabAllowedErrorRootCauses = []string{
 
 func vrnetlabAllowedErrorLine(line string) bool {
 	lineLower := strings.ToLower(line)
+	lineLower = strings.ReplaceAll(lineLower, `\"`, `"`)
 	if strings.Contains(lineLower, `msg="mode exited with error"`) {
 		return vrnetlabAllowedErrorRootCause(lineLower)
 	}
@@ -734,7 +735,7 @@ func TestVrnetlabAllowedErrorLineRequiresExpectedModeFailureCause(t *testing.T) 
 		},
 		{
 			name: "mode exit allowed with stable mdadm exec cause",
-			line: `level=ERROR msg="mode exited with error" mode=deprovision error="deprovision step stop-raid: stop raid arrays: exec mdadm: exec: "mdadm": executable file not found in $PATH"`,
+			line: `level=ERROR msg="mode exited with error" mode=deprovision error="deprovision step stop-raid: stop raid arrays: exec mdadm: exec: \"mdadm\": executable file not found in $PATH"`,
 			want: true,
 		},
 		{
