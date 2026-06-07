@@ -3,6 +3,7 @@
 package image
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -32,6 +33,28 @@ func StreamAB(ctx context.Context, url string, target ABTargets, opts ...StreamO
 	}
 	slog.Info("A/B image streaming", "url", url, "disk", target.Disk, "root", target.RootPartition, "boot", target.BootPartition)
 
+	var opt StreamOpts
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+
+	decompressed, cleanup, format, err := openAndDecompress(ctx, url)
+	if err != nil {
+		return err
+	}
+	if format != FormatQCOW2 {
+		defer cleanup()
+		if err := streamABRaw(ctx, decompressed, target, opt); err != nil {
+			wipeLeadingSectors(target.RootPartition)
+			return err
+		}
+		return nil
+	}
+	cleanup()
+	return streamABViaRamdisk(ctx, url, target, opt)
+}
+
+func streamABViaRamdisk(ctx context.Context, url string, target ABTargets, opt StreamOpts) error {
 	if err := setupRamdisk(); err != nil {
 		return fmt.Errorf("setting up ramdisk: %w", err)
 	}
@@ -42,10 +65,6 @@ func StreamAB(ctx context.Context, url string, target ABTargets, opts ...StreamO
 		return err
 	}
 
-	var opt StreamOpts
-	if len(opts) > 0 {
-		opt = opts[0]
-	}
 	if err := verifyFileChecksum(rawPath, opt); err != nil {
 		return err
 	}
@@ -55,6 +74,60 @@ func StreamAB(ctx context.Context, url string, target ABTargets, opts ...StreamO
 		return err
 	}
 	return nil
+}
+
+func streamABRaw(ctx context.Context, src io.Reader, target ABTargets, opt StreamOpts) error {
+	prefix, err := readStreamPrefix(src, streamABPrefixBytes)
+	if err != nil {
+		return err
+	}
+
+	stream, checksum, err := wrapChecksum(io.MultiReader(bytes.NewReader(prefix), src), opt)
+	if err != nil {
+		return err
+	}
+
+	parts, err := parseGPTPartitions(prefix)
+	if err != nil {
+		if err == errNoGPT {
+			slog.Info("source image has no GPT partition table; copying as root filesystem")
+			if err := streamReaderToDevice(ctx, stream, target.RootPartition); err != nil {
+				return err
+			}
+			return verifyChecksum(checksum, opt)
+		}
+		return err
+	}
+
+	var ranges []abStreamRange
+	if target.BootPartition != "" {
+		if boot, ok := selectSourceBootPartition(parts); ok {
+			ranges = append(ranges, abStreamRange{
+				name:  "boot",
+				start: int64(gptSectorSize) * boot.Start,
+				size:  int64(gptSectorSize) * boot.Size,
+				dst:   target.BootPartition,
+			})
+		} else {
+			slog.Warn("source image has no EFI partition; leaving shared boot partition unchanged")
+		}
+	}
+
+	root, ok := selectSourceRootPartition(parts)
+	if !ok {
+		return fmt.Errorf("source image has no root partition candidate")
+	}
+	ranges = append(ranges, abStreamRange{
+		name:  "root",
+		start: int64(gptSectorSize) * root.Start,
+		size:  int64(gptSectorSize) * root.Size,
+		dst:   target.RootPartition,
+	})
+
+	if err := copyABStreamRanges(ctx, stream, ranges, checksum != nil); err != nil {
+		return err
+	}
+	return verifyChecksum(checksum, opt)
 }
 
 func verifyFileChecksum(path string, opt StreamOpts) error {
