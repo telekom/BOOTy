@@ -177,10 +177,16 @@ func writeFileAtomic(target string, data []byte, perm os.FileMode) error {
 		_ = os.Remove(tmp) //nolint:gosec // tmp was created next to target
 		return fmt.Errorf("chmod target: %w", err)
 	}
-	if _, err := out.Write(data); err != nil {
+	written, err := out.Write(data)
+	if err != nil {
 		_ = out.Close()
 		_ = os.Remove(tmp) //nolint:gosec // tmp was created next to target
 		return fmt.Errorf("write target: %w", err)
+	}
+	if written != len(data) {
+		_ = out.Close()
+		_ = os.Remove(tmp) //nolint:gosec // tmp was created next to target
+		return fmt.Errorf("write target short write: %w", io.ErrShortWrite)
 	}
 	if err := out.Close(); err != nil {
 		_ = os.Remove(tmp) //nolint:gosec // tmp was created next to target
@@ -385,7 +391,7 @@ func openSysextSource(ctx context.Context, source string) (io.ReadCloser, error)
 		}
 		if resp.StatusCode != http.StatusOK {
 			_ = resp.Body.Close()
-			return nil, fmt.Errorf("fetch sysext: HTTP %d", resp.StatusCode)
+			return nil, fmt.Errorf("fetch sysext %s: %s", source, resp.Status)
 		}
 		return resp.Body, nil
 	}

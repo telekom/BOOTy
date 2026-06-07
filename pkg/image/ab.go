@@ -30,7 +30,7 @@ type ABTargets struct {
 // existing dual-root A/B layout. It does not replace the target partition table.
 func StreamAB(ctx context.Context, url string, target ABTargets, opts ...StreamOpts) error {
 	if strings.TrimSpace(target.RootPartition) == "" {
-		return fmt.Errorf("A/B root partition is required")
+		return fmt.Errorf("a/b root partition is required")
 	}
 	slog.Info("A/B image streaming", "url", url, "disk", target.Disk, "root", target.RootPartition, "boot", target.BootPartition)
 

@@ -673,9 +673,19 @@ func (o *Orchestrator) writeABSlotState() error {
 	if err != nil {
 		return err
 	}
-	stateDir := filepath.Join(o.config.rootDir, "etc", "booty")
+	statePath := filepath.Join(o.config.rootDir, "etc", "booty", "ab-slot.env")
+	stateDir := filepath.Dir(statePath)
+	if err := ensureWithinRoot(o.config.rootDir, statePath); err != nil {
+		return fmt.Errorf("a/b slot state path: %w", err)
+	}
+	if err := ensureTargetParentWithinRoot(o.config.rootDir, stateDir); err != nil {
+		return fmt.Errorf("a/b slot state directory: %w", err)
+	}
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return fmt.Errorf("creating A/B state directory: %w", err)
+	}
+	if err := ensureTargetParentWithinRoot(o.config.rootDir, stateDir); err != nil {
+		return fmt.Errorf("a/b slot state directory: %w", err)
 	}
 	content := fmt.Sprintf(
 		"BOOTY_AB_SCHEME=%s\nBOOTY_AB_TARGET_SLOT=%s\nBOOTY_AB_ACTIVE_SLOT=%s\nBOOTY_AB_PRESERVE_EXISTING=%t\nBOOTY_AB_ROOT_PARTITION=%s\n",
@@ -685,7 +695,7 @@ func (o *Orchestrator) writeABSlotState() error {
 		ab.PreserveExisting,
 		o.rootPartition,
 	)
-	if err := os.WriteFile(filepath.Join(stateDir, "ab-slot.env"), []byte(content), 0o644); err != nil {
+	if err := writeFileAtomic(statePath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("writing A/B slot state: %w", err)
 	}
 	return nil

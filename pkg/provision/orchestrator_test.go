@@ -655,6 +655,27 @@ func TestWriteABSlotState(t *testing.T) {
 	}
 }
 
+func TestWriteABSlotStateRejectsSymlinkEscape(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(o.config.rootDir, "etc")); err != nil {
+		t.Fatal(err)
+	}
+
+	err := o.writeABSlotState()
+	if err == nil {
+		t.Fatal("expected symlink escape error")
+	}
+	if !strings.Contains(err.Error(), "target escapes provisioned root") {
+		t.Fatalf("error = %v, want target escape", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "booty", "ab-slot.env")); !os.IsNotExist(err) {
+		t.Fatalf("A/B slot state followed symlink into %s", outside)
+	}
+}
+
 func TestWipeOrSecureEraseDisksSkipsWholeDiskWipeForABPreserveExisting(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Image.Mode = config.ImageModeAB

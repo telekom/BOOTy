@@ -392,6 +392,25 @@ func TestOpenSysextSourceHTTPBodyTimeout(t *testing.T) {
 	}
 }
 
+func TestOpenSysextSourceHTTPStatusErrorIncludesURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+
+	source := srv.URL + "/layer.raw"
+	_, err := openSysextSource(context.Background(), source)
+	if err == nil {
+		t.Fatal("expected HTTP status error")
+	}
+	if !strings.Contains(err.Error(), source) {
+		t.Fatalf("error = %q, want source URL", err.Error())
+	}
+	if !strings.Contains(err.Error(), "503 Service Unavailable") {
+		t.Fatalf("error = %q, want HTTP status text", err.Error())
+	}
+}
+
 func writeSysextSource(t *testing.T, content string) (string, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "layer.raw")
