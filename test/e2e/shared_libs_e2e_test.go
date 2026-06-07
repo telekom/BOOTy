@@ -98,6 +98,7 @@ func TestDefaultSharedLibsResolveE2E(t *testing.T) {
 	checkSharedLibs(t, image, []string{
 		// Disk tools
 		"bin/wipefs", "sbin/mdadm", "sbin/resize2fs", "sbin/e2fsck",
+		"sbin/mkfs.ext4", "sbin/mkfs.vfat",
 		"sbin/xfs_growfs", "bin/btrfs", "bin/parted", "bin/sgdisk",
 		"bin/partprobe",
 		// EFI
@@ -126,6 +127,7 @@ func TestGoBGPSharedLibsResolveE2E(t *testing.T) {
 	checkSharedLibs(t, image, []string{
 		// Disk tools
 		"bin/wipefs", "sbin/mdadm", "sbin/resize2fs", "sbin/e2fsck",
+		"sbin/mkfs.ext4", "sbin/mkfs.vfat",
 		"sbin/xfs_growfs", "bin/btrfs", "bin/parted", "bin/sgdisk",
 		"bin/partprobe",
 		// EFI
@@ -295,6 +297,28 @@ func TestGoBGPInitramfsHasLibmnlE2E(t *testing.T) {
 	}
 	if !hasLibmnl {
 		t.Error("libmnl.so not found in gobgp initramfs (required by iproute2 ip/bridge)")
+	}
+}
+
+func TestFullInitramfsFlavorsHavePartitionFormattersE2E(t *testing.T) {
+	dockerAvailable(t)
+	for _, tc := range []struct {
+		name   string
+		target string
+	}{
+		{name: "default"},
+		{name: "gobgp", target: "gobgp"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dest := t.TempDir()
+			cpioGz := buildTarget(t, tc.target, dest)
+			files := listCPIOContents(t, cpioGz)
+			for _, want := range []string{"sbin/mkfs.ext4", "sbin/mkfs.vfat"} {
+				if !files[want] && !files["./"+want] {
+					t.Fatalf("initramfs missing %s; A/B partition layout formatting cannot run", want)
+				}
+			}
+		})
 	}
 }
 

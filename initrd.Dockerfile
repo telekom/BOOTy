@@ -123,6 +123,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # "not found", silently dropping them from the initramfs.
 RUN mkdir -p /tool-libs && \
     ldd /sbin/mdadm /usr/sbin/wipefs /sbin/resize2fs /sbin/e2fsck \
+        /usr/sbin/mkfs.ext4 /usr/sbin/mkfs.vfat \
         /usr/sbin/xfs_growfs /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk \
         /sbin/partprobe /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
         /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
@@ -138,6 +139,7 @@ RUN mkdir -p /tool-libs && \
 # Shared libs in /tool-libs are intentionally NOT stripped — that can corrupt them.
 RUN strip --strip-all \
     /sbin/mdadm /usr/sbin/wipefs /sbin/resize2fs /sbin/e2fsck \
+    /usr/sbin/mkfs.ext4 /usr/sbin/mkfs.vfat \
     /usr/sbin/xfs_growfs /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk \
     /sbin/partprobe /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
     /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
@@ -187,6 +189,8 @@ COPY --from=tools /sbin/mdadm sbin/mdadm
 COPY --from=tools /usr/sbin/wipefs bin/wipefs
 COPY --from=tools /sbin/resize2fs sbin/resize2fs
 COPY --from=tools /sbin/e2fsck sbin/e2fsck
+COPY --from=tools /usr/sbin/mkfs.ext4 sbin/mkfs.ext4
+COPY --from=tools /usr/sbin/mkfs.vfat sbin/mkfs.vfat
 COPY --from=tools /usr/sbin/xfs_growfs sbin/xfs_growfs
 COPY --from=tools /usr/bin/btrfs bin/btrfs
 COPY --from=tools /usr/sbin/parted bin/parted
@@ -239,6 +243,7 @@ COPY --from=dev /usr/bin/upx /usr/local/bin/upx
 RUN for b in \
         sbin/bgpd sbin/zebra sbin/bfdd bin/vtysh sbin/watchfrr \
         sbin/mdadm bin/wipefs sbin/resize2fs sbin/e2fsck \
+        sbin/mkfs.ext4 sbin/mkfs.vfat \
         bin/xfs_growfs bin/btrfs bin/parted bin/sgdisk bin/partprobe \
         bin/efibootmgr bin/dmidecode bin/ethtool bin/curl bin/ip bin/bridge \
         bin/hdparm bin/nvme bin/mstconfig bin/mstflint bin/ipmitool \
@@ -353,6 +358,8 @@ COPY --from=tools /sbin/mdadm sbin/mdadm
 COPY --from=tools /usr/sbin/wipefs bin/wipefs
 COPY --from=tools /sbin/resize2fs sbin/resize2fs
 COPY --from=tools /sbin/e2fsck sbin/e2fsck
+COPY --from=tools /usr/sbin/mkfs.ext4 sbin/mkfs.ext4
+COPY --from=tools /usr/sbin/mkfs.vfat sbin/mkfs.vfat
 COPY --from=tools /usr/sbin/xfs_growfs sbin/xfs_growfs
 COPY --from=tools /usr/bin/btrfs bin/btrfs
 COPY --from=tools /usr/sbin/parted bin/parted
@@ -400,6 +407,7 @@ COPY --from=kernel /modules/ modules/
 # Skipped: busybox (multi-applet), .so shared libs, .ko kernel modules.
 RUN for b in \
         sbin/mdadm bin/wipefs sbin/resize2fs sbin/e2fsck \
+        sbin/mkfs.ext4 sbin/mkfs.vfat \
         bin/xfs_growfs bin/btrfs bin/parted bin/sgdisk bin/partprobe \
         bin/efibootmgr bin/dmidecode bin/ethtool bin/curl bin/ip bin/bridge \
         bin/hdparm bin/nvme bin/mstconfig bin/mstflint bin/ipmitool \
