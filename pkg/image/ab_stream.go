@@ -191,8 +191,12 @@ func copyReader(ctx context.Context, dst io.Writer, src io.Reader) error {
 		}
 		n, readErr := src.Read(buf)
 		if n > 0 {
-			if _, err := dst.Write(buf[:n]); err != nil {
+			written, err := dst.Write(buf[:n])
+			if err != nil {
 				return err
+			}
+			if written != n {
+				return io.ErrShortWrite
 			}
 		}
 		if errors.Is(readErr, io.EOF) {
