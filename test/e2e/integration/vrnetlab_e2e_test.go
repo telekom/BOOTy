@@ -645,16 +645,19 @@ func TestVrnetlabModulesLoaded(t *testing.T) {
 // vrnetlabAllowedErrors lists error messages expected in CI (no real disk, etc.).
 // Debug dumps (DumpDebugState, DumpPATH, dumpConfig) log at WARN level and
 // are invisible to this check — only genuine ERROR-level messages remain.
-var vrnetlabAllowedErrors = []string{
+var vrnetlabAllowedErrorWrappers = []string{
 	// Top-level provisioning/deprovisioning failure.
 	"provisioning failed",
 	"deprovisioning failed",
 	// Individual step failures.
 	"provisioning step failed",
 	"Deprovisioning step failed",
+}
+
+var vrnetlabAllowedErrorRootCauses = []string{
 	// Expected in CI without real disks or network.
 	"no suitable disk found",
-	`exec mdadm: exec: "mdadm": executable file not found in $PATH`,
+	`exec: "mdadm": executable file not found in $PATH`,
 	"Connectivity timeout",
 	"Connecting to provisioning server",
 	"network connectivity timeout",
@@ -665,7 +668,20 @@ var vrnetlabAllowedErrors = []string{
 
 func vrnetlabAllowedErrorLine(line string) bool {
 	lineLower := strings.ToLower(line)
-	for _, pattern := range vrnetlabAllowedErrors {
+	if strings.Contains(lineLower, `msg="mode exited with error"`) {
+		return vrnetlabAllowedErrorRootCause(lineLower)
+	}
+
+	for _, pattern := range vrnetlabAllowedErrorWrappers {
+		if strings.Contains(lineLower, strings.ToLower(pattern)) {
+			return true
+		}
+	}
+	return vrnetlabAllowedErrorRootCause(lineLower)
+}
+
+func vrnetlabAllowedErrorRootCause(lineLower string) bool {
+	for _, pattern := range vrnetlabAllowedErrorRootCauses {
 		if strings.Contains(lineLower, strings.ToLower(pattern)) {
 			return true
 		}
@@ -717,9 +733,14 @@ func TestVrnetlabAllowedErrorLineRequiresExpectedModeFailureCause(t *testing.T) 
 			want: true,
 		},
 		{
-			name: "mode exit allowed with missing mdadm stop raid cause",
+			name: "mode exit allowed with stable mdadm exec cause",
 			line: `level=ERROR msg="mode exited with error" mode=deprovision error="deprovision step stop-raid: stop raid arrays: exec mdadm: exec: "mdadm": executable file not found in $PATH"`,
 			want: true,
+		},
+		{
+			name: "mode exit rejected with generic wrapper and unexpected cause",
+			line: `level=ERROR msg="mode exited with error" error="provisioning failed: unexpected storage corruption"`,
+			want: false,
 		},
 		{
 			name: "mode exit rejected without expected cause",
