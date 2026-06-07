@@ -61,6 +61,10 @@ func verifyFileChecksum(path string, opt StreamOpts) error {
 	if opt.Checksum == "" {
 		return nil
 	}
+	opt, err := normalizeChecksumOpt(opt)
+	if err != nil {
+		return err
+	}
 	h, err := newHash(opt.ChecksumType)
 	if err != nil {
 		return err

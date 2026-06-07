@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -238,7 +239,7 @@ func assertPartitionPrefix(t *testing.T, dev string, want []byte) {
 		t.Fatalf("open %s for read: %v", dev, err)
 	}
 	defer f.Close()
-	if _, err := f.Read(got); err != nil {
+	if _, err := io.ReadFull(f, got); err != nil {
 		t.Fatalf("read %s: %v", dev, err)
 	}
 	if !bytes.Equal(got, want) {

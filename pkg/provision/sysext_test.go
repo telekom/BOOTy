@@ -339,6 +339,16 @@ func TestWriteAndHashRejectsShortWrite(t *testing.T) {
 	}
 }
 
+func TestWriteAndHashRejectsZeroProgressReader(t *testing.T) {
+	_, err := writeAndHash(context.Background(), zeroProgressReader{}, io.Discard)
+	if err == nil {
+		t.Fatal("expected zero-progress reader error")
+	}
+	if !errors.Is(err, io.ErrNoProgress) {
+		t.Fatalf("error = %v, want %v", err, io.ErrNoProgress)
+	}
+}
+
 func TestSysextHTTPClientBoundsHeaderWait(t *testing.T) {
 	transport, ok := sysextHTTPClient.Transport.(*http.Transport)
 	if !ok {
@@ -419,6 +429,12 @@ type shortWriter struct{}
 
 func (shortWriter) Write(p []byte) (int, error) {
 	return len(p) - 1, nil
+}
+
+type zeroProgressReader struct{}
+
+func (zeroProgressReader) Read([]byte) (int, error) {
+	return 0, nil
 }
 
 func readFile(t *testing.T, path string) string {

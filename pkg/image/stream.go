@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -178,6 +179,10 @@ func wrapChecksum(r io.Reader, opt StreamOpts) (io.Reader, hash.Hash, error) {
 	if opt.Checksum == "" {
 		return r, nil, nil
 	}
+	opt, err := normalizeChecksumOpt(opt)
+	if err != nil {
+		return nil, nil, err
+	}
 	h, err := newHash(opt.ChecksumType)
 	if err != nil {
 		return nil, nil, err
@@ -190,6 +195,10 @@ func verifyChecksum(h hash.Hash, opt StreamOpts) error {
 	if h == nil {
 		return nil
 	}
+	opt, err := normalizeChecksumOpt(opt)
+	if err != nil {
+		return err
+	}
 	got := hex.EncodeToString(h.Sum(nil))
 	if subtle.ConstantTimeCompare([]byte(got), []byte(opt.Checksum)) != 1 {
 		return fmt.Errorf("checksum mismatch: computed=%s want=%s",
@@ -197,6 +206,38 @@ func verifyChecksum(h hash.Hash, opt StreamOpts) error {
 	}
 	slog.Info("checksum verified", "type", opt.ChecksumType)
 	return nil
+}
+
+func normalizeChecksumOpt(opt StreamOpts) (StreamOpts, error) {
+	opt.Checksum = strings.ToLower(strings.TrimSpace(opt.Checksum))
+	opt.ChecksumType = strings.ToLower(strings.TrimSpace(opt.ChecksumType))
+	if opt.Checksum == "" {
+		return opt, nil
+	}
+
+	for _, alg := range []string{"sha256", "sha512"} {
+		prefix := alg + ":"
+		if strings.HasPrefix(opt.Checksum, prefix) {
+			if opt.ChecksumType != "" && opt.ChecksumType != alg {
+				return opt, fmt.Errorf("checksum prefix %s conflicts with checksum type %s", alg, opt.ChecksumType)
+			}
+			opt.ChecksumType = alg
+			opt.Checksum = strings.TrimPrefix(opt.Checksum, prefix)
+			break
+		}
+	}
+
+	if opt.ChecksumType == "" {
+		switch len(opt.Checksum) {
+		case sha256.Size * 2:
+			opt.ChecksumType = "sha256"
+		case sha512.Size * 2:
+			opt.ChecksumType = "sha512"
+		default:
+			return opt, fmt.Errorf("cannot infer checksum type from checksum length %d", len(opt.Checksum))
+		}
+	}
+	return opt, nil
 }
 
 // openSource returns a ReadCloser for the given URL.
@@ -296,7 +337,7 @@ func FetchOCILayerWithRetry(ctx context.Context, ref string) (io.ReadCloser, err
 }
 
 func newHash(checksumType string) (hash.Hash, error) {
-	switch checksumType {
+	switch strings.ToLower(strings.TrimSpace(checksumType)) {
 	case "sha256":
 		return sha256.New(), nil
 	case "sha512":

@@ -411,6 +411,9 @@ func writeAndHash(ctx context.Context, src io.Reader, dst io.Writer) (string, er
 			return "", fmt.Errorf("copy sysext canceled: %w", err)
 		}
 		n, readErr := src.Read(buf)
+		if n == 0 && readErr == nil {
+			return "", io.ErrNoProgress
+		}
 		if n > 0 {
 			chunk := buf[:n]
 			if _, err := hash.Write(chunk); err != nil {

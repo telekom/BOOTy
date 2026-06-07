@@ -194,6 +194,31 @@ func TestStreamChecksumPass(t *testing.T) {
 	}
 }
 
+func TestStreamChecksumInfersTypeAndStripsPrefix(t *testing.T) {
+	data := []byte("data for checksum inference")
+	h := sha256.Sum256(data)
+	checksum := "sha256:" + strings.ToUpper(hex.EncodeToString(h[:]))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	}))
+	defer srv.Close()
+
+	tmpFile, err := os.CreateTemp(t.TempDir(), "disk-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = tmpFile.Close()
+
+	err = Stream(context.Background(), srv.URL+"/image.img", tmpFile.Name(), StreamOpts{
+		Checksum: checksum,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestStreamChecksumMismatch(t *testing.T) {
 	data := []byte("data for checksum mismatch test")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
