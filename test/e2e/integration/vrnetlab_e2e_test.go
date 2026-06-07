@@ -654,6 +654,7 @@ var vrnetlabAllowedErrors = []string{
 	"Deprovisioning step failed",
 	// Expected in CI without real disks or network.
 	"no suitable disk found",
+	`exec mdadm: exec: "mdadm": executable file not found in $PATH`,
 	"Connectivity timeout",
 	"Connecting to provisioning server",
 	"network connectivity timeout",
@@ -713,6 +714,11 @@ func TestVrnetlabAllowedErrorLineRequiresExpectedModeFailureCause(t *testing.T) 
 		{
 			name: "mode exit allowed with wrapped expected cause",
 			line: `level=ERROR msg="mode exited with error" error="provisioning failed: no suitable disk found"`,
+			want: true,
+		},
+		{
+			name: "mode exit allowed with missing mdadm stop raid cause",
+			line: `level=ERROR msg="mode exited with error" mode=deprovision error="deprovision step stop-raid: stop raid arrays: exec mdadm: exec: "mdadm": executable file not found in $PATH"`,
 			want: true,
 		},
 		{
