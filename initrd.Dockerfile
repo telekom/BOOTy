@@ -148,7 +148,7 @@ RUN strip --strip-all \
 # Busybox static binary — sourced from Docker Hub for reliability and
 # Dependabot version tracking.  Eliminates the fragile busybox.net download
 # that caused CI failures when the site was unreachable.
-FROM busybox:1.37.0-musl AS busybox-bin
+FROM busybox:1.38.0-musl AS busybox-bin
 
 FROM debian:bookworm-slim AS busybox
 RUN apt-get update && apt-get install -y --no-install-recommends cpio curl ca-certificates zstd \
