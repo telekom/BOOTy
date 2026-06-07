@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestABConfigResolvedTargetSlot(t *testing.T) {
 	tests := []struct {
@@ -70,5 +73,44 @@ func TestValidateRejectsABPreserveOutsideABMode(t *testing.T) {
 
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected validation error")
+	}
+}
+
+func TestValidateRejectsABPreserveInactiveWithoutActiveSlot(t *testing.T) {
+	tests := []struct {
+		name       string
+		targetSlot string
+	}{
+		{name: "default inactive target"},
+		{name: "explicit inactive target", targetSlot: ABTargetInactive},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{}
+			cfg.Provision.Image.Mode = ImageModeAB
+			cfg.Provision.AB.PreserveExisting = true
+			cfg.Provision.AB.TargetSlot = tt.targetSlot
+			cfg.Provision.AB.RootSizeMB = 8192
+
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if got := err.Error(); !strings.Contains(got, "provision.ab.activeSlot is required") {
+				t.Fatalf("Validate() error = %q", got)
+			}
+		})
+	}
+}
+
+func TestValidateAcceptsABPreserveExplicitTargetWithoutActiveSlot(t *testing.T) {
+	cfg := &Config{}
+	cfg.Provision.Image.Mode = ImageModeAB
+	cfg.Provision.AB.PreserveExisting = true
+	cfg.Provision.AB.TargetSlot = ABSlotB
+	cfg.Provision.AB.RootSizeMB = 8192
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error: %v", err)
 	}
 }

@@ -182,6 +182,9 @@ func validateABModeConstraints(abMode bool, cfg *ABConfig) []string {
 	if withDefaults.RootSizeMB <= 0 {
 		errs = append(errs, "provision.ab.rootSizeMB must be positive in ab image mode")
 	}
+	if cfg.PreserveExisting && withDefaults.TargetSlot == ABTargetInactive && withDefaults.ActiveSlot == "" {
+		errs = append(errs, "provision.ab.activeSlot is required when preserveExisting targets the inactive slot")
+	}
 	if _, err := withDefaults.ResolvedTargetSlot(); err != nil {
 		errs = append(errs, fmt.Sprintf("provision.ab: %v", err))
 	}

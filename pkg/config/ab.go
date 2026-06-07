@@ -38,7 +38,7 @@ type ABConfig struct {
 
 	// ActiveSlot is the currently booted slot ("a" or "b"). It is used when
 	// TargetSlot is "inactive" or empty. Empty defaults to no active slot, so
-	// the target resolves to slot "a".
+	// the target resolves to slot "a" for initial provisioning.
 	ActiveSlot string `yaml:"activeSlot" json:"activeSlot"`
 
 	// TargetSlot is the slot to write ("a", "b", or "inactive"). Empty
