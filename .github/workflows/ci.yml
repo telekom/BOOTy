@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CONTAINERLAB_VERSION: "v0.75.0"
+  CONTAINERLAB_VERSION: "0.75.0"
 
 permissions:
   contents: read
@@ -431,7 +431,7 @@ jobs:
         run: sudo test/e2e/clab/create-test-image.sh test/e2e/clab/images
 
       - name: Install ContainerLab
-        run: curl --connect-timeout 30 --max-time 120 -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}
+        run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
       - name: Deploy topology
         run: sudo containerlab deploy --topo test/e2e/clab/topology.clab.yml
@@ -799,18 +799,7 @@ jobs:
         run: sudo test/e2e/clab/create-test-image.sh test/e2e/clab/images
 
       - name: Install ContainerLab
-        run: |
-          for attempt in 1 2 3; do
-            echo "Installing ContainerLab (attempt ${attempt}/3)..."
-            if curl -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}; then
-              echo "ContainerLab installed successfully"
-              exit 0
-            fi
-            echo "Attempt ${attempt} failed, retrying in 5s..."
-            sleep 5
-          done
-          echo "ContainerLab installation failed after 3 attempts"
-          exit 1
+        run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
       - name: Deploy boot topology
         run: sudo containerlab deploy --topo test/e2e/clab/topology-boot.clab.yml
@@ -918,7 +907,7 @@ jobs:
         run: docker build -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
 
       - name: Install ContainerLab
-        run: curl -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}
+        run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
       - name: Deploy GoBGP topology
         run: sudo containerlab deploy --topo test/e2e/clab/topology-gobgp.clab.yml
@@ -1045,7 +1034,7 @@ jobs:
         run: docker build -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
 
       - name: Install ContainerLab
-        run: curl -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}
+        run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
       - name: Deploy Type-5 topology
         run: sudo containerlab deploy --topo test/e2e/clab/topology-type5.clab.yml
@@ -1179,7 +1168,7 @@ jobs:
         run: sudo test/e2e/clab/create-test-image.sh test/e2e/clab/images
 
       - name: Install ContainerLab
-        run: curl -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}
+        run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
       - name: Deploy vrnetlab EVPN topology
         run: sudo containerlab deploy --topo test/e2e/clab/topology-vrnetlab.clab.yml
