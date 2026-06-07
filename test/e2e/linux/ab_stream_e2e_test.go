@@ -155,9 +155,14 @@ func createPartitionedRawImage(t *testing.T, partitions []testPartition) rawImag
 	for _, part := range partitions {
 		fmt.Fprintf(&spec, "size=%dM, type=%s, name=%s\n", part.sizeMB, part.typeGUID, part.name)
 	}
-	cmd := exec.Command("sfdisk", path)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sfdisk", path)
 	cmd.Stdin = strings.NewReader(spec.String())
 	if out, err := cmd.CombinedOutput(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			t.Fatalf("sfdisk %s timed out after 30s:\n%s", path, out)
+		}
 		t.Fatalf("sfdisk %s:\n%s\n%v", path, out, err)
 	}
 

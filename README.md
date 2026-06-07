@@ -1025,6 +1025,7 @@ full feature roadmap with priorities and status tracking.
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup, coding standards, PR process |
 | [docs/roadmap.md](docs/roadmap.md) | Feature roadmap (P0–P4 priorities) |
 | [docs/sysext-provisioning.md](docs/sysext-provisioning.md) | Optional systemd-sysext loading while provisioning |
+| [docs/ab-partitioning.md](docs/ab-partitioning.md) | Optional A/B partitioning and inactive-slot provisioning |
 | [.github/AGENTS.md](.github/AGENTS.md) | Copilot agents, review personas, prompts |
 | [.github/copilot-instructions.md](.github/copilot-instructions.md) | Project guidelines for Copilot |
 

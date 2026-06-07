@@ -160,8 +160,35 @@ func (c *Configurator) writeSysextCatalog(cfg *config.SysextConfig, catalog *sys
 		return fmt.Errorf("marshal sysext catalog: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.WriteFile(catalogPath, data, 0o644); err != nil {
+	if err := writeFileAtomic(catalogPath, data, 0o644); err != nil {
 		return fmt.Errorf("write sysext catalog: %w", err)
+	}
+	return nil
+}
+
+func writeFileAtomic(target string, data []byte, perm os.FileMode) error {
+	out, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".*.tmp") //nolint:gosec // target directory constrained by caller
+	if err != nil {
+		return fmt.Errorf("create target: %w", err)
+	}
+	tmp := out.Name()
+	if err := out.Chmod(perm); err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmp) //nolint:gosec // tmp was created next to target
+		return fmt.Errorf("chmod target: %w", err)
+	}
+	if _, err := out.Write(data); err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmp) //nolint:gosec // tmp was created next to target
+		return fmt.Errorf("write target: %w", err)
+	}
+	if err := out.Close(); err != nil {
+		_ = os.Remove(tmp) //nolint:gosec // tmp was created next to target
+		return fmt.Errorf("close target: %w", err)
+	}
+	if err := os.Rename(tmp, target); err != nil { //nolint:gosec // atomic replacement within constrained target directory
+		_ = os.Remove(tmp) //nolint:gosec // tmp was created next to target
+		return fmt.Errorf("install target: %w", err)
 	}
 	return nil
 }

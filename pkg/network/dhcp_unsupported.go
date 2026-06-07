@@ -20,7 +20,7 @@ func NewDHCPMode() *DHCPMode {
 }
 
 func (d *DHCPMode) Setup(context.Context, *Config) error {
-	return fmt.Errorf("DHCP mode is only supported on Linux")
+	return fmt.Errorf("dhcp mode is only supported on Linux")
 }
 
 func (d *DHCPMode) WaitForConnectivity(ctx context.Context, target string, timeout time.Duration) error {

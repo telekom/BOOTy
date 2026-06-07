@@ -70,6 +70,40 @@ func TestApplySysextsPreloadsLayerAndCatalog(t *testing.T) {
 	}
 }
 
+func TestApplySysextsCatalogDoesNotFollowExistingSymlink(t *testing.T) {
+	c := newTestConfigurator(t, newMockCommander())
+	source, digest := writeSysextSource(t, "safe catalog")
+	targetDir := filepath.Join(c.rootDir, "usr/lib/tcaas-sysext/preloaded")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside-catalog.json")
+	if err := os.Symlink(outside, filepath.Join(targetDir, "catalog.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.SysextConfig{
+		Enabled: true,
+		Layers: []config.SysextLayerConfig{{
+			Name:   "node-tuning",
+			Source: source,
+			SHA256: digest,
+		}},
+	}
+
+	if err := c.ApplySysexts(context.Background(), &cfg); err != nil {
+		t.Fatalf("ApplySysexts() error: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(targetDir, "catalog.json")); err != nil {
+		t.Fatalf("catalog lstat: %v", err)
+	} else if _, err := os.Readlink(filepath.Join(targetDir, "catalog.json")); err == nil {
+		t.Fatal("catalog.json is still a symlink")
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("catalog write followed symlink target")
+	}
+}
+
 func TestApplySysextsActiveModeDoesNotWriteCatalog(t *testing.T) {
 	c := newTestConfigurator(t, newMockCommander())
 	source, digest := writeSysextSource(t, "debug sysext")
