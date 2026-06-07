@@ -350,7 +350,7 @@ func copySysextSource(ctx context.Context, source, target, expected string) (str
 	closeErr := out.Close()
 	if copyErr != nil {
 		_ = os.Remove(tmp) //nolint:gosec // tmp was created in the constrained sysext target directory
-		return "", copyErr
+		return "", fmt.Errorf("copy sysext: %w", copyErr)
 	}
 	if closeErr != nil {
 		_ = os.Remove(tmp) //nolint:gosec // tmp was created in the constrained sysext target directory
@@ -412,7 +412,7 @@ func writeAndHash(ctx context.Context, src io.Reader, dst io.Writer) (string, er
 		}
 		n, readErr := src.Read(buf)
 		if n == 0 && readErr == nil {
-			return "", io.ErrNoProgress
+			return "", fmt.Errorf("read sysext made no progress: %w", io.ErrNoProgress)
 		}
 		if n > 0 {
 			chunk := buf[:n]
@@ -424,7 +424,7 @@ func writeAndHash(ctx context.Context, src io.Reader, dst io.Writer) (string, er
 				return "", fmt.Errorf("write sysext: %w", err)
 			}
 			if written != len(chunk) {
-				return "", io.ErrShortWrite
+				return "", fmt.Errorf("write sysext short write: %w", io.ErrShortWrite)
 			}
 		}
 		if readErr == io.EOF {
