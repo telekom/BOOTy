@@ -121,7 +121,11 @@ func listInitramfsFiles(t *testing.T, path string) map[string]bool {
 
 	gzipCmd := exec.Command("gzip", "-dc", path)
 	cpioCmd := exec.Command("cpio", "-t")
-	cpioCmd.Stdin, _ = gzipCmd.StdoutPipe()
+	pipe, err := gzipCmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("gzip stdout pipe: %v", err)
+	}
+	cpioCmd.Stdin = pipe
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	cpioCmd.Stdout = &out

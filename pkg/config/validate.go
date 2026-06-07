@@ -312,7 +312,7 @@ func validateSysextSHA256(value string) error {
 	}
 	for _, r := range value {
 		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
-			return fmt.Errorf("must be lowercase or uppercase hex")
+			return fmt.Errorf("must be hex characters")
 		}
 	}
 	return nil
