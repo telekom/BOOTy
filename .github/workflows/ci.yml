@@ -793,7 +793,7 @@ jobs:
           go-version: "1.26"
 
       - name: Build BOOTy test container image
-        run: docker build -t booty-test:latest -f test/e2e/clab/booty-test.Dockerfile .
+        run: test/e2e/clab/docker-build-retry.sh -t booty-test:latest -f test/e2e/clab/booty-test.Dockerfile .
 
       - name: Generate test disk image
         run: sudo test/e2e/clab/create-test-image.sh test/e2e/clab/images
@@ -904,7 +904,7 @@ jobs:
           go-version: "1.26"
 
       - name: Build GoBGP test image
-        run: docker build -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
+        run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
 
       - name: Install ContainerLab
         run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
@@ -1031,7 +1031,7 @@ jobs:
           go-version: "1.26"
 
       - name: Build GoBGP test image
-        run: docker build -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
+        run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
 
       - name: Install ContainerLab
         run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
@@ -1162,7 +1162,7 @@ jobs:
           go-version: "1.26"
 
       - name: Build BOOTy vrnetlab VM image
-        run: docker build -t booty-vrnetlab:latest -f test/e2e/clab/vrnetlab/Dockerfile .
+        run: test/e2e/clab/docker-build-retry.sh -t booty-vrnetlab:latest -f test/e2e/clab/vrnetlab/Dockerfile .
 
       - name: Generate test disk image
         run: sudo test/e2e/clab/create-test-image.sh test/e2e/clab/images
