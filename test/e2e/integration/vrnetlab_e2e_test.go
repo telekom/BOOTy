@@ -642,7 +642,8 @@ func TestVrnetlabModulesLoaded(t *testing.T) {
 // Unexpected ERROR Detection
 // ═══════════════════════════════════════════════════════════════════════
 
-// vrnetlabAllowedErrors lists error messages expected in CI (no real disk, etc.).
+// vrnetlabAllowedErrorWrappers and vrnetlabAllowedErrorRootCauses list error
+// messages expected in CI (no real disk, etc.).
 // Debug dumps (DumpDebugState, DumpPATH, dumpConfig) log at WARN level and
 // are invisible to this check — only genuine ERROR-level messages remain.
 var vrnetlabAllowedErrorWrappers = []string{
