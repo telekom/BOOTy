@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CONTAINERLAB_VERSION: "0.75.0"
+  CONTAINERLAB_VERSION: "v0.75.0"
 
 permissions:
   contents: read
@@ -530,7 +530,10 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: sudo containerlab destroy --topo test/e2e/clab/topology.clab.yml --cleanup
+        run: |
+          if command -v containerlab >/dev/null 2>&1; then
+            sudo containerlab destroy --topo test/e2e/clab/topology.clab.yml --cleanup || true
+          fi
 
   uefi-iso-boot:
     name: UEFI ISO Boot Validation
@@ -895,7 +898,10 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: sudo containerlab destroy --topo test/e2e/clab/topology-boot.clab.yml --cleanup
+        run: |
+          if command -v containerlab >/dev/null 2>&1; then
+            sudo containerlab destroy --topo test/e2e/clab/topology-boot.clab.yml --cleanup || true
+          fi
 
   e2e-gobgp:
     name: E2E GoBGP PeerModes
@@ -1019,7 +1025,10 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: sudo containerlab destroy --topo test/e2e/clab/topology-gobgp.clab.yml --cleanup
+        run: |
+          if command -v containerlab >/dev/null 2>&1; then
+            sudo containerlab destroy --topo test/e2e/clab/topology-gobgp.clab.yml --cleanup || true
+          fi
 
   e2e-type5:
     name: E2E Pure Type-5 Fabric
@@ -1147,7 +1156,10 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: sudo containerlab destroy --topo test/e2e/clab/topology-type5.clab.yml --cleanup
+        run: |
+          if command -v containerlab >/dev/null 2>&1; then
+            sudo containerlab destroy --topo test/e2e/clab/topology-type5.clab.yml --cleanup || true
+          fi
 
   e2e-vrnetlab:
     name: E2E EVPN Boot (vrnetlab)
@@ -1302,4 +1314,7 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: sudo containerlab destroy --topo test/e2e/clab/topology-vrnetlab.clab.yml --cleanup
+        run: |
+          if command -v containerlab >/dev/null 2>&1; then
+            sudo containerlab destroy --topo test/e2e/clab/topology-vrnetlab.clab.yml --cleanup || true
+          fi
