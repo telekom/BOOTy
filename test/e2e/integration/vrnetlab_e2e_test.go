@@ -660,8 +660,16 @@ var vrnetlabAllowedErrors = []string{
 	// Expected when CAPRF endpoints are HTTP-only and token auth is enforced.
 	"failed to report error status",
 	"insecure transport",
-	// Top-level mode exit error logged by main.go after any mode failure.
-	"mode exited with error",
+}
+
+func vrnetlabAllowedErrorLine(line string) bool {
+	lineLower := strings.ToLower(line)
+	for _, pattern := range vrnetlabAllowedErrors {
+		if strings.Contains(lineLower, strings.ToLower(pattern)) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestVrnetlabNoUnexpectedErrors(t *testing.T) {
@@ -684,18 +692,42 @@ func TestVrnetlabNoUnexpectedErrors(t *testing.T) {
 			if !strings.Contains(line, "level=ERROR") {
 				continue
 			}
-			lineLower := strings.ToLower(line)
-			allowed := false
-			for _, pattern := range vrnetlabAllowedErrors {
-				if strings.Contains(lineLower, strings.ToLower(pattern)) {
-					allowed = true
-					break
-				}
-			}
-			if !allowed {
+			if !vrnetlabAllowedErrorLine(line) {
 				t.Errorf("%s: unexpected ERROR log: %s", vm.desc, line)
 			}
 		}
+	}
+}
+
+func TestVrnetlabAllowedErrorLineRequiresExpectedModeFailureCause(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{
+			name: "direct allowed provisioning failure",
+			line: `level=ERROR msg="provisioning failed" error="no suitable disk found"`,
+			want: true,
+		},
+		{
+			name: "mode exit allowed with wrapped expected cause",
+			line: `level=ERROR msg="mode exited with error" error="provisioning failed: no suitable disk found"`,
+			want: true,
+		},
+		{
+			name: "mode exit rejected without expected cause",
+			line: `level=ERROR msg="mode exited with error" error="unexpected storage corruption"`,
+			want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := vrnetlabAllowedErrorLine(tc.line); got != tc.want {
+				t.Fatalf("vrnetlabAllowedErrorLine() = %t, want %t", got, tc.want)
+			}
+		})
 	}
 }
 
