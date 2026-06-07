@@ -117,7 +117,9 @@ func TestStreamABRawRootFallbackAndChecksumMismatch(t *testing.T) {
 	if !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("StreamAB() error = %q, want checksum mismatch", err.Error())
 	}
-	assertPartitionPrefix(t, target.partitions[1], before)
+	// The streaming path detects checksum mismatches after writing; it then
+	// invalidates the target slot so firmware cannot boot stale corrupt data.
+	assertPartitionPrefixZeroed(t, target.partitions[1], 1024*1024)
 }
 
 type testPartition struct {
@@ -245,6 +247,11 @@ func assertPartitionPrefix(t *testing.T, dev string, want []byte) {
 	if !bytes.Equal(got, want) {
 		t.Fatalf("%s prefix mismatch", dev)
 	}
+}
+
+func assertPartitionPrefixZeroed(t *testing.T, dev string, size int) {
+	t.Helper()
+	assertPartitionPrefix(t, dev, make([]byte, size))
 }
 
 func waitForDevicePath(t *testing.T, dev string, timeout time.Duration) {

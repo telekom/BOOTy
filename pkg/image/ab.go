@@ -5,6 +5,7 @@ package image
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -89,7 +90,7 @@ func streamABRaw(ctx context.Context, src io.Reader, target ABTargets, opt Strea
 
 	parts, err := parseGPTPartitions(prefix)
 	if err != nil {
-		if err == errNoGPT {
+		if errors.Is(err, errNoGPT) {
 			slog.Info("source image has no GPT partition table; copying as root filesystem")
 			if err := streamReaderToDevice(ctx, stream, target.RootPartition); err != nil {
 				return err

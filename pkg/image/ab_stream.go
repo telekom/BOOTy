@@ -29,9 +29,9 @@ type abStreamRange struct {
 	dst   string
 }
 
-func readStreamPrefix(r io.Reader, max int64) ([]byte, error) {
+func readStreamPrefix(r io.Reader, limit int64) ([]byte, error) {
 	var buf bytes.Buffer
-	_, err := io.CopyN(&buf, r, max)
+	_, err := io.CopyN(&buf, r, limit)
 	switch {
 	case err == nil:
 		return buf.Bytes(), nil
@@ -118,7 +118,7 @@ func copyABStreamRanges(ctx context.Context, src io.Reader, ranges []abStreamRan
 	pos := int64(0)
 	for _, r := range ranges {
 		if err := ctx.Err(); err != nil {
-			return err
+			return fmt.Errorf("copying A/B ranges canceled: %w", err)
 		}
 		if r.start < pos {
 			return fmt.Errorf("overlapping A/B copy ranges at %s", r.name)
@@ -172,7 +172,7 @@ func copyReaderRangeToDevice(ctx context.Context, src io.Reader, dst string, siz
 
 	limited := &io.LimitedReader{R: src, N: size}
 	if err := copyReader(ctx, out, limited); err != nil {
-		return err
+		return fmt.Errorf("copying stream to target: %w", err)
 	}
 	if limited.N != 0 {
 		return fmt.Errorf("source image ended %d bytes before partition range completed", limited.N)
@@ -187,13 +187,13 @@ func copyReader(ctx context.Context, dst io.Writer, src io.Reader) error {
 	buf := make([]byte, imageCopyBufferSize)
 	for {
 		if err := ctx.Err(); err != nil {
-			return err
+			return fmt.Errorf("copy canceled: %w", err)
 		}
 		n, readErr := src.Read(buf)
 		if n > 0 {
 			written, err := dst.Write(buf[:n])
 			if err != nil {
-				return err
+				return fmt.Errorf("writing stream chunk: %w", err)
 			}
 			if written != n {
 				return io.ErrShortWrite
@@ -203,7 +203,7 @@ func copyReader(ctx context.Context, dst io.Writer, src io.Reader) error {
 			return nil
 		}
 		if readErr != nil {
-			return readErr
+			return fmt.Errorf("reading stream chunk: %w", readErr)
 		}
 	}
 }
