@@ -49,13 +49,13 @@ type ABConfig struct {
 	// Use this for OS upgrades on an existing A/B layout.
 	PreserveExisting bool `yaml:"preserveExisting" json:"preserveExisting"`
 
-	// BootSizeMB is the shared EFI system partition size. Empty defaults to 512.
+	// BootSizeMB is the shared EFI system partition size. Zero defaults to 512.
 	BootSizeMB int `yaml:"bootSizeMB" json:"bootSizeMB"`
 
-	// RootSizeMB is the size of each root slot. Empty defaults to 32768.
+	// RootSizeMB is the size of each root slot. Zero defaults to 32768.
 	RootSizeMB int `yaml:"rootSizeMB" json:"rootSizeMB"`
 
-	// StateSizeMB is the persistent state partition size. Empty means it fills
+	// StateSizeMB is the persistent state partition size. Zero means it fills
 	// the remaining disk.
 	StateSizeMB int `yaml:"stateSizeMB" json:"stateSizeMB"`
 }

@@ -607,12 +607,20 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 	// Default whole-disk mode.
 	o.log.Info("Streaming image", "url", bestURL, "disk", o.targetDisk)
 	if err := image.Stream(ctx, bestURL, o.targetDisk, opts...); err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "checksum mismatch") {
-			return &PermanentError{Err: fmt.Errorf("streaming %s: %w", bestURL, err)}
-		}
-		return fmt.Errorf("streaming %s: %w", bestURL, err)
+		return classifyImageStreamError(bestURL, err)
 	}
 	return nil
+}
+
+func classifyImageStreamError(imageURL string, err error) error {
+	if err == nil {
+		return nil
+	}
+	wrapped := fmt.Errorf("streaming %s: %w", imageURL, err)
+	if strings.Contains(strings.ToLower(err.Error()), "checksum mismatch") {
+		return &PermanentError{Err: wrapped}
+	}
+	return wrapped
 }
 
 func (o *Orchestrator) streamABImage(ctx context.Context, bestURL string, opts []image.StreamOpts) error {
@@ -627,11 +635,14 @@ func (o *Orchestrator) streamABImage(ctx context.Context, bestURL string, opts [
 	}
 
 	o.log.Info("Streaming image into A/B target slot", "url", bestURL, "disk", o.targetDisk, "root", o.rootPartition, "boot", o.bootPartition)
-	return image.StreamAB(ctx, bestURL, image.ABTargets{
+	if err := image.StreamAB(ctx, bestURL, image.ABTargets{
 		Disk:          o.targetDisk,
 		BootPartition: o.bootPartition,
 		RootPartition: o.rootPartition,
-	}, opts...)
+	}, opts...); err != nil {
+		return classifyImageStreamError(bestURL, err)
+	}
+	return nil
 }
 
 func (o *Orchestrator) prepareABTargetSlot(ctx context.Context) error {

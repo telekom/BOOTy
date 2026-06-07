@@ -35,6 +35,29 @@ func newTestOrchestratorWithCommander(t *testing.T, cfg *config.MachineConfig, p
 	return o, cmd
 }
 
+func TestClassifyImageStreamErrorChecksumMismatchIsPermanent(t *testing.T) {
+	err := classifyImageStreamError("http://images.local/node.raw", errors.New("checksum mismatch: computed=bad want=good"))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !isPermanent(err) {
+		t.Fatalf("checksum mismatch should be permanent: %T %[1]v", err)
+	}
+	if !strings.Contains(err.Error(), "streaming http://images.local/node.raw") {
+		t.Fatalf("error should include image URL context, got %q", err.Error())
+	}
+}
+
+func TestClassifyImageStreamErrorNonChecksumRemainsRetryable(t *testing.T) {
+	err := classifyImageStreamError("http://images.local/node.raw", errors.New("connection reset by peer"))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if isPermanent(err) {
+		t.Fatalf("transient stream failure should not be permanent: %T %[1]v", err)
+	}
+}
+
 func TestProvisionStepCount(t *testing.T) {
 	// Verify the pipeline has the expected number of steps.
 	cfg := &config.MachineConfig{}
