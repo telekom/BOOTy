@@ -91,6 +91,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"check-filesystem", o.checkFilesystem},
 		{"enable-lvm", o.enableLVM},
 		{"mount-root", o.mountRoot},
+		{"mount-boot", o.mountBoot},
 		{"apply-sysexts", o.applySysexts},
 		{"write-fstab", o.writeFstabStep},
 		{"setup-chroot-binds", o.setupChrootBinds},
@@ -857,6 +858,26 @@ func (o *Orchestrator) mountRoot(ctx context.Context) error {
 	return o.disk.MountPartition(ctx, o.rootPartition, newroot)
 }
 
+func bootEFIMountPoint() string {
+	return filepath.Join(newroot, "boot", "efi")
+}
+
+func (o *Orchestrator) mountBoot(ctx context.Context) error {
+	if strings.TrimSpace(o.bootPartition) == "" {
+		o.log.Info("skipping boot partition mount; no boot partition detected")
+		return nil
+	}
+	mountpoint := bootEFIMountPoint()
+	if isMountPoint(mountpoint) {
+		o.log.Info("boot partition already mounted", "mountpoint", mountpoint)
+		return nil
+	}
+	if err := o.disk.MountPartition(ctx, o.bootPartition, mountpoint); err != nil {
+		return fmt.Errorf("mounting boot partition %s at %s: %w", o.bootPartition, mountpoint, err)
+	}
+	return nil
+}
+
 func (o *Orchestrator) applySysexts(ctx context.Context) error {
 	return o.config.ApplySysexts(ctx, &o.cfg.Provision.Sysext)
 }
@@ -971,8 +992,23 @@ func (o *Orchestrator) runPostProvisionCmds(ctx context.Context) error {
 
 func (o *Orchestrator) teardownChroot(_ context.Context) error {
 	bindErr := o.disk.TeardownChrootBindMounts(newroot)
+	bootErr := o.unmountBoot()
 	unmountErr := o.disk.Unmount(newroot)
-	return errors.Join(bindErr, unmountErr)
+	return errors.Join(bindErr, bootErr, unmountErr)
+}
+
+func (o *Orchestrator) unmountBoot() error {
+	if strings.TrimSpace(o.bootPartition) == "" {
+		return nil
+	}
+	mountpoint := bootEFIMountPoint()
+	if !isMountPoint(mountpoint) {
+		return nil
+	}
+	if err := o.disk.Unmount(mountpoint); err != nil {
+		return fmt.Errorf("unmount boot partition %s: %w", mountpoint, err)
+	}
+	return nil
 }
 
 func (o *Orchestrator) runHealthChecks(ctx context.Context) error {
@@ -1228,7 +1264,7 @@ func stepDebugCmds(step string) []debugCmd {
 			{"disk space", "df -h"},
 			{"partitions", "cat /proc/partitions"},
 		}
-	case "mount-root", "apply-sysexts", "setup-chroot-binds":
+	case "mount-root", "mount-boot", "apply-sysexts", "setup-chroot-binds":
 		return []debugCmd{
 			{"proc mounts", "cat /proc/mounts"},
 			{"newroot contents", "ls -la /newroot/ 2>/dev/null || echo '/newroot not found'"},

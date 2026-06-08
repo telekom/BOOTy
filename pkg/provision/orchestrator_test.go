@@ -66,8 +66,45 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 37 {
-		t.Fatalf("expected 37 provisioning steps, got %d", len(steps))
+	if len(steps) != 38 {
+		t.Fatalf("expected 38 provisioning steps, got %d", len(steps))
+	}
+}
+
+func TestMountBootStepIsBetweenRootMountAndBootloaderWork(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	steps := o.provisionSteps()
+
+	indices := map[string]int{}
+	for i, step := range steps {
+		indices[step.Name] = i
+	}
+	for _, name := range []string{"mount-root", "mount-boot", "configure-grub", "create-efi-boot-entry", "teardown-chroot"} {
+		if _, ok := indices[name]; !ok {
+			t.Fatalf("missing step %q", name)
+		}
+	}
+	if !(indices["mount-root"] < indices["mount-boot"] &&
+		indices["mount-boot"] < indices["configure-grub"] &&
+		indices["mount-boot"] < indices["create-efi-boot-entry"] &&
+		indices["create-efi-boot-entry"] < indices["teardown-chroot"]) {
+		t.Fatalf("unexpected boot mount ordering: %#v", indices)
+	}
+}
+
+func TestMountBootSkipsWhenNoBootPartition(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	if err := o.mountBoot(context.Background()); err != nil {
+		t.Fatalf("mountBoot without boot partition: %v", err)
+	}
+}
+
+func TestBootEFIMountPointUsesMountedRoot(t *testing.T) {
+	if got, want := bootEFIMountPoint(), filepath.Join(newroot, "boot", "efi"); got != want {
+		t.Fatalf("bootEFIMountPoint = %q, want %q", got, want)
 	}
 }
 
