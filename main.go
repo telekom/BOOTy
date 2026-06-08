@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -586,7 +587,7 @@ func mergeNetplanConfig(dst, src *network.Config) {
 		dst.UnderlayIP = src.UnderlayIP
 	}
 	if src.ProvisionIP != "" {
-		dst.ProvisionIP = src.ProvisionIP
+		dst.ProvisionIP = mergeProvisionIP(dst.ProvisionIP, src.ProvisionIP)
 	}
 	if src.NetworkMode != "" {
 		dst.NetworkMode = src.NetworkMode
@@ -631,6 +632,51 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	if len(src.Interfaces) > 0 {
 		dst.Interfaces = src.Interfaces
 	}
+}
+
+func mergeProvisionIP(existing, detected string) string {
+	if detected == "" || existing == "" {
+		if detected != "" {
+			return detected
+		}
+		return existing
+	}
+	if shouldPreserveProvisionPrefix(existing, detected) {
+		return existing
+	}
+	return detected
+}
+
+func shouldPreserveProvisionPrefix(existing, detected string) bool {
+	existingIP, _, existingBits, err := parseCIDRBits(existing)
+	if err != nil {
+		return false
+	}
+	detectedIP, _, detectedBits, err := parseCIDRBits(detected)
+	if err != nil {
+		return false
+	}
+	if !existingIP.Equal(detectedIP) {
+		return false
+	}
+	if detectedBits.ones != detectedBits.bits {
+		return false
+	}
+	return existingBits.ones < detectedBits.ones
+}
+
+type cidrBits struct {
+	ones int
+	bits int
+}
+
+func parseCIDRBits(value string) (net.IP, *net.IPNet, cidrBits, error) {
+	ip, ipNet, err := net.ParseCIDR(value)
+	if err != nil {
+		return nil, nil, cidrBits{}, fmt.Errorf("parse CIDR %q: %w", value, err)
+	}
+	ones, bits := ipNet.Mask.Size()
+	return ip, ipNet, cidrBits{ones: ones, bits: bits}, nil
 }
 
 // setupGoBGPStack creates and sets up a GoBGP/EVPN network stack.
