@@ -4,6 +4,7 @@ package provision
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -33,6 +34,49 @@ func newTestOrchestratorWithCommander(t *testing.T, cfg *config.MachineConfig, p
 	o := NewOrchestrator(cfg, provider, mgr)
 	o.config.rootDir = t.TempDir()
 	return o, cmd
+}
+
+func sfdiskJSON(t *testing.T, parts []disk.Partition) []byte {
+	t.Helper()
+	var out struct {
+		PartitionTable struct {
+			Partitions []disk.Partition `json:"partitions"`
+		} `json:"partitiontable"`
+	}
+	out.PartitionTable.Partitions = parts
+	data, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshal sfdisk json: %v", err)
+	}
+	return data
+}
+
+func hasCommandName(calls []mockCall, name string) bool {
+	for _, call := range calls {
+		if call.name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCommandCall(calls []mockCall, name string, args ...string) bool {
+	for _, call := range calls {
+		if call.name != name || len(call.args) != len(args) {
+			continue
+		}
+		match := true
+		for i := range args {
+			if call.args[i] != args[i] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
 }
 
 func TestClassifyImageStreamErrorChecksumMismatchIsPermanent(t *testing.T) {
@@ -817,6 +861,65 @@ func TestWipeOrSecureEraseDisksSkipsWholeDiskWipeForABPreserveExisting(t *testin
 	}
 	if len(cmd.calls) != 0 {
 		t.Fatalf("expected no wipe commands, got %#v", cmd.calls)
+	}
+}
+
+func TestABPreserveExistingValidatesExistingLayoutBeforeWipe(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.ActiveSlot = config.ABSlotA
+	cfg.Provision.AB.TargetSlot = config.ABTargetInactive
+	cfg.Provision.AB.PreserveExisting = true
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	cmd.setResult("sfdisk --json", sfdiskJSON(t, []disk.Partition{
+		{Node: "/dev/sda1", Type: disk.EFISystemPartitionGUID, Name: "BOOTY-EFI"},
+		{Node: "/dev/sda2", Type: disk.LinuxFilesystemGUID, Name: "BOOTY-ROOT-A"},
+		{Node: "/dev/sda3", Type: disk.LinuxFilesystemGUID, Name: "BOOTY-ROOT-B"},
+		{Node: "/dev/sda4", Type: disk.LinuxFilesystemGUID, Name: "BOOTY-STATE"},
+	}), nil)
+
+	if err := o.ensureABPartitionLayout(); err != nil {
+		t.Fatalf("ensureABPartitionLayout: %v", err)
+	}
+	if err := o.parsePartitionsFromLayout(context.Background()); err != nil {
+		t.Fatalf("parsePartitionsFromLayout: %v", err)
+	}
+	if err := o.validateABPreserveExistingLayout(context.Background()); err != nil {
+		t.Fatalf("validateABPreserveExistingLayout: %v", err)
+	}
+	if err := o.prepareABTargetSlot(context.Background()); err != nil {
+		t.Fatalf("prepareABTargetSlot: %v", err)
+	}
+	if !hasCommandCall(cmd.calls, "wipefs", "-af", "/dev/sda3") {
+		t.Fatalf("expected wipefs only on inactive root /dev/sda3, calls: %#v", cmd.calls)
+	}
+}
+
+func TestABPreserveExistingRejectsUnexpectedLayoutBeforeWipe(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.ActiveSlot = config.ABSlotA
+	cfg.Provision.AB.TargetSlot = config.ABTargetInactive
+	cfg.Provision.AB.PreserveExisting = true
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	cmd.setResult("sfdisk --json", sfdiskJSON(t, []disk.Partition{
+		{Node: "/dev/sda1", Type: disk.EFISystemPartitionGUID, Name: "SYSTEM"},
+		{Node: "/dev/sda2", Type: disk.LinuxFilesystemGUID, Name: "BOOTY-ROOT-B"},
+		{Node: "/dev/sda3", Type: disk.LinuxFilesystemGUID, Name: "BOOTY-ROOT-A"},
+		{Node: "/dev/sda4", Type: disk.LinuxFilesystemGUID, Name: "BOOTY-STATE"},
+	}), nil)
+
+	err := o.streamABImage(context.Background(), "http://image.example/os.raw", nil)
+	if err == nil {
+		t.Fatal("expected unexpected preserved A/B layout to fail")
+	}
+	if !strings.Contains(err.Error(), `existing A/B partition 1 label = "SYSTEM", want "BOOTY-EFI"`) {
+		t.Fatalf("error = %v", err)
+	}
+	if hasCommandName(cmd.calls, "wipefs") {
+		t.Fatalf("preserve layout validation must fail before wipefs, calls: %#v", cmd.calls)
 	}
 }
 

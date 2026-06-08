@@ -639,6 +639,9 @@ func (o *Orchestrator) streamABImage(ctx context.Context, bestURL string, opts [
 	if err := o.parsePartitionsFromLayout(ctx); err != nil {
 		return err
 	}
+	if err := o.validateABPreserveExistingLayout(ctx); err != nil {
+		return err
+	}
 	if err := o.prepareABTargetSlot(ctx); err != nil {
 		return err
 	}
@@ -673,6 +676,54 @@ func (o *Orchestrator) prepareABTargetSlot(ctx context.Context) error {
 		return fmt.Errorf("wiping A/B target slot before stream: %w", err)
 	}
 	return nil
+}
+
+func (o *Orchestrator) validateABPreserveExistingLayout(ctx context.Context) error {
+	if !o.cfg.Provision.AB.PreserveExisting {
+		return nil
+	}
+	layout := o.cfg.Provision.Disk.PartitionLayout
+	if layout == nil {
+		return fmt.Errorf("A/B preserveExisting requires generated partition layout")
+	}
+	actual, err := o.disk.ParsePartitions(ctx, o.targetDisk)
+	if err != nil {
+		return fmt.Errorf("validate existing A/B partition layout: %w", err)
+	}
+	if len(actual) < len(layout.Partitions) {
+		return fmt.Errorf("existing A/B partition layout has %d partitions, want at least %d",
+			len(actual), len(layout.Partitions))
+	}
+	for i, expected := range layout.Partitions {
+		if err := validateABPreservePartition(o.targetDisk, i, expected, actual[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateABPreservePartition(diskDevice string, index int, expected config.Partition, actual disk.Partition) error {
+	partNum := index + 1
+	expectedNode := disk.PartitionDevicePath(diskDevice, partNum)
+	if actual.Node != expectedNode {
+		return fmt.Errorf("existing A/B partition %d node = %q, want %q", partNum, actual.Node, expectedNode)
+	}
+	if strings.TrimSpace(actual.Name) != expected.Label {
+		return fmt.Errorf("existing A/B partition %d label = %q, want %q", partNum, actual.Name, expected.Label)
+	}
+	expectedType := expectedABPartitionType(expected)
+	if !strings.EqualFold(actual.Type, expectedType) {
+		return fmt.Errorf("existing A/B partition %d (%s) type = %q, want %q",
+			partNum, expected.Label, actual.Type, expectedType)
+	}
+	return nil
+}
+
+func expectedABPartitionType(part config.Partition) string {
+	if strings.EqualFold(part.Filesystem, "vfat") || part.Mountpoint == "/boot/efi" {
+		return disk.EFISystemPartitionGUID
+	}
+	return disk.LinuxFilesystemGUID
 }
 
 func (o *Orchestrator) isABImageMode() bool {
