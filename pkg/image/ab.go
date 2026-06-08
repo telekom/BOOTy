@@ -39,32 +39,38 @@ func StreamAB(ctx context.Context, url string, target ABTargets, opts ...StreamO
 		opt = opts[0]
 	}
 
-	decompressed, cleanup, format, err := openAndDecompress(ctx, url)
+	src, cleanup, format, err := openAndDecompress(ctx, url)
 	if err != nil {
 		return err
 	}
 	if format != FormatQCOW2 {
 		defer cleanup()
-		if err := streamABRaw(ctx, decompressed, target, opt); err != nil {
+		if err := streamABRaw(ctx, src, target, opt); err != nil {
 			wipeLeadingSectors(target.RootPartition)
 			return err
 		}
 		return nil
 	}
-	cleanup()
-	return streamABViaRamdisk(ctx, url, target, opt)
+	defer cleanup()
+	return streamABViaRamdisk(ctx, src, target, opt)
 }
 
-func streamABViaRamdisk(ctx context.Context, url string, target ABTargets, opt StreamOpts) error {
+func streamABViaRamdisk(ctx context.Context, src io.Reader, target ABTargets, opt StreamOpts) error {
 	if err := setupRamdisk(); err != nil {
 		return fmt.Errorf("setting up ramdisk: %w", err)
 	}
 	defer cleanupRamdisk()
 
-	rawPath, err := downloadAndPrepareRaw(ctx, url)
-	if err != nil {
+	qcow2Path := ramdiskPath + "/image.qcow2"
+	rawPath := ramdiskPath + "/image.raw"
+
+	if err := writeImageToFile(src, qcow2Path); err != nil {
+		return fmt.Errorf("writing qcow2 image to ramdisk: %w", err)
+	}
+	if err := convertQCOW2ToRaw(ctx, qcow2Path, rawPath); err != nil {
 		return err
 	}
+	_ = os.Remove(qcow2Path)
 
 	if err := verifyFileChecksum(rawPath, opt); err != nil {
 		return err

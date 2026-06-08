@@ -87,6 +87,10 @@ func downloadToFile(ctx context.Context, url, dest string) error {
 	}
 	defer func() { _ = body.Close() }()
 
+	return writeImageToFile(body, dest)
+}
+
+func writeImageToFile(src io.Reader, dest string) error {
 	f, err := os.Create(dest) //nolint:gosec // dest is a controlled ramdisk path
 	if err != nil {
 		return fmt.Errorf("creating file %s: %w", dest, err)
@@ -97,13 +101,13 @@ func downloadToFile(ctx context.Context, url, dest string) error {
 	stopProgress := startProgressTicker(counter)
 
 	buf := make([]byte, imageCopyBufferSize)
-	written, err := io.CopyBuffer(f, io.TeeReader(body, counter), buf)
+	written, err := io.CopyBuffer(f, io.TeeReader(src, counter), buf)
 	stopProgress()
 	if err != nil {
 		return fmt.Errorf("writing to file: %w", err)
 	}
 	fmt.Println()
-	slog.Info("qcow2 downloaded to ramdisk", "bytes", written)
+	slog.Info("image written to ramdisk", "bytes", written)
 	return nil
 }
 

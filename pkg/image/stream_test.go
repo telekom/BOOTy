@@ -468,3 +468,34 @@ func TestStreamQCOW2Detection(t *testing.T) {
 		t.Error("convertQCOW2Hook was not invoked for qcow2 image")
 	}
 }
+
+func TestOpenAndDecompressQCOW2KeepsDetectedSource(t *testing.T) {
+	data := append([]byte{0x51, 0x46, 0x49, 0xfb}, []byte("payload after qcow2 header")...)
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	}))
+	defer srv.Close()
+
+	src, cleanup, format, err := openAndDecompress(context.Background(), srv.URL+"/image.qcow2")
+	if err != nil {
+		t.Fatalf("openAndDecompress() = %v", err)
+	}
+	defer cleanup()
+	if format != FormatQCOW2 {
+		t.Fatalf("format = %s, want %s", format, FormatQCOW2)
+	}
+
+	got, err := io.ReadAll(src)
+	if err != nil {
+		t.Fatalf("reading returned source: %v", err)
+	}
+	if string(got) != string(data) {
+		t.Fatalf("returned source = %q, want %q", got, data)
+	}
+	if requests != 1 {
+		t.Fatalf("server received %d requests, want 1", requests)
+	}
+}

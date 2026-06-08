@@ -140,6 +140,8 @@ var convertQCOW2Hook = func(_ context.Context, _, _ string) error {
 
 // openAndDecompress opens the image source, detects compression, and returns
 // the decompressed reader along with a cleanup function and detected format.
+// For qcow2 images, the returned reader is the original stream with the
+// detection bytes preserved so callers can continue consuming the same source.
 func openAndDecompress(ctx context.Context, url string) (io.Reader, func(), Format, error) {
 	body, err := openSource(ctx, url)
 	if err != nil {
@@ -156,7 +158,7 @@ func openAndDecompress(ctx context.Context, url string) (io.Reader, func(), Form
 	// qcow2 cannot be decompressed inline — return early so caller can route.
 	if format == FormatQCOW2 {
 		cleanup := func() { _ = body.Close() }
-		return nil, cleanup, FormatQCOW2, nil
+		return reader, cleanup, FormatQCOW2, nil
 	}
 
 	decompressed, closer, err := Decompressor(reader, format)
