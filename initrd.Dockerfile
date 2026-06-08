@@ -153,7 +153,8 @@ RUN strip --strip-all \
 FROM busybox:1.38.0-musl AS busybox-bin
 
 FROM debian:bookworm-slim AS busybox
-RUN apt-get update && apt-get install -y --no-install-recommends cpio curl ca-certificates zstd \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cpio ca-certificates zstd cloud-guest-utils \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
 
@@ -169,8 +170,7 @@ RUN bin/busybox --install -s bin
 RUN rm -f bin/partprobe bin/hdparm bin/ip bin/mkfs.vfat bin/mkfs.fat bin/mkdosfs
 
 # cloud-utils growpart
-RUN curl -fsSL https://github.com/canonical/cloud-utils/archive/refs/tags/0.33.tar.gz | tar -xz -C /tmp \
-    && mv /tmp/cloud-utils-0.33/bin/growpart bin/
+RUN cp /usr/bin/growpart bin/growpart
 
 # Copy build contents from previous builds
 COPY --from=lvm /LVM2.2.03.27/tools/lvm sbin/
