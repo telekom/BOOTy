@@ -1307,3 +1307,77 @@ jobs:
           if command -v containerlab >/dev/null 2>&1; then
             sudo containerlab destroy --topo test/e2e/clab/topology-vrnetlab.clab.yml --cleanup || true
           fi
+
+  e2e-gobgp-vrnetlab:
+    name: E2E GoBGP PeerModes (vrnetlab)
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+
+      - name: Build BOOTy vrnetlab VM image
+        run: test/e2e/clab/docker-build-retry.sh -t booty-vrnetlab:latest -f test/e2e/clab/vrnetlab/Dockerfile .
+
+      - name: Install ContainerLab
+        run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
+
+      - name: Deploy GoBGP vrnetlab topology
+        run: sudo containerlab deploy --topo test/e2e/clab/topology-gobgp-vrnetlab.clab.yml
+
+      - name: Run GoBGP vrnetlab E2E tests
+        env:
+          GOMAXPROCS: "2"
+        run: go test -tags e2e_gobgp_vrnetlab -v -race -count=1 -timeout 30m ./test/e2e/integration/...
+
+      - name: Collect GoBGP vrnetlab logs
+        if: always()
+        timeout-minutes: 8
+        run: |
+          mkdir -p gobgp-vrnetlab-logs
+
+          for node in spine01 rr01 booty-unnumbered booty-dual booty-numbered; do
+            name="clab-booty-gobgp-vrnetlab-lab-${node}"
+            {
+              echo "=== docker logs ${name} ==="
+              timeout 30 sudo docker logs "${name}" 2>&1 || true
+              echo
+              echo "=== ip addr ==="
+              timeout 10 sudo docker exec "${name}" ip addr 2>&1 || true
+              echo
+              echo "=== ip route ==="
+              timeout 10 sudo docker exec "${name}" ip route 2>&1 || true
+            } > "gobgp-vrnetlab-logs/${node}.log" 2>&1
+          done
+
+          for node in spine01 rr01; do
+            name="clab-booty-gobgp-vrnetlab-lab-${node}"
+            {
+              echo "=== show bgp summary ==="
+              timeout 15 sudo docker exec "${name}" vtysh -c "show bgp summary" 2>&1 || true
+              echo
+              echo "=== show bgp l2vpn evpn ==="
+              timeout 15 sudo docker exec "${name}" vtysh -c "show bgp l2vpn evpn" 2>&1 || true
+              echo
+              echo "=== show bgp neighbor json ==="
+              timeout 15 sudo docker exec "${name}" vtysh -c "show bgp neighbor json" 2>&1 || true
+            } > "gobgp-vrnetlab-logs/${node}-bgp.log" 2>&1
+          done
+
+      - name: Upload GoBGP vrnetlab logs
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: gobgp-vrnetlab-logs
+          path: gobgp-vrnetlab-logs/
+          if-no-files-found: ignore
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if command -v containerlab >/dev/null 2>&1; then
+            sudo containerlab destroy --topo test/e2e/clab/topology-gobgp-vrnetlab.clab.yml --cleanup || true
+          fi
