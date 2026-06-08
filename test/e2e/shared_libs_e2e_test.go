@@ -149,6 +149,43 @@ func TestGoBGPSharedLibsResolveE2E(t *testing.T) {
 	})
 }
 
+func TestFullInitramfsMkfsVfatSupportsFATSizeFlagE2E(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		stage string
+	}{
+		{name: "default", stage: "busybox"},
+		{name: "gobgp", stage: "gobgp-builder"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			image := buildStageImage(t, tc.stage)
+			ldPaths := strings.Join([]string{
+				"/build/initramfs/lib",
+				"/build/initramfs/usr/lib",
+				"/build/initramfs/lib/x86_64-linux-gnu",
+				"/build/initramfs/usr/lib/x86_64-linux-gnu",
+			}, ":")
+			script := strings.Join([]string{
+				"PATH=/build/initramfs/bin:/build/initramfs/sbin:$PATH",
+				"resolved=$(command -v mkfs.vfat)",
+				`echo "resolved=$resolved"`,
+				`[ "$resolved" = "/build/initramfs/sbin/mkfs.vfat" ]`,
+				`sh -c 'test "$1" = ok' -- ok`,
+				"mkfs.vfat --help >/tmp/mkfs-vfat-help 2>&1 || true",
+				"cat /tmp/mkfs-vfat-help",
+				"grep -q -- '-F' /tmp/mkfs-vfat-help",
+				"! grep -qi busybox /tmp/mkfs-vfat-help",
+			}, " && ")
+			cmd := exec.Command("docker", "run", "--rm", "--entrypoint", "",
+				"-e", "LD_LIBRARY_PATH="+ldPaths, image, "sh", "-ec", script)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("mkfs.vfat PATH/FAT-size check failed: %v\n%s", err, out)
+			}
+		})
+	}
+}
+
 // TestSlimSharedLibsResolveE2E builds the slim builder stage and verifies
 // shared library resolution for all dynamically-linked binaries.
 func TestSlimSharedLibsResolveE2E(t *testing.T) {

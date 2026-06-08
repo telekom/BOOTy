@@ -423,6 +423,28 @@ func TestDefaultContainsDiskToolsE2E(t *testing.T) {
 	assertContains(t, files, "bin/efibootmgr", "efibootmgr")
 }
 
+func TestFullFlavorsUseDosfstoolsMkfsVfatE2E(t *testing.T) {
+	dockerAvailable(t)
+	for _, tc := range []struct {
+		name   string
+		target string
+	}{
+		{name: "default"},
+		{name: "gobgp", target: "gobgp"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dest := t.TempDir()
+			cpioGz := buildTarget(t, tc.target, dest)
+			files := listCPIOContents(t, cpioGz)
+
+			assertContains(t, files, "sbin/mkfs.vfat", "dosfstools mkfs.vfat")
+			assertNotContains(t, files, "bin/mkfs.vfat", "BusyBox mkfs.vfat applet shadowing dosfstools")
+			assertNotContains(t, files, "bin/mkfs.fat", "BusyBox mkfs.fat applet shadowing dosfstools")
+			assertNotContains(t, files, "bin/mkdosfs", "BusyBox mkdosfs applet shadowing dosfstools")
+		})
+	}
+}
+
 func TestDefaultContainsNetworkAndSSHE2E(t *testing.T) {
 	dockerAvailable(t)
 	dest := t.TempDir()

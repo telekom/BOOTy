@@ -61,14 +61,30 @@ func checkDockerfileModules(t *testing.T, path string, critical []string) {
 
 func TestDockerfileModuleLoopSyntax(t *testing.T) {
 	checkDockerfileModules(t, "initrd.Dockerfile", []string{
-		"ext4", "xfs", "vfat", "scsi_mod", "sd_mod",
+		"ext4", "xfs", "fat", "vfat", "nls_cp437", "nls_iso8859-1", "scsi_mod", "sd_mod",
 		"virtio_pci", "virtio_net", "virtio_blk", "vxlan",
 	})
 }
 
 func TestVrnetlabDockerfileModuleLoopSyntax(t *testing.T) {
 	checkDockerfileModules(t, "test/e2e/clab/vrnetlab/Dockerfile", []string{
-		"ext4", "xfs", "vfat", "scsi_mod", "sd_mod",
+		"ext4", "xfs", "fat", "vfat", "nls_cp437", "nls_iso8859-1", "scsi_mod", "sd_mod",
 		"virtio_pci", "virtio_net", "virtio_blk", "virtio_scsi", "vxlan",
 	})
+}
+
+func TestDockerfileRemovesBusyboxMkfsVfatCollisions(t *testing.T) {
+	data, err := os.ReadFile("initrd.Dockerfile")
+	if err != nil {
+		t.Fatalf("cannot read initrd.Dockerfile: %v", err)
+	}
+	text := string(data)
+	for _, path := range []string{"bin/mkfs.vfat", "bin/mkfs.fat", "bin/mkdosfs"} {
+		if strings.Count(text, path) < 2 {
+			t.Errorf("%s must be removed in both full initramfs builders so dosfstools sbin/mkfs.vfat is used", path)
+		}
+	}
+	if !strings.Contains(text, "RUN rm -f bin/partprobe bin/hdparm bin/ip bin/mkfs.vfat bin/mkfs.fat bin/mkdosfs bin/lsblk\nCOPY --from=busybox /build/initramfs/bin/growpart bin/growpart") {
+		t.Error("bin/lsblk must be removed in the GoBGP builder before copying real lsblk, otherwise COPY corrupts bin/busybox")
+	}
 }

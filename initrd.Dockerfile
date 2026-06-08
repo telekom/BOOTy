@@ -74,7 +74,7 @@ RUN apt-get update && \
     # Module categories:
     #   QEMU/KVM virtio:  virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev virtio_pci virtio_net failover net_failover
     #   Storage (SCSI):   scsi_mod sd_mod virtio_blk virtio_scsi
-    #   Filesystems:      ext4 jbd2 mbcache crc32c_generic xfs btrfs vfat
+    #   Filesystems:      ext4 jbd2 mbcache crc32c_generic xfs btrfs fat vfat nls_cp437 nls_iso8859-1
     #   VXLAN/bridge:     dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc
     #   Intel NICs:       e1000e igb igc ixgbe i40e ice iavf
     #   Broadcom NICs:    tg3 bnxt_en
@@ -86,7 +86,7 @@ RUN apt-get update && \
         virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
         virtio_pci virtio_net failover net_failover \
         scsi_mod sd_mod virtio_blk virtio_scsi \
-        ext4 jbd2 mbcache crc32c_generic xfs btrfs vfat \
+        ext4 jbd2 mbcache crc32c_generic xfs btrfs fat vfat nls_cp437 nls_iso8859-1 \
         dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc \
         e1000e igb igc ixgbe i40e ice iavf \
         tg3 bnxt_en \
@@ -166,7 +166,7 @@ RUN bin/busybox --install -s bin
 # Docker COPY follows destination symlinks: if bin/X -> busybox exists, COPY
 # writes the source file content into the busybox binary instead of replacing
 # the symlink.  Remove busybox symlinks that collide with real tool binaries.
-RUN rm -f bin/partprobe bin/hdparm bin/ip
+RUN rm -f bin/partprobe bin/hdparm bin/ip bin/mkfs.vfat bin/mkfs.fat bin/mkdosfs
 
 # cloud-utils growpart
 RUN curl -fsSL https://github.com/canonical/cloud-utils/archive/refs/tags/0.33.tar.gz | tar -xz -C /tmp \
@@ -342,7 +342,7 @@ WORKDIR /build/initramfs
 COPY --from=busybox-bin /bin/busybox bin/busybox
 RUN for cmd in $(bin/busybox --list); do if [ "$cmd" != "busybox" ]; then ln -sf busybox "bin/$cmd"; fi; done
 # Docker COPY follows destination symlinks — remove colliding busybox symlinks.
-RUN rm -f bin/partprobe bin/hdparm bin/ip
+RUN rm -f bin/partprobe bin/hdparm bin/ip bin/mkfs.vfat bin/mkfs.fat bin/mkdosfs bin/lsblk
 COPY --from=busybox /build/initramfs/bin/growpart bin/growpart
 
 # BOOTy init binary (with GoBGP compiled in)
