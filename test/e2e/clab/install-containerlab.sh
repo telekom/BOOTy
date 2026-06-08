@@ -24,8 +24,10 @@ curl_common=(
   --location
   --show-error
   --silent
-  --retry 3
-  --retry-delay 5
+  --retry 8
+  --retry-all-errors
+  --retry-delay 10
+  --retry-max-time 300
   --connect-timeout 30
   --max-time 120
 )
