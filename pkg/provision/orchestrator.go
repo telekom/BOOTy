@@ -1069,7 +1069,7 @@ func (o *Orchestrator) unmountBoot() error {
 		return nil
 	}
 	if err := o.disk.Unmount(mountpoint); err != nil {
-		return fmt.Errorf("unmount boot partition %s: %w", mountpoint, err)
+		return fmt.Errorf("unmount boot mountpoint %s: %w", mountpoint, err)
 	}
 	return nil
 }
