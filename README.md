@@ -33,7 +33,7 @@ BOOTy operates in two modes depending on the boot environment:
 1. A Redfish BMC mounts an ISO containing a kernel, BOOTy initramfs, and `/deploy/vars` config.
 2. BOOTy reads `/deploy/vars` for machine config, image URLs, and CAPRF server endpoints.
 3. Network connectivity is established via **FRR/EVPN** (BGP underlay) or **DHCP** fallback.
-4. The provisioning pipeline runs 37 steps: status reporting → RAID cleanup → disk detection → NVMe namespace setup → image streaming → partition management → optional sysext loading → OS configuration → cloud-init injection → kexec.
+4. The provisioning pipeline runs 38 steps: status reporting → RAID cleanup → disk detection → NVMe namespace setup → image streaming → partition management → optional sysext loading → OS configuration → cloud-init injection → kexec.
 5. Status, logs, and debug info are shipped back to the CAPRF controller throughout.
 
 ### Legacy Mode
@@ -71,7 +71,7 @@ BOOTy operates in two modes depending on the boot environment:
 - **Filesystem support** — ext2, ext3, ext4, xfs, btrfs, vfat mount/resize
 - **LLDP discovery** — Raw AF_PACKET-based LLDP listener for switch topology discovery
 - **Post-provision hooks** — Execute arbitrary commands in chroot after OS configuration
-- **37-step provisioning pipeline** — RAID cleanup, disk detection, NVMe namespace setup, image streaming, partition growth, LVM, filesystem resize, optional sysext loading, OS configuration, cloud-init injection, EFI boot, Mellanox SR-IOV, post-provision hooks
+- **38-step provisioning pipeline** — RAID cleanup, disk detection, NVMe namespace setup, image streaming, partition growth, LVM, filesystem resize, optional sysext loading, OS configuration, cloud-init injection, EFI boot, Mellanox SR-IOV, post-provision hooks
 - **systemd-sysext provisioning** — Optional digest-checked sysext preload or active loading into the provisioned OS image
 - **Kexec support** — Fast reboot into installed kernel without full BIOS POST (auto-disabled after firmware changes)
 - **Remote logging** — Real-time log and debug shipping to CAPRF controller
@@ -316,7 +316,14 @@ go run server/server.go \
 | `MOK_PASSWORD` | — | *(Phase 2)* One-time password for MokManager confirmation |
 | `IMAGE_CHECKSUM` | — | Expected hex digest of the raw disk image |
 | `IMAGE_CHECKSUM_TYPE` | — | Checksum algorithm: `sha256` or `sha512` |
-| `IMAGE_MODE` | `whole-disk` | Image write mode: `whole-disk` or `partition` |
+| `IMAGE_MODE` | `whole-disk` | Image write mode: `whole-disk`, `partition`, or `ab` |
+| `AB_SCHEME` | `dual-root` | A/B partitioning scheme for `IMAGE_MODE=ab` |
+| `AB_ACTIVE_SLOT` | — | Currently booted A/B slot, `a` or `b` |
+| `AB_TARGET_SLOT` | `inactive` | A/B slot to write: `inactive`, `a`, or `b` |
+| `AB_PRESERVE_EXISTING` | `false` | Reuse an existing A/B layout and write only the target root slot |
+| `AB_BOOT_SIZE_MB` | `512` | Shared EFI partition size for generated A/B layouts |
+| `AB_ROOT_SIZE_MB` | `32768` | Size of each generated A/B root slot |
+| `AB_STATE_SIZE_MB` | `0` | Persistent state partition size; `0` fills remaining disk |
 | `DISK_DEVICE` | auto-detect | Explicit disk device path override (e.g. `/dev/sda`) |
 | `IMAGE_SIGNATURE_URL` | — | URL to detached GPG signature for image verification |
 | `IMAGE_GPG_PUBKEY` | — | Path to GPG public key for image signature verification |
@@ -330,6 +337,11 @@ go run server/server.go \
 | `NVME_NAMESPACES` | — | JSON config for NVMe namespace creation (e.g. `[{"device":"/dev/nvme0","namespaces":[{"size_gb":100}]}]`) |
 | `CLOUDINIT_ENABLED` | `false` | Generate and inject cloud-init NoCloud/ConfigDrive config |
 | `CLOUDINIT_DATASOURCE` | `nocloud` | Cloud-init datasource type |
+| `SYSEXT_ENABLED` | `false` | Copy configured systemd-sysext layers into the provisioned root |
+| `SYSEXT_DEFAULT_MODE` | `preload` | Default sysext layer mode: `preload` or `active` |
+| `SYSEXT_CATALOG_DIR` | `/usr/lib/tcaas-sysext/preloaded` | Target catalog directory for preloaded sysext layers |
+| `SYSEXT_ACTIVE_DIR` | `/var/lib/extensions` | Target directory for active sysext layers |
+| `SYSEXT_LAYERS` | — | JSON array of sysext layer objects |
 
 #### Network Variables
 
@@ -993,7 +1005,7 @@ and the PR process.
 │   │   ├── persist/           # Persist network config into target OS (netplan, NM, systemd-networkd)
 │   │   ├── vrf/               # VRF configuration and validation
 │   │   └── vlan/              # VLAN 802.1Q tagging via netlink
-│   ├── provision/              # Orchestrator (37-step provision, deprovision)
+│   ├── provision/              # Orchestrator (38-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
 │   ├── realm/                  # Device, mount, network, shell operations
 │   ├── rescue/                 # Rescue mode behavior and retry policy

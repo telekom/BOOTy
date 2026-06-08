@@ -21,7 +21,7 @@ three-tier architecture:
 │  ┌──────────────────────────────────────────────┐│
 │  │ Tier 2: Overlay (EVPN)                       ││
 │  │  • Advertises Type-5 (IP Prefix) routes      ││
-│  │  • Processes Type-2/3 routes → FDB entries   ││
+│  │  • Optional Type-2/3 L2 control plane        ││
 │  │  • VXLAN + bridge for provisioning network   ││
 │  │  • Gateway VTEP route for baseline reach     ││
 │  └──────────────────────────────────────────────┘│
@@ -63,6 +63,7 @@ export dns_resolver="8.8.8.8"
 | `provision_gateway` | Yes | — | Remote VTEP IP (spine/DCGW loopback) for gateway route + BUM FDB |
 | `dns_resolver` | No | — | DNS resolver IP |
 | `overlay_subnet` | No | — | IPv6 overlay subnet (optional) |
+| `EVPN_L2_ENABLED` | No | `false` | Enable Type-2/3 EVPN route origination and handling |
 
 ### Peering Mode Variables
 
@@ -113,17 +114,26 @@ export BGP_REMOTE_ASN="65000"
 
 ### What BOOTy Advertises
 
-BOOTy advertises **Type-5 (IP Prefix)** routes only. These announce
-the provisioning subnet reachability with VXLAN encapsulation info,
+By default, BOOTy advertises **Type-5 (IP Prefix)** routes only. These
+announce provisioning host reachability with VXLAN encapsulation info,
 allowing the fabric to route traffic toward BOOTy's VTEP.
+
+When `EVPN_L2_ENABLED=true`, BOOTy also originates:
+
+| Route Type | Purpose |
+|------------|---------|
+| **Type-2** (MAC/IP) | Advertise the local bridge MAC and provisioning IP |
+| **Type-3** (Inclusive Multicast) | Advertise this VTEP as a BUM flooding target |
 
 ### What BOOTy Receives
 
 The `watchRoutes()` function monitors GoBGP's route stream and processes
-incoming EVPN routes from the fabric:
+incoming EVPN routes from the fabric. Type-5 routes are always handled. Type-2
+and Type-3 handling is enabled only when `EVPN_L2_ENABLED=true`.
 
 | Route Type | Action | Purpose |
 |------------|--------|---------|
+| **Type-5** (IP Prefix) | Learns remote VTEP prefix reachability | Route overlay traffic toward remote VTEPs |
 | **Type-2** (MAC/IP) | Installs unicast FDB entry (`MAC → VTEP`) | Learn remote MACs via control plane |
 | **Type-3** (Inclusive Multicast) | Installs BUM FDB entry (`00:00:00:00:00:00 → VTEP`) | Enable BUM flooding to remote VTEPs |
 

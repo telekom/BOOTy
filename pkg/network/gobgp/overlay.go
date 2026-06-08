@@ -29,10 +29,6 @@ const (
 
 	// defaultMTU is the fallback inner MTU when cfg.MTU is too low.
 	defaultMTU = 1500
-
-	// asnMax2Byte is the maximum 2-byte ASN value, used to select
-	// between 2-octet and 4-octet BGP community / RD formats.
-	asnMax2Byte = 65535
 )
 
 // fdbInstaller abstracts netlink FDB operations for testability.
@@ -1003,7 +999,6 @@ func rtFoundInCommunities(communities []*anypb.Any, localASN, localVNI uint32) b
 
 // rtCommunityMatches returns true if the proto message represents a Route
 // Target extended community (SubType 0x02) matching the given ASN and VNI.
-// For 4-octet ASN the VNI is masked to 16 bits, mirroring buildRouteTarget.
 func rtCommunityMatches(msg interface{}, localASN, localVNI uint32) bool {
 	const rtSubType = uint32(0x02)
 	switch v := msg.(type) {
@@ -1014,7 +1009,8 @@ func rtCommunityMatches(msg interface{}, localASN, localVNI uint32) bool {
 	case *apipb.FourOctetAsSpecificExtended:
 		return v.GetSubType() == rtSubType &&
 			v.GetAsn() == localASN &&
-			v.GetLocalAdmin() == localVNI&0xFFFF
+			localVNI <= routeTargetLocalAdminMax &&
+			v.GetLocalAdmin() == localVNI
 	}
 	return false
 }
@@ -1032,11 +1028,14 @@ func buildRouteTarget(asn, vni uint32) (*anypb.Any, error) {
 			LocalAdmin:   vni,
 		})
 	} else {
+		if vni > routeTargetLocalAdminMax {
+			return nil, fmt.Errorf("route target value %d exceeds %d for 4-octet ASN %d", vni, routeTargetLocalAdminMax, asn)
+		}
 		a, err = anypb.New(&apipb.FourOctetAsSpecificExtended{
 			IsTransitive: true,
 			SubType:      0x02, // Route Target
 			Asn:          asn,
-			LocalAdmin:   vni & 0xFFFF,
+			LocalAdmin:   vni,
 		})
 	}
 	if err != nil {

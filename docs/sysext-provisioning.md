@@ -4,8 +4,8 @@ BOOTy can optionally copy systemd-sysext images into the provisioned OS while
 the target root filesystem is mounted during provisioning.
 
 This is disabled by default. When enabled, BOOTy runs the `apply-sysexts` step
-after `mount-root` and before fstab, chroot bind mounts, cloud-init, bootloader,
-and post-provision commands.
+after `mount-root`/`mount-boot` and before fstab, chroot bind mounts,
+cloud-init, bootloader, and post-provision commands.
 
 ## Preload mode
 

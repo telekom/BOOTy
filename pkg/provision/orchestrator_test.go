@@ -730,6 +730,32 @@ func TestABStreamTargetsPreserveExistingSkipsSharedBoot(t *testing.T) {
 	}
 }
 
+func TestShouldPreserveABBootEntries(t *testing.T) {
+	tests := []struct {
+		name     string
+		mode     string
+		preserve bool
+		want     bool
+	}{
+		{name: "A/B preserve existing", mode: config.ImageModeAB, preserve: true, want: true},
+		{name: "A/B fresh install", mode: config.ImageModeAB, preserve: false, want: false},
+		{name: "whole disk preserve flag ignored", mode: config.ImageModeWholeDisk, preserve: true, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.MachineConfig{}
+			cfg.Provision.Image.Mode = tt.mode
+			cfg.Provision.AB.PreserveExisting = tt.preserve
+			o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+			if got := o.shouldPreserveABBootEntries(); got != tt.want {
+				t.Fatalf("shouldPreserveABBootEntries() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestWriteABSlotState(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Image.Mode = config.ImageModeAB

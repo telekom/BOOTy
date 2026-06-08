@@ -145,16 +145,24 @@ func TestBuildRouteDistinguisher(t *testing.T) {
 
 func TestBuildRouteTarget(t *testing.T) {
 	tests := []struct {
-		name string
-		asn  uint32
-		vni  uint32
+		name    string
+		asn     uint32
+		vni     uint32
+		wantErr bool
 	}{
-		{"2-byte ASN", 65000, 4000},
-		{"4-byte ASN", 70000, 5000},
+		{name: "2-byte ASN", asn: 65000, vni: 4000},
+		{name: "4-byte ASN", asn: 70000, vni: 5000},
+		{name: "4-byte ASN rejects unencodable local admin", asn: 70000, vni: 65536, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rt, err := buildRouteTarget(tt.asn, tt.vni)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("buildRouteTarget() err = %v, wantErr %t", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -1055,7 +1063,7 @@ func mustRT4(t *testing.T, asn, vni uint32) *anypb.Any {
 		IsTransitive: true,
 		SubType:      0x02,
 		Asn:          asn,
-		LocalAdmin:   vni & 0xFFFF,
+		LocalAdmin:   vni,
 	})
 	if err != nil {
 		t.Fatalf("marshal FourOctetAsSpecificExtended: %v", err)
@@ -1105,6 +1113,13 @@ func TestMatchesLocalRT(t *testing.T) {
 			localASN: 70000,
 			localVNI: 5000,
 			want:     true,
+		},
+		{
+			name:     "4-byte RT does not mask oversized VNI",
+			path:     mustPathWithRT(t, mustRT4(t, 70000, 1)),
+			localASN: 70000,
+			localVNI: 65537,
+			want:     false,
 		},
 		{
 			name:     "multiple communities one matching returns true",

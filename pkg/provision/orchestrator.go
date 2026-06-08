@@ -321,6 +321,10 @@ func (o *Orchestrator) disableLVM(ctx context.Context) error {
 }
 
 func (o *Orchestrator) removeEFIBootEntries(ctx context.Context) error {
+	if o.shouldPreserveABBootEntries() {
+		o.log.Info("A/B preserveExisting enabled, preserving existing EFI boot entries")
+		return nil
+	}
 	return o.config.RemoveEFIBootEntries(ctx)
 }
 
@@ -329,6 +333,10 @@ func (o *Orchestrator) mountEFIVars(ctx context.Context) error {
 }
 
 func (o *Orchestrator) createEFIBootEntry(ctx context.Context) error {
+	if o.shouldPreserveABBootEntries() {
+		o.log.Info("A/B preserveExisting enabled, preserving existing EFI boot entry")
+		return nil
+	}
 	return o.config.CreateEFIBootEntry(ctx, o.targetDisk, o.bootPartition)
 }
 
@@ -669,6 +677,10 @@ func (o *Orchestrator) prepareABTargetSlot(ctx context.Context) error {
 
 func (o *Orchestrator) isABImageMode() bool {
 	return strings.EqualFold(strings.TrimSpace(o.cfg.Provision.Image.Mode), config.ImageModeAB)
+}
+
+func (o *Orchestrator) shouldPreserveABBootEntries() bool {
+	return o.isABImageMode() && o.cfg.Provision.AB.PreserveExisting
 }
 
 func (o *Orchestrator) ensureABPartitionLayout() error {

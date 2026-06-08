@@ -97,6 +97,7 @@ func TestParseRouteTarget(t *testing.T) {
 		{"RT:abc:1000", 0, 0, true},
 		{"RT:65000:abc", 0, 0, true},
 		{"RT:9999999999:1000", 0, 0, true},
+		{"RT:4200000001:65536", 0, 0, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.input, func(t *testing.T) {
