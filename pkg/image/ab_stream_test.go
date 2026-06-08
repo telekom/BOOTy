@@ -8,6 +8,8 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,6 +76,25 @@ func TestParseGPTPartitionsSelectsExpectedTypes(t *testing.T) {
 	if !ok || root.Type != linuxFilesystemGUID || root.Start != 4096 {
 		t.Fatalf("root partition = %#v, ok=%v", root, ok)
 	}
+}
+
+func TestCopyReaderFailsOnShortWrite(t *testing.T) {
+	err := copyReader(context.Background(), shortWriter{}, strings.NewReader("payload"))
+	if !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("copyReader() error = %v, want io.ErrShortWrite", err)
+	}
+	if err != nil && !strings.Contains(err.Error(), "writing stream chunk") {
+		t.Fatalf("copyReader() error = %q, want stream write context", err.Error())
+	}
+}
+
+type shortWriter struct{}
+
+func (shortWriter) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	return len(p) - 1, nil
 }
 
 func testGPTImage(t *testing.T) []byte {

@@ -196,7 +196,7 @@ func copyReader(ctx context.Context, dst io.Writer, src io.Reader) error {
 				return fmt.Errorf("writing stream chunk: %w", err)
 			}
 			if written != n {
-				return io.ErrShortWrite
+				return fmt.Errorf("writing stream chunk: %w", io.ErrShortWrite)
 			}
 		}
 		if errors.Is(readErr, io.EOF) {

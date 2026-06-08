@@ -84,7 +84,19 @@ func TestDockerfileRemovesBusyboxMkfsVfatCollisions(t *testing.T) {
 			t.Errorf("%s must be removed in both full initramfs builders so dosfstools sbin/mkfs.vfat is used", path)
 		}
 	}
-	if !strings.Contains(text, "RUN rm -f bin/partprobe bin/hdparm bin/ip bin/mkfs.vfat bin/mkfs.fat bin/mkdosfs bin/lsblk\nCOPY --from=busybox /build/initramfs/bin/growpart bin/growpart") {
+	lines := strings.Split(text, "\n")
+	foundSafeGrowpartCopy := false
+	for i, line := range lines {
+		if strings.TrimSpace(line) != "COPY --from=busybox /build/initramfs/bin/growpart bin/growpart" || i == 0 {
+			continue
+		}
+		previous := strings.TrimSpace(lines[i-1])
+		if strings.HasPrefix(previous, "RUN rm -f ") && strings.Contains(previous, "bin/lsblk") {
+			foundSafeGrowpartCopy = true
+			break
+		}
+	}
+	if !foundSafeGrowpartCopy {
 		t.Error("bin/lsblk must be removed in the GoBGP builder before copying real lsblk, otherwise COPY corrupts bin/busybox")
 	}
 }
