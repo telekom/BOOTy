@@ -484,6 +484,9 @@ func TestToNetworkConfig_BM4XEVPN(t *testing.T) {
 	if netCfg.OverlayVRFName != "cluster" {
 		t.Errorf("OverlayVRFName = %q, want cluster", netCfg.OverlayVRFName)
 	}
+	if netCfg.OverlayVRFTableID != 10 {
+		t.Errorf("OverlayVRFTableID = %d, want 10", netCfg.OverlayVRFTableID)
+	}
 	if netCfg.MTU != 9100 {
 		t.Errorf("MTU = %d, want 9100", netCfg.MTU)
 	}
@@ -520,6 +523,9 @@ func TestToNetworkConfig_ProductionUnderlayVRFOverlayDefault(t *testing.T) {
 	if netCfg.OverlayVRFName != "" {
 		t.Errorf("OverlayVRFName = %q, want empty default VRF", netCfg.OverlayVRFName)
 	}
+	if netCfg.OverlayVRFTableID != 0 {
+		t.Errorf("OverlayVRFTableID = %d, want 0", netCfg.OverlayVRFTableID)
+	}
 }
 
 func TestToNetworkConfig_OverlayVRFCanDifferFromUnderlayVRF(t *testing.T) {
@@ -550,6 +556,9 @@ func TestToNetworkConfig_OverlayVRFCanDifferFromUnderlayVRF(t *testing.T) {
 	}
 	if netCfg.OverlayVRFName != "z-overlay" {
 		t.Errorf("OverlayVRFName = %q, want z-overlay", netCfg.OverlayVRFName)
+	}
+	if netCfg.OverlayVRFTableID != 20 {
+		t.Errorf("OverlayVRFTableID = %d, want 20", netCfg.OverlayVRFTableID)
 	}
 }
 

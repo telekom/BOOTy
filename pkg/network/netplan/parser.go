@@ -248,6 +248,9 @@ func extractVRFs(np *Config, cfg *network.Config) {
 		}
 		if cfg.BridgeName != "" && containsString(vrf.Interfaces, cfg.BridgeName) {
 			cfg.OverlayVRFName = name
+			if vrf.Table > 0 {
+				cfg.OverlayVRFTableID = uint32(vrf.Table)
+			}
 		}
 	}
 }

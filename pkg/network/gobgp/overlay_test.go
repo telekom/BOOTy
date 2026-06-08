@@ -573,6 +573,33 @@ func TestHandleType5RouteNoGateway(t *testing.T) {
 	overlay.handleType5Route(route, "", false)
 }
 
+func TestOverlayRouteTable(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *Config
+		want int
+	}{
+		{
+			name: "default namespace",
+			cfg:  &Config{OverlayVRFName: "", OverlayVRFTableID: 20},
+			want: 0,
+		},
+		{
+			name: "overlay VRF",
+			cfg:  &Config{OverlayVRFName: "Vrf_overlay", OverlayVRFTableID: 20},
+			want: 20,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			overlay := &OverlayTier{cfg: tt.cfg}
+			if got := overlay.overlayRouteTable(); got != tt.want {
+				t.Errorf("overlayRouteTable() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 // --- Type-2 handler tests ---------------------------------------------------
 
 func TestHandleType2RouteInstallsFDB(t *testing.T) {

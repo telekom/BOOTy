@@ -48,7 +48,8 @@ type Config struct {
 	BridgeName        string           // Bridge device name (default: "br.provision")
 	VRFName           string           // Underlay VRF name (default: empty, same as FRR)
 	OverlayVRFName    string           // Overlay bridge VRF name (default: follows VRFName)
-	VRFTableID        uint32           // Routing table ID for VRF (default: 1000)
+	VRFTableID        uint32           // Routing table ID for the underlay VRF (default: 1000)
+	OverlayVRFTableID uint32           // Routing table ID for the overlay bridge VRF (default: VRFTableID)
 	MTU               int              // Physical interface MTU (default: 9000)
 	KeepaliveInterval uint64           // BGP keepalive seconds (default: 3)
 	HoldTime          uint64           // BGP hold timer seconds (default: 9)
@@ -104,6 +105,7 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		VRFName:             netCfg.VRFName,
 		OverlayVRFName:      overlayVRFName,
 		VRFTableID:          netCfg.VRFTableID,
+		OverlayVRFTableID:   netCfg.OverlayVRFTableID,
 		MTU:                 netCfg.MTU,
 		KeepaliveInterval:   uint64(netCfg.BGPKeepalive),
 		HoldTime:            uint64(netCfg.BGPHold),
@@ -150,12 +152,7 @@ func (c *Config) ApplyDefaults() {
 	if c.MTU == 0 {
 		c.MTU = 9000
 	}
-	if c.VRFTableID == 0 || c.VRFTableID == 1 {
-		if c.VRFTableID == 1 {
-			slog.Warn("vrf_table_id=1 conflicts with default routing table, overriding to 1000")
-		}
-		c.VRFTableID = 1000
-	}
+	c.applyVRFTableDefaults()
 	// Normalize UnderlayAF and OverlayType to their canonical lowercase forms
 	// so downstream comparisons don't need case-insensitive matching.
 	if af, err := ParseUnderlayAF(c.UnderlayAF); err == nil {
@@ -169,6 +166,24 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.GracefulRestart != nil {
 		c.GracefulRestart.ApplyDefaults()
+	}
+}
+
+func (c *Config) applyVRFTableDefaults() {
+	switch c.VRFTableID {
+	case 0:
+		c.VRFTableID = 1000
+	case 1:
+		slog.Warn("vrf_table_id=1 conflicts with default routing table, overriding to 1000")
+		c.VRFTableID = 1000
+	}
+
+	switch c.OverlayVRFTableID {
+	case 0:
+		c.OverlayVRFTableID = c.VRFTableID
+	case 1:
+		slog.Warn("overlay_vrf_table_id=1 conflicts with default routing table, using underlay VRF table")
+		c.OverlayVRFTableID = c.VRFTableID
 	}
 }
 

@@ -245,6 +245,9 @@ func TestApplyDefaults(t *testing.T) {
 	if cfg.VRFTableID != 1000 {
 		t.Errorf("VRFTableID = %d, want 1000", cfg.VRFTableID)
 	}
+	if cfg.OverlayVRFTableID != 1000 {
+		t.Errorf("OverlayVRFTableID = %d, want 1000", cfg.OverlayVRFTableID)
+	}
 }
 
 func TestApplyDefaultsVRFTableIDOneOverridden(t *testing.T) {
@@ -253,6 +256,9 @@ func TestApplyDefaultsVRFTableIDOneOverridden(t *testing.T) {
 
 	if cfg.VRFTableID != 1000 {
 		t.Errorf("VRFTableID = %d, want 1000 (table 1 conflicts with default)", cfg.VRFTableID)
+	}
+	if cfg.OverlayVRFTableID != 1000 {
+		t.Errorf("OverlayVRFTableID = %d, want 1000", cfg.OverlayVRFTableID)
 	}
 }
 
@@ -264,6 +270,7 @@ func TestApplyDefaultsPreservesValues(t *testing.T) {
 		BridgeName:        "custom-br",
 		MTU:               1500,
 		VRFTableID:        42,
+		OverlayVRFTableID: 43,
 	}
 	cfg.ApplyDefaults()
 
@@ -285,6 +292,18 @@ func TestApplyDefaultsPreservesValues(t *testing.T) {
 	if cfg.VRFTableID != 42 {
 		t.Errorf("VRFTableID = %d, want 42", cfg.VRFTableID)
 	}
+	if cfg.OverlayVRFTableID != 43 {
+		t.Errorf("OverlayVRFTableID = %d, want 43", cfg.OverlayVRFTableID)
+	}
+}
+
+func TestApplyDefaultsOverlayVRFTableIDOneUsesUnderlayTable(t *testing.T) {
+	cfg := &Config{VRFTableID: 42, OverlayVRFTableID: 1}
+	cfg.ApplyDefaults()
+
+	if cfg.OverlayVRFTableID != 42 {
+		t.Errorf("OverlayVRFTableID = %d, want 42", cfg.OverlayVRFTableID)
+	}
 }
 
 func TestNewConfigDefaultsOverlayVRFToUnderlayVRF(t *testing.T) {
@@ -302,6 +321,9 @@ func TestNewConfigDefaultsOverlayVRFToUnderlayVRF(t *testing.T) {
 	}
 	if cfg.OverlayVRFName != "Vrf_underlay" {
 		t.Errorf("OverlayVRFName = %q, want Vrf_underlay", cfg.OverlayVRFName)
+	}
+	if cfg.OverlayVRFTableID != cfg.VRFTableID {
+		t.Errorf("OverlayVRFTableID = %d, want underlay table %d", cfg.OverlayVRFTableID, cfg.VRFTableID)
 	}
 }
 
@@ -322,6 +344,31 @@ func TestNewConfigHonorsExplicitDefaultOverlayVRF(t *testing.T) {
 	}
 	if cfg.OverlayVRFName != "" {
 		t.Errorf("OverlayVRFName = %q, want empty default VRF", cfg.OverlayVRFName)
+	}
+}
+
+func TestNewConfigHonorsOverlayVRFTableID(t *testing.T) {
+	cfg, err := NewConfig(&network.Config{
+		ASN:               65000,
+		UnderlayIP:        "192.168.4.10",
+		ProvisionVNI:      1000,
+		ProvisionIP:       "10.200.0.10/24",
+		ProvisionGateway:  "192.168.4.1",
+		VRFName:           "Vrf_underlay",
+		VRFTableID:        10,
+		OverlayVRFSet:     true,
+		OverlayVRFName:    "Vrf_overlay",
+		OverlayVRFTableID: 20,
+		BGPPeerMode:       network.PeerModeUnnumbered,
+	})
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	if cfg.VRFTableID != 10 {
+		t.Errorf("VRFTableID = %d, want 10", cfg.VRFTableID)
+	}
+	if cfg.OverlayVRFTableID != 20 {
+		t.Errorf("OverlayVRFTableID = %d, want 20", cfg.OverlayVRFTableID)
 	}
 }
 

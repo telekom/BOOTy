@@ -223,23 +223,23 @@ func (o *OverlayTier) Teardown(_ context.Context) error {
 // CreateVRF creates configured VRF interfaces.
 // Called by Stack before underlay setup so that dummy/NICs can be assigned.
 func (o *OverlayTier) CreateVRF() error {
-	if err := o.createVRF(o.cfg.VRFName); err != nil {
+	if err := o.createVRF(o.cfg.VRFName, o.cfg.VRFTableID); err != nil {
 		return err
 	}
 	if o.cfg.OverlayVRFName != o.cfg.VRFName {
-		return o.createVRF(o.cfg.OverlayVRFName)
+		return o.createVRF(o.cfg.OverlayVRFName, o.cfg.OverlayVRFTableID)
 	}
 	return nil
 }
 
-func (o *OverlayTier) createVRF(name string) error {
+func (o *OverlayTier) createVRF(name string, tableID uint32) error {
 	if name == "" {
 		return nil
 	}
 
 	vrf := &netlink.Vrf{
 		LinkAttrs: netlink.LinkAttrs{Name: name},
-		Table:     o.cfg.VRFTableID,
+		Table:     tableID,
 	}
 	if err := netlink.LinkAdd(vrf); err != nil {
 		if !errors.Is(err, syscall.EEXIST) {
@@ -260,8 +260,15 @@ func (o *OverlayTier) createVRF(name string) error {
 		return fmt.Errorf("bring up VRF %s: %w", name, err)
 	}
 
-	o.log.Info("vrf ready", "name", name, "table", o.cfg.VRFTableID)
+	o.log.Info("vrf ready", "name", name, "table", tableID)
 	return nil
+}
+
+func (o *OverlayTier) overlayRouteTable() int {
+	if o.cfg.OverlayVRFName == "" {
+		return 0
+	}
+	return int(o.cfg.OverlayVRFTableID)
 }
 
 // vxlanName returns the VXLAN interface name derived from the provision VNI.
@@ -705,6 +712,9 @@ func (o *OverlayTier) handleType5Route(route *apipb.EVPNIPPrefixRoute, vtep stri
 		LinkIndex: link.Attrs().Index,
 		Dst:       dst,
 		Gw:        gw,
+	}
+	if tableID := o.overlayRouteTable(); tableID != 0 {
+		kr.Table = tableID
 	}
 
 	if withdraw {

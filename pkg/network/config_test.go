@@ -20,13 +20,18 @@ func TestApplyDefaults(t *testing.T) {
 	if cfg.VRFTableID != 1000 {
 		t.Errorf("VRFTableID = %d, want %d", cfg.VRFTableID, 1000)
 	}
+	if cfg.OverlayVRFTableID != 1000 {
+		t.Errorf("OverlayVRFTableID = %d, want %d", cfg.OverlayVRFTableID, 1000)
+	}
 }
 
 func TestApplyDefaults_NoOverwrite(t *testing.T) {
 	cfg := Config{
-		BridgeName: "custom-br",
-		VRFName:    "custom-vrf",
-		MTU:        1500,
+		BridgeName:        "custom-br",
+		VRFName:           "custom-vrf",
+		VRFTableID:        42,
+		OverlayVRFTableID: 43,
+		MTU:               1500,
 	}
 	cfg.ApplyDefaults()
 
@@ -38,6 +43,12 @@ func TestApplyDefaults_NoOverwrite(t *testing.T) {
 	}
 	if cfg.MTU != 1500 {
 		t.Errorf("MTU = %d, want %d", cfg.MTU, 1500)
+	}
+	if cfg.VRFTableID != 42 {
+		t.Errorf("VRFTableID = %d, want %d", cfg.VRFTableID, 42)
+	}
+	if cfg.OverlayVRFTableID != 43 {
+		t.Errorf("OverlayVRFTableID = %d, want %d", cfg.OverlayVRFTableID, 43)
 	}
 }
 
