@@ -766,7 +766,7 @@ func (o *Orchestrator) validateABActiveSlotState(ctx context.Context) error {
 	return nil
 }
 
-func abSlotPartitionDevice(diskDevice string, slot string) (string, error) {
+func abSlotPartitionDevice(diskDevice, slot string) (string, error) {
 	switch normalizeABStateSlot(slot) {
 	case config.ABSlotA:
 		return disk.PartitionDevicePath(diskDevice, 2), nil
@@ -780,7 +780,7 @@ func abSlotPartitionDevice(diskDevice string, slot string) (string, error) {
 func readABSlotStateFile(path string) (map[string]string, error) {
 	f, err := os.Open(path) //nolint:gosec // path is inside a read-only mounted root partition
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
 
@@ -798,7 +798,7 @@ func readABSlotStateFile(path string) (map[string]string, error) {
 		values[strings.TrimSpace(key)] = strings.Trim(strings.TrimSpace(value), `"'`)
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("scan %s: %w", path, err)
 	}
 	return values, nil
 }

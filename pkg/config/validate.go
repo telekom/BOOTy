@@ -172,13 +172,10 @@ func validateABSizeFields(cfg *ABConfig) []string {
 	return errs
 }
 
-func validateABModeConstraints(abMode bool, disableKexec bool, cfg *ABConfig) []string {
+func validateABModeConstraints(abMode, disableKexec bool, cfg *ABConfig) []string {
 	var errs []string
 	if cfg.PreserveExisting && !abMode {
 		errs = append(errs, "provision.ab.preserveExisting requires provision.image.mode=ab")
-	}
-	if cfg.PreserveExisting && abMode && disableKexec {
-		errs = append(errs, "provision.disableKexec must be false when provision.ab.preserveExisting is true")
 	}
 	if !abMode {
 		return errs
@@ -188,6 +185,22 @@ func validateABModeConstraints(abMode bool, disableKexec bool, cfg *ABConfig) []
 	if withDefaults.RootSizeMB <= 0 {
 		errs = append(errs, "provision.ab.rootSizeMB must be positive in ab image mode")
 	}
+	errs = append(errs, validateABPreserveConstraints(disableKexec, cfg, &withDefaults)...)
+	errs = append(errs, validateABSourceRootSelectors(cfg)...)
+	if _, err := withDefaults.ResolvedTargetSlot(); err != nil {
+		errs = append(errs, fmt.Sprintf("provision.ab: %v", err))
+	}
+	return errs
+}
+
+func validateABPreserveConstraints(disableKexec bool, cfg, withDefaults *ABConfig) []string {
+	if !cfg.PreserveExisting {
+		return nil
+	}
+	var errs []string
+	if disableKexec {
+		errs = append(errs, "provision.disableKexec must be false when provision.ab.preserveExisting is true")
+	}
 	if cfg.PreserveExisting && withDefaults.ActiveSlot == "" {
 		errs = append(errs, "provision.ab.activeSlot is required when preserveExisting is true")
 	}
@@ -196,13 +209,14 @@ func validateABModeConstraints(abMode bool, disableKexec bool, cfg *ABConfig) []
 		withDefaults.ActiveSlot == withDefaults.TargetSlot {
 		errs = append(errs, "provision.ab.targetSlot must not equal provision.ab.activeSlot when preserveExisting is true")
 	}
-	if cfg.SourceRootLabel != "" && cfg.SourceRootPartition != 0 {
-		errs = append(errs, "provision.ab.sourceRootLabel and provision.ab.sourceRootPartition are mutually exclusive")
-	}
-	if _, err := withDefaults.ResolvedTargetSlot(); err != nil {
-		errs = append(errs, fmt.Sprintf("provision.ab: %v", err))
-	}
 	return errs
+}
+
+func validateABSourceRootSelectors(cfg *ABConfig) []string {
+	if cfg.SourceRootLabel != "" && cfg.SourceRootPartition != 0 {
+		return []string{"provision.ab.sourceRootLabel and provision.ab.sourceRootPartition are mutually exclusive"}
+	}
+	return nil
 }
 
 // minDevicesForLevel returns the minimum number of member devices required

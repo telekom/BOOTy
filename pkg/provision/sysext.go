@@ -235,7 +235,10 @@ func syncParentDir(target string) error {
 		return fmt.Errorf("open target directory: %w", err)
 	}
 	defer func() { _ = dir.Close() }()
-	return dir.Sync()
+	if err := dir.Sync(); err != nil {
+		return fmt.Errorf("sync target directory: %w", err)
+	}
+	return nil
 }
 
 func (c *sysextCatalog) upsert(layer *sysextCatalogLayer) {
