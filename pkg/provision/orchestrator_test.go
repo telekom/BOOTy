@@ -85,10 +85,10 @@ func TestMountBootStepIsBetweenRootMountAndBootloaderWork(t *testing.T) {
 			t.Fatalf("missing step %q", name)
 		}
 	}
-	if !(indices["mount-root"] < indices["mount-boot"] &&
-		indices["mount-boot"] < indices["configure-grub"] &&
-		indices["mount-boot"] < indices["create-efi-boot-entry"] &&
-		indices["create-efi-boot-entry"] < indices["teardown-chroot"]) {
+	if indices["mount-root"] >= indices["mount-boot"] ||
+		indices["mount-boot"] >= indices["configure-grub"] ||
+		indices["mount-boot"] >= indices["create-efi-boot-entry"] ||
+		indices["create-efi-boot-entry"] >= indices["teardown-chroot"] {
 		t.Fatalf("unexpected boot mount ordering: %#v", indices)
 	}
 }
