@@ -70,10 +70,12 @@ type Config struct {
 	BGPMinPeers     int      // Minimum established BGP peers for underlay readiness (default: 1)
 
 	// Common fields.
-	BridgeName  string // Default: "br.provision"
-	VRFName     string // Default: empty (no VRF isolation); set explicitly if needed
-	MTU         int    // Default: 9000
-	NetworkMode string // "gobgp" to use in-process GoBGP instead of FRR
+	BridgeName     string // Default: "br.provision"
+	VRFName        string // Underlay VRF name; empty means default namespace
+	OverlayVRFName string // Overlay bridge VRF name; empty means default namespace
+	OverlayVRFSet  bool   // OverlayVRFName was explicitly derived from structured config
+	MTU            int    // Default: 9000
+	NetworkMode    string // "gobgp" to use in-process GoBGP instead of FRR
 
 	// EVPN L2 overlay (Type-2/3 route processing) — disabled by default.
 	EVPNL2Enabled bool // Enable L2 overlay route handling

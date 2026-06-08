@@ -287,6 +287,44 @@ func TestApplyDefaultsPreservesValues(t *testing.T) {
 	}
 }
 
+func TestNewConfigDefaultsOverlayVRFToUnderlayVRF(t *testing.T) {
+	cfg, err := NewConfig(&network.Config{
+		ASN:              65000,
+		UnderlayIP:       "192.168.4.10",
+		ProvisionVNI:     1000,
+		ProvisionIP:      "10.200.0.10/24",
+		ProvisionGateway: "192.168.4.1",
+		VRFName:          "Vrf_underlay",
+		BGPPeerMode:      network.PeerModeUnnumbered,
+	})
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	if cfg.OverlayVRFName != "Vrf_underlay" {
+		t.Errorf("OverlayVRFName = %q, want Vrf_underlay", cfg.OverlayVRFName)
+	}
+}
+
+func TestNewConfigHonorsExplicitDefaultOverlayVRF(t *testing.T) {
+	cfg, err := NewConfig(&network.Config{
+		ASN:              65000,
+		UnderlayIP:       "192.168.4.10",
+		ProvisionVNI:     1000,
+		ProvisionIP:      "10.200.0.10/24",
+		ProvisionGateway: "192.168.4.1",
+		VRFName:          "Vrf_underlay",
+		OverlayVRFSet:    true,
+		OverlayVRFName:   "",
+		BGPPeerMode:      network.PeerModeUnnumbered,
+	})
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	if cfg.OverlayVRFName != "" {
+		t.Errorf("OverlayVRFName = %q, want empty default VRF", cfg.OverlayVRFName)
+	}
+}
+
 func TestApplyDefaultsPropagatesGracefulRestart(t *testing.T) {
 	cfg := &Config{
 		GracefulRestart: &GracefulRestartConfig{Enabled: true},

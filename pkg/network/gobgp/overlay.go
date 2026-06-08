@@ -82,7 +82,7 @@ type OverlayTier struct {
 	fdb    fdbInstaller
 
 	// Track resources created by us for clean teardown.
-	createdVRF      bool
+	createdVRFs     map[string]bool
 	createdBridge   bool
 	createdVXLAN    bool
 	addedLoopbackIP *netlink.Addr
@@ -97,9 +97,10 @@ type OverlayTier struct {
 // NewOverlayTier creates a new overlay tier.
 func NewOverlayTier(cfg *Config) *OverlayTier {
 	return &OverlayTier{
-		cfg: cfg,
-		log: slog.With("tier", "overlay"),
-		fdb: netlinkFDB{},
+		cfg:         cfg,
+		log:         slog.With("tier", "overlay"),
+		fdb:         netlinkFDB{},
+		createdVRFs: map[string]bool{},
 	}
 }
 
@@ -219,34 +220,47 @@ func (o *OverlayTier) Teardown(_ context.Context) error {
 	return nil
 }
 
-// CreateVRF creates the VRF interface if VRFName is configured.
+// CreateVRF creates configured VRF interfaces.
 // Called by Stack before underlay setup so that dummy/NICs can be assigned.
 func (o *OverlayTier) CreateVRF() error {
-	if o.cfg.VRFName == "" {
+	if err := o.createVRF(o.cfg.VRFName); err != nil {
+		return err
+	}
+	if o.cfg.OverlayVRFName != o.cfg.VRFName {
+		return o.createVRF(o.cfg.OverlayVRFName)
+	}
+	return nil
+}
+
+func (o *OverlayTier) createVRF(name string) error {
+	if name == "" {
 		return nil
 	}
 
 	vrf := &netlink.Vrf{
-		LinkAttrs: netlink.LinkAttrs{Name: o.cfg.VRFName},
+		LinkAttrs: netlink.LinkAttrs{Name: name},
 		Table:     o.cfg.VRFTableID,
 	}
 	if err := netlink.LinkAdd(vrf); err != nil {
 		if !errors.Is(err, syscall.EEXIST) {
-			return fmt.Errorf("add VRF %s: %w", o.cfg.VRFName, err)
+			return fmt.Errorf("add VRF %s: %w", name, err)
 		}
 	} else {
-		o.createdVRF = true
+		if o.createdVRFs == nil {
+			o.createdVRFs = map[string]bool{}
+		}
+		o.createdVRFs[name] = true
 	}
 
-	link, err := netlink.LinkByName(o.cfg.VRFName)
+	link, err := netlink.LinkByName(name)
 	if err != nil {
-		return fmt.Errorf("find VRF %s: %w", o.cfg.VRFName, err)
+		return fmt.Errorf("find VRF %s: %w", name, err)
 	}
 	if err := netlink.LinkSetUp(link); err != nil {
-		return fmt.Errorf("bring up VRF %s: %w", o.cfg.VRFName, err)
+		return fmt.Errorf("bring up VRF %s: %w", name, err)
 	}
 
-	o.log.Info("vrf ready", "name", o.cfg.VRFName, "table", o.cfg.VRFTableID)
+	o.log.Info("vrf ready", "name", name, "table", o.cfg.VRFTableID)
 	return nil
 }
 
@@ -272,14 +286,16 @@ func (o *OverlayTier) createVXLANAndBridge() error {
 		return fmt.Errorf("attach VXLAN to bridge: %w", err)
 	}
 
-	// Assign bridge to VRF for traffic isolation.
-	if o.cfg.VRFName != "" {
-		vrfLink, err := netlink.LinkByName(o.cfg.VRFName)
+	// Assign bridge to the configured overlay VRF. Production-like netplan
+	// often keeps the L3VNI bridge in the default VRF while only the
+	// underlay NIC and VTEP source live in Vrf_underlay.
+	if o.cfg.OverlayVRFName != "" {
+		vrfLink, err := netlink.LinkByName(o.cfg.OverlayVRFName)
 		if err != nil {
-			return fmt.Errorf("find VRF %s: %w", o.cfg.VRFName, err)
+			return fmt.Errorf("find overlay VRF %s: %w", o.cfg.OverlayVRFName, err)
 		}
 		if err := netlink.LinkSetMasterByIndex(brLink, vrfLink.Attrs().Index); err != nil {
-			return fmt.Errorf("assign bridge to VRF: %w", err)
+			return fmt.Errorf("assign bridge to overlay VRF: %w", err)
 		}
 	}
 

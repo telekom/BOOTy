@@ -46,7 +46,8 @@ type Config struct {
 	VPNRT             string           // Optional explicit EVPN route target (ASN:value)
 	DNSResolvers      string           // Comma-separated DNS servers
 	BridgeName        string           // Bridge device name (default: "br.provision")
-	VRFName           string           // VRF name (default: empty, same as FRR)
+	VRFName           string           // Underlay VRF name (default: empty, same as FRR)
+	OverlayVRFName    string           // Overlay bridge VRF name (default: follows VRFName)
 	VRFTableID        uint32           // Routing table ID for VRF (default: 1000)
 	MTU               int              // Physical interface MTU (default: 9000)
 	KeepaliveInterval uint64           // BGP keepalive seconds (default: 3)
@@ -86,6 +87,11 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		return nil, fmt.Errorf("derive addresses: %w", err)
 	}
 
+	overlayVRFName := netCfg.OverlayVRFName
+	if !netCfg.OverlayVRFSet {
+		overlayVRFName = netCfg.VRFName
+	}
+
 	cfg := &Config{
 		ASN:                 netCfg.ASN,
 		RouterID:            underlayIP,
@@ -96,6 +102,7 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		DNSResolvers:        netCfg.DNSResolvers,
 		BridgeName:          netCfg.BridgeName,
 		VRFName:             netCfg.VRFName,
+		OverlayVRFName:      overlayVRFName,
 		VRFTableID:          netCfg.VRFTableID,
 		MTU:                 netCfg.MTU,
 		KeepaliveInterval:   uint64(netCfg.BGPKeepalive),

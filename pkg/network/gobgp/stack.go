@@ -208,18 +208,20 @@ func (s *Stack) teardownGatewayRoute() {
 	s.gateway = nil
 }
 
-// cleanupVRF removes the VRF link if it was created by the overlay tier.
+// cleanupVRF removes VRF links created by the overlay tier.
 func (s *Stack) cleanupVRF() {
-	name := s.overlay.cfg.VRFName
-	if name == "" || !s.overlay.createdVRF {
-		return
-	}
-	link, err := netlink.LinkByName(name)
-	if err != nil {
-		return
-	}
-	if err := netlink.LinkDel(link); err != nil {
-		s.log.Warn("Failed to delete VRF", "name", name, "error", err)
+	for name, created := range s.overlay.createdVRFs {
+		if name == "" || !created {
+			continue
+		}
+		link, err := netlink.LinkByName(name)
+		if err != nil {
+			continue
+		}
+		if err := netlink.LinkDel(link); err != nil {
+			s.log.Warn("Failed to delete VRF", "name", name, "error", err)
+		}
+		delete(s.overlay.createdVRFs, name)
 	}
 }
 
