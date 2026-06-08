@@ -42,6 +42,34 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Publish GitLab generic package
+        env:
+          GITLAB_PACKAGE_TOKEN: ${{ secrets.GITLAB_PACKAGE_TOKEN }}
+          GITLAB_API_V4_URL: ${{ vars.GITLAB_API_V4_URL || 'https://gitlab.devops.telekom.de/api/v4' }}
+          GITLAB_PACKAGE_PROJECT_ID: ${{ vars.GITLAB_PACKAGE_PROJECT_ID || '278324' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GITLAB_PACKAGE_TOKEN}" ]; then
+            echo "GITLAB_PACKAGE_TOKEN is not configured; skipping GitLab package publish."
+            exit 0
+          fi
+
+          version="${HEAD_SHA:0:7}"
+          python3 - <<'PY'
+          import pathlib
+          import zipfile
+
+          root = pathlib.Path("out-gobgp-iso")
+          with zipfile.ZipFile("booty-gobgp-pr-iso.zip", "w", zipfile.ZIP_DEFLATED) as archive:
+              for name in ("booty-gobgp.iso", "booty-gobgp.iso.sha256"):
+                  archive.write(root / name, name)
+          PY
+          curl --fail --silent --show-error \
+            --header "PRIVATE-TOKEN: ${GITLAB_PACKAGE_TOKEN}" \
+            --upload-file booty-gobgp-pr-iso.zip \
+            "${GITLAB_API_V4_URL}/projects/${GITLAB_PACKAGE_PROJECT_ID}/packages/generic/booty-pr-artifacts/${version}/booty-gobgp-pr-iso.zip"
+
       - name: Print download hint
         env:
           REF_NAME: ${{ github.head_ref || github.ref_name }}
