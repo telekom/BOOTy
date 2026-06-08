@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -478,7 +479,7 @@ func (o *OverlayTier) advertiseType5(ctx context.Context) error {
 		return fmt.Errorf("build EVPN NLRI: %w", err)
 	}
 
-	pattrs, err := buildType5PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
+	pattrs, err := buildType5PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI), o.cfg.VPNRT)
 	if err != nil {
 		return fmt.Errorf("build path attributes: %w", err)
 	}
@@ -514,7 +515,7 @@ func (o *OverlayTier) advertiseType3(ctx context.Context) error {
 		return fmt.Errorf("build EVPN type-3 NLRI: %w", err)
 	}
 
-	pattrs, err := buildType3PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
+	pattrs, err := buildType3PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI), o.cfg.VPNRT)
 	if err != nil {
 		return fmt.Errorf("build type-3 path attributes: %w", err)
 	}
@@ -563,7 +564,7 @@ func (o *OverlayTier) advertiseType2(ctx context.Context) error {
 		return fmt.Errorf("build EVPN type-2 NLRI: %w", err)
 	}
 
-	pattrs, err := buildType2PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
+	pattrs, err := buildType2PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI), o.cfg.VPNRT)
 	if err != nil {
 		return fmt.Errorf("build type-2 path attributes: %w", err)
 	}
@@ -622,7 +623,7 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 		return
 	}
 
-	if !p.GetIsWithdraw() && !matchesLocalRT(p, o.cfg.ASN, uint32(o.cfg.ProvisionVNI)) {
+	if !p.GetIsWithdraw() && !matchesConfiguredRT(p, o.cfg) {
 		o.log.Debug("route update skipped: RT mismatch", "action", action, "type", nlri.GetTypeUrl())
 		return
 	}
@@ -917,7 +918,7 @@ func buildEVPNType5NLRI(rd *anypb.Any, provisionIP, gwIP string, label uint32) (
 }
 
 // buildType5PathAttrs builds BGP path attributes for EVPN Type-5 advertisement.
-func buildType5PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32) ([]*anypb.Any, error) {
+func buildType5PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32, vpnRT string) ([]*anypb.Any, error) {
 	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0}) // IGP
 	if err != nil {
 		return nil, fmt.Errorf("marshal origin: %w", err)
@@ -934,7 +935,7 @@ func buildType5PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32) ([]*a
 		return nil, fmt.Errorf("marshal mp-reach: %w", err)
 	}
 
-	rt, err := buildRouteTarget(asn, vni)
+	rt, err := buildRouteTargetForSpec(vpnRT, asn, vni)
 	if err != nil {
 		return nil, fmt.Errorf("build route target: %w", err)
 	}
@@ -968,6 +969,21 @@ func matchesLocalRT(path *apipb.Path, localASN, localVNI uint32) bool {
 		}
 	}
 	return false
+}
+
+// matchesConfiguredRT reports whether a route carries the configured import RT.
+// If VPNRT is unset, the default stays local ASN + VNI for backwards
+// compatibility.
+func matchesConfiguredRT(path *apipb.Path, cfg *Config) bool {
+	asn, vni := cfg.ASN, uint32(cfg.ProvisionVNI)
+	if cfg.VPNRT != "" {
+		parsedASN, parsedVNI, err := ParseRouteTarget(cfg.VPNRT)
+		if err != nil {
+			return false
+		}
+		asn, vni = parsedASN, parsedVNI
+	}
+	return matchesLocalRT(path, asn, vni)
 }
 
 // rtFoundInCommunities checks a slice of extended community Any values for a
@@ -1029,6 +1045,17 @@ func buildRouteTarget(asn, vni uint32) (*anypb.Any, error) {
 	return a, nil
 }
 
+func buildRouteTargetForSpec(spec string, fallbackASN, fallbackVNI uint32) (*anypb.Any, error) {
+	if strings.TrimSpace(spec) == "" {
+		return buildRouteTarget(fallbackASN, fallbackVNI)
+	}
+	asn, vni, err := ParseRouteTarget(spec)
+	if err != nil {
+		return nil, err
+	}
+	return buildRouteTarget(asn, vni)
+}
+
 // pmsiTunnelTypeIngressReplication is the PMSI tunnel type for ingress
 // replication (RFC 6514 §5). Remote VTEPs replicate BUM frames to this VTEP.
 const pmsiTunnelTypeIngressReplication = 6
@@ -1050,7 +1077,7 @@ func buildEVPNType3NLRI(rd *anypb.Any, routerID string) (*anypb.Any, error) {
 
 // buildType3PathAttrs builds BGP path attributes for EVPN Type-3 (IMET)
 // advertisement, including Origin, MpReach, Route Target, and PMSI Tunnel.
-func buildType3PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32) ([]*anypb.Any, error) {
+func buildType3PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32, vpnRT string) ([]*anypb.Any, error) {
 	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0})
 	if err != nil {
 		return nil, fmt.Errorf("marshal origin: %w", err)
@@ -1065,7 +1092,7 @@ func buildType3PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32) ([]*a
 		return nil, fmt.Errorf("marshal mp-reach: %w", err)
 	}
 
-	rt, err := buildRouteTarget(asn, vni)
+	rt, err := buildRouteTargetForSpec(vpnRT, asn, vni)
 	if err != nil {
 		return nil, fmt.Errorf("build route target: %w", err)
 	}
@@ -1114,7 +1141,7 @@ func buildEVPNType2NLRI(rd *anypb.Any, mac, ip string, label uint32) (*anypb.Any
 
 // buildType2PathAttrs builds BGP path attributes for EVPN Type-2 (MAC/IP)
 // advertisement, including Origin, MpReach, and Route Target.
-func buildType2PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32) ([]*anypb.Any, error) {
+func buildType2PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32, vpnRT string) ([]*anypb.Any, error) {
 	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0})
 	if err != nil {
 		return nil, fmt.Errorf("marshal origin: %w", err)
@@ -1129,7 +1156,7 @@ func buildType2PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32) ([]*a
 		return nil, fmt.Errorf("marshal mp-reach: %w", err)
 	}
 
-	rt, err := buildRouteTarget(asn, vni)
+	rt, err := buildRouteTargetForSpec(vpnRT, asn, vni)
 	if err != nil {
 		return nil, fmt.Errorf("build route target: %w", err)
 	}

@@ -43,6 +43,7 @@ type Config struct {
 	ProvisionVNI      int              // VXLAN VNI for provisioning network
 	ProvisionIP       string           // IP/mask for provision bridge
 	ProvisionGateway  string           // Gateway VTEP IP for VXLAN BUM flooding
+	VPNRT             string           // Optional explicit EVPN route target (ASN:value)
 	DNSResolvers      string           // Comma-separated DNS servers
 	BridgeName        string           // Bridge device name (default: "br.provision")
 	VRFName           string           // VRF name (default: empty, same as FRR)
@@ -91,6 +92,7 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		ProvisionVNI:        int(netCfg.ProvisionVNI),
 		ProvisionIP:         netCfg.ProvisionIP,
 		ProvisionGateway:    netCfg.ProvisionGateway,
+		VPNRT:               netCfg.VPNRT,
 		DNSResolvers:        netCfg.DNSResolvers,
 		BridgeName:          netCfg.BridgeName,
 		VRFName:             netCfg.VRFName,
@@ -177,21 +179,8 @@ func (c *Config) Validate() error {
 	if err := c.validateTimers(); err != nil {
 		return err
 	}
-
-	if c.ProvisionVNI == 0 || c.ProvisionVNI > 16777215 {
-		return fmt.Errorf("ProvisionVNI %d out of range (must be 1..16777215)", c.ProvisionVNI)
-	}
-
-	// 4-octet ASN RD/RT format can only encode 16-bit VNI values.
-	if c.ASN > 65535 && c.ProvisionVNI > 65535 {
-		return fmt.Errorf("4-octet ASN %d with VNI %d > 65535 is unsupported (RD/RT truncation)", c.ASN, c.ProvisionVNI)
-	}
-
-	// MTU must leave room for VXLAN overhead (50 bytes) plus minimum
-	// useful IP payload (576 bytes per RFC 791).
-	const minMTU = 576 + 50 // minIP + vxlanOverhead
-	if c.MTU > 0 && c.MTU < minMTU {
-		return fmt.Errorf("MTU %d too low (minimum %d = 576 IP + 50 VXLAN overhead)", c.MTU, minMTU)
+	if err := c.validateProvisioning(); err != nil {
+		return err
 	}
 
 	if _, err := ParseUnderlayAF(c.UnderlayAF); err != nil {
@@ -207,7 +196,39 @@ func (c *Config) Validate() error {
 	if c.MinEstablishedPeers < 1 {
 		return fmt.Errorf("BGP_MIN_PEERS %d is invalid (must be >= 1)", c.MinEstablishedPeers)
 	}
+	if err := c.validateVPNRT(); err != nil {
+		return err
+	}
 	return c.validatePolicy()
+}
+
+func (c *Config) validateProvisioning() error {
+	if c.ProvisionVNI == 0 || c.ProvisionVNI > 16777215 {
+		return fmt.Errorf("ProvisionVNI %d out of range (must be 1..16777215)", c.ProvisionVNI)
+	}
+
+	// 4-octet ASN RD/RT format can only encode 16-bit VNI values.
+	if c.ASN > 65535 && c.ProvisionVNI > 65535 {
+		return fmt.Errorf("4-octet ASN %d with VNI %d > 65535 is unsupported (RD/RT truncation)", c.ASN, c.ProvisionVNI)
+	}
+
+	// MTU must leave room for VXLAN overhead (50 bytes) plus minimum
+	// useful IP payload (576 bytes per RFC 791).
+	const minMTU = 576 + 50 // minIP + vxlanOverhead
+	if c.MTU > 0 && c.MTU < minMTU {
+		return fmt.Errorf("MTU %d too low (minimum %d = 576 IP + 50 VXLAN overhead)", c.MTU, minMTU)
+	}
+	return nil
+}
+
+func (c *Config) validateVPNRT() error {
+	if strings.TrimSpace(c.VPNRT) == "" {
+		return nil
+	}
+	if _, _, err := ParseRouteTarget(c.VPNRT); err != nil {
+		return fmt.Errorf("invalid VPN route target: %w", err)
+	}
+	return nil
 }
 
 func (c *Config) validatePolicy() error {

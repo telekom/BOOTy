@@ -46,6 +46,33 @@ func TestNewConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "explicit_vpn_rt",
+			netCfg: &network.Config{
+				UnderlayIP:   "192.168.4.10",
+				ASN:          65100,
+				ProvisionVNI: 1000,
+				VPNRT:        "65000:1000",
+				BGPPeerMode:  network.PeerModeUnnumbered,
+			},
+			check: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				if cfg.VPNRT != "65000:1000" {
+					t.Errorf("VPNRT = %q, want 65000:1000", cfg.VPNRT)
+				}
+			},
+		},
+		{
+			name: "invalid_vpn_rt",
+			netCfg: &network.Config{
+				UnderlayIP:   "192.168.4.10",
+				ASN:          65100,
+				ProvisionVNI: 1000,
+				VPNRT:        "65000",
+				BGPPeerMode:  network.PeerModeUnnumbered,
+			},
+			wantErr: true,
+		},
+		{
 			name: "dual_with_neighbors",
 			netCfg: &network.Config{
 				UnderlayIP:   "10.0.0.5",

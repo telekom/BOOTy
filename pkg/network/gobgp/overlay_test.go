@@ -211,13 +211,36 @@ func TestBuildType5PathAttrs(t *testing.T) {
 		t.Fatalf("build NLRI: %v", err)
 	}
 
-	pattrs, err := buildType5PathAttrs(nlri, "10.0.0.1", 65000, 4000)
+	pattrs, err := buildType5PathAttrs(nlri, "10.0.0.1", 65000, 4000, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Expect 3 attributes: origin, mp-reach, ext-communities.
 	if len(pattrs) != 3 {
 		t.Errorf("got %d path attrs, want 3", len(pattrs))
+	}
+}
+
+func TestBuildType5PathAttrsUsesExplicitVPNRT(t *testing.T) {
+	rd, err := buildRouteDistinguisher(65100, 1000)
+	if err != nil {
+		t.Fatalf("build RD: %v", err)
+	}
+	nlri, err := buildEVPNType5NLRI(rd, "10.200.0.10/32", "192.168.4.10", 1000)
+	if err != nil {
+		t.Fatalf("build NLRI: %v", err)
+	}
+
+	pattrs, err := buildType5PathAttrs(nlri, "192.168.4.10", 65100, 1000, "65000:1000")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	path := &apipb.Path{Pattrs: pattrs}
+	if !matchesLocalRT(path, 65000, 1000) {
+		t.Fatal("expected exported Type-5 attributes to carry configured VPNRT 65000:1000")
+	}
+	if matchesLocalRT(path, 65100, 1000) {
+		t.Fatal("did not expect exported Type-5 attributes to carry fallback local RT")
 	}
 }
 
@@ -735,7 +758,7 @@ func TestBuildType3PathAttrs(t *testing.T) {
 		t.Fatalf("build NLRI: %v", err)
 	}
 
-	pattrs, err := buildType3PathAttrs(nlri, "10.0.0.1", 65000, 4000)
+	pattrs, err := buildType3PathAttrs(nlri, "10.0.0.1", 65000, 4000, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -777,7 +800,7 @@ func TestBuildType3PathAttrs4ByteASN(t *testing.T) {
 		t.Fatalf("build NLRI: %v", err)
 	}
 
-	pattrs, err := buildType3PathAttrs(nlri, "10.0.0.1", 70000, 5000)
+	pattrs, err := buildType3PathAttrs(nlri, "10.0.0.1", 70000, 5000, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -856,7 +879,7 @@ func TestBuildType2PathAttrs(t *testing.T) {
 		t.Fatalf("build NLRI: %v", err)
 	}
 
-	pattrs, err := buildType2PathAttrs(nlri, "10.0.0.1", 65000, 4000)
+	pattrs, err := buildType2PathAttrs(nlri, "10.0.0.1", 65000, 4000, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -890,7 +913,7 @@ func TestBuildType2PathAttrs4ByteASN(t *testing.T) {
 		t.Fatalf("build NLRI: %v", err)
 	}
 
-	pattrs, err := buildType2PathAttrs(nlri, "10.0.0.1", 70000, 5000)
+	pattrs, err := buildType2PathAttrs(nlri, "10.0.0.1", 70000, 5000, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1108,6 +1131,20 @@ func TestMatchesLocalRT(t *testing.T) {
 	}
 }
 
+func TestMatchesConfiguredRT(t *testing.T) {
+	path := mustPathWithRT(t, mustRT2(t, 65000, 1000))
+
+	if !matchesConfiguredRT(path, &Config{ASN: 65100, ProvisionVNI: 1000, VPNRT: "65000:1000"}) {
+		t.Fatal("expected configured VPNRT to match imported route")
+	}
+	if matchesConfiguredRT(path, &Config{ASN: 65100, ProvisionVNI: 1000}) {
+		t.Fatal("expected local fallback RT to reject route from different RT")
+	}
+	if matchesConfiguredRT(path, &Config{ASN: 65100, ProvisionVNI: 1000, VPNRT: "bad"}) {
+		t.Fatal("expected invalid configured VPNRT to reject route")
+	}
+}
+
 func TestProcessRouteUpdateRTFilter(t *testing.T) {
 	nlri, err := anypb.New(&apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
@@ -1156,6 +1193,28 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 		// Matching RT must reach FDB dispatch (LinkByName is called for Type-5 installs).
 		if mock.linkName == "" {
 			t.Error("matching RT: expected FDB dispatch (LinkByName called), but it was not")
+		}
+	})
+
+	t.Run("route with configured VPNRT is dispatched to FDB", func(t *testing.T) {
+		mock := &mockFDB{}
+		overlay := newOverlay(mock)
+		overlay.cfg.ASN = 65100
+		overlay.cfg.ProvisionVNI = 1000
+		overlay.cfg.VPNRT = "65000:1000"
+		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*anypb.Any{mustRT2(t, 65000, 1000)},
+		})
+		if err != nil {
+			t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
+		}
+		path := &apipb.Path{
+			Nlri:   nlri,
+			Pattrs: []*anypb.Any{mp, extComm},
+		}
+		overlay.processRouteUpdate(path)
+		if mock.linkName == "" {
+			t.Error("configured VPNRT: expected FDB dispatch (LinkByName called), but it was not")
 		}
 	})
 
