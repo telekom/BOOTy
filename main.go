@@ -276,7 +276,7 @@ func runCAPRF(ctx context.Context) {
 		kexeced := tryKexec(cfg, provisionErr.FirmwareChanged)
 		time.Sleep(2 * time.Second)
 		if requiresABKexec(cfg) && !kexeced {
-			slog.Error("A/B preserveExisting requires kexec; refusing normal reboot because firmware boot state still points at the active slot")
+			slog.Error("a/b preserveExisting requires kexec; refusing normal reboot because firmware boot state still points at the active slot")
 			realm.PowerOff()
 			return
 		}
