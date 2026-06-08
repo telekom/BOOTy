@@ -210,6 +210,11 @@ func writeFileAtomic(target string, data []byte, perm os.FileMode) error {
 		_ = os.Remove(tmp) //nolint:gosec // tmp was created next to target
 		return fmt.Errorf("write target short write: %w", io.ErrShortWrite)
 	}
+	if err := out.Sync(); err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmp) //nolint:gosec // tmp was created next to target
+		return fmt.Errorf("fsync target: %w", err)
+	}
 	if err := out.Close(); err != nil {
 		_ = os.Remove(tmp) //nolint:gosec // tmp was created next to target
 		return fmt.Errorf("close target: %w", err)
@@ -375,10 +380,18 @@ func copySysextSource(ctx context.Context, source, target, expected string) (str
 		return "", fmt.Errorf("chmod target: %w", err)
 	}
 	digest, copyErr := writeAndHash(ctx, src, out)
+	var syncErr error
+	if copyErr == nil {
+		syncErr = out.Sync()
+	}
 	closeErr := out.Close()
 	if copyErr != nil {
 		_ = os.Remove(tmp) //nolint:gosec // tmp was created in the constrained sysext target directory
 		return "", fmt.Errorf("copy sysext: %w", copyErr)
+	}
+	if syncErr != nil {
+		_ = os.Remove(tmp) //nolint:gosec // tmp was created in the constrained sysext target directory
+		return "", fmt.Errorf("fsync target: %w", syncErr)
 	}
 	if closeErr != nil {
 		_ = os.Remove(tmp) //nolint:gosec // tmp was created in the constrained sysext target directory
