@@ -20,14 +20,25 @@ Initial provisioning writes slot A unless `targetSlot` is set. Upgrades set
 `targetSlot: inactive`; BOOTy then rewrites only the inactive root slot and
 leaves the active slot available for rollback.
 
-BOOTy copies the source image EFI partition into `BOOTY-EFI` and the largest
-Linux/root partition into the target root slot. If the source image is a plain
-root filesystem image without a partition table, BOOTy copies that file directly
-into the target root slot.
+BOOTy copies the source image EFI partition into `BOOTY-EFI` during initial
+provisioning. During `preserveExisting` upgrades, it leaves `BOOTY-EFI`
+untouched so the active slot remains rollback-capable. The source root partition
+is selected by `sourceRootLabel`, `sourceRootPartition`, a single common root
+label such as `rootfs`, or one unambiguous Linux filesystem partition. Ambiguous
+partitioned source images fail fast instead of guessing. If the source image is
+a plain root filesystem image without a partition table, BOOTy copies that file
+directly into the target root slot.
 
 After mounting the target root, BOOTy writes `/etc/booty/ab-slot.env` with the
-selected slot and root partition. Higher-level tooling can read that after boot
-to report the active slot.
+selected slot, booted slot marker, and root partition. Higher-level tooling can
+read that after boot to report the active slot.
+
+For `preserveExisting` upgrades, BOOTy also mounts the declared active root slot
+read-only and verifies `/etc/booty/ab-slot.env` before wiping the target slot.
+This prevents a stale `AB_ACTIVE_SLOT` value from wiping the currently active
+root partition. Preserve-existing upgrades require kexec; BOOTy powers off
+instead of doing a normal reboot if kexec is disabled or fails, because the
+firmware boot path may still point at the old active slot.
 
 ## YAML
 
@@ -44,6 +55,7 @@ provision:
     activeSlot: a
     targetSlot: inactive
     preserveExisting: true
+    sourceRootLabel: rootfs
     bootSizeMB: 512
     rootSizeMB: 65536
     stateSizeMB: 0
@@ -58,10 +70,14 @@ export AB_SCHEME="dual-root"
 export AB_ACTIVE_SLOT="a"
 export AB_TARGET_SLOT="inactive"
 export AB_PRESERVE_EXISTING="true"
+export AB_SOURCE_ROOT_LABEL="rootfs"
 export AB_BOOT_SIZE_MB="512"
 export AB_ROOT_SIZE_MB="65536"
 export AB_STATE_SIZE_MB="0"
 ```
+
+Use `AB_SOURCE_ROOT_PARTITION="2"` instead of `AB_SOURCE_ROOT_LABEL` only for
+source images that do not carry a stable GPT root partition label.
 
 ## Requirements
 
@@ -69,6 +85,11 @@ export AB_STATE_SIZE_MB="0"
 - `rootSizeMB` must fit the source root filesystem with operational headroom.
 - Use `preserveExisting: true` only on disks already provisioned with the BOOTy
   A/B scheme.
+- Do not set `DISABLE_KEXEC=true` for preserve-existing upgrades. The inactive
+  slot is activated through kexec, while the active slot stays available for
+  rollback.
+- Keep `/etc/booty/ab-slot.env` in both root slots. BOOTy writes it during
+  provisioning and validates it on later upgrades.
 - Sysext layers remain independent from the OS image. Preload sysexts into the
   target root during A/B provisioning, then activate the desired composition at
   boot or through a higher-level updater.

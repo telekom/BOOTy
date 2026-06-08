@@ -103,14 +103,65 @@ func TestValidateRejectsABPreserveInactiveWithoutActiveSlot(t *testing.T) {
 	}
 }
 
-func TestValidateAcceptsABPreserveExplicitTargetWithoutActiveSlot(t *testing.T) {
+func TestValidateRejectsABPreserveExplicitTargetWithoutActiveSlot(t *testing.T) {
 	cfg := &Config{}
 	cfg.Provision.Image.Mode = ImageModeAB
 	cfg.Provision.AB.PreserveExisting = true
 	cfg.Provision.AB.TargetSlot = ABSlotB
 	cfg.Provision.AB.RootSizeMB = 8192
 
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate() error: %v", err)
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected activeSlot validation error")
+	}
+}
+
+func TestValidateRejectsABPreserveTargetEqualsActive(t *testing.T) {
+	cfg := &Config{}
+	cfg.Provision.Image.Mode = ImageModeAB
+	cfg.Provision.AB.PreserveExisting = true
+	cfg.Provision.AB.ActiveSlot = ABSlotA
+	cfg.Provision.AB.TargetSlot = ABSlotA
+	cfg.Provision.AB.RootSizeMB = 8192
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected target=active validation error")
+	}
+	if got := err.Error(); !strings.Contains(got, "must not equal") {
+		t.Fatalf("Validate() error = %q", got)
+	}
+}
+
+func TestValidateRejectsABPreserveWithDisableKexec(t *testing.T) {
+	cfg := &Config{}
+	cfg.Provision.Image.Mode = ImageModeAB
+	cfg.Provision.DisableKexec = true
+	cfg.Provision.AB.PreserveExisting = true
+	cfg.Provision.AB.ActiveSlot = ABSlotA
+	cfg.Provision.AB.TargetSlot = ABTargetInactive
+	cfg.Provision.AB.RootSizeMB = 8192
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected disableKexec validation error")
+	}
+	if got := err.Error(); !strings.Contains(got, "disableKexec must be false") {
+		t.Fatalf("Validate() error = %q", got)
+	}
+}
+
+func TestValidateRejectsABSourceRootSelectorConflict(t *testing.T) {
+	cfg := &Config{}
+	cfg.Provision.Image.Mode = ImageModeAB
+	cfg.Provision.AB.RootSizeMB = 8192
+	cfg.Provision.AB.SourceRootLabel = "rootfs"
+	cfg.Provision.AB.SourceRootPartition = 2
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected source-root selector conflict")
+	}
+	if got := err.Error(); !strings.Contains(got, "sourceRootLabel and provision.ab.sourceRootPartition are mutually exclusive") {
+		t.Fatalf("Validate() error = %q", got)
 	}
 }

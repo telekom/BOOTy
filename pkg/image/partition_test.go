@@ -40,28 +40,56 @@ func TestConvertQCOW2HookRegistered(t *testing.T) {
 
 func TestSelectSourcePartitionsForAB(t *testing.T) {
 	parts := []sfdiskPartition{
-		{Node: "/dev/loop0p1", Type: efiSystemPartitionGUID, Size: 1024},
-		{Node: "/dev/loop0p2", Type: linuxFilesystemGUID, Size: 2048},
-		{Node: "/dev/loop0p3", Type: linuxFilesystemGUID, Size: 4096},
+		{Node: "/dev/loop0p1", Type: efiSystemPartitionGUID, Size: 1024, Number: 1},
+		{Node: "/dev/loop0p2", Type: linuxFilesystemGUID, Size: 2048, Name: "rootfs", Number: 2},
+		{Node: "/dev/loop0p3", Type: linuxFilesystemGUID, Size: 4096, Name: "data", Number: 3},
 	}
 	boot, ok := selectSourceBootPartition(parts)
 	if !ok || boot.Node != "/dev/loop0p1" {
 		t.Fatalf("boot = %#v, ok=%v", boot, ok)
 	}
-	root, ok := selectSourceRootPartition(parts)
-	if !ok || root.Node != "/dev/loop0p3" {
-		t.Fatalf("root = %#v, ok=%v", root, ok)
+	root, err := selectSourceRootPartition(parts, "", 0)
+	if err != nil || root.Node != "/dev/loop0p2" {
+		t.Fatalf("root = %#v, err=%v", root, err)
 	}
 }
 
-func TestSelectSourceRootPartitionFallsBackToLargestNonEFI(t *testing.T) {
+func TestSelectSourceRootPartitionRejectsAmbiguousLinuxPartitions(t *testing.T) {
+	parts := []sfdiskPartition{
+		{Node: "/dev/loop0p1", Type: efiSystemPartitionGUID, Size: 1024},
+		{Node: "/dev/loop0p2", Type: linuxFilesystemGUID, Size: 2048},
+		{Node: "/dev/loop0p3", Type: linuxFilesystemGUID, Size: 8192},
+	}
+	if _, err := selectSourceRootPartition(parts, "", 0); err == nil {
+		t.Fatal("expected ambiguous Linux root selection to fail")
+	}
+}
+
+func TestSelectSourceRootPartitionSupportsExplicitSelectors(t *testing.T) {
+	parts := []sfdiskPartition{
+		{Node: "/dev/loop0p1", Type: efiSystemPartitionGUID, Size: 1024, Number: 1},
+		{Node: "/dev/loop0p2", Type: linuxFilesystemGUID, Size: 2048, Name: "ROOT-A", Number: 2},
+		{Node: "/dev/loop0p3", Type: linuxFilesystemGUID, Size: 8192, Name: "STATE", Number: 3},
+	}
+
+	root, err := selectSourceRootPartition(parts, "root-a", 0)
+	if err != nil || root.Node != "/dev/loop0p2" {
+		t.Fatalf("label root = %#v, err=%v", root, err)
+	}
+
+	root, err = selectSourceRootPartition(parts, "", 3)
+	if err != nil || root.Node != "/dev/loop0p3" {
+		t.Fatalf("partition root = %#v, err=%v", root, err)
+	}
+}
+
+func TestSelectSourceRootPartitionAllowsSingleNonEFI(t *testing.T) {
 	parts := []sfdiskPartition{
 		{Node: "/dev/loop0p1", Type: efiSystemPartitionGUID, Size: 1024},
 		{Node: "/dev/loop0p2", Type: "unknown", Size: 8192},
-		{Node: "/dev/loop0p3", Type: "unknown", Size: 4096},
 	}
-	root, ok := selectSourceRootPartition(parts)
-	if !ok || root.Node != "/dev/loop0p2" {
-		t.Fatalf("root = %#v, ok=%v", root, ok)
+	root, err := selectSourceRootPartition(parts, "", 0)
+	if err != nil || root.Node != "/dev/loop0p2" {
+		t.Fatalf("root = %#v, err=%v", root, err)
 	}
 }

@@ -223,7 +223,19 @@ func writeFileAtomic(target string, data []byte, perm os.FileMode) error {
 		_ = os.Remove(tmp) //nolint:gosec // tmp was created next to target
 		return fmt.Errorf("install target: %w", err)
 	}
+	if err := syncParentDir(target); err != nil {
+		return fmt.Errorf("fsync target directory: %w", err)
+	}
 	return nil
+}
+
+func syncParentDir(target string) error {
+	dir, err := os.Open(filepath.Dir(target)) //nolint:gosec // target directory constrained by caller
+	if err != nil {
+		return fmt.Errorf("open target directory: %w", err)
+	}
+	defer func() { _ = dir.Close() }()
+	return dir.Sync()
 }
 
 func (c *sysextCatalog) upsert(layer *sysextCatalogLayer) {
@@ -404,6 +416,9 @@ func copySysextSource(ctx context.Context, source, target, expected string) (str
 	if err := os.Rename(tmp, target); err != nil { //nolint:gosec // both paths are in the constrained sysext target directory
 		_ = os.Remove(tmp) //nolint:gosec // tmp was created in the constrained sysext target directory
 		return "", fmt.Errorf("install target: %w", err)
+	}
+	if err := syncParentDir(target); err != nil {
+		return "", fmt.Errorf("fsync target directory: %w", err)
 	}
 	return digest, nil
 }

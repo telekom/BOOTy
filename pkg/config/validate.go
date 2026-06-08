@@ -83,7 +83,7 @@ func (c *Config) Validate() error {
 	if err := validateSysextConfig(&c.Provision.Sysext); err != nil {
 		errs = append(errs, err.Error())
 	}
-	if err := validateABConfig(c.Provision.Image.Mode, &c.Provision.AB); err != nil {
+	if err := validateABConfig(c.Provision.Image.Mode, c.Provision.DisableKexec, &c.Provision.AB); err != nil {
 		errs = append(errs, err.Error())
 	}
 
@@ -121,14 +121,14 @@ func (c *Config) normalize() {
 	}
 }
 
-func validateABConfig(imageMode string, cfg *ABConfig) error {
+func validateABConfig(imageMode string, disableKexec bool, cfg *ABConfig) error {
 	errs := make([]string, 0, 5)
 	mode := strings.ToLower(strings.TrimSpace(imageMode))
 	abMode := mode == ImageModeAB
 
 	errs = append(errs, validateABEnums(cfg)...)
 	errs = append(errs, validateABSizeFields(cfg)...)
-	errs = append(errs, validateABModeConstraints(abMode, cfg)...)
+	errs = append(errs, validateABModeConstraints(abMode, disableKexec, cfg)...)
 
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
@@ -166,13 +166,19 @@ func validateABSizeFields(cfg *ABConfig) []string {
 	if cfg.StateSizeMB < 0 {
 		errs = append(errs, "provision.ab.stateSizeMB must be non-negative")
 	}
+	if cfg.SourceRootPartition < 0 {
+		errs = append(errs, "provision.ab.sourceRootPartition must be non-negative")
+	}
 	return errs
 }
 
-func validateABModeConstraints(abMode bool, cfg *ABConfig) []string {
+func validateABModeConstraints(abMode bool, disableKexec bool, cfg *ABConfig) []string {
 	var errs []string
 	if cfg.PreserveExisting && !abMode {
 		errs = append(errs, "provision.ab.preserveExisting requires provision.image.mode=ab")
+	}
+	if cfg.PreserveExisting && abMode && disableKexec {
+		errs = append(errs, "provision.disableKexec must be false when provision.ab.preserveExisting is true")
 	}
 	if !abMode {
 		return errs
@@ -182,8 +188,16 @@ func validateABModeConstraints(abMode bool, cfg *ABConfig) []string {
 	if withDefaults.RootSizeMB <= 0 {
 		errs = append(errs, "provision.ab.rootSizeMB must be positive in ab image mode")
 	}
-	if cfg.PreserveExisting && withDefaults.TargetSlot == ABTargetInactive && withDefaults.ActiveSlot == "" {
-		errs = append(errs, "provision.ab.activeSlot is required when preserveExisting targets the inactive slot")
+	if cfg.PreserveExisting && withDefaults.ActiveSlot == "" {
+		errs = append(errs, "provision.ab.activeSlot is required when preserveExisting is true")
+	}
+	if cfg.PreserveExisting && withDefaults.ActiveSlot != "" &&
+		(withDefaults.TargetSlot == ABSlotA || withDefaults.TargetSlot == ABSlotB) &&
+		withDefaults.ActiveSlot == withDefaults.TargetSlot {
+		errs = append(errs, "provision.ab.targetSlot must not equal provision.ab.activeSlot when preserveExisting is true")
+	}
+	if cfg.SourceRootLabel != "" && cfg.SourceRootPartition != 0 {
+		errs = append(errs, "provision.ab.sourceRootLabel and provision.ab.sourceRootPartition are mutually exclusive")
 	}
 	if _, err := withDefaults.ResolvedTargetSlot(); err != nil {
 		errs = append(errs, fmt.Sprintf("provision.ab: %v", err))

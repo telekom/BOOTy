@@ -13,6 +13,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"unicode/utf16"
 )
 
 const (
@@ -82,13 +83,30 @@ func parseGPTPartitions(prefix []byte) ([]sfdiskPartition, error) {
 			return nil, fmt.Errorf("invalid GPT partition %d: first_lba=%d last_lba=%d", i+1, firstLBA, lastLBA)
 		}
 		parts = append(parts, sfdiskPartition{
-			Node:  fmt.Sprintf("gpt-part-%d", i+1),
-			Start: int64(firstLBA),
-			Size:  int64(lastLBA - firstLBA + 1),
-			Type:  guidString(entry[:16]),
+			Node:   fmt.Sprintf("gpt-part-%d", i+1),
+			Start:  int64(firstLBA),
+			Size:   int64(lastLBA - firstLBA + 1),
+			Type:   guidString(entry[:16]),
+			Name:   decodeGPTPartitionName(entry[56:min(len(entry), 128)]),
+			Number: int(i + 1),
 		})
 	}
 	return parts, nil
+}
+
+func decodeGPTPartitionName(name []byte) string {
+	if len(name)%2 == 1 {
+		name = name[:len(name)-1]
+	}
+	runes := make([]uint16, 0, len(name)/2)
+	for i := 0; i+1 < len(name); i += 2 {
+		r := binary.LittleEndian.Uint16(name[i : i+2])
+		if r == 0 {
+			break
+		}
+		runes = append(runes, r)
+	}
+	return strings.TrimSpace(string(utf16.Decode(runes)))
 }
 
 func isZeroGUID(guid []byte) bool {

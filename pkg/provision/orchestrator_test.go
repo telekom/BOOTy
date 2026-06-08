@@ -757,6 +757,8 @@ func TestABStreamTargetsPreserveExistingSkipsSharedBoot(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Image.Mode = config.ImageModeAB
 	cfg.Provision.AB.PreserveExisting = true
+	cfg.Provision.AB.SourceRootLabel = "rootfs"
+	cfg.Provision.AB.SourceRootPartition = 0
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 	o.targetDisk = "/dev/sda"
 	o.bootPartition = "/dev/sda1"
@@ -771,6 +773,9 @@ func TestABStreamTargetsPreserveExistingSkipsSharedBoot(t *testing.T) {
 	}
 	if targets.BootPartition != "" {
 		t.Fatalf("BootPartition = %q, want empty when preserving existing A/B boot assets", targets.BootPartition)
+	}
+	if targets.SourceRootLabel != "rootfs" {
+		t.Fatalf("SourceRootLabel = %q, want rootfs", targets.SourceRootLabel)
 	}
 }
 
@@ -819,12 +824,46 @@ func TestWriteABSlotState(t *testing.T) {
 	content := string(data)
 	for _, want := range []string{
 		"BOOTY_AB_TARGET_SLOT=a",
+		"BOOTY_AB_BOOTED_SLOT=a",
 		"BOOTY_AB_ACTIVE_SLOT=b",
 		"BOOTY_AB_PRESERVE_EXISTING=true",
 		"BOOTY_AB_ROOT_PARTITION=/dev/sda2",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("ab-slot.env missing %q in:\n%s", want, content)
+		}
+	}
+}
+
+func TestReadABSlotStateFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ab-slot.env")
+	if err := os.WriteFile(path, []byte("BOOTY_AB_BOOTED_SLOT='b'\nBOOTY_AB_TARGET_SLOT=a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state, err := readABSlotStateFile(path)
+	if err != nil {
+		t.Fatalf("readABSlotStateFile: %v", err)
+	}
+	if state["BOOTY_AB_BOOTED_SLOT"] != "b" {
+		t.Fatalf("BOOTY_AB_BOOTED_SLOT = %q, want b", state["BOOTY_AB_BOOTED_SLOT"])
+	}
+}
+
+func TestABSlotPartitionDevice(t *testing.T) {
+	tests := []struct {
+		slot string
+		want string
+	}{
+		{slot: config.ABSlotA, want: "/dev/sda2"},
+		{slot: config.ABSlotB, want: "/dev/sda3"},
+	}
+	for _, tt := range tests {
+		got, err := abSlotPartitionDevice("/dev/sda", tt.slot)
+		if err != nil {
+			t.Fatalf("abSlotPartitionDevice(%q): %v", tt.slot, err)
+		}
+		if got != tt.want {
+			t.Fatalf("abSlotPartitionDevice(%q) = %q, want %q", tt.slot, got, tt.want)
 		}
 	}
 }

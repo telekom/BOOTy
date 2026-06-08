@@ -236,7 +236,14 @@ provision:
     # targetSlot: inactive (default) | a | b.
     targetSlot: inactive
     # preserveExisting: true for OS upgrades; skips disk-wide wipe and layout creation.
+    # Requires activeSlot and kexec so BOOTy can switch into the target slot
+    # without relying on firmware boot order that still points at the active slot.
     preserveExisting: false
+    # sourceRootLabel/sourceRootPartition select the source-image root partition.
+    # Prefer a stable GPT label and use the 1-based partition number only when
+    # the source image has no root label.
+    sourceRootLabel: rootfs
+    sourceRootPartition: 0
     # bootSizeMB: shared EFI system partition size (default: 512).
     bootSizeMB: 512
     # rootSizeMB: size of each root slot (default: 32768).

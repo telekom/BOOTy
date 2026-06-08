@@ -174,10 +174,12 @@ func copyPartitions(ctx context.Context, rawPath, targetDisk string) error {
 
 // sfdiskPartition mirrors the sfdisk JSON partition entry.
 type sfdiskPartition struct {
-	Node  string `json:"node"`
-	Start int64  `json:"start"`
-	Size  int64  `json:"size"`
-	Type  string `json:"type"`
+	Node   string `json:"node"`
+	Start  int64  `json:"start"`
+	Size   int64  `json:"size"`
+	Type   string `json:"type"`
+	Name   string `json:"name,omitempty"`
+	Number int    `json:"-"`
 }
 
 // readSfdiskPartitions reads partition entries from a disk/loop device.
@@ -199,6 +201,9 @@ func readSfdiskPartitions(ctx context.Context, dev string) ([]sfdiskPartition, e
 	}
 	if err := json.Unmarshal(jsonBytes, &result); err != nil {
 		return nil, fmt.Errorf("parsing sfdisk output: %w", err)
+	}
+	for i := range result.PartitionTable.Partitions {
+		result.PartitionTable.Partitions[i].Number = i + 1
 	}
 	return result.PartitionTable.Partitions, nil
 }

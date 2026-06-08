@@ -917,6 +917,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"AB_SCHEME":                   &cfg.Provision.AB.Scheme,
 		"AB_ACTIVE_SLOT":              &cfg.Provision.AB.ActiveSlot,
 		"AB_TARGET_SLOT":              &cfg.Provision.AB.TargetSlot,
+		"AB_SOURCE_ROOT_LABEL":        &cfg.Provision.AB.SourceRootLabel,
 	}
 
 	if ptr, ok := strFields[key]; ok {
@@ -1030,6 +1031,7 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		"AB_BOOT_SIZE_MB":                    &cfg.Provision.AB.BootSizeMB,
 		"AB_ROOT_SIZE_MB":                    &cfg.Provision.AB.RootSizeMB,
 		"AB_STATE_SIZE_MB":                   &cfg.Provision.AB.StateSizeMB,
+		"AB_SOURCE_ROOT_PARTITION":           &cfg.Provision.AB.SourceRootPartition,
 	}
 
 	if ptr, ok := intFields[key]; ok {

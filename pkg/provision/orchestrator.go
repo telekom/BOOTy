@@ -3,6 +3,7 @@
 package provision
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -662,9 +663,11 @@ func (o *Orchestrator) abStreamTargets() image.ABTargets {
 		bootPartition = ""
 	}
 	return image.ABTargets{
-		Disk:          o.targetDisk,
-		BootPartition: bootPartition,
-		RootPartition: o.rootPartition,
+		Disk:                o.targetDisk,
+		BootPartition:       bootPartition,
+		RootPartition:       o.rootPartition,
+		SourceRootLabel:     o.cfg.Provision.AB.SourceRootLabel,
+		SourceRootPartition: o.cfg.Provision.AB.SourceRootPartition,
 	}
 }
 
@@ -699,7 +702,109 @@ func (o *Orchestrator) validateABPreserveExistingLayout(ctx context.Context) err
 			return err
 		}
 	}
+	if err := o.validateABActiveSlotState(ctx); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (o *Orchestrator) validateABActiveSlotState(ctx context.Context) error {
+	ab := o.cfg.Provision.AB.WithDefaults()
+	if ab.ActiveSlot == "" {
+		return fmt.Errorf("A/B preserveExisting requires provision.ab.activeSlot")
+	}
+	targetSlot, err := ab.ResolvedTargetSlot()
+	if err != nil {
+		return err
+	}
+	if targetSlot == ab.ActiveSlot {
+		return fmt.Errorf("A/B target slot %q equals active slot", targetSlot)
+	}
+
+	activePartition, err := abSlotPartitionDevice(o.targetDisk, ab.ActiveSlot)
+	if err != nil {
+		return err
+	}
+	if activePartition == o.rootPartition {
+		return fmt.Errorf("A/B target root %s resolves to active slot %q", o.rootPartition, ab.ActiveSlot)
+	}
+
+	if _, err := os.Stat(activePartition); err != nil {
+		if os.IsNotExist(err) {
+			o.log.Warn("active A/B partition device is not present; skipping mounted active-slot state validation", "device", activePartition)
+			return nil
+		}
+		return fmt.Errorf("stat active A/B partition %s: %w", activePartition, err)
+	}
+
+	mountpoint, err := os.MkdirTemp("", "booty-active-slot-*")
+	if err != nil {
+		return fmt.Errorf("creating active A/B slot mountpoint: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(mountpoint) }()
+
+	if err := o.disk.MountPartitionReadOnly(ctx, activePartition, mountpoint); err != nil {
+		return fmt.Errorf("mounting declared active A/B slot %q (%s): %w", ab.ActiveSlot, activePartition, err)
+	}
+	defer func() {
+		if err := o.disk.Unmount(mountpoint); err != nil {
+			o.log.Warn("failed to unmount active A/B slot", "mountpoint", mountpoint, "error", err)
+		}
+	}()
+
+	state, err := readABSlotStateFile(filepath.Join(mountpoint, "etc", "booty", "ab-slot.env"))
+	if err != nil {
+		return fmt.Errorf("reading active A/B slot state from %s: %w", activePartition, err)
+	}
+	bootedSlot := normalizeABStateSlot(state["BOOTY_AB_BOOTED_SLOT"])
+	if bootedSlot == "" {
+		bootedSlot = normalizeABStateSlot(state["BOOTY_AB_TARGET_SLOT"])
+	}
+	if bootedSlot != ab.ActiveSlot {
+		return fmt.Errorf("active A/B slot state on %s reports slot %q, config declares %q", activePartition, bootedSlot, ab.ActiveSlot)
+	}
+	return nil
+}
+
+func abSlotPartitionDevice(diskDevice string, slot string) (string, error) {
+	switch normalizeABStateSlot(slot) {
+	case config.ABSlotA:
+		return disk.PartitionDevicePath(diskDevice, 2), nil
+	case config.ABSlotB:
+		return disk.PartitionDevicePath(diskDevice, 3), nil
+	default:
+		return "", fmt.Errorf("invalid A/B slot %q", slot)
+	}
+}
+
+func readABSlotStateFile(path string) (map[string]string, error) {
+	f, err := os.Open(path) //nolint:gosec // path is inside a read-only mounted root partition
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	values := make(map[string]string)
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		values[strings.TrimSpace(key)] = strings.Trim(strings.TrimSpace(value), `"'`)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return values, nil
+}
+
+func normalizeABStateSlot(slot string) string {
+	return strings.ToLower(strings.TrimSpace(slot))
 }
 
 func validateABPreservePartition(diskDevice string, index int, expected config.Partition, actual disk.Partition) error {
@@ -774,8 +879,9 @@ func (o *Orchestrator) writeABSlotState() error {
 		return fmt.Errorf("a/b slot state directory: %w", err)
 	}
 	content := fmt.Sprintf(
-		"BOOTY_AB_SCHEME=%s\nBOOTY_AB_TARGET_SLOT=%s\nBOOTY_AB_ACTIVE_SLOT=%s\nBOOTY_AB_PRESERVE_EXISTING=%t\nBOOTY_AB_ROOT_PARTITION=%s\n",
+		"BOOTY_AB_SCHEME=%s\nBOOTY_AB_TARGET_SLOT=%s\nBOOTY_AB_BOOTED_SLOT=%s\nBOOTY_AB_ACTIVE_SLOT=%s\nBOOTY_AB_PRESERVE_EXISTING=%t\nBOOTY_AB_ROOT_PARTITION=%s\n",
 		ab.Scheme,
+		targetSlot,
 		targetSlot,
 		ab.ActiveSlot,
 		ab.PreserveExisting,

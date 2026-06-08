@@ -58,6 +58,16 @@ type ABConfig struct {
 	// StateSizeMB is the persistent state partition size. Zero means it fills
 	// the remaining disk.
 	StateSizeMB int `yaml:"stateSizeMB" json:"stateSizeMB"`
+
+	// SourceRootLabel selects the source-image GPT partition label to copy into
+	// the target root slot. When empty, BOOTy accepts common root labels or a
+	// single unambiguous Linux root partition and fails on ambiguous layouts.
+	SourceRootLabel string `yaml:"sourceRootLabel" json:"sourceRootLabel"`
+
+	// SourceRootPartition selects the 1-based source-image partition number to
+	// copy into the target root slot. It is mutually exclusive with
+	// SourceRootLabel and exists for images that do not label root partitions.
+	SourceRootPartition int `yaml:"sourceRootPartition" json:"sourceRootPartition"`
 }
 
 // WithDefaults returns a copy with production-safe defaults filled in.

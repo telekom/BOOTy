@@ -273,8 +273,13 @@ func runCAPRF(ctx context.Context) {
 				slog.Warn("network teardown error", "error", err)
 			}
 		}
-		tryKexec(cfg, provisionErr.FirmwareChanged)
+		kexeced := tryKexec(cfg, provisionErr.FirmwareChanged)
 		time.Sleep(2 * time.Second)
+		if requiresABKexec(cfg) && !kexeced {
+			slog.Error("A/B preserveExisting requires kexec; refusing normal reboot because firmware boot state still points at the active slot")
+			realm.PowerOff()
+			return
+		}
 		if provisionErr.PowerOff {
 			slog.Info("provisioning succeeded, powering off for orchestrator to manage boot")
 			realm.PowerOff()
@@ -714,37 +719,37 @@ func detectIPMI(netCfg *network.Config) {
 }
 
 // tryKexec attempts to kexec into the installed kernel.
-// Falls back silently on failure so the caller can do a normal reboot.
+// Returns false on failure so the caller can decide whether a normal reboot is safe.
 // Skips kexec when disabled by config toggle or when firmware was changed during
 // provisioning (e.g. Mellanox SR-IOV), since firmware reinit requires a hard reboot.
-func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) {
+func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) bool {
 	if cfg.Provision.DisableKexec {
 		slog.Info("kexec disabled by configuration, skipping")
-		return
+		return false
 	}
 
 	if firmwareChanged {
 		slog.Info("firmware values changed during provisioning, hard reboot required — skipping kexec")
-		return
+		return false
 	}
 
 	const grubPath = "/newroot/boot/grub/grub.cfg"
 	f, err := os.Open(grubPath)
 	if err != nil {
 		slog.Warn("cannot open grub.cfg, skipping kexec", "error", err)
-		return
+		return false
 	}
 	defer func() { _ = f.Close() }()
 
 	entries, err := kexec.ParseGrubCfg(f)
 	if err != nil {
 		slog.Warn("failed to parse grub.cfg", "error", err)
-		return
+		return false
 	}
 	entry, err := kexec.GetDefaultEntry(entries)
 	if err != nil {
 		slog.Warn("no default boot entry found", "error", err)
-		return
+		return false
 	}
 
 	kernel := "/newroot" + entry.Kernel
@@ -753,9 +758,16 @@ func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) {
 
 	if err := kexec.Load(kernel, initrd, entry.KernelArgs); err != nil {
 		slog.Warn("kexec load failed, falling back to reboot", "error", err)
-		return
+		return false
 	}
 	if err := kexec.Execute(); err != nil {
 		slog.Warn("kexec execute failed, falling back to reboot", "error", err)
+		return false
 	}
+	return true
+}
+
+func requiresABKexec(cfg *config.MachineConfig) bool {
+	return strings.EqualFold(strings.TrimSpace(cfg.Provision.Image.Mode), config.ImageModeAB) &&
+		cfg.Provision.AB.PreserveExisting
 }

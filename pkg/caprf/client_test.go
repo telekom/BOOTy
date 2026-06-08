@@ -194,6 +194,7 @@ export AB_PRESERVE_EXISTING="true"
 export AB_BOOT_SIZE_MB="1024"
 export AB_ROOT_SIZE_MB="65536"
 export AB_STATE_SIZE_MB="8192"
+export AB_SOURCE_ROOT_LABEL="rootfs"
 `
 	cfg, err := ParseVars(strings.NewReader(input))
 	if err != nil {
@@ -210,6 +211,22 @@ export AB_STATE_SIZE_MB="8192"
 	}
 	if cfg.Provision.AB.BootSizeMB != 1024 || cfg.Provision.AB.RootSizeMB != 65536 || cfg.Provision.AB.StateSizeMB != 8192 {
 		t.Fatalf("unexpected sizes: %#v", cfg.Provision.AB)
+	}
+	if cfg.Provision.AB.SourceRootLabel != "rootfs" {
+		t.Fatalf("sourceRootLabel = %q, want rootfs", cfg.Provision.AB.SourceRootLabel)
+	}
+}
+
+func TestParseVarsABSourceRootPartition(t *testing.T) {
+	input := `export IMAGE_MODE="ab"
+export AB_SOURCE_ROOT_PARTITION="2"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provision.AB.SourceRootPartition != 2 {
+		t.Fatalf("sourceRootPartition = %d, want 2", cfg.Provision.AB.SourceRootPartition)
 	}
 }
 

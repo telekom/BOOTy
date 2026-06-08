@@ -5,6 +5,7 @@ package main
 import (
 	"testing"
 
+	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/network"
 )
 
@@ -40,5 +41,28 @@ func TestMergeProvisionIPUsesDetectedInvalidCIDR(t *testing.T) {
 
 	if got != "not-a-cidr" {
 		t.Fatalf("mergeProvisionIP() = %q, want detected invalid value", got)
+	}
+}
+
+func TestRequiresABKexec(t *testing.T) {
+	tests := []struct {
+		name     string
+		mode     string
+		preserve bool
+		want     bool
+	}{
+		{name: "preserve existing A/B upgrade", mode: config.ImageModeAB, preserve: true, want: true},
+		{name: "fresh A/B install", mode: config.ImageModeAB, preserve: false, want: false},
+		{name: "whole disk ignores preserve flag", mode: config.ImageModeWholeDisk, preserve: true, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.MachineConfig{}
+			cfg.Provision.Image.Mode = tt.mode
+			cfg.Provision.AB.PreserveExisting = tt.preserve
+			if got := requiresABKexec(cfg); got != tt.want {
+				t.Fatalf("requiresABKexec() = %t, want %t", got, tt.want)
+			}
+		})
 	}
 }

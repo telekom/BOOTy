@@ -271,7 +271,7 @@ go run server/server.go \
 | `MODE` | `provision` | `provision`, `deprovision`, `soft-deprovision`, `standby`, or `dry-run` |
 | `DRY_RUN` | `false` | When `true`, forces `MODE=dry-run`: validates prerequisites without destructive writes |
 | `BOOTY_RESUME` | `false` | Enable checkpoint resume — skip previously completed steps on restart |
-| `DISABLE_KEXEC` | `false` | Skip kexec, always hard-reboot |
+| `DISABLE_KEXEC` | `false` | Skip kexec, always hard-reboot. Must stay `false` for A/B preserve-existing upgrades |
 | `MIN_DISK_SIZE_GB` | `0` | Minimum disk size filter (0 = no minimum) |
 | `BOOTY_ALLOW_REMOVABLE` | `false` | Allow USB/removable media as provisioning target |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters |
@@ -324,6 +324,8 @@ go run server/server.go \
 | `AB_BOOT_SIZE_MB` | `512` | Shared EFI partition size for generated A/B layouts |
 | `AB_ROOT_SIZE_MB` | `32768` | Size of each generated A/B root slot |
 | `AB_STATE_SIZE_MB` | `0` | Persistent state partition size; `0` fills remaining disk |
+| `AB_SOURCE_ROOT_LABEL` | — | Source-image GPT partition label to copy into the target root slot |
+| `AB_SOURCE_ROOT_PARTITION` | — | 1-based source-image partition number to copy when no stable label exists |
 | `DISK_DEVICE` | auto-detect | Explicit disk device path override (e.g. `/dev/sda`) |
 | `IMAGE_SIGNATURE_URL` | — | URL to detached GPG signature for image verification |
 | `IMAGE_GPG_PUBKEY` | — | Path to GPG public key for image signature verification |

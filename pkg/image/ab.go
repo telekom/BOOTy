@@ -21,9 +21,11 @@ const (
 
 // ABTargets names the already-created target partitions for an A/B image copy.
 type ABTargets struct {
-	Disk          string
-	BootPartition string
-	RootPartition string
+	Disk                string
+	BootPartition       string
+	RootPartition       string
+	SourceRootLabel     string
+	SourceRootPartition int
 }
 
 // StreamAB downloads an OS image and copies its boot/root payload into an
@@ -120,9 +122,9 @@ func streamABRaw(ctx context.Context, src io.Reader, target ABTargets, opt Strea
 		}
 	}
 
-	root, ok := selectSourceRootPartition(parts)
-	if !ok {
-		return fmt.Errorf("source image has no root partition candidate")
+	root, err := selectSourceRootPartition(parts, target.SourceRootLabel, target.SourceRootPartition)
+	if err != nil {
+		return err
 	}
 	ranges = append(ranges, abStreamRange{
 		name:  "root",
@@ -191,9 +193,9 @@ func copyABPayload(ctx context.Context, rawPath string, target ABTargets) error 
 		}
 	}
 
-	root, ok := selectSourceRootPartition(srcParts)
-	if !ok {
-		return fmt.Errorf("source image has no root partition candidate")
+	root, err := selectSourceRootPartition(srcParts, target.SourceRootLabel, target.SourceRootPartition)
+	if err != nil {
+		return err
 	}
 	slog.Info("copying source root partition to A/B target slot", "src", root.Node, "dst", target.RootPartition)
 	return ddPartition(ctx, root.Node, target.RootPartition)
@@ -208,20 +210,94 @@ func selectSourceBootPartition(parts []sfdiskPartition) (sfdiskPartition, bool) 
 	return sfdiskPartition{}, false
 }
 
-func selectSourceRootPartition(parts []sfdiskPartition) (sfdiskPartition, bool) {
-	var fallback sfdiskPartition
-	for _, part := range parts {
-		if strings.EqualFold(part.Type, linuxFilesystemGUID) {
-			if part.Size > fallback.Size {
-				fallback = part
+var commonSourceRootLabels = map[string]struct{}{
+	"root":              {},
+	"root-a":            {},
+	"root-b":            {},
+	"rootfs":            {},
+	"cloudimg-rootfs":   {},
+	"booty-root-a":      {},
+	"booty-root-b":      {},
+	"ubuntu-root":       {},
+	"debian-root":       {},
+	"fedora-root":       {},
+	"opensuse-root":     {},
+	"opensuse-rootfs":   {},
+	"flatcar-root":      {},
+	"bottlerocket-root": {},
+}
+
+func selectSourceRootPartition(parts []sfdiskPartition, label string, number int) (sfdiskPartition, error) {
+	if number > 0 {
+		for _, part := range parts {
+			if part.Number == number {
+				return part, nil
 			}
+		}
+		return sfdiskPartition{}, fmt.Errorf("source image has no partition number %d", number)
+	}
+
+	if strings.TrimSpace(label) != "" {
+		return selectSingleSourceRootCandidate(parts, func(part sfdiskPartition) bool {
+			return strings.EqualFold(strings.TrimSpace(part.Name), strings.TrimSpace(label))
+		}, fmt.Sprintf("label %q", strings.TrimSpace(label)))
+	}
+
+	if part, err := selectSingleSourceRootCandidate(parts, hasCommonSourceRootLabel, "common root partition label"); err == nil {
+		return part, nil
+	} else if !errors.Is(err, errNoSourceRootCandidate) {
+		return sfdiskPartition{}, err
+	}
+
+	if part, err := selectSingleSourceRootCandidate(parts, isLinuxFilesystemPartition, "Linux filesystem partition"); err == nil {
+		return part, nil
+	} else if !errors.Is(err, errNoSourceRootCandidate) {
+		return sfdiskPartition{}, err
+	}
+
+	return selectSingleSourceRootCandidate(parts, func(part sfdiskPartition) bool {
+		return !strings.EqualFold(part.Type, efiSystemPartitionGUID)
+	}, "non-EFI partition")
+}
+
+var errNoSourceRootCandidate = errors.New("source image has no root partition candidate")
+
+func selectSingleSourceRootCandidate(parts []sfdiskPartition, match func(sfdiskPartition) bool, reason string) (sfdiskPartition, error) {
+	var candidate sfdiskPartition
+	count := 0
+	for _, part := range parts {
+		if !match(part) {
 			continue
 		}
-		if !strings.EqualFold(part.Type, efiSystemPartitionGUID) && part.Size > fallback.Size {
-			fallback = part
-		}
+		candidate = part
+		count++
 	}
-	return fallback, fallback.Node != ""
+	switch count {
+	case 0:
+		return sfdiskPartition{}, errNoSourceRootCandidate
+	case 1:
+		return candidate, nil
+	default:
+		return sfdiskPartition{}, fmt.Errorf("source image has %d %s candidates; set provision.ab.sourceRootLabel or provision.ab.sourceRootPartition", count, reason)
+	}
+}
+
+func hasCommonSourceRootLabel(part sfdiskPartition) bool {
+	if strings.EqualFold(part.Type, efiSystemPartitionGUID) {
+		return false
+	}
+	_, ok := commonSourceRootLabels[normalizeSourceRootLabel(part.Name)]
+	return ok
+}
+
+func normalizeSourceRootLabel(label string) string {
+	label = strings.ToLower(strings.TrimSpace(label))
+	label = strings.ReplaceAll(label, "_", "-")
+	return label
+}
+
+func isLinuxFilesystemPartition(part sfdiskPartition) bool {
+	return strings.EqualFold(part.Type, linuxFilesystemGUID)
 }
 
 func ddFileToDevice(ctx context.Context, src, dst string) error {

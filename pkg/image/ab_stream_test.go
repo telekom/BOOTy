@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf16"
 )
 
 func TestStreamABRawCopiesGPTBootAndRootRanges(t *testing.T) {
@@ -72,9 +73,9 @@ func TestParseGPTPartitionsSelectsExpectedTypes(t *testing.T) {
 	if !ok || boot.Type != efiSystemPartitionGUID || boot.Start != 2048 {
 		t.Fatalf("boot partition = %#v, ok=%v", boot, ok)
 	}
-	root, ok := selectSourceRootPartition(parts)
-	if !ok || root.Type != linuxFilesystemGUID || root.Start != 4096 {
-		t.Fatalf("root partition = %#v, ok=%v", root, ok)
+	root, err := selectSourceRootPartition(parts, "", 0)
+	if err != nil || root.Type != linuxFilesystemGUID || root.Start != 4096 || root.Name != "rootfs" || root.Number != 2 {
+		t.Fatalf("root partition = %#v, err=%v", root, err)
 	}
 }
 
@@ -117,18 +118,18 @@ func testGPTImage(t *testing.T) []byte {
 	writeGPTEntry(raw, 0, []byte{
 		0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11,
 		0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9, 0x3b,
-	}, 2048, 2055)
+	}, 2048, 2055, "ESP")
 	writeGPTEntry(raw, 1, []byte{
 		0xaf, 0x3d, 0xc6, 0x0f, 0x83, 0x84, 0x72, 0x47,
 		0x8e, 0x79, 0x3d, 0x69, 0xd8, 0x47, 0x7d, 0xe4,
-	}, 4096, 4111)
+	}, 4096, 4111, "rootfs")
 
 	fillPartition(raw, 2048, 2055, 'B')
 	fillPartition(raw, 4096, 4111, 'R')
 	return raw
 }
 
-func writeGPTEntry(raw []byte, index int, typeGUID []byte, firstLBA, lastLBA uint64) {
+func writeGPTEntry(raw []byte, index int, typeGUID []byte, firstLBA, lastLBA uint64, name string) {
 	entry := raw[2*gptSectorSize+index*128 : 2*gptSectorSize+(index+1)*128]
 	copy(entry[:16], typeGUID)
 	for i := 16; i < 32; i++ {
@@ -136,6 +137,13 @@ func writeGPTEntry(raw []byte, index int, typeGUID []byte, firstLBA, lastLBA uin
 	}
 	binary.LittleEndian.PutUint64(entry[32:40], firstLBA)
 	binary.LittleEndian.PutUint64(entry[40:48], lastLBA)
+	encodedName := utf16.Encode([]rune(name))
+	for i, r := range encodedName {
+		if 56+i*2+1 >= len(entry) {
+			break
+		}
+		binary.LittleEndian.PutUint16(entry[56+i*2:58+i*2], r)
+	}
 }
 
 func fillPartition(raw []byte, firstLBA, lastLBA uint64, value byte) {
