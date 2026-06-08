@@ -70,7 +70,7 @@ func TestApplySysextsPreloadsLayerAndCatalog(t *testing.T) {
 	}
 }
 
-func TestApplySysextsCatalogDoesNotFollowExistingSymlink(t *testing.T) {
+func TestApplySysextsRejectsExistingCatalogSymlink(t *testing.T) {
 	c := newTestConfigurator(t, newMockCommander())
 	source, digest := writeSysextSource(t, "safe catalog")
 	targetDir := filepath.Join(c.rootDir, "usr/lib/tcaas-sysext/preloaded")
@@ -91,16 +91,49 @@ func TestApplySysextsCatalogDoesNotFollowExistingSymlink(t *testing.T) {
 		}},
 	}
 
-	if err := c.ApplySysexts(context.Background(), &cfg); err != nil {
-		t.Fatalf("ApplySysexts() error: %v", err)
+	err := c.ApplySysexts(context.Background(), &cfg)
+	if err == nil {
+		t.Fatal("expected existing catalog symlink rejection")
+	}
+	if !strings.Contains(err.Error(), "refusing symlink") {
+		t.Fatalf("expected symlink rejection, got %v", err)
 	}
 	if _, err := os.Lstat(filepath.Join(targetDir, "catalog.json")); err != nil {
 		t.Fatalf("catalog lstat: %v", err)
-	} else if _, err := os.Readlink(filepath.Join(targetDir, "catalog.json")); err == nil {
-		t.Fatal("catalog.json is still a symlink")
+	} else if _, err := os.Readlink(filepath.Join(targetDir, "catalog.json")); err != nil {
+		t.Fatal("catalog.json symlink was unexpectedly replaced")
 	}
 	if _, err := os.Stat(outside); !os.IsNotExist(err) {
 		t.Fatalf("catalog write followed symlink target")
+	}
+}
+
+func TestApplySysextsRejectsOversizedCatalog(t *testing.T) {
+	c := newTestConfigurator(t, newMockCommander())
+	source, digest := writeSysextSource(t, "safe catalog")
+	targetDir := filepath.Join(c.rootDir, "usr/lib/tcaas-sysext/preloaded")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(targetDir, "catalog.json"), []byte(strings.Repeat("x", maxSysextCatalogBytes+1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.SysextConfig{
+		Enabled: true,
+		Layers: []config.SysextLayerConfig{{
+			Name:   "node-tuning",
+			Source: source,
+			SHA256: digest,
+		}},
+	}
+
+	err := c.ApplySysexts(context.Background(), &cfg)
+	if err == nil {
+		t.Fatal("expected oversized catalog rejection")
+	}
+	if !strings.Contains(err.Error(), "catalog exceeds") {
+		t.Fatalf("expected size rejection, got %v", err)
 	}
 }
 

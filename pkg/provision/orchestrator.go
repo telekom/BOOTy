@@ -634,15 +634,26 @@ func (o *Orchestrator) streamABImage(ctx context.Context, bestURL string, opts [
 		return err
 	}
 
-	o.log.Info("Streaming image into A/B target slot", "url", bestURL, "disk", o.targetDisk, "root", o.rootPartition, "boot", o.bootPartition)
-	if err := image.StreamAB(ctx, bestURL, image.ABTargets{
-		Disk:          o.targetDisk,
-		BootPartition: o.bootPartition,
-		RootPartition: o.rootPartition,
-	}, opts...); err != nil {
+	targets := o.abStreamTargets()
+	o.log.Info("Streaming image into A/B target slot", "url", bestURL, "disk", targets.Disk, "root", targets.RootPartition, "boot", targets.BootPartition)
+	if err := image.StreamAB(ctx, bestURL, targets, opts...); err != nil {
 		return classifyImageStreamError(bestURL, err)
 	}
 	return nil
+}
+
+func (o *Orchestrator) abStreamTargets() image.ABTargets {
+	bootPartition := o.bootPartition
+	if o.cfg.Provision.AB.PreserveExisting {
+		// PreserveExisting updates only the target root slot. The shared EFI
+		// partition stays untouched so rollback keeps the previous boot assets.
+		bootPartition = ""
+	}
+	return image.ABTargets{
+		Disk:          o.targetDisk,
+		BootPartition: bootPartition,
+		RootPartition: o.rootPartition,
+	}
 }
 
 func (o *Orchestrator) prepareABTargetSlot(ctx context.Context) error {
@@ -747,6 +758,10 @@ func (o *Orchestrator) partprobe(ctx context.Context) error {
 }
 
 func (o *Orchestrator) parsePartitions(ctx context.Context) error {
+	if err := o.ensureABPartitionLayout(); err != nil {
+		return err
+	}
+
 	// With a custom partition layout, derive root from the layout definition
 	// rather than scanning by GUID (which can pick the wrong partition when
 	// multiple Linux-type partitions exist).
@@ -865,7 +880,7 @@ func (o *Orchestrator) growPartition(ctx context.Context) error {
 }
 
 func (o *Orchestrator) resizeFilesystem(ctx context.Context) error {
-	if o.cfg.Provision.Disk.PartitionLayout != nil {
+	if o.cfg.Provision.Disk.PartitionLayout != nil && !o.isABImageMode() {
 		o.log.Info("skipping resize-filesystem for declarative partition layout")
 		return nil
 	}

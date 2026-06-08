@@ -649,6 +649,50 @@ func TestEnsureABPartitionLayoutTargetsInactiveSlot(t *testing.T) {
 	}
 }
 
+func TestParsePartitionsEnsuresABLayoutOnResume(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.ActiveSlot = config.ABSlotA
+	cfg.Provision.AB.TargetSlot = config.ABTargetInactive
+	cfg.Provision.AB.RootSizeMB = 8192
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+
+	if err := o.parsePartitions(context.Background()); err != nil {
+		t.Fatalf("parsePartitions: %v", err)
+	}
+	if cfg.Provision.Disk.PartitionLayout == nil {
+		t.Fatal("expected generated A/B partition layout")
+	}
+	if o.bootPartition != "/dev/sda1" {
+		t.Fatalf("bootPartition = %q, want /dev/sda1", o.bootPartition)
+	}
+	if o.rootPartition != "/dev/sda3" {
+		t.Fatalf("rootPartition = %q, want inactive slot /dev/sda3", o.rootPartition)
+	}
+}
+
+func TestABStreamTargetsPreserveExistingSkipsSharedBoot(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.PreserveExisting = true
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.bootPartition = "/dev/sda1"
+	o.rootPartition = "/dev/sda3"
+
+	targets := o.abStreamTargets()
+	if targets.Disk != "/dev/sda" {
+		t.Fatalf("Disk = %q, want /dev/sda", targets.Disk)
+	}
+	if targets.RootPartition != "/dev/sda3" {
+		t.Fatalf("RootPartition = %q, want /dev/sda3", targets.RootPartition)
+	}
+	if targets.BootPartition != "" {
+		t.Fatalf("BootPartition = %q, want empty when preserving existing A/B boot assets", targets.BootPartition)
+	}
+}
+
 func TestWriteABSlotState(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Image.Mode = config.ImageModeAB
@@ -938,6 +982,26 @@ func TestResizeFilesystemSkippedForPartitionLayout(t *testing.T) {
 	}
 	if len(cmd.calls) != 0 {
 		t.Fatalf("expected no commands when resize-filesystem is skipped, got %d", len(cmd.calls))
+	}
+}
+
+func TestResizeFilesystemRunsForABPartitionLayout(t *testing.T) {
+	cmd := newMockCommander()
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{Table: "gpt", Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}}}
+	o := NewOrchestrator(
+		cfg,
+		&mockProvider{},
+		disk.NewManager(cmd),
+	)
+	o.rootPartition = "/dev/sda3"
+
+	if err := o.resizeFilesystem(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cmd.calls) != 1 || cmd.calls[0].name != "resize2fs" || strings.Join(cmd.calls[0].args, " ") != "/dev/sda3" {
+		t.Fatalf("expected resize2fs /dev/sda3 when resizing A/B root slot, got %#v", cmd.calls)
 	}
 }
 

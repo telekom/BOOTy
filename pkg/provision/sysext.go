@@ -29,6 +29,7 @@ const (
 	defaultSysextActiveDir  = "/var/lib/extensions"
 	sysextModePreload       = "preload"
 	sysextModeActive        = "active"
+	maxSysextCatalogBytes   = 1024 * 1024
 )
 
 var sysextHTTPClient = &http.Client{
@@ -134,12 +135,33 @@ func (c *Configurator) readSysextCatalog(cfg *config.SysextConfig) (*sysextCatal
 	if err != nil {
 		return nil, fmt.Errorf("sysext catalog path: %w", err)
 	}
-	data, err := os.ReadFile(catalogPath) //nolint:gosec // path constrained to provisioned root
+	info, err := os.Lstat(catalogPath)
 	if os.IsNotExist(err) {
 		return catalog, nil
 	}
 	if err != nil {
+		return nil, fmt.Errorf("inspect sysext catalog: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("read sysext catalog: refusing symlink %s", catalogPath)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("read sysext catalog: refusing non-regular file %s", catalogPath)
+	}
+	if info.Size() > maxSysextCatalogBytes {
+		return nil, fmt.Errorf("read sysext catalog: catalog exceeds %d bytes", maxSysextCatalogBytes)
+	}
+	file, err := os.Open(catalogPath) //nolint:gosec // path constrained to provisioned root
+	if err != nil {
+		return nil, fmt.Errorf("open sysext catalog: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+	data, err := io.ReadAll(io.LimitReader(file, maxSysextCatalogBytes+1))
+	if err != nil {
 		return nil, fmt.Errorf("read sysext catalog: %w", err)
+	}
+	if len(data) > maxSysextCatalogBytes {
+		return nil, fmt.Errorf("read sysext catalog: catalog exceeds %d bytes", maxSysextCatalogBytes)
 	}
 	if err := json.Unmarshal(data, catalog); err != nil {
 		return nil, fmt.Errorf("parse sysext catalog: %w", err)
