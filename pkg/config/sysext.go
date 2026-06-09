@@ -38,8 +38,8 @@ type SysextLayerConfig struct {
 	// Default: "unknown"
 	Version string `yaml:"version" json:"version"`
 
-	// Source is a local path, HTTP(S) URL, or oci:// registry reference for a
-	// sysext .raw image.
+	// Source is a local path, HTTPS URL, or oci:// registry reference for a
+	// sysext .raw image. Plain HTTP sources are rejected.
 	Source string `yaml:"source" json:"source"`
 
 	// FileName overrides the target file name. Defaults to basename(Source), or
@@ -47,8 +47,9 @@ type SysextLayerConfig struct {
 	// basename.
 	FileName string `yaml:"fileName" json:"fileName"`
 
-	// SHA256 is the optional expected SHA256 digest for the source content. Both
-	// bare hex and sha256:<hex> forms are accepted.
+	// SHA256 is the expected SHA256 digest for the source content. Both bare hex
+	// and sha256:<hex> forms are accepted. It is required unless Source is an
+	// OCI digest reference.
 	SHA256 string `yaml:"sha256" json:"sha256"`
 
 	// Mode overrides SysextConfig.DefaultMode for this layer.

@@ -78,11 +78,11 @@ provision:
 ## Sources
 
 `source` may be a local path in the initramfs, such as a file injected by CAPRF
-under `/deploy/sysext`, an HTTP(S) URL, or an OCI registry reference using the
-`oci://` scheme. OCI sources pull the topmost layer from the referenced image
-using BOOTy's normal registry keychain support. For OCI sources, set `fileName`
-explicitly when the active/catalog filename must be stable; otherwise BOOTy
-uses `<name>.raw`.
+under `/deploy/sysext`, an HTTPS URL, or an OCI registry reference using the
+`oci://` scheme. Plain HTTP sysext sources are rejected. OCI sources pull the
+topmost layer from the referenced image using BOOTy's normal registry keychain
+support. For OCI sources, set `fileName` explicitly when the active/catalog
+filename must be stable; otherwise BOOTy uses `<name>.raw`.
 
 ```yaml
 provision:
@@ -99,8 +99,10 @@ provision:
 Local provisioner files are preferred for reproducibility and to avoid a second
 network dependency after the OS image has already streamed.
 
-BOOTy streams each sysext through SHA256 while copying. If `sha256` is set, a
-mismatch aborts provisioning and removes the temporary target file.
+BOOTy streams each sysext through SHA256 while copying. Every enabled layer must
+set `sha256`, unless the source is pinned as an OCI digest reference such as
+`oci://registry.example/tcaas/node-tuning@sha256:<digest>`. A mismatch aborts
+provisioning and removes the temporary target file.
 
 ## CAPRF vars
 

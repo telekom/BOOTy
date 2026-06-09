@@ -360,6 +360,11 @@ func TestValidate(t *testing.T) {
 		{name: "invalid sysext layer mode", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Layers: []SysextLayerConfig{{Name: "debug", Mode: "now"}}}}}, wantErr: "invalid provision.sysext.layers[0].mode"},
 		{name: "invalid sysext filename", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Layers: []SysextLayerConfig{{Name: "debug", FileName: "../debug.raw"}}}}}, wantErr: "provision.sysext.layers[0].fileName"},
 		{name: "enabled sysext layer requires source", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug"}}}}}, wantErr: "source is required"},
+		{name: "enabled sysext https source requires sha256", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "https://images.example.invalid/debug.raw"}}}}}, wantErr: "sha256: required"},
+		{name: "enabled sysext local source requires sha256", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "/deploy/sysext/debug.raw"}}}}}, wantErr: "sha256: required"},
+		{name: "enabled sysext rejects plain http source", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "http://images.example.invalid/debug.raw", SHA256: strings.Repeat("a", 64)}}}}}, wantErr: "plain HTTP sysext sources are not allowed"},
+		{name: "enabled sysext accepts https source with sha256", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "https://images.example.invalid/debug.raw", SHA256: strings.Repeat("a", 64)}}}}}},
+		{name: "enabled sysext accepts oci digest source without sha256", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "oci://registry.example.invalid/tcaas/debug@sha256:" + strings.Repeat("a", 64)}}}}}},
 		{name: "valid token algorithm", cfg: Config{Transport: TransportConfig{TokenAlgorithm: "ES256"}}},
 		{name: "invalid token algorithm", cfg: Config{Transport: TransportConfig{TokenAlgorithm: "HS256"}}, wantErr: "invalid transport.tokenAlgorithm"},
 		{

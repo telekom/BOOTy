@@ -22,7 +22,7 @@ import (
 func TestABSysextVarsRoundTripE2E(t *testing.T) {
 	layers := `[
 		{"name":"node-tuning","version":"2026.06.06","source":"oci://registry.example.invalid/tcaas/node-tuning:2026.06.06","fileName":"node-tuning.raw","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-		{"name":"vsr","version":"1.0.0","source":"https://images.example.invalid/vsr.raw","fileName":"vsr.raw","mode":"preload"}
+		{"name":"vsr","version":"1.0.0","source":"https://images.example.invalid/vsr.raw","fileName":"vsr.raw","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","mode":"preload"}
 	]`
 	vars := strings.Join([]string{
 		`export IMAGE="https://images.example.invalid/os.raw.gz"`,

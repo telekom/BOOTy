@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -301,7 +302,27 @@ func validateSysextLayerConfig(enabled bool, index int, layer *SysextLayerConfig
 	if err := validateSysextSHA256(layer.SHA256); err != nil {
 		errs = append(errs, fmt.Sprintf("%s.sha256: %v", prefix, err))
 	}
+	errs = append(errs, validateSysextSourceIntegrity(enabled, prefix, layer)...)
 	return errs
+}
+
+func validateSysextSourceIntegrity(enabled bool, prefix string, layer *SysextLayerConfig) []string {
+	source := strings.TrimSpace(layer.Source)
+	if source == "" {
+		return nil
+	}
+	var errs []string
+	if u, err := url.Parse(source); err == nil && strings.EqualFold(u.Scheme, "http") {
+		errs = append(errs, fmt.Sprintf("%s.source: plain HTTP sysext sources are not allowed; use HTTPS, OCI, or a local provisioner file", prefix))
+	}
+	if enabled && strings.TrimSpace(layer.SHA256) == "" && !isOCIDigestSource(source) {
+		errs = append(errs, fmt.Sprintf("%s.sha256: required unless source is an OCI digest reference", prefix))
+	}
+	return errs
+}
+
+func isOCIDigestSource(source string) bool {
+	return strings.HasPrefix(source, "oci://") && strings.Contains(source, "@sha256:")
 }
 
 func validateSysextTargetDir(value string) error {
