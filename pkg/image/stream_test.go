@@ -436,7 +436,9 @@ func TestHTTPGetWithRetry_AllFail(t *testing.T) {
 func TestStreamQCOW2Detection(t *testing.T) {
 	// Serve qcow2 magic bytes — Stream should detect and redirect to qcow2 hook.
 	data := append([]byte{0x51, 0x46, 0x49, 0xfb}, make([]byte, 100)...)
+	requests := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(data)
 	}))
@@ -451,10 +453,17 @@ func TestStreamQCOW2Detection(t *testing.T) {
 	// Override hook to verify it's called.
 	called := false
 	orig := convertQCOW2Hook
-	convertQCOW2Hook = func(_ context.Context, url, device string) error {
+	convertQCOW2Hook = func(_ context.Context, src io.Reader, sourceName, device string) error {
 		called = true
-		if !strings.Contains(url, srv.URL) {
-			t.Errorf("expected hook URL to contain %s, got %s", srv.URL, url)
+		if !strings.Contains(sourceName, srv.URL) {
+			t.Errorf("expected hook source to contain %s, got %s", srv.URL, sourceName)
+		}
+		got, err := io.ReadAll(src)
+		if err != nil {
+			t.Fatalf("reading hook source: %v", err)
+		}
+		if string(got) != string(data) {
+			t.Fatalf("hook source = %q, want %q", got, data)
 		}
 		return nil
 	}
@@ -466,6 +475,9 @@ func TestStreamQCOW2Detection(t *testing.T) {
 	}
 	if !called {
 		t.Error("convertQCOW2Hook was not invoked for qcow2 image")
+	}
+	if requests != 1 {
+		t.Fatalf("server received %d requests, want 1", requests)
 	}
 }
 

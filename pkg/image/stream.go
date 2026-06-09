@@ -62,8 +62,8 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 
 	// qcow2 images require download → convert → stream via ramdisk.
 	if format == FormatQCOW2 {
-		cleanup()
-		return convertQCOW2Hook(ctx, url, device)
+		defer cleanup()
+		return convertQCOW2Hook(ctx, decompressed, url, device)
 	}
 	defer cleanup()
 
@@ -132,9 +132,9 @@ func wipeLeadingSectors(device string) {
 	}
 }
 
-// convertQCOW2Hook is set by the linux build to call ConvertQCOW2.
+// convertQCOW2Hook is set by the linux build to call ConvertQCOW2FromReader.
 // On non-linux platforms, qcow2 conversion is unsupported.
-var convertQCOW2Hook = func(_ context.Context, _, _ string) error {
+var convertQCOW2Hook = func(_ context.Context, _ io.Reader, _, _ string) error {
 	return fmt.Errorf("qcow2 conversion requires linux (tmpfs ramdisk + qemu-img)")
 }
 

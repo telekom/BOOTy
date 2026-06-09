@@ -21,7 +21,7 @@ const (
 )
 
 func init() {
-	convertQCOW2Hook = ConvertQCOW2
+	convertQCOW2Hook = ConvertQCOW2FromReader
 }
 
 // ConvertQCOW2 downloads a qcow2 image to a tmpfs ramdisk, converts it to raw
@@ -30,8 +30,20 @@ func init() {
 // The flow is: download → tmpfs → qemu-img convert -f qcow2 -O raw → dd to device.
 // The ramdisk is cleaned up after conversion.
 func ConvertQCOW2(ctx context.Context, url, device string) error {
-	slog.Info("qcow2 image detected, downloading to ramdisk for conversion",
-		"url", filepath.Base(url), "device", device)
+	body, err := openSource(ctx, url)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = body.Close() }()
+
+	return ConvertQCOW2FromReader(ctx, body, url, device)
+}
+
+// ConvertQCOW2FromReader writes an already-open qcow2 stream to a tmpfs
+// ramdisk, converts it to raw, and streams the result to the target device.
+func ConvertQCOW2FromReader(ctx context.Context, src io.Reader, sourceName, device string) error {
+	slog.Info("qcow2 image detected, writing to ramdisk for conversion",
+		"source", filepath.Base(sourceName), "device", device)
 
 	if err := setupRamdisk(); err != nil {
 		return fmt.Errorf("setting up ramdisk: %w", err)
@@ -41,8 +53,8 @@ func ConvertQCOW2(ctx context.Context, url, device string) error {
 	qcow2Path := filepath.Join(ramdiskPath, "image.qcow2")
 	rawPath := filepath.Join(ramdiskPath, "image.raw")
 
-	if err := downloadToFile(ctx, url, qcow2Path); err != nil {
-		return fmt.Errorf("downloading qcow2 image: %w", err)
+	if err := writeImageToFile(src, qcow2Path); err != nil {
+		return fmt.Errorf("writing qcow2 image: %w", err)
 	}
 
 	if err := convertQCOW2ToRaw(ctx, qcow2Path, rawPath); err != nil {
