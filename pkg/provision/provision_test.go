@@ -255,6 +255,9 @@ func TestConfigureGRUB(t *testing.T) {
 	if len(data) == 0 {
 		t.Fatal("expected non-empty grub config")
 	}
+	if _, err := os.Stat(filepath.Join(c.rootDir, "boot", "grub")); err != nil {
+		t.Fatalf("expected boot grub dir: %v", err)
+	}
 }
 
 func TestCopyProvisionerFilesNotExist(t *testing.T) {

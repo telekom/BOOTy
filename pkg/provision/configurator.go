@@ -172,6 +172,11 @@ func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineCon
 		return fmt.Errorf("writing grub config: %w", err)
 	}
 
+	bootGrubDir := filepath.Join(c.rootDir, "boot", "grub")
+	if err := os.MkdirAll(bootGrubDir, 0o755); err != nil {
+		return fmt.Errorf("creating boot grub dir: %w", err)
+	}
+
 	// Run update-grub in chroot.
 	out, err := c.disk.ChrootRun(ctx, c.rootDir, "update-grub")
 	if err != nil {
