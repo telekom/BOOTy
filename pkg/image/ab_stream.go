@@ -134,31 +134,33 @@ func copyABStreamRanges(ctx context.Context, src io.Reader, ranges []abStreamRan
 	})
 
 	pos := int64(0)
+	var dirtyTargets []string
 	for _, r := range ranges {
 		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("copying A/B ranges canceled: %w", err)
+			return dirtyABTargetsError(fmt.Errorf("copying A/B ranges canceled: %w", err), dirtyTargets...)
 		}
 		if r.start < pos {
-			return fmt.Errorf("overlapping A/B copy ranges at %s", r.name)
+			return dirtyABTargetsError(fmt.Errorf("overlapping A/B copy ranges at %s", r.name), dirtyTargets...)
 		}
 		if r.size <= 0 {
-			return fmt.Errorf("invalid A/B copy range size for %s: %d", r.name, r.size)
+			return dirtyABTargetsError(fmt.Errorf("invalid A/B copy range size for %s: %d", r.name, r.size), dirtyTargets...)
 		}
 		if _, err := io.CopyN(io.Discard, src, r.start-pos); err != nil {
-			return fmt.Errorf("skipping to %s partition at byte %d: %w", r.name, r.start, err)
+			return dirtyABTargetsError(fmt.Errorf("skipping to %s partition at byte %d: %w", r.name, r.start, err), dirtyTargets...)
 		}
 		pos = r.start
 
 		slog.Info("streaming source partition to A/B target", "partition", r.name, "dst", r.dst, "bytes", r.size)
 		if err := copyReaderRangeToDevice(ctx, src, r.dst, r.size); err != nil {
-			return fmt.Errorf("copying %s partition to %s: %w", r.name, r.dst, err)
+			return dirtyABTargetsError(fmt.Errorf("copying %s partition to %s: %w", r.name, r.dst, err), dirtyTargets...)
 		}
+		dirtyTargets = append(dirtyTargets, r.dst)
 		pos += r.size
 	}
 
 	if drain {
 		if _, err := io.Copy(io.Discard, src); err != nil {
-			return fmt.Errorf("draining source image for checksum: %w", err)
+			return dirtyABTargetsError(fmt.Errorf("draining source image for checksum: %w", err), dirtyTargets...)
 		}
 	}
 	return nil
@@ -172,8 +174,13 @@ func streamReaderToDevice(ctx context.Context, src io.Reader, dst string) error 
 	}
 	defer func() { _ = out.Close() }()
 
-	if err := copyReader(ctx, out, src); err != nil {
-		return fmt.Errorf("writing root target %s: %w", dst, err)
+	written, err := copyReader(ctx, out, src)
+	if err != nil {
+		err = fmt.Errorf("writing root target %s: %w", dst, err)
+		if written > 0 {
+			return dirtyABTargetsError(err, dst)
+		}
+		return err
 	}
 	if err := out.Sync(); err != nil {
 		slog.Warn("sync to target failed", "target", dst, "error", err)
@@ -189,11 +196,20 @@ func copyReaderRangeToDevice(ctx context.Context, src io.Reader, dst string, siz
 	defer func() { _ = out.Close() }()
 
 	limited := &io.LimitedReader{R: src, N: size}
-	if err := copyReader(ctx, out, limited); err != nil {
-		return fmt.Errorf("copying stream to target: %w", err)
+	written, err := copyReader(ctx, out, limited)
+	if err != nil {
+		err = fmt.Errorf("copying stream to target: %w", err)
+		if written > 0 {
+			return dirtyABTargetsError(err, dst)
+		}
+		return err
 	}
 	if limited.N != 0 {
-		return fmt.Errorf("source image ended %d bytes before partition range completed", limited.N)
+		err := fmt.Errorf("source image ended %d bytes before partition range completed", limited.N)
+		if written > 0 {
+			return dirtyABTargetsError(err, dst)
+		}
+		return err
 	}
 	if err := out.Sync(); err != nil {
 		slog.Warn("sync to target failed", "target", dst, "error", err)
@@ -201,27 +217,29 @@ func copyReaderRangeToDevice(ctx context.Context, src io.Reader, dst string, siz
 	return nil
 }
 
-func copyReader(ctx context.Context, dst io.Writer, src io.Reader) error {
+func copyReader(ctx context.Context, dst io.Writer, src io.Reader) (int64, error) {
 	buf := make([]byte, imageCopyBufferSize)
+	var total int64
 	for {
 		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("copy canceled: %w", err)
+			return total, fmt.Errorf("copy canceled: %w", err)
 		}
 		n, readErr := src.Read(buf)
 		if n > 0 {
 			written, err := dst.Write(buf[:n])
+			total += int64(written)
 			if err != nil {
-				return fmt.Errorf("writing stream chunk: %w", err)
+				return total, fmt.Errorf("writing stream chunk: %w", err)
 			}
 			if written != n {
-				return fmt.Errorf("writing stream chunk: %w", io.ErrShortWrite)
+				return total, fmt.Errorf("writing stream chunk: %w", io.ErrShortWrite)
 			}
 		}
 		if errors.Is(readErr, io.EOF) {
-			return nil
+			return total, nil
 		}
 		if readErr != nil {
-			return fmt.Errorf("reading stream chunk: %w", readErr)
+			return total, fmt.Errorf("reading stream chunk: %w", readErr)
 		}
 	}
 }

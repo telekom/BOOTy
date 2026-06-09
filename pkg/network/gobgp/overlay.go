@@ -92,6 +92,11 @@ type OverlayTier struct {
 	// so withdrawals (which lack next-hop) can still delete the right
 	// FDB entry. WatchEvent callbacks may run concurrently.
 	macVTEP sync.Map
+
+	importRTOnce sync.Once
+	importRTASN  uint32
+	importRTVNI  uint32
+	importRTErr  error
 }
 
 // NewOverlayTier creates a new overlay tier.
@@ -642,9 +647,16 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 		return
 	}
 
-	if !p.GetIsWithdraw() && !matchesConfiguredRT(p, o.cfg) {
-		o.log.Debug("route update skipped: RT mismatch", "action", action, "type", nlri.GetTypeUrl())
-		return
+	if !p.GetIsWithdraw() {
+		importASN, importVNI, err := o.importRouteTarget()
+		if err != nil {
+			o.log.Debug("route update skipped: invalid configured import RT", "action", action, "type", nlri.GetTypeUrl(), "error", err)
+			return
+		}
+		if !matchesLocalRT(p, importASN, importVNI) {
+			o.log.Debug("route update skipped: RT mismatch", "action", action, "type", nlri.GetTypeUrl())
+			return
+		}
 	}
 
 	msg, err := nlri.UnmarshalNew()
@@ -993,19 +1005,15 @@ func matchesLocalRT(path *apipb.Path, localASN, localVNI uint32) bool {
 	return false
 }
 
-// matchesConfiguredRT reports whether a route carries the configured import RT.
-// If VPNRT is unset, the default stays local ASN + VNI for backwards
-// compatibility.
-func matchesConfiguredRT(path *apipb.Path, cfg *Config) bool {
-	asn, vni := cfg.ASN, uint32(cfg.ProvisionVNI)
-	if cfg.VPNRT != "" {
-		parsedASN, parsedVNI, err := ParseRouteTarget(cfg.VPNRT)
-		if err != nil {
-			return false
+func (o *OverlayTier) importRouteTarget() (asn, vni uint32, err error) {
+	o.importRTOnce.Do(func() {
+		if o.cfg == nil {
+			o.importRTErr = fmt.Errorf("missing GoBGP config")
+			return
 		}
-		asn, vni = parsedASN, parsedVNI
-	}
-	return matchesLocalRT(path, asn, vni)
+		o.importRTASN, o.importRTVNI, o.importRTErr = o.cfg.importRouteTarget()
+	})
+	return o.importRTASN, o.importRTVNI, o.importRTErr
 }
 
 // rtFoundInCommunities checks a slice of extended community Any values for a

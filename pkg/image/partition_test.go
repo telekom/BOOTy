@@ -2,7 +2,10 @@
 
 package image
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestTargetPartitionNode(t *testing.T) {
 	tests := []struct {
@@ -80,6 +83,21 @@ func TestSelectSourceRootPartitionSupportsExplicitSelectors(t *testing.T) {
 	root, err = selectSourceRootPartition(parts, "", 3)
 	if err != nil || root.Node != "/dev/loop0p3" {
 		t.Fatalf("partition root = %#v, err=%v", root, err)
+	}
+}
+
+func TestSelectSourceRootPartitionRejectsExplicitEFI(t *testing.T) {
+	parts := []sfdiskPartition{
+		{Node: "/dev/loop0p1", Type: efiSystemPartitionGUID, Size: 1024, Number: 1},
+		{Node: "/dev/loop0p2", Type: linuxFilesystemGUID, Size: 2048, Name: "rootfs", Number: 2},
+	}
+
+	_, err := selectSourceRootPartition(parts, "", 1)
+	if err == nil {
+		t.Fatal("expected explicit EFI partition selector to fail")
+	}
+	if !strings.Contains(err.Error(), "is EFI, not a root partition") {
+		t.Fatalf("error = %q, want EFI rejection", err.Error())
 	}
 }
 

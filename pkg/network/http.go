@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,15 +15,28 @@ func WaitForHTTP(ctx context.Context, target string, timeout time.Duration) erro
 		return fmt.Errorf("empty connectivity target URL")
 	}
 
-	deadline := time.Now().Add(timeout)
+	if timeout <= 0 {
+		return fmt.Errorf("network connectivity timeout after %s (0 attempts)", timeout)
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	client := &http.Client{Timeout: 10 * time.Second}
 	attempt := 0
 	retryTicker := time.NewTicker(1 * time.Second)
 	defer retryTicker.Stop()
 
-	for time.Now().Before(deadline) {
+	for {
+		if err := waitCtx.Err(); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return fmt.Errorf("network connectivity timeout after %s (%d attempts): %w", timeout, attempt, err)
+			}
+			return fmt.Errorf("context canceled: %w", err)
+		}
+
 		attempt++
-		req, err := http.NewRequestWithContext(ctx, http.MethodHead, target, http.NoBody)
+		req, err := http.NewRequestWithContext(waitCtx, http.MethodHead, target, http.NoBody)
 		if err != nil {
 			return fmt.Errorf("create request: %w", err)
 		}
@@ -40,11 +54,13 @@ func WaitForHTTP(ctx context.Context, target string, timeout time.Duration) erro
 		slog.Debug("connectivity check failed", "target", target, "attempt", attempt, "error", err)
 
 		select {
-		case <-ctx.Done():
-			return fmt.Errorf("context canceled: %w", ctx.Err())
+		case <-waitCtx.Done():
+			err := waitCtx.Err()
+			if errors.Is(err, context.DeadlineExceeded) {
+				return fmt.Errorf("network connectivity timeout after %s (%d attempts): %w", timeout, attempt, err)
+			}
+			return fmt.Errorf("context canceled: %w", err)
 		case <-retryTicker.C:
 		}
 	}
-
-	return fmt.Errorf("network connectivity timeout after %s (%d attempts)", timeout, attempt)
 }

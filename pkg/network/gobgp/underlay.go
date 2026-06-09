@@ -10,6 +10,7 @@ import (
 	"net"
 	"os/exec"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -666,8 +667,14 @@ func discoverLinkLocalPeer(iface string) (string, error) {
 	// Trigger NDP by pinging the all-nodes multicast address.
 	go triggerNDP(iface)
 
+	discoveryCtx, cancel := context.WithTimeout(context.Background(), nicRetryCount*nicRetryInterval)
+	defer cancel()
+
 	var fallback string
-	for range 20 {
+	ticker := time.NewTicker(nicRetryInterval)
+	defer ticker.Stop()
+
+	for {
 		addrs := findLinkLocalNeighbors(ifi, iface)
 		if len(addrs) == 1 {
 			return addrs[0], nil
@@ -676,17 +683,20 @@ func discoverLinkLocalPeer(iface string) (string, error) {
 			if fallback == "" {
 				fallback = addr
 			}
-			if bgpPortReachable(addr) {
-				return addr, nil
-			}
 		}
-		time.Sleep(500 * time.Millisecond)
-	}
+		if addr := firstReachableBGPPeer(discoveryCtx, addrs); addr != "" {
+			return addr, nil
+		}
 
-	if fallback != "" {
-		return fallback, nil
+		select {
+		case <-discoveryCtx.Done():
+			if fallback != "" {
+				return fallback, nil
+			}
+			return "", fmt.Errorf("no IPv6 link-local neighbor found on %s after 10s", iface)
+		case <-ticker.C:
+		}
 	}
-	return "", fmt.Errorf("no IPv6 link-local neighbor found on %s after 10s", iface)
 }
 
 // triggerNDP sends ICMPv6 packets on the interface to populate the NDP
@@ -714,12 +724,56 @@ func triggerNDP(iface string) {
 	_, _ = conn.WriteTo(msg, dst)
 }
 
-func bgpPortReachable(addr string) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), bgpProbeTimeout)
+func firstReachableBGPPeer(ctx context.Context, addrs []string) string {
+	return firstReachableBGPPeerOnPort(ctx, addrs, "179")
+}
+
+func firstReachableBGPPeerOnPort(ctx context.Context, addrs []string, port string) string {
+	if len(addrs) == 0 {
+		return ""
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, bgpProbeTimeout)
 	defer cancel()
 
+	var wg sync.WaitGroup
+	result := make(chan string, 1)
+	done := make(chan struct{})
+
+	for _, addr := range addrs {
+		addr := addr
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if !bgpPortReachable(probeCtx, addr, port) {
+				return
+			}
+			select {
+			case result <- addr:
+			default:
+			}
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case addr := <-result:
+		cancel()
+		return addr
+	case <-done:
+		return ""
+	case <-probeCtx.Done():
+		return ""
+	}
+}
+
+func bgpPortReachable(ctx context.Context, addr, port string) bool {
 	var d net.Dialer
-	conn, err := d.DialContext(ctx, "tcp6", net.JoinHostPort(addr, "179"))
+	conn, err := d.DialContext(ctx, "tcp6", net.JoinHostPort(addr, port))
 	if err != nil {
 		return false
 	}

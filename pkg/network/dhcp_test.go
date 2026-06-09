@@ -44,6 +44,23 @@ func TestWaitForHTTP_Timeout(t *testing.T) {
 	}
 }
 
+func TestWaitForHTTP_TimeoutBoundsInFlightRequest(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	start := time.Now()
+	err := WaitForHTTP(context.Background(), srv.URL, 150*time.Millisecond)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if elapsed > time.Second {
+		t.Fatalf("WaitForHTTP took %s, want request bounded by timeout", elapsed)
+	}
+}
+
 func TestWaitForHTTP_EmptyTarget(t *testing.T) {
 	err := WaitForHTTP(context.Background(), "", 1*time.Second)
 	if err == nil {

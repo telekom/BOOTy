@@ -37,13 +37,17 @@ type Tier interface {
 
 // Config holds GoBGP three-tier stack configuration.
 type Config struct {
-	ASN               uint32           // Local BGP autonomous system number
-	RouterID          string           // BGP router ID (underlay IP)
-	ListenPort        int32            // BGP listen port (default: 179)
-	ProvisionVNI      int              // VXLAN VNI for provisioning network
-	ProvisionIP       string           // IP/mask for provision bridge
-	ProvisionGateway  string           // Gateway VTEP IP for VXLAN BUM flooding
-	VPNRT             string           // Optional explicit EVPN route target (ASN:value)
+	ASN               uint32 // Local BGP autonomous system number
+	RouterID          string // BGP router ID (underlay IP)
+	ListenPort        int32  // BGP listen port (default: 179)
+	ProvisionVNI      int    // VXLAN VNI for provisioning network
+	ProvisionIP       string // IP/mask for provision bridge
+	ProvisionGateway  string // Gateway VTEP IP for VXLAN BUM flooding
+	VPNRT             string // Optional explicit EVPN route target (ASN:value)
+	importRTASN       uint32
+	importRTVNI       uint32
+	importRTReady     bool
+	importRTErr       error
 	DNSResolvers      string           // Comma-separated DNS servers
 	BridgeName        string           // Bridge device name (default: "br.provision")
 	VRFName           string           // Underlay VRF name (default: empty, same as FRR)
@@ -220,7 +224,7 @@ func (c *Config) Validate() error {
 	if c.MinEstablishedPeers < 1 {
 		return fmt.Errorf("BGP_MIN_PEERS %d is invalid (must be >= 1)", c.MinEstablishedPeers)
 	}
-	if err := c.validateVPNRT(); err != nil {
+	if _, _, err := c.importRouteTarget(); err != nil {
 		return err
 	}
 	return c.validatePolicy()
@@ -241,16 +245,6 @@ func (c *Config) validateProvisioning() error {
 	const minMTU = 576 + 50 // minIP + vxlanOverhead
 	if c.MTU > 0 && c.MTU < minMTU {
 		return fmt.Errorf("MTU %d too low (minimum %d = 576 IP + 50 VXLAN overhead)", c.MTU, minMTU)
-	}
-	return nil
-}
-
-func (c *Config) validateVPNRT() error {
-	if strings.TrimSpace(c.VPNRT) == "" {
-		return nil
-	}
-	if _, _, err := ParseRouteTarget(c.VPNRT); err != nil {
-		return fmt.Errorf("invalid VPN route target: %w", err)
 	}
 	return nil
 }
@@ -325,6 +319,32 @@ func parseCSV(s string) []string {
 // parseNeighborAddrs splits a comma-separated list of IPs into a string slice.
 func parseNeighborAddrs(s string) []string {
 	return parseCSV(s)
+}
+
+func (c *Config) importRouteTarget() (asn, vni uint32, err error) {
+	if !c.importRTReady {
+		_ = c.cacheImportRouteTarget()
+	}
+	return c.importRTASN, c.importRTVNI, c.importRTErr
+}
+
+func (c *Config) cacheImportRouteTarget() error {
+	c.importRTASN, c.importRTVNI, c.importRTErr = deriveImportRouteTarget(c)
+	c.importRTReady = true
+	return c.importRTErr
+}
+
+func deriveImportRouteTarget(c *Config) (asn, vni uint32, err error) {
+	asn, vni = c.ASN, uint32(c.ProvisionVNI)
+	vpnRT := strings.TrimSpace(c.VPNRT)
+	if vpnRT == "" {
+		return asn, vni, nil
+	}
+	parsedASN, parsedVNI, err := ParseRouteTarget(vpnRT)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid VPN route target: %w", err)
+	}
+	return parsedASN, parsedVNI, nil
 }
 
 // IsiBGP returns true when the numbered peers use the same ASN (iBGP).

@@ -1173,16 +1173,38 @@ func TestMatchesLocalRT(t *testing.T) {
 	}
 }
 
-func TestMatchesConfiguredRT(t *testing.T) {
+func TestConfigImportRouteTarget(t *testing.T) {
 	path := mustPathWithRT(t, mustRT2(t, 65000, 1000))
 
-	if !matchesConfiguredRT(path, &Config{ASN: 65100, ProvisionVNI: 1000, VPNRT: "65000:1000"}) {
+	cfg := &Config{ASN: 65100, ProvisionVNI: 1000, VPNRT: "65000:1000"}
+	asn, vni, err := cfg.importRouteTarget()
+	if err != nil {
+		t.Fatalf("importRouteTarget(): %v", err)
+	}
+	if !matchesLocalRT(path, asn, vni) {
 		t.Fatal("expected configured VPNRT to match imported route")
 	}
-	if matchesConfiguredRT(path, &Config{ASN: 65100, ProvisionVNI: 1000}) {
+
+	cfg.VPNRT = "bad"
+	cachedASN, cachedVNI, err := cfg.importRouteTarget()
+	if err != nil {
+		t.Fatalf("cached importRouteTarget(): %v", err)
+	}
+	if cachedASN != asn || cachedVNI != vni {
+		t.Fatalf("cached import RT = %d:%d, want %d:%d", cachedASN, cachedVNI, asn, vni)
+	}
+
+	fallback := &Config{ASN: 65100, ProvisionVNI: 1000}
+	fallbackASN, fallbackVNI, err := fallback.importRouteTarget()
+	if err != nil {
+		t.Fatalf("fallback importRouteTarget(): %v", err)
+	}
+	if matchesLocalRT(path, fallbackASN, fallbackVNI) {
 		t.Fatal("expected local fallback RT to reject route from different RT")
 	}
-	if matchesConfiguredRT(path, &Config{ASN: 65100, ProvisionVNI: 1000, VPNRT: "bad"}) {
+
+	invalid := &Config{ASN: 65100, ProvisionVNI: 1000, VPNRT: "bad"}
+	if _, _, err := invalid.importRouteTarget(); err == nil {
 		t.Fatal("expected invalid configured VPNRT to reject route")
 	}
 }
@@ -1257,6 +1279,36 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 		overlay.processRouteUpdate(path)
 		if mock.linkName == "" {
 			t.Error("configured VPNRT: expected FDB dispatch (LinkByName called), but it was not")
+		}
+	})
+
+	t.Run("configured VPNRT is cached for route updates", func(t *testing.T) {
+		mock := &mockFDB{}
+		overlay := newOverlay(mock)
+		overlay.cfg.ASN = 65100
+		overlay.cfg.ProvisionVNI = 1000
+		overlay.cfg.VPNRT = "65000:1000"
+		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*anypb.Any{mustRT2(t, 65000, 1000)},
+		})
+		if err != nil {
+			t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
+		}
+		path := &apipb.Path{
+			Nlri:   nlri,
+			Pattrs: []*anypb.Any{mp, extComm},
+		}
+
+		overlay.processRouteUpdate(path)
+		if mock.linkName == "" {
+			t.Fatal("configured VPNRT: expected first update to dispatch")
+		}
+
+		mock.linkName = ""
+		overlay.cfg.VPNRT = "bad"
+		overlay.processRouteUpdate(path)
+		if mock.linkName == "" {
+			t.Error("configured VPNRT cache: expected cached RT to dispatch second update")
 		}
 	})
 

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"log/slog"
 	"os"
@@ -26,6 +27,64 @@ type ABTargets struct {
 	RootPartition       string
 	SourceRootLabel     string
 	SourceRootPartition int
+}
+
+type abDirtyTargetsError struct {
+	err     error
+	targets []string
+}
+
+func (e *abDirtyTargetsError) Error() string {
+	return e.err.Error()
+}
+
+func (e *abDirtyTargetsError) Unwrap() error {
+	return e.err
+}
+
+func dirtyABTargetsError(err error, targets ...string) error {
+	if err == nil {
+		return nil
+	}
+	var existing *abDirtyTargetsError
+	if errors.As(err, &existing) {
+		targets = append(targets, existing.targets...)
+	}
+	seen := make(map[string]struct{}, len(targets))
+	unique := make([]string, 0, len(targets))
+	for _, target := range targets {
+		target = strings.TrimSpace(target)
+		if target == "" {
+			continue
+		}
+		if _, ok := seen[target]; ok {
+			continue
+		}
+		seen[target] = struct{}{}
+		unique = append(unique, target)
+	}
+	if len(unique) == 0 {
+		return err
+	}
+	return &abDirtyTargetsError{err: err, targets: unique}
+}
+
+func invalidateDirtyABTargets(err error) {
+	var dirty *abDirtyTargetsError
+	if !errors.As(err, &dirty) {
+		return
+	}
+	for _, target := range dirty.targets {
+		wipeLeadingSectors(target)
+	}
+}
+
+func abRangeTargets(ranges []abStreamRange) []string {
+	targets := make([]string, 0, len(ranges))
+	for _, r := range ranges {
+		targets = append(targets, r.dst)
+	}
+	return targets
 }
 
 // StreamAB downloads an OS image and copies its boot/root payload into an
@@ -48,7 +107,7 @@ func StreamAB(ctx context.Context, url string, target ABTargets, opts ...StreamO
 	if format != FormatQCOW2 {
 		defer cleanup()
 		if err := streamABRaw(ctx, src, target, opt); err != nil {
-			wipeLeadingSectors(target.RootPartition)
+			invalidateDirtyABTargets(err)
 			return err
 		}
 		return nil
@@ -79,7 +138,7 @@ func streamABViaRamdisk(ctx context.Context, src io.Reader, target ABTargets, op
 	}
 
 	if err := copyABPayload(ctx, rawPath, target); err != nil {
-		wipeLeadingSectors(target.RootPartition)
+		invalidateDirtyABTargets(err)
 		return err
 	}
 	return nil
@@ -97,14 +156,10 @@ func streamABRaw(ctx context.Context, src io.Reader, target ABTargets, opt Strea
 	}
 
 	parts, err := parseGPTPartitions(prefix)
+	if errors.Is(err, errNoGPT) {
+		return streamABRootFilesystem(ctx, stream, checksum, target, opt)
+	}
 	if err != nil {
-		if errors.Is(err, errNoGPT) {
-			slog.Info("source image has no GPT partition table; copying as root filesystem")
-			if err := streamReaderToDevice(ctx, stream, target.RootPartition); err != nil {
-				return err
-			}
-			return verifyChecksum(checksum, opt)
-		}
 		return err
 	}
 
@@ -136,7 +191,21 @@ func streamABRaw(ctx context.Context, src io.Reader, target ABTargets, opt Strea
 	if err := copyABStreamRanges(ctx, stream, ranges, checksum != nil); err != nil {
 		return err
 	}
-	return verifyChecksum(checksum, opt)
+	if err := verifyChecksum(checksum, opt); err != nil {
+		return dirtyABTargetsError(err, abRangeTargets(ranges)...)
+	}
+	return nil
+}
+
+func streamABRootFilesystem(ctx context.Context, stream io.Reader, checksum hash.Hash, target ABTargets, opt StreamOpts) error {
+	slog.Info("source image has no GPT partition table; copying as root filesystem")
+	if err := streamReaderToDevice(ctx, stream, target.RootPartition); err != nil {
+		return err
+	}
+	if err := verifyChecksum(checksum, opt); err != nil {
+		return dirtyABTargetsError(err, target.RootPartition)
+	}
+	return nil
 }
 
 func verifyFileChecksum(path string, opt StreamOpts) error {
@@ -166,7 +235,7 @@ func copyABPayload(ctx context.Context, rawPath string, target ABTargets) error 
 	loopDev, err := setupLoopDevice(ctx, rawPath)
 	if err != nil {
 		slog.Info("source image is not loop-mountable as a disk image; copying as root filesystem", "error", err)
-		return ddFileToDevice(ctx, rawPath, target.RootPartition)
+		return dirtyABTargetsError(ddFileToDevice(ctx, rawPath, target.RootPartition), target.RootPartition)
 	}
 	defer teardownLoopDevice(ctx, loopDev)
 
@@ -179,15 +248,13 @@ func copyABPayload(ctx context.Context, rawPath string, target ABTargets) error 
 		if err != nil {
 			slog.Info("source image has no partition table; copying as root filesystem", "error", err)
 		}
-		return ddFileToDevice(ctx, rawPath, target.RootPartition)
+		return dirtyABTargetsError(ddFileToDevice(ctx, rawPath, target.RootPartition), target.RootPartition)
 	}
 
+	var boot *sfdiskPartition
 	if target.BootPartition != "" {
-		if boot, ok := selectSourceBootPartition(srcParts); ok {
-			slog.Info("copying source boot partition to shared A/B boot partition", "src", boot.Node, "dst", target.BootPartition)
-			if err := ddPartition(ctx, boot.Node, target.BootPartition); err != nil {
-				return fmt.Errorf("copying boot partition: %w", err)
-			}
+		if selected, ok := selectSourceBootPartition(srcParts); ok {
+			boot = &selected
 		} else {
 			slog.Warn("source image has no EFI partition; leaving shared boot partition unchanged")
 		}
@@ -197,8 +264,21 @@ func copyABPayload(ctx context.Context, rawPath string, target ABTargets) error 
 	if err != nil {
 		return err
 	}
+
+	var dirtyTargets []string
+	if boot != nil {
+		slog.Info("copying source boot partition to shared A/B boot partition", "src", boot.Node, "dst", target.BootPartition)
+		if err := ddPartition(ctx, boot.Node, target.BootPartition); err != nil {
+			return dirtyABTargetsError(fmt.Errorf("copying boot partition: %w", err), target.BootPartition)
+		}
+		dirtyTargets = append(dirtyTargets, target.BootPartition)
+	}
+
 	slog.Info("copying source root partition to A/B target slot", "src", root.Node, "dst", target.RootPartition)
-	return ddPartition(ctx, root.Node, target.RootPartition)
+	if err := ddPartition(ctx, root.Node, target.RootPartition); err != nil {
+		return dirtyABTargetsError(fmt.Errorf("copying root partition: %w", err), append(dirtyTargets, target.RootPartition)...)
+	}
+	return nil
 }
 
 func selectSourceBootPartition(parts []sfdiskPartition) (sfdiskPartition, bool) {
@@ -231,6 +311,9 @@ func selectSourceRootPartition(parts []sfdiskPartition, label string, number int
 	if number > 0 {
 		for _, part := range parts {
 			if part.Number == number {
+				if strings.EqualFold(part.Type, efiSystemPartitionGUID) {
+					return sfdiskPartition{}, fmt.Errorf("source image partition number %d is EFI, not a root partition", number)
+				}
 				return part, nil
 			}
 		}

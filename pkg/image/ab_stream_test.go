@@ -44,6 +44,47 @@ func TestStreamABRawCopiesGPTBootAndRootRanges(t *testing.T) {
 	}
 }
 
+func TestStreamABRawChecksumErrorMarksBootAndRootDirty(t *testing.T) {
+	raw := testGPTImage(t)
+	bootTarget := filepath.Join(t.TempDir(), "boot.img")
+	rootTarget := filepath.Join(t.TempDir(), "root.img")
+	createTargetFile(t, bootTarget)
+	createTargetFile(t, rootTarget)
+
+	err := streamABRaw(context.Background(), bytes.NewReader(raw), ABTargets{
+		BootPartition: bootTarget,
+		RootPartition: rootTarget,
+	}, StreamOpts{Checksum: strings.Repeat("0", sha256.Size*2), ChecksumType: "sha256"})
+	if err == nil {
+		t.Fatal("expected checksum mismatch")
+	}
+
+	var dirty *abDirtyTargetsError
+	if !errors.As(err, &dirty) {
+		t.Fatalf("error = %v, want dirty targets metadata", err)
+	}
+	want := []string{bootTarget, rootTarget}
+	if !sameStrings(dirty.targets, want) {
+		t.Fatalf("dirty targets = %#v, want %#v", dirty.targets, want)
+	}
+}
+
+func TestDirtyABTargetsErrorDeduplicatesTargets(t *testing.T) {
+	base := errors.New("copy failed")
+	err := dirtyABTargetsError(base, "/dev/root", "", "/dev/root", " /dev/boot ")
+	var dirty *abDirtyTargetsError
+	if !errors.As(err, &dirty) {
+		t.Fatalf("error = %v, want dirty target wrapper", err)
+	}
+	want := []string{"/dev/root", "/dev/boot"}
+	if !sameStrings(dirty.targets, want) {
+		t.Fatalf("dirty targets = %#v, want %#v", dirty.targets, want)
+	}
+	if !errors.Is(err, base) {
+		t.Fatalf("wrapped error does not preserve base error: %v", err)
+	}
+}
+
 func TestStreamABRawFallsBackToRootFilesystemWhenNoGPT(t *testing.T) {
 	raw := []byte("rootfs without partition table")
 	rootTarget := filepath.Join(t.TempDir(), "root.img")
@@ -80,12 +121,15 @@ func TestParseGPTPartitionsSelectsExpectedTypes(t *testing.T) {
 }
 
 func TestCopyReaderFailsOnShortWrite(t *testing.T) {
-	err := copyReader(context.Background(), shortWriter{}, strings.NewReader("payload"))
+	written, err := copyReader(context.Background(), shortWriter{}, strings.NewReader("payload"))
 	if !errors.Is(err, io.ErrShortWrite) {
 		t.Fatalf("copyReader() error = %v, want io.ErrShortWrite", err)
 	}
 	if err != nil && !strings.Contains(err.Error(), "writing stream chunk") {
 		t.Fatalf("copyReader() error = %q, want stream write context", err.Error())
+	}
+	if written != int64(len("payload")-1) {
+		t.Fatalf("copyReader() written = %d, want %d", written, len("payload")-1)
 	}
 }
 
@@ -168,4 +212,16 @@ func readFile(t *testing.T, path string) []byte {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return data
+}
+
+func sameStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }

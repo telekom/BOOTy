@@ -4,6 +4,7 @@ package gobgp
 
 import (
 	"context"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -803,4 +804,40 @@ func TestUnderlayTierReady(t *testing.T) {
 			t.Fatal("Ready() = nil, want timeout error when count < min")
 		}
 	})
+}
+
+func TestFirstReachableBGPPeer(t *testing.T) {
+	var listenConfig net.ListenConfig
+	ln, err := listenConfig.Listen(context.Background(), "tcp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 loopback listener unavailable: %v", err)
+	}
+	defer ln.Close() //nolint:errcheck // test cleanup
+
+	accepted := make(chan struct{})
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		_ = conn.Close()
+		close(accepted)
+	}()
+
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("split listener address: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	got := firstReachableBGPPeerOnPort(ctx, []string{"2001:db8::1", "::1"}, port)
+	if got != "::1" {
+		t.Fatalf("firstReachableBGPPeer() = %q, want ::1", got)
+	}
+
+	select {
+	case <-accepted:
+	case <-time.After(time.Second):
+		t.Fatal("listener did not observe BGP probe")
+	}
 }
