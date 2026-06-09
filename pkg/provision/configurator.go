@@ -21,6 +21,8 @@ import (
 
 const newroot = "/newroot"
 
+var efiRuntimeReady = defaultEFIRuntimeReady
+
 // safeKernelParams matches only safe characters for kernel command line parameters.
 var safeKernelParams = regexp.MustCompile(`^[a-zA-Z0-9=._\-/ ]*$`)
 
@@ -370,6 +372,18 @@ func (c *Configurator) MountEFIVars(ctx context.Context) error {
 	return nil
 }
 
+func defaultEFIRuntimeReady() (ready bool, reason string) {
+	if _, err := os.Stat("/sys/firmware/efi"); os.IsNotExist(err) {
+		return false, "system not booted in EFI mode"
+	} else if err != nil {
+		return false, fmt.Sprintf("cannot stat /sys/firmware/efi: %v", err)
+	}
+	if !isMountPoint("/sys/firmware/efi/efivars") {
+		return false, "efivarfs not mounted"
+	}
+	return true, ""
+}
+
 // isMountPoint checks whether a path is already a mount point by reading /proc/mounts.
 func isMountPoint(path string) bool {
 	data, err := os.ReadFile("/proc/mounts")
@@ -419,18 +433,8 @@ func (c *Configurator) CreateEFIBootEntry(ctx context.Context, diskDev, bootPart
 		return nil
 	}
 
-	// efibootmgr communicates with EFI firmware NVRAM; on BIOS systems the
-	// sysfs EFI directory does not exist and the tool cannot function.
-	if _, err := os.Stat("/sys/firmware/efi"); os.IsNotExist(err) {
-		slog.Warn("system not booted in EFI mode, skipping EFI boot entry creation")
-		return nil
-	}
-
-	// efibootmgr requires efivarfs to read/write NVRAM variables.  When the
-	// kernel lacks CONFIG_EFIVAR_FS (common in minimal initramfs kernels),
-	// efivarfs cannot be mounted and the tool will fail.  Skip gracefully.
-	if !isMountPoint("/sys/firmware/efi/efivars") {
-		slog.Warn("efivarfs not mounted, skipping EFI boot entry creation (efibootmgr requires efivarfs)")
+	if ok, reason := efiRuntimeReady(); !ok {
+		slog.Warn("skipping EFI boot entry creation", "reason", reason)
 		return nil
 	}
 

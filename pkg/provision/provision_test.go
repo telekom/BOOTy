@@ -422,6 +422,10 @@ func TestPartNumberFromDevice(t *testing.T) {
 }
 
 func TestCreateEFIBootEntry(t *testing.T) {
+	old := efiRuntimeReady
+	efiRuntimeReady = func() (bool, string) { return true, "" }
+	t.Cleanup(func() { efiRuntimeReady = old })
+
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
 
@@ -443,6 +447,9 @@ func TestCreateEFIBootEntry(t *testing.T) {
 	err = c.CreateEFIBootEntry(context.Background(), "/dev/sda", "/dev/sda1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if !hasCommandName(cmd.calls, "chroot") {
+		t.Fatal("expected chroot efibootmgr command")
 	}
 }
 

@@ -146,6 +146,20 @@ func TestMountBootSkipsWhenNoBootPartition(t *testing.T) {
 	}
 }
 
+func TestMountBootSkipsWhenEFIRuntimeUnavailable(t *testing.T) {
+	old := efiRuntimeReady
+	efiRuntimeReady = func() (bool, string) { return false, "unit test" }
+	t.Cleanup(func() { efiRuntimeReady = old })
+
+	cfg := &config.MachineConfig{}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.bootPartition = "/dev/does-not-exist"
+
+	if err := o.mountBoot(context.Background()); err != nil {
+		t.Fatalf("mountBoot without EFI runtime: %v", err)
+	}
+}
+
 func TestBootEFIMountPointUsesMountedRoot(t *testing.T) {
 	if got, want := bootEFIMountPoint(), filepath.Join(newroot, "boot", "efi"); got != want {
 		t.Fatalf("bootEFIMountPoint = %q, want %q", got, want)

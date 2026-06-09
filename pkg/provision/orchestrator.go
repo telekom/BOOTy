@@ -1036,6 +1036,10 @@ func (o *Orchestrator) mountBoot(ctx context.Context) error {
 		o.log.Info("skipping boot partition mount; no boot partition detected")
 		return nil
 	}
+	if ok, reason := efiRuntimeReady(); !ok {
+		o.log.Warn("skipping boot partition mount; EFI runtime unavailable", "partition", o.bootPartition, "reason", reason)
+		return nil
+	}
 	mountpoint := bootEFIMountPoint()
 	if isMountPoint(mountpoint) {
 		o.log.Info("boot partition already mounted", "mountpoint", mountpoint)
