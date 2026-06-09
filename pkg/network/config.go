@@ -63,6 +63,7 @@ type Config struct {
 
 	// BGP peering mode (GoBGP).
 	BGPPeerMode     PeerMode // Unnumbered (default), dual, or numbered
+	BGPInterfaces   string   // Comma-separated interfaces for unnumbered/dual peers
 	BGPNeighbors    string   // Comma-separated numbered peer IPs
 	BGPRemoteASN    uint32   // Remote ASN for numbered peers (0 = iBGP)
 	BGPUnderlayAF   string   // Underlay address family: ipv4, ipv6, dual-stack (default: ipv4)

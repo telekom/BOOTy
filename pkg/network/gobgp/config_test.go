@@ -655,6 +655,23 @@ func TestNewConfigMapsMinEstablishedPeers(t *testing.T) {
 	}
 }
 
+func TestNewConfigMapsBGPInterfaces(t *testing.T) {
+	netCfg := &network.Config{
+		UnderlayIP:    "10.0.0.1",
+		ASN:           65000,
+		ProvisionVNI:  4000,
+		BGPPeerMode:   network.PeerModeUnnumbered,
+		BGPInterfaces: "eth1, eth2",
+	}
+	cfg, err := NewConfig(netCfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := strings.Join(cfg.Interfaces, ","); got != "eth1,eth2" {
+		t.Errorf("Interfaces = %q, want eth1,eth2", got)
+	}
+}
+
 func TestNewConfigDefaultsMinEstablishedPeersToOne(t *testing.T) {
 	netCfg := &network.Config{
 		UnderlayIP:   "10.0.0.1",

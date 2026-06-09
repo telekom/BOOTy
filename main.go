@@ -425,6 +425,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 		BFDReceiveMS:     cfg.Network.BGP.BFDReceiveMS,
 		NetworkMode:      cfg.Network.Mode,
 		BGPPeerMode:      network.ParsePeerMode(cfg.Network.BGP.PeerMode),
+		BGPInterfaces:    cfg.Network.BGP.Interfaces,
 		BGPNeighbors:     cfg.Network.BGP.Neighbors,
 		BGPRemoteASN:     cfg.Network.BGP.RemoteASN,
 		BGPUnderlayAF:    cfg.Network.BGP.UnderlayAF,

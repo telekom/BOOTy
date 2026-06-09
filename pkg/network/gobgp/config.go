@@ -58,6 +58,7 @@ type Config struct {
 	BridgeMAC         string           // Derived MAC for provision bridge
 	IPMIMAC           string           // IPMI MAC for bridge MAC derivation
 	PeerMode          network.PeerMode // BGP session establishment mode
+	Interfaces        []string         // Explicit interfaces for unnumbered peers
 	NeighborAddrs     []string         // Explicit numbered peer IPs (dual/numbered modes)
 	RemoteASN         uint32           // Remote ASN for numbered peers (0 = same ASN → iBGP)
 	EnableL2          bool             // Enable L2 EVPN overlay (gate Type-2/3 route handling)
@@ -113,6 +114,7 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		BridgeMAC:           bridgeMAC,
 		IPMIMAC:             netCfg.IPMIMAC,
 		PeerMode:            netCfg.BGPPeerMode,
+		Interfaces:          parseCSV(netCfg.BGPInterfaces),
 		NeighborAddrs:       parseNeighborAddrs(netCfg.BGPNeighbors),
 		RemoteASN:           netCfg.BGPRemoteASN,
 		EnableL2:            netCfg.EVPNL2Enabled,
@@ -306,19 +308,23 @@ func (c *Config) validateTimers() error {
 	return nil
 }
 
-// parseNeighborAddrs splits a comma-separated list of IPs into a string slice.
-func parseNeighborAddrs(s string) []string {
+func parseCSV(s string) []string {
 	if s == "" {
 		return nil
 	}
-	var addrs []string
+	var values []string
 	for _, a := range strings.Split(s, ",") {
 		a = strings.TrimSpace(a)
 		if a != "" {
-			addrs = append(addrs, a)
+			values = append(values, a)
 		}
 	}
-	return addrs
+	return values
+}
+
+// parseNeighborAddrs splits a comma-separated list of IPs into a string slice.
+func parseNeighborAddrs(s string) []string {
+	return parseCSV(s)
 }
 
 // IsiBGP returns true when the numbered peers use the same ASN (iBGP).

@@ -56,6 +56,7 @@ export dns_resolver="8.8.8.8"
 |----------|----------|---------|-------------|
 | `NETWORK_MODE` | Yes | — | Must be `gobgp` to activate GoBGP stack |
 | `BGP_PEER_MODE` | No | `unnumbered` | Peering mode (see below) |
+| `BGP_INTERFACES` | No | — | Comma-separated interface allowlist for unnumbered/dual peers; empty uses all detected physical NICs |
 | `underlay_ip` | Yes | — | Local VTEP IP / BGP router-id (e.g. `10.0.0.20`) |
 | `asn_server` | Yes | — | Local BGP AS number |
 | `provision_vni` | Yes | — | VXLAN VNI for provisioning network |
@@ -69,6 +70,7 @@ export dns_resolver="8.8.8.8"
 
 | Variable | Modes | Description |
 |----------|-------|-------------|
+| `BGP_INTERFACES` | `unnumbered`, `dual` | Restrict interface peering to listed NICs, useful when management or bootstrap NICs are present |
 | `BGP_NEIGHBORS` | `dual`, `numbered` | Comma-separated peer IPs |
 | `BGP_REMOTE_ASN` | `numbered` | Remote ASN (0 = iBGP) |
 
@@ -80,9 +82,11 @@ Best for leaf-spine topologies with IPv6 link-local peering:
 
 ```bash
 export BGP_PEER_MODE="unnumbered"
+export BGP_INTERFACES="eth1,eth2"  # optional; omit to use all physical NICs
 ```
 
 - Discovers peers automatically via IPv6 NDP on all physical NICs
+- Restricts discovery to `BGP_INTERFACES` when set, avoiding peering on management or provisioning-only NICs
 - Carries both IPv4 unicast and L2VPN-EVPN on the same sessions
 - No explicit neighbor configuration needed
 

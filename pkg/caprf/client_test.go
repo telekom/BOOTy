@@ -808,6 +808,7 @@ func TestParseVarsNetworkMode(t *testing.T) {
 
 func TestParseVarsBGPPeering(t *testing.T) {
 	input := `BGP_PEER_MODE="dual"
+BGP_INTERFACES="eth1,eth2"
 BGP_NEIGHBORS="10.0.0.1,10.0.0.2"
 bgp_remote_asn="65100"
 BGP_UNDERLAY_AF="ipv6"
@@ -820,6 +821,9 @@ BGP_AUTH_PASSWORD="s3cr3t"
 	}
 	if cfg.Network.BGP.PeerMode != "dual" {
 		t.Errorf("BGPPeerMode = %q, want dual", cfg.Network.BGP.PeerMode)
+	}
+	if cfg.Network.BGP.Interfaces != "eth1,eth2" {
+		t.Errorf("BGPInterfaces = %q, want eth1,eth2", cfg.Network.BGP.Interfaces)
 	}
 	if cfg.Network.BGP.Neighbors != "10.0.0.1,10.0.0.2" {
 		t.Errorf("BGPNeighbors = %q, want 10.0.0.1,10.0.0.2", cfg.Network.BGP.Neighbors)

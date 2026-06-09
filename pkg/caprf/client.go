@@ -887,6 +887,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"CLOUDINIT_DATASOURCE":        &cfg.Provision.CloudInit.Datasource,
 		"vrf_name":                    &cfg.Network.VRF.Name,
 		"BGP_PEER_MODE":               &cfg.Network.BGP.PeerMode,
+		"BGP_INTERFACES":              &cfg.Network.BGP.Interfaces,
 		"BGP_NEIGHBORS":               &cfg.Network.BGP.Neighbors,
 		"IMAGE_CHECKSUM":              &cfg.Provision.Image.Checksum,
 		"IMAGE_CHECKSUM_TYPE":         &cfg.Provision.Image.ChecksumType,

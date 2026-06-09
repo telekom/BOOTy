@@ -1485,6 +1485,7 @@ func dumpConfig(cfg *config.MachineConfig) {
 		"vrf_table_id", cfg.Network.VRF.TableID,
 		"bgp_keepalive", cfg.Network.BGP.Keepalive,
 		"bgp_hold", cfg.Network.BGP.Hold,
+		"bgp_interfaces", cfg.Network.BGP.Interfaces,
 		"bfd_transmit_ms", cfg.Network.BGP.BFDTransmitMS,
 		"bfd_receive_ms", cfg.Network.BGP.BFDReceiveMS,
 		"static_ip", cfg.Network.Static.IP,

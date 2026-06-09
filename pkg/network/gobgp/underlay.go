@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 
@@ -28,6 +29,10 @@ const (
 
 	// nicRetryInterval is the delay between NIC detection attempts.
 	nicRetryInterval = 500 * time.Millisecond
+
+	// bgpProbeTimeout is a best-effort TCP probe timeout used to prefer an
+	// actual BGP speaker when a link has multiple IPv6 link-local neighbors.
+	bgpProbeTimeout = 250 * time.Millisecond
 
 	// raInterval is the period between Router Advertisement bursts.
 	raInterval = 10 * time.Second
@@ -257,6 +262,10 @@ func (u *UnderlayTier) createUnderlayDummy() error {
 // found. In containerlab environments, veth links are created after the
 // container starts, so data-plane NICs may not be immediately visible.
 func (u *UnderlayTier) waitForNICs() ([]string, error) {
+	if len(u.cfg.Interfaces) > 0 {
+		return u.waitForConfiguredNICs()
+	}
+
 	for range nicRetryCount {
 		nics, err := network.DetectPhysicalNICs()
 		if err != nil {
@@ -269,6 +278,23 @@ func (u *UnderlayTier) waitForNICs() ([]string, error) {
 	}
 	// Return whatever was found on the last scan (may be only 1 NIC).
 	return network.DetectPhysicalNICs()
+}
+
+func (u *UnderlayTier) waitForConfiguredNICs() ([]string, error) {
+	var missing []string
+	for range nicRetryCount {
+		missing = missing[:0]
+		for _, name := range u.cfg.Interfaces {
+			if _, err := netlink.LinkByName(name); err != nil {
+				missing = append(missing, name)
+			}
+		}
+		if len(missing) == 0 {
+			return append([]string(nil), u.cfg.Interfaces...), nil
+		}
+		time.Sleep(nicRetryInterval)
+	}
+	return nil, fmt.Errorf("configured BGP interface(s) not found: %s", strings.Join(missing, ","))
 }
 
 func (u *UnderlayTier) configureNICs() error {
@@ -640,14 +666,26 @@ func discoverLinkLocalPeer(iface string) (string, error) {
 	// Trigger NDP by pinging the all-nodes multicast address.
 	go triggerNDP(iface)
 
+	var fallback string
 	for range 20 {
-		addr, found := findLinkLocalNeighbor(ifi, iface)
-		if found {
-			return addr, nil
+		addrs := findLinkLocalNeighbors(ifi, iface)
+		if len(addrs) == 1 {
+			return addrs[0], nil
+		}
+		for _, addr := range addrs {
+			if fallback == "" {
+				fallback = addr
+			}
+			if bgpPortReachable(addr) {
+				return addr, nil
+			}
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 
+	if fallback != "" {
+		return fallback, nil
+	}
 	return "", fmt.Errorf("no IPv6 link-local neighbor found on %s after 10s", iface)
 }
 
@@ -676,14 +714,28 @@ func triggerNDP(iface string) {
 	_, _ = conn.WriteTo(msg, dst)
 }
 
-// findLinkLocalNeighbor looks for exactly one non-local link-local IPv6
-// neighbor on the given interface.
-func findLinkLocalNeighbor(ifi *net.Interface, iface string) (string, bool) {
+func bgpPortReachable(addr string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), bgpProbeTimeout)
+	defer cancel()
+
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "tcp6", net.JoinHostPort(addr, "179"))
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+// findLinkLocalNeighbors returns non-local link-local IPv6 neighbors on the
+// given interface.
+func findLinkLocalNeighbors(ifi *net.Interface, iface string) []string {
 	neighs, err := netlink.NeighList(ifi.Index, netlink.FAMILY_V6)
 	if err != nil {
-		return "", false
+		return nil
 	}
 
+	addrs := make([]string, 0, len(neighs))
 	for i := range neighs {
 		n := &neighs[i]
 		if n.State&netlink.NUD_FAILED != 0 {
@@ -695,9 +747,9 @@ func findLinkLocalNeighbor(ifi *net.Interface, iface string) (string, bool) {
 		if isOwnAddress(ifi, n.IP) {
 			continue
 		}
-		return fmt.Sprintf("%s%%%s", n.IP, iface), true
+		addrs = append(addrs, fmt.Sprintf("%s%%%s", n.IP, iface))
 	}
-	return "", false
+	return addrs
 }
 
 // isOwnAddress checks if the given IP belongs to the interface.
