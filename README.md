@@ -837,7 +837,9 @@ and uses the derived network config, with netplan values overriding
 The netplan parser supports ethernets, bonds, bridges, VLANs, tunnels
 (VXLAN/GRE), dummy devices, VRFs, and static routes. When an FRR config
 file is also present, BOOTy extracts BGP parameters (ASN, router-ID,
-peers, EVPN settings) from it.
+peers, EVPN settings) from it. Pure Type-5 configs that use
+`advertise ipv4 unicast` stay L3-only; `advertise-all-vni` is the opt-in
+signal for L2 EVPN Type-2/Type-3 handling.
 
 ### Network Persistence
 

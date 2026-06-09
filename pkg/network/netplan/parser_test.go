@@ -492,6 +492,43 @@ func TestToNetworkConfig_BM4XEVPN(t *testing.T) {
 	}
 }
 
+func TestToNetworkConfig_PureType5DoesNotEnableL2(t *testing.T) {
+	np := &Config{
+		Network: NetworkSection{
+			Ethernets: map[string]EthernetConfig{
+				"hbn": {LinkLocal: []string{"ipv6"}, MTU: 9100},
+			},
+			DummyDevices: map[string]DummyConfig{
+				"dum.underlay": {Addresses: []string{"192.168.4.10/32"}},
+			},
+			Tunnels: map[string]TunnelConfig{
+				"vx.1000": {Mode: "vxlan", ID: 1000, Local: "192.168.4.10", Port: 4789},
+			},
+			Bridges: map[string]BridgeConfig{
+				"br.provision": {Interfaces: []string{"vx.1000"}, Addresses: []string{"10.200.0.10/32"}},
+			},
+		},
+	}
+	frr := &FRRParams{
+		ASN:             65100,
+		RouterID:        "192.168.4.10",
+		UnnumberedPeers: []string{"hbn"},
+		EVPN:            true,
+		AdvertiseAllVNI: false,
+	}
+
+	netCfg := ToNetworkConfig(np, frr)
+	if netCfg.NetworkMode != "gobgp" {
+		t.Errorf("NetworkMode = %q, want gobgp", netCfg.NetworkMode)
+	}
+	if netCfg.EVPNL2Enabled {
+		t.Error("EVPNL2Enabled should be false for pure Type-5 without advertise-all-vni")
+	}
+	if netCfg.BGPPeerMode != network.PeerModeUnnumbered {
+		t.Errorf("BGPPeerMode = %q, want unnumbered", netCfg.BGPPeerMode)
+	}
+}
+
 func TestToNetworkConfig_ProductionUnderlayVRFOverlayDefault(t *testing.T) {
 	np := &Config{
 		Network: NetworkSection{

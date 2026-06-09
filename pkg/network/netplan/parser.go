@@ -277,7 +277,7 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 	if frr.RouterID != "" && cfg.UnderlayIP == "" {
 		cfg.UnderlayIP = frr.RouterID
 	}
-	if frr.EVPN {
+	if frr.AdvertiseAllVNI {
 		cfg.EVPNL2Enabled = true
 	}
 	hasUnnumbered := len(frr.UnnumberedPeers) > 0
