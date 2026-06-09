@@ -79,7 +79,9 @@ provision:
 
 `source` may be a local path in the initramfs, such as a file injected by CAPRF
 under `/deploy/sysext`, an HTTPS URL, or an OCI registry reference using the
-`oci://` scheme. Plain HTTP sysext sources are rejected. OCI sources pull the
+`oci://` scheme. Plain HTTP sysext sources require
+`allowInsecureHTTP: true` or `SYSEXT_ALLOW_INSECURE_HTTP=true` and should be
+limited to controlled provisioning networks and tests. OCI sources pull the
 topmost layer from the referenced image using BOOTy's normal registry keychain
 support. For OCI sources, set `fileName` explicitly when the active/catalog
 filename must be stable; otherwise BOOTy uses `<name>.raw`.
@@ -117,7 +119,9 @@ export SYSEXT_LAYERS='[{"name":"node-tuning","version":"v1","source":"https://re
 ```
 
 `SYSEXT_LAYERS` is a JSON array using the same layer fields as the YAML
-configuration. `SYSEXT_ACTIVE_DIR` is also supported for `active` mode.
+configuration. `SYSEXT_ACTIVE_DIR` is also supported for `active` mode. Use
+`SYSEXT_ALLOW_INSECURE_HTTP=true` only for explicit plain-HTTP provisioning
+networks.
 
 ## Best practices
 
@@ -126,7 +130,10 @@ configuration. `SYSEXT_ACTIVE_DIR` is also supported for `active` mode.
 - For A/B OS updates, keep sysexts independently versioned. BOOTy can preload
   selected sysexts into the target root slot while `IMAGE_MODE=ab` writes the
   inactive OS slot.
-- Pin every layer with `name`, `version`, `fileName`, and `sha256`.
+- Pin every layer with `name`, `version`, `fileName`, and `sha256` or an OCI
+  digest reference.
+- Prefer HTTPS, OCI, or local provisioner files. Plain HTTP requires explicit
+  opt-in and is not a production default.
 - Keep kernel, firmware, bootloader, users, `/etc`, `/var`, and provider state
   in the base image or regular provisioning config, not in sysext.
 - Use BOOTy sysext provisioning for site-specific late binding, such as

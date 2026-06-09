@@ -1011,6 +1011,8 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) (bool, error)
 		cfg.Provision.CrashArtifacts.Enabled = parseBoolVar(value)
 	case "SYSEXT_ENABLED":
 		cfg.Provision.Sysext.Enabled = parseBoolVar(value)
+	case "SYSEXT_ALLOW_INSECURE_HTTP":
+		cfg.Provision.Sysext.AllowInsecureHTTP = parseBoolVar(value)
 	case "AB_PRESERVE_EXISTING":
 		cfg.Provision.AB.PreserveExisting = parseBoolVar(value)
 	default:

@@ -24,6 +24,12 @@ type SysextConfig struct {
 	// Default: /var/lib/extensions
 	ActiveDir string `yaml:"activeDir" json:"activeDir"`
 
+	// AllowInsecureHTTP permits plain HTTP sysext sources. This is intended for
+	// controlled provisioning networks and tests; production sources should use
+	// HTTPS, OCI, or local provisioner files.
+	// Default: false
+	AllowInsecureHTTP bool `yaml:"allowInsecureHTTP" json:"allowInsecureHTTP"`
+
 	// Layers lists sysext images to copy into the provisioned OS.
 	Layers []SysextLayerConfig `yaml:"layers" json:"layers"`
 }
@@ -39,7 +45,7 @@ type SysextLayerConfig struct {
 	Version string `yaml:"version" json:"version"`
 
 	// Source is a local path, HTTPS URL, or oci:// registry reference for a
-	// sysext .raw image. Plain HTTP sources are rejected.
+	// sysext .raw image. Plain HTTP sources require allowInsecureHTTP=true.
 	Source string `yaml:"source" json:"source"`
 
 	// FileName overrides the target file name. Defaults to basename(Source), or

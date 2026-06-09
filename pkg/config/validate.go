@@ -275,7 +275,7 @@ func validateSysextConfig(cfg *SysextConfig) error {
 		errs = append(errs, fmt.Sprintf("provision.sysext.activeDir: %v", err))
 	}
 	for i := range cfg.Layers {
-		errs = append(errs, validateSysextLayerConfig(cfg.Enabled, i, &cfg.Layers[i])...)
+		errs = append(errs, validateSysextLayerConfig(cfg.Enabled, cfg.AllowInsecureHTTP, i, &cfg.Layers[i])...)
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
@@ -283,7 +283,7 @@ func validateSysextConfig(cfg *SysextConfig) error {
 	return nil
 }
 
-func validateSysextLayerConfig(enabled bool, index int, layer *SysextLayerConfig) []string {
+func validateSysextLayerConfig(enabled, allowInsecureHTTP bool, index int, layer *SysextLayerConfig) []string {
 	prefix := fmt.Sprintf("provision.sysext.layers[%d]", index)
 	var errs []string
 	if strings.TrimSpace(layer.Name) == "" {
@@ -302,18 +302,18 @@ func validateSysextLayerConfig(enabled bool, index int, layer *SysextLayerConfig
 	if err := validateSysextSHA256(layer.SHA256); err != nil {
 		errs = append(errs, fmt.Sprintf("%s.sha256: %v", prefix, err))
 	}
-	errs = append(errs, validateSysextSourceIntegrity(enabled, prefix, layer)...)
+	errs = append(errs, validateSysextSourceIntegrity(enabled, allowInsecureHTTP, prefix, layer)...)
 	return errs
 }
 
-func validateSysextSourceIntegrity(enabled bool, prefix string, layer *SysextLayerConfig) []string {
+func validateSysextSourceIntegrity(enabled, allowInsecureHTTP bool, prefix string, layer *SysextLayerConfig) []string {
 	source := strings.TrimSpace(layer.Source)
 	if source == "" {
 		return nil
 	}
 	var errs []string
-	if u, err := url.Parse(source); err == nil && strings.EqualFold(u.Scheme, "http") {
-		errs = append(errs, fmt.Sprintf("%s.source: plain HTTP sysext sources are not allowed; use HTTPS, OCI, or a local provisioner file", prefix))
+	if u, err := url.Parse(source); err == nil && strings.EqualFold(u.Scheme, "http") && !allowInsecureHTTP {
+		errs = append(errs, fmt.Sprintf("%s.source: plain HTTP sysext sources require provision.sysext.allowInsecureHTTP=true; use HTTPS, OCI, or a local provisioner file for production", prefix))
 	}
 	if enabled && strings.TrimSpace(layer.SHA256) == "" && !isOCIDigestSource(source) {
 		errs = append(errs, fmt.Sprintf("%s.sha256: required unless source is an OCI digest reference", prefix))

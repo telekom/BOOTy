@@ -1033,6 +1033,7 @@ func TestParseVarsSysextConfig(t *testing.T) {
 SYSEXT_DEFAULT_MODE="preload"
 SYSEXT_CATALOG_DIR="/usr/lib/tcaas-sysext/preloaded"
 SYSEXT_ACTIVE_DIR="/var/lib/extensions"
+SYSEXT_ALLOW_INSECURE_HTTP="true"
 SYSEXT_LAYERS='[{"name":"node-tuning","version":"v1","source":"https://example.invalid/node-tuning.raw","fileName":"node-tuning.raw","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mode":"preload"}]'
 `
 	cfg, err := ParseVars(strings.NewReader(input))
@@ -1050,6 +1051,9 @@ SYSEXT_LAYERS='[{"name":"node-tuning","version":"v1","source":"https://example.i
 	}
 	if cfg.Provision.Sysext.ActiveDir != "/var/lib/extensions" {
 		t.Errorf("Sysext.ActiveDir = %q", cfg.Provision.Sysext.ActiveDir)
+	}
+	if !cfg.Provision.Sysext.AllowInsecureHTTP {
+		t.Error("Sysext.AllowInsecureHTTP should be true")
 	}
 	if len(cfg.Provision.Sysext.Layers) != 1 {
 		t.Fatalf("Sysext.Layers len = %d, want 1", len(cfg.Provision.Sysext.Layers))
