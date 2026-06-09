@@ -453,7 +453,7 @@ func TestStreamQCOW2Detection(t *testing.T) {
 	// Override hook to verify it's called.
 	called := false
 	orig := convertQCOW2Hook
-	convertQCOW2Hook = func(_ context.Context, src io.Reader, sourceName, device string) error {
+	convertQCOW2Hook = func(_ context.Context, src io.Reader, sourceName, device string, _ StreamOpts) error {
 		called = true
 		if !strings.Contains(sourceName, srv.URL) {
 			t.Errorf("expected hook source to contain %s, got %s", srv.URL, sourceName)
@@ -478,6 +478,45 @@ func TestStreamQCOW2Detection(t *testing.T) {
 	}
 	if requests != 1 {
 		t.Fatalf("server received %d requests, want 1", requests)
+	}
+}
+
+func TestStreamQCOW2ChecksumMismatch(t *testing.T) {
+	data := append([]byte{0x51, 0x46, 0x49, 0xfb}, []byte("qcow2 payload for checksum")...)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	}))
+	defer srv.Close()
+
+	tmpFile, err := os.CreateTemp(t.TempDir(), "disk-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = tmpFile.Close()
+
+	orig := convertQCOW2Hook
+	convertQCOW2Hook = func(_ context.Context, src io.Reader, _ string, _ string, opt StreamOpts) error {
+		checksummed, h, err := wrapChecksum(src, opt)
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(io.Discard, checksummed); err != nil {
+			return err
+		}
+		return verifyChecksum(h, opt)
+	}
+	defer func() { convertQCOW2Hook = orig }()
+
+	err = Stream(context.Background(), srv.URL+"/image.qcow2", tmpFile.Name(), StreamOpts{
+		Checksum:     "0000000000000000000000000000000000000000000000000000000000000000",
+		ChecksumType: "sha256",
+	})
+	if err == nil {
+		t.Fatal("expected checksum mismatch error")
+	}
+	if !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("error = %q, want checksum mismatch", err.Error())
 	}
 }
 
