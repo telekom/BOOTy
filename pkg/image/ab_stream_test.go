@@ -101,6 +101,48 @@ func TestStreamABRawFallsBackToRootFilesystemWhenNoGPT(t *testing.T) {
 	}
 }
 
+func TestStreamReaderToDeviceSyncErrorMarksTargetDirty(t *testing.T) {
+	if _, err := os.Stat("/dev/null"); err != nil {
+		t.Skip("/dev/null is unavailable")
+	}
+
+	err := streamReaderToDevice(context.Background(), strings.NewReader("payload"), "/dev/null")
+	if err == nil {
+		t.Fatal("expected /dev/null sync failure")
+	}
+	var dirty *abDirtyTargetsError
+	if !errors.As(err, &dirty) {
+		t.Fatalf("error = %v, want dirty targets metadata", err)
+	}
+	if !sameStrings(dirty.targets, []string{"/dev/null"}) {
+		t.Fatalf("dirty targets = %#v, want /dev/null", dirty.targets)
+	}
+	if !strings.Contains(err.Error(), "syncing root target /dev/null") {
+		t.Fatalf("error = %q, want sync context", err.Error())
+	}
+}
+
+func TestCopyReaderRangeToDeviceSyncErrorMarksTargetDirty(t *testing.T) {
+	if _, err := os.Stat("/dev/null"); err != nil {
+		t.Skip("/dev/null is unavailable")
+	}
+
+	err := copyReaderRangeToDevice(context.Background(), strings.NewReader("payload"), "/dev/null", int64(len("payload")))
+	if err == nil {
+		t.Fatal("expected /dev/null sync failure")
+	}
+	var dirty *abDirtyTargetsError
+	if !errors.As(err, &dirty) {
+		t.Fatalf("error = %v, want dirty targets metadata", err)
+	}
+	if !sameStrings(dirty.targets, []string{"/dev/null"}) {
+		t.Fatalf("dirty targets = %#v, want /dev/null", dirty.targets)
+	}
+	if !strings.Contains(err.Error(), "syncing target /dev/null") {
+		t.Fatalf("error = %q, want sync context", err.Error())
+	}
+}
+
 func TestParseGPTPartitionsSelectsExpectedTypes(t *testing.T) {
 	parts, err := parseGPTPartitions(testGPTImage(t)[:streamABPrefixBytes])
 	if err != nil {

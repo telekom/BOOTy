@@ -183,7 +183,7 @@ func streamReaderToDevice(ctx context.Context, src io.Reader, dst string) error 
 		return err
 	}
 	if err := out.Sync(); err != nil {
-		slog.Warn("sync to target failed", "target", dst, "error", err)
+		return dirtyABTargetsError(fmt.Errorf("syncing root target %s: %w", dst, err), dst)
 	}
 	return nil
 }
@@ -212,7 +212,7 @@ func copyReaderRangeToDevice(ctx context.Context, src io.Reader, dst string, siz
 		return err
 	}
 	if err := out.Sync(); err != nil {
-		slog.Warn("sync to target failed", "target", dst, "error", err)
+		return dirtyABTargetsError(fmt.Errorf("syncing target %s: %w", dst, err), dst)
 	}
 	return nil
 }
