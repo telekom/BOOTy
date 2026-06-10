@@ -123,7 +123,7 @@ jobs:
       - name: Install KVM dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools cpio zstd linux-image-generic xorriso isolinux syslinux-common fdisk util-linux e2fsprogs parted mdadm lvm2 gdisk
+          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools cpio zstd linux-image-generic xorriso isolinux syslinux-common fdisk util-linux e2fsprogs dosfstools parted mdadm lvm2 gdisk
 
       - name: Scenario-specific setup
         if: matrix.setup != ''
