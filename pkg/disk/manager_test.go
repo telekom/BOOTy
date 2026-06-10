@@ -443,8 +443,10 @@ func TestIsBashNotFound(t *testing.T) {
 		want bool
 	}{
 		{"bash missing in chroot", fmt.Errorf("exec chroot: exit status 127 [output: chroot: can't execute '/bin/bash': No such file or directory]"), true},
+		{"busybox bash applet missing in chroot", fmt.Errorf("exec chroot: exit status 127 [output: bash: applet not found]"), true},
 		{"exit 127 without no such file", fmt.Errorf("exit status 127"), false},
 		{"no such file without 127", fmt.Errorf("No such file or directory"), false},
+		{"bash applet error without 127", fmt.Errorf("bash: applet not found"), false},
 		{"normal error", fmt.Errorf("exec chroot: exit status 1"), false},
 	}
 	for _, tt := range tests {
@@ -457,15 +459,23 @@ func TestIsBashNotFound(t *testing.T) {
 }
 
 func TestChrootRunBashNotFoundFallsBackToSh(t *testing.T) {
+	testChrootRunBashUnavailableFallsBackToSh(t, fmt.Errorf("exec chroot: exit status 127 [output: chroot: can't execute '/bin/bash': No such file or directory]"))
+}
+
+func TestChrootRunBusyboxBashAppletMissingFallsBackToSh(t *testing.T) {
+	testChrootRunBashUnavailableFallsBackToSh(t, fmt.Errorf("exec chroot: exit status 127 [output: bash: applet not found]"))
+}
+
+func testChrootRunBashUnavailableFallsBackToSh(t *testing.T, bashErr error) {
+	t.Helper()
+
 	cmd := newMockCommander()
 	mgr := NewManager(cmd)
 
-	// Simulate bash not found inside chroot (exit status 127).
-	bashErr := fmt.Errorf("exec chroot: exit status 127 [output: chroot: can't execute '/bin/bash': No such file or directory]")
 	cmd.setResult("chroot /newroot", nil, bashErr)
 
 	// The fallback /bin/sh call uses the same mock key, so it also errors.
-	// We verify that isBashNotFound triggers and /bin/sh is attempted.
+	// We verify that bash-unavailable detection triggers and /bin/sh is attempted.
 	_, _ = mgr.ChrootRun(context.Background(), "/newroot", "ls /dev/mst/")
 
 	// Verify both /bin/bash and /bin/sh were attempted.
@@ -484,7 +494,7 @@ func TestChrootRunBashNotFoundFallsBackToSh(t *testing.T) {
 		t.Error("expected /bin/bash attempt")
 	}
 	if !shCall {
-		t.Error("expected /bin/sh fallback attempt after bash not found")
+		t.Error("expected /bin/sh fallback attempt after bash is unavailable")
 	}
 }
 

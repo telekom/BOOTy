@@ -806,9 +806,9 @@ func (m *Manager) ChrootRun(ctx context.Context, root, command string) ([]byte, 
 			slog.Info("chroot binary not found, using syscall fallback", "root", root)
 			return m.chrootSyscall(ctx, root, command)
 		}
-		// If /bin/bash is missing inside the chroot target, try /bin/sh.
+		// If /bin/bash is missing or unusable inside the chroot target, try /bin/sh.
 		if isBashNotFound(err) {
-			slog.Info("bash not found in chroot, trying /bin/sh", "root", root)
+			slog.Info("bash unavailable in chroot, trying /bin/sh", "root", root)
 			return m.cmd.Run(ctx, "chroot", root, "/bin/sh", "-c", command)
 		}
 		return out, fmt.Errorf("chroot exec in %s: %w", root, err)
@@ -847,12 +847,14 @@ func isExecNotFound(err error) bool {
 		strings.Contains(msg, "command not found")
 }
 
-// isBashNotFound checks whether the error indicates /bin/bash was not found
-// inside a chroot target (exit status 127 with "No such file or directory").
+// isBashNotFound checks whether /bin/bash is unavailable inside a chroot target.
 func isBashNotFound(err error) bool {
 	msg := err.Error()
-	return strings.Contains(msg, "exit status 127") &&
-		strings.Contains(msg, "No such file or directory")
+	if !strings.Contains(msg, "exit status 127") {
+		return false
+	}
+	return strings.Contains(msg, "No such file or directory") ||
+		strings.Contains(msg, "bash: applet not found")
 }
 
 // SetupChrootBindMounts creates standard bind mounts for chroot operations.
