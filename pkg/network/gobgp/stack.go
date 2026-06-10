@@ -219,7 +219,7 @@ func (s *Stack) cleanupVRF() {
 			continue
 		}
 		if err := netlink.LinkDel(link); err != nil {
-			s.log.Warn("Failed to delete VRF", "name", name, "error", err)
+			s.log.Warn("failed to delete VRF", "name", name, "error", err)
 		}
 		delete(s.overlay.createdVRFs, name)
 	}

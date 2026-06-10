@@ -90,7 +90,15 @@ func FetchOCILayerByMediaType(ctx context.Context, reference string, mediaTypes 
 		}
 	}
 
-	return nil, fmt.Errorf("OCI image %q has no layer with media type %q", reference, mediaTypes)
+	return nil, fmt.Errorf("OCI image %q has no layer with media type %s", reference, formatMediaTypes(mediaTypes))
+}
+
+func formatMediaTypes(mediaTypes []types.MediaType) string {
+	values := make([]string, len(mediaTypes))
+	for i, mediaType := range mediaTypes {
+		values[i] = string(mediaType)
+	}
+	return strings.Join(values, ", ")
 }
 
 // IsOCIReference returns true if the URL uses the oci:// scheme.

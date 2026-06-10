@@ -616,6 +616,9 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	if src.VRFTableID > 0 {
 		dst.VRFTableID = src.VRFTableID
 	}
+	if src.OverlayVRFTableID > 0 {
+		dst.OverlayVRFTableID = src.OverlayVRFTableID
+	}
 	if src.VRFName != "" {
 		dst.VRFName = src.VRFName
 	}
