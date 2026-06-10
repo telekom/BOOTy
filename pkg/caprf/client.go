@@ -992,7 +992,7 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) error {
 		cfg.Provision.Disk.PartitionLayout = layout
 	case "SYSEXT_LAYERS":
 		var layers []config.SysextLayerConfig
-		if err := json.Unmarshal([]byte(value), &layers); err != nil {
+		if err := unmarshalJSONVar(value, &layers); err != nil {
 			return fmt.Errorf("invalid SYSEXT_LAYERS: %w", err)
 		}
 		cfg.Provision.Sysext.Layers = layers
@@ -1003,6 +1003,63 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) error {
 	}
 
 	return nil
+}
+
+func unmarshalJSONVar(value string, target any) error {
+	if err := json.Unmarshal([]byte(value), target); err == nil {
+		return nil
+	}
+	return json.Unmarshal([]byte(normalizeGoQuotedJSONWhitespace(value)), target)
+}
+
+func normalizeGoQuotedJSONWhitespace(value string) string {
+	var b strings.Builder
+	b.Grow(len(value))
+
+	inString := false
+	escaped := false
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		if inString {
+			b.WriteByte(ch)
+			if escaped {
+				escaped = false
+				continue
+			}
+			switch ch {
+			case '\\':
+				escaped = true
+			case '"':
+				inString = false
+			}
+			continue
+		}
+
+		if ch == '"' {
+			inString = true
+			b.WriteByte(ch)
+			continue
+		}
+		if ch == '\\' && i+1 < len(value) {
+			switch value[i+1] {
+			case 'n':
+				b.WriteByte('\n')
+				i++
+				continue
+			case 'r':
+				b.WriteByte('\r')
+				i++
+				continue
+			case 't':
+				b.WriteByte('\t')
+				i++
+				continue
+			}
+		}
+		b.WriteByte(ch)
+	}
+
+	return b.String()
 }
 
 // applyBoolIntVar handles boolean and integer special vars.

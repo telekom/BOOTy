@@ -1065,7 +1065,9 @@ SYSEXT_LAYERS='[{"name":"node-tuning","version":"v1","source":"https://example.i
 }
 
 func TestParseVarsSysextConfigGoQuotedJSON(t *testing.T) {
-	layersJSON := `[{"name":"node-tuning","version":"v1","source":"oci://registry.example.com/tcaas/sysext-node-tuning:v1","fileName":"node-tuning.raw","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mode":"preload"}]`
+	layersJSON := `[
+		{"name":"node-tuning","version":"v1","source":"oci://registry.example.com/tcaas/sysext-node-tuning:v1","fileName":"node-tuning.raw","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mode":"preload"}
+	]`
 	input := fmt.Sprintf("export SYSEXT_ENABLED=%q\nexport SYSEXT_LAYERS=%q\n", "true", layersJSON)
 
 	cfg, err := ParseVars(strings.NewReader(input))
