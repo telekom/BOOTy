@@ -462,13 +462,15 @@ func mountQcow2(t *testing.T, qcow2Path string) (rootMount string, cleanup func(
 	})
 
 	// Wait for partitions after qemu-nbd attach.
-	run(t, "partprobe nbd", "partprobe", nbdDev)
+	rereadPartitionTable(t, nbdDev)
 	rootPart := nbdDev + "p2"
 	waitForDevice(t, rootPart, 10*time.Second)
 
 	// Mount root partition.
 	mountDir := t.TempDir()
-	run(t, "mount provisioned root", "mount", "-o", "ro", rootPart, mountDir)
+	mountReadOnlyWithRetry(t, rootPart, mountDir, func() {
+		rereadPartitionTable(t, nbdDev)
+	})
 
 	cleanup = func() {
 		_ = exec.Command("umount", mountDir).Run()
@@ -508,13 +510,49 @@ func writeFile(t *testing.T, path, content string) {
 func waitForDevice(t *testing.T, devPath string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
+	var lastErr error
 	for time.Now().Before(deadline) {
-		if _, err := os.Stat(devPath); err == nil {
-			return
+		info, err := os.Stat(devPath)
+		if err == nil {
+			if info.Mode()&os.ModeDevice != 0 {
+				return
+			}
+			lastErr = fmt.Errorf("%s exists but is not a device", devPath)
+		} else {
+			lastErr = err
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("device %s did not appear within %s", devPath, timeout)
+	t.Fatalf("device %s did not appear within %s: %v", devPath, timeout, lastErr)
+}
+
+func rereadPartitionTable(t *testing.T, devPath string) {
+	t.Helper()
+	_ = exec.Command("blockdev", "--rereadpt", devPath).Run()
+	run(t, "partprobe nbd", "partprobe", devPath)
+	if _, err := exec.LookPath("udevadm"); err == nil {
+		_ = exec.Command("udevadm", "settle", "--timeout=10").Run()
+	}
+}
+
+func mountReadOnlyWithRetry(t *testing.T, devPath, mountDir string, beforeRetry func()) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	var out []byte
+	var err error
+	for time.Now().Before(deadline) {
+		waitForDevice(t, devPath, time.Second)
+		cmd := exec.Command("mount", "-o", "ro", devPath, mountDir)
+		out, err = cmd.CombinedOutput()
+		if err == nil {
+			return
+		}
+		if beforeRetry != nil {
+			beforeRetry()
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatalf("mount provisioned root: mount [-o ro %s %s] failed: %v\n%s", devPath, mountDir, err, out)
 }
 
 func buildBooty(t *testing.T, output string) {
