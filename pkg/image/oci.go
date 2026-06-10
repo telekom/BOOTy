@@ -12,6 +12,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/types"
 )
 
+// SystemdSysextMediaType is the OCI layer media type expected for raw
+// systemd-sysext images.
 const SystemdSysextMediaType types.MediaType = "application/vnd.systemd.sysext.image.v1+raw"
 
 // FetchOCILayer pulls a single-layer OCI image and returns its content as
