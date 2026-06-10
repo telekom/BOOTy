@@ -193,6 +193,48 @@ func TestMountBootMountsWhenEFIRuntimeUnavailable(t *testing.T) {
 	}
 }
 
+func TestMountBootSkipsUnsupportedBootPartitionWhenEFIRuntimeUnavailable(t *testing.T) {
+	oldRuntime := efiRuntimeReady
+	efiRuntimeReady = func() (bool, string) { return false, "unit test" }
+	t.Cleanup(func() { efiRuntimeReady = oldRuntime })
+	oldMountPoint := isMountPoint
+	isMountPoint = func(string) bool { return false }
+	t.Cleanup(func() { isMountPoint = oldMountPoint })
+	oldMountBootPart := mountBootPart
+	mountBootPart = func(_ context.Context, _ *disk.Manager, _, _ string) error {
+		return errors.New("mounting /dev/sda1 at /newroot/boot/efi: tried ext4=invalid argument, vfat=invalid argument")
+	}
+	t.Cleanup(func() { mountBootPart = oldMountBootPart })
+
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	o.bootPartition = "/dev/sda1"
+
+	if err := o.mountBoot(context.Background()); err != nil {
+		t.Fatalf("mountBoot unsupported partition without EFI runtime: %v", err)
+	}
+}
+
+func TestMountBootFailsUnsupportedBootPartitionWhenEFIRuntimeReady(t *testing.T) {
+	oldRuntime := efiRuntimeReady
+	efiRuntimeReady = func() (bool, string) { return true, "" }
+	t.Cleanup(func() { efiRuntimeReady = oldRuntime })
+	oldMountPoint := isMountPoint
+	isMountPoint = func(string) bool { return false }
+	t.Cleanup(func() { isMountPoint = oldMountPoint })
+	oldMountBootPart := mountBootPart
+	mountBootPart = func(_ context.Context, _ *disk.Manager, _, _ string) error {
+		return errors.New("mounting /dev/sda1 at /newroot/boot/efi: tried ext4=invalid argument, vfat=invalid argument")
+	}
+	t.Cleanup(func() { mountBootPart = oldMountBootPart })
+
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	o.bootPartition = "/dev/sda1"
+
+	if err := o.mountBoot(context.Background()); err == nil {
+		t.Fatal("mountBoot succeeded with unsupported boot partition and EFI runtime")
+	}
+}
+
 func TestBootEFIMountPointUsesMountedRoot(t *testing.T) {
 	if got, want := bootEFIMountPoint(), filepath.Join(newroot, "boot", "efi"); got != want {
 		t.Fatalf("bootEFIMountPoint = %q, want %q", got, want)

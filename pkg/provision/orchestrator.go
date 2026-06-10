@@ -1154,9 +1154,25 @@ func (o *Orchestrator) mountBoot(ctx context.Context) error {
 		return nil
 	}
 	if err := mountBootPart(ctx, o.disk, o.bootPartition, mountpoint); err != nil {
+		if isUnsupportedBootFilesystemError(err) {
+			if ok, reason := efiRuntimeReady(); !ok {
+				o.log.Warn("skipping boot partition mount; partition is not a usable ESP and EFI runtime is unavailable",
+					"partition", o.bootPartition, "reason", reason, "error", err)
+				return nil
+			}
+		}
 		return fmt.Errorf("mounting boot partition %s at %s: %w", o.bootPartition, mountpoint, err)
 	}
 	return nil
+}
+
+func isUnsupportedBootFilesystemError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, ": tried ") &&
+		(strings.Contains(msg, "invalid argument") || strings.Contains(msg, "wrong fs type") || strings.Contains(msg, "no such device"))
 }
 
 func (o *Orchestrator) applySysexts(ctx context.Context) error {
