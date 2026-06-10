@@ -105,12 +105,28 @@ jobs:
               sudo apt-get install -y qemu-utils cryptsetup
               qemu-img create -f qcow2 test-luks.qcow2 2G
               sudo modprobe nbd max_part=8
-              sudo qemu-nbd --connect=/dev/nbd0 test-luks.qcow2
-              echo -n "booty-test" | sudo cryptsetup luksFormat /dev/nbd0 -
-              echo -n "booty-test" | sudo cryptsetup luksOpen /dev/nbd0 testcrypt -
+              nbd_dev=""
+              for candidate in /dev/nbd{0..15}; do
+                if sudo qemu-nbd --connect="${candidate}" test-luks.qcow2; then
+                  nbd_dev="${candidate}"
+                  break
+                fi
+              done
+              if [ -z "${nbd_dev}" ]; then
+                echo "No free NBD device available for LUKS setup" >&2
+                exit 1
+              fi
+              cleanup_luks_nbd() {
+                sudo cryptsetup luksClose testcrypt >/dev/null 2>&1 || true
+                sudo qemu-nbd --disconnect "${nbd_dev}" >/dev/null 2>&1 || true
+              }
+              trap cleanup_luks_nbd EXIT
+              echo -n "booty-test" | sudo cryptsetup luksFormat "${nbd_dev}" -
+              echo -n "booty-test" | sudo cryptsetup luksOpen "${nbd_dev}" testcrypt -
               sudo mkfs.ext4 /dev/mapper/testcrypt
               sudo cryptsetup luksClose testcrypt
-              sudo qemu-nbd --disconnect /dev/nbd0
+              sudo qemu-nbd --disconnect "${nbd_dev}"
+              trap - EXIT
       fail-fast: false
 
     steps:
