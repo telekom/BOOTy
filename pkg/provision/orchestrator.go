@@ -733,17 +733,8 @@ func (o *Orchestrator) validateABActiveSlotState(ctx context.Context) error {
 		return fmt.Errorf("A/B target root %s resolves to active slot %q", o.rootPartition, ab.ActiveSlot)
 	}
 
-	bootedSlot, err := detectBootedABSlotFromCmdline(o.targetDisk)
-	if err != nil {
-		return fmt.Errorf("determine booted A/B slot from kernel cmdline: %w", err)
-	}
-	if bootedSlot == "" {
-		slotA, _ := abSlotPartitionDevice(o.targetDisk, config.ABSlotA)
-		slotB, _ := abSlotPartitionDevice(o.targetDisk, config.ABSlotB)
-		return fmt.Errorf("cannot independently determine booted A/B slot from kernel cmdline; root= must reference BOOTY-ROOT-A, BOOTY-ROOT-B, %s, or %s", slotA, slotB)
-	}
-	if bootedSlot != ab.ActiveSlot {
-		return fmt.Errorf("kernel cmdline reports booted A/B slot %q, config declares active slot %q", bootedSlot, ab.ActiveSlot)
+	if err := validateABBootedSlotSignal(o.targetDisk, ab.ActiveSlot); err != nil {
+		return err
 	}
 
 	if _, err := os.Stat(activePartition); err != nil {
@@ -779,6 +770,22 @@ func (o *Orchestrator) validateABActiveSlotState(ctx context.Context) error {
 	}
 	if stateBootedSlot != ab.ActiveSlot {
 		return fmt.Errorf("active A/B slot state on %s reports slot %q, config declares %q", activePartition, stateBootedSlot, ab.ActiveSlot)
+	}
+	return nil
+}
+
+func validateABBootedSlotSignal(diskDevice, activeSlot string) error {
+	bootedSlot, err := detectBootedABSlotFromCmdline(diskDevice)
+	if err != nil {
+		return fmt.Errorf("determine booted A/B slot from kernel cmdline: %w", err)
+	}
+	if bootedSlot == "" {
+		slotA, _ := abSlotPartitionDevice(diskDevice, config.ABSlotA)
+		slotB, _ := abSlotPartitionDevice(diskDevice, config.ABSlotB)
+		return fmt.Errorf("cannot independently determine booted A/B slot from kernel cmdline; root= must reference BOOTY-ROOT-A, BOOTY-ROOT-B, %s, or %s", slotA, slotB)
+	}
+	if bootedSlot != activeSlot {
+		return fmt.Errorf("kernel cmdline reports booted A/B slot %q, config declares active slot %q", bootedSlot, activeSlot)
 	}
 	return nil
 }

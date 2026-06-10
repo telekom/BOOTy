@@ -484,7 +484,7 @@ func openSysextSource(ctx context.Context, source string) (io.ReadCloser, error)
 		}
 		return resp.Body, nil
 	}
-	info, err := os.Stat(source)
+	info, err := os.Stat(source) //nolint:gosec // configured local sysext source path, opened read-only below
 	if err != nil {
 		return nil, fmt.Errorf("stat sysext source: %w", err)
 	}
