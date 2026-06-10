@@ -82,9 +82,12 @@ under `/deploy/sysext`, an HTTPS URL, or an OCI registry reference using the
 `oci://` scheme. Plain HTTP sysext sources require
 `allowInsecureHTTP: true` or `SYSEXT_ALLOW_INSECURE_HTTP=true` and should be
 limited to controlled provisioning networks and tests. OCI sources pull the
-topmost layer from the referenced image using BOOTy's normal registry keychain
-support. For OCI sources, set `fileName` explicitly when the active/catalog
-filename must be stable; otherwise BOOTy uses `<name>.raw`.
+first layer with media type `application/vnd.systemd.sysext.image.v1+raw` from
+the referenced image using BOOTy's normal registry keychain support. BOOTy
+rejects ordinary container-image layers for sysext sources so multi-layer
+artifacts cannot accidentally preload the wrong blob. For OCI sources, set
+`fileName` explicitly when the active/catalog filename must be stable; otherwise
+BOOTy uses `<name>.raw`.
 
 ```yaml
 provision:

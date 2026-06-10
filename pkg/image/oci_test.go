@@ -15,6 +15,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/stream"
+	"github.com/google/go-containerregistry/pkg/v1/types"
 )
 
 func startTestRegistry(t *testing.T) *httptest.Server {
@@ -94,6 +95,62 @@ func TestFetchOCILayerMultiLayer(t *testing.T) {
 	}
 	if string(got) != "layer-2-latest" {
 		t.Errorf("got %q, want last layer content", got)
+	}
+}
+
+func TestFetchOCILayerByMediaType(t *testing.T) {
+	srv := startTestRegistry(t)
+	defer srv.Close()
+
+	sysextLayer := stream.NewLayer(
+		io.NopCloser(strings.NewReader("sysext-layer")),
+		stream.WithMediaType(SystemdSysextMediaType),
+	)
+	topLayer := stream.NewLayer(
+		io.NopCloser(strings.NewReader("ordinary-top-layer")),
+		stream.WithMediaType(types.OCILayer),
+	)
+	img, err := mutate.AppendLayers(empty.Image, sysextLayer, topLayer)
+	if err != nil {
+		t.Fatalf("mutate.AppendLayers: %v", err)
+	}
+
+	ref, err := name.ParseReference(fmt.Sprintf("%s/test/typed:v1", strings.TrimPrefix(srv.URL, "http://")))
+	if err != nil {
+		t.Fatalf("parse ref: %v", err)
+	}
+	if err := remote.Write(ref, img); err != nil {
+		t.Fatalf("remote.Write: %v", err)
+	}
+
+	rc, err := FetchOCILayerByMediaType(context.Background(), ref.String(), SystemdSysextMediaType)
+	if err != nil {
+		t.Fatalf("FetchOCILayerByMediaType: %v", err)
+	}
+	defer rc.Close()
+
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if string(got) != "sysext-layer" {
+		t.Errorf("got %q, want sysext media-type layer", got)
+	}
+}
+
+func TestFetchOCILayerByMediaTypeRejectsMissingLayer(t *testing.T) {
+	srv := startTestRegistry(t)
+	defer srv.Close()
+
+	pushTestImageToRegistry(t, srv, "test/no-sysext:v1", []byte("ordinary-layer"))
+
+	ref := fmt.Sprintf("%s/test/no-sysext:v1", strings.TrimPrefix(srv.URL, "http://"))
+	_, err := FetchOCILayerByMediaType(context.Background(), ref, SystemdSysextMediaType)
+	if err == nil {
+		t.Fatal("expected missing sysext media type error")
+	}
+	if !strings.Contains(err.Error(), string(SystemdSysextMediaType)) {
+		t.Fatalf("error = %q, want sysext media type", err.Error())
 	}
 }
 

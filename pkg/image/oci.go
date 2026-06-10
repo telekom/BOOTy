@@ -9,7 +9,10 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/types"
 )
+
+const SystemdSysextMediaType types.MediaType = "application/vnd.systemd.sysext.image.v1+raw"
 
 // FetchOCILayer pulls a single-layer OCI image and returns its content as
 // a streaming io.ReadCloser. The reference should be a standard image ref
@@ -41,6 +44,51 @@ func FetchOCILayer(ctx context.Context, reference string) (io.ReadCloser, error)
 		return nil, fmt.Errorf("uncompress layer for %q: %w", reference, err)
 	}
 	return rc, nil
+}
+
+// FetchOCILayerByMediaType pulls the first layer matching one of the requested
+// media types and returns its uncompressed content.
+func FetchOCILayerByMediaType(ctx context.Context, reference string, mediaTypes ...types.MediaType) (io.ReadCloser, error) {
+	if len(mediaTypes) == 0 {
+		return FetchOCILayer(ctx, reference)
+	}
+
+	ref, err := name.ParseReference(reference)
+	if err != nil {
+		return nil, fmt.Errorf("parse OCI reference %q: %w", reference, err)
+	}
+
+	img, err := remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("pull OCI image %q: %w", reference, err)
+	}
+
+	layers, err := img.Layers()
+	if err != nil {
+		return nil, fmt.Errorf("get layers for %q: %w", reference, err)
+	}
+	if len(layers) == 0 {
+		return nil, fmt.Errorf("OCI image %q has no layers", reference)
+	}
+
+	for _, want := range mediaTypes {
+		for _, layer := range layers {
+			got, err := layer.MediaType()
+			if err != nil {
+				return nil, fmt.Errorf("read layer media type for %q: %w", reference, err)
+			}
+			if got != want {
+				continue
+			}
+			rc, err := layer.Uncompressed()
+			if err != nil {
+				return nil, fmt.Errorf("uncompress %s layer for %q: %w", want, reference, err)
+			}
+			return rc, nil
+		}
+	}
+
+	return nil, fmt.Errorf("OCI image %q has no layer with media type %q", reference, mediaTypes)
 }
 
 // IsOCIReference returns true if the URL uses the oci:// scheme.

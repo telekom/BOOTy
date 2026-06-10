@@ -24,7 +24,9 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/stream"
+	"github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/telekom/BOOTy/pkg/config"
+	imageutil "github.com/telekom/BOOTy/pkg/image"
 )
 
 func TestApplySysextsPreloadsLayerAndCatalog(t *testing.T) {
@@ -201,6 +203,32 @@ func TestApplySysextsPullsOCILayer(t *testing.T) {
 	}
 	if catalog.Layers[0].FileName != "node-tuning.raw" {
 		t.Fatalf("catalog fileName = %q", catalog.Layers[0].FileName)
+	}
+}
+
+func TestApplySysextsRejectsOCIWithoutSysextMediaType(t *testing.T) {
+	c := newTestConfigurator(t, newMockCommander())
+	content := []byte("ordinary oci layer")
+	ref := pushOCIWithMediaType(t, "test/not-a-sysext:v1", content, types.OCILayer)
+	sum := sha256.Sum256(content)
+	digest := hex.EncodeToString(sum[:])
+
+	cfg := config.SysextConfig{
+		Enabled: true,
+		Layers: []config.SysextLayerConfig{{
+			Name:    "node-tuning",
+			Version: "v1",
+			Source:  "oci://" + ref,
+			SHA256:  digest,
+		}},
+	}
+
+	err := c.ApplySysexts(context.Background(), &cfg)
+	if err == nil {
+		t.Fatal("expected ordinary OCI layer to be rejected for sysext preload")
+	}
+	if !strings.Contains(err.Error(), string(imageutil.SystemdSysextMediaType)) {
+		t.Fatalf("error = %q, want sysext media type", err.Error())
 	}
 }
 
@@ -456,10 +484,15 @@ func writeSysextSource(t *testing.T, content string) (string, string) {
 
 func pushSysextOCI(t *testing.T, repoTag string, data []byte) string {
 	t.Helper()
+	return pushOCIWithMediaType(t, repoTag, data, imageutil.SystemdSysextMediaType)
+}
+
+func pushOCIWithMediaType(t *testing.T, repoTag string, data []byte, mediaType types.MediaType) string {
+	t.Helper()
 	srv := httptest.NewServer(registry.New())
 	t.Cleanup(srv.Close)
 
-	layer := stream.NewLayer(io.NopCloser(strings.NewReader(string(data))))
+	layer := stream.NewLayer(io.NopCloser(strings.NewReader(string(data))), stream.WithMediaType(mediaType))
 	img, err := mutate.AppendLayers(empty.Image, layer)
 	if err != nil {
 		t.Fatalf("mutate.AppendLayers: %v", err)

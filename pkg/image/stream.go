@@ -17,6 +17,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/google/go-containerregistry/pkg/v1/types"
 )
 
 const imageCopyBufferSize = 16 << 20 // 16 MiB
@@ -321,6 +323,32 @@ func FetchOCILayerWithRetry(ctx context.Context, ref string) (io.ReadCloser, err
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		rc, err := FetchOCILayer(ctx, ref)
+		if err == nil {
+			return rc, nil
+		}
+		lastErr = fmt.Errorf("OCI pull (attempt %d/%d): %w", attempt+1, maxRetries, err)
+		slog.Warn("OCI pull failed, retrying", "attempt", attempt+1, "error", err, "backoff", backoff)
+		if attempt < maxRetries-1 {
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("context canceled: %w", ctx.Err())
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+		}
+	}
+	return nil, lastErr
+}
+
+// FetchOCILayerByMediaTypeWithRetry retries OCI layer fetch by explicit media
+// type with exponential backoff.
+func FetchOCILayerByMediaTypeWithRetry(ctx context.Context, ref string, mediaTypes ...types.MediaType) (io.ReadCloser, error) {
+	const maxRetries = 3
+	backoff := retryBackoffBase
+
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		rc, err := FetchOCILayerByMediaType(ctx, ref, mediaTypes...)
 		if err == nil {
 			return rc, nil
 		}

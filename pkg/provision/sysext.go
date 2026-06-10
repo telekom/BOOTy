@@ -430,7 +430,7 @@ func openSysextSource(ctx context.Context, source string) (io.ReadCloser, error)
 	if imageutil.IsOCIReference(source) {
 		ref := imageutil.TrimOCIScheme(source)
 		slog.Info("pulling OCI sysext layer", "ref", ref)
-		return imageutil.FetchOCILayerWithRetry(ctx, ref)
+		return imageutil.FetchOCILayerByMediaTypeWithRetry(ctx, ref, imageutil.SystemdSysextMediaType)
 	}
 	u, err := url.Parse(source)
 	if err == nil && (u.Scheme == "http" || u.Scheme == "https") {
