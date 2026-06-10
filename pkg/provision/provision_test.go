@@ -545,29 +545,51 @@ func TestProvisionStepsContainEFIVars(t *testing.T) {
 	}
 }
 
-func TestProvisionStepsApplySysextsAfterMountRoot(t *testing.T) {
+func TestProvisionStepsConfigureMountedRootBeforeSysexts(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	orch := NewOrchestrator(cfg, &mockProvider{}, disk.NewManager(newMockCommander()))
 	steps := orch.provisionSteps()
 
-	mountIdx, bootIdx, sysextIdx, fstabIdx := -1, -1, -1, -1
+	mountIdx, bootIdx := -1, -1
+	hostnameIdx, filesIdx, dnsIdx := -1, -1, -1
+	sysextIdx, fstabIdx := -1, -1
 	for i, step := range steps {
 		switch step.Name {
 		case "mount-root":
 			mountIdx = i
 		case "mount-boot":
 			bootIdx = i
+		case "set-hostname":
+			hostnameIdx = i
+		case "copy-provisioner-files":
+			filesIdx = i
+		case "configure-dns":
+			dnsIdx = i
 		case "apply-sysexts":
 			sysextIdx = i
 		case "write-fstab":
 			fstabIdx = i
 		}
 	}
-	if mountIdx == -1 || bootIdx == -1 || sysextIdx == -1 || fstabIdx == -1 {
-		t.Fatalf("missing mount-root/mount-boot/apply-sysexts/write-fstab in steps")
+	if mountIdx == -1 || bootIdx == -1 || hostnameIdx == -1 || filesIdx == -1 || dnsIdx == -1 || sysextIdx == -1 || fstabIdx == -1 {
+		t.Fatalf("missing mounted-root configuration steps")
 	}
-	if mountIdx >= bootIdx || bootIdx >= sysextIdx || sysextIdx >= fstabIdx {
-		t.Fatalf("unexpected sysext step order: mount=%d boot=%d sysext=%d fstab=%d", mountIdx, bootIdx, sysextIdx, fstabIdx)
+	if mountIdx >= bootIdx ||
+		bootIdx >= hostnameIdx ||
+		hostnameIdx >= filesIdx ||
+		filesIdx >= dnsIdx ||
+		dnsIdx >= sysextIdx ||
+		sysextIdx >= fstabIdx {
+		t.Fatalf(
+			"unexpected mounted-root step order: mount=%d boot=%d hostname=%d files=%d dns=%d sysext=%d fstab=%d",
+			mountIdx,
+			bootIdx,
+			hostnameIdx,
+			filesIdx,
+			dnsIdx,
+			sysextIdx,
+			fstabIdx,
+		)
 	}
 }
 
