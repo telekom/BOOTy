@@ -50,7 +50,7 @@ func TestABProvisionPreloadsSysextsWithoutActivatingVM(t *testing.T) {
 	requireProvisionTools(t)
 	requireDiskInspectTools(t)
 
-	rawDisk := createTestDiskImage(t, 512)
+	rawDisk := createChrootCapableTestDiskImage(t, 512)
 	gzImage := compressGzip(t, rawDisk)
 	sysextPath := filepath.Join(t.TempDir(), "node-tuning.raw")
 	sysextPayload := []byte("node tuning sysext vm e2e\n")

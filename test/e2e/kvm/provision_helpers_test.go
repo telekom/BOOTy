@@ -109,6 +109,86 @@ func createTestDiskImage(t *testing.T, sizeMB int) string {
 	return rawPath
 }
 
+func createChrootCapableTestDiskImage(t *testing.T, sizeMB int) string {
+	t.Helper()
+
+	rawPath := createTestDiskImage(t, sizeMB)
+	loopOut := runOutput(t, "setup chroot-capable loop device", "losetup", "--find", "--show", "--partscan", rawPath)
+	loopDev := strings.TrimSpace(string(loopOut))
+	detached := false
+	defer func() {
+		if !detached {
+			_ = exec.Command("losetup", "-d", loopDev).Run()
+		}
+	}()
+
+	rootDev := loopDev + "p2"
+	waitForDevice(t, rootDev, 5*time.Second)
+
+	mountDir := filepath.Join(t.TempDir(), "rootmnt")
+	if err := os.MkdirAll(mountDir, 0o755); err != nil {
+		t.Fatalf("mkdir chroot-capable mountDir: %v", err)
+	}
+	mounted := false
+	defer func() {
+		if mounted {
+			_ = exec.Command("umount", mountDir).Run()
+		}
+	}()
+	run(t, "mount chroot-capable root partition", "mount", rootDev, mountDir)
+	mounted = true
+
+	installMinimalChrootFixture(t, mountDir)
+
+	run(t, "unmount chroot-capable root", "umount", mountDir)
+	mounted = false
+	run(t, "detach chroot-capable loop", "losetup", "-d", loopDev)
+	detached = true
+
+	return rawPath
+}
+
+func installMinimalChrootFixture(t *testing.T, root string) {
+	t.Helper()
+
+	for _, d := range []string{
+		"bin", "usr/sbin", "boot/grub", "etc/default/grub.d",
+	} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatalf("mkdir chroot fixture %s: %v", d, err)
+		}
+	}
+
+	busyboxBin := findBusybox(t)
+	copyBinary(t, busyboxBin, filepath.Join(root, "bin", "busybox"))
+	copySharedLibs(t, busyboxBin, root)
+	for _, ld := range []string{"/lib64/ld-linux-x86-64.so.2", "/lib/ld-linux-x86-64.so.2"} {
+		if _, err := os.Stat(ld); err == nil {
+			if err := os.MkdirAll(filepath.Join(root, filepath.Dir(ld)), 0o755); err != nil {
+				t.Fatalf("mkdir dynamic linker dir: %v", err)
+			}
+			copyBinary(t, ld, filepath.Join(root, ld))
+			break
+		}
+	}
+	for _, applet := range []string{"sh", "bash", "mkdir", "cat", "printf"} {
+		link := filepath.Join(root, "bin", applet)
+		_ = os.Remove(link)
+		if err := os.Symlink("busybox", link); err != nil {
+			t.Fatalf("symlink chroot applet %s: %v", applet, err)
+		}
+	}
+
+	updateGrub := `#!/bin/sh
+set -eu
+mkdir -p /boot/grub
+printf '%s\n' 'set default=0' > /boot/grub/grub.cfg
+`
+	updateGrubPath := filepath.Join(root, "usr", "sbin", "update-grub")
+	writeFile(t, updateGrubPath, updateGrub)
+	run(t, "chmod update-grub fixture", "chmod", "+x", updateGrubPath)
+}
+
 // compressGzip gzips the file at src and returns the path to the .gz file.
 func compressGzip(t *testing.T, src string) string {
 	t.Helper()
