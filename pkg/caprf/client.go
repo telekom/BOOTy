@@ -1006,10 +1006,18 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) error {
 }
 
 func unmarshalJSONVar(value string, target any) error {
-	if err := json.Unmarshal([]byte(value), target); err == nil {
+	err := json.Unmarshal([]byte(value), target)
+	if err == nil {
 		return nil
 	}
-	return json.Unmarshal([]byte(normalizeGoQuotedJSONWhitespace(value)), target)
+	normalized := normalizeGoQuotedJSONWhitespace(value)
+	if normalized == value {
+		return fmt.Errorf("unmarshal JSON var: %w", err)
+	}
+	if err := json.Unmarshal([]byte(normalized), target); err != nil {
+		return fmt.Errorf("unmarshal normalized JSON var: %w", err)
+	}
+	return nil
 }
 
 func normalizeGoQuotedJSONWhitespace(value string) string {
