@@ -312,13 +312,23 @@ func validateSysextSourceIntegrity(enabled, allowInsecureHTTP bool, prefix strin
 		return nil
 	}
 	var errs []string
-	if u, err := url.Parse(source); err == nil && strings.EqualFold(u.Scheme, "http") && !allowInsecureHTTP {
+	u, err := url.Parse(source)
+	if err != nil {
+		if looksLikeHTTPSource(source) {
+			errs = append(errs, fmt.Sprintf("%s.source: invalid HTTP(S) sysext source: %v", prefix, err))
+		}
+	} else if strings.EqualFold(u.Scheme, "http") && !allowInsecureHTTP {
 		errs = append(errs, fmt.Sprintf("%s.source: plain HTTP sysext sources require provision.sysext.allowInsecureHTTP=true; use HTTPS, OCI, or a local provisioner file for production", prefix))
 	}
 	if enabled && strings.TrimSpace(layer.SHA256) == "" && !isOCIDigestSource(source) {
 		errs = append(errs, fmt.Sprintf("%s.sha256: required unless source is an OCI digest reference", prefix))
 	}
 	return errs
+}
+
+func looksLikeHTTPSource(source string) bool {
+	lower := strings.ToLower(strings.TrimSpace(source))
+	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
 }
 
 func isOCIDigestSource(source string) bool {

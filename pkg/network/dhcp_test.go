@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -65,6 +66,16 @@ func TestWaitForHTTP_EmptyTarget(t *testing.T) {
 	err := WaitForHTTP(context.Background(), "", 1*time.Second)
 	if err == nil {
 		t.Fatal("expected error for empty target")
+	}
+}
+
+func TestWaitForHTTP_NonPositiveTimeout(t *testing.T) {
+	err := WaitForHTTP(context.Background(), "http://127.0.0.1:19", 0)
+	if err == nil {
+		t.Fatal("expected error for non-positive timeout")
+	}
+	if !strings.Contains(err.Error(), "must be positive") {
+		t.Fatalf("error = %q, want positive-timeout validation", err.Error())
 	}
 }
 

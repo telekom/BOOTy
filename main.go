@@ -623,6 +623,8 @@ func mergeNetplanConfig(dst, src *network.Config) {
 		dst.VRFName = src.VRFName
 	}
 	if src.OverlayVRFSet {
+		// Preserve an explicitly empty overlay VRF name: it means the overlay
+		// should stay in the default namespace, not that the value is unset.
 		dst.OverlayVRFName = src.OverlayVRFName
 		dst.OverlayVRFSet = true
 	}

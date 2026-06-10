@@ -16,7 +16,7 @@ func WaitForHTTP(ctx context.Context, target string, timeout time.Duration) erro
 	}
 
 	if timeout <= 0 {
-		return fmt.Errorf("network connectivity timeout after %s (0 attempts)", timeout)
+		return fmt.Errorf("network connectivity timeout must be positive, got %s", timeout)
 	}
 
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
