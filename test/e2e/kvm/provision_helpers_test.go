@@ -20,7 +20,7 @@ import (
 // requireProvisionTools fails the test if essential provisioning tools are missing.
 func requireProvisionTools(t *testing.T) {
 	t.Helper()
-	for _, tool := range []string{"sfdisk", "mkfs.ext4", "qemu-img", "losetup", "dd", "mount", "umount"} {
+	for _, tool := range []string{"sgdisk", "sfdisk", "mkfs.ext4", "qemu-img", "losetup", "dd", "mount", "umount"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Fatalf("%s not available", tool)
 		}
@@ -223,7 +223,7 @@ func buildProvisionInitramfs(t *testing.T, vars map[string]string) string {
 
 	// Copy essential provisioning tools from host with their shared libraries.
 	essentialTools := []string{
-		"partprobe", "sfdisk", "e2fsck", "resize2fs", "wipefs", "mdadm", "lvm",
+		"partprobe", "sgdisk", "sfdisk", "e2fsck", "resize2fs", "wipefs", "mdadm", "lvm",
 		"losetup", "dd",
 	}
 	for _, tool := range essentialTools {
