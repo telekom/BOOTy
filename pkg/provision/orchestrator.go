@@ -845,13 +845,13 @@ func resolveRootSpecDevice(rootSpec string) string {
 	if key, value, ok := strings.Cut(rootSpec, "="); ok {
 		switch strings.ToUpper(key) {
 		case "UUID":
-			devicePath = filepath.Join("/dev/disk/by-uuid", value)
+			devicePath = "/dev/disk/by-uuid/" + value
 		case "PARTUUID":
-			devicePath = filepath.Join("/dev/disk/by-partuuid", value)
+			devicePath = "/dev/disk/by-partuuid/" + value
 		case "LABEL":
-			devicePath = filepath.Join("/dev/disk/by-label", value)
+			devicePath = "/dev/disk/by-label/" + value
 		case "PARTLABEL":
-			devicePath = filepath.Join("/dev/disk/by-partlabel", value)
+			devicePath = "/dev/disk/by-partlabel/" + value
 		}
 	} else if strings.HasPrefix(rootSpec, "/dev/") {
 		devicePath = rootSpec
@@ -875,7 +875,7 @@ func resolveBlockSlaveDevice(devicePath string) string {
 	if name == "" {
 		return devicePath
 	}
-	return filepath.Join("/dev", name)
+	return "/dev/" + name
 }
 
 func abSlotPartitionDevice(diskDevice, slot string) (string, error) {
