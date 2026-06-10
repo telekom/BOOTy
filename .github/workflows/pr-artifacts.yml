@@ -20,17 +20,53 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4.1.0
 
       - name: Build GoBGP ISO artifact
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          MERGE_SHA: ${{ github.sha }}
         run: |
+          set -euo pipefail
           docker buildx build --platform linux/amd64 --target gobgp-iso \
             --output type=local,dest=out-gobgp-iso -f initrd.Dockerfile .
 
           test -f out-gobgp-iso/booty-gobgp.iso
           sha256sum out-gobgp-iso/booty-gobgp.iso > out-gobgp-iso/booty-gobgp.iso.sha256
+          python3 - <<'PY'
+          import datetime
+          import hashlib
+          import json
+          import os
+          import pathlib
+
+          iso = pathlib.Path("out-gobgp-iso/booty-gobgp.iso")
+          document = {
+              "artifact": "booty-gobgp-pr-iso",
+              "head_sha": os.environ["HEAD_SHA"],
+              "github_sha": os.environ["MERGE_SHA"],
+              "checked_out_sha": os.popen("git rev-parse HEAD").read().strip(),
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "workflow": os.environ["GITHUB_WORKFLOW"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "iso": {
+                  "name": iso.name,
+                  "sha256": hashlib.sha256(iso.read_bytes()).hexdigest(),
+                  "size": iso.stat().st_size,
+              },
+          }
+          pathlib.Path("out-gobgp-iso/booty-pr-artifact.json").write_text(
+              json.dumps(document, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
 
       - name: Publish artifact
         uses: actions/upload-artifact@v7.0.1
@@ -39,6 +75,7 @@ jobs:
           path: |
             out-gobgp-iso/booty-gobgp.iso
             out-gobgp-iso/booty-gobgp.iso.sha256
+            out-gobgp-iso/booty-pr-artifact.json
           if-no-files-found: error
           retention-days: 14
 
@@ -62,7 +99,7 @@ jobs:
 
           root = pathlib.Path("out-gobgp-iso")
           with zipfile.ZipFile("booty-gobgp-pr-iso.zip", "w", zipfile.ZIP_DEFLATED) as archive:
-              for name in ("booty-gobgp.iso", "booty-gobgp.iso.sha256"):
+              for name in ("booty-gobgp.iso", "booty-gobgp.iso.sha256", "booty-pr-artifact.json"):
                   archive.write(root / name, name)
           PY
           curl --fail --silent --show-error \
