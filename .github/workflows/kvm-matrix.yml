@@ -141,7 +141,18 @@ jobs:
 
           # Extract busybox from the Dependabot-tracked Docker image
           BUSYBOX_IMAGE=$(grep '^FROM' test/e2e/assets/busybox/Dockerfile | awk '{print $2}')
-          docker run --rm --platform=linux/amd64 "$BUSYBOX_IMAGE" cat /bin/busybox > initramfs/bin/busybox
+          BUSYBOX_TMP=$(mktemp)
+          for attempt in 1 2 3; do
+            if docker run --rm --platform=linux/amd64 "$BUSYBOX_IMAGE" cat /bin/busybox > "$BUSYBOX_TMP"; then
+              mv "$BUSYBOX_TMP" initramfs/bin/busybox
+              break
+            fi
+            if [ "$attempt" = "3" ]; then
+              rm -f "$BUSYBOX_TMP"
+              exit 1
+            fi
+            sleep $((attempt * 5))
+          done
           chmod +x initramfs/bin/busybox
           # Verify that busybox is statically linked to avoid non-bootable initramfs output.
           if ! file initramfs/bin/busybox | grep -Eqi 'statically linked|static-pie linked'; then

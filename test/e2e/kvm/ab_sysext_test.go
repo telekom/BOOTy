@@ -90,7 +90,7 @@ func TestABProvisionPreloadsSysextsWithoutActivatingVM(t *testing.T) {
 		"SYSEXT_LAYERS":              sysextLayers,
 	})
 
-	output := runQEMUProvision(t, findKernel(t), initramfs, targetDisk, 7*time.Minute)
+	output := runQEMUNetworkMode(t, findKernel(t), initramfs, targetDisk, 7*time.Minute)
 	t.Logf("A/B sysext VM output tail:\n%s", tail(output, 4000))
 	assertProvisionSucceeded(t, output)
 
