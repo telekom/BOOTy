@@ -36,6 +36,17 @@ func newTestOrchestratorWithCommander(t *testing.T, cfg *config.MachineConfig, p
 	return o, cmd
 }
 
+func withProcCmdline(t *testing.T, cmdline string) {
+	t.Helper()
+	previous := readProcCmdline
+	readProcCmdline = func() ([]byte, error) {
+		return []byte(cmdline), nil
+	}
+	t.Cleanup(func() {
+		readProcCmdline = previous
+	})
+}
+
 func sfdiskJSON(t *testing.T, parts []disk.Partition) []byte {
 	t.Helper()
 	var out struct {
@@ -863,6 +874,34 @@ func TestReadABSlotStateFile(t *testing.T) {
 	}
 }
 
+func TestDetectBootedABSlotFromCmdline(t *testing.T) {
+	tests := []struct {
+		name     string
+		cmdline  string
+		disk     string
+		wantSlot string
+	}{
+		{name: "partlabel slot a", cmdline: "quiet root=PARTLABEL=BOOTY-ROOT-A", disk: "/dev/sda", wantSlot: config.ABSlotA},
+		{name: "by partlabel slot b", cmdline: "root=/dev/disk/by-partlabel/BOOTY-ROOT-B ro", disk: "/dev/sda", wantSlot: config.ABSlotB},
+		{name: "scsi partition slot a", cmdline: "root=/dev/sda2", disk: "/dev/sda", wantSlot: config.ABSlotA},
+		{name: "nvme partition slot b", cmdline: "root=/dev/nvme0n1p3", disk: "/dev/nvme0n1", wantSlot: config.ABSlotB},
+		{name: "unknown root", cmdline: "root=UUID=abcd", disk: "/dev/sda", wantSlot: ""},
+		{name: "no root", cmdline: "console=ttyS0", disk: "/dev/sda", wantSlot: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withProcCmdline(t, tt.cmdline)
+			got, err := detectBootedABSlotFromCmdline(tt.disk)
+			if err != nil {
+				t.Fatalf("detectBootedABSlotFromCmdline: %v", err)
+			}
+			if got != tt.wantSlot {
+				t.Fatalf("detectBootedABSlotFromCmdline() = %q, want %q", got, tt.wantSlot)
+			}
+		})
+	}
+}
+
 func TestABSlotPartitionDevice(t *testing.T) {
 	tests := []struct {
 		slot string
@@ -918,6 +957,8 @@ func TestWipeOrSecureEraseDisksSkipsWholeDiskWipeForABPreserveExisting(t *testin
 }
 
 func TestABPreserveExistingValidatesExistingLayoutBeforeWipe(t *testing.T) {
+	withProcCmdline(t, "console=ttyS0 root=PARTLABEL=BOOTY-ROOT-A")
+
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Image.Mode = config.ImageModeAB
 	cfg.Provision.AB.ActiveSlot = config.ABSlotA
@@ -946,6 +987,41 @@ func TestABPreserveExistingValidatesExistingLayoutBeforeWipe(t *testing.T) {
 	}
 	if !hasCommandCall(cmd.calls, "wipefs", "-af", "/dev/sda3") {
 		t.Fatalf("expected wipefs only on inactive root /dev/sda3, calls: %#v", cmd.calls)
+	}
+}
+
+func TestABPreserveExistingRejectsStaleActiveSlotFromCmdline(t *testing.T) {
+	withProcCmdline(t, "console=ttyS0 root=PARTLABEL=BOOTY-ROOT-B")
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.ActiveSlot = config.ABSlotA
+	cfg.Provision.AB.TargetSlot = config.ABTargetInactive
+	cfg.Provision.AB.PreserveExisting = true
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	cmd.setResult("sfdisk --json", sfdiskJSON(t, []disk.Partition{
+		{Node: "/dev/sda1", Type: disk.EFISystemPartitionGUID, Name: "BOOTY-EFI"},
+		{Node: "/dev/sda2", Type: disk.LinuxFilesystemGUID, Name: "BOOTY-ROOT-A"},
+		{Node: "/dev/sda3", Type: disk.LinuxFilesystemGUID, Name: "BOOTY-ROOT-B"},
+		{Node: "/dev/sda4", Type: disk.LinuxFilesystemGUID, Name: "BOOTY-STATE"},
+	}), nil)
+
+	if err := o.ensureABPartitionLayout(); err != nil {
+		t.Fatalf("ensureABPartitionLayout: %v", err)
+	}
+	if err := o.parsePartitionsFromLayout(context.Background()); err != nil {
+		t.Fatalf("parsePartitionsFromLayout: %v", err)
+	}
+	err := o.validateABPreserveExistingLayout(context.Background())
+	if err == nil {
+		t.Fatal("expected stale active slot rejection")
+	}
+	if !strings.Contains(err.Error(), `kernel cmdline reports booted A/B slot "b", config declares active slot "a"`) {
+		t.Fatalf("error = %v", err)
+	}
+	if hasCommandName(cmd.calls, "wipefs") {
+		t.Fatalf("stale active slot validation must fail before wipefs, calls: %#v", cmd.calls)
 	}
 }
 
@@ -1509,5 +1585,16 @@ func TestTeardownChrootReturnsJoinedErrors(t *testing.T) {
 	err := o.teardownChroot(context.Background())
 	if err == nil {
 		t.Fatal("expected error from teardownChroot when unmount fails on non-root host")
+	}
+}
+
+func TestTeardownChrootKeepsABPreserveExistingMountedForKexec(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.PreserveExisting = true
+	o, _ := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	if err := o.teardownChroot(context.Background()); err != nil {
+		t.Fatalf("teardownChroot should keep /newroot mounted for preserve-existing kexec: %v", err)
 	}
 }

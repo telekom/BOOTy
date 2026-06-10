@@ -28,6 +28,10 @@ import (
 	"github.com/telekom/BOOTy/pkg/rescue"
 )
 
+var readProcCmdline = func() ([]byte, error) {
+	return os.ReadFile("/proc/cmdline")
+}
+
 // Step represents a named provisioning step.
 type Step struct {
 	Name string
@@ -729,6 +733,19 @@ func (o *Orchestrator) validateABActiveSlotState(ctx context.Context) error {
 		return fmt.Errorf("A/B target root %s resolves to active slot %q", o.rootPartition, ab.ActiveSlot)
 	}
 
+	bootedSlot, err := detectBootedABSlotFromCmdline(o.targetDisk)
+	if err != nil {
+		return fmt.Errorf("determine booted A/B slot from kernel cmdline: %w", err)
+	}
+	if bootedSlot == "" {
+		slotA, _ := abSlotPartitionDevice(o.targetDisk, config.ABSlotA)
+		slotB, _ := abSlotPartitionDevice(o.targetDisk, config.ABSlotB)
+		return fmt.Errorf("cannot independently determine booted A/B slot from kernel cmdline; root= must reference BOOTY-ROOT-A, BOOTY-ROOT-B, %s, or %s", slotA, slotB)
+	}
+	if bootedSlot != ab.ActiveSlot {
+		return fmt.Errorf("kernel cmdline reports booted A/B slot %q, config declares active slot %q", bootedSlot, ab.ActiveSlot)
+	}
+
 	if _, err := os.Stat(activePartition); err != nil {
 		if os.IsNotExist(err) {
 			o.log.Warn("active A/B partition device is not present; skipping mounted active-slot state validation", "device", activePartition)
@@ -756,14 +773,51 @@ func (o *Orchestrator) validateABActiveSlotState(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reading active A/B slot state from %s: %w", activePartition, err)
 	}
-	bootedSlot := normalizeABStateSlot(state["BOOTY_AB_BOOTED_SLOT"])
-	if bootedSlot == "" {
-		bootedSlot = normalizeABStateSlot(state["BOOTY_AB_TARGET_SLOT"])
+	stateBootedSlot := normalizeABStateSlot(state["BOOTY_AB_BOOTED_SLOT"])
+	if stateBootedSlot == "" {
+		stateBootedSlot = normalizeABStateSlot(state["BOOTY_AB_TARGET_SLOT"])
 	}
-	if bootedSlot != ab.ActiveSlot {
-		return fmt.Errorf("active A/B slot state on %s reports slot %q, config declares %q", activePartition, bootedSlot, ab.ActiveSlot)
+	if stateBootedSlot != ab.ActiveSlot {
+		return fmt.Errorf("active A/B slot state on %s reports slot %q, config declares %q", activePartition, stateBootedSlot, ab.ActiveSlot)
 	}
 	return nil
+}
+
+func detectBootedABSlotFromCmdline(diskDevice string) (string, error) {
+	data, err := readProcCmdline()
+	if err != nil {
+		return "", err
+	}
+	for _, field := range strings.Fields(string(data)) {
+		key, value, ok := strings.Cut(field, "=")
+		if !ok || key != "root" {
+			continue
+		}
+		if slot := abSlotFromRootSpec(value, diskDevice); slot != "" {
+			return slot, nil
+		}
+		return "", nil
+	}
+	return "", nil
+}
+
+func abSlotFromRootSpec(rootSpec, diskDevice string) string {
+	rootSpec = strings.Trim(strings.TrimSpace(rootSpec), `"'`)
+	switch {
+	case strings.EqualFold(rootSpec, "PARTLABEL=BOOTY-ROOT-A"),
+		strings.EqualFold(rootSpec, "/dev/disk/by-partlabel/BOOTY-ROOT-A"):
+		return config.ABSlotA
+	case strings.EqualFold(rootSpec, "PARTLABEL=BOOTY-ROOT-B"),
+		strings.EqualFold(rootSpec, "/dev/disk/by-partlabel/BOOTY-ROOT-B"):
+		return config.ABSlotB
+	}
+	if slotA, err := abSlotPartitionDevice(diskDevice, config.ABSlotA); err == nil && rootSpec == slotA {
+		return config.ABSlotA
+	}
+	if slotB, err := abSlotPartitionDevice(diskDevice, config.ABSlotB); err == nil && rootSpec == slotB {
+		return config.ABSlotB
+	}
+	return ""
 }
 
 func abSlotPartitionDevice(diskDevice, slot string) (string, error) {
@@ -1164,10 +1218,18 @@ func (o *Orchestrator) runPostProvisionCmds(ctx context.Context) error {
 }
 
 func (o *Orchestrator) teardownChroot(_ context.Context) error {
+	if o.shouldKeepChrootMountedForABKexec() {
+		o.log.Info("keeping A/B preserve-existing root mounted for kexec", "root", newroot)
+		return nil
+	}
 	bindErr := o.disk.TeardownChrootBindMounts(newroot)
 	bootErr := o.unmountBoot()
 	unmountErr := o.disk.Unmount(newroot)
 	return errors.Join(bindErr, bootErr, unmountErr)
+}
+
+func (o *Orchestrator) shouldKeepChrootMountedForABKexec() bool {
+	return o.isABImageMode() && o.cfg.Provision.AB.PreserveExisting
 }
 
 func (o *Orchestrator) unmountBoot() error {

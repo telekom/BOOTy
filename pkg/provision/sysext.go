@@ -67,6 +67,9 @@ func (c *Configurator) ApplySysexts(ctx context.Context, cfg *config.SysextConfi
 		slog.Info("sysext provisioning enabled with no layers")
 		return nil
 	}
+	if err := validateSysextLayerTargets(cfg); err != nil {
+		return err
+	}
 
 	catalog := &sysextCatalog{
 		APIVersion: "imagebuilding.tcaas.telekom.de/v1alpha1",
@@ -85,6 +88,28 @@ func (c *Configurator) ApplySysexts(ctx context.Context, cfg *config.SysextConfi
 		}
 	}
 	return c.writeSysextCatalog(cfg, catalog)
+}
+
+func validateSysextLayerTargets(cfg *config.SysextConfig) error {
+	seen := make(map[string]string, len(cfg.Layers))
+	for i := range cfg.Layers {
+		layer := &cfg.Layers[i]
+		mode := sysextLayerMode(cfg, layer)
+		targetDir, err := sysextTargetDir(cfg, mode)
+		if err != nil {
+			return fmt.Errorf("sysext %s: %w", layer.Name, err)
+		}
+		fileName := sysextFileName(layer)
+		imagePath, err := sysextImagePath(targetDir, fileName)
+		if err != nil {
+			return fmt.Errorf("sysext %s target: %w", layer.Name, err)
+		}
+		if previous, ok := seen[imagePath]; ok {
+			return fmt.Errorf("duplicate sysext target %s for layers %q and %q", imagePath, previous, layer.Name)
+		}
+		seen[imagePath] = layer.Name
+	}
+	return nil
 }
 
 func sysextHasPreloadLayers(cfg *config.SysextConfig) bool {
@@ -310,14 +335,10 @@ func sourceBaseName(source string) string {
 }
 
 func sysextTargetPath(root, dir, fileName string) (hostPath, imagePath string, err error) {
-	if !isPlainFileName(fileName) {
-		return "", "", fmt.Errorf("unsafe fileName %q", fileName)
+	imagePath, err = sysextImagePath(dir, fileName)
+	if err != nil {
+		return "", "", err
 	}
-	cleanDir := path.Clean("/" + strings.TrimSpace(dir))
-	if cleanDir == "/" {
-		return "", "", fmt.Errorf("target directory must not be root")
-	}
-	imagePath = path.Join(cleanDir, fileName)
 	hostPath = filepath.Join(root, strings.TrimPrefix(filepath.FromSlash(imagePath), string(filepath.Separator)))
 	if err := ensureWithinRoot(root, hostPath); err != nil {
 		return "", "", err
@@ -332,6 +353,17 @@ func sysextTargetPath(root, dir, fileName string) (hostPath, imagePath string, e
 		return "", "", err
 	}
 	return hostPath, imagePath, nil
+}
+
+func sysextImagePath(dir, fileName string) (string, error) {
+	if !isPlainFileName(fileName) {
+		return "", fmt.Errorf("unsafe fileName %q", fileName)
+	}
+	cleanDir := path.Clean("/" + strings.TrimSpace(dir))
+	if cleanDir == "/" {
+		return "", fmt.Errorf("target directory must not be root")
+	}
+	return path.Join(cleanDir, fileName), nil
 }
 
 func isPlainFileName(name string) bool {
@@ -429,22 +461,26 @@ func copySysextSource(ctx context.Context, source, target, expected string) (str
 func openSysextSource(ctx context.Context, source string) (io.ReadCloser, error) {
 	if imageutil.IsOCIReference(source) {
 		ref := imageutil.TrimOCIScheme(source)
-		slog.Info("pulling OCI sysext layer", "ref", ref)
-		return imageutil.FetchOCILayerByMediaTypeWithRetry(ctx, ref, imageutil.SystemdSysextMediaType)
+		slog.Info("pulling OCI sysext layer", "ref", redactSysextOCILogRef(ref))
+		rc, err := imageutil.FetchOCILayerByMediaTypeWithRetry(ctx, ref, imageutil.SystemdSysextMediaType)
+		if err != nil {
+			return nil, fmt.Errorf("fetch OCI sysext %s: %s", redactSysextOCILogRef(ref), redactSysextSourceError(err, source))
+		}
+		return rc, nil
 	}
 	u, err := url.Parse(source)
 	if err == nil && (u.Scheme == "http" || u.Scheme == "https") {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, http.NoBody)
 		if err != nil {
-			return nil, fmt.Errorf("create sysext request: %w", err)
+			return nil, fmt.Errorf("create sysext request %s: %s", redactImageURL(source), redactSysextSourceError(err, source))
 		}
 		resp, err := sysextHTTPClient.Do(req) //nolint:gosec // configured sysext source URL
 		if err != nil {
-			return nil, fmt.Errorf("fetch sysext: %w", err)
+			return nil, fmt.Errorf("fetch sysext %s: %s", redactImageURL(source), redactSysextSourceError(err, source))
 		}
 		if resp.StatusCode != http.StatusOK {
 			_ = resp.Body.Close()
-			return nil, fmt.Errorf("fetch sysext %s: %s", source, resp.Status)
+			return nil, fmt.Errorf("fetch sysext %s: %s", redactImageURL(source), resp.Status)
 		}
 		return resp.Body, nil
 	}
@@ -460,6 +496,27 @@ func openSysextSource(ctx context.Context, source string) (io.ReadCloser, error)
 		return nil, fmt.Errorf("open sysext source: %w", err)
 	}
 	return file, nil
+}
+
+func redactSysextOCILogRef(ref string) string {
+	return strings.TrimPrefix(redactImageURL("oci://"+ref), "oci://")
+}
+
+func redactSysextSourceError(err error, source string) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	if source == "" {
+		return msg
+	}
+	redacted := redactImageURL(source)
+	msg = strings.ReplaceAll(msg, source, redacted)
+	if imageutil.IsOCIReference(source) {
+		ref := imageutil.TrimOCIScheme(source)
+		msg = strings.ReplaceAll(msg, ref, strings.TrimPrefix(redacted, "oci://"))
+	}
+	return msg
 }
 
 func writeAndHash(ctx context.Context, src io.Reader, dst io.Writer) (string, error) {

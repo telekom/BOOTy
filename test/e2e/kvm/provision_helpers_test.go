@@ -215,7 +215,7 @@ func buildProvisionInitramfs(t *testing.T, vars map[string]string) string {
 		"mkdir", "cp", "mv", "rm", "ln", "chmod", "chown",
 		"mknod", "insmod", "modprobe", "setsid", "cttyhack",
 		"chroot", "bash", "ash", "ip", "ifconfig", "udhcpc",
-		"find", "xargs", "grep", "awk", "sed",
+		"find", "xargs", "grep", "awk", "sed", "mdev",
 	} {
 		link := filepath.Join(rootDir, "bin", applet)
 		_ = os.Symlink("busybox", link)
@@ -223,7 +223,7 @@ func buildProvisionInitramfs(t *testing.T, vars map[string]string) string {
 
 	// Copy essential provisioning tools from host with their shared libraries.
 	essentialTools := []string{
-		"partprobe", "sgdisk", "sfdisk", "mkfs.vfat", "e2fsck", "resize2fs", "wipefs", "mdadm", "lvm",
+		"partprobe", "sgdisk", "sfdisk", "mkfs.ext4", "mkfs.vfat", "e2fsck", "resize2fs", "wipefs", "mdadm", "lvm",
 		"losetup", "dd",
 	}
 	for _, tool := range essentialTools {
@@ -339,7 +339,7 @@ func runQEMUProvision(t *testing.T, kernel, initramfs, disk string, timeoutDur t
 	out, err := cmd.CombinedOutput()
 
 	if ctx.Err() == context.DeadlineExceeded {
-		t.Logf("QEMU provision timed out after %v. tail:\n%s", timeoutDur, tail(out, 2000))
+		t.Fatalf("QEMU provision timed out after %v. tail:\n%s", timeoutDur, tail(out, 2000))
 	} else if err != nil {
 		// Exit code from -no-reboot is expected when BOOTy calls reboot.
 		t.Logf("QEMU provision exited: %v (expected on reboot)", err)

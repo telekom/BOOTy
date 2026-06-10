@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -167,6 +168,41 @@ func TestApplySysextsActiveModeDoesNotWriteCatalog(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(c.rootDir, "usr/lib/tcaas-sysext/preloaded")); !os.IsNotExist(err) {
 		t.Fatalf("preload directory should not exist for active-only layers")
+	}
+}
+
+func TestApplySysextsRejectsDuplicateTargetPathBeforeCopy(t *testing.T) {
+	c := newTestConfigurator(t, newMockCommander())
+	sourceA, digestA := writeSysextSource(t, "first")
+	sourceB, digestB := writeSysextSource(t, "second")
+
+	cfg := config.SysextConfig{
+		Enabled: true,
+		Layers: []config.SysextLayerConfig{
+			{
+				Name:     "node-tuning",
+				Source:   sourceA,
+				FileName: "shared.raw",
+				SHA256:   digestA,
+			},
+			{
+				Name:     "vsr",
+				Source:   sourceB,
+				FileName: "shared.raw",
+				SHA256:   digestB,
+			},
+		},
+	}
+
+	err := c.ApplySysexts(context.Background(), &cfg)
+	if err == nil {
+		t.Fatal("expected duplicate target rejection")
+	}
+	if !strings.Contains(err.Error(), `duplicate sysext target /usr/lib/tcaas-sysext/preloaded/shared.raw`) {
+		t.Fatalf("expected duplicate target error, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(c.rootDir, "usr/lib/tcaas-sysext/preloaded/shared.raw")); !os.IsNotExist(err) {
+		t.Fatalf("duplicate target validation must run before writing target, stat err=%v", err)
 	}
 }
 
@@ -453,19 +489,31 @@ func TestOpenSysextSourceHTTPBodyTimeout(t *testing.T) {
 	}
 }
 
-func TestOpenSysextSourceHTTPStatusErrorIncludesURL(t *testing.T) {
+func TestOpenSysextSourceHTTPStatusErrorRedactsSensitiveURLParts(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "unavailable", http.StatusServiceUnavailable)
 	}))
 	t.Cleanup(srv.Close)
 
-	source := srv.URL + "/layer.raw"
-	_, err := openSysextSource(context.Background(), source)
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.User = url.UserPassword("robot", "secret")
+	u.Path = "/layer.raw"
+	u.RawQuery = "token=abc"
+	source := u.String()
+
+	_, err = openSysextSource(context.Background(), source)
 	if err == nil {
 		t.Fatal("expected HTTP status error")
 	}
-	if !strings.Contains(err.Error(), source) {
-		t.Fatalf("error = %q, want source URL", err.Error())
+	if strings.Contains(err.Error(), "robot") || strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "token=abc") {
+		t.Fatalf("error leaked sensitive URL parts: %q", err.Error())
+	}
+	wantURL := srv.URL + "/layer.raw"
+	if !strings.Contains(err.Error(), wantURL) {
+		t.Fatalf("error = %q, want redacted URL %q", err.Error(), wantURL)
 	}
 	if !strings.Contains(err.Error(), "503 Service Unavailable") {
 		t.Fatalf("error = %q, want HTTP status text", err.Error())

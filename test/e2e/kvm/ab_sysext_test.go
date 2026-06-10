@@ -33,6 +33,10 @@ func TestProvisionInitramfsContainsABStreamingTools(t *testing.T) {
 		"sbin/dd",
 		"sbin/sfdisk",
 		"sbin/partprobe",
+		"sbin/sgdisk",
+		"sbin/mkfs.ext4",
+		"sbin/mkfs.vfat",
+		"bin/mdev",
 	} {
 		if !files[want] && !files["./"+want] {
 			t.Fatalf("initramfs missing %s; A/B StreamAB cannot run in VM", want)
@@ -85,6 +89,7 @@ func TestABProvisionPreloadsSysextsWithoutActivatingVM(t *testing.T) {
 
 	output := runQEMUProvision(t, findKernel(t), initramfs, targetDisk, 7*time.Minute)
 	t.Logf("A/B sysext VM output tail:\n%s", tail(output, 4000))
+	assertProvisionSucceeded(t, output)
 
 	rootMount, cleanup := mountQcow2(t, targetDisk)
 	defer cleanup()
@@ -122,6 +127,30 @@ func TestABProvisionPreloadsSysextsWithoutActivatingVM(t *testing.T) {
 	if !strings.Contains(slotState, "BOOTY_AB_TARGET_SLOT=a") {
 		t.Fatalf("A/B slot state did not record initial target slot a:\n%s", slotState)
 	}
+}
+
+func assertProvisionSucceeded(t *testing.T, output []byte) {
+	t.Helper()
+	text := string(output)
+	for _, bad := range []string{
+		"provisioning step failed",
+		"provisioning failed",
+		"mode exited with error",
+		"panic:",
+	} {
+		if strings.Contains(text, bad) {
+			t.Fatalf("QEMU provisioning output contains failure marker %q. tail:\n%s", bad, tail(output, 4000))
+		}
+	}
+	for _, good := range []string{
+		"provisioning step\" component=provision step=report-success",
+		"CAPRF run complete",
+	} {
+		if strings.Contains(text, good) {
+			return
+		}
+	}
+	t.Fatalf("QEMU provisioning output did not contain a success marker. tail:\n%s", tail(output, 4000))
 }
 
 func listInitramfsFiles(t *testing.T, path string) map[string]bool {
