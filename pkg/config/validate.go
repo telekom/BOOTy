@@ -332,7 +332,11 @@ func looksLikeHTTPSource(source string) bool {
 }
 
 func isOCIDigestSource(source string) bool {
-	return strings.HasPrefix(source, "oci://") && strings.Contains(source, "@sha256:")
+	if !strings.HasPrefix(source, "oci://") {
+		return false
+	}
+	_, digest, ok := strings.Cut(source, "@sha256:")
+	return ok && strings.TrimSpace(digest) != "" && validateSysextSHA256(digest) == nil
 }
 
 func validateSysextTargetDir(value string) error {
@@ -365,14 +369,15 @@ func validateSysextFileName(name string) error {
 }
 
 func validateSysextSHA256(value string) error {
-	value = strings.TrimPrefix(strings.TrimSpace(strings.ToLower(value)), "sha256:")
-	if value == "" {
+	digest := strings.TrimSpace(strings.ToLower(value))
+	if digest == "" {
 		return nil
 	}
-	if len(value) != 64 {
+	digest = strings.TrimPrefix(digest, "sha256:")
+	if len(digest) != 64 {
 		return fmt.Errorf("must be 64 hex characters")
 	}
-	for _, r := range value {
+	for _, r := range digest {
 		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
 			return fmt.Errorf("must be hex characters")
 		}
