@@ -171,13 +171,17 @@ func installMinimalChrootFixture(t *testing.T, root string) {
 			break
 		}
 	}
-	for _, applet := range []string{"sh", "bash", "mkdir", "cat", "printf"} {
+	for _, applet := range []string{"sh", "mkdir", "cat", "printf"} {
 		link := filepath.Join(root, "bin", applet)
 		_ = os.Remove(link)
 		if err := os.Symlink("busybox", link); err != nil {
 			t.Fatalf("symlink chroot applet %s: %v", applet, err)
 		}
 	}
+	writeFile(t, filepath.Join(root, "bin", "bash"), `#!/bin/sh
+exec /bin/sh "$@"
+`)
+	run(t, "chmod bash fixture", "chmod", "+x", filepath.Join(root, "bin", "bash"))
 
 	updateGrub := `#!/bin/sh
 set -eu
