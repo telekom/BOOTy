@@ -1236,6 +1236,47 @@ func TestParseVarsSingleQuoteStripping(t *testing.T) {
 	}
 }
 
+func TestParseVarsDoubleQuotedShellEscapes(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "escaped quotes",
+			input: `TOKEN="token with \"quoted\" segment"`,
+			want:  `token with "quoted" segment`,
+		},
+		{
+			name:  "literal newline escape",
+			input: `TOKEN="line\nnext"`,
+			want:  `line\nnext`,
+		},
+		{
+			name:  "unknown escape preserved",
+			input: `TOKEN="path\qvalue"`,
+			want:  `path\qvalue`,
+		},
+		{
+			name:  "shell special escapes",
+			input: "TOKEN=\"dollar \\$ backtick \\` slash \\\\\"",
+			want:  "dollar $ backtick ` slash \\",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := ParseVars(strings.NewReader(tc.input))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Transport.Token != tc.want {
+				t.Fatalf("Token = %q, want %q", cfg.Transport.Token, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseVarsUnmatchedQuotesPreserved(t *testing.T) {
 	tests := []struct {
 		name  string

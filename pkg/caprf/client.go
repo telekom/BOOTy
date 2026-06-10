@@ -826,16 +826,37 @@ func unquoteVarValue(value string) (string, error) {
 	}
 	switch {
 	case value[0] == '"' && value[len(value)-1] == '"':
-		unquoted, err := strconv.Unquote(value)
-		if err != nil {
-			return "", fmt.Errorf("unquote value: %w", err)
-		}
-		return unquoted, nil
+		return unquoteDoubleQuotedVarValue(value[1 : len(value)-1]), nil
 	case value[0] == '\'' && value[len(value)-1] == '\'':
 		return value[1 : len(value)-1], nil
 	default:
 		return value, nil
 	}
+}
+
+func unquoteDoubleQuotedVarValue(value string) string {
+	var b strings.Builder
+	b.Grow(len(value))
+
+	for i := 0; i < len(value); i++ {
+		if value[i] != '\\' {
+			b.WriteByte(value[i])
+			continue
+		}
+		if i+1 >= len(value) {
+			b.WriteByte('\\')
+			continue
+		}
+		switch value[i+1] {
+		case '$', '`', '"', '\\':
+			b.WriteByte(value[i+1])
+			i++
+		default:
+			b.WriteByte('\\')
+		}
+	}
+
+	return b.String()
 }
 
 func applyVar(cfg *config.MachineConfig, key, value string) error {
