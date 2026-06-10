@@ -307,6 +307,20 @@ func TestFindRootPartition(t *testing.T) {
 	}
 }
 
+func TestFindRootPartitionAcceptsMBRLinuxType(t *testing.T) {
+	mgr := NewManager(newMockCommander())
+	parts := []Partition{
+		{Node: "/dev/sda1", Type: LinuxFilesystemMBRType},
+	}
+	root, err := mgr.FindRootPartition(parts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if root.Node != "/dev/sda1" {
+		t.Errorf("expected /dev/sda1, got %s", root.Node)
+	}
+}
+
 func TestFindRootPartitionNotFound(t *testing.T) {
 	mgr := NewManager(newMockCommander())
 	parts := []Partition{

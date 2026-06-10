@@ -70,6 +70,7 @@ type sfdiskOutput struct {
 const (
 	EFISystemPartitionGUID = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
 	LinuxFilesystemGUID    = "0FC63DAF-8483-4772-8E79-3D69D8477DE4"
+	LinuxFilesystemMBRType = "83"
 )
 
 // StopRAIDArrays stops all RAID arrays via mdadm.
@@ -455,13 +456,13 @@ func (m *Manager) FindBootPartition(parts []Partition) (*Partition, error) {
 }
 
 // FindRootPartition finds the primary Linux filesystem partition.
-// When multiple partitions share the LinuxFilesystemGUID, it prefers one
-// with a "root" or "/" GPT name, otherwise returns the last match (root
-// is typically after /boot in the partition table).
+// When multiple partitions share a Linux filesystem type, it prefers one with
+// a "root" or "/" partition name, otherwise returns the last match (root is
+// typically after /boot in the partition table).
 func (m *Manager) FindRootPartition(parts []Partition) (*Partition, error) {
 	var last *Partition
 	for i := range parts {
-		if !strings.EqualFold(parts[i].Type, LinuxFilesystemGUID) {
+		if !isLinuxFilesystemPartitionType(parts[i].Type) {
 			continue
 		}
 		lower := strings.ToLower(parts[i].Name)
@@ -474,6 +475,11 @@ func (m *Manager) FindRootPartition(parts []Partition) (*Partition, error) {
 		return last, nil
 	}
 	return nil, fmt.Errorf("no Linux filesystem partition found")
+}
+
+func isLinuxFilesystemPartitionType(partitionType string) bool {
+	return strings.EqualFold(partitionType, LinuxFilesystemGUID) ||
+		strings.EqualFold(partitionType, LinuxFilesystemMBRType)
 }
 
 // GrowPartition grows a partition to fill available space using growpart.
