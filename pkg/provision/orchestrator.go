@@ -32,6 +32,14 @@ var readProcCmdline = func() ([]byte, error) {
 	return os.ReadFile("/proc/cmdline")
 }
 
+var (
+	evalRootSymlinks = filepath.EvalSymlinks
+	mountBootPart    = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
+		return mgr.MountPartition(ctx, device, mountpoint)
+	}
+	sysBlockRoot = "/sys/class/block"
+)
+
 // Step represents a named provisioning step.
 type Step struct {
 	Name string
@@ -812,12 +820,17 @@ func abSlotFromRootSpec(rootSpec, diskDevice string) string {
 	rootSpec = strings.Trim(strings.TrimSpace(rootSpec), `"'`)
 	switch {
 	case strings.EqualFold(rootSpec, "PARTLABEL=BOOTY-ROOT-A"),
+		strings.EqualFold(rootSpec, "LABEL=BOOTY-ROOT-A"),
+		strings.EqualFold(rootSpec, "/dev/disk/by-label/BOOTY-ROOT-A"),
 		strings.EqualFold(rootSpec, "/dev/disk/by-partlabel/BOOTY-ROOT-A"):
 		return config.ABSlotA
 	case strings.EqualFold(rootSpec, "PARTLABEL=BOOTY-ROOT-B"),
+		strings.EqualFold(rootSpec, "LABEL=BOOTY-ROOT-B"),
+		strings.EqualFold(rootSpec, "/dev/disk/by-label/BOOTY-ROOT-B"),
 		strings.EqualFold(rootSpec, "/dev/disk/by-partlabel/BOOTY-ROOT-B"):
 		return config.ABSlotB
 	}
+	rootSpec = resolveRootSpecDevice(rootSpec)
 	if slotA, err := abSlotPartitionDevice(diskDevice, config.ABSlotA); err == nil && rootSpec == slotA {
 		return config.ABSlotA
 	}
@@ -825,6 +838,44 @@ func abSlotFromRootSpec(rootSpec, diskDevice string) string {
 		return config.ABSlotB
 	}
 	return ""
+}
+
+func resolveRootSpecDevice(rootSpec string) string {
+	var devicePath string
+	if key, value, ok := strings.Cut(rootSpec, "="); ok {
+		switch strings.ToUpper(key) {
+		case "UUID":
+			devicePath = filepath.Join("/dev/disk/by-uuid", value)
+		case "PARTUUID":
+			devicePath = filepath.Join("/dev/disk/by-partuuid", value)
+		case "LABEL":
+			devicePath = filepath.Join("/dev/disk/by-label", value)
+		case "PARTLABEL":
+			devicePath = filepath.Join("/dev/disk/by-partlabel", value)
+		}
+	} else if strings.HasPrefix(rootSpec, "/dev/") {
+		devicePath = rootSpec
+	}
+	if devicePath == "" {
+		return rootSpec
+	}
+	if resolved, err := evalRootSymlinks(devicePath); err == nil && strings.HasPrefix(resolved, "/dev/") {
+		devicePath = resolved
+	}
+	return resolveBlockSlaveDevice(devicePath)
+}
+
+func resolveBlockSlaveDevice(devicePath string) string {
+	base := filepath.Base(devicePath)
+	entries, err := os.ReadDir(filepath.Join(sysBlockRoot, base, "slaves"))
+	if err != nil || len(entries) != 1 {
+		return devicePath
+	}
+	name := strings.TrimSpace(entries[0].Name())
+	if name == "" {
+		return devicePath
+	}
+	return filepath.Join("/dev", name)
 }
 
 func abSlotPartitionDevice(diskDevice, slot string) (string, error) {
@@ -1097,16 +1148,12 @@ func (o *Orchestrator) mountBoot(ctx context.Context) error {
 		o.log.Info("skipping boot partition mount; no boot partition detected")
 		return nil
 	}
-	if ok, reason := efiRuntimeReady(); !ok {
-		o.log.Warn("skipping boot partition mount; EFI runtime unavailable", "partition", o.bootPartition, "reason", reason)
-		return nil
-	}
 	mountpoint := bootEFIMountPoint()
 	if isMountPoint(mountpoint) {
 		o.log.Info("boot partition already mounted", "mountpoint", mountpoint)
 		return nil
 	}
-	if err := o.disk.MountPartition(ctx, o.bootPartition, mountpoint); err != nil {
+	if err := mountBootPart(ctx, o.disk, o.bootPartition, mountpoint); err != nil {
 		return fmt.Errorf("mounting boot partition %s at %s: %w", o.bootPartition, mountpoint, err)
 	}
 	return nil

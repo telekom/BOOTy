@@ -21,7 +21,10 @@ import (
 
 const newroot = "/newroot"
 
-var efiRuntimeReady = defaultEFIRuntimeReady
+var (
+	efiRuntimeReady = defaultEFIRuntimeReady
+	isMountPoint    = defaultIsMountPoint
+)
 
 // safeKernelParams matches only safe characters for kernel command line parameters.
 var safeKernelParams = regexp.MustCompile(`^[a-zA-Z0-9=._\-/ ]*$`)
@@ -389,8 +392,8 @@ func defaultEFIRuntimeReady() (ready bool, reason string) {
 	return true, ""
 }
 
-// isMountPoint checks whether a path is already a mount point by reading /proc/mounts.
-func isMountPoint(path string) bool {
+// defaultIsMountPoint checks whether a path is already a mount point by reading /proc/mounts.
+func defaultIsMountPoint(path string) bool {
 	data, err := os.ReadFile("/proc/mounts")
 	if err != nil {
 		return false

@@ -157,17 +157,39 @@ func TestMountBootSkipsWhenNoBootPartition(t *testing.T) {
 	}
 }
 
-func TestMountBootSkipsWhenEFIRuntimeUnavailable(t *testing.T) {
-	old := efiRuntimeReady
-	efiRuntimeReady = func() (bool, string) { return false, "unit test" }
-	t.Cleanup(func() { efiRuntimeReady = old })
+func TestMountBootMountsWhenEFIRuntimeUnavailable(t *testing.T) {
+	oldRuntime := efiRuntimeReady
+	efiRuntimeReady = func() (bool, string) {
+		t.Fatal("mountBoot must not require EFI runtime; only boot-entry operations need efivarfs")
+		return false, "unit test"
+	}
+	t.Cleanup(func() { efiRuntimeReady = oldRuntime })
+	oldMountPoint := isMountPoint
+	isMountPoint = func(string) bool { return false }
+	t.Cleanup(func() { isMountPoint = oldMountPoint })
+	oldMountBootPart := mountBootPart
+	mounted := false
+	mountBootPart = func(_ context.Context, _ *disk.Manager, device, mountpoint string) error {
+		mounted = true
+		if device != "/dev/sda1" {
+			t.Fatalf("mounted device = %q, want /dev/sda1", device)
+		}
+		if mountpoint != bootEFIMountPoint() {
+			t.Fatalf("mountpoint = %q, want %q", mountpoint, bootEFIMountPoint())
+		}
+		return nil
+	}
+	t.Cleanup(func() { mountBootPart = oldMountBootPart })
 
 	cfg := &config.MachineConfig{}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
-	o.bootPartition = "/dev/does-not-exist"
+	o.bootPartition = "/dev/sda1"
 
 	if err := o.mountBoot(context.Background()); err != nil {
 		t.Fatalf("mountBoot without EFI runtime: %v", err)
+	}
+	if !mounted {
+		t.Fatal("mountBoot did not mount the ESP")
 	}
 }
 
@@ -875,6 +897,34 @@ func TestReadABSlotStateFile(t *testing.T) {
 }
 
 func TestDetectBootedABSlotFromCmdline(t *testing.T) {
+	oldEval := evalRootSymlinks
+	oldSysBlockRoot := sysBlockRoot
+	sysRoot := t.TempDir()
+	sysBlockRoot = sysRoot
+	evalRootSymlinks = func(path string) (string, error) {
+		switch path {
+		case "/dev/disk/by-uuid/root-a-uuid":
+			return "/dev/sda2", nil
+		case "/dev/disk/by-partuuid/root-b-partuuid":
+			return "/dev/sda3", nil
+		case "/dev/mapper/crypt-root-b":
+			return "/dev/dm-0", nil
+		default:
+			return "", os.ErrNotExist
+		}
+	}
+	t.Cleanup(func() {
+		evalRootSymlinks = oldEval
+		sysBlockRoot = oldSysBlockRoot
+	})
+	slavesDir := filepath.Join(sysRoot, "dm-0", "slaves")
+	if err := os.MkdirAll(slavesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(slavesDir, "sda3"), []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	tests := []struct {
 		name     string
 		cmdline  string
@@ -885,6 +935,9 @@ func TestDetectBootedABSlotFromCmdline(t *testing.T) {
 		{name: "by partlabel slot b", cmdline: "root=/dev/disk/by-partlabel/BOOTY-ROOT-B ro", disk: "/dev/sda", wantSlot: config.ABSlotB},
 		{name: "scsi partition slot a", cmdline: "root=/dev/sda2", disk: "/dev/sda", wantSlot: config.ABSlotA},
 		{name: "nvme partition slot b", cmdline: "root=/dev/nvme0n1p3", disk: "/dev/nvme0n1", wantSlot: config.ABSlotB},
+		{name: "uuid slot a", cmdline: "root=UUID=root-a-uuid", disk: "/dev/sda", wantSlot: config.ABSlotA},
+		{name: "partuuid slot b", cmdline: "root=PARTUUID=root-b-partuuid", disk: "/dev/sda", wantSlot: config.ABSlotB},
+		{name: "mapper slave slot b", cmdline: "root=/dev/mapper/crypt-root-b", disk: "/dev/sda", wantSlot: config.ABSlotB},
 		{name: "unknown root", cmdline: "root=UUID=abcd", disk: "/dev/sda", wantSlot: ""},
 		{name: "no root", cmdline: "console=ttyS0", disk: "/dev/sda", wantSlot: ""},
 	}
