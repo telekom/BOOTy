@@ -109,6 +109,11 @@ set `sha256`, unless the source is pinned as an OCI digest reference such as
 `oci://registry.example/tcaas/node-tuning@sha256:<digest>`. A mismatch aborts
 provisioning and removes the temporary target file.
 
+PR CI always publishes the GoBGP ISO as a GitHub Actions artifact with
+`booty-pr-artifact.json` metadata. GitLab generic-package publishing is optional
+for fork-safe PRs unless repository variable `GITLAB_PACKAGE_REQUIRED=true` is
+set; in that mode CI fails if `GITLAB_PACKAGE_TOKEN` is missing.
+
 ## CAPRF vars
 
 When BOOTy is launched through CAPRF, the same config can be delivered through

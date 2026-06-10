@@ -82,17 +82,30 @@ jobs:
       - name: Publish GitLab generic package
         env:
           GITLAB_PACKAGE_TOKEN: ${{ secrets.GITLAB_PACKAGE_TOKEN }}
+          GITLAB_PACKAGE_REQUIRED: ${{ vars.GITLAB_PACKAGE_REQUIRED || 'false' }}
           GITLAB_API_V4_URL: ${{ vars.GITLAB_API_V4_URL || 'https://gitlab.devops.telekom.de/api/v4' }}
           GITLAB_PACKAGE_PROJECT_ID: ${{ vars.GITLAB_PACKAGE_PROJECT_ID || '278324' }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
+          version="${HEAD_SHA:0:7}"
+          package_url="${GITLAB_API_V4_URL}/projects/${GITLAB_PACKAGE_PROJECT_ID}/packages/generic/booty-pr-artifacts/${version}/booty-gobgp-pr-iso.zip"
+          required="$(printf '%s' "${GITLAB_PACKAGE_REQUIRED}" | tr '[:upper:]' '[:lower:]')"
           if [ -z "${GITLAB_PACKAGE_TOKEN}" ]; then
-            echo "GITLAB_PACKAGE_TOKEN is not configured; skipping GitLab package publish."
+            if [ "${required}" = "true" ] || [ "${required}" = "1" ] || [ "${required}" = "yes" ]; then
+              echo "::error::GITLAB_PACKAGE_REQUIRED is true, but GITLAB_PACKAGE_TOKEN is not configured."
+              exit 1
+            fi
+            echo "::notice::GITLAB_PACKAGE_TOKEN is not configured; GitLab generic package publish is optional and was skipped."
+            {
+              echo "### GitLab generic package"
+              echo
+              echo "Skipped: \`GITLAB_PACKAGE_TOKEN\` is not configured."
+              echo "Set repository variable \`GITLAB_PACKAGE_REQUIRED=true\` to make this a required publishing target."
+            } >> "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
 
-          version="${HEAD_SHA:0:7}"
           python3 - <<'PY'
           import pathlib
           import zipfile
@@ -105,7 +118,12 @@ jobs:
           curl --fail --silent --show-error \
             --header "PRIVATE-TOKEN: ${GITLAB_PACKAGE_TOKEN}" \
             --upload-file booty-gobgp-pr-iso.zip \
-            "${GITLAB_API_V4_URL}/projects/${GITLAB_PACKAGE_PROJECT_ID}/packages/generic/booty-pr-artifacts/${version}/booty-gobgp-pr-iso.zip"
+            "${package_url}"
+          {
+            echo "### GitLab generic package"
+            echo
+            echo "Published: \`${package_url}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Print download hint
         env:
