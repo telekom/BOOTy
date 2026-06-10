@@ -66,20 +66,21 @@ func TestABProvisionPreloadsSysextsWithoutActivatingVM(t *testing.T) {
 	run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":            "ab-sysext-vm",
-		"dns_resolver":        "8.8.8.8",
-		"MODE":                "provision",
-		"DISK_DEVICE":         "/dev/vda",
-		"IMAGE":               baseURL + "/image.gz",
-		"IMAGE_MODE":          "ab",
-		"AB_SCHEME":           "dual-root",
-		"AB_TARGET_SLOT":      "inactive",
-		"AB_BOOT_SIZE_MB":     "64",
-		"AB_ROOT_SIZE_MB":     "768",
-		"AB_STATE_SIZE_MB":    "64",
-		"SYSEXT_ENABLED":      "true",
-		"SYSEXT_DEFAULT_MODE": "preload",
-		"SYSEXT_LAYERS":       sysextLayers,
+		"HOSTNAME":                   "ab-sysext-vm",
+		"dns_resolver":               "8.8.8.8",
+		"MODE":                       "provision",
+		"DISK_DEVICE":                "/dev/vda",
+		"IMAGE":                      baseURL + "/image.gz",
+		"IMAGE_MODE":                 "ab",
+		"AB_SCHEME":                  "dual-root",
+		"AB_TARGET_SLOT":             "inactive",
+		"AB_BOOT_SIZE_MB":            "64",
+		"AB_ROOT_SIZE_MB":            "768",
+		"AB_STATE_SIZE_MB":           "64",
+		"SYSEXT_ENABLED":             "true",
+		"SYSEXT_ALLOW_INSECURE_HTTP": "true",
+		"SYSEXT_DEFAULT_MODE":        "preload",
+		"SYSEXT_LAYERS":              sysextLayers,
 	})
 
 	output := runQEMUProvision(t, findKernel(t), initramfs, targetDisk, 7*time.Minute)
@@ -107,8 +108,15 @@ func TestABProvisionPreloadsSysextsWithoutActivatingVM(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(rootMount, "usr/lib/tcaas-sysext/preloaded/node-tuning.raw")); err != nil {
 		t.Fatalf("preloaded sysext missing: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(rootMount, "var/lib/extensions/node-tuning.raw")); !os.IsNotExist(err) {
-		t.Fatalf("preloaded sysext must not be active under /var/lib/extensions; stat err=%v", err)
+	for _, dir := range []string{
+		"etc/extensions",
+		"run/extensions",
+		"var/lib/extensions",
+		"usr/lib/extensions",
+	} {
+		if _, err := os.Stat(filepath.Join(rootMount, dir, "node-tuning.raw")); !os.IsNotExist(err) {
+			t.Fatalf("preloaded sysext must not be active under /%s; stat err=%v", dir, err)
+		}
 	}
 	slotState := readProvisionedFile(t, rootMount, "etc/booty/ab-slot.env")
 	if !strings.Contains(slotState, "BOOTY_AB_TARGET_SLOT=a") {
