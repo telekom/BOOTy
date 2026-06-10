@@ -122,6 +122,36 @@ func TestStreamABRawRootFallbackAndChecksumMismatch(t *testing.T) {
 	assertPartitionPrefixZeroed(t, target.partitions[1], 1024*1024)
 }
 
+func TestStreamABQCOW2RootFallback(t *testing.T) {
+	requireRoot(t)
+	requireABStreamTools(t)
+	requireTool(t, "qemu-img")
+
+	sourcePayload := repeatedPayload("qcow2-root-source", 2*1024*1024)
+	sourceRaw := filepath.Join(t.TempDir(), "rootfs.raw")
+	sourceQCOW2 := filepath.Join(t.TempDir(), "rootfs.qcow2")
+	if err := os.WriteFile(sourceRaw, sourcePayload, 0o600); err != nil {
+		t.Fatalf("write source rootfs: %v", err)
+	}
+	sourceSum := sha256.Sum256(sourcePayload)
+	runCmd(t, "qemu-img", "convert", "-f", "raw", "-O", "qcow2", sourceRaw, sourceQCOW2)
+
+	target := createPartitionedRawImage(t, []testPartition{
+		{name: "BOOTY-EFI", sizeMB: 8, typeGUID: "C12A7328-F81F-11D2-BA4B-00A0C93EC93B", payload: repeatedPayload("efi-keep-qcow2", 1024*1024)},
+		{name: "BOOTY-ROOT-A", sizeMB: 16, typeGUID: "0FC63DAF-8483-4772-8E79-3D69D8477DE4", payload: repeatedPayload("root-before-qcow2", 2*1024*1024)},
+	})
+
+	if err := image.StreamAB(context.Background(), serveFile(t, sourceQCOW2), image.ABTargets{
+		Disk:          target.path,
+		BootPartition: target.partitions[0],
+		RootPartition: target.partitions[1],
+	}, image.StreamOpts{Checksum: hex.EncodeToString(sourceSum[:]), ChecksumType: "sha256"}); err != nil {
+		t.Fatalf("StreamAB() qcow2 root fallback error: %v", err)
+	}
+	assertPartitionPrefix(t, target.partitions[0], repeatedPayload("efi-keep-qcow2", 1024*1024))
+	assertPartitionPrefix(t, target.partitions[1], sourcePayload)
+}
+
 type testPartition struct {
 	name     string
 	sizeMB   int
@@ -138,9 +168,14 @@ type rawImage struct {
 func requireABStreamTools(t *testing.T) {
 	t.Helper()
 	for _, tool := range []string{"truncate", "sfdisk", "losetup", "partprobe", "dd"} {
-		if _, err := exec.LookPath(tool); err != nil {
-			t.Skipf("%s not available", tool)
-		}
+		requireTool(t, tool)
+	}
+}
+
+func requireTool(t *testing.T, tool string) {
+	t.Helper()
+	if _, err := exec.LookPath(tool); err != nil {
+		t.Skipf("%s not available", tool)
 	}
 }
 

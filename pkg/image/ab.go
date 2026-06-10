@@ -239,16 +239,16 @@ func copyABPayload(ctx context.Context, rawPath string, target ABTargets) error 
 	}
 	defer teardownLoopDevice(ctx, loopDev)
 
-	if _, err := runCmd(ctx, "partprobe", loopDev); err != nil {
-		return fmt.Errorf("partprobe source image: %w", err)
-	}
-
 	srcParts, err := readSfdiskPartitions(ctx, loopDev)
 	if err != nil || len(srcParts) == 0 {
 		if err != nil {
 			slog.Info("source image has no partition table; copying as root filesystem", "error", err)
 		}
 		return dirtyABTargetsError(ddFileToDevice(ctx, rawPath, target.RootPartition), target.RootPartition)
+	}
+
+	if _, err := runCmd(ctx, "partprobe", loopDev); err != nil {
+		return fmt.Errorf("partprobe source image: %w", err)
 	}
 
 	var boot *sfdiskPartition
