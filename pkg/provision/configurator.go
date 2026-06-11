@@ -626,6 +626,13 @@ func copyFile(ctx context.Context, src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return fmt.Errorf("create dir for %s: %w", dst, err)
 	}
+	if existing, err := os.Lstat(dst); err == nil && existing.Mode()&os.ModeSymlink != 0 {
+		if err := os.Remove(dst); err != nil {
+			return fmt.Errorf("replace symlink dest %s: %w", dst, err)
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("stat dest %s: %w", dst, err)
+	}
 	in, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("open source %s: %w", src, err)
