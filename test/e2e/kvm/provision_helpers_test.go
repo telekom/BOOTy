@@ -610,11 +610,18 @@ func findBusybox(t *testing.T) string {
 
 func copyFilesystemModules(t *testing.T, rootDir string) {
 	t.Helper()
-	release := kernelRelease()
-	if release == "" {
-		t.Log("kernel release unavailable, not copying filesystem modules")
+	releases := kernelModuleReleases(t)
+	if len(releases) == 0 {
+		t.Log("kernel module releases unavailable, not copying filesystem modules")
 		return
 	}
+	for _, release := range releases {
+		copyFilesystemModulesForRelease(t, rootDir, release)
+	}
+}
+
+func copyFilesystemModulesForRelease(t *testing.T, rootDir, release string) {
+	t.Helper()
 	hostModuleRoot := filepath.Join("/lib/modules", release)
 	if st, err := os.Stat(hostModuleRoot); err != nil || !st.IsDir() {
 		t.Logf("host module tree %s unavailable, not copying filesystem modules", hostModuleRoot)
@@ -623,13 +630,23 @@ func copyFilesystemModules(t *testing.T, rootDir string) {
 
 	copied := map[string]bool{}
 	for _, module := range []string{"vfat", "fat", "nls_cp437", "nls_iso8859-1", "nls_ascii", "nls_utf8"} {
-		path := kernelModulePath(t, module)
+		path := kernelModulePath(t, release, module)
 		if path == "" {
 			continue
 		}
 		copyKernelModule(t, rootDir, release, path, copied)
 	}
-	for _, meta := range []string{"modules.dep", "modules.alias", "modules.symbols", "modules.builtin", "modules.order"} {
+	for _, meta := range []string{
+		"modules.dep",
+		"modules.dep.bin",
+		"modules.alias",
+		"modules.alias.bin",
+		"modules.symbols",
+		"modules.symbols.bin",
+		"modules.builtin",
+		"modules.builtin.bin",
+		"modules.order",
+	} {
 		src := filepath.Join(hostModuleRoot, meta)
 		if _, err := os.Stat(src); err == nil {
 			dst := filepath.Join(rootDir, "lib", "modules", release, meta)
@@ -639,6 +656,37 @@ func copyFilesystemModules(t *testing.T, rootDir string) {
 			copyBinary(t, src, dst)
 		}
 	}
+}
+
+func kernelModuleReleases(t *testing.T) []string {
+	t.Helper()
+	seen := map[string]bool{}
+	var releases []string
+	add := func(release string) {
+		release = strings.TrimSpace(release)
+		if release == "" || seen[release] {
+			return
+		}
+		seen[release] = true
+		releases = append(releases, release)
+	}
+
+	add(kernelRelease())
+	if kernel := os.Getenv("BOOTY_KERNEL"); kernel != "" {
+		base := filepath.Base(kernel)
+		add(strings.TrimPrefix(base, "vmlinuz-"))
+	}
+	entries, err := os.ReadDir("/lib/modules")
+	if err != nil {
+		t.Logf("read /lib/modules failed: %v", err)
+		return releases
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			add(entry.Name())
+		}
+	}
+	return releases
 }
 
 func installTestEFIFallbackAsset(t *testing.T, rootDir string) {
@@ -663,11 +711,11 @@ func installModuleLoader(t *testing.T, rootDir string) {
 	}
 }
 
-func kernelModulePath(t *testing.T, module string) string {
+func kernelModulePath(t *testing.T, release, module string) string {
 	t.Helper()
-	out, err := exec.Command("modinfo", "-F", "filename", module).CombinedOutput()
+	out, err := exec.Command("modinfo", "-k", release, "-F", "filename", module).CombinedOutput()
 	if err != nil {
-		t.Logf("modinfo %s failed, not copying module: %v (%s)", module, err, strings.TrimSpace(string(out)))
+		t.Logf("modinfo -k %s %s failed, not copying module: %v (%s)", release, module, err, strings.TrimSpace(string(out)))
 		return ""
 	}
 	path := strings.TrimSpace(string(out))
@@ -683,6 +731,10 @@ func copyKernelModule(t *testing.T, rootDir, release, src string, copied map[str
 		return
 	}
 	copied[src] = true
+	if _, err := os.Stat(src); err != nil {
+		t.Logf("kernel module %s unavailable for %s, skipping: %v", src, release, err)
+		return
+	}
 	rel, err := filepath.Rel(filepath.Join("/lib/modules", release), src)
 	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
 		t.Logf("kernel module %s is outside /lib/modules/%s, skipping", src, release)
