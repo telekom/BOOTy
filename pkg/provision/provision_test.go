@@ -260,6 +260,42 @@ func TestConfigureGRUB(t *testing.T) {
 	}
 }
 
+func TestConfigureGRUBABWritesTargetRootPartLabel(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.ActiveSlot = config.ABSlotA
+	cfg.Provision.AB.TargetSlot = config.ABTargetInactive
+	cfg.Provision.ExtraKernelParams = "quiet splash root=/dev/old"
+
+	if err := c.ConfigureGRUB(context.Background(), cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(c.rootDir, "etc", "default", "grub.d", "10-caprf-kernel-params.cfg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.Contains(line, "root=PARTLABEL=BOOTY-ROOT-B") {
+		t.Fatalf("A/B root partlabel missing from GRUB config: %s", line)
+	}
+	if strings.LastIndex(line, "root=PARTLABEL=BOOTY-ROOT-B") < strings.LastIndex(line, "root=/dev/old") {
+		t.Fatalf("A/B root partlabel must override earlier root args: %s", line)
+	}
+}
+
+func TestABRootKernelParamRejectsInvalidTarget(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.TargetSlot = "next"
+
+	if _, err := abRootKernelParam(cfg); err == nil {
+		t.Fatal("expected invalid target slot error")
+	}
+}
+
 func TestCopyProvisionerFilesNotExist(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)

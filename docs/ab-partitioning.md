@@ -31,7 +31,10 @@ directly into the target root slot.
 
 After mounting the target root, BOOTy writes `/etc/booty/ab-slot.env` with the
 selected slot, booted slot marker, and root partition. Higher-level tooling can
-read that after boot to report the active slot.
+read that after boot to report the active slot. BOOTy also writes an explicit
+`root=PARTLABEL=BOOTY-ROOT-A` or `root=PARTLABEL=BOOTY-ROOT-B` kernel argument
+into the target GRUB defaults so kexec and firmware boots select the same root
+slot.
 
 For `preserveExisting` upgrades, BOOTy validates the declared active root slot
 before wiping the inactive target. If the current kernel command line identifies

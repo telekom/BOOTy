@@ -176,6 +176,13 @@ func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineCon
 		}
 		grubLine += " " + cfg.Provision.ExtraKernelParams
 	}
+	abRootParam, err := abRootKernelParam(cfg)
+	if err != nil {
+		return err
+	}
+	if abRootParam != "" {
+		grubLine += " " + abRootParam
+	}
 	grubLine += "\"\n"
 	grubPath := filepath.Join(grubDir, "10-caprf-kernel-params.cfg")
 	slog.Info("writing GRUB config", "path", grubPath, "console", console)
@@ -194,6 +201,25 @@ func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineCon
 		return fmt.Errorf("update-grub: %s: %w", string(out), err)
 	}
 	return nil
+}
+
+func abRootKernelParam(cfg *config.MachineConfig) (string, error) {
+	if cfg == nil || !strings.EqualFold(strings.TrimSpace(cfg.Provision.Image.Mode), config.ImageModeAB) {
+		return "", nil
+	}
+	ab := cfg.Provision.AB.WithDefaults()
+	target, err := ab.ResolvedTargetSlot()
+	if err != nil {
+		return "", fmt.Errorf("resolve A/B target slot for GRUB root: %w", err)
+	}
+	switch target {
+	case config.ABSlotA:
+		return "root=PARTLABEL=BOOTY-ROOT-A", nil
+	case config.ABSlotB:
+		return "root=PARTLABEL=BOOTY-ROOT-B", nil
+	default:
+		return "", fmt.Errorf("invalid resolved A/B target slot %q", target)
+	}
 }
 
 // InstallEFIFallbackLoader installs a removable UEFI loader into /boot/efi

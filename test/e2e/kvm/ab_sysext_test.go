@@ -130,6 +130,10 @@ func TestABProvisionPreloadsSysextsWithoutActivatingVM(t *testing.T) {
 	if !strings.Contains(slotState, "BOOTY_AB_TARGET_SLOT=a") {
 		t.Fatalf("A/B slot state did not record initial target slot a:\n%s", slotState)
 	}
+	grubDefaults := readProvisionedFile(t, rootMount, "etc/default/grub.d/10-caprf-kernel-params.cfg")
+	if !strings.Contains(grubDefaults, "root=PARTLABEL=BOOTY-ROOT-A") {
+		t.Fatalf("A/B GRUB defaults did not pin the target root slot:\n%s", grubDefaults)
+	}
 
 	cleanup()
 	espMount, espCleanup := mountQcow2Partition(t, targetDisk, 1)
