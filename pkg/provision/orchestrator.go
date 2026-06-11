@@ -506,6 +506,19 @@ func (o *Orchestrator) detectDisk(ctx context.Context) error {
 		o.targetDisk = o.cfg.Provision.Disk.Device
 		return nil
 	}
+
+	serial := strings.TrimSpace(o.cfg.Provision.Disk.SerialNumber)
+	o.cfg.Provision.Disk.SerialNumber = serial
+	if serial != "" {
+		d, err := o.disk.FindDiskBySerial(ctx, serial, o.cfg.Provision.Disk.MinSizeGB)
+		if err != nil {
+			return err
+		}
+		o.log.Info("using configured disk serial", "serial", serial, "device", d)
+		o.targetDisk = d
+		return nil
+	}
+
 	d, err := o.disk.DetectDisk(ctx, o.cfg.Provision.Disk.MinSizeGB)
 	if err != nil {
 		return err

@@ -327,6 +327,7 @@ go run server/server.go \
 | `AB_SOURCE_ROOT_LABEL` | — | Source-image GPT partition label to copy into the target root slot |
 | `AB_SOURCE_ROOT_PARTITION` | — | 1-based source-image partition number to copy when no stable label exists |
 | `DISK_DEVICE` | auto-detect | Explicit disk device path override (e.g. `/dev/sda`) |
+| `DISK_SERIAL_NUMBER` | — | Select the target disk by exact sysfs serial number when `DISK_DEVICE` is unset |
 | `IMAGE_SIGNATURE_URL` | — | URL to detached GPG signature for image verification |
 | `IMAGE_GPG_PUBKEY` | — | Path to GPG public key for image signature verification |
 | `LUKS_ENABLED` | `false` | *(Planned)* Enable LUKS2 encryption for target partitions |

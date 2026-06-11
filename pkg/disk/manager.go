@@ -367,6 +367,57 @@ func (m *Manager) DetectDisk(_ context.Context, minSizeGB int) (string, error) {
 	return best.path, nil
 }
 
+// FindDiskBySerial finds a non-virtual target disk whose sysfs serial exactly
+// matches serial. Removable media are rejected unless BOOTY_ALLOW_REMOVABLE=true.
+func (m *Manager) FindDiskBySerial(_ context.Context, serial string, minSizeGB int) (string, error) {
+	serial = strings.TrimSpace(serial)
+	if serial == "" {
+		return "", fmt.Errorf("disk serial is required")
+	}
+	slog.Info("detecting target disk by serial", "serial", serial, "minSizeGB", minSizeGB)
+
+	blockDir := m.sysfsRoot + "/block"
+	entries, err := os.ReadDir(blockDir)
+	if err != nil {
+		return "", fmt.Errorf("reading %s: %w", blockDir, err)
+	}
+
+	allowRemovable := os.Getenv("BOOTY_ALLOW_REMOVABLE") == "true"
+	var matches []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if isVirtualDisk(name) {
+			continue
+		}
+		if !allowRemovable && m.isRemovableMedia(name) {
+			slog.Warn("skipping removable media device", "device", "/dev/"+name)
+			continue
+		}
+		deviceSerial, err := m.readDiskSerial(name)
+		if err != nil || deviceSerial != serial {
+			continue
+		}
+		sizeGB, err := m.readDiskSizeGB(name)
+		if err != nil {
+			return "", fmt.Errorf("read size for disk with serial %q at /dev/%s: %w", serial, name, err)
+		}
+		if minSizeGB > 0 && sizeGB < minSizeGB {
+			return "", fmt.Errorf("disk with serial %q at /dev/%s is %d GB, below minimum %d GB", serial, name, sizeGB, minSizeGB)
+		}
+		matches = append(matches, "/dev/"+name)
+	}
+
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("no suitable disk found with serial %q", serial)
+	case 1:
+		slog.Info("selected disk by serial", "device", matches[0], "serial", serial)
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("multiple disks found with serial %q: %s", serial, strings.Join(matches, ", "))
+	}
+}
+
 // isRemovableMedia reports whether the block device is removable (USB, SD card).
 // Fails closed: if the sysfs attribute cannot be read, the device is treated as
 // removable to err on the side of caution.
@@ -403,6 +454,23 @@ func (m *Manager) readDiskSizeGB(name string) (int, error) {
 		return 0, fmt.Errorf("parse disk size %s: %w", name, err)
 	}
 	return int(sectors * 512 / (1024 * 1024 * 1024)), nil
+}
+
+// readDiskSerial reads a block device serial number from common sysfs locations.
+func (m *Manager) readDiskSerial(name string) (string, error) {
+	paths := []string{
+		filepath.Join(m.sysfsRoot, "block", name, "device", "serial"),
+		filepath.Join(m.sysfsRoot, "block", name, "serial"),
+	}
+	for _, path := range paths {
+		data, err := os.ReadFile(path) //nolint:gosec // path is constrained to test or sysfs root
+		if err == nil {
+			if serial := strings.TrimSpace(string(data)); serial != "" {
+				return serial, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("serial not found for %s", name)
 }
 
 // ParsePartitions reads the partition table using sfdisk --json.

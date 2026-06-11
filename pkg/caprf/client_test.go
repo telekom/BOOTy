@@ -82,6 +82,7 @@ export REGION="eu-central-1"
 export PROVIDER_ID="redfish://bmc.example.com/Systems/1"
 export MODE="provision"
 export MIN_DISK_SIZE_GB="100"
+export DISK_SERIAL_NUMBER="RAID-DISK-1"
 export LOG_URL="http://caprf.example.com/log"
 export INIT_URL="http://caprf.example.com/status/init"
 export ERROR_URL="http://caprf.example.com/status/error"
@@ -123,6 +124,9 @@ export DEBUG_URL="http://caprf.example.com/debug"
 	}
 	if cfg.Provision.Disk.MinSizeGB != 100 {
 		t.Fatalf("unexpected min disk size: %d", cfg.Provision.Disk.MinSizeGB)
+	}
+	if cfg.Provision.Disk.SerialNumber != "RAID-DISK-1" {
+		t.Fatalf("unexpected disk serial number: %s", cfg.Provision.Disk.SerialNumber)
 	}
 	if cfg.Transport.LogURL != "http://caprf.example.com/log" {
 		t.Fatalf("unexpected log URL: %s", cfg.Transport.LogURL)

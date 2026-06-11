@@ -914,6 +914,8 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"IMAGE_CHECKSUM_TYPE":         &cfg.Provision.Image.ChecksumType,
 		"IMAGE_MODE":                  &cfg.Provision.Image.Mode,
 		"DISK_DEVICE":                 &cfg.Provision.Disk.Device,
+		"DISK_SERIAL":                 &cfg.Provision.Disk.SerialNumber,
+		"DISK_SERIAL_NUMBER":          &cfg.Provision.Disk.SerialNumber,
 		"INVENTORY_URL":               &cfg.Provision.Inventory.URL,
 		"FIRMWARE_URL":                &cfg.Provision.Firmware.URL,
 		"FIRMWARE_MIN_BIOS":           &cfg.Provision.Firmware.MinBIOS,

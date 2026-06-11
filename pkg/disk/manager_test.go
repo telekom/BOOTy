@@ -55,6 +55,26 @@ func makeExitError(code int) error {
 	return err
 }
 
+func writeSysfsBlockDevice(t *testing.T, sysfs, dev, removable string, sizeGB int, serial string) {
+	t.Helper()
+	dir := sysfs + "/block/" + dev
+	if err := os.MkdirAll(dir+"/device", 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	if err := os.WriteFile(dir+"/removable", []byte(removable), 0o644); err != nil {
+		t.Fatalf("write removable: %v", err)
+	}
+	sectors := int64(sizeGB) * 1024 * 1024 * 1024 / 512
+	if err := os.WriteFile(dir+"/size", []byte(fmt.Sprintf("%d\n", sectors)), 0o644); err != nil {
+		t.Fatalf("write size: %v", err)
+	}
+	if serial != "" {
+		if err := os.WriteFile(dir+"/device/serial", []byte(serial+"\n"), 0o644); err != nil {
+			t.Fatalf("write serial: %v", err)
+		}
+	}
+}
+
 func TestExitCodeFromError(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -854,6 +874,50 @@ func TestIsRemovableMediaAllowEnv(t *testing.T) {
 	}
 	if disk != "/dev/sda" {
 		t.Errorf("expected /dev/sda to be selected, got %q", disk)
+	}
+}
+
+func TestFindDiskBySerialSelectsMatchingDisk(t *testing.T) {
+	sysfs := t.TempDir()
+	writeSysfsBlockDevice(t, sysfs, "sda", "0\n", 40, "BOOT-DISK")
+	writeSysfsBlockDevice(t, sysfs, "sdb", "0\n", 96, "RAID-DISK-1")
+
+	mgr := newManagerWithSysfs(newMockCommander(), sysfs)
+	disk, err := mgr.FindDiskBySerial(t.Context(), "RAID-DISK-1", 64)
+	if err != nil {
+		t.Fatalf("FindDiskBySerial: unexpected error: %v", err)
+	}
+	if disk != "/dev/sdb" {
+		t.Fatalf("FindDiskBySerial = %q, want /dev/sdb", disk)
+	}
+}
+
+func TestFindDiskBySerialRejectsTooSmallDisk(t *testing.T) {
+	sysfs := t.TempDir()
+	writeSysfsBlockDevice(t, sysfs, "sdb", "0\n", 10, "RAID-DISK-1")
+
+	mgr := newManagerWithSysfs(newMockCommander(), sysfs)
+	_, err := mgr.FindDiskBySerial(t.Context(), "RAID-DISK-1", 64)
+	if err == nil {
+		t.Fatal("expected error for disk below minimum size")
+	}
+	if !strings.Contains(err.Error(), "below minimum 64 GB") {
+		t.Fatalf("error = %q, want minimum size detail", err)
+	}
+}
+
+func TestFindDiskBySerialRejectsDuplicateSerials(t *testing.T) {
+	sysfs := t.TempDir()
+	writeSysfsBlockDevice(t, sysfs, "sdb", "0\n", 96, "DUPLICATE")
+	writeSysfsBlockDevice(t, sysfs, "sdc", "0\n", 96, "DUPLICATE")
+
+	mgr := newManagerWithSysfs(newMockCommander(), sysfs)
+	_, err := mgr.FindDiskBySerial(t.Context(), "DUPLICATE", 0)
+	if err == nil {
+		t.Fatal("expected error for duplicate disk serial")
+	}
+	if !strings.Contains(err.Error(), "multiple disks found") {
+		t.Fatalf("error = %q, want duplicate detail", err)
 	}
 }
 
