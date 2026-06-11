@@ -18,6 +18,8 @@ import (
 const (
 	efiSystemPartitionGUID = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
 	linuxFilesystemGUID    = "0FC63DAF-8483-4772-8E79-3D69D8477DE4"
+	efiSystemMBRType       = "ef"
+	linuxFilesystemMBRType = "83"
 )
 
 // ABTargets names the already-created target partitions for an A/B image copy.
@@ -155,8 +157,8 @@ func streamABRaw(ctx context.Context, src io.Reader, target ABTargets, opt Strea
 		return err
 	}
 
-	parts, err := parseGPTPartitions(prefix)
-	if errors.Is(err, errNoGPT) {
+	parts, err := parseStreamPartitions(prefix)
+	if errors.Is(err, errNoPartitionTable) {
 		return streamABRootFilesystem(ctx, stream, checksum, target, opt)
 	}
 	if err != nil {
@@ -198,7 +200,7 @@ func streamABRaw(ctx context.Context, src io.Reader, target ABTargets, opt Strea
 }
 
 func streamABRootFilesystem(ctx context.Context, stream io.Reader, checksum hash.Hash, target ABTargets, opt StreamOpts) error {
-	slog.Info("source image has no GPT partition table; copying as root filesystem")
+	slog.Info("source image has no partition table; copying as root filesystem")
 	if err := streamReaderToDevice(ctx, stream, target.RootPartition); err != nil {
 		return err
 	}
@@ -283,7 +285,7 @@ func copyABPayload(ctx context.Context, rawPath string, target ABTargets) error 
 
 func selectSourceBootPartition(parts []sfdiskPartition) (sfdiskPartition, bool) {
 	for _, part := range parts {
-		if strings.EqualFold(part.Type, efiSystemPartitionGUID) {
+		if isEFISystemPartition(part) {
 			return part, true
 		}
 	}
@@ -311,7 +313,7 @@ func selectSourceRootPartition(parts []sfdiskPartition, label string, number int
 	if number > 0 {
 		for _, part := range parts {
 			if part.Number == number {
-				if strings.EqualFold(part.Type, efiSystemPartitionGUID) {
+				if isEFISystemPartition(part) {
 					return sfdiskPartition{}, fmt.Errorf("source image partition number %d is EFI, not a root partition", number)
 				}
 				return part, nil
@@ -339,7 +341,7 @@ func selectSourceRootPartition(parts []sfdiskPartition, label string, number int
 	}
 
 	return selectSingleSourceRootCandidate(parts, func(part sfdiskPartition) bool {
-		return !strings.EqualFold(part.Type, efiSystemPartitionGUID)
+		return !isEFISystemPartition(part)
 	}, "non-EFI partition")
 }
 
@@ -366,7 +368,7 @@ func selectSingleSourceRootCandidate(parts []sfdiskPartition, match func(sfdiskP
 }
 
 func hasCommonSourceRootLabel(part sfdiskPartition) bool {
-	if strings.EqualFold(part.Type, efiSystemPartitionGUID) {
+	if isEFISystemPartition(part) {
 		return false
 	}
 	_, ok := commonSourceRootLabels[normalizeSourceRootLabel(part.Name)]
@@ -380,7 +382,13 @@ func normalizeSourceRootLabel(label string) string {
 }
 
 func isLinuxFilesystemPartition(part sfdiskPartition) bool {
-	return strings.EqualFold(part.Type, linuxFilesystemGUID)
+	return strings.EqualFold(part.Type, linuxFilesystemGUID) ||
+		strings.EqualFold(part.Type, linuxFilesystemMBRType)
+}
+
+func isEFISystemPartition(part sfdiskPartition) bool {
+	return strings.EqualFold(part.Type, efiSystemPartitionGUID) ||
+		strings.EqualFold(part.Type, efiSystemMBRType)
 }
 
 func ddFileToDevice(ctx context.Context, src, dst string) error {

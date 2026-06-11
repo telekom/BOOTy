@@ -44,6 +44,34 @@ func TestStreamABRawCopiesGPTBootAndRootRanges(t *testing.T) {
 	}
 }
 
+func TestStreamABRawCopiesMBRBootAndRootRanges(t *testing.T) {
+	raw := testMBRImage(t)
+	sum := sha256.Sum256(raw)
+
+	bootTarget := filepath.Join(t.TempDir(), "boot.img")
+	rootTarget := filepath.Join(t.TempDir(), "root.img")
+	createTargetFile(t, bootTarget)
+	createTargetFile(t, rootTarget)
+
+	err := streamABRaw(context.Background(), bytes.NewReader(raw), ABTargets{
+		BootPartition:       bootTarget,
+		RootPartition:       rootTarget,
+		SourceRootPartition: 2,
+	}, StreamOpts{Checksum: hex.EncodeToString(sum[:]), ChecksumType: "sha256"})
+	if err != nil {
+		t.Fatalf("streamABRaw: %v", err)
+	}
+
+	boot := readFile(t, bootTarget)
+	if !bytes.HasPrefix(boot, bytes.Repeat([]byte("B"), 32)) {
+		t.Fatalf("boot target was not copied from MBR EFI partition: %q", string(boot[:min(32, len(boot))]))
+	}
+	root := readFile(t, rootTarget)
+	if !bytes.HasPrefix(root, bytes.Repeat([]byte("R"), 32)) {
+		t.Fatalf("root target was not copied from MBR root partition: %q", string(root[:min(32, len(root))]))
+	}
+}
+
 func TestStreamABRawChecksumErrorMarksBootAndRootDirty(t *testing.T) {
 	raw := testGPTImage(t)
 	bootTarget := filepath.Join(t.TempDir(), "boot.img")
@@ -162,6 +190,25 @@ func TestParseGPTPartitionsSelectsExpectedTypes(t *testing.T) {
 	}
 }
 
+func TestParseMBRPartitionsSelectsExpectedTypes(t *testing.T) {
+	parts, err := parseMBRPartitions(testMBRImage(t)[:streamABPrefixBytes])
+	if err != nil {
+		t.Fatalf("parseMBRPartitions: %v", err)
+	}
+	if len(parts) != 2 {
+		t.Fatalf("partitions = %d, want 2", len(parts))
+	}
+
+	boot, ok := selectSourceBootPartition(parts)
+	if !ok || boot.Type != efiSystemMBRType || boot.Start != 2048 {
+		t.Fatalf("boot partition = %#v, ok=%v", boot, ok)
+	}
+	root, err := selectSourceRootPartition(parts, "", 0)
+	if err != nil || root.Type != linuxFilesystemMBRType || root.Start != 4096 || root.Number != 2 {
+		t.Fatalf("root partition = %#v, err=%v", root, err)
+	}
+}
+
 func TestCopyReaderFailsOnShortWrite(t *testing.T) {
 	written, err := copyReader(context.Background(), shortWriter{}, strings.NewReader("payload"))
 	if !errors.Is(err, io.ErrShortWrite) {
@@ -215,6 +262,22 @@ func testGPTImage(t *testing.T) []byte {
 	return raw
 }
 
+func testMBRImage(t *testing.T) []byte {
+	t.Helper()
+
+	const sectors = 8192
+	raw := make([]byte, sectors*gptSectorSize)
+	raw[510] = 0x55
+	raw[511] = 0xaa
+
+	writeMBREntry(raw, 0, 0xef, 2048, 8)
+	writeMBREntry(raw, 1, 0x83, 4096, 16)
+
+	fillPartition(raw, 2048, 2055, 'B')
+	fillPartition(raw, 4096, 4111, 'R')
+	return raw
+}
+
 func writeGPTEntry(raw []byte, index int, typeGUID []byte, firstLBA, lastLBA uint64, name string) {
 	entry := raw[2*gptSectorSize+index*128 : 2*gptSectorSize+(index+1)*128]
 	copy(entry[:16], typeGUID)
@@ -230,6 +293,13 @@ func writeGPTEntry(raw []byte, index int, typeGUID []byte, firstLBA, lastLBA uin
 		}
 		binary.LittleEndian.PutUint16(entry[56+i*2:58+i*2], r)
 	}
+}
+
+func writeMBREntry(raw []byte, index int, partType byte, firstLBA, sectors uint32) {
+	entry := raw[mbrPartitionTableOffset+index*mbrPartitionEntrySize : mbrPartitionTableOffset+(index+1)*mbrPartitionEntrySize]
+	entry[4] = partType
+	binary.LittleEndian.PutUint32(entry[8:12], firstLBA)
+	binary.LittleEndian.PutUint32(entry[12:16], sectors)
 }
 
 func fillPartition(raw []byte, firstLBA, lastLBA uint64, value byte) {

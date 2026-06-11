@@ -17,11 +17,17 @@ import (
 )
 
 const (
-	gptSectorSize       = 512
-	streamABPrefixBytes = 1 << 20
+	gptSectorSize           = 512
+	streamABPrefixBytes     = 1 << 20
+	mbrPartitionTableOffset = 446
+	mbrPartitionEntrySize   = 16
+	mbrPartitionEntryCount  = 4
 )
 
-var errNoGPT = errors.New("source image has no GPT partition table")
+var (
+	errNoGPT            = errors.New("source image has no GPT partition table")
+	errNoPartitionTable = errors.New("source image has no partition table")
+)
 
 type abStreamRange struct {
 	name  string
@@ -90,6 +96,59 @@ func parseGPTPartitions(prefix []byte) ([]sfdiskPartition, error) {
 			Name:   decodeGPTPartitionName(entry[56:min(len(entry), 128)]),
 			Number: int(i + 1),
 		})
+	}
+	return parts, nil
+}
+
+func parseStreamPartitions(prefix []byte) ([]sfdiskPartition, error) {
+	parts, err := parseGPTPartitions(prefix)
+	if err == nil {
+		return parts, nil
+	}
+	if !errors.Is(err, errNoGPT) {
+		return nil, err
+	}
+	parts, err = parseMBRPartitions(prefix)
+	if err == nil {
+		return parts, nil
+	}
+	if errors.Is(err, errNoPartitionTable) {
+		return nil, errNoPartitionTable
+	}
+	return nil, err
+}
+
+func parseMBRPartitions(prefix []byte) ([]sfdiskPartition, error) {
+	if len(prefix) < gptSectorSize {
+		return nil, errNoPartitionTable
+	}
+	if prefix[510] != 0x55 || prefix[511] != 0xaa {
+		return nil, errNoPartitionTable
+	}
+
+	parts := make([]sfdiskPartition, 0, mbrPartitionEntryCount)
+	for i := 0; i < mbrPartitionEntryCount; i++ {
+		offset := mbrPartitionTableOffset + i*mbrPartitionEntrySize
+		entry := prefix[offset : offset+mbrPartitionEntrySize]
+		partType := entry[4]
+		start := binary.LittleEndian.Uint32(entry[8:12])
+		size := binary.LittleEndian.Uint32(entry[12:16])
+		if partType == 0 || size == 0 {
+			continue
+		}
+		if start == 0 {
+			return nil, fmt.Errorf("invalid MBR partition %d: start_lba=0 size=%d", i+1, size)
+		}
+		parts = append(parts, sfdiskPartition{
+			Node:   fmt.Sprintf("mbr-part-%d", i+1),
+			Start:  int64(start),
+			Size:   int64(size),
+			Type:   fmt.Sprintf("%02x", partType),
+			Number: i + 1,
+		})
+	}
+	if len(parts) == 0 {
+		return nil, errNoPartitionTable
 	}
 	return parts, nil
 }
