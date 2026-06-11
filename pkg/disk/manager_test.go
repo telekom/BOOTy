@@ -909,6 +909,40 @@ func TestFindDiskBySerialFallsBackToLSBLK(t *testing.T) {
 	}
 }
 
+func TestFindDiskBySerialMatchesWWIDContainingSerial(t *testing.T) {
+	sysfs := t.TempDir()
+	writeSysfsBlockDevice(t, sysfs, "sdb", "0\n", 96, "")
+	if err := os.WriteFile(sysfs+"/block/sdb/device/wwid", []byte("scsi-0QEMU_QEMU_HARDDISK_RAID-DISK-1\n"), 0o644); err != nil {
+		t.Fatalf("write wwid: %v", err)
+	}
+
+	mgr := newManagerWithSysfs(newMockCommander(), sysfs)
+	disk, err := mgr.FindDiskBySerial(t.Context(), "RAID-DISK-1", 64)
+	if err != nil {
+		t.Fatalf("FindDiskBySerial: unexpected error: %v", err)
+	}
+	if disk != "/dev/sdb" {
+		t.Fatalf("FindDiskBySerial = %q, want /dev/sdb", disk)
+	}
+}
+
+func TestFindDiskBySerialMatchesVPDIdentifierContainingSerial(t *testing.T) {
+	sysfs := t.TempDir()
+	writeSysfsBlockDevice(t, sysfs, "sdb", "0\n", 96, "")
+	if err := os.WriteFile(sysfs+"/block/sdb/device/vpd_pg80", []byte{0x00, 0x80, 0x00, 0x0b, 'R', 'A', 'I', 'D', '-', 'D', 'I', 'S', 'K', '-', '1'}, 0o644); err != nil {
+		t.Fatalf("write vpd_pg80: %v", err)
+	}
+
+	mgr := newManagerWithSysfs(newMockCommander(), sysfs)
+	disk, err := mgr.FindDiskBySerial(t.Context(), "RAID-DISK-1", 64)
+	if err != nil {
+		t.Fatalf("FindDiskBySerial: unexpected error: %v", err)
+	}
+	if disk != "/dev/sdb" {
+		t.Fatalf("FindDiskBySerial = %q, want /dev/sdb", disk)
+	}
+}
+
 func TestFindDiskBySerialRejectsTooSmallDisk(t *testing.T) {
 	sysfs := t.TempDir()
 	writeSysfsBlockDevice(t, sysfs, "sdb", "0\n", 10, "RAID-DISK-1")

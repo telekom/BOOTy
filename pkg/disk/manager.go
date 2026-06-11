@@ -395,7 +395,7 @@ func (m *Manager) FindDiskBySerial(ctx context.Context, serial string, minSizeGB
 			continue
 		}
 		deviceSerial, err := m.readDiskSerial(name)
-		if err != nil || deviceSerial != serial {
+		if err != nil || !diskSerialMatches(deviceSerial, serial) {
 			if deviceSerial != "" {
 				observed = append(observed, "/dev/"+name+"="+deviceSerial)
 			}
@@ -452,7 +452,7 @@ func (m *Manager) findDiskBySerialWithLSBLK(ctx context.Context, serial string, 
 			continue
 		}
 		observed = append(observed, path+"="+deviceSerial)
-		if deviceSerial != serial {
+		if !diskSerialMatches(deviceSerial, serial) {
 			continue
 		}
 		name := filepath.Base(path)
@@ -513,21 +513,43 @@ func (m *Manager) readDiskSizeGB(name string) (int, error) {
 	return int(sectors * 512 / (1024 * 1024 * 1024)), nil
 }
 
-// readDiskSerial reads a block device serial number from common sysfs locations.
+func diskSerialMatches(candidate, target string) bool {
+	candidate = strings.TrimSpace(candidate)
+	target = strings.TrimSpace(target)
+	return candidate != "" && target != "" && (candidate == target || strings.Contains(candidate, target))
+}
+
+// readDiskSerial reads a block device serial number or stable identifier from
+// common sysfs locations. Some virtual SCSI devices expose the requested serial
+// only through WWID/VPD attributes, so callers use diskSerialMatches instead of
+// requiring strict equality on every source.
 func (m *Manager) readDiskSerial(name string) (string, error) {
 	paths := []string{
 		filepath.Join(m.sysfsRoot, "block", name, "device", "serial"),
 		filepath.Join(m.sysfsRoot, "block", name, "serial"),
+		filepath.Join(m.sysfsRoot, "block", name, "device", "wwid"),
+		filepath.Join(m.sysfsRoot, "block", name, "device", "vpd_pg80"),
+		filepath.Join(m.sysfsRoot, "block", name, "device", "vpd_pg83"),
 	}
 	for _, path := range paths {
 		data, err := os.ReadFile(path) //nolint:gosec // path is constrained to test or sysfs root
 		if err == nil {
-			if serial := strings.TrimSpace(string(data)); serial != "" {
+			if serial := printableIdentifier(data); serial != "" {
 				return serial, nil
 			}
 		}
 	}
 	return "", fmt.Errorf("serial not found for %s", name)
+}
+
+func printableIdentifier(data []byte) string {
+	value := strings.Map(func(r rune) rune {
+		if r < 32 || r == 127 {
+			return -1
+		}
+		return r
+	}, string(data))
+	return strings.TrimSpace(value)
 }
 
 // ParsePartitions reads the partition table using sfdisk --json.
