@@ -892,6 +892,23 @@ func TestFindDiskBySerialSelectsMatchingDisk(t *testing.T) {
 	}
 }
 
+func TestFindDiskBySerialFallsBackToLSBLK(t *testing.T) {
+	sysfs := t.TempDir()
+	writeSysfsBlockDevice(t, sysfs, "sdb", "0\n", 96, "")
+
+	cmd := newMockCommander()
+	cmd.setResult("lsblk --nodeps", []byte("/dev/sda BOOT-DISK\n/dev/sdb RAID-DISK-1\n"), nil)
+
+	mgr := newManagerWithSysfs(cmd, sysfs)
+	disk, err := mgr.FindDiskBySerial(t.Context(), "RAID-DISK-1", 64)
+	if err != nil {
+		t.Fatalf("FindDiskBySerial: unexpected error: %v", err)
+	}
+	if disk != "/dev/sdb" {
+		t.Fatalf("FindDiskBySerial = %q, want /dev/sdb", disk)
+	}
+}
+
 func TestFindDiskBySerialRejectsTooSmallDisk(t *testing.T) {
 	sysfs := t.TempDir()
 	writeSysfsBlockDevice(t, sysfs, "sdb", "0\n", 10, "RAID-DISK-1")
