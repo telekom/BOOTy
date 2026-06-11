@@ -188,6 +188,38 @@ func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineCon
 	return nil
 }
 
+// InstallEFIFallbackLoader installs a removable UEFI loader into /boot/efi
+// without writing firmware NVRAM. This is required for A/B images where the
+// source image has no ESP to copy and the provisioning environment has no
+// efivarfs access.
+func (c *Configurator) InstallEFIFallbackLoader(ctx context.Context, diskDev string) error {
+	target, err := grubEFITarget(runtime.GOARCH)
+	if err != nil {
+		return err
+	}
+	cmd := fmt.Sprintf(
+		"grub-install --target=%s --efi-directory=/boot/efi --bootloader-id=ubuntu --removable --no-nvram --recheck %s",
+		target,
+		diskDev,
+	)
+	out, err := c.disk.ChrootRun(ctx, c.rootDir, cmd)
+	if err != nil {
+		return fmt.Errorf("install EFI fallback loader: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+func grubEFITarget(arch string) (string, error) {
+	switch arch {
+	case "amd64":
+		return "x86_64-efi", nil
+	case "arm64":
+		return "arm64-efi", nil
+	default:
+		return "", fmt.Errorf("unsupported architecture for EFI fallback loader: %s", arch)
+	}
+}
+
 // CopyProvisionerFiles copies files from /deploy/file-system/ to the root.
 func (c *Configurator) CopyProvisionerFiles(ctx context.Context) error {
 	return c.copyTreeIntoChroot(ctx, "/deploy/file-system", "provisioner files")

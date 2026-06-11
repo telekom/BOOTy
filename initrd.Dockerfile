@@ -74,7 +74,7 @@ RUN apt-get update && \
     # Module categories:
     #   QEMU/KVM virtio:  virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev virtio_pci virtio_net failover net_failover
     #   Storage (SCSI):   scsi_mod sd_mod virtio_blk virtio_scsi
-    #   Filesystems:      ext4 jbd2 mbcache crc32c_generic xfs btrfs fat vfat nls_cp437 nls_iso8859-1
+    #   Filesystems:      ext4 jbd2 mbcache crc32c_generic xfs btrfs fat vfat nls_cp437 nls_iso8859-1 nls_ascii
     #   VXLAN/bridge:     dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc
     #   Intel NICs:       e1000e igb igc ixgbe i40e ice iavf
     #   Broadcom NICs:    tg3 bnxt_en
@@ -86,7 +86,7 @@ RUN apt-get update && \
         virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
         virtio_pci virtio_net failover net_failover \
         scsi_mod sd_mod virtio_blk virtio_scsi \
-        ext4 jbd2 mbcache crc32c_generic xfs btrfs fat vfat nls_cp437 nls_iso8859-1 \
+        ext4 jbd2 mbcache crc32c_generic xfs btrfs fat vfat nls_cp437 nls_iso8859-1 nls_ascii \
         dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc \
         e1000e igb igc ixgbe i40e ice iavf \
         tg3 bnxt_en \

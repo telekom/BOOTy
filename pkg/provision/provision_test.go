@@ -467,6 +467,67 @@ func TestCreateEFIBootEntryEmptyPartition(t *testing.T) {
 	}
 }
 
+func TestGrubEFITarget(t *testing.T) {
+	tests := []struct {
+		arch string
+		want string
+	}{
+		{arch: "amd64", want: "x86_64-efi"},
+		{arch: "arm64", want: "arm64-efi"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.arch, func(t *testing.T) {
+			got, err := grubEFITarget(tt.arch)
+			if err != nil {
+				t.Fatalf("grubEFITarget(%q): %v", tt.arch, err)
+			}
+			if got != tt.want {
+				t.Fatalf("grubEFITarget(%q) = %q, want %q", tt.arch, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGrubEFITargetRejectsUnsupportedArch(t *testing.T) {
+	if _, err := grubEFITarget("riscv64"); err == nil {
+		t.Fatal("grubEFITarget accepted unsupported arch")
+	}
+}
+
+func TestInstallEFIFallbackLoader(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+	target, err := grubEFITarget(runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCmd := fmt.Sprintf(
+		"grub-install --target=%s --efi-directory=/boot/efi --bootloader-id=ubuntu --removable --no-nvram --recheck /dev/sda",
+		target,
+	)
+
+	if err := c.InstallEFIFallbackLoader(context.Background(), "/dev/sda"); err != nil {
+		t.Fatalf("InstallEFIFallbackLoader() error = %v", err)
+	}
+	if !hasCommandCall(cmd.calls, "chroot", c.rootDir, "/bin/bash", "-c", wantCmd) {
+		t.Fatalf("missing fallback grub-install command, calls=%#v", cmd.calls)
+	}
+}
+
+func TestInstallEFIFallbackLoaderReportsChrootFailure(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+	cmd.setResult("chroot "+c.rootDir, []byte("grub missing"), fmt.Errorf("exit status 1"))
+
+	err := c.InstallEFIFallbackLoader(context.Background(), "/dev/sda")
+	if err == nil {
+		t.Fatal("InstallEFIFallbackLoader() error = nil, want failure")
+	}
+	if !strings.Contains(err.Error(), "install EFI fallback loader: grub missing") {
+		t.Fatalf("error = %v, want grub output", err)
+	}
+}
+
 func TestRunPostProvisionCmds(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
@@ -539,9 +600,9 @@ func TestProvisionStepsContainEFIVars(t *testing.T) {
 		t.Errorf("mount-efivarfs (idx %d) must come before remove-efi-entries (idx %d)", mountIdx, removeIdx)
 	}
 
-	// Verify total step count includes setup-nvme-namespaces, mount-boot, and apply-sysexts.
-	if len(steps) != 38 {
-		t.Errorf("expected 38 provisioning steps, got %d", len(steps))
+	// Verify total step count includes setup-nvme-namespaces, mount-boot, apply-sysexts, and EFI fallback install.
+	if len(steps) != 39 {
+		t.Errorf("expected 39 provisioning steps, got %d", len(steps))
 	}
 }
 

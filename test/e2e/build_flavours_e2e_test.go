@@ -140,6 +140,17 @@ func assertNotContains(t *testing.T, files map[string]bool, path, desc string) {
 	}
 }
 
+func assertKernelModuleContains(t *testing.T, files map[string]bool, module string) {
+	t.Helper()
+	prefix := "modules/" + module + ".ko"
+	for path := range files {
+		if strings.HasPrefix(path, prefix) {
+			return
+		}
+	}
+	t.Errorf("expected kernel module %s under modules/ in initramfs", module)
+}
+
 // assertFileSize checks that the cpio.gz file is within the expected size range.
 func assertFileSize(t *testing.T, path string, minMB, maxMB float64) {
 	t.Helper()
@@ -480,6 +491,7 @@ func TestDefaultContainsKernelModulesE2E(t *testing.T) {
 	if !hasModules {
 		t.Error("no kernel modules found under modules/ in default initramfs")
 	}
+	assertKernelModuleContains(t, files, "nls_ascii")
 }
 
 // ── GoBGP build composition tests ────────────────────────────────────────
@@ -566,6 +578,7 @@ func TestGoBGPContainsKernelModulesE2E(t *testing.T) {
 	if !hasModules {
 		t.Error("no kernel modules found under modules/ in gobgp initramfs")
 	}
+	assertKernelModuleContains(t, files, "nls_ascii")
 }
 
 // ── Cross-flavour comparison with GoBGP ──────────────────────────────────

@@ -112,6 +112,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"resize-filesystem", o.resizeFilesystem},
 		{"configure-kubelet", o.configureKubelet},
 		{"configure-grub", o.configureGRUB},
+		{"install-efi-fallback", o.installEFIFallbackLoader},
 		{"inject-cloudinit", o.injectCloudInit},
 		{"copy-machine-files", o.copyMachineFiles},
 		{"run-machine-commands", o.runMachineCommands},
@@ -1225,6 +1226,25 @@ func (o *Orchestrator) configureKubelet(_ context.Context) error {
 
 func (o *Orchestrator) configureGRUB(ctx context.Context) error {
 	return o.config.ConfigureGRUB(ctx, o.cfg)
+}
+
+func (o *Orchestrator) installEFIFallbackLoader(ctx context.Context) error {
+	if !o.isABImageMode() {
+		return nil
+	}
+	if o.cfg.Provision.AB.PreserveExisting {
+		o.log.Info("A/B preserveExisting enabled, preserving existing EFI fallback loader")
+		return nil
+	}
+	if strings.TrimSpace(o.bootPartition) == "" {
+		o.log.Info("skipping EFI fallback loader installation; no boot partition detected")
+		return nil
+	}
+	mountpoint := bootEFIMountPoint()
+	if !isMountPoint(mountpoint) {
+		return fmt.Errorf("cannot install EFI fallback loader: boot partition %s is not mounted at %s", o.bootPartition, mountpoint)
+	}
+	return o.config.InstallEFIFallbackLoader(ctx, o.targetDisk)
 }
 
 func (o *Orchestrator) injectCloudInit(_ context.Context) error {

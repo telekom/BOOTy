@@ -121,8 +121,8 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 38 {
-		t.Fatalf("expected 38 provisioning steps, got %d", len(steps))
+	if len(steps) != 39 {
+		t.Fatalf("expected 39 provisioning steps, got %d", len(steps))
 	}
 }
 
@@ -135,14 +135,15 @@ func TestMountBootStepIsBetweenRootMountAndBootloaderWork(t *testing.T) {
 	for i, step := range steps {
 		indices[step.Name] = i
 	}
-	for _, name := range []string{"mount-root", "mount-boot", "configure-grub", "create-efi-boot-entry", "teardown-chroot"} {
+	for _, name := range []string{"mount-root", "mount-boot", "configure-grub", "install-efi-fallback", "create-efi-boot-entry", "teardown-chroot"} {
 		if _, ok := indices[name]; !ok {
 			t.Fatalf("missing step %q", name)
 		}
 	}
 	if indices["mount-root"] >= indices["mount-boot"] ||
 		indices["mount-boot"] >= indices["configure-grub"] ||
-		indices["mount-boot"] >= indices["create-efi-boot-entry"] ||
+		indices["configure-grub"] >= indices["install-efi-fallback"] ||
+		indices["install-efi-fallback"] >= indices["create-efi-boot-entry"] ||
 		indices["create-efi-boot-entry"] >= indices["teardown-chroot"] {
 		t.Fatalf("unexpected boot mount ordering: %#v", indices)
 	}
@@ -238,6 +239,74 @@ func TestMountBootFailsUnsupportedBootPartitionWhenEFIRuntimeReady(t *testing.T)
 func TestBootEFIMountPointUsesMountedRoot(t *testing.T) {
 	if got, want := bootEFIMountPoint(), filepath.Join(newroot, "boot", "efi"); got != want {
 		t.Fatalf("bootEFIMountPoint = %q, want %q", got, want)
+	}
+}
+
+func TestInstallEFIFallbackLoaderSkipsNonABMode(t *testing.T) {
+	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{}, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.bootPartition = "/dev/sda1"
+
+	if err := o.installEFIFallbackLoader(context.Background()); err != nil {
+		t.Fatalf("installEFIFallbackLoader non-A/B: %v", err)
+	}
+	if hasCommandName(cmd.calls, "chroot") {
+		t.Fatal("fallback installer ran for non-A/B mode")
+	}
+}
+
+func TestInstallEFIFallbackLoaderSkipsPreserveExistingAB(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.PreserveExisting = true
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.bootPartition = "/dev/sda1"
+
+	if err := o.installEFIFallbackLoader(context.Background()); err != nil {
+		t.Fatalf("installEFIFallbackLoader preserveExisting: %v", err)
+	}
+	if hasCommandName(cmd.calls, "chroot") {
+		t.Fatal("fallback installer ran for preserveExisting A/B mode")
+	}
+}
+
+func TestInstallEFIFallbackLoaderRequiresMountedESP(t *testing.T) {
+	oldMountPoint := isMountPoint
+	isMountPoint = func(string) bool { return false }
+	t.Cleanup(func() { isMountPoint = oldMountPoint })
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.bootPartition = "/dev/sda1"
+
+	err := o.installEFIFallbackLoader(context.Background())
+	if err == nil {
+		t.Fatal("installEFIFallbackLoader succeeded with unmounted ESP")
+	}
+	if !strings.Contains(err.Error(), "boot partition /dev/sda1 is not mounted") {
+		t.Fatalf("error = %v, want unmounted ESP message", err)
+	}
+}
+
+func TestInstallEFIFallbackLoaderRunsForInitialABMode(t *testing.T) {
+	oldMountPoint := isMountPoint
+	isMountPoint = func(path string) bool { return path == bootEFIMountPoint() }
+	t.Cleanup(func() { isMountPoint = oldMountPoint })
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.bootPartition = "/dev/sda1"
+
+	if err := o.installEFIFallbackLoader(context.Background()); err != nil {
+		t.Fatalf("installEFIFallbackLoader initial A/B: %v", err)
+	}
+	if !hasCommandName(cmd.calls, "chroot") {
+		t.Fatal("fallback installer did not run for initial A/B mode")
 	}
 }
 
