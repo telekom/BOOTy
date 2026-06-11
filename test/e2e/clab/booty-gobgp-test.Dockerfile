@@ -11,7 +11,7 @@ RUN CGO_ENABLED=1 GOOS=linux go build -a \
     -ldflags "-linkmode external -extldflags '-static' -s -w" \
     -o /booty
 
-FROM alpine:3.23
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates iproute2
 # Disk provisioning tools needed for full provisioning pipeline.
 RUN apk add --no-cache e2fsprogs dosfstools sgdisk parted lvm2 util-linux
