@@ -33,16 +33,19 @@ After mounting the target root, BOOTy writes `/etc/booty/ab-slot.env` with the
 selected slot, booted slot marker, and root partition. Higher-level tooling can
 read that after boot to report the active slot.
 
-For `preserveExisting` upgrades, BOOTy first verifies that the kernel command
-line identifies the booted slot with `root=PARTLABEL=BOOTY-ROOT-A`,
-`root=PARTLABEL=BOOTY-ROOT-B`, or the matching partition node such as
-`root=/dev/sda2`. It rejects a conflicting or missing booted-slot signal before
-it mounts the declared active root slot read-only and validates
-`/etc/booty/ab-slot.env`. This prevents a stale `AB_ACTIVE_SLOT` value from
-wiping the currently active root partition. Preserve-existing upgrades require
-kexec; BOOTy keeps `/newroot` mounted until kexec runs, and powers off instead
-of doing a normal reboot if kexec is disabled or fails, because the firmware
-boot path may still point at the old active slot.
+For `preserveExisting` upgrades, BOOTy validates the declared active root slot
+before wiping the inactive target. If the current kernel command line identifies
+an installed A/B root with `root=PARTLABEL=BOOTY-ROOT-A`,
+`root=PARTLABEL=BOOTY-ROOT-B`, or a matching partition node such as
+`root=/dev/sda2`, BOOTy rejects a conflicting active-slot value. When BOOTy is
+booted from virtual media and `root=` does not identify an A/B slot, it skips the
+cmdline proof and relies on the read-only validation of the declared active root
+slot's `/etc/booty/ab-slot.env`. This keeps CAPRF-style virtual-media upgrades
+working while still preventing a stale `AB_ACTIVE_SLOT` value from wiping the
+currently active root partition. Preserve-existing upgrades require kexec; BOOTy
+keeps `/newroot` mounted until kexec runs, and powers off instead of doing a
+normal reboot if kexec is disabled or fails, because the firmware boot path may
+still point at the old active slot.
 
 ## YAML
 
@@ -89,8 +92,10 @@ source images that do not carry a stable GPT root partition label.
 - `rootSizeMB` must fit the source root filesystem with operational headroom.
 - Use `preserveExisting: true` only on disks already provisioned with the BOOTy
   A/B scheme.
-- Boot preserve-existing upgrades with a kernel `root=` parameter that resolves
-  to `BOOTY-ROOT-A`, `BOOTY-ROOT-B`, or the corresponding partition node.
+- Prefer a kernel `root=` parameter that resolves to `BOOTY-ROOT-A`,
+  `BOOTY-ROOT-B`, or the corresponding partition node. Virtual-media provisioner
+  boots are also supported; in that case the active root slot state file becomes
+  the required validation source.
 - Do not set `DISABLE_KEXEC=true` for preserve-existing upgrades. The inactive
   slot is activated through kexec, while the active slot stays available for
   rollback.

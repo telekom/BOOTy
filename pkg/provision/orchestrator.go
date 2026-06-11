@@ -806,9 +806,7 @@ func validateABBootedSlotSignal(diskDevice, activeSlot string) error {
 		return fmt.Errorf("determine booted A/B slot from kernel cmdline: %w", err)
 	}
 	if bootedSlot == "" {
-		slotA, _ := abSlotPartitionDevice(diskDevice, config.ABSlotA)
-		slotB, _ := abSlotPartitionDevice(diskDevice, config.ABSlotB)
-		return fmt.Errorf("cannot independently determine booted A/B slot from kernel cmdline; root= must reference BOOTY-ROOT-A, BOOTY-ROOT-B, %s, or %s", slotA, slotB)
+		return nil
 	}
 	if bootedSlot != activeSlot {
 		return fmt.Errorf("kernel cmdline reports booted A/B slot %q, config declares active slot %q", bootedSlot, activeSlot)

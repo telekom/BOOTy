@@ -1081,6 +1081,26 @@ func TestDetectBootedABSlotFromCmdline(t *testing.T) {
 	}
 }
 
+func TestValidateABBootedSlotSignalAllowsProvisionerBootWithoutABRoot(t *testing.T) {
+	withProcCmdline(t, "console=ttyS0 root=LABEL=caas-deploy-image")
+
+	if err := validateABBootedSlotSignal("/dev/sda", config.ABSlotA); err != nil {
+		t.Fatalf("validateABBootedSlotSignal: %v", err)
+	}
+}
+
+func TestValidateABBootedSlotSignalRejectsMismatchedABRoot(t *testing.T) {
+	withProcCmdline(t, "console=ttyS0 root=PARTLABEL=BOOTY-ROOT-B")
+
+	err := validateABBootedSlotSignal("/dev/sda", config.ABSlotA)
+	if err == nil {
+		t.Fatal("expected stale active slot rejection")
+	}
+	if !strings.Contains(err.Error(), `kernel cmdline reports booted A/B slot "b", config declares active slot "a"`) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestABSlotPartitionDevice(t *testing.T) {
 	tests := []struct {
 		slot string
