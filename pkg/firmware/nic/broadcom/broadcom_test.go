@@ -102,6 +102,7 @@ hds                 : off
 	}
 	if state == nil {
 		t.Fatal("state is nil")
+		return
 	}
 
 	// Check that firmware version was captured

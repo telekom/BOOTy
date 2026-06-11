@@ -101,6 +101,7 @@ func TestNewManagerDefault(t *testing.T) {
 	mgr := NewManager(nil)
 	if mgr == nil {
 		t.Fatal("expected non-nil manager")
+		return
 	}
 	// Should use ExecCommander by default.
 	if _, ok := mgr.cmd.(*ExecCommander); !ok {

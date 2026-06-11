@@ -30,6 +30,7 @@ func TestEmitterLastEvent(t *testing.T) {
 	last := e.LastEvent()
 	if last == nil {
 		t.Fatal("expected non-nil last event")
+		return
 	}
 	if last.Type != EventProvCompleted {
 		t.Errorf("last.Type = %s, want %s", last.Type, EventProvCompleted)

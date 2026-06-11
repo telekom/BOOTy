@@ -17,6 +17,8 @@ import (
 	"time"
 )
 
+const testEFIFallbackPayload = "BOOTy KVM e2e EFI fallback\n"
+
 // requireProvisionTools fails the test if essential provisioning tools are missing.
 func requireProvisionTools(t *testing.T) {
 	t.Helper()
@@ -304,6 +306,7 @@ func buildProvisionInitramfs(t *testing.T, vars map[string]string) string {
 		link := filepath.Join(rootDir, "bin", applet)
 		_ = os.Symlink("busybox", link)
 	}
+	installModuleLoader(t, rootDir)
 
 	// Copy essential provisioning tools from host with their shared libraries.
 	essentialTools := []string{
@@ -320,6 +323,8 @@ func buildProvisionInitramfs(t *testing.T, vars map[string]string) string {
 		copyBinary(t, toolPath, destBin)
 		copySharedLibs(t, toolPath, rootDir)
 	}
+	copyFilesystemModules(t, rootDir)
+	installTestEFIFallbackAsset(t, rootDir)
 
 	// Copy ld-linux dynamic linker if present.
 	for _, ld := range []string{"/lib64/ld-linux-x86-64.so.2", "/lib/ld-linux-x86-64.so.2"} {
@@ -339,7 +344,13 @@ func buildProvisionInitramfs(t *testing.T, vars map[string]string) string {
 	// (subtest-specific; left empty by default)
 
 	// Write /init script.
-	initScript := "#!/bin/sh\nexport PATH=/bin:/sbin:/usr/bin:/usr/sbin\nexec /booty\n"
+	initScript := `#!/bin/sh
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+for mod in fat vfat nls_cp437 nls_iso8859-1 nls_ascii nls_utf8; do
+	modprobe "$mod" 2>/dev/null || true
+done
+exec /booty
+`
 	writeFile(t, filepath.Join(rootDir, "init"), initScript)
 	run(t, "chmod init", "chmod", "+x", filepath.Join(rootDir, "init"))
 
@@ -436,6 +447,13 @@ func runQEMUProvision(t *testing.T, kernel, initramfs, disk string, timeoutDur t
 // and a cleanup function. The caller must defer cleanup.
 func mountQcow2(t *testing.T, qcow2Path string) (rootMount string, cleanup func()) {
 	t.Helper()
+	return mountQcow2Partition(t, qcow2Path, 2)
+}
+
+// mountQcow2Partition mounts a qcow2 partition by 1-based partition number.
+// It returns the mount path and a cleanup function. The caller must defer cleanup.
+func mountQcow2Partition(t *testing.T, qcow2Path string, partNum int) (rootMount string, cleanup func()) {
+	t.Helper()
 
 	// Find an available nbd device.
 	run(t, "load nbd module", "modprobe", "nbd", "max_part=8")
@@ -463,18 +481,24 @@ func mountQcow2(t *testing.T, qcow2Path string) (rootMount string, cleanup func(
 
 	// Wait for partitions after qemu-nbd attach.
 	rereadPartitionTable(t, nbdDev)
-	rootPart := nbdDev + "p2"
-	waitForDevice(t, rootPart, 10*time.Second)
+	partDev := fmt.Sprintf("%sp%d", nbdDev, partNum)
+	waitForDevice(t, partDev, 10*time.Second)
 
-	// Mount root partition.
 	mountDir := t.TempDir()
-	mountReadOnlyWithRetry(t, rootPart, mountDir, func() {
+	mountReadOnlyWithRetry(t, partDev, mountDir, func() {
 		rereadPartitionTable(t, nbdDev)
 	})
 
+	cleaned := false
 	cleanup = func() {
+		if cleaned {
+			return
+		}
+		cleaned = true
 		_ = exec.Command("umount", mountDir).Run()
+		_ = exec.Command("qemu-nbd", "--disconnect", nbdDev).Run()
 	}
+	t.Cleanup(cleanup)
 
 	return mountDir, cleanup
 }
@@ -582,6 +606,93 @@ func findBusybox(t *testing.T) string {
 	}
 	t.Fatal("busybox not found")
 	return ""
+}
+
+func copyFilesystemModules(t *testing.T, rootDir string) {
+	t.Helper()
+	release := kernelRelease()
+	if release == "" {
+		t.Log("kernel release unavailable, not copying filesystem modules")
+		return
+	}
+	hostModuleRoot := filepath.Join("/lib/modules", release)
+	if st, err := os.Stat(hostModuleRoot); err != nil || !st.IsDir() {
+		t.Logf("host module tree %s unavailable, not copying filesystem modules", hostModuleRoot)
+		return
+	}
+
+	copied := map[string]bool{}
+	for _, module := range []string{"vfat", "fat", "nls_cp437", "nls_iso8859-1", "nls_ascii", "nls_utf8"} {
+		path := kernelModulePath(t, module)
+		if path == "" {
+			continue
+		}
+		copyKernelModule(t, rootDir, release, path, copied)
+	}
+	for _, meta := range []string{"modules.dep", "modules.alias", "modules.symbols", "modules.builtin", "modules.order"} {
+		src := filepath.Join(hostModuleRoot, meta)
+		if _, err := os.Stat(src); err == nil {
+			dst := filepath.Join(rootDir, "lib", "modules", release, meta)
+			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+				t.Fatalf("mkdir module metadata dir: %v", err)
+			}
+			copyBinary(t, src, dst)
+		}
+	}
+}
+
+func installTestEFIFallbackAsset(t *testing.T, rootDir string) {
+	t.Helper()
+	efiDir := filepath.Join(rootDir, "usr", "lib", "booty", "efi")
+	if err := os.MkdirAll(efiDir, 0o755); err != nil {
+		t.Fatalf("mkdir efi fallback asset dir: %v", err)
+	}
+	writeFile(t, filepath.Join(efiDir, "BOOTX64.EFI"), testEFIFallbackPayload)
+}
+
+func installModuleLoader(t *testing.T, rootDir string) {
+	t.Helper()
+	for _, tool := range []string{"modprobe", "insmod"} {
+		dst := filepath.Join(rootDir, "sbin", tool)
+		if toolPath, err := exec.LookPath(tool); err == nil {
+			copyBinary(t, toolPath, dst)
+			copySharedLibs(t, toolPath, rootDir)
+			continue
+		}
+		_ = os.Symlink(filepath.Join("..", "bin", "busybox"), dst)
+	}
+}
+
+func kernelModulePath(t *testing.T, module string) string {
+	t.Helper()
+	out, err := exec.Command("modinfo", "-F", "filename", module).CombinedOutput()
+	if err != nil {
+		t.Logf("modinfo %s failed, not copying module: %v (%s)", module, err, strings.TrimSpace(string(out)))
+		return ""
+	}
+	path := strings.TrimSpace(string(out))
+	if path == "" || path == "(builtin)" {
+		return ""
+	}
+	return path
+}
+
+func copyKernelModule(t *testing.T, rootDir, release, src string, copied map[string]bool) {
+	t.Helper()
+	if copied[src] {
+		return
+	}
+	copied[src] = true
+	rel, err := filepath.Rel(filepath.Join("/lib/modules", release), src)
+	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		t.Logf("kernel module %s is outside /lib/modules/%s, skipping", src, release)
+		return
+	}
+	dst := filepath.Join(rootDir, "lib", "modules", release, rel)
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		t.Fatalf("mkdir kernel module dir: %v", err)
+	}
+	copyBinary(t, src, dst)
 }
 
 func copyBinary(t *testing.T, src, dst string) {

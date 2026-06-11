@@ -775,6 +775,7 @@ func TestLoadOrCreateCheckpoint(t *testing.T) {
 			cp := o.loadOrCreateCheckpoint()
 			if cp == nil {
 				t.Fatal("expected non-nil checkpoint")
+				return
 			}
 			if cp.persist != tc.wantPersist {
 				t.Errorf("persist = %v, want %v", cp.persist, tc.wantPersist)
@@ -894,6 +895,7 @@ func TestEnsureABPartitionLayoutTargetsInactiveSlot(t *testing.T) {
 	layout := cfg.Provision.Disk.PartitionLayout
 	if layout == nil {
 		t.Fatal("expected partition layout")
+		return
 	}
 	if layout.Partitions[1].Mountpoint != "" {
 		t.Fatalf("slot A mountpoint = %q, want empty", layout.Partitions[1].Mountpoint)

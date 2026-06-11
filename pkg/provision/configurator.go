@@ -202,13 +202,14 @@ func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineCon
 // the asset is unavailable, it falls back to the target-root grub-install path
 // to preserve compatibility with older initramfs builds.
 func (c *Configurator) InstallEFIFallbackLoader(ctx context.Context, diskDev, rootDev string) error {
-	if err := c.installBundledEFIFallbackLoader(rootDev); err == nil {
+	err := c.installBundledEFIFallbackLoader(rootDev)
+	if err == nil {
 		return nil
-	} else if !errors.Is(err, errEFIFallbackAssetMissing) || !installEFIFallbackWithChroot {
-		return err
-	} else {
-		slog.Warn("bundled EFI fallback loader unavailable, falling back to target-root grub-install", "error", err)
 	}
+	if !errors.Is(err, errEFIFallbackAssetMissing) || !installEFIFallbackWithChroot {
+		return err
+	}
+	slog.Warn("bundled EFI fallback loader unavailable, falling back to target-root grub-install", "error", err)
 
 	target, err := grubEFITarget(runtime.GOARCH)
 	if err != nil {
@@ -282,7 +283,7 @@ func (c *Configurator) installBundledEFIFallbackLoader(rootDev string) error {
 func defaultEFIFallbackHandoffID() (string, error) {
 	var data [16]byte
 	if _, err := rand.Read(data[:]); err != nil {
-		return "", err
+		return "", fmt.Errorf("read random EFI fallback handoff id: %w", err)
 	}
 	return hex.EncodeToString(data[:]), nil
 }
@@ -290,28 +291,32 @@ func defaultEFIFallbackHandoffID() (string, error) {
 func copyRegularFile(src, dst string, mode os.FileMode) error {
 	in, err := os.Open(src)
 	if err != nil {
-		return err
+		return fmt.Errorf("open source file %s: %w", src, err)
 	}
 	defer func() { _ = in.Close() }()
 
 	tmp, err := os.CreateTemp(filepath.Dir(dst), ".booty-copy-*")
 	if err != nil {
-		return err
+		return fmt.Errorf("create temporary file next to %s: %w", dst, err)
 	}
 	tmpName := tmp.Name()
 	defer func() { _ = os.Remove(tmpName) }()
 	if _, err := io.Copy(tmp, in); err != nil {
 		_ = tmp.Close()
-		return err
+		return fmt.Errorf("copy %s to temporary file %s: %w", src, tmpName, err)
 	}
 	if err := tmp.Chmod(mode); err != nil {
 		_ = tmp.Close()
-		return err
+		return fmt.Errorf("chmod temporary file %s: %w", tmpName, err)
 	}
 	if err := tmp.Close(); err != nil {
-		return err
+		return fmt.Errorf("close temporary file %s: %w", tmpName, err)
 	}
-	return os.Rename(tmpName, dst)
+	// #nosec G703 -- caller validates the destination is inside the target root.
+	if err := os.Rename(tmpName, dst); err != nil {
+		return fmt.Errorf("rename temporary file %s to %s: %w", tmpName, dst, err)
+	}
+	return nil
 }
 
 func efiRemovableLoaderName(arch string) (string, error) {

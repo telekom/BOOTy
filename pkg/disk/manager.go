@@ -376,39 +376,10 @@ func (m *Manager) FindDiskBySerial(ctx context.Context, serial string, minSizeGB
 	}
 	slog.Info("detecting target disk by serial", "serial", serial, "minSizeGB", minSizeGB)
 
-	blockDir := m.sysfsRoot + "/block"
-	entries, err := os.ReadDir(blockDir)
-	if err != nil {
-		return "", fmt.Errorf("reading %s: %w", blockDir, err)
-	}
-
 	allowRemovable := os.Getenv("BOOTY_ALLOW_REMOVABLE") == "true"
-	var matches []string
-	var observed []string
-	for _, entry := range entries {
-		name := entry.Name()
-		if isVirtualDisk(name) {
-			continue
-		}
-		if !allowRemovable && m.isRemovableMedia(name) {
-			slog.Warn("skipping removable media device", "device", "/dev/"+name)
-			continue
-		}
-		deviceSerial, err := m.readDiskSerial(name)
-		if err != nil || !diskSerialMatches(deviceSerial, serial) {
-			if deviceSerial != "" {
-				observed = append(observed, "/dev/"+name+"="+deviceSerial)
-			}
-			continue
-		}
-		sizeGB, err := m.readDiskSizeGB(name)
-		if err != nil {
-			return "", fmt.Errorf("read size for disk with serial %q at /dev/%s: %w", serial, name, err)
-		}
-		if minSizeGB > 0 && sizeGB < minSizeGB {
-			return "", fmt.Errorf("disk with serial %q at /dev/%s is %d GB, below minimum %d GB", serial, name, sizeGB, minSizeGB)
-		}
-		matches = append(matches, "/dev/"+name)
+	matches, observed, err := m.findDiskBySerialWithSysfs(serial, minSizeGB, allowRemovable)
+	if err != nil {
+		return "", err
 	}
 	if len(matches) == 0 {
 		lsblkMatches, lsblkObserved, err := m.findDiskBySerialWithLSBLK(ctx, serial, minSizeGB, allowRemovable)
@@ -433,14 +404,47 @@ func (m *Manager) FindDiskBySerial(ctx context.Context, serial string, minSizeGB
 	}
 }
 
-func (m *Manager) findDiskBySerialWithLSBLK(ctx context.Context, serial string, minSizeGB int, allowRemovable bool) ([]string, []string, error) {
+func (m *Manager) findDiskBySerialWithSysfs(serial string, minSizeGB int, allowRemovable bool) (matches, observed []string, err error) {
+	blockDir := m.sysfsRoot + "/block"
+	entries, err := os.ReadDir(blockDir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading %s: %w", blockDir, err)
+	}
+
+	for _, entry := range entries {
+		name := entry.Name()
+		if isVirtualDisk(name) {
+			continue
+		}
+		if !allowRemovable && m.isRemovableMedia(name) {
+			slog.Warn("skipping removable media device", "device", "/dev/"+name)
+			continue
+		}
+		deviceSerial, err := m.readDiskSerial(name)
+		if err != nil || !diskSerialMatches(deviceSerial, serial) {
+			if deviceSerial != "" {
+				observed = append(observed, "/dev/"+name+"="+deviceSerial)
+			}
+			continue
+		}
+		sizeGB, err := m.readDiskSizeGB(name)
+		if err != nil {
+			return nil, observed, fmt.Errorf("read size for disk with serial %q at /dev/%s: %w", serial, name, err)
+		}
+		if minSizeGB > 0 && sizeGB < minSizeGB {
+			return nil, observed, fmt.Errorf("disk with serial %q at /dev/%s is %d GB, below minimum %d GB", serial, name, sizeGB, minSizeGB)
+		}
+		matches = append(matches, "/dev/"+name)
+	}
+	return matches, observed, nil
+}
+
+func (m *Manager) findDiskBySerialWithLSBLK(ctx context.Context, serial string, minSizeGB int, allowRemovable bool) (matches, observed []string, err error) {
 	out, err := m.cmd.Run(ctx, "lsblk", "--nodeps", "--noheadings", "--paths", "--output", "NAME,SERIAL")
 	if err != nil {
 		return nil, nil, fmt.Errorf("lsblk NAME,SERIAL: %s: %w", string(out), err)
 	}
 
-	var matches []string
-	var observed []string
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(strings.TrimSpace(line))
 		if len(fields) < 2 {

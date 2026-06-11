@@ -130,6 +130,26 @@ func TestABProvisionPreloadsSysextsWithoutActivatingVM(t *testing.T) {
 	if !strings.Contains(slotState, "BOOTY_AB_TARGET_SLOT=a") {
 		t.Fatalf("A/B slot state did not record initial target slot a:\n%s", slotState)
 	}
+
+	cleanup()
+	espMount, espCleanup := mountQcow2Partition(t, targetDisk, 1)
+	defer espCleanup()
+	loader, err := os.ReadFile(filepath.Join(espMount, "EFI", "BOOT", "BOOTX64.EFI"))
+	if err != nil {
+		t.Fatalf("ESP fallback loader missing: %v", err)
+	}
+	if string(loader) != testEFIFallbackPayload {
+		t.Fatalf("ESP fallback loader payload = %q, want test fixture", string(loader))
+	}
+	grubCfg := readProvisionedFile(t, espMount, "EFI/BOOT/grub.cfg")
+	for _, want := range []string{
+		"search --no-floppy --set=booty_root --file /etc/booty/grub-target-",
+		"configfile ($booty_root)/boot/grub/grub.cfg",
+	} {
+		if !strings.Contains(grubCfg, want) {
+			t.Fatalf("ESP grub.cfg missing %q:\n%s", want, grubCfg)
+		}
+	}
 }
 
 func assertProvisionSucceeded(t *testing.T, output []byte) {

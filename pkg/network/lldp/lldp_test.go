@@ -38,6 +38,7 @@ func TestParseLLDPValidPayload(t *testing.T) {
 	n := parseLLDP(data, "eth0")
 	if n == nil {
 		t.Fatal("parseLLDP() returned nil for valid payload")
+		return
 	}
 
 	if n.Interface != "eth0" {
