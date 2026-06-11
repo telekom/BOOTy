@@ -3,11 +3,13 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func dockerAvailable(t *testing.T) {
@@ -23,6 +25,10 @@ func buildTarget(t *testing.T, target, dest string) string {
 	t.Helper()
 	dockerfile := filepath.Join(findRepoRoot(t), "initrd.Dockerfile")
 	repoRoot := findRepoRoot(t)
+
+	if !dockerBuildxAvailable() {
+		return buildTargetWithDockerBuild(t, target, dest, dockerfile, repoRoot)
+	}
 
 	args := []string{"buildx", "build", "--platform", "linux/amd64"}
 	if target != "" {
@@ -54,6 +60,84 @@ func buildTarget(t *testing.T, target, dest string) string {
 		t.Fatalf("expected output %s not found: %v", out, err)
 	}
 	return out
+}
+
+func dockerBuildxAvailable() bool {
+	cmd := exec.Command("docker", "buildx", "version")
+	return cmd.Run() == nil
+}
+
+func buildTargetWithDockerBuild(t *testing.T, target, dest, dockerfile, repoRoot string) string {
+	t.Helper()
+	name := target
+	if name == "" {
+		name = "default"
+	}
+	imageTag := fmt.Sprintf("booty-e2e-%s-%d", strings.NewReplacer("/", "-", ":", "-").Replace(name), time.Now().UnixNano())
+
+	args := []string{"build", "--platform", "linux/amd64"}
+	if target != "" {
+		args = append(args, "--target", target)
+	}
+	args = append(args, "-t", imageTag, "-f", dockerfile, repoRoot)
+
+	cmd := exec.Command("docker", args...)
+	cmd.Env = append(os.Environ(), "DOCKER_BUILDKIT=1")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("docker build --target %s failed: %v", name, err)
+	}
+	t.Cleanup(func() {
+		_ = exec.Command("docker", "rmi", "-f", imageTag).Run()
+	})
+
+	containerIDBytes, err := exec.Command("docker", "create", imageTag, "/bin/true").Output()
+	if err != nil {
+		t.Fatalf("docker create %s failed: %v", imageTag, err)
+	}
+	containerID := strings.TrimSpace(string(containerIDBytes))
+	t.Cleanup(func() {
+		_ = exec.Command("docker", "rm", "-f", containerID).Run()
+	})
+
+	out := filepath.Join(dest, targetArtifactName(target))
+	cp := exec.Command("docker", "cp", containerID+":"+containerArtifactPath(target), out)
+	cp.Stdout = os.Stdout
+	cp.Stderr = os.Stderr
+	if err := cp.Run(); err != nil {
+		t.Fatalf("docker cp %s artifact failed: %v", name, err)
+	}
+	if _, err := os.Stat(out); err != nil {
+		t.Fatalf("expected output %s not found: %v", out, err)
+	}
+	return out
+}
+
+func targetArtifactName(target string) string {
+	switch target {
+	case "micro":
+		return "initramfs.cpio.gz"
+	case "iso":
+		return "booty.iso"
+	case "gobgp-iso":
+		return "booty-gobgp.iso"
+	default:
+		return "initramfs.cpio.zst"
+	}
+}
+
+func containerArtifactPath(target string) string {
+	switch target {
+	case "micro":
+		return "/initramfs.cpio.gz"
+	case "iso":
+		return "/booty.iso"
+	case "gobgp-iso":
+		return "/booty-gobgp.iso"
+	default:
+		return "/initramfs.cpio.zst"
+	}
 }
 
 // findRepoRoot walks up from the test file to find the repo root (contains go.mod).
@@ -452,6 +536,25 @@ func TestFullFlavorsUseDosfstoolsMkfsVfatE2E(t *testing.T) {
 			assertNotContains(t, files, "bin/mkfs.vfat", "BusyBox mkfs.vfat applet shadowing dosfstools")
 			assertNotContains(t, files, "bin/mkfs.fat", "BusyBox mkfs.fat applet shadowing dosfstools")
 			assertNotContains(t, files, "bin/mkdosfs", "BusyBox mkdosfs applet shadowing dosfstools")
+		})
+	}
+}
+
+func TestFullFlavorsContainEFIFallbackLoaderE2E(t *testing.T) {
+	dockerAvailable(t)
+	for _, tc := range []struct {
+		name   string
+		target string
+	}{
+		{name: "default"},
+		{name: "gobgp", target: "gobgp"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dest := t.TempDir()
+			cpioGz := buildTarget(t, tc.target, dest)
+			files := listCPIOContents(t, cpioGz)
+
+			assertContains(t, files, "usr/lib/booty/efi/BOOTX64.EFI", "bundled removable EFI fallback loader")
 		})
 	}
 }

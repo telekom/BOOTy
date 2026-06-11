@@ -310,6 +310,21 @@ func TestInstallEFIFallbackLoaderRunsForInitialABMode(t *testing.T) {
 	}
 }
 
+func TestCreateEFIBootEntrySkipsABMode(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.bootPartition = "/dev/sda1"
+
+	if err := o.createEFIBootEntry(context.Background()); err != nil {
+		t.Fatalf("createEFIBootEntry A/B: %v", err)
+	}
+	if hasCommandName(cmd.calls, "chroot") {
+		t.Fatalf("A/B createEFIBootEntry should not chroot, calls=%#v", cmd.calls)
+	}
+}
+
 func TestSetupNVMeNamespaces_NoOp(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	provider := &mockProvider{}

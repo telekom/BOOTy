@@ -34,6 +34,23 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
     CGO_ENABLED=1 GOOS=linux go build -a -trimpath -ldflags "-linkmode external -extldflags '-static' -s -w" -o init
 RUN upx -9 init
 
+# Build a removable UEFI fallback loader that BOOTy can copy into a target ESP.
+# The embedded config loads EFI/BOOT/grub.cfg from the ESP; BOOTy writes that
+# handoff config at provisioning time so the selected A/B root slot is explicit.
+FROM debian:bookworm-slim AS efi-fallback
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    grub-common grub-efi-amd64-bin ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /out && \
+    printf '%s\n' \
+      'search --no-floppy --set=esp --file /EFI/BOOT/grub.cfg' \
+      'configfile ($esp)/EFI/BOOT/grub.cfg' \
+      > /tmp/booty-efi-fallback.cfg && \
+    grub-mkstandalone -O x86_64-efi -o /out/BOOTX64.EFI \
+      --locales="" --fonts="" \
+      --modules="part_gpt part_msdos fat ext2 search search_fs_file configfile normal" \
+      "boot/grub/grub.cfg=/tmp/booty-efi-fallback.cfg"
+
 # Build FRR (BGP/BFD/Zebra) for EVPN networking — use FRR official stable repo
 FROM debian:bookworm-slim AS frr
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -176,6 +193,7 @@ RUN cp /usr/bin/growpart bin/growpart
 COPY --from=lvm /LVM2.2.03.27/tools/lvm sbin/
 COPY --from=sfdisk /util-linux/sfdisk.static bin/sfdisk
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
+COPY --from=efi-fallback /out/BOOTX64.EFI usr/lib/booty/efi/BOOTX64.EFI
 
 # FRR binaries for EVPN networking
 COPY --from=frr /usr/lib/frr/bgpd sbin/bgpd
@@ -347,6 +365,7 @@ COPY --from=busybox /build/initramfs/bin/growpart bin/growpart
 
 # BOOTy init binary (with GoBGP compiled in)
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
+COPY --from=efi-fallback /out/BOOTX64.EFI usr/lib/booty/efi/BOOTX64.EFI
 
 # LVM + sfdisk for disk management
 RUN mkdir -p sbin

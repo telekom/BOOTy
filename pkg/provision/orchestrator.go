@@ -347,6 +347,10 @@ func (o *Orchestrator) mountEFIVars(ctx context.Context) error {
 }
 
 func (o *Orchestrator) createEFIBootEntry(ctx context.Context) error {
+	if o.isABImageMode() {
+		o.log.Info("A/B image mode uses removable EFI fallback loader; skipping EFI NVRAM boot entry")
+		return nil
+	}
 	if o.shouldPreserveABBootEntries() {
 		o.log.Info("A/B preserveExisting enabled, preserving existing EFI boot entry")
 		return nil
@@ -1244,7 +1248,7 @@ func (o *Orchestrator) installEFIFallbackLoader(ctx context.Context) error {
 	if !isMountPoint(mountpoint) {
 		return fmt.Errorf("cannot install EFI fallback loader: boot partition %s is not mounted at %s", o.bootPartition, mountpoint)
 	}
-	return o.config.InstallEFIFallbackLoader(ctx, o.targetDisk)
+	return o.config.InstallEFIFallbackLoader(ctx, o.targetDisk, o.rootPartition)
 }
 
 func (o *Orchestrator) injectCloudInit(_ context.Context) error {

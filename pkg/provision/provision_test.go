@@ -467,6 +467,29 @@ func TestCreateEFIBootEntryEmptyPartition(t *testing.T) {
 	}
 }
 
+func TestEFILoaderPathUsesRemovableFallback(t *testing.T) {
+	root := t.TempDir()
+	loaderName, err := efiRemovableLoaderName(runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	efiBootDir := filepath.Join(root, "boot", "efi", "EFI", "BOOT")
+	if err := os.MkdirAll(efiBootDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(efiBootDir, loaderName), []byte("efi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := efiLoaderPath(root, runtime.GOARCH)
+	if err != nil {
+		t.Fatalf("efiLoaderPath(): %v", err)
+	}
+	if want := `\EFI\BOOT\` + loaderName; got != want {
+		t.Fatalf("efiLoaderPath() = %q, want %q", got, want)
+	}
+}
+
 func TestGrubEFITarget(t *testing.T) {
 	tests := []struct {
 		arch string
@@ -506,7 +529,7 @@ func TestInstallEFIFallbackLoader(t *testing.T) {
 		target,
 	)
 
-	if err := c.InstallEFIFallbackLoader(context.Background(), "/dev/sda"); err != nil {
+	if err := c.InstallEFIFallbackLoader(context.Background(), "/dev/sda", "/dev/sda2"); err != nil {
 		t.Fatalf("InstallEFIFallbackLoader() error = %v", err)
 	}
 	if !hasCommandCall(cmd.calls, "chroot", c.rootDir, "/bin/bash", "-c", wantCmd) {
@@ -519,12 +542,97 @@ func TestInstallEFIFallbackLoaderReportsChrootFailure(t *testing.T) {
 	c := newTestConfigurator(t, cmd)
 	cmd.setResult("chroot "+c.rootDir, []byte("grub missing"), fmt.Errorf("exit status 1"))
 
-	err := c.InstallEFIFallbackLoader(context.Background(), "/dev/sda")
+	err := c.InstallEFIFallbackLoader(context.Background(), "/dev/sda", "/dev/sda2")
 	if err == nil {
 		t.Fatal("InstallEFIFallbackLoader() error = nil, want failure")
 	}
 	if !strings.Contains(err.Error(), "install EFI fallback loader: grub missing") {
 		t.Fatalf("error = %v, want grub output", err)
+	}
+}
+
+func TestInstallEFIFallbackLoaderUsesBundledAsset(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+
+	assetDir := t.TempDir()
+	loaderName, err := efiRemovableLoaderName(runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assetDir, loaderName), []byte("efi-binary"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldAssetDir := efiFallbackAssetDirectory
+	efiFallbackAssetDirectory = assetDir
+	t.Cleanup(func() { efiFallbackAssetDirectory = oldAssetDir })
+	oldHandoffID := newEFIFallbackHandoffID
+	newEFIFallbackHandoffID = func() (string, error) { return "abcdef0123456789", nil }
+	t.Cleanup(func() { newEFIFallbackHandoffID = oldHandoffID })
+
+	grubDir := filepath.Join(c.rootDir, "boot", "grub")
+	if err := os.MkdirAll(grubDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(grubDir, "grub.cfg"), []byte("menuentry test {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.InstallEFIFallbackLoader(context.Background(), "/dev/sda", "/dev/sda2"); err != nil {
+		t.Fatalf("InstallEFIFallbackLoader() error = %v", err)
+	}
+	if hasCommandName(cmd.calls, "chroot") {
+		t.Fatalf("bundled fallback path should not chroot, calls=%#v", cmd.calls)
+	}
+	efiBootDir := filepath.Join(c.rootDir, "boot", "efi", "EFI", "BOOT")
+	if got, err := os.ReadFile(filepath.Join(efiBootDir, loaderName)); err != nil || string(got) != "efi-binary" {
+		t.Fatalf("fallback loader = %q, %v; want copied bundled asset", string(got), err)
+	}
+	grubConfig, err := os.ReadFile(filepath.Join(efiBootDir, "grub.cfg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	grubText := string(grubConfig)
+	if !strings.Contains(grubText, "search --no-floppy --set=booty_root --file /etc/booty/grub-target-abcdef0123456789") {
+		t.Fatalf("ESP grub.cfg missing marker search:\n%s", grubText)
+	}
+	if !strings.Contains(grubText, "configfile ($booty_root)/boot/grub/grub.cfg") {
+		t.Fatalf("ESP grub.cfg missing target grub handoff:\n%s", grubText)
+	}
+	marker, err := os.ReadFile(filepath.Join(c.rootDir, "etc", "booty", "grub-target-abcdef0123456789"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(marker) != "/dev/sda2\n" {
+		t.Fatalf("marker = %q, want root device", string(marker))
+	}
+}
+
+func TestInstallEFIFallbackLoaderWithBundledAssetRequiresTargetGrubConfig(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+
+	assetDir := t.TempDir()
+	loaderName, err := efiRemovableLoaderName(runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assetDir, loaderName), []byte("efi-binary"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldAssetDir := efiFallbackAssetDirectory
+	efiFallbackAssetDirectory = assetDir
+	t.Cleanup(func() { efiFallbackAssetDirectory = oldAssetDir })
+
+	err = c.InstallEFIFallbackLoader(context.Background(), "/dev/sda", "/dev/sda2")
+	if err == nil {
+		t.Fatal("InstallEFIFallbackLoader() error = nil, want missing target grub config error")
+	}
+	if !strings.Contains(err.Error(), "target GRUB config") {
+		t.Fatalf("error = %v, want target GRUB config", err)
+	}
+	if hasCommandName(cmd.calls, "chroot") {
+		t.Fatalf("missing target grub should not fall back to chroot, calls=%#v", cmd.calls)
 	}
 }
 
