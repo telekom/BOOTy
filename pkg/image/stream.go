@@ -250,7 +250,7 @@ func normalizeChecksumOpt(opt StreamOpts) (StreamOpts, error) {
 func openSource(ctx context.Context, url string) (io.ReadCloser, error) {
 	if IsOCIReference(url) {
 		ref := TrimOCIScheme(url)
-		slog.Info("pulling OCI image", "ref", ref)
+		slog.Info("pulling OCI image", "ref", RedactOCIRef(ref))
 		return FetchOCILayerWithRetry(ctx, ref)
 	}
 
@@ -265,18 +265,20 @@ var retryBackoffBase = time.Second
 func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 	const maxRetries = 3
 	backoff := retryBackoffBase
+	redactedURL := RedactURL(url)
 
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 		if err != nil {
-			return nil, fmt.Errorf("creating request: %w", err)
+			return nil, fmt.Errorf("creating request for %s: %s", redactedURL, RedactSourceError(err, url))
 		}
 
 		resp, err := imageHTTPClient.Do(req) //nolint:gosec // URL from trusted config
 		if err != nil {
-			lastErr = fmt.Errorf("fetching image (attempt %d/%d): %w", attempt+1, maxRetries, err)
-			slog.Warn("HTTP request failed, retrying", "attempt", attempt+1, "error", err, "backoff", backoff)
+			errMsg := RedactSourceError(err, url)
+			lastErr = fmt.Errorf("fetching image %s (attempt %d/%d): %s", redactedURL, attempt+1, maxRetries, errMsg)
+			slog.Warn("HTTP request failed, retrying", "attempt", attempt+1, "error", errMsg, "backoff", backoff)
 			if attempt < maxRetries-1 {
 				select {
 				case <-ctx.Done():
@@ -294,11 +296,11 @@ func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 		_ = resp.Body.Close()
 
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("image not found: %s", url)
+			return nil, fmt.Errorf("image not found: %s", redactedURL)
 		}
 		// Retry on 5xx server errors.
 		if resp.StatusCode >= 500 {
-			lastErr = fmt.Errorf("server error %d for %s (attempt %d/%d)", resp.StatusCode, url, attempt+1, maxRetries)
+			lastErr = fmt.Errorf("server error %d for %s (attempt %d/%d)", resp.StatusCode, redactedURL, attempt+1, maxRetries)
 			slog.Warn("HTTP server error, retrying", "attempt", attempt+1, "status", resp.StatusCode, "backoff", backoff)
 			if attempt < maxRetries-1 {
 				select {
@@ -310,7 +312,7 @@ func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 			}
 			continue
 		}
-		return nil, fmt.Errorf("unexpected status %d for %s", resp.StatusCode, url)
+		return nil, fmt.Errorf("unexpected status %d for %s", resp.StatusCode, redactedURL)
 	}
 	return nil, lastErr
 }
@@ -319,6 +321,7 @@ func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 func FetchOCILayerWithRetry(ctx context.Context, ref string) (io.ReadCloser, error) {
 	const maxRetries = 3
 	backoff := retryBackoffBase
+	redactedRef := RedactOCIRef(ref)
 
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -326,8 +329,9 @@ func FetchOCILayerWithRetry(ctx context.Context, ref string) (io.ReadCloser, err
 		if err == nil {
 			return rc, nil
 		}
-		lastErr = fmt.Errorf("OCI pull (attempt %d/%d): %w", attempt+1, maxRetries, err)
-		slog.Warn("OCI pull failed, retrying", "attempt", attempt+1, "error", err, "backoff", backoff)
+		errMsg := redactOCIRefError(err, ref)
+		lastErr = fmt.Errorf("OCI pull %s (attempt %d/%d): %s", redactedRef, attempt+1, maxRetries, errMsg)
+		slog.Warn("OCI pull failed, retrying", "attempt", attempt+1, "ref", redactedRef, "error", errMsg, "backoff", backoff)
 		if attempt < maxRetries-1 {
 			select {
 			case <-ctx.Done():
@@ -345,6 +349,7 @@ func FetchOCILayerWithRetry(ctx context.Context, ref string) (io.ReadCloser, err
 func FetchOCILayerByMediaTypeWithRetry(ctx context.Context, ref string, mediaTypes ...types.MediaType) (io.ReadCloser, error) {
 	const maxRetries = 3
 	backoff := retryBackoffBase
+	redactedRef := RedactOCIRef(ref)
 
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -352,8 +357,9 @@ func FetchOCILayerByMediaTypeWithRetry(ctx context.Context, ref string, mediaTyp
 		if err == nil {
 			return rc, nil
 		}
-		lastErr = fmt.Errorf("OCI pull (attempt %d/%d): %w", attempt+1, maxRetries, err)
-		slog.Warn("OCI pull failed, retrying", "attempt", attempt+1, "error", err, "backoff", backoff)
+		errMsg := redactOCIRefError(err, ref)
+		lastErr = fmt.Errorf("OCI pull %s (attempt %d/%d): %s", redactedRef, attempt+1, maxRetries, errMsg)
+		slog.Warn("OCI pull failed, retrying", "attempt", attempt+1, "ref", redactedRef, "error", errMsg, "backoff", backoff)
 		if attempt < maxRetries-1 {
 			select {
 			case <-ctx.Done():

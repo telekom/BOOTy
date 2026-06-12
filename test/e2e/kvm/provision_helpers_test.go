@@ -166,10 +166,14 @@ func installMinimalChrootFixture(t *testing.T, root string) {
 	copySharedLibs(t, busyboxBin, root)
 	for _, ld := range []string{"/lib64/ld-linux-x86-64.so.2", "/lib/ld-linux-x86-64.so.2"} {
 		if _, err := os.Stat(ld); err == nil {
-			if err := os.MkdirAll(filepath.Join(root, filepath.Dir(ld)), 0o755); err != nil {
+			ldTarget, err := pathInFixtureRoot(root, ld)
+			if err != nil {
+				t.Fatalf("dynamic linker fixture path: %v", err)
+			}
+			if err := os.MkdirAll(filepath.Dir(ldTarget), 0o755); err != nil {
 				t.Fatalf("mkdir dynamic linker dir: %v", err)
 			}
-			copyBinary(t, ld, filepath.Join(root, ld))
+			copyBinary(t, ld, ldTarget)
 			break
 		}
 	}
@@ -329,9 +333,13 @@ func buildProvisionInitramfs(t *testing.T, vars map[string]string) string {
 	// Copy ld-linux dynamic linker if present.
 	for _, ld := range []string{"/lib64/ld-linux-x86-64.so.2", "/lib/ld-linux-x86-64.so.2"} {
 		if _, err := os.Stat(ld); err == nil {
-			destDir := filepath.Join(rootDir, filepath.Dir(ld))
+			ldTarget, pathErr := pathInFixtureRoot(rootDir, ld)
+			if pathErr != nil {
+				t.Fatalf("dynamic linker fixture path: %v", pathErr)
+			}
+			destDir := filepath.Dir(ldTarget)
 			if err := os.MkdirAll(destDir, 0o755); err == nil {
-				copyBinary(t, ld, filepath.Join(rootDir, ld))
+				copyBinary(t, ld, ldTarget)
 			}
 			break
 		}
@@ -766,6 +774,37 @@ func copyBinary(t *testing.T, src, dst string) {
 	}
 }
 
+func pathInFixtureRoot(rootDir, hostPath string) (string, error) {
+	cleanPath := filepath.Clean(hostPath)
+	if !filepath.IsAbs(cleanPath) {
+		return "", fmt.Errorf("%s is not absolute", hostPath)
+	}
+	relPath, err := filepath.Rel(string(os.PathSeparator), cleanPath)
+	if err != nil {
+		return "", fmt.Errorf("derive relative path for %s: %w", hostPath, err)
+	}
+	if relPath == "." || strings.HasPrefix(relPath, ".."+string(os.PathSeparator)) || relPath == ".." {
+		return "", fmt.Errorf("%s cannot be copied into fixture root", hostPath)
+	}
+	return filepath.Join(rootDir, relPath), nil
+}
+
+func TestPathInFixtureRootKeepsAbsoluteHostPathUnderRoot(t *testing.T) {
+	rootDir := filepath.Join(t.TempDir(), "fixture")
+	got, err := pathInFixtureRoot(rootDir, "/lib64/ld-linux-x86-64.so.2")
+	if err != nil {
+		t.Fatalf("pathInFixtureRoot: %v", err)
+	}
+	want := filepath.Join(rootDir, "lib64", "ld-linux-x86-64.so.2")
+	if got != want {
+		t.Fatalf("pathInFixtureRoot = %q, want %q", got, want)
+	}
+
+	if _, err := pathInFixtureRoot(rootDir, "relative/lib.so"); err == nil {
+		t.Fatal("expected relative host path to be rejected")
+	}
+}
+
 // copySharedLibs copies shared library dependencies of a binary into the initramfs.
 func copySharedLibs(t *testing.T, binary, rootDir string) {
 	t.Helper()
@@ -784,8 +823,11 @@ func copySharedLibs(t *testing.T, binary, rootDir string) {
 				if libPath == "" || libPath == "not" {
 					continue
 				}
-				destDir := filepath.Join(rootDir, filepath.Dir(libPath))
-				destPath := filepath.Join(rootDir, libPath)
+				destPath, err := pathInFixtureRoot(rootDir, libPath)
+				if err != nil {
+					continue
+				}
+				destDir := filepath.Dir(destPath)
 				if _, err := os.Stat(destPath); err == nil {
 					continue // already copied
 				}

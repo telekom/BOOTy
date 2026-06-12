@@ -1,13 +1,13 @@
 # BOOTy — Coding Agent Guidance
 
 ## OVERVIEW
-Lightweight initramfs agent for bare-metal OS provisioning (not a K8s operator). Boots as PID 1, orchestrates 38 provisioning steps including disk imaging, optional sysext loading, BGP/EVPN networking, and kexec.
+Lightweight initramfs agent for bare-metal OS provisioning (not a K8s operator). Boots as PID 1, orchestrates 39 provisioning steps including disk imaging, optional sysext loading, BGP/EVPN networking, and kexec.
 
 ## STRUCTURE
 | Directory | Purpose |
 |-----------|---------|
 | `pkg/network/` | Pluggable networking: `gobgp` (pure Go), `frr` (legacy), `lldp` (raw frames) |
-| `pkg/provision/` | The 38-step state machine for image/disk/sysext/network/kexec flow |
+| `pkg/provision/` | The 39-step state machine for image/disk/sysext/network/kexec flow |
 | `pkg/crash/` | Startup crash artifact collection and host metadata correlation |
 | `pkg/realm/` | Low-level Linux primitives: syscalls, mounts, device creation |
 | `pkg/bios/` | Vendor-specific BIOS management (Dell, HPE, Lenovo, Supermicro) |

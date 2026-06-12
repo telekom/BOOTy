@@ -433,6 +433,25 @@ func TestHTTPGetWithRetry_AllFail(t *testing.T) {
 	}
 }
 
+func TestHTTPGetWithRetryErrorRedactsSensitiveURLParts(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	source := strings.Replace(srv.URL, "http://", "http://user:secret@", 1) + "/image.img?token=abc#frag"
+	_, err := httpGetWithRetry(context.Background(), source)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "token=abc") || strings.Contains(err.Error(), "#frag") {
+		t.Fatalf("error leaked sensitive URL parts: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), srv.URL+"/image.img") {
+		t.Fatalf("error = %q, want redacted URL context", err.Error())
+	}
+}
+
 func TestStreamQCOW2Detection(t *testing.T) {
 	// Serve qcow2 magic bytes — Stream should detect and redirect to qcow2 hook.
 	data := append([]byte{0x51, 0x46, 0x49, 0xfb}, make([]byte, 100)...)

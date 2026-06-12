@@ -113,6 +113,20 @@ func TestClassifyImageStreamErrorNonChecksumRemainsRetryable(t *testing.T) {
 	}
 }
 
+func TestClassifyImageStreamErrorRedactsSensitiveURLParts(t *testing.T) {
+	rawURL := "https://user:secret@images.local/node.raw?token=abc#frag"
+	err := classifyImageStreamError(rawURL, fmt.Errorf("fetching %s failed", rawURL))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "token=abc") || strings.Contains(err.Error(), "#frag") {
+		t.Fatalf("error leaked sensitive URL parts: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "https://images.local/node.raw") {
+		t.Fatalf("error = %q, want redacted URL context", err.Error())
+	}
+}
+
 func TestProvisionStepCount(t *testing.T) {
 	// Verify the pipeline has the expected number of steps.
 	cfg := &config.MachineConfig{}

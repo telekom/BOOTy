@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -367,8 +368,9 @@ func (m *Manager) DetectDisk(_ context.Context, minSizeGB int) (string, error) {
 	return best.path, nil
 }
 
-// FindDiskBySerial finds a non-virtual target disk whose sysfs serial exactly
-// matches serial. Removable media are rejected unless BOOTY_ALLOW_REMOVABLE=true.
+// FindDiskBySerial finds a non-virtual target disk whose serial or stable
+// identifier exactly matches serial. Removable media are rejected unless
+// BOOTY_ALLOW_REMOVABLE=true.
 func (m *Manager) FindDiskBySerial(ctx context.Context, serial string, minSizeGB int) (string, error) {
 	serial = strings.TrimSpace(serial)
 	if serial == "" {
@@ -520,30 +522,72 @@ func (m *Manager) readDiskSizeGB(name string) (int, error) {
 func diskSerialMatches(candidate, target string) bool {
 	candidate = strings.TrimSpace(candidate)
 	target = strings.TrimSpace(target)
-	return candidate != "" && target != "" && (candidate == target || strings.Contains(candidate, target))
+	return candidate != "" && target != "" && candidate == target
 }
 
 // readDiskSerial reads a block device serial number or stable identifier from
-// common sysfs locations. Some virtual SCSI devices expose the requested serial
-// only through WWID/VPD attributes, so callers use diskSerialMatches instead of
-// requiring strict equality on every source.
+// common sysfs locations. Some virtual SCSI devices expose the stable identifier
+// only through WWID/VPD attributes, so callers compare the normalized value from
+// each source against the requested identifier.
 func (m *Manager) readDiskSerial(name string) (string, error) {
-	paths := []string{
-		filepath.Join(m.sysfsRoot, "block", name, "device", "serial"),
-		filepath.Join(m.sysfsRoot, "block", name, "serial"),
-		filepath.Join(m.sysfsRoot, "block", name, "device", "wwid"),
-		filepath.Join(m.sysfsRoot, "block", name, "device", "vpd_pg80"),
-		filepath.Join(m.sysfsRoot, "block", name, "device", "vpd_pg83"),
+	sources := []struct {
+		path string
+		vpd  bool
+	}{
+		{path: filepath.Join(m.sysfsRoot, "block", name, "device", "serial")},
+		{path: filepath.Join(m.sysfsRoot, "block", name, "serial")},
+		{path: filepath.Join(m.sysfsRoot, "block", name, "device", "wwid")},
+		{path: filepath.Join(m.sysfsRoot, "block", name, "device", "vpd_pg80"), vpd: true},
+		{path: filepath.Join(m.sysfsRoot, "block", name, "device", "vpd_pg83"), vpd: true},
 	}
-	for _, path := range paths {
-		data, err := os.ReadFile(path) //nolint:gosec // path is constrained to test or sysfs root
+	for _, source := range sources {
+		data, err := os.ReadFile(source.path) //nolint:gosec // path is constrained to test or sysfs root
 		if err == nil {
-			if serial := printableIdentifier(data); serial != "" {
+			serial := printableIdentifier(data)
+			if source.vpd {
+				serial = printableSCSIVPDIdentifier(data)
+			}
+			if serial != "" {
 				return serial, nil
 			}
 		}
 	}
 	return "", fmt.Errorf("serial not found for %s", name)
+}
+
+func printableSCSIVPDIdentifier(data []byte) string {
+	if len(data) < 4 {
+		return printableIdentifier(data)
+	}
+
+	pageCode := data[1]
+	pageLength := int(binary.BigEndian.Uint16(data[2:4]))
+	if pageLength <= 0 || pageLength > len(data)-4 {
+		return printableIdentifier(data)
+	}
+
+	body := data[4 : 4+pageLength]
+	switch pageCode {
+	case 0x80:
+		return printableIdentifier(body)
+	case 0x83:
+		for len(body) >= 4 {
+			codeSet := body[0] & 0x0f
+			identifierLength := int(body[3])
+			if identifierLength <= 0 || identifierLength > len(body)-4 {
+				break
+			}
+			identifier := body[4 : 4+identifierLength]
+			if codeSet == 2 || codeSet == 3 {
+				if value := printableIdentifier(identifier); value != "" {
+					return value
+				}
+			}
+			body = body[4+identifierLength:]
+		}
+	}
+
+	return printableIdentifier(data)
 }
 
 func printableIdentifier(data []byte) string {

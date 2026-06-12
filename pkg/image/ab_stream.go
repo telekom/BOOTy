@@ -17,11 +17,12 @@ import (
 )
 
 const (
-	gptSectorSize           = 512
-	streamABPrefixBytes     = 1 << 20
-	mbrPartitionTableOffset = 446
-	mbrPartitionEntrySize   = 16
-	mbrPartitionEntryCount  = 4
+	gptSectorSize            = 512
+	gptPartitionEntryMaxSize = 4096
+	streamABPrefixBytes      = 1 << 20
+	mbrPartitionTableOffset  = 446
+	mbrPartitionEntrySize    = 16
+	mbrPartitionEntryCount   = 4
 )
 
 var (
@@ -62,7 +63,7 @@ func parseGPTPartitions(prefix []byte) ([]sfdiskPartition, error) {
 	entriesLBA := binary.LittleEndian.Uint64(header[72:80])
 	entryCount := binary.LittleEndian.Uint32(header[80:84])
 	entrySize := binary.LittleEndian.Uint32(header[84:88])
-	if entrySize < 56 {
+	if entrySize < 56 || entrySize > gptPartitionEntryMaxSize {
 		return nil, fmt.Errorf("invalid GPT partition entry size %d", entrySize)
 	}
 	if entryCount > 4096 {
@@ -78,8 +79,13 @@ func parseGPTPartitions(prefix []byte) ([]sfdiskPartition, error) {
 
 	parts := make([]sfdiskPartition, 0, entryCount)
 	for i := uint32(0); i < entryCount; i++ {
-		offset := int(entriesOffset + uint64(i)*uint64(entrySize))
-		entry := prefix[offset : offset+int(entrySize)]
+		offset := entriesOffset + uint64(i)*uint64(entrySize)
+		end := offset + uint64(entrySize)
+		if end < offset || offset > uint64(len(prefix)) || end > uint64(len(prefix)) {
+			return nil, fmt.Errorf("GPT partition entry %d exceeds streaming prefix: offset=%d size=%d prefix=%d",
+				i+1, offset, entrySize, len(prefix))
+		}
+		entry := prefix[int(offset):int(end)]
 		if isZeroGUID(entry[:16]) {
 			continue
 		}

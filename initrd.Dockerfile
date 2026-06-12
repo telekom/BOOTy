@@ -38,15 +38,29 @@ RUN upx -9 init
 # The embedded config loads EFI/BOOT/grub.cfg from the ESP; BOOTy writes that
 # handoff config at provisioning time so the selected A/B root slot is explicit.
 FROM debian:bookworm-slim AS efi-fallback
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    grub-common grub-efi-amd64-bin ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-RUN mkdir -p /out && \
+ARG TARGETARCH
+RUN set -eux; \
+    apt-get update; \
+    case "${TARGETARCH:-amd64}" in \
+      arm64) grub_pkg="grub-efi-arm64-bin" ;; \
+      amd64) grub_pkg="grub-efi-amd64-bin" ;; \
+      *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    apt-get install -y --no-install-recommends \
+      grub-common "${grub_pkg}" ca-certificates; \
+    rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    case "${TARGETARCH:-amd64}" in \
+      arm64) grub_platform="arm64-efi"; efi_loader="BOOTAA64.EFI" ;; \
+      amd64) grub_platform="x86_64-efi"; efi_loader="BOOTX64.EFI" ;; \
+      *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    mkdir -p /out && \
     printf '%s\n' \
       'search --no-floppy --set=esp --file /EFI/BOOT/grub.cfg' \
       'configfile ($esp)/EFI/BOOT/grub.cfg' \
       > /tmp/booty-efi-fallback.cfg && \
-    grub-mkstandalone -O x86_64-efi -o /out/BOOTX64.EFI \
+    grub-mkstandalone -O "${grub_platform}" -o "/out/${efi_loader}" \
       --locales="" --fonts="" \
       --modules="part_gpt part_msdos fat ext2 search search_fs_file configfile normal" \
       "boot/grub/grub.cfg=/tmp/booty-efi-fallback.cfg"
@@ -193,7 +207,7 @@ RUN cp /usr/bin/growpart bin/growpart
 COPY --from=lvm /LVM2.2.03.27/tools/lvm sbin/
 COPY --from=sfdisk /util-linux/sfdisk.static bin/sfdisk
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
-COPY --from=efi-fallback /out/BOOTX64.EFI usr/lib/booty/efi/BOOTX64.EFI
+COPY --from=efi-fallback /out/ usr/lib/booty/efi/
 
 # FRR binaries for EVPN networking
 COPY --from=frr /usr/lib/frr/bgpd sbin/bgpd
@@ -365,7 +379,7 @@ COPY --from=busybox /build/initramfs/bin/growpart bin/growpart
 
 # BOOTy init binary (with GoBGP compiled in)
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
-COPY --from=efi-fallback /out/BOOTX64.EFI usr/lib/booty/efi/BOOTX64.EFI
+COPY --from=efi-fallback /out/ usr/lib/booty/efi/
 
 # LVM + sfdisk for disk management
 RUN mkdir -p sbin

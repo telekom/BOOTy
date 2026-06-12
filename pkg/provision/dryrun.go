@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/image"
 )
 
 var (
@@ -368,14 +369,7 @@ func (o *Orchestrator) dryRunEFIBoot(_ context.Context) DryRunResult {
 }
 
 func redactImageURL(rawURL string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return rawURL
-	}
-	u.User = nil
-	u.RawQuery = ""
-	u.Fragment = ""
-	return u.String()
+	return image.RedactURL(rawURL)
 }
 
 func redactURLError(err error, rawURL string) string {

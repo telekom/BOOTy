@@ -190,6 +190,46 @@ func TestParseGPTPartitionsSelectsExpectedTypes(t *testing.T) {
 	}
 }
 
+func TestParseGPTPartitionsRejectsOversizedEntryWithoutPanic(t *testing.T) {
+	prefix := append([]byte(nil), testGPTImage(t)[:streamABPrefixBytes]...)
+	header := prefix[gptSectorSize : 2*gptSectorSize]
+	binary.LittleEndian.PutUint32(header[84:88], gptPartitionEntryMaxSize+1)
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("parseGPTPartitions panicked: %v", r)
+		}
+	}()
+	_, err := parseGPTPartitions(prefix)
+	if err == nil {
+		t.Fatal("expected oversized GPT entry size to fail")
+	}
+	if !strings.Contains(err.Error(), "invalid GPT partition entry size") {
+		t.Fatalf("error = %q, want invalid entry size detail", err)
+	}
+}
+
+func TestParseGPTPartitionsRejectsEntriesOutsidePrefixWithoutPanic(t *testing.T) {
+	prefix := append([]byte(nil), testGPTImage(t)[:streamABPrefixBytes]...)
+	header := prefix[gptSectorSize : 2*gptSectorSize]
+	binary.LittleEndian.PutUint64(header[72:80], streamABPrefixBytes/gptSectorSize-1)
+	binary.LittleEndian.PutUint32(header[80:84], 2)
+	binary.LittleEndian.PutUint32(header[84:88], 512)
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("parseGPTPartitions panicked: %v", r)
+		}
+	}()
+	_, err := parseGPTPartitions(prefix)
+	if err == nil {
+		t.Fatal("expected GPT entries outside prefix to fail")
+	}
+	if !strings.Contains(err.Error(), "GPT partition entries exceed streaming prefix") {
+		t.Fatalf("error = %q, want prefix bounds detail", err)
+	}
+}
+
 func TestParseMBRPartitionsSelectsExpectedTypes(t *testing.T) {
 	parts, err := parseMBRPartitions(testMBRImage(t)[:streamABPrefixBytes])
 	if err != nil {

@@ -499,22 +499,14 @@ func openSysextSource(ctx context.Context, source string) (io.ReadCloser, error)
 }
 
 func redactSysextOCILogRef(ref string) string {
-	return strings.TrimPrefix(redactImageURL("oci://"+ref), "oci://")
+	return imageutil.RedactOCIRef(ref)
 }
 
 func redactSysextSourceError(err error, source string) string {
-	if err == nil {
-		return ""
-	}
-	msg := err.Error()
-	if source == "" {
-		return msg
-	}
-	redacted := redactImageURL(source)
-	msg = strings.ReplaceAll(msg, source, redacted)
+	msg := imageutil.RedactSourceError(err, source)
 	if imageutil.IsOCIReference(source) {
 		ref := imageutil.TrimOCIScheme(source)
-		msg = strings.ReplaceAll(msg, ref, strings.TrimPrefix(redacted, "oci://"))
+		msg = strings.ReplaceAll(msg, ref, imageutil.RedactOCIRef(ref))
 	}
 	return msg
 }

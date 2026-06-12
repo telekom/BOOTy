@@ -910,15 +910,16 @@ func TestFindDiskBySerialFallsBackToLSBLK(t *testing.T) {
 	}
 }
 
-func TestFindDiskBySerialMatchesWWIDContainingSerial(t *testing.T) {
+func TestFindDiskBySerialMatchesExactWWID(t *testing.T) {
 	sysfs := t.TempDir()
 	writeSysfsBlockDevice(t, sysfs, "sdb", "0\n", 96, "")
-	if err := os.WriteFile(sysfs+"/block/sdb/device/wwid", []byte("scsi-0QEMU_QEMU_HARDDISK_RAID-DISK-1\n"), 0o644); err != nil {
+	wwid := "scsi-0QEMU_QEMU_HARDDISK_RAID-DISK-1"
+	if err := os.WriteFile(sysfs+"/block/sdb/device/wwid", []byte(wwid+"\n"), 0o644); err != nil {
 		t.Fatalf("write wwid: %v", err)
 	}
 
 	mgr := newManagerWithSysfs(newMockCommander(), sysfs)
-	disk, err := mgr.FindDiskBySerial(t.Context(), "RAID-DISK-1", 64)
+	disk, err := mgr.FindDiskBySerial(t.Context(), wwid, 64)
 	if err != nil {
 		t.Fatalf("FindDiskBySerial: unexpected error: %v", err)
 	}
@@ -927,7 +928,7 @@ func TestFindDiskBySerialMatchesWWIDContainingSerial(t *testing.T) {
 	}
 }
 
-func TestFindDiskBySerialMatchesVPDIdentifierContainingSerial(t *testing.T) {
+func TestFindDiskBySerialMatchesExactVPDIdentifier(t *testing.T) {
 	sysfs := t.TempDir()
 	writeSysfsBlockDevice(t, sysfs, "sdb", "0\n", 96, "")
 	if err := os.WriteFile(sysfs+"/block/sdb/device/vpd_pg80", []byte{0x00, 0x80, 0x00, 0x0b, 'R', 'A', 'I', 'D', '-', 'D', 'I', 'S', 'K', '-', '1'}, 0o644); err != nil {
@@ -941,6 +942,45 @@ func TestFindDiskBySerialMatchesVPDIdentifierContainingSerial(t *testing.T) {
 	}
 	if disk != "/dev/sdb" {
 		t.Fatalf("FindDiskBySerial = %q, want /dev/sdb", disk)
+	}
+}
+
+func TestFindDiskBySerialMatchesExactVPDPage83TextIdentifier(t *testing.T) {
+	sysfs := t.TempDir()
+	writeSysfsBlockDevice(t, sysfs, "sdb", "0\n", 96, "")
+	vpdPage83 := []byte{
+		0x00, 0x83, 0x00, 0x0f,
+		0x02, 0x01, 0x00, 0x0b,
+		'R', 'A', 'I', 'D', '-', 'D', 'I', 'S', 'K', '-', '1',
+	}
+	if err := os.WriteFile(sysfs+"/block/sdb/device/vpd_pg83", vpdPage83, 0o644); err != nil {
+		t.Fatalf("write vpd_pg83: %v", err)
+	}
+
+	mgr := newManagerWithSysfs(newMockCommander(), sysfs)
+	disk, err := mgr.FindDiskBySerial(t.Context(), "RAID-DISK-1", 64)
+	if err != nil {
+		t.Fatalf("FindDiskBySerial: unexpected error: %v", err)
+	}
+	if disk != "/dev/sdb" {
+		t.Fatalf("FindDiskBySerial = %q, want /dev/sdb", disk)
+	}
+}
+
+func TestFindDiskBySerialDoesNotMatchSubstring(t *testing.T) {
+	sysfs := t.TempDir()
+	writeSysfsBlockDevice(t, sysfs, "sdb", "0\n", 96, "RAID-DISK-10")
+
+	cmd := newMockCommander()
+	cmd.setResult("lsblk --nodeps", []byte("/dev/sdb RAID-DISK-10\n"), nil)
+
+	mgr := newManagerWithSysfs(cmd, sysfs)
+	_, err := mgr.FindDiskBySerial(t.Context(), "RAID-DISK-1", 64)
+	if err == nil {
+		t.Fatal("expected substring-only serial lookup to fail")
+	}
+	if !strings.Contains(err.Error(), "no suitable disk found with serial") {
+		t.Fatalf("error = %q, want no suitable disk detail", err)
 	}
 }
 

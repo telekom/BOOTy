@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/registry"
@@ -169,6 +170,23 @@ func TestFetchOCILayerInvalidRef(t *testing.T) {
 	_, err := FetchOCILayer(context.Background(), ":::invalid")
 	if err == nil {
 		t.Fatal("expected error for invalid reference")
+	}
+}
+
+func TestFetchOCILayerByMediaTypeWithRetryRedactsSensitiveRefParts(t *testing.T) {
+	retryBackoffBase = 0
+	t.Cleanup(func() { retryBackoffBase = time.Second })
+
+	ref := "user:secret@registry.example.invalid/repo/sysext:dev?token=abc"
+	_, err := FetchOCILayerByMediaTypeWithRetry(context.Background(), ref, SystemdSysextMediaType)
+	if err == nil {
+		t.Fatal("expected OCI pull error")
+	}
+	if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "token=abc") {
+		t.Fatalf("error leaked sensitive OCI ref parts: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "registry.example.invalid/repo/sysext:dev") {
+		t.Fatalf("error = %q, want redacted ref context", err.Error())
 	}
 }
 

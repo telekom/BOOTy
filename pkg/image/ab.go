@@ -95,7 +95,7 @@ func StreamAB(ctx context.Context, url string, target ABTargets, opts ...StreamO
 	if strings.TrimSpace(target.RootPartition) == "" {
 		return fmt.Errorf("a/b root partition is required")
 	}
-	slog.Info("a/b image streaming", "url", url, "disk", target.Disk, "root", target.RootPartition, "boot", target.BootPartition)
+	slog.Info("a/b image streaming", "url", RedactURL(url), "disk", target.Disk, "root", target.RootPartition, "boot", target.BootPartition)
 
 	var opt StreamOpts
 	if len(opts) > 0 {

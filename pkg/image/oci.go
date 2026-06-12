@@ -21,29 +21,30 @@ const SystemdSysextMediaType types.MediaType = "application/vnd.systemd.sysext.i
 // (e.g. "ghcr.io/org/image:tag"). Auth uses the default Docker keychain
 // (~/.docker/config.json).
 func FetchOCILayer(ctx context.Context, reference string) (io.ReadCloser, error) {
+	redactedRef := RedactOCIRef(reference)
 	ref, err := name.ParseReference(reference)
 	if err != nil {
-		return nil, fmt.Errorf("parse OCI reference %q: %w", reference, err)
+		return nil, fmt.Errorf("parse OCI reference %q: %s", redactedRef, redactOCIRefError(err, reference))
 	}
 
 	img, err := remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx))
 	if err != nil {
-		return nil, fmt.Errorf("pull OCI image %q: %w", reference, err)
+		return nil, fmt.Errorf("pull OCI image %q: %s", redactedRef, redactOCIRefError(err, reference))
 	}
 
 	layers, err := img.Layers()
 	if err != nil {
-		return nil, fmt.Errorf("get layers for %q: %w", reference, err)
+		return nil, fmt.Errorf("get layers for %q: %s", redactedRef, redactOCIRefError(err, reference))
 	}
 	if len(layers) == 0 {
-		return nil, fmt.Errorf("OCI image %q has no layers", reference)
+		return nil, fmt.Errorf("OCI image %q has no layers", redactedRef)
 	}
 
 	// Use the last (topmost) layer as the image content.
 	layer := layers[len(layers)-1]
 	rc, err := layer.Uncompressed()
 	if err != nil {
-		return nil, fmt.Errorf("uncompress layer for %q: %w", reference, err)
+		return nil, fmt.Errorf("uncompress layer for %q: %s", redactedRef, redactOCIRefError(err, reference))
 	}
 	return rc, nil
 }
@@ -55,42 +56,43 @@ func FetchOCILayerByMediaType(ctx context.Context, reference string, mediaTypes 
 		return FetchOCILayer(ctx, reference)
 	}
 
+	redactedRef := RedactOCIRef(reference)
 	ref, err := name.ParseReference(reference)
 	if err != nil {
-		return nil, fmt.Errorf("parse OCI reference %q: %w", reference, err)
+		return nil, fmt.Errorf("parse OCI reference %q: %s", redactedRef, redactOCIRefError(err, reference))
 	}
 
 	img, err := remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx))
 	if err != nil {
-		return nil, fmt.Errorf("pull OCI image %q: %w", reference, err)
+		return nil, fmt.Errorf("pull OCI image %q: %s", redactedRef, redactOCIRefError(err, reference))
 	}
 
 	layers, err := img.Layers()
 	if err != nil {
-		return nil, fmt.Errorf("get layers for %q: %w", reference, err)
+		return nil, fmt.Errorf("get layers for %q: %s", redactedRef, redactOCIRefError(err, reference))
 	}
 	if len(layers) == 0 {
-		return nil, fmt.Errorf("OCI image %q has no layers", reference)
+		return nil, fmt.Errorf("OCI image %q has no layers", redactedRef)
 	}
 
 	for _, want := range mediaTypes {
 		for _, layer := range layers {
 			got, err := layer.MediaType()
 			if err != nil {
-				return nil, fmt.Errorf("read layer media type for %q: %w", reference, err)
+				return nil, fmt.Errorf("read layer media type for %q: %s", redactedRef, redactOCIRefError(err, reference))
 			}
 			if got != want {
 				continue
 			}
 			rc, err := layer.Uncompressed()
 			if err != nil {
-				return nil, fmt.Errorf("uncompress %s layer for %q: %w", want, reference, err)
+				return nil, fmt.Errorf("uncompress %s layer for %q: %s", want, redactedRef, redactOCIRefError(err, reference))
 			}
 			return rc, nil
 		}
 	}
 
-	return nil, fmt.Errorf("OCI image %q has no layer with media type %s", reference, formatMediaTypes(mediaTypes))
+	return nil, fmt.Errorf("OCI image %q has no layer with media type %s", redactedRef, formatMediaTypes(mediaTypes))
 }
 
 func formatMediaTypes(mediaTypes []types.MediaType) string {

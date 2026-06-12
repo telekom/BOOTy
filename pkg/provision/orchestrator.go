@@ -625,7 +625,7 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 	// Partition-by-partition mode: wipe first to ensure a clean slate on any
 	// retry attempt, then download and copy each partition individually.
 	if strings.EqualFold(o.cfg.Provision.Image.Mode, "partition") {
-		o.log.Info("Streaming image partition-by-partition", "url", bestURL, "disk", o.targetDisk)
+		o.log.Info("Streaming image partition-by-partition", "url", image.RedactURL(bestURL), "disk", o.targetDisk)
 		if err := o.disk.WipeDisk(ctx, o.targetDisk); err != nil {
 			return fmt.Errorf("wiping disk before partition stream: %w", err)
 		}
@@ -645,7 +645,7 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 	}
 
 	// Default whole-disk mode.
-	o.log.Info("Streaming image", "url", bestURL, "disk", o.targetDisk)
+	o.log.Info("Streaming image", "url", image.RedactURL(bestURL), "disk", o.targetDisk)
 	if err := image.Stream(ctx, bestURL, o.targetDisk, opts...); err != nil {
 		return classifyImageStreamError(bestURL, err)
 	}
@@ -656,7 +656,7 @@ func classifyImageStreamError(imageURL string, err error) error {
 	if err == nil {
 		return nil
 	}
-	wrapped := fmt.Errorf("streaming %s: %w", imageURL, err)
+	wrapped := fmt.Errorf("streaming %s: %s", image.RedactURL(imageURL), image.RedactSourceError(err, imageURL))
 	if strings.Contains(strings.ToLower(err.Error()), "checksum mismatch") {
 		return &PermanentError{Err: wrapped}
 	}
@@ -678,7 +678,7 @@ func (o *Orchestrator) streamABImage(ctx context.Context, bestURL string, opts [
 	}
 
 	targets := o.abStreamTargets()
-	o.log.Info("Streaming image into A/B target slot", "url", bestURL, "disk", targets.Disk, "root", targets.RootPartition, "boot", targets.BootPartition)
+	o.log.Info("Streaming image into A/B target slot", "url", image.RedactURL(bestURL), "disk", targets.Disk, "root", targets.RootPartition, "boot", targets.BootPartition)
 	if err := image.StreamAB(ctx, bestURL, targets, opts...); err != nil {
 		return classifyImageStreamError(bestURL, err)
 	}
