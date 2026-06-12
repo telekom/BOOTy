@@ -45,7 +45,7 @@ func ConvertQCOW2(ctx context.Context, url, device string, opts ...StreamOpts) e
 // ramdisk, converts it to raw, and streams the result to the target device.
 func ConvertQCOW2FromReader(ctx context.Context, src io.Reader, sourceName, device string, opts ...StreamOpts) error {
 	slog.Info("qcow2 image detected, writing to ramdisk for conversion",
-		"source", filepath.Base(sourceName), "device", device)
+		"source", redactQCOW2SourceForLog(sourceName), "device", device)
 	var opt StreamOpts
 	if len(opts) > 0 {
 		opt = opts[0]
@@ -75,6 +75,10 @@ func ConvertQCOW2FromReader(ctx context.Context, src io.Reader, sourceName, devi
 	}
 
 	return nil
+}
+
+func redactQCOW2SourceForLog(sourceName string) string {
+	return RedactURL(sourceName)
 }
 
 // setupRamdisk creates and mounts a tmpfs at ramdiskPath.
