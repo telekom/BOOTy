@@ -3,13 +3,11 @@
 package e2e
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func dockerAvailable(t *testing.T) {
@@ -73,13 +71,12 @@ func buildTargetWithDockerBuild(t *testing.T, target, dest, dockerfile, repoRoot
 	if name == "" {
 		name = "default"
 	}
-	imageTag := fmt.Sprintf("booty-e2e-%s-%d", strings.NewReplacer("/", "-", ":", "-").Replace(name), time.Now().UnixNano())
 
 	args := []string{"build", "--platform", "linux/amd64"}
 	if target != "" {
 		args = append(args, "--target", target)
 	}
-	args = append(args, "-t", imageTag, "-f", dockerfile, repoRoot)
+	args = append(args, "--output", "type=local,dest="+dest, "-f", dockerfile, repoRoot)
 
 	cmd := exec.Command("docker", args...)
 	cmd.Env = append(os.Environ(), "DOCKER_BUILDKIT=1")
@@ -88,26 +85,8 @@ func buildTargetWithDockerBuild(t *testing.T, target, dest, dockerfile, repoRoot
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("docker build --target %s failed: %v", name, err)
 	}
-	t.Cleanup(func() {
-		_ = exec.Command("docker", "rmi", "-f", imageTag).Run()
-	})
-
-	containerIDBytes, err := exec.Command("docker", "create", imageTag, "/bin/true").Output()
-	if err != nil {
-		t.Fatalf("docker create %s failed: %v", imageTag, err)
-	}
-	containerID := strings.TrimSpace(string(containerIDBytes))
-	t.Cleanup(func() {
-		_ = exec.Command("docker", "rm", "-f", containerID).Run()
-	})
 
 	out := filepath.Join(dest, targetArtifactName(target))
-	cp := exec.Command("docker", "cp", containerID+":"+containerArtifactPath(target), out)
-	cp.Stdout = os.Stdout
-	cp.Stderr = os.Stderr
-	if err := cp.Run(); err != nil {
-		t.Fatalf("docker cp %s artifact failed: %v", name, err)
-	}
 	if _, err := os.Stat(out); err != nil {
 		t.Fatalf("expected output %s not found: %v", out, err)
 	}
@@ -127,16 +106,82 @@ func targetArtifactName(target string) string {
 	}
 }
 
-func containerArtifactPath(target string) string {
-	switch target {
-	case "micro":
-		return "/initramfs.cpio.gz"
-	case "iso":
-		return "/booty.iso"
-	case "gobgp-iso":
-		return "/booty-gobgp.iso"
-	default:
-		return "/initramfs.cpio.zst"
+func TestBuildTargetWithDockerBuildUsesBuildKitLocalOutput(t *testing.T) {
+	fakeBin := t.TempDir()
+	argsLog := filepath.Join(t.TempDir(), "docker-args.log")
+	dockerPath := filepath.Join(fakeBin, "docker")
+	script := `#!/bin/sh
+set -eu
+printf '%s\n' "$@" > "$BOOTY_DOCKER_ARGS_LOG"
+if [ "$1" != "build" ]; then
+  echo "unexpected docker command: $1" >&2
+  exit 42
+fi
+shift
+dest=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output)
+      shift
+      dest="${1#type=local,dest=}"
+      ;;
+  esac
+  shift || true
+done
+if [ -z "$dest" ]; then
+  echo "missing build output destination" >&2
+  exit 43
+fi
+mkdir -p "$dest"
+printf fake > "$dest/initramfs.cpio.zst"
+printf fake > "$dest/initramfs.cpio.gz"
+printf fake > "$dest/booty.iso"
+printf fake > "$dest/booty-gobgp.iso"
+`
+	if err := os.WriteFile(dockerPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake docker: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BOOTY_DOCKER_ARGS_LOG", argsLog)
+
+	tmp := t.TempDir()
+	dockerfile := filepath.Join(tmp, "Dockerfile")
+	repoRoot := filepath.Join(tmp, "repo")
+	dest := filepath.Join(tmp, "out")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("create repo root: %v", err)
+	}
+	if err := os.WriteFile(dockerfile, []byte("FROM scratch\n"), 0o644); err != nil {
+		t.Fatalf("write dockerfile: %v", err)
+	}
+
+	out := buildTargetWithDockerBuild(t, "gobgp-iso", dest, dockerfile, repoRoot)
+	if filepath.Base(out) != "booty-gobgp.iso" {
+		t.Fatalf("unexpected output path: %s", out)
+	}
+
+	args, err := os.ReadFile(argsLog)
+	if err != nil {
+		t.Fatalf("read fake docker args: %v", err)
+	}
+	argsText := string(args)
+	for _, want := range []string{
+		"build\n",
+		"--platform\nlinux/amd64\n",
+		"--target\ngobgp-iso\n",
+		"--output\ntype=local,dest=" + dest + "\n",
+	} {
+		if !strings.Contains(argsText, want) {
+			t.Fatalf("docker args missing %q in:\n%s", want, argsText)
+		}
+	}
+	argLines := strings.Split(strings.TrimSpace(argsText), "\n")
+	for _, forbidden := range []string{"create", "cp"} {
+		for _, arg := range argLines {
+			if arg == forbidden {
+				t.Fatalf("fallback must not use docker %s for scratch targets; args:\n%s", forbidden, argsText)
+			}
+		}
 	}
 }
 
