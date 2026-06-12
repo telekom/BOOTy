@@ -70,9 +70,11 @@ provision:
     layers:
       - name: node-tuning
         source: /deploy/sysext/node-tuning.raw
+        sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       - name: debug-tools
         source: /deploy/sysext/debug-tools.raw
         mode: active
+        sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 ```
 
 ## Sources

@@ -345,6 +345,7 @@ go run server/server.go \
 | `SYSEXT_CATALOG_DIR` | `/usr/lib/tcaas-sysext/preloaded` | Target catalog directory for preloaded sysext layers |
 | `SYSEXT_ACTIVE_DIR` | `/var/lib/extensions` | Target directory for active sysext layers |
 | `SYSEXT_LAYERS` | — | JSON array of sysext layer objects |
+| `SYSEXT_ALLOW_INSECURE_HTTP` | `false` | Allow plain HTTP sysext sources on controlled provisioning networks |
 
 #### Network Variables
 

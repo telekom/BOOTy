@@ -72,6 +72,41 @@ func TestVerifyGPGSignature_DownloadFails(t *testing.T) {
 	}
 }
 
+func TestVerifyGPGSignatureRedactsURLsInErrors(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "sig") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte("image-data"))
+	}))
+	defer ts.Close()
+
+	tmpKey := t.TempDir() + "/key.gpg"
+	if err := os.WriteFile(tmpKey, []byte("fake-key"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := VerifyGPGSignature(
+		context.Background(),
+		ts.URL+"/img?image-token=secret#image-fragment",
+		ts.URL+"/sig?signature-token=secret#signature-fragment",
+		tmpKey,
+	)
+	if err == nil {
+		t.Fatal("expected error when signature download fails")
+	}
+	msg := err.Error()
+	for _, sensitive := range []string{"signature-token", "image-token", "secret", "signature-fragment", "image-fragment"} {
+		if strings.Contains(msg, sensitive) {
+			t.Fatalf("error leaked %q: %s", sensitive, msg)
+		}
+	}
+	if !strings.Contains(msg, ts.URL+"/sig") {
+		t.Fatalf("error did not preserve redacted signature URL context: %s", msg)
+	}
+}
+
 func TestRunGPGVerifyStream_WithInvalidBinary(t *testing.T) {
 	// Create a temp dir with a fake gpgv that always fails.
 	tmpDir := t.TempDir()
