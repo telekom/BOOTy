@@ -319,8 +319,19 @@ func validateSysextSourceIntegrity(enabled, allowInsecureHTTP bool, prefix strin
 		if looksLikeHTTPSource(source) {
 			errs = append(errs, fmt.Sprintf("%s.source: invalid HTTP(S) sysext source %s: %s", prefix, imageutil.RedactURL(source), imageutil.RedactSourceError(err, source)))
 		}
-	} else if strings.EqualFold(u.Scheme, "http") && !allowInsecureHTTP {
-		errs = append(errs, fmt.Sprintf("%s.source: plain HTTP sysext sources require provision.sysext.allowInsecureHTTP=true; use HTTPS, OCI, or a local provisioner file for production", prefix))
+	} else {
+		switch strings.ToLower(u.Scheme) {
+		case "":
+			// No scheme means a local provisioner file path, which keeps the
+			// existing offline provisioning behavior.
+		case "https", "oci":
+		case "http":
+			if !allowInsecureHTTP {
+				errs = append(errs, fmt.Sprintf("%s.source: plain HTTP sysext sources require provision.sysext.allowInsecureHTTP=true; use HTTPS, OCI, or a local provisioner file for production", prefix))
+			}
+		default:
+			errs = append(errs, fmt.Sprintf("%s.source: unsupported sysext source scheme %q; use HTTPS, OCI, plain HTTP with provision.sysext.allowInsecureHTTP=true, or a local provisioner file", prefix, u.Scheme))
+		}
 	}
 	if enabled && strings.TrimSpace(layer.SHA256) == "" && !isOCIDigestSource(source) {
 		errs = append(errs, fmt.Sprintf("%s.sha256: required unless source is an OCI digest reference", prefix))
