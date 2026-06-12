@@ -863,9 +863,9 @@ func TestRedactImageURL(t *testing.T) {
 			want: "https://example.com/image.raw",
 		},
 		{
-			name: "invalid URL is unchanged",
+			name: "invalid URL fails closed",
 			in:   "::://bad-url",
-			want: "::://bad-url",
+			want: "[redacted invalid URL]",
 		},
 	}
 

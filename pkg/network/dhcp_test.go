@@ -3,7 +3,9 @@
 package network
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -99,6 +101,36 @@ func TestWaitForHTTP_AuthUnauthorized(t *testing.T) {
 	err := WaitForHTTP(context.Background(), srv.URL, 5*time.Second)
 	if err != nil {
 		t.Fatalf("expected 401 to count as connectivity, got error: %v", err)
+	}
+}
+
+func TestWaitForHTTP_RedactsTargetInLogs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() {
+		slog.SetDefault(previous)
+	})
+
+	target := strings.Replace(srv.URL, "http://", "http://user:secret@", 1) + "/image.raw?token=abc#frag"
+	err := WaitForHTTP(context.Background(), target, 5*time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := logs.String()
+	for _, leaked := range []string{"user", "secret", "token=abc", "frag"} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("logs leaked %q: %s", leaked, got)
+		}
+	}
+	if !strings.Contains(got, "/image.raw") {
+		t.Fatalf("logs = %q, want redacted path context", got)
 	}
 }
 

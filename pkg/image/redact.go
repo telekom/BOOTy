@@ -10,7 +10,7 @@ import (
 func RedactURL(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return rawURL
+		return "[redacted invalid URL]"
 	}
 	u.User = nil
 	u.RawQuery = ""

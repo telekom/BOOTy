@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -26,6 +27,7 @@ func WaitForHTTP(ctx context.Context, target string, timeout time.Duration) erro
 	attempt := 0
 	retryTicker := time.NewTicker(1 * time.Second)
 	defer retryTicker.Stop()
+	logTarget := redactHTTPURLForLog(target)
 
 	for {
 		if err := waitCtx.Err(); err != nil {
@@ -47,11 +49,11 @@ func WaitForHTTP(ctx context.Context, target string, timeout time.Duration) erro
 			// Any HTTP response proves the network path works. The server
 			// may return 401 (auth required) or other non-2xx codes, but
 			// that still means connectivity is established.
-			slog.Info("network connectivity established", "target", target, "status", resp.StatusCode, "attempt", attempt)
+			slog.Info("network connectivity established", "target", logTarget, "status", resp.StatusCode, "attempt", attempt)
 			return nil
 		}
 
-		slog.Debug("connectivity check failed", "target", target, "attempt", attempt, "error", err)
+		slog.Debug("connectivity check failed", "target", logTarget, "attempt", attempt, "error", err)
 
 		select {
 		case <-waitCtx.Done():
@@ -63,4 +65,15 @@ func WaitForHTTP(ctx context.Context, target string, timeout time.Duration) erro
 		case <-retryTicker.C:
 		}
 	}
+}
+
+func redactHTTPURLForLog(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "[redacted invalid URL]"
+	}
+	u.User = nil
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
 }

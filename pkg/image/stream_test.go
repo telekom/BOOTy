@@ -35,6 +35,11 @@ func TestRedactURLRemovesSensitiveParts(t *testing.T) {
 			in:   "https://example.com/image.raw?token=abc#frag",
 			want: "https://example.com/image.raw",
 		},
+		{
+			name: "invalid url fails closed",
+			in:   "https://example.com/%zz?token=secret",
+			want: "[redacted invalid URL]",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
