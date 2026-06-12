@@ -464,7 +464,7 @@ func openSysextSource(ctx context.Context, source string) (io.ReadCloser, error)
 		slog.Info("pulling OCI sysext layer", "ref", redactSysextOCILogRef(ref))
 		rc, err := imageutil.FetchOCILayerByMediaTypeWithRetry(ctx, ref, imageutil.SystemdSysextMediaType)
 		if err != nil {
-			return nil, fmt.Errorf("fetch OCI sysext %s: %s", redactSysextOCILogRef(ref), redactSysextSourceError(err, source))
+			return nil, fmt.Errorf("fetch OCI sysext %s: %w", redactSysextOCILogRef(ref), redactedSysextSourceError(err, source))
 		}
 		return rc, nil
 	}
@@ -472,11 +472,11 @@ func openSysextSource(ctx context.Context, source string) (io.ReadCloser, error)
 	if err == nil && (u.Scheme == "http" || u.Scheme == "https") {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, http.NoBody)
 		if err != nil {
-			return nil, fmt.Errorf("create sysext request %s: %s", redactImageURL(source), redactSysextSourceError(err, source))
+			return nil, fmt.Errorf("create sysext request %s: %w", redactImageURL(source), redactedSysextSourceError(err, source))
 		}
 		resp, err := sysextHTTPClient.Do(req) //nolint:gosec // configured sysext source URL
 		if err != nil {
-			return nil, fmt.Errorf("fetch sysext %s: %s", redactImageURL(source), redactSysextSourceError(err, source))
+			return nil, fmt.Errorf("fetch sysext %s: %w", redactImageURL(source), redactedSysextSourceError(err, source))
 		}
 		if resp.StatusCode != http.StatusOK {
 			_ = resp.Body.Close()
@@ -509,6 +509,26 @@ func redactSysextSourceError(err error, source string) string {
 		msg = strings.ReplaceAll(msg, ref, imageutil.RedactOCIRef(ref))
 	}
 	return msg
+}
+
+type redactedSysextSourceErr struct {
+	err    error
+	source string
+}
+
+func redactedSysextSourceError(err error, source string) error {
+	if err == nil {
+		return nil
+	}
+	return &redactedSysextSourceErr{err: err, source: source}
+}
+
+func (e *redactedSysextSourceErr) Error() string {
+	return redactSysextSourceError(e.err, e.source)
+}
+
+func (e *redactedSysextSourceErr) Unwrap() error {
+	return e.err
 }
 
 func writeAndHash(ctx context.Context, src io.Reader, dst io.Writer) (string, error) {

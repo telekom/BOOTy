@@ -399,3 +399,32 @@ func TestValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateSysextMalformedHTTPSourceRedactsSensitiveURLParts(t *testing.T) {
+	cfg := Config{
+		Provision: ProvisionConfig{
+			Sysext: SysextConfig{
+				Enabled:           true,
+				AllowInsecureHTTP: true,
+				Layers: []SysextLayerConfig{{
+					Name:   "debug",
+					Source: "https://robot:secret@example.invalid/%zz?token=abc#frag",
+					SHA256: strings.Repeat("a", 64),
+				}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	for _, sensitive := range []string{"robot", "secret", "token=abc", "#frag"} {
+		if strings.Contains(err.Error(), sensitive) {
+			t.Fatalf("validation error leaked %q: %q", sensitive, err.Error())
+		}
+	}
+	if !strings.Contains(err.Error(), "[redacted invalid URL]") {
+		t.Fatalf("validation error = %q, want redacted invalid URL context", err.Error())
+	}
+}

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+
+	imageutil "github.com/telekom/BOOTy/pkg/image"
 )
 
 // Validate checks that all enum-like config fields contain known values and
@@ -315,7 +317,7 @@ func validateSysextSourceIntegrity(enabled, allowInsecureHTTP bool, prefix strin
 	u, err := url.Parse(source)
 	if err != nil {
 		if looksLikeHTTPSource(source) {
-			errs = append(errs, fmt.Sprintf("%s.source: invalid HTTP(S) sysext source: %v", prefix, err))
+			errs = append(errs, fmt.Sprintf("%s.source: invalid HTTP(S) sysext source %s: %s", prefix, imageutil.RedactURL(source), imageutil.RedactSourceError(err, source)))
 		}
 	} else if strings.EqualFold(u.Scheme, "http") && !allowInsecureHTTP {
 		errs = append(errs, fmt.Sprintf("%s.source: plain HTTP sysext sources require provision.sysext.allowInsecureHTTP=true; use HTTPS, OCI, or a local provisioner file for production", prefix))

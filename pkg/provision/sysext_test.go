@@ -520,6 +520,40 @@ func TestOpenSysextSourceHTTPStatusErrorRedactsSensitiveURLParts(t *testing.T) {
 	}
 }
 
+func TestOpenSysextSourceHTTPFetchErrorRedactsAndPreservesCause(t *testing.T) {
+	cause := errors.New("sentinel transport")
+	source := "https://robot:secret@example.invalid/layer.raw?token=abc#frag"
+	oldClient := sysextHTTPClient
+	sysextHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			return nil, &url.Error{Op: "Get", URL: source, Err: cause}
+		}),
+	}
+	t.Cleanup(func() { sysextHTTPClient = oldClient })
+
+	_, err := openSysextSource(context.Background(), source)
+	if err == nil {
+		t.Fatal("expected fetch error")
+	}
+	if !errors.Is(err, cause) {
+		t.Fatalf("errors.Is(err, cause) = false; err=%v", err)
+	}
+	for _, sensitive := range []string{"robot", "secret", "token=abc", "#frag"} {
+		if strings.Contains(err.Error(), sensitive) {
+			t.Fatalf("error leaked %q: %q", sensitive, err.Error())
+		}
+	}
+	if !strings.Contains(err.Error(), "https://example.invalid/layer.raw") {
+		t.Fatalf("error = %q, want redacted source context", err.Error())
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
 func writeSysextSource(t *testing.T, content string) (string, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "layer.raw")
