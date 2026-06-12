@@ -257,6 +257,20 @@ func TestStreamChecksumInfersTypeAndStripsPrefix(t *testing.T) {
 	}
 }
 
+func TestNormalizeChecksumOptRejectsEmptyPrefixedDigest(t *testing.T) {
+	for _, checksum := range []string{"sha256:", "sha512:"} {
+		t.Run(checksum, func(t *testing.T) {
+			_, err := normalizeChecksumOpt(StreamOpts{Checksum: checksum})
+			if err == nil {
+				t.Fatal("expected empty digest error")
+			}
+			if !strings.Contains(err.Error(), "requires a non-empty digest") {
+				t.Fatalf("error = %q, want non-empty digest message", err.Error())
+			}
+		})
+	}
+}
+
 func TestStreamChecksumMismatch(t *testing.T) {
 	data := []byte("data for checksum mismatch test")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

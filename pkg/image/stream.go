@@ -226,6 +226,9 @@ func normalizeChecksumOpt(opt StreamOpts) (StreamOpts, error) {
 			}
 			opt.ChecksumType = alg
 			opt.Checksum = strings.TrimPrefix(opt.Checksum, prefix)
+			if opt.Checksum == "" {
+				return opt, fmt.Errorf("checksum prefix %s requires a non-empty digest", alg)
+			}
 			break
 		}
 	}
