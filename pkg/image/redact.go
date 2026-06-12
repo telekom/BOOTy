@@ -57,7 +57,7 @@ func (e *redactedSourceError) Unwrap() error {
 func sourceRedactionCandidates(rawSource string) []string {
 	u, err := url.Parse(rawSource)
 	if err != nil {
-		return []string{rawSource}
+		return invalidSourceRedactionCandidates(rawSource)
 	}
 
 	var candidates []string
@@ -84,6 +84,14 @@ func sourceRedactionCandidates(rawSource string) []string {
 
 	addSourceCredentialRedactionCandidates(add, u, &withoutFragment)
 
+	return candidates
+}
+
+func invalidSourceRedactionCandidates(rawSource string) []string {
+	candidates := []string{rawSource}
+	if withoutFragment, _, ok := strings.Cut(rawSource, "#"); ok && withoutFragment != "" {
+		candidates = append(candidates, withoutFragment)
+	}
 	return candidates
 }
 

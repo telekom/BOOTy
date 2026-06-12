@@ -372,10 +372,11 @@ func (noopNetworkMode) Teardown(context.Context) error { return nil }
 // It returns the active network mode so callers can tear down the latest instance.
 func ensureNetworkConnectivity(ctx context.Context, cfg *config.MachineConfig, netMode network.Mode, target string) (network.Mode, error) {
 	const maxRetries = 3
+	logTarget := network.RedactHTTPURLForLog(target)
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		slog.Info("waiting for network connectivity", "target", target, "attempt", attempt)
+		slog.Info("waiting for network connectivity", "target", logTarget, "attempt", attempt)
 		if err := netMode.WaitForConnectivity(ctx, target, 5*time.Minute); err == nil {
-			slog.Info("network connectivity established", "target", target)
+			slog.Info("network connectivity established", "target", logTarget)
 			return netMode, nil
 		}
 		slog.Error("network connectivity timeout", "attempt", attempt)

@@ -28,7 +28,7 @@ func WaitForHTTP(ctx context.Context, target string, timeout time.Duration) erro
 	attempt := 0
 	retryTicker := time.NewTicker(1 * time.Second)
 	defer retryTicker.Stop()
-	logTarget := redactHTTPURLForLog(target)
+	logTarget := RedactHTTPURLForLog(target)
 
 	for {
 		if err := waitCtx.Err(); err != nil {
@@ -41,7 +41,7 @@ func WaitForHTTP(ctx context.Context, target string, timeout time.Duration) erro
 		attempt++
 		req, err := http.NewRequestWithContext(waitCtx, http.MethodHead, target, http.NoBody)
 		if err != nil {
-			return fmt.Errorf("create request: %w", err)
+			return fmt.Errorf("create request for %s: %w", logTarget, &redactedHTTPError{rawURL: target, err: err})
 		}
 
 		resp, err := client.Do(req) //nolint:gosec // target is from trusted config
@@ -68,7 +68,9 @@ func WaitForHTTP(ctx context.Context, target string, timeout time.Duration) erro
 	}
 }
 
-func redactHTTPURLForLog(rawURL string) string {
+// RedactHTTPURLForLog strips credentials, query parameters, and fragments from
+// HTTP connectivity target URLs before they are written to logs.
+func RedactHTTPURLForLog(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return "[redacted invalid URL]"
@@ -84,17 +86,30 @@ func redactHTTPErrorForLog(err error, rawURL string) string {
 		return ""
 	}
 	msg := err.Error()
-	redacted := redactHTTPURLForLog(rawURL)
+	redacted := RedactHTTPURLForLog(rawURL)
 	for _, candidate := range httpURLRedactionCandidates(rawURL) {
 		msg = strings.ReplaceAll(msg, candidate, redacted)
 	}
 	return msg
 }
 
+type redactedHTTPError struct {
+	rawURL string
+	err    error
+}
+
+func (e *redactedHTTPError) Error() string {
+	return redactHTTPErrorForLog(e.err, e.rawURL)
+}
+
+func (e *redactedHTTPError) Unwrap() error {
+	return e.err
+}
+
 func httpURLRedactionCandidates(rawURL string) []string {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return []string{rawURL}
+		return invalidHTTPURLRedactionCandidates(rawURL)
 	}
 
 	var candidates []string
@@ -121,6 +136,14 @@ func httpURLRedactionCandidates(rawURL string) []string {
 
 	addHTTPCredentialRedactionCandidates(add, u, &withoutFragment)
 
+	return candidates
+}
+
+func invalidHTTPURLRedactionCandidates(rawURL string) []string {
+	candidates := []string{rawURL}
+	if withoutFragment, _, ok := strings.Cut(rawURL, "#"); ok && withoutFragment != "" {
+		candidates = append(candidates, withoutFragment)
+	}
 	return candidates
 }
 
