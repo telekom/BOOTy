@@ -95,13 +95,17 @@ func (s *Stack) WaitForConnectivity(ctx context.Context, target string, timeout 
 	}
 
 	if target != "" {
-		s.log.Info("BGP established, polling target URL", "target", target)
+		s.logPollingTarget(target)
 		if err := network.WaitForHTTP(ctx, target, timeout); err != nil {
 			return fmt.Errorf("target connectivity: %w", err)
 		}
 	}
 
 	return nil
+}
+
+func (s *Stack) logPollingTarget(target string) {
+	s.log.Info("BGP established, polling target URL", "target", network.RedactHTTPURLForLog(target))
 }
 
 // installGatewayRoute adds a /32 kernel route to the gateway VTEP via a
