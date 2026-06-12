@@ -328,9 +328,9 @@ func FetchOCILayerWithRetry(ctx context.Context, ref string) (io.ReadCloser, err
 		if err == nil {
 			return rc, nil
 		}
-		errMsg := redactOCIRefError(err, ref)
-		lastErr = fmt.Errorf("OCI pull %s (attempt %d/%d): %s", redactedRef, attempt+1, maxRetries, errMsg)
-		slog.Warn("OCI pull failed, retrying", "attempt", attempt+1, "ref", redactedRef, "error", errMsg, "backoff", backoff)
+		redactedErr := wrapRedactedOCIRefError(err, ref)
+		lastErr = fmt.Errorf("OCI pull %s (attempt %d/%d): %w", redactedRef, attempt+1, maxRetries, redactedErr)
+		slog.Warn("OCI pull failed, retrying", "attempt", attempt+1, "ref", redactedRef, "error", redactedErr, "backoff", backoff)
 		if attempt < maxRetries-1 {
 			select {
 			case <-ctx.Done():
@@ -356,9 +356,9 @@ func FetchOCILayerByMediaTypeWithRetry(ctx context.Context, ref string, mediaTyp
 		if err == nil {
 			return rc, nil
 		}
-		errMsg := redactOCIRefError(err, ref)
-		lastErr = fmt.Errorf("OCI pull %s (attempt %d/%d): %s", redactedRef, attempt+1, maxRetries, errMsg)
-		slog.Warn("OCI pull failed, retrying", "attempt", attempt+1, "ref", redactedRef, "error", errMsg, "backoff", backoff)
+		redactedErr := wrapRedactedOCIRefError(err, ref)
+		lastErr = fmt.Errorf("OCI pull %s (attempt %d/%d): %w", redactedRef, attempt+1, maxRetries, redactedErr)
+		slog.Warn("OCI pull failed, retrying", "attempt", attempt+1, "ref", redactedRef, "error", redactedErr, "backoff", backoff)
 		if attempt < maxRetries-1 {
 			select {
 			case <-ctx.Done():

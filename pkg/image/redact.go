@@ -127,3 +127,23 @@ func redactOCIRefError(err error, ref string) string {
 	msg = strings.ReplaceAll(msg, "oci://"+ref, "oci://"+redactedRef)
 	return msg
 }
+
+type redactedOCIRefError struct {
+	ref string
+	err error
+}
+
+func (e *redactedOCIRefError) Error() string {
+	return redactOCIRefError(e.err, e.ref)
+}
+
+func (e *redactedOCIRefError) Unwrap() error {
+	return e.err
+}
+
+func wrapRedactedOCIRefError(err error, ref string) error {
+	if err == nil {
+		return nil
+	}
+	return &redactedOCIRefError{ref: ref, err: err}
+}

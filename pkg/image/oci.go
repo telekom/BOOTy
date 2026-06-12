@@ -24,17 +24,17 @@ func FetchOCILayer(ctx context.Context, reference string) (io.ReadCloser, error)
 	redactedRef := RedactOCIRef(reference)
 	ref, err := name.ParseReference(reference)
 	if err != nil {
-		return nil, fmt.Errorf("parse OCI reference %q: %s", redactedRef, redactOCIRefError(err, reference))
+		return nil, fmt.Errorf("parse OCI reference %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
 	}
 
 	img, err := remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx))
 	if err != nil {
-		return nil, fmt.Errorf("pull OCI image %q: %s", redactedRef, redactOCIRefError(err, reference))
+		return nil, fmt.Errorf("pull OCI image %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
 	}
 
 	layers, err := img.Layers()
 	if err != nil {
-		return nil, fmt.Errorf("get layers for %q: %s", redactedRef, redactOCIRefError(err, reference))
+		return nil, fmt.Errorf("get layers for %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
 	}
 	if len(layers) == 0 {
 		return nil, fmt.Errorf("OCI image %q has no layers", redactedRef)
@@ -44,7 +44,7 @@ func FetchOCILayer(ctx context.Context, reference string) (io.ReadCloser, error)
 	layer := layers[len(layers)-1]
 	rc, err := layer.Uncompressed()
 	if err != nil {
-		return nil, fmt.Errorf("uncompress layer for %q: %s", redactedRef, redactOCIRefError(err, reference))
+		return nil, fmt.Errorf("uncompress layer for %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
 	}
 	return rc, nil
 }
@@ -59,17 +59,17 @@ func FetchOCILayerByMediaType(ctx context.Context, reference string, mediaTypes 
 	redactedRef := RedactOCIRef(reference)
 	ref, err := name.ParseReference(reference)
 	if err != nil {
-		return nil, fmt.Errorf("parse OCI reference %q: %s", redactedRef, redactOCIRefError(err, reference))
+		return nil, fmt.Errorf("parse OCI reference %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
 	}
 
 	img, err := remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx))
 	if err != nil {
-		return nil, fmt.Errorf("pull OCI image %q: %s", redactedRef, redactOCIRefError(err, reference))
+		return nil, fmt.Errorf("pull OCI image %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
 	}
 
 	layers, err := img.Layers()
 	if err != nil {
-		return nil, fmt.Errorf("get layers for %q: %s", redactedRef, redactOCIRefError(err, reference))
+		return nil, fmt.Errorf("get layers for %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
 	}
 	if len(layers) == 0 {
 		return nil, fmt.Errorf("OCI image %q has no layers", redactedRef)
@@ -79,14 +79,14 @@ func FetchOCILayerByMediaType(ctx context.Context, reference string, mediaTypes 
 		for _, layer := range layers {
 			got, err := layer.MediaType()
 			if err != nil {
-				return nil, fmt.Errorf("read layer media type for %q: %s", redactedRef, redactOCIRefError(err, reference))
+				return nil, fmt.Errorf("read layer media type for %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
 			}
 			if got != want {
 				continue
 			}
 			rc, err := layer.Uncompressed()
 			if err != nil {
-				return nil, fmt.Errorf("uncompress %s layer for %q: %s", want, redactedRef, redactOCIRefError(err, reference))
+				return nil, fmt.Errorf("uncompress %s layer for %q: %w", want, redactedRef, wrapRedactedOCIRefError(err, reference))
 			}
 			return rc, nil
 		}

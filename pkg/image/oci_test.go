@@ -2,6 +2,7 @@ package image
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http/httptest"
@@ -182,12 +183,45 @@ func TestFetchOCILayerByMediaTypeWithRetryRedactsSensitiveRefParts(t *testing.T)
 	if err == nil {
 		t.Fatal("expected OCI pull error")
 	}
-	if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "token=abc") {
-		t.Fatalf("error leaked sensitive OCI ref parts: %q", err.Error())
+	for _, leaked := range []string{"user", "secret", "token=abc"} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("error leaked sensitive OCI ref part %q: %q", leaked, err.Error())
+		}
 	}
 	if !strings.Contains(err.Error(), "registry.example.invalid/repo/sysext:dev") {
 		t.Fatalf("error = %q, want redacted ref context", err.Error())
 	}
+}
+
+func TestRedactedOCIRefErrorPreservesUnwrapAndRedacts(t *testing.T) {
+	sentinel := errors.New("temporary OCI failure")
+	ref := "user:secret@registry.example.invalid/repo/sysext:dev?token=abc"
+	err := fmt.Errorf("OCI pull %s: %w", RedactOCIRef(ref), wrapRedactedOCIRefError(&ociRefTestError{ref: ref, err: sentinel}, ref))
+
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("error does not preserve wrapped OCI error: %v", err)
+	}
+	for _, leaked := range []string{"user", "secret", "token=abc"} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("error leaked sensitive OCI ref part %q: %q", leaked, err.Error())
+		}
+	}
+	if !strings.Contains(err.Error(), "registry.example.invalid/repo/sysext:dev") {
+		t.Fatalf("error = %q, want redacted ref context", err.Error())
+	}
+}
+
+type ociRefTestError struct {
+	ref string
+	err error
+}
+
+func (e *ociRefTestError) Error() string {
+	return "failed pulling oci://" + e.ref + ": " + e.err.Error()
+}
+
+func (e *ociRefTestError) Unwrap() error {
+	return e.err
 }
 
 func TestFetchOCILayerNoLayers(t *testing.T) {
