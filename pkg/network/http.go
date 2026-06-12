@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -53,7 +54,7 @@ func WaitForHTTP(ctx context.Context, target string, timeout time.Duration) erro
 			return nil
 		}
 
-		slog.Debug("connectivity check failed", "target", logTarget, "attempt", attempt, "error", err)
+		slog.Debug("connectivity check failed", "target", logTarget, "attempt", attempt, "error", redactHTTPErrorForLog(err, target))
 
 		select {
 		case <-waitCtx.Done():
@@ -76,4 +77,71 @@ func redactHTTPURLForLog(rawURL string) string {
 	u.RawQuery = ""
 	u.Fragment = ""
 	return u.String()
+}
+
+func redactHTTPErrorForLog(err error, rawURL string) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	redacted := redactHTTPURLForLog(rawURL)
+	for _, candidate := range httpURLRedactionCandidates(rawURL) {
+		msg = strings.ReplaceAll(msg, candidate, redacted)
+	}
+	return msg
+}
+
+func httpURLRedactionCandidates(rawURL string) []string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return []string{rawURL}
+	}
+
+	var candidates []string
+	add := func(value string) {
+		if value == "" {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == value {
+				return
+			}
+		}
+		candidates = append(candidates, value)
+	}
+
+	add(rawURL)
+	add(u.String())
+	add(u.Redacted())
+
+	withoutFragment := *u
+	withoutFragment.Fragment = ""
+	add(withoutFragment.String())
+	add(withoutFragment.Redacted())
+
+	if u.User != nil {
+		username := u.User.Username()
+		if password, ok := u.User.Password(); ok {
+			userInfo := u.User.String()
+			if userInfo != "" {
+				add(strings.Replace(u.String(), userInfo+"@", username+":***@", 1))
+				add(strings.Replace(withoutFragment.String(), userInfo+"@", username+":***@", 1))
+			}
+			if password != "" {
+				add(strings.Replace(u.String(), ":"+password+"@", ":***@", 1))
+				add(strings.Replace(withoutFragment.String(), ":"+password+"@", ":***@", 1))
+			}
+			for _, placeholder := range []string{"xxxxx", "***"} {
+				redactedPassword := *u
+				redactedPassword.User = url.UserPassword(username, placeholder)
+				add(redactedPassword.String())
+
+				withoutFragment := redactedPassword
+				withoutFragment.Fragment = ""
+				add(withoutFragment.String())
+			}
+		}
+	}
+
+	return candidates
 }

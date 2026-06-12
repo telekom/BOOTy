@@ -34,7 +34,79 @@ func RedactSourceError(err error, rawSource string) string {
 	if rawSource == "" {
 		return msg
 	}
-	return strings.ReplaceAll(msg, rawSource, RedactURL(rawSource))
+	redacted := RedactURL(rawSource)
+	for _, candidate := range sourceRedactionCandidates(rawSource) {
+		msg = strings.ReplaceAll(msg, candidate, redacted)
+	}
+	return msg
+}
+
+type redactedSourceError struct {
+	rawSource string
+	err       error
+}
+
+func (e *redactedSourceError) Error() string {
+	return RedactSourceError(e.err, e.rawSource)
+}
+
+func (e *redactedSourceError) Unwrap() error {
+	return e.err
+}
+
+func sourceRedactionCandidates(rawSource string) []string {
+	u, err := url.Parse(rawSource)
+	if err != nil {
+		return []string{rawSource}
+	}
+
+	var candidates []string
+	add := func(value string) {
+		if value == "" {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == value {
+				return
+			}
+		}
+		candidates = append(candidates, value)
+	}
+
+	add(rawSource)
+	add(u.String())
+	add(u.Redacted())
+
+	withoutFragment := *u
+	withoutFragment.Fragment = ""
+	add(withoutFragment.String())
+	add(withoutFragment.Redacted())
+
+	if u.User != nil {
+		username := u.User.Username()
+		if password, ok := u.User.Password(); ok {
+			userInfo := u.User.String()
+			if userInfo != "" {
+				add(strings.Replace(u.String(), userInfo+"@", username+":***@", 1))
+				add(strings.Replace(withoutFragment.String(), userInfo+"@", username+":***@", 1))
+			}
+			if password != "" {
+				add(strings.Replace(u.String(), ":"+password+"@", ":***@", 1))
+				add(strings.Replace(withoutFragment.String(), ":"+password+"@", ":***@", 1))
+			}
+			for _, placeholder := range []string{"xxxxx", "***"} {
+				redactedPassword := *u
+				redactedPassword.User = url.UserPassword(username, placeholder)
+				add(redactedPassword.String())
+
+				withoutFragment := redactedPassword
+				withoutFragment.Fragment = ""
+				add(withoutFragment.String())
+			}
+		}
+	}
+
+	return candidates
 }
 
 func redactOCIRefError(err error, ref string) string {

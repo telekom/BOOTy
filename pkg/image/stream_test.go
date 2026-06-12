@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,12 @@ import (
 	"github.com/pierrec/lz4/v4"
 	"github.com/ulikunitz/xz"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func TestRedactURLRemovesSensitiveParts(t *testing.T) {
 	tests := []struct {
@@ -481,6 +488,49 @@ func TestHTTPGetWithRetryErrorRedactsSensitiveURLParts(t *testing.T) {
 	if !strings.Contains(err.Error(), srv.URL+"/image.img") {
 		t.Fatalf("error = %q, want redacted URL context", err.Error())
 	}
+}
+
+func TestHTTPGetWithRetryRedactsErrorAndPreservesUnwrap(t *testing.T) {
+	retryBackoffBase = 0
+	t.Cleanup(func() { retryBackoffBase = time.Second })
+
+	previousClient := imageHTTPClient
+	t.Cleanup(func() { imageHTTPClient = previousClient })
+
+	sentinel := errors.New("temporary transport failure")
+	imageHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return nil, &sourceURLTestError{source: req.URL.String(), err: sentinel}
+	})}
+
+	source := "https://leaky-user:super-secret@example.com/image.raw?token=abc#frag"
+	_, err := httpGetWithRetry(context.Background(), source)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("error does not preserve wrapped transport error: %v", err)
+	}
+	for _, leaked := range []string{"leaky-user", "super-secret", "token=abc", "frag"} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("error leaked %q: %s", leaked, err.Error())
+		}
+	}
+	if !strings.Contains(err.Error(), "https://example.com/image.raw") {
+		t.Fatalf("error = %q, want redacted URL context", err.Error())
+	}
+}
+
+type sourceURLTestError struct {
+	source string
+	err    error
+}
+
+func (e *sourceURLTestError) Error() string {
+	return "request to " + e.source + ": " + e.err.Error()
+}
+
+func (e *sourceURLTestError) Unwrap() error {
+	return e.err
 }
 
 func TestStreamQCOW2Detection(t *testing.T) {

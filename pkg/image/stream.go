@@ -270,14 +270,14 @@ func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 		if err != nil {
-			return nil, fmt.Errorf("creating request for %s: %s", redactedURL, RedactSourceError(err, url))
+			return nil, fmt.Errorf("creating request for %s: %w", redactedURL, &redactedSourceError{rawSource: url, err: err})
 		}
 
 		resp, err := imageHTTPClient.Do(req) //nolint:gosec // URL from trusted config
 		if err != nil {
-			errMsg := RedactSourceError(err, url)
-			lastErr = fmt.Errorf("fetching image %s (attempt %d/%d): %s", redactedURL, attempt+1, maxRetries, errMsg)
-			slog.Warn("HTTP request failed, retrying", "attempt", attempt+1, "error", errMsg, "backoff", backoff)
+			redactedErr := &redactedSourceError{rawSource: url, err: err}
+			lastErr = fmt.Errorf("fetching image %s (attempt %d/%d): %w", redactedURL, attempt+1, maxRetries, redactedErr)
+			slog.Warn("HTTP request failed, retrying", "attempt", attempt+1, "error", redactedErr, "backoff", backoff)
 			if attempt < maxRetries-1 {
 				select {
 				case <-ctx.Done():
