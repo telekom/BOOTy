@@ -14,7 +14,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -50,7 +49,7 @@ type StreamOpts struct {
 // lz4, xz, bzip2). qcow2 images are detected and converted via ramdisk.
 // Optional checksum validation is performed after write.
 func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
-	slog.Info("streaming image", "url", filepath.Base(url), "device", device) //nolint:gosec // trusted config values
+	slog.Info("streaming image", "url", RedactURL(url), "device", device) //nolint:gosec // trusted config values
 
 	var opt StreamOpts
 	if len(opts) > 0 {

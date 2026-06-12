@@ -653,10 +653,11 @@ func (c *Client) postJSONWithAuth(ctx context.Context, url string, data []byte) 
 
 func (c *Client) withRetry(ctx context.Context, url string, fn func() error) error {
 	var lastErr error
+	redacted := redactedURL(url)
 	for attempt := range 3 {
 		if attempt > 0 {
 			backoff := time.Duration(1<<(attempt-1)) * time.Second
-			c.log.Info("retrying request", "url", url, "attempt", attempt+1, "backoff", backoff)
+			c.log.Info("retrying request", "url", redacted, "attempt", attempt+1, "backoff", backoff)
 			select {
 			case <-time.After(backoff):
 			case <-ctx.Done():
@@ -671,9 +672,9 @@ func (c *Client) withRetry(ctx context.Context, url string, fn func() error) err
 		if errors.Is(lastErr, errInsecureTransport) {
 			return lastErr
 		}
-		c.log.Warn("request failed", "url", url, "attempt", attempt+1, "error", lastErr)
+		c.log.Warn("request failed", "url", redacted, "attempt", attempt+1, "error", lastErr)
 	}
-	return fmt.Errorf("request failed after 3 attempts to %s: %w", url, lastErr)
+	return fmt.Errorf("request failed after 3 attempts to %s: %w", redacted, lastErr)
 }
 
 // setAuth attaches the Bearer token only when the request URL uses HTTPS
@@ -686,8 +687,9 @@ func (c *Client) setAuth(req *http.Request) error {
 		return nil
 	}
 	if req.URL != nil && req.URL.Scheme != "https" && !isLoopback(req.URL.Hostname()) && !c.cfg.Transport.Insecure {
-		c.warnInsecureOnce(req.URL.Redacted())
-		return fmt.Errorf("%w: refusing bearer token on non-HTTPS request %s", errInsecureTransport, req.URL.Redacted())
+		redacted := redactedURL(req.URL.String())
+		c.warnInsecureOnce(redacted)
+		return fmt.Errorf("%w: refusing bearer token on non-HTTPS request %s", errInsecureTransport, redacted)
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	return nil
@@ -725,12 +727,13 @@ func (c *Client) requireSecureEndpoint(rawURL, purpose string) error {
 	if u.Scheme == "https" || isLoopback(u.Hostname()) {
 		return nil
 	}
-	redacted := u.Redacted()
+	redacted := redactedURL(rawURL)
 	c.warnInsecureOnce(redacted)
 	return fmt.Errorf("%w: %s requires HTTPS, got %s", errInsecureTransport, purpose, redacted)
 }
 
 func (c *Client) doPost(ctx context.Context, url, body string) error {
+	redacted := redactedURL(url)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url,
 		strings.NewReader(body))
 	if err != nil {
@@ -743,18 +746,19 @@ func (c *Client) doPost(ctx context.Context, url, body string) error {
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
-		return fmt.Errorf("POST %s: %w", url, err)
+		return fmt.Errorf("POST %s: %w", redacted, err)
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("POST %s: status %d", url, resp.StatusCode)
+		return fmt.Errorf("POST %s: status %d", redacted, resp.StatusCode)
 	}
 	return nil
 }
 
 func (c *Client) doPostJSON(ctx context.Context, url string, data []byte) error {
+	redacted := redactedURL(url)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url,
 		bytes.NewReader(data))
 	if err != nil {
@@ -767,13 +771,13 @@ func (c *Client) doPostJSON(ctx context.Context, url string, data []byte) error 
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
-		return fmt.Errorf("POST %s: %w", url, err)
+		return fmt.Errorf("POST %s: %w", redacted, err)
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("POST %s: status %d", url, resp.StatusCode)
+		return fmt.Errorf("POST %s: status %d", redacted, resp.StatusCode)
 	}
 	return nil
 }

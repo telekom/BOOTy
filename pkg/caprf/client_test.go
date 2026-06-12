@@ -1808,3 +1808,93 @@ func TestSetAuth(t *testing.T) {
 		})
 	}
 }
+
+func TestRedactedURLRemovesCredentialsQueryAndFragment(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "credentials query fragment",
+			in:   "https://user:secret@example.com/status?token=abc#frag",
+			want: "https://example.com/status",
+		},
+		{
+			name: "query fragment without credentials",
+			in:   "https://example.com/status?token=abc#frag",
+			want: "https://example.com/status",
+		},
+		{
+			name: "invalid URL",
+			in:   "::://bad-url",
+			want: "<invalid-url>",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := redactedURL(tt.in); got != tt.want {
+				t.Fatalf("redactedURL(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSetAuthErrorRedactsQueryToken(t *testing.T) {
+	c := &Client{
+		log: slog.Default().With("component", "caprf"),
+		cfg: &config.MachineConfig{Transport: config.TransportConfig{Token: "tok"}},
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://10.0.0.1/status?token=abc#frag", http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = c.setAuth(req)
+	if err == nil {
+		t.Fatal("expected insecure transport error")
+	}
+	if strings.Contains(err.Error(), "token=abc") || strings.Contains(err.Error(), "#frag") {
+		t.Fatalf("setAuth error leaked sensitive URL parts: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "http://10.0.0.1/status") {
+		t.Fatalf("setAuth error = %q, want redacted URL context", err.Error())
+	}
+}
+
+func TestWithRetryErrorRedactsQueryToken(t *testing.T) {
+	c := &Client{
+		log: slog.Default().With("component", "caprf"),
+		cfg: &config.MachineConfig{},
+	}
+	err := c.withRetry(context.Background(), "https://example.com/status?token=abc#frag", func() error {
+		return errors.New("boom")
+	})
+	if err == nil {
+		t.Fatal("expected retry error")
+	}
+	if strings.Contains(err.Error(), "token=abc") || strings.Contains(err.Error(), "#frag") {
+		t.Fatalf("retry error leaked sensitive URL parts: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "https://example.com/status") {
+		t.Fatalf("retry error = %q, want redacted URL context", err.Error())
+	}
+}
+
+func TestDoPostErrorRedactsQueryToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	c := NewFromConfig(&config.MachineConfig{})
+	err := c.doPost(context.Background(), srv.URL+"/status?token=abc#frag", "body")
+	if err == nil {
+		t.Fatal("expected POST status error")
+	}
+	if strings.Contains(err.Error(), "token=abc") || strings.Contains(err.Error(), "#frag") {
+		t.Fatalf("POST error leaked sensitive URL parts: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), srv.URL+"/status") {
+		t.Fatalf("POST error = %q, want redacted URL context", err.Error())
+	}
+}

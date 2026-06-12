@@ -854,12 +854,17 @@ func TestRedactURLs(t *testing.T) {
 		{
 			name: "with credentials",
 			urls: []string{"http://user:pass@registry.example.com/image:tag"},
-			want: []string{"http://REDACTED@registry.example.com/image:tag"},
+			want: []string{"http://registry.example.com/image:tag"},
 		},
 		{
 			name: "oci with credentials",
 			urls: []string{"oci://user:pass@registry/repo:v1"},
-			want: []string{"oci://REDACTED@registry/repo:v1"},
+			want: []string{"oci://registry/repo:v1"},
+		},
+		{
+			name: "with query and fragment",
+			urls: []string{"https://registry.example.com/image.raw?token=abc#frag"},
+			want: []string{"https://registry.example.com/image.raw"},
 		},
 		{
 			name: "empty",
@@ -871,10 +876,12 @@ func TestRedactURLs(t *testing.T) {
 			urls: []string{
 				"http://example.com/plain.gz",
 				"http://admin:secret@example.com/private.gz",
+				"https://example.com/query.gz?token=abc#frag",
 			},
 			want: []string{
 				"http://example.com/plain.gz",
-				"http://REDACTED@example.com/private.gz",
+				"http://example.com/private.gz",
+				"https://example.com/query.gz",
 			},
 		},
 	}

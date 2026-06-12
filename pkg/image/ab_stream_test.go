@@ -262,6 +262,19 @@ func TestCopyReaderFailsOnShortWrite(t *testing.T) {
 	}
 }
 
+func TestCopyReaderFailsOnNoProgress(t *testing.T) {
+	written, err := copyReader(context.Background(), io.Discard, stuckReader{})
+	if !errors.Is(err, io.ErrNoProgress) {
+		t.Fatalf("copyReader() error = %v, want io.ErrNoProgress", err)
+	}
+	if err != nil && !strings.Contains(err.Error(), "reading stream chunk") {
+		t.Fatalf("copyReader() error = %q, want stream read context", err.Error())
+	}
+	if written != 0 {
+		t.Fatalf("copyReader() written = %d, want 0", written)
+	}
+}
+
 type shortWriter struct{}
 
 func (shortWriter) Write(p []byte) (int, error) {
@@ -269,6 +282,12 @@ func (shortWriter) Write(p []byte) (int, error) {
 		return 0, nil
 	}
 	return len(p) - 1, nil
+}
+
+type stuckReader struct{}
+
+func (stuckReader) Read(_ []byte) (int, error) {
+	return 0, nil
 }
 
 func testGPTImage(t *testing.T) []byte {

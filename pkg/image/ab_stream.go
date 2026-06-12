@@ -300,6 +300,9 @@ func copyReader(ctx context.Context, dst io.Writer, src io.Reader) (int64, error
 				return total, fmt.Errorf("writing stream chunk: %w", io.ErrShortWrite)
 			}
 		}
+		if n == 0 && readErr == nil {
+			return total, fmt.Errorf("reading stream chunk: %w", io.ErrNoProgress)
+		}
 		if errors.Is(readErr, io.EOF) {
 			return total, nil
 		}

@@ -115,7 +115,8 @@ func TestClassifyImageStreamErrorNonChecksumRemainsRetryable(t *testing.T) {
 
 func TestClassifyImageStreamErrorRedactsSensitiveURLParts(t *testing.T) {
 	rawURL := "https://user:secret@images.local/node.raw?token=abc#frag"
-	err := classifyImageStreamError(rawURL, fmt.Errorf("fetching %s failed", rawURL))
+	cause := fmt.Errorf("fetching %s failed", rawURL)
+	err := classifyImageStreamError(rawURL, cause)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -124,6 +125,27 @@ func TestClassifyImageStreamErrorRedactsSensitiveURLParts(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "https://images.local/node.raw") {
 		t.Fatalf("error = %q, want redacted URL context", err.Error())
+	}
+	if !errors.Is(err, cause) {
+		t.Fatalf("error should preserve original cause: %v", err)
+	}
+}
+
+func TestClassifyImageStreamErrorRedactsSensitiveURLWithoutUserinfo(t *testing.T) {
+	rawURL := "https://images.local/node.raw?token=abc#frag"
+	cause := fmt.Errorf("fetching %s failed", rawURL)
+	err := classifyImageStreamError(rawURL, cause)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.Contains(err.Error(), "token=abc") || strings.Contains(err.Error(), "#frag") {
+		t.Fatalf("error leaked sensitive URL parts: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "https://images.local/node.raw") {
+		t.Fatalf("error = %q, want redacted URL context", err.Error())
+	}
+	if !errors.Is(err, cause) {
+		t.Fatalf("error should preserve original cause: %v", err)
 	}
 }
 

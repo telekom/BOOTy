@@ -21,7 +21,7 @@ import (
 // This preserves the partition table on the target disk and allows the source
 // image partitions to differ in size from the target.
 func StreamPartitions(ctx context.Context, url, device string) error {
-	slog.Info("partition-by-partition imaging", "url", url, "device", device)
+	slog.Info("partition-by-partition imaging", "url", RedactURL(url), "device", device)
 
 	if err := setupRamdisk(); err != nil {
 		return fmt.Errorf("setting up ramdisk: %w", err)

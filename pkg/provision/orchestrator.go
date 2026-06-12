@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -656,11 +655,27 @@ func classifyImageStreamError(imageURL string, err error) error {
 	if err == nil {
 		return nil
 	}
-	wrapped := fmt.Errorf("streaming %s: %s", image.RedactURL(imageURL), image.RedactSourceError(err, imageURL))
+	wrapped := &redactedImageStreamError{
+		msg: fmt.Sprintf("streaming %s: %s", image.RedactURL(imageURL), image.RedactSourceError(err, imageURL)),
+		err: err,
+	}
 	if strings.Contains(strings.ToLower(err.Error()), "checksum mismatch") {
 		return &PermanentError{Err: wrapped}
 	}
 	return wrapped
+}
+
+type redactedImageStreamError struct {
+	msg string
+	err error
+}
+
+func (e *redactedImageStreamError) Error() string {
+	return e.msg
+}
+
+func (e *redactedImageStreamError) Unwrap() error {
+	return e.err
 }
 
 func (o *Orchestrator) streamABImage(ctx context.Context, bestURL string, opts []image.StreamOpts) error {
@@ -1662,18 +1677,12 @@ func dumpConfig(cfg *config.MachineConfig) {
 	)
 }
 
-// redactURLs strips embedded credentials from image URLs to prevent leaking
-// secrets (e.g. oci://user:pass@registry/image:tag) in debug logs.
+// redactURLs strips embedded credentials, query parameters, and fragments from
+// image URLs before they are written to debug logs.
 func redactURLs(urls []string) []string {
 	redacted := make([]string, len(urls))
 	for i, raw := range urls {
-		u, err := url.Parse(raw)
-		if err != nil || u.User == nil {
-			redacted[i] = raw
-			continue
-		}
-		u.User = url.User("REDACTED")
-		redacted[i] = u.String()
+		redacted[i] = image.RedactURL(raw)
 	}
 	return redacted
 }

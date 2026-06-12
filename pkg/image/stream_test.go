@@ -19,6 +19,32 @@ import (
 	"github.com/ulikunitz/xz"
 )
 
+func TestRedactURLRemovesSensitiveParts(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "credentials query fragment",
+			in:   "https://user:secret@example.com/image.raw?token=abc#frag",
+			want: "https://example.com/image.raw",
+		},
+		{
+			name: "query fragment without credentials",
+			in:   "https://example.com/image.raw?token=abc#frag",
+			want: "https://example.com/image.raw",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := RedactURL(tt.in); got != tt.want {
+				t.Fatalf("RedactURL(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestStreamRaw(t *testing.T) {
 	data := []byte("raw image content for testing")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
