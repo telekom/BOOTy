@@ -119,29 +119,37 @@ func httpURLRedactionCandidates(rawURL string) []string {
 	add(withoutFragment.String())
 	add(withoutFragment.Redacted())
 
-	if u.User != nil {
-		username := u.User.Username()
-		if password, ok := u.User.Password(); ok {
-			userInfo := u.User.String()
-			if userInfo != "" {
-				add(strings.Replace(u.String(), userInfo+"@", username+":***@", 1))
-				add(strings.Replace(withoutFragment.String(), userInfo+"@", username+":***@", 1))
-			}
-			if password != "" {
-				add(strings.Replace(u.String(), ":"+password+"@", ":***@", 1))
-				add(strings.Replace(withoutFragment.String(), ":"+password+"@", ":***@", 1))
-			}
-			for _, placeholder := range []string{"xxxxx", "***"} {
-				redactedPassword := *u
-				redactedPassword.User = url.UserPassword(username, placeholder)
-				add(redactedPassword.String())
-
-				withoutFragment := redactedPassword
-				withoutFragment.Fragment = ""
-				add(withoutFragment.String())
-			}
-		}
-	}
+	addHTTPCredentialRedactionCandidates(add, u, &withoutFragment)
 
 	return candidates
+}
+
+func addHTTPCredentialRedactionCandidates(add func(string), u, withoutFragment *url.URL) {
+	if u.User == nil {
+		return
+	}
+	password, ok := u.User.Password()
+	if !ok {
+		return
+	}
+
+	username := u.User.Username()
+	userInfo := u.User.String()
+	if userInfo != "" {
+		add(strings.Replace(u.String(), userInfo+"@", username+":***@", 1))
+		add(strings.Replace(withoutFragment.String(), userInfo+"@", username+":***@", 1))
+	}
+	if password != "" {
+		add(strings.Replace(u.String(), ":"+password+"@", ":***@", 1))
+		add(strings.Replace(withoutFragment.String(), ":"+password+"@", ":***@", 1))
+	}
+	for _, placeholder := range []string{"xxxxx", "***"} {
+		redactedPassword := *u
+		redactedPassword.User = url.UserPassword(username, placeholder)
+		add(redactedPassword.String())
+
+		withoutFragment := redactedPassword
+		withoutFragment.Fragment = ""
+		add(withoutFragment.String())
+	}
 }
