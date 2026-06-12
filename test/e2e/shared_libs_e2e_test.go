@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -20,15 +21,17 @@ func buildStageImage(t *testing.T, stage string) string {
 	dockerfile := filepath.Join(findRepoRoot(t), "initrd.Dockerfile")
 	repoRoot := findRepoRoot(t)
 
-	args := []string{
-		"buildx", "build", "--platform", "linux/amd64",
-		"--target", stage, "--load", "-t", tag,
-		"-f", dockerfile, repoRoot,
+	args := []string{"buildx", "build", "--platform", "linux/amd64", "--target", stage, "--load", "-t", tag, "-f", dockerfile, repoRoot}
+	errPrefix := "docker buildx build"
+	if !dockerBuildxAvailable() {
+		args = []string{"build", "--platform", "linux/amd64", "--target", stage, "-t", tag, "-f", dockerfile, repoRoot}
+		errPrefix = "docker build"
 	}
 	cmd := exec.Command("docker", args...)
+	cmd.Env = append(os.Environ(), "DOCKER_BUILDKIT=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("docker buildx build --target %s failed: %v\n%s", stage, err, out)
+		t.Fatalf("%s --target %s failed: %v\n%s", errPrefix, stage, err, out)
 	}
 
 	t.Cleanup(func() {
