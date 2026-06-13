@@ -21,7 +21,8 @@ Initial provisioning writes slot A unless `targetSlot` is set. Upgrades set
 leaves the active slot available for rollback.
 
 BOOTy copies the source image EFI partition into `BOOTY-EFI` during initial
-provisioning. During `preserveExisting` upgrades, it leaves `BOOTY-EFI`
+provisioning when the source image contains one. During `preserveExisting`
+upgrades, it leaves `BOOTY-EFI`
 untouched so the active slot remains rollback-capable. The source root partition
 is selected by `sourceRootLabel`, `sourceRootPartition`, a single common root
 label such as `rootfs`, or one unambiguous Linux filesystem partition. Ambiguous

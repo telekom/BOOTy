@@ -77,6 +77,12 @@ jobs:
             test_regex: TestABProvisionPreloadsSysextsWithoutActivatingVM
             privileged: true
             setup: ""
+          - scenario: ab-preserve-existing
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: TestABPreserveExistingUpgradeKeepsActiveSlotAndWritesInactiveVM
+            privileged: true
+            setup: ""
           - scenario: crash-artifacts
             qemu_extra: ""
             test_tag: e2e

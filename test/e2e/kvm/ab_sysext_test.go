@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -15,6 +16,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/registry"
+	"github.com/google/go-containerregistry/pkg/v1/empty"
+	"github.com/google/go-containerregistry/pkg/v1/mutate"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/stream"
+
+	imageutil "github.com/telekom/BOOTy/pkg/image"
 )
 
 func TestProvisionInitramfsContainsABStreamingTools(t *testing.T) {
@@ -52,14 +62,12 @@ func TestABProvisionPreloadsSysextsWithoutActivatingVM(t *testing.T) {
 
 	rawDisk := createChrootCapableTestDiskImage(t, 512)
 	gzImage := compressGzip(t, rawDisk)
-	sysextPath := filepath.Join(t.TempDir(), "node-tuning.raw")
 	sysextPayload := []byte("node tuning sysext vm e2e\n")
-	if err := os.WriteFile(sysextPath, sysextPayload, 0o600); err != nil {
-		t.Fatalf("write sysext: %v", err)
-	}
 	sysextSum := sha256.Sum256(sysextPayload)
-	baseURL := startABImageServer(t, gzImage, sysextPath)
-	sysextURL := baseURL + "/node-tuning.raw"
+	baseURL := startABImageServer(t, gzImage)
+	ociPushHost, ociGuestHost := startABOCIRegistry(t)
+	pushKVMSysextOCI(t, ociPushHost, "test/node-tuning:v1", sysextPayload)
+	sysextURL := "oci://" + ociGuestHost + "/test/node-tuning:v1"
 	sysextLayers := fmt.Sprintf(
 		`[{"name":"node-tuning","version":"vm-e2e","source":%q,"fileName":"node-tuning.raw","sha256":"sha256:%s","mode":"preload"}]`,
 		sysextURL,
@@ -70,24 +78,24 @@ func TestABProvisionPreloadsSysextsWithoutActivatingVM(t *testing.T) {
 	run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":                   "ab-sysext-vm",
-		"dns_resolver":               "8.8.8.8",
-		"MODE":                       "provision",
-		"DISK_DEVICE":                "/dev/vda",
-		"STATIC_IP":                  "10.0.2.15/24",
-		"STATIC_GATEWAY":             "10.0.2.2",
-		"STATIC_IFACE":               "eth0",
-		"IMAGE":                      baseURL + "/image.gz",
-		"IMAGE_MODE":                 "ab",
-		"AB_SCHEME":                  "dual-root",
-		"AB_TARGET_SLOT":             "inactive",
-		"AB_BOOT_SIZE_MB":            "64",
-		"AB_ROOT_SIZE_MB":            "768",
-		"AB_STATE_SIZE_MB":           "64",
-		"SYSEXT_ENABLED":             "true",
-		"SYSEXT_ALLOW_INSECURE_HTTP": "true",
-		"SYSEXT_DEFAULT_MODE":        "preload",
-		"SYSEXT_LAYERS":              sysextLayers,
+		"HOSTNAME":                 "ab-sysext-vm",
+		"dns_resolver":             "8.8.8.8",
+		"MODE":                     "provision",
+		"DISK_DEVICE":              "/dev/vda",
+		"STATIC_IP":                "10.0.2.15/24",
+		"STATIC_GATEWAY":           "10.0.2.2",
+		"STATIC_IFACE":             "eth0",
+		"IMAGE":                    baseURL + "/image.gz",
+		"IMAGE_MODE":               "ab",
+		"AB_SCHEME":                "dual-root",
+		"AB_TARGET_SLOT":           "inactive",
+		"AB_SOURCE_ROOT_PARTITION": "2",
+		"AB_BOOT_SIZE_MB":          "64",
+		"AB_ROOT_SIZE_MB":          "768",
+		"AB_STATE_SIZE_MB":         "64",
+		"SYSEXT_ENABLED":           "true",
+		"SYSEXT_DEFAULT_MODE":      "preload",
+		"SYSEXT_LAYERS":            sysextLayers,
 	})
 
 	output := runQEMUNetworkMode(t, findKernel(t), initramfs, targetDisk, 7*time.Minute)
@@ -156,6 +164,121 @@ func TestABProvisionPreloadsSysextsWithoutActivatingVM(t *testing.T) {
 	}
 }
 
+func TestABPreserveExistingUpgradeKeepsActiveSlotAndWritesInactiveVM(t *testing.T) {
+	requireRoot(t)
+	qemuAvailable(t)
+	requireProvisionTools(t)
+	requireDiskInspectTools(t)
+
+	initialRaw := createChrootCapableTestDiskImage(t, 512)
+	initialImage := compressGzip(t, initialRaw)
+	initialURL := startABImageServer(t, initialImage)
+
+	upgradeRaw := createChrootCapableTestDiskImage(t, 512)
+	upgradeImage := compressGzip(t, upgradeRaw)
+	upgradeURL := startABImageServer(t, upgradeImage)
+
+	targetDisk := filepath.Join(t.TempDir(), "ab-preserve-target.qcow2")
+	run(t, "create preserve target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
+
+	initialInitramfs := buildProvisionInitramfs(t, map[string]string{
+		"HOSTNAME":                 "ab-preserve-initial",
+		"dns_resolver":             "8.8.8.8",
+		"MODE":                     "provision",
+		"DISK_DEVICE":              "/dev/vda",
+		"STATIC_IP":                "10.0.2.15/24",
+		"STATIC_GATEWAY":           "10.0.2.2",
+		"STATIC_IFACE":             "eth0",
+		"IMAGE":                    initialURL + "/image.gz",
+		"IMAGE_MODE":               "ab",
+		"AB_SCHEME":                "dual-root",
+		"AB_TARGET_SLOT":           "a",
+		"AB_SOURCE_ROOT_PARTITION": "2",
+		"AB_BOOT_SIZE_MB":          "64",
+		"AB_ROOT_SIZE_MB":          "768",
+		"AB_STATE_SIZE_MB":         "64",
+	})
+
+	initialOutput := runQEMUNetworkMode(t, findKernel(t), initialInitramfs, targetDisk, 7*time.Minute)
+	t.Logf("A/B initial VM output tail:\n%s", tail(initialOutput, 3000))
+	assertProvisionSucceeded(t, initialOutput)
+
+	upgradeInitramfs := buildProvisionInitramfs(t, map[string]string{
+		"HOSTNAME":                 "ab-preserve-upgrade",
+		"dns_resolver":             "8.8.8.8",
+		"MODE":                     "provision",
+		"DISK_DEVICE":              "/dev/vda",
+		"STATIC_IP":                "10.0.2.15/24",
+		"STATIC_GATEWAY":           "10.0.2.2",
+		"STATIC_IFACE":             "eth0",
+		"IMAGE":                    upgradeURL + "/image.gz",
+		"IMAGE_MODE":               "ab",
+		"AB_SCHEME":                "dual-root",
+		"AB_ACTIVE_SLOT":           "a",
+		"AB_TARGET_SLOT":           "inactive",
+		"AB_PRESERVE_EXISTING":     "true",
+		"AB_SOURCE_ROOT_PARTITION": "2",
+		"AB_BOOT_SIZE_MB":          "64",
+		"AB_ROOT_SIZE_MB":          "768",
+		"AB_STATE_SIZE_MB":         "64",
+	})
+
+	upgradeOutput := runQEMUNetworkMode(t, findKernel(t), upgradeInitramfs, targetDisk, 7*time.Minute)
+	t.Logf("A/B preserve-existing VM output tail:\n%s", tail(upgradeOutput, 5000))
+	assertProvisionSucceeded(t, upgradeOutput)
+	upgradeText := string(upgradeOutput)
+	for _, want := range []string{
+		"A/B preserveExisting enabled, skipping whole-disk wipe",
+		"keeping A/B preserve-existing root mounted for kexec",
+		"a/b preserveExisting requires kexec; refusing normal reboot",
+	} {
+		if !strings.Contains(upgradeText, want) {
+			t.Fatalf("preserve-existing output missing %q. tail:\n%s", want, tail(upgradeOutput, 5000))
+		}
+	}
+
+	slotA, cleanupA := mountQcow2Partition(t, targetDisk, 2)
+	defer cleanupA()
+	hostnameA := readProvisionedFile(t, slotA, "etc/hostname")
+	if !strings.Contains(hostnameA, "ab-preserve-initial") {
+		t.Fatalf("active slot A hostname changed during preserve-existing upgrade: %q", strings.TrimSpace(hostnameA))
+	}
+	stateA := readProvisionedFile(t, slotA, "etc/booty/ab-slot.env")
+	if !strings.Contains(stateA, "BOOTY_AB_TARGET_SLOT=a") {
+		t.Fatalf("slot A state changed unexpectedly:\n%s", stateA)
+	}
+	cleanupA()
+
+	slotB, cleanupB := mountQcow2Partition(t, targetDisk, 3)
+	defer cleanupB()
+	hostnameB := readProvisionedFile(t, slotB, "etc/hostname")
+	if !strings.Contains(hostnameB, "ab-preserve-upgrade") {
+		t.Fatalf("inactive slot B hostname not written by upgrade: %q", strings.TrimSpace(hostnameB))
+	}
+	stateB := readProvisionedFile(t, slotB, "etc/booty/ab-slot.env")
+	for _, want := range []string{
+		"BOOTY_AB_TARGET_SLOT=b",
+		"BOOTY_AB_BOOTED_SLOT=b",
+		"BOOTY_AB_ACTIVE_SLOT=a",
+		"BOOTY_AB_PRESERVE_EXISTING=true",
+	} {
+		if !strings.Contains(stateB, want) {
+			t.Fatalf("slot B state missing %q:\n%s", want, stateB)
+		}
+	}
+	cleanupB()
+
+	espMount, espCleanup := mountQcow2Partition(t, targetDisk, 1)
+	defer espCleanup()
+	loader, err := os.ReadFile(filepath.Join(espMount, "EFI", "BOOT", "BOOTX64.EFI"))
+	if err != nil {
+		t.Fatalf("ESP fallback loader missing after preserve-existing upgrade: %v", err)
+	}
+	if string(loader) != testEFIFallbackPayload {
+		t.Fatalf("ESP fallback loader was changed during preserve-existing upgrade: %q", string(loader))
+	}
+}
+
 func assertProvisionSucceeded(t *testing.T, output []byte) {
 	t.Helper()
 	text := string(output)
@@ -218,15 +341,12 @@ func listInitramfsFiles(t *testing.T, path string) map[string]bool {
 	return files
 }
 
-func startABImageServer(t *testing.T, imagePath, sysextPath string) string {
+func startABImageServer(t *testing.T, imagePath string) string {
 	t.Helper()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/image.gz", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, imagePath)
-	})
-	mux.HandleFunc("/node-tuning.raw", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, sysextPath)
 	})
 
 	listener, err := net.Listen("tcp", "0.0.0.0:0")
@@ -239,4 +359,40 @@ func startABImageServer(t *testing.T, imagePath, sysextPath string) string {
 	t.Cleanup(func() { _ = srv.Close() })
 
 	return fmt.Sprintf("http://10.0.2.2:%d", listener.Addr().(*net.TCPAddr).Port)
+}
+
+func startABOCIRegistry(t *testing.T) (pushHost, guestHost string) {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("listen OCI registry: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	srv := &http.Server{Handler: registry.New(), ReadHeaderTimeout: 10 * time.Second}
+	go func() { _ = srv.Serve(listener) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	return fmt.Sprintf("127.0.0.1:%d", port), fmt.Sprintf("10.0.2.2:%d", port)
+}
+
+func pushKVMSysextOCI(t *testing.T, registryHost, repoTag string, data []byte) {
+	t.Helper()
+
+	layer := stream.NewLayer(
+		io.NopCloser(bytes.NewReader(data)),
+		stream.WithMediaType(imageutil.SystemdSysextMediaType),
+	)
+	img, err := mutate.AppendLayers(empty.Image, layer)
+	if err != nil {
+		t.Fatalf("append sysext OCI layer: %v", err)
+	}
+
+	ref, err := name.ParseReference(registryHost + "/" + repoTag)
+	if err != nil {
+		t.Fatalf("parse sysext OCI ref: %v", err)
+	}
+	if err := remote.Write(ref, img); err != nil {
+		t.Fatalf("push sysext OCI ref: %v", err)
+	}
 }
