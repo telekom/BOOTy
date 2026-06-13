@@ -318,6 +318,8 @@ func validateSysextSourceIntegrity(enabled, allowInsecureHTTP bool, prefix strin
 	if err != nil {
 		if looksLikeHTTPSource(source) {
 			errs = append(errs, fmt.Sprintf("%s.source: invalid HTTP(S) sysext source %s: %s", prefix, imageutil.RedactURL(source), imageutil.RedactSourceError(err, source)))
+		} else if looksLikeURLSource(source) {
+			errs = append(errs, fmt.Sprintf("%s.source: invalid sysext source %s: %s", prefix, imageutil.RedactURL(source), imageutil.RedactSourceError(err, source)))
 		}
 	} else {
 		switch strings.ToLower(u.Scheme) {
@@ -342,6 +344,10 @@ func validateSysextSourceIntegrity(enabled, allowInsecureHTTP bool, prefix strin
 func looksLikeHTTPSource(source string) bool {
 	lower := strings.ToLower(strings.TrimSpace(source))
 	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
+}
+
+func looksLikeURLSource(source string) bool {
+	return strings.Contains(strings.TrimSpace(source), "://")
 }
 
 func isOCIDigestSource(source string) bool {
