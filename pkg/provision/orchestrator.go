@@ -36,6 +36,9 @@ var (
 	mountBootPart    = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
 		return mgr.MountPartition(ctx, device, mountpoint)
 	}
+	mountReadOnlyPart = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
+		return mgr.MountPartitionReadOnly(ctx, device, mountpoint)
+	}
 	sysBlockRoot = "/sys/class/block"
 )
 
@@ -780,8 +783,7 @@ func (o *Orchestrator) validateABActiveSlotState(ctx context.Context) error {
 
 	if _, err := os.Stat(activePartition); err != nil {
 		if os.IsNotExist(err) {
-			o.log.Warn("active A/B partition device is not present; skipping mounted active-slot state validation", "device", activePartition)
-			return nil
+			return fmt.Errorf("active A/B partition device %s is not present", activePartition)
 		}
 		return fmt.Errorf("stat active A/B partition %s: %w", activePartition, err)
 	}
@@ -792,7 +794,7 @@ func (o *Orchestrator) validateABActiveSlotState(ctx context.Context) error {
 	}
 	defer func() { _ = os.RemoveAll(mountpoint) }()
 
-	if err := o.disk.MountPartitionReadOnly(ctx, activePartition, mountpoint); err != nil {
+	if err := mountReadOnlyPart(ctx, o.disk, activePartition, mountpoint); err != nil {
 		return fmt.Errorf("mounting declared active A/B slot %q (%s): %w", ab.ActiveSlot, activePartition, err)
 	}
 	defer func() {

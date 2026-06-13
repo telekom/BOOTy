@@ -47,6 +47,21 @@ func withProcCmdline(t *testing.T, cmdline string) {
 	})
 }
 
+func withABSlotStateMount(t *testing.T, slot string) {
+	t.Helper()
+	previous := mountReadOnlyPart
+	mountReadOnlyPart = func(_ context.Context, _ *disk.Manager, _ string, mountpoint string) error {
+		stateDir := filepath.Join(mountpoint, "etc", "booty")
+		if err := os.MkdirAll(stateDir, 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(stateDir, "ab-slot.env"), []byte("BOOTY_AB_BOOTED_SLOT="+slot+"\n"), 0o644)
+	}
+	t.Cleanup(func() {
+		mountReadOnlyPart = previous
+	})
+}
+
 func sfdiskJSON(t *testing.T, parts []disk.Partition) []byte {
 	t.Helper()
 	var out struct {
@@ -1195,6 +1210,7 @@ func TestWipeOrSecureEraseDisksSkipsWholeDiskWipeForABPreserveExisting(t *testin
 
 func TestABPreserveExistingValidatesExistingLayoutBeforeWipe(t *testing.T) {
 	withProcCmdline(t, "console=ttyS0 root=PARTLABEL=BOOTY-ROOT-A")
+	withABSlotStateMount(t, config.ABSlotA)
 
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Image.Mode = config.ImageModeAB
@@ -1202,12 +1218,16 @@ func TestABPreserveExistingValidatesExistingLayoutBeforeWipe(t *testing.T) {
 	cfg.Provision.AB.TargetSlot = config.ABTargetInactive
 	cfg.Provision.AB.PreserveExisting = true
 	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
-	o.targetDisk = "/dev/sda"
+	o.targetDisk = filepath.Join(t.TempDir(), "disk")
+	activePartition := disk.PartitionDevicePath(o.targetDisk, 2)
+	if err := os.WriteFile(activePartition, nil, 0o644); err != nil {
+		t.Fatalf("create fake active partition: %v", err)
+	}
 	cmd.setResult("sfdisk --json", sfdiskJSON(t, []disk.Partition{
-		{Node: "/dev/sda1", Type: disk.EFISystemPartitionGUID, Name: "BOOTY-EFI"},
-		{Node: "/dev/sda2", Type: disk.LinuxFilesystemGUID, Name: "BOOTY-ROOT-A"},
-		{Node: "/dev/sda3", Type: disk.LinuxFilesystemGUID, Name: "BOOTY-ROOT-B"},
-		{Node: "/dev/sda4", Type: disk.LinuxFilesystemGUID, Name: "BOOTY-STATE"},
+		{Node: disk.PartitionDevicePath(o.targetDisk, 1), Type: disk.EFISystemPartitionGUID, Name: "BOOTY-EFI"},
+		{Node: activePartition, Type: disk.LinuxFilesystemGUID, Name: "BOOTY-ROOT-A"},
+		{Node: disk.PartitionDevicePath(o.targetDisk, 3), Type: disk.LinuxFilesystemGUID, Name: "BOOTY-ROOT-B"},
+		{Node: disk.PartitionDevicePath(o.targetDisk, 4), Type: disk.LinuxFilesystemGUID, Name: "BOOTY-STATE"},
 	}), nil)
 
 	if err := o.ensureABPartitionLayout(); err != nil {
@@ -1222,8 +1242,45 @@ func TestABPreserveExistingValidatesExistingLayoutBeforeWipe(t *testing.T) {
 	if err := o.prepareABTargetSlot(context.Background()); err != nil {
 		t.Fatalf("prepareABTargetSlot: %v", err)
 	}
-	if !hasCommandCall(cmd.calls, "wipefs", "-af", "/dev/sda3") {
-		t.Fatalf("expected wipefs only on inactive root /dev/sda3, calls: %#v", cmd.calls)
+	targetPartition := disk.PartitionDevicePath(o.targetDisk, 3)
+	if !hasCommandCall(cmd.calls, "wipefs", "-af", targetPartition) {
+		t.Fatalf("expected wipefs only on inactive root %s, calls: %#v", targetPartition, cmd.calls)
+	}
+}
+
+func TestABPreserveExistingRejectsMissingActiveSlotDeviceBeforeWipe(t *testing.T) {
+	withProcCmdline(t, "console=ttyS0 root=LABEL=caas-deploy-image")
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.ActiveSlot = config.ABSlotA
+	cfg.Provision.AB.TargetSlot = config.ABTargetInactive
+	cfg.Provision.AB.PreserveExisting = true
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = filepath.Join(t.TempDir(), "disk")
+	activePartition := disk.PartitionDevicePath(o.targetDisk, 2)
+	cmd.setResult("sfdisk --json", sfdiskJSON(t, []disk.Partition{
+		{Node: disk.PartitionDevicePath(o.targetDisk, 1), Type: disk.EFISystemPartitionGUID, Name: "BOOTY-EFI"},
+		{Node: activePartition, Type: disk.LinuxFilesystemGUID, Name: "BOOTY-ROOT-A"},
+		{Node: disk.PartitionDevicePath(o.targetDisk, 3), Type: disk.LinuxFilesystemGUID, Name: "BOOTY-ROOT-B"},
+		{Node: disk.PartitionDevicePath(o.targetDisk, 4), Type: disk.LinuxFilesystemGUID, Name: "BOOTY-STATE"},
+	}), nil)
+
+	if err := o.ensureABPartitionLayout(); err != nil {
+		t.Fatalf("ensureABPartitionLayout: %v", err)
+	}
+	if err := o.parsePartitionsFromLayout(context.Background()); err != nil {
+		t.Fatalf("parsePartitionsFromLayout: %v", err)
+	}
+	err := o.validateABPreserveExistingLayout(context.Background())
+	if err == nil {
+		t.Fatal("expected missing active slot device rejection")
+	}
+	if !strings.Contains(err.Error(), "active A/B partition device "+activePartition+" is not present") {
+		t.Fatalf("error = %v", err)
+	}
+	if hasCommandName(cmd.calls, "wipefs") {
+		t.Fatalf("missing active slot validation must fail before wipefs, calls: %#v", cmd.calls)
 	}
 }
 
