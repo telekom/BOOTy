@@ -3,6 +3,7 @@
 package image
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -38,6 +39,34 @@ func TestConvertQCOW2HookRegistered(t *testing.T) {
 	// On linux, the init() in qcow2.go should have set the hook.
 	if convertQCOW2Hook == nil {
 		t.Fatal("convertQCOW2Hook is nil on linux")
+	}
+}
+
+func TestReadSfdiskPartitionsDerivesNumbersFromDeviceNodes(t *testing.T) {
+	previous := runCmd
+	runCmd = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "sfdisk" || len(args) != 2 || args[0] != "--json" || args[1] != "/dev/loop0" {
+			t.Fatalf("unexpected command %s %v", name, args)
+		}
+		return []byte(`sfdisk noise
+{"partitiontable":{"partitions":[
+  {"node":"/dev/loop0p5","start":2048,"size":4096,"type":"83"},
+  {"node":"/dev/loop0p7","start":6144,"size":4096,"type":"83"},
+  {"node":"/dev/mapper/root","start":10240,"size":4096,"type":"83"}
+]}}`), nil
+	}
+	t.Cleanup(func() { runCmd = previous })
+
+	parts, err := readSfdiskPartitions(context.Background(), "/dev/loop0")
+	if err != nil {
+		t.Fatalf("readSfdiskPartitions: %v", err)
+	}
+	got := []int{parts[0].Number, parts[1].Number, parts[2].Number}
+	want := []int{5, 7, 3}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("partition numbers = %v, want %v", got, want)
+		}
 	}
 }
 

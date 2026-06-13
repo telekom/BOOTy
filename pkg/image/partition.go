@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -203,9 +204,25 @@ func readSfdiskPartitions(ctx context.Context, dev string) ([]sfdiskPartition, e
 		return nil, fmt.Errorf("parsing sfdisk output: %w", err)
 	}
 	for i := range result.PartitionTable.Partitions {
-		result.PartitionTable.Partitions[i].Number = i + 1
+		result.PartitionTable.Partitions[i].Number = partitionNumberFromNode(result.PartitionTable.Partitions[i].Node, i+1)
 	}
 	return result.PartitionTable.Partitions, nil
+}
+
+func partitionNumberFromNode(node string, fallback int) int {
+	end := len(node)
+	start := end
+	for start > 0 && node[start-1] >= '0' && node[start-1] <= '9' {
+		start--
+	}
+	if start == end {
+		return fallback
+	}
+	n, err := strconv.Atoi(node[start:end])
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
 }
 
 // copyPartitionTable copies the GPT/MBR partition table from src to dst using sfdisk.
@@ -267,8 +284,10 @@ func targetPartitionNode(disk string, partNum int) string {
 	return fmt.Sprintf("%s%d", disk, partNum)
 }
 
-// runCmd executes a command and returns its combined output.
-func runCmd(ctx context.Context, name string, args ...string) ([]byte, error) {
+var runCmd = runCommand
+
+// runCommand executes a command and returns its combined output.
+func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // controlled arguments
 	out, err := cmd.CombinedOutput()
 	if err != nil {
