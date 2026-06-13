@@ -488,13 +488,16 @@ func mountQcow2Partition(t *testing.T, qcow2Path string, partNum int) (rootMount
 	})
 
 	// Wait for partitions after qemu-nbd attach.
-	rereadPartitionTable(t, nbdDev)
+	if err := rereadPartitionTable(nbdDev); err != nil {
+		_ = exec.Command("qemu-nbd", "--disconnect", nbdDev).Run()
+		t.Fatalf("reread partition table on %s: %v", nbdDev, err)
+	}
 	partDev := fmt.Sprintf("%sp%d", nbdDev, partNum)
 	waitForDevice(t, partDev, 10*time.Second)
 
 	mountDir := t.TempDir()
 	mountReadOnlyWithRetry(t, partDev, mountDir, func() {
-		rereadPartitionTable(t, nbdDev)
+		_ = rereadPartitionTable(nbdDev)
 	})
 
 	cleaned := false
@@ -558,13 +561,28 @@ func waitForDevice(t *testing.T, devPath string, timeout time.Duration) {
 	t.Fatalf("device %s did not appear within %s: %v", devPath, timeout, lastErr)
 }
 
-func rereadPartitionTable(t *testing.T, devPath string) {
-	t.Helper()
-	_ = exec.Command("blockdev", "--rereadpt", devPath).Run()
-	run(t, "partprobe nbd", "partprobe", devPath)
-	if _, err := exec.LookPath("udevadm"); err == nil {
-		_ = exec.Command("udevadm", "settle", "--timeout=10").Run()
+func rereadPartitionTable(devPath string) error {
+	deadline := time.Now().Add(10 * time.Second)
+	var lastOut []byte
+	var lastErr error
+	for time.Now().Before(deadline) {
+		_ = exec.Command("blockdev", "--rereadpt", devPath).Run()
+		cmd := exec.Command("partprobe", devPath)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			if _, lookErr := exec.LookPath("udevadm"); lookErr == nil {
+				_ = exec.Command("udevadm", "settle", "--timeout=10").Run()
+			}
+			return nil
+		}
+		lastOut = out
+		lastErr = err
+		if _, lookErr := exec.LookPath("udevadm"); lookErr == nil {
+			_ = exec.Command("udevadm", "settle", "--timeout=2").Run()
+		}
+		time.Sleep(250 * time.Millisecond)
 	}
+	return fmt.Errorf("partprobe %s failed after retries: %w\n%s", devPath, lastErr, lastOut)
 }
 
 func mountReadOnlyWithRetry(t *testing.T, devPath, mountDir string, beforeRetry func()) {
