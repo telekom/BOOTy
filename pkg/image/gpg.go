@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -37,8 +36,8 @@ var gpgHTTPClient = &http.Client{
 // multi-GB images in memory.
 func VerifyGPGSignature(ctx context.Context, imageURL, sigURL, pubKeyPath string) error {
 	slog.Info("verifying image GPG signature",
-		"image", filepath.Base(imageURL),
-		"signature", filepath.Base(sigURL),
+		"image", RedactURL(imageURL),
+		"signature", RedactURL(sigURL),
 		"pubkey", pubKeyPath,
 	)
 
@@ -59,7 +58,7 @@ func VerifyGPGSignature(ctx context.Context, imageURL, sigURL, pubKeyPath string
 // gpgv/gpg --verify via stdin, avoiding a full download to disk/tmpfs.
 func verifyWithStream(ctx context.Context, imageURL, keyring, sigFile string) error {
 	if strings.HasPrefix(imageURL, "oci://") {
-		return fmt.Errorf("gpg signature verification is not supported for OCI images (%s)", imageURL)
+		return fmt.Errorf("gpg signature verification is not supported for OCI images (%s)", RedactURL(imageURL))
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, http.NoBody)
@@ -89,12 +88,12 @@ func downloadToTemp(ctx context.Context, rawURL, pattern string) (string, error)
 
 	resp, err := gpgHTTPClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
-		return "", fmt.Errorf("downloading %s: %w", filepath.Base(rawURL), err)
+		return "", fmt.Errorf("downloading %s: %w", RedactURL(rawURL), err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("downloading %s: status %d", filepath.Base(rawURL), resp.StatusCode)
+		return "", fmt.Errorf("downloading %s: status %d", RedactURL(rawURL), resp.StatusCode)
 	}
 
 	f, err := os.CreateTemp("", pattern)

@@ -21,7 +21,9 @@ const (
 )
 
 func init() {
-	convertQCOW2Hook = ConvertQCOW2
+	convertQCOW2Hook = func(ctx context.Context, src io.Reader, sourceName, device string, opt StreamOpts) error {
+		return ConvertQCOW2FromReader(ctx, src, sourceName, device, opt)
+	}
 }
 
 // ConvertQCOW2 downloads a qcow2 image to a tmpfs ramdisk, converts it to raw
@@ -29,9 +31,25 @@ func init() {
 //
 // The flow is: download → tmpfs → qemu-img convert -f qcow2 -O raw → dd to device.
 // The ramdisk is cleaned up after conversion.
-func ConvertQCOW2(ctx context.Context, url, device string) error {
-	slog.Info("qcow2 image detected, downloading to ramdisk for conversion",
-		"url", filepath.Base(url), "device", device)
+func ConvertQCOW2(ctx context.Context, url, device string, opts ...StreamOpts) error {
+	body, err := openSource(ctx, url)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = body.Close() }()
+
+	return ConvertQCOW2FromReader(ctx, body, url, device, opts...)
+}
+
+// ConvertQCOW2FromReader writes an already-open qcow2 stream to a tmpfs
+// ramdisk, converts it to raw, and streams the result to the target device.
+func ConvertQCOW2FromReader(ctx context.Context, src io.Reader, sourceName, device string, opts ...StreamOpts) error {
+	slog.Info("qcow2 image detected, writing to ramdisk for conversion",
+		"source", redactQCOW2SourceForLog(sourceName), "device", device)
+	var opt StreamOpts
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
 
 	if err := setupRamdisk(); err != nil {
 		return fmt.Errorf("setting up ramdisk: %w", err)
@@ -41,8 +59,8 @@ func ConvertQCOW2(ctx context.Context, url, device string) error {
 	qcow2Path := filepath.Join(ramdiskPath, "image.qcow2")
 	rawPath := filepath.Join(ramdiskPath, "image.raw")
 
-	if err := downloadToFile(ctx, url, qcow2Path); err != nil {
-		return fmt.Errorf("downloading qcow2 image: %w", err)
+	if err := writeImageToFile(src, qcow2Path); err != nil {
+		return fmt.Errorf("writing qcow2 image: %w", err)
 	}
 
 	if err := convertQCOW2ToRaw(ctx, qcow2Path, rawPath); err != nil {
@@ -52,11 +70,15 @@ func ConvertQCOW2(ctx context.Context, url, device string) error {
 	// Remove qcow2 to free ramdisk space before streaming.
 	_ = os.Remove(qcow2Path)
 
-	if err := streamRawToDevice(rawPath, device); err != nil {
+	if err := streamRawToDevice(rawPath, device, opt); err != nil {
 		return fmt.Errorf("streaming raw image to device: %w", err)
 	}
 
 	return nil
+}
+
+func redactQCOW2SourceForLog(sourceName string) string {
+	return RedactURL(sourceName)
 }
 
 // setupRamdisk creates and mounts a tmpfs at ramdiskPath.
@@ -87,6 +109,10 @@ func downloadToFile(ctx context.Context, url, dest string) error {
 	}
 	defer func() { _ = body.Close() }()
 
+	return writeImageToFile(body, dest)
+}
+
+func writeImageToFile(src io.Reader, dest string) error {
 	f, err := os.Create(dest) //nolint:gosec // dest is a controlled ramdisk path
 	if err != nil {
 		return fmt.Errorf("creating file %s: %w", dest, err)
@@ -97,13 +123,13 @@ func downloadToFile(ctx context.Context, url, dest string) error {
 	stopProgress := startProgressTicker(counter)
 
 	buf := make([]byte, imageCopyBufferSize)
-	written, err := io.CopyBuffer(f, io.TeeReader(body, counter), buf)
+	written, err := io.CopyBuffer(f, io.TeeReader(src, counter), buf)
 	stopProgress()
 	if err != nil {
 		return fmt.Errorf("writing to file: %w", err)
 	}
 	fmt.Println()
-	slog.Info("qcow2 downloaded to ramdisk", "bytes", written)
+	slog.Info("image written to ramdisk", "bytes", written)
 	return nil
 }
 
@@ -127,7 +153,7 @@ func convertQCOW2ToRaw(ctx context.Context, src, dst string) error {
 }
 
 // streamRawToDevice streams a raw image file to a block device.
-func streamRawToDevice(rawPath, device string) error {
+func streamRawToDevice(rawPath, device string, opt StreamOpts) error {
 	slog.Info("streaming raw image to device", "src", rawPath, "device", device)
 
 	src, err := os.Open(rawPath) //nolint:gosec // controlled ramdisk path
@@ -145,8 +171,14 @@ func streamRawToDevice(rawPath, device string) error {
 	counter := &WriteCounter{}
 	stopProgress := startProgressTicker(counter)
 
+	checksummed, h, err := wrapChecksum(src, opt)
+	if err != nil {
+		stopProgress()
+		return err
+	}
+
 	buf := make([]byte, imageCopyBufferSize)
-	written, err := io.CopyBuffer(dst, io.TeeReader(src, counter), buf)
+	written, err := io.CopyBuffer(dst, io.TeeReader(checksummed, counter), buf)
 	stopProgress()
 	if err != nil {
 		slog.Error("qcow2 write failed: wiping partial image", "device", device, "error", err)
@@ -155,5 +187,12 @@ func streamRawToDevice(rawPath, device string) error {
 	}
 	fmt.Println()
 	slog.Info("raw image written to device", "bytes", written)
+
+	if err := verifyChecksum(h, opt); err != nil {
+		slog.Error("checksum mismatch: wiping partition table to prevent booting corrupt image",
+			"device", device, "error", err)
+		wipeLeadingSectors(device)
+		return err
+	}
 	return nil
 }

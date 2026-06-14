@@ -68,7 +68,7 @@ jobs:
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
 
@@ -80,7 +80,7 @@ jobs:
       - name: Run E2E tests
         run: |
           # Run e2e tests excluding kvm/ (KVM tests run in the dedicated KVM matrix job)
-          go test -tags e2e -v -race $(go list -tags e2e ./test/e2e/... | grep -v /kvm)
+          go test -tags e2e -v -race -timeout 20m $(go list -tags e2e ./test/e2e/... | grep -v /kvm)
 
   build:
     name: Build (${{ matrix.arch }})
@@ -260,7 +260,7 @@ jobs:
       - name: Install QEMU and dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 cpio zstd
+          sudo apt-get install -y qemu-system-x86 cpio zstd busybox-static
 
       - name: Build initramfs image
         run: |
@@ -276,10 +276,8 @@ jobs:
           sudo mknod initramfs/dev/ttyS0 c 4 64
           sudo mknod initramfs/dev/null c 1 3
 
-          # Extract busybox from the Dependabot-tracked Docker image
-          BUSYBOX_IMAGE=$(grep '^FROM' test/e2e/assets/busybox/Dockerfile | awk '{print $2}')
-          docker run --rm --platform=linux/amd64 "$BUSYBOX_IMAGE" cat /bin/busybox > initramfs/bin/busybox
-          chmod +x initramfs/bin/busybox
+          # Prefer the Dependabot-tracked Docker image, with busybox-static as a CI network fallback.
+          bash test/e2e/assets/busybox/extract.sh initramfs/bin/busybox
           # Verify that busybox is statically linked to avoid non-bootable initramfs output.
           if ! file initramfs/bin/busybox | grep -Eqi 'statically linked|static-pie linked'; then
             echo "ERROR: extracted /bin/busybox is not statically linked"
@@ -431,7 +429,7 @@ jobs:
         run: sudo test/e2e/clab/create-test-image.sh test/e2e/clab/images
 
       - name: Install ContainerLab
-        run: curl --connect-timeout 30 --max-time 120 -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}
+        run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
       - name: Deploy topology
         run: sudo containerlab deploy --topo test/e2e/clab/topology.clab.yml
@@ -530,7 +528,10 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: sudo containerlab destroy --topo test/e2e/clab/topology.clab.yml --cleanup
+        run: |
+          if command -v containerlab >/dev/null 2>&1; then
+            sudo containerlab destroy --topo test/e2e/clab/topology.clab.yml --cleanup || true
+          fi
 
   uefi-iso-boot:
     name: UEFI ISO Boot Validation
@@ -547,7 +548,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y qemu-system-x86 ovmf xorriso grub-efi-amd64-bin \
-            grub-common mtools cpio zstd dosfstools \
+            grub-common mtools cpio zstd busybox-static dosfstools \
             isolinux syslinux-common swtpm swtpm-tools
 
       - name: Build initramfs image
@@ -564,10 +565,8 @@ jobs:
           sudo mknod initramfs/dev/ttyS0 c 4 64
           sudo mknod initramfs/dev/null c 1 3
 
-          # Extract busybox from the Dependabot-tracked Docker image
-          BUSYBOX_IMAGE=$(grep '^FROM' test/e2e/assets/busybox/Dockerfile | awk '{print $2}')
-          docker run --rm --platform=linux/amd64 "$BUSYBOX_IMAGE" cat /bin/busybox > initramfs/bin/busybox
-          chmod +x initramfs/bin/busybox
+          # Prefer the Dependabot-tracked Docker image, with busybox-static as a CI network fallback.
+          bash test/e2e/assets/busybox/extract.sh initramfs/bin/busybox
           # Verify that busybox is statically linked to avoid non-bootable initramfs output.
           if ! file initramfs/bin/busybox | grep -Eqi 'statically linked|static-pie linked'; then
             echo "ERROR: extracted /bin/busybox is not statically linked"
@@ -790,24 +789,13 @@ jobs:
           go-version: "1.26"
 
       - name: Build BOOTy test container image
-        run: docker build -t booty-test:latest -f test/e2e/clab/booty-test.Dockerfile .
+        run: test/e2e/clab/docker-build-retry.sh -t booty-test:latest -f test/e2e/clab/booty-test.Dockerfile .
 
       - name: Generate test disk image
         run: sudo test/e2e/clab/create-test-image.sh test/e2e/clab/images
 
       - name: Install ContainerLab
-        run: |
-          for attempt in 1 2 3; do
-            echo "Installing ContainerLab (attempt ${attempt}/3)..."
-            if curl -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}; then
-              echo "ContainerLab installed successfully"
-              exit 0
-            fi
-            echo "Attempt ${attempt} failed, retrying in 5s..."
-            sleep 5
-          done
-          echo "ContainerLab installation failed after 3 attempts"
-          exit 1
+        run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
       - name: Deploy boot topology
         run: sudo containerlab deploy --topo test/e2e/clab/topology-boot.clab.yml
@@ -895,7 +883,10 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: sudo containerlab destroy --topo test/e2e/clab/topology-boot.clab.yml --cleanup
+        run: |
+          if command -v containerlab >/dev/null 2>&1; then
+            sudo containerlab destroy --topo test/e2e/clab/topology-boot.clab.yml --cleanup || true
+          fi
 
   e2e-gobgp:
     name: E2E GoBGP PeerModes
@@ -909,10 +900,10 @@ jobs:
           go-version: "1.26"
 
       - name: Build GoBGP test image
-        run: docker build -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
+        run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
 
       - name: Install ContainerLab
-        run: curl -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}
+        run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
       - name: Deploy GoBGP topology
         run: sudo containerlab deploy --topo test/e2e/clab/topology-gobgp.clab.yml
@@ -1019,7 +1010,10 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: sudo containerlab destroy --topo test/e2e/clab/topology-gobgp.clab.yml --cleanup
+        run: |
+          if command -v containerlab >/dev/null 2>&1; then
+            sudo containerlab destroy --topo test/e2e/clab/topology-gobgp.clab.yml --cleanup || true
+          fi
 
   e2e-type5:
     name: E2E Pure Type-5 Fabric
@@ -1033,10 +1027,10 @@ jobs:
           go-version: "1.26"
 
       - name: Build GoBGP test image
-        run: docker build -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
+        run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
 
       - name: Install ContainerLab
-        run: curl -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}
+        run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
       - name: Deploy Type-5 topology
         run: sudo containerlab deploy --topo test/e2e/clab/topology-type5.clab.yml
@@ -1147,7 +1141,10 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: sudo containerlab destroy --topo test/e2e/clab/topology-type5.clab.yml --cleanup
+        run: |
+          if command -v containerlab >/dev/null 2>&1; then
+            sudo containerlab destroy --topo test/e2e/clab/topology-type5.clab.yml --cleanup || true
+          fi
 
   e2e-vrnetlab:
     name: E2E EVPN Boot (vrnetlab)
@@ -1161,13 +1158,13 @@ jobs:
           go-version: "1.26"
 
       - name: Build BOOTy vrnetlab VM image
-        run: docker build -t booty-vrnetlab:latest -f test/e2e/clab/vrnetlab/Dockerfile .
+        run: test/e2e/clab/docker-build-retry.sh -t booty-vrnetlab:latest -f test/e2e/clab/vrnetlab/Dockerfile .
 
       - name: Generate test disk image
         run: sudo test/e2e/clab/create-test-image.sh test/e2e/clab/images
 
       - name: Install ContainerLab
-        run: curl -fsSL https://get.containerlab.dev | sudo bash -s -- -v ${{ env.CONTAINERLAB_VERSION }}
+        run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
       - name: Deploy vrnetlab EVPN topology
         run: sudo containerlab deploy --topo test/e2e/clab/topology-vrnetlab.clab.yml
@@ -1302,4 +1299,81 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: sudo containerlab destroy --topo test/e2e/clab/topology-vrnetlab.clab.yml --cleanup
+        run: |
+          if command -v containerlab >/dev/null 2>&1; then
+            sudo containerlab destroy --topo test/e2e/clab/topology-vrnetlab.clab.yml --cleanup || true
+          fi
+
+  e2e-gobgp-vrnetlab:
+    name: E2E GoBGP PeerModes (vrnetlab)
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+
+      - name: Build BOOTy vrnetlab VM image
+        run: test/e2e/clab/docker-build-retry.sh -t booty-vrnetlab:latest -f test/e2e/clab/vrnetlab/Dockerfile .
+
+      - name: Install ContainerLab
+        run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
+
+      - name: Deploy GoBGP vrnetlab topology
+        run: sudo containerlab deploy --topo test/e2e/clab/topology-gobgp-vrnetlab.clab.yml
+
+      - name: Run GoBGP vrnetlab E2E tests
+        env:
+          GOMAXPROCS: "2"
+        run: go test -tags e2e_gobgp_vrnetlab -v -race -count=1 -timeout 30m ./test/e2e/integration/...
+
+      - name: Collect GoBGP vrnetlab logs
+        if: always()
+        timeout-minutes: 8
+        run: |
+          mkdir -p gobgp-vrnetlab-logs
+
+          for node in spine01 rr01 booty-unnumbered booty-dual booty-numbered; do
+            name="clab-booty-gobgp-vrnetlab-lab-${node}"
+            {
+              echo "=== docker logs ${name} ==="
+              timeout 30 sudo docker logs "${name}" 2>&1 || true
+              echo
+              echo "=== ip addr ==="
+              timeout 10 sudo docker exec "${name}" ip addr 2>&1 || true
+              echo
+              echo "=== ip route ==="
+              timeout 10 sudo docker exec "${name}" ip route 2>&1 || true
+            } > "gobgp-vrnetlab-logs/${node}.log" 2>&1
+          done
+
+          for node in spine01 rr01; do
+            name="clab-booty-gobgp-vrnetlab-lab-${node}"
+            {
+              echo "=== show bgp summary ==="
+              timeout 15 sudo docker exec "${name}" vtysh -c "show bgp summary" 2>&1 || true
+              echo
+              echo "=== show bgp l2vpn evpn ==="
+              timeout 15 sudo docker exec "${name}" vtysh -c "show bgp l2vpn evpn" 2>&1 || true
+              echo
+              echo "=== show bgp neighbor json ==="
+              timeout 15 sudo docker exec "${name}" vtysh -c "show bgp neighbor json" 2>&1 || true
+            } > "gobgp-vrnetlab-logs/${node}-bgp.log" 2>&1
+          done
+
+      - name: Upload GoBGP vrnetlab logs
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: gobgp-vrnetlab-logs
+          path: gobgp-vrnetlab-logs/
+          if-no-files-found: ignore
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if command -v containerlab >/dev/null 2>&1; then
+            sudo containerlab destroy --topo test/e2e/clab/topology-gobgp-vrnetlab.clab.yml --cleanup || true
+          fi

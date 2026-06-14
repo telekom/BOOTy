@@ -3,9 +3,12 @@
 package network
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -44,10 +47,37 @@ func TestWaitForHTTP_Timeout(t *testing.T) {
 	}
 }
 
+func TestWaitForHTTP_TimeoutBoundsInFlightRequest(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	start := time.Now()
+	err := WaitForHTTP(context.Background(), srv.URL, 150*time.Millisecond)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if elapsed > time.Second {
+		t.Fatalf("WaitForHTTP took %s, want request bounded by timeout", elapsed)
+	}
+}
+
 func TestWaitForHTTP_EmptyTarget(t *testing.T) {
 	err := WaitForHTTP(context.Background(), "", 1*time.Second)
 	if err == nil {
 		t.Fatal("expected error for empty target")
+	}
+}
+
+func TestWaitForHTTP_NonPositiveTimeout(t *testing.T) {
+	err := WaitForHTTP(context.Background(), "http://127.0.0.1:19", 0)
+	if err == nil {
+		t.Fatal("expected error for non-positive timeout")
+	}
+	if !strings.Contains(err.Error(), "must be positive") {
+		t.Fatalf("error = %q, want positive-timeout validation", err.Error())
 	}
 }
 
@@ -71,6 +101,36 @@ func TestWaitForHTTP_AuthUnauthorized(t *testing.T) {
 	err := WaitForHTTP(context.Background(), srv.URL, 5*time.Second)
 	if err != nil {
 		t.Fatalf("expected 401 to count as connectivity, got error: %v", err)
+	}
+}
+
+func TestWaitForHTTP_RedactsTargetInLogs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() {
+		slog.SetDefault(previous)
+	})
+
+	target := strings.Replace(srv.URL, "http://", "http://user:secret@", 1) + "/image.raw?token=abc#frag"
+	err := WaitForHTTP(context.Background(), target, 5*time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := logs.String()
+	for _, leaked := range []string{"user", "secret", "token=abc", "frag"} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("logs leaked %q: %s", leaked, got)
+		}
+	}
+	if !strings.Contains(got, "/image.raw") {
+		t.Fatalf("logs = %q, want redacted path context", got)
 	}
 }
 

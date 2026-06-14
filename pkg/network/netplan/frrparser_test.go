@@ -127,6 +127,42 @@ exit
 	}
 }
 
+func TestParseFRRConfigBytes_PureType5EVPN(t *testing.T) {
+	t.Helper()
+	conf := `
+router bgp 65100
+ bgp router-id 192.168.4.10
+ neighbor hbn interface remote-as external
+ !
+ address-family ipv4 unicast
+  network 192.168.4.10/32
+  neighbor hbn activate
+ exit-address-family
+ !
+ address-family l2vpn evpn
+  neighbor hbn activate
+  advertise ipv4 unicast
+  route-target import 65000:1000
+  route-target export 65000:1000
+ exit-address-family
+exit
+`
+	params, err := ParseFRRConfigBytes([]byte(conf))
+	if err != nil {
+		t.Fatalf("ParseFRRConfigBytes: %v", err)
+	}
+
+	if !params.EVPN {
+		t.Error("EVPN should be true for Type-5 l2vpn evpn config")
+	}
+	if params.AdvertiseAllVNI {
+		t.Error("AdvertiseAllVNI should be false for pure Type-5 config")
+	}
+	if len(params.UnnumberedPeers) != 1 || params.UnnumberedPeers[0] != "hbn" {
+		t.Errorf("UnnumberedPeers = %v, want [hbn]", params.UnnumberedPeers)
+	}
+}
+
 func TestParseFRRConfigBytes_SkipsLinkLocal(t *testing.T) {
 	t.Helper()
 	conf := `

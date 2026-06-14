@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -28,10 +29,6 @@ const (
 
 	// defaultMTU is the fallback inner MTU when cfg.MTU is too low.
 	defaultMTU = 1500
-
-	// asnMax2Byte is the maximum 2-byte ASN value, used to select
-	// between 2-octet and 4-octet BGP community / RD formats.
-	asnMax2Byte = 65535
 )
 
 // fdbInstaller abstracts netlink FDB operations for testability.
@@ -85,7 +82,7 @@ type OverlayTier struct {
 	fdb    fdbInstaller
 
 	// Track resources created by us for clean teardown.
-	createdVRF      bool
+	createdVRFs     map[string]bool
 	createdBridge   bool
 	createdVXLAN    bool
 	addedLoopbackIP *netlink.Addr
@@ -95,14 +92,20 @@ type OverlayTier struct {
 	// so withdrawals (which lack next-hop) can still delete the right
 	// FDB entry. WatchEvent callbacks may run concurrently.
 	macVTEP sync.Map
+
+	importRTOnce sync.Once
+	importRTASN  uint32
+	importRTVNI  uint32
+	importRTErr  error
 }
 
 // NewOverlayTier creates a new overlay tier.
 func NewOverlayTier(cfg *Config) *OverlayTier {
 	return &OverlayTier{
-		cfg: cfg,
-		log: slog.With("tier", "overlay"),
-		fdb: netlinkFDB{},
+		cfg:         cfg,
+		log:         slog.With("tier", "overlay"),
+		fdb:         netlinkFDB{},
+		createdVRFs: map[string]bool{},
 	}
 }
 
@@ -222,35 +225,55 @@ func (o *OverlayTier) Teardown(_ context.Context) error {
 	return nil
 }
 
-// CreateVRF creates the VRF interface if VRFName is configured.
+// CreateVRF creates configured VRF interfaces.
 // Called by Stack before underlay setup so that dummy/NICs can be assigned.
 func (o *OverlayTier) CreateVRF() error {
-	if o.cfg.VRFName == "" {
+	if err := o.createVRF(o.cfg.VRFName, o.cfg.VRFTableID); err != nil {
+		return err
+	}
+	if o.cfg.OverlayVRFName != o.cfg.VRFName {
+		return o.createVRF(o.cfg.OverlayVRFName, o.cfg.OverlayVRFTableID)
+	}
+	return nil
+}
+
+func (o *OverlayTier) createVRF(name string, tableID uint32) error {
+	if name == "" {
 		return nil
 	}
 
 	vrf := &netlink.Vrf{
-		LinkAttrs: netlink.LinkAttrs{Name: o.cfg.VRFName},
-		Table:     o.cfg.VRFTableID,
+		LinkAttrs: netlink.LinkAttrs{Name: name},
+		Table:     tableID,
 	}
 	if err := netlink.LinkAdd(vrf); err != nil {
 		if !errors.Is(err, syscall.EEXIST) {
-			return fmt.Errorf("add VRF %s: %w", o.cfg.VRFName, err)
+			return fmt.Errorf("add VRF %s: %w", name, err)
 		}
 	} else {
-		o.createdVRF = true
+		if o.createdVRFs == nil {
+			o.createdVRFs = map[string]bool{}
+		}
+		o.createdVRFs[name] = true
 	}
 
-	link, err := netlink.LinkByName(o.cfg.VRFName)
+	link, err := netlink.LinkByName(name)
 	if err != nil {
-		return fmt.Errorf("find VRF %s: %w", o.cfg.VRFName, err)
+		return fmt.Errorf("find VRF %s: %w", name, err)
 	}
 	if err := netlink.LinkSetUp(link); err != nil {
-		return fmt.Errorf("bring up VRF %s: %w", o.cfg.VRFName, err)
+		return fmt.Errorf("bring up VRF %s: %w", name, err)
 	}
 
-	o.log.Info("vrf ready", "name", o.cfg.VRFName, "table", o.cfg.VRFTableID)
+	o.log.Info("vrf ready", "name", name, "table", tableID)
 	return nil
+}
+
+func (o *OverlayTier) overlayRouteTable() int {
+	if o.cfg.OverlayVRFName == "" {
+		return 0
+	}
+	return int(o.cfg.OverlayVRFTableID)
 }
 
 // vxlanName returns the VXLAN interface name derived from the provision VNI.
@@ -275,14 +298,16 @@ func (o *OverlayTier) createVXLANAndBridge() error {
 		return fmt.Errorf("attach VXLAN to bridge: %w", err)
 	}
 
-	// Assign bridge to VRF for traffic isolation.
-	if o.cfg.VRFName != "" {
-		vrfLink, err := netlink.LinkByName(o.cfg.VRFName)
+	// Assign bridge to the configured overlay VRF. Production-like netplan
+	// often keeps the L3VNI bridge in the default VRF while only the
+	// underlay NIC and VTEP source live in Vrf_underlay.
+	if o.cfg.OverlayVRFName != "" {
+		vrfLink, err := netlink.LinkByName(o.cfg.OverlayVRFName)
 		if err != nil {
-			return fmt.Errorf("find VRF %s: %w", o.cfg.VRFName, err)
+			return fmt.Errorf("find overlay VRF %s: %w", o.cfg.OverlayVRFName, err)
 		}
 		if err := netlink.LinkSetMasterByIndex(brLink, vrfLink.Attrs().Index); err != nil {
-			return fmt.Errorf("assign bridge to VRF: %w", err)
+			return fmt.Errorf("assign bridge to overlay VRF: %w", err)
 		}
 	}
 
@@ -478,7 +503,7 @@ func (o *OverlayTier) advertiseType5(ctx context.Context) error {
 		return fmt.Errorf("build EVPN NLRI: %w", err)
 	}
 
-	pattrs, err := buildType5PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
+	pattrs, err := buildType5PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI), o.cfg.VPNRT)
 	if err != nil {
 		return fmt.Errorf("build path attributes: %w", err)
 	}
@@ -514,7 +539,7 @@ func (o *OverlayTier) advertiseType3(ctx context.Context) error {
 		return fmt.Errorf("build EVPN type-3 NLRI: %w", err)
 	}
 
-	pattrs, err := buildType3PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
+	pattrs, err := buildType3PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI), o.cfg.VPNRT)
 	if err != nil {
 		return fmt.Errorf("build type-3 path attributes: %w", err)
 	}
@@ -563,7 +588,7 @@ func (o *OverlayTier) advertiseType2(ctx context.Context) error {
 		return fmt.Errorf("build EVPN type-2 NLRI: %w", err)
 	}
 
-	pattrs, err := buildType2PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
+	pattrs, err := buildType2PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI), o.cfg.VPNRT)
 	if err != nil {
 		return fmt.Errorf("build type-2 path attributes: %w", err)
 	}
@@ -622,9 +647,16 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 		return
 	}
 
-	if !p.GetIsWithdraw() && !matchesLocalRT(p, o.cfg.ASN, uint32(o.cfg.ProvisionVNI)) {
-		o.log.Debug("route update skipped: RT mismatch", "action", action, "type", nlri.GetTypeUrl())
-		return
+	if !p.GetIsWithdraw() {
+		importASN, importVNI, err := o.importRouteTarget()
+		if err != nil {
+			o.log.Debug("route update skipped: invalid configured import RT", "action", action, "type", nlri.GetTypeUrl(), "error", err)
+			return
+		}
+		if !matchesLocalRT(p, importASN, importVNI) {
+			o.log.Debug("route update skipped: RT mismatch", "action", action, "type", nlri.GetTypeUrl())
+			return
+		}
 	}
 
 	msg, err := nlri.UnmarshalNew()
@@ -692,6 +724,9 @@ func (o *OverlayTier) handleType5Route(route *apipb.EVPNIPPrefixRoute, vtep stri
 		LinkIndex: link.Attrs().Index,
 		Dst:       dst,
 		Gw:        gw,
+	}
+	if tableID := o.overlayRouteTable(); tableID != 0 {
+		kr.Table = tableID
 	}
 
 	if withdraw {
@@ -917,7 +952,7 @@ func buildEVPNType5NLRI(rd *anypb.Any, provisionIP, gwIP string, label uint32) (
 }
 
 // buildType5PathAttrs builds BGP path attributes for EVPN Type-5 advertisement.
-func buildType5PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32) ([]*anypb.Any, error) {
+func buildType5PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32, vpnRT string) ([]*anypb.Any, error) {
 	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0}) // IGP
 	if err != nil {
 		return nil, fmt.Errorf("marshal origin: %w", err)
@@ -934,7 +969,7 @@ func buildType5PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32) ([]*a
 		return nil, fmt.Errorf("marshal mp-reach: %w", err)
 	}
 
-	rt, err := buildRouteTarget(asn, vni)
+	rt, err := buildRouteTargetForSpec(vpnRT, asn, vni)
 	if err != nil {
 		return nil, fmt.Errorf("build route target: %w", err)
 	}
@@ -970,6 +1005,17 @@ func matchesLocalRT(path *apipb.Path, localASN, localVNI uint32) bool {
 	return false
 }
 
+func (o *OverlayTier) importRouteTarget() (asn, vni uint32, err error) {
+	o.importRTOnce.Do(func() {
+		if o.cfg == nil {
+			o.importRTErr = fmt.Errorf("missing GoBGP config")
+			return
+		}
+		o.importRTASN, o.importRTVNI, o.importRTErr = o.cfg.importRouteTarget()
+	})
+	return o.importRTASN, o.importRTVNI, o.importRTErr
+}
+
 // rtFoundInCommunities checks a slice of extended community Any values for a
 // Route Target matching localASN and localVNI.
 func rtFoundInCommunities(communities []*anypb.Any, localASN, localVNI uint32) bool {
@@ -987,7 +1033,6 @@ func rtFoundInCommunities(communities []*anypb.Any, localASN, localVNI uint32) b
 
 // rtCommunityMatches returns true if the proto message represents a Route
 // Target extended community (SubType 0x02) matching the given ASN and VNI.
-// For 4-octet ASN the VNI is masked to 16 bits, mirroring buildRouteTarget.
 func rtCommunityMatches(msg interface{}, localASN, localVNI uint32) bool {
 	const rtSubType = uint32(0x02)
 	switch v := msg.(type) {
@@ -998,7 +1043,8 @@ func rtCommunityMatches(msg interface{}, localASN, localVNI uint32) bool {
 	case *apipb.FourOctetAsSpecificExtended:
 		return v.GetSubType() == rtSubType &&
 			v.GetAsn() == localASN &&
-			v.GetLocalAdmin() == localVNI&0xFFFF
+			localVNI <= routeTargetLocalAdminMax &&
+			v.GetLocalAdmin() == localVNI
 	}
 	return false
 }
@@ -1016,17 +1062,31 @@ func buildRouteTarget(asn, vni uint32) (*anypb.Any, error) {
 			LocalAdmin:   vni,
 		})
 	} else {
+		if vni > routeTargetLocalAdminMax {
+			return nil, fmt.Errorf("route target value %d exceeds %d for 4-octet ASN %d", vni, routeTargetLocalAdminMax, asn)
+		}
 		a, err = anypb.New(&apipb.FourOctetAsSpecificExtended{
 			IsTransitive: true,
 			SubType:      0x02, // Route Target
 			Asn:          asn,
-			LocalAdmin:   vni & 0xFFFF,
+			LocalAdmin:   vni,
 		})
 	}
 	if err != nil {
 		return nil, fmt.Errorf("marshal route target: %w", err)
 	}
 	return a, nil
+}
+
+func buildRouteTargetForSpec(spec string, fallbackASN, fallbackVNI uint32) (*anypb.Any, error) {
+	if strings.TrimSpace(spec) == "" {
+		return buildRouteTarget(fallbackASN, fallbackVNI)
+	}
+	asn, vni, err := ParseRouteTarget(spec)
+	if err != nil {
+		return nil, err
+	}
+	return buildRouteTarget(asn, vni)
 }
 
 // pmsiTunnelTypeIngressReplication is the PMSI tunnel type for ingress
@@ -1050,7 +1110,7 @@ func buildEVPNType3NLRI(rd *anypb.Any, routerID string) (*anypb.Any, error) {
 
 // buildType3PathAttrs builds BGP path attributes for EVPN Type-3 (IMET)
 // advertisement, including Origin, MpReach, Route Target, and PMSI Tunnel.
-func buildType3PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32) ([]*anypb.Any, error) {
+func buildType3PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32, vpnRT string) ([]*anypb.Any, error) {
 	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0})
 	if err != nil {
 		return nil, fmt.Errorf("marshal origin: %w", err)
@@ -1065,7 +1125,7 @@ func buildType3PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32) ([]*a
 		return nil, fmt.Errorf("marshal mp-reach: %w", err)
 	}
 
-	rt, err := buildRouteTarget(asn, vni)
+	rt, err := buildRouteTargetForSpec(vpnRT, asn, vni)
 	if err != nil {
 		return nil, fmt.Errorf("build route target: %w", err)
 	}
@@ -1114,7 +1174,7 @@ func buildEVPNType2NLRI(rd *anypb.Any, mac, ip string, label uint32) (*anypb.Any
 
 // buildType2PathAttrs builds BGP path attributes for EVPN Type-2 (MAC/IP)
 // advertisement, including Origin, MpReach, and Route Target.
-func buildType2PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32) ([]*anypb.Any, error) {
+func buildType2PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32, vpnRT string) ([]*anypb.Any, error) {
 	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0})
 	if err != nil {
 		return nil, fmt.Errorf("marshal origin: %w", err)
@@ -1129,7 +1189,7 @@ func buildType2PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32) ([]*a
 		return nil, fmt.Errorf("marshal mp-reach: %w", err)
 	}
 
-	rt, err := buildRouteTarget(asn, vni)
+	rt, err := buildRouteTargetForSpec(vpnRT, asn, vni)
 	if err != nil {
 		return nil, fmt.Errorf("build route target: %w", err)
 	}

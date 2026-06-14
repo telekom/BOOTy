@@ -34,7 +34,9 @@ const (
 
 func requireVrnetlabLab(t *testing.T) {
 	t.Helper()
-	out, err := exec.Command("docker", "ps", "--format", "{{.Names}}").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", "ps", "--format", "{{.Names}}").Output()
 	if err != nil {
 		t.Fatalf("docker not available: %v", err)
 	}
@@ -603,16 +605,19 @@ func TestVrnetlabAllVMsEnterCAPRF(t *testing.T) {
 // successful boot. If the Dockerfile module copy loop breaks (e.g. shell
 // comment parsing), this test catches it before a real deploy.
 var vrnetlabRequiredModules = []string{
-	"ext4",        // root filesystem
-	"xfs",         // common data filesystem
-	"vfat",        // EFI system partition
-	"scsi_mod",    // SCSI subsystem
-	"sd_mod",      // SCSI disk driver
-	"virtio_blk",  // virtio block storage (QEMU)
-	"virtio_scsi", // virtio SCSI controller
-	"virtio_pci",  // PCI virtio transport (QEMU)
-	"virtio_net",  // virtio NIC
-	"vxlan",       // VXLAN overlay
+	"ext4",          // root filesystem
+	"xfs",           // common data filesystem
+	"fat",           // FAT core used by vfat
+	"vfat",          // EFI system partition
+	"nls_cp437",     // default FAT codepage support
+	"nls_iso8859-1", // default FAT iocharset support
+	"scsi_mod",      // SCSI subsystem
+	"sd_mod",        // SCSI disk driver
+	"virtio_blk",    // virtio block storage (QEMU)
+	"virtio_scsi",   // virtio SCSI controller
+	"virtio_pci",    // PCI virtio transport (QEMU)
+	"virtio_net",    // virtio NIC
+	"vxlan",         // VXLAN overlay
 }
 
 func TestVrnetlabModulesLoaded(t *testing.T) {
@@ -659,6 +664,7 @@ var vrnetlabAllowedErrorRootCauses = []string{
 	// Expected in CI without real disks or network.
 	"no suitable disk found",
 	`exec: "mdadm": executable file not found in $PATH`,
+	"stop raid arrays",
 	"Connectivity timeout",
 	"Connecting to provisioning server",
 	"network connectivity timeout",

@@ -2,11 +2,13 @@ package image
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/registry"
@@ -15,6 +17,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/stream"
+	"github.com/google/go-containerregistry/pkg/v1/types"
 )
 
 func startTestRegistry(t *testing.T) *httptest.Server {
@@ -97,6 +100,62 @@ func TestFetchOCILayerMultiLayer(t *testing.T) {
 	}
 }
 
+func TestFetchOCILayerByMediaType(t *testing.T) {
+	srv := startTestRegistry(t)
+	defer srv.Close()
+
+	sysextLayer := stream.NewLayer(
+		io.NopCloser(strings.NewReader("sysext-layer")),
+		stream.WithMediaType(SystemdSysextMediaType),
+	)
+	topLayer := stream.NewLayer(
+		io.NopCloser(strings.NewReader("ordinary-top-layer")),
+		stream.WithMediaType(types.OCILayer),
+	)
+	img, err := mutate.AppendLayers(empty.Image, sysextLayer, topLayer)
+	if err != nil {
+		t.Fatalf("mutate.AppendLayers: %v", err)
+	}
+
+	ref, err := name.ParseReference(fmt.Sprintf("%s/test/typed:v1", strings.TrimPrefix(srv.URL, "http://")))
+	if err != nil {
+		t.Fatalf("parse ref: %v", err)
+	}
+	if err := remote.Write(ref, img); err != nil {
+		t.Fatalf("remote.Write: %v", err)
+	}
+
+	rc, err := FetchOCILayerByMediaType(context.Background(), ref.String(), SystemdSysextMediaType)
+	if err != nil {
+		t.Fatalf("FetchOCILayerByMediaType: %v", err)
+	}
+	defer rc.Close()
+
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if string(got) != "sysext-layer" {
+		t.Errorf("got %q, want sysext media-type layer", got)
+	}
+}
+
+func TestFetchOCILayerByMediaTypeRejectsMissingLayer(t *testing.T) {
+	srv := startTestRegistry(t)
+	defer srv.Close()
+
+	pushTestImageToRegistry(t, srv, "test/no-sysext:v1", []byte("ordinary-layer"))
+
+	ref := fmt.Sprintf("%s/test/no-sysext:v1", strings.TrimPrefix(srv.URL, "http://"))
+	_, err := FetchOCILayerByMediaType(context.Background(), ref, SystemdSysextMediaType)
+	if err == nil {
+		t.Fatal("expected missing sysext media type error")
+	}
+	if !strings.Contains(err.Error(), string(SystemdSysextMediaType)) {
+		t.Fatalf("error = %q, want sysext media type", err.Error())
+	}
+}
+
 func TestFetchOCILayerNotFound(t *testing.T) {
 	srv := startTestRegistry(t)
 	defer srv.Close()
@@ -113,6 +172,56 @@ func TestFetchOCILayerInvalidRef(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid reference")
 	}
+}
+
+func TestFetchOCILayerByMediaTypeWithRetryRedactsSensitiveRefParts(t *testing.T) {
+	retryBackoffBase = 0
+	t.Cleanup(func() { retryBackoffBase = time.Second })
+
+	ref := "user:secret@registry.example.invalid/repo/sysext:dev?token=abc"
+	_, err := FetchOCILayerByMediaTypeWithRetry(context.Background(), ref, SystemdSysextMediaType)
+	if err == nil {
+		t.Fatal("expected OCI pull error")
+	}
+	for _, leaked := range []string{"user", "secret", "token=abc"} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("error leaked sensitive OCI ref part %q: %q", leaked, err.Error())
+		}
+	}
+	if !strings.Contains(err.Error(), "registry.example.invalid/repo/sysext:dev") {
+		t.Fatalf("error = %q, want redacted ref context", err.Error())
+	}
+}
+
+func TestRedactedOCIRefErrorPreservesUnwrapAndRedacts(t *testing.T) {
+	sentinel := errors.New("temporary OCI failure")
+	ref := "user:secret@registry.example.invalid/repo/sysext:dev?token=abc"
+	err := fmt.Errorf("OCI pull %s: %w", RedactOCIRef(ref), wrapRedactedOCIRefError(&ociRefTestError{ref: ref, err: sentinel}, ref))
+
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("error does not preserve wrapped OCI error: %v", err)
+	}
+	for _, leaked := range []string{"user", "secret", "token=abc"} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("error leaked sensitive OCI ref part %q: %q", leaked, err.Error())
+		}
+	}
+	if !strings.Contains(err.Error(), "registry.example.invalid/repo/sysext:dev") {
+		t.Fatalf("error = %q, want redacted ref context", err.Error())
+	}
+}
+
+type ociRefTestError struct {
+	ref string
+	err error
+}
+
+func (e *ociRefTestError) Error() string {
+	return "failed pulling oci://" + e.ref + ": " + e.err.Error()
+}
+
+func (e *ociRefTestError) Unwrap() error {
+	return e.err
 }
 
 func TestFetchOCILayerNoLayers(t *testing.T) {

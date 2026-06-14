@@ -14,8 +14,10 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/google/go-containerregistry/pkg/v1/types"
 )
 
 const imageCopyBufferSize = 16 << 20 // 16 MiB
@@ -47,7 +49,7 @@ type StreamOpts struct {
 // lz4, xz, bzip2). qcow2 images are detected and converted via ramdisk.
 // Optional checksum validation is performed after write.
 func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
-	slog.Info("streaming image", "url", filepath.Base(url), "device", device) //nolint:gosec // trusted config values
+	slog.Info("streaming image", "url", RedactURL(url), "device", device) //nolint:gosec // trusted config values
 
 	var opt StreamOpts
 	if len(opts) > 0 {
@@ -61,8 +63,8 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 
 	// qcow2 images require download → convert → stream via ramdisk.
 	if format == FormatQCOW2 {
-		cleanup()
-		return convertQCOW2Hook(ctx, url, device)
+		defer cleanup()
+		return convertQCOW2Hook(ctx, decompressed, url, device, opt)
 	}
 	defer cleanup()
 
@@ -131,14 +133,16 @@ func wipeLeadingSectors(device string) {
 	}
 }
 
-// convertQCOW2Hook is set by the linux build to call ConvertQCOW2.
+// convertQCOW2Hook is set by the linux build to call ConvertQCOW2FromReader.
 // On non-linux platforms, qcow2 conversion is unsupported.
-var convertQCOW2Hook = func(_ context.Context, _, _ string) error {
+var convertQCOW2Hook = func(_ context.Context, _ io.Reader, _, _ string, _ StreamOpts) error {
 	return fmt.Errorf("qcow2 conversion requires linux (tmpfs ramdisk + qemu-img)")
 }
 
 // openAndDecompress opens the image source, detects compression, and returns
 // the decompressed reader along with a cleanup function and detected format.
+// For qcow2 images, the returned reader is the original stream with the
+// detection bytes preserved so callers can continue consuming the same source.
 func openAndDecompress(ctx context.Context, url string) (io.Reader, func(), Format, error) {
 	body, err := openSource(ctx, url)
 	if err != nil {
@@ -155,7 +159,7 @@ func openAndDecompress(ctx context.Context, url string) (io.Reader, func(), Form
 	// qcow2 cannot be decompressed inline — return early so caller can route.
 	if format == FormatQCOW2 {
 		cleanup := func() { _ = body.Close() }
-		return nil, cleanup, FormatQCOW2, nil
+		return reader, cleanup, FormatQCOW2, nil
 	}
 
 	decompressed, closer, err := Decompressor(reader, format)
@@ -178,6 +182,10 @@ func wrapChecksum(r io.Reader, opt StreamOpts) (io.Reader, hash.Hash, error) {
 	if opt.Checksum == "" {
 		return r, nil, nil
 	}
+	opt, err := normalizeChecksumOpt(opt)
+	if err != nil {
+		return nil, nil, err
+	}
 	h, err := newHash(opt.ChecksumType)
 	if err != nil {
 		return nil, nil, err
@@ -190,6 +198,10 @@ func verifyChecksum(h hash.Hash, opt StreamOpts) error {
 	if h == nil {
 		return nil
 	}
+	opt, err := normalizeChecksumOpt(opt)
+	if err != nil {
+		return err
+	}
 	got := hex.EncodeToString(h.Sum(nil))
 	if subtle.ConstantTimeCompare([]byte(got), []byte(opt.Checksum)) != 1 {
 		return fmt.Errorf("checksum mismatch: computed=%s want=%s",
@@ -199,14 +211,49 @@ func verifyChecksum(h hash.Hash, opt StreamOpts) error {
 	return nil
 }
 
+func normalizeChecksumOpt(opt StreamOpts) (StreamOpts, error) {
+	opt.Checksum = strings.ToLower(strings.TrimSpace(opt.Checksum))
+	opt.ChecksumType = strings.ToLower(strings.TrimSpace(opt.ChecksumType))
+	if opt.Checksum == "" {
+		return opt, nil
+	}
+
+	for _, alg := range []string{"sha256", "sha512"} {
+		prefix := alg + ":"
+		if strings.HasPrefix(opt.Checksum, prefix) {
+			if opt.ChecksumType != "" && opt.ChecksumType != alg {
+				return opt, fmt.Errorf("checksum prefix %s conflicts with checksum type %s", alg, opt.ChecksumType)
+			}
+			opt.ChecksumType = alg
+			opt.Checksum = strings.TrimPrefix(opt.Checksum, prefix)
+			if opt.Checksum == "" {
+				return opt, fmt.Errorf("checksum prefix %s requires a non-empty digest", alg)
+			}
+			break
+		}
+	}
+
+	if opt.ChecksumType == "" {
+		switch len(opt.Checksum) {
+		case sha256.Size * 2:
+			opt.ChecksumType = "sha256"
+		case sha512.Size * 2:
+			opt.ChecksumType = "sha512"
+		default:
+			return opt, fmt.Errorf("cannot infer checksum type from checksum length %d", len(opt.Checksum))
+		}
+	}
+	return opt, nil
+}
+
 // openSource returns a ReadCloser for the given URL.
 // Supports http/https and oci:// protocols.
 // HTTP requests are retried up to 3 times with exponential backoff.
 func openSource(ctx context.Context, url string) (io.ReadCloser, error) {
 	if IsOCIReference(url) {
 		ref := TrimOCIScheme(url)
-		slog.Info("pulling OCI image", "ref", ref)
-		return fetchOCIWithRetry(ctx, ref)
+		slog.Info("pulling OCI image", "ref", RedactOCIRef(ref))
+		return FetchOCILayerWithRetry(ctx, ref)
 	}
 
 	return httpGetWithRetry(ctx, url)
@@ -220,18 +267,20 @@ var retryBackoffBase = time.Second
 func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 	const maxRetries = 3
 	backoff := retryBackoffBase
+	redactedURL := RedactURL(url)
 
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 		if err != nil {
-			return nil, fmt.Errorf("creating request: %w", err)
+			return nil, fmt.Errorf("creating request for %s: %w", redactedURL, &redactedSourceError{rawSource: url, err: err})
 		}
 
 		resp, err := imageHTTPClient.Do(req) //nolint:gosec // URL from trusted config
 		if err != nil {
-			lastErr = fmt.Errorf("fetching image (attempt %d/%d): %w", attempt+1, maxRetries, err)
-			slog.Warn("HTTP request failed, retrying", "attempt", attempt+1, "error", err, "backoff", backoff)
+			redactedErr := &redactedSourceError{rawSource: url, err: err}
+			lastErr = fmt.Errorf("fetching image %s (attempt %d/%d): %w", redactedURL, attempt+1, maxRetries, redactedErr)
+			slog.Warn("HTTP request failed, retrying", "attempt", attempt+1, "error", redactedErr, "backoff", backoff)
 			if attempt < maxRetries-1 {
 				select {
 				case <-ctx.Done():
@@ -249,11 +298,11 @@ func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 		_ = resp.Body.Close()
 
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("image not found: %s", url)
+			return nil, fmt.Errorf("image not found: %s", redactedURL)
 		}
 		// Retry on 5xx server errors.
 		if resp.StatusCode >= 500 {
-			lastErr = fmt.Errorf("server error %d for %s (attempt %d/%d)", resp.StatusCode, url, attempt+1, maxRetries)
+			lastErr = fmt.Errorf("server error %d for %s (attempt %d/%d)", resp.StatusCode, redactedURL, attempt+1, maxRetries)
 			slog.Warn("HTTP server error, retrying", "attempt", attempt+1, "status", resp.StatusCode, "backoff", backoff)
 			if attempt < maxRetries-1 {
 				select {
@@ -265,15 +314,16 @@ func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 			}
 			continue
 		}
-		return nil, fmt.Errorf("unexpected status %d for %s", resp.StatusCode, url)
+		return nil, fmt.Errorf("unexpected status %d for %s", resp.StatusCode, redactedURL)
 	}
 	return nil, lastErr
 }
 
-// fetchOCIWithRetry retries OCI layer fetch with exponential backoff.
-func fetchOCIWithRetry(ctx context.Context, ref string) (io.ReadCloser, error) {
+// FetchOCILayerWithRetry retries OCI layer fetch with exponential backoff.
+func FetchOCILayerWithRetry(ctx context.Context, ref string) (io.ReadCloser, error) {
 	const maxRetries = 3
 	backoff := retryBackoffBase
+	redactedRef := RedactOCIRef(ref)
 
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -281,8 +331,37 @@ func fetchOCIWithRetry(ctx context.Context, ref string) (io.ReadCloser, error) {
 		if err == nil {
 			return rc, nil
 		}
-		lastErr = fmt.Errorf("OCI pull (attempt %d/%d): %w", attempt+1, maxRetries, err)
-		slog.Warn("OCI pull failed, retrying", "attempt", attempt+1, "error", err, "backoff", backoff)
+		redactedErr := wrapRedactedOCIRefError(err, ref)
+		lastErr = fmt.Errorf("OCI pull %s (attempt %d/%d): %w", redactedRef, attempt+1, maxRetries, redactedErr)
+		slog.Warn("OCI pull failed, retrying", "attempt", attempt+1, "ref", redactedRef, "error", redactedErr, "backoff", backoff)
+		if attempt < maxRetries-1 {
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("context canceled: %w", ctx.Err())
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+		}
+	}
+	return nil, lastErr
+}
+
+// FetchOCILayerByMediaTypeWithRetry retries OCI layer fetch by explicit media
+// type with exponential backoff.
+func FetchOCILayerByMediaTypeWithRetry(ctx context.Context, ref string, mediaTypes ...types.MediaType) (io.ReadCloser, error) {
+	const maxRetries = 3
+	backoff := retryBackoffBase
+	redactedRef := RedactOCIRef(ref)
+
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		rc, err := FetchOCILayerByMediaType(ctx, ref, mediaTypes...)
+		if err == nil {
+			return rc, nil
+		}
+		redactedErr := wrapRedactedOCIRefError(err, ref)
+		lastErr = fmt.Errorf("OCI pull %s (attempt %d/%d): %w", redactedRef, attempt+1, maxRetries, redactedErr)
+		slog.Warn("OCI pull failed, retrying", "attempt", attempt+1, "ref", redactedRef, "error", redactedErr, "backoff", backoff)
 		if attempt < maxRetries-1 {
 			select {
 			case <-ctx.Done():
@@ -296,7 +375,7 @@ func fetchOCIWithRetry(ctx context.Context, ref string) (io.ReadCloser, error) {
 }
 
 func newHash(checksumType string) (hash.Hash, error) {
-	switch checksumType {
+	switch strings.ToLower(strings.TrimSpace(checksumType)) {
 	case "sha256":
 		return sha256.New(), nil
 	case "sha512":

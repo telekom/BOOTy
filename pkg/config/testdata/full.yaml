@@ -222,11 +222,34 @@ provision:
     # checksumType: sha256 | sha512 (default: inferred from checksum length)
     checksumType: sha256
 
-    # mode: whole-disk (default) | partition
+    # mode: whole-disk (default) | partition | ab
     mode: whole-disk
 
     signatureURL: ""
     gpgPubKey: ""
+
+  ab:
+    # scheme: dual-root (default). Used only when provision.image.mode=ab.
+    scheme: dual-root
+    # activeSlot: currently booted slot, a | b. Empty means initial provision.
+    activeSlot: a
+    # targetSlot: inactive (default) | a | b.
+    targetSlot: inactive
+    # preserveExisting: true for OS upgrades; skips disk-wide wipe and layout creation.
+    # Requires activeSlot and kexec so BOOTy can switch into the target slot
+    # without relying on firmware boot order that still points at the active slot.
+    preserveExisting: false
+    # sourceRootLabel/sourceRootPartition select the source-image root partition.
+    # Prefer a stable GPT label and use the 1-based partition number only when
+    # the source image has no root label.
+    sourceRootLabel: rootfs
+    sourceRootPartition: 0
+    # bootSizeMB: shared EFI system partition size (default: 512).
+    bootSizeMB: 512
+    # rootSizeMB: size of each root slot (default: 32768).
+    rootSizeMB: 32768
+    # stateSizeMB: persistent state partition size; 0 fills remaining space.
+    stateSizeMB: 0
 
   disk:
     # device: explicit block device path (default: auto-detect largest non-removable disk)
@@ -275,6 +298,22 @@ provision:
     enabled: false
     # datasource: nocloud (default) | configdrive
     datasource: nocloud
+
+  sysext:
+    # enabled: copy selected systemd-sysext images into the provisioned root
+    # while BOOTy still has it mounted. Default false.
+    enabled: false
+    # defaultMode: preload (inactive catalog) | active (/var/lib/extensions)
+    defaultMode: preload
+    catalogDir: /usr/lib/tcaas-sysext/preloaded
+    activeDir: /var/lib/extensions
+    layers:
+      - name: node-tuning
+        version: v1
+        source: oci://registry.example.com/tcaas/sysext-node-tuning:v1
+        fileName: node-tuning.raw
+        sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        mode: preload
 
   crashArtifacts:
     enabled: false

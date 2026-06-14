@@ -417,6 +417,8 @@ func TestLoadFullYAMLReference(t *testing.T) {
 		{"Provision.Image.Mode", cfg.Provision.Image.Mode, "whole-disk"},
 		{"Provision.Disk.MinSizeGB", cfg.Provision.Disk.MinSizeGB, 100},
 		{"Provision.Disk.NumVFs", cfg.Provision.Disk.NumVFs, 32},
+		{"Provision.Sysext.DefaultMode", cfg.Provision.Sysext.DefaultMode, "preload"},
+		{"Provision.Sysext.CatalogDir", cfg.Provision.Sysext.CatalogDir, "/usr/lib/tcaas-sysext/preloaded"},
 		{"Provision.Firmware.MinBIOS", cfg.Provision.Firmware.MinBIOS, "2.10"},
 		{"Provision.Firmware.MinBMC", cfg.Provision.Firmware.MinBMC, "4.50"},
 		{"Provision.CrashArtifacts.MaxMB", cfg.Provision.CrashArtifacts.MaxMB, 256},
@@ -445,6 +447,12 @@ func TestLoadFullYAMLReference(t *testing.T) {
 	}
 	if len(cfg.Provision.PostProvisionCmds) != 1 {
 		t.Errorf("PostProvisionCmds len = %d, want 1", len(cfg.Provision.PostProvisionCmds))
+	}
+	if len(cfg.Provision.Sysext.Layers) != 1 {
+		t.Fatalf("Provision.Sysext.Layers len = %d, want 1", len(cfg.Provision.Sysext.Layers))
+	}
+	if cfg.Provision.Sysext.Layers[0].Name != "node-tuning" {
+		t.Errorf("Provision.Sysext.Layers[0].Name = %q, want node-tuning", cfg.Provision.Sysext.Layers[0].Name)
 	}
 }
 

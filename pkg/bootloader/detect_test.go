@@ -5,6 +5,7 @@ package bootloader
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -22,7 +23,11 @@ func TestDetectBootloader_SystemdBoot(t *testing.T) {
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(path, "systemd-bootx64.efi"), []byte("stub"), 0o644); err != nil {
+	name := "systemd-bootx64.efi"
+	if runtime.GOARCH == "arm64" {
+		name = "systemd-bootaa64.efi"
+	}
+	if err := os.WriteFile(filepath.Join(path, name), []byte("stub"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	b := DetectBootloader(root)

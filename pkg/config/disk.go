@@ -12,6 +12,12 @@ type DiskConfig struct {
 	// Default: "" (auto-detect largest non-removable disk, or RAID device if configured)
 	Device string `yaml:"device" json:"device"`
 
+	// SerialNumber selects a target disk by its sysfs device serial number when
+	// Device is unset. This is intended for provider-level disk selectors where
+	// the kernel device name is not stable across boots.
+	// Default: "" (do not select by serial)
+	SerialNumber string `yaml:"serialNumber" json:"serialNumber"`
+
 	// MinSizeGB sets the minimum acceptable disk size in GiB.
 	// Disks smaller than this are rejected during auto-detection.
 	// Default: 0 (no minimum)

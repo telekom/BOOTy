@@ -2,7 +2,10 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
+
+	imageutil "github.com/telekom/BOOTy/pkg/image"
 )
 
 // Validate checks that all enum-like config fields contain known values and
@@ -12,7 +15,7 @@ import (
 // Fields validated:
 //   - Mode: "provision", "deprovision", "soft-deprovision", "soft", "hard",
 //     "standby", "dry-run", "check"
-//   - Provision.Image.Mode: "whole-disk", "partition"
+//   - Provision.Image.Mode: "whole-disk", "partition", "ab"
 //   - Provision.Image.ChecksumType: "sha256", "sha512"
 //   - Provision.CloudInit.Datasource: "nocloud", "configdrive"
 //   - Provision.Disk.RAID[*]: valid level, unique non-empty name without /dev/ prefix,
@@ -37,7 +40,7 @@ func (c *Config) Validate() error {
 			return validateEnum(c.Mode, "mode", "provision", "deprovision", "soft-deprovision", "soft", "hard", "standby", "dry-run", "check")
 		},
 		func() string {
-			return validateEnum(c.Provision.Image.Mode, "provision.image.mode", "whole-disk", "partition")
+			return validateEnum(c.Provision.Image.Mode, "provision.image.mode", ImageModeWholeDisk, ImageModePartition, ImageModeAB)
 		},
 		func() string {
 			return validateEnumLower(c.Network.Mode, "network.mode", "gobgp", "frr", "static", "dhcp")
@@ -80,6 +83,12 @@ func (c *Config) Validate() error {
 	if err := validateRAIDConfig(c.Provision.Disk.RAID); err != nil {
 		errs = append(errs, err.Error())
 	}
+	if err := validateSysextConfig(&c.Provision.Sysext); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := validateABConfig(c.Provision.Image.Mode, c.Provision.DisableKexec, &c.Provision.AB); err != nil {
+		errs = append(errs, err.Error())
+	}
 
 	if len(errs) > 0 {
 		return fmt.Errorf("config validation: %s", strings.Join(errs, "; "))
@@ -99,6 +108,10 @@ func (c *Config) normalize() {
 		&c.Network.BGP.UnderlayAF,
 		&c.Network.BGP.OverlayType,
 		&c.Provision.CloudInit.Datasource,
+		&c.Provision.Sysext.DefaultMode,
+		&c.Provision.AB.Scheme,
+		&c.Provision.AB.ActiveSlot,
+		&c.Provision.AB.TargetSlot,
 		&c.Rescue.Mode,
 	}
 	for _, f := range lowerFields {
@@ -109,6 +122,104 @@ func (c *Config) normalize() {
 	if c.Transport.TokenAlgorithm != "" {
 		c.Transport.TokenAlgorithm = strings.ToUpper(c.Transport.TokenAlgorithm)
 	}
+}
+
+func validateABConfig(imageMode string, disableKexec bool, cfg *ABConfig) error {
+	errs := make([]string, 0, 5)
+	mode := strings.ToLower(strings.TrimSpace(imageMode))
+	abMode := mode == ImageModeAB
+
+	errs = append(errs, validateABEnums(cfg)...)
+	errs = append(errs, validateABSizeFields(cfg)...)
+	errs = append(errs, validateABModeConstraints(abMode, disableKexec, cfg)...)
+
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func validateABEnums(cfg *ABConfig) []string {
+	var errs []string
+	scheme := normalizeABScheme(cfg.Scheme)
+	if scheme != "" && scheme != ABSchemeDualRoot {
+		errs = append(errs, fmt.Sprintf("invalid provision.ab.scheme %q", cfg.Scheme))
+	}
+
+	activeSlot := normalizeABSlot(cfg.ActiveSlot)
+	if activeSlot != "" && activeSlot != ABSlotA && activeSlot != ABSlotB {
+		errs = append(errs, fmt.Sprintf("invalid provision.ab.activeSlot %q", cfg.ActiveSlot))
+	}
+
+	targetSlot := strings.ToLower(strings.TrimSpace(cfg.TargetSlot))
+	if targetSlot != "" && targetSlot != ABSlotA && targetSlot != ABSlotB && targetSlot != ABTargetInactive {
+		errs = append(errs, fmt.Sprintf("invalid provision.ab.targetSlot %q", cfg.TargetSlot))
+	}
+	return errs
+}
+
+func validateABSizeFields(cfg *ABConfig) []string {
+	var errs []string
+	if cfg.BootSizeMB < 0 {
+		errs = append(errs, "provision.ab.bootSizeMB must be non-negative")
+	}
+	if cfg.RootSizeMB < 0 {
+		errs = append(errs, "provision.ab.rootSizeMB must be non-negative")
+	}
+	if cfg.StateSizeMB < 0 {
+		errs = append(errs, "provision.ab.stateSizeMB must be non-negative")
+	}
+	if cfg.SourceRootPartition < 0 {
+		errs = append(errs, "provision.ab.sourceRootPartition must be non-negative")
+	}
+	return errs
+}
+
+func validateABModeConstraints(abMode, disableKexec bool, cfg *ABConfig) []string {
+	var errs []string
+	if cfg.PreserveExisting && !abMode {
+		errs = append(errs, "provision.ab.preserveExisting requires provision.image.mode=ab")
+	}
+	if !abMode {
+		return errs
+	}
+
+	withDefaults := cfg.WithDefaults()
+	if withDefaults.RootSizeMB <= 0 {
+		errs = append(errs, "provision.ab.rootSizeMB must be positive in ab image mode")
+	}
+	errs = append(errs, validateABPreserveConstraints(disableKexec, cfg, &withDefaults)...)
+	errs = append(errs, validateABSourceRootSelectors(cfg)...)
+	if _, err := withDefaults.ResolvedTargetSlot(); err != nil {
+		errs = append(errs, fmt.Sprintf("provision.ab: %v", err))
+	}
+	return errs
+}
+
+func validateABPreserveConstraints(disableKexec bool, cfg, withDefaults *ABConfig) []string {
+	if !cfg.PreserveExisting {
+		return nil
+	}
+	var errs []string
+	if disableKexec {
+		errs = append(errs, "provision.disableKexec must be false when provision.ab.preserveExisting is true")
+	}
+	if cfg.PreserveExisting && withDefaults.ActiveSlot == "" {
+		errs = append(errs, "provision.ab.activeSlot is required when preserveExisting is true")
+	}
+	if cfg.PreserveExisting && withDefaults.ActiveSlot != "" &&
+		(withDefaults.TargetSlot == ABSlotA || withDefaults.TargetSlot == ABSlotB) &&
+		withDefaults.ActiveSlot == withDefaults.TargetSlot {
+		errs = append(errs, "provision.ab.targetSlot must not equal provision.ab.activeSlot when preserveExisting is true")
+	}
+	return errs
+}
+
+func validateABSourceRootSelectors(cfg *ABConfig) []string {
+	if cfg.SourceRootLabel != "" && cfg.SourceRootPartition != 0 {
+		return []string{"provision.ab.sourceRootLabel and provision.ab.sourceRootPartition are mutually exclusive"}
+	}
+	return nil
 }
 
 // minDevicesForLevel returns the minimum number of member devices required
@@ -149,6 +260,146 @@ func validateRAIDConfig(raids []RAIDConfig) error {
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func validateSysextConfig(cfg *SysextConfig) error {
+	var errs []string
+	defaultMode := strings.ToLower(strings.TrimSpace(cfg.DefaultMode))
+	if defaultMode != "" && defaultMode != "preload" && defaultMode != "active" {
+		errs = append(errs, fmt.Sprintf("invalid provision.sysext.defaultMode %q", cfg.DefaultMode))
+	}
+	if err := validateSysextTargetDir(cfg.CatalogDir); err != nil {
+		errs = append(errs, fmt.Sprintf("provision.sysext.catalogDir: %v", err))
+	}
+	if err := validateSysextTargetDir(cfg.ActiveDir); err != nil {
+		errs = append(errs, fmt.Sprintf("provision.sysext.activeDir: %v", err))
+	}
+	for i := range cfg.Layers {
+		errs = append(errs, validateSysextLayerConfig(cfg.Enabled, cfg.AllowInsecureHTTP, i, &cfg.Layers[i])...)
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func validateSysextLayerConfig(enabled, allowInsecureHTTP bool, index int, layer *SysextLayerConfig) []string {
+	prefix := fmt.Sprintf("provision.sysext.layers[%d]", index)
+	var errs []string
+	if strings.TrimSpace(layer.Name) == "" {
+		errs = append(errs, prefix+": name is required")
+	}
+	if enabled && strings.TrimSpace(layer.Source) == "" {
+		errs = append(errs, prefix+": source is required when provision.sysext.enabled is true")
+	}
+	mode := strings.ToLower(strings.TrimSpace(layer.Mode))
+	if mode != "" && mode != "preload" && mode != "active" {
+		errs = append(errs, fmt.Sprintf("invalid %s.mode %q", prefix, layer.Mode))
+	}
+	if err := validateSysextFileName(layer.FileName); err != nil {
+		errs = append(errs, fmt.Sprintf("%s.fileName: %v", prefix, err))
+	}
+	if err := validateSysextSHA256(layer.SHA256); err != nil {
+		errs = append(errs, fmt.Sprintf("%s.sha256: %v", prefix, err))
+	}
+	errs = append(errs, validateSysextSourceIntegrity(enabled, allowInsecureHTTP, prefix, layer)...)
+	return errs
+}
+
+func validateSysextSourceIntegrity(enabled, allowInsecureHTTP bool, prefix string, layer *SysextLayerConfig) []string {
+	source := strings.TrimSpace(layer.Source)
+	if source == "" {
+		return nil
+	}
+	var errs []string
+	u, err := url.Parse(source)
+	if err != nil {
+		if looksLikeHTTPSource(source) {
+			errs = append(errs, fmt.Sprintf("%s.source: invalid HTTP(S) sysext source %s: %s", prefix, imageutil.RedactURL(source), imageutil.RedactSourceError(err, source)))
+		} else if looksLikeURLSource(source) {
+			errs = append(errs, fmt.Sprintf("%s.source: invalid sysext source %s: %s", prefix, imageutil.RedactURL(source), imageutil.RedactSourceError(err, source)))
+		}
+	} else {
+		switch strings.ToLower(u.Scheme) {
+		case "":
+			// No scheme means a local provisioner file path, which keeps the
+			// existing offline provisioning behavior.
+		case "https", "oci":
+		case "http":
+			if !allowInsecureHTTP {
+				errs = append(errs, fmt.Sprintf("%s.source: plain HTTP sysext sources require provision.sysext.allowInsecureHTTP=true; use HTTPS, OCI, or a local provisioner file for production", prefix))
+			}
+		default:
+			errs = append(errs, fmt.Sprintf("%s.source: unsupported sysext source scheme %q; use HTTPS, OCI, plain HTTP with provision.sysext.allowInsecureHTTP=true, or a local provisioner file", prefix, u.Scheme))
+		}
+	}
+	if enabled && strings.TrimSpace(layer.SHA256) == "" && !isOCIDigestSource(source) {
+		errs = append(errs, fmt.Sprintf("%s.sha256: required unless source is an OCI digest reference", prefix))
+	}
+	return errs
+}
+
+func looksLikeHTTPSource(source string) bool {
+	lower := strings.ToLower(strings.TrimSpace(source))
+	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
+}
+
+func looksLikeURLSource(source string) bool {
+	return strings.Contains(strings.TrimSpace(source), "://")
+}
+
+func isOCIDigestSource(source string) bool {
+	if !strings.HasPrefix(source, "oci://") {
+		return false
+	}
+	_, digest, ok := strings.Cut(source, "@sha256:")
+	return ok && strings.TrimSpace(digest) != "" && validateSysextSHA256(digest) == nil
+}
+
+func validateSysextTargetDir(value string) error {
+	dir := strings.TrimSpace(value)
+	if dir == "" {
+		return nil
+	}
+	if !strings.HasPrefix(dir, "/") {
+		return fmt.Errorf("must be an absolute path")
+	}
+	if dir == "/" {
+		return fmt.Errorf("must not be root")
+	}
+	for _, part := range strings.Split(dir, "/") {
+		if part == ".." {
+			return fmt.Errorf("must not contain parent-directory segments")
+		}
+	}
+	return nil
+}
+
+func validateSysextFileName(name string) error {
+	if name == "" {
+		return nil
+	}
+	if strings.Contains(name, "/") || strings.Contains(name, "\\") || name == "." || name == ".." || strings.Contains(name, "..") {
+		return fmt.Errorf("must be a plain file name")
+	}
+	return nil
+}
+
+func validateSysextSHA256(value string) error {
+	digest := strings.TrimSpace(strings.ToLower(value))
+	if digest == "" {
+		return nil
+	}
+	digest = strings.TrimPrefix(digest, "sha256:")
+	if len(digest) != 64 {
+		return fmt.Errorf("must be 64 hex characters")
+	}
+	for _, r := range digest {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return fmt.Errorf("must be hex characters")
+		}
 	}
 	return nil
 }

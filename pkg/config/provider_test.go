@@ -318,9 +318,10 @@ func TestParsePartitionLayoutTooManyPartitions(t *testing.T) {
 
 func TestValidate(t *testing.T) {
 	tests := []struct {
-		name    string
-		cfg     Config
-		wantErr string
+		name           string
+		cfg            Config
+		wantErr        string
+		wantNormalized func(t *testing.T, cfg *Config)
 	}{
 		{name: "empty config is valid", cfg: Config{}},
 		{name: "valid mode provision", cfg: Config{Mode: "provision"}},
@@ -346,6 +347,33 @@ func TestValidate(t *testing.T) {
 		{name: "invalid overlay type", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{OverlayType: "gre"}}}, wantErr: "invalid network.bgp.overlayType"},
 		{name: "valid cloud-init ds", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: "nocloud"}}}},
 		{name: "invalid cloud-init ds", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: "ec2"}}}, wantErr: "invalid provision.cloudInit.datasource"},
+		{name: "valid sysext preload mode", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{DefaultMode: "preload"}}}},
+		{name: "normalizes sysext default mode", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{DefaultMode: "PreLoad"}}}, wantNormalized: func(t *testing.T, cfg *Config) {
+			t.Helper()
+			if cfg.Provision.Sysext.DefaultMode != "preload" {
+				t.Fatalf("DefaultMode = %q, want preload", cfg.Provision.Sysext.DefaultMode)
+			}
+		}},
+		{name: "invalid sysext default mode", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{DefaultMode: "enabled"}}}, wantErr: "invalid provision.sysext.defaultMode"},
+		{name: "invalid sysext catalog dir", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{CatalogDir: "var/lib/sysext"}}}, wantErr: "provision.sysext.catalogDir"},
+		{name: "invalid sysext active dir", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{ActiveDir: "/"}}}, wantErr: "provision.sysext.activeDir"},
+		{name: "invalid sysext layer mode", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Layers: []SysextLayerConfig{{Name: "debug", Mode: "now"}}}}}, wantErr: "invalid provision.sysext.layers[0].mode"},
+		{name: "invalid sysext filename", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Layers: []SysextLayerConfig{{Name: "debug", FileName: "../debug.raw"}}}}}, wantErr: "provision.sysext.layers[0].fileName"},
+		{name: "enabled sysext layer requires source", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug"}}}}}, wantErr: "source is required"},
+		{name: "enabled sysext https source requires sha256", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "https://images.example.invalid/debug.raw"}}}}}, wantErr: "sha256: required"},
+		{name: "enabled sysext local source requires sha256", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "/deploy/sysext/debug.raw"}}}}}, wantErr: "sha256: required"},
+		{name: "enabled sysext rejects empty sha256 prefix", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "https://images.example.invalid/debug.raw", SHA256: "sha256:"}}}}}, wantErr: "sha256: must be 64 hex characters"},
+		{name: "enabled sysext rejects plain http source by default", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "http://images.example.invalid/debug.raw", SHA256: strings.Repeat("a", 64)}}}}}, wantErr: "allowInsecureHTTP"},
+		{name: "enabled sysext rejects malformed http source", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, AllowInsecureHTTP: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "http://[::1/debug.raw", SHA256: strings.Repeat("a", 64)}}}}}, wantErr: "invalid HTTP(S) sysext source"},
+		{name: "enabled sysext rejects malformed oci source", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "oci://registry.example.invalid/%zz", SHA256: strings.Repeat("a", 64)}}}}}, wantErr: "invalid sysext source"},
+		{name: "enabled sysext rejects malformed url-like source", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "custom://registry.example.invalid/%zz", SHA256: strings.Repeat("a", 64)}}}}}, wantErr: "invalid sysext source"},
+		{name: "enabled sysext accepts local path with percent escape as local source", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "/deploy/sysext/%zz.raw", SHA256: strings.Repeat("a", 64)}}}}}},
+		{name: "enabled sysext rejects unsupported url scheme", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "htps://images.example.invalid/debug.raw", SHA256: strings.Repeat("a", 64)}}}}}, wantErr: `unsupported sysext source scheme "htps"`},
+		{name: "enabled sysext rejects file url scheme", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "file:///deploy/sysext/debug.raw", SHA256: strings.Repeat("a", 64)}}}}}, wantErr: `unsupported sysext source scheme "file"`},
+		{name: "enabled sysext accepts plain http source with explicit opt in", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, AllowInsecureHTTP: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "http://images.example.invalid/debug.raw", SHA256: strings.Repeat("a", 64)}}}}}},
+		{name: "enabled sysext accepts https source with sha256", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "https://images.example.invalid/debug.raw", SHA256: strings.Repeat("a", 64)}}}}}},
+		{name: "enabled sysext rejects empty oci digest source", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "oci://registry.example.invalid/tcaas/debug@sha256:"}}}}}, wantErr: "sha256: required"},
+		{name: "enabled sysext accepts oci digest source without sha256", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "oci://registry.example.invalid/tcaas/debug@sha256:" + strings.Repeat("a", 64)}}}}}},
 		{name: "valid token algorithm", cfg: Config{Transport: TransportConfig{TokenAlgorithm: "ES256"}}},
 		{name: "invalid token algorithm", cfg: Config{Transport: TransportConfig{TokenAlgorithm: "HS256"}}, wantErr: "invalid transport.tokenAlgorithm"},
 		{
@@ -362,6 +390,9 @@ func TestValidate(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
 				}
+				if tc.wantNormalized != nil {
+					tc.wantNormalized(t, &tc.cfg)
+				}
 				return
 			}
 			if err == nil {
@@ -371,5 +402,34 @@ func TestValidate(t *testing.T) {
 				t.Fatalf("expected error containing %q, got: %v", tc.wantErr, err)
 			}
 		})
+	}
+}
+
+func TestValidateSysextMalformedHTTPSourceRedactsSensitiveURLParts(t *testing.T) {
+	cfg := Config{
+		Provision: ProvisionConfig{
+			Sysext: SysextConfig{
+				Enabled:           true,
+				AllowInsecureHTTP: true,
+				Layers: []SysextLayerConfig{{
+					Name:   "debug",
+					Source: "https://robot:secret@example.invalid/%zz?token=abc#frag",
+					SHA256: strings.Repeat("a", 64),
+				}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	for _, sensitive := range []string{"robot", "secret", "token=abc", "#frag"} {
+		if strings.Contains(err.Error(), sensitive) {
+			t.Fatalf("validation error leaked %q: %q", sensitive, err.Error())
+		}
+	}
+	if !strings.Contains(err.Error(), "[redacted invalid URL]") {
+		t.Fatalf("validation error = %q, want redacted invalid URL context", err.Error())
 	}
 }

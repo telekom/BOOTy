@@ -34,6 +34,37 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
     CGO_ENABLED=1 GOOS=linux go build -a -trimpath -ldflags "-linkmode external -extldflags '-static' -s -w" -o init
 RUN upx -9 init
 
+# Build a removable UEFI fallback loader that BOOTy can copy into a target ESP.
+# The embedded config loads EFI/BOOT/grub.cfg from the ESP; BOOTy writes that
+# handoff config at provisioning time so the selected A/B root slot is explicit.
+FROM debian:bookworm-slim AS efi-fallback
+ARG TARGETARCH
+RUN set -eux; \
+    apt-get update; \
+    case "${TARGETARCH:-amd64}" in \
+      arm64) grub_pkg="grub-efi-arm64-bin" ;; \
+      amd64) grub_pkg="grub-efi-amd64-bin" ;; \
+      *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    apt-get install -y --no-install-recommends \
+      grub-common "${grub_pkg}" ca-certificates; \
+    rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    case "${TARGETARCH:-amd64}" in \
+      arm64) grub_platform="arm64-efi"; efi_loader="BOOTAA64.EFI" ;; \
+      amd64) grub_platform="x86_64-efi"; efi_loader="BOOTX64.EFI" ;; \
+      *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    mkdir -p /out && \
+    printf '%s\n' \
+      'search --no-floppy --set=esp --file /EFI/BOOT/grub.cfg' \
+      'configfile ($esp)/EFI/BOOT/grub.cfg' \
+      > /tmp/booty-efi-fallback.cfg && \
+    grub-mkstandalone -O "${grub_platform}" -o "/out/${efi_loader}" \
+      --locales="" --fonts="" \
+      --modules="part_gpt part_msdos fat ext2 search search_fs_file configfile normal" \
+      "boot/grub/grub.cfg=/tmp/booty-efi-fallback.cfg"
+
 # Build FRR (BGP/BFD/Zebra) for EVPN networking — use FRR official stable repo
 FROM debian:bookworm-slim AS frr
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -74,7 +105,7 @@ RUN apt-get update && \
     # Module categories:
     #   QEMU/KVM virtio:  virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev virtio_pci virtio_net failover net_failover
     #   Storage (SCSI):   scsi_mod sd_mod virtio_blk virtio_scsi
-    #   Filesystems:      ext4 jbd2 mbcache crc32c_generic xfs btrfs vfat
+    #   Filesystems:      ext4 jbd2 mbcache crc32c_generic xfs btrfs fat vfat nls_cp437 nls_iso8859-1 nls_ascii
     #   VXLAN/bridge:     dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc
     #   Intel NICs:       e1000e igb igc ixgbe i40e ice iavf
     #   Broadcom NICs:    tg3 bnxt_en
@@ -86,7 +117,7 @@ RUN apt-get update && \
         virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
         virtio_pci virtio_net failover net_failover \
         scsi_mod sd_mod virtio_blk virtio_scsi \
-        ext4 jbd2 mbcache crc32c_generic xfs btrfs vfat \
+        ext4 jbd2 mbcache crc32c_generic xfs btrfs fat vfat nls_cp437 nls_iso8859-1 nls_ascii \
         dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc \
         e1000e igb igc ixgbe i40e ice iavf \
         tg3 bnxt_en \
@@ -123,6 +154,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # "not found", silently dropping them from the initramfs.
 RUN mkdir -p /tool-libs && \
     ldd /sbin/mdadm /usr/sbin/wipefs /sbin/resize2fs /sbin/e2fsck \
+        /usr/sbin/mkfs.ext4 /usr/sbin/mkfs.vfat \
         /usr/sbin/xfs_growfs /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk \
         /sbin/partprobe /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
         /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
@@ -138,6 +170,7 @@ RUN mkdir -p /tool-libs && \
 # Shared libs in /tool-libs are intentionally NOT stripped — that can corrupt them.
 RUN strip --strip-all \
     /sbin/mdadm /usr/sbin/wipefs /sbin/resize2fs /sbin/e2fsck \
+    /usr/sbin/mkfs.ext4 /usr/sbin/mkfs.vfat \
     /usr/sbin/xfs_growfs /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk \
     /sbin/partprobe /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
     /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
@@ -151,7 +184,8 @@ RUN strip --strip-all \
 FROM busybox:1.38.0-musl AS busybox-bin
 
 FROM debian:bookworm-slim AS busybox
-RUN apt-get update && apt-get install -y --no-install-recommends cpio curl ca-certificates zstd \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cpio ca-certificates zstd cloud-guest-utils \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
 
@@ -164,16 +198,16 @@ RUN bin/busybox --install -s bin
 # Docker COPY follows destination symlinks: if bin/X -> busybox exists, COPY
 # writes the source file content into the busybox binary instead of replacing
 # the symlink.  Remove busybox symlinks that collide with real tool binaries.
-RUN rm -f bin/partprobe bin/hdparm bin/ip
+RUN rm -f bin/partprobe bin/hdparm bin/ip bin/mkfs.vfat bin/mkfs.fat bin/mkdosfs
 
 # cloud-utils growpart
-RUN curl -fsSL https://github.com/canonical/cloud-utils/archive/refs/tags/0.33.tar.gz | tar -xz -C /tmp \
-    && mv /tmp/cloud-utils-0.33/bin/growpart bin/
+RUN cp /usr/bin/growpart bin/growpart
 
 # Copy build contents from previous builds
 COPY --from=lvm /LVM2.2.03.27/tools/lvm sbin/
 COPY --from=sfdisk /util-linux/sfdisk.static bin/sfdisk
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
+COPY --from=efi-fallback /out/ usr/lib/booty/efi/
 
 # FRR binaries for EVPN networking
 COPY --from=frr /usr/lib/frr/bgpd sbin/bgpd
@@ -187,6 +221,8 @@ COPY --from=tools /sbin/mdadm sbin/mdadm
 COPY --from=tools /usr/sbin/wipefs bin/wipefs
 COPY --from=tools /sbin/resize2fs sbin/resize2fs
 COPY --from=tools /sbin/e2fsck sbin/e2fsck
+COPY --from=tools /usr/sbin/mkfs.ext4 sbin/mkfs.ext4
+COPY --from=tools /usr/sbin/mkfs.vfat sbin/mkfs.vfat
 COPY --from=tools /usr/sbin/xfs_growfs sbin/xfs_growfs
 COPY --from=tools /usr/bin/btrfs bin/btrfs
 COPY --from=tools /usr/sbin/parted bin/parted
@@ -239,6 +275,7 @@ COPY --from=dev /usr/bin/upx /usr/local/bin/upx
 RUN for b in \
         sbin/bgpd sbin/zebra sbin/bfdd bin/vtysh sbin/watchfrr \
         sbin/mdadm bin/wipefs sbin/resize2fs sbin/e2fsck \
+        sbin/mkfs.ext4 sbin/mkfs.vfat \
         bin/xfs_growfs bin/btrfs bin/parted bin/sgdisk bin/partprobe \
         bin/efibootmgr bin/dmidecode bin/ethtool bin/curl bin/ip bin/bridge \
         bin/hdparm bin/nvme bin/mstconfig bin/mstflint bin/ipmitool \
@@ -337,11 +374,12 @@ WORKDIR /build/initramfs
 COPY --from=busybox-bin /bin/busybox bin/busybox
 RUN for cmd in $(bin/busybox --list); do if [ "$cmd" != "busybox" ]; then ln -sf busybox "bin/$cmd"; fi; done
 # Docker COPY follows destination symlinks — remove colliding busybox symlinks.
-RUN rm -f bin/partprobe bin/hdparm bin/ip
+RUN rm -f bin/partprobe bin/hdparm bin/ip bin/mkfs.vfat bin/mkfs.fat bin/mkdosfs bin/lsblk
 COPY --from=busybox /build/initramfs/bin/growpart bin/growpart
 
 # BOOTy init binary (with GoBGP compiled in)
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
+COPY --from=efi-fallback /out/ usr/lib/booty/efi/
 
 # LVM + sfdisk for disk management
 RUN mkdir -p sbin
@@ -353,6 +391,8 @@ COPY --from=tools /sbin/mdadm sbin/mdadm
 COPY --from=tools /usr/sbin/wipefs bin/wipefs
 COPY --from=tools /sbin/resize2fs sbin/resize2fs
 COPY --from=tools /sbin/e2fsck sbin/e2fsck
+COPY --from=tools /usr/sbin/mkfs.ext4 sbin/mkfs.ext4
+COPY --from=tools /usr/sbin/mkfs.vfat sbin/mkfs.vfat
 COPY --from=tools /usr/sbin/xfs_growfs sbin/xfs_growfs
 COPY --from=tools /usr/bin/btrfs bin/btrfs
 COPY --from=tools /usr/sbin/parted bin/parted
@@ -400,6 +440,7 @@ COPY --from=kernel /modules/ modules/
 # Skipped: busybox (multi-applet), .so shared libs, .ko kernel modules.
 RUN for b in \
         sbin/mdadm bin/wipefs sbin/resize2fs sbin/e2fsck \
+        sbin/mkfs.ext4 sbin/mkfs.vfat \
         bin/xfs_growfs bin/btrfs bin/parted bin/sgdisk bin/partprobe \
         bin/efibootmgr bin/dmidecode bin/ethtool bin/curl bin/ip bin/bridge \
         bin/hdparm bin/nvme bin/mstconfig bin/mstflint bin/ipmitool \

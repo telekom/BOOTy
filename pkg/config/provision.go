@@ -38,6 +38,8 @@ type ProvisionConfig struct {
 	Firmware       FirmwareConfig       `yaml:"firmware"       json:"firmware"`
 	SecureBoot     SecureBootConfig     `yaml:"secureBoot"     json:"secureBoot"`
 	CloudInit      CloudInitConfig      `yaml:"cloudInit"      json:"cloudInit"`
+	Sysext         SysextConfig         `yaml:"sysext"         json:"sysext"`
+	AB             ABConfig             `yaml:"ab"             json:"ab"`
 	CrashArtifacts CrashArtifactsConfig `yaml:"crashArtifacts" json:"crashArtifacts"`
 	Inventory      InventoryConfig      `yaml:"inventory"      json:"inventory"`
 }

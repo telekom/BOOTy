@@ -145,16 +145,24 @@ func TestBuildRouteDistinguisher(t *testing.T) {
 
 func TestBuildRouteTarget(t *testing.T) {
 	tests := []struct {
-		name string
-		asn  uint32
-		vni  uint32
+		name    string
+		asn     uint32
+		vni     uint32
+		wantErr bool
 	}{
-		{"2-byte ASN", 65000, 4000},
-		{"4-byte ASN", 70000, 5000},
+		{name: "2-byte ASN", asn: 65000, vni: 4000},
+		{name: "4-byte ASN", asn: 70000, vni: 5000},
+		{name: "4-byte ASN rejects unencodable local admin", asn: 70000, vni: 65536, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rt, err := buildRouteTarget(tt.asn, tt.vni)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("buildRouteTarget() err = %v, wantErr %t", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -211,13 +219,36 @@ func TestBuildType5PathAttrs(t *testing.T) {
 		t.Fatalf("build NLRI: %v", err)
 	}
 
-	pattrs, err := buildType5PathAttrs(nlri, "10.0.0.1", 65000, 4000)
+	pattrs, err := buildType5PathAttrs(nlri, "10.0.0.1", 65000, 4000, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Expect 3 attributes: origin, mp-reach, ext-communities.
 	if len(pattrs) != 3 {
 		t.Errorf("got %d path attrs, want 3", len(pattrs))
+	}
+}
+
+func TestBuildType5PathAttrsUsesExplicitVPNRT(t *testing.T) {
+	rd, err := buildRouteDistinguisher(65100, 1000)
+	if err != nil {
+		t.Fatalf("build RD: %v", err)
+	}
+	nlri, err := buildEVPNType5NLRI(rd, "10.200.0.10/32", "192.168.4.10", 1000)
+	if err != nil {
+		t.Fatalf("build NLRI: %v", err)
+	}
+
+	pattrs, err := buildType5PathAttrs(nlri, "192.168.4.10", 65100, 1000, "65000:1000")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	path := &apipb.Path{Pattrs: pattrs}
+	if !matchesLocalRT(path, 65000, 1000) {
+		t.Fatal("expected exported Type-5 attributes to carry configured VPNRT 65000:1000")
+	}
+	if matchesLocalRT(path, 65100, 1000) {
+		t.Fatal("did not expect exported Type-5 attributes to carry fallback local RT")
 	}
 }
 
@@ -542,6 +573,33 @@ func TestHandleType5RouteNoGateway(t *testing.T) {
 	overlay.handleType5Route(route, "", false)
 }
 
+func TestOverlayRouteTable(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *Config
+		want int
+	}{
+		{
+			name: "default namespace",
+			cfg:  &Config{OverlayVRFName: "", OverlayVRFTableID: 20},
+			want: 0,
+		},
+		{
+			name: "overlay VRF",
+			cfg:  &Config{OverlayVRFName: "Vrf_overlay", OverlayVRFTableID: 20},
+			want: 20,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			overlay := &OverlayTier{cfg: tt.cfg}
+			if got := overlay.overlayRouteTable(); got != tt.want {
+				t.Errorf("overlayRouteTable() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 // --- Type-2 handler tests ---------------------------------------------------
 
 func TestHandleType2RouteInstallsFDB(t *testing.T) {
@@ -735,7 +793,7 @@ func TestBuildType3PathAttrs(t *testing.T) {
 		t.Fatalf("build NLRI: %v", err)
 	}
 
-	pattrs, err := buildType3PathAttrs(nlri, "10.0.0.1", 65000, 4000)
+	pattrs, err := buildType3PathAttrs(nlri, "10.0.0.1", 65000, 4000, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -777,7 +835,7 @@ func TestBuildType3PathAttrs4ByteASN(t *testing.T) {
 		t.Fatalf("build NLRI: %v", err)
 	}
 
-	pattrs, err := buildType3PathAttrs(nlri, "10.0.0.1", 70000, 5000)
+	pattrs, err := buildType3PathAttrs(nlri, "10.0.0.1", 70000, 5000, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -856,7 +914,7 @@ func TestBuildType2PathAttrs(t *testing.T) {
 		t.Fatalf("build NLRI: %v", err)
 	}
 
-	pattrs, err := buildType2PathAttrs(nlri, "10.0.0.1", 65000, 4000)
+	pattrs, err := buildType2PathAttrs(nlri, "10.0.0.1", 65000, 4000, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -890,7 +948,7 @@ func TestBuildType2PathAttrs4ByteASN(t *testing.T) {
 		t.Fatalf("build NLRI: %v", err)
 	}
 
-	pattrs, err := buildType2PathAttrs(nlri, "10.0.0.1", 70000, 5000)
+	pattrs, err := buildType2PathAttrs(nlri, "10.0.0.1", 70000, 5000, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1032,7 +1090,7 @@ func mustRT4(t *testing.T, asn, vni uint32) *anypb.Any {
 		IsTransitive: true,
 		SubType:      0x02,
 		Asn:          asn,
-		LocalAdmin:   vni & 0xFFFF,
+		LocalAdmin:   vni,
 	})
 	if err != nil {
 		t.Fatalf("marshal FourOctetAsSpecificExtended: %v", err)
@@ -1084,6 +1142,13 @@ func TestMatchesLocalRT(t *testing.T) {
 			want:     true,
 		},
 		{
+			name:     "4-byte RT does not mask oversized VNI",
+			path:     mustPathWithRT(t, mustRT4(t, 70000, 1)),
+			localASN: 70000,
+			localVNI: 65537,
+			want:     false,
+		},
+		{
 			name:     "multiple communities one matching returns true",
 			path:     mustPathWithRT(t, mustRT2(t, 65001, 4000), mustRT2(t, 65000, 4000)),
 			localASN: 65000,
@@ -1105,6 +1170,42 @@ func TestMatchesLocalRT(t *testing.T) {
 				t.Errorf("matchesLocalRT() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestConfigImportRouteTarget(t *testing.T) {
+	path := mustPathWithRT(t, mustRT2(t, 65000, 1000))
+
+	cfg := &Config{ASN: 65100, ProvisionVNI: 1000, VPNRT: "65000:1000"}
+	asn, vni, err := cfg.importRouteTarget()
+	if err != nil {
+		t.Fatalf("importRouteTarget(): %v", err)
+	}
+	if !matchesLocalRT(path, asn, vni) {
+		t.Fatal("expected configured VPNRT to match imported route")
+	}
+
+	cfg.VPNRT = "bad"
+	cachedASN, cachedVNI, err := cfg.importRouteTarget()
+	if err != nil {
+		t.Fatalf("cached importRouteTarget(): %v", err)
+	}
+	if cachedASN != asn || cachedVNI != vni {
+		t.Fatalf("cached import RT = %d:%d, want %d:%d", cachedASN, cachedVNI, asn, vni)
+	}
+
+	fallback := &Config{ASN: 65100, ProvisionVNI: 1000}
+	fallbackASN, fallbackVNI, err := fallback.importRouteTarget()
+	if err != nil {
+		t.Fatalf("fallback importRouteTarget(): %v", err)
+	}
+	if matchesLocalRT(path, fallbackASN, fallbackVNI) {
+		t.Fatal("expected local fallback RT to reject route from different RT")
+	}
+
+	invalid := &Config{ASN: 65100, ProvisionVNI: 1000, VPNRT: "bad"}
+	if _, _, err := invalid.importRouteTarget(); err == nil {
+		t.Fatal("expected invalid configured VPNRT to reject route")
 	}
 }
 
@@ -1156,6 +1257,58 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 		// Matching RT must reach FDB dispatch (LinkByName is called for Type-5 installs).
 		if mock.linkName == "" {
 			t.Error("matching RT: expected FDB dispatch (LinkByName called), but it was not")
+		}
+	})
+
+	t.Run("route with configured VPNRT is dispatched to FDB", func(t *testing.T) {
+		mock := &mockFDB{}
+		overlay := newOverlay(mock)
+		overlay.cfg.ASN = 65100
+		overlay.cfg.ProvisionVNI = 1000
+		overlay.cfg.VPNRT = "65000:1000"
+		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*anypb.Any{mustRT2(t, 65000, 1000)},
+		})
+		if err != nil {
+			t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
+		}
+		path := &apipb.Path{
+			Nlri:   nlri,
+			Pattrs: []*anypb.Any{mp, extComm},
+		}
+		overlay.processRouteUpdate(path)
+		if mock.linkName == "" {
+			t.Error("configured VPNRT: expected FDB dispatch (LinkByName called), but it was not")
+		}
+	})
+
+	t.Run("configured VPNRT is cached for route updates", func(t *testing.T) {
+		mock := &mockFDB{}
+		overlay := newOverlay(mock)
+		overlay.cfg.ASN = 65100
+		overlay.cfg.ProvisionVNI = 1000
+		overlay.cfg.VPNRT = "65000:1000"
+		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*anypb.Any{mustRT2(t, 65000, 1000)},
+		})
+		if err != nil {
+			t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
+		}
+		path := &apipb.Path{
+			Nlri:   nlri,
+			Pattrs: []*anypb.Any{mp, extComm},
+		}
+
+		overlay.processRouteUpdate(path)
+		if mock.linkName == "" {
+			t.Fatal("configured VPNRT: expected first update to dispatch")
+		}
+
+		mock.linkName = ""
+		overlay.cfg.VPNRT = "bad"
+		overlay.processRouteUpdate(path)
+		if mock.linkName == "" {
+			t.Error("configured VPNRT cache: expected cached RT to dispatch second update")
 		}
 	})
 

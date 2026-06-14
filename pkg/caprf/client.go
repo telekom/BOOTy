@@ -653,10 +653,11 @@ func (c *Client) postJSONWithAuth(ctx context.Context, url string, data []byte) 
 
 func (c *Client) withRetry(ctx context.Context, url string, fn func() error) error {
 	var lastErr error
+	redacted := redactedURL(url)
 	for attempt := range 3 {
 		if attempt > 0 {
 			backoff := time.Duration(1<<(attempt-1)) * time.Second
-			c.log.Info("retrying request", "url", url, "attempt", attempt+1, "backoff", backoff)
+			c.log.Info("retrying request", "url", redacted, "attempt", attempt+1, "backoff", backoff)
 			select {
 			case <-time.After(backoff):
 			case <-ctx.Done():
@@ -671,9 +672,9 @@ func (c *Client) withRetry(ctx context.Context, url string, fn func() error) err
 		if errors.Is(lastErr, errInsecureTransport) {
 			return lastErr
 		}
-		c.log.Warn("request failed", "url", url, "attempt", attempt+1, "error", lastErr)
+		c.log.Warn("request failed", "url", redacted, "attempt", attempt+1, "error", lastErr)
 	}
-	return fmt.Errorf("request failed after 3 attempts to %s: %w", url, lastErr)
+	return fmt.Errorf("request failed after 3 attempts to %s: %w", redacted, lastErr)
 }
 
 // setAuth attaches the Bearer token only when the request URL uses HTTPS
@@ -686,8 +687,9 @@ func (c *Client) setAuth(req *http.Request) error {
 		return nil
 	}
 	if req.URL != nil && req.URL.Scheme != "https" && !isLoopback(req.URL.Hostname()) && !c.cfg.Transport.Insecure {
-		c.warnInsecureOnce(req.URL.Redacted())
-		return fmt.Errorf("%w: refusing bearer token on non-HTTPS request %s", errInsecureTransport, req.URL.Redacted())
+		redacted := redactedURL(req.URL.String())
+		c.warnInsecureOnce(redacted)
+		return fmt.Errorf("%w: refusing bearer token on non-HTTPS request %s", errInsecureTransport, redacted)
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	return nil
@@ -725,12 +727,13 @@ func (c *Client) requireSecureEndpoint(rawURL, purpose string) error {
 	if u.Scheme == "https" || isLoopback(u.Hostname()) {
 		return nil
 	}
-	redacted := u.Redacted()
+	redacted := redactedURL(rawURL)
 	c.warnInsecureOnce(redacted)
 	return fmt.Errorf("%w: %s requires HTTPS, got %s", errInsecureTransport, purpose, redacted)
 }
 
 func (c *Client) doPost(ctx context.Context, url, body string) error {
+	redacted := redactedURL(url)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url,
 		strings.NewReader(body))
 	if err != nil {
@@ -743,18 +746,19 @@ func (c *Client) doPost(ctx context.Context, url, body string) error {
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
-		return fmt.Errorf("POST %s: %w", url, err)
+		return fmt.Errorf("POST %s: %w", redacted, err)
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("POST %s: status %d", url, resp.StatusCode)
+		return fmt.Errorf("POST %s: status %d", redacted, resp.StatusCode)
 	}
 	return nil
 }
 
 func (c *Client) doPostJSON(ctx context.Context, url string, data []byte) error {
+	redacted := redactedURL(url)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url,
 		bytes.NewReader(data))
 	if err != nil {
@@ -767,13 +771,13 @@ func (c *Client) doPostJSON(ctx context.Context, url string, data []byte) error 
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
-		return fmt.Errorf("POST %s: %w", url, err)
+		return fmt.Errorf("POST %s: %w", redacted, err)
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("POST %s: status %d", url, resp.StatusCode)
+		return fmt.Errorf("POST %s: status %d", redacted, resp.StatusCode)
 	}
 	return nil
 }
@@ -798,15 +802,10 @@ func ParseVars(r io.Reader) (*config.MachineConfig, error) {
 			continue
 		}
 
-		// Unquote value: strip surrounding double quotes or single quotes.
-		// Single quotes are common for JSON values in shell-style var files.
-		if len(value) >= 2 {
-			switch {
-			case value[0] == '"' && value[len(value)-1] == '"':
-				value = value[1 : len(value)-1]
-			case value[0] == '\'' && value[len(value)-1] == '\'':
-				value = value[1 : len(value)-1]
-			}
+		var err error
+		value, err = unquoteVarValue(value)
+		if err != nil {
+			return nil, fmt.Errorf("parse var %s: %w", key, err)
 		}
 
 		if err := applyVar(cfg, key, value); err != nil {
@@ -823,6 +822,45 @@ func ParseVars(r io.Reader) (*config.MachineConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+func unquoteVarValue(value string) (string, error) {
+	if len(value) < 2 {
+		return value, nil
+	}
+	switch {
+	case value[0] == '"' && value[len(value)-1] == '"':
+		return unquoteDoubleQuotedVarValue(value[1 : len(value)-1]), nil
+	case value[0] == '\'' && value[len(value)-1] == '\'':
+		return value[1 : len(value)-1], nil
+	default:
+		return value, nil
+	}
+}
+
+func unquoteDoubleQuotedVarValue(value string) string {
+	var b strings.Builder
+	b.Grow(len(value))
+
+	for i := 0; i < len(value); i++ {
+		if value[i] != '\\' {
+			b.WriteByte(value[i])
+			continue
+		}
+		if i+1 >= len(value) {
+			b.WriteByte('\\')
+			continue
+		}
+		switch value[i+1] {
+		case '$', '`', '"', '\\':
+			b.WriteByte(value[i+1])
+			i++
+		default:
+			b.WriteByte('\\')
+		}
+	}
+
+	return b.String()
 }
 
 func applyVar(cfg *config.MachineConfig, key, value string) error {
@@ -874,11 +912,14 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"CLOUDINIT_DATASOURCE":        &cfg.Provision.CloudInit.Datasource,
 		"vrf_name":                    &cfg.Network.VRF.Name,
 		"BGP_PEER_MODE":               &cfg.Network.BGP.PeerMode,
+		"BGP_INTERFACES":              &cfg.Network.BGP.Interfaces,
 		"BGP_NEIGHBORS":               &cfg.Network.BGP.Neighbors,
 		"IMAGE_CHECKSUM":              &cfg.Provision.Image.Checksum,
 		"IMAGE_CHECKSUM_TYPE":         &cfg.Provision.Image.ChecksumType,
 		"IMAGE_MODE":                  &cfg.Provision.Image.Mode,
 		"DISK_DEVICE":                 &cfg.Provision.Disk.Device,
+		"DISK_SERIAL":                 &cfg.Provision.Disk.SerialNumber,
+		"DISK_SERIAL_NUMBER":          &cfg.Provision.Disk.SerialNumber,
 		"INVENTORY_URL":               &cfg.Provision.Inventory.URL,
 		"FIRMWARE_URL":                &cfg.Provision.Firmware.URL,
 		"FIRMWARE_MIN_BIOS":           &cfg.Provision.Firmware.MinBIOS,
@@ -898,6 +939,13 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"TOKEN_ALGORITHM":             &cfg.Transport.TokenAlgorithm,
 		"NVME_NAMESPACES":             &cfg.Provision.Disk.NVMeNamespaces,
 		"BGP_AUTH_PASSWORD":           &cfg.Network.BGP.AuthPassword,
+		"SYSEXT_DEFAULT_MODE":         &cfg.Provision.Sysext.DefaultMode,
+		"SYSEXT_CATALOG_DIR":          &cfg.Provision.Sysext.CatalogDir,
+		"SYSEXT_ACTIVE_DIR":           &cfg.Provision.Sysext.ActiveDir,
+		"AB_SCHEME":                   &cfg.Provision.AB.Scheme,
+		"AB_ACTIVE_SLOT":              &cfg.Provision.AB.ActiveSlot,
+		"AB_TARGET_SLOT":              &cfg.Provision.AB.TargetSlot,
+		"AB_SOURCE_ROOT_LABEL":        &cfg.Provision.AB.SourceRootLabel,
 	}
 
 	if ptr, ok := strFields[key]; ok {
@@ -948,6 +996,12 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) error {
 			return fmt.Errorf("invalid PARTITION_LAYOUT: %w", err)
 		}
 		cfg.Provision.Disk.PartitionLayout = layout
+	case "SYSEXT_LAYERS":
+		var layers []config.SysextLayerConfig
+		if err := unmarshalJSONVar(value, &layers); err != nil {
+			return fmt.Errorf("invalid SYSEXT_LAYERS: %w", err)
+		}
+		cfg.Provision.Sysext.Layers = layers
 	default:
 		if strings.HasPrefix(key, "LUKS_") {
 			return fmt.Errorf("%s is not supported yet", key)
@@ -955,6 +1009,71 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) error {
 	}
 
 	return nil
+}
+
+func unmarshalJSONVar(value string, target any) error {
+	err := json.Unmarshal([]byte(value), target)
+	if err == nil {
+		return nil
+	}
+	normalized := normalizeGoQuotedJSONWhitespace(value)
+	if normalized == value {
+		return fmt.Errorf("unmarshal JSON var: %w", err)
+	}
+	if err := json.Unmarshal([]byte(normalized), target); err != nil {
+		return fmt.Errorf("unmarshal normalized JSON var: %w", err)
+	}
+	return nil
+}
+
+func normalizeGoQuotedJSONWhitespace(value string) string {
+	var b strings.Builder
+	b.Grow(len(value))
+
+	inString := false
+	escaped := false
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		if inString {
+			b.WriteByte(ch)
+			if escaped {
+				escaped = false
+				continue
+			}
+			switch ch {
+			case '\\':
+				escaped = true
+			case '"':
+				inString = false
+			}
+			continue
+		}
+
+		if ch == '"' {
+			inString = true
+			b.WriteByte(ch)
+			continue
+		}
+		if ch == '\\' && i+1 < len(value) {
+			switch value[i+1] {
+			case 'n':
+				b.WriteByte('\n')
+				i++
+				continue
+			case 'r':
+				b.WriteByte('\r')
+				i++
+				continue
+			case 't':
+				b.WriteByte('\t')
+				i++
+				continue
+			}
+		}
+		b.WriteByte(ch)
+	}
+
+	return b.String()
 }
 
 // applyBoolIntVar handles boolean and integer special vars.
@@ -982,6 +1101,12 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) (bool, error)
 		cfg.Transport.Insecure = parseBoolVar(value)
 	case "CRASH_ARTIFACTS_ENABLED":
 		cfg.Provision.CrashArtifacts.Enabled = parseBoolVar(value)
+	case "SYSEXT_ENABLED":
+		cfg.Provision.Sysext.Enabled = parseBoolVar(value)
+	case "SYSEXT_ALLOW_INSECURE_HTTP":
+		cfg.Provision.Sysext.AllowInsecureHTTP = parseBoolVar(value)
+	case "AB_PRESERVE_EXISTING":
+		cfg.Provision.AB.PreserveExisting = parseBoolVar(value)
 	default:
 		return applyFeatureToggle(cfg, key, value)
 	}
@@ -998,6 +1123,10 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		"CRASH_ARTIFACTS_MAX_MB":             &cfg.Provision.CrashArtifacts.MaxMB,
 		"CRASH_ARTIFACTS_UPLOAD_TIMEOUT_SEC": &cfg.Provision.CrashArtifacts.UploadTimeoutSec,
 		"BGP_MIN_PEERS":                      &cfg.Network.BGP.MinPeers,
+		"AB_BOOT_SIZE_MB":                    &cfg.Provision.AB.BootSizeMB,
+		"AB_ROOT_SIZE_MB":                    &cfg.Provision.AB.RootSizeMB,
+		"AB_STATE_SIZE_MB":                   &cfg.Provision.AB.StateSizeMB,
+		"AB_SOURCE_ROOT_PARTITION":           &cfg.Provision.AB.SourceRootPartition,
 	}
 
 	if ptr, ok := intFields[key]; ok {

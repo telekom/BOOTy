@@ -314,6 +314,45 @@ func TestCopyTreeCancelledBeforeStart(t *testing.T) {
 	}
 }
 
+func TestCopyTreeReplacesDanglingDestinationSymlink(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	srcEtc := filepath.Join(src, "etc")
+	if err := os.MkdirAll(srcEtc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcEtc, "resolv.conf"), []byte("nameserver 192.0.2.53\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dstEtc := filepath.Join(dst, "etc")
+	if err := os.MkdirAll(dstEtc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../run/systemd/resolve/stub-resolv.conf", filepath.Join(dstEtc, "resolv.conf")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyTree(context.Background(), src, dst); err != nil {
+		t.Fatalf("copyTree returned error: %v", err)
+	}
+
+	dstFile := filepath.Join(dstEtc, "resolv.conf")
+	if info, err := os.Lstat(dstFile); err != nil {
+		t.Fatalf("expected resolv.conf: %v", err)
+	} else if info.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("expected destination symlink to be replaced with a regular file")
+	}
+	data, err := os.ReadFile(dstFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "nameserver 192.0.2.53\n" {
+		t.Fatalf("resolv.conf = %q", data)
+	}
+}
+
 func TestCopyFileCancelledBeforeStart(t *testing.T) {
 	src := t.TempDir()
 	dst := t.TempDir()
@@ -329,6 +368,36 @@ func TestCopyFileCancelledBeforeStart(t *testing.T) {
 	err := copyFile(ctx, srcFile, filepath.Join(dst, "file.txt"))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got: %v", err)
+	}
+}
+
+func TestCopyFileReplacesDanglingDestinationSymlink(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	srcFile := filepath.Join(src, "file.txt")
+	if err := os.WriteFile(srcFile, []byte("new data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dstFile := filepath.Join(dst, "file.txt")
+	if err := os.Symlink("missing-target", dstFile); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyFile(context.Background(), srcFile, dstFile); err != nil {
+		t.Fatalf("copyFile returned error: %v", err)
+	}
+	if info, err := os.Lstat(dstFile); err != nil {
+		t.Fatalf("expected copied file: %v", err)
+	} else if info.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("expected destination symlink to be replaced with a regular file")
+	}
+	data, err := os.ReadFile(dstFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "new data" {
+		t.Fatalf("file content = %q", data)
 	}
 }
 

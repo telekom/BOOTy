@@ -54,14 +54,16 @@ type Config struct {
 	BondMode       string // Bonding mode (default: "802.3ad" for LACP)
 
 	// BGP/BFD tuning fields.
-	VRFTableID    uint32 // Routing table ID for VRF (default: 1000)
-	BGPKeepalive  uint32 // BGP keepalive interval in seconds (0 = FRR default)
-	BGPHold       uint32 // BGP hold timer in seconds (0 = FRR default)
-	BFDTransmitMS uint32 // BFD transmit interval in ms (default: 300)
-	BFDReceiveMS  uint32 // BFD receive interval in ms (default: 300)
+	VRFTableID        uint32 // Routing table ID for the underlay VRF (default: 1000)
+	OverlayVRFTableID uint32 // Routing table ID for the overlay bridge VRF (default: VRFTableID)
+	BGPKeepalive      uint32 // BGP keepalive interval in seconds (0 = FRR default)
+	BGPHold           uint32 // BGP hold timer in seconds (0 = FRR default)
+	BFDTransmitMS     uint32 // BFD transmit interval in ms (default: 300)
+	BFDReceiveMS      uint32 // BFD receive interval in ms (default: 300)
 
 	// BGP peering mode (GoBGP).
 	BGPPeerMode     PeerMode // Unnumbered (default), dual, or numbered
+	BGPInterfaces   string   // Comma-separated interfaces for unnumbered/dual peers
 	BGPNeighbors    string   // Comma-separated numbered peer IPs
 	BGPRemoteASN    uint32   // Remote ASN for numbered peers (0 = iBGP)
 	BGPUnderlayAF   string   // Underlay address family: ipv4, ipv6, dual-stack (default: ipv4)
@@ -70,10 +72,12 @@ type Config struct {
 	BGPMinPeers     int      // Minimum established BGP peers for underlay readiness (default: 1)
 
 	// Common fields.
-	BridgeName  string // Default: "br.provision"
-	VRFName     string // Default: empty (no VRF isolation); set explicitly if needed
-	MTU         int    // Default: 9000
-	NetworkMode string // "gobgp" to use in-process GoBGP instead of FRR
+	BridgeName     string // Default: "br.provision"
+	VRFName        string // Underlay VRF name; empty means default namespace
+	OverlayVRFName string // Overlay bridge VRF name; empty means default namespace
+	OverlayVRFSet  bool   // OverlayVRFName was explicitly derived from structured config
+	MTU            int    // Default: 9000
+	NetworkMode    string // "gobgp" to use in-process GoBGP instead of FRR
 
 	// EVPN L2 overlay (Type-2/3 route processing) — disabled by default.
 	EVPNL2Enabled bool // Enable L2 overlay route handling
@@ -104,6 +108,9 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.VRFTableID == 0 {
 		c.VRFTableID = 1000
+	}
+	if c.OverlayVRFTableID == 0 {
+		c.OverlayVRFTableID = c.VRFTableID
 	}
 	if c.BGPMinPeers == 0 {
 		c.BGPMinPeers = 1

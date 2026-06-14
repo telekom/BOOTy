@@ -17,10 +17,12 @@ import (
 	"time"
 )
 
+const testEFIFallbackPayload = "BOOTy KVM e2e EFI fallback\n"
+
 // requireProvisionTools fails the test if essential provisioning tools are missing.
 func requireProvisionTools(t *testing.T) {
 	t.Helper()
-	for _, tool := range []string{"sfdisk", "mkfs.ext4", "qemu-img", "losetup", "dd", "mount", "umount"} {
+	for _, tool := range []string{"sgdisk", "sfdisk", "mkfs.ext4", "mkfs.vfat", "qemu-img", "losetup", "dd", "mount", "umount"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Fatalf("%s not available", tool)
 		}
@@ -107,6 +109,94 @@ func createTestDiskImage(t *testing.T, sizeMB int) string {
 	run(t, "detach loop", "losetup", "-d", loopDev)
 
 	return rawPath
+}
+
+func createChrootCapableTestDiskImage(t *testing.T, sizeMB int) string {
+	t.Helper()
+
+	rawPath := createTestDiskImage(t, sizeMB)
+	loopOut := runOutput(t, "setup chroot-capable loop device", "losetup", "--find", "--show", "--partscan", rawPath)
+	loopDev := strings.TrimSpace(string(loopOut))
+	detached := false
+	defer func() {
+		if !detached {
+			_ = exec.Command("losetup", "-d", loopDev).Run()
+		}
+	}()
+
+	rootDev := loopDev + "p2"
+	waitForDevice(t, rootDev, 5*time.Second)
+
+	mountDir := filepath.Join(t.TempDir(), "rootmnt")
+	if err := os.MkdirAll(mountDir, 0o755); err != nil {
+		t.Fatalf("mkdir chroot-capable mountDir: %v", err)
+	}
+	mounted := false
+	defer func() {
+		if mounted {
+			_ = exec.Command("umount", mountDir).Run()
+		}
+	}()
+	run(t, "mount chroot-capable root partition", "mount", rootDev, mountDir)
+	mounted = true
+
+	installMinimalChrootFixture(t, mountDir)
+
+	run(t, "unmount chroot-capable root", "umount", mountDir)
+	mounted = false
+	run(t, "detach chroot-capable loop", "losetup", "-d", loopDev)
+	detached = true
+
+	return rawPath
+}
+
+func installMinimalChrootFixture(t *testing.T, root string) {
+	t.Helper()
+
+	for _, d := range []string{
+		"bin", "usr/sbin", "boot/grub", "etc/default/grub.d",
+	} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatalf("mkdir chroot fixture %s: %v", d, err)
+		}
+	}
+
+	busyboxBin := findBusybox(t)
+	copyBinary(t, busyboxBin, filepath.Join(root, "bin", "busybox"))
+	copySharedLibs(t, busyboxBin, root)
+	for _, ld := range []string{"/lib64/ld-linux-x86-64.so.2", "/lib/ld-linux-x86-64.so.2"} {
+		if _, err := os.Stat(ld); err == nil {
+			ldTarget, err := pathInFixtureRoot(root, ld)
+			if err != nil {
+				t.Fatalf("dynamic linker fixture path: %v", err)
+			}
+			if err := os.MkdirAll(filepath.Dir(ldTarget), 0o755); err != nil {
+				t.Fatalf("mkdir dynamic linker dir: %v", err)
+			}
+			copyBinary(t, ld, ldTarget)
+			break
+		}
+	}
+	for _, applet := range []string{"sh", "mkdir", "cat", "printf"} {
+		link := filepath.Join(root, "bin", applet)
+		_ = os.Remove(link)
+		if err := os.Symlink("busybox", link); err != nil {
+			t.Fatalf("symlink chroot applet %s: %v", applet, err)
+		}
+	}
+	writeFile(t, filepath.Join(root, "bin", "bash"), `#!/bin/sh
+exec /bin/sh "$@"
+`)
+	run(t, "chmod bash fixture", "chmod", "+x", filepath.Join(root, "bin", "bash"))
+
+	updateGrub := `#!/bin/sh
+set -eu
+mkdir -p /boot/grub
+printf '%s\n' 'set default=0' > /boot/grub/grub.cfg
+`
+	updateGrubPath := filepath.Join(root, "usr", "sbin", "update-grub")
+	writeFile(t, updateGrubPath, updateGrub)
+	run(t, "chmod update-grub fixture", "chmod", "+x", updateGrubPath)
 }
 
 // compressGzip gzips the file at src and returns the path to the .gz file.
@@ -215,15 +305,17 @@ func buildProvisionInitramfs(t *testing.T, vars map[string]string) string {
 		"mkdir", "cp", "mv", "rm", "ln", "chmod", "chown",
 		"mknod", "insmod", "modprobe", "setsid", "cttyhack",
 		"chroot", "bash", "ash", "ip", "ifconfig", "udhcpc",
-		"find", "xargs", "grep", "awk", "sed",
+		"find", "xargs", "grep", "awk", "sed", "mdev",
 	} {
 		link := filepath.Join(rootDir, "bin", applet)
 		_ = os.Symlink("busybox", link)
 	}
+	installModuleLoader(t, rootDir)
 
 	// Copy essential provisioning tools from host with their shared libraries.
 	essentialTools := []string{
-		"partprobe", "sfdisk", "e2fsck", "resize2fs", "wipefs", "mdadm", "lvm",
+		"partprobe", "sgdisk", "sfdisk", "mkfs.ext4", "mkfs.vfat", "e2fsck", "resize2fs", "wipefs", "mdadm", "lvm",
+		"losetup", "dd",
 	}
 	for _, tool := range essentialTools {
 		toolPath, err := exec.LookPath(tool)
@@ -235,13 +327,19 @@ func buildProvisionInitramfs(t *testing.T, vars map[string]string) string {
 		copyBinary(t, toolPath, destBin)
 		copySharedLibs(t, toolPath, rootDir)
 	}
+	copyFilesystemModules(t, rootDir)
+	installTestEFIFallbackAsset(t, rootDir)
 
 	// Copy ld-linux dynamic linker if present.
 	for _, ld := range []string{"/lib64/ld-linux-x86-64.so.2", "/lib/ld-linux-x86-64.so.2"} {
 		if _, err := os.Stat(ld); err == nil {
-			destDir := filepath.Join(rootDir, filepath.Dir(ld))
+			ldTarget, pathErr := pathInFixtureRoot(rootDir, ld)
+			if pathErr != nil {
+				t.Fatalf("dynamic linker fixture path: %v", pathErr)
+			}
+			destDir := filepath.Dir(ldTarget)
 			if err := os.MkdirAll(destDir, 0o755); err == nil {
-				copyBinary(t, ld, filepath.Join(rootDir, ld))
+				copyBinary(t, ld, ldTarget)
 			}
 			break
 		}
@@ -254,7 +352,13 @@ func buildProvisionInitramfs(t *testing.T, vars map[string]string) string {
 	// (subtest-specific; left empty by default)
 
 	// Write /init script.
-	initScript := "#!/bin/sh\nexport PATH=/bin:/sbin:/usr/bin:/usr/sbin\nexec /booty\n"
+	initScript := `#!/bin/sh
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+for mod in fat vfat nls_cp437 nls_iso8859-1 nls_ascii nls_utf8; do
+	modprobe "$mod" 2>/dev/null || true
+done
+exec /booty
+`
 	writeFile(t, filepath.Join(rootDir, "init"), initScript)
 	run(t, "chmod init", "chmod", "+x", filepath.Join(rootDir, "init"))
 
@@ -338,7 +442,7 @@ func runQEMUProvision(t *testing.T, kernel, initramfs, disk string, timeoutDur t
 	out, err := cmd.CombinedOutput()
 
 	if ctx.Err() == context.DeadlineExceeded {
-		t.Logf("QEMU provision timed out after %v. tail:\n%s", timeoutDur, tail(out, 2000))
+		t.Fatalf("QEMU provision timed out after %v. tail:\n%s", timeoutDur, tail(out, 2000))
 	} else if err != nil {
 		// Exit code from -no-reboot is expected when BOOTy calls reboot.
 		t.Logf("QEMU provision exited: %v (expected on reboot)", err)
@@ -350,6 +454,13 @@ func runQEMUProvision(t *testing.T, kernel, initramfs, disk string, timeoutDur t
 // mountQcow2 mounts a qcow2 disk image via qemu-nbd and returns the root mount path
 // and a cleanup function. The caller must defer cleanup.
 func mountQcow2(t *testing.T, qcow2Path string) (rootMount string, cleanup func()) {
+	t.Helper()
+	return mountQcow2Partition(t, qcow2Path, 2)
+}
+
+// mountQcow2Partition mounts a qcow2 partition by 1-based partition number.
+// It returns the mount path and a cleanup function. The caller must defer cleanup.
+func mountQcow2Partition(t *testing.T, qcow2Path string, partNum int) (rootMount string, cleanup func()) {
 	t.Helper()
 
 	// Find an available nbd device.
@@ -377,17 +488,28 @@ func mountQcow2(t *testing.T, qcow2Path string) (rootMount string, cleanup func(
 	})
 
 	// Wait for partitions after qemu-nbd attach.
-	run(t, "partprobe nbd", "partprobe", nbdDev)
-	rootPart := nbdDev + "p2"
-	waitForDevice(t, rootPart, 10*time.Second)
-
-	// Mount root partition.
-	mountDir := t.TempDir()
-	run(t, "mount provisioned root", "mount", "-o", "ro", rootPart, mountDir)
-
-	cleanup = func() {
-		_ = exec.Command("umount", mountDir).Run()
+	if err := rereadPartitionTable(nbdDev); err != nil {
+		_ = exec.Command("qemu-nbd", "--disconnect", nbdDev).Run()
+		t.Fatalf("reread partition table on %s: %v", nbdDev, err)
 	}
+	partDev := fmt.Sprintf("%sp%d", nbdDev, partNum)
+	waitForDevice(t, partDev, 10*time.Second)
+
+	mountDir := t.TempDir()
+	mountReadOnlyWithRetry(t, partDev, mountDir, func() {
+		_ = rereadPartitionTable(nbdDev)
+	})
+
+	cleaned := false
+	cleanup = func() {
+		if cleaned {
+			return
+		}
+		cleaned = true
+		_ = exec.Command("umount", mountDir).Run()
+		_ = exec.Command("qemu-nbd", "--disconnect", nbdDev).Run()
+	}
+	t.Cleanup(cleanup)
 
 	return mountDir, cleanup
 }
@@ -423,13 +545,64 @@ func writeFile(t *testing.T, path, content string) {
 func waitForDevice(t *testing.T, devPath string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
+	var lastErr error
 	for time.Now().Before(deadline) {
-		if _, err := os.Stat(devPath); err == nil {
-			return
+		info, err := os.Stat(devPath)
+		if err == nil {
+			if info.Mode()&os.ModeDevice != 0 {
+				return
+			}
+			lastErr = fmt.Errorf("%s exists but is not a device", devPath)
+		} else {
+			lastErr = err
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("device %s did not appear within %s", devPath, timeout)
+	t.Fatalf("device %s did not appear within %s: %v", devPath, timeout, lastErr)
+}
+
+func rereadPartitionTable(devPath string) error {
+	deadline := time.Now().Add(10 * time.Second)
+	var lastOut []byte
+	var lastErr error
+	for time.Now().Before(deadline) {
+		_ = exec.Command("blockdev", "--rereadpt", devPath).Run()
+		cmd := exec.Command("partprobe", devPath)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			if _, lookErr := exec.LookPath("udevadm"); lookErr == nil {
+				_ = exec.Command("udevadm", "settle", "--timeout=10").Run()
+			}
+			return nil
+		}
+		lastOut = out
+		lastErr = err
+		if _, lookErr := exec.LookPath("udevadm"); lookErr == nil {
+			_ = exec.Command("udevadm", "settle", "--timeout=2").Run()
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return fmt.Errorf("partprobe %s failed after retries: %w\n%s", devPath, lastErr, lastOut)
+}
+
+func mountReadOnlyWithRetry(t *testing.T, devPath, mountDir string, beforeRetry func()) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	var out []byte
+	var err error
+	for time.Now().Before(deadline) {
+		waitForDevice(t, devPath, time.Second)
+		cmd := exec.Command("mount", "-o", "ro", devPath, mountDir)
+		out, err = cmd.CombinedOutput()
+		if err == nil {
+			return
+		}
+		if beforeRetry != nil {
+			beforeRetry()
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatalf("mount provisioned root: mount [-o ro %s %s] failed: %v\n%s", devPath, mountDir, err, out)
 }
 
 func buildBooty(t *testing.T, output string) {
@@ -461,6 +634,145 @@ func findBusybox(t *testing.T) string {
 	return ""
 }
 
+func copyFilesystemModules(t *testing.T, rootDir string) {
+	t.Helper()
+	releases := kernelModuleReleases(t)
+	if len(releases) == 0 {
+		t.Log("kernel module releases unavailable, not copying filesystem modules")
+		return
+	}
+	for _, release := range releases {
+		copyFilesystemModulesForRelease(t, rootDir, release)
+	}
+}
+
+func copyFilesystemModulesForRelease(t *testing.T, rootDir, release string) {
+	t.Helper()
+	hostModuleRoot := filepath.Join("/lib/modules", release)
+	if st, err := os.Stat(hostModuleRoot); err != nil || !st.IsDir() {
+		t.Logf("host module tree %s unavailable, not copying filesystem modules", hostModuleRoot)
+		return
+	}
+
+	copied := map[string]bool{}
+	for _, module := range []string{"vfat", "fat", "nls_cp437", "nls_iso8859-1", "nls_ascii", "nls_utf8"} {
+		path := kernelModulePath(t, release, module)
+		if path == "" {
+			continue
+		}
+		copyKernelModule(t, rootDir, release, path, copied)
+	}
+	for _, meta := range []string{
+		"modules.dep",
+		"modules.dep.bin",
+		"modules.alias",
+		"modules.alias.bin",
+		"modules.symbols",
+		"modules.symbols.bin",
+		"modules.builtin",
+		"modules.builtin.bin",
+		"modules.order",
+	} {
+		src := filepath.Join(hostModuleRoot, meta)
+		if _, err := os.Stat(src); err == nil {
+			dst := filepath.Join(rootDir, "lib", "modules", release, meta)
+			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+				t.Fatalf("mkdir module metadata dir: %v", err)
+			}
+			copyBinary(t, src, dst)
+		}
+	}
+}
+
+func kernelModuleReleases(t *testing.T) []string {
+	t.Helper()
+	seen := map[string]bool{}
+	var releases []string
+	add := func(release string) {
+		release = strings.TrimSpace(release)
+		if release == "" || seen[release] {
+			return
+		}
+		seen[release] = true
+		releases = append(releases, release)
+	}
+
+	add(kernelRelease())
+	if kernel := os.Getenv("BOOTY_KERNEL"); kernel != "" {
+		base := filepath.Base(kernel)
+		add(strings.TrimPrefix(base, "vmlinuz-"))
+	}
+	entries, err := os.ReadDir("/lib/modules")
+	if err != nil {
+		t.Logf("read /lib/modules failed: %v", err)
+		return releases
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			add(entry.Name())
+		}
+	}
+	return releases
+}
+
+func installTestEFIFallbackAsset(t *testing.T, rootDir string) {
+	t.Helper()
+	efiDir := filepath.Join(rootDir, "usr", "lib", "booty", "efi")
+	if err := os.MkdirAll(efiDir, 0o755); err != nil {
+		t.Fatalf("mkdir efi fallback asset dir: %v", err)
+	}
+	writeFile(t, filepath.Join(efiDir, "BOOTX64.EFI"), testEFIFallbackPayload)
+}
+
+func installModuleLoader(t *testing.T, rootDir string) {
+	t.Helper()
+	for _, tool := range []string{"modprobe", "insmod"} {
+		dst := filepath.Join(rootDir, "sbin", tool)
+		if toolPath, err := exec.LookPath(tool); err == nil {
+			copyBinary(t, toolPath, dst)
+			copySharedLibs(t, toolPath, rootDir)
+			continue
+		}
+		_ = os.Symlink(filepath.Join("..", "bin", "busybox"), dst)
+	}
+}
+
+func kernelModulePath(t *testing.T, release, module string) string {
+	t.Helper()
+	out, err := exec.Command("modinfo", "-k", release, "-F", "filename", module).CombinedOutput()
+	if err != nil {
+		t.Logf("modinfo -k %s %s failed, not copying module: %v (%s)", release, module, err, strings.TrimSpace(string(out)))
+		return ""
+	}
+	path := strings.TrimSpace(string(out))
+	if path == "" || path == "(builtin)" {
+		return ""
+	}
+	return path
+}
+
+func copyKernelModule(t *testing.T, rootDir, release, src string, copied map[string]bool) {
+	t.Helper()
+	if copied[src] {
+		return
+	}
+	copied[src] = true
+	if _, err := os.Stat(src); err != nil {
+		t.Logf("kernel module %s unavailable for %s, skipping: %v", src, release, err)
+		return
+	}
+	rel, err := filepath.Rel(filepath.Join("/lib/modules", release), src)
+	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		t.Logf("kernel module %s is outside /lib/modules/%s, skipping", src, release)
+		return
+	}
+	dst := filepath.Join(rootDir, "lib", "modules", release, rel)
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		t.Fatalf("mkdir kernel module dir: %v", err)
+	}
+	copyBinary(t, src, dst)
+}
+
 func copyBinary(t *testing.T, src, dst string) {
 	t.Helper()
 	in, err := os.Open(src)
@@ -477,6 +789,37 @@ func copyBinary(t *testing.T, src, dst string) {
 
 	if _, err := io.Copy(out, in); err != nil {
 		t.Fatalf("copy %s -> %s: %v", src, dst, err)
+	}
+}
+
+func pathInFixtureRoot(rootDir, hostPath string) (string, error) {
+	cleanPath := filepath.Clean(hostPath)
+	if !filepath.IsAbs(cleanPath) {
+		return "", fmt.Errorf("%s is not absolute", hostPath)
+	}
+	relPath, err := filepath.Rel(string(os.PathSeparator), cleanPath)
+	if err != nil {
+		return "", fmt.Errorf("derive relative path for %s: %w", hostPath, err)
+	}
+	if relPath == "." || strings.HasPrefix(relPath, ".."+string(os.PathSeparator)) || relPath == ".." {
+		return "", fmt.Errorf("%s cannot be copied into fixture root", hostPath)
+	}
+	return filepath.Join(rootDir, relPath), nil
+}
+
+func TestPathInFixtureRootKeepsAbsoluteHostPathUnderRoot(t *testing.T) {
+	rootDir := filepath.Join(t.TempDir(), "fixture")
+	got, err := pathInFixtureRoot(rootDir, "/lib64/ld-linux-x86-64.so.2")
+	if err != nil {
+		t.Fatalf("pathInFixtureRoot: %v", err)
+	}
+	want := filepath.Join(rootDir, "lib64", "ld-linux-x86-64.so.2")
+	if got != want {
+		t.Fatalf("pathInFixtureRoot = %q, want %q", got, want)
+	}
+
+	if _, err := pathInFixtureRoot(rootDir, "relative/lib.so"); err == nil {
+		t.Fatal("expected relative host path to be rejected")
 	}
 }
 
@@ -498,8 +841,11 @@ func copySharedLibs(t *testing.T, binary, rootDir string) {
 				if libPath == "" || libPath == "not" {
 					continue
 				}
-				destDir := filepath.Join(rootDir, filepath.Dir(libPath))
-				destPath := filepath.Join(rootDir, libPath)
+				destPath, err := pathInFixtureRoot(rootDir, libPath)
+				if err != nil {
+					continue
+				}
+				destDir := filepath.Dir(destPath)
 				if _, err := os.Stat(destPath); err == nil {
 					continue // already copied
 				}

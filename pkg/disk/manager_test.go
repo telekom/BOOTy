@@ -55,6 +55,26 @@ func makeExitError(code int) error {
 	return err
 }
 
+func writeSysfsBlockDevice(t *testing.T, sysfs, dev, removable string, sizeGB int, serial string) {
+	t.Helper()
+	dir := sysfs + "/block/" + dev
+	if err := os.MkdirAll(dir+"/device", 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	if err := os.WriteFile(dir+"/removable", []byte(removable), 0o644); err != nil {
+		t.Fatalf("write removable: %v", err)
+	}
+	sectors := int64(sizeGB) * 1024 * 1024 * 1024 / 512
+	if err := os.WriteFile(dir+"/size", []byte(fmt.Sprintf("%d\n", sectors)), 0o644); err != nil {
+		t.Fatalf("write size: %v", err)
+	}
+	if serial != "" {
+		if err := os.WriteFile(dir+"/device/serial", []byte(serial+"\n"), 0o644); err != nil {
+			t.Fatalf("write serial: %v", err)
+		}
+	}
+}
+
 func TestExitCodeFromError(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -81,6 +101,7 @@ func TestNewManagerDefault(t *testing.T) {
 	mgr := NewManager(nil)
 	if mgr == nil {
 		t.Fatal("expected non-nil manager")
+		return
 	}
 	// Should use ExecCommander by default.
 	if _, ok := mgr.cmd.(*ExecCommander); !ok {
@@ -161,6 +182,21 @@ func TestWipeDiskValidationAndCommands(t *testing.T) {
 				t.Fatalf("second command = %s %v, want wipefs -af /dev/sda", cmd.calls[1].name, cmd.calls[1].args)
 			}
 		})
+	}
+}
+
+func TestWipeFilesystemSignaturesOnlyUsesWipefs(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+
+	if err := mgr.WipeFilesystemSignatures(context.Background(), "/dev/sda3"); err != nil {
+		t.Fatalf("WipeFilesystemSignatures: %v", err)
+	}
+	if len(cmd.calls) != 1 {
+		t.Fatalf("calls = %d, want 1: %#v", len(cmd.calls), cmd.calls)
+	}
+	if cmd.calls[0].name != "wipefs" || strings.Join(cmd.calls[0].args, " ") != "-af /dev/sda3" {
+		t.Fatalf("call = %s %v, want wipefs -af /dev/sda3", cmd.calls[0].name, cmd.calls[0].args)
 	}
 }
 
@@ -289,6 +325,20 @@ func TestFindRootPartition(t *testing.T) {
 	}
 	if root.Node != "/dev/sda2" {
 		t.Errorf("expected /dev/sda2, got %s", root.Node)
+	}
+}
+
+func TestFindRootPartitionAcceptsMBRLinuxType(t *testing.T) {
+	mgr := NewManager(newMockCommander())
+	parts := []Partition{
+		{Node: "/dev/sda1", Type: LinuxFilesystemMBRType},
+	}
+	root, err := mgr.FindRootPartition(parts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if root.Node != "/dev/sda1" {
+		t.Errorf("expected /dev/sda1, got %s", root.Node)
 	}
 }
 
@@ -428,8 +478,10 @@ func TestIsBashNotFound(t *testing.T) {
 		want bool
 	}{
 		{"bash missing in chroot", fmt.Errorf("exec chroot: exit status 127 [output: chroot: can't execute '/bin/bash': No such file or directory]"), true},
+		{"busybox bash applet missing in chroot", fmt.Errorf("exec chroot: exit status 127 [output: bash: applet not found]"), true},
 		{"exit 127 without no such file", fmt.Errorf("exit status 127"), false},
 		{"no such file without 127", fmt.Errorf("No such file or directory"), false},
+		{"bash applet error without 127", fmt.Errorf("bash: applet not found"), false},
 		{"normal error", fmt.Errorf("exec chroot: exit status 1"), false},
 	}
 	for _, tt := range tests {
@@ -442,15 +494,23 @@ func TestIsBashNotFound(t *testing.T) {
 }
 
 func TestChrootRunBashNotFoundFallsBackToSh(t *testing.T) {
+	testChrootRunBashUnavailableFallsBackToSh(t, fmt.Errorf("exec chroot: exit status 127 [output: chroot: can't execute '/bin/bash': No such file or directory]"))
+}
+
+func TestChrootRunBusyboxBashAppletMissingFallsBackToSh(t *testing.T) {
+	testChrootRunBashUnavailableFallsBackToSh(t, fmt.Errorf("exec chroot: exit status 127 [output: bash: applet not found]"))
+}
+
+func testChrootRunBashUnavailableFallsBackToSh(t *testing.T, bashErr error) {
+	t.Helper()
+
 	cmd := newMockCommander()
 	mgr := NewManager(cmd)
 
-	// Simulate bash not found inside chroot (exit status 127).
-	bashErr := fmt.Errorf("exec chroot: exit status 127 [output: chroot: can't execute '/bin/bash': No such file or directory]")
 	cmd.setResult("chroot /newroot", nil, bashErr)
 
 	// The fallback /bin/sh call uses the same mock key, so it also errors.
-	// We verify that isBashNotFound triggers and /bin/sh is attempted.
+	// We verify that bash-unavailable detection triggers and /bin/sh is attempted.
 	_, _ = mgr.ChrootRun(context.Background(), "/newroot", "ls /dev/mst/")
 
 	// Verify both /bin/bash and /bin/sh were attempted.
@@ -469,7 +529,7 @@ func TestChrootRunBashNotFoundFallsBackToSh(t *testing.T) {
 		t.Error("expected /bin/bash attempt")
 	}
 	if !shCall {
-		t.Error("expected /bin/sh fallback attempt after bash not found")
+		t.Error("expected /bin/sh fallback attempt after bash is unavailable")
 	}
 }
 
@@ -815,6 +875,141 @@ func TestIsRemovableMediaAllowEnv(t *testing.T) {
 	}
 	if disk != "/dev/sda" {
 		t.Errorf("expected /dev/sda to be selected, got %q", disk)
+	}
+}
+
+func TestFindDiskBySerialSelectsMatchingDisk(t *testing.T) {
+	sysfs := t.TempDir()
+	writeSysfsBlockDevice(t, sysfs, "sda", "0\n", 40, "BOOT-DISK")
+	writeSysfsBlockDevice(t, sysfs, "sdb", "0\n", 96, "RAID-DISK-1")
+
+	mgr := newManagerWithSysfs(newMockCommander(), sysfs)
+	disk, err := mgr.FindDiskBySerial(t.Context(), "RAID-DISK-1", 64)
+	if err != nil {
+		t.Fatalf("FindDiskBySerial: unexpected error: %v", err)
+	}
+	if disk != "/dev/sdb" {
+		t.Fatalf("FindDiskBySerial = %q, want /dev/sdb", disk)
+	}
+}
+
+func TestFindDiskBySerialFallsBackToLSBLK(t *testing.T) {
+	sysfs := t.TempDir()
+	writeSysfsBlockDevice(t, sysfs, "sdb", "0\n", 96, "")
+
+	cmd := newMockCommander()
+	cmd.setResult("lsblk --nodeps", []byte("/dev/sda BOOT-DISK\n/dev/sdb RAID-DISK-1\n"), nil)
+
+	mgr := newManagerWithSysfs(cmd, sysfs)
+	disk, err := mgr.FindDiskBySerial(t.Context(), "RAID-DISK-1", 64)
+	if err != nil {
+		t.Fatalf("FindDiskBySerial: unexpected error: %v", err)
+	}
+	if disk != "/dev/sdb" {
+		t.Fatalf("FindDiskBySerial = %q, want /dev/sdb", disk)
+	}
+}
+
+func TestFindDiskBySerialMatchesExactWWID(t *testing.T) {
+	sysfs := t.TempDir()
+	writeSysfsBlockDevice(t, sysfs, "sdb", "0\n", 96, "")
+	wwid := "scsi-0QEMU_QEMU_HARDDISK_RAID-DISK-1"
+	if err := os.WriteFile(sysfs+"/block/sdb/device/wwid", []byte(wwid+"\n"), 0o644); err != nil {
+		t.Fatalf("write wwid: %v", err)
+	}
+
+	mgr := newManagerWithSysfs(newMockCommander(), sysfs)
+	disk, err := mgr.FindDiskBySerial(t.Context(), wwid, 64)
+	if err != nil {
+		t.Fatalf("FindDiskBySerial: unexpected error: %v", err)
+	}
+	if disk != "/dev/sdb" {
+		t.Fatalf("FindDiskBySerial = %q, want /dev/sdb", disk)
+	}
+}
+
+func TestFindDiskBySerialMatchesExactVPDIdentifier(t *testing.T) {
+	sysfs := t.TempDir()
+	writeSysfsBlockDevice(t, sysfs, "sdb", "0\n", 96, "")
+	if err := os.WriteFile(sysfs+"/block/sdb/device/vpd_pg80", []byte{0x00, 0x80, 0x00, 0x0b, 'R', 'A', 'I', 'D', '-', 'D', 'I', 'S', 'K', '-', '1'}, 0o644); err != nil {
+		t.Fatalf("write vpd_pg80: %v", err)
+	}
+
+	mgr := newManagerWithSysfs(newMockCommander(), sysfs)
+	disk, err := mgr.FindDiskBySerial(t.Context(), "RAID-DISK-1", 64)
+	if err != nil {
+		t.Fatalf("FindDiskBySerial: unexpected error: %v", err)
+	}
+	if disk != "/dev/sdb" {
+		t.Fatalf("FindDiskBySerial = %q, want /dev/sdb", disk)
+	}
+}
+
+func TestFindDiskBySerialMatchesExactVPDPage83TextIdentifier(t *testing.T) {
+	sysfs := t.TempDir()
+	writeSysfsBlockDevice(t, sysfs, "sdb", "0\n", 96, "")
+	vpdPage83 := []byte{
+		0x00, 0x83, 0x00, 0x0f,
+		0x02, 0x01, 0x00, 0x0b,
+		'R', 'A', 'I', 'D', '-', 'D', 'I', 'S', 'K', '-', '1',
+	}
+	if err := os.WriteFile(sysfs+"/block/sdb/device/vpd_pg83", vpdPage83, 0o644); err != nil {
+		t.Fatalf("write vpd_pg83: %v", err)
+	}
+
+	mgr := newManagerWithSysfs(newMockCommander(), sysfs)
+	disk, err := mgr.FindDiskBySerial(t.Context(), "RAID-DISK-1", 64)
+	if err != nil {
+		t.Fatalf("FindDiskBySerial: unexpected error: %v", err)
+	}
+	if disk != "/dev/sdb" {
+		t.Fatalf("FindDiskBySerial = %q, want /dev/sdb", disk)
+	}
+}
+
+func TestFindDiskBySerialDoesNotMatchSubstring(t *testing.T) {
+	sysfs := t.TempDir()
+	writeSysfsBlockDevice(t, sysfs, "sdb", "0\n", 96, "RAID-DISK-10")
+
+	cmd := newMockCommander()
+	cmd.setResult("lsblk --nodeps", []byte("/dev/sdb RAID-DISK-10\n"), nil)
+
+	mgr := newManagerWithSysfs(cmd, sysfs)
+	_, err := mgr.FindDiskBySerial(t.Context(), "RAID-DISK-1", 64)
+	if err == nil {
+		t.Fatal("expected substring-only serial lookup to fail")
+	}
+	if !strings.Contains(err.Error(), "no suitable disk found with serial") {
+		t.Fatalf("error = %q, want no suitable disk detail", err)
+	}
+}
+
+func TestFindDiskBySerialRejectsTooSmallDisk(t *testing.T) {
+	sysfs := t.TempDir()
+	writeSysfsBlockDevice(t, sysfs, "sdb", "0\n", 10, "RAID-DISK-1")
+
+	mgr := newManagerWithSysfs(newMockCommander(), sysfs)
+	_, err := mgr.FindDiskBySerial(t.Context(), "RAID-DISK-1", 64)
+	if err == nil {
+		t.Fatal("expected error for disk below minimum size")
+	}
+	if !strings.Contains(err.Error(), "below minimum 64 GB") {
+		t.Fatalf("error = %q, want minimum size detail", err)
+	}
+}
+
+func TestFindDiskBySerialRejectsDuplicateSerials(t *testing.T) {
+	sysfs := t.TempDir()
+	writeSysfsBlockDevice(t, sysfs, "sdb", "0\n", 96, "DUPLICATE")
+	writeSysfsBlockDevice(t, sysfs, "sdc", "0\n", 96, "DUPLICATE")
+
+	mgr := newManagerWithSysfs(newMockCommander(), sysfs)
+	_, err := mgr.FindDiskBySerial(t.Context(), "DUPLICATE", 0)
+	if err == nil {
+		t.Fatal("expected error for duplicate disk serial")
+	}
+	if !strings.Contains(err.Error(), "multiple disks found") {
+		t.Fatalf("error = %q, want duplicate detail", err)
 	}
 }
 

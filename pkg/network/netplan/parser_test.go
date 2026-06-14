@@ -433,8 +433,8 @@ func TestToNetworkConfig_BM4XEVPN(t *testing.T) {
 				"vx_p_zerotrust": {Mode: "vxlan", ID: 200, Local: "192.168.4.11", Port: 4789},
 			},
 			Bridges: map[string]BridgeConfig{
-				"br_cluster":     {Interfaces: []string{"vx_cluster"}},
-				"br_p_zerotrust": {Interfaces: []string{"vx_p_zerotrust"}},
+				"br_cluster":     {Interfaces: []string{"vx_cluster"}, Addresses: []string{"10.100.0.11/32"}},
+				"br_p_zerotrust": {Interfaces: []string{"vx_p_zerotrust"}, Addresses: []string{"10.200.0.11/32"}},
 			},
 			VRFs: map[string]VRFConfig{
 				"cluster":     {Table: 10, Interfaces: []string{"hbn", "br_cluster"}},
@@ -475,8 +475,127 @@ func TestToNetworkConfig_BM4XEVPN(t *testing.T) {
 	if netCfg.VRFTableID == 0 {
 		t.Error("VRFTableID should be > 0")
 	}
+	if netCfg.BridgeName != "br_cluster" {
+		t.Errorf("BridgeName = %q, want br_cluster", netCfg.BridgeName)
+	}
+	if !netCfg.OverlayVRFSet {
+		t.Error("OverlayVRFSet should be true")
+	}
+	if netCfg.OverlayVRFName != "cluster" {
+		t.Errorf("OverlayVRFName = %q, want cluster", netCfg.OverlayVRFName)
+	}
+	if netCfg.OverlayVRFTableID != 10 {
+		t.Errorf("OverlayVRFTableID = %d, want 10", netCfg.OverlayVRFTableID)
+	}
 	if netCfg.MTU != 9100 {
 		t.Errorf("MTU = %d, want 9100", netCfg.MTU)
+	}
+}
+
+func TestToNetworkConfig_PureType5DoesNotEnableL2(t *testing.T) {
+	np := &Config{
+		Network: NetworkSection{
+			Ethernets: map[string]EthernetConfig{
+				"hbn": {LinkLocal: []string{"ipv6"}, MTU: 9100},
+			},
+			DummyDevices: map[string]DummyConfig{
+				"dum.underlay": {Addresses: []string{"192.168.4.10/32"}},
+			},
+			Tunnels: map[string]TunnelConfig{
+				"vx.1000": {Mode: "vxlan", ID: 1000, Local: "192.168.4.10", Port: 4789},
+			},
+			Bridges: map[string]BridgeConfig{
+				"br.provision": {Interfaces: []string{"vx.1000"}, Addresses: []string{"10.200.0.10/32"}},
+			},
+		},
+	}
+	frr := &FRRParams{
+		ASN:             65100,
+		RouterID:        "192.168.4.10",
+		UnnumberedPeers: []string{"hbn"},
+		EVPN:            true,
+		AdvertiseAllVNI: false,
+	}
+
+	netCfg := ToNetworkConfig(np, frr)
+	if netCfg.NetworkMode != "gobgp" {
+		t.Errorf("NetworkMode = %q, want gobgp", netCfg.NetworkMode)
+	}
+	if netCfg.EVPNL2Enabled {
+		t.Error("EVPNL2Enabled should be false for pure Type-5 without advertise-all-vni")
+	}
+	if netCfg.BGPPeerMode != network.PeerModeUnnumbered {
+		t.Errorf("BGPPeerMode = %q, want unnumbered", netCfg.BGPPeerMode)
+	}
+}
+
+func TestToNetworkConfig_ProductionUnderlayVRFOverlayDefault(t *testing.T) {
+	np := &Config{
+		Network: NetworkSection{
+			DummyDevices: map[string]DummyConfig{
+				"dum.underlay": {Addresses: []string{"192.168.4.10/32"}},
+			},
+			Tunnels: map[string]TunnelConfig{
+				"vx.1000": {Mode: "vxlan", ID: 1000, Local: "192.168.4.10", Port: 4789},
+			},
+			Bridges: map[string]BridgeConfig{
+				"br.provision": {Interfaces: []string{"vx.1000"}, Addresses: []string{"10.200.0.10/32"}},
+			},
+			VRFs: map[string]VRFConfig{
+				"Vrf_underlay": {Table: 10, Interfaces: []string{"hbn", "dum.underlay"}},
+			},
+		},
+	}
+
+	netCfg := ToNetworkConfig(np, &FRRParams{ASN: 65100, RouterID: "192.168.4.10", EVPN: true})
+	if netCfg.VRFName != "Vrf_underlay" {
+		t.Errorf("VRFName = %q, want Vrf_underlay", netCfg.VRFName)
+	}
+	if netCfg.BridgeName != "br.provision" {
+		t.Errorf("BridgeName = %q, want br.provision", netCfg.BridgeName)
+	}
+	if !netCfg.OverlayVRFSet {
+		t.Fatal("OverlayVRFSet should be true for netplan-derived bridge placement")
+	}
+	if netCfg.OverlayVRFName != "" {
+		t.Errorf("OverlayVRFName = %q, want empty default VRF", netCfg.OverlayVRFName)
+	}
+	if netCfg.OverlayVRFTableID != 0 {
+		t.Errorf("OverlayVRFTableID = %d, want 0", netCfg.OverlayVRFTableID)
+	}
+}
+
+func TestToNetworkConfig_OverlayVRFCanDifferFromUnderlayVRF(t *testing.T) {
+	np := &Config{
+		Network: NetworkSection{
+			DummyDevices: map[string]DummyConfig{
+				"dum.underlay": {Addresses: []string{"192.168.4.10/32"}},
+			},
+			Tunnels: map[string]TunnelConfig{
+				"vx.1000": {Mode: "vxlan", ID: 1000, Local: "192.168.4.10", Port: 4789},
+			},
+			Bridges: map[string]BridgeConfig{
+				"br.provision": {Interfaces: []string{"vx.1000"}, Addresses: []string{"10.200.0.10/32"}},
+			},
+			VRFs: map[string]VRFConfig{
+				"a-underlay": {Table: 10, Interfaces: []string{"hbn", "dum.underlay"}},
+				"z-overlay":  {Table: 20, Interfaces: []string{"br.provision"}},
+			},
+		},
+	}
+
+	netCfg := ToNetworkConfig(np, &FRRParams{ASN: 65100, RouterID: "192.168.4.10", EVPN: true})
+	if netCfg.VRFName != "a-underlay" {
+		t.Errorf("VRFName = %q, want a-underlay", netCfg.VRFName)
+	}
+	if !netCfg.OverlayVRFSet {
+		t.Fatal("OverlayVRFSet should be true")
+	}
+	if netCfg.OverlayVRFName != "z-overlay" {
+		t.Errorf("OverlayVRFName = %q, want z-overlay", netCfg.OverlayVRFName)
+	}
+	if netCfg.OverlayVRFTableID != 20 {
+		t.Errorf("OverlayVRFTableID = %d, want 20", netCfg.OverlayVRFTableID)
 	}
 }
 

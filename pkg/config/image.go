@@ -20,10 +20,12 @@ type ImageConfig struct {
 	ChecksumType string `yaml:"checksumType" json:"checksumType"`
 
 	// Mode controls how the image is written to disk.
-	// Valid values: "whole-disk" (default), "partition"
+	// Valid values: "whole-disk" (default), "partition", "ab"
 	//   - whole-disk: dd-style write of the entire image to the block device
 	//   - partition: per-partition extraction (streams each partition independently;
 	//     does NOT use Provision.Disk.PartitionLayout, which is not yet supported)
+	//   - ab: copy the image boot/root partitions into a generated dual-root
+	//     A/B layout and boot the selected target slot
 	// Default: "whole-disk"
 	Mode string `yaml:"mode" json:"mode"`
 

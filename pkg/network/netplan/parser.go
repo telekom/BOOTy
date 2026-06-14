@@ -160,6 +160,7 @@ func extractBridges(np *Config, cfg *network.Config) {
 			}
 		}
 		if hasVXLAN && cfg.ProvisionIP == "" {
+			cfg.BridgeName = name
 			cfg.ProvisionIP = br.Addresses[0]
 			break
 		}
@@ -235,17 +236,32 @@ func extractBonds(np *Config, cfg *network.Config) {
 }
 
 func extractVRFs(np *Config, cfg *network.Config) {
-	if cfg.VRFTableID != 0 {
-		return
+	if cfg.BridgeName != "" && len(np.Network.VRFs) > 0 {
+		cfg.OverlayVRFSet = true
 	}
+
 	for _, name := range sortedKeys(np.Network.VRFs) {
 		vrf := np.Network.VRFs[name]
-		if vrf.Table > 0 {
+		if cfg.VRFTableID == 0 && vrf.Table > 0 {
 			cfg.VRFTableID = uint32(vrf.Table)
 			cfg.VRFName = name
-			return
+		}
+		if cfg.BridgeName != "" && containsString(vrf.Interfaces, cfg.BridgeName) {
+			cfg.OverlayVRFName = name
+			if vrf.Table > 0 {
+				cfg.OverlayVRFTableID = uint32(vrf.Table)
+			}
 		}
 	}
+}
+
+func containsString(items []string, needle string) bool {
+	for _, item := range items {
+		if item == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func applyFRRParams(frr *FRRParams, cfg *network.Config) {
@@ -261,7 +277,7 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 	if frr.RouterID != "" && cfg.UnderlayIP == "" {
 		cfg.UnderlayIP = frr.RouterID
 	}
-	if frr.EVPN {
+	if frr.AdvertiseAllVNI {
 		cfg.EVPNL2Enabled = true
 	}
 	hasUnnumbered := len(frr.UnnumberedPeers) > 0

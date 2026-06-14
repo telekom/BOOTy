@@ -3,12 +3,12 @@
 package provision
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +25,21 @@ import (
 	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/inventory"
 	"github.com/telekom/BOOTy/pkg/rescue"
+)
+
+var readProcCmdline = func() ([]byte, error) {
+	return os.ReadFile("/proc/cmdline")
+}
+
+var (
+	evalRootSymlinks = filepath.EvalSymlinks
+	mountBootPart    = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
+		return mgr.MountPartition(ctx, device, mountpoint)
+	}
+	mountReadOnlyPart = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
+		return mgr.MountPartitionReadOnly(ctx, device, mountpoint)
+	}
+	sysBlockRoot = "/sys/class/block"
 )
 
 // Step represents a named provisioning step.
@@ -72,9 +87,6 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"collect-inventory", o.collectInventory},
 		{"collect-firmware", o.collectFirmware},
 		{"health-checks", o.runHealthChecks},
-		{"set-hostname", o.setHostname},
-		{"copy-provisioner-files", o.copyProvisionerFiles},
-		{"configure-dns", o.configureDNS},
 		{"stop-raid", o.stopRAID},
 		{"disable-lvm", o.disableLVM},
 		{"mount-efivarfs", o.mountEFIVars},
@@ -91,12 +103,18 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"check-filesystem", o.checkFilesystem},
 		{"enable-lvm", o.enableLVM},
 		{"mount-root", o.mountRoot},
+		{"mount-boot", o.mountBoot},
+		{"set-hostname", o.setHostname},
+		{"copy-provisioner-files", o.copyProvisionerFiles},
+		{"configure-dns", o.configureDNS},
+		{"apply-sysexts", o.applySysexts},
 		{"write-fstab", o.writeFstabStep},
 		{"setup-chroot-binds", o.setupChrootBinds},
 		{"grow-partition", o.growPartition},
 		{"resize-filesystem", o.resizeFilesystem},
 		{"configure-kubelet", o.configureKubelet},
 		{"configure-grub", o.configureGRUB},
+		{"install-efi-fallback", o.installEFIFallbackLoader},
 		{"inject-cloudinit", o.injectCloudInit},
 		{"copy-machine-files", o.copyMachineFiles},
 		{"run-machine-commands", o.runMachineCommands},
@@ -319,6 +337,10 @@ func (o *Orchestrator) disableLVM(ctx context.Context) error {
 }
 
 func (o *Orchestrator) removeEFIBootEntries(ctx context.Context) error {
+	if o.shouldPreserveABBootEntries() {
+		o.log.Info("A/B preserveExisting enabled, preserving existing EFI boot entries")
+		return nil
+	}
 	return o.config.RemoveEFIBootEntries(ctx)
 }
 
@@ -327,6 +349,14 @@ func (o *Orchestrator) mountEFIVars(ctx context.Context) error {
 }
 
 func (o *Orchestrator) createEFIBootEntry(ctx context.Context) error {
+	if o.isABImageMode() {
+		o.log.Info("A/B image mode uses removable EFI fallback loader; skipping EFI NVRAM boot entry")
+		return nil
+	}
+	if o.shouldPreserveABBootEntries() {
+		o.log.Info("A/B preserveExisting enabled, preserving existing EFI boot entry")
+		return nil
+	}
 	return o.config.CreateEFIBootEntry(ctx, o.targetDisk, o.bootPartition)
 }
 
@@ -382,8 +412,15 @@ func (o *Orchestrator) setupNVMeNamespaces(ctx context.Context) error {
 }
 
 func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
+	if err := o.ensureABPartitionLayout(); err != nil {
+		return err
+	}
 	if err := o.validatePartitionLayoutConfig(); err != nil {
 		return err
+	}
+	if o.isABImageMode() && o.cfg.Provision.AB.PreserveExisting {
+		o.log.Info("A/B preserveExisting enabled, skipping whole-disk wipe")
+		return nil
 	}
 
 	// In deprovision modes use the deprovision-specific SecureErase setting.
@@ -410,6 +447,9 @@ func (o *Orchestrator) validatePartitionLayoutModeCompatibility() error {
 
 	// Deprovisioning is allowed to wipe disks even when PARTITION_LAYOUT is set.
 	if o.cfg.Mode == "deprovision" || o.cfg.Mode == "soft" || o.cfg.Mode == "soft-deprovision" {
+		return nil
+	}
+	if o.isABImageMode() {
 		return nil
 	}
 
@@ -473,6 +513,19 @@ func (o *Orchestrator) detectDisk(ctx context.Context) error {
 		o.targetDisk = o.cfg.Provision.Disk.Device
 		return nil
 	}
+
+	serial := strings.TrimSpace(o.cfg.Provision.Disk.SerialNumber)
+	o.cfg.Provision.Disk.SerialNumber = serial
+	if serial != "" {
+		d, err := o.disk.FindDiskBySerial(ctx, serial, o.cfg.Provision.Disk.MinSizeGB)
+		if err != nil {
+			return err
+		}
+		o.log.Info("using configured disk serial", "serial", serial, "device", d)
+		o.targetDisk = d
+		return nil
+	}
+
 	d, err := o.disk.DetectDisk(ctx, o.cfg.Provision.Disk.MinSizeGB)
 	if err != nil {
 		return err
@@ -482,7 +535,14 @@ func (o *Orchestrator) detectDisk(ctx context.Context) error {
 }
 
 func (o *Orchestrator) applyPartitionLayout(ctx context.Context) error {
+	if err := o.ensureABPartitionLayout(); err != nil {
+		return err
+	}
 	if o.cfg.Provision.Disk.PartitionLayout == nil {
+		return nil
+	}
+	if o.isABImageMode() && o.cfg.Provision.AB.PreserveExisting {
+		o.log.Info("A/B preserveExisting enabled, reusing existing partition layout")
 		return nil
 	}
 
@@ -520,7 +580,10 @@ func (o *Orchestrator) applyPartitionLayout(ctx context.Context) error {
 
 // writeFstab generates and writes fstab after root is mounted.
 func (o *Orchestrator) writeFstabStep(_ context.Context) error {
-	return o.writeFstab()
+	if err := o.writeFstab(); err != nil {
+		return err
+	}
+	return o.writeABSlotState()
 }
 
 func (o *Orchestrator) writeFstab() error {
@@ -547,7 +610,7 @@ func (o *Orchestrator) writeFstab() error {
 func (o *Orchestrator) streamImage(ctx context.Context) error {
 	// With a custom partition layout, fail fast — rootfs extraction for
 	// layout mode is not implemented yet.
-	if o.cfg.Provision.Disk.PartitionLayout != nil {
+	if o.cfg.Provision.Disk.PartitionLayout != nil && !o.isABImageMode() {
 		return fmt.Errorf("%s", errPartitionLayoutNotSupported)
 	}
 
@@ -564,7 +627,7 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 	// Partition-by-partition mode: wipe first to ensure a clean slate on any
 	// retry attempt, then download and copy each partition individually.
 	if strings.EqualFold(o.cfg.Provision.Image.Mode, "partition") {
-		o.log.Info("Streaming image partition-by-partition", "url", bestURL, "disk", o.targetDisk)
+		o.log.Info("Streaming image partition-by-partition", "url", image.RedactURL(bestURL), "disk", o.targetDisk)
 		if err := o.disk.WipeDisk(ctx, o.targetDisk); err != nil {
 			return fmt.Errorf("wiping disk before partition stream: %w", err)
 		}
@@ -579,13 +642,398 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 		})
 	}
 
+	if o.isABImageMode() {
+		return o.streamABImage(ctx, bestURL, opts)
+	}
+
 	// Default whole-disk mode.
-	o.log.Info("Streaming image", "url", bestURL, "disk", o.targetDisk)
+	o.log.Info("Streaming image", "url", image.RedactURL(bestURL), "disk", o.targetDisk)
 	if err := image.Stream(ctx, bestURL, o.targetDisk, opts...); err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "checksum mismatch") {
-			return &PermanentError{Err: fmt.Errorf("streaming %s: %w", bestURL, err)}
+		return classifyImageStreamError(bestURL, err)
+	}
+	return nil
+}
+
+func classifyImageStreamError(imageURL string, err error) error {
+	if err == nil {
+		return nil
+	}
+	wrapped := &redactedImageStreamError{
+		msg: fmt.Sprintf("streaming %s: %s", image.RedactURL(imageURL), image.RedactSourceError(err, imageURL)),
+		err: err,
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "checksum mismatch") {
+		return &PermanentError{Err: wrapped}
+	}
+	return wrapped
+}
+
+type redactedImageStreamError struct {
+	msg string
+	err error
+}
+
+func (e *redactedImageStreamError) Error() string {
+	return e.msg
+}
+
+func (e *redactedImageStreamError) Unwrap() error {
+	return e.err
+}
+
+func (o *Orchestrator) streamABImage(ctx context.Context, bestURL string, opts []image.StreamOpts) error {
+	if err := o.ensureABPartitionLayout(); err != nil {
+		return err
+	}
+	if err := o.parsePartitionsFromLayout(ctx); err != nil {
+		return err
+	}
+	if err := o.validateABPreserveExistingLayout(ctx); err != nil {
+		return err
+	}
+	if err := o.prepareABTargetSlot(ctx); err != nil {
+		return err
+	}
+
+	targets := o.abStreamTargets()
+	o.log.Info("Streaming image into A/B target slot", "url", image.RedactURL(bestURL), "disk", targets.Disk, "root", targets.RootPartition, "boot", targets.BootPartition)
+	if err := image.StreamAB(ctx, bestURL, targets, opts...); err != nil {
+		return classifyImageStreamError(bestURL, err)
+	}
+	return nil
+}
+
+func (o *Orchestrator) abStreamTargets() image.ABTargets {
+	bootPartition := o.bootPartition
+	if o.cfg.Provision.AB.PreserveExisting {
+		// PreserveExisting updates only the target root slot. The shared EFI
+		// partition stays untouched so rollback keeps the previous boot assets.
+		bootPartition = ""
+	}
+	return image.ABTargets{
+		Disk:                o.targetDisk,
+		BootPartition:       bootPartition,
+		RootPartition:       o.rootPartition,
+		SourceRootLabel:     o.cfg.Provision.AB.SourceRootLabel,
+		SourceRootPartition: o.cfg.Provision.AB.SourceRootPartition,
+	}
+}
+
+func (o *Orchestrator) prepareABTargetSlot(ctx context.Context) error {
+	if !o.cfg.Provision.AB.PreserveExisting {
+		return nil
+	}
+	if err := o.disk.WipeFilesystemSignatures(ctx, o.rootPartition); err != nil {
+		return fmt.Errorf("wiping A/B target slot before stream: %w", err)
+	}
+	return nil
+}
+
+func (o *Orchestrator) validateABPreserveExistingLayout(ctx context.Context) error {
+	if !o.cfg.Provision.AB.PreserveExisting {
+		return nil
+	}
+	layout := o.cfg.Provision.Disk.PartitionLayout
+	if layout == nil {
+		return fmt.Errorf("A/B preserveExisting requires generated partition layout")
+	}
+	actual, err := o.disk.ParsePartitions(ctx, o.targetDisk)
+	if err != nil {
+		return fmt.Errorf("validate existing A/B partition layout: %w", err)
+	}
+	if len(actual) < len(layout.Partitions) {
+		return fmt.Errorf("existing A/B partition layout has %d partitions, want at least %d",
+			len(actual), len(layout.Partitions))
+	}
+	for i, expected := range layout.Partitions {
+		if err := validateABPreservePartition(o.targetDisk, i, expected, actual[i]); err != nil {
+			return err
 		}
-		return fmt.Errorf("streaming %s: %w", bestURL, err)
+	}
+	if err := o.validateABActiveSlotState(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (o *Orchestrator) validateABActiveSlotState(ctx context.Context) error {
+	ab := o.cfg.Provision.AB.WithDefaults()
+	if ab.ActiveSlot == "" {
+		return fmt.Errorf("A/B preserveExisting requires provision.ab.activeSlot")
+	}
+	targetSlot, err := ab.ResolvedTargetSlot()
+	if err != nil {
+		return err
+	}
+	if targetSlot == ab.ActiveSlot {
+		return fmt.Errorf("A/B target slot %q equals active slot", targetSlot)
+	}
+
+	activePartition, err := abSlotPartitionDevice(o.targetDisk, ab.ActiveSlot)
+	if err != nil {
+		return err
+	}
+	if activePartition == o.rootPartition {
+		return fmt.Errorf("A/B target root %s resolves to active slot %q", o.rootPartition, ab.ActiveSlot)
+	}
+
+	if err := validateABBootedSlotSignal(o.targetDisk, ab.ActiveSlot); err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(activePartition); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("active A/B partition device %s is not present", activePartition)
+		}
+		return fmt.Errorf("stat active A/B partition %s: %w", activePartition, err)
+	}
+
+	mountpoint, err := os.MkdirTemp("", "booty-active-slot-*")
+	if err != nil {
+		return fmt.Errorf("creating active A/B slot mountpoint: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(mountpoint) }()
+
+	if err := mountReadOnlyPart(ctx, o.disk, activePartition, mountpoint); err != nil {
+		return fmt.Errorf("mounting declared active A/B slot %q (%s): %w", ab.ActiveSlot, activePartition, err)
+	}
+	defer func() {
+		if err := o.disk.Unmount(mountpoint); err != nil {
+			o.log.Warn("failed to unmount active A/B slot", "mountpoint", mountpoint, "error", err)
+		}
+	}()
+
+	state, err := readABSlotStateFile(filepath.Join(mountpoint, "etc", "booty", "ab-slot.env"))
+	if err != nil {
+		return fmt.Errorf("reading active A/B slot state from %s: %w", activePartition, err)
+	}
+	stateBootedSlot := normalizeABStateSlot(state["BOOTY_AB_BOOTED_SLOT"])
+	if stateBootedSlot == "" {
+		stateBootedSlot = normalizeABStateSlot(state["BOOTY_AB_TARGET_SLOT"])
+	}
+	if stateBootedSlot != ab.ActiveSlot {
+		return fmt.Errorf("active A/B slot state on %s reports slot %q, config declares %q", activePartition, stateBootedSlot, ab.ActiveSlot)
+	}
+	return nil
+}
+
+func validateABBootedSlotSignal(diskDevice, activeSlot string) error {
+	bootedSlot, err := detectBootedABSlotFromCmdline(diskDevice)
+	if err != nil {
+		return fmt.Errorf("determine booted A/B slot from kernel cmdline: %w", err)
+	}
+	if bootedSlot == "" {
+		return nil
+	}
+	if bootedSlot != activeSlot {
+		return fmt.Errorf("kernel cmdline reports booted A/B slot %q, config declares active slot %q", bootedSlot, activeSlot)
+	}
+	return nil
+}
+
+func detectBootedABSlotFromCmdline(diskDevice string) (string, error) {
+	data, err := readProcCmdline()
+	if err != nil {
+		return "", err
+	}
+	for _, field := range strings.Fields(string(data)) {
+		key, value, ok := strings.Cut(field, "=")
+		if !ok || key != "root" {
+			continue
+		}
+		if slot := abSlotFromRootSpec(value, diskDevice); slot != "" {
+			return slot, nil
+		}
+		return "", nil
+	}
+	return "", nil
+}
+
+func abSlotFromRootSpec(rootSpec, diskDevice string) string {
+	rootSpec = strings.Trim(strings.TrimSpace(rootSpec), `"'`)
+	switch {
+	case strings.EqualFold(rootSpec, "PARTLABEL=BOOTY-ROOT-A"),
+		strings.EqualFold(rootSpec, "LABEL=BOOTY-ROOT-A"),
+		strings.EqualFold(rootSpec, "/dev/disk/by-label/BOOTY-ROOT-A"),
+		strings.EqualFold(rootSpec, "/dev/disk/by-partlabel/BOOTY-ROOT-A"):
+		return config.ABSlotA
+	case strings.EqualFold(rootSpec, "PARTLABEL=BOOTY-ROOT-B"),
+		strings.EqualFold(rootSpec, "LABEL=BOOTY-ROOT-B"),
+		strings.EqualFold(rootSpec, "/dev/disk/by-label/BOOTY-ROOT-B"),
+		strings.EqualFold(rootSpec, "/dev/disk/by-partlabel/BOOTY-ROOT-B"):
+		return config.ABSlotB
+	}
+	rootSpec = resolveRootSpecDevice(rootSpec)
+	if slotA, err := abSlotPartitionDevice(diskDevice, config.ABSlotA); err == nil && rootSpec == slotA {
+		return config.ABSlotA
+	}
+	if slotB, err := abSlotPartitionDevice(diskDevice, config.ABSlotB); err == nil && rootSpec == slotB {
+		return config.ABSlotB
+	}
+	return ""
+}
+
+func resolveRootSpecDevice(rootSpec string) string {
+	var devicePath string
+	if key, value, ok := strings.Cut(rootSpec, "="); ok {
+		switch strings.ToUpper(key) {
+		case "UUID":
+			devicePath = "/dev/disk/by-uuid/" + value
+		case "PARTUUID":
+			devicePath = "/dev/disk/by-partuuid/" + value
+		case "LABEL":
+			devicePath = "/dev/disk/by-label/" + value
+		case "PARTLABEL":
+			devicePath = "/dev/disk/by-partlabel/" + value
+		}
+	} else if strings.HasPrefix(rootSpec, "/dev/") {
+		devicePath = rootSpec
+	}
+	if devicePath == "" {
+		return rootSpec
+	}
+	if resolved, err := evalRootSymlinks(devicePath); err == nil && strings.HasPrefix(resolved, "/dev/") {
+		devicePath = resolved
+	}
+	return resolveBlockSlaveDevice(devicePath)
+}
+
+func resolveBlockSlaveDevice(devicePath string) string {
+	base := filepath.Base(devicePath)
+	entries, err := os.ReadDir(filepath.Join(sysBlockRoot, base, "slaves"))
+	if err != nil || len(entries) != 1 {
+		return devicePath
+	}
+	name := strings.TrimSpace(entries[0].Name())
+	if name == "" {
+		return devicePath
+	}
+	return "/dev/" + name
+}
+
+func abSlotPartitionDevice(diskDevice, slot string) (string, error) {
+	switch normalizeABStateSlot(slot) {
+	case config.ABSlotA:
+		return disk.PartitionDevicePath(diskDevice, 2), nil
+	case config.ABSlotB:
+		return disk.PartitionDevicePath(diskDevice, 3), nil
+	default:
+		return "", fmt.Errorf("invalid A/B slot %q", slot)
+	}
+}
+
+func readABSlotStateFile(path string) (map[string]string, error) {
+	f, err := os.Open(path) //nolint:gosec // path is inside a read-only mounted root partition
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	values := make(map[string]string)
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		values[strings.TrimSpace(key)] = strings.Trim(strings.TrimSpace(value), `"'`)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan %s: %w", path, err)
+	}
+	return values, nil
+}
+
+func normalizeABStateSlot(slot string) string {
+	return strings.ToLower(strings.TrimSpace(slot))
+}
+
+func validateABPreservePartition(diskDevice string, index int, expected config.Partition, actual disk.Partition) error {
+	partNum := index + 1
+	expectedNode := disk.PartitionDevicePath(diskDevice, partNum)
+	if actual.Node != expectedNode {
+		return fmt.Errorf("existing A/B partition %d node = %q, want %q", partNum, actual.Node, expectedNode)
+	}
+	if strings.TrimSpace(actual.Name) != expected.Label {
+		return fmt.Errorf("existing A/B partition %d label = %q, want %q", partNum, actual.Name, expected.Label)
+	}
+	expectedType := expectedABPartitionType(expected)
+	if !strings.EqualFold(actual.Type, expectedType) {
+		return fmt.Errorf("existing A/B partition %d (%s) type = %q, want %q",
+			partNum, expected.Label, actual.Type, expectedType)
+	}
+	return nil
+}
+
+func expectedABPartitionType(part config.Partition) string {
+	if strings.EqualFold(part.Filesystem, "vfat") || part.Mountpoint == "/boot/efi" {
+		return disk.EFISystemPartitionGUID
+	}
+	return disk.LinuxFilesystemGUID
+}
+
+func (o *Orchestrator) isABImageMode() bool {
+	return strings.EqualFold(strings.TrimSpace(o.cfg.Provision.Image.Mode), config.ImageModeAB)
+}
+
+func (o *Orchestrator) shouldPreserveABBootEntries() bool {
+	return o.isABImageMode() && o.cfg.Provision.AB.PreserveExisting
+}
+
+func (o *Orchestrator) ensureABPartitionLayout() error {
+	if !o.isABImageMode() {
+		return nil
+	}
+	device := strings.TrimSpace(o.targetDisk)
+	if device == "" {
+		device = strings.TrimSpace(o.cfg.Provision.Disk.Device)
+	}
+	layout, err := o.cfg.Provision.AB.PartitionLayout(device)
+	if err != nil {
+		return fmt.Errorf("A/B partition layout: %w", err)
+	}
+	o.cfg.Provision.Disk.PartitionLayout = layout
+	return nil
+}
+
+func (o *Orchestrator) writeABSlotState() error {
+	if !o.isABImageMode() {
+		return nil
+	}
+	ab := o.cfg.Provision.AB.WithDefaults()
+	targetSlot, err := ab.ResolvedTargetSlot()
+	if err != nil {
+		return err
+	}
+	statePath := filepath.Join(o.config.rootDir, "etc", "booty", "ab-slot.env")
+	stateDir := filepath.Dir(statePath)
+	if err := ensureWithinRoot(o.config.rootDir, statePath); err != nil {
+		return fmt.Errorf("a/b slot state path: %w", err)
+	}
+	if err := ensureTargetParentWithinRoot(o.config.rootDir, stateDir); err != nil {
+		return fmt.Errorf("a/b slot state directory: %w", err)
+	}
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		return fmt.Errorf("creating A/B state directory: %w", err)
+	}
+	if err := ensureTargetParentWithinRoot(o.config.rootDir, stateDir); err != nil {
+		return fmt.Errorf("a/b slot state directory: %w", err)
+	}
+	content := fmt.Sprintf(
+		"BOOTY_AB_SCHEME=%s\nBOOTY_AB_TARGET_SLOT=%s\nBOOTY_AB_BOOTED_SLOT=%s\nBOOTY_AB_ACTIVE_SLOT=%s\nBOOTY_AB_PRESERVE_EXISTING=%t\nBOOTY_AB_ROOT_PARTITION=%s\n",
+		ab.Scheme,
+		targetSlot,
+		targetSlot,
+		ab.ActiveSlot,
+		ab.PreserveExisting,
+		o.rootPartition,
+	)
+	if err := writeFileAtomic(statePath, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("writing A/B slot state: %w", err)
 	}
 	return nil
 }
@@ -625,6 +1073,10 @@ func (o *Orchestrator) partprobe(ctx context.Context) error {
 }
 
 func (o *Orchestrator) parsePartitions(ctx context.Context) error {
+	if err := o.ensureABPartitionLayout(); err != nil {
+		return err
+	}
+
 	// With a custom partition layout, derive root from the layout definition
 	// rather than scanning by GUID (which can pick the wrong partition when
 	// multiple Linux-type partitions exist).
@@ -720,6 +1172,46 @@ func (o *Orchestrator) mountRoot(ctx context.Context) error {
 	return o.disk.MountPartition(ctx, o.rootPartition, newroot)
 }
 
+func bootEFIMountPoint() string {
+	return filepath.Join(newroot, "boot", "efi")
+}
+
+func (o *Orchestrator) mountBoot(ctx context.Context) error {
+	if strings.TrimSpace(o.bootPartition) == "" {
+		o.log.Info("skipping boot partition mount; no boot partition detected")
+		return nil
+	}
+	mountpoint := bootEFIMountPoint()
+	if isMountPoint(mountpoint) {
+		o.log.Info("boot partition already mounted", "mountpoint", mountpoint)
+		return nil
+	}
+	if err := mountBootPart(ctx, o.disk, o.bootPartition, mountpoint); err != nil {
+		if isUnsupportedBootFilesystemError(err) {
+			if ok, reason := efiRuntimeReady(); !ok {
+				o.log.Warn("skipping boot partition mount; partition is not a usable ESP and EFI runtime is unavailable",
+					"partition", o.bootPartition, "reason", reason, "error", err)
+				return nil
+			}
+		}
+		return fmt.Errorf("mounting boot partition %s at %s: %w", o.bootPartition, mountpoint, err)
+	}
+	return nil
+}
+
+func isUnsupportedBootFilesystemError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, ": tried ") &&
+		(strings.Contains(msg, "invalid argument") || strings.Contains(msg, "wrong fs type") || strings.Contains(msg, "no such device"))
+}
+
+func (o *Orchestrator) applySysexts(ctx context.Context) error {
+	return o.config.ApplySysexts(ctx, &o.cfg.Provision.Sysext)
+}
+
 func (o *Orchestrator) setupChrootBinds(_ context.Context) error {
 	return o.disk.SetupChrootBindMounts(newroot)
 }
@@ -739,7 +1231,7 @@ func (o *Orchestrator) growPartition(ctx context.Context) error {
 }
 
 func (o *Orchestrator) resizeFilesystem(ctx context.Context) error {
-	if o.cfg.Provision.Disk.PartitionLayout != nil {
+	if o.cfg.Provision.Disk.PartitionLayout != nil && !o.isABImageMode() {
 		o.log.Info("skipping resize-filesystem for declarative partition layout")
 		return nil
 	}
@@ -753,6 +1245,25 @@ func (o *Orchestrator) configureKubelet(_ context.Context) error {
 
 func (o *Orchestrator) configureGRUB(ctx context.Context) error {
 	return o.config.ConfigureGRUB(ctx, o.cfg)
+}
+
+func (o *Orchestrator) installEFIFallbackLoader(ctx context.Context) error {
+	if !o.isABImageMode() {
+		return nil
+	}
+	if o.cfg.Provision.AB.PreserveExisting {
+		o.log.Info("A/B preserveExisting enabled, preserving existing EFI fallback loader")
+		return nil
+	}
+	if strings.TrimSpace(o.bootPartition) == "" {
+		o.log.Info("skipping EFI fallback loader installation; no boot partition detected")
+		return nil
+	}
+	mountpoint := bootEFIMountPoint()
+	if !isMountPoint(mountpoint) {
+		return fmt.Errorf("cannot install EFI fallback loader: boot partition %s is not mounted at %s", o.bootPartition, mountpoint)
+	}
+	return o.config.InstallEFIFallbackLoader(ctx, o.targetDisk, o.rootPartition)
 }
 
 func (o *Orchestrator) injectCloudInit(_ context.Context) error {
@@ -829,9 +1340,32 @@ func (o *Orchestrator) runPostProvisionCmds(ctx context.Context) error {
 }
 
 func (o *Orchestrator) teardownChroot(_ context.Context) error {
+	if o.shouldKeepChrootMountedForABKexec() {
+		o.log.Info("keeping A/B preserve-existing root mounted for kexec", "root", newroot)
+		return nil
+	}
 	bindErr := o.disk.TeardownChrootBindMounts(newroot)
+	bootErr := o.unmountBoot()
 	unmountErr := o.disk.Unmount(newroot)
-	return errors.Join(bindErr, unmountErr)
+	return errors.Join(bindErr, bootErr, unmountErr)
+}
+
+func (o *Orchestrator) shouldKeepChrootMountedForABKexec() bool {
+	return o.isABImageMode() && o.cfg.Provision.AB.PreserveExisting
+}
+
+func (o *Orchestrator) unmountBoot() error {
+	if strings.TrimSpace(o.bootPartition) == "" {
+		return nil
+	}
+	mountpoint := bootEFIMountPoint()
+	if !isMountPoint(mountpoint) {
+		return nil
+	}
+	if err := o.disk.Unmount(mountpoint); err != nil {
+		return fmt.Errorf("unmount boot mountpoint %s: %w", mountpoint, err)
+	}
+	return nil
 }
 
 func (o *Orchestrator) runHealthChecks(ctx context.Context) error {
@@ -1087,7 +1621,7 @@ func stepDebugCmds(step string) []debugCmd {
 			{"disk space", "df -h"},
 			{"partitions", "cat /proc/partitions"},
 		}
-	case "mount-root", "setup-chroot-binds":
+	case "mount-root", "mount-boot", "apply-sysexts", "setup-chroot-binds":
 		return []debugCmd{
 			{"proc mounts", "cat /proc/mounts"},
 			{"newroot contents", "ls -la /newroot/ 2>/dev/null || echo '/newroot not found'"},
@@ -1135,6 +1669,7 @@ func dumpConfig(cfg *config.MachineConfig) {
 		"vrf_table_id", cfg.Network.VRF.TableID,
 		"bgp_keepalive", cfg.Network.BGP.Keepalive,
 		"bgp_hold", cfg.Network.BGP.Hold,
+		"bgp_interfaces", cfg.Network.BGP.Interfaces,
 		"bfd_transmit_ms", cfg.Network.BGP.BFDTransmitMS,
 		"bfd_receive_ms", cfg.Network.BGP.BFDReceiveMS,
 		"static_ip", cfg.Network.Static.IP,
@@ -1144,18 +1679,12 @@ func dumpConfig(cfg *config.MachineConfig) {
 	)
 }
 
-// redactURLs strips embedded credentials from image URLs to prevent leaking
-// secrets (e.g. oci://user:pass@registry/image:tag) in debug logs.
+// redactURLs strips embedded credentials, query parameters, and fragments from
+// image URLs before they are written to debug logs.
 func redactURLs(urls []string) []string {
 	redacted := make([]string, len(urls))
 	for i, raw := range urls {
-		u, err := url.Parse(raw)
-		if err != nil || u.User == nil {
-			redacted[i] = raw
-			continue
-		}
-		u.User = url.User("REDACTED")
-		redacted[i] = u.String()
+		redacted[i] = image.RedactURL(raw)
 	}
 	return redacted
 }

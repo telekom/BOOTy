@@ -49,6 +49,12 @@ type BGPConfig struct {
 	// Default: "unnumbered"
 	PeerMode string `yaml:"peerMode" json:"peerMode"`
 
+	// Interfaces is a comma-separated list of interfaces used for
+	// unnumbered BGP peering. When empty, all detected physical NICs are used.
+	// Example: "eth1,eth2"
+	// Default: ""
+	Interfaces string `yaml:"interfaces" json:"interfaces"`
+
 	// Neighbors is a comma-separated list of numbered BGP peer IPs.
 	// Required when PeerMode is "dual" or "numbered".
 	// Example: "10.0.0.1,10.0.0.2"

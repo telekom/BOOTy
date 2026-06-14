@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -272,8 +273,13 @@ func runCAPRF(ctx context.Context) {
 				slog.Warn("network teardown error", "error", err)
 			}
 		}
-		tryKexec(cfg, provisionErr.FirmwareChanged)
+		kexeced := tryKexec(cfg, provisionErr.FirmwareChanged)
 		time.Sleep(2 * time.Second)
+		if requiresABKexec(cfg) && !kexeced {
+			slog.Error("a/b preserveExisting requires kexec; refusing normal reboot because firmware boot state still points at the active slot")
+			realm.PowerOff()
+			return
+		}
 		if provisionErr.PowerOff {
 			slog.Info("provisioning succeeded, powering off for orchestrator to manage boot")
 			realm.PowerOff()
@@ -366,10 +372,11 @@ func (noopNetworkMode) Teardown(context.Context) error { return nil }
 // It returns the active network mode so callers can tear down the latest instance.
 func ensureNetworkConnectivity(ctx context.Context, cfg *config.MachineConfig, netMode network.Mode, target string) (network.Mode, error) {
 	const maxRetries = 3
+	logTarget := network.RedactHTTPURLForLog(target)
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		slog.Info("waiting for network connectivity", "target", target, "attempt", attempt)
+		slog.Info("waiting for network connectivity", "target", logTarget, "attempt", attempt)
 		if err := netMode.WaitForConnectivity(ctx, target, 5*time.Minute); err == nil {
-			slog.Info("network connectivity established", "target", target)
+			slog.Info("network connectivity established", "target", logTarget)
 			return netMode, nil
 		}
 		slog.Error("network connectivity timeout", "attempt", attempt)
@@ -419,6 +426,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 		BFDReceiveMS:     cfg.Network.BGP.BFDReceiveMS,
 		NetworkMode:      cfg.Network.Mode,
 		BGPPeerMode:      network.ParsePeerMode(cfg.Network.BGP.PeerMode),
+		BGPInterfaces:    cfg.Network.BGP.Interfaces,
 		BGPNeighbors:     cfg.Network.BGP.Neighbors,
 		BGPRemoteASN:     cfg.Network.BGP.RemoteASN,
 		BGPUnderlayAF:    cfg.Network.BGP.UnderlayAF,
@@ -586,7 +594,7 @@ func mergeNetplanConfig(dst, src *network.Config) {
 		dst.UnderlayIP = src.UnderlayIP
 	}
 	if src.ProvisionIP != "" {
-		dst.ProvisionIP = src.ProvisionIP
+		dst.ProvisionIP = mergeProvisionIP(dst.ProvisionIP, src.ProvisionIP)
 	}
 	if src.NetworkMode != "" {
 		dst.NetworkMode = src.NetworkMode
@@ -609,8 +617,17 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	if src.VRFTableID > 0 {
 		dst.VRFTableID = src.VRFTableID
 	}
+	if src.OverlayVRFTableID > 0 {
+		dst.OverlayVRFTableID = src.OverlayVRFTableID
+	}
 	if src.VRFName != "" {
 		dst.VRFName = src.VRFName
+	}
+	if src.OverlayVRFSet {
+		// Preserve an explicitly empty overlay VRF name: it means the overlay
+		// should stay in the default namespace, not that the value is unset.
+		dst.OverlayVRFName = src.OverlayVRFName
+		dst.OverlayVRFSet = true
 	}
 	if src.MTU > 0 {
 		dst.MTU = src.MTU
@@ -627,6 +644,51 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	if len(src.Interfaces) > 0 {
 		dst.Interfaces = src.Interfaces
 	}
+}
+
+func mergeProvisionIP(existing, detected string) string {
+	if detected == "" || existing == "" {
+		if detected != "" {
+			return detected
+		}
+		return existing
+	}
+	if shouldPreserveProvisionPrefix(existing, detected) {
+		return existing
+	}
+	return detected
+}
+
+func shouldPreserveProvisionPrefix(existing, detected string) bool {
+	existingIP, _, existingBits, err := parseCIDRBits(existing)
+	if err != nil {
+		return false
+	}
+	detectedIP, _, detectedBits, err := parseCIDRBits(detected)
+	if err != nil {
+		return false
+	}
+	if !existingIP.Equal(detectedIP) {
+		return false
+	}
+	if detectedBits.ones != detectedBits.bits {
+		return false
+	}
+	return existingBits.ones < detectedBits.ones
+}
+
+type cidrBits struct {
+	ones int
+	bits int
+}
+
+func parseCIDRBits(value string) (net.IP, *net.IPNet, cidrBits, error) {
+	ip, ipNet, err := net.ParseCIDR(value)
+	if err != nil {
+		return nil, nil, cidrBits{}, fmt.Errorf("parse CIDR %q: %w", value, err)
+	}
+	ones, bits := ipNet.Mask.Size()
+	return ip, ipNet, cidrBits{ones: ones, bits: bits}, nil
 }
 
 // setupGoBGPStack creates and sets up a GoBGP/EVPN network stack.
@@ -664,37 +726,37 @@ func detectIPMI(netCfg *network.Config) {
 }
 
 // tryKexec attempts to kexec into the installed kernel.
-// Falls back silently on failure so the caller can do a normal reboot.
+// Returns false on failure so the caller can decide whether a normal reboot is safe.
 // Skips kexec when disabled by config toggle or when firmware was changed during
 // provisioning (e.g. Mellanox SR-IOV), since firmware reinit requires a hard reboot.
-func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) {
+func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) bool {
 	if cfg.Provision.DisableKexec {
 		slog.Info("kexec disabled by configuration, skipping")
-		return
+		return false
 	}
 
 	if firmwareChanged {
 		slog.Info("firmware values changed during provisioning, hard reboot required — skipping kexec")
-		return
+		return false
 	}
 
 	const grubPath = "/newroot/boot/grub/grub.cfg"
 	f, err := os.Open(grubPath)
 	if err != nil {
 		slog.Warn("cannot open grub.cfg, skipping kexec", "error", err)
-		return
+		return false
 	}
 	defer func() { _ = f.Close() }()
 
 	entries, err := kexec.ParseGrubCfg(f)
 	if err != nil {
 		slog.Warn("failed to parse grub.cfg", "error", err)
-		return
+		return false
 	}
 	entry, err := kexec.GetDefaultEntry(entries)
 	if err != nil {
 		slog.Warn("no default boot entry found", "error", err)
-		return
+		return false
 	}
 
 	kernel := "/newroot" + entry.Kernel
@@ -703,9 +765,16 @@ func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) {
 
 	if err := kexec.Load(kernel, initrd, entry.KernelArgs); err != nil {
 		slog.Warn("kexec load failed, falling back to reboot", "error", err)
-		return
+		return false
 	}
 	if err := kexec.Execute(); err != nil {
 		slog.Warn("kexec execute failed, falling back to reboot", "error", err)
+		return false
 	}
+	return true
+}
+
+func requiresABKexec(cfg *config.MachineConfig) bool {
+	return strings.EqualFold(strings.TrimSpace(cfg.Provision.Image.Mode), config.ImageModeAB) &&
+		cfg.Provision.AB.PreserveExisting
 }

@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -21,7 +22,7 @@ import (
 // This preserves the partition table on the target disk and allows the source
 // image partitions to differ in size from the target.
 func StreamPartitions(ctx context.Context, url, device string) error {
-	slog.Info("partition-by-partition imaging", "url", url, "device", device)
+	slog.Info("partition-by-partition imaging", "url", RedactURL(url), "device", device)
 
 	if err := setupRamdisk(); err != nil {
 		return fmt.Errorf("setting up ramdisk: %w", err)
@@ -174,10 +175,12 @@ func copyPartitions(ctx context.Context, rawPath, targetDisk string) error {
 
 // sfdiskPartition mirrors the sfdisk JSON partition entry.
 type sfdiskPartition struct {
-	Node  string `json:"node"`
-	Start int64  `json:"start"`
-	Size  int64  `json:"size"`
-	Type  string `json:"type"`
+	Node   string `json:"node"`
+	Start  int64  `json:"start"`
+	Size   int64  `json:"size"`
+	Type   string `json:"type"`
+	Name   string `json:"name,omitempty"`
+	Number int    `json:"-"`
 }
 
 // readSfdiskPartitions reads partition entries from a disk/loop device.
@@ -200,7 +203,26 @@ func readSfdiskPartitions(ctx context.Context, dev string) ([]sfdiskPartition, e
 	if err := json.Unmarshal(jsonBytes, &result); err != nil {
 		return nil, fmt.Errorf("parsing sfdisk output: %w", err)
 	}
+	for i := range result.PartitionTable.Partitions {
+		result.PartitionTable.Partitions[i].Number = partitionNumberFromNode(result.PartitionTable.Partitions[i].Node, i+1)
+	}
 	return result.PartitionTable.Partitions, nil
+}
+
+func partitionNumberFromNode(node string, fallback int) int {
+	end := len(node)
+	start := end
+	for start > 0 && node[start-1] >= '0' && node[start-1] <= '9' {
+		start--
+	}
+	if start == end {
+		return fallback
+	}
+	n, err := strconv.Atoi(node[start:end])
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
 }
 
 // copyPartitionTable copies the GPT/MBR partition table from src to dst using sfdisk.
@@ -262,8 +284,10 @@ func targetPartitionNode(disk string, partNum int) string {
 	return fmt.Sprintf("%s%d", disk, partNum)
 }
 
-// runCmd executes a command and returns its combined output.
-func runCmd(ctx context.Context, name string, args ...string) ([]byte, error) {
+var runCmd = runCommand
+
+// runCommand executes a command and returns its combined output.
+func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // controlled arguments
 	out, err := cmd.CombinedOutput()
 	if err != nil {

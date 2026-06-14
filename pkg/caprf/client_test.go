@@ -82,6 +82,7 @@ export REGION="eu-central-1"
 export PROVIDER_ID="redfish://bmc.example.com/Systems/1"
 export MODE="provision"
 export MIN_DISK_SIZE_GB="100"
+export DISK_SERIAL_NUMBER="RAID-DISK-1"
 export LOG_URL="http://caprf.example.com/log"
 export INIT_URL="http://caprf.example.com/status/init"
 export ERROR_URL="http://caprf.example.com/status/error"
@@ -123,6 +124,9 @@ export DEBUG_URL="http://caprf.example.com/debug"
 	}
 	if cfg.Provision.Disk.MinSizeGB != 100 {
 		t.Fatalf("unexpected min disk size: %d", cfg.Provision.Disk.MinSizeGB)
+	}
+	if cfg.Provision.Disk.SerialNumber != "RAID-DISK-1" {
+		t.Fatalf("unexpected disk serial number: %s", cfg.Provision.Disk.SerialNumber)
 	}
 	if cfg.Transport.LogURL != "http://caprf.example.com/log" {
 		t.Fatalf("unexpected log URL: %s", cfg.Transport.LogURL)
@@ -181,6 +185,52 @@ func TestParseVarsPartitionLayoutInvalidFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "invalid PARTITION_LAYOUT") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseVarsABConfig(t *testing.T) {
+	input := `export IMAGE="oci://registry.example.com/tcaas/os:v2"
+export IMAGE_MODE="ab"
+export AB_SCHEME="dual-root"
+export AB_ACTIVE_SLOT="a"
+export AB_TARGET_SLOT="inactive"
+export AB_PRESERVE_EXISTING="true"
+export AB_BOOT_SIZE_MB="1024"
+export AB_ROOT_SIZE_MB="65536"
+export AB_STATE_SIZE_MB="8192"
+export AB_SOURCE_ROOT_LABEL="rootfs"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provision.Image.Mode != config.ImageModeAB {
+		t.Fatalf("image mode = %q, want ab", cfg.Provision.Image.Mode)
+	}
+	if !cfg.Provision.AB.PreserveExisting {
+		t.Fatal("expected preserveExisting=true")
+	}
+	if cfg.Provision.AB.ActiveSlot != "a" || cfg.Provision.AB.TargetSlot != "inactive" {
+		t.Fatalf("unexpected slots: %#v", cfg.Provision.AB)
+	}
+	if cfg.Provision.AB.BootSizeMB != 1024 || cfg.Provision.AB.RootSizeMB != 65536 || cfg.Provision.AB.StateSizeMB != 8192 {
+		t.Fatalf("unexpected sizes: %#v", cfg.Provision.AB)
+	}
+	if cfg.Provision.AB.SourceRootLabel != "rootfs" {
+		t.Fatalf("sourceRootLabel = %q, want rootfs", cfg.Provision.AB.SourceRootLabel)
+	}
+}
+
+func TestParseVarsABSourceRootPartition(t *testing.T) {
+	input := `export IMAGE_MODE="ab"
+export AB_SOURCE_ROOT_PARTITION="2"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provision.AB.SourceRootPartition != 2 {
+		t.Fatalf("sourceRootPartition = %d, want 2", cfg.Provision.AB.SourceRootPartition)
 	}
 }
 
@@ -762,6 +812,7 @@ func TestParseVarsNetworkMode(t *testing.T) {
 
 func TestParseVarsBGPPeering(t *testing.T) {
 	input := `BGP_PEER_MODE="dual"
+BGP_INTERFACES="eth1,eth2"
 BGP_NEIGHBORS="10.0.0.1,10.0.0.2"
 bgp_remote_asn="65100"
 BGP_UNDERLAY_AF="ipv6"
@@ -774,6 +825,9 @@ BGP_AUTH_PASSWORD="s3cr3t"
 	}
 	if cfg.Network.BGP.PeerMode != "dual" {
 		t.Errorf("BGPPeerMode = %q, want dual", cfg.Network.BGP.PeerMode)
+	}
+	if cfg.Network.BGP.Interfaces != "eth1,eth2" {
+		t.Errorf("BGPInterfaces = %q, want eth1,eth2", cfg.Network.BGP.Interfaces)
 	}
 	if cfg.Network.BGP.Neighbors != "10.0.0.1,10.0.0.2" {
 		t.Errorf("BGPNeighbors = %q, want 10.0.0.1,10.0.0.2", cfg.Network.BGP.Neighbors)
@@ -978,6 +1032,78 @@ IMAGE_CHECKSUM_TYPE="sha256"
 	}
 }
 
+func TestParseVarsSysextConfig(t *testing.T) {
+	input := `SYSEXT_ENABLED="true"
+SYSEXT_DEFAULT_MODE="preload"
+SYSEXT_CATALOG_DIR="/usr/lib/tcaas-sysext/preloaded"
+SYSEXT_ACTIVE_DIR="/var/lib/extensions"
+SYSEXT_ALLOW_INSECURE_HTTP="true"
+SYSEXT_LAYERS='[{"name":"node-tuning","version":"v1","source":"https://example.invalid/node-tuning.raw","fileName":"node-tuning.raw","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mode":"preload"}]'
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Provision.Sysext.Enabled {
+		t.Fatal("Sysext.Enabled should be true")
+	}
+	if cfg.Provision.Sysext.DefaultMode != "preload" {
+		t.Errorf("Sysext.DefaultMode = %q", cfg.Provision.Sysext.DefaultMode)
+	}
+	if cfg.Provision.Sysext.CatalogDir != "/usr/lib/tcaas-sysext/preloaded" {
+		t.Errorf("Sysext.CatalogDir = %q", cfg.Provision.Sysext.CatalogDir)
+	}
+	if cfg.Provision.Sysext.ActiveDir != "/var/lib/extensions" {
+		t.Errorf("Sysext.ActiveDir = %q", cfg.Provision.Sysext.ActiveDir)
+	}
+	if !cfg.Provision.Sysext.AllowInsecureHTTP {
+		t.Error("Sysext.AllowInsecureHTTP should be true")
+	}
+	if len(cfg.Provision.Sysext.Layers) != 1 {
+		t.Fatalf("Sysext.Layers len = %d, want 1", len(cfg.Provision.Sysext.Layers))
+	}
+	layer := cfg.Provision.Sysext.Layers[0]
+	if layer.Name != "node-tuning" || layer.Source != "https://example.invalid/node-tuning.raw" {
+		t.Fatalf("unexpected sysext layer: %#v", layer)
+	}
+}
+
+func TestParseVarsSysextConfigGoQuotedJSON(t *testing.T) {
+	layersJSON := `[
+		{"name":"node-tuning","version":"v1","source":"oci://registry.example.com/tcaas/sysext-node-tuning:v1","fileName":"node-tuning.raw","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mode":"preload"}
+	]`
+	input := fmt.Sprintf("export SYSEXT_ENABLED=%q\nexport SYSEXT_LAYERS=%q\n", "true", layersJSON)
+
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Provision.Sysext.Enabled {
+		t.Fatal("Sysext.Enabled should be true")
+	}
+	if len(cfg.Provision.Sysext.Layers) != 1 {
+		t.Fatalf("Sysext.Layers len = %d, want 1", len(cfg.Provision.Sysext.Layers))
+	}
+	layer := cfg.Provision.Sysext.Layers[0]
+	if layer.Source != "oci://registry.example.com/tcaas/sysext-node-tuning:v1" {
+		t.Fatalf("Source = %q", layer.Source)
+	}
+	if layer.FileName != "node-tuning.raw" {
+		t.Fatalf("FileName = %q", layer.FileName)
+	}
+}
+
+func TestParseVarsSysextLayersInvalidJSON(t *testing.T) {
+	input := `SYSEXT_LAYERS="not-json"`
+	_, err := ParseVars(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("expected invalid SYSEXT_LAYERS error")
+	}
+	if !strings.Contains(err.Error(), "invalid SYSEXT_LAYERS") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestParseVarsNumVFs(t *testing.T) {
 	input := `NUM_VFS="64"`
 	cfg, err := ParseVars(strings.NewReader(input))
@@ -1113,6 +1239,47 @@ func TestParseVarsSingleQuoteStripping(t *testing.T) {
 	}
 	if !strings.Contains(cfg.Provision.Disk.NVMeNamespaces, "/dev/nvme0") {
 		t.Errorf("single-quoted value not parsed correctly: NVMeNamespaces = %q", cfg.Provision.Disk.NVMeNamespaces)
+	}
+}
+
+func TestParseVarsDoubleQuotedShellEscapes(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "escaped quotes",
+			input: `TOKEN="token with \"quoted\" segment"`,
+			want:  `token with "quoted" segment`,
+		},
+		{
+			name:  "literal newline escape",
+			input: `TOKEN="line\nnext"`,
+			want:  `line\nnext`,
+		},
+		{
+			name:  "unknown escape preserved",
+			input: `TOKEN="path\qvalue"`,
+			want:  `path\qvalue`,
+		},
+		{
+			name:  "shell special escapes",
+			input: "TOKEN=\"dollar \\$ backtick \\` slash \\\\\"",
+			want:  "dollar $ backtick ` slash \\",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := ParseVars(strings.NewReader(tc.input))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Transport.Token != tc.want {
+				t.Fatalf("Token = %q, want %q", cfg.Transport.Token, tc.want)
+			}
+		})
 	}
 }
 
@@ -1639,5 +1806,95 @@ func TestSetAuth(t *testing.T) {
 				t.Errorf("expected no Authorization header, got %q", got)
 			}
 		})
+	}
+}
+
+func TestRedactedURLRemovesCredentialsQueryAndFragment(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "credentials query fragment",
+			in:   "https://user:secret@example.com/status?token=abc#frag",
+			want: "https://example.com/status",
+		},
+		{
+			name: "query fragment without credentials",
+			in:   "https://example.com/status?token=abc#frag",
+			want: "https://example.com/status",
+		},
+		{
+			name: "invalid URL",
+			in:   "::://bad-url",
+			want: "<invalid-url>",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := redactedURL(tt.in); got != tt.want {
+				t.Fatalf("redactedURL(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSetAuthErrorRedactsQueryToken(t *testing.T) {
+	c := &Client{
+		log: slog.Default().With("component", "caprf"),
+		cfg: &config.MachineConfig{Transport: config.TransportConfig{Token: "tok"}},
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://10.0.0.1/status?token=abc#frag", http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = c.setAuth(req)
+	if err == nil {
+		t.Fatal("expected insecure transport error")
+	}
+	if strings.Contains(err.Error(), "token=abc") || strings.Contains(err.Error(), "#frag") {
+		t.Fatalf("setAuth error leaked sensitive URL parts: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "http://10.0.0.1/status") {
+		t.Fatalf("setAuth error = %q, want redacted URL context", err.Error())
+	}
+}
+
+func TestWithRetryErrorRedactsQueryToken(t *testing.T) {
+	c := &Client{
+		log: slog.Default().With("component", "caprf"),
+		cfg: &config.MachineConfig{},
+	}
+	err := c.withRetry(context.Background(), "https://example.com/status?token=abc#frag", func() error {
+		return errors.New("boom")
+	})
+	if err == nil {
+		t.Fatal("expected retry error")
+	}
+	if strings.Contains(err.Error(), "token=abc") || strings.Contains(err.Error(), "#frag") {
+		t.Fatalf("retry error leaked sensitive URL parts: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "https://example.com/status") {
+		t.Fatalf("retry error = %q, want redacted URL context", err.Error())
+	}
+}
+
+func TestDoPostErrorRedactsQueryToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	c := NewFromConfig(&config.MachineConfig{})
+	err := c.doPost(context.Background(), srv.URL+"/status?token=abc#frag", "body")
+	if err == nil {
+		t.Fatal("expected POST status error")
+	}
+	if strings.Contains(err.Error(), "token=abc") || strings.Contains(err.Error(), "#frag") {
+		t.Fatalf("POST error leaked sensitive URL parts: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), srv.URL+"/status") {
+		t.Fatalf("POST error = %q, want redacted URL context", err.Error())
 	}
 }

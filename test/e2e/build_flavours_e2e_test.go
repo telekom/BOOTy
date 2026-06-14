@@ -24,6 +24,10 @@ func buildTarget(t *testing.T, target, dest string) string {
 	dockerfile := filepath.Join(findRepoRoot(t), "initrd.Dockerfile")
 	repoRoot := findRepoRoot(t)
 
+	if !dockerBuildxAvailable() {
+		return buildTargetWithDockerBuild(t, target, dest, dockerfile, repoRoot)
+	}
+
 	args := []string{"buildx", "build", "--platform", "linux/amd64"}
 	if target != "" {
 		args = append(args, "--target", target)
@@ -54,6 +58,131 @@ func buildTarget(t *testing.T, target, dest string) string {
 		t.Fatalf("expected output %s not found: %v", out, err)
 	}
 	return out
+}
+
+func dockerBuildxAvailable() bool {
+	cmd := exec.Command("docker", "buildx", "version")
+	return cmd.Run() == nil
+}
+
+func buildTargetWithDockerBuild(t *testing.T, target, dest, dockerfile, repoRoot string) string {
+	t.Helper()
+	name := target
+	if name == "" {
+		name = "default"
+	}
+
+	args := []string{"build", "--platform", "linux/amd64"}
+	if target != "" {
+		args = append(args, "--target", target)
+	}
+	args = append(args, "--output", "type=local,dest="+dest, "-f", dockerfile, repoRoot)
+
+	cmd := exec.Command("docker", args...)
+	cmd.Env = append(os.Environ(), "DOCKER_BUILDKIT=1")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("docker build --target %s failed: %v", name, err)
+	}
+
+	out := filepath.Join(dest, targetArtifactName(target))
+	if _, err := os.Stat(out); err != nil {
+		t.Fatalf("expected output %s not found: %v", out, err)
+	}
+	return out
+}
+
+func targetArtifactName(target string) string {
+	switch target {
+	case "micro":
+		return "initramfs.cpio.gz"
+	case "iso":
+		return "booty.iso"
+	case "gobgp-iso":
+		return "booty-gobgp.iso"
+	default:
+		return "initramfs.cpio.zst"
+	}
+}
+
+func TestBuildTargetWithDockerBuildUsesBuildKitLocalOutput(t *testing.T) {
+	fakeBin := t.TempDir()
+	argsLog := filepath.Join(t.TempDir(), "docker-args.log")
+	dockerPath := filepath.Join(fakeBin, "docker")
+	script := `#!/bin/sh
+set -eu
+printf '%s\n' "$@" > "$BOOTY_DOCKER_ARGS_LOG"
+if [ "$1" != "build" ]; then
+  echo "unexpected docker command: $1" >&2
+  exit 42
+fi
+shift
+dest=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output)
+      shift
+      dest="${1#type=local,dest=}"
+      ;;
+  esac
+  shift || true
+done
+if [ -z "$dest" ]; then
+  echo "missing build output destination" >&2
+  exit 43
+fi
+mkdir -p "$dest"
+printf fake > "$dest/initramfs.cpio.zst"
+printf fake > "$dest/initramfs.cpio.gz"
+printf fake > "$dest/booty.iso"
+printf fake > "$dest/booty-gobgp.iso"
+`
+	if err := os.WriteFile(dockerPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake docker: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BOOTY_DOCKER_ARGS_LOG", argsLog)
+
+	tmp := t.TempDir()
+	dockerfile := filepath.Join(tmp, "Dockerfile")
+	repoRoot := filepath.Join(tmp, "repo")
+	dest := filepath.Join(tmp, "out")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("create repo root: %v", err)
+	}
+	if err := os.WriteFile(dockerfile, []byte("FROM scratch\n"), 0o644); err != nil {
+		t.Fatalf("write dockerfile: %v", err)
+	}
+
+	out := buildTargetWithDockerBuild(t, "gobgp-iso", dest, dockerfile, repoRoot)
+	if filepath.Base(out) != "booty-gobgp.iso" {
+		t.Fatalf("unexpected output path: %s", out)
+	}
+
+	args, err := os.ReadFile(argsLog)
+	if err != nil {
+		t.Fatalf("read fake docker args: %v", err)
+	}
+	argsText := string(args)
+	for _, want := range []string{
+		"build\n",
+		"--platform\nlinux/amd64\n",
+		"--target\ngobgp-iso\n",
+		"--output\ntype=local,dest=" + dest + "\n",
+	} {
+		if !strings.Contains(argsText, want) {
+			t.Fatalf("docker args missing %q in:\n%s", want, argsText)
+		}
+	}
+	argLines := strings.Split(strings.TrimSpace(argsText), "\n")
+	for _, forbidden := range []string{"create", "cp"} {
+		for _, arg := range argLines {
+			if arg == forbidden {
+				t.Fatalf("fallback must not use docker %s for scratch targets; args:\n%s", forbidden, argsText)
+			}
+		}
+	}
 }
 
 // findRepoRoot walks up from the test file to find the repo root (contains go.mod).
@@ -138,6 +267,17 @@ func assertNotContains(t *testing.T, files map[string]bool, path, desc string) {
 	if files[path] {
 		t.Errorf("did NOT expect %s (%s) in initramfs, but found it", path, desc)
 	}
+}
+
+func assertKernelModuleContains(t *testing.T, files map[string]bool, module string) {
+	t.Helper()
+	prefix := "modules/" + module + ".ko"
+	for path := range files {
+		if strings.HasPrefix(path, prefix) {
+			return
+		}
+	}
+	t.Errorf("expected kernel module %s under modules/ in initramfs", module)
 }
 
 // assertFileSize checks that the cpio.gz file is within the expected size range.
@@ -423,6 +563,47 @@ func TestDefaultContainsDiskToolsE2E(t *testing.T) {
 	assertContains(t, files, "bin/efibootmgr", "efibootmgr")
 }
 
+func TestFullFlavorsUseDosfstoolsMkfsVfatE2E(t *testing.T) {
+	dockerAvailable(t)
+	for _, tc := range []struct {
+		name   string
+		target string
+	}{
+		{name: "default"},
+		{name: "gobgp", target: "gobgp"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dest := t.TempDir()
+			cpioGz := buildTarget(t, tc.target, dest)
+			files := listCPIOContents(t, cpioGz)
+
+			assertContains(t, files, "sbin/mkfs.vfat", "dosfstools mkfs.vfat")
+			assertNotContains(t, files, "bin/mkfs.vfat", "BusyBox mkfs.vfat applet shadowing dosfstools")
+			assertNotContains(t, files, "bin/mkfs.fat", "BusyBox mkfs.fat applet shadowing dosfstools")
+			assertNotContains(t, files, "bin/mkdosfs", "BusyBox mkdosfs applet shadowing dosfstools")
+		})
+	}
+}
+
+func TestFullFlavorsContainEFIFallbackLoaderE2E(t *testing.T) {
+	dockerAvailable(t)
+	for _, tc := range []struct {
+		name   string
+		target string
+	}{
+		{name: "default"},
+		{name: "gobgp", target: "gobgp"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dest := t.TempDir()
+			cpioGz := buildTarget(t, tc.target, dest)
+			files := listCPIOContents(t, cpioGz)
+
+			assertContains(t, files, "usr/lib/booty/efi/BOOTX64.EFI", "bundled removable EFI fallback loader")
+		})
+	}
+}
+
 func TestDefaultContainsNetworkAndSSHE2E(t *testing.T) {
 	dockerAvailable(t)
 	dest := t.TempDir()
@@ -458,6 +639,7 @@ func TestDefaultContainsKernelModulesE2E(t *testing.T) {
 	if !hasModules {
 		t.Error("no kernel modules found under modules/ in default initramfs")
 	}
+	assertKernelModuleContains(t, files, "nls_ascii")
 }
 
 // ── GoBGP build composition tests ────────────────────────────────────────
@@ -544,6 +726,7 @@ func TestGoBGPContainsKernelModulesE2E(t *testing.T) {
 	if !hasModules {
 		t.Error("no kernel modules found under modules/ in gobgp initramfs")
 	}
+	assertKernelModuleContains(t, files, "nls_ascii")
 }
 
 // ── Cross-flavour comparison with GoBGP ──────────────────────────────────

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/image"
 )
 
 var (
@@ -103,7 +104,7 @@ func (o *Orchestrator) DryRun(ctx context.Context) error {
 }
 
 func (o *Orchestrator) dryRunConfigValidation(_ context.Context) DryRunResult {
-	if o.cfg.Provision.Disk.PartitionLayout != nil {
+	if o.cfg.Provision.Disk.PartitionLayout != nil && !o.isABImageMode() {
 		return DryRunResult{Status: DryRunFail,
 			Message: errPartitionLayoutNotSupported}
 	}
@@ -292,8 +293,12 @@ func (o *Orchestrator) dryRunImageMode(_ context.Context) DryRunResult {
 		return DryRunResult{Status: DryRunPass,
 			Message: "image mode: partition-by-partition (requires ramdisk + losetup)"}
 	}
+	if mode == "ab" {
+		return DryRunResult{Status: DryRunPass,
+			Message: "image mode: A/B dual-root slot update"}
+	}
 	return DryRunResult{Status: DryRunFail,
-		Message: fmt.Sprintf("unknown IMAGE_MODE: %q (valid: whole-disk, partition)", o.cfg.Provision.Image.Mode)}
+		Message: fmt.Sprintf("unknown IMAGE_MODE: %q (valid: whole-disk, partition, ab)", o.cfg.Provision.Image.Mode)}
 }
 
 func (o *Orchestrator) dryRunNetworkLink(_ context.Context) DryRunResult {
@@ -364,14 +369,7 @@ func (o *Orchestrator) dryRunEFIBoot(_ context.Context) DryRunResult {
 }
 
 func redactImageURL(rawURL string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return rawURL
-	}
-	u.User = nil
-	u.RawQuery = ""
-	u.Fragment = ""
-	return u.String()
+	return image.RedactURL(rawURL)
 }
 
 func redactURLError(err error, rawURL string) string {

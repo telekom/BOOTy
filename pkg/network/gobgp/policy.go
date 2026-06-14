@@ -6,6 +6,16 @@ import (
 	"strings"
 )
 
+const (
+	// asnMax2Byte is the maximum 2-byte ASN value, used to select
+	// between 2-octet and 4-octet BGP community / RD formats.
+	asnMax2Byte = 65535
+
+	// routeTargetLocalAdminMax is the largest local-admin value that can be
+	// encoded with a 4-octet ASN route-target extended community.
+	routeTargetLocalAdminMax = 65535
+)
+
 // CommunityConfig specifies BGP community tagging.
 type CommunityConfig struct {
 	Standard []string `json:"standard,omitempty"` // "65000:100"
@@ -101,6 +111,30 @@ func ParseStandardCommunity(s string) (asn, value uint16, err error) {
 		return 0, 0, fmt.Errorf("invalid community value %q: %w", parts[1], err)
 	}
 	return uint16(a), uint16(v), nil
+}
+
+// ParseRouteTarget parses an EVPN route target in either "ASN:value" or
+// "RT:ASN:value" form.
+func ParseRouteTarget(s string) (asn, value uint32, err error) {
+	parts := strings.Split(strings.TrimSpace(s), ":")
+	if len(parts) == 3 && strings.EqualFold(parts[0], "RT") {
+		parts = parts[1:]
+	}
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("invalid route target %q, expected ASN:value or RT:ASN:value", s)
+	}
+	a, err := strconv.ParseUint(strings.TrimSpace(parts[0]), 10, 32)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid route target ASN %q: %w", parts[0], err)
+	}
+	v, err := strconv.ParseUint(strings.TrimSpace(parts[1]), 10, 32)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid route target value %q: %w", parts[1], err)
+	}
+	if a > asnMax2Byte && v > routeTargetLocalAdminMax {
+		return 0, 0, fmt.Errorf("route target value %d exceeds %d for 4-octet ASN %d", v, routeTargetLocalAdminMax, a)
+	}
+	return uint32(a), uint32(v), nil
 }
 
 // ValidateCommunities checks all community strings for validity.

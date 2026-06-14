@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -20,15 +21,17 @@ func buildStageImage(t *testing.T, stage string) string {
 	dockerfile := filepath.Join(findRepoRoot(t), "initrd.Dockerfile")
 	repoRoot := findRepoRoot(t)
 
-	args := []string{
-		"buildx", "build", "--platform", "linux/amd64",
-		"--target", stage, "--load", "-t", tag,
-		"-f", dockerfile, repoRoot,
+	args := []string{"buildx", "build", "--platform", "linux/amd64", "--target", stage, "--load", "-t", tag, "-f", dockerfile, repoRoot}
+	errPrefix := "docker buildx build"
+	if !dockerBuildxAvailable() {
+		args = []string{"build", "--platform", "linux/amd64", "--target", stage, "-t", tag, "-f", dockerfile, repoRoot}
+		errPrefix = "docker build"
 	}
 	cmd := exec.Command("docker", args...)
+	cmd.Env = append(os.Environ(), "DOCKER_BUILDKIT=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("docker buildx build --target %s failed: %v\n%s", stage, err, out)
+		t.Fatalf("%s --target %s failed: %v\n%s", errPrefix, stage, err, out)
 	}
 
 	t.Cleanup(func() {
@@ -98,6 +101,7 @@ func TestDefaultSharedLibsResolveE2E(t *testing.T) {
 	checkSharedLibs(t, image, []string{
 		// Disk tools
 		"bin/wipefs", "sbin/mdadm", "sbin/resize2fs", "sbin/e2fsck",
+		"sbin/mkfs.ext4", "sbin/mkfs.vfat",
 		"sbin/xfs_growfs", "bin/btrfs", "bin/parted", "bin/sgdisk",
 		"bin/partprobe",
 		// EFI
@@ -126,6 +130,7 @@ func TestGoBGPSharedLibsResolveE2E(t *testing.T) {
 	checkSharedLibs(t, image, []string{
 		// Disk tools
 		"bin/wipefs", "sbin/mdadm", "sbin/resize2fs", "sbin/e2fsck",
+		"sbin/mkfs.ext4", "sbin/mkfs.vfat",
 		"sbin/xfs_growfs", "bin/btrfs", "bin/parted", "bin/sgdisk",
 		"bin/partprobe",
 		// EFI
@@ -145,6 +150,43 @@ func TestGoBGPSharedLibsResolveE2E(t *testing.T) {
 		// Rescue mode
 		"bin/lsblk",
 	})
+}
+
+func TestFullInitramfsMkfsVfatSupportsFATSizeFlagE2E(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		stage string
+	}{
+		{name: "default", stage: "busybox"},
+		{name: "gobgp", stage: "gobgp-builder"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			image := buildStageImage(t, tc.stage)
+			ldPaths := strings.Join([]string{
+				"/build/initramfs/lib",
+				"/build/initramfs/usr/lib",
+				"/build/initramfs/lib/x86_64-linux-gnu",
+				"/build/initramfs/usr/lib/x86_64-linux-gnu",
+			}, ":")
+			script := strings.Join([]string{
+				"PATH=/build/initramfs/bin:/build/initramfs/sbin:$PATH",
+				"resolved=$(command -v mkfs.vfat)",
+				`echo "resolved=$resolved"`,
+				`[ "$resolved" = "/build/initramfs/sbin/mkfs.vfat" ]`,
+				`sh -c 'test "$1" = ok' -- ok`,
+				"mkfs.vfat --help >/tmp/mkfs-vfat-help 2>&1 || true",
+				"cat /tmp/mkfs-vfat-help",
+				"grep -q -- '-F' /tmp/mkfs-vfat-help",
+				"! grep -qi busybox /tmp/mkfs-vfat-help",
+			}, " && ")
+			cmd := exec.Command("docker", "run", "--rm", "--entrypoint", "",
+				"-e", "LD_LIBRARY_PATH="+ldPaths, image, "sh", "-ec", script)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("mkfs.vfat PATH/FAT-size check failed: %v\n%s", err, out)
+			}
+		})
+	}
 }
 
 // TestSlimSharedLibsResolveE2E builds the slim builder stage and verifies
@@ -295,6 +337,28 @@ func TestGoBGPInitramfsHasLibmnlE2E(t *testing.T) {
 	}
 	if !hasLibmnl {
 		t.Error("libmnl.so not found in gobgp initramfs (required by iproute2 ip/bridge)")
+	}
+}
+
+func TestFullInitramfsFlavorsHavePartitionFormattersE2E(t *testing.T) {
+	dockerAvailable(t)
+	for _, tc := range []struct {
+		name   string
+		target string
+	}{
+		{name: "default"},
+		{name: "gobgp", target: "gobgp"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dest := t.TempDir()
+			cpioGz := buildTarget(t, tc.target, dest)
+			files := listCPIOContents(t, cpioGz)
+			for _, want := range []string{"sbin/mkfs.ext4", "sbin/mkfs.vfat"} {
+				if !files[want] && !files["./"+want] {
+					t.Fatalf("initramfs missing %s; A/B partition layout formatting cannot run", want)
+				}
+			}
+		})
 	}
 }
 

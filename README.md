@@ -33,7 +33,7 @@ BOOTy operates in two modes depending on the boot environment:
 1. A Redfish BMC mounts an ISO containing a kernel, BOOTy initramfs, and `/deploy/vars` config.
 2. BOOTy reads `/deploy/vars` for machine config, image URLs, and CAPRF server endpoints.
 3. Network connectivity is established via **FRR/EVPN** (BGP underlay) or **DHCP** fallback.
-4. The provisioning pipeline runs 36 steps: status reporting → RAID cleanup → disk detection → NVMe namespace setup → image streaming → partition management → OS configuration → cloud-init injection → kexec.
+4. The provisioning pipeline runs 39 steps: status reporting -> RAID cleanup -> NVMe namespace setup -> disk detection -> partition layout -> image streaming -> optional sysext loading -> OS configuration -> EFI fallback installation -> cloud-init injection -> kexec.
 5. Status, logs, and debug info are shipped back to the CAPRF controller throughout.
 
 ### Legacy Mode
@@ -71,7 +71,8 @@ BOOTy operates in two modes depending on the boot environment:
 - **Filesystem support** — ext2, ext3, ext4, xfs, btrfs, vfat mount/resize
 - **LLDP discovery** — Raw AF_PACKET-based LLDP listener for switch topology discovery
 - **Post-provision hooks** — Execute arbitrary commands in chroot after OS configuration
-- **36-step provisioning pipeline** — RAID cleanup, disk detection, NVMe namespace setup, image streaming, partition growth, LVM, filesystem resize, OS configuration, cloud-init injection, EFI boot, Mellanox SR-IOV, post-provision hooks
+- **39-step provisioning pipeline** — RAID cleanup, NVMe namespace setup, disk detection, partition layout, image streaming, partition growth, LVM, filesystem resize, optional sysext loading, OS configuration, EFI fallback installation, cloud-init injection, EFI boot, Mellanox SR-IOV, post-provision hooks
+- **systemd-sysext provisioning** — Optional digest-checked sysext preload or active loading into the provisioned OS image
 - **Kexec support** — Fast reboot into installed kernel without full BIOS POST (auto-disabled after firmware changes)
 - **Remote logging** — Real-time log and debug shipping to CAPRF controller
 - **Startup crash artifact upload** — Best-effort pre-wipe collection of existing OS crash logs, dumps, and host metadata for CAPRF/S3 correlation
@@ -270,7 +271,7 @@ go run server/server.go \
 | `MODE` | `provision` | `provision`, `deprovision`, `soft-deprovision`, `standby`, or `dry-run` |
 | `DRY_RUN` | `false` | When `true`, forces `MODE=dry-run`: validates prerequisites without destructive writes |
 | `BOOTY_RESUME` | `false` | Enable checkpoint resume — skip previously completed steps on restart |
-| `DISABLE_KEXEC` | `false` | Skip kexec, always hard-reboot |
+| `DISABLE_KEXEC` | `false` | Skip kexec, always hard-reboot. Must stay `false` for A/B preserve-existing upgrades |
 | `MIN_DISK_SIZE_GB` | `0` | Minimum disk size filter (0 = no minimum) |
 | `BOOTY_ALLOW_REMOVABLE` | `false` | Allow USB/removable media as provisioning target |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters |
@@ -315,8 +316,18 @@ go run server/server.go \
 | `MOK_PASSWORD` | — | *(Phase 2)* One-time password for MokManager confirmation |
 | `IMAGE_CHECKSUM` | — | Expected hex digest of the raw disk image |
 | `IMAGE_CHECKSUM_TYPE` | — | Checksum algorithm: `sha256` or `sha512` |
-| `IMAGE_MODE` | `whole-disk` | Image write mode: `whole-disk` or `partition` |
+| `IMAGE_MODE` | `whole-disk` | Image write mode: `whole-disk`, `partition`, or `ab` |
+| `AB_SCHEME` | `dual-root` | A/B partitioning scheme for `IMAGE_MODE=ab` |
+| `AB_ACTIVE_SLOT` | — | Currently booted A/B slot, `a` or `b` |
+| `AB_TARGET_SLOT` | `inactive` | A/B slot to write: `inactive`, `a`, or `b` |
+| `AB_PRESERVE_EXISTING` | `false` | Reuse an existing A/B layout and write only the target root slot |
+| `AB_BOOT_SIZE_MB` | `512` | Shared EFI partition size for generated A/B layouts |
+| `AB_ROOT_SIZE_MB` | `32768` | Size of each generated A/B root slot |
+| `AB_STATE_SIZE_MB` | `0` | Persistent state partition size; `0` fills remaining disk |
+| `AB_SOURCE_ROOT_LABEL` | — | Source-image GPT partition label to copy into the target root slot |
+| `AB_SOURCE_ROOT_PARTITION` | — | 1-based source-image partition number to copy when no stable label exists |
 | `DISK_DEVICE` | auto-detect | Explicit disk device path override (e.g. `/dev/sda`) |
+| `DISK_SERIAL_NUMBER` | — | Select the target disk by exact sysfs serial number when `DISK_DEVICE` is unset |
 | `IMAGE_SIGNATURE_URL` | — | URL to detached GPG signature for image verification |
 | `IMAGE_GPG_PUBKEY` | — | Path to GPG public key for image signature verification |
 | `LUKS_ENABLED` | `false` | *(Planned)* Enable LUKS2 encryption for target partitions |
@@ -329,6 +340,12 @@ go run server/server.go \
 | `NVME_NAMESPACES` | — | JSON config for NVMe namespace creation (e.g. `[{"device":"/dev/nvme0","namespaces":[{"size_gb":100}]}]`) |
 | `CLOUDINIT_ENABLED` | `false` | Generate and inject cloud-init NoCloud/ConfigDrive config |
 | `CLOUDINIT_DATASOURCE` | `nocloud` | Cloud-init datasource type |
+| `SYSEXT_ENABLED` | `false` | Copy configured systemd-sysext layers into the provisioned root |
+| `SYSEXT_DEFAULT_MODE` | `preload` | Default sysext layer mode: `preload` or `active` |
+| `SYSEXT_CATALOG_DIR` | `/usr/lib/tcaas-sysext/preloaded` | Target catalog directory for preloaded sysext layers |
+| `SYSEXT_ACTIVE_DIR` | `/var/lib/extensions` | Target directory for active sysext layers |
+| `SYSEXT_LAYERS` | — | JSON array of sysext layer objects |
+| `SYSEXT_ALLOW_INSECURE_HTTP` | `false` | Allow plain HTTP sysext sources on controlled provisioning networks |
 
 #### Network Variables
 
@@ -342,6 +359,7 @@ go run server/server.go \
 | `BOND_MODE` | `802.3ad` | Bond mode: `802.3ad`/`lacp`, `balance-rr`, `active-backup`, `balance-xor` |
 | `VLANS` | — | Multi-VLAN config (e.g. `200:eno1:10.200.0.42/24,300:eno2`) |
 | `BGP_PEER_MODE` | `unnumbered` | GoBGP peering mode: `unnumbered`, `dual`, `numbered` |
+| `BGP_INTERFACES` | — | Optional comma-separated interface allowlist for unnumbered/dual GoBGP peers; empty means all detected physical NICs |
 | `BGP_NEIGHBORS` | — | Comma-separated peer IPs (required for `dual` and `numbered` modes) |
 | `BGP_REMOTE_ASN` | — | Remote ASN for numbered peers (0 or omitted = iBGP) |
 | `BGP_UNDERLAY_AF` | `ipv4` | Underlay address family: `ipv4`, `ipv6`, `dual-stack` |
@@ -821,7 +839,9 @@ and uses the derived network config, with netplan values overriding
 The netplan parser supports ethernets, bonds, bridges, VLANs, tunnels
 (VXLAN/GRE), dummy devices, VRFs, and static routes. When an FRR config
 file is also present, BOOTy extracts BGP parameters (ASN, router-ID,
-peers, EVPN settings) from it.
+peers, EVPN settings) from it. Pure Type-5 configs that use
+`advertise ipv4 unicast` stay L3-only; `advertise-all-vni` is the opt-in
+signal for L2 EVPN Type-2/Type-3 handling.
 
 ### Network Persistence
 
@@ -992,7 +1012,7 @@ and the PR process.
 │   │   ├── persist/           # Persist network config into target OS (netplan, NM, systemd-networkd)
 │   │   ├── vrf/               # VRF configuration and validation
 │   │   └── vlan/              # VLAN 802.1Q tagging via netlink
-│   ├── provision/              # Orchestrator (36-step provision, deprovision)
+│   ├── provision/              # Orchestrator (39-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
 │   ├── realm/                  # Device, mount, network, shell operations
 │   ├── rescue/                 # Rescue mode behavior and retry policy
@@ -1023,6 +1043,8 @@ full feature roadmap with priorities and status tracking.
 |----------|-------------|
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup, coding standards, PR process |
 | [docs/roadmap.md](docs/roadmap.md) | Feature roadmap (P0–P4 priorities) |
+| [docs/sysext-provisioning.md](docs/sysext-provisioning.md) | Optional systemd-sysext loading while provisioning |
+| [docs/ab-partitioning.md](docs/ab-partitioning.md) | Optional A/B partitioning and inactive-slot provisioning |
 | [.github/AGENTS.md](.github/AGENTS.md) | Copilot agents, review personas, prompts |
 | [.github/copilot-instructions.md](.github/copilot-instructions.md) | Project guidelines for Copilot |
 

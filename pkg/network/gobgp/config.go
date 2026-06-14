@@ -37,16 +37,23 @@ type Tier interface {
 
 // Config holds GoBGP three-tier stack configuration.
 type Config struct {
-	ASN               uint32           // Local BGP autonomous system number
-	RouterID          string           // BGP router ID (underlay IP)
-	ListenPort        int32            // BGP listen port (default: 179)
-	ProvisionVNI      int              // VXLAN VNI for provisioning network
-	ProvisionIP       string           // IP/mask for provision bridge
-	ProvisionGateway  string           // Gateway VTEP IP for VXLAN BUM flooding
+	ASN               uint32 // Local BGP autonomous system number
+	RouterID          string // BGP router ID (underlay IP)
+	ListenPort        int32  // BGP listen port (default: 179)
+	ProvisionVNI      int    // VXLAN VNI for provisioning network
+	ProvisionIP       string // IP/mask for provision bridge
+	ProvisionGateway  string // Gateway VTEP IP for VXLAN BUM flooding
+	VPNRT             string // Optional explicit EVPN route target (ASN:value)
+	importRTASN       uint32
+	importRTVNI       uint32
+	importRTReady     bool
+	importRTErr       error
 	DNSResolvers      string           // Comma-separated DNS servers
 	BridgeName        string           // Bridge device name (default: "br.provision")
-	VRFName           string           // VRF name (default: empty, same as FRR)
-	VRFTableID        uint32           // Routing table ID for VRF (default: 1000)
+	VRFName           string           // Underlay VRF name (default: empty, same as FRR)
+	OverlayVRFName    string           // Overlay bridge VRF name (default: follows VRFName)
+	VRFTableID        uint32           // Routing table ID for the underlay VRF (default: 1000)
+	OverlayVRFTableID uint32           // Routing table ID for the overlay bridge VRF (default: VRFTableID)
 	MTU               int              // Physical interface MTU (default: 9000)
 	KeepaliveInterval uint64           // BGP keepalive seconds (default: 3)
 	HoldTime          uint64           // BGP hold timer seconds (default: 9)
@@ -55,6 +62,7 @@ type Config struct {
 	BridgeMAC         string           // Derived MAC for provision bridge
 	IPMIMAC           string           // IPMI MAC for bridge MAC derivation
 	PeerMode          network.PeerMode // BGP session establishment mode
+	Interfaces        []string         // Explicit interfaces for unnumbered peers
 	NeighborAddrs     []string         // Explicit numbered peer IPs (dual/numbered modes)
 	RemoteASN         uint32           // Remote ASN for numbered peers (0 = same ASN → iBGP)
 	EnableL2          bool             // Enable L2 EVPN overlay (gate Type-2/3 route handling)
@@ -85,16 +93,24 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		return nil, fmt.Errorf("derive addresses: %w", err)
 	}
 
+	overlayVRFName := netCfg.OverlayVRFName
+	if !netCfg.OverlayVRFSet {
+		overlayVRFName = netCfg.VRFName
+	}
+
 	cfg := &Config{
 		ASN:                 netCfg.ASN,
 		RouterID:            underlayIP,
 		ProvisionVNI:        int(netCfg.ProvisionVNI),
 		ProvisionIP:         netCfg.ProvisionIP,
 		ProvisionGateway:    netCfg.ProvisionGateway,
+		VPNRT:               netCfg.VPNRT,
 		DNSResolvers:        netCfg.DNSResolvers,
 		BridgeName:          netCfg.BridgeName,
 		VRFName:             netCfg.VRFName,
+		OverlayVRFName:      overlayVRFName,
 		VRFTableID:          netCfg.VRFTableID,
+		OverlayVRFTableID:   netCfg.OverlayVRFTableID,
 		MTU:                 netCfg.MTU,
 		KeepaliveInterval:   uint64(netCfg.BGPKeepalive),
 		HoldTime:            uint64(netCfg.BGPHold),
@@ -102,6 +118,7 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		BridgeMAC:           bridgeMAC,
 		IPMIMAC:             netCfg.IPMIMAC,
 		PeerMode:            netCfg.BGPPeerMode,
+		Interfaces:          parseCSV(netCfg.BGPInterfaces),
 		NeighborAddrs:       parseNeighborAddrs(netCfg.BGPNeighbors),
 		RemoteASN:           netCfg.BGPRemoteASN,
 		EnableL2:            netCfg.EVPNL2Enabled,
@@ -141,12 +158,7 @@ func (c *Config) ApplyDefaults() {
 	if c.MTU == 0 {
 		c.MTU = 9000
 	}
-	if c.VRFTableID == 0 || c.VRFTableID == 1 {
-		if c.VRFTableID == 1 {
-			slog.Warn("vrf_table_id=1 conflicts with default routing table, overriding to 1000")
-		}
-		c.VRFTableID = 1000
-	}
+	c.applyVRFTableDefaults()
 	// Normalize UnderlayAF and OverlayType to their canonical lowercase forms
 	// so downstream comparisons don't need case-insensitive matching.
 	if af, err := ParseUnderlayAF(c.UnderlayAF); err == nil {
@@ -160,6 +172,24 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.GracefulRestart != nil {
 		c.GracefulRestart.ApplyDefaults()
+	}
+}
+
+func (c *Config) applyVRFTableDefaults() {
+	switch c.VRFTableID {
+	case 0:
+		c.VRFTableID = 1000
+	case 1:
+		slog.Warn("vrf_table_id=1 conflicts with default routing table, overriding to 1000")
+		c.VRFTableID = 1000
+	}
+
+	switch c.OverlayVRFTableID {
+	case 0:
+		c.OverlayVRFTableID = c.VRFTableID
+	case 1:
+		slog.Warn("overlay_vrf_table_id=1 conflicts with default routing table, using underlay VRF table")
+		c.OverlayVRFTableID = c.VRFTableID
 	}
 }
 
@@ -177,21 +207,8 @@ func (c *Config) Validate() error {
 	if err := c.validateTimers(); err != nil {
 		return err
 	}
-
-	if c.ProvisionVNI == 0 || c.ProvisionVNI > 16777215 {
-		return fmt.Errorf("ProvisionVNI %d out of range (must be 1..16777215)", c.ProvisionVNI)
-	}
-
-	// 4-octet ASN RD/RT format can only encode 16-bit VNI values.
-	if c.ASN > 65535 && c.ProvisionVNI > 65535 {
-		return fmt.Errorf("4-octet ASN %d with VNI %d > 65535 is unsupported (RD/RT truncation)", c.ASN, c.ProvisionVNI)
-	}
-
-	// MTU must leave room for VXLAN overhead (50 bytes) plus minimum
-	// useful IP payload (576 bytes per RFC 791).
-	const minMTU = 576 + 50 // minIP + vxlanOverhead
-	if c.MTU > 0 && c.MTU < minMTU {
-		return fmt.Errorf("MTU %d too low (minimum %d = 576 IP + 50 VXLAN overhead)", c.MTU, minMTU)
+	if err := c.validateProvisioning(); err != nil {
+		return err
 	}
 
 	if _, err := ParseUnderlayAF(c.UnderlayAF); err != nil {
@@ -207,7 +224,29 @@ func (c *Config) Validate() error {
 	if c.MinEstablishedPeers < 1 {
 		return fmt.Errorf("BGP_MIN_PEERS %d is invalid (must be >= 1)", c.MinEstablishedPeers)
 	}
+	if _, _, err := c.importRouteTarget(); err != nil {
+		return err
+	}
 	return c.validatePolicy()
+}
+
+func (c *Config) validateProvisioning() error {
+	if c.ProvisionVNI == 0 || c.ProvisionVNI > 16777215 {
+		return fmt.Errorf("ProvisionVNI %d out of range (must be 1..16777215)", c.ProvisionVNI)
+	}
+
+	// 4-octet ASN RD/RT format can only encode 16-bit VNI values.
+	if c.ASN > 65535 && c.ProvisionVNI > 65535 {
+		return fmt.Errorf("4-octet ASN %d with VNI %d > 65535 is unsupported (RD/RT truncation)", c.ASN, c.ProvisionVNI)
+	}
+
+	// MTU must leave room for VXLAN overhead (50 bytes) plus minimum
+	// useful IP payload (576 bytes per RFC 791).
+	const minMTU = 576 + 50 // minIP + vxlanOverhead
+	if c.MTU > 0 && c.MTU < minMTU {
+		return fmt.Errorf("MTU %d too low (minimum %d = 576 IP + 50 VXLAN overhead)", c.MTU, minMTU)
+	}
+	return nil
 }
 
 func (c *Config) validatePolicy() error {
@@ -263,19 +302,49 @@ func (c *Config) validateTimers() error {
 	return nil
 }
 
-// parseNeighborAddrs splits a comma-separated list of IPs into a string slice.
-func parseNeighborAddrs(s string) []string {
+func parseCSV(s string) []string {
 	if s == "" {
 		return nil
 	}
-	var addrs []string
+	var values []string
 	for _, a := range strings.Split(s, ",") {
 		a = strings.TrimSpace(a)
 		if a != "" {
-			addrs = append(addrs, a)
+			values = append(values, a)
 		}
 	}
-	return addrs
+	return values
+}
+
+// parseNeighborAddrs splits a comma-separated list of IPs into a string slice.
+func parseNeighborAddrs(s string) []string {
+	return parseCSV(s)
+}
+
+func (c *Config) importRouteTarget() (asn, vni uint32, err error) {
+	if !c.importRTReady {
+		_ = c.cacheImportRouteTarget()
+	}
+	return c.importRTASN, c.importRTVNI, c.importRTErr
+}
+
+func (c *Config) cacheImportRouteTarget() error {
+	c.importRTASN, c.importRTVNI, c.importRTErr = deriveImportRouteTarget(c)
+	c.importRTReady = true
+	return c.importRTErr
+}
+
+func deriveImportRouteTarget(c *Config) (asn, vni uint32, err error) {
+	asn, vni = c.ASN, uint32(c.ProvisionVNI)
+	vpnRT := strings.TrimSpace(c.VPNRT)
+	if vpnRT == "" {
+		return asn, vni, nil
+	}
+	parsedASN, parsedVNI, err := ParseRouteTarget(vpnRT)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid VPN route target: %w", err)
+	}
+	return parsedASN, parsedVNI, nil
 }
 
 // IsiBGP returns true when the numbered peers use the same ASN (iBGP).

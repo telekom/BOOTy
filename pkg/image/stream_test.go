@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,43 @@ import (
 	"github.com/pierrec/lz4/v4"
 	"github.com/ulikunitz/xz"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestRedactURLRemovesSensitiveParts(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "credentials query fragment",
+			in:   "https://user:secret@example.com/image.raw?token=abc#frag",
+			want: "https://example.com/image.raw",
+		},
+		{
+			name: "query fragment without credentials",
+			in:   "https://example.com/image.raw?token=abc#frag",
+			want: "https://example.com/image.raw",
+		},
+		{
+			name: "invalid url fails closed",
+			in:   "https://example.com/%zz?token=secret",
+			want: "[redacted invalid URL]",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := RedactURL(tt.in); got != tt.want {
+				t.Fatalf("RedactURL(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
 
 func TestStreamRaw(t *testing.T) {
 	data := []byte("raw image content for testing")
@@ -191,6 +229,45 @@ func TestStreamChecksumPass(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestStreamChecksumInfersTypeAndStripsPrefix(t *testing.T) {
+	data := []byte("data for checksum inference")
+	h := sha256.Sum256(data)
+	checksum := "sha256:" + strings.ToUpper(hex.EncodeToString(h[:]))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	}))
+	defer srv.Close()
+
+	tmpFile, err := os.CreateTemp(t.TempDir(), "disk-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = tmpFile.Close()
+
+	err = Stream(context.Background(), srv.URL+"/image.img", tmpFile.Name(), StreamOpts{
+		Checksum: checksum,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNormalizeChecksumOptRejectsEmptyPrefixedDigest(t *testing.T) {
+	for _, checksum := range []string{"sha256:", "sha512:"} {
+		t.Run(checksum, func(t *testing.T) {
+			_, err := normalizeChecksumOpt(StreamOpts{Checksum: checksum})
+			if err == nil {
+				t.Fatal("expected empty digest error")
+			}
+			if !strings.Contains(err.Error(), "requires a non-empty digest") {
+				t.Fatalf("error = %q, want non-empty digest message", err.Error())
+			}
+		})
 	}
 }
 
@@ -408,10 +485,74 @@ func TestHTTPGetWithRetry_AllFail(t *testing.T) {
 	}
 }
 
+func TestHTTPGetWithRetryErrorRedactsSensitiveURLParts(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	source := strings.Replace(srv.URL, "http://", "http://user:secret@", 1) + "/image.img?token=abc#frag"
+	_, err := httpGetWithRetry(context.Background(), source)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "token=abc") || strings.Contains(err.Error(), "#frag") {
+		t.Fatalf("error leaked sensitive URL parts: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), srv.URL+"/image.img") {
+		t.Fatalf("error = %q, want redacted URL context", err.Error())
+	}
+}
+
+func TestHTTPGetWithRetryRedactsErrorAndPreservesUnwrap(t *testing.T) {
+	retryBackoffBase = 0
+	t.Cleanup(func() { retryBackoffBase = time.Second })
+
+	previousClient := imageHTTPClient
+	t.Cleanup(func() { imageHTTPClient = previousClient })
+
+	sentinel := errors.New("temporary transport failure")
+	imageHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return nil, &sourceURLTestError{source: req.URL.String(), err: sentinel}
+	})}
+
+	source := "https://leaky-user:super-secret@example.com/image.raw?token=abc#frag"
+	_, err := httpGetWithRetry(context.Background(), source)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("error does not preserve wrapped transport error: %v", err)
+	}
+	for _, leaked := range []string{"leaky-user", "super-secret", "token=abc", "frag"} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("error leaked %q: %s", leaked, err.Error())
+		}
+	}
+	if !strings.Contains(err.Error(), "https://example.com/image.raw") {
+		t.Fatalf("error = %q, want redacted URL context", err.Error())
+	}
+}
+
+type sourceURLTestError struct {
+	source string
+	err    error
+}
+
+func (e *sourceURLTestError) Error() string {
+	return "request to " + e.source + ": " + e.err.Error()
+}
+
+func (e *sourceURLTestError) Unwrap() error {
+	return e.err
+}
+
 func TestStreamQCOW2Detection(t *testing.T) {
 	// Serve qcow2 magic bytes — Stream should detect and redirect to qcow2 hook.
 	data := append([]byte{0x51, 0x46, 0x49, 0xfb}, make([]byte, 100)...)
+	requests := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(data)
 	}))
@@ -426,10 +567,17 @@ func TestStreamQCOW2Detection(t *testing.T) {
 	// Override hook to verify it's called.
 	called := false
 	orig := convertQCOW2Hook
-	convertQCOW2Hook = func(_ context.Context, url, device string) error {
+	convertQCOW2Hook = func(_ context.Context, src io.Reader, sourceName, device string, _ StreamOpts) error {
 		called = true
-		if !strings.Contains(url, srv.URL) {
-			t.Errorf("expected hook URL to contain %s, got %s", srv.URL, url)
+		if !strings.Contains(sourceName, srv.URL) {
+			t.Errorf("expected hook source to contain %s, got %s", srv.URL, sourceName)
+		}
+		got, err := io.ReadAll(src)
+		if err != nil {
+			t.Fatalf("reading hook source: %v", err)
+		}
+		if string(got) != string(data) {
+			t.Fatalf("hook source = %q, want %q", got, data)
 		}
 		return nil
 	}
@@ -441,5 +589,78 @@ func TestStreamQCOW2Detection(t *testing.T) {
 	}
 	if !called {
 		t.Error("convertQCOW2Hook was not invoked for qcow2 image")
+	}
+	if requests != 1 {
+		t.Fatalf("server received %d requests, want 1", requests)
+	}
+}
+
+func TestStreamQCOW2ChecksumMismatch(t *testing.T) {
+	data := append([]byte{0x51, 0x46, 0x49, 0xfb}, []byte("qcow2 payload for checksum")...)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	}))
+	defer srv.Close()
+
+	tmpFile, err := os.CreateTemp(t.TempDir(), "disk-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = tmpFile.Close()
+
+	orig := convertQCOW2Hook
+	convertQCOW2Hook = func(_ context.Context, src io.Reader, _ string, _ string, opt StreamOpts) error {
+		checksummed, h, err := wrapChecksum(src, opt)
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(io.Discard, checksummed); err != nil {
+			return err
+		}
+		return verifyChecksum(h, opt)
+	}
+	defer func() { convertQCOW2Hook = orig }()
+
+	err = Stream(context.Background(), srv.URL+"/image.qcow2", tmpFile.Name(), StreamOpts{
+		Checksum:     "0000000000000000000000000000000000000000000000000000000000000000",
+		ChecksumType: "sha256",
+	})
+	if err == nil {
+		t.Fatal("expected checksum mismatch error")
+	}
+	if !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("error = %q, want checksum mismatch", err.Error())
+	}
+}
+
+func TestOpenAndDecompressQCOW2KeepsDetectedSource(t *testing.T) {
+	data := append([]byte{0x51, 0x46, 0x49, 0xfb}, []byte("payload after qcow2 header")...)
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	}))
+	defer srv.Close()
+
+	src, cleanup, format, err := openAndDecompress(context.Background(), srv.URL+"/image.qcow2")
+	if err != nil {
+		t.Fatalf("openAndDecompress() = %v", err)
+	}
+	defer cleanup()
+	if format != FormatQCOW2 {
+		t.Fatalf("format = %s, want %s", format, FormatQCOW2)
+	}
+
+	got, err := io.ReadAll(src)
+	if err != nil {
+		t.Fatalf("reading returned source: %v", err)
+	}
+	if string(got) != string(data) {
+		t.Fatalf("returned source = %q, want %q", got, data)
+	}
+	if requests != 1 {
+		t.Fatalf("server received %d requests, want 1", requests)
 	}
 }

@@ -20,17 +20,53 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4.1.0
 
       - name: Build GoBGP ISO artifact
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          MERGE_SHA: ${{ github.sha }}
         run: |
+          set -euo pipefail
           docker buildx build --platform linux/amd64 --target gobgp-iso \
             --output type=local,dest=out-gobgp-iso -f initrd.Dockerfile .
 
           test -f out-gobgp-iso/booty-gobgp.iso
           sha256sum out-gobgp-iso/booty-gobgp.iso > out-gobgp-iso/booty-gobgp.iso.sha256
+          python3 - <<'PY'
+          import datetime
+          import hashlib
+          import json
+          import os
+          import pathlib
+
+          iso = pathlib.Path("out-gobgp-iso/booty-gobgp.iso")
+          document = {
+              "artifact": "booty-gobgp-pr-iso",
+              "head_sha": os.environ["HEAD_SHA"],
+              "github_sha": os.environ["MERGE_SHA"],
+              "checked_out_sha": os.popen("git rev-parse HEAD").read().strip(),
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "workflow": os.environ["GITHUB_WORKFLOW"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "iso": {
+                  "name": iso.name,
+                  "sha256": hashlib.sha256(iso.read_bytes()).hexdigest(),
+                  "size": iso.stat().st_size,
+              },
+          }
+          pathlib.Path("out-gobgp-iso/booty-pr-artifact.json").write_text(
+              json.dumps(document, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
 
       - name: Publish artifact
         uses: actions/upload-artifact@v7.0.1
@@ -39,8 +75,55 @@ jobs:
           path: |
             out-gobgp-iso/booty-gobgp.iso
             out-gobgp-iso/booty-gobgp.iso.sha256
+            out-gobgp-iso/booty-pr-artifact.json
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish GitLab generic package
+        env:
+          GITLAB_PACKAGE_TOKEN: ${{ secrets.GITLAB_PACKAGE_TOKEN }}
+          GITLAB_PACKAGE_REQUIRED: ${{ vars.GITLAB_PACKAGE_REQUIRED || 'false' }}
+          GITLAB_API_V4_URL: ${{ vars.GITLAB_API_V4_URL || 'https://gitlab.devops.telekom.de/api/v4' }}
+          GITLAB_PACKAGE_PROJECT_ID: ${{ vars.GITLAB_PACKAGE_PROJECT_ID || '278324' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          version="${HEAD_SHA:0:7}"
+          package_url="${GITLAB_API_V4_URL}/projects/${GITLAB_PACKAGE_PROJECT_ID}/packages/generic/booty-pr-artifacts/${version}/booty-gobgp-pr-iso.zip"
+          required="$(printf '%s' "${GITLAB_PACKAGE_REQUIRED}" | tr '[:upper:]' '[:lower:]')"
+          if [ -z "${GITLAB_PACKAGE_TOKEN}" ]; then
+            if [ "${required}" = "true" ] || [ "${required}" = "1" ] || [ "${required}" = "yes" ]; then
+              echo "::error::GITLAB_PACKAGE_REQUIRED is true, but GITLAB_PACKAGE_TOKEN is not configured."
+              exit 1
+            fi
+            echo "::notice::GITLAB_PACKAGE_TOKEN is not configured; GitLab generic package publish is optional and was skipped."
+            {
+              echo "### GitLab generic package"
+              echo
+              echo "Skipped: \`GITLAB_PACKAGE_TOKEN\` is not configured."
+              echo "Set repository variable \`GITLAB_PACKAGE_REQUIRED=true\` to make this a required publishing target."
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          python3 - <<'PY'
+          import pathlib
+          import zipfile
+
+          root = pathlib.Path("out-gobgp-iso")
+          with zipfile.ZipFile("booty-gobgp-pr-iso.zip", "w", zipfile.ZIP_DEFLATED) as archive:
+              for name in ("booty-gobgp.iso", "booty-gobgp.iso.sha256", "booty-pr-artifact.json"):
+                  archive.write(root / name, name)
+          PY
+          curl --fail --silent --show-error \
+            --header "PRIVATE-TOKEN: ${GITLAB_PACKAGE_TOKEN}" \
+            --upload-file booty-gobgp-pr-iso.zip \
+            "${package_url}"
+          {
+            echo "### GitLab generic package"
+            echo
+            echo "Published: \`${package_url}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Print download hint
         env:

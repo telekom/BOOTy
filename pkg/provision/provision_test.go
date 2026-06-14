@@ -255,6 +255,45 @@ func TestConfigureGRUB(t *testing.T) {
 	if len(data) == 0 {
 		t.Fatal("expected non-empty grub config")
 	}
+	if _, err := os.Stat(filepath.Join(c.rootDir, "boot", "grub")); err != nil {
+		t.Fatalf("expected boot grub dir: %v", err)
+	}
+}
+
+func TestConfigureGRUBABWritesTargetRootPartLabel(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.ActiveSlot = config.ABSlotA
+	cfg.Provision.AB.TargetSlot = config.ABTargetInactive
+	cfg.Provision.ExtraKernelParams = "quiet splash root=/dev/old"
+
+	if err := c.ConfigureGRUB(context.Background(), cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(c.rootDir, "etc", "default", "grub.d", "10-caprf-kernel-params.cfg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.Contains(line, "root=PARTLABEL=BOOTY-ROOT-B") {
+		t.Fatalf("A/B root partlabel missing from GRUB config: %s", line)
+	}
+	if strings.LastIndex(line, "root=PARTLABEL=BOOTY-ROOT-B") < strings.LastIndex(line, "root=/dev/old") {
+		t.Fatalf("A/B root partlabel must override earlier root args: %s", line)
+	}
+}
+
+func TestABRootKernelParamRejectsInvalidTarget(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.TargetSlot = "next"
+
+	if _, err := abRootKernelParam(cfg); err == nil {
+		t.Fatal("expected invalid target slot error")
+	}
 }
 
 func TestCopyProvisionerFilesNotExist(t *testing.T) {
@@ -422,6 +461,10 @@ func TestPartNumberFromDevice(t *testing.T) {
 }
 
 func TestCreateEFIBootEntry(t *testing.T) {
+	old := efiRuntimeReady
+	efiRuntimeReady = func() (bool, string) { return true, "" }
+	t.Cleanup(func() { efiRuntimeReady = old })
+
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
 
@@ -444,6 +487,9 @@ func TestCreateEFIBootEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if !hasCommandName(cmd.calls, "chroot") {
+		t.Fatal("expected chroot efibootmgr command")
+	}
 }
 
 func TestCreateEFIBootEntryEmptyPartition(t *testing.T) {
@@ -454,6 +500,175 @@ func TestCreateEFIBootEntryEmptyPartition(t *testing.T) {
 	err := c.CreateEFIBootEntry(context.Background(), "/dev/sda", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestEFILoaderPathUsesRemovableFallback(t *testing.T) {
+	root := t.TempDir()
+	loaderName, err := efiRemovableLoaderName(runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	efiBootDir := filepath.Join(root, "boot", "efi", "EFI", "BOOT")
+	if err := os.MkdirAll(efiBootDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(efiBootDir, loaderName), []byte("efi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := efiLoaderPath(root, runtime.GOARCH)
+	if err != nil {
+		t.Fatalf("efiLoaderPath(): %v", err)
+	}
+	if want := `\EFI\BOOT\` + loaderName; got != want {
+		t.Fatalf("efiLoaderPath() = %q, want %q", got, want)
+	}
+}
+
+func TestGrubEFITarget(t *testing.T) {
+	tests := []struct {
+		arch string
+		want string
+	}{
+		{arch: "amd64", want: "x86_64-efi"},
+		{arch: "arm64", want: "arm64-efi"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.arch, func(t *testing.T) {
+			got, err := grubEFITarget(tt.arch)
+			if err != nil {
+				t.Fatalf("grubEFITarget(%q): %v", tt.arch, err)
+			}
+			if got != tt.want {
+				t.Fatalf("grubEFITarget(%q) = %q, want %q", tt.arch, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGrubEFITargetRejectsUnsupportedArch(t *testing.T) {
+	if _, err := grubEFITarget("riscv64"); err == nil {
+		t.Fatal("grubEFITarget accepted unsupported arch")
+	}
+}
+
+func TestInstallEFIFallbackLoader(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+	target, err := grubEFITarget(runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCmd := fmt.Sprintf(
+		"grub-install --target=%s --efi-directory=/boot/efi --bootloader-id=ubuntu --removable --no-nvram --recheck /dev/sda",
+		target,
+	)
+
+	if err := c.InstallEFIFallbackLoader(context.Background(), "/dev/sda", "/dev/sda2"); err != nil {
+		t.Fatalf("InstallEFIFallbackLoader() error = %v", err)
+	}
+	if !hasCommandCall(cmd.calls, "chroot", c.rootDir, "/bin/bash", "-c", wantCmd) {
+		t.Fatalf("missing fallback grub-install command, calls=%#v", cmd.calls)
+	}
+}
+
+func TestInstallEFIFallbackLoaderReportsChrootFailure(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+	cmd.setResult("chroot "+c.rootDir, []byte("grub missing"), fmt.Errorf("exit status 1"))
+
+	err := c.InstallEFIFallbackLoader(context.Background(), "/dev/sda", "/dev/sda2")
+	if err == nil {
+		t.Fatal("InstallEFIFallbackLoader() error = nil, want failure")
+	}
+	if !strings.Contains(err.Error(), "install EFI fallback loader: grub missing") {
+		t.Fatalf("error = %v, want grub output", err)
+	}
+}
+
+func TestInstallEFIFallbackLoaderUsesBundledAsset(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+
+	assetDir := t.TempDir()
+	loaderName, err := efiRemovableLoaderName(runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assetDir, loaderName), []byte("efi-binary"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldAssetDir := efiFallbackAssetDirectory
+	efiFallbackAssetDirectory = assetDir
+	t.Cleanup(func() { efiFallbackAssetDirectory = oldAssetDir })
+	oldHandoffID := newEFIFallbackHandoffID
+	newEFIFallbackHandoffID = func() (string, error) { return "abcdef0123456789", nil }
+	t.Cleanup(func() { newEFIFallbackHandoffID = oldHandoffID })
+
+	grubDir := filepath.Join(c.rootDir, "boot", "grub")
+	if err := os.MkdirAll(grubDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(grubDir, "grub.cfg"), []byte("menuentry test {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.InstallEFIFallbackLoader(context.Background(), "/dev/sda", "/dev/sda2"); err != nil {
+		t.Fatalf("InstallEFIFallbackLoader() error = %v", err)
+	}
+	if hasCommandName(cmd.calls, "chroot") {
+		t.Fatalf("bundled fallback path should not chroot, calls=%#v", cmd.calls)
+	}
+	efiBootDir := filepath.Join(c.rootDir, "boot", "efi", "EFI", "BOOT")
+	if got, err := os.ReadFile(filepath.Join(efiBootDir, loaderName)); err != nil || string(got) != "efi-binary" {
+		t.Fatalf("fallback loader = %q, %v; want copied bundled asset", string(got), err)
+	}
+	grubConfig, err := os.ReadFile(filepath.Join(efiBootDir, "grub.cfg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	grubText := string(grubConfig)
+	if !strings.Contains(grubText, "search --no-floppy --set=booty_root --file /etc/booty/grub-target-abcdef0123456789") {
+		t.Fatalf("ESP grub.cfg missing marker search:\n%s", grubText)
+	}
+	if !strings.Contains(grubText, "configfile ($booty_root)/boot/grub/grub.cfg") {
+		t.Fatalf("ESP grub.cfg missing target grub handoff:\n%s", grubText)
+	}
+	marker, err := os.ReadFile(filepath.Join(c.rootDir, "etc", "booty", "grub-target-abcdef0123456789"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(marker) != "/dev/sda2\n" {
+		t.Fatalf("marker = %q, want root device", string(marker))
+	}
+}
+
+func TestInstallEFIFallbackLoaderWithBundledAssetRequiresTargetGrubConfig(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+
+	assetDir := t.TempDir()
+	loaderName, err := efiRemovableLoaderName(runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assetDir, loaderName), []byte("efi-binary"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldAssetDir := efiFallbackAssetDirectory
+	efiFallbackAssetDirectory = assetDir
+	t.Cleanup(func() { efiFallbackAssetDirectory = oldAssetDir })
+
+	err = c.InstallEFIFallbackLoader(context.Background(), "/dev/sda", "/dev/sda2")
+	if err == nil {
+		t.Fatal("InstallEFIFallbackLoader() error = nil, want missing target grub config error")
+	}
+	if !strings.Contains(err.Error(), "target GRUB config") {
+		t.Fatalf("error = %v, want target GRUB config", err)
+	}
+	if hasCommandName(cmd.calls, "chroot") {
+		t.Fatalf("missing target grub should not fall back to chroot, calls=%#v", cmd.calls)
 	}
 }
 
@@ -529,9 +744,57 @@ func TestProvisionStepsContainEFIVars(t *testing.T) {
 		t.Errorf("mount-efivarfs (idx %d) must come before remove-efi-entries (idx %d)", mountIdx, removeIdx)
 	}
 
-	// Verify total step count is 36 (35 base + setup-nvme-namespaces).
-	if len(steps) != 36 {
-		t.Errorf("expected 36 provisioning steps, got %d", len(steps))
+	// Verify total step count includes setup-nvme-namespaces, mount-boot, apply-sysexts, and EFI fallback install.
+	if len(steps) != 39 {
+		t.Errorf("expected 39 provisioning steps, got %d", len(steps))
+	}
+}
+
+func TestProvisionStepsConfigureMountedRootBeforeSysexts(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	orch := NewOrchestrator(cfg, &mockProvider{}, disk.NewManager(newMockCommander()))
+	steps := orch.provisionSteps()
+
+	mountIdx, bootIdx := -1, -1
+	hostnameIdx, filesIdx, dnsIdx := -1, -1, -1
+	sysextIdx, fstabIdx := -1, -1
+	for i, step := range steps {
+		switch step.Name {
+		case "mount-root":
+			mountIdx = i
+		case "mount-boot":
+			bootIdx = i
+		case "set-hostname":
+			hostnameIdx = i
+		case "copy-provisioner-files":
+			filesIdx = i
+		case "configure-dns":
+			dnsIdx = i
+		case "apply-sysexts":
+			sysextIdx = i
+		case "write-fstab":
+			fstabIdx = i
+		}
+	}
+	if mountIdx == -1 || bootIdx == -1 || hostnameIdx == -1 || filesIdx == -1 || dnsIdx == -1 || sysextIdx == -1 || fstabIdx == -1 {
+		t.Fatalf("missing mounted-root configuration steps")
+	}
+	if mountIdx >= bootIdx ||
+		bootIdx >= hostnameIdx ||
+		hostnameIdx >= filesIdx ||
+		filesIdx >= dnsIdx ||
+		dnsIdx >= sysextIdx ||
+		sysextIdx >= fstabIdx {
+		t.Fatalf(
+			"unexpected mounted-root step order: mount=%d boot=%d hostname=%d files=%d dns=%d sysext=%d fstab=%d",
+			mountIdx,
+			bootIdx,
+			hostnameIdx,
+			filesIdx,
+			dnsIdx,
+			sysextIdx,
+			fstabIdx,
+		)
 	}
 }
 
@@ -591,12 +854,17 @@ func TestRedactURLs(t *testing.T) {
 		{
 			name: "with credentials",
 			urls: []string{"http://user:pass@registry.example.com/image:tag"},
-			want: []string{"http://REDACTED@registry.example.com/image:tag"},
+			want: []string{"http://registry.example.com/image:tag"},
 		},
 		{
 			name: "oci with credentials",
 			urls: []string{"oci://user:pass@registry/repo:v1"},
-			want: []string{"oci://REDACTED@registry/repo:v1"},
+			want: []string{"oci://registry/repo:v1"},
+		},
+		{
+			name: "with query and fragment",
+			urls: []string{"https://registry.example.com/image.raw?token=abc#frag"},
+			want: []string{"https://registry.example.com/image.raw"},
 		},
 		{
 			name: "empty",
@@ -608,10 +876,12 @@ func TestRedactURLs(t *testing.T) {
 			urls: []string{
 				"http://example.com/plain.gz",
 				"http://admin:secret@example.com/private.gz",
+				"https://example.com/query.gz?token=abc#frag",
 			},
 			want: []string{
 				"http://example.com/plain.gz",
-				"http://REDACTED@example.com/private.gz",
+				"http://example.com/private.gz",
+				"https://example.com/query.gz",
 			},
 		},
 	}

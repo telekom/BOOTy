@@ -4,6 +4,9 @@ package provision
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -20,6 +23,16 @@ import (
 )
 
 const newroot = "/newroot"
+
+var errEFIFallbackAssetMissing = errors.New("bundled EFI fallback loader missing")
+
+var (
+	efiRuntimeReady              = defaultEFIRuntimeReady
+	isMountPoint                 = defaultIsMountPoint
+	efiFallbackAssetDirectory    = "/usr/lib/booty/efi"
+	newEFIFallbackHandoffID      = defaultEFIFallbackHandoffID
+	installEFIFallbackWithChroot = true
+)
 
 // safeKernelParams matches only safe characters for kernel command line parameters.
 var safeKernelParams = regexp.MustCompile(`^[a-zA-Z0-9=._\-/ ]*$`)
@@ -163,11 +176,23 @@ func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineCon
 		}
 		grubLine += " " + cfg.Provision.ExtraKernelParams
 	}
+	abRootParam, err := abRootKernelParam(cfg)
+	if err != nil {
+		return err
+	}
+	if abRootParam != "" {
+		grubLine += " " + abRootParam
+	}
 	grubLine += "\"\n"
 	grubPath := filepath.Join(grubDir, "10-caprf-kernel-params.cfg")
 	slog.Info("writing GRUB config", "path", grubPath, "console", console)
 	if err := os.WriteFile(grubPath, []byte(grubLine), 0o644); err != nil {
 		return fmt.Errorf("writing grub config: %w", err)
+	}
+
+	bootGrubDir := filepath.Join(c.rootDir, "boot", "grub")
+	if err := os.MkdirAll(bootGrubDir, 0o755); err != nil {
+		return fmt.Errorf("creating boot grub dir: %w", err)
 	}
 
 	// Run update-grub in chroot.
@@ -176,6 +201,170 @@ func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineCon
 		return fmt.Errorf("update-grub: %s: %w", string(out), err)
 	}
 	return nil
+}
+
+func abRootKernelParam(cfg *config.MachineConfig) (string, error) {
+	if cfg == nil || !strings.EqualFold(strings.TrimSpace(cfg.Provision.Image.Mode), config.ImageModeAB) {
+		return "", nil
+	}
+	ab := cfg.Provision.AB.WithDefaults()
+	target, err := ab.ResolvedTargetSlot()
+	if err != nil {
+		return "", fmt.Errorf("resolve A/B target slot for GRUB root: %w", err)
+	}
+	switch target {
+	case config.ABSlotA:
+		return "root=PARTLABEL=BOOTY-ROOT-A", nil
+	case config.ABSlotB:
+		return "root=PARTLABEL=BOOTY-ROOT-B", nil
+	default:
+		return "", fmt.Errorf("invalid resolved A/B target slot %q", target)
+	}
+}
+
+// InstallEFIFallbackLoader installs a removable UEFI loader into /boot/efi
+// without writing firmware NVRAM. BOOTy first uses its bundled standalone
+// loader so minimal immutable target roots do not need grub-efi packages. If
+// the asset is unavailable, it falls back to the target-root grub-install path
+// to preserve compatibility with older initramfs builds.
+func (c *Configurator) InstallEFIFallbackLoader(ctx context.Context, diskDev, rootDev string) error {
+	err := c.installBundledEFIFallbackLoader(rootDev)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, errEFIFallbackAssetMissing) || !installEFIFallbackWithChroot {
+		return err
+	}
+	slog.Warn("bundled EFI fallback loader unavailable, falling back to target-root grub-install", "error", err)
+
+	target, err := grubEFITarget(runtime.GOARCH)
+	if err != nil {
+		return err
+	}
+	cmd := fmt.Sprintf(
+		"grub-install --target=%s --efi-directory=/boot/efi --bootloader-id=ubuntu --removable --no-nvram --recheck %s",
+		target,
+		diskDev,
+	)
+	out, err := c.disk.ChrootRun(ctx, c.rootDir, cmd)
+	if err != nil {
+		return fmt.Errorf("install EFI fallback loader: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+func (c *Configurator) installBundledEFIFallbackLoader(rootDev string) error {
+	loaderName, err := efiRemovableLoaderName(runtime.GOARCH)
+	if err != nil {
+		return err
+	}
+	assetPath := filepath.Join(efiFallbackAssetDirectory, loaderName)
+	if _, err := os.Stat(assetPath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%w: %s", errEFIFallbackAssetMissing, assetPath)
+		}
+		return fmt.Errorf("stat bundled EFI fallback loader %s: %w", assetPath, err)
+	}
+	targetGrub := filepath.Join(c.rootDir, "boot", "grub", "grub.cfg")
+	if _, err := os.Stat(targetGrub); err != nil {
+		return fmt.Errorf("target GRUB config %s is required for EFI fallback handoff: %w", targetGrub, err)
+	}
+
+	handoffID, err := newEFIFallbackHandoffID()
+	if err != nil {
+		return fmt.Errorf("creating EFI fallback handoff id: %w", err)
+	}
+	markerRel := filepath.Join("etc", "booty", "grub-target-"+handoffID)
+	markerPath := filepath.Join(c.rootDir, markerRel)
+	if err := ensureTargetParentWithinRoot(c.rootDir, filepath.Dir(markerPath)); err != nil {
+		return fmt.Errorf("EFI fallback marker directory: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(markerPath), 0o755); err != nil {
+		return fmt.Errorf("creating EFI fallback marker directory: %w", err)
+	}
+	if err := writeFileAtomic(markerPath, []byte(rootDev+"\n"), 0o644); err != nil {
+		return fmt.Errorf("writing EFI fallback marker: %w", err)
+	}
+
+	efiBootDir := filepath.Join(c.rootDir, "boot", "efi", "EFI", "BOOT")
+	if err := ensureTargetParentWithinRoot(c.rootDir, efiBootDir); err != nil {
+		return fmt.Errorf("EFI fallback directory: %w", err)
+	}
+	if err := os.MkdirAll(efiBootDir, 0o755); err != nil {
+		return fmt.Errorf("creating EFI fallback directory: %w", err)
+	}
+	if err := copyRegularFile(assetPath, filepath.Join(efiBootDir, loaderName), 0o644); err != nil {
+		return fmt.Errorf("copy bundled EFI fallback loader: %w", err)
+	}
+
+	markerGRUBPath := "/" + filepath.ToSlash(markerRel)
+	grubConfig := fmt.Sprintf("search --no-floppy --set=booty_root --file %s\nset prefix=($booty_root)/boot/grub\nconfigfile ($booty_root)/boot/grub/grub.cfg\n", markerGRUBPath)
+	if err := writeFileAtomic(filepath.Join(efiBootDir, "grub.cfg"), []byte(grubConfig), 0o644); err != nil {
+		return fmt.Errorf("writing EFI fallback grub config: %w", err)
+	}
+	slog.Info("installed bundled EFI fallback loader", "loader", filepath.Join(efiBootDir, loaderName), "root", rootDev, "marker", markerGRUBPath)
+	return nil
+}
+
+func defaultEFIFallbackHandoffID() (string, error) {
+	var data [16]byte
+	if _, err := rand.Read(data[:]); err != nil {
+		return "", fmt.Errorf("read random EFI fallback handoff id: %w", err)
+	}
+	return hex.EncodeToString(data[:]), nil
+}
+
+func copyRegularFile(src, dst string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open source file %s: %w", src, err)
+	}
+	defer func() { _ = in.Close() }()
+
+	tmp, err := os.CreateTemp(filepath.Dir(dst), ".booty-copy-*")
+	if err != nil {
+		return fmt.Errorf("create temporary file next to %s: %w", dst, err)
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+	if _, err := io.Copy(tmp, in); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("copy %s to temporary file %s: %w", src, tmpName, err)
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("chmod temporary file %s: %w", tmpName, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temporary file %s: %w", tmpName, err)
+	}
+	// #nosec G703 -- caller validates the destination is inside the target root.
+	if err := os.Rename(tmpName, dst); err != nil {
+		return fmt.Errorf("rename temporary file %s to %s: %w", tmpName, dst, err)
+	}
+	return nil
+}
+
+func efiRemovableLoaderName(arch string) (string, error) {
+	switch arch {
+	case "amd64":
+		return "BOOTX64.EFI", nil
+	case "arm64":
+		return "BOOTAA64.EFI", nil
+	default:
+		return "", fmt.Errorf("unsupported architecture for EFI fallback loader: %s", arch)
+	}
+}
+
+func grubEFITarget(arch string) (string, error) {
+	switch arch {
+	case "amd64":
+		return "x86_64-efi", nil
+	case "arm64":
+		return "arm64-efi", nil
+	default:
+		return "", fmt.Errorf("unsupported architecture for EFI fallback loader: %s", arch)
+	}
 }
 
 // CopyProvisionerFiles copies files from /deploy/file-system/ to the root.
@@ -370,8 +559,20 @@ func (c *Configurator) MountEFIVars(ctx context.Context) error {
 	return nil
 }
 
-// isMountPoint checks whether a path is already a mount point by reading /proc/mounts.
-func isMountPoint(path string) bool {
+func defaultEFIRuntimeReady() (ready bool, reason string) {
+	if _, err := os.Stat("/sys/firmware/efi"); os.IsNotExist(err) {
+		return false, "system not booted in EFI mode"
+	} else if err != nil {
+		return false, fmt.Sprintf("cannot stat /sys/firmware/efi: %v", err)
+	}
+	if !isMountPoint("/sys/firmware/efi/efivars") {
+		return false, "efivarfs not mounted"
+	}
+	return true, ""
+}
+
+// defaultIsMountPoint checks whether a path is already a mount point by reading /proc/mounts.
+func defaultIsMountPoint(path string) bool {
 	data, err := os.ReadFile("/proc/mounts")
 	if err != nil {
 		return false
@@ -419,18 +620,8 @@ func (c *Configurator) CreateEFIBootEntry(ctx context.Context, diskDev, bootPart
 		return nil
 	}
 
-	// efibootmgr communicates with EFI firmware NVRAM; on BIOS systems the
-	// sysfs EFI directory does not exist and the tool cannot function.
-	if _, err := os.Stat("/sys/firmware/efi"); os.IsNotExist(err) {
-		slog.Warn("system not booted in EFI mode, skipping EFI boot entry creation")
-		return nil
-	}
-
-	// efibootmgr requires efivarfs to read/write NVRAM variables.  When the
-	// kernel lacks CONFIG_EFIVAR_FS (common in minimal initramfs kernels),
-	// efivarfs cannot be mounted and the tool will fail.  Skip gracefully.
-	if !isMountPoint("/sys/firmware/efi/efivars") {
-		slog.Warn("efivarfs not mounted, skipping EFI boot entry creation (efibootmgr requires efivarfs)")
+	if ok, reason := efiRuntimeReady(); !ok {
+		slog.Warn("skipping EFI boot entry creation", "reason", reason)
 		return nil
 	}
 
@@ -474,6 +665,11 @@ func efiLoaderPath(rootDir, arch string) (string, error) {
 	}
 	shimPath := filepath.Join(rootDir, "boot", "efi", "EFI", "ubuntu", shimName)
 	grubPath := filepath.Join(rootDir, "boot", "efi", "EFI", "ubuntu", grubName)
+	removableName, removableErr := efiRemovableLoaderName(arch)
+	if removableErr != nil {
+		return "", removableErr
+	}
+	removablePath := filepath.Join(rootDir, "boot", "efi", "EFI", "BOOT", removableName)
 	_, err = os.Stat(shimPath)
 	if err == nil {
 		return `\EFI\ubuntu\` + shimName, nil
@@ -488,7 +684,14 @@ func efiLoaderPath(rootDir, arch string) (string, error) {
 	if !os.IsNotExist(err) {
 		return "", fmt.Errorf("stat grub %s: %w", grubPath, err)
 	}
-	return "", fmt.Errorf("no EFI loader found: checked %s and %s", shimPath, grubPath)
+	_, err = os.Stat(removablePath)
+	if err == nil {
+		return `\EFI\BOOT\` + removableName, nil
+	}
+	if !os.IsNotExist(err) {
+		return "", fmt.Errorf("stat removable EFI loader %s: %w", removablePath, err)
+	}
+	return "", fmt.Errorf("no EFI loader found: checked %s, %s and %s", shimPath, grubPath, removablePath)
 }
 
 // partNumberFromDevice extracts the partition number from a device path.
@@ -613,6 +816,13 @@ func copyFile(ctx context.Context, src, dst string) error {
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return fmt.Errorf("create dir for %s: %w", dst, err)
+	}
+	if existing, err := os.Lstat(dst); err == nil && existing.Mode()&os.ModeSymlink != 0 {
+		if err := os.Remove(dst); err != nil {
+			return fmt.Errorf("replace symlink dest %s: %w", dst, err)
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("stat dest %s: %w", dst, err)
 	}
 	in, err := os.Open(src)
 	if err != nil {

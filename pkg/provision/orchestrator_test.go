@@ -4,6 +4,7 @@ package provision
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -35,6 +36,134 @@ func newTestOrchestratorWithCommander(t *testing.T, cfg *config.MachineConfig, p
 	return o, cmd
 }
 
+func withProcCmdline(t *testing.T, cmdline string) {
+	t.Helper()
+	previous := readProcCmdline
+	readProcCmdline = func() ([]byte, error) {
+		return []byte(cmdline), nil
+	}
+	t.Cleanup(func() {
+		readProcCmdline = previous
+	})
+}
+
+func withABSlotStateMount(t *testing.T, slot string) {
+	t.Helper()
+	previous := mountReadOnlyPart
+	mountReadOnlyPart = func(_ context.Context, _ *disk.Manager, _ string, mountpoint string) error {
+		stateDir := filepath.Join(mountpoint, "etc", "booty")
+		if err := os.MkdirAll(stateDir, 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(stateDir, "ab-slot.env"), []byte("BOOTY_AB_BOOTED_SLOT="+slot+"\n"), 0o644)
+	}
+	t.Cleanup(func() {
+		mountReadOnlyPart = previous
+	})
+}
+
+func sfdiskJSON(t *testing.T, parts []disk.Partition) []byte {
+	t.Helper()
+	var out struct {
+		PartitionTable struct {
+			Partitions []disk.Partition `json:"partitions"`
+		} `json:"partitiontable"`
+	}
+	out.PartitionTable.Partitions = parts
+	data, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshal sfdisk json: %v", err)
+	}
+	return data
+}
+
+func hasCommandName(calls []mockCall, name string) bool {
+	for _, call := range calls {
+		if call.name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCommandCall(calls []mockCall, name string, args ...string) bool {
+	for _, call := range calls {
+		if call.name != name || len(call.args) != len(args) {
+			continue
+		}
+		match := true
+		for i := range args {
+			if call.args[i] != args[i] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
+func TestClassifyImageStreamErrorChecksumMismatchIsPermanent(t *testing.T) {
+	err := classifyImageStreamError("http://images.local/node.raw", errors.New("checksum mismatch: computed=bad want=good"))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !isPermanent(err) {
+		t.Fatalf("checksum mismatch should be permanent: %T %[1]v", err)
+	}
+	if !strings.Contains(err.Error(), "streaming http://images.local/node.raw") {
+		t.Fatalf("error should include image URL context, got %q", err.Error())
+	}
+}
+
+func TestClassifyImageStreamErrorNonChecksumRemainsRetryable(t *testing.T) {
+	err := classifyImageStreamError("http://images.local/node.raw", errors.New("connection reset by peer"))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if isPermanent(err) {
+		t.Fatalf("transient stream failure should not be permanent: %T %[1]v", err)
+	}
+}
+
+func TestClassifyImageStreamErrorRedactsSensitiveURLParts(t *testing.T) {
+	rawURL := "https://user:secret@images.local/node.raw?token=abc#frag"
+	cause := fmt.Errorf("fetching %s failed", rawURL)
+	err := classifyImageStreamError(rawURL, cause)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "token=abc") || strings.Contains(err.Error(), "#frag") {
+		t.Fatalf("error leaked sensitive URL parts: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "https://images.local/node.raw") {
+		t.Fatalf("error = %q, want redacted URL context", err.Error())
+	}
+	if !errors.Is(err, cause) {
+		t.Fatalf("error should preserve original cause: %v", err)
+	}
+}
+
+func TestClassifyImageStreamErrorRedactsSensitiveURLWithoutUserinfo(t *testing.T) {
+	rawURL := "https://images.local/node.raw?token=abc#frag"
+	cause := fmt.Errorf("fetching %s failed", rawURL)
+	err := classifyImageStreamError(rawURL, cause)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.Contains(err.Error(), "token=abc") || strings.Contains(err.Error(), "#frag") {
+		t.Fatalf("error leaked sensitive URL parts: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "https://images.local/node.raw") {
+		t.Fatalf("error = %q, want redacted URL context", err.Error())
+	}
+	if !errors.Is(err, cause) {
+		t.Fatalf("error should preserve original cause: %v", err)
+	}
+}
+
 func TestProvisionStepCount(t *testing.T) {
 	// Verify the pipeline has the expected number of steps.
 	cfg := &config.MachineConfig{}
@@ -43,8 +172,207 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 36 {
-		t.Fatalf("expected 36 provisioning steps, got %d", len(steps))
+	if len(steps) != 39 {
+		t.Fatalf("expected 39 provisioning steps, got %d", len(steps))
+	}
+}
+
+func TestMountBootStepIsBetweenRootMountAndBootloaderWork(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	steps := o.provisionSteps()
+
+	indices := map[string]int{}
+	for i, step := range steps {
+		indices[step.Name] = i
+	}
+	for _, name := range []string{"mount-root", "mount-boot", "configure-grub", "install-efi-fallback", "create-efi-boot-entry", "teardown-chroot"} {
+		if _, ok := indices[name]; !ok {
+			t.Fatalf("missing step %q", name)
+		}
+	}
+	if indices["mount-root"] >= indices["mount-boot"] ||
+		indices["mount-boot"] >= indices["configure-grub"] ||
+		indices["configure-grub"] >= indices["install-efi-fallback"] ||
+		indices["install-efi-fallback"] >= indices["create-efi-boot-entry"] ||
+		indices["create-efi-boot-entry"] >= indices["teardown-chroot"] {
+		t.Fatalf("unexpected boot mount ordering: %#v", indices)
+	}
+}
+
+func TestMountBootSkipsWhenNoBootPartition(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	if err := o.mountBoot(context.Background()); err != nil {
+		t.Fatalf("mountBoot without boot partition: %v", err)
+	}
+}
+
+func TestMountBootMountsWhenEFIRuntimeUnavailable(t *testing.T) {
+	oldRuntime := efiRuntimeReady
+	efiRuntimeReady = func() (bool, string) {
+		t.Fatal("mountBoot must not require EFI runtime; only boot-entry operations need efivarfs")
+		return false, "unit test"
+	}
+	t.Cleanup(func() { efiRuntimeReady = oldRuntime })
+	oldMountPoint := isMountPoint
+	isMountPoint = func(string) bool { return false }
+	t.Cleanup(func() { isMountPoint = oldMountPoint })
+	oldMountBootPart := mountBootPart
+	mounted := false
+	mountBootPart = func(_ context.Context, _ *disk.Manager, device, mountpoint string) error {
+		mounted = true
+		if device != "/dev/sda1" {
+			t.Fatalf("mounted device = %q, want /dev/sda1", device)
+		}
+		if mountpoint != bootEFIMountPoint() {
+			t.Fatalf("mountpoint = %q, want %q", mountpoint, bootEFIMountPoint())
+		}
+		return nil
+	}
+	t.Cleanup(func() { mountBootPart = oldMountBootPart })
+
+	cfg := &config.MachineConfig{}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.bootPartition = "/dev/sda1"
+
+	if err := o.mountBoot(context.Background()); err != nil {
+		t.Fatalf("mountBoot without EFI runtime: %v", err)
+	}
+	if !mounted {
+		t.Fatal("mountBoot did not mount the ESP")
+	}
+}
+
+func TestMountBootSkipsUnsupportedBootPartitionWhenEFIRuntimeUnavailable(t *testing.T) {
+	oldRuntime := efiRuntimeReady
+	efiRuntimeReady = func() (bool, string) { return false, "unit test" }
+	t.Cleanup(func() { efiRuntimeReady = oldRuntime })
+	oldMountPoint := isMountPoint
+	isMountPoint = func(string) bool { return false }
+	t.Cleanup(func() { isMountPoint = oldMountPoint })
+	oldMountBootPart := mountBootPart
+	mountBootPart = func(_ context.Context, _ *disk.Manager, _, _ string) error {
+		return errors.New("mounting /dev/sda1 at /newroot/boot/efi: tried ext4=invalid argument, vfat=invalid argument")
+	}
+	t.Cleanup(func() { mountBootPart = oldMountBootPart })
+
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	o.bootPartition = "/dev/sda1"
+
+	if err := o.mountBoot(context.Background()); err != nil {
+		t.Fatalf("mountBoot unsupported partition without EFI runtime: %v", err)
+	}
+}
+
+func TestMountBootFailsUnsupportedBootPartitionWhenEFIRuntimeReady(t *testing.T) {
+	oldRuntime := efiRuntimeReady
+	efiRuntimeReady = func() (bool, string) { return true, "" }
+	t.Cleanup(func() { efiRuntimeReady = oldRuntime })
+	oldMountPoint := isMountPoint
+	isMountPoint = func(string) bool { return false }
+	t.Cleanup(func() { isMountPoint = oldMountPoint })
+	oldMountBootPart := mountBootPart
+	mountBootPart = func(_ context.Context, _ *disk.Manager, _, _ string) error {
+		return errors.New("mounting /dev/sda1 at /newroot/boot/efi: tried ext4=invalid argument, vfat=invalid argument")
+	}
+	t.Cleanup(func() { mountBootPart = oldMountBootPart })
+
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	o.bootPartition = "/dev/sda1"
+
+	if err := o.mountBoot(context.Background()); err == nil {
+		t.Fatal("mountBoot succeeded with unsupported boot partition and EFI runtime")
+	}
+}
+
+func TestBootEFIMountPointUsesMountedRoot(t *testing.T) {
+	if got, want := bootEFIMountPoint(), filepath.Join(newroot, "boot", "efi"); got != want {
+		t.Fatalf("bootEFIMountPoint = %q, want %q", got, want)
+	}
+}
+
+func TestInstallEFIFallbackLoaderSkipsNonABMode(t *testing.T) {
+	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{}, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.bootPartition = "/dev/sda1"
+
+	if err := o.installEFIFallbackLoader(context.Background()); err != nil {
+		t.Fatalf("installEFIFallbackLoader non-A/B: %v", err)
+	}
+	if hasCommandName(cmd.calls, "chroot") {
+		t.Fatal("fallback installer ran for non-A/B mode")
+	}
+}
+
+func TestInstallEFIFallbackLoaderSkipsPreserveExistingAB(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.PreserveExisting = true
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.bootPartition = "/dev/sda1"
+
+	if err := o.installEFIFallbackLoader(context.Background()); err != nil {
+		t.Fatalf("installEFIFallbackLoader preserveExisting: %v", err)
+	}
+	if hasCommandName(cmd.calls, "chroot") {
+		t.Fatal("fallback installer ran for preserveExisting A/B mode")
+	}
+}
+
+func TestInstallEFIFallbackLoaderRequiresMountedESP(t *testing.T) {
+	oldMountPoint := isMountPoint
+	isMountPoint = func(string) bool { return false }
+	t.Cleanup(func() { isMountPoint = oldMountPoint })
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.bootPartition = "/dev/sda1"
+
+	err := o.installEFIFallbackLoader(context.Background())
+	if err == nil {
+		t.Fatal("installEFIFallbackLoader succeeded with unmounted ESP")
+	}
+	if !strings.Contains(err.Error(), "boot partition /dev/sda1 is not mounted") {
+		t.Fatalf("error = %v, want unmounted ESP message", err)
+	}
+}
+
+func TestInstallEFIFallbackLoaderRunsForInitialABMode(t *testing.T) {
+	oldMountPoint := isMountPoint
+	isMountPoint = func(path string) bool { return path == bootEFIMountPoint() }
+	t.Cleanup(func() { isMountPoint = oldMountPoint })
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.bootPartition = "/dev/sda1"
+
+	if err := o.installEFIFallbackLoader(context.Background()); err != nil {
+		t.Fatalf("installEFIFallbackLoader initial A/B: %v", err)
+	}
+	if !hasCommandName(cmd.calls, "chroot") {
+		t.Fatal("fallback installer did not run for initial A/B mode")
+	}
+}
+
+func TestCreateEFIBootEntrySkipsABMode(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.bootPartition = "/dev/sda1"
+
+	if err := o.createEFIBootEntry(context.Background()); err != nil {
+		t.Fatalf("createEFIBootEntry A/B: %v", err)
+	}
+	if hasCommandName(cmd.calls, "chroot") {
+		t.Fatalf("A/B createEFIBootEntry should not chroot, calls=%#v", cmd.calls)
 	}
 }
 
@@ -498,6 +826,7 @@ func TestLoadOrCreateCheckpoint(t *testing.T) {
 			cp := o.loadOrCreateCheckpoint()
 			if cp == nil {
 				t.Fatal("expected non-nil checkpoint")
+				return
 			}
 			if cp.persist != tc.wantPersist {
 				t.Errorf("persist = %v, want %v", cp.persist, tc.wantPersist)
@@ -585,6 +914,7 @@ func TestDryRunImageMode(t *testing.T) {
 		{"whole-disk", "whole-disk", DryRunPass},
 		{"partition", "partition", DryRunPass},
 		{"PARTITION caps", "PARTITION", DryRunPass},
+		{"ab", "ab", DryRunPass},
 		{"invalid", "invalid-mode", DryRunFail},
 	}
 	for _, tt := range tests {
@@ -598,6 +928,421 @@ func TestDryRunImageMode(t *testing.T) {
 				t.Errorf("dryRunImageMode(%q) status = %s, want %s", tt.mode, result.Status, tt.status)
 			}
 		})
+	}
+}
+
+func TestEnsureABPartitionLayoutTargetsInactiveSlot(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.ActiveSlot = config.ABSlotA
+	cfg.Provision.AB.TargetSlot = config.ABTargetInactive
+	cfg.Provision.AB.RootSizeMB = 8192
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+
+	if err := o.ensureABPartitionLayout(); err != nil {
+		t.Fatalf("ensureABPartitionLayout: %v", err)
+	}
+	layout := cfg.Provision.Disk.PartitionLayout
+	if layout == nil {
+		t.Fatal("expected partition layout")
+		return
+	}
+	if layout.Partitions[1].Mountpoint != "" {
+		t.Fatalf("slot A mountpoint = %q, want empty", layout.Partitions[1].Mountpoint)
+	}
+	if layout.Partitions[2].Mountpoint != "/" {
+		t.Fatalf("slot B mountpoint = %q, want /", layout.Partitions[2].Mountpoint)
+	}
+}
+
+func TestParsePartitionsEnsuresABLayoutOnResume(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.ActiveSlot = config.ABSlotA
+	cfg.Provision.AB.TargetSlot = config.ABTargetInactive
+	cfg.Provision.AB.RootSizeMB = 8192
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+
+	if err := o.parsePartitions(context.Background()); err != nil {
+		t.Fatalf("parsePartitions: %v", err)
+	}
+	if cfg.Provision.Disk.PartitionLayout == nil {
+		t.Fatal("expected generated A/B partition layout")
+	}
+	if o.bootPartition != "/dev/sda1" {
+		t.Fatalf("bootPartition = %q, want /dev/sda1", o.bootPartition)
+	}
+	if o.rootPartition != "/dev/sda3" {
+		t.Fatalf("rootPartition = %q, want inactive slot /dev/sda3", o.rootPartition)
+	}
+}
+
+func TestABStreamTargetsPreserveExistingSkipsSharedBoot(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.PreserveExisting = true
+	cfg.Provision.AB.SourceRootLabel = "rootfs"
+	cfg.Provision.AB.SourceRootPartition = 0
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.bootPartition = "/dev/sda1"
+	o.rootPartition = "/dev/sda3"
+
+	targets := o.abStreamTargets()
+	if targets.Disk != "/dev/sda" {
+		t.Fatalf("Disk = %q, want /dev/sda", targets.Disk)
+	}
+	if targets.RootPartition != "/dev/sda3" {
+		t.Fatalf("RootPartition = %q, want /dev/sda3", targets.RootPartition)
+	}
+	if targets.BootPartition != "" {
+		t.Fatalf("BootPartition = %q, want empty when preserving existing A/B boot assets", targets.BootPartition)
+	}
+	if targets.SourceRootLabel != "rootfs" {
+		t.Fatalf("SourceRootLabel = %q, want rootfs", targets.SourceRootLabel)
+	}
+}
+
+func TestShouldPreserveABBootEntries(t *testing.T) {
+	tests := []struct {
+		name     string
+		mode     string
+		preserve bool
+		want     bool
+	}{
+		{name: "A/B preserve existing", mode: config.ImageModeAB, preserve: true, want: true},
+		{name: "A/B fresh install", mode: config.ImageModeAB, preserve: false, want: false},
+		{name: "whole disk preserve flag ignored", mode: config.ImageModeWholeDisk, preserve: true, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.MachineConfig{}
+			cfg.Provision.Image.Mode = tt.mode
+			cfg.Provision.AB.PreserveExisting = tt.preserve
+			o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+			if got := o.shouldPreserveABBootEntries(); got != tt.want {
+				t.Fatalf("shouldPreserveABBootEntries() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWriteABSlotState(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.ActiveSlot = config.ABSlotB
+	cfg.Provision.AB.TargetSlot = config.ABTargetInactive
+	cfg.Provision.AB.PreserveExisting = true
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.rootPartition = "/dev/sda2"
+
+	if err := o.writeABSlotState(); err != nil {
+		t.Fatalf("writeABSlotState: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(o.config.rootDir, "etc", "booty", "ab-slot.env"))
+	if err != nil {
+		t.Fatalf("read ab-slot.env: %v", err)
+	}
+	content := string(data)
+	for _, want := range []string{
+		"BOOTY_AB_TARGET_SLOT=a",
+		"BOOTY_AB_BOOTED_SLOT=a",
+		"BOOTY_AB_ACTIVE_SLOT=b",
+		"BOOTY_AB_PRESERVE_EXISTING=true",
+		"BOOTY_AB_ROOT_PARTITION=/dev/sda2",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("ab-slot.env missing %q in:\n%s", want, content)
+		}
+	}
+}
+
+func TestReadABSlotStateFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ab-slot.env")
+	if err := os.WriteFile(path, []byte("BOOTY_AB_BOOTED_SLOT='b'\nBOOTY_AB_TARGET_SLOT=a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state, err := readABSlotStateFile(path)
+	if err != nil {
+		t.Fatalf("readABSlotStateFile: %v", err)
+	}
+	if state["BOOTY_AB_BOOTED_SLOT"] != "b" {
+		t.Fatalf("BOOTY_AB_BOOTED_SLOT = %q, want b", state["BOOTY_AB_BOOTED_SLOT"])
+	}
+}
+
+func TestDetectBootedABSlotFromCmdline(t *testing.T) {
+	oldEval := evalRootSymlinks
+	oldSysBlockRoot := sysBlockRoot
+	sysRoot := t.TempDir()
+	sysBlockRoot = sysRoot
+	evalRootSymlinks = func(path string) (string, error) {
+		switch path {
+		case "/dev/disk/by-uuid/root-a-uuid":
+			return "/dev/sda2", nil
+		case "/dev/disk/by-partuuid/root-b-partuuid":
+			return "/dev/sda3", nil
+		case "/dev/mapper/crypt-root-b":
+			return "/dev/dm-0", nil
+		default:
+			return "", os.ErrNotExist
+		}
+	}
+	t.Cleanup(func() {
+		evalRootSymlinks = oldEval
+		sysBlockRoot = oldSysBlockRoot
+	})
+	slavesDir := filepath.Join(sysRoot, "dm-0", "slaves")
+	if err := os.MkdirAll(slavesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(slavesDir, "sda3"), []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name     string
+		cmdline  string
+		disk     string
+		wantSlot string
+	}{
+		{name: "partlabel slot a", cmdline: "quiet root=PARTLABEL=BOOTY-ROOT-A", disk: "/dev/sda", wantSlot: config.ABSlotA},
+		{name: "by partlabel slot b", cmdline: "root=/dev/disk/by-partlabel/BOOTY-ROOT-B ro", disk: "/dev/sda", wantSlot: config.ABSlotB},
+		{name: "scsi partition slot a", cmdline: "root=/dev/sda2", disk: "/dev/sda", wantSlot: config.ABSlotA},
+		{name: "nvme partition slot b", cmdline: "root=/dev/nvme0n1p3", disk: "/dev/nvme0n1", wantSlot: config.ABSlotB},
+		{name: "uuid slot a", cmdline: "root=UUID=root-a-uuid", disk: "/dev/sda", wantSlot: config.ABSlotA},
+		{name: "partuuid slot b", cmdline: "root=PARTUUID=root-b-partuuid", disk: "/dev/sda", wantSlot: config.ABSlotB},
+		{name: "mapper slave slot b", cmdline: "root=/dev/mapper/crypt-root-b", disk: "/dev/sda", wantSlot: config.ABSlotB},
+		{name: "unknown root", cmdline: "root=UUID=abcd", disk: "/dev/sda", wantSlot: ""},
+		{name: "no root", cmdline: "console=ttyS0", disk: "/dev/sda", wantSlot: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withProcCmdline(t, tt.cmdline)
+			got, err := detectBootedABSlotFromCmdline(tt.disk)
+			if err != nil {
+				t.Fatalf("detectBootedABSlotFromCmdline: %v", err)
+			}
+			if got != tt.wantSlot {
+				t.Fatalf("detectBootedABSlotFromCmdline() = %q, want %q", got, tt.wantSlot)
+			}
+		})
+	}
+}
+
+func TestValidateABBootedSlotSignalAllowsProvisionerBootWithoutABRoot(t *testing.T) {
+	withProcCmdline(t, "console=ttyS0 root=LABEL=caas-deploy-image")
+
+	if err := validateABBootedSlotSignal("/dev/sda", config.ABSlotA); err != nil {
+		t.Fatalf("validateABBootedSlotSignal: %v", err)
+	}
+}
+
+func TestValidateABBootedSlotSignalRejectsMismatchedABRoot(t *testing.T) {
+	withProcCmdline(t, "console=ttyS0 root=PARTLABEL=BOOTY-ROOT-B")
+
+	err := validateABBootedSlotSignal("/dev/sda", config.ABSlotA)
+	if err == nil {
+		t.Fatal("expected stale active slot rejection")
+	}
+	if !strings.Contains(err.Error(), `kernel cmdline reports booted A/B slot "b", config declares active slot "a"`) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestABSlotPartitionDevice(t *testing.T) {
+	tests := []struct {
+		slot string
+		want string
+	}{
+		{slot: config.ABSlotA, want: "/dev/sda2"},
+		{slot: config.ABSlotB, want: "/dev/sda3"},
+	}
+	for _, tt := range tests {
+		got, err := abSlotPartitionDevice("/dev/sda", tt.slot)
+		if err != nil {
+			t.Fatalf("abSlotPartitionDevice(%q): %v", tt.slot, err)
+		}
+		if got != tt.want {
+			t.Fatalf("abSlotPartitionDevice(%q) = %q, want %q", tt.slot, got, tt.want)
+		}
+	}
+}
+
+func TestWriteABSlotStateRejectsSymlinkEscape(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(o.config.rootDir, "etc")); err != nil {
+		t.Fatal(err)
+	}
+
+	err := o.writeABSlotState()
+	if err == nil {
+		t.Fatal("expected symlink escape error")
+	}
+	if !strings.Contains(err.Error(), "target escapes provisioned root") {
+		t.Fatalf("error = %v, want target escape", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "booty", "ab-slot.env")); !os.IsNotExist(err) {
+		t.Fatalf("A/B slot state followed symlink into %s", outside)
+	}
+}
+
+func TestWipeOrSecureEraseDisksSkipsWholeDiskWipeForABPreserveExisting(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.PreserveExisting = true
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	if err := o.wipeOrSecureEraseDisks(context.Background()); err != nil {
+		t.Fatalf("wipeOrSecureEraseDisks: %v", err)
+	}
+	if len(cmd.calls) != 0 {
+		t.Fatalf("expected no wipe commands, got %#v", cmd.calls)
+	}
+}
+
+func TestABPreserveExistingValidatesExistingLayoutBeforeWipe(t *testing.T) {
+	withProcCmdline(t, "console=ttyS0 root=PARTLABEL=BOOTY-ROOT-A")
+	withABSlotStateMount(t, config.ABSlotA)
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.ActiveSlot = config.ABSlotA
+	cfg.Provision.AB.TargetSlot = config.ABTargetInactive
+	cfg.Provision.AB.PreserveExisting = true
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = filepath.Join(t.TempDir(), "disk")
+	activePartition := disk.PartitionDevicePath(o.targetDisk, 2)
+	if err := os.WriteFile(activePartition, nil, 0o644); err != nil {
+		t.Fatalf("create fake active partition: %v", err)
+	}
+	cmd.setResult("sfdisk --json", sfdiskJSON(t, []disk.Partition{
+		{Node: disk.PartitionDevicePath(o.targetDisk, 1), Type: disk.EFISystemPartitionGUID, Name: "BOOTY-EFI"},
+		{Node: activePartition, Type: disk.LinuxFilesystemGUID, Name: "BOOTY-ROOT-A"},
+		{Node: disk.PartitionDevicePath(o.targetDisk, 3), Type: disk.LinuxFilesystemGUID, Name: "BOOTY-ROOT-B"},
+		{Node: disk.PartitionDevicePath(o.targetDisk, 4), Type: disk.LinuxFilesystemGUID, Name: "BOOTY-STATE"},
+	}), nil)
+
+	if err := o.ensureABPartitionLayout(); err != nil {
+		t.Fatalf("ensureABPartitionLayout: %v", err)
+	}
+	if err := o.parsePartitionsFromLayout(context.Background()); err != nil {
+		t.Fatalf("parsePartitionsFromLayout: %v", err)
+	}
+	if err := o.validateABPreserveExistingLayout(context.Background()); err != nil {
+		t.Fatalf("validateABPreserveExistingLayout: %v", err)
+	}
+	if err := o.prepareABTargetSlot(context.Background()); err != nil {
+		t.Fatalf("prepareABTargetSlot: %v", err)
+	}
+	targetPartition := disk.PartitionDevicePath(o.targetDisk, 3)
+	if !hasCommandCall(cmd.calls, "wipefs", "-af", targetPartition) {
+		t.Fatalf("expected wipefs only on inactive root %s, calls: %#v", targetPartition, cmd.calls)
+	}
+}
+
+func TestABPreserveExistingRejectsMissingActiveSlotDeviceBeforeWipe(t *testing.T) {
+	withProcCmdline(t, "console=ttyS0 root=LABEL=caas-deploy-image")
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.ActiveSlot = config.ABSlotA
+	cfg.Provision.AB.TargetSlot = config.ABTargetInactive
+	cfg.Provision.AB.PreserveExisting = true
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = filepath.Join(t.TempDir(), "disk")
+	activePartition := disk.PartitionDevicePath(o.targetDisk, 2)
+	cmd.setResult("sfdisk --json", sfdiskJSON(t, []disk.Partition{
+		{Node: disk.PartitionDevicePath(o.targetDisk, 1), Type: disk.EFISystemPartitionGUID, Name: "BOOTY-EFI"},
+		{Node: activePartition, Type: disk.LinuxFilesystemGUID, Name: "BOOTY-ROOT-A"},
+		{Node: disk.PartitionDevicePath(o.targetDisk, 3), Type: disk.LinuxFilesystemGUID, Name: "BOOTY-ROOT-B"},
+		{Node: disk.PartitionDevicePath(o.targetDisk, 4), Type: disk.LinuxFilesystemGUID, Name: "BOOTY-STATE"},
+	}), nil)
+
+	if err := o.ensureABPartitionLayout(); err != nil {
+		t.Fatalf("ensureABPartitionLayout: %v", err)
+	}
+	if err := o.parsePartitionsFromLayout(context.Background()); err != nil {
+		t.Fatalf("parsePartitionsFromLayout: %v", err)
+	}
+	err := o.validateABPreserveExistingLayout(context.Background())
+	if err == nil {
+		t.Fatal("expected missing active slot device rejection")
+	}
+	if !strings.Contains(err.Error(), "active A/B partition device "+activePartition+" is not present") {
+		t.Fatalf("error = %v", err)
+	}
+	if hasCommandName(cmd.calls, "wipefs") {
+		t.Fatalf("missing active slot validation must fail before wipefs, calls: %#v", cmd.calls)
+	}
+}
+
+func TestABPreserveExistingRejectsStaleActiveSlotFromCmdline(t *testing.T) {
+	withProcCmdline(t, "console=ttyS0 root=PARTLABEL=BOOTY-ROOT-B")
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.ActiveSlot = config.ABSlotA
+	cfg.Provision.AB.TargetSlot = config.ABTargetInactive
+	cfg.Provision.AB.PreserveExisting = true
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	cmd.setResult("sfdisk --json", sfdiskJSON(t, []disk.Partition{
+		{Node: "/dev/sda1", Type: disk.EFISystemPartitionGUID, Name: "BOOTY-EFI"},
+		{Node: "/dev/sda2", Type: disk.LinuxFilesystemGUID, Name: "BOOTY-ROOT-A"},
+		{Node: "/dev/sda3", Type: disk.LinuxFilesystemGUID, Name: "BOOTY-ROOT-B"},
+		{Node: "/dev/sda4", Type: disk.LinuxFilesystemGUID, Name: "BOOTY-STATE"},
+	}), nil)
+
+	if err := o.ensureABPartitionLayout(); err != nil {
+		t.Fatalf("ensureABPartitionLayout: %v", err)
+	}
+	if err := o.parsePartitionsFromLayout(context.Background()); err != nil {
+		t.Fatalf("parsePartitionsFromLayout: %v", err)
+	}
+	err := o.validateABPreserveExistingLayout(context.Background())
+	if err == nil {
+		t.Fatal("expected stale active slot rejection")
+	}
+	if !strings.Contains(err.Error(), `kernel cmdline reports booted A/B slot "b", config declares active slot "a"`) {
+		t.Fatalf("error = %v", err)
+	}
+	if hasCommandName(cmd.calls, "wipefs") {
+		t.Fatalf("stale active slot validation must fail before wipefs, calls: %#v", cmd.calls)
+	}
+}
+
+func TestABPreserveExistingRejectsUnexpectedLayoutBeforeWipe(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.ActiveSlot = config.ABSlotA
+	cfg.Provision.AB.TargetSlot = config.ABTargetInactive
+	cfg.Provision.AB.PreserveExisting = true
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	cmd.setResult("sfdisk --json", sfdiskJSON(t, []disk.Partition{
+		{Node: "/dev/sda1", Type: disk.EFISystemPartitionGUID, Name: "SYSTEM"},
+		{Node: "/dev/sda2", Type: disk.LinuxFilesystemGUID, Name: "BOOTY-ROOT-B"},
+		{Node: "/dev/sda3", Type: disk.LinuxFilesystemGUID, Name: "BOOTY-ROOT-A"},
+		{Node: "/dev/sda4", Type: disk.LinuxFilesystemGUID, Name: "BOOTY-STATE"},
+	}), nil)
+
+	err := o.streamABImage(context.Background(), "http://image.example/os.raw", nil)
+	if err == nil {
+		t.Fatal("expected unexpected preserved A/B layout to fail")
+	}
+	if !strings.Contains(err.Error(), `existing A/B partition 1 label = "SYSTEM", want "BOOTY-EFI"`) {
+		t.Fatalf("error = %v", err)
+	}
+	if hasCommandName(cmd.calls, "wipefs") {
+		t.Fatalf("preserve layout validation must fail before wipefs, calls: %#v", cmd.calls)
 	}
 }
 
@@ -826,6 +1571,26 @@ func TestResizeFilesystemSkippedForPartitionLayout(t *testing.T) {
 	}
 	if len(cmd.calls) != 0 {
 		t.Fatalf("expected no commands when resize-filesystem is skipped, got %d", len(cmd.calls))
+	}
+}
+
+func TestResizeFilesystemRunsForABPartitionLayout(t *testing.T) {
+	cmd := newMockCommander()
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{Table: "gpt", Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}}}
+	o := NewOrchestrator(
+		cfg,
+		&mockProvider{},
+		disk.NewManager(cmd),
+	)
+	o.rootPartition = "/dev/sda3"
+
+	if err := o.resizeFilesystem(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cmd.calls) != 1 || cmd.calls[0].name != "resize2fs" || strings.Join(cmd.calls[0].args, " ") != "/dev/sda3" {
+		t.Fatalf("expected resize2fs /dev/sda3 when resizing A/B root slot, got %#v", cmd.calls)
 	}
 }
 
@@ -1114,5 +1879,16 @@ func TestTeardownChrootReturnsJoinedErrors(t *testing.T) {
 	err := o.teardownChroot(context.Background())
 	if err == nil {
 		t.Fatal("expected error from teardownChroot when unmount fails on non-root host")
+	}
+}
+
+func TestTeardownChrootKeepsABPreserveExistingMountedForKexec(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.PreserveExisting = true
+	o, _ := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	if err := o.teardownChroot(context.Background()); err != nil {
+		t.Fatalf("teardownChroot should keep /newroot mounted for preserve-existing kexec: %v", err)
 	}
 }

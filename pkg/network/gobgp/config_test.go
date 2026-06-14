@@ -4,6 +4,7 @@ package gobgp
 
 import (
 	"context"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +45,33 @@ func TestNewConfig(t *testing.T) {
 					t.Errorf("MTU = %d, want 9000 (default)", cfg.MTU)
 				}
 			},
+		},
+		{
+			name: "explicit_vpn_rt",
+			netCfg: &network.Config{
+				UnderlayIP:   "192.168.4.10",
+				ASN:          65100,
+				ProvisionVNI: 1000,
+				VPNRT:        "65000:1000",
+				BGPPeerMode:  network.PeerModeUnnumbered,
+			},
+			check: func(t *testing.T, cfg *Config) {
+				t.Helper()
+				if cfg.VPNRT != "65000:1000" {
+					t.Errorf("VPNRT = %q, want 65000:1000", cfg.VPNRT)
+				}
+			},
+		},
+		{
+			name: "invalid_vpn_rt",
+			netCfg: &network.Config{
+				UnderlayIP:   "192.168.4.10",
+				ASN:          65100,
+				ProvisionVNI: 1000,
+				VPNRT:        "65000",
+				BGPPeerMode:  network.PeerModeUnnumbered,
+			},
+			wantErr: true,
 		},
 		{
 			name: "dual_with_neighbors",
@@ -218,6 +246,9 @@ func TestApplyDefaults(t *testing.T) {
 	if cfg.VRFTableID != 1000 {
 		t.Errorf("VRFTableID = %d, want 1000", cfg.VRFTableID)
 	}
+	if cfg.OverlayVRFTableID != 1000 {
+		t.Errorf("OverlayVRFTableID = %d, want 1000", cfg.OverlayVRFTableID)
+	}
 }
 
 func TestApplyDefaultsVRFTableIDOneOverridden(t *testing.T) {
@@ -226,6 +257,9 @@ func TestApplyDefaultsVRFTableIDOneOverridden(t *testing.T) {
 
 	if cfg.VRFTableID != 1000 {
 		t.Errorf("VRFTableID = %d, want 1000 (table 1 conflicts with default)", cfg.VRFTableID)
+	}
+	if cfg.OverlayVRFTableID != 1000 {
+		t.Errorf("OverlayVRFTableID = %d, want 1000", cfg.OverlayVRFTableID)
 	}
 }
 
@@ -237,6 +271,7 @@ func TestApplyDefaultsPreservesValues(t *testing.T) {
 		BridgeName:        "custom-br",
 		MTU:               1500,
 		VRFTableID:        42,
+		OverlayVRFTableID: 43,
 	}
 	cfg.ApplyDefaults()
 
@@ -257,6 +292,84 @@ func TestApplyDefaultsPreservesValues(t *testing.T) {
 	}
 	if cfg.VRFTableID != 42 {
 		t.Errorf("VRFTableID = %d, want 42", cfg.VRFTableID)
+	}
+	if cfg.OverlayVRFTableID != 43 {
+		t.Errorf("OverlayVRFTableID = %d, want 43", cfg.OverlayVRFTableID)
+	}
+}
+
+func TestApplyDefaultsOverlayVRFTableIDOneUsesUnderlayTable(t *testing.T) {
+	cfg := &Config{VRFTableID: 42, OverlayVRFTableID: 1}
+	cfg.ApplyDefaults()
+
+	if cfg.OverlayVRFTableID != 42 {
+		t.Errorf("OverlayVRFTableID = %d, want 42", cfg.OverlayVRFTableID)
+	}
+}
+
+func TestNewConfigDefaultsOverlayVRFToUnderlayVRF(t *testing.T) {
+	cfg, err := NewConfig(&network.Config{
+		ASN:              65000,
+		UnderlayIP:       "192.168.4.10",
+		ProvisionVNI:     1000,
+		ProvisionIP:      "10.200.0.10/24",
+		ProvisionGateway: "192.168.4.1",
+		VRFName:          "Vrf_underlay",
+		BGPPeerMode:      network.PeerModeUnnumbered,
+	})
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	if cfg.OverlayVRFName != "Vrf_underlay" {
+		t.Errorf("OverlayVRFName = %q, want Vrf_underlay", cfg.OverlayVRFName)
+	}
+	if cfg.OverlayVRFTableID != cfg.VRFTableID {
+		t.Errorf("OverlayVRFTableID = %d, want underlay table %d", cfg.OverlayVRFTableID, cfg.VRFTableID)
+	}
+}
+
+func TestNewConfigHonorsExplicitDefaultOverlayVRF(t *testing.T) {
+	cfg, err := NewConfig(&network.Config{
+		ASN:              65000,
+		UnderlayIP:       "192.168.4.10",
+		ProvisionVNI:     1000,
+		ProvisionIP:      "10.200.0.10/24",
+		ProvisionGateway: "192.168.4.1",
+		VRFName:          "Vrf_underlay",
+		OverlayVRFSet:    true,
+		OverlayVRFName:   "",
+		BGPPeerMode:      network.PeerModeUnnumbered,
+	})
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	if cfg.OverlayVRFName != "" {
+		t.Errorf("OverlayVRFName = %q, want empty default VRF", cfg.OverlayVRFName)
+	}
+}
+
+func TestNewConfigHonorsOverlayVRFTableID(t *testing.T) {
+	cfg, err := NewConfig(&network.Config{
+		ASN:               65000,
+		UnderlayIP:        "192.168.4.10",
+		ProvisionVNI:      1000,
+		ProvisionIP:       "10.200.0.10/24",
+		ProvisionGateway:  "192.168.4.1",
+		VRFName:           "Vrf_underlay",
+		VRFTableID:        10,
+		OverlayVRFSet:     true,
+		OverlayVRFName:    "Vrf_overlay",
+		OverlayVRFTableID: 20,
+		BGPPeerMode:       network.PeerModeUnnumbered,
+	})
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	if cfg.VRFTableID != 10 {
+		t.Errorf("VRFTableID = %d, want 10", cfg.VRFTableID)
+	}
+	if cfg.OverlayVRFTableID != 20 {
+		t.Errorf("OverlayVRFTableID = %d, want 20", cfg.OverlayVRFTableID)
 	}
 }
 
@@ -543,6 +656,23 @@ func TestNewConfigMapsMinEstablishedPeers(t *testing.T) {
 	}
 }
 
+func TestNewConfigMapsBGPInterfaces(t *testing.T) {
+	netCfg := &network.Config{
+		UnderlayIP:    "10.0.0.1",
+		ASN:           65000,
+		ProvisionVNI:  4000,
+		BGPPeerMode:   network.PeerModeUnnumbered,
+		BGPInterfaces: "eth1, eth2",
+	}
+	cfg, err := NewConfig(netCfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := strings.Join(cfg.Interfaces, ","); got != "eth1,eth2" {
+		t.Errorf("Interfaces = %q, want eth1,eth2", got)
+	}
+}
+
 func TestNewConfigDefaultsMinEstablishedPeersToOne(t *testing.T) {
 	netCfg := &network.Config{
 		UnderlayIP:   "10.0.0.1",
@@ -674,4 +804,40 @@ func TestUnderlayTierReady(t *testing.T) {
 			t.Fatal("Ready() = nil, want timeout error when count < min")
 		}
 	})
+}
+
+func TestFirstReachableBGPPeer(t *testing.T) {
+	var listenConfig net.ListenConfig
+	ln, err := listenConfig.Listen(context.Background(), "tcp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 loopback listener unavailable: %v", err)
+	}
+	defer ln.Close() //nolint:errcheck // test cleanup
+
+	accepted := make(chan struct{})
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		_ = conn.Close()
+		close(accepted)
+	}()
+
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("split listener address: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	got := firstReachableBGPPeerOnPort(ctx, []string{"2001:db8::1", "::1"}, port)
+	if got != "::1" {
+		t.Fatalf("firstReachableBGPPeer() = %q, want ::1", got)
+	}
+
+	select {
+	case <-accepted:
+	case <-time.After(time.Second):
+		t.Fatal("listener did not observe BGP probe")
+	}
 }

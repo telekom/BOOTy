@@ -82,6 +82,37 @@ func TestParseStandardCommunity(t *testing.T) {
 	}
 }
 
+func TestParseRouteTarget(t *testing.T) {
+	tests := []struct {
+		input string
+		asn   uint32
+		val   uint32
+		err   bool
+	}{
+		{"65000:1000", 65000, 1000, false},
+		{"RT:65000:1000", 65000, 1000, false},
+		{" RT:4200000001:65535 ", 4200000001, 65535, false},
+		{"bad", 0, 0, true},
+		{"RT:65000", 0, 0, true},
+		{"RT:abc:1000", 0, 0, true},
+		{"RT:65000:abc", 0, 0, true},
+		{"RT:9999999999:1000", 0, 0, true},
+		{"RT:4200000001:65536", 0, 0, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			asn, val, err := ParseRouteTarget(tc.input)
+			if (err != nil) != tc.err {
+				t.Errorf("ParseRouteTarget(%q) err = %v, wantErr %v", tc.input, err, tc.err)
+				return
+			}
+			if !tc.err && (asn != tc.asn || val != tc.val) {
+				t.Errorf("ParseRouteTarget(%q) = (%d, %d), want (%d, %d)", tc.input, asn, val, tc.asn, tc.val)
+			}
+		})
+	}
+}
+
 func TestValidateCommunities(t *testing.T) {
 	tests := []struct {
 		name string

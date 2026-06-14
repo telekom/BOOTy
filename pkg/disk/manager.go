@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -70,6 +71,7 @@ type sfdiskOutput struct {
 const (
 	EFISystemPartitionGUID = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
 	LinuxFilesystemGUID    = "0FC63DAF-8483-4772-8E79-3D69D8477DE4"
+	LinuxFilesystemMBRType = "83"
 )
 
 // StopRAIDArrays stops all RAID arrays via mdadm.
@@ -109,6 +111,20 @@ func (m *Manager) WipeDisk(ctx context.Context, device string) error {
 	if out, err := m.cmd.Run(ctx, "sgdisk", "--zap-all", device); err != nil {
 		slog.Debug("sgdisk zap failed (may not be GPT)", "device", device, "output", string(out), "err", err)
 	}
+	if _, err := m.cmd.Run(ctx, "wipefs", "-af", device); err != nil {
+		return fmt.Errorf("wipefs %s: %w", device, err)
+	}
+	return nil
+}
+
+// WipeFilesystemSignatures clears filesystem signatures on an existing
+// partition without touching the parent disk partition table.
+func (m *Manager) WipeFilesystemSignatures(ctx context.Context, device string) error {
+	device = strings.TrimSpace(device)
+	if device == "" {
+		return fmt.Errorf("wipe filesystem signatures: device is required")
+	}
+	slog.Info("wiping filesystem signatures", "device", device)
 	if _, err := m.cmd.Run(ctx, "wipefs", "-af", device); err != nil {
 		return fmt.Errorf("wipefs %s: %w", device, err)
 	}
@@ -352,6 +368,119 @@ func (m *Manager) DetectDisk(_ context.Context, minSizeGB int) (string, error) {
 	return best.path, nil
 }
 
+// FindDiskBySerial finds a non-virtual target disk whose serial or stable
+// identifier exactly matches serial. Removable media are rejected unless
+// BOOTY_ALLOW_REMOVABLE=true.
+func (m *Manager) FindDiskBySerial(ctx context.Context, serial string, minSizeGB int) (string, error) {
+	serial = strings.TrimSpace(serial)
+	if serial == "" {
+		return "", fmt.Errorf("disk serial is required")
+	}
+	slog.Info("detecting target disk by serial", "serial", serial, "minSizeGB", minSizeGB)
+
+	allowRemovable := os.Getenv("BOOTY_ALLOW_REMOVABLE") == "true"
+	matches, observed, err := m.findDiskBySerialWithSysfs(serial, minSizeGB, allowRemovable)
+	if err != nil {
+		return "", err
+	}
+	if len(matches) == 0 {
+		lsblkMatches, lsblkObserved, err := m.findDiskBySerialWithLSBLK(ctx, serial, minSizeGB, allowRemovable)
+		if err != nil {
+			slog.Warn("lsblk serial lookup failed", "serial", serial, "err", err)
+		}
+		matches = append(matches, lsblkMatches...)
+		observed = append(observed, lsblkObserved...)
+	}
+
+	switch len(matches) {
+	case 0:
+		if len(observed) > 0 {
+			return "", fmt.Errorf("no suitable disk found with serial %q (observed: %s)", serial, strings.Join(observed, ", "))
+		}
+		return "", fmt.Errorf("no suitable disk found with serial %q", serial)
+	case 1:
+		slog.Info("selected disk by serial", "device", matches[0], "serial", serial)
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("multiple disks found with serial %q: %s", serial, strings.Join(matches, ", "))
+	}
+}
+
+func (m *Manager) findDiskBySerialWithSysfs(serial string, minSizeGB int, allowRemovable bool) (matches, observed []string, err error) {
+	blockDir := m.sysfsRoot + "/block"
+	entries, err := os.ReadDir(blockDir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading %s: %w", blockDir, err)
+	}
+
+	for _, entry := range entries {
+		name := entry.Name()
+		if isVirtualDisk(name) {
+			continue
+		}
+		if !allowRemovable && m.isRemovableMedia(name) {
+			slog.Warn("skipping removable media device", "device", "/dev/"+name)
+			continue
+		}
+		deviceSerial, err := m.readDiskSerial(name)
+		if err != nil || !diskSerialMatches(deviceSerial, serial) {
+			if deviceSerial != "" {
+				observed = append(observed, "/dev/"+name+"="+deviceSerial)
+			}
+			continue
+		}
+		sizeGB, err := m.readDiskSizeGB(name)
+		if err != nil {
+			return nil, observed, fmt.Errorf("read size for disk with serial %q at /dev/%s: %w", serial, name, err)
+		}
+		if minSizeGB > 0 && sizeGB < minSizeGB {
+			return nil, observed, fmt.Errorf("disk with serial %q at /dev/%s is %d GB, below minimum %d GB", serial, name, sizeGB, minSizeGB)
+		}
+		matches = append(matches, "/dev/"+name)
+	}
+	return matches, observed, nil
+}
+
+func (m *Manager) findDiskBySerialWithLSBLK(ctx context.Context, serial string, minSizeGB int, allowRemovable bool) (matches, observed []string, err error) {
+	out, err := m.cmd.Run(ctx, "lsblk", "--nodeps", "--noheadings", "--paths", "--output", "NAME,SERIAL")
+	if err != nil {
+		return nil, nil, fmt.Errorf("lsblk NAME,SERIAL: %s: %w", string(out), err)
+	}
+
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 2 {
+			continue
+		}
+		path := fields[0]
+		deviceSerial := strings.Join(fields[1:], " ")
+		if deviceSerial == "" {
+			continue
+		}
+		observed = append(observed, path+"="+deviceSerial)
+		if !diskSerialMatches(deviceSerial, serial) {
+			continue
+		}
+		name := filepath.Base(path)
+		if isVirtualDisk(name) {
+			continue
+		}
+		if !allowRemovable && m.isRemovableMedia(name) {
+			slog.Warn("skipping removable media device", "device", path)
+			continue
+		}
+		sizeGB, err := m.readDiskSizeGB(name)
+		if err != nil {
+			return nil, observed, fmt.Errorf("read size for disk with serial %q at %s: %w", serial, path, err)
+		}
+		if minSizeGB > 0 && sizeGB < minSizeGB {
+			return nil, observed, fmt.Errorf("disk with serial %q at %s is %d GB, below minimum %d GB", serial, path, sizeGB, minSizeGB)
+		}
+		matches = append(matches, path)
+	}
+	return matches, observed, nil
+}
+
 // isRemovableMedia reports whether the block device is removable (USB, SD card).
 // Fails closed: if the sysfs attribute cannot be read, the device is treated as
 // removable to err on the side of caution.
@@ -388,6 +517,87 @@ func (m *Manager) readDiskSizeGB(name string) (int, error) {
 		return 0, fmt.Errorf("parse disk size %s: %w", name, err)
 	}
 	return int(sectors * 512 / (1024 * 1024 * 1024)), nil
+}
+
+func diskSerialMatches(candidate, target string) bool {
+	candidate = strings.TrimSpace(candidate)
+	target = strings.TrimSpace(target)
+	return candidate != "" && target != "" && candidate == target
+}
+
+// readDiskSerial reads a block device serial number or stable identifier from
+// common sysfs locations. Some virtual SCSI devices expose the stable identifier
+// only through WWID/VPD attributes, so callers compare the normalized value from
+// each source against the requested identifier.
+func (m *Manager) readDiskSerial(name string) (string, error) {
+	sources := []struct {
+		path string
+		vpd  bool
+	}{
+		{path: filepath.Join(m.sysfsRoot, "block", name, "device", "serial")},
+		{path: filepath.Join(m.sysfsRoot, "block", name, "serial")},
+		{path: filepath.Join(m.sysfsRoot, "block", name, "device", "wwid")},
+		{path: filepath.Join(m.sysfsRoot, "block", name, "device", "vpd_pg80"), vpd: true},
+		{path: filepath.Join(m.sysfsRoot, "block", name, "device", "vpd_pg83"), vpd: true},
+	}
+	for _, source := range sources {
+		data, err := os.ReadFile(source.path) //nolint:gosec // path is constrained to test or sysfs root
+		if err == nil {
+			serial := printableIdentifier(data)
+			if source.vpd {
+				serial = printableSCSIVPDIdentifier(data)
+			}
+			if serial != "" {
+				return serial, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("serial not found for %s", name)
+}
+
+func printableSCSIVPDIdentifier(data []byte) string {
+	if len(data) < 4 {
+		return printableIdentifier(data)
+	}
+
+	pageCode := data[1]
+	pageLength := int(binary.BigEndian.Uint16(data[2:4]))
+	if pageLength <= 0 || pageLength > len(data)-4 {
+		return printableIdentifier(data)
+	}
+
+	body := data[4 : 4+pageLength]
+	switch pageCode {
+	case 0x80:
+		return printableIdentifier(body)
+	case 0x83:
+		for len(body) >= 4 {
+			codeSet := body[0] & 0x0f
+			identifierLength := int(body[3])
+			if identifierLength <= 0 || identifierLength > len(body)-4 {
+				break
+			}
+			identifier := body[4 : 4+identifierLength]
+			if codeSet == 2 || codeSet == 3 {
+				if value := printableIdentifier(identifier); value != "" {
+					return value
+				}
+			}
+			body = body[4+identifierLength:]
+		}
+	}
+
+	return printableIdentifier(data)
+}
+
+func printableIdentifier(data []byte) string {
+	value := strings.Map(func(r rune) rune {
+		if r < 32 || r == 127 {
+			return -1
+		}
+		return r
+	}, string(data))
+	return strings.TrimSpace(value)
 }
 
 // ParsePartitions reads the partition table using sfdisk --json.
@@ -441,13 +651,13 @@ func (m *Manager) FindBootPartition(parts []Partition) (*Partition, error) {
 }
 
 // FindRootPartition finds the primary Linux filesystem partition.
-// When multiple partitions share the LinuxFilesystemGUID, it prefers one
-// with a "root" or "/" GPT name, otherwise returns the last match (root
-// is typically after /boot in the partition table).
+// When multiple partitions share a Linux filesystem type, it prefers one with
+// a "root" or "/" partition name, otherwise returns the last match (root is
+// typically after /boot in the partition table).
 func (m *Manager) FindRootPartition(parts []Partition) (*Partition, error) {
 	var last *Partition
 	for i := range parts {
-		if !strings.EqualFold(parts[i].Type, LinuxFilesystemGUID) {
+		if !isLinuxFilesystemPartitionType(parts[i].Type) {
 			continue
 		}
 		lower := strings.ToLower(parts[i].Name)
@@ -460,6 +670,11 @@ func (m *Manager) FindRootPartition(parts []Partition) (*Partition, error) {
 		return last, nil
 	}
 	return nil, fmt.Errorf("no Linux filesystem partition found")
+}
+
+func isLinuxFilesystemPartitionType(partitionType string) bool {
+	return strings.EqualFold(partitionType, LinuxFilesystemGUID) ||
+		strings.EqualFold(partitionType, LinuxFilesystemMBRType)
 }
 
 // GrowPartition grows a partition to fill available space using growpart.
@@ -792,9 +1007,9 @@ func (m *Manager) ChrootRun(ctx context.Context, root, command string) ([]byte, 
 			slog.Info("chroot binary not found, using syscall fallback", "root", root)
 			return m.chrootSyscall(ctx, root, command)
 		}
-		// If /bin/bash is missing inside the chroot target, try /bin/sh.
+		// If /bin/bash is missing or unusable inside the chroot target, try /bin/sh.
 		if isBashNotFound(err) {
-			slog.Info("bash not found in chroot, trying /bin/sh", "root", root)
+			slog.Info("bash unavailable in chroot, trying /bin/sh", "root", root)
 			return m.cmd.Run(ctx, "chroot", root, "/bin/sh", "-c", command)
 		}
 		return out, fmt.Errorf("chroot exec in %s: %w", root, err)
@@ -833,12 +1048,14 @@ func isExecNotFound(err error) bool {
 		strings.Contains(msg, "command not found")
 }
 
-// isBashNotFound checks whether the error indicates /bin/bash was not found
-// inside a chroot target (exit status 127 with "No such file or directory").
+// isBashNotFound checks whether /bin/bash is unavailable inside a chroot target.
 func isBashNotFound(err error) bool {
 	msg := err.Error()
-	return strings.Contains(msg, "exit status 127") &&
-		strings.Contains(msg, "No such file or directory")
+	if !strings.Contains(msg, "exit status 127") {
+		return false
+	}
+	return strings.Contains(msg, "No such file or directory") ||
+		strings.Contains(msg, "bash: applet not found")
 }
 
 // SetupChrootBindMounts creates standard bind mounts for chroot operations.

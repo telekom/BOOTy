@@ -31,7 +31,7 @@ RUN apt-get update && \
         virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
         virtio_pci virtio_net failover net_failover \
         scsi_mod sd_mod virtio_blk virtio_scsi \
-        ext4 jbd2 mbcache crc32c_generic xfs btrfs vfat \
+        ext4 jbd2 mbcache crc32c_generic xfs btrfs fat vfat nls_cp437 nls_iso8859-1 \
         dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc \
         e1000e igb igc ixgbe i40e ice iavf \
         tg3 bnxt_en \
