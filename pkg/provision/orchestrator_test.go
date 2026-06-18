@@ -172,12 +172,12 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 39 {
-		t.Fatalf("expected 39 provisioning steps, got %d", len(steps))
+	if len(steps) != 40 {
+		t.Fatalf("expected 40 provisioning steps, got %d", len(steps))
 	}
 }
 
-func TestMountBootStepIsBetweenRootMountAndBootloaderWork(t *testing.T) {
+func TestMountBootAndSharedDataStepsPrecedeProvisioningWrites(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 	steps := o.provisionSteps()
@@ -186,17 +186,100 @@ func TestMountBootStepIsBetweenRootMountAndBootloaderWork(t *testing.T) {
 	for i, step := range steps {
 		indices[step.Name] = i
 	}
-	for _, name := range []string{"mount-root", "mount-boot", "configure-grub", "install-efi-fallback", "create-efi-boot-entry", "teardown-chroot"} {
+	for _, name := range []string{"mount-root", "mount-boot", "mount-shared-data", "copy-provisioner-files", "apply-sysexts", "configure-grub", "install-efi-fallback", "create-efi-boot-entry", "teardown-chroot"} {
 		if _, ok := indices[name]; !ok {
 			t.Fatalf("missing step %q", name)
 		}
 	}
 	if indices["mount-root"] >= indices["mount-boot"] ||
-		indices["mount-boot"] >= indices["configure-grub"] ||
+		indices["mount-boot"] >= indices["mount-shared-data"] ||
+		indices["mount-shared-data"] >= indices["copy-provisioner-files"] ||
+		indices["mount-shared-data"] >= indices["apply-sysexts"] ||
+		indices["apply-sysexts"] >= indices["configure-grub"] ||
 		indices["configure-grub"] >= indices["install-efi-fallback"] ||
 		indices["install-efi-fallback"] >= indices["create-efi-boot-entry"] ||
 		indices["create-efi-boot-entry"] >= indices["teardown-chroot"] {
 		t.Fatalf("unexpected boot mount ordering: %#v", indices)
+	}
+}
+
+func TestMountSharedDataMountsSystemABDataPartitions(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.Scheme = config.ABSchemeSystemAB
+	cfg.Provision.AB.PreserveExisting = true
+	cfg.Provision.AB.DataPartitions = []config.ABDataPartition{
+		{Label: "BOOTY-VAR", Mountpoint: "/var", SizeMB: 1024},
+		{Label: "BOOTY-HOME", Mountpoint: "/home"},
+	}
+	layout, err := cfg.Provision.AB.PartitionLayout("/dev/sda")
+	if err != nil {
+		t.Fatalf("PartitionLayout: %v", err)
+	}
+	cfg.Provision.Disk.PartitionLayout = layout
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+
+	oldMountPoint := isMountPoint
+	isMountPoint = func(string) bool { return false }
+	t.Cleanup(func() { isMountPoint = oldMountPoint })
+
+	oldMountShared := mountSharedDataPart
+	var mounted []string
+	mountSharedDataPart = func(_ context.Context, _ *disk.Manager, device, mountpoint string) error {
+		mounted = append(mounted, device+"="+mountpoint)
+		return nil
+	}
+	t.Cleanup(func() { mountSharedDataPart = oldMountShared })
+
+	if err := o.mountSharedData(context.Background()); err != nil {
+		t.Fatalf("mountSharedData: %v", err)
+	}
+	want := []string{"/dev/sda4=/newroot/var", "/dev/sda5=/newroot/home"}
+	if strings.Join(mounted, ",") != strings.Join(want, ",") {
+		t.Fatalf("mounted = %#v, want %#v", mounted, want)
+	}
+}
+
+func TestSharedDataSeedCopyPreservesSymlinksAndIgnoresLostFound(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dst, "lost+found"), 0o700); err != nil {
+		t.Fatalf("create lost+found: %v", err)
+	}
+	empty, err := directoryEmptyForSeed(dst)
+	if err != nil {
+		t.Fatalf("directoryEmptyForSeed: %v", err)
+	}
+	if !empty {
+		t.Fatal("lost+found-only seed target should be considered empty")
+	}
+	if err := os.MkdirAll(filepath.Join(src, "lib"), 0o755); err != nil {
+		t.Fatalf("create source directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "lib", "state"), []byte("kept"), 0o644); err != nil {
+		t.Fatalf("write source file: %v", err)
+	}
+	if err := os.Symlink("../lib/state", filepath.Join(src, "state-link")); err != nil {
+		t.Fatalf("create source symlink: %v", err)
+	}
+
+	if err := copyTreeWithSymlinks(context.Background(), src, dst); err != nil {
+		t.Fatalf("copyTreeWithSymlinks: %v", err)
+	}
+	link, err := os.Readlink(filepath.Join(dst, "state-link"))
+	if err != nil {
+		t.Fatalf("read copied symlink: %v", err)
+	}
+	if link != "../lib/state" {
+		t.Fatalf("copied symlink target = %q, want ../lib/state", link)
+	}
+	data, err := os.ReadFile(filepath.Join(dst, "lib", "state"))
+	if err != nil {
+		t.Fatalf("read copied file: %v", err)
+	}
+	if string(data) != "kept" {
+		t.Fatalf("copied file = %q", string(data))
 	}
 }
 

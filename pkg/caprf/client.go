@@ -1002,6 +1002,12 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) error {
 			return fmt.Errorf("invalid SYSEXT_LAYERS: %w", err)
 		}
 		cfg.Provision.Sysext.Layers = layers
+	case "AB_DATA_PARTITIONS":
+		var partitions []config.ABDataPartition
+		if err := unmarshalJSONVar(value, &partitions); err != nil {
+			return fmt.Errorf("invalid AB_DATA_PARTITIONS: %w", err)
+		}
+		cfg.Provision.AB.DataPartitions = partitions
 	default:
 		if strings.HasPrefix(key, "LUKS_") {
 			return fmt.Errorf("%s is not supported yet", key)

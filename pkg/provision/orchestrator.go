@@ -39,6 +39,9 @@ var (
 	mountReadOnlyPart = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
 		return mgr.MountPartitionReadOnly(ctx, device, mountpoint)
 	}
+	mountSharedDataPart = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
+		return mgr.MountPartition(ctx, device, mountpoint)
+	}
 	sysBlockRoot = "/sys/class/block"
 )
 
@@ -65,6 +68,7 @@ type Orchestrator struct {
 	targetDisk      string
 	rootPartition   string
 	bootPartition   string
+	sharedMounts    []string
 	bestImageURL    string // resolved by verify-image, reused by stream-image
 	firmwareChanged bool   // true if any step changed firmware values requiring hard reboot
 }
@@ -104,6 +108,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"enable-lvm", o.enableLVM},
 		{"mount-root", o.mountRoot},
 		{"mount-boot", o.mountBoot},
+		{"mount-shared-data", o.mountSharedData},
 		{"set-hostname", o.setHostname},
 		{"copy-provisioner-files", o.copyProvisionerFiles},
 		{"configure-dns", o.configureDNS},
@@ -1199,6 +1204,191 @@ func (o *Orchestrator) mountBoot(ctx context.Context) error {
 	return nil
 }
 
+type sharedDataMount struct {
+	device     string
+	mountpoint string
+	label      string
+}
+
+func (o *Orchestrator) mountSharedData(ctx context.Context) error {
+	if !o.isSystemABMode() {
+		return nil
+	}
+	mounts := o.sharedDataMountsFromLayout()
+	for _, m := range mounts {
+		target := filepath.Join(newroot, strings.TrimPrefix(m.mountpoint, "/"))
+		if err := ensureWithinRoot(newroot, target); err != nil {
+			return fmt.Errorf("shared data mount %s: %w", m.mountpoint, err)
+		}
+		if isMountPoint(target) {
+			o.log.Info("shared data partition already mounted", "label", m.label, "mountpoint", target)
+			o.recordSharedMount(target)
+			continue
+		}
+		if !o.cfg.Provision.AB.PreserveExisting {
+			if err := o.seedSharedDataPartition(ctx, m.device, target); err != nil {
+				return fmt.Errorf("seed shared data partition %s: %w", m.label, err)
+			}
+		}
+		if err := mountSharedDataPart(ctx, o.disk, m.device, target); err != nil {
+			return fmt.Errorf("mount shared data partition %s at %s: %w", m.device, target, err)
+		}
+		o.recordSharedMount(target)
+		o.log.Info("mounted shared data partition", "label", m.label, "device", m.device, "mountpoint", target)
+	}
+	return nil
+}
+
+func (o *Orchestrator) isSystemABMode() bool {
+	return o.isABImageMode() && o.cfg.Provision.AB.WithDefaults().Scheme == config.ABSchemeSystemAB
+}
+
+func (o *Orchestrator) sharedDataMountsFromLayout() []sharedDataMount {
+	layout := o.cfg.Provision.Disk.PartitionLayout
+	if layout == nil {
+		return nil
+	}
+	var mounts []sharedDataMount
+	for i, part := range layout.Partitions {
+		if !isSharedDataPartition(part) {
+			continue
+		}
+		mounts = append(mounts, sharedDataMount{
+			device:     disk.PartitionDevicePath(o.targetDisk, i+1),
+			mountpoint: part.Mountpoint,
+			label:      part.Label,
+		})
+	}
+	return mounts
+}
+
+func isSharedDataPartition(part config.Partition) bool {
+	mountpoint := strings.TrimSpace(part.Mountpoint)
+	if mountpoint == "" || mountpoint == "/" || mountpoint == "/boot/efi" {
+		return false
+	}
+	return !strings.EqualFold(part.Filesystem, "swap")
+}
+
+func (o *Orchestrator) recordSharedMount(mountpoint string) {
+	for _, existing := range o.sharedMounts {
+		if existing == mountpoint {
+			return
+		}
+	}
+	o.sharedMounts = append(o.sharedMounts, mountpoint)
+}
+
+func (o *Orchestrator) seedSharedDataPartition(ctx context.Context, device, target string) error {
+	if _, err := os.Stat(target); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("stat seed source %s: %w", target, err)
+	}
+	seedMount, err := os.MkdirTemp(newroot, ".booty-data-seed-*")
+	if err != nil {
+		return fmt.Errorf("create seed mountpoint: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(seedMount) }()
+	if err := mountSharedDataPart(ctx, o.disk, device, seedMount); err != nil {
+		return fmt.Errorf("mount seed target %s: %w", device, err)
+	}
+	defer func() {
+		if err := o.disk.Unmount(seedMount); err != nil {
+			o.log.Warn("failed to unmount shared data seed target", "mountpoint", seedMount, "error", err)
+		}
+	}()
+	empty, err := directoryEmptyForSeed(seedMount)
+	if err != nil {
+		return err
+	}
+	if !empty {
+		o.log.Info("shared data partition already has content, skipping seed", "device", device)
+		return nil
+	}
+	return copyTreeWithSymlinks(ctx, target, seedMount)
+}
+
+func directoryEmptyForSeed(path string) (bool, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return false, fmt.Errorf("read seed directory %s: %w", path, err)
+	}
+	for _, entry := range entries {
+		if entry.Name() == "lost+found" {
+			continue
+		}
+		return false, nil
+	}
+	return true, nil
+}
+
+func copyTreeWithSymlinks(ctx context.Context, srcBase, destRoot string) error {
+	cleanDest, err := filepath.Abs(destRoot)
+	if err != nil {
+		return fmt.Errorf("resolve dest root: %w", err)
+	}
+	return filepath.WalkDir(srcBase, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return fmt.Errorf("walk %s: %w", path, walkErr)
+		}
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("copy tree canceled: %w", err)
+		}
+		relPath, _ := filepath.Rel(srcBase, path)
+		destPath := filepath.Join(cleanDest, relPath)
+		if err := ensureWithinRoot(cleanDest, destPath); err != nil {
+			return fmt.Errorf("shared data seed path %s: %w", relPath, err)
+		}
+		return copyTreeEntry(ctx, path, destPath, d)
+	})
+}
+
+func copyTreeEntry(ctx context.Context, src, dst string, d os.DirEntry) error {
+	info, err := d.Info()
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", src, err)
+	}
+	switch mode := info.Mode(); {
+	case mode&os.ModeSymlink != 0:
+		return copySymlink(src, dst)
+	case d.IsDir():
+		if err := os.MkdirAll(dst, mode.Perm()); err != nil {
+			return fmt.Errorf("create directory %s: %w", dst, err)
+		}
+		return os.Chmod(dst, mode.Perm())
+	case mode.IsRegular():
+		return copyFile(ctx, src, dst)
+	default:
+		slog.Warn("skipping unsupported shared data seed entry", "path", src, "mode", mode.String())
+		return nil
+	}
+}
+
+func copySymlink(src, dst string) error {
+	target, err := os.Readlink(src)
+	if err != nil {
+		return fmt.Errorf("read symlink %s: %w", src, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return fmt.Errorf("create symlink parent %s: %w", dst, err)
+	}
+	if existing, err := os.Lstat(dst); err == nil {
+		if existing.IsDir() {
+			return nil
+		}
+		if err := os.Remove(dst); err != nil {
+			return fmt.Errorf("replace symlink destination %s: %w", dst, err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat symlink destination %s: %w", dst, err)
+	}
+	if err := os.Symlink(target, dst); err != nil {
+		return fmt.Errorf("create symlink %s: %w", dst, err)
+	}
+	return nil
+}
+
 func isUnsupportedBootFilesystemError(err error) bool {
 	if err == nil {
 		return false
@@ -1346,8 +1536,9 @@ func (o *Orchestrator) teardownChroot(_ context.Context) error {
 	}
 	bindErr := o.disk.TeardownChrootBindMounts(newroot)
 	bootErr := o.unmountBoot()
+	sharedErr := o.unmountSharedData()
 	unmountErr := o.disk.Unmount(newroot)
-	return errors.Join(bindErr, bootErr, unmountErr)
+	return errors.Join(bindErr, bootErr, sharedErr, unmountErr)
 }
 
 func (o *Orchestrator) shouldKeepChrootMountedForABKexec() bool {
@@ -1366,6 +1557,20 @@ func (o *Orchestrator) unmountBoot() error {
 		return fmt.Errorf("unmount boot mountpoint %s: %w", mountpoint, err)
 	}
 	return nil
+}
+
+func (o *Orchestrator) unmountSharedData() error {
+	var errs []error
+	for i := len(o.sharedMounts) - 1; i >= 0; i-- {
+		mountpoint := o.sharedMounts[i]
+		if !isMountPoint(mountpoint) {
+			continue
+		}
+		if err := o.disk.Unmount(mountpoint); err != nil {
+			errs = append(errs, fmt.Errorf("unmount shared data mountpoint %s: %w", mountpoint, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (o *Orchestrator) runHealthChecks(ctx context.Context) error {
