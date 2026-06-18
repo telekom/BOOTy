@@ -164,6 +164,49 @@ func TestABProvisionPreloadsSysextsWithoutActivatingVM(t *testing.T) {
 	}
 }
 
+func TestFlatcarLikeUSRASourceCanProvisionSystemABVM(t *testing.T) {
+	requireRoot(t)
+	qemuAvailable(t)
+	requireProvisionTools(t)
+	requireDiskInspectTools(t)
+
+	rawDisk := createFlatcarLikeUSRATestDiskImage(t, 512)
+	gzImage := compressGzip(t, rawDisk)
+	baseURL := startABImageServer(t, gzImage)
+
+	targetDisk := filepath.Join(t.TempDir(), "flatcar-usra-system-ab.qcow2")
+	run(t, "create flatcar-like target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
+
+	initramfs := buildProvisionInitramfs(t, map[string]string{
+		"HOSTNAME":             "flatcar-usra-system-ab",
+		"dns_resolver":         "8.8.8.8",
+		"MODE":                 "provision",
+		"DISK_DEVICE":          "/dev/vda",
+		"STATIC_IP":            "10.0.2.15/24",
+		"STATIC_GATEWAY":       "10.0.2.2",
+		"STATIC_IFACE":         "eth0",
+		"IMAGE":                baseURL + "/image.gz",
+		"IMAGE_MODE":           "ab",
+		"AB_SCHEME":            "system-ab",
+		"AB_TARGET_SLOT":       "a",
+		"AB_SOURCE_ROOT_LABEL": "USR-A",
+		"AB_BOOT_SIZE_MB":      "64",
+		"AB_ROOT_SIZE_MB":      "768",
+		"AB_STATE_SIZE_MB":     "64",
+	})
+
+	output := runQEMUNetworkMode(t, findKernel(t), initramfs, targetDisk, 7*time.Minute)
+	t.Logf("Flatcar-like USR-A system-ab VM output tail:\n%s", tail(output, 3000))
+	assertProvisionSucceeded(t, output)
+
+	rootMount, cleanup := mountQcow2Partition(t, targetDisk, 2)
+	defer cleanup()
+	hostname := readProvisionedFile(t, rootMount, "etc/hostname")
+	if !strings.Contains(hostname, "flatcar-usra-system-ab") {
+		t.Fatalf("hostname not written from Flatcar-like USR-A source: %q", strings.TrimSpace(hostname))
+	}
+}
+
 func TestABPreserveExistingUpgradeKeepsActiveSlotAndWritesInactiveVM(t *testing.T) {
 	requireRoot(t)
 	qemuAvailable(t)
@@ -277,6 +320,111 @@ func TestABPreserveExistingUpgradeKeepsActiveSlotAndWritesInactiveVM(t *testing.
 	if string(loader) != testEFIFallbackPayload {
 		t.Fatalf("ESP fallback loader was changed during preserve-existing upgrade: %q", string(loader))
 	}
+}
+
+func TestSystemABPreserveExistingKeepsSharedVarVM(t *testing.T) {
+	requireRoot(t)
+	qemuAvailable(t)
+	requireProvisionTools(t)
+	requireDiskInspectTools(t)
+
+	initialRaw := createChrootCapableTestDiskImage(t, 512)
+	initialImage := compressGzip(t, initialRaw)
+	initialURL := startABImageServer(t, initialImage)
+
+	upgradeRaw := createChrootCapableTestDiskImage(t, 512)
+	upgradeImage := compressGzip(t, upgradeRaw)
+	upgradeURL := startABImageServer(t, upgradeImage)
+
+	targetDisk := filepath.Join(t.TempDir(), "system-ab-target.qcow2")
+	run(t, "create system-ab target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "3G")
+
+	initialInitramfs := buildProvisionInitramfs(t, map[string]string{
+		"HOSTNAME":                 "system-ab-initial",
+		"dns_resolver":             "8.8.8.8",
+		"MODE":                     "provision",
+		"DISK_DEVICE":              "/dev/vda",
+		"STATIC_IP":                "10.0.2.15/24",
+		"STATIC_GATEWAY":           "10.0.2.2",
+		"STATIC_IFACE":             "eth0",
+		"IMAGE":                    initialURL + "/image.gz",
+		"IMAGE_MODE":               "ab",
+		"AB_SCHEME":                "system-ab",
+		"AB_TARGET_SLOT":           "a",
+		"AB_SOURCE_ROOT_PARTITION": "2",
+		"AB_BOOT_SIZE_MB":          "64",
+		"AB_ROOT_SIZE_MB":          "768",
+		"AB_STATE_SIZE_MB":         "512",
+		"CLOUDINIT_ENABLED":        "true",
+	})
+
+	initialOutput := runQEMUNetworkMode(t, findKernel(t), initialInitramfs, targetDisk, 7*time.Minute)
+	t.Logf("system-ab initial VM output tail:\n%s", tail(initialOutput, 3000))
+	assertProvisionSucceeded(t, initialOutput)
+
+	slotA, cleanupA := mountQcow2Partition(t, targetDisk, 2)
+	fstab := readProvisionedFile(t, slotA, "etc/fstab")
+	if !strings.Contains(fstab, "PARTLABEL=BOOTY-DATA\t/var\text4") {
+		t.Fatalf("system-ab fstab missing shared /var:\n%s", fstab)
+	}
+	cleanupA()
+
+	dataMount, dataCleanup := mountQcow2Partition(t, targetDisk, 4)
+	meta := readProvisionedFile(t, dataMount, "lib/cloud/seed/nocloud/meta-data")
+	if !strings.Contains(meta, "system-ab-initial") {
+		t.Fatalf("initial cloud-init seed missing from shared /var:\n%s", meta)
+	}
+	dataCleanup()
+
+	upgradeInitramfs := buildProvisionInitramfs(t, map[string]string{
+		"HOSTNAME":                 "system-ab-upgrade",
+		"dns_resolver":             "8.8.8.8",
+		"MODE":                     "provision",
+		"DISK_DEVICE":              "/dev/vda",
+		"STATIC_IP":                "10.0.2.15/24",
+		"STATIC_GATEWAY":           "10.0.2.2",
+		"STATIC_IFACE":             "eth0",
+		"IMAGE":                    upgradeURL + "/image.gz",
+		"IMAGE_MODE":               "ab",
+		"AB_SCHEME":                "system-ab",
+		"AB_ACTIVE_SLOT":           "a",
+		"AB_TARGET_SLOT":           "inactive",
+		"AB_PRESERVE_EXISTING":     "true",
+		"AB_SOURCE_ROOT_PARTITION": "2",
+		"AB_BOOT_SIZE_MB":          "64",
+		"AB_ROOT_SIZE_MB":          "768",
+		"AB_STATE_SIZE_MB":         "512",
+	})
+
+	upgradeOutput := runQEMUNetworkMode(t, findKernel(t), upgradeInitramfs, targetDisk, 7*time.Minute)
+	t.Logf("system-ab preserve-existing VM output tail:\n%s", tail(upgradeOutput, 5000))
+	assertProvisionSucceeded(t, upgradeOutput)
+
+	slotB, cleanupB := mountQcow2Partition(t, targetDisk, 3)
+	hostnameB := readProvisionedFile(t, slotB, "etc/hostname")
+	if !strings.Contains(hostnameB, "system-ab-upgrade") {
+		t.Fatalf("inactive slot B hostname not written by system-ab upgrade: %q", strings.TrimSpace(hostnameB))
+	}
+	cleanupB()
+
+	dataMount, dataCleanup = mountQcow2Partition(t, targetDisk, 4)
+	meta = readProvisionedFile(t, dataMount, "lib/cloud/seed/nocloud/meta-data")
+	if !strings.Contains(meta, "system-ab-initial") {
+		t.Fatalf("shared /var was not preserved across system-ab upgrade:\n%s", meta)
+	}
+	dataCleanup()
+}
+
+func createFlatcarLikeUSRATestDiskImage(t *testing.T, sizeMB int) string {
+	t.Helper()
+	rawDisk := createChrootCapableTestDiskImage(t, sizeMB)
+	run(t, "label flatcar-like source partitions",
+		"sgdisk",
+		"--change-name=1:EFI-SYSTEM",
+		"--change-name=2:USR-A",
+		rawDisk,
+	)
+	return rawDisk
 }
 
 func assertProvisionSucceeded(t *testing.T, output []byte) {

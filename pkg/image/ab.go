@@ -306,6 +306,8 @@ var commonSourceRootLabels = map[string]struct{}{
 	"opensuse-root":     {},
 	"opensuse-rootfs":   {},
 	"flatcar-root":      {},
+	"usr-a":             {},
+	"usr-b":             {},
 	"bottlerocket-root": {},
 }
 

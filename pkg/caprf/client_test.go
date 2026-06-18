@@ -221,6 +221,29 @@ export AB_SOURCE_ROOT_LABEL="rootfs"
 	}
 }
 
+func TestParseVarsABSystemDataPartitions(t *testing.T) {
+	input := `export IMAGE_MODE="ab"
+export AB_SCHEME="system-ab"
+export AB_DATA_PARTITIONS='[{"label":"BOOTY-VAR","mountpoint":"/var","sizeMB":8192},{"label":"BOOTY-HOME","mountpoint":"/home"}]'
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provision.AB.Scheme != config.ABSchemeSystemAB {
+		t.Fatalf("scheme = %q, want %q", cfg.Provision.AB.Scheme, config.ABSchemeSystemAB)
+	}
+	if len(cfg.Provision.AB.DataPartitions) != 2 {
+		t.Fatalf("data partitions = %d, want 2", len(cfg.Provision.AB.DataPartitions))
+	}
+	if cfg.Provision.AB.DataPartitions[0].Label != "BOOTY-VAR" || cfg.Provision.AB.DataPartitions[0].Mountpoint != "/var" {
+		t.Fatalf("first data partition = %+v", cfg.Provision.AB.DataPartitions[0])
+	}
+	if cfg.Provision.AB.DataPartitions[1].Filesystem != "ext4" {
+		t.Fatalf("second data partition filesystem = %q, want ext4", cfg.Provision.AB.DataPartitions[1].Filesystem)
+	}
+}
+
 func TestParseVarsABSourceRootPartition(t *testing.T) {
 	input := `export IMAGE_MODE="ab"
 export AB_SOURCE_ROOT_PARTITION="2"

@@ -122,6 +122,7 @@ func (c *Config) normalize() {
 	if c.Transport.TokenAlgorithm != "" {
 		c.Transport.TokenAlgorithm = strings.ToUpper(c.Transport.TokenAlgorithm)
 	}
+	c.Provision.AB.DataPartitions = normalizeABDataPartitions(c.Provision.AB.DataPartitions)
 }
 
 func validateABConfig(imageMode string, disableKexec bool, cfg *ABConfig) error {
@@ -142,7 +143,7 @@ func validateABConfig(imageMode string, disableKexec bool, cfg *ABConfig) error 
 func validateABEnums(cfg *ABConfig) []string {
 	var errs []string
 	scheme := normalizeABScheme(cfg.Scheme)
-	if scheme != "" && scheme != ABSchemeDualRoot {
+	if scheme != "" && scheme != ABSchemeDualRoot && scheme != ABSchemeSystemAB {
 		errs = append(errs, fmt.Sprintf("invalid provision.ab.scheme %q", cfg.Scheme))
 	}
 
@@ -172,6 +173,11 @@ func validateABSizeFields(cfg *ABConfig) []string {
 	if cfg.SourceRootPartition < 0 {
 		errs = append(errs, "provision.ab.sourceRootPartition must be non-negative")
 	}
+	for i, part := range cfg.DataPartitions {
+		if part.SizeMB < 0 {
+			errs = append(errs, fmt.Sprintf("provision.ab.dataPartitions[%d].sizeMB must be non-negative", i))
+		}
+	}
 	return errs
 }
 
@@ -187,6 +193,11 @@ func validateABModeConstraints(abMode, disableKexec bool, cfg *ABConfig) []strin
 	withDefaults := cfg.WithDefaults()
 	if withDefaults.RootSizeMB <= 0 {
 		errs = append(errs, "provision.ab.rootSizeMB must be positive in ab image mode")
+	}
+	if layout, err := withDefaults.PartitionLayout("/dev/sda"); err != nil {
+		errs = append(errs, fmt.Sprintf("provision.ab: %v", err))
+	} else {
+		errs = append(errs, validateABPartitionLayoutContract(layout)...)
 	}
 	errs = append(errs, validateABPreserveConstraints(disableKexec, cfg, &withDefaults)...)
 	errs = append(errs, validateABSourceRootSelectors(cfg)...)
@@ -211,6 +222,20 @@ func validateABPreserveConstraints(disableKexec bool, cfg, withDefaults *ABConfi
 		(withDefaults.TargetSlot == ABSlotA || withDefaults.TargetSlot == ABSlotB) &&
 		withDefaults.ActiveSlot == withDefaults.TargetSlot {
 		errs = append(errs, "provision.ab.targetSlot must not equal provision.ab.activeSlot when preserveExisting is true")
+	}
+	return errs
+}
+
+func validateABPartitionLayoutContract(layout *PartitionLayout) []string {
+	var errs []string
+	if err := validatePartitions(layout.Partitions); err != nil {
+		errs = append(errs, fmt.Sprintf("provision.ab partition layout: %v", err))
+	}
+	if err := validateUniqueMountpoints(layout.Partitions, layout.LVM); err != nil {
+		errs = append(errs, fmt.Sprintf("provision.ab partition layout: %v", err))
+	}
+	if err := validateRootPresence(layout.Partitions, layout.LVM); err != nil {
+		errs = append(errs, fmt.Sprintf("provision.ab partition layout: %v", err))
 	}
 	return errs
 }

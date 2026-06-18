@@ -51,6 +51,49 @@ func TestABConfigPartitionLayoutTargetsInactiveSlot(t *testing.T) {
 	}
 }
 
+func TestABConfigSystemABPartitionLayoutDefaultsToSharedVar(t *testing.T) {
+	layout, err := (&ABConfig{
+		Scheme:     ABSchemeSystemAB,
+		ActiveSlot: ABSlotA,
+		TargetSlot: ABTargetInactive,
+		RootSizeMB: 4096,
+	}).PartitionLayout("/dev/sda")
+	if err != nil {
+		t.Fatalf("PartitionLayout() error: %v", err)
+	}
+	if len(layout.Partitions) != 4 {
+		t.Fatalf("partitions = %d, want 4", len(layout.Partitions))
+	}
+	data := layout.Partitions[3]
+	if data.Label != "BOOTY-DATA" || data.Mountpoint != "/var" || data.Filesystem != "ext4" || data.SizeMB != 0 {
+		t.Fatalf("data partition = %+v, want BOOTY-DATA ext4 /var fill remaining", data)
+	}
+}
+
+func TestABConfigSystemABPartitionLayoutUsesConfiguredDataPartitions(t *testing.T) {
+	layout, err := (&ABConfig{
+		Scheme:     ABSchemeSystemAB,
+		TargetSlot: ABSlotA,
+		RootSizeMB: 4096,
+		DataPartitions: []ABDataPartition{
+			{Label: "BOOTY-VAR", SizeMB: 8192, Mountpoint: "/var"},
+			{Label: "BOOTY-HOME", Mountpoint: "/home"},
+		},
+	}).PartitionLayout("/dev/vda")
+	if err != nil {
+		t.Fatalf("PartitionLayout() error: %v", err)
+	}
+	if len(layout.Partitions) != 5 {
+		t.Fatalf("partitions = %d, want 5", len(layout.Partitions))
+	}
+	if layout.Partitions[3].Label != "BOOTY-VAR" || layout.Partitions[3].SizeMB != 8192 || layout.Partitions[3].Mountpoint != "/var" {
+		t.Fatalf("var partition = %+v", layout.Partitions[3])
+	}
+	if layout.Partitions[4].Label != "BOOTY-HOME" || layout.Partitions[4].SizeMB != 0 || layout.Partitions[4].Mountpoint != "/home" {
+		t.Fatalf("home partition = %+v", layout.Partitions[4])
+	}
+}
+
 func TestValidateAcceptsABImageMode(t *testing.T) {
 	cfg := &Config{}
 	cfg.Provision.Image.Mode = ImageModeAB
@@ -63,6 +106,39 @@ func TestValidateAcceptsABImageMode(t *testing.T) {
 	}
 	if cfg.Provision.AB.TargetSlot != ABTargetInactive {
 		t.Fatalf("target slot normalized to %q, want inactive", cfg.Provision.AB.TargetSlot)
+	}
+}
+
+func TestValidateAcceptsSystemABImageMode(t *testing.T) {
+	cfg := &Config{}
+	cfg.Provision.Image.Mode = ImageModeAB
+	cfg.Provision.AB.Scheme = ABSchemeSystemAB
+	cfg.Provision.AB.RootSizeMB = 8192
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error: %v", err)
+	}
+	if cfg.Provision.AB.Scheme != ABSchemeSystemAB {
+		t.Fatalf("scheme normalized to %q, want %q", cfg.Provision.AB.Scheme, ABSchemeSystemAB)
+	}
+}
+
+func TestValidateRejectsInvalidSystemABDataPartition(t *testing.T) {
+	cfg := &Config{}
+	cfg.Provision.Image.Mode = ImageModeAB
+	cfg.Provision.AB.Scheme = ABSchemeSystemAB
+	cfg.Provision.AB.RootSizeMB = 8192
+	cfg.Provision.AB.DataPartitions = []ABDataPartition{
+		{Label: "BOOTY-DATA", SizeMB: 1024, Mountpoint: "/var"},
+		{Label: "BOOTY-DATA", Mountpoint: "/home"},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected duplicate data partition label validation error")
+	}
+	if got := err.Error(); !strings.Contains(got, `duplicate label "BOOTY-DATA"`) {
+		t.Fatalf("Validate() error = %q", got)
 	}
 }
 
