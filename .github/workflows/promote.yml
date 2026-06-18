@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.channel }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
