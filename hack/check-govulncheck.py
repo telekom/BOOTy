@@ -53,9 +53,19 @@ def iter_json_objects(data: str) -> list[dict[str, Any]]:
     return objects
 
 
+def is_symbol_finding(finding: dict[str, Any]) -> bool:
+    return any(
+        isinstance(frame.get("function"), str) and frame["function"] != ""
+        for frame in finding.get("trace", [])
+        if isinstance(frame, dict)
+    )
+
+
 def finding_modules(finding: dict[str, Any]) -> set[str]:
     modules: set[str] = set()
     for frame in finding.get("trace", []):
+        if not isinstance(frame, dict):
+            continue
         module = frame.get("module")
         if isinstance(module, str):
             modules.add(module)
@@ -97,6 +107,8 @@ def main() -> int:
             continue
         osv_id = finding.get("osv")
         if not isinstance(osv_id, str):
+            continue
+        if not is_symbol_finding(finding):
             continue
         findings.setdefault(osv_id, set()).update(finding_modules(finding))
 
