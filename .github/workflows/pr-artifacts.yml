@@ -2,8 +2,6 @@ name: PR Artifact Publishing
 
 on:
   pull_request:
-    branches:
-      - main
   workflow_dispatch:
 
 concurrency:
