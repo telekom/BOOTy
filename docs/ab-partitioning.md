@@ -109,14 +109,14 @@ provision:
     bootSizeMB: 512
     rootSizeMB: 65536
     dataPartitions:
-      - label: BOOTY-DATA
-        mountpoint: /var
-        filesystem: ext4
-        sizeMB: 0
       - label: BOOTY-HOME
         mountpoint: /home
         filesystem: ext4
         sizeMB: 65536
+      - label: BOOTY-DATA
+        mountpoint: /var
+        filesystem: ext4
+        sizeMB: 0
 ```
 
 ## CAPRF Vars
@@ -141,7 +141,7 @@ For `system-ab`, configure additional shared data partitions as JSON:
 
 ```sh
 export AB_SCHEME="system-ab"
-export AB_DATA_PARTITIONS='[{"label":"BOOTY-DATA","mountpoint":"/var","filesystem":"ext4","sizeMB":0},{"label":"BOOTY-HOME","mountpoint":"/home","filesystem":"ext4","sizeMB":65536}]'
+export AB_DATA_PARTITIONS='[{"label":"BOOTY-HOME","mountpoint":"/home","filesystem":"ext4","sizeMB":65536},{"label":"BOOTY-DATA","mountpoint":"/var","filesystem":"ext4","sizeMB":0}]'
 ```
 
 Flatcar-like source images commonly expose immutable OS slots as `USR-A` and

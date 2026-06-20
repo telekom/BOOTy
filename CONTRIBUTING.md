@@ -137,7 +137,7 @@ When your PR introduces new functionality, verify:
 - [ ] New build tags are added to `.github/instructions/e2e-tests.instructions.md`
 - [ ] `.github/copilot-instructions.md` architecture section is up to date
 - [ ] Step count references are consistent across `README.md`,
-      `copilot-instructions.md`, and `CONTRIBUTING.md` (currently 39 steps)
+      `copilot-instructions.md`, and `CONTRIBUTING.md` (currently 40 steps)
 - [ ] New agents/prompts/instructions are listed in `.github/AGENTS.md`
 
 ## License

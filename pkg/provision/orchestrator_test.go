@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -203,6 +204,16 @@ func TestMountBootAndSharedDataStepsPrecedeProvisioningWrites(t *testing.T) {
 	}
 }
 
+func TestResumeStateStepsRerunMountSharedDataForCleanupState(t *testing.T) {
+	stateSteps := resumeStateSteps()
+	if _, ok := stateSteps["mount-shared-data"]; !ok {
+		t.Fatal("mount-shared-data must rerun on resume to rebuild sharedMounts for teardown cleanup")
+	}
+	if _, ok := stateSteps["set-hostname"]; ok {
+		t.Fatal("set-hostname should remain skippable after resume")
+	}
+}
+
 func TestMountSharedDataMountsSystemABDataPartitions(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Image.Mode = config.ImageModeAB
@@ -241,6 +252,45 @@ func TestMountSharedDataMountsSystemABDataPartitions(t *testing.T) {
 	}
 }
 
+func TestMountSharedDataRecordsAlreadyMountedSystemABDataPartitions(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.Scheme = config.ABSchemeSystemAB
+	cfg.Provision.AB.PreserveExisting = true
+	cfg.Provision.AB.DataPartitions = []config.ABDataPartition{
+		{Label: "BOOTY-VAR", Mountpoint: "/var", SizeMB: 1024},
+		{Label: "BOOTY-HOME", Mountpoint: "/home"},
+	}
+	layout, err := cfg.Provision.AB.PartitionLayout("/dev/sda")
+	if err != nil {
+		t.Fatalf("PartitionLayout: %v", err)
+	}
+	cfg.Provision.Disk.PartitionLayout = layout
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+
+	oldMountPoint := isMountPoint
+	isMountPoint = func(path string) bool {
+		return path == filepath.Join(newroot, "var") || path == filepath.Join(newroot, "home")
+	}
+	t.Cleanup(func() { isMountPoint = oldMountPoint })
+
+	oldMountShared := mountSharedDataPart
+	mountSharedDataPart = func(_ context.Context, _ *disk.Manager, _, _ string) error {
+		t.Fatal("already-mounted shared data partitions must not be mounted again")
+		return nil
+	}
+	t.Cleanup(func() { mountSharedDataPart = oldMountShared })
+
+	if err := o.mountSharedData(context.Background()); err != nil {
+		t.Fatalf("mountSharedData: %v", err)
+	}
+	want := []string{filepath.Join(newroot, "var"), filepath.Join(newroot, "home")}
+	if strings.Join(o.sharedMounts, ",") != strings.Join(want, ",") {
+		t.Fatalf("sharedMounts = %#v, want %#v", o.sharedMounts, want)
+	}
+}
+
 func TestSharedDataSeedCopyPreservesSymlinksAndIgnoresLostFound(t *testing.T) {
 	src := t.TempDir()
 	dst := t.TempDir()
@@ -257,11 +307,22 @@ func TestSharedDataSeedCopyPreservesSymlinksAndIgnoresLostFound(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(src, "lib"), 0o755); err != nil {
 		t.Fatalf("create source directory: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(src, "lib", "state"), []byte("kept"), 0o644); err != nil {
+	srcFile := filepath.Join(src, "lib", "state")
+	if err := os.WriteFile(srcFile, []byte("kept"), 0o640); err != nil {
 		t.Fatalf("write source file: %v", err)
 	}
 	if err := os.Symlink("../lib/state", filepath.Join(src, "state-link")); err != nil {
 		t.Fatalf("create source symlink: %v", err)
+	}
+	srcModTime := time.Unix(1_700_000_000, 0)
+	if err := os.Chtimes(srcFile, srcModTime, srcModTime); err != nil {
+		t.Fatalf("set source file timestamps: %v", err)
+	}
+	if err := os.Chmod(filepath.Join(src, "lib"), 0o750); err != nil {
+		t.Fatalf("set source directory mode: %v", err)
+	}
+	if err := os.Chtimes(filepath.Join(src, "lib"), srcModTime, srcModTime); err != nil {
+		t.Fatalf("set source directory timestamps: %v", err)
 	}
 
 	if err := copyTreeWithSymlinks(context.Background(), src, dst); err != nil {
@@ -280,6 +341,26 @@ func TestSharedDataSeedCopyPreservesSymlinksAndIgnoresLostFound(t *testing.T) {
 	}
 	if string(data) != "kept" {
 		t.Fatalf("copied file = %q", string(data))
+	}
+	fileInfo, err := os.Stat(filepath.Join(dst, "lib", "state"))
+	if err != nil {
+		t.Fatalf("stat copied file: %v", err)
+	}
+	if fileInfo.Mode().Perm() != 0o640 {
+		t.Fatalf("copied file mode = %v, want 0640", fileInfo.Mode().Perm())
+	}
+	if !fileInfo.ModTime().Equal(srcModTime) {
+		t.Fatalf("copied file mtime = %v, want %v", fileInfo.ModTime(), srcModTime)
+	}
+	dirInfo, err := os.Stat(filepath.Join(dst, "lib"))
+	if err != nil {
+		t.Fatalf("stat copied directory: %v", err)
+	}
+	if dirInfo.Mode().Perm() != 0o750 {
+		t.Fatalf("copied directory mode = %v, want 0750", dirInfo.Mode().Perm())
+	}
+	if !dirInfo.ModTime().Equal(srcModTime) {
+		t.Fatalf("copied directory mtime = %v, want %v", dirInfo.ModTime(), srcModTime)
 	}
 }
 
