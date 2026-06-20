@@ -17,6 +17,10 @@ SRC = $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 DOCKERTAG ?= $(VERSION)
 REPOSITORY = ghcr.io/telekom/booty
 
+COVERAGE_PROFILE ?= coverage.out
+COVERAGE_HTML ?= coverage.html
+COVERAGE_THRESHOLD ?= 40.0
+
 .PHONY: all build build-all clean install uninstall fmt lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic oci-push oci-push-initramfs oci-push-binary
 
 all: lint test install
@@ -50,10 +54,30 @@ lint:
 	@golangci-lint run ./...
 
 test:
-	@go test -race -coverprofile=coverage.out ./...
-	@go tool cover -func=coverage.out
-	@go tool cover -html=coverage.out -o coverage.html
-	@echo "Coverage report: coverage.html"
+	@go test -race -coverprofile=$(COVERAGE_PROFILE) ./...
+	@go tool cover -func=$(COVERAGE_PROFILE) | awk -v min="$(COVERAGE_THRESHOLD)" '\
+		BEGIN { \
+			threshold = min; \
+			sub(/%$$/, "", threshold); \
+			if (threshold !~ /^[0-9]+([.][0-9]+)?$$/) { \
+				printf "invalid COVERAGE_THRESHOLD: %s\n", min; \
+				invalid = 1; \
+				exit 2; \
+			} \
+		} \
+		{ print } \
+		/^total:/ { coverage = $$3; sub(/%$$/, "", coverage); found = 1 } \
+		END { \
+			if (invalid) { exit 2 } \
+			if (!found) { print "coverage check failed: total coverage line not found"; exit 1 } \
+			if (coverage + 0 < threshold + 0) { \
+				printf "coverage %s%% is below %s%% threshold\n", coverage, threshold; \
+				exit 1; \
+			} \
+			printf "coverage %s%% meets %s%% threshold\n", coverage, threshold; \
+		}'
+	@go tool cover -html=$(COVERAGE_PROFILE) -o $(COVERAGE_HTML)
+	@echo "Coverage report: $(COVERAGE_HTML)"
 
 dockerx86:
 	@docker buildx build --platform linux/amd64 --load -t $(REPOSITORY):$(DOCKERTAG) -f initrd.Dockerfile .
