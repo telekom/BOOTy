@@ -43,8 +43,14 @@ var (
 	mountSharedDataPart = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
 		return mgr.MountPartition(ctx, device, mountpoint)
 	}
+	unmountSharedDataPart = func(mgr *disk.Manager, mountpoint string) error {
+		return mgr.Unmount(mountpoint)
+	}
 	sysBlockRoot = "/sys/class/block"
 )
+
+const sharedDataSeedInProgressMarker = ".booty-shared-data-seed-in-progress"
+const sharedDataSeedInProgressContent = "BOOTy shared-data seed in progress\n"
 
 // Step represents a named provisioning step.
 type Step struct {
@@ -1300,38 +1306,142 @@ func (o *Orchestrator) seedSharedDataPartition(ctx context.Context, device, targ
 	if err != nil {
 		return fmt.Errorf("create seed mountpoint: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(seedMount) }()
+	mounted := false
+	defer func() { o.cleanupSharedDataSeedMount(seedMount, mounted) }()
 	if err := mountSharedDataPart(ctx, o.disk, device, seedMount); err != nil {
 		return fmt.Errorf("mount seed target %s: %w", device, err)
 	}
-	defer func() {
-		if err := o.disk.Unmount(seedMount); err != nil {
-			o.log.Warn("failed to unmount shared data seed target", "mountpoint", seedMount, "error", err)
-		}
-	}()
-	empty, err := directoryEmptyForSeed(seedMount)
+	mounted = true
+	state, err := seedDirectoryState(seedMount)
 	if err != nil {
 		return err
 	}
-	if !empty {
+	switch state {
+	case seedStateExistingContent:
 		o.log.Info("shared data partition already has content, skipping seed", "device", device)
 		return nil
+	case seedStateInProgress:
+		o.log.Warn("shared data seed was interrupted, cleaning and retrying", "device", device)
+		if err := cleanInterruptedSeed(seedMount); err != nil {
+			return err
+		}
+	case seedStateEmpty:
 	}
-	return copyTreeWithSymlinks(ctx, target, seedMount)
+	if err := writeSeedInProgressMarker(seedMount); err != nil {
+		return err
+	}
+	if err := copyTreeWithSymlinks(ctx, target, seedMount); err != nil {
+		return err
+	}
+	return removeSeedInProgressMarker(seedMount)
 }
 
+func (o *Orchestrator) cleanupSharedDataSeedMount(seedMount string, mounted bool) {
+	if mounted {
+		if err := unmountSharedDataPart(o.disk, seedMount); err != nil {
+			o.log.Warn("failed to unmount shared data seed target; leaving mountpoint intact", "mountpoint", seedMount, "error", err)
+			return
+		}
+	}
+	if err := os.RemoveAll(seedMount); err != nil {
+		o.log.Warn("failed to remove shared data seed mountpoint", "mountpoint", seedMount, "error", err)
+	}
+}
+
+type seedState int
+
+const (
+	seedStateEmpty seedState = iota
+	seedStateExistingContent
+	seedStateInProgress
+)
+
 func directoryEmptyForSeed(path string) (bool, error) {
+	state, err := seedDirectoryState(path)
+	if err != nil {
+		return false, err
+	}
+	return state == seedStateEmpty, nil
+}
+
+func seedDirectoryState(path string) (seedState, error) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		return false, fmt.Errorf("read seed directory %s: %w", path, err)
+		return seedStateExistingContent, fmt.Errorf("read seed directory %s: %w", path, err)
+	}
+	hasExistingContent := false
+	hasInProgressMarker := false
+	for _, entry := range entries {
+		if entry.Name() == "lost+found" {
+			continue
+		}
+		if entry.Name() == sharedDataSeedInProgressMarker {
+			markerValid, err := validSeedInProgressMarker(filepath.Join(path, entry.Name()))
+			if err != nil {
+				return seedStateExistingContent, err
+			}
+			if markerValid {
+				hasInProgressMarker = true
+				continue
+			}
+		}
+		hasExistingContent = true
+	}
+	if hasInProgressMarker {
+		return seedStateInProgress, nil
+	}
+	if hasExistingContent {
+		return seedStateExistingContent, nil
+	}
+	return seedStateEmpty, nil
+}
+
+func validSeedInProgressMarker(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return false, fmt.Errorf("stat seed marker %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return false, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, fmt.Errorf("read seed marker %s: %w", path, err)
+	}
+	return string(data) == sharedDataSeedInProgressContent, nil
+}
+
+func cleanInterruptedSeed(path string) error {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return fmt.Errorf("read interrupted seed directory %s: %w", path, err)
 	}
 	for _, entry := range entries {
 		if entry.Name() == "lost+found" {
 			continue
 		}
-		return false, nil
+		entryPath := filepath.Join(path, entry.Name())
+		if err := os.RemoveAll(entryPath); err != nil {
+			return fmt.Errorf("remove interrupted seed entry %s: %w", entryPath, err)
+		}
 	}
-	return true, nil
+	return nil
+}
+
+func writeSeedInProgressMarker(path string) error {
+	markerPath := filepath.Join(path, sharedDataSeedInProgressMarker)
+	if err := os.WriteFile(markerPath, []byte(sharedDataSeedInProgressContent), 0o600); err != nil {
+		return fmt.Errorf("write shared data seed marker %s: %w", markerPath, err)
+	}
+	return nil
+}
+
+func removeSeedInProgressMarker(path string) error {
+	markerPath := filepath.Join(path, sharedDataSeedInProgressMarker)
+	if err := os.Remove(markerPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove shared data seed marker %s: %w", markerPath, err)
+	}
+	return nil
 }
 
 func copyTreeWithSymlinks(ctx context.Context, srcBase, destRoot string) error {
