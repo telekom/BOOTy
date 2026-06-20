@@ -291,6 +291,85 @@ func TestMountSharedDataRecordsAlreadyMountedSystemABDataPartitions(t *testing.T
 	}
 }
 
+func TestCleanupSharedDataSeedMountKeepsMountedTreeOnUnmountFailure(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	seedMount := filepath.Join(t.TempDir(), "seed")
+	if err := os.Mkdir(seedMount, 0o755); err != nil {
+		t.Fatalf("create seed mount: %v", err)
+	}
+	sentinel := filepath.Join(seedMount, "shared-data")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0o600); err != nil {
+		t.Fatalf("write sentinel: %v", err)
+	}
+
+	oldUnmountShared := unmountSharedDataPart
+	unmountSharedDataPart = func(_ *disk.Manager, _ string) error {
+		return errors.New("device busy")
+	}
+	t.Cleanup(func() { unmountSharedDataPart = oldUnmountShared })
+
+	o.cleanupSharedDataSeedMount(seedMount, true)
+
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("sentinel should remain after unmount failure: %v", err)
+	}
+}
+
+func TestInterruptedSharedDataSeedIsCleanedForRetry(t *testing.T) {
+	dst := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dst, "lost+found"), 0o700); err != nil {
+		t.Fatalf("create lost+found: %v", err)
+	}
+	if err := writeSeedInProgressMarker(dst); err != nil {
+		t.Fatalf("write seed marker: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dst, "partial", "nested"), 0o755); err != nil {
+		t.Fatalf("create partial directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dst, "partial", "nested", "state"), []byte("partial"), 0o600); err != nil {
+		t.Fatalf("write partial file: %v", err)
+	}
+
+	state, err := seedDirectoryState(dst)
+	if err != nil {
+		t.Fatalf("seedDirectoryState: %v", err)
+	}
+	if state != seedStateInProgress {
+		t.Fatalf("seedDirectoryState = %v, want in-progress", state)
+	}
+	if err := cleanInterruptedSeed(dst); err != nil {
+		t.Fatalf("cleanInterruptedSeed: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dst, "lost+found")); err != nil {
+		t.Fatalf("lost+found should remain: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "partial")); !os.IsNotExist(err) {
+		t.Fatalf("partial content should be removed, got err=%v", err)
+	}
+	if empty, err := directoryEmptyForSeed(dst); err != nil {
+		t.Fatalf("directoryEmptyForSeed: %v", err)
+	} else if !empty {
+		t.Fatal("cleaned interrupted seed should be empty")
+	}
+}
+
+func TestInvalidSharedDataSeedMarkerPreservesExistingContent(t *testing.T) {
+	dst := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dst, sharedDataSeedInProgressMarker), []byte("user content"), 0o600); err != nil {
+		t.Fatalf("write marker-shaped user file: %v", err)
+	}
+
+	state, err := seedDirectoryState(dst)
+	if err != nil {
+		t.Fatalf("seedDirectoryState: %v", err)
+	}
+	if state != seedStateExistingContent {
+		t.Fatalf("seedDirectoryState = %v, want existing-content", state)
+	}
+}
+
 func TestSharedDataSeedCopyPreservesSymlinksAndIgnoresLostFound(t *testing.T) {
 	src := t.TempDir()
 	dst := t.TempDir()

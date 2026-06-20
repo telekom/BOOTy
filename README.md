@@ -324,6 +324,7 @@ go run server/server.go \
 | `AB_BOOT_SIZE_MB` | `512` | Shared EFI partition size for generated A/B layouts |
 | `AB_ROOT_SIZE_MB` | `32768` | Size of each generated A/B root slot |
 | `AB_STATE_SIZE_MB` | `0` | Persistent state partition size; `0` fills remaining disk |
+| `AB_DATA_PARTITIONS` | — | JSON list of shared data partitions for `AB_SCHEME=system-ab`; the single `sizeMB:0` fill-remaining partition must be last |
 | `AB_SOURCE_ROOT_LABEL` | — | Source-image GPT partition label to copy into the target root slot |
 | `AB_SOURCE_ROOT_PARTITION` | — | 1-based source-image partition number to copy when no stable label exists |
 | `DISK_DEVICE` | auto-detect | Explicit disk device path override (e.g. `/dev/sda`) |
