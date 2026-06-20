@@ -814,15 +814,8 @@ func copyFile(ctx context.Context, src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("stat %s: %w", src, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return fmt.Errorf("create dir for %s: %w", dst, err)
-	}
-	if existing, err := os.Lstat(dst); err == nil && existing.Mode()&os.ModeSymlink != 0 {
-		if err := os.Remove(dst); err != nil {
-			return fmt.Errorf("replace symlink dest %s: %w", dst, err)
-		}
-	} else if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("stat dest %s: %w", dst, err)
+	if err := prepareCopyDestination(dst); err != nil {
+		return err
 	}
 	in, err := os.Open(src)
 	if err != nil {
@@ -834,12 +827,7 @@ func copyFile(ctx context.Context, src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("open dest %s: %w", dst, err)
 	}
-	closed := false
-	defer func() {
-		if !closed {
-			_ = out.Close()
-		}
-	}()
+	defer func() { _ = out.Close() }()
 
 	copyDone := make(chan error, 1)
 	go func() {
@@ -856,13 +844,28 @@ func copyFile(ctx context.Context, src, dst string) error {
 			return fmt.Errorf("copy %s -> %s: %w", src, dst, cpErr)
 		}
 		if closeErr := out.Close(); closeErr != nil {
-			closed = true
 			return fmt.Errorf("close dest %s: %w", dst, closeErr)
 		}
-		closed = true
 		if err := applyPathMetadata(copiedPathMetadataFromInfo(dst, info)); err != nil {
 			return err
 		}
 		return nil
 	}
+}
+
+func prepareCopyDestination(dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return fmt.Errorf("create dir for %s: %w", dst, err)
+	}
+	existing, err := os.Lstat(dst)
+	if err == nil && existing.Mode()&os.ModeSymlink != 0 {
+		if err := os.Remove(dst); err != nil {
+			return fmt.Errorf("replace symlink dest %s: %w", dst, err)
+		}
+		return nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("stat dest %s: %w", dst, err)
+	}
+	return nil
 }
