@@ -1471,7 +1471,7 @@ func copyTreeWithSymlinks(ctx context.Context, srcBase, destRoot string) error {
 		}
 		return copyTreeEntry(ctx, path, destPath, d)
 	}); err != nil {
-		return err
+		return fmt.Errorf("copy shared data tree %s -> %s: %w", srcBase, destRoot, err)
 	}
 	for i := len(dirs) - 1; i >= 0; i-- {
 		if err := applyPathMetadata(dirs[i]); err != nil {
