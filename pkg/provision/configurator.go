@@ -803,9 +803,9 @@ func hasPCIVendor(vendorID string) (bool, error) {
 	return false, nil
 }
 
-// copyFile copies a file preserving permissions. The copy respects context
-// cancellation: if ctx is canceled mid-copy, the source file is closed which
-// terminates the in-progress io.Copy and the error is returned.
+// copyFile copies a file preserving mode bits and modification time. The copy
+// respects context cancellation: if ctx is canceled mid-copy, the source file is
+// closed which terminates the in-progress io.Copy and the error is returned.
 func copyFile(ctx context.Context, src, dst string) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("copy file canceled: %w", err)
@@ -830,11 +830,16 @@ func copyFile(ctx context.Context, src, dst string) error {
 	}
 	defer func() { _ = in.Close() }()
 
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, metadataMode(info.Mode()))
 	if err != nil {
 		return fmt.Errorf("open dest %s: %w", dst, err)
 	}
-	defer func() { _ = out.Close() }()
+	closed := false
+	defer func() {
+		if !closed {
+			_ = out.Close()
+		}
+	}()
 
 	copyDone := make(chan error, 1)
 	go func() {
@@ -849,6 +854,14 @@ func copyFile(ctx context.Context, src, dst string) error {
 	case cpErr := <-copyDone:
 		if cpErr != nil {
 			return fmt.Errorf("copy %s -> %s: %w", src, dst, cpErr)
+		}
+		if closeErr := out.Close(); closeErr != nil {
+			closed = true
+			return fmt.Errorf("close dest %s: %w", dst, closeErr)
+		}
+		closed = true
+		if err := applyPathMetadata(copiedPathMetadataFromInfo(dst, info)); err != nil {
+			return err
 		}
 		return nil
 	}

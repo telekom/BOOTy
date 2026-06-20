@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/cloudinit"
@@ -138,7 +139,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 
 	// stateSteps must always re-run on resume because they rebuild in-memory
 	// runtime fields that later steps depend on (firmwareChanged, targetDisk,
-	// rootPartition/bootPartition).
+	// rootPartition/bootPartition, sharedMounts).
 	stateSteps := resumeStateSteps()
 
 	for i, step := range steps {
@@ -161,9 +162,10 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 
 func resumeStateSteps() map[string]struct{} {
 	return map[string]struct{}{
-		"setup-mellanox":   {},
-		"detect-disk":      {},
-		"parse-partitions": {},
+		"setup-mellanox":    {},
+		"detect-disk":       {},
+		"parse-partitions":  {},
+		"mount-shared-data": {},
 	}
 }
 
@@ -1210,6 +1212,15 @@ type sharedDataMount struct {
 	label      string
 }
 
+type copiedPathMetadata struct {
+	path     string
+	mode     os.FileMode
+	modTime  time.Time
+	uid      int
+	gid      int
+	hasOwner bool
+}
+
 func (o *Orchestrator) mountSharedData(ctx context.Context) error {
 	if !o.isSystemABMode() {
 		return nil
@@ -1328,7 +1339,8 @@ func copyTreeWithSymlinks(ctx context.Context, srcBase, destRoot string) error {
 	if err != nil {
 		return fmt.Errorf("resolve dest root: %w", err)
 	}
-	return filepath.WalkDir(srcBase, func(path string, d os.DirEntry, walkErr error) error {
+	var dirs []copiedPathMetadata
+	if err := filepath.WalkDir(srcBase, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return fmt.Errorf("walk %s: %w", path, walkErr)
 		}
@@ -1340,8 +1352,23 @@ func copyTreeWithSymlinks(ctx context.Context, srcBase, destRoot string) error {
 		if err := ensureWithinRoot(cleanDest, destPath); err != nil {
 			return fmt.Errorf("shared data seed path %s: %w", relPath, err)
 		}
+		if d.IsDir() {
+			info, err := d.Info()
+			if err != nil {
+				return fmt.Errorf("stat %s: %w", path, err)
+			}
+			dirs = append(dirs, copiedPathMetadataFromInfo(destPath, info))
+		}
 		return copyTreeEntry(ctx, path, destPath, d)
-	})
+	}); err != nil {
+		return err
+	}
+	for i := len(dirs) - 1; i >= 0; i-- {
+		if err := applyPathMetadata(dirs[i]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func copyTreeEntry(ctx context.Context, src, dst string, d os.DirEntry) error {
@@ -1353,16 +1380,52 @@ func copyTreeEntry(ctx context.Context, src, dst string, d os.DirEntry) error {
 	case mode&os.ModeSymlink != 0:
 		return copySymlink(src, dst)
 	case d.IsDir():
-		if err := os.MkdirAll(dst, mode.Perm()); err != nil {
+		if err := os.MkdirAll(dst, metadataMode(mode)); err != nil {
 			return fmt.Errorf("create directory %s: %w", dst, err)
 		}
-		return os.Chmod(dst, mode.Perm())
+		if err := os.Chmod(dst, metadataMode(mode)); err != nil {
+			return fmt.Errorf("set directory mode %s: %w", dst, err)
+		}
+		return nil
 	case mode.IsRegular():
 		return copyFile(ctx, src, dst)
 	default:
 		slog.Warn("skipping unsupported shared data seed entry", "path", src, "mode", mode.String())
 		return nil
 	}
+}
+
+func metadataMode(mode os.FileMode) os.FileMode {
+	return mode & (os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky)
+}
+
+func copiedPathMetadataFromInfo(path string, info os.FileInfo) copiedPathMetadata {
+	meta := copiedPathMetadata{
+		path:    path,
+		mode:    metadataMode(info.Mode()),
+		modTime: info.ModTime(),
+	}
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		meta.uid = int(stat.Uid)
+		meta.gid = int(stat.Gid)
+		meta.hasOwner = true
+	}
+	return meta
+}
+
+func applyPathMetadata(meta copiedPathMetadata) error {
+	if meta.hasOwner {
+		if err := os.Chown(meta.path, meta.uid, meta.gid); err != nil {
+			return fmt.Errorf("set owner %s: %w", meta.path, err)
+		}
+	}
+	if err := os.Chmod(meta.path, meta.mode); err != nil {
+		return fmt.Errorf("set mode %s: %w", meta.path, err)
+	}
+	if err := os.Chtimes(meta.path, meta.modTime, meta.modTime); err != nil {
+		return fmt.Errorf("set timestamps %s: %w", meta.path, err)
+	}
+	return nil
 }
 
 func copySymlink(src, dst string) error {
