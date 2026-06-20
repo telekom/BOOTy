@@ -55,7 +55,27 @@ lint:
 
 test:
 	@go test -race -coverprofile=$(COVERAGE_PROFILE) ./...
-	@go tool cover -func=$(COVERAGE_PROFILE) | awk -v min="$(COVERAGE_THRESHOLD)" 'BEGIN { threshold = min; sub(/%$$/, "", threshold) } { print } /^total:/ { coverage = $$3; sub(/%$$/, "", coverage); found = 1 } END { if (threshold !~ /^[0-9]+([.][0-9]+)?$$/) { printf "invalid COVERAGE_THRESHOLD: %s\n", min; exit 2 } if (!found) { print "coverage check failed: total coverage line not found"; exit 1 } if (coverage + 0 < threshold + 0) { printf "coverage %.1f%% is below %.1f%% threshold\n", coverage, threshold; exit 1 } printf "coverage %.1f%% meets %.1f%% threshold\n", coverage, threshold }'
+	@go tool cover -func=$(COVERAGE_PROFILE) | awk -v min="$(COVERAGE_THRESHOLD)" '\
+		BEGIN { \
+			threshold = min; \
+			sub(/%$$/, "", threshold); \
+			if (threshold !~ /^[0-9]+([.][0-9]+)?$$/) { \
+				printf "invalid COVERAGE_THRESHOLD: %s\n", min; \
+				invalid = 1; \
+				exit 2; \
+			} \
+		} \
+		{ print } \
+		/^total:/ { coverage = $$3; sub(/%$$/, "", coverage); found = 1 } \
+		END { \
+			if (invalid) { exit 2 } \
+			if (!found) { print "coverage check failed: total coverage line not found"; exit 1 } \
+			if (coverage + 0 < threshold + 0) { \
+				printf "coverage %s%% is below %s%% threshold\n", coverage, threshold; \
+				exit 1; \
+			} \
+			printf "coverage %s%% meets %s%% threshold\n", coverage, threshold; \
+		}'
 	@go tool cover -html=$(COVERAGE_PROFILE) -o $(COVERAGE_HTML)
 	@echo "Coverage report: $(COVERAGE_HTML)"
 
