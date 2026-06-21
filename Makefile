@@ -154,7 +154,7 @@ test-e2e:
 
 test-kvm:
 	@echo Running KVM E2E tests (requires QEMU, root, and KVM assets)
-	@go test -tags e2e -race -v -timeout 15m ./test/e2e/kvm/...
+	@go test -tags e2e -race -count=1 -v -timeout 15m ./test/e2e/kvm/...
 
 clab-up:
 	@echo Deploying ContainerLab topology

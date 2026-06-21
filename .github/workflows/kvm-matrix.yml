@@ -200,10 +200,22 @@ jobs:
 
       - name: Run KVM test (${{ matrix.scenario }})
         run: |
+          set -o pipefail
+          log_file="kvm-${{ matrix.scenario }}.log"
           if [ "${{ matrix.privileged }}" = "true" ] || [ "${{ matrix.scenario }}" = "luks-verify" ]; then
-            sudo -E env "PATH=$PATH:/usr/sbin:/sbin" go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -v -timeout 15m ./test/e2e/kvm/...
+            test_cmd=(sudo -E env "PATH=$PATH:/usr/sbin:/sbin" go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -count=1 -v -timeout 15m ./test/e2e/kvm/...)
           else
-            go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -v -timeout 15m ./test/e2e/kvm/...
+            test_cmd=(go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -count=1 -v -timeout 15m ./test/e2e/kvm/...)
+          fi
+          if ! "${test_cmd[@]}" 2>&1 | tee "${log_file}"; then
+            {
+              echo "### KVM ${{ matrix.scenario }} failed"
+              echo
+              echo '```'
+              tail -n 120 "${log_file}"
+              echo '```'
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 1
           fi
         env:
           QEMU_EXTRA_ARGS: ${{ matrix.qemu_extra }}
@@ -212,3 +224,11 @@ jobs:
           LUKS_DISK_IMAGE: ${{ matrix.luks_disk && format('{0}/{1}', github.workspace, matrix.luks_disk) || '' }}
           OVMF_VARS: ${{ matrix.ovmf_vars && format('{0}/{1}', github.workspace, matrix.ovmf_vars) || '' }}
           OVMF_CODE: ${{ matrix.ovmf_code || '' }}
+
+      - name: Upload KVM log (${{ matrix.scenario }})
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: kvm-${{ matrix.scenario }}-log
+          path: kvm-${{ matrix.scenario }}.log
+          if-no-files-found: ignore
