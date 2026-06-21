@@ -407,7 +407,10 @@ func copyTree(ctx context.Context, srcBase, destRoot string) error {
 			slog.Warn("skipping symlink in copy tree", "path", path)
 			return nil
 		}
-		relPath, _ := filepath.Rel(srcBase, path)
+		relPath, err := filepath.Rel(srcBase, path)
+		if err != nil {
+			return fmt.Errorf("resolve copy path %s relative to %s: %w", path, srcBase, err)
+		}
 		destPath := filepath.Join(cleanDest, relPath)
 
 		// Verify the resolved destination stays within destRoot.

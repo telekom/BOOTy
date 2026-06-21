@@ -1457,7 +1457,10 @@ func copyTreeWithSymlinks(ctx context.Context, srcBase, destRoot string) error {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("copy tree canceled: %w", err)
 		}
-		relPath, _ := filepath.Rel(srcBase, path)
+		relPath, err := filepath.Rel(srcBase, path)
+		if err != nil {
+			return fmt.Errorf("resolve shared data seed path %s relative to %s: %w", path, srcBase, err)
+		}
 		destPath := filepath.Join(cleanDest, relPath)
 		if err := ensureWithinRoot(cleanDest, destPath); err != nil {
 			return fmt.Errorf("shared data seed path %s: %w", relPath, err)
