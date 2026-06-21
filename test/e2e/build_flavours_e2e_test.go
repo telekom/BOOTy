@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func dockerAvailable(t *testing.T) {
@@ -34,17 +35,16 @@ func buildTarget(t *testing.T, target, dest string) string {
 	}
 	args = append(args, "--output", "type=local,dest="+dest, "-f", dockerfile, repoRoot)
 
-	cmd := exec.Command("docker", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		name := target
-		if name == "" {
-			name = "default"
-		}
-		t.Fatalf("docker buildx build --target %s failed: %v", name, err)
+	name := target
+	if name == "" {
+		name = "default"
 	}
+	runDockerBuild(t, "docker buildx build --target "+name, func() *exec.Cmd {
+		cmd := exec.Command("docker", args...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd
+	})
 
 	// gobgp, default, and slim use zstd compression; micro uses gzip.
 	out := filepath.Join(dest, "initramfs.cpio.gz")
@@ -78,19 +78,39 @@ func buildTargetWithDockerBuild(t *testing.T, target, dest, dockerfile, repoRoot
 	}
 	args = append(args, "--output", "type=local,dest="+dest, "-f", dockerfile, repoRoot)
 
-	cmd := exec.Command("docker", args...)
-	cmd.Env = append(os.Environ(), "DOCKER_BUILDKIT=1")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("docker build --target %s failed: %v", name, err)
-	}
+	runDockerBuild(t, "docker build --target "+name, func() *exec.Cmd {
+		cmd := exec.Command("docker", args...)
+		cmd.Env = append(os.Environ(), "DOCKER_BUILDKIT=1")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd
+	})
 
 	out := filepath.Join(dest, targetArtifactName(target))
 	if _, err := os.Stat(out); err != nil {
 		t.Fatalf("expected output %s not found: %v", out, err)
 	}
 	return out
+}
+
+func runDockerBuild(t *testing.T, description string, newCommand func() *exec.Cmd) {
+	t.Helper()
+
+	const attempts = 2
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if err := newCommand().Run(); err != nil {
+			lastErr = err
+			if attempt < attempts {
+				t.Logf("%s failed on attempt %d/%d: %v; retrying", description, attempt, attempts, err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
+			break
+		}
+		return
+	}
+	t.Fatalf("%s failed after %d attempts: %v", description, attempts, lastErr)
 }
 
 func targetArtifactName(target string) string {

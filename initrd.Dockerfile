@@ -488,20 +488,22 @@ COPY --from=gobgp-iso-builder /booty-gobgp.iso .
 
 # ── Micro target: pure-Go BOOTy only, no external binaries ────────────────
 FROM golang:1.26-alpine AS micro-dev
-RUN apk add --no-cache git ca-certificates
-COPY . /go/src/github.com/telekom/BOOTy/
+COPY go.mod go.sum /go/src/github.com/telekom/BOOTy/
 WORKDIR /go/src/github.com/telekom/BOOTy
+RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
+    go mod download
+COPY . /go/src/github.com/telekom/BOOTy/
 RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
     --mount=type=cache,sharing=locked,id=goroot,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux go build -a -trimpath -ldflags "-s -w" -o init
 
 FROM debian:bookworm-slim AS micro-builder
-RUN apt-get update && apt-get install -y --no-install-recommends cpio \
+RUN apt-get update && apt-get install -y --no-install-recommends cpio ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
 RUN mkdir -p bin sbin dev proc sys tmp etc
 COPY --from=micro-dev /go/src/github.com/telekom/BOOTy/init .
-COPY --from=micro-dev /etc/ssl/certs/ca-certificates.crt etc/ssl/certs/
+RUN mkdir -p etc/ssl/certs && cp /etc/ssl/certs/ca-certificates.crt etc/ssl/certs/
 
 # Package micro initramfs
 RUN find . -print0 | cpio --null -ov --format=newc > ../initramfs.cpio \
