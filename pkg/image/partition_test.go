@@ -115,6 +115,28 @@ func TestSelectSourceRootPartitionSupportsExplicitSelectors(t *testing.T) {
 	}
 }
 
+func TestSelectSourceRootPartitionSupportsFlatcarUsrSlots(t *testing.T) {
+	parts := []sfdiskPartition{
+		{Node: "/dev/loop0p1", Type: efiSystemPartitionGUID, Size: 1024, Name: "EFI-SYSTEM", Number: 1},
+		{Node: "/dev/loop0p3", Type: linuxFilesystemGUID, Size: 2048, Name: "USR-A", Number: 3},
+		{Node: "/dev/loop0p4", Type: linuxFilesystemGUID, Size: 2048, Name: "USR-B", Number: 4},
+		{Node: "/dev/loop0p9", Type: linuxFilesystemGUID, Size: 8192, Name: "ROOT", Number: 9},
+	}
+
+	root, err := selectSourceRootPartition(parts, "USR-A", 0)
+	if err != nil || root.Node != "/dev/loop0p3" {
+		t.Fatalf("flatcar explicit USR-A root = %#v, err=%v", root, err)
+	}
+
+	_, err = selectSourceRootPartition(parts, "", 0)
+	if err == nil {
+		t.Fatal("expected Flatcar USR-A/USR-B source image to require an explicit selector")
+	}
+	if !strings.Contains(err.Error(), "common root partition label candidates") {
+		t.Fatalf("error = %q, want common-label ambiguity", err.Error())
+	}
+}
+
 func TestSelectSourceRootPartitionRejectsExplicitEFI(t *testing.T) {
 	parts := []sfdiskPartition{
 		{Node: "/dev/loop0p1", Type: efiSystemPartitionGUID, Size: 1024, Number: 1},

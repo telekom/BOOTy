@@ -15,6 +15,8 @@ const (
 
 	// ABSchemeDualRoot is the supported A/B layout with shared boot/state and two root slots.
 	ABSchemeDualRoot = "dual-root"
+	// ABSchemeSystemAB is an A/B layout for immutable system roots with shared data partitions.
+	ABSchemeSystemAB = "system-ab"
 	// ABSlotA identifies root slot A.
 	ABSlotA = "a"
 	// ABSlotB identifies root slot B.
@@ -24,6 +26,10 @@ const (
 
 	defaultABBootSizeMB = 512
 	defaultABRootSizeMB = 32768
+
+	defaultABDataLabel      = "BOOTY-DATA"
+	defaultABDataMountpoint = "/var"
+	defaultABDataFilesystem = "ext4"
 )
 
 // ABConfig defines a dual-root A/B provisioning scheme.
@@ -56,8 +62,14 @@ type ABConfig struct {
 	RootSizeMB int `yaml:"rootSizeMB" json:"rootSizeMB"`
 
 	// StateSizeMB is the persistent state partition size. Zero means it fills
-	// the remaining disk.
+	// the remaining disk. In system-ab, this remains a compatibility alias for
+	// the default BOOTY-DATA partition size when DataPartitions is not set.
 	StateSizeMB int `yaml:"stateSizeMB" json:"stateSizeMB"`
+
+	// DataPartitions are shared data partitions for system-ab. Empty defaults
+	// to one ext4 partition labeled BOOTY-DATA mounted at /var. SizeMB=0 means
+	// fill remaining space and must only be used by the final data partition.
+	DataPartitions []ABDataPartition `yaml:"dataPartitions,omitempty" json:"dataPartitions,omitempty"`
 
 	// SourceRootLabel selects the source-image GPT partition label to copy into
 	// the target root slot. When empty, BOOTy accepts common root labels or a
@@ -68,6 +80,14 @@ type ABConfig struct {
 	// copy into the target root slot. It is mutually exclusive with
 	// SourceRootLabel and exists for images that do not label root partitions.
 	SourceRootPartition int `yaml:"sourceRootPartition" json:"sourceRootPartition"`
+}
+
+// ABDataPartition defines a shared data partition in the system-ab layout.
+type ABDataPartition struct {
+	Label      string `yaml:"label" json:"label"`
+	SizeMB     int    `yaml:"sizeMB,omitempty" json:"sizeMB,omitempty"`
+	Filesystem string `yaml:"filesystem,omitempty" json:"filesystem,omitempty"`
+	Mountpoint string `yaml:"mountpoint" json:"mountpoint"`
 }
 
 // WithDefaults returns a copy with production-safe defaults filled in.
@@ -91,6 +111,7 @@ func (a *ABConfig) WithDefaults() ABConfig {
 	if cfg.RootSizeMB == 0 {
 		cfg.RootSizeMB = defaultABRootSizeMB
 	}
+	cfg.DataPartitions = defaultABDataPartitions(cfg.Scheme, cfg.StateSizeMB, cfg.DataPartitions)
 	return cfg
 }
 
@@ -116,10 +137,10 @@ func (a *ABConfig) ResolvedTargetSlot() (string, error) {
 	}
 }
 
-// PartitionLayout returns the dual-root GPT layout for the configured target.
+// PartitionLayout returns the GPT layout for the configured A/B scheme.
 func (a *ABConfig) PartitionLayout(device string) (*PartitionLayout, error) {
 	cfg := a.WithDefaults()
-	if cfg.Scheme != ABSchemeDualRoot {
+	if cfg.Scheme != ABSchemeDualRoot && cfg.Scheme != ABSchemeSystemAB {
 		return nil, fmt.Errorf("unsupported A/B scheme %q", cfg.Scheme)
 	}
 	target, err := cfg.ResolvedTargetSlot()
@@ -135,36 +156,81 @@ func (a *ABConfig) PartitionLayout(device string) (*PartitionLayout, error) {
 		rootBMount = "/"
 	}
 
-	return &PartitionLayout{
-		Table:  "gpt",
-		Device: device,
-		Partitions: []Partition{
-			{
-				Label:      "BOOTY-EFI",
-				SizeMB:     cfg.BootSizeMB,
-				Filesystem: "vfat",
-				Mountpoint: "/boot/efi",
-			},
-			{
-				Label:      "BOOTY-ROOT-A",
-				SizeMB:     cfg.RootSizeMB,
-				Filesystem: "ext4",
-				Mountpoint: rootAMount,
-			},
-			{
-				Label:      "BOOTY-ROOT-B",
-				SizeMB:     cfg.RootSizeMB,
-				Filesystem: "ext4",
-				Mountpoint: rootBMount,
-			},
-			{
-				Label:      "BOOTY-STATE",
-				SizeMB:     cfg.StateSizeMB,
-				Filesystem: "ext4",
-				Mountpoint: "/var/lib/booty",
-			},
+	partitions := []Partition{
+		{
+			Label:      "BOOTY-EFI",
+			SizeMB:     cfg.BootSizeMB,
+			Filesystem: "vfat",
+			Mountpoint: "/boot/efi",
 		},
+		{
+			Label:      "BOOTY-ROOT-A",
+			SizeMB:     cfg.RootSizeMB,
+			Filesystem: "ext4",
+			Mountpoint: rootAMount,
+		},
+		{
+			Label:      "BOOTY-ROOT-B",
+			SizeMB:     cfg.RootSizeMB,
+			Filesystem: "ext4",
+			Mountpoint: rootBMount,
+		},
+	}
+	if cfg.Scheme == ABSchemeDualRoot {
+		partitions = append(partitions, Partition{
+			Label:      "BOOTY-STATE",
+			SizeMB:     cfg.StateSizeMB,
+			Filesystem: "ext4",
+			Mountpoint: "/var/lib/booty",
+		})
+	} else {
+		for _, data := range cfg.DataPartitions {
+			partitions = append(partitions, Partition{
+				Label:      data.Label,
+				SizeMB:     data.SizeMB,
+				Filesystem: data.Filesystem,
+				Mountpoint: data.Mountpoint,
+			})
+		}
+	}
+
+	return &PartitionLayout{
+		Table:      "gpt",
+		Device:     device,
+		Partitions: partitions,
 	}, nil
+}
+
+func defaultABDataPartitions(scheme string, stateSizeMB int, parts []ABDataPartition) []ABDataPartition {
+	if scheme != ABSchemeSystemAB {
+		return normalizeABDataPartitions(parts)
+	}
+	if len(parts) == 0 {
+		return []ABDataPartition{{
+			Label:      defaultABDataLabel,
+			SizeMB:     stateSizeMB,
+			Filesystem: defaultABDataFilesystem,
+			Mountpoint: defaultABDataMountpoint,
+		}}
+	}
+	return normalizeABDataPartitions(parts)
+}
+
+func normalizeABDataPartitions(parts []ABDataPartition) []ABDataPartition {
+	if len(parts) == 0 {
+		return nil
+	}
+	out := make([]ABDataPartition, 0, len(parts))
+	for _, part := range parts {
+		part.Label = strings.TrimSpace(part.Label)
+		part.Filesystem = strings.ToLower(strings.TrimSpace(part.Filesystem))
+		part.Mountpoint = strings.TrimSpace(part.Mountpoint)
+		if part.Filesystem == "" {
+			part.Filesystem = defaultABDataFilesystem
+		}
+		out = append(out, part)
+	}
+	return out
 }
 
 func normalizeABScheme(value string) string {

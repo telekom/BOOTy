@@ -5,8 +5,8 @@ upgrades. Existing `whole-disk` and `partition` modes are unchanged.
 
 ## Behavior
 
-Set `provision.image.mode: ab` or `IMAGE_MODE=ab`. BOOTy generates this GPT
-scheme unless `preserveExisting` is set:
+Set `provision.image.mode: ab` or `IMAGE_MODE=ab`. The default `dual-root`
+scheme generates this GPT layout unless `preserveExisting` is set:
 
 | Partition | Label | Purpose |
 | --- | --- | --- |
@@ -14,6 +14,19 @@ scheme unless `preserveExisting` is set:
 | 2 | `BOOTY-ROOT-A` | Root slot A |
 | 3 | `BOOTY-ROOT-B` | Root slot B |
 | 4 | `BOOTY-STATE` | Persistent BOOTy state, fills remaining disk by default |
+
+The `system-ab` scheme keeps the same shared EFI and root slots but replaces
+`BOOTY-STATE` with shared runtime data partitions. By default it creates one
+ext4 partition:
+
+| Partition | Label | Mountpoint | Purpose |
+| --- | --- | --- | --- |
+| 4 | `BOOTY-DATA` | `/var` | Shared runtime data across root-slot upgrades |
+
+Use `dataPartitions` or `AB_DATA_PARTITIONS` to add or replace shared data
+mounts such as `/home`. If no data partitions are configured, `stateSizeMB` /
+`AB_STATE_SIZE_MB` remains a compatibility alias for the default `/var`
+partition size. A size of `0` still means "fill remaining disk".
 
 Initial provisioning writes slot A unless `targetSlot` is set. Upgrades set
 `preserveExisting: true`, provide `activeSlot`, and normally use
@@ -29,6 +42,13 @@ label such as `rootfs`, or one unambiguous Linux filesystem partition. Ambiguous
 partitioned source images fail fast instead of guessing. If the source image is
 a plain root filesystem image without a partition table, BOOTy copies that file
 directly into the target root slot.
+
+For `system-ab`, BOOTy mounts shared data partitions before hostname writes,
+provisioner files, sysext preload/activation, fstab generation, cloud-init
+injection, machine files, and post-provision commands. During first install,
+BOOTy seeds an empty shared partition from the corresponding directory in the
+target root slot before mounting it. During `preserveExisting` upgrades, shared
+data partitions are validated and mounted but never formatted or seeded.
 
 After mounting the target root, BOOTy writes `/etc/booty/ab-slot.env` with the
 selected slot, booted slot marker, and root partition. Higher-level tooling can
@@ -72,6 +92,33 @@ provision:
     stateSizeMB: 0
 ```
 
+`system-ab` example:
+
+```yaml
+provision:
+  image:
+    mode: ab
+    urls:
+      - oci://registry.example.com/tcaas/os-node:v2
+  ab:
+    scheme: system-ab
+    activeSlot: a
+    targetSlot: inactive
+    preserveExisting: true
+    sourceRootPartition: 2
+    bootSizeMB: 512
+    rootSizeMB: 65536
+    dataPartitions:
+      - label: BOOTY-HOME
+        mountpoint: /home
+        filesystem: ext4
+        sizeMB: 65536
+      - label: BOOTY-DATA
+        mountpoint: /var
+        filesystem: ext4
+        sizeMB: 0
+```
+
 ## CAPRF Vars
 
 ```sh
@@ -89,6 +136,18 @@ export AB_STATE_SIZE_MB="0"
 
 Use `AB_SOURCE_ROOT_PARTITION="2"` instead of `AB_SOURCE_ROOT_LABEL` only for
 source images that do not carry a stable GPT root partition label.
+
+For `system-ab`, configure additional shared data partitions as JSON:
+
+```sh
+export AB_SCHEME="system-ab"
+export AB_DATA_PARTITIONS='[{"label":"BOOTY-HOME","mountpoint":"/home","filesystem":"ext4","sizeMB":65536},{"label":"BOOTY-DATA","mountpoint":"/var","filesystem":"ext4","sizeMB":0}]'
+```
+
+Flatcar-like source images commonly expose immutable OS slots as `USR-A` and
+`USR-B` plus a stateful `ROOT` partition. Use an explicit selector such as
+`AB_SOURCE_ROOT_LABEL="USR-A"` for these images; BOOTy intentionally rejects
+ambiguous source images instead of guessing between OS slots.
 
 ## Requirements
 

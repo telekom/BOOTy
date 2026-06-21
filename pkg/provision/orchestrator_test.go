@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -172,12 +173,12 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 39 {
-		t.Fatalf("expected 39 provisioning steps, got %d", len(steps))
+	if len(steps) != 40 {
+		t.Fatalf("expected 40 provisioning steps, got %d", len(steps))
 	}
 }
 
-func TestMountBootStepIsBetweenRootMountAndBootloaderWork(t *testing.T) {
+func TestMountBootAndSharedDataStepsPrecedeProvisioningWrites(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 	steps := o.provisionSteps()
@@ -186,17 +187,287 @@ func TestMountBootStepIsBetweenRootMountAndBootloaderWork(t *testing.T) {
 	for i, step := range steps {
 		indices[step.Name] = i
 	}
-	for _, name := range []string{"mount-root", "mount-boot", "configure-grub", "install-efi-fallback", "create-efi-boot-entry", "teardown-chroot"} {
+	for _, name := range []string{"mount-root", "mount-boot", "mount-shared-data", "copy-provisioner-files", "apply-sysexts", "configure-grub", "install-efi-fallback", "create-efi-boot-entry", "teardown-chroot"} {
 		if _, ok := indices[name]; !ok {
 			t.Fatalf("missing step %q", name)
 		}
 	}
 	if indices["mount-root"] >= indices["mount-boot"] ||
-		indices["mount-boot"] >= indices["configure-grub"] ||
+		indices["mount-boot"] >= indices["mount-shared-data"] ||
+		indices["mount-shared-data"] >= indices["copy-provisioner-files"] ||
+		indices["mount-shared-data"] >= indices["apply-sysexts"] ||
+		indices["apply-sysexts"] >= indices["configure-grub"] ||
 		indices["configure-grub"] >= indices["install-efi-fallback"] ||
 		indices["install-efi-fallback"] >= indices["create-efi-boot-entry"] ||
 		indices["create-efi-boot-entry"] >= indices["teardown-chroot"] {
 		t.Fatalf("unexpected boot mount ordering: %#v", indices)
+	}
+}
+
+func TestResumeStateStepsRerunMountSharedDataForCleanupState(t *testing.T) {
+	stateSteps := resumeStateSteps()
+	if _, ok := stateSteps["mount-shared-data"]; !ok {
+		t.Fatal("mount-shared-data must rerun on resume to rebuild sharedMounts for teardown cleanup")
+	}
+	if _, ok := stateSteps["set-hostname"]; ok {
+		t.Fatal("set-hostname should remain skippable after resume")
+	}
+}
+
+func TestMountSharedDataMountsSystemABDataPartitions(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.Scheme = config.ABSchemeSystemAB
+	cfg.Provision.AB.PreserveExisting = true
+	cfg.Provision.AB.DataPartitions = []config.ABDataPartition{
+		{Label: "BOOTY-VAR", Mountpoint: "/var", SizeMB: 1024},
+		{Label: "BOOTY-HOME", Mountpoint: "/home"},
+	}
+	layout, err := cfg.Provision.AB.PartitionLayout("/dev/sda")
+	if err != nil {
+		t.Fatalf("PartitionLayout: %v", err)
+	}
+	cfg.Provision.Disk.PartitionLayout = layout
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+
+	oldMountPoint := isMountPoint
+	isMountPoint = func(string) bool { return false }
+	t.Cleanup(func() { isMountPoint = oldMountPoint })
+
+	oldMountShared := mountSharedDataPart
+	var mounted []string
+	mountSharedDataPart = func(_ context.Context, _ *disk.Manager, device, mountpoint string) error {
+		mounted = append(mounted, device+"="+mountpoint)
+		return nil
+	}
+	t.Cleanup(func() { mountSharedDataPart = oldMountShared })
+
+	if err := o.mountSharedData(context.Background()); err != nil {
+		t.Fatalf("mountSharedData: %v", err)
+	}
+	want := []string{"/dev/sda4=/newroot/var", "/dev/sda5=/newroot/home"}
+	if strings.Join(mounted, ",") != strings.Join(want, ",") {
+		t.Fatalf("mounted = %#v, want %#v", mounted, want)
+	}
+}
+
+func TestMountSharedDataRecordsAlreadyMountedSystemABDataPartitions(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.Scheme = config.ABSchemeSystemAB
+	cfg.Provision.AB.PreserveExisting = true
+	cfg.Provision.AB.DataPartitions = []config.ABDataPartition{
+		{Label: "BOOTY-VAR", Mountpoint: "/var", SizeMB: 1024},
+		{Label: "BOOTY-HOME", Mountpoint: "/home"},
+	}
+	layout, err := cfg.Provision.AB.PartitionLayout("/dev/sda")
+	if err != nil {
+		t.Fatalf("PartitionLayout: %v", err)
+	}
+	cfg.Provision.Disk.PartitionLayout = layout
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+
+	oldMountPoint := isMountPoint
+	isMountPoint = func(path string) bool {
+		return path == filepath.Join(newroot, "var") || path == filepath.Join(newroot, "home")
+	}
+	t.Cleanup(func() { isMountPoint = oldMountPoint })
+
+	oldMountShared := mountSharedDataPart
+	mountSharedDataPart = func(_ context.Context, _ *disk.Manager, _, _ string) error {
+		t.Fatal("already-mounted shared data partitions must not be mounted again")
+		return nil
+	}
+	t.Cleanup(func() { mountSharedDataPart = oldMountShared })
+
+	if err := o.mountSharedData(context.Background()); err != nil {
+		t.Fatalf("mountSharedData: %v", err)
+	}
+	want := []string{filepath.Join(newroot, "var"), filepath.Join(newroot, "home")}
+	if strings.Join(o.sharedMounts, ",") != strings.Join(want, ",") {
+		t.Fatalf("sharedMounts = %#v, want %#v", o.sharedMounts, want)
+	}
+}
+
+func TestCleanupSharedDataSeedMountKeepsMountedTreeOnUnmountFailure(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	seedMount := filepath.Join(t.TempDir(), "seed")
+	if err := os.Mkdir(seedMount, 0o755); err != nil {
+		t.Fatalf("create seed mount: %v", err)
+	}
+	sentinel := filepath.Join(seedMount, "shared-data")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0o600); err != nil {
+		t.Fatalf("write sentinel: %v", err)
+	}
+
+	oldUnmountShared := unmountSharedDataPart
+	unmountSharedDataPart = func(_ *disk.Manager, _ string) error {
+		return errors.New("device busy")
+	}
+	t.Cleanup(func() { unmountSharedDataPart = oldUnmountShared })
+
+	o.cleanupSharedDataSeedMount(seedMount, true)
+
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("sentinel should remain after unmount failure: %v", err)
+	}
+}
+
+func TestInterruptedSharedDataSeedIsCleanedForRetry(t *testing.T) {
+	dst := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dst, "lost+found"), 0o700); err != nil {
+		t.Fatalf("create lost+found: %v", err)
+	}
+	if err := writeSeedInProgressMarker(dst); err != nil {
+		t.Fatalf("write seed marker: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dst, "partial", "nested"), 0o755); err != nil {
+		t.Fatalf("create partial directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dst, "partial", "nested", "state"), []byte("partial"), 0o600); err != nil {
+		t.Fatalf("write partial file: %v", err)
+	}
+
+	state, err := seedDirectoryState(dst)
+	if err != nil {
+		t.Fatalf("seedDirectoryState: %v", err)
+	}
+	if state != seedStateInProgress {
+		t.Fatalf("seedDirectoryState = %v, want in-progress", state)
+	}
+	if err := cleanInterruptedSeed(dst); err != nil {
+		t.Fatalf("cleanInterruptedSeed: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dst, "lost+found")); err != nil {
+		t.Fatalf("lost+found should remain: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "partial")); !os.IsNotExist(err) {
+		t.Fatalf("partial content should be removed, got err=%v", err)
+	}
+	if empty, err := directoryEmptyForSeed(dst); err != nil {
+		t.Fatalf("directoryEmptyForSeed: %v", err)
+	} else if !empty {
+		t.Fatal("cleaned interrupted seed should be empty")
+	}
+}
+
+func TestInvalidSharedDataSeedMarkerPreservesExistingContent(t *testing.T) {
+	dst := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dst, sharedDataSeedInProgressMarker), []byte("user content"), 0o600); err != nil {
+		t.Fatalf("write marker-shaped user file: %v", err)
+	}
+
+	state, err := seedDirectoryState(dst)
+	if err != nil {
+		t.Fatalf("seedDirectoryState: %v", err)
+	}
+	if state != seedStateExistingContent {
+		t.Fatalf("seedDirectoryState = %v, want existing-content", state)
+	}
+}
+
+func TestSeedSharedDataPartitionRejectsSymlinkedSourceBeforeMount(t *testing.T) {
+	root := t.TempDir()
+	realTarget := filepath.Join(root, "real-var")
+	if err := os.Mkdir(realTarget, 0o755); err != nil {
+		t.Fatalf("create real target: %v", err)
+	}
+	target := filepath.Join(root, "var")
+	if err := os.Symlink(realTarget, target); err != nil {
+		t.Fatalf("create symlinked seed source: %v", err)
+	}
+
+	oldMountShared := mountSharedDataPart
+	mountCalled := false
+	mountSharedDataPart = func(_ context.Context, _ *disk.Manager, _, _ string) error {
+		mountCalled = true
+		return nil
+	}
+	t.Cleanup(func() { mountSharedDataPart = oldMountShared })
+
+	err := (&Orchestrator{}).seedSharedDataPartition(context.Background(), "/dev/test", target)
+	if err == nil || !strings.Contains(err.Error(), "got symlink") {
+		t.Fatalf("seedSharedDataPartition error = %v, want symlink rejection", err)
+	}
+	if mountCalled {
+		t.Fatal("seedSharedDataPartition must reject symlinked source before mounting seed target")
+	}
+}
+
+func TestSharedDataSeedCopyPreservesSymlinksAndIgnoresLostFound(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dst, "lost+found"), 0o700); err != nil {
+		t.Fatalf("create lost+found: %v", err)
+	}
+	empty, err := directoryEmptyForSeed(dst)
+	if err != nil {
+		t.Fatalf("directoryEmptyForSeed: %v", err)
+	}
+	if !empty {
+		t.Fatal("lost+found-only seed target should be considered empty")
+	}
+	if err := os.MkdirAll(filepath.Join(src, "lib"), 0o755); err != nil {
+		t.Fatalf("create source directory: %v", err)
+	}
+	srcFile := filepath.Join(src, "lib", "state")
+	if err := os.WriteFile(srcFile, []byte("kept"), 0o640); err != nil {
+		t.Fatalf("write source file: %v", err)
+	}
+	if err := os.Symlink("../lib/state", filepath.Join(src, "state-link")); err != nil {
+		t.Fatalf("create source symlink: %v", err)
+	}
+	srcModTime := time.Unix(1_700_000_000, 0)
+	if err := os.Chtimes(srcFile, srcModTime, srcModTime); err != nil {
+		t.Fatalf("set source file timestamps: %v", err)
+	}
+	if err := os.Chmod(filepath.Join(src, "lib"), 0o750); err != nil {
+		t.Fatalf("set source directory mode: %v", err)
+	}
+	if err := os.Chtimes(filepath.Join(src, "lib"), srcModTime, srcModTime); err != nil {
+		t.Fatalf("set source directory timestamps: %v", err)
+	}
+
+	if err := copyTreeWithSymlinks(context.Background(), src, dst); err != nil {
+		t.Fatalf("copyTreeWithSymlinks: %v", err)
+	}
+	link, err := os.Readlink(filepath.Join(dst, "state-link"))
+	if err != nil {
+		t.Fatalf("read copied symlink: %v", err)
+	}
+	if link != "../lib/state" {
+		t.Fatalf("copied symlink target = %q, want ../lib/state", link)
+	}
+	data, err := os.ReadFile(filepath.Join(dst, "lib", "state"))
+	if err != nil {
+		t.Fatalf("read copied file: %v", err)
+	}
+	if string(data) != "kept" {
+		t.Fatalf("copied file = %q", string(data))
+	}
+	fileInfo, err := os.Stat(filepath.Join(dst, "lib", "state"))
+	if err != nil {
+		t.Fatalf("stat copied file: %v", err)
+	}
+	if fileInfo.Mode().Perm() != 0o640 {
+		t.Fatalf("copied file mode = %v, want 0640", fileInfo.Mode().Perm())
+	}
+	if !fileInfo.ModTime().Equal(srcModTime) {
+		t.Fatalf("copied file mtime = %v, want %v", fileInfo.ModTime(), srcModTime)
+	}
+	dirInfo, err := os.Stat(filepath.Join(dst, "lib"))
+	if err != nil {
+		t.Fatalf("stat copied directory: %v", err)
+	}
+	if dirInfo.Mode().Perm() != 0o750 {
+		t.Fatalf("copied directory mode = %v, want 0750", dirInfo.Mode().Perm())
+	}
+	if !dirInfo.ModTime().Equal(srcModTime) {
+		t.Fatalf("copied directory mtime = %v, want %v", dirInfo.ModTime(), srcModTime)
 	}
 }
 

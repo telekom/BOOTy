@@ -195,7 +195,7 @@ func seedRawDiskCrashArtifacts(t *testing.T, rawDisk string) {
 	if err := os.MkdirAll(mountDir, 0o755); err != nil {
 		t.Fatalf("mkdir mount dir: %v", err)
 	}
-	run(t, "mount existing root", "mount", rootDev, mountDir)
+	mountWithRetry(t, "mount existing root", rootDev, mountDir)
 	defer run(t, "unmount existing root", "umount", mountDir)
 	writeKVMFile(t, filepath.Join(mountDir, "var", "crash", "vmcore"), "old-os-vmcore")
 	writeKVMFile(t, filepath.Join(mountDir, "var", "log", "kern.log"), "kernel panic - not syncing: kvm")

@@ -87,7 +87,7 @@ func createTestDiskImage(t *testing.T, sizeMB int) string {
 	if err := os.MkdirAll(mountDir, 0o755); err != nil {
 		t.Fatalf("mkdir mountDir: %v", err)
 	}
-	run(t, "mount root partition", "mount", rootDev, mountDir)
+	mountWithRetry(t, "mount root partition", rootDev, mountDir)
 	t.Cleanup(func() {
 		_ = exec.Command("umount", mountDir).Run()
 	})
@@ -137,7 +137,7 @@ func createChrootCapableTestDiskImage(t *testing.T, sizeMB int) string {
 			_ = exec.Command("umount", mountDir).Run()
 		}
 	}()
-	run(t, "mount chroot-capable root partition", "mount", rootDev, mountDir)
+	mountWithRetry(t, "mount chroot-capable root partition", rootDev, mountDir)
 	mounted = true
 
 	installMinimalChrootFixture(t, mountDir)
@@ -559,6 +559,33 @@ func waitForDevice(t *testing.T, devPath string, timeout time.Duration) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("device %s did not appear within %s: %v", devPath, timeout, lastErr)
+}
+
+func mountWithRetry(t *testing.T, label, devPath, mountDir string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	var out []byte
+	var err error
+	var lastStatErr error
+	for time.Now().Before(deadline) {
+		info, statErr := os.Stat(devPath)
+		if statErr == nil && info.Mode()&os.ModeDevice != 0 {
+			cmd := exec.Command("mount", devPath, mountDir)
+			out, err = cmd.CombinedOutput()
+			if err == nil {
+				return
+			}
+		} else if statErr != nil {
+			lastStatErr = statErr
+		} else {
+			lastStatErr = fmt.Errorf("%s exists but is not a device", devPath)
+		}
+		if _, lookErr := exec.LookPath("udevadm"); lookErr == nil {
+			_ = exec.Command("udevadm", "settle", "--timeout=2").Run()
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatalf("%s: mount [%s %s] failed after retries: %v (last stat: %v)\n%s", label, devPath, mountDir, err, lastStatErr, out)
 }
 
 func rereadPartitionTable(devPath string) error {

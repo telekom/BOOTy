@@ -83,6 +83,34 @@ func TestABSysextVarsRoundTripE2E(t *testing.T) {
 	}
 }
 
+func TestABSystemVarsRoundTripE2E(t *testing.T) {
+	dataPartitions := `[
+		{"label":"BOOTY-VAR","mountpoint":"/var","sizeMB":8192},
+		{"label":"BOOTY-HOME","mountpoint":"/home"}
+	]`
+	vars := strings.Join([]string{
+		`export IMAGE="https://images.example.invalid/os.raw.gz"`,
+		`export IMAGE_MODE="ab"`,
+		`export AB_SCHEME="system-ab"`,
+		`export AB_TARGET_SLOT="a"`,
+		"export AB_DATA_PARTITIONS=" + strconv.Quote(dataPartitions),
+	}, "\n")
+
+	cfg, err := parseTestVars(vars)
+	if err != nil {
+		t.Fatalf("ParseVars() error: %v", err)
+	}
+	if cfg.Provision.AB.Scheme != config.ABSchemeSystemAB {
+		t.Fatalf("A/B scheme = %q, want system-ab", cfg.Provision.AB.Scheme)
+	}
+	if len(cfg.Provision.AB.DataPartitions) != 2 {
+		t.Fatalf("data partitions = %d, want 2", len(cfg.Provision.AB.DataPartitions))
+	}
+	if cfg.Provision.AB.DataPartitions[0].Mountpoint != "/var" {
+		t.Fatalf("first data partition = %+v", cfg.Provision.AB.DataPartitions[0])
+	}
+}
+
 func TestABSysextVarsRejectBrokenInputsE2E(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -208,6 +236,45 @@ func TestABPartitionLayoutContractE2E(t *testing.T) {
 	}
 	if explicit.Partitions[1].Mountpoint != "/" || explicit.Partitions[2].Mountpoint != "" {
 		t.Fatalf("explicit target A mountpoints = %q/%q, want / and empty", explicit.Partitions[1].Mountpoint, explicit.Partitions[2].Mountpoint)
+	}
+}
+
+func TestABSystemPartitionLayoutContractE2E(t *testing.T) {
+	ab := config.ABConfig{
+		Scheme:     config.ABSchemeSystemAB,
+		TargetSlot: config.ABSlotA,
+		BootSizeMB: 128,
+		RootSizeMB: 1024,
+		DataPartitions: []config.ABDataPartition{
+			{Label: "BOOTY-VAR", SizeMB: 4096, Mountpoint: "/var"},
+			{Label: "BOOTY-HOME", Mountpoint: "/home"},
+		},
+	}
+
+	layout, err := ab.PartitionLayout("/dev/vda")
+	if err != nil {
+		t.Fatalf("PartitionLayout() error: %v", err)
+	}
+	want := []struct {
+		label      string
+		sizeMB     int
+		filesystem string
+		mountpoint string
+	}{
+		{"BOOTY-EFI", 128, "vfat", "/boot/efi"},
+		{"BOOTY-ROOT-A", 1024, "ext4", "/"},
+		{"BOOTY-ROOT-B", 1024, "ext4", ""},
+		{"BOOTY-VAR", 4096, "ext4", "/var"},
+		{"BOOTY-HOME", 0, "ext4", "/home"},
+	}
+	if len(layout.Partitions) != len(want) {
+		t.Fatalf("partitions = %d, want %d", len(layout.Partitions), len(want))
+	}
+	for i, wantPart := range want {
+		got := layout.Partitions[i]
+		if got.Label != wantPart.label || got.SizeMB != wantPart.sizeMB || got.Filesystem != wantPart.filesystem || got.Mountpoint != wantPart.mountpoint {
+			t.Fatalf("partition[%d] = %+v, want %+v", i, got, wantPart)
+		}
 	}
 }
 

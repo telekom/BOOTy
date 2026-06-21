@@ -407,7 +407,10 @@ func copyTree(ctx context.Context, srcBase, destRoot string) error {
 			slog.Warn("skipping symlink in copy tree", "path", path)
 			return nil
 		}
-		relPath, _ := filepath.Rel(srcBase, path)
+		relPath, err := filepath.Rel(srcBase, path)
+		if err != nil {
+			return fmt.Errorf("resolve copy path %s relative to %s: %w", path, srcBase, err)
+		}
 		destPath := filepath.Join(cleanDest, relPath)
 
 		// Verify the resolved destination stays within destRoot.
@@ -803,9 +806,9 @@ func hasPCIVendor(vendorID string) (bool, error) {
 	return false, nil
 }
 
-// copyFile copies a file preserving permissions. The copy respects context
-// cancellation: if ctx is canceled mid-copy, the source file is closed which
-// terminates the in-progress io.Copy and the error is returned.
+// copyFile copies a file preserving mode bits and modification time. The copy
+// respects context cancellation: if ctx is canceled mid-copy, the source file is
+// closed which terminates the in-progress io.Copy and the error is returned.
 func copyFile(ctx context.Context, src, dst string) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("copy file canceled: %w", err)
@@ -814,15 +817,8 @@ func copyFile(ctx context.Context, src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("stat %s: %w", src, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return fmt.Errorf("create dir for %s: %w", dst, err)
-	}
-	if existing, err := os.Lstat(dst); err == nil && existing.Mode()&os.ModeSymlink != 0 {
-		if err := os.Remove(dst); err != nil {
-			return fmt.Errorf("replace symlink dest %s: %w", dst, err)
-		}
-	} else if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("stat dest %s: %w", dst, err)
+	if err := prepareCopyDestination(dst); err != nil {
+		return err
 	}
 	in, err := os.Open(src)
 	if err != nil {
@@ -830,11 +826,16 @@ func copyFile(ctx context.Context, src, dst string) error {
 	}
 	defer func() { _ = in.Close() }()
 
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, metadataMode(info.Mode()))
 	if err != nil {
 		return fmt.Errorf("open dest %s: %w", dst, err)
 	}
-	defer func() { _ = out.Close() }()
+	outClosed := false
+	defer func() {
+		if !outClosed {
+			_ = out.Close()
+		}
+	}()
 
 	copyDone := make(chan error, 1)
 	go func() {
@@ -850,6 +851,31 @@ func copyFile(ctx context.Context, src, dst string) error {
 		if cpErr != nil {
 			return fmt.Errorf("copy %s -> %s: %w", src, dst, cpErr)
 		}
+		closeErr := out.Close()
+		outClosed = true
+		if closeErr != nil {
+			return fmt.Errorf("close dest %s: %w", dst, closeErr)
+		}
+		if err := applyPathMetadata(copiedPathMetadataFromInfo(dst, info)); err != nil {
+			return err
+		}
 		return nil
 	}
+}
+
+func prepareCopyDestination(dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return fmt.Errorf("create dir for %s: %w", dst, err)
+	}
+	existing, err := os.Lstat(dst)
+	if err == nil && existing.Mode()&os.ModeSymlink != 0 {
+		if err := os.Remove(dst); err != nil {
+			return fmt.Errorf("replace symlink dest %s: %w", dst, err)
+		}
+		return nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("stat dest %s: %w", dst, err)
+	}
+	return nil
 }
