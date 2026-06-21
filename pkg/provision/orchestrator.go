@@ -1297,10 +1297,10 @@ func (o *Orchestrator) recordSharedMount(mountpoint string) {
 }
 
 func (o *Orchestrator) seedSharedDataPartition(ctx context.Context, device, target string) error {
-	if _, err := os.Stat(target); os.IsNotExist(err) {
+	if exists, err := validateSharedDataSeedSource(target); err != nil {
+		return err
+	} else if !exists {
 		return nil
-	} else if err != nil {
-		return fmt.Errorf("stat seed source %s: %w", target, err)
 	}
 	seedMount, err := os.MkdirTemp(newroot, ".booty-data-seed-*")
 	if err != nil {
@@ -1445,21 +1445,30 @@ func removeSeedInProgressMarker(path string) error {
 }
 
 func copyTreeWithSymlinks(ctx context.Context, srcBase, destRoot string) error {
+	if exists, err := validateSharedDataSeedSource(srcBase); err != nil {
+		return err
+	} else if !exists {
+		return fmt.Errorf("seed source %s does not exist", srcBase)
+	}
+	cleanSrc, err := filepath.Abs(srcBase)
+	if err != nil {
+		return fmt.Errorf("resolve source root: %w", err)
+	}
 	cleanDest, err := filepath.Abs(destRoot)
 	if err != nil {
 		return fmt.Errorf("resolve dest root: %w", err)
 	}
 	var dirs []copiedPathMetadata
-	if err := filepath.WalkDir(srcBase, func(path string, d os.DirEntry, walkErr error) error {
+	if err := filepath.WalkDir(cleanSrc, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return fmt.Errorf("walk %s: %w", path, walkErr)
 		}
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("copy tree canceled: %w", err)
 		}
-		relPath, err := filepath.Rel(srcBase, path)
+		relPath, err := filepath.Rel(cleanSrc, path)
 		if err != nil {
-			return fmt.Errorf("resolve shared data seed path %s relative to %s: %w", path, srcBase, err)
+			return fmt.Errorf("resolve shared data seed path %s relative to %s: %w", path, cleanSrc, err)
 		}
 		destPath := filepath.Join(cleanDest, relPath)
 		if err := ensureWithinRoot(cleanDest, destPath); err != nil {
@@ -1482,6 +1491,23 @@ func copyTreeWithSymlinks(ctx context.Context, srcBase, destRoot string) error {
 		}
 	}
 	return nil
+}
+
+func validateSharedDataSeedSource(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("stat seed source %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return false, fmt.Errorf("seed source %s must be a directory, got symlink", path)
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("seed source %s must be a directory", path)
+	}
+	return true, nil
 }
 
 func copyTreeEntry(ctx context.Context, src, dst string, d os.DirEntry) error {
