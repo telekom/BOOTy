@@ -370,6 +370,34 @@ func TestInvalidSharedDataSeedMarkerPreservesExistingContent(t *testing.T) {
 	}
 }
 
+func TestSeedSharedDataPartitionRejectsSymlinkedSourceBeforeMount(t *testing.T) {
+	root := t.TempDir()
+	realTarget := filepath.Join(root, "real-var")
+	if err := os.Mkdir(realTarget, 0o755); err != nil {
+		t.Fatalf("create real target: %v", err)
+	}
+	target := filepath.Join(root, "var")
+	if err := os.Symlink(realTarget, target); err != nil {
+		t.Fatalf("create symlinked seed source: %v", err)
+	}
+
+	oldMountShared := mountSharedDataPart
+	mountCalled := false
+	mountSharedDataPart = func(_ context.Context, _ *disk.Manager, _, _ string) error {
+		mountCalled = true
+		return nil
+	}
+	t.Cleanup(func() { mountSharedDataPart = oldMountShared })
+
+	err := (&Orchestrator{}).seedSharedDataPartition(context.Background(), "/dev/test", target)
+	if err == nil || !strings.Contains(err.Error(), "got symlink") {
+		t.Fatalf("seedSharedDataPartition error = %v, want symlink rejection", err)
+	}
+	if mountCalled {
+		t.Fatal("seedSharedDataPartition must reject symlinked source before mounting seed target")
+	}
+}
+
 func TestSharedDataSeedCopyPreservesSymlinksAndIgnoresLostFound(t *testing.T) {
 	src := t.TempDir()
 	dst := t.TempDir()

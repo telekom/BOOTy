@@ -830,7 +830,12 @@ func copyFile(ctx context.Context, src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("open dest %s: %w", dst, err)
 	}
-	defer func() { _ = out.Close() }()
+	outClosed := false
+	defer func() {
+		if !outClosed {
+			_ = out.Close()
+		}
+	}()
 
 	copyDone := make(chan error, 1)
 	go func() {
@@ -846,7 +851,9 @@ func copyFile(ctx context.Context, src, dst string) error {
 		if cpErr != nil {
 			return fmt.Errorf("copy %s -> %s: %w", src, dst, cpErr)
 		}
-		if closeErr := out.Close(); closeErr != nil {
+		closeErr := out.Close()
+		outClosed = true
+		if closeErr != nil {
 			return fmt.Errorf("close dest %s: %w", dst, closeErr)
 		}
 		if err := applyPathMetadata(copiedPathMetadataFromInfo(dst, info)); err != nil {
