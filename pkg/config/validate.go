@@ -183,6 +183,7 @@ func validateABSizeFields(cfg *ABConfig) []string {
 
 func validateABModeConstraints(abMode, disableKexec bool, cfg *ABConfig) []string {
 	var errs []string
+	errs = append(errs, validateABDataPartitionMode(abMode, cfg)...)
 	if cfg.PreserveExisting && !abMode {
 		errs = append(errs, "provision.ab.preserveExisting requires provision.image.mode=ab")
 	}
@@ -203,6 +204,25 @@ func validateABModeConstraints(abMode, disableKexec bool, cfg *ABConfig) []strin
 	errs = append(errs, validateABSourceRootSelectors(cfg)...)
 	if _, err := withDefaults.ResolvedTargetSlot(); err != nil {
 		errs = append(errs, fmt.Sprintf("provision.ab: %v", err))
+	}
+	return errs
+}
+
+func validateABDataPartitionMode(abMode bool, cfg *ABConfig) []string {
+	if len(cfg.DataPartitions) == 0 {
+		return nil
+	}
+
+	scheme := normalizeABScheme(cfg.Scheme)
+	if !abMode || scheme != ABSchemeSystemAB {
+		return []string{"provision.ab.dataPartitions requires provision.image.mode=ab and provision.ab.scheme=system-ab"}
+	}
+
+	var errs []string
+	for i, part := range cfg.DataPartitions {
+		if strings.EqualFold(strings.TrimSpace(part.Filesystem), "vfat") {
+			errs = append(errs, fmt.Sprintf("provision.ab.dataPartitions[%d].filesystem must not be vfat for system-ab shared data", i))
+		}
 	}
 	return errs
 }

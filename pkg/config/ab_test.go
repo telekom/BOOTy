@@ -142,6 +142,56 @@ func TestValidateRejectsInvalidSystemABDataPartition(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsDataPartitionsOutsideSystemABMode(t *testing.T) {
+	tests := []struct {
+		name      string
+		imageMode string
+		scheme    string
+	}{
+		{name: "whole disk image mode", imageMode: ImageModeWholeDisk, scheme: ABSchemeSystemAB},
+		{name: "dual root scheme", imageMode: ImageModeAB, scheme: ABSchemeDualRoot},
+		{name: "implicit dual root scheme", imageMode: ImageModeAB},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{}
+			cfg.Provision.Image.Mode = tt.imageMode
+			cfg.Provision.AB.Scheme = tt.scheme
+			cfg.Provision.AB.RootSizeMB = 8192
+			cfg.Provision.AB.DataPartitions = []ABDataPartition{
+				{Label: "BOOTY-DATA", SizeMB: 1024, Mountpoint: "/var"},
+			}
+
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatal("expected dataPartitions mode validation error")
+			}
+			if got := err.Error(); !strings.Contains(got, "provision.ab.dataPartitions requires provision.image.mode=ab and provision.ab.scheme=system-ab") {
+				t.Fatalf("Validate() error = %q", got)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsVFATSystemABDataPartition(t *testing.T) {
+	cfg := &Config{}
+	cfg.Provision.Image.Mode = ImageModeAB
+	cfg.Provision.AB.Scheme = ABSchemeSystemAB
+	cfg.Provision.AB.RootSizeMB = 8192
+	cfg.Provision.AB.DataPartitions = []ABDataPartition{
+		{Label: "BOOTY-DATA", SizeMB: 1024, Filesystem: "VFAT", Mountpoint: "/var"},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected vfat data partition validation error")
+	}
+	if got := err.Error(); !strings.Contains(got, "provision.ab.dataPartitions[0].filesystem must not be vfat") {
+		t.Fatalf("Validate() error = %q", got)
+	}
+}
+
 func TestValidateRejectsABPreserveOutsideABMode(t *testing.T) {
 	cfg := &Config{}
 	cfg.Provision.Image.Mode = ImageModeWholeDisk
