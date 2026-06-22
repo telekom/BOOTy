@@ -514,6 +514,55 @@ func TestRedactedTokenURLErrorDoesNotRetainSensitiveURLParts(t *testing.T) {
 	}
 }
 
+func TestRedactedTokenURLErrorPreservesSanitizedURLCause(t *testing.T) {
+	rawURL := "https://leaky-user:super-secret@example.com/token?token=abc#frag"
+	cause := &tokenURLTestNetError{msg: "temporary transport failure", timeout: true}
+	err := newRedactedTokenURLError(rawURL, &url.Error{
+		Op:  "Post",
+		URL: rawURL,
+		Err: fmt.Errorf("dial %s: %w", rawURL, cause),
+	})
+	if err == nil {
+		t.Fatal("expected wrapped error")
+	}
+
+	assertErrorChainNoSensitiveTokenURLParts(t, err)
+
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) {
+		t.Fatal("expected redacted error to preserve *url.Error matching")
+	}
+	if urlErr.URL != "https://example.com/token" {
+		t.Fatalf("url.Error.URL = %q, want redacted URL", urlErr.URL)
+	}
+	assertNoSensitiveTokenURLParts(t, fmt.Sprintf("%#v", urlErr))
+
+	var netErr net.Error
+	if !errors.As(err, &netErr) {
+		t.Fatal("expected redacted error to preserve net.Error matching")
+	}
+	if !netErr.Timeout() {
+		t.Fatal("expected preserved net.Error timeout status")
+	}
+}
+
+type tokenURLTestNetError struct {
+	msg     string
+	timeout bool
+}
+
+func (e *tokenURLTestNetError) Error() string {
+	return e.msg
+}
+
+func (e *tokenURLTestNetError) Timeout() bool {
+	return e.timeout
+}
+
+func (e *tokenURLTestNetError) Temporary() bool {
+	return false
+}
+
 func tokenURLWithSensitiveParts(t *testing.T, rawURL string) string {
 	t.Helper()
 	parsed, err := url.Parse(rawURL)

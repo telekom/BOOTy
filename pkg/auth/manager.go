@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -259,19 +260,19 @@ func (tm *TokenManager) renew(ctx context.Context) error {
 
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return fmt.Errorf("renew token: status %d", resp.StatusCode)
+		return fmt.Errorf("renew token from %s: status %d", tm.redactedTokenURL, resp.StatusCode)
 	}
 
 	var tokenResp TokenResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxTokenResponseBytes)).Decode(&tokenResp); err != nil {
-		return fmt.Errorf("decode renewal response: %w", err)
+		return fmt.Errorf("decode renewal response from %s: %w", tm.redactedTokenURL, err)
 	}
 
 	if tokenResp.AccessToken == "" {
-		return fmt.Errorf("renew token: empty access_token in response")
+		return fmt.Errorf("renew token from %s: empty access_token in response", tm.redactedTokenURL)
 	}
 	if tokenResp.ExpiresIn <= 0 {
-		return fmt.Errorf("renew token: invalid expires_in %d", tokenResp.ExpiresIn)
+		return fmt.Errorf("renew token from %s: invalid expires_in %d", tm.redactedTokenURL, tokenResp.ExpiresIn)
 	}
 
 	tm.mu.Lock()
@@ -328,9 +329,7 @@ func redactTokenURL(rawURL string) string {
 }
 
 type redactedTokenURLError struct {
-	msg              string
-	contextCanceled  bool
-	deadlineExceeded bool
+	err error
 }
 
 func newRedactedTokenURLError(rawURL string, err error) error {
@@ -338,25 +337,143 @@ func newRedactedTokenURLError(rawURL string, err error) error {
 		return nil
 	}
 
-	msg := err.Error()
+	return &redactedTokenURLError{err: redactTokenError(rawURL, err)}
+}
+
+func (e *redactedTokenURLError) Error() string {
+	return e.err.Error()
+}
+
+func (e *redactedTokenURLError) Unwrap() error {
+	return e.err
+}
+
+type redactedWrappedError struct {
+	msg string
+	err error
+}
+
+func (e *redactedWrappedError) Error() string {
+	return e.msg
+}
+
+func (e *redactedWrappedError) Unwrap() error {
+	return e.err
+}
+
+type redactedWrappedNetError struct {
+	redactedWrappedError
+	timeout bool
+}
+
+func (e *redactedWrappedNetError) Timeout() bool {
+	return e.timeout
+}
+
+func (e *redactedWrappedNetError) Temporary() bool {
+	return false
+}
+
+type redactedJoinedError struct {
+	msg  string
+	errs []error
+}
+
+func (e *redactedJoinedError) Error() string {
+	return e.msg
+}
+
+func (e *redactedJoinedError) Unwrap() []error {
+	return e.errs
+}
+
+type redactedLeafError struct {
+	msg string
+}
+
+func (e *redactedLeafError) Error() string {
+	return e.msg
+}
+
+type redactedNetError struct {
+	msg     string
+	timeout bool
+}
+
+func (e *redactedNetError) Error() string {
+	return e.msg
+}
+
+func (e *redactedNetError) Timeout() bool {
+	return e.timeout
+}
+
+func (e *redactedNetError) Temporary() bool {
+	return false
+}
+
+func redactTokenError(rawURL string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if typed, ok := directURLError(err); ok {
+		sanitized := *typed
+		sanitized.URL = redactTokenErrorString(rawURL, typed.URL)
+		sanitized.Err = redactTokenError(rawURL, typed.Err)
+		return &sanitized
+	}
+
+	if unwrapper, ok := err.(interface{ Unwrap() []error }); ok {
+		errs := unwrapper.Unwrap()
+		sanitized := make([]error, 0, len(errs))
+		for _, child := range errs {
+			if child != nil {
+				sanitized = append(sanitized, redactTokenError(rawURL, child))
+			}
+		}
+		return &redactedJoinedError{msg: redactTokenErrorString(rawURL, err.Error()), errs: sanitized}
+	}
+	if unwrapper, ok := err.(interface{ Unwrap() error }); ok {
+		wrapped := &redactedWrappedError{
+			msg: redactTokenErrorString(rawURL, err.Error()),
+			err: redactTokenError(rawURL, unwrapper.Unwrap()),
+		}
+		var netErr net.Error
+		if errors.As(wrapped.err, &netErr) {
+			return &redactedWrappedNetError{
+				redactedWrappedError: *wrapped,
+				timeout:              netErr.Timeout(),
+			}
+		}
+		return wrapped
+	}
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return &redactedNetError{
+			msg:     redactTokenErrorString(rawURL, err.Error()),
+			timeout: netErr.Timeout(),
+		}
+	}
+	return &redactedLeafError{msg: redactTokenErrorString(rawURL, err.Error())}
+}
+
+func directURLError(err error) (*url.Error, bool) {
+	urlErr, ok := err.(*url.Error) //nolint:errorlint // direct match preserves outer wrappers for recursive sanitizing.
+	return urlErr, ok
+}
+
+func redactTokenErrorString(rawURL, msg string) string {
 	redacted := redactTokenURL(rawURL)
 	for _, candidate := range tokenURLRedactionCandidates(rawURL) {
 		msg = strings.ReplaceAll(msg, candidate, redacted)
 	}
-	return &redactedTokenURLError{
-		msg:              msg,
-		contextCanceled:  errors.Is(err, context.Canceled),
-		deadlineExceeded: errors.Is(err, context.DeadlineExceeded),
-	}
-}
-
-func (e *redactedTokenURLError) Error() string {
-	return e.msg
-}
-
-func (e *redactedTokenURLError) Is(target error) bool {
-	return (target == context.Canceled && e.contextCanceled) ||
-		(target == context.DeadlineExceeded && e.deadlineExceeded)
+	return msg
 }
 
 func tokenURLRedactionCandidates(rawURL string) []string {

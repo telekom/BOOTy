@@ -1672,6 +1672,14 @@ func TestAcquireTokenErrorRedactsTokenURL(t *testing.T) {
 		if strings.Contains(err.Error(), leaked) {
 			t.Fatalf("AcquireToken error leaked sensitive URL part %q: %q", leaked, err.Error())
 		}
+		for current := err; current != nil; current = errors.Unwrap(current) {
+			if strings.Contains(current.Error(), leaked) {
+				t.Fatalf("AcquireToken error chain leaked sensitive URL part %q: %q", leaked, current.Error())
+			}
+			if strings.Contains(fmt.Sprintf("%#v", current), leaked) {
+				t.Fatalf("AcquireToken error wrapper retained sensitive URL part %q: %#v", leaked, current)
+			}
+		}
 	}
 	if !strings.Contains(err.Error(), srv.URL) {
 		t.Fatalf("AcquireToken error = %q, want redacted URL context %q", err.Error(), srv.URL)
