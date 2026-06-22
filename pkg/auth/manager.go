@@ -498,6 +498,8 @@ func tokenURLRedactionCandidates(rawURL string) []string {
 	add(rawURL)
 	add(u.String())
 	add(u.Redacted())
+	add(u.RawQuery)
+	add(u.Fragment)
 
 	withoutFragment := *u
 	withoutFragment.Fragment = ""
@@ -528,10 +530,13 @@ func addTokenCredentialRedactionCandidates(add func(string), u, withoutFragment 
 	username := u.User.Username()
 	userInfo := u.User.String()
 	if userInfo != "" {
+		add(userInfo)
 		add(strings.Replace(u.String(), userInfo+"@", username+":***@", 1))
 		add(strings.Replace(withoutFragment.String(), userInfo+"@", username+":***@", 1))
 	}
+	add(username)
 	if password != "" {
+		add(password)
 		add(strings.Replace(u.String(), ":"+password+"@", ":***@", 1))
 		add(strings.Replace(withoutFragment.String(), ":"+password+"@", ":***@", 1))
 	}

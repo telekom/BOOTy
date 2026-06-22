@@ -590,7 +590,20 @@ func assertNoSensitiveTokenURLParts(t *testing.T, msg string) {
 
 func assertErrorChainNoSensitiveTokenURLParts(t *testing.T, err error) {
 	t.Helper()
-	for current := err; current != nil; current = errors.Unwrap(current) {
+	assertErrorNoSensitiveTokenURLParts(t, err, map[error]struct{}{})
+}
+
+func assertErrorNoSensitiveTokenURLParts(t *testing.T, current error, seen map[error]struct{}) {
+	t.Helper()
+	if current == nil {
+		return
+	}
+	if _, ok := seen[current]; ok {
+		return
+	}
+	seen[current] = struct{}{}
+
+	for current != nil {
 		assertNoSensitiveTokenURLParts(t, current.Error())
 		formatted := fmt.Sprintf("%#v", current)
 		for _, leaked := range sensitiveTokenURLParts() {
@@ -598,5 +611,41 @@ func assertErrorChainNoSensitiveTokenURLParts(t *testing.T, err error) {
 				t.Fatalf("error wrapper retained sensitive token URL part %q: %#v", leaked, current)
 			}
 		}
+		if joined, ok := current.(interface{ Unwrap() []error }); ok {
+			for _, child := range joined.Unwrap() {
+				assertErrorNoSensitiveTokenURLParts(t, child, seen)
+			}
+			return
+		}
+		current = errors.Unwrap(current)
+	}
+}
+
+func TestRedactedTokenURLErrorRedactsStandaloneSensitiveURLParts(t *testing.T) {
+	rawURL := "https://leaky-user:super-secret@example.com/token?token=abc#frag"
+	err := newRedactedTokenURLError(rawURL, fmt.Errorf(
+		"token request failed for user leaky-user with password super-secret, query token=abc, fragment frag",
+	))
+	if err == nil {
+		t.Fatal("expected wrapped error")
+	}
+
+	assertErrorChainNoSensitiveTokenURLParts(t, err)
+}
+
+func TestRedactedTokenURLErrorRedactsJoinedErrors(t *testing.T) {
+	rawURL := "https://leaky-user:super-secret@example.com/token?token=abc#frag"
+	err := newRedactedTokenURLError(rawURL, errors.Join(
+		fmt.Errorf("token request failed for %s", rawURL),
+		fmt.Errorf("transport detail leaked password super-secret"),
+		context.Canceled,
+	))
+	if err == nil {
+		t.Fatal("expected wrapped error")
+	}
+
+	assertErrorChainNoSensitiveTokenURLParts(t, err)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatal("expected redacted joined error to match context.Canceled")
 	}
 }
