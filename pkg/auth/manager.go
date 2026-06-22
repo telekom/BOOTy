@@ -61,7 +61,7 @@ func NewTokenManager(tokenURL, bootstrapToken string, log *slog.Logger) (*TokenM
 	}
 	u, err := url.Parse(tokenURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse token URL: %w", err)
+		return nil, fmt.Errorf("parse token URL: %w", newRedactedTokenURLError(tokenURL, err))
 	}
 	if u.Scheme != "https" && (u.Scheme != "http" || (u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1" && u.Hostname() != "::1")) {
 		return nil, fmt.Errorf("token URL must use HTTPS (http allowed only for localhost), got %q", u.Scheme)
@@ -115,7 +115,7 @@ func (tm *TokenManager) Acquire(ctx context.Context, serial, bmcMAC string) erro
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tm.tokenURL,
 		bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("create token request for %s: %w", tm.redactedTokenURL, &redactedTokenURLError{rawURL: tm.tokenURL, err: err})
+		return fmt.Errorf("create token request for %s: %w", tm.redactedTokenURL, newRedactedTokenURLError(tm.tokenURL, err))
 	}
 
 	tm.mu.RLock()
@@ -125,7 +125,7 @@ func (tm *TokenManager) Acquire(ctx context.Context, serial, bmcMAC string) erro
 
 	resp, err := tm.client.Do(req) //nolint:gosec // G107: token URL comes from validated configuration, not user input
 	if err != nil {
-		return fmt.Errorf("acquire token from %s: %w", tm.redactedTokenURL, &redactedTokenURLError{rawURL: tm.tokenURL, err: err})
+		return fmt.Errorf("acquire token from %s: %w", tm.redactedTokenURL, newRedactedTokenURLError(tm.tokenURL, err))
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 
@@ -243,7 +243,7 @@ func (tm *TokenManager) renew(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tm.tokenURL,
 		bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("create renewal request for %s: %w", tm.redactedTokenURL, &redactedTokenURLError{rawURL: tm.tokenURL, err: err})
+		return fmt.Errorf("create renewal request for %s: %w", tm.redactedTokenURL, newRedactedTokenURLError(tm.tokenURL, err))
 	}
 
 	tm.mu.RLock()
@@ -253,7 +253,7 @@ func (tm *TokenManager) renew(ctx context.Context) error {
 
 	resp, err := tm.client.Do(req) //nolint:gosec // G107: token URL comes from validated configuration, not user input
 	if err != nil {
-		return fmt.Errorf("renew token from %s: %w", tm.redactedTokenURL, &redactedTokenURLError{rawURL: tm.tokenURL, err: err})
+		return fmt.Errorf("renew token from %s: %w", tm.redactedTokenURL, newRedactedTokenURLError(tm.tokenURL, err))
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 
@@ -328,30 +328,41 @@ func redactTokenURL(rawURL string) string {
 }
 
 type redactedTokenURLError struct {
-	rawURL string
-	err    error
+	msg              string
+	contextCanceled  bool
+	deadlineExceeded bool
+}
+
+func newRedactedTokenURLError(rawURL string, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	msg := err.Error()
+	redacted := redactTokenURL(rawURL)
+	for _, candidate := range tokenURLRedactionCandidates(rawURL) {
+		msg = strings.ReplaceAll(msg, candidate, redacted)
+	}
+	return &redactedTokenURLError{
+		msg:              msg,
+		contextCanceled:  errors.Is(err, context.Canceled),
+		deadlineExceeded: errors.Is(err, context.DeadlineExceeded),
+	}
 }
 
 func (e *redactedTokenURLError) Error() string {
-	if e.err == nil {
-		return ""
-	}
-	msg := e.err.Error()
-	redacted := redactTokenURL(e.rawURL)
-	for _, candidate := range tokenURLRedactionCandidates(e.rawURL) {
-		msg = strings.ReplaceAll(msg, candidate, redacted)
-	}
-	return msg
+	return e.msg
 }
 
-func (e *redactedTokenURLError) Unwrap() error {
-	return e.err
+func (e *redactedTokenURLError) Is(target error) bool {
+	return (target == context.Canceled && e.contextCanceled) ||
+		(target == context.DeadlineExceeded && e.deadlineExceeded)
 }
 
 func tokenURLRedactionCandidates(rawURL string) []string {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return []string{rawURL}
+		return invalidTokenURLRedactionCandidates(rawURL)
 	}
 
 	var candidates []string
@@ -380,6 +391,14 @@ func tokenURLRedactionCandidates(rawURL string) []string {
 		addTokenCredentialRedactionCandidates(add, u, &withoutFragment)
 	}
 
+	return candidates
+}
+
+func invalidTokenURLRedactionCandidates(rawURL string) []string {
+	candidates := []string{rawURL}
+	if withoutFragment, _, ok := strings.Cut(rawURL, "#"); ok {
+		candidates = append(candidates, withoutFragment)
+	}
 	return candidates
 }
 

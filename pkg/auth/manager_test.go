@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -85,6 +86,7 @@ func TestTokenManager_Acquire_RedactsSensitiveTokenURLParts(t *testing.T) {
 		t.Fatal("expected error for 401 response")
 	}
 	assertNoSensitiveTokenURLParts(t, err.Error())
+	assertErrorChainNoSensitiveTokenURLParts(t, err)
 	if !strings.Contains(err.Error(), server.URL) {
 		t.Fatalf("error = %q, want redacted URL context %q", err.Error(), server.URL)
 	}
@@ -108,6 +110,7 @@ func TestTokenManager_Acquire_RedactsSensitiveTokenURLPartsFromTransportError(t 
 		t.Fatal("expected transport error")
 	}
 	assertNoSensitiveTokenURLParts(t, err.Error())
+	assertErrorChainNoSensitiveTokenURLParts(t, err)
 	if !strings.Contains(err.Error(), rawURL) {
 		t.Fatalf("error = %q, want redacted URL context %q", err.Error(), rawURL)
 	}
@@ -197,6 +200,7 @@ func TestTokenManager_Renew_RedactsSensitiveTokenURLPartsFromTransportError(t *t
 		t.Fatal("expected transport error")
 	}
 	assertNoSensitiveTokenURLParts(t, err.Error())
+	assertErrorChainNoSensitiveTokenURLParts(t, err)
 	if !strings.Contains(err.Error(), rawURL) {
 		t.Fatalf("error = %q, want redacted URL context %q", err.Error(), rawURL)
 	}
@@ -253,6 +257,7 @@ func TestTokenManager_RenewWithRetry_RedactsSensitiveTokenURLPartsFromTransportE
 		t.Fatal("expected retry exhaustion error")
 	}
 	assertNoSensitiveTokenURLParts(t, err.Error())
+	assertErrorChainNoSensitiveTokenURLParts(t, err)
 	if !strings.Contains(err.Error(), rawURL) {
 		t.Fatalf("error = %q, want redacted URL context %q", err.Error(), rawURL)
 	}
@@ -487,6 +492,28 @@ func TestNewTokenManager_AllowsHTTPS(t *testing.T) {
 	}
 }
 
+func TestNewTokenManager_RedactsSensitiveInvalidTokenURLParseError(t *testing.T) {
+	_, err := NewTokenManager("https://leaky-user:super-secret@example.com/%zz?token=abc#frag", "token", nil)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+
+	assertErrorChainNoSensitiveTokenURLParts(t, err)
+}
+
+func TestRedactedTokenURLErrorDoesNotRetainSensitiveURLParts(t *testing.T) {
+	rawURL := "https://leaky-user:super-secret@example.com/token?token=abc#frag"
+	err := newRedactedTokenURLError(rawURL, fmt.Errorf("Get %q: %w", rawURL, context.Canceled))
+	if err == nil {
+		t.Fatal("expected wrapped error")
+	}
+
+	assertErrorChainNoSensitiveTokenURLParts(t, err)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatal("expected redacted token URL error to match context.Canceled")
+	}
+}
+
 func tokenURLWithSensitiveParts(t *testing.T, rawURL string) string {
 	t.Helper()
 	parsed, err := url.Parse(rawURL)
@@ -499,11 +526,28 @@ func tokenURLWithSensitiveParts(t *testing.T, rawURL string) string {
 	return parsed.String()
 }
 
+func sensitiveTokenURLParts() []string {
+	return []string{"leaky-user", "super-secret", "token=abc", "frag"}
+}
+
 func assertNoSensitiveTokenURLParts(t *testing.T, msg string) {
 	t.Helper()
-	for _, leaked := range []string{"leaky-user", "super-secret", "token=abc", "frag"} {
+	for _, leaked := range sensitiveTokenURLParts() {
 		if strings.Contains(msg, leaked) {
 			t.Fatalf("error leaked sensitive token URL part %q: %q", leaked, msg)
+		}
+	}
+}
+
+func assertErrorChainNoSensitiveTokenURLParts(t *testing.T, err error) {
+	t.Helper()
+	for current := err; current != nil; current = errors.Unwrap(current) {
+		assertNoSensitiveTokenURLParts(t, current.Error())
+		formatted := fmt.Sprintf("%#v", current)
+		for _, leaked := range sensitiveTokenURLParts() {
+			if strings.Contains(formatted, leaked) {
+				t.Fatalf("error wrapper retained sensitive token URL part %q: %#v", leaked, current)
+			}
 		}
 	}
 }
