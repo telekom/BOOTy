@@ -3,10 +3,14 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -65,6 +69,50 @@ func TestTokenManager_Acquire_ServerError(t *testing.T) {
 	tm := mustNewTokenManager(t, server.URL, "bad-token", slog.Default())
 	if err := tm.Acquire(context.Background(), "SN123", "aa:bb:cc:dd:ee:ff"); err == nil {
 		t.Fatal("expected error for 401 response")
+	}
+}
+
+func TestTokenManager_Acquire_RedactsSensitiveTokenURLParts(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	tokenURL := tokenURLWithSensitiveParts(t, server.URL)
+	tm := mustNewTokenManager(t, tokenURL, "bad-token", slog.Default())
+
+	err := tm.Acquire(context.Background(), "SN123", "aa:bb:cc:dd:ee:ff")
+	if err == nil {
+		t.Fatal("expected error for 401 response")
+	}
+	assertNoSensitiveTokenURLParts(t, err.Error())
+	assertErrorChainNoSensitiveTokenURLParts(t, err)
+	if !strings.Contains(err.Error(), server.URL) {
+		t.Fatalf("error = %q, want redacted URL context %q", err.Error(), server.URL)
+	}
+}
+
+func TestTokenManager_Acquire_RedactsSensitiveTokenURLPartsFromTransportError(t *testing.T) {
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawURL := "http://" + listener.Addr().String() + "/token"
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	tokenURL := tokenURLWithSensitiveParts(t, rawURL)
+	tm := mustNewTokenManager(t, tokenURL, "bootstrap-token", slog.Default())
+
+	err = tm.Acquire(context.Background(), "SN123", "aa:bb:cc:dd:ee:ff")
+	if err == nil {
+		t.Fatal("expected transport error")
+	}
+	assertNoSensitiveTokenURLParts(t, err.Error())
+	assertErrorChainNoSensitiveTokenURLParts(t, err)
+	if !strings.Contains(err.Error(), rawURL) {
+		t.Fatalf("error = %q, want redacted URL context %q", err.Error(), rawURL)
 	}
 }
 
@@ -132,6 +180,32 @@ func TestTokenManager_Renew(t *testing.T) {
 	}
 }
 
+func TestTokenManager_Renew_RedactsSensitiveTokenURLPartsFromTransportError(t *testing.T) {
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawURL := "http://" + listener.Addr().String() + "/token"
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	tokenURL := tokenURLWithSensitiveParts(t, rawURL)
+	tm := mustNewTokenManager(t, tokenURL, "token", slog.Default())
+	tm.refreshToken = "refresh"
+	tm.expiresAt = time.Now().Add(time.Hour)
+
+	err = tm.renew(context.Background())
+	if err == nil {
+		t.Fatal("expected transport error")
+	}
+	assertNoSensitiveTokenURLParts(t, err.Error())
+	assertErrorChainNoSensitiveTokenURLParts(t, err)
+	if !strings.Contains(err.Error(), rawURL) {
+		t.Fatalf("error = %q, want redacted URL context %q", err.Error(), rawURL)
+	}
+}
+
 func TestTokenManager_RenewWithRetry_EventualSuccess(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -159,6 +233,33 @@ func TestTokenManager_RenewWithRetry_EventualSuccess(t *testing.T) {
 
 	if got := tm.Token(); got != "retry-token" {
 		t.Errorf("expected 'retry-token', got %q", got)
+	}
+}
+
+func TestTokenManager_RenewWithRetry_RedactsSensitiveTokenURLPartsFromTransportError(t *testing.T) {
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawURL := "http://" + listener.Addr().String() + "/token"
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	tokenURL := tokenURLWithSensitiveParts(t, rawURL)
+	tm := mustNewTokenManager(t, tokenURL, "token", slog.Default())
+	tm.refreshToken = "refresh"
+	tm.expiresAt = time.Now().Add(time.Hour)
+	tm.backoff = func(_ int) time.Duration { return 0 }
+
+	err = tm.renewWithRetry(context.Background())
+	if err == nil {
+		t.Fatal("expected retry exhaustion error")
+	}
+	assertNoSensitiveTokenURLParts(t, err.Error())
+	assertErrorChainNoSensitiveTokenURLParts(t, err)
+	if !strings.Contains(err.Error(), rawURL) {
+		t.Fatalf("error = %q, want redacted URL context %q", err.Error(), rawURL)
 	}
 }
 
@@ -388,5 +489,163 @@ func TestNewTokenManager_AllowsHTTPS(t *testing.T) {
 	}
 	if tm == nil {
 		t.Fatal("expected non-nil TokenManager")
+	}
+}
+
+func TestNewTokenManager_RedactsSensitiveInvalidTokenURLParseError(t *testing.T) {
+	_, err := NewTokenManager("https://leaky-user:super-secret@example.com/%zz?token=abc#frag", "token", nil)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+
+	assertErrorChainNoSensitiveTokenURLParts(t, err)
+}
+
+func TestRedactedTokenURLErrorDoesNotRetainSensitiveURLParts(t *testing.T) {
+	rawURL := "https://leaky-user:super-secret@example.com/token?token=abc#frag"
+	err := newRedactedTokenURLError(rawURL, fmt.Errorf("Get %q: %w", rawURL, context.Canceled))
+	if err == nil {
+		t.Fatal("expected wrapped error")
+	}
+
+	assertErrorChainNoSensitiveTokenURLParts(t, err)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatal("expected redacted token URL error to match context.Canceled")
+	}
+}
+
+func TestRedactedTokenURLErrorPreservesSanitizedURLCause(t *testing.T) {
+	rawURL := "https://leaky-user:super-secret@example.com/token?token=abc#frag"
+	cause := &tokenURLTestNetError{msg: "temporary transport failure", timeout: true}
+	err := newRedactedTokenURLError(rawURL, &url.Error{
+		Op:  "Post",
+		URL: rawURL,
+		Err: fmt.Errorf("dial %s: %w", rawURL, cause),
+	})
+	if err == nil {
+		t.Fatal("expected wrapped error")
+	}
+
+	assertErrorChainNoSensitiveTokenURLParts(t, err)
+
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) {
+		t.Fatal("expected redacted error to preserve *url.Error matching")
+	}
+	if urlErr.URL != "https://example.com/token" {
+		t.Fatalf("url.Error.URL = %q, want redacted URL", urlErr.URL)
+	}
+	assertNoSensitiveTokenURLParts(t, fmt.Sprintf("%#v", urlErr))
+
+	var netErr net.Error
+	if !errors.As(err, &netErr) {
+		t.Fatal("expected redacted error to preserve net.Error matching")
+	}
+	if !netErr.Timeout() {
+		t.Fatal("expected preserved net.Error timeout status")
+	}
+}
+
+type tokenURLTestNetError struct {
+	msg     string
+	timeout bool
+}
+
+func (e *tokenURLTestNetError) Error() string {
+	return e.msg
+}
+
+func (e *tokenURLTestNetError) Timeout() bool {
+	return e.timeout
+}
+
+func (e *tokenURLTestNetError) Temporary() bool {
+	return false
+}
+
+func tokenURLWithSensitiveParts(t *testing.T, rawURL string) string {
+	t.Helper()
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed.User = url.UserPassword("leaky-user", "super-secret")
+	parsed.RawQuery = "token=abc"
+	parsed.Fragment = "frag"
+	return parsed.String()
+}
+
+func sensitiveTokenURLParts() []string {
+	return []string{"leaky-user", "super-secret", "token=abc", "frag"}
+}
+
+func assertNoSensitiveTokenURLParts(t *testing.T, msg string) {
+	t.Helper()
+	for _, leaked := range sensitiveTokenURLParts() {
+		if strings.Contains(msg, leaked) {
+			t.Fatalf("error leaked sensitive token URL part %q: %q", leaked, msg)
+		}
+	}
+}
+
+func assertErrorChainNoSensitiveTokenURLParts(t *testing.T, err error) {
+	t.Helper()
+	assertErrorNoSensitiveTokenURLParts(t, err, map[error]struct{}{})
+}
+
+func assertErrorNoSensitiveTokenURLParts(t *testing.T, current error, seen map[error]struct{}) {
+	t.Helper()
+	if current == nil {
+		return
+	}
+	if _, ok := seen[current]; ok {
+		return
+	}
+	seen[current] = struct{}{}
+
+	for current != nil {
+		assertNoSensitiveTokenURLParts(t, current.Error())
+		formatted := fmt.Sprintf("%#v", current)
+		for _, leaked := range sensitiveTokenURLParts() {
+			if strings.Contains(formatted, leaked) {
+				t.Fatalf("error wrapper retained sensitive token URL part %q: %#v", leaked, current)
+			}
+		}
+		if joined, ok := current.(interface{ Unwrap() []error }); ok {
+			for _, child := range joined.Unwrap() {
+				assertErrorNoSensitiveTokenURLParts(t, child, seen)
+			}
+			return
+		}
+		current = errors.Unwrap(current)
+	}
+}
+
+func TestRedactedTokenURLErrorRedactsStandaloneSensitiveURLParts(t *testing.T) {
+	rawURL := "https://leaky-user:super-secret@example.com/token?token=abc#frag"
+	err := newRedactedTokenURLError(rawURL, fmt.Errorf(
+		"token request failed for user leaky-user with password super-secret, query token=abc, fragment frag",
+	))
+	if err == nil {
+		t.Fatal("expected wrapped error")
+	}
+
+	assertErrorChainNoSensitiveTokenURLParts(t, err)
+}
+
+func TestRedactedTokenURLErrorRedactsJoinedErrors(t *testing.T) {
+	rawURL := "https://leaky-user:super-secret@example.com/token?token=abc#frag"
+	err := newRedactedTokenURLError(rawURL, errors.Join(
+		fmt.Errorf("token request failed for %s", rawURL),
+		fmt.Errorf("transport detail leaked password super-secret"),
+		context.Canceled,
+	))
+	if err == nil {
+		t.Fatal("expected wrapped error")
+	}
+
+	assertErrorChainNoSensitiveTokenURLParts(t, err)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatal("expected redacted joined error to match context.Canceled")
 	}
 }
