@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -1639,6 +1640,41 @@ func TestAcquireTokenWithServer(t *testing.T) {
 	cfg, _ := client.GetConfig(context.Background())
 	if cfg.Transport.Token != "jwt-token-123" {
 		t.Errorf("Token = %q, want %q", cfg.Transport.Token, "jwt-token-123")
+	}
+}
+
+func TestAcquireTokenErrorRedactsTokenURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	tokenURL, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenURL.User = url.UserPassword("leaky-user", "super-secret")
+	tokenURL.RawQuery = "token=abc"
+	tokenURL.Fragment = "frag"
+
+	client := NewFromConfig(&config.MachineConfig{
+		Hostname: "test-host",
+		Transport: config.TransportConfig{
+			Token:    "bootstrap-token",
+			TokenURL: tokenURL.String(),
+		},
+	})
+	err = client.AcquireToken(context.Background())
+	if err == nil {
+		t.Fatal("expected token acquisition error")
+	}
+	for _, leaked := range []string{"leaky-user", "super-secret", "token=abc", "frag"} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("AcquireToken error leaked sensitive URL part %q: %q", leaked, err.Error())
+		}
+	}
+	if !strings.Contains(err.Error(), srv.URL) {
+		t.Fatalf("AcquireToken error = %q, want redacted URL context %q", err.Error(), srv.URL)
 	}
 }
 

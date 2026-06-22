@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -65,6 +68,48 @@ func TestTokenManager_Acquire_ServerError(t *testing.T) {
 	tm := mustNewTokenManager(t, server.URL, "bad-token", slog.Default())
 	if err := tm.Acquire(context.Background(), "SN123", "aa:bb:cc:dd:ee:ff"); err == nil {
 		t.Fatal("expected error for 401 response")
+	}
+}
+
+func TestTokenManager_Acquire_RedactsSensitiveTokenURLParts(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	tokenURL := tokenURLWithSensitiveParts(t, server.URL)
+	tm := mustNewTokenManager(t, tokenURL, "bad-token", slog.Default())
+
+	err := tm.Acquire(context.Background(), "SN123", "aa:bb:cc:dd:ee:ff")
+	if err == nil {
+		t.Fatal("expected error for 401 response")
+	}
+	assertNoSensitiveTokenURLParts(t, err.Error())
+	if !strings.Contains(err.Error(), server.URL) {
+		t.Fatalf("error = %q, want redacted URL context %q", err.Error(), server.URL)
+	}
+}
+
+func TestTokenManager_Acquire_RedactsSensitiveTokenURLPartsFromTransportError(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawURL := "http://" + listener.Addr().String() + "/token"
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	tokenURL := tokenURLWithSensitiveParts(t, rawURL)
+	tm := mustNewTokenManager(t, tokenURL, "bootstrap-token", slog.Default())
+
+	err = tm.Acquire(context.Background(), "SN123", "aa:bb:cc:dd:ee:ff")
+	if err == nil {
+		t.Fatal("expected transport error")
+	}
+	assertNoSensitiveTokenURLParts(t, err.Error())
+	if !strings.Contains(err.Error(), rawURL) {
+		t.Fatalf("error = %q, want redacted URL context %q", err.Error(), rawURL)
 	}
 }
 
@@ -388,5 +433,26 @@ func TestNewTokenManager_AllowsHTTPS(t *testing.T) {
 	}
 	if tm == nil {
 		t.Fatal("expected non-nil TokenManager")
+	}
+}
+
+func tokenURLWithSensitiveParts(t *testing.T, rawURL string) string {
+	t.Helper()
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed.User = url.UserPassword("leaky-user", "super-secret")
+	parsed.RawQuery = "token=abc"
+	parsed.Fragment = "frag"
+	return parsed.String()
+}
+
+func assertNoSensitiveTokenURLParts(t *testing.T, msg string) {
+	t.Helper()
+	for _, leaked := range []string{"leaky-user", "super-secret", "token=abc", "frag"} {
+		if strings.Contains(msg, leaked) {
+			t.Fatalf("error leaked sensitive token URL part %q: %q", leaked, msg)
+		}
 	}
 }

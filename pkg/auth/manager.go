@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
@@ -37,18 +38,19 @@ type tokenRequest struct {
 
 // TokenManager handles JWT acquisition, renewal, and failure recovery.
 type TokenManager struct {
-	tokenURL       string
-	token          string
-	refreshToken   string
-	expiresAt      time.Time
-	mu             sync.RWMutex
-	client         *http.Client
-	log            *slog.Logger
-	onFatal        func()
-	backoff        func(attempt int) time.Duration
-	algorithm      string
-	acquired       bool
-	renewalStarted bool // true once StartRenewal launches renewLoop
+	tokenURL         string
+	redactedTokenURL string
+	token            string
+	refreshToken     string
+	expiresAt        time.Time
+	mu               sync.RWMutex
+	client           *http.Client
+	log              *slog.Logger
+	onFatal          func()
+	backoff          func(attempt int) time.Duration
+	algorithm        string
+	acquired         bool
+	renewalStarted   bool // true once StartRenewal launches renewLoop
 }
 
 // NewTokenManager creates a token manager with an initial bootstrap token.
@@ -65,8 +67,9 @@ func NewTokenManager(tokenURL, bootstrapToken string, log *slog.Logger) (*TokenM
 		return nil, fmt.Errorf("token URL must use HTTPS (http allowed only for localhost), got %q", u.Scheme)
 	}
 	return &TokenManager{
-		tokenURL: tokenURL,
-		token:    bootstrapToken,
+		tokenURL:         tokenURL,
+		redactedTokenURL: redactTokenURL(tokenURL),
+		token:            bootstrapToken,
 		client: &http.Client{
 			Timeout: 15 * time.Second,
 			Transport: &http.Transport{
@@ -112,7 +115,7 @@ func (tm *TokenManager) Acquire(ctx context.Context, serial, bmcMAC string) erro
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tm.tokenURL,
 		bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("create token request: %w", err)
+		return fmt.Errorf("create token request for %s: %w", tm.redactedTokenURL, &redactedTokenURLError{rawURL: tm.tokenURL, err: err})
 	}
 
 	tm.mu.RLock()
@@ -122,13 +125,13 @@ func (tm *TokenManager) Acquire(ctx context.Context, serial, bmcMAC string) erro
 
 	resp, err := tm.client.Do(req) //nolint:gosec // G107: token URL comes from validated configuration, not user input
 	if err != nil {
-		return fmt.Errorf("acquire token from %s: %w", tm.tokenURL, err)
+		return fmt.Errorf("acquire token from %s: %w", tm.redactedTokenURL, &redactedTokenURLError{rawURL: tm.tokenURL, err: err})
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return fmt.Errorf("acquire token from %s: status %d", tm.tokenURL, resp.StatusCode)
+		return fmt.Errorf("acquire token from %s: status %d", tm.redactedTokenURL, resp.StatusCode)
 	}
 
 	var tokenResp TokenResponse
@@ -137,10 +140,10 @@ func (tm *TokenManager) Acquire(ctx context.Context, serial, bmcMAC string) erro
 	}
 
 	if tokenResp.AccessToken == "" {
-		return fmt.Errorf("acquire token from %s: empty access_token in response", tm.tokenURL)
+		return fmt.Errorf("acquire token from %s: empty access_token in response", tm.redactedTokenURL)
 	}
 	if tokenResp.ExpiresIn <= 0 {
-		return fmt.Errorf("acquire token from %s: invalid expires_in %d", tm.tokenURL, tokenResp.ExpiresIn)
+		return fmt.Errorf("acquire token from %s: invalid expires_in %d", tm.redactedTokenURL, tokenResp.ExpiresIn)
 	}
 
 	tm.mu.Lock()
@@ -240,7 +243,7 @@ func (tm *TokenManager) renew(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tm.tokenURL,
 		bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("create renewal request: %w", err)
+		return fmt.Errorf("create renewal request for %s: %w", tm.redactedTokenURL, &redactedTokenURLError{rawURL: tm.tokenURL, err: err})
 	}
 
 	tm.mu.RLock()
@@ -250,7 +253,7 @@ func (tm *TokenManager) renew(ctx context.Context) error {
 
 	resp, err := tm.client.Do(req) //nolint:gosec // G107: token URL comes from validated configuration, not user input
 	if err != nil {
-		return fmt.Errorf("renew token: %w", err)
+		return fmt.Errorf("renew token from %s: %w", tm.redactedTokenURL, &redactedTokenURLError{rawURL: tm.tokenURL, err: err})
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 
@@ -311,4 +314,98 @@ func (tm *TokenManager) renewWithRetry(ctx context.Context) error {
 
 func defaultBackoff(attempt int) time.Duration {
 	return time.Duration(1<<attempt) * time.Second
+}
+
+func redactTokenURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "<invalid-url>"
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	u.User = nil
+	return u.String()
+}
+
+type redactedTokenURLError struct {
+	rawURL string
+	err    error
+}
+
+func (e *redactedTokenURLError) Error() string {
+	if e.err == nil {
+		return ""
+	}
+	msg := e.err.Error()
+	redacted := redactTokenURL(e.rawURL)
+	for _, candidate := range tokenURLRedactionCandidates(e.rawURL) {
+		msg = strings.ReplaceAll(msg, candidate, redacted)
+	}
+	return msg
+}
+
+func (e *redactedTokenURLError) Unwrap() error {
+	return e.err
+}
+
+func tokenURLRedactionCandidates(rawURL string) []string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return []string{rawURL}
+	}
+
+	var candidates []string
+	add := func(value string) {
+		if value == "" {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == value {
+				return
+			}
+		}
+		candidates = append(candidates, value)
+	}
+
+	add(rawURL)
+	add(u.String())
+	add(u.Redacted())
+
+	withoutFragment := *u
+	withoutFragment.Fragment = ""
+	add(withoutFragment.String())
+	add(withoutFragment.Redacted())
+
+	if u.User != nil {
+		addTokenCredentialRedactionCandidates(add, u, &withoutFragment)
+	}
+
+	return candidates
+}
+
+func addTokenCredentialRedactionCandidates(add func(string), u, withoutFragment *url.URL) {
+	password, ok := u.User.Password()
+	if !ok {
+		return
+	}
+
+	username := u.User.Username()
+	userInfo := u.User.String()
+	if userInfo != "" {
+		add(strings.Replace(u.String(), userInfo+"@", username+":***@", 1))
+		add(strings.Replace(withoutFragment.String(), userInfo+"@", username+":***@", 1))
+	}
+	if password != "" {
+		add(strings.Replace(u.String(), ":"+password+"@", ":***@", 1))
+		add(strings.Replace(withoutFragment.String(), ":"+password+"@", ":***@", 1))
+	}
+	for _, placeholder := range []string{"xxxxx", "***"} {
+		redactedPassword := *u
+		redactedPassword.User = url.UserPassword(username, placeholder)
+		add(redactedPassword.String())
+
+		withoutFragment := redactedPassword
+		withoutFragment.Fragment = ""
+		add(withoutFragment.String())
+	}
 }
