@@ -177,6 +177,31 @@ func TestTokenManager_Renew(t *testing.T) {
 	}
 }
 
+func TestTokenManager_Renew_RedactsSensitiveTokenURLPartsFromTransportError(t *testing.T) {
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawURL := "http://" + listener.Addr().String() + "/token"
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	tokenURL := tokenURLWithSensitiveParts(t, rawURL)
+	tm := mustNewTokenManager(t, tokenURL, "token", slog.Default())
+	tm.refreshToken = "refresh"
+	tm.expiresAt = time.Now().Add(time.Hour)
+
+	err = tm.renew(context.Background())
+	if err == nil {
+		t.Fatal("expected transport error")
+	}
+	assertNoSensitiveTokenURLParts(t, err.Error())
+	if !strings.Contains(err.Error(), rawURL) {
+		t.Fatalf("error = %q, want redacted URL context %q", err.Error(), rawURL)
+	}
+}
+
 func TestTokenManager_RenewWithRetry_EventualSuccess(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -204,6 +229,32 @@ func TestTokenManager_RenewWithRetry_EventualSuccess(t *testing.T) {
 
 	if got := tm.Token(); got != "retry-token" {
 		t.Errorf("expected 'retry-token', got %q", got)
+	}
+}
+
+func TestTokenManager_RenewWithRetry_RedactsSensitiveTokenURLPartsFromTransportError(t *testing.T) {
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawURL := "http://" + listener.Addr().String() + "/token"
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	tokenURL := tokenURLWithSensitiveParts(t, rawURL)
+	tm := mustNewTokenManager(t, tokenURL, "token", slog.Default())
+	tm.refreshToken = "refresh"
+	tm.expiresAt = time.Now().Add(time.Hour)
+	tm.backoff = func(_ int) time.Duration { return 0 }
+
+	err = tm.renewWithRetry(context.Background())
+	if err == nil {
+		t.Fatal("expected retry exhaustion error")
+	}
+	assertNoSensitiveTokenURLParts(t, err.Error())
+	if !strings.Contains(err.Error(), rawURL) {
+		t.Fatalf("error = %q, want redacted URL context %q", err.Error(), rawURL)
 	}
 }
 
