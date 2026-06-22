@@ -1294,7 +1294,7 @@ jobs:
             [ -f "$logfile" ] || continue
             UNEXPECTED=$(grep 'level=ERROR' "$logfile" 2>/dev/null | grep -vE "$ALLOWED_ERRORS" || true)
             if [ -n "$UNEXPECTED" ]; then
-              echo "WARNING: Unexpected ERROR-level logs in $(basename "$logfile"):"
+              echo "ERROR: Unexpected ERROR-level logs in $(basename "$logfile"):"
               echo "$UNEXPECTED"
               VRNETLAB_ERRORS="yes"
             fi
