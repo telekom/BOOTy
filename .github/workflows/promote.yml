@@ -17,43 +17,58 @@ on:
 
 permissions:
   contents: write
-  packages: write
 
 jobs:
   promote:
     name: Promote ${{ inputs.version }} to ${{ inputs.channel }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.channel }}
+    env:
+      SOURCE_VERSION: ${{ inputs.version }}
+      TARGET_CHANNEL: ${{ inputs.channel }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Validate version exists
+      - name: Validate promotion input
         run: |
-          if ! git rev-parse "${{ inputs.version }}" >/dev/null 2>&1; then
-            echo "::error::Tag ${{ inputs.version }} does not exist"
+          if ! [[ "$SOURCE_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "::error::Invalid version tag: $SOURCE_VERSION"
+            exit 1
+          fi
+          case "$TARGET_CHANNEL" in
+            beta|stable) ;;
+            *)
+              echo "::error::Invalid promotion channel: $TARGET_CHANNEL"
+              exit 1
+              ;;
+          esac
+          if ! git rev-parse --verify --quiet "refs/tags/${SOURCE_VERSION}" >/dev/null; then
+            echo "::error::Tag $SOURCE_VERSION does not exist"
             exit 1
           fi
 
       - name: Determine new tag
         id: tag
         run: |
-          VERSION="${{ inputs.version }}"
-          BASE="${VERSION%-*}"  # strip pre-release suffix
-          case "${{ inputs.channel }}" in
+          BASE="${SOURCE_VERSION%%-*}"  # strip pre-release suffix
+          case "$TARGET_CHANNEL" in
             beta)
               # Find next beta number
               LAST=$(git tag -l "${BASE}-beta.*" | sort -V | tail -1)
               if [ -z "$LAST" ]; then
                 NUM=1
+              elif [[ "$LAST" =~ \.([0-9]+)$ ]]; then
+                NUM=$((BASH_REMATCH[1] + 1))
               else
-                NUM=$((${LAST##*.} + 1))
+                echo "::error::Existing beta tag has unexpected format: $LAST"
+                exit 1
               fi
-              echo "tag=${BASE}-beta.${NUM}" >> "$GITHUB_OUTPUT"
+              printf 'tag=%s\n' "${BASE}-beta.${NUM}" >> "$GITHUB_OUTPUT"
               ;;
             stable)
-              echo "tag=${BASE}" >> "$GITHUB_OUTPUT"
+              printf 'tag=%s\n' "${BASE}" >> "$GITHUB_OUTPUT"
               ;;
           esac
 
@@ -61,17 +76,20 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if git rev-parse "${{ steps.tag.outputs.tag }}" >/dev/null 2>&1; then
-            echo "::error::Tag ${{ steps.tag.outputs.tag }} already exists"
+          NEW_TAG="${{ steps.tag.outputs.tag }}"
+          if git rev-parse --verify --quiet "refs/tags/${NEW_TAG}" >/dev/null; then
+            echo "::error::Tag $NEW_TAG already exists"
             exit 1
           fi
-          COMMIT=$(git rev-list -n 1 "${{ inputs.version }}")
-          git tag "${{ steps.tag.outputs.tag }}" "$COMMIT"
-          git push origin "${{ steps.tag.outputs.tag }}"
+          COMMIT=$(git rev-list -n 1 "$SOURCE_VERSION")
+          git tag "$NEW_TAG" "$COMMIT"
+          git push origin "$NEW_TAG"
 
       - name: Summary
         run: |
-          echo "## Promotion Complete" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Source: \`${{ inputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Target: \`${{ steps.tag.outputs.tag }}\` (${{ inputs.channel }})" >> "$GITHUB_STEP_SUMMARY"
-          echo "- The release-v2 workflow will now build artifacts for this tag." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Promotion Complete"
+            echo "- Source: \`$SOURCE_VERSION\`"
+            echo "- Target: \`${{ steps.tag.outputs.tag }}\` ($TARGET_CHANNEL)"
+            echo "- The release-v2 workflow will now build artifacts for this tag."
+          } >> "$GITHUB_STEP_SUMMARY"
