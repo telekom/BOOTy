@@ -71,7 +71,8 @@ jobs:
           path: |
             booty-${{ matrix.arch }}
             out-${{ matrix.flavor }}/initramfs.cpio.gz
-          if-no-files-found: ignore
+            out-${{ matrix.flavor }}/initramfs.cpio.zst
+          if-no-files-found: error
 
   scan:
     name: Vulnerability Scan

@@ -67,7 +67,7 @@ essentials:
 | Artifact | Architectures | Initramfs Flavors |
 |----------|--------------|-------------------|
 | Binary (`booty`) | amd64, arm64 | N/A |
-| Initramfs (`.cpio.gz`) | amd64 | default (FRR), gobgp, slim, micro |
+| Initramfs (`.cpio.zst` / `.cpio.gz`) | amd64, arm64 | default (FRR), gobgp, slim, micro |
 | ISO (`.iso`) | amd64 | default, gobgp |
 | Container image | amd64, arm64 | default, gobgp, slim, micro |
 | SBOM (`.spdx.json`) | — | Per artifact |
@@ -180,7 +180,7 @@ jobs:
           files: |
             booty-amd64
             booty-arm64
-            initramfs-*.cpio.gz
+            initramfs-*.cpio.*
             booty-*.iso
             sbom.spdx.json
             *.sha256

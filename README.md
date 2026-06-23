@@ -120,7 +120,7 @@ This compiles BOOTy for `linux/amd64` and `linux/arm64`, then packages BusyBox, 
 To extract the initramfs to the local filesystem:
 
 ```bash
-docker run ghcr.io/telekom/booty:latest tar -cf - /initramfs.cpio.gz | tar xf -
+docker run ghcr.io/telekom/booty:latest tar -cf - /initramfs.cpio.zst | tar xf -
 ```
 
 ### Build Flavors
