@@ -78,7 +78,7 @@ BOOTy operates in two modes depending on the boot environment:
 - **Startup crash artifact upload** — Best-effort pre-wipe collection of existing OS crash logs, dumps, and host metadata for CAPRF/S3 correlation
 - **Hard/soft deprovisioning** — Full disk wipe or GRUB rename for reprovisioning
 - **Standby mode** — Hot standby with heartbeats and command polling for sub-second provisioning
-- **Cloud-init injection** — NoCloud and ConfigDrive datasource generation (users, packages, NTP, runcmd)
+- **Cloud-init injection** — NoCloud datasource generation (users, packages, NTP, runcmd)
 - **Netplan overlay** — Drop-in netplan YAML config from provisioner overrides `/deploy/vars` network settings
 - **Network persistence** — Auto-generates OS-native network config (netplan, NetworkManager, systemd-networkd)
 - **IPMI operations** — BMC network config, boot device control, chassis power, sensor readings
@@ -339,8 +339,8 @@ go run server/server.go \
 | `LUKS_HASH` | `sha256` | *(Planned)* LUKS2 hash algorithm |
 | `NUM_VFS` | `0` | Number of SR-IOV virtual functions for Mellanox NICs (0 = skip) |
 | `NVME_NAMESPACES` | — | JSON config for NVMe namespace creation (e.g. `[{"device":"/dev/nvme0","namespaces":[{"size_gb":100}]}]`) |
-| `CLOUDINIT_ENABLED` | `false` | Generate and inject cloud-init NoCloud/ConfigDrive config |
-| `CLOUDINIT_DATASOURCE` | `nocloud` | Cloud-init datasource type |
+| `CLOUDINIT_ENABLED` | `false` | Generate and inject cloud-init NoCloud config |
+| `CLOUDINIT_DATASOURCE` | `nocloud` | Cloud-init datasource type; only `nocloud` is supported |
 | `SYSEXT_ENABLED` | `false` | Copy configured systemd-sysext layers into the provisioned root |
 | `SYSEXT_DEFAULT_MODE` | `preload` | Default sysext layer mode: `preload` or `active` |
 | `SYSEXT_CATALOG_DIR` | `/usr/lib/tcaas-sysext/preloaded` | Target catalog directory for preloaded sysext layers |
@@ -804,11 +804,11 @@ table.
 ### Cloud-Init
 
 BOOTy generates and injects cloud-init configuration into the provisioned
-OS. Two datasource types are supported: `nocloud` and `configdrive`.
+OS. The supported datasource type is `nocloud`.
 
 ```bash
 export CLOUDINIT_ENABLED=true
-export CLOUDINIT_DATASOURCE=nocloud    # nocloud (default) or configdrive
+export CLOUDINIT_DATASOURCE=nocloud    # nocloud (default)
 ```
 
 When enabled, BOOTy writes cloud-init seed data to the appropriate path
@@ -989,7 +989,7 @@ and the PR process.
 │   ├── bootloader/             # Bootloader detection (GRUB, systemd-boot)
 │   ├── buildinfo/              # Binary build information (version, commit, date)
 │   ├── caprf/                  # CAPRF client (status, log, debug, vars parsing)
-│   ├── cloudinit/              # Cloud-init NoCloud/ConfigDrive generation
+│   ├── cloudinit/              # Cloud-init NoCloud generation
 │   ├── config/                 # MachineConfig, Provider interface, Status types
 │   ├── crash/                  # Startup crash artifact collection, metadata, upload contracts
 │   ├── debug/                  # Structured debug dump collection

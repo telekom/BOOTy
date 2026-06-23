@@ -8,7 +8,7 @@ type CloudInitConfig struct {
 	Enabled bool `yaml:"enabled" json:"enabled"`
 
 	// Datasource is the cloud-init datasource type to configure.
-	// Valid values: "nocloud", "configdrive"
+	// Valid values: "nocloud"
 	// Default: "nocloud"
 	Datasource string `yaml:"datasource" json:"datasource"`
 }

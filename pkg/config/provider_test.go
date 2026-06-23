@@ -346,6 +346,7 @@ func TestValidate(t *testing.T) {
 		{name: "valid overlay type", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{OverlayType: "evpn-vxlan"}}}},
 		{name: "invalid overlay type", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{OverlayType: "gre"}}}, wantErr: "invalid network.bgp.overlayType"},
 		{name: "valid cloud-init ds", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: "nocloud"}}}},
+		{name: "configdrive cloud-init ds is unsupported", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: "configdrive"}}}, wantErr: "invalid provision.cloudInit.datasource"},
 		{name: "invalid cloud-init ds", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: "ec2"}}}, wantErr: "invalid provision.cloudInit.datasource"},
 		{name: "valid sysext preload mode", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{DefaultMode: "preload"}}}},
 		{name: "normalizes sysext default mode", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{DefaultMode: "PreLoad"}}}, wantNormalized: func(t *testing.T, cfg *Config) {
