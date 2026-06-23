@@ -22,7 +22,11 @@ jobs:
       - id: version
         run: |
           BASE=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          echo "version=${BASE}-nightly.$(date +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          if ! printf '%s\n' "${BASE}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$'; then
+            echo "::error::latest tag ${BASE} is not a valid release version"
+            exit 1
+          fi
+          printf 'version=%s-nightly.%s\n' "${BASE}" "$(date +%Y%m%d)" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build (${{ matrix.arch }}/${{ matrix.flavor }})
@@ -45,10 +49,12 @@ jobs:
 
       - name: Build binary
         if: matrix.flavor == 'default'
+        env:
+          NIGHTLY_VERSION: ${{ needs.version.outputs.version }}
         run: |
           CGO_ENABLED=1 GOOS=linux GOARCH=${{ matrix.arch }} CC=gcc \
             go build -ldflags "-s -w \
-              -X main.Version=${{ needs.version.outputs.version }} \
+              -X main.Version=${NIGHTLY_VERSION} \
               -X main.Build=$(date -u +%Y%m%dT%H%M%S) \
               -linkmode external -extldflags '-static'" \
             -o booty-${{ matrix.arch }}
@@ -127,8 +133,10 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push nightly container image
+        env:
+          NIGHTLY_VERSION: ${{ needs.version.outputs.version }}
         run: |
-          IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]'):${{ needs.version.outputs.version }}
+          IMAGE="$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]'):${NIGHTLY_VERSION}"
           docker buildx build --platform linux/amd64 \
             --provenance=true \
             --push \
