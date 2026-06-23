@@ -364,6 +364,9 @@ func TestSystemABPreserveExistingKeepsSharedVarVM(t *testing.T) {
 
 	slotA, cleanupA := mountQcow2Partition(t, targetDisk, 2)
 	fstab := readProvisionedFile(t, slotA, "etc/fstab")
+	if !strings.Contains(fstab, "PARTLABEL=BOOTY-ROOT-A\t/\text4\tro\t0\t1") {
+		t.Fatalf("system-ab fstab missing read-only root:\n%s", fstab)
+	}
 	if !strings.Contains(fstab, "PARTLABEL=BOOTY-DATA\t/var\text4") {
 		t.Fatalf("system-ab fstab missing shared /var:\n%s", fstab)
 	}

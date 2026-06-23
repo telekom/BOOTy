@@ -286,6 +286,32 @@ func TestConfigureGRUBABWritesTargetRootPartLabel(t *testing.T) {
 	}
 }
 
+func TestConfigureGRUBSystemABWritesReadOnlyRoot(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.Scheme = config.ABSchemeSystemAB
+	cfg.Provision.AB.TargetSlot = config.ABSlotA
+	cfg.Provision.ExtraKernelParams = "quiet rw"
+
+	if err := c.ConfigureGRUB(context.Background(), cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(c.rootDir, "etc", "default", "grub.d", "10-caprf-kernel-params.cfg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.Contains(line, "root=PARTLABEL=BOOTY-ROOT-A ro") {
+		t.Fatalf("system-ab root ro params missing from GRUB config: %s", line)
+	}
+	if strings.LastIndex(line, " ro") < strings.LastIndex(line, " rw") {
+		t.Fatalf("system-ab ro param must override earlier rw args: %s", line)
+	}
+}
+
 func TestABRootKernelParamRejectsInvalidTarget(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Image.Mode = config.ImageModeAB

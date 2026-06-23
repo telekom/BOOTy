@@ -118,6 +118,36 @@ func TestParsePartitionLayoutMountpointWhitespace(t *testing.T) {
 	}
 }
 
+func TestParsePartitionLayoutMountOptions(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"root","sizeMB":1024,"filesystem":"ext4","mountpoint":"/","mountOptions":"ro"},{"label":"var","filesystem":"xfs","mountpoint":"/var","mountOptions":"defaults,noatime"}]}`
+	layout, err := ParsePartitionLayout(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if layout.Partitions[0].MountOptions != "ro" {
+		t.Fatalf("root mountOptions = %q, want ro", layout.Partitions[0].MountOptions)
+	}
+	if layout.Partitions[1].MountOptions != "defaults,noatime" {
+		t.Fatalf("var mountOptions = %q, want defaults,noatime", layout.Partitions[1].MountOptions)
+	}
+}
+
+func TestParsePartitionLayoutRejectsMountOptionsWhitespace(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"root","filesystem":"ext4","mountpoint":"/","mountOptions":"ro noexec"}]}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Fatal("expected error for mountOptions with whitespace")
+	}
+}
+
+func TestParsePartitionLayoutRejectsLvmMountOptionsWhitespace(t *testing.T) {
+	input := `{"table":"gpt","partitions":[{"label":"pv","sizeMB":8192}],"lvm":{"volumeGroup":"sysvg","pvPartition":1,"volumes":[{"name":"root","filesystem":"ext4","mountpoint":"/","mountOptions":"ro noexec"}]}}`
+	_, err := ParsePartitionLayout(input)
+	if err == nil {
+		t.Fatal("expected error for lvm mountOptions with whitespace")
+	}
+}
+
 func TestParsePartitionLayoutDuplicatePartitionMountpoints(t *testing.T) {
 	input := `{"table":"gpt","partitions":[{"label":"root1","filesystem":"ext4","mountpoint":"/"},{"label":"root2","filesystem":"xfs","mountpoint":"/"}]}`
 	_, err := ParsePartitionLayout(input)

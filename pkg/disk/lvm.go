@@ -33,7 +33,8 @@ func (m *Manager) ApplyLVMConfig(ctx context.Context, device string, layout *con
 		return err
 	}
 
-	for _, vol := range lvm.Volumes {
+	for i := range lvm.Volumes {
+		vol := &lvm.Volumes[i]
 		if err := m.createLogicalVolume(ctx, lvm.VolumeGroup, vol); err != nil {
 			return err
 		}
@@ -124,7 +125,7 @@ func (m *Manager) createVolumeGroup(ctx context.Context, vg, pvDev string) error
 	return nil
 }
 
-func (m *Manager) createLogicalVolume(ctx context.Context, vg string, vol config.LVVolume) error {
+func (m *Manager) createLogicalVolume(ctx context.Context, vg string, vol *config.LVVolume) error {
 	out, err := m.cmd.Run(ctx, "lvcreate", buildLVCreateArgs(vg, vol)...)
 	if err != nil {
 		return fmt.Errorf("lvcreate %s/%s: %s: %w", vg, vol.Name, string(out), err)
@@ -132,7 +133,7 @@ func (m *Manager) createLogicalVolume(ctx context.Context, vg string, vol config
 	return nil
 }
 
-func buildLVCreateArgs(vg string, vol config.LVVolume) []string {
+func buildLVCreateArgs(vg string, vol *config.LVVolume) []string {
 	args := make([]string, 0, 6)
 	switch {
 	case vol.Extents != "":
@@ -145,7 +146,7 @@ func buildLVCreateArgs(vg string, vol config.LVVolume) []string {
 	return append(args, "-n", vol.Name, vg)
 }
 
-func (m *Manager) formatLogicalVolume(ctx context.Context, vg string, vol config.LVVolume) error {
+func (m *Manager) formatLogicalVolume(ctx context.Context, vg string, vol *config.LVVolume) error {
 	if vol.Filesystem == "" {
 		return nil
 	}
@@ -180,7 +181,11 @@ func GenerateLVMFstab(lvm *config.LVMConfig) string {
 		if vol.Mountpoint == "/" {
 			pass = 1
 		}
-		fmt.Fprintf(&sb, "%s\t%s\t%s\t%s\t%d\t%d\n", lvDev, vol.Mountpoint, fsType, "defaults", 0, pass)
+		opts := "defaults"
+		if vol.MountOptions != "" {
+			opts = vol.MountOptions
+		}
+		fmt.Fprintf(&sb, "%s\t%s\t%s\t%s\t%d\t%d\n", lvDev, vol.Mountpoint, fsType, opts, 0, pass)
 	}
 	return sb.String()
 }

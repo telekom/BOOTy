@@ -150,10 +150,18 @@ func (a *ABConfig) PartitionLayout(device string) (*PartitionLayout, error) {
 
 	rootAMount := ""
 	rootBMount := ""
+	rootAOptions := ""
+	rootBOptions := ""
+	rootMountOptions := ""
+	if cfg.Scheme == ABSchemeSystemAB {
+		rootMountOptions = "ro"
+	}
 	if target == ABSlotA {
 		rootAMount = "/"
+		rootAOptions = rootMountOptions
 	} else {
 		rootBMount = "/"
+		rootBOptions = rootMountOptions
 	}
 
 	partitions := []Partition{
@@ -164,16 +172,18 @@ func (a *ABConfig) PartitionLayout(device string) (*PartitionLayout, error) {
 			Mountpoint: "/boot/efi",
 		},
 		{
-			Label:      "BOOTY-ROOT-A",
-			SizeMB:     cfg.RootSizeMB,
-			Filesystem: "ext4",
-			Mountpoint: rootAMount,
+			Label:        "BOOTY-ROOT-A",
+			SizeMB:       cfg.RootSizeMB,
+			Filesystem:   "ext4",
+			Mountpoint:   rootAMount,
+			MountOptions: rootAOptions,
 		},
 		{
-			Label:      "BOOTY-ROOT-B",
-			SizeMB:     cfg.RootSizeMB,
-			Filesystem: "ext4",
-			Mountpoint: rootBMount,
+			Label:        "BOOTY-ROOT-B",
+			SizeMB:       cfg.RootSizeMB,
+			Filesystem:   "ext4",
+			Mountpoint:   rootBMount,
+			MountOptions: rootBOptions,
 		},
 	}
 	if cfg.Scheme == ABSchemeDualRoot {
