@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version="${1:-${CONTAINERLAB_VERSION:-0.75.0}}"
+version="${1:-${CONTAINERLAB_VERSION:-0.76.1}}"
 version="${version#v}"
 tag="v${version}"
 
