@@ -236,7 +236,7 @@ func (tm *TokenManager) renew(ctx context.Context) error {
 	type renewRequest struct {
 		RefreshToken string `json:"refresh_token,omitempty"` //nolint:gosec // G101: struct field for token request body, not a hardcoded credential
 	}
-	data, err := json.Marshal(renewRequest{RefreshToken: refresh})
+	data, err := json.Marshal(renewRequest{RefreshToken: refresh}) //nolint:gosec // G117: refresh token is intentionally serialized into token renewal request body
 	if err != nil {
 		return fmt.Errorf("marshal renewal request: %w", err)
 	}

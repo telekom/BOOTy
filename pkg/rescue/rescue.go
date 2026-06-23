@@ -223,7 +223,7 @@ func setupPasswordHash(hash string) error {
 			return fmt.Errorf("reading shadow: %w", err)
 		}
 		entry := fmt.Sprintf("root:%s:19000:0:99999:7:::\n", hash)
-		if wErr := os.WriteFile("/etc/shadow", []byte(entry), 0o600); wErr != nil {
+		if wErr := os.WriteFile("/etc/shadow", []byte(entry), 0o600); wErr != nil { //nolint:gosec // G703: fixed rescue-mode shadow path, no user-controlled path
 			return fmt.Errorf("writing shadow: %w", wErr)
 		}
 		return nil
@@ -245,7 +245,7 @@ func setupPasswordHash(hash string) error {
 		lines = append(lines, fmt.Sprintf("root:%s:19000:0:99999:7:::", hash))
 	}
 
-	if err := os.WriteFile("/etc/shadow", []byte(strings.Join(lines, "\n")), 0o600); err != nil {
+	if err := os.WriteFile("/etc/shadow", []byte(strings.Join(lines, "\n")), 0o600); err != nil { //nolint:gosec // G703: fixed rescue-mode shadow path, no user-controlled path
 		return fmt.Errorf("writing shadow: %w", err)
 	}
 	return nil
