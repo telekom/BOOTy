@@ -83,6 +83,12 @@ jobs:
             test_regex: TestABPreserveExistingUpgradeKeepsActiveSlotAndWritesInactiveVM
             privileged: true
             setup: ""
+          - scenario: system-ab-preserve-existing
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: TestSystemABPreserveExistingKeepsSharedVarVM
+            privileged: true
+            setup: ""
           - scenario: crash-artifacts
             qemu_extra: ""
             test_tag: e2e
