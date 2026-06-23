@@ -1294,13 +1294,16 @@ jobs:
             [ -f "$logfile" ] || continue
             UNEXPECTED=$(grep 'level=ERROR' "$logfile" 2>/dev/null | grep -vE "$ALLOWED_ERRORS" || true)
             if [ -n "$UNEXPECTED" ]; then
-              echo "WARNING: Unexpected ERROR-level logs in $(basename "$logfile"):"
+              echo "ERROR: Unexpected ERROR-level logs in $(basename "$logfile"):"
               echo "$UNEXPECTED"
               VRNETLAB_ERRORS="yes"
             fi
           done
           if [ -n "$VRNETLAB_ERRORS" ]; then
-            echo "::warning::Unexpected ERROR-level log entries found in vrnetlab serial logs"
+            echo "::error::Unexpected ERROR-level log entries found in vrnetlab serial logs"
+            exit 1
+          else
+            echo "PASS: No unexpected ERROR-level log entries in vrnetlab serial logs"
           fi
 
       - name: Upload vrnetlab logs
