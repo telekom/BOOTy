@@ -1844,6 +1844,7 @@ func TestSetAuth(t *testing.T) {
 		{"https with token", "tok", "https://example.com/status", false, true, false},
 		{"http remote rejected", "tok", "http://10.0.0.1/status", false, false, true},
 		{"http localhost allowed", "tok", "http://127.0.0.1/status", false, true, false},
+		{"http 127 hostname rejected", "tok", "http://127.evil.example/status", false, false, true},
 		{"http ::1 allowed", "tok", "http://[::1]/status", false, true, false},
 		{"no token", "", "https://example.com/status", false, false, false},
 		{"http remote allowed with insecure transport", "tok", "http://10.0.0.1/status", true, true, false},

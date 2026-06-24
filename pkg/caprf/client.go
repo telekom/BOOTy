@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"mime/multipart"
+	"net"
 	"net/http"
 	neturl "net/url"
 	"os"
@@ -678,7 +679,7 @@ func (c *Client) withRetry(ctx context.Context, url string, fn func() error) err
 }
 
 // setAuth attaches the Bearer token only when the request URL uses HTTPS
-// or targets loopback (localhost/127.x). Non-HTTPS remote endpoints fail
+// or targets loopback (localhost or loopback IP literals). Non-HTTPS remote endpoints fail
 // closed to avoid credential leakage over plaintext transport.
 // When InsecureTransport is set, the HTTPS requirement is bypassed.
 func (c *Client) setAuth(req *http.Request) error {
@@ -695,9 +696,13 @@ func (c *Client) setAuth(req *http.Request) error {
 	return nil
 }
 
-// isLoopback returns true for localhost, 127.x.x.x, and [::1].
+// isLoopback returns true for localhost and loopback IP literals.
 func isLoopback(host string) bool {
-	return host == "localhost" || strings.HasPrefix(host, "127.") || host == "::1"
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func newHTTPClient(timeout time.Duration) *http.Client {
