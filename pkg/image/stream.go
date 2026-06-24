@@ -93,7 +93,7 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 	}
 
 	if err := syncImageTarget(out, device); err != nil {
-		slog.Error("image sync failed: wiping partial image", "device", device, "error", err)
+		slog.Error("image sync failed: attempting to wipe partial image", "device", device, "error", err)
 		wipeLeadingSectors(device)
 		return err
 	}
