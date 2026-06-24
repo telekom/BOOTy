@@ -25,10 +25,12 @@ for mod in virtio_ring virtio virtio_pci_modern_dev virtio_pci_legacy_dev \
 done
 
 # Wait for virtio NIC to appear.
-for _ in $(seq 1 30); do
+attempt=0
+while [ "$attempt" -lt 30 ]; do
     if /bin/ip link show eth0 >/dev/null 2>&1; then
         break
     fi
+    attempt=$((attempt + 1))
     sleep 1
 done
 
