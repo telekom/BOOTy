@@ -634,6 +634,25 @@ func TestStreamQCOW2ChecksumMismatch(t *testing.T) {
 	}
 }
 
+type failingSyncer struct {
+	err error
+}
+
+func (f failingSyncer) Sync() error {
+	return f.err
+}
+
+func TestSyncImageTargetReturnsSyncError(t *testing.T) {
+	syncErr := errors.New("flush failed")
+	err := syncImageTarget(failingSyncer{err: syncErr}, "/dev/test")
+	if !errors.Is(err, syncErr) {
+		t.Fatalf("syncImageTarget() error = %v, want %v", err, syncErr)
+	}
+	if !strings.Contains(err.Error(), "syncing device /dev/test") {
+		t.Fatalf("syncImageTarget() error = %q, want device context", err.Error())
+	}
+}
+
 func TestOpenAndDecompressQCOW2KeepsDetectedSource(t *testing.T) {
 	data := append([]byte{0x51, 0x46, 0x49, 0xfb}, []byte("payload after qcow2 header")...)
 	requests := 0
