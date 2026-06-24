@@ -275,7 +275,8 @@ func TestGrowPartitionAndResize(t *testing.T) {
 	}
 
 	// Resize filesystem.
-	err = mgr.ResizeFilesystem(ctx, newRoot.Node)
+	mountDir := t.TempDir()
+	err = mgr.ResizeFilesystem(ctx, newRoot.Node, mountDir)
 	if err != nil {
 		t.Fatalf("ResizeFilesystem: %v", err)
 	}

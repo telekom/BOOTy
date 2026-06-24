@@ -1644,7 +1644,7 @@ func (o *Orchestrator) resizeFilesystem(ctx context.Context) error {
 		return nil
 	}
 
-	return o.disk.ResizeFilesystem(ctx, o.rootPartition)
+	return o.disk.ResizeFilesystem(ctx, o.rootPartition, newroot)
 }
 
 func (o *Orchestrator) configureKubelet(_ context.Context) error {

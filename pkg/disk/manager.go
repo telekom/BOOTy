@@ -713,17 +713,17 @@ func (m *Manager) GrowPartition(ctx context.Context, disk string, partNum int) e
 }
 
 // ResizeFilesystem resizes the filesystem on the given device.
-// Supports ext2/3/4 (resize2fs), XFS (xfs_growfs), and btrfs.
-func (m *Manager) ResizeFilesystem(ctx context.Context, device string) error {
-	slog.Info("resizing filesystem", "device", device)
+// Supports ext2/3/4 via the block device and XFS/btrfs via the mounted path.
+func (m *Manager) ResizeFilesystem(ctx context.Context, device, mountpoint string) error {
+	slog.Info("resizing filesystem", "device", device, "mountpoint", mountpoint)
 	// Try resize2fs for ext2/3/4 first.
 	if out, err := m.cmd.Run(ctx, "resize2fs", device); err != nil {
 		slog.Debug("resize2fs failed, trying xfs_growfs", "output", string(out))
 		// Fall back to xfs_growfs.
-		if out, err := m.cmd.Run(ctx, "xfs_growfs", device); err != nil {
+		if out, err := m.cmd.Run(ctx, "xfs_growfs", mountpoint); err != nil {
 			slog.Debug("xfs_growfs failed, trying btrfs resize", "output", string(out))
 			// Fall back to btrfs filesystem resize.
-			if out, err := m.cmd.Run(ctx, "btrfs", "filesystem", "resize", "max", device); err != nil {
+			if out, err := m.cmd.Run(ctx, "btrfs", "filesystem", "resize", "max", mountpoint); err != nil {
 				return fmt.Errorf("resize filesystem %s: %s: %w", device, string(out), err)
 			}
 		}

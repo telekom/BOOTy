@@ -634,7 +634,7 @@ func TestResizeFilesystemExt4(t *testing.T) {
 	cmd := newMockCommander()
 	mgr := NewManager(cmd)
 
-	if err := mgr.ResizeFilesystem(context.Background(), "/dev/sda2"); err != nil {
+	if err := mgr.ResizeFilesystem(context.Background(), "/dev/sda2", "/newroot"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(cmd.calls) != 1 || cmd.calls[0].name != "resize2fs" {
@@ -647,7 +647,7 @@ func TestResizeFilesystemXFS(t *testing.T) {
 	mgr := NewManager(cmd)
 
 	cmd.setResult("resize2fs /dev/sda2", nil, fmt.Errorf("not ext4"))
-	if err := mgr.ResizeFilesystem(context.Background(), "/dev/sda2"); err != nil {
+	if err := mgr.ResizeFilesystem(context.Background(), "/dev/sda2", "/newroot"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(cmd.calls) != 2 {
@@ -656,6 +656,9 @@ func TestResizeFilesystemXFS(t *testing.T) {
 	if cmd.calls[1].name != "xfs_growfs" {
 		t.Errorf("expected xfs_growfs, got %s", cmd.calls[1].name)
 	}
+	if len(cmd.calls[1].args) != 1 || cmd.calls[1].args[0] != "/newroot" {
+		t.Fatalf("expected xfs_growfs /newroot, got %s %v", cmd.calls[1].name, cmd.calls[1].args)
+	}
 }
 
 func TestResizeFilesystemBothFail(t *testing.T) {
@@ -663,10 +666,28 @@ func TestResizeFilesystemBothFail(t *testing.T) {
 	mgr := NewManager(cmd)
 
 	cmd.setResult("resize2fs /dev/sda2", nil, fmt.Errorf("not ext4"))
-	cmd.setResult("xfs_growfs /dev/sda2", nil, fmt.Errorf("not xfs"))
+	cmd.setResult("xfs_growfs /newroot", nil, fmt.Errorf("not xfs"))
 	cmd.setResult("btrfs filesystem", nil, fmt.Errorf("not btrfs"))
-	if err := mgr.ResizeFilesystem(context.Background(), "/dev/sda2"); err == nil {
+	if err := mgr.ResizeFilesystem(context.Background(), "/dev/sda2", "/newroot"); err == nil {
 		t.Fatal("expected error when all resize methods fail")
+	}
+}
+
+func TestResizeFilesystemBtrfsUsesMountpoint(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+
+	cmd.setResult("resize2fs /dev/sda2", nil, fmt.Errorf("not ext4"))
+	cmd.setResult("xfs_growfs /newroot", nil, fmt.Errorf("not xfs"))
+	if err := mgr.ResizeFilesystem(context.Background(), "/dev/sda2", "/newroot"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cmd.calls) != 3 {
+		t.Fatalf("expected 3 calls, got %#v", cmd.calls)
+	}
+	got := cmd.calls[2]
+	if got.name != "btrfs" || strings.Join(got.args, " ") != "filesystem resize max /newroot" {
+		t.Fatalf("expected btrfs filesystem resize max /newroot, got %s %v", got.name, got.args)
 	}
 }
 
