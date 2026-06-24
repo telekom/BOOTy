@@ -21,8 +21,13 @@ import (
 //
 // This preserves the partition table on the target disk and allows the source
 // image partitions to differ in size from the target.
-func StreamPartitions(ctx context.Context, url, device string) error {
+func StreamPartitions(ctx context.Context, url, device string, opts ...StreamOpts) error {
 	slog.Info("partition-by-partition imaging", "url", RedactURL(url), "device", device)
+
+	var opt StreamOpts
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
 
 	if err := setupRamdisk(); err != nil {
 		return fmt.Errorf("setting up ramdisk: %w", err)
@@ -34,7 +39,33 @@ func StreamPartitions(ctx context.Context, url, device string) error {
 		return err
 	}
 
+	if err := verifyRawImageChecksum(rawPath, opt); err != nil {
+		return err
+	}
+
 	return copyPartitions(ctx, rawPath, device)
+}
+
+func verifyRawImageChecksum(rawPath string, opt StreamOpts) error {
+	if opt.Checksum == "" {
+		return nil
+	}
+
+	src, err := os.Open(rawPath) //nolint:gosec // controlled ramdisk path
+	if err != nil {
+		return fmt.Errorf("opening raw image for checksum: %w", err)
+	}
+	defer func() { _ = src.Close() }()
+
+	checksummed, h, err := wrapChecksum(src, opt)
+	if err != nil {
+		return err
+	}
+	buf := make([]byte, imageCopyBufferSize)
+	if _, err := io.CopyBuffer(io.Discard, checksummed, buf); err != nil {
+		return fmt.Errorf("reading raw image for checksum: %w", err)
+	}
+	return verifyChecksum(h, opt)
 }
 
 // downloadAndPrepareRaw downloads an image to the ramdisk, decompresses it

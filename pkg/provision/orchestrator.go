@@ -648,6 +648,14 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 		}
 	}
 
+	var opts []image.StreamOpts
+	if o.cfg.Provision.Image.Checksum != "" {
+		opts = append(opts, image.StreamOpts{
+			Checksum:     o.cfg.Provision.Image.Checksum,
+			ChecksumType: o.cfg.Provision.Image.ChecksumType,
+		})
+	}
+
 	// Partition-by-partition mode: wipe first to ensure a clean slate on any
 	// retry attempt, then download and copy each partition individually.
 	if strings.EqualFold(o.cfg.Provision.Image.Mode, "partition") {
@@ -655,15 +663,10 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 		if err := o.disk.WipeDisk(ctx, o.targetDisk); err != nil {
 			return fmt.Errorf("wiping disk before partition stream: %w", err)
 		}
-		return image.StreamPartitions(ctx, bestURL, o.targetDisk)
-	}
-
-	var opts []image.StreamOpts
-	if o.cfg.Provision.Image.Checksum != "" {
-		opts = append(opts, image.StreamOpts{
-			Checksum:     o.cfg.Provision.Image.Checksum,
-			ChecksumType: o.cfg.Provision.Image.ChecksumType,
-		})
+		if err := image.StreamPartitions(ctx, bestURL, o.targetDisk, opts...); err != nil {
+			return classifyImageStreamError(bestURL, err)
+		}
+		return nil
 	}
 
 	if o.isABImageMode() {

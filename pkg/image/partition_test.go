@@ -4,6 +4,9 @@ package image
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"os"
 	"strings"
 	"testing"
 )
@@ -40,6 +43,44 @@ func TestConvertQCOW2HookRegistered(t *testing.T) {
 	if convertQCOW2Hook == nil {
 		t.Fatal("convertQCOW2Hook is nil on linux")
 	}
+}
+
+func TestVerifyRawImageChecksumPasses(t *testing.T) {
+	raw := []byte("partition-mode raw image")
+	path := writeRawChecksumFixture(t, raw)
+	sum := sha256.Sum256(raw)
+
+	err := verifyRawImageChecksum(path, StreamOpts{
+		Checksum:     hex.EncodeToString(sum[:]),
+		ChecksumType: "sha256",
+	})
+	if err != nil {
+		t.Fatalf("verifyRawImageChecksum: %v", err)
+	}
+}
+
+func TestVerifyRawImageChecksumMismatch(t *testing.T) {
+	path := writeRawChecksumFixture(t, []byte("partition-mode raw image"))
+
+	err := verifyRawImageChecksum(path, StreamOpts{
+		Checksum:     strings.Repeat("0", sha256.Size*2),
+		ChecksumType: "sha256",
+	})
+	if err == nil {
+		t.Fatal("expected checksum mismatch")
+	}
+	if !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("error = %q, want checksum mismatch", err.Error())
+	}
+}
+
+func writeRawChecksumFixture(t *testing.T, data []byte) string {
+	t.Helper()
+	path := t.TempDir() + "/image.raw"
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write raw fixture: %v", err)
+	}
+	return path
 }
 
 func TestReadSfdiskPartitionsDerivesNumbersFromDeviceNodes(t *testing.T) {
