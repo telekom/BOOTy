@@ -21,7 +21,7 @@ func (e *RebootRequestedError) Error() string { return "reboot requested" }
 // ProvisionCompleteError indicates a successful provision operation.
 // It is returned by ProvisionMode.Run() on success and by StandbyMode when
 // it executes a provision command. The PowerOff field indicates the caller
-// should power off rather than reboot (used in direct provision mode).
+// should power off rather than reboot for workflows that explicitly require it.
 type ProvisionCompleteError struct {
 	FirmwareChanged bool
 	PowerOff        bool
