@@ -400,6 +400,9 @@ func (o *Orchestrator) targetNetworkConfig() (*networkpersist.NetworkConfig, err
 	if err := addPersistentVLANs(cfg, o.cfg.Network.VLAN.Config); err != nil {
 		return nil, err
 	}
+	if len(cfg.Bonds) > 0 && cfg.Bonds[0].Address == "" && len(cfg.VLANs) == 0 {
+		return nil, fmt.Errorf("bond network persistence requires static ip or vlan config")
+	}
 	if len(cfg.Interfaces) == 0 && len(cfg.Bonds) == 0 && len(cfg.VLANs) == 0 {
 		return nil, fmt.Errorf("no interface, bond, or vlan configured for target network")
 	}
@@ -431,7 +434,7 @@ func addPersistentInterface(target *networkpersist.NetworkConfig, cfg *config.Ma
 	iface := strings.TrimSpace(cfg.Network.Static.Iface)
 	address := strings.TrimSpace(cfg.Network.Static.IP)
 	if address != "" && iface == "" {
-		return fmt.Errorf("STATIC_IFACE is required when persisting STATIC_IP without a bond")
+		return fmt.Errorf("static iface is required when persisting static ip without a bond")
 	}
 	if iface == "" {
 		return nil
@@ -452,7 +455,7 @@ func addPersistentVLANs(target *networkpersist.NetworkConfig, spec string) error
 	}
 	for _, vlan := range vlans {
 		if strings.TrimSpace(vlan.Gateway) != "" {
-			return fmt.Errorf("VLAN %d on %s has gateway %q, but target network persistence cannot render VLAN gateways yet", vlan.ID, vlan.Parent, vlan.Gateway)
+			return fmt.Errorf("vlan %d on %s has gateway %q, but target network persistence cannot render vlan gateways yet", vlan.ID, vlan.Parent, vlan.Gateway)
 		}
 		target.VLANs = append(target.VLANs, networkpersist.VLANConfig{
 			Parent:  strings.TrimSpace(vlan.Parent),

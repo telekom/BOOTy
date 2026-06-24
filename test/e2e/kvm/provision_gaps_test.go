@@ -703,7 +703,10 @@ func TestNetworkPersistenceStaticIP(t *testing.T) {
 	if entries, err := os.ReadDir(netplanDir); err == nil && len(entries) > 0 {
 		t.Logf("found netplan configs: %d files", len(entries))
 		for _, e := range entries {
-			content, _ := os.ReadFile(filepath.Join(netplanDir, e.Name()))
+			content, readErr := os.ReadFile(filepath.Join(netplanDir, e.Name()))
+			if readErr != nil {
+				t.Fatalf("read netplan config %s: %v", e.Name(), readErr)
+			}
 			if strings.Contains(string(content), "10.1.0.5") {
 				t.Log("netplan config contains static IP 10.1.0.5")
 				foundStaticIP = true
