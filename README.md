@@ -865,7 +865,8 @@ v2 seed files under `/var/lib/cloud/seed/config_drive/openstack/latest/`.
 The active provisioning integration currently generates:
 
 - **Instance metadata** — instance-id and hostname. When a provider-id is
-  configured, it is used as the source for instance-id.
+  configured, it is used as the source for instance-id and is not written as
+  a separate metadata field.
 - **User data** — hostname and `manage_etc_hosts`
 - **Network config v2** — bonds, addresses, gateways, nameservers
   (generated from the active provisioning network config)
