@@ -115,7 +115,7 @@ func runTopologyCheckWithRetry(t *testing.T, check topologyCheck) {
 	var cmdOut string
 	var cmdErr error
 	for {
-		cmdOut, cmdErr = dockerExecRaw(t, check.container, check.args...)
+		cmdOut, cmdErr = dockerExecRawContext(ctx, t, check.container, check.args...)
 		if cmdErr == nil && (check.expectContain == "" || strings.Contains(cmdOut, check.expectContain)) {
 			return
 		}
