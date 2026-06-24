@@ -453,7 +453,7 @@ func TestReportCrashArtifactsPreparePresignedPUTNoAuthorization(t *testing.T) {
 
 func TestReportCrashArtifactsRejectsPresignedPUTBearerAuth(t *testing.T) {
 	archivePath := writeCrashArchiveFixture(t)
-	var uploadCalled bool
+	uploadCalled := make(chan struct{}, 1)
 
 	mux := http.NewServeMux()
 	srv := httptest.NewServer(mux)
@@ -469,7 +469,10 @@ func TestReportCrashArtifactsRejectsPresignedPUTBearerAuth(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(resp)
 	})
 	mux.HandleFunc("PUT /upload", func(w http.ResponseWriter, _ *http.Request) {
-		uploadCalled = true
+		select {
+		case uploadCalled <- struct{}{}:
+		default:
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -484,8 +487,10 @@ func TestReportCrashArtifactsRejectsPresignedPUTBearerAuth(t *testing.T) {
 	if !strings.Contains(err.Error(), "only supported for") {
 		t.Fatalf("error = %q, want auth mode rejection", err.Error())
 	}
-	if uploadCalled {
+	select {
+	case <-uploadCalled:
 		t.Fatal("presigned upload endpoint was called")
+	default:
 	}
 }
 
