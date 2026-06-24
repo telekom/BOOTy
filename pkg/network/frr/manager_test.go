@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -147,13 +150,47 @@ func TestAddBGPPeerError(t *testing.T) {
 	}
 }
 
-func TestStartFRRFallthrough(t *testing.T) {
+func TestStartFRRFallthroughFailsWhenRequiredDaemonsMissing(t *testing.T) {
 	// startFRR tries systemctl → frrinit.sh → startDaemonsDirect.
-	// In test, neither systemctl nor frrinit.sh exist, so it falls
-	// through to startDaemonsDirect which skips missing daemon binaries.
+	// In test, neither systemctl nor frrinit.sh exist, so it falls through
+	// to startDaemonsDirect. Required daemon binaries must be present there.
 	mgr := NewManager(nil)
-	if err := mgr.startFRR(context.Background()); err != nil {
+	err := mgr.startFRR(context.Background())
+	if err == nil {
+		t.Fatal("expected error for missing required FRR daemons")
+	}
+	if !strings.Contains(err.Error(), "required FRR daemons not found") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveFRRDaemonsSupportsInitramfsSbinLayout(t *testing.T) {
+	sbin := t.TempDir()
+	usrLib := t.TempDir()
+	origDirs := frrDaemonDirs
+	frrDaemonDirs = []string{usrLib, sbin}
+	t.Cleanup(func() { frrDaemonDirs = origDirs })
+
+	for _, name := range []string{"zebra", "bgpd", "bfdd"} {
+		path := filepath.Join(sbin, name)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatalf("write fake daemon %s: %v", name, err)
+		}
+	}
+
+	paths, missing := resolveFRRDaemons([]frrDaemonSpec{
+		{"mgmtd", nil, false},
+		{"zebra", nil, true},
+		{"bgpd", nil, true},
+		{"bfdd", nil, true},
+	})
+	if len(missing) > 0 {
+		t.Fatalf("unexpected missing daemons: %v", missing)
+	}
+	for _, name := range []string{"zebra", "bgpd", "bfdd"} {
+		if got, want := paths[name], filepath.Join(sbin, name); got != want {
+			t.Fatalf("%s path = %q, want %q", name, got, want)
+		}
 	}
 }
 
