@@ -1000,7 +1000,7 @@ func routeUpdateMatchesImportRT(path *apipb.Path, localASN, localVNI uint32) boo
 	return matches
 }
 
-func routeTargetMatchState(path *apipb.Path, localASN, localVNI uint32) (matches bool, hasRouteTarget bool) {
+func routeTargetMatchState(path *apipb.Path, localASN, localVNI uint32) (matches, hasRouteTarget bool) {
 	for _, attr := range path.GetPattrs() {
 		msg, err := attr.UnmarshalNew()
 		if err != nil {
@@ -1032,7 +1032,7 @@ func (o *OverlayTier) importRouteTarget() (asn, vni uint32, err error) {
 
 // rtFoundInCommunities checks a slice of extended community Any values for a
 // Route Target matching localASN and localVNI.
-func rtFoundInCommunities(communities []*anypb.Any, localASN, localVNI uint32) (matches bool, hasRouteTarget bool) {
+func rtFoundInCommunities(communities []*anypb.Any, localASN, localVNI uint32) (matches, hasRouteTarget bool) {
 	for _, c := range communities {
 		msg, err := c.UnmarshalNew()
 		if err != nil {
