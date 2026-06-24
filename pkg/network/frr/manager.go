@@ -646,20 +646,27 @@ type frrDaemonSpec struct {
 
 var frrDaemonDirs = []string{"/usr/lib/frr", "/sbin"}
 
-func resolveFRRDaemonPath(name string) (string, bool) {
+func resolveFRRDaemonPath(name string) (string, bool, error) {
 	for _, dir := range frrDaemonDirs {
 		path := dir + "/" + name
-		if _, err := os.Stat(path); err == nil {
-			return path, true
+		if _, err := os.Stat(path); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return "", false, fmt.Errorf("stat FRR daemon %s: %w", path, err)
 		}
+		return path, true, nil
 	}
-	return "", false
+	return "", false, nil
 }
 
-func resolveFRRDaemons(daemons []frrDaemonSpec) (paths map[string]string, missing []string) {
+func resolveFRRDaemons(daemons []frrDaemonSpec) (paths map[string]string, missing []string, err error) {
 	paths = make(map[string]string, len(daemons))
 	for _, d := range daemons {
-		path, ok := resolveFRRDaemonPath(d.name)
+		path, ok, err := resolveFRRDaemonPath(d.name)
+		if err != nil {
+			return nil, nil, err
+		}
 		if !ok {
 			if d.required {
 				missing = append(missing, d.name)
@@ -668,7 +675,7 @@ func resolveFRRDaemons(daemons []frrDaemonSpec) (paths map[string]string, missin
 		}
 		paths[d.name] = path
 	}
-	return paths, missing
+	return paths, missing, nil
 }
 
 func (m *Manager) startDaemonsDirect(ctx context.Context) error {
@@ -683,7 +690,10 @@ func (m *Manager) startDaemonsDirect(ctx context.Context) error {
 		{"bgpd", []string{"-d", "-A", "127.0.0.1", "-f", "/etc/frr/frr.conf"}, true},
 		{"bfdd", []string{"-d", "-A", "127.0.0.1"}, true},
 	}
-	paths, missing := resolveFRRDaemons(daemons)
+	paths, missing, err := resolveFRRDaemons(daemons)
+	if err != nil {
+		return fmt.Errorf("resolve FRR daemons: %w", err)
+	}
 	if len(missing) > 0 {
 		return fmt.Errorf("required FRR daemons not found: %s", strings.Join(missing, ", "))
 	}

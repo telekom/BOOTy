@@ -179,12 +179,15 @@ func TestResolveFRRDaemonsSupportsInitramfsSbinLayout(t *testing.T) {
 		}
 	}
 
-	paths, missing := resolveFRRDaemons([]frrDaemonSpec{
+	paths, missing, err := resolveFRRDaemons([]frrDaemonSpec{
 		{"mgmtd", nil, false},
 		{"zebra", nil, true},
 		{"bgpd", nil, true},
 		{"bfdd", nil, true},
 	})
+	if err != nil {
+		t.Fatalf("resolve daemons: %v", err)
+	}
 	if len(missing) > 0 {
 		t.Fatalf("unexpected missing daemons: %v", missing)
 	}
@@ -192,6 +195,30 @@ func TestResolveFRRDaemonsSupportsInitramfsSbinLayout(t *testing.T) {
 		if got, want := paths[name], filepath.Join(sbin, name); got != want {
 			t.Fatalf("%s path = %q, want %q", name, got, want)
 		}
+	}
+}
+
+func TestResolveFRRDaemonsSurfacesStatErrors(t *testing.T) {
+	badDir := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(badDir, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("write bad daemon dir: %v", err)
+	}
+
+	origDirs := frrDaemonDirs
+	frrDaemonDirs = []string{badDir}
+	t.Cleanup(func() { frrDaemonDirs = origDirs })
+
+	_, _, err := resolveFRRDaemons([]frrDaemonSpec{
+		{"zebra", nil, true},
+	})
+	if err == nil {
+		t.Fatal("expected stat error")
+	}
+	if !strings.Contains(err.Error(), "stat FRR daemon") {
+		t.Fatalf("error = %q, want stat FRR daemon context", err.Error())
+	}
+	if strings.Contains(err.Error(), "required FRR daemons not found") {
+		t.Fatalf("error flattened stat failure into missing daemon: %v", err)
 	}
 }
 
