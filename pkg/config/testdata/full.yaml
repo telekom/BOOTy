@@ -296,7 +296,7 @@ provision:
 
   cloudInit:
     enabled: false
-    # datasource: nocloud (default) | configdrive
+    # datasource: nocloud (default) or configdrive
     datasource: nocloud
 
   sysext:

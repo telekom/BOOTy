@@ -1,6 +1,7 @@
 package cloudinit
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -206,6 +207,83 @@ func TestInjectNoCloud(t *testing.T) {
 	}
 }
 
+func TestInjectConfigDrive(t *testing.T) {
+	root := t.TempDir()
+
+	ud := &UserData{Hostname: "configdrive-test"}
+	md := &MetaData{InstanceID: "test-id", LocalHostname: "configdrive-test", Platform: "booty"}
+	nc := &NetworkConfig{
+		Version: 2,
+		Ethernets: map[string]EthConfig{
+			"eth0": {
+				Addresses:   []string{"10.0.0.5/24"},
+				Gateway4:    "10.0.0.1",
+				Nameservers: &NSConfig{Addresses: []string{"1.1.1.1"}},
+			},
+		},
+	}
+
+	if err := InjectConfigDrive(root, ud, md, nc); err != nil {
+		t.Fatalf("InjectConfigDrive: %v", err)
+	}
+
+	seedDir := filepath.Join(root, "var", "lib", "cloud", "seed", "config_drive", "openstack", "latest")
+	for _, name := range []string{"user_data", "meta_data.json", "network_data.json"} {
+		data, err := os.ReadFile(filepath.Join(seedDir, name))
+		if err != nil {
+			t.Errorf("read %s: %v", name, err)
+			continue
+		}
+		if len(data) == 0 {
+			t.Errorf("%s is empty", name)
+		}
+	}
+
+	assertConfigDriveMetadata(t, filepath.Join(seedDir, "meta_data.json"))
+	assertConfigDriveNetworkData(t, filepath.Join(seedDir, "network_data.json"))
+}
+
+func assertConfigDriveMetadata(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read meta_data.json: %v", err)
+	}
+
+	var md openStackMetaData
+	if err := json.Unmarshal(data, &md); err != nil {
+		t.Fatalf("unmarshal meta_data.json: %v", err)
+	}
+	if md.UUID != "test-id" || md.Hostname != "configdrive-test" || md.Name != "configdrive-test" {
+		t.Fatalf("unexpected metadata: %+v", md)
+	}
+}
+
+func assertConfigDriveNetworkData(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read network_data.json: %v", err)
+	}
+
+	var networkData openStackNetworkData
+	if err := json.Unmarshal(data, &networkData); err != nil {
+		t.Fatalf("unmarshal network_data.json: %v", err)
+	}
+	if len(networkData.Links) != 1 || networkData.Links[0].ID != "eth0" {
+		t.Fatalf("unexpected links: %+v", networkData.Links)
+	}
+	if len(networkData.Networks) != 1 || networkData.Networks[0].IPAddress != "10.0.0.5" {
+		t.Fatalf("unexpected networks: %+v", networkData.Networks)
+	}
+	if len(networkData.Networks[0].Services) != 1 || networkData.Networks[0].Services[0].Address != "1.1.1.1" {
+		t.Fatalf("unexpected network services: %+v", networkData.Networks[0].Services)
+	}
+	if len(networkData.Services) != 1 || networkData.Services[0].Address != "1.1.1.1" {
+		t.Fatalf("unexpected services: %+v", networkData.Services)
+	}
+}
+
 func TestAddressList(t *testing.T) {
 	if got := addressList(""); got != nil {
 		t.Errorf("addressList empty = %v, want nil", got)
@@ -295,6 +373,22 @@ func TestInjectNoCloud_InvalidRootPath(t *testing.T) {
 	}
 	if err := InjectNoCloud("relative/path", ud, md, nc); err == nil {
 		t.Error("expected error for relative rootPath")
+	}
+}
+
+func TestInjectConfigDrive_InvalidStaticAddress(t *testing.T) {
+	root := t.TempDir()
+	ud := &UserData{Hostname: "test"}
+	md := &MetaData{InstanceID: "id", LocalHostname: "test", Platform: "booty"}
+	nc := &NetworkConfig{
+		Version: 2,
+		Ethernets: map[string]EthConfig{
+			"eth0": {Addresses: []string{"not-a-cidr"}},
+		},
+	}
+
+	if err := InjectConfigDrive(root, ud, md, nc); err == nil {
+		t.Fatal("expected error for invalid static CIDR")
 	}
 }
 

@@ -465,12 +465,12 @@ func validateEnumLower(value, name string, allowed ...string) string {
 	if value == "" {
 		return ""
 	}
-	return validateEnum(strings.ToLower(value), name, allowed...)
+	return validateEnum(strings.ToLower(strings.TrimSpace(value)), name, allowed...)
 }
 
 func validateEnumUpper(value, name string, allowed ...string) string {
 	if value == "" {
 		return ""
 	}
-	return validateEnum(strings.ToUpper(value), name, allowed...)
+	return validateEnum(strings.ToUpper(strings.TrimSpace(value)), name, allowed...)
 }

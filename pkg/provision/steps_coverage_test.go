@@ -146,6 +146,30 @@ func TestOrchestratorConfigureGRUB_WritesConfig(t *testing.T) {
 	}
 }
 
+func TestOrchestratorConfigureGRUB_ConfigDriveDatasource(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.CloudInit.Datasource = "configdrive"
+	provider := &mockProvider{}
+	o, _ := newTestOrchestratorWithCommander(t, cfg, provider)
+
+	if err := o.configureGRUB(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	grubPath := filepath.Join(o.config.rootDir, "etc", "default", "grub.d", "10-caprf-kernel-params.cfg")
+	data, err := os.ReadFile(grubPath)
+	if err != nil {
+		t.Fatalf("expected grub config to exist: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "ci.datasource=ConfigDrive") {
+		t.Errorf("expected ConfigDrive datasource in grub config: %s", content)
+	}
+	if strings.Contains(content, "ds=nocloud") {
+		t.Errorf("ConfigDrive grub config must not force NoCloud: %s", content)
+	}
+}
+
 func TestOrchestratorConfigureGRUB_WithExtraParams(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.ExtraKernelParams = "quiet splash"

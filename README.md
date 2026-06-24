@@ -341,8 +341,8 @@ go run server/server.go \
 | `LUKS_HASH` | `sha256` | *(Planned)* LUKS2 hash algorithm |
 | `NUM_VFS` | `0` | Number of SR-IOV virtual functions for Mellanox NICs (0 = skip) |
 | `NVME_NAMESPACES` | — | JSON config for NVMe namespace creation (e.g. `[{"device":"/dev/nvme0","namespaces":[{"size_gb":100}]}]`) |
-| `CLOUDINIT_ENABLED` | `false` | Generate and inject cloud-init NoCloud/ConfigDrive config |
-| `CLOUDINIT_DATASOURCE` | `nocloud` | Cloud-init datasource type |
+| `CLOUDINIT_ENABLED` | `false` | Generate and inject cloud-init config |
+| `CLOUDINIT_DATASOURCE` | `nocloud` | Cloud-init datasource type: `nocloud` or `configdrive` |
 | `SYSEXT_ENABLED` | `false` | Copy configured systemd-sysext layers into the provisioned root |
 | `SYSEXT_DEFAULT_MODE` | `preload` | Default sysext layer mode: `preload` or `active` |
 | `SYSEXT_CATALOG_DIR` | `/usr/lib/tcaas-sysext/preloaded` | Target catalog directory for preloaded sysext layers |
@@ -806,7 +806,7 @@ table.
 ### Cloud-Init
 
 BOOTy generates and injects cloud-init configuration into the provisioned
-OS. Two datasource types are supported: `nocloud` and `configdrive`.
+OS. Supported datasource types are `nocloud` and `configdrive`.
 
 ```bash
 export CLOUDINIT_ENABLED=true
@@ -814,7 +814,10 @@ export CLOUDINIT_DATASOURCE=nocloud    # nocloud (default) or configdrive
 ```
 
 When enabled, BOOTy writes cloud-init seed data to the appropriate path
-on the provisioned root filesystem. The generated config includes:
+on the provisioned root filesystem. `nocloud` writes
+`/var/lib/cloud/seed/nocloud/`, and `configdrive` writes OpenStack ConfigDrive
+v2 seed files under `/var/lib/cloud/seed/config_drive/openstack/latest/`.
+The generated config includes:
 
 - **Instance metadata** — instance-id, hostname, provider-id
 - **User data** — user management (groups, shell, sudo, SSH keys), package
@@ -991,7 +994,7 @@ and the PR process.
 │   ├── bootloader/             # Bootloader detection (GRUB, systemd-boot)
 │   ├── buildinfo/              # Binary build information (version, commit, date)
 │   ├── caprf/                  # CAPRF client (status, log, debug, vars parsing)
-│   ├── cloudinit/              # Cloud-init NoCloud/ConfigDrive generation
+│   ├── cloudinit/              # Cloud-init NoCloud and ConfigDrive generation
 │   ├── config/                 # MachineConfig, Provider interface, Status types
 │   ├── crash/                  # Startup crash artifact collection, metadata, upload contracts
 │   ├── debug/                  # Structured debug dump collection

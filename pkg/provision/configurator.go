@@ -169,7 +169,12 @@ func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineCon
 		}
 	}
 
-	grubLine := fmt.Sprintf("GRUB_CMDLINE_LINUX=\"ds=nocloud console=%s", console)
+	cloudInitDatasourceParam, err := cloudInitKernelDatasourceParam(cfg)
+	if err != nil {
+		return err
+	}
+
+	grubLine := fmt.Sprintf("GRUB_CMDLINE_LINUX=\"%s console=%s", cloudInitDatasourceParam, console)
 	if cfg.Provision.ExtraKernelParams != "" {
 		if !safeKernelParams.MatchString(cfg.Provision.ExtraKernelParams) {
 			return fmt.Errorf("unsafe characters in ExtraKernelParams: %q", cfg.Provision.ExtraKernelParams)
@@ -201,6 +206,18 @@ func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineCon
 		return fmt.Errorf("update-grub: %s: %w", string(out), err)
 	}
 	return nil
+}
+
+func cloudInitKernelDatasourceParam(cfg *config.MachineConfig) (string, error) {
+	datasource := strings.ToLower(strings.TrimSpace(cfg.Provision.CloudInit.Datasource))
+	switch datasource {
+	case "", "nocloud":
+		return "ds=nocloud", nil
+	case "configdrive":
+		return "ci.datasource=ConfigDrive", nil
+	default:
+		return "", fmt.Errorf("unsupported cloud-init datasource %q", cfg.Provision.CloudInit.Datasource)
+	}
 }
 
 func abRootKernelParam(cfg *config.MachineConfig) (string, error) {

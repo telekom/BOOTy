@@ -1913,6 +1913,42 @@ func TestInjectCloudInit_NoCloudInject(t *testing.T) {
 	}
 }
 
+func TestInjectCloudInit_ConfigDriveInject(t *testing.T) {
+	cfg := &config.MachineConfig{
+		Hostname: "test-host",
+	}
+	cfg.Provision.CloudInit.Enabled = true
+	cfg.Provision.CloudInit.Datasource = "configdrive"
+	cfg.Provision.ProviderID = "redfish://bmc.example/Systems/1"
+	cfg.Network.Static.IP = "10.0.0.10/24"
+	cfg.Network.Static.Gateway = "10.0.0.1"
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	if err := o.injectCloudInit(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	seedDir := filepath.Join(o.config.rootDir, "var", "lib", "cloud", "seed", "config_drive", "openstack", "latest")
+	for _, name := range []string{"user_data", "meta_data.json", "network_data.json"} {
+		if _, err := os.Stat(filepath.Join(seedDir, name)); err != nil {
+			t.Errorf("expected seed file %s to exist: %v", name, err)
+		}
+	}
+
+	metaData, err := os.ReadFile(filepath.Join(seedDir, "meta_data.json"))
+	if err != nil {
+		t.Fatalf("read meta_data.json: %v", err)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(metaData, &metadata); err != nil {
+		t.Fatalf("unmarshal meta_data.json: %v", err)
+	}
+	if metadata["uuid"] != "redfish://bmc.example/Systems/1" {
+		t.Fatalf("metadata uuid = %v", metadata["uuid"])
+	}
+}
+
 func TestInjectCloudInit_DefaultDatasourceAndStableInstanceID(t *testing.T) {
 	cfg := &config.MachineConfig{
 		Hostname: "test-host",
@@ -1936,17 +1972,22 @@ func TestInjectCloudInit_DefaultDatasourceAndStableInstanceID(t *testing.T) {
 	}
 }
 
-func TestInjectCloudInit_DatasourceCaseInsensitiveAndTrimmed(t *testing.T) {
+func TestInjectCloudInit_ConfigDriveDatasourceCaseInsensitiveAndTrimmed(t *testing.T) {
 	cfg := &config.MachineConfig{
 		Hostname: "test-host",
 	}
 	cfg.Provision.CloudInit.Enabled = true
-	cfg.Provision.CloudInit.Datasource = " NoCloud "
+	cfg.Provision.CloudInit.Datasource = " ConfigDrive "
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
 	if err := o.injectCloudInit(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+
+	seedDir := filepath.Join(o.config.rootDir, "var", "lib", "cloud", "seed", "config_drive", "openstack", "latest")
+	if _, err := os.Stat(filepath.Join(seedDir, "meta_data.json")); err != nil {
+		t.Fatalf("expected configdrive meta_data.json: %v", err)
 	}
 }
 
