@@ -53,8 +53,9 @@ func (m *mockCommander) setResult(key string, output []byte, err error) {
 }
 
 type mockProvider struct {
-	statuses []statusReport
-	configs  []*config.MachineConfig
+	statuses        []statusReport
+	configs         []*config.MachineConfig
+	firmwareReports [][]byte
 }
 
 type statusReport struct {
@@ -76,7 +77,8 @@ func (p *mockProvider) ReportStatus(_ context.Context, status config.Status, mes
 
 func (p *mockProvider) ShipLog(_ context.Context, _ string) error { return nil }
 func (p *mockProvider) Heartbeat(_ context.Context) error         { return nil }
-func (p *mockProvider) ReportFirmware(_ context.Context, _ []byte) error {
+func (p *mockProvider) ReportFirmware(_ context.Context, data []byte) error {
+	p.firmwareReports = append(p.firmwareReports, append([]byte(nil), data...))
 	return nil
 }
 func (p *mockProvider) FetchCommands(_ context.Context) ([]config.Command, error) {

@@ -18,6 +18,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/cloudinit"
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
+	"github.com/telekom/BOOTy/pkg/firmware"
 )
 
 // newTestOrchestrator builds an Orchestrator with a mock provider and disk manager
@@ -991,6 +992,36 @@ func TestCollectFirmwareDisabled(t *testing.T) {
 
 	if err := o.collectFirmware(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCollectFirmwareMinimumFailureAbortsAfterReport(t *testing.T) {
+	previousCollect := collectFirmware
+	collectFirmware = func() (*firmware.Report, error) {
+		return &firmware.Report{
+			BIOS: firmware.Version{Component: "BIOS", Version: "U30"},
+		}, nil
+	}
+	t.Cleanup(func() {
+		collectFirmware = previousCollect
+	})
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Firmware.Enabled = true
+	cfg.Provision.Firmware.MinBIOS = "U46"
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	err := o.collectFirmware(context.Background())
+	if err == nil {
+		t.Fatal("expected firmware validation failure")
+	}
+	if !strings.Contains(err.Error(), "firmware validation failed") ||
+		!strings.Contains(err.Error(), "firmware-bios") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(provider.firmwareReports) != 1 {
+		t.Fatalf("firmware reports = %d, want 1", len(provider.firmwareReports))
 	}
 }
 
