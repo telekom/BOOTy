@@ -57,7 +57,7 @@ func selectDefaultOCILayer(layers []v1.Layer) (v1.Layer, error) {
 	for i := len(layers) - 1; i >= 0; i-- {
 		mediaType, err := layers[i].MediaType()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("read layer media type: %w", err)
 		}
 		if isTextPlainMediaType(mediaType) {
 			continue
