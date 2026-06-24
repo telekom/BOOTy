@@ -1037,6 +1037,26 @@ func TestOverlaySetupSkipsOverlayNone(t *testing.T) {
 	}
 }
 
+func TestOverlayCleanupSetupFailureCancelsOverlayWatch(t *testing.T) {
+	watchCtx, cancel := context.WithCancel(context.Background())
+	overlay := &OverlayTier{
+		cfg:    &Config{ProvisionVNI: 4000, BridgeName: "br-test"},
+		log:    slog.Default(),
+		cancel: cancel,
+	}
+
+	setupErr := errors.New("forced setup failure")
+	err := overlay.cleanupSetupFailure(context.Background(), "add provision IP", setupErr)
+	if !errors.Is(err, setupErr) {
+		t.Fatalf("cleanupSetupFailure error = %v, want wrapped setup error", err)
+	}
+	select {
+	case <-watchCtx.Done():
+	default:
+		t.Fatal("cleanupSetupFailure did not cancel overlay watch context")
+	}
+}
+
 func TestUnderlaySetupRejectsUnimplementedAF(t *testing.T) {
 	tests := []struct {
 		name string
