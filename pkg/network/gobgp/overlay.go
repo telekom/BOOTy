@@ -632,9 +632,10 @@ func (o *OverlayTier) watchRoutes(ctx context.Context) {
 }
 
 // processRouteUpdate handles a single BGP path update by dispatching to the
-// appropriate handler based on NLRI type. Routes whose extended communities do
-// not carry a Route Target matching the local ASN+VNI are silently skipped so
-// that foreign-tenant routes are never installed into the kernel.
+// appropriate handler based on NLRI type. Add/update routes must carry a Route
+// Target matching the local ASN+VNI. Withdrawals with Route Target communities
+// must also match, while withdrawals without Route Targets are allowed so
+// MP_UNREACH updates can remove previously imported routes.
 func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 	withdraw := p.GetIsWithdraw()
 	action := "add"
