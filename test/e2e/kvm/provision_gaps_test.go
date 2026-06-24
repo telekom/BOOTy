@@ -570,6 +570,9 @@ func TestTPMDetectionAndPCRRead(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	if _, err := os.Stat(swtpmSock); err != nil {
+		t.Fatalf("swtpm control socket %s did not appear within 15s: %v", swtpmSock, err)
+	}
 
 	args := []string{
 		"-m", "512", "-nographic", "-no-reboot",
