@@ -646,7 +646,7 @@ type frrDaemonSpec struct {
 
 var frrDaemonDirs = []string{"/usr/lib/frr", "/sbin"}
 
-func resolveFRRDaemonPath(name string) (string, bool, error) {
+func resolveFRRDaemonPath(name string) (path string, ok bool, err error) {
 	for _, dir := range frrDaemonDirs {
 		path := dir + "/" + name
 		if _, err := os.Stat(path); err != nil {
