@@ -4,6 +4,7 @@ package network
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -125,7 +126,10 @@ func (c *Config) ApplyDefaults() {
 
 // ConfigureResolvers writes DNS resolvers for the active initramfs network.
 func ConfigureResolvers(resolvers string) error {
-	lines := resolverLines(resolvers)
+	lines, err := resolverLines(resolvers)
+	if err != nil {
+		return err
+	}
 	if len(lines) == 0 {
 		return nil
 	}
@@ -150,16 +154,20 @@ func ConfigureResolvers(resolvers string) error {
 	return nil
 }
 
-func resolverLines(resolvers string) []string {
+func resolverLines(resolvers string) ([]string, error) {
 	fields := strings.Split(resolvers, ",")
 	lines := make([]string, 0, len(fields))
 	for _, resolver := range fields {
 		resolver = strings.TrimSpace(resolver)
-		if resolver != "" {
-			lines = append(lines, "nameserver "+resolver)
+		if resolver == "" {
+			continue
 		}
+		if _, err := netip.ParseAddr(resolver); err != nil {
+			return nil, fmt.Errorf("invalid DNS resolver %q: must be an IPv4 or IPv6 address", resolver)
+		}
+		lines = append(lines, "nameserver "+resolver)
 	}
-	return lines
+	return lines, nil
 }
 
 // IsFRRMode returns true if the config has enough parameters for FRR/EVPN.

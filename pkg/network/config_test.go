@@ -122,8 +122,29 @@ func TestConfigureResolversEmptySkips(t *testing.T) {
 	}
 }
 
+func TestConfigureResolversRejectsInjectedDirectives(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "etc", "resolv.conf")
+	originalPath := resolvConfPath
+	resolvConfPath = path
+	t.Cleanup(func() { resolvConfPath = originalPath })
+
+	err := ConfigureResolvers("8.8.8.8\nsearch evil.example")
+	if err == nil {
+		t.Fatal("expected invalid resolver error")
+	}
+	if !strings.Contains(err.Error(), "invalid DNS resolver") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("resolv.conf should not be written for invalid resolver, stat error: %v", statErr)
+	}
+}
+
 func TestResolverLines(t *testing.T) {
-	lines := resolverLines("8.8.8.8, 1.1.1.1, ,2001:4860:4860::8888")
+	lines, err := resolverLines("8.8.8.8, 1.1.1.1, ,2001:4860:4860::8888")
+	if err != nil {
+		t.Fatalf("resolverLines: %v", err)
+	}
 	got := strings.Join(lines, "\n")
 	want := "nameserver 8.8.8.8\nnameserver 1.1.1.1\nnameserver 2001:4860:4860::8888"
 	if got != want {
