@@ -864,7 +864,9 @@ on the provisioned root filesystem. `nocloud` writes
 v2 seed files under `/var/lib/cloud/seed/config_drive/openstack/latest/`.
 The active provisioning integration currently generates:
 
-- **Instance metadata** — instance-id, hostname, provider-id
+- **Instance metadata** — instance-id and hostname. When a provider-id is
+  configured, it is used as the source for instance-id.
+- **User data** — hostname and `manage_etc_hosts`
 - **Network config v2** — bonds, addresses, gateways, nameservers
   (generated from the active provisioning network config)
 
@@ -958,8 +960,8 @@ filesystem:
 
 | Bootloader | Detection | Architecture |
 |-----------|-----------|--------------|
-| systemd-boot | Presence of `EFI/systemd/systemd-bootx64.efi` | x86_64 |
-| systemd-boot | Presence of `EFI/systemd/systemd-bootaa64.efi` | ARM64 |
+| systemd-boot | Presence of `boot/efi/EFI/systemd/systemd-bootx64.efi` | x86_64 |
+| systemd-boot | Presence of `boot/efi/EFI/systemd/systemd-bootaa64.efi` | ARM64 |
 | GRUB | Default fallback when systemd-boot is not found | All |
 
 The active provisioning pipeline is still GRUB-oriented. It writes GRUB drop-in
