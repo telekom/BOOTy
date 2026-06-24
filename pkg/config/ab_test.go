@@ -46,6 +46,9 @@ func TestABConfigPartitionLayoutTargetsInactiveSlot(t *testing.T) {
 	if layout.Partitions[2].Mountpoint != "/" {
 		t.Fatalf("slot B mountpoint = %q, want /", layout.Partitions[2].Mountpoint)
 	}
+	if layout.Partitions[2].MountOptions != "" {
+		t.Fatalf("dual-root slot B mount options = %q, want empty", layout.Partitions[2].MountOptions)
+	}
 	if layout.Partitions[3].Mountpoint != "/var/lib/booty" {
 		t.Fatalf("state mountpoint = %q", layout.Partitions[3].Mountpoint)
 	}
@@ -63,6 +66,12 @@ func TestABConfigSystemABPartitionLayoutDefaultsToSharedVar(t *testing.T) {
 	}
 	if len(layout.Partitions) != 4 {
 		t.Fatalf("partitions = %d, want 4", len(layout.Partitions))
+	}
+	if layout.Partitions[1].MountOptions != "" {
+		t.Fatalf("inactive slot A mount options = %q, want empty", layout.Partitions[1].MountOptions)
+	}
+	if layout.Partitions[2].MountOptions != "ro" {
+		t.Fatalf("active system-ab root mount options = %q, want ro", layout.Partitions[2].MountOptions)
 	}
 	data := layout.Partitions[3]
 	if data.Label != "BOOTY-DATA" || data.Mountpoint != "/var" || data.Filesystem != "ext4" || data.SizeMB != 0 {

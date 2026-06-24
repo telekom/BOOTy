@@ -769,7 +769,8 @@ func (o *Orchestrator) validateABPreserveExistingLayout(ctx context.Context) err
 		return fmt.Errorf("existing A/B partition layout has %d partitions, want at least %d",
 			len(actual), len(layout.Partitions))
 	}
-	for i, expected := range layout.Partitions {
+	for i := range layout.Partitions {
+		expected := &layout.Partitions[i]
 		if err := validateABPreservePartition(o.targetDisk, i, expected, actual[i]); err != nil {
 			return err
 		}
@@ -976,7 +977,7 @@ func normalizeABStateSlot(slot string) string {
 	return strings.ToLower(strings.TrimSpace(slot))
 }
 
-func validateABPreservePartition(diskDevice string, index int, expected config.Partition, actual disk.Partition) error {
+func validateABPreservePartition(diskDevice string, index int, expected *config.Partition, actual disk.Partition) error {
 	partNum := index + 1
 	expectedNode := disk.PartitionDevicePath(diskDevice, partNum)
 	if actual.Node != expectedNode {
@@ -993,7 +994,7 @@ func validateABPreservePartition(diskDevice string, index int, expected config.P
 	return nil
 }
 
-func expectedABPartitionType(part config.Partition) string {
+func expectedABPartitionType(part *config.Partition) string {
 	if strings.EqualFold(part.Filesystem, "vfat") || part.Mountpoint == "/boot/efi" {
 		return disk.EFISystemPartitionGUID
 	}
@@ -1277,7 +1278,8 @@ func (o *Orchestrator) sharedDataMountsFromLayout() []sharedDataMount {
 		return nil
 	}
 	var mounts []sharedDataMount
-	for i, part := range layout.Partitions {
+	for i := range layout.Partitions {
+		part := &layout.Partitions[i]
 		if !isSharedDataPartition(part) {
 			continue
 		}
@@ -1290,7 +1292,7 @@ func (o *Orchestrator) sharedDataMountsFromLayout() []sharedDataMount {
 	return mounts
 }
 
-func isSharedDataPartition(part config.Partition) bool {
+func isSharedDataPartition(part *config.Partition) bool {
 	mountpoint := strings.TrimSpace(part.Mountpoint)
 	if mountpoint == "" || mountpoint == "/" || mountpoint == "/boot/efi" {
 		return false

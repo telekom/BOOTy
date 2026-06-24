@@ -83,7 +83,7 @@ func TestResolveTypeGUID(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := resolveTypeGUID(tc.part)
+			got := resolveTypeGUID(&tc.part)
 			if got != tc.want {
 				t.Errorf("got %s, want %s", got, tc.want)
 			}
@@ -134,6 +134,24 @@ func TestGenerateFstab(t *testing.T) {
 	}
 	if !strings.Contains(fstab, "PARTLABEL=root") || !strings.Contains(fstab, "ext4") {
 		t.Errorf("fstab missing root entry:\n%s", fstab)
+	}
+}
+
+func TestGenerateFstabUsesMountOptions(t *testing.T) {
+	layout := &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "root", Filesystem: "ext4", Mountpoint: "/", MountOptions: "ro"},
+			{Label: "data", Filesystem: "ext4", Mountpoint: "/var", MountOptions: "defaults,noatime"},
+		},
+	}
+
+	fstab := GenerateFstab(layout, "/dev/sda")
+	if !strings.Contains(fstab, "PARTLABEL=root\t/\text4\tro\t0\t1") {
+		t.Errorf("fstab missing root ro options:\n%s", fstab)
+	}
+	if !strings.Contains(fstab, "PARTLABEL=data\t/var\text4\tdefaults,noatime\t0\t2") {
+		t.Errorf("fstab missing data mount options:\n%s", fstab)
 	}
 }
 
@@ -414,7 +432,7 @@ func TestGenerateLVMFstab(t *testing.T) {
 		VolumeGroup: "sysvg",
 		Volumes: []config.LVVolume{
 			{Name: "root", Filesystem: "ext4", Mountpoint: "/"},
-			{Name: "var", Filesystem: "xfs", Mountpoint: "/var"},
+			{Name: "var", Filesystem: "xfs", Mountpoint: "/var", MountOptions: "defaults,noatime"},
 			{Name: "swap", Filesystem: "swap"},
 		},
 	}
@@ -427,6 +445,9 @@ func TestGenerateLVMFstab(t *testing.T) {
 	}
 	if !strings.Contains(fstab, "/dev/sysvg/var") {
 		t.Errorf("fstab missing var LV:\n%s", fstab)
+	}
+	if !strings.Contains(fstab, "/dev/sysvg/var\t/var\txfs\tdefaults,noatime\t0\t2") {
+		t.Errorf("fstab missing var LV mount options:\n%s", fstab)
 	}
 	if !strings.Contains(fstab, "/dev/sysvg/swap\tnone\tswap\tsw") {
 		t.Errorf("fstab missing swap LV entry:\n%s", fstab)

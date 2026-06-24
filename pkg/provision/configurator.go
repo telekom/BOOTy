@@ -231,12 +231,20 @@ func abRootKernelParam(cfg *config.MachineConfig) (string, error) {
 	}
 	switch target {
 	case config.ABSlotA:
-		return "root=PARTLABEL=BOOTY-ROOT-A", nil
+		return abRootKernelParamForSlot(config.ABSlotA, ab.Scheme), nil
 	case config.ABSlotB:
-		return "root=PARTLABEL=BOOTY-ROOT-B", nil
+		return abRootKernelParamForSlot(config.ABSlotB, ab.Scheme), nil
 	default:
 		return "", fmt.Errorf("invalid resolved A/B target slot %q", target)
 	}
+}
+
+func abRootKernelParamForSlot(slot, scheme string) string {
+	rootParam := fmt.Sprintf("root=PARTLABEL=BOOTY-ROOT-%s", strings.ToUpper(slot))
+	if scheme == config.ABSchemeSystemAB {
+		return rootParam + " ro"
+	}
+	return rootParam
 }
 
 // InstallEFIFallbackLoader installs a removable UEFI loader into /boot/efi

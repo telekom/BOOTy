@@ -64,6 +64,10 @@ type Partition struct {
 	// installed OS (e.g. "/", "/boot", "/boot/efi").
 	// A Mountpoint requires a Filesystem. Swap partitions must not set a Mountpoint.
 	Mountpoint string `json:"mountpoint,omitempty" yaml:"mountpoint,omitempty"`
+
+	// MountOptions overrides the generated fstab mount options. Empty lets the
+	// fstab generator use its fixed defaults. Swap partitions ignore this field.
+	MountOptions string `json:"mountOptions,omitempty" yaml:"mountOptions,omitempty"`
 }
 
 // LVMConfig defines an LVM volume group and its logical volumes.
@@ -105,6 +109,10 @@ type LVVolume struct {
 	// Mountpoint is the absolute path where the volume is mounted inside the
 	// installed OS. A Mountpoint requires a Filesystem.
 	Mountpoint string `json:"mountpoint,omitempty" yaml:"mountpoint,omitempty"`
+
+	// MountOptions overrides the generated fstab mount options. Empty lets the
+	// fstab generator use its fixed defaults. Swap volumes ignore this field.
+	MountOptions string `json:"mountOptions,omitempty" yaml:"mountOptions,omitempty"`
 }
 
 // ParsePartitionLayout parses and validates a JSON partition layout string.
@@ -117,6 +125,7 @@ type LVVolume struct {
 //   - At most one partition may have SizeMB=0 (fill remaining), and it must be last
 //   - Mountpoints must be absolute, whitespace-free, path-traversal-free, and unique
 //   - A mountpoint requires a filesystem; swap partitions must not define a mountpoint
+//   - Mount options must be fstab-token safe and whitespace-free
 //   - Supported filesystems: "vfat", "ext4", "xfs", "swap", "" (raw)
 //   - TypeGUID, when set, must be a valid UUID
 //   - LVM validation: volumeGroup and pvPartition required, pvPartition must not define
@@ -190,7 +199,8 @@ func normalizePartitionLayoutDevice(device string) (string, error) {
 func validatePartitions(partitions []Partition) error {
 	fillCount := 0
 	seen := make(map[string]bool)
-	for i, part := range partitions {
+	for i := range partitions {
+		part := &partitions[i]
 		if err := validatePartitionEntry(i, part, len(partitions), seen); err != nil {
 			return err
 		}
@@ -204,11 +214,14 @@ func validatePartitions(partitions []Partition) error {
 	return nil
 }
 
-func validatePartitionEntry(index int, part Partition, partitionCount int, seen map[string]bool) error {
+func validatePartitionEntry(index int, part *Partition, partitionCount int, seen map[string]bool) error {
 	if err := validatePartitionLabel(index, part.Label, seen); err != nil {
 		return err
 	}
 	if err := validatePartitionMountpoint(index, part); err != nil {
+		return err
+	}
+	if err := validateMountOptions(fmt.Sprintf("partition %d (%s)", index+1, part.Label), part.MountOptions); err != nil {
 		return err
 	}
 	if !isSupportedFilesystem(part.Filesystem) {
@@ -237,7 +250,7 @@ func validatePartitionLabel(index int, label string, seen map[string]bool) error
 	return nil
 }
 
-func validatePartitionMountpoint(index int, part Partition) error {
+func validatePartitionMountpoint(index int, part *Partition) error {
 	if part.Mountpoint != "" && !strings.HasPrefix(part.Mountpoint, "/") {
 		return fmt.Errorf("partition %d (%s): mountpoint %q must be an absolute path", index+1, part.Label, part.Mountpoint)
 	}
@@ -256,7 +269,7 @@ func validatePartitionMountpoint(index int, part Partition) error {
 	return nil
 }
 
-func validatePartitionSize(index int, part Partition, partitionCount int) error {
+func validatePartitionSize(index int, part *Partition, partitionCount int) error {
 	if part.SizeMB < 0 {
 		return fmt.Errorf("partition %d (%s): sizeMB must be non-negative", index+1, part.Label)
 	}
@@ -280,7 +293,8 @@ func validateLVMConfig(lvm *LVMConfig, partitions []Partition) error {
 		return err
 	}
 	seenNames := make(map[string]bool)
-	for i, vol := range lvm.Volumes {
+	for i := range lvm.Volumes {
+		vol := &lvm.Volumes[i]
 		if err := validateLVMVolume(i, vol); err != nil {
 			return err
 		}
@@ -295,7 +309,7 @@ func validateLVMConfig(lvm *LVMConfig, partitions []Partition) error {
 	return nil
 }
 
-func usesAllRemainingLVMExtents(vol LVVolume) bool {
+func usesAllRemainingLVMExtents(vol *LVVolume) bool {
 	if vol.SizeMB > 0 {
 		return false
 	}
@@ -362,7 +376,7 @@ func validateLVMPVPartition(lvm *LVMConfig, partitions []Partition) error {
 	return nil
 }
 
-func validateLVMVolume(index int, vol LVVolume) error {
+func validateLVMVolume(index int, vol *LVVolume) error {
 	if vol.Name == "" {
 		return fmt.Errorf("lvm volume %d: name is required", index+1)
 	}
@@ -370,6 +384,9 @@ func validateLVMVolume(index int, vol LVVolume) error {
 		return fmt.Errorf("lvm volume %d: invalid name %q", index+1, vol.Name)
 	}
 	if err := validateLVMVolumeMountpoint(index, vol); err != nil {
+		return err
+	}
+	if err := validateMountOptions(fmt.Sprintf("lvm volume %d (%s)", index+1, vol.Name), vol.MountOptions); err != nil {
 		return err
 	}
 	if !isSupportedFilesystem(vol.Filesystem) {
@@ -381,7 +398,7 @@ func validateLVMVolume(index int, vol LVVolume) error {
 	return nil
 }
 
-func validateLVMVolumeMountpoint(index int, vol LVVolume) error {
+func validateLVMVolumeMountpoint(index int, vol *LVVolume) error {
 	if vol.Mountpoint != "" && !strings.HasPrefix(vol.Mountpoint, "/") {
 		return fmt.Errorf("lvm volume %d (%s): mountpoint %q must be an absolute path", index+1, vol.Name, vol.Mountpoint)
 	}
@@ -400,6 +417,19 @@ func validateLVMVolumeMountpoint(index int, vol LVVolume) error {
 	return nil
 }
 
+func validateMountOptions(location, options string) error {
+	if options == "" {
+		return nil
+	}
+	if strings.TrimSpace(options) != options || strings.ContainsAny(options, " \t\n\r") {
+		return fmt.Errorf("%s: mountOptions %q must not contain whitespace", location, options)
+	}
+	if !mountOptionsRE.MatchString(options) {
+		return fmt.Errorf("%s: mountOptions %q contains unsupported characters", location, options)
+	}
+	return nil
+}
+
 // containsPathTraversal detects ".." path components in a mountpoint string.
 // filepath.Clean collapses traversal sequences, so we check the raw components.
 func containsPathTraversal(path string) bool {
@@ -411,7 +441,7 @@ func containsPathTraversal(path string) bool {
 	return false
 }
 
-func validateLVMVolumeSize(index int, vol LVVolume) error {
+func validateLVMVolumeSize(index int, vol *LVVolume) error {
 	if vol.SizeMB < 0 {
 		return fmt.Errorf("lvm volume %d (%s): sizeMB must be non-negative", index+1, vol.Name)
 	}
@@ -451,6 +481,9 @@ func isSupportedFilesystem(fs string) bool {
 
 // typeGUIDRE validates GPT type GUID format.
 var typeGUIDRE = regexp.MustCompile(`^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$`)
+
+// mountOptionsRE validates a single fstab options token without whitespace.
+var mountOptionsRE = regexp.MustCompile(`^[A-Za-z0-9_.,=:/+-]+$`)
 
 const maxPartitions = 128
 const maxLVMVolumes = 256
