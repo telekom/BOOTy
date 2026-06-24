@@ -163,7 +163,7 @@ jobs:
           CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
             go build -ldflags "-linkmode external -extldflags '-static' -s -w" -o booty
 
-          mkdir -p initramfs/{bin,sbin,dev,proc,sys,etc,tmp,usr/bin,lib/modules,mnt}
+          mkdir -p initramfs/{bin,sbin,dev,proc,run,sys,etc,tmp,usr/bin,lib/modules,mnt}
           sudo mknod initramfs/dev/console c 5 1
           sudo mknod initramfs/dev/ttyS0 c 4 64
           sudo mknod initramfs/dev/null c 1 3

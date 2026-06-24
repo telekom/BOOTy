@@ -30,7 +30,7 @@ jobs:
             go build -ldflags "-linkmode external -extldflags '-static' -s -w" -o booty
 
           # Create initramfs directory structure
-          mkdir -p initramfs/{bin,sbin,dev,proc,sys,etc,tmp,usr/bin,lib/modules,mnt,home}
+          mkdir -p initramfs/{bin,sbin,dev,proc,run,sys,etc,tmp,usr/bin,lib/modules,mnt,home}
 
           # Create device nodes so the kernel can give init a working console
           sudo mknod initramfs/dev/console c 5 1
