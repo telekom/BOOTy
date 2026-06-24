@@ -2,9 +2,12 @@
 
 # Build LVM2 as an init
 FROM gcc:16 AS lvm
-RUN wget https://mirrors.kernel.org/sourceware/lvm2/LVM2.2.03.27.tgz
-RUN tar -xf LVM2.2.03.27.tgz
-WORKDIR LVM2.2.03.27
+ARG LVM2_VERSION=2.03.27
+ARG LVM2_SHA256=3133415905b9b46d152d064865d52f32eee4fcbeb0e8a69e3510caeaae0c56a9
+RUN wget -O "LVM2.${LVM2_VERSION}.tgz" "https://mirrors.kernel.org/sourceware/lvm2/LVM2.${LVM2_VERSION}.tgz"
+RUN echo "${LVM2_SHA256}  LVM2.${LVM2_VERSION}.tgz" | sha256sum -c -
+RUN tar -xf "LVM2.${LVM2_VERSION}.tgz"
+WORKDIR LVM2.${LVM2_VERSION}
 RUN apt-get update && apt-get install -y libaio-dev libdevmapper-dev
 RUN ./configure --enable-static_link --disable-selinux
 RUN sed -i '/DMLIBS = -ldevmapper/ s/$/ -lm -lpthread/' libdm/dm-tools/Makefile
@@ -15,9 +18,11 @@ RUN strip --strip-all lvm
 
 # Build scripted fdisk (sfdisk)
 FROM gcc:16 AS sfdisk
+ARG UTIL_LINUX_REF=5305e6c70b274f679329b79c0e1ef5a07e9dc1a6
 RUN apt-get update -y && apt-get install -y bison autopoint gettext flex
-RUN git clone --branch v2.41.3 --depth 1 https://github.com/util-linux/util-linux.git
+RUN git clone --depth 1 --filter=blob:none --no-checkout https://github.com/util-linux/util-linux.git
 WORKDIR util-linux
+RUN git fetch --depth 1 origin "${UTIL_LINUX_REF}" && git checkout --detach "${UTIL_LINUX_REF}"
 RUN ./autogen.sh && ./configure --enable-static-programs=sfdisk && make
 RUN strip --strip-all sfdisk.static
 
