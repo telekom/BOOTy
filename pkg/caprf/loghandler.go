@@ -219,7 +219,7 @@ func redactAttrs(attrs []slog.Attr) []slog.Attr {
 	return redacted
 }
 
-func redactRecord(r slog.Record) slog.Record {
+func redactRecord(r *slog.Record) slog.Record {
 	redacted := slog.NewRecord(r.Time, r.Level, r.Message, r.PC)
 	r.Attrs(func(attr slog.Attr) bool {
 		redacted.AddAttrs(redactAttr(attr))
@@ -240,7 +240,7 @@ func (h *RemoteHandler) DroppedCount() int64 {
 
 // Handle sends the log record to both the inner handler and the remote buffer.
 func (h *RemoteHandler) Handle(ctx context.Context, r slog.Record) error { //nolint:gocritic // slog.Handler interface requires value receiver
-	redactedRecord := redactRecord(r)
+	redactedRecord := redactRecord(&r)
 	if err := h.inner.Handle(ctx, redactedRecord); err != nil {
 		return err //nolint:wrapcheck // slog.Handler.Handle must return unwrapped errors
 	}
