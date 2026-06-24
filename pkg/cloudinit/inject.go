@@ -215,7 +215,7 @@ func configDriveNetworkData(nc *NetworkConfig) (openStackNetworkData, error) {
 		data.Services = append(data.Services, services...)
 	}
 	for name, bond := range nc.Bonds {
-		next, err := appendBondNetworkData(data, strings.TrimSpace(name), bond)
+		next, err := appendBondNetworkData(data, strings.TrimSpace(name), &bond)
 		if err != nil {
 			return data, err
 		}
@@ -224,7 +224,7 @@ func configDriveNetworkData(nc *NetworkConfig) (openStackNetworkData, error) {
 	return data, nil
 }
 
-func appendBondNetworkData(data openStackNetworkData, name string, bond BondConfig) (openStackNetworkData, error) {
+func appendBondNetworkData(data openStackNetworkData, name string, bond *BondConfig) (openStackNetworkData, error) {
 	if name == "" {
 		return data, nil
 	}
@@ -257,7 +257,7 @@ func ethernetLink(id string, match *MatchConfig, mtu int) openStackLink {
 	return link
 }
 
-func bondLink(id string, bond BondConfig) openStackLink {
+func bondLink(id string, bond *BondConfig) openStackLink {
 	link := openStackLink{ID: id, Type: "bond", Name: id}
 	for _, iface := range bond.Interfaces {
 		if iface = strings.TrimSpace(iface); iface != "" {
