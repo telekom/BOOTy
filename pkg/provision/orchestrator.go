@@ -1803,30 +1803,9 @@ func (o *Orchestrator) runHealthChecks(ctx context.Context) error {
 		return nil
 	}
 
-	checks := []health.Check{
-		&health.DiskPresenceCheck{},
-		&health.DiskIOErrorCheck{},
-		&health.MemoryECCCheck{},
-		&health.MinimumMemoryCheck{MinGiB: o.cfg.Health.MinMemoryGB},
-		&health.MinimumCPUCheck{MinCPUs: o.cfg.Health.MinCPUs},
-		&health.NICLinkStateCheck{},
-		&health.ThermalStateCheck{},
-	}
+	results, critical := health.RunAll(ctx, o.healthChecks(), o.cfg.Health.SkipChecks)
 
-	results, critical := health.RunAll(ctx, checks, o.cfg.Health.SkipChecks)
-
-	for _, r := range results {
-		logAttrs := []any{
-			"check", r.Name,
-			"status", r.Status,
-			"severity", r.Severity,
-			"message", r.Message,
-		}
-		if r.Details != "" {
-			logAttrs = append(logAttrs, "details", r.Details)
-		}
-		o.log.Info("Health check result", logAttrs...)
-	}
+	o.logHealthCheckResults(results)
 
 	// Best-effort report to server.
 	if reporter, ok := o.provider.(HealthReporter); ok {
@@ -1845,6 +1824,33 @@ func (o *Orchestrator) runHealthChecks(ctx context.Context) error {
 		return fmt.Errorf("critical health check(s) failed: %s", strings.Join(failed, ", "))
 	}
 	return nil
+}
+
+func (o *Orchestrator) healthChecks() []health.Check {
+	return []health.Check{
+		&health.DiskPresenceCheck{},
+		&health.DiskIOErrorCheck{},
+		&health.MemoryECCCheck{},
+		&health.MinimumMemoryCheck{MinGiB: o.cfg.Health.MinMemoryGB},
+		&health.MinimumCPUCheck{MinCPUs: o.cfg.Health.MinCPUs},
+		&health.NICLinkStateCheck{},
+		&health.ThermalStateCheck{},
+	}
+}
+
+func (o *Orchestrator) logHealthCheckResults(results []health.CheckResult) {
+	for _, r := range results {
+		logAttrs := []any{
+			"check", r.Name,
+			"status", r.Status,
+			"severity", r.Severity,
+			"message", r.Message,
+		}
+		if r.Details != "" {
+			logAttrs = append(logAttrs, "details", r.Details)
+		}
+		o.log.Info("Health check result", logAttrs...)
+	}
 }
 
 func (o *Orchestrator) reportSuccess(ctx context.Context) error {

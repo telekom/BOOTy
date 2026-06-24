@@ -212,21 +212,50 @@ func TestDryRunImageUnreachable(t *testing.T) {
 
 func TestDryRunHealthChecks(t *testing.T) {
 	tests := []struct {
-		name    string
-		enabled bool
-		expect  DryRunStatus
+		name       string
+		configure  func(*config.MachineConfig)
+		expect     DryRunStatus
+		wantInText string
 	}{
-		{"disabled", false, DryRunWarn},
-		{"enabled", true, DryRunPass},
+		{
+			name: "disabled",
+			configure: func(cfg *config.MachineConfig) {
+				cfg.Health.Enabled = false
+			},
+			expect:     DryRunWarn,
+			wantInText: "disabled",
+		},
+		{
+			name: "enabled runs checks",
+			configure: func(cfg *config.MachineConfig) {
+				cfg.Health.Enabled = true
+				cfg.Health.SkipChecks = "disk-presence,disk-ioerr,memory-ecc,nic-link-state,thermal-state"
+			},
+			expect:     DryRunPass,
+			wantInText: "executed",
+		},
+		{
+			name: "critical failure fails dry-run",
+			configure: func(cfg *config.MachineConfig) {
+				cfg.Health.Enabled = true
+				cfg.Health.MinCPUs = 999999
+				cfg.Health.SkipChecks = "disk-presence,disk-ioerr,memory-ecc,nic-link-state,thermal-state"
+			},
+			expect:     DryRunFail,
+			wantInText: "minimum-cpu",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.MachineConfig{}
-			cfg.Health.Enabled = tc.enabled
+			tc.configure(cfg)
 			o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
 			result := o.dryRunHealthChecks(context.Background())
 			if result.Status != tc.expect {
-				t.Errorf("got %s, want %s", result.Status, tc.expect)
+				t.Errorf("got %s, want %s: %s", result.Status, tc.expect, result.Message)
+			}
+			if !strings.Contains(result.Message, tc.wantInText) {
+				t.Errorf("message = %q, want substring %q", result.Message, tc.wantInText)
 			}
 		})
 	}
@@ -830,6 +859,7 @@ func TestDryRun_AllPass(t *testing.T) {
 	passCfg.Provision.Image.GPGPubKey = pubKey
 	passCfg.Provision.Disk.Device = "/dev/mock0"
 	passCfg.Health.Enabled = true
+	passCfg.Health.SkipChecks = "disk-presence,disk-ioerr,memory-ecc,nic-link-state,thermal-state"
 	passCfg.Provision.Inventory.Enabled = true
 	passCfg.Provision.Image.Checksum = "abc123"
 	passCfg.Provision.Image.ChecksumType = "sha256"

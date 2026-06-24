@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/health"
 	"github.com/telekom/BOOTy/pkg/image"
 )
 
@@ -238,11 +239,53 @@ func (o *Orchestrator) dryRunDiskDetection(ctx context.Context) DryRunResult {
 		Message: fmt.Sprintf("detected disk %s", d)}
 }
 
-func (o *Orchestrator) dryRunHealthChecks(_ context.Context) DryRunResult {
+func (o *Orchestrator) dryRunHealthChecks(ctx context.Context) DryRunResult {
 	if !o.cfg.Health.Enabled {
 		return DryRunResult{Status: DryRunWarn, Message: "health checks disabled"}
 	}
-	return DryRunResult{Status: DryRunPass, Message: "health checks enabled and will run"}
+
+	results, critical := health.RunAll(ctx, o.healthChecks(), o.cfg.Health.SkipChecks)
+	o.logHealthCheckResults(results)
+	if reporter, ok := o.provider.(HealthReporter); ok {
+		if err := reporter.ReportHealthChecks(ctx, results); err != nil {
+			o.log.Warn("Failed to report health checks", "error", err)
+		}
+	}
+
+	var failed []string
+	var criticalFailed []string
+	var skipped int
+	for _, r := range results {
+		switch r.Status {
+		case health.StatusFail:
+			failed = append(failed, r.Name)
+			if r.Severity == health.SeverityCritical {
+				criticalFailed = append(criticalFailed, r.Name)
+			}
+		case health.StatusSkip:
+			skipped++
+		}
+	}
+
+	summary := fmt.Sprintf(
+		"health checks executed: %d pass, %d fail, %d skipped",
+		len(results)-len(failed)-skipped,
+		len(failed),
+		skipped,
+	)
+	if critical {
+		return DryRunResult{
+			Status:  DryRunFail,
+			Message: fmt.Sprintf("%s; critical failures: %s", summary, strings.Join(criticalFailed, ", ")),
+		}
+	}
+	if len(failed) > 0 {
+		return DryRunResult{
+			Status:  DryRunWarn,
+			Message: fmt.Sprintf("%s; non-critical failures: %s", summary, strings.Join(failed, ", ")),
+		}
+	}
+	return DryRunResult{Status: DryRunPass, Message: summary}
 }
 
 func (o *Orchestrator) dryRunImageChecksum(_ context.Context) DryRunResult {
