@@ -12,6 +12,8 @@ func TestLoadYAML(t *testing.T) {
 	content := `
 hostname: test-node-01
 mode: provision
+persistNetwork: true
+osFamily: Ubuntu
 
 network:
   mode: gobgp
@@ -121,6 +123,12 @@ agent:
 	if cfg.Mode != "provision" {
 		t.Errorf("Mode = %q", cfg.Mode)
 	}
+	if !cfg.PersistNetwork {
+		t.Error("PersistNetwork = false")
+	}
+	if cfg.OSFamily != "ubuntu" {
+		t.Errorf("OSFamily = %q", cfg.OSFamily)
+	}
 	if cfg.Network.Mode != "gobgp" {
 		t.Errorf("Network.Mode = %q", cfg.Network.Mode)
 	}
@@ -202,6 +210,8 @@ func TestLoadJSON(t *testing.T) {
 	content := `{
   "hostname": "json-node",
   "mode": "provision",
+  "persistNetwork": true,
+  "osFamily": "rhel",
   "network": {
     "mode": "static",
     "static": {"ip": "10.0.0.5/24", "gateway": "10.0.0.1"}
@@ -222,6 +232,12 @@ func TestLoadJSON(t *testing.T) {
 	}
 	if cfg.Network.Static.IP != "10.0.0.5/24" {
 		t.Errorf("Network.Static.IP = %q", cfg.Network.Static.IP)
+	}
+	if !cfg.PersistNetwork {
+		t.Error("PersistNetwork = false")
+	}
+	if cfg.OSFamily != "rhel" {
+		t.Errorf("OSFamily = %q", cfg.OSFamily)
 	}
 	if cfg.Provision.Disk.MinSizeGB != 50 {
 		t.Errorf("Provision.Disk.MinSizeGB = %d", cfg.Provision.Disk.MinSizeGB)

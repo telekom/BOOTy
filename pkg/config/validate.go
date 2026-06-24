@@ -64,6 +64,9 @@ func (c *Config) Validate() error {
 			return validateEnumLower(c.Provision.CloudInit.Datasource, "provision.cloudInit.datasource", "nocloud", "configdrive")
 		},
 		func() string {
+			return validateEnumLower(c.OSFamily, "osFamily", "ubuntu", "rhel", "flatcar")
+		},
+		func() string {
 			return validateEnumUpper(c.Transport.TokenAlgorithm, "transport.tokenAlgorithm", "RS256", "ES256")
 		},
 	}
@@ -78,6 +81,9 @@ func (c *Config) Validate() error {
 	peerMode := strings.ToLower(strings.TrimSpace(c.Network.BGP.PeerMode))
 	if (peerMode == "dual" || peerMode == "numbered") && strings.TrimSpace(c.Network.BGP.Neighbors) == "" {
 		errs = append(errs, "network.bgp.neighbors required when network.bgp.peerMode is dual or numbered")
+	}
+	if c.PersistNetwork && strings.TrimSpace(c.OSFamily) == "" {
+		errs = append(errs, "osFamily required when persistNetwork is true")
 	}
 
 	if err := validateRAIDConfig(c.Provision.Disk.RAID); err != nil {
@@ -111,6 +117,7 @@ func (c *Config) normalize() {
 		&c.Network.BGP.UnderlayAF,
 		&c.Network.BGP.OverlayType,
 		&c.Provision.CloudInit.Datasource,
+		&c.OSFamily,
 		&c.Provision.Sysext.DefaultMode,
 		&c.Provision.AB.Scheme,
 		&c.Provision.AB.ActiveSlot,

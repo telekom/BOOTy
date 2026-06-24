@@ -118,7 +118,7 @@ cross-compilation hosts for the Go binary.
 | Initramfs artifacts | `linux/amd64` default, slim, micro, and GoBGP build-flavor jobs |
 | Boot/provisioning behavior | x86_64 KVM/QEMU jobs on Ubuntu GitHub runners |
 | Network integration | ContainerLab and vrnetlab jobs on privileged Linux runners |
-| Network persistence renderers | Unit tests for Ubuntu/netplan, RHEL/NetworkManager, and Flatcar/systemd-networkd writers |
+| Network persistence | Unit tests for Ubuntu/netplan, RHEL/NetworkManager, and Flatcar/systemd-networkd writers plus explicit provisioning opt-in wiring |
 
 CI does not currently prove macOS/Windows runtime behavior, non-Linux boot
 targets, vendor Flatcar images, VMware ESXi provisioning, Windows target
@@ -403,6 +403,8 @@ go run server/server.go \
 | `STATIC_IP` | — | Static IP in CIDR notation (e.g. `10.0.0.5/24`) |
 | `STATIC_GATEWAY` | — | Default gateway for static networking |
 | `STATIC_IFACE` | — | Interface for static IP (auto-detect if empty) |
+| `PERSIST_NETWORK` | `false` | Write configured target OS network files during provisioning |
+| `OS_FAMILY` | — | Required when `PERSIST_NETWORK=true`; one of `ubuntu`, `rhel`, `flatcar` |
 | `BOND_INTERFACES` | — | Comma-separated interfaces for LACP bond (e.g. `eth0,eth1`) |
 | `BOND_MODE` | `802.3ad` | Bond mode: `802.3ad`/`lacp`, `balance-rr`, `active-backup`, `balance-xor` |
 | `VLANS` | — | Multi-VLAN config (e.g. `200:eno1:10.200.0.42/24,300:eno2`) |
@@ -904,19 +906,21 @@ signal for L2 EVPN Type-2/Type-3 handling.
 ### Network Persistence
 
 BOOTy includes renderer helpers for persistent network configuration on the
-target OS filesystem. These helpers are unit-tested, but the provisioning
-orchestrator does not currently auto-detect the target OS family or call them
-as part of the 40-step provisioning pipeline. During provisioning, BOOTy
-currently writes DNS configuration and can generate cloud-init network config
-when cloud-init injection is enabled.
+target OS filesystem. Set `PERSIST_NETWORK=true` and an explicit `OS_FAMILY`
+to write those files during provisioning. BOOTy does not auto-detect the
+target OS family, and static address persistence without a bond requires
+`STATIC_IFACE` because the initramfs auto-detected interface name may not be
+stable in the provisioned OS. During provisioning, BOOTy also writes DNS
+configuration and can generate cloud-init network config when cloud-init
+injection is enabled.
 
 Implemented renderer formats:
 
 | OS Family | Format | Config Path | Scope |
 |-----------|--------|-------------|-------|
-| Ubuntu | Netplan YAML | `/etc/netplan/` | Unit-tested renderer only |
-| RHEL | NetworkManager keyfiles | `/etc/NetworkManager/system-connections/` | Unit-tested renderer only; bonds and VLANs are not supported by this writer |
-| Flatcar | systemd-networkd units | `/etc/systemd/network/` | Unit-tested renderer only; bonds and VLANs are not supported by this writer |
+| Ubuntu | Netplan YAML | `/etc/netplan/` | Unit-tested renderer and explicit provisioning opt-in |
+| RHEL | NetworkManager keyfiles | `/etc/NetworkManager/system-connections/` | Unit-tested renderer and explicit provisioning opt-in; bonds and VLANs are not supported by this writer |
+| Flatcar | systemd-networkd units | `/etc/systemd/network/` | Unit-tested renderer and explicit provisioning opt-in; bonds and VLANs are not supported by this writer |
 
 The renderer package can write interface configs, bond settings, addresses,
 gateways, DNS, and VLAN assignments where the selected writer supports them.

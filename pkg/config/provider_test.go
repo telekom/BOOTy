@@ -379,6 +379,14 @@ func TestValidate(t *testing.T) {
 		{name: "trims cloud-init ds", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: " NoCloud "}}}},
 		{name: "valid configdrive cloud-init ds", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: " configDrive "}}}},
 		{name: "invalid cloud-init ds", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: "ec2"}}}, wantErr: "invalid provision.cloudInit.datasource"},
+		{name: "valid network persistence os family", cfg: Config{PersistNetwork: true, OSFamily: "Ubuntu"}, wantNormalized: func(t *testing.T, cfg *Config) {
+			t.Helper()
+			if cfg.OSFamily != "ubuntu" {
+				t.Fatalf("OSFamily = %q, want ubuntu", cfg.OSFamily)
+			}
+		}},
+		{name: "network persistence requires os family", cfg: Config{PersistNetwork: true}, wantErr: "osFamily required when persistNetwork is true"},
+		{name: "invalid network persistence os family", cfg: Config{OSFamily: "windows"}, wantErr: "invalid osFamily"},
 		{name: "valid sysext preload mode", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{DefaultMode: "preload"}}}},
 		{name: "normalizes sysext default mode", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{DefaultMode: "PreLoad"}}}, wantNormalized: func(t *testing.T, cfg *Config) {
 			t.Helper()

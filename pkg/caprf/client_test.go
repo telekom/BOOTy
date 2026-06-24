@@ -1017,6 +1017,24 @@ STATIC_IFACE="eth0"
 	}
 }
 
+func TestParseVarsNetworkPersistence(t *testing.T) {
+	input := `PERSIST_NETWORK="true"
+OS_FAMILY="Flatcar"
+STATIC_IP="10.0.0.5/24"
+STATIC_IFACE="eth0"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.PersistNetwork {
+		t.Fatal("PersistNetwork = false, want true")
+	}
+	if cfg.OSFamily != "flatcar" {
+		t.Errorf("OSFamily = %q, want flatcar", cfg.OSFamily)
+	}
+}
+
 func TestParseVarsBondConfig(t *testing.T) {
 	input := `BOND_INTERFACES="eth0,eth1"
 BOND_MODE="802.3ad"

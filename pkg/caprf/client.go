@@ -891,6 +891,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"REGION":                      &cfg.Provision.Region,
 		"PROVIDER_ID":                 &cfg.Provision.ProviderID,
 		"MODE":                        &cfg.Mode,
+		"OS_FAMILY":                   &cfg.OSFamily,
 		"LOG_URL":                     &cfg.Transport.LogURL,
 		"INIT_URL":                    &cfg.Transport.InitURL,
 		"ERROR_URL":                   &cfg.Transport.ErrorURL,
@@ -1159,6 +1160,8 @@ func applyFeatureToggle(cfg *config.MachineConfig, key, value string) (bool, err
 	switch key {
 	case "TELEMETRY_ENABLED":
 		cfg.Telemetry.Enabled = parseBoolVar(value)
+	case "PERSIST_NETWORK":
+		cfg.PersistNetwork = parseBoolVar(value)
 	case "SECUREBOOT_REENABLE":
 		cfg.Provision.SecureBoot.ReEnable = parseBoolVar(value)
 	case "RESCUE_TIMEOUT":

@@ -2269,6 +2269,72 @@ func TestInjectCloudInit_NoCloudInject(t *testing.T) {
 	}
 }
 
+func TestConfigureDNSPersistsUbuntuStaticInterface(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.PersistNetwork = true
+	cfg.OSFamily = "ubuntu"
+	cfg.Network.Static.IP = "10.1.0.5/24"
+	cfg.Network.Static.Gateway = "10.1.0.1"
+	cfg.Network.Static.Iface = "eth0"
+	cfg.Network.DNSResolvers = "8.8.8.8, 1.1.1.1"
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	if err := o.configureDNS(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(o.config.rootDir, "etc", "netplan", "01-booty-provisioned.yaml"))
+	if err != nil {
+		t.Fatalf("read netplan config: %v", err)
+	}
+	content := string(data)
+	for _, want := range []string{
+		"eth0:",
+		"addresses: [10.1.0.5/24]",
+		"via: 10.1.0.1",
+		"addresses: [8.8.8.8, 1.1.1.1]",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("netplan config missing %q:\n%s", want, content)
+		}
+	}
+}
+
+func TestPersistNetworkConfigRequiresOSFamily(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.PersistNetwork = true
+	cfg.Network.Static.IP = "10.1.0.5/24"
+	cfg.Network.Static.Iface = "eth0"
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	err := o.persistNetworkConfig()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "unsupported OS family") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPersistNetworkConfigRequiresInterfaceForStaticIP(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.PersistNetwork = true
+	cfg.OSFamily = "ubuntu"
+	cfg.Network.Static.IP = "10.1.0.5/24"
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	err := o.persistNetworkConfig()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "STATIC_IFACE is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestInjectCloudInit_ConfigDriveInject(t *testing.T) {
 	cfg := &config.MachineConfig{
 		Hostname: "test-host",
