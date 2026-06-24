@@ -394,6 +394,7 @@ func TestSlimExcludesLVME2E(t *testing.T) {
 	assertNotContains(t, files, "sbin/lvm", "LVM tooling")
 	assertNotContains(t, files, "bin/sfdisk", "sfdisk")
 	assertNotContains(t, files, "bin/gpgv", "GPG verifier")
+	assertNotContains(t, files, "bin/qemu-img", "qemu-img")
 }
 
 func TestSlimSizeSmallerThanDefaultE2E(t *testing.T) {
@@ -582,6 +583,7 @@ func TestDefaultContainsDiskToolsE2E(t *testing.T) {
 	assertContains(t, files, "bin/parted", "parted")
 	assertContains(t, files, "bin/sgdisk", "sgdisk GPT")
 	assertContains(t, files, "bin/partprobe", "partprobe")
+	assertContains(t, files, "bin/qemu-img", "qemu-img qcow2 converter")
 	assertContains(t, files, "bin/efibootmgr", "efibootmgr")
 }
 
@@ -714,6 +716,7 @@ func TestGoBGPContainsDiskToolsE2E(t *testing.T) {
 
 	assertContains(t, files, "bin/wipefs", "wipefs")
 	assertContains(t, files, "sbin/mdadm", "mdadm RAID")
+	assertContains(t, files, "bin/qemu-img", "qemu-img qcow2 converter")
 	assertContains(t, files, "bin/efibootmgr", "efibootmgr")
 	assertContains(t, files, "bin/lsblk", "lsblk for rescue mode")
 }
