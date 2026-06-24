@@ -91,7 +91,7 @@ iso:
 
 slim:
 	@docker buildx build --platform linux/amd64 --target slim --output type=local,dest=. -f initrd.Dockerfile .
-	@echo Slim initramfs built: initramfs.cpio.gz
+	@echo Slim initramfs built: initramfs.cpio.zst
 
 micro:
 	@docker buildx build --platform linux/amd64 --target micro --output type=local,dest=. -f initrd.Dockerfile .
@@ -120,7 +120,7 @@ arm64:
 arm64-slim:
 	@mkdir -p dist/arm64
 	@docker buildx build --platform linux/arm64 --target slim --output type=local,dest=dist/arm64 -f initrd.Dockerfile .
-	@echo ARM64 slim initramfs built: dist/arm64/initramfs.cpio.gz
+	@echo ARM64 slim initramfs built: dist/arm64/initramfs.cpio.zst
 
 arm64-gobgp:
 	@mkdir -p dist/arm64
@@ -136,13 +136,15 @@ test-iso:
 getramdisk:
 
 	@ID=$$(docker create $(REPOSITORY):$(DOCKERTAG) null); \
-	docker cp $$ID:/initramfs.cpio.gz initramfs.cpio.gz ; docker rm $$ID
+	trap 'docker rm "$$ID" >/dev/null 2>&1 || true' EXIT; \
+	docker cp "$$ID:/initramfs.cpio.zst" initramfs.cpio.zst
 	@echo Extracted ramdisk
 
 getramdisk-arm64:
 	@mkdir -p dist/arm64
 	@ID=$$(docker create $(REPOSITORY):$(DOCKERTAG)-arm64 null); \
-	docker cp $$ID:/initramfs.cpio.gz dist/arm64/initramfs.cpio.gz ; docker rm $$ID
+	trap 'docker rm "$$ID" >/dev/null 2>&1 || true' EXIT; \
+	docker cp "$$ID:/initramfs.cpio.zst" dist/arm64/initramfs.cpio.zst
 	@echo Extracted ARM64 ramdisk to dist/arm64/
 
 simplify:
@@ -331,18 +333,19 @@ run: install
 
 OCI_FLAVOR ?= default
 OCI_ARCH ?= $(TARGETARCH)
-# gobgp flavor uses zstd compression (.zst); all other flavors use gzip (.gz).
-INITRAMFS_PATH ?= $(if $(filter gobgp,$(OCI_FLAVOR)),\
+# default, slim, and gobgp flavors use zstd compression (.zst); micro uses gzip (.gz).
+ZSTD_INITRAMFS_FLAVORS := default slim gobgp
+INITRAMFS_PATH ?= $(if $(filter $(OCI_FLAVOR),$(ZSTD_INITRAMFS_FLAVORS)),\
     $(if $(filter arm64,$(OCI_ARCH)),dist/arm64/initramfs.cpio.zst,initramfs.cpio.zst),\
     $(if $(filter arm64,$(OCI_ARCH)),dist/arm64/initramfs.cpio.gz,initramfs.cpio.gz))
 
 oci-push: oci-push-initramfs oci-push-binary
 	@echo Initramfs and binary OCI artifacts pushed for $(OCI_FLAVOR)/$(OCI_ARCH)
 
-INITRAMFS_MEDIA_TYPE = $(if $(filter gobgp,$(OCI_FLAVOR)),application/vnd.cncf.initramfs.layer.v1+zstd,application/vnd.cncf.initramfs.layer.v1+gzip)
+INITRAMFS_MEDIA_TYPE = $(if $(filter $(OCI_FLAVOR),$(ZSTD_INITRAMFS_FLAVORS)),application/vnd.cncf.initramfs.layer.v1+zstd,application/vnd.cncf.initramfs.layer.v1+gzip)
 
 oci-push-initramfs:
-	@test -f $(INITRAMFS_PATH) || (echo "ERROR: $(INITRAMFS_PATH) not found — build with 'make gobgp' or 'make slim' first"; exit 1)
+	@test -f $(INITRAMFS_PATH) || (echo "ERROR: $(INITRAMFS_PATH) not found — build the requested initramfs flavor first"; exit 1)
 	@sha256sum $(INITRAMFS_PATH) > $(INITRAMFS_PATH).sha256
 	@oras push $(REPOSITORY)/initramfs:$(DOCKERTAG)-$(OCI_FLAVOR)-$(OCI_ARCH) \
 		--annotation "org.opencontainers.image.version=$(VERSION)" \
