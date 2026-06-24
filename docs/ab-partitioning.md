@@ -23,6 +23,11 @@ ext4 partition:
 | --- | --- | --- | --- |
 | 4 | `BOOTY-DATA` | `/var` | Shared runtime data across root-slot upgrades |
 
+Generated `system-ab` root slots are immutable by default: BOOTy writes `ro`
+for the mounted target root in `/etc/fstab` and includes `ro` in the generated
+GRUB kernel arguments. Mutable state must live on shared data partitions such as
+`/var` or `/home`.
+
 Use `dataPartitions` or `AB_DATA_PARTITIONS` to add or replace shared data
 mounts such as `/home`. If no data partitions are configured, `stateSizeMB` /
 `AB_STATE_SIZE_MB` remains a compatibility alias for the default `/var`
@@ -143,6 +148,11 @@ For `system-ab`, configure additional shared data partitions as JSON:
 export AB_SCHEME="system-ab"
 export AB_DATA_PARTITIONS='[{"label":"BOOTY-HOME","mountpoint":"/home","filesystem":"ext4","sizeMB":65536},{"label":"BOOTY-DATA","mountpoint":"/var","filesystem":"ext4","sizeMB":0}]'
 ```
+
+Declarative partition layouts also accept `mountOptions` on partitions and LVM
+volumes. The value is written into generated fstab entries as a single
+comma-separated options token such as `defaults,noatime` or `ro`; whitespace is
+rejected. Leave it empty to use BOOTy's generated defaults for that layout.
 
 Flatcar-like source images commonly expose immutable OS slots as `USR-A` and
 `USR-B` plus a stateful `ROOT` partition. Use an explicit selector such as

@@ -65,8 +65,8 @@ type Partition struct {
 	// A Mountpoint requires a Filesystem. Swap partitions must not set a Mountpoint.
 	Mountpoint string `json:"mountpoint,omitempty" yaml:"mountpoint,omitempty"`
 
-	// MountOptions overrides the generated fstab mount options. Empty selects
-	// BOOTy's filesystem-specific defaults. Swap partitions ignore this field.
+	// MountOptions overrides the generated fstab mount options. Empty lets the
+	// fstab generator use its fixed defaults. Swap partitions ignore this field.
 	MountOptions string `json:"mountOptions,omitempty" yaml:"mountOptions,omitempty"`
 }
 
@@ -110,8 +110,8 @@ type LVVolume struct {
 	// installed OS. A Mountpoint requires a Filesystem.
 	Mountpoint string `json:"mountpoint,omitempty" yaml:"mountpoint,omitempty"`
 
-	// MountOptions overrides the generated fstab mount options. Empty selects
-	// BOOTy's filesystem-specific defaults. Swap volumes ignore this field.
+	// MountOptions overrides the generated fstab mount options. Empty lets the
+	// fstab generator use its fixed defaults. Swap volumes ignore this field.
 	MountOptions string `json:"mountOptions,omitempty" yaml:"mountOptions,omitempty"`
 }
 
