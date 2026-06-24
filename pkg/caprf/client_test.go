@@ -451,6 +451,44 @@ func TestReportCrashArtifactsPreparePresignedPUTNoAuthorization(t *testing.T) {
 	}
 }
 
+func TestReportCrashArtifactsRejectsPresignedPUTBearerAuth(t *testing.T) {
+	archivePath := writeCrashArchiveFixture(t)
+	var uploadCalled bool
+
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	mux.HandleFunc("POST /crash/prepare", func(w http.ResponseWriter, _ *http.Request) {
+		resp := crash.PrepareResponse{
+			UploadMode: crash.UploadModePresignedPUT,
+			AuthMode:   crash.AuthModeBearer,
+			Method:     http.MethodPut,
+			UploadURL:  srv.URL + "/upload?X-Amz-Signature=secret-signature",
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+	mux.HandleFunc("PUT /upload", func(w http.ResponseWriter, _ *http.Request) {
+		uploadCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	client := NewFromConfig(&config.MachineConfig{
+		Transport: config.TransportConfig{Token: "crash-token"},
+		Provision: config.ProvisionConfig{CrashArtifacts: config.CrashArtifactsConfig{PrepareURL: srv.URL + "/crash/prepare"}},
+	})
+	err := client.ReportCrashArtifacts(context.Background(), crashRequestFixture(), archivePath)
+	if err == nil {
+		t.Fatal("expected presigned bearer auth to be rejected")
+	}
+	if !strings.Contains(err.Error(), "only supported for") {
+		t.Fatalf("error = %q, want auth mode rejection", err.Error())
+	}
+	if uploadCalled {
+		t.Fatal("presigned upload endpoint was called")
+	}
+}
+
 func TestReportCrashArtifactsDirectCAPRFUploadUsesBearer(t *testing.T) {
 	archivePath := writeCrashArchiveFixture(t)
 	var uploadAuth string

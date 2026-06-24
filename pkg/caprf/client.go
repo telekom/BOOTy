@@ -586,6 +586,10 @@ func (c *Client) applyCrashUploadAuth(req *http.Request, instructions *crash.Pre
 	case crash.AuthModeNone:
 		return nil
 	case crash.AuthModeBearer:
+		if instructions.UploadMode != crash.UploadModeCAPRFProxy {
+			return fmt.Errorf("crash artifact auth mode %q is only supported for %q uploads",
+				authMode, crash.UploadModeCAPRFProxy)
+		}
 		return c.setAuth(req)
 	default:
 		return fmt.Errorf("unsupported crash artifact auth mode %q", authMode)
