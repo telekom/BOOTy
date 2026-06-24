@@ -136,13 +136,15 @@ test-iso:
 getramdisk:
 
 	@ID=$$(docker create $(REPOSITORY):$(DOCKERTAG) null); \
-	docker cp $$ID:/initramfs.cpio.zst initramfs.cpio.zst ; docker rm $$ID
+	trap 'docker rm "$$ID" >/dev/null 2>&1 || true' EXIT; \
+	docker cp "$$ID:/initramfs.cpio.zst" initramfs.cpio.zst
 	@echo Extracted ramdisk
 
 getramdisk-arm64:
 	@mkdir -p dist/arm64
 	@ID=$$(docker create $(REPOSITORY):$(DOCKERTAG)-arm64 null); \
-	docker cp $$ID:/initramfs.cpio.zst dist/arm64/initramfs.cpio.zst ; docker rm $$ID
+	trap 'docker rm "$$ID" >/dev/null 2>&1 || true' EXIT; \
+	docker cp "$$ID:/initramfs.cpio.zst" dist/arm64/initramfs.cpio.zst
 	@echo Extracted ARM64 ramdisk to dist/arm64/
 
 simplify:

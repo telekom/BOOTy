@@ -180,7 +180,7 @@ jobs:
           files: |
             booty-amd64
             booty-arm64
-            initramfs-*.cpio.*
+            *-initramfs.cpio.*
             booty-*.iso
             sbom.spdx.json
             *.sha256

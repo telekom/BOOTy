@@ -112,15 +112,17 @@ BOOTy operates in two modes depending on the boot environment:
 Build the complete initramfs with Docker:
 
 ```bash
-make build
+make dockerx86
 ```
 
-This compiles BOOTy for `linux/amd64` and `linux/arm64`, then packages BusyBox, LVM2, FRR, and kernel modules for common server NICs into a bootable initramfs.
+This compiles BOOTy for `linux/amd64`, then packages BusyBox, LVM2, FRR, and kernel modules for common server NICs into a bootable initramfs container image. Use `make docker` to build and push the multi-architecture image.
 
 To extract the initramfs to the local filesystem:
 
 ```bash
-docker run ghcr.io/telekom/booty:latest tar -cf - /initramfs.cpio.zst | tar xf -
+ID=$(docker create ghcr.io/telekom/booty:latest null)
+docker cp "$ID:/initramfs.cpio.zst" initramfs.cpio.zst
+docker rm "$ID"
 ```
 
 ### Build Flavors

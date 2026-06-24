@@ -64,6 +64,21 @@ jobs:
             --output type=local,dest=out-${{ matrix.flavor }} \
             -f initrd.Dockerfile .
 
+      - name: Verify initramfs output
+        run: |
+          case "${{ matrix.flavor }}" in
+            micro)
+              test -f "out-${{ matrix.flavor }}/initramfs.cpio.gz"
+              ;;
+            default|gobgp|slim)
+              test -f "out-${{ matrix.flavor }}/initramfs.cpio.zst"
+              ;;
+            *)
+              echo "unknown flavor ${{ matrix.flavor }}" >&2
+              exit 1
+              ;;
+          esac
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v7.0.1
         with:
