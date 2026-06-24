@@ -351,6 +351,9 @@ func TestWriteNMKeyfiles(t *testing.T) {
 	if !strings.Contains(content, "type=ethernet") {
 		t.Error("missing type")
 	}
+	if !strings.Contains(content, "interface-name=enp1s0") {
+		t.Error("missing interface-name binding")
+	}
 	if !strings.Contains(content, "method=auto") {
 		t.Error("missing dhcp method")
 	}
@@ -652,6 +655,9 @@ func TestWriteNMKeyfiles_MultiInterfaceDNSOnce(t *testing.T) {
 	if !strings.Contains(string(first), "dns=8.8.8.8") {
 		t.Error("first interface should have dns")
 	}
+	if !strings.Contains(string(first), "interface-name=enp1s0") {
+		t.Error("first interface should bind to enp1s0")
+	}
 	if !strings.Contains(string(first), "route1=172.16.0.0/12,10.0.0.1") {
 		t.Error("first interface should have routes")
 	}
@@ -661,6 +667,9 @@ func TestWriteNMKeyfiles_MultiInterfaceDNSOnce(t *testing.T) {
 	}
 	if strings.Contains(string(second), "dns=") {
 		t.Error("second interface should not have dns")
+	}
+	if !strings.Contains(string(second), "interface-name=enp2s0") {
+		t.Error("second interface should bind to enp2s0")
 	}
 	if strings.Contains(string(second), "route1=") {
 		t.Error("second interface should not have routes")
