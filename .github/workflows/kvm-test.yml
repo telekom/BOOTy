@@ -25,6 +25,7 @@ jobs:
 
       - name: Build initramfs image
         run: |
+          set -euo pipefail
           # Build BOOTy as a static binary for linux/amd64
           CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
             go build -ldflags "-linkmode external -extldflags '-static' -s -w" -o booty
@@ -56,7 +57,7 @@ jobs:
           cp booty initramfs/booty
 
           # Copy e1000 kernel module (QEMU default virtual NIC)
-          MOD_PATH=$(find /lib/modules/$(uname -r) -name "e1000.ko*" | head -1)
+          MOD_PATH=$(find /lib/modules/$(uname -r) -name "e1000.ko*" -print -quit)
           if [ -n "$MOD_PATH" ]; then
             case "$MOD_PATH" in
               *.zst) zstd -d "$MOD_PATH" -o initramfs/lib/modules/e1000.ko ;;
