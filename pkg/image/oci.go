@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 )
@@ -40,13 +41,36 @@ func FetchOCILayer(ctx context.Context, reference string) (io.ReadCloser, error)
 		return nil, fmt.Errorf("OCI image %q has no layers", redactedRef)
 	}
 
-	// Use the last (topmost) layer as the image content.
-	layer := layers[len(layers)-1]
+	layer, err := selectDefaultOCILayer(layers)
+	if err != nil {
+		return nil, fmt.Errorf("select content layer for %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
+	}
+
 	rc, err := layer.Uncompressed()
 	if err != nil {
 		return nil, fmt.Errorf("uncompress layer for %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
 	}
 	return rc, nil
+}
+
+func selectDefaultOCILayer(layers []v1.Layer) (v1.Layer, error) {
+	for i := len(layers) - 1; i >= 0; i-- {
+		mediaType, err := layers[i].MediaType()
+		if err != nil {
+			return nil, err
+		}
+		if isTextPlainMediaType(mediaType) {
+			continue
+		}
+		return layers[i], nil
+	}
+
+	return nil, fmt.Errorf("OCI image has no non-text layers")
+}
+
+func isTextPlainMediaType(mediaType types.MediaType) bool {
+	value := strings.ToLower(strings.TrimSpace(string(mediaType)))
+	return value == "text/plain" || strings.HasPrefix(value, "text/plain;")
 }
 
 // FetchOCILayerByMediaType pulls the first layer matching one of the requested

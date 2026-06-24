@@ -100,6 +100,76 @@ func TestFetchOCILayerMultiLayer(t *testing.T) {
 	}
 }
 
+func TestFetchOCILayerSkipsChecksumTextLayer(t *testing.T) {
+	srv := startTestRegistry(t)
+	defer srv.Close()
+
+	payloadLayer := stream.NewLayer(
+		io.NopCloser(strings.NewReader("initramfs-payload")),
+		stream.WithMediaType(types.OCILayer),
+	)
+	checksumLayer := stream.NewLayer(
+		io.NopCloser(strings.NewReader("sha256 deadbeef  initramfs.cpio.zst")),
+		stream.WithMediaType(types.MediaType("text/plain")),
+	)
+	img, err := mutate.AppendLayers(empty.Image, payloadLayer, checksumLayer)
+	if err != nil {
+		t.Fatalf("mutate.AppendLayers: %v", err)
+	}
+
+	ref, err := name.ParseReference(fmt.Sprintf("%s/test/checksum-sidecar:v1", strings.TrimPrefix(srv.URL, "http://")))
+	if err != nil {
+		t.Fatalf("parse ref: %v", err)
+	}
+	if err := remote.Write(ref, img); err != nil {
+		t.Fatalf("remote.Write: %v", err)
+	}
+
+	rc, err := FetchOCILayer(context.Background(), ref.String())
+	if err != nil {
+		t.Fatalf("FetchOCILayer: %v", err)
+	}
+	defer rc.Close()
+
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if string(got) != "initramfs-payload" {
+		t.Errorf("got %q, want payload layer content", got)
+	}
+}
+
+func TestFetchOCILayerRejectsOnlyTextLayers(t *testing.T) {
+	srv := startTestRegistry(t)
+	defer srv.Close()
+
+	checksumLayer := stream.NewLayer(
+		io.NopCloser(strings.NewReader("sha256 deadbeef  initramfs.cpio.zst")),
+		stream.WithMediaType(types.MediaType("text/plain")),
+	)
+	img, err := mutate.AppendLayers(empty.Image, checksumLayer)
+	if err != nil {
+		t.Fatalf("mutate.AppendLayers: %v", err)
+	}
+
+	ref, err := name.ParseReference(fmt.Sprintf("%s/test/checksum-only:v1", strings.TrimPrefix(srv.URL, "http://")))
+	if err != nil {
+		t.Fatalf("parse ref: %v", err)
+	}
+	if err := remote.Write(ref, img); err != nil {
+		t.Fatalf("remote.Write: %v", err)
+	}
+
+	_, err = FetchOCILayer(context.Background(), ref.String())
+	if err == nil {
+		t.Fatal("expected text-only layer error")
+	}
+	if !strings.Contains(err.Error(), "no non-text layers") {
+		t.Fatalf("error = %q, want no non-text layers", err.Error())
+	}
+}
+
 func TestFetchOCILayerByMediaType(t *testing.T) {
 	srv := startTestRegistry(t)
 	defer srv.Close()
