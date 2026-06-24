@@ -58,6 +58,9 @@ func TestDefaultMountsContainsExpected(t *testing.T) {
 		if want, ok := modes[m.Name]; ok && m.Mode != want {
 			t.Errorf("mount %q mode = %#o, want %#o", m.Name, m.Mode, want)
 		}
+		if m.Name == "run" && m.Options != "mode=0755" {
+			t.Errorf("mount %q options = %q, want mode=0755", m.Name, m.Options)
+		}
 	}
 }
 

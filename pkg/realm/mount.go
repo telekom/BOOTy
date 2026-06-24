@@ -43,7 +43,7 @@ func DefaultMounts() *Mounts {
 			{Name: "home", Path: "/home", Mode: 0o755},
 			{Name: "mnt", Path: "/mnt", Mode: 0o755},
 			{Name: "proc", Source: "proc", Path: "/proc", FSType: "proc", Mode: 0o755},
-			{Name: "run", Source: "tmpfs", Path: "/run", FSType: "tmpfs", Mode: 0o755},
+			{Name: "run", Source: "tmpfs", Path: "/run", FSType: "tmpfs", Mode: 0o755, Options: "mode=0755"},
 			{Name: "sys", Source: "sysfs", Path: "/sys", FSType: "sysfs", Mode: 0o755},
 			{Name: "tmp", Source: "tmpfs", Path: "/tmp", FSType: "tmpfs", Mode: 0o1777},
 			{Name: "usr", Path: "/usr", Mode: 0o755},
