@@ -110,6 +110,26 @@ func TestEfiLoaderPath(t *testing.T) {
 	}
 }
 
+func TestEfiLoaderPathDebian(t *testing.T) {
+	root := t.TempDir()
+	efiDir := filepath.Join(root, "boot", "efi", "EFI", "debian")
+	if err := os.MkdirAll(efiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(efiDir, "grubx64.efi"), []byte("grub"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	loader, err := efiLoaderPath(root, "amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "\\EFI\\debian\\grubx64.efi"
+	if loader != want {
+		t.Errorf("got %q, want Debian grub fallback %q", loader, want)
+	}
+}
+
 func TestEfiLoaderPath_MissingLoaders(t *testing.T) {
 	root := t.TempDir()
 	efiDir := filepath.Join(root, "boot", "efi", "EFI", "ubuntu")
