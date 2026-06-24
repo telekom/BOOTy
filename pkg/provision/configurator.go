@@ -546,6 +546,13 @@ func (c *Configurator) ConfigureDNS(cfg *config.MachineConfig) error {
 			lines = append(lines, "nameserver "+r)
 		}
 	}
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("replace resolv.conf symlink: %w", err)
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("stat resolv.conf: %w", err)
+	}
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
 		return fmt.Errorf("writing resolv.conf: %w", err)
 	}
