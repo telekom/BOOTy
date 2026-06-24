@@ -255,8 +255,34 @@ func TestConfigureGRUB(t *testing.T) {
 	if len(data) == 0 {
 		t.Fatal("expected non-empty grub config")
 	}
+	if !strings.Contains(string(data), "ds=nocloud") {
+		t.Fatalf("expected default NoCloud datasource in grub config: %s", data)
+	}
 	if _, err := os.Stat(filepath.Join(c.rootDir, "boot", "grub")); err != nil {
 		t.Fatalf("expected boot grub dir: %v", err)
+	}
+}
+
+func TestConfigureGRUBConfigDriveDatasource(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+	cfg := &config.MachineConfig{}
+	cfg.Provision.CloudInit.Datasource = " configDrive "
+
+	if err := c.ConfigureGRUB(context.Background(), cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(c.rootDir, "etc", "default", "grub.d", "10-caprf-kernel-params.cfg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "ci.datasource=ConfigDrive") {
+		t.Fatalf("expected ConfigDrive datasource in grub config: %s", content)
+	}
+	if strings.Contains(content, "ds=nocloud") {
+		t.Fatalf("ConfigDrive grub config must not force NoCloud: %s", content)
 	}
 }
 
