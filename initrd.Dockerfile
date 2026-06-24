@@ -148,7 +148,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     binutils \
     mdadm util-linux e2fsprogs xfsprogs btrfs-progs parted gdisk kpartx dosfstools \
     efibootmgr dmidecode ethtool curl iproute2 bridge-utils \
-    hdparm nvme-cli mstflint lldpd \
+    hdparm nvme-cli mstflint lldpd gpgv \
     dropbear-bin cryptsetup-bin ipmitool \
     && rm -rf /var/lib/apt/lists/*
 
@@ -165,7 +165,7 @@ RUN mkdir -p /tool-libs && \
         /sbin/partprobe /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
         /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
         /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
-        /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk \
+        /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /usr/bin/gpgv \
         /sbin/cryptsetup /usr/bin/ipmitool 2>/dev/null \
     | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
     | sort -u | while read -r lib; do \
@@ -183,7 +183,7 @@ RUN strip --strip-all \
         /sbin/partprobe /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
         /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
         /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
-        /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk \
+        /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /usr/bin/gpgv \
         /sbin/cryptsetup /usr/bin/ipmitool
 
 # Busybox static binary — sourced from Docker Hub for reliability and
@@ -268,6 +268,11 @@ COPY --from=tools /usr/sbin/lldpd sbin/lldpd
 COPY --from=tools /usr/sbin/dropbear bin/dropbear
 COPY --from=tools /usr/bin/dropbearkey bin/dropbearkey
 
+# Trust store and signature verification for HTTPS image/CAPRF/token/sysext
+# fetches and IMAGE_SIGNATURE_URL verification.
+RUN mkdir -p etc/ssl/certs && cp /etc/ssl/certs/ca-certificates.crt etc/ssl/certs/
+COPY --from=tools /usr/bin/gpgv bin/gpgv
+
 # Copy pre-collected shared libraries from stages where packages are installed.
 # This replaces the previous ldd scan that ran in this stage — that approach
 # missed package-specific libs (libefivar, libmnl, etc.) because they were
@@ -290,7 +295,7 @@ RUN for b in \
         sbin/xfs_growfs sbin/xfs_repair sbin/mkfs.xfs bin/btrfs bin/parted bin/sgdisk bin/partprobe bin/kpartx \
         bin/efibootmgr bin/dmidecode bin/ethtool bin/curl bin/ip bin/bridge \
         bin/hdparm bin/nvme bin/mstconfig bin/mstflint bin/ipmitool \
-        bin/lldpcli sbin/lldpd bin/dropbear bin/dropbearkey \
+        bin/lldpcli sbin/lldpd bin/dropbear bin/dropbearkey bin/gpgv \
         sbin/cryptsetup; do \
     upx -9 "$b" 2>/dev/null || true; \
 done
@@ -332,7 +337,7 @@ COPY --from=iso-builder /booty.iso .
 
 # ── Slim target: BOOTy + busybox shell + minimal tools, no FRR/LVM ────────
 FROM debian:bookworm-slim AS slim-builder
-RUN apt-get update && apt-get install -y --no-install-recommends cpio zstd \
+RUN apt-get update && apt-get install -y --no-install-recommends cpio zstd ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
 
@@ -352,6 +357,7 @@ COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
 COPY --from=tools /sbin/ip bin/ip
 COPY --from=tools /usr/sbin/ethtool bin/ethtool
 COPY --from=tools /usr/bin/curl bin/curl
+RUN mkdir -p etc/ssl/certs && cp /etc/ssl/certs/ca-certificates.crt etc/ssl/certs/
 
 # Basic disk tools (filesystem check + resize only)
 RUN mkdir -p sbin
@@ -444,6 +450,12 @@ COPY --from=tools /usr/bin/dropbearkey bin/dropbearkey
 # lsblk for rescue mode disk auto-mount
 COPY --from=tools /bin/lsblk bin/lsblk
 
+# Trust store and signature verification for HTTPS image/CAPRF/token/sysext
+# fetches and IMAGE_SIGNATURE_URL verification.
+RUN mkdir -p etc/ssl/certs
+COPY --from=busybox /etc/ssl/certs/ca-certificates.crt etc/ssl/certs/
+COPY --from=tools /usr/bin/gpgv bin/gpgv
+
 # Copy pre-collected shared libraries from the tools stage.
 COPY --from=tools /tool-libs/ .
 
@@ -458,7 +470,7 @@ RUN for b in \
         sbin/xfs_growfs sbin/xfs_repair sbin/mkfs.xfs bin/btrfs bin/parted bin/sgdisk bin/partprobe bin/kpartx \
         bin/efibootmgr bin/dmidecode bin/ethtool bin/curl bin/ip bin/bridge \
         bin/hdparm bin/nvme bin/mstconfig bin/mstflint bin/ipmitool \
-        bin/lldpcli sbin/lldpd bin/dropbear bin/dropbearkey bin/lsblk \
+        bin/lldpcli sbin/lldpd bin/dropbear bin/dropbearkey bin/lsblk bin/gpgv \
         sbin/cryptsetup sbin/lvm bin/sfdisk; do \
     upx -9 "$b" 2>/dev/null || true; \
 done
