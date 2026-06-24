@@ -94,6 +94,23 @@ func waitForVMLog(t *testing.T, container, entry string, timeout time.Duration) 
 	return false
 }
 
+// waitForVMLogAny polls docker logs until any entry appears or timeout.
+func waitForVMLogAny(t *testing.T, container string, entries []string, timeout time.Duration) (string, bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var logs string
+	for time.Now().Before(deadline) {
+		logs = getVMSerialLog(t, container)
+		for _, entry := range entries {
+			if strings.Contains(logs, entry) {
+				return logs, true
+			}
+		}
+		time.Sleep(3 * time.Second)
+	}
+	return logs, false
+}
+
 // waitForVMAccessLog polls a container's file until it contains the expected string.
 func waitForVMAccessLog(t *testing.T, container, logPath, entry string, timeout time.Duration) (string, bool) {
 	t.Helper()
@@ -323,28 +340,15 @@ func TestVrnetlabProvisionAttemptsImageDownload(t *testing.T) {
 		t.Fatalf("provision VM did not reach report-init\n%s", logs)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
-
-	var logs string
-	for {
-		logs = getVMSerialLog(t, vmProvision)
-		if strings.Contains(logs, "Streaming image") ||
-			strings.Contains(logs, "Beginning write") ||
-			strings.Contains(logs, "stream-image") {
-			t.Log("provision VM: image download attempted through EVPN")
-			return
-		}
-
-		select {
-		case <-ctx.Done():
-			t.Logf("Serial log:\n%s", logs)
-			t.Fatal("provision VM did not attempt image download through EVPN")
-		case <-ticker.C:
-		}
+	if logs, ok := waitForVMLogAny(t, vmProvision, []string{
+		"Streaming image",
+		"Beginning write",
+		"stream-image",
+	}, 120*time.Second); !ok {
+		t.Logf("Serial log:\n%s", logs)
+		t.Fatal("provision VM did not attempt image download through EVPN")
 	}
+	t.Log("provision VM: image download attempted through EVPN")
 }
 
 func TestVrnetlabNginxReceivedImageRequest(t *testing.T) {
@@ -404,18 +408,20 @@ func TestVrnetlabProvisionFullLifecycleViaEVPN(t *testing.T) {
 		t.Logf("provision VM: %s", step.desc)
 	}
 
-	// Verify provisioning continues past report-init
-	time.Sleep(15 * time.Second)
-	logs := getVMSerialLog(t, vmProvision)
-
-	if !strings.Contains(logs, "provisioning step") && !strings.Contains(logs, "detect-disk") {
+	// Verify provisioning continues past report-init.
+	if logs, ok := waitForVMLogAny(t, vmProvision, []string{
+		"step=collect-inventory",
+		"step=health-checks",
+		"step=stop-raid",
+		"step=detect-disk",
+	}, 120*time.Second); !ok {
 		t.Fatalf("provision VM did not execute provisioning steps after report-init\n%s", logs)
 	}
 	t.Log("provision VM: provisioning orchestrator executing steps through EVPN")
 
 	// Verify CAPRF mock received the init POST through EVPN
-	access, _ := vmDockerExec(t, vmCAPRF, "cat", "/var/log/nginx/access.log")
-	if !strings.Contains(access, "/status/init") {
+	access, ok := waitForVMAccessLog(t, vmCAPRF, "/var/log/nginx/access.log", "/status/init", 120*time.Second)
+	if !ok {
 		t.Fatalf("provision VM: CAPRF init status missing from access log\n%s", access)
 	}
 	t.Log("provision VM: CAPRF init status received through EVPN")
@@ -442,26 +448,14 @@ func TestVrnetlabDeprovisionFullLifecycleViaEVPN(t *testing.T) {
 	}
 	t.Log("deprovision VM: FRR/EVPN network mode active")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		logs := getVMSerialLog(t, vmDeprovision)
-		if strings.Contains(logs, "Deprovisioning step") ||
-			strings.Contains(logs, "starting deprovisioning") ||
-			strings.Contains(logs, "report-init") {
-			t.Log("deprovision VM: deprovisioning lifecycle executing through EVPN")
-			return
-		}
-
-		select {
-		case <-ctx.Done():
-			t.Fatalf("deprovision VM did not execute deprovisioning lifecycle\n%s", logs)
-		case <-ticker.C:
-		}
+	if logs, ok := waitForVMLogAny(t, vmDeprovision, []string{
+		"Deprovisioning step",
+		"starting deprovisioning",
+		"report-init",
+	}, 90*time.Second); !ok {
+		t.Fatalf("deprovision VM did not execute deprovisioning lifecycle\n%s", logs)
 	}
+	t.Log("deprovision VM: deprovisioning lifecycle executing through EVPN")
 }
 
 func TestVrnetlabStandbyFullLifecycleViaEVPN(t *testing.T) {
@@ -491,10 +485,9 @@ func TestVrnetlabStandbyFullLifecycleViaEVPN(t *testing.T) {
 	}
 	t.Log("standby VM: entered standby mode")
 
-	// Verify heartbeat was sent to CAPRF through EVPN
-	time.Sleep(30 * time.Second)
-	access, _ := vmDockerExec(t, vmCAPRF, "cat", "/var/log/nginx/access.log")
-	if !strings.Contains(access, "/status/heartbeat") {
+	// Verify heartbeat was sent to CAPRF through EVPN.
+	access, ok := waitForVMAccessLog(t, vmCAPRF, "/var/log/nginx/access.log", "/status/heartbeat", 120*time.Second)
+	if !ok {
 		logs := getVMSerialLog(t, vmStandby)
 		t.Fatalf("standby VM: heartbeat missing from CAPRF access log\nAccess log:\n%s\nSerial log:\n%s", access, logs)
 	}

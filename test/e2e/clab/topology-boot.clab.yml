@@ -93,6 +93,7 @@ topology:
       image: booty-test:latest
       binds:
         - data/vars-provision:/deploy/vars:ro
+        - data/no-mdadm-arrays:/usr/local/bin/mdadm:ro
       env:
         BOOTY_NO_REBOOT: "1"
       exec:
