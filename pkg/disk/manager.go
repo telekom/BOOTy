@@ -719,6 +719,9 @@ func (m *Manager) ResizeFilesystem(ctx context.Context, device, mountpoint strin
 	// Try resize2fs for ext2/3/4 first.
 	if out, err := m.cmd.Run(ctx, "resize2fs", device); err != nil {
 		slog.Debug("resize2fs failed, trying xfs_growfs", "output", string(out))
+		if strings.TrimSpace(mountpoint) == "" {
+			return fmt.Errorf("resize filesystem %s requires mountpoint for xfs/btrfs fallback", device)
+		}
 		// Fall back to xfs_growfs.
 		if out, err := m.cmd.Run(ctx, "xfs_growfs", mountpoint); err != nil {
 			slog.Debug("xfs_growfs failed, trying btrfs resize", "output", string(out))

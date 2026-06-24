@@ -677,6 +677,23 @@ func TestResizeFilesystemBothFail(t *testing.T) {
 	}
 }
 
+func TestResizeFilesystemFallbackRequiresMountpoint(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+
+	cmd.setResult("resize2fs /dev/sda2", nil, fmt.Errorf("not ext4"))
+	err := mgr.ResizeFilesystem(context.Background(), "/dev/sda2", " ")
+	if err == nil {
+		t.Fatal("expected error when fallback needs empty mountpoint")
+	}
+	if !strings.Contains(err.Error(), "requires mountpoint") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cmd.calls) != 1 {
+		t.Fatalf("fallback commands should not run, got %#v", cmd.calls)
+	}
+}
+
 func TestResizeFilesystemBtrfsUsesMountpoint(t *testing.T) {
 	cmd := newMockCommander()
 	mgr := NewManager(cmd)
