@@ -65,7 +65,7 @@ func selectDefaultOCILayer(layers []v1.Layer) (v1.Layer, error) {
 		return layers[i], nil
 	}
 
-	return nil, fmt.Errorf("OCI image has no non-text layers")
+	return nil, fmt.Errorf("oci image has no non-text layers")
 }
 
 func isTextPlainMediaType(mediaType types.MediaType) bool {
