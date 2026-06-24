@@ -80,12 +80,12 @@ BOOTy operates in two modes depending on the boot environment:
 - **Standby mode** — Hot standby with heartbeats and command polling for sub-second provisioning
 - **Cloud-init injection** — NoCloud and ConfigDrive datasource generation (users, packages, NTP, runcmd)
 - **Netplan overlay** — Drop-in netplan YAML config from provisioner overrides `/deploy/vars` network settings
-- **Network persistence** — Auto-generates OS-native network config (netplan, NetworkManager, systemd-networkd)
+- **Network persistence renderers** — Library support for netplan, NetworkManager, and systemd-networkd config generation
 - **IPMI operations** — BMC network config, boot device control, chassis power, sensor readings
 - **TPM 2.0 support** — Detection, PCR reading, metadata collection, LUKS2 TPM enrollment (Phase 2)
 - **Bootloader auto-detection** — Automatic GRUB vs systemd-boot selection (x86_64 and ARM64)
 - **BGP policy engine** — Import/export filtering, community tagging, graceful restart
-- **Multi-architecture** — Builds for `linux/amd64` and `linux/arm64`
+- **Multi-architecture builds** — CI builds `linux/amd64` and `linux/arm64` artifacts
 - **Multiple build flavors** — Full (FRR+tools), GoBGP (pure Go BGP), slim (DHCP-only), micro (pure Go), ISO (bootable)
 
 ## Prerequisites
@@ -105,17 +105,48 @@ BOOTy operates in two modes depending on the boot environment:
 | ContainerLab         | 0.44+   | E2E tests only (Linux) |
 | KVM / QEMU           | —       | E2E boot tests only (Linux) |
 
+### Supported and Tested Scope
+
+BOOTy is Linux-only runtime software: it runs as PID 1 inside an initramfs and
+uses Linux syscalls, mounts, block devices, netlink, KVM/QEMU test coverage,
+and ContainerLab networking tests. macOS and Windows are supported only as
+cross-compilation hosts for the Go binary.
+
+| Scope | Current CI proof |
+|-------|------------------|
+| Go binary | `linux/amd64` and `linux/arm64` build jobs |
+| Initramfs artifacts | `linux/amd64` default, slim, micro, and GoBGP build-flavor jobs |
+| Boot/provisioning behavior | x86_64 KVM/QEMU jobs on Ubuntu GitHub runners |
+| Network integration | ContainerLab and vrnetlab jobs on privileged Linux runners |
+| Network persistence renderers | Unit tests for Ubuntu/netplan, RHEL/NetworkManager, and Flatcar/systemd-networkd writers |
+
+CI does not currently prove macOS/Windows runtime behavior, non-Linux boot
+targets, SUSE/openSUSE-specific provisioning, Fedora-specific provisioning, or
+automatic target-OS detection for persistent network configuration.
+
 ## Building
+
+### BOOTy Binary
+
+Compile the BOOTy binary for the configured Go target:
+
+```bash
+make build
+```
 
 ### Initramfs (recommended)
 
-Build the complete initramfs with Docker:
+Build the full amd64 initramfs container image with Docker:
 
 ```bash
 make dockerx86
 ```
 
-This compiles BOOTy for `linux/amd64`, then packages BusyBox, LVM2, FRR, and kernel modules for common server NICs into a bootable initramfs container image. Use `make docker` to build and push the multi-architecture image.
+To emit a local bootable artifact instead of loading a Docker image, use one of
+the build-flavor targets below, for example `make gobgp` or `make iso`. These
+Docker targets compile BOOTy and assemble a bootable initramfs or ISO; the
+included networking stack, disk tools, firmware tools, and kernel modules vary
+by flavor.
 
 To extract the initramfs to the local filesystem:
 
@@ -852,9 +883,14 @@ signal for L2 EVPN Type-2/Type-3 handling.
 
 ### Network Persistence
 
-After provisioning, BOOTy writes persistent network configuration to the
-target OS filesystem so the installed OS boots with the correct network
-settings. The output format is auto-detected based on the OS family:
+BOOTy includes renderer helpers for persistent network configuration on the
+target OS filesystem. These helpers are unit-tested, but the provisioning
+orchestrator does not currently auto-detect the target OS family or call them
+as part of the 40-step provisioning pipeline. During provisioning, BOOTy
+currently writes DNS configuration and can generate cloud-init network config
+when cloud-init injection is enabled.
+
+Implemented renderer formats:
 
 | OS Family | Format | Config Path |
 |-----------|--------|-------------|
@@ -862,9 +898,8 @@ settings. The output format is auto-detected based on the OS family:
 | RHEL | NetworkManager keyfiles | `/etc/NetworkManager/system-connections/` |
 | Flatcar | systemd-networkd units | `/etc/systemd/network/` |
 
-Network persistence runs automatically as part of the provisioning
-pipeline. It writes interface configs, bond settings, addresses,
-gateways, DNS, and VLAN assignments in the OS-native format.
+The renderer package can write interface configs, bond settings, addresses,
+gateways, DNS, and VLAN assignments where the selected writer supports them.
 
 ### IPMI Operations
 
@@ -922,8 +957,10 @@ a new binary:
 
 1. **Install the package** in the `tools` build stage:
 ```dockerfile
-# In the 'tools' stage (FROM alpine AS tools)
-RUN apk add --no-cache your-package
+# In the 'tools' stage (FROM debian:bookworm-slim AS tools)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    your-package \
+    && rm -rf /var/lib/apt/lists/*
 ```
 
 2. **Copy the binary** into the final initramfs:
