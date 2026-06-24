@@ -1217,6 +1217,10 @@ func (o *Orchestrator) enableLVM(ctx context.Context) error {
 }
 
 func (o *Orchestrator) mountRoot(ctx context.Context) error {
+	if isMountPoint(newroot) {
+		o.log.Info("root partition already mounted", "mountpoint", newroot)
+		return nil
+	}
 	return o.disk.MountPartition(ctx, o.rootPartition, newroot)
 }
 

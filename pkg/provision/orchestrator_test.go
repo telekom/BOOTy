@@ -482,6 +482,19 @@ func TestSharedDataSeedCopyPreservesSymlinksAndIgnoresLostFound(t *testing.T) {
 	}
 }
 
+func TestMountRootSkipsAlreadyMountedNewroot(t *testing.T) {
+	oldMountPoint := isMountPoint
+	isMountPoint = func(path string) bool { return path == newroot }
+	t.Cleanup(func() { isMountPoint = oldMountPoint })
+
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	o.rootPartition = "/dev/sda2"
+
+	if err := o.mountRoot(context.Background()); err != nil {
+		t.Fatalf("mountRoot with mounted newroot: %v", err)
+	}
+}
+
 func TestMountBootSkipsWhenNoBootPartition(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
