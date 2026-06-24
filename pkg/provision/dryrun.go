@@ -253,18 +253,16 @@ func (o *Orchestrator) dryRunImageChecksum(_ context.Context) DryRunResult {
 		return DryRunResult{Status: DryRunWarn,
 			Message: "no image checksum configured - integrity cannot be verified"}
 	}
-	checkType := strings.ToLower(strings.TrimSpace(o.cfg.Provision.Image.ChecksumType))
-	if checkType == "" {
-		checkType = "sha256"
-	}
-	switch checkType {
-	case "sha256", "sha512":
-		return DryRunResult{Status: DryRunPass,
-			Message: fmt.Sprintf("checksum configured (%s)", checkType)}
-	default:
+	checksum, err := image.NormalizeChecksum(
+		o.cfg.Provision.Image.Checksum,
+		o.cfg.Provision.Image.ChecksumType,
+	)
+	if err != nil {
 		return DryRunResult{Status: DryRunFail,
-			Message: fmt.Sprintf("unsupported checksum type: %s", checkType)}
+			Message: fmt.Sprintf("invalid image checksum: %v", err)}
 	}
+	return DryRunResult{Status: DryRunPass,
+		Message: fmt.Sprintf("checksum configured (%s)", checksum.ChecksumType)}
 }
 
 func (o *Orchestrator) dryRunImageSignature(_ context.Context) DryRunResult {

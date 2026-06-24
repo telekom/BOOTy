@@ -256,7 +256,35 @@ func normalizeChecksumOpt(opt StreamOpts) (StreamOpts, error) {
 			return opt, fmt.Errorf("cannot infer checksum type from checksum length %d", len(opt.Checksum))
 		}
 	}
+	if err := validateChecksumDigest(opt.ChecksumType, opt.Checksum); err != nil {
+		return opt, err
+	}
 	return opt, nil
+}
+
+// NormalizeChecksum validates and normalizes a user-provided checksum and type.
+// It is exported so dry-run checks can fail before destructive provisioning.
+func NormalizeChecksum(checksum, checksumType string) (StreamOpts, error) {
+	return normalizeChecksumOpt(StreamOpts{Checksum: checksum, ChecksumType: checksumType})
+}
+
+func validateChecksumDigest(checksumType, checksum string) error {
+	var expectedLen int
+	switch checksumType {
+	case "sha256":
+		expectedLen = sha256.Size * 2
+	case "sha512":
+		expectedLen = sha512.Size * 2
+	default:
+		return fmt.Errorf("unsupported checksum type: %s", checksumType)
+	}
+	if len(checksum) != expectedLen {
+		return fmt.Errorf("%s checksum length %d, want %d", checksumType, len(checksum), expectedLen)
+	}
+	if _, err := hex.DecodeString(checksum); err != nil {
+		return fmt.Errorf("invalid %s checksum hex: %w", checksumType, err)
+	}
+	return nil
 }
 
 // openSource returns a ReadCloser for the given URL.
