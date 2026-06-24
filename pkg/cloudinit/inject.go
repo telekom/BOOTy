@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -113,14 +114,16 @@ func writeSeedFiles(seedDir, tempPattern string, files map[string][]byte) error 
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	for name, data := range files {
+	names := sortedSeedFileNames(files)
+	for _, name := range names {
+		data := files[name]
 		tmp := filepath.Join(tmpDir, name)
 		if err := os.WriteFile(tmp, data, 0o600); err != nil {
 			return fmt.Errorf("write %s: %w", name, err)
 		}
 	}
 	// All temp files written — now rename to final paths.
-	for name := range files {
+	for _, name := range names {
 		src := filepath.Join(tmpDir, name)
 		dst := filepath.Join(seedDir, name)
 		if err := os.Rename(src, dst); err != nil {
@@ -128,6 +131,15 @@ func writeSeedFiles(seedDir, tempPattern string, files map[string][]byte) error 
 		}
 	}
 	return nil
+}
+
+func sortedSeedFileNames(files map[string][]byte) []string {
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 type openStackMetaData struct {
