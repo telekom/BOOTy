@@ -83,7 +83,7 @@ func TestISOBootHeadlessQ35(t *testing.T) {
 // dependent.  The positive test (TestISOBootHeadlessQ35) is the strict validation.
 func TestISOBootHeadlessQ35NoSerial(t *testing.T) {
 	if os.Getenv("KVM_NOSERIAL_TEST") == "" {
-		t.Skip("KVM_NOSERIAL_TEST not set; skipping diagnostic no-serial ISO boot test")
+		failOrSkipUnsupportedHost(t, "KVM_NOSERIAL_TEST not set for diagnostic no-serial ISO boot test")
 	}
 	qemuAvailable(t)
 	requireXorrisofs(t)
@@ -138,7 +138,7 @@ func TestISOBootHeadlessQ35NoSerial(t *testing.T) {
 func requireXorrisofs(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("xorrisofs"); err != nil {
-		t.Skip("xorrisofs not available; skipping ISO boot test")
+		failOrSkipUnsupportedHost(t, "xorrisofs not available for ISO boot test")
 	}
 }
 
@@ -149,10 +149,10 @@ func requireISOLINUX(t *testing.T) (string, string) {
 	ldlinuxC32 := envOrDefault("LDLINUX_C32", "/usr/lib/syslinux/modules/bios/ldlinux.c32")
 
 	if _, err := os.Stat(isolinuxBin); err != nil {
-		t.Skipf("isolinux.bin not found at %s; skipping ISO boot test", isolinuxBin)
+		failOrSkipUnsupportedHost(t, "isolinux.bin not found at %s for ISO boot test", isolinuxBin)
 	}
 	if _, err := os.Stat(ldlinuxC32); err != nil {
-		t.Skipf("ldlinux.c32 not found at %s; skipping ISO boot test", ldlinuxC32)
+		failOrSkipUnsupportedHost(t, "ldlinux.c32 not found at %s for ISO boot test", ldlinuxC32)
 	}
 	return isolinuxBin, ldlinuxC32
 }

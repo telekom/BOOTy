@@ -26,7 +26,7 @@ func TestUEFISecureBootSmoke(t *testing.T) {
 	ovmfVars := envOrDefault("OVMF_VARS", "")
 
 	if _, err := os.Stat(ovmf); err != nil {
-		t.Skipf("OVMF Secure Boot firmware not found at %s; skipping Secure Boot smoke", ovmf)
+		failOrSkipUnsupportedHost(t, "OVMF Secure Boot firmware not found at %s for Secure Boot smoke", ovmf)
 	}
 
 	args := []string{

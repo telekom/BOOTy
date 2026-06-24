@@ -15,7 +15,7 @@ import (
 func TestTPMSmokeQEMU(t *testing.T) {
 	qemuAvailable(t)
 	if _, err := exec.LookPath("swtpm"); err != nil {
-		t.Skip("swtpm not available; skipping TPM QEMU smoke")
+		failOrSkipUnsupportedHost(t, "swtpm not available for TPM QEMU smoke")
 	}
 
 	initramfs := envOrDefault("BOOTY_INITRAMFS", "test-initramfs.cpio.gz")

@@ -4,6 +4,7 @@ package kvm
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -17,8 +18,17 @@ const bootyStartMarker = "starting BOOTy"
 func qemuAvailable(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("qemu-system-x86_64"); err != nil {
-		t.Skip("qemu-system-x86_64 not available; skipping KVM/QEMU e2e test")
+		failOrSkipUnsupportedHost(t, "qemu-system-x86_64 not available")
 	}
+}
+
+func failOrSkipUnsupportedHost(t *testing.T, format string, args ...any) {
+	t.Helper()
+	msg := fmt.Sprintf(format, args...)
+	if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
+		t.Fatal(msg)
+	}
+	t.Skip(msg)
 }
 
 // envOrDefault returns the environment variable value or a default.

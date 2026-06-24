@@ -359,7 +359,7 @@ func TestUEFIBootloaderInstallAndNativeBoot(t *testing.T) {
 		"/usr/share/OVMF/OVMF_CODE.fd",
 	)
 	if _, err := os.Stat(ovmfCode); err != nil {
-		t.Skip("OVMF firmware not available; skipping UEFI boot test")
+		failOrSkipUnsupportedHost(t, "OVMF firmware not available for UEFI boot test")
 	}
 
 	rawDisk := createTestDiskImage(t, 512)
@@ -433,7 +433,7 @@ func TestSecureBootEnforcementReachesInit(t *testing.T) {
 		)
 	}
 	if _, err := os.Stat(ovmfCode); err != nil {
-		t.Skip("SecureBoot OVMF firmware not available; skipping Secure Boot test")
+		failOrSkipUnsupportedHost(t, "SecureBoot OVMF firmware not available for Secure Boot test")
 	}
 
 	initramfs := envOrDefault("BOOTY_INITRAMFS", "booty-initramfs.cpio.gz")
@@ -482,7 +482,7 @@ func TestLUKSEncryptionDetection(t *testing.T) {
 
 	// Check if we can create a LUKS volume for testing.
 	if _, err := exec.LookPath("cryptsetup"); err != nil {
-		t.Skip("cryptsetup not available; skipping LUKS encryption test")
+		failOrSkipUnsupportedHost(t, "cryptsetup not available for LUKS encryption test")
 	}
 
 	luksImg := filepath.Join(t.TempDir(), "luks-test.img")
@@ -540,7 +540,7 @@ func TestTPMDetectionAndPCRRead(t *testing.T) {
 	qemuAvailable(t)
 
 	if _, err := exec.LookPath("swtpm"); err != nil {
-		t.Skip("swtpm not available; skipping TPM test")
+		failOrSkipUnsupportedHost(t, "swtpm not available for TPM test")
 	}
 
 	initramfs := envOrDefault("BOOTY_INITRAMFS", "booty-initramfs.cpio.gz")
@@ -609,7 +609,7 @@ func TestEFIBootEntryManagementOVMF(t *testing.T) {
 		"/usr/share/OVMF/OVMF_CODE.fd",
 	)
 	if _, err := os.Stat(ovmfCode); err != nil {
-		t.Skip("OVMF firmware not available; skipping EFI boot-entry test")
+		failOrSkipUnsupportedHost(t, "OVMF firmware not available for EFI boot-entry test")
 	}
 
 	rawDisk := createTestDiskImage(t, 512)
@@ -768,11 +768,11 @@ func TestISOBootProvisioning(t *testing.T) {
 	requireProvisionTools(t)
 
 	if _, err := exec.LookPath("xorrisofs"); err != nil {
-		t.Skip("xorrisofs not available; skipping ISO provisioning test")
+		failOrSkipUnsupportedHost(t, "xorrisofs not available for ISO provisioning test")
 	}
 	if _, err := exec.LookPath("isolinux"); err != nil {
 		if _, err := os.Stat("/usr/lib/ISOLINUX/isolinux.bin"); err != nil {
-			t.Skip("isolinux not available; skipping ISO provisioning test")
+			failOrSkipUnsupportedHost(t, "isolinux not available for ISO provisioning test")
 		}
 	}
 
