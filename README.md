@@ -115,7 +115,7 @@ cross-compilation hosts for the Go binary.
 | Scope | Current CI proof |
 |-------|------------------|
 | Go binary | `linux/amd64` and `linux/arm64` build jobs |
-| Initramfs artifacts | `linux/amd64` default, slim, micro, and GoBGP build-flavour jobs |
+| Initramfs artifacts | `linux/amd64` default, slim, micro, and GoBGP build-flavor jobs |
 | Boot/provisioning behavior | x86_64 KVM/QEMU jobs on Ubuntu GitHub runners |
 | Network integration | ContainerLab and vrnetlab jobs on privileged Linux runners |
 | Network persistence renderers | Unit tests for Ubuntu/netplan, RHEL/NetworkManager, and Flatcar/systemd-networkd writers |
@@ -143,10 +143,10 @@ make dockerx86
 ```
 
 To emit a local bootable artifact instead of loading a Docker image, use one of
-the build-flavour targets below, for example `make gobgp` or `make iso`.
-These Docker targets compile BOOTy and package BusyBox, LVM2, FRR or GoBGP,
-disk tools, firmware tools, and kernel modules for common server NICs into a
-bootable initramfs or ISO.
+the build-flavor targets below, for example `make gobgp` or `make iso`. These
+Docker targets compile BOOTy and assemble a bootable initramfs or ISO; the
+included networking stack, disk tools, firmware tools, and kernel modules vary
+by flavor.
 
 To extract the initramfs to the local filesystem:
 
