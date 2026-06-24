@@ -23,6 +23,26 @@ OUTPUT_DIR="${1:-${SCRIPT_DIR}/images}"
 IMAGE_RAW="${OUTPUT_DIR}/test.img"
 IMAGE_GZ="${OUTPUT_DIR}/test.img.gz"
 IMAGE_SIZE_MB=256
+LOOP_DEV=""
+MOUNT_DIR=""
+
+cleanup() {
+    local status=$?
+
+    if [ -n "${MOUNT_DIR}" ]; then
+        umount "${MOUNT_DIR}/boot/efi" 2>/dev/null || true
+        umount "${MOUNT_DIR}" 2>/dev/null || true
+        rmdir "${MOUNT_DIR}" 2>/dev/null || true
+    fi
+
+    if [ -n "${LOOP_DEV}" ]; then
+        losetup -d "${LOOP_DEV}" 2>/dev/null || true
+    fi
+
+    exit "${status}"
+}
+
+trap cleanup EXIT
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -42,7 +62,7 @@ LOOP_DEV=$(losetup --find --show --partscan "${IMAGE_RAW}")
 echo "    Loop device: ${LOOP_DEV}"
 
 # Wait for partition devices to appear.
-for i in $(seq 1 30); do
+for _ in $(seq 1 30); do
     if [ -b "${LOOP_DEV}p2" ]; then
         break
     fi
@@ -52,7 +72,6 @@ done
 
 if [ ! -b "${LOOP_DEV}p1" ] || [ ! -b "${LOOP_DEV}p2" ]; then
     echo "ERROR: partition devices not found (${LOOP_DEV}p1, ${LOOP_DEV}p2)"
-    losetup -d "${LOOP_DEV}"
     exit 1
 fi
 
@@ -92,9 +111,11 @@ umount "${MOUNT_DIR}/boot/efi"
 
 umount "${MOUNT_DIR}"
 rmdir "${MOUNT_DIR}"
+MOUNT_DIR=""
 
 echo "==> Detaching loop device"
 losetup -d "${LOOP_DEV}"
+LOOP_DEV=""
 
 echo "==> Compressing image with gzip"
 gzip -f -k "${IMAGE_RAW}"
