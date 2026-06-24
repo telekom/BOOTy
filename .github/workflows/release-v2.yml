@@ -190,7 +190,7 @@ jobs:
 
   container:
     name: Container Image (${{ matrix.flavor }}/${{ matrix.arch }})
-    needs: build
+    needs: [build, scan]
     strategy:
       matrix:
         include:
@@ -329,7 +329,7 @@ jobs:
 
   iso-oci:
     name: ISO OCI (${{ matrix.flavor }})
-    needs: iso
+    needs: [iso, scan]
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -426,7 +426,7 @@ jobs:
 
   oci-artifacts:
     name: Publish OCI Artifacts (${{ matrix.arch }})
-    needs: [build, sbom, sign]
+    needs: [build, sbom, sign, scan]
     runs-on: ubuntu-latest
     strategy:
       matrix:
