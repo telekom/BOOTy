@@ -190,10 +190,13 @@ func TestProvisionVerifyAndBoot(t *testing.T) {
 	// GRUB kernel params check.
 	grubCfg := filepath.Join(rootMount, "etc/default/grub.d/10-caprf-kernel-params.cfg")
 	if data, err := os.ReadFile(grubCfg); err == nil {
-		for _, param := range []string{"quiet", "audit=0", "ds=nocloud"} {
+		for _, param := range []string{"quiet", "audit=0"} {
 			if !strings.Contains(string(data), param) {
 				t.Errorf("GRUB config missing %q", param)
 			}
+		}
+		if strings.Contains(string(data), "ds=nocloud") {
+			t.Error("GRUB config should not force NoCloud when cloud-init is disabled")
 		}
 	}
 

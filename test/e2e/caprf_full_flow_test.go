@@ -766,6 +766,7 @@ func TestConfiguratorFileOperationsE2E(t *testing.T) {
 			FailureDomain:     "dc1-az2",
 			Region:            "eu-west",
 			ExtraKernelParams: "audit=0 quiet",
+			CloudInit:         config.CloudInitConfig{Enabled: true},
 		},
 		Network: config.NetworkConfig{
 			DNSResolvers: "8.8.8.8,1.1.1.1",
