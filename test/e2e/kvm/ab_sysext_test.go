@@ -193,6 +193,7 @@ func TestFlatcarLikeUSRASourceCanProvisionSystemABVM(t *testing.T) {
 		"AB_BOOT_SIZE_MB":      "64",
 		"AB_ROOT_SIZE_MB":      "768",
 		"AB_STATE_SIZE_MB":     "64",
+		"CLOUDINIT_ENABLED":    "true",
 	})
 
 	output := runQEMUNetworkMode(t, findKernel(t), initramfs, targetDisk, 7*time.Minute)
@@ -204,6 +205,38 @@ func TestFlatcarLikeUSRASourceCanProvisionSystemABVM(t *testing.T) {
 	hostname := readProvisionedFile(t, rootMount, "etc/hostname")
 	if !strings.Contains(hostname, "flatcar-usra-system-ab") {
 		t.Fatalf("hostname not written from Flatcar-like USR-A source: %q", strings.TrimSpace(hostname))
+	}
+	fstab := readProvisionedFile(t, rootMount, "etc/fstab")
+	for _, want := range []string{
+		"PARTLABEL=BOOTY-ROOT-A\t/\text4\tro\t0\t1",
+		"PARTLABEL=BOOTY-DATA\t/var\text4",
+	} {
+		if !strings.Contains(fstab, want) {
+			t.Fatalf("Flatcar-like system-ab fstab missing %q:\n%s", want, fstab)
+		}
+	}
+	grubDefaults := readProvisionedFile(t, rootMount, "etc/default/grub.d/10-caprf-kernel-params.cfg")
+	if !strings.Contains(grubDefaults, "root=PARTLABEL=BOOTY-ROOT-A ro") {
+		t.Fatalf("Flatcar-like system-ab GRUB defaults did not pin read-only slot A:\n%s", grubDefaults)
+	}
+	slotState := readProvisionedFile(t, rootMount, "etc/booty/ab-slot.env")
+	for _, want := range []string{
+		"BOOTY_AB_SCHEME=system-ab",
+		"BOOTY_AB_TARGET_SLOT=a",
+		"BOOTY_AB_BOOTED_SLOT=a",
+		"BOOTY_AB_ROOT_PARTITION=/dev/vda2",
+	} {
+		if !strings.Contains(slotState, want) {
+			t.Fatalf("Flatcar-like system-ab slot state missing %q:\n%s", want, slotState)
+		}
+	}
+	cleanup()
+
+	dataMount, dataCleanup := mountQcow2Partition(t, targetDisk, 4)
+	defer dataCleanup()
+	meta := readProvisionedFile(t, dataMount, "lib/cloud/seed/nocloud/meta-data")
+	if !strings.Contains(meta, "flatcar-usra-system-ab") {
+		t.Fatalf("Flatcar-like system-ab shared /var missing cloud-init seed:\n%s", meta)
 	}
 }
 
