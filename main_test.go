@@ -138,6 +138,7 @@ func TestTryKexecSkipsWhenSecureBootReEnableRequested(t *testing.T) {
 func TestSetupNetworkModeExplicitGoBGPFailsClosed(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Network.Mode = "gobgp"
+	cfg.Network.BGP.UnderlayAF = "invalid"
 
 	mode, err := setupNetworkMode(context.Background(), cfg)
 	if err == nil {
