@@ -19,22 +19,22 @@ import (
 
 const testEFIFallbackPayload = "BOOTy KVM e2e EFI fallback\n"
 
-// requireProvisionTools fails the test if essential provisioning tools are missing.
+// requireProvisionTools requires essential provisioning tools.
 func requireProvisionTools(t *testing.T) {
 	t.Helper()
 	for _, tool := range []string{"sgdisk", "sfdisk", "mkfs.ext4", "mkfs.vfat", "qemu-img", "losetup", "dd", "mount", "umount"} {
 		if _, err := exec.LookPath(tool); err != nil {
-			t.Fatalf("%s not available", tool)
+			failOrSkipUnsupportedHost(t, "%s not available for KVM provisioning test", tool)
 		}
 	}
 }
 
-// requireDiskInspectTools fails if tools needed for post-provision inspection are missing.
+// requireDiskInspectTools requires tools needed for post-provision inspection.
 func requireDiskInspectTools(t *testing.T) {
 	t.Helper()
 	for _, tool := range []string{"qemu-nbd", "partprobe"} {
 		if _, err := exec.LookPath(tool); err != nil {
-			t.Fatalf("%s not available", tool)
+			failOrSkipUnsupportedHost(t, "%s not available for KVM disk-inspection test", tool)
 		}
 	}
 }

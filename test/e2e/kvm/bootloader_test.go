@@ -26,7 +26,7 @@ func TestUEFIBootPathSmoke(t *testing.T) {
 	ovmfVars := envOrDefault("OVMF_VARS", "")
 
 	if _, err := os.Stat(ovmf); err != nil {
-		t.Fatalf("OVMF firmware not found at %s", ovmf)
+		failOrSkipUnsupportedHost(t, "OVMF firmware not found at %s for UEFI boot-path smoke", ovmf)
 	}
 
 	args := []string{
