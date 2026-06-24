@@ -211,6 +211,23 @@ func redactAttr(a slog.Attr) slog.Attr {
 	return a
 }
 
+func redactAttrs(attrs []slog.Attr) []slog.Attr {
+	redacted := make([]slog.Attr, len(attrs))
+	for i, attr := range attrs {
+		redacted[i] = redactAttr(attr)
+	}
+	return redacted
+}
+
+func redactRecord(r slog.Record) slog.Record {
+	redacted := slog.NewRecord(r.Time, r.Level, r.Message, r.PC)
+	r.Attrs(func(attr slog.Attr) bool {
+		redacted.AddAttrs(redactAttr(attr))
+		return true
+	})
+	return redacted
+}
+
 // Enabled reports whether the handler handles records at the given level.
 func (h *RemoteHandler) Enabled(_ context.Context, level slog.Level) bool {
 	return level >= h.level.Level()
@@ -223,7 +240,8 @@ func (h *RemoteHandler) DroppedCount() int64 {
 
 // Handle sends the log record to both the inner handler and the remote buffer.
 func (h *RemoteHandler) Handle(ctx context.Context, r slog.Record) error { //nolint:gocritic // slog.Handler interface requires value receiver
-	if err := h.inner.Handle(ctx, r); err != nil {
+	redactedRecord := redactRecord(r)
+	if err := h.inner.Handle(ctx, redactedRecord); err != nil {
 		return err //nolint:wrapcheck // slog.Handler.Handle must return unwrapped errors
 	}
 
@@ -246,8 +264,7 @@ func (h *RemoteHandler) Handle(ctx context.Context, r slog.Record) error { //nol
 		sb.WriteString(a.Value.String())
 	}
 
-	r.Attrs(func(a slog.Attr) bool {
-		a = redactAttr(a)
+	redactedRecord.Attrs(func(a slog.Attr) bool {
 		sb.WriteString(" ")
 		sb.WriteString(prefix)
 		sb.WriteString(a.Key)
@@ -296,12 +313,13 @@ func (h *RemoteHandler) warnViaInner(msg string, attrs ...slog.Attr) {
 
 // WithAttrs returns a new handler with the given attributes.
 func (h *RemoteHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	redactedAttrs := redactAttrs(attrs)
 	return &RemoteHandler{
 		client:   h.client,
-		inner:    h.inner.WithAttrs(attrs),
+		inner:    h.inner.WithAttrs(redactedAttrs),
 		level:    h.level,
 		buf:      h.buf,
-		attrs:    append(append([]slog.Attr{}, h.attrs...), attrs...),
+		attrs:    append(append([]slog.Attr{}, h.attrs...), redactedAttrs...),
 		groups:   h.groups,
 		done:     h.done,
 		once:     h.once,
