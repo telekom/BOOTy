@@ -17,7 +17,7 @@ import (
 //     "standby", "dry-run", "check"
 //   - Provision.Image.Mode: "whole-disk", "partition", "ab"
 //   - Provision.Image.ChecksumType: "sha256", "sha512"
-//   - Provision.CloudInit.Datasource: "nocloud"
+//   - Provision.CloudInit.Datasource: "nocloud", "configdrive"
 //   - Provision.Disk.RAID[*]: valid level, unique non-empty name without /dev/ prefix,
 //     minimum device count per RAID level
 //   - Network.Mode: "gobgp", "frr", "static", "dhcp"
@@ -61,7 +61,7 @@ func (c *Config) Validate() error {
 			return validateEnumLower(c.Network.BGP.OverlayType, "network.bgp.overlayType", "evpn-vxlan", "l3vpn", "none")
 		},
 		func() string {
-			return validateEnumLower(c.Provision.CloudInit.Datasource, "provision.cloudInit.datasource", "nocloud")
+			return validateEnumLower(c.Provision.CloudInit.Datasource, "provision.cloudInit.datasource", "nocloud", "configdrive")
 		},
 		func() string {
 			return validateEnumUpper(c.Transport.TokenAlgorithm, "transport.tokenAlgorithm", "RS256", "ES256")

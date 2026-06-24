@@ -1663,13 +1663,9 @@ func (o *Orchestrator) injectCloudInit(_ context.Context) error {
 		return nil
 	}
 
-	// Validate datasource — only NoCloud is supported.
 	ds := strings.ToLower(strings.TrimSpace(o.cfg.Provision.CloudInit.Datasource))
 	if ds == "" {
 		ds = "nocloud"
-	}
-	if ds != "nocloud" {
-		return fmt.Errorf("unsupported cloud-init datasource %q, only \"nocloud\" is supported", ds)
 	}
 
 	// Split bond interfaces, trimming spaces and filtering empty entries.
@@ -1709,10 +1705,20 @@ func (o *Orchestrator) injectCloudInit(_ context.Context) error {
 
 	ud, md, nc := cloudinit.Generate(ciCfg)
 	rootPath := o.config.rootDir
-	if err := cloudinit.InjectNoCloud(rootPath, ud, md, nc); err != nil {
+
+	var err error
+	switch ds {
+	case "nocloud":
+		err = cloudinit.InjectNoCloud(rootPath, ud, md, nc)
+	case "configdrive":
+		err = cloudinit.InjectConfigDrive(rootPath, ud, md, nc)
+	default:
+		return fmt.Errorf("unsupported cloud-init datasource %q", ds)
+	}
+	if err != nil {
 		return fmt.Errorf("inject cloud-init: %w", err)
 	}
-	o.log.Info("cloud-init nocloud seed injected", "root", rootPath)
+	o.log.Info("cloud-init seed injected", "datasource", ds, "root", rootPath)
 	return nil
 }
 
