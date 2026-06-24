@@ -500,11 +500,11 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 			if frrErr := mgr.Setup(ctx, netCfg); frrErr != nil {
 				slog.Error("FRR fallback also failed", "error", frrErr)
 				mgr.DumpFRRState()
-				return dhcpFallback(ctx, netCfg), nil
+				return networkModeWithResolvers(netCfg, dhcpFallback(ctx, netCfg))
 			}
-			return mgr, nil
+			return networkModeWithResolvers(netCfg, mgr)
 		}
-		return stack, nil
+		return networkModeWithResolvers(netCfg, stack)
 	}
 
 	if netCfg.IsFRRMode() {
@@ -514,9 +514,9 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 		if err := mgr.Setup(ctx, netCfg); err != nil {
 			slog.Error("FRR network setup failed, falling back to DHCP", "error", err)
 			mgr.DumpFRRState()
-			return dhcpFallback(ctx, netCfg), nil
+			return networkModeWithResolvers(netCfg, dhcpFallback(ctx, netCfg))
 		}
-		return mgr, nil
+		return networkModeWithResolvers(netCfg, mgr)
 	}
 
 	if netCfg.IsStaticMode() {
@@ -524,13 +524,20 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 		mode := &network.StaticMode{}
 		if err := mode.Setup(ctx, netCfg); err != nil {
 			slog.Error("static network setup failed, falling back to DHCP", "error", err)
-			return dhcpFallback(ctx, netCfg), nil
+			return networkModeWithResolvers(netCfg, dhcpFallback(ctx, netCfg))
 		}
-		return mode, nil
+		return networkModeWithResolvers(netCfg, mode)
 	}
 
 	slog.Info("using DHCP network mode")
-	return dhcpFallback(ctx, netCfg), nil
+	return networkModeWithResolvers(netCfg, dhcpFallback(ctx, netCfg))
+}
+
+func networkModeWithResolvers(netCfg *network.Config, mode network.Mode) (network.Mode, error) {
+	if err := network.ConfigureResolvers(netCfg.DNSResolvers); err != nil {
+		return nil, fmt.Errorf("configure initramfs DNS: %w", err)
+	}
+	return mode, nil
 }
 
 // dhcpFallback creates a DHCP mode and attempts setup.

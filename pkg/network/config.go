@@ -4,10 +4,14 @@ package network
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 )
+
+var resolvConfPath = "/etc/resolv.conf"
 
 // Mode configures network connectivity in the ramdisk.
 type Mode interface {
@@ -117,6 +121,45 @@ func (c *Config) ApplyDefaults() {
 	}
 	// BFD is opt-in: only enabled when bfd_transmit_ms / bfd_receive_ms
 	// are explicitly set via environment variables.
+}
+
+// ConfigureResolvers writes DNS resolvers for the active initramfs network.
+func ConfigureResolvers(resolvers string) error {
+	lines := resolverLines(resolvers)
+	if len(lines) == 0 {
+		return nil
+	}
+
+	dir := filepath.Dir(resolvConfPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create resolver directory %s: %w", dir, err)
+	}
+
+	if info, err := os.Lstat(resolvConfPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		if err := os.Remove(resolvConfPath); err != nil {
+			return fmt.Errorf("replace resolver symlink %s: %w", resolvConfPath, err)
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("stat resolver file %s: %w", resolvConfPath, err)
+	}
+
+	content := strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile(resolvConfPath, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("write resolver file %s: %w", resolvConfPath, err)
+	}
+	return nil
+}
+
+func resolverLines(resolvers string) []string {
+	fields := strings.Split(resolvers, ",")
+	lines := make([]string, 0, len(fields))
+	for _, resolver := range fields {
+		resolver = strings.TrimSpace(resolver)
+		if resolver != "" {
+			lines = append(lines, "nameserver "+resolver)
+		}
+	}
+	return lines
 }
 
 // IsFRRMode returns true if the config has enough parameters for FRR/EVPN.
