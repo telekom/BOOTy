@@ -477,6 +477,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 		slog.Info("using GoBGP/EVPN network mode", "asn", cfg.Network.BGP.ASN)
 		stack, err := setupGoBGPStack(ctx, netCfg)
 		if err != nil {
+			slog.Error("gobgp network setup failed", "error", err)
 			return nil, fmt.Errorf("gobgp network setup: %w", err)
 		}
 		return networkModeWithResolvers(netCfg, stack)
