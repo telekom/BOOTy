@@ -322,7 +322,8 @@ func TestBootStandbyEntersStandbyLoop(t *testing.T) {
 		time.Sleep(2 * time.Second)
 	}
 
-	t.Skip("standby loop marker not observed quickly; skipping to avoid CI timeout in slow environments")
+	logs := getBootyLogs(t, standbyContainer)
+	t.Fatalf("standby loop marker not observed within 45s\nFull logs:\n%s", logs)
 }
 
 // --- Log content validation ---
@@ -423,10 +424,9 @@ func TestBootNginxAccessLogShowsImageRequest(t *testing.T) {
 	if !ok {
 		if strings.Contains(out, "/images/") {
 			t.Logf("Nginx received image directory request through EVPN:\n%s", out)
-			return
 		}
 		t.Logf("Nginx access log:\n%s", out)
-		t.Skip("nginx did not receive /images/test.img.gz in time; image index reachability is validated by other boot tests")
+		t.Fatal("nginx did not receive /images/test.img.gz in time")
 	}
 	t.Logf("Nginx received image request through EVPN:\n%s", out)
 }
@@ -536,56 +536,9 @@ func TestBootStandbyHeartbeatsSentToCAPRF(t *testing.T) {
 			return
 		}
 		t.Logf("CAPRF access log:\n%s", out)
-		t.Skip("CAPRF mock did not receive /status/heartbeat in time")
+		t.Fatal("CAPRF mock did not receive /status/heartbeat in time")
 	}
 	t.Log("CAPRF mock received heartbeat from standby node through EVPN")
-}
-
-// --- Initramfs module verification ---
-
-// requiredModules lists kernel module names that must be
-// present in the /modules/ directory of every BOOTy container. These are
-// critical for storage, filesystems, and basic networking. If the Dockerfile
-// module copy loop breaks (e.g. shell parsing), this test catches it.
-var requiredModules = []string{
-	"ext4",          // filesystem
-	"xfs",           // filesystem
-	"fat",           // FAT core used by vfat
-	"vfat",          // ESP / EFI partition
-	"nls_cp437",     // default FAT codepage support
-	"nls_iso8859-1", // default FAT iocharset support
-	"scsi_mod",      // SCSI subsystem
-	"sd_mod",        // SCSI disk driver
-	"virtio_blk",    // virtio block storage (QEMU)
-	"virtio_scsi",   // virtio SCSI controller
-	"virtio_pci",    // PCI virtio transport
-	"virtio_net",    // virtio NIC
-	"vxlan",         // VXLAN overlay
-}
-
-func TestBootModulesPresent(t *testing.T) {
-	requireBootLab(t)
-
-	// List kernel module files shipped in the initramfs.
-	// ContainerLab containers use booty-test.Dockerfile (no /modules/ dir);
-	// only the real initramfs (KVM/vrnetlab) has /modules/.
-	out, err := bootDockerExec(t, provisionContainer, "ls", "/modules/")
-	if err != nil {
-		if strings.Contains(out, "No such file or directory") {
-			t.Skip("/modules/ not present in container image — module validation covered by KVM and vrnetlab tests")
-		}
-		t.Fatalf("cannot list /modules/: %v\n%s", err, out)
-	}
-
-	modules := out
-	t.Logf("Found modules in /modules/: %d files", len(strings.Split(strings.TrimSpace(modules), "\n")))
-
-	for _, mod := range requiredModules {
-		// Module files are named like ext4.ko, ext4.ko.zst, ext4.ko.xz, etc.
-		if !strings.Contains(modules, mod+".ko") {
-			t.Errorf("critical module %q not found in /modules/ — Dockerfile module copy may be broken", mod)
-		}
-	}
 }
 
 // --- Unexpected ERROR detection ---
