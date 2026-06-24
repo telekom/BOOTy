@@ -151,11 +151,11 @@ func TestProvisionVerifyKubeletConfig(t *testing.T) {
 
 // --- Helpers ---
 
-// requireRoot fails if not running as root.
+// requireRoot skips if not running as root.
 func requireRoot(t *testing.T) {
 	t.Helper()
 	if os.Getuid() != 0 {
-		t.Fatal("requires root")
+		t.Skip("requires root; skipping KVM provisioning test")
 	}
 }
 

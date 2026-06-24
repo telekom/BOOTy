@@ -17,7 +17,7 @@ const bootyStartMarker = "starting BOOTy"
 func qemuAvailable(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("qemu-system-x86_64"); err != nil {
-		t.Fatal("qemu-system-x86_64 not available")
+		t.Skip("qemu-system-x86_64 not available; skipping KVM/QEMU e2e test")
 	}
 }
 
