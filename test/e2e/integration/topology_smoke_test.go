@@ -100,20 +100,34 @@ func TestContainerLabTopologySmoke(t *testing.T) {
 
 	// Retry topology checks to allow services to settle after clab deploy.
 	for _, check := range spec.checks {
-		var cmdOut string
-		var cmdErr error
-		for attempt := 0; attempt < 5; attempt++ {
-			cmdOut, cmdErr = dockerExecRaw(t, check.container, check.args...)
-			if cmdErr == nil {
-				break
+		runTopologyCheckWithRetry(t, check)
+	}
+}
+
+func runTopologyCheckWithRetry(t *testing.T, check topologyCheck) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	var cmdOut string
+	var cmdErr error
+	for {
+		cmdOut, cmdErr = dockerExecRawContext(ctx, t, check.container, check.args...)
+		if cmdErr == nil && (check.expectContain == "" || strings.Contains(cmdOut, check.expectContain)) {
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			if cmdErr != nil {
+				t.Fatalf("topology check failed on %s after retries: %v\n%s", check.container, cmdErr, cmdOut)
 			}
-			time.Sleep(2 * time.Second)
-		}
-		if cmdErr != nil {
-			t.Fatalf("topology check failed on %s after retries: %v\n%s", check.container, cmdErr, cmdOut)
-		}
-		if check.expectContain != "" && !strings.Contains(cmdOut, check.expectContain) {
-			t.Fatalf("topology check on %s: output missing %q\n%s", check.container, check.expectContain, cmdOut)
+			t.Fatalf("topology check on %s: output missing %q after retries\n%s",
+				check.container, check.expectContain, cmdOut)
+		case <-ticker.C:
 		}
 	}
 }

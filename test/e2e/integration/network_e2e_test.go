@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"context"
 	"os/exec"
 	"strings"
 	"testing"
@@ -58,8 +59,13 @@ func wgetPostFromClient(t *testing.T, url string) int {
 // dockerExecRaw runs docker exec and returns stdout+stderr and error.
 func dockerExecRaw(t *testing.T, container string, args ...string) (string, error) {
 	t.Helper()
+	return dockerExecRawContext(context.Background(), t, container, args...)
+}
+
+func dockerExecRawContext(ctx context.Context, t *testing.T, container string, args ...string) (string, error) {
+	t.Helper()
 	cmdArgs := append([]string{"exec", container}, args...)
-	out, err := exec.Command("docker", cmdArgs...).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "docker", cmdArgs...).CombinedOutput()
 	return string(out), err
 }
 
