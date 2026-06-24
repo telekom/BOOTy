@@ -90,6 +90,12 @@ jobs:
             test_regex: TestSystemABPreserveExistingKeepsSharedVarVM
             privileged: true
             setup: ""
+          - scenario: flatcar-usra-system-ab
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: TestFlatcarLikeUSRASourceCanProvisionSystemABVM
+            privileged: true
+            setup: ""
           - scenario: crash-artifacts
             qemu_extra: ""
             test_tag: e2e
