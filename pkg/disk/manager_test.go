@@ -668,8 +668,12 @@ func TestResizeFilesystemBothFail(t *testing.T) {
 	cmd.setResult("resize2fs /dev/sda2", nil, fmt.Errorf("not ext4"))
 	cmd.setResult("xfs_growfs /newroot", nil, fmt.Errorf("not xfs"))
 	cmd.setResult("btrfs filesystem", nil, fmt.Errorf("not btrfs"))
-	if err := mgr.ResizeFilesystem(context.Background(), "/dev/sda2", "/newroot"); err == nil {
+	err := mgr.ResizeFilesystem(context.Background(), "/dev/sda2", "/newroot")
+	if err == nil {
 		t.Fatal("expected error when all resize methods fail")
+	}
+	if !strings.Contains(err.Error(), "/newroot") {
+		t.Fatalf("error should include mountpoint, got %v", err)
 	}
 }
 

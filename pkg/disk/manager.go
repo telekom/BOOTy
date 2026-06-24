@@ -724,7 +724,7 @@ func (m *Manager) ResizeFilesystem(ctx context.Context, device, mountpoint strin
 			slog.Debug("xfs_growfs failed, trying btrfs resize", "output", string(out))
 			// Fall back to btrfs filesystem resize.
 			if out, err := m.cmd.Run(ctx, "btrfs", "filesystem", "resize", "max", mountpoint); err != nil {
-				return fmt.Errorf("resize filesystem %s: %s: %w", device, string(out), err)
+				return fmt.Errorf("resize filesystem %s at %s: %s: %w", device, mountpoint, string(out), err)
 			}
 		}
 	}
