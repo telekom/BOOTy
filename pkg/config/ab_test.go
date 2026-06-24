@@ -285,6 +285,24 @@ func TestValidateRejectsABPreserveWithDisableKexec(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsABPreserveWithSecureBootReEnable(t *testing.T) {
+	cfg := &Config{}
+	cfg.Provision.Image.Mode = ImageModeAB
+	cfg.Provision.SecureBoot.ReEnable = true
+	cfg.Provision.AB.PreserveExisting = true
+	cfg.Provision.AB.ActiveSlot = ABSlotA
+	cfg.Provision.AB.TargetSlot = ABTargetInactive
+	cfg.Provision.AB.RootSizeMB = 8192
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected secure boot re-enable validation error")
+	}
+	if got := err.Error(); !strings.Contains(got, "secureBoot.reEnable is incompatible") {
+		t.Fatalf("Validate() error = %q", got)
+	}
+}
+
 func TestValidateRejectsABSourceRootSelectorConflict(t *testing.T) {
 	cfg := &Config{}
 	cfg.Provision.Image.Mode = ImageModeAB

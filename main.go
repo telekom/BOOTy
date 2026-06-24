@@ -727,11 +727,17 @@ func detectIPMI(netCfg *network.Config) {
 
 // tryKexec attempts to kexec into the installed kernel.
 // Returns false on failure so the caller can decide whether a normal reboot is safe.
-// Skips kexec when disabled by config toggle or when firmware was changed during
-// provisioning (e.g. Mellanox SR-IOV), since firmware reinit requires a hard reboot.
+// Skips kexec when disabled by config toggle, when firmware was changed during
+// provisioning (e.g. Mellanox SR-IOV), or when Secure Boot must be re-enabled,
+// since those paths require a firmware-enforced reboot.
 func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) bool {
 	if cfg.Provision.DisableKexec {
 		slog.Info("kexec disabled by configuration, skipping")
+		return false
+	}
+
+	if cfg.Provision.SecureBoot.ReEnable {
+		slog.Info("secure boot re-enable requested, hard reboot required; skipping kexec")
 		return false
 	}
 

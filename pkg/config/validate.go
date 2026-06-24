@@ -89,6 +89,9 @@ func (c *Config) Validate() error {
 	if err := validateABConfig(c.Provision.Image.Mode, c.Provision.DisableKexec, &c.Provision.AB); err != nil {
 		errs = append(errs, err.Error())
 	}
+	if err := validateSecureBootConfig(c.Provision.Image.Mode, &c.Provision.SecureBoot, &c.Provision.AB); err != nil {
+		errs = append(errs, err.Error())
+	}
 
 	if len(errs) > 0 {
 		return fmt.Errorf("config validation: %s", strings.Join(errs, "; "))
@@ -136,6 +139,16 @@ func validateABConfig(imageMode string, disableKexec bool, cfg *ABConfig) error 
 
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func validateSecureBootConfig(imageMode string, secureBoot *SecureBootConfig, ab *ABConfig) error {
+	if secureBoot == nil || ab == nil || !secureBoot.ReEnable {
+		return nil
+	}
+	if strings.EqualFold(strings.TrimSpace(imageMode), ImageModeAB) && ab.PreserveExisting {
+		return fmt.Errorf("provision.secureBoot.reEnable is incompatible with A/B preserveExisting upgrades because final reboot must not kexec")
 	}
 	return nil
 }
