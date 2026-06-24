@@ -840,8 +840,11 @@ func TestDeprovisionHardScopesWipeToProvisionDiskDevice(t *testing.T) {
 	o, cmd := newTestOrchestratorWithCommander(t, cfg, provider)
 	withMockBlockDevices(t, "/dev/sda")
 
-	if err := o.Deprovision(context.Background()); err != nil {
-		t.Fatalf("Deprovision: %v", err)
+	if err := o.selectDeprovisionDisk(context.Background()); err != nil {
+		t.Fatalf("selectDeprovisionDisk: %v", err)
+	}
+	if err := o.wipeOrSecureEraseDisks(context.Background()); err != nil {
+		t.Fatalf("wipeOrSecureEraseDisks: %v", err)
 	}
 
 	wipes := wipeCommandCalls(cmd.calls)
@@ -867,8 +870,11 @@ func TestDeprovisionHardPrefersDeprovisionDevice(t *testing.T) {
 	o, cmd := newTestOrchestratorWithCommander(t, cfg, provider)
 	withMockBlockDevices(t, "/dev/sda", "/dev/sdb")
 
-	if err := o.Deprovision(context.Background()); err != nil {
-		t.Fatalf("Deprovision: %v", err)
+	if err := o.selectDeprovisionDisk(context.Background()); err != nil {
+		t.Fatalf("selectDeprovisionDisk: %v", err)
+	}
+	if err := o.wipeOrSecureEraseDisks(context.Background()); err != nil {
+		t.Fatalf("wipeOrSecureEraseDisks: %v", err)
 	}
 
 	wipes := wipeCommandCalls(cmd.calls)
@@ -915,7 +921,7 @@ func TestDeprovisionHardRejectsInvalidConfiguredDevice(t *testing.T) {
 	cfg.Provision.Disk.Device = "sda"
 	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
 
-	err := o.Deprovision(context.Background())
+	err := o.selectDeprovisionDisk(context.Background())
 	if err == nil {
 		t.Fatal("expected invalid device error")
 	}
@@ -938,7 +944,7 @@ func TestDeprovisionHardRejectsCharacterConfiguredDevice(t *testing.T) {
 		return nil, os.ErrNotExist
 	})
 
-	err := o.Deprovision(context.Background())
+	err := o.selectDeprovisionDisk(context.Background())
 	if err == nil {
 		t.Fatal("expected character device error")
 	}
