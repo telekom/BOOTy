@@ -971,6 +971,7 @@ func applyUint32Var(cfg *config.MachineConfig, key, value string) (bool, error) 
 		"bgp_hold":        &cfg.Network.BGP.Hold,
 		"bfd_transmit_ms": &cfg.Network.BGP.BFDTransmitMS,
 		"bfd_receive_ms":  &cfg.Network.BGP.BFDReceiveMS,
+		"BGP_REMOTE_ASN":  &cfg.Network.BGP.RemoteASN,
 		"bgp_remote_asn":  &cfg.Network.BGP.RemoteASN,
 	}
 

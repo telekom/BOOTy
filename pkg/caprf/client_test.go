@@ -838,7 +838,7 @@ func TestParseVarsBGPPeering(t *testing.T) {
 	input := `BGP_PEER_MODE="dual"
 BGP_INTERFACES="eth1,eth2"
 BGP_NEIGHBORS="10.0.0.1,10.0.0.2"
-bgp_remote_asn="65100"
+BGP_REMOTE_ASN="65100"
 BGP_UNDERLAY_AF="ipv6"
 BGP_OVERLAY_TYPE="l3vpn"
 BGP_AUTH_PASSWORD="s3cr3t"
