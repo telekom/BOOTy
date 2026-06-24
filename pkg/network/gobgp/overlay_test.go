@@ -1133,6 +1133,32 @@ func mustRT4(t *testing.T, asn, vni uint32) *anypb.Any {
 	return a
 }
 
+func mustRTIPv4(t *testing.T, address string, localAdmin uint32) *anypb.Any {
+	t.Helper()
+	a, err := anypb.New(&apipb.IPv4AddressSpecificExtended{
+		IsTransitive: true,
+		SubType:      0x02,
+		Address:      address,
+		LocalAdmin:   localAdmin,
+	})
+	if err != nil {
+		t.Fatalf("marshal IPv4AddressSpecificExtended: %v", err)
+	}
+	return a
+}
+
+func mustRawRT(t *testing.T, typ uint32) *anypb.Any {
+	t.Helper()
+	a, err := anypb.New(&apipb.UnknownExtended{
+		Type:  typ,
+		Value: []byte{0x02, 0, 0, 0, 0, 0, 0},
+	})
+	if err != nil {
+		t.Fatalf("marshal UnknownExtended: %v", err)
+	}
+	return a
+}
+
 func TestMatchesLocalRT(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1203,6 +1229,34 @@ func TestMatchesLocalRT(t *testing.T) {
 			got := matchesLocalRT(tt.path, tt.localASN, tt.localVNI)
 			if got != tt.want {
 				t.Errorf("matchesLocalRT() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRouteTargetMatchStateDetectsForeignRouteTargets(t *testing.T) {
+	tests := []struct {
+		name string
+		path *apipb.Path
+	}{
+		{
+			name: "ipv4 address-specific RT",
+			path: mustPathWithRT(t, mustRTIPv4(t, "192.0.2.10", 4000)),
+		},
+		{
+			name: "raw unknown RT",
+			path: mustPathWithRT(t, mustRawRT(t, 0x01)),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			matches, hasRT := routeTargetMatchState(tt.path, 65000, 4000)
+			if matches {
+				t.Fatal("foreign route target matched local RT")
+			}
+			if !hasRT {
+				t.Fatal("foreign route target was treated as absent")
 			}
 		})
 	}
@@ -1367,7 +1421,7 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 		}
 	})
 
-	t.Run("withdrawal with non-matching RT is not skipped", func(t *testing.T) {
+	t.Run("withdrawal with non-matching RT is skipped", func(t *testing.T) {
 		mock := &mockFDB{}
 		overlay := newOverlay(mock)
 		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
@@ -1376,16 +1430,28 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 		if err != nil {
 			t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
 		}
-		// Withdrawals carry no RT in practice; we must not filter them on RT.
+		// RT-bearing withdrawals from foreign overlays must not remove local FDB state.
 		path := &apipb.Path{
 			IsWithdraw: true,
 			Nlri:       nlri,
 			Pattrs:     []*anypb.Any{extComm},
 		}
 		overlay.processRouteUpdate(path)
-		// Withdrawal must reach FDB dispatch regardless of RT mismatch.
+		if mock.linkName != "" {
+			t.Errorf("withdrawal with non-matching RT: unexpected FDB dispatch via LinkByName(%q)", mock.linkName)
+		}
+	})
+
+	t.Run("withdrawal without RT is not skipped", func(t *testing.T) {
+		mock := &mockFDB{}
+		overlay := newOverlay(mock)
+		path := &apipb.Path{
+			IsWithdraw: true,
+			Nlri:       nlri,
+		}
+		overlay.processRouteUpdate(path)
 		if mock.linkName == "" {
-			t.Error("withdrawal: expected FDB dispatch (LinkByName called) even with RT mismatch, but it was not")
+			t.Error("withdrawal without RT: expected FDB dispatch (LinkByName called), but it was not")
 		}
 	})
 }

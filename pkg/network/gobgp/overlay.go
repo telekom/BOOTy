@@ -667,9 +667,10 @@ func (o *OverlayTier) watchRoutes(ctx context.Context) {
 }
 
 // processRouteUpdate handles a single BGP path update by dispatching to the
-// appropriate handler based on NLRI type. Routes whose extended communities do
-// not carry a Route Target matching the local ASN+VNI are silently skipped so
-// that foreign-tenant routes are never installed into the kernel.
+// appropriate handler based on NLRI type. Add/update routes must carry a Route
+// Target matching the local ASN+VNI. Withdrawals with Route Target communities
+// must also match, while withdrawals without Route Targets are allowed so
+// MP_UNREACH updates can remove previously imported routes.
 func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 	withdraw := p.GetIsWithdraw()
 	action := "add"
@@ -682,16 +683,14 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 		return
 	}
 
-	if !p.GetIsWithdraw() {
-		importASN, importVNI, err := o.importRouteTarget()
-		if err != nil {
-			o.log.Debug("route update skipped: invalid configured import RT", "action", action, "type", nlri.GetTypeUrl(), "error", err)
-			return
-		}
-		if !matchesLocalRT(p, importASN, importVNI) {
-			o.log.Debug("route update skipped: RT mismatch", "action", action, "type", nlri.GetTypeUrl())
-			return
-		}
+	importASN, importVNI, err := o.importRouteTarget()
+	if err != nil {
+		o.log.Debug("route update skipped: invalid configured import RT", "action", action, "type", nlri.GetTypeUrl(), "error", err)
+		return
+	}
+	if !routeUpdateMatchesImportRT(p, importASN, importVNI) {
+		o.log.Debug("route update skipped: RT mismatch", "action", action, "type", nlri.GetTypeUrl())
+		return
 	}
 
 	msg, err := nlri.UnmarshalNew()
@@ -1024,6 +1023,19 @@ func buildType5PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32, vpnRT
 // for an ExtendedCommunitiesAttribute and checks each community entry against
 // the expected RT value (same logic as buildRouteTarget).
 func matchesLocalRT(path *apipb.Path, localASN, localVNI uint32) bool {
+	matches, _ := routeTargetMatchState(path, localASN, localVNI)
+	return matches
+}
+
+func routeUpdateMatchesImportRT(path *apipb.Path, localASN, localVNI uint32) bool {
+	matches, hasRouteTarget := routeTargetMatchState(path, localASN, localVNI)
+	if path.GetIsWithdraw() && !hasRouteTarget {
+		return true
+	}
+	return matches
+}
+
+func routeTargetMatchState(path *apipb.Path, localASN, localVNI uint32) (matches, hasRouteTarget bool) {
 	for _, attr := range path.GetPattrs() {
 		msg, err := attr.UnmarshalNew()
 		if err != nil {
@@ -1033,11 +1045,13 @@ func matchesLocalRT(path *apipb.Path, localASN, localVNI uint32) bool {
 		if !ok {
 			continue
 		}
-		if rtFoundInCommunities(extComm.GetCommunities(), localASN, localVNI) {
-			return true
+		rtMatches, rtPresent := rtFoundInCommunities(extComm.GetCommunities(), localASN, localVNI)
+		hasRouteTarget = hasRouteTarget || rtPresent
+		if rtMatches {
+			return true, true
 		}
 	}
-	return false
+	return false, hasRouteTarget
 }
 
 func (o *OverlayTier) importRouteTarget() (asn, vni uint32, err error) {
@@ -1053,17 +1067,52 @@ func (o *OverlayTier) importRouteTarget() (asn, vni uint32, err error) {
 
 // rtFoundInCommunities checks a slice of extended community Any values for a
 // Route Target matching localASN and localVNI.
-func rtFoundInCommunities(communities []*anypb.Any, localASN, localVNI uint32) bool {
+func rtFoundInCommunities(communities []*anypb.Any, localASN, localVNI uint32) (matches, hasRouteTarget bool) {
 	for _, c := range communities {
 		msg, err := c.UnmarshalNew()
 		if err != nil {
 			continue
 		}
+		if rtCommunityPresent(msg) {
+			hasRouteTarget = true
+		}
 		if rtCommunityMatches(msg, localASN, localVNI) {
-			return true
+			return true, true
 		}
 	}
+	return false, hasRouteTarget
+}
+
+func rtCommunityPresent(msg interface{}) bool {
+	const rtSubType = uint32(0x02)
+	switch v := msg.(type) {
+	case *apipb.TwoOctetAsSpecificExtended:
+		return v.GetSubType() == rtSubType
+	case *apipb.IPv4AddressSpecificExtended:
+		return v.GetSubType() == rtSubType
+	case *apipb.IPv6AddressSpecificExtended:
+		return v.GetSubType() == rtSubType
+	case *apipb.FourOctetAsSpecificExtended:
+		return v.GetSubType() == rtSubType
+	case *apipb.UnknownExtended:
+		return isRawRouteTargetType(v.GetType()) && rawExtendedSubType(v.GetValue()) == rtSubType
+	}
 	return false
+}
+
+func isRawRouteTargetType(t uint32) bool {
+	switch t {
+	case 0x00, 0x01, 0x02, 0x40, 0x41, 0x42:
+		return true
+	}
+	return false
+}
+
+func rawExtendedSubType(value []byte) uint32 {
+	if len(value) == 0 {
+		return 0
+	}
+	return uint32(value[0])
 }
 
 // rtCommunityMatches returns true if the proto message represents a Route
