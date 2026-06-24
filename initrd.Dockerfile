@@ -159,12 +159,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # "not found", silently dropping them from the initramfs.
 RUN mkdir -p /tool-libs && \
     ldd /sbin/mdadm /usr/sbin/wipefs /sbin/resize2fs /sbin/e2fsck \
-        /usr/sbin/mkfs.ext4 /usr/sbin/mkfs.vfat \
-        /usr/sbin/xfs_growfs /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk \
-        /sbin/partprobe /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
+        /usr/sbin/mkfs.ext4 /usr/sbin/mkfs.vfat /usr/sbin/mkfs.xfs \
+        /usr/sbin/xfs_growfs /usr/sbin/xfs_repair \
+        /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk \
+        /sbin/partprobe /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
         /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
         /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
-        /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk 2>/dev/null \
+        /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk \
+        /sbin/cryptsetup /usr/bin/ipmitool 2>/dev/null \
     | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
     | sort -u | while read -r lib; do \
         [ -n "$lib" ] && [ -f "$lib" ] && cp -L --parents "$lib" /tool-libs/ 2>/dev/null || true; \
@@ -175,13 +177,14 @@ RUN mkdir -p /tool-libs && \
 # Shared libs in /tool-libs are intentionally NOT stripped — that can corrupt them.
 RUN strip --strip-all \
     /sbin/mdadm /usr/sbin/wipefs /sbin/resize2fs /sbin/e2fsck \
-    /usr/sbin/mkfs.ext4 /usr/sbin/mkfs.vfat \
-    /usr/sbin/xfs_growfs /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk \
-    /sbin/partprobe /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
-    /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
-    /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
-    /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk \
-    /sbin/cryptsetup
+        /usr/sbin/mkfs.ext4 /usr/sbin/mkfs.vfat /usr/sbin/mkfs.xfs \
+        /usr/sbin/xfs_growfs /usr/sbin/xfs_repair \
+        /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk \
+        /sbin/partprobe /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
+        /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
+        /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
+        /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk \
+        /sbin/cryptsetup /usr/bin/ipmitool
 
 # Busybox static binary — sourced from Docker Hub for reliability and
 # Dependabot version tracking.  Eliminates the fragile busybox.net download
@@ -228,11 +231,14 @@ COPY --from=tools /sbin/resize2fs sbin/resize2fs
 COPY --from=tools /sbin/e2fsck sbin/e2fsck
 COPY --from=tools /usr/sbin/mkfs.ext4 sbin/mkfs.ext4
 COPY --from=tools /usr/sbin/mkfs.vfat sbin/mkfs.vfat
+COPY --from=tools /usr/sbin/mkfs.xfs sbin/mkfs.xfs
 COPY --from=tools /usr/sbin/xfs_growfs sbin/xfs_growfs
+COPY --from=tools /usr/sbin/xfs_repair sbin/xfs_repair
 COPY --from=tools /usr/bin/btrfs bin/btrfs
 COPY --from=tools /usr/sbin/parted bin/parted
 COPY --from=tools /usr/sbin/sgdisk bin/sgdisk
 COPY --from=tools /sbin/partprobe bin/partprobe
+COPY --from=tools /usr/sbin/kpartx bin/kpartx
 COPY --from=tools /usr/bin/efibootmgr bin/efibootmgr
 COPY --from=tools /usr/sbin/dmidecode bin/dmidecode
 COPY --from=tools /usr/sbin/ethtool bin/ethtool
@@ -281,7 +287,7 @@ RUN for b in \
         sbin/bgpd sbin/zebra sbin/bfdd bin/vtysh sbin/watchfrr \
         sbin/mdadm bin/wipefs sbin/resize2fs sbin/e2fsck \
         sbin/mkfs.ext4 sbin/mkfs.vfat \
-        bin/xfs_growfs bin/btrfs bin/parted bin/sgdisk bin/partprobe \
+        sbin/xfs_growfs sbin/xfs_repair sbin/mkfs.xfs bin/btrfs bin/parted bin/sgdisk bin/partprobe bin/kpartx \
         bin/efibootmgr bin/dmidecode bin/ethtool bin/curl bin/ip bin/bridge \
         bin/hdparm bin/nvme bin/mstconfig bin/mstflint bin/ipmitool \
         bin/lldpcli sbin/lldpd bin/dropbear bin/dropbearkey \
@@ -398,11 +404,14 @@ COPY --from=tools /sbin/resize2fs sbin/resize2fs
 COPY --from=tools /sbin/e2fsck sbin/e2fsck
 COPY --from=tools /usr/sbin/mkfs.ext4 sbin/mkfs.ext4
 COPY --from=tools /usr/sbin/mkfs.vfat sbin/mkfs.vfat
+COPY --from=tools /usr/sbin/mkfs.xfs sbin/mkfs.xfs
 COPY --from=tools /usr/sbin/xfs_growfs sbin/xfs_growfs
+COPY --from=tools /usr/sbin/xfs_repair sbin/xfs_repair
 COPY --from=tools /usr/bin/btrfs bin/btrfs
 COPY --from=tools /usr/sbin/parted bin/parted
 COPY --from=tools /usr/sbin/sgdisk bin/sgdisk
 COPY --from=tools /sbin/partprobe bin/partprobe
+COPY --from=tools /usr/sbin/kpartx bin/kpartx
 COPY --from=tools /usr/bin/efibootmgr bin/efibootmgr
 COPY --from=tools /usr/sbin/dmidecode bin/dmidecode
 COPY --from=tools /usr/sbin/ethtool bin/ethtool
@@ -446,7 +455,7 @@ COPY --from=kernel /modules/ modules/
 RUN for b in \
         sbin/mdadm bin/wipefs sbin/resize2fs sbin/e2fsck \
         sbin/mkfs.ext4 sbin/mkfs.vfat \
-        bin/xfs_growfs bin/btrfs bin/parted bin/sgdisk bin/partprobe \
+        sbin/xfs_growfs sbin/xfs_repair sbin/mkfs.xfs bin/btrfs bin/parted bin/sgdisk bin/partprobe bin/kpartx \
         bin/efibootmgr bin/dmidecode bin/ethtool bin/curl bin/ip bin/bridge \
         bin/hdparm bin/nvme bin/mstconfig bin/mstflint bin/ipmitool \
         bin/lldpcli sbin/lldpd bin/dropbear bin/dropbearkey bin/lsblk \
