@@ -79,7 +79,7 @@ func (o *Orchestrator) configuredDeprovisionDisk() (string, error) {
 		device string
 	}{
 		{name: "deprovision.device", device: o.cfg.Deprovision.Device},
-		{name: "provision.disk.device", device: o.cfg.Provision.Disk.Device},
+		{name: "provision.disk.device/DISK_DEVICE", device: o.cfg.Provision.Disk.Device},
 	} {
 		device := strings.TrimSpace(candidate.device)
 		if device == "" {
