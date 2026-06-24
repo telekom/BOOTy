@@ -461,9 +461,10 @@ are retried only when the step policy has `Transient: true`.
 **Checkpoint resume** — Enable with `BOOTY_RESUME=true`. On each step
 completion/failure the checkpoint is persisted to `/tmp/booty-checkpoint.json`.
 On restart, previously completed steps are skipped — except runtime-state steps
-(`setup-mellanox`, `detect-disk`, `parse-partitions`, `mount-shared-data`) which
-always re-execute to rebuild in-memory state (target disk path, partition info,
-shared data mount cleanup list).
+(`setup-mellanox`, `detect-disk`, `parse-partitions`, `mount-root`, `mount-boot`,
+`mount-shared-data`) which always re-execute to rebuild in-memory state and
+mount state (target disk path, partition info, target mounts, shared data mount
+cleanup list).
 
 ```bash
 # Enable checkpoint resume

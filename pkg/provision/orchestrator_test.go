@@ -1260,15 +1260,24 @@ func TestCheckpointResume_SkipsCompleted(t *testing.T) {
 }
 
 func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
-	// stateSteps (setup-mellanox, detect-disk, parse-partitions) must re-run
-	// even if marked complete because they rebuild runtime in-memory state.
+	// stateSteps must re-run even if marked complete because they rebuild
+	// runtime in-memory state and mount state after a restart.
 	dir := t.TempDir()
 	cpPath := dir + "/checkpoint.json"
 
 	cp := &Checkpoint{
-		CompletedSteps: []string{"setup-mellanox", "detect-disk", "parse-partitions", "stream-image", "configure-ssh"},
-		persist:        true,
-		path:           cpPath,
+		CompletedSteps: []string{
+			"setup-mellanox",
+			"detect-disk",
+			"parse-partitions",
+			"mount-root",
+			"mount-boot",
+			"mount-shared-data",
+			"stream-image",
+			"configure-ssh",
+		},
+		persist: true,
+		path:    cpPath,
 	}
 	if err := cp.Save(); err != nil {
 		t.Fatalf("save checkpoint: %v", err)
@@ -1286,6 +1295,9 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 		{"setup-mellanox", func(_ context.Context) error { ran = append(ran, "setup-mellanox"); return nil }},
 		{"detect-disk", func(_ context.Context) error { ran = append(ran, "detect-disk"); return nil }},
 		{"parse-partitions", func(_ context.Context) error { ran = append(ran, "parse-partitions"); return nil }},
+		{"mount-root", func(_ context.Context) error { ran = append(ran, "mount-root"); return nil }},
+		{"mount-boot", func(_ context.Context) error { ran = append(ran, "mount-boot"); return nil }},
+		{"mount-shared-data", func(_ context.Context) error { ran = append(ran, "mount-shared-data"); return nil }},
 		{"stream-image", func(_ context.Context) error { ran = append(ran, "stream-image"); return nil }},
 		{"configure-ssh", func(_ context.Context) error { ran = append(ran, "configure-ssh"); return nil }},
 	}
@@ -1300,12 +1312,19 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 		}
 	}
 
-	// setup-mellanox, detect-disk, and parse-partitions re-run (stateSteps);
-	// stream-image and configure-ssh skip (completed, non-state).
-	if len(ran) != 3 {
-		t.Errorf("expected 3 runs (setup-mellanox, detect-disk, parse-partitions), got %v", ran)
+	// stateSteps re-run; stream-image and configure-ssh skip because they are
+	// completed non-state steps.
+	if len(ran) != 6 {
+		t.Errorf("expected 6 state step runs, got %v", ran)
 	}
-	for _, name := range []string{"setup-mellanox", "detect-disk", "parse-partitions"} {
+	for _, name := range []string{
+		"setup-mellanox",
+		"detect-disk",
+		"parse-partitions",
+		"mount-root",
+		"mount-boot",
+		"mount-shared-data",
+	} {
 		found := false
 		for _, r := range ran {
 			if r == name {

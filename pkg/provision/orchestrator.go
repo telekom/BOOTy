@@ -173,6 +173,8 @@ func resumeStateSteps() map[string]struct{} {
 		"setup-mellanox":    {},
 		"detect-disk":       {},
 		"parse-partitions":  {},
+		"mount-root":        {},
+		"mount-boot":        {},
 		"mount-shared-data": {},
 	}
 }
