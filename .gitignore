@@ -5,6 +5,12 @@ init
 
 # Build artifacts
 images/*
+dist/
+booty.iso
+booty-gobgp.iso
+initramfs.cpio.gz
+initramfs.cpio.zst
+*.sha256
 coverage.out
 coverage.html
 
