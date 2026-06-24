@@ -32,7 +32,7 @@ func TestIsMountedPartialMatch(t *testing.T) {
 
 func TestDefaultMountsContainsExpected(t *testing.T) {
 	mounts := DefaultMounts()
-	expected := []string{"bin", "dev", "etc", "home", "mnt", "proc", "sys", "tmp", "usr"}
+	expected := []string{"bin", "dev", "etc", "home", "mnt", "proc", "run", "sys", "tmp", "usr"}
 	if len(mounts.Mount) != len(expected) {
 		t.Fatalf("expected %d mounts, got %d", len(expected), len(mounts.Mount))
 	}
@@ -49,6 +49,7 @@ func TestDefaultMountsContainsExpected(t *testing.T) {
 		"home": 0o755,
 		"mnt":  0o755,
 		"proc": 0o755,
+		"run":  0o755,
 		"sys":  0o755,
 		"tmp":  0o1777,
 		"usr":  0o755,

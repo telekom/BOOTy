@@ -88,7 +88,7 @@ func setupMountsAndDevices() {
 	m := realm.DefaultMounts()
 	d := realm.DefaultDevices()
 
-	for _, name := range []string{"dev", "proc", "tmp", "sys"} {
+	for _, name := range []string{"dev", "proc", "run", "tmp", "sys"} {
 		mt := m.GetMount(name)
 		mt.CreateMount = true
 		mt.EnableMount = true

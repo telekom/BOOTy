@@ -534,7 +534,7 @@ FROM debian:bookworm-slim AS micro-builder
 RUN apt-get update && apt-get install -y --no-install-recommends cpio ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
-RUN mkdir -p bin sbin dev proc sys tmp etc
+RUN mkdir -p bin sbin dev proc run sys tmp etc
 COPY --from=micro-dev /go/src/github.com/telekom/BOOTy/init .
 RUN mkdir -p etc/ssl/certs && cp /etc/ssl/certs/ca-certificates.crt etc/ssl/certs/
 

@@ -63,7 +63,7 @@ RUN curl -s https://deb.frrouting.org/frr/keys.gpg \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /initramfs
-RUN mkdir -p bin sbin dev proc sys etc tmp deploy lib/modules mnt \
+RUN mkdir -p bin sbin dev proc run sys etc tmp deploy lib/modules mnt \
     usr/lib/frr usr/bin etc/frr etc/pam.d var/run/frr lib && \
     echo 'root:x:0:0:root:/root:/bin/sh' > etc/passwd && \
     echo 'frr:x:101:104::/var/run/frr:/bin/sh' >> etc/passwd && \
