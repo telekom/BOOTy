@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -330,13 +331,52 @@ func (m *Manager) DumpFRRState() {
 	m.log.Warn("=== FRR STATE DUMP END ===")
 }
 
+type frrDirOwner struct {
+	uid int
+	gid int
+	ok  bool
+}
+
+var (
+	frrRuntimeDirs = []string{"/run/frr", "/var/run/frr", "/var/tmp/frr", "/var/lib/frr"}
+	lookupFRRUser  = defaultFRRDirOwner
+	chownFRRDir    = os.Chown
+)
+
+func defaultFRRDirOwner() frrDirOwner {
+	data, err := os.ReadFile("/etc/passwd")
+	if err != nil {
+		return frrDirOwner{}
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Split(line, ":")
+		if len(fields) < 4 || fields[0] != "frr" {
+			continue
+		}
+		uid, uidErr := strconv.Atoi(fields[2])
+		gid, gidErr := strconv.Atoi(fields[3])
+		if uidErr != nil || gidErr != nil {
+			return frrDirOwner{}
+		}
+		return frrDirOwner{uid: uid, gid: gid, ok: true}
+	}
+	return frrDirOwner{}
+}
+
 // ensureFRRDirs creates runtime directories that FRR daemons expect.
 // Without these, zebra cannot create its zserv.api socket and bgpd
 // cannot communicate with zebra, breaking BGP unnumbered.
 func ensureFRRDirs() {
-	for _, d := range []string{"/var/run/frr", "/var/tmp/frr", "/var/lib/frr"} {
+	owner := lookupFRRUser()
+	for _, d := range frrRuntimeDirs {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			slog.Warn("failed to create FRR directory", "path", d, "error", err)
+			continue
+		}
+		if owner.ok {
+			if err := chownFRRDir(d, owner.uid, owner.gid); err != nil {
+				slog.Warn("failed to set FRR directory ownership", "path", d, "error", err)
+			}
 		}
 	}
 }

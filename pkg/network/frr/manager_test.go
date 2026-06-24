@@ -150,6 +150,80 @@ func TestAddBGPPeerError(t *testing.T) {
 	}
 }
 
+func TestEnsureFRRDirsCreatesRuntimeDirsWithFRROwnership(t *testing.T) {
+	base := t.TempDir()
+	dirs := []string{
+		filepath.Join(base, "run", "frr"),
+		filepath.Join(base, "var", "run", "frr"),
+		filepath.Join(base, "var", "tmp", "frr"),
+		filepath.Join(base, "var", "lib", "frr"),
+	}
+
+	origDirs := frrRuntimeDirs
+	origLookup := lookupFRRUser
+	origChown := chownFRRDir
+	frrRuntimeDirs = dirs
+	lookupFRRUser = func() frrDirOwner {
+		return frrDirOwner{uid: 101, gid: 104, ok: true}
+	}
+
+	chowned := make(map[string]bool, len(dirs))
+	chownFRRDir = func(path string, uid, gid int) error {
+		if uid != 101 || gid != 104 {
+			t.Fatalf("chown(%q) owner = %d:%d, want 101:104", path, uid, gid)
+		}
+		chowned[path] = true
+		return nil
+	}
+	t.Cleanup(func() {
+		frrRuntimeDirs = origDirs
+		lookupFRRUser = origLookup
+		chownFRRDir = origChown
+	})
+
+	ensureFRRDirs()
+
+	for _, dir := range dirs {
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("expected FRR dir %q: %v", dir, err)
+		}
+		if !info.IsDir() {
+			t.Fatalf("expected FRR path %q to be a directory", dir)
+		}
+		if !chowned[dir] {
+			t.Fatalf("expected FRR dir %q to be chowned", dir)
+		}
+	}
+}
+
+func TestEnsureFRRDirsSkipsOwnershipWhenFRRUserMissing(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "run", "frr")
+
+	origDirs := frrRuntimeDirs
+	origLookup := lookupFRRUser
+	origChown := chownFRRDir
+	frrRuntimeDirs = []string{dir}
+	lookupFRRUser = func() frrDirOwner { return frrDirOwner{} }
+	chownFRRDir = func(path string, uid, gid int) error {
+		t.Fatalf("unexpected chown(%q, %d, %d)", path, uid, gid)
+		return nil
+	}
+	t.Cleanup(func() {
+		frrRuntimeDirs = origDirs
+		lookupFRRUser = origLookup
+		chownFRRDir = origChown
+	})
+
+	ensureFRRDirs()
+
+	if info, err := os.Stat(dir); err != nil {
+		t.Fatalf("expected FRR dir %q: %v", dir, err)
+	} else if !info.IsDir() {
+		t.Fatalf("expected FRR path %q to be a directory", dir)
+	}
+}
+
 func TestStartDaemonsDirectFailsWhenRequiredDaemonsMissing(t *testing.T) {
 	origDirs := frrDaemonDirs
 	frrDaemonDirs = []string{t.TempDir(), t.TempDir()}
