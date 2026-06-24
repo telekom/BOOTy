@@ -298,7 +298,7 @@ func TestValidateRejectsABPreserveWithSecureBootReEnable(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected secure boot re-enable validation error")
 	}
-	if got := err.Error(); !strings.Contains(got, "secureBoot.reEnable is incompatible") {
+	if got := err.Error(); !strings.Contains(got, "provision.secureBoot.reEnable requires a hard reboot") {
 		t.Fatalf("Validate() error = %q", got)
 	}
 }

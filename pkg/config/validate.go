@@ -148,7 +148,7 @@ func validateSecureBootConfig(imageMode string, secureBoot *SecureBootConfig, ab
 		return nil
 	}
 	if strings.EqualFold(strings.TrimSpace(imageMode), ImageModeAB) && ab.PreserveExisting {
-		return fmt.Errorf("provision.secureBoot.reEnable is incompatible with A/B preserveExisting upgrades because final reboot must not kexec")
+		return fmt.Errorf("provision.secureBoot.reEnable requires a hard reboot, but provision.ab.preserveExisting uses kexec")
 	}
 	return nil
 }
