@@ -212,6 +212,24 @@ func (m *Manager) SecureEraseAllDisks(ctx context.Context) error {
 	return nil
 }
 
+// SecureEraseDisk performs hardware-level secure erase on a single disk.
+// It falls back to quick erase when the device does not support secure erase.
+func (m *Manager) SecureEraseDisk(ctx context.Context, device string) error {
+	device = strings.TrimSpace(device)
+	if device == "" {
+		return fmt.Errorf("secure erase disk: device is required")
+	}
+
+	checkPath := device
+	if resolved, err := filepath.EvalSymlinks(device); err == nil {
+		checkPath = resolved
+	}
+	if strings.HasPrefix(filepath.Base(checkPath), "nvme") {
+		return m.secureEraseNVMe(ctx, device)
+	}
+	return m.secureEraseSATA(ctx, device)
+}
+
 // secureEraseNVMe performs NVMe User Data Erase via nvme format command.
 func (m *Manager) secureEraseNVMe(ctx context.Context, dev string) error {
 	slog.Info("NVMe secure erase", "device", dev)

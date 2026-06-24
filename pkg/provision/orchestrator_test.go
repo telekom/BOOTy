@@ -800,6 +800,44 @@ func TestWipeOrSecureEraseDisks(t *testing.T) {
 	}
 }
 
+func TestWipeOrSecureEraseDisksScopesQuickEraseToTargetDisk(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+
+	if err := o.wipeOrSecureEraseDisks(context.Background()); err != nil {
+		t.Fatalf("wipeOrSecureEraseDisks: %v", err)
+	}
+
+	if got := len(cmd.calls); got != 2 {
+		t.Fatalf("expected 2 target wipe calls, got %d: %#v", got, cmd.calls)
+	}
+	if !hasCommandCall(cmd.calls, "sgdisk", "--zap-all", "/dev/sda") {
+		t.Fatalf("expected sgdisk to target /dev/sda, got %#v", cmd.calls)
+	}
+	if !hasCommandCall(cmd.calls, "wipefs", "-af", "/dev/sda") {
+		t.Fatalf("expected wipefs to target /dev/sda, got %#v", cmd.calls)
+	}
+}
+
+func TestWipeOrSecureEraseDisksScopesSecureEraseToTargetDisk(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.SecureErase = true
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+
+	if err := o.wipeOrSecureEraseDisks(context.Background()); err != nil {
+		t.Fatalf("wipeOrSecureEraseDisks: %v", err)
+	}
+
+	if !hasCommandCall(cmd.calls, "hdparm", "-I", "/dev/sda") {
+		t.Fatalf("expected secure erase probe to target /dev/sda, got %#v", cmd.calls)
+	}
+	if !hasCommandCall(cmd.calls, "wipefs", "-af", "/dev/sda") {
+		t.Fatalf("expected secure erase fallback to target /dev/sda, got %#v", cmd.calls)
+	}
+}
+
 func TestWipeOrSecureEraseDisksAllowsPartitionLayoutWithImageURLsInDeprovisionMode(t *testing.T) {
 	cfg := &config.MachineConfig{
 		Mode: "deprovision",

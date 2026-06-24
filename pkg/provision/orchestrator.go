@@ -445,7 +445,13 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 	}
 	if secureErase {
 		o.log.Info("secure erase enabled, performing hardware-level erase")
+		if o.targetDisk != "" {
+			return o.disk.SecureEraseDisk(ctx, o.targetDisk)
+		}
 		return o.disk.SecureEraseAllDisks(ctx)
+	}
+	if o.targetDisk != "" {
+		return o.disk.WipeDisk(ctx, o.targetDisk)
 	}
 	return o.disk.WipeAllDisks(ctx)
 }

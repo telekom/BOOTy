@@ -185,6 +185,70 @@ func TestWipeDiskValidationAndCommands(t *testing.T) {
 	}
 }
 
+func TestSecureEraseDiskValidationAndCommands(t *testing.T) {
+	tests := []struct {
+		name      string
+		device    string
+		wantErr   string
+		wantFirst mockCall
+	}{
+		{
+			name:    "empty device",
+			device:  "",
+			wantErr: "secure erase disk: device is required",
+		},
+		{
+			name:    "whitespace device",
+			device:  " \t ",
+			wantErr: "secure erase disk: device is required",
+		},
+		{
+			name:   "sata device",
+			device: " /dev/sda ",
+			wantFirst: mockCall{
+				name: "hdparm",
+				args: []string{"-I", "/dev/sda"},
+			},
+		},
+		{
+			name:   "nvme device",
+			device: "/dev/nvme0n1",
+			wantFirst: mockCall{
+				name: "nvme",
+				args: []string{"format", "/dev/nvme0n1", "--ses=1", "--force"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newMockCommander()
+			mgr := NewManager(cmd)
+
+			err := mgr.SecureEraseDisk(context.Background(), tt.device)
+			if tt.wantErr != "" {
+				if err == nil || err.Error() != tt.wantErr {
+					t.Fatalf("SecureEraseDisk() error = %v, want %q", err, tt.wantErr)
+				}
+				if len(cmd.calls) != 0 {
+					t.Fatalf("expected no command calls, got %d", len(cmd.calls))
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("SecureEraseDisk() unexpected error = %v", err)
+			}
+			if len(cmd.calls) == 0 {
+				t.Fatal("expected command calls")
+			}
+			if cmd.calls[0].name != tt.wantFirst.name || strings.Join(cmd.calls[0].args, " ") != strings.Join(tt.wantFirst.args, " ") {
+				t.Fatalf("first command = %s %v, want %s %v", cmd.calls[0].name, cmd.calls[0].args, tt.wantFirst.name, tt.wantFirst.args)
+			}
+		})
+	}
+}
+
 func TestWipeFilesystemSignaturesOnlyUsesWipefs(t *testing.T) {
 	cmd := newMockCommander()
 	mgr := NewManager(cmd)
