@@ -92,13 +92,10 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 		return fmt.Errorf("writing to device: %w", err)
 	}
 
-	// Flush all written data to the underlying block device before returning.
-	// Without this, subsequent partition table re-reads (BLKRRPART ioctl via
-	// partprobe/blockdev) may not see the new partition table because dirty
-	// pages haven't reached the disk backend (especially on QEMU/KVM where
-	// the guest kernel's writeback queue may lag behind).
-	if err := out.Sync(); err != nil {
-		slog.Warn("sync to device failed", "device", device, "error", err)
+	if err := syncImageTarget(out, device); err != nil {
+		slog.Error("image sync failed: attempting to wipe partial image", "device", device, "error", err)
+		wipeLeadingSectors(device)
+		return err
 	}
 
 	fmt.Println()
@@ -109,6 +106,22 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 			"device", device, "error", err)
 		wipeLeadingSectors(device)
 		return err
+	}
+	return nil
+}
+
+type fileSyncer interface {
+	Sync() error
+}
+
+func syncImageTarget(out fileSyncer, device string) error {
+	// Flush all written data to the underlying block device before returning.
+	// Without this, subsequent partition table re-reads (BLKRRPART ioctl via
+	// partprobe/blockdev) may not see the new partition table because dirty
+	// pages haven't reached the disk backend (especially on QEMU/KVM where
+	// the guest kernel's writeback queue may lag behind).
+	if err := out.Sync(); err != nil {
+		return fmt.Errorf("syncing device %s: %w", device, err)
 	}
 	return nil
 }
