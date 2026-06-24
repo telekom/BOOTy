@@ -49,7 +49,7 @@ build-all: $(SRC)
 	@GOOS=$(TARGETOS) GOARCH=arm64 go build $(LDFLAGS) -o dist/arm64/$(TARGET)
 
 clean:
-	@rm -f $(CLEAN_FILES)
+	@rm -f -- $(CLEAN_FILES)
 	@rm -rf dist
 
 install:
