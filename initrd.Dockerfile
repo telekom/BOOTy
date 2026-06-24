@@ -20,7 +20,7 @@ RUN strip --strip-all lvm
 FROM gcc:16 AS sfdisk
 ARG UTIL_LINUX_REF=5305e6c70b274f679329b79c0e1ef5a07e9dc1a6
 RUN apt-get update -y && apt-get install -y bison autopoint gettext flex
-RUN git clone --filter=blob:none --no-checkout https://github.com/util-linux/util-linux.git
+RUN git clone --depth 1 --filter=blob:none --no-checkout https://github.com/util-linux/util-linux.git
 WORKDIR util-linux
 RUN git fetch --depth 1 origin "${UTIL_LINUX_REF}" && git checkout --detach "${UTIL_LINUX_REF}"
 RUN ./autogen.sh && ./configure --enable-static-programs=sfdisk && make
