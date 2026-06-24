@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 const redactedLogValue = "[REDACTED]"
@@ -267,12 +268,51 @@ func isSensitiveLogKey(key string) bool {
 			return true
 		}
 	}
-	for _, segment := range strings.FieldsFunc(lower, isLogKeySeparator) {
+	for _, segment := range splitLogKeySegments(key) {
 		if _, ok := sensitiveLogKeySegments[segment]; ok {
 			return true
 		}
 	}
 	return false
+}
+
+func splitLogKeySegments(key string) []string {
+	parts := strings.FieldsFunc(key, isLogKeySeparator)
+	segs := make([]string, 0, len(parts))
+	for _, part := range parts {
+		for _, segment := range splitLogKeyCamel(part) {
+			segs = append(segs, strings.ToLower(segment))
+		}
+	}
+	if len(segs) == 0 {
+		return []string{strings.ToLower(key)}
+	}
+	return segs
+}
+
+func splitLogKeyCamel(s string) []string {
+	if s == "" {
+		return nil
+	}
+	runes := []rune(s)
+	segs := make([]string, 0, 2)
+	start := 0
+	for i := 1; i < len(runes); i++ {
+		prev, cur := runes[i-1], runes[i]
+		switch {
+		case unicode.IsLower(prev) && unicode.IsUpper(cur):
+			segs = append(segs, string(runes[start:i]))
+			start = i
+		case unicode.IsDigit(prev) && unicode.IsLetter(cur):
+			segs = append(segs, string(runes[start:i]))
+			start = i
+		case i >= 2 && unicode.IsUpper(runes[i-2]) && unicode.IsUpper(prev) && unicode.IsLower(cur):
+			segs = append(segs, string(runes[start:i-1]))
+			start = i - 1
+		}
+	}
+	segs = append(segs, string(runes[start:]))
+	return segs
 }
 
 func isLogKeySeparator(r rune) bool {

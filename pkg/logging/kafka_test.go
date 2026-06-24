@@ -178,6 +178,7 @@ func TestKafkaHandler_RedactsSensitiveAttrs(t *testing.T) {
 	r := slog.NewRecord(time.Now(), slog.LevelInfo, "redacted", 0)
 	r.AddAttrs(
 		slog.String("authorization", "Bearer record-token"),
+		slog.String("x509Cert", "record-cert"),
 		slog.String("component", "network"),
 	)
 	if err := h.Handle(context.Background(), r); err != nil {
@@ -185,7 +186,7 @@ func TestKafkaHandler_RedactsSensitiveAttrs(t *testing.T) {
 	}
 
 	raw := string(mw.messages[0])
-	for _, leaked := range []string{"handler-token", "nested-password", "record-token"} {
+	for _, leaked := range []string{"handler-token", "nested-password", "record-token", "record-cert"} {
 		if strings.Contains(raw, leaked) {
 			t.Fatalf("sensitive value %q leaked in Kafka log JSON: %s", leaked, raw)
 		}
@@ -200,6 +201,9 @@ func TestKafkaHandler_RedactsSensitiveAttrs(t *testing.T) {
 	}
 	if msg.Attrs["authorization"] != redactedLogValue {
 		t.Fatalf("authorization = %v, want redacted", msg.Attrs["authorization"])
+	}
+	if msg.Attrs["x509Cert"] != redactedLogValue {
+		t.Fatalf("x509Cert = %v, want redacted", msg.Attrs["x509Cert"])
 	}
 	if msg.Attrs["component"] != "network" {
 		t.Fatalf("component = %v, want network", msg.Attrs["component"])
