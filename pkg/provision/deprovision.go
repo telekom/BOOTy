@@ -85,12 +85,26 @@ func (o *Orchestrator) configuredDeprovisionDisk() (string, error) {
 		if device == "" {
 			continue
 		}
-		if !strings.HasPrefix(device, "/dev/") {
-			return "", fmt.Errorf("%s %q must be an absolute /dev/ path", candidate.name, device)
+		if err := validateConfiguredBlockDevice(candidate.name, device); err != nil {
+			return "", err
 		}
 		return device, nil
 	}
 	return "", nil
+}
+
+func validateConfiguredBlockDevice(name, device string) error {
+	if !strings.HasPrefix(device, "/dev/") {
+		return fmt.Errorf("%s %q must be an absolute /dev/ path", name, device)
+	}
+	info, err := statPath(device)
+	if err != nil {
+		return fmt.Errorf("%s %q: %w", name, device, err)
+	}
+	if info.Mode()&os.ModeDevice == 0 || info.Mode()&os.ModeCharDevice != 0 {
+		return fmt.Errorf("%s %q is not a block device", name, device)
+	}
+	return nil
 }
 
 // softDeprovision renames grub.cfg so the system won't boot.

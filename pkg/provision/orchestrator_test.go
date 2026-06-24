@@ -838,6 +838,7 @@ func TestDeprovisionHardScopesWipeToProvisionDiskDevice(t *testing.T) {
 	cfg.Provision.Disk.Device = "/dev/sda"
 	provider := &mockProvider{}
 	o, cmd := newTestOrchestratorWithCommander(t, cfg, provider)
+	withMockBlockDevices(t, "/dev/sda")
 
 	if err := o.Deprovision(context.Background()); err != nil {
 		t.Fatalf("Deprovision: %v", err)
@@ -864,6 +865,7 @@ func TestDeprovisionHardPrefersDeprovisionDevice(t *testing.T) {
 	cfg.Deprovision.Device = "/dev/sdb"
 	provider := &mockProvider{}
 	o, cmd := newTestOrchestratorWithCommander(t, cfg, provider)
+	withMockBlockDevices(t, "/dev/sda", "/dev/sdb")
 
 	if err := o.Deprovision(context.Background()); err != nil {
 		t.Fatalf("Deprovision: %v", err)
@@ -897,6 +899,43 @@ func TestDeprovisionHardRejectsInvalidConfiguredDevice(t *testing.T) {
 	if len(wipeCommandCalls(cmd.calls)) != 0 {
 		t.Fatalf("expected no wipe commands for invalid device, got %#v", cmd.calls)
 	}
+}
+
+func TestDeprovisionHardRejectsCharacterConfiguredDevice(t *testing.T) {
+	cfg := &config.MachineConfig{Mode: "deprovision"}
+	cfg.Provision.Disk.Device = "/dev/null"
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	withMockStat(t, func(path string) (os.FileInfo, error) {
+		if path == "/dev/null" {
+			return fakeFileInfo{name: "null", mode: os.ModeDevice | os.ModeCharDevice}, nil
+		}
+		return nil, os.ErrNotExist
+	})
+
+	err := o.Deprovision(context.Background())
+	if err == nil {
+		t.Fatal("expected character device error")
+	}
+	if !strings.Contains(err.Error(), "not a block device") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(wipeCommandCalls(cmd.calls)) != 0 {
+		t.Fatalf("expected no wipe commands for character device, got %#v", cmd.calls)
+	}
+}
+
+func withMockBlockDevices(t *testing.T, devices ...string) {
+	t.Helper()
+	blocks := make(map[string]struct{}, len(devices))
+	for _, device := range devices {
+		blocks[device] = struct{}{}
+	}
+	withMockStat(t, func(path string) (os.FileInfo, error) {
+		if _, ok := blocks[path]; ok {
+			return fakeFileInfo{name: filepath.Base(path), mode: os.ModeDevice}, nil
+		}
+		return nil, os.ErrNotExist
+	})
 }
 
 func TestWipeOrSecureEraseDisksRequiresTargetDiskInProvisionMode(t *testing.T) {
