@@ -180,7 +180,7 @@ clab-down:
 
 test-e2e-integration:
 	@echo Running E2E integration tests (requires clab-up)
-	@BOOTY_TOPOLOGY=lab go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/...
+	@BOOTY_TOPOLOGY=$${BOOTY_TOPOLOGY:-lab} go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/...
 
 booty-test-image:
 	@echo Building BOOTy test container image
