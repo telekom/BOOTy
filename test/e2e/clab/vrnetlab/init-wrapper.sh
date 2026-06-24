@@ -24,12 +24,23 @@ for mod in virtio_ring virtio virtio_pci_modern_dev virtio_pci_legacy_dev \
     [ -n "$ko" ] && /bin/insmod "$ko" 2>/dev/null || true
 done
 
-# Wait for virtio NIC to appear
-sleep 3
+# Wait for virtio NIC to appear.
+attempt=0
+while [ "$attempt" -lt 30 ]; do
+    if /bin/ip link show eth0 >/dev/null 2>&1; then
+        break
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+done
 
 # Bring up interfaces — BOOTy's FRR manager handles IP configuration
 /bin/ip link set lo up 2>/dev/null
-/bin/ip link set eth0 up 2>/dev/null
+if ! /bin/ip link set eth0 up; then
+    echo "ERROR: eth0 did not appear or could not be brought up" >&2
+    /bin/ip link show >&2 || true
+    exit 1
+fi
 
 # Execute BOOTy as the main init process
 exec /booty
