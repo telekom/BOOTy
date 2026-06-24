@@ -1053,10 +1053,31 @@ func rtCommunityPresent(msg interface{}) bool {
 	switch v := msg.(type) {
 	case *apipb.TwoOctetAsSpecificExtended:
 		return v.GetSubType() == rtSubType
+	case *apipb.IPv4AddressSpecificExtended:
+		return v.GetSubType() == rtSubType
+	case *apipb.IPv6AddressSpecificExtended:
+		return v.GetSubType() == rtSubType
 	case *apipb.FourOctetAsSpecificExtended:
 		return v.GetSubType() == rtSubType
+	case *apipb.UnknownExtended:
+		return isRawRouteTargetType(v.GetType()) && rawExtendedSubType(v.GetValue()) == rtSubType
 	}
 	return false
+}
+
+func isRawRouteTargetType(t uint32) bool {
+	switch t {
+	case 0x00, 0x01, 0x02, 0x40, 0x41, 0x42:
+		return true
+	}
+	return false
+}
+
+func rawExtendedSubType(value []byte) uint32 {
+	if len(value) == 0 {
+		return 0
+	}
+	return uint32(value[0])
 }
 
 // rtCommunityMatches returns true if the proto message represents a Route
