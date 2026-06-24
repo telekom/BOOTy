@@ -24,12 +24,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${GITHUB_REF_NAME}"
-          if ! printf '%s\n' "${TAG}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$'; then
+          VERSION="${TAG#v}"
+          if [ "${VERSION}" = "${TAG}" ]; then
             echo "::error::release tag ${TAG} is not valid semver"
             exit 1
           fi
 
-          status=$(curl -sS -o /tmp/release.json -w "%{http_code}" \
+          SEMVER_RE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+([0-9A-Za-z-]+)(\.[0-9A-Za-z-]+)*)?$'
+          if ! printf '%s\n' "${VERSION}" | grep -Eq "${SEMVER_RE}"; then
+            echo "::error::release tag ${TAG} is not valid semver"
+            exit 1
+          fi
+
+          status=$(curl -sS -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" || true)
@@ -46,7 +53,8 @@ jobs:
               ;;
           esac
 
-          if printf '%s\n' "${TAG}" | grep -q -- '-'; then
+          BASE_VERSION="${VERSION%%+*}"
+          if printf '%s\n' "${BASE_VERSION}" | grep -q -- '-'; then
             printf 'prerelease=true\n' >> "${GITHUB_OUTPUT}"
             printf 'make_latest=false\n' >> "${GITHUB_OUTPUT}"
           else
