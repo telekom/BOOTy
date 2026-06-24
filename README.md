@@ -78,7 +78,7 @@ BOOTy operates in two modes depending on the boot environment:
 - **Startup crash artifact upload** — Best-effort pre-wipe collection of existing OS crash logs, dumps, and host metadata for CAPRF/S3 correlation
 - **Hard/soft deprovisioning** — Full disk wipe or GRUB rename for reprovisioning
 - **Standby mode** — Hot standby with heartbeats and command polling for sub-second provisioning
-- **Cloud-init injection** — NoCloud and ConfigDrive seed generation from the provisioning network config
+- **Cloud-init injection** — NoCloud and ConfigDrive seed generation from provisioning identity and network config
 - **Netplan overlay** — Drop-in netplan YAML config from provisioner overrides `/deploy/vars` network settings
 - **Network persistence renderers** — Library support for netplan, NetworkManager, and systemd-networkd config generation
 - **IPMI operations** — BMC network config, boot device control, chassis power, sensor readings
@@ -864,9 +864,9 @@ on the provisioned root filesystem. `nocloud` writes
 v2 seed files under `/var/lib/cloud/seed/config_drive/openstack/latest/`.
 The active provisioning integration currently generates:
 
-- **Instance metadata** — instance-id and hostname. When a provider-id is
-  configured, it is used as the source for instance-id and is not written as
-  a separate metadata field.
+- **Instance metadata** — instance-id, local-hostname, and platform (`booty`).
+  When a provider-id is configured, it is used as the source for instance-id
+  and is not written as a separate metadata field.
 - **User data** — hostname and `manage_etc_hosts`
 - **Network config v2** — bonds, addresses, gateways, nameservers
   (generated from the active provisioning network config)
@@ -961,8 +961,8 @@ filesystem:
 
 | Bootloader | Detection | Architecture |
 |-----------|-----------|--------------|
-| systemd-boot | Presence of `boot/efi/EFI/systemd/systemd-bootx64.efi` | x86_64 |
-| systemd-boot | Presence of `boot/efi/EFI/systemd/systemd-bootaa64.efi` | ARM64 |
+| systemd-boot | Presence of `/boot/efi/EFI/systemd/systemd-bootx64.efi` inside the target root | x86_64 |
+| systemd-boot | Presence of `/boot/efi/EFI/systemd/systemd-bootaa64.efi` inside the target root | ARM64 |
 | GRUB | Default fallback when systemd-boot is not found | All |
 
 The active provisioning pipeline is still GRUB-oriented. It writes GRUB drop-in
