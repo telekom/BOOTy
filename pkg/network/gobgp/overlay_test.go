@@ -1332,7 +1332,7 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 		}
 	})
 
-	t.Run("withdrawal with non-matching RT is not skipped", func(t *testing.T) {
+	t.Run("withdrawal with non-matching RT is skipped", func(t *testing.T) {
 		mock := &mockFDB{}
 		overlay := newOverlay(mock)
 		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
@@ -1348,9 +1348,21 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 			Pattrs:     []*anypb.Any{extComm},
 		}
 		overlay.processRouteUpdate(path)
-		// Withdrawal must reach FDB dispatch regardless of RT mismatch.
+		if mock.linkName != "" {
+			t.Errorf("withdrawal with non-matching RT: unexpected FDB dispatch via LinkByName(%q)", mock.linkName)
+		}
+	})
+
+	t.Run("withdrawal without RT is not skipped", func(t *testing.T) {
+		mock := &mockFDB{}
+		overlay := newOverlay(mock)
+		path := &apipb.Path{
+			IsWithdraw: true,
+			Nlri:       nlri,
+		}
+		overlay.processRouteUpdate(path)
 		if mock.linkName == "" {
-			t.Error("withdrawal: expected FDB dispatch (LinkByName called) even with RT mismatch, but it was not")
+			t.Error("withdrawal without RT: expected FDB dispatch (LinkByName called), but it was not")
 		}
 	})
 }
