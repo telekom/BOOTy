@@ -286,6 +286,40 @@ func TestConfigureDNSSuccess(t *testing.T) {
 	}
 }
 
+func TestConfigureDNSReplacesDanglingResolvConfSymlink(t *testing.T) {
+	root := t.TempDir()
+	etcDir := filepath.Join(root, "etc")
+	if err := os.MkdirAll(etcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(etcDir, "resolv.conf")
+	if err := os.Symlink("../run/systemd/resolve/stub-resolv.conf", path); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &Configurator{rootDir: root}
+	cfg := &config.MachineConfig{}
+	cfg.Network.DNSResolvers = "8.8.8.8"
+	if err := c.ConfigureDNS(cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("stat resolv.conf: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("resolv.conf is still a symlink")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read resolv.conf: %v", err)
+	}
+	if string(data) != "nameserver 8.8.8.8\n" {
+		t.Fatalf("resolv.conf = %q", data)
+	}
+}
+
 func TestConfigureDNSMissingEtcDir(t *testing.T) {
 	root := t.TempDir()
 	// Don't create /etc — ConfigureDNS should skip gracefully.
