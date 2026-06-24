@@ -105,8 +105,8 @@ func renderConfigDriveSeedFiles(ud *UserData, md *MetaData, nc *NetworkConfig) (
 
 func writeSeedFiles(seedDir, tempPattern string, files map[string][]byte) error {
 	// Two-phase write: write all files to a temp directory, then rename each
-	// to its final path. If any write fails, the temp dir is cleaned up and
-	// existing seed files are untouched.
+	// to its final path. Failures before the rename phase leave existing seed
+	// files untouched; failures during rename can leave earlier files updated.
 	tmpDir, err := os.MkdirTemp(filepath.Dir(seedDir), tempPattern)
 	if err != nil {
 		return fmt.Errorf("create temp dir: %w", err)

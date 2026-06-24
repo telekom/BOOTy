@@ -1972,7 +1972,7 @@ func TestInjectCloudInit_DefaultDatasourceAndStableInstanceID(t *testing.T) {
 	}
 }
 
-func TestInjectCloudInit_DatasourceCaseInsensitiveAndTrimmed(t *testing.T) {
+func TestInjectCloudInit_ConfigDriveDatasourceCaseInsensitiveAndTrimmed(t *testing.T) {
 	cfg := &config.MachineConfig{
 		Hostname: "test-host",
 	}

@@ -78,7 +78,7 @@ BOOTy operates in two modes depending on the boot environment:
 - **Startup crash artifact upload** — Best-effort pre-wipe collection of existing OS crash logs, dumps, and host metadata for CAPRF/S3 correlation
 - **Hard/soft deprovisioning** — Full disk wipe or GRUB rename for reprovisioning
 - **Standby mode** — Hot standby with heartbeats and command polling for sub-second provisioning
-- **Cloud-init injection** — NoCloud datasource generation (users, packages, NTP, runcmd)
+- **Cloud-init injection** — NoCloud and ConfigDrive datasource generation (users, packages, NTP, runcmd)
 - **Netplan overlay** — Drop-in netplan YAML config from provisioner overrides `/deploy/vars` network settings
 - **Network persistence** — Auto-generates OS-native network config (netplan, NetworkManager, systemd-networkd)
 - **IPMI operations** — BMC network config, boot device control, chassis power, sensor readings
