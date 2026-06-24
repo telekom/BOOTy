@@ -753,6 +753,29 @@ func TestReportSuccess(t *testing.T) {
 	if provider.statuses[0].status != config.StatusSuccess {
 		t.Errorf("expected StatusSuccess, got %v", provider.statuses[0].status)
 	}
+	if provider.statuses[0].message != "provisioning complete" {
+		t.Errorf("expected default success message, got %q", provider.statuses[0].message)
+	}
+}
+
+func TestReportSuccessSignalsSecureBootReEnable(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.SecureBoot.ReEnable = true
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	if err := o.reportSuccess(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(provider.statuses) != 1 {
+		t.Fatalf("expected 1 status report, got %d", len(provider.statuses))
+	}
+	if provider.statuses[0].status != config.StatusSuccess {
+		t.Errorf("expected StatusSuccess, got %v", provider.statuses[0].status)
+	}
+	if !strings.Contains(provider.statuses[0].message, "SECUREBOOT_REENABLE=true") {
+		t.Errorf("expected Secure Boot re-enable signal, got %q", provider.statuses[0].message)
+	}
 }
 
 func TestWipeOrSecureEraseDisks(t *testing.T) {

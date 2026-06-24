@@ -1826,7 +1826,15 @@ func (o *Orchestrator) runHealthChecks(ctx context.Context) error {
 }
 
 func (o *Orchestrator) reportSuccess(ctx context.Context) error {
-	return o.provider.ReportStatus(ctx, config.StatusSuccess, "provisioning complete")
+	return o.provider.ReportStatus(ctx, config.StatusSuccess, successStatusMessage(o.cfg))
+}
+
+func successStatusMessage(cfg *config.MachineConfig) string {
+	message := "provisioning complete"
+	if cfg != nil && cfg.Provision.SecureBoot.ReEnable {
+		message += " SECUREBOOT_REENABLE=true"
+	}
+	return message
 }
 
 // DumpDebugState logs system state useful for diagnosing failures.
