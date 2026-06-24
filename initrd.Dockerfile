@@ -148,7 +148,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     binutils \
     mdadm util-linux e2fsprogs xfsprogs btrfs-progs parted gdisk kpartx dosfstools \
     efibootmgr dmidecode ethtool curl iproute2 bridge-utils \
-    hdparm nvme-cli mstflint lldpd gpgv \
+    hdparm nvme-cli mstflint lldpd gpgv qemu-utils \
     dropbear-bin cryptsetup-bin ipmitool \
     && rm -rf /var/lib/apt/lists/*
 
@@ -175,6 +175,11 @@ RUN mkdir -p /tool-libs /tool-libs-full && \
     | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
     | sort -u | while read -r lib; do \
         [ -n "$lib" ] && [ -f "$lib" ] && cp -L --parents "$lib" /tool-libs-full/ 2>/dev/null || true; \
+    done && \
+    ldd /usr/bin/qemu-img 2>/dev/null \
+    | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
+    | sort -u | while read -r lib; do \
+        [ -n "$lib" ] && [ -f "$lib" ] && cp -L --parents "$lib" /tool-libs-full/ 2>/dev/null || true; \
     done
 
 # Strip debug symbols from tool binaries to reduce initramfs size (~20-40% per binary).
@@ -188,7 +193,7 @@ RUN strip --strip-all \
         /sbin/partprobe /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
         /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
         /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
-        /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /usr/bin/gpgv \
+        /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /usr/bin/gpgv /usr/bin/qemu-img \
         /sbin/cryptsetup /usr/bin/ipmitool
 
 # Busybox static binary — sourced from Docker Hub for reliability and
@@ -244,6 +249,7 @@ COPY --from=tools /usr/sbin/parted bin/parted
 COPY --from=tools /usr/sbin/sgdisk bin/sgdisk
 COPY --from=tools /sbin/partprobe bin/partprobe
 COPY --from=tools /usr/sbin/kpartx bin/kpartx
+COPY --from=tools /usr/bin/qemu-img bin/qemu-img
 COPY --from=tools /usr/bin/efibootmgr bin/efibootmgr
 COPY --from=tools /usr/sbin/dmidecode bin/dmidecode
 COPY --from=tools /usr/sbin/ethtool bin/ethtool
@@ -299,7 +305,7 @@ RUN for b in \
         sbin/mdadm bin/wipefs sbin/resize2fs sbin/e2fsck \
         sbin/mkfs.ext4 sbin/mkfs.vfat \
         sbin/xfs_growfs sbin/xfs_repair sbin/mkfs.xfs bin/btrfs bin/parted bin/sgdisk bin/partprobe bin/kpartx \
-        bin/efibootmgr bin/dmidecode bin/ethtool bin/curl bin/ip bin/bridge \
+        bin/qemu-img bin/efibootmgr bin/dmidecode bin/ethtool bin/curl bin/ip bin/bridge \
         bin/hdparm bin/nvme bin/mstconfig bin/mstflint bin/ipmitool \
         bin/lldpcli sbin/lldpd bin/dropbear bin/dropbearkey bin/gpgv \
         sbin/cryptsetup; do \
@@ -424,6 +430,7 @@ COPY --from=tools /usr/sbin/parted bin/parted
 COPY --from=tools /usr/sbin/sgdisk bin/sgdisk
 COPY --from=tools /sbin/partprobe bin/partprobe
 COPY --from=tools /usr/sbin/kpartx bin/kpartx
+COPY --from=tools /usr/bin/qemu-img bin/qemu-img
 COPY --from=tools /usr/bin/efibootmgr bin/efibootmgr
 COPY --from=tools /usr/sbin/dmidecode bin/dmidecode
 COPY --from=tools /usr/sbin/ethtool bin/ethtool
@@ -475,7 +482,7 @@ RUN for b in \
         sbin/mdadm bin/wipefs sbin/resize2fs sbin/e2fsck \
         sbin/mkfs.ext4 sbin/mkfs.vfat \
         sbin/xfs_growfs sbin/xfs_repair sbin/mkfs.xfs bin/btrfs bin/parted bin/sgdisk bin/partprobe bin/kpartx \
-        bin/efibootmgr bin/dmidecode bin/ethtool bin/curl bin/ip bin/bridge \
+        bin/qemu-img bin/efibootmgr bin/dmidecode bin/ethtool bin/curl bin/ip bin/bridge \
         bin/hdparm bin/nvme bin/mstconfig bin/mstflint bin/ipmitool \
         bin/lldpcli sbin/lldpd bin/dropbear bin/dropbearkey bin/lsblk bin/gpgv \
         sbin/cryptsetup sbin/lvm bin/sfdisk; do \
