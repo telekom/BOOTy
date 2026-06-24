@@ -393,6 +393,7 @@ func TestSlimExcludesLVME2E(t *testing.T) {
 
 	assertNotContains(t, files, "sbin/lvm", "LVM tooling")
 	assertNotContains(t, files, "bin/sfdisk", "sfdisk")
+	assertNotContains(t, files, "bin/gpgv", "GPG verifier")
 }
 
 func TestSlimSizeSmallerThanDefaultE2E(t *testing.T) {

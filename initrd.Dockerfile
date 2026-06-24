@@ -157,7 +157,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ensures every transitive dependency is resolved — the assembly stages
 # only have base Debian libs and would report package-specific libs as
 # "not found", silently dropping them from the initramfs.
-RUN mkdir -p /tool-libs && \
+RUN mkdir -p /tool-libs /tool-libs-full && \
     ldd /sbin/mdadm /usr/sbin/wipefs /sbin/resize2fs /sbin/e2fsck \
         /usr/sbin/mkfs.ext4 /usr/sbin/mkfs.vfat /usr/sbin/mkfs.xfs \
         /usr/sbin/xfs_growfs /usr/sbin/xfs_repair \
@@ -165,11 +165,16 @@ RUN mkdir -p /tool-libs && \
         /sbin/partprobe /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
         /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
         /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
-        /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /usr/bin/gpgv \
+        /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk \
         /sbin/cryptsetup /usr/bin/ipmitool 2>/dev/null \
     | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
     | sort -u | while read -r lib; do \
         [ -n "$lib" ] && [ -f "$lib" ] && cp -L --parents "$lib" /tool-libs/ 2>/dev/null || true; \
+    done && \
+    ldd /usr/bin/gpgv 2>/dev/null \
+    | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
+    | sort -u | while read -r lib; do \
+        [ -n "$lib" ] && [ -f "$lib" ] && cp -L --parents "$lib" /tool-libs-full/ 2>/dev/null || true; \
     done
 
 # Strip debug symbols from tool binaries to reduce initramfs size (~20-40% per binary).
@@ -278,6 +283,7 @@ COPY --from=tools /usr/bin/gpgv bin/gpgv
 # missed package-specific libs (libefivar, libmnl, etc.) because they were
 # not installed here and ldd reported them as "not found".
 COPY --from=tools /tool-libs/ .
+COPY --from=tools /tool-libs-full/ .
 COPY --from=frr /frr-libs/ .
 
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
@@ -458,6 +464,7 @@ COPY --from=tools /usr/bin/gpgv bin/gpgv
 
 # Copy pre-collected shared libraries from the tools stage.
 COPY --from=tools /tool-libs/ .
+COPY --from=tools /tool-libs-full/ .
 
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
