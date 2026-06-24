@@ -9,8 +9,54 @@ permissions:
   contents: read
 
 jobs:
+  validate-tag:
+    name: Validate Release Tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      make_latest: ${{ steps.meta.outputs.make_latest }}
+    steps:
+      - id: meta
+        name: Validate tag and release state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if ! printf '%s\n' "${TAG}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$'; then
+            echo "::error::release tag ${TAG} is not valid semver"
+            exit 1
+          fi
+
+          status=$(curl -sS -o /tmp/release.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" || true)
+          case "${status}" in
+            200)
+              echo "::error::release ${TAG} already exists; refusing to overwrite published assets"
+              exit 1
+              ;;
+            404)
+              ;;
+            *)
+              echo "::error::could not verify release ${TAG} existence, GitHub API status ${status}"
+              exit 1
+              ;;
+          esac
+
+          if printf '%s\n' "${TAG}" | grep -q -- '-'; then
+            printf 'prerelease=true\n' >> "${GITHUB_OUTPUT}"
+            printf 'make_latest=false\n' >> "${GITHUB_OUTPUT}"
+          else
+            printf 'prerelease=false\n' >> "${GITHUB_OUTPUT}"
+            printf 'make_latest=true\n' >> "${GITHUB_OUTPUT}"
+          fi
+
   build:
     name: Build (${{ matrix.arch }}/${{ matrix.flavor }})
+    needs: validate-tag
     strategy:
       matrix:
         include:
@@ -384,6 +430,7 @@ jobs:
 
   changelog:
     name: Generate Changelog
+    needs: validate-tag
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -406,7 +453,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [build, iso, iso-oci, sbom, scan, sign, container-manifest, changelog, oci-artifacts]
+    needs: [validate-tag, build, iso, iso-oci, sbom, scan, sign, container-manifest, changelog, oci-artifacts]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -428,6 +475,9 @@ jobs:
         with:
           body_path: artifacts/changelog/CHANGELOG.md
           files: release-files/*
+          prerelease: ${{ needs.validate-tag.outputs.prerelease }}
+          make_latest: ${{ needs.validate-tag.outputs.make_latest }}
+          overwrite_files: false
 
   oci-artifacts:
     name: Publish OCI Artifacts (${{ matrix.arch }})
