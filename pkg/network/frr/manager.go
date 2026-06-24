@@ -648,14 +648,14 @@ var frrDaemonDirs = []string{"/usr/lib/frr", "/sbin"}
 
 func resolveFRRDaemonPath(name string) (path string, ok bool, err error) {
 	for _, dir := range frrDaemonDirs {
-		path := dir + "/" + name
-		if _, err := os.Stat(path); err != nil {
+		candidate := dir + "/" + name
+		if _, err := os.Stat(candidate); err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
-			return "", false, fmt.Errorf("stat FRR daemon %s: %w", path, err)
+			return "", false, fmt.Errorf("stat FRR daemon %s: %w", candidate, err)
 		}
-		return path, true, nil
+		return candidate, true, nil
 	}
 	return "", false, nil
 }
