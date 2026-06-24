@@ -884,6 +884,32 @@ func TestDeprovisionHardPrefersDeprovisionDevice(t *testing.T) {
 	}
 }
 
+func TestDeprovisionHardScopesSecureEraseToConfiguredDevice(t *testing.T) {
+	cfg := &config.MachineConfig{Mode: "deprovision"}
+	cfg.Deprovision.Device = "/dev/sdb"
+	cfg.Deprovision.SecureErase = true
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	withMockBlockDevices(t, "/dev/sdb")
+
+	if err := o.selectDeprovisionDisk(context.Background()); err != nil {
+		t.Fatalf("selectDeprovisionDisk: %v", err)
+	}
+	if err := o.wipeOrSecureEraseDisks(context.Background()); err != nil {
+		t.Fatalf("wipeOrSecureEraseDisks: %v", err)
+	}
+
+	if !hasCommandCall(cmd.calls, "hdparm", "-I", "/dev/sdb") {
+		t.Fatalf("expected secure erase probe to target /dev/sdb, got %#v", cmd.calls)
+	}
+	if !hasCommandCall(cmd.calls, "wipefs", "-af", "/dev/sdb") {
+		t.Fatalf("expected secure erase fallback to target /dev/sdb, got %#v", cmd.calls)
+	}
+	if hasCommandCall(cmd.calls, "hdparm", "-I", "/dev/sda") ||
+		hasCommandCall(cmd.calls, "wipefs", "-af", "/dev/sda") {
+		t.Fatalf("secure erase should not target provision disk, got %#v", cmd.calls)
+	}
+}
+
 func TestDeprovisionHardRejectsInvalidConfiguredDevice(t *testing.T) {
 	cfg := &config.MachineConfig{Mode: "deprovision"}
 	cfg.Provision.Disk.Device = "sda"
