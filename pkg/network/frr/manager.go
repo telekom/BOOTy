@@ -656,9 +656,8 @@ func resolveFRRDaemonPath(name string) (string, bool) {
 	return "", false
 }
 
-func resolveFRRDaemons(daemons []frrDaemonSpec) (map[string]string, []string) {
-	paths := make(map[string]string, len(daemons))
-	var missing []string
+func resolveFRRDaemons(daemons []frrDaemonSpec) (paths map[string]string, missing []string) {
+	paths = make(map[string]string, len(daemons))
 	for _, d := range daemons {
 		path, ok := resolveFRRDaemonPath(d.name)
 		if !ok {
