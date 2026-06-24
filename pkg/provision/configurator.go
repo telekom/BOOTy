@@ -698,27 +698,36 @@ func efiLoaderPath(rootDir, arch string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve efi loader names: %w", err)
 	}
-	shimPath := filepath.Join(rootDir, "boot", "efi", "EFI", "ubuntu", shimName)
-	grubPath := filepath.Join(rootDir, "boot", "efi", "EFI", "ubuntu", grubName)
+	vendorDirs := []string{"ubuntu", "debian"}
 	removableName, removableErr := efiRemovableLoaderName(arch)
 	if removableErr != nil {
 		return "", removableErr
 	}
 	removablePath := filepath.Join(rootDir, "boot", "efi", "EFI", "BOOT", removableName)
-	_, err = os.Stat(shimPath)
-	if err == nil {
-		return `\EFI\ubuntu\` + shimName, nil
+
+	var checked []string
+	for _, vendor := range vendorDirs {
+		shimPath := filepath.Join(rootDir, "boot", "efi", "EFI", vendor, shimName)
+		checked = append(checked, shimPath)
+		_, err = os.Stat(shimPath)
+		if err == nil {
+			return `\EFI\` + vendor + `\` + shimName, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("stat shim %s: %w", shimPath, err)
+		}
+
+		grubPath := filepath.Join(rootDir, "boot", "efi", "EFI", vendor, grubName)
+		checked = append(checked, grubPath)
+		_, err = os.Stat(grubPath)
+		if err == nil {
+			return `\EFI\` + vendor + `\` + grubName, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("stat grub %s: %w", grubPath, err)
+		}
 	}
-	if !os.IsNotExist(err) {
-		return "", fmt.Errorf("stat shim %s: %w", shimPath, err)
-	}
-	_, err = os.Stat(grubPath)
-	if err == nil {
-		return `\EFI\ubuntu\` + grubName, nil
-	}
-	if !os.IsNotExist(err) {
-		return "", fmt.Errorf("stat grub %s: %w", grubPath, err)
-	}
+	checked = append(checked, removablePath)
 	_, err = os.Stat(removablePath)
 	if err == nil {
 		return `\EFI\BOOT\` + removableName, nil
@@ -726,7 +735,7 @@ func efiLoaderPath(rootDir, arch string) (string, error) {
 	if !os.IsNotExist(err) {
 		return "", fmt.Errorf("stat removable EFI loader %s: %w", removablePath, err)
 	}
-	return "", fmt.Errorf("no EFI loader found: checked %s, %s and %s", shimPath, grubPath, removablePath)
+	return "", fmt.Errorf("no EFI loader found: checked %s", strings.Join(checked, ", "))
 }
 
 // partNumberFromDevice extracts the partition number from a device path.
