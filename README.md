@@ -78,12 +78,12 @@ BOOTy operates in two modes depending on the boot environment:
 - **Startup crash artifact upload** — Best-effort pre-wipe collection of existing OS crash logs, dumps, and host metadata for CAPRF/S3 correlation
 - **Hard/soft deprovisioning** — Full disk wipe or GRUB rename for reprovisioning
 - **Standby mode** — Hot standby with heartbeats and command polling for sub-second provisioning
-- **Cloud-init injection** — NoCloud and ConfigDrive datasource generation (users, packages, NTP, runcmd)
+- **Cloud-init injection** — NoCloud and ConfigDrive seed generation from the provisioning network config
 - **Netplan overlay** — Drop-in netplan YAML config from provisioner overrides `/deploy/vars` network settings
 - **Network persistence renderers** — Library support for netplan, NetworkManager, and systemd-networkd config generation
 - **IPMI operations** — BMC network config, boot device control, chassis power, sensor readings
 - **TPM 2.0 support** — Detection, PCR reading, metadata collection, LUKS2 TPM enrollment (Phase 2)
-- **Bootloader auto-detection** — Automatic GRUB vs systemd-boot selection (x86_64 and ARM64)
+- **Bootloader helpers** — GRUB-oriented provisioning plus experimental bootloader detection helpers
 - **BGP policy engine** — Import/export filtering, community tagging, graceful restart
 - **Multi-architecture builds** — CI builds `linux/amd64` and `linux/arm64` artifacts
 - **Multiple build flavors** — Full (FRR+tools), GoBGP (pure Go BGP), slim (DHCP-only), micro (pure Go), ISO (bootable)
@@ -121,8 +121,22 @@ cross-compilation hosts for the Go binary.
 | Network persistence renderers | Unit tests for Ubuntu/netplan, RHEL/NetworkManager, and Flatcar/systemd-networkd writers |
 
 CI does not currently prove macOS/Windows runtime behavior, non-Linux boot
-targets, SUSE/openSUSE-specific provisioning, Fedora-specific provisioning, or
-automatic target-OS detection for persistent network configuration.
+targets, vendor Flatcar images, VMware ESXi provisioning, Windows target
+provisioning, SUSE/openSUSE-specific provisioning, Fedora-specific
+provisioning, RHEL/Rocky/Alma target bootloader behavior, Debian target image
+first boot, or automatic target-OS detection for persistent network
+configuration.
+
+Target OS support is limited to behavior the repository implements and tests:
+
+| Target OS family | Current status |
+|------------------|----------------|
+| Generic Linux images | Supported at the image/disk/provisioning level when the target image is compatible with the GRUB-oriented provisioning flow and required target-side tools/files are present. Current CI uses synthetic Linux images on Ubuntu runners rather than real distro cloud images. |
+| Ubuntu/Debian-like images | Common examples and GRUB/update-grub assumptions exist, but CI does not prove first boot of a real Ubuntu or Debian target image with cloud-init, netplan, or systemd applying the generated files. |
+| RHEL/Rocky/Alma/Fedora/SUSE/openSUSE/SLES | Not target-OS proven. Some label and renderer helpers exist, but active provisioning does not implement native GRUB2/BLS/vendor EFI paths, SELinux relabeling, or distro-specific first-boot validation. |
+| Flatcar | Unit tests cover systemd-networkd rendering and source-root selection can handle explicit `USR-A`/`USR-B` labels. The existing KVM test uses a Flatcar-like synthetic source layout, not a real Flatcar vendor image, Ignition, update-engine, or Nebraska flow. |
+| VMware ESXi | Unsupported and unclaimed. The repository has no ESXi/VMware/vSphere/VMFS provisioning path or CI coverage. |
+| Windows | Unsupported as a BOOTy runtime or provisioned target OS. Windows is mentioned only as a possible Go cross-compilation host. |
 
 ## Building
 
@@ -848,14 +862,16 @@ When enabled, BOOTy writes cloud-init seed data to the appropriate path
 on the provisioned root filesystem. `nocloud` writes
 `/var/lib/cloud/seed/nocloud/`, and `configdrive` writes OpenStack ConfigDrive
 v2 seed files under `/var/lib/cloud/seed/config_drive/openstack/latest/`.
-The generated config includes:
+The active provisioning integration currently generates:
 
 - **Instance metadata** — instance-id, hostname, provider-id
-- **User data** — user management (groups, shell, sudo, SSH keys), package
-  installation, NTP servers, timezone, file writing, and arbitrary `runcmd`
-  commands
 - **Network config v2** — bonds, addresses, gateways, nameservers
   (generated from the active provisioning network config)
+
+The cloud-init generator package has fields for richer user-data such as users,
+packages, NTP, file writes, and `runcmd`, but the provisioning configuration
+surface does not currently populate those fields from CAPRF or environment
+configuration.
 
 ### Netplan Overlay
 
@@ -892,11 +908,11 @@ when cloud-init injection is enabled.
 
 Implemented renderer formats:
 
-| OS Family | Format | Config Path |
-|-----------|--------|-------------|
-| Ubuntu | Netplan YAML | `/etc/netplan/` |
-| RHEL | NetworkManager keyfiles | `/etc/NetworkManager/system-connections/` |
-| Flatcar | systemd-networkd units | `/etc/systemd/network/` |
+| OS Family | Format | Config Path | Scope |
+|-----------|--------|-------------|-------|
+| Ubuntu | Netplan YAML | `/etc/netplan/` | Unit-tested renderer only |
+| RHEL | NetworkManager keyfiles | `/etc/NetworkManager/system-connections/` | Unit-tested renderer only; bonds and VLANs are not supported by this writer |
+| Flatcar | systemd-networkd units | `/etc/systemd/network/` | Unit-tested renderer only; bonds and VLANs are not supported by this writer |
 
 The renderer package can write interface configs, bond settings, addresses,
 gateways, DNS, and VLAN assignments where the selected writer supports them.
@@ -935,10 +951,10 @@ inventory and debug payloads.
 TPM info is included in hardware inventory and debug dumps when a TPM is
 present. No environment variables are required — detection is automatic.
 
-### Bootloader Detection
+### Bootloader Helpers
 
-BOOTy automatically detects the installed bootloader on the provisioned
-OS to configure the correct boot chain:
+BOOTy includes helper code for detecting the installed bootloader on a target
+filesystem:
 
 | Bootloader | Detection | Architecture |
 |-----------|-----------|--------------|
@@ -946,9 +962,10 @@ OS to configure the correct boot chain:
 | systemd-boot | Presence of `EFI/systemd/systemd-bootaa64.efi` | ARM64 |
 | GRUB | Default fallback when systemd-boot is not found | All |
 
-Bootloader detection determines how kernel parameters are configured,
-how kexec parses the boot config, and how EFI boot entries are created.
-No environment variables are required — detection is automatic.
+The active provisioning pipeline is still GRUB-oriented. It writes GRUB drop-in
+configuration, invokes `update-grub` in the target chroot, and creates EFI
+entries using the currently implemented GRUB paths. The detector is not yet the
+source of truth for provisioning, kexec parsing, or EFI boot-entry creation.
 
 ## Extending Bundled Binaries
 
