@@ -21,6 +21,7 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 	if mode == "" {
 		mode = "hard"
 	}
+	o.cfg.Mode = mode
 	o.log.Info("starting deprovisioning", "mode", mode)
 
 	steps := []Step{

@@ -805,7 +805,7 @@ func TestWipeOrSecureEraseDisks(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := &config.MachineConfig{}
+			cfg := &config.MachineConfig{Mode: "deprovision"}
 			cfg.Provision.Disk.SecureErase = tc.secureErase
 			cmd := newMockCommander()
 			if tc.wipeErr != nil {
@@ -820,6 +820,74 @@ func TestWipeOrSecureEraseDisks(t *testing.T) {
 				t.Fatalf("wantErr=%v, got err=%v", tc.wantErr, err)
 			}
 		})
+	}
+}
+
+func TestWipeOrSecureEraseDisksRequiresTargetDiskInProvisionMode(t *testing.T) {
+	tests := []struct {
+		name        string
+		mode        string
+		secureErase bool
+	}{
+		{name: "provision quick erase", mode: "provision"},
+		{name: "dry-run quick erase", mode: "dry-run"},
+		{name: "provision secure erase", mode: "provision", secureErase: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.MachineConfig{Mode: tc.mode}
+			cfg.Provision.Disk.SecureErase = tc.secureErase
+			o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+			err := o.wipeOrSecureEraseDisks(context.Background())
+			if err == nil {
+				t.Fatal("expected error when targetDisk is empty")
+			}
+			if !strings.Contains(err.Error(), "target disk is required") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(cmd.calls) != 0 {
+				t.Fatalf("expected no wipe commands, got %#v", cmd.calls)
+			}
+		})
+	}
+}
+
+func TestWipeOrSecureEraseDisksScopesQuickEraseToTargetDisk(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+
+	if err := o.wipeOrSecureEraseDisks(context.Background()); err != nil {
+		t.Fatalf("wipeOrSecureEraseDisks: %v", err)
+	}
+
+	if got := len(cmd.calls); got != 2 {
+		t.Fatalf("expected 2 target wipe calls, got %d: %#v", got, cmd.calls)
+	}
+	if !hasCommandCall(cmd.calls, "sgdisk", "--zap-all", "/dev/sda") {
+		t.Fatalf("expected sgdisk to target /dev/sda, got %#v", cmd.calls)
+	}
+	if !hasCommandCall(cmd.calls, "wipefs", "-af", "/dev/sda") {
+		t.Fatalf("expected wipefs to target /dev/sda, got %#v", cmd.calls)
+	}
+}
+
+func TestWipeOrSecureEraseDisksScopesSecureEraseToTargetDisk(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.SecureErase = true
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+
+	if err := o.wipeOrSecureEraseDisks(context.Background()); err != nil {
+		t.Fatalf("wipeOrSecureEraseDisks: %v", err)
+	}
+
+	if !hasCommandCall(cmd.calls, "hdparm", "-I", "/dev/sda") {
+		t.Fatalf("expected secure erase probe to target /dev/sda, got %#v", cmd.calls)
+	}
+	if !hasCommandCall(cmd.calls, "wipefs", "-af", "/dev/sda") {
+		t.Fatalf("expected secure erase fallback to target /dev/sda, got %#v", cmd.calls)
 	}
 }
 
