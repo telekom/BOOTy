@@ -221,13 +221,15 @@ func (m *Manager) SecureEraseDisk(ctx context.Context, device string) error {
 	}
 
 	checkPath := device
+	erasePath := device
 	if resolved, err := filepath.EvalSymlinks(device); err == nil {
 		checkPath = resolved
+		erasePath = resolved
 	}
 	if strings.HasPrefix(filepath.Base(checkPath), "nvme") {
-		return m.secureEraseNVMe(ctx, device)
+		return m.secureEraseNVMe(ctx, erasePath)
 	}
-	return m.secureEraseSATA(ctx, device)
+	return m.secureEraseSATA(ctx, erasePath)
 }
 
 // secureEraseNVMe performs NVMe User Data Erase via nvme format command.

@@ -443,17 +443,22 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 	if mode == "deprovision" || mode == "soft-deprovision" || mode == "soft" || mode == "hard" {
 		secureErase = o.cfg.Deprovision.SecureErase
 	}
+	targetDisk := strings.TrimSpace(o.targetDisk)
+	if targetDisk == "" {
+		if mode == "deprovision" || mode == "hard" {
+			if secureErase {
+				o.log.Info("secure erase enabled, performing hardware-level erase on all disks")
+				return o.disk.SecureEraseAllDisks(ctx)
+			}
+			return o.disk.WipeAllDisks(ctx)
+		}
+		return fmt.Errorf("target disk is required before wipe-disks")
+	}
 	if secureErase {
 		o.log.Info("secure erase enabled, performing hardware-level erase")
-		if o.targetDisk != "" {
-			return o.disk.SecureEraseDisk(ctx, o.targetDisk)
-		}
-		return o.disk.SecureEraseAllDisks(ctx)
+		return o.disk.SecureEraseDisk(ctx, targetDisk)
 	}
-	if o.targetDisk != "" {
-		return o.disk.WipeDisk(ctx, o.targetDisk)
-	}
-	return o.disk.WipeAllDisks(ctx)
+	return o.disk.WipeDisk(ctx, targetDisk)
 }
 
 // errPartitionLayoutNotSupported is the shared error for layout-mode gating.

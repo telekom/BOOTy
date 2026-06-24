@@ -782,7 +782,7 @@ func TestWipeOrSecureEraseDisks(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := &config.MachineConfig{}
+			cfg := &config.MachineConfig{Mode: "deprovision"}
 			cfg.Provision.Disk.SecureErase = tc.secureErase
 			cmd := newMockCommander()
 			if tc.wipeErr != nil {
@@ -795,6 +795,36 @@ func TestWipeOrSecureEraseDisks(t *testing.T) {
 			err := o.wipeOrSecureEraseDisks(context.Background())
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("wantErr=%v, got err=%v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestWipeOrSecureEraseDisksRequiresTargetDiskInProvisionMode(t *testing.T) {
+	tests := []struct {
+		name        string
+		mode        string
+		secureErase bool
+	}{
+		{name: "provision quick erase", mode: "provision"},
+		{name: "dry-run quick erase", mode: "dry-run"},
+		{name: "provision secure erase", mode: "provision", secureErase: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.MachineConfig{Mode: tc.mode}
+			cfg.Provision.Disk.SecureErase = tc.secureErase
+			o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+			err := o.wipeOrSecureEraseDisks(context.Background())
+			if err == nil {
+				t.Fatal("expected error when targetDisk is empty")
+			}
+			if !strings.Contains(err.Error(), "target disk is required") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(cmd.calls) != 0 {
+				t.Fatalf("expected no wipe commands, got %#v", cmd.calls)
 			}
 		})
 	}

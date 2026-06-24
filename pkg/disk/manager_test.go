@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -218,6 +219,25 @@ func TestSecureEraseDiskValidationAndCommands(t *testing.T) {
 				args: []string{"format", "/dev/nvme0n1", "--ses=1", "--force"},
 			},
 		},
+		{
+			name: "nvme symlink uses resolved command path",
+			device: func() string {
+				dir := t.TempDir()
+				target := filepath.Join(dir, "nvme0n1")
+				if err := os.WriteFile(target, []byte("disk"), 0o600); err != nil {
+					t.Fatalf("write target: %v", err)
+				}
+				link := filepath.Join(dir, "disk-by-id")
+				if err := os.Symlink(target, link); err != nil {
+					t.Fatalf("symlink target: %v", err)
+				}
+				return link
+			}(),
+			wantFirst: mockCall{
+				name: "nvme",
+				args: []string{"format", "", "--ses=1", "--force"},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -241,6 +261,9 @@ func TestSecureEraseDiskValidationAndCommands(t *testing.T) {
 			}
 			if len(cmd.calls) == 0 {
 				t.Fatal("expected command calls")
+			}
+			if tt.name == "nvme symlink uses resolved command path" {
+				tt.wantFirst.args[1], _ = filepath.EvalSymlinks(tt.device)
 			}
 			if cmd.calls[0].name != tt.wantFirst.name || strings.Join(cmd.calls[0].args, " ") != strings.Join(tt.wantFirst.args, " ") {
 				t.Fatalf("first command = %s %v, want %s %v", cmd.calls[0].name, cmd.calls[0].args, tt.wantFirst.name, tt.wantFirst.args)
