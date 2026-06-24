@@ -482,14 +482,20 @@ func mountQcow2Partition(t *testing.T, qcow2Path string, partNum int) (rootMount
 		t.Fatal("no free nbd device found")
 	}
 
+	connected := true
+	disconnect := func() {
+		if !connected {
+			return
+		}
+		connected = false
+		disconnectNBD(nbdDev)
+	}
 	// Register disconnect immediately so it runs even if partprobe/mount fail.
-	t.Cleanup(func() {
-		_ = exec.Command("qemu-nbd", "--disconnect", nbdDev).Run()
-	})
+	t.Cleanup(disconnect)
 
 	// Wait for partitions after qemu-nbd attach.
 	if err := rereadPartitionTable(nbdDev); err != nil {
-		_ = exec.Command("qemu-nbd", "--disconnect", nbdDev).Run()
+		disconnect()
 		t.Fatalf("reread partition table on %s: %v", nbdDev, err)
 	}
 	partDev := fmt.Sprintf("%sp%d", nbdDev, partNum)
@@ -507,11 +513,31 @@ func mountQcow2Partition(t *testing.T, qcow2Path string, partNum int) (rootMount
 		}
 		cleaned = true
 		_ = exec.Command("umount", mountDir).Run()
-		_ = exec.Command("qemu-nbd", "--disconnect", nbdDev).Run()
+		disconnect()
 	}
 	t.Cleanup(cleanup)
 
 	return mountDir, cleanup
+}
+
+func disconnectNBD(devPath string) {
+	_ = exec.Command("qemu-nbd", "--disconnect", devPath).Run()
+	waitForNBDDisconnect(devPath, 5*time.Second)
+}
+
+func waitForNBDDisconnect(devPath string, timeout time.Duration) {
+	pidPath := filepath.Join("/sys/block", filepath.Base(devPath), "pid")
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(pidPath)
+		if err != nil || strings.TrimSpace(string(data)) == "" || strings.TrimSpace(string(data)) == "0" {
+			settleDevices(2)
+			return
+		}
+		settleDevices(1)
+		time.Sleep(100 * time.Millisecond)
+	}
+	settleDevices(2)
 }
 
 // --- Low-level helpers ---
@@ -597,19 +623,21 @@ func rereadPartitionTable(devPath string) error {
 		cmd := exec.Command("partprobe", devPath)
 		out, err := cmd.CombinedOutput()
 		if err == nil {
-			if _, lookErr := exec.LookPath("udevadm"); lookErr == nil {
-				_ = exec.Command("udevadm", "settle", "--timeout=10").Run()
-			}
+			settleDevices(10)
 			return nil
 		}
 		lastOut = out
 		lastErr = err
-		if _, lookErr := exec.LookPath("udevadm"); lookErr == nil {
-			_ = exec.Command("udevadm", "settle", "--timeout=2").Run()
-		}
+		settleDevices(2)
 		time.Sleep(250 * time.Millisecond)
 	}
 	return fmt.Errorf("partprobe %s failed after retries: %w\n%s", devPath, lastErr, lastOut)
+}
+
+func settleDevices(timeoutSeconds int) {
+	if _, lookErr := exec.LookPath("udevadm"); lookErr == nil {
+		_ = exec.Command("udevadm", "settle", fmt.Sprintf("--timeout=%d", timeoutSeconds)).Run()
+	}
 }
 
 func mountReadOnlyWithRetry(t *testing.T, devPath, mountDir string, beforeRetry func()) {
