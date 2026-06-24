@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	apipb "github.com/osrg/gobgp/v3/api"
+	"github.com/osrg/gobgp/v3/pkg/server"
 	"github.com/vishvananda/netlink"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -1034,6 +1035,40 @@ func TestOverlaySetupSkipsOverlayNone(t *testing.T) {
 	}
 	if err := overlay.Setup(context.Background()); err != nil {
 		t.Fatalf("overlay none should succeed with no-op: %v", err)
+	}
+}
+
+func TestOverlaySetupFailureRunsTeardown(t *testing.T) {
+	watchCtx, cancel := context.WithCancel(context.Background())
+	setupErr := errors.New("forced setup failure")
+	teardownCalled := false
+	overlay := &OverlayTier{
+		cfg:    &Config{OverlayType: string(OverlayEVPNVXLAN), ProvisionVNI: 4000, BridgeName: "br-test"},
+		log:    slog.Default(),
+		cancel: cancel,
+		bgp:    server.NewBgpServer(),
+		hooks: &overlaySetupHooks{
+			createVXLANAndBridge: func() error { return nil },
+			addProvisionIP:       func() error { return setupErr },
+			teardown: func(context.Context) error {
+				teardownCalled = true
+				cancel()
+				return nil
+			},
+		},
+	}
+
+	err := overlay.Setup(context.Background())
+	if !errors.Is(err, setupErr) {
+		t.Fatalf("Setup error = %v, want wrapped setup error", err)
+	}
+	if !teardownCalled {
+		t.Fatal("Setup failure did not run teardown")
+	}
+	select {
+	case <-watchCtx.Done():
+	default:
+		t.Fatal("cleanupSetupFailure did not cancel overlay watch context")
 	}
 }
 

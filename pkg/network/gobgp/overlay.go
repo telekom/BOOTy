@@ -80,6 +80,7 @@ type OverlayTier struct {
 	log    *slog.Logger
 	cancel context.CancelFunc
 	fdb    fdbInstaller
+	hooks  *overlaySetupHooks
 
 	// Track resources created by us for clean teardown.
 	createdVRFs     map[string]bool
@@ -97,6 +98,12 @@ type OverlayTier struct {
 	importRTASN  uint32
 	importRTVNI  uint32
 	importRTErr  error
+}
+
+type overlaySetupHooks struct {
+	createVXLANAndBridge func() error
+	addProvisionIP       func() error
+	teardown             func(context.Context) error
 }
 
 // NewOverlayTier creates a new overlay tier.
@@ -135,28 +142,28 @@ func (o *OverlayTier) Setup(ctx context.Context) error {
 		return fmt.Errorf("BGP server not set: call SetBgpServer before Setup")
 	}
 
-	if err := o.createVXLANAndBridge(); err != nil {
-		return fmt.Errorf("create VXLAN/bridge: %w", err)
+	if err := o.setupCreateVXLANAndBridge(); err != nil {
+		return o.cleanupSetupFailure(ctx, "create VXLAN/bridge", err)
 	}
 
-	if err := o.addProvisionIP(); err != nil {
-		return fmt.Errorf("add provision IP: %w", err)
+	if err := o.setupAddProvisionIP(); err != nil {
+		return o.cleanupSetupFailure(ctx, "add provision IP", err)
 	}
 
 	if err := o.addOverlayLoopback(); err != nil {
-		return fmt.Errorf("add overlay loopback: %w", err)
+		return o.cleanupSetupFailure(ctx, "add overlay loopback", err)
 	}
 
 	if err := o.advertiseType5(ctx); err != nil {
-		return fmt.Errorf("advertise EVPN Type-5: %w", err)
+		return o.cleanupSetupFailure(ctx, "advertise EVPN Type-5", err)
 	}
 
 	if o.cfg.EnableL2 {
 		if err := o.advertiseType3(ctx); err != nil {
-			return fmt.Errorf("advertise EVPN Type-3: %w", err)
+			return o.cleanupSetupFailure(ctx, "advertise EVPN Type-3", err)
 		}
 		if err := o.advertiseType2(ctx); err != nil {
-			return fmt.Errorf("advertise EVPN Type-2: %w", err)
+			return o.cleanupSetupFailure(ctx, "advertise EVPN Type-2", err)
 		}
 	}
 
@@ -165,6 +172,34 @@ func (o *OverlayTier) Setup(ctx context.Context) error {
 	go o.watchRoutes(watchCtx)
 
 	return nil
+}
+
+func (o *OverlayTier) cleanupSetupFailure(ctx context.Context, step string, setupErr error) error {
+	if teardownErr := o.setupTeardown(ctx); teardownErr != nil {
+		o.log.Warn("failed to tear down overlay after setup failure", "step", step, "error", teardownErr)
+	}
+	return fmt.Errorf("%s: %w", step, setupErr)
+}
+
+func (o *OverlayTier) setupCreateVXLANAndBridge() error {
+	if o.hooks != nil && o.hooks.createVXLANAndBridge != nil {
+		return o.hooks.createVXLANAndBridge()
+	}
+	return o.createVXLANAndBridge()
+}
+
+func (o *OverlayTier) setupAddProvisionIP() error {
+	if o.hooks != nil && o.hooks.addProvisionIP != nil {
+		return o.hooks.addProvisionIP()
+	}
+	return o.addProvisionIP()
+}
+
+func (o *OverlayTier) setupTeardown(ctx context.Context) error {
+	if o.hooks != nil && o.hooks.teardown != nil {
+		return o.hooks.teardown(ctx)
+	}
+	return o.Teardown(ctx)
 }
 
 // Ready waits until the overlay is operational by checking EVPN route state.
