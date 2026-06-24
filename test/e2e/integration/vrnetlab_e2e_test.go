@@ -442,13 +442,25 @@ func TestVrnetlabDeprovisionFullLifecycleViaEVPN(t *testing.T) {
 	}
 	t.Log("deprovision VM: FRR/EVPN network mode active")
 
-	// Wait for deprovisioning steps to execute
-	time.Sleep(15 * time.Second)
-	logs := getVMSerialLog(t, vmDeprovision)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
 
-	if strings.Contains(logs, "Deprovisioning step") || strings.Contains(logs, "Starting deprovisioning") ||
-		strings.Contains(logs, "report-init") {
-		t.Log("deprovision VM: deprovisioning lifecycle executing through EVPN")
+	for {
+		logs := getVMSerialLog(t, vmDeprovision)
+		if strings.Contains(logs, "Deprovisioning step") ||
+			strings.Contains(logs, "starting deprovisioning") ||
+			strings.Contains(logs, "report-init") {
+			t.Log("deprovision VM: deprovisioning lifecycle executing through EVPN")
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			t.Fatalf("deprovision VM did not execute deprovisioning lifecycle\n%s", logs)
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -668,7 +680,6 @@ var vrnetlabAllowedErrorWrappers = []string{
 var vrnetlabAllowedErrorRootCauses = []string{
 	// Expected in CI without real disks or network.
 	"no suitable disk found",
-	`exec: "mdadm": executable file not found in $PATH`,
 	"stop raid arrays",
 	"Connectivity timeout",
 	"Connecting to provisioning server",
@@ -676,6 +687,10 @@ var vrnetlabAllowedErrorRootCauses = []string{
 	// Expected when CAPRF endpoints are HTTP-only and token auth is enforced.
 	"failed to report error status",
 	"insecure transport",
+}
+
+var vrnetlabDeniedErrorRootCauses = []string{
+	`exec mdadm: exec: "mdadm": executable file not found`,
 }
 
 func vrnetlabAllowedErrorLine(line string) bool {
@@ -694,6 +709,11 @@ func vrnetlabAllowedErrorLine(line string) bool {
 }
 
 func vrnetlabAllowedErrorRootCause(lineLower string) bool {
+	for _, pattern := range vrnetlabDeniedErrorRootCauses {
+		if strings.Contains(lineLower, strings.ToLower(pattern)) {
+			return false
+		}
+	}
 	for _, pattern := range vrnetlabAllowedErrorRootCauses {
 		if strings.Contains(lineLower, strings.ToLower(pattern)) {
 			return true
@@ -746,9 +766,9 @@ func TestVrnetlabAllowedErrorLineRequiresExpectedModeFailureCause(t *testing.T) 
 			want: true,
 		},
 		{
-			name: "mode exit allowed with stable mdadm exec cause",
+			name: "mode exit rejects missing mdadm",
 			line: `level=ERROR msg="mode exited with error" mode=deprovision error="deprovision step stop-raid: stop raid arrays: exec mdadm: exec: \"mdadm\": executable file not found in $PATH"`,
-			want: true,
+			want: false,
 		},
 		{
 			name: "mode exit rejected with generic wrapper and unexpected cause",
