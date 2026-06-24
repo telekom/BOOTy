@@ -7,9 +7,32 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 )
+
+const redactedLogValue = "[REDACTED]"
+
+var sensitiveLogKeySubstrings = []string{
+	"password",
+	"token",
+	"secret",
+	"credential",
+	"authorization",
+	"bearer",
+	"private",
+	"session",
+	"apikey",
+	"secretkey",
+	"privatekey",
+}
+
+var sensitiveLogKeySegments = map[string]struct{}{
+	"auth": {},
+	"cert": {},
+	"key":  {},
+}
 
 // KafkaConfig holds Kafka connection settings.
 type KafkaConfig struct {
@@ -142,7 +165,8 @@ func (h *KafkaHandler) Handle(_ context.Context, r slog.Record) error { //nolint
 		if a.Key == "step" {
 			msg.Step = a.Value.String()
 		} else {
-			msg.Attrs[groupPrefix+a.Key] = resolveValue(a.Value)
+			key := groupPrefix + a.Key
+			msg.Attrs[key] = resolveValueForKey(key, a.Value)
 		}
 	}
 
@@ -151,7 +175,8 @@ func (h *KafkaHandler) Handle(_ context.Context, r slog.Record) error { //nolint
 		if a.Key == "step" {
 			msg.Step = a.Value.String()
 		} else {
-			msg.Attrs[groupPrefix+a.Key] = resolveValue(a.Value)
+			key := groupPrefix + a.Key
+			msg.Attrs[key] = resolveValueForKey(key, a.Value)
 		}
 		return true
 	})
@@ -214,17 +239,42 @@ func (h *KafkaHandler) Close() error {
 	return h.writer.Close()
 }
 
-// resolveValue converts a slog.Value to a JSON-safe representation.
-func resolveValue(v slog.Value) any {
+func resolveValueForKey(key string, v slog.Value) any {
+	if isSensitiveLogKey(key) {
+		return redactedLogValue
+	}
 	v = v.Resolve()
 	switch v.Kind() {
 	case slog.KindGroup:
 		m := make(map[string]any)
 		for _, a := range v.Group() {
-			m[a.Key] = resolveValue(a.Value)
+			childKey := a.Key
+			if key != "" {
+				childKey = key + "." + a.Key
+			}
+			m[a.Key] = resolveValueForKey(childKey, a.Value)
 		}
 		return m
 	default:
 		return v.Any()
 	}
+}
+
+func isSensitiveLogKey(key string) bool {
+	lower := strings.ToLower(key)
+	for _, word := range sensitiveLogKeySubstrings {
+		if strings.Contains(lower, word) {
+			return true
+		}
+	}
+	for _, segment := range strings.FieldsFunc(lower, isLogKeySeparator) {
+		if _, ok := sensitiveLogKeySegments[segment]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func isLogKeySeparator(r rune) bool {
+	return r == '.' || r == '_' || r == '-'
 }

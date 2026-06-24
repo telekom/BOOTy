@@ -165,6 +165,57 @@ func TestKafkaHandler_WithGroup(t *testing.T) {
 	}
 }
 
+func TestKafkaHandler_RedactsSensitiveAttrs(t *testing.T) {
+	mw := &mockWriter{}
+	h := NewKafkaHandler(mw, "t", MachineIdentity{}).WithAttrs([]slog.Attr{
+		slog.String("api_token", "handler-token"),
+		slog.Group("creds",
+			slog.String("password", "nested-password"),
+			slog.String("user", "admin"),
+		),
+	})
+
+	r := slog.NewRecord(time.Now(), slog.LevelInfo, "redacted", 0)
+	r.AddAttrs(
+		slog.String("authorization", "Bearer record-token"),
+		slog.String("component", "network"),
+	)
+	if err := h.Handle(context.Background(), r); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := string(mw.messages[0])
+	for _, leaked := range []string{"handler-token", "nested-password", "record-token"} {
+		if strings.Contains(raw, leaked) {
+			t.Fatalf("sensitive value %q leaked in Kafka log JSON: %s", leaked, raw)
+		}
+	}
+
+	var msg LogMessage
+	if err := json.Unmarshal(mw.messages[0], &msg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if msg.Attrs["api_token"] != redactedLogValue {
+		t.Fatalf("api_token = %v, want redacted", msg.Attrs["api_token"])
+	}
+	if msg.Attrs["authorization"] != redactedLogValue {
+		t.Fatalf("authorization = %v, want redacted", msg.Attrs["authorization"])
+	}
+	if msg.Attrs["component"] != "network" {
+		t.Fatalf("component = %v, want network", msg.Attrs["component"])
+	}
+	creds, ok := msg.Attrs["creds"].(map[string]any)
+	if !ok {
+		t.Fatalf("creds attr = %#v, want object", msg.Attrs["creds"])
+	}
+	if creds["password"] != redactedLogValue {
+		t.Fatalf("creds.password = %v, want redacted", creds["password"])
+	}
+	if creds["user"] != "admin" {
+		t.Fatalf("creds.user = %v, want admin", creds["user"])
+	}
+}
+
 func TestKafkaHandler_Close(t *testing.T) {
 	mw := &mockWriter{}
 	h := NewKafkaHandler(mw, "t", MachineIdentity{})
