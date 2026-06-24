@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -131,5 +132,22 @@ func TestTryKexecSkipsWhenSecureBootReEnableRequested(t *testing.T) {
 
 	if tryKexec(cfg, false) {
 		t.Fatal("tryKexec returned true when secure boot re-enable requires hard reboot")
+	}
+}
+
+func TestSetupNetworkModeExplicitGoBGPFailsClosed(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Network.Mode = "gobgp"
+
+	mode, err := setupNetworkMode(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected explicit GoBGP setup error")
+	}
+	if mode != nil {
+		t.Fatalf("mode = %T, want nil on explicit GoBGP setup failure", mode)
+	}
+	if !strings.Contains(err.Error(), "gobgp network setup") ||
+		!strings.Contains(err.Error(), "gobgp config") {
+		t.Fatalf("error = %q, want GoBGP setup failure context", err.Error())
 	}
 }
