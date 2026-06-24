@@ -1810,7 +1810,7 @@ func (o *Orchestrator) runHealthChecks(ctx context.Context) error {
 	// Best-effort report to server.
 	if reporter, ok := o.provider.(HealthReporter); ok {
 		if err := reporter.ReportHealthChecks(ctx, results); err != nil {
-			o.log.Warn("Failed to report health checks", "error", err)
+			o.log.Warn("failed to report health checks", "error", err)
 		}
 	}
 
