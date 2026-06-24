@@ -533,14 +533,17 @@ func TestCreateEFIBootEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd.setResult("chroot "+c.rootDir, []byte("Boot0001* ubuntu"), nil)
+	cmd.setResult("efibootmgr -c", []byte("Boot0001* ubuntu"), nil)
 
 	err = c.CreateEFIBootEntry(context.Background(), "/dev/sda", "/dev/sda1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !hasCommandName(cmd.calls, "chroot") {
-		t.Fatal("expected chroot efibootmgr command")
+	if hasCommandName(cmd.calls, "chroot") {
+		t.Fatalf("EFI boot entry creation should not chroot, calls=%#v", cmd.calls)
+	}
+	if !hasCommandCall(cmd.calls, "efibootmgr", "-c", "-d", "/dev/sda", "-p", "1", "-L", "ubuntu", "-l", `\EFI\ubuntu\`+shimName) {
+		t.Fatalf("expected host efibootmgr create command, calls=%#v", cmd.calls)
 	}
 }
 
