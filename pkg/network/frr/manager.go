@@ -638,30 +638,75 @@ func runDaemonCmd(ctx context.Context, name string, args ...string) error {
 	return nil
 }
 
+type frrDaemonSpec struct {
+	name     string
+	args     []string
+	required bool
+}
+
+var frrDaemonDirs = []string{"/usr/lib/frr", "/sbin"}
+
+func resolveFRRDaemonPath(name string) (path string, ok bool, err error) {
+	for _, dir := range frrDaemonDirs {
+		candidate := dir + "/" + name
+		if _, err := os.Stat(candidate); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return "", false, fmt.Errorf("stat FRR daemon %s: %w", candidate, err)
+		}
+		return candidate, true, nil
+	}
+	return "", false, nil
+}
+
+func resolveFRRDaemons(daemons []frrDaemonSpec) (paths map[string]string, missing []string, err error) {
+	paths = make(map[string]string, len(daemons))
+	for _, d := range daemons {
+		path, ok, err := resolveFRRDaemonPath(d.name)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !ok {
+			if d.required {
+				missing = append(missing, d.name)
+			}
+			continue
+		}
+		paths[d.name] = path
+	}
+	return paths, missing, nil
+}
+
 func (m *Manager) startDaemonsDirect(ctx context.Context) error {
 	// FRR 10.x daemon startup order: mgmtd → zebra → staticd → bgpd → bfdd.
 	// bgpd always uses -f to read its config directly — peer-group property
 	// inheritance is unreliable when config is pushed by mgmtd alone.
 	// mgmtd (if present) handles management-plane infrastructure.
-	type daemonSpec struct {
-		name string
-		args []string
+	daemons := []frrDaemonSpec{
+		{"mgmtd", []string{"-d", "-A", "127.0.0.1"}, false},
+		{"zebra", []string{"-d", "-A", "127.0.0.1", "-s", "90000000"}, true},
+		{"staticd", []string{"-d", "-A", "127.0.0.1"}, false},
+		{"bgpd", []string{"-d", "-A", "127.0.0.1", "-f", "/etc/frr/frr.conf"}, true},
+		{"bfdd", []string{"-d", "-A", "127.0.0.1"}, true},
 	}
-
-	daemons := []daemonSpec{
-		{"mgmtd", []string{"-d", "-A", "127.0.0.1"}},
-		{"zebra", []string{"-d", "-A", "127.0.0.1", "-s", "90000000"}},
-		{"staticd", []string{"-d", "-A", "127.0.0.1"}},
-		{"bgpd", []string{"-d", "-A", "127.0.0.1", "-f", "/etc/frr/frr.conf"}},
-		{"bfdd", []string{"-d", "-A", "127.0.0.1"}},
+	paths, missing, err := resolveFRRDaemons(daemons)
+	if err != nil {
+		return fmt.Errorf("resolve FRR daemons: %w", err)
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("required FRR daemons not found: %s", strings.Join(missing, ", "))
 	}
 	for _, d := range daemons {
-		path := "/usr/lib/frr/" + d.name
-		if _, err := os.Stat(path); err != nil {
+		path, ok := paths[d.name]
+		if !ok {
 			m.log.Debug("Daemon not found, skipping", "daemon", d.name)
 			continue
 		}
 		if err := runDaemonCmd(ctx, path, d.args...); err != nil {
+			if d.required {
+				return fmt.Errorf("start FRR daemon %s: %w", d.name, err)
+			}
 			m.log.Warn("Failed to start daemon", "daemon", d.name, "error", err)
 		} else {
 			m.log.Info("Started FRR daemon", "daemon", d.name)
