@@ -21,6 +21,18 @@ COVERAGE_PROFILE ?= coverage.out
 COVERAGE_HTML ?= coverage.html
 COVERAGE_THRESHOLD ?= 40.0
 
+CLEAN_FILES := \
+	$(TARGET) \
+	$(TARGET).sha256 \
+	$(COVERAGE_PROFILE) \
+	$(COVERAGE_HTML) \
+	booty.iso \
+	booty-gobgp.iso \
+	initramfs.cpio.gz \
+	initramfs.cpio.gz.sha256 \
+	initramfs.cpio.zst \
+	initramfs.cpio.zst.sha256
+
 .PHONY: all build build-all clean install uninstall fmt lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic oci-push oci-push-initramfs oci-push-binary
 
 all: lint test install
@@ -37,7 +49,7 @@ build-all: $(SRC)
 	@GOOS=$(TARGETOS) GOARCH=arm64 go build $(LDFLAGS) -o dist/arm64/$(TARGET)
 
 clean:
-	@rm -f $(TARGET)
+	@rm -f $(CLEAN_FILES)
 	@rm -rf dist
 
 install:
