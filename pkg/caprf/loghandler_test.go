@@ -1,6 +1,7 @@
 package caprf
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
@@ -553,5 +554,35 @@ func TestHandleRedactsSensitiveAttrs(t *testing.T) {
 	}
 	if !strings.Contains(shipped, "component=provision") {
 		t.Errorf("expected non-sensitive attr to pass through, got: %s", shipped)
+	}
+}
+
+func TestHandleRedactsSensitiveAttrsInLocalLog(t *testing.T) {
+	ts := newTestServer(t)
+
+	cfg := &config.MachineConfig{
+		Transport: config.TransportConfig{Token: "redact-local-token", LogURL: ts.server.URL + "/log"},
+	}
+	client := NewFromConfig(cfg)
+
+	var local bytes.Buffer
+	inner := slog.NewTextHandler(&local, &slog.HandlerOptions{Level: slog.LevelDebug})
+	handler := NewRemoteHandler(client, inner, slog.LevelInfo, 100)
+	logger := slog.New(handler).With("apiToken", "derived-secret")
+
+	logger.Info("provisioning", "password", "s3cr3t", "component", "provision")
+	handler.Close()
+
+	got := local.String()
+	for _, leaked := range []string{"s3cr3t", "derived-secret"} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("local log leaked sensitive value %q: %s", leaked, got)
+		}
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("local log did not contain redaction marker: %s", got)
+	}
+	if !strings.Contains(got, "component=provision") {
+		t.Fatalf("local log dropped non-sensitive attr: %s", got)
 	}
 }
