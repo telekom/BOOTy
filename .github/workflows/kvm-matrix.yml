@@ -43,6 +43,7 @@ jobs:
   kvm-tests:
     name: KVM ${{ matrix.scenario }}
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       matrix:
         include:
