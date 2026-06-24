@@ -150,12 +150,13 @@ func TestAddBGPPeerError(t *testing.T) {
 	}
 }
 
-func TestStartFRRFallthroughFailsWhenRequiredDaemonsMissing(t *testing.T) {
-	// startFRR tries systemctl → frrinit.sh → startDaemonsDirect.
-	// In test, neither systemctl nor frrinit.sh exist, so it falls through
-	// to startDaemonsDirect. Required daemon binaries must be present there.
+func TestStartDaemonsDirectFailsWhenRequiredDaemonsMissing(t *testing.T) {
+	origDirs := frrDaemonDirs
+	frrDaemonDirs = []string{t.TempDir(), t.TempDir()}
+	t.Cleanup(func() { frrDaemonDirs = origDirs })
+
 	mgr := NewManager(nil)
-	err := mgr.startFRR(context.Background())
+	err := mgr.startDaemonsDirect(context.Background())
 	if err == nil {
 		t.Fatal("expected error for missing required FRR daemons")
 	}
