@@ -379,13 +379,18 @@ func TestValidate(t *testing.T) {
 		{name: "trims cloud-init ds", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: " NoCloud "}}}},
 		{name: "valid configdrive cloud-init ds", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: " configDrive "}}}},
 		{name: "invalid cloud-init ds", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: "ec2"}}}, wantErr: "invalid provision.cloudInit.datasource"},
-		{name: "valid network persistence os family", cfg: Config{PersistNetwork: true, OSFamily: " Ubuntu "}, wantNormalized: func(t *testing.T, cfg *Config) {
+		{name: "valid network persistence os family", cfg: Config{PersistNetwork: true, OSFamily: " Ubuntu ", Network: NetworkConfig{Static: StaticConfig{Iface: "eth0"}}}, wantNormalized: func(t *testing.T, cfg *Config) {
 			t.Helper()
 			if cfg.OSFamily != "ubuntu" {
 				t.Fatalf("OSFamily = %q, want ubuntu", cfg.OSFamily)
 			}
 		}},
-		{name: "network persistence requires os family", cfg: Config{PersistNetwork: true}, wantErr: "osFamily required when persistNetwork is true"},
+		{name: "network persistence requires os family", cfg: Config{PersistNetwork: true, Network: NetworkConfig{Static: StaticConfig{Iface: "eth0"}}}, wantErr: "osFamily required when persistNetwork is true"},
+		{name: "network persistence requires target network", cfg: Config{PersistNetwork: true, OSFamily: "ubuntu"}, wantErr: "network.static.iface, network.bond.interfaces, or network.vlan.config required"},
+		{name: "network persistence static ip requires interface", cfg: Config{PersistNetwork: true, OSFamily: "ubuntu", Network: NetworkConfig{Static: StaticConfig{IP: "10.1.0.5/24"}}}, wantErr: "network.static.iface required"},
+		{name: "network persistence accepts vlan without gateway", cfg: Config{PersistNetwork: true, OSFamily: "ubuntu", Network: NetworkConfig{VLAN: VLANConfig{Config: "100:eth0:10.100.0.5/24"}}}},
+		{name: "network persistence rejects vlan gateway", cfg: Config{PersistNetwork: true, OSFamily: "ubuntu", Network: NetworkConfig{VLAN: VLANConfig{Config: "100:eth0:10.100.0.5/24:10.100.0.1"}}}, wantErr: "network.vlan.config vlan 100 on eth0 includes gateway"},
+		{name: "network persistence bare bond requires address or vlan", cfg: Config{PersistNetwork: true, OSFamily: "ubuntu", Network: NetworkConfig{Bond: BondConfig{Interfaces: "eth0,eth1"}}}, wantErr: "network.bond.interfaces requires network.static.ip or network.vlan.config"},
 		{name: "invalid network persistence os family", cfg: Config{OSFamily: "windows"}, wantErr: "invalid osFamily"},
 		{name: "valid sysext preload mode", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{DefaultMode: "preload"}}}},
 		{name: "normalizes sysext default mode", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{DefaultMode: "PreLoad"}}}, wantNormalized: func(t *testing.T, cfg *Config) {

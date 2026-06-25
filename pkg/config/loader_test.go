@@ -29,7 +29,8 @@ network:
     provisionVNI: 100
     provisionIP: "10.100.0.20/24"
   static:
-    ip: ""
+    ip: "10.0.0.5/24"
+    gateway: "10.0.0.1"
   bond:
     interfaces: "eth0,eth1"
     mode: "802.3ad"
@@ -214,7 +215,7 @@ func TestLoadJSON(t *testing.T) {
   "osFamily": "rhel",
   "network": {
     "mode": "static",
-    "static": {"ip": "10.0.0.5/24", "gateway": "10.0.0.1"}
+    "static": {"ip": "10.0.0.5/24", "gateway": "10.0.0.1", "iface": "eth0"}
   },
   "transport": {"token": "json-token", "initURL": "https://example.com/init"},
   "provision": {

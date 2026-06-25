@@ -439,11 +439,15 @@ func addPersistentInterface(target *networkpersist.NetworkConfig, cfg *config.Ma
 	if iface == "" {
 		return nil
 	}
+	gateway := strings.TrimSpace(cfg.Network.Static.Gateway)
+	if address == "" {
+		gateway = ""
+	}
 	target.Interfaces = append(target.Interfaces, networkpersist.InterfaceConfig{
 		Name:    iface,
 		DHCP:    address == "",
 		Address: address,
-		Gateway: strings.TrimSpace(cfg.Network.Static.Gateway),
+		Gateway: gateway,
 	})
 	return nil
 }

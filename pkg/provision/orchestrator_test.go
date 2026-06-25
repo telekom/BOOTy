@@ -2357,6 +2357,23 @@ func TestTargetNetworkConfigBondAndVLANMapping(t *testing.T) {
 			},
 		},
 		{
+			name: "dhcp interface drops gateway",
+			configure: func(cfg *config.MachineConfig) {
+				cfg.Network.Static.Iface = "eno1"
+				cfg.Network.Static.Gateway = "10.1.0.1"
+			},
+			assert: func(t *testing.T, got *networkpersist.NetworkConfig) {
+				t.Helper()
+				if len(got.Interfaces) != 1 {
+					t.Fatalf("interfaces = %#v, want one interface", got.Interfaces)
+				}
+				iface := got.Interfaces[0]
+				if iface.Name != "eno1" || !iface.DHCP || iface.Address != "" || iface.Gateway != "" {
+					t.Fatalf("unexpected dhcp interface config: %#v", iface)
+				}
+			},
+		},
+		{
 			name: "vlan gateway is rejected",
 			configure: func(cfg *config.MachineConfig) {
 				cfg.Network.VLAN.Config = "200:eno1:10.200.0.42/24:10.200.0.1"

@@ -429,9 +429,9 @@ func runQEMUProvision(t *testing.T, kernel, initramfs, disk string, timeoutDur t
 		"-kernel", kernel,
 		"-initrd", initramfs,
 		"-drive", fmt.Sprintf("file=%s,format=qcow2,if=virtio", disk),
-		"-net", "nic,model=e1000,macaddr=52:54:00:12:34:56",
+		"-net", "nic,model=virtio,macaddr=52:54:00:12:34:56",
 		"-net", "user",
-		"-append", "console=ttyS0 panic=1",
+		"-append", "console=ttyS0 panic=1 net.ifnames=0",
 	}
 	args = append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)
 

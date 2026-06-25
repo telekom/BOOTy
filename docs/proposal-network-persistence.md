@@ -1,6 +1,9 @@
 # Proposal: Network Configuration Persistence
 
-## Status: Partially implemented (explicit opt-in, no target OS auto-detection)
+## Status: Implemented
+
+Implemented as explicit opt-in network persistence without target OS
+auto-detection.
 
 ## Priority: P2
 
