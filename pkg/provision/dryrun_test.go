@@ -17,11 +17,13 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
+	"github.com/telekom/BOOTy/pkg/health"
 )
 
 type dryRunProvider struct {
-	lastStatus  config.Status
-	lastMessage string
+	lastStatus    config.Status
+	lastMessage   string
+	healthReports [][]health.CheckResult
 }
 
 type fakeFileInfo struct {
@@ -63,6 +65,10 @@ func (p *dryRunProvider) FetchCommands(_ context.Context) ([]config.Command, err
 func (p *dryRunProvider) AcknowledgeCommand(_ context.Context, _, _, _ string) error { return nil }
 func (p *dryRunProvider) ReportInventory(_ context.Context, _ []byte) error          { return nil }
 func (p *dryRunProvider) ReportFirmware(_ context.Context, _ []byte) error           { return nil }
+func (p *dryRunProvider) ReportHealthChecks(_ context.Context, results []health.CheckResult) error {
+	p.healthReports = append(p.healthReports, append([]health.CheckResult(nil), results...))
+	return nil
+}
 
 func withMockInterfaces(t *testing.T, fn func() ([]net.Interface, error)) {
 	t.Helper()
@@ -212,23 +218,72 @@ func TestDryRunImageUnreachable(t *testing.T) {
 
 func TestDryRunHealthChecks(t *testing.T) {
 	tests := []struct {
-		name    string
-		enabled bool
-		expect  DryRunStatus
+		name       string
+		configure  func(*config.MachineConfig)
+		expect     DryRunStatus
+		wantInText string
 	}{
-		{"disabled", false, DryRunWarn},
-		{"enabled", true, DryRunPass},
+		{
+			name: "disabled",
+			configure: func(cfg *config.MachineConfig) {
+				cfg.Health.Enabled = false
+			},
+			expect:     DryRunWarn,
+			wantInText: "disabled",
+		},
+		{
+			name: "enabled runs checks",
+			configure: func(cfg *config.MachineConfig) {
+				cfg.Health.Enabled = true
+				cfg.Health.SkipChecks = "disk-presence,disk-ioerr,memory-ecc,nic-link-state,thermal-state"
+			},
+			expect:     DryRunPass,
+			wantInText: "executed",
+		},
+		{
+			name: "critical failure fails dry-run",
+			configure: func(cfg *config.MachineConfig) {
+				cfg.Health.Enabled = true
+				cfg.Health.MinCPUs = 999999
+				cfg.Health.SkipChecks = "disk-presence,disk-ioerr,memory-ecc,nic-link-state,thermal-state"
+			},
+			expect:     DryRunFail,
+			wantInText: "minimum-cpu",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.MachineConfig{}
-			cfg.Health.Enabled = tc.enabled
+			tc.configure(cfg)
 			o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
 			result := o.dryRunHealthChecks(context.Background())
 			if result.Status != tc.expect {
-				t.Errorf("got %s, want %s", result.Status, tc.expect)
+				t.Errorf("got %s, want %s: %s", result.Status, tc.expect, result.Message)
+			}
+			if !strings.Contains(result.Message, tc.wantInText) {
+				t.Errorf("message = %q, want substring %q", result.Message, tc.wantInText)
 			}
 		})
+	}
+}
+
+func TestDryRunHealthChecksReportsResults(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Health.Enabled = true
+	cfg.Health.MinCPUs = 1
+	cfg.Health.SkipChecks = "disk-presence,disk-ioerr,memory-ecc,nic-link-state,thermal-state"
+	provider := &dryRunProvider{}
+	o := NewOrchestrator(cfg, provider, disk.NewManager(nil))
+
+	result := o.dryRunHealthChecks(context.Background())
+	if result.Status != DryRunPass {
+		t.Fatalf("got %s, want pass: %s", result.Status, result.Message)
+	}
+	if len(provider.healthReports) != 1 {
+		t.Fatalf("health reports = %d, want 1", len(provider.healthReports))
+	}
+	if len(provider.healthReports[0]) == 0 {
+		t.Fatal("reported health results were empty")
 	}
 }
 
@@ -830,6 +885,7 @@ func TestDryRun_AllPass(t *testing.T) {
 	passCfg.Provision.Image.GPGPubKey = pubKey
 	passCfg.Provision.Disk.Device = "/dev/mock0"
 	passCfg.Health.Enabled = true
+	passCfg.Health.SkipChecks = "disk-presence,disk-ioerr,memory-ecc,nic-link-state,thermal-state"
 	passCfg.Provision.Inventory.Enabled = true
 	passCfg.Provision.Image.Checksum = "abc123"
 	passCfg.Provision.Image.ChecksumType = "sha256"
