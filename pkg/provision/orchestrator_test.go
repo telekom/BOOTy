@@ -214,6 +214,37 @@ func TestProvisionStepsValidateImageSourceBeforeWipe(t *testing.T) {
 	}
 }
 
+func TestProvisionStepsVerifyImageBeforeDestructiveStorage(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	steps := o.provisionSteps()
+
+	indices := map[string]int{}
+	for i, step := range steps {
+		indices[step.Name] = i
+	}
+	verifyIdx, ok := indices["verify-image"]
+	if !ok {
+		t.Fatal("missing verify-image step")
+	}
+	validateIdx, ok := indices["validate-provision-inputs"]
+	if !ok {
+		t.Fatal("missing validate-provision-inputs step")
+	}
+	if validateIdx >= verifyIdx {
+		t.Fatalf("validate-provision-inputs index %d must be before verify-image index %d", validateIdx, verifyIdx)
+	}
+	for _, name := range []string{"stop-raid", "disable-lvm", "setup-nvme-namespaces", "detect-disk", "wipe-disks"} {
+		stepIdx, ok := indices[name]
+		if !ok {
+			t.Fatalf("missing %s step", name)
+		}
+		if verifyIdx >= stepIdx {
+			t.Fatalf("verify-image index %d must be before %s index %d", verifyIdx, name, stepIdx)
+		}
+	}
+}
+
 func TestValidateImageSourceConfiguredRejectsMissingImage(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
@@ -281,6 +312,9 @@ func TestResumeStateStepsRerunMountSharedDataForCleanupState(t *testing.T) {
 	stateSteps := resumeStateSteps()
 	if _, ok := stateSteps["validate-provision-inputs"]; !ok {
 		t.Fatal("validate-provision-inputs must rerun on resume before destructive storage steps")
+	}
+	if _, ok := stateSteps["verify-image"]; !ok {
+		t.Fatal("verify-image must rerun on resume so the verified and streamed image source cannot diverge")
 	}
 	if _, ok := stateSteps["mount-shared-data"]; !ok {
 		t.Fatal("mount-shared-data must rerun on resume to rebuild sharedMounts for teardown cleanup")
@@ -1379,6 +1413,7 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 	cp := &Checkpoint{
 		CompletedSteps: []string{
 			"validate-provision-inputs",
+			"verify-image",
 			"setup-mellanox",
 			"detect-disk",
 			"parse-partitions",
@@ -1409,6 +1444,7 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 			ran = append(ran, "validate-provision-inputs")
 			return nil
 		}},
+		{"verify-image", func(_ context.Context) error { ran = append(ran, "verify-image"); return nil }},
 		{"setup-mellanox", func(_ context.Context) error { ran = append(ran, "setup-mellanox"); return nil }},
 		{"detect-disk", func(_ context.Context) error { ran = append(ran, "detect-disk"); return nil }},
 		{"parse-partitions", func(_ context.Context) error { ran = append(ran, "parse-partitions"); return nil }},
@@ -1432,11 +1468,12 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 
 	// stateSteps re-run; stream-image and configure-ssh skip because they are
 	// completed non-state steps.
-	if len(ran) != 8 {
-		t.Errorf("expected 8 state step runs, got %v", ran)
+	if len(ran) != 9 {
+		t.Errorf("expected 9 state step runs, got %v", ran)
 	}
 	for _, name := range []string{
 		"validate-provision-inputs",
+		"verify-image",
 		"setup-mellanox",
 		"detect-disk",
 		"parse-partitions",

@@ -103,6 +103,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"collect-firmware", o.collectFirmware},
 		{"health-checks", o.runHealthChecks},
 		{"validate-provision-inputs", o.validateProvisionInputs},
+		{"verify-image", o.verifyImageSignature},
 		{"stop-raid", o.stopRAID},
 		{"disable-lvm", o.disableLVM},
 		{"mount-efivarfs", o.mountEFIVars},
@@ -111,7 +112,6 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"setup-nvme-namespaces", o.setupNVMeNamespaces},
 		{"detect-disk", o.detectDisk},
 		{"wipe-disks", o.wipeOrSecureEraseDisks},
-		{"verify-image", o.verifyImageSignature},
 		{"apply-partition-layout", o.applyPartitionLayout},
 		{"stream-image", o.streamImage},
 		{"partprobe", o.partprobe},
@@ -149,8 +149,8 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 	cp := o.loadOrCreateCheckpoint()
 
 	// stateSteps must always re-run on resume because they rebuild in-memory
-	// runtime fields that later steps depend on (firmwareChanged, targetDisk,
-	// rootPartition/bootPartition, sharedMounts, chroot bind mounts) or
+	// runtime fields that later steps depend on (firmwareChanged, bestImageURL,
+	// targetDisk, rootPartition/bootPartition, sharedMounts, chroot bind mounts) or
 	// revalidate safety preconditions before destructive operations.
 	stateSteps := resumeStateSteps()
 
@@ -175,6 +175,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 func resumeStateSteps() map[string]struct{} {
 	return map[string]struct{}{
 		"validate-provision-inputs": {},
+		"verify-image":              {},
 		"setup-mellanox":            {},
 		"detect-disk":               {},
 		"parse-partitions":          {},
