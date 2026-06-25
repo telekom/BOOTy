@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -354,7 +355,7 @@ func buildProvisionInitramfs(t *testing.T, vars map[string]string) string {
 	// Write /init script.
 	initScript := `#!/bin/sh
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
-for mod in fat vfat nls_cp437 nls_iso8859-1 nls_ascii nls_utf8; do
+for mod in virtio_pci virtio_net e1000 e1000e fat vfat nls_cp437 nls_iso8859-1 nls_ascii nls_utf8; do
 	modprobe "$mod" 2>/dev/null || true
 done
 exec /booty
@@ -716,12 +717,11 @@ func copyFilesystemModulesForRelease(t *testing.T, rootDir, release string) {
 	}
 
 	copied := map[string]bool{}
-	for _, module := range []string{"vfat", "fat", "nls_cp437", "nls_iso8859-1", "nls_ascii", "nls_utf8"} {
-		path := kernelModulePath(t, release, module)
-		if path == "" {
-			continue
-		}
-		copyKernelModule(t, rootDir, release, path, copied)
+	for _, module := range []string{
+		"vfat", "fat", "nls_cp437", "nls_iso8859-1", "nls_ascii", "nls_utf8",
+		"virtio_pci", "virtio_net", "e1000", "e1000e",
+	} {
+		copyKernelModuleWithDependencies(t, rootDir, release, module, copied, map[string]bool{})
 	}
 	for _, meta := range []string{
 		"modules.dep",
@@ -810,6 +810,43 @@ func kernelModulePath(t *testing.T, release, module string) string {
 		return ""
 	}
 	return path
+}
+
+func copyKernelModuleWithDependencies(t *testing.T, rootDir, release, module string, copied, visiting map[string]bool) {
+	t.Helper()
+	if visiting[module] {
+		return
+	}
+	visiting[module] = true
+	defer delete(visiting, module)
+
+	for _, dep := range kernelModuleDependencies(t, release, module) {
+		copyKernelModuleWithDependencies(t, rootDir, release, dep, copied, visiting)
+	}
+
+	path := kernelModulePath(t, release, module)
+	if path == "" {
+		return
+	}
+	copyKernelModule(t, rootDir, release, path, copied)
+}
+
+func kernelModuleDependencies(t *testing.T, release, module string) []string {
+	t.Helper()
+	out, err := exec.Command("modinfo", "-k", release, "-F", "depends", module).CombinedOutput()
+	if err != nil {
+		return nil
+	}
+
+	depends := strings.FieldsFunc(strings.TrimSpace(string(out)), func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\r'
+	})
+	for i := range depends {
+		depends[i] = strings.TrimSpace(depends[i])
+	}
+	return slices.DeleteFunc(depends, func(dep string) bool {
+		return dep == ""
+	})
 }
 
 func copyKernelModule(t *testing.T, rootDir, release, src string, copied map[string]bool) {
