@@ -196,6 +196,7 @@ func TestSlimSharedLibsResolveE2E(t *testing.T) {
 	checkSharedLibs(t, image, []string{
 		"bin/ip", "bin/ethtool", "bin/curl",
 		"bin/partprobe", "sbin/e2fsck", "sbin/resize2fs",
+		"sbin/mkfs.ext4", "sbin/mkfs.vfat", "sbin/mkfs.xfs",
 	})
 }
 
@@ -348,6 +349,7 @@ func TestFullInitramfsFlavorsHavePartitionFormattersE2E(t *testing.T) {
 	}{
 		{name: "default"},
 		{name: "gobgp", target: "gobgp"},
+		{name: "slim", target: "slim"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dest := t.TempDir()

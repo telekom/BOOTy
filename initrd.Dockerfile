@@ -362,7 +362,8 @@ WORKDIR /build/initramfs
 COPY --from=busybox-bin /bin/busybox bin/busybox
 RUN for cmd in $(bin/busybox --list); do if [ "$cmd" != "busybox" ]; then ln -sf busybox "bin/$cmd"; fi; done
 # Docker COPY follows destination symlinks — remove colliding busybox symlinks.
-RUN rm -f bin/partprobe bin/ip bin/wipefs bin/sgdisk bin/sfdisk
+RUN rm -f bin/partprobe bin/ip bin/wipefs bin/sgdisk bin/sfdisk \
+    bin/mkfs.vfat bin/mkfs.fat bin/mkdosfs
 RUN cp /usr/bin/growpart bin/growpart
 
 # BOOTy init binary (static, CGO-enabled)
@@ -383,6 +384,9 @@ COPY --from=tools /usr/sbin/sfdisk bin/sfdisk
 COPY --from=tools /sbin/partprobe bin/partprobe
 COPY --from=tools /sbin/e2fsck sbin/e2fsck
 COPY --from=tools /sbin/resize2fs sbin/resize2fs
+COPY --from=tools /usr/sbin/mkfs.ext4 sbin/mkfs.ext4
+COPY --from=tools /usr/sbin/mkfs.vfat sbin/mkfs.vfat
+COPY --from=tools /usr/sbin/mkfs.xfs sbin/mkfs.xfs
 
 # Copy pre-collected shared libraries (slim was previously missing lib copying
 # entirely, breaking all dynamically linked tool binaries at runtime).
