@@ -32,7 +32,7 @@ func (m *ProvisionMode) Run(ctx context.Context) error {
 		if err == nil {
 			m.succeeded = true
 			m.firmwareChanged = orch.FirmwareChanged()
-			return &ProvisionCompleteError{FirmwareChanged: m.firmwareChanged, PowerOff: true}
+			return provisionComplete(m.firmwareChanged)
 		}
 		slog.Error("provisioning failed", "error", err)
 
@@ -68,3 +68,7 @@ func (m *ProvisionMode) Succeeded() bool { return m.succeeded }
 
 // FirmwareChanged returns whether firmware was modified during provisioning.
 func (m *ProvisionMode) FirmwareChanged() bool { return m.firmwareChanged }
+
+func provisionComplete(firmwareChanged bool) *ProvisionCompleteError {
+	return &ProvisionCompleteError{FirmwareChanged: firmwareChanged}
+}

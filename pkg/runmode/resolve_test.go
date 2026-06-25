@@ -59,3 +59,13 @@ func TestProvisionModeInitialState(t *testing.T) {
 		t.Error("FirmwareChanged() should be false before Run")
 	}
 }
+
+func TestProvisionCompleteRequestsRebootFallback(t *testing.T) {
+	err := provisionComplete(true)
+	if !err.FirmwareChanged {
+		t.Error("FirmwareChanged should be preserved")
+	}
+	if err.PowerOff {
+		t.Error("direct provision completion should reboot when kexec is skipped or fails")
+	}
+}
