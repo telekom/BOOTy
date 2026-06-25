@@ -169,7 +169,7 @@ time, not by BOOTy:
 |------|--------|
 | `pkg/network/persist/persist.go` | Network config writer |
 | `pkg/network/persist/persist_test.go` | Writer unit tests |
-| `pkg/provision/orchestrator.go` | Wire `PersistNetworkConfig()` into target network configuration |
+| `pkg/provision/orchestrator.go` | Persist target network configuration from the existing `configure-dns` step |
 | `pkg/config/config.go` | Add `PersistNetwork`, `OSFamily` fields |
 | `pkg/caprf/client.go` | Parse `PERSIST_NETWORK`, `OS_FAMILY` vars |
 
