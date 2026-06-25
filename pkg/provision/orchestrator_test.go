@@ -282,6 +282,44 @@ func TestValidateImageSourceConfiguredAllowsImage(t *testing.T) {
 	}
 }
 
+func TestValidateImageSourceRejectsUnpinnedOCIWithoutChecksum(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{
+		"https://images.example.invalid/node.raw",
+		"oci://registry.example.invalid/org/node:latest",
+	}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err := o.validateProvisionInputs(context.Background())
+	if err == nil {
+		t.Fatal("expected unpinned OCI source error")
+	}
+	if !strings.Contains(err.Error(), "must use a digest reference or IMAGE_CHECKSUM") {
+		t.Fatalf("error = %q, want OCI pinning context", err.Error())
+	}
+}
+
+func TestValidateImageSourceAllowsOCIDigest(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{"oci://registry.example.invalid/org/node@sha256:" + strings.Repeat("a", 64)}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	if err := o.validateProvisionInputs(context.Background()); err != nil {
+		t.Fatalf("validateProvisionInputs: %v", err)
+	}
+}
+
+func TestValidateImageSourceAllowsOCITagWithChecksum(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{"oci://registry.example.invalid/org/node:latest"}
+	cfg.Provision.Image.Checksum = strings.Repeat("b", 64)
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	if err := o.validateProvisionInputs(context.Background()); err != nil {
+		t.Fatalf("validateProvisionInputs: %v", err)
+	}
+}
+
 func TestMountBootAndSharedDataStepsPrecedeProvisioningWrites(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})

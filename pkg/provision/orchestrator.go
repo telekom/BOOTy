@@ -586,12 +586,22 @@ func (o *Orchestrator) validateProvisionInputs(_ context.Context) error {
 	if err := o.validatePartitionLayoutModeCompatibility(); err != nil {
 		return err
 	}
+	checksumConfigured := strings.TrimSpace(o.cfg.Provision.Image.Checksum) != ""
+	hasSource := false
 	for _, source := range o.cfg.Provision.Image.URLs {
-		if strings.TrimSpace(source) != "" {
-			return nil
+		source = strings.TrimSpace(source)
+		if source == "" {
+			continue
+		}
+		hasSource = true
+		if image.IsOCIReference(source) && !checksumConfigured && !image.IsOCIDigestReference(source) {
+			return fmt.Errorf("provision OCI image source must use a digest reference or IMAGE_CHECKSUM before destructive storage steps: %s", image.RedactURL(source))
 		}
 	}
-	return fmt.Errorf("provision image source required before destructive storage steps: no image URLs configured")
+	if !hasSource {
+		return fmt.Errorf("provision image source required before destructive storage steps: no image URLs configured")
+	}
+	return nil
 }
 
 func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
