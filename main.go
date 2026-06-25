@@ -477,14 +477,8 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 		slog.Info("using GoBGP/EVPN network mode", "asn", cfg.Network.BGP.ASN)
 		stack, err := setupGoBGPStack(ctx, netCfg)
 		if err != nil {
-			slog.Error("goBGP setup failed, falling back to FRR", "error", err)
-			mgr := frr.NewManager(nil)
-			if frrErr := mgr.Setup(ctx, netCfg); frrErr != nil {
-				slog.Error("FRR fallback also failed", "error", frrErr)
-				mgr.DumpFRRState()
-				return networkModeWithResolvers(netCfg, dhcpFallback(ctx, netCfg))
-			}
-			return networkModeWithResolvers(netCfg, mgr)
+			slog.Error("gobgp network setup failed", "error", err)
+			return nil, fmt.Errorf("gobgp network setup: %w", err)
 		}
 		return networkModeWithResolvers(netCfg, stack)
 	}
