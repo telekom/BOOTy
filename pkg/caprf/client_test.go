@@ -913,6 +913,38 @@ BGP_AUTH_PASSWORD="s3cr3t"
 	}
 }
 
+func TestParseVarsDocumentedNetworkUppercaseAliases(t *testing.T) {
+	input := `BGP_KEEPALIVE="30"
+BGP_HOLD="90"
+BFD_TRANSMIT_MS="150"
+BFD_RECEIVE_MS="175"
+VRF_NAME="provision"
+VRF_TABLE_ID="10"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Network.BGP.Keepalive != 30 {
+		t.Errorf("BGPKeepalive = %d, want 30", cfg.Network.BGP.Keepalive)
+	}
+	if cfg.Network.BGP.Hold != 90 {
+		t.Errorf("BGPHold = %d, want 90", cfg.Network.BGP.Hold)
+	}
+	if cfg.Network.BGP.BFDTransmitMS != 150 {
+		t.Errorf("BFDTransmitMS = %d, want 150", cfg.Network.BGP.BFDTransmitMS)
+	}
+	if cfg.Network.BGP.BFDReceiveMS != 175 {
+		t.Errorf("BFDReceiveMS = %d, want 175", cfg.Network.BGP.BFDReceiveMS)
+	}
+	if cfg.Network.VRF.Name != "provision" {
+		t.Errorf("VRFName = %q, want provision", cfg.Network.VRF.Name)
+	}
+	if cfg.Network.VRF.TableID != 10 {
+		t.Errorf("VRFTableID = %d, want 10", cfg.Network.VRF.TableID)
+	}
+}
+
 func TestClientHeartbeat(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
