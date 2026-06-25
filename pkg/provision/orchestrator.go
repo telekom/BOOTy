@@ -33,10 +33,10 @@ var readProcCmdline = func() ([]byte, error) {
 }
 
 var (
-	evalRootSymlinks = filepath.EvalSymlinks
-	collectFirmware  = firmware.Collect
-	validateFirmware = firmware.Validate
-	mountBootPart    = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
+	evalRootSymlinks   = filepath.EvalSymlinks
+	collectFirmwareFn  = firmware.Collect
+	validateFirmwareFn = firmware.Validate
+	mountBootPart      = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
 		return mgr.MountPartition(ctx, device, mountpoint)
 	}
 	mountReadOnlyPart = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
@@ -297,7 +297,7 @@ func (o *Orchestrator) collectFirmware(ctx context.Context) error {
 		return nil
 	}
 
-	report, err := collectFirmware()
+	report, err := collectFirmwareFn()
 	if err != nil {
 		// Collection is best-effort: missing sysfs entries are common in
 		// virtual environments, so we log and continue provisioning.
@@ -311,7 +311,7 @@ func (o *Orchestrator) collectFirmware(ctx context.Context) error {
 			MinBIOSVersion: o.cfg.Provision.Firmware.MinBIOS,
 			MinBMCVersion:  o.cfg.Provision.Firmware.MinBMC,
 		}
-		results := validateFirmware(report, policy)
+		results := validateFirmwareFn(report, policy)
 		for _, r := range results {
 			if r.Status == "fail" {
 				failures = append(failures, r)

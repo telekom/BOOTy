@@ -996,14 +996,14 @@ func TestCollectFirmwareDisabled(t *testing.T) {
 }
 
 func TestCollectFirmwareMinimumFailureAbortsAfterReport(t *testing.T) {
-	previousCollect := collectFirmware
-	collectFirmware = func() (*firmware.Report, error) {
+	previousCollect := collectFirmwareFn
+	collectFirmwareFn = func() (*firmware.Report, error) {
 		return &firmware.Report{
 			BIOS: firmware.Version{Component: "BIOS", Version: "U30"},
 		}, nil
 	}
 	t.Cleanup(func() {
-		collectFirmware = previousCollect
+		collectFirmwareFn = previousCollect
 	})
 
 	cfg := &config.MachineConfig{}
