@@ -223,6 +223,7 @@ func TestRenderConfig_Onefabric(t *testing.T) {
 	}
 
 	checks := []string{
+		"neighbor fabric local-as 65002 no-prepend replace-as",
 		"neighbor 10.0.0.1 remote-as internal",
 		"neighbor 10.0.0.2 remote-as internal",
 		"aggregate-address 10.10.0.0/16",
@@ -341,10 +342,13 @@ func TestRenderConfig_VBM4XParams(t *testing.T) {
 		"transmit-interval 150",
 		"receive-interval 150",
 		"neighbor fabric bfd profile datacenter",
+		"neighbor fabric local-as 65500 no-prepend replace-as",
 		"neighbor swp0 interface peer-group fabric",
 		"neighbor swp1 interface peer-group fabric",
 		"neighbor 10.10.10.1 remote-as internal",
+		"neighbor 10.10.10.1 bfd profile datacenter",
 		"neighbor 10.10.10.2 remote-as internal",
+		"neighbor 10.10.10.2 bfd profile datacenter",
 		"route-target both 64497:1000",
 	}
 	for _, check := range checks {

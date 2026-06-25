@@ -138,6 +138,7 @@ func DeriveBridgeMAC(ipmiMAC string) string {
 // frrConfigData holds template data for FRR configuration rendering.
 type frrConfigData struct {
 	ASN              uint32
+	LocalASN         uint32
 	UnderlayIP       string
 	NICs             []string
 	VRFName          string
@@ -174,6 +175,9 @@ router bgp {{ .ASN }}{{ if .VRFName }} vrf {{ .VRFName }}{{ end }}
 {{- end }}
  neighbor fabric peer-group
  neighbor fabric remote-as external
+{{- if .LocalASN }}
+ neighbor fabric local-as {{ .LocalASN }} no-prepend replace-as
+{{- end }}
 {{- if .BFDProfile }}
  neighbor fabric bfd profile {{ .BFDProfile }}
 {{- end }}
@@ -207,6 +211,9 @@ router bgp {{ .ASN }}{{ if .VRFName }} vrf {{ .VRFName }}{{ end }}
 {{- range .DCGWIPs }}
  neighbor {{ . }} remote-as internal
  neighbor {{ . }} update-source {{ $.UnderlayIP }}
+{{- if $.BFDProfile }}
+ neighbor {{ . }} bfd profile {{ $.BFDProfile }}
+{{- end }}
 {{- end }}
  !
  address-family l2vpn evpn
@@ -232,6 +239,7 @@ line vty
 func RenderConfig(cfg *network.Config, underlayIP, overlayIP string, nics []string) (string, error) {
 	data := frrConfigData{
 		ASN:        cfg.ASN,
+		LocalASN:   cfg.LocalASN,
 		UnderlayIP: underlayIP,
 		NICs:       nics,
 		VRFName:    cfg.VRFName,
