@@ -56,13 +56,22 @@ func bootDockerExecOrFail(t *testing.T, container string, args ...string) string
 	return out
 }
 
-// getBootyLogs retrieves all BOOTy log output from a container.
-// For bounded output (e.g. CI dump tests), use getBootyLogsTail instead.
-func getBootyLogs(t *testing.T, container string) string {
+func dockerLogsArgs(container, tail string, since time.Time) []string {
+	args := []string{"logs"}
+	if !since.IsZero() {
+		args = append(args, "--since", since.UTC().Format(time.RFC3339Nano))
+	}
+	if tail != "" {
+		args = append(args, "--tail", tail)
+	}
+	return append(args, container)
+}
+
+func getBootyLogsWithArgs(t *testing.T, container string, args []string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", "logs", container).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			t.Logf("Warning: timed out retrieving logs for %s", container)
@@ -72,32 +81,37 @@ func getBootyLogs(t *testing.T, container string) string {
 		return ""
 	}
 	return string(out)
+}
+
+// getBootyLogs retrieves all BOOTy log output from a container.
+// For bounded output (e.g. CI dump tests), use getBootyLogsTail instead.
+func getBootyLogs(t *testing.T, container string) string {
+	t.Helper()
+	return getBootyLogsWithArgs(t, container, dockerLogsArgs(container, "", time.Time{}))
 }
 
 // getBootyLogsTail retrieves the last N lines of BOOTy log output from a container.
 func getBootyLogsTail(t *testing.T, container, tail string) string {
 	t.Helper()
-	// BOOTy output goes to container stdout/stderr
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", "logs", "--tail", tail, container).CombinedOutput()
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			t.Logf("Warning: timed out retrieving logs for %s", container)
-			return string(out)
-		}
-		t.Logf("Warning: could not get logs for %s: %v", container, err)
-		return ""
-	}
-	return string(out)
+	return getBootyLogsWithArgs(t, container, dockerLogsArgs(container, tail, time.Time{}))
+}
+
+func getBootyLogsSince(t *testing.T, container string, since time.Time) string {
+	t.Helper()
+	return getBootyLogsWithArgs(t, container, dockerLogsArgs(container, "", since))
 }
 
 // waitForLogEntry waits until a log line appears in a container's output.
 func waitForLogEntry(t *testing.T, container, entry string, timeout time.Duration) bool {
 	t.Helper()
+	return waitForLogEntrySince(t, container, entry, timeout, time.Time{})
+}
+
+func waitForLogEntrySince(t *testing.T, container, entry string, timeout time.Duration, since time.Time) bool {
+	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		logs := getBootyLogs(t, container)
+		logs := getBootyLogsSince(t, container, since)
 		if strings.Contains(logs, entry) {
 			return true
 		}
@@ -107,32 +121,34 @@ func waitForLogEntry(t *testing.T, container, entry string, timeout time.Duratio
 }
 
 // bootyNetworkFailed checks if BOOTy exhausted all network retries.
-func bootyNetworkFailed(t *testing.T, container string) bool {
+func bootyNetworkFailed(t *testing.T, container string, since time.Time) bool {
 	t.Helper()
-	logs := getBootyLogs(t, container)
+	logs := getBootyLogsSince(t, container, since)
 	return strings.Contains(logs, "network connectivity failed after all retries")
 }
 
 // restartContainer restarts a docker container and waits for it to be running.
-func restartContainer(t *testing.T, container string) {
+func restartContainer(t *testing.T, container string) time.Time {
 	t.Helper()
 	t.Logf("Restarting container %s for network recovery", container)
+	restartStarted := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	if out, err := exec.CommandContext(ctx, "docker", "restart", container).CombinedOutput(); err != nil {
 		t.Logf("Warning: docker restart %s failed: %v\n%s", container, err, out)
-		return
+		return restartStarted
 	}
 	// Wait for BOOTy to start inside the container.
 	for i := 0; i < 30; i++ {
-		logs := getBootyLogs(t, container)
+		logs := getBootyLogsSince(t, container, restartStarted)
 		if strings.Contains(logs, "starting BOOTy") {
 			t.Logf("Container %s restarted and BOOTy started", container)
-			return
+			return restartStarted
 		}
 		time.Sleep(2 * time.Second)
 	}
 	t.Logf("Warning: container %s restarted but BOOTy startup not detected", container)
+	return restartStarted
 }
 
 // waitForAccessLogEntry polls a container's file until it contains the expected string.
@@ -173,11 +189,12 @@ func TestBootAllNodesReachCAPRF(t *testing.T) {
 			// If BOOTy's internal retries exhaust, restart the container once.
 			var reachable bool
 			for round := 0; round < 2; round++ {
+				logSince := time.Time{}
 				if round > 0 {
-					restartContainer(t, c.name)
+					logSince = restartContainer(t, c.name)
 				}
 				for i := 0; i < 180; i++ {
-					if bootyNetworkFailed(t, c.name) {
+					if bootyNetworkFailed(t, c.name, logSince) {
 						t.Logf("%s BOOTy exhausted network retries (round %d)", c.desc, round)
 						break
 					}
@@ -219,11 +236,12 @@ func TestBootAllNodesReachNginx(t *testing.T) {
 			t.Parallel()
 			var reachable bool
 			for round := 0; round < 2; round++ {
+				logSince := time.Time{}
 				if round > 0 {
-					restartContainer(t, c.name)
+					logSince = restartContainer(t, c.name)
 				}
 				for i := 0; i < 120; i++ {
-					if bootyNetworkFailed(t, c.name) {
+					if bootyNetworkFailed(t, c.name, logSince) {
 						t.Logf("%s BOOTy exhausted network retries (round %d)", c.desc, round)
 						break
 					}
@@ -390,11 +408,12 @@ func TestBootAllNodesImageReachableThroughEVPN(t *testing.T) {
 			t.Parallel()
 			var ok bool
 			for round := 0; round < 2; round++ {
+				logSince := time.Time{}
 				if round > 0 {
-					restartContainer(t, c.name)
+					logSince = restartContainer(t, c.name)
 				}
 				for i := 0; i < 90; i++ {
-					if bootyNetworkFailed(t, c.name) {
+					if bootyNetworkFailed(t, c.name, logSince) {
 						t.Logf("%s BOOTy exhausted network retries (round %d)", c.desc, round)
 						break
 					}
@@ -510,10 +529,10 @@ func TestBootStandbyHeartbeatsSentToCAPRF(t *testing.T) {
 	requireBootLab(t)
 
 	// If standby's network failed, restart it and wait for recovery.
-	if bootyNetworkFailed(t, standbyContainer) {
-		restartContainer(t, standbyContainer)
+	if bootyNetworkFailed(t, standbyContainer, time.Time{}) {
+		logSince := restartContainer(t, standbyContainer)
 		// Wait for BOOTy to re-establish connectivity after restart.
-		if !waitForLogEntry(t, standbyContainer, "network connectivity established", 6*time.Minute) {
+		if !waitForLogEntrySince(t, standbyContainer, "network connectivity established", 6*time.Minute, logSince) {
 			logs := getBootyLogs(t, standbyContainer)
 			t.Fatalf("standby did not recover network after restart\nFull logs:\n%s", logs)
 		}
