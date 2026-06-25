@@ -1025,6 +1025,7 @@ make lint
 make fmt
 
 # E2E tests — ContainerLab (Linux only)
+make clab-test-image                         # Generate the shared test disk image
 make clab-up && make test-e2e-integration       # FRR/EVPN topology
 make clab-gobgp-up && make test-e2e-gobgp        # GoBGP topology
 make clab-boot-up && make test-e2e-boot          # Boot orchestrator

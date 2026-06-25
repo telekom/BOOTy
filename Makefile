@@ -33,7 +33,9 @@ CLEAN_FILES := \
 	initramfs.cpio.zst \
 	initramfs.cpio.zst.sha256
 
-.PHONY: all build build-all clean install uninstall fmt lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic oci-push oci-push-initramfs oci-push-binary
+CLAB_TEST_IMAGE ?= test/e2e/clab/images/test.img.gz
+
+.PHONY: all build build-all clean install uninstall fmt lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm clab-test-image clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic oci-push oci-push-initramfs oci-push-binary
 
 all: lint test install
 
@@ -170,7 +172,13 @@ test-kvm:
 	@printf '%s\n' 'Running KVM E2E tests (requires QEMU, root, and KVM assets)'
 	@go test -tags e2e -race -count=1 -v -timeout 15m ./test/e2e/kvm/...
 
-clab-up:
+clab-test-image: $(CLAB_TEST_IMAGE)
+
+$(CLAB_TEST_IMAGE): test/e2e/clab/create-test-image.sh
+	@printf '%s\n' 'Generating test disk image (requires root)'
+	@sudo test/e2e/clab/create-test-image.sh $(dir $@)
+
+clab-up: $(CLAB_TEST_IMAGE)
 	@echo Deploying ContainerLab topology
 	@cd test/e2e/clab && sudo clab deploy --topo topology.clab.yml
 
@@ -186,9 +194,7 @@ booty-test-image:
 	@echo Building BOOTy test container image
 	@docker build -t booty-test:latest -f test/e2e/clab/booty-test.Dockerfile .
 
-clab-boot-up: booty-test-image
-	@printf '%s\n' 'Generating test disk image (requires root)'
-	@sudo test/e2e/clab/create-test-image.sh test/e2e/clab/images
+clab-boot-up: booty-test-image $(CLAB_TEST_IMAGE)
 	@printf '%s\n' 'Deploying boot test topology (includes BOOTy nodes)'
 	@cd test/e2e/clab && sudo clab deploy --topo topology-boot.clab.yml
 
@@ -204,7 +210,7 @@ booty-vrnetlab-image:
 	@echo Building BOOTy vrnetlab VM image
 	@docker build -t booty-vrnetlab:latest -f test/e2e/clab/vrnetlab/Dockerfile .
 
-clab-vrnetlab-up: booty-vrnetlab-image
+clab-vrnetlab-up: booty-vrnetlab-image $(CLAB_TEST_IMAGE)
 	@printf '%s\n' 'Deploying vrnetlab EVPN topology (QEMU VMs + EVPN fabric)'
 	@cd test/e2e/clab && sudo clab deploy --topo topology-vrnetlab.clab.yml
 
@@ -222,7 +228,7 @@ booty-gobgp-test-image:
 	@printf '%s\n' 'Building BOOTy GoBGP test container image (no FRR)'
 	@docker build -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
 
-clab-gobgp-up: booty-gobgp-test-image
+clab-gobgp-up: booty-gobgp-test-image $(CLAB_TEST_IMAGE)
 	@printf '%s\n' 'Deploying GoBGP test topology (unnumbered + dual + numbered)'
 	@cd test/e2e/clab && sudo clab deploy --topo topology-gobgp.clab.yml
 
@@ -234,7 +240,7 @@ test-e2e-gobgp:
 	@printf '%s\n' 'Running GoBGP E2E tests (requires clab-gobgp-up)'
 	@go test -tags e2e_gobgp -race -v -timeout 300s ./test/e2e/integration/...
 
-clab-gobgp-vrnetlab-up: booty-vrnetlab-image
+clab-gobgp-vrnetlab-up: booty-vrnetlab-image $(CLAB_TEST_IMAGE)
 	@printf '%s\n' 'Deploying GoBGP vrnetlab topology (QEMU VMs, all PeerModes)'
 	@cd test/e2e/clab && sudo clab deploy --topo topology-gobgp-vrnetlab.clab.yml
 
@@ -262,7 +268,7 @@ test-e2e-type5:
 
 # ── Production-realistic e2e targets ───────────────────────────────────────
 
-clab-production-up: booty-test-image
+clab-production-up: booty-test-image $(CLAB_TEST_IMAGE)
 	@printf '%s\n' 'Deploying production-realistic topology (VRF + DCGW + BFD)'
 	@cd test/e2e/clab && sudo clab deploy --topo topology-production.clab.yml
 
