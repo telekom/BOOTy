@@ -1892,6 +1892,7 @@ func (o *Orchestrator) injectCloudInit(_ context.Context) error {
 		Hostname:   o.cfg.Hostname,
 		InstanceID: instanceID,
 		StaticIP:   o.cfg.Network.Static.IP,
+		Interface:  o.cfg.Network.Static.Iface,
 		Gateway:    o.cfg.Network.Static.Gateway,
 		BondIfaces: bondIfaces,
 		BondMode:   o.cfg.Network.Bond.Mode,

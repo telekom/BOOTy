@@ -59,6 +59,24 @@ func TestGenerate_StaticIP(t *testing.T) {
 	}
 }
 
+func TestGenerate_StaticIPUsesConfiguredInterface(t *testing.T) {
+	cfg := &Config{
+		Hostname:   "node-1",
+		InstanceID: "SN1",
+		StaticIP:   "10.0.0.5/24",
+		Interface:  " eth0 ",
+	}
+
+	_, _, nc := Generate(cfg)
+
+	if _, ok := nc.Ethernets["id0"]; ok {
+		t.Fatal("unexpected fallback id0 ethernet when interface is configured")
+	}
+	if _, ok := nc.Ethernets["eth0"]; !ok {
+		t.Fatalf("ethernets = %#v, want eth0", nc.Ethernets)
+	}
+}
+
 func TestGenerate_DHCP(t *testing.T) {
 	cfg := &Config{
 		Hostname:   "dhcp-node",
@@ -73,6 +91,20 @@ func TestGenerate_DHCP(t *testing.T) {
 	}
 	if !eth.DHCP4 {
 		t.Error("DHCP4 should be true when no static IP")
+	}
+}
+
+func TestGenerate_DHCPUsesConfiguredInterface(t *testing.T) {
+	cfg := &Config{
+		Hostname:   "dhcp-node",
+		InstanceID: "SN2",
+		Interface:  "ens3",
+	}
+
+	_, _, nc := Generate(cfg)
+
+	if _, ok := nc.Ethernets["ens3"]; !ok {
+		t.Fatalf("ethernets = %#v, want ens3", nc.Ethernets)
 	}
 }
 

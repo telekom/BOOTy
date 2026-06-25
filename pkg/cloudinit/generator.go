@@ -113,6 +113,7 @@ type Config struct {
 	NTP         *NTPConfig
 	Timezone    string
 	StaticIP    string
+	Interface   string
 	Gateway     string
 	DNS         []string
 	BondIfaces  []string
@@ -196,7 +197,7 @@ func generateNetworkConfig(cfg *Config) *NetworkConfig {
 		if cfg.MACAddress != "" {
 			eth.Match = &MatchConfig{MACAddress: cfg.MACAddress}
 		}
-		nc.Ethernets = map[string]EthConfig{"id0": eth}
+		nc.Ethernets = map[string]EthConfig{ethernetID(cfg.Interface): eth}
 		return nc
 	}
 
@@ -204,8 +205,16 @@ func generateNetworkConfig(cfg *Config) *NetworkConfig {
 	if cfg.MACAddress != "" {
 		eth.Match = &MatchConfig{MACAddress: cfg.MACAddress}
 	}
-	nc.Ethernets = map[string]EthConfig{"id0": eth}
+	nc.Ethernets = map[string]EthConfig{ethernetID(cfg.Interface): eth}
 	return nc
+}
+
+func ethernetID(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "id0"
+	}
+	return name
 }
 
 func addressList(ip string) []string {
