@@ -39,6 +39,21 @@ var (
 	Build   = "unknown"
 )
 
+var (
+	setupBondLayer = func(ctx context.Context, cfg *network.Config) error {
+		bond := &network.BondMode{}
+		return bond.Setup(ctx, cfg)
+	}
+	setupVLANLayer = func(v network.VLANConfig) (string, error) {
+		return vlan.Setup(&vlan.Config{
+			ID:      v.ID,
+			Parent:  v.Parent,
+			Address: v.Address,
+			Gateway: v.Gateway,
+		})
+	}
+)
+
 const varsPath = "/deploy/vars"
 
 func main() {
@@ -452,41 +467,8 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 		netCfg.VLANs = vlans
 	}
 
-	// Set up VLANs first — they create sub-interfaces that other modes use.
-	if netCfg.IsVLANMode() {
-		slog.Info("setting up VLAN interfaces", "count", len(netCfg.VLANs))
-		var vlanErrs []error
-		for _, v := range netCfg.VLANs {
-			name, err := vlan.Setup(&vlan.Config{
-				ID:      v.ID,
-				Parent:  v.Parent,
-				Address: v.Address,
-				Gateway: v.Gateway,
-			})
-			if err != nil {
-				slog.Error("VLAN setup failed", "vlan", v.ID, "parent", v.Parent, "error", err)
-				vlanErrs = append(vlanErrs, fmt.Errorf("vlan %d on %s: %w", v.ID, v.Parent, err))
-				continue
-			}
-			if netCfg.StaticIface == "" {
-				netCfg.StaticIface = name
-			}
-		}
-		if err := errors.Join(vlanErrs...); err != nil {
-			return nil, fmt.Errorf("vlan setup: %w", err)
-		}
-	}
-
-	// Set up bonding if configured (bond becomes the interface for other modes).
-	if netCfg.IsBondMode() {
-		slog.Info("setting up LACP bond")
-		bond := &network.BondMode{}
-		if err := bond.Setup(ctx, netCfg); err != nil {
-			return nil, fmt.Errorf("bond setup: %w", err)
-		}
-		if netCfg.StaticIface == "" {
-			netCfg.StaticIface = "bond0"
-		}
+	if err := prepareLinkLayers(ctx, netCfg); err != nil {
+		return nil, err
 	}
 
 	// Priority: GoBGP > FRR > Static > DHCP.
@@ -531,6 +513,39 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 
 	slog.Info("using DHCP network mode")
 	return dhcpFallback(ctx, netCfg), nil
+}
+
+func prepareLinkLayers(ctx context.Context, netCfg *network.Config) error {
+	if netCfg.IsBondMode() {
+		slog.Info("setting up LACP bond")
+		if err := setupBondLayer(ctx, netCfg); err != nil {
+			return fmt.Errorf("bond setup: %w", err)
+		}
+		if netCfg.StaticIface == "" && !netCfg.IsVLANMode() {
+			netCfg.StaticIface = "bond0"
+		}
+	}
+
+	if netCfg.IsVLANMode() {
+		slog.Info("setting up VLAN interfaces", "count", len(netCfg.VLANs))
+		var vlanErrs []error
+		for _, v := range netCfg.VLANs {
+			name, err := setupVLANLayer(v)
+			if err != nil {
+				slog.Error("VLAN setup failed", "vlan", v.ID, "parent", v.Parent, "error", err)
+				vlanErrs = append(vlanErrs, fmt.Errorf("vlan %d on %s: %w", v.ID, v.Parent, err))
+				continue
+			}
+			if netCfg.StaticIface == "" {
+				netCfg.StaticIface = name
+			}
+		}
+		if err := errors.Join(vlanErrs...); err != nil {
+			return fmt.Errorf("vlan setup: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // dhcpFallback creates a DHCP mode and attempts setup.
