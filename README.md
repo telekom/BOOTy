@@ -746,7 +746,7 @@ BOOTy automatically detects Mellanox ConnectX NICs via PCI vendor ID and
 configures SR-IOV virtual functions using `mstconfig`:
 
 ```bash
-# Set number of virtual functions (default: 32 when Mellanox detected)
+# Set a positive number of virtual functions. NUM_VFS=0 skips this step.
 export NUM_VFS=16
 ```
 

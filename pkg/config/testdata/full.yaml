@@ -261,7 +261,7 @@ provision:
     # secureErase: use ATA Secure Erase / NVMe Format instead of wipefs (default: false)
     secureErase: false
 
-    # numVFs: SR-IOV Virtual Functions to create on Mellanox NICs (default: 32)
+    # numVFs: SR-IOV Virtual Functions to create on Mellanox NICs (0 = skip)
     numVFs: 32
 
     # nvmeNamespaces: JSON configuration for NVMe namespace creation (default: "")

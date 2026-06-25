@@ -768,6 +768,11 @@ func partNumberFromDevice(dev string) string {
 func (c *Configurator) SetupMellanox(ctx context.Context, numVFs int) (bool, error) {
 	slog.Info("checking for Mellanox NICs")
 
+	if numVFs <= 0 {
+		slog.Info("mellanox SR-IOV setup disabled", "numVFs", numVFs)
+		return false, nil
+	}
+
 	// Detect Mellanox NICs via sysfs (vendor 0x15b3) instead of lspci.
 	found, err := hasPCIVendorFunc("15b3")
 	if err != nil {
@@ -777,10 +782,6 @@ func (c *Configurator) SetupMellanox(ctx context.Context, numVFs int) (bool, err
 	if !found {
 		slog.Info("no Mellanox NICs found")
 		return false, nil
-	}
-
-	if numVFs <= 0 {
-		numVFs = 32
 	}
 
 	// Enumerate all Mellanox mst pciconf devices dynamically.
