@@ -375,6 +375,12 @@ func TestSlimContainsDiskToolsE2E(t *testing.T) {
 	assertContains(t, files, "bin/growpart", "growpart")
 	assertContains(t, files, "sbin/e2fsck", "e2fsck")
 	assertContains(t, files, "sbin/resize2fs", "resize2fs")
+	assertContains(t, files, "sbin/mkfs.ext4", "mkfs.ext4")
+	assertContains(t, files, "sbin/mkfs.vfat", "mkfs.vfat")
+	assertContains(t, files, "sbin/mkfs.xfs", "mkfs.xfs")
+	assertNotContains(t, files, "bin/mkfs.vfat", "BusyBox mkfs.vfat applet shadowing dosfstools")
+	assertNotContains(t, files, "bin/mkfs.fat", "BusyBox mkfs.fat applet shadowing dosfstools")
+	assertNotContains(t, files, "bin/mkdosfs", "BusyBox mkdosfs applet shadowing dosfstools")
 }
 
 func TestSlimExcludesFRRE2E(t *testing.T) {
@@ -602,6 +608,7 @@ func TestFullFlavorsUseDosfstoolsMkfsVfatE2E(t *testing.T) {
 	}{
 		{name: "default"},
 		{name: "gobgp", target: "gobgp"},
+		{name: "slim", target: "slim"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dest := t.TempDir()

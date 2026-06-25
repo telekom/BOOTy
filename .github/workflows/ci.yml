@@ -219,6 +219,12 @@ jobs:
           grep -q "bin/sgdisk" slim-files.txt || (echo "FAIL: sgdisk missing"; exit 1)
           grep -q "bin/sfdisk" slim-files.txt || (echo "FAIL: sfdisk missing"; exit 1)
           grep -q "bin/growpart" slim-files.txt || (echo "FAIL: growpart missing"; exit 1)
+          grep -q "sbin/mkfs.ext4" slim-files.txt || (echo "FAIL: mkfs.ext4 missing"; exit 1)
+          grep -q "sbin/mkfs.vfat" slim-files.txt || (echo "FAIL: mkfs.vfat missing"; exit 1)
+          grep -q "sbin/mkfs.xfs" slim-files.txt || (echo "FAIL: mkfs.xfs missing"; exit 1)
+          if grep -Eq '^(\./)?bin/mkfs\.vfat$' slim-files.txt; then echo "FAIL: busybox mkfs.vfat shadows dosfstools"; exit 1; fi
+          if grep -Eq '^(\./)?bin/mkfs\.fat$' slim-files.txt; then echo "FAIL: busybox mkfs.fat shadows dosfstools"; exit 1; fi
+          if grep -Eq '^(\./)?bin/mkdosfs$' slim-files.txt; then echo "FAIL: busybox mkdosfs shadows dosfstools"; exit 1; fi
 
           # Must NOT contain FRR or LVM
           if grep -q "sbin/bgpd" slim-files.txt; then echo "FAIL: bgpd present in slim"; exit 1; fi
