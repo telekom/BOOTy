@@ -671,8 +671,7 @@ func (c *Configurator) CreateEFIBootEntry(ctx context.Context, diskDev, bootPart
 	// Determine partition number from the partition device path.
 	partNum := partNumberFromDevice(bootPart)
 
-	cmd := fmt.Sprintf("efibootmgr -c -d %s -p %s -L ubuntu -l %s", diskDev, partNum, loader)
-	out, err := c.disk.ChrootRun(ctx, c.rootDir, cmd)
+	out, err := c.disk.Run(ctx, "efibootmgr", "-c", "-d", diskDev, "-p", partNum, "-L", "ubuntu", "-l", loader)
 	if err != nil {
 		return fmt.Errorf("efibootmgr create: %s: %w", string(out), err)
 	}

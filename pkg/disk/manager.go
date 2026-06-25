@@ -43,6 +43,11 @@ func NewManager(cmd Commander) *Manager {
 	return &Manager{cmd: cmd, sysfsRoot: "/sys"}
 }
 
+// Run executes a host command through the manager's command runner.
+func (m *Manager) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return m.cmd.Run(ctx, name, args...)
+}
+
 // newManagerWithSysfs creates a Manager with a custom sysfs root for testing.
 func newManagerWithSysfs(cmd Commander, sysfsRoot string) *Manager {
 	if cmd == nil {
