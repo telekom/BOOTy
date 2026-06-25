@@ -1726,6 +1726,8 @@ func TestDetectBootedABSlotFromCmdline(t *testing.T) {
 		{name: "uuid slot a", cmdline: "root=UUID=root-a-uuid", disk: "/dev/sda", wantSlot: config.ABSlotA},
 		{name: "partuuid slot b", cmdline: "root=PARTUUID=root-b-partuuid", disk: "/dev/sda", wantSlot: config.ABSlotB},
 		{name: "mapper slave slot b", cmdline: "root=/dev/mapper/crypt-root-b", disk: "/dev/sda", wantSlot: config.ABSlotB},
+		{name: "stale root before slot b", cmdline: "root=UUID=old-root root=PARTLABEL=BOOTY-ROOT-B", disk: "/dev/sda", wantSlot: config.ABSlotB},
+		{name: "last booty root wins", cmdline: "root=PARTLABEL=BOOTY-ROOT-A root=PARTLABEL=BOOTY-ROOT-B", disk: "/dev/sda", wantSlot: config.ABSlotB},
 		{name: "unknown root", cmdline: "root=UUID=abcd", disk: "/dev/sda", wantSlot: ""},
 		{name: "no root", cmdline: "console=ttyS0", disk: "/dev/sda", wantSlot: ""},
 	}

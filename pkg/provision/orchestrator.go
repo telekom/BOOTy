@@ -1018,17 +1018,17 @@ func detectBootedABSlotFromCmdline(diskDevice string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	bootedSlot := ""
 	for _, field := range strings.Fields(string(data)) {
 		key, value, ok := strings.Cut(field, "=")
 		if !ok || key != "root" {
 			continue
 		}
 		if slot := abSlotFromRootSpec(value, diskDevice); slot != "" {
-			return slot, nil
+			bootedSlot = slot
 		}
-		return "", nil
 	}
-	return "", nil
+	return bootedSlot, nil
 }
 
 func abSlotFromRootSpec(rootSpec, diskDevice string) string {
