@@ -173,33 +173,54 @@ back to `TelemetryURL` if MetricsURL is empty).
 ### Auto-Detection
 
 ```go
-import "github.com/telekom/BOOTy/pkg/bootloader"
+import (
+    "fmt"
 
-bl := bootloader.Detect("/mnt/target")
-fmt.Printf("Type: %s\n", bl.Type)  // "grub", "systemd-boot", "unknown"
+    "github.com/telekom/BOOTy/pkg/bootloader"
+)
+
+bl := bootloader.DetectBootloader("/mnt/target")
+switch bl.(type) {
+case *bootloader.SystemdBoot:
+    fmt.Println("Type: systemd-boot")
+case *bootloader.GRUB:
+    fmt.Println("Type: grub")
+}
 ```
 
 Detection checks for:
-- GRUB: `/boot/grub/grub.cfg` or `/boot/grub2/grub.cfg`
 - systemd-boot: `/boot/efi/EFI/systemd/systemd-bootx64.efi` (amd64)
   or `/boot/efi/EFI/systemd/systemd-bootaa64.efi` (arm64)
+- GRUB: fallback when the systemd-boot binary is not found
 
 ### GRUB Management
 
 ```go
+import (
+    "context"
+
+    "github.com/telekom/BOOTy/pkg/bootloader"
+)
+
 grub := &bootloader.GRUB{}
-err := grub.Install("/mnt/target", "/dev/sda")
-entries, err := grub.ListEntries("/mnt/target")
-err = grub.SetDefault("/mnt/target", "Ubuntu")
+err := grub.Install(context.Background(), "/mnt/target", "/dev/sda")
+entries, err := grub.ListEntries(context.Background(), "/mnt/target")
+err = grub.SetDefault(context.Background(), "/mnt/target", "Ubuntu")
 ```
 
 ### systemd-boot Management
 
 ```go
+import (
+    "context"
+
+    "github.com/telekom/BOOTy/pkg/bootloader"
+)
+
 sdb := &bootloader.SystemdBoot{}
-err := sdb.Install("/mnt/target", "")
-entries, err := sdb.ListEntries("/mnt/target")
-err = sdb.SetDefault("/mnt/target", "default-entry")
+err := sdb.Install(context.Background(), "/mnt/target", "")
+entries, err := sdb.ListEntries(context.Background(), "/mnt/target")
+err = sdb.SetDefault(context.Background(), "/mnt/target", "default-entry")
 ```
 
 ## GRUB Config Parsing (`pkg/grubcfg/`)
