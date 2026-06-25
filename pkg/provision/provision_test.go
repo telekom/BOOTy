@@ -253,6 +253,9 @@ KUBELET_EXTRA_ARGS="--v=4 --provider-id=old --node-labels=keep=true,topology.kub
 			t.Fatalf("merged kubelet env missing %q: %s", want, content)
 		}
 	}
+	if count := strings.Count(content, "--node-labels="); count != 1 {
+		t.Fatalf("expected exactly one node-labels flag, got %d: %s", count, content)
+	}
 	if strings.Contains(content, "--provider-id=old") || strings.Contains(content, "topology.kubernetes.io/zone=old") {
 		t.Fatalf("merged kubelet env kept stale BOOTy-owned args: %s", content)
 	}

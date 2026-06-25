@@ -122,7 +122,7 @@ func (c *Configurator) ConfigureKubelet(cfg *config.MachineConfig) error {
 		return err
 	}
 	slog.Info("writing kubelet extra args", "path", path)
-	return updateKubeletExtraArgs(path, args)
+	return updateKubeletExtraArgs(c.rootDir, path, args)
 }
 
 func kubeletExtraArgs(cfg *config.MachineConfig) []string {
@@ -223,13 +223,19 @@ func parseOSReleaseFields(content string) map[string]string {
 	return fields
 }
 
-func updateKubeletExtraArgs(path string, managed []string) error {
+func updateKubeletExtraArgs(rootDir, path string, managed []string) error {
 	content, err := os.ReadFile(path) //nolint:gosec // target root config
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("reading kubelet env file: %w", err)
 	}
+	if err := ensureWithinRoot(rootDir, path); err != nil {
+		return fmt.Errorf("validating kubelet env path: %w", err)
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("creating kubelet env dir: %w", err)
+	}
+	if err := ensureTargetParentWithinRoot(rootDir, filepath.Dir(path)); err != nil {
+		return fmt.Errorf("validating kubelet env dir: %w", err)
 	}
 
 	lines := splitConfigLines(string(content))
@@ -245,7 +251,7 @@ func updateKubeletExtraArgs(path string, managed []string) error {
 		lines = append(lines, formatKubeletExtraArgs(managed))
 	}
 
-	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil { //nolint:gosec // path is constrained to target root above
 		return fmt.Errorf("writing kubelet env file: %w", err)
 	}
 	return nil
@@ -274,40 +280,53 @@ func mergeKubeletArgs(line string, managed []string) []string {
 	}
 
 	var merged []string
+	var labels []string
 	for _, arg := range strings.Fields(value) {
-		kept := keepExistingKubeletArg(arg)
-		if kept != "" {
-			merged = append(merged, kept)
+		switch {
+		case strings.HasPrefix(arg, "--provider-id="):
+			continue
+		case strings.HasPrefix(arg, "--node-labels="):
+			labels = append(labels, keepExistingNodeLabels(arg)...)
+		default:
+			merged = append(merged, arg)
 		}
 	}
-	return append(merged, managed...)
-}
 
-func keepExistingKubeletArg(arg string) string {
-	switch {
-	case strings.HasPrefix(arg, "--provider-id="):
-		return ""
-	case strings.HasPrefix(arg, "--node-labels="):
-		return keepExistingNodeLabels(arg)
-	default:
-		return arg
+	for _, arg := range managed {
+		if strings.HasPrefix(arg, "--node-labels=") {
+			labels = append(labels, splitNodeLabels(strings.TrimPrefix(arg, "--node-labels="))...)
+			continue
+		}
+		merged = append(merged, arg)
 	}
+	if len(labels) > 0 {
+		merged = append(merged, "--node-labels="+strings.Join(labels, ","))
+	}
+	return merged
 }
 
-func keepExistingNodeLabels(arg string) string {
-	value := strings.TrimPrefix(arg, "--node-labels=")
+func keepExistingNodeLabels(arg string) []string {
+	labels := splitNodeLabels(strings.TrimPrefix(arg, "--node-labels="))
+	kept := labels[:0]
+	for _, label := range labels {
+		if strings.HasPrefix(label, "topology.kubernetes.io/zone=") ||
+			strings.HasPrefix(label, "topology.kubernetes.io/region=") {
+			continue
+		}
+		kept = append(kept, label)
+	}
+	return kept
+}
+
+func splitNodeLabels(value string) []string {
 	var labels []string
 	for _, label := range strings.Split(value, ",") {
-		if label == "" || strings.HasPrefix(label, "topology.kubernetes.io/zone=") ||
-			strings.HasPrefix(label, "topology.kubernetes.io/region=") {
+		if label == "" {
 			continue
 		}
 		labels = append(labels, label)
 	}
-	if len(labels) == 0 {
-		return ""
-	}
-	return "--node-labels=" + strings.Join(labels, ",")
+	return labels
 }
 
 func formatKubeletExtraArgs(args []string) string {
