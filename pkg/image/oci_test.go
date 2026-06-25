@@ -66,6 +66,28 @@ func TestFetchOCILayer(t *testing.T) {
 	}
 }
 
+func TestProbeOCIReference(t *testing.T) {
+	srv := startTestRegistry(t)
+	defer srv.Close()
+
+	pushTestImageToRegistry(t, srv, "test/probe:v1", []byte("probe payload"))
+
+	ref := fmt.Sprintf("%s/test/probe:v1", strings.TrimPrefix(srv.URL, "http://"))
+	if err := ProbeOCIReference(context.Background(), ref); err != nil {
+		t.Fatalf("ProbeOCIReference: %v", err)
+	}
+}
+
+func TestProbeOCIReferenceRejectsMissingImage(t *testing.T) {
+	srv := startTestRegistry(t)
+	defer srv.Close()
+
+	ref := fmt.Sprintf("%s/test/missing:v1", strings.TrimPrefix(srv.URL, "http://"))
+	if err := ProbeOCIReference(context.Background(), ref); err == nil {
+		t.Fatal("expected missing image error")
+	}
+}
+
 func TestFetchOCILayerMultiLayer(t *testing.T) {
 	srv := startTestRegistry(t)
 	defer srv.Close()

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/registry"
+	"github.com/google/go-containerregistry/pkg/v1/empty"
+	"github.com/google/go-containerregistry/pkg/v1/mutate"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/stream"
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
@@ -68,6 +76,30 @@ func (p *dryRunProvider) ReportFirmware(_ context.Context, _ []byte) error      
 func (p *dryRunProvider) ReportHealthChecks(_ context.Context, results []health.CheckResult) error {
 	p.healthReports = append(p.healthReports, append([]health.CheckResult(nil), results...))
 	return nil
+}
+
+func startDryRunOCIRegistry(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(registry.New())
+}
+
+func pushDryRunOCIImage(t *testing.T, srv *httptest.Server, repoTag string, data string) string {
+	t.Helper()
+
+	layer := stream.NewLayer(io.NopCloser(strings.NewReader(data)))
+	img, err := mutate.AppendLayers(empty.Image, layer)
+	if err != nil {
+		t.Fatalf("mutate.AppendLayers: %v", err)
+	}
+
+	ref, err := name.ParseReference(fmt.Sprintf("%s/%s", strings.TrimPrefix(srv.URL, "http://"), repoTag))
+	if err != nil {
+		t.Fatalf("parse ref: %v", err)
+	}
+	if err := remote.Write(ref, img); err != nil {
+		t.Fatalf("remote.Write: %v", err)
+	}
+	return ref.String()
 }
 
 func withMockInterfaces(t *testing.T, fn func() ([]net.Interface, error)) {
@@ -346,19 +378,23 @@ func TestDryRunImageReachability_NoURLsLayoutOnly(t *testing.T) {
 }
 
 func TestDryRunImageReachability_OCI(t *testing.T) {
+	srv := startDryRunOCIRegistry(t)
+	defer srv.Close()
+	ref := pushDryRunOCIImage(t, srv, "test/dryrun:v1", "dry-run payload")
+
 	cfg := &config.MachineConfig{}
-	cfg.Provision.Image.URLs = []string{"oci://registry.example.com/image:latest"}
+	cfg.Provision.Image.URLs = []string{"oci://" + ref}
 	o := NewOrchestrator(
 		cfg,
 		&dryRunProvider{},
 		disk.NewManager(nil),
 	)
 	result := o.dryRunImageReachability(context.Background())
-	if result.Status != DryRunWarn {
-		t.Errorf("got %s, want warn for OCI URLs: %s", result.Status, result.Message)
+	if result.Status != DryRunPass {
+		t.Errorf("got %s, want pass for reachable OCI URL: %s", result.Status, result.Message)
 	}
-	if !strings.Contains(result.Message, "skipped") {
-		t.Errorf("expected skipped message, got %q", result.Message)
+	if strings.Contains(result.Message, "skipped") {
+		t.Errorf("did not expect skipped message, got %q", result.Message)
 	}
 }
 
@@ -367,17 +403,41 @@ func TestDryRunImageReachability_MixedHTTPAndOCI(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
+	registry := startDryRunOCIRegistry(t)
+	defer registry.Close()
+	ref := pushDryRunOCIImage(t, registry, "test/mixed:v1", "mixed payload")
 
 	cfg := &config.MachineConfig{}
-	cfg.Provision.Image.URLs = []string{srv.URL + "/image.raw", "oci://registry.example.com/image:latest"}
+	cfg.Provision.Image.URLs = []string{srv.URL + "/image.raw", "oci://" + ref}
 	o := NewOrchestrator(
 		cfg,
 		&dryRunProvider{},
 		disk.NewManager(nil),
 	)
 	result := o.dryRunImageReachability(context.Background())
-	if result.Status != DryRunWarn {
-		t.Errorf("got %s, want warn for mixed URLs: %s", result.Status, result.Message)
+	if result.Status != DryRunPass {
+		t.Errorf("got %s, want pass for mixed reachable URLs: %s", result.Status, result.Message)
+	}
+}
+
+func TestDryRunImageReachability_OCINotFound(t *testing.T) {
+	srv := startDryRunOCIRegistry(t)
+	defer srv.Close()
+
+	ref := strings.TrimPrefix(srv.URL, "http://") + "/test/missing:v1"
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{"oci://" + ref}
+	o := NewOrchestrator(
+		cfg,
+		&dryRunProvider{},
+		disk.NewManager(nil),
+	)
+	result := o.dryRunImageReachability(context.Background())
+	if result.Status != DryRunFail {
+		t.Errorf("got %s, want fail for missing OCI URL: %s", result.Status, result.Message)
+	}
+	if !strings.Contains(result.Message, "OCI image unreachable") {
+		t.Errorf("expected OCI failure context, got %q", result.Message)
 	}
 }
 
