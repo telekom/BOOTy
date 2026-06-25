@@ -145,16 +145,35 @@ jobs:
                 echo "No free NBD device available for LUKS setup" >&2
                 exit 1
               fi
+              wait_luks_nbd_disconnect() {
+                local dev="$1"
+                local pid_file="/sys/block/${dev##*/}/pid"
+                local deadline=$((SECONDS + 5))
+                local pid=""
+                while [ "${SECONDS}" -lt "${deadline}" ]; do
+                  pid="$(cat "${pid_file}" 2>/dev/null | tr -d '[:space:]' || true)"
+                  if [ -z "${pid}" ] || [ "${pid}" = "0" ]; then
+                    return 0
+                  fi
+                  sleep 0.1
+                done
+                echo "Timed out waiting for ${dev} to disconnect" >&2
+                return 1
+              }
+              disconnect_luks_nbd() {
+                sudo qemu-nbd --disconnect "${nbd_dev}" >/dev/null 2>&1 || true
+                wait_luks_nbd_disconnect "${nbd_dev}"
+              }
               cleanup_luks_nbd() {
                 sudo cryptsetup luksClose testcrypt >/dev/null 2>&1 || true
-                sudo qemu-nbd --disconnect "${nbd_dev}" >/dev/null 2>&1 || true
+                disconnect_luks_nbd || true
               }
               trap cleanup_luks_nbd EXIT
               echo -n "booty-test" | sudo cryptsetup luksFormat "${nbd_dev}" -
               echo -n "booty-test" | sudo cryptsetup luksOpen "${nbd_dev}" testcrypt -
               sudo mkfs.ext4 /dev/mapper/testcrypt
               sudo cryptsetup luksClose testcrypt
-              sudo qemu-nbd --disconnect "${nbd_dev}"
+              disconnect_luks_nbd
               trap - EXIT
       fail-fast: false
 
