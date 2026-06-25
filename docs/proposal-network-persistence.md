@@ -1,6 +1,9 @@
 # Proposal: Network Configuration Persistence
 
-## Status: In Progress (library only — not yet integrated into provisioning orchestrator)
+## Status: Implemented
+
+Implemented as explicit opt-in network persistence without target OS
+auto-detection.
 
 ## Priority: P2
 
@@ -35,9 +38,10 @@ Kubernetes node setup to re-configure. This creates a gap where:
 
 ### Approach
 
-After writing the OS image and before the final reboot, BOOTy writes network
-configuration files into the target OS filesystem. The format depends on the
-target OS's network manager.
+After writing the OS image and before the final reboot, BOOTy can write network
+configuration files into the target OS filesystem when `PERSIST_NETWORK=true`
+and `OS_FAMILY` is set. The format depends on the selected target OS network
+manager.
 
 ### Supported Formats
 
@@ -124,17 +128,19 @@ func (p *NetworkPersistence) writeNetplan() error {
 
 ```go
 // pkg/provision/orchestrator.go
-func (o *Orchestrator) PersistNetworkConfig(ctx context.Context) error {
+func (o *Orchestrator) persistNetworkConfig() error {
     if !o.cfg.PersistNetwork {
         return nil
     }
-
-    netPersist := &configurator.NetworkPersistence{
-        rootDir:  o.rootDir,
-        osFamily: o.cfg.OSFamily,
-        config:   o.currentNetworkConfig(),
+    family, err := persist.ParseOSFamily(o.cfg.OSFamily)
+    if err != nil {
+        return err
     }
-    return netPersist.Write()
+    cfg, err := o.targetNetworkConfig()
+    if err != nil {
+        return err
+    }
+    return persist.Write(o.config.rootDir, family, cfg)
 }
 ```
 
@@ -161,10 +167,11 @@ time, not by BOOTy:
 
 | File | Change |
 |------|--------|
-| `pkg/provision/configurator/network.go` | New — network config writer |
-| `pkg/provision/configurator/network_test.go` | New — unit tests |
-| `pkg/provision/orchestrator.go` | Add `PersistNetworkConfig()` step |
-| `pkg/config/provider.go` | Add `PersistNetwork`, `OSFamily` fields |
+| `pkg/network/persist/persist.go` | Network config writer |
+| `pkg/network/persist/persist_test.go` | Writer unit tests |
+| `pkg/provision/orchestrator.go` | Persist target network configuration from the existing `configure-dns` step |
+| `pkg/config/config.go` | Add `PersistNetwork`, `OSFamily` fields |
+| `pkg/caprf/client.go` | Parse `PERSIST_NETWORK`, `OS_FAMILY` vars |
 
 ## Risks
 

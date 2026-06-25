@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	imageutil "github.com/telekom/BOOTy/pkg/image"
+	"github.com/telekom/BOOTy/pkg/network"
 )
 
 // Validate checks that all enum-like config fields contain known values and
@@ -64,6 +65,9 @@ func (c *Config) Validate() error {
 			return validateEnumLower(c.Provision.CloudInit.Datasource, "provision.cloudInit.datasource", "nocloud", "configdrive")
 		},
 		func() string {
+			return validateEnumLower(c.OSFamily, "osFamily", "ubuntu", "rhel", "flatcar")
+		},
+		func() string {
 			return validateEnumUpper(c.Transport.TokenAlgorithm, "transport.tokenAlgorithm", "RS256", "ES256")
 		},
 	}
@@ -79,6 +83,7 @@ func (c *Config) Validate() error {
 	if (peerMode == "dual" || peerMode == "numbered") && strings.TrimSpace(c.Network.BGP.Neighbors) == "" {
 		errs = append(errs, "network.bgp.neighbors required when network.bgp.peerMode is dual or numbered")
 	}
+	errs = append(errs, c.validatePersistence()...)
 
 	if err := validateRAIDConfig(c.Provision.Disk.RAID); err != nil {
 		errs = append(errs, err.Error())
@@ -101,6 +106,50 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+func (c *Config) validatePersistence() []string {
+	if !c.PersistNetwork {
+		return nil
+	}
+	staticIP := strings.TrimSpace(c.Network.Static.IP)
+	staticIface := strings.TrimSpace(c.Network.Static.Iface)
+	bondInterfaces := strings.TrimSpace(c.Network.Bond.Interfaces)
+	vlanConfig := strings.TrimSpace(c.Network.VLAN.Config)
+
+	var errs []string
+	if strings.TrimSpace(c.OSFamily) == "" {
+		errs = append(errs, "osFamily required when persistNetwork is true")
+	}
+	if staticIP != "" && bondInterfaces == "" && staticIface == "" {
+		errs = append(errs, "network.static.iface required when persistNetwork is true with network.static.ip and no network.bond.interfaces")
+	}
+	if staticIface == "" && bondInterfaces == "" && vlanConfig == "" {
+		errs = append(errs, "network.static.iface, network.bond.interfaces, or network.vlan.config required when persistNetwork is true")
+	}
+	if bondInterfaces != "" && staticIP == "" && vlanConfig == "" {
+		errs = append(errs, "network.bond.interfaces requires network.static.ip or network.vlan.config when persistNetwork is true")
+	}
+	errs = append(errs, validatePersistenceVLANConfig(vlanConfig)...)
+	return errs
+}
+
+func validatePersistenceVLANConfig(vlanConfig string) []string {
+	if vlanConfig == "" {
+		return nil
+	}
+	vlans, err := network.ParseVLANs(vlanConfig)
+	if err != nil {
+		return []string{fmt.Sprintf("network.vlan.config invalid: %s", err)}
+	}
+
+	var errs []string
+	for _, vlan := range vlans {
+		if strings.TrimSpace(vlan.Gateway) != "" {
+			errs = append(errs, fmt.Sprintf("network.vlan.config vlan %d on %s includes gateway, which target network persistence cannot render", vlan.ID, vlan.Parent))
+		}
+	}
+	return errs
+}
+
 // normalize lowercases or uppercases case-insensitive enum fields so downstream
 // code can use plain equality comparisons without calling ToLower/ToUpper.
 func (c *Config) normalize() {
@@ -111,6 +160,7 @@ func (c *Config) normalize() {
 		&c.Network.BGP.UnderlayAF,
 		&c.Network.BGP.OverlayType,
 		&c.Provision.CloudInit.Datasource,
+		&c.OSFamily,
 		&c.Provision.Sysext.DefaultMode,
 		&c.Provision.AB.Scheme,
 		&c.Provision.AB.ActiveSlot,
@@ -119,11 +169,11 @@ func (c *Config) normalize() {
 	}
 	for _, f := range lowerFields {
 		if *f != "" {
-			*f = strings.ToLower(*f)
+			*f = strings.ToLower(strings.TrimSpace(*f))
 		}
 	}
 	if c.Transport.TokenAlgorithm != "" {
-		c.Transport.TokenAlgorithm = strings.ToUpper(c.Transport.TokenAlgorithm)
+		c.Transport.TokenAlgorithm = strings.ToUpper(strings.TrimSpace(c.Transport.TokenAlgorithm))
 	}
 	c.Provision.AB.DataPartitions = normalizeABDataPartitions(c.Provision.AB.DataPartitions)
 }

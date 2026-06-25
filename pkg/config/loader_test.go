@@ -12,6 +12,8 @@ func TestLoadYAML(t *testing.T) {
 	content := `
 hostname: test-node-01
 mode: provision
+persistNetwork: true
+osFamily: Ubuntu
 
 network:
   mode: gobgp
@@ -27,7 +29,8 @@ network:
     provisionVNI: 100
     provisionIP: "10.100.0.20/24"
   static:
-    ip: ""
+    ip: "10.0.0.5/24"
+    gateway: "10.0.0.1"
   bond:
     interfaces: "eth0,eth1"
     mode: "802.3ad"
@@ -121,6 +124,12 @@ agent:
 	if cfg.Mode != "provision" {
 		t.Errorf("Mode = %q", cfg.Mode)
 	}
+	if !cfg.PersistNetwork {
+		t.Error("PersistNetwork = false")
+	}
+	if cfg.OSFamily != "ubuntu" {
+		t.Errorf("OSFamily = %q", cfg.OSFamily)
+	}
 	if cfg.Network.Mode != "gobgp" {
 		t.Errorf("Network.Mode = %q", cfg.Network.Mode)
 	}
@@ -202,9 +211,11 @@ func TestLoadJSON(t *testing.T) {
 	content := `{
   "hostname": "json-node",
   "mode": "provision",
+  "persistNetwork": true,
+  "osFamily": "rhel",
   "network": {
     "mode": "static",
-    "static": {"ip": "10.0.0.5/24", "gateway": "10.0.0.1"}
+    "static": {"ip": "10.0.0.5/24", "gateway": "10.0.0.1", "iface": "eth0"}
   },
   "transport": {"token": "json-token", "initURL": "https://example.com/init"},
   "provision": {
@@ -222,6 +233,12 @@ func TestLoadJSON(t *testing.T) {
 	}
 	if cfg.Network.Static.IP != "10.0.0.5/24" {
 		t.Errorf("Network.Static.IP = %q", cfg.Network.Static.IP)
+	}
+	if !cfg.PersistNetwork {
+		t.Error("PersistNetwork = false")
+	}
+	if cfg.OSFamily != "rhel" {
+		t.Errorf("OSFamily = %q", cfg.OSFamily)
 	}
 	if cfg.Provision.Disk.MinSizeGB != 50 {
 		t.Errorf("Provision.Disk.MinSizeGB = %d", cfg.Provision.Disk.MinSizeGB)

@@ -671,20 +671,23 @@ func TestNetworkPersistenceStaticIP(t *testing.T) {
 
 	rawDisk := createTestDiskImage(t, 512)
 	gzImage := compressGzip(t, rawDisk)
-	baseURL := startImageServer(t, gzImage)
+	baseURL := startNetworkTestServer(t, gzImage)
 
 	targetDisk := filepath.Join(t.TempDir(), "netpersist.qcow2")
 	run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":       "net-persist-test",
-		"IMAGE":          baseURL + "/image.gz",
-		"MODE":           "provision",
-		"DISK_DEVICE":    "/dev/vda",
-		"STATIC_IP":      "10.1.0.5/24",
-		"STATIC_GATEWAY": "10.1.0.1",
-		"STATIC_IFACE":   "eth0",
-		"dns_resolver":   "8.8.8.8,1.1.1.1",
+		"HOSTNAME":        "net-persist-test",
+		"IMAGE":           baseURL + "/image.gz",
+		"MODE":            "provision",
+		"DISK_DEVICE":     "/dev/vda",
+		"INIT_URL":        baseURL + "/status/init",
+		"STATIC_IP":       "10.0.2.15/24",
+		"STATIC_GATEWAY":  "10.0.2.2",
+		"STATIC_IFACE":    "eth0",
+		"dns_resolver":    "8.8.8.8,1.1.1.1",
+		"PERSIST_NETWORK": "true",
+		"OS_FAMILY":       "ubuntu",
 	})
 
 	kernel := findKernel(t)
@@ -697,14 +700,28 @@ func TestNetworkPersistenceStaticIP(t *testing.T) {
 
 	// Check for netplan config (Ubuntu-style).
 	netplanDir := filepath.Join(rootMount, "etc", "netplan")
-	if entries, err := os.ReadDir(netplanDir); err == nil && len(entries) > 0 {
-		t.Logf("found netplan configs: %d files", len(entries))
-		for _, e := range entries {
-			content, _ := os.ReadFile(filepath.Join(netplanDir, e.Name()))
-			if strings.Contains(string(content), "10.1.0.5") {
-				t.Log("netplan config contains static IP 10.1.0.5")
-			}
+	entries, err := os.ReadDir(netplanDir)
+	if err != nil {
+		t.Fatalf("read netplan dir %s: %v", netplanDir, err)
+	}
+	if len(entries) == 0 {
+		t.Fatalf("expected persisted Ubuntu netplan config in %s, found none", netplanDir)
+	}
+
+	foundStaticIP := false
+	t.Logf("found netplan configs: %d files", len(entries))
+	for _, e := range entries {
+		content, readErr := os.ReadFile(filepath.Join(netplanDir, e.Name()))
+		if readErr != nil {
+			t.Fatalf("read netplan config %s: %v", e.Name(), readErr)
 		}
+		if strings.Contains(string(content), "10.0.2.15") {
+			t.Log("netplan config contains static IP 10.0.2.15")
+			foundStaticIP = true
+		}
+	}
+	if !foundStaticIP {
+		t.Fatalf("expected persisted Ubuntu netplan config containing static IP 10.0.2.15")
 	}
 
 	// Check for NetworkManager keyfiles (RHEL-style).
@@ -719,11 +736,8 @@ func TestNetworkPersistenceStaticIP(t *testing.T) {
 		t.Logf("found systemd-networkd configs: %d files", len(entries))
 	}
 
-	// At minimum, resolv.conf should have the DNS resolvers.
-	resolvConf := readProvisionedFile(t, rootMount, "etc/resolv.conf")
-	if !strings.Contains(resolvConf, "nameserver 8.8.8.8") {
-		t.Error("resolv.conf missing DNS resolver 8.8.8.8")
-	}
+	// DNS persistence is covered by the full provisioning tests; this gap test
+	// is scoped to target-network configuration files.
 }
 
 // ---------------------------------------------------------------------------

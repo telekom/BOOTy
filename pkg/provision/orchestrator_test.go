@@ -19,6 +19,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/firmware"
+	networkpersist "github.com/telekom/BOOTy/pkg/network/persist"
 )
 
 // newTestOrchestrator builds an Orchestrator with a mock provider and disk manager
@@ -2266,6 +2267,207 @@ func TestInjectCloudInit_NoCloudInject(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(seedDir, name)); err != nil {
 			t.Errorf("expected seed file %s to exist: %v", name, err)
 		}
+	}
+}
+
+func TestConfigureDNSPersistsUbuntuStaticInterface(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.PersistNetwork = true
+	cfg.OSFamily = "ubuntu"
+	cfg.Network.Static.IP = "10.1.0.5/24"
+	cfg.Network.Static.Gateway = "10.1.0.1"
+	cfg.Network.Static.Iface = "eth0"
+	cfg.Network.DNSResolvers = "8.8.8.8, 1.1.1.1"
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	if err := o.configureDNS(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(o.config.rootDir, "etc", "netplan", "01-booty-provisioned.yaml"))
+	if err != nil {
+		t.Fatalf("read netplan config: %v", err)
+	}
+	content := string(data)
+	for _, want := range []string{
+		"eth0:",
+		"addresses: [10.1.0.5/24]",
+		"via: 10.1.0.1",
+		"addresses: [8.8.8.8, 1.1.1.1]",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("netplan config missing %q:\n%s", want, content)
+		}
+	}
+}
+
+func TestTargetNetworkConfigBondAndVLANMapping(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*config.MachineConfig)
+		assert    func(*testing.T, *networkpersist.NetworkConfig)
+		wantErr   string
+	}{
+		{
+			name: "bond with static address",
+			configure: func(cfg *config.MachineConfig) {
+				cfg.Network.Bond.Interfaces = "eth0, eth1"
+				cfg.Network.Bond.Mode = "802.3ad"
+				cfg.Network.Static.IP = "10.1.0.5/24"
+				cfg.Network.Static.Gateway = "10.1.0.1"
+			},
+			assert: func(t *testing.T, got *networkpersist.NetworkConfig) {
+				t.Helper()
+				if len(got.Bonds) != 1 {
+					t.Fatalf("bonds = %#v, want one bond", got.Bonds)
+				}
+				bond := got.Bonds[0]
+				if bond.Name != "bond0" || bond.Mode != "802.3ad" || bond.Address != "10.1.0.5/24" || bond.Gateway != "10.1.0.1" {
+					t.Fatalf("unexpected bond config: %#v", bond)
+				}
+				if len(bond.Members) != 2 || bond.Members[0] != "eth0" || bond.Members[1] != "eth1" {
+					t.Fatalf("unexpected bond members: %#v", bond.Members)
+				}
+			},
+		},
+		{
+			name: "bond without address or vlan is rejected",
+			configure: func(cfg *config.MachineConfig) {
+				cfg.Network.Bond.Interfaces = "eth0,eth1"
+			},
+			wantErr: "bond network persistence requires static ip or vlan config",
+		},
+		{
+			name: "bond lacp alias persists canonical mode",
+			configure: func(cfg *config.MachineConfig) {
+				cfg.Network.Bond.Interfaces = "eth0,eth1"
+				cfg.Network.Bond.Mode = " LACP "
+				cfg.Network.Static.IP = "10.1.0.5/24"
+			},
+			assert: func(t *testing.T, got *networkpersist.NetworkConfig) {
+				t.Helper()
+				if len(got.Bonds) != 1 {
+					t.Fatalf("bonds = %#v, want one bond", got.Bonds)
+				}
+				if got.Bonds[0].Mode != "802.3ad" {
+					t.Fatalf("bond mode = %q, want 802.3ad", got.Bonds[0].Mode)
+				}
+			},
+		},
+		{
+			name: "bond with vlan drops unaddressed gateway",
+			configure: func(cfg *config.MachineConfig) {
+				cfg.Network.Bond.Interfaces = "eth0,eth1"
+				cfg.Network.Static.Gateway = "10.1.0.1"
+				cfg.Network.VLAN.Config = "200:bond0:10.200.0.42/24"
+			},
+			assert: func(t *testing.T, got *networkpersist.NetworkConfig) {
+				t.Helper()
+				if len(got.Bonds) != 1 {
+					t.Fatalf("bonds = %#v, want one bond", got.Bonds)
+				}
+				bond := got.Bonds[0]
+				if bond.Address != "" || bond.Gateway != "" {
+					t.Fatalf("unexpected unaddressed bond config: %#v", bond)
+				}
+			},
+		},
+		{
+			name: "vlans map dhcp and static addresses",
+			configure: func(cfg *config.MachineConfig) {
+				cfg.Network.VLAN.Config = "200:eno1:10.200.0.42/24,300:eno2"
+			},
+			assert: func(t *testing.T, got *networkpersist.NetworkConfig) {
+				t.Helper()
+				if len(got.VLANs) != 2 {
+					t.Fatalf("vlans = %#v, want two vlans", got.VLANs)
+				}
+				if got.VLANs[0].Parent != "eno1" || got.VLANs[0].ID != 200 || got.VLANs[0].Address != "10.200.0.42/24" || got.VLANs[0].DHCP {
+					t.Fatalf("unexpected static vlan: %#v", got.VLANs[0])
+				}
+				if got.VLANs[1].Parent != "eno2" || got.VLANs[1].ID != 300 || !got.VLANs[1].DHCP || got.VLANs[1].Address != "" {
+					t.Fatalf("unexpected dhcp vlan: %#v", got.VLANs[1])
+				}
+			},
+		},
+		{
+			name: "dhcp interface drops gateway",
+			configure: func(cfg *config.MachineConfig) {
+				cfg.Network.Static.Iface = "eno1"
+				cfg.Network.Static.Gateway = "10.1.0.1"
+			},
+			assert: func(t *testing.T, got *networkpersist.NetworkConfig) {
+				t.Helper()
+				if len(got.Interfaces) != 1 {
+					t.Fatalf("interfaces = %#v, want one interface", got.Interfaces)
+				}
+				iface := got.Interfaces[0]
+				if iface.Name != "eno1" || !iface.DHCP || iface.Address != "" || iface.Gateway != "" {
+					t.Fatalf("unexpected dhcp interface config: %#v", iface)
+				}
+			},
+		},
+		{
+			name: "vlan gateway is rejected",
+			configure: func(cfg *config.MachineConfig) {
+				cfg.Network.VLAN.Config = "200:eno1:10.200.0.42/24:10.200.0.1"
+			},
+			wantErr: "cannot render vlan gateways yet",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.MachineConfig{}
+			tc.configure(cfg)
+			o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+			got, err := o.targetNetworkConfig()
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("targetNetworkConfig() error = %v, want substring %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("targetNetworkConfig() unexpected error: %v", err)
+			}
+			tc.assert(t, got)
+		})
+	}
+}
+
+func TestPersistNetworkConfigRequiresOSFamily(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.PersistNetwork = true
+	cfg.Network.Static.IP = "10.1.0.5/24"
+	cfg.Network.Static.Iface = "eth0"
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	err := o.persistNetworkConfig()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "unsupported OS family") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPersistNetworkConfigRequiresInterfaceForStaticIP(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.PersistNetwork = true
+	cfg.OSFamily = "ubuntu"
+	cfg.Network.Static.IP = "10.1.0.5/24"
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	err := o.persistNetworkConfig()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "static iface is required") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

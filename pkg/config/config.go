@@ -28,6 +28,17 @@ type Config struct {
 	// Default: false
 	DryRun bool `yaml:"dryRun" json:"dryRun"`
 
+	// PersistNetwork writes explicit network configuration into the provisioned
+	// target OS. It requires OSFamily because BOOTy does not auto-detect the
+	// target network manager from arbitrary images.
+	// Default: false
+	PersistNetwork bool `yaml:"persistNetwork" json:"persistNetwork"`
+
+	// OSFamily selects the target OS network writer when PersistNetwork is set.
+	// Valid values: "ubuntu", "rhel", "flatcar".
+	// Default: ""
+	OSFamily string `yaml:"osFamily" json:"osFamily"`
+
 	// Cross-cutting configuration sections.
 	Network   NetworkConfig   `yaml:"network"   json:"network"`
 	Transport TransportConfig `yaml:"transport" json:"transport"`

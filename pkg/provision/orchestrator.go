@@ -25,6 +25,8 @@ import (
 	"github.com/telekom/BOOTy/pkg/health"
 	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/inventory"
+	"github.com/telekom/BOOTy/pkg/network"
+	networkpersist "github.com/telekom/BOOTy/pkg/network/persist"
 	"github.com/telekom/BOOTy/pkg/rescue"
 )
 
@@ -359,7 +361,138 @@ func (o *Orchestrator) copyProvisionerFiles(ctx context.Context) error {
 }
 
 func (o *Orchestrator) configureDNS(_ context.Context) error {
-	return o.config.ConfigureDNS(o.cfg)
+	if err := o.config.ConfigureDNS(o.cfg); err != nil {
+		return err
+	}
+	return o.persistNetworkConfig()
+}
+
+func (o *Orchestrator) persistNetworkConfig() error {
+	if !o.cfg.PersistNetwork {
+		return nil
+	}
+	family, err := networkpersist.ParseOSFamily(o.cfg.OSFamily)
+	if err != nil {
+		return fmt.Errorf("network persistence: %w", err)
+	}
+	cfg, err := o.targetNetworkConfig()
+	if err != nil {
+		return fmt.Errorf("network persistence: %w", err)
+	}
+	if err := networkpersist.Write(o.config.rootDir, family, cfg); err != nil {
+		return fmt.Errorf("network persistence: %w", err)
+	}
+	o.log.Info("persisted target network configuration", "osFamily", family)
+	return nil
+}
+
+func (o *Orchestrator) targetNetworkConfig() (*networkpersist.NetworkConfig, error) {
+	cfg := &networkpersist.NetworkConfig{
+		DNS: networkpersist.DNSConfig{
+			Servers: splitCommaValues(o.cfg.Network.DNSResolvers),
+		},
+	}
+
+	addPersistentBond(cfg, o.cfg)
+	if err := addPersistentInterface(cfg, o.cfg); err != nil {
+		return nil, err
+	}
+	if err := addPersistentVLANs(cfg, o.cfg.Network.VLAN.Config); err != nil {
+		return nil, err
+	}
+	if len(cfg.Bonds) > 0 && cfg.Bonds[0].Address == "" && len(cfg.VLANs) == 0 {
+		return nil, fmt.Errorf("bond network persistence requires static ip or vlan config")
+	}
+	if len(cfg.Interfaces) == 0 && len(cfg.Bonds) == 0 && len(cfg.VLANs) == 0 {
+		return nil, fmt.Errorf("no interface, bond, or vlan configured for target network")
+	}
+	return cfg, nil
+}
+
+func addPersistentBond(target *networkpersist.NetworkConfig, cfg *config.MachineConfig) {
+	members := splitCommaValues(cfg.Network.Bond.Interfaces)
+	if len(members) == 0 {
+		return
+	}
+	mode := normalizePersistentBondMode(cfg.Network.Bond.Mode)
+	address := strings.TrimSpace(cfg.Network.Static.IP)
+	gateway := strings.TrimSpace(cfg.Network.Static.Gateway)
+	if address == "" {
+		gateway = ""
+	}
+	target.Bonds = append(target.Bonds, networkpersist.BondConfig{
+		Name:    "bond0",
+		Members: members,
+		Mode:    mode,
+		Address: address,
+		Gateway: gateway,
+	})
+}
+
+func normalizePersistentBondMode(mode string) string {
+	trimmed := strings.TrimSpace(mode)
+	switch strings.ToLower(trimmed) {
+	case "", "lacp", "802.3ad":
+		return "802.3ad"
+	case "balance-rr", "active-backup", "balance-xor":
+		return strings.ToLower(trimmed)
+	default:
+		return trimmed
+	}
+}
+
+func addPersistentInterface(target *networkpersist.NetworkConfig, cfg *config.MachineConfig) error {
+	if len(target.Bonds) > 0 {
+		return nil
+	}
+	iface := strings.TrimSpace(cfg.Network.Static.Iface)
+	address := strings.TrimSpace(cfg.Network.Static.IP)
+	if address != "" && iface == "" {
+		return fmt.Errorf("static iface is required when persisting static ip without a bond")
+	}
+	if iface == "" {
+		return nil
+	}
+	gateway := strings.TrimSpace(cfg.Network.Static.Gateway)
+	if address == "" {
+		gateway = ""
+	}
+	target.Interfaces = append(target.Interfaces, networkpersist.InterfaceConfig{
+		Name:    iface,
+		DHCP:    address == "",
+		Address: address,
+		Gateway: gateway,
+	})
+	return nil
+}
+
+func addPersistentVLANs(target *networkpersist.NetworkConfig, spec string) error {
+	vlans, err := network.ParseVLANs(spec)
+	if err != nil {
+		return fmt.Errorf("invalid VLAN persistence config: %w", err)
+	}
+	for _, vlan := range vlans {
+		if strings.TrimSpace(vlan.Gateway) != "" {
+			return fmt.Errorf("vlan %d on %s has gateway %q, but target network persistence cannot render vlan gateways yet", vlan.ID, vlan.Parent, vlan.Gateway)
+		}
+		target.VLANs = append(target.VLANs, networkpersist.VLANConfig{
+			Parent:  strings.TrimSpace(vlan.Parent),
+			ID:      vlan.ID,
+			DHCP:    strings.TrimSpace(vlan.Address) == "",
+			Address: strings.TrimSpace(vlan.Address),
+		})
+	}
+	return nil
+}
+
+func splitCommaValues(raw string) []string {
+	var values []string
+	for _, part := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			values = append(values, trimmed)
+		}
+	}
+	return values
 }
 
 func (o *Orchestrator) stopRAID(ctx context.Context) error {
