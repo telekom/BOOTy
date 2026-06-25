@@ -835,6 +835,8 @@ func kernelModuleDependencies(t *testing.T, release, module string) []string {
 	t.Helper()
 	out, err := exec.Command("modinfo", "-k", release, "-F", "depends", module).CombinedOutput()
 	if err != nil {
+		t.Logf("modinfo -k %s -F depends %s failed, not copying module dependencies: %v (%s)",
+			release, module, err, strings.TrimSpace(string(out)))
 		return nil
 	}
 
