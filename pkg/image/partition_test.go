@@ -193,13 +193,30 @@ func TestSelectSourceRootPartitionRejectsExplicitEFI(t *testing.T) {
 	}
 }
 
-func TestSelectSourceRootPartitionAllowsSingleNonEFI(t *testing.T) {
+func TestSelectSourceRootPartitionRejectsImplicitUnknownNonEFI(t *testing.T) {
 	parts := []sfdiskPartition{
 		{Node: "/dev/loop0p1", Type: efiSystemPartitionGUID, Size: 1024},
 		{Node: "/dev/loop0p2", Type: "unknown", Size: 8192},
 	}
-	root, err := selectSourceRootPartition(parts, "", 0)
-	if err != nil || root.Node != "/dev/loop0p2" {
-		t.Fatalf("root = %#v, err=%v", root, err)
+	_, err := selectSourceRootPartition(parts, "", 0)
+	if err == nil {
+		t.Fatal("expected unknown non-EFI partition to require an explicit selector")
+	}
+	if !strings.Contains(err.Error(), "no Linux root partition candidate") {
+		t.Fatalf("error = %q, want Linux root candidate rejection", err.Error())
+	}
+}
+
+func TestSelectSourceRootPartitionRejectsImplicitMicrosoftBasicData(t *testing.T) {
+	parts := []sfdiskPartition{
+		{Node: "/dev/loop0p1", Type: efiSystemPartitionGUID, Size: 1024},
+		{Node: "/dev/loop0p2", Type: "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7", Size: 8192},
+	}
+	_, err := selectSourceRootPartition(parts, "", 0)
+	if err == nil {
+		t.Fatal("expected Microsoft Basic Data partition to require an explicit selector")
+	}
+	if !strings.Contains(err.Error(), "no Linux root partition candidate") {
+		t.Fatalf("error = %q, want Linux root candidate rejection", err.Error())
 	}
 }

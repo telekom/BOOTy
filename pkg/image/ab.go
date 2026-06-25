@@ -342,9 +342,9 @@ func selectSourceRootPartition(parts []sfdiskPartition, label string, number int
 		return sfdiskPartition{}, err
 	}
 
-	return selectSingleSourceRootCandidate(parts, func(part sfdiskPartition) bool {
-		return !isEFISystemPartition(part)
-	}, "non-EFI partition")
+	return sfdiskPartition{}, fmt.Errorf(
+		"source image has no Linux root partition candidate; set provision.ab.sourceRootLabel or provision.ab.sourceRootPartition for supported Linux images without a standard root label or partition type",
+	)
 }
 
 var errNoSourceRootCandidate = errors.New("source image has no root partition candidate")
