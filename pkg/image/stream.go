@@ -114,7 +114,7 @@ type fileSyncer interface {
 	Sync() error
 }
 
-func syncImageTarget(out fileSyncer, device string) error {
+var syncImageTarget = func(out fileSyncer, device string) error {
 	// Flush all written data to the underlying block device before returning.
 	// Without this, subsequent partition table re-reads (BLKRRPART ioctl via
 	// partprobe/blockdev) may not see the new partition table because dirty
