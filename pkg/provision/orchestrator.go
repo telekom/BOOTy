@@ -33,8 +33,10 @@ var readProcCmdline = func() ([]byte, error) {
 }
 
 var (
-	evalRootSymlinks = filepath.EvalSymlinks
-	mountBootPart    = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
+	evalRootSymlinks   = filepath.EvalSymlinks
+	collectFirmwareFn  = firmware.Collect
+	validateFirmwareFn = firmware.Validate
+	mountBootPart      = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
 		return mgr.MountPartition(ctx, device, mountpoint)
 	}
 	mountReadOnlyPart = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
@@ -295,7 +297,7 @@ func (o *Orchestrator) collectFirmware(ctx context.Context) error {
 		return nil
 	}
 
-	report, err := firmware.Collect()
+	report, err := collectFirmwareFn()
 	if err != nil {
 		// Collection is best-effort: missing sysfs entries are common in
 		// virtual environments, so we log and continue provisioning.
@@ -303,14 +305,16 @@ func (o *Orchestrator) collectFirmware(ctx context.Context) error {
 		return nil
 	}
 
+	var failures []firmware.ValidationResult
 	if o.cfg.Provision.Firmware.MinBIOS != "" || o.cfg.Provision.Firmware.MinBMC != "" {
 		policy := firmware.Policy{
 			MinBIOSVersion: o.cfg.Provision.Firmware.MinBIOS,
 			MinBMCVersion:  o.cfg.Provision.Firmware.MinBMC,
 		}
-		results := firmware.Validate(report, policy)
+		results := validateFirmwareFn(report, policy)
 		for _, r := range results {
 			if r.Status == "fail" {
+				failures = append(failures, r)
 				o.log.Warn("Firmware validation", "name", r.Name, "status", r.Status, "message", r.Message)
 			} else {
 				o.log.Info("Firmware validation", "name", r.Name, "status", r.Status, "message", r.Message)
@@ -323,7 +327,21 @@ func (o *Orchestrator) collectFirmware(ctx context.Context) error {
 		return fmt.Errorf("marshal firmware report: %w", err)
 	}
 
-	return o.provider.ReportFirmware(ctx, data)
+	if err := o.provider.ReportFirmware(ctx, data); err != nil {
+		return err
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("firmware validation failed: %s", formatFirmwareFailures(failures))
+	}
+	return nil
+}
+
+func formatFirmwareFailures(failures []firmware.ValidationResult) string {
+	parts := make([]string, 0, len(failures))
+	for _, failure := range failures {
+		parts = append(parts, fmt.Sprintf("%s: %s", failure.Name, failure.Message))
+	}
+	return strings.Join(parts, "; ")
 }
 
 func (o *Orchestrator) setHostname(_ context.Context) error {
