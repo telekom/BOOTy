@@ -586,7 +586,8 @@ func renderNMKeyfile(iface *InterfaceConfig, dns *DNSConfig, routes []RouteConfi
 	var b strings.Builder
 	b.WriteString("[connection]\n")
 	fmt.Fprintf(&b, "id=%s\n", iface.Name)
-	b.WriteString("type=ethernet\n\n")
+	b.WriteString("type=ethernet\n")
+	fmt.Fprintf(&b, "interface-name=%s\n\n", iface.Name)
 	b.WriteString("[ethernet]\n")
 	if iface.MAC != "" {
 		fmt.Fprintf(&b, "mac-address=%s\n", iface.MAC)
