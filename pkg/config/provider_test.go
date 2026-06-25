@@ -379,7 +379,7 @@ func TestValidate(t *testing.T) {
 		{name: "trims cloud-init ds", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: " NoCloud "}}}},
 		{name: "valid configdrive cloud-init ds", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: " configDrive "}}}},
 		{name: "invalid cloud-init ds", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: "ec2"}}}, wantErr: "invalid provision.cloudInit.datasource"},
-		{name: "valid network persistence os family", cfg: Config{PersistNetwork: true, OSFamily: "Ubuntu"}, wantNormalized: func(t *testing.T, cfg *Config) {
+		{name: "valid network persistence os family", cfg: Config{PersistNetwork: true, OSFamily: " Ubuntu "}, wantNormalized: func(t *testing.T, cfg *Config) {
 			t.Helper()
 			if cfg.OSFamily != "ubuntu" {
 				t.Fatalf("OSFamily = %q, want ubuntu", cfg.OSFamily)

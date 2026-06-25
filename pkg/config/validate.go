@@ -126,11 +126,11 @@ func (c *Config) normalize() {
 	}
 	for _, f := range lowerFields {
 		if *f != "" {
-			*f = strings.ToLower(*f)
+			*f = strings.ToLower(strings.TrimSpace(*f))
 		}
 	}
 	if c.Transport.TokenAlgorithm != "" {
-		c.Transport.TokenAlgorithm = strings.ToUpper(c.Transport.TokenAlgorithm)
+		c.Transport.TokenAlgorithm = strings.ToUpper(strings.TrimSpace(c.Transport.TokenAlgorithm))
 	}
 	c.Provision.AB.DataPartitions = normalizeABDataPartitions(c.Provision.AB.DataPartitions)
 }
