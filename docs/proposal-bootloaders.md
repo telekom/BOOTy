@@ -1,16 +1,21 @@
 # Proposal: Bootloader Management — GRUB Enhancement + systemd-boot
 
-## Status: Implemented (PR #43)
+## Status: Partially implemented
 
 ## Priority: P2
 
 ## Summary
 
-Unified bootloader management via a `Bootloader` interface supporting both
-GRUB and systemd-boot. Improves existing GRUB config parsing in `pkg/kexec/`,
-adds GRUB installation into provisioned OS, and introduces full systemd-boot
-support as an alternative. Auto-detects which bootloader the provisioned OS
-image uses.
+Unified bootloader management via a `Bootloader` interface. The current code
+contains bootloader detection helpers and GRUB-oriented provisioning support,
+but the active provisioning pipeline does not yet use systemd-boot as a source
+of truth for target configuration, kexec parsing, or EFI boot-entry creation.
+`SystemdBoot.Configure` is currently a no-op and systemd-boot first boot is not
+CI-proven.
+
+The design sections below describe intended coverage and note current gaps.
+When a snippet reflects current code, it uses the actual exported API; planned
+systemd-boot entry generation is called out separately.
 
 ## Motivation
 
@@ -23,8 +28,8 @@ configuration in the provisioned OS. Several modern Linux distributions
 |-----|--------|
 | No GRUB installation management | Manual GRUB setup needed post-provision |
 | No multi-kernel support | Can't select between kernel versions |
-| No systemd-boot support | Can't provision systemd-boot distros |
-| No bootloader auto-detection | Operator must know which bootloader the image uses |
+| No active systemd-boot provisioning support | Can't claim systemd-boot distro provisioning |
+| No provisioning use of bootloader auto-detection | Provisioning still follows GRUB-oriented paths |
 
 ### Industry Context
 
@@ -46,70 +51,51 @@ package bootloader
 
 import "context"
 
-// Bootloader abstracts bootloader installation and configuration.
 type Bootloader interface {
-    // Name returns the bootloader type ("grub", "systemd-boot").
-    Name() string
-
-    // Install installs the bootloader into the provisioned OS.
-    Install(ctx context.Context, rootPath string, espPath string) error
-
-    // Configure sets default kernel, cmdline, timeout.
-    Configure(ctx context.Context, cfg BootConfig) error
-
-    // ListEntries returns available boot entries.
+    // Install sets up the bootloader on the target disk.
+    Install(ctx context.Context, rootPath, diskDevice string) error
+    // Configure sets kernel parameters and default entry.
+    Configure(ctx context.Context, rootPath string, cfg BootConfig) error
+    // ListEntries returns the available boot entries.
     ListEntries(ctx context.Context, rootPath string) ([]BootEntry, error)
-
-    // SetDefault sets the default boot entry.
-    SetDefault(ctx context.Context, entryID string) error
+    // SetDefault sets the default boot entry by title.
+    SetDefault(ctx context.Context, rootPath, title string) error
 }
 
 type BootConfig struct {
-    DefaultKernel string            `json:"defaultKernel"`
-    KernelCmdline string            `json:"kernelCmdline"`
-    ExtraParams   string            `json:"extraParams"`
-    Timeout       int               `json:"timeout"`     // seconds
-    RootDevice    string            `json:"rootDevice"`   // e.g., "UUID=..."
-    Entries       []BootEntry       `json:"entries,omitempty"`
+    KernelPath   string
+    InitrdPath   string
+    Cmdline      string
+    DefaultEntry string
 }
 
 type BootEntry struct {
-    ID         string `json:"id"`
-    Title      string `json:"title"`
-    Kernel     string `json:"kernel"`
-    Initrd     string `json:"initrd"`
-    Cmdline    string `json:"cmdline"`
-    IsDefault  bool   `json:"isDefault"`
+    Title  string
+    Kernel string
+    Initrd string
+    Args   string
 }
 ```
 
 ### GRUB Manager
 
 ```go
-// pkg/bootloader/grub/grub.go
-package grub
+// pkg/bootloader/grub.go
+package bootloader
 
 import (
     "context"
     "fmt"
     "os/exec"
+    "strings"
 )
 
-type GRUB struct {
-    log *slog.Logger
-}
+type GRUB struct{}
 
-func (g *GRUB) Name() string { return "grub" }
-
-func (g *GRUB) Install(ctx context.Context, rootPath, espPath string) error {
-    // grub-install --target=x86_64-efi --efi-directory=<esp> --boot-directory=<boot>
-    cmd := exec.CommandContext(ctx, "chroot", rootPath,
-        "grub-install",
-        "--target=x86_64-efi",
-        fmt.Sprintf("--efi-directory=%s", espPath),
-    )
-    if out, err := cmd.CombinedOutput(); err != nil {
-        return fmt.Errorf("grub-install: %s: %w", string(out), err)
+func (g *GRUB) Install(ctx context.Context, rootPath, diskDevice string) error {
+    out, err := exec.CommandContext(ctx, "chroot", rootPath, "grub-install", diskDevice).CombinedOutput()
+    if err != nil {
+        return fmt.Errorf("grub-install: %s: %w", strings.TrimSpace(string(out)), err)
     }
     return nil
 }
@@ -117,52 +103,18 @@ func (g *GRUB) Install(ctx context.Context, rootPath, espPath string) error {
 
 ### systemd-boot Manager
 
-```go
-// pkg/bootloader/systemdboot/systemdboot.go
-package systemdboot
+Current implementation is helper-only:
 
-import (
-    "context"
-    "fmt"
-    "os"
-    "path/filepath"
-)
+- `SystemdBoot.Install` runs `bootctl install` inside the target chroot.
+- `SystemdBoot.Configure` is a no-op and relies on existing Type #1 BLS
+  entries in the target image.
+- BOOTy does not generate `loader/entries/*.conf` or `loader.conf` during the
+  active provisioning pipeline.
 
-type SystemdBoot struct {
-    log *slog.Logger
-}
-
-func (s *SystemdBoot) Name() string { return "systemd-boot" }
-
-func (s *SystemdBoot) Install(ctx context.Context, rootPath, espPath string) error {
-    // bootctl install --esp-path=<esp> --root=<root>
-    cmd := exec.CommandContext(ctx, "bootctl", "install",
-        "--esp-path="+espPath,
-        "--root="+rootPath,
-    )
-    if out, err := cmd.CombinedOutput(); err != nil {
-        return fmt.Errorf("bootctl install: %s: %w", string(out), err)
-    }
-    return nil
-}
-
-// GenerateEntry creates a systemd-boot loader entry file.
-func (s *SystemdBoot) GenerateEntry(espPath string, entry BootEntry) error {
-    // /boot/efi/loader/entries/<id>.conf
-    entryPath := filepath.Join(espPath, "loader", "entries", entry.ID+".conf")
-    content := fmt.Sprintf("title   %s\nlinux   %s\ninitrd  %s\noptions %s\n",
-        entry.Title, entry.Kernel, entry.Initrd, entry.Cmdline)
-    return os.WriteFile(entryPath, []byte(content), 0o644)
-}
-
-// GenerateLoaderConf creates the main loader.conf.
-func (s *SystemdBoot) GenerateLoaderConf(espPath string, cfg BootConfig) error {
-    loaderPath := filepath.Join(espPath, "loader", "loader.conf")
-    content := fmt.Sprintf("default %s.conf\ntimeout %d\nconsole-mode max\n",
-        cfg.DefaultKernel, cfg.Timeout)
-    return os.WriteFile(loaderPath, []byte(content), 0o644)
-}
-```
+Direct loader-entry generation and loader configuration remain planned work.
+Current unit tests cover detection, `bootctl` output parsing, and the no-op
+`Configure` behavior. They do not validate loader-entry or `loader.conf`
+generation because that generation is not implemented.
 
 ### Auto-Detection
 
@@ -170,23 +122,18 @@ func (s *SystemdBoot) GenerateLoaderConf(espPath string, cfg BootConfig) error {
 // pkg/bootloader/detect.go
 package bootloader
 
-import "os"
+import (
+    "os"
+    "path/filepath"
+)
 
-// DetectBootloader auto-detects which bootloader is installed in the
-// provisioned OS image.
-func DetectBootloader(rootPath string) string {
-    // Check for systemd-boot
-    if _, err := os.Stat(rootPath + "/usr/lib/systemd/boot/efi/systemd-bootx64.efi"); err == nil {
-        return "systemd-boot"
+// DetectBootloader examines rootPath and returns the appropriate Bootloader.
+func DetectBootloader(rootPath string) Bootloader {
+    sdBoot := filepath.Join(rootPath, "boot", "efi", "EFI", "systemd", "systemd-bootx64.efi")
+    if stat, err := os.Stat(sdBoot); err == nil && !stat.IsDir() {
+        return &SystemdBoot{}
     }
-    // Check for GRUB
-    if _, err := os.Stat(rootPath + "/usr/sbin/grub-install"); err == nil {
-        return "grub"
-    }
-    if _, err := os.Stat(rootPath + "/usr/sbin/grub2-install"); err == nil {
-        return "grub" // RHEL/CentOS use grub2-*
-    }
-    return "unknown"
+    return &GRUB{}
 }
 ```
 
@@ -195,25 +142,13 @@ func DetectBootloader(rootPath string) string {
 | Binary | Package | Purpose | Initramfs Flavor | Already Present? |
 |--------|---------|---------|-----------------|-----------------|
 | `efibootmgr` | `efibootmgr` | EFI boot entry management | all | **Yes** |
-| `bootctl` | `systemd` | systemd-boot installation (fallback) | full, gobgp | **No — add** |
+| `bootctl` | target OS systemd | systemd-boot installation helper | target chroot | **Not bundled** |
 | `grub-install` | — | Runs in chroot of provisioned OS | N/A (from image) | N/A |
 
-**Note**: `grub-install` and `update-grub` run inside the chroot of the
-provisioned OS image, so they don't need to be in BOOTy's initramfs.
-`bootctl` needs to be in the initramfs only as a fallback — the Go
-implementation generates entry files directly.
-
-**Dockerfile change** (tools stage):
-
-```dockerfile
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ... existing packages ... \
-    systemd-boot \
-    && rm -rf /var/lib/apt/lists/*
-
-# systemd-boot installer (fallback for systemd-boot setup)
-COPY --from=tools /usr/bin/bootctl bin/bootctl
-```
+**Note**: `grub-install`, `update-grub`, and the current `bootctl` helper run
+inside the chroot of the provisioned OS image. `bootctl` is not bundled in
+BOOTy's initramfs, and the active Go implementation does not generate
+systemd-boot entry files directly.
 
 ## Files Changed
 
@@ -221,28 +156,30 @@ COPY --from=tools /usr/bin/bootctl bin/bootctl
 |------|--------|
 | `pkg/bootloader/bootloader.go` | Common `Bootloader` interface |
 | `pkg/bootloader/detect.go` | Auto-detection logic |
-| `pkg/bootloader/grub/grub.go` | GRUB manager |
-| `pkg/bootloader/systemdboot/systemdboot.go` | systemd-boot manager |
+| `pkg/bootloader/grub.go` | GRUB manager |
+| `pkg/bootloader/systemdboot.go` | systemd-boot manager |
 | `pkg/kexec/grub.go` | Enhanced GRUB config parsing |
-| `pkg/provision/orchestrator.go` | `configureBootloader()` step |
-| `initrd.Dockerfile` | Add `bootctl` binary |
+| `pkg/provision/orchestrator.go` | Still uses GRUB-oriented provisioning paths |
+| `initrd.Dockerfile` | No `bootctl` bundle in the current implementation |
 
 ## Testing
 
 ### Unit Tests
 
 - `bootloader/detect_test.go` — Auto-detection with mock filesystem trees.
-  Table-driven: GRUB, systemd-boot, GRUB2 (RHEL), unknown.
-- `bootloader/grub/grub_test.go` — GRUB config generation, entry parsing.
-- `bootloader/systemdboot/systemdboot_test.go` — Entry file generation,
-  loader.conf generation. Verify output format matches systemd-boot spec.
+  Covered cases: systemd-boot binary, GRUB fallback, and directory-not-file
+  fallback.
+- `bootloader/bootloader_test.go` — GRUB entry parsing and missing-file
+  behavior; systemd-boot no-op `Configure`; `bootctl` output parsing.
 
 ### E2E / KVM Tests
 
-- **KVM matrix** (`kvm-matrix.yml`, tag `e2e_kvm`):
-  - QEMU + OVMF with GRUB-based image → verify boot entry created
-  - QEMU + OVMF with systemd-boot image → verify loader entries
-  - Verify kexec from both bootloader configs
+The current KVM matrix proves BOOTy startup through QEMU direct kernel/initrd
+boot and synthetic A/B flows. It does not prove firmware handoff through the
+target disk's GRUB or systemd-boot bootloader, first boot of a real
+systemd-boot image, systemd-boot loader-entry generation, or kexec from
+systemd-boot configuration. Add those tests before marking systemd-boot
+provisioning support as implemented.
 
 ## Risks
 
