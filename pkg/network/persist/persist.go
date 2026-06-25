@@ -347,11 +347,13 @@ func renderNetplanEthernets(b *strings.Builder, ifaces []InterfaceConfig, dns *D
 	b.WriteString("  ethernets:\n")
 	for i := range ifaces {
 		renderNetplanInterface(b, &ifaces[i])
+		attachedRoutes := []RouteConfig(nil)
 		if !*dnsAttached {
 			renderNetplanIfaceDNS(b, dns)
-			renderNetplanIfaceRoutes(b, routes)
+			attachedRoutes = routes
 			*dnsAttached = true
 		}
+		renderNetplanIfaceRoutes(b, ifaces[i].Gateway, attachedRoutes)
 	}
 }
 
@@ -361,10 +363,6 @@ func renderNetplanInterface(b *strings.Builder, iface *InterfaceConfig) {
 		b.WriteString("      dhcp4: true\n")
 	} else if iface.Address != "" {
 		fmt.Fprintf(b, "      addresses: [%s]\n", iface.Address)
-	}
-	if iface.Gateway != "" {
-		b.WriteString("      routes:\n")
-		fmt.Fprintf(b, "        - to: default\n          via: %s\n", iface.Gateway)
 	}
 	if iface.MTU > 0 {
 		fmt.Fprintf(b, "      mtu: %d\n", iface.MTU)
@@ -385,10 +383,6 @@ func renderNetplanBonds(b *strings.Builder, bonds []BondConfig, dns *DNSConfig, 
 		if bonds[i].Address != "" {
 			fmt.Fprintf(b, "      addresses: [%s]\n", bonds[i].Address)
 		}
-		if bonds[i].Gateway != "" {
-			b.WriteString("      routes:\n")
-			fmt.Fprintf(b, "        - to: default\n          via: %s\n", bonds[i].Gateway)
-		}
 		if bonds[i].MTU > 0 {
 			fmt.Fprintf(b, "      mtu: %d\n", bonds[i].MTU)
 		}
@@ -399,11 +393,13 @@ func renderNetplanBonds(b *strings.Builder, bonds []BondConfig, dns *DNSConfig, 
 		if bonds[i].HashPolicy != "" {
 			fmt.Fprintf(b, "        transmit-hash-policy: %s\n", bonds[i].HashPolicy)
 		}
+		attachedRoutes := []RouteConfig(nil)
 		if !*dnsAttached {
 			renderNetplanIfaceDNS(b, dns)
-			renderNetplanIfaceRoutes(b, routes)
+			attachedRoutes = routes
 			*dnsAttached = true
 		}
+		renderNetplanIfaceRoutes(b, bonds[i].Gateway, attachedRoutes)
 	}
 }
 
@@ -425,11 +421,13 @@ func renderNetplanVLANs(b *strings.Builder, vlans []VLANConfig, dns *DNSConfig, 
 		} else if vlans[i].Address != "" {
 			fmt.Fprintf(b, "      addresses: [%s]\n", vlans[i].Address)
 		}
+		attachedRoutes := []RouteConfig(nil)
 		if !*dnsAttached {
 			renderNetplanIfaceDNS(b, dns)
-			renderNetplanIfaceRoutes(b, routes)
+			attachedRoutes = routes
 			*dnsAttached = true
 		}
+		renderNetplanIfaceRoutes(b, "", attachedRoutes)
 	}
 }
 
@@ -446,11 +444,14 @@ func renderNetplanIfaceDNS(b *strings.Builder, dns *DNSConfig) {
 	}
 }
 
-func renderNetplanIfaceRoutes(b *strings.Builder, routes []RouteConfig) {
-	if len(routes) == 0 {
+func renderNetplanIfaceRoutes(b *strings.Builder, gateway string, routes []RouteConfig) {
+	if gateway == "" && len(routes) == 0 {
 		return
 	}
 	b.WriteString("      routes:\n")
+	if gateway != "" {
+		fmt.Fprintf(b, "        - to: default\n          via: %s\n", gateway)
+	}
 	for _, r := range routes {
 		fmt.Fprintf(b, "        - to: %s\n          via: %s\n", r.Destination, r.Gateway)
 		if r.Metric > 0 {
