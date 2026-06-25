@@ -123,6 +123,13 @@ func TestIsOCIDigestReference(t *testing.T) {
 	}
 }
 
+func TestOCIDigestReferenceReturnsParseError(t *testing.T) {
+	_, err := OCIDigestReference("oci://registry.example.com/%zz")
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+}
+
 func TestFetchOCILayerMultiLayer(t *testing.T) {
 	srv := startTestRegistry(t)
 	defer srv.Close()

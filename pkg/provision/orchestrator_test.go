@@ -274,11 +274,14 @@ func TestValidateImageSourceConfiguredRejectsBlankImage(t *testing.T) {
 
 func TestValidateImageSourceConfiguredAllowsImage(t *testing.T) {
 	cfg := &config.MachineConfig{}
-	cfg.Provision.Image.URLs = []string{"https://images.example.invalid/node.raw"}
+	cfg.Provision.Image.URLs = []string{"  https://images.example.invalid/node.raw  ", "\t"}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
 	if err := o.validateProvisionInputs(context.Background()); err != nil {
 		t.Fatalf("validateProvisionInputs: %v", err)
+	}
+	if got := cfg.Provision.Image.URLs; got[0] != "https://images.example.invalid/node.raw" || got[1] != "" {
+		t.Fatalf("image URLs were not normalized: %#v", got)
 	}
 }
 
@@ -312,11 +315,28 @@ func TestValidateImageSourceAllowsOCIDigest(t *testing.T) {
 func TestValidateImageSourceAllowsOCITagWithChecksum(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Image.URLs = []string{"oci://registry.example.invalid/org/node:latest"}
-	cfg.Provision.Image.Checksum = strings.Repeat("b", 64)
+	cfg.Provision.Image.Checksum = "  " + strings.Repeat("b", 64) + "  "
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
 	if err := o.validateProvisionInputs(context.Background()); err != nil {
 		t.Fatalf("validateProvisionInputs: %v", err)
+	}
+	if cfg.Provision.Image.Checksum != strings.Repeat("b", 64) {
+		t.Fatalf("checksum was not normalized: %q", cfg.Provision.Image.Checksum)
+	}
+}
+
+func TestValidateImageSourceRejectsMalformedOCI(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{"oci://registry.example.invalid/%zz"}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err := o.validateProvisionInputs(context.Background())
+	if err == nil {
+		t.Fatal("expected malformed OCI source error")
+	}
+	if !strings.Contains(err.Error(), "invalid OCI image source") {
+		t.Fatalf("error = %q, want invalid OCI context", err.Error())
 	}
 }
 
