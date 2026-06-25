@@ -185,8 +185,69 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 40 {
-		t.Fatalf("expected 40 provisioning steps, got %d", len(steps))
+	if len(steps) != 41 {
+		t.Fatalf("expected 41 provisioning steps, got %d", len(steps))
+	}
+}
+
+func TestProvisionStepsValidateImageSourceBeforeWipe(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	steps := o.provisionSteps()
+
+	indices := map[string]int{}
+	for i, step := range steps {
+		indices[step.Name] = i
+	}
+	validateIdx, ok := indices["validate-provision-inputs"]
+	if !ok {
+		t.Fatal("missing validate-provision-inputs step")
+	}
+	for _, name := range []string{"stop-raid", "disable-lvm", "setup-nvme-namespaces", "detect-disk", "wipe-disks"} {
+		stepIdx, ok := indices[name]
+		if !ok {
+			t.Fatalf("missing %s step", name)
+		}
+		if validateIdx >= stepIdx {
+			t.Fatalf("validate-provision-inputs index %d must be before %s index %d", validateIdx, name, stepIdx)
+		}
+	}
+}
+
+func TestValidateImageSourceConfiguredRejectsMissingImage(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err := o.validateProvisionInputs(context.Background())
+	if err == nil {
+		t.Fatal("expected missing image source error")
+	}
+	if !strings.Contains(err.Error(), "no image URLs configured") {
+		t.Fatalf("error = %q, want no image URLs context", err.Error())
+	}
+}
+
+func TestValidateImageSourceConfiguredRejectsBlankImage(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{" ", "\t"}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err := o.validateProvisionInputs(context.Background())
+	if err == nil {
+		t.Fatal("expected missing image source error")
+	}
+	if !strings.Contains(err.Error(), "no image URLs configured") {
+		t.Fatalf("error = %q, want no image URLs context", err.Error())
+	}
+}
+
+func TestValidateImageSourceConfiguredAllowsImage(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{"https://images.example.invalid/node.raw"}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	if err := o.validateProvisionInputs(context.Background()); err != nil {
+		t.Fatalf("validateProvisionInputs: %v", err)
 	}
 }
 
@@ -218,6 +279,9 @@ func TestMountBootAndSharedDataStepsPrecedeProvisioningWrites(t *testing.T) {
 
 func TestResumeStateStepsRerunMountSharedDataForCleanupState(t *testing.T) {
 	stateSteps := resumeStateSteps()
+	if _, ok := stateSteps["validate-provision-inputs"]; !ok {
+		t.Fatal("validate-provision-inputs must rerun on resume before destructive storage steps")
+	}
 	if _, ok := stateSteps["mount-shared-data"]; !ok {
 		t.Fatal("mount-shared-data must rerun on resume to rebuild sharedMounts for teardown cleanup")
 	}
@@ -1314,6 +1378,7 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 
 	cp := &Checkpoint{
 		CompletedSteps: []string{
+			"validate-provision-inputs",
 			"setup-mellanox",
 			"detect-disk",
 			"parse-partitions",
@@ -1340,6 +1405,10 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 
 	var ran []string
 	steps := []Step{
+		{"validate-provision-inputs", func(_ context.Context) error {
+			ran = append(ran, "validate-provision-inputs")
+			return nil
+		}},
 		{"setup-mellanox", func(_ context.Context) error { ran = append(ran, "setup-mellanox"); return nil }},
 		{"detect-disk", func(_ context.Context) error { ran = append(ran, "detect-disk"); return nil }},
 		{"parse-partitions", func(_ context.Context) error { ran = append(ran, "parse-partitions"); return nil }},
@@ -1363,10 +1432,11 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 
 	// stateSteps re-run; stream-image and configure-ssh skip because they are
 	// completed non-state steps.
-	if len(ran) != 7 {
-		t.Errorf("expected 7 state step runs, got %v", ran)
+	if len(ran) != 8 {
+		t.Errorf("expected 8 state step runs, got %v", ran)
 	}
 	for _, name := range []string{
+		"validate-provision-inputs",
 		"setup-mellanox",
 		"detect-disk",
 		"parse-partitions",

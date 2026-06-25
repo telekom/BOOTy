@@ -102,6 +102,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"collect-inventory", o.collectInventory},
 		{"collect-firmware", o.collectFirmware},
 		{"health-checks", o.runHealthChecks},
+		{"validate-provision-inputs", o.validateProvisionInputs},
 		{"stop-raid", o.stopRAID},
 		{"disable-lvm", o.disableLVM},
 		{"mount-efivarfs", o.mountEFIVars},
@@ -149,7 +150,8 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 
 	// stateSteps must always re-run on resume because they rebuild in-memory
 	// runtime fields that later steps depend on (firmwareChanged, targetDisk,
-	// rootPartition/bootPartition, sharedMounts, chroot bind mounts).
+	// rootPartition/bootPartition, sharedMounts, chroot bind mounts) or
+	// revalidate safety preconditions before destructive operations.
 	stateSteps := resumeStateSteps()
 
 	for i, step := range steps {
@@ -172,13 +174,14 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 
 func resumeStateSteps() map[string]struct{} {
 	return map[string]struct{}{
-		"setup-mellanox":     {},
-		"detect-disk":        {},
-		"parse-partitions":   {},
-		"mount-root":         {},
-		"mount-boot":         {},
-		"mount-shared-data":  {},
-		"setup-chroot-binds": {},
+		"validate-provision-inputs": {},
+		"setup-mellanox":            {},
+		"detect-disk":               {},
+		"parse-partitions":          {},
+		"mount-root":                {},
+		"mount-boot":                {},
+		"mount-shared-data":         {},
+		"setup-chroot-binds":        {},
 	}
 }
 
@@ -576,6 +579,18 @@ func (o *Orchestrator) setupNVMeNamespaces(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (o *Orchestrator) validateProvisionInputs(_ context.Context) error {
+	if err := o.validatePartitionLayoutModeCompatibility(); err != nil {
+		return err
+	}
+	for _, source := range o.cfg.Provision.Image.URLs {
+		if strings.TrimSpace(source) != "" {
+			return nil
+		}
+	}
+	return fmt.Errorf("provision image source required before destructive storage steps: no image URLs configured")
 }
 
 func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
