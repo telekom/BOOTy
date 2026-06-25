@@ -367,7 +367,12 @@ func TestSlimContainsDiskToolsE2E(t *testing.T) {
 	cpioGz := buildTarget(t, "slim", dest)
 	files := listCPIOContents(t, cpioGz)
 
+	assertContains(t, files, "sbin/mdadm", "mdadm RAID")
+	assertContains(t, files, "bin/wipefs", "wipefs")
+	assertContains(t, files, "bin/sgdisk", "sgdisk GPT")
+	assertContains(t, files, "bin/sfdisk", "sfdisk partitioner")
 	assertContains(t, files, "bin/partprobe", "partprobe")
+	assertContains(t, files, "bin/growpart", "growpart")
 	assertContains(t, files, "sbin/e2fsck", "e2fsck")
 	assertContains(t, files, "sbin/resize2fs", "resize2fs")
 }
@@ -392,7 +397,6 @@ func TestSlimExcludesLVME2E(t *testing.T) {
 	files := listCPIOContents(t, cpioGz)
 
 	assertNotContains(t, files, "sbin/lvm", "LVM tooling")
-	assertNotContains(t, files, "bin/sfdisk", "sfdisk")
 	assertNotContains(t, files, "bin/gpgv", "GPG verifier")
 	assertNotContains(t, files, "bin/qemu-img", "qemu-img")
 }

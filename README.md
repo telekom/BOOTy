@@ -180,7 +180,7 @@ The `initrd.Dockerfile` supports multiple build targets via `--target`:
 | `gobgp` | ~45 MB | GoBGP/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production without FRR dependency |
 | `iso` | ~100 MB | FRR/EVPN + DHCP | Full | Bootable ISO for Redfish virtual media |
 | `gobgp-iso` | ~65 MB | GoBGP/EVPN + DHCP | Full | Bootable GoBGP ISO for Redfish virtual media |
-| `slim` | ~15 MB | DHCP only | Minimal (e2fsck, resize2fs) | Lightweight provisioning without BGP |
+| `slim` | ~15 MB | DHCP only | Provisioning basics, no LVM/FRR | Lightweight provisioning without BGP |
 | `micro` | ~10 MB | None (pure Go) | None | Minimal agent, custom network stack |
 
 #### ARM64 Targets

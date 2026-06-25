@@ -146,7 +146,7 @@ RUN apt-get update && \
 FROM debian:bookworm-slim AS tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     binutils \
-    mdadm util-linux e2fsprogs xfsprogs btrfs-progs parted gdisk kpartx dosfstools \
+    mdadm util-linux fdisk e2fsprogs xfsprogs btrfs-progs parted gdisk kpartx dosfstools \
     efibootmgr dmidecode ethtool curl iproute2 bridge-utils \
     hdparm nvme-cli mstflint lldpd gpgv qemu-utils \
     dropbear-bin cryptsetup-bin ipmitool \
@@ -161,7 +161,7 @@ RUN mkdir -p /tool-libs /tool-libs-full && \
     ldd /sbin/mdadm /usr/sbin/wipefs /sbin/resize2fs /sbin/e2fsck \
         /usr/sbin/mkfs.ext4 /usr/sbin/mkfs.vfat /usr/sbin/mkfs.xfs \
         /usr/sbin/xfs_growfs /usr/sbin/xfs_repair \
-        /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk \
+        /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk /usr/sbin/sfdisk \
         /sbin/partprobe /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
         /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
         /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
@@ -189,7 +189,7 @@ RUN strip --strip-all \
     /sbin/mdadm /usr/sbin/wipefs /sbin/resize2fs /sbin/e2fsck \
         /usr/sbin/mkfs.ext4 /usr/sbin/mkfs.vfat /usr/sbin/mkfs.xfs \
         /usr/sbin/xfs_growfs /usr/sbin/xfs_repair \
-        /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk \
+        /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk /usr/sbin/sfdisk \
         /sbin/partprobe /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
         /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
         /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
@@ -351,7 +351,7 @@ COPY --from=iso-builder /booty.iso .
 
 # ── Slim target: BOOTy + busybox shell + minimal tools, no FRR/LVM ────────
 FROM debian:bookworm-slim AS slim-builder
-RUN apt-get update && apt-get install -y --no-install-recommends cpio zstd ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends cpio zstd ca-certificates cloud-guest-utils \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
 
@@ -361,8 +361,8 @@ WORKDIR /build/initramfs
 COPY --from=busybox-bin /bin/busybox bin/busybox
 RUN for cmd in $(bin/busybox --list); do if [ "$cmd" != "busybox" ]; then ln -sf busybox "bin/$cmd"; fi; done
 # Docker COPY follows destination symlinks — remove colliding busybox symlinks.
-RUN rm -f bin/partprobe bin/ip
-COPY --from=busybox /build/initramfs/bin/growpart bin/growpart
+RUN rm -f bin/partprobe bin/ip bin/wipefs bin/sgdisk bin/sfdisk
+RUN cp /usr/bin/growpart bin/growpart
 
 # BOOTy init binary (static, CGO-enabled)
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
@@ -373,8 +373,12 @@ COPY --from=tools /usr/sbin/ethtool bin/ethtool
 COPY --from=tools /usr/bin/curl bin/curl
 RUN mkdir -p etc/ssl/certs && cp /etc/ssl/certs/ca-certificates.crt etc/ssl/certs/
 
-# Basic disk tools (filesystem check + resize only)
+# Provisioning disk tools without FRR or LVM support.
 RUN mkdir -p sbin
+COPY --from=tools /sbin/mdadm sbin/mdadm
+COPY --from=tools /usr/sbin/wipefs bin/wipefs
+COPY --from=tools /usr/sbin/sgdisk bin/sgdisk
+COPY --from=tools /usr/sbin/sfdisk bin/sfdisk
 COPY --from=tools /sbin/partprobe bin/partprobe
 COPY --from=tools /sbin/e2fsck sbin/e2fsck
 COPY --from=tools /sbin/resize2fs sbin/resize2fs

@@ -214,6 +214,11 @@ jobs:
           grep -q "^init$\|^./init$" slim-files.txt || (echo "FAIL: init missing"; exit 1)
           grep -q "bin/busybox" slim-files.txt || (echo "FAIL: busybox missing"; exit 1)
           grep -q "bin/ip" slim-files.txt || (echo "FAIL: ip missing"; exit 1)
+          grep -q "sbin/mdadm" slim-files.txt || (echo "FAIL: mdadm missing"; exit 1)
+          grep -q "bin/wipefs" slim-files.txt || (echo "FAIL: wipefs missing"; exit 1)
+          grep -q "bin/sgdisk" slim-files.txt || (echo "FAIL: sgdisk missing"; exit 1)
+          grep -q "bin/sfdisk" slim-files.txt || (echo "FAIL: sfdisk missing"; exit 1)
+          grep -q "bin/growpart" slim-files.txt || (echo "FAIL: growpart missing"; exit 1)
 
           # Must NOT contain FRR or LVM
           if grep -q "sbin/bgpd" slim-files.txt; then echo "FAIL: bgpd present in slim"; exit 1; fi
