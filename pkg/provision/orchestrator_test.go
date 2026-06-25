@@ -2339,6 +2339,24 @@ func TestTargetNetworkConfigBondAndVLANMapping(t *testing.T) {
 			wantErr: "bond network persistence requires static ip or vlan config",
 		},
 		{
+			name: "bond with vlan drops unaddressed gateway",
+			configure: func(cfg *config.MachineConfig) {
+				cfg.Network.Bond.Interfaces = "eth0,eth1"
+				cfg.Network.Static.Gateway = "10.1.0.1"
+				cfg.Network.VLAN.Config = "200:bond0:10.200.0.42/24"
+			},
+			assert: func(t *testing.T, got *networkpersist.NetworkConfig) {
+				t.Helper()
+				if len(got.Bonds) != 1 {
+					t.Fatalf("bonds = %#v, want one bond", got.Bonds)
+				}
+				bond := got.Bonds[0]
+				if bond.Address != "" || bond.Gateway != "" {
+					t.Fatalf("unexpected unaddressed bond config: %#v", bond)
+				}
+			},
+		},
+		{
 			name: "vlans map dhcp and static addresses",
 			configure: func(cfg *config.MachineConfig) {
 				cfg.Network.VLAN.Config = "200:eno1:10.200.0.42/24,300:eno2"

@@ -418,12 +418,17 @@ func addPersistentBond(target *networkpersist.NetworkConfig, cfg *config.Machine
 	if mode == "" {
 		mode = "802.3ad"
 	}
+	address := strings.TrimSpace(cfg.Network.Static.IP)
+	gateway := strings.TrimSpace(cfg.Network.Static.Gateway)
+	if address == "" {
+		gateway = ""
+	}
 	target.Bonds = append(target.Bonds, networkpersist.BondConfig{
 		Name:    "bond0",
 		Members: members,
 		Mode:    mode,
-		Address: strings.TrimSpace(cfg.Network.Static.IP),
-		Gateway: strings.TrimSpace(cfg.Network.Static.Gateway),
+		Address: address,
+		Gateway: gateway,
 	})
 }
 
