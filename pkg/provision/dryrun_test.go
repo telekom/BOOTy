@@ -444,11 +444,13 @@ func TestDryRunImageChecksum(t *testing.T) {
 		expect       DryRunStatus
 	}{
 		{"no checksum", "", "", nil, DryRunWarn},
-		{"sha256", "abc123", "sha256", nil, DryRunPass},
-		{"sha512", "abc123", "sha512", nil, DryRunPass},
-		{"uppercase type", "abc123", "SHA512", nil, DryRunPass},
-		{"trimmed uppercase type", "abc123", " SHA256 ", nil, DryRunPass},
-		{"empty type defaults to sha256", "abc123", "", nil, DryRunPass},
+		{"sha256", strings.Repeat("a", 64), "sha256", nil, DryRunPass},
+		{"sha512", strings.Repeat("a", 128), "sha512", nil, DryRunPass},
+		{"uppercase type", strings.Repeat("a", 128), "SHA512", nil, DryRunPass},
+		{"trimmed uppercase type", strings.Repeat("a", 64), " SHA256 ", nil, DryRunPass},
+		{"empty type infers sha256", strings.Repeat("a", 64), "", nil, DryRunPass},
+		{"short sha256", "abc123", "sha256", nil, DryRunFail},
+		{"non-hex sha256", strings.Repeat("g", 64), "sha256", nil, DryRunFail},
 		{"unsupported type", "abc123", "md5", nil, DryRunFail},
 		{"layout-only skips checksum", "", "", func() *config.MachineConfig {
 			c := &config.MachineConfig{}
@@ -887,7 +889,7 @@ func TestDryRun_AllPass(t *testing.T) {
 	passCfg.Health.Enabled = true
 	passCfg.Health.SkipChecks = "disk-presence,disk-ioerr,memory-ecc,nic-link-state,thermal-state"
 	passCfg.Provision.Inventory.Enabled = true
-	passCfg.Provision.Image.Checksum = "abc123"
+	passCfg.Provision.Image.Checksum = strings.Repeat("a", 64)
 	passCfg.Provision.Image.ChecksumType = "sha256"
 	o := NewOrchestrator(
 		passCfg,

@@ -271,6 +271,48 @@ func TestNormalizeChecksumOptRejectsEmptyPrefixedDigest(t *testing.T) {
 	}
 }
 
+func TestNormalizeChecksumOptRejectsMalformedExplicitDigest(t *testing.T) {
+	tests := []struct {
+		name         string
+		checksum     string
+		checksumType string
+		want         string
+	}{
+		{
+			name:         "short sha256",
+			checksum:     "abc123",
+			checksumType: "sha256",
+			want:         "sha256 checksum length",
+		},
+		{
+			name:         "non-hex sha256",
+			checksum:     strings.Repeat("g", sha256.Size*2),
+			checksumType: "sha256",
+			want:         "invalid sha256 checksum hex",
+		},
+		{
+			name:         "sha512 length for sha256",
+			checksum:     strings.Repeat("0", sha512.Size*2),
+			checksumType: "sha256",
+			want:         "sha256 checksum length",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := normalizeChecksumOpt(StreamOpts{
+				Checksum:     tt.checksum,
+				ChecksumType: tt.checksumType,
+			})
+			if err == nil {
+				t.Fatal("expected malformed checksum error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %q, want to contain %q", err.Error(), tt.want)
+			}
+		})
+	}
+}
+
 func TestStreamChecksumMismatch(t *testing.T) {
 	data := []byte("data for checksum mismatch test")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
