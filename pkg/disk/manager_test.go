@@ -118,6 +118,13 @@ func TestNewManagerCustomCommander(t *testing.T) {
 	}
 }
 
+func TestBindMountSkipsAlreadyMountedTarget(t *testing.T) {
+	mgr := NewManager(newMockCommander())
+	if err := mgr.BindMount("/proc", "/proc"); err != nil {
+		t.Fatalf("BindMount should skip already-mounted target: %v", err)
+	}
+}
+
 func TestStopRAIDArrays(t *testing.T) {
 	cmd := newMockCommander()
 	mgr := NewManager(cmd)

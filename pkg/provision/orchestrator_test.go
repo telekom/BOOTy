@@ -1286,6 +1286,7 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 			"mount-root",
 			"mount-boot",
 			"mount-shared-data",
+			"setup-chroot-binds",
 			"stream-image",
 			"configure-ssh",
 		},
@@ -1311,6 +1312,7 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 		{"mount-root", func(_ context.Context) error { ran = append(ran, "mount-root"); return nil }},
 		{"mount-boot", func(_ context.Context) error { ran = append(ran, "mount-boot"); return nil }},
 		{"mount-shared-data", func(_ context.Context) error { ran = append(ran, "mount-shared-data"); return nil }},
+		{"setup-chroot-binds", func(_ context.Context) error { ran = append(ran, "setup-chroot-binds"); return nil }},
 		{"stream-image", func(_ context.Context) error { ran = append(ran, "stream-image"); return nil }},
 		{"configure-ssh", func(_ context.Context) error { ran = append(ran, "configure-ssh"); return nil }},
 	}
@@ -1327,8 +1329,8 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 
 	// stateSteps re-run; stream-image and configure-ssh skip because they are
 	// completed non-state steps.
-	if len(ran) != 6 {
-		t.Errorf("expected 6 state step runs, got %v", ran)
+	if len(ran) != 7 {
+		t.Errorf("expected 7 state step runs, got %v", ran)
 	}
 	for _, name := range []string{
 		"setup-mellanox",
@@ -1337,6 +1339,7 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 		"mount-root",
 		"mount-boot",
 		"mount-shared-data",
+		"setup-chroot-binds",
 	} {
 		found := false
 		for _, r := range ran {

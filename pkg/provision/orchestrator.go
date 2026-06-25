@@ -147,7 +147,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 
 	// stateSteps must always re-run on resume because they rebuild in-memory
 	// runtime fields that later steps depend on (firmwareChanged, targetDisk,
-	// rootPartition/bootPartition, sharedMounts).
+	// rootPartition/bootPartition, sharedMounts, chroot bind mounts).
 	stateSteps := resumeStateSteps()
 
 	for i, step := range steps {
@@ -170,12 +170,13 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 
 func resumeStateSteps() map[string]struct{} {
 	return map[string]struct{}{
-		"setup-mellanox":    {},
-		"detect-disk":       {},
-		"parse-partitions":  {},
-		"mount-root":        {},
-		"mount-boot":        {},
-		"mount-shared-data": {},
+		"setup-mellanox":     {},
+		"detect-disk":        {},
+		"parse-partitions":   {},
+		"mount-root":         {},
+		"mount-boot":         {},
+		"mount-shared-data":  {},
+		"setup-chroot-binds": {},
 	}
 }
 
