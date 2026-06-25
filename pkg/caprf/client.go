@@ -883,6 +883,10 @@ func applyVar(cfg *config.MachineConfig, key, value string) error {
 }
 
 func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
+	if applyNetworkStringVar(cfg, key, value) {
+		return true
+	}
+
 	strFields := map[string]*string{
 		"HOSTNAME":                    &cfg.Hostname,
 		"TOKEN":                       &cfg.Transport.Token,
@@ -899,31 +903,10 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"DEBUG_URL":                   &cfg.Transport.DebugURL,
 		"HEARTBEAT_URL":               &cfg.Agent.HeartbeatURL,
 		"COMMANDS_URL":                &cfg.Agent.CommandsURL,
-		"underlay_subnet":             &cfg.Network.EVPN.UnderlaySubnet,
-		"underlay_ip":                 &cfg.Network.EVPN.UnderlayIP,
-		"overlay_subnet":              &cfg.Network.EVPN.OverlaySubnet,
-		"ipmi_subnet":                 &cfg.Network.IPMI.Subnet,
-		"provision_ip":                &cfg.Network.EVPN.ProvisionIP,
-		"provision_gateway":           &cfg.Network.EVPN.ProvisionGateway,
-		"dns_resolver":                &cfg.Network.DNSResolvers,
-		"dcgw_ips":                    &cfg.Network.EVPN.DCGWIPs,
-		"overlay_aggregate":           &cfg.Network.EVPN.OverlayAggregate,
-		"vpn_rt":                      &cfg.Network.EVPN.VPNRT,
-		"STATIC_IP":                   &cfg.Network.Static.IP,
-		"STATIC_GATEWAY":              &cfg.Network.Static.Gateway,
-		"STATIC_IFACE":                &cfg.Network.Static.Iface,
-		"BOND_INTERFACES":             &cfg.Network.Bond.Interfaces,
-		"BOND_MODE":                   &cfg.Network.Bond.Mode,
-		"VLANS":                       &cfg.Network.VLAN.Config,
-		"NETWORK_MODE":                &cfg.Network.Mode,
 		"RESCUE_MODE":                 &cfg.Rescue.Mode,
 		"RESCUE_SSH_PUBKEY":           &cfg.Rescue.SSHPubKey,
 		"RESCUE_PASSWORD_HASH":        &cfg.Rescue.PasswordHash,
 		"CLOUDINIT_DATASOURCE":        &cfg.Provision.CloudInit.Datasource,
-		"vrf_name":                    &cfg.Network.VRF.Name,
-		"BGP_PEER_MODE":               &cfg.Network.BGP.PeerMode,
-		"BGP_INTERFACES":              &cfg.Network.BGP.Interfaces,
-		"BGP_NEIGHBORS":               &cfg.Network.BGP.Neighbors,
 		"IMAGE_CHECKSUM":              &cfg.Provision.Image.Checksum,
 		"IMAGE_CHECKSUM_TYPE":         &cfg.Provision.Image.ChecksumType,
 		"IMAGE_MODE":                  &cfg.Provision.Image.Mode,
@@ -948,7 +931,6 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"TOKEN_URL":                   &cfg.Transport.TokenURL,
 		"TOKEN_ALGORITHM":             &cfg.Transport.TokenAlgorithm,
 		"NVME_NAMESPACES":             &cfg.Provision.Disk.NVMeNamespaces,
-		"BGP_AUTH_PASSWORD":           &cfg.Network.BGP.AuthPassword,
 		"SYSEXT_DEFAULT_MODE":         &cfg.Provision.Sysext.DefaultMode,
 		"SYSEXT_CATALOG_DIR":          &cfg.Provision.Sysext.CatalogDir,
 		"SYSEXT_ACTIVE_DIR":           &cfg.Provision.Sysext.ActiveDir,
@@ -965,16 +947,55 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 	return false
 }
 
+func applyNetworkStringVar(cfg *config.MachineConfig, key, value string) bool {
+	strFields := map[string]*string{
+		"underlay_subnet":   &cfg.Network.EVPN.UnderlaySubnet,
+		"underlay_ip":       &cfg.Network.EVPN.UnderlayIP,
+		"overlay_subnet":    &cfg.Network.EVPN.OverlaySubnet,
+		"ipmi_subnet":       &cfg.Network.IPMI.Subnet,
+		"provision_ip":      &cfg.Network.EVPN.ProvisionIP,
+		"provision_gateway": &cfg.Network.EVPN.ProvisionGateway,
+		"dns_resolver":      &cfg.Network.DNSResolvers,
+		"dcgw_ips":          &cfg.Network.EVPN.DCGWIPs,
+		"overlay_aggregate": &cfg.Network.EVPN.OverlayAggregate,
+		"vpn_rt":            &cfg.Network.EVPN.VPNRT,
+		"STATIC_IP":         &cfg.Network.Static.IP,
+		"STATIC_GATEWAY":    &cfg.Network.Static.Gateway,
+		"STATIC_IFACE":      &cfg.Network.Static.Iface,
+		"BOND_INTERFACES":   &cfg.Network.Bond.Interfaces,
+		"BOND_MODE":         &cfg.Network.Bond.Mode,
+		"VLANS":             &cfg.Network.VLAN.Config,
+		"NETWORK_MODE":      &cfg.Network.Mode,
+		"VRF_NAME":          &cfg.Network.VRF.Name,
+		"vrf_name":          &cfg.Network.VRF.Name,
+		"BGP_PEER_MODE":     &cfg.Network.BGP.PeerMode,
+		"BGP_INTERFACES":    &cfg.Network.BGP.Interfaces,
+		"BGP_NEIGHBORS":     &cfg.Network.BGP.Neighbors,
+		"BGP_AUTH_PASSWORD": &cfg.Network.BGP.AuthPassword,
+	}
+
+	if ptr, ok := strFields[key]; ok {
+		*ptr = value
+		return true
+	}
+	return false
+}
+
 func applyUint32Var(cfg *config.MachineConfig, key, value string) (bool, error) {
 	uint32Fields := map[string]*uint32{
 		"asn_server":      &cfg.Network.BGP.ASN,
 		"provision_vni":   &cfg.Network.EVPN.ProvisionVNI,
 		"leaf_asn":        &cfg.Network.EVPN.LeafASN,
 		"local_asn":       &cfg.Network.EVPN.LocalASN,
+		"VRF_TABLE_ID":    &cfg.Network.VRF.TableID,
 		"vrf_table_id":    &cfg.Network.VRF.TableID,
+		"BGP_KEEPALIVE":   &cfg.Network.BGP.Keepalive,
 		"bgp_keepalive":   &cfg.Network.BGP.Keepalive,
+		"BGP_HOLD":        &cfg.Network.BGP.Hold,
 		"bgp_hold":        &cfg.Network.BGP.Hold,
+		"BFD_TRANSMIT_MS": &cfg.Network.BGP.BFDTransmitMS,
 		"bfd_transmit_ms": &cfg.Network.BGP.BFDTransmitMS,
+		"BFD_RECEIVE_MS":  &cfg.Network.BGP.BFDReceiveMS,
 		"bfd_receive_ms":  &cfg.Network.BGP.BFDReceiveMS,
 		"BGP_REMOTE_ASN":  &cfg.Network.BGP.RemoteASN,
 		"bgp_remote_asn":  &cfg.Network.BGP.RemoteASN,
