@@ -456,6 +456,30 @@ func (s *sequentialCommander) Run(_ context.Context, _ string, _ ...string) ([]b
 	return r.output, r.err
 }
 
+func TestSetupMellanoxZeroVFsSkipsFirmwareChange(t *testing.T) {
+	restore := SetPCIVendorCheckFunc(func(string) (bool, error) { return true, nil })
+	defer restore()
+	cmd := &sequentialCommander{
+		results: []mockResult{
+			{output: []byte("mt4125_pciconf0\n"), err: nil},
+			{output: []byte("Applied"), err: nil},
+		},
+	}
+	mgr := disk.NewManager(cmd)
+	c := &Configurator{disk: mgr, rootDir: t.TempDir()}
+
+	changed, err := c.SetupMellanox(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if changed {
+		t.Fatal("expected NUM_VFS=0 to skip firmware changes")
+	}
+	if cmd.idx != 0 {
+		t.Fatalf("expected no mst device enumeration when NUM_VFS=0, got %d command calls", cmd.idx)
+	}
+}
+
 func TestSetupMellanoxFirmwareChanged(t *testing.T) {
 	restore := SetPCIVendorCheckFunc(func(string) (bool, error) { return true, nil })
 	defer restore()
