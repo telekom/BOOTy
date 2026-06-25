@@ -532,7 +532,7 @@ func prepareLinkLayers(ctx context.Context, netCfg *network.Config) error {
 		for _, v := range netCfg.VLANs {
 			name, err := setupVLANLayer(v)
 			if err != nil {
-				slog.Error("VLAN setup failed", "vlan", v.ID, "parent", v.Parent, "error", err)
+				slog.Error("vlan setup failed", "vlan", v.ID, "parent", v.Parent, "error", err)
 				vlanErrs = append(vlanErrs, fmt.Errorf("vlan %d on %s: %w", v.ID, v.Parent, err))
 				continue
 			}
