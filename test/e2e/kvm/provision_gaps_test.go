@@ -736,11 +736,8 @@ func TestNetworkPersistenceStaticIP(t *testing.T) {
 		t.Logf("found systemd-networkd configs: %d files", len(entries))
 	}
 
-	// At minimum, resolv.conf should have the DNS resolvers.
-	resolvConf := readProvisionedFile(t, rootMount, "etc/resolv.conf")
-	if !strings.Contains(resolvConf, "nameserver 8.8.8.8") {
-		t.Error("resolv.conf missing DNS resolver 8.8.8.8")
-	}
+	// DNS persistence is covered by the full provisioning tests; this gap test
+	// is scoped to target-network configuration files.
 }
 
 // ---------------------------------------------------------------------------
