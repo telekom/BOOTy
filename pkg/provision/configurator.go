@@ -29,6 +29,7 @@ var errEFIFallbackAssetMissing = errors.New("bundled EFI fallback loader missing
 var (
 	efiRuntimeReady              = defaultEFIRuntimeReady
 	isMountPoint                 = defaultIsMountPoint
+	mountedSource                = defaultMountedSource
 	efiFallbackAssetDirectory    = "/usr/lib/booty/efi"
 	newEFIFallbackHandoffID      = defaultEFIFallbackHandoffID
 	installEFIFallbackWithChroot = true
@@ -617,17 +618,22 @@ func defaultEFIRuntimeReady() (ready bool, reason string) {
 
 // defaultIsMountPoint checks whether a path is already a mount point by reading /proc/mounts.
 func defaultIsMountPoint(path string) bool {
+	_, mounted := defaultMountedSource(path)
+	return mounted
+}
+
+func defaultMountedSource(path string) (string, bool) {
 	data, err := os.ReadFile("/proc/mounts")
 	if err != nil {
-		return false
+		return "", false
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) >= 2 && fields[1] == path {
-			return true
+			return fields[0], true
 		}
 	}
-	return false
+	return "", false
 }
 
 // RemoveEFIBootEntries removes old EFI boot entries matching "ubuntu".

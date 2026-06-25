@@ -919,10 +919,28 @@ func (m *Manager) BindMount(source, target string) error {
 	if err := os.MkdirAll(target, 0o755); err != nil {
 		return fmt.Errorf("creating bind mount target %s: %w", target, err)
 	}
+	if isMountPoint(target) {
+		slog.Info("bind mount target already mounted, skipping", "source", source, "target", target)
+		return nil
+	}
 	if err := syscall.Mount(source, target, "", syscall.MS_BIND, ""); err != nil {
 		return fmt.Errorf("bind mount %s -> %s: %w", source, target, err)
 	}
 	return nil
+}
+
+func isMountPoint(path string) bool {
+	data, err := os.ReadFile("/proc/mounts")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == path {
+			return true
+		}
+	}
+	return false
 }
 
 // Unmount unmounts a filesystem.

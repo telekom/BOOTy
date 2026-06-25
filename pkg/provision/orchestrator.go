@@ -147,7 +147,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 
 	// stateSteps must always re-run on resume because they rebuild in-memory
 	// runtime fields that later steps depend on (firmwareChanged, targetDisk,
-	// rootPartition/bootPartition, sharedMounts).
+	// rootPartition/bootPartition, sharedMounts, chroot bind mounts).
 	stateSteps := resumeStateSteps()
 
 	for i, step := range steps {
@@ -170,10 +170,13 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 
 func resumeStateSteps() map[string]struct{} {
 	return map[string]struct{}{
-		"setup-mellanox":    {},
-		"detect-disk":       {},
-		"parse-partitions":  {},
-		"mount-shared-data": {},
+		"setup-mellanox":     {},
+		"detect-disk":        {},
+		"parse-partitions":   {},
+		"mount-root":         {},
+		"mount-boot":         {},
+		"mount-shared-data":  {},
+		"setup-chroot-binds": {},
 	}
 }
 
@@ -1215,7 +1218,32 @@ func (o *Orchestrator) enableLVM(ctx context.Context) error {
 }
 
 func (o *Orchestrator) mountRoot(ctx context.Context) error {
+	if isMountPoint(newroot) {
+		source, ok := mountedSource(newroot)
+		if !ok {
+			return fmt.Errorf("%s is already mounted but mount source could not be resolved", newroot)
+		}
+		if !sameMountSource(source, o.rootPartition) {
+			return fmt.Errorf("%s is already mounted from %s, expected root partition %s", newroot, source, o.rootPartition)
+		}
+		o.log.Info("root partition already mounted", "mountpoint", newroot, "source", source)
+		return nil
+	}
 	return o.disk.MountPartition(ctx, o.rootPartition, newroot)
+}
+
+func sameMountSource(actual, expected string) bool {
+	actual = strings.TrimSpace(actual)
+	expected = strings.TrimSpace(expected)
+	if actual == "" || expected == "" {
+		return false
+	}
+	if actual == expected {
+		return true
+	}
+	actualResolved, actualErr := evalRootSymlinks(actual)
+	expectedResolved, expectedErr := evalRootSymlinks(expected)
+	return actualErr == nil && expectedErr == nil && actualResolved == expectedResolved
 }
 
 func bootEFIMountPoint() string {
