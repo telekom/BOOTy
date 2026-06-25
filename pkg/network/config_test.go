@@ -1,6 +1,9 @@
 package network
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -49,6 +52,103 @@ func TestApplyDefaults_NoOverwrite(t *testing.T) {
 	}
 	if cfg.OverlayVRFTableID != 43 {
 		t.Errorf("OverlayVRFTableID = %d, want %d", cfg.OverlayVRFTableID, 43)
+	}
+}
+
+func TestConfigureResolversWritesInitramfsResolvConf(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "etc", "resolv.conf")
+	originalPath := resolvConfPath
+	resolvConfPath = path
+	t.Cleanup(func() { resolvConfPath = originalPath })
+
+	if err := ConfigureResolvers(" 8.8.8.8, ,1.1.1.1 "); err != nil {
+		t.Fatalf("ConfigureResolvers: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read resolv.conf: %v", err)
+	}
+	if got, want := string(data), "nameserver 8.8.8.8\nnameserver 1.1.1.1\n"; got != want {
+		t.Fatalf("resolv.conf = %q, want %q", got, want)
+	}
+}
+
+func TestConfigureResolversReplacesDanglingSymlink(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "etc", "resolv.conf")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir etc: %v", err)
+	}
+	if err := os.Symlink("../run/systemd/resolve/stub-resolv.conf", path); err != nil {
+		t.Fatalf("symlink resolv.conf: %v", err)
+	}
+
+	originalPath := resolvConfPath
+	resolvConfPath = path
+	t.Cleanup(func() { resolvConfPath = originalPath })
+
+	if err := ConfigureResolvers("9.9.9.9"); err != nil {
+		t.Fatalf("ConfigureResolvers: %v", err)
+	}
+
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("stat resolv.conf: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("resolv.conf is still a symlink")
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read resolv.conf: %v", err)
+	}
+	if got, want := string(data), "nameserver 9.9.9.9\n"; got != want {
+		t.Fatalf("resolv.conf = %q, want %q", got, want)
+	}
+}
+
+func TestConfigureResolversEmptySkips(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "etc", "resolv.conf")
+	originalPath := resolvConfPath
+	resolvConfPath = path
+	t.Cleanup(func() { resolvConfPath = originalPath })
+
+	if err := ConfigureResolvers(" , "); err != nil {
+		t.Fatalf("ConfigureResolvers: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("resolv.conf should not exist after empty resolvers, stat error: %v", err)
+	}
+}
+
+func TestConfigureResolversRejectsInjectedDirectives(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "etc", "resolv.conf")
+	originalPath := resolvConfPath
+	resolvConfPath = path
+	t.Cleanup(func() { resolvConfPath = originalPath })
+
+	err := ConfigureResolvers("8.8.8.8\nsearch evil.example")
+	if err == nil {
+		t.Fatal("expected invalid resolver error")
+	}
+	if !strings.Contains(err.Error(), "invalid DNS resolver") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("resolv.conf should not be written for invalid resolver, stat error: %v", statErr)
+	}
+}
+
+func TestResolverLines(t *testing.T) {
+	lines, err := resolverLines("8.8.8.8, 1.1.1.1, ,2001:4860:4860::8888")
+	if err != nil {
+		t.Fatalf("resolverLines: %v", err)
+	}
+	got := strings.Join(lines, "\n")
+	want := "nameserver 8.8.8.8\nnameserver 1.1.1.1\nnameserver 2001:4860:4860::8888"
+	if got != want {
+		t.Fatalf("resolverLines = %q, want %q", got, want)
 	}
 }
 
