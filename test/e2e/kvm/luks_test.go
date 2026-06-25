@@ -82,7 +82,7 @@ func TestLUKSVerifyHeader(t *testing.T) {
 		failOrSkipUnsupportedHost(t, "no free nbd device found for LUKS header verification")
 	}
 	t.Cleanup(func() {
-		_ = exec.Command("qemu-nbd", "--disconnect", nbdDev).Run()
+		disconnectNBD(t, nbdDev)
 	})
 
 	// Poll cryptsetup luksDump until the nbd device is ready (qemu-nbd connect
