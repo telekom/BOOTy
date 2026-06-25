@@ -534,8 +534,8 @@ jobs:
           REPO=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
 
           ensure_oci_ref_absent() {
-            ref="$1"
-            err="${RUNNER_TEMP}/oras-ref-check.err"
+            local ref="$1"
+            local err="${RUNNER_TEMP}/oras-ref-check.err"
             if oras manifest fetch "${ref}" >/dev/null 2>"${err}"; then
               echo "::error::OCI artifact ${ref} already exists; refusing to overwrite"
               exit 1
