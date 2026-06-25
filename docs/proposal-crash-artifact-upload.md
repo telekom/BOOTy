@@ -26,6 +26,7 @@ The archive includes:
 | `CRASH_ARTIFACTS_UPLOAD_URL` | — | Direct CAPRF proxy upload endpoint |
 | `CRASH_ARTIFACTS_MAX_MB` | `256` | Maximum artifact payload size |
 | `CRASH_ARTIFACTS_UPLOAD_TIMEOUT_SEC` | `120` | Prepare/upload timeout |
+| `CRASH_ARTIFACTS_INCLUDE_MEMORY_DUMPS` | `false` | Include raw `vmcore` and systemd coredumps; skipped by default because they can contain process memory and secrets |
 
 ## CAPRF Prepare Contract
 
@@ -66,6 +67,8 @@ BOOTy mounts the detected root partition read-only and scans a strict allowlist:
 Symlinks are skipped, paths must remain under the mounted root, and oversized
 files are skipped with manifest reasons. Upload is skipped when no crash
 evidence is found.
+Raw `vmcore` and systemd coredump files are also skipped unless
+`CRASH_ARTIFACTS_INCLUDE_MEMORY_DUMPS=true` is configured.
 
 ## Metadata
 
@@ -86,6 +89,8 @@ Crash dumps, logs, serials, UUIDs, MAC addresses, and firmware metadata can be
 sensitive. The feature is opt-in. BOOTy does not log artifact contents,
 metadata payloads, or presigned query strings, and it never sends its bearer
 token to presigned S3 URLs.
+Text logs and JSON metadata are redacted before archive and prepare-request
+upload; raw memory dumps require the separate memory-dump opt-in.
 
 ## Limitations
 

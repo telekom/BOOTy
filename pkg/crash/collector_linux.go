@@ -4,14 +4,18 @@ package crash
 
 import (
 	"archive/tar"
+	"bufio"
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -41,6 +45,14 @@ var textEvidenceMarkers = []string{
 	"ramoops",
 	"vmcore",
 }
+
+var (
+	crashURLPattern = regexp.MustCompile(`https?://[^\s"'<>()]+`)
+	secretPatterns  = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)(\bauthorization\s*[:=]\s*bearer\s+)[^\s"']+`),
+		regexp.MustCompile(`(?i)(\b[A-Z0-9_]*(?:TOKEN|PASSWORD|SECRET|KEY)[A-Z0-9_]*\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;]+)`),
+	}
+)
 
 var targetRootPatterns = []string{
 	"var/crash",
@@ -91,6 +103,7 @@ func Collect(ctx context.Context, opts *CollectOptions) (*CollectResult, error) 
 
 	metadata := collectMetadata(ctx, opts.Config)
 	candidates, skipped := collectCandidates(ctx, opts)
+	candidates, skipped = filterMemoryDumps(candidates, skipped, includeMemoryDumps(opts.Config))
 	evidenceFound := hasEvidence(candidates)
 
 	manifest := Manifest{
@@ -242,7 +255,7 @@ func classifyArtifact(path, rel, archivePrefix string) (kind string, evidence []
 	switch {
 	case archivePrefix == "pstore":
 		return "pstore", []string{"pstore"}
-	case strings.Contains(lowerRel, "var/crash") || strings.Contains(lowerBase, "vmcore"):
+	case isRawKdumpPath(lowerBase):
 		return "kdump", []string{"crash-file"}
 	case strings.Contains(lowerRel, "systemd/coredump"):
 		return "coredump", []string{"coredump-file"}
@@ -283,6 +296,40 @@ func hasEvidence(candidates []candidate) bool {
 	return false
 }
 
+func filterMemoryDumps(candidates []candidate, skipped []SkippedArtifact, include bool) ([]candidate, []SkippedArtifact) {
+	if include {
+		return candidates, skipped
+	}
+	filtered := candidates[:0]
+	for _, c := range candidates {
+		if isMemoryDumpKind(c.kind) {
+			skipped = append(skipped, SkippedArtifact{
+				SourcePath: c.sourcePath,
+				Reason:     "memory_dump_upload_disabled",
+				SizeBytes:  c.size,
+			})
+			continue
+		}
+		filtered = append(filtered, c)
+	}
+	return filtered, skipped
+}
+
+func includeMemoryDumps(cfg *config.MachineConfig) bool {
+	return cfg != nil && cfg.Provision.CrashArtifacts.IncludeMemoryDumps
+}
+
+func isMemoryDumpKind(kind string) bool {
+	return kind == "kdump" || kind == "coredump"
+}
+
+func isRawKdumpPath(lowerBase string) bool {
+	if strings.HasPrefix(lowerBase, "vmcore-dmesg") {
+		return false
+	}
+	return lowerBase == "vmcore" || strings.HasPrefix(lowerBase, "vmcore.")
+}
+
 func selectArtifacts(candidates []candidate, maxBytes int64, manifest *Manifest) []Artifact {
 	var selected []Artifact
 	var used int64
@@ -317,6 +364,7 @@ func collectMetadata(ctx context.Context, cfg *config.MachineConfig) HostMetadat
 	metadata.Firmware = marshalMetadata("firmware", firmware.Collect, &metadata.Errors)
 	metadata.Debug = marshalValue("debug", debugdump.Collect(ctx), &metadata.Errors)
 	metadata.BuildInfo = marshalValue("buildInfo", buildinfo.Get(), &metadata.Errors)
+	sanitizeHostMetadata(&metadata)
 	return metadata
 }
 
@@ -371,8 +419,11 @@ func writeArchive(outputDir string, manifest *Manifest) (archivePath string, arc
 		}
 		outputDir = dir
 	}
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+	if err := os.MkdirAll(outputDir, 0o700); err != nil {
 		return "", 0, fmt.Errorf("create crash archive dir: %w", err)
+	}
+	if err := os.Chmod(outputDir, 0o700); err != nil { //nolint:gosec // owner-only directory requires execute bit
+		return "", 0, fmt.Errorf("secure crash archive dir: %w", err)
 	}
 	archivePath = filepath.Join(outputDir, "crash-artifacts.tar.gz")
 	for range 4 {
@@ -396,9 +447,18 @@ func writeArchive(outputDir string, manifest *Manifest) (archivePath string, arc
 }
 
 func writeArchiveFile(archivePath string, manifest *Manifest) error {
-	out, err := os.Create(archivePath) //nolint:gosec // path is configured output directory
+	if info, err := os.Lstat(archivePath); err == nil && !info.Mode().IsRegular() {
+		return fmt.Errorf("crash archive path is not a regular file")
+	} else if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("stat crash archive path: %w", err)
+	}
+	out, err := os.OpenFile(archivePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // path is configured output directory
 	if err != nil {
 		return fmt.Errorf("create crash archive: %w", err)
+	}
+	if err := out.Chmod(0o600); err != nil {
+		_ = out.Close()
+		return fmt.Errorf("secure crash archive: %w", err)
 	}
 	defer out.Close() //nolint:errcheck // best-effort close on error path
 
@@ -414,9 +474,9 @@ func writeArchiveFile(archivePath string, manifest *Manifest) error {
 	if err := addJSON(tw, "metadata.json", manifest.Metadata); err != nil {
 		return err
 	}
-	for _, artifact := range manifest.Artifacts {
-		if err := addFile(tw, artifact.SourcePath, artifact.ArchivePath); err != nil {
-			slog.Warn("failed to add crash artifact", "path", artifact.SourcePath, "error", err)
+	for i := range manifest.Artifacts {
+		if err := addFile(tw, &manifest.Artifacts[i], filepath.Dir(archivePath)); err != nil {
+			slog.Warn("failed to add crash artifact", "path", manifest.Artifacts[i].SourcePath, "error", err)
 		}
 	}
 	return nil
@@ -427,6 +487,7 @@ func addJSON(tw *tar.Writer, name string, value any) error {
 	if err != nil {
 		return fmt.Errorf("marshal %s: %w", name, err)
 	}
+	data = redactCrashBytes(data)
 	header := &tar.Header{Name: name, Mode: 0o600, Size: int64(len(data)), ModTime: time.Unix(0, 0).UTC()}
 	if err := tw.WriteHeader(header); err != nil {
 		return fmt.Errorf("write tar header %s: %w", name, err)
@@ -437,19 +498,22 @@ func addJSON(tw *tar.Writer, name string, value any) error {
 	return nil
 }
 
-func addFile(tw *tar.Writer, source, archivePath string) error {
-	info, err := os.Stat(source)
+func addFile(tw *tar.Writer, artifact *Artifact, scratchDir string) error {
+	info, err := os.Stat(artifact.SourcePath)
 	if err != nil {
 		return fmt.Errorf("stat artifact: %w", err)
 	}
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("artifact is not a regular file")
 	}
-	header := &tar.Header{Name: archivePath, Mode: 0o600, Size: info.Size(), ModTime: info.ModTime()}
+	if shouldRedactArtifact(artifact.Kind) {
+		return addRedactedFile(tw, artifact, info.ModTime(), scratchDir)
+	}
+	header := &tar.Header{Name: artifact.ArchivePath, Mode: 0o600, Size: info.Size(), ModTime: info.ModTime()}
 	if err := tw.WriteHeader(header); err != nil {
 		return fmt.Errorf("write tar header: %w", err)
 	}
-	f, err := os.Open(source) //nolint:gosec // source is allowlisted and validated
+	f, err := os.Open(artifact.SourcePath) //nolint:gosec // source is allowlisted and validated
 	if err != nil {
 		return fmt.Errorf("open artifact: %w", err)
 	}
@@ -458,4 +522,179 @@ func addFile(tw *tar.Writer, source, archivePath string) error {
 		return fmt.Errorf("copy artifact: %w", err)
 	}
 	return nil
+}
+
+func addRedactedFile(tw *tar.Writer, artifact *Artifact, modTime time.Time, scratchDir string) error {
+	tmp, err := os.CreateTemp(scratchDir, ".booty-crash-redacted-*")
+	if err != nil {
+		return fmt.Errorf("create redacted artifact temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
+	defer tmp.Close()        //nolint:errcheck // best-effort close on error path
+	if err := tmp.Chmod(0o600); err != nil {
+		return fmt.Errorf("secure redacted artifact temp file: %w", err)
+	}
+	if err := writeRedactedFile(tmp, artifact.SourcePath); err != nil {
+		return err
+	}
+	info, err := tmp.Stat()
+	if err != nil {
+		return fmt.Errorf("stat redacted artifact temp file: %w", err)
+	}
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("rewind redacted artifact temp file: %w", err)
+	}
+	header := &tar.Header{Name: artifact.ArchivePath, Mode: 0o600, Size: info.Size(), ModTime: modTime}
+	if err := tw.WriteHeader(header); err != nil {
+		return fmt.Errorf("write tar header: %w", err)
+	}
+	if _, err := io.Copy(tw, tmp); err != nil {
+		return fmt.Errorf("copy redacted artifact: %w", err)
+	}
+	return nil
+}
+
+func writeRedactedFile(w io.Writer, path string) error {
+	return forEachRedactedChunk(path, func(chunk []byte) error {
+		if _, err := w.Write(chunk); err != nil {
+			return fmt.Errorf("write tar data: %w", err)
+		}
+		return nil
+	})
+}
+
+func forEachRedactedChunk(path string, fn func([]byte) error) error {
+	f, err := os.Open(path) //nolint:gosec // source is allowlisted and validated
+	if err != nil {
+		return fmt.Errorf("open artifact: %w", err)
+	}
+	defer f.Close() //nolint:errcheck // best-effort close
+
+	reader := bufio.NewReaderSize(f, 64*1024)
+	for {
+		chunk, err := reader.ReadBytes('\n')
+		if len(chunk) > 0 {
+			if err := fn(redactCrashBytes(chunk)); err != nil {
+				return err
+			}
+		}
+		if err == nil || errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		return fmt.Errorf("read artifact: %w", err)
+	}
+	return nil
+}
+
+func shouldRedactArtifact(kind string) bool {
+	return kind == "kernel-log" || kind == "pstore"
+}
+
+func sanitizeHostMetadata(metadata *HostMetadata) {
+	metadata.Machine.ProviderID = redactCrashString(metadata.Machine.ProviderID)
+	metadata.Inventory = redactRawMessage(metadata.Inventory)
+	metadata.Firmware = redactRawMessage(metadata.Firmware)
+	metadata.Debug = redactRawMessage(metadata.Debug)
+	metadata.BuildInfo = redactRawMessage(metadata.BuildInfo)
+	for i := range metadata.Errors {
+		metadata.Errors[i].Error = redactCrashString(metadata.Errors[i].Error)
+	}
+}
+
+func redactRawMessage(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return json.RawMessage(redactCrashBytes(raw))
+	}
+	redacted, ok := redactJSONValue(value)
+	if !ok {
+		return json.RawMessage(redactCrashBytes(raw))
+	}
+	data, err := json.Marshal(redacted)
+	if err != nil {
+		return json.RawMessage(redactCrashBytes(raw))
+	}
+	return json.RawMessage(data)
+}
+
+func redactJSONValue(value any) (any, bool) {
+	switch v := value.(type) {
+	case map[string]any:
+		for key, child := range v {
+			if isSecretKey(key) {
+				v[key] = "[REDACTED]"
+				continue
+			}
+			redacted, ok := redactJSONValue(child)
+			if !ok {
+				return nil, false
+			}
+			v[key] = redacted
+		}
+		return v, true
+	case []any:
+		for i, child := range v {
+			redacted, ok := redactJSONValue(child)
+			if !ok {
+				return nil, false
+			}
+			v[i] = redacted
+		}
+		return v, true
+	case string:
+		return redactCrashString(v), true
+	case nil, bool, float64:
+		return v, true
+	default:
+		return nil, false
+	}
+}
+
+func isSecretKey(key string) bool {
+	upper := strings.ToUpper(key)
+	return strings.Contains(upper, "TOKEN") ||
+		strings.Contains(upper, "PASSWORD") ||
+		strings.Contains(upper, "SECRET") ||
+		strings.Contains(upper, "KEY") ||
+		strings.Contains(upper, "AUTHORIZATION")
+}
+
+func redactCrashBytes(data []byte) []byte {
+	return []byte(redactCrashString(string(data)))
+}
+
+func redactCrashString(value string) string {
+	value = crashURLPattern.ReplaceAllStringFunc(value, redactCrashURL)
+	for _, pattern := range secretPatterns {
+		value = pattern.ReplaceAllString(value, "${1}[REDACTED]")
+	}
+	return value
+}
+
+func redactCrashURL(raw string) string {
+	candidate, suffix := splitURLSuffix(raw)
+	parsed, err := url.Parse(candidate)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return raw
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String() + suffix
+}
+
+func splitURLSuffix(raw string) (candidate, suffix string) {
+	candidate = raw
+	for candidate != "" && strings.ContainsRune(".,;:)]}", rune(candidate[len(candidate)-1])) {
+		suffix = candidate[len(candidate)-1:] + suffix
+		candidate = candidate[:len(candidate)-1]
+	}
+	return candidate, suffix
 }

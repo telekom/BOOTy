@@ -358,6 +358,7 @@ go run server/server.go \
 | `CRASH_ARTIFACTS_UPLOAD_URL` | — | Direct CAPRF proxy endpoint for crash archive uploads when no prepare endpoint is used |
 | `CRASH_ARTIFACTS_MAX_MB` | `256` | Maximum crash artifact payload size in MiB |
 | `CRASH_ARTIFACTS_UPLOAD_TIMEOUT_SEC` | `120` | Timeout for crash artifact prepare/upload requests |
+| `CRASH_ARTIFACTS_INCLUDE_MEMORY_DUMPS` | `false` | Include raw `vmcore` and systemd coredump files; disabled by default because these can contain process memory and secrets |
 | `SECUREBOOT_REENABLE` | `false` | Signal CAPRF to re-enable Secure Boot after provisioning |
 | `MOK_CERT_PATH` | — | *(Phase 2)* Path to DER-encoded MOK certificate for custom kernel signing |
 | `MOK_PASSWORD` | — | *(Phase 2)* One-time password for MokManager confirmation |
@@ -631,6 +632,9 @@ The collector searches for kernel crash and dump evidence in paths such as
 `/sys/fs/pstore`. The archive metadata reuses BOOTy's hardware inventory,
 firmware report, debug dump, and build information. Upload failures are
 best-effort and do not block provisioning.
+Text logs and JSON metadata are redacted before upload. Raw `vmcore` and
+systemd coredump files are skipped unless
+`CRASH_ARTIFACTS_INCLUDE_MEMORY_DUMPS=true` is set.
 
 CAPRF can either return presigned S3 upload instructions from
 `CRASH_ARTIFACTS_PREPARE_URL` or accept direct proxy uploads at

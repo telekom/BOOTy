@@ -1280,6 +1280,7 @@ func TestParseVarsCrashArtifactsConfig(t *testing.T) {
 		`CRASH_ARTIFACTS_UPLOAD_URL="https://caprf.example.com/crash/upload"`,
 		`CRASH_ARTIFACTS_MAX_MB="128"`,
 		`CRASH_ARTIFACTS_UPLOAD_TIMEOUT_SEC="180"`,
+		`CRASH_ARTIFACTS_INCLUDE_MEMORY_DUMPS="true"`,
 	}, "\n")
 	cfg, err := ParseVars(strings.NewReader(input))
 	if err != nil {
@@ -1299,6 +1300,9 @@ func TestParseVarsCrashArtifactsConfig(t *testing.T) {
 	}
 	if cfg.Provision.CrashArtifacts.UploadTimeoutSec != 180 {
 		t.Errorf("CrashArtifactsUploadTimeoutSec = %d, want 180", cfg.Provision.CrashArtifacts.UploadTimeoutSec)
+	}
+	if !cfg.Provision.CrashArtifacts.IncludeMemoryDumps {
+		t.Error("CrashArtifactsIncludeMemoryDumps should be true")
 	}
 }
 

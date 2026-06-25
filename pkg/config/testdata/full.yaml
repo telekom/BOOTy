@@ -323,6 +323,8 @@ provision:
     maxMB: 256
     # uploadTimeoutSec: upload timeout in seconds (default: 120)
     uploadTimeoutSec: 120
+    # includeMemoryDumps: include raw vmcore and systemd coredump files (default: false)
+    includeMemoryDumps: true
 
   inventory:
     enabled: false

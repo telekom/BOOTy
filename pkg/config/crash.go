@@ -23,4 +23,8 @@ type CrashArtifactsConfig struct {
 	// UploadTimeoutSec is the upload timeout in seconds.
 	// Default: 120
 	UploadTimeoutSec int `yaml:"uploadTimeoutSec" json:"uploadTimeoutSec"`
+
+	// IncludeMemoryDumps allows raw vmcore and systemd coredump uploads.
+	// Default: false
+	IncludeMemoryDumps bool `yaml:"includeMemoryDumps" json:"includeMemoryDumps"`
 }

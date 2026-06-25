@@ -38,8 +38,9 @@ func TestCrashArtifactsPreWipeUploadFromExistingRoot(t *testing.T) {
 				Device: loopDev,
 			},
 			CrashArtifacts: config.CrashArtifactsConfig{
-				Enabled:    true,
-				PrepareURL: server.URL + "/crash/prepare",
+				Enabled:            true,
+				PrepareURL:         server.URL + "/crash/prepare",
+				IncludeMemoryDumps: true,
 			},
 		},
 	}
@@ -157,9 +158,10 @@ func TestCrashArtifactsUploadFailureIsNonFatal(t *testing.T) {
 				Device: loopDev,
 			},
 			CrashArtifacts: config.CrashArtifactsConfig{
-				Enabled:          true,
-				PrepareURL:       server.URL + "/crash/prepare",
-				UploadTimeoutSec: 10,
+				Enabled:            true,
+				PrepareURL:         server.URL + "/crash/prepare",
+				UploadTimeoutSec:   10,
+				IncludeMemoryDumps: true,
 			},
 		},
 	}
