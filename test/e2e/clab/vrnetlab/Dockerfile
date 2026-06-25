@@ -51,7 +51,7 @@ RUN apt-get update && \
 FROM debian:bookworm-slim AS initramfs
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cpio busybox-static curl gnupg lsb-release ca-certificates \
-    e2fsprogs dosfstools gdisk parted lvm2 fdisk util-linux \
+    e2fsprogs dosfstools gdisk parted lvm2 fdisk util-linux mdadm \
     && rm -rf /var/lib/apt/lists/*
 
 # Install FRR for EVPN networking support inside the VM.
@@ -92,13 +92,13 @@ COPY --from=kernel /modules/ /initramfs/modules/
 
 # FRR daemons and dependencies for EVPN networking.
 # mgmtd is required in FRR 10.5+ for proper integrated config loading.
-# Also include disk provisioning tools (sgdisk, mkfs, parted, lvm).
+# Also include disk provisioning tools (mdadm, sgdisk, mkfs, parted, lvm).
 # Copy binaries and resolve all shared library dependencies.
 RUN mkdir -p /initramfs/lib64 /initramfs/lib/x86_64-linux-gnu && \
     for bin in /usr/lib/frr/mgmtd /usr/lib/frr/zebra /usr/lib/frr/bgpd /usr/lib/frr/bfdd /usr/bin/vtysh \
                /usr/sbin/sgdisk /usr/sbin/mkfs.ext4 /usr/sbin/mkfs.vfat /usr/sbin/parted \
                /usr/sbin/pvcreate /usr/sbin/vgcreate /usr/sbin/lvcreate \
-               /usr/sbin/wipefs /usr/sbin/sfdisk /usr/bin/lsblk /usr/sbin/blkid; do \
+               /usr/sbin/mdadm /usr/sbin/wipefs /usr/sbin/sfdisk /usr/bin/lsblk /usr/sbin/blkid; do \
         dest="/initramfs$(dirname $bin)"; \
         mkdir -p "$dest"; \
         cp "$bin" "/initramfs${bin}"; \
