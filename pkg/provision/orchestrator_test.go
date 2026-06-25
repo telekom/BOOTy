@@ -2339,6 +2339,23 @@ func TestTargetNetworkConfigBondAndVLANMapping(t *testing.T) {
 			wantErr: "bond network persistence requires static ip or vlan config",
 		},
 		{
+			name: "bond lacp alias persists canonical mode",
+			configure: func(cfg *config.MachineConfig) {
+				cfg.Network.Bond.Interfaces = "eth0,eth1"
+				cfg.Network.Bond.Mode = " LACP "
+				cfg.Network.Static.IP = "10.1.0.5/24"
+			},
+			assert: func(t *testing.T, got *networkpersist.NetworkConfig) {
+				t.Helper()
+				if len(got.Bonds) != 1 {
+					t.Fatalf("bonds = %#v, want one bond", got.Bonds)
+				}
+				if got.Bonds[0].Mode != "802.3ad" {
+					t.Fatalf("bond mode = %q, want 802.3ad", got.Bonds[0].Mode)
+				}
+			},
+		},
+		{
 			name: "bond with vlan drops unaddressed gateway",
 			configure: func(cfg *config.MachineConfig) {
 				cfg.Network.Bond.Interfaces = "eth0,eth1"

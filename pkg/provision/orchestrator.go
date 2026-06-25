@@ -414,10 +414,7 @@ func addPersistentBond(target *networkpersist.NetworkConfig, cfg *config.Machine
 	if len(members) == 0 {
 		return
 	}
-	mode := strings.TrimSpace(cfg.Network.Bond.Mode)
-	if mode == "" {
-		mode = "802.3ad"
-	}
+	mode := normalizePersistentBondMode(cfg.Network.Bond.Mode)
 	address := strings.TrimSpace(cfg.Network.Static.IP)
 	gateway := strings.TrimSpace(cfg.Network.Static.Gateway)
 	if address == "" {
@@ -430,6 +427,18 @@ func addPersistentBond(target *networkpersist.NetworkConfig, cfg *config.Machine
 		Address: address,
 		Gateway: gateway,
 	})
+}
+
+func normalizePersistentBondMode(mode string) string {
+	trimmed := strings.TrimSpace(mode)
+	switch strings.ToLower(trimmed) {
+	case "", "lacp", "802.3ad":
+		return "802.3ad"
+	case "balance-rr", "active-backup", "balance-xor":
+		return strings.ToLower(trimmed)
+	default:
+		return trimmed
+	}
 }
 
 func addPersistentInterface(target *networkpersist.NetworkConfig, cfg *config.MachineConfig) error {
