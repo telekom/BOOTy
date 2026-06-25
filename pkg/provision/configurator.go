@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -109,13 +110,25 @@ func (c *Configurator) SetHostname(cfg *config.MachineConfig) error {
 	return nil
 }
 
-// ConfigureKubelet writes kubelet drop-in configs for provider-id and node labels.
+// ConfigureKubelet writes kubeadm-compatible kubelet extra args.
 func (c *Configurator) ConfigureKubelet(cfg *config.MachineConfig) error {
-	confDir := filepath.Join(c.rootDir, "etc", "kubernetes", "kubelet.conf.d")
-	if err := os.MkdirAll(confDir, 0o755); err != nil {
-		return fmt.Errorf("creating kubelet conf dir: %w", err)
+	args := kubeletExtraArgs(cfg)
+	if len(args) == 0 {
+		return nil
 	}
 
+	path, err := c.kubeletEnvPath(cfg)
+	if err != nil {
+		return err
+	}
+	slog.Info("writing kubelet extra args", "path", path)
+	return updateKubeletExtraArgs(path, args)
+}
+
+func kubeletExtraArgs(cfg *config.MachineConfig) []string {
+	if cfg == nil {
+		return nil
+	}
 	var labels []string
 	if cfg.Provision.FailureDomain != "" {
 		labels = append(labels, "topology.kubernetes.io/zone="+cfg.Provision.FailureDomain)
@@ -124,35 +137,181 @@ func (c *Configurator) ConfigureKubelet(cfg *config.MachineConfig) error {
 		labels = append(labels, "topology.kubernetes.io/region="+cfg.Provision.Region)
 	}
 
-	if cfg.Provision.ProviderID != "" && len(labels) > 0 {
-		combined := []string{fmt.Sprintf("--provider-id=%s", cfg.Provision.ProviderID), fmt.Sprintf("--node-labels=%s", strings.Join(labels, ","))}
-		content := fmt.Sprintf("KUBELET_EXTRA_ARGS=%q\n", strings.Join(combined, " "))
-		path := filepath.Join(confDir, "10-caprf-kubelet-extra-args.conf")
-		slog.Info("writing combined kubelet extra args", "path", path)
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-			return fmt.Errorf("writing combined kubelet conf: %w", err)
-		}
-		return nil
-	}
-
+	var args []string
 	if cfg.Provision.ProviderID != "" {
-		content := fmt.Sprintf("KUBELET_EXTRA_ARGS=\"--provider-id=%s\"\n", cfg.Provision.ProviderID)
-		path := filepath.Join(confDir, "10-caprf-provider-id.conf")
-		slog.Info("writing kubelet provider-id config", "path", path)
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-			return fmt.Errorf("writing provider-id conf: %w", err)
+		args = append(args, "--provider-id="+cfg.Provision.ProviderID)
+	}
+	if len(labels) > 0 {
+		args = append(args, "--node-labels="+strings.Join(labels, ","))
+	}
+	return args
+}
+
+func (c *Configurator) kubeletEnvPath(cfg *config.MachineConfig) (string, error) {
+	debPath := filepath.Join(c.rootDir, "etc", "default", "kubelet")
+	rpmPath := filepath.Join(c.rootDir, "etc", "sysconfig", "kubelet")
+	for _, path := range []string{debPath, rpmPath} {
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path, nil
 		}
 	}
 
-	if len(labels) > 0 {
-		content := fmt.Sprintf("KUBELET_EXTRA_ARGS=\"--node-labels=%s\"\n", strings.Join(labels, ","))
-		path := filepath.Join(confDir, "20-caprf-node-labels.conf")
-		slog.Info("writing kubelet node labels config", "path", path)
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-			return fmt.Errorf("writing node-labels conf: %w", err)
+	family := targetKubeletFamily(c.rootDir, cfg)
+	switch family {
+	case "debian":
+		return debPath, nil
+	case "rpm":
+		return rpmPath, nil
+	case "flatcar":
+		return "", fmt.Errorf("configuring kubelet extra args is unsupported for flatcar targets")
+	default:
+		return "", fmt.Errorf("configuring kubelet extra args requires /etc/default/kubelet, /etc/sysconfig/kubelet, or supported /etc/os-release")
+	}
+}
+
+func targetKubeletFamily(rootDir string, cfg *config.MachineConfig) string {
+	if cfg != nil {
+		switch strings.ToLower(strings.TrimSpace(cfg.OSFamily)) {
+		case "ubuntu":
+			return "debian"
+		case "rhel":
+			return "rpm"
+		case "flatcar":
+			return "flatcar"
 		}
+	}
+	return kubeletFamilyFromOSRelease(filepath.Join(rootDir, "etc", "os-release"))
+}
+
+func kubeletFamilyFromOSRelease(path string) string {
+	data, err := os.ReadFile(path) //nolint:gosec // target root metadata
+	if err != nil {
+		return ""
+	}
+	fields := parseOSReleaseFields(string(data))
+	for _, value := range append([]string{fields["ID"]}, strings.Fields(fields["ID_LIKE"])...) {
+		switch strings.ToLower(value) {
+		case "ubuntu", "debian":
+			return "debian"
+		case "rhel", "fedora", "centos", "rocky", "almalinux", "sles", "suse", "opensuse":
+			return "rpm"
+		case "flatcar":
+			return "flatcar"
+		}
+	}
+	return ""
+}
+
+func parseOSReleaseFields(content string) map[string]string {
+	fields := make(map[string]string)
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if unquoted, err := strconv.Unquote(value); err == nil {
+			value = unquoted
+		}
+		fields[key] = value
+	}
+	return fields
+}
+
+func updateKubeletExtraArgs(path string, managed []string) error {
+	content, err := os.ReadFile(path) //nolint:gosec // target root config
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("reading kubelet env file: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("creating kubelet env dir: %w", err)
+	}
+
+	lines := splitConfigLines(string(content))
+	replaced := false
+	for i, line := range lines {
+		if !isKubeletExtraArgsLine(line) {
+			continue
+		}
+		lines[i] = formatKubeletExtraArgs(mergeKubeletArgs(line, managed))
+		replaced = true
+	}
+	if !replaced {
+		lines = append(lines, formatKubeletExtraArgs(managed))
+	}
+
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		return fmt.Errorf("writing kubelet env file: %w", err)
 	}
 	return nil
+}
+
+func splitConfigLines(content string) []string {
+	content = strings.TrimRight(content, "\n")
+	if content == "" {
+		return nil
+	}
+	return strings.Split(content, "\n")
+}
+
+func isKubeletExtraArgsLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasPrefix(trimmed, "KUBELET_EXTRA_ARGS=")
+}
+
+func mergeKubeletArgs(line string, managed []string) []string {
+	_, value, _ := strings.Cut(line, "=")
+	value = strings.TrimSpace(value)
+	if unquoted, err := strconv.Unquote(value); err == nil {
+		value = unquoted
+	} else {
+		value = strings.Trim(value, `"'`)
+	}
+
+	var merged []string
+	for _, arg := range strings.Fields(value) {
+		kept := keepExistingKubeletArg(arg)
+		if kept != "" {
+			merged = append(merged, kept)
+		}
+	}
+	return append(merged, managed...)
+}
+
+func keepExistingKubeletArg(arg string) string {
+	switch {
+	case strings.HasPrefix(arg, "--provider-id="):
+		return ""
+	case strings.HasPrefix(arg, "--node-labels="):
+		return keepExistingNodeLabels(arg)
+	default:
+		return arg
+	}
+}
+
+func keepExistingNodeLabels(arg string) string {
+	value := strings.TrimPrefix(arg, "--node-labels=")
+	var labels []string
+	for _, label := range strings.Split(value, ",") {
+		if label == "" || strings.HasPrefix(label, "topology.kubernetes.io/zone=") ||
+			strings.HasPrefix(label, "topology.kubernetes.io/region=") {
+			continue
+		}
+		labels = append(labels, label)
+	}
+	if len(labels) == 0 {
+		return ""
+	}
+	return "--node-labels=" + strings.Join(labels, ",")
+}
+
+func formatKubeletExtraArgs(args []string) string {
+	return "KUBELET_EXTRA_ARGS=" + strconv.Quote(strings.Join(args, " "))
 }
 
 // ConfigureGRUB writes GRUB kernel parameters and runs update-grub via chroot.

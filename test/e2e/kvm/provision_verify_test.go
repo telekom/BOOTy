@@ -136,17 +136,15 @@ func TestProvisionVerifyKubeletConfig(t *testing.T) {
 	rootMount, cleanup := mountQcow2(t, targetDisk)
 	defer cleanup()
 
-	providerCfg := readProvisionedFile(t, rootMount, "etc/kubernetes/kubelet.conf.d/10-caprf-provider-id.conf")
-	if !strings.Contains(providerCfg, "redfish://10.0.0.1/Systems/1") {
-		t.Errorf("kubelet provider-id config missing expected value:\n%s", providerCfg)
+	kubeletCfg := readProvisionedFile(t, rootMount, "etc/default/kubelet")
+	if !strings.Contains(kubeletCfg, "redfish://10.0.0.1/Systems/1") {
+		t.Errorf("kubelet provider-id config missing expected value:\n%s", kubeletCfg)
 	}
-
-	labelsCfg := readProvisionedFile(t, rootMount, "etc/kubernetes/kubelet.conf.d/20-caprf-node-labels.conf")
-	if !strings.Contains(labelsCfg, "topology.kubernetes.io/zone=az-1") {
-		t.Errorf("kubelet labels config missing zone:\n%s", labelsCfg)
+	if !strings.Contains(kubeletCfg, "topology.kubernetes.io/zone=az-1") {
+		t.Errorf("kubelet labels config missing zone:\n%s", kubeletCfg)
 	}
-	if !strings.Contains(labelsCfg, "topology.kubernetes.io/region=eu-central") {
-		t.Errorf("kubelet labels config missing region:\n%s", labelsCfg)
+	if !strings.Contains(kubeletCfg, "topology.kubernetes.io/region=eu-central") {
+		t.Errorf("kubelet labels config missing region:\n%s", kubeletCfg)
 	}
 }
 

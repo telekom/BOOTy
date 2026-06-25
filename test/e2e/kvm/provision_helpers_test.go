@@ -95,7 +95,7 @@ func createTestDiskImage(t *testing.T, sizeMB int) string {
 
 	// Create minimal filesystem structure expected by provisioning.
 	for _, d := range []string{
-		"etc", "etc/default/grub.d", "etc/kubernetes/kubelet.conf.d",
+		"etc", "etc/default", "etc/default/grub.d",
 		"boot", "var", "tmp", "bin", "usr/bin",
 	} {
 		if err := os.MkdirAll(filepath.Join(mountDir, d), 0o755); err != nil {
@@ -104,6 +104,7 @@ func createTestDiskImage(t *testing.T, sizeMB int) string {
 	}
 	// Write pre-provision hostname so we can verify it's overwritten.
 	writeFile(t, filepath.Join(mountDir, "etc", "hostname"), "pre-provision\n")
+	writeFile(t, filepath.Join(mountDir, "etc", "os-release"), "ID=ubuntu\nID_LIKE=debian\n")
 
 	// Unmount and detach before compressing.
 	run(t, "unmount root", "umount", mountDir)
