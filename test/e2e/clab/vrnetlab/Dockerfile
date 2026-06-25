@@ -55,8 +55,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install FRR for EVPN networking support inside the VM.
-RUN curl -s https://deb.frrouting.org/frr/keys.gpg \
-      | tee /usr/share/keyrings/frrouting.gpg > /dev/null && \
+RUN curl --fail --location --show-error --silent \
+      https://deb.frrouting.org/frr/keys.gpg \
+      -o /tmp/frrouting.downloaded.gpg && \
+    printf '%s\n' \
+      3D9968AC9AE7BE1169288DDB1FD5839895F57FDA \
+      4A56C7738BB3F81595A805D2A832769908F13ED1 \
+      A90FC36D9429409798E9C2D874DEED43AB194DBF \
+      BBC9ACA9D13025A2C186FF7F741E92A1F6E3975B \
+      > /tmp/frrouting.expected-fingerprints && \
+    export GNUPGHOME="$(mktemp -d)" && \
+    chmod 700 "$GNUPGHOME" && \
+    gpg --batch --import /tmp/frrouting.downloaded.gpg && \
+    gpg --batch --export $(cat /tmp/frrouting.expected-fingerprints) \
+      > /usr/share/keyrings/frrouting.gpg && \
+    gpg --show-keys --with-colons /usr/share/keyrings/frrouting.gpg \
+      | awk -F: '$1 == "pub" { primary=1; next } $1 == "sub" { primary=0 } $1 == "fpr" && primary { print $10; primary=0 }' \
+      | sort -u > /tmp/frrouting.fingerprints && \
+    sort -u /tmp/frrouting.expected-fingerprints -o /tmp/frrouting.expected-fingerprints && \
+    diff -u /tmp/frrouting.expected-fingerprints /tmp/frrouting.fingerprints && \
+    rm -rf "$GNUPGHOME" /tmp/frrouting.downloaded.gpg \
+      /tmp/frrouting.expected-fingerprints /tmp/frrouting.fingerprints && \
     echo "deb [signed-by=/usr/share/keyrings/frrouting.gpg] https://deb.frrouting.org/frr $(lsb_release -s -c) frr-stable" \
       > /etc/apt/sources.list.d/frr.list && \
     apt-get update && apt-get install -y --no-install-recommends frr && \
