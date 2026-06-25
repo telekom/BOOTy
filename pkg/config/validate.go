@@ -114,10 +114,14 @@ func (c *Config) validatePersistence() []string {
 	staticIface := strings.TrimSpace(c.Network.Static.Iface)
 	bondInterfaces := strings.TrimSpace(c.Network.Bond.Interfaces)
 	vlanConfig := strings.TrimSpace(c.Network.VLAN.Config)
+	osFamily := strings.ToLower(strings.TrimSpace(c.OSFamily))
 
 	var errs []string
-	if strings.TrimSpace(c.OSFamily) == "" {
+	if osFamily == "" {
 		errs = append(errs, "osFamily required when persistNetwork is true")
+	}
+	if persistentNetworkLayoutUnsupported(osFamily, bondInterfaces, vlanConfig) {
+		errs = append(errs, fmt.Sprintf("osFamily %s target network persistence does not yet support network.bond.interfaces or network.vlan.config", osFamily))
 	}
 	if staticIP != "" && bondInterfaces == "" && staticIface == "" {
 		errs = append(errs, "network.static.iface required when persistNetwork is true with network.static.ip and no network.bond.interfaces")
@@ -130,6 +134,15 @@ func (c *Config) validatePersistence() []string {
 	}
 	errs = append(errs, validatePersistenceVLANConfig(vlanConfig)...)
 	return errs
+}
+
+func persistentNetworkLayoutUnsupported(osFamily, bondInterfaces, vlanConfig string) bool {
+	switch osFamily {
+	case "rhel", "flatcar":
+		return bondInterfaces != "" || vlanConfig != ""
+	default:
+		return false
+	}
 }
 
 func validatePersistenceVLANConfig(vlanConfig string) []string {
