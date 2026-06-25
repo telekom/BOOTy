@@ -486,12 +486,45 @@ func TestMountRootSkipsAlreadyMountedNewroot(t *testing.T) {
 	oldMountPoint := isMountPoint
 	isMountPoint = func(path string) bool { return path == newroot }
 	t.Cleanup(func() { isMountPoint = oldMountPoint })
+	oldMountedSource := mountedSource
+	mountedSource = func(path string) (string, bool) {
+		if path == newroot {
+			return "/dev/sda2", true
+		}
+		return "", false
+	}
+	t.Cleanup(func() { mountedSource = oldMountedSource })
 
 	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
 	o.rootPartition = "/dev/sda2"
 
 	if err := o.mountRoot(context.Background()); err != nil {
 		t.Fatalf("mountRoot with mounted newroot: %v", err)
+	}
+}
+
+func TestMountRootFailsWhenNewrootMountedFromUnexpectedPartition(t *testing.T) {
+	oldMountPoint := isMountPoint
+	isMountPoint = func(path string) bool { return path == newroot }
+	t.Cleanup(func() { isMountPoint = oldMountPoint })
+	oldMountedSource := mountedSource
+	mountedSource = func(path string) (string, bool) {
+		if path == newroot {
+			return "/dev/sdb2", true
+		}
+		return "", false
+	}
+	t.Cleanup(func() { mountedSource = oldMountedSource })
+
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	o.rootPartition = "/dev/sda2"
+
+	err := o.mountRoot(context.Background())
+	if err == nil {
+		t.Fatal("expected mounted root partition mismatch error")
+	}
+	if !strings.Contains(err.Error(), "expected root partition /dev/sda2") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

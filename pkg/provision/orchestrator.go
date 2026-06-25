@@ -1219,10 +1219,31 @@ func (o *Orchestrator) enableLVM(ctx context.Context) error {
 
 func (o *Orchestrator) mountRoot(ctx context.Context) error {
 	if isMountPoint(newroot) {
-		o.log.Info("root partition already mounted", "mountpoint", newroot)
+		source, ok := mountedSource(newroot)
+		if !ok {
+			return fmt.Errorf("%s is already mounted but mount source could not be resolved", newroot)
+		}
+		if !sameMountSource(source, o.rootPartition) {
+			return fmt.Errorf("%s is already mounted from %s, expected root partition %s", newroot, source, o.rootPartition)
+		}
+		o.log.Info("root partition already mounted", "mountpoint", newroot, "source", source)
 		return nil
 	}
 	return o.disk.MountPartition(ctx, o.rootPartition, newroot)
+}
+
+func sameMountSource(actual, expected string) bool {
+	actual = strings.TrimSpace(actual)
+	expected = strings.TrimSpace(expected)
+	if actual == "" || expected == "" {
+		return false
+	}
+	if actual == expected {
+		return true
+	}
+	actualResolved, actualErr := evalRootSymlinks(actual)
+	expectedResolved, expectedErr := evalRootSymlinks(expected)
+	return actualErr == nil && expectedErr == nil && actualResolved == expectedResolved
 }
 
 func bootEFIMountPoint() string {
