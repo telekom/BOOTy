@@ -444,6 +444,34 @@ func TestRenderNetplan_DNSAndRoutes(t *testing.T) {
 	}
 }
 
+func TestRenderNetplan_GatewayAndRoutesShareRoutesBlock(t *testing.T) {
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{
+			{Name: "eth0", Address: "10.0.0.5/24", Gateway: "10.0.0.1"},
+		},
+		Routes: []RouteConfig{
+			{Destination: "172.16.0.0/12", Gateway: "10.0.0.1", Metric: 50},
+		},
+	}
+	result := RenderNetplan(cfg)
+	ethIdx := strings.Index(result, "    eth0:")
+	if ethIdx < 0 {
+		t.Fatal("missing eth0 stanza")
+	}
+	ifaceSection := result[ethIdx:]
+	if got := strings.Count(ifaceSection, "routes:"); got != 1 {
+		t.Fatalf("routes blocks = %d, want 1:\n%s", got, ifaceSection)
+	}
+	for _, want := range []string{
+		"- to: default\n          via: 10.0.0.1",
+		"- to: 172.16.0.0/12\n          via: 10.0.0.1\n          metric: 50",
+	} {
+		if !strings.Contains(ifaceSection, want) {
+			t.Errorf("missing %q in netplan route output", want)
+		}
+	}
+}
+
 func TestRenderNetplan_BondAllFields(t *testing.T) {
 	cfg := &NetworkConfig{
 		Bonds: []BondConfig{
@@ -468,6 +496,40 @@ func TestRenderNetplan_BondAllFields(t *testing.T) {
 	} {
 		if !strings.Contains(result, want) {
 			t.Errorf("missing %q in netplan bond output", want)
+		}
+	}
+}
+
+func TestRenderNetplan_BondGatewayAndRoutesShareRoutesBlock(t *testing.T) {
+	cfg := &NetworkConfig{
+		Bonds: []BondConfig{
+			{
+				Name:    "bond0",
+				Members: []string{"eth0", "eth1"},
+				Mode:    "802.3ad",
+				Address: "10.0.0.5/24",
+				Gateway: "10.0.0.1",
+			},
+		},
+		Routes: []RouteConfig{
+			{Destination: "172.16.0.0/12", Gateway: "10.0.0.1"},
+		},
+	}
+	result := RenderNetplan(cfg)
+	bondIdx := strings.Index(result, "    bond0:")
+	if bondIdx < 0 {
+		t.Fatal("missing bond0 stanza")
+	}
+	bondSection := result[bondIdx:]
+	if got := strings.Count(bondSection, "routes:"); got != 1 {
+		t.Fatalf("routes blocks = %d, want 1:\n%s", got, bondSection)
+	}
+	for _, want := range []string{
+		"- to: default\n          via: 10.0.0.1",
+		"- to: 172.16.0.0/12\n          via: 10.0.0.1",
+	} {
+		if !strings.Contains(bondSection, want) {
+			t.Errorf("missing %q in netplan bond route output", want)
 		}
 	}
 }
