@@ -174,7 +174,13 @@ func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineCon
 		return err
 	}
 
-	grubLine := fmt.Sprintf("GRUB_CMDLINE_LINUX=\"%s console=%s", cloudInitDatasourceParam, console)
+	kernelParams := make([]string, 0, 2)
+	if cloudInitDatasourceParam != "" {
+		kernelParams = append(kernelParams, cloudInitDatasourceParam)
+	}
+	kernelParams = append(kernelParams, "console="+console)
+
+	grubLine := fmt.Sprintf("GRUB_CMDLINE_LINUX=\"%s", strings.Join(kernelParams, " "))
 	if cfg.Provision.ExtraKernelParams != "" {
 		if !safeKernelParams.MatchString(cfg.Provision.ExtraKernelParams) {
 			return fmt.Errorf("unsafe characters in ExtraKernelParams: %q", cfg.Provision.ExtraKernelParams)
@@ -209,6 +215,9 @@ func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineCon
 }
 
 func cloudInitKernelDatasourceParam(cfg *config.MachineConfig) (string, error) {
+	if cfg == nil || !cfg.Provision.CloudInit.Enabled {
+		return "", nil
+	}
 	datasource := strings.ToLower(strings.TrimSpace(cfg.Provision.CloudInit.Datasource))
 	switch datasource {
 	case "", "nocloud":

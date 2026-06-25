@@ -188,13 +188,14 @@ func TestProvisionVerifyAndBoot(t *testing.T) {
 	}
 
 	// GRUB kernel params check.
-	grubCfg := filepath.Join(rootMount, "etc/default/grub.d/10-caprf-kernel-params.cfg")
-	if data, err := os.ReadFile(grubCfg); err == nil {
-		for _, param := range []string{"quiet", "audit=0", "ds=nocloud"} {
-			if !strings.Contains(string(data), param) {
-				t.Errorf("GRUB config missing %q", param)
-			}
+	grubCfg := readProvisionedFile(t, rootMount, "etc/default/grub.d/10-caprf-kernel-params.cfg")
+	for _, param := range []string{"quiet", "audit=0"} {
+		if !strings.Contains(grubCfg, param) {
+			t.Errorf("GRUB config missing %q", param)
 		}
+	}
+	if strings.Contains(grubCfg, "ds=nocloud") {
+		t.Error("GRUB config should not force NoCloud when cloud-init is disabled")
 	}
 
 	// Look for kernel in provisioned disk.

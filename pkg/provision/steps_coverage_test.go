@@ -141,13 +141,34 @@ func TestOrchestratorConfigureGRUB_WritesConfig(t *testing.T) {
 	if !strings.Contains(content, "GRUB_CMDLINE_LINUX=") {
 		t.Errorf("expected GRUB_CMDLINE_LINUX in grub config: %s", content)
 	}
-	if !strings.Contains(content, "ds=nocloud") {
-		t.Errorf("expected ds=nocloud in grub config: %s", content)
+	if strings.Contains(content, "ds=nocloud") {
+		t.Errorf("default-disabled cloud-init must not force NoCloud in grub config: %s", content)
+	}
+}
+
+func TestOrchestratorConfigureGRUB_NoCloudDatasourceEnabled(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.CloudInit.Enabled = true
+	provider := &mockProvider{}
+	o, _ := newTestOrchestratorWithCommander(t, cfg, provider)
+
+	if err := o.configureGRUB(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	grubPath := filepath.Join(o.config.rootDir, "etc", "default", "grub.d", "10-caprf-kernel-params.cfg")
+	data, err := os.ReadFile(grubPath)
+	if err != nil {
+		t.Fatalf("expected grub config to exist: %v", err)
+	}
+	if !strings.Contains(string(data), "ds=nocloud") {
+		t.Errorf("expected enabled NoCloud datasource in grub config: %s", data)
 	}
 }
 
 func TestOrchestratorConfigureGRUB_ConfigDriveDatasource(t *testing.T) {
 	cfg := &config.MachineConfig{}
+	cfg.Provision.CloudInit.Enabled = true
 	cfg.Provision.CloudInit.Datasource = "configdrive"
 	provider := &mockProvider{}
 	o, _ := newTestOrchestratorWithCommander(t, cfg, provider)

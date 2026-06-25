@@ -81,6 +81,7 @@ func TestProvisionVerifyGRUBKernelParams(t *testing.T) {
 		"MODE":                        "provision",
 		"DISK_DEVICE":                 "/dev/vda",
 		"MACHINE_EXTRA_KERNEL_PARAMS": extraParams,
+		"CLOUDINIT_ENABLED":           "true",
 	})
 
 	kernel := findKernel(t)
