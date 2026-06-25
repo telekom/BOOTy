@@ -34,6 +34,7 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 		steps = append(steps, Step{"soft-deprovision", o.softDeprovision})
 	} else {
 		steps = append(steps,
+			Step{"select-deprovision-disk", o.selectDeprovisionDisk},
 			Step{"stop-raid", o.stopRAID},
 			Step{"disable-lvm", o.disableLVM},
 			Step{"wipe-disks", o.wipeOrSecureEraseDisks},
@@ -58,15 +59,61 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 	return nil
 }
 
+func (o *Orchestrator) selectDeprovisionDisk(_ context.Context) error {
+	device, err := o.configuredDeprovisionDisk()
+	if err != nil {
+		return err
+	}
+	if device == "" {
+		o.log.Info("no deprovision disk override configured; hard deprovision will wipe all disks")
+		return nil
+	}
+	o.targetDisk = device
+	o.log.Info("using configured deprovision disk", "device", device)
+	return nil
+}
+
+func (o *Orchestrator) configuredDeprovisionDisk() (string, error) {
+	for _, candidate := range []struct {
+		name   string
+		device string
+	}{
+		{name: "deprovision.device", device: o.cfg.Deprovision.Device},
+		{name: "provision.disk.device/DISK_DEVICE", device: o.cfg.Provision.Disk.Device},
+	} {
+		device := strings.TrimSpace(candidate.device)
+		if device == "" {
+			continue
+		}
+		if err := validateConfiguredBlockDevice(candidate.name, device); err != nil {
+			return "", err
+		}
+		return device, nil
+	}
+	return "", nil
+}
+
+func validateConfiguredBlockDevice(name, device string) error {
+	if !strings.HasPrefix(device, "/dev/") {
+		return fmt.Errorf("%s %q must be an absolute /dev/ path", name, device)
+	}
+	info, err := statPath(device)
+	if err != nil {
+		return fmt.Errorf("%s %q: %w", name, device, err)
+	}
+	if info.Mode()&os.ModeDevice == 0 || info.Mode()&os.ModeCharDevice != 0 {
+		return fmt.Errorf("%s %q is not a block device", name, device)
+	}
+	return nil
+}
+
 // softDeprovision renames grub.cfg so the system won't boot.
 func (o *Orchestrator) softDeprovision(ctx context.Context) error {
-	// Prefer deprovision-specific device if set; otherwise auto-detect.
 	var d string
 	var err error
-	if dev := strings.TrimSpace(o.cfg.Deprovision.Device); dev != "" {
-		if !strings.HasPrefix(dev, "/dev/") {
-			return fmt.Errorf("deprovision.device %q must be an absolute /dev/ path", dev)
-		}
+	if dev, devErr := o.configuredDeprovisionDisk(); devErr != nil {
+		return devErr
+	} else if dev != "" {
 		d = dev
 	} else {
 		d, err = o.disk.DetectDisk(ctx, o.cfg.Provision.Disk.MinSizeGB)

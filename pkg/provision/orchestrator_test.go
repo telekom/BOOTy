@@ -107,6 +107,16 @@ func hasCommandCall(calls []mockCall, name string, args ...string) bool {
 	return false
 }
 
+func wipeCommandCalls(calls []mockCall) []mockCall {
+	var out []mockCall
+	for _, call := range calls {
+		if call.name == "sgdisk" || call.name == "wipefs" {
+			out = append(out, call)
+		}
+	}
+	return out
+}
+
 func TestClassifyImageStreamErrorChecksumMismatchIsPermanent(t *testing.T) {
 	err := classifyImageStreamError("http://images.local/node.raw", errors.New("checksum mismatch: computed=bad want=good"))
 	if err == nil {
@@ -822,6 +832,143 @@ func TestWipeOrSecureEraseDisks(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDeprovisionHardScopesWipeToProvisionDiskDevice(t *testing.T) {
+	cfg := &config.MachineConfig{Mode: "deprovision"}
+	cfg.Provision.Disk.Device = "/dev/sda"
+	provider := &mockProvider{}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, provider)
+	withMockBlockDevices(t, "/dev/sda")
+
+	if err := o.selectDeprovisionDisk(context.Background()); err != nil {
+		t.Fatalf("selectDeprovisionDisk: %v", err)
+	}
+	if err := o.wipeOrSecureEraseDisks(context.Background()); err != nil {
+		t.Fatalf("wipeOrSecureEraseDisks: %v", err)
+	}
+
+	wipes := wipeCommandCalls(cmd.calls)
+	if len(wipes) != 2 {
+		t.Fatalf("expected exactly 2 target wipe calls, got %#v", wipes)
+	}
+	if !hasCommandCall(wipes, "sgdisk", "--zap-all", "/dev/sda") {
+		t.Fatalf("expected sgdisk to target /dev/sda, got %#v", wipes)
+	}
+	if !hasCommandCall(wipes, "wipefs", "-af", "/dev/sda") {
+		t.Fatalf("expected wipefs to target /dev/sda, got %#v", wipes)
+	}
+	if o.targetDisk != "/dev/sda" {
+		t.Fatalf("targetDisk = %q, want /dev/sda", o.targetDisk)
+	}
+}
+
+func TestDeprovisionHardPrefersDeprovisionDevice(t *testing.T) {
+	cfg := &config.MachineConfig{Mode: "deprovision"}
+	cfg.Provision.Disk.Device = "/dev/sda"
+	cfg.Deprovision.Device = "/dev/sdb"
+	provider := &mockProvider{}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, provider)
+	withMockBlockDevices(t, "/dev/sda", "/dev/sdb")
+
+	if err := o.selectDeprovisionDisk(context.Background()); err != nil {
+		t.Fatalf("selectDeprovisionDisk: %v", err)
+	}
+	if err := o.wipeOrSecureEraseDisks(context.Background()); err != nil {
+		t.Fatalf("wipeOrSecureEraseDisks: %v", err)
+	}
+
+	wipes := wipeCommandCalls(cmd.calls)
+	if !hasCommandCall(wipes, "sgdisk", "--zap-all", "/dev/sdb") {
+		t.Fatalf("expected sgdisk to target /dev/sdb, got %#v", wipes)
+	}
+	if !hasCommandCall(wipes, "wipefs", "-af", "/dev/sdb") {
+		t.Fatalf("expected wipefs to target /dev/sdb, got %#v", wipes)
+	}
+	if hasCommandCall(wipes, "sgdisk", "--zap-all", "/dev/sda") ||
+		hasCommandCall(wipes, "wipefs", "-af", "/dev/sda") {
+		t.Fatalf("deprovision.device should override provision disk, got %#v", wipes)
+	}
+}
+
+func TestDeprovisionHardScopesSecureEraseToConfiguredDevice(t *testing.T) {
+	cfg := &config.MachineConfig{Mode: "deprovision"}
+	cfg.Deprovision.Device = "/dev/sdb"
+	cfg.Deprovision.SecureErase = true
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	withMockBlockDevices(t, "/dev/sdb")
+
+	if err := o.selectDeprovisionDisk(context.Background()); err != nil {
+		t.Fatalf("selectDeprovisionDisk: %v", err)
+	}
+	if err := o.wipeOrSecureEraseDisks(context.Background()); err != nil {
+		t.Fatalf("wipeOrSecureEraseDisks: %v", err)
+	}
+
+	if !hasCommandCall(cmd.calls, "hdparm", "-I", "/dev/sdb") {
+		t.Fatalf("expected secure erase probe to target /dev/sdb, got %#v", cmd.calls)
+	}
+	if !hasCommandCall(cmd.calls, "wipefs", "-af", "/dev/sdb") {
+		t.Fatalf("expected secure erase fallback to target /dev/sdb, got %#v", cmd.calls)
+	}
+	if hasCommandCall(cmd.calls, "hdparm", "-I", "/dev/sda") ||
+		hasCommandCall(cmd.calls, "wipefs", "-af", "/dev/sda") {
+		t.Fatalf("secure erase should not target provision disk, got %#v", cmd.calls)
+	}
+}
+
+func TestDeprovisionHardRejectsInvalidConfiguredDevice(t *testing.T) {
+	cfg := &config.MachineConfig{Mode: "deprovision"}
+	cfg.Provision.Disk.Device = "sda"
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	err := o.selectDeprovisionDisk(context.Background())
+	if err == nil {
+		t.Fatal("expected invalid device error")
+	}
+	if !strings.Contains(err.Error(), "must be an absolute /dev/ path") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(wipeCommandCalls(cmd.calls)) != 0 {
+		t.Fatalf("expected no wipe commands for invalid device, got %#v", cmd.calls)
+	}
+}
+
+func TestDeprovisionHardRejectsCharacterConfiguredDevice(t *testing.T) {
+	cfg := &config.MachineConfig{Mode: "deprovision"}
+	cfg.Provision.Disk.Device = "/dev/null"
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	withMockStat(t, func(path string) (os.FileInfo, error) {
+		if path == "/dev/null" {
+			return fakeFileInfo{name: "null", mode: os.ModeDevice | os.ModeCharDevice}, nil
+		}
+		return nil, os.ErrNotExist
+	})
+
+	err := o.selectDeprovisionDisk(context.Background())
+	if err == nil {
+		t.Fatal("expected character device error")
+	}
+	if !strings.Contains(err.Error(), "not a block device") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(wipeCommandCalls(cmd.calls)) != 0 {
+		t.Fatalf("expected no wipe commands for character device, got %#v", cmd.calls)
+	}
+}
+
+func withMockBlockDevices(t *testing.T, devices ...string) {
+	t.Helper()
+	blocks := make(map[string]struct{}, len(devices))
+	for _, device := range devices {
+		blocks[device] = struct{}{}
+	}
+	withMockStat(t, func(path string) (os.FileInfo, error) {
+		if _, ok := blocks[path]; ok {
+			return fakeFileInfo{name: filepath.Base(path), mode: os.ModeDevice}, nil
+		}
+		return nil, os.ErrNotExist
+	})
 }
 
 func TestWipeOrSecureEraseDisksRequiresTargetDiskInProvisionMode(t *testing.T) {
