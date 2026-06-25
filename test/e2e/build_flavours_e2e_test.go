@@ -571,6 +571,9 @@ func TestDefaultContainsLVME2E(t *testing.T) {
 	files := listCPIOContents(t, cpioGz)
 
 	assertContains(t, files, "sbin/lvm", "LVM tooling")
+	for _, cmd := range []string{"pvcreate", "vgs", "vgcreate", "lvcreate"} {
+		assertContains(t, files, "sbin/"+cmd, "LVM "+cmd)
+	}
 	assertContains(t, files, "bin/sfdisk", "sfdisk partitioner")
 }
 
@@ -709,6 +712,9 @@ func TestGoBGPContainsLVME2E(t *testing.T) {
 	files := listCPIOContents(t, cpioGz)
 
 	assertContains(t, files, "sbin/lvm", "LVM tooling")
+	for _, cmd := range []string{"pvcreate", "vgs", "vgcreate", "lvcreate"} {
+		assertContains(t, files, "sbin/"+cmd, "LVM "+cmd)
+	}
 	assertContains(t, files, "bin/sfdisk", "sfdisk partitioner")
 }
 

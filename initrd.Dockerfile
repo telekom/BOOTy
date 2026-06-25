@@ -223,6 +223,7 @@ RUN cp /usr/bin/growpart bin/growpart
 
 # Copy build contents from previous builds
 COPY --from=lvm /LVM2.2.03.27/tools/lvm sbin/
+RUN for cmd in pvcreate vgs vgcreate lvcreate; do ln -sf lvm "sbin/${cmd}"; done
 COPY --from=sfdisk /util-linux/sfdisk.static bin/sfdisk
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
 COPY --from=efi-fallback /out/ usr/lib/booty/efi/
@@ -421,6 +422,7 @@ COPY --from=efi-fallback /out/ usr/lib/booty/efi/
 # LVM + sfdisk for disk management
 RUN mkdir -p sbin
 COPY --from=lvm /LVM2.2.03.27/tools/lvm sbin/lvm
+RUN for cmd in pvcreate vgs vgcreate lvcreate; do ln -sf lvm "sbin/${cmd}"; done
 COPY --from=sfdisk /util-linux/sfdisk.static bin/sfdisk
 
 # Disk and system tools (same as default)

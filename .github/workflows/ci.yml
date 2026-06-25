@@ -249,6 +249,10 @@ jobs:
           grep -q "bin/busybox" gobgp-files.txt || (echo "FAIL: busybox missing"; exit 1)
           grep -q "bin/ip" gobgp-files.txt || (echo "FAIL: ip missing"; exit 1)
           grep -q "sbin/lvm" gobgp-files.txt || (echo "FAIL: lvm missing"; exit 1)
+          grep -q "sbin/pvcreate" gobgp-files.txt || (echo "FAIL: pvcreate missing"; exit 1)
+          grep -q "sbin/vgs" gobgp-files.txt || (echo "FAIL: vgs missing"; exit 1)
+          grep -q "sbin/vgcreate" gobgp-files.txt || (echo "FAIL: vgcreate missing"; exit 1)
+          grep -q "sbin/lvcreate" gobgp-files.txt || (echo "FAIL: lvcreate missing"; exit 1)
 
           # Must NOT contain FRR (GoBGP is in-process Go)
           if grep -q "sbin/bgpd" gobgp-files.txt; then echo "FAIL: bgpd present in gobgp"; exit 1; fi
