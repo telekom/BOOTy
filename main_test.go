@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -41,6 +42,63 @@ func TestMergeProvisionIPUsesDetectedInvalidCIDR(t *testing.T) {
 
 	if got != "not-a-cidr" {
 		t.Fatalf("mergeProvisionIP() = %q, want detected invalid value", got)
+	}
+}
+
+func TestPrepareLinkLayersCreatesBondBeforeVLAN(t *testing.T) {
+	previousBond := setupBondLayer
+	previousVLAN := setupVLANLayer
+	var calls []string
+	setupBondLayer = func(_ context.Context, _ *network.Config) error {
+		calls = append(calls, "bond")
+		return nil
+	}
+	setupVLANLayer = func(v network.VLANConfig) (string, error) {
+		calls = append(calls, "vlan:"+v.Parent)
+		return "bond0.100", nil
+	}
+	t.Cleanup(func() {
+		setupBondLayer = previousBond
+		setupVLANLayer = previousVLAN
+	})
+
+	cfg := &network.Config{
+		BondInterfaces: "eth0,eth1",
+		VLANs:          []network.VLANConfig{{ID: 100, Parent: "bond0", Address: "10.0.0.2/24"}},
+	}
+	if err := prepareLinkLayers(context.Background(), cfg); err != nil {
+		t.Fatalf("prepareLinkLayers: %v", err)
+	}
+
+	want := []string{"bond", "vlan:bond0"}
+	if len(calls) != len(want) {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+	for i := range want {
+		if calls[i] != want[i] {
+			t.Fatalf("calls = %v, want %v", calls, want)
+		}
+	}
+	if cfg.StaticIface != "bond0.100" {
+		t.Fatalf("StaticIface = %q, want bond0.100", cfg.StaticIface)
+	}
+}
+
+func TestPrepareLinkLayersBondOnlySelectsBond0(t *testing.T) {
+	previousBond := setupBondLayer
+	setupBondLayer = func(_ context.Context, _ *network.Config) error {
+		return nil
+	}
+	t.Cleanup(func() {
+		setupBondLayer = previousBond
+	})
+
+	cfg := &network.Config{BondInterfaces: "eth0,eth1"}
+	if err := prepareLinkLayers(context.Background(), cfg); err != nil {
+		t.Fatalf("prepareLinkLayers: %v", err)
+	}
+	if cfg.StaticIface != "bond0" {
+		t.Fatalf("StaticIface = %q, want bond0", cfg.StaticIface)
 	}
 }
 
