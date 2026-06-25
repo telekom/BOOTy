@@ -17,7 +17,11 @@ on:
       - "pkg/runmode/**"
       - "pkg/realm/**"
       - "pkg/image/**"
+      - "pkg/network/**"
+      - "go.mod"
+      - "go.sum"
       - "main.go"
+      - "test/e2e/assets/busybox/**"
       - "test/e2e/kvm/**"
       - ".github/workflows/kvm-matrix.yml"
   pull_request:
@@ -35,7 +39,11 @@ on:
       - "pkg/runmode/**"
       - "pkg/realm/**"
       - "pkg/image/**"
+      - "pkg/network/**"
+      - "go.mod"
+      - "go.sum"
       - "main.go"
+      - "test/e2e/assets/busybox/**"
       - "test/e2e/kvm/**"
       - ".github/workflows/kvm-matrix.yml"
   workflow_dispatch:
