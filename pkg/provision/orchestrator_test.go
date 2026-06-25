@@ -2342,6 +2342,43 @@ func TestInjectCloudInit_NoCloudInject(t *testing.T) {
 	}
 }
 
+func TestInjectCloudInit_NoCloudUsesStaticInterface(t *testing.T) {
+	cfg := &config.MachineConfig{
+		Hostname: "test-host",
+	}
+	cfg.Provision.CloudInit.Enabled = true
+	cfg.Provision.CloudInit.Datasource = "nocloud"
+	cfg.Network.Static.Iface = "eth0"
+	cfg.Network.Static.IP = "10.0.0.10/24"
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	if err := o.injectCloudInit(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	netPath := filepath.Join(o.config.rootDir, "var", "lib", "cloud", "seed", "nocloud", "network-config")
+	data, err := os.ReadFile(netPath)
+	if err != nil {
+		t.Fatalf("read network-config: %v", err)
+	}
+
+	var nc cloudinit.NetworkConfig
+	if err := yaml.Unmarshal(data, &nc); err != nil {
+		t.Fatalf("unmarshal network-config: %v", err)
+	}
+	if _, ok := nc.Ethernets["id0"]; ok {
+		t.Fatalf("unexpected id0 ethernet in network-config: %+v", nc.Ethernets)
+	}
+	eth, ok := nc.Ethernets["eth0"]
+	if !ok {
+		t.Fatalf("network-config ethernets = %+v, want eth0", nc.Ethernets)
+	}
+	if len(eth.Addresses) != 1 || eth.Addresses[0] != "10.0.0.10/24" {
+		t.Fatalf("eth0 addresses = %v", eth.Addresses)
+	}
+}
+
 func TestConfigureDNSPersistsUbuntuStaticInterface(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.PersistNetwork = true
