@@ -167,7 +167,7 @@ test-e2e:
 	@go test -tags e2e -race -v -timeout 20m $(shell go list -tags e2e ./test/e2e/... | grep -v /kvm)
 
 test-kvm:
-	@echo Running KVM E2E tests (requires QEMU, root, and KVM assets)
+	@printf '%s\n' 'Running KVM E2E tests (requires QEMU, root, and KVM assets)'
 	@go test -tags e2e -race -count=1 -v -timeout 15m ./test/e2e/kvm/...
 
 clab-up:
@@ -179,7 +179,7 @@ clab-down:
 	@cd test/e2e/clab && sudo clab destroy --topo topology.clab.yml
 
 test-e2e-integration:
-	@echo Running E2E integration tests (requires clab-up)
+	@printf '%s\n' 'Running E2E integration tests (requires clab-up)'
 	@BOOTY_TOPOLOGY=$${BOOTY_TOPOLOGY:-lab} go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/...
 
 booty-test-image:
@@ -187,9 +187,9 @@ booty-test-image:
 	@docker build -t booty-test:latest -f test/e2e/clab/booty-test.Dockerfile .
 
 clab-boot-up: booty-test-image
-	@echo Generating test disk image (requires root)
+	@printf '%s\n' 'Generating test disk image (requires root)'
 	@sudo test/e2e/clab/create-test-image.sh test/e2e/clab/images
-	@echo Deploying boot test topology (includes BOOTy nodes)
+	@printf '%s\n' 'Deploying boot test topology (includes BOOTy nodes)'
 	@cd test/e2e/clab && sudo clab deploy --topo topology-boot.clab.yml
 
 clab-boot-down:
@@ -197,7 +197,7 @@ clab-boot-down:
 	@cd test/e2e/clab && sudo clab destroy --topo topology-boot.clab.yml
 
 test-e2e-boot:
-	@echo Running BOOTy boot E2E tests (requires clab-boot-up)
+	@printf '%s\n' 'Running BOOTy boot E2E tests (requires clab-boot-up)'
 	@go test -tags e2e_boot -race -v -timeout 300s ./test/e2e/integration/...
 
 booty-vrnetlab-image:
@@ -205,7 +205,7 @@ booty-vrnetlab-image:
 	@docker build -t booty-vrnetlab:latest -f test/e2e/clab/vrnetlab/Dockerfile .
 
 clab-vrnetlab-up: booty-vrnetlab-image
-	@echo Deploying vrnetlab EVPN topology (QEMU VMs + EVPN fabric)
+	@printf '%s\n' 'Deploying vrnetlab EVPN topology (QEMU VMs + EVPN fabric)'
 	@cd test/e2e/clab && sudo clab deploy --topo topology-vrnetlab.clab.yml
 
 clab-vrnetlab-down:
@@ -213,17 +213,17 @@ clab-vrnetlab-down:
 	@cd test/e2e/clab && sudo clab destroy --topo topology-vrnetlab.clab.yml
 
 test-e2e-vrnetlab:
-	@echo Running vrnetlab EVPN E2E tests (requires clab-vrnetlab-up)
+	@printf '%s\n' 'Running vrnetlab EVPN E2E tests (requires clab-vrnetlab-up)'
 	@go test -tags e2e_vrnetlab -race -v -timeout 600s ./test/e2e/integration/...
 
 # ── GoBGP e2e targets ──────────────────────────────────────────────────────
 
 booty-gobgp-test-image:
-	@echo Building BOOTy GoBGP test container image (no FRR)
+	@printf '%s\n' 'Building BOOTy GoBGP test container image (no FRR)'
 	@docker build -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
 
 clab-gobgp-up: booty-gobgp-test-image
-	@echo Deploying GoBGP test topology (unnumbered + dual + numbered)
+	@printf '%s\n' 'Deploying GoBGP test topology (unnumbered + dual + numbered)'
 	@cd test/e2e/clab && sudo clab deploy --topo topology-gobgp.clab.yml
 
 clab-gobgp-down:
@@ -231,11 +231,11 @@ clab-gobgp-down:
 	@cd test/e2e/clab && sudo clab destroy --topo topology-gobgp.clab.yml
 
 test-e2e-gobgp:
-	@echo Running GoBGP E2E tests (requires clab-gobgp-up)
+	@printf '%s\n' 'Running GoBGP E2E tests (requires clab-gobgp-up)'
 	@go test -tags e2e_gobgp -race -v -timeout 300s ./test/e2e/integration/...
 
 clab-gobgp-vrnetlab-up: booty-vrnetlab-image
-	@echo Deploying GoBGP vrnetlab topology (QEMU VMs, all PeerModes)
+	@printf '%s\n' 'Deploying GoBGP vrnetlab topology (QEMU VMs, all PeerModes)'
 	@cd test/e2e/clab && sudo clab deploy --topo topology-gobgp-vrnetlab.clab.yml
 
 clab-gobgp-vrnetlab-down:
@@ -243,13 +243,13 @@ clab-gobgp-vrnetlab-down:
 	@cd test/e2e/clab && sudo clab destroy --topo topology-gobgp-vrnetlab.clab.yml
 
 test-e2e-gobgp-vrnetlab:
-	@echo Running GoBGP vrnetlab E2E tests (requires clab-gobgp-vrnetlab-up)
+	@printf '%s\n' 'Running GoBGP vrnetlab E2E tests (requires clab-gobgp-vrnetlab-up)'
 	@go test -tags e2e_gobgp_vrnetlab -race -v -timeout 600s ./test/e2e/integration/...
 
 # ── Pure Type-5 e2e targets (CAPRF per-machine leaf fabric) ───────────────
 
 clab-type5-up: booty-gobgp-test-image
-	@echo Deploying pure Type-5 topology (spine + per-machine leaf, VNI 1000)
+	@printf '%s\n' 'Deploying pure Type-5 topology (spine + per-machine leaf, VNI 1000)'
 	@cd test/e2e/clab && sudo clab deploy --topo topology-type5.clab.yml
 
 clab-type5-down:
@@ -257,13 +257,13 @@ clab-type5-down:
 	@cd test/e2e/clab && sudo clab destroy --topo topology-type5.clab.yml
 
 test-e2e-type5:
-	@echo Running pure Type-5 E2E tests (requires clab-type5-up)
+	@printf '%s\n' 'Running pure Type-5 E2E tests (requires clab-type5-up)'
 	@go test -tags e2e_gobgp_type5 -race -v -timeout 300s ./test/e2e/integration/...
 
 # ── Production-realistic e2e targets ───────────────────────────────────────
 
 clab-production-up: booty-test-image
-	@echo Deploying production-realistic topology (VRF + DCGW + BFD)
+	@printf '%s\n' 'Deploying production-realistic topology (VRF + DCGW + BFD)'
 	@cd test/e2e/clab && sudo clab deploy --topo topology-production.clab.yml
 
 clab-production-down:
@@ -271,7 +271,7 @@ clab-production-down:
 	@cd test/e2e/clab && sudo clab destroy --topo topology-production.clab.yml
 
 test-e2e-production:
-	@echo Running production-realistic E2E tests (requires clab-production-up)
+	@printf '%s\n' 'Running production-realistic E2E tests (requires clab-production-up)'
 	@go test -tags e2e_production -race -v -timeout 600s ./test/e2e/integration/...
 
 # ── DHCP lab targets ───────────────────────────────────────────────────────
@@ -285,21 +285,21 @@ clab-dhcp-down:
 	@cd test/e2e/clab && sudo clab destroy --topo topology-dhcp.clab.yml
 
 test-e2e-dhcp:
-	@echo Running DHCP E2E tests (requires clab-dhcp-up)
+	@printf '%s\n' 'Running DHCP E2E tests (requires clab-dhcp-up)'
 	@BOOTY_TOPOLOGY=dhcp go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/... -run TestContainerLabTopologySmoke
 
 # ── Bonding (non-LACP) lab targets ───────────────────────────────────────
 
 clab-bond-up:
-	@echo Deploying bond-mode (non-LACP) test topology
+	@printf '%s\n' 'Deploying bond-mode (non-LACP) test topology'
 	@cd test/e2e/clab && sudo clab deploy --topo topology-lacp.clab.yml
 
 clab-bond-down:
-	@echo Destroying bond-mode (non-LACP) test topology
+	@printf '%s\n' 'Destroying bond-mode (non-LACP) test topology'
 	@cd test/e2e/clab && sudo clab destroy --topo topology-lacp.clab.yml
 
 test-e2e-bond:
-	@echo Running bond-mode (non-LACP) E2E tests (requires clab-bond-up)
+	@printf '%s\n' 'Running bond-mode (non-LACP) E2E tests (requires clab-bond-up)'
 	@BOOTY_TOPOLOGY=bond go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/... -run TestContainerLabTopologySmoke
 
 # Backward-compatible aliases.
@@ -318,7 +318,7 @@ clab-static-down:
 	@cd test/e2e/clab && sudo clab destroy --topo topology-static.clab.yml
 
 test-e2e-static:
-	@echo Running static IP E2E tests (requires clab-static-up)
+	@printf '%s\n' 'Running static IP E2E tests (requires clab-static-up)'
 	@BOOTY_TOPOLOGY=static go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/... -run TestContainerLabTopologySmoke
 
 # ── Multi-NIC lab targets ─────────────────────────────────────────────────
@@ -332,7 +332,7 @@ clab-multi-nic-down:
 	@cd test/e2e/clab && sudo clab destroy --topo topology-multi-nic.clab.yml
 
 test-e2e-multi-nic:
-	@echo Running multi-NIC E2E tests (requires clab-multi-nic-up)
+	@printf '%s\n' 'Running multi-NIC E2E tests (requires clab-multi-nic-up)'
 	@BOOTY_TOPOLOGY=multi-nic go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/... -run TestContainerLabTopologySmoke
 
 check:
