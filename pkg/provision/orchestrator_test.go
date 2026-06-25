@@ -214,6 +214,37 @@ func TestProvisionStepsValidateImageSourceBeforeWipe(t *testing.T) {
 	}
 }
 
+func TestProvisionStepsVerifyImageBeforeDestructiveStorage(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	steps := o.provisionSteps()
+
+	indices := map[string]int{}
+	for i, step := range steps {
+		indices[step.Name] = i
+	}
+	verifyIdx, ok := indices["verify-image"]
+	if !ok {
+		t.Fatal("missing verify-image step")
+	}
+	validateIdx, ok := indices["validate-provision-inputs"]
+	if !ok {
+		t.Fatal("missing validate-provision-inputs step")
+	}
+	if validateIdx >= verifyIdx {
+		t.Fatalf("validate-provision-inputs index %d must be before verify-image index %d", validateIdx, verifyIdx)
+	}
+	for _, name := range []string{"stop-raid", "disable-lvm", "setup-nvme-namespaces", "detect-disk", "wipe-disks"} {
+		stepIdx, ok := indices[name]
+		if !ok {
+			t.Fatalf("missing %s step", name)
+		}
+		if verifyIdx >= stepIdx {
+			t.Fatalf("verify-image index %d must be before %s index %d", verifyIdx, name, stepIdx)
+		}
+	}
+}
+
 func TestValidateImageSourceConfiguredRejectsMissingImage(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})

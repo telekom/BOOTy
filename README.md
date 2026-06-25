@@ -591,7 +591,8 @@ export IMAGE_GPG_PUBKEY="/deploy/signing-key.gpg"
 
 Checksum verification runs after image streaming — the raw bytes are hashed
 during the write and compared against the expected digest. GPG verification
-downloads the detached signature and verifies it against the provided public key.
+downloads the detached signature and verifies it against the provided public key
+before destructive storage setup starts.
 
 ### Telemetry and Metrics
 
