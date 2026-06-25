@@ -66,6 +66,30 @@ jobs:
           )
           PY
 
+      - name: Package GitLab generic artifact
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib
+          import zipfile
+
+          root = pathlib.Path("out-gobgp-iso")
+          archive_path = pathlib.Path("booty-gobgp-pr-iso.zip")
+          artifact_names = (
+              "booty-gobgp.iso",
+              "booty-gobgp.iso.sha256",
+              "booty-pr-artifact.json",
+          )
+
+          with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+              for name in artifact_names:
+                  artifact = root / name
+                  if not artifact.is_file() or artifact.is_symlink():
+                      raise SystemExit(f"{artifact} must be a regular non-symlink file")
+                  archive.write(artifact, name)
+          PY
+
       - name: Publish artifact
         uses: actions/upload-artifact@v7.0.1
         with:
@@ -105,15 +129,6 @@ jobs:
             exit 0
           fi
 
-          python3 - <<'PY'
-          import pathlib
-          import zipfile
-
-          root = pathlib.Path("out-gobgp-iso")
-          with zipfile.ZipFile("booty-gobgp-pr-iso.zip", "w", zipfile.ZIP_DEFLATED) as archive:
-              for name in ("booty-gobgp.iso", "booty-gobgp.iso.sha256", "booty-pr-artifact.json"):
-                  archive.write(root / name, name)
-          PY
           curl --fail --silent --show-error \
             --header "PRIVATE-TOKEN: ${GITLAB_PACKAGE_TOKEN}" \
             --upload-file booty-gobgp-pr-iso.zip \
