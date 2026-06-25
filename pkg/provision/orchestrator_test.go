@@ -1987,6 +1987,25 @@ func TestResizeFilesystemRunsForABPartitionLayout(t *testing.T) {
 	}
 }
 
+func TestResizeFilesystemUsesMountedRootForXFS(t *testing.T) {
+	cmd := newMockCommander()
+	cfg := &config.MachineConfig{}
+	o := NewOrchestrator(
+		cfg,
+		&mockProvider{},
+		disk.NewManager(cmd),
+	)
+	o.rootPartition = "/dev/sda2"
+	cmd.setResult("resize2fs /dev/sda2", nil, fmt.Errorf("not ext"))
+
+	if err := o.resizeFilesystem(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !hasCommandCall(cmd.calls, "xfs_growfs", newroot) {
+		t.Fatalf("expected xfs_growfs to target mounted root %s, got %#v", newroot, cmd.calls)
+	}
+}
+
 func TestInjectCloudInit_Disabled(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	provider := &mockProvider{}
