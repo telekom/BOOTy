@@ -124,3 +124,12 @@ func TestRequiresABKexec(t *testing.T) {
 		})
 	}
 }
+
+func TestTryKexecSkipsWhenSecureBootReEnableRequested(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.SecureBoot.ReEnable = true
+
+	if tryKexec(cfg, false) {
+		t.Fatal("tryKexec returned true when secure boot re-enable requires hard reboot")
+	}
+}
