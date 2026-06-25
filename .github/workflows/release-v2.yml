@@ -427,7 +427,20 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           REPO=$(echo "ghcr.io/${{ github.repository }}-iso" | tr '[:upper:]' '[:lower:]')
-          oras push "${REPO}:${VERSION}${{ matrix.tag_suffix }}" \
+          REF="${REPO}:${VERSION}${{ matrix.tag_suffix }}"
+
+          err="${RUNNER_TEMP}/oras-ref-check.err"
+          if oras manifest fetch "${REF}" >/dev/null 2>"${err}"; then
+            echo "::error::OCI artifact ${REF} already exists; refusing to overwrite"
+            exit 1
+          fi
+          if ! grep -Eiq '(not found|manifest unknown|name unknown|404)' "${err}"; then
+            echo "::error::could not verify OCI artifact ${REF} is absent"
+            cat "${err}" >&2 || true
+            exit 1
+          fi
+
+          oras push "${REF}" \
             --artifact-type application/vnd.booty.iso.v1 \
             "${{ matrix.artifact }}:application/octet-stream"
 
@@ -520,6 +533,20 @@ jobs:
           VERSION=${GITHUB_REF_NAME#v}
           REPO=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
 
+          ensure_oci_ref_absent() {
+            local ref="$1"
+            local err="${RUNNER_TEMP}/oras-ref-check.err"
+            if oras manifest fetch "${ref}" >/dev/null 2>"${err}"; then
+              echo "::error::OCI artifact ${ref} already exists; refusing to overwrite"
+              exit 1
+            fi
+            if ! grep -Eiq '(not found|manifest unknown|name unknown|404)' "${err}"; then
+              echo "::error::could not verify OCI artifact ${ref} is absent"
+              cat "${err}" >&2 || true
+              exit 1
+            fi
+          }
+
           for flavor in default gobgp slim micro; do
             # gobgp, default, and slim use zstd compression; micro uses gzip.
             if [ "${flavor}" = "gobgp" ] || [ "${flavor}" = "default" ] || [ "${flavor}" = "slim" ]; then
@@ -542,11 +569,13 @@ jobs:
             fi
 
             TAG="${VERSION}-${flavor}-${{ matrix.arch }}"
-            echo "Publishing ${REPO}/initramfs:${TAG}"
+            REF="${REPO}/initramfs:${TAG}"
+            ensure_oci_ref_absent "${REF}"
+            echo "Publishing ${REF}"
 
             ARGS="${INITRAMFS}:${MEDIA_TYPE} ${CHECKSUM}:text/plain"
 
-            oras push "${REPO}/initramfs:${TAG}" \
+            oras push "${REF}" \
               --annotation "org.opencontainers.image.title=BOOTy initramfs (${flavor}/${{ matrix.arch }})" \
               --annotation "org.opencontainers.image.version=${VERSION}" \
               --annotation "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
@@ -568,14 +597,27 @@ jobs:
           fi
 
           TAG="${VERSION}-${{ matrix.arch }}"
-          echo "Publishing ${REPO}/binary:${TAG}"
+          REF="${REPO}/binary:${TAG}"
+
+          err="${RUNNER_TEMP}/oras-ref-check.err"
+          if oras manifest fetch "${REF}" >/dev/null 2>"${err}"; then
+            echo "::error::OCI artifact ${REF} already exists; refusing to overwrite"
+            exit 1
+          fi
+          if ! grep -Eiq '(not found|manifest unknown|name unknown|404)' "${err}"; then
+            echo "::error::could not verify OCI artifact ${REF} is absent"
+            cat "${err}" >&2 || true
+            exit 1
+          fi
+
+          echo "Publishing ${REF}"
 
           ARGS="${BINARY}:application/vnd.cncf.binary.layer.v1"
           if [ -f "${CHECKSUM}" ]; then
             ARGS="${ARGS} ${CHECKSUM}:text/plain"
           fi
 
-          oras push "${REPO}/binary:${TAG}" \
+          oras push "${REF}" \
             --annotation "org.opencontainers.image.title=BOOTy binary (${{ matrix.arch }})" \
             --annotation "org.opencontainers.image.version=${VERSION}" \
             --annotation "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
@@ -594,8 +636,20 @@ jobs:
             exit 0
           fi
 
-          echo "Publishing ${REPO}/sbom:${VERSION}"
-          oras push "${REPO}/sbom:${VERSION}" \
+          REF="${REPO}/sbom:${VERSION}"
+          err="${RUNNER_TEMP}/oras-ref-check.err"
+          if oras manifest fetch "${REF}" >/dev/null 2>"${err}"; then
+            echo "::error::OCI artifact ${REF} already exists; refusing to overwrite"
+            exit 1
+          fi
+          if ! grep -Eiq '(not found|manifest unknown|name unknown|404)' "${err}"; then
+            echo "::error::could not verify OCI artifact ${REF} is absent"
+            cat "${err}" >&2 || true
+            exit 1
+          fi
+
+          echo "Publishing ${REF}"
+          oras push "${REF}" \
             --annotation "org.opencontainers.image.title=BOOTy SBOM" \
             --annotation "org.opencontainers.image.version=${VERSION}" \
             --annotation "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
