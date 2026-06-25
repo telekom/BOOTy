@@ -267,6 +267,7 @@ jobs:
           echo "PASS: gobgp contents verified"
 
       - name: Upload build flavour artifacts
+        if: always()
         uses: actions/upload-artifact@v7.0.1
         with:
           name: build-flavours
@@ -274,6 +275,10 @@ jobs:
             out-slim/initramfs.cpio.zst
             out-micro/initramfs.cpio.gz
             out-gobgp/initramfs.cpio.zst
+            slim-files.txt
+            micro-files.txt
+            gobgp-files.txt
+          if-no-files-found: ignore
 
   kvm-boot:
     name: KVM Boot Validation
@@ -806,7 +811,43 @@ jobs:
           sudo apt-get install -y fdisk gdisk e2fsprogs xfsprogs cloud-guest-utils parted util-linux qemu-utils mdadm lvm2 zstd lz4 xz-utils
 
       - name: Run Linux E2E tests
-        run: sudo -E env "PATH=$PATH:/usr/sbin:/sbin" $(which go) test -tags linux_e2e -v -count=1 -timeout 5m ./test/e2e/linux/...
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p linux-e2e-logs
+          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m ./test/e2e/linux/... 2>&1 | tee linux-e2e-logs/go-test.log
+
+      - name: Collect Linux E2E diagnostics
+        if: always()
+        run: |
+          mkdir -p linux-e2e-logs
+          {
+            echo "## uname"
+            uname -a
+            echo
+            echo "## disk usage"
+            df -h
+            echo
+            echo "## block devices"
+            lsblk -o NAME,MAJ:MIN,SIZE,TYPE,FSTYPE,MOUNTPOINTS || true
+            echo
+            echo "## loop devices"
+            sudo losetup -a || true
+            echo
+            echo "## mounted filesystems"
+            findmnt || true
+            echo
+            echo "## qemu-img"
+            qemu-img --version || true
+          } > linux-e2e-logs/host-diagnostics.txt 2>&1
+
+      - name: Upload Linux E2E diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: linux-e2e-diagnostics
+          path: linux-e2e-logs/
+          if-no-files-found: ignore
 
   e2e-boot:
     name: E2E Boot (ContainerLab)
