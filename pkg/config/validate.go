@@ -139,6 +139,10 @@ func (c *Config) validatePersistence() []string {
 	if osFamily == "" {
 		errs = append(errs, "osFamily required when persistNetwork is true")
 	}
+	if persistentNetworkOSFamilyBlocked(osFamily) {
+		errs = append(errs, fmt.Sprintf("osFamily %s target network persistence is blocked until native bootloader, BLS, and SELinux first-boot support are implemented", osFamily))
+		return errs
+	}
 	if staticIP != "" && bondInterfaces == "" && staticIface == "" {
 		errs = append(errs, "network.static.iface required when persistNetwork is true with network.static.ip and no network.bond.interfaces")
 	}
@@ -150,6 +154,10 @@ func (c *Config) validatePersistence() []string {
 	}
 	errs = append(errs, validatePersistenceVLANConfig(vlanConfig)...)
 	return errs
+}
+
+func persistentNetworkOSFamilyBlocked(osFamily string) bool {
+	return osFamily == "rhel"
 }
 
 func validatePersistenceVLANConfig(vlanConfig string) []string {
