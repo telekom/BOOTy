@@ -313,7 +313,9 @@ RUN for b in \
 done
 
 # Package initramfs
-RUN find . -print0 | cpio --null -ov --format=newc > ../initramfs.cpio \
+RUN find . -print0 > ../initramfs.files \
+    && cpio --null -ov --format=newc < ../initramfs.files > ../initramfs.cpio \
+    && rm ../initramfs.files \
     && zstd -19 --long ../initramfs.cpio -o /initramfs.cpio.zst \
     && rm ../initramfs.cpio
 
@@ -382,7 +384,9 @@ COPY --from=tools /sbin/resize2fs sbin/resize2fs
 COPY --from=tools /tool-libs/ .
 
 # Package slim initramfs
-RUN find . -print0 | cpio --null -ov --format=newc > ../initramfs.cpio \
+RUN find . -print0 > ../initramfs.files \
+    && cpio --null -ov --format=newc < ../initramfs.files > ../initramfs.cpio \
+    && rm ../initramfs.files \
     && zstd -19 --long ../initramfs.cpio -o /initramfs.cpio.zst \
     && rm ../initramfs.cpio
 
@@ -492,7 +496,9 @@ done
 # Package GoBGP initramfs with zstd compression (no FRR binaries — GoBGP runs in-process)
 # zstd -19 achieves ~10–20% better ratio than gzip with much faster decompression.
 # The Debian bookworm 6.1 kernel has CONFIG_RD_ZSTD=y built-in.
-RUN find . -print0 | cpio --null -ov --format=newc > ../initramfs.cpio \
+RUN find . -print0 > ../initramfs.files \
+    && cpio --null -ov --format=newc < ../initramfs.files > ../initramfs.cpio \
+    && rm ../initramfs.files \
     && zstd -19 --long ../initramfs.cpio -o /initramfs.cpio.zst \
     && rm ../initramfs.cpio
 
@@ -546,7 +552,9 @@ COPY --from=micro-dev /go/src/github.com/telekom/BOOTy/init .
 RUN mkdir -p etc/ssl/certs && cp /etc/ssl/certs/ca-certificates.crt etc/ssl/certs/
 
 # Package micro initramfs
-RUN find . -print0 | cpio --null -ov --format=newc > ../initramfs.cpio \
+RUN find . -print0 > ../initramfs.files \
+    && cpio --null -ov --format=newc < ../initramfs.files > ../initramfs.cpio \
+    && rm ../initramfs.files \
     && gzip ../initramfs.cpio && mv ../initramfs.cpio.gz /
 
 FROM scratch AS micro

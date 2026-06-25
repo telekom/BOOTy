@@ -2,7 +2,7 @@
 # Container entrypoint for BOOTy vrnetlab VM.
 # Injects /deploy/vars into the initramfs, bridges the container's
 # data interface (eth1) to a QEMU tap device, then boots the VM.
-set -e
+set -euo pipefail
 
 # ── Prepare initramfs ──────────────────────────────────────────────────
 cd /opt/initramfs
