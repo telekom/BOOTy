@@ -138,7 +138,10 @@ func TestTryKexecSkipsWhenSecureBootReEnableRequested(t *testing.T) {
 func TestSetupNetworkModeExplicitGoBGPFailsClosed(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Network.Mode = "gobgp"
+	cfg.Network.BGP.ASN = 65000
 	cfg.Network.BGP.UnderlayAF = "invalid"
+	cfg.Network.EVPN.UnderlayIP = "10.0.0.1"
+	cfg.Network.EVPN.ProvisionVNI = 4000
 
 	mode, err := setupNetworkMode(context.Background(), cfg)
 	if err == nil {
@@ -148,7 +151,7 @@ func TestSetupNetworkModeExplicitGoBGPFailsClosed(t *testing.T) {
 		t.Fatalf("mode = %T, want nil on explicit GoBGP setup failure", mode)
 	}
 	if !strings.Contains(err.Error(), "gobgp network setup") ||
-		!strings.Contains(err.Error(), "gobgp config") {
+		!strings.Contains(err.Error(), "invalid underlay AF") {
 		t.Fatalf("error = %q, want GoBGP setup failure context", err.Error())
 	}
 }
