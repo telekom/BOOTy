@@ -73,14 +73,14 @@ func DeriveIPFromOffset(sourceIP, sourceSubnet, targetSubnet string) (string, er
 				return "", fmt.Errorf("invalid IPv4 source subnet")
 			}
 			offset := ipToUint32(src4) - ipToUint32(srcBase)
-			result := make(net.IP, 16)
-			copy(result, tgtNet.IP.To16())
+			resultIP := make(net.IP, 16)
+			copy(resultIP, tgtNet.IP.To16())
 			tgtLast4 := ipToUint32(tgtNet.IP.To16()[12:16]) + offset
-			result[12] = byte(tgtLast4 >> 24) //nolint:gosec // intentional truncation for IP byte extraction
-			result[13] = byte(tgtLast4 >> 16) //nolint:gosec // intentional truncation
-			result[14] = byte(tgtLast4 >> 8)  //nolint:gosec // intentional truncation
-			result[15] = byte(tgtLast4)       //nolint:gosec // intentional truncation
-			return validateDerivedIP(result.String(), tgtNet, targetSubnet)
+			resultIP[12] = byte(tgtLast4 >> 24) //nolint:gosec // intentional truncation for IP byte extraction
+			resultIP[13] = byte(tgtLast4 >> 16) //nolint:gosec // intentional truncation
+			resultIP[14] = byte(tgtLast4 >> 8)  //nolint:gosec // intentional truncation
+			resultIP[15] = byte(tgtLast4)       //nolint:gosec // intentional truncation
+			return validateDerivedIP(resultIP.String(), tgtNet, targetSubnet)
 		}
 		result, err = deriveIPv4Offset(src4, srcNet, tgtNet)
 	} else {
