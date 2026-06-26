@@ -553,29 +553,36 @@ func prepareLinkLayers(ctx context.Context, netCfg *network.Config) (*linkLayerC
 	}
 
 	if netCfg.IsVLANMode() {
-		slog.Info("setting up VLAN interfaces", "count", len(netCfg.VLANs))
-		var vlanErrs []error
-		for _, v := range netCfg.VLANs {
-			name, err := setupVLANLayer(v)
-			if err != nil {
-				slog.Error("vlan setup failed", "vlan", v.ID, "parent", v.Parent, "error", err)
-				vlanErrs = append(vlanErrs, fmt.Errorf("vlan %d on %s: %w", v.ID, v.Parent, err))
-				continue
-			}
-			if netCfg.StaticIface == "" {
-				netCfg.StaticIface = name
-			}
-			cleanup.vlans = append(cleanup.vlans, v)
-		}
-		if err := errors.Join(vlanErrs...); err != nil {
-			if cleanupErr := cleanup.Teardown(ctx); cleanupErr != nil {
-				return nil, errors.Join(fmt.Errorf("vlan setup: %w", err), fmt.Errorf("link-layer rollback: %w", cleanupErr))
-			}
-			return nil, fmt.Errorf("vlan setup: %w", err)
+		if err := setupVLANLayers(ctx, netCfg, cleanup); err != nil {
+			return nil, err
 		}
 	}
 
 	return cleanup, nil
+}
+
+func setupVLANLayers(ctx context.Context, netCfg *network.Config, cleanup *linkLayerCleanup) error {
+	slog.Info("setting up VLAN interfaces", "count", len(netCfg.VLANs))
+	var vlanErrs []error
+	for _, v := range netCfg.VLANs {
+		name, err := setupVLANLayer(v)
+		if err != nil {
+			slog.Error("vlan setup failed", "vlan", v.ID, "parent", v.Parent, "error", err)
+			vlanErrs = append(vlanErrs, fmt.Errorf("vlan %d on %s: %w", v.ID, v.Parent, err))
+			continue
+		}
+		if netCfg.StaticIface == "" {
+			netCfg.StaticIface = name
+		}
+		cleanup.vlans = append(cleanup.vlans, v)
+	}
+	if err := errors.Join(vlanErrs...); err != nil {
+		if cleanupErr := cleanup.Teardown(ctx); cleanupErr != nil {
+			return errors.Join(fmt.Errorf("vlan setup: %w", err), fmt.Errorf("link-layer rollback: %w", cleanupErr))
+		}
+		return fmt.Errorf("vlan setup: %w", err)
+	}
+	return nil
 }
 
 type linkLayerCleanup struct {
