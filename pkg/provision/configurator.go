@@ -35,6 +35,8 @@ var (
 	installEFIFallbackWithChroot = true
 )
 
+var managedEFIVendors = [...]string{"ubuntu", "debian"}
+
 // safeKernelParams matches only safe characters for kernel command line parameters.
 var safeKernelParams = regexp.MustCompile(`^[a-zA-Z0-9=._\-/ ]*$`)
 
@@ -277,8 +279,9 @@ func (c *Configurator) InstallEFIFallbackLoader(ctx context.Context, diskDev, ro
 		return err
 	}
 	cmd := fmt.Sprintf(
-		"grub-install --target=%s --efi-directory=/boot/efi --bootloader-id=ubuntu --removable --no-nvram --recheck %s",
+		"grub-install --target=%s --efi-directory=/boot/efi --bootloader-id=%s --removable --no-nvram --recheck %s",
 		target,
+		efiFallbackBootloaderID(c.rootDir),
 		diskDev,
 	)
 	out, err := c.disk.ChrootRun(ctx, c.rootDir, cmd)
@@ -636,7 +639,7 @@ func defaultMountedSource(path string) (string, bool) {
 	return "", false
 }
 
-// RemoveEFIBootEntries removes old EFI boot entries matching "ubuntu".
+// RemoveEFIBootEntries removes old EFI boot entries matching supported Linux loaders.
 // Runs efibootmgr directly on the host (not in chroot) since it operates
 // on the host's EFI variables via /sys/firmware/efi/efivars.
 func (c *Configurator) RemoveEFIBootEntries(ctx context.Context) error {
@@ -647,15 +650,13 @@ func (c *Configurator) RemoveEFIBootEntries(ctx context.Context) error {
 		return nil
 	}
 	for _, line := range strings.Split(string(out), "\n") {
-		if !strings.Contains(strings.ToLower(line), "ubuntu") {
+		if !isManagedEFIBootEntryLine(line) {
 			continue
 		}
-		if len(line) > 8 && strings.HasPrefix(line, "Boot") {
-			bootNum := line[4:8]
-			slog.Info("removing EFI boot entry", "entry", bootNum)
-			if out, err := exec.CommandContext(ctx, "efibootmgr", "-b", bootNum, "-B").CombinedOutput(); err != nil { //nolint:gosec // boot entry ID from efibootmgr output
-				slog.Warn("failed to remove EFI entry", "entry", bootNum, "output", string(out))
-			}
+		bootNum := line[4:8]
+		slog.Info("removing EFI boot entry", "entry", bootNum)
+		if out, err := exec.CommandContext(ctx, "efibootmgr", "-b", bootNum, "-B").CombinedOutput(); err != nil { //nolint:gosec // boot entry ID from efibootmgr output
+			slog.Warn("failed to remove EFI entry", "entry", bootNum, "output", string(out))
 		}
 	}
 	return nil
@@ -682,11 +683,12 @@ func (c *Configurator) CreateEFIBootEntry(ctx context.Context, diskDev, bootPart
 	if err != nil {
 		return fmt.Errorf("detect EFI loader: %w", err)
 	}
+	label := efiBootEntryLabel(loader)
 
 	// Determine partition number from the partition device path.
 	partNum := partNumberFromDevice(bootPart)
 
-	out, err := c.disk.Run(ctx, "efibootmgr", "-c", "-d", diskDev, "-p", partNum, "-L", "ubuntu", "-l", loader)
+	out, err := c.disk.Run(ctx, "efibootmgr", "-c", "-d", diskDev, "-p", partNum, "-L", label, "-l", loader)
 	if err != nil {
 		return fmt.Errorf("efibootmgr create: %s: %w", string(out), err)
 	}
@@ -712,7 +714,6 @@ func efiLoaderPath(rootDir, arch string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve efi loader names: %w", err)
 	}
-	vendorDirs := []string{"ubuntu", "debian"}
 	removableName, removableErr := efiRemovableLoaderName(arch)
 	if removableErr != nil {
 		return "", removableErr
@@ -720,7 +721,7 @@ func efiLoaderPath(rootDir, arch string) (string, error) {
 	removablePath := filepath.Join(rootDir, "boot", "efi", "EFI", "BOOT", removableName)
 
 	var checked []string
-	for _, vendor := range vendorDirs {
+	for _, vendor := range managedEFIVendors {
 		shimPath := filepath.Join(rootDir, "boot", "efi", "EFI", vendor, shimName)
 		checked = append(checked, shimPath)
 		_, err = os.Stat(shimPath)
@@ -750,6 +751,44 @@ func efiLoaderPath(rootDir, arch string) (string, error) {
 		return "", fmt.Errorf("stat removable EFI loader %s: %w", removablePath, err)
 	}
 	return "", fmt.Errorf("no EFI loader found: checked %s", strings.Join(checked, ", "))
+}
+
+func isManagedEFIBootEntryLine(line string) bool {
+	if len(line) <= 8 || !strings.HasPrefix(line, "Boot") {
+		return false
+	}
+	lower := strings.ToLower(line)
+	for _, vendor := range managedEFIVendors {
+		if strings.Contains(lower, vendor) {
+			return true
+		}
+	}
+	return false
+}
+
+func efiBootEntryLabel(loader string) string {
+	parts := strings.Split(strings.Trim(loader, `\`), `\`)
+	if len(parts) >= 2 && strings.EqualFold(parts[0], "EFI") {
+		for _, vendor := range managedEFIVendors {
+			if strings.EqualFold(parts[1], vendor) {
+				return vendor
+			}
+		}
+	}
+	return "ubuntu"
+}
+
+func efiFallbackBootloaderID(rootDir string) string {
+	if loader, err := efiLoaderPath(rootDir, runtime.GOARCH); err == nil {
+		return efiBootEntryLabel(loader)
+	}
+	for _, vendor := range managedEFIVendors {
+		efiDir := filepath.Join(rootDir, "boot", "efi", "EFI", vendor)
+		if info, err := os.Stat(efiDir); err == nil && info.IsDir() {
+			return vendor
+		}
+	}
+	return "ubuntu"
 }
 
 // partNumberFromDevice extracts the partition number from a device path.

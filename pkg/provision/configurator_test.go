@@ -130,6 +130,57 @@ func TestEfiLoaderPathDebian(t *testing.T) {
 	}
 }
 
+func TestEfiBootEntryLabel(t *testing.T) {
+	tests := []struct {
+		name   string
+		loader string
+		want   string
+	}{
+		{
+			name:   "ubuntu shim",
+			loader: `\EFI\ubuntu\shimx64.efi`,
+			want:   "ubuntu",
+		},
+		{
+			name:   "debian grub",
+			loader: `\EFI\debian\grubx64.efi`,
+			want:   "debian",
+		},
+		{
+			name:   "removable fallback preserves legacy label",
+			loader: `\EFI\BOOT\BOOTX64.EFI`,
+			want:   "ubuntu",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := efiBootEntryLabel(tt.loader); got != tt.want {
+				t.Fatalf("efiBootEntryLabel(%q) = %q, want %q", tt.loader, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestManagedEFIBootEntryLine(t *testing.T) {
+	tests := []struct {
+		line string
+		want bool
+	}{
+		{line: "Boot0001* ubuntu", want: true},
+		{line: "Boot0002* debian", want: true},
+		{line: "Boot0003* Windows Boot Manager", want: false},
+		{line: "BootOrder: 0001,0002", want: false},
+		{line: "Boot0004* Fedora", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			if got := isManagedEFIBootEntryLine(tt.line); got != tt.want {
+				t.Fatalf("isManagedEFIBootEntryLine(%q) = %t, want %t", tt.line, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEfiLoaderPath_MissingLoaders(t *testing.T) {
 	root := t.TempDir()
 	efiDir := filepath.Join(root, "boot", "efi", "EFI", "ubuntu")
