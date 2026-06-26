@@ -145,6 +145,10 @@ func TestResolveKexecPath(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "boot", "explicit-root-kernel"))
 	mustWrite(t, filepath.Join(root, "vmlinuz-local"))
 	mustWrite(t, filepath.Join(root, "boot", "vmlinuz-local"))
+	if err := os.Mkdir(filepath.Join(root, "vmlinuz-directory"), 0o755); err != nil {
+		t.Fatalf("mkdir root vmlinuz-directory: %v", err)
+	}
+	mustWrite(t, filepath.Join(root, "boot", "vmlinuz-directory"))
 
 	tests := []struct {
 		name     string
@@ -175,6 +179,21 @@ func TestResolveKexecPath(t *testing.T) {
 			name:     "prefers root path when it exists",
 			grubPath: "/vmlinuz-local",
 			want:     filepath.Join(root, "vmlinuz-local"),
+		},
+		{
+			name:     "does not move non standard root relative path under boot",
+			grubPath: "/explicit-root-kernel",
+			want:     filepath.Join(root, "explicit-root-kernel"),
+		},
+		{
+			name:     "skips root directory when boot file exists",
+			grubPath: "/vmlinuz-directory",
+			want:     filepath.Join(root, "boot", "vmlinuz-directory"),
+		},
+		{
+			name:     "leaves empty path empty",
+			grubPath: "  ",
+			want:     "",
 		},
 		{
 			name:     "does not move non boot artifact under boot",

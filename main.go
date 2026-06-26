@@ -801,12 +801,16 @@ func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) bool {
 
 func resolveKexecPath(root, grubPath string) string {
 	path := strings.TrimSpace(grubPath)
+	if path == "" {
+		return ""
+	}
 	candidates := []string{pathInRoot(root, path)}
 	if isRootRelativeBootArtifact(path) {
 		candidates = append(candidates, pathInRoot(filepath.Join(root, "boot"), path))
 	}
 	for _, candidate := range candidates {
-		if _, err := os.Stat(candidate); err == nil {
+		info, err := os.Stat(candidate)
+		if err == nil && info.Mode().IsRegular() {
 			return candidate
 		}
 	}
