@@ -182,6 +182,12 @@ func extractEthernets(np *Config, cfg *network.Config) (dhcpCount int, dnsList [
 		if eth.Nameservers != nil {
 			dnsList = append(dnsList, eth.Nameservers.Addresses...)
 		}
+		if cfg.StaticIP == "" {
+			if addr := firstAddress(eth.Addresses); addr != "" {
+				cfg.StaticIP = addr
+				cfg.StaticIface = ethernetStaticIface(name, &eth)
+			}
+		}
 		for _, r := range eth.Routes {
 			if r.To == "default" && r.Via != "" && cfg.StaticGateway == "" {
 				cfg.StaticGateway = r.Via
@@ -227,6 +233,10 @@ func extractBonds(np *Config, cfg *network.Config) {
 		if bond.Parameters != nil && bond.Parameters.Mode != "" {
 			cfg.BondMode = bond.Parameters.Mode
 		}
+		if addr := firstAddress(bond.Addresses); addr != "" {
+			cfg.StaticIP = addr
+			cfg.StaticIface = name
+		}
 		if bond.MTU > cfg.MTU {
 			cfg.MTU = bond.MTU
 		}
@@ -253,6 +263,25 @@ func extractVRFs(np *Config, cfg *network.Config) {
 			}
 		}
 	}
+}
+
+func firstAddress(addresses []string) string {
+	for _, addr := range addresses {
+		if trimmed := strings.TrimSpace(addr); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func ethernetStaticIface(name string, eth *EthernetConfig) string {
+	if eth.Match == nil || eth.Match.Name == "" {
+		return name
+	}
+	if strings.ContainsAny(eth.Match.Name, "*?[]") {
+		return ""
+	}
+	return eth.Match.Name
 }
 
 func containsString(items []string, needle string) bool {

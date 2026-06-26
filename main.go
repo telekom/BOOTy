@@ -496,7 +496,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 	}
 
 	if netCfg.IsStaticMode() {
-		slog.Info("using static network mode", "ip", cfg.Network.Static.IP)
+		slog.Info("using static network mode", "ip", netCfg.StaticIP)
 		mode := &network.StaticMode{}
 		if err := mode.Setup(ctx, netCfg); err != nil {
 			slog.Error("static network setup failed, falling back to DHCP", "error", err)
@@ -650,6 +650,10 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	}
 	if src.DNSResolvers != "" {
 		dst.DNSResolvers = src.DNSResolvers
+	}
+	if src.StaticIP != "" {
+		dst.StaticIP = src.StaticIP
+		dst.StaticIface = src.StaticIface
 	}
 	if src.StaticGateway != "" {
 		dst.StaticGateway = src.StaticGateway
