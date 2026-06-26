@@ -719,11 +719,13 @@ BOOTy supports 802.1Q VLAN tagging via netlink. Configure VLANs with the
 
 ```bash
 export VLANS="200:eno1:10.200.0.42/24,300:eno2"
+export VLANS="200:eno1:[2001:db8:200::42/64]:[2001:db8:200::1]"
 ```
 
 Each VLAN creates a tagged sub-interface (`eno1.200`), assigns the IP address
 (if provided), and brings the link up. VLANs are created after the primary
-network mode is established.
+network mode is established. IPv6 address or gateway fields in `VLANS` must
+be wrapped in brackets because `:` separates fields in the compact format.
 
 ### Kexec Boot
 

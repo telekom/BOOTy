@@ -200,6 +200,10 @@ func (c *Config) IsVLANMode() bool {
 //	"200:eno1:10.200.0.42/24"
 //	"200:eno1:10.200.0.42/24,300:eno2"
 //	"200:eno1:10.200.0.42/24:10.200.0.1"
+//	"200:eno1:[2001:db8::42/64]:[2001:db8::1]"
+//
+// IPv6 address or gateway fields must be bracketed because ':' separates
+// fields in the compact VLAN specification.
 func ParseVLANs(spec string) ([]VLANConfig, error) {
 	spec = strings.TrimSpace(spec)
 	if spec == "" {
@@ -212,9 +216,15 @@ func ParseVLANs(spec string) ([]VLANConfig, error) {
 		if entry == "" {
 			continue
 		}
-		parts := strings.SplitN(entry, ":", 4)
+		parts, err := splitVLANEntry(entry)
+		if err != nil {
+			return nil, err
+		}
 		if len(parts) < 2 {
 			return nil, fmt.Errorf("invalid VLAN entry %q: need at least ID:parent", entry)
+		}
+		if len(parts) > 4 {
+			return nil, fmt.Errorf("invalid VLAN entry %q: too many fields; wrap IPv6 address or gateway fields in brackets", entry)
 		}
 
 		id, err := strconv.Atoi(parts[0])
@@ -227,17 +237,51 @@ func ParseVLANs(spec string) ([]VLANConfig, error) {
 
 		cfg := VLANConfig{
 			ID:     id,
-			Parent: parts[1],
+			Parent: strings.TrimSpace(parts[1]),
 		}
 		if len(parts) >= 3 {
-			cfg.Address = parts[2]
+			cfg.Address = strings.TrimSpace(parts[2])
 		}
 		if len(parts) >= 4 {
-			cfg.Gateway = parts[3]
+			cfg.Gateway = strings.TrimSpace(parts[3])
 		}
 		configs = append(configs, cfg)
 	}
 	return configs, nil
+}
+
+func splitVLANEntry(entry string) ([]string, error) {
+	var fields []string
+	var field strings.Builder
+	inBracket := false
+	for _, r := range entry {
+		switch r {
+		case '[':
+			if inBracket {
+				return nil, fmt.Errorf("invalid VLAN entry %q: nested '['", entry)
+			}
+			inBracket = true
+		case ']':
+			if !inBracket {
+				return nil, fmt.Errorf("invalid VLAN entry %q: unmatched ']'", entry)
+			}
+			inBracket = false
+		case ':':
+			if !inBracket {
+				fields = append(fields, strings.TrimSpace(field.String()))
+				field.Reset()
+				continue
+			}
+			field.WriteRune(r)
+		default:
+			field.WriteRune(r)
+		}
+	}
+	if inBracket {
+		return nil, fmt.Errorf("invalid VLAN entry %q: unterminated '['", entry)
+	}
+	fields = append(fields, strings.TrimSpace(field.String()))
+	return fields, nil
 }
 
 // IsGoBGPMode returns true if GoBGP mode is explicitly requested.
