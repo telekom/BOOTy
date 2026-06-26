@@ -212,8 +212,12 @@ func (c *Config) Validate() error {
 		return err
 	}
 
-	if _, err := ParseUnderlayAF(c.UnderlayAF); err != nil {
+	af, err := ParseUnderlayAF(c.UnderlayAF)
+	if err != nil {
 		return fmt.Errorf("invalid underlay AF: %w", err)
+	}
+	if af != AFIPv4 {
+		return fmt.Errorf("underlay AF %q is not yet implemented", af)
 	}
 	ot, err := ParseOverlayType(c.OverlayType)
 	if err != nil {

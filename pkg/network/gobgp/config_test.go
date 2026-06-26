@@ -405,6 +405,35 @@ func TestValidateAcceptsValid(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsUnsupportedUnderlayAF(t *testing.T) {
+	tests := []struct {
+		name     string
+		underlay string
+	}{
+		{"ipv6", "ipv6"},
+		{"dual_stack", "dual-stack"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{
+				ASN:                 65000,
+				RouterID:            "10.0.0.1",
+				PeerMode:            network.PeerModeUnnumbered,
+				ProvisionVNI:        100,
+				MinEstablishedPeers: 1,
+				UnderlayAF:          tt.underlay,
+			}
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatal("expected unsupported underlay AF error, got nil")
+			}
+			if !strings.Contains(err.Error(), "not yet implemented") {
+				t.Fatalf("expected not yet implemented error, got: %v", err)
+			}
+		})
+	}
+}
+
 func TestValidateRejectsNonIPv4RouterID(t *testing.T) {
 	tests := []struct {
 		name     string
