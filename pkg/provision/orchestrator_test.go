@@ -1516,6 +1516,27 @@ func TestSetupRAIDRequiresTargetBeforeMultipleArrayWork(t *testing.T) {
 	}
 }
 
+func TestSetupRAIDRejectsTooFewUniqueMembersBeforeWipe(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+		Name:    "md0",
+		Level:   1,
+		Devices: []string{"/dev/sda", " /dev/sda "},
+	}}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	err := o.setupRAID(context.Background())
+	if err == nil {
+		t.Fatal("expected unique member count error")
+	}
+	if !strings.Contains(err.Error(), "requires at least 2 unique member devices") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cmd.calls) != 0 {
+		t.Fatalf("expected no destructive commands before validation, got %#v", cmd.calls)
+	}
+}
+
 func TestProvisionReportsErrorOnStepFailure(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	provider := &mockProvider{}

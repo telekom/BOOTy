@@ -620,9 +620,12 @@ func (o *Orchestrator) setupNVMeNamespaces(ctx context.Context) error {
 }
 
 func (o *Orchestrator) setupRAID(ctx context.Context) error {
-	raids := o.cfg.Provision.Disk.RAID
+	raids := normalizedRAIDConfigs(o.cfg.Provision.Disk.RAID)
 	if len(raids) == 0 {
 		return nil
+	}
+	if err := validateRAIDMemberCounts(raids); err != nil {
+		return err
 	}
 	if err := o.selectRAIDTargetDevice(raids); err != nil {
 		return err
@@ -631,10 +634,8 @@ func (o *Orchestrator) setupRAID(ctx context.Context) error {
 		return err
 	}
 	for _, raid := range raids {
-		name := strings.TrimSpace(raid.Name)
-		devices := trimmedRAIDDevices(raid.Devices)
-		if err := o.disk.CreateRAIDArray(ctx, name, raid.Level, devices); err != nil {
-			return fmt.Errorf("create raid array %q: %w", name, err)
+		if err := o.disk.CreateRAIDArray(ctx, raid.Name, raid.Level, raid.Devices); err != nil {
+			return fmt.Errorf("create raid array %q: %w", raid.Name, err)
 		}
 	}
 	return nil
@@ -658,6 +659,40 @@ func (o *Orchestrator) wipeRAIDMemberDevices(ctx context.Context, raids []config
 	return nil
 }
 
+func normalizedRAIDConfigs(raids []config.RAIDConfig) []config.RAIDConfig {
+	normalized := make([]config.RAIDConfig, 0, len(raids))
+	for _, raid := range raids {
+		raid.Name = strings.TrimSpace(raid.Name)
+		raid.Devices = uniqueTrimmedRAIDDevices(raid.Devices)
+		normalized = append(normalized, raid)
+	}
+	return normalized
+}
+
+func validateRAIDMemberCounts(raids []config.RAIDConfig) error {
+	for _, raid := range raids {
+		minDevices := minRAIDDevicesForLevel(raid.Level)
+		if len(raid.Devices) < minDevices {
+			return fmt.Errorf("raid array %q level %d requires at least %d unique member devices, got %d",
+				raid.Name, raid.Level, minDevices, len(raid.Devices))
+		}
+	}
+	return nil
+}
+
+func minRAIDDevicesForLevel(level int) int {
+	switch level {
+	case 0, 1:
+		return 2
+	case 5:
+		return 3
+	case 6, 10:
+		return 4
+	default:
+		return 2
+	}
+}
+
 func (o *Orchestrator) selectRAIDTargetDevice(raids []config.RAIDConfig) error {
 	if strings.TrimSpace(o.cfg.Provision.Disk.Device) != "" {
 		return nil
@@ -676,7 +711,7 @@ func uniqueRAIDMemberDevices(raids []config.RAIDConfig) []string {
 	seen := make(map[string]struct{})
 	var devices []string
 	for _, raid := range raids {
-		for _, device := range trimmedRAIDDevices(raid.Devices) {
+		for _, device := range raid.Devices {
 			if _, ok := seen[device]; ok {
 				continue
 			}
@@ -687,13 +722,19 @@ func uniqueRAIDMemberDevices(raids []config.RAIDConfig) []string {
 	return devices
 }
 
-func trimmedRAIDDevices(devices []string) []string {
+func uniqueTrimmedRAIDDevices(devices []string) []string {
+	seen := make(map[string]struct{})
 	out := make([]string, 0, len(devices))
 	for _, device := range devices {
 		trimmed := strings.TrimSpace(device)
-		if trimmed != "" {
-			out = append(out, trimmed)
+		if trimmed == "" {
+			continue
 		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
 	}
 	return out
 }
