@@ -59,7 +59,11 @@ func DeriveIPFromOffset(sourceIP, sourceSubnet, targetSubnet string) (string, er
 	if err != nil {
 		return "", fmt.Errorf("invalid target subnet: %w", err)
 	}
+	if !srcNet.Contains(src) {
+		return "", fmt.Errorf("source IP %s is outside source subnet %s", sourceIP, sourceSubnet)
+	}
 
+	var result string
 	src4 := src.To4()
 	if src4 != nil {
 		// Cross-family: IPv4 source + IPv6 target — compute offset from IPv4, apply to IPv6.
@@ -76,11 +80,51 @@ func DeriveIPFromOffset(sourceIP, sourceSubnet, targetSubnet string) (string, er
 			result[13] = byte(tgtLast4 >> 16) //nolint:gosec // intentional truncation
 			result[14] = byte(tgtLast4 >> 8)  //nolint:gosec // intentional truncation
 			result[15] = byte(tgtLast4)       //nolint:gosec // intentional truncation
-			return result.String(), nil
+			return validateDerivedIP(result.String(), tgtNet, targetSubnet)
 		}
-		return deriveIPv4Offset(src4, srcNet, tgtNet)
+		result, err = deriveIPv4Offset(src4, srcNet, tgtNet)
+	} else {
+		result, err = deriveIPv6Offset(src.To16(), srcNet, tgtNet)
 	}
-	return deriveIPv6Offset(src.To16(), srcNet, tgtNet)
+	if err != nil {
+		return "", err
+	}
+	return validateDerivedIP(result, tgtNet, targetSubnet)
+}
+
+func validateDerivedIP(result string, tgtNet *net.IPNet, targetSubnet string) (string, error) {
+	resultIP := net.ParseIP(result)
+	if resultIP == nil {
+		return "", fmt.Errorf("derived target IP %s is invalid", result)
+	}
+	if !tgtNet.Contains(resultIP) {
+		return "", fmt.Errorf("derived target IP %s is outside target subnet %s", result, targetSubnet)
+	}
+	if err := validateIPv4HostAddress(resultIP, tgtNet, targetSubnet); err != nil {
+		return "", err
+	}
+	return result, nil
+}
+
+func validateIPv4HostAddress(ip net.IP, subnet *net.IPNet, targetSubnet string) error {
+	ip4 := ip.To4()
+	net4 := subnet.IP.To4()
+	if ip4 == nil || net4 == nil {
+		return nil
+	}
+	ones, bits := subnet.Mask.Size()
+	if bits != 32 || ones >= 31 {
+		return nil
+	}
+	ipValue := ipToUint32(ip4)
+	networkValue := ipToUint32(net4)
+	broadcastValue := networkValue | ^ipToUint32(net.IP(subnet.Mask))
+	switch ipValue {
+	case networkValue, broadcastValue:
+		return fmt.Errorf("derived target IP %s is not a usable host in target subnet %s", ip.String(), targetSubnet)
+	default:
+		return nil
+	}
 }
 
 func deriveIPv4Offset(src net.IP, srcNet, tgtNet *net.IPNet) (string, error) {

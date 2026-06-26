@@ -85,6 +85,22 @@ func TestDeriveAddresses_InvalidSourceIP(t *testing.T) {
 	}
 }
 
+func TestDeriveAddresses_IPMIOutsideSubnet(t *testing.T) {
+	cfg := network.Config{
+		UnderlaySubnet: "192.168.4.0/24",
+		IPMISubnet:     "172.30.0.0/24",
+		IPMIIP:         "10.0.0.42",
+	}
+	_, _, _, err := DeriveAddresses(&cfg)
+	if err == nil {
+		t.Fatal("expected error for IPMI IP outside IPMI subnet")
+	}
+	if !strings.Contains(err.Error(), "derive underlay IP") ||
+		!strings.Contains(err.Error(), "outside source subnet") {
+		t.Fatalf("error = %q, want underlay derivation source subnet context", err.Error())
+	}
+}
+
 func TestDeriveAddresses_InvalidSubnet(t *testing.T) {
 	cfg := network.Config{
 		UnderlaySubnet: "bad-subnet",
@@ -141,7 +157,7 @@ func TestDeriveIPFromOffset(t *testing.T) {
 		{"offset_42", "172.30.0.42", "172.30.0.0/24", "192.168.4.0/24", "192.168.4.42"},
 		{"offset_1", "172.30.0.1", "172.30.0.0/24", "10.0.0.0/24", "10.0.0.1"},
 		{"offset_254", "172.30.0.254", "172.30.0.0/24", "10.0.0.0/24", "10.0.0.254"},
-		{"zero_offset", "172.30.0.0", "172.30.0.0/24", "10.0.0.0/24", "10.0.0.0"},
+		{"zero_offset_31", "172.30.0.0", "172.30.0.0/24", "10.0.0.0/31", "10.0.0.0"},
 		// IPv6 → IPv6
 		{"ipv6_offset", "fd00::a", "fd00::/64", "fd01::/64", "fd01::a"},
 		{"ipv6_offset_1", "fd00::1", "fd00::/64", "fd01::/64", "fd01::1"},
@@ -171,6 +187,10 @@ func TestDeriveIPFromOffset_Errors(t *testing.T) {
 		{"bad_ip", "not-an-ip", "10.0.0.0/24", "10.0.0.0/24"},
 		{"bad_src_subnet", "10.0.0.1", "bad", "10.0.0.0/24"},
 		{"bad_tgt_subnet", "10.0.0.1", "10.0.0.0/24", "bad"},
+		{"source_outside_subnet", "10.0.0.42", "172.30.0.0/24", "192.168.4.0/24"},
+		{"derived_outside_target_subnet", "172.30.1.42", "172.30.0.0/16", "10.0.0.0/24"},
+		{"derived_network_address", "172.30.0.0", "172.30.0.0/24", "10.0.0.0/24"},
+		{"derived_broadcast_address", "172.30.0.255", "172.30.0.0/24", "10.0.0.0/24"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
