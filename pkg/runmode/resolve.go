@@ -2,22 +2,27 @@
 
 package runmode
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/telekom/BOOTy/pkg/config"
+)
 
 // Resolve returns the Mode implementation matching the config's Mode field.
 func Resolve(deps Deps) (Mode, error) {
-	switch deps.Cfg.Mode {
-	case "standby":
+	mode := deps.Cfg.Mode
+	switch {
+	case mode == "standby":
 		return &StandbyMode{deps: deps}, nil
-	case "dry-run":
+	case mode == "dry-run":
 		return &DryRunMode{deps: deps}, nil
-	case "deprovision", "soft-deprovision", "soft", "hard":
+	case config.IsDeprovisionMode(mode):
 		return &DeprovisionMode{deps: deps}, nil
-	case "check":
+	case mode == "check":
 		return &CheckMode{deps: deps}, nil
-	case "provision", "":
+	case mode == "provision" || mode == "":
 		return &ProvisionMode{deps: deps}, nil
 	default:
-		return nil, fmt.Errorf("unknown mode %q", deps.Cfg.Mode)
+		return nil, fmt.Errorf("unknown mode %q", mode)
 	}
 }
