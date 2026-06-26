@@ -1186,7 +1186,11 @@ func (m *Manager) chrootSyscall(ctx context.Context, root, command string) ([]by
 func runChrootSyscallExec(ctx context.Context, root, shell, command string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, shell, "-c", command)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Chroot: root}
-	return cmd.CombinedOutput()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return out, fmt.Errorf("run %s in chroot %s: %w", shell, root, err)
+	}
+	return out, nil
 }
 
 func formatChrootSyscallError(root, shell string, out []byte, err error) error {
