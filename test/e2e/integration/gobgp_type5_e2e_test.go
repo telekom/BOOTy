@@ -156,7 +156,6 @@ func type5WaitForBGPInterface(t *testing.T, container, iface string) {
 	}
 }
 
-
 // --- Spine-Leaf Fabric BGP ---------------------------------------------------
 
 func TestType5SpineLeaf01BGPEstablished(t *testing.T) {
@@ -435,14 +434,32 @@ func TestType5SpineFDBHasVMVTEPs(t *testing.T) {
 	requireType5Lab(t)
 	t.Cleanup(func() { type5DumpDebugState(t) })
 
-	out := type5DockerExec(t, type5LabSpine, "bridge", "fdb", "show", "dev", "vxlan1000")
-	if !strings.Contains(out, "192.168.4.10") {
-		t.Errorf("spine01 FDB missing VM0 VTEP 192.168.4.10:\n%s", out)
-	}
-	if !strings.Contains(out, "192.168.4.11") {
-		t.Errorf("spine01 FDB missing VM1 VTEP 192.168.4.11:\n%s", out)
-	}
+	type5WaitForSpineFDBVTEPs(t)
 	t.Log("Confirmed: spine01 FDB has BUM entries for VM VTEPs")
+}
+
+func type5WaitForSpineFDBVTEPs(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), type5ConvergeTimeout)
+	defer cancel()
+
+	ticker := time.NewTicker(type5ConvergeInterval)
+	defer ticker.Stop()
+
+	var last string
+	for {
+		out, _ := type5DockerExecRaw(t, type5LabSpine, "bridge", "fdb", "show", "dev", "vxlan1000")
+		last = out
+		if strings.Contains(out, "192.168.4.10") && strings.Contains(out, "192.168.4.11") {
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			t.Fatalf("spine01 FDB missing VM VTEPs after %s:\n%s", type5ConvergeTimeout, last)
+		case <-ticker.C:
+		}
+	}
 }
 
 // --- Overlay Connectivity ----------------------------------------------------
@@ -603,4 +620,3 @@ func TestType5JumboMTU(t *testing.T) {
 
 	t.Log("Confirmed: jumbo MTU 9100 on all underlay interfaces")
 }
-
