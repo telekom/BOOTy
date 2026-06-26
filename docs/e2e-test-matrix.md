@@ -105,7 +105,7 @@ applies:
 | GoBGP E2E                   | `e2e_gobgp`              | Real GoBGP peering, all PeerModes.                                         |
 | Boot E2E                    | `e2e_boot`               | Provisioning orchestrator step ordering with real network plumbing.        |
 | vrnetlab / QEMU             | `e2e_vrnetlab`           | Full boot flow, kexec, EVPN fabric, ISO boot (KVM-required).               |
-| GoBGP vrnetlab              | `e2e_gobgp_vrnetlab`     | GoBGP QEMU VMs against FRR fabric containers; not vendor NOS proof.        |
+| GoBGP vrnetlab              | `e2e_gobgp_vrnetlab`     | GoBGP QEMU VMs with FRR fabric only; no vendor NOS interoperability proof. |
 | Production                  | `e2e_production`         | VRF, DCGW, BFD, production-like topology.                                  |
 
 ## Running

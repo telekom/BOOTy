@@ -38,7 +38,8 @@ deviations from the original proposal:
   to reduce cognitive complexity.
 - **E2E testing**: Containerlab topologies cover unnumbered, dual, and
   numbered modes. The GoBGP vrnetlab topology boots BOOTy in QEMU VMs against
-  FRR-based fabric containers; it is not vendor NOS switch proof.
+  FRR-based fabric containers; it is not evidence of interoperability with
+  vendor NOS images or physical switches.
 - **CI**: Dedicated `e2e-gobgp` CI job in GitHub Actions with
   containerlab-based topology.
 - **Release**: GoBGP artifacts added to `release.yml` workflow.
