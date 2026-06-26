@@ -385,7 +385,7 @@ go run server/server.go \
 | `LUKS_KEY_SIZE` | `512` | *(Planned)* LUKS2 key size in bits |
 | `LUKS_HASH` | `sha256` | *(Planned)* LUKS2 hash algorithm |
 | `NUM_VFS` | `0` | Number of SR-IOV virtual functions for Mellanox NICs (0 = skip) |
-| `NVME_NAMESPACES` | — | JSON config for NVMe namespace creation (e.g. `[{"device":"/dev/nvme0","namespaces":[{"size_gb":100}]}]`) |
+| `NVME_NAMESPACES` | — | JSON config for NVMe namespace creation (e.g. `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":100}]}]`) |
 | `CLOUDINIT_ENABLED` | `false` | Generate and inject cloud-init config |
 | `CLOUDINIT_DATASOURCE` | `nocloud` | Cloud-init datasource type: `nocloud` or `configdrive` |
 | `SYSEXT_ENABLED` | `false` | Copy configured systemd-sysext layers into the provisioned root |

@@ -70,6 +70,20 @@ func TestParseNVMeConfigNamespaceFields(t *testing.T) {
 	}
 }
 
+func TestParseNVMeConfigReadmeExample(t *testing.T) {
+	input := `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":100}]}]`
+	configs, err := ParseNVMeConfig(input)
+	if err != nil {
+		t.Fatalf("README NVME_NAMESPACES example must parse: %v", err)
+	}
+	if len(configs) != 1 || len(configs[0].Namespaces) != 1 {
+		t.Fatalf("README example parsed unexpected layout: %#v", configs)
+	}
+	if got := configs[0].Namespaces[0].BlockSize; got != 512 {
+		t.Fatalf("README example default blockSize = %d, want 512", got)
+	}
+}
+
 func TestNVMeControllerRegex(t *testing.T) {
 	tests := []struct {
 		name  string
