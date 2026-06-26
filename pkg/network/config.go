@@ -235,9 +235,14 @@ func ParseVLANs(spec string) ([]VLANConfig, error) {
 			return nil, fmt.Errorf("VLAN ID %d out of range (1-4094)", id)
 		}
 
+		parent := strings.TrimSpace(parts[1])
+		if parent == "" {
+			return nil, fmt.Errorf("invalid VLAN entry %q: parent interface is required", entry)
+		}
+
 		cfg := VLANConfig{
 			ID:     id,
-			Parent: strings.TrimSpace(parts[1]),
+			Parent: parent,
 		}
 		if len(parts) >= 3 {
 			cfg.Address = strings.TrimSpace(parts[2])
