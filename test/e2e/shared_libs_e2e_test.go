@@ -164,6 +164,7 @@ func TestFullInitramfsMkfsVfatSupportsFATSizeFlagE2E(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			image := buildStageImage(t, tc.stage)
+			checkSharedLibs(t, image, []string{"bin/lsblk"})
 			ldPaths := strings.Join([]string{
 				"/build/initramfs/lib",
 				"/build/initramfs/usr/lib",

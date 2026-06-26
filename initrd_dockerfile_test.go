@@ -164,7 +164,8 @@ func TestDockerfileUsesUtilLinuxLsblk(t *testing.T) {
 	rmCommandHasLsblk := false
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "COPY --from=tools /bin/lsblk bin/lsblk" {
+		if trimmed == "COPY --from=tools /bin/lsblk bin/lsblk" ||
+			trimmed == "COPY --from=tools /usr/bin/lsblk bin/lsblk" {
 			lsblkCopies++
 		}
 		if strings.HasPrefix(trimmed, "RUN rm -f ") {
