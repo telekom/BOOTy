@@ -438,14 +438,16 @@ Operations on mounted root filesystem at `/newroot`:
    run via `chroot /newroot /bin/bash -c "{command}"`
 5. **Configure GRUB**:
    - Write `/etc/default/grub.d/10-caprf-kernel-params.cfg`
-   - Content: `GRUB_CMDLINE_LINUX="ds=nocloud console={ttyS0|ttyS1} {ExtraKernelParams}"`
+   - Content includes the selected cloud-init datasource parameter:
+     `ds=nocloud` for NoCloud, `ci.datasource=ConfigDrive` for ConfigDrive.
    - Console selection: Lenovo → ttyS1, default → ttyS0 (from dmidecode)
    - Run `chroot /newroot update-grub`
 6. **Copy machine files**: Copy files from machine config to root filesystem
 7. **Cloud-init setup**:
-   - Write `/etc/cloud/nocloud/user-data`
-   - Write `/etc/cloud/nocloud/meta-data`
-   - Write `/etc/cloud/cloud.cfg.d/99-local.cfg` (datasource: NoCloud)
+   - NoCloud writes seed files below
+     `/var/lib/cloud/seed/nocloud/`
+   - ConfigDrive writes OpenStack seed files below
+     `/var/lib/cloud/seed/config_drive/openstack/latest/`
 8. **EFI boot management**:
    - Mount efivarfs
    - Remove old ubuntu boot entries (efibootmgr)
