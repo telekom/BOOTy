@@ -79,7 +79,18 @@ func TestParseNVMeConfigReadmeExample(t *testing.T) {
 	if len(configs) != 1 || len(configs[0].Namespaces) != 1 {
 		t.Fatalf("README example parsed unexpected layout: %#v", configs)
 	}
-	if got := configs[0].Namespaces[0].BlockSize; got != 512 {
+	cfg := configs[0]
+	if got := cfg.Controller; got != "/dev/nvme0" {
+		t.Fatalf("README example controller = %q, want /dev/nvme0", got)
+	}
+	ns := cfg.Namespaces[0]
+	if got := ns.Label; got != "os" {
+		t.Fatalf("README example label = %q, want os", got)
+	}
+	if got := ns.SizePct; got != 100 {
+		t.Fatalf("README example sizePct = %d, want 100", got)
+	}
+	if got := ns.BlockSize; got != 512 {
 		t.Fatalf("README example default blockSize = %d, want 512", got)
 	}
 }
