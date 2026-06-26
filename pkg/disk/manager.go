@@ -705,7 +705,7 @@ func isLinuxFilesystemPartitionType(partitionType string) bool {
 // GrowPartition grows a partition to fill available space using growpart.
 func (m *Manager) GrowPartition(ctx context.Context, disk string, partNum int) error {
 	slog.Info("growing partition", "disk", disk, "partition", partNum)
-	out, err := m.cmd.Run(ctx, "growpart", disk, strconv.Itoa(partNum))
+	out, err := m.cmd.Run(ctx, "growpart", "--update", "off", disk, strconv.Itoa(partNum))
 	if err != nil {
 		// growpart exits 1 if partition already fills the disk.
 		if strings.Contains(string(out), "NOCHANGE") {
@@ -713,6 +713,9 @@ func (m *Manager) GrowPartition(ctx context.Context, disk string, partNum int) e
 			return nil
 		}
 		return fmt.Errorf("growpart %s %d: %s: %w", disk, partNum, string(out), err)
+	}
+	if err := m.PartProbe(ctx, disk); err != nil {
+		return fmt.Errorf("refresh partition table after growpart %s %d: %w", disk, partNum, err)
 	}
 	return nil
 }
