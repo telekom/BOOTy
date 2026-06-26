@@ -2029,6 +2029,27 @@ func TestVerifyImageSignature_MissingPubKey(t *testing.T) {
 	}
 }
 
+func TestVerifyImageRejectsMultiLayerOCIBeforeWipe(t *testing.T) {
+	srv := startDryRunOCIRegistry(t)
+	defer srv.Close()
+	ref := pushDryRunMultiLayerOCIImage(t, srv, "test/multi-layer-os:v1", "layer-1", "layer-2")
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{"oci://" + ref}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err := o.verifyImageSignature(context.Background())
+	if err == nil {
+		t.Fatal("expected multi-layer OCI image rejection")
+	}
+	if !strings.Contains(err.Error(), "expected exactly one payload layer") {
+		t.Fatalf("error = %q, want exactly one payload layer", err.Error())
+	}
+	if o.bestImageURL != "oci://"+ref {
+		t.Fatalf("bestImageURL = %q, want selected OCI ref", o.bestImageURL)
+	}
+}
+
 func TestDryRunImageMode(t *testing.T) {
 	tests := []struct {
 		name   string

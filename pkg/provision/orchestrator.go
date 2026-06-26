@@ -1312,6 +1312,13 @@ func (o *Orchestrator) verifyImageSignature(ctx context.Context) error {
 	}
 	o.bestImageURL = bestURL
 
+	if image.IsOCIReference(bestURL) {
+		ref := image.TrimOCIScheme(bestURL)
+		if err := image.ProbeOCIReference(ctx, ref); err != nil {
+			return fmt.Errorf("probing OCI image source: %w", err)
+		}
+	}
+
 	if o.cfg.Provision.Image.SignatureURL == "" {
 		o.log.Info("no image signature URL configured, skipping verification")
 		return nil

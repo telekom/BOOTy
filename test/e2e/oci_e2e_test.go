@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -269,10 +270,10 @@ func TestOCIStreamNotFoundE2E(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 7: OCI Multi-Layer Image (last layer used)
+// Test 7: OCI Multi-Layer Image (rejected)
 // ---------------------------------------------------------------------------
 
-func TestOCIMultiLayerLastUsedE2E(t *testing.T) {
+func TestOCIMultiLayerRejectedE2E(t *testing.T) {
 	srv := startOCIRegistry(t)
 	host := srv.Listener.Addr().String()
 
@@ -303,19 +304,15 @@ func TestOCIMultiLayerLastUsedE2E(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	rc, err := image.FetchOCILayer(ctx, ref)
-	if err != nil {
-		t.Fatal(err)
+	_, err = image.FetchOCILayer(ctx, ref)
+	if err == nil {
+		t.Fatal("expected multi-layer OCI image rejection")
 	}
-	defer func() { _ = rc.Close() }()
-
-	var buf bytes.Buffer
-	if _, err := buf.ReadFrom(rc); err != nil {
-		t.Fatal(err)
+	if !strings.Contains(err.Error(), "expected exactly one payload layer") {
+		t.Fatalf("error = %q, want exactly one payload layer", err.Error())
 	}
-
-	if !bytes.Equal(buf.Bytes(), layer2Data) {
-		t.Errorf("expected last layer data, got %d bytes", buf.Len())
+	if err := image.ProbeOCIReference(ctx, ref); err == nil {
+		t.Fatal("expected ProbeOCIReference to reject multi-layer OCI image")
 	}
 }
 

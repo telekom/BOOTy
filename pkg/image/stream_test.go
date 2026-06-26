@@ -15,6 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/empty"
+	"github.com/google/go-containerregistry/pkg/v1/mutate"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/stream"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pierrec/lz4/v4"
 	"github.com/ulikunitz/xz"
@@ -403,6 +408,54 @@ func TestStreamNotFound(t *testing.T) {
 	err = Stream(context.Background(), srv.URL+"/missing.img", tmpFile.Name())
 	if err == nil {
 		t.Fatal("expected error for 404")
+	}
+}
+
+func TestStreamRejectsMultiLayerOCIWithoutChangingTarget(t *testing.T) {
+	srv := startTestRegistry(t)
+	defer srv.Close()
+
+	layer1 := stream.NewLayer(io.NopCloser(strings.NewReader("layer-1")))
+	layer2 := stream.NewLayer(io.NopCloser(strings.NewReader("layer-2")))
+	img, err := mutate.AppendLayers(empty.Image, layer1, layer2)
+	if err != nil {
+		t.Fatalf("mutate.AppendLayers: %v", err)
+	}
+
+	ref, err := name.ParseReference(strings.TrimPrefix(srv.URL, "http://") + "/test/multi-stream:v1")
+	if err != nil {
+		t.Fatalf("parse ref: %v", err)
+	}
+	if err := remote.Write(ref, img); err != nil {
+		t.Fatalf("remote.Write: %v", err)
+	}
+
+	const original = "existing target bytes"
+	tmpFile, err := os.CreateTemp(t.TempDir(), "disk-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpPath := tmpFile.Name()
+	if _, err := tmpFile.WriteString(original); err != nil {
+		t.Fatal(err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	err = Stream(context.Background(), "oci://"+ref.String(), tmpPath)
+	if err == nil {
+		t.Fatal("expected multi-layer OCI stream rejection")
+	}
+	if !strings.Contains(err.Error(), "expected exactly one payload layer") {
+		t.Fatalf("error = %q, want exactly one payload layer", err.Error())
+	}
+	got, err := os.ReadFile(tmpPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Fatalf("target was modified: got %q, want %q", got, original)
 	}
 }
 
