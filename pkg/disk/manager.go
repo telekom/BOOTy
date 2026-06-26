@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -994,6 +995,49 @@ func (m *Manager) Unmount(target string) error {
 		return fmt.Errorf("unmount %s: %w", target, err)
 	}
 	return nil
+}
+
+// UnmountRecursive unmounts root and any mounted children below it, deepest
+// paths first. Missing mount entries are treated as already clean.
+func (m *Manager) UnmountRecursive(root string) error {
+	targets, err := mountedSubpaths(root)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, target := range targets {
+		if err := m.Unmount(target); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func mountedSubpaths(root string) ([]string, error) {
+	data, err := os.ReadFile("/proc/mounts")
+	if err != nil {
+		return nil, fmt.Errorf("read mounts: %w", err)
+	}
+	root = strings.TrimRight(root, "/")
+	seen := map[string]struct{}{}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		target := fields[1]
+		if target == root || strings.HasPrefix(target, root+"/") {
+			seen[target] = struct{}{}
+		}
+	}
+	targets := make([]string, 0, len(seen))
+	for target := range seen {
+		targets = append(targets, target)
+	}
+	sort.Slice(targets, func(i, j int) bool {
+		return len(targets[i]) > len(targets[j])
+	})
+	return targets, nil
 }
 
 // exitCodeFromError extracts the process exit code from an error chain.

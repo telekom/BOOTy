@@ -2138,7 +2138,18 @@ func (o *Orchestrator) teardownChroot(_ context.Context) error {
 }
 
 func (o *Orchestrator) shouldKeepChrootMountedForKexec() bool {
-	return !o.cfg.Provision.DisableKexec && !o.firmwareChanged
+	return ShouldKeepTargetRootMountedForKexec(o.cfg, o.firmwareChanged)
+}
+
+// ShouldKeepTargetRootMountedForKexec mirrors the main kexec gates so teardown
+// only preserves /newroot when the following exit path can attempt kexec.
+func ShouldKeepTargetRootMountedForKexec(cfg *config.MachineConfig, firmwareChanged bool) bool {
+	if cfg == nil {
+		return false
+	}
+	return !cfg.Provision.DisableKexec &&
+		!cfg.Provision.SecureBoot.ReEnable &&
+		!firmwareChanged
 }
 
 func (o *Orchestrator) unmountBoot() error {
