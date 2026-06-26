@@ -234,6 +234,7 @@ func TestSlimSharedLibsResolveE2E(t *testing.T) {
 		"bin/ip", "bin/ethtool", "bin/curl",
 		"bin/partprobe", "bin/partx", "bin/lsblk", "sbin/e2fsck", "sbin/resize2fs",
 		"sbin/mkfs.ext4", "sbin/mkfs.vfat", "sbin/mkfs.xfs",
+		"sbin/xfs_growfs", "sbin/xfs_repair", "bin/btrfs",
 	})
 }
 

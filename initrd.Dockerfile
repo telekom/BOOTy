@@ -426,6 +426,9 @@ COPY --from=tools /sbin/resize2fs sbin/resize2fs
 COPY --from=tools /usr/sbin/mkfs.ext4 sbin/mkfs.ext4
 COPY --from=tools /usr/sbin/mkfs.vfat sbin/mkfs.vfat
 COPY --from=tools /usr/sbin/mkfs.xfs sbin/mkfs.xfs
+COPY --from=tools /usr/sbin/xfs_growfs sbin/xfs_growfs
+COPY --from=tools /usr/sbin/xfs_repair sbin/xfs_repair
+COPY --from=tools /usr/bin/btrfs bin/btrfs
 
 # Copy pre-collected shared libraries (slim was previously missing lib copying
 # entirely, breaking all dynamically linked tool binaries at runtime).
