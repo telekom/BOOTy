@@ -36,8 +36,9 @@ deviations from the original proposal:
   returns error if no peers were added.
 - **Peer helpers**: `addInterfacePeers()` and `addNumberedPeers()` extracted
   to reduce cognitive complexity.
-- **E2E testing**: Three containerlab topologies (unnumbered, dual, numbered)
-  plus three vrnetlab topologies for Cumulus VM testing.
+- **E2E testing**: Containerlab topologies cover unnumbered, dual, and
+  numbered modes. The GoBGP vrnetlab topology boots BOOTy in QEMU VMs against
+  FRR-based fabric containers; it is not vendor NOS switch proof.
 - **CI**: Dedicated `e2e-gobgp` CI job in GitHub Actions with
   containerlab-based topology.
 - **Release**: GoBGP artifacts added to `release.yml` workflow.
@@ -466,15 +467,18 @@ func Setup(ctx context.Context) error {
 
 ## Switch Vendor Compatibility
 
-BGP unnumbered (RFC 5549) and EVPN (RFC 7432) compatibility:
+The repository currently proves GoBGP interop against FRR fabric containers in
+Containerlab/vrnetlab. It does not include CI or documented manual evidence for
+vendor NOS images or physical switches.
 
-| Vendor | Platform | BGP Unnumbered | EVPN Type-5 | Tested |
-|--------|----------|---------------|-------------|--------|
-| Cumulus/NVIDIA | Spectrum | ✅ Native | ✅ Native | ✅ Containerlab |
-| Arista | EOS | ✅ 4.23+ | ✅ 4.21+ | ⬜ Planned |
-| Cisco | NX-OS | ✅ 9.3+ | ✅ 9.2+ | ⬜ Planned |
-| Dell/OS10 | S5200 | ✅ 10.5+ | ✅ 10.5+ | ⬜ Planned |
-| SONiC | Generic | ✅ Native | ✅ Native | ⬜ Planned |
+| Target | Repo Evidence |
+|--------|---------------|
+| FRR fabric containers | CI/containerlab and vrnetlab topologies |
+| Cumulus/NVIDIA | Not proven in this repo |
+| Arista EOS | Not proven in this repo |
+| Cisco NX-OS | Not proven in this repo |
+| Dell OS10 | Not proven in this repo |
+| SONiC | Not proven in this repo |
 
 **Key risk**: BGP unnumbered uses IPv6 link-local addresses for peering
 (RFC 5549). GoBGP supports this, but interop with each vendor's
@@ -586,7 +590,7 @@ without SSH or `vtysh`.
   FRR `bfdd` as a sidecar.
 - **BGP unnumbered**: GoBGP's RFC 5549 (interface peering via IPv6 LL)
   support needs verification with actual leaf switches. Mitigation:
-  test in containerlab with Cumulus VX first, then on physical hardware.
+  test in a vendor NOS lab first, then on physical hardware.
 - **EVPN Type-5 maturity**: FRR's EVPN Type-5 is battle-tested in DC
   fabrics. GoBGP's Type-5 support is less deployed but the route type
   itself is simpler than Type-2/3 (pure L3, no MAC learning). Mitigation:
