@@ -527,6 +527,9 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 
 func networkModeWithResolvers(ctx context.Context, netCfg *network.Config, mode network.Mode, cleanup *linkLayerCleanup) (network.Mode, error) {
 	if err := network.ConfigureResolvers(netCfg.DNSResolvers); err != nil {
+		if cleanupErr := mode.Teardown(ctx); cleanupErr != nil {
+			slog.Warn("network mode cleanup after resolver setup failure failed", "error", cleanupErr)
+		}
 		if cleanupErr := cleanup.Teardown(ctx); cleanupErr != nil {
 			slog.Warn("link-layer cleanup after resolver setup failure failed", "error", cleanupErr)
 		}

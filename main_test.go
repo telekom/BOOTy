@@ -213,6 +213,47 @@ func TestPrepareLinkLayersRollsBackOnVLANFailure(t *testing.T) {
 	}
 }
 
+func TestNetworkModeWithResolversCleansModeAndLinkLayersOnResolverFailure(t *testing.T) {
+	previousTeardownVLAN := teardownVLANLayer
+	var calls []string
+	teardownVLANLayer = func(v network.VLANConfig) error {
+		calls = append(calls, fmt.Sprintf("teardown-vlan:%d", v.ID))
+		return nil
+	}
+	t.Cleanup(func() {
+		teardownVLANLayer = previousTeardownVLAN
+	})
+
+	mode := teardownRecorderMode{teardown: func() error {
+		calls = append(calls, "teardown-mode")
+		return nil
+	}}
+	cleanup := &linkLayerCleanup{
+		bond: teardownRecorderMode{teardown: func() error {
+			calls = append(calls, "teardown-bond")
+			return nil
+		}},
+		vlans: []network.VLANConfig{{ID: 100, Parent: "bond0"}},
+	}
+	netCfg := &network.Config{DNSResolvers: "8.8.8.8\nsearch evil.example"}
+
+	got, err := networkModeWithResolvers(context.Background(), netCfg, mode, cleanup)
+	if err == nil {
+		t.Fatal("networkModeWithResolvers() error = nil, want resolver validation failure")
+	}
+	if got != nil {
+		t.Fatalf("networkModeWithResolvers() mode = %T, want nil", got)
+	}
+	if !strings.Contains(err.Error(), "configure initramfs DNS") {
+		t.Fatalf("networkModeWithResolvers() error = %q, want DNS context", err.Error())
+	}
+
+	want := []string{"teardown-mode", "teardown-vlan:100", "teardown-bond"}
+	if strings.Join(calls, ",") != strings.Join(want, ",") {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+}
+
 func TestRequiresABKexec(t *testing.T) {
 	tests := []struct {
 		name     string
