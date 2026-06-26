@@ -51,6 +51,13 @@ jobs:
             --output type=local,dest=out-gobgp-iso -f initrd.Dockerfile .
 
           test -f out-gobgp-iso/booty-gobgp.iso
+          max_iso_bytes=$((140 * 1024 * 1024))
+          iso_bytes=$(stat -c%s "out-gobgp-iso/booty-gobgp.iso")
+          echo "GoBGP ISO size: $(numfmt --to=iec "$iso_bytes")"
+          if [ "$iso_bytes" -gt "$max_iso_bytes" ]; then
+            echo "::error::GoBGP ISO is $(numfmt --to=iec "$iso_bytes"), above hard cap $(numfmt --to=iec "$max_iso_bytes")"
+            exit 1
+          fi
           sha256sum out-gobgp-iso/booty-gobgp.iso > out-gobgp-iso/booty-gobgp.iso.sha256
           python3 - <<'PY'
           import datetime

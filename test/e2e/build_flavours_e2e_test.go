@@ -11,6 +11,13 @@ import (
 	"time"
 )
 
+const (
+	maxMicroInitramfsMB   = 20.0
+	maxSlimInitramfsMB    = 70.0
+	maxGoBGPInitramfsMB   = 100.0
+	maxDefaultInitramfsMB = 140.0
+)
+
 func dockerAvailable(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("docker"); err != nil {
@@ -427,7 +434,7 @@ func assertRequiredInitDeviceNodeModes(t *testing.T, entries map[string]cpioEntr
 	}
 }
 
-// assertFileSize checks that the cpio.gz file is within the expected size range.
+// assertFileSize checks that the compressed initramfs artifact is within the expected size range.
 func assertFileSize(t *testing.T, path string, minMB, maxMB float64) {
 	t.Helper()
 	info, err := os.Stat(path)
@@ -967,4 +974,9 @@ func TestBuildFlavourSizeOrderWithGoBGPE2E(t *testing.T) {
 	if gobgpInfo.Size() > defaultInfo.Size()*2 {
 		t.Error("gobgp should not be more than 2x the default size")
 	}
+
+	assertFileSize(t, microCpio, 0.1, maxMicroInitramfsMB)
+	assertFileSize(t, slimCpio, 0.1, maxSlimInitramfsMB)
+	assertFileSize(t, gobgpCpio, 0.1, maxGoBGPInitramfsMB)
+	assertFileSize(t, defaultCpio, 0.1, maxDefaultInitramfsMB)
 }
