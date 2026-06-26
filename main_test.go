@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -132,6 +134,71 @@ func TestTryKexecSkipsWhenSecureBootReEnableRequested(t *testing.T) {
 
 	if tryKexec(cfg, false) {
 		t.Fatal("tryKexec returned true when secure boot re-enable requires hard reboot")
+	}
+}
+
+func TestResolveKexecPath(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "boot", "vmlinuz-6.1.0"))
+	mustWrite(t, filepath.Join(root, "boot", "initrd.img-6.1.0"))
+	mustWrite(t, filepath.Join(root, "boot", "initramfs-6.1.0.img"))
+	mustWrite(t, filepath.Join(root, "boot", "explicit-root-kernel"))
+	mustWrite(t, filepath.Join(root, "vmlinuz-local"))
+	mustWrite(t, filepath.Join(root, "boot", "vmlinuz-local"))
+
+	tests := []struct {
+		name     string
+		grubPath string
+		want     string
+	}{
+		{
+			name:     "keeps explicit boot path",
+			grubPath: "/boot/vmlinuz-6.1.0",
+			want:     filepath.Join(root, "boot", "vmlinuz-6.1.0"),
+		},
+		{
+			name:     "resolves root relative vmlinuz below mounted boot",
+			grubPath: "/vmlinuz-6.1.0",
+			want:     filepath.Join(root, "boot", "vmlinuz-6.1.0"),
+		},
+		{
+			name:     "resolves root relative initrd below mounted boot",
+			grubPath: "/initrd.img-6.1.0",
+			want:     filepath.Join(root, "boot", "initrd.img-6.1.0"),
+		},
+		{
+			name:     "resolves root relative initramfs below mounted boot",
+			grubPath: "/initramfs-6.1.0.img",
+			want:     filepath.Join(root, "boot", "initramfs-6.1.0.img"),
+		},
+		{
+			name:     "prefers root path when it exists",
+			grubPath: "/vmlinuz-local",
+			want:     filepath.Join(root, "vmlinuz-local"),
+		},
+		{
+			name:     "does not move non boot artifact under boot",
+			grubPath: "/EFI/BOOT/BOOTX64.EFI",
+			want:     filepath.Join(root, "EFI", "BOOT", "BOOTX64.EFI"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolveKexecPath(root, tt.grubPath); got != tt.want {
+				t.Fatalf("resolveKexecPath(%q) = %q, want %q", tt.grubPath, got, tt.want)
+			}
+		})
+	}
+}
+
+func mustWrite(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte("test"), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
 }
 
