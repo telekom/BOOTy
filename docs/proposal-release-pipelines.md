@@ -96,7 +96,7 @@ jobs:
       - id: version
         run: |
           BASE=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          echo "version=${BASE}-nightly.$(date +%Y%m%d).${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "version=${BASE}-nightly.$(date +%Y%m%d).${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
   build:
     needs: version
@@ -123,6 +123,7 @@ jobs:
 
   container:
     needs: [version, build, scan, sbom]
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: write

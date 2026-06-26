@@ -25,7 +25,7 @@ jobs:
             echo "::error::latest tag ${BASE} is not a valid release version"
             exit 1
           fi
-          printf 'version=%s-nightly.%s.%s\n' "${BASE}" "$(date +%Y%m%d)" "${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          printf 'version=%s-nightly.%s.%s.%s\n' "${BASE}" "$(date +%Y%m%d)" "${GITHUB_RUN_NUMBER}" "${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build (${{ matrix.arch }}/${{ matrix.flavor }})
@@ -137,6 +137,7 @@ jobs:
     name: Nightly Container Image
     needs: [version, build, scan, sbom]
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: write
