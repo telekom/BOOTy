@@ -309,10 +309,19 @@ func removeLinkByName(name string) error {
 }
 
 func isMissingNetlinkObject(err error) bool {
+	if err == nil {
+		return false
+	}
+	for _, target := range []error{os.ErrNotExist, syscall.ENOENT, syscall.ENODEV, syscall.EADDRNOTAVAIL} {
+		if errors.Is(err, target) {
+			return true
+		}
+	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "no such") ||
 		strings.Contains(msg, "not found") ||
-		strings.Contains(msg, "cannot find")
+		strings.Contains(msg, "cannot find") ||
+		strings.Contains(msg, "cannot assign requested address")
 }
 
 // DumpFRRState logs FRR diagnostic state via the commander abstraction.

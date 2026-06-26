@@ -500,6 +500,25 @@ func TestRollbackSetupSkipsFRRStateDumpBeforeStart(t *testing.T) {
 	}
 }
 
+func TestIsMissingNetlinkObjectCoversAlreadyRemovedResources(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "wrapped enoent", err: fmt.Errorf("find link: %w", syscall.ENOENT)},
+		{name: "wrapped enodev", err: fmt.Errorf("delete link: %w", syscall.ENODEV)},
+		{name: "wrapped eaddrnotavail", err: fmt.Errorf("delete addr: %w", syscall.EADDRNOTAVAIL)},
+		{name: "netlink string", err: fmt.Errorf("delete addr 10.0.0.21/32 from lo: cannot assign requested address")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !isMissingNetlinkObject(tt.err) {
+				t.Fatalf("isMissingNetlinkObject(%v) = false, want true", tt.err)
+			}
+		})
+	}
+}
+
 func setupFakeDaemonDir(t *testing.T, names []string) {
 	t.Helper()
 	dir := t.TempDir()
