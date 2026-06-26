@@ -287,6 +287,7 @@ func TestParseVLANs(t *testing.T) {
 			false,
 		},
 		{"invalid_no_parent", "200", nil, true},
+		{"invalid_empty_parent", "200:", nil, true},
 		{"invalid_id_zero", "0:eth0", nil, true},
 		{"invalid_id_high", "4095:eth0", nil, true},
 		{"invalid_id_text", "abc:eth0", nil, true},
