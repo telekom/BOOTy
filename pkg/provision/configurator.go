@@ -757,13 +757,25 @@ func isManagedEFIBootEntryLine(line string) bool {
 	if len(line) <= 8 || !strings.HasPrefix(line, "Boot") {
 		return false
 	}
-	lower := strings.ToLower(line)
+	label := efiBootEntryLineLabel(line)
+	if label == "" {
+		return false
+	}
 	for _, vendor := range managedEFIVendors {
-		if strings.Contains(lower, vendor) {
+		if strings.EqualFold(label, vendor) {
 			return true
 		}
 	}
 	return false
+}
+
+func efiBootEntryLineLabel(line string) string {
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return ""
+	}
+	label := fields[1]
+	return strings.TrimSuffix(label, "*")
 }
 
 func efiBootEntryLabel(loader string) string {

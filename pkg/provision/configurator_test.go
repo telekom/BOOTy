@@ -168,9 +168,11 @@ func TestManagedEFIBootEntryLine(t *testing.T) {
 	}{
 		{line: "Boot0001* ubuntu", want: true},
 		{line: "Boot0002* debian", want: true},
-		{line: "Boot0003* Windows Boot Manager", want: false},
+		{line: "Boot0003* rescue-ubuntu-old HD(1,GPT,...)/File(\\EFI\\BOOT\\BOOTX64.EFI)", want: false},
+		{line: "Boot0004* Windows Boot Manager HD(1,GPT,...)/File(\\EFI\\ubuntu\\shimx64.efi)", want: false},
+		{line: "Boot0005* Windows Boot Manager", want: false},
 		{line: "BootOrder: 0001,0002", want: false},
-		{line: "Boot0004* Fedora", want: false},
+		{line: "Boot0006* Fedora", want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.line, func(t *testing.T) {

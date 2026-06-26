@@ -728,6 +728,10 @@ func TestInstallEFIFallbackLoader(t *testing.T) {
 func TestInstallEFIFallbackLoaderUsesDebianBootloaderID(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
+	oldAssetDir := efiFallbackAssetDirectory
+	efiFallbackAssetDirectory = t.TempDir()
+	t.Cleanup(func() { efiFallbackAssetDirectory = oldAssetDir })
+
 	target, err := grubEFITarget(runtime.GOARCH)
 	if err != nil {
 		t.Fatal(err)
