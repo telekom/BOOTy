@@ -16,12 +16,25 @@ on:
           - stable
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  reject-non-default-ref:
+    name: Reject non-default dispatch ref
+    runs-on: ubuntu-latest
+    if: github.ref != format('refs/heads/{0}', github.event.repository.default_branch)
+    steps:
+      - name: Reject promotion from non-default ref
+        run: |
+          echo "::error::Release promotion must be dispatched from refs/heads/${{ github.event.repository.default_branch }}; got ${GITHUB_REF}"
+          exit 1
+
   promote:
     name: Promote ${{ inputs.version }} to ${{ inputs.channel }}
     runs-on: ubuntu-latest
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    permissions:
+      contents: write
     environment: ${{ inputs.channel }}
     env:
       SOURCE_VERSION: ${{ inputs.version }}
