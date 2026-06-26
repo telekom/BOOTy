@@ -91,6 +91,10 @@ func downloadAndPrepareRaw(ctx context.Context, url string) (string, error) {
 
 	rawPath := ramdiskPath + "/image.raw"
 
+	if isUnsupportedContainerFormat(format) {
+		return "", unsupportedImageFormatError(format)
+	}
+
 	switch format {
 	case FormatQCOW2:
 		if err := convertQCOW2ToRaw(ctx, downloadPath, rawPath); err != nil {

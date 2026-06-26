@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
@@ -259,9 +260,71 @@ func TestDetectFormatQCOW2(t *testing.T) {
 	}
 }
 
+func TestDetectFormatUnsupportedVMwareContainers(t *testing.T) {
+	ova := make([]byte, 512)
+	copy(ova[257:], []byte("ustar"))
+
+	tests := []struct {
+		name string
+		data []byte
+		want Format
+	}{
+		{
+			name: "vmdk sparse extent",
+			data: []byte{'K', 'D', 'M', 'V', 0x00, 0x00},
+			want: FormatVMDK,
+		},
+		{
+			name: "vmdk descriptor",
+			data: []byte("# Disk DescriptorFile\nversion=1\n"),
+			want: FormatVMDK,
+		},
+		{
+			name: "ovf xml declaration",
+			data: []byte("<?xml version=\"1.0\"?><Envelope></Envelope>"),
+			want: FormatOVF,
+		},
+		{
+			name: "ovf envelope",
+			data: []byte("  <ovf:Envelope></ovf:Envelope>"),
+			want: FormatOVF,
+		},
+		{
+			name: "ova tar archive",
+			data: ova,
+			want: FormatOVA,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, _, err := DetectFormat(bytes.NewReader(tt.data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if f != tt.want {
+				t.Errorf("got %s, want %s", f, tt.want)
+			}
+		})
+	}
+}
+
 func TestDecompressorQCOW2_ReturnsError(t *testing.T) {
 	_, _, err := Decompressor(bytes.NewReader(nil), FormatQCOW2)
 	if err == nil {
 		t.Fatal("expected error for qcow2 decompressor, got nil")
+	}
+}
+
+func TestDecompressorUnsupportedVMwareContainersReturnError(t *testing.T) {
+	for _, format := range []Format{FormatVMDK, FormatOVA, FormatOVF} {
+		t.Run(string(format), func(t *testing.T) {
+			_, _, err := Decompressor(bytes.NewReader(nil), format)
+			if err == nil {
+				t.Fatal("expected unsupported format error, got nil")
+			}
+			if !strings.Contains(err.Error(), "convert to raw or qcow2") {
+				t.Fatalf("error = %q, want conversion guidance", err.Error())
+			}
+		})
 	}
 }

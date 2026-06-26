@@ -6,6 +6,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -71,6 +73,31 @@ func TestVerifyRawImageChecksumMismatch(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("error = %q, want checksum mismatch", err.Error())
+	}
+}
+
+func TestDownloadAndPrepareRawRejectsUnsupportedVMwareContainer(t *testing.T) {
+	if err := os.RemoveAll(ramdiskPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(ramdiskPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(ramdiskPath) })
+
+	data := append([]byte{'K', 'D', 'M', 'V'}, []byte("vmdk payload")...)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	}))
+	defer srv.Close()
+
+	_, err := downloadAndPrepareRaw(context.Background(), srv.URL+"/image.vmdk")
+	if err == nil {
+		t.Fatal("expected unsupported VMDK error")
+	}
+	if !strings.Contains(err.Error(), "unsupported image format vmdk") {
+		t.Fatalf("error = %q, want unsupported VMDK format", err.Error())
 	}
 }
 

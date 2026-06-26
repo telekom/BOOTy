@@ -637,6 +637,42 @@ func TestStreamQCOW2Detection(t *testing.T) {
 	}
 }
 
+func TestStreamRejectsUnsupportedVMwareContainerBeforeWrite(t *testing.T) {
+	data := append([]byte{'K', 'D', 'M', 'V'}, []byte("vmdk payload")...)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	}))
+	defer srv.Close()
+
+	tmpFile, err := os.CreateTemp(t.TempDir(), "disk-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := []byte("existing target data")
+	if _, err := tmpFile.Write(before); err != nil {
+		t.Fatal(err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	err = Stream(context.Background(), srv.URL+"/image.vmdk", tmpFile.Name())
+	if err == nil {
+		t.Fatal("expected unsupported VMDK error")
+	}
+	if !strings.Contains(err.Error(), "unsupported image format vmdk") {
+		t.Fatalf("error = %q, want unsupported VMDK format", err.Error())
+	}
+	after, err := os.ReadFile(tmpFile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("target changed after unsupported format: got %q, want %q", after, before)
+	}
+}
+
 func TestStreamQCOW2ChecksumMismatch(t *testing.T) {
 	data := append([]byte{0x51, 0x46, 0x49, 0xfb}, []byte("qcow2 payload for checksum")...)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
