@@ -311,7 +311,64 @@ func Test_DetectPhysicalNICs_noRetryNeeded(t *testing.T) {
 	defer restore()
 
 	sleepFunc = func(time.Duration) {} // no-op: must not block
+	callCount := 0
 	linkList = func() ([]netlink.Link, error) {
+		callCount++
+		return []netlink.Link{
+			fakeLink("eth0", testMAC),
+			fakeLink("eth1", testMAC),
+		}, nil
+	}
+
+	nics, err := DetectPhysicalNICs()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(nics) != 2 || nics[0] != "eth0" || nics[1] != "eth1" {
+		t.Fatalf("expected [eth0 eth1], got %v", nics)
+	}
+	if callCount != 1 {
+		t.Fatalf("expected one scan, got %d", callCount)
+	}
+}
+
+func Test_DetectPhysicalNICs_waitsForLateFabricLink(t *testing.T) {
+	restore := snapshotNICFns()
+	defer restore()
+
+	sleepFunc = func(time.Duration) {} // no-op: must not block
+	callCount := 0
+	linkList = func() ([]netlink.Link, error) {
+		callCount++
+		if callCount <= 3 {
+			return []netlink.Link{fakeLink("eth0", testMAC)}, nil
+		}
+		return []netlink.Link{
+			fakeLink("eth0", testMAC),
+			fakeLink("eth1", testMAC),
+		}, nil
+	}
+
+	nics, err := DetectPhysicalNICs()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(nics) != 2 || nics[0] != "eth0" || nics[1] != "eth1" {
+		t.Fatalf("expected [eth0 eth1], got %v", nics)
+	}
+	if callCount != 4 {
+		t.Fatalf("expected four scans, got %d", callCount)
+	}
+}
+
+func Test_DetectPhysicalNICs_returnsSingleNICAfterSettleWindow(t *testing.T) {
+	restore := snapshotNICFns()
+	defer restore()
+
+	sleepFunc = func(time.Duration) {} // no-op: must not block
+	callCount := 0
+	linkList = func() ([]netlink.Link, error) {
+		callCount++
 		return []netlink.Link{fakeLink("eth0", testMAC)}, nil
 	}
 
@@ -321,6 +378,9 @@ func Test_DetectPhysicalNICs_noRetryNeeded(t *testing.T) {
 	}
 	if len(nics) != 1 || nics[0] != "eth0" {
 		t.Fatalf("expected [eth0], got %v", nics)
+	}
+	if callCount != physicalNICSingleNICSettleRetries+1 {
+		t.Fatalf("expected %d scans, got %d", physicalNICSingleNICSettleRetries+1, callCount)
 	}
 }
 
