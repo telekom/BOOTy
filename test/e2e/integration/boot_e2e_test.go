@@ -54,7 +54,12 @@ func requireBootLab(t *testing.T) {
 
 func bootDockerExec(t *testing.T, container string, args ...string) (string, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	return bootDockerExecWithTimeout(t, 60*time.Second, container, args...)
+}
+
+func bootDockerExecWithTimeout(t *testing.T, timeout time.Duration, container string, args ...string) (string, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmdArgs := append([]string{"exec", container}, args...)
 	out, err := exec.CommandContext(ctx, "docker", cmdArgs...).CombinedOutput()
@@ -150,11 +155,67 @@ func waitForLogEntrySince(t *testing.T, container, entry string, timeout time.Du
 	return false
 }
 
-// bootyNetworkFailed checks if BOOTy exhausted all network retries.
-func bootyNetworkFailed(t *testing.T, container string, since time.Time) bool {
+// bootyNetworkNeedsRecovery checks if BOOTy can no longer serve as a live
+// network probe without a restart. This includes explicit connectivity
+// exhaustion and terminal mode exit after retries are exhausted.
+func bootyNetworkNeedsRecovery(t *testing.T, container string, since time.Time) bool {
 	t.Helper()
 	logs := getBootyLogsSince(t, container, since)
-	return strings.Contains(logs, "network connectivity failed after all retries")
+	return networkProbeNeedsRestart(logs)
+}
+
+func networkProbeNeedsRestart(logs string) bool {
+	restartMarkers := []string{
+		"network connectivity failed after all retries",
+		"mode exited with error",
+		"network teardown error",
+	}
+	for _, marker := range restartMarkers {
+		if strings.Contains(logs, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestNetworkProbeNeedsRestart(t *testing.T) {
+	tests := []struct {
+		name string
+		logs string
+		want bool
+	}{
+		{
+			name: "active network",
+			logs: `time=2026-06-26 level=INFO msg="Network connectivity established"`,
+		},
+		{
+			name: "connectivity exhausted",
+			logs: `level=ERROR msg="network connectivity failed after all retries"`,
+			want: true,
+		},
+		{
+			name: "mode exited",
+			logs: `level=ERROR msg="mode exited with error" mode=provision`,
+			want: true,
+		},
+		{
+			name: "teardown warning",
+			logs: `level=WARN msg="network teardown error"`,
+			want: true,
+		},
+		{
+			name: "frr teardown alone still allows retry",
+			logs: `level=INFO msg="FRR teardown complete" component=frr`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := networkProbeNeedsRestart(tt.logs); got != tt.want {
+				t.Fatalf("networkProbeNeedsRestart() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
 
 // restartContainer restarts a docker container and waits for it to be running.
@@ -217,8 +278,8 @@ func waitForBootHTTP(t *testing.T, probe bootHTTPProbe, timeout time.Duration) b
 		attempts := 0
 		for time.Now().Before(deadline) {
 			attempts++
-			if bootyNetworkFailed(t, probe.container, logSince) {
-				t.Logf("%s BOOTy exhausted network retries (round %d)", probe.desc, round)
+			if bootyNetworkNeedsRecovery(t, probe.container, logSince) {
+				t.Logf("%s BOOTy needs network recovery (round %d)", probe.desc, round)
 				break
 			}
 			if time.Until(deadline) <= time.Second {
@@ -584,7 +645,7 @@ func TestBootStandbyHeartbeatsSentToCAPRF(t *testing.T) {
 	requireBootLab(t)
 
 	// If standby's network failed, restart it and wait for recovery.
-	if bootyNetworkFailed(t, standbyContainer, time.Time{}) {
+	if bootyNetworkNeedsRecovery(t, standbyContainer, time.Time{}) {
 		logSince := restartContainer(t, standbyContainer)
 		// Wait for BOOTy to re-establish connectivity after restart.
 		if !waitForLogEntrySince(t, standbyContainer, "network connectivity established", 6*time.Minute, logSince) {
