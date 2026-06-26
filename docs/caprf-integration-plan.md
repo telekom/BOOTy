@@ -2,9 +2,11 @@
 
 ## Status: Implemented
 
-All phases below are complete. CI runs 12 jobs across lint, unit tests,
-build, E2E ContainerLab, E2E vrnetlab (EVPN boot), and KVM boot validation.
-All 12 jobs pass as of the `feat/carpf-integration` branch.
+All phases below are complete. Current CI truth lives in `.github/workflows/ci.yml`
+and includes lint, unit tests, build and artifact checks, ContainerLab E2E,
+vrnetlab EVPN boot validation, KVM boot validation, UEFI ISO boot validation,
+and privileged Linux E2E. Use the current default-branch workflow run as status
+truth rather than historical job counts or the original integration branch name.
 
 ## Overview
 

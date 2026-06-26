@@ -1,13 +1,13 @@
 # BOOTy — Coding Agent Guidance
 
 ## OVERVIEW
-Lightweight initramfs agent for bare-metal OS provisioning (not a K8s operator). Boots as PID 1, orchestrates 41 provisioning steps including disk imaging, shared data mounting, optional sysext loading, BGP/EVPN networking, and kexec.
+Lightweight initramfs agent for bare-metal OS provisioning (not a K8s operator). Boots as PID 1, orchestrates provisioning steps including disk imaging, shared data mounting, optional sysext loading, and BGP/EVPN networking. After the provisioning orchestrator reports success, `main.go` chooses kexec, hard reboot, or power-off handling.
 
 ## STRUCTURE
 | Directory | Purpose |
 |-----------|---------|
 | `pkg/network/` | Pluggable networking: `gobgp` (pure Go), `frr` (legacy), `lldp` (raw frames) |
-| `pkg/provision/` | The 41-step state machine for image/disk/shared-data/sysext/network/kexec flow |
+| `pkg/provision/` | State machine for image/disk/shared-data/sysext/network provisioning flow |
 | `pkg/crash/` | Startup crash artifact collection and host metadata correlation |
 | `pkg/realm/` | Low-level Linux primitives: syscalls, mounts, device creation |
 | `pkg/bios/` | Vendor-specific BIOS management (Dell, HPE, Lenovo, Supermicro) |
@@ -32,7 +32,7 @@ Lightweight initramfs agent for bare-metal OS provisioning (not a K8s operator).
 
 ## ANTI-PATTERNS
 - **No interactive prompts**: The agent runs unattended; all logic must be automated.
-- **No `time.Sleep` in tests**: Use channels, tickers, or context cancellation.
+- **No unbounded `time.Sleep` in tests**: Unit tests should use channels, tickers, or context cancellation. E2E polling may use deadline-bound sleeps with diagnostics.
 - **No shell-outs**: Prefer pure Go or direct syscalls (e.g. `unix.FinitModule`) over `exec.Command`.
 
 ## COMMANDS
