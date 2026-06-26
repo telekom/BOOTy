@@ -359,6 +359,21 @@ func TestTeardownStopsTrackedDirectDaemons(t *testing.T) {
 	}
 }
 
+func TestStopDaemonsDirectClearsEmptyState(t *testing.T) {
+	mgr := NewManager(newMockFRRCommander())
+	mgr.frrStartMethod = frrStartDirect
+
+	if err := mgr.stopDaemonsDirect(context.Background()); err != nil {
+		t.Fatalf("stopDaemonsDirect: %v", err)
+	}
+	if mgr.frrStartMethod != "" {
+		t.Fatalf("frrStartMethod = %q, want cleared", mgr.frrStartMethod)
+	}
+	if len(mgr.directDaemonList) != 0 {
+		t.Fatalf("directDaemonList = %v, want cleared", mgr.directDaemonList)
+	}
+}
+
 func TestRestartFRRRestartsTrackedDirectDaemons(t *testing.T) {
 	setupFakeDaemonDir(t, []string{"zebra", "bgpd", "bfdd"})
 	commands, signals := installDaemonHooks(t, nil, map[string][]int{

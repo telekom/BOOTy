@@ -875,6 +875,7 @@ func (m *Manager) trackDirectDaemon(name string) {
 func (m *Manager) stopDaemonsDirect(ctx context.Context) error {
 	names := reverseStrings(m.directDaemonList)
 	if len(names) == 0 {
+		m.clearDirectDaemonState()
 		return nil
 	}
 	if err := signalDaemons(ctx, names, syscall.SIGTERM); err != nil {
@@ -889,9 +890,13 @@ func (m *Manager) stopDaemonsDirect(ctx context.Context) error {
 			return errors.Join(err, waitErr)
 		}
 	}
+	m.clearDirectDaemonState()
+	return nil
+}
+
+func (m *Manager) clearDirectDaemonState() {
 	m.directDaemonList = nil
 	m.frrStartMethod = ""
-	return nil
 }
 
 func reverseStrings(in []string) []string {
