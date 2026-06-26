@@ -436,6 +436,9 @@ func TestResumeStateStepsRerunMountSharedDataForCleanupState(t *testing.T) {
 	if _, ok := stateSteps["setup-nvme-namespaces"]; ok {
 		t.Fatal("setup-nvme-namespaces must not rerun on resume because it deletes and recreates namespaces")
 	}
+	if _, ok := stateSteps["teardown-chroot"]; !ok {
+		t.Fatal("teardown-chroot must rerun on resume when setup-chroot-binds reruns")
+	}
 	if _, ok := stateSteps["set-hostname"]; ok {
 		t.Fatal("set-hostname should remain skippable after resume")
 	}
@@ -1789,6 +1792,7 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 			"mount-boot",
 			"mount-shared-data",
 			"setup-chroot-binds",
+			"teardown-chroot",
 			"stream-image",
 			"configure-ssh",
 		},
@@ -1822,6 +1826,7 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 		{"mount-boot", func(_ context.Context) error { ran = append(ran, "mount-boot"); return nil }},
 		{"mount-shared-data", func(_ context.Context) error { ran = append(ran, "mount-shared-data"); return nil }},
 		{"setup-chroot-binds", func(_ context.Context) error { ran = append(ran, "setup-chroot-binds"); return nil }},
+		{"teardown-chroot", func(_ context.Context) error { ran = append(ran, "teardown-chroot"); return nil }},
 		{"stream-image", func(_ context.Context) error { ran = append(ran, "stream-image"); return nil }},
 		{"configure-ssh", func(_ context.Context) error { ran = append(ran, "configure-ssh"); return nil }},
 	}
@@ -1838,8 +1843,8 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 
 	// stateSteps re-run; stream-image and configure-ssh skip because they are
 	// completed non-state steps.
-	if len(ran) != 11 {
-		t.Errorf("expected 11 state step runs, got %v", ran)
+	if len(ran) != 12 {
+		t.Errorf("expected 12 state step runs, got %v", ran)
 	}
 	for _, name := range []string{
 		"validate-provision-inputs",
@@ -1853,6 +1858,7 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 		"mount-boot",
 		"mount-shared-data",
 		"setup-chroot-binds",
+		"teardown-chroot",
 	} {
 		found := false
 		for _, r := range ran {
