@@ -193,6 +193,21 @@ func TestRedactCommand(t *testing.T) {
 			want:  "setup password=[REDACTED] token=[REDACTED] region=eu",
 		},
 		{
+			name:  "compound assignment secret",
+			input: "AWS_SECRET_ACCESS_KEY=abc /usr/bin/true",
+			want:  "AWS_SECRET_ACCESS_KEY=[REDACTED] /usr/bin/true",
+		},
+		{
+			name:  "compound assignment password",
+			input: "BGP_AUTH_PASSWORD=s3cr3t /usr/bin/true",
+			want:  "BGP_AUTH_PASSWORD=[REDACTED] /usr/bin/true",
+		},
+		{
+			name:  "compound flag secret",
+			input: "--aws-secret-access-key=abc --region eu",
+			want:  "--aws-secret-access-key=[REDACTED] --region eu",
+		},
+		{
 			name:  "empty string",
 			input: "",
 			want:  "",
@@ -231,6 +246,11 @@ func TestRedactCommand(t *testing.T) {
 			name:  "tab-delimited flag value",
 			input: "--password\tsecret",
 			want:  "--password [REDACTED]",
+		},
+		{
+			name:  "form-feed-delimited flag value",
+			input: "--token\fsecret",
+			want:  "--token [REDACTED]",
 		},
 		{
 			name:  "assignment with double-quoted spaced value",
