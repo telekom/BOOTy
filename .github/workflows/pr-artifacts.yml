@@ -102,7 +102,7 @@ jobs:
           retention-days: 14
 
       - name: Publish GitLab generic package
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         env:
           GITLAB_PACKAGE_TOKEN: ${{ secrets.GITLAB_PACKAGE_TOKEN }}
           GITLAB_PACKAGE_REQUIRED: ${{ vars.GITLAB_PACKAGE_REQUIRED || 'false' }}
@@ -146,6 +146,15 @@ jobs:
             echo "### GitLab generic package"
             echo
             echo "Skipped for pull requests; run this workflow manually to publish a GitLab package."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Note GitLab package publish ref guard
+        if: github.event_name == 'workflow_dispatch' && github.ref != format('refs/heads/{0}', github.event.repository.default_branch)
+        run: |
+          {
+            echo "### GitLab generic package"
+            echo
+            echo "Skipped: GitLab package publishing is only available when this workflow is dispatched from the default branch."
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Print download hint
