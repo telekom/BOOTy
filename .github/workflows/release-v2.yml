@@ -194,6 +194,7 @@ jobs:
         with:
           name: sbom
           path: sbom.spdx.json
+          if-no-files-found: error
 
   scan:
     name: Vulnerability Scan
@@ -231,7 +232,13 @@ jobs:
 
       - name: Sign checksums with Cosign
         run: |
-          for f in $(find artifacts -name "*.sha256"); do
+          mapfile -t checksums < <(find artifacts -type f -name "*.sha256" | sort)
+          if [ "${#checksums[@]}" -eq 0 ]; then
+            echo "::error::no checksum files found to sign"
+            find artifacts -maxdepth 3 -type f -print || true
+            exit 1
+          fi
+          for f in "${checksums[@]}"; do
             cosign sign-blob --yes \
               --output-signature "${f}.sig" \
               --bundle "${f}.bundle" \
@@ -245,6 +252,7 @@ jobs:
           path: |
             artifacts/**/*.sig
             artifacts/**/*.bundle
+          if-no-files-found: error
 
   container:
     name: Container Image (${{ matrix.flavor }}/${{ matrix.arch }})
@@ -387,6 +395,7 @@ jobs:
           path: |
             ${{ matrix.artifact }}
             ${{ matrix.artifact }}.sha256
+          if-no-files-found: error
 
   iso-oci:
     name: ISO OCI (${{ matrix.flavor }})
@@ -475,6 +484,7 @@ jobs:
         with:
           name: changelog
           path: CHANGELOG.md
+          if-no-files-found: error
 
   release:
     name: Create GitHub Release
