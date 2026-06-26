@@ -296,13 +296,10 @@ export CLOUDINIT_RUN_CMD='[["kubeadm","join","--token","xxx","10.0.0.1:6443"]]'
 
 ### Unit Tests
 
-- `cloudinit/generator_test.go` — Generate from various machine configs.
-  Table-driven: minimal (hostname only), full (all fields), Kubernetes
-  bootstrap, Windows-style line endings.
-- `cloudinit/inject_test.go` — NoCloud injection with `t.TempDir()`.
-  Verify file paths, permissions, content.
-- `cloudinit/generator_test.go` — ConfigDrive seed-file rendering, invalid
-  static address rejection, and missing required input coverage.
+- `cloudinit/generator_test.go` — Generation and seed injection coverage:
+  minimal and full configs, Kubernetes bootstrap, Windows-style line endings,
+  NoCloud and ConfigDrive seed-file paths/content, invalid static address
+  rejection, and missing required input coverage.
 
 ### E2E / KVM Tests
 
