@@ -129,42 +129,28 @@ func (o *Orchestrator) dryRunImageReachability(ctx context.Context) DryRunResult
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 	validated := 0
-	skippedOCI := 0
 	for _, imgURL := range o.cfg.Provision.Image.URLs {
 		scheme, redactedURL, invalidResult := validateDryRunImageURL(imgURL)
 		if invalidResult != nil {
 			return *invalidResult
 		}
 
-		// Skip OCI sources until registry reachability checks are implemented.
 		if scheme == "oci" {
-			skippedOCI++
-			o.log.Info("skipping oci image reachability check", "url", redactedURL)
-			continue
-		}
-
-		probeResult := probeHTTPImageReachability(ctx, httpClient, imgURL, redactedURL)
-		if probeResult != nil {
-			return *probeResult
+			if probeResult := probeOCIImageReachability(ctx, imgURL, redactedURL); probeResult != nil {
+				return *probeResult
+			}
+		} else {
+			probeResult := probeHTTPImageReachability(ctx, httpClient, imgURL, redactedURL)
+			if probeResult != nil {
+				return *probeResult
+			}
 		}
 
 		validated++
 		o.log.Info("image reachable", "url", redactedURL)
 	}
 
-	if validated == 0 && skippedOCI > 0 {
-		return DryRunResult{
-			Status:  DryRunWarn,
-			Message: fmt.Sprintf("skipped %d OCI image URL(s); reachability not validated", skippedOCI),
-		}
-	}
-	if skippedOCI > 0 {
-		return DryRunResult{
-			Status:  DryRunWarn,
-			Message: fmt.Sprintf("validated %d HTTP image URL(s), skipped %d OCI image URL(s)", validated, skippedOCI),
-		}
-	}
-	return DryRunResult{Status: DryRunPass, Message: "all HTTP image URLs reachable"}
+	return DryRunResult{Status: DryRunPass, Message: fmt.Sprintf("all %d image URL(s) reachable", validated)}
 }
 
 func validateDryRunImageURL(imgURL string) (scheme, redactedURL string, invalidResult *DryRunResult) {
@@ -210,6 +196,26 @@ func probeHTTPImageReachability(ctx context.Context, httpClient *http.Client, im
 	}
 
 	return nil
+}
+
+func probeOCIImageReachability(ctx context.Context, imgURL, redactedURL string) *DryRunResult {
+	ref := trimDryRunOCIScheme(imgURL)
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := image.ProbeOCIReference(probeCtx, ref); err != nil {
+		errMsg := redactURLError(err, imgURL)
+		return &DryRunResult{Status: DryRunFail,
+			Message: fmt.Sprintf("OCI image unreachable %s: %s", redactedURL, errMsg)}
+	}
+	return nil
+}
+
+func trimDryRunOCIScheme(imgURL string) string {
+	const scheme = "oci://"
+	if len(imgURL) >= len(scheme) && strings.EqualFold(imgURL[:len(scheme)], scheme) {
+		return imgURL[len(scheme):]
+	}
+	return image.TrimOCIScheme(imgURL)
 }
 
 func (o *Orchestrator) dryRunDiskDetection(ctx context.Context) DryRunResult {

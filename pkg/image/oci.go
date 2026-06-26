@@ -53,6 +53,34 @@ func FetchOCILayer(ctx context.Context, reference string) (io.ReadCloser, error)
 	return rc, nil
 }
 
+// ProbeOCIReference verifies that an OCI image reference resolves and has a
+// usable payload layer without downloading the layer content.
+func ProbeOCIReference(ctx context.Context, reference string) error {
+	redactedRef := RedactOCIRef(reference)
+	ref, err := name.ParseReference(reference)
+	if err != nil {
+		return fmt.Errorf("parse OCI reference %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
+	}
+
+	img, err := remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx))
+	if err != nil {
+		return fmt.Errorf("resolve OCI image %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
+	}
+
+	layers, err := img.Layers()
+	if err != nil {
+		return fmt.Errorf("get layers for %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
+	}
+	if len(layers) == 0 {
+		return fmt.Errorf("OCI image %q has no layers", redactedRef)
+	}
+
+	if _, err := selectDefaultOCILayer(layers); err != nil {
+		return fmt.Errorf("select content layer for %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
+	}
+	return nil
+}
+
 func selectDefaultOCILayer(layers []v1.Layer) (v1.Layer, error) {
 	for i := len(layers) - 1; i >= 0; i-- {
 		mediaType, err := layers[i].MediaType()
