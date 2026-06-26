@@ -1030,7 +1030,7 @@ make clab-gobgp-up && make test-e2e-gobgp        # GoBGP topology
 make clab-boot-up && make test-e2e-boot          # Boot orchestrator
 make clab-dhcp-up && make test-e2e-dhcp          # DHCP mode topology
 make clab-bond-up && make test-e2e-bond          # Bond mode topology
-make clab-lacp-up && make test-e2e-lacp          # LACP-specific bond checks
+make clab-lacp-up && make test-e2e-lacp          # Backward-compatible alias for bond mode
 make clab-static-up && make test-e2e-static      # Static IP topology
 make clab-multi-nic-up && make test-e2e-multi-nic # Multi-NIC discovery and config
 
