@@ -50,6 +50,16 @@ func (m *mockCommander) setResult(key string, output []byte, err error) {
 	m.results[key] = mockResult{output: output, err: err}
 }
 
+func hasDiskCommandCall(calls []mockCall, name string, args ...string) bool {
+	wantArgs := strings.Join(args, " ")
+	for _, call := range calls {
+		if call.name == name && strings.Join(call.args, " ") == wantArgs {
+			return true
+		}
+	}
+	return false
+}
+
 // makeExitError creates an *exec.ExitError with the given exit code.
 func makeExitError(code int) error {
 	err := exec.CommandContext(context.Background(), "sh", "-c", fmt.Sprintf("exit %d", code)).Run()
@@ -770,6 +780,23 @@ func TestSecureEraseSATA(t *testing.T) {
 		}
 	})
 
+	t.Run("missing hdparm fails without wipefs fallback", func(t *testing.T) {
+		cmd := newMockCommander()
+		mgr := NewManager(cmd)
+		cmd.setResult("hdparm -I", nil, fmt.Errorf("exec hdparm: %w", exec.ErrNotFound))
+
+		err := mgr.secureEraseSATA(context.Background(), "/dev/sda")
+		if err == nil {
+			t.Fatal("expected missing hdparm error")
+		}
+		if !strings.Contains(err.Error(), "hdparm secure erase tool is required") {
+			t.Fatalf("error = %v, want missing hdparm diagnostic", err)
+		}
+		if hasDiskCommandCall(cmd.calls, "wipefs", "-af", "/dev/sda") {
+			t.Fatalf("secure erase must not fall back to wipefs when hdparm is missing: %#v", cmd.calls)
+		}
+	})
+
 	t.Run("set-pass failure returns error", func(t *testing.T) {
 		cmd := newMockCommander()
 		mgr := NewManager(cmd)
@@ -792,6 +819,23 @@ func TestSecureEraseSATA(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
+}
+
+func TestSecureEraseNVMEMissingToolFailsWithoutWipefsFallback(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+	cmd.setResult("nvme format", nil, fmt.Errorf("exec nvme: %w", exec.ErrNotFound))
+
+	err := mgr.secureEraseNVMe(context.Background(), "/dev/nvme0n1")
+	if err == nil {
+		t.Fatal("expected missing nvme error")
+	}
+	if !strings.Contains(err.Error(), "nvme secure erase tool is required") {
+		t.Fatalf("error = %v, want missing nvme diagnostic", err)
+	}
+	if hasDiskCommandCall(cmd.calls, "wipefs", "-af", "/dev/nvme0n1") {
+		t.Fatalf("secure erase must not fall back to wipefs when nvme is missing: %#v", cmd.calls)
+	}
 }
 
 func TestCheckFilesystem(t *testing.T) {
