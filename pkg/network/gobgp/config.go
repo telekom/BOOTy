@@ -67,7 +67,8 @@ type Config struct {
 	RemoteASN         uint32           // Remote ASN for numbered peers (0 = same ASN → iBGP)
 	EnableL2          bool             // Enable L2 EVPN overlay (gate Type-2/3 route handling)
 	AuthPassword      string           // Optional TCP-MD5 password for BGP peers (empty = no auth)
-	// UnderlayAF selects the BGP address family for underlay sessions (ipv4/ipv6/dual-stack).
+	// UnderlayAF selects the BGP address family for underlay sessions.
+	// Machine config accepts only ipv4; other parsed values are unsupported.
 	UnderlayAF string
 	// OverlayType selects the BGP overlay encapsulation (evpn-vxlan/l3vpn/none).
 	OverlayType string

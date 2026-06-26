@@ -154,19 +154,19 @@ func TestNewConfig(t *testing.T) {
 			},
 		},
 		{
-			name: "underlay_af_and_overlay_type_wired",
+			name: "supported_underlay_af_and_overlay_type_wired",
 			netCfg: &network.Config{
 				UnderlayIP:     "10.0.0.1",
 				ASN:            65000,
 				ProvisionVNI:   4000,
 				BGPPeerMode:    network.PeerModeUnnumbered,
-				BGPUnderlayAF:  "ipv6",
+				BGPUnderlayAF:  "ipv4",
 				BGPOverlayType: "evpn-vxlan",
 			},
 			check: func(t *testing.T, cfg *Config) {
 				t.Helper()
-				if cfg.UnderlayAF != "ipv6" {
-					t.Errorf("UnderlayAF = %q, want ipv6", cfg.UnderlayAF)
+				if cfg.UnderlayAF != "ipv4" {
+					t.Errorf("UnderlayAF = %q, want ipv4", cfg.UnderlayAF)
 				}
 				if cfg.OverlayType != "evpn-vxlan" {
 					t.Errorf("OverlayType = %q, want evpn-vxlan", cfg.OverlayType)
