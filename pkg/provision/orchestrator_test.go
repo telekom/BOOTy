@@ -424,6 +424,12 @@ func TestResumeStateStepsRerunMountSharedDataForCleanupState(t *testing.T) {
 	if _, ok := stateSteps["verify-image"]; !ok {
 		t.Fatal("verify-image must rerun on resume so the verified and streamed image source cannot diverge")
 	}
+	if _, ok := stateSteps["mount-efivarfs"]; !ok {
+		t.Fatal("mount-efivarfs must rerun on resume because efivarfs is volatile after restart")
+	}
+	if _, ok := stateSteps["enable-lvm"]; !ok {
+		t.Fatal("enable-lvm must rerun on resume because activated LVM devices are volatile after restart")
+	}
 	if _, ok := stateSteps["mount-shared-data"]; !ok {
 		t.Fatal("mount-shared-data must rerun on resume to rebuild sharedMounts for teardown cleanup")
 	}
@@ -1774,9 +1780,11 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 		CompletedSteps: []string{
 			"validate-provision-inputs",
 			"verify-image",
+			"mount-efivarfs",
 			"setup-mellanox",
 			"detect-disk",
 			"parse-partitions",
+			"enable-lvm",
 			"mount-root",
 			"mount-boot",
 			"mount-shared-data",
@@ -1805,9 +1813,11 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 			return nil
 		}},
 		{"verify-image", func(_ context.Context) error { ran = append(ran, "verify-image"); return nil }},
+		{"mount-efivarfs", func(_ context.Context) error { ran = append(ran, "mount-efivarfs"); return nil }},
 		{"setup-mellanox", func(_ context.Context) error { ran = append(ran, "setup-mellanox"); return nil }},
 		{"detect-disk", func(_ context.Context) error { ran = append(ran, "detect-disk"); return nil }},
 		{"parse-partitions", func(_ context.Context) error { ran = append(ran, "parse-partitions"); return nil }},
+		{"enable-lvm", func(_ context.Context) error { ran = append(ran, "enable-lvm"); return nil }},
 		{"mount-root", func(_ context.Context) error { ran = append(ran, "mount-root"); return nil }},
 		{"mount-boot", func(_ context.Context) error { ran = append(ran, "mount-boot"); return nil }},
 		{"mount-shared-data", func(_ context.Context) error { ran = append(ran, "mount-shared-data"); return nil }},
@@ -1828,15 +1838,17 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 
 	// stateSteps re-run; stream-image and configure-ssh skip because they are
 	// completed non-state steps.
-	if len(ran) != 9 {
-		t.Errorf("expected 9 state step runs, got %v", ran)
+	if len(ran) != 11 {
+		t.Errorf("expected 11 state step runs, got %v", ran)
 	}
 	for _, name := range []string{
 		"validate-provision-inputs",
 		"verify-image",
+		"mount-efivarfs",
 		"setup-mellanox",
 		"detect-disk",
 		"parse-partitions",
+		"enable-lvm",
 		"mount-root",
 		"mount-boot",
 		"mount-shared-data",

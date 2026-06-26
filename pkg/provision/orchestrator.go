@@ -152,8 +152,9 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 
 	// stateSteps must always re-run on resume because they rebuild in-memory
 	// runtime fields that later steps depend on (firmwareChanged, bestImageURL,
-	// targetDisk, rootPartition/bootPartition, sharedMounts, chroot bind mounts) or
-	// revalidate safety preconditions before destructive operations.
+	// targetDisk, LVM devices, rootPartition/bootPartition, efivarfs, sharedMounts,
+	// chroot bind mounts) or revalidate safety preconditions before destructive
+	// operations.
 	stateSteps := resumeStateSteps()
 
 	for i, step := range steps {
@@ -178,9 +179,11 @@ func resumeStateSteps() map[string]struct{} {
 	return map[string]struct{}{
 		"validate-provision-inputs": {},
 		"verify-image":              {},
+		"mount-efivarfs":            {},
 		"setup-mellanox":            {},
 		"detect-disk":               {},
 		"parse-partitions":          {},
+		"enable-lvm":                {},
 		"mount-root":                {},
 		"mount-boot":                {},
 		"mount-shared-data":         {},
