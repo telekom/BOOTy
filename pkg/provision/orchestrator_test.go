@@ -390,6 +390,34 @@ func TestValidateImageSourceRejectsMalformedOCI(t *testing.T) {
 	}
 }
 
+func TestValidateProvisionInputsRejectsGPGSignatureWithoutChecksum(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{"https://images.example.invalid/node.raw"}
+	cfg.Provision.Image.SignatureURL = "https://images.example.invalid/node.raw.sig"
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err := o.validateProvisionInputs(context.Background())
+	if err == nil {
+		t.Fatal("expected missing checksum error")
+	}
+	if !strings.Contains(err.Error(), "IMAGE_SIGNATURE_URL requires IMAGE_CHECKSUM") {
+		t.Fatalf("error = %q, want signature checksum context", err.Error())
+	}
+}
+
+func TestValidateProvisionInputsAllowsGPGSignatureWithChecksum(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{"https://images.example.invalid/node.raw"}
+	cfg.Provision.Image.SignatureURL = "https://images.example.invalid/node.raw.sig"
+	cfg.Provision.Image.Checksum = strings.Repeat("a", 64)
+	cfg.Provision.Image.ChecksumType = "sha256"
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	if err := o.validateProvisionInputs(context.Background()); err != nil {
+		t.Fatalf("validateProvisionInputs: %v", err)
+	}
+}
+
 func TestMountBootAndSharedDataStepsPrecedeProvisioningWrites(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})

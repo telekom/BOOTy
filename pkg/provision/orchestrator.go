@@ -637,6 +637,9 @@ func (o *Orchestrator) validateProvisionInputs(_ context.Context) error {
 	if !hasSource {
 		return fmt.Errorf("provision image source required before destructive storage steps: no image URLs configured")
 	}
+	if strings.TrimSpace(o.cfg.Provision.Image.SignatureURL) != "" && !checksumConfigured {
+		return fmt.Errorf("IMAGE_SIGNATURE_URL requires IMAGE_CHECKSUM because signature verification and image streaming use separate downloads")
+	}
 	return nil
 }
 
