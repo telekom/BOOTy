@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -62,7 +63,22 @@ func bootDockerExecWithTimeout(t *testing.T, timeout time.Duration, container st
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmdArgs := append([]string{"exec", container}, args...)
-	out, err := exec.CommandContext(ctx, "docker", cmdArgs...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, "docker", cmdArgs...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil && err != syscall.ESRCH {
+			return err
+		}
+		return nil
+	}
+	cmd.WaitDelay = 2 * time.Second
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return string(out), fmt.Errorf("docker exec %s %s timed out after %s: %w", container, strings.Join(args, " "), timeout, ctx.Err())
+	}
 	return string(out), err
 }
 
@@ -347,7 +363,6 @@ func TestBootAllNodesReachCAPRF(t *testing.T) {
 		desc string
 	}{
 		{provisionContainer, "provision"},
-		{deprovisionContainer, "deprovision"},
 		{standbyContainer, "standby"},
 	}
 
@@ -361,7 +376,7 @@ func TestBootAllNodesReachCAPRF(t *testing.T) {
 				url:       "http://10.100.0.11/health",
 			}
 			if !waitForBootHTTP(t, probe, bootCAPRFReachabilityTimeout) {
-				t.Fatalf("%s node cannot reach CAPRF mock (10.100.0.11) through EVPN fabric after restart", c.desc)
+				t.Fatalf("%s node cannot reach CAPRF mock (10.100.0.11) through EVPN fabric", c.desc)
 			}
 			t.Logf("%s node reaches CAPRF mock through EVPN fabric", c.desc)
 		})
@@ -376,7 +391,6 @@ func TestBootAllNodesReachNginx(t *testing.T) {
 		desc string
 	}{
 		{provisionContainer, "provision"},
-		{deprovisionContainer, "deprovision"},
 		{standbyContainer, "standby"},
 	}
 
@@ -390,7 +404,7 @@ func TestBootAllNodesReachNginx(t *testing.T) {
 				url:       "http://10.100.0.10/",
 			}
 			if !waitForBootHTTP(t, probe, bootReachabilityTimeout) {
-				t.Fatalf("%s node cannot reach nginx (10.100.0.10) through EVPN fabric after restart", c.desc)
+				t.Fatalf("%s node cannot reach nginx (10.100.0.10) through EVPN fabric", c.desc)
 			}
 			t.Logf("%s node reaches nginx through EVPN fabric", c.desc)
 		})
@@ -521,6 +535,16 @@ func TestBootCAPRFMockReceivedInitStatus(t *testing.T) {
 	t.Logf("CAPRF mock received /status/init request\nAccess log:\n%s", out)
 }
 
+func TestBootDeprovisionReportsSuccessThroughEVPN(t *testing.T) {
+	requireBootLab(t)
+
+	out, ok := waitForAccessLogEntry(t, caprfContainer, "/var/log/nginx/access.log", `10.100.0.21 "POST /status/success`, 180*time.Second)
+	if !ok {
+		t.Fatalf("CAPRF mock did not receive deprovision success from 10.100.0.21\nAccess log:\n%s", out)
+	}
+	t.Logf("CAPRF mock received deprovision success through EVPN\nAccess log:\n%s", out)
+}
+
 // --- Image pull through EVPN ---
 
 func TestBootAllNodesImageReachableThroughEVPN(t *testing.T) {
@@ -531,7 +555,6 @@ func TestBootAllNodesImageReachableThroughEVPN(t *testing.T) {
 		desc string
 	}{
 		{provisionContainer, "provision"},
-		{deprovisionContainer, "deprovision"},
 		{standbyContainer, "standby"},
 	}
 
@@ -546,7 +569,7 @@ func TestBootAllNodesImageReachableThroughEVPN(t *testing.T) {
 				contains:  "test.img.gz",
 			}
 			if !waitForBootHTTP(t, probe, bootReachabilityTimeout) {
-				t.Fatalf("%s node cannot reach nginx images (10.100.0.10) through EVPN after restart", c.desc)
+				t.Fatalf("%s node cannot reach nginx images (10.100.0.10) through EVPN", c.desc)
 			}
 			t.Logf("%s node: nginx image listing through EVPN succeeded", c.desc)
 		})
