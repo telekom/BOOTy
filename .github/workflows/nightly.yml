@@ -60,13 +60,22 @@ jobs:
             -o booty-${{ matrix.arch }}
 
       - name: Build initramfs (${{ matrix.flavor }})
+        env:
+          NIGHTLY_VERSION: ${{ needs.version.outputs.version }}
         run: |
+          BUILD_FLAVOR="${{ matrix.flavor }}"
+          if [ "${BUILD_FLAVOR}" = "default" ]; then
+            BUILD_FLAVOR="full"
+          fi
           TARGET_ARG=""
           if [ "${{ matrix.flavor }}" != "default" ]; then
             TARGET_ARG="--target=${{ matrix.flavor }}"
           fi
           docker buildx build --platform linux/${{ matrix.arch }} \
             ${TARGET_ARG} \
+            --build-arg "BOOTY_VERSION=${NIGHTLY_VERSION}" \
+            --build-arg "BOOTY_BUILD=${{ github.sha }}" \
+            --build-arg "BOOTY_FLAVOR=${BUILD_FLAVOR}" \
             --output type=local,dest=out-${{ matrix.flavor }} \
             -f initrd.Dockerfile .
 
@@ -154,6 +163,9 @@ jobs:
         run: |
           IMAGE="$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]'):${NIGHTLY_VERSION}"
           docker buildx build --platform linux/amd64 \
+            --build-arg "BOOTY_VERSION=${NIGHTLY_VERSION}" \
+            --build-arg "BOOTY_BUILD=${{ github.sha }}" \
+            --build-arg "BOOTY_FLAVOR=full" \
             --provenance=true \
             --push \
             -t "${IMAGE}" \

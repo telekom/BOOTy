@@ -28,6 +28,9 @@ RUN strip --strip-all sfdisk.static
 
 # Build BOOTy as an init
 FROM golang:1.26-alpine AS dev
+ARG BOOTY_VERSION=dev
+ARG BOOTY_BUILD=unknown
+ARG BOOTY_FLAVOR=full
 RUN apk add --no-cache git ca-certificates gcc linux-headers musl-dev upx
 COPY go.mod go.sum /go/src/github.com/telekom/BOOTy/
 WORKDIR /go/src/github.com/telekom/BOOTy
@@ -36,7 +39,12 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
 COPY . /go/src/github.com/telekom/BOOTy/
 RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
     --mount=type=cache,sharing=locked,id=goroot,target=/root/.cache/go-build \
-    CGO_ENABLED=1 GOOS=linux go build -a -trimpath -ldflags "-linkmode external -extldflags '-static' -s -w" -o init
+    CGO_ENABLED=1 GOOS=linux go build -a -trimpath -ldflags "-linkmode external -extldflags '-static' -s -w \
+      -X main.Version=${BOOTY_VERSION} \
+      -X main.Build=${BOOTY_BUILD} \
+      -X github.com/telekom/BOOTy/pkg/buildinfo.version=${BOOTY_VERSION} \
+      -X github.com/telekom/BOOTy/pkg/buildinfo.commit=${BOOTY_BUILD} \
+      -X github.com/telekom/BOOTy/pkg/buildinfo.flavor=${BOOTY_FLAVOR}" -o init
 RUN upx -9 init
 
 # Build a removable UEFI fallback loader that BOOTy can copy into a target ESP.
@@ -563,6 +571,9 @@ COPY --from=gobgp-iso-builder /booty-gobgp.iso .
 
 # ── Micro target: pure-Go BOOTy only, no external binaries ────────────────
 FROM golang:1.26-bookworm AS micro-dev
+ARG BOOTY_VERSION=dev
+ARG BOOTY_BUILD=unknown
+ARG BOOTY_FLAVOR=micro
 COPY go.mod go.sum /go/src/github.com/telekom/BOOTy/
 WORKDIR /go/src/github.com/telekom/BOOTy
 RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
@@ -570,7 +581,12 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
 COPY . /go/src/github.com/telekom/BOOTy/
 RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
     --mount=type=cache,sharing=locked,id=goroot,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -a -trimpath -ldflags "-s -w" -o init
+    CGO_ENABLED=0 GOOS=linux go build -a -trimpath -ldflags "-s -w \
+      -X main.Version=${BOOTY_VERSION} \
+      -X main.Build=${BOOTY_BUILD} \
+      -X github.com/telekom/BOOTy/pkg/buildinfo.version=${BOOTY_VERSION} \
+      -X github.com/telekom/BOOTy/pkg/buildinfo.commit=${BOOTY_BUILD} \
+      -X github.com/telekom/BOOTy/pkg/buildinfo.flavor=${BOOTY_FLAVOR}" -o init
 
 FROM debian:bookworm-slim AS micro-builder
 RUN apt-get update && apt-get install -y --no-install-recommends cpio ca-certificates \

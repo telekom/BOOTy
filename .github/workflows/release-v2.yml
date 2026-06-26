@@ -135,6 +135,11 @@ jobs:
 
       - name: Build initramfs (${{ matrix.flavor }})
         run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          BUILD_FLAVOR="${{ matrix.flavor }}"
+          if [ "${BUILD_FLAVOR}" = "default" ]; then
+            BUILD_FLAVOR="full"
+          fi
           TARGET_ARG=""
           if [ "${{ matrix.flavor }}" != "default" ]; then
             TARGET_ARG="--target=${{ matrix.flavor }}"
@@ -142,6 +147,9 @@ jobs:
           docker buildx build \
             ${TARGET_ARG} \
             --platform linux/${{ matrix.arch }} \
+            --build-arg "BOOTY_VERSION=${VERSION}" \
+            --build-arg "BOOTY_BUILD=${{ github.sha }}" \
+            --build-arg "BOOTY_FLAVOR=${BUILD_FLAVOR}" \
             --output type=local,dest=out-${{ matrix.flavor }} \
             -f initrd.Dockerfile .
 
@@ -285,6 +293,10 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           TARGET_ARG=""
+          BUILD_FLAVOR="${{ matrix.flavor }}"
+          if [ "${BUILD_FLAVOR}" = "default" ]; then
+            BUILD_FLAVOR="full"
+          fi
           IMAGE_TAG="${VERSION}"
           if [ "${{ matrix.flavor }}" = "gobgp" ]; then
             TARGET_ARG="--target=gobgp"
@@ -294,6 +306,9 @@ jobs:
           docker buildx build \
             ${TARGET_ARG} \
             --platform "linux/${{ matrix.arch }}" \
+            --build-arg "BOOTY_VERSION=${VERSION}" \
+            --build-arg "BOOTY_BUILD=${{ github.sha }}" \
+            --build-arg "BOOTY_FLAVOR=${BUILD_FLAVOR}" \
             --provenance=true \
             --push \
             -t "${IMAGE}:${IMAGE_TAG}-${{ matrix.arch }}" \
@@ -370,9 +385,17 @@ jobs:
 
       - name: Build ISO
         run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          BUILD_FLAVOR="${{ matrix.flavor }}"
+          if [ "${BUILD_FLAVOR}" = "default" ]; then
+            BUILD_FLAVOR="full"
+          fi
           docker buildx build \
             --target ${{ matrix.target }} \
             --platform linux/amd64 \
+            --build-arg "BOOTY_VERSION=${VERSION}" \
+            --build-arg "BOOTY_BUILD=${{ github.sha }}" \
+            --build-arg "BOOTY_FLAVOR=${BUILD_FLAVOR}" \
             --output type=local,dest=out-iso \
             -f initrd.Dockerfile .
           mv out-iso/${{ matrix.output }} ${{ matrix.artifact }}
