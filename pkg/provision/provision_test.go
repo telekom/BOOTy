@@ -861,6 +861,14 @@ func TestInstallEFIFallbackLoaderWithBundledAssetRequiresTargetGrubConfig(t *tes
 	}
 }
 
+func devicePathCaseName(prefix, value string) string {
+	if value == "" {
+		return prefix + "_empty"
+	}
+	name := strings.NewReplacer("/", "_", "\n", `\n`, " ", "_").Replace(value)
+	return prefix + "_" + name
+}
+
 func TestValidateChrootDevicePath(t *testing.T) {
 	valid := []string{
 		"/dev/sda",
@@ -871,7 +879,7 @@ func TestValidateChrootDevicePath(t *testing.T) {
 		"/dev/mapper/vg-root",
 	}
 	for _, value := range valid {
-		t.Run("valid_"+value, func(t *testing.T) {
+		t.Run(devicePathCaseName("valid", value), func(t *testing.T) {
 			got, err := validateChrootDevicePath("device", value)
 			if err != nil {
 				t.Fatalf("validateChrootDevicePath(%q) error = %v", value, err)
@@ -892,7 +900,7 @@ func TestValidateChrootDevicePath(t *testing.T) {
 		"/dev/sda\n/dev/sdb",
 	}
 	for _, value := range invalid {
-		t.Run("invalid_"+value, func(t *testing.T) {
+		t.Run(devicePathCaseName("invalid", value), func(t *testing.T) {
 			if _, err := validateChrootDevicePath("device", value); err == nil {
 				t.Fatalf("validateChrootDevicePath(%q) error = nil, want rejection", value)
 			}

@@ -354,7 +354,7 @@ func (c *Configurator) installBundledEFIFallbackLoader(rootDev string) error {
 func validateChrootDevicePath(name, value string) (string, error) {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
-		return "", fmt.Errorf("%s is required", name)
+		return "", fmt.Errorf("%s is required", strings.ToLower(name))
 	}
 	if trimmed != value || strings.Contains(trimmed, "..") || !safeChrootDevicePath.MatchString(trimmed) {
 		return "", fmt.Errorf("unsafe %s %q", name, value)
