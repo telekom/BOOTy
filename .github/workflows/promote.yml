@@ -43,6 +43,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Validate promotion input
         run: |
@@ -103,6 +104,8 @@ jobs:
           esac
 
       - name: Create promoted tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -116,7 +119,7 @@ jobs:
             -m "Promote $SOURCE_VERSION to $NEW_TAG" \
             -m "Source tag: $SOURCE_VERSION" \
             -m "Target channel: $TARGET_CHANNEL"
-          git push origin "$NEW_TAG"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$NEW_TAG"
 
       - name: Summary
         run: |
