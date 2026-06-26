@@ -1,4 +1,4 @@
-//go:build linux_e2e
+//go:build linux && linux_e2e
 
 package linux
 
