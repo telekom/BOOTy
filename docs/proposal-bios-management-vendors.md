@@ -1,6 +1,6 @@
 # Proposal: Vendor-Specific BIOS Settings Management
 
-## Status: Implemented (PR #49)
+## Status: Phase 1 scaffolded; full vendor BIOS management not implemented
 
 ## Priority: P1
 
@@ -14,6 +14,11 @@ server vendors: **HPE ProLiant** (iLO), **Lenovo ThinkSystem** (XCC),
 **Supermicro** (IPMI/Redfish), and **Dell PowerEdge** (iDRAC). A common
 `BIOSManager` interface abstracts vendor differences with auto-detection
 from DMI `sys_vendor`.
+
+Current repository state: the vendor packages model recommended baseline
+settings through `pkg/bios.BaseManager`. They do not read or write live BIOS
+attributes through Redfish, IPMI, efivarfs, or vendor sysfs paths, and the
+BIOS package is not wired into the provisioning orchestrator.
 
 ## Motivation
 

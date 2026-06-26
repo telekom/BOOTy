@@ -6,10 +6,10 @@
 
 ## Summary
 
-Collect and report firmware versions (BIOS, BMC/iLO/XCC, NIC, storage
-controller) from both Redfish and sysfs during provisioning. Optionally
-validate that firmware meets minimum version requirements before
-provisioning proceeds.
+Collect and report firmware versions from sysfs/DMI during provisioning.
+Optionally validate that firmware meets minimum version requirements before
+provisioning proceeds. CAPRF-side Redfish enrichment for vendor-specific
+BMC/iLO/XCC firmware remains deferred.
 
 ## Implementation Details
 
@@ -27,7 +27,9 @@ and deviations from the original proposal:
 - **CAPRF reporting**: `Client.ReportFirmware()` POSTs JSON to the
   configured firmware URL with retry logic.
 - **Orchestrator integration**: Firmware collection runs as a provisioning
-  step, with best-effort reporting.
+  step. Collection failures are best-effort and log/continue; report upload
+  errors and configured minimum-version validation failures abort the
+  provisioning step.
 - **Validation**: Firmware version validation (minimum version policy) is
   implemented via `firmware.Validate()` — checks BIOS and BMC versions
   against configurable minimums.
@@ -161,7 +163,7 @@ func ValidateFirmware(report FirmwareReport, policy FirmwarePolicy) []CheckResul
 # /deploy/vars
 export FIRMWARE_REPORT="true"
 export FIRMWARE_MIN_BIOS="U46"    # HPE iLO BIOS version
-export FIRMWARE_MIN_BMC="2.72"     # HPE iLO firmware version
+export FIRMWARE_MIN_BMC="2.72"     # DMI board_version minimum when exposed
 ```
 
 ### CAPRF Integration
@@ -177,9 +179,14 @@ type RedfishHostStatus struct {
 }
 ```
 
-## Required Binaries in Initramfs
+## Tooling Availability in Initramfs
 
-All required binaries are already present:
+The active `pkg/firmware.Collect()` path reads sysfs/DMI files directly and
+does not invoke these binaries. This table records proposal/tooling
+availability for deeper firmware collection work, not a runtime dependency of
+the current provisioning firmware report.
+
+The relevant binaries are already present for future deeper collection work:
 
 | Binary | Package | Purpose | Initramfs Flavor | Already Present? |
 |--------|---------|---------|-----------------|------------------|

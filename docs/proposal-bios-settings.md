@@ -1,6 +1,6 @@
 # Proposal: BIOS Settings Management via Redfish
 
-## Status: Phase 1 Implemented
+## Status: Phase 1 scaffolded; live capture/apply not wired into provisioning
 
 ## Priority: P2
 
@@ -11,6 +11,12 @@ machines via the Redfish `Bios` resource (`/redfish/v1/Systems/1/Bios`). This
 enables declarative BIOS configuration as part of the provisioning pipeline —
 ensuring consistent settings across fleet machines without manual BIOS console
 access.
+
+Current repository state: `pkg/bios` contains manager interfaces and
+vendor-specific baseline scaffolding, but the active `Capture` path returns
+configured baseline values instead of reading live Redfish/IPMI/efivarfs data.
+`Apply` and `Reset` return `ErrNotImplemented`, and BIOS state is not currently
+collected as an automatic provisioning report.
 
 ## Motivation
 
