@@ -81,7 +81,7 @@ BOOTy operates in two modes depending on the boot environment:
 - **Cloud-init injection** — NoCloud and ConfigDrive seed generation from provisioning identity and network config
 - **Netplan overlay** — Drop-in netplan YAML config from provisioner overrides `/deploy/vars` network settings
 - **Network persistence renderers** — Library support for netplan, NetworkManager, and systemd-networkd config generation
-- **IPMI operations** — library support for local BMC network reads, boot device control, and chassis power
+- **IPMI operations** — Library support for local BMC network reads, boot device control, and chassis power
 - **TPM 2.0 support** — Detection, PCR reading, metadata collection, LUKS2 TPM enrollment (Phase 2)
 - **Bootloader helpers** — GRUB-oriented provisioning plus experimental bootloader detection helpers
 - **BGP policy engine** — Import/export filtering, community tagging, graceful restart

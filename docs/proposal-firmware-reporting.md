@@ -162,7 +162,7 @@ func ValidateFirmware(report FirmwareReport, policy FirmwarePolicy) []CheckResul
 ```bash
 # /deploy/vars
 export FIRMWARE_REPORT="true"
-export FIRMWARE_MIN_BIOS="U46"    # HPE iLO BIOS version
+export FIRMWARE_MIN_BIOS="U46"    # HPE BIOS version
 export FIRMWARE_MIN_BMC="2.72"     # DMI board_version minimum when exposed
 ```
 
