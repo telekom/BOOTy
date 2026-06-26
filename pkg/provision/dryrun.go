@@ -50,6 +50,7 @@ func (o *Orchestrator) DryRun(ctx context.Context) error {
 	}{
 		{"config-validation", o.dryRunConfigValidation},
 		{"image-reachability", o.dryRunImageReachability},
+		{"image-prerequisites", o.dryRunImagePrerequisites},
 		{"image-checksum", o.dryRunImageChecksum},
 		{"image-signature", o.dryRunImageSignature},
 		{"image-mode", o.dryRunImageMode},
@@ -248,6 +249,28 @@ func (o *Orchestrator) dryRunDiskDetection(ctx context.Context) DryRunResult {
 	}
 	return DryRunResult{Status: DryRunPass,
 		Message: fmt.Sprintf("detected disk %s", d)}
+}
+
+func (o *Orchestrator) dryRunImagePrerequisites(ctx context.Context) DryRunResult {
+	if len(o.cfg.Provision.Image.URLs) == 0 {
+		if o.cfg.Provision.Disk.PartitionLayout != nil {
+			return DryRunResult{Status: DryRunWarn, Message: "layout-only mode: skipping image prerequisite check"}
+		}
+		return DryRunResult{Status: DryRunFail, Message: "no image URLs configured"}
+	}
+
+	bestURL, err := image.SelectBestSource(ctx, o.cfg.Provision.Image.URLs)
+	if err != nil {
+		return DryRunResult{Status: DryRunFail,
+			Message: fmt.Sprintf("selecting image source: %v", err)}
+	}
+	format, err := image.ValidateStreamingPrerequisites(ctx, bestURL)
+	if err != nil {
+		return DryRunResult{Status: DryRunFail,
+			Message: fmt.Sprintf("image prerequisites failed: %v", err)}
+	}
+	return DryRunResult{Status: DryRunPass,
+		Message: fmt.Sprintf("image format %s prerequisites available", format)}
 }
 
 func (o *Orchestrator) dryRunHealthChecks(ctx context.Context) DryRunResult {

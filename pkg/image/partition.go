@@ -111,7 +111,7 @@ func downloadAndPrepareRaw(ctx context.Context, url string) (string, error) {
 			return "", err
 		}
 		_ = os.Remove(downloadPath)
-		return rawPath, nil
+		return convertPreparedQCOW2(ctx, rawPath)
 
 	case FormatRaw:
 		// Already raw — just rename.
@@ -122,6 +122,28 @@ func downloadAndPrepareRaw(ctx context.Context, url string) (string, error) {
 	}
 
 	return downloadPath, nil
+}
+
+func convertPreparedQCOW2(ctx context.Context, path string) (string, error) {
+	f, err := os.Open(path) //nolint:gosec // controlled ramdisk path
+	if err != nil {
+		return "", fmt.Errorf("opening prepared image: %w", err)
+	}
+	format, _, err := DetectFormat(f)
+	_ = f.Close()
+	if err != nil {
+		return "", fmt.Errorf("detecting prepared image format: %w", err)
+	}
+	if format != FormatQCOW2 {
+		return path, nil
+	}
+
+	rawPath := path + ".raw"
+	if err := convertQCOW2ToRaw(ctx, path, rawPath); err != nil {
+		return "", err
+	}
+	_ = os.Remove(path)
+	return rawPath, nil
 }
 
 // decompressFile decompresses a file on the ramdisk to a new output file.

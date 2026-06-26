@@ -152,6 +152,30 @@ func withMockReadPath(t *testing.T, fn func(string) ([]byte, error)) {
 	})
 }
 
+func newTestImageServer(t *testing.T, body []byte) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodHead:
+			w.WriteHeader(http.StatusOK)
+		case http.MethodGet:
+			_, _ = w.Write(body)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	}))
+}
+
+func prependFakeQemuImgToPath(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	qemuImg := filepath.Join(dir, "qemu-img")
+	if err := os.WriteFile(qemuImg, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake qemu-img: %v", err)
+	}
+	t.Setenv("PATH", dir)
+}
+
 func TestDryRunConfigValidation(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -645,6 +669,57 @@ func TestDryRunImageReachability_UppercaseScheme(t *testing.T) {
 	}
 }
 
+func TestDryRunImagePrerequisitesQCOW2RequiresQemuImg(t *testing.T) {
+	srv := newTestImageServer(t, append([]byte{0x51, 0x46, 0x49, 0xfb}, []byte("qcow2 payload")...))
+	defer srv.Close()
+	t.Setenv("PATH", t.TempDir())
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{srv.URL + "/image.qcow2"}
+	o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
+
+	result := o.dryRunImagePrerequisites(context.Background())
+	if result.Status != DryRunFail {
+		t.Fatalf("got %s, want fail: %s", result.Status, result.Message)
+	}
+	if !strings.Contains(result.Message, "qemu-img") {
+		t.Fatalf("message = %q, want qemu-img context", result.Message)
+	}
+}
+
+func TestDryRunImagePrerequisitesQCOW2PassesWithQemuImg(t *testing.T) {
+	srv := newTestImageServer(t, append([]byte{0x51, 0x46, 0x49, 0xfb}, []byte("qcow2 payload")...))
+	defer srv.Close()
+	prependFakeQemuImgToPath(t)
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{srv.URL + "/image.qcow2"}
+	o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
+
+	result := o.dryRunImagePrerequisites(context.Background())
+	if result.Status != DryRunPass {
+		t.Fatalf("got %s, want pass: %s", result.Status, result.Message)
+	}
+	if !strings.Contains(result.Message, "qcow2") {
+		t.Fatalf("message = %q, want qcow2 context", result.Message)
+	}
+}
+
+func TestDryRunImagePrerequisitesRawPassesWithoutQemuImg(t *testing.T) {
+	srv := newTestImageServer(t, []byte("raw payload"))
+	defer srv.Close()
+	t.Setenv("PATH", t.TempDir())
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{srv.URL + "/image.raw"}
+	o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
+
+	result := o.dryRunImagePrerequisites(context.Background())
+	if result.Status != DryRunPass {
+		t.Fatalf("got %s, want pass: %s", result.Status, result.Message)
+	}
+}
+
 func TestDryRunImageChecksum(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -1036,9 +1111,7 @@ func TestDryRunImageReachability_ServerError(t *testing.T) {
 }
 
 func TestDryRunAggregation(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
+	srv := newTestImageServer(t, []byte("raw payload"))
 	defer srv.Close()
 
 	provider := &dryRunProvider{}
@@ -1079,9 +1152,7 @@ func TestDryRunAggregation(t *testing.T) {
 }
 
 func TestDryRunAggregation_WarningsReported(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
+	srv := newTestImageServer(t, []byte("raw payload"))
 	defer srv.Close()
 
 	provider := &dryRunProvider{}
@@ -1129,9 +1200,7 @@ func TestDryRunAggregation_WarningsReported(t *testing.T) {
 }
 
 func TestDryRun_AllPass(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
+	srv := newTestImageServer(t, []byte("raw payload"))
 	defer srv.Close()
 
 	// Create a dummy GPG pubkey file so the image-signature check passes.

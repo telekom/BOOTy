@@ -814,3 +814,64 @@ func TestOpenAndDecompressQCOW2KeepsDetectedSource(t *testing.T) {
 		t.Fatalf("server received %d requests, want 1", requests)
 	}
 }
+
+func TestOpenAndDecompressGzipQCOW2KeepsDetectedSource(t *testing.T) {
+	data := append([]byte{0x51, 0x46, 0x49, 0xfb}, []byte("payload after qcow2 header")...)
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusOK)
+		gz := gzip.NewWriter(w)
+		_, _ = gz.Write(data)
+		_ = gz.Close()
+	}))
+	defer srv.Close()
+
+	src, cleanup, format, err := openAndDecompress(context.Background(), srv.URL+"/image.qcow2.gz")
+	if err != nil {
+		t.Fatalf("openAndDecompress() = %v", err)
+	}
+	defer cleanup()
+	if format != FormatQCOW2 {
+		t.Fatalf("format = %s, want %s", format, FormatQCOW2)
+	}
+
+	got, err := io.ReadAll(src)
+	if err != nil {
+		t.Fatalf("reading returned source: %v", err)
+	}
+	if string(got) != string(data) {
+		t.Fatalf("returned source = %q, want %q", got, data)
+	}
+	if requests != 1 {
+		t.Fatalf("server received %d requests, want 1", requests)
+	}
+}
+
+func TestOpenAndDecompressGzipRawReportsPayloadFormat(t *testing.T) {
+	data := []byte("raw payload after gzip")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		gz := gzip.NewWriter(w)
+		_, _ = gz.Write(data)
+		_ = gz.Close()
+	}))
+	defer srv.Close()
+
+	src, cleanup, format, err := openAndDecompress(context.Background(), srv.URL+"/image.raw.gz")
+	if err != nil {
+		t.Fatalf("openAndDecompress() = %v", err)
+	}
+	defer cleanup()
+	if format != FormatRaw {
+		t.Fatalf("format = %s, want %s", format, FormatRaw)
+	}
+
+	got, err := io.ReadAll(src)
+	if err != nil {
+		t.Fatalf("reading returned source: %v", err)
+	}
+	if string(got) != string(data) {
+		t.Fatalf("returned source = %q, want %q", got, data)
+	}
+}
