@@ -97,6 +97,18 @@ func TestNetworkConfig_Validate(t *testing.T) {
 		{"bond no mode", NetworkConfig{
 			Bonds: []BondConfig{{Name: "bond0", Members: []string{"eth0", "eth1"}}},
 		}, true},
+		{"bond member is another bond", NetworkConfig{
+			Bonds: []BondConfig{
+				{Name: "bond0", Members: []string{"eth0", "eth1"}, Mode: "802.3ad"},
+				{Name: "bond1", Members: []string{"bond0", "eth2"}, Mode: "active-backup"},
+			},
+		}, true},
+		{"bond member is vlan", NetworkConfig{
+			Bonds: []BondConfig{
+				{Name: "bond0", Members: []string{"eth0.100", "eth1"}, Mode: "802.3ad"},
+			},
+			VLANs: []VLANConfig{{Parent: "eth0", ID: 100}},
+		}, true},
 		{"invalid iface name", NetworkConfig{
 			Interfaces: []InterfaceConfig{{Name: "../../etc", DHCP: true}},
 		}, true},
@@ -500,6 +512,34 @@ func TestRenderNetplan_BondAllFields(t *testing.T) {
 	}
 }
 
+func TestRenderNetplan_BondDeclaresBackingEthernets(t *testing.T) {
+	cfg := &NetworkConfig{
+		Bonds: []BondConfig{
+			{Name: "bond0", Members: []string{"eth1", "eth0"}, Mode: "802.3ad", Address: "10.0.0.5/24"},
+		},
+		DNS: DNSConfig{Servers: []string{"8.8.8.8"}},
+	}
+	result := RenderNetplan(cfg)
+	for _, want := range []string{
+		"  ethernets:\n",
+		"    eth0: {}\n",
+		"    eth1: {}\n",
+		"  bonds:\n",
+		"    bond0:\n",
+		"      interfaces: [eth1, eth0]\n",
+		"      nameservers:\n",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("missing %q in netplan output:\n%s", want, result)
+		}
+	}
+	bondIdx := strings.Index(result, "    bond0:")
+	dnsIdx := strings.Index(result, "      nameservers:")
+	if bondIdx < 0 || dnsIdx < 0 || dnsIdx < bondIdx {
+		t.Fatalf("nameservers must remain under bond stanza:\n%s", result)
+	}
+}
+
 func TestRenderNetplan_BondGatewayAndRoutesShareRoutesBlock(t *testing.T) {
 	cfg := &NetworkConfig{
 		Bonds: []BondConfig{
@@ -531,6 +571,72 @@ func TestRenderNetplan_BondGatewayAndRoutesShareRoutesBlock(t *testing.T) {
 		if !strings.Contains(bondSection, want) {
 			t.Errorf("missing %q in netplan bond route output", want)
 		}
+	}
+}
+
+func TestRenderNetplan_VLANDeclaresBackingEthernet(t *testing.T) {
+	cfg := &NetworkConfig{
+		VLANs: []VLANConfig{
+			{Parent: "eno1", ID: 100, Address: "10.100.0.5/24"},
+		},
+	}
+	result := RenderNetplan(cfg)
+	for _, want := range []string{
+		"  ethernets:\n",
+		"    eno1: {}\n",
+		"  vlans:\n",
+		"    eno1.100:\n",
+		"      link: eno1\n",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("missing %q in netplan output:\n%s", want, result)
+		}
+	}
+}
+
+func TestRenderNetplan_DoesNotDuplicateExplicitBackingEthernet(t *testing.T) {
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{
+			{Name: "eth0", DHCP: true},
+		},
+		VLANs: []VLANConfig{
+			{Parent: "eth0", ID: 100, DHCP: true},
+		},
+	}
+	result := RenderNetplan(cfg)
+	if got := strings.Count(result, "    eth0:"); got != 1 {
+		t.Fatalf("eth0 stanzas = %d, want 1:\n%s", got, result)
+	}
+	if strings.Contains(result, "    eth0: {}\n") {
+		t.Fatalf("explicit eth0 should not also render as empty backing ethernet:\n%s", result)
+	}
+}
+
+func TestRenderNetplan_VLANOnBondDoesNotDeclareBondAsEthernet(t *testing.T) {
+	cfg := &NetworkConfig{
+		Bonds: []BondConfig{
+			{Name: "bond0", Members: []string{"eth0", "eth1"}, Mode: "802.3ad"},
+		},
+		VLANs: []VLANConfig{
+			{Name: "bond0.200", Parent: "bond0", ID: 200, DHCP: true},
+		},
+	}
+	result := RenderNetplan(cfg)
+	for _, want := range []string{
+		"    eth0: {}\n",
+		"    eth1: {}\n",
+		"  bonds:\n",
+		"    bond0:\n",
+		"  vlans:\n",
+		"    bond0.200:\n",
+		"      link: bond0\n",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("missing %q in netplan output:\n%s", want, result)
+		}
+	}
+	if strings.Contains(result, "    bond0: {}\n") {
+		t.Fatalf("bond parent should not render as empty ethernet:\n%s", result)
 	}
 }
 

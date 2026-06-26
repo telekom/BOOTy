@@ -56,7 +56,7 @@ manager.
 
 | OS family | Network manager | Config path | Format | Implemented scope |
 |-----------|-----------------|-------------|--------|-------------------|
-| Ubuntu | netplan + systemd-networkd | `/etc/netplan/` | YAML | Interfaces, DHCP, static addresses, gateways, DNS, static routes, bonds, and VLANs where configured |
+| Ubuntu | netplan + systemd-networkd | `/etc/netplan/` | YAML | Interfaces, DHCP, static addresses, gateways, DNS, static routes, bonds, and VLANs where configured; bond members and VLAN parent links are declared as backing ethernets |
 | RHEL-like | NetworkManager | `/etc/NetworkManager/system-connections/` | INI keyfile | Interfaces, DHCP, static addresses, gateways, DNS, and static routes; bonds and VLANs are rejected |
 | Flatcar | systemd-networkd | `/etc/systemd/network/` | INI unit file | Interfaces, DHCP, static addresses, gateways, DNS, and static routes; bonds and VLANs are rejected |
 
