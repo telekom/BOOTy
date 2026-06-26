@@ -536,6 +536,69 @@ func TestDryRunImageChecksum(t *testing.T) {
 	}
 }
 
+func TestDryRunImageSignature(t *testing.T) {
+	pubKey := "/keys/pub.gpg"
+	withMockStat(t, func(path string) (os.FileInfo, error) {
+		if path == pubKey {
+			return fakeFileInfo{name: "pub.gpg", mode: 0o600}, nil
+		}
+		return nil, os.ErrNotExist
+	})
+
+	tests := []struct {
+		name       string
+		cfg        func() *config.MachineConfig
+		expect     DryRunStatus
+		wantSubstr string
+	}{
+		{
+			name: "no signature URL",
+			cfg: func() *config.MachineConfig {
+				return &config.MachineConfig{}
+			},
+			expect:     DryRunWarn,
+			wantSubstr: "GPG verification disabled",
+		},
+		{
+			name: "signature without checksum",
+			cfg: func() *config.MachineConfig {
+				c := &config.MachineConfig{}
+				c.Provision.Image.SignatureURL = "https://images.example.invalid/node.raw.sig"
+				c.Provision.Image.GPGPubKey = pubKey
+				return c
+			},
+			expect:     DryRunFail,
+			wantSubstr: imageSignatureChecksumRequiredMessage,
+		},
+		{
+			name: "signature with checksum",
+			cfg: func() *config.MachineConfig {
+				c := &config.MachineConfig{}
+				c.Provision.Image.SignatureURL = "https://images.example.invalid/node.raw.sig"
+				c.Provision.Image.GPGPubKey = pubKey
+				c.Provision.Image.Checksum = strings.Repeat("a", 64)
+				c.Provision.Image.ChecksumType = "sha256"
+				return c
+			},
+			expect:     DryRunPass,
+			wantSubstr: "image signature verification configured",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			o := NewOrchestrator(tc.cfg(), &dryRunProvider{}, disk.NewManager(nil))
+			result := o.dryRunImageSignature(context.Background())
+			if result.Status != tc.expect {
+				t.Fatalf("got %s, want %s: %s", result.Status, tc.expect, result.Message)
+			}
+			if !strings.Contains(result.Message, tc.wantSubstr) {
+				t.Fatalf("message = %q, want %q", result.Message, tc.wantSubstr)
+			}
+		})
+	}
+}
+
 func TestDryRunNetworkLink(t *testing.T) {
 	tests := []struct {
 		name       string

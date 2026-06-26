@@ -319,6 +319,10 @@ func (o *Orchestrator) dryRunImageSignature(_ context.Context) DryRunResult {
 		return DryRunResult{Status: DryRunWarn,
 			Message: "no image signature URL configured - GPG verification disabled"}
 	}
+	if strings.TrimSpace(o.cfg.Provision.Image.Checksum) == "" {
+		return DryRunResult{Status: DryRunFail,
+			Message: imageSignatureChecksumRequiredMessage}
+	}
 	if o.cfg.Provision.Image.GPGPubKey == "" {
 		return DryRunResult{Status: DryRunFail,
 			Message: "image signature URL set but no GPG public key path configured"}

@@ -55,6 +55,7 @@ var (
 
 const sharedDataSeedInProgressMarker = ".booty-shared-data-seed-in-progress"
 const sharedDataSeedInProgressContent = "BOOTy shared-data seed in progress\n"
+const imageSignatureChecksumRequiredMessage = "IMAGE_SIGNATURE_URL requires IMAGE_CHECKSUM because signature verification and image streaming use separate downloads"
 
 // Step represents a named provisioning step.
 type Step struct {
@@ -638,7 +639,7 @@ func (o *Orchestrator) validateProvisionInputs(_ context.Context) error {
 		return fmt.Errorf("provision image source required before destructive storage steps: no image URLs configured")
 	}
 	if strings.TrimSpace(o.cfg.Provision.Image.SignatureURL) != "" && !checksumConfigured {
-		return fmt.Errorf("IMAGE_SIGNATURE_URL requires IMAGE_CHECKSUM because signature verification and image streaming use separate downloads")
+		return errors.New(imageSignatureChecksumRequiredMessage)
 	}
 	return nil
 }
