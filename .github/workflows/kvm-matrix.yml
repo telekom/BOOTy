@@ -278,8 +278,10 @@ jobs:
 
       - name: Upload KVM log (${{ matrix.scenario }})
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7.0.1
         with:
           name: kvm-${{ matrix.scenario }}-log
           path: kvm-${{ matrix.scenario }}.log
           if-no-files-found: ignore
+          retention-days: 7
