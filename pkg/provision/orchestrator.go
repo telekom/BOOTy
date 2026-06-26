@@ -2126,8 +2126,8 @@ func (o *Orchestrator) runPostProvisionCmds(ctx context.Context) error {
 }
 
 func (o *Orchestrator) teardownChroot(_ context.Context) error {
-	if o.shouldKeepChrootMountedForABKexec() {
-		o.log.Info("keeping A/B preserve-existing root mounted for kexec", "root", newroot)
+	if o.shouldKeepChrootMountedForKexec() {
+		o.log.Info("keeping target root mounted for kexec", "root", newroot)
 		return nil
 	}
 	bindErr := o.disk.TeardownChrootBindMounts(newroot)
@@ -2137,8 +2137,8 @@ func (o *Orchestrator) teardownChroot(_ context.Context) error {
 	return errors.Join(bindErr, bootErr, sharedErr, unmountErr)
 }
 
-func (o *Orchestrator) shouldKeepChrootMountedForABKexec() bool {
-	return o.isABImageMode() && o.cfg.Provision.AB.PreserveExisting
+func (o *Orchestrator) shouldKeepChrootMountedForKexec() bool {
+	return !o.cfg.Provision.DisableKexec && !o.firmwareChanged
 }
 
 func (o *Orchestrator) unmountBoot() error {

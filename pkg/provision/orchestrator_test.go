@@ -3456,10 +3456,20 @@ func TestCheckFilesystem(t *testing.T) {
 
 func TestTeardownChrootReturnsJoinedErrors(t *testing.T) {
 	cfg := &config.MachineConfig{}
+	cfg.Provision.DisableKexec = true
 	o, _ := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
 	err := o.teardownChroot(context.Background())
 	if err == nil {
 		t.Fatal("expected error from teardownChroot when unmount fails on non-root host")
+	}
+}
+
+func TestTeardownChrootKeepsNewrootMountedForKexec(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o, _ := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	if err := o.teardownChroot(context.Background()); err != nil {
+		t.Fatalf("teardownChroot should keep /newroot mounted for kexec: %v", err)
 	}
 }
 
@@ -3471,5 +3481,16 @@ func TestTeardownChrootKeepsABPreserveExistingMountedForKexec(t *testing.T) {
 
 	if err := o.teardownChroot(context.Background()); err != nil {
 		t.Fatalf("teardownChroot should keep /newroot mounted for preserve-existing kexec: %v", err)
+	}
+}
+
+func TestTeardownChrootUnmountsWhenFirmwareChangedRequiresReboot(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o, _ := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.firmwareChanged = true
+
+	err := o.teardownChroot(context.Background())
+	if err == nil {
+		t.Fatal("expected teardown error when firmware change disables kexec and unmounts on non-root host")
 	}
 }
