@@ -882,7 +882,7 @@ func TestParseVarsBGPPeering(t *testing.T) {
 BGP_INTERFACES="eth1,eth2"
 BGP_NEIGHBORS="10.0.0.1,10.0.0.2"
 BGP_REMOTE_ASN="65100"
-BGP_UNDERLAY_AF="ipv6"
+BGP_UNDERLAY_AF="ipv4"
 BGP_OVERLAY_TYPE="l3vpn"
 BGP_AUTH_PASSWORD="s3cr3t"
 `
@@ -902,8 +902,8 @@ BGP_AUTH_PASSWORD="s3cr3t"
 	if cfg.Network.BGP.RemoteASN != 65100 {
 		t.Errorf("BGPRemoteASN = %d, want 65100", cfg.Network.BGP.RemoteASN)
 	}
-	if cfg.Network.BGP.UnderlayAF != "ipv6" {
-		t.Errorf("BGPUnderlayAF = %q, want ipv6", cfg.Network.BGP.UnderlayAF)
+	if cfg.Network.BGP.UnderlayAF != "ipv4" {
+		t.Errorf("BGPUnderlayAF = %q, want ipv4", cfg.Network.BGP.UnderlayAF)
 	}
 	if cfg.Network.BGP.OverlayType != "l3vpn" {
 		t.Errorf("BGPOverlayType = %q, want l3vpn", cfg.Network.BGP.OverlayType)
