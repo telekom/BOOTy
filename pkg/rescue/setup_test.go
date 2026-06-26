@@ -8,6 +8,9 @@ import (
 
 func TestSetupSSHKeys_WritesKeys(t *testing.T) {
 	if os.Getuid() == 0 {
+		if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
+			t.Fatal("running as root in CI would write to real /root/.ssh/authorized_keys")
+		}
 		t.Skip("skipping: running as root would write to real /root/.ssh/authorized_keys")
 	}
 	// Not root — expect permission error writing to /root/.ssh.

@@ -2750,10 +2750,10 @@ func TestDetectDisk_CharDeviceRejected(t *testing.T) {
 	charDevice := "/dev/null"
 	info, err := os.Stat(charDevice)
 	if err != nil {
-		t.Skipf("cannot stat %s: %v", charDevice, err)
+		t.Fatalf("cannot stat %s: %v", charDevice, err)
 	}
 	if info.Mode()&os.ModeCharDevice == 0 {
-		t.Skipf("%s is not a character device on this host", charDevice)
+		t.Fatalf("%s is not a character device on this host", charDevice)
 	}
 
 	cfg := &config.MachineConfig{}

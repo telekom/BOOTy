@@ -5,6 +5,7 @@ package gobgp
 import (
 	"context"
 	"net"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -810,6 +811,9 @@ func TestFirstReachableBGPPeer(t *testing.T) {
 	var listenConfig net.ListenConfig
 	ln, err := listenConfig.Listen(context.Background(), "tcp6", "[::1]:0")
 	if err != nil {
+		if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
+			t.Fatalf("IPv6 loopback listener unavailable: %v", err)
+		}
 		t.Skipf("IPv6 loopback listener unavailable: %v", err)
 	}
 	defer ln.Close() //nolint:errcheck // test cleanup

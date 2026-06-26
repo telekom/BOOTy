@@ -14,11 +14,27 @@ import (
 	"testing"
 )
 
-// requireRoot skips the test if not running as root.
+func failOrSkipUnsupportedHost(t *testing.T, format string, args ...any) {
+	t.Helper()
+	msg := fmt.Sprintf(format, args...)
+	if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
+		t.Fatal(msg)
+	}
+	t.Skip(msg)
+}
+
+func requireTool(t *testing.T, tool string) {
+	t.Helper()
+	if _, err := exec.LookPath(tool); err != nil {
+		failOrSkipUnsupportedHost(t, "%s not available", tool)
+	}
+}
+
+// requireRoot skips the test if not running as root outside CI.
 func requireRoot(t *testing.T) {
 	t.Helper()
 	if os.Getuid() != 0 {
-		t.Skip("test requires root (run with sudo)")
+		failOrSkipUnsupportedHost(t, "test requires root (run with sudo)")
 	}
 }
 

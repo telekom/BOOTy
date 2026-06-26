@@ -29,9 +29,7 @@ func TestRAIDArrayCreationAndStop(t *testing.T) {
 	requireRoot(t)
 
 	// Check if mdadm is available.
-	if _, err := exec.LookPath("mdadm"); err != nil {
-		t.Skip("mdadm not available")
-	}
+	requireTool(t, "mdadm")
 
 	ctx := context.Background()
 	mgr := disk.NewManager(nil)
@@ -73,9 +71,7 @@ func TestRAIDArrayCreationAndStop(t *testing.T) {
 func TestRAIDArrayRequiresMinDevices(t *testing.T) {
 	requireRoot(t)
 
-	if _, err := exec.LookPath("mdadm"); err != nil {
-		t.Skip("mdadm not available")
-	}
+	requireTool(t, "mdadm")
 
 	ctx := context.Background()
 	mgr := disk.NewManager(nil)
@@ -100,9 +96,7 @@ func TestLVMVolumeGroupLifecycle(t *testing.T) {
 	requireRoot(t)
 
 	for _, tool := range []string{"pvcreate", "vgcreate", "lvcreate", "vgchange", "vgremove"} {
-		if _, err := exec.LookPath(tool); err != nil {
-			t.Skipf("%s not available", tool)
-		}
+		requireTool(t, tool)
 	}
 
 	dev := createRawLoopDevice(t, 100)
@@ -147,9 +141,7 @@ func TestLVMVolumeGroupLifecycle(t *testing.T) {
 func TestImageStreamZstdToDevice(t *testing.T) {
 	requireRoot(t)
 
-	if _, err := exec.LookPath("zstd"); err != nil {
-		t.Skip("zstd not available")
-	}
+	requireTool(t, "zstd")
 
 	loopDev := createRawLoopDevice(t, 10)
 
@@ -192,9 +184,7 @@ func TestImageStreamZstdToDevice(t *testing.T) {
 func TestImageStreamLZ4ToDevice(t *testing.T) {
 	requireRoot(t)
 
-	if _, err := exec.LookPath("lz4"); err != nil {
-		t.Skip("lz4 not available")
-	}
+	requireTool(t, "lz4")
 
 	loopDev := createRawLoopDevice(t, 10)
 
@@ -234,9 +224,7 @@ func TestImageStreamLZ4ToDevice(t *testing.T) {
 func TestImageStreamXZToDevice(t *testing.T) {
 	requireRoot(t)
 
-	if _, err := exec.LookPath("xz"); err != nil {
-		t.Skip("xz not available")
-	}
+	requireTool(t, "xz")
 
 	loopDev := createRawLoopDevice(t, 10)
 

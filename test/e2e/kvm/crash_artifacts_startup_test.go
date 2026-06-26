@@ -24,9 +24,7 @@ import (
 )
 
 func TestCrashArtifactsStartupUploadBeforeImageDownload(t *testing.T) {
-	if os.Getuid() != 0 {
-		t.Skip("test requires root (run with sudo)")
-	}
+	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)
 	requireDiskInspectTools(t)

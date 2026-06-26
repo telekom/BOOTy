@@ -308,9 +308,7 @@ func TestApplyPartitionLayoutOnRawLoopDevice(t *testing.T) {
 	requireRoot(t)
 
 	for _, bin := range []string{"sgdisk", "partprobe", "mkfs.ext4", "blkid"} {
-		if _, err := exec.LookPath(bin); err != nil {
-			t.Skipf("%s not available", bin)
-		}
+		requireTool(t, bin)
 	}
 
 	ctx := context.Background()
