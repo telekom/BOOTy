@@ -133,7 +133,8 @@ Target OS support is limited to behavior the repository implements and tests:
 |------------------|----------------|
 | Generic Linux images | Supported at the image/disk/provisioning level when the target image is compatible with the GRUB-oriented provisioning flow and required target-side tools/files are present. Current CI uses synthetic Linux images on Ubuntu runners rather than real distro cloud images. |
 | Ubuntu/Debian-like images | Common examples and GRUB/update-grub assumptions exist, but CI does not prove first boot of a real Ubuntu or Debian target image with cloud-init, netplan, or systemd applying the generated files. |
-| RHEL/Rocky/Alma/Fedora/SUSE/openSUSE/SLES | Not target-OS proven. Some label and renderer helpers exist, but active provisioning does not implement native GRUB2/BLS/vendor EFI paths, SELinux relabeling, or distro-specific first-boot validation. |
+| RHEL/Rocky/Alma/Fedora | Not target-OS proven. Some label and NetworkManager renderer helpers exist, but active provisioning does not implement native GRUB2/BLS/vendor EFI paths, SELinux relabeling, or distro-specific first-boot validation. |
+| SUSE/openSUSE/SLES | Not target-OS proven. Some openSUSE source-root labels and an SLES secure-boot verifier path exist, but there is no SUSE network persistence writer, native GRUB2 handoff, package/init integration, or distro-specific first-boot validation. |
 | Flatcar | Unit tests cover systemd-networkd rendering and source-root selection can handle explicit `USR-A`/`USR-B` labels. The existing KVM test uses a Flatcar-like synthetic source layout, not a real Flatcar vendor image, Ignition, update-engine, or Nebraska flow. |
 | VMware ESXi | Unsupported and unclaimed. The repository has no ESXi/VMware/vSphere/VMFS provisioning path or CI coverage. |
 | Windows | Unsupported as a BOOTy runtime or provisioned target OS. Windows is mentioned only as a possible Go cross-compilation host. |
