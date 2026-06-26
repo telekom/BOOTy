@@ -11,9 +11,10 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/telekom/BOOTy/pkg/blockdev"
 )
 
 // StreamPartitions downloads an image to a tmpfs ramdisk, optionally converts
@@ -306,23 +307,7 @@ func ddPartition(ctx context.Context, src, dst string) error {
 // targetPartitionNode derives the partition device node for a given disk and
 // partition number using the same device naming rules as the disk package.
 func targetPartitionNode(disk string, partNum int) string {
-	if strings.HasPrefix(disk, "/dev/disk/by-") {
-		return fmt.Sprintf("%s-part%d", disk, partNum)
-	}
-
-	devName := filepath.Base(disk)
-	if needsPartitionSeparator(devName) {
-		return fmt.Sprintf("%sp%d", disk, partNum)
-	}
-	return fmt.Sprintf("%s%d", disk, partNum)
-}
-
-func needsPartitionSeparator(devName string) bool {
-	return strings.HasPrefix(devName, "nvme") ||
-		strings.HasPrefix(devName, "loop") ||
-		strings.HasPrefix(devName, "mmcblk") ||
-		strings.HasPrefix(devName, "md") ||
-		strings.HasPrefix(devName, "nbd")
+	return blockdev.PartitionDevicePath(disk, partNum)
 }
 
 var runCmd = runCommand

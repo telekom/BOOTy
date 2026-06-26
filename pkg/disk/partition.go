@@ -6,9 +6,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"strings"
 
+	"github.com/telekom/BOOTy/pkg/blockdev"
 	"github.com/telekom/BOOTy/pkg/config"
 )
 
@@ -180,17 +180,7 @@ func resolveTypeGUID(part *config.Partition) string {
 
 // PartitionDevicePath returns the device path for a specific partition number.
 func PartitionDevicePath(device string, num int) string {
-	if strings.HasPrefix(device, "/dev/disk/by-") {
-		return fmt.Sprintf("%s-part%d", device, num)
-	}
-
-	// NVMe: /dev/nvme0n1 → /dev/nvme0n1p1
-	// SATA: /dev/sda → /dev/sda1
-	devName := filepath.Base(device)
-	if strings.HasPrefix(devName, "nvme") || strings.HasPrefix(devName, "loop") || strings.HasPrefix(devName, "mmcblk") || strings.HasPrefix(devName, "md") || strings.HasPrefix(devName, "nbd") {
-		return fmt.Sprintf("%sp%d", device, num)
-	}
-	return fmt.Sprintf("%s%d", device, num)
+	return blockdev.PartitionDevicePath(device, num)
 }
 
 // partitionDevice is an unexported alias for internal use.
