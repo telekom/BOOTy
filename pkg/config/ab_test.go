@@ -375,3 +375,32 @@ func TestValidateRejectsABSourceRootSelectorConflict(t *testing.T) {
 		t.Fatalf("Validate() error = %q", got)
 	}
 }
+
+func TestValidateTrimsABSourceRootSelector(t *testing.T) {
+	cfg := &Config{}
+	cfg.Provision.Image.Mode = ImageModeAB
+	cfg.Provision.AB.RootSizeMB = 8192
+	cfg.Provision.AB.SourceRootLabel = " rootfs "
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if cfg.Provision.AB.SourceRootLabel != "rootfs" {
+		t.Fatalf("sourceRootLabel = %q, want rootfs", cfg.Provision.AB.SourceRootLabel)
+	}
+}
+
+func TestValidateRejectsBlankABSourceRootSelector(t *testing.T) {
+	cfg := &Config{}
+	cfg.Provision.Image.Mode = ImageModeAB
+	cfg.Provision.AB.RootSizeMB = 8192
+	cfg.Provision.AB.SourceRootLabel = "   "
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected blank source-root selector")
+	}
+	if got := err.Error(); !strings.Contains(got, "provision.ab.sourceRootLabel must not be blank") {
+		t.Fatalf("Validate() error = %q", got)
+	}
+}

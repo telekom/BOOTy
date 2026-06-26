@@ -21,13 +21,27 @@ type ImageConfig struct {
 
 	// Mode controls how the image is written to disk.
 	// Valid values: "whole-disk" (default), "partition", "ab"
-	//   - whole-disk: dd-style write of the entire image to the block device
+	//   - whole-disk: dd-style write of the entire image to the block device,
+	//     or source-root filesystem streaming into the declared root partition
+	//     when provision.disk.partitionLayout is set
 	//   - partition: per-partition extraction (streams each partition independently;
-	//     does NOT use Provision.Disk.PartitionLayout, which is not yet supported)
+	//     cannot be combined with Provision.Disk.PartitionLayout)
 	//   - ab: copy the image boot/root partitions into a generated dual-root
 	//     A/B layout and boot the selected target slot
 	// Default: "whole-disk"
 	Mode string `yaml:"mode" json:"mode"`
+
+	// SourceRootLabel selects the source-image GPT partition label to stream
+	// into a declarative partition layout root. It is mutually exclusive with
+	// SourceRootPartition. A/B mode uses provision.ab.sourceRootLabel instead.
+	// Default: "" (auto-select a common root label or unambiguous Linux partition)
+	SourceRootLabel string `yaml:"sourceRootLabel" json:"sourceRootLabel"`
+
+	// SourceRootPartition selects the 1-based source-image partition number to
+	// stream into a declarative partition layout root. It is mutually exclusive
+	// with SourceRootLabel. A/B mode uses provision.ab.sourceRootPartition.
+	// Default: 0 (not set)
+	SourceRootPartition int `yaml:"sourceRootPartition" json:"sourceRootPartition"`
 
 	// SignatureURL is the URL to a detached GPG signature for image verification.
 	// Default: ""

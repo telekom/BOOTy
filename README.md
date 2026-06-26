@@ -331,7 +331,9 @@ root is mounted.
 | `MOK_PASSWORD` | — | *(Phase 2)* One-time password for MokManager confirmation |
 | `IMAGE_CHECKSUM` | — | Expected hex digest of the raw disk image |
 | `IMAGE_CHECKSUM_TYPE` | — | Checksum algorithm: `sha256` or `sha512` |
-| `IMAGE_MODE` | `whole-disk` | Image write mode: `whole-disk`, `partition`, or `ab` |
+| `IMAGE_MODE` | `whole-disk` | Image write mode: `whole-disk`, `partition`, or `ab`; with a declarative partition layout, `whole-disk` streams the selected root filesystem into the declared root partition |
+| `IMAGE_SOURCE_ROOT_LABEL` | — | Source-image GPT partition label to stream into a declarative partition layout root |
+| `IMAGE_SOURCE_ROOT_PARTITION` | — | 1-based source-image partition number for declarative partition layout root streaming |
 | `AB_SCHEME` | `dual-root` | A/B partitioning scheme for `IMAGE_MODE=ab` |
 | `AB_ACTIVE_SLOT` | — | Currently booted A/B slot, `a` or `b` |
 | `AB_TARGET_SLOT` | `inactive` | A/B slot to write: `inactive`, `a`, or `b` |

@@ -182,7 +182,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 			expect: DryRunPass,
 		},
 		{
-			name: "layout-only without hostname",
+			name: "layout without image and hostname",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{}
 				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
@@ -194,7 +194,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 			expect: DryRunFail,
 		},
 		{
-			name: "layout-only with hostname",
+			name: "layout without image",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{Hostname: "node1"}
 				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
@@ -206,13 +206,56 @@ func TestDryRunConfigValidation(t *testing.T) {
 			expect: DryRunFail,
 		},
 		{
-			name: "layout with image url",
+			name: "layout with image url without hostname",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{}
 				c.Provision.Image.URLs = []string{"http://example.com/img"}
 				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 					Table:      "gpt",
 					Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
+				}
+				return c
+			}(),
+			expect: DryRunWarn,
+		},
+		{
+			name: "layout with image url and hostname",
+			cfg: func() *config.MachineConfig {
+				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.Image.URLs = []string{"http://example.com/img"}
+				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+					Table:      "gpt",
+					Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
+				}
+				return c
+			}(),
+			expect: DryRunPass,
+		},
+		{
+			name: "partition image mode with layout",
+			cfg: func() *config.MachineConfig {
+				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.Image.Mode = config.ImageModePartition
+				c.Provision.Image.URLs = []string{"http://example.com/img"}
+				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+					Table:      "gpt",
+					Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
+				}
+				return c
+			}(),
+			expect: DryRunFail,
+		},
+		{
+			name: "unsupported layout mountpoint",
+			cfg: func() *config.MachineConfig {
+				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.Image.URLs = []string{"http://example.com/img"}
+				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+					Table: "gpt",
+					Partitions: []config.Partition{
+						{Label: "root", Filesystem: "ext4", Mountpoint: "/"},
+						{Label: "var", Filesystem: "ext4", Mountpoint: "/var"},
+					},
 				}
 				return c
 			}(),
@@ -383,7 +426,7 @@ func TestDryRunImageReachability_NoURLs(t *testing.T) {
 	}
 }
 
-func TestDryRunImageReachability_NoURLsLayoutOnly(t *testing.T) {
+func TestDryRunImageReachability_NoURLsWithPartitionLayout(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 		Table:      "gpt",
@@ -395,8 +438,8 @@ func TestDryRunImageReachability_NoURLsLayoutOnly(t *testing.T) {
 		disk.NewManager(nil),
 	)
 	result := o.dryRunImageReachability(context.Background())
-	if result.Status != DryRunWarn {
-		t.Errorf("got %s, want warn for layout-only empty URLs: %s", result.Status, result.Message)
+	if result.Status != DryRunFail {
+		t.Errorf("got %s, want fail for partition layout empty URLs: %s", result.Status, result.Message)
 	}
 }
 
@@ -535,7 +578,7 @@ func TestDryRunImageChecksum(t *testing.T) {
 		{"short sha256", "abc123", "sha256", nil, DryRunFail},
 		{"non-hex sha256", strings.Repeat("g", 64), "sha256", nil, DryRunFail},
 		{"unsupported type", "abc123", "md5", nil, DryRunFail},
-		{"layout-only skips checksum", "", "", func() *config.MachineConfig {
+		{"layout without checksum", "", "", func() *config.MachineConfig {
 			c := &config.MachineConfig{}
 			c.Provision.Disk.PartitionLayout = &config.PartitionLayout{Table: "gpt", Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}}}
 			return c

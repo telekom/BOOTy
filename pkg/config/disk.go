@@ -59,8 +59,8 @@ type DiskConfig struct {
 	RAID []RAIDConfig `yaml:"raid" json:"raid"`
 
 	// PartitionLayout defines declarative GPT partitioning.
-	// Note: provisioning via PartitionLayout is not yet supported; this field is
-	// reserved for a future release.
+	// When set with whole-disk image mode, BOOTy creates this layout and streams
+	// the selected source root filesystem into the declared root partition.
 	// Default: nil
 	PartitionLayout *PartitionLayout `yaml:"partitionLayout" json:"partitionLayout"`
 }

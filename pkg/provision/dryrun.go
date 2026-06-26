@@ -105,9 +105,11 @@ func (o *Orchestrator) DryRun(ctx context.Context) error {
 }
 
 func (o *Orchestrator) dryRunConfigValidation(_ context.Context) DryRunResult {
-	if o.cfg.Provision.Disk.PartitionLayout != nil && !o.isABImageMode() {
-		return DryRunResult{Status: DryRunFail,
-			Message: errPartitionLayoutNotSupported}
+	if err := o.validatePartitionLayoutModeCompatibility(); err != nil {
+		return DryRunResult{Status: DryRunFail, Message: err.Error()}
+	}
+	if err := o.validatePartitionLayoutRuntimeSupport(); err != nil {
+		return DryRunResult{Status: DryRunFail, Message: err.Error()}
 	}
 
 	if len(o.cfg.Provision.Image.URLs) == 0 {
@@ -121,9 +123,6 @@ func (o *Orchestrator) dryRunConfigValidation(_ context.Context) DryRunResult {
 
 func (o *Orchestrator) dryRunImageReachability(ctx context.Context) DryRunResult {
 	if len(o.cfg.Provision.Image.URLs) == 0 {
-		if o.cfg.Provision.Disk.PartitionLayout != nil {
-			return DryRunResult{Status: DryRunWarn, Message: "layout-only mode: skipping image reachability check"}
-		}
 		return DryRunResult{Status: DryRunFail, Message: "no image URLs configured"}
 	}
 
@@ -295,9 +294,6 @@ func (o *Orchestrator) dryRunHealthChecks(ctx context.Context) DryRunResult {
 }
 
 func (o *Orchestrator) dryRunImageChecksum(_ context.Context) DryRunResult {
-	if len(o.cfg.Provision.Image.URLs) == 0 && o.cfg.Provision.Disk.PartitionLayout != nil {
-		return DryRunResult{Status: DryRunWarn, Message: "layout-only mode: skipping image checksum check"}
-	}
 	if o.cfg.Provision.Image.Checksum == "" {
 		return DryRunResult{Status: DryRunWarn,
 			Message: "no image checksum configured - integrity cannot be verified"}

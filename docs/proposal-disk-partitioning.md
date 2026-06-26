@@ -2,7 +2,7 @@
 
 ## Status: Accepted
 
-Implementation status (current PR scope): Phase 1 groundwork implemented; end-to-end partition-layout provisioning remains pending.
+Implementation status: Phase 1 groundwork and root image streaming are implemented; tarball extraction and generic non-root mount orchestration remain pending.
 
 Implemented in Phase 1:
 - `ParsePartitionLayout` validation (GPT-only schema, root/mountpoint checks,
@@ -14,13 +14,17 @@ Implemented in Phase 1:
   full input validation (PV bounds, VG/LV name checks)
 - `GenerateFstab` + `GenerateLVMFstab` using strings.Builder
 - Orchestrator integration: `apply-partition-layout` step, layout-based
-  root/ESP resolution, fail-fast gating when `PARTITION_LAYOUT` is set,
-  write-fstab after mount-root
+  root/ESP resolution, root filesystem streaming into the declared root
+  partition, and write-fstab after mount-root
 - Comprehensive unit tests with mockCommander for command-sequence verification
 
 Current runtime behavior:
-- BOOTy now fails fast when `PARTITION_LAYOUT` is set (with or without `IMAGE`)
-  to avoid destructive disk writes until rootfs extraction support is available.
+- BOOTy creates the declared GPT layout and, in default `whole-disk` image
+  mode, streams the selected root filesystem/source-root partition into the
+  declared root mountpoint.
+- `provision.image.mode=partition` is rejected with `PARTITION_LAYOUT` because
+  that mode copies the source partition table and conflicts with a declarative
+  target layout.
 
 Still pending for full proposal closure:
 - End-to-end rootfs tarball extraction flow (instead of raw image assumptions)
@@ -74,9 +78,9 @@ type Partition struct {
     Number     int    `json:"number"`
     Label      string `json:"label"`
     SizeMB     int    `json:"sizeMB"`     // 0 = remainder
-    FSType     string `json:"fsType"`     // ext4, xfs, vfat, swap
-    MountPoint string `json:"mountPoint"` // e.g., "/", "/boot/efi"
-    Flags      string `json:"flags"`      // e.g., "boot,esp"
+    Filesystem string `json:"filesystem"` // ext4, xfs, vfat, swap
+    Mountpoint string `json:"mountpoint"` // e.g., "/", "/boot/efi"
+    TypeGUID   string `json:"typeGUID"`   // optional explicit GPT type GUID
 }
 
 type LVMConfig struct {
@@ -88,8 +92,8 @@ type LVMConfig struct {
 type LVVolume struct {
     Name       string `json:"name"`
     SizeMB     int    `json:"sizeMB"` // 0 = remainder
-    FSType     string `json:"fsType"`
-    MountPoint string `json:"mountPoint"`
+    Filesystem string `json:"filesystem"`
+    Mountpoint string `json:"mountpoint"`
 }
 ```
 
@@ -97,12 +101,13 @@ type LVVolume struct {
 
 ```bash
 # /deploy/vars
-export PARTITION_LAYOUT='[
-  {"number":1, "label":"efi",  "sizeMB":512,   "fsType":"vfat", "mountPoint":"/boot/efi", "flags":"boot,esp"},
-  {"number":2, "label":"boot", "sizeMB":1024,  "fsType":"ext4", "mountPoint":"/boot"},
-  {"number":3, "label":"root", "sizeMB":51200, "fsType":"ext4", "mountPoint":"/"},
-  {"number":4, "label":"data", "sizeMB":0,     "fsType":"xfs",  "mountPoint":"/var/lib/containerd"}
-]'
+export PARTITION_LAYOUT='{
+  "table": "gpt",
+  "partitions": [
+    {"label":"efi",  "sizeMB":512,   "filesystem":"vfat", "mountpoint":"/boot/efi"},
+    {"label":"root", "sizeMB":51200, "filesystem":"ext4", "mountpoint":"/"}
+  ]
+}'
 ```
 
 Or via CAPRF `ProvisionerConfig`:
@@ -115,18 +120,16 @@ metadata:
 stringData:
   config: |
     partitionLayout:
-      device: auto  # auto-detect root disk
       table: gpt
       partitions:
         - label: efi
           sizeMB: 512
-          fsType: vfat
-          mountPoint: /boot/efi
-          flags: boot,esp
+          filesystem: vfat
+          mountpoint: /boot/efi
         - label: root
           sizeMB: 0
-          fsType: ext4
-          mountPoint: /
+          filesystem: ext4
+          mountpoint: /
 ```
 
 ### Implementation
@@ -192,17 +195,19 @@ func (m *Manager) ApplyPartitionLayout(ctx context.Context, layout PartitionLayo
 When a partition layout is configured, the provisioning pipeline changes:
 
 ```
-Without custom partitioning (current):
+Without custom partitioning:
   Stream image → whole disk → partprobe → mount → configure
 
 With custom partitioning:
-  Apply partition layout → format → mount all partitions →
-  extract rootfs tarball → configure → generate fstab
+  Apply partition layout → format → stream selected source root →
+  partprobe → mount root and /boot/efi → configure → generate fstab
 ```
 
-This means the image format also changes: instead of a raw disk image,
-a rootfs tarball (`.tar.gz` / `.tar.zst`) is extracted into the
-mounted root partition.
+In the implemented path, the image remains a raw/qcow2/compressed/OCI source.
+BOOTy selects the source root partition, or copies a plain root filesystem
+image, and writes it into the declared root partition. Rootfs tarball extraction
+and arbitrary non-root mount orchestration remain future work; non-A/B layouts
+currently reject mountpoints other than `/` and `/boot/efi`.
 
 ### Auto-generated fstab
 
@@ -256,9 +261,9 @@ not required.
 
 ## Risks
 
-- **Image format change**: Custom partitioning requires rootfs tarball
-  instead of raw disk image. Both formats must be supported. Auto-detect
-  via image file extension or magic bytes.
+- **Image payload scope**: Custom partitioning currently streams raw,
+  qcow2, compressed, or OCI source-root payloads into the declared root
+  partition. Rootfs tarball extraction remains separate future work.
 - **LVM complexity**: LVM adds `lvm2` tooling to the initrd (~5 MB).
   Consider making it optional.
 - **Partition numbering**: NVMe devices use `p1`, `p2` while SATA/SAS

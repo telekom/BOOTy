@@ -226,6 +226,11 @@ provision:
     # mode: whole-disk (default) | partition | ab
     mode: whole-disk
 
+    # sourceRootLabel/sourceRootPartition select the source-image root partition
+    # for declarative partition layout streaming. A/B mode uses provision.ab.
+    sourceRootLabel: ""
+    sourceRootPartition: 0
+
     signatureURL: ""
     gpgPubKey: ""
 
@@ -278,9 +283,10 @@ provision:
           - /dev/sda
           - /dev/sdb
 
-    # partitionLayout: declarative GPT partitioning (not yet active in provisioning).
-    # When set, use ParsePartitionLayout to validate the JSON form.
-    # partitionLayout: null  # reserved for future use
+    # partitionLayout: declarative GPT partitioning.
+    # With provision.image.mode=whole-disk, BOOTy creates this layout and streams
+    # the selected source root filesystem into the declared root mountpoint.
+    # partitionLayout: null
 
   firmware:
     enabled: true

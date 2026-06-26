@@ -31,6 +31,13 @@ type ABTargets struct {
 	SourceRootPartition int
 }
 
+// RootTarget names an already-created target root partition for custom layouts.
+type RootTarget struct {
+	RootPartition       string
+	SourceRootLabel     string
+	SourceRootPartition int
+}
+
 type abDirtyTargetsError struct {
 	err     error
 	targets []string
@@ -96,7 +103,26 @@ func StreamAB(ctx context.Context, url string, target ABTargets, opts ...StreamO
 		return fmt.Errorf("a/b root partition is required")
 	}
 	slog.Info("a/b image streaming", "url", RedactURL(url), "disk", target.Disk, "root", target.RootPartition, "boot", target.BootPartition)
+	return streamSelectedImagePayload(ctx, url, target, opts...)
+}
 
+// StreamRoot downloads an OS image and copies its selected root filesystem
+// payload into an already-created target root partition. Partitioned source
+// images use the same root selection rules as A/B streaming; plain filesystem
+// images without a partition table are copied directly.
+func StreamRoot(ctx context.Context, url string, target RootTarget, opts ...StreamOpts) error {
+	if strings.TrimSpace(target.RootPartition) == "" {
+		return fmt.Errorf("root partition is required")
+	}
+	slog.Info("root image streaming", "url", RedactURL(url), "root", target.RootPartition)
+	return streamSelectedImagePayload(ctx, url, ABTargets{
+		RootPartition:       target.RootPartition,
+		SourceRootLabel:     target.SourceRootLabel,
+		SourceRootPartition: target.SourceRootPartition,
+	}, opts...)
+}
+
+func streamSelectedImagePayload(ctx context.Context, url string, target ABTargets, opts ...StreamOpts) error {
 	var opt StreamOpts
 	if len(opts) > 0 {
 		opt = opts[0]
@@ -347,11 +373,14 @@ func selectSourceRootPartition(parts []sfdiskPartition, label string, number int
 	}
 
 	return sfdiskPartition{}, fmt.Errorf(
-		"source image has no Linux root partition candidate; set provision.ab.sourceRootLabel or provision.ab.sourceRootPartition for supported Linux images without a standard root label or partition type",
+		"source image has no Linux root partition candidate; %s for supported Linux images without a standard root label or partition type",
+		sourceRootSelectorHint,
 	)
 }
 
 var errNoSourceRootCandidate = errors.New("source image has no root partition candidate")
+
+const sourceRootSelectorHint = "set provision.image.sourceRootLabel/provision.image.sourceRootPartition for partition-layout root streaming, or provision.ab.sourceRootLabel/provision.ab.sourceRootPartition for A/B streaming"
 
 func selectSingleSourceRootCandidate(parts []sfdiskPartition, match func(sfdiskPartition) bool, reason string) (sfdiskPartition, error) {
 	var candidate sfdiskPartition
@@ -369,7 +398,7 @@ func selectSingleSourceRootCandidate(parts []sfdiskPartition, match func(sfdiskP
 	case 1:
 		return candidate, nil
 	default:
-		return sfdiskPartition{}, fmt.Errorf("source image has %d %s candidates; set provision.ab.sourceRootLabel or provision.ab.sourceRootPartition", count, reason)
+		return sfdiskPartition{}, fmt.Errorf("source image has %d %s candidates; %s", count, reason, sourceRootSelectorHint)
 	}
 }
 

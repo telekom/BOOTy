@@ -359,10 +359,36 @@ func TestValidate(t *testing.T) {
 		{name: "invalid mode", cfg: Config{Mode: "invalid"}, wantErr: "invalid mode"},
 		{name: "valid image mode", cfg: Config{Provision: ProvisionConfig{Image: ImageConfig{Mode: "whole-disk"}}}},
 		{name: "invalid image mode", cfg: Config{Provision: ProvisionConfig{Image: ImageConfig{Mode: "raw"}}}, wantErr: "invalid provision.image.mode"},
+		{name: "valid image source root selector", cfg: Config{Provision: ProvisionConfig{Image: ImageConfig{SourceRootLabel: " ROOT-A "}}}, wantNormalized: func(t *testing.T, cfg *Config) {
+			t.Helper()
+			if cfg.Provision.Image.SourceRootLabel != "ROOT-A" {
+				t.Fatalf("sourceRootLabel = %q, want ROOT-A", cfg.Provision.Image.SourceRootLabel)
+			}
+		}},
+		{name: "invalid blank image source root selector", cfg: Config{Provision: ProvisionConfig{Image: ImageConfig{SourceRootLabel: "   "}}}, wantErr: "provision.image.sourceRootLabel must not be blank"},
+		{name: "invalid image source root selector conflict", cfg: Config{Provision: ProvisionConfig{Image: ImageConfig{SourceRootLabel: "ROOT-A", SourceRootPartition: 2}}}, wantErr: "provision.image.sourceRootLabel and provision.image.sourceRootPartition are mutually exclusive"},
+		{name: "invalid image source root partition", cfg: Config{Provision: ProvisionConfig{Image: ImageConfig{SourceRootPartition: -1}}}, wantErr: "provision.image.sourceRootPartition must be non-negative"},
 		{name: "valid network mode", cfg: Config{Network: NetworkConfig{Mode: "gobgp"}}},
 		{name: "invalid network mode", cfg: Config{Network: NetworkConfig{Mode: "ospf"}}, wantErr: "invalid network.mode"},
 		{name: "valid checksum type", cfg: Config{Provision: ProvisionConfig{Image: ImageConfig{ChecksumType: "sha256"}}}},
 		{name: "invalid checksum type", cfg: Config{Provision: ProvisionConfig{Image: ImageConfig{ChecksumType: "md5"}}}, wantErr: "invalid provision.image.checksumType"},
+		{name: "valid direct partition layout", cfg: Config{Provision: ProvisionConfig{Disk: DiskConfig{PartitionLayout: &PartitionLayout{
+			Device:     "/dev/sda",
+			Partitions: []Partition{{Label: "root", Filesystem: "ext4", Mountpoint: "/"}},
+		}}}}, wantNormalized: func(t *testing.T, cfg *Config) {
+			t.Helper()
+			if cfg.Provision.Disk.PartitionLayout.Table != "gpt" {
+				t.Fatalf("partition layout table = %q, want gpt", cfg.Provision.Disk.PartitionLayout.Table)
+			}
+		}},
+		{name: "invalid direct partition layout missing root", cfg: Config{Provision: ProvisionConfig{Disk: DiskConfig{PartitionLayout: &PartitionLayout{
+			Table:      "gpt",
+			Partitions: []Partition{{Label: "data", Filesystem: "ext4", Mountpoint: "/data"}},
+		}}}}, wantErr: `partition layout must include mountpoint "/"`},
+		{name: "invalid direct partition layout filesystem", cfg: Config{Provision: ProvisionConfig{Disk: DiskConfig{PartitionLayout: &PartitionLayout{
+			Table:      "gpt",
+			Partitions: []Partition{{Label: "root", Filesystem: "ntfs", Mountpoint: "/"}},
+		}}}}, wantErr: `unsupported filesystem "ntfs"`},
 		{name: "valid rescue mode", cfg: Config{Rescue: RescueConfig{Mode: "shell"}}},
 		{name: "invalid rescue mode", cfg: Config{Rescue: RescueConfig{Mode: "panic"}}, wantErr: "invalid rescue.mode"},
 		{name: "valid peer mode", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{PeerMode: "unnumbered"}}}},

@@ -1108,6 +1108,11 @@ func (m *Manager) fsType(ctx context.Context, device string) (string, error) {
 	return strings.ToLower(strings.TrimSpace(string(out))), nil
 }
 
+// FilesystemType returns the filesystem type reported by blkid for device.
+func (m *Manager) FilesystemType(ctx context.Context, device string) (string, error) {
+	return m.fsType(ctx, device)
+}
+
 // DisableLVM deactivates LVM volume groups before disk wipe.
 func (m *Manager) DisableLVM(ctx context.Context) error {
 	slog.Info("deactivating LVM volume groups")
