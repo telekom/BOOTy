@@ -173,8 +173,23 @@ func TestSelectSourceRootPartitionSupportsFlatcarUsrSlots(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected Flatcar USR-A/USR-B source image to require an explicit selector")
 	}
-	if !strings.Contains(err.Error(), "common root partition label candidates") {
-		t.Fatalf("error = %q, want common-label ambiguity", err.Error())
+	if !strings.Contains(err.Error(), "Flatcar-like USR-A/USR-B") {
+		t.Fatalf("error = %q, want Flatcar-like USR slot rejection", err.Error())
+	}
+}
+
+func TestSelectSourceRootPartitionRejectsImplicitSingleFlatcarUsrSlot(t *testing.T) {
+	parts := []sfdiskPartition{
+		{Node: "/dev/loop0p1", Type: efiSystemPartitionGUID, Size: 1024, Name: "EFI-SYSTEM", Number: 1},
+		{Node: "/dev/loop0p3", Type: linuxFilesystemGUID, Size: 2048, Name: "USR-A", Number: 3},
+	}
+
+	_, err := selectSourceRootPartition(parts, "", 0)
+	if err == nil {
+		t.Fatal("expected single Flatcar USR-A source image to require an explicit selector")
+	}
+	if !strings.Contains(err.Error(), "Flatcar-like USR-A/USR-B") {
+		t.Fatalf("error = %q, want Flatcar-like USR slot rejection", err.Error())
 	}
 }
 
