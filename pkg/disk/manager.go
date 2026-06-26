@@ -31,10 +31,11 @@ type Commander = executil.Commander
 type ExecCommander = executil.ExecCommander
 
 var (
-	mountFunc        = syscall.Mount
-	unmountFunc      = syscall.Unmount
-	isMountPointFunc = isMountPoint
-	readMountsFile   = os.ReadFile
+	mountFunc               = syscall.Mount
+	unmountFunc             = syscall.Unmount
+	isMountPointFunc        = isMountPoint
+	readMountsFile          = os.ReadFile
+	runChrootSyscallCommand = runChrootSyscallExec
 )
 
 // Manager handles disk operations for provisioning.
@@ -1167,21 +1168,37 @@ func (m *Manager) ChrootRun(ctx context.Context, root, command string) ([]byte, 
 
 // chrootSyscall runs a command using SysProcAttr.Chroot instead of the chroot binary.
 func (m *Manager) chrootSyscall(ctx context.Context, root, command string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "/bin/bash", "-c", command)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Chroot: root}
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		raw := strings.TrimSpace(string(out))
-		if len(raw) > 512 {
-			raw = raw[:512] + "...(truncated)"
+	shells := []string{"/bin/bash", "/bin/sh"}
+	for i, shell := range shells {
+		out, err := runChrootSyscallCommand(ctx, root, shell, command)
+		if err == nil {
+			return out, nil
 		}
-		raw = strings.NewReplacer("\n", " ", "\r", " ").Replace(raw)
-		if raw != "" {
-			return out, fmt.Errorf("chroot syscall in %s: %w [output: %s]", root, err, raw)
+		if i == 0 && isShellNotFound(err, shell) {
+			slog.Info("bash unavailable in syscall chroot, trying /bin/sh", "root", root)
+			continue
 		}
-		return out, fmt.Errorf("chroot syscall in %s: %w", root, err)
+		return out, formatChrootSyscallError(root, shell, out, err)
 	}
-	return out, nil
+	return nil, fmt.Errorf("chroot syscall in %s: no shell configured", root)
+}
+
+func runChrootSyscallExec(ctx context.Context, root, shell, command string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, shell, "-c", command)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Chroot: root}
+	return cmd.CombinedOutput()
+}
+
+func formatChrootSyscallError(root, shell string, out []byte, err error) error {
+	raw := strings.TrimSpace(string(out))
+	if len(raw) > 512 {
+		raw = raw[:512] + "...(truncated)"
+	}
+	raw = strings.NewReplacer("\n", " ", "\r", " ").Replace(raw)
+	if raw != "" {
+		return fmt.Errorf("chroot syscall %s in %s: %w [output: %s]", shell, root, err, raw)
+	}
+	return fmt.Errorf("chroot syscall %s in %s: %w", shell, root, err)
 }
 
 // isExecNotFound checks whether an error indicates the executable was not found.
@@ -1198,7 +1215,17 @@ func isExecNotFound(err error) bool {
 
 // isBashNotFound checks whether /bin/bash is unavailable inside a chroot target.
 func isBashNotFound(err error) bool {
+	return isShellNotFound(err, "/bin/bash")
+}
+
+func isShellNotFound(err error, shell string) bool {
 	msg := err.Error()
+	if strings.Contains(msg, shell) &&
+		(strings.Contains(msg, "No such file or directory") ||
+			strings.Contains(msg, "no such file or directory") ||
+			strings.Contains(msg, "executable file not found")) {
+		return true
+	}
 	if !strings.Contains(msg, "exit status 127") {
 		return false
 	}
