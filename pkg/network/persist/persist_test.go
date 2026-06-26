@@ -130,6 +130,14 @@ func TestNetworkConfig_Validate(t *testing.T) {
 			DNS:        DNSConfig{Servers: []string{"2001:4860:4860::8888"}},
 			Routes:     []RouteConfig{{Destination: "default", Gateway: "fd00::1"}},
 		}, false},
+		{"ipv6 route with ipv4 gateway", NetworkConfig{
+			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
+			Routes:     []RouteConfig{{Destination: "2001:db8::/64", Gateway: "10.0.0.1"}},
+		}, true},
+		{"ipv4 route with ipv6 gateway", NetworkConfig{
+			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
+			Routes:     []RouteConfig{{Destination: "10.0.0.0/8", Gateway: "fd00::1"}},
+		}, true},
 		{"invalid route destination", NetworkConfig{
 			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
 			Routes:     []RouteConfig{{Destination: "10.0.0.0", Gateway: "10.0.0.1"}},

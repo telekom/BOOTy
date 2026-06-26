@@ -214,6 +214,9 @@ func (c *NetworkConfig) validateRoutes() error {
 		if err := validateIP(route.Gateway); err != nil {
 			return fmt.Errorf("route %d: invalid gateway: %w", i, err)
 		}
+		if route.Destination != "default" && cidrIsIPv6(route.Destination) != ipIsIPv6(route.Gateway) {
+			return fmt.Errorf("route %d: destination and gateway IP families differ", i)
+		}
 		if route.Metric < 0 {
 			return fmt.Errorf("route %d: metric must be >= 0", i)
 		}
@@ -306,7 +309,7 @@ func validateDNSConfig(cfg *DNSConfig) error {
 func validateCIDR(v string) error {
 	_, err := netip.ParsePrefix(v)
 	if err != nil {
-		return fmt.Errorf("invalid cidr %q", v)
+		return fmt.Errorf("invalid cidr %q: %w", v, err)
 	}
 	return nil
 }
@@ -314,7 +317,7 @@ func validateCIDR(v string) error {
 func validateIP(v string) error {
 	_, err := netip.ParseAddr(v)
 	if err != nil {
-		return fmt.Errorf("invalid ip %q", v)
+		return fmt.Errorf("invalid ip %q: %w", v, err)
 	}
 	return nil
 }
@@ -700,11 +703,18 @@ func familyDNSServers(dns *DNSConfig, ipv6 bool) []string {
 func familyRoutes(routes []RouteConfig, ipv6 bool) []RouteConfig {
 	filtered := make([]RouteConfig, 0, len(routes))
 	for _, route := range routes {
-		if ipIsIPv6(route.Gateway) == ipv6 {
+		if routeIsIPv6(route) == ipv6 {
 			filtered = append(filtered, route)
 		}
 	}
 	return filtered
+}
+
+func routeIsIPv6(route RouteConfig) bool {
+	if route.Destination != "default" {
+		return cidrIsIPv6(route.Destination)
+	}
+	return ipIsIPv6(route.Gateway)
 }
 
 func writeNMKeyfiles(dir string, cfg *NetworkConfig) error {
