@@ -4,6 +4,7 @@ package provision
 
 import (
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -64,3 +65,51 @@ func TestStepDebugCmds(t *testing.T) {
 func TestDumpDebugStateNoPanic(t *testing.T) { DumpDebugState("test") }
 func TestFRRDebugCmdsNoPanic(t *testing.T)   { frrDebugCmds("test") }
 func TestGoBGPDebugCmdsNoPanic(t *testing.T) { gobgpDebugCmds() }
+
+func TestRedactDebugData(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		forbidden []string
+	}{
+		{
+			name:      "authorization bearer header",
+			input:     "Authorization: Bearer live-debug-token",
+			forbidden: []string{"live-debug-token"},
+		},
+		{
+			name:      "compound env key",
+			input:     "BGP_AUTH_PASSWORD=s3cr3t neighbor=10.0.0.1",
+			forbidden: []string{"s3cr3t"},
+		},
+		{
+			name:      "frr password directive",
+			input:     "neighbor 192.0.2.1 password frr-secret",
+			forbidden: []string{"frr-secret"},
+		},
+		{
+			name:      "url credentials and query token",
+			input:     "fetch https://robot:secret@example.test/image.raw?token=query-secret",
+			forbidden: []string{"robot:secret", "query-secret"},
+		},
+		{
+			name:      "non-sensitive substring remains",
+			input:     "monkey=banana interface=eth0",
+			forbidden: nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := redactDebugData(tc.input)
+			for _, forbidden := range tc.forbidden {
+				if strings.Contains(got, forbidden) {
+					t.Fatalf("redactDebugData leaked %q: %q", forbidden, got)
+				}
+			}
+			if len(tc.forbidden) == 0 && got != tc.input {
+				t.Fatalf("redactDebugData(%q) = %q, want unchanged", tc.input, got)
+			}
+		})
+	}
+}
