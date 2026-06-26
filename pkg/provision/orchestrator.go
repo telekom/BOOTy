@@ -119,6 +119,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"remove-efi-entries", o.removeEFIBootEntries},
 		{"setup-mellanox", o.setupMellanox},
 		{"setup-nvme-namespaces", o.setupNVMeNamespaces},
+		{"setup-raid", o.setupRAID},
 		{"detect-disk", o.detectDisk},
 		{"wipe-disks", o.wipeOrSecureEraseDisks},
 		{"apply-partition-layout", o.applyPartitionLayout},
@@ -189,6 +190,7 @@ func resumeStateSteps() map[string]struct{} {
 		"verify-image":              {},
 		"mount-efivarfs":            {},
 		"setup-mellanox":            {},
+		"setup-raid":                {},
 		"detect-disk":               {},
 		"parse-partitions":          {},
 		"enable-lvm":                {},
@@ -617,6 +619,89 @@ func (o *Orchestrator) setupNVMeNamespaces(ctx context.Context) error {
 	return nil
 }
 
+func (o *Orchestrator) setupRAID(ctx context.Context) error {
+	raids := o.cfg.Provision.Disk.RAID
+	if len(raids) == 0 {
+		return nil
+	}
+	if err := o.selectRAIDTargetDevice(raids); err != nil {
+		return err
+	}
+	if err := o.wipeRAIDMemberDevices(ctx, raids); err != nil {
+		return err
+	}
+	for _, raid := range raids {
+		name := strings.TrimSpace(raid.Name)
+		devices := trimmedRAIDDevices(raid.Devices)
+		if err := o.disk.CreateRAIDArray(ctx, name, raid.Level, devices); err != nil {
+			return fmt.Errorf("create raid array %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func (o *Orchestrator) wipeRAIDMemberDevices(ctx context.Context, raids []config.RAIDConfig) error {
+	devices := uniqueRAIDMemberDevices(raids)
+	secureErase := o.cfg.Provision.Disk.SecureErase
+	for _, device := range devices {
+		if secureErase {
+			o.log.Info("secure erase enabled, erasing raid member", "device", device)
+			if err := o.disk.SecureEraseDisk(ctx, device); err != nil {
+				return fmt.Errorf("secure erase raid member %s: %w", device, err)
+			}
+			continue
+		}
+		if err := o.disk.WipeDisk(ctx, device); err != nil {
+			return fmt.Errorf("wipe raid member %s: %w", device, err)
+		}
+	}
+	return nil
+}
+
+func (o *Orchestrator) selectRAIDTargetDevice(raids []config.RAIDConfig) error {
+	if strings.TrimSpace(o.cfg.Provision.Disk.Device) != "" {
+		return nil
+	}
+	if len(raids) != 1 {
+		return fmt.Errorf("provision.disk.device is required when %d raid arrays are configured", len(raids))
+	}
+	target := raidDevicePath(raids[0].Name)
+	o.cfg.Provision.Disk.Device = target
+	o.targetDisk = target
+	o.log.Info("set disk device from raid configuration", "device", target)
+	return nil
+}
+
+func uniqueRAIDMemberDevices(raids []config.RAIDConfig) []string {
+	seen := make(map[string]struct{})
+	var devices []string
+	for _, raid := range raids {
+		for _, device := range trimmedRAIDDevices(raid.Devices) {
+			if _, ok := seen[device]; ok {
+				continue
+			}
+			seen[device] = struct{}{}
+			devices = append(devices, device)
+		}
+	}
+	return devices
+}
+
+func trimmedRAIDDevices(devices []string) []string {
+	out := make([]string, 0, len(devices))
+	for _, device := range devices {
+		trimmed := strings.TrimSpace(device)
+		if trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+func raidDevicePath(name string) string {
+	return "/dev/" + strings.TrimSpace(name)
+}
+
 func (o *Orchestrator) validateProvisionInputs(_ context.Context) error {
 	if err := o.validatePartitionLayoutModeCompatibility(); err != nil {
 		return err
@@ -765,7 +850,7 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 	}
 	targetDisk := strings.TrimSpace(o.targetDisk)
 	if targetDisk == "" {
-		if mode == "deprovision" || mode == "hard" {
+		if allowsWholeDiskDeprovisionWipe(mode) {
 			if secureErase {
 				o.log.Info("secure erase enabled, performing hardware-level erase on all disks")
 				return o.disk.SecureEraseAllDisks(ctx)
@@ -774,11 +859,19 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 		}
 		return fmt.Errorf("target disk is required before wipe-disks")
 	}
+	if len(o.cfg.Provision.Disk.RAID) > 0 && !deprovisionMode {
+		o.log.Info("wiping raid target device after array creation", "device", targetDisk)
+		return o.disk.WipeDisk(ctx, targetDisk)
+	}
 	if secureErase {
 		o.log.Info("secure erase enabled, performing hardware-level erase")
 		return o.disk.SecureEraseDisk(ctx, targetDisk)
 	}
 	return o.disk.WipeDisk(ctx, targetDisk)
+}
+
+func allowsWholeDiskDeprovisionWipe(mode string) bool {
+	return mode == "deprovision" || mode == "hard"
 }
 
 func (o *Orchestrator) validatePartitionLayoutModeCompatibility() error {
@@ -2660,6 +2753,14 @@ func stepDebugCmds(step string) []debugCmd {
 			{"shared libs sgdisk", "ldd $(which sgdisk 2>/dev/null) 2>&1 || echo 'ldd/sgdisk not found'"},
 			{"ld.so check", "ls -la /lib64/ld-linux-x86-64.so.2 /lib/ld-linux-x86-64.so.2 /lib64/ld-linux-aarch64.so.1 /lib/ld-linux-aarch64.so.1 2>/dev/null || echo 'dynamic linker not found'"},
 			{"dev devices", "ls -la /dev/sd* /dev/nvme* /dev/vd* 2>/dev/null || true"},
+		}
+	case "setup-raid":
+		return []debugCmd{
+			{"mdadm version", "mdadm --version 2>&1 || echo 'mdadm not available'"},
+			{"mdstat", "cat /proc/mdstat 2>/dev/null || echo 'no mdstat'"},
+			{"mdadm scan", "mdadm --detail --scan 2>&1 || true"},
+			{"dev md devices", "ls -la /dev/md* /dev/md/* 2>/dev/null || true"},
+			{"candidate disks", "ls -la /dev/sd* /dev/nvme* /dev/vd* 2>/dev/null || true"},
 		}
 	case "parse-partitions", "apply-partition-layout":
 		return []debugCmd{
