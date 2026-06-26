@@ -149,6 +149,7 @@ topology:
         BOOTY_NO_REBOOT: "1"
       exec:
         - dd if=/dev/zero of=/tmp/disk.img bs=1M count=0 seek=2048
+        - sh -c 'test -b /dev/loop0 || mknod -m 660 /dev/loop0 b 7 0'
         - losetup /dev/loop0 /tmp/disk.img
 
     # Scenario 2: Dual mode — unnumbered underlay (IPv4) + numbered EVPN to RR
@@ -165,7 +166,8 @@ topology:
         - ip link set dev eth2 mtu 9000
         - ip link set dev eth2 up
         - dd if=/dev/zero of=/tmp/disk.img bs=1M count=0 seek=2048
-        - losetup /dev/loop0 /tmp/disk.img
+        - sh -c 'test -b /dev/loop1 || mknod -m 660 /dev/loop1 b 7 1'
+        - losetup /dev/loop1 /tmp/disk.img
 
     # Scenario 3: Numbered only — all sessions via explicit IPs
     booty-numbered:
@@ -181,7 +183,8 @@ topology:
         - ip link set dev eth1 mtu 9000
         - ip link set dev eth1 up
         - dd if=/dev/zero of=/tmp/disk.img bs=1M count=0 seek=2048
-        - losetup /dev/loop0 /tmp/disk.img
+        - sh -c 'test -b /dev/loop2 || mknod -m 660 /dev/loop2 b 7 2'
+        - losetup /dev/loop2 /tmp/disk.img
 
   links:
     # ── Fabric ──────────────────────────────────────────────────────
