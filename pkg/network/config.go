@@ -63,8 +63,8 @@ type Config struct {
 	OverlayVRFTableID uint32 // Routing table ID for the overlay bridge VRF (default: VRFTableID)
 	BGPKeepalive      uint32 // BGP keepalive interval in seconds (0 = FRR default)
 	BGPHold           uint32 // BGP hold timer in seconds (0 = FRR default)
-	BFDTransmitMS     uint32 // BFD transmit interval in ms (default: 300)
-	BFDReceiveMS      uint32 // BFD receive interval in ms (default: 300)
+	BFDTransmitMS     uint32 // FRR-only BFD transmit interval in ms (0 = disabled)
+	BFDReceiveMS      uint32 // FRR-only BFD receive interval in ms (0 = disabled)
 
 	// BGP peering mode (GoBGP).
 	BGPPeerMode     PeerMode // Unnumbered (default), dual, or numbered
@@ -120,8 +120,7 @@ func (c *Config) ApplyDefaults() {
 	if c.BGPMinPeers == 0 {
 		c.BGPMinPeers = 1
 	}
-	// BFD is opt-in: only enabled when bfd_transmit_ms / bfd_receive_ms
-	// are explicitly set via environment variables.
+	// BFD is FRR-only and opt-in; BFD timer validation happens before mode setup.
 }
 
 // ConfigureResolvers writes DNS resolvers for the active initramfs network.

@@ -155,6 +155,46 @@ func TestNewConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "reject_bfd_transmit_only",
+			netCfg: &network.Config{
+				UnderlayIP:     "10.0.0.1",
+				ASN:            65000,
+				ProvisionVNI:   4000,
+				BGPPeerMode:    network.PeerModeUnnumbered,
+				BFDTransmitMS:  150,
+				BGPUnderlayAF:  "ipv4",
+				BGPOverlayType: "evpn-vxlan",
+			},
+			wantErr: true,
+		},
+		{
+			name: "reject_bfd_receive_only",
+			netCfg: &network.Config{
+				UnderlayIP:     "10.0.0.1",
+				ASN:            65000,
+				ProvisionVNI:   4000,
+				BGPPeerMode:    network.PeerModeUnnumbered,
+				BFDReceiveMS:   150,
+				BGPUnderlayAF:  "ipv4",
+				BGPOverlayType: "evpn-vxlan",
+			},
+			wantErr: true,
+		},
+		{
+			name: "reject_bfd_pair",
+			netCfg: &network.Config{
+				UnderlayIP:     "10.0.0.1",
+				ASN:            65000,
+				ProvisionVNI:   4000,
+				BGPPeerMode:    network.PeerModeUnnumbered,
+				BFDTransmitMS:  150,
+				BFDReceiveMS:   150,
+				BGPUnderlayAF:  "ipv4",
+				BGPOverlayType: "evpn-vxlan",
+			},
+			wantErr: true,
+		},
+		{
 			name: "supported_underlay_af_and_overlay_type_wired",
 			netCfg: &network.Config{
 				UnderlayIP:     "10.0.0.1",

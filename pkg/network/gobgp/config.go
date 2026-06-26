@@ -88,6 +88,9 @@ type Config struct {
 // and applies GoBGP-specific defaults (aggressive hold timers, no BFD).
 func NewConfig(netCfg *network.Config) (*Config, error) {
 	netCfg.ApplyDefaults()
+	if netCfg.BFDTransmitMS > 0 || netCfg.BFDReceiveMS > 0 {
+		return nil, fmt.Errorf("gobgp mode does not support BFD; use FRR mode or BGP keepalive/hold timers")
+	}
 
 	underlayIP, overlayIP, bridgeMAC, err := frr.DeriveAddresses(netCfg)
 	if err != nil {
