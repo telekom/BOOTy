@@ -17,7 +17,7 @@ import (
 // Fields validated:
 //   - Mode: "provision", "deprovision", "soft-deprovision", "soft", "hard",
 //     "standby", "dry-run", "check"
-//   - Provision.TargetOS: "linux"
+//   - Provision.TargetOS: empty or "linux" (required later by provision preflight)
 //   - Provision.Image.Mode: "whole-disk", "partition", "ab"
 //   - Provision.Image.ChecksumType: "sha256", "sha512"
 //   - Provision.CloudInit.Datasource: "nocloud", "configdrive"
@@ -290,7 +290,7 @@ func ValidateProvisionTargetOS(target string) error {
 // before provisioning reaches destructive storage steps.
 func ValidateRequiredProvisionTargetOS(target string) error {
 	if NormalizeProvisionTargetOS(target) == "" {
-		return fmt.Errorf("provision.targetOS required before destructive storage steps: set PROVISION_TARGET_OS=%s for Linux-compatible target images", TargetOSLinux)
+		return fmt.Errorf("provision.targetOS required before destructive storage steps: set PROVISION_TARGET_OS=%s or TARGET_OS=%s for Linux-compatible target images", TargetOSLinux, TargetOSLinux)
 	}
 	return ValidateProvisionTargetOS(target)
 }

@@ -646,7 +646,7 @@ func TestValidateProvisionInputsRejectsRHELLikeFamilyBeforeWipe(t *testing.T) {
 	if err == nil {
 		t.Fatal("validateProvisionInputs() error = nil, want unsupported RHEL-like target")
 	}
-	if !strings.Contains(err.Error(), "RHEL-like target bootloader support is not implemented") ||
+	if !strings.Contains(err.Error(), "rhel-like target bootloader support is not implemented") ||
 		!strings.Contains(err.Error(), "before destructive storage steps") {
 		t.Fatalf("error = %q, want unsupported RHEL-like preflight context", err.Error())
 	}
