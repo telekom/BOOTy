@@ -205,6 +205,60 @@ printf fake > "$dest/booty-gobgp.iso"
 	}
 }
 
+func TestOCIPushInitramfsBuildsIsolatedFlavorArtifact(t *testing.T) {
+	makefilePath := filepath.Join(findRepoRoot(t), "Makefile")
+	data, err := os.ReadFile(makefilePath)
+	if err != nil {
+		t.Fatalf("read Makefile: %v", err)
+	}
+	makefile := string(data)
+
+	for _, want := range []string{
+		"override OCI_INITRAMFS_DIR := dist/oci/$(OCI_FLAVOR)-$(OCI_ARCH)",
+		"override INITRAMFS_PATH := $(OCI_INITRAMFS_DIR)/$(OCI_INITRAMFS_BASENAME)",
+		"override INITRAMFS_MEDIA_TYPE :=",
+		"export VERSION DOCKERTAG REPOSITORY OCI_FLAVOR OCI_ARCH OCI_INITRAMFS_DIR INITRAMFS_PATH INITRAMFS_MEDIA_TYPE",
+	} {
+		if !strings.Contains(makefile, want) {
+			t.Fatalf("Makefile missing OCI isolation contract %q", want)
+		}
+	}
+
+	recipe := makeTargetRecipe(t, makefile, "oci-push-initramfs")
+	for _, want := range []string{
+		`case "$$OCI_FLAVOR" in default|slim|gobgp|micro)`,
+		`target_arg="--target=$$OCI_FLAVOR"`,
+		`docker buildx build --platform "linux/$$OCI_ARCH" $$target_arg`,
+		`--output "type=local,dest=$$OCI_INITRAMFS_DIR"`,
+		`expected $$OCI_FLAVOR/$$OCI_ARCH artifact $$INITRAMFS_PATH was not produced`,
+	} {
+		if !strings.Contains(recipe, want) {
+			t.Fatalf("oci-push-initramfs recipe missing %q in:\n%s", want, recipe)
+		}
+	}
+	if strings.Contains(recipe, "build the requested initramfs flavor first") {
+		t.Fatalf("oci-push-initramfs must build the requested flavor instead of trusting a prebuilt root artifact:\n%s", recipe)
+	}
+}
+
+func makeTargetRecipe(t *testing.T, makefile, target string) string {
+	t.Helper()
+
+	start := strings.Index(makefile, "\n"+target+":")
+	if start == -1 {
+		if strings.HasPrefix(makefile, target+":") {
+			start = 0
+		} else {
+			t.Fatalf("target %q not found", target)
+		}
+	}
+	next := strings.Index(makefile[start+1:], "\n\n")
+	if next == -1 {
+		return makefile[start:]
+	}
+	return makefile[start : start+1+next]
+}
+
 // findRepoRoot walks up from the test file to find the repo root (contains go.mod).
 func findRepoRoot(t *testing.T) string {
 	t.Helper()

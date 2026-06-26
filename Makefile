@@ -353,25 +353,37 @@ OCI_FLAVOR ?= default
 OCI_ARCH ?= $(TARGETARCH)
 # default, slim, and gobgp flavors use zstd compression (.zst); micro uses gzip (.gz).
 ZSTD_INITRAMFS_FLAVORS := default slim gobgp
-INITRAMFS_PATH ?= $(if $(filter $(OCI_FLAVOR),$(ZSTD_INITRAMFS_FLAVORS)),\
-    $(if $(filter arm64,$(OCI_ARCH)),dist/arm64/initramfs.cpio.zst,initramfs.cpio.zst),\
-    $(if $(filter arm64,$(OCI_ARCH)),dist/arm64/initramfs.cpio.gz,initramfs.cpio.gz))
+VALID_INITRAMFS_FLAVORS := default slim gobgp micro
+override OCI_INITRAMFS_DIR := dist/oci/$(OCI_FLAVOR)-$(OCI_ARCH)
+override OCI_INITRAMFS_BASENAME := $(if $(filter $(OCI_FLAVOR),$(ZSTD_INITRAMFS_FLAVORS)),initramfs.cpio.zst,initramfs.cpio.gz)
+override INITRAMFS_PATH := $(OCI_INITRAMFS_DIR)/$(OCI_INITRAMFS_BASENAME)
 
 oci-push: oci-push-initramfs oci-push-binary
 	@echo Initramfs and binary OCI artifacts pushed for $(OCI_FLAVOR)/$(OCI_ARCH)
 
-INITRAMFS_MEDIA_TYPE = $(if $(filter $(OCI_FLAVOR),$(ZSTD_INITRAMFS_FLAVORS)),application/vnd.cncf.initramfs.layer.v1+zstd,application/vnd.cncf.initramfs.layer.v1+gzip)
+override INITRAMFS_MEDIA_TYPE := $(if $(filter $(OCI_FLAVOR),$(ZSTD_INITRAMFS_FLAVORS)),application/vnd.cncf.initramfs.layer.v1+zstd,application/vnd.cncf.initramfs.layer.v1+gzip)
+
+export VERSION DOCKERTAG REPOSITORY OCI_FLAVOR OCI_ARCH OCI_INITRAMFS_DIR INITRAMFS_PATH INITRAMFS_MEDIA_TYPE
 
 oci-push-initramfs:
-	@test -f $(INITRAMFS_PATH) || (echo "ERROR: $(INITRAMFS_PATH) not found — build the requested initramfs flavor first"; exit 1)
-	@sha256sum $(INITRAMFS_PATH) > $(INITRAMFS_PATH).sha256
-	@oras push $(REPOSITORY)/initramfs:$(DOCKERTAG)-$(OCI_FLAVOR)-$(OCI_ARCH) \
-		--annotation "org.opencontainers.image.version=$(VERSION)" \
-		--annotation "io.booty.flavor=$(OCI_FLAVOR)" \
-		--annotation "io.booty.arch=$(OCI_ARCH)" \
-		$(INITRAMFS_PATH):$(INITRAMFS_MEDIA_TYPE) \
-		$(INITRAMFS_PATH).sha256:text/plain
-	@echo Pushed $(REPOSITORY)/initramfs:$(DOCKERTAG)-$(OCI_FLAVOR)-$(OCI_ARCH)
+	@case "$$OCI_FLAVOR" in default|slim|gobgp|micro) ;; *) echo "ERROR: unsupported OCI_FLAVOR=$$OCI_FLAVOR (expected: $(VALID_INITRAMFS_FLAVORS))"; exit 1 ;; esac
+	@case "$$OCI_ARCH" in amd64|arm64) ;; *) echo "ERROR: unsupported OCI_ARCH=$$OCI_ARCH (expected: amd64 arm64)"; exit 1 ;; esac
+	@mkdir -p "$$OCI_INITRAMFS_DIR"
+	@rm -f "$$OCI_INITRAMFS_DIR"/initramfs.cpio.zst "$$OCI_INITRAMFS_DIR"/initramfs.cpio.gz \
+		"$$OCI_INITRAMFS_DIR"/initramfs.cpio.zst.sha256 "$$OCI_INITRAMFS_DIR"/initramfs.cpio.gz.sha256
+	@target_arg=""; \
+	if [ "$$OCI_FLAVOR" != "default" ]; then target_arg="--target=$$OCI_FLAVOR"; fi; \
+	docker buildx build --platform "linux/$$OCI_ARCH" $$target_arg \
+		--output "type=local,dest=$$OCI_INITRAMFS_DIR" -f initrd.Dockerfile .
+	@test -f "$$INITRAMFS_PATH" || (echo "ERROR: expected $$OCI_FLAVOR/$$OCI_ARCH artifact $$INITRAMFS_PATH was not produced"; exit 1)
+	@sha256sum "$$INITRAMFS_PATH" > "$${INITRAMFS_PATH}.sha256"
+	@oras push "$${REPOSITORY}/initramfs:$${DOCKERTAG}-$${OCI_FLAVOR}-$${OCI_ARCH}" \
+		--annotation "org.opencontainers.image.version=$$VERSION" \
+		--annotation "io.booty.flavor=$$OCI_FLAVOR" \
+		--annotation "io.booty.arch=$$OCI_ARCH" \
+		"$${INITRAMFS_PATH}:$${INITRAMFS_MEDIA_TYPE}" \
+		"$${INITRAMFS_PATH}.sha256:text/plain"
+	@echo Pushed "$${REPOSITORY}/initramfs:$${DOCKERTAG}-$${OCI_FLAVOR}-$${OCI_ARCH}"
 
 oci-push-binary:
 	@test -f $(TARGET) || (echo "ERROR: $(TARGET) binary not found — run 'make build' first"; exit 1)
