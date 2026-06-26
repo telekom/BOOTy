@@ -29,6 +29,11 @@ type Commander = executil.Commander
 // ExecCommander executes real system commands.
 type ExecCommander = executil.ExecCommander
 
+var (
+	mountFunc   = syscall.Mount
+	unmountFunc = syscall.Unmount
+)
+
 // Manager handles disk operations for provisioning.
 type Manager struct {
 	cmd       Commander
@@ -923,7 +928,7 @@ func (m *Manager) BindMount(source, target string) error {
 		slog.Info("bind mount target already mounted, skipping", "source", source, "target", target)
 		return nil
 	}
-	if err := syscall.Mount(source, target, "", syscall.MS_BIND, ""); err != nil {
+	if err := mountFunc(source, target, "", syscall.MS_BIND, ""); err != nil {
 		return fmt.Errorf("bind mount %s -> %s: %w", source, target, err)
 	}
 	return nil
@@ -945,7 +950,7 @@ func isMountPoint(path string) bool {
 
 // Unmount unmounts a filesystem.
 func (m *Manager) Unmount(target string) error {
-	if err := syscall.Unmount(target, 0); err != nil {
+	if err := unmountFunc(target, 0); err != nil {
 		return fmt.Errorf("unmount %s: %w", target, err)
 	}
 	return nil
@@ -1112,9 +1117,16 @@ func (m *Manager) SetupChrootBindMounts(root string) error {
 		{"/sys", "sys"},
 		{"/run", "run"},
 	}
+	var mounted []string
 	for _, b := range binds {
-		if err := m.BindMount(b.src, root+"/"+b.rel); err != nil {
+		target := root + "/" + b.rel
+		wasMounted := isMountPoint(target)
+		if err := m.BindMount(b.src, target); err != nil {
+			m.rollbackChrootBindMounts(root, mounted)
 			return fmt.Errorf("bind mount %s: %w", b.src, err)
+		}
+		if !wasMounted {
+			mounted = append(mounted, b.rel)
 		}
 	}
 
@@ -1130,6 +1142,15 @@ func (m *Manager) SetupChrootBindMounts(root string) error {
 		}
 	}
 	return nil
+}
+
+func (m *Manager) rollbackChrootBindMounts(root string, mounted []string) {
+	for i := len(mounted) - 1; i >= 0; i-- {
+		path := root + "/" + mounted[i]
+		if err := m.Unmount(path); err != nil {
+			slog.Warn("chroot bind rollback failed", "path", path, "error", err)
+		}
+	}
 }
 
 // TeardownChrootBindMounts unmounts the standard chroot bind mounts and
