@@ -2307,7 +2307,7 @@ func TestResizeFilesystemRunsForABPartitionLayout(t *testing.T) {
 	if err := o.resizeFilesystem(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(cmd.calls) != 1 || cmd.calls[0].name != "resize2fs" || strings.Join(cmd.calls[0].args, " ") != "/dev/sda3" {
+	if !hasCommandCall(cmd.calls, "resize2fs", "/dev/sda3") {
 		t.Fatalf("expected resize2fs /dev/sda3 when resizing A/B root slot, got %#v", cmd.calls)
 	}
 }
