@@ -138,6 +138,10 @@ jobs:
 
 ### Workflow: Release (`release-v2.yml`)
 
+Release and promotion tags must resolve to commits reachable from `origin/main`;
+the workflows fail closed before building or promoting artifacts when a tag
+points at unmerged history.
+
 ```yaml
 # .github/workflows/release-v2.yml
 name: Release

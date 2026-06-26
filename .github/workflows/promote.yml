@@ -65,6 +65,12 @@ jobs:
             echo "::error::Tag $SOURCE_VERSION must be an annotated tag"
             exit 1
           fi
+          git fetch --no-tags --prune origin '+refs/heads/main:refs/remotes/origin/main'
+          SOURCE_COMMIT=$(git rev-list -n 1 "refs/tags/${SOURCE_VERSION}")
+          if ! git merge-base --is-ancestor "$SOURCE_COMMIT" origin/main; then
+            echo "::error::Tag $SOURCE_VERSION points to $SOURCE_COMMIT, which is not reachable from origin/main"
+            exit 1
+          fi
 
       - name: Determine new tag
         id: tag
