@@ -447,19 +447,19 @@ func TestFindRootPartitionNotFound(t *testing.T) {
 	}
 }
 
-func TestFindRootPartitionPrefersLast(t *testing.T) {
+func TestFindRootPartitionRejectsAmbiguousLinuxPartitions(t *testing.T) {
 	mgr := NewManager(newMockCommander())
 	parts := []Partition{
 		{Node: "/dev/sda1", Type: EFISystemPartitionGUID},
 		{Node: "/dev/sda2", Type: LinuxFilesystemGUID, Name: "boot"},
 		{Node: "/dev/sda3", Type: LinuxFilesystemGUID, Name: ""},
 	}
-	root, err := mgr.FindRootPartition(parts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, err := mgr.FindRootPartition(parts)
+	if err == nil {
+		t.Fatal("expected ambiguous root partition error")
 	}
-	if root.Node != "/dev/sda3" {
-		t.Errorf("expected /dev/sda3 (last linux partition), got %s", root.Node)
+	if !strings.Contains(err.Error(), "ambiguous Linux root partition candidates") {
+		t.Fatalf("error = %q, want ambiguity context", err.Error())
 	}
 }
 
@@ -477,6 +477,93 @@ func TestFindRootPartitionPrefersNamed(t *testing.T) {
 	}
 	if root.Node != "/dev/sda3" {
 		t.Errorf("expected /dev/sda3 (named root), got %s", root.Node)
+	}
+}
+
+func TestFindRootPartitionAcceptsSlashName(t *testing.T) {
+	mgr := NewManager(newMockCommander())
+	parts := []Partition{
+		{Node: "/dev/sda1", Type: EFISystemPartitionGUID},
+		{Node: "/dev/sda2", Type: LinuxFilesystemGUID, Name: "boot"},
+		{Node: "/dev/sda3", Type: LinuxFilesystemGUID, Name: "/"},
+		{Node: "/dev/sda4", Type: LinuxFilesystemGUID, Name: "data"},
+	}
+	root, err := mgr.FindRootPartition(parts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if root.Node != "/dev/sda3" {
+		t.Errorf("expected /dev/sda3 (named /), got %s", root.Node)
+	}
+}
+
+func TestFindRootPartitionRejectsMultipleNamedRoots(t *testing.T) {
+	mgr := NewManager(newMockCommander())
+	parts := []Partition{
+		{Node: "/dev/sda2", Type: LinuxFilesystemGUID, Name: "root"},
+		{Node: "/dev/sda3", Type: LinuxFilesystemGUID, Name: "/"},
+	}
+	_, err := mgr.FindRootPartition(parts)
+	if err == nil {
+		t.Fatal("expected multiple root partition error")
+	}
+	if !strings.Contains(err.Error(), "multiple partitions named root or /") {
+		t.Fatalf("error = %q, want multiple roots context", err.Error())
+	}
+}
+
+func TestFindRootPartitionRejectsBOOTyABLayoutWithoutExplicitRoot(t *testing.T) {
+	mgr := NewManager(newMockCommander())
+	parts := []Partition{
+		{Node: "/dev/sda1", Type: EFISystemPartitionGUID, Name: "BOOTY-EFI"},
+		{Node: "/dev/sda2", Type: LinuxFilesystemGUID, Name: "BOOTY-ROOT-A"},
+		{Node: "/dev/sda3", Type: LinuxFilesystemGUID, Name: "BOOTY-ROOT-B"},
+		{Node: "/dev/sda4", Type: LinuxFilesystemGUID, Name: "BOOTY-STATE"},
+	}
+	_, err := mgr.FindRootPartition(parts)
+	if err == nil {
+		t.Fatal("expected ambiguous A/B root partition error")
+	}
+	if !strings.Contains(err.Error(), "BOOTY-ROOT-A") ||
+		!strings.Contains(err.Error(), "BOOTY-ROOT-B") ||
+		!strings.Contains(err.Error(), "BOOTY-STATE") {
+		t.Fatalf("error = %q, want A/B candidate names", err.Error())
+	}
+}
+
+func TestFindRootPartitionRejectsUnsupportedTargetPartitionTypes(t *testing.T) {
+	const (
+		microsoftBasicDataGUID = "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7"
+		vmwareVMFSGUID         = "AA31E02A-400F-11DB-9590-000C2911D1B8"
+	)
+
+	tests := []struct {
+		name string
+		part Partition
+	}{
+		{
+			name: "windows basic data",
+			part: Partition{Node: "/dev/sda3", Type: microsoftBasicDataGUID, Name: "Windows"},
+		},
+		{
+			name: "vmware vmfs",
+			part: Partition{Node: "/dev/sda3", Type: vmwareVMFSGUID, Name: "datastore1"},
+		},
+	}
+	mgr := NewManager(newMockCommander())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := mgr.FindRootPartition([]Partition{
+				{Node: "/dev/sda1", Type: EFISystemPartitionGUID},
+				tt.part,
+			})
+			if err == nil {
+				t.Fatal("expected unsupported target partition type error")
+			}
+			if !strings.Contains(err.Error(), "no Linux filesystem partition found") {
+				t.Fatalf("error = %q, want no Linux filesystem context", err.Error())
+			}
+		})
 	}
 }
 

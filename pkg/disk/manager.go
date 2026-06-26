@@ -676,30 +676,51 @@ func (m *Manager) FindBootPartition(parts []Partition) (*Partition, error) {
 }
 
 // FindRootPartition finds the primary Linux filesystem partition.
-// When multiple partitions share a Linux filesystem type, it prefers one with
-// a "root" or "/" partition name, otherwise returns the last match (root is
-// typically after /boot in the partition table).
+// When multiple partitions share a Linux filesystem type, it requires exactly
+// one partition named "root" or "/" to avoid selecting data/state partitions.
 func (m *Manager) FindRootPartition(parts []Partition) (*Partition, error) {
-	var last *Partition
+	var candidates []*Partition
+	var namedRoot []*Partition
 	for i := range parts {
 		if !isLinuxFilesystemPartitionType(parts[i].Type) {
 			continue
 		}
-		lower := strings.ToLower(parts[i].Name)
+		candidates = append(candidates, &parts[i])
+		lower := strings.ToLower(strings.TrimSpace(parts[i].Name))
 		if lower == "root" || lower == "/" {
-			return &parts[i], nil
+			namedRoot = append(namedRoot, &parts[i])
 		}
-		last = &parts[i]
 	}
-	if last != nil {
-		return last, nil
+	switch {
+	case len(namedRoot) == 1:
+		return namedRoot[0], nil
+	case len(namedRoot) > 1:
+		return nil, fmt.Errorf("ambiguous Linux root partitions: multiple partitions named root or /: %s", partitionCandidateList(namedRoot))
+	case len(candidates) == 1:
+		return candidates[0], nil
+	case len(candidates) > 1:
+		return nil, fmt.Errorf("ambiguous Linux root partition candidates: %s; name exactly one partition root or /", partitionCandidateList(candidates))
+	default:
+		return nil, fmt.Errorf("no Linux filesystem partition found")
 	}
-	return nil, fmt.Errorf("no Linux filesystem partition found")
 }
 
 func isLinuxFilesystemPartitionType(partitionType string) bool {
 	return strings.EqualFold(partitionType, LinuxFilesystemGUID) ||
 		strings.EqualFold(partitionType, LinuxFilesystemMBRType)
+}
+
+func partitionCandidateList(parts []*Partition) string {
+	candidates := make([]string, 0, len(parts))
+	for _, part := range parts {
+		label := strings.TrimSpace(part.Name)
+		if label == "" {
+			candidates = append(candidates, part.Node)
+			continue
+		}
+		candidates = append(candidates, fmt.Sprintf("%s (%s)", part.Node, label))
+	}
+	return strings.Join(candidates, ", ")
 }
 
 // GrowPartition grows a partition to fill available space using growpart.
