@@ -21,8 +21,9 @@ systemd-boot entry generation is called out separately.
 
 BOOTy currently has basic GRUB config parsing in `pkg/kexec/grub.go` for
 kexec kernel loading, but doesn't manage the bootloader installation or
-configuration in the provisioned OS. Several modern Linux distributions
-(Fedora, Arch, systemd-first distros) use systemd-boot instead of GRUB.
+configuration in the provisioned OS. Fedora uses BLS-style boot entries with
+GRUB2 on most architectures, while several systemd-first distributions such as
+Arch can use systemd-boot instead of GRUB.
 
 | Gap | Impact |
 |-----|--------|
