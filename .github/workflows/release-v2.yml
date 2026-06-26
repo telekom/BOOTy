@@ -429,7 +429,7 @@ jobs:
           REPO=$(echo "ghcr.io/${{ github.repository }}-iso" | tr '[:upper:]' '[:lower:]')
           REF="${REPO}:${VERSION}${{ matrix.tag_suffix }}"
           CREATED=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
           err="${RUNNER_TEMP}/oras-ref-check.err"
           if oras manifest fetch "${REF}" >/dev/null 2>"${err}"; then
@@ -549,7 +549,7 @@ jobs:
           VERSION=${GITHUB_REF_NAME#v}
           REPO=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           CREATED=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
           ensure_oci_ref_absent() {
             local ref="$1"
@@ -613,7 +613,7 @@ jobs:
           VERSION=${GITHUB_REF_NAME#v}
           REPO=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           CREATED=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           BINARY="artifacts/release-default-${{ matrix.arch }}/booty-${{ matrix.arch }}"
           CHECKSUM="artifacts/release-default-${{ matrix.arch }}/booty-${{ matrix.arch }}.sha256"
 
@@ -662,7 +662,7 @@ jobs:
           VERSION=${GITHUB_REF_NAME#v}
           REPO=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           CREATED=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           SBOM="artifacts/sbom/sbom.spdx.json"
 
           if [ ! -f "${SBOM}" ]; then
