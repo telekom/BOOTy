@@ -192,6 +192,10 @@ rescue:
 # Only read when mode is "provision" or "dry-run".
 # ---------------------------------------------------------------------------
 provision:
+  # targetOS: required before destructive provisioning writes. Only linux is
+  # currently accepted; non-Linux and unknown values fail preflight.
+  targetOS: linux
+
   # extraKernelParams: additional kernel command-line parameters for the installed OS
   extraKernelParams: "console=ttyS0,115200"
 

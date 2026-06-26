@@ -167,6 +167,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 			name: "no hostname",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{}
+				c.Provision.TargetOS = config.TargetOSLinux
 				c.Provision.Image.URLs = []string{"http://example.com/img"}
 				return c
 			}(),
@@ -176,15 +177,36 @@ func TestDryRunConfigValidation(t *testing.T) {
 			name: "valid config",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.TargetOS = config.TargetOSLinux
 				c.Provision.Image.URLs = []string{"http://example.com/img"}
 				return c
 			}(),
 			expect: DryRunPass,
 		},
 		{
+			name: "missing target os",
+			cfg: func() *config.MachineConfig {
+				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.Image.URLs = []string{"http://example.com/img"}
+				return c
+			}(),
+			expect: DryRunFail,
+		},
+		{
+			name: "rhel-like target hint",
+			cfg: func() *config.MachineConfig {
+				c := &config.MachineConfig{Hostname: "node1", OSFamily: "rhel"}
+				c.Provision.TargetOS = config.TargetOSLinux
+				c.Provision.Image.URLs = []string{"http://example.com/img"}
+				return c
+			}(),
+			expect: DryRunFail,
+		},
+		{
 			name: "layout without image and hostname",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{}
+				c.Provision.TargetOS = config.TargetOSLinux
 				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 					Table:      "gpt",
 					Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
@@ -1066,6 +1088,7 @@ func TestDryRunAggregation_WarningsReported(t *testing.T) {
 	})
 
 	warnCfg := &config.MachineConfig{Hostname: "test-host"}
+	warnCfg.Provision.TargetOS = config.TargetOSLinux
 	warnCfg.Provision.Image.URLs = []string{srv.URL + "/image.raw"}
 	warnCfg.Provision.Disk.Device = "/dev/mock0"
 	o := NewOrchestrator(
@@ -1125,6 +1148,7 @@ func TestDryRun_AllPass(t *testing.T) {
 	})
 
 	passCfg := &config.MachineConfig{Hostname: "test-host"}
+	passCfg.Provision.TargetOS = config.TargetOSLinux
 	passCfg.Provision.Image.URLs = []string{srv.URL + "/image.raw"}
 	passCfg.Provision.Image.SignatureURL = srv.URL + "/image.raw.sig"
 	passCfg.Provision.Image.GPGPubKey = pubKey

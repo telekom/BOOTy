@@ -930,6 +930,30 @@ func TestParseVarsNetworkMode(t *testing.T) {
 	}
 }
 
+func TestParseVarsProvisionTargetOS(t *testing.T) {
+	input := `PROVISION_TARGET_OS=" Linux "
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provision.TargetOS != config.TargetOSLinux {
+		t.Errorf("Provision.TargetOS = %q, want %q", cfg.Provision.TargetOS, config.TargetOSLinux)
+	}
+}
+
+func TestParseVarsTargetOSAliasRejectsUnsupported(t *testing.T) {
+	input := `TARGET_OS="windows"
+`
+	_, err := ParseVars(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("ParseVars() error = nil, want unsupported target OS")
+	}
+	if !strings.Contains(err.Error(), "Windows targets are not supported") {
+		t.Fatalf("ParseVars() error = %q, want Windows unsupported context", err.Error())
+	}
+}
+
 func TestParseVarsBGPPeering(t *testing.T) {
 	input := `BGP_PEER_MODE="dual"
 BGP_INTERFACES="eth1,eth2"

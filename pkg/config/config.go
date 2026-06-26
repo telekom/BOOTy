@@ -34,7 +34,8 @@ type Config struct {
 	// Default: false
 	PersistNetwork bool `yaml:"persistNetwork" json:"persistNetwork"`
 
-	// OSFamily selects the target OS network writer when PersistNetwork is set.
+	// OSFamily selects the target OS network writer when PersistNetwork is set;
+	// it is not a general provisioning support declaration.
 	// Valid values: "ubuntu", "rhel", "flatcar".
 	// Default: ""
 	OSFamily string `yaml:"osFamily" json:"osFamily"`
