@@ -59,6 +59,32 @@ func TestGenerate_StaticIP(t *testing.T) {
 	}
 }
 
+func TestGenerate_StaticIPv6(t *testing.T) {
+	cfg := &Config{
+		Hostname:   "node-v6",
+		InstanceID: "SNV6",
+		StaticIP:   "2001:db8::10/64",
+		Gateway:    "2001:db8::1",
+		DNS:        []string{"2001:4860:4860::8888"},
+	}
+
+	_, _, nc := Generate(cfg)
+
+	eth, ok := nc.Ethernets["id0"]
+	if !ok {
+		t.Fatal("expected ethernets[id0]")
+	}
+	if eth.Gateway4 != "" {
+		t.Errorf("gateway4 = %q, want empty for IPv6 static config", eth.Gateway4)
+	}
+	if eth.Gateway6 != "2001:db8::1" {
+		t.Errorf("gateway6 = %q, want 2001:db8::1", eth.Gateway6)
+	}
+	if len(eth.Addresses) != 1 || eth.Addresses[0] != "2001:db8::10/64" {
+		t.Errorf("addresses = %v, want [2001:db8::10/64]", eth.Addresses)
+	}
+}
+
 func TestGenerate_StaticIPUsesConfiguredInterface(t *testing.T) {
 	cfg := &Config{
 		Hostname:   "node-1",
@@ -131,6 +157,93 @@ func TestGenerate_Bond(t *testing.T) {
 	}
 	if bond.Parameters.Mode != "802.3ad" {
 		t.Errorf("bond mode = %q, want %q", bond.Parameters.Mode, "802.3ad")
+	}
+}
+
+func TestGenerate_BondIPv6(t *testing.T) {
+	cfg := &Config{
+		Hostname:   "bond-v6",
+		InstanceID: "SNB6",
+		BondIfaces: []string{"eth0", "eth1"},
+		StaticIP:   "2001:db8:1::10/64",
+		Gateway:    "2001:db8:1::1",
+	}
+
+	_, _, nc := Generate(cfg)
+
+	bond, ok := nc.Bonds["bond0"]
+	if !ok {
+		t.Fatal("expected bonds[bond0]")
+	}
+	if bond.Gateway4 != "" {
+		t.Errorf("gateway4 = %q, want empty for IPv6 bond", bond.Gateway4)
+	}
+	if bond.Gateway6 != "2001:db8:1::1" {
+		t.Errorf("gateway6 = %q, want 2001:db8:1::1", bond.Gateway6)
+	}
+}
+
+func TestGenerate_VLANs(t *testing.T) {
+	cfg := &Config{
+		Hostname:   "vlan-node",
+		InstanceID: "SNVLAN",
+		VLANs: []VLANInput{
+			{ID: 200, Parent: "eno1", Address: "10.200.0.42/24", Gateway: "10.200.0.1"},
+			{ID: 300, Parent: "eno2"},
+		},
+		DNS: []string{"1.1.1.1"},
+	}
+
+	_, _, nc := Generate(cfg)
+
+	if _, ok := nc.Ethernets["id0"]; ok {
+		t.Fatalf("unexpected fallback id0 ethernet for VLAN-only config: %#v", nc.Ethernets)
+	}
+	if _, ok := nc.Ethernets["eno1"]; !ok {
+		t.Fatalf("missing parent ethernet eno1: %#v", nc.Ethernets)
+	}
+	staticVLAN, ok := nc.VLANs["eno1.200"]
+	if !ok {
+		t.Fatalf("missing static VLAN: %#v", nc.VLANs)
+	}
+	if staticVLAN.ID != 200 || staticVLAN.Link != "eno1" || staticVLAN.Gateway4 != "10.200.0.1" {
+		t.Fatalf("unexpected static VLAN config: %#v", staticVLAN)
+	}
+	if staticVLAN.Nameservers == nil || staticVLAN.Nameservers.Addresses[0] != "1.1.1.1" {
+		t.Fatalf("unexpected VLAN nameservers: %#v", staticVLAN.Nameservers)
+	}
+	dhcpVLAN, ok := nc.VLANs["eno2.300"]
+	if !ok {
+		t.Fatalf("missing DHCP VLAN: %#v", nc.VLANs)
+	}
+	if !dhcpVLAN.DHCP4 || len(dhcpVLAN.Addresses) != 0 {
+		t.Fatalf("unexpected DHCP VLAN config: %#v", dhcpVLAN)
+	}
+}
+
+func TestGenerate_BondVLANDoesNotDHCPUntaggedBond(t *testing.T) {
+	cfg := &Config{
+		Hostname:   "bond-vlan",
+		InstanceID: "SNBV",
+		BondIfaces: []string{"eth0", "eth1"},
+		VLANs:      []VLANInput{{ID: 200, Parent: "bond0", Address: "10.200.0.42/24"}},
+	}
+
+	_, _, nc := Generate(cfg)
+
+	bond, ok := nc.Bonds["bond0"]
+	if !ok {
+		t.Fatal("expected bonds[bond0]")
+	}
+	if bond.DHCP4 {
+		t.Fatalf("bond should not DHCP on untagged bond when bond VLAN is configured: %#v", bond)
+	}
+	vlan, ok := nc.VLANs["bond0.200"]
+	if !ok {
+		t.Fatalf("missing bond VLAN: %#v", nc.VLANs)
+	}
+	if vlan.Link != "bond0" || len(nc.Ethernets) != 0 {
+		t.Fatalf("unexpected bond VLAN topology: vlan=%#v ethernets=%#v", vlan, nc.Ethernets)
 	}
 }
 
@@ -275,6 +388,54 @@ func TestInjectConfigDrive(t *testing.T) {
 	assertConfigDriveNetworkData(t, filepath.Join(seedDir, "network_data.json"))
 }
 
+func TestConfigDriveNetworkDataIPv6AndVLAN(t *testing.T) {
+	nc := &NetworkConfig{
+		Version: 2,
+		Ethernets: map[string]EthConfig{
+			"eth0": {},
+		},
+		VLANs: map[string]VLANConfig{
+			"eth0.200": {
+				ID:          200,
+				Link:        "eth0",
+				Addresses:   []string{"2001:db8:200::42/64"},
+				Gateway6:    "2001:db8:200::1",
+				Nameservers: &NSConfig{Addresses: []string{"2001:4860:4860::8888"}},
+			},
+		},
+	}
+
+	networkData, err := configDriveNetworkData(nc)
+	if err != nil {
+		t.Fatalf("configDriveNetworkData: %v", err)
+	}
+
+	vlanLink := findOpenStackLink(networkData.Links, "eth0.200")
+	if vlanLink == nil {
+		t.Fatalf("missing VLAN link: %+v", networkData.Links)
+	}
+	if vlanLink.Type != "vlan" || vlanLink.VLANID == nil || *vlanLink.VLANID != 200 || vlanLink.VLANLink != "eth0" {
+		t.Fatalf("unexpected VLAN link: %+v", *vlanLink)
+	}
+	if vlanLink.VLANMACAddress == nil {
+		t.Fatalf("VLAN link must include vlan_mac_address for cloud-init OpenStack conversion: %+v", *vlanLink)
+	}
+
+	v6Network := findOpenStackNetwork(networkData.Networks, "eth0.200")
+	if v6Network == nil {
+		t.Fatalf("missing VLAN IPv6 network: %+v", networkData.Networks)
+	}
+	if v6Network.Type != "ipv6" || v6Network.IPAddress != "2001:db8:200::42" || v6Network.Netmask != "64" {
+		t.Fatalf("unexpected IPv6 network: %+v", *v6Network)
+	}
+	if v6Network.Gateway != "2001:db8:200::1" || len(v6Network.Routes) != 1 || v6Network.Routes[0].Network != "::/0" {
+		t.Fatalf("unexpected IPv6 gateway/routes: %+v", *v6Network)
+	}
+	if len(v6Network.Services) != 1 || v6Network.Services[0].Address != "2001:4860:4860::8888" {
+		t.Fatalf("unexpected network services: %+v", v6Network.Services)
+	}
+}
+
 func assertConfigDriveMetadata(t *testing.T, path string) {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -314,6 +475,24 @@ func assertConfigDriveNetworkData(t *testing.T, path string) {
 	if len(networkData.Services) != 1 || networkData.Services[0].Address != "1.1.1.1" {
 		t.Fatalf("unexpected services: %+v", networkData.Services)
 	}
+}
+
+func findOpenStackLink(links []openStackLink, id string) *openStackLink {
+	for i := range links {
+		if links[i].ID == id {
+			return &links[i]
+		}
+	}
+	return nil
+}
+
+func findOpenStackNetwork(networks []openStackNetwork, link string) *openStackNetwork {
+	for i := range networks {
+		if networks[i].Link == link {
+			return &networks[i]
+		}
+	}
+	return nil
 }
 
 func TestAddressList(t *testing.T) {

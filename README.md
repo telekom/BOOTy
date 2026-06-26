@@ -872,7 +872,8 @@ The active provisioning integration currently generates:
   When a provider-id is configured, it is used as the source for instance-id
   and is not written as a separate metadata field.
 - **User data** — hostname and `manage_etc_hosts`
-- **Network config v2** — bonds, addresses, gateways, nameservers
+- **Network config v2** — IPv4/IPv6 addresses and gateways, bonds, VLANs,
+  and nameservers
   (generated from the active provisioning network config)
 
 The cloud-init generator package has fields for richer user-data such as users,

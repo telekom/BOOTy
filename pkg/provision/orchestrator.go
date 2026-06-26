@@ -1894,6 +1894,10 @@ func (o *Orchestrator) injectCloudInit(_ context.Context) error {
 			dns = append(dns, s)
 		}
 	}
+	vlans, err := cloudInitVLANInputs(o.cfg.Network.VLAN.Config)
+	if err != nil {
+		return err
+	}
 
 	// Cloud-init expects a stable, non-empty instance-id for first-boot identity.
 	instanceID := strings.TrimSpace(o.cfg.Provision.ProviderID)
@@ -1913,12 +1917,12 @@ func (o *Orchestrator) injectCloudInit(_ context.Context) error {
 		BondIfaces: bondIfaces,
 		BondMode:   o.cfg.Network.Bond.Mode,
 		DNS:        dns,
+		VLANs:      vlans,
 	}
 
 	ud, md, nc := cloudinit.Generate(ciCfg)
 	rootPath := o.config.rootDir
 
-	var err error
 	switch ds {
 	case "nocloud":
 		err = cloudinit.InjectNoCloud(rootPath, ud, md, nc)
@@ -1932,6 +1936,23 @@ func (o *Orchestrator) injectCloudInit(_ context.Context) error {
 	}
 	o.log.Info("cloud-init seed injected", "datasource", ds, "root", rootPath)
 	return nil
+}
+
+func cloudInitVLANInputs(spec string) ([]cloudinit.VLANInput, error) {
+	vlans, err := network.ParseVLANs(spec)
+	if err != nil {
+		return nil, fmt.Errorf("invalid cloud-init VLAN config: %w", err)
+	}
+	inputs := make([]cloudinit.VLANInput, 0, len(vlans))
+	for _, vlan := range vlans {
+		inputs = append(inputs, cloudinit.VLANInput{
+			ID:      vlan.ID,
+			Parent:  vlan.Parent,
+			Address: vlan.Address,
+			Gateway: vlan.Gateway,
+		})
+	}
+	return inputs, nil
 }
 
 func (o *Orchestrator) copyMachineFiles(ctx context.Context) error {

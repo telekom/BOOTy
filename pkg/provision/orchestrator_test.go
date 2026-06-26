@@ -2741,6 +2741,75 @@ func TestInjectCloudInit_TrimmedBondAndDNSValues(t *testing.T) {
 	}
 }
 
+func TestInjectCloudInit_NoCloudVLANConfig(t *testing.T) {
+	cfg := &config.MachineConfig{
+		Hostname: "test-host",
+	}
+	cfg.Provision.CloudInit.Enabled = true
+	cfg.Provision.CloudInit.Datasource = "nocloud"
+	cfg.Network.VLAN.Config = "200:eno1:10.200.0.42/24:10.200.0.1,300:eno2"
+	cfg.Network.DNSResolvers = "1.1.1.1"
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	if err := o.injectCloudInit(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	netPath := filepath.Join(o.config.rootDir, "var", "lib", "cloud", "seed", "nocloud", "network-config")
+	data, err := os.ReadFile(netPath)
+	if err != nil {
+		t.Fatalf("read network-config: %v", err)
+	}
+
+	var nc cloudinit.NetworkConfig
+	if err := yaml.Unmarshal(data, &nc); err != nil {
+		t.Fatalf("unmarshal network-config: %v", err)
+	}
+
+	if _, ok := nc.Ethernets["id0"]; ok {
+		t.Fatalf("unexpected fallback id0 ethernet: %#v", nc.Ethernets)
+	}
+	if _, ok := nc.Ethernets["eno1"]; !ok {
+		t.Fatalf("missing VLAN parent ethernet: %#v", nc.Ethernets)
+	}
+	staticVLAN, ok := nc.VLANs["eno1.200"]
+	if !ok {
+		t.Fatalf("missing static VLAN: %#v", nc.VLANs)
+	}
+	if staticVLAN.Gateway4 != "10.200.0.1" || staticVLAN.DHCP4 {
+		t.Fatalf("unexpected static VLAN config: %#v", staticVLAN)
+	}
+	if staticVLAN.Nameservers == nil || len(staticVLAN.Nameservers.Addresses) != 1 {
+		t.Fatalf("unexpected VLAN nameservers: %#v", staticVLAN.Nameservers)
+	}
+	dhcpVLAN, ok := nc.VLANs["eno2.300"]
+	if !ok {
+		t.Fatalf("missing DHCP VLAN: %#v", nc.VLANs)
+	}
+	if !dhcpVLAN.DHCP4 || len(dhcpVLAN.Addresses) != 0 {
+		t.Fatalf("unexpected DHCP VLAN config: %#v", dhcpVLAN)
+	}
+}
+
+func TestInjectCloudInit_InvalidVLANConfigFails(t *testing.T) {
+	cfg := &config.MachineConfig{
+		Hostname: "test-host",
+	}
+	cfg.Provision.CloudInit.Enabled = true
+	cfg.Network.VLAN.Config = "bad-vlan"
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	err := o.injectCloudInit(context.Background())
+	if err == nil {
+		t.Fatal("expected invalid VLAN config to fail")
+	}
+	if !strings.Contains(err.Error(), "invalid cloud-init VLAN config") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 // TestDetectDisk_CharDeviceRejected verifies that detectDisk rejects a character
 // device when DiskDevice is explicitly configured. Both the validatePartitionLayoutConfig
 // and detectDisk code paths must reject character devices consistently.
