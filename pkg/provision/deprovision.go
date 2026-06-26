@@ -24,6 +24,24 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 	o.cfg.Mode = mode
 	o.log.Info("starting deprovisioning", "mode", mode)
 
+	steps := o.deprovisionSteps(mode)
+
+	for i, step := range steps {
+		o.log.Info("deprovisioning step", "step", step.Name, "index", i+1, "total", len(steps))
+		if err := step.Fn(ctx); err != nil {
+			msg := fmt.Sprintf("step %s failed: %v", step.Name, err)
+			o.log.Error("deprovisioning step failed", "step", step.Name, "error", err)
+			DumpDebugState(step.Name)
+			if reportErr := o.provider.ReportStatus(ctx, config.StatusError, msg); reportErr != nil {
+				o.log.Error("failed to report error status", "error", reportErr)
+			}
+			return fmt.Errorf("deprovision step %s: %w", step.Name, err)
+		}
+	}
+	return nil
+}
+
+func (o *Orchestrator) deprovisionSteps(mode string) []Step {
 	steps := []Step{
 		{"report-init", o.reportInit},
 		{"copy-provisioner-files", o.copyProvisionerFiles},
@@ -35,28 +53,14 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 	} else {
 		steps = append(steps,
 			Step{"select-deprovision-disk", o.selectDeprovisionDisk},
-			Step{"stop-raid", o.stopRAID},
 			Step{"disable-lvm", o.disableLVM},
+			Step{"stop-raid", o.stopRAID},
 			Step{"wipe-disks", o.wipeOrSecureEraseDisks},
 			Step{"mount-efivarfs", o.mountEFIVars},
 			Step{"remove-efi-entries", o.removeEFIBootEntries},
 		)
 	}
-	steps = append(steps, Step{"report-success", o.reportDeprovisionSuccess})
-
-	for i, step := range steps {
-		o.log.Info("Deprovisioning step", "step", step.Name, "index", i+1, "total", len(steps))
-		if err := step.Fn(ctx); err != nil {
-			msg := fmt.Sprintf("step %s failed: %v", step.Name, err)
-			o.log.Error("Deprovisioning step failed", "step", step.Name, "error", err)
-			DumpDebugState(step.Name)
-			if reportErr := o.provider.ReportStatus(ctx, config.StatusError, msg); reportErr != nil {
-				o.log.Error("Failed to report error status", "error", reportErr)
-			}
-			return fmt.Errorf("deprovision step %s: %w", step.Name, err)
-		}
-	}
-	return nil
+	return append(steps, Step{"report-success", o.reportDeprovisionSuccess})
 }
 
 func (o *Orchestrator) selectDeprovisionDisk(_ context.Context) error {
