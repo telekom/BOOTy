@@ -1825,10 +1825,9 @@ func (o *Orchestrator) growPartition(ctx context.Context) error {
 		return nil
 	}
 
-	partNum := disk.PartitionNumber(o.rootPartition, o.targetDisk)
-	if partNum == 0 {
-		o.log.Warn("Could not determine partition number, skipping grow")
-		return nil
+	partNum, err := disk.PartitionNumberChecked(o.rootPartition, o.targetDisk)
+	if err != nil {
+		return fmt.Errorf("determine root partition number: %w", err)
 	}
 	return o.disk.GrowPartition(ctx, o.targetDisk, partNum)
 }
