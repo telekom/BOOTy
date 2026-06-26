@@ -253,7 +253,24 @@ jobs:
         run: |
           set -o pipefail
           log_file="kvm-${{ matrix.scenario }}.log"
-          matches=$(go test -tags ${{ matrix.test_tag }} -list '${{ matrix.test_regex }}' ./test/e2e/kvm/... | grep '^Test' || true)
+          set +e
+          list_output=$(go test -tags ${{ matrix.test_tag }} -list '${{ matrix.test_regex }}' ./test/e2e/kvm/... 2>&1)
+          list_status=$?
+          set -e
+          if [ "$list_status" -ne 0 ]; then
+            {
+              echo "### KVM ${{ matrix.scenario }} test discovery failed"
+              echo
+              echo '```'
+              echo "go test -tags ${{ matrix.test_tag }} -list '${{ matrix.test_regex }}' ./test/e2e/kvm/..."
+              echo
+              printf '%s\n' "$list_output"
+              echo '```'
+            } >> "${GITHUB_STEP_SUMMARY}"
+            printf '%s\n' "$list_output"
+            exit "$list_status"
+          fi
+          matches=$(printf '%s\n' "$list_output" | grep '^Test' || true)
           if [ -z "$matches" ]; then
             {
               echo "### KVM ${{ matrix.scenario }} matched no tests"
