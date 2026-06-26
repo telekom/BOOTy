@@ -112,7 +112,11 @@ func TestFormatMountUnmount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
 	}
-	defer os.RemoveAll(mountpoint)
+	t.Cleanup(func() {
+		if err := os.RemoveAll(mountpoint); err != nil {
+			t.Logf("cleanup mountpoint %s: %v", mountpoint, err)
+		}
+	})
 
 	// Mount using disk.Manager.
 	if err := mgr.MountPartition(ctx, root.Node, mountpoint); err != nil {
@@ -204,7 +208,11 @@ func TestBindMountAndTeardown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
 	}
-	defer os.RemoveAll(mountpoint)
+	t.Cleanup(func() {
+		if err := os.RemoveAll(mountpoint); err != nil {
+			t.Logf("cleanup mountpoint %s: %v", mountpoint, err)
+		}
+	})
 
 	if err := mgr.MountPartition(ctx, root.Node, mountpoint); err != nil {
 		t.Fatalf("MountPartition: %v", err)
@@ -224,10 +232,6 @@ func TestBindMountAndTeardown(t *testing.T) {
 		os.MkdirAll(mountpoint+"/"+dir, 0o755)
 	}
 
-	// Setup chroot bind mounts.
-	if err := mgr.SetupChrootBindMounts(mountpoint); err != nil {
-		t.Fatalf("SetupChrootBindMounts: %v", err)
-	}
 	bindsMounted := true
 	t.Cleanup(func() {
 		if !bindsMounted {
@@ -237,6 +241,11 @@ func TestBindMountAndTeardown(t *testing.T) {
 			t.Logf("cleanup chroot bind mounts under %s: %v", mountpoint, err)
 		}
 	})
+
+	// Setup chroot bind mounts.
+	if err := mgr.SetupChrootBindMounts(mountpoint); err != nil {
+		t.Fatalf("SetupChrootBindMounts: %v", err)
+	}
 
 	// Verify /proc is bind-mounted (should have content).
 	entries, err := os.ReadDir(mountpoint + "/proc")
