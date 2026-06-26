@@ -77,7 +77,11 @@ func bootDockerExecWithTimeout(t *testing.T, timeout time.Duration, container st
 	cmd.WaitDelay = 2 * time.Second
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
-		return string(out), fmt.Errorf("docker exec %s %s timed out after %s: %w", container, strings.Join(args, " "), timeout, ctx.Err())
+		timeoutErr := fmt.Errorf("docker exec %s %s timed out after %s: %w", container, strings.Join(args, " "), timeout, ctx.Err())
+		if err != nil {
+			return string(out), fmt.Errorf("%w (command error: %v)", timeoutErr, err)
+		}
+		return string(out), timeoutErr
 	}
 	return string(out), err
 }

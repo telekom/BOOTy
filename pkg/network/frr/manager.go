@@ -841,7 +841,7 @@ func (m *Manager) startDaemonsDirect(ctx context.Context) error {
 	for _, d := range daemons {
 		path, ok := paths[d.name]
 		if !ok {
-			m.log.Debug("Daemon not found, skipping", "daemon", d.name)
+			m.log.Debug("daemon not found, skipping", "daemon", d.name)
 			continue
 		}
 		if err := runFRRDaemonCommand(ctx, path, d.args...); err != nil {
@@ -852,10 +852,10 @@ func (m *Manager) startDaemonsDirect(ctx context.Context) error {
 				}
 				return startErr
 			}
-			m.log.Warn("Failed to start daemon", "daemon", d.name, "error", err)
+			m.log.Warn("failed to start daemon", "daemon", d.name, "error", err)
 		} else {
 			m.trackDirectDaemon(d.name)
-			m.log.Info("Started FRR daemon", "daemon", d.name)
+			m.log.Info("started FRR daemon", "daemon", d.name)
 		}
 		time.Sleep(frrDaemonStartDelay)
 	}
@@ -882,7 +882,7 @@ func (m *Manager) stopDaemonsDirect(ctx context.Context) error {
 		return err
 	}
 	if err := waitForDaemonsExit(ctx, names, frrDaemonStopWait); err != nil {
-		m.log.Warn("FRR daemons still running after SIGTERM; sending SIGKILL", "error", err)
+		m.log.Warn("frr daemons still running after SIGTERM; sending SIGKILL", "error", err)
 		if killErr := signalDaemons(ctx, names, syscall.SIGKILL); killErr != nil {
 			return errors.Join(err, killErr)
 		}
