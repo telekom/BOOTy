@@ -49,6 +49,11 @@ func vmDockerExec(t *testing.T, container string, args ...string) (string, error
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	return vmDockerExecContext(t, ctx, container, args...)
+}
+
+func vmDockerExecContext(t *testing.T, ctx context.Context, container string, args ...string) (string, error) {
+	t.Helper()
 	cmdArgs := append([]string{"exec", container}, args...)
 	out, err := exec.CommandContext(ctx, "docker", cmdArgs...).CombinedOutput()
 	return string(out), err
@@ -182,15 +187,20 @@ func waitForVrnetlabEVPNRoutes(t *testing.T) string {
 	defer ticker.Stop()
 
 	var last string
+	var lastErr error
 	for {
-		out, err := vmDockerExec(t, vmSpine, "vtysh", "-c", "show bgp l2vpn evpn")
+		out, err := vmDockerExecContext(t, ctx, vmSpine, "vtysh", "-c", "show bgp l2vpn evpn")
 		last = out
+		lastErr = err
 		if err == nil && (strings.Contains(out, "Route Distinguisher") || strings.Contains(out, "Network")) {
 			return out
 		}
 
 		select {
 		case <-ctx.Done():
+			if lastErr != nil {
+				t.Fatalf("no EVPN routes found on spine01 after 60s; last docker exec error: %v\n%s", lastErr, last)
+			}
 			t.Fatalf("no EVPN routes found on spine01 after 60s\n%s", last)
 		case <-ticker.C:
 		}
