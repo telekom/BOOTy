@@ -1,18 +1,27 @@
 # Proposal: Network Configuration Persistence
 
-## Status: Implemented
+## Status: Implemented with limitations
 
 Implemented as explicit opt-in network persistence without target OS
-auto-detection.
+auto-detection. Current CI proves renderer unit behavior and synthetic KVM
+wiring only; it does not prove first boot of real Ubuntu, Debian, RHEL-like,
+Flatcar, Fedora, SUSE, Windows, or VMware ESXi target images.
 
 ## Priority: P2
 
 ## Summary
 
-Persist the provisioning-time network configuration into the target OS so
-the machine's production network "just works" on first boot — without relying
-on cloud-init or external orchestration to re-discover and configure networking.
-This covers static IPs, bonding, VLANs, DNS, routes, and EVPN underlay settings.
+Persist selected provisioning-time network configuration into the target OS
+filesystem when operators explicitly enable it with `PERSIST_NETWORK=true` and
+set `OS_FAMILY`. This reduces reliance on cloud-init or external orchestration
+to re-discover basic target networking, but first-boot behavior remains
+target-OS-specific and must not be claimed without real image validation.
+
+The implemented scope covers DHCP interfaces, static interfaces, DNS, gateways,
+static routes, bonds, and VLANs only where the selected writer supports them. It
+does not persist EVPN/BGP underlay state, does not auto-detect the target OS,
+and intentionally rejects known unsupported layouts such as RHEL/Flatcar bonds
+or VLANs.
 
 ## Motivation
 
@@ -45,11 +54,13 @@ manager.
 
 ### Supported Formats
 
-| OS | Network Manager | Config Path | Format |
-|----|----------------|-------------|--------|
-| Ubuntu 20.04+ | netplan + systemd-networkd | `/etc/netplan/` | YAML |
-| RHEL 8+ | NetworkManager | `/etc/NetworkManager/system-connections/` | INI keyfile |
-| Flatcar | systemd-networkd | `/etc/systemd/network/` | INI unit file |
+| OS family | Network manager | Config path | Format | Implemented scope |
+|-----------|-----------------|-------------|--------|-------------------|
+| Ubuntu | netplan + systemd-networkd | `/etc/netplan/` | YAML | Interfaces, DHCP, static addresses, gateways, DNS, static routes, bonds, and VLANs where configured |
+| RHEL-like | NetworkManager | `/etc/NetworkManager/system-connections/` | INI keyfile | Interfaces, DHCP, static addresses, gateways, DNS, and static routes; bonds and VLANs are rejected |
+| Flatcar | systemd-networkd | `/etc/systemd/network/` | INI unit file | Interfaces, DHCP, static addresses, gateways, DNS, and static routes; bonds and VLANs are rejected |
+
+No current CI job proves first boot of a real distro image applying these files.
 
 ### Implementation
 
@@ -89,7 +100,7 @@ func (p *NetworkPersistence) Write() error {
     case "flatcar":
         return p.writeSystemdNetworkd()
     default:
-        return p.writeNetplan() // sensible default
+        return fmt.Errorf("unsupported OS family %q", p.osFamily)
     }
 }
 ```
@@ -153,6 +164,9 @@ export OS_FAMILY="ubuntu"  # or "rhel", "flatcar"
 # Network config is derived from current BOOTy networking state
 ```
 
+`OS_FAMILY` is required. BOOTy fails closed for unsupported OS families instead
+of guessing a renderer.
+
 ## Required Binaries in Initramfs
 
 No additional binaries needed. Network config file generation is pure Go
@@ -175,19 +189,21 @@ time, not by BOOTy:
 
 ## Risks
 
-- **OS detection**: Incorrect OS family detection writes wrong format. Should
-  be explicitly set or auto-detected from the OS image (check for
-  `/etc/os-release` in the chroot).
+- **OS family selection**: `OS_FAMILY` must be explicitly set. BOOTy currently
+  fails closed rather than auto-detecting the OS image from `/etc/os-release`.
 - **Conflicts**: If cloud-init also configures networking, there may be
   conflicts. BOOTy's config should take lowest priority (filename `01-*`).
 - **Complex topologies**: EVPN/BGP underlay config cannot be persisted as
   simple netplan — requires additional service configuration (FRR or GoBGP).
+- **Writer gaps**: RHEL/NetworkManager and Flatcar/systemd-networkd persistence
+  currently reject bonds and VLANs. VLAN gateway persistence is not implemented.
+- **Coverage gaps**: CI exercises renderer unit tests and synthetic KVM wiring,
+  not real distro first boot.
 
 ## Effort Estimate
 
-- Netplan writer: **2 days**
-- NetworkManager writer: **2 days**
-- systemd-networkd writer: **1 day**
-- OS detection + integration: **2 days**
-- Testing: **2-3 days**
-- Total: **9-12 days**
+- Implemented: explicit opt-in wiring, netplan, NetworkManager, and
+  systemd-networkd writers with unit coverage.
+- Remaining: real-image first-boot tests, target OS auto-detection if desired,
+  RHEL/Flatcar bond/VLAN support, VLAN gateway persistence, and EVPN/BGP
+  service persistence.
