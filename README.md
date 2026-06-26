@@ -752,10 +752,11 @@ export NUM_VFS=16
 ```
 
 For each detected Mellanox device, BOOTy runs
-`mstconfig -d <device> set NUM_OF_VFS=<n>`. This modifies NIC firmware and
-requires a hard reboot — kexec is automatically disabled when SR-IOV is
-configured. If `mstconfig` fails or no Mellanox NICs are found, provisioning
-continues normally.
+`mstconfig -d <device> -y set SRIOV_EN=True NUM_OF_VFS=<n>`. This modifies NIC
+firmware and requires a hard reboot — kexec is automatically disabled when
+SR-IOV is configured. When `NUM_VFS` is positive, missing Mellanox NICs, missing
+`/dev/mst` pciconf devices, or `mstconfig` failures abort provisioning instead
+of silently continuing without the requested firmware change.
 
 ### Secure Erase
 

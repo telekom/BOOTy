@@ -1563,7 +1563,9 @@ func TestCAPRFServerUnreachable(t *testing.T) {
 // Test 32: Mellanox No NICs
 // ---------------------------------------------------------------------------
 
-func TestMellanoxNoNICsE2E(t *testing.T) {
+func TestMellanoxNoNICsFailWhenRequestedE2E(t *testing.T) {
+	restore := provision.SetPCIVendorCheckFunc(func(string) (bool, error) { return false, nil })
+	defer restore()
 	cmd := newMockCommander()
 	cmd.set("chroot", []byte(""), nil)
 
@@ -1572,11 +1574,14 @@ func TestMellanoxNoNICsE2E(t *testing.T) {
 	c.SetRootDir(t.TempDir())
 
 	changed, err := c.SetupMellanox(context.Background(), 32)
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal("expected NUM_VFS request without Mellanox NICs to fail")
+	}
+	if !strings.Contains(err.Error(), "no Mellanox NICs found") {
+		t.Fatalf("error = %v, want no Mellanox NICs found", err)
 	}
 	if changed {
-		t.Error("expected firmwareChanged=false with no Mellanox NICs")
+		t.Error("expected firmwareChanged=false without Mellanox NICs")
 	}
 }
 

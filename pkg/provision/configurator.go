@@ -26,6 +26,8 @@ const newroot = "/newroot"
 
 var errEFIFallbackAssetMissing = errors.New("bundled EFI fallback loader missing")
 
+const mstconfigOutputLimit = 256
+
 var (
 	efiRuntimeReady              = defaultEFIRuntimeReady
 	isMountPoint                 = defaultIsMountPoint
@@ -776,46 +778,68 @@ func (c *Configurator) SetupMellanox(ctx context.Context, numVFs int) (bool, err
 	// Detect Mellanox NICs via sysfs (vendor 0x15b3) instead of lspci.
 	found, err := hasPCIVendorFunc("15b3")
 	if err != nil {
-		slog.Info("PCI enumeration failed, skipping Mellanox setup", "error", err)
-		return false, nil
+		return false, fmt.Errorf("detect Mellanox PCI devices: %w", err)
 	}
 	if !found {
-		slog.Info("no Mellanox NICs found")
-		return false, nil
+		return false, fmt.Errorf("requested NUM_VFS=%d but no Mellanox NICs found", numVFs)
 	}
 
 	// Enumerate all Mellanox mst pciconf devices dynamically.
 	listOut, err := c.disk.ChrootRun(ctx, c.rootDir, "ls /dev/mst/")
 	if err != nil {
-		slog.Warn("cannot list /dev/mst/ devices", "error", err)
-		return false, nil
+		return false, fmt.Errorf("list Mellanox mst devices: %w", err)
 	}
 
 	changed := false
+	validDevices := 0
+	var errs []string
 	for _, entry := range strings.Fields(string(listOut)) {
 		if !strings.Contains(entry, "pciconf") {
 			continue
 		}
 		// Validate device name with allowlist to prevent shell injection.
 		if !isSafeDeviceName(entry) {
-			slog.Warn("skipping mst device with invalid characters", "entry", entry)
+			errs = append(errs, fmt.Sprintf("invalid mst device name %q", entry))
 			continue
 		}
+		validDevices++
 		devPath := "/dev/mst/" + entry
-		cmd := fmt.Sprintf("mstconfig -d %s set NUM_OF_VFS=%d", devPath, numVFs)
+		cmd := fmt.Sprintf("mstconfig -d %s -y set SRIOV_EN=True NUM_OF_VFS=%d", devPath, numVFs)
 		slog.Info("configuring Mellanox SR-IOV", "device", devPath, "numVFs", numVFs)
 		out, err := c.disk.ChrootRun(ctx, c.rootDir, cmd)
 		if err != nil {
-			slog.Warn("mstconfig failed", "device", devPath, "output", string(out), "error", err)
+			errs = append(errs, formatMstconfigError(devPath, out, err))
 			continue
 		}
 		changed = true
+	}
+	if validDevices == 0 {
+		errs = append(errs, "no Mellanox mst pciconf devices found in /dev/mst")
+	}
+	if len(errs) > 0 {
+		return changed, fmt.Errorf("configure Mellanox SR-IOV: %s", strings.Join(errs, "; "))
 	}
 
 	if changed {
 		slog.Info("mellanox firmware values changed, hard reboot required")
 	}
 	return changed, nil
+}
+
+func formatMstconfigError(devPath string, out []byte, err error) string {
+	output := compactMstconfigOutput(out)
+	if output == "" {
+		return fmt.Sprintf("mstconfig %s failed: %v", devPath, err)
+	}
+	return fmt.Sprintf("mstconfig %s failed: %v [output: %s]", devPath, err, output)
+}
+
+func compactMstconfigOutput(out []byte) string {
+	output := strings.Join(strings.Fields(string(out)), " ")
+	if len(output) > mstconfigOutputLimit {
+		output = output[:mstconfigOutputLimit] + "...(truncated)"
+	}
+	return output
 }
 
 // isSafeDeviceName validates that a device name contains only safe characters

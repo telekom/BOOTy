@@ -414,40 +414,48 @@ func TestRunMachineCommandsNotExist(t *testing.T) {
 	}
 }
 
-func TestSetupMellanoxNoNICs(t *testing.T) {
+func TestSetupMellanoxNoNICsFailsWhenRequested(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
 	restore := SetPCIVendorCheckFunc(func(string) (bool, error) { return false, nil })
 	defer restore()
 	changed, err := c.SetupMellanox(context.Background(), 32)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected error when NUM_VFS is requested without Mellanox NICs")
+	}
+	if !strings.Contains(err.Error(), "no Mellanox NICs found") {
+		t.Fatalf("error = %v, want no Mellanox NICs found", err)
 	}
 	if changed {
 		t.Error("expected no firmware change")
 	}
 }
 
-func TestSetupMellanoxLspciFailure(t *testing.T) {
+func TestSetupMellanoxPCIDetectionFailureFailsWhenRequested(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
 	restore := SetPCIVendorCheckFunc(func(string) (bool, error) { return false, fmt.Errorf("sysfs not available") })
 	defer restore()
 	changed, err := c.SetupMellanox(context.Background(), 32)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected PCI detection error")
+	}
+	if !strings.Contains(err.Error(), "detect Mellanox PCI devices") {
+		t.Fatalf("error = %v, want PCI detection context", err)
 	}
 	if changed {
-		t.Error("expected no firmware change on lspci failure")
+		t.Error("expected no firmware change on PCI detection failure")
 	}
 }
 
 type sequentialCommander struct {
 	results []mockResult
 	idx     int
+	calls   []mockCall
 }
 
-func (s *sequentialCommander) Run(_ context.Context, _ string, _ ...string) ([]byte, error) {
+func (s *sequentialCommander) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	s.calls = append(s.calls, mockCall{name: name, args: args})
 	if s.idx >= len(s.results) {
 		return nil, nil
 	}
@@ -483,12 +491,13 @@ func TestSetupMellanoxZeroVFsSkipsFirmwareChange(t *testing.T) {
 func TestSetupMellanoxFirmwareChanged(t *testing.T) {
 	restore := SetPCIVendorCheckFunc(func(string) (bool, error) { return true, nil })
 	defer restore()
-	mgr := disk.NewManager(&sequentialCommander{
+	cmd := &sequentialCommander{
 		results: []mockResult{
 			{output: []byte("mt4125_pciconf0\n"), err: nil},
 			{output: []byte("Applied"), err: nil},
 		},
-	})
+	}
+	mgr := disk.NewManager(cmd)
 	c := &Configurator{disk: mgr, rootDir: t.TempDir()}
 	changed, err := c.SetupMellanox(context.Background(), 32)
 	if err != nil {
@@ -496,6 +505,84 @@ func TestSetupMellanoxFirmwareChanged(t *testing.T) {
 	}
 	if !changed {
 		t.Error("expected firmware change when mstconfig succeeds")
+	}
+	if len(cmd.calls) != 2 {
+		t.Fatalf("expected list and mstconfig calls, got %d", len(cmd.calls))
+	}
+	got := chrootShellCommand(t, cmd.calls[1])
+	if !strings.Contains(got, "SRIOV_EN=True") || !strings.Contains(got, "NUM_OF_VFS=32") {
+		t.Fatalf("mstconfig command = %q, want SRIOV_EN=True and NUM_OF_VFS=32", got)
+	}
+}
+
+func chrootShellCommand(t *testing.T, call mockCall) string {
+	t.Helper()
+	if call.name != "chroot" || len(call.args) < 4 {
+		t.Fatalf("call = %#v, want chroot root /bin/bash -c command", call)
+	}
+	return call.args[3]
+}
+
+func TestSetupMellanoxMissingMstDevicesFailsWhenRequested(t *testing.T) {
+	restore := SetPCIVendorCheckFunc(func(string) (bool, error) { return true, nil })
+	defer restore()
+	mgr := disk.NewManager(&sequentialCommander{
+		results: []mockResult{
+			{output: []byte("mstflint\n"), err: nil},
+		},
+	})
+	c := &Configurator{disk: mgr, rootDir: t.TempDir()}
+	changed, err := c.SetupMellanox(context.Background(), 32)
+	if err == nil {
+		t.Fatal("expected missing pciconf device error")
+	}
+	if !strings.Contains(err.Error(), "no Mellanox mst pciconf devices found") {
+		t.Fatalf("error = %v, want missing pciconf context", err)
+	}
+	if changed {
+		t.Error("expected no firmware change when no mst pciconf devices exist")
+	}
+}
+
+func TestSetupMellanoxListMstFailsWhenRequested(t *testing.T) {
+	restore := SetPCIVendorCheckFunc(func(string) (bool, error) { return true, nil })
+	defer restore()
+	mgr := disk.NewManager(&sequentialCommander{
+		results: []mockResult{
+			{output: []byte("missing"), err: fmt.Errorf("ls: no such file or directory")},
+		},
+	})
+	c := &Configurator{disk: mgr, rootDir: t.TempDir()}
+	changed, err := c.SetupMellanox(context.Background(), 32)
+	if err == nil {
+		t.Fatal("expected /dev/mst listing error")
+	}
+	if !strings.Contains(err.Error(), "list Mellanox mst devices") {
+		t.Fatalf("error = %v, want list Mellanox mst devices context", err)
+	}
+	if changed {
+		t.Error("expected no firmware change when /dev/mst cannot be listed")
+	}
+}
+
+func TestSetupMellanoxUnsafeMstDeviceFailsWhenRequested(t *testing.T) {
+	restore := SetPCIVendorCheckFunc(func(string) (bool, error) { return true, nil })
+	defer restore()
+	mgr := disk.NewManager(&sequentialCommander{
+		results: []mockResult{
+			{output: []byte("mt4125_pciconf0;touch\n"), err: nil},
+		},
+	})
+	c := &Configurator{disk: mgr, rootDir: t.TempDir()}
+	changed, err := c.SetupMellanox(context.Background(), 32)
+	if err == nil {
+		t.Fatal("expected invalid mst device error")
+	}
+	if !strings.Contains(err.Error(), "invalid mst device name") {
+		t.Fatalf("error = %v, want invalid mst device context", err)
+	}
+	if changed {
+		t.Error("expected no firmware change for unsafe mst device")
 	}
 }
 
@@ -510,11 +597,28 @@ func TestSetupMellanoxMstconfigFails(t *testing.T) {
 	})
 	c := &Configurator{disk: mgr, rootDir: t.TempDir()}
 	changed, err := c.SetupMellanox(context.Background(), 32)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected mstconfig failure")
+	}
+	if !strings.Contains(err.Error(), "mstconfig /dev/mst/mt4125_pciconf0 failed") {
+		t.Fatalf("error = %v, want mstconfig failure context", err)
 	}
 	if changed {
 		t.Error("expected no firmware change when mstconfig fails")
+	}
+}
+
+func TestFormatMstconfigErrorCompactsOutput(t *testing.T) {
+	out := []byte(strings.Repeat("line one\nline two\t", 20))
+	got := formatMstconfigError("/dev/mst/mt4125_pciconf0", out, fmt.Errorf("exit status 1"))
+	if strings.Contains(got, "\n") || strings.Contains(got, "\t") {
+		t.Fatalf("error output was not normalized: %q", got)
+	}
+	if !strings.Contains(got, "...(truncated)") {
+		t.Fatalf("error output was not truncated: %q", got)
+	}
+	if !strings.Contains(got, "exit status 1") {
+		t.Fatalf("error is missing command failure: %q", got)
 	}
 }
 
