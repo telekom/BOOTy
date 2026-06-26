@@ -42,6 +42,11 @@ var safeKernelParams = regexp.MustCompile(`^[a-zA-Z0-9=._\-/ ]*$`)
 // rejecting shell metacharacters that enable command chaining or substitution.
 var safeProvisionCommand = regexp.MustCompile(`^[a-zA-Z0-9_./:=,@%+\-\s]+$`)
 
+// safeChrootDevicePath allows stable Linux block-device paths without shell
+// metacharacters. Some callers still interpolate these values into legacy
+// chroot shell commands, so fail closed before command construction.
+var safeChrootDevicePath = regexp.MustCompile(`^/dev/[a-zA-Z0-9._/+:-]+$`)
+
 var blockedShellTokens = []string{"&&", "||", "|", "`", "$(", ")", ">", "<", ";", "\n", "\r"}
 
 // sensitiveKeyPattern matches sensitive key-value pairs in two forms:
@@ -263,7 +268,12 @@ func abRootKernelParamForSlot(slot, scheme string) string {
 // the asset is unavailable, it falls back to the target-root grub-install path
 // to preserve compatibility with older initramfs builds.
 func (c *Configurator) InstallEFIFallbackLoader(ctx context.Context, diskDev, rootDev string) error {
-	err := c.installBundledEFIFallbackLoader(rootDev)
+	var err error
+	diskDev, err = validateChrootDevicePath("EFI fallback disk device", diskDev)
+	if err != nil {
+		return err
+	}
+	err = c.installBundledEFIFallbackLoader(rootDev)
 	if err == nil {
 		return nil
 	}
@@ -339,6 +349,17 @@ func (c *Configurator) installBundledEFIFallbackLoader(rootDev string) error {
 	}
 	slog.Info("installed bundled EFI fallback loader", "loader", filepath.Join(efiBootDir, loaderName), "root", rootDev, "marker", markerGRUBPath)
 	return nil
+}
+
+func validateChrootDevicePath(name, value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", fmt.Errorf("%s is required", name)
+	}
+	if trimmed != value || strings.Contains(trimmed, "..") || !safeChrootDevicePath.MatchString(trimmed) {
+		return "", fmt.Errorf("unsafe %s %q", name, value)
+	}
+	return trimmed, nil
 }
 
 func defaultEFIFallbackHandoffID() (string, error) {
@@ -673,6 +694,16 @@ func (c *Configurator) CreateEFIBootEntry(ctx context.Context, diskDev, bootPart
 	if ok, reason := efiRuntimeReady(); !ok {
 		slog.Warn("skipping EFI boot entry creation", "reason", reason)
 		return nil
+	}
+
+	var err error
+	diskDev, err = validateChrootDevicePath("EFI boot disk device", diskDev)
+	if err != nil {
+		return err
+	}
+	bootPart, err = validateChrootDevicePath("EFI boot partition device", bootPart)
+	if err != nil {
+		return err
 	}
 
 	slog.Info("creating EFI boot entry", "disk", diskDev, "partition", bootPart)
