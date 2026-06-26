@@ -165,7 +165,7 @@ func waitExitedChild() (int, syscall.WaitStatus, error) {
 	if err != nil {
 		return pid, status, fmt.Errorf("wait for exited child: %w", err)
 	}
-	return pid, status, err
+	return pid, status, nil
 }
 
 func reapExitedChildrenWith(waitChild waitExitedChildFunc) {
