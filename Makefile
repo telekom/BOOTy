@@ -204,7 +204,7 @@ clab-boot-down:
 
 test-e2e-boot:
 	@printf '%s\n' 'Running BOOTy boot E2E tests (requires clab-boot-up)'
-	@go test -tags e2e_boot -race -v -timeout 300s ./test/e2e/integration/...
+	@go test -tags e2e_boot -race -v -timeout 30m ./test/e2e/integration/...
 
 booty-vrnetlab-image:
 	@echo Building BOOTy vrnetlab VM image
