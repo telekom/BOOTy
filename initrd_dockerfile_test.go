@@ -151,3 +151,40 @@ func TestReleaseAndNightlyPassInitramfsBuildInfoArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestDockerfileUsesUtilLinuxLsblk(t *testing.T) {
+	data, err := os.ReadFile("initrd.Dockerfile")
+	if err != nil {
+		t.Fatalf("cannot read initrd.Dockerfile: %v", err)
+	}
+	lines := strings.Split(string(data), "\n")
+	lsblkCopies := 0
+	lsblkRemovals := 0
+	inRmCommand := false
+	rmCommandHasLsblk := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "COPY --from=tools /bin/lsblk bin/lsblk" {
+			lsblkCopies++
+		}
+		if strings.HasPrefix(trimmed, "RUN rm -f ") {
+			inRmCommand = true
+			rmCommandHasLsblk = false
+		}
+		if inRmCommand && strings.Contains(trimmed, "bin/lsblk") {
+			rmCommandHasLsblk = true
+		}
+		if inRmCommand && !strings.HasSuffix(trimmed, "\\") {
+			if rmCommandHasLsblk {
+				lsblkRemovals++
+			}
+			inRmCommand = false
+		}
+	}
+	if lsblkCopies != 3 {
+		t.Fatalf("expected default, slim, and GoBGP builders to copy util-linux lsblk, got %d copies", lsblkCopies)
+	}
+	if lsblkRemovals != 3 {
+		t.Fatalf("expected default, slim, and GoBGP builders to remove BusyBox lsblk before COPY, got %d removals", lsblkRemovals)
+	}
+}
