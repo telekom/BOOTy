@@ -111,6 +111,51 @@ func TestReadSfdiskPartitionsDerivesNumbersFromDeviceNodes(t *testing.T) {
 	}
 }
 
+func TestTargetPartitionNodeForSourceUsesParsedSourceNumber(t *testing.T) {
+	tests := []struct {
+		name     string
+		disk     string
+		part     sfdiskPartition
+		fallback int
+		wantNode string
+		wantNum  int
+	}{
+		{
+			name:     "sparse source partition",
+			disk:     "/dev/sda",
+			part:     sfdiskPartition{Node: "/dev/loop0p7", Number: 7},
+			fallback: 2,
+			wantNode: "/dev/sda7",
+			wantNum:  7,
+		},
+		{
+			name:     "nvme sparse source partition",
+			disk:     "/dev/nvme0n1",
+			part:     sfdiskPartition{Node: "/dev/loop0p5", Number: 5},
+			fallback: 1,
+			wantNode: "/dev/nvme0n1p5",
+			wantNum:  5,
+		},
+		{
+			name:     "fallback for missing parsed number",
+			disk:     "/dev/sda",
+			part:     sfdiskPartition{Node: "/dev/mapper/root"},
+			fallback: 3,
+			wantNode: "/dev/sda3",
+			wantNum:  3,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotNode, gotNum := targetPartitionNodeForSource(tt.disk, tt.part, tt.fallback)
+			if gotNode != tt.wantNode || gotNum != tt.wantNum {
+				t.Fatalf("targetPartitionNodeForSource() = (%q, %d), want (%q, %d)",
+					gotNode, gotNum, tt.wantNode, tt.wantNum)
+			}
+		})
+	}
+}
+
 func TestSelectSourcePartitionsForAB(t *testing.T) {
 	parts := []sfdiskPartition{
 		{Node: "/dev/loop0p1", Type: efiSystemPartitionGUID, Size: 1024, Number: 1},
