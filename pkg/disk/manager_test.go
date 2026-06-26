@@ -168,6 +168,51 @@ func TestSetupChrootBindMountsRollsBackPartialFailure(t *testing.T) {
 	}
 }
 
+func TestSetupChrootBindMountsDoesNotRollbackPreExistingMount(t *testing.T) {
+	oldMount := mountFunc
+	oldUnmount := unmountFunc
+	oldIsMountPoint := isMountPointFunc
+	t.Cleanup(func() {
+		mountFunc = oldMount
+		unmountFunc = oldUnmount
+		isMountPointFunc = oldIsMountPoint
+	})
+
+	root := t.TempDir()
+	preMounted := root + "/proc"
+	var mounted []string
+	var unmounted []string
+	isMountPointFunc = func(path string) bool {
+		return path == preMounted
+	}
+	mountFunc = func(source, target, _ string, _ uintptr, _ string) error {
+		if source == "/sys" {
+			return syscall.EPERM
+		}
+		mounted = append(mounted, target)
+		return nil
+	}
+	unmountFunc = func(target string, _ int) error {
+		unmounted = append(unmounted, target)
+		return nil
+	}
+
+	mgr := NewManager(newMockCommander())
+	err := mgr.SetupChrootBindMounts(root)
+	if err == nil {
+		t.Fatal("SetupChrootBindMounts() error = nil, want /sys bind failure")
+	}
+
+	wantMounted := []string{root + "/dev"}
+	if strings.Join(mounted, ",") != strings.Join(wantMounted, ",") {
+		t.Fatalf("mounted = %v, want %v", mounted, wantMounted)
+	}
+	wantUnmounted := []string{root + "/dev"}
+	if strings.Join(unmounted, ",") != strings.Join(wantUnmounted, ",") {
+		t.Fatalf("unmounted = %v, want %v", unmounted, wantUnmounted)
+	}
+}
+
 func TestStopRAIDArrays(t *testing.T) {
 	cmd := newMockCommander()
 	mgr := NewManager(cmd)

@@ -30,8 +30,9 @@ type Commander = executil.Commander
 type ExecCommander = executil.ExecCommander
 
 var (
-	mountFunc   = syscall.Mount
-	unmountFunc = syscall.Unmount
+	mountFunc        = syscall.Mount
+	unmountFunc      = syscall.Unmount
+	isMountPointFunc = isMountPoint
 )
 
 // Manager handles disk operations for provisioning.
@@ -921,17 +922,22 @@ func waitForDevice(ctx context.Context, device string) error {
 
 // BindMount performs a bind mount.
 func (m *Manager) BindMount(source, target string) error {
+	_, err := m.bindMount(source, target)
+	return err
+}
+
+func (m *Manager) bindMount(source, target string) (bool, error) {
 	if err := os.MkdirAll(target, 0o755); err != nil {
-		return fmt.Errorf("creating bind mount target %s: %w", target, err)
+		return false, fmt.Errorf("creating bind mount target %s: %w", target, err)
 	}
-	if isMountPoint(target) {
+	if isMountPointFunc(target) {
 		slog.Info("bind mount target already mounted, skipping", "source", source, "target", target)
-		return nil
+		return false, nil
 	}
 	if err := mountFunc(source, target, "", syscall.MS_BIND, ""); err != nil {
-		return fmt.Errorf("bind mount %s -> %s: %w", source, target, err)
+		return false, fmt.Errorf("bind mount %s -> %s: %w", source, target, err)
 	}
-	return nil
+	return true, nil
 }
 
 func isMountPoint(path string) bool {
@@ -1120,12 +1126,12 @@ func (m *Manager) SetupChrootBindMounts(root string) error {
 	var mounted []string
 	for _, b := range binds {
 		target := root + "/" + b.rel
-		wasMounted := isMountPoint(target)
-		if err := m.BindMount(b.src, target); err != nil {
+		didMount, err := m.bindMount(b.src, target)
+		if err != nil {
 			m.rollbackChrootBindMounts(root, mounted)
 			return fmt.Errorf("bind mount %s: %w", b.src, err)
 		}
-		if !wasMounted {
+		if didMount {
 			mounted = append(mounted, b.rel)
 		}
 	}
