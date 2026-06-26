@@ -94,7 +94,13 @@ jobs:
       - name: Run E2E tests
         run: |
           # Run e2e tests excluding kvm/ (KVM tests run in the dedicated KVM matrix job)
-          go test -tags e2e -v -race -count=1 -timeout 20m $(go list -tags e2e ./test/e2e/... | grep -v /kvm)
+          packages="$(go list -tags e2e ./test/e2e/...)"
+          packages="$(printf '%s\n' "$packages" | awk '$0 !~ /\/kvm$/')"
+          if [ -z "$packages" ]; then
+            echo "no non-KVM e2e packages discovered" >&2
+            exit 1
+          fi
+          printf '%s\n' "$packages" | xargs go test -tags e2e -v -race -count=1 -timeout 20m
 
   build:
     name: Build (${{ matrix.arch }})

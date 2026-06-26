@@ -164,7 +164,13 @@ simplify:
 
 test-e2e:
 	@echo Running E2E tests
-	@go test -tags e2e -race -v -timeout 20m $(shell go list -tags e2e ./test/e2e/... | grep -v /kvm)
+	@packages=$$(go list -tags e2e ./test/e2e/...) || exit $$?; \
+	packages=$$(printf '%s\n' "$$packages" | awk '$$0 !~ /\/kvm$$/'); \
+	if [ -z "$$packages" ]; then \
+		printf '%s\n' 'no non-KVM e2e packages discovered' >&2; \
+		exit 1; \
+	fi; \
+	printf '%s\n' "$$packages" | xargs go test -tags e2e -race -v -timeout 20m
 
 test-kvm:
 	@printf '%s\n' 'Running KVM E2E tests (requires QEMU, root, and KVM assets)'
