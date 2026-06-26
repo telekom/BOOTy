@@ -730,6 +730,26 @@ func TestToNetworkConfig_StaticEthernetWildcardAutoDetect(t *testing.T) {
 	}
 }
 
+func TestToNetworkConfig_StaticEthernetMACMatchAutoDetect(t *testing.T) {
+	np := &Config{
+		Network: NetworkSection{
+			Ethernets: map[string]EthernetConfig{
+				"provision-uplink": {
+					Match:     &MatchConfig{MAC: "00:11:22:33:44:55"},
+					Addresses: []string{"10.1.2.3/24"},
+				},
+			},
+		},
+	}
+	netCfg := ToNetworkConfig(np, nil)
+	if netCfg.StaticIP != "10.1.2.3/24" {
+		t.Errorf("StaticIP = %q, want 10.1.2.3/24", netCfg.StaticIP)
+	}
+	if netCfg.StaticIface != "" {
+		t.Errorf("StaticIface = %q, want auto-detect", netCfg.StaticIface)
+	}
+}
+
 func TestToNetworkConfig_StaticBondAddress(t *testing.T) {
 	np := &Config{
 		Network: NetworkSection{
@@ -755,6 +775,30 @@ func TestToNetworkConfig_StaticBondAddress(t *testing.T) {
 	}
 	if netCfg.BondInterfaces != "eno1,eno2" {
 		t.Errorf("BondInterfaces = %q, want eno1,eno2", netCfg.BondInterfaces)
+	}
+}
+
+func TestToNetworkConfig_StaticBondAddressUsesCreatedBondName(t *testing.T) {
+	np := &Config{
+		Network: NetworkSection{
+			Ethernets: map[string]EthernetConfig{
+				"eno1": {},
+				"eno2": {},
+			},
+			Bonds: map[string]BondConfig{
+				"provision-bond": {
+					Interfaces: []string{"eno1", "eno2"},
+					Addresses:  []string{"10.5.0.10/24"},
+				},
+			},
+		},
+	}
+	netCfg := ToNetworkConfig(np, nil)
+	if netCfg.StaticIP != "10.5.0.10/24" {
+		t.Errorf("StaticIP = %q, want 10.5.0.10/24", netCfg.StaticIP)
+	}
+	if netCfg.StaticIface != "bond0" {
+		t.Errorf("StaticIface = %q, want bond0", netCfg.StaticIface)
 	}
 }
 

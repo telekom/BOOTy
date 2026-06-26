@@ -235,7 +235,7 @@ func extractBonds(np *Config, cfg *network.Config) {
 		}
 		if addr := firstAddress(bond.Addresses); addr != "" {
 			cfg.StaticIP = addr
-			cfg.StaticIface = name
+			cfg.StaticIface = "bond0"
 		}
 		if bond.MTU > cfg.MTU {
 			cfg.MTU = bond.MTU
@@ -275,8 +275,11 @@ func firstAddress(addresses []string) string {
 }
 
 func ethernetStaticIface(name string, eth *EthernetConfig) string {
-	if eth.Match == nil || eth.Match.Name == "" {
+	if eth.Match == nil {
 		return name
+	}
+	if eth.Match.Name == "" {
+		return ""
 	}
 	if strings.ContainsAny(eth.Match.Name, "*?[]") {
 		return ""
