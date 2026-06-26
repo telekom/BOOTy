@@ -4,14 +4,33 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/network"
 )
+
+type teardownRecorderMode struct {
+	teardown func() error
+}
+
+func (m teardownRecorderMode) Setup(context.Context, *network.Config) error { return nil }
+
+func (m teardownRecorderMode) WaitForConnectivity(context.Context, string, time.Duration) error {
+	return nil
+}
+
+func (m teardownRecorderMode) Teardown(context.Context) error {
+	if m.teardown == nil {
+		return nil
+	}
+	return m.teardown()
+}
 
 func TestMergeNetplanConfigPreservesProvisionPrefixForSameHostMask(t *testing.T) {
 	dst := &network.Config{ProvisionIP: "10.200.0.10/24"}
@@ -66,9 +85,9 @@ func TestPrepareLinkLayersCreatesBondBeforeVLAN(t *testing.T) {
 	previousBond := setupBondLayer
 	previousVLAN := setupVLANLayer
 	var calls []string
-	setupBondLayer = func(_ context.Context, _ *network.Config) error {
+	setupBondLayer = func(_ context.Context, _ *network.Config) (network.Mode, error) {
 		calls = append(calls, "bond")
-		return nil
+		return teardownRecorderMode{}, nil
 	}
 	setupVLANLayer = func(v network.VLANConfig) (string, error) {
 		calls = append(calls, "vlan:"+v.Parent)
@@ -83,7 +102,7 @@ func TestPrepareLinkLayersCreatesBondBeforeVLAN(t *testing.T) {
 		BondInterfaces: "eth0,eth1",
 		VLANs:          []network.VLANConfig{{ID: 100, Parent: "bond0", Address: "10.0.0.2/24"}},
 	}
-	if err := prepareLinkLayers(context.Background(), cfg); err != nil {
+	if _, err := prepareLinkLayers(context.Background(), cfg); err != nil {
 		t.Fatalf("prepareLinkLayers: %v", err)
 	}
 
@@ -103,19 +122,94 @@ func TestPrepareLinkLayersCreatesBondBeforeVLAN(t *testing.T) {
 
 func TestPrepareLinkLayersBondOnlySelectsBond0(t *testing.T) {
 	previousBond := setupBondLayer
-	setupBondLayer = func(_ context.Context, _ *network.Config) error {
-		return nil
+	setupBondLayer = func(_ context.Context, _ *network.Config) (network.Mode, error) {
+		return teardownRecorderMode{}, nil
 	}
 	t.Cleanup(func() {
 		setupBondLayer = previousBond
 	})
 
 	cfg := &network.Config{BondInterfaces: "eth0,eth1"}
-	if err := prepareLinkLayers(context.Background(), cfg); err != nil {
+	if _, err := prepareLinkLayers(context.Background(), cfg); err != nil {
 		t.Fatalf("prepareLinkLayers: %v", err)
 	}
 	if cfg.StaticIface != "bond0" {
 		t.Fatalf("StaticIface = %q, want bond0", cfg.StaticIface)
+	}
+}
+
+func TestLinkLayerNetworkModeTeardownCleansInnerThenLinkLayers(t *testing.T) {
+	previousVLAN := teardownVLANLayer
+	var calls []string
+	teardownVLANLayer = func(v network.VLANConfig) error {
+		calls = append(calls, fmt.Sprintf("vlan:%s.%d", v.Parent, v.ID))
+		return nil
+	}
+	t.Cleanup(func() { teardownVLANLayer = previousVLAN })
+
+	inner := teardownRecorderMode{teardown: func() error {
+		calls = append(calls, "inner")
+		return nil
+	}}
+	cleanup := &linkLayerCleanup{
+		bond: teardownRecorderMode{teardown: func() error {
+			calls = append(calls, "bond")
+			return nil
+		}},
+		vlans: []network.VLANConfig{{ID: 100, Parent: "bond0"}},
+	}
+
+	if err := wrapLinkLayerMode(inner, cleanup).Teardown(context.Background()); err != nil {
+		t.Fatalf("Teardown: %v", err)
+	}
+	want := []string{"inner", "vlan:bond0.100", "bond"}
+	if strings.Join(calls, ",") != strings.Join(want, ",") {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+}
+
+func TestPrepareLinkLayersRollsBackOnVLANFailure(t *testing.T) {
+	previousBond := setupBondLayer
+	previousVLAN := setupVLANLayer
+	previousTeardownVLAN := teardownVLANLayer
+	var calls []string
+	setupBondLayer = func(_ context.Context, _ *network.Config) (network.Mode, error) {
+		calls = append(calls, "bond")
+		return teardownRecorderMode{teardown: func() error {
+			calls = append(calls, "teardown-bond")
+			return nil
+		}}, nil
+	}
+	setupVLANLayer = func(v network.VLANConfig) (string, error) {
+		calls = append(calls, fmt.Sprintf("vlan:%d", v.ID))
+		if v.ID == 200 {
+			return "", fmt.Errorf("vlan setup failed")
+		}
+		return fmt.Sprintf("%s.%d", v.Parent, v.ID), nil
+	}
+	teardownVLANLayer = func(v network.VLANConfig) error {
+		calls = append(calls, fmt.Sprintf("teardown-vlan:%d", v.ID))
+		return nil
+	}
+	t.Cleanup(func() {
+		setupBondLayer = previousBond
+		setupVLANLayer = previousVLAN
+		teardownVLANLayer = previousTeardownVLAN
+	})
+
+	cfg := &network.Config{
+		BondInterfaces: "eth0,eth1",
+		VLANs: []network.VLANConfig{
+			{ID: 100, Parent: "bond0"},
+			{ID: 200, Parent: "bond0"},
+		},
+	}
+	if _, err := prepareLinkLayers(context.Background(), cfg); err == nil {
+		t.Fatal("prepareLinkLayers() error = nil, want VLAN setup failure")
+	}
+	want := []string{"bond", "vlan:100", "vlan:200", "teardown-vlan:100", "teardown-bond"}
+	if strings.Join(calls, ",") != strings.Join(want, ",") {
+		t.Fatalf("calls = %v, want %v", calls, want)
 	}
 }
 

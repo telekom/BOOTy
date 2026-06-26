@@ -40,9 +40,12 @@ var (
 )
 
 var (
-	setupBondLayer = func(ctx context.Context, cfg *network.Config) error {
+	setupBondLayer = func(ctx context.Context, cfg *network.Config) (network.Mode, error) {
 		bond := &network.BondMode{}
-		return bond.Setup(ctx, cfg)
+		if err := bond.Setup(ctx, cfg); err != nil {
+			return nil, err
+		}
+		return bond, nil
 	}
 	setupVLANLayer = func(v network.VLANConfig) (string, error) {
 		return vlan.Setup(&vlan.Config{
@@ -50,6 +53,12 @@ var (
 			Parent:  v.Parent,
 			Address: v.Address,
 			Gateway: v.Gateway,
+		})
+	}
+	teardownVLANLayer = func(v network.VLANConfig) error {
+		return vlan.TeardownConfig(&vlan.Config{
+			ID:     v.ID,
+			Parent: v.Parent,
 		})
 	}
 )
@@ -470,7 +479,8 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 		netCfg.VLANs = vlans
 	}
 
-	if err := prepareLinkLayers(ctx, netCfg); err != nil {
+	linkCleanup, err := prepareLinkLayers(ctx, netCfg)
+	if err != nil {
 		return nil, err
 	}
 
@@ -481,9 +491,12 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 		stack, err := setupGoBGPStack(ctx, netCfg)
 		if err != nil {
 			slog.Error("gobgp network setup failed", "error", err)
+			if cleanupErr := linkCleanup.Teardown(ctx); cleanupErr != nil {
+				slog.Warn("link-layer cleanup after GoBGP setup failure failed", "error", cleanupErr)
+			}
 			return nil, fmt.Errorf("gobgp network setup: %w", err)
 		}
-		return networkModeWithResolvers(netCfg, stack)
+		return networkModeWithResolvers(ctx, netCfg, stack, linkCleanup)
 	}
 
 	if netCfg.IsFRRMode() {
@@ -493,9 +506,9 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 		if err := mgr.Setup(ctx, netCfg); err != nil {
 			slog.Error("FRR network setup failed, falling back to DHCP", "error", err)
 			mgr.DumpFRRState()
-			return networkModeWithResolvers(netCfg, dhcpFallback(ctx, netCfg))
+			return networkModeWithResolvers(ctx, netCfg, dhcpFallback(ctx, netCfg), linkCleanup)
 		}
-		return networkModeWithResolvers(netCfg, mgr)
+		return networkModeWithResolvers(ctx, netCfg, mgr, linkCleanup)
 	}
 
 	if netCfg.IsStaticMode() {
@@ -503,28 +516,34 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 		mode := &network.StaticMode{}
 		if err := mode.Setup(ctx, netCfg); err != nil {
 			slog.Error("static network setup failed, falling back to DHCP", "error", err)
-			return networkModeWithResolvers(netCfg, dhcpFallback(ctx, netCfg))
+			return networkModeWithResolvers(ctx, netCfg, dhcpFallback(ctx, netCfg), linkCleanup)
 		}
-		return networkModeWithResolvers(netCfg, mode)
+		return networkModeWithResolvers(ctx, netCfg, mode, linkCleanup)
 	}
 
 	slog.Info("using DHCP network mode")
-	return networkModeWithResolvers(netCfg, dhcpFallback(ctx, netCfg))
+	return networkModeWithResolvers(ctx, netCfg, dhcpFallback(ctx, netCfg), linkCleanup)
 }
 
-func networkModeWithResolvers(netCfg *network.Config, mode network.Mode) (network.Mode, error) {
+func networkModeWithResolvers(ctx context.Context, netCfg *network.Config, mode network.Mode, cleanup *linkLayerCleanup) (network.Mode, error) {
 	if err := network.ConfigureResolvers(netCfg.DNSResolvers); err != nil {
+		if cleanupErr := cleanup.Teardown(ctx); cleanupErr != nil {
+			slog.Warn("link-layer cleanup after resolver setup failure failed", "error", cleanupErr)
+		}
 		return nil, fmt.Errorf("configure initramfs DNS: %w", err)
 	}
-	return mode, nil
+	return wrapLinkLayerMode(mode, cleanup), nil
 }
 
-func prepareLinkLayers(ctx context.Context, netCfg *network.Config) error {
+func prepareLinkLayers(ctx context.Context, netCfg *network.Config) (*linkLayerCleanup, error) {
+	cleanup := &linkLayerCleanup{}
 	if netCfg.IsBondMode() {
 		slog.Info("setting up LACP bond")
-		if err := setupBondLayer(ctx, netCfg); err != nil {
-			return fmt.Errorf("bond setup: %w", err)
+		bondMode, err := setupBondLayer(ctx, netCfg)
+		if err != nil {
+			return nil, fmt.Errorf("bond setup: %w", err)
 		}
+		cleanup.bond = bondMode
 		if netCfg.StaticIface == "" && !netCfg.IsVLANMode() {
 			netCfg.StaticIface = "bond0"
 		}
@@ -543,13 +562,61 @@ func prepareLinkLayers(ctx context.Context, netCfg *network.Config) error {
 			if netCfg.StaticIface == "" {
 				netCfg.StaticIface = name
 			}
+			cleanup.vlans = append(cleanup.vlans, v)
 		}
 		if err := errors.Join(vlanErrs...); err != nil {
-			return fmt.Errorf("vlan setup: %w", err)
+			if cleanupErr := cleanup.Teardown(ctx); cleanupErr != nil {
+				return nil, errors.Join(fmt.Errorf("vlan setup: %w", err), fmt.Errorf("link-layer rollback: %w", cleanupErr))
+			}
+			return nil, fmt.Errorf("vlan setup: %w", err)
 		}
 	}
 
-	return nil
+	return cleanup, nil
+}
+
+type linkLayerCleanup struct {
+	bond  network.Mode
+	vlans []network.VLANConfig
+}
+
+func (c *linkLayerCleanup) empty() bool {
+	return c == nil || (c.bond == nil && len(c.vlans) == 0)
+}
+
+func (c *linkLayerCleanup) Teardown(ctx context.Context) error {
+	if c.empty() {
+		return nil
+	}
+	var errs []error
+	for i := len(c.vlans) - 1; i >= 0; i-- {
+		v := c.vlans[i]
+		if err := teardownVLANLayer(v); err != nil {
+			errs = append(errs, fmt.Errorf("teardown vlan %d on %s: %w", v.ID, v.Parent, err))
+		}
+	}
+	if c.bond != nil {
+		if err := c.bond.Teardown(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("teardown bond: %w", err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+type linkLayerNetworkMode struct {
+	network.Mode
+	cleanup *linkLayerCleanup
+}
+
+func wrapLinkLayerMode(mode network.Mode, cleanup *linkLayerCleanup) network.Mode {
+	if cleanup.empty() {
+		return mode
+	}
+	return &linkLayerNetworkMode{Mode: mode, cleanup: cleanup}
+}
+
+func (m *linkLayerNetworkMode) Teardown(ctx context.Context) error {
+	return errors.Join(m.Mode.Teardown(ctx), m.cleanup.Teardown(ctx))
 }
 
 // dhcpFallback creates a DHCP mode and attempts setup.
