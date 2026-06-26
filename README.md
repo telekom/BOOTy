@@ -68,7 +68,7 @@ BOOTy operates in two modes depending on the boot environment:
 - **HTTP retry with backoff** — Automatic exponential backoff retry for image downloads and OCI pulls
 - **Secure erase** — NVMe format (SES1) and ATA Security Erase for full disk sanitization
 - **Software RAID** — mdadm array creation (RAID 0/1/5/6/10)
-- **Filesystem support** — ext2, ext3, ext4, xfs, btrfs, vfat mount/resize
+- **Filesystem support** — ext2, ext3, ext4, xfs, btrfs mount/resize; vfat mount/format for EFI system partitions
 - **LLDP discovery** — Raw AF_PACKET-based LLDP listener for switch topology discovery
 - **Post-provision hooks** — Execute arbitrary commands in chroot after OS configuration
 - **41-step provisioning pipeline** — provisioning input validation, RAID cleanup, NVMe namespace setup, disk detection, partition layout, image streaming, shared data mounting, partition growth, LVM, filesystem resize, optional sysext loading, OS configuration, EFI fallback installation, cloud-init injection, EFI boot, Mellanox SR-IOV, post-provision hooks

@@ -721,6 +721,10 @@ func (m *Manager) GrowPartition(ctx context.Context, disk string, partNum int) e
 // Supports ext2/3/4 via the block device and XFS/btrfs via the mounted path.
 func (m *Manager) ResizeFilesystem(ctx context.Context, device, mountpoint string) error {
 	slog.Info("resizing filesystem", "device", device, "mountpoint", mountpoint)
+	fsType, fsErr := m.fsType(ctx, device)
+	if fsErr == nil && fsType == "vfat" {
+		return fmt.Errorf("resize filesystem %s: vfat resize is not supported; vfat is supported for ESP mount/format only", device)
+	}
 	// Try resize2fs for ext2/3/4 first.
 	if out, err := m.cmd.Run(ctx, "resize2fs", device); err != nil {
 		slog.Debug("resize2fs failed, trying xfs_growfs", "output", string(out))
@@ -984,6 +988,8 @@ func (m *Manager) CheckFilesystem(ctx context.Context, device string) error {
 			return fmt.Errorf("btrfs check failed on %s: %s: %w", device, strings.TrimSpace(string(out)), err)
 		}
 		return nil
+	case "vfat":
+		return fmt.Errorf("check filesystem %s: vfat fsck is not supported; vfat is supported for ESP mount/format only", device)
 	}
 
 	out, err := m.cmd.Run(ctx, "e2fsck", "-fy", device)

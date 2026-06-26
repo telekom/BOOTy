@@ -644,8 +644,25 @@ func TestResizeFilesystemExt4(t *testing.T) {
 	if err := mgr.ResizeFilesystem(context.Background(), "/dev/sda2", "/newroot"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(cmd.calls) != 1 || cmd.calls[0].name != "resize2fs" {
+	if len(cmd.calls) != 2 || cmd.calls[1].name != "resize2fs" {
 		t.Fatalf("expected resize2fs call, got %v", cmd.calls)
+	}
+}
+
+func TestResizeFilesystemVFATUnsupported(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := NewManager(cmd)
+
+	cmd.setResult("blkid -o", []byte("vfat\n"), nil)
+	err := mgr.ResizeFilesystem(context.Background(), "/dev/sda1", "/newroot/boot/efi")
+	if err == nil {
+		t.Fatal("expected unsupported vfat resize error")
+	}
+	if !strings.Contains(err.Error(), "vfat resize is not supported") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cmd.calls) != 1 {
+		t.Fatalf("vfat resize should not try resize tools, got %#v", cmd.calls)
 	}
 }
 
@@ -657,14 +674,14 @@ func TestResizeFilesystemXFS(t *testing.T) {
 	if err := mgr.ResizeFilesystem(context.Background(), "/dev/sda2", "/newroot"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(cmd.calls) != 2 {
-		t.Fatalf("expected 2 calls (resize2fs, xfs_growfs), got %d", len(cmd.calls))
+	if len(cmd.calls) != 3 {
+		t.Fatalf("expected 3 calls (blkid, resize2fs, xfs_growfs), got %d", len(cmd.calls))
 	}
-	if cmd.calls[1].name != "xfs_growfs" {
-		t.Errorf("expected xfs_growfs, got %s", cmd.calls[1].name)
+	if cmd.calls[2].name != "xfs_growfs" {
+		t.Errorf("expected xfs_growfs, got %s", cmd.calls[2].name)
 	}
-	if len(cmd.calls[1].args) != 1 || cmd.calls[1].args[0] != "/newroot" {
-		t.Fatalf("expected xfs_growfs /newroot, got %s %v", cmd.calls[1].name, cmd.calls[1].args)
+	if len(cmd.calls[2].args) != 1 || cmd.calls[2].args[0] != "/newroot" {
+		t.Fatalf("expected xfs_growfs /newroot, got %s %v", cmd.calls[2].name, cmd.calls[2].args)
 	}
 }
 
@@ -696,7 +713,7 @@ func TestResizeFilesystemFallbackRequiresMountpoint(t *testing.T) {
 	if !strings.Contains(err.Error(), "requires mountpoint") {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(cmd.calls) != 1 {
+	if len(cmd.calls) != 2 {
 		t.Fatalf("fallback commands should not run, got %#v", cmd.calls)
 	}
 }
@@ -710,10 +727,10 @@ func TestResizeFilesystemBtrfsUsesMountpoint(t *testing.T) {
 	if err := mgr.ResizeFilesystem(context.Background(), "/dev/sda2", "/newroot"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(cmd.calls) != 3 {
+	if len(cmd.calls) != 4 {
 		t.Fatalf("expected 3 calls, got %#v", cmd.calls)
 	}
-	got := cmd.calls[2]
+	got := cmd.calls[3]
 	if got.name != "btrfs" || strings.Join(got.args, " ") != "filesystem resize max /newroot" {
 		t.Fatalf("expected btrfs filesystem resize max /newroot, got %s %v", got.name, got.args)
 	}
@@ -835,6 +852,22 @@ func TestCheckFilesystem(t *testing.T) {
 		err := mgr.CheckFilesystem(context.Background(), "/dev/sda2")
 		if err == nil {
 			t.Fatal("expected error for exit code 8")
+		}
+	})
+
+	t.Run("vfat unsupported", func(t *testing.T) {
+		cmd := newMockCommander()
+		mgr := NewManager(cmd)
+		cmd.setResult("blkid -o", []byte("vfat\n"), nil)
+		err := mgr.CheckFilesystem(context.Background(), "/dev/sda1")
+		if err == nil {
+			t.Fatal("expected unsupported vfat check error")
+		}
+		if !strings.Contains(err.Error(), "vfat fsck is not supported") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(cmd.calls) != 1 {
+			t.Fatalf("vfat check should not try e2fsck, got %#v", cmd.calls)
 		}
 	})
 }
