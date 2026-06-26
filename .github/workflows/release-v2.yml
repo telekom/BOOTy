@@ -291,12 +291,23 @@ jobs:
             IMAGE_TAG="${VERSION}-gobgp"
           fi
           IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          REF="${IMAGE}:${IMAGE_TAG}-${{ matrix.arch }}"
+          err="${RUNNER_TEMP}/container-ref-check.err"
+          if docker buildx imagetools inspect "${REF}" >/dev/null 2>"${err}"; then
+            echo "::error::container image ${REF} already exists; refusing to overwrite"
+            exit 1
+          fi
+          if ! grep -Eiq '(not found|manifest unknown|name unknown|404)' "${err}"; then
+            echo "::error::could not verify container image ${REF} is absent"
+            cat "${err}" >&2 || true
+            exit 1
+          fi
           docker buildx build \
             ${TARGET_ARG} \
             --platform "linux/${{ matrix.arch }}" \
             --provenance=true \
             --push \
-            -t "${IMAGE}:${IMAGE_TAG}-${{ matrix.arch }}" \
+            -t "${REF}" \
             -f initrd.Dockerfile .
 
   container-manifest:
@@ -329,8 +340,19 @@ jobs:
             IMAGE_TAG="${VERSION}-gobgp"
           fi
           IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          REF="${IMAGE}:${IMAGE_TAG}"
+          err="${RUNNER_TEMP}/container-manifest-ref-check.err"
+          if docker buildx imagetools inspect "${REF}" >/dev/null 2>"${err}"; then
+            echo "::error::container image ${REF} already exists; refusing to overwrite"
+            exit 1
+          fi
+          if ! grep -Eiq '(not found|manifest unknown|name unknown|404)' "${err}"; then
+            echo "::error::could not verify container image ${REF} is absent"
+            cat "${err}" >&2 || true
+            exit 1
+          fi
           docker buildx imagetools create \
-            -t "${IMAGE}:${IMAGE_TAG}" \
+            -t "${REF}" \
             "${IMAGE}:${IMAGE_TAG}-amd64" \
             "${IMAGE}:${IMAGE_TAG}-arm64"
 
