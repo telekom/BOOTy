@@ -174,11 +174,11 @@ func TestFlatcarLikeUSRASourceCanProvisionSystemABVM(t *testing.T) {
 	gzImage := compressGzip(t, rawDisk)
 	baseURL := startABImageServer(t, gzImage)
 
-	targetDisk := filepath.Join(t.TempDir(), "flatcar-usra-system-ab.qcow2")
+	targetDisk := filepath.Join(t.TempDir(), "flatcar-like-usra-system-ab.qcow2")
 	run(t, "create flatcar-like target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":             "flatcar-usra-system-ab",
+		"HOSTNAME":             "flatcar-like-usra-system-ab",
 		"dns_resolver":         "8.8.8.8",
 		"MODE":                 "provision",
 		"DISK_DEVICE":          "/dev/vda",
@@ -203,7 +203,7 @@ func TestFlatcarLikeUSRASourceCanProvisionSystemABVM(t *testing.T) {
 	rootMount, cleanup := mountQcow2Partition(t, targetDisk, 2)
 	defer cleanup()
 	hostname := readProvisionedFile(t, rootMount, "etc/hostname")
-	if !strings.Contains(hostname, "flatcar-usra-system-ab") {
+	if !strings.Contains(hostname, "flatcar-like-usra-system-ab") {
 		t.Fatalf("hostname not written from Flatcar-like USR-A source: %q", strings.TrimSpace(hostname))
 	}
 	fstab := readProvisionedFile(t, rootMount, "etc/fstab")
@@ -235,7 +235,7 @@ func TestFlatcarLikeUSRASourceCanProvisionSystemABVM(t *testing.T) {
 	dataMount, dataCleanup := mountQcow2Partition(t, targetDisk, 4)
 	defer dataCleanup()
 	meta := readProvisionedFile(t, dataMount, "lib/cloud/seed/nocloud/meta-data")
-	if !strings.Contains(meta, "flatcar-usra-system-ab") {
+	if !strings.Contains(meta, "flatcar-like-usra-system-ab") {
 		t.Fatalf("Flatcar-like system-ab shared /var missing cloud-init seed:\n%s", meta)
 	}
 }
