@@ -722,6 +722,9 @@ func (m *Manager) GrowPartition(ctx context.Context, disk string, partNum int) e
 func (m *Manager) ResizeFilesystem(ctx context.Context, device, mountpoint string) error {
 	slog.Info("resizing filesystem", "device", device, "mountpoint", mountpoint)
 	fsType, fsErr := m.fsType(ctx, device)
+	if fsErr != nil {
+		slog.Warn("failed to detect filesystem type before resize, falling back to resize tools", "device", device, "error", fsErr)
+	}
 	if fsErr == nil && fsType == "vfat" {
 		return fmt.Errorf("resize filesystem %s: vfat resize is not supported; vfat is supported for ESP mount/format only", device)
 	}

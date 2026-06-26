@@ -728,7 +728,7 @@ func TestResizeFilesystemBtrfsUsesMountpoint(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(cmd.calls) != 4 {
-		t.Fatalf("expected 3 calls, got %#v", cmd.calls)
+		t.Fatalf("expected 4 calls, got %#v", cmd.calls)
 	}
 	got := cmd.calls[3]
 	if got.name != "btrfs" || strings.Join(got.args, " ") != "filesystem resize max /newroot" {
