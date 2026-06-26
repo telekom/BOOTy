@@ -304,25 +304,29 @@ func validateDNSConfig(cfg *DNSConfig) error {
 }
 
 func validateCIDR(v string) error {
-	prefix, err := netip.ParsePrefix(v)
+	_, err := netip.ParsePrefix(v)
 	if err != nil {
 		return fmt.Errorf("invalid cidr %q", v)
-	}
-	if prefix.Addr().Is6() {
-		return fmt.Errorf("ipv6 cidr %q not supported (renderers are ipv4-only)", v)
 	}
 	return nil
 }
 
 func validateIP(v string) error {
-	addr, err := netip.ParseAddr(v)
+	_, err := netip.ParseAddr(v)
 	if err != nil {
 		return fmt.Errorf("invalid ip %q", v)
 	}
-	if addr.Is6() {
-		return fmt.Errorf("ipv6 address %q not supported (renderers are ipv4-only)", v)
-	}
 	return nil
+}
+
+func cidrIsIPv6(v string) bool {
+	prefix, err := netip.ParsePrefix(v)
+	return err == nil && prefix.Addr().Is6()
+}
+
+func ipIsIPv6(v string) bool {
+	addr, err := netip.ParseAddr(v)
+	return err == nil && addr.Is6()
 }
 
 // RenderNetplan renders the configuration as netplan YAML.
@@ -450,14 +454,28 @@ func renderNetplanIfaceRoutes(b *strings.Builder, gateway string, routes []Route
 	}
 	b.WriteString("      routes:\n")
 	if gateway != "" {
-		fmt.Fprintf(b, "        - to: default\n          via: %s\n", gateway)
+		fmt.Fprintf(b, "        - to: %s\n          via: %s\n", netplanDefaultRoute(gateway), gateway)
 	}
 	for _, r := range routes {
-		fmt.Fprintf(b, "        - to: %s\n          via: %s\n", r.Destination, r.Gateway)
+		fmt.Fprintf(b, "        - to: %s\n          via: %s\n", netplanRouteDestination(r), r.Gateway)
 		if r.Metric > 0 {
 			fmt.Fprintf(b, "          metric: %d\n", r.Metric)
 		}
 	}
+}
+
+func netplanDefaultRoute(gateway string) string {
+	if ipIsIPv6(gateway) {
+		return "::/0"
+	}
+	return "default"
+}
+
+func netplanRouteDestination(r RouteConfig) string {
+	if r.Destination == "default" {
+		return netplanDefaultRoute(r.Gateway)
+	}
+	return r.Destination
 }
 
 // RenderNetworkdUnit renders a systemd-networkd .network unit for an interface.
@@ -569,17 +587,23 @@ func appendNetworkdDNSRoutes(content string, dns *DNSConfig, routes []RouteConfi
 	b.WriteString(content)
 	for _, r := range routes {
 		b.WriteString("\n[Route]\n")
-		dst := r.Destination
-		if dst == "default" {
-			dst = "0.0.0.0/0"
-		}
-		fmt.Fprintf(&b, "Destination=%s\n", dst)
+		fmt.Fprintf(&b, "Destination=%s\n", routeDestination(r))
 		fmt.Fprintf(&b, "Gateway=%s\n", r.Gateway)
 		if r.Metric > 0 {
 			fmt.Fprintf(&b, "Metric=%d\n", r.Metric)
 		}
 	}
 	return b.String()
+}
+
+func routeDestination(r RouteConfig) string {
+	if r.Destination != "default" {
+		return r.Destination
+	}
+	if ipIsIPv6(r.Gateway) {
+		return "::/0"
+	}
+	return "0.0.0.0/0"
 }
 
 // renderNMKeyfile renders a NetworkManager keyfile for an interface.
@@ -593,35 +617,94 @@ func renderNMKeyfile(iface *InterfaceConfig, dns *DNSConfig, routes []RouteConfi
 	if iface.MAC != "" {
 		fmt.Fprintf(&b, "mac-address=%s\n", iface.MAC)
 	}
+	renderNMIPv4(&b, iface, dns, routes)
+	renderNMIPv6(&b, iface, dns, routes)
+	return b.String()
+}
+
+func renderNMIPv4(b *strings.Builder, iface *InterfaceConfig, dns *DNSConfig, routes []RouteConfig) {
 	b.WriteString("\n[ipv4]\n")
-	if iface.DHCP {
+	staticIPv4 := iface.Address != "" && !cidrIsIPv6(iface.Address)
+	switch {
+	case iface.DHCP:
 		b.WriteString("method=auto\n")
-	} else if iface.Address != "" {
+	case staticIPv4:
 		b.WriteString("method=manual\n")
-		fmt.Fprintf(&b, "address1=%s\n", iface.Address)
-		if iface.Gateway != "" {
-			fmt.Fprintf(&b, "gateway=%s\n", iface.Gateway)
+		fmt.Fprintf(b, "address1=%s\n", iface.Address)
+		if iface.Gateway != "" && !ipIsIPv6(iface.Gateway) {
+			fmt.Fprintf(b, "gateway=%s\n", iface.Gateway)
 		}
+	default:
+		b.WriteString("method=disabled\n")
 	}
-	if len(dns.Servers) > 0 {
-		fmt.Fprintf(&b, "dns=%s\n", strings.Join(dns.Servers, ";"))
+	if iface.DHCP || staticIPv4 {
+		renderNMDNSRoutes(b, dns, routes, false)
 	}
-	if len(dns.Search) > 0 {
-		fmt.Fprintf(&b, "dns-search=%s\n", strings.Join(dns.Search, ";"))
-	}
-	for i, r := range routes {
-		dst := r.Destination
-		if dst == "default" {
-			dst = "0.0.0.0/0"
+}
+
+func renderNMIPv6(b *strings.Builder, iface *InterfaceConfig, dns *DNSConfig, routes []RouteConfig) {
+	b.WriteString("\n[ipv6]\n")
+	staticIPv6 := iface.Address != "" && cidrIsIPv6(iface.Address)
+	hasConfig := staticIPv6 || hasFamilyDNSRoutes(dns, routes, true)
+	switch {
+	case staticIPv6:
+		b.WriteString("method=manual\n")
+		fmt.Fprintf(b, "address1=%s\n", iface.Address)
+		if iface.Gateway != "" && ipIsIPv6(iface.Gateway) {
+			fmt.Fprintf(b, "gateway=%s\n", iface.Gateway)
 		}
-		fmt.Fprintf(&b, "route%d=%s,%s", i+1, dst, r.Gateway)
+	case hasConfig:
+		b.WriteString("method=auto\n")
+	default:
+		b.WriteString("method=disabled\n")
+	}
+	if hasConfig {
+		renderNMDNSRoutes(b, dns, routes, true)
+	}
+}
+
+func renderNMDNSRoutes(b *strings.Builder, dns *DNSConfig, routes []RouteConfig, ipv6 bool) {
+	servers := familyDNSServers(dns, ipv6)
+	if len(servers) > 0 {
+		fmt.Fprintf(b, "dns=%s\n", strings.Join(servers, ";"))
+	}
+	if dns != nil && len(dns.Search) > 0 {
+		fmt.Fprintf(b, "dns-search=%s\n", strings.Join(dns.Search, ";"))
+	}
+	for i, r := range familyRoutes(routes, ipv6) {
+		fmt.Fprintf(b, "route%d=%s,%s", i+1, routeDestination(r), r.Gateway)
 		if r.Metric > 0 {
-			fmt.Fprintf(&b, ",%d", r.Metric)
+			fmt.Fprintf(b, ",%d", r.Metric)
 		}
 		b.WriteByte('\n')
 	}
-	b.WriteString("\n[ipv6]\nmethod=disabled\n")
-	return b.String()
+}
+
+func hasFamilyDNSRoutes(dns *DNSConfig, routes []RouteConfig, ipv6 bool) bool {
+	return len(familyDNSServers(dns, ipv6)) > 0 || len(familyRoutes(routes, ipv6)) > 0
+}
+
+func familyDNSServers(dns *DNSConfig, ipv6 bool) []string {
+	if dns == nil {
+		return nil
+	}
+	servers := make([]string, 0, len(dns.Servers))
+	for _, server := range dns.Servers {
+		if ipIsIPv6(server) == ipv6 {
+			servers = append(servers, server)
+		}
+	}
+	return servers
+}
+
+func familyRoutes(routes []RouteConfig, ipv6 bool) []RouteConfig {
+	filtered := make([]RouteConfig, 0, len(routes))
+	for _, route := range routes {
+		if ipIsIPv6(route.Gateway) == ipv6 {
+			filtered = append(filtered, route)
+		}
+	}
+	return filtered
 }
 
 func writeNMKeyfiles(dir string, cfg *NetworkConfig) error {

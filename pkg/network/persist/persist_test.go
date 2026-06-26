@@ -61,6 +61,9 @@ func TestNetworkConfig_Validate(t *testing.T) {
 		{"static addr", NetworkConfig{
 			Interfaces: []InterfaceConfig{{Name: "eth0", Address: "10.0.0.1/24"}},
 		}, false},
+		{"static ipv6 addr", NetworkConfig{
+			Interfaces: []InterfaceConfig{{Name: "eth0", Address: "fd00::5/64", Gateway: "fd00::1"}},
+		}, false},
 		{"no name", NetworkConfig{
 			Interfaces: []InterfaceConfig{{DHCP: true}},
 		}, true},
@@ -121,6 +124,11 @@ func TestNetworkConfig_Validate(t *testing.T) {
 		{"valid route", NetworkConfig{
 			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
 			Routes:     []RouteConfig{{Destination: "10.0.0.0/8", Gateway: "10.0.0.1"}},
+		}, false},
+		{"valid ipv6 route and dns", NetworkConfig{
+			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
+			DNS:        DNSConfig{Servers: []string{"2001:4860:4860::8888"}},
+			Routes:     []RouteConfig{{Destination: "default", Gateway: "fd00::1"}},
 		}, false},
 		{"invalid route destination", NetworkConfig{
 			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
@@ -472,6 +480,29 @@ func TestRenderNetplan_GatewayAndRoutesShareRoutesBlock(t *testing.T) {
 	}
 }
 
+func TestRenderNetplan_IPv6DefaultRoutes(t *testing.T) {
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{
+			{Name: "eth0", Address: "fd00::5/64", Gateway: "fd00::1"},
+		},
+		DNS: DNSConfig{Servers: []string{"2001:4860:4860::8888"}},
+		Routes: []RouteConfig{
+			{Destination: "default", Gateway: "fd00::fe", Metric: 50},
+		},
+	}
+	result := RenderNetplan(cfg)
+	for _, want := range []string{
+		"addresses: [fd00::5/64]",
+		"addresses: [2001:4860:4860::8888]",
+		"- to: ::/0\n          via: fd00::1",
+		"- to: ::/0\n          via: fd00::fe\n          metric: 50",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("missing %q in netplan IPv6 output:\n%s", want, result)
+		}
+	}
+}
+
 func TestRenderNetplan_BondAllFields(t *testing.T) {
 	cfg := &NetworkConfig{
 		Bonds: []BondConfig{
@@ -659,6 +690,38 @@ func TestWriteNetworkd_MTUAndDNS(t *testing.T) {
 	}
 }
 
+func TestWriteNetworkd_IPv6(t *testing.T) {
+	root := t.TempDir()
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{
+			{Name: "eth0", Address: "fd00::10/64", Gateway: "fd00::1"},
+		},
+		DNS: DNSConfig{Servers: []string{"2001:4860:4860::8888"}},
+		Routes: []RouteConfig{
+			{Destination: "default", Gateway: "fd00::1", Metric: 20},
+		},
+	}
+	if err := Write(root, Flatcar, cfg); err != nil {
+		t.Fatalf("Write() error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "etc/systemd/network/10-booty-eth0.network"))
+	if err != nil {
+		t.Fatalf("ReadFile() error: %v", err)
+	}
+	content := string(data)
+	for _, want := range []string{
+		"Address=fd00::10/64",
+		"Gateway=fd00::1",
+		"DNS=2001:4860:4860::8888",
+		"Destination=::/0",
+		"Metric=20",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("missing %q in networkd IPv6 output:\n%s", want, content)
+		}
+	}
+}
+
 func TestWriteNMKeyfiles_DNSAndRoutes(t *testing.T) {
 	root := t.TempDir()
 	cfg := &NetworkConfig{
@@ -690,6 +753,43 @@ func TestWriteNMKeyfiles_DNSAndRoutes(t *testing.T) {
 	}
 	if !strings.Contains(content, "route1=172.16.0.0/12,10.0.0.1") {
 		t.Error("missing route")
+	}
+}
+
+func TestWriteNMKeyfiles_IPv6(t *testing.T) {
+	root := t.TempDir()
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{
+			{Name: "enp1s0", Address: "fd00::10/64", Gateway: "fd00::1"},
+		},
+		DNS: DNSConfig{
+			Servers: []string{"2001:4860:4860::8888"},
+			Search:  []string{"example.com"},
+		},
+		Routes: []RouteConfig{
+			{Destination: "default", Gateway: "fd00::1", Metric: 20},
+		},
+	}
+	if err := Write(root, RHEL, cfg); err != nil {
+		t.Fatalf("Write() error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "etc/NetworkManager/system-connections/booty-enp1s0.nmconnection"))
+	if err != nil {
+		t.Fatalf("ReadFile() error: %v", err)
+	}
+	content := string(data)
+	for _, want := range []string{
+		"[ipv4]\nmethod=disabled",
+		"[ipv6]\nmethod=manual",
+		"address1=fd00::10/64",
+		"gateway=fd00::1",
+		"dns=2001:4860:4860::8888",
+		"dns-search=example.com",
+		"route1=::/0,fd00::1,20",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("missing %q in NetworkManager IPv6 output:\n%s", want, content)
+		}
 	}
 }
 
