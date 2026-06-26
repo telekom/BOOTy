@@ -193,6 +193,10 @@ time, not by BOOTy:
   fails closed rather than auto-detecting the OS image from `/etc/os-release`.
 - **Conflicts**: If cloud-init also configures networking, there may be
   conflicts. BOOTy's config should take lowest priority (filename `01-*`).
+- **Flatcar first boot**: `OS_FAMILY=flatcar` only selects the
+  systemd-networkd writer. BOOTy rejects Flatcar plus cloud-init because
+  Flatcar first-boot provisioning uses Ignition, which BOOTy does not
+  implement.
 - **Complex topologies**: EVPN/BGP underlay config cannot be persisted as
   simple netplan — requires additional service configuration (FRR or GoBGP).
 - **Writer gaps**: RHEL/NetworkManager and Flatcar/systemd-networkd persistence

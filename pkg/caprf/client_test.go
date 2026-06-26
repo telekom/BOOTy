@@ -1096,6 +1096,23 @@ STATIC_IFACE="eth0"
 	}
 }
 
+func TestParseVarsRejectsFlatcarCloudInit(t *testing.T) {
+	input := `PERSIST_NETWORK="true"
+OS_FAMILY="Flatcar"
+STATIC_IP="10.0.0.5/24"
+STATIC_IFACE="eth0"
+CLOUDINIT_ENABLED="true"
+CLOUDINIT_DATASOURCE="nocloud"
+`
+	_, err := ParseVars(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("ParseVars() error = nil, want Flatcar cloud-init rejection")
+	}
+	if !strings.Contains(err.Error(), "Flatcar first-boot provisioning requires Ignition") {
+		t.Fatalf("ParseVars() error = %q, want Flatcar Ignition context", err.Error())
+	}
+}
+
 func TestParseVarsBondConfig(t *testing.T) {
 	input := `BOND_INTERFACES="eth0,eth1"
 BOND_MODE="802.3ad"

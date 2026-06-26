@@ -385,6 +385,7 @@ func TestValidate(t *testing.T) {
 		{name: "trims cloud-init ds", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: " NoCloud "}}}},
 		{name: "valid configdrive cloud-init ds", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: " configDrive "}}}},
 		{name: "invalid cloud-init ds", cfg: Config{Provision: ProvisionConfig{CloudInit: CloudInitConfig{Datasource: "ec2"}}}, wantErr: "invalid provision.cloudInit.datasource"},
+		{name: "flatcar cloud-init rejected", cfg: Config{OSFamily: " Flatcar ", Provision: ProvisionConfig{CloudInit: CloudInitConfig{Enabled: true, Datasource: "nocloud"}}}, wantErr: "Flatcar first-boot provisioning requires Ignition"},
 		{name: "valid network persistence os family", cfg: Config{PersistNetwork: true, OSFamily: " Ubuntu ", Network: NetworkConfig{Static: StaticConfig{Iface: "eth0"}}}, wantNormalized: func(t *testing.T, cfg *Config) {
 			t.Helper()
 			if cfg.OSFamily != "ubuntu" {

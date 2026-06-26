@@ -85,6 +85,9 @@ func (c *Config) Validate() error {
 		errs = append(errs, "network.bgp.neighbors required when network.bgp.peerMode is dual or numbered")
 	}
 	errs = append(errs, c.validateBGP()...)
+	if msg := validateFlatcarCloudInit(c.OSFamily, c.Provision.CloudInit.Enabled); msg != "" {
+		errs = append(errs, msg)
+	}
 	errs = append(errs, c.validatePersistence()...)
 
 	if err := validateRAIDConfig(c.Provision.Disk.RAID); err != nil {
@@ -158,6 +161,16 @@ func (c *Config) validatePersistence() []string {
 
 func persistentNetworkOSFamilyBlocked(osFamily string) bool {
 	return osFamily == "rhel"
+}
+
+func validateFlatcarCloudInit(osFamily string, cloudInitEnabled bool) string {
+	if !cloudInitEnabled {
+		return ""
+	}
+	if strings.EqualFold(strings.TrimSpace(osFamily), "flatcar") {
+		return "provision.cloudInit.enabled is not supported with osFamily flatcar: Flatcar first-boot provisioning requires Ignition, which BOOTy does not implement"
+	}
+	return ""
 }
 
 func validatePersistenceVLANConfig(vlanConfig string) []string {
