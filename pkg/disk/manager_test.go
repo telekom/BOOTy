@@ -487,20 +487,11 @@ func TestGrowPartitionSuccess(t *testing.T) {
 	if err := mgr.GrowPartition(context.Background(), "/dev/sda", 2); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(cmd.calls) != 4 {
-		t.Fatalf("expected growpart plus partition refresh calls, got %v", cmd.calls)
+	if len(cmd.calls) != 1 {
+		t.Fatalf("expected growpart call, got %v", cmd.calls)
 	}
-	if got := cmd.calls[0]; got.name != "growpart" || strings.Join(got.args, " ") != "--update off /dev/sda 2" {
-		t.Fatalf("expected growpart --update off /dev/sda 2, got %s %v", got.name, got.args)
-	}
-	if got := cmd.calls[1]; got.name != "sync" {
-		t.Fatalf("expected sync after growpart, got %s %v", got.name, got.args)
-	}
-	if got := cmd.calls[2]; got.name != "partprobe" || strings.Join(got.args, " ") != "/dev/sda" {
-		t.Fatalf("expected partprobe /dev/sda, got %s %v", got.name, got.args)
-	}
-	if got := cmd.calls[3]; got.name != "mdev" || strings.Join(got.args, " ") != "-s" {
-		t.Fatalf("expected mdev -s, got %s %v", got.name, got.args)
+	if got := cmd.calls[0]; got.name != "growpart" || strings.Join(got.args, " ") != "--update on /dev/sda 2" {
+		t.Fatalf("expected growpart --update on /dev/sda 2, got %s %v", got.name, got.args)
 	}
 }
 
@@ -649,21 +640,6 @@ func TestGrowPartitionError(t *testing.T) {
 	cmd.setResult("growpart --update", []byte("error"), fmt.Errorf("exit 1"))
 	if err := mgr.GrowPartition(context.Background(), "/dev/sda", 2); err == nil {
 		t.Fatal("expected error")
-	}
-}
-
-func TestGrowPartitionPartProbeError(t *testing.T) {
-	cmd := newMockCommander()
-	mgr := NewManager(cmd)
-
-	cmd.setResult("partprobe /dev/sda", nil, fmt.Errorf("exit 1"))
-	cmd.setResult("blockdev --rereadpt", nil, fmt.Errorf("exit 1"))
-	err := mgr.GrowPartition(context.Background(), "/dev/sda", 2)
-	if err == nil {
-		t.Fatal("expected partition refresh error")
-	}
-	if !strings.Contains(err.Error(), "refresh partition table after growpart") {
-		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
