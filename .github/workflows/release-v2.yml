@@ -217,7 +217,12 @@ jobs:
           upload-release-assets: false
 
       - name: Generate SBOM checksum
-        run: sha256sum sbom.spdx.json > sbom.spdx.json.sha256
+        run: |
+          if [ ! -s sbom.spdx.json ]; then
+            echo "::error::SBOM generation did not produce sbom.spdx.json"
+            exit 1
+          fi
+          sha256sum sbom.spdx.json > sbom.spdx.json.sha256
 
       - name: Upload SBOM
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
