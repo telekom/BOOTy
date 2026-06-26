@@ -258,6 +258,7 @@ jobs:
           list_status=$?
           set -e
           if [ "$list_status" -ne 0 ]; then
+            printf '%s\n' "$list_output" > "${log_file}"
             {
               echo "### KVM ${{ matrix.scenario }} test discovery failed"
               echo
@@ -272,6 +273,7 @@ jobs:
           fi
           matches=$(printf '%s\n' "$list_output" | grep '^Test' || true)
           if [ -z "$matches" ]; then
+            printf 'No tests matched %s with tags %s\n' '${{ matrix.test_regex }}' '${{ matrix.test_tag }}' > "${log_file}"
             {
               echo "### KVM ${{ matrix.scenario }} matched no tests"
               echo
