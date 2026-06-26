@@ -261,13 +261,14 @@ func waitForAccessLogEntry(t *testing.T, container, logPath, entry string, timeo
 func waitForBootHTTP(t *testing.T, probe bootHTTPProbe, timeout time.Duration) bool {
 	t.Helper()
 	deadline := bootDeadline(t, timeout)
+	testStarted := time.Now()
 	var lastErr error
 	var lastOut string
 	for round := 0; round <= bootRecoveryRestarts; round++ {
 		if time.Now().After(deadline) {
 			break
 		}
-		logSince := time.Time{}
+		logSince := testStarted
 		if round > 0 {
 			if time.Until(deadline) <= bootRestartBudget {
 				t.Logf("%s skipping recovery restart; remaining time is below restart budget", probe.desc)
