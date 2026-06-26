@@ -514,11 +514,15 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     steps:
       - name: Install ORAS
         uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3
         with:
           version: "1.3.1"
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
 
       - name: Login to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
@@ -582,6 +586,7 @@ jobs:
               --annotation "io.booty.flavor=${flavor}" \
               --annotation "io.booty.arch=${{ matrix.arch }}" \
               ${ARGS}
+            cosign sign --yes "${REF}"
           done
 
       - name: Publish binary artifact
@@ -623,6 +628,7 @@ jobs:
             --annotation "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
             --annotation "io.booty.arch=${{ matrix.arch }}" \
             ${ARGS}
+          cosign sign --yes "${REF}"
 
       - name: Publish SBOM artifact
         if: matrix.arch == 'amd64'
@@ -654,3 +660,4 @@ jobs:
             --annotation "org.opencontainers.image.version=${VERSION}" \
             --annotation "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
             "${SBOM}:application/spdx+json"
+          cosign sign --yes "${REF}"
