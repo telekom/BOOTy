@@ -412,7 +412,7 @@ go run server/server.go \
 | `BGP_INTERFACES` | — | Optional comma-separated interface allowlist for unnumbered/dual GoBGP peers; empty means all detected physical NICs |
 | `BGP_NEIGHBORS` | — | Comma-separated peer IPs (required for `dual` and `numbered` modes) |
 | `BGP_REMOTE_ASN` | — | Remote ASN for numbered peers (0 or omitted = iBGP) |
-| `BGP_UNDERLAY_AF` | `ipv4` | Underlay address family: `ipv4`, `ipv6`, `dual-stack` |
+| `BGP_UNDERLAY_AF` | `ipv4` | Underlay address family. Only `ipv4` is implemented; `ipv6` and `dual-stack` are rejected during config validation. |
 | `BGP_OVERLAY_TYPE` | `evpn-vxlan` | Overlay encapsulation: `evpn-vxlan`, `l3vpn`, `none` |
 | `BGP_AUTH_PASSWORD` | — | Optional TCP-MD5 password for all BGP peers (empty = no authentication) |
 | `VRF_TABLE_ID` | `1` | VRF routing table ID (0 uses default of 1) |

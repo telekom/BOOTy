@@ -67,7 +67,7 @@ type BGPConfig struct {
 	RemoteASN uint32 `yaml:"remoteASN" json:"remoteASN"`
 
 	// UnderlayAF is the underlay address family.
-	// Valid values: "ipv4", "ipv6", "dual-stack"
+	// Valid value: "ipv4". IPv6 and dual-stack underlays are not implemented yet.
 	// Default: "ipv4"
 	UnderlayAF string `yaml:"underlayAF" json:"underlayAF"`
 

@@ -23,7 +23,7 @@ import (
 //     minimum device count per RAID level
 //   - Network.Mode: "gobgp", "frr", "static", "dhcp"
 //   - Network.BGP.PeerMode: "unnumbered", "dual", "numbered"
-//   - Network.BGP.UnderlayAF: "ipv4", "ipv6", "dual-stack"
+//   - Network.BGP.UnderlayAF: "ipv4"
 //   - Network.BGP.OverlayType: "evpn-vxlan", "l3vpn", "none"
 //   - Rescue.Mode: "reboot", "retry", "shell", "wait"
 //   - Transport.TokenAlgorithm: "RS256", "ES256"
@@ -56,7 +56,7 @@ func (c *Config) Validate() error {
 			return validateEnumLower(c.Network.BGP.PeerMode, "network.bgp.peerMode", "unnumbered", "dual", "numbered")
 		},
 		func() string {
-			return validateEnumLower(c.Network.BGP.UnderlayAF, "network.bgp.underlayAF", "ipv4", "ipv6", "dual-stack")
+			return validateEnumLower(c.Network.BGP.UnderlayAF, "network.bgp.underlayAF", "ipv4")
 		},
 		func() string {
 			return validateEnumLower(c.Network.BGP.OverlayType, "network.bgp.overlayType", "evpn-vxlan", "l3vpn", "none")
