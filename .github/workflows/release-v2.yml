@@ -36,6 +36,19 @@ jobs:
             exit 1
           fi
 
+          ref_json=$(curl -fsS \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}") || {
+              echo "::error::could not inspect release tag ${TAG}"
+              exit 1
+            }
+          ref_type=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["type"])' <<<"${ref_json}")
+          if [ "${ref_type}" != "tag" ]; then
+            echo "::error::release tag ${TAG} must be an annotated tag, got Git object type ${ref_type}"
+            exit 1
+          fi
+
           status=$(curl -sS -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \

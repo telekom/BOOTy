@@ -48,6 +48,10 @@ jobs:
             echo "::error::Tag $SOURCE_VERSION does not exist"
             exit 1
           fi
+          if [ "$(git cat-file -t "refs/tags/${SOURCE_VERSION}")" != "tag" ]; then
+            echo "::error::Tag $SOURCE_VERSION must be an annotated tag"
+            exit 1
+          fi
 
       - name: Determine new tag
         id: tag
@@ -82,7 +86,10 @@ jobs:
             exit 1
           fi
           COMMIT=$(git rev-list -n 1 "$SOURCE_VERSION")
-          git tag "$NEW_TAG" "$COMMIT"
+          git tag -a "$NEW_TAG" "$COMMIT" \
+            -m "Promote $SOURCE_VERSION to $NEW_TAG" \
+            -m "Source tag: $SOURCE_VERSION" \
+            -m "Target channel: $TARGET_CHANNEL"
           git push origin "$NEW_TAG"
 
       - name: Summary
