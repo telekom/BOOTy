@@ -41,11 +41,7 @@ var (
 
 var (
 	setupBondLayer = func(ctx context.Context, cfg *network.Config) (network.Mode, error) {
-		bond := &network.BondMode{}
-		if err := bond.Setup(ctx, cfg); err != nil {
-			return nil, err
-		}
-		return bond, nil
+		return setupBondMode(ctx, cfg, &network.BondMode{})
 	}
 	setupVLANLayer = func(v network.VLANConfig) (string, error) {
 		return vlan.Setup(&vlan.Config{
@@ -62,6 +58,16 @@ var (
 		})
 	}
 )
+
+func setupBondMode(ctx context.Context, cfg *network.Config, bond network.Mode) (network.Mode, error) {
+	if err := bond.Setup(ctx, cfg); err != nil {
+		if cleanupErr := bond.Teardown(ctx); cleanupErr != nil {
+			return nil, errors.Join(err, fmt.Errorf("bond rollback: %w", cleanupErr))
+		}
+		return nil, err
+	}
+	return bond, nil
+}
 
 const (
 	varsPath          = "/deploy/vars"

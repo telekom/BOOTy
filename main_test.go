@@ -16,10 +16,16 @@ import (
 )
 
 type teardownRecorderMode struct {
+	setup    func() error
 	teardown func() error
 }
 
-func (m teardownRecorderMode) Setup(context.Context, *network.Config) error { return nil }
+func (m teardownRecorderMode) Setup(context.Context, *network.Config) error {
+	if m.setup == nil {
+		return nil
+	}
+	return m.setup()
+}
 
 func (m teardownRecorderMode) WaitForConnectivity(context.Context, string, time.Duration) error {
 	return nil
@@ -78,6 +84,31 @@ func TestMergeNetplanConfigOverridesStaticAddressPair(t *testing.T) {
 	}
 	if dst.StaticIface != "" {
 		t.Fatalf("StaticIface = %q, want netplan auto-detect", dst.StaticIface)
+	}
+}
+
+func TestSetupBondModeRollsBackOnSetupFailure(t *testing.T) {
+	var calls []string
+	bond := teardownRecorderMode{
+		setup: func() error {
+			calls = append(calls, "setup")
+			return fmt.Errorf("setup failed")
+		},
+		teardown: func() error {
+			calls = append(calls, "teardown")
+			return nil
+		},
+	}
+
+	got, err := setupBondMode(context.Background(), &network.Config{}, bond)
+	if err == nil {
+		t.Fatal("setupBondMode() error = nil, want setup failure")
+	}
+	if got != nil {
+		t.Fatalf("setupBondMode() mode = %T, want nil", got)
+	}
+	if strings.Join(calls, ",") != "setup,teardown" {
+		t.Fatalf("calls = %v, want setup then teardown", calls)
 	}
 }
 
