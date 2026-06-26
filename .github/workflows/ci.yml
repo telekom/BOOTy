@@ -51,12 +51,36 @@ jobs:
 
       - name: Check coverage gate (40%)
         run: |
-          COVERAGE=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $NF}' | tr -d '%')
-          echo "Total coverage: ${COVERAGE}%"
-          if (( $(echo "$COVERAGE < 40" | bc -l) )); then
-            echo "::error::Coverage ${COVERAGE}% is below the 40% minimum"
-            exit 1
-          fi
+          go tool cover -func=coverage.out | awk -v min="40.0" '
+            BEGIN {
+              threshold = min
+              sub(/%$/, "", threshold)
+              if (threshold !~ /^[0-9]+([.][0-9]+)?$/) {
+                printf "::error::invalid coverage threshold: %s\n", min
+                invalid = 1
+                exit 2
+              }
+            }
+            { print }
+            /^total:/ {
+              coverage = $3
+              sub(/%$/, "", coverage)
+              found = 1
+            }
+            END {
+              if (invalid) {
+                exit 2
+              }
+              if (!found) {
+                print "::error::coverage check failed: total coverage line not found"
+                exit 1
+              }
+              if (coverage + 0 < threshold + 0) {
+                printf "::error::coverage %s%% is below %.1f%% minimum\n", coverage, threshold
+                exit 1
+              }
+              printf "coverage %s%% meets %.1f%% minimum\n", coverage, threshold
+            }'
 
       - name: Upload coverage
         uses: actions/upload-artifact@v7.0.1
