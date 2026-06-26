@@ -448,8 +448,11 @@ func type5WaitForSpineFDBVTEPs(t *testing.T) {
 
 	var last string
 	for {
-		out, _ := type5DockerExecRaw(t, type5LabSpine, "bridge", "fdb", "show", "dev", "vxlan1000")
+		out, err := type5DockerExecRaw(t, type5LabSpine, "bridge", "fdb", "show", "dev", "vxlan1000")
 		last = out
+		if err != nil {
+			last = "docker exec error: " + err.Error() + "\n" + out
+		}
 		if strings.Contains(out, "192.168.4.10") && strings.Contains(out, "192.168.4.11") {
 			return
 		}
