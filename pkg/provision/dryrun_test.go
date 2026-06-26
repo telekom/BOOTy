@@ -154,9 +154,10 @@ func withMockReadPath(t *testing.T, fn func(string) ([]byte, error)) {
 
 func TestDryRunConfigValidation(t *testing.T) {
 	tests := []struct {
-		name   string
-		cfg    *config.MachineConfig
-		expect DryRunStatus
+		name        string
+		cfg         *config.MachineConfig
+		expect      DryRunStatus
+		wantMessage string
 	}{
 		{
 			name:   "no images",
@@ -200,7 +201,8 @@ func TestDryRunConfigValidation(t *testing.T) {
 				c.Provision.Image.URLs = []string{"http://example.com/img"}
 				return c
 			}(),
-			expect: DryRunFail,
+			expect:      DryRunFail,
+			wantMessage: `osFamily="rhel"`,
 		},
 		{
 			name: "layout without image and hostname",
@@ -334,6 +336,9 @@ func TestDryRunConfigValidation(t *testing.T) {
 			result := o.dryRunConfigValidation(context.Background())
 			if result.Status != tc.expect {
 				t.Errorf("got %s, want %s: %s", result.Status, tc.expect, result.Message)
+			}
+			if tc.wantMessage != "" && !strings.Contains(result.Message, tc.wantMessage) {
+				t.Errorf("message = %q, want substring %q", result.Message, tc.wantMessage)
 			}
 		})
 	}

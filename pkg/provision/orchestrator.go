@@ -622,8 +622,9 @@ func (o *Orchestrator) validateProvisionInputs(_ context.Context) error {
 		return fmt.Errorf("rejected before destructive storage steps: %w", err)
 	}
 	o.cfg.Provision.TargetOS = config.NormalizeProvisionTargetOS(o.cfg.Provision.TargetOS)
-	if strings.EqualFold(strings.TrimSpace(o.cfg.OSFamily), "rhel") {
-		return fmt.Errorf("rhel-like target bootloader support is not implemented: native GRUB2/BLS/vendor EFI paths are required before destructive storage steps")
+	osFamily := strings.ToLower(strings.TrimSpace(o.cfg.OSFamily))
+	if osFamily == "rhel" {
+		return fmt.Errorf("osFamily=%q is not supported for provisioning: rhel-like target bootloader support is not implemented: native GRUB2/BLS/vendor EFI paths are required before destructive storage steps", osFamily)
 	}
 	if err := o.validatePartitionLayoutModeCompatibility(); err != nil {
 		return err

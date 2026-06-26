@@ -382,7 +382,7 @@ root is mounted.
 | `STATIC_GATEWAY` | — | Default gateway for static networking |
 | `STATIC_IFACE` | — | Target interface for static IP and non-bond cloud-init network config |
 | `PERSIST_NETWORK` | `false` | Write configured target OS network files during provisioning |
-| `OS_FAMILY` | — | Required when `PERSIST_NETWORK=true`; one of `ubuntu`, `rhel`, `flatcar` |
+| `OS_FAMILY` | — | Required when `PERSIST_NETWORK=true`; one of `ubuntu`, `rhel`, `flatcar`. `rhel` network persistence is parsed, but provisioning and dry-run preflight reject it until RHEL-like bootloader support is implemented. |
 | `PROVISION_TARGET_OS` / `TARGET_OS` | — | Required provisioning target OS preflight hint. Only `linux` is accepted; `windows`, `esxi`, and unknown values are rejected before destructive storage steps. |
 | `BOND_INTERFACES` | — | Comma-separated interfaces for LACP bond (e.g. `eth0,eth1`) |
 | `BOND_MODE` | `802.3ad` | Bond mode: `802.3ad`/`lacp`, `balance-rr`, `active-backup`, `balance-xor` |

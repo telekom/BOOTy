@@ -115,9 +115,10 @@ func (o *Orchestrator) dryRunConfigValidation(_ context.Context) DryRunResult {
 	if err := config.ValidateRequiredProvisionTargetOS(o.cfg.Provision.TargetOS); err != nil {
 		return DryRunResult{Status: DryRunFail, Message: err.Error()}
 	}
-	if strings.EqualFold(strings.TrimSpace(o.cfg.OSFamily), "rhel") {
+	osFamily := strings.ToLower(strings.TrimSpace(o.cfg.OSFamily))
+	if osFamily == "rhel" {
 		return DryRunResult{Status: DryRunFail,
-			Message: "rhel-like target bootloader support is not implemented: native GRUB2/BLS/vendor EFI paths are required"}
+			Message: fmt.Sprintf("osFamily=%q is not supported for provisioning: rhel-like target bootloader support is not implemented: native GRUB2/BLS/vendor EFI paths are required", osFamily)}
 	}
 	if o.cfg.Hostname == "" {
 		return DryRunResult{Status: DryRunWarn, Message: "hostname not set"}

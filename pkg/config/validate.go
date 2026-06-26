@@ -17,7 +17,8 @@ import (
 // Fields validated:
 //   - Mode: "provision", "deprovision", "soft-deprovision", "soft", "hard",
 //     "standby", "dry-run", "check"
-//   - Provision.TargetOS: empty or "linux" (required later by provision preflight)
+//   - Provision.TargetOS: empty or "linux"; non-empty unsupported values are rejected
+//     (an explicit value is required later by provision preflight)
 //   - Provision.Image.Mode: "whole-disk", "partition", "ab"
 //   - Provision.Image.ChecksumType: "sha256", "sha512"
 //   - Provision.CloudInit.Datasource: "nocloud", "configdrive"
