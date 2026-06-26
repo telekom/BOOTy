@@ -30,11 +30,15 @@ datacenter deployments:
 
 ### Current Mode Matrix (GoBGP)
 
+GoBGP currently defaults to EVPN Type-5 IP-prefix routing. EVPN L2
+Type-2/Type-3 origination and handling is optional and requires
+`EVPN_L2_ENABLED=true`.
+
 | Mode | Underlay | Overlay | Status |
 |------|---------|---------|--------|
-| Unnumbered | eBGP unnumbered (link-local) | EVPN Type-2 + VXLAN | Implemented |
-| Dual | eBGP numbered (loopback) | EVPN Type-2 + VXLAN | Implemented |
-| Numbered | eBGP numbered (interface IP) | EVPN Type-2 + VXLAN | Implemented |
+| Unnumbered | eBGP unnumbered (link-local) | EVPN Type-5 + VXLAN | Implemented |
+| Dual | eBGP numbered (loopback) | EVPN Type-5 + VXLAN | Implemented |
+| Numbered | eBGP numbered (interface IP) | EVPN Type-5 + VXLAN | Implemented |
 
 ### Proposed Extended Matrix
 
