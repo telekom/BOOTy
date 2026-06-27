@@ -611,24 +611,24 @@ alone:
 VERSION=v1.2.3
 VERSION_NO_V=${VERSION#v}
 ISSUER="https://token.actions.githubusercontent.com"
-IDENTITY="^https://github.com/telekom/BOOTy/.github/workflows/release-v2.yml@refs/tags/${VERSION}$"
+IDENTITY="https://github.com/telekom/BOOTy/.github/workflows/release-v2.yml@refs/tags/${VERSION}"
 
 # Verify a GitHub release checksum file and then verify the payload checksum.
 ARTIFACT=default-amd64-initramfs.cpio.zst
 cosign verify-blob \
   --bundle "${ARTIFACT}.sha256.bundle" \
-  --certificate-identity-regexp "${IDENTITY}" \
+  --certificate-identity "${IDENTITY}" \
   --certificate-oidc-issuer "${ISSUER}" \
   "${ARTIFACT}.sha256"
 sha256sum -c "${ARTIFACT}.sha256"
 
 # Verify signed OCI release refs before pulling or mirroring them.
 cosign verify \
-  --certificate-identity-regexp "${IDENTITY}" \
+  --certificate-identity "${IDENTITY}" \
   --certificate-oidc-issuer "${ISSUER}" \
   "ghcr.io/telekom/booty:${VERSION_NO_V}"
 cosign verify \
-  --certificate-identity-regexp "${IDENTITY}" \
+  --certificate-identity "${IDENTITY}" \
   --certificate-oidc-issuer "${ISSUER}" \
   "ghcr.io/telekom/booty:${VERSION_NO_V}-gobgp"
 ```
