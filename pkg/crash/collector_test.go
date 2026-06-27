@@ -275,7 +275,7 @@ func TestCollectNoEvidenceSkipsArchive(t *testing.T) {
 func TestCollectSkipsSymlinksAndOversizedFiles(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "var", "log", "kern.log"), "kernel panic with call trace")
-	writeTestFile(t, filepath.Join(root, "var", "crash", "large-vmcore"), "0123456789abcdef")
+	writeTestFile(t, filepath.Join(root, "var", "crash", "large-vmcore"), strings.Repeat("x", 128*1024))
 	if err := os.Symlink("/etc/passwd", filepath.Join(root, "var", "crash", "passwd-link")); err != nil {
 		t.Fatalf("symlink: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestCollectSkipsSymlinksAndOversizedFiles(t *testing.T) {
 		RootPath:   root,
 		PstorePath: filepath.Join(t.TempDir(), "missing-pstore"),
 		OutputDir:  t.TempDir(),
-		MaxBytes:   8,
+		MaxBytes:   64 * 1024,
 		Config: &config.MachineConfig{
 			Provision: config.ProvisionConfig{
 				CrashArtifacts: config.CrashArtifactsConfig{
@@ -308,6 +308,28 @@ func TestCollectSkipsSymlinksAndOversizedFiles(t *testing.T) {
 	}
 	if !contains(reasons, "size_limit") {
 		t.Fatalf("expected size limit skip, got %v", reasons)
+	}
+}
+
+func TestCollectRemovesArchiveWhenFinalArchiveExceedsLimit(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "var", "log", "kern.log"), "kernel panic with call trace")
+	outDir := t.TempDir()
+
+	_, err := Collect(context.Background(), &CollectOptions{
+		RootPath:   root,
+		PstorePath: filepath.Join(t.TempDir(), "missing-pstore"),
+		OutputDir:  outDir,
+		MaxBytes:   1,
+	})
+	if err == nil {
+		t.Fatal("expected final archive size error")
+	}
+	if !strings.Contains(err.Error(), "crash archive size") || !strings.Contains(err.Error(), "exceeds limit") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(outDir, "crash-artifacts.tar.gz")); !os.IsNotExist(statErr) {
+		t.Fatalf("oversized archive should be removed, stat error: %v", statErr)
 	}
 }
 
