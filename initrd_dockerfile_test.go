@@ -216,3 +216,70 @@ func TestSlimDockerfileIncludesResizeAndRepairTools(t *testing.T) {
 		}
 	}
 }
+
+func TestDockerfileUsesUtilLinuxDiskProbeTools(t *testing.T) {
+	data, err := os.ReadFile("initrd.Dockerfile")
+	if err != nil {
+		t.Fatalf("cannot read initrd.Dockerfile: %v", err)
+	}
+	text := string(data)
+	for _, tool := range []struct {
+		name string
+		copy string
+		path string
+	}{
+		{
+			name: "blkid",
+			copy: "COPY --from=tools /sbin/blkid sbin/blkid",
+			path: "bin/blkid",
+		},
+		{
+			name: "losetup",
+			copy: "COPY --from=tools /usr/sbin/losetup bin/losetup",
+			path: "bin/losetup",
+		},
+	} {
+		if got := strings.Count(text, tool.copy); got != 3 {
+			t.Fatalf("util-linux %s must be copied into default, slim, and GoBGP builders; got %d copies", tool.name, got)
+		}
+		for _, stage := range []string{"busybox", "slim-builder", "gobgp-builder"} {
+			t.Run(tool.name+"/"+stage, func(t *testing.T) {
+				requireStageReplacesBusyboxTool(t, text, stage, tool.name, tool.copy, tool.path)
+			})
+		}
+	}
+}
+
+func requireStageReplacesBusyboxTool(t *testing.T, text, stage, toolName, copyCommand, busyboxPath string) {
+	t.Helper()
+
+	block := dockerfileStageBlock(t, text, stage)
+	copyIndex := strings.Index(block, copyCommand)
+	if copyIndex < 0 {
+		t.Fatalf("%s stage must copy util-linux %s", stage, toolName)
+	}
+
+	beforeCopy := block[:copyIndex]
+	removeIndex := strings.LastIndex(beforeCopy, "RUN rm -f")
+	if removeIndex >= 0 && strings.Contains(beforeCopy[removeIndex:], busyboxPath) {
+		return
+	}
+	t.Fatalf("%s stage must remove BusyBox %s before copying util-linux %s", stage, busyboxPath, toolName)
+}
+
+func dockerfileStageBlock(t *testing.T, text, stage string) string {
+	t.Helper()
+
+	stagePattern := regexp.MustCompile(`(?m)^FROM\s+.*\s+AS\s+` + regexp.QuoteMeta(stage) + `\s*$`)
+	loc := stagePattern.FindStringIndex(text)
+	if loc == nil {
+		t.Fatalf("cannot find Dockerfile stage %q", stage)
+	}
+	block := text[loc[0]:]
+	fromPattern := regexp.MustCompile(`(?m)^FROM\s+`)
+	matches := fromPattern.FindAllStringIndex(block, 2)
+	if len(matches) == 2 {
+		return block[:matches[1][0]]
+	}
+	return block
+}
