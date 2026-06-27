@@ -59,12 +59,16 @@ export dns_resolver="8.8.8.8"
 | `BGP_INTERFACES` | No | — | Comma-separated interface allowlist for unnumbered/dual peers; empty uses all detected physical NICs |
 | `underlay_ip` | Yes | — | Local VTEP IP / BGP router-id (e.g. `10.0.0.20`) |
 | `asn_server` | Yes | — | Local BGP AS number |
-| `provision_vni` | Yes | — | VXLAN VNI for provisioning network |
+| `provision_vni` | Yes | — | VXLAN VNI for provisioning network. With `asn_server > 65535`, values above 65535 are rejected because 4-octet ASN RD/RT local-admin values are 16-bit. |
 | `provision_ip` | Yes | — | Overlay IP in CIDR notation (e.g. `10.100.0.20/24`) |
 | `provision_gateway` | Yes | — | Remote VTEP IP (spine/DCGW loopback) for gateway route + BUM FDB |
 | `dns_resolver` | No | — | DNS resolver IP |
 | `overlay_subnet` | No | — | IPv6 overlay subnet (optional) |
 | `EVPN_L2_ENABLED` | No | `false` | Enable Type-2/3 EVPN route origination and handling |
+
+GoBGP currently does not implement BFD. `BFD_TRANSMIT_MS` and
+`BFD_RECEIVE_MS` are consumed by the FRR backend; GoBGP relies on keepalive and
+hold timers for failure detection.
 
 ### Peering Mode Variables
 

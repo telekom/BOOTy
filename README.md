@@ -420,12 +420,12 @@ go run server/server.go \
 | `BGP_KEEPALIVE` | `0` | Optional BGP keepalive timer in seconds (0 = stack default) |
 | `BGP_HOLD` | `0` | Optional BGP hold timer in seconds (0 = stack default) |
 | `BGP_MIN_PEERS` | `1` | Minimum number of BGP peers that must reach ESTABLISHED state before underlay is considered ready |
-| `BFD_TRANSMIT_MS` | `0` | Optional BFD transmit interval in milliseconds (0 = disabled) |
-| `BFD_RECEIVE_MS` | `0` | Optional BFD receive interval in milliseconds (0 = disabled) |
+| `BFD_TRANSMIT_MS` | `0` | Optional FRR BFD transmit interval in milliseconds (0 = disabled). GoBGP mode currently ignores BFD settings and relies on BGP hold timers. |
+| `BFD_RECEIVE_MS` | `0` | Optional FRR BFD receive interval in milliseconds (0 = disabled). GoBGP mode currently ignores BFD settings and relies on BGP hold timers. |
 | `underlay_subnet` | — | Underlay CIDR for FRR mode (e.g. `192.168.4.0/24`) |
 | `underlay_ip` | — | Underlay loopback / router-ID for GoBGP mode |
 | `asn_server` | — | Local BGP autonomous system number |
-| `provision_vni` | — | VXLAN VNI for the provisioning network |
+| `provision_vni` | — | VXLAN VNI for the provisioning network. GoBGP rejects `asn_server > 65535` together with `provision_vni > 65535` because 4-octet ASN RD/RT local-admin values are 16-bit. |
 | `provision_ip` | — | IP/mask on the provisioning bridge (e.g. `10.100.0.20/24`) |
 | `provision_gateway` | — | Gateway VTEP IP for VXLAN BUM flooding and kernel route |
 | `overlay_subnet` | — | Overlay CIDR (e.g. `2a01:598:40a:5481::/64`) |
@@ -833,18 +833,19 @@ automatic.
 
 ### BGP Policy
 
-GoBGP mode supports BGP policy configuration with community tagging on
-import/export routes. Policies are applied to control route distribution
-across the EVPN fabric.
+GoBGP mode has policy configuration types for community tagging, local-pref,
+MED, and graceful restart. The active runtime validates those fields, but it
+does not yet apply import/export policy to GoBGP peer sessions; when policy is
+configured, setup logs a warning and continues without policy enforcement.
 
 **Community formats:**
 - **Standard communities**: `ASN:value` (16-bit each, e.g. `65000:100`)
-- **Extended communities**: `TYPE:ASN:value` with 4-octet ASN support (e.g. `RT:4200000001:100`)
+- **Extended communities**: `TYPE:ASN:value` fields are parsed as 32-bit values (e.g. `RT:4200000001:100`); EVPN route-target encoding with a 4-octet ASN can only carry values up to `65535`
 - **Large communities**: `GA:LD1:LD2` (32-bit each, e.g. `65000:1:100`)
 
-The policy engine in `pkg/network/gobgp/policy.go` supports import/export
-filtering, community attachment, and graceful restart configuration for
-session resilience.
+The helpers in `pkg/network/gobgp/policy.go` parse and validate policy data.
+Runtime import/export filtering and community attachment remain unimplemented
+for GoBGP sessions.
 
 **VRF isolation** supports multi-VRF configurations with separate management
 and provisioning routing tables. VRF configs are validated for unique names,
