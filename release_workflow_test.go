@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -30,7 +29,7 @@ func TestReleaseWorkflowSBOMScansReleaseArtifacts(t *testing.T) {
 	if !ok {
 		t.Fatal("missing sbom job")
 	}
-	if got := needsList(job.Needs); !reflect.DeepEqual(got, []string{"build", "iso"}) {
+	if got := needsSet(job.Needs); !hasNeeds(got, "build", "iso") {
 		t.Fatalf("sbom needs = %v, want [build iso]", got)
 	}
 
@@ -44,6 +43,13 @@ func TestReleaseWorkflowSBOMScansReleaseArtifacts(t *testing.T) {
 	assertStepWith(t, sbom, "path", "release-artifacts")
 	assertStepWith(t, sbom, "upload-artifact", "false")
 	assertStepWith(t, sbom, "upload-release-assets", "false")
+
+	requireStep(t, job, "Generate SBOM checksum")
+	upload := requireAction(t, job, "actions/upload-artifact")
+	assertStepWith(t, upload, "name", "sbom")
+	assertStepWithContains(t, upload, "path", "sbom.spdx.json")
+	assertStepWithContains(t, upload, "path", "sbom.spdx.json.sha256")
+	assertStepWith(t, upload, "if-no-files-found", "error")
 }
 
 func loadWorkflow(t *testing.T, path string) workflowFile {
@@ -86,25 +92,53 @@ func assertStepWith(t *testing.T, step workflowStep, key, want string) {
 	}
 }
 
+func assertStepWithContains(t *testing.T, step workflowStep, key, want string) {
+	t.Helper()
+	if got := workflowValueString(step.With[key]); !strings.Contains(got, want) {
+		t.Fatalf("%s.%s = %q, want to contain %q", step.Name, key, got, want)
+	}
+}
+
+func requireStep(t *testing.T, job workflowJob, name string) workflowStep {
+	t.Helper()
+	for _, step := range job.Steps {
+		if step.Name == name {
+			return step
+		}
+	}
+	t.Fatalf("missing step %q", name)
+	return workflowStep{}
+}
+
 func actionMatches(uses, action string) bool {
 	return strings.HasPrefix(uses, action+"@")
 }
 
-func needsList(value any) []string {
+func hasNeeds(got map[string]bool, want ...string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for _, need := range want {
+		if !got[need] {
+			return false
+		}
+	}
+	return true
+}
+
+func needsSet(value any) map[string]bool {
+	out := map[string]bool{}
 	switch v := value.(type) {
 	case string:
-		return []string{v}
+		out[v] = true
 	case []any:
-		out := make([]string, 0, len(v))
 		for _, item := range v {
 			if s, ok := item.(string); ok {
-				out = append(out, s)
+				out[s] = true
 			}
 		}
-		return out
-	default:
-		return nil
 	}
+	return out
 }
 
 func workflowValueString(value any) string {
