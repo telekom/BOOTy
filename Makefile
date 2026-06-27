@@ -274,8 +274,10 @@ test-e2e-type5:
 
 # ── Production-realistic e2e targets ───────────────────────────────────────
 
+PRODUCTION_CI_TESTS := ^(TestProductionBootyStartsSuccessfully|TestProductionCAPRFModeDetected|TestProductionFRRNetworkModeSelected|TestProductionSpineBGPEstablished|TestProductionDCGWBGPEstablished|TestProductionSpineDCGWBGPEstablished|TestProductionEVPNAddressFamilyOnSpine|TestProductionEVPNAddressFamilyOnDCGW|TestProductionVXLANInterfaceCreated|TestProductionProvisionBridgeIP|TestProductionUnderlayRouteOnSpine|TestProductionUnderlayRouteOnDCGW|TestProductionOverlayReachClient|TestProductionOverlayReachNginx|TestProductionOverlayReachCAPRF|TestProductionGatewayFDB|TestProductionGatewayRoute)$$
+
 clab-production-up: booty-test-image $(CLAB_TEST_IMAGE)
-	@printf '%s\n' 'Deploying production-realistic topology (VRF + DCGW + BFD)'
+	@printf '%s\n' 'Deploying production-realistic topology'
 	@cd test/e2e/clab && sudo clab deploy --topo topology-production.clab.yml
 
 clab-production-down:
@@ -283,7 +285,11 @@ clab-production-down:
 	@cd test/e2e/clab && sudo clab destroy --topo topology-production.clab.yml --cleanup
 
 test-e2e-production:
-	@printf '%s\n' 'Running production-realistic E2E tests (requires clab-production-up)'
+	@printf '%s\n' 'Running CI-proven production E2E smoke tests (requires clab-production-up)'
+	@go test -tags e2e_production -race -v -run '$(PRODUCTION_CI_TESTS)' -timeout 600s ./test/e2e/integration/...
+
+test-e2e-production-full:
+	@printf '%s\n' 'Running full production E2E tests, including known unproven limitations (requires clab-production-up)'
 	@go test -tags e2e_production -race -v -timeout 600s ./test/e2e/integration/...
 
 # ── DHCP lab targets ───────────────────────────────────────────────────────

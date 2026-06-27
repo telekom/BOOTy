@@ -109,7 +109,7 @@ applies:
 | Boot E2E                    | `e2e_boot`               | Provisioning orchestrator step ordering with real network plumbing.        |
 | vrnetlab / QEMU             | `e2e_vrnetlab`           | Full boot flow, kexec, EVPN fabric, ISO boot (KVM-required).               |
 | GoBGP vrnetlab              | `e2e_gobgp_vrnetlab`     | GoBGP QEMU VMs with FRR fabric only; no vendor NOS interoperability proof. |
-| Production                  | `e2e_production`         | VRF, DCGW, BFD, production-like topology.                                  |
+| Production smoke            | `e2e_production`         | CI-proven production-like topology: CAPRF/FRR mode, BGP peering, EVPN AF, VXLAN, underlay routes, overlay reachability, gateway FDB/route. VRF, DCGW BFD, and EVPN type-5 assertions are not CI-proven and are covered by `make test-e2e-production-full` as known limitations. |
 
 ## Running
 
