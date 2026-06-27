@@ -420,14 +420,7 @@ func redactImageURL(rawURL string) string {
 }
 
 func redactURLError(err error, rawURL string) string {
-	if err == nil {
-		return ""
-	}
-	msg := err.Error()
-	if rawURL == "" {
-		return msg
-	}
-	return strings.ReplaceAll(msg, rawURL, redactImageURL(rawURL))
+	return image.RedactSourceError(err, rawURL)
 }
 
 func (o *Orchestrator) dryRunInventoryProbe(_ context.Context) DryRunResult {
