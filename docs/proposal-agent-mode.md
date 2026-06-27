@@ -3,7 +3,7 @@
 ## Status: Implemented
 
 The core standby loop, heartbeat, and command polling are implemented in
-`main.go` (`runStandby`) and `pkg/caprf/client.go` (`Heartbeat`,
+`pkg/runmode/standby.go` and `pkg/caprf/client.go` (`Heartbeat`,
 `FetchCommands`). Both methods use real HTTP calls tested with `httptest.Server`.
 The E2E vrnetlab test suite validates standby heartbeat delivery end-to-end.
 
@@ -37,12 +37,12 @@ Standby mode is activated via `/deploy/vars`:
 
 ```bash
 export MODE="standby"
-export HEARTBEAT_URL="http://caprf-server/status/heartbeat"
-export COMMANDS_URL="http://caprf-server/commands"
+export HEARTBEAT_URL="https://caprf.example.com/status/heartbeat"
+export COMMANDS_URL="https://caprf.example.com/commands"
 ```
 
-When `MODE=standby`, `runCAPRF()` enters the `runStandby()` loop instead of
-the normal provision/deprovision path.
+When `MODE=standby`, `runCAPRF()` resolves the standby runmode instead of the
+normal provision/deprovision path.
 
 ### Architecture
 
@@ -55,11 +55,11 @@ the normal provision/deprovision path.
 │    ├─ setup networking (FRR or DHCP)     │
 │    ├─ wait for connectivity              │
 │    └─ switch cfg.Mode                    │
-│         ├─ "standby" → runStandby()      │
+│         ├─ "standby" → StandbyMode       │
 │         ├─ "provision" → orch.Provision()│
 │         └─ "deprovision" → orch.Deprov() │
 │                                          │
-│  runStandby()                            │
+│  StandbyMode.Run()                       │
 │    ├─ heartbeat ticker (30s)             │
 │    ├─ command poll ticker (10s)          │
 │    └─ command dispatch:                  │
@@ -112,7 +112,7 @@ Both methods are tested with `httptest.Server` mocks.
 
 | File | What |
 |------|------|
-| `main.go` `runStandby()` | Heartbeat + poll loop with select, command dispatch |
+| `pkg/runmode/standby.go` | Heartbeat + poll loop with select, command dispatch |
 | `pkg/caprf/client.go` | `Heartbeat()`, `FetchCommands()` with real HTTP calls |
 | `pkg/config/provider.go` | `HeartbeatURL`, `CommandsURL` fields on `MachineConfig` |
 | `pkg/caprf/client.go` | `applyVar()` wires `HEARTBEAT_URL` and `COMMANDS_URL` |

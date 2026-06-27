@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -29,8 +30,22 @@ func (m *StandbyMode) Name() string { return "standby" }
 
 // Run enters the standby heartbeat/command polling loop until the context is canceled.
 func (m *StandbyMode) Run(ctx context.Context) error {
+	if err := m.validateConfig(); err != nil {
+		return err
+	}
+
 	slog.Info("entering standby mode")
-	_ = m.deps.Client.ReportStatus(ctx, config.StatusInit, "standby")
+	if err := m.deps.Client.ReportStatus(ctx, config.StatusInit, "standby"); err != nil {
+		return fmt.Errorf("standby status readiness: %w", err)
+	}
+	if err := m.deps.Client.Heartbeat(ctx); err != nil {
+		return fmt.Errorf("standby heartbeat readiness: %w", err)
+	}
+	if result, handled, err := m.pollCommands(ctx); err != nil {
+		return fmt.Errorf("standby command readiness: %w", err)
+	} else if handled {
+		return result.err
+	}
 
 	heartbeatTicker := time.NewTicker(heartbeatInterval)
 	defer heartbeatTicker.Stop()
@@ -50,19 +65,51 @@ func (m *StandbyMode) Run(ctx context.Context) error {
 			}
 
 		case <-pollTicker.C:
-			cmds, err := m.deps.Client.FetchCommands(ctx)
+			result, handled, err := m.pollCommands(ctx)
 			if err != nil {
 				slog.Warn("command poll failed", "error", err)
 				continue
 			}
-			for _, cmd := range cmds {
-				result := m.handleCommand(ctx, cmd)
-				if result != nil {
-					return result.err
-				}
+			if handled {
+				return result.err
 			}
 		}
 	}
+}
+
+func (m *StandbyMode) validateConfig() error {
+	if m.deps.Cfg == nil {
+		return fmt.Errorf("standby mode requires machine config")
+	}
+	if m.deps.Client == nil {
+		return fmt.Errorf("standby mode requires CAPRF client")
+	}
+
+	var missing []string
+	if strings.TrimSpace(m.deps.Cfg.Agent.HeartbeatURL) == "" {
+		missing = append(missing, "HEARTBEAT_URL")
+	}
+	if strings.TrimSpace(m.deps.Cfg.Agent.CommandsURL) == "" {
+		missing = append(missing, "COMMANDS_URL")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("standby mode requires %s", strings.Join(missing, " and "))
+	}
+	return nil
+}
+
+func (m *StandbyMode) pollCommands(ctx context.Context) (*commandResult, bool, error) {
+	cmds, err := m.deps.Client.FetchCommands(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, cmd := range cmds {
+		result := m.handleCommand(ctx, cmd)
+		if result != nil {
+			return result, true, nil
+		}
+	}
+	return nil, false, nil
 }
 
 type commandResult struct {
