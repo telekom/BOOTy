@@ -1,6 +1,11 @@
 # Proposal: Intel NIC Firmware Management
 
-## Status: Phase 1 Implemented (PR #47)
+## Status: Partially implemented — package helpers and unit tests only
+
+Source of truth as of 2026-06-27: the default branch contains the
+`pkg/firmware/nic/intel` manager and unit tests. It does **not** wire this
+manager into the provisioning state machine and does not run Intel-specific
+ContainerLab, KVM, or physical-NIC E2E coverage.
 
 ## Priority: P1
 
@@ -222,13 +227,10 @@ management. The Go devlink + ethtool approach covers all parameter operations.
 
 ### E2E / KVM Tests
 
-- **KVM matrix** (`kvm-matrix.yml`, tag `e2e_kvm`):
-  - QEMU with `-device e1000e` (Intel 1G emulation)
-  - Verify: capture runs, FW version detected via ethtool ioctl
-  - Verify: unsupported devlink param gracefully handled
-- **linux_e2e** (tag `linux_e2e`):
-  - Test on CI runner's physical Intel NICs (if available)
-  - Verify devlink param read on ice/i40e NIC
+No current E2E test exercises the Intel NIC firmware manager. QEMU/KVM and
+`linux_e2e` coverage for this proposal still requires a runtime integration
+that proves BOOTy invokes the manager during provisioning and handles missing
+or unsupported driver parameters deterministically.
 
 ## Risks
 

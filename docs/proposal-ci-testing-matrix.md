@@ -1,6 +1,6 @@
 # Proposal: CI Testing Matrix — DHCP, LACP, Static, Multi-NIC, KVM
 
-## Status: Implemented (PR #68)
+## Status: Partially implemented — CI truth lives in current workflows
 
 ## Priority: P1
 
@@ -10,7 +10,13 @@ Expand CI testing infrastructure with new ContainerLab topologies for DHCP,
 LACP, static, and multi-NIC configurations. Add a dedicated KVM test matrix
 (`.github/workflows/kvm-matrix.yml`) for hardware-dependent features like
 SecureBoot, LUKS, TPM, kexec, BIOS settings, and bootloader management.
-Raise coverage target from 40% to 60%.
+
+Source of truth as of 2026-06-27: `.github/workflows/ci.yml` keeps the unit-test
+coverage gate at 40%, not 60%. The default branch includes manual Make targets
+for DHCP/static/multi-NIC/bond topology smoke tests, but PR/default CI only runs
+the main ContainerLab topology unless a workflow explicitly adds those targets.
+`.github/workflows/kvm-matrix.yml` exists and covers specific KVM smoke
+scenarios; it does not prove full BIOS settings management.
 
 ## Motivation
 
@@ -18,15 +24,15 @@ Current E2E test coverage has significant gaps:
 
 | Mode | Current Test Coverage | Gap |
 |------|----------------------|-----|
-| DHCP | None | No DHCP server in any topology |
-| Static IP | None | No static mode tests |
-| LACP bonding | None | No LACP topology |
-| Multi-NIC | Partial | Only 2 NICs tested (single uplink pair) |
-| SecureBoot | None | Requires KVM with OVMF |
-| LUKS | None | Requires KVM with block devices |
-| TPM | None | Requires KVM with swtpm |
-| Kexec | Minimal | Existing `kvm-test.yml` is single-scenario |
-| BIOS | None | Requires KVM with OVMF |
+| DHCP | Manual `clab-dhcp-up` / `test-e2e-dhcp` smoke target | Not run by the default PR CI matrix |
+| Static IP | Manual `clab-static-up` / `test-e2e-static` smoke target plus KVM network-persistence scenario | Gateway and renderer variants remain limited |
+| LACP bonding | `clab-lacp-*` aliases the bond topology; topology comments say it does not validate LACP negotiation | Real LACP negotiation remains unproven |
+| Multi-NIC | Manual `clab-multi-nic-up` / `test-e2e-multi-nic` smoke target | Not run by the default PR CI matrix |
+| SecureBoot | KVM `secureboot-smoke` scenario | Smoke boot only, not full chain validation |
+| LUKS | KVM `luks` and `luks-verify` scenarios | Full provisioning/enrollment flows remain limited |
+| TPM | KVM `tpm` smoke scenario | Attestation and sealing flows remain limited |
+| Kexec | KVM `kexec` smoke scenario | Full target handoff matrix remains limited |
+| BIOS | KVM vendor-detection test only | BIOS settings capture/apply remains unproven in CI |
 
 ### Current Topology Coverage
 
@@ -36,7 +42,8 @@ Current E2E test coverage has significant gaps:
 | Boot ContainerLab | `e2e_boot` | Full provision flow |
 | GoBGP ContainerLab | `e2e_gobgp` | 3 peering modes |
 | vrnetlab | `e2e_vrnetlab` | QEMU VMs + EVPN fabric |
-| KVM | `kvm-test.yml` | Single e1000 driver test |
+| KVM boot | `.github/workflows/ci.yml` `kvm-boot` | BOOTy startup with QEMU/e1000 |
+| KVM matrix | `.github/workflows/kvm-matrix.yml` | SecureBoot, LUKS, TPM, kexec, A/B, Flatcar-like source-root, crash artifacts, network persistence, bootloader, ISO smoke scenarios |
 
 ## Design
 
@@ -235,7 +242,7 @@ exclusively on CI runners.
 
 | Current | Target | Strategy |
 |---------|--------|----------|
-| 40% | 60% | New KVM tests + ContainerLab topologies + unit test gaps |
+| 40% | Not raised | Keep documentation aligned with the active `Makefile` and `.github/workflows/ci.yml` gate before proposing a higher threshold |
 
 Specific coverage improvements:
 - `pkg/network/` — bond, static, DHCP mode tests
@@ -263,7 +270,7 @@ This IS the testing infrastructure proposal. Validation:
 - Each new ContainerLab topology deploys without errors
 - KVM scenarios boot QEMU successfully in CI
 - All E2E tests pass in new topologies
-- Coverage reaches 60% target
+- Coverage continues to meet the active 40% gate unless a future PR raises it
 
 ## Risks
 

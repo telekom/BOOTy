@@ -210,6 +210,11 @@ err = grub.SetDefault(context.Background(), "/mnt/target", "Ubuntu")
 
 ### systemd-boot Management
 
+The `SystemdBoot` type is a helper API. The active provisioning pipeline is
+still GRUB-oriented for target boot configuration and kexec handoff;
+systemd-boot detection or helper methods are not currently used as the
+provisioning source of truth.
+
 ```go
 import (
     "context"

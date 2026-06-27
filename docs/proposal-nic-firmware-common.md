@@ -1,6 +1,14 @@
 # Proposal: NIC Firmware Management — Common Framework
 
-## Status: Phase 1 Implemented (PR #47)
+## Status: Partially implemented — package helpers and unit tests only
+
+Source of truth as of 2026-06-27: the default branch contains
+`pkg/firmware/nic/` vendor helpers and unit tests, plus the generic
+`Collect` firmware report function in `pkg/firmware`. It does **not** contain a
+dedicated `nicFirmware` provisioning step, NIC-firmware-specific CAPRF report
+method, NIC firmware config fields, or ContainerLab/KVM coverage for these vendor
+managers. Treat the runtime and E2E sections below as remaining design work until
+those files and tests exist on the default branch.
 
 ## Priority: P1
 
@@ -309,13 +317,11 @@ COPY --from=tools /sbin/devlink bin/devlink
 
 ### E2E Tests
 
-- **ContainerLab** (tag `e2e_integration`): Verify NIC firmware capture
-  runs without error on virtio interfaces (will report "unsupported vendor"
-  — test exercises the code path).
-- **KVM matrix** (tag `e2e_kvm`, new `kvm-matrix.yml`):
-  - QEMU with `-device virtio-net-pci` or passthrough NIC
-  - BOOTy boots, runs NIC firmware capture, reports to mock CAPRF server
-  - Verify JSON inventory contains NIC firmware state
+No current E2E test exercises the `pkg/firmware/nic/` vendor manager path.
+Existing KVM firmware coverage validates generic sysfs/DMI firmware collection,
+not baseline/diff/apply behavior or vendor NIC firmware parameter management.
+Future runtime integration must add ContainerLab or KVM evidence before claiming
+the provisioning step is supported.
 
 ## Usage Guide
 
