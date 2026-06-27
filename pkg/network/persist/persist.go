@@ -471,7 +471,7 @@ func RenderNetworkdUnit(iface *InterfaceConfig) string {
 	}
 	b.WriteString("\n[Network]\n")
 	if iface.DHCP {
-		b.WriteString("DHCP=yes\n")
+		b.WriteString("DHCP=ipv4\n")
 	} else if iface.Address != "" {
 		fmt.Fprintf(&b, "Address=%s\n", iface.Address)
 		if iface.Gateway != "" {
