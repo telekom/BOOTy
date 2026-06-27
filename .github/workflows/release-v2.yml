@@ -720,9 +720,10 @@ jobs:
             ensure_oci_ref_absent "${REF}"
             echo "Publishing ${REF}"
 
-            ARGS="${INITRAMFS}:${MEDIA_TYPE} ${CHECKSUM}:text/plain"
+            args=("${INITRAMFS}:${MEDIA_TYPE}" "${CHECKSUM}:text/plain")
 
             oras push "${REF}" \
+              --artifact-type application/vnd.booty.initramfs.v1 \
               --annotation "org.opencontainers.image.title=BOOTy initramfs (${flavor}/${{ matrix.arch }})" \
               --annotation "org.opencontainers.image.version=${VERSION}" \
               --annotation "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
@@ -733,7 +734,7 @@ jobs:
               --annotation "io.booty.arch=${{ matrix.arch }}" \
               --annotation "io.booty.github.run_id=${{ github.run_id }}" \
               --annotation "io.booty.github.run_attempt=${{ github.run_attempt }}" \
-              ${ARGS}
+              "${args[@]}"
             cosign sign --yes "${REF}"
           done
 
@@ -771,9 +772,10 @@ jobs:
 
           echo "Publishing ${REF}"
 
-          ARGS="${BINARY}:application/vnd.cncf.binary.layer.v1 ${CHECKSUM}:text/plain"
+          args=("${BINARY}:application/vnd.cncf.binary.layer.v1" "${CHECKSUM}:text/plain")
 
           oras push "${REF}" \
+            --artifact-type application/vnd.booty.binary.v1 \
             --annotation "org.opencontainers.image.title=BOOTy binary (${{ matrix.arch }})" \
             --annotation "org.opencontainers.image.version=${VERSION}" \
             --annotation "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
@@ -783,7 +785,7 @@ jobs:
             --annotation "io.booty.arch=${{ matrix.arch }}" \
             --annotation "io.booty.github.run_id=${{ github.run_id }}" \
             --annotation "io.booty.github.run_attempt=${{ github.run_attempt }}" \
-            ${ARGS}
+            "${args[@]}"
           cosign sign --yes "${REF}"
 
       - name: Publish SBOM artifact
@@ -814,6 +816,7 @@ jobs:
 
           echo "Publishing ${REF}"
           oras push "${REF}" \
+            --artifact-type application/vnd.booty.sbom.v1 \
             --annotation "org.opencontainers.image.title=BOOTy SBOM" \
             --annotation "org.opencontainers.image.version=${VERSION}" \
             --annotation "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
