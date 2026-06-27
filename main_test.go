@@ -15,6 +15,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/realm"
+	"github.com/telekom/BOOTy/pkg/runmode"
 )
 
 type teardownRecorderMode struct {
@@ -403,6 +404,93 @@ func mustWrite(t *testing.T, path string) {
 	}
 }
 
+func TestHandleProvisionHandoffReportsFailedReboot(t *testing.T) {
+	reporter := &provisionHandoffReporter{}
+	ops, state := provisionHandoffTestOps(t, func() error {
+		return errors.New("permission denied")
+	}, nil)
+
+	handleProvisionHandoff(
+		context.Background(),
+		&config.MachineConfig{},
+		reporter,
+		&runmode.ProvisionCompleteError{},
+		false,
+		ops,
+	)
+
+	assertProvisionHandoffFailure(t, reporter, state, "reboot handoff failed after provisioning success")
+	assertProvisionHandoffFailure(t, reporter, state, "permission denied")
+}
+
+func TestHandleProvisionHandoffReportsFailedABPowerOff(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.PreserveExisting = true
+	reporter := &provisionHandoffReporter{}
+	ops, state := provisionHandoffTestOps(t, nil, func() error {
+		return errors.New("power control denied")
+	})
+
+	handleProvisionHandoff(
+		context.Background(),
+		cfg,
+		reporter,
+		&runmode.ProvisionCompleteError{},
+		false,
+		ops,
+	)
+
+	assertProvisionHandoffFailure(t, reporter, state, "a/b preserveExisting requires kexec")
+	assertProvisionHandoffFailure(t, reporter, state, "power control denied")
+}
+
+func TestHandleProvisionHandoffRequestsSuccessfulReboot(t *testing.T) {
+	reporter := &provisionHandoffReporter{}
+	rebootCalls := 0
+	ops, state := provisionHandoffTestOps(t, func() error {
+		rebootCalls++
+		return nil
+	}, nil)
+
+	handleProvisionHandoff(
+		context.Background(),
+		&config.MachineConfig{},
+		reporter,
+		&runmode.ProvisionCompleteError{},
+		false,
+		ops,
+	)
+
+	if rebootCalls != 1 {
+		t.Fatalf("reboot calls = %d, want 1", rebootCalls)
+	}
+	assertProvisionHandoffSuccess(t, reporter, state)
+}
+
+func TestHandleProvisionHandoffRequestsSuccessfulPowerOff(t *testing.T) {
+	reporter := &provisionHandoffReporter{}
+	powerOffCalls := 0
+	ops, state := provisionHandoffTestOps(t, nil, func() error {
+		powerOffCalls++
+		return nil
+	})
+
+	handleProvisionHandoff(
+		context.Background(),
+		&config.MachineConfig{},
+		reporter,
+		&runmode.ProvisionCompleteError{PowerOff: true},
+		false,
+		ops,
+	)
+
+	if powerOffCalls != 1 {
+		t.Fatalf("power off calls = %d, want 1", powerOffCalls)
+	}
+	assertProvisionHandoffSuccess(t, reporter, state)
+}
+
 func TestSetupNetworkModeExplicitGoBGPFailsClosed(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Network.Mode = "gobgp"
@@ -605,4 +693,86 @@ func stringSlicesEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+type provisionHandoffReporter struct {
+	status  config.Status
+	message string
+}
+
+type provisionHandoffState struct {
+	shellCalls int
+	exitCode   int
+}
+
+func (r *provisionHandoffReporter) ReportStatus(_ context.Context, status config.Status, message string) error {
+	r.status = status
+	r.message = message
+	return nil
+}
+
+func provisionHandoffTestOps(t *testing.T, reboot, powerOff func() error) (provisionHandoffOps, *provisionHandoffState) {
+	t.Helper()
+	state := &provisionHandoffState{exitCode: -1}
+	ops := provisionHandoffOps{}
+	ops.reboot = func() error {
+		if reboot == nil {
+			t.Fatal("unexpected reboot request")
+		}
+		return reboot()
+	}
+	ops.powerOff = func() error {
+		if powerOff == nil {
+			t.Fatal("unexpected power off request")
+		}
+		return powerOff()
+	}
+	ops.shell = func() {
+		state.shellCalls++
+	}
+	ops.exit = func(code int) {
+		state.exitCode = code
+	}
+	return ops, state
+}
+
+func assertProvisionHandoffFailure(
+	t *testing.T,
+	reporter *provisionHandoffReporter,
+	state *provisionHandoffState,
+	want string,
+) {
+	t.Helper()
+	if reporter.status != config.StatusError {
+		t.Fatalf("status = %q, want %q", reporter.status, config.StatusError)
+	}
+	if !strings.Contains(reporter.message, want) {
+		t.Fatalf("message = %q, want to contain %q", reporter.message, want)
+	}
+	if state.shellCalls != 1 {
+		t.Fatalf("shell calls = %d, want 1", state.shellCalls)
+	}
+	if state.exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1", state.exitCode)
+	}
+}
+
+func assertProvisionHandoffSuccess(
+	t *testing.T,
+	reporter *provisionHandoffReporter,
+	state *provisionHandoffState,
+) {
+	t.Helper()
+	if reporter.status == config.StatusError {
+		t.Fatalf("status = %q, want no error status", reporter.status)
+	}
+	if reporter.message != "" {
+		t.Fatalf("message = %q, want empty", reporter.message)
+	}
+	if state.shellCalls != 0 {
+		t.Fatalf("shell calls = %d, want 0", state.shellCalls)
+	}
+	if state.exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0", state.exitCode)
+	}
 }
