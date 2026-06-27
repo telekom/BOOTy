@@ -645,7 +645,13 @@ func writeNetworkd(dir string, cfg *NetworkConfig) error {
 	if err := writeNetworkdParentLinks(dir, parentVLANs, handledParents); err != nil {
 		return err
 	}
-	return writeNetworkdVLANs(dir, cfg, &primaryAttached)
+	if err := writeNetworkdVLANs(dir, cfg, &primaryAttached); err != nil {
+		return err
+	}
+	if err := removeStaleBootyFiles(dir, networkdKeepFiles(cfg, parentVLANs), isBootyNetworkdFile); err != nil {
+		return fmt.Errorf("remove stale networkd units: %w", err)
+	}
+	return nil
 }
 
 func writeNetworkdInterfaces(
@@ -739,6 +745,30 @@ func writeNetworkdVLANs(dir string, cfg *NetworkConfig, primaryAttached *bool) e
 	return nil
 }
 
+func networkdKeepFiles(cfg *NetworkConfig, parentVLANs map[string][]string) map[string]struct{} {
+	keep := make(map[string]struct{})
+	for i := range cfg.Interfaces {
+		keep[networkdFilename(cfg.Interfaces[i].Name, "network")] = struct{}{}
+	}
+	for i := range cfg.Bonds {
+		bond := &cfg.Bonds[i]
+		keep[networkdFilename(bond.Name, "netdev")] = struct{}{}
+		keep[networkdFilename(bond.Name, "network")] = struct{}{}
+		for _, member := range bond.Members {
+			keep[networkdFilename("bond-"+bond.Name+"-"+member, "network")] = struct{}{}
+		}
+	}
+	for parent := range parentVLANs {
+		keep[networkdFilename(parent, "network")] = struct{}{}
+	}
+	for i := range cfg.VLANs {
+		name := vlanName(&cfg.VLANs[i])
+		keep[networkdFilename(name, "netdev")] = struct{}{}
+		keep[networkdFilename(name, "network")] = struct{}{}
+	}
+	return keep
+}
+
 func renderNetworkdBondNetdev(bond *BondConfig) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[NetDev]\nName=%s\nKind=bond\n\n[Bond]\nMode=%s\n", bond.Name, bond.Mode)
@@ -774,8 +804,12 @@ func renderNetworkdVLANNetwork(vlan *VLANConfig) string {
 }
 
 func writeNetworkdFile(dir, name, suffix, content string) error {
-	filename := fmt.Sprintf("10-booty-%s.%s", filepath.Base(name), suffix)
+	filename := networkdFilename(name, suffix)
 	return writeFileAtomic(dir, filename, []byte(content), 0o644)
+}
+
+func networkdFilename(name, suffix string) string {
+	return fmt.Sprintf("10-booty-%s.%s", filepath.Base(name), suffix)
 }
 
 func attachNetworkdPrimary(
@@ -972,7 +1006,13 @@ func writeNMKeyfiles(dir string, cfg *NetworkConfig) error {
 	if err := writeNMParentLinks(dir, parentVLANs, handledParents); err != nil {
 		return err
 	}
-	return writeNMVLANs(dir, cfg, &primaryAttached)
+	if err := writeNMVLANs(dir, cfg, &primaryAttached); err != nil {
+		return err
+	}
+	if err := removeStaleBootyFiles(dir, nmKeepFiles(cfg, parentVLANs), isBootyNMKeyfile); err != nil {
+		return fmt.Errorf("remove stale nm keyfiles: %w", err)
+	}
+	return nil
 }
 
 func writeNMInterfaces(
@@ -1105,6 +1145,56 @@ func renderNMVLANKeyfile(vlan *VLANConfig, dns *DNSConfig, routes []RouteConfig)
 
 func nmFilename(name string) string {
 	return fmt.Sprintf("booty-%s.nmconnection", filepath.Base(name))
+}
+
+func nmKeepFiles(cfg *NetworkConfig, parentVLANs map[string][]string) map[string]struct{} {
+	keep := make(map[string]struct{})
+	for i := range cfg.Interfaces {
+		keep[nmFilename(cfg.Interfaces[i].Name)] = struct{}{}
+	}
+	for i := range cfg.Bonds {
+		bond := &cfg.Bonds[i]
+		keep[nmFilename(bond.Name)] = struct{}{}
+		for _, member := range bond.Members {
+			keep[nmFilename(fmt.Sprintf("%s-%s", bond.Name, member))] = struct{}{}
+		}
+	}
+	for parent := range parentVLANs {
+		keep[nmFilename(parent)] = struct{}{}
+	}
+	for i := range cfg.VLANs {
+		keep[nmFilename(vlanName(&cfg.VLANs[i]))] = struct{}{}
+	}
+	return keep
+}
+
+func removeStaleBootyFiles(dir string, keep map[string]struct{}, owned func(string) bool) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("read config dir: %w", err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !owned(name) {
+			continue
+		}
+		if _, ok := keep[name]; ok {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func isBootyNetworkdFile(name string) bool {
+	return strings.HasPrefix(name, "10-booty-") &&
+		(strings.HasSuffix(name, ".network") || strings.HasSuffix(name, ".netdev"))
+}
+
+func isBootyNMKeyfile(name string) bool {
+	return strings.HasPrefix(name, "booty-") && strings.HasSuffix(name, ".nmconnection")
 }
 
 func writeFileAtomic(dir, filename string, content []byte, perm os.FileMode) error {

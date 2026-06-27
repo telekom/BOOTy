@@ -363,6 +363,38 @@ func TestWriteNetworkd(t *testing.T) {
 	}
 }
 
+func TestWriteNetworkdRemovesStaleBootyOwnedUnits(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "etc/systemd/network")
+	first := &NetworkConfig{
+		Interfaces: []InterfaceConfig{
+			{Name: "eth0", DHCP: true},
+			{Name: "eth1", DHCP: true},
+		},
+	}
+	if err := Write(root, Flatcar, first); err != nil {
+		t.Fatalf("first Write() error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "99-user.network"), []byte("[Match]\nName=eth9\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(user) error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "10-booty-bond0.netdev"), []byte("[NetDev]\nName=bond0\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(stale netdev) error: %v", err)
+	}
+
+	second := &NetworkConfig{
+		Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
+	}
+	if err := Write(root, Flatcar, second); err != nil {
+		t.Fatalf("second Write() error: %v", err)
+	}
+
+	assertFileExists(t, filepath.Join(dir, "10-booty-eth0.network"))
+	assertFileMissing(t, filepath.Join(dir, "10-booty-eth1.network"))
+	assertFileMissing(t, filepath.Join(dir, "10-booty-bond0.netdev"))
+	assertFileExists(t, filepath.Join(dir, "99-user.network"))
+}
+
 func TestWriteNMKeyfiles(t *testing.T) {
 	root := t.TempDir()
 	cfg := &NetworkConfig{
@@ -394,6 +426,34 @@ func TestWriteNMKeyfiles(t *testing.T) {
 	if !strings.Contains(content, "[ipv6]\nmethod=disabled") {
 		t.Error("missing ipv6 disabled section")
 	}
+}
+
+func TestWriteNMKeyfilesRemovesStaleBootyOwnedProfiles(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "etc/NetworkManager/system-connections")
+	first := &NetworkConfig{
+		Interfaces: []InterfaceConfig{
+			{Name: "enp1s0", DHCP: true},
+			{Name: "enp2s0", DHCP: true},
+		},
+	}
+	if err := Write(root, RHEL, first); err != nil {
+		t.Fatalf("first Write() error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "admin.nmconnection"), []byte("[connection]\nid=admin\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(user) error: %v", err)
+	}
+
+	second := &NetworkConfig{
+		Interfaces: []InterfaceConfig{{Name: "enp1s0", DHCP: true}},
+	}
+	if err := Write(root, RHEL, second); err != nil {
+		t.Fatalf("second Write() error: %v", err)
+	}
+
+	assertFileExists(t, filepath.Join(dir, "booty-enp1s0.nmconnection"))
+	assertFileMissing(t, filepath.Join(dir, "booty-enp2s0.nmconnection"))
+	assertFileExists(t, filepath.Join(dir, "admin.nmconnection"))
 }
 
 func TestWriteValidationError(t *testing.T) {
@@ -1086,5 +1146,21 @@ func assertFileContains(t *testing.T, path string, wants []string) {
 		if !strings.Contains(content, want) {
 			t.Errorf("%s missing %q:\n%s", path, want, content)
 		}
+	}
+}
+
+func assertFileExists(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected %s to exist: %v", path, err)
+	}
+}
+
+func assertFileMissing(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err == nil {
+		t.Fatalf("expected %s to be removed", path)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat %s: %v", path, err)
 	}
 }
