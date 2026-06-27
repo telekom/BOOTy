@@ -197,8 +197,8 @@ func TestScenarioNumberedOnly(t *testing.T) {
 			MinEstablishedPeers: 1,
 		}
 
-		if err := cfg.Validate(); err != nil {
-			t.Fatalf("numbered mode with IPv6 neighbor should pass: %v", err)
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("numbered mode with IPv6 neighbor should fail validation")
 		}
 	})
 }

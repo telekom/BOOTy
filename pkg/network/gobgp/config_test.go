@@ -639,6 +639,29 @@ func TestValidateAcceptsMinEstablishedPeersGreaterThanOne(t *testing.T) {
 	}
 }
 
+func TestValidatePeerModeRejectsIPv6Neighbors(t *testing.T) {
+	for _, mode := range []network.PeerMode{network.PeerModeDual, network.PeerModeNumbered} {
+		t.Run(string(mode), func(t *testing.T) {
+			cfg := &Config{
+				ASN:                 65000,
+				RouterID:            "10.0.0.1",
+				PeerMode:            mode,
+				NeighborAddrs:       []string{"fd00::1"},
+				ProvisionVNI:        4000,
+				MinEstablishedPeers: 1,
+			}
+
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatal("Validate() accepted IPv6 BGP_NEIGHBORS")
+			}
+			if !strings.Contains(err.Error(), "must be IPv4") {
+				t.Fatalf("Validate() error = %v, want IPv4 diagnostic", err)
+			}
+		})
+	}
+}
+
 func TestNewConfigMapsMinEstablishedPeers(t *testing.T) {
 	netCfg := &network.Config{
 		UnderlayIP:   "10.0.0.1",
