@@ -201,6 +201,63 @@ func TestValidateRejectsVFATSystemABDataPartition(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsSystemABDataPartitionWithoutUsableMountpoint(t *testing.T) {
+	tests := []struct {
+		name string
+		part ABDataPartition
+		want string
+	}{
+		{
+			name: "missing mountpoint",
+			part: ABDataPartition{Label: "BOOTY-CACHE", SizeMB: 1024},
+			want: "provision.ab.dataPartitions[0].mountpoint is required",
+		},
+		{
+			name: "relative mountpoint",
+			part: ABDataPartition{Label: "BOOTY-CACHE", SizeMB: 1024, Mountpoint: "var/cache"},
+			want: `provision.ab.dataPartitions[0].mountpoint "var/cache" must be an absolute path`,
+		},
+		{
+			name: "root mountpoint",
+			part: ABDataPartition{Label: "BOOTY-CACHE", SizeMB: 1024, Mountpoint: "/"},
+			want: `provision.ab.dataPartitions[0].mountpoint must not be "/"`,
+		},
+		{
+			name: "efi mountpoint",
+			part: ABDataPartition{Label: "BOOTY-CACHE", SizeMB: 1024, Mountpoint: "/boot/efi"},
+			want: `provision.ab.dataPartitions[0].mountpoint must not be "/boot/efi"`,
+		},
+		{
+			name: "efi mountpoint with trailing slash",
+			part: ABDataPartition{Label: "BOOTY-CACHE", SizeMB: 1024, Mountpoint: "/boot/efi/"},
+			want: `provision.ab.dataPartitions[0].mountpoint must not be "/boot/efi"`,
+		},
+		{
+			name: "swap filesystem",
+			part: ABDataPartition{Label: "BOOTY-CACHE", SizeMB: 1024, Filesystem: "swap", Mountpoint: "/var/cache"},
+			want: "provision.ab.dataPartitions[0].filesystem must not be swap",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{}
+			cfg.Provision.Image.Mode = ImageModeAB
+			cfg.Provision.AB.Scheme = ABSchemeSystemAB
+			cfg.Provision.AB.RootSizeMB = 8192
+			cfg.Provision.AB.DataPartitions = []ABDataPartition{tt.part}
+
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatal("expected data partition validation error")
+			}
+			if got := err.Error(); !strings.Contains(got, tt.want) {
+				t.Fatalf("Validate() error = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidateRejectsABPreserveOutsideABMode(t *testing.T) {
 	cfg := &Config{}
 	cfg.Provision.Image.Mode = ImageModeWholeDisk
