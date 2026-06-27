@@ -376,6 +376,8 @@ go run server/server.go \
 | `AB_SOURCE_ROOT_PARTITION` | — | 1-based source-image partition number to copy when no stable label exists |
 | `DISK_DEVICE` | auto-detect | Explicit disk device path override (e.g. `/dev/sda`) |
 | `DISK_SERIAL_NUMBER` | — | Select the target disk by exact sysfs serial number when `DISK_DEVICE` is unset |
+| `ROOT_PARTITION_LABEL` | — | Whole-disk image root GPT partition label/PARTLABEL; use when multiple Linux partitions exist |
+| `ROOT_PARTITION_NUMBER` | — | Whole-disk image root partition number; use only when no stable root partition label exists |
 | `IMAGE_SIGNATURE_URL` | — | URL to detached GPG signature for image verification |
 | `IMAGE_GPG_PUBKEY` | — | Path to GPG public key for image signature verification |
 | `LUKS_ENABLED` | `false` | *(Planned)* Enable LUKS2 encryption for target partitions |

@@ -1695,6 +1695,82 @@ func TestParsePartitionsEnsuresABLayoutOnResume(t *testing.T) {
 	}
 }
 
+func TestParsePartitionsUsesConfiguredRootPartitionNumber(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RootPartitionNumber = 2
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	cmd.setResult("sfdisk --json", sfdiskJSON(t, []disk.Partition{
+		{Node: "/dev/sda1", Type: disk.EFISystemPartitionGUID, Name: "EFI"},
+		{Node: "/dev/sda2", Type: disk.LinuxFilesystemGUID, Name: "ubuntu-root"},
+		{Node: "/dev/sda3", Type: disk.LinuxFilesystemGUID, Name: "state"},
+	}), nil)
+
+	if err := o.parsePartitions(context.Background()); err != nil {
+		t.Fatalf("parsePartitions: %v", err)
+	}
+	if o.rootPartition != "/dev/sda2" {
+		t.Fatalf("rootPartition = %q, want selected root /dev/sda2", o.rootPartition)
+	}
+}
+
+func TestParsePartitionsUsesConfiguredRootPartitionLabel(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RootPartitionLabel = "ubuntu-root"
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	cmd.setResult("sfdisk --json", sfdiskJSON(t, []disk.Partition{
+		{Node: "/dev/sda1", Type: disk.EFISystemPartitionGUID, Name: "EFI"},
+		{Node: "/dev/sda2", Type: disk.LinuxFilesystemGUID, Name: "ubuntu-root"},
+		{Node: "/dev/sda3", Type: disk.LinuxFilesystemGUID, Name: "state"},
+	}), nil)
+
+	if err := o.parsePartitions(context.Background()); err != nil {
+		t.Fatalf("parsePartitions: %v", err)
+	}
+	if o.rootPartition != "/dev/sda2" {
+		t.Fatalf("rootPartition = %q, want selected root /dev/sda2", o.rootPartition)
+	}
+}
+
+func TestParsePartitionsRejectsMissingConfiguredRootPartitionLabel(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RootPartitionLabel = "missing-root"
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	cmd.setResult("sfdisk --json", sfdiskJSON(t, []disk.Partition{
+		{Node: "/dev/sda1", Type: disk.EFISystemPartitionGUID, Name: "EFI"},
+		{Node: "/dev/sda2", Type: disk.LinuxFilesystemGUID, Name: "ubuntu-root"},
+	}), nil)
+
+	err := o.parsePartitions(context.Background())
+	if err == nil {
+		t.Fatal("expected missing root label error")
+	}
+	if !strings.Contains(err.Error(), `root partition label "missing-root" not found`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParsePartitionsRejectsNonLinuxConfiguredRootPartitionNumber(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RootPartitionNumber = 1
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	cmd.setResult("sfdisk --json", sfdiskJSON(t, []disk.Partition{
+		{Node: "/dev/sda1", Type: disk.EFISystemPartitionGUID, Name: "EFI"},
+		{Node: "/dev/sda2", Type: disk.LinuxFilesystemGUID, Name: "ubuntu-root"},
+	}), nil)
+
+	err := o.parsePartitions(context.Background())
+	if err == nil {
+		t.Fatal("expected non-Linux root selector error")
+	}
+	if !strings.Contains(err.Error(), "non-Linux partition type") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestABStreamTargetsPreserveExistingSkipsSharedBoot(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Image.Mode = config.ImageModeAB

@@ -88,6 +88,9 @@ func (c *Config) Validate() error {
 	if err := validateRAIDConfig(c.Provision.Disk.RAID); err != nil {
 		errs = append(errs, err.Error())
 	}
+	if err := validateDiskRootSelectors(&c.Provision.Disk); err != nil {
+		errs = append(errs, err.Error())
+	}
 	if err := validateSysextConfig(&c.Provision.Sysext); err != nil {
 		errs = append(errs, err.Error())
 	}
@@ -188,7 +191,18 @@ func (c *Config) normalize() {
 	if c.Transport.TokenAlgorithm != "" {
 		c.Transport.TokenAlgorithm = strings.ToUpper(strings.TrimSpace(c.Transport.TokenAlgorithm))
 	}
+	c.Provision.Disk.RootPartitionLabel = strings.TrimSpace(c.Provision.Disk.RootPartitionLabel)
 	c.Provision.AB.DataPartitions = normalizeABDataPartitions(c.Provision.AB.DataPartitions)
+}
+
+func validateDiskRootSelectors(cfg *DiskConfig) error {
+	if cfg.RootPartitionNumber < 0 {
+		return fmt.Errorf("provision.disk.rootPartitionNumber must be non-negative")
+	}
+	if strings.TrimSpace(cfg.RootPartitionLabel) != "" && cfg.RootPartitionNumber != 0 {
+		return fmt.Errorf("provision.disk.rootPartitionLabel and provision.disk.rootPartitionNumber are mutually exclusive")
+	}
+	return nil
 }
 
 func validateABConfig(imageMode string, disableKexec bool, cfg *ABConfig) error {

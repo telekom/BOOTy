@@ -18,6 +18,19 @@ type DiskConfig struct {
 	// Default: "" (do not select by serial)
 	SerialNumber string `yaml:"serialNumber" json:"serialNumber"`
 
+	// RootPartitionLabel selects the streamed whole-disk image root partition by
+	// GPT partition name/PARTLABEL. Use this when the image contains multiple
+	// Linux filesystem partitions and the root partition is not named "root" or "/".
+	// Mutually exclusive with RootPartitionNumber.
+	// Default: "" (auto-detect)
+	RootPartitionLabel string `yaml:"rootPartitionLabel" json:"rootPartitionLabel"`
+
+	// RootPartitionNumber selects the streamed whole-disk image root partition by
+	// 1-based partition number. Use this only when the image does not provide a
+	// stable GPT partition name/PARTLABEL. Mutually exclusive with RootPartitionLabel.
+	// Default: 0 (auto-detect)
+	RootPartitionNumber int `yaml:"rootPartitionNumber" json:"rootPartitionNumber"`
+
 	// MinSizeGB sets the minimum acceptable disk size in GiB.
 	// Disks smaller than this are rejected during auto-detection.
 	// Default: 0 (no minimum)
