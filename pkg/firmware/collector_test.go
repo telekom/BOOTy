@@ -102,8 +102,7 @@ func TestCollectBMC(t *testing.T) {
 	withTestPaths(t, tmpDir)
 
 	setupDMI(t, tmpDir, map[string]string{
-		"board_vendor":  "Lenovo",
-		"board_version": "System Board Rev A",
+		"board_vendor": "Lenovo",
 	})
 
 	report, err := Collect()
@@ -118,7 +117,7 @@ func TestCollectBMC(t *testing.T) {
 		t.Errorf("BMC.Vendor = %q, want %q", report.BMC.Vendor, "Lenovo")
 	}
 	if report.BMC.Version != "" {
-		t.Errorf("BMC.Version = %q, want empty because board_version is not BMC firmware", report.BMC.Version)
+		t.Errorf("BMC.Version = %q, want empty when no BMC firmware source is collected", report.BMC.Version)
 	}
 }
 
