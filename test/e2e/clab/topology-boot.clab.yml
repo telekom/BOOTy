@@ -66,6 +66,7 @@ topology:
     nginx:
       kind: linux
       image: nginx:alpine
+      cmd: sh -c "rm -f /var/log/nginx/access.log && touch /var/log/nginx/access.log && nginx -g 'daemon off;'"
       binds:
         - nginx.conf:/etc/nginx/nginx.conf:ro
         - html:/usr/share/nginx/html:ro
@@ -73,11 +74,11 @@ topology:
       exec:
         - ip addr add 10.100.0.10/24 dev eth1
         - ip link set dev eth1 up
-        - sh -c 'rm -f /var/log/nginx/access.log && touch /var/log/nginx/access.log && nginx -s reload'
 
     caprf-mock:
       kind: linux
       image: nginx:alpine
+      cmd: sh -c "rm -f /var/log/nginx/access.log && touch /var/log/nginx/access.log && nginx -g 'daemon off;'"
       binds:
         - caprf-mock.conf:/etc/nginx/nginx.conf:ro
         - images:/srv/images:ro
@@ -85,7 +86,6 @@ topology:
       exec:
         - ip addr add 10.100.0.11/24 dev eth1
         - ip link set dev eth1 up
-        - sh -c 'rm -f /var/log/nginx/access.log && touch /var/log/nginx/access.log && nginx -s reload'
 
     # ── BOOTy boot nodes: one per mode, all on spine's L3 underlay ────
     booty-provision:
