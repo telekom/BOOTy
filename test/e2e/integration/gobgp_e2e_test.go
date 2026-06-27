@@ -363,6 +363,29 @@ func TestGoBGPNumberedUnderlayRoute(t *testing.T) {
 	}
 }
 
+// TestGoBGPNumberedGatewayRoute verifies the gateway VTEP host route is
+// installed through the numbered BGP neighbor instead of relying on an
+// unnumbered fabric NIC.
+func TestGoBGPNumberedGatewayRoute(t *testing.T) {
+	requireGoBGPLab(t)
+	t.Cleanup(func() { dumpDebugState(t) })
+
+	waitForBGPPeer(t, "10.0.2.2")
+
+	deadline := time.Now().Add(bgpConvergeTimeout)
+	for {
+		out, _ := gobgpDockerExecRaw(t, gobgpLabNumbered, "ip", "route", "show", "10.0.0.1/32")
+		if strings.Contains(out, "10.0.0.1") && strings.Contains(out, "via 10.0.2.1") {
+			t.Log("Gateway route 10.0.0.1/32 present via numbered neighbor 10.0.2.1")
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("gateway /32 route not installed via numbered neighbor:\n%s", out)
+		}
+		time.Sleep(bgpConvergeInterval)
+	}
+}
+
 // --- Cross-mode: fabric-level connectivity ----------------------------------
 
 func TestGoBGPSpineLeafBGPEstablished(t *testing.T) {

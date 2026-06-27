@@ -20,6 +20,55 @@ type Stack struct {
 	cfg      *Config
 	log      *slog.Logger
 	gateway  *netlink.Route
+	routes   gatewayRouteOps
+}
+
+type gatewayRouteOps interface {
+	LinkByName(name string) (netlink.Link, error)
+	AddrList(link netlink.Link, family int) ([]netlink.Addr, error)
+	RouteGet(destination net.IP) ([]netlink.Route, error)
+	RouteReplace(route *netlink.Route) error
+	RouteDel(route *netlink.Route) error
+}
+
+type netlinkGatewayRouteOps struct{}
+
+func (netlinkGatewayRouteOps) LinkByName(name string) (netlink.Link, error) {
+	link, err := netlink.LinkByName(name)
+	if err != nil {
+		return nil, fmt.Errorf("link by name %s: %w", name, err)
+	}
+	return link, nil
+}
+
+func (netlinkGatewayRouteOps) AddrList(link netlink.Link, family int) ([]netlink.Addr, error) {
+	addrs, err := netlink.AddrList(link, family)
+	if err != nil {
+		return nil, fmt.Errorf("address list for %s: %w", link.Attrs().Name, err)
+	}
+	return addrs, nil
+}
+
+func (netlinkGatewayRouteOps) RouteGet(destination net.IP) ([]netlink.Route, error) {
+	routes, err := netlink.RouteGet(destination)
+	if err != nil {
+		return nil, fmt.Errorf("route get %s: %w", destination.String(), err)
+	}
+	return routes, nil
+}
+
+func (netlinkGatewayRouteOps) RouteReplace(route *netlink.Route) error {
+	if err := netlink.RouteReplace(route); err != nil {
+		return fmt.Errorf("route replace: %w", err)
+	}
+	return nil
+}
+
+func (netlinkGatewayRouteOps) RouteDel(route *netlink.Route) error {
+	if err := netlink.RouteDel(route); err != nil {
+		return fmt.Errorf("route delete: %w", err)
+	}
+	return nil
 }
 
 // NewStack creates a GoBGP stack from the given configuration.
@@ -32,6 +81,7 @@ func NewStack(cfg *Config) *Stack {
 		overlay:  overlay,
 		cfg:      cfg,
 		log:      slog.With("mode", "gobgp"),
+		routes:   netlinkGatewayRouteOps{},
 	}
 }
 
@@ -94,6 +144,10 @@ func (s *Stack) WaitForConnectivity(ctx context.Context, target string, timeout 
 		return fmt.Errorf("underlay connectivity: %w", err)
 	}
 
+	if err := s.ensureGatewayRoute(); err != nil {
+		return fmt.Errorf("gateway route: %w", err)
+	}
+
 	if target != "" {
 		s.logPollingTarget(target)
 		if err := network.WaitForHTTP(ctx, target, timeout); err != nil {
@@ -104,30 +158,28 @@ func (s *Stack) WaitForConnectivity(ctx context.Context, target string, timeout 
 	return nil
 }
 
+func (s *Stack) ensureGatewayRoute() error {
+	if s.cfg.ProvisionGateway == "" || s.gateway != nil {
+		return nil
+	}
+	return s.installGatewayRoute()
+}
+
 func (s *Stack) logPollingTarget(target string) {
 	s.log.Info("BGP established, polling target URL", "target", network.RedactHTTPURLForLog(target))
 }
 
-// installGatewayRoute adds a /32 kernel route to the gateway VTEP via a
-// physical NIC in the underlay VRF. On the point-to-point link between
-// the VM and the leaf/spine switch, the kernel will ARP for the destination
-// directly on the interface and the switch will respond (proxy-arp or
-// arp_ignore defaults to 0).
+// installGatewayRoute adds a host route to the gateway VTEP. Numbered mode
+// resolves the egress link through an already configured neighbor route; other
+// modes install a link-scope route via a fabric NIC in the underlay VRF. On
+// the point-to-point link between the VM and the leaf/spine switch, the kernel
+// will ARP for the destination directly on the interface and the switch will
+// respond (proxy-arp or arp_ignore defaults to 0).
 //
 // When a VRF is configured, the route is installed in the VRF's routing
 // table using a NIC that is enslaved to that VRF, so VXLAN outer packets
 // (sourced from the VRF) can reach the remote VTEP.
 func (s *Stack) installGatewayRoute() error {
-	if len(s.underlay.nics) == 0 {
-		return fmt.Errorf("no underlay NICs available")
-	}
-
-	nic := s.selectGatewayNIC()
-	link, err := netlink.LinkByName(nic)
-	if err != nil {
-		return fmt.Errorf("find NIC %s: %w", nic, err)
-	}
-
 	gwIP := net.ParseIP(s.cfg.ProvisionGateway)
 	if gwIP == nil {
 		return fmt.Errorf("invalid gateway IP %q", s.cfg.ProvisionGateway)
@@ -136,6 +188,20 @@ func (s *Stack) installGatewayRoute() error {
 	maskBits := 32
 	if gwIP.To4() == nil {
 		maskBits = 128
+	}
+
+	if s.cfg.PeerMode == network.PeerModeNumbered {
+		return s.installNumberedGatewayRoute(gwIP, maskBits)
+	}
+
+	if len(s.underlay.nics) == 0 {
+		return fmt.Errorf("no underlay NICs available")
+	}
+
+	nic := s.selectGatewayNIC()
+	link, err := s.gatewayRoutes().LinkByName(nic)
+	if err != nil {
+		return fmt.Errorf("find NIC %s: %w", nic, err)
 	}
 
 	route := &netlink.Route{
@@ -150,13 +216,72 @@ func (s *Stack) installGatewayRoute() error {
 		route.Table = int(s.overlay.cfg.VRFTableID)
 	}
 
-	if err := netlink.RouteReplace(route); err != nil {
+	if err := s.gatewayRoutes().RouteReplace(route); err != nil {
 		return fmt.Errorf("replace route to %s via %s: %w", s.cfg.ProvisionGateway, nic, err)
 	}
 	s.gateway = route
 
-	s.log.Info("Installed gateway VTEP route", "gateway", s.cfg.ProvisionGateway, "nic", nic)
+	s.log.Info("installed gateway VTEP route", "gateway", s.cfg.ProvisionGateway, "nic", nic)
 	return nil
+}
+
+func (s *Stack) installNumberedGatewayRoute(gwIP net.IP, maskBits int) error {
+	var lastErr error
+	for _, addr := range s.cfg.NeighborAddrs {
+		neighbor := net.ParseIP(addr)
+		if neighbor == nil {
+			continue
+		}
+		if !sameIPFamily(gwIP, neighbor) {
+			lastErr = fmt.Errorf("neighbor %s address family does not match gateway %s", addr, s.cfg.ProvisionGateway)
+			continue
+		}
+		egress, err := s.gatewayRoutes().RouteGet(neighbor)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		for i := range egress {
+			route := &egress[i]
+			if route.LinkIndex == 0 {
+				continue
+			}
+			gatewayRoute := &netlink.Route{
+				Dst:       &net.IPNet{IP: gwIP, Mask: net.CIDRMask(maskBits, maskBits)},
+				LinkIndex: route.LinkIndex,
+			}
+			if s.overlay.cfg.VRFName != "" {
+				gatewayRoute.Table = int(s.overlay.cfg.VRFTableID)
+			}
+			switch {
+			case route.Gw != nil:
+				gatewayRoute.Gw = route.Gw
+			case neighbor.Equal(gwIP):
+				gatewayRoute.Scope = netlink.SCOPE_LINK
+			default:
+				gatewayRoute.Gw = neighbor
+			}
+			if err := s.gatewayRoutes().RouteReplace(gatewayRoute); err != nil {
+				return fmt.Errorf("replace numbered route to %s via %s: %w", s.cfg.ProvisionGateway, addr, err)
+			}
+			s.gateway = gatewayRoute
+			s.log.Info("installed numbered gateway VTEP route",
+				"gateway", s.cfg.ProvisionGateway,
+				"neighbor", addr,
+				"linkIndex", route.LinkIndex,
+			)
+			return nil
+		}
+		lastErr = fmt.Errorf("route to neighbor %s has no link index", addr)
+	}
+	if lastErr != nil {
+		return fmt.Errorf("resolve numbered gateway egress: %w", lastErr)
+	}
+	return fmt.Errorf("no usable BGP neighbors for numbered gateway route")
+}
+
+func sameIPFamily(a, b net.IP) bool {
+	return (a.To4() == nil) == (b.To4() == nil)
 }
 
 // selectGatewayNIC picks the NIC to use for the gateway route. When a VRF
@@ -168,11 +293,11 @@ func (s *Stack) installGatewayRoute() error {
 func (s *Stack) selectGatewayNIC() string {
 	if s.overlay.cfg.VRFName == "" {
 		for _, nic := range s.underlay.nics {
-			link, err := netlink.LinkByName(nic)
+			link, err := s.gatewayRoutes().LinkByName(nic)
 			if err != nil {
 				continue
 			}
-			addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
+			addrs, err := s.gatewayRoutes().AddrList(link, netlink.FAMILY_V4)
 			if err != nil {
 				continue
 			}
@@ -183,14 +308,14 @@ func (s *Stack) selectGatewayNIC() string {
 		return s.underlay.nics[0]
 	}
 
-	vrfLink, err := netlink.LinkByName(s.overlay.cfg.VRFName)
+	vrfLink, err := s.gatewayRoutes().LinkByName(s.overlay.cfg.VRFName)
 	if err != nil {
 		return s.underlay.nics[0]
 	}
 	vrfIdx := vrfLink.Attrs().Index
 
 	for _, nic := range s.underlay.nics {
-		link, err := netlink.LinkByName(nic)
+		link, err := s.gatewayRoutes().LinkByName(nic)
 		if err != nil {
 			continue
 		}
@@ -206,10 +331,17 @@ func (s *Stack) teardownGatewayRoute() {
 	if s.gateway == nil {
 		return
 	}
-	if err := netlink.RouteDel(s.gateway); err != nil {
+	if err := s.gatewayRoutes().RouteDel(s.gateway); err != nil {
 		s.log.Debug("failed to delete gateway VTEP route", "gateway", s.cfg.ProvisionGateway, "error", err)
 	}
 	s.gateway = nil
+}
+
+func (s *Stack) gatewayRoutes() gatewayRouteOps {
+	if s.routes != nil {
+		return s.routes
+	}
+	return netlinkGatewayRouteOps{}
 }
 
 // cleanupVRF removes VRF links created by the overlay tier.
