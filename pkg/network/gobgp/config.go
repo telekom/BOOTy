@@ -234,6 +234,14 @@ func (c *Config) validateProvisioning() error {
 	if c.ProvisionVNI == 0 || c.ProvisionVNI > 16777215 {
 		return fmt.Errorf("ProvisionVNI %d out of range (must be 1..16777215)", c.ProvisionVNI)
 	}
+	if overlayType, err := ParseOverlayType(c.OverlayType); err == nil && overlayType == OverlayEVPNVXLAN {
+		if c.ProvisionGateway == "" {
+			return fmt.Errorf("provision gateway is required for GoBGP VXLAN data plane")
+		}
+		if ip := net.ParseIP(c.ProvisionGateway); ip == nil || ip.To4() == nil {
+			return fmt.Errorf("provision gateway %q must be a valid IPv4 address", c.ProvisionGateway)
+		}
+	}
 
 	// 4-octet ASN RD/RT format can only encode 16-bit VNI values.
 	if c.ASN > 65535 && c.ProvisionVNI > 65535 {

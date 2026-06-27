@@ -142,6 +142,7 @@ func TestSetupNetworkModeExplicitGoBGPFailsClosed(t *testing.T) {
 	cfg.Network.BGP.UnderlayAF = "invalid"
 	cfg.Network.EVPN.UnderlayIP = "10.0.0.1"
 	cfg.Network.EVPN.ProvisionVNI = 4000
+	cfg.Network.EVPN.ProvisionGateway = "10.0.0.254"
 
 	mode, err := setupNetworkMode(context.Background(), cfg)
 	if err == nil {

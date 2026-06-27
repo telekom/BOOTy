@@ -207,6 +207,9 @@ func TestNewConfig(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.netCfg.ProvisionGateway == "" {
+				tt.netCfg.ProvisionGateway = testProvisionGateway
+			}
 			cfg, err := NewConfig(tt.netCfg)
 			if tt.wantErr {
 				if err == nil {
@@ -221,6 +224,54 @@ func TestNewConfig(t *testing.T) {
 				tt.check(t, cfg)
 			}
 		})
+	}
+}
+
+func TestNewConfigRejectsMissingProvisionGateway(t *testing.T) {
+	_, err := NewConfig(&network.Config{
+		UnderlayIP:   "10.0.0.1",
+		ASN:          65000,
+		ProvisionVNI: 4000,
+		BGPPeerMode:  network.PeerModeUnnumbered,
+	})
+	if err == nil {
+		t.Fatal("expected error for missing provision gateway")
+	}
+	if !strings.Contains(err.Error(), "provision gateway") {
+		t.Fatalf("expected provision gateway error, got %v", err)
+	}
+}
+
+func TestNewConfigAllowsMissingProvisionGatewayWhenOverlayDisabled(t *testing.T) {
+	_, err := NewConfig(&network.Config{
+		UnderlayIP:     "10.0.0.1",
+		ASN:            65000,
+		ProvisionVNI:   4000,
+		BGPPeerMode:    network.PeerModeUnnumbered,
+		BGPOverlayType: string(OverlayNone),
+	})
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+}
+
+func TestNewConfigRejectsInvalidProvisionGateway(t *testing.T) {
+	_, err := NewConfig(&network.Config{
+		UnderlayIP:        "10.0.0.1",
+		ASN:               65000,
+		ProvisionVNI:      4000,
+		ProvisionGateway:  "fd00::1",
+		BGPPeerMode:       network.PeerModeUnnumbered,
+		BGPMinPeers:       1,
+		BGPOverlayType:    string(OverlayEVPNVXLAN),
+		BGPUnderlayAF:     "ipv4",
+		OverlayVRFTableID: 1000,
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid provision gateway")
+	}
+	if !strings.Contains(err.Error(), "valid IPv4") {
+		t.Fatalf("expected IPv4 gateway error, got %v", err)
 	}
 }
 
@@ -399,7 +450,14 @@ func TestValidateRequiresRouterID(t *testing.T) {
 }
 
 func TestValidateAcceptsValid(t *testing.T) {
-	cfg := &Config{ASN: 65000, RouterID: "10.0.0.1", PeerMode: network.PeerModeUnnumbered, ProvisionVNI: 100, MinEstablishedPeers: 1}
+	cfg := &Config{
+		ASN:                 65000,
+		RouterID:            "10.0.0.1",
+		PeerMode:            network.PeerModeUnnumbered,
+		ProvisionVNI:        100,
+		ProvisionGateway:    testProvisionGateway,
+		MinEstablishedPeers: 1,
+	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -430,6 +488,7 @@ func TestValidatePeerModeUnnumbered(t *testing.T) {
 		RouterID:            "10.0.0.1",
 		PeerMode:            network.PeerModeUnnumbered,
 		ProvisionVNI:        100,
+		ProvisionGateway:    testProvisionGateway,
 		MinEstablishedPeers: 1,
 	}
 	if err := cfg.Validate(); err != nil {
@@ -466,6 +525,7 @@ func TestValidatePeerModeDualWithNeighbors(t *testing.T) {
 		PeerMode:            network.PeerModeDual,
 		NeighborAddrs:       []string{"10.0.0.100", "10.0.0.101"},
 		ProvisionVNI:        100,
+		ProvisionGateway:    testProvisionGateway,
 		MinEstablishedPeers: 1,
 	}
 	if err := cfg.Validate(); err != nil {
@@ -481,6 +541,7 @@ func TestValidatePeerModeNumberedWithNeighbors(t *testing.T) {
 		NeighborAddrs:       []string{"10.0.0.50"},
 		RemoteASN:           65001,
 		ProvisionVNI:        100,
+		ProvisionGateway:    testProvisionGateway,
 		MinEstablishedPeers: 1,
 	}
 	if err := cfg.Validate(); err != nil {
@@ -513,11 +574,12 @@ func TestValidateRejectsUnknownPeerMode(t *testing.T) {
 
 func TestValidateRejectsUnsupportedOverlayType(t *testing.T) {
 	cfg := &Config{
-		ASN:          65000,
-		RouterID:     "10.0.0.1",
-		PeerMode:     network.PeerModeUnnumbered,
-		ProvisionVNI: 100,
-		OverlayType:  string(OverlayL3VPN),
+		ASN:              65000,
+		RouterID:         "10.0.0.1",
+		PeerMode:         network.PeerModeUnnumbered,
+		ProvisionVNI:     100,
+		ProvisionGateway: testProvisionGateway,
+		OverlayType:      string(OverlayL3VPN),
 	}
 	err := cfg.Validate()
 	if err == nil {
@@ -536,7 +598,14 @@ func TestValidateRejectsHoldTimeLessThan3(t *testing.T) {
 }
 
 func TestValidateAcceptsHoldTimeZero(t *testing.T) {
-	cfg := &Config{ASN: 65000, RouterID: "10.0.0.1", PeerMode: network.PeerModeUnnumbered, ProvisionVNI: 100, HoldTime: 0}
+	cfg := &Config{
+		ASN:              65000,
+		RouterID:         "10.0.0.1",
+		PeerMode:         network.PeerModeUnnumbered,
+		ProvisionVNI:     100,
+		ProvisionGateway: testProvisionGateway,
+		HoldTime:         0,
+	}
 	cfg.ApplyDefaults()
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("HoldTime 0 (defaulted) should pass: %v", err)
@@ -632,6 +701,7 @@ func TestValidateAcceptsMinEstablishedPeersGreaterThanOne(t *testing.T) {
 		RouterID:            "10.0.0.1",
 		PeerMode:            network.PeerModeUnnumbered,
 		ProvisionVNI:        100,
+		ProvisionGateway:    testProvisionGateway,
 		MinEstablishedPeers: 2,
 	}
 	if err := cfg.Validate(); err != nil {
@@ -641,11 +711,12 @@ func TestValidateAcceptsMinEstablishedPeersGreaterThanOne(t *testing.T) {
 
 func TestNewConfigMapsMinEstablishedPeers(t *testing.T) {
 	netCfg := &network.Config{
-		UnderlayIP:   "10.0.0.1",
-		ASN:          65000,
-		ProvisionVNI: 4000,
-		BGPPeerMode:  network.PeerModeUnnumbered,
-		BGPMinPeers:  2,
+		UnderlayIP:       "10.0.0.1",
+		ASN:              65000,
+		ProvisionVNI:     4000,
+		ProvisionGateway: testProvisionGateway,
+		BGPPeerMode:      network.PeerModeUnnumbered,
+		BGPMinPeers:      2,
 	}
 	cfg, err := NewConfig(netCfg)
 	if err != nil {
@@ -658,11 +729,12 @@ func TestNewConfigMapsMinEstablishedPeers(t *testing.T) {
 
 func TestNewConfigMapsBGPInterfaces(t *testing.T) {
 	netCfg := &network.Config{
-		UnderlayIP:    "10.0.0.1",
-		ASN:           65000,
-		ProvisionVNI:  4000,
-		BGPPeerMode:   network.PeerModeUnnumbered,
-		BGPInterfaces: "eth1, eth2",
+		UnderlayIP:       "10.0.0.1",
+		ASN:              65000,
+		ProvisionVNI:     4000,
+		ProvisionGateway: testProvisionGateway,
+		BGPPeerMode:      network.PeerModeUnnumbered,
+		BGPInterfaces:    "eth1, eth2",
 	}
 	cfg, err := NewConfig(netCfg)
 	if err != nil {
@@ -675,10 +747,11 @@ func TestNewConfigMapsBGPInterfaces(t *testing.T) {
 
 func TestNewConfigDefaultsMinEstablishedPeersToOne(t *testing.T) {
 	netCfg := &network.Config{
-		UnderlayIP:   "10.0.0.1",
-		ASN:          65000,
-		ProvisionVNI: 4000,
-		BGPPeerMode:  network.PeerModeUnnumbered,
+		UnderlayIP:       "10.0.0.1",
+		ASN:              65000,
+		ProvisionVNI:     4000,
+		ProvisionGateway: testProvisionGateway,
+		BGPPeerMode:      network.PeerModeUnnumbered,
 	}
 	cfg, err := NewConfig(netCfg)
 	if err != nil {
