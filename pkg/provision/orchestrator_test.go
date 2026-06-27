@@ -1733,6 +1733,26 @@ func TestParsePartitionsUsesConfiguredRootPartitionLabel(t *testing.T) {
 	}
 }
 
+func TestParsePartitionsRejectsAmbiguousConfiguredRootPartitionLabel(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RootPartitionLabel = "ubuntu-root"
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	cmd.setResult("sfdisk --json", sfdiskJSON(t, []disk.Partition{
+		{Node: "/dev/sda1", Type: disk.EFISystemPartitionGUID, Name: "EFI"},
+		{Node: "/dev/sda2", Type: disk.LinuxFilesystemGUID, Name: "ubuntu-root"},
+		{Node: "/dev/sda3", Type: disk.LinuxFilesystemGUID, Name: "ubuntu-root"},
+	}), nil)
+
+	err := o.parsePartitions(context.Background())
+	if err == nil {
+		t.Fatal("expected ambiguous root label error")
+	}
+	if !strings.Contains(err.Error(), `root partition label "ubuntu-root" matched 2 Linux partitions`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestParsePartitionsRejectsMissingConfiguredRootPartitionLabel(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Disk.RootPartitionLabel = "missing-root"

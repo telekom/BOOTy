@@ -1315,6 +1315,8 @@ func (o *Orchestrator) findRootPartition(parts []disk.Partition) (*disk.Partitio
 }
 
 func findRootPartitionByLabel(parts []disk.Partition, label string) (*disk.Partition, error) {
+	var candidate *disk.Partition
+	matches := 0
 	for i := range parts {
 		if !strings.EqualFold(strings.TrimSpace(parts[i].Name), label) {
 			continue
@@ -1322,7 +1324,14 @@ func findRootPartitionByLabel(parts []disk.Partition, label string) (*disk.Parti
 		if !isLinuxRootPartition(parts[i]) {
 			return nil, fmt.Errorf("root partition label %q matched %s with non-Linux partition type %q", label, parts[i].Node, parts[i].Type)
 		}
-		return &parts[i], nil
+		candidate = &parts[i]
+		matches++
+	}
+	if matches > 1 {
+		return nil, fmt.Errorf("root partition label %q matched %d Linux partitions; set provision.disk.rootPartitionNumber to disambiguate", label, matches)
+	}
+	if candidate != nil {
+		return candidate, nil
 	}
 	return nil, fmt.Errorf("root partition label %q not found", label)
 }
