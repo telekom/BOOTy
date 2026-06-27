@@ -2,7 +2,10 @@
 
 package realm
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestDefaultDevices(t *testing.T) {
 	d := DefaultDevices()
@@ -74,8 +77,6 @@ func TestCreateDeviceNoDevicesToCreate(t *testing.T) {
 }
 
 func TestCreateDeviceWithMknodFailure(t *testing.T) {
-	// Even with CreateDevice=true and an invalid path, the function logs
-	// but still returns nil.
 	d := &Devices{
 		Device: []Device{
 			{
@@ -88,13 +89,17 @@ func TestCreateDeviceWithMknodFailure(t *testing.T) {
 			},
 		},
 	}
-	if err := d.CreateDevice(); err != nil {
-		t.Fatalf("CreateDevice() error: %v", err)
+	err := d.CreateDevice()
+	if err == nil {
+		t.Fatal("CreateDevice() error = nil, want mknod failure")
+	}
+	if !strings.Contains(err.Error(), `create device "test"`) ||
+		!strings.Contains(err.Error(), "/nonexistent/path/testdev") {
+		t.Fatalf("CreateDevice() error = %q, want device context", err.Error())
 	}
 }
 
 func TestCreateDeviceMixed(t *testing.T) {
-	// Mix of CreateDevice=true and false.
 	d := &Devices{
 		Device: []Device{
 			{CreateDevice: false, Name: "skip-this"},
@@ -102,8 +107,12 @@ func TestCreateDeviceMixed(t *testing.T) {
 			{CreateDevice: false, Name: "skip-also"},
 		},
 	}
-	if err := d.CreateDevice(); err != nil {
-		t.Fatalf("CreateDevice() error: %v", err)
+	err := d.CreateDevice()
+	if err == nil {
+		t.Fatal("CreateDevice() error = nil, want mknod failure")
+	}
+	if !strings.Contains(err.Error(), `create device "try-this"`) {
+		t.Fatalf("CreateDevice() error = %q, want try-this context", err.Error())
 	}
 }
 
