@@ -152,5 +152,5 @@ func (o *Orchestrator) softDeprovision(ctx context.Context) error {
 }
 
 func (o *Orchestrator) reportDeprovisionSuccess(ctx context.Context) error {
-	return o.provider.ReportStatus(ctx, config.StatusSuccess, "deprovisioning complete")
+	return o.reportTerminalSuccess(ctx, "deprovisioning", "deprovisioning complete")
 }

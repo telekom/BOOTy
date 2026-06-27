@@ -2050,7 +2050,14 @@ func (o *Orchestrator) logHealthCheckResults(results []health.CheckResult) {
 }
 
 func (o *Orchestrator) reportSuccess(ctx context.Context) error {
-	return o.provider.ReportStatus(ctx, config.StatusSuccess, successStatusMessage(o.cfg))
+	return o.reportTerminalSuccess(ctx, "provisioning", successStatusMessage(o.cfg))
+}
+
+func (o *Orchestrator) reportTerminalSuccess(ctx context.Context, operation, message string) error {
+	if err := o.provider.ReportStatus(ctx, config.StatusSuccess, message); err != nil {
+		o.log.Warn("failed to report terminal success status", "operation", operation, "error", err)
+	}
+	return nil
 }
 
 func successStatusMessage(cfg *config.MachineConfig) string {
