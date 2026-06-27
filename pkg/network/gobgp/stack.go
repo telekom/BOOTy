@@ -26,7 +26,7 @@ type Stack struct {
 type gatewayRouteOps interface {
 	LinkByName(name string) (netlink.Link, error)
 	AddrList(link netlink.Link, family int) ([]netlink.Addr, error)
-	RouteGet(destination net.IP) ([]netlink.Route, error)
+	RouteGet(destination net.IP, options *netlink.RouteGetOptions) ([]netlink.Route, error)
 	RouteReplace(route *netlink.Route) error
 	RouteDel(route *netlink.Route) error
 }
@@ -49,8 +49,8 @@ func (netlinkGatewayRouteOps) AddrList(link netlink.Link, family int) ([]netlink
 	return addrs, nil
 }
 
-func (netlinkGatewayRouteOps) RouteGet(destination net.IP) ([]netlink.Route, error) {
-	routes, err := netlink.RouteGet(destination)
+func (netlinkGatewayRouteOps) RouteGet(destination net.IP, options *netlink.RouteGetOptions) ([]netlink.Route, error) {
+	routes, err := netlink.RouteGetWithOptions(destination, options)
 	if err != nil {
 		return nil, fmt.Errorf("route get %s: %w", destination.String(), err)
 	}
@@ -125,14 +125,18 @@ func (s *Stack) Setup(ctx context.Context, _ *network.Config) error {
 	// Install a kernel route to the gateway VTEP so VXLAN outer packets
 	// can reach the spine switch. GoBGP does not install received BGP
 	// routes into the kernel FIB, so this explicit route is required.
-	if s.cfg.ProvisionGateway != "" {
+	if s.shouldInstallGatewayRouteDuringSetup() {
 		if err := s.installGatewayRoute(); err != nil {
-			s.log.Warn("Failed to install gateway route", "error", err)
+			s.log.Warn("failed to install gateway route", "error", err)
 		}
 	}
 
 	s.log.Info("GoBGP network stack ready")
 	return nil
+}
+
+func (s *Stack) shouldInstallGatewayRouteDuringSetup() bool {
+	return s.cfg.ProvisionGateway != "" && s.cfg.PeerMode != network.PeerModeNumbered
 }
 
 // WaitForConnectivity waits for BGP to establish and then polls the target
@@ -160,6 +164,12 @@ func (s *Stack) WaitForConnectivity(ctx context.Context, target string, timeout 
 
 func (s *Stack) ensureGatewayRoute() error {
 	if s.cfg.ProvisionGateway == "" || s.gateway != nil {
+		return nil
+	}
+	if s.cfg.PeerMode != network.PeerModeNumbered {
+		if err := s.installGatewayRoute(); err != nil {
+			s.log.Warn("failed to install gateway route", "error", err)
+		}
 		return nil
 	}
 	return s.installGatewayRoute()
@@ -236,30 +246,21 @@ func (s *Stack) installNumberedGatewayRoute(gwIP net.IP, maskBits int) error {
 			lastErr = fmt.Errorf("neighbor %s address family does not match gateway %s", addr, s.cfg.ProvisionGateway)
 			continue
 		}
-		egress, err := s.gatewayRoutes().RouteGet(neighbor)
+		egress, err := s.gatewayRoutes().RouteGet(neighbor, s.numberedGatewayRouteGetOptions())
 		if err != nil {
 			lastErr = err
 			continue
 		}
+		foundLink := false
 		for i := range egress {
-			route := &egress[i]
-			if route.LinkIndex == 0 {
+			gatewayRoute, hasLink, err := s.numberedGatewayRoute(gwIP, maskBits, neighbor, &egress[i])
+			if !hasLink {
 				continue
 			}
-			gatewayRoute := &netlink.Route{
-				Dst:       &net.IPNet{IP: gwIP, Mask: net.CIDRMask(maskBits, maskBits)},
-				LinkIndex: route.LinkIndex,
-			}
-			if s.overlay.cfg.VRFName != "" {
-				gatewayRoute.Table = int(s.overlay.cfg.VRFTableID)
-			}
-			switch {
-			case route.Gw != nil:
-				gatewayRoute.Gw = route.Gw
-			case neighbor.Equal(gwIP):
-				gatewayRoute.Scope = netlink.SCOPE_LINK
-			default:
-				gatewayRoute.Gw = neighbor
+			foundLink = true
+			if err != nil {
+				lastErr = err
+				continue
 			}
 			if err := s.gatewayRoutes().RouteReplace(gatewayRoute); err != nil {
 				return fmt.Errorf("replace numbered route to %s via %s: %w", s.cfg.ProvisionGateway, addr, err)
@@ -268,16 +269,52 @@ func (s *Stack) installNumberedGatewayRoute(gwIP net.IP, maskBits int) error {
 			s.log.Info("installed numbered gateway VTEP route",
 				"gateway", s.cfg.ProvisionGateway,
 				"neighbor", addr,
-				"linkIndex", route.LinkIndex,
+				"linkIndex", gatewayRoute.LinkIndex,
 			)
 			return nil
 		}
-		lastErr = fmt.Errorf("route to neighbor %s has no link index", addr)
+		if !foundLink {
+			lastErr = fmt.Errorf("route to neighbor %s has no link index", addr)
+		}
 	}
 	if lastErr != nil {
 		return fmt.Errorf("resolve numbered gateway egress: %w", lastErr)
 	}
 	return fmt.Errorf("no usable BGP neighbors for numbered gateway route")
+}
+
+func (s *Stack) numberedGatewayRouteGetOptions() *netlink.RouteGetOptions {
+	if s.overlay.cfg.VRFName == "" {
+		return nil
+	}
+	return &netlink.RouteGetOptions{VrfName: s.overlay.cfg.VRFName}
+}
+
+func (s *Stack) numberedGatewayRoute(gwIP net.IP, maskBits int, neighbor net.IP, route *netlink.Route) (*netlink.Route, bool, error) {
+	if route.LinkIndex == 0 {
+		return nil, false, nil
+	}
+	gatewayRoute := &netlink.Route{
+		Dst:       &net.IPNet{IP: gwIP, Mask: net.CIDRMask(maskBits, maskBits)},
+		LinkIndex: route.LinkIndex,
+	}
+	if route.Table != 0 {
+		gatewayRoute.Table = route.Table
+	} else if s.overlay.cfg.VRFName != "" {
+		gatewayRoute.Table = int(s.overlay.cfg.VRFTableID)
+	}
+	switch {
+	case route.Gw != nil:
+		if !sameIPFamily(gwIP, route.Gw) {
+			return nil, true, fmt.Errorf("egress gateway %s address family does not match gateway %s", route.Gw.String(), s.cfg.ProvisionGateway)
+		}
+		gatewayRoute.Gw = route.Gw
+	case neighbor.Equal(gwIP):
+		gatewayRoute.Scope = netlink.SCOPE_LINK
+	default:
+		gatewayRoute.Gw = neighbor
+	}
+	return gatewayRoute, true, nil
 }
 
 func sameIPFamily(a, b net.IP) bool {

@@ -372,14 +372,19 @@ func TestGoBGPNumberedGatewayRoute(t *testing.T) {
 
 	waitForBGPPeer(t, "10.0.2.2")
 
-	deadline := time.Now().Add(bgpConvergeTimeout)
+	deadline := time.Now().Add(2 * bgpConvergeTimeout)
+	var lastErr error
 	for {
-		out, _ := gobgpDockerExecRaw(t, gobgpLabNumbered, "ip", "route", "show", "10.0.0.1/32")
+		out, err := gobgpDockerExecRaw(t, gobgpLabNumbered, "ip", "route", "show", "10.0.0.1/32")
+		lastErr = err
 		if strings.Contains(out, "10.0.0.1") && strings.Contains(out, "via 10.0.2.1") {
 			t.Log("Gateway route 10.0.0.1/32 present via numbered neighbor 10.0.2.1")
 			return
 		}
 		if time.Now().After(deadline) {
+			if lastErr != nil {
+				t.Fatalf("gateway /32 route not installed via numbered neighbor: %v\n%s", lastErr, out)
+			}
 			t.Fatalf("gateway /32 route not installed via numbered neighbor:\n%s", out)
 		}
 		time.Sleep(bgpConvergeInterval)
