@@ -259,7 +259,7 @@ export ERROR_URL="http://caprf:8080/status/error"
 export LOG_URL="http://caprf:8080/log"
 
 # JWT authentication (optional — omit for static bearer token)
-export TOKEN_URL="http://caprf:8080/auth/token"  # JWT token endpoint
+export TOKEN_URL="https://caprf.example.com/auth/token"  # JWT token endpoint
 export TOKEN_ALGORITHM="RS256"                    # RS256 or ES256
 # When TOKEN_URL is set, JWT acquisition/renewal failures are treated as fatal
 # and BOOTy reboots to avoid running with stale credentials.
@@ -696,8 +696,8 @@ BOOTy supports JWT-based authentication with the CAPRF controller. Set
 `TOKEN_URL` to enable automatic token acquisition and background renewal:
 
 ```bash
-export TOKEN="bootstrap-token"                    # Initial bootstrap token
-export TOKEN_URL="http://caprf:8080/auth/token"   # JWT token endpoint
+export TOKEN="bootstrap-token"                         # Initial bootstrap token
+export TOKEN_URL="https://caprf.example.com/auth/token" # JWT token endpoint
 export TOKEN_ALGORITHM="RS256"                    # Optional: RS256 (default) or ES256
 ```
 
