@@ -2,8 +2,10 @@ package image
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -104,6 +106,85 @@ func TestVerifyGPGSignatureRedactsURLsInErrors(t *testing.T) {
 	}
 	if !strings.Contains(msg, ts.URL+"/sig") {
 		t.Fatalf("error did not preserve redacted signature URL context: %s", msg)
+	}
+}
+
+func TestDownloadToTempTransportErrorRedactsURL(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("sig-data"))
+	}))
+	rawURL := sensitiveTestURL(t, ts.URL, "/sig")
+	ts.Close()
+
+	_, err := downloadToTemp(context.Background(), rawURL, "gpg-test-*")
+	if err == nil {
+		t.Fatal("expected signature download transport error")
+	}
+	assertNoSensitiveURLParts(t, err.Error())
+	assertPreservesURLError(t, err)
+	if !strings.Contains(err.Error(), "/sig") {
+		t.Fatalf("error did not preserve redacted signature path context: %s", err)
+	}
+}
+
+func TestVerifyGPGSignatureImageTransportErrorRedactsURL(t *testing.T) {
+	sigServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("sig-data"))
+	}))
+	defer sigServer.Close()
+
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("image-data"))
+	}))
+	imageURL := sensitiveTestURL(t, imageServer.URL, "/image.raw")
+	imageServer.Close()
+
+	tmpKey := t.TempDir() + "/key.gpg"
+	if err := os.WriteFile(tmpKey, []byte("fake-key"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := VerifyGPGSignature(context.Background(), imageURL, sigServer.URL+"/sig", tmpKey)
+	if err == nil {
+		t.Fatal("expected image stream transport error")
+	}
+	assertNoSensitiveURLParts(t, err.Error())
+	assertPreservesURLError(t, err)
+	if !strings.Contains(err.Error(), "/image.raw") {
+		t.Fatalf("error did not preserve redacted image path context: %s", err)
+	}
+}
+
+func sensitiveTestURL(t *testing.T, baseURL, path string) string {
+	t.Helper()
+
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		t.Fatalf("parse test URL: %v", err)
+	}
+	u.Path = path
+	u.User = url.UserPassword("robot", "secret")
+	u.RawQuery = "token=abc"
+	u.Fragment = "frag"
+	return u.String()
+}
+
+func assertNoSensitiveURLParts(t *testing.T, msg string) {
+	t.Helper()
+
+	for _, sensitive := range []string{"robot", "secret", "token=abc", "frag"} {
+		if strings.Contains(msg, sensitive) {
+			t.Fatalf("error leaked %q: %s", sensitive, msg)
+		}
+	}
+}
+
+func assertPreservesURLError(t *testing.T, err error) {
+	t.Helper()
+
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) {
+		t.Fatalf("error chain did not preserve *url.Error: %v", err)
 	}
 }
 
