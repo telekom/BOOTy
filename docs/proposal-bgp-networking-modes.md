@@ -273,6 +273,10 @@ export BGP_GRACEFUL_RESTART="true"
 export BGP_RESTART_TIME="120"
 ```
 
+Current GoBGP runtime status: policy structs and community parsing exist, but
+import/export policy is not yet applied to GoBGP sessions. BFD settings are
+FRR-only; GoBGP uses keepalive and hold timers for failure detection.
+
 ## Files Changed
 
 | File | Change |
