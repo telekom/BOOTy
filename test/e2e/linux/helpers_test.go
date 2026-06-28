@@ -1,4 +1,4 @@
-//go:build linux_e2e
+//go:build linux && linux_e2e
 
 // Package linux contains Linux-specific E2E tests that require root access.
 // These tests exercise real disk, filesystem, and mount operations using
