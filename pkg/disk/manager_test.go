@@ -721,6 +721,70 @@ func TestChrootRunCommandError(t *testing.T) {
 	}
 }
 
+func TestMountedSubpathsFromRejectsUnsafeRoots(t *testing.T) {
+	for _, root := range []string{"", "/", "relative"} {
+		t.Run(root, func(t *testing.T) {
+			if _, err := mountedSubpathsFrom(root, []byte("dev /newroot ext4 rw 0 0\n")); err == nil {
+				t.Fatal("mountedSubpathsFrom() error = nil, want unsafe-root error")
+			}
+		})
+	}
+}
+
+func TestMountedSubpathsFromScopesAndSortsDeepestFirst(t *testing.T) {
+	data := []byte(strings.Join([]string{
+		"rootfs / rootfs rw 0 0",
+		"dev /newroot ext4 rw 0 0",
+		"proc /newroot/proc proc rw 0 0",
+		"sys /newroot/proc/sys sysfs rw 0 0",
+		"other /newroot-old ext4 rw 0 0",
+		"",
+	}, "\n"))
+
+	got, err := mountedSubpathsFrom("/newroot/", data)
+	if err != nil {
+		t.Fatalf("mountedSubpathsFrom() error = %v", err)
+	}
+	want := []string{"/newroot/proc/sys", "/newroot/proc", "/newroot"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("targets = %v, want %v", got, want)
+	}
+}
+
+func TestUnmountRecursiveIgnoresDisappearingMounts(t *testing.T) {
+	oldUnmount := unmountFunc
+	oldReadMounts := readMountsFile
+	t.Cleanup(func() {
+		unmountFunc = oldUnmount
+		readMountsFile = oldReadMounts
+	})
+
+	readMountsFile = func(string) ([]byte, error) {
+		return []byte(strings.Join([]string{
+			"dev /newroot ext4 rw 0 0",
+			"proc /newroot/proc proc rw 0 0",
+			"",
+		}, "\n")), nil
+	}
+	var targets []string
+	unmountFunc = func(target string, _ int) error {
+		targets = append(targets, target)
+		if target == "/newroot/proc" {
+			return syscall.EINVAL
+		}
+		return syscall.ENOENT
+	}
+
+	mgr := NewManager(newMockCommander())
+	if err := mgr.UnmountRecursive("/newroot"); err != nil {
+		t.Fatalf("UnmountRecursive() error = %v, want disappearing mounts ignored", err)
+	}
+	want := []string{"/newroot/proc", "/newroot"}
+	if strings.Join(targets, ",") != strings.Join(want, ",") {
+		t.Fatalf("unmounted = %v, want %v", targets, want)
+	}
+}
+
 func TestChrootRunFallbackOnNotFound(t *testing.T) {
 	cmd := newMockCommander()
 	mgr := NewManager(cmd)

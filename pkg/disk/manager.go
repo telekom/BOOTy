@@ -34,6 +34,7 @@ var (
 	mountFunc        = syscall.Mount
 	unmountFunc      = syscall.Unmount
 	isMountPointFunc = isMountPoint
+	readMountsFile   = os.ReadFile
 )
 
 // Manager handles disk operations for provisioning.
@@ -1007,6 +1008,9 @@ func (m *Manager) UnmountRecursive(root string) error {
 	var errs []error
 	for _, target := range targets {
 		if err := m.Unmount(target); err != nil {
+			if errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOENT) {
+				continue
+			}
 			errs = append(errs, err)
 		}
 	}
@@ -1014,11 +1018,18 @@ func (m *Manager) UnmountRecursive(root string) error {
 }
 
 func mountedSubpaths(root string) ([]string, error) {
-	data, err := os.ReadFile("/proc/mounts")
+	data, err := readMountsFile("/proc/mounts")
 	if err != nil {
 		return nil, fmt.Errorf("read mounts: %w", err)
 	}
-	root = strings.TrimRight(root, "/")
+	return mountedSubpathsFrom(root, data)
+}
+
+func mountedSubpathsFrom(root string, data []byte) ([]string, error) {
+	root = filepath.Clean(strings.TrimSpace(root))
+	if root == "." || root == string(os.PathSeparator) || !filepath.IsAbs(root) {
+		return nil, fmt.Errorf("refusing unsafe recursive unmount root %q", root)
+	}
 	seen := map[string]struct{}{}
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)

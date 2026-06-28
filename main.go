@@ -924,11 +924,11 @@ func isRootRelativeBootArtifact(path string) bool {
 }
 
 func cleanupFailedKexecTarget(diskMgr *disk.Manager) {
-	if err := diskMgr.UnmountRecursive("/newroot"); err != nil {
-		slog.Warn("failed to clean up target root after unsuccessful kexec", "root", "/newroot", "error", err)
+	if err := diskMgr.UnmountRecursive(installedRootPath); err != nil {
+		slog.Warn("failed to clean up target root after unsuccessful kexec", "root", installedRootPath, "error", err)
 		return
 	}
-	slog.Info("cleaned up target root after unsuccessful kexec", "root", "/newroot")
+	slog.Info("cleaned up target root after unsuccessful kexec", "root", installedRootPath)
 }
 
 func requiresABKexec(cfg *config.MachineConfig) bool {
