@@ -140,7 +140,7 @@ func (c *Config) validatePersistence() []string {
 		errs = append(errs, "osFamily required when persistNetwork is true")
 	}
 	if persistentNetworkOSFamilyBlocked(osFamily) {
-		errs = append(errs, fmt.Sprintf("osFamily %s target network persistence is blocked until native bootloader, BLS, and SELinux first-boot support are implemented", osFamily))
+		errs = append(errs, fmt.Sprintf("osFamily %q with persistNetwork=true is blocked: target network persistence is blocked until native bootloader, BLS, and SELinux first-boot support are implemented", osFamily))
 		return errs
 	}
 	if staticIP != "" && bondInterfaces == "" && staticIface == "" {
