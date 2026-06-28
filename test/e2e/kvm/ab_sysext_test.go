@@ -305,7 +305,7 @@ func TestABPreserveExistingUpgradeKeepsActiveSlotAndWritesInactiveVM(t *testing.
 	upgradeText := string(upgradeOutput)
 	for _, want := range []string{
 		"A/B preserveExisting enabled, skipping whole-disk wipe",
-		"keeping A/B preserve-existing root mounted for kexec",
+		"keeping target root mounted for kexec",
 		"a/b preserveExisting requires kexec; refusing normal reboot",
 	} {
 		if !strings.Contains(upgradeText, want) {

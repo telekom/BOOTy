@@ -2131,8 +2131,8 @@ func (o *Orchestrator) runPostProvisionCmds(ctx context.Context) error {
 }
 
 func (o *Orchestrator) teardownChroot(_ context.Context) error {
-	if o.shouldKeepChrootMountedForABKexec() {
-		o.log.Info("keeping A/B preserve-existing root mounted for kexec", "root", newroot)
+	if o.shouldKeepChrootMountedForKexec() {
+		o.log.Info("keeping target root mounted for kexec", "root", newroot)
 		return nil
 	}
 	bindErr := o.disk.TeardownChrootBindMounts(newroot)
@@ -2142,8 +2142,19 @@ func (o *Orchestrator) teardownChroot(_ context.Context) error {
 	return errors.Join(bindErr, bootErr, sharedErr, unmountErr)
 }
 
-func (o *Orchestrator) shouldKeepChrootMountedForABKexec() bool {
-	return o.isABImageMode() && o.cfg.Provision.AB.PreserveExisting
+func (o *Orchestrator) shouldKeepChrootMountedForKexec() bool {
+	return ShouldKeepTargetRootMountedForKexec(o.cfg, o.firmwareChanged)
+}
+
+// ShouldKeepTargetRootMountedForKexec mirrors the main kexec gates so teardown
+// only preserves /newroot when the following exit path can attempt kexec.
+func ShouldKeepTargetRootMountedForKexec(cfg *config.MachineConfig, firmwareChanged bool) bool {
+	if cfg == nil {
+		return false
+	}
+	return !cfg.Provision.DisableKexec &&
+		!cfg.Provision.SecureBoot.ReEnable &&
+		!firmwareChanged
 }
 
 func (o *Orchestrator) unmountBoot() error {

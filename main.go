@@ -307,6 +307,9 @@ func runCAPRF(ctx context.Context) {
 			}
 		}
 		kexeced := tryKexec(cfg, provisionErr.FirmwareChanged)
+		if !kexeced && provision.ShouldKeepTargetRootMountedForKexec(cfg, provisionErr.FirmwareChanged) {
+			cleanupFailedKexecTarget(diskMgr)
+		}
 		time.Sleep(2 * time.Second)
 		if requiresABKexec(cfg) && !kexeced {
 			slog.Error("a/b preserveExisting requires kexec; refusing normal reboot because firmware boot state still points at the active slot")
@@ -918,6 +921,14 @@ func isRootRelativeBootArtifact(path string) bool {
 	return strings.HasPrefix(name, "vmlinuz") ||
 		strings.HasPrefix(name, "initrd") ||
 		strings.HasPrefix(name, "initramfs")
+}
+
+func cleanupFailedKexecTarget(diskMgr *disk.Manager) {
+	if err := diskMgr.UnmountRecursive(installedRootPath); err != nil {
+		slog.Warn("failed to clean up target root after unsuccessful kexec", "root", installedRootPath, "error", err)
+		return
+	}
+	slog.Info("cleaned up target root after unsuccessful kexec", "root", installedRootPath)
 }
 
 func requiresABKexec(cfg *config.MachineConfig) bool {

@@ -3487,10 +3487,20 @@ func TestCheckFilesystem(t *testing.T) {
 
 func TestTeardownChrootReturnsJoinedErrors(t *testing.T) {
 	cfg := &config.MachineConfig{}
+	cfg.Provision.DisableKexec = true
 	o, _ := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
 	err := o.teardownChroot(context.Background())
 	if err == nil {
 		t.Fatal("expected error from teardownChroot when unmount fails on non-root host")
+	}
+}
+
+func TestTeardownChrootKeepsNewrootMountedForKexec(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o, _ := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	if err := o.teardownChroot(context.Background()); err != nil {
+		t.Fatalf("teardownChroot should keep /newroot mounted for kexec: %v", err)
 	}
 }
 
@@ -3502,5 +3512,46 @@ func TestTeardownChrootKeepsABPreserveExistingMountedForKexec(t *testing.T) {
 
 	if err := o.teardownChroot(context.Background()); err != nil {
 		t.Fatalf("teardownChroot should keep /newroot mounted for preserve-existing kexec: %v", err)
+	}
+}
+
+func TestTeardownChrootUnmountsWhenFirmwareChangedRequiresReboot(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o, _ := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.firmwareChanged = true
+
+	err := o.teardownChroot(context.Background())
+	if err == nil {
+		t.Fatal("expected teardown error when firmware change disables kexec and unmounts on non-root host")
+	}
+}
+
+func TestTeardownChrootUnmountsWhenSecureBootReEnableRequiresReboot(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.SecureBoot.ReEnable = true
+	o, _ := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	err := o.teardownChroot(context.Background())
+	if err == nil {
+		t.Fatal("expected teardown error when secure boot re-enable disables kexec and unmounts on non-root host")
+	}
+}
+
+func TestShouldKeepTargetRootMountedForKexecMatchesKexecGates(t *testing.T) {
+	if !ShouldKeepTargetRootMountedForKexec(&config.MachineConfig{}, false) {
+		t.Fatal("expected kexec-capable config to keep target root mounted")
+	}
+	cfg := &config.MachineConfig{}
+	cfg.Provision.DisableKexec = true
+	if ShouldKeepTargetRootMountedForKexec(cfg, false) {
+		t.Fatal("disabled kexec must not keep target root mounted")
+	}
+	cfg = &config.MachineConfig{}
+	cfg.Provision.SecureBoot.ReEnable = true
+	if ShouldKeepTargetRootMountedForKexec(cfg, false) {
+		t.Fatal("secure boot re-enable must not keep target root mounted")
+	}
+	if ShouldKeepTargetRootMountedForKexec(&config.MachineConfig{}, true) {
+		t.Fatal("firmware changes requiring reboot must not keep target root mounted")
 	}
 }
