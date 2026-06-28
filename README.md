@@ -610,6 +610,55 @@ during the write and compared against the expected digest. GPG verification
 downloads the detached signature and verifies it against the provided public key
 before destructive storage setup starts.
 
+`IMAGE_SIGNATURE_URL` is only supported for non-`oci://` image sources today.
+For OCI image sources, use digest-pinned references such as
+`oci://registry.example/os-image@sha256:<digest>` and keep `IMAGE_CHECKSUM`
+enabled when the source is not pinned by digest. Runtime Cosign or Notation
+verification for provisioning `oci://` images is not implemented yet.
+
+### Release Artifact Verification
+
+Release builds sign checksum files, container images, and ORAS-published
+artifacts with Sigstore keyless signing from the `release-v2.yml` workflow.
+Verify release assets before use instead of trusting tags or downloaded files
+alone:
+
+```bash
+VERSION=v1.2.3
+VERSION_NO_V=${VERSION#v}
+ISSUER="https://token.actions.githubusercontent.com"
+IDENTITY="https://github.com/telekom/BOOTy/.github/workflows/release-v2.yml@refs/tags/${VERSION}"
+
+# Verify a GitHub release checksum file and then verify the payload checksum.
+ARTIFACT=default-amd64-initramfs.cpio.zst
+cosign verify-blob \
+  --bundle "${ARTIFACT}.sha256.bundle" \
+  --certificate-identity "${IDENTITY}" \
+  --certificate-oidc-issuer "${ISSUER}" \
+  "${ARTIFACT}.sha256"
+sha256sum -c "${ARTIFACT}.sha256"
+
+# Verify signed OCI release refs before pulling or mirroring them.
+cosign verify \
+  --certificate-identity "${IDENTITY}" \
+  --certificate-oidc-issuer "${ISSUER}" \
+  "ghcr.io/telekom/booty:${VERSION_NO_V}"
+cosign verify \
+  --certificate-identity "${IDENTITY}" \
+  --certificate-oidc-issuer "${ISSUER}" \
+  "ghcr.io/telekom/booty:${VERSION_NO_V}-gobgp"
+```
+
+The release workflow also signs these OCI artifact refs:
+
+| Artifact | Example ref |
+|----------|-------------|
+| Initramfs | `ghcr.io/telekom/booty/initramfs:${VERSION_NO_V}-default-amd64` |
+| Binary | `ghcr.io/telekom/booty/binary:${VERSION_NO_V}-amd64` |
+| ISO | `ghcr.io/telekom/booty-iso:${VERSION_NO_V}` |
+| GoBGP ISO | `ghcr.io/telekom/booty-iso:${VERSION_NO_V}-gobgp` |
+| SBOM | `ghcr.io/telekom/booty/sbom:${VERSION_NO_V}` |
+
 ### Telemetry and Metrics
 
 Provisioning telemetry tracks step-level timing, image throughput, retry
