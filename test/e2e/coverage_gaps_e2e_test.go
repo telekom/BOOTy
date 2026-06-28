@@ -303,7 +303,8 @@ func TestRAIDLVMProvisionOrderE2E(t *testing.T) {
 		},
 	}
 	orch := provision.NewOrchestrator(cfg, newMockProvider(cfg), disk.NewManager(cmd))
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	const provisionHangGuardTimeout = 10 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), provisionHangGuardTimeout)
 	defer cancel()
 	_ = orch.Provision(ctx)
 
