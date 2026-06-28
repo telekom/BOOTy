@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -122,6 +123,93 @@ func TestBindMountSkipsAlreadyMountedTarget(t *testing.T) {
 	mgr := NewManager(newMockCommander())
 	if err := mgr.BindMount("/proc", "/proc"); err != nil {
 		t.Fatalf("BindMount should skip already-mounted target: %v", err)
+	}
+}
+
+func TestSetupChrootBindMountsRollsBackPartialFailure(t *testing.T) {
+	oldMount := mountFunc
+	oldUnmount := unmountFunc
+	t.Cleanup(func() {
+		mountFunc = oldMount
+		unmountFunc = oldUnmount
+	})
+
+	root := t.TempDir()
+	var mounted []string
+	var unmounted []string
+	mountFunc = func(source, target, _ string, _ uintptr, _ string) error {
+		if source == "/sys" {
+			return syscall.EPERM
+		}
+		mounted = append(mounted, target)
+		return nil
+	}
+	unmountFunc = func(target string, _ int) error {
+		unmounted = append(unmounted, target)
+		return nil
+	}
+
+	mgr := NewManager(newMockCommander())
+	err := mgr.SetupChrootBindMounts(root)
+	if err == nil {
+		t.Fatal("SetupChrootBindMounts() error = nil, want /sys bind failure")
+	}
+	if !strings.Contains(err.Error(), "bind mount /sys") {
+		t.Fatalf("SetupChrootBindMounts() error = %v, want /sys bind failure", err)
+	}
+
+	wantMounted := []string{root + "/dev", root + "/proc"}
+	if strings.Join(mounted, ",") != strings.Join(wantMounted, ",") {
+		t.Fatalf("mounted = %v, want %v", mounted, wantMounted)
+	}
+	wantUnmounted := []string{root + "/proc", root + "/dev"}
+	if strings.Join(unmounted, ",") != strings.Join(wantUnmounted, ",") {
+		t.Fatalf("unmounted = %v, want %v", unmounted, wantUnmounted)
+	}
+}
+
+func TestSetupChrootBindMountsDoesNotRollbackPreExistingMount(t *testing.T) {
+	oldMount := mountFunc
+	oldUnmount := unmountFunc
+	oldIsMountPoint := isMountPointFunc
+	t.Cleanup(func() {
+		mountFunc = oldMount
+		unmountFunc = oldUnmount
+		isMountPointFunc = oldIsMountPoint
+	})
+
+	root := t.TempDir()
+	preMounted := root + "/proc"
+	var mounted []string
+	var unmounted []string
+	isMountPointFunc = func(path string) bool {
+		return path == preMounted
+	}
+	mountFunc = func(source, target, _ string, _ uintptr, _ string) error {
+		if source == "/sys" {
+			return syscall.EPERM
+		}
+		mounted = append(mounted, target)
+		return nil
+	}
+	unmountFunc = func(target string, _ int) error {
+		unmounted = append(unmounted, target)
+		return nil
+	}
+
+	mgr := NewManager(newMockCommander())
+	err := mgr.SetupChrootBindMounts(root)
+	if err == nil {
+		t.Fatal("SetupChrootBindMounts() error = nil, want /sys bind failure")
+	}
+
+	wantMounted := []string{root + "/dev"}
+	if strings.Join(mounted, ",") != strings.Join(wantMounted, ",") {
+		t.Fatalf("mounted = %v, want %v", mounted, wantMounted)
+	}
+	wantUnmounted := []string{root + "/dev"}
+	if strings.Join(unmounted, ",") != strings.Join(wantUnmounted, ",") {
+		t.Fatalf("unmounted = %v, want %v", unmounted, wantUnmounted)
 	}
 }
 

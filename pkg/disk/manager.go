@@ -29,6 +29,12 @@ type Commander = executil.Commander
 // ExecCommander executes real system commands.
 type ExecCommander = executil.ExecCommander
 
+var (
+	mountFunc        = syscall.Mount
+	unmountFunc      = syscall.Unmount
+	isMountPointFunc = isMountPoint
+)
+
 // Manager handles disk operations for provisioning.
 type Manager struct {
 	cmd       Commander
@@ -937,17 +943,22 @@ func waitForDevice(ctx context.Context, device string) error {
 
 // BindMount performs a bind mount.
 func (m *Manager) BindMount(source, target string) error {
+	_, err := m.bindMount(source, target)
+	return err
+}
+
+func (m *Manager) bindMount(source, target string) (bool, error) {
 	if err := os.MkdirAll(target, 0o755); err != nil {
-		return fmt.Errorf("creating bind mount target %s: %w", target, err)
+		return false, fmt.Errorf("creating bind mount target %s: %w", target, err)
 	}
-	if isMountPoint(target) {
+	if isMountPointFunc(target) {
 		slog.Info("bind mount target already mounted, skipping", "source", source, "target", target)
-		return nil
+		return false, nil
 	}
-	if err := syscall.Mount(source, target, "", syscall.MS_BIND, ""); err != nil {
-		return fmt.Errorf("bind mount %s -> %s: %w", source, target, err)
+	if err := mountFunc(source, target, "", syscall.MS_BIND, ""); err != nil {
+		return false, fmt.Errorf("bind mount %s -> %s: %w", source, target, err)
 	}
-	return nil
+	return true, nil
 }
 
 func isMountPoint(path string) bool {
@@ -966,7 +977,7 @@ func isMountPoint(path string) bool {
 
 // Unmount unmounts a filesystem.
 func (m *Manager) Unmount(target string) error {
-	if err := syscall.Unmount(target, 0); err != nil {
+	if err := unmountFunc(target, 0); err != nil {
 		return fmt.Errorf("unmount %s: %w", target, err)
 	}
 	return nil
@@ -1133,9 +1144,16 @@ func (m *Manager) SetupChrootBindMounts(root string) error {
 		{"/sys", "sys"},
 		{"/run", "run"},
 	}
+	var mounted []string
 	for _, b := range binds {
-		if err := m.BindMount(b.src, root+"/"+b.rel); err != nil {
+		target := root + "/" + b.rel
+		didMount, err := m.bindMount(b.src, target)
+		if err != nil {
+			m.rollbackChrootBindMounts(root, mounted)
 			return fmt.Errorf("bind mount %s: %w", b.src, err)
+		}
+		if didMount {
+			mounted = append(mounted, b.rel)
 		}
 	}
 
@@ -1151,6 +1169,15 @@ func (m *Manager) SetupChrootBindMounts(root string) error {
 		}
 	}
 	return nil
+}
+
+func (m *Manager) rollbackChrootBindMounts(root string, mounted []string) {
+	for i := len(mounted) - 1; i >= 0; i-- {
+		path := root + "/" + mounted[i]
+		if err := m.Unmount(path); err != nil {
+			slog.Warn("chroot bind rollback failed", "path", path, "error", err)
+		}
+	}
 }
 
 // TeardownChrootBindMounts unmounts the standard chroot bind mounts and
