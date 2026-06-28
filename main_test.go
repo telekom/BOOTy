@@ -46,6 +46,20 @@ func TestMergeProvisionIPUsesDetectedInvalidCIDR(t *testing.T) {
 	}
 }
 
+func TestMergeNetplanConfigOverridesStaticAddressPair(t *testing.T) {
+	dst := &network.Config{StaticIP: "192.0.2.10/24", StaticIface: "eth9"}
+	src := &network.Config{StaticIP: "10.1.2.3/24"}
+
+	mergeNetplanConfig(dst, src)
+
+	if dst.StaticIP != "10.1.2.3/24" {
+		t.Fatalf("StaticIP = %q, want netplan address", dst.StaticIP)
+	}
+	if dst.StaticIface != "" {
+		t.Fatalf("StaticIface = %q, want netplan auto-detect", dst.StaticIface)
+	}
+}
+
 func TestPrepareLinkLayersCreatesBondBeforeVLAN(t *testing.T) {
 	previousBond := setupBondLayer
 	previousVLAN := setupVLANLayer
