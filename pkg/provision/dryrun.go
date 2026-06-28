@@ -264,6 +264,10 @@ func (o *Orchestrator) dryRunImagePrerequisites(ctx context.Context) DryRunResul
 		return DryRunResult{Status: DryRunFail,
 			Message: fmt.Sprintf("selecting image source: %v", err)}
 	}
+	if image.IsOCIReference(bestURL) {
+		return DryRunResult{Status: DryRunWarn,
+			Message: "OCI image selected: skipping local image prerequisite check"}
+	}
 	format, err := image.ValidateStreamingPrerequisites(ctx, bestURL)
 	if err != nil {
 		return DryRunResult{Status: DryRunFail,

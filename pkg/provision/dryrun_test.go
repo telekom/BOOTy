@@ -720,6 +720,22 @@ func TestDryRunImagePrerequisitesRawPassesWithoutQemuImg(t *testing.T) {
 	}
 }
 
+func TestDryRunImagePrerequisitesSkipsOCIWithoutPullingLayer(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{"oci://registry.example.invalid/team/node:latest"}
+	o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
+
+	result := o.dryRunImagePrerequisites(context.Background())
+	if result.Status != DryRunWarn {
+		t.Fatalf("got %s, want warn: %s", result.Status, result.Message)
+	}
+	if !strings.Contains(result.Message, "OCI image selected") {
+		t.Fatalf("message = %q, want OCI context", result.Message)
+	}
+}
+
 func TestDryRunImageChecksum(t *testing.T) {
 	tests := []struct {
 		name         string
