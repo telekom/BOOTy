@@ -511,12 +511,15 @@ func TestSlimContainsDiskToolsE2E(t *testing.T) {
 	assertContains(t, files, "bin/lsblk", "util-linux lsblk")
 	assertContains(t, files, "sbin/e2fsck", "e2fsck")
 	assertContains(t, files, "sbin/resize2fs", "resize2fs")
+	assertContains(t, files, "sbin/blkid", "util-linux blkid")
+	assertContains(t, files, "bin/losetup", "util-linux losetup")
 	assertContains(t, files, "sbin/mkfs.ext4", "mkfs.ext4")
 	assertContains(t, files, "sbin/mkfs.vfat", "mkfs.vfat")
 	assertContains(t, files, "sbin/mkfs.xfs", "mkfs.xfs")
 	assertContains(t, files, "sbin/xfs_growfs", "xfs_growfs")
 	assertContains(t, files, "sbin/xfs_repair", "xfs_repair")
 	assertContains(t, files, "bin/btrfs", "btrfs")
+	assertNotContains(t, files, "bin/blkid", "BusyBox blkid applet shadowing util-linux blkid")
 	assertNotContains(t, files, "bin/mkfs.vfat", "BusyBox mkfs.vfat applet shadowing dosfstools")
 	assertNotContains(t, files, "bin/mkfs.fat", "BusyBox mkfs.fat applet shadowing dosfstools")
 	assertNotContains(t, files, "bin/mkdosfs", "BusyBox mkdosfs applet shadowing dosfstools")
@@ -756,6 +759,8 @@ func TestDefaultContainsDiskToolsE2E(t *testing.T) {
 	assertContains(t, files, "sbin/mdadm", "mdadm RAID")
 	assertContains(t, files, "sbin/resize2fs", "resize2fs")
 	assertContains(t, files, "sbin/e2fsck", "e2fsck")
+	assertContains(t, files, "sbin/blkid", "util-linux blkid")
+	assertContains(t, files, "bin/losetup", "util-linux losetup")
 	assertContains(t, files, "bin/parted", "parted")
 	assertContains(t, files, "bin/sgdisk", "sgdisk GPT")
 	assertContains(t, files, "bin/partprobe", "partprobe")
@@ -763,6 +768,7 @@ func TestDefaultContainsDiskToolsE2E(t *testing.T) {
 	assertContains(t, files, "bin/lsblk", "util-linux lsblk")
 	assertContains(t, files, "bin/qemu-img", "qemu-img qcow2 converter")
 	assertContains(t, files, "bin/efibootmgr", "efibootmgr")
+	assertNotContains(t, files, "bin/blkid", "BusyBox blkid applet shadowing util-linux blkid")
 }
 
 func TestFullFlavorsUseDosfstoolsMkfsVfatE2E(t *testing.T) {
@@ -901,6 +907,9 @@ func TestGoBGPContainsDiskToolsE2E(t *testing.T) {
 	assertContains(t, files, "bin/qemu-img", "qemu-img qcow2 converter")
 	assertContains(t, files, "bin/efibootmgr", "efibootmgr")
 	assertContains(t, files, "bin/lsblk", "lsblk for rescue mode")
+	assertContains(t, files, "sbin/blkid", "util-linux blkid")
+	assertContains(t, files, "bin/losetup", "util-linux losetup")
+	assertNotContains(t, files, "bin/blkid", "BusyBox blkid applet shadowing util-linux blkid")
 }
 
 func TestGoBGPContainsNetworkAndSSHE2E(t *testing.T) {

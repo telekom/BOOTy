@@ -101,6 +101,7 @@ func TestDefaultSharedLibsResolveE2E(t *testing.T) {
 	checkSharedLibs(t, image, []string{
 		// Disk tools
 		"bin/wipefs", "sbin/mdadm", "sbin/resize2fs", "sbin/e2fsck",
+		"sbin/blkid", "bin/losetup",
 		"sbin/mkfs.ext4", "sbin/mkfs.vfat",
 		"sbin/xfs_growfs", "bin/btrfs", "bin/parted", "bin/sgdisk",
 		"bin/partprobe", "bin/partx", "bin/qemu-img",
@@ -132,6 +133,7 @@ func TestGoBGPSharedLibsResolveE2E(t *testing.T) {
 	checkSharedLibs(t, image, []string{
 		// Disk tools
 		"bin/wipefs", "sbin/mdadm", "sbin/resize2fs", "sbin/e2fsck",
+		"sbin/blkid", "bin/losetup",
 		"sbin/mkfs.ext4", "sbin/mkfs.vfat",
 		"sbin/xfs_growfs", "bin/btrfs", "bin/parted", "bin/sgdisk",
 		"bin/partprobe", "bin/partx", "bin/qemu-img",
@@ -226,13 +228,59 @@ func TestFullInitramfsLsblkSupportsRuntimeFlagsE2E(t *testing.T) {
 	}
 }
 
+func TestFullInitramfsDiskProbeToolsUseUtilLinuxE2E(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		stage string
+	}{
+		{name: "default", stage: "busybox"},
+		{name: "gobgp", stage: "gobgp-builder"},
+		{name: "slim", stage: "slim-builder"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			image := buildStageImage(t, tc.stage)
+			ldPaths := strings.Join([]string{
+				"/build/initramfs/lib",
+				"/build/initramfs/usr/lib",
+				"/build/initramfs/lib/x86_64-linux-gnu",
+				"/build/initramfs/usr/lib/x86_64-linux-gnu",
+			}, ":")
+			script := strings.Join([]string{
+				"PATH=/build/initramfs/bin:/build/initramfs/sbin:$PATH",
+				"resolved_blkid=$(command -v blkid)",
+				`echo "resolved_blkid=$resolved_blkid"`,
+				`[ "$resolved_blkid" = "/build/initramfs/sbin/blkid" ]`,
+				"blkid --version >/tmp/blkid-version 2>&1",
+				"cat /tmp/blkid-version",
+				"grep -qi 'util-linux' /tmp/blkid-version",
+				"! grep -qi busybox /tmp/blkid-version",
+				"resolved_losetup=$(command -v losetup)",
+				`echo "resolved_losetup=$resolved_losetup"`,
+				`[ "$resolved_losetup" = "/build/initramfs/bin/losetup" ]`,
+				"losetup --help >/tmp/losetup-help 2>&1",
+				"cat /tmp/losetup-help",
+				"grep -q -- '--show' /tmp/losetup-help",
+				"grep -q -- '--partscan' /tmp/losetup-help",
+				"grep -q -- '--detach' /tmp/losetup-help",
+				"! grep -qi busybox /tmp/losetup-help",
+			}, " && ")
+			cmd := exec.Command("docker", "run", "--rm", "--entrypoint", "",
+				"-e", "LD_LIBRARY_PATH="+ldPaths, image, "sh", "-ec", script)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("disk probe tool PATH/help check failed: %v\n%s", err, out)
+			}
+		})
+	}
+}
+
 // TestSlimSharedLibsResolveE2E builds the slim builder stage and verifies
 // shared library resolution for all dynamically-linked binaries.
 func TestSlimSharedLibsResolveE2E(t *testing.T) {
 	image := buildStageImage(t, "slim-builder")
 	checkSharedLibs(t, image, []string{
 		"bin/ip", "bin/ethtool", "bin/curl",
-		"bin/partprobe", "bin/partx", "bin/lsblk", "sbin/e2fsck", "sbin/resize2fs",
+		"bin/partprobe", "bin/partx", "bin/lsblk", "sbin/e2fsck", "sbin/blkid", "bin/losetup", "sbin/resize2fs",
 		"sbin/mkfs.ext4", "sbin/mkfs.vfat", "sbin/mkfs.xfs",
 		"sbin/xfs_growfs", "sbin/xfs_repair", "bin/btrfs",
 	})

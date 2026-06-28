@@ -192,7 +192,7 @@ RUN mkdir -p /tool-libs /tool-libs-full && \
         /sbin/partprobe /usr/bin/partx /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
         /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
         /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
-        /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk \
+        /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /sbin/blkid /usr/sbin/losetup \
         /sbin/cryptsetup /usr/bin/ipmitool 2>/dev/null \
     | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
     | sort -u | while read -r lib; do \
@@ -220,7 +220,7 @@ RUN strip --strip-all \
         /sbin/partprobe /usr/bin/partx /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
         /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
         /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
-        /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /usr/bin/gpgv /usr/bin/qemu-img \
+        /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /sbin/blkid /usr/sbin/losetup /usr/bin/gpgv /usr/bin/qemu-img \
         /sbin/cryptsetup /usr/bin/ipmitool
 
 # Busybox static binary — sourced from Docker Hub for reliability and
@@ -247,7 +247,7 @@ RUN bin/busybox --install -s bin
 # Docker COPY follows destination symlinks: if bin/X -> busybox exists, COPY
 # writes the source file content into the busybox binary instead of replacing
 # the symlink.  Remove busybox symlinks that collide with real tool binaries.
-RUN rm -f bin/partprobe bin/hdparm bin/ip bin/mkfs.vfat bin/mkfs.fat bin/mkdosfs bin/lsblk
+RUN rm -f bin/partprobe bin/hdparm bin/ip bin/mkfs.vfat bin/mkfs.fat bin/mkdosfs bin/lsblk bin/blkid bin/losetup
 
 # cloud-utils growpart
 RUN cp /usr/bin/growpart bin/growpart
@@ -271,6 +271,8 @@ COPY --from=tools /sbin/mdadm sbin/mdadm
 COPY --from=tools /usr/sbin/wipefs bin/wipefs
 COPY --from=tools /sbin/resize2fs sbin/resize2fs
 COPY --from=tools /sbin/e2fsck sbin/e2fsck
+COPY --from=tools /sbin/blkid sbin/blkid
+COPY --from=tools /usr/sbin/losetup bin/losetup
 COPY --from=tools /usr/sbin/mkfs.ext4 sbin/mkfs.ext4
 COPY --from=tools /usr/sbin/mkfs.vfat sbin/mkfs.vfat
 COPY --from=tools /usr/sbin/mkfs.xfs sbin/mkfs.xfs
@@ -336,7 +338,7 @@ COPY --from=dev /usr/bin/upx /usr/local/bin/upx
 # Skipped: busybox (multi-applet), .so shared libs, .ko kernel modules, init (already compressed in dev stage).
 RUN for b in \
         sbin/bgpd sbin/zebra sbin/bfdd bin/vtysh sbin/watchfrr \
-        sbin/mdadm bin/wipefs sbin/resize2fs sbin/e2fsck \
+        sbin/mdadm bin/wipefs sbin/resize2fs sbin/e2fsck sbin/blkid bin/losetup \
         sbin/mkfs.ext4 sbin/mkfs.vfat \
         sbin/xfs_growfs sbin/xfs_repair sbin/mkfs.xfs bin/btrfs bin/parted bin/sgdisk bin/partprobe bin/kpartx \
         bin/qemu-img bin/efibootmgr bin/dmidecode bin/ethtool bin/curl bin/ip bin/bridge \
@@ -400,7 +402,7 @@ COPY --from=busybox-bin /bin/busybox bin/busybox
 RUN for cmd in $(bin/busybox --list); do if [ "$cmd" != "busybox" ]; then ln -sf busybox "bin/$cmd"; fi; done
 # Docker COPY follows destination symlinks — remove colliding busybox symlinks.
 RUN rm -f bin/partprobe bin/ip bin/wipefs bin/sgdisk bin/sfdisk \
-    bin/mkfs.vfat bin/mkfs.fat bin/mkdosfs bin/lsblk
+    bin/mkfs.vfat bin/mkfs.fat bin/mkdosfs bin/lsblk bin/blkid bin/losetup
 RUN cp /usr/bin/growpart bin/growpart
 
 # BOOTy init binary (static, CGO-enabled)
@@ -422,6 +424,8 @@ COPY --from=tools /sbin/partprobe bin/partprobe
 COPY --from=tools /usr/bin/partx bin/partx
 COPY --from=tools /bin/lsblk bin/lsblk
 COPY --from=tools /sbin/e2fsck sbin/e2fsck
+COPY --from=tools /sbin/blkid sbin/blkid
+COPY --from=tools /usr/sbin/losetup bin/losetup
 COPY --from=tools /sbin/resize2fs sbin/resize2fs
 COPY --from=tools /usr/sbin/mkfs.ext4 sbin/mkfs.ext4
 COPY --from=tools /usr/sbin/mkfs.vfat sbin/mkfs.vfat
@@ -462,7 +466,7 @@ RUN mkdir -p dev proc run sys tmp etc && \
 COPY --from=busybox-bin /bin/busybox bin/busybox
 RUN for cmd in $(bin/busybox --list); do if [ "$cmd" != "busybox" ]; then ln -sf busybox "bin/$cmd"; fi; done
 # Docker COPY follows destination symlinks — remove colliding busybox symlinks.
-RUN rm -f bin/partprobe bin/hdparm bin/ip bin/mkfs.vfat bin/mkfs.fat bin/mkdosfs bin/lsblk
+RUN rm -f bin/partprobe bin/hdparm bin/ip bin/mkfs.vfat bin/mkfs.fat bin/mkdosfs bin/lsblk bin/blkid bin/losetup
 COPY --from=busybox /build/initramfs/bin/growpart bin/growpart
 
 # BOOTy init binary (with GoBGP compiled in)
@@ -480,6 +484,8 @@ COPY --from=tools /sbin/mdadm sbin/mdadm
 COPY --from=tools /usr/sbin/wipefs bin/wipefs
 COPY --from=tools /sbin/resize2fs sbin/resize2fs
 COPY --from=tools /sbin/e2fsck sbin/e2fsck
+COPY --from=tools /sbin/blkid sbin/blkid
+COPY --from=tools /usr/sbin/losetup bin/losetup
 COPY --from=tools /usr/sbin/mkfs.ext4 sbin/mkfs.ext4
 COPY --from=tools /usr/sbin/mkfs.vfat sbin/mkfs.vfat
 COPY --from=tools /usr/sbin/mkfs.xfs sbin/mkfs.xfs
@@ -540,7 +546,7 @@ COPY --from=kernel /modules/ modules/
 # UPX-compress tool binaries (~60% reduction per binary).
 # Skipped: busybox (multi-applet), .so shared libs, .ko kernel modules.
 RUN for b in \
-        sbin/mdadm bin/wipefs sbin/resize2fs sbin/e2fsck \
+        sbin/mdadm bin/wipefs sbin/resize2fs sbin/e2fsck sbin/blkid bin/losetup \
         sbin/mkfs.ext4 sbin/mkfs.vfat \
         sbin/xfs_growfs sbin/xfs_repair sbin/mkfs.xfs bin/btrfs bin/parted bin/sgdisk bin/partprobe bin/kpartx \
         bin/qemu-img bin/efibootmgr bin/dmidecode bin/ethtool bin/curl bin/ip bin/bridge \
