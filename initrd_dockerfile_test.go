@@ -224,19 +224,22 @@ func TestDockerfileUsesUtilLinuxDiskProbeTools(t *testing.T) {
 	}
 	text := string(data)
 	for _, tool := range []struct {
-		name string
-		copy string
-		path string
+		name             string
+		copy             string
+		path             string
+		removeBeforeCopy bool
 	}{
 		{
-			name: "blkid",
-			copy: "COPY --from=tools /sbin/blkid sbin/blkid",
-			path: "bin/blkid",
+			name:             "blkid",
+			copy:             "COPY --from=tools /sbin/blkid sbin/blkid",
+			path:             "bin/blkid",
+			removeBeforeCopy: false,
 		},
 		{
-			name: "losetup",
-			copy: "COPY --from=tools /usr/sbin/losetup bin/losetup",
-			path: "bin/losetup",
+			name:             "losetup",
+			copy:             "COPY --from=tools /usr/sbin/losetup bin/losetup",
+			path:             "bin/losetup",
+			removeBeforeCopy: true,
 		},
 	} {
 		if got := strings.Count(text, tool.copy); got != 3 {
@@ -244,13 +247,17 @@ func TestDockerfileUsesUtilLinuxDiskProbeTools(t *testing.T) {
 		}
 		for _, stage := range []string{"busybox", "slim-builder", "gobgp-builder"} {
 			t.Run(tool.name+"/"+stage, func(t *testing.T) {
-				requireStageReplacesBusyboxTool(t, text, stage, tool.name, tool.copy, tool.path)
+				if tool.removeBeforeCopy {
+					requireStageRemovesBusyboxToolBeforeCopy(t, text, stage, tool.name, tool.copy, tool.path)
+					return
+				}
+				requireStageRemovesBusyboxTool(t, text, stage, tool.name, tool.path)
 			})
 		}
 	}
 }
 
-func requireStageReplacesBusyboxTool(t *testing.T, text, stage, toolName, copyCommand, busyboxPath string) {
+func requireStageRemovesBusyboxToolBeforeCopy(t *testing.T, text, stage, toolName, copyCommand, busyboxPath string) {
 	t.Helper()
 
 	block := dockerfileStageBlock(t, text, stage)
@@ -265,6 +272,17 @@ func requireStageReplacesBusyboxTool(t *testing.T, text, stage, toolName, copyCo
 		return
 	}
 	t.Fatalf("%s stage must remove BusyBox %s before copying util-linux %s", stage, busyboxPath, toolName)
+}
+
+func requireStageRemovesBusyboxTool(t *testing.T, text, stage, toolName, busyboxPath string) {
+	t.Helper()
+
+	block := dockerfileStageBlock(t, text, stage)
+	removeIndex := strings.LastIndex(block, "RUN rm -f")
+	if removeIndex >= 0 && strings.Contains(block[removeIndex:], busyboxPath) {
+		return
+	}
+	t.Fatalf("%s stage must remove BusyBox %s before packaging util-linux %s", stage, busyboxPath, toolName)
 }
 
 func dockerfileStageBlock(t *testing.T, text, stage string) string {
