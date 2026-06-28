@@ -56,7 +56,8 @@ var (
 	unmountSharedDataPart = func(mgr *disk.Manager, mountpoint string) error {
 		return mgr.Unmount(mountpoint)
 	}
-	sysBlockRoot = "/sys/class/block"
+	streamRootImageFn = image.StreamRoot
+	sysBlockRoot      = "/sys/class/block"
 )
 
 const sharedDataSeedInProgressMarker = ".booty-shared-data-seed-in-progress"
@@ -620,6 +621,9 @@ func (o *Orchestrator) validateProvisionInputs(_ context.Context) error {
 	if err := o.validatePartitionLayoutModeCompatibility(); err != nil {
 		return err
 	}
+	if err := o.validatePartitionLayoutRuntimeSupport(); err != nil {
+		return err
+	}
 	o.cfg.Provision.Image.Checksum = strings.TrimSpace(o.cfg.Provision.Image.Checksum)
 	checksumConfigured := o.cfg.Provision.Image.Checksum != ""
 	hasSource := false
@@ -777,9 +781,6 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 	return o.disk.WipeDisk(ctx, targetDisk)
 }
 
-// errPartitionLayoutNotSupported is the shared error for layout-mode gating.
-const errPartitionLayoutNotSupported = "partition layout provisioning is not supported yet; rootfs extraction support is still pending"
-
 func (o *Orchestrator) validatePartitionLayoutModeCompatibility() error {
 	if o.cfg.Provision.Disk.PartitionLayout == nil {
 		return nil
@@ -793,7 +794,12 @@ func (o *Orchestrator) validatePartitionLayoutModeCompatibility() error {
 		return nil
 	}
 
-	return fmt.Errorf("%s", errPartitionLayoutNotSupported)
+	mode := strings.ToLower(strings.TrimSpace(o.cfg.Provision.Image.Mode))
+	if mode == "" || mode == config.ImageModeWholeDisk {
+		return nil
+	}
+
+	return fmt.Errorf("provision.image.mode=%q cannot be combined with partition layout; use whole-disk mode to stream the selected root filesystem into the declared root partition", mode)
 }
 
 func (o *Orchestrator) validatePartitionLayoutConfig() error {
@@ -813,6 +819,9 @@ func (o *Orchestrator) validatePartitionLayoutConfig() error {
 	if err := o.validatePartitionLayoutModeCompatibility(); err != nil {
 		return err
 	}
+	if err := o.validatePartitionLayoutRuntimeSupport(); err != nil {
+		return err
+	}
 
 	if layoutDevice == "" {
 		return nil
@@ -827,6 +836,38 @@ func (o *Orchestrator) validatePartitionLayoutConfig() error {
 	}
 
 	return nil
+}
+
+func (o *Orchestrator) validatePartitionLayoutRuntimeSupport() error {
+	layout := o.cfg.Provision.Disk.PartitionLayout
+	if layout == nil || o.isABImageMode() || config.IsDeprovisionMode(o.cfg.Mode) {
+		return nil
+	}
+	for _, part := range layout.Partitions {
+		if err := validateSupportedLayoutMountpoint(part.Mountpoint); err != nil {
+			return err
+		}
+	}
+	if layout.LVM != nil {
+		for _, vol := range layout.LVM.Volumes {
+			if strings.TrimSpace(vol.Mountpoint) == "/boot/efi" {
+				return fmt.Errorf("partition layout lvm volume mountpoint \"/boot/efi\" is not supported; declare /boot/efi as a regular partition")
+			}
+			if err := validateSupportedLayoutMountpoint(vol.Mountpoint); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateSupportedLayoutMountpoint(mountpoint string) error {
+	switch strings.TrimSpace(mountpoint) {
+	case "", "/", "/boot/efi":
+		return nil
+	default:
+		return fmt.Errorf("partition layout mountpoint %q is not supported in non-A/B layout provisioning; only / and /boot/efi are mounted during provisioning", mountpoint)
+	}
 }
 
 func (o *Orchestrator) detectDisk(ctx context.Context) error {
@@ -919,21 +960,29 @@ func (o *Orchestrator) applyPartitionLayout(ctx context.Context) error {
 }
 
 // writeFstab generates and writes fstab after root is mounted.
-func (o *Orchestrator) writeFstabStep(_ context.Context) error {
-	if err := o.writeFstab(); err != nil {
+func (o *Orchestrator) writeFstabStep(ctx context.Context) error {
+	if err := o.writeFstab(ctx); err != nil {
 		return err
 	}
 	return o.writeABSlotState()
 }
 
-func (o *Orchestrator) writeFstab() error {
+func (o *Orchestrator) writeFstab(ctx context.Context) error {
 	if o.cfg.Provision.Disk.PartitionLayout == nil {
 		return nil
 	}
 	device := o.targetDisk
-	fstab := disk.GenerateFstab(o.cfg.Provision.Disk.PartitionLayout, device)
-	if o.cfg.Provision.Disk.PartitionLayout.LVM != nil {
-		fstab += disk.GenerateLVMFstab(o.cfg.Provision.Disk.PartitionLayout.LVM)
+	layout := o.cfg.Provision.Disk.PartitionLayout
+	if o.shouldDetectPartitionLayoutRootFilesystem() {
+		var err error
+		layout, err = o.partitionLayoutWithDetectedRootFilesystem(ctx, layout)
+		if err != nil {
+			return err
+		}
+	}
+	fstab := disk.GenerateFstab(layout, device)
+	if layout.LVM != nil {
+		fstab += disk.GenerateLVMFstab(layout.LVM)
 	}
 
 	fstabPath := filepath.Join(o.config.rootDir, "etc", "fstab")
@@ -947,13 +996,63 @@ func (o *Orchestrator) writeFstab() error {
 	return nil
 }
 
-func (o *Orchestrator) streamImage(ctx context.Context) error {
-	// With a custom partition layout, fail fast — rootfs extraction for
-	// layout mode is not implemented yet.
-	if o.cfg.Provision.Disk.PartitionLayout != nil && !o.isABImageMode() {
-		return fmt.Errorf("%s", errPartitionLayoutNotSupported)
+func (o *Orchestrator) shouldDetectPartitionLayoutRootFilesystem() bool {
+	return o.cfg.Provision.Disk.PartitionLayout != nil && !o.isABImageMode()
+}
+
+func (o *Orchestrator) partitionLayoutWithDetectedRootFilesystem(
+	ctx context.Context,
+	layout *config.PartitionLayout,
+) (*config.PartitionLayout, error) {
+	rootFS, err := o.disk.FilesystemType(ctx, o.rootPartition)
+	if err != nil {
+		return nil, fmt.Errorf("detecting streamed root filesystem for fstab: %w", err)
+	}
+	if rootFS == "" {
+		return nil, fmt.Errorf("detecting streamed root filesystem for fstab: empty filesystem type for %s", o.rootPartition)
 	}
 
+	updated := copyPartitionLayout(layout)
+	if setLayoutRootFilesystem(updated, rootFS) {
+		return updated, nil
+	}
+	return nil, fmt.Errorf("partition layout has no root mountpoint for fstab")
+}
+
+func copyPartitionLayout(layout *config.PartitionLayout) *config.PartitionLayout {
+	if layout == nil {
+		return nil
+	}
+	updated := *layout
+	updated.Partitions = append([]config.Partition(nil), layout.Partitions...)
+	if layout.LVM != nil {
+		lvm := *layout.LVM
+		lvm.Volumes = append([]config.LVVolume(nil), layout.LVM.Volumes...)
+		updated.LVM = &lvm
+	}
+	return &updated
+}
+
+func setLayoutRootFilesystem(layout *config.PartitionLayout, fsType string) bool {
+	for i := range layout.Partitions {
+		if strings.TrimSpace(layout.Partitions[i].Mountpoint) == "/" {
+			layout.Partitions[i].Filesystem = fsType
+			return true
+		}
+	}
+	if layout.LVM == nil {
+		return false
+	}
+	for i := range layout.LVM.Volumes {
+		if strings.TrimSpace(layout.LVM.Volumes[i].Mountpoint) == "/" {
+			layout.LVM.Volumes[i].Filesystem = fsType
+			return true
+		}
+	}
+	return false
+}
+
+func (o *Orchestrator) streamImage(ctx context.Context) error {
 	bestURL := o.bestImageURL
 	if bestURL == "" {
 		// verify-image may have skipped URL resolution; resolve it now.
@@ -970,6 +1069,10 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 			Checksum:     o.cfg.Provision.Image.Checksum,
 			ChecksumType: o.cfg.Provision.Image.ChecksumType,
 		})
+	}
+
+	if o.cfg.Provision.Disk.PartitionLayout != nil && !o.isABImageMode() {
+		return o.streamPartitionLayoutRootImage(ctx, bestURL, opts)
 	}
 
 	// Partition-by-partition mode: wipe first to ensure a clean slate on any
@@ -992,6 +1095,24 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 	// Default whole-disk mode.
 	o.log.Info("Streaming image", "url", image.RedactURL(bestURL), "disk", o.targetDisk)
 	if err := image.Stream(ctx, bestURL, o.targetDisk, opts...); err != nil {
+		return classifyImageStreamError(bestURL, err)
+	}
+	return nil
+}
+
+func (o *Orchestrator) streamPartitionLayoutRootImage(ctx context.Context, bestURL string, opts []image.StreamOpts) error {
+	if err := o.validatePartitionLayoutModeCompatibility(); err != nil {
+		return err
+	}
+	if err := o.parsePartitionsFromLayout(ctx); err != nil {
+		return err
+	}
+	o.log.Info("streaming image into partition layout root", "url", image.RedactURL(bestURL), "disk", o.targetDisk, "root", o.rootPartition)
+	if err := streamRootImageFn(ctx, bestURL, image.RootTarget{
+		RootPartition:       o.rootPartition,
+		SourceRootLabel:     o.cfg.Provision.Image.SourceRootLabel,
+		SourceRootPartition: o.cfg.Provision.Image.SourceRootPartition,
+	}, opts...); err != nil {
 		return classifyImageStreamError(bestURL, err)
 	}
 	return nil
@@ -2078,11 +2199,6 @@ func (o *Orchestrator) growPartition(ctx context.Context) error {
 }
 
 func (o *Orchestrator) resizeFilesystem(ctx context.Context) error {
-	if o.cfg.Provision.Disk.PartitionLayout != nil && !o.isABImageMode() {
-		o.log.Info("skipping resize-filesystem for declarative partition layout")
-		return nil
-	}
-
 	return o.disk.ResizeFilesystem(ctx, o.rootPartition, newroot)
 }
 

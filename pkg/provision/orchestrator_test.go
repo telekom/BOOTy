@@ -20,6 +20,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/firmware"
+	"github.com/telekom/BOOTy/pkg/image"
 	networkpersist "github.com/telekom/BOOTy/pkg/network/persist"
 )
 
@@ -575,6 +576,76 @@ func TestValidateProvisionInputsAllowsGPGSignatureWithChecksum(t *testing.T) {
 	}
 	if got := cfg.Provision.Image.SignatureURL; got != "https://images.example.invalid/node.raw.sig" {
 		t.Fatalf("SignatureURL = %q, want trimmed URL", got)
+	}
+}
+
+func TestValidateProvisionInputsRejectsPartitionModeWithPartitionLayout(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModePartition
+	cfg.Provision.Image.URLs = []string{"https://images.example.invalid/node.raw"}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "root", Mountpoint: "/"},
+		},
+	}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err := o.validateProvisionInputs(context.Background())
+	if err == nil {
+		t.Fatal("expected partition image mode to reject declarative partition layout")
+	}
+	if !strings.Contains(err.Error(), "cannot be combined with partition layout") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateProvisionInputsRejectsUnsupportedPartitionLayoutMountpoint(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{"https://images.example.invalid/node.raw"}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "root", Filesystem: "ext4", Mountpoint: "/"},
+			{Label: "var", Filesystem: "ext4", Mountpoint: "/var"},
+		},
+	}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err := o.validateProvisionInputs(context.Background())
+	if err == nil {
+		t.Fatal("expected unsupported non-root mountpoint error")
+	}
+	if !strings.Contains(err.Error(), `mountpoint "/var" is not supported`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateProvisionInputsRejectsLVMBootEFIMountpoint(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{"https://images.example.invalid/node.raw"}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "pv", SizeMB: 8192},
+		},
+		LVM: &config.LVMConfig{
+			VolumeGroup: "sysvg",
+			PVPartition: 1,
+			Volumes: []config.LVVolume{
+				{Name: "root", Filesystem: "ext4", Mountpoint: "/"},
+				{Name: "efi", Filesystem: "vfat", Mountpoint: "/boot/efi"},
+			},
+		},
+	}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err := o.validateProvisionInputs(context.Background())
+	if err == nil {
+		t.Fatal("expected LVM /boot/efi mountpoint to fail")
+	}
+	if !strings.Contains(err.Error(), `lvm volume mountpoint "/boot/efi" is not supported`) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -1727,7 +1798,27 @@ func TestWipeOrSecureEraseDisksAllowsPartitionLayoutWithImageURLsInDeprovisionMo
 	}
 }
 
-func TestWipeOrSecureEraseDisksRejectsPartitionLayoutWithImageURLsInProvisionMode(t *testing.T) {
+func TestWipeOrSecureEraseDisksAllowsUnsupportedPartitionLayoutMountpointsInDeprovisionMode(t *testing.T) {
+	cfg := &config.MachineConfig{
+		Mode: "hard",
+	}
+	cfg.Provision.Image.URLs = []string{"http://images.local/node.img.zst"}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "root", Filesystem: "ext4", Mountpoint: "/"},
+			{Label: "var", Filesystem: "ext4", Mountpoint: "/var"},
+		},
+	}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err := o.wipeOrSecureEraseDisks(context.Background())
+	if err != nil {
+		t.Fatalf("expected deprovision wipe to ignore provisioning-only mountpoint support, got: %v", err)
+	}
+}
+
+func TestWipeOrSecureEraseDisksAllowsPartitionLayoutWithImageURLsInProvisionMode(t *testing.T) {
 	cfg := &config.MachineConfig{
 		Mode: "provision",
 	}
@@ -1738,18 +1829,19 @@ func TestWipeOrSecureEraseDisksRejectsPartitionLayoutWithImageURLsInProvisionMod
 			{Label: "root", Mountpoint: "/"},
 		},
 	}
-	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
 
 	err := o.wipeOrSecureEraseDisks(context.Background())
-	if err == nil {
-		t.Fatal("expected error when partition layout is combined with image urls in provision mode")
+	if err != nil {
+		t.Fatalf("expected partition layout to be allowed in provision mode, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "partition layout provisioning is not supported yet") {
-		t.Fatalf("unexpected error: %v", err)
+	if !hasCommandCall(cmd.calls, "wipefs", "-af", "/dev/sda") {
+		t.Fatalf("expected wipefs to target /dev/sda, got %#v", cmd.calls)
 	}
 }
 
-func TestWipeOrSecureEraseDisksRejectsPartitionLayoutWithoutImageURLsInProvisionMode(t *testing.T) {
+func TestValidateProvisionInputsRejectsPartitionLayoutWithoutImageURLsInProvisionMode(t *testing.T) {
 	cfg := &config.MachineConfig{
 		Mode: "provision",
 	}
@@ -1761,11 +1853,11 @@ func TestWipeOrSecureEraseDisksRejectsPartitionLayoutWithoutImageURLsInProvision
 	}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
-	err := o.wipeOrSecureEraseDisks(context.Background())
+	err := o.validateProvisionInputs(context.Background())
 	if err == nil {
 		t.Fatal("expected error when partition layout is set without image urls in provision mode")
 	}
-	if !strings.Contains(err.Error(), "partition layout provisioning is not supported yet") {
+	if !strings.Contains(err.Error(), "no image URLs configured") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -2924,13 +3016,14 @@ func TestStreamImagePartitionLayoutFailsWithoutImages(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when partition layout is used without image urls")
 	}
-	if !strings.Contains(err.Error(), "partition layout provisioning is not supported yet") {
+	if !strings.Contains(err.Error(), "no image URLs provided") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestStreamImagePartitionLayoutRejectsImageURLs(t *testing.T) {
+func TestStreamImagePartitionLayoutRejectsPartitionImageMode(t *testing.T) {
 	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModePartition
 	cfg.Provision.Image.URLs = []string{"http://images.local/node.img.zst"}
 	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 		Table: "gpt",
@@ -2938,16 +3031,116 @@ func TestStreamImagePartitionLayoutRejectsImageURLs(t *testing.T) {
 			{Label: "root", Mountpoint: "/"},
 		},
 	}
-	provider := &mockProvider{}
-	o := newTestOrchestrator(t, cfg, provider)
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
 	o.targetDisk = "/dev/sda"
 
 	err := o.streamImage(context.Background())
 	if err == nil {
-		t.Fatal("expected error when partition layout is combined with image urls")
+		t.Fatal("expected partition image mode to reject declarative partition layout")
 	}
-	if !strings.Contains(err.Error(), "partition layout provisioning is not supported yet") {
+	if !strings.Contains(err.Error(), "cannot be combined with partition layout") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestStreamImagePartitionLayoutStreamsDeclaredRoot(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{"http://images.local/node.img.zst"}
+	cfg.Provision.Image.SourceRootLabel = "root-a"
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "efi", Filesystem: "vfat", Mountpoint: "/boot/efi"},
+			{Label: "root", Filesystem: "ext4", Mountpoint: "/"},
+		},
+	}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+	o.targetDisk = "/dev/sda"
+
+	previous := streamRootImageFn
+	called := false
+	streamRootImageFn = func(_ context.Context, gotURL string, target image.RootTarget, opts ...image.StreamOpts) error {
+		called = true
+		if gotURL != "http://images.local/node.img.zst" {
+			t.Fatalf("stream URL = %q", gotURL)
+		}
+		if target.RootPartition != "/dev/sda2" {
+			t.Fatalf("root target = %q, want /dev/sda2", target.RootPartition)
+		}
+		if target.SourceRootLabel != "root-a" {
+			t.Fatalf("source root label = %q, want root-a", target.SourceRootLabel)
+		}
+		if target.SourceRootPartition != 0 {
+			t.Fatalf("source root partition = %d, want 0", target.SourceRootPartition)
+		}
+		if len(opts) != 0 {
+			t.Fatalf("unexpected stream opts: %#v", opts)
+		}
+		return nil
+	}
+	t.Cleanup(func() {
+		streamRootImageFn = previous
+	})
+
+	err := o.streamImage(context.Background())
+	if err != nil {
+		t.Fatalf("streamImage: %v", err)
+	}
+	if !called {
+		t.Fatal("streamRootImageFn was not called")
+	}
+}
+
+func TestWriteFstabUsesDetectedPartitionLayoutRootFilesystem(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "efi", Filesystem: "vfat", Mountpoint: "/boot/efi"},
+			{Label: "root", Filesystem: "xfs", Mountpoint: "/"},
+		},
+	}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.rootPartition = "/dev/sda2"
+	cmd.setResult("blkid -o", []byte("ext4\n"), nil)
+
+	if err := o.writeFstab(context.Background()); err != nil {
+		t.Fatalf("writeFstab: %v", err)
+	}
+
+	fstabBytes, err := os.ReadFile(filepath.Join(o.config.rootDir, "etc", "fstab"))
+	if err != nil {
+		t.Fatalf("read fstab: %v", err)
+	}
+	fstab := string(fstabBytes)
+	if !strings.Contains(fstab, "PARTLABEL=root\t/\text4\tdefaults\t0\t1") {
+		t.Fatalf("fstab root entry =\n%s\nwant detected ext4", fstab)
+	}
+	if cfg.Provision.Disk.PartitionLayout.Partitions[1].Filesystem != "xfs" {
+		t.Fatalf("layout root filesystem mutated to %q", cfg.Provision.Disk.PartitionLayout.Partitions[1].Filesystem)
+	}
+}
+
+func TestWriteFstabFailsWhenPartitionLayoutRootFilesystemIsUnknown(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "root", Filesystem: "xfs", Mountpoint: "/"},
+		},
+	}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.rootPartition = "/dev/sda1"
+
+	err := o.writeFstab(context.Background())
+	if err == nil {
+		t.Fatal("expected empty blkid result to fail")
+	}
+	if !strings.Contains(err.Error(), "empty filesystem type") {
+		t.Fatalf("writeFstab error = %v", err)
 	}
 }
 
@@ -2996,7 +3189,7 @@ func TestGrowPartitionSkippedForPartitionLayout(t *testing.T) {
 	}
 }
 
-func TestResizeFilesystemSkippedForPartitionLayout(t *testing.T) {
+func TestResizeFilesystemRunsForPartitionLayout(t *testing.T) {
 	cmd := newMockCommander()
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{Table: "gpt", Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}}}
@@ -3010,8 +3203,8 @@ func TestResizeFilesystemSkippedForPartitionLayout(t *testing.T) {
 	if err := o.resizeFilesystem(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(cmd.calls) != 0 {
-		t.Fatalf("expected no commands when resize-filesystem is skipped, got %d", len(cmd.calls))
+	if !hasCommandCall(cmd.calls, "resize2fs", "/dev/sda1") {
+		t.Fatalf("expected resize2fs /dev/sda1 when resizing partition layout root, got %#v", cmd.calls)
 	}
 }
 

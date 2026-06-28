@@ -113,6 +113,16 @@ func TestDirtyABTargetsErrorDeduplicatesTargets(t *testing.T) {
 	}
 }
 
+func TestStreamRootRequiresRootPartition(t *testing.T) {
+	err := StreamRoot(context.Background(), "http://images.local/root.raw", RootTarget{})
+	if err == nil {
+		t.Fatal("expected missing root partition error")
+	}
+	if !strings.Contains(err.Error(), "root partition is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestStreamABRawFallsBackToRootFilesystemWhenNoGPT(t *testing.T) {
 	raw := []byte("rootfs without partition table")
 	rootTarget := filepath.Join(t.TempDir(), "root.img")

@@ -335,8 +335,15 @@ func TestSelectSourceRootPartitionRejectsAmbiguousLinuxPartitions(t *testing.T) 
 		{Node: "/dev/loop0p2", Type: linuxFilesystemGUID, Size: 2048},
 		{Node: "/dev/loop0p3", Type: linuxFilesystemGUID, Size: 8192},
 	}
-	if _, err := selectSourceRootPartition(parts, "", 0); err == nil {
+	_, err := selectSourceRootPartition(parts, "", 0)
+	if err == nil {
 		t.Fatal("expected ambiguous Linux root selection to fail")
+	}
+	if !strings.Contains(err.Error(), "provision.image.sourceRootLabel/provision.image.sourceRootPartition") {
+		t.Fatalf("error = %q, want provision.image selector hint", err.Error())
+	}
+	if !strings.Contains(err.Error(), "provision.ab.sourceRootLabel/provision.ab.sourceRootPartition") {
+		t.Fatalf("error = %q, want provision.ab selector hint", err.Error())
 	}
 }
 
@@ -378,6 +385,12 @@ func TestSelectSourceRootPartitionSupportsFlatcarUsrSlots(t *testing.T) {
 	if !strings.Contains(err.Error(), "Flatcar-like USR-A/USR-B") {
 		t.Fatalf("error = %q, want Flatcar-like USR slot rejection", err.Error())
 	}
+	if !strings.Contains(err.Error(), "provision.image.sourceRootLabel/provision.image.sourceRootPartition") {
+		t.Fatalf("error = %q, want partition-layout selector hint", err.Error())
+	}
+	if !strings.Contains(err.Error(), "provision.ab.sourceRootLabel/provision.ab.sourceRootPartition") {
+		t.Fatalf("error = %q, want A/B selector hint", err.Error())
+	}
 }
 
 func TestSelectSourceRootPartitionRejectsImplicitSingleFlatcarUsrSlot(t *testing.T) {
@@ -392,6 +405,12 @@ func TestSelectSourceRootPartitionRejectsImplicitSingleFlatcarUsrSlot(t *testing
 	}
 	if !strings.Contains(err.Error(), "Flatcar-like USR-A/USR-B") {
 		t.Fatalf("error = %q, want Flatcar-like USR slot rejection", err.Error())
+	}
+	if !strings.Contains(err.Error(), "provision.image.sourceRootLabel/provision.image.sourceRootPartition") {
+		t.Fatalf("error = %q, want partition-layout selector hint", err.Error())
+	}
+	if !strings.Contains(err.Error(), "provision.ab.sourceRootLabel/provision.ab.sourceRootPartition") {
+		t.Fatalf("error = %q, want A/B selector hint", err.Error())
 	}
 }
 
@@ -421,6 +440,9 @@ func TestSelectSourceRootPartitionRejectsImplicitUnknownNonEFI(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no Linux root partition candidate") {
 		t.Fatalf("error = %q, want Linux root candidate rejection", err.Error())
+	}
+	if !strings.Contains(err.Error(), "provision.image.sourceRootLabel/provision.image.sourceRootPartition") {
+		t.Fatalf("error = %q, want provision.image selector hint", err.Error())
 	}
 }
 

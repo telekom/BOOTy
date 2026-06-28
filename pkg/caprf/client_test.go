@@ -287,6 +287,30 @@ export ROOT_PARTITION_NUMBER="2"
 	}
 }
 
+func TestParseVarsImageSourceRootLabel(t *testing.T) {
+	input := `export IMAGE_SOURCE_ROOT_LABEL="USR-A"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provision.Image.SourceRootLabel != "USR-A" {
+		t.Fatalf("image sourceRootLabel = %q, want USR-A", cfg.Provision.Image.SourceRootLabel)
+	}
+}
+
+func TestParseVarsImageSourceRootPartition(t *testing.T) {
+	input := `export IMAGE_SOURCE_ROOT_PARTITION="3"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provision.Image.SourceRootPartition != 3 {
+		t.Fatalf("image sourceRootPartition = %d, want 3", cfg.Provision.Image.SourceRootPartition)
+	}
+}
+
 func TestParseVarsInsecureTransport(t *testing.T) {
 	input := `export INSECURE_TRANSPORT="true"
 export HOSTNAME="worker-01"

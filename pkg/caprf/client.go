@@ -910,6 +910,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"IMAGE_CHECKSUM":              &cfg.Provision.Image.Checksum,
 		"IMAGE_CHECKSUM_TYPE":         &cfg.Provision.Image.ChecksumType,
 		"IMAGE_MODE":                  &cfg.Provision.Image.Mode,
+		"IMAGE_SOURCE_ROOT_LABEL":     &cfg.Provision.Image.SourceRootLabel,
 		"DISK_DEVICE":                 &cfg.Provision.Disk.Device,
 		"DISK_SERIAL":                 &cfg.Provision.Disk.SerialNumber,
 		"DISK_SERIAL_NUMBER":          &cfg.Provision.Disk.SerialNumber,
@@ -1178,6 +1179,7 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		"AB_BOOT_SIZE_MB":                    &cfg.Provision.AB.BootSizeMB,
 		"AB_ROOT_SIZE_MB":                    &cfg.Provision.AB.RootSizeMB,
 		"AB_STATE_SIZE_MB":                   &cfg.Provision.AB.StateSizeMB,
+		"IMAGE_SOURCE_ROOT_PARTITION":        &cfg.Provision.Image.SourceRootPartition,
 		"AB_SOURCE_ROOT_PARTITION":           &cfg.Provision.AB.SourceRootPartition,
 		"ROOT_PARTITION_NUMBER":              &cfg.Provision.Disk.RootPartitionNumber,
 	}

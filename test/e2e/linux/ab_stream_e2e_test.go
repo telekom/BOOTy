@@ -152,6 +152,39 @@ func TestStreamABQCOW2RootFallback(t *testing.T) {
 	assertPartitionPrefix(t, target.partitions[1], sourcePayload)
 }
 
+func TestStreamRootCopiesSelectedRootPartition(t *testing.T) {
+	requireRoot(t)
+	requireABStreamTools(t)
+
+	rootA := repeatedPayload("root-a-source", 2*1024*1024)
+	rootB := repeatedPayload("root-b-source", 2*1024*1024)
+	source := createPartitionedRawImage(t, []testPartition{
+		{name: "EFI", sizeMB: 8, typeGUID: "C12A7328-F81F-11D2-BA4B-00A0C93EC93B", payload: repeatedPayload("efi-source", 1024*1024)},
+		{name: "ROOT-A", sizeMB: 24, typeGUID: "0FC63DAF-8483-4772-8E79-3D69D8477DE4", payload: rootA},
+		{name: "ROOT-B", sizeMB: 24, typeGUID: "0FC63DAF-8483-4772-8E79-3D69D8477DE4", payload: rootB},
+	})
+	target := createPartitionedRawImage(t, []testPartition{
+		{name: "target-root", sizeMB: 32, typeGUID: "0FC63DAF-8483-4772-8E79-3D69D8477DE4", payload: repeatedPayload("target-before", 2*1024*1024)},
+	})
+	url := serveFile(t, source.path)
+
+	if err := image.StreamRoot(context.Background(), url, image.RootTarget{
+		RootPartition:   target.partitions[0],
+		SourceRootLabel: "ROOT-B",
+	}); err != nil {
+		t.Fatalf("StreamRoot() label selector error: %v", err)
+	}
+	assertPartitionPrefix(t, target.partitions[0], rootB)
+
+	if err := image.StreamRoot(context.Background(), url, image.RootTarget{
+		RootPartition:       target.partitions[0],
+		SourceRootPartition: 2,
+	}); err != nil {
+		t.Fatalf("StreamRoot() partition selector error: %v", err)
+	}
+	assertPartitionPrefix(t, target.partitions[0], rootA)
+}
+
 type testPartition struct {
 	name     string
 	sizeMB   int

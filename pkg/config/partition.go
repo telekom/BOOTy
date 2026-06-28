@@ -146,36 +146,57 @@ func ParsePartitionLayout(data string) (*PartitionLayout, error) {
 		return nil, fmt.Errorf("parsing partition layout: unexpected trailing content")
 	}
 
+	return ValidatePartitionLayout(&layout)
+}
+
+// ValidatePartitionLayout validates a PartitionLayout built programmatically or
+// decoded from YAML/JSON, returning a normalized copy on success.
+func ValidatePartitionLayout(layout *PartitionLayout) (*PartitionLayout, error) {
+	if layout == nil {
+		return nil, fmt.Errorf("partition layout is required")
+	}
+	validated := copyPartitionLayout(layout)
 	if len(layout.Partitions) == 0 {
 		return nil, fmt.Errorf("partition layout has no partitions")
 	}
 	if len(layout.Partitions) > maxPartitions {
 		return nil, fmt.Errorf("partition layout has %d partitions, maximum is %d", len(layout.Partitions), maxPartitions)
 	}
-	if layout.Table == "" {
-		layout.Table = "gpt"
+	if validated.Table == "" {
+		validated.Table = "gpt"
 	}
-	if layout.Table != "gpt" {
-		return nil, fmt.Errorf("unsupported partition table %q, only \"gpt\" is supported", layout.Table)
+	if validated.Table != "gpt" {
+		return nil, fmt.Errorf("unsupported partition table %q, only \"gpt\" is supported", validated.Table)
 	}
-	device, err := normalizePartitionLayoutDevice(layout.Device)
+	device, err := normalizePartitionLayoutDevice(validated.Device)
 	if err != nil {
 		return nil, err
 	}
-	layout.Device = device
-	if err := validatePartitions(layout.Partitions); err != nil {
+	validated.Device = device
+	if err := validatePartitions(validated.Partitions); err != nil {
 		return nil, err
 	}
-	if err := validateLVMConfig(layout.LVM, layout.Partitions); err != nil {
+	if err := validateLVMConfig(validated.LVM, validated.Partitions); err != nil {
 		return nil, err
 	}
-	if err := validateUniqueMountpoints(layout.Partitions, layout.LVM); err != nil {
+	if err := validateUniqueMountpoints(validated.Partitions, validated.LVM); err != nil {
 		return nil, err
 	}
-	if err := validateRootPresence(layout.Partitions, layout.LVM); err != nil {
+	if err := validateRootPresence(validated.Partitions, validated.LVM); err != nil {
 		return nil, err
 	}
-	return &layout, nil
+	return &validated, nil
+}
+
+func copyPartitionLayout(layout *PartitionLayout) PartitionLayout {
+	validated := *layout
+	validated.Partitions = append([]Partition(nil), layout.Partitions...)
+	if layout.LVM != nil {
+		lvm := *layout.LVM
+		lvm.Volumes = append([]LVVolume(nil), layout.LVM.Volumes...)
+		validated.LVM = &lvm
+	}
+	return validated
 }
 
 func normalizePartitionLayoutDevice(device string) (string, error) {

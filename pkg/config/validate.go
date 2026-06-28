@@ -37,6 +37,53 @@ import (
 // All validation errors are collected and returned as a single error. Returns
 // nil when the config is valid.
 func (c *Config) Validate() error {
+	errs := c.validateEnums()
+
+	peerMode := strings.ToLower(strings.TrimSpace(c.Network.BGP.PeerMode))
+	if (peerMode == "dual" || peerMode == "numbered") && strings.TrimSpace(c.Network.BGP.Neighbors) == "" {
+		errs = append(errs, "network.bgp.neighbors required when network.bgp.peerMode is dual or numbered")
+	}
+	errs = append(errs, c.validateBGP()...)
+	if msg := validateFlatcarCloudInit(c.OSFamily, c.Provision.CloudInit.Enabled); msg != "" {
+		errs = append(errs, msg)
+	}
+	errs = append(errs, c.validatePersistence()...)
+
+	if err := validateRAIDConfig(c.Provision.Disk.RAID); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := validateDiskRootSelectors(&c.Provision.Disk); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if c.Provision.Disk.PartitionLayout != nil {
+		if layout, err := ValidatePartitionLayout(c.Provision.Disk.PartitionLayout); err != nil {
+			errs = append(errs, err.Error())
+		} else {
+			c.Provision.Disk.PartitionLayout = layout
+		}
+	}
+	if err := validateSysextConfig(&c.Provision.Sysext); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := validateImageSourceRootSelectors(&c.Provision.Image); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := validateABConfig(c.Provision.Image.Mode, c.Provision.DisableKexec, &c.Provision.AB); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := validateSecureBootConfig(c.Provision.Image.Mode, &c.Provision.SecureBoot, &c.Provision.AB); err != nil {
+		errs = append(errs, err.Error())
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("config validation: %s", strings.Join(errs, "; "))
+	}
+
+	c.normalize()
+	return nil
+}
+
+func (c *Config) validateEnums() []string {
 	validators := []func() string{
 		func() string {
 			return validateEnum(c.Mode, "mode", "provision", "deprovision", "soft-deprovision", "soft", "hard", "standby", "dry-run", "check")
@@ -79,39 +126,7 @@ func (c *Config) Validate() error {
 			errs = append(errs, msg)
 		}
 	}
-
-	peerMode := strings.ToLower(strings.TrimSpace(c.Network.BGP.PeerMode))
-	if (peerMode == "dual" || peerMode == "numbered") && strings.TrimSpace(c.Network.BGP.Neighbors) == "" {
-		errs = append(errs, "network.bgp.neighbors required when network.bgp.peerMode is dual or numbered")
-	}
-	errs = append(errs, c.validateBGP()...)
-	if msg := validateFlatcarCloudInit(c.OSFamily, c.Provision.CloudInit.Enabled); msg != "" {
-		errs = append(errs, msg)
-	}
-	errs = append(errs, c.validatePersistence()...)
-
-	if err := validateRAIDConfig(c.Provision.Disk.RAID); err != nil {
-		errs = append(errs, err.Error())
-	}
-	if err := validateDiskRootSelectors(&c.Provision.Disk); err != nil {
-		errs = append(errs, err.Error())
-	}
-	if err := validateSysextConfig(&c.Provision.Sysext); err != nil {
-		errs = append(errs, err.Error())
-	}
-	if err := validateABConfig(c.Provision.Image.Mode, c.Provision.DisableKexec, &c.Provision.AB); err != nil {
-		errs = append(errs, err.Error())
-	}
-	if err := validateSecureBootConfig(c.Provision.Image.Mode, &c.Provision.SecureBoot, &c.Provision.AB); err != nil {
-		errs = append(errs, err.Error())
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("config validation: %s", strings.Join(errs, "; "))
-	}
-
-	c.normalize()
-	return nil
+	return errs
 }
 
 func (c *Config) validateBGP() []string {
@@ -189,6 +204,21 @@ func validatePersistenceVLANConfig(vlanConfig string) []string {
 		}
 	}
 	return errs
+}
+
+func validateImageSourceRootSelectors(cfg *ImageConfig) error {
+	if cfg.SourceRootPartition < 0 {
+		return fmt.Errorf("provision.image.sourceRootPartition must be non-negative")
+	}
+	label := strings.TrimSpace(cfg.SourceRootLabel)
+	if cfg.SourceRootLabel != "" && label == "" {
+		return fmt.Errorf("provision.image.sourceRootLabel must not be blank")
+	}
+	if label != "" && cfg.SourceRootPartition != 0 {
+		return fmt.Errorf("provision.image.sourceRootLabel and provision.image.sourceRootPartition are mutually exclusive")
+	}
+	cfg.SourceRootLabel = label
+	return nil
 }
 
 // normalize lowercases or uppercases case-insensitive enum fields so downstream
@@ -392,9 +422,14 @@ func validateABPartitionLayoutContract(layout *PartitionLayout) []string {
 }
 
 func validateABSourceRootSelectors(cfg *ABConfig) []string {
-	if cfg.SourceRootLabel != "" && cfg.SourceRootPartition != 0 {
+	label := strings.TrimSpace(cfg.SourceRootLabel)
+	if cfg.SourceRootLabel != "" && label == "" {
+		return []string{"provision.ab.sourceRootLabel must not be blank"}
+	}
+	if label != "" && cfg.SourceRootPartition != 0 {
 		return []string{"provision.ab.sourceRootLabel and provision.ab.sourceRootPartition are mutually exclusive"}
 	}
+	cfg.SourceRootLabel = label
 	return nil
 }
 
