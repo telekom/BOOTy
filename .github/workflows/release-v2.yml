@@ -18,10 +18,16 @@ jobs:
       prerelease: ${{ steps.meta.outputs.prerelease }}
       make_latest: ${{ steps.meta.outputs.make_latest }}
     steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
       - id: meta
         name: Validate tag and release state
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"
@@ -52,6 +58,19 @@ jobs:
           ref_type=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["type"])' <<<"${ref_json}")
           if [ "${ref_type}" != "tag" ]; then
             echo "::error::release tag ${TAG} must be an annotated tag, got Git object type ${ref_type}"
+            exit 1
+          fi
+
+          if ! git fetch --no-tags --prune origin "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"; then
+            echo "::error::could not fetch default branch ${DEFAULT_BRANCH}"
+            exit 1
+          fi
+          if ! TAG_COMMIT=$(git rev-list -n 1 "refs/tags/${TAG}" 2>/dev/null); then
+            echo "::error::release tag ${TAG} does not resolve to a commit"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${TAG_COMMIT}" "origin/${DEFAULT_BRANCH}"; then
+            echo "::error::release tag ${TAG} points to ${TAG_COMMIT}, which is not reachable from origin/${DEFAULT_BRANCH}"
             exit 1
           fi
 
