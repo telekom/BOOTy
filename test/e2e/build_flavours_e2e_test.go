@@ -217,7 +217,7 @@ func TestOCIPushInitramfsBuildsIsolatedFlavorArtifact(t *testing.T) {
 		"override OCI_INITRAMFS_DIR := dist/oci/$(OCI_FLAVOR)-$(OCI_ARCH)",
 		"override INITRAMFS_PATH := $(OCI_INITRAMFS_DIR)/$(OCI_INITRAMFS_BASENAME)",
 		"override INITRAMFS_MEDIA_TYPE :=",
-		"export VERSION DOCKERTAG REPOSITORY OCI_FLAVOR OCI_ARCH OCI_INITRAMFS_DIR INITRAMFS_PATH INITRAMFS_MEDIA_TYPE",
+		"export VERSION DOCKERTAG REPOSITORY TARGET OCI_FLAVOR OCI_ARCH OCI_INITRAMFS_DIR INITRAMFS_PATH INITRAMFS_MEDIA_TYPE",
 	} {
 		if !strings.Contains(makefile, want) {
 			t.Fatalf("Makefile missing OCI isolation contract %q", want)
