@@ -104,6 +104,7 @@ provision:
     uploadURL: "https://caprf.example.com/crash/upload"
     maxMB: 256
     uploadTimeoutSec: 120
+    includeMemoryDumps: true
   inventory:
     enabled: true
     url: "https://caprf.example.com/inventory"
@@ -201,6 +202,9 @@ agent:
 	}
 	if cfg.Provision.CrashArtifacts.MaxMB != 256 {
 		t.Errorf("Provision.CrashArtifacts.MaxMB = %d", cfg.Provision.CrashArtifacts.MaxMB)
+	}
+	if !cfg.Provision.CrashArtifacts.IncludeMemoryDumps {
+		t.Error("Provision.CrashArtifacts.IncludeMemoryDumps = false")
 	}
 	if cfg.Agent.HeartbeatURL != "https://caprf.example.com/heartbeat" {
 		t.Errorf("Agent.HeartbeatURL = %q", cfg.Agent.HeartbeatURL)
@@ -440,6 +444,7 @@ func TestLoadFullYAMLReference(t *testing.T) {
 		{"Provision.Firmware.MinBMC", cfg.Provision.Firmware.MinBMC, "4.50"},
 		{"Provision.CrashArtifacts.MaxMB", cfg.Provision.CrashArtifacts.MaxMB, 256},
 		{"Provision.CrashArtifacts.UploadTimeoutSec", cfg.Provision.CrashArtifacts.UploadTimeoutSec, 120},
+		{"Provision.CrashArtifacts.IncludeMemoryDumps", cfg.Provision.CrashArtifacts.IncludeMemoryDumps, true},
 		{"Agent.HeartbeatURL", cfg.Agent.HeartbeatURL, "https://caprf.example.com/heartbeat"},
 		{"Agent.CommandsURL", cfg.Agent.CommandsURL, "https://caprf.example.com/commands"},
 	}

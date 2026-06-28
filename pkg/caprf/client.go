@@ -1119,6 +1119,9 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) (bool, error)
 	if handled, err := applyIntVar(cfg, key, value); handled {
 		return true, err
 	}
+	if applyCrashArtifactsBoolVar(cfg, key, value) {
+		return true, nil
+	}
 
 	switch key {
 	case "DISABLE_KEXEC":
@@ -1137,8 +1140,6 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) (bool, error)
 		cfg.DryRun = parseBoolVar(value)
 	case "INSECURE_TRANSPORT":
 		cfg.Transport.Insecure = parseBoolVar(value)
-	case "CRASH_ARTIFACTS_ENABLED":
-		cfg.Provision.CrashArtifacts.Enabled = parseBoolVar(value)
 	case "SYSEXT_ENABLED":
 		cfg.Provision.Sysext.Enabled = parseBoolVar(value)
 	case "SYSEXT_ALLOW_INSECURE_HTTP":
@@ -1149,6 +1150,18 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) (bool, error)
 		return applyFeatureToggle(cfg, key, value)
 	}
 	return true, nil
+}
+
+func applyCrashArtifactsBoolVar(cfg *config.MachineConfig, key, value string) bool {
+	switch key {
+	case "CRASH_ARTIFACTS_ENABLED":
+		cfg.Provision.CrashArtifacts.Enabled = parseBoolVar(value)
+	case "CRASH_ARTIFACTS_INCLUDE_MEMORY_DUMPS":
+		cfg.Provision.CrashArtifacts.IncludeMemoryDumps = parseBoolVar(value)
+	default:
+		return false
+	}
+	return true
 }
 
 // applyIntVar handles integer special vars.

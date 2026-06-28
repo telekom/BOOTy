@@ -41,17 +41,18 @@ func TestCrashArtifactsStartupUploadBeforeImageDownload(t *testing.T) {
 	server := newKVMCrashArtifactServer(t, imageGz)
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":                    "crash-kvm-node",
-		"INSECURE_TRANSPORT":          "true",
-		"IMAGE":                       server.guestURL + "/image.gz",
-		"MODE":                        "provision",
-		"DISK_DEVICE":                 "/dev/vda",
-		"INIT_URL":                    server.guestURL + "/status/init",
-		"STATIC_IP":                   "10.0.2.15/24",
-		"STATIC_GATEWAY":              "10.0.2.2",
-		"STATIC_IFACE":                "eth0",
-		"CRASH_ARTIFACTS_ENABLED":     "true",
-		"CRASH_ARTIFACTS_PREPARE_URL": server.guestURL + "/crash/prepare",
+		"HOSTNAME":                             "crash-kvm-node",
+		"INSECURE_TRANSPORT":                   "true",
+		"IMAGE":                                server.guestURL + "/image.gz",
+		"MODE":                                 "provision",
+		"DISK_DEVICE":                          "/dev/vda",
+		"INIT_URL":                             server.guestURL + "/status/init",
+		"STATIC_IP":                            "10.0.2.15/24",
+		"STATIC_GATEWAY":                       "10.0.2.2",
+		"STATIC_IFACE":                         "eth0",
+		"CRASH_ARTIFACTS_ENABLED":              "true",
+		"CRASH_ARTIFACTS_PREPARE_URL":          server.guestURL + "/crash/prepare",
+		"CRASH_ARTIFACTS_INCLUDE_MEMORY_DUMPS": "true",
 	})
 
 	kernel := findKernel(t)
