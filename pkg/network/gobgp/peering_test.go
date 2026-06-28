@@ -19,6 +19,7 @@ func TestScenarioUnnumberedEVPN(t *testing.T) {
 		PeerMode:            network.PeerModeUnnumbered,
 		ProvisionVNI:        4000,
 		ProvisionIP:         "10.100.0.10/24",
+		ProvisionGateway:    testProvisionGateway,
 		MTU:                 9000,
 		KeepaliveInterval:   3,
 		HoldTime:            9,
@@ -63,6 +64,7 @@ func TestScenarioDualUnnumberedAndNumbered(t *testing.T) {
 			RemoteASN:           0, // 0 = same as local = iBGP
 			ProvisionVNI:        4000,
 			ProvisionIP:         "10.100.0.10/24",
+			ProvisionGateway:    testProvisionGateway,
 			MTU:                 9000,
 			KeepaliveInterval:   3,
 			HoldTime:            9,
@@ -99,6 +101,7 @@ func TestScenarioDualUnnumberedAndNumbered(t *testing.T) {
 			RemoteASN:           65100, // Different ASN = eBGP
 			ProvisionVNI:        4000,
 			ProvisionIP:         "10.100.0.10/24",
+			ProvisionGateway:    testProvisionGateway,
 			MTU:                 9000,
 			KeepaliveInterval:   3,
 			HoldTime:            9,
@@ -132,6 +135,7 @@ func TestScenarioNumberedOnly(t *testing.T) {
 			RemoteASN:           65000, // Same ASN = iBGP
 			ProvisionVNI:        4000,
 			ProvisionIP:         "10.100.0.10/24",
+			ProvisionGateway:    testProvisionGateway,
 			MTU:                 9000,
 			KeepaliveInterval:   3,
 			HoldTime:            9,
@@ -159,6 +163,7 @@ func TestScenarioNumberedOnly(t *testing.T) {
 			RemoteASN:           65020, // Different ASN = eBGP
 			ProvisionVNI:        4000,
 			ProvisionIP:         "10.100.0.10/24",
+			ProvisionGateway:    testProvisionGateway,
 			MTU:                 9000,
 			KeepaliveInterval:   3,
 			HoldTime:            9,
@@ -194,6 +199,7 @@ func TestScenarioNumberedOnly(t *testing.T) {
 			NeighborAddrs:       []string{"fd00::1"},
 			RemoteASN:           65000,
 			ProvisionVNI:        100,
+			ProvisionGateway:    testProvisionGateway,
 			MinEstablishedPeers: 1,
 		}
 
