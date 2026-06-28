@@ -39,13 +39,11 @@ func collectBIOS() Version {
 }
 
 func collectBMC() Version {
-	// BMC firmware is not directly exposed via standard sysfs on most
-	// platforms. We read the board (baseboard management) version when
-	// available and fall back to empty — enrichment via Redfish happens
-	// on the CAPRF side.
+	// BMC firmware is not exposed via standard DMI sysfs. Keep the board
+	// vendor for correlation, but leave Version empty unless a real BMC source
+	// is added so MinBMC checks fail closed instead of comparing baseboard data.
 	v := Version{Component: "BMC"}
 	v.Vendor = readSysFile(filepath.Join(sysDMIPath, "board_vendor"))
-	v.Version = readSysFile(filepath.Join(sysDMIPath, "board_version"))
 	return v
 }
 

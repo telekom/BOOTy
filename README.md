@@ -354,7 +354,7 @@ go run server/server.go \
 | `FIRMWARE_REPORT` | `false` | Enable firmware version collection and reporting |
 | `FIRMWARE_URL` | — | POST endpoint for firmware report |
 | `FIRMWARE_MIN_BIOS` | — | Minimum BIOS version (vendor-specific string) |
-| `FIRMWARE_MIN_BMC` | — | Minimum BMC version (vendor-specific string) |
+| `FIRMWARE_MIN_BMC` | — | Minimum BMC firmware version; fails closed when no real BMC firmware source reports a version |
 | `TELEMETRY_ENABLED` | `false` | Enable provisioning metrics and telemetry collection |
 | `TELEMETRY_URL` | — | POST endpoint for telemetry snapshot |
 | `METRICS_URL` | — | POST endpoint for provisioning metrics |
@@ -569,26 +569,25 @@ firmware), and NVMe namespaces.
 
 ### Firmware Reporting
 
-Collects BIOS, BMC, NIC, and storage firmware versions and optionally enforces
-minimum version requirements.
+Collects BIOS, BMC vendor, NIC firmware, and storage controller firmware from
+sysfs and optionally enforces minimum version requirements.
 
 ```bash
 export FIRMWARE_REPORT=true
 export FIRMWARE_URL="http://caprf:8080/firmware"
 export FIRMWARE_MIN_BIOS="U46"           # Abort if BIOS older than U46
-export FIRMWARE_MIN_BMC="2.72"           # Abort if reported BMC/board version older than 2.72
+export FIRMWARE_MIN_BMC="2.72"           # Abort unless a real BMC firmware source reports >= 2.72
 ```
 
-Firmware versions are read from sysfs/DMI (`/sys/class/dmi/id/`,
-`/sys/class/net`, and `/sys/class/scsi_host`). BMC firmware is reported from
-the DMI board version when present; standard Linux sysfs does not expose a
-vendor-neutral BMC firmware version. Active NIC firmware reporting reads the
-PCI-backed interface `firmware_version` sysfs attribute. Vendor-specific NIC
-managers under `pkg/firmware/nic/` provide additional ethtool/devlink-oriented
-helpers, but the provisioning firmware report path does not currently invoke
-those managers. If firmware collection itself fails, provisioning logs the
-failure and continues; if configured minimum firmware validation fails,
-provisioning reports the collected firmware data and then aborts.
+BIOS firmware is read from `/sys/class/dmi/id/`. BMC vendor is correlated from
+DMI board data, but DMI `board_version` is not a BMC firmware version;
+`FIRMWARE_MIN_BMC` therefore fails closed unless a real BMC firmware source
+provides a version. NIC firmware is read from PCI-backed interfaces via
+`/sys/class/net/<iface>/device/firmware_version`, with driver and PCI address
+metadata from the same sysfs device. Storage controller firmware is reported
+from `/sys/class/scsi_host/*/firmware_rev` when exposed. When minimum versions
+are set, provisioning aborts if the running firmware is unknown or below the
+threshold.
 
 ### Image Verification
 

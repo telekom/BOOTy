@@ -5,6 +5,7 @@ package firmware
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -101,8 +102,7 @@ func TestCollectBMC(t *testing.T) {
 	withTestPaths(t, tmpDir)
 
 	setupDMI(t, tmpDir, map[string]string{
-		"board_vendor":  "Lenovo",
-		"board_version": "1.05",
+		"board_vendor": "Lenovo",
 	})
 
 	report, err := Collect()
@@ -116,8 +116,8 @@ func TestCollectBMC(t *testing.T) {
 	if report.BMC.Vendor != "Lenovo" {
 		t.Errorf("BMC.Vendor = %q, want %q", report.BMC.Vendor, "Lenovo")
 	}
-	if report.BMC.Version != "1.05" {
-		t.Errorf("BMC.Version = %q, want %q", report.BMC.Version, "1.05")
+	if report.BMC.Version != "" {
+		t.Errorf("BMC.Version = %q, want empty when no BMC firmware source is collected", report.BMC.Version)
 	}
 }
 
@@ -307,6 +307,24 @@ func TestValidateBMC(t *testing.T) {
 	}
 	if results[0].Status != "pass" {
 		t.Errorf("expected pass, got %q", results[0].Status)
+	}
+}
+
+func TestValidateBMCUnknown(t *testing.T) {
+	report := &Report{
+		BMC: Version{Component: "BMC", Version: ""},
+	}
+	policy := Policy{MinBMCVersion: "2.72"}
+
+	results := Validate(report, policy)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Status != "fail" {
+		t.Errorf("expected fail for unknown BMC version, got %q", results[0].Status)
+	}
+	if !strings.Contains(results[0].Message, "version unknown") {
+		t.Errorf("BMC validation message = %q, want unknown-version diagnostic", results[0].Message)
 	}
 }
 
