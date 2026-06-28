@@ -314,7 +314,8 @@ test-e2e-bond:
 	@printf '%s\n' 'Running bond-mode (non-LACP) E2E tests (requires clab-bond-up)'
 	@BOOTY_TOPOLOGY=bond go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/... -run TestContainerLabTopologySmoke
 
-# Backward-compatible aliases.
+# Backward-compatible aliases for the historical clab-lacp-* target names.
+# topology-lacp.clab.yml validates bond connectivity, not 802.3ad negotiation.
 clab-lacp-up: clab-bond-up
 clab-lacp-down: clab-bond-down
 test-e2e-lacp: test-e2e-bond
