@@ -103,6 +103,28 @@ func pushDryRunOCIImage(t *testing.T, srv *httptest.Server, repoTag string, data
 	return ref.String()
 }
 
+func pushDryRunMultiLayerOCIImage(t *testing.T, srv *httptest.Server, repoTag string, payloads ...string) string {
+	t.Helper()
+
+	layers := make([]mutate.Addendum, 0, len(payloads))
+	for _, payload := range payloads {
+		layers = append(layers, mutate.Addendum{Layer: stream.NewLayer(io.NopCloser(strings.NewReader(payload)))})
+	}
+	img, err := mutate.Append(empty.Image, layers...)
+	if err != nil {
+		t.Fatalf("mutate.Append: %v", err)
+	}
+
+	ref, err := name.ParseReference(fmt.Sprintf("%s/%s", strings.TrimPrefix(srv.URL, "http://"), repoTag))
+	if err != nil {
+		t.Fatalf("parse ref: %v", err)
+	}
+	if err := remote.Write(ref, img); err != nil {
+		t.Fatalf("remote.Write: %v", err)
+	}
+	return ref.String()
+}
+
 func withMockInterfaces(t *testing.T, fn func() ([]net.Interface, error)) {
 	t.Helper()
 	original := listInterfaces

@@ -200,9 +200,9 @@ func probeHTTPImageReachability(ctx context.Context, httpClient *http.Client, im
 
 func probeOCIImageReachability(ctx context.Context, imgURL, redactedURL string) *DryRunResult {
 	ref := trimDryRunOCIScheme(imgURL)
-	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, ociPreflightProbeTimeout)
 	defer cancel()
-	if err := image.ProbeOCIReference(probeCtx, ref); err != nil {
+	if err := probeOCIReference(probeCtx, ref); err != nil {
 		errMsg := redactURLError(err, imgURL)
 		return &DryRunResult{Status: DryRunFail,
 			Message: fmt.Sprintf("OCI image unreachable %s: %s", redactedURL, errMsg)}

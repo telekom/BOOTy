@@ -34,10 +34,13 @@ var readProcCmdline = func() ([]byte, error) {
 	return os.ReadFile("/proc/cmdline")
 }
 
+const ociPreflightProbeTimeout = 10 * time.Second
+
 var (
 	evalRootSymlinks   = filepath.EvalSymlinks
 	collectFirmwareFn  = firmware.Collect
 	validateFirmwareFn = firmware.Validate
+	probeOCIReference  = image.ProbeOCIReference
 	mountBootPart      = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
 		return mgr.MountPartition(ctx, device, mountpoint)
 	}
@@ -1311,6 +1314,17 @@ func (o *Orchestrator) verifyImageSignature(ctx context.Context) error {
 		return fmt.Errorf("selecting image source: %w", err)
 	}
 	o.bestImageURL = bestURL
+
+	if image.IsOCIReference(bestURL) {
+		// Probe OCI sources even without GPG verification so bad registry
+		// references fail before destructive storage steps begin.
+		ref := image.TrimOCIScheme(bestURL)
+		probeCtx, cancel := context.WithTimeout(ctx, ociPreflightProbeTimeout)
+		defer cancel()
+		if err := probeOCIReference(probeCtx, ref); err != nil {
+			return fmt.Errorf("probing OCI image source: %w", err)
+		}
+	}
 
 	if o.cfg.Provision.Image.SignatureURL == "" {
 		o.log.Info("no image signature URL configured, skipping verification")

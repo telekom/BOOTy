@@ -2029,6 +2029,67 @@ func TestVerifyImageSignature_MissingPubKey(t *testing.T) {
 	}
 }
 
+func TestVerifyImageRejectsMultiLayerOCIBeforeWipe(t *testing.T) {
+	srv := startDryRunOCIRegistry(t)
+	defer srv.Close()
+	ref := pushDryRunMultiLayerOCIImage(t, srv, "test/multi-layer-os:v1", "layer-1", "layer-2")
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{"oci://" + ref}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err := o.verifyImageSignature(context.Background())
+	if err == nil {
+		t.Fatal("expected multi-layer OCI image rejection")
+	}
+	if !strings.Contains(err.Error(), "expected exactly one payload layer") {
+		t.Fatalf("error = %q, want exactly one payload layer", err.Error())
+	}
+	if o.bestImageURL != "oci://"+ref {
+		t.Fatalf("bestImageURL = %q, want selected OCI ref", o.bestImageURL)
+	}
+}
+
+func TestVerifyImageSignatureOCIProbeUsesTimeout(t *testing.T) {
+	previousProbe := probeOCIReference
+	t.Cleanup(func() {
+		probeOCIReference = previousProbe
+	})
+
+	const ref = "registry.example.invalid/team/node:latest"
+	var called bool
+	probeOCIReference = func(ctx context.Context, gotRef string) error {
+		called = true
+		if gotRef != ref {
+			t.Fatalf("probe ref = %q, want %q", gotRef, ref)
+		}
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			t.Fatal("probe context has no deadline")
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 || remaining > ociPreflightProbeTimeout {
+			t.Fatalf("probe deadline remaining = %v, want within %v", remaining, ociPreflightProbeTimeout)
+		}
+		return errors.New("stop probe")
+	}
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{"oci://" + ref}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err := o.verifyImageSignature(context.Background())
+	if err == nil {
+		t.Fatal("expected probe error")
+	}
+	if !strings.Contains(err.Error(), "probing OCI image source") {
+		t.Fatalf("error = %q, want OCI probe context", err.Error())
+	}
+	if !called {
+		t.Fatal("probe was not called")
+	}
+}
+
 func TestDryRunImageMode(t *testing.T) {
 	tests := []struct {
 		name   string

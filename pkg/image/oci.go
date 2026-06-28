@@ -82,18 +82,30 @@ func ProbeOCIReference(ctx context.Context, reference string) error {
 }
 
 func selectDefaultOCILayer(layers []v1.Layer) (v1.Layer, error) {
-	for i := len(layers) - 1; i >= 0; i-- {
-		mediaType, err := layers[i].MediaType()
+	var payloadLayer v1.Layer
+	payloadCount := 0
+	for _, layer := range layers {
+		mediaType, err := layer.MediaType()
 		if err != nil {
 			return nil, fmt.Errorf("read layer media type: %w", err)
 		}
 		if isTextPlainMediaType(mediaType) {
 			continue
 		}
-		return layers[i], nil
+		payloadCount++
+		if payloadLayer == nil {
+			payloadLayer = layer
+		}
 	}
 
-	return nil, fmt.Errorf("oci image has no non-text layers")
+	switch payloadCount {
+	case 0:
+		return nil, fmt.Errorf("oci image has no non-text layers")
+	case 1:
+		return payloadLayer, nil
+	default:
+		return nil, fmt.Errorf("oci image has %d non-text layers; expected exactly one payload layer", payloadCount)
+	}
 }
 
 func isTextPlainMediaType(mediaType types.MediaType) bool {

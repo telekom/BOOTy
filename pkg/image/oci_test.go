@@ -130,7 +130,7 @@ func TestOCIDigestReferenceReturnsParseError(t *testing.T) {
 	}
 }
 
-func TestFetchOCILayerMultiLayer(t *testing.T) {
+func TestFetchOCILayerRejectsMultiplePayloadLayers(t *testing.T) {
 	srv := startTestRegistry(t)
 	defer srv.Close()
 
@@ -149,18 +149,15 @@ func TestFetchOCILayerMultiLayer(t *testing.T) {
 		t.Fatalf("remote.Write: %v", err)
 	}
 
-	rc, err := FetchOCILayer(context.Background(), ref.String())
-	if err != nil {
-		t.Fatalf("FetchOCILayer: %v", err)
+	_, err = FetchOCILayer(context.Background(), ref.String())
+	if err == nil {
+		t.Fatal("expected multi-layer OCI image rejection")
 	}
-	defer rc.Close()
-
-	got, err := io.ReadAll(rc)
-	if err != nil {
-		t.Fatalf("ReadAll: %v", err)
+	if !strings.Contains(err.Error(), "expected exactly one payload layer") {
+		t.Fatalf("error = %q, want exactly one payload layer", err.Error())
 	}
-	if string(got) != "layer-2-latest" {
-		t.Errorf("got %q, want last layer content", got)
+	if err := ProbeOCIReference(context.Background(), ref.String()); err == nil {
+		t.Fatal("expected ProbeOCIReference to reject multi-layer OCI image")
 	}
 }
 
