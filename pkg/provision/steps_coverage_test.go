@@ -247,7 +247,7 @@ func TestOrchestratorRunMachineCommands_NoDirNoOp(t *testing.T) {
 func TestOrchestratorMountEFIVars_ReturnsNilOnNonEFIHost(t *testing.T) {
 	// Skip when running as root to avoid touching host EFI state.
 	if os.Getuid() == 0 {
-		t.Skip("skipping under root to avoid side-effects on efivarfs")
+		failOrSkipRootUnsafe(t, "skipping under root to avoid side-effects on efivarfs")
 	}
 
 	cfg := &config.MachineConfig{}
@@ -266,7 +266,7 @@ func TestOrchestratorMountEFIVars_ReturnsNilOnNonEFIHost(t *testing.T) {
 func TestOrchestratorRemoveEFIBootEntries_GracefulWhenMissing(t *testing.T) {
 	// Skip when running as root to avoid touching real EFI boot entries.
 	if os.Getuid() == 0 {
-		t.Skip("skipping under root to avoid touching real EFI boot entries")
+		failOrSkipRootUnsafe(t, "skipping under root to avoid touching real EFI boot entries")
 	}
 
 	cfg := &config.MachineConfig{}

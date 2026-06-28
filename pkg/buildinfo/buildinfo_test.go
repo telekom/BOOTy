@@ -59,9 +59,8 @@ func TestDependencies(t *testing.T) {
 	if deps == nil {
 		t.Fatal("Dependencies() returned nil, want non-nil slice")
 	}
-	// In a test binary, we expect at least the testing stdlib deps.
 	if len(deps) == 0 {
-		t.Skip("no build info available in test binary")
+		t.Log("test binary has no external module dependencies")
 	}
 	for i, d := range deps {
 		if d.Path == "" {

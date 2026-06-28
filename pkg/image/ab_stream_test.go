@@ -131,7 +131,7 @@ func TestStreamABRawFallsBackToRootFilesystemWhenNoGPT(t *testing.T) {
 
 func TestStreamReaderToDeviceSyncErrorMarksTargetDirty(t *testing.T) {
 	if _, err := os.Stat("/dev/null"); err != nil {
-		t.Skip("/dev/null is unavailable")
+		t.Fatalf("/dev/null is unavailable: %v", err)
 	}
 
 	err := streamReaderToDevice(context.Background(), strings.NewReader("payload"), "/dev/null")
@@ -152,7 +152,7 @@ func TestStreamReaderToDeviceSyncErrorMarksTargetDirty(t *testing.T) {
 
 func TestCopyReaderRangeToDeviceSyncErrorMarksTargetDirty(t *testing.T) {
 	if _, err := os.Stat("/dev/null"); err != nil {
-		t.Skip("/dev/null is unavailable")
+		t.Fatalf("/dev/null is unavailable: %v", err)
 	}
 
 	err := copyReaderRangeToDevice(context.Background(), strings.NewReader("payload"), "/dev/null", int64(len("payload")))

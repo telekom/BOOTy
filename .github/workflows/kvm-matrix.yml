@@ -296,6 +296,10 @@ jobs:
             } >> "${GITHUB_STEP_SUMMARY}"
             exit 1
           fi
+          if grep -E '^[[:space:]]*--- SKIP:' "${log_file}"; then
+            echo "::error::KVM ${{ matrix.scenario }} tests skipped in CI"
+            exit 1
+          fi
         env:
           QEMU_EXTRA_ARGS: ${{ matrix.qemu_extra }}
           BOOTY_INITRAMFS: ${{ github.workspace }}/test-initramfs.cpio.gz

@@ -172,13 +172,6 @@ func requireABStreamTools(t *testing.T) {
 	}
 }
 
-func requireTool(t *testing.T, tool string) {
-	t.Helper()
-	if _, err := exec.LookPath(tool); err != nil {
-		t.Skipf("%s not available", tool)
-	}
-}
-
 func createPartitionedRawImage(t *testing.T, partitions []testPartition) rawImage {
 	t.Helper()
 	totalMB := 4

@@ -47,7 +47,13 @@ jobs:
           cache: true
 
       - name: Run tests
-        run: go test -v -race -coverprofile=coverage.out ./...
+        run: |
+          set -o pipefail
+          go test -v -race -coverprofile=coverage.out ./... 2>&1 | tee test.log
+          if grep -E '^[[:space:]]*--- SKIP:' test.log; then
+            echo "::error::unit tests skipped in CI"
+            exit 1
+          fi
 
       - name: Check coverage gate (40%)
         run: |
@@ -117,6 +123,7 @@ jobs:
 
       - name: Run E2E tests
         run: |
+          set -o pipefail
           # Run e2e tests excluding kvm/ (KVM tests run in the dedicated KVM matrix job)
           packages="$(go list -tags e2e ./test/e2e/...)"
           packages="$(printf '%s\n' "$packages" | awk '$0 !~ /\/kvm$/')"
@@ -124,7 +131,11 @@ jobs:
             echo "no non-KVM e2e packages discovered" >&2
             exit 1
           fi
-          printf '%s\n' "$packages" | xargs go test -tags e2e -v -race -count=1 -timeout 20m
+          printf '%s\n' "$packages" | xargs go test -tags e2e -v -race -count=1 -timeout 20m 2>&1 | tee e2e.log
+          if grep -E '^[[:space:]]*--- SKIP:' e2e.log; then
+            echo "::error::e2e tests skipped in CI"
+            exit 1
+          fi
 
   build:
     name: Build (${{ matrix.arch }})
@@ -550,7 +561,13 @@ jobs:
           # -parallel limits t.Parallel() subtests (not used in e2e_integration); GOMAXPROCS caps
           # OS threads to reduce runner contention.
           GOMAXPROCS: "2"
-        run: go test -tags e2e_integration -v -race -count=1 -timeout 10m ./test/e2e/integration/...
+        run: |
+          set -o pipefail
+          go test -tags e2e_integration -v -race -count=1 -timeout 10m ./test/e2e/integration/... 2>&1 | tee e2e-integration.log
+          if grep -E '^[[:space:]]*--- SKIP:' e2e-integration.log; then
+            echo "::error::containerlab e2e tests skipped in CI"
+            exit 1
+          fi
 
       - name: Collect container logs
         if: always()
@@ -847,6 +864,10 @@ jobs:
           set -o pipefail
           mkdir -p linux-e2e-logs
           sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m ./test/e2e/linux/... 2>&1 | tee linux-e2e-logs/go-test.log
+          if grep -E '^[[:space:]]*--- SKIP:' linux-e2e-logs/go-test.log; then
+            echo "::error::linux e2e tests skipped in CI"
+            exit 1
+          fi
 
       - name: Collect Linux E2E diagnostics
         if: always()
@@ -939,7 +960,13 @@ jobs:
         # -parallel=2 is a no-op without t.Parallel(); use GOMAXPROCS to cap OS threads.
         env:
           GOMAXPROCS: "2"
-        run: go test -tags e2e_boot -v -race -count=1 -timeout 30m ./test/e2e/integration/...
+        run: |
+          set -o pipefail
+          go test -tags e2e_boot -v -race -count=1 -timeout 30m ./test/e2e/integration/... 2>&1 | tee e2e-boot.log
+          if grep -E '^[[:space:]]*--- SKIP:' e2e-boot.log; then
+            echo "::error::boot e2e tests skipped in CI"
+            exit 1
+          fi
 
       - name: Collect BOOTy container logs
         if: always()
@@ -1045,7 +1072,13 @@ jobs:
         # OS threads to reduce runner contention.
         env:
           GOMAXPROCS: "2"
-        run: go test -tags e2e_gobgp -v -race -count=1 -timeout 10m ./test/e2e/integration/...
+        run: |
+          set -o pipefail
+          go test -tags e2e_gobgp -v -race -count=1 -timeout 10m ./test/e2e/integration/... 2>&1 | tee e2e-gobgp.log
+          if grep -E '^[[:space:]]*--- SKIP:' e2e-gobgp.log; then
+            echo "::error::gobgp e2e tests skipped in CI"
+            exit 1
+          fi
 
       - name: Collect GoBGP logs
         if: always()
@@ -1182,7 +1215,13 @@ jobs:
       - name: Run Type-5 E2E tests
         env:
           GOMAXPROCS: "2"
-        run: go test -tags e2e_gobgp_type5 -v -race -count=1 -timeout 10m ./test/e2e/integration/...
+        run: |
+          set -o pipefail
+          go test -tags e2e_gobgp_type5 -v -race -count=1 -timeout 10m ./test/e2e/integration/... 2>&1 | tee e2e-type5.log
+          if grep -E '^[[:space:]]*--- SKIP:' e2e-type5.log; then
+            echo "::error::type-5 e2e tests skipped in CI"
+            exit 1
+          fi
 
       - name: Collect Type-5 logs
         if: always()
@@ -1323,7 +1362,13 @@ jobs:
         # -parallel=2 is a no-op without t.Parallel(); use GOMAXPROCS to cap OS threads.
         env:
           GOMAXPROCS: "2"
-        run: go test -tags e2e_vrnetlab -v -race -count=1 -timeout 30m ./test/e2e/integration/...
+        run: |
+          set -o pipefail
+          go test -tags e2e_vrnetlab -v -race -count=1 -timeout 30m ./test/e2e/integration/... 2>&1 | tee e2e-vrnetlab.log
+          if grep -E '^[[:space:]]*--- SKIP:' e2e-vrnetlab.log; then
+            echo "::error::vrnetlab e2e tests skipped in CI"
+            exit 1
+          fi
 
       - name: Collect vrnetlab logs
         if: always()
@@ -1433,7 +1478,13 @@ jobs:
       - name: Run GoBGP vrnetlab E2E tests
         env:
           GOMAXPROCS: "2"
-        run: go test -tags e2e_gobgp_vrnetlab -v -race -count=1 -timeout 30m ./test/e2e/integration/...
+        run: |
+          set -o pipefail
+          go test -tags e2e_gobgp_vrnetlab -v -race -count=1 -timeout 30m ./test/e2e/integration/... 2>&1 | tee e2e-gobgp-vrnetlab.log
+          if grep -E '^[[:space:]]*--- SKIP:' e2e-gobgp-vrnetlab.log; then
+            echo "::error::gobgp vrnetlab e2e tests skipped in CI"
+            exit 1
+          fi
 
       - name: Collect GoBGP vrnetlab logs
         if: always()

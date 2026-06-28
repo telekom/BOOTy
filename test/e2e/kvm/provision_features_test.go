@@ -24,9 +24,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestCloudInitInjectionQEMU(t *testing.T) {
-	if os.Getuid() != 0 {
-		t.Skip("requires root")
-	}
+	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)
 	requireDiskInspectTools(t)
@@ -40,16 +38,16 @@ func TestCloudInitInjectionQEMU(t *testing.T) {
 
 	kernel := findKernel(t)
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":              "cloud-init-test",
-		"IMAGE":                 baseURL + "/image.gz",
-		"MODE":                  "provision",
-		"DISK_DEVICE":           "/dev/vda",
-		"STATIC_IP":             "10.0.2.15/24",
-		"STATIC_GATEWAY":        "10.0.2.2",
-		"STATIC_IFACE":          "eth0",
-		"INSECURE_TRANSPORT":    "true",
-		"CLOUDINIT_ENABLED":     "true",
-		"CLOUDINIT_DATASOURCE":  "nocloud",
+		"HOSTNAME":             "cloud-init-test",
+		"IMAGE":                baseURL + "/image.gz",
+		"MODE":                 "provision",
+		"DISK_DEVICE":          "/dev/vda",
+		"STATIC_IP":            "10.0.2.15/24",
+		"STATIC_GATEWAY":       "10.0.2.2",
+		"STATIC_IFACE":         "eth0",
+		"INSECURE_TRANSPORT":   "true",
+		"CLOUDINIT_ENABLED":    "true",
+		"CLOUDINIT_DATASOURCE": "nocloud",
 	})
 
 	output := runQEMUProvision(t, kernel, initramfs, targetDisk, 5*time.Minute)
@@ -95,9 +93,7 @@ func TestCloudInitInjectionQEMU(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPostProvisionCommandsQEMU(t *testing.T) {
-	if os.Getuid() != 0 {
-		t.Skip("requires root")
-	}
+	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)
 	requireDiskInspectTools(t)
@@ -153,9 +149,7 @@ func TestPostProvisionCommandsQEMU(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestImageChecksumPassQEMU(t *testing.T) {
-	if os.Getuid() != 0 {
-		t.Skip("requires root")
-	}
+	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)
 
@@ -210,9 +204,7 @@ func TestImageChecksumPassQEMU(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestImageChecksumFailQEMU(t *testing.T) {
-	if os.Getuid() != 0 {
-		t.Skip("requires root")
-	}
+	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)
 
@@ -259,9 +251,7 @@ func TestImageChecksumFailQEMU(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestHealthChecksEndpointQEMU(t *testing.T) {
-	if os.Getuid() != 0 {
-		t.Skip("requires root")
-	}
+	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)
 
@@ -317,9 +307,7 @@ func TestHealthChecksEndpointQEMU(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestInventoryCollectionEndpointQEMU(t *testing.T) {
-	if os.Getuid() != 0 {
-		t.Skip("requires root")
-	}
+	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)
 
@@ -382,9 +370,7 @@ func TestInventoryCollectionEndpointQEMU(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTelemetryCollectionEndpointQEMU(t *testing.T) {
-	if os.Getuid() != 0 {
-		t.Skip("requires root")
-	}
+	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)
 
@@ -398,19 +384,19 @@ func TestTelemetryCollectionEndpointQEMU(t *testing.T) {
 
 	kernel := findKernel(t)
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":            "telemetry-test",
-		"IMAGE":               mock.guestURL + "/image.gz",
-		"MODE":                "provision",
-		"DISK_DEVICE":         "/dev/vda",
-		"STATIC_IP":           "10.0.2.15/24",
-		"STATIC_GATEWAY":      "10.0.2.2",
-		"STATIC_IFACE":        "eth0",
-		"INSECURE_TRANSPORT":  "true",
-		"INIT_URL":            mock.guestURL + "/status/init",
-		"TELEMETRY_ENABLED":   "true",
-		"TELEMETRY_URL":       mock.guestURL + "/telemetry",
-		"METRICS_URL":         mock.guestURL + "/metrics",
-		"EVENT_URL":           mock.guestURL + "/events",
+		"HOSTNAME":           "telemetry-test",
+		"IMAGE":              mock.guestURL + "/image.gz",
+		"MODE":               "provision",
+		"DISK_DEVICE":        "/dev/vda",
+		"STATIC_IP":          "10.0.2.15/24",
+		"STATIC_GATEWAY":     "10.0.2.2",
+		"STATIC_IFACE":       "eth0",
+		"INSECURE_TRANSPORT": "true",
+		"INIT_URL":           mock.guestURL + "/status/init",
+		"TELEMETRY_ENABLED":  "true",
+		"TELEMETRY_URL":      mock.guestURL + "/telemetry",
+		"METRICS_URL":        mock.guestURL + "/metrics",
+		"EVENT_URL":          mock.guestURL + "/events",
 	})
 
 	output := runQEMUProvision(t, kernel, initramfs, targetDisk, 5*time.Minute)
@@ -448,9 +434,7 @@ func TestTelemetryCollectionEndpointQEMU(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRescueModeRetryQEMU(t *testing.T) {
-	if os.Getuid() != 0 {
-		t.Skip("requires root")
-	}
+	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)
 
@@ -515,9 +499,7 @@ func TestRescueModeRetryQEMU(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDryRunSkipsDiskWritesQEMU(t *testing.T) {
-	if os.Getuid() != 0 {
-		t.Skip("requires root")
-	}
+	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)
 
