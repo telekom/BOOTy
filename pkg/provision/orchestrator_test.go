@@ -682,9 +682,10 @@ func TestValidateProvisionInputsRejectsGPGSignatureWithoutChecksum(t *testing.T)
 }
 
 func TestValidateProvisionInputsAllowsGPGSignatureWithChecksum(t *testing.T) {
+	srv := newTestImageServer(t, []byte("booty raw image"))
 	cfg := &config.MachineConfig{}
 	cfg.Provision.TargetOS = config.TargetOSLinux
-	cfg.Provision.Image.URLs = []string{"https://images.example.invalid/node.raw"}
+	cfg.Provision.Image.URLs = []string{srv.URL + "/node.raw"}
 	cfg.Provision.Image.SignatureURL = " https://images.example.invalid/node.raw.sig "
 	cfg.Provision.Image.Checksum = strings.Repeat("a", 64)
 	cfg.Provision.Image.ChecksumType = "sha256"
