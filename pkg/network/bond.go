@@ -58,11 +58,18 @@ func (b *BondMode) Setup(_ context.Context, cfg *Config) error {
 	bond.Miimon = 100 // 100 ms link monitoring interval for failure detection
 	bond.LacpRate = netlink.BOND_LACP_RATE_FAST
 	bond.XmitHashPolicy = netlink.BOND_XMIT_HASH_POLICY_LAYER3_4
+	bondLink := netlink.Link(bond)
 
 	if err := bondLinkAdd(bond); err != nil {
 		if !errors.Is(err, syscall.EEXIST) {
 			return fmt.Errorf("creating bond0: %w", err)
 		}
+		existing, lookupErr := bondLinkByName("bond0")
+		if lookupErr != nil {
+			return fmt.Errorf("looking up existing bond0: %w", lookupErr)
+		}
+		bondLink = existing
+		b.bond = existing
 		slog.Info("bond interface already exists, reusing", "name", "bond0")
 	} else {
 		slog.Info("created bond interface", "name", "bond0", "mode", bond.Mode)
@@ -85,7 +92,7 @@ func (b *BondMode) Setup(_ context.Context, cfg *Config) error {
 		if err := bondLinkSetDown(link); err != nil {
 			slog.Warn("failed to bring down slave", "name", ifName, "error", err)
 		}
-		if err := bondLinkSetBondSlave(link, &netlink.Bond{LinkAttrs: *bond.Attrs()}); err != nil {
+		if err := bondLinkSetBondSlave(link, &netlink.Bond{LinkAttrs: *bondLink.Attrs()}); err != nil {
 			slog.Warn("failed to enslave interface", "name", ifName, "error", err)
 			continue
 		}
@@ -98,11 +105,11 @@ func (b *BondMode) Setup(_ context.Context, cfg *Config) error {
 	}
 
 	// Bring the bond up.
-	if err := bondLinkSetUp(bond); err != nil {
+	if err := bondLinkSetUp(bondLink); err != nil {
 		return fmt.Errorf("bringing up bond0: %w", err)
 	}
 
-	b.bond = bond
+	b.bond = bondLink
 	return nil
 }
 
