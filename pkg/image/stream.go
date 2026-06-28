@@ -174,6 +174,10 @@ func openAndDecompress(ctx context.Context, url string) (io.Reader, func(), Form
 		cleanup := func() { _ = body.Close() }
 		return reader, cleanup, FormatQCOW2, nil
 	}
+	if format == FormatRaw {
+		cleanup := func() { _ = body.Close() }
+		return reader, cleanup, FormatRaw, nil
+	}
 
 	decompressed, closer, err := Decompressor(reader, format)
 	if err != nil {

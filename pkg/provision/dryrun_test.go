@@ -720,6 +720,35 @@ func TestDryRunImagePrerequisitesRawPassesWithoutQemuImg(t *testing.T) {
 	}
 }
 
+func TestDryRunImagePrerequisitesTrimsImageURLs(t *testing.T) {
+	srv := newTestImageServer(t, []byte("raw payload"))
+	defer srv.Close()
+	t.Setenv("PATH", t.TempDir())
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{" ", "\t" + srv.URL + "/image.raw  "}
+	o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
+
+	result := o.dryRunImagePrerequisites(context.Background())
+	if result.Status != DryRunPass {
+		t.Fatalf("got %s, want pass: %s", result.Status, result.Message)
+	}
+}
+
+func TestDryRunImagePrerequisitesFailsWhenURLsAreBlank(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{" ", "\t"}
+	o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
+
+	result := o.dryRunImagePrerequisites(context.Background())
+	if result.Status != DryRunFail {
+		t.Fatalf("got %s, want fail: %s", result.Status, result.Message)
+	}
+	if !strings.Contains(result.Message, "no image URLs configured") {
+		t.Fatalf("message = %q, want no image URLs context", result.Message)
+	}
+}
+
 func TestDryRunImagePrerequisitesSkipsOCIWithoutPullingLayer(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 

@@ -259,7 +259,12 @@ func (o *Orchestrator) dryRunImagePrerequisites(ctx context.Context) DryRunResul
 		return DryRunResult{Status: DryRunFail, Message: "no image URLs configured"}
 	}
 
-	bestURL, err := image.SelectBestSource(ctx, o.cfg.Provision.Image.URLs)
+	imageSources := dryRunImageSources(o.cfg.Provision.Image.URLs)
+	if len(imageSources) == 0 {
+		return DryRunResult{Status: DryRunFail, Message: "no image URLs configured"}
+	}
+
+	bestURL, err := image.SelectBestSource(ctx, imageSources)
 	if err != nil {
 		return DryRunResult{Status: DryRunFail,
 			Message: fmt.Sprintf("selecting image source: %v", err)}
@@ -275,6 +280,17 @@ func (o *Orchestrator) dryRunImagePrerequisites(ctx context.Context) DryRunResul
 	}
 	return DryRunResult{Status: DryRunPass,
 		Message: fmt.Sprintf("image format %s prerequisites available", format)}
+}
+
+func dryRunImageSources(urls []string) []string {
+	sources := make([]string, 0, len(urls))
+	for _, source := range urls {
+		source = strings.TrimSpace(source)
+		if source != "" {
+			sources = append(sources, source)
+		}
+	}
+	return sources
 }
 
 func (o *Orchestrator) dryRunHealthChecks(ctx context.Context) DryRunResult {
