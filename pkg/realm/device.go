@@ -57,7 +57,7 @@ func (d *Devices) CreateDevice() error {
 		if d.Device[x].CreateDevice {
 			err := syscall.Mknod(d.Device[x].Path, d.Device[x].Mode, makedev(d.Device[x].Major, d.Device[x].Minor))
 			if err != nil {
-				return fmt.Errorf("create device %q at %s: %w", d.Device[x].Name, d.Device[x].Path, err)
+				return fmt.Errorf("create device %q at %q: %w", d.Device[x].Name, d.Device[x].Path, err)
 			}
 		}
 	}
