@@ -395,6 +395,31 @@ func TestWriteNetworkdRemovesStaleBootyOwnedUnits(t *testing.T) {
 	assertFileExists(t, filepath.Join(dir, "99-user.network"))
 }
 
+func TestWriteNetworkdSkipsStaleBootyOwnedDirectories(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "etc/systemd/network")
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
+	}
+	if err := Write(root, Flatcar, cfg); err != nil {
+		t.Fatalf("first Write() error: %v", err)
+	}
+	staleDir := filepath.Join(dir, "10-booty-old.network")
+	if err := os.Mkdir(staleDir, 0o755); err != nil {
+		t.Fatalf("Mkdir(staleDir) error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(staleDir, "marker"), []byte("admin-owned\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(staleDir marker) error: %v", err)
+	}
+
+	if err := Write(root, Flatcar, cfg); err != nil {
+		t.Fatalf("second Write() error: %v", err)
+	}
+
+	assertFileExists(t, filepath.Join(dir, "10-booty-eth0.network"))
+	assertFileExists(t, staleDir)
+}
+
 func TestWriteNMKeyfiles(t *testing.T) {
 	root := t.TempDir()
 	cfg := &NetworkConfig{
@@ -454,6 +479,31 @@ func TestWriteNMKeyfilesRemovesStaleBootyOwnedProfiles(t *testing.T) {
 	assertFileExists(t, filepath.Join(dir, "booty-enp1s0.nmconnection"))
 	assertFileMissing(t, filepath.Join(dir, "booty-enp2s0.nmconnection"))
 	assertFileExists(t, filepath.Join(dir, "admin.nmconnection"))
+}
+
+func TestWriteNMKeyfilesSkipsStaleBootyOwnedDirectories(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "etc/NetworkManager/system-connections")
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{{Name: "enp1s0", DHCP: true}},
+	}
+	if err := Write(root, RHEL, cfg); err != nil {
+		t.Fatalf("first Write() error: %v", err)
+	}
+	staleDir := filepath.Join(dir, "booty-old.nmconnection")
+	if err := os.Mkdir(staleDir, 0o755); err != nil {
+		t.Fatalf("Mkdir(staleDir) error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(staleDir, "marker"), []byte("admin-owned\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(staleDir marker) error: %v", err)
+	}
+
+	if err := Write(root, RHEL, cfg); err != nil {
+		t.Fatalf("second Write() error: %v", err)
+	}
+
+	assertFileExists(t, filepath.Join(dir, "booty-enp1s0.nmconnection"))
+	assertFileExists(t, staleDir)
 }
 
 func TestWriteValidationError(t *testing.T) {

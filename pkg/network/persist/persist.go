@@ -1181,6 +1181,9 @@ func removeStaleBootyFiles(dir string, keep map[string]struct{}, owned func(stri
 		if _, ok := keep[name]; ok {
 			continue
 		}
+		if entry.Type()&os.ModeType != 0 {
+			continue
+		}
 		if err := os.Remove(filepath.Join(dir, name)); err != nil {
 			return fmt.Errorf("%s: %w", name, err)
 		}
