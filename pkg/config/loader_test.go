@@ -216,7 +216,7 @@ func TestLoadJSON(t *testing.T) {
   "hostname": "json-node",
   "mode": "provision",
   "persistNetwork": true,
-  "osFamily": "rhel",
+  "osFamily": "ubuntu",
   "network": {
     "mode": "static",
     "static": {"ip": "10.0.0.5/24", "gateway": "10.0.0.1", "iface": "eth0"}
@@ -241,7 +241,7 @@ func TestLoadJSON(t *testing.T) {
 	if !cfg.PersistNetwork {
 		t.Error("PersistNetwork = false")
 	}
-	if cfg.OSFamily != "rhel" {
+	if cfg.OSFamily != "ubuntu" {
 		t.Errorf("OSFamily = %q", cfg.OSFamily)
 	}
 	if cfg.Provision.Disk.MinSizeGB != 50 {
