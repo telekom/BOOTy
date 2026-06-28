@@ -120,7 +120,7 @@ func (c *Config) validateBGP() []string {
 		errs = append(errs, "network.bgp.bfdTransmitMS and network.bgp.bfdReceiveMS must be set together")
 	}
 	if strings.EqualFold(strings.TrimSpace(c.Network.Mode), "gobgp") && (bfdTransmit > 0 || bfdReceive > 0) {
-		errs = append(errs, "network.mode gobgp does not support BFD; use network.mode=frr or BGP keepalive/hold timers")
+		errs = append(errs, "network.mode=gobgp does not support BFD; use network.mode=frr or BGP keepalive/hold timers")
 	}
 	return errs
 }
