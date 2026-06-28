@@ -273,6 +273,11 @@ overlay_subnet="fd00::/64"
 dns_resolver="8.8.8.8"
 ```
 
+`IMAGE` must reference a raw disk image, a supported compressed raw image
+(`.gz`, `.lz4`, `.xz`, `.zst`, `.bz2`), a QCOW2 image, or an OCI layer that
+contains a supported image payload. VMware VMDK, OVA, and OVF containers are
+not provisioning inputs; convert them to raw or QCOW2 before publishing.
+
 ### Legacy Mode
 
 The provisioning server serves configuration files and (optionally) disk images over HTTP.
