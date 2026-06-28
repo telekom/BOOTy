@@ -12,6 +12,7 @@ jobs:
   validate-tag:
     name: Validate Release Tag
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     outputs:
@@ -132,6 +133,7 @@ jobs:
             runner: ubuntu-24.04-arm
       fail-fast: false
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
     steps:
       - name: Assert runner architecture
         run: |
@@ -225,6 +227,7 @@ jobs:
     name: Generate SBOM
     needs: [build, iso]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Download release artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -267,6 +270,7 @@ jobs:
     name: Vulnerability Scan
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
@@ -298,6 +302,7 @@ jobs:
     name: Sign Artifacts
     needs: [build, iso, sbom]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
@@ -314,7 +319,7 @@ jobs:
 
       - name: Sign checksums with Cosign
         run: |
-          mapfile -t checksums < <(find artifacts -type f -name "*.sha256" | sort)
+          mapfile -d '' -t checksums < <(find artifacts -type f -name "*.sha256" -print0 | sort -z)
           if [ "${#checksums[@]}" -eq 0 ]; then
             echo "::error::no checksum files found to sign"
             find artifacts -maxdepth 3 -type f -print || true
@@ -355,6 +360,7 @@ jobs:
             arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
     permissions:
       contents: read
       packages: write
@@ -451,6 +457,7 @@ jobs:
     name: Container Manifest (${{ matrix.flavor }})
     needs: container-sign
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       matrix:
         flavor: [default, gobgp]
@@ -510,6 +517,7 @@ jobs:
     name: ISO (${{ matrix.flavor }})
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     strategy:
       matrix:
         include:
@@ -560,6 +568,7 @@ jobs:
     name: ISO OCI (${{ matrix.flavor }})
     needs: [iso, scan]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       matrix:
         include:
@@ -637,6 +646,7 @@ jobs:
     name: Generate Changelog
     needs: validate-tag
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
@@ -661,6 +671,7 @@ jobs:
     name: Create GitHub Release
     needs: [validate-tag, build, iso, iso-oci, sbom, scan, sign, container-manifest, changelog, oci-artifacts]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:
@@ -689,6 +700,7 @@ jobs:
     name: Publish OCI Artifacts (${{ matrix.arch }})
     needs: [build, sbom, sign, scan]
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     strategy:
       matrix:
         arch: [amd64, arm64]

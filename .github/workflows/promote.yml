@@ -22,6 +22,7 @@ jobs:
   reject-non-default-ref:
     name: Reject non-default dispatch ref
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: github.ref != format('refs/heads/{0}', github.event.repository.default_branch)
     steps:
       - name: Reject promotion from non-default ref
@@ -32,6 +33,7 @@ jobs:
   promote:
     name: Promote ${{ inputs.version }} to ${{ inputs.channel }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     permissions:
       contents: write
