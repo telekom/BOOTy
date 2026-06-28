@@ -35,6 +35,12 @@ jobs:
             echo "::error::release tag ${TAG} is not valid semver"
             exit 1
           fi
+          case "${VERSION}" in
+            *+*)
+              echo "::error::release tag ${TAG} contains SemVer build metadata, which cannot be used in Docker/OCI tags"
+              exit 1
+              ;;
+          esac
 
           ref_json=$(curl -fsS \
             -H "Authorization: Bearer ${GH_TOKEN}" \
