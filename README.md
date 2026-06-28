@@ -81,7 +81,7 @@ BOOTy operates in two modes depending on the boot environment:
 - **Cloud-init injection** — NoCloud and ConfigDrive seed generation from provisioning identity and network config
 - **Netplan overlay** — Drop-in netplan YAML config from provisioner overrides `/deploy/vars` network settings
 - **Network persistence renderers** — Library support for netplan, NetworkManager, and systemd-networkd config generation
-- **IPMI operations** — BMC network config, boot device control, chassis power, sensor readings
+- **IPMI operations** — Library support for local BMC network reads, boot device control, and chassis power
 - **TPM 2.0 support** — Detection, PCR reading, metadata collection, LUKS2 TPM enrollment (Phase 2)
 - **Bootloader helpers** — GRUB-oriented provisioning plus experimental bootloader detection helpers
 - **BGP policy engine** — Import/export filtering, community tagging, graceful restart
@@ -561,20 +561,26 @@ firmware), and NVMe namespaces.
 
 ### Firmware Reporting
 
-Collects BIOS, BMC, and NIC firmware versions and optionally enforces minimum
-version requirements.
+Collects BIOS, BMC, NIC, and storage firmware versions and optionally enforces
+minimum version requirements.
 
 ```bash
 export FIRMWARE_REPORT=true
 export FIRMWARE_URL="http://caprf:8080/firmware"
 export FIRMWARE_MIN_BIOS="U46"           # Abort if BIOS older than U46
-export FIRMWARE_MIN_BMC="2.72"           # Abort if BMC older than 2.72
+export FIRMWARE_MIN_BMC="2.72"           # Abort if reported BMC/board version older than 2.72
 ```
 
-Firmware versions are read from sysfs (`/sys/class/dmi/id/`). NIC firmware
-is collected per-driver for Broadcom, Intel, and Mellanox adapters via ethtool.
-When minimum versions are set, provisioning aborts if the running firmware is
-below the threshold.
+Firmware versions are read from sysfs/DMI (`/sys/class/dmi/id/`,
+`/sys/class/net`, and `/sys/class/scsi_host`). BMC firmware is reported from
+the DMI board version when present; standard Linux sysfs does not expose a
+vendor-neutral BMC firmware version. Active NIC firmware reporting reads the
+PCI-backed interface `firmware_version` sysfs attribute. Vendor-specific NIC
+managers under `pkg/firmware/nic/` provide additional ethtool/devlink-oriented
+helpers, but the provisioning firmware report path does not currently invoke
+those managers. If firmware collection itself fails, provisioning logs the
+failure and continues; if configured minimum firmware validation fails,
+provisioning reports the collected firmware data and then aborts.
 
 ### Image Verification
 
@@ -825,19 +831,21 @@ status (`completed` or `failed` with error message).
 
 ### BIOS Settings
 
-BOOTy captures BIOS configuration state from vendor-specific sysfs paths.
-Supported vendors are auto-detected via DMI (`/sys/class/dmi/id/sys_vendor`):
+BOOTy has a BIOS package with vendor-specific baseline scaffolding for common
+server vendors. Supported vendors are auto-detected via DMI
+(`/sys/class/dmi/id/sys_vendor`):
 
-| Vendor | Key Settings Captured |
+| Vendor | Baseline Settings Modeled |
 |--------|----------------------|
 | Dell | LogicalProc, VirtualizationTechnology, SriovGlobalEnable, BootMode, SecureBoot |
 | HPE | Hyperthreading, Virtualization, SRIOV, BootMode, SecureBootStatus |
 | Lenovo | OperatingMode, HyperThreading, VirtualizationTechnology, SRIOVSupport, BootMode |
-| Supermicro | Generic BIOS capture |
+| Supermicro | Generic baseline placeholder |
 
-BIOS state is collected early in provisioning and reported to the CAPRF
-controller. No environment variables are required — vendor detection is
-automatic.
+The current `Capture` implementation returns the configured baseline settings
+for the detected vendor; it does not read live BIOS attributes from Redfish,
+IPMI, efivarfs, or vendor sysfs paths. `Apply` and `Reset` are not implemented,
+and BIOS capture is not wired as an automatic provisioning report step today.
 
 
 ### BGP Policy
@@ -941,21 +949,19 @@ gateways, DNS, and VLAN assignments where the selected writer supports them.
 
 ### IPMI Operations
 
-BOOTy includes an IPMI manager (`pkg/ipmi/`) for local BMC operations
-via `ipmitool`. IPMI capabilities are used during provisioning for
-auto-detecting the BMC MAC address and IP, which are included in
-debug/inventory payloads.
+BOOTy includes an IPMI manager (`pkg/ipmi/`) for local BMC operations via
+`ipmitool`. This package is a library; it is not currently wired into the
+automatic provisioning, debug, or inventory flows.
 
 | Operation | Description |
 |-----------|-------------|
 | `GetBMCNetwork` | Read BMC IP, netmask, gateway, MAC, DHCP, and VLAN settings |
 | `SetNextBoot` | Set next boot device: `pxe`, `disk`, `cdrom`, `bios` |
 | `ChassisControl` | Power on/off/cycle/reset/soft |
-| `GetChassisStatus` | Query power state, faults, and intrusion |
-| `GetSensors` | Read sensor values (temperature, voltage, fan) |
 
-No environment variables are required — IPMI is used automatically when
-`ipmitool` is available in the initramfs.
+No environment variables enable automatic IPMI use today. Sensor reading,
+chassis status reporting, and BMC auto-detection are tracked in the IPMI
+proposal docs but are not implemented in the runtime package.
 
 ### TPM Support
 
