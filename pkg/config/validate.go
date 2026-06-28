@@ -37,48 +37,7 @@ import (
 // All validation errors are collected and returned as a single error. Returns
 // nil when the config is valid.
 func (c *Config) Validate() error {
-	validators := []func() string{
-		func() string {
-			return validateEnum(c.Mode, "mode", "provision", "deprovision", "soft-deprovision", "soft", "hard", "standby", "dry-run", "check")
-		},
-		func() string {
-			return validateEnum(c.Provision.Image.Mode, "provision.image.mode", ImageModeWholeDisk, ImageModePartition, ImageModeAB)
-		},
-		func() string {
-			return validateEnumLower(c.Network.Mode, "network.mode", "gobgp", "frr", "static", "dhcp")
-		},
-		func() string {
-			return validateEnumLower(c.Provision.Image.ChecksumType, "provision.image.checksumType", "sha256", "sha512")
-		},
-		func() string {
-			return validateEnumLower(c.Rescue.Mode, "rescue.mode", "reboot", "retry", "shell", "wait")
-		},
-		func() string {
-			return validateEnumLower(c.Network.BGP.PeerMode, "network.bgp.peerMode", "unnumbered", "dual", "numbered")
-		},
-		func() string {
-			return validateEnumLower(c.Network.BGP.UnderlayAF, "network.bgp.underlayAF", "ipv4")
-		},
-		func() string {
-			return validateEnumLower(c.Network.BGP.OverlayType, "network.bgp.overlayType", "evpn-vxlan", "l3vpn", "none")
-		},
-		func() string {
-			return validateEnumLower(c.Provision.CloudInit.Datasource, "provision.cloudInit.datasource", "nocloud", "configdrive")
-		},
-		func() string {
-			return validateEnumLower(c.OSFamily, "osFamily", "ubuntu", "rhel", "flatcar")
-		},
-		func() string {
-			return validateEnumUpper(c.Transport.TokenAlgorithm, "transport.tokenAlgorithm", "RS256", "ES256")
-		},
-	}
-
-	var errs []string
-	for _, v := range validators {
-		if msg := v(); msg != "" {
-			errs = append(errs, msg)
-		}
-	}
+	errs := c.validateEnums()
 
 	peerMode := strings.ToLower(strings.TrimSpace(c.Network.BGP.PeerMode))
 	if (peerMode == "dual" || peerMode == "numbered") && strings.TrimSpace(c.Network.BGP.Neighbors) == "" {
@@ -122,6 +81,52 @@ func (c *Config) Validate() error {
 
 	c.normalize()
 	return nil
+}
+
+func (c *Config) validateEnums() []string {
+	validators := []func() string{
+		func() string {
+			return validateEnum(c.Mode, "mode", "provision", "deprovision", "soft-deprovision", "soft", "hard", "standby", "dry-run", "check")
+		},
+		func() string {
+			return validateEnum(c.Provision.Image.Mode, "provision.image.mode", ImageModeWholeDisk, ImageModePartition, ImageModeAB)
+		},
+		func() string {
+			return validateEnumLower(c.Network.Mode, "network.mode", "gobgp", "frr", "static", "dhcp")
+		},
+		func() string {
+			return validateEnumLower(c.Provision.Image.ChecksumType, "provision.image.checksumType", "sha256", "sha512")
+		},
+		func() string {
+			return validateEnumLower(c.Rescue.Mode, "rescue.mode", "reboot", "retry", "shell", "wait")
+		},
+		func() string {
+			return validateEnumLower(c.Network.BGP.PeerMode, "network.bgp.peerMode", "unnumbered", "dual", "numbered")
+		},
+		func() string {
+			return validateEnumLower(c.Network.BGP.UnderlayAF, "network.bgp.underlayAF", "ipv4")
+		},
+		func() string {
+			return validateEnumLower(c.Network.BGP.OverlayType, "network.bgp.overlayType", "evpn-vxlan", "l3vpn", "none")
+		},
+		func() string {
+			return validateEnumLower(c.Provision.CloudInit.Datasource, "provision.cloudInit.datasource", "nocloud", "configdrive")
+		},
+		func() string {
+			return validateEnumLower(c.OSFamily, "osFamily", "ubuntu", "rhel", "flatcar")
+		},
+		func() string {
+			return validateEnumUpper(c.Transport.TokenAlgorithm, "transport.tokenAlgorithm", "RS256", "ES256")
+		},
+	}
+
+	var errs []string
+	for _, v := range validators {
+		if msg := v(); msg != "" {
+			errs = append(errs, msg)
+		}
+	}
+	return errs
 }
 
 func (c *Config) validateBGP() []string {

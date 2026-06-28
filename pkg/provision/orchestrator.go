@@ -840,7 +840,7 @@ func (o *Orchestrator) validatePartitionLayoutConfig() error {
 
 func (o *Orchestrator) validatePartitionLayoutRuntimeSupport() error {
 	layout := o.cfg.Provision.Disk.PartitionLayout
-	if layout == nil || o.isABImageMode() || isDeprovisionMode(o.cfg.Mode) {
+	if layout == nil || o.isABImageMode() || config.IsDeprovisionMode(o.cfg.Mode) {
 		return nil
 	}
 	for _, part := range layout.Partitions {
@@ -859,15 +859,6 @@ func (o *Orchestrator) validatePartitionLayoutRuntimeSupport() error {
 		}
 	}
 	return nil
-}
-
-func isDeprovisionMode(mode string) bool {
-	switch strings.TrimSpace(mode) {
-	case "deprovision", "hard", "soft", "soft-deprovision":
-		return true
-	default:
-		return false
-	}
 }
 
 func validateSupportedLayoutMountpoint(mountpoint string) error {
