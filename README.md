@@ -579,6 +579,9 @@ below the threshold.
 ### Image Verification
 
 BOOTy supports checksum and GPG signature verification for streamed images.
+OCI image sources must either be digest-pinned (`oci://repo/image@sha256:...`)
+or provide `IMAGE_CHECKSUM`; mutable OCI tags without a checksum are rejected
+before destructive storage steps.
 
 ```bash
 # IMAGE_CHECKSUM must be the raw hex digest (no "sha256:" prefix)

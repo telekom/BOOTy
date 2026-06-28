@@ -88,6 +88,48 @@ func TestProbeOCIReferenceRejectsMissingImage(t *testing.T) {
 	}
 }
 
+func TestIsOCIDigestReference(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	tests := []struct {
+		name string
+		url  string
+		want bool
+	}{
+		{
+			name: "digest",
+			url:  "oci://registry.example.com/org/image@sha256:" + digest,
+			want: true,
+		},
+		{
+			name: "tag",
+			url:  "oci://registry.example.com/org/image:latest",
+		},
+		{
+			name: "http",
+			url:  "https://registry.example.com/org/image@sha256:" + digest,
+		},
+		{
+			name: "invalid",
+			url:  "oci://registry.example.com/%zz",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsOCIDigestReference(tt.url); got != tt.want {
+				t.Fatalf("IsOCIDigestReference(%q) = %t, want %t", tt.url, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOCIDigestReferenceReturnsParseError(t *testing.T) {
+	_, err := OCIDigestReference("oci://registry.example.com/%zz")
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+}
+
 func TestFetchOCILayerMultiLayer(t *testing.T) {
 	srv := startTestRegistry(t)
 	defer srv.Close()

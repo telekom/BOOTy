@@ -160,6 +160,25 @@ func IsOCIReference(url string) bool {
 	return strings.HasPrefix(url, "oci://")
 }
 
+// IsOCIDigestReference returns true when an oci:// URL is pinned by digest.
+func IsOCIDigestReference(url string) bool {
+	ok, err := OCIDigestReference(url)
+	return err == nil && ok
+}
+
+// OCIDigestReference reports whether an oci:// URL is pinned by digest.
+func OCIDigestReference(url string) (bool, error) {
+	if !IsOCIReference(url) {
+		return false, fmt.Errorf("not an OCI reference")
+	}
+	ref, err := name.ParseReference(TrimOCIScheme(url))
+	if err != nil {
+		return false, fmt.Errorf("parse OCI reference: %w", err)
+	}
+	_, ok := ref.(name.Digest)
+	return ok, nil
+}
+
 // TrimOCIScheme removes the oci:// prefix from a URL.
 func TrimOCIScheme(url string) string {
 	return strings.TrimPrefix(url, "oci://")
