@@ -1342,12 +1342,84 @@ func (o *Orchestrator) parsePartitions(ctx context.Context) error {
 		o.bootPartition = boot.Node
 	}
 
-	root, err := o.disk.FindRootPartition(parts)
+	root, err := o.findRootPartition(parts)
 	if err != nil {
 		return err
 	}
 	o.rootPartition = root.Node
 	return nil
+}
+
+func (o *Orchestrator) findRootPartition(parts []disk.Partition) (*disk.Partition, error) {
+	label := strings.TrimSpace(o.cfg.Provision.Disk.RootPartitionLabel)
+	if label != "" {
+		return findRootPartitionByLabel(parts, label)
+	}
+	number := o.cfg.Provision.Disk.RootPartitionNumber
+	if number > 0 {
+		return findRootPartitionByNumber(parts, o.targetDisk, number)
+	}
+	return o.disk.FindRootPartition(parts)
+}
+
+func findRootPartitionByLabel(parts []disk.Partition, label string) (*disk.Partition, error) {
+	var candidate *disk.Partition
+	matches := 0
+	for i := range parts {
+		if !strings.EqualFold(strings.TrimSpace(parts[i].Name), label) {
+			continue
+		}
+		if !isLinuxRootPartition(parts[i]) {
+			return nil, fmt.Errorf("root partition label %q matched %s with non-Linux partition type %q", label, parts[i].Node, parts[i].Type)
+		}
+		candidate = &parts[i]
+		matches++
+	}
+	if matches > 1 {
+		return nil, fmt.Errorf("root partition label %q matched %d Linux partitions; set provision.disk.rootPartitionNumber to disambiguate", label, matches)
+	}
+	if candidate != nil {
+		return candidate, nil
+	}
+	return nil, fmt.Errorf("root partition label %q not found", label)
+}
+
+func findRootPartitionByNumber(parts []disk.Partition, targetDisk string, number int) (*disk.Partition, error) {
+	for i := range parts {
+		if partitionNumberForSelector(parts[i].Node, targetDisk) != number {
+			continue
+		}
+		if !isLinuxRootPartition(parts[i]) {
+			return nil, fmt.Errorf("root partition number %d matched %s with non-Linux partition type %q", number, parts[i].Node, parts[i].Type)
+		}
+		return &parts[i], nil
+	}
+	return nil, fmt.Errorf("root partition number %d not found", number)
+}
+
+func isLinuxRootPartition(part disk.Partition) bool {
+	return strings.EqualFold(part.Type, disk.LinuxFilesystemGUID) ||
+		strings.EqualFold(part.Type, disk.LinuxFilesystemMBRType)
+}
+
+func partitionNumberForSelector(node, targetDisk string) int {
+	if targetDisk != "" && strings.HasPrefix(node, targetDisk) {
+		return disk.PartitionNumber(node, targetDisk)
+	}
+	base := filepath.Base(node)
+	end := len(base)
+	start := end
+	for start > 0 && base[start-1] >= '0' && base[start-1] <= '9' {
+		start--
+	}
+	if start == end {
+		return 0
+	}
+	n, err := strconv.Atoi(base[start:end])
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // parsePartitionsFromLayout determines boot/root partitions from the declared

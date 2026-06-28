@@ -913,6 +913,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"DISK_DEVICE":                 &cfg.Provision.Disk.Device,
 		"DISK_SERIAL":                 &cfg.Provision.Disk.SerialNumber,
 		"DISK_SERIAL_NUMBER":          &cfg.Provision.Disk.SerialNumber,
+		"ROOT_PARTITION_LABEL":        &cfg.Provision.Disk.RootPartitionLabel,
 		"INVENTORY_URL":               &cfg.Provision.Inventory.URL,
 		"FIRMWARE_URL":                &cfg.Provision.Firmware.URL,
 		"FIRMWARE_MIN_BIOS":           &cfg.Provision.Firmware.MinBIOS,
@@ -1178,6 +1179,7 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		"AB_ROOT_SIZE_MB":                    &cfg.Provision.AB.RootSizeMB,
 		"AB_STATE_SIZE_MB":                   &cfg.Provision.AB.StateSizeMB,
 		"AB_SOURCE_ROOT_PARTITION":           &cfg.Provision.AB.SourceRootPartition,
+		"ROOT_PARTITION_NUMBER":              &cfg.Provision.Disk.RootPartitionNumber,
 	}
 
 	if ptr, ok := intFields[key]; ok {

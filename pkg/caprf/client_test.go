@@ -258,6 +258,35 @@ export AB_SOURCE_ROOT_PARTITION="2"
 	}
 }
 
+func TestParseVarsRootPartitionSelectors(t *testing.T) {
+	input := `export ROOT_PARTITION_LABEL="ubuntu-root"
+export ROOT_PARTITION_NUMBER="2"
+`
+	_, err := ParseVars(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("expected selector conflict")
+	}
+	if !strings.Contains(err.Error(), "rootPartitionLabel and provision.disk.rootPartitionNumber are mutually exclusive") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cfg, err := ParseVars(strings.NewReader(`export ROOT_PARTITION_NUMBER="2"`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provision.Disk.RootPartitionNumber != 2 {
+		t.Fatalf("rootPartitionNumber = %d, want 2", cfg.Provision.Disk.RootPartitionNumber)
+	}
+
+	cfg, err = ParseVars(strings.NewReader(`export ROOT_PARTITION_LABEL="ubuntu-root"`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provision.Disk.RootPartitionLabel != "ubuntu-root" {
+		t.Fatalf("rootPartitionLabel = %q, want ubuntu-root", cfg.Provision.Disk.RootPartitionLabel)
+	}
+}
+
 func TestParseVarsInsecureTransport(t *testing.T) {
 	input := `export INSECURE_TRANSPORT="true"
 export HOSTNAME="worker-01"
