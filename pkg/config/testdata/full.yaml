@@ -40,7 +40,7 @@ network:
     # remoteASN: 0 = iBGP (same AS), >0 = eBGP remote AS
     remoteASN: 0
 
-    # underlayAF: ipv4 (default) | ipv6 | dual-stack
+    # underlayAF: ipv4 (default; non-ipv4 values are rejected)
     underlayAF: ipv4
 
     # overlayType: evpn-vxlan (default) | l3vpn | none

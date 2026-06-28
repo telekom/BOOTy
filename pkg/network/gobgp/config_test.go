@@ -154,19 +154,19 @@ func TestNewConfig(t *testing.T) {
 			},
 		},
 		{
-			name: "underlay_af_and_overlay_type_wired",
+			name: "supported_underlay_af_and_overlay_type_wired",
 			netCfg: &network.Config{
 				UnderlayIP:     "10.0.0.1",
 				ASN:            65000,
 				ProvisionVNI:   4000,
 				BGPPeerMode:    network.PeerModeUnnumbered,
-				BGPUnderlayAF:  "ipv6",
+				BGPUnderlayAF:  "ipv4",
 				BGPOverlayType: "evpn-vxlan",
 			},
 			check: func(t *testing.T, cfg *Config) {
 				t.Helper()
-				if cfg.UnderlayAF != "ipv6" {
-					t.Errorf("UnderlayAF = %q, want ipv6", cfg.UnderlayAF)
+				if cfg.UnderlayAF != "ipv4" {
+					t.Errorf("UnderlayAF = %q, want ipv4", cfg.UnderlayAF)
 				}
 				if cfg.OverlayType != "evpn-vxlan" {
 					t.Errorf("OverlayType = %q, want evpn-vxlan", cfg.OverlayType)
@@ -402,6 +402,35 @@ func TestValidateAcceptsValid(t *testing.T) {
 	cfg := &Config{ASN: 65000, RouterID: "10.0.0.1", PeerMode: network.PeerModeUnnumbered, ProvisionVNI: 100, MinEstablishedPeers: 1}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateRejectsUnsupportedUnderlayAF(t *testing.T) {
+	tests := []struct {
+		name     string
+		underlay string
+	}{
+		{"ipv6", "ipv6"},
+		{"dual_stack", "dual-stack"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{
+				ASN:                 65000,
+				RouterID:            "10.0.0.1",
+				PeerMode:            network.PeerModeUnnumbered,
+				ProvisionVNI:        100,
+				MinEstablishedPeers: 1,
+				UnderlayAF:          tt.underlay,
+			}
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatal("expected unsupported underlay AF error, got nil")
+			}
+			if !strings.Contains(err.Error(), "not yet implemented") {
+				t.Fatalf("expected not yet implemented error, got: %v", err)
+			}
+		})
 	}
 }
 

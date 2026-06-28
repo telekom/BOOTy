@@ -372,6 +372,8 @@ func TestValidate(t *testing.T) {
 		{name: "numbered peer mode requires neighbors", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{PeerMode: "numbered"}}}, wantErr: "network.bgp.neighbors required"},
 		{name: "invalid peer mode", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{PeerMode: "mesh"}}}, wantErr: "invalid network.bgp.peerMode"},
 		{name: "valid underlay AF", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{UnderlayAF: "ipv4"}}}},
+		{name: "ipv6 underlay AF not implemented", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{UnderlayAF: "ipv6"}}}, wantErr: "invalid network.bgp.underlayAF"},
+		{name: "dual stack underlay AF not implemented", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{UnderlayAF: "dual-stack"}}}, wantErr: "invalid network.bgp.underlayAF"},
 		{name: "invalid underlay AF", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{UnderlayAF: "ipv3"}}}, wantErr: "invalid network.bgp.underlayAF"},
 		{name: "valid overlay type", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{OverlayType: "evpn-vxlan"}}}},
 		{name: "invalid overlay type", cfg: Config{Network: NetworkConfig{BGP: BGPConfig{OverlayType: "gre"}}}, wantErr: "invalid network.bgp.overlayType"},

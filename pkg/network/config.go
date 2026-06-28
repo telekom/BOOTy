@@ -71,7 +71,7 @@ type Config struct {
 	BGPInterfaces   string   // Comma-separated interfaces for unnumbered/dual peers
 	BGPNeighbors    string   // Comma-separated numbered peer IPs
 	BGPRemoteASN    uint32   // Remote ASN for numbered peers (0 = iBGP)
-	BGPUnderlayAF   string   // Underlay address family: ipv4, ipv6, dual-stack (default: ipv4)
+	BGPUnderlayAF   string   // Underlay address family: ipv4 only; non-ipv4 values are rejected in config validation
 	BGPOverlayType  string   // Overlay encapsulation: evpn-vxlan, l3vpn, none (default: evpn-vxlan)
 	BGPAuthPassword string   // Optional TCP-MD5 password for all BGP peers (empty = no auth)
 	BGPMinPeers     int      // Minimum established BGP peers for underlay readiness (default: 1)
