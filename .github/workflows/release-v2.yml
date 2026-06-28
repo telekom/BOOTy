@@ -204,23 +204,44 @@ jobs:
 
   sbom:
     name: Generate SBOM
-    needs: build
+    needs: [build, iso]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - name: Download release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: release-*
+          path: release-artifacts
+          merge-multiple: false
 
       - name: Generate SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
         with:
+          path: release-artifacts
           format: spdx-json
           output-file: sbom.spdx.json
+          upload-artifact: false
           upload-release-assets: false
+
+      - name: Generate SBOM checksum
+        run: |
+          if [ ! -s sbom.spdx.json ]; then
+            echo "::error::SBOM generation did not produce sbom.spdx.json"
+            exit 1
+          fi
+          sha256sum sbom.spdx.json > sbom.spdx.json.sha256
+          if [ ! -s sbom.spdx.json.sha256 ]; then
+            echo "::error::SBOM checksum generation did not produce sbom.spdx.json.sha256"
+            exit 1
+          fi
 
       - name: Upload SBOM
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: sbom
-          path: sbom.spdx.json
+          path: |
+            sbom.spdx.json
+            sbom.spdx.json.sha256
           if-no-files-found: error
 
   scan:
