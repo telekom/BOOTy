@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -22,10 +23,11 @@ type workflowJob struct {
 }
 
 type workflowStep struct {
-	Name string         `yaml:"name"`
-	Uses string         `yaml:"uses"`
-	Run  string         `yaml:"run"`
-	With map[string]any `yaml:"with"`
+	Name            string         `yaml:"name"`
+	Uses            string         `yaml:"uses"`
+	Run             string         `yaml:"run"`
+	ContinueOnError any            `yaml:"continue-on-error"`
+	With            map[string]any `yaml:"with"`
 }
 
 func loadWorkflow(t *testing.T, path string) workflowFile {
@@ -167,6 +169,8 @@ func workflowValueString(value any) string {
 			return "true"
 		}
 		return "false"
+	case int:
+		return strconv.Itoa(v)
 	default:
 		return ""
 	}

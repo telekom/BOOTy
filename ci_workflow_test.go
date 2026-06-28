@@ -61,7 +61,13 @@ func TestCIWorkflowRunsProductionE2E(t *testing.T) {
 
 	upload := requireWorkflowAction(t, job, "actions/upload-artifact")
 	assertWorkflowActionPinned(t, upload, "actions/upload-artifact")
+	if got := workflowValueString(upload.ContinueOnError); got != "true" {
+		t.Fatalf("upload continue-on-error = %q, want true", got)
+	}
 	if got := workflowValueString(upload.With["name"]); got != "production-e2e-logs" {
 		t.Fatalf("upload artifact name = %q, want production-e2e-logs", got)
+	}
+	if got := workflowValueString(upload.With["retention-days"]); got != "7" {
+		t.Fatalf("upload retention-days = %q, want 7", got)
 	}
 }

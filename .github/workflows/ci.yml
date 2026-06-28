@@ -754,6 +754,7 @@ jobs:
 
       - name: Upload production logs
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: production-e2e-logs
@@ -761,6 +762,7 @@ jobs:
             production-e2e.log
             production-logs/
           if-no-files-found: ignore
+          retention-days: 7
 
       - name: Cleanup
         if: always()
