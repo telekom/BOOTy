@@ -703,6 +703,37 @@ func TestCreateEFIBootEntry(t *testing.T) {
 	}
 }
 
+func TestCreateEFIBootEntryDebian(t *testing.T) {
+	old := efiRuntimeReady
+	efiRuntimeReady = func() (bool, string) { return true, "" }
+	t.Cleanup(func() { efiRuntimeReady = old })
+
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+
+	efiDir := filepath.Join(c.rootDir, "boot", "efi", "EFI", "debian")
+	if err := os.MkdirAll(efiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, grubName, err := efiLoaderNames(runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(efiDir, grubName), []byte("grub"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd.setResult("efibootmgr -c", []byte("Boot0001* debian"), nil)
+
+	err = c.CreateEFIBootEntry(context.Background(), "/dev/sda", "/dev/sda1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !hasCommandCall(cmd.calls, "efibootmgr", "-c", "-d", "/dev/sda", "-p", "1", "-L", "debian", "-l", `\EFI\debian\`+grubName) {
+		t.Fatalf("expected Debian efibootmgr create command, calls=%#v", cmd.calls)
+	}
+}
+
 func TestCreateEFIBootEntryEmptyPartition(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
@@ -824,6 +855,34 @@ func TestInstallEFIFallbackLoader(t *testing.T) {
 	}
 	if !hasCommandCall(cmd.calls, "chroot", c.rootDir, "/bin/bash", "-c", wantCmd) {
 		t.Fatalf("missing fallback grub-install command, calls=%#v", cmd.calls)
+	}
+}
+
+func TestInstallEFIFallbackLoaderUsesDebianBootloaderID(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+	oldAssetDir := efiFallbackAssetDirectory
+	efiFallbackAssetDirectory = t.TempDir()
+	t.Cleanup(func() { efiFallbackAssetDirectory = oldAssetDir })
+
+	target, err := grubEFITarget(runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	efiDir := filepath.Join(c.rootDir, "boot", "efi", "EFI", "debian")
+	if err := os.MkdirAll(efiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wantCmd := fmt.Sprintf(
+		"grub-install --target=%s --efi-directory=/boot/efi --bootloader-id=debian --removable --no-nvram --recheck /dev/sda",
+		target,
+	)
+
+	if err := c.InstallEFIFallbackLoader(context.Background(), "/dev/sda", "/dev/sda2"); err != nil {
+		t.Fatalf("InstallEFIFallbackLoader() error = %v", err)
+	}
+	if !hasCommandCall(cmd.calls, "chroot", c.rootDir, "/bin/bash", "-c", wantCmd) {
+		t.Fatalf("missing Debian fallback grub-install command, calls=%#v", cmd.calls)
 	}
 }
 
