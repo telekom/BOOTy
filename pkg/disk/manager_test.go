@@ -723,7 +723,7 @@ func TestChrootRunCommandError(t *testing.T) {
 
 func TestMountedSubpathsFromRejectsUnsafeRoots(t *testing.T) {
 	for _, root := range []string{"", "/", "relative"} {
-		t.Run(root, func(t *testing.T) {
+		t.Run(fmt.Sprintf("root=%q", root), func(t *testing.T) {
 			if _, err := mountedSubpathsFrom(root, []byte("dev /newroot ext4 rw 0 0\n")); err == nil {
 				t.Fatal("mountedSubpathsFrom() error = nil, want unsafe-root error")
 			}
