@@ -1,6 +1,11 @@
 # Proposal: Mellanox/NVIDIA ConnectX NIC Firmware Management
 
-## Status: Phase 1 Implemented (PR #47)
+## Status: Partially implemented — package helpers and unit tests only
+
+Source of truth as of 2026-06-27: the default branch contains the
+`pkg/firmware/nic/mellanox` manager and unit tests. It does **not** wire this
+manager into the provisioning state machine and does not run Mellanox-specific
+ContainerLab, KVM, or passthrough E2E coverage.
 
 ## Priority: P1
 
@@ -257,18 +262,14 @@ COPY --from=tools /sbin/devlink bin/devlink
 
 ### E2E / KVM Tests
 
-- **KVM matrix** (`kvm-matrix.yml`, tag `e2e_kvm`):
-  - QEMU with mlx5 vfio-pci passthrough (when hardware available)
-  - QEMU with virtio-net + mock sysfs overlay for CI without real hardware
-  - Verify: BOOTy boots → captures NIC FW state → diffs against baseline →
-    reports to mock CAPRF HTTP server
-  - Verify: mstconfig fallback executes when devlink unavailable
+No current E2E test exercises the Mellanox NIC firmware manager. KVM coverage
+for this proposal still requires either real/passthrough Mellanox hardware or a
+mocked runtime integration that proves BOOTy invokes the manager during
+provisioning.
 
 ### Integration Tests
 
-- **ContainerLab** (tag `e2e_integration`): Exercise capture code path
-  on virtio interfaces. Expected result: unsupported vendor (validates
-  error handling).
+No current ContainerLab test exercises this capture path.
 
 ## Risks
 

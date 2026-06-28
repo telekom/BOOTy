@@ -1,6 +1,11 @@
 # Proposal: Broadcom NIC Firmware Management
 
-## Status: Phase 1 Implemented (PR #47)
+## Status: Partially implemented — package helpers and unit tests only
+
+Source of truth as of 2026-06-27: the default branch contains the
+`pkg/firmware/nic/broadcom` manager and unit tests. It does **not** wire this
+manager into the provisioning state machine and does not run Broadcom-specific
+ContainerLab, KVM, or mocked-runtime E2E coverage.
 
 ## Priority: P2
 
@@ -159,10 +164,10 @@ parameter management use cases.
 
 ### E2E / KVM Tests
 
-- **KVM matrix** (`kvm-matrix.yml`, tag `e2e_kvm`):
-  - QEMU with virtio-net (Broadcom can't be emulated in QEMU)
-  - Mock sysfs overlay with BCM57414 PCI vendor/device IDs
-  - Verify capture logic exercises both tg3 and bnxt_en code paths
+No current E2E test exercises the Broadcom NIC firmware manager. KVM coverage
+for this proposal still requires a runtime integration that proves BOOTy invokes
+the manager during provisioning, even when the NIC data is mocked because QEMU
+cannot emulate the relevant Broadcom hardware.
 
 ## Risks
 
