@@ -35,10 +35,10 @@ func detectVendorFromPath(path string) Vendor {
 
 // ParseVendor maps a raw DMI sys_vendor string to a known Vendor.
 func ParseVendor(raw string) Vendor {
-	normalized := strings.Join(strings.Fields(strings.ToLower(raw)), " ")
+	normalized := normalizeVendor(raw)
 	switch {
 	case normalized == "hp", normalized == "hpe",
-		strings.Contains(normalized, "hewlett packard enterprise"):
+		strings.Contains(normalized, "hewlett packard"):
 		return VendorHPE
 	case strings.Contains(normalized, "lenovo"):
 		return VendorLenovo
@@ -49,6 +49,11 @@ func ParseVendor(raw string) Vendor {
 	default:
 		return VendorGeneric
 	}
+}
+
+func normalizeVendor(raw string) string {
+	replacer := strings.NewReplacer("-", " ", "_", " ")
+	return strings.Join(strings.Fields(replacer.Replace(strings.ToLower(raw))), " ")
 }
 
 // KernelModules returns vendor-specific kernel modules to load.

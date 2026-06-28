@@ -16,6 +16,8 @@ func TestParseVendor(t *testing.T) {
 		{name: "hp-short", raw: "HP", want: VendorHPE},
 		{name: "hpe-short", raw: "HPE", want: VendorHPE},
 		{name: "hpe-full", raw: "Hewlett Packard Enterprise", want: VendorHPE},
+		{name: "hpe-hyphenated", raw: "Hewlett-Packard Enterprise", want: VendorHPE},
+		{name: "hp-hyphenated", raw: "Hewlett-Packard", want: VendorHPE},
 		{name: "lenovo", raw: "Lenovo", want: VendorLenovo},
 		{name: "lenovo-upper", raw: "LENOVO", want: VendorLenovo},
 		{name: "dell", raw: "Dell Inc.", want: VendorDell},
