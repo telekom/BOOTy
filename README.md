@@ -793,10 +793,13 @@ export SECURE_ERASE=true
 |-----------|--------------|
 | NVMe | `nvme format --ses=1` (User Data Erase) |
 | SATA/SAS | ATA Security Erase via `hdparm` |
-| Fallback | `wipefs -af` (partition table + filesystem signatures) |
+| Unsupported or frozen drive fallback | `wipefs -af` (partition table + filesystem signatures) |
 
-Secure erase is non-fatal — if hardware erase fails on a drive (e.g., SATA
-security state is frozen), BOOTy falls back to `wipefs` and continues.
+Secure erase requires the matching runtime tool (`nvme` for NVMe devices,
+`hdparm` for SATA/SAS devices). Missing tools are fatal when `SECURE_ERASE=true`
+so BOOTy does not silently downgrade an explicit secure erase request. If the
+tool is available but the drive reports unsupported or frozen hardware erase
+state, BOOTy falls back to `wipefs` and continues.
 
 ### Post-Provision Commands
 

@@ -249,6 +249,9 @@ func (m *Manager) secureEraseNVMe(ctx context.Context, dev string) error {
 	// ses=1: User Data Erase, ses=2: Crypto Erase (not all drives support it).
 	out, err := m.cmd.Run(ctx, "nvme", "format", dev, "--ses=1", "--force")
 	if err != nil {
+		if isExecNotFound(err) {
+			return fmt.Errorf("%s: nvme secure erase tool is required when secure erase is enabled: %w", dev, err)
+		}
 		slog.Warn("NVMe secure erase failed, falling back to wipefs",
 			"device", dev, "output", string(out), "error", err)
 		if out, err := m.cmd.Run(ctx, "wipefs", "-af", dev); err != nil {
@@ -268,6 +271,9 @@ func (m *Manager) secureEraseSATA(ctx context.Context, dev string) error {
 
 	// Step 1: Check if security is supported.
 	out, err := m.cmd.Run(ctx, "hdparm", "-I", dev)
+	if err != nil && isExecNotFound(err) {
+		return fmt.Errorf("%s: hdparm secure erase tool is required when secure erase is enabled: %w", dev, err)
+	}
 	if err != nil || !strings.Contains(string(out), "Security:") {
 		slog.Info("drive does not support ATA security, using wipefs", "device", dev)
 		if out, err := m.cmd.Run(ctx, "wipefs", "-af", dev); err != nil {
