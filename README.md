@@ -354,7 +354,7 @@ go run server/server.go \
 | `FIRMWARE_REPORT` | `false` | Enable firmware version collection and reporting |
 | `FIRMWARE_URL` | — | POST endpoint for firmware report |
 | `FIRMWARE_MIN_BIOS` | — | Minimum BIOS version (vendor-specific string) |
-| `FIRMWARE_MIN_BMC` | — | Minimum BMC version (vendor-specific string) |
+| `FIRMWARE_MIN_BMC` | — | Minimum BMC firmware version; fails closed when no real BMC firmware source reports a version |
 | `TELEMETRY_ENABLED` | `false` | Enable provisioning metrics and telemetry collection |
 | `TELEMETRY_URL` | — | POST endpoint for telemetry snapshot |
 | `METRICS_URL` | — | POST endpoint for provisioning metrics |
