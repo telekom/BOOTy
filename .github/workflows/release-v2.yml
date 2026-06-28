@@ -501,6 +501,8 @@ jobs:
           VERSION=${GITHUB_REF_NAME#v}
           REPO=$(echo "ghcr.io/${{ github.repository }}-iso" | tr '[:upper:]' '[:lower:]')
           REF="${REPO}:${VERSION}${{ matrix.tag_suffix }}"
+          CREATED=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
           err="${RUNNER_TEMP}/oras-ref-check.err"
           if oras manifest fetch "${REF}" >/dev/null 2>"${err}"; then
@@ -515,6 +517,16 @@ jobs:
 
           oras push "${REF}" \
             --artifact-type application/vnd.booty.iso.v1 \
+            --annotation "org.opencontainers.image.title=BOOTy ISO (${{ matrix.flavor }})" \
+            --annotation "org.opencontainers.image.version=${VERSION}" \
+            --annotation "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --annotation "org.opencontainers.image.created=${CREATED}" \
+            --annotation "org.opencontainers.image.url=${RUN_URL}" \
+            --annotation "io.booty.flavor=${{ matrix.flavor }}" \
+            --annotation "io.booty.arch=amd64" \
+            --annotation "io.booty.github.run_id=${{ github.run_id }}" \
+            --annotation "io.booty.github.run_attempt=${{ github.run_attempt }}" \
             "${{ matrix.artifact }}:application/octet-stream"
 
       - name: Install Cosign
@@ -610,6 +622,8 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           REPO=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          CREATED=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
           ensure_oci_ref_absent() {
             local ref="$1"
@@ -657,8 +671,13 @@ jobs:
               --annotation "org.opencontainers.image.title=BOOTy initramfs (${flavor}/${{ matrix.arch }})" \
               --annotation "org.opencontainers.image.version=${VERSION}" \
               --annotation "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+              --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
+              --annotation "org.opencontainers.image.created=${CREATED}" \
+              --annotation "org.opencontainers.image.url=${RUN_URL}" \
               --annotation "io.booty.flavor=${flavor}" \
               --annotation "io.booty.arch=${{ matrix.arch }}" \
+              --annotation "io.booty.github.run_id=${{ github.run_id }}" \
+              --annotation "io.booty.github.run_attempt=${{ github.run_attempt }}" \
               ${ARGS}
             cosign sign --yes "${REF}"
           done
@@ -667,6 +686,8 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           REPO=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          CREATED=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           BINARY="artifacts/release-default-${{ matrix.arch }}/booty-${{ matrix.arch }}"
           CHECKSUM="artifacts/release-default-${{ matrix.arch }}/booty-${{ matrix.arch }}.sha256"
 
@@ -700,7 +721,12 @@ jobs:
             --annotation "org.opencontainers.image.title=BOOTy binary (${{ matrix.arch }})" \
             --annotation "org.opencontainers.image.version=${VERSION}" \
             --annotation "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --annotation "org.opencontainers.image.created=${CREATED}" \
+            --annotation "org.opencontainers.image.url=${RUN_URL}" \
             --annotation "io.booty.arch=${{ matrix.arch }}" \
+            --annotation "io.booty.github.run_id=${{ github.run_id }}" \
+            --annotation "io.booty.github.run_attempt=${{ github.run_attempt }}" \
             ${ARGS}
           cosign sign --yes "${REF}"
 
@@ -709,6 +735,8 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           REPO=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          CREATED=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           SBOM="artifacts/sbom/sbom.spdx.json"
 
           if [ ! -f "${SBOM}" ]; then
@@ -733,5 +761,10 @@ jobs:
             --annotation "org.opencontainers.image.title=BOOTy SBOM" \
             --annotation "org.opencontainers.image.version=${VERSION}" \
             --annotation "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --annotation "org.opencontainers.image.created=${CREATED}" \
+            --annotation "org.opencontainers.image.url=${RUN_URL}" \
+            --annotation "io.booty.github.run_id=${{ github.run_id }}" \
+            --annotation "io.booty.github.run_attempt=${{ github.run_attempt }}" \
             "${SBOM}:application/spdx+json"
           cosign sign --yes "${REF}"
