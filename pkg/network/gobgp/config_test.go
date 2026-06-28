@@ -479,6 +479,7 @@ func TestValidateRejectsUnsupportedUnderlayAF(t *testing.T) {
 				RouterID:            "10.0.0.1",
 				PeerMode:            network.PeerModeUnnumbered,
 				ProvisionVNI:        100,
+				ProvisionGateway:    testProvisionGateway,
 				MinEstablishedPeers: 1,
 				UnderlayAF:          tt.underlay,
 			}
