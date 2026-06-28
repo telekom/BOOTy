@@ -224,6 +224,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 			name: "layout without image",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.TargetOS = config.TargetOSLinux
 				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 					Table:      "gpt",
 					Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
@@ -236,6 +237,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 			name: "layout with image url without hostname",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{}
+				c.Provision.TargetOS = config.TargetOSLinux
 				c.Provision.Image.URLs = []string{"http://example.com/img"}
 				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 					Table:      "gpt",
@@ -249,6 +251,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 			name: "layout with image url and hostname",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.TargetOS = config.TargetOSLinux
 				c.Provision.Image.URLs = []string{"http://example.com/img"}
 				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 					Table:      "gpt",
@@ -262,6 +265,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 			name: "layout device conflicts with disk device",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.TargetOS = config.TargetOSLinux
 				c.Provision.Image.URLs = []string{"http://example.com/img"}
 				c.Provision.Disk.Device = "/dev/sda"
 				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
@@ -277,6 +281,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 			name: "layout device missing",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.TargetOS = config.TargetOSLinux
 				c.Provision.Image.URLs = []string{"http://example.com/img"}
 				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 					Device:     "/dev/booty-dryrun-missing",
@@ -291,6 +296,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 			name: "layout device is not block device",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.TargetOS = config.TargetOSLinux
 				c.Provision.Image.URLs = []string{"http://example.com/img"}
 				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 					Device:     "/dev/null",
@@ -305,6 +311,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 			name: "partition image mode with layout",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.TargetOS = config.TargetOSLinux
 				c.Provision.Image.Mode = config.ImageModePartition
 				c.Provision.Image.URLs = []string{"http://example.com/img"}
 				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
@@ -319,6 +326,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 			name: "unsupported layout mountpoint",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.TargetOS = config.TargetOSLinux
 				c.Provision.Image.URLs = []string{"http://example.com/img"}
 				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 					Table: "gpt",

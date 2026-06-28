@@ -1940,6 +1940,7 @@ func TestValidateProvisionInputsRejectsPartitionLayoutWithoutImageURLsInProvisio
 	cfg := &config.MachineConfig{
 		Mode: "provision",
 	}
+	cfg.Provision.TargetOS = config.TargetOSLinux
 	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 		Table: "gpt",
 		Partitions: []config.Partition{
