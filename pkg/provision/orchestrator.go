@@ -648,7 +648,7 @@ func validateProvisionImageSource(source string, checksumConfigured bool) error 
 
 	u, err := url.Parse(source)
 	if err != nil {
-		return fmt.Errorf("invalid image source %q: %s", image.RedactURL(source), image.RedactSourceError(err, source))
+		return fmt.Errorf("invalid image source %q: %w", image.RedactURL(source), redactedProvisionSourceError(err, source))
 	}
 	scheme := strings.ToLower(u.Scheme)
 	switch scheme {
@@ -671,7 +671,7 @@ func validateProvisionOCIImageSource(source string, checksumConfigured bool) err
 	}
 	parsedRef, err := ociname.ParseReference(ref)
 	if err != nil {
-		return fmt.Errorf("invalid OCI image source %q: %s", image.RedactOCIRef(ref), redactOCIReferenceError(err, ref))
+		return fmt.Errorf("invalid OCI image source %q: %w", image.RedactOCIRef(ref), redactedProvisionOCIReferenceError(err, ref))
 	}
 	_, digestRef := parsedRef.(ociname.Digest)
 	if !checksumConfigured && !digestRef {
@@ -689,6 +689,46 @@ func redactOCIReferenceError(err error, ref string) string {
 	msg = strings.ReplaceAll(msg, ref, redactedRef)
 	msg = strings.ReplaceAll(msg, "oci://"+ref, "oci://"+redactedRef)
 	return msg
+}
+
+type redactedProvisionSourceErr struct {
+	source string
+	err    error
+}
+
+func redactedProvisionSourceError(err error, source string) error {
+	if err == nil {
+		return nil
+	}
+	return &redactedProvisionSourceErr{source: source, err: err}
+}
+
+func (e *redactedProvisionSourceErr) Error() string {
+	return image.RedactSourceError(e.err, e.source)
+}
+
+func (e *redactedProvisionSourceErr) Unwrap() error {
+	return e.err
+}
+
+type redactedProvisionOCIReferenceErr struct {
+	ref string
+	err error
+}
+
+func redactedProvisionOCIReferenceError(err error, ref string) error {
+	if err == nil {
+		return nil
+	}
+	return &redactedProvisionOCIReferenceErr{ref: ref, err: err}
+}
+
+func (e *redactedProvisionOCIReferenceErr) Error() string {
+	return redactOCIReferenceError(e.err, e.ref)
+}
+
+func (e *redactedProvisionOCIReferenceErr) Unwrap() error {
+	return e.err
 }
 
 func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {

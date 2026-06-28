@@ -458,6 +458,7 @@ func TestValidateImageSourceConfiguredRedactsSensitiveInvalidSource(t *testing.T
 	if !strings.Contains(err.Error(), "[redacted invalid URL]") {
 		t.Fatalf("error = %q, want invalid URL redaction", err.Error())
 	}
+	requireWrappedOriginalError(t, err)
 }
 
 func TestValidateImageSourceConfiguredRedactsSensitiveOCIReference(t *testing.T) {
@@ -476,6 +477,18 @@ func TestValidateImageSourceConfiguredRedactsSensitiveOCIReference(t *testing.T)
 	}
 	if !strings.Contains(err.Error(), "[redacted invalid URL]") {
 		t.Fatalf("error = %q, want invalid OCI source redaction", err.Error())
+	}
+	requireWrappedOriginalError(t, err)
+}
+
+func requireWrappedOriginalError(t *testing.T, err error) {
+	t.Helper()
+	redactedErr := errors.Unwrap(err)
+	if redactedErr == nil {
+		t.Fatalf("error %q does not wrap a redacted parser error", err)
+	}
+	if originalErr := errors.Unwrap(redactedErr); originalErr == nil {
+		t.Fatalf("redacted parser error %q does not wrap the original parser error", redactedErr)
 	}
 }
 
