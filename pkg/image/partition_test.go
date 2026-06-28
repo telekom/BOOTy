@@ -284,6 +284,35 @@ func TestWaitForPartitionDeviceStopsOnCanceledContext(t *testing.T) {
 	}
 }
 
+func TestWaitForPartitionDeviceReturnsNonMissingStatError(t *testing.T) {
+	previousRun := runCmd
+	previousStat := statPath
+	var mdevCalls int
+	runCmd = func(context.Context, string, ...string) ([]byte, error) {
+		mdevCalls++
+		return nil, nil
+	}
+	statPath = func(string) (os.FileInfo, error) {
+		return nil, os.ErrPermission
+	}
+	t.Cleanup(func() {
+		runCmd = previousRun
+		statPath = previousStat
+	})
+
+	err := waitForPartitionDevice(context.Background(), "/dev/sda1")
+	if err == nil {
+		t.Fatal("expected stat error")
+	}
+	if !strings.Contains(err.Error(), "stat partition device /dev/sda1") ||
+		!strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("error = %q, want stat permission context", err.Error())
+	}
+	if mdevCalls != 0 {
+		t.Fatalf("mdev calls = %d, want 0", mdevCalls)
+	}
+}
+
 func TestSelectSourcePartitionsForAB(t *testing.T) {
 	parts := []sfdiskPartition{
 		{Node: "/dev/loop0p1", Type: efiSystemPartitionGUID, Size: 1024, Number: 1},

@@ -352,14 +352,18 @@ func waitForPartitionDevice(ctx context.Context, device string) error {
 	defer ticker.Stop()
 
 	for i := range partitionDeviceWaitAttempts {
-		if _, err := statPath(device); err == nil {
+		if err := statPartitionDevice(device); err == nil {
 			return nil
+		} else if !os.IsNotExist(err) {
+			return err
 		}
 		if out, err := runCmd(ctx, "mdev", "-s"); err != nil {
 			slog.Debug("mdev -s failed while waiting for partition device", "device", device, "error", err, "output", string(out))
 		}
-		if _, err := statPath(device); err == nil {
+		if err := statPartitionDevice(device); err == nil {
 			return nil
+		} else if !os.IsNotExist(err) {
+			return err
 		}
 		slog.Debug("waiting for partition device", "device", device, "iteration", i)
 		if i == partitionDeviceWaitAttempts-1 {
@@ -372,6 +376,16 @@ func waitForPartitionDevice(ctx context.Context, device string) error {
 		}
 	}
 	return fmt.Errorf("device node did not appear after %s", partitionDeviceWaitInterval*partitionDeviceWaitAttempts)
+}
+
+func statPartitionDevice(device string) error {
+	if _, err := statPath(device); err != nil {
+		if os.IsNotExist(err) {
+			return err
+		}
+		return fmt.Errorf("stat partition device %s: %w", device, err)
+	}
+	return nil
 }
 
 // targetPartitionNode derives the partition device node for a given disk and
