@@ -241,7 +241,7 @@ GoBGP E2E tests use ContainerLab with the `e2e_gobgp` build tag:
 make clab-gobgp-up && make test-e2e-gobgp
 ```
 
-For full EVPN validation with real switch VMs:
+For full EVPN validation with QEMU BOOTy VMs and FRR-based fabric containers:
 
 ```bash
 make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab

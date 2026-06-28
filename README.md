@@ -1056,7 +1056,7 @@ make clab-multi-nic-up && make test-e2e-multi-nic # Multi-NIC discovery and conf
 
 # E2E tests — KVM/QEMU vrnetlab (Linux + KVM)
 make clab-vrnetlab-up && make test-e2e-vrnetlab   # Full EVPN boot flow
-make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab  # GoBGP + real switches
+make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab  # GoBGP QEMU VMs + FRR fabric
 
 # Linux-only E2E (disk/mount/loop device, requires root)
 go test -tags linux_e2e -v ./pkg/disk/...

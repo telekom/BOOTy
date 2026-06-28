@@ -90,7 +90,7 @@ consider work complete until tests are written, passing, and cover the change.
 | **GoBGP E2E** (`e2e_gobgp`) | GoBGP peering, tiers, PeerMode changes | `make clab-gobgp-up && make test-e2e-gobgp` |
 | **Boot E2E** (`e2e_boot`) | Provisioning orchestrator, step ordering | `make clab-boot-up && make test-e2e-boot` |
 | **vrnetlab / QEMU** (`e2e_vrnetlab`) | Full boot flow, kexec, EVPN fabric, ISO boot | `make clab-vrnetlab-up && make test-e2e-vrnetlab` |
-| **GoBGP vrnetlab** (`e2e_gobgp_vrnetlab`) | GoBGP with real switch VMs (all PeerModes) | `make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab` |
+| **GoBGP vrnetlab** (`e2e_gobgp_vrnetlab`) | GoBGP QEMU VMs with FRR fabric containers (all PeerModes) | `make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab` |
 | **Production** (`e2e_production`) | VRF, DCGW, BFD, production-like topology | `make clab-production-up && make test-e2e-production` |
 
 ### When to Use KVM / QEMU Testing
@@ -98,7 +98,7 @@ consider work complete until tests are written, passing, and cover the change.
 Use vrnetlab (QEMU-backed) E2E tests when the change:
 - Affects the **boot sequence** (PID 1 init, kexec, reboot)
 - Modifies **image streaming** to block devices (not just unit-testable decompression)
-- Changes **EVPN overlay** behavior that requires real switch control planes
+- Changes **EVPN overlay** behavior that requires FRR fabric control planes
 - Alters **bootloader installation** (GRUB, systemd-boot, ESP partitions)
 - Touches **Redfish integration** or ISO boot paths
 - Cannot be validated with ContainerLab containers alone
