@@ -1496,6 +1496,56 @@ func TestSetupRAIDCreatesConfiguredArrayAndSetsSingleArrayTarget(t *testing.T) {
 	}
 }
 
+func TestSetupRAIDAllowsNestedMDArrayName(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+		Name:    "md/boot",
+		Level:   1,
+		Devices: []string{"/dev/sda", "/dev/sdb"},
+	}}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	if err := o.setupRAID(context.Background()); err != nil {
+		t.Fatalf("setupRAID: %v", err)
+	}
+	if cfg.Provision.Disk.Device != "/dev/md/boot" {
+		t.Fatalf("DiskDevice = %q, want /dev/md/boot", cfg.Provision.Disk.Device)
+	}
+	if o.targetDisk != "/dev/md/boot" {
+		t.Fatalf("targetDisk = %q, want /dev/md/boot", o.targetDisk)
+	}
+	createArgs := []string{"--create", "/dev/md/boot", "--level", "1", "--raid-devices", "2", "--run", "--force", "--metadata", "1.2", "/dev/sda", "/dev/sdb"}
+	if !hasCommandCall(cmd.calls, "mdadm", createArgs...) {
+		t.Fatalf("expected mdadm create for nested md path, got %#v", cmd.calls)
+	}
+}
+
+func TestSetupRAIDTreatsNVMeAutoTargetAsUnset(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.Device = "/dev/nvme0n5"
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+		Name:    "md0",
+		Level:   1,
+		Devices: []string{"/dev/nvme0n1", "/dev/nvme1n1"},
+	}}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.nvmeTargetDevice = "/dev/nvme0n5"
+
+	if err := o.setupRAID(context.Background()); err != nil {
+		t.Fatalf("setupRAID: %v", err)
+	}
+	if cfg.Provision.Disk.Device != "/dev/md0" {
+		t.Fatalf("DiskDevice = %q, want /dev/md0", cfg.Provision.Disk.Device)
+	}
+	if o.targetDisk != "/dev/md0" {
+		t.Fatalf("targetDisk = %q, want /dev/md0", o.targetDisk)
+	}
+	createArgs := []string{"--create", "/dev/md0", "--level", "1", "--raid-devices", "2", "--run", "--force", "--metadata", "1.2", "/dev/nvme0n1", "/dev/nvme1n1"}
+	if !hasCommandCall(cmd.calls, "mdadm", createArgs...) {
+		t.Fatalf("expected mdadm create after nvme auto-target reset, got %#v", cmd.calls)
+	}
+}
+
 func TestSetupRAIDRequiresTargetBeforeMultipleArrayWork(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Disk.RAID = []config.RAIDConfig{

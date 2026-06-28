@@ -724,11 +724,15 @@ func minRAIDDevicesForLevel(level int) int {
 
 func (o *Orchestrator) selectRAIDTargetDevice(raids []config.RAIDConfig) error {
 	if target := strings.TrimSpace(o.cfg.Provision.Disk.Device); target != "" {
-		if !raidTargetMatchesConfig(target, raids) {
-			return fmt.Errorf("provision.disk.device %s must match one of the configured raid array devices before destructive storage steps", target)
+		if o.nvmeTargetDevice != "" && target == o.nvmeTargetDevice {
+			o.cfg.Provision.Disk.Device = ""
+		} else {
+			if !raidTargetMatchesConfig(target, raids) {
+				return fmt.Errorf("provision.disk.device %s must match one of the configured raid array devices before destructive storage steps", target)
+			}
+			o.cfg.Provision.Disk.Device = target
+			return nil
 		}
-		o.cfg.Provision.Disk.Device = target
-		return nil
 	}
 	if len(raids) != 1 {
 		return fmt.Errorf("provision.disk.device is required when %d raid arrays are configured", len(raids))
@@ -787,10 +791,11 @@ func uniqueTrimmedRAIDDevices(devices []string) []string {
 
 func raidDevicePath(name string) (string, error) {
 	name = strings.TrimSpace(name)
-	if name == "" || name == "." || name == ".." || filepath.Base(name) != name {
+	clean := filepath.Clean(name)
+	if name == "" || filepath.IsAbs(name) || clean != name || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
 		return "", fmt.Errorf("invalid raid array name %q before destructive storage steps", name)
 	}
-	return "/dev/" + name, nil
+	return "/dev/" + clean, nil
 }
 
 func (o *Orchestrator) validateProvisionInputs(_ context.Context) error {
