@@ -1488,17 +1488,25 @@ func (o *Orchestrator) enableLVM(ctx context.Context) error {
 
 func (o *Orchestrator) mountRoot(ctx context.Context) error {
 	if isMountPoint(newroot) {
-		source, ok := mountedSource(newroot)
-		if !ok {
-			return fmt.Errorf("%s is already mounted but mount source could not be resolved", newroot)
-		}
-		if !sameMountSource(source, o.rootPartition) {
-			return fmt.Errorf("%s is already mounted from %s, expected root partition %s", newroot, source, o.rootPartition)
+		source, err := mountedFromExpectedSource(newroot, o.rootPartition, "root partition")
+		if err != nil {
+			return err
 		}
 		o.log.Info("root partition already mounted", "mountpoint", newroot, "source", source)
 		return nil
 	}
 	return o.disk.MountPartition(ctx, o.rootPartition, newroot)
+}
+
+func mountedFromExpectedSource(mountpoint, expected, description string) (string, error) {
+	source, ok := mountedSource(mountpoint)
+	if !ok {
+		return "", fmt.Errorf("%s is already mounted but mount source could not be resolved", mountpoint)
+	}
+	if !sameMountSource(source, expected) {
+		return "", fmt.Errorf("%s is already mounted from %s, expected %s %s", mountpoint, source, description, expected)
+	}
+	return source, nil
 }
 
 func sameMountSource(actual, expected string) bool {
@@ -1526,7 +1534,11 @@ func (o *Orchestrator) mountBoot(ctx context.Context) error {
 	}
 	mountpoint := bootEFIMountPoint()
 	if isMountPoint(mountpoint) {
-		o.log.Info("boot partition already mounted", "mountpoint", mountpoint)
+		source, err := mountedFromExpectedSource(mountpoint, o.bootPartition, "boot partition")
+		if err != nil {
+			return err
+		}
+		o.log.Info("boot partition already mounted", "mountpoint", mountpoint, "source", source)
 		return nil
 	}
 	if err := mountBootPart(ctx, o.disk, o.bootPartition, mountpoint); err != nil {
@@ -1568,7 +1580,11 @@ func (o *Orchestrator) mountSharedData(ctx context.Context) error {
 			return fmt.Errorf("shared data mount %s: %w", m.mountpoint, err)
 		}
 		if isMountPoint(target) {
-			o.log.Info("shared data partition already mounted", "label", m.label, "mountpoint", target)
+			source, err := mountedFromExpectedSource(target, m.device, "shared data partition")
+			if err != nil {
+				return err
+			}
+			o.log.Info("shared data partition already mounted", "label", m.label, "mountpoint", target, "source", source)
 			o.recordSharedMount(target)
 			continue
 		}

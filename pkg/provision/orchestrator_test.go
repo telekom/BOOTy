@@ -495,6 +495,18 @@ func TestMountSharedDataRecordsAlreadyMountedSystemABDataPartitions(t *testing.T
 		return path == filepath.Join(newroot, "var") || path == filepath.Join(newroot, "home")
 	}
 	t.Cleanup(func() { isMountPoint = oldMountPoint })
+	oldMountedSource := mountedSource
+	mountedSource = func(path string) (string, bool) {
+		switch path {
+		case filepath.Join(newroot, "var"):
+			return "/dev/sda4", true
+		case filepath.Join(newroot, "home"):
+			return "/dev/sda5", true
+		default:
+			return "", false
+		}
+	}
+	t.Cleanup(func() { mountedSource = oldMountedSource })
 
 	oldMountShared := mountSharedDataPart
 	mountSharedDataPart = func(_ context.Context, _ *disk.Manager, _, _ string) error {
@@ -509,6 +521,50 @@ func TestMountSharedDataRecordsAlreadyMountedSystemABDataPartitions(t *testing.T
 	want := []string{filepath.Join(newroot, "var"), filepath.Join(newroot, "home")}
 	if strings.Join(o.sharedMounts, ",") != strings.Join(want, ",") {
 		t.Fatalf("sharedMounts = %#v, want %#v", o.sharedMounts, want)
+	}
+}
+
+func TestMountSharedDataFailsWhenAlreadyMountedFromUnexpectedPartition(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.Scheme = config.ABSchemeSystemAB
+	cfg.Provision.AB.PreserveExisting = true
+	cfg.Provision.AB.DataPartitions = []config.ABDataPartition{
+		{Label: "BOOTY-VAR", Mountpoint: "/var", SizeMB: 1024},
+	}
+	layout, err := cfg.Provision.AB.PartitionLayout("/dev/sda")
+	if err != nil {
+		t.Fatalf("PartitionLayout: %v", err)
+	}
+	cfg.Provision.Disk.PartitionLayout = layout
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+
+	target := filepath.Join(newroot, "var")
+	oldMountPoint := isMountPoint
+	isMountPoint = func(path string) bool { return path == target }
+	t.Cleanup(func() { isMountPoint = oldMountPoint })
+	oldMountedSource := mountedSource
+	mountedSource = func(path string) (string, bool) {
+		if path == target {
+			return "/dev/sdb4", true
+		}
+		return "", false
+	}
+	t.Cleanup(func() { mountedSource = oldMountedSource })
+	oldMountShared := mountSharedDataPart
+	mountSharedDataPart = func(_ context.Context, _ *disk.Manager, _, _ string) error {
+		t.Fatal("mismatched shared data partition must not be mounted")
+		return nil
+	}
+	t.Cleanup(func() { mountSharedDataPart = oldMountShared })
+
+	err = o.mountSharedData(context.Background())
+	if err == nil {
+		t.Fatal("expected shared data mount source mismatch error")
+	}
+	if !strings.Contains(err.Error(), "expected shared data partition /dev/sda4") {
+		t.Fatalf("mountSharedData error = %q", err.Error())
 	}
 }
 
@@ -744,6 +800,64 @@ func TestMountBootSkipsWhenNoBootPartition(t *testing.T) {
 
 	if err := o.mountBoot(context.Background()); err != nil {
 		t.Fatalf("mountBoot without boot partition: %v", err)
+	}
+}
+
+func TestMountBootSkipsAlreadyMountedExpectedPartition(t *testing.T) {
+	oldMountPoint := isMountPoint
+	isMountPoint = func(path string) bool { return path == bootEFIMountPoint() }
+	t.Cleanup(func() { isMountPoint = oldMountPoint })
+	oldMountedSource := mountedSource
+	mountedSource = func(path string) (string, bool) {
+		if path == bootEFIMountPoint() {
+			return "/dev/sda1", true
+		}
+		return "", false
+	}
+	t.Cleanup(func() { mountedSource = oldMountedSource })
+	oldMountBootPart := mountBootPart
+	mountBootPart = func(_ context.Context, _ *disk.Manager, _, _ string) error {
+		t.Fatal("already-mounted boot partition must not be mounted again")
+		return nil
+	}
+	t.Cleanup(func() { mountBootPart = oldMountBootPart })
+
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	o.bootPartition = "/dev/sda1"
+
+	if err := o.mountBoot(context.Background()); err != nil {
+		t.Fatalf("mountBoot with mounted ESP: %v", err)
+	}
+}
+
+func TestMountBootFailsWhenAlreadyMountedFromUnexpectedPartition(t *testing.T) {
+	oldMountPoint := isMountPoint
+	isMountPoint = func(path string) bool { return path == bootEFIMountPoint() }
+	t.Cleanup(func() { isMountPoint = oldMountPoint })
+	oldMountedSource := mountedSource
+	mountedSource = func(path string) (string, bool) {
+		if path == bootEFIMountPoint() {
+			return "/dev/sdb1", true
+		}
+		return "", false
+	}
+	t.Cleanup(func() { mountedSource = oldMountedSource })
+	oldMountBootPart := mountBootPart
+	mountBootPart = func(_ context.Context, _ *disk.Manager, _, _ string) error {
+		t.Fatal("mismatched boot partition must not be mounted")
+		return nil
+	}
+	t.Cleanup(func() { mountBootPart = oldMountBootPart })
+
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	o.bootPartition = "/dev/sda1"
+
+	err := o.mountBoot(context.Background())
+	if err == nil {
+		t.Fatal("expected boot mount source mismatch error")
+	}
+	if !strings.Contains(err.Error(), "expected boot partition /dev/sda1") {
+		t.Fatalf("mountBoot error = %q", err.Error())
 	}
 }
 
