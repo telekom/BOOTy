@@ -69,7 +69,7 @@ essentials:
 | Binary (`booty`) | amd64, arm64 | N/A |
 | Initramfs (`.cpio.zst` / `.cpio.gz`) | amd64, arm64 | default (FRR), gobgp, slim, micro |
 | ISO (`.iso`) | amd64 | default, gobgp |
-| Container image | amd64, arm64 | default, gobgp, slim, micro |
+| Container image | amd64, arm64 | default, gobgp |
 | SBOM (`.spdx.json`) | — | Per artifact |
 | Signature (`.sig`) | — | Per artifact |
 | Checksum (`.sha256`) | — | Per artifact |

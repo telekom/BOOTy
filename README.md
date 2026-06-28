@@ -1060,7 +1060,7 @@ make clab-vrnetlab-up && make test-e2e-vrnetlab   # Full EVPN boot flow
 make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab  # GoBGP QEMU VMs + FRR fabric
 
 # Linux-only E2E (disk/mount/loop device, requires root)
-go test -tags linux_e2e -v ./pkg/disk/...
+sudo -E env "PATH=$PATH:/usr/sbin:/sbin" go test -tags linux_e2e -v -count=1 ./test/e2e/linux/...
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for coding standards, test requirements,

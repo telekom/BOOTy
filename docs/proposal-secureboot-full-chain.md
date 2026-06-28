@@ -1,6 +1,6 @@
 # Proposal: Full Secure Boot Chain
 
-## Status: Implemented (PR #48)
+## Status: Partial / Preconditions Only (PR #48)
 
 ## Priority: P0
 
@@ -12,8 +12,13 @@ Extend the existing SecureBoot lifecycle proposal with full chain-of-trust
 management: signed shim → signed GRUB → signed kernel verification, MOK
 (Machine Owner Key) enrollment from BOOTy, signing infrastructure
 documentation, and per-image chain validation before creating EFI boot
-entries. This ensures every component in the boot chain is cryptographically
-verified from UEFI firmware through kernel execution.
+entries.
+
+Current BOOTy code performs Secure Boot precondition checks only: it confirms
+Secure Boot state and expected boot-chain component presence, and parses EFI
+PE/COFF headers where applicable. It does not yet cryptographically verify
+shim, GRUB, kernel, or module signatures, and it does not automate full MOK
+enrollment.
 
 ## Motivation
 

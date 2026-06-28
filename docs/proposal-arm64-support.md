@@ -102,15 +102,13 @@ func (o *Orchestrator) selectImage() string {
 }
 ```
 
-### ARM64-Specific Modules
+### ARM64 Kernel Module Scope
 
-| Category | AMD64 Module | ARM64 Equivalent |
-|----------|-------------|-----------------|
-| NIC | `ixgbe`, `i40e`, `ice` | `thunder_bgx`, `octeontx2`, `mlx5_core` |
-| Storage | `ahci`, `megaraid_sas` | `ahci_platform`, `nvme` |
-| Console | `pcspkr` | N/A |
-| GPIO | N/A | `gpio-thunderx`, `gpio-dwapb` |
-| USB | `xhci_hcd` | `xhci_hcd` (same) |
+The current Dockerfile uses one explicit module list for both amd64 and arm64
+builds. That list covers virtio, common filesystems, bridge/vxlan, Intel,
+Broadcom, Mellanox, dm-crypt, and IPMI modules. ARM64 platform-specific NIC,
+storage, console, GPIO, and USB modules require Dockerfile and CI proof before
+they can be listed as bundled support.
 
 ### EFI Boot Differences
 
@@ -161,15 +159,14 @@ ARM64 builds use the same binaries as AMD64 but compiled for `aarch64`.
 The multi-arch Dockerfile handles this via `--platform linux/arm64`.
 No new binaries are needed beyond the existing set.
 
-**ARM64-specific kernel modules** (replace some AMD64-only modules):
+**Current kernel module bundle**
 
-| Module | Purpose | AMD64 Equivalent |
-|--------|---------|-----------------|
-| `thunder_bgx` | Cavium ThunderX NIC | `ixgbe` |
-| `octeontx2` | Marvell OcteonTX2 NIC | `i40e` |
-| `mlx5_core` | Mellanox ConnectX (same) | `mlx5_core` |
-| `ahci_platform` | Platform AHCI controller | `ahci` |
-| `gpio-dwapb` | DesignWare GPIO | N/A |
+ARM64 builds currently use the same explicit module bundle as AMD64. The
+Dockerfile copies modules such as virtio, ext4, xfs, btrfs, bridge/vxlan,
+Intel/Broadcom/Mellanox NIC drivers, dm-crypt, and IPMI support. ARM64-specific
+platform modules such as `thunder_bgx`, `octeontx2`, `ahci_platform`, and
+`gpio-dwapb` are not currently bundled and should be treated as planned support
+until the Dockerfile and CI prove them.
 
 **Dockerfile change** (multi-arch build):
 
