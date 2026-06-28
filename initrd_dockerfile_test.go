@@ -189,3 +189,30 @@ func TestDockerfileUsesUtilLinuxLsblk(t *testing.T) {
 		t.Fatalf("expected default, slim, and GoBGP builders to remove BusyBox lsblk before COPY, got %d removals", lsblkRemovals)
 	}
 }
+
+func TestSlimDockerfileIncludesResizeAndRepairTools(t *testing.T) {
+	data, err := os.ReadFile("initrd.Dockerfile")
+	if err != nil {
+		t.Fatalf("cannot read initrd.Dockerfile: %v", err)
+	}
+	text := string(data)
+	start := strings.Index(text, "FROM debian:bookworm-slim AS slim-builder")
+	if start < 0 {
+		t.Fatal("cannot find slim-builder stage")
+	}
+	end := strings.Index(text[start+1:], "\nFROM ")
+	if end < 0 {
+		t.Fatal("cannot find end of slim-builder stage")
+	}
+	slimStage := text[start : start+1+end]
+	for _, want := range []string{
+		"COPY --from=tools /sbin/resize2fs sbin/resize2fs",
+		"COPY --from=tools /usr/sbin/xfs_growfs sbin/xfs_growfs",
+		"COPY --from=tools /usr/sbin/xfs_repair sbin/xfs_repair",
+		"COPY --from=tools /usr/bin/btrfs bin/btrfs",
+	} {
+		if !strings.Contains(slimStage, want) {
+			t.Fatalf("slim-builder missing filesystem tool copy %q", want)
+		}
+	}
+}
