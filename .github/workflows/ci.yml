@@ -322,6 +322,7 @@ jobs:
 
       - name: Upload build flavour artifacts
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7.0.1
         with:
           name: build-flavours
@@ -333,6 +334,7 @@ jobs:
             micro-files.txt
             gobgp-files.txt
           if-no-files-found: ignore
+          retention-days: 7
 
   kvm-boot:
     name: KVM Boot Validation
@@ -494,11 +496,13 @@ jobs:
 
       - name: Upload serial log
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7.0.1
         with:
           name: kvm-boot-serial-log
           path: serial.log
           if-no-files-found: ignore
+          retention-days: 7
 
       - name: Cleanup
         if: always()
@@ -619,11 +623,13 @@ jobs:
 
       - name: Upload ContainerLab logs
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7.0.1
         with:
           name: clab-logs
           path: clab-logs/
           if-no-files-found: ignore
+          retention-days: 7
 
       - name: Cleanup
         if: always()
@@ -842,19 +848,23 @@ jobs:
 
       - name: Upload UEFI serial log
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7.0.1
         with:
           name: uefi-iso-boot-serial-log
           path: serial-uefi.log
           if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload ISO artifact
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7.0.1
         with:
           name: booty-uefi-iso
           path: test-uefi.iso
           if-no-files-found: ignore
+          retention-days: 7
 
       - name: Cleanup
         if: always()
@@ -915,11 +925,13 @@ jobs:
 
       - name: Upload Linux E2E diagnostics
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7.0.1
         with:
           name: linux-e2e-diagnostics
           path: linux-e2e-logs/
           if-no-files-found: ignore
+          retention-days: 7
 
   e2e-boot:
     name: E2E Boot (ContainerLab)
@@ -1027,11 +1039,13 @@ jobs:
 
       - name: Upload boot logs
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7.0.1
         with:
           name: boot-logs
           path: boot-logs/
           if-no-files-found: ignore
+          retention-days: 7
 
       - name: Cleanup
         if: always()
@@ -1162,11 +1176,13 @@ jobs:
 
       - name: Upload GoBGP logs
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7.0.1
         with:
           name: gobgp-logs
           path: gobgp-logs/
           if-no-files-found: ignore
+          retention-days: 7
 
       - name: Cleanup
         if: always()
@@ -1301,11 +1317,13 @@ jobs:
 
       - name: Upload Type-5 logs
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7.0.1
         with:
           name: type5-logs
           path: type5-logs/
           if-no-files-found: ignore
+          retention-days: 7
 
       - name: Cleanup
         if: always()
@@ -1470,11 +1488,13 @@ jobs:
 
       - name: Upload vrnetlab logs
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7.0.1
         with:
           name: vrnetlab-logs
           path: vrnetlab-logs/
           if-no-files-found: ignore
+          retention-days: 7
 
       - name: Cleanup
         if: always()
@@ -1552,11 +1572,13 @@ jobs:
 
       - name: Upload GoBGP vrnetlab logs
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7.0.1
         with:
           name: gobgp-vrnetlab-logs
           path: gobgp-vrnetlab-logs/
           if-no-files-found: ignore
+          retention-days: 7
 
       - name: Cleanup
         if: always()
