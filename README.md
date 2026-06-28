@@ -429,8 +429,8 @@ go run server/server.go \
 | `BGP_KEEPALIVE` | `0` | Optional BGP keepalive timer in seconds (0 = stack default) |
 | `BGP_HOLD` | `0` | Optional BGP hold timer in seconds (0 = stack default) |
 | `BGP_MIN_PEERS` | `1` | Minimum number of BGP peers that must reach ESTABLISHED state before underlay is considered ready |
-| `BFD_TRANSMIT_MS` | `0` | Optional FRR BFD transmit interval in milliseconds (0 = disabled). GoBGP mode currently ignores BFD settings and relies on BGP hold timers. |
-| `BFD_RECEIVE_MS` | `0` | Optional FRR BFD receive interval in milliseconds (0 = disabled). GoBGP mode currently ignores BFD settings and relies on BGP hold timers. |
+| `BFD_TRANSMIT_MS` | `0` | FRR-only BFD transmit interval in milliseconds; must be set together with `BFD_RECEIVE_MS` and is rejected for `NETWORK_MODE=gobgp` |
+| `BFD_RECEIVE_MS` | `0` | FRR-only BFD receive interval in milliseconds; must be set together with `BFD_TRANSMIT_MS` and is rejected for `NETWORK_MODE=gobgp` |
 | `underlay_subnet` | — | Underlay CIDR for FRR mode (e.g. `192.168.4.0/24`) |
 | `underlay_ip` | — | Underlay loopback / router-ID for GoBGP mode |
 | `asn_server` | — | Local BGP autonomous system number |

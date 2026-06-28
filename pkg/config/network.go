@@ -93,13 +93,13 @@ type BGPConfig struct {
 	// Default: 0 (use FRR/GoBGP default, typically 180s)
 	Hold uint32 `yaml:"hold" json:"hold"`
 
-	// BFDTransmitMS is the BFD transmit interval in milliseconds.
-	// BFD is opt-in: only enabled when this value is explicitly set > 0.
+	// BFDTransmitMS is the FRR-only BFD transmit interval in milliseconds.
+	// BFD timers must be configured as a pair and are rejected for GoBGP mode.
 	// Default: 0 (BFD disabled; typical value when enabled: 300)
 	BFDTransmitMS uint32 `yaml:"bfdTransmitMS" json:"bfdTransmitMS"`
 
-	// BFDReceiveMS is the BFD receive interval in milliseconds.
-	// BFD is opt-in: only enabled when this value is explicitly set > 0.
+	// BFDReceiveMS is the FRR-only BFD receive interval in milliseconds.
+	// BFD timers must be configured as a pair and are rejected for GoBGP mode.
 	// Default: 0 (BFD disabled; typical value when enabled: 300)
 	BFDReceiveMS uint32 `yaml:"bfdReceiveMS" json:"bfdReceiveMS"`
 }

@@ -84,6 +84,7 @@ func (c *Config) Validate() error {
 	if (peerMode == "dual" || peerMode == "numbered") && strings.TrimSpace(c.Network.BGP.Neighbors) == "" {
 		errs = append(errs, "network.bgp.neighbors required when network.bgp.peerMode is dual or numbered")
 	}
+	errs = append(errs, c.validateBGP()...)
 	errs = append(errs, c.validatePersistence()...)
 
 	if err := validateRAIDConfig(c.Provision.Disk.RAID); err != nil {
@@ -108,6 +109,20 @@ func (c *Config) Validate() error {
 
 	c.normalize()
 	return nil
+}
+
+func (c *Config) validateBGP() []string {
+	bfdTransmit := c.Network.BGP.BFDTransmitMS
+	bfdReceive := c.Network.BGP.BFDReceiveMS
+
+	var errs []string
+	if (bfdTransmit == 0) != (bfdReceive == 0) {
+		errs = append(errs, "network.bgp.bfdTransmitMS and network.bgp.bfdReceiveMS must be set together")
+	}
+	if strings.EqualFold(strings.TrimSpace(c.Network.Mode), "gobgp") && (bfdTransmit > 0 || bfdReceive > 0) {
+		errs = append(errs, "network.mode=gobgp does not support BFD; use network.mode=frr or BGP keepalive/hold timers")
+	}
+	return errs
 }
 
 func (c *Config) validatePersistence() []string {

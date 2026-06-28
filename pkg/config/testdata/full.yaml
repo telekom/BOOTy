@@ -56,9 +56,10 @@ network:
     keepalive: 0
     hold: 0
 
-    # bfdTransmitMS/bfdReceiveMS: BFD intervals in milliseconds (0 = BFD disabled)
-    bfdTransmitMS: 300
-    bfdReceiveMS: 300
+    # bfdTransmitMS/bfdReceiveMS: FRR-only BFD intervals in milliseconds (0 = disabled).
+    # GoBGP does not support BFD; use keepalive/hold timers for faster failure detection.
+    bfdTransmitMS: 0
+    bfdReceiveMS: 0
 
   evpn:
     # underlaySubnet: IPv4 subnet for loopback IP derivation (e.g. "192.168.4.0/24")
