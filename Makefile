@@ -370,7 +370,7 @@ oci-push: oci-push-initramfs oci-push-binary
 
 override INITRAMFS_MEDIA_TYPE := $(if $(filter $(OCI_FLAVOR),$(ZSTD_INITRAMFS_FLAVORS)),application/vnd.cncf.initramfs.layer.v1+zstd,application/vnd.cncf.initramfs.layer.v1+gzip)
 
-export VERSION DOCKERTAG REPOSITORY OCI_FLAVOR OCI_ARCH OCI_INITRAMFS_DIR INITRAMFS_PATH INITRAMFS_MEDIA_TYPE
+export VERSION DOCKERTAG REPOSITORY TARGET OCI_FLAVOR OCI_ARCH OCI_INITRAMFS_DIR INITRAMFS_PATH INITRAMFS_MEDIA_TYPE
 
 ensure_oci_ref_absent = @ref="$(1)"; err=$$(mktemp) || { echo "ERROR: could not create temporary file for OCI ref check" >&2; exit 1; }; trap 'rm -f "$$err"' EXIT; if oras manifest fetch "$$ref" >/dev/null 2>"$$err"; then echo "ERROR: OCI artifact $$ref already exists; refusing to overwrite"; exit 1; fi; if ! grep -Eiq '(not found|manifest unknown|name unknown|404)' "$$err"; then echo "ERROR: could not verify OCI artifact $$ref is absent"; cat "$$err" >&2 || true; exit 1; fi
 
@@ -396,12 +396,12 @@ oci-push-initramfs:
 	@echo Pushed "$${REPOSITORY}/initramfs:$${DOCKERTAG}-$${OCI_FLAVOR}-$${OCI_ARCH}"
 
 oci-push-binary:
-	@test -f $(TARGET) || (echo "ERROR: $(TARGET) binary not found — run 'make build' first"; exit 1)
+	@test -f "$$TARGET" || (echo "ERROR: $$TARGET binary not found — run 'make build' first"; exit 1)
 	$(call ensure_oci_ref_absent,$${REPOSITORY}/binary:$${DOCKERTAG}-$${OCI_ARCH})
-	@sha256sum $(TARGET) > $(TARGET).sha256
-	@oras push $(REPOSITORY)/binary:$(DOCKERTAG)-$(OCI_ARCH) \
-		--annotation "org.opencontainers.image.version=$(VERSION)" \
-		--annotation "io.booty.arch=$(OCI_ARCH)" \
-		$(TARGET):application/vnd.cncf.binary.layer.v1 \
-		$(TARGET).sha256:text/plain
-	@echo Pushed $(REPOSITORY)/binary:$(DOCKERTAG)-$(OCI_ARCH)
+	@sha256sum "$$TARGET" > "$$TARGET.sha256"
+	@oras push "$${REPOSITORY}/binary:$${DOCKERTAG}-$${OCI_ARCH}" \
+		--annotation "org.opencontainers.image.version=$$VERSION" \
+		--annotation "io.booty.arch=$$OCI_ARCH" \
+		"$${TARGET}:application/vnd.cncf.binary.layer.v1" \
+		"$${TARGET}.sha256:text/plain"
+	@echo Pushed "$${REPOSITORY}/binary:$${DOCKERTAG}-$${OCI_ARCH}"
