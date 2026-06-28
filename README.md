@@ -33,7 +33,7 @@ BOOTy operates in two modes depending on the boot environment:
 1. A Redfish BMC mounts an ISO containing a kernel, BOOTy initramfs, and `/deploy/vars` config.
 2. BOOTy reads `/deploy/vars` for machine config, image URLs, and CAPRF server endpoints.
 3. Network connectivity is established via **FRR/EVPN** (BGP underlay) or **DHCP** fallback.
-4. The provisioning pipeline validates input, cleans storage state, prepares NVMe namespaces, detects disks, applies the partition layout, streams the image, mounts shared data, optionally loads sysexts, configures the OS, installs EFI fallbacks, and injects cloud-init. After the orchestrator reports success, `main.go` attempts kexec, falls back to a hard reboot, or powers off when requested by provisioning state.
+4. The provisioning pipeline validates input, cleans storage state, prepares NVMe namespaces, detects disks, applies the partition layout, streams the image, mounts shared data, optionally loads sysexts, configures the OS, installs EFI fallbacks, and injects cloud-init. After the orchestrator reports success, `main.go` attempts kexec, falls back to a hard reboot, powers off when requested by provisioning state, or powers off as a safety fallback when A/B `preserveExisting` requires kexec but kexec is unavailable.
 5. Status, logs, and debug info are shipped back to the CAPRF controller throughout.
 
 ### Legacy Mode
