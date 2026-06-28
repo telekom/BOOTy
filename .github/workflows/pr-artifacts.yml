@@ -15,6 +15,7 @@ jobs:
   publish-pr-iso:
     name: Publish PR BOOTy GoBGP ISO
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v7
