@@ -225,7 +225,7 @@ exclusively in CI.
 |------|--------|
 | `.github/workflows/nightly.yml` | New nightly build workflow |
 | `.github/workflows/release-v2.yml` | Enhanced release with SBOM/signing/changelog |
-| `.github/workflows/promote.yml` | Beta → stable promotion with approval gate |
+| `.github/workflows/promote.yml` | Beta → stable promotion with approval gate; manual dispatch must use the default branch |
 | `cliff.toml` | git-cliff changelog configuration |
 | `.goreleaser.yml` | Optional GoReleaser config (alternative to custom workflows) |
 | `Makefile` | `make release-local` for local artifact builds |
