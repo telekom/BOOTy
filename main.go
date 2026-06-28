@@ -338,11 +338,6 @@ func runCAPRF(ctx context.Context) {
 		realm.Reboot()
 		return
 	case errors.As(modeErr, &provisionErr):
-		if netMode != nil {
-			if err := netMode.Teardown(ctx); err != nil {
-				slog.Warn("network teardown error", "error", err)
-			}
-		}
 		kexeced := tryKexec(cfg, provisionErr.FirmwareChanged)
 		if !kexeced && provision.ShouldKeepTargetRootMountedForKexec(cfg, provisionErr.FirmwareChanged) {
 			cleanupFailedKexecTarget(diskMgr)

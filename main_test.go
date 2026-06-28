@@ -491,6 +491,26 @@ func TestHandleProvisionHandoffRequestsSuccessfulPowerOff(t *testing.T) {
 	assertProvisionHandoffSuccess(t, reporter, state)
 }
 
+func TestProvisionCompleteExitKeepsNetworkUntilHandoff(t *testing.T) {
+	data, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	source := string(data)
+	start := strings.Index(source, "case errors.As(modeErr, &provisionErr):")
+	if start < 0 {
+		t.Fatal("provision complete branch not found")
+	}
+	end := strings.Index(source[start:], "handleProvisionHandoff")
+	if end < 0 {
+		t.Fatal("provision complete handoff call not found")
+	}
+	branch := source[start : start+end]
+	if strings.Contains(branch, ".Teardown(") {
+		t.Fatalf("provision complete branch tears network down before handoff:\n%s", branch)
+	}
+}
+
 func TestSetupNetworkModeExplicitGoBGPFailsClosed(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Network.Mode = "gobgp"
