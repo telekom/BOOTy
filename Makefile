@@ -35,7 +35,7 @@ CLEAN_FILES := \
 
 CLAB_TEST_IMAGE ?= test/e2e/clab/images/test.img.gz
 
-.PHONY: all build build-all clean install uninstall fmt lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm clab-test-image clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic oci-push oci-push-initramfs oci-push-binary
+.PHONY: all build build-all clean install uninstall fmt lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm test-e2e clab-test-image clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-test-image booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-type5-up clab-type5-down test-e2e-type5 clab-production-up clab-production-down test-e2e-production clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic oci-push oci-push-initramfs oci-push-binary
 
 all: lint test install
 
@@ -190,7 +190,7 @@ clab-up: $(CLAB_TEST_IMAGE)
 
 clab-down:
 	@echo Destroying ContainerLab topology
-	@cd test/e2e/clab && sudo clab destroy --topo topology.clab.yml
+	@cd test/e2e/clab && sudo clab destroy --topo topology.clab.yml --cleanup
 
 test-e2e-integration:
 	@printf '%s\n' 'Running E2E integration tests (requires clab-up)'
@@ -206,7 +206,7 @@ clab-boot-up: booty-test-image $(CLAB_TEST_IMAGE)
 
 clab-boot-down:
 	@echo Destroying boot test topology
-	@cd test/e2e/clab && sudo clab destroy --topo topology-boot.clab.yml
+	@cd test/e2e/clab && sudo clab destroy --topo topology-boot.clab.yml --cleanup
 
 test-e2e-boot:
 	@printf '%s\n' 'Running BOOTy boot E2E tests (requires clab-boot-up)'
@@ -222,7 +222,7 @@ clab-vrnetlab-up: booty-vrnetlab-image $(CLAB_TEST_IMAGE)
 
 clab-vrnetlab-down:
 	@echo Destroying vrnetlab EVPN topology
-	@cd test/e2e/clab && sudo clab destroy --topo topology-vrnetlab.clab.yml
+	@cd test/e2e/clab && sudo clab destroy --topo topology-vrnetlab.clab.yml --cleanup
 
 test-e2e-vrnetlab:
 	@printf '%s\n' 'Running vrnetlab EVPN E2E tests (requires clab-vrnetlab-up)'
@@ -240,7 +240,7 @@ clab-gobgp-up: booty-gobgp-test-image $(CLAB_TEST_IMAGE)
 
 clab-gobgp-down:
 	@echo Destroying GoBGP test topology
-	@cd test/e2e/clab && sudo clab destroy --topo topology-gobgp.clab.yml
+	@cd test/e2e/clab && sudo clab destroy --topo topology-gobgp.clab.yml --cleanup
 
 test-e2e-gobgp:
 	@printf '%s\n' 'Running GoBGP E2E tests (requires clab-gobgp-up)'
@@ -252,7 +252,7 @@ clab-gobgp-vrnetlab-up: booty-vrnetlab-image $(CLAB_TEST_IMAGE)
 
 clab-gobgp-vrnetlab-down:
 	@echo Destroying GoBGP vrnetlab topology
-	@cd test/e2e/clab && sudo clab destroy --topo topology-gobgp-vrnetlab.clab.yml
+	@cd test/e2e/clab && sudo clab destroy --topo topology-gobgp-vrnetlab.clab.yml --cleanup
 
 test-e2e-gobgp-vrnetlab:
 	@printf '%s\n' 'Running GoBGP vrnetlab E2E tests (requires clab-gobgp-vrnetlab-up)'
@@ -266,7 +266,7 @@ clab-type5-up: booty-gobgp-test-image
 
 clab-type5-down:
 	@echo Destroying pure Type-5 topology
-	@cd test/e2e/clab && sudo clab destroy --topo topology-type5.clab.yml
+	@cd test/e2e/clab && sudo clab destroy --topo topology-type5.clab.yml --cleanup
 
 test-e2e-type5:
 	@printf '%s\n' 'Running pure Type-5 E2E tests (requires clab-type5-up)'
@@ -280,7 +280,7 @@ clab-production-up: booty-test-image $(CLAB_TEST_IMAGE)
 
 clab-production-down:
 	@echo Destroying production-realistic topology
-	@cd test/e2e/clab && sudo clab destroy --topo topology-production.clab.yml
+	@cd test/e2e/clab && sudo clab destroy --topo topology-production.clab.yml --cleanup
 
 test-e2e-production:
 	@printf '%s\n' 'Running production-realistic E2E tests (requires clab-production-up)'
@@ -294,7 +294,7 @@ clab-dhcp-up:
 
 clab-dhcp-down:
 	@echo Destroying DHCP test topology
-	@cd test/e2e/clab && sudo clab destroy --topo topology-dhcp.clab.yml
+	@cd test/e2e/clab && sudo clab destroy --topo topology-dhcp.clab.yml --cleanup
 
 test-e2e-dhcp:
 	@printf '%s\n' 'Running DHCP E2E tests (requires clab-dhcp-up)'
@@ -308,7 +308,7 @@ clab-bond-up:
 
 clab-bond-down:
 	@printf '%s\n' 'Destroying bond-mode (non-LACP) test topology'
-	@cd test/e2e/clab && sudo clab destroy --topo topology-lacp.clab.yml
+	@cd test/e2e/clab && sudo clab destroy --topo topology-lacp.clab.yml --cleanup
 
 test-e2e-bond:
 	@printf '%s\n' 'Running bond-mode (non-LACP) E2E tests (requires clab-bond-up)'
@@ -328,7 +328,7 @@ clab-static-up:
 
 clab-static-down:
 	@echo Destroying static IP test topology
-	@cd test/e2e/clab && sudo clab destroy --topo topology-static.clab.yml
+	@cd test/e2e/clab && sudo clab destroy --topo topology-static.clab.yml --cleanup
 
 test-e2e-static:
 	@printf '%s\n' 'Running static IP E2E tests (requires clab-static-up)'
@@ -342,7 +342,7 @@ clab-multi-nic-up:
 
 clab-multi-nic-down:
 	@echo Destroying multi-NIC test topology
-	@cd test/e2e/clab && sudo clab destroy --topo topology-multi-nic.clab.yml
+	@cd test/e2e/clab && sudo clab destroy --topo topology-multi-nic.clab.yml --cleanup
 
 test-e2e-multi-nic:
 	@printf '%s\n' 'Running multi-NIC E2E tests (requires clab-multi-nic-up)'
