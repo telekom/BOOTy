@@ -2363,6 +2363,7 @@ func TestInjectCloudInit_NoCloudInject(t *testing.T) {
 	}
 	cfg.Provision.CloudInit.Enabled = true
 	cfg.Provision.CloudInit.Datasource = "nocloud"
+	cfg.Network.Static.Iface = "eth0"
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
@@ -2376,6 +2377,24 @@ func TestInjectCloudInit_NoCloudInject(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(seedDir, name)); err != nil {
 			t.Errorf("expected seed file %s to exist: %v", name, err)
 		}
+	}
+}
+
+func TestInjectCloudInit_RequiresStaticInterfaceWithoutBond(t *testing.T) {
+	cfg := &config.MachineConfig{
+		Hostname: "test-host",
+	}
+	cfg.Provision.CloudInit.Enabled = true
+	cfg.Provision.CloudInit.Datasource = "nocloud"
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	err := o.injectCloudInit(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "STATIC_IFACE") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -2624,6 +2643,7 @@ func TestInjectCloudInit_ConfigDriveInject(t *testing.T) {
 	cfg.Provision.CloudInit.Enabled = true
 	cfg.Provision.CloudInit.Datasource = "configdrive"
 	cfg.Provision.ProviderID = "redfish://bmc.example/Systems/1"
+	cfg.Network.Static.Iface = "eth0"
 	cfg.Network.Static.IP = "10.0.0.10/24"
 	cfg.Network.Static.Gateway = "10.0.0.1"
 	provider := &mockProvider{}
@@ -2659,6 +2679,7 @@ func TestInjectCloudInit_DefaultDatasourceAndStableInstanceID(t *testing.T) {
 	}
 	cfg.Provision.CloudInit.Enabled = true
 	cfg.Provision.ProviderID = "redfish://bmc.example/Systems/1"
+	cfg.Network.Static.Iface = "eth0"
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
@@ -2682,6 +2703,7 @@ func TestInjectCloudInit_ConfigDriveDatasourceCaseInsensitiveAndTrimmed(t *testi
 	}
 	cfg.Provision.CloudInit.Enabled = true
 	cfg.Provision.CloudInit.Datasource = " ConfigDrive "
+	cfg.Network.Static.Iface = "eth0"
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 

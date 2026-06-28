@@ -298,6 +298,7 @@ func TestOrchestratorCreateEFIBootEntry_SkipsWhenNoBootPartition(t *testing.T) {
 func TestOrchestratorInjectCloudInit_FallbackInstanceID(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.CloudInit.Enabled = true
+	cfg.Network.Static.Iface = "eth0"
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 

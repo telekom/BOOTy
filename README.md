@@ -402,7 +402,7 @@ go run server/server.go \
 | `NETWORK_MODE` | — | Network mode override: `gobgp` for pure-Go BGP stack |
 | `STATIC_IP` | — | Static IP in CIDR notation (e.g. `10.0.0.5/24`) |
 | `STATIC_GATEWAY` | — | Default gateway for static networking |
-| `STATIC_IFACE` | — | Interface for static IP (auto-detect if empty) |
+| `STATIC_IFACE` | — | Target interface for static IP and non-bond cloud-init network config |
 | `PERSIST_NETWORK` | `false` | Write configured target OS network files during provisioning |
 | `OS_FAMILY` | — | Required when `PERSIST_NETWORK=true`; one of `ubuntu`, `rhel`, `flatcar` |
 | `BOND_INTERFACES` | — | Comma-separated interfaces for LACP bond (e.g. `eth0,eth1`) |
@@ -868,6 +868,9 @@ When enabled, BOOTy writes cloud-init seed data to the appropriate path
 on the provisioned root filesystem. `nocloud` writes
 `/var/lib/cloud/seed/nocloud/`, and `configdrive` writes OpenStack ConfigDrive
 v2 seed files under `/var/lib/cloud/seed/config_drive/openstack/latest/`.
+For non-bond cloud-init network config, `STATIC_IFACE` is required so the
+generated v2 network-config names the target OS interface instead of an
+initramfs-only fallback.
 The active provisioning integration currently generates:
 
 - **Instance metadata** — instance-id, local-hostname, and platform (`booty`).

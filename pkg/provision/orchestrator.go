@@ -1874,28 +1874,17 @@ func (o *Orchestrator) injectCloudInit(_ context.Context) error {
 		return nil
 	}
 
-	ds := strings.ToLower(strings.TrimSpace(o.cfg.Provision.CloudInit.Datasource))
-	if ds == "" {
-		ds = "nocloud"
+	ds, err := cloudInitDatasource(o.cfg.Provision.CloudInit.Datasource)
+	if err != nil {
+		return err
 	}
 
-	// Split bond interfaces, trimming spaces and filtering empty entries.
-	var bondIfaces []string
-	for _, iface := range strings.Split(o.cfg.Network.Bond.Interfaces, ",") {
-		if s := strings.TrimSpace(iface); s != "" {
-			bondIfaces = append(bondIfaces, s)
-		}
-	}
-
-	// Parse DNS resolvers, trimming spaces and filtering empty entries.
-	var dns []string
-	for _, r := range strings.Split(o.cfg.Network.DNSResolvers, ",") {
-		if s := strings.TrimSpace(r); s != "" {
-			dns = append(dns, s)
-		}
-	}
+	bondIfaces := splitTrimmedCSV(o.cfg.Network.Bond.Interfaces)
 	vlans, err := cloudInitVLANInputs(o.cfg.Network.VLAN.Config)
 	if err != nil {
+		return err
+	}
+	if err := validateCloudInitNetworkTarget(o.cfg.Network.Static.Iface, bondIfaces, vlans); err != nil {
 		return err
 	}
 
@@ -1916,23 +1905,22 @@ func (o *Orchestrator) injectCloudInit(_ context.Context) error {
 		Gateway:    o.cfg.Network.Static.Gateway,
 		BondIfaces: bondIfaces,
 		BondMode:   o.cfg.Network.Bond.Mode,
-		DNS:        dns,
+		DNS:        splitTrimmedCSV(o.cfg.Network.DNSResolvers),
 		VLANs:      vlans,
 	}
 
 	ud, md, nc := cloudinit.Generate(ciCfg)
 	rootPath := o.config.rootDir
 
+	var injectErr error
 	switch ds {
 	case "nocloud":
-		err = cloudinit.InjectNoCloud(rootPath, ud, md, nc)
+		injectErr = cloudinit.InjectNoCloud(rootPath, ud, md, nc)
 	case "configdrive":
-		err = cloudinit.InjectConfigDrive(rootPath, ud, md, nc)
-	default:
-		return fmt.Errorf("unsupported cloud-init datasource %q", ds)
+		injectErr = cloudinit.InjectConfigDrive(rootPath, ud, md, nc)
 	}
-	if err != nil {
-		return fmt.Errorf("inject cloud-init: %w", err)
+	if injectErr != nil {
+		return fmt.Errorf("inject cloud-init: %w", injectErr)
 	}
 	o.log.Info("cloud-init seed injected", "datasource", ds, "root", rootPath)
 	return nil
@@ -1953,6 +1941,34 @@ func cloudInitVLANInputs(spec string) ([]cloudinit.VLANInput, error) {
 		})
 	}
 	return inputs, nil
+}
+
+func cloudInitDatasource(raw string) (string, error) {
+	ds := strings.ToLower(strings.TrimSpace(raw))
+	if ds == "" {
+		return "nocloud", nil
+	}
+	if ds != "nocloud" && ds != "configdrive" {
+		return "", fmt.Errorf("unsupported cloud-init datasource %q", ds)
+	}
+	return ds, nil
+}
+
+func validateCloudInitNetworkTarget(iface string, bondIfaces []string, vlans []cloudinit.VLANInput) error {
+	if len(bondIfaces) == 0 && strings.TrimSpace(iface) == "" && len(vlans) == 0 {
+		return fmt.Errorf("cloud-init network config requires STATIC_IFACE when no bond interfaces are configured")
+	}
+	return nil
+}
+
+func splitTrimmedCSV(raw string) []string {
+	var values []string
+	for _, value := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			values = append(values, trimmed)
+		}
+	}
+	return values
 }
 
 func (o *Orchestrator) copyMachineFiles(ctx context.Context) error {
