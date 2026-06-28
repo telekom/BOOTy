@@ -36,6 +36,7 @@ func TestMakefileRejectsUnsafeBuildVariables(t *testing.T) {
 		want string
 	}{
 		{name: "target", arg: "TARGET=booty;touch", want: "invalid TARGET"},
+		{name: "target-leading-dash", arg: "TARGET=-booty", want: "invalid TARGET"},
 		{name: "version", arg: "VERSION=v1;touch", want: "invalid VERSION"},
 		{name: "build", arg: "BUILD=abc;touch", want: "invalid BUILD"},
 	}
@@ -74,6 +75,73 @@ func TestMakefileRejectsTraversalTarget(t *testing.T) {
 	}
 	if !strings.Contains(string(output), "invalid TARGET") {
 		t.Fatalf("check-build-vars output = %q, want invalid TARGET", output)
+	}
+}
+
+func TestMakefileBuildSkipsUpToDateBinary(t *testing.T) {
+	t.Parallel()
+
+	makePath, err := exec.LookPath("make")
+	if err != nil {
+		t.Skipf("make not found on PATH: %v", err)
+	}
+	repoDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+
+	tmp := t.TempDir()
+	fakeBin := filepath.Join(tmp, "bin")
+	if err := os.Mkdir(fakeBin, 0o755); err != nil {
+		t.Fatalf("mkdir fake bin: %v", err)
+	}
+	writeExecutable(t, filepath.Join(fakeBin, "go"), `#!/bin/sh
+printf '%s\n' "$*" >> "$GO_LOG"
+if [ "$1" = build ]; then
+  out=
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = -o ]; then
+      shift
+      out=$1
+    fi
+    shift || break
+  done
+  if [ -z "$out" ]; then
+    printf '%s\n' 'missing -o output' >&2
+    exit 1
+  fi
+  printf '%s' payload > "$out"
+fi
+`)
+
+	logPath := filepath.Join(tmp, "go.log")
+	target := filepath.Join(tmp, "booty")
+	args := []string{
+		"-f", filepath.Join(repoDir, "Makefile"),
+		"build",
+		"TARGET=" + target,
+		"TARGETOS=linux",
+		"TARGETARCH=amd64",
+		"VERSION=test",
+		"BUILD=abcdef1",
+	}
+	for i := 0; i < 2; i++ {
+		cmd := exec.Command(makePath, args...)
+		cmd.Dir = tmp
+		cmd.Env = append(os.Environ(),
+			"PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"),
+			"GO_LOG="+logPath,
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("make build run %d failed: %v\n%s", i+1, err, out)
+		}
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read fake go log: %v", err)
+	}
+	if got := strings.Count(string(logData), "build "); got != 1 {
+		t.Fatalf("go build calls = %d, want 1; log:\n%s", got, logData)
 	}
 }
 

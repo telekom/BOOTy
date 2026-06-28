@@ -40,7 +40,7 @@ export TARGET VERSION BUILD TARGETOS TARGETARCH DOCKERTAG REPOSITORY
 all: lint test install
 
 check-build-vars:
-	@printf '%s\n' "$$TARGET" | grep -Eq '^[A-Za-z0-9_./-][A-Za-z0-9_./ -]*$$' || { printf 'ERROR: invalid TARGET: %s\n' "$$TARGET"; exit 2; }
+	@printf '%s\n' "$$TARGET" | grep -Eq '^[A-Za-z0-9_./][A-Za-z0-9_./ -]*$$' || { printf 'ERROR: invalid TARGET: %s\n' "$$TARGET"; exit 2; }
 	@case "$$TARGET" in *..*) printf 'ERROR: invalid TARGET: %s\n' "$$TARGET"; exit 2 ;; esac
 	@printf '%s\n' "$$VERSION" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._+~-]*$$' || { printf 'ERROR: invalid VERSION: %s\n' "$$VERSION"; exit 2; }
 	@printf '%s\n' "$$BUILD" | grep -Eq '^([A-Fa-f0-9]{7,64}|unknown)$$' || { printf 'ERROR: invalid BUILD: %s\n' "$$BUILD"; exit 2; }
@@ -55,8 +55,16 @@ check-oci-vars: check-docker-vars check-build-vars
 	@case "$$OCI_FLAVOR" in default|slim|micro|gobgp) ;; *) printf 'ERROR: invalid OCI_FLAVOR: %s\n' "$$OCI_FLAVOR"; exit 2 ;; esac
 	@case "$$OCI_ARCH" in amd64|arm64) ;; *) printf 'ERROR: invalid OCI_ARCH: %s\n' "$$OCI_ARCH"; exit 2 ;; esac
 
-build: check-build-vars $(SRC)
-	@GOOS="$$TARGETOS" GOARCH="$$TARGETARCH" go build -trimpath -ldflags "$(GO_LDFLAGS)" -o "$$TARGET"
+build: check-build-vars
+	@mkdir -p .build
+	@build_vars="TARGET=$$TARGET TARGETOS=$$TARGETOS TARGETARCH=$$TARGETARCH VERSION=$$VERSION BUILD=$$BUILD"; \
+	vars_file=.build/build.vars; \
+	if [ -f "$$TARGET" ] && [ -f "$$vars_file" ] && [ "$$(cat "$$vars_file")" = "$$build_vars" ] && ! find . -type f -name '*.go' -not -path "./vendor/*" -newer "$$TARGET" | grep -q .; then \
+		printf '%s\n' "$$TARGET is up to date"; \
+		exit 0; \
+	fi; \
+	GOOS="$$TARGETOS" GOARCH="$$TARGETARCH" go build -trimpath -ldflags "$(GO_LDFLAGS)" -o "$$TARGET"; \
+	printf '%s\n' "$$build_vars" > "$$vars_file"
 
 build-all: check-build-vars $(SRC)
 	@mkdir -p dist/amd64 dist/arm64
@@ -66,14 +74,14 @@ build-all: check-build-vars $(SRC)
 clean: check-build-vars
 	@rm -f -- "$$TARGET" "$${TARGET}.sha256"
 	@rm -f -- $(CLEAN_FILES)
-	@rm -rf dist
+	@rm -rf dist .build
 
 install: check-build-vars
 	@echo Building and Installing project
 	@go install -trimpath -ldflags "$(GO_LDFLAGS)"
 
 uninstall: check-build-vars clean
-	@target_path=$$(command -v "$$TARGET" 2>/dev/null || true); \
+	@target_path=$$(command -v -- "$$TARGET" 2>/dev/null || true); \
 	if [ -n "$$target_path" ]; then rm -f -- "$$target_path"; fi
 
 fmt:
