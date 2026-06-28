@@ -23,6 +23,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@v6
         with:
@@ -40,6 +42,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@v6
         with:
@@ -100,6 +104,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@v6
         with:
@@ -115,6 +121,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@v6
         with:
@@ -166,6 +174,8 @@ jobs:
           fi
 
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@v6
         with:
@@ -192,6 +202,8 @@ jobs:
     needs: [lint]
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4.1.0
@@ -328,6 +340,8 @@ jobs:
     needs: [build]
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@v6
         with:
@@ -497,6 +511,8 @@ jobs:
     needs: [build]
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@v6
         with:
@@ -622,6 +638,8 @@ jobs:
     needs: [build]
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@v6
         with:
@@ -848,6 +866,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@v6
         with:
@@ -907,6 +927,8 @@ jobs:
     needs: [build]
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@v6
         with:
@@ -1024,6 +1046,8 @@ jobs:
     needs: [build]
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@v6
         with:
@@ -1157,6 +1181,8 @@ jobs:
     needs: [build]
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@v6
         with:
@@ -1294,6 +1320,8 @@ jobs:
     needs: [build]
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@v6
         with:
@@ -1461,6 +1489,8 @@ jobs:
     needs: [build]
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@v6
         with:
