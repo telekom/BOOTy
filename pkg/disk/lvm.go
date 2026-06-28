@@ -48,6 +48,23 @@ func (m *Manager) ApplyLVMConfig(ctx context.Context, device string, layout *con
 	return nil
 }
 
+// RequireLVMTools verifies that the runtime has LVM tooling before any
+// destructive provisioning step relies on a layout that creates LVM volumes.
+func (m *Manager) RequireLVMTools(ctx context.Context, layout *config.PartitionLayout) error {
+	if layout == nil || layout.LVM == nil || len(layout.LVM.Volumes) == 0 {
+		return nil
+	}
+	out, err := m.cmd.Run(ctx, "lvm", "version")
+	if err != nil {
+		trimmed := strings.TrimSpace(string(out))
+		if trimmed != "" {
+			return fmt.Errorf("lvm tooling required by partition layout: %s: %w", trimmed, err)
+		}
+		return fmt.Errorf("lvm tooling required by partition layout: %w", err)
+	}
+	return nil
+}
+
 func validateLVMApplyInputs(device string, layout *config.PartitionLayout) (*config.LVMConfig, string, error) {
 	if layout == nil || layout.LVM == nil || len(layout.LVM.Volumes) == 0 {
 		return nil, "", nil
@@ -105,7 +122,7 @@ func isValidLVMChar(c rune) bool {
 }
 
 func (m *Manager) createPhysicalVolume(ctx context.Context, pvDev string) error {
-	out, err := m.cmd.Run(ctx, "pvcreate", "-f", pvDev)
+	out, err := m.cmd.Run(ctx, "lvm", "pvcreate", "-f", pvDev)
 	if err != nil {
 		return fmt.Errorf("pvcreate %s: %s: %w", pvDev, string(out), err)
 	}
@@ -114,11 +131,11 @@ func (m *Manager) createPhysicalVolume(ctx context.Context, pvDev string) error 
 
 func (m *Manager) createVolumeGroup(ctx context.Context, vg, pvDev string) error {
 	// Check if VG already exists (idempotent for BOOTY_RESUME).
-	if _, err := m.cmd.Run(ctx, "vgs", vg, "--noheadings"); err == nil {
+	if _, err := m.cmd.Run(ctx, "lvm", "vgs", vg, "--noheadings"); err == nil {
 		slog.Info("volume group already exists, skipping create", "vg", vg)
 		return nil
 	}
-	out, err := m.cmd.Run(ctx, "vgcreate", vg, pvDev)
+	out, err := m.cmd.Run(ctx, "lvm", "vgcreate", vg, pvDev)
 	if err != nil {
 		return fmt.Errorf("vgcreate %s: %s: %w", vg, string(out), err)
 	}
@@ -126,7 +143,8 @@ func (m *Manager) createVolumeGroup(ctx context.Context, vg, pvDev string) error
 }
 
 func (m *Manager) createLogicalVolume(ctx context.Context, vg string, vol *config.LVVolume) error {
-	out, err := m.cmd.Run(ctx, "lvcreate", buildLVCreateArgs(vg, vol)...)
+	args := append([]string{"lvcreate"}, buildLVCreateArgs(vg, vol)...)
+	out, err := m.cmd.Run(ctx, "lvm", args...)
 	if err != nil {
 		return fmt.Errorf("lvcreate %s/%s: %s: %w", vg, vol.Name, string(out), err)
 	}

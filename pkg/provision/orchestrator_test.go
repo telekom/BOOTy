@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1385,6 +1386,39 @@ func TestWipeOrSecureEraseDisksRejectsPartitionLayoutWithoutImageURLsInProvision
 	}
 	if !strings.Contains(err.Error(), "partition layout provisioning is not supported yet") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestWipeOrSecureEraseDisksRejectsLVMLayoutBeforeWipeWhenToolMissing(t *testing.T) {
+	cfg := &config.MachineConfig{
+		Mode: "provision",
+	}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+		Table: "gpt",
+		Partitions: []config.Partition{
+			{Label: "BOOTY-PV", SizeMB: 1024},
+		},
+		LVM: &config.LVMConfig{
+			VolumeGroup: "sysvg",
+			PVPartition: 1,
+			Volumes: []config.LVVolume{
+				{Name: "root", Filesystem: "ext4", Mountpoint: "/", Extents: "100%FREE"},
+			},
+		},
+	}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	cmd.setResult("lvm version", nil, fmt.Errorf("exec lvm: %w", exec.ErrNotFound))
+
+	err := o.wipeOrSecureEraseDisks(context.Background())
+	if err == nil {
+		t.Fatal("expected missing lvm error")
+	}
+	if !strings.Contains(err.Error(), "lvm tooling required by partition layout") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(wipeCommandCalls(cmd.calls)) != 0 {
+		t.Fatalf("expected no wipe commands before lvm preflight succeeds, got %#v", cmd.calls)
 	}
 }
 

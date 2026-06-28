@@ -640,6 +640,11 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 	if err := o.ensureABPartitionLayout(); err != nil {
 		return err
 	}
+	if !config.IsDeprovisionMode(o.cfg.Mode) {
+		if err := o.disk.RequireLVMTools(ctx, o.cfg.Provision.Disk.PartitionLayout); err != nil {
+			return err
+		}
+	}
 	if err := o.validatePartitionLayoutConfig(); err != nil {
 		return err
 	}
@@ -652,7 +657,8 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 	// In all other modes (provision, dry-run) use the provision setting.
 	secureErase := o.cfg.Provision.Disk.SecureErase
 	mode := o.cfg.Mode
-	if mode == "deprovision" || mode == "soft-deprovision" || mode == "soft" || mode == "hard" {
+	deprovisionMode := config.IsDeprovisionMode(mode)
+	if deprovisionMode {
 		secureErase = o.cfg.Deprovision.SecureErase
 	}
 	targetDisk := strings.TrimSpace(o.targetDisk)
@@ -682,7 +688,7 @@ func (o *Orchestrator) validatePartitionLayoutModeCompatibility() error {
 	}
 
 	// Deprovisioning is allowed to wipe disks even when PARTITION_LAYOUT is set.
-	if o.cfg.Mode == "deprovision" || o.cfg.Mode == "soft" || o.cfg.Mode == "soft-deprovision" {
+	if config.IsDeprovisionMode(o.cfg.Mode) {
 		return nil
 	}
 	if o.isABImageMode() {
