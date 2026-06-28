@@ -377,6 +377,9 @@ func TestResumeStateStepsRerunMountSharedDataForCleanupState(t *testing.T) {
 	if _, ok := stateSteps["mount-shared-data"]; !ok {
 		t.Fatal("mount-shared-data must rerun on resume to rebuild sharedMounts for teardown cleanup")
 	}
+	if _, ok := stateSteps["setup-nvme-namespaces"]; ok {
+		t.Fatal("setup-nvme-namespaces must not rerun on resume because it deletes and recreates namespaces")
+	}
 	if _, ok := stateSteps["set-hostname"]; ok {
 		t.Fatal("set-hostname should remain skippable after resume")
 	}
@@ -904,6 +907,87 @@ func TestSetupNVMeNamespaces_HappyPathSetsDiskDevice(t *testing.T) {
 	if cfg.Provision.Disk.Device != "/dev/nvme0n5" {
 		t.Fatalf("DiskDevice = %q, want /dev/nvme0n5", cfg.Provision.Disk.Device)
 	}
+	if o.nvmeTargetDevice != "/dev/nvme0n5" {
+		t.Fatalf("nvmeTargetDevice = %q, want /dev/nvme0n5", o.nvmeTargetDevice)
+	}
+}
+
+func TestCheckpointRecordsNVMeTargetDevice(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.NVMeNamespaces = `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":100}]}]`
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	cmd.setResult("nvme id-ctrl", []byte(`{"nn":32,"tnvmcap":1024000}`), nil)
+	cmd.setResult("nvme create-ns", []byte("create-ns: Success, created nsid:5\n"), nil)
+
+	cp := &Checkpoint{}
+	step := Step{"setup-nvme-namespaces", o.setupNVMeNamespaces}
+	if err := o.executeStep(context.Background(), step, cp); err != nil {
+		t.Fatalf("execute setup-nvme-namespaces: %v", err)
+	}
+	if cp.NVMeTargetDevice != "/dev/nvme0n5" {
+		t.Fatalf("checkpoint NVMeTargetDevice = %q, want /dev/nvme0n5", cp.NVMeTargetDevice)
+	}
+	if !cp.IsCompleted("setup-nvme-namespaces") {
+		t.Fatal("checkpoint should mark setup-nvme-namespaces complete")
+	}
+}
+
+func TestCheckpointResumeRestoresNVMeTargetDevice(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.NVMeNamespaces = `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":100}]}]`
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	cp := &Checkpoint{
+		CompletedSteps:   []string{"setup-nvme-namespaces"},
+		NVMeTargetDevice: "/dev/nvme0n5",
+	}
+
+	o.restoreCheckpointDerivedState(cp)
+
+	if cfg.Provision.Disk.Device != "/dev/nvme0n5" {
+		t.Fatalf("DiskDevice = %q, want checkpoint target", cfg.Provision.Disk.Device)
+	}
+	if o.nvmeTargetDevice != "/dev/nvme0n5" {
+		t.Fatalf("nvmeTargetDevice = %q, want checkpoint target", o.nvmeTargetDevice)
+	}
+}
+
+func TestCheckpointResumeDoesNotOverrideExplicitDiskDevice(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.Device = "/dev/disk/by-id/operator-selected"
+	cfg.Provision.Disk.NVMeNamespaces = `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":100}]}]`
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	cp := &Checkpoint{NVMeTargetDevice: "/dev/nvme0n5"}
+
+	o.restoreCheckpointDerivedState(cp)
+
+	if cfg.Provision.Disk.Device != "/dev/disk/by-id/operator-selected" {
+		t.Fatalf("DiskDevice = %q, want explicit config to win", cfg.Provision.Disk.Device)
+	}
+}
+
+func TestCheckpointResumeDoesNotRerunNVMeNamespaceSetup(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.NVMeNamespaces = `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":100}]}]`
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	cp := &Checkpoint{
+		CompletedSteps:   []string{"setup-nvme-namespaces"},
+		NVMeTargetDevice: "/dev/nvme0n5",
+	}
+	o.restoreCheckpointDerivedState(cp)
+
+	stateSteps := resumeStateSteps()
+	step := Step{"setup-nvme-namespaces", o.setupNVMeNamespaces}
+	_, mustRun := stateSteps[step.Name]
+	if cp.IsCompleted(step.Name) && !mustRun {
+		if len(cmd.calls) != 0 {
+			t.Fatalf("completed nvme setup should skip without nvme commands, got %#v", cmd.calls)
+		}
+		return
+	}
+	if err := o.executeStep(context.Background(), step, cp); err != nil {
+		t.Fatalf("setup-nvme-namespaces reran unexpectedly: %v", err)
+	}
+	t.Fatalf("setup-nvme-namespaces must remain skippable on resume; calls=%#v", cmd.calls)
 }
 
 func TestProvisionReportsErrorOnStepFailure(t *testing.T) {

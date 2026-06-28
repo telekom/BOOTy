@@ -15,6 +15,7 @@ func TestCheckpoint_SaveLoad(t *testing.T) {
 
 	cp := &Checkpoint{
 		LastCompletedStep: "stream-image",
+		NVMeTargetDevice:  "/dev/nvme0n5",
 		CompletedSteps:    []string{"report-init", "configure-dns", "stream-image"},
 		FailureCount:      1,
 		path:              path,
@@ -30,6 +31,9 @@ func TestCheckpoint_SaveLoad(t *testing.T) {
 	}
 	if result.LastCompletedStep != "stream-image" {
 		t.Errorf("got %q, want %q", result.LastCompletedStep, "stream-image")
+	}
+	if result.NVMeTargetDevice != "/dev/nvme0n5" {
+		t.Errorf("NVMeTargetDevice = %q, want /dev/nvme0n5", result.NVMeTargetDevice)
 	}
 	if len(result.CompletedSteps) != 3 {
 		t.Errorf("got %d steps, want 3", len(result.CompletedSteps))

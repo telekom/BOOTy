@@ -76,12 +76,13 @@ type Orchestrator struct {
 	log      *slog.Logger
 
 	// Runtime state set during provisioning.
-	targetDisk      string
-	rootPartition   string
-	bootPartition   string
-	sharedMounts    []string
-	bestImageURL    string // resolved by verify-image, reused by stream-image
-	firmwareChanged bool   // true if any step changed firmware values requiring hard reboot
+	targetDisk       string
+	rootPartition    string
+	bootPartition    string
+	sharedMounts     []string
+	bestImageURL     string // resolved by verify-image, reused by stream-image
+	nvmeTargetDevice string
+	firmwareChanged  bool // true if any step changed firmware values requiring hard reboot
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
@@ -147,6 +148,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 	steps := o.provisionSteps()
 
 	cp := o.loadOrCreateCheckpoint()
+	o.restoreCheckpointDerivedState(cp)
 
 	// stateSteps must always re-run on resume because they rebuild in-memory
 	// runtime fields that later steps depend on (firmwareChanged, bestImageURL,
@@ -203,6 +205,18 @@ func (o *Orchestrator) loadOrCreateCheckpoint() *Checkpoint {
 	return &Checkpoint{}
 }
 
+func (o *Orchestrator) restoreCheckpointDerivedState(cp *Checkpoint) {
+	if cp == nil || cp.NVMeTargetDevice == "" {
+		return
+	}
+	if o.cfg.Provision.Disk.NVMeNamespaces == "" || o.cfg.Provision.Disk.Device != "" {
+		return
+	}
+	o.cfg.Provision.Disk.Device = cp.NVMeTargetDevice
+	o.nvmeTargetDevice = cp.NVMeTargetDevice
+	o.log.Info("restored nvme target device from checkpoint", "device", cp.NVMeTargetDevice)
+}
+
 // executeStep runs a single provisioning step with optional retry, updating
 // the checkpoint on success or failure.
 func (o *Orchestrator) executeStep(ctx context.Context, step Step, cp *Checkpoint) error {
@@ -229,11 +243,19 @@ func (o *Orchestrator) executeStep(ctx context.Context, step Step, cp *Checkpoin
 		return fmt.Errorf("provision step %s: %w", step.Name, err)
 	}
 
+	o.recordCheckpointDerivedState(step.Name, cp)
 	cp.MarkStep(step.Name)
 	if saveErr := cp.Save(); saveErr != nil {
 		o.log.Warn("failed to save checkpoint", "error", saveErr)
 	}
 	return nil
+}
+
+func (o *Orchestrator) recordCheckpointDerivedState(stepName string, cp *Checkpoint) {
+	if cp == nil || stepName != "setup-nvme-namespaces" || o.nvmeTargetDevice == "" {
+		return
+	}
+	cp.NVMeTargetDevice = o.nvmeTargetDevice
 }
 
 // RescueConfig returns the normalized rescue config derived from machine config.
@@ -576,6 +598,7 @@ func (o *Orchestrator) setupNVMeNamespaces(ctx context.Context) error {
 		nsids := created[firstController]
 		if len(nsids) > 0 {
 			o.cfg.Provision.Disk.Device = firstController + "n" + nsids[0]
+			o.nvmeTargetDevice = o.cfg.Provision.Disk.Device
 			o.log.Info("set disk device from nvme namespace layout", "device", o.cfg.Provision.Disk.Device)
 		}
 	}

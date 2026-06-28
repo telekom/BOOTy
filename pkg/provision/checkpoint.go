@@ -14,14 +14,16 @@ var ErrNoCheckpoint = errors.New("no checkpoint found")
 
 // Checkpoint records provisioning progress to tmpfs.
 //
-// NOTE: The checkpoint currently only persists step completion status.
-// Steps that derive in-memory state (e.g., detect-disk sets targetDisk,
-// parse-partitions sets partition paths) will need to re-run on resume
-// to rebuild that state. This means resume is only effective for skipping
-// truly idempotent steps that precede the failure point.
+// NOTE: The checkpoint primarily persists step completion status. Steps that
+// derive in-memory state (e.g., detect-disk sets targetDisk, parse-partitions
+// sets partition paths) will need to re-run on resume to rebuild that state.
 type Checkpoint struct {
-	LastCompletedStep string   `json:"lastCompletedStep"`
-	CompletedSteps    []string `json:"completedSteps"`
+	LastCompletedStep string `json:"lastCompletedStep"`
+	// NVMeTargetDevice stores the namespace device selected by
+	// setup-nvme-namespaces. That step is destructive when repeated, so resume
+	// restores this derived disk device instead of rerunning namespace layout.
+	NVMeTargetDevice string   `json:"nvmeTargetDevice,omitempty"`
+	CompletedSteps   []string `json:"completedSteps"`
 	// FailureCount is the number of steps that failed at least once
 	// (incremented per executeStep error, not per retry attempt).
 	FailureCount int      `json:"failureCount"`
