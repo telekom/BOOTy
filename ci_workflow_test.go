@@ -1,34 +1,12 @@
 package main
 
 import (
-	"os"
 	"strings"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 )
 
-type ciWorkflowFile struct {
-	Jobs map[string]ciWorkflowJob `yaml:"jobs"`
-}
-
-type ciWorkflowJob struct {
-	Name            string           `yaml:"name"`
-	Needs           any              `yaml:"needs"`
-	If              string           `yaml:"if"`
-	ContinueOnError any              `yaml:"continue-on-error"`
-	Steps           []ciWorkflowStep `yaml:"steps"`
-}
-
-type ciWorkflowStep struct {
-	Name string         `yaml:"name"`
-	Uses string         `yaml:"uses"`
-	Run  string         `yaml:"run"`
-	With map[string]any `yaml:"with"`
-}
-
 func TestCIWorkflowRunsProductionE2E(t *testing.T) {
-	wf := loadCIWorkflow(t)
+	wf := loadWorkflow(t, ".github/workflows/ci.yml")
 	job, ok := wf.Jobs["e2e-production"]
 	if !ok {
 		t.Fatal("missing e2e-production job")
@@ -42,23 +20,22 @@ func TestCIWorkflowRunsProductionE2E(t *testing.T) {
 	if job.ContinueOnError != nil {
 		t.Fatalf("e2e-production continue-on-error = %v, want unset", job.ContinueOnError)
 	}
-	if got := ciNeedsSet(job.Needs); !ciHasNeeds(got, "build") {
+	if got := needsSet(job.Needs); !hasNeeds(got, "build") {
 		t.Fatalf("e2e-production needs = %v, want [build]", got)
 	}
-	checkout := requireCIAction(t, job, "actions/checkout")
-	if checkout.Uses != "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" {
-		t.Fatalf("checkout action = %q, want pinned v7 SHA", checkout.Uses)
+	if job.TimeoutMinutes != 30 {
+		t.Fatalf("e2e-production timeout-minutes = %d, want 30", job.TimeoutMinutes)
 	}
+	checkout := requireWorkflowAction(t, job, "actions/checkout")
+	assertWorkflowActionPinned(t, checkout, "actions/checkout")
 	if got, ok := checkout.With["persist-credentials"].(bool); !ok || got {
 		t.Fatalf("checkout persist-credentials = %v, want false", checkout.With["persist-credentials"])
 	}
-	setupGo := requireCIAction(t, job, "actions/setup-go")
-	if setupGo.Uses != "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16" {
-		t.Fatalf("setup-go action = %q, want pinned v6 SHA", setupGo.Uses)
-	}
+	setupGo := requireWorkflowAction(t, job, "actions/setup-go")
+	assertWorkflowActionPinned(t, setupGo, "actions/setup-go")
 
-	requireCIStepRunContains(t, job, "Deploy production topology", "topology-production.clab.yml")
-	run := requireCIStep(t, job, "Run production E2E tests").Run
+	requireWorkflowStepRunContains(t, job, "Deploy production topology", "topology-production.clab.yml")
+	run := requireWorkflowStep(t, job, "Run production E2E tests").Run
 	for _, want := range []string{
 		"make test-e2e-production",
 		"production-e2e.log",
@@ -80,90 +57,11 @@ func TestCIWorkflowRunsProductionE2E(t *testing.T) {
 			t.Fatalf("Run production E2E tests includes unproven production assertion %q", unsupported)
 		}
 	}
-	requireCIStepRunContains(t, job, "Cleanup", "topology-production.clab.yml")
+	requireWorkflowStepRunContains(t, job, "Cleanup", "topology-production.clab.yml")
 
-	upload := requireCIAction(t, job, "actions/upload-artifact")
-	if upload.Uses != "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" {
-		t.Fatalf("upload-artifact action = %q, want pinned v7.0.1 SHA", upload.Uses)
-	}
-	if got := ciWorkflowValueString(upload.With["name"]); got != "production-e2e-logs" {
+	upload := requireWorkflowAction(t, job, "actions/upload-artifact")
+	assertWorkflowActionPinned(t, upload, "actions/upload-artifact")
+	if got := workflowValueString(upload.With["name"]); got != "production-e2e-logs" {
 		t.Fatalf("upload artifact name = %q, want production-e2e-logs", got)
 	}
-}
-
-func loadCIWorkflow(t *testing.T) ciWorkflowFile {
-	t.Helper()
-	data, err := os.ReadFile(".github/workflows/ci.yml")
-	if err != nil {
-		t.Fatalf("read ci workflow: %v", err)
-	}
-	var wf ciWorkflowFile
-	if err := yaml.Unmarshal(data, &wf); err != nil {
-		t.Fatalf("parse ci workflow: %v", err)
-	}
-	return wf
-}
-
-func requireCIStep(t *testing.T, job ciWorkflowJob, name string) ciWorkflowStep {
-	t.Helper()
-	for _, step := range job.Steps {
-		if step.Name == name {
-			return step
-		}
-	}
-	t.Fatalf("missing step %q", name)
-	return ciWorkflowStep{}
-}
-
-func requireCIStepRunContains(t *testing.T, job ciWorkflowJob, name, want string) {
-	t.Helper()
-	run := requireCIStep(t, job, name).Run
-	if !strings.Contains(run, want) {
-		t.Fatalf("%s run = %q, want to contain %q", name, run, want)
-	}
-}
-
-func requireCIAction(t *testing.T, job ciWorkflowJob, action string) ciWorkflowStep {
-	t.Helper()
-	for _, step := range job.Steps {
-		if strings.HasPrefix(step.Uses, action+"@") {
-			return step
-		}
-	}
-	t.Fatalf("missing action %s", action)
-	return ciWorkflowStep{}
-}
-
-func ciHasNeeds(got map[string]bool, want ...string) bool {
-	if len(got) != len(want) {
-		return false
-	}
-	for _, need := range want {
-		if !got[need] {
-			return false
-		}
-	}
-	return true
-}
-
-func ciNeedsSet(value any) map[string]bool {
-	out := map[string]bool{}
-	switch v := value.(type) {
-	case string:
-		out[v] = true
-	case []any:
-		for _, item := range v {
-			if s, ok := item.(string); ok {
-				out[s] = true
-			}
-		}
-	}
-	return out
-}
-
-func ciWorkflowValueString(value any) string {
-	if s, ok := value.(string); ok {
-		return s
-	}
-	return ""
 }
