@@ -39,6 +39,7 @@ jobs:
     env:
       SOURCE_VERSION: ${{ inputs.version }}
       TARGET_CHANNEL: ${{ inputs.channel }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
@@ -70,13 +71,16 @@ jobs:
             echo "::error::Tag $SOURCE_VERSION must be an annotated tag"
             exit 1
           fi
-          git fetch --no-tags --prune origin '+refs/heads/main:refs/remotes/origin/main'
+          if ! git fetch --no-tags --prune origin "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"; then
+            echo "::error::Could not fetch default branch ${DEFAULT_BRANCH}"
+            exit 1
+          fi
           if ! SOURCE_COMMIT=$(git rev-list -n 1 "refs/tags/${SOURCE_VERSION}"); then
             echo "::error::Tag $SOURCE_VERSION does not resolve to a commit"
             exit 1
           fi
-          if ! git merge-base --is-ancestor "$SOURCE_COMMIT" origin/main; then
-            echo "::error::Tag $SOURCE_VERSION points to $SOURCE_COMMIT, which is not reachable from origin/main"
+          if ! git merge-base --is-ancestor "$SOURCE_COMMIT" "origin/${DEFAULT_BRANCH}"; then
+            echo "::error::Tag $SOURCE_VERSION points to $SOURCE_COMMIT, which is not reachable from origin/${DEFAULT_BRANCH}"
             exit 1
           fi
 
@@ -119,7 +123,10 @@ jobs:
             -m "Promote $SOURCE_VERSION to $NEW_TAG" \
             -m "Source tag: $SOURCE_VERSION" \
             -m "Target channel: $TARGET_CHANNEL"
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$NEW_TAG"
+          GIT_CONFIG_COUNT=1 \
+          GIT_CONFIG_KEY_0="http.https://github.com/${GITHUB_REPOSITORY}.git.extraheader" \
+          GIT_CONFIG_VALUE_0="AUTHORIZATION: bearer ${GH_TOKEN}" \
+            git push "https://github.com/${GITHUB_REPOSITORY}.git" "$NEW_TAG"
 
       - name: Summary
         run: |
