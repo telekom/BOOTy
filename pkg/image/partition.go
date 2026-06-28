@@ -189,14 +189,13 @@ func copyPartitions(ctx context.Context, rawPath, targetDisk string) error {
 	// Copy each partition.
 	for i, sp := range srcParts {
 		srcNode := sp.Node
-		// Derive target partition node from target disk.
-		tgtNode := targetPartitionNode(targetDisk, i+1)
+		tgtNode, partNum := targetPartitionNodeForSource(targetDisk, sp, i+1)
 		slog.Info("copying partition",
-			"index", i+1, "src", srcNode, "dst", tgtNode,
+			"source_partition", partNum, "src", srcNode, "dst", tgtNode,
 			"type", sp.Type, "sectors", sp.Size)
 
 		if err := ddPartition(ctx, srcNode, tgtNode); err != nil {
-			return fmt.Errorf("copying partition %d (%s -> %s): %w", i+1, srcNode, tgtNode, err)
+			return fmt.Errorf("copying partition %d (%s -> %s): %w", partNum, srcNode, tgtNode, err)
 		}
 	}
 
@@ -254,6 +253,14 @@ func partitionNumberFromNode(node string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+func targetPartitionNodeForSource(targetDisk string, part sfdiskPartition, fallback int) (node string, number int) {
+	partNum := part.Number
+	if partNum <= 0 {
+		partNum = fallback
+	}
+	return targetPartitionNode(targetDisk, partNum), partNum
 }
 
 // copyPartitionTable copies the GPT/MBR partition table from src to dst using sfdisk.
