@@ -45,6 +45,17 @@ func TestCIWorkflowRunsProductionE2E(t *testing.T) {
 	if got := ciNeedsSet(job.Needs); !ciHasNeeds(got, "build") {
 		t.Fatalf("e2e-production needs = %v, want [build]", got)
 	}
+	checkout := requireCIAction(t, job, "actions/checkout")
+	if checkout.Uses != "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" {
+		t.Fatalf("checkout action = %q, want pinned v7 SHA", checkout.Uses)
+	}
+	if got, ok := checkout.With["persist-credentials"].(bool); !ok || got {
+		t.Fatalf("checkout persist-credentials = %v, want false", checkout.With["persist-credentials"])
+	}
+	setupGo := requireCIAction(t, job, "actions/setup-go")
+	if setupGo.Uses != "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16" {
+		t.Fatalf("setup-go action = %q, want pinned v6 SHA", setupGo.Uses)
+	}
 
 	requireCIStepRunContains(t, job, "Deploy production topology", "topology-production.clab.yml")
 	run := requireCIStep(t, job, "Run production E2E tests").Run
@@ -65,13 +76,16 @@ func TestCIWorkflowRunsProductionE2E(t *testing.T) {
 		"TestProductionEVPNType5OnSpine",
 		"TestProductionEVPNType5OnDCGW",
 	} {
-		if strings.Contains(run, unsupported+" \\") {
+		if strings.Contains(run, unsupported) {
 			t.Fatalf("Run production E2E tests includes unproven production assertion %q", unsupported)
 		}
 	}
 	requireCIStepRunContains(t, job, "Cleanup", "topology-production.clab.yml")
 
 	upload := requireCIAction(t, job, "actions/upload-artifact")
+	if upload.Uses != "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" {
+		t.Fatalf("upload-artifact action = %q, want pinned v7.0.1 SHA", upload.Uses)
+	}
 	if got := ciWorkflowValueString(upload.With["name"]); got != "production-e2e-logs" {
 		t.Fatalf("upload artifact name = %q, want production-e2e-logs", got)
 	}
