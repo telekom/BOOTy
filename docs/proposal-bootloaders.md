@@ -186,7 +186,7 @@ provisioning support as implemented.
 | Risk | Mitigation |
 |------|------------|
 | bootctl version mismatch with target OS | Run bootctl from chroot when possible |
-| GRUB path differences (grub vs grub2) | Detection handles both |
+| GRUB path differences (grub vs grub2) | Active provisioning still uses `update-grub` and `/boot/grub/grub.cfg`; add `/boot/grub2` and `grub2-mkconfig` support before claiming RHEL/SUSE GRUB2 handoff |
 | EFI partition layout varies | Configurable ESP path |
 
 ## Effort Estimate
