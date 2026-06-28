@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1004,6 +1005,25 @@ func TestRedactURLError(t *testing.T) {
 	redacted := redactURLError(err, raw)
 	if strings.Contains(redacted, "secret") || strings.Contains(redacted, "token=abc") {
 		t.Fatalf("redacted error leaked sensitive data: %q", redacted)
+	}
+	if !strings.Contains(redacted, "https://example.com/image.raw") {
+		t.Fatalf("expected redacted URL in error, got %q", redacted)
+	}
+}
+
+func TestRedactURLErrorHandlesStdlibRedactedURLVariants(t *testing.T) {
+	raw := "https://user:secret@example.com/image.raw?token=abc#frag"
+	err := &url.Error{
+		Op:  "Head",
+		URL: "https://user:***@example.com/image.raw?token=abc",
+		Err: errors.New("connection refused"),
+	}
+
+	redacted := redactURLError(err, raw)
+	for _, sensitive := range []string{"user", "secret", "token=abc", "#frag"} {
+		if strings.Contains(redacted, sensitive) {
+			t.Fatalf("redacted error leaked %q: %q", sensitive, redacted)
+		}
 	}
 	if !strings.Contains(redacted, "https://example.com/image.raw") {
 		t.Fatalf("expected redacted URL in error, got %q", redacted)
