@@ -1,4 +1,4 @@
-//go:build e2e_boot
+//go:build linux && e2e_boot
 
 package integration
 

@@ -1,4 +1,4 @@
-//go:build e2e_boot
+//go:build linux && e2e_boot
 
 // Package integration contains full BOOTy boot tests running inside
 // containerlab. Three BOOTy instances (provision, deprovision, standby)
