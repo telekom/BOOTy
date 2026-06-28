@@ -686,7 +686,10 @@ func validateRAIDNames(raids []config.RAIDConfig) error {
 
 func validateRAIDMemberCounts(raids []config.RAIDConfig) error {
 	for _, raid := range raids {
-		minDevices := minRAIDDevicesForLevel(raid.Level)
+		minDevices, ok := minRAIDDevicesForLevel(raid.Level)
+		if !ok {
+			return fmt.Errorf("raid array %q has unsupported level %d before destructive storage steps", raid.Name, raid.Level)
+		}
 		if len(raid.Devices) < minDevices {
 			return fmt.Errorf("raid array %q level %d requires at least %d unique member devices, got %d",
 				raid.Name, raid.Level, minDevices, len(raid.Devices))
@@ -709,16 +712,16 @@ func validateRAIDMemberDevicesDisjoint(raids []config.RAIDConfig) error {
 	return nil
 }
 
-func minRAIDDevicesForLevel(level int) int {
+func minRAIDDevicesForLevel(level int) (int, bool) {
 	switch level {
 	case 0, 1:
-		return 2
+		return 2, true
 	case 5:
-		return 3
+		return 3, true
 	case 6, 10:
-		return 4
+		return 4, true
 	default:
-		return 2
+		return 0, false
 	}
 }
 
@@ -795,7 +798,21 @@ func raidDevicePath(name string) (string, error) {
 	if name == "" || filepath.IsAbs(name) || clean != name || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
 		return "", fmt.Errorf("invalid raid array name %q before destructive storage steps", name)
 	}
-	return "/dev/" + clean, nil
+	if strings.HasPrefix(clean, "md/") {
+		if strings.Count(clean, "/") == 1 && strings.TrimPrefix(clean, "md/") != "" {
+			return "/dev/" + clean, nil
+		}
+		return "", fmt.Errorf("invalid raid array name %q before destructive storage steps", name)
+	}
+	if strings.HasPrefix(clean, "md") && len(clean) > 2 {
+		for _, r := range strings.TrimPrefix(clean, "md") {
+			if r < '0' || r > '9' {
+				return "", fmt.Errorf("invalid raid array name %q before destructive storage steps", name)
+			}
+		}
+		return "/dev/" + clean, nil
+	}
+	return "", fmt.Errorf("invalid raid array name %q before destructive storage steps", name)
 }
 
 func (o *Orchestrator) validateProvisionInputs(_ context.Context) error {

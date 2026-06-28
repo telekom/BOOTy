@@ -1587,6 +1587,27 @@ func TestSetupRAIDRejectsTooFewUniqueMembersBeforeWipe(t *testing.T) {
 	}
 }
 
+func TestSetupRAIDRejectsUnsupportedLevelBeforeWipe(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+		Name:    "md0",
+		Level:   7,
+		Devices: []string{"/dev/sda", "/dev/sdb"},
+	}}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	err := o.setupRAID(context.Background())
+	if err == nil {
+		t.Fatal("expected unsupported raid level error")
+	}
+	if !strings.Contains(err.Error(), "unsupported level 7") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cmd.calls) != 0 {
+		t.Fatalf("expected no destructive commands before validation, got %#v", cmd.calls)
+	}
+}
+
 func TestSetupRAIDRejectsDuplicateMembersAcrossArraysBeforeWipe(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Disk.RAID = []config.RAIDConfig{
@@ -1608,23 +1629,28 @@ func TestSetupRAIDRejectsDuplicateMembersAcrossArraysBeforeWipe(t *testing.T) {
 }
 
 func TestSetupRAIDRejectsUnsafeArrayNameBeforeWipe(t *testing.T) {
-	cfg := &config.MachineConfig{}
-	cfg.Provision.Disk.RAID = []config.RAIDConfig{{
-		Name:    "md/../sda",
-		Level:   1,
-		Devices: []string{"/dev/sda", "/dev/sdb"},
-	}}
-	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	for _, name := range []string{"md/../sda", "sda", "md/boot/extra", "mdboot"} {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			cfg := &config.MachineConfig{}
+			cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+				Name:    name,
+				Level:   1,
+				Devices: []string{"/dev/sda", "/dev/sdb"},
+			}}
+			o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
 
-	err := o.setupRAID(context.Background())
-	if err == nil {
-		t.Fatal("expected invalid raid array name error")
-	}
-	if !strings.Contains(err.Error(), "invalid raid array name") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(cmd.calls) != 0 {
-		t.Fatalf("expected no destructive commands before validation, got %#v", cmd.calls)
+			err := o.setupRAID(context.Background())
+			if err == nil {
+				t.Fatal("expected invalid raid array name error")
+			}
+			if !strings.Contains(err.Error(), "invalid raid array name") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(cmd.calls) != 0 {
+				t.Fatalf("expected no destructive commands before validation, got %#v", cmd.calls)
+			}
+		})
 	}
 }
 
