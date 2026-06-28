@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/BOOTy/pkg/realm"
 )
 
 type teardownRecorderMode struct {
@@ -421,4 +423,186 @@ func TestSetupNetworkModeExplicitGoBGPFailsClosed(t *testing.T) {
 		!strings.Contains(err.Error(), "invalid underlay AF") {
 		t.Fatalf("error = %q, want GoBGP setup failure context", err.Error())
 	}
+}
+
+func TestSetupMountsAndDevicesFailsOnMissingRequiredMount(t *testing.T) {
+	mounts := newFakeEarlyMounts()
+	delete(mounts.mounts, "proc")
+
+	err := setupMountsAndDevicesWith(mounts, &fakeEarlyDevices{})
+	if err == nil {
+		t.Fatal("expected missing mount error")
+	}
+	if !strings.Contains(err.Error(), `required early mount "proc" not configured`) {
+		t.Fatalf("error = %q, want missing proc mount context", err.Error())
+	}
+	if len(mounts.calls) != 0 {
+		t.Fatalf("calls = %v, want no setup after missing mount", mounts.calls)
+	}
+}
+
+func TestSetupMountsAndDevicesStopsOnMountAllError(t *testing.T) {
+	mounts := newFakeEarlyMounts()
+	mounts.mountAllErr = errors.New("proc unavailable")
+	devices := &fakeEarlyDevices{}
+
+	err := setupMountsAndDevicesWith(mounts, devices)
+	if err == nil {
+		t.Fatal("expected mount all error")
+	}
+	if !strings.Contains(err.Error(), "mount early filesystems") ||
+		!strings.Contains(err.Error(), "proc unavailable") {
+		t.Fatalf("error = %q, want mount all context", err.Error())
+	}
+	wantCalls := []string{"create-folders", "mount-named:dev", "mount-all"}
+	if !stringSlicesEqual(mounts.calls, wantCalls) {
+		t.Fatalf("mount calls = %v, want %v", mounts.calls, wantCalls)
+	}
+	if devices.calls != 1 {
+		t.Fatalf("device calls = %d, want 1", devices.calls)
+	}
+}
+
+func TestSetupMountsAndDevicesStopsOnCreateFolderError(t *testing.T) {
+	mounts := newFakeEarlyMounts()
+	mounts.createErr = errors.New("mkdir denied")
+	devices := &fakeEarlyDevices{}
+
+	err := setupMountsAndDevicesWith(mounts, devices)
+	if err == nil {
+		t.Fatal("expected create folder error")
+	}
+	if !strings.Contains(err.Error(), "create early mount folders") ||
+		!strings.Contains(err.Error(), "mkdir denied") {
+		t.Fatalf("error = %q, want create folder context", err.Error())
+	}
+	wantCalls := []string{"create-folders"}
+	if !stringSlicesEqual(mounts.calls, wantCalls) {
+		t.Fatalf("mount calls = %v, want %v", mounts.calls, wantCalls)
+	}
+	if devices.calls != 0 {
+		t.Fatalf("device calls = %d, want 0", devices.calls)
+	}
+}
+
+func TestSetupMountsAndDevicesStopsOnMountDevError(t *testing.T) {
+	mounts := newFakeEarlyMounts()
+	mounts.mountDevErr = errors.New("devtmpfs unavailable")
+	devices := &fakeEarlyDevices{}
+
+	err := setupMountsAndDevicesWith(mounts, devices)
+	if err == nil {
+		t.Fatal("expected mount dev error")
+	}
+	if !strings.Contains(err.Error(), "mount early /dev") ||
+		!strings.Contains(err.Error(), "devtmpfs unavailable") {
+		t.Fatalf("error = %q, want mount dev context", err.Error())
+	}
+	wantCalls := []string{"create-folders", "mount-named:dev"}
+	if !stringSlicesEqual(mounts.calls, wantCalls) {
+		t.Fatalf("mount calls = %v, want %v", mounts.calls, wantCalls)
+	}
+	if devices.calls != 0 {
+		t.Fatalf("device calls = %d, want 0", devices.calls)
+	}
+}
+
+func TestSetupMountsAndDevicesStopsOnCreateDeviceError(t *testing.T) {
+	mounts := newFakeEarlyMounts()
+	devices := &fakeEarlyDevices{err: errors.New("mknod denied")}
+
+	err := setupMountsAndDevicesWith(mounts, devices)
+	if err == nil {
+		t.Fatal("expected create device error")
+	}
+	if !strings.Contains(err.Error(), "create early devices") ||
+		!strings.Contains(err.Error(), "mknod denied") {
+		t.Fatalf("error = %q, want create device context", err.Error())
+	}
+	wantCalls := []string{"create-folders", "mount-named:dev"}
+	if !stringSlicesEqual(mounts.calls, wantCalls) {
+		t.Fatalf("mount calls = %v, want %v", mounts.calls, wantCalls)
+	}
+	if devices.calls != 1 {
+		t.Fatalf("device calls = %d, want 1", devices.calls)
+	}
+}
+
+func TestSetupMountsAndDevicesSuccess(t *testing.T) {
+	mounts := newFakeEarlyMounts()
+	devices := &fakeEarlyDevices{}
+
+	if err := setupMountsAndDevicesWith(mounts, devices); err != nil {
+		t.Fatalf("setupMountsAndDevicesWith: %v", err)
+	}
+	wantCalls := []string{"create-folders", "mount-named:dev", "mount-all"}
+	if !stringSlicesEqual(mounts.calls, wantCalls) {
+		t.Fatalf("mount calls = %v, want %v", mounts.calls, wantCalls)
+	}
+	if devices.calls != 1 {
+		t.Fatalf("device calls = %d, want 1", devices.calls)
+	}
+	for _, name := range []string{"dev", "proc", "run", "tmp", "sys"} {
+		mt := mounts.mounts[name]
+		if mt == nil || !mt.CreateMount || !mt.EnableMount {
+			t.Fatalf("mount %s = %+v, want create+enable", name, mt)
+		}
+	}
+}
+
+type fakeEarlyMounts struct {
+	mounts      map[string]*realm.Mount
+	calls       []string
+	createErr   error
+	mountDevErr error
+	mountAllErr error
+}
+
+func newFakeEarlyMounts() *fakeEarlyMounts {
+	mounts := make(map[string]*realm.Mount)
+	for _, name := range []string{"dev", "proc", "run", "tmp", "sys"} {
+		mounts[name] = &realm.Mount{Name: name}
+	}
+	return &fakeEarlyMounts{mounts: mounts}
+}
+
+func (f *fakeEarlyMounts) GetMount(name string) *realm.Mount {
+	return f.mounts[name]
+}
+
+func (f *fakeEarlyMounts) CreateFolder() error {
+	f.calls = append(f.calls, "create-folders")
+	return f.createErr
+}
+
+func (f *fakeEarlyMounts) MountNamed(name string, _ bool) error {
+	f.calls = append(f.calls, "mount-named:"+name)
+	return f.mountDevErr
+}
+
+func (f *fakeEarlyMounts) MountAll() error {
+	f.calls = append(f.calls, "mount-all")
+	return f.mountAllErr
+}
+
+type fakeEarlyDevices struct {
+	calls int
+	err   error
+}
+
+func (f *fakeEarlyDevices) CreateDevice() error {
+	f.calls++
+	return f.err
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

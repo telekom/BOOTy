@@ -82,7 +82,11 @@ func main() {
 	// /usr/bin, /usr/sbin, and /usr/local/bin are also reachable.
 	ensurePATH("/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/local/sbin")
 
-	setupMountsAndDevices()
+	if err := setupMountsAndDevices(); err != nil {
+		slog.Error("early mount/device setup failed", "error", err)
+		realm.Reboot()
+		return
+	}
 	loadModules()
 
 	slog.Info("starting BOOTy", "version", Version, "build", Build)
@@ -116,29 +120,45 @@ func ensurePATH(dirs ...string) {
 	}
 }
 
-// setupMountsAndDevices performs early init: mount filesystems and create devices.
-func setupMountsAndDevices() {
-	m := realm.DefaultMounts()
-	d := realm.DefaultDevices()
+type earlyInitMountManager interface {
+	GetMount(name string) *realm.Mount
+	CreateFolder() error
+	MountNamed(name string, remove bool) error
+	MountAll() error
+}
 
+type earlyInitDeviceManager interface {
+	CreateDevice() error
+}
+
+// setupMountsAndDevices performs early init: mount filesystems and create devices.
+func setupMountsAndDevices() error {
+	return setupMountsAndDevicesWith(realm.DefaultMounts(), realm.DefaultDevices())
+}
+
+func setupMountsAndDevicesWith(m earlyInitMountManager, d earlyInitDeviceManager) error {
 	for _, name := range []string{"dev", "proc", "run", "tmp", "sys"} {
 		mt := m.GetMount(name)
+		if mt == nil {
+			return fmt.Errorf("required early mount %q not configured", name)
+		}
 		mt.CreateMount = true
 		mt.EnableMount = true
 	}
 
 	if err := m.CreateFolder(); err != nil {
-		slog.Error("failed to create folders", "error", err)
+		return fmt.Errorf("create early mount folders: %w", err)
 	}
 	if err := m.MountNamed("dev", true); err != nil {
-		slog.Error("failed to mount dev", "error", err)
+		return fmt.Errorf("mount early /dev: %w", err)
 	}
 	if err := d.CreateDevice(); err != nil {
-		slog.Error("failed to create devices", "error", err)
+		return fmt.Errorf("create early devices: %w", err)
 	}
 	if err := m.MountAll(); err != nil {
-		slog.Error("failed to mount filesystems", "error", err)
+		return fmt.Errorf("mount early filesystems: %w", err)
 	}
+	return nil
 }
 
 // loadModules loads kernel modules from /modules/ for server NICs and storage controllers.
