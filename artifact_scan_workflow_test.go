@@ -82,6 +82,20 @@ func TestInitramfsExtractionScriptFailsClosed(t *testing.T) {
 	}
 }
 
+func TestReleaseSBOMChecksumFailsClosed(t *testing.T) {
+	job := loadArtifactScanWorkflow(t, ".github/workflows/release-v2.yml").Jobs["sbom"]
+	step := requireArtifactScanRun(t, job, "Generate SBOM checksum", "sbom.spdx.json.sha256")
+	for _, want := range []string{
+		"sha256sum sbom.spdx.json > sbom.spdx.json.sha256",
+		"[ ! -s sbom.spdx.json.sha256 ]",
+		"SBOM checksum generation did not produce sbom.spdx.json.sha256",
+	} {
+		if !strings.Contains(step.Run, want) {
+			t.Fatalf("%s run = %q, want to contain %q", step.Name, step.Run, want)
+		}
+	}
+}
+
 func loadArtifactScanWorkflow(t *testing.T, path string) artifactScanWorkflowFile {
 	t.Helper()
 	data, err := os.ReadFile(path)
