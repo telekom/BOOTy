@@ -562,7 +562,8 @@ before destructive storage steps.
 export IMAGE_CHECKSUM="a1b2c3d4e5f6..."
 export IMAGE_CHECKSUM_TYPE="sha256"           # sha256 or sha512
 
-# GPG signature verification (optional)
+# GPG signature verification. Requires IMAGE_CHECKSUM because BOOTy verifies
+# the signature before storage setup, then streams the image in a later fetch.
 export IMAGE_SIGNATURE_URL="http://images.local/ubuntu.img.gz.sig"
 export IMAGE_GPG_PUBKEY="/deploy/signing-key.gpg"
 ```
@@ -570,7 +571,9 @@ export IMAGE_GPG_PUBKEY="/deploy/signing-key.gpg"
 Checksum verification runs after image streaming — the raw bytes are hashed
 during the write and compared against the expected digest. GPG verification
 downloads the detached signature and verifies it against the provided public key
-before destructive storage setup starts.
+before destructive storage setup starts. When `IMAGE_SIGNATURE_URL` is set,
+`IMAGE_CHECKSUM` is required so the bytes written during the later streaming step
+are bound to the verified image.
 
 `IMAGE_SIGNATURE_URL` is only supported for non-`oci://` image sources today.
 For OCI image sources, use digest-pinned references such as
