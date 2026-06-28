@@ -44,6 +44,7 @@ go test -cover ./...
 go test ./pkg/image/...
 
 # Run E2E integration tests (requires ContainerLab, Linux only)
+make clab-test-image
 make clab-up && make test-e2e-integration
 make clab-gobgp-up && make test-e2e-gobgp
 make clab-type5-up && make test-e2e-type5
