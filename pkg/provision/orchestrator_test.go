@@ -109,6 +109,17 @@ func hasCommandCall(calls []mockCall, name string, args ...string) bool {
 	return false
 }
 
+func requireStepIndex(t *testing.T, steps []Step, name string) int {
+	t.Helper()
+	for i, step := range steps {
+		if step.Name == name {
+			return i
+		}
+	}
+	t.Fatalf("missing step %q", name)
+	return -1
+}
+
 func wipeCommandCalls(calls []mockCall) []mockCall {
 	var out []mockCall
 	for _, call := range calls {
@@ -243,6 +254,44 @@ func TestProvisionStepsVerifyImageBeforeDestructiveStorage(t *testing.T) {
 		if verifyIdx >= stepIdx {
 			t.Fatalf("verify-image index %d must be before %s index %d", verifyIdx, name, stepIdx)
 		}
+	}
+}
+
+func TestProvisionStepsDisableLVMBeforeStoppingRAID(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	steps := o.provisionSteps()
+
+	disableIdx := requireStepIndex(t, steps, "disable-lvm")
+	stopIdx := requireStepIndex(t, steps, "stop-raid")
+	wipeIdx := requireStepIndex(t, steps, "wipe-disks")
+
+	if disableIdx >= stopIdx {
+		t.Fatalf("disable-lvm index %d must be before stop-raid index %d", disableIdx, stopIdx)
+	}
+	if stopIdx >= wipeIdx {
+		t.Fatalf("stop-raid index %d must be before wipe-disks index %d", stopIdx, wipeIdx)
+	}
+}
+
+func TestHardDeprovisionStepsDisableLVMBeforeStoppingRAID(t *testing.T) {
+	cfg := &config.MachineConfig{Mode: "hard"}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	steps := o.deprovisionSteps("hard")
+
+	selectIdx := requireStepIndex(t, steps, "select-deprovision-disk")
+	disableIdx := requireStepIndex(t, steps, "disable-lvm")
+	stopIdx := requireStepIndex(t, steps, "stop-raid")
+	wipeIdx := requireStepIndex(t, steps, "wipe-disks")
+
+	if selectIdx >= disableIdx {
+		t.Fatalf("select-deprovision-disk index %d must be before disable-lvm index %d", selectIdx, disableIdx)
+	}
+	if disableIdx >= stopIdx {
+		t.Fatalf("disable-lvm index %d must be before stop-raid index %d", disableIdx, stopIdx)
+	}
+	if stopIdx >= wipeIdx {
+		t.Fatalf("stop-raid index %d must be before wipe-disks index %d", stopIdx, wipeIdx)
 	}
 }
 

@@ -290,7 +290,7 @@ func TestRAIDLVMProvisionOrderE2E(t *testing.T) {
 	_ = orch.Provision(context.Background())
 
 	calls := cmd.getCalls()
-	var mdadmIdx, lvmDisableIdx, lvmEnableIdx int
+	mdadmIdx, lvmDisableIdx, lvmEnableIdx := -1, -1, -1
 	for i, c := range calls {
 		s := c.String()
 		if strings.Contains(s, "mdadm") && strings.Contains(s, "--stop") {
@@ -303,10 +303,16 @@ func TestRAIDLVMProvisionOrderE2E(t *testing.T) {
 			lvmEnableIdx = i
 		}
 	}
-	if mdadmIdx > 0 && lvmDisableIdx > 0 && mdadmIdx > lvmDisableIdx {
-		t.Errorf("mdadm (%d) should be before lvm disable (%d)", mdadmIdx, lvmDisableIdx)
+	if lvmDisableIdx == -1 {
+		t.Fatal("expected lvm disable command")
 	}
-	if lvmDisableIdx > 0 && lvmEnableIdx > 0 && lvmDisableIdx > lvmEnableIdx {
+	if mdadmIdx == -1 {
+		t.Fatal("expected mdadm stop command")
+	}
+	if lvmDisableIdx > mdadmIdx {
+		t.Errorf("lvm disable (%d) should be before mdadm stop (%d)", lvmDisableIdx, mdadmIdx)
+	}
+	if lvmEnableIdx != -1 && lvmDisableIdx > lvmEnableIdx {
 		t.Errorf("lvm disable (%d) should be before enable (%d)", lvmDisableIdx, lvmEnableIdx)
 	}
 }
