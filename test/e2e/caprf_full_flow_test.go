@@ -761,6 +761,7 @@ func TestConfiguratorFileOperationsE2E(t *testing.T) {
 
 	cfg := &config.MachineConfig{
 		Hostname: "config-node",
+		OSFamily: "ubuntu",
 		Provision: config.ProvisionConfig{
 			ProviderID:        "redfish://bmc/Systems/1",
 			FailureDomain:     "dc1-az2",
@@ -789,34 +790,17 @@ func TestConfiguratorFileOperationsE2E(t *testing.T) {
 	if err := c.ConfigureKubelet(cfg); err != nil {
 		t.Fatalf("ConfigureKubelet: %v", err)
 	}
-	combinedPath := filepath.Join(root, "etc", "kubernetes", "kubelet.conf.d", "10-caprf-kubelet-extra-args.conf")
-	if combinedConf, err := os.ReadFile(combinedPath); err == nil {
-		if !strings.Contains(string(combinedConf), "redfish://bmc/Systems/1") {
-			t.Errorf("combined kubelet conf missing provider-id: %q", string(combinedConf))
-		}
-		if !strings.Contains(string(combinedConf), "topology.kubernetes.io/zone=dc1-az2") {
-			t.Errorf("combined kubelet conf missing zone label: %q", string(combinedConf))
-		}
-		if !strings.Contains(string(combinedConf), "topology.kubernetes.io/region=eu-west") {
-			t.Errorf("combined kubelet conf missing region label: %q", string(combinedConf))
-		}
-	} else {
-		pidConf, readErr := os.ReadFile(filepath.Join(root, "etc", "kubernetes", "kubelet.conf.d", "10-caprf-provider-id.conf"))
-		if readErr != nil {
-			t.Fatal(readErr)
-		}
-		if !strings.Contains(string(pidConf), "redfish://bmc/Systems/1") {
-			t.Errorf("provider-id conf = %q", string(pidConf))
-		}
-		labelConf, readErr := os.ReadFile(filepath.Join(root, "etc", "kubernetes", "kubelet.conf.d", "20-caprf-node-labels.conf"))
-		if readErr != nil {
-			t.Fatal(readErr)
-		}
-		if !strings.Contains(string(labelConf), "topology.kubernetes.io/zone=dc1-az2") {
-			t.Errorf("node labels should contain zone: %q", string(labelConf))
-		}
-		if !strings.Contains(string(labelConf), "topology.kubernetes.io/region=eu-west") {
-			t.Errorf("node labels should contain region: %q", string(labelConf))
+	kubeletConf, err := os.ReadFile(filepath.Join(root, "etc", "default", "kubelet"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"redfish://bmc/Systems/1",
+		"topology.kubernetes.io/zone=dc1-az2",
+		"topology.kubernetes.io/region=eu-west",
+	} {
+		if !strings.Contains(string(kubeletConf), want) {
+			t.Errorf("kubelet env missing %s: %q", want, string(kubeletConf))
 		}
 	}
 
@@ -1692,6 +1676,7 @@ func TestConfiguratorKubeletNoLabelsE2E(t *testing.T) {
 	c.SetRootDir(root)
 
 	cfg := &config.MachineConfig{
+		OSFamily: "ubuntu",
 		Provision: config.ProvisionConfig{
 			ProviderID: "redfish://bmc/Systems/1",
 		},
@@ -1701,7 +1686,7 @@ func TestConfiguratorKubeletNoLabelsE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pidConf, err := os.ReadFile(filepath.Join(root, "etc", "kubernetes", "kubelet.conf.d", "10-caprf-provider-id.conf"))
+	pidConf, err := os.ReadFile(filepath.Join(root, "etc", "default", "kubelet"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1709,9 +1694,8 @@ func TestConfiguratorKubeletNoLabelsE2E(t *testing.T) {
 		t.Errorf("unexpected content: %q", string(pidConf))
 	}
 
-	labelsPath := filepath.Join(root, "etc", "kubernetes", "kubelet.conf.d", "20-caprf-node-labels.conf")
-	if _, err := os.Stat(labelsPath); !os.IsNotExist(err) {
-		t.Error("labels conf should not exist without failure domain or region")
+	if strings.Contains(string(pidConf), "--node-labels=") {
+		t.Errorf("node labels should not exist without failure domain or region: %q", string(pidConf))
 	}
 }
 

@@ -180,7 +180,7 @@ func TestProvisionVerifyAndBoot(t *testing.T) {
 	}
 
 	// Kubelet provider-id check.
-	providerCfg := filepath.Join(rootMount, "etc/kubernetes/kubelet.conf.d/10-caprf-provider-id.conf")
+	providerCfg := filepath.Join(rootMount, "etc/default/kubelet")
 	if data, err := os.ReadFile(providerCfg); err == nil {
 		if !strings.Contains(string(data), "redfish://10.0.0.1/Systems/1") {
 			t.Error("provider-id not in kubelet config")

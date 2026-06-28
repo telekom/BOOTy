@@ -429,9 +429,11 @@ Operations on mounted root filesystem at `/newroot`:
 
 1. **Set hostname**: Write to `/newroot/etc/hostname`
 2. **Configure kubelet**:
-   - Create `/etc/kubernetes/kubelet.conf.d/`
-   - Write `10-caprf-provider-id.conf` with `--provider-id={PROVIDER_ID}`
-   - Write node labels for `topology.kubernetes.io/zone` and `region`
+   - Write `KUBELET_EXTRA_ARGS` to kubeadm-supported env files:
+     `/etc/default/kubelet` on Debian-like targets or
+     `/etc/sysconfig/kubelet` on RPM-like targets
+   - Merge `--provider-id={PROVIDER_ID}` and topology labels for
+     `topology.kubernetes.io/zone` and `region`
 3. **Write custom files**: Iterate `MachineConfig.Files`, write each to filesystem
    with correct path, owner, permissions
 4. **Execute custom commands**: For each command in `MachineConfig.Commands`,

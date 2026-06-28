@@ -127,11 +127,12 @@ func TestConfigureKubeletProviderID(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
 	cfg := &config.MachineConfig{}
+	cfg.OSFamily = "ubuntu"
 	cfg.Provision.ProviderID = "redfish://host/sys/1"
 	if err := c.ConfigureKubelet(cfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	confPath := filepath.Join(c.rootDir, "etc", "kubernetes", "kubelet.conf.d", "10-caprf-provider-id.conf")
+	confPath := filepath.Join(c.rootDir, "etc", "default", "kubelet")
 	data, err := os.ReadFile(confPath)
 	if err != nil {
 		t.Fatal(err)
@@ -146,18 +147,20 @@ func TestConfigureKubeletNodeLabels(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
 	cfg := &config.MachineConfig{}
+	cfg.OSFamily = "ubuntu"
 	cfg.Provision.FailureDomain = "dc1-az1"
 	cfg.Provision.Region = "eu-central"
 	if err := c.ConfigureKubelet(cfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	confPath := filepath.Join(c.rootDir, "etc", "kubernetes", "kubelet.conf.d", "20-caprf-node-labels.conf")
+	confPath := filepath.Join(c.rootDir, "etc", "default", "kubelet")
 	data, err := os.ReadFile(confPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(data) == 0 {
-		t.Fatal("expected non-empty node labels config")
+	content := string(data)
+	if !strings.Contains(content, "--node-labels=topology.kubernetes.io/zone=dc1-az1,topology.kubernetes.io/region=eu-central") {
+		t.Fatalf("expected topology labels in kubelet env file, got %q", content)
 	}
 }
 
@@ -168,9 +171,9 @@ func TestConfigureKubeletNoLabels(t *testing.T) {
 	if err := c.ConfigureKubelet(cfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	confPath := filepath.Join(c.rootDir, "etc", "kubernetes", "kubelet.conf.d", "20-caprf-node-labels.conf")
+	confPath := filepath.Join(c.rootDir, "etc", "default", "kubelet")
 	if _, err := os.Stat(confPath); !os.IsNotExist(err) {
-		t.Error("node labels file should not exist when no labels configured")
+		t.Error("kubelet env file should not exist when no args are configured")
 	}
 }
 
@@ -178,6 +181,7 @@ func TestConfigureKubeletCombinedExtraArgs(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
 	cfg := &config.MachineConfig{}
+	cfg.OSFamily = "ubuntu"
 	cfg.Provision.ProviderID = "redfish://host/sys/1"
 	cfg.Provision.FailureDomain = "dc1-az1"
 	cfg.Provision.Region = "eu-central"
@@ -186,7 +190,7 @@ func TestConfigureKubeletCombinedExtraArgs(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	combinedPath := filepath.Join(c.rootDir, "etc", "kubernetes", "kubelet.conf.d", "10-caprf-kubelet-extra-args.conf")
+	combinedPath := filepath.Join(c.rootDir, "etc", "default", "kubelet")
 	data, err := os.ReadFile(combinedPath)
 	if err != nil {
 		t.Fatal(err)
@@ -199,11 +203,97 @@ func TestConfigureKubeletCombinedExtraArgs(t *testing.T) {
 		t.Fatalf("combined config missing node-labels: %q", content)
 	}
 
-	if _, err := os.Stat(filepath.Join(c.rootDir, "etc", "kubernetes", "kubelet.conf.d", "10-caprf-provider-id.conf")); !os.IsNotExist(err) {
-		t.Fatal("provider-id file should not exist when combined config is written")
+}
+
+func TestConfigureKubeletRHELUsesSysconfig(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+	cfg := &config.MachineConfig{OSFamily: "rhel"}
+	cfg.Provision.ProviderID = "redfish://host/sys/1"
+
+	if err := c.ConfigureKubelet(cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(c.rootDir, "etc", "kubernetes", "kubelet.conf.d", "20-caprf-node-labels.conf")); !os.IsNotExist(err) {
-		t.Fatal("node-label file should not exist when combined config is written")
+	data, err := os.ReadFile(filepath.Join(c.rootDir, "etc", "sysconfig", "kubelet"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "--provider-id=redfish://host/sys/1") {
+		t.Fatalf("provider-id missing from sysconfig kubelet file: %q", string(data))
+	}
+}
+
+func TestConfigureKubeletMergesExistingArgs(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+	confPath := filepath.Join(c.rootDir, "etc", "default", "kubelet")
+	if err := os.MkdirAll(filepath.Dir(confPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := `# keep this
+KUBELET_EXTRA_ARGS="--v=4 --provider-id=old --node-labels=keep=true,topology.kubernetes.io/zone=old"
+`
+	if err := os.WriteFile(confPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.MachineConfig{}
+	cfg.Provision.ProviderID = "redfish://host/sys/1"
+	cfg.Provision.FailureDomain = "dc1-az1"
+
+	if err := c.ConfigureKubelet(cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data, err := os.ReadFile(confPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	for _, want := range []string{"# keep this", "--v=4", "--provider-id=redfish://host/sys/1", "keep=true", "topology.kubernetes.io/zone=dc1-az1"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("merged kubelet env missing %q: %s", want, content)
+		}
+	}
+	if count := strings.Count(content, "--node-labels="); count != 1 {
+		t.Fatalf("expected exactly one node-labels flag, got %d: %s", count, content)
+	}
+	if strings.Contains(content, "--provider-id=old") || strings.Contains(content, "topology.kubernetes.io/zone=old") {
+		t.Fatalf("merged kubelet env kept stale BOOTy-owned args: %s", content)
+	}
+}
+
+func TestConfigureKubeletFlatcarUnsupported(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+	cfg := &config.MachineConfig{OSFamily: "flatcar"}
+	cfg.Provision.ProviderID = "redfish://host/sys/1"
+
+	err := c.ConfigureKubelet(cfg)
+	if err == nil {
+		t.Fatal("expected unsupported flatcar kubelet layout error")
+	}
+	if !strings.Contains(err.Error(), "unsupported for flatcar") {
+		t.Fatalf("expected flatcar unsupported error, got %v", err)
+	}
+}
+
+func TestConfigureKubeletDetectsOSRelease(t *testing.T) {
+	cmd := newMockCommander()
+	c := newTestConfigurator(t, cmd)
+	osReleasePath := filepath.Join(c.rootDir, "etc", "os-release")
+	if err := os.MkdirAll(filepath.Dir(osReleasePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(osReleasePath, []byte("ID=fedora\nID_LIKE=\"rhel fedora\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.MachineConfig{}
+	cfg.Provision.ProviderID = "redfish://host/sys/1"
+
+	if err := c.ConfigureKubelet(cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(c.rootDir, "etc", "sysconfig", "kubelet")); err != nil {
+		t.Fatalf("expected sysconfig kubelet file: %v", err)
 	}
 }
 

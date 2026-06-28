@@ -368,10 +368,10 @@ func TestEndToEndDiskProvisioningFlow(t *testing.T) {
 		t.Fatalf("WriteFile hostname: %v", err)
 	}
 
-	os.MkdirAll(mountpoint+"/etc/kubernetes/kubelet.conf.d", 0o755) //nolint:errcheck
-	kubeletConf := "[Service]\nEnvironment=\"KUBELET_EXTRA_ARGS=--provider-id=test://node-1\"\n"
+	os.MkdirAll(mountpoint+"/etc/default", 0o755) //nolint:errcheck
+	kubeletConf := "KUBELET_EXTRA_ARGS=\"--provider-id=test://node-1\"\n"
 	if err := os.WriteFile(
-		mountpoint+"/etc/kubernetes/kubelet.conf.d/20-provider-id.conf",
+		mountpoint+"/etc/default/kubelet",
 		[]byte(kubeletConf),
 		0o644,
 	); err != nil {
