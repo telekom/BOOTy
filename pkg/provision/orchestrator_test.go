@@ -361,6 +361,7 @@ func TestValidateImageSourceConfiguredAllowsImage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.MachineConfig{}
+			cfg.Provision.TargetOS = config.TargetOSLinux
 			cfg.Provision.Image.URLs = []string{tt.source}
 			cfg.Provision.Image.Checksum = tt.checksum
 			o := newTestOrchestrator(t, cfg, &mockProvider{})
@@ -417,6 +418,7 @@ func TestValidateImageSourceConfiguredRejectsInvalidSources(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.MachineConfig{}
+			cfg.Provision.TargetOS = config.TargetOSLinux
 			cfg.Provision.Image.URLs = tt.sources
 			o := newTestOrchestrator(t, cfg, &mockProvider{})
 
@@ -447,6 +449,7 @@ func TestValidateImageSourceConfiguredNormalizesImageSources(t *testing.T) {
 
 func TestValidateImageSourceConfiguredRedactsSensitiveInvalidSource(t *testing.T) {
 	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = config.TargetOSLinux
 	cfg.Provision.Image.URLs = []string{"https://robot:secret@images.example.invalid/%zz?token=abc#frag"}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
@@ -467,6 +470,7 @@ func TestValidateImageSourceConfiguredRedactsSensitiveInvalidSource(t *testing.T
 
 func TestValidateImageSourceConfiguredRedactsSensitiveOCIReference(t *testing.T) {
 	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = config.TargetOSLinux
 	cfg.Provision.Image.URLs = []string{"oci://robot:secret@registry.example.invalid/%zz?token=abc#frag"}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
