@@ -662,8 +662,11 @@ func TestGrowPartitionSuccess(t *testing.T) {
 	if err := mgr.GrowPartition(context.Background(), "/dev/sda", 2); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(cmd.calls) != 1 || cmd.calls[0].name != "growpart" {
+	if len(cmd.calls) != 1 {
 		t.Fatalf("expected growpart call, got %v", cmd.calls)
+	}
+	if got := cmd.calls[0]; got.name != "growpart" || strings.Join(got.args, " ") != "--update on /dev/sda 2" {
+		t.Fatalf("expected growpart --update on /dev/sda 2, got %s %v", got.name, got.args)
 	}
 }
 
@@ -671,9 +674,12 @@ func TestGrowPartitionNoChange(t *testing.T) {
 	cmd := newMockCommander()
 	mgr := NewManager(cmd)
 
-	cmd.setResult("growpart /dev/sda", []byte("NOCHANGE: partition already fills disk"), fmt.Errorf("exit 1"))
+	cmd.setResult("growpart --update", []byte("NOCHANGE: partition already fills disk"), fmt.Errorf("exit 1"))
 	if err := mgr.GrowPartition(context.Background(), "/dev/sda", 2); err != nil {
 		t.Fatalf("unexpected error for NOCHANGE: %v", err)
+	}
+	if len(cmd.calls) != 1 {
+		t.Fatalf("NOCHANGE should not refresh partition table, got %v", cmd.calls)
 	}
 }
 
@@ -806,7 +812,7 @@ func TestGrowPartitionError(t *testing.T) {
 	cmd := newMockCommander()
 	mgr := NewManager(cmd)
 
-	cmd.setResult("growpart /dev/sda", []byte("error"), fmt.Errorf("exit 1"))
+	cmd.setResult("growpart --update", []byte("error"), fmt.Errorf("exit 1"))
 	if err := mgr.GrowPartition(context.Background(), "/dev/sda", 2); err == nil {
 		t.Fatal("expected error")
 	}

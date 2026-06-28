@@ -103,7 +103,7 @@ func TestDefaultSharedLibsResolveE2E(t *testing.T) {
 		"bin/wipefs", "sbin/mdadm", "sbin/resize2fs", "sbin/e2fsck",
 		"sbin/mkfs.ext4", "sbin/mkfs.vfat",
 		"sbin/xfs_growfs", "bin/btrfs", "bin/parted", "bin/sgdisk",
-		"bin/partprobe", "bin/qemu-img",
+		"bin/partprobe", "bin/partx", "bin/qemu-img",
 		// EFI
 		"bin/efibootmgr",
 		// System
@@ -132,7 +132,7 @@ func TestGoBGPSharedLibsResolveE2E(t *testing.T) {
 		"bin/wipefs", "sbin/mdadm", "sbin/resize2fs", "sbin/e2fsck",
 		"sbin/mkfs.ext4", "sbin/mkfs.vfat",
 		"sbin/xfs_growfs", "bin/btrfs", "bin/parted", "bin/sgdisk",
-		"bin/partprobe", "bin/qemu-img",
+		"bin/partprobe", "bin/partx", "bin/qemu-img",
 		// EFI
 		"bin/efibootmgr",
 		// System
@@ -195,7 +195,7 @@ func TestSlimSharedLibsResolveE2E(t *testing.T) {
 	image := buildStageImage(t, "slim-builder")
 	checkSharedLibs(t, image, []string{
 		"bin/ip", "bin/ethtool", "bin/curl",
-		"bin/partprobe", "sbin/e2fsck", "sbin/resize2fs",
+		"bin/partprobe", "bin/partx", "sbin/e2fsck", "sbin/resize2fs",
 		"sbin/mkfs.ext4", "sbin/mkfs.vfat", "sbin/mkfs.xfs",
 	})
 }

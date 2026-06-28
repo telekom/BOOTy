@@ -181,7 +181,7 @@ RUN mkdir -p /tool-libs /tool-libs-full && \
         /usr/sbin/mkfs.ext4 /usr/sbin/mkfs.vfat /usr/sbin/mkfs.xfs \
         /usr/sbin/xfs_growfs /usr/sbin/xfs_repair \
         /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk /usr/sbin/sfdisk \
-        /sbin/partprobe /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
+        /sbin/partprobe /usr/bin/partx /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
         /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
         /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
         /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk \
@@ -209,7 +209,7 @@ RUN strip --strip-all \
         /usr/sbin/mkfs.ext4 /usr/sbin/mkfs.vfat /usr/sbin/mkfs.xfs \
         /usr/sbin/xfs_growfs /usr/sbin/xfs_repair \
         /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk /usr/sbin/sfdisk \
-        /sbin/partprobe /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
+        /sbin/partprobe /usr/bin/partx /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
         /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
         /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
         /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /usr/bin/gpgv /usr/bin/qemu-img \
@@ -268,6 +268,7 @@ COPY --from=tools /usr/bin/btrfs bin/btrfs
 COPY --from=tools /usr/sbin/parted bin/parted
 COPY --from=tools /usr/sbin/sgdisk bin/sgdisk
 COPY --from=tools /sbin/partprobe bin/partprobe
+COPY --from=tools /usr/bin/partx bin/partx
 COPY --from=tools /usr/sbin/kpartx bin/kpartx
 COPY --from=tools /usr/bin/qemu-img bin/qemu-img
 COPY --from=tools /usr/bin/efibootmgr bin/efibootmgr
@@ -401,6 +402,7 @@ COPY --from=tools /usr/sbin/wipefs bin/wipefs
 COPY --from=tools /usr/sbin/sgdisk bin/sgdisk
 COPY --from=tools /usr/sbin/sfdisk bin/sfdisk
 COPY --from=tools /sbin/partprobe bin/partprobe
+COPY --from=tools /usr/bin/partx bin/partx
 COPY --from=tools /sbin/e2fsck sbin/e2fsck
 COPY --from=tools /sbin/resize2fs sbin/resize2fs
 COPY --from=tools /usr/sbin/mkfs.ext4 sbin/mkfs.ext4
@@ -462,6 +464,7 @@ COPY --from=tools /usr/bin/btrfs bin/btrfs
 COPY --from=tools /usr/sbin/parted bin/parted
 COPY --from=tools /usr/sbin/sgdisk bin/sgdisk
 COPY --from=tools /sbin/partprobe bin/partprobe
+COPY --from=tools /usr/bin/partx bin/partx
 COPY --from=tools /usr/sbin/kpartx bin/kpartx
 COPY --from=tools /usr/bin/qemu-img bin/qemu-img
 COPY --from=tools /usr/bin/efibootmgr bin/efibootmgr

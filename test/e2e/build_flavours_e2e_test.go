@@ -372,6 +372,7 @@ func TestSlimContainsDiskToolsE2E(t *testing.T) {
 	assertContains(t, files, "bin/sgdisk", "sgdisk GPT")
 	assertContains(t, files, "bin/sfdisk", "sfdisk partitioner")
 	assertContains(t, files, "bin/partprobe", "partprobe")
+	assertContains(t, files, "bin/partx", "partx online partition updater")
 	assertContains(t, files, "bin/growpart", "growpart")
 	assertContains(t, files, "sbin/e2fsck", "e2fsck")
 	assertContains(t, files, "sbin/resize2fs", "resize2fs")
@@ -596,6 +597,7 @@ func TestDefaultContainsDiskToolsE2E(t *testing.T) {
 	assertContains(t, files, "bin/parted", "parted")
 	assertContains(t, files, "bin/sgdisk", "sgdisk GPT")
 	assertContains(t, files, "bin/partprobe", "partprobe")
+	assertContains(t, files, "bin/partx", "partx online partition updater")
 	assertContains(t, files, "bin/qemu-img", "qemu-img qcow2 converter")
 	assertContains(t, files, "bin/efibootmgr", "efibootmgr")
 }

@@ -732,7 +732,7 @@ func partitionCandidateList(parts []*Partition) string {
 // GrowPartition grows a partition to fill available space using growpart.
 func (m *Manager) GrowPartition(ctx context.Context, disk string, partNum int) error {
 	slog.Info("growing partition", "disk", disk, "partition", partNum)
-	out, err := m.cmd.Run(ctx, "growpart", disk, strconv.Itoa(partNum))
+	out, err := m.cmd.Run(ctx, "growpart", "--update", "on", disk, strconv.Itoa(partNum))
 	if err != nil {
 		// growpart exits 1 if partition already fills the disk.
 		if strings.Contains(string(out), "NOCHANGE") {
