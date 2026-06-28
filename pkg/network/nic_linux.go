@@ -28,24 +28,23 @@ var (
 // DetectPhysicalNICs returns the names of all physical network interfaces,
 // excluding loopback, virtual, bridge, and VXLAN interfaces.
 // In containerlab environments, interfaces may initially appear with temporary
-// names (clab-*) before being renamed to their final names. This function
-// retries briefly when temporary names are detected.
+// names (clab-*) before being renamed to their final names. After container
+// restarts, a scan can also briefly see only the management NIC before fabric
+// links are moved into the namespace. This function retries briefly for both
+// settling cases.
 func DetectPhysicalNICs() ([]string, error) {
-	const maxRetries = 20
-	const retryInterval = 500 * time.Millisecond
-
-	for i := range maxRetries {
+	for i := range physicalNICMaxRetries {
 		nics, hasTemp, err := detectNICsOnce()
 		if err != nil {
 			return nil, err
 		}
-		if !hasTemp {
+		if !hasTemp && physicalNICsSettled(nics, i) {
 			return nics, nil
 		}
 		if i == 0 {
-			slog.Info("waiting for interface names to stabilize (clab-* detected)")
+			logNICSettleWait(nics, hasTemp)
 		}
-		sleepFunc(retryInterval)
+		sleepFunc(physicalNICRetryInterval)
 	}
 
 	// Final attempt: return whatever we have, excluding any remaining clab-* names.
@@ -60,6 +59,27 @@ func DetectPhysicalNICs() ([]string, error) {
 		}
 	}
 	return stable, nil
+}
+
+const (
+	physicalNICMaxRetries             = 20
+	physicalNICRetryInterval          = 500 * time.Millisecond
+	physicalNICSingleNICSettleRetries = 6
+)
+
+func physicalNICsSettled(nics []string, retry int) bool {
+	if len(nics) == 1 {
+		return retry >= physicalNICSingleNICSettleRetries
+	}
+	return true
+}
+
+func logNICSettleWait(nics []string, hasTemp bool) {
+	if hasTemp {
+		slog.Info("waiting for interface names to stabilize (clab-* detected)")
+		return
+	}
+	slog.Info("waiting for physical interface set to stabilize", "nics", nics)
 }
 
 // detectNICsOnce performs a single scan of network interfaces and reports

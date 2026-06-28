@@ -1,4 +1,4 @@
-//go:build e2e_boot
+//go:build linux && e2e_boot
 
 // Package integration contains full BOOTy boot tests running inside
 // containerlab. Three BOOTy instances (provision, deprovision, standby)
@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -54,10 +55,34 @@ func requireBootLab(t *testing.T) {
 
 func bootDockerExec(t *testing.T, container string, args ...string) (string, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	return bootDockerExecWithTimeout(t, 60*time.Second, container, args...)
+}
+
+func bootDockerExecWithTimeout(t *testing.T, timeout time.Duration, container string, args ...string) (string, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmdArgs := append([]string{"exec", container}, args...)
-	out, err := exec.CommandContext(ctx, "docker", cmdArgs...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, "docker", cmdArgs...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil && err != syscall.ESRCH {
+			return err
+		}
+		return nil
+	}
+	cmd.WaitDelay = 2 * time.Second
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		timeoutErr := fmt.Errorf("docker exec %s %s timed out after %s: %w", container, strings.Join(args, " "), timeout, ctx.Err())
+		if err != nil {
+			return string(out), fmt.Errorf("%w (command error: %v)", timeoutErr, err)
+		}
+		return string(out), timeoutErr
+	}
 	return string(out), err
 }
 
@@ -70,11 +95,7 @@ func bootDockerExecBefore(t *testing.T, deadline time.Time, container string, ar
 	if timeout > 60*time.Second {
 		timeout = 60 * time.Second
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	cmdArgs := append([]string{"exec", container}, args...)
-	out, err := exec.CommandContext(ctx, "docker", cmdArgs...).CombinedOutput()
-	return string(out), err
+	return bootDockerExecWithTimeout(t, timeout, container, args...)
 }
 
 func bootDockerExecOrFail(t *testing.T, container string, args ...string) string {
@@ -150,11 +171,67 @@ func waitForLogEntrySince(t *testing.T, container, entry string, timeout time.Du
 	return false
 }
 
-// bootyNetworkFailed checks if BOOTy exhausted all network retries.
-func bootyNetworkFailed(t *testing.T, container string, since time.Time) bool {
+// bootyNetworkNeedsRecovery checks if BOOTy can no longer serve as a live
+// network probe without a restart. This includes explicit connectivity
+// exhaustion and terminal mode exit after retries are exhausted.
+func bootyNetworkNeedsRecovery(t *testing.T, container string, since time.Time) bool {
 	t.Helper()
 	logs := getBootyLogsSince(t, container, since)
-	return strings.Contains(logs, "network connectivity failed after all retries")
+	return networkProbeNeedsRestart(logs)
+}
+
+func networkProbeNeedsRestart(logs string) bool {
+	restartMarkers := []string{
+		"network connectivity failed after all retries",
+		"mode exited with error",
+		"network teardown error",
+	}
+	for _, marker := range restartMarkers {
+		if strings.Contains(logs, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestNetworkProbeNeedsRestart(t *testing.T) {
+	tests := []struct {
+		name string
+		logs string
+		want bool
+	}{
+		{
+			name: "active network",
+			logs: `time=2026-06-26 level=INFO msg="Network connectivity established"`,
+		},
+		{
+			name: "connectivity exhausted",
+			logs: `level=ERROR msg="network connectivity failed after all retries"`,
+			want: true,
+		},
+		{
+			name: "mode exited",
+			logs: `level=ERROR msg="mode exited with error" mode=provision`,
+			want: true,
+		},
+		{
+			name: "teardown warning",
+			logs: `level=WARN msg="network teardown error"`,
+			want: true,
+		},
+		{
+			name: "frr teardown alone still allows retry",
+			logs: `level=INFO msg="FRR teardown complete" component=frr`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := networkProbeNeedsRestart(tt.logs); got != tt.want {
+				t.Fatalf("networkProbeNeedsRestart() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
 
 // restartContainer restarts a docker container and waits for it to be running.
@@ -217,8 +294,8 @@ func waitForBootHTTP(t *testing.T, probe bootHTTPProbe, timeout time.Duration) b
 		attempts := 0
 		for time.Now().Before(deadline) {
 			attempts++
-			if bootyNetworkFailed(t, probe.container, logSince) {
-				t.Logf("%s BOOTy exhausted network retries (round %d)", probe.desc, round)
+			if bootyNetworkNeedsRecovery(t, probe.container, logSince) {
+				t.Logf("%s BOOTy needs network recovery (round %d)", probe.desc, round)
 				break
 			}
 			if time.Until(deadline) <= time.Second {
@@ -285,7 +362,6 @@ func TestBootAllNodesReachCAPRF(t *testing.T) {
 		desc string
 	}{
 		{provisionContainer, "provision"},
-		{deprovisionContainer, "deprovision"},
 		{standbyContainer, "standby"},
 	}
 
@@ -299,7 +375,7 @@ func TestBootAllNodesReachCAPRF(t *testing.T) {
 				url:       "http://10.100.0.11/health",
 			}
 			if !waitForBootHTTP(t, probe, bootCAPRFReachabilityTimeout) {
-				t.Fatalf("%s node cannot reach CAPRF mock (10.100.0.11) through EVPN fabric after restart", c.desc)
+				t.Fatalf("%s node cannot reach CAPRF mock (10.100.0.11) through EVPN fabric", c.desc)
 			}
 			t.Logf("%s node reaches CAPRF mock through EVPN fabric", c.desc)
 		})
@@ -314,7 +390,6 @@ func TestBootAllNodesReachNginx(t *testing.T) {
 		desc string
 	}{
 		{provisionContainer, "provision"},
-		{deprovisionContainer, "deprovision"},
 		{standbyContainer, "standby"},
 	}
 
@@ -328,7 +403,7 @@ func TestBootAllNodesReachNginx(t *testing.T) {
 				url:       "http://10.100.0.10/",
 			}
 			if !waitForBootHTTP(t, probe, bootReachabilityTimeout) {
-				t.Fatalf("%s node cannot reach nginx (10.100.0.10) through EVPN fabric after restart", c.desc)
+				t.Fatalf("%s node cannot reach nginx (10.100.0.10) through EVPN fabric", c.desc)
 			}
 			t.Logf("%s node reaches nginx through EVPN fabric", c.desc)
 		})
@@ -459,6 +534,16 @@ func TestBootCAPRFMockReceivedInitStatus(t *testing.T) {
 	t.Logf("CAPRF mock received /status/init request\nAccess log:\n%s", out)
 }
 
+func TestBootDeprovisionReportsSuccessThroughEVPN(t *testing.T) {
+	requireBootLab(t)
+
+	out, ok := waitForAccessLogEntry(t, caprfContainer, "/var/log/nginx/access.log", `10.100.0.21 "POST /status/success`, 180*time.Second)
+	if !ok {
+		t.Fatalf("CAPRF mock did not receive deprovision success from 10.100.0.21\nAccess log:\n%s", out)
+	}
+	t.Logf("CAPRF mock received deprovision success through EVPN\nAccess log:\n%s", out)
+}
+
 // --- Image pull through EVPN ---
 
 func TestBootAllNodesImageReachableThroughEVPN(t *testing.T) {
@@ -469,7 +554,6 @@ func TestBootAllNodesImageReachableThroughEVPN(t *testing.T) {
 		desc string
 	}{
 		{provisionContainer, "provision"},
-		{deprovisionContainer, "deprovision"},
 		{standbyContainer, "standby"},
 	}
 
@@ -484,7 +568,7 @@ func TestBootAllNodesImageReachableThroughEVPN(t *testing.T) {
 				contains:  "test.img.gz",
 			}
 			if !waitForBootHTTP(t, probe, bootReachabilityTimeout) {
-				t.Fatalf("%s node cannot reach nginx images (10.100.0.10) through EVPN after restart", c.desc)
+				t.Fatalf("%s node cannot reach nginx images (10.100.0.10) through EVPN", c.desc)
 			}
 			t.Logf("%s node: nginx image listing through EVPN succeeded", c.desc)
 		})
@@ -584,7 +668,7 @@ func TestBootStandbyHeartbeatsSentToCAPRF(t *testing.T) {
 	requireBootLab(t)
 
 	// If standby's network failed, restart it and wait for recovery.
-	if bootyNetworkFailed(t, standbyContainer, time.Time{}) {
+	if bootyNetworkNeedsRecovery(t, standbyContainer, time.Time{}) {
 		logSince := restartContainer(t, standbyContainer)
 		// Wait for BOOTy to re-establish connectivity after restart.
 		if !waitForLogEntrySince(t, standbyContainer, "network connectivity established", 6*time.Minute, logSince) {
