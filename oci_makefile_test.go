@@ -19,6 +19,9 @@ func TestMakefileOCIPushTargetsCheckRefBeforePush(t *testing.T) {
 	if !strings.Contains(makefile, `oras manifest fetch "$$ref"`) {
 		t.Fatal("Makefile OCI guard must probe the remote ref before publishing")
 	}
+	if !strings.Contains(makefile, `mktemp "$${TMPDIR:-/tmp}/oci-ref-check.XXXXXX"`) {
+		t.Fatal("Makefile OCI guard must use a portable mktemp template")
+	}
 
 	tests := []struct {
 		name  string

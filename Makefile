@@ -372,7 +372,7 @@ override INITRAMFS_MEDIA_TYPE := $(if $(filter $(OCI_FLAVOR),$(ZSTD_INITRAMFS_FL
 
 export VERSION DOCKERTAG REPOSITORY TARGET OCI_FLAVOR OCI_ARCH OCI_INITRAMFS_DIR INITRAMFS_PATH INITRAMFS_MEDIA_TYPE
 
-ensure_oci_ref_absent = @ref="$(1)"; err=$$(mktemp) || { echo "ERROR: could not create temporary file for OCI ref check" >&2; exit 1; }; trap 'rm -f "$$err"' EXIT; if oras manifest fetch "$$ref" >/dev/null 2>"$$err"; then echo "ERROR: OCI artifact $$ref already exists; refusing to overwrite"; exit 1; fi; if ! grep -Eiq '(not found|manifest unknown|name unknown|404)' "$$err"; then echo "ERROR: could not verify OCI artifact $$ref is absent"; cat "$$err" >&2 || true; exit 1; fi
+ensure_oci_ref_absent = @ref="$(1)"; err=$$(mktemp "$${TMPDIR:-/tmp}/oci-ref-check.XXXXXX") || { echo "ERROR: could not create temporary file for OCI ref check" >&2; exit 1; }; trap 'rm -f "$$err"' EXIT; if oras manifest fetch "$$ref" >/dev/null 2>"$$err"; then echo "ERROR: OCI artifact $$ref already exists; refusing to overwrite"; exit 1; fi; if ! grep -Eiq '(not found|manifest unknown|name unknown|404)' "$$err"; then echo "ERROR: could not verify OCI artifact $$ref is absent"; cat "$$err" >&2 || true; exit 1; fi
 
 oci-push-initramfs:
 	@case "$$OCI_FLAVOR" in default|slim|gobgp|micro) ;; *) echo "ERROR: unsupported OCI_FLAVOR=$$OCI_FLAVOR (expected: $(VALID_INITRAMFS_FLAVORS))"; exit 1 ;; esac
