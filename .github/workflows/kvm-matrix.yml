@@ -200,6 +200,7 @@ jobs:
 
       - name: Install KVM dependencies
         run: |
+          sudo find /etc/apt/sources.list.d -type f \( -iname '*microsoft*' -o -iname '*azure-cli*' \) -delete
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools cpio zstd busybox-static linux-image-generic xorriso isolinux syslinux-common fdisk util-linux e2fsprogs dosfstools parted mdadm lvm2 gdisk
 
