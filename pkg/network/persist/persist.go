@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -121,6 +122,9 @@ func (c *NetworkConfig) Validate() error {
 	if err := c.validateVLANs(); err != nil {
 		return err
 	}
+	if err := c.validateLogicalReferences(); err != nil {
+		return err
+	}
 	if err := validateDNSConfig(&c.DNS); err != nil {
 		return err
 	}
@@ -130,6 +134,25 @@ func (c *NetworkConfig) Validate() error {
 	if (len(c.DNS.Servers) > 0 || len(c.DNS.Search) > 0 || len(c.Routes) > 0) &&
 		len(c.Interfaces) == 0 && len(c.Bonds) == 0 && len(c.VLANs) == 0 {
 		return fmt.Errorf("dns/routes require at least one interface, bond, or vlan")
+	}
+	return nil
+}
+
+func (c *NetworkConfig) validateLogicalReferences() error {
+	logicalNames := make(map[string]struct{}, len(c.Bonds)+len(c.VLANs))
+	for i := range c.Bonds {
+		logicalNames[c.Bonds[i].Name] = struct{}{}
+	}
+	for i := range c.VLANs {
+		logicalNames[vlanEffectiveName(&c.VLANs[i])] = struct{}{}
+	}
+
+	for i := range c.Bonds {
+		for _, member := range c.Bonds[i].Members {
+			if _, ok := logicalNames[member]; ok {
+				return fmt.Errorf("bond %q: member %q must be a physical interface, not a bond or vlan", c.Bonds[i].Name, member)
+			}
+		}
 	}
 	return nil
 }
@@ -186,16 +209,20 @@ func (c *NetworkConfig) validateVLANs() error {
 				return fmt.Errorf("vlan %d: invalid address: %w", i, err)
 			}
 		}
-		effName := vlan.Name
-		if effName == "" {
-			effName = fmt.Sprintf("%s.%d", vlan.Parent, vlan.ID)
-		}
+		effName := vlanEffectiveName(&vlan)
 		if _, exists := vlanNames[effName]; exists {
 			return fmt.Errorf("vlan %d: duplicate vlan name %q", i, effName)
 		}
 		vlanNames[effName] = struct{}{}
 	}
 	return nil
+}
+
+func vlanEffectiveName(vlan *VLANConfig) string {
+	if vlan.Name != "" {
+		return vlan.Name
+	}
+	return fmt.Sprintf("%s.%d", vlan.Parent, vlan.ID)
 }
 
 func (c *NetworkConfig) validateRoutes() error {
@@ -341,27 +368,73 @@ func RenderNetplan(cfg *NetworkConfig) string {
 	b.WriteString("network:\n")
 	b.WriteString("  version: 2\n")
 	b.WriteString("  renderer: networkd\n")
-	renderNetplanEthernets(&b, cfg.Interfaces, &cfg.DNS, cfg.Routes, &dnsAttached)
+	renderNetplanEthernets(&b, cfg, &cfg.DNS, cfg.Routes, &dnsAttached)
 	renderNetplanBonds(&b, cfg.Bonds, &cfg.DNS, cfg.Routes, &dnsAttached)
 	renderNetplanVLANs(&b, cfg.VLANs, &cfg.DNS, cfg.Routes, &dnsAttached)
 	return b.String()
 }
 
-func renderNetplanEthernets(b *strings.Builder, ifaces []InterfaceConfig, dns *DNSConfig, routes []RouteConfig, dnsAttached *bool) {
-	if len(ifaces) == 0 {
+func renderNetplanEthernets(b *strings.Builder, cfg *NetworkConfig, dns *DNSConfig, routes []RouteConfig, dnsAttached *bool) {
+	backing := netplanBackingEthernets(cfg)
+	if len(cfg.Interfaces) == 0 && len(backing) == 0 {
 		return
 	}
 	b.WriteString("  ethernets:\n")
-	for i := range ifaces {
-		renderNetplanInterface(b, &ifaces[i])
+	for i := range cfg.Interfaces {
+		renderNetplanInterface(b, &cfg.Interfaces[i])
 		attachedRoutes := []RouteConfig(nil)
 		if !*dnsAttached {
 			renderNetplanIfaceDNS(b, dns)
 			attachedRoutes = routes
 			*dnsAttached = true
 		}
-		renderNetplanIfaceRoutes(b, ifaces[i].Gateway, attachedRoutes)
+		renderNetplanIfaceRoutes(b, cfg.Interfaces[i].Gateway, attachedRoutes)
 	}
+	for _, name := range backing {
+		fmt.Fprintf(b, "    %s: {}\n", name)
+	}
+}
+
+func netplanBackingEthernets(cfg *NetworkConfig) []string {
+	explicit := make(map[string]struct{}, len(cfg.Interfaces))
+	for i := range cfg.Interfaces {
+		explicit[cfg.Interfaces[i].Name] = struct{}{}
+	}
+
+	logical := make(map[string]struct{}, len(cfg.Bonds)+len(cfg.VLANs))
+	for i := range cfg.Bonds {
+		logical[cfg.Bonds[i].Name] = struct{}{}
+	}
+	for i := range cfg.VLANs {
+		logical[vlanEffectiveName(&cfg.VLANs[i])] = struct{}{}
+	}
+
+	needed := make(map[string]struct{})
+	for i := range cfg.Bonds {
+		for _, member := range cfg.Bonds[i].Members {
+			if _, ok := explicit[member]; ok {
+				continue
+			}
+			needed[member] = struct{}{}
+		}
+	}
+	for i := range cfg.VLANs {
+		parent := cfg.VLANs[i].Parent
+		if _, ok := explicit[parent]; ok {
+			continue
+		}
+		if _, ok := logical[parent]; ok {
+			continue
+		}
+		needed[parent] = struct{}{}
+	}
+
+	names := make([]string, 0, len(needed))
+	for name := range needed {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func renderNetplanInterface(b *strings.Builder, iface *InterfaceConfig) {
