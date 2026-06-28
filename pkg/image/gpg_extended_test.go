@@ -23,12 +23,19 @@ func TestVerifyGPGSignature_OCI_URL(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	err := VerifyGPGSignature(context.Background(), "oci://registry.example.com/image:tag", ts.URL+"/sig", tmpKey)
-	if err == nil {
-		t.Error("expected error for OCI URL")
-	}
-	if !strings.Contains(err.Error(), "oci://") {
-		t.Errorf("error should mention oci://, got: %v", err)
+	for _, imageURL := range []string{
+		"oci://registry.example.com/image:tag",
+		"OCI://registry.example.com/image:tag",
+	} {
+		t.Run(imageURL, func(t *testing.T) {
+			err := VerifyGPGSignature(context.Background(), imageURL, ts.URL+"/sig", tmpKey)
+			if err == nil {
+				t.Error("expected error for OCI URL")
+			}
+			if !strings.Contains(strings.ToLower(err.Error()), "oci://") {
+				t.Errorf("error should mention oci://, got: %v", err)
+			}
+		})
 	}
 }
 

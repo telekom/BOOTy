@@ -669,13 +669,11 @@ func validateProvisionOCIImageSource(source string, checksumConfigured bool) err
 	if ref == "" {
 		return fmt.Errorf("invalid OCI image source: missing reference")
 	}
-	if _, err := ociname.ParseReference(ref); err != nil {
+	parsedRef, err := ociname.ParseReference(ref)
+	if err != nil {
 		return fmt.Errorf("invalid OCI image source %q: %s", image.RedactOCIRef(ref), redactOCIReferenceError(err, ref))
 	}
-	digestRef, err := image.OCIDigestReference(source)
-	if err != nil {
-		return fmt.Errorf("invalid OCI image source before destructive storage steps: %s: %w", image.RedactURL(source), err)
-	}
+	_, digestRef := parsedRef.(ociname.Digest)
 	if !checksumConfigured && !digestRef {
 		return fmt.Errorf("provision OCI image source must use a digest reference or IMAGE_CHECKSUM before destructive storage steps: %s", image.RedactURL(source))
 	}

@@ -514,10 +514,11 @@ func looksLikeURLSource(source string) bool {
 }
 
 func isOCIDigestSource(source string) bool {
-	if !strings.HasPrefix(source, "oci://") {
+	source = strings.TrimSpace(source)
+	if !imageutil.IsOCIReference(source) {
 		return false
 	}
-	_, digest, ok := strings.Cut(source, "@sha256:")
+	_, digest, ok := strings.Cut(imageutil.TrimOCIScheme(source), "@sha256:")
 	return ok && strings.TrimSpace(digest) != "" && validateSysextSHA256(digest) == nil
 }
 

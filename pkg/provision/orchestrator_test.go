@@ -350,6 +350,10 @@ func TestValidateImageSourceConfiguredAllowsImage(t *testing.T) {
 			name:   "oci digest",
 			source: "oci://registry.example.invalid/tcaas/node@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		},
+		{
+			name:   "oci uppercase digest",
+			source: "OCI://registry.example.invalid/tcaas/node@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
