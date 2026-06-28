@@ -49,6 +49,11 @@ func vmDockerExec(t *testing.T, container string, args ...string) (string, error
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	return vmDockerExecContext(t, ctx, container, args...)
+}
+
+func vmDockerExecContext(t *testing.T, ctx context.Context, container string, args ...string) (string, error) {
+	t.Helper()
 	cmdArgs := append([]string{"exec", container}, args...)
 	out, err := exec.CommandContext(ctx, "docker", cmdArgs...).CombinedOutput()
 	return string(out), err
@@ -169,14 +174,37 @@ func TestVrnetlabBGPSessionsEstablished(t *testing.T) {
 func TestVrnetlabEVPNRoutesPresent(t *testing.T) {
 	requireVrnetlabLab(t)
 
-	// Allow time for EVPN convergence
-	time.Sleep(5 * time.Second)
-
-	out := vmDockerExecOrFail(t, vmSpine, "vtysh", "-c", "show bgp l2vpn evpn")
-	if !strings.Contains(out, "Route Distinguisher") && !strings.Contains(out, "Network") {
-		t.Fatalf("no EVPN routes found on spine01\n%s", out)
-	}
+	out := waitForVrnetlabEVPNRoutes(t)
 	t.Logf("EVPN routes present on spine01:\n%s", out)
+}
+
+func waitForVrnetlabEVPNRoutes(t *testing.T) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	var last string
+	var lastErr error
+	for {
+		out, err := vmDockerExecContext(t, ctx, vmSpine, "vtysh", "-c", "show bgp l2vpn evpn")
+		last = out
+		lastErr = err
+		if err == nil && (strings.Contains(out, "Route Distinguisher") || strings.Contains(out, "Network")) {
+			return out
+		}
+
+		select {
+		case <-ctx.Done():
+			if lastErr != nil {
+				t.Fatalf("no EVPN routes found on spine01 after 60s; last docker exec error: %v\n%s", lastErr, last)
+			}
+			t.Fatalf("no EVPN routes found on spine01 after 60s\n%s", last)
+		case <-ticker.C:
+		}
+	}
 }
 
 func TestVrnetlabLeafBGPEstablished(t *testing.T) {
