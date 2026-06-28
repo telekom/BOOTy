@@ -154,7 +154,7 @@ func withMockReadPath(t *testing.T, fn func(string) ([]byte, error)) {
 
 func newTestImageServer(t *testing.T, body []byte) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodHead:
 			w.WriteHeader(http.StatusOK)
@@ -164,6 +164,8 @@ func newTestImageServer(t *testing.T, body []byte) *httptest.Server {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	}))
+	t.Cleanup(srv.Close)
+	return srv
 }
 
 func prependFakeQemuImgToPath(t *testing.T) {
@@ -738,6 +740,23 @@ func TestDryRunImagePrerequisitesTrimsImageURLs(t *testing.T) {
 func TestDryRunImagePrerequisitesFailsWhenURLsAreBlank(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Image.URLs = []string{" ", "\t"}
+	o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
+
+	result := o.dryRunImagePrerequisites(context.Background())
+	if result.Status != DryRunFail {
+		t.Fatalf("got %s, want fail: %s", result.Status, result.Message)
+	}
+	if !strings.Contains(result.Message, "no image URLs configured") {
+		t.Fatalf("message = %q, want no image URLs context", result.Message)
+	}
+}
+
+func TestDryRunImagePrerequisitesFailsWhenPartitionLayoutHasNoImageURLs(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+		Table:      "gpt",
+		Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
+	}
 	o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
 
 	result := o.dryRunImagePrerequisites(context.Background())

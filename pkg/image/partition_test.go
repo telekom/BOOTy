@@ -175,6 +175,12 @@ cp "$src" "$dst"
 	if converted == source {
 		t.Fatal("expected converted raw path to differ from qcow2 source")
 	}
+	if strings.HasSuffix(converted, ".raw.raw") {
+		t.Fatalf("converted path = %q, want no .raw.raw suffix", converted)
+	}
+	if want := strings.TrimSuffix(source, filepath.Ext(source)) + ".converted.raw"; converted != want {
+		t.Fatalf("converted path = %q, want %q", converted, want)
+	}
 	got, err := os.ReadFile(converted)
 	if err != nil {
 		t.Fatalf("read converted fixture: %v", err)

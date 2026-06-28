@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -138,7 +139,7 @@ func convertPreparedQCOW2(ctx context.Context, path string) (string, error) {
 		return path, nil
 	}
 
-	rawPath := path + ".raw"
+	rawPath := strings.TrimSuffix(path, filepath.Ext(path)) + ".converted.raw"
 	if err := convertQCOW2ToRaw(ctx, path, rawPath); err != nil {
 		return "", err
 	}

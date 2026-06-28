@@ -253,9 +253,6 @@ func (o *Orchestrator) dryRunDiskDetection(ctx context.Context) DryRunResult {
 
 func (o *Orchestrator) dryRunImagePrerequisites(ctx context.Context) DryRunResult {
 	if len(o.cfg.Provision.Image.URLs) == 0 {
-		if o.cfg.Provision.Disk.PartitionLayout != nil {
-			return DryRunResult{Status: DryRunWarn, Message: "layout-only mode: skipping image prerequisite check"}
-		}
 		return DryRunResult{Status: DryRunFail, Message: "no image URLs configured"}
 	}
 
