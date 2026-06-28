@@ -821,13 +821,17 @@ Persistent agent mode that polls for provisioning commands from CAPRF:
 
 ```bash
 export MODE=standby
-export HEARTBEAT_URL="http://caprf-server/status/heartbeat"
-export COMMANDS_URL="http://caprf-server/commands"
+export HEARTBEAT_URL="https://caprf.example.com/status/heartbeat"
+export COMMANDS_URL="https://caprf.example.com/commands"
 ```
 
-In standby mode, BOOTy sends periodic heartbeats (every 30s) and polls for
-pending commands (every 10s). On failure, the configured `RESCUE_MODE` policy
-applies (retry, shell, wait, or reboot).
+In standby mode, both URLs are required. BOOTy reports standby status, sends
+an initial heartbeat, and polls commands once before entering the periodic loop
+(heartbeats every 30s, command polls every 10s). Startup readiness failures
+return an error immediately. After readiness succeeds, heartbeat and command-poll
+failures are logged and retried on the next tick. `RESCUE_MODE` applies to hot
+provision command failures; deprovision command failures are ACKed as failed
+before BOOTy returns a reboot request.
 
 | Command | Behavior |
 |---------|----------|
