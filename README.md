@@ -569,8 +569,8 @@ firmware), and NVMe namespaces.
 
 ### Firmware Reporting
 
-Collects BIOS and NIC firmware versions and optionally enforces minimum version
-requirements.
+Collects BIOS, BMC vendor, NIC firmware, and storage controller firmware from
+sysfs and optionally enforces minimum version requirements.
 
 ```bash
 export FIRMWARE_REPORT=true
@@ -579,12 +579,15 @@ export FIRMWARE_MIN_BIOS="U46"           # Abort if BIOS older than U46
 export FIRMWARE_MIN_BMC="2.72"           # Abort unless a real BMC firmware source reports >= 2.72
 ```
 
-BIOS firmware is read from sysfs (`/sys/class/dmi/id/`). BMC vendor is
-correlated from DMI board data, but DMI `board_version` is not a BMC firmware
-version; `FIRMWARE_MIN_BMC` therefore fails closed unless a real BMC firmware
-source provides a version. NIC firmware is collected per-driver for Broadcom,
-Intel, and Mellanox adapters via ethtool. When minimum versions are set,
-provisioning aborts if the running firmware is unknown or below the threshold.
+BIOS firmware is read from `/sys/class/dmi/id/`. BMC vendor is correlated from
+DMI board data, but DMI `board_version` is not a BMC firmware version;
+`FIRMWARE_MIN_BMC` therefore fails closed unless a real BMC firmware source
+provides a version. NIC firmware is read from PCI-backed interfaces via
+`/sys/class/net/<iface>/device/firmware_version`, with driver and PCI address
+metadata from the same sysfs device. Storage controller firmware is reported
+from `/sys/class/scsi_host/*/firmware_rev` when exposed. When minimum versions
+are set, provisioning aborts if the running firmware is unknown or below the
+threshold.
 
 ### Image Verification
 
