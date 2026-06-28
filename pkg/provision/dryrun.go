@@ -105,10 +105,7 @@ func (o *Orchestrator) DryRun(ctx context.Context) error {
 }
 
 func (o *Orchestrator) dryRunConfigValidation(_ context.Context) DryRunResult {
-	if err := o.validatePartitionLayoutModeCompatibility(); err != nil {
-		return DryRunResult{Status: DryRunFail, Message: err.Error()}
-	}
-	if err := o.validatePartitionLayoutRuntimeSupport(); err != nil {
+	if err := o.validatePartitionLayoutConfig(); err != nil {
 		return DryRunResult{Status: DryRunFail, Message: err.Error()}
 	}
 

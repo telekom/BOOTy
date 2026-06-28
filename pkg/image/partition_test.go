@@ -385,6 +385,12 @@ func TestSelectSourceRootPartitionSupportsFlatcarUsrSlots(t *testing.T) {
 	if !strings.Contains(err.Error(), "Flatcar-like USR-A/USR-B") {
 		t.Fatalf("error = %q, want Flatcar-like USR slot rejection", err.Error())
 	}
+	if !strings.Contains(err.Error(), "provision.image.sourceRootLabel/provision.image.sourceRootPartition") {
+		t.Fatalf("error = %q, want partition-layout selector hint", err.Error())
+	}
+	if !strings.Contains(err.Error(), "provision.ab.sourceRootLabel/provision.ab.sourceRootPartition") {
+		t.Fatalf("error = %q, want A/B selector hint", err.Error())
+	}
 }
 
 func TestSelectSourceRootPartitionRejectsImplicitSingleFlatcarUsrSlot(t *testing.T) {
@@ -399,6 +405,12 @@ func TestSelectSourceRootPartitionRejectsImplicitSingleFlatcarUsrSlot(t *testing
 	}
 	if !strings.Contains(err.Error(), "Flatcar-like USR-A/USR-B") {
 		t.Fatalf("error = %q, want Flatcar-like USR slot rejection", err.Error())
+	}
+	if !strings.Contains(err.Error(), "provision.image.sourceRootLabel/provision.image.sourceRootPartition") {
+		t.Fatalf("error = %q, want partition-layout selector hint", err.Error())
+	}
+	if !strings.Contains(err.Error(), "provision.ab.sourceRootLabel/provision.ab.sourceRootPartition") {
+		t.Fatalf("error = %q, want A/B selector hint", err.Error())
 	}
 }
 

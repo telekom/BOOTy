@@ -356,7 +356,8 @@ func selectSourceRootPartition(parts []sfdiskPartition, label string, number int
 
 	if hasFlatcarUSRSlot(parts) {
 		return sfdiskPartition{}, fmt.Errorf(
-			"source image has Flatcar-like USR-A/USR-B slots; set provision.ab.sourceRootLabel or provision.ab.sourceRootPartition explicitly",
+			"source image has Flatcar-like USR-A/USR-B slots; %s",
+			sourceRootSelectorHint,
 		)
 	}
 

@@ -232,6 +232,49 @@ func TestDryRunConfigValidation(t *testing.T) {
 			expect: DryRunPass,
 		},
 		{
+			name: "layout device conflicts with disk device",
+			cfg: func() *config.MachineConfig {
+				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.Image.URLs = []string{"http://example.com/img"}
+				c.Provision.Disk.Device = "/dev/sda"
+				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+					Device:     "/dev/sdb",
+					Table:      "gpt",
+					Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
+				}
+				return c
+			}(),
+			expect: DryRunFail,
+		},
+		{
+			name: "layout device missing",
+			cfg: func() *config.MachineConfig {
+				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.Image.URLs = []string{"http://example.com/img"}
+				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+					Device:     "/dev/booty-dryrun-missing",
+					Table:      "gpt",
+					Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
+				}
+				return c
+			}(),
+			expect: DryRunFail,
+		},
+		{
+			name: "layout device is not block device",
+			cfg: func() *config.MachineConfig {
+				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.Image.URLs = []string{"http://example.com/img"}
+				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+					Device:     "/dev/null",
+					Table:      "gpt",
+					Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
+				}
+				return c
+			}(),
+			expect: DryRunFail,
+		},
+		{
 			name: "partition image mode with layout",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{Hostname: "node1"}
