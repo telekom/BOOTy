@@ -1126,6 +1126,27 @@ func TestReportSuccessSignalsSecureBootReEnable(t *testing.T) {
 	}
 }
 
+func TestReportSuccessStatusFailureCompletesStep(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	provider := &mockProvider{reportStatusErr: errors.New("status endpoint unavailable")}
+	o := newTestOrchestrator(t, cfg, provider)
+	cp := &Checkpoint{}
+
+	err := o.executeStep(context.Background(), Step{"report-success", o.reportSuccess}, cp)
+	if err != nil {
+		t.Fatalf("report-success should not fail completed provisioning: %v", err)
+	}
+	if !cp.IsCompleted("report-success") {
+		t.Fatal("report-success step was not marked complete")
+	}
+	if len(provider.statuses) != 1 {
+		t.Fatalf("expected one best-effort success report attempt, got %d", len(provider.statuses))
+	}
+	if provider.statuses[0].status != config.StatusSuccess {
+		t.Fatalf("status = %s, want %s", provider.statuses[0].status, config.StatusSuccess)
+	}
+}
+
 func TestWipeOrSecureEraseDisks(t *testing.T) {
 	tests := []struct {
 		name        string
