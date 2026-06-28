@@ -306,8 +306,6 @@ var commonSourceRootLabels = map[string]struct{}{
 	"opensuse-root":     {},
 	"opensuse-rootfs":   {},
 	"flatcar-root":      {},
-	"usr-a":             {},
-	"usr-b":             {},
 	"bottlerocket-root": {},
 }
 
@@ -328,6 +326,12 @@ func selectSourceRootPartition(parts []sfdiskPartition, label string, number int
 		return selectSingleSourceRootCandidate(parts, func(part sfdiskPartition) bool {
 			return strings.EqualFold(strings.TrimSpace(part.Name), strings.TrimSpace(label))
 		}, fmt.Sprintf("label %q", strings.TrimSpace(label)))
+	}
+
+	if hasFlatcarUSRSlot(parts) {
+		return sfdiskPartition{}, fmt.Errorf(
+			"source image has Flatcar-like USR-A/USR-B slots; set provision.ab.sourceRootLabel or provision.ab.sourceRootPartition explicitly",
+		)
 	}
 
 	if part, err := selectSingleSourceRootCandidate(parts, hasCommonSourceRootLabel, "common root partition label"); err == nil {
@@ -375,6 +379,24 @@ func hasCommonSourceRootLabel(part sfdiskPartition) bool {
 	}
 	_, ok := commonSourceRootLabels[normalizeSourceRootLabel(part.Name)]
 	return ok
+}
+
+func hasFlatcarUSRSlot(parts []sfdiskPartition) bool {
+	for _, part := range parts {
+		if isFlatcarUSRSlotLabel(part.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+func isFlatcarUSRSlotLabel(label string) bool {
+	switch normalizeSourceRootLabel(label) {
+	case "usr-a", "usr-b":
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeSourceRootLabel(label string) string {
