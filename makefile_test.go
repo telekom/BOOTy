@@ -55,6 +55,28 @@ func TestMakefileRejectsUnsafeBuildVariables(t *testing.T) {
 	}
 }
 
+func TestMakefileAllowsPathLikeTarget(t *testing.T) {
+	t.Parallel()
+
+	target := filepath.Join(t.TempDir(), "booty binary")
+	output, err := runMake(t, "check-build-vars", "TARGET="+target)
+	if err != nil {
+		t.Fatalf("check-build-vars rejected path-like TARGET %q: %v\n%s", target, err, output)
+	}
+}
+
+func TestMakefileRejectsTraversalTarget(t *testing.T) {
+	t.Parallel()
+
+	output, err := runMake(t, "check-build-vars", "TARGET=../booty")
+	if err == nil {
+		t.Fatalf("check-build-vars accepted traversal TARGET; output:\n%s", output)
+	}
+	if !strings.Contains(string(output), "invalid TARGET") {
+		t.Fatalf("check-build-vars output = %q, want invalid TARGET", output)
+	}
+}
+
 func TestMakefileRejectsUnsafeTargetForDestructiveTargets(t *testing.T) {
 	t.Parallel()
 

@@ -2,7 +2,7 @@
 SHELL := /bin/sh
 
 TARGET := booty
-.DEFAULT_GOAL: $(TARGET)
+.DEFAULT_GOAL := build
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0)
 BUILD := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
@@ -40,7 +40,8 @@ export TARGET VERSION BUILD TARGETOS TARGETARCH DOCKERTAG REPOSITORY
 all: lint test install
 
 check-build-vars:
-	@printf '%s\n' "$$TARGET" | grep -Eq '^[A-Za-z0-9_.-]+$$' || { printf 'ERROR: invalid TARGET: %s\n' "$$TARGET"; exit 2; }
+	@printf '%s\n' "$$TARGET" | grep -Eq '^[A-Za-z0-9_./-][A-Za-z0-9_./ -]*$$' || { printf 'ERROR: invalid TARGET: %s\n' "$$TARGET"; exit 2; }
+	@case "$$TARGET" in *..*) printf 'ERROR: invalid TARGET: %s\n' "$$TARGET"; exit 2 ;; esac
 	@printf '%s\n' "$$VERSION" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._+~-]*$$' || { printf 'ERROR: invalid VERSION: %s\n' "$$VERSION"; exit 2; }
 	@printf '%s\n' "$$BUILD" | grep -Eq '^([A-Fa-f0-9]{7,64}|unknown)$$' || { printf 'ERROR: invalid BUILD: %s\n' "$$BUILD"; exit 2; }
 	@printf '%s\n' "$$TARGETOS" | grep -Eq '^[A-Za-z0-9_.-]+$$' || { printf 'ERROR: invalid TARGETOS: %s\n' "$$TARGETOS"; exit 2; }
@@ -54,11 +55,8 @@ check-oci-vars: check-docker-vars check-build-vars
 	@case "$$OCI_FLAVOR" in default|slim|micro|gobgp) ;; *) printf 'ERROR: invalid OCI_FLAVOR: %s\n' "$$OCI_FLAVOR"; exit 2 ;; esac
 	@case "$$OCI_ARCH" in amd64|arm64) ;; *) printf 'ERROR: invalid OCI_ARCH: %s\n' "$$OCI_ARCH"; exit 2 ;; esac
 
-$(TARGET): $(SRC) | check-build-vars
+build: check-build-vars $(SRC)
 	@GOOS="$$TARGETOS" GOARCH="$$TARGETARCH" go build -trimpath -ldflags "$(GO_LDFLAGS)" -o "$$TARGET"
-
-build: check-build-vars $(TARGET)
-	@true
 
 build-all: check-build-vars $(SRC)
 	@mkdir -p dist/amd64 dist/arm64
