@@ -692,8 +692,12 @@ jobs:
           CHECKSUM="artifacts/release-default-${{ matrix.arch }}/booty-${{ matrix.arch }}.sha256"
 
           if [ ! -f "${BINARY}" ]; then
-            echo "No binary found for ${{ matrix.arch }}, skipping"
-            exit 0
+            echo "::error::missing binary artifact ${BINARY}"
+            exit 1
+          fi
+          if [ ! -f "${CHECKSUM}" ]; then
+            echo "::error::missing binary checksum ${CHECKSUM}"
+            exit 1
           fi
 
           TAG="${VERSION}-${{ matrix.arch }}"
@@ -712,10 +716,7 @@ jobs:
 
           echo "Publishing ${REF}"
 
-          ARGS="${BINARY}:application/vnd.cncf.binary.layer.v1"
-          if [ -f "${CHECKSUM}" ]; then
-            ARGS="${ARGS} ${CHECKSUM}:text/plain"
-          fi
+          ARGS="${BINARY}:application/vnd.cncf.binary.layer.v1 ${CHECKSUM}:text/plain"
 
           oras push "${REF}" \
             --annotation "org.opencontainers.image.title=BOOTy binary (${{ matrix.arch }})" \
@@ -740,8 +741,8 @@ jobs:
           SBOM="artifacts/sbom/sbom.spdx.json"
 
           if [ ! -f "${SBOM}" ]; then
-            echo "No SBOM found, skipping"
-            exit 0
+            echo "::error::missing SBOM artifact ${SBOM}"
+            exit 1
           fi
 
           REF="${REPO}/sbom:${VERSION}"
