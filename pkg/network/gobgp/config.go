@@ -284,8 +284,12 @@ func (c *Config) validatePeerMode() error {
 			return fmt.Errorf("BGP_NEIGHBORS required for %s peer mode", c.PeerMode)
 		}
 		for _, addr := range c.NeighborAddrs {
-			if net.ParseIP(addr) == nil {
+			ip := net.ParseIP(addr)
+			if ip == nil {
 				return fmt.Errorf("invalid neighbor address %q", addr)
+			}
+			if ip.To4() == nil {
+				return fmt.Errorf("BGP_NEIGHBORS address %q must be IPv4; IPv6 underlay is not implemented", addr)
 			}
 		}
 	case network.PeerModeUnnumbered:
