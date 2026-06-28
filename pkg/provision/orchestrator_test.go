@@ -400,7 +400,7 @@ func TestValidateProvisionInputsRejectsGPGSignatureWithoutChecksum(t *testing.T)
 	if err == nil {
 		t.Fatal("expected missing checksum error")
 	}
-	if !strings.Contains(err.Error(), "IMAGE_SIGNATURE_URL requires IMAGE_CHECKSUM") {
+	if !strings.Contains(err.Error(), "image signature URL (IMAGE_SIGNATURE_URL) requires image checksum (IMAGE_CHECKSUM)") {
 		t.Fatalf("error = %q, want signature checksum context", err.Error())
 	}
 }
@@ -408,13 +408,16 @@ func TestValidateProvisionInputsRejectsGPGSignatureWithoutChecksum(t *testing.T)
 func TestValidateProvisionInputsAllowsGPGSignatureWithChecksum(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Image.URLs = []string{"https://images.example.invalid/node.raw"}
-	cfg.Provision.Image.SignatureURL = "https://images.example.invalid/node.raw.sig"
+	cfg.Provision.Image.SignatureURL = " https://images.example.invalid/node.raw.sig "
 	cfg.Provision.Image.Checksum = strings.Repeat("a", 64)
 	cfg.Provision.Image.ChecksumType = "sha256"
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
 	if err := o.validateProvisionInputs(context.Background()); err != nil {
 		t.Fatalf("validateProvisionInputs: %v", err)
+	}
+	if got := cfg.Provision.Image.SignatureURL; got != "https://images.example.invalid/node.raw.sig" {
+		t.Fatalf("SignatureURL = %q, want trimmed URL", got)
 	}
 }
 

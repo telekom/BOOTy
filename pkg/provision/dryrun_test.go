@@ -571,6 +571,17 @@ func TestDryRunImageSignature(t *testing.T) {
 			wantSubstr: imageSignatureChecksumRequiredMessage,
 		},
 		{
+			name: "whitespace signature URL",
+			cfg: func() *config.MachineConfig {
+				c := &config.MachineConfig{}
+				c.Provision.Image.SignatureURL = "   "
+				c.Provision.Image.GPGPubKey = pubKey
+				return c
+			},
+			expect:     DryRunWarn,
+			wantSubstr: "GPG verification disabled",
+		},
+		{
 			name: "signature with checksum",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{}

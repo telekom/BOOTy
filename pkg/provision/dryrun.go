@@ -315,6 +315,7 @@ func (o *Orchestrator) dryRunImageChecksum(_ context.Context) DryRunResult {
 }
 
 func (o *Orchestrator) dryRunImageSignature(_ context.Context) DryRunResult {
+	o.cfg.Provision.Image.SignatureURL = strings.TrimSpace(o.cfg.Provision.Image.SignatureURL)
 	if o.cfg.Provision.Image.SignatureURL == "" {
 		return DryRunResult{Status: DryRunWarn,
 			Message: "no image signature URL configured - GPG verification disabled"}
