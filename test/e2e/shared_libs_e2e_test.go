@@ -118,6 +118,8 @@ func TestDefaultSharedLibsResolveE2E(t *testing.T) {
 		"bin/lldpcli", "sbin/lldpd",
 		// SSH
 		"bin/dropbear", "bin/dropbearkey",
+		// Rescue/debug mode
+		"bin/lsblk",
 		// FRR
 		"sbin/bgpd", "sbin/zebra", "sbin/bfdd", "bin/vtysh", "sbin/watchfrr",
 	})
@@ -162,6 +164,7 @@ func TestFullInitramfsMkfsVfatSupportsFATSizeFlagE2E(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			image := buildStageImage(t, tc.stage)
+			checkSharedLibs(t, image, []string{"bin/lsblk"})
 			ldPaths := strings.Join([]string{
 				"/build/initramfs/lib",
 				"/build/initramfs/usr/lib",
@@ -189,13 +192,47 @@ func TestFullInitramfsMkfsVfatSupportsFATSizeFlagE2E(t *testing.T) {
 	}
 }
 
+func TestFullInitramfsLsblkSupportsRuntimeFlagsE2E(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		stage string
+	}{
+		{name: "default", stage: "busybox"},
+		{name: "gobgp", stage: "gobgp-builder"},
+		{name: "slim", stage: "slim-builder"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			image := buildStageImage(t, tc.stage)
+			ldPaths := strings.Join([]string{
+				"/build/initramfs/lib",
+				"/build/initramfs/usr/lib",
+				"/build/initramfs/lib/x86_64-linux-gnu",
+				"/build/initramfs/usr/lib/x86_64-linux-gnu",
+			}, ":")
+			checks := []string{
+				"/build/initramfs/bin/lsblk --nodeps --noheadings --paths --output NAME,SERIAL >/dev/null",
+				"/build/initramfs/bin/lsblk -rnpo NAME >/dev/null",
+				"/build/initramfs/bin/lsblk --json >/dev/null",
+				"! /build/initramfs/bin/lsblk --help 2>&1 | grep -qi busybox",
+			}
+			script := strings.Join(checks, " && ")
+			cmd := exec.Command("docker", "run", "--rm", "--entrypoint", "",
+				"-e", "LD_LIBRARY_PATH="+ldPaths, image, "sh", "-ec", script)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("lsblk runtime flag check failed: %v\n%s", err, out)
+			}
+		})
+	}
+}
+
 // TestSlimSharedLibsResolveE2E builds the slim builder stage and verifies
 // shared library resolution for all dynamically-linked binaries.
 func TestSlimSharedLibsResolveE2E(t *testing.T) {
 	image := buildStageImage(t, "slim-builder")
 	checkSharedLibs(t, image, []string{
 		"bin/ip", "bin/ethtool", "bin/curl",
-		"bin/partprobe", "bin/partx", "sbin/e2fsck", "sbin/resize2fs",
+		"bin/partprobe", "bin/partx", "bin/lsblk", "sbin/e2fsck", "sbin/resize2fs",
 		"sbin/mkfs.ext4", "sbin/mkfs.vfat", "sbin/mkfs.xfs",
 	})
 }

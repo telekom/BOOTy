@@ -247,7 +247,7 @@ RUN bin/busybox --install -s bin
 # Docker COPY follows destination symlinks: if bin/X -> busybox exists, COPY
 # writes the source file content into the busybox binary instead of replacing
 # the symlink.  Remove busybox symlinks that collide with real tool binaries.
-RUN rm -f bin/partprobe bin/hdparm bin/ip bin/mkfs.vfat bin/mkfs.fat bin/mkdosfs
+RUN rm -f bin/partprobe bin/hdparm bin/ip bin/mkfs.vfat bin/mkfs.fat bin/mkdosfs bin/lsblk
 
 # cloud-utils growpart
 RUN cp /usr/bin/growpart bin/growpart
@@ -281,6 +281,7 @@ COPY --from=tools /usr/sbin/parted bin/parted
 COPY --from=tools /usr/sbin/sgdisk bin/sgdisk
 COPY --from=tools /sbin/partprobe bin/partprobe
 COPY --from=tools /usr/bin/partx bin/partx
+COPY --from=tools /bin/lsblk bin/lsblk
 COPY --from=tools /usr/sbin/kpartx bin/kpartx
 COPY --from=tools /usr/bin/qemu-img bin/qemu-img
 COPY --from=tools /usr/bin/efibootmgr bin/efibootmgr
@@ -399,7 +400,7 @@ COPY --from=busybox-bin /bin/busybox bin/busybox
 RUN for cmd in $(bin/busybox --list); do if [ "$cmd" != "busybox" ]; then ln -sf busybox "bin/$cmd"; fi; done
 # Docker COPY follows destination symlinks — remove colliding busybox symlinks.
 RUN rm -f bin/partprobe bin/ip bin/wipefs bin/sgdisk bin/sfdisk \
-    bin/mkfs.vfat bin/mkfs.fat bin/mkdosfs
+    bin/mkfs.vfat bin/mkfs.fat bin/mkdosfs bin/lsblk
 RUN cp /usr/bin/growpart bin/growpart
 
 # BOOTy init binary (static, CGO-enabled)
@@ -419,6 +420,7 @@ COPY --from=tools /usr/sbin/sgdisk bin/sgdisk
 COPY --from=tools /usr/sbin/sfdisk bin/sfdisk
 COPY --from=tools /sbin/partprobe bin/partprobe
 COPY --from=tools /usr/bin/partx bin/partx
+COPY --from=tools /bin/lsblk bin/lsblk
 COPY --from=tools /sbin/e2fsck sbin/e2fsck
 COPY --from=tools /sbin/resize2fs sbin/resize2fs
 COPY --from=tools /usr/sbin/mkfs.ext4 sbin/mkfs.ext4
