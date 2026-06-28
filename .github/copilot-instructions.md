@@ -85,7 +85,7 @@ consider work complete until tests are written, passing, and cover the change.
 | Test Level | When Required | How to Run |
 |------------|---------------|------------|
 | **Unit tests** | All code changes — minimum 40% coverage gate | `make test` |
-| **Linux E2E** (`linux_e2e`) | Disk, mount, loop device, or partition code | `go test -tags linux_e2e` (requires root) |
+| **Linux E2E** (`linux_e2e`) | Disk, mount, loop device, or partition code | `sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m ./test/e2e/linux/...` (requires root) |
 | **ContainerLab E2E** (`e2e_integration`) | Network modes, FRR, DHCP, bonds, static | `make clab-up && make test-e2e-integration` |
 | **GoBGP E2E** (`e2e_gobgp`) | GoBGP peering, tiers, PeerMode changes | `make clab-gobgp-up && make test-e2e-gobgp` |
 | **Boot E2E** (`e2e_boot`) | Provisioning orchestrator, step ordering | `make clab-boot-up && make test-e2e-boot` |

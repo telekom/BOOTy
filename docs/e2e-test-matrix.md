@@ -17,7 +17,10 @@ fleets that combine two orthogonal choices:
 Every customer-impacting bug in past releases has involved at least one of
 these axes (image checksum mismatch on gzipped HTTP, OCI auth regression,
 mdadm `--create` argument ordering, RAID metadata not zeroed on re-provision,
-…). The matrix test guarantees that **every release exercises every cell**.
+…). PR and default-branch CI exercise every matrix cell. The release workflow
+builds, scans, signs, and uploads release artifacts from the release ref; it does
+not by itself rerun the generic E2E matrix unless a separate CI run is also
+triggered for that ref.
 
 ## Cells covered
 

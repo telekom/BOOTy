@@ -33,7 +33,7 @@ BOOTy operates in two modes depending on the boot environment:
 1. A Redfish BMC mounts an ISO containing a kernel, BOOTy initramfs, and `/deploy/vars` config.
 2. BOOTy reads `/deploy/vars` for machine config, image URLs, and CAPRF server endpoints.
 3. Network connectivity is established via **FRR/EVPN** (BGP underlay) or **DHCP** fallback.
-4. The provisioning pipeline runs 41 steps: status reporting -> provisioning input validation -> RAID cleanup -> NVMe namespace setup -> disk detection -> partition layout -> image streaming -> shared data mounting -> optional sysext loading -> OS configuration -> EFI fallback installation -> cloud-init injection -> kexec.
+4. The provisioning pipeline validates input, cleans storage state, prepares NVMe namespaces, detects disks, applies the partition layout, streams the image, mounts shared data, optionally loads sysexts, configures the OS, installs EFI fallbacks, and injects cloud-init. After the orchestrator reports success, `main.go` attempts kexec, falls back to a hard reboot, powers off when requested by provisioning state, or powers off as a safety fallback when A/B `preserveExisting` requires kexec but kexec is unavailable.
 5. Status, logs, and debug info are shipped back to the CAPRF controller throughout.
 
 ### Legacy Mode
@@ -1122,10 +1122,10 @@ make clab-multi-nic-up && make test-e2e-multi-nic # Multi-NIC discovery and conf
 
 # E2E tests — KVM/QEMU vrnetlab (Linux + KVM)
 make clab-vrnetlab-up && make test-e2e-vrnetlab   # Full EVPN boot flow
-make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab  # GoBGP QEMU VMs + FRR fabric
+make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab  # GoBGP with FRR fabric + QEMU VMs
 
 # Linux-only E2E (disk/mount/loop device, requires root)
-sudo -E env "PATH=$PATH:/usr/sbin:/sbin" go test -tags linux_e2e -v -count=1 ./test/e2e/linux/...
+sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m ./test/e2e/linux/...
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for coding standards, test requirements,

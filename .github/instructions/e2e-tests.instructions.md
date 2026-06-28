@@ -19,7 +19,7 @@ Every E2E test file **must** start with a build tag matching its topology:
 | `e2e_vrnetlab` | QEMU vrnetlab | `make clab-vrnetlab-up && make test-e2e-vrnetlab` |
 | `e2e_gobgp_vrnetlab` | GoBGP QEMU vrnetlab | `make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab` |
 | `e2e_production` | Production-realistic (VRF+DCGW+BFD) | `make clab-production-up && make test-e2e-production` |
-| `linux_e2e` | Linux root access | Direct `go test -tags linux_e2e` |
+| `linux_e2e` | Linux root access | `sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m ./test/e2e/linux/...` |
 
 ## Helper Functions
 
@@ -49,7 +49,7 @@ Define container names as constants at the top of each test file.
 
 ## Polling Pattern
 
-Use timeout + interval loops, not channels, for container state checks:
+Use timeout + interval loops, not channels, for container state checks. Keep sleeps deadline-bound and include diagnostics on timeout:
 
 ```go
 deadline := time.Now().Add(timeout)
@@ -57,6 +57,8 @@ for time.Now().Before(deadline) {
     // check condition
     time.Sleep(2 * time.Second)
 }
+dumpDebugState(t)
+t.Fatalf("condition not met within %s", timeout)
 ```
 
 Typical timeouts: 30s for log polling, 60s for BGP convergence.
