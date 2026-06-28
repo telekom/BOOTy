@@ -362,6 +362,9 @@ func waitForPartitionDevice(ctx context.Context, device string) error {
 			return nil
 		}
 		slog.Debug("waiting for partition device", "device", device, "iteration", i)
+		if i == partitionDeviceWaitAttempts-1 {
+			break
+		}
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("wait canceled: %w", ctx.Err())
