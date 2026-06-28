@@ -277,8 +277,11 @@ func TestRenderNetworkdUnit(t *testing.T) {
 func TestRenderNetworkdUnit_DHCP(t *testing.T) {
 	iface := &InterfaceConfig{Name: "eth0", DHCP: true}
 	result := RenderNetworkdUnit(iface)
-	if !strings.Contains(result, "DHCP=yes") {
-		t.Error("missing DHCP")
+	if !strings.Contains(result, "DHCP=ipv4") {
+		t.Error("missing IPv4 DHCP")
+	}
+	if strings.Contains(result, "DHCP=yes") {
+		t.Error("networkd DHCP should not request implicit dual-stack DHCP")
 	}
 }
 
