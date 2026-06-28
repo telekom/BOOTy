@@ -9,8 +9,9 @@
 Add comprehensive cloud-init configuration generation and injection during
 provisioning. BOOTy generates cloud-init `user-data`, `meta-data`, and
 `network-config` from CAPRF-provided machine configuration, writes them to
-the provisioned OS (NoCloud datasource or configdrive partition), and
-validates cloud-init syntax before finalizing.
+the provisioned OS as NoCloud or OpenStack ConfigDrive seed files. Current
+implementation validates render/injection errors, but does not run cloud-init
+schema validation or prove a real target first boot in CI.
 
 ## Motivation
 
@@ -54,8 +55,8 @@ BOOTy Provisioning
   ├─ Method 1: NoCloud datasource
   │   └─ Write to /var/lib/cloud/seed/nocloud/{user-data,meta-data,network-config}
   │
-  └─ Method 2: Configdrive partition
-      └─ Create FAT32 partition with openstack/latest/{user_data,meta_data.json}
+  └─ Method 2: ConfigDrive seed directory
+      └─ Write to /var/lib/cloud/seed/config_drive/openstack/latest/{user_data,meta_data.json,network_data.json}
 ```
 
 ### Cloud-Init Generator
@@ -265,23 +266,10 @@ spec:
 
 ### Required Binaries in Initramfs
 
-| Binary | Package | Purpose | Initramfs Flavor | Already Present? |
-|--------|---------|---------|-----------------|-----------------|
-| `mkfs.vfat` | `dosfstools` | FAT32 configdrive partition | full, gobgp | **No — add** (configdrive only) |
-
-**Note**: NoCloud injection requires no binaries (just file writes).
-Configdrive requires a FAT32 partition which needs `mkfs.vfat`.
-
-**Dockerfile change** (tools stage, only for configdrive support):
-
-```dockerfile
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ... existing packages ... \
-    dosfstools \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY --from=tools /sbin/mkfs.vfat bin/mkfs.vfat
-```
+Current NoCloud and ConfigDrive support writes seed files into the mounted
+target root filesystem. It does not create or format a separate FAT32
+ConfigDrive partition, so no `mkfs.vfat` dependency is required for the
+implemented path.
 
 ### Configuration
 
@@ -300,31 +288,24 @@ export CLOUDINIT_RUN_CMD='[["kubeadm","join","--token","xxx","10.0.0.1:6443"]]'
 | File | Change |
 |------|--------|
 | `pkg/cloudinit/generator.go` | Cloud-init config generation |
-| `pkg/cloudinit/inject.go` | NoCloud + configdrive injection |
-| `pkg/cloudinit/validate.go` | Syntax validation |
-| `pkg/cloudinit/types.go` | Configuration types |
+| `pkg/cloudinit/inject.go` | NoCloud + ConfigDrive seed-directory injection |
 | `pkg/provision/orchestrator.go` | `injectCloudInit()` step |
 | `pkg/config/provider.go` | Cloud-init config fields |
-| `initrd.Dockerfile` | Add `mkfs.vfat` for configdrive support |
 
 ## Testing
 
 ### Unit Tests
 
-- `cloudinit/generator_test.go` — Generate from various machine configs.
-  Table-driven: minimal (hostname only), full (all fields), Kubernetes
-  bootstrap, Windows-style line endings.
-- `cloudinit/inject_test.go` — NoCloud injection with `t.TempDir()`.
-  Verify file paths, permissions, content.
-- `cloudinit/validate_test.go` — Valid YAML, invalid YAML, missing required
-  fields, large payload.
+- `cloudinit/generator_test.go` — Generation and seed injection coverage:
+  minimal and full configs, Kubernetes bootstrap, Windows-style line endings,
+  NoCloud and ConfigDrive seed-file paths/content, invalid static address
+  rejection, and missing required input coverage.
 
 ### E2E / KVM Tests
 
-- **KVM matrix** (`kvm-matrix.yml`, tag `e2e_kvm`):
-  - Provision with cloud-init → boot → verify hostname set correctly
-  - Provision with SSH key injection → verify key in authorized_keys
-  - Verify cloud-init runs on first boot (check `/var/lib/cloud/instance/boot-finished`)
+Current KVM coverage verifies seed files on the provisioned disk. It does not
+boot a real cloud-init target image and does not prove hostname, SSH key, or
+`/var/lib/cloud/instance/boot-finished` behavior after first boot.
 
 ## Risks
 
@@ -332,10 +313,11 @@ export CLOUDINIT_RUN_CMD='[["kubeadm","join","--token","xxx","10.0.0.1:6443"]]'
 |------|------------|
 | Different cloud-init versions | Target v22+ (network-config v2 support) |
 | YAML serialization edge cases | Use gopkg.in/yaml.v3; comprehensive tests |
-| Configdrive partition layout varies | Support OpenStack and NoCloud formats |
+| ConfigDrive first-boot behavior varies | Current implementation writes OpenStack seed files; real target first-boot validation is still required |
 | Sensitive data in user-data | Encrypted in transit via TLS; warn in docs |
 
 ## Effort Estimate
 
-6–10 engineering days (generator + injection + validation + configdrive +
-KVM tests).
+6–10 engineering days for the original full scope. The implemented phase covers
+generation and seed-directory injection; schema validation, real ConfigDrive
+partition creation, and target first-boot proof remain separate work.
