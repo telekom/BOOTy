@@ -30,7 +30,7 @@ type DiskConfig struct {
 
 	// NumVFs is the number of SR-IOV Virtual Functions to create on Mellanox NICs.
 	// Applied during the Mellanox firmware configuration step.
-	// Default: 32
+	// Default: 0 (skip SR-IOV firmware changes)
 	NumVFs int `yaml:"numVFs" json:"numVFs"`
 
 	// NVMeNamespaces is a JSON configuration string for NVMe namespace creation.
