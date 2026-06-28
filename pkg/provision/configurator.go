@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"unicode"
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
@@ -52,19 +53,21 @@ var safeChrootDevicePath = regexp.MustCompile(`^/dev/[a-zA-Z0-9._/+:-]+$`)
 
 var blockedShellTokens = []string{"&&", "||", "|", "`", "$(", ")", ">", "<", ";", "\n", "\r"}
 
-// sensitiveKeyPattern matches sensitive key-value pairs in two forms:
+const sensitiveCommandKeyPattern = `(?:password|token|secret|key|credential|auth|` +
+	`(?:[a-z0-9]+[-_])+(?:password|token|secret|key|credential|auth)(?:[-_][a-z0-9]+)*|` +
+	`(?:password|token|secret|key|credential|auth)(?:[-_][a-z0-9]+)+)`
+
+// sensitiveKeyPattern matches sensitive command key-value pairs in two forms:
 //  1. CLI flag format: --key=value, -key=value, or --key value / -key value
 //     (quoted values are recognized in the pattern but will be rejected earlier
 //     by validateProvisionCommand which does not allow quote characters)
-//  2. Assignment format: key=value or key: value, where key must appear as a
-//     complete token (preceded by whitespace or start of string) to avoid
-//     false positives from embedded substrings like "monkey=banana"
+//  2. Assignment format: key=value or key: value, where key must appear as a complete token.
 //
 // The value portion is replaced with [REDACTED] in logs.
 var sensitiveKeyPattern = regexp.MustCompile(
 	`(?i)(?:` +
-		`(--?)(password|token|secret|key|credential|auth)(?:=(?:"[^"]*"|'[^']*'|\S+)|[\t ]+(?:"[^"]*"|'[^']*'|\S+))` +
-		`|(?:^|(?P<pre>[\s]))(password|token|secret|key|credential|auth)\s*[=:]\s*(?:"[^"]*"|'[^']*'|\S+)` +
+		`(--?)(` + sensitiveCommandKeyPattern + `)(?:=(?:"[^"]*"|'[^']*'|\S+)|\s+(?:"[^"]*"|'[^']*'|\S+))` +
+		`|(?:^|(?P<pre>[\s]))(` + sensitiveCommandKeyPattern + `)\s*[=:]\s*(?:"[^"]*"|'[^']*'|\S+)` +
 		`)`,
 )
 
@@ -74,7 +77,7 @@ func redactCommand(cmd string) string {
 	return sensitiveKeyPattern.ReplaceAllStringFunc(cmd, func(match string) string {
 		if strings.HasPrefix(match, "-") {
 			eqIdx := strings.Index(match, "=")
-			wsIdx := strings.IndexAny(match, " \t")
+			wsIdx := firstWhitespaceIndex(match)
 			if eqIdx >= 0 && (wsIdx < 0 || eqIdx < wsIdx) {
 				return match[:eqIdx+1] + "[REDACTED]"
 			}
@@ -88,6 +91,15 @@ func redactCommand(cmd string) string {
 		}
 		return match
 	})
+}
+
+func firstWhitespaceIndex(s string) int {
+	for i, r := range s {
+		if unicode.IsSpace(r) {
+			return i
+		}
+	}
+	return -1
 }
 
 // Configurator handles post-image OS configuration.
