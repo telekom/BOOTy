@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/telekom/BOOTy/pkg/blockdev"
 )
@@ -167,8 +168,8 @@ func copyPartitions(ctx context.Context, rawPath, targetDisk string) error {
 	defer teardownLoopDevice(ctx, loopDev)
 
 	// Force kernel to re-read partition table on loop device.
-	if _, err := runCmd(ctx, "partprobe", loopDev); err != nil {
-		return fmt.Errorf("partprobe loop device: %w", err)
+	if err := settlePartitionTable(ctx, loopDev); err != nil {
+		return fmt.Errorf("settling loop device partitions: %w", err)
 	}
 
 	// Copy partition table from source to target.
@@ -177,9 +178,9 @@ func copyPartitions(ctx context.Context, rawPath, targetDisk string) error {
 		return fmt.Errorf("copying partition table: %w", err)
 	}
 
-	// Re-read target partition table.
-	if _, err := runCmd(ctx, "partprobe", targetDisk); err != nil {
-		return fmt.Errorf("partprobe target: %w", err)
+	// Re-read target partition table and trigger partition device creation.
+	if err := settlePartitionTable(ctx, targetDisk); err != nil {
+		return fmt.Errorf("settling target partitions: %w", err)
 	}
 
 	// Read partitions from source loop device.
@@ -200,6 +201,12 @@ func copyPartitions(ctx context.Context, rawPath, targetDisk string) error {
 			"source_partition", partNum, "src", srcNode, "dst", tgtNode,
 			"type", sp.Type, "sectors", sp.Size)
 
+		if err := waitForPartitionDevice(ctx, srcNode); err != nil {
+			return fmt.Errorf("source partition %s not ready: %w", srcNode, err)
+		}
+		if err := waitForPartitionDevice(ctx, tgtNode); err != nil {
+			return fmt.Errorf("target partition %s not ready: %w", tgtNode, err)
+		}
 		if err := ddPartition(ctx, srcNode, tgtNode); err != nil {
 			return fmt.Errorf("copying partition %d (%s -> %s): %w", partNum, srcNode, tgtNode, err)
 		}
@@ -315,6 +322,72 @@ func ddPartition(ctx context.Context, src, dst string) error {
 	return nil
 }
 
+func settlePartitionTable(ctx context.Context, disk string) error {
+	if out, err := runCmd(ctx, "sync"); err != nil {
+		slog.Warn("sync before partition settle failed", "disk", disk, "error", err, "output", string(out))
+	}
+
+	out, err := runCmd(ctx, "partprobe", disk)
+	if err != nil {
+		slog.Warn("partprobe failed, trying blockdev --rereadpt", "disk", disk, "error", err, "output", string(out))
+		out, err = runCmd(ctx, "blockdev", "--rereadpt", disk)
+		if err != nil {
+			return fmt.Errorf("re-read partition table %s: %s: %w", disk, string(out), err)
+		}
+	}
+
+	if out, err := runCmd(ctx, "mdev", "-s"); err != nil {
+		slog.Warn("mdev -s failed after partition settle", "disk", disk, "error", err, "output", string(out))
+	}
+	return nil
+}
+
+const (
+	partitionDeviceWaitInterval = 500 * time.Millisecond
+	partitionDeviceWaitAttempts = 20
+)
+
+func waitForPartitionDevice(ctx context.Context, device string) error {
+	ticker := time.NewTicker(partitionDeviceWaitInterval)
+	defer ticker.Stop()
+
+	for i := range partitionDeviceWaitAttempts {
+		if err := statPartitionDevice(device); err == nil {
+			return nil
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		if out, err := runCmd(ctx, "mdev", "-s"); err != nil {
+			slog.Debug("mdev -s failed while waiting for partition device", "device", device, "error", err, "output", string(out))
+		}
+		if err := statPartitionDevice(device); err == nil {
+			return nil
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		slog.Debug("waiting for partition device", "device", device, "iteration", i)
+		if i == partitionDeviceWaitAttempts-1 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("wait canceled: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
+	return fmt.Errorf("device node did not appear after %s", partitionDeviceWaitInterval*partitionDeviceWaitAttempts)
+}
+
+func statPartitionDevice(device string) error {
+	if _, err := statPath(device); err != nil {
+		if os.IsNotExist(err) {
+			return err
+		}
+		return fmt.Errorf("stat partition device %s: %w", device, err)
+	}
+	return nil
+}
+
 // targetPartitionNode derives the partition device node for a given disk and
 // partition number using the same device naming rules as the disk package.
 func targetPartitionNode(disk string, partNum int) string {
@@ -322,6 +395,7 @@ func targetPartitionNode(disk string, partNum int) string {
 }
 
 var runCmd = runCommand
+var statPath = os.Stat
 
 // runCommand executes a command and returns its combined output.
 func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {

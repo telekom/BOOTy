@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -41,6 +42,18 @@ func TestTargetPartitionNode(t *testing.T) {
 				t.Errorf("targetPartitionNode(%q, %d) = %q, want %q", tt.disk, tt.partNum, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTargetPartitionNodeForSourceUsesParsedPartitionNumber(t *testing.T) {
+	source := sfdiskPartition{Node: "/dev/loop0p7", Number: 7}
+	if got, partNum := targetPartitionNodeForSource("/dev/sda", source, 1); got != "/dev/sda7" || partNum != 7 {
+		t.Fatalf("targetPartitionNodeForSource sparse source = (%q, %d), want (/dev/sda7, 7)", got, partNum)
+	}
+
+	source.Number = 0
+	if got, partNum := targetPartitionNodeForSource("/dev/nvme0n1", source, 2); got != "/dev/nvme0n1p2" || partNum != 2 {
+		t.Fatalf("targetPartitionNodeForSource fallback = (%q, %d), want (/dev/nvme0n1p2, 2)", got, partNum)
 	}
 }
 
@@ -187,6 +200,119 @@ func TestTargetPartitionNodeForSourceUsesParsedSourceNumber(t *testing.T) {
 	}
 }
 
+func TestSettlePartitionTableFallsBackAndRunsMdev(t *testing.T) {
+	previous := runCmd
+	var calls []string
+	runCmd = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		calls = append(calls, commandString(name, args...))
+		switch commandString(name, args...) {
+		case "sync":
+			return nil, nil
+		case "partprobe /dev/sda":
+			return []byte("busy"), errors.New("busy")
+		case "blockdev --rereadpt /dev/sda":
+			return nil, nil
+		case "mdev -s":
+			return nil, nil
+		default:
+			t.Fatalf("unexpected command %s %v", name, args)
+			return nil, nil
+		}
+	}
+	t.Cleanup(func() { runCmd = previous })
+
+	if err := settlePartitionTable(context.Background(), "/dev/sda"); err != nil {
+		t.Fatalf("settlePartitionTable: %v", err)
+	}
+	assertCommands(t, calls, []string{
+		"sync",
+		"partprobe /dev/sda",
+		"blockdev --rereadpt /dev/sda",
+		"mdev -s",
+	})
+}
+
+func TestWaitForPartitionDeviceRunsMdevUntilNodeAppears(t *testing.T) {
+	previous := runCmd
+	device := t.TempDir() + "/sda1"
+	var mdevCalls int
+	runCmd = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if commandString(name, args...) != "mdev -s" {
+			t.Fatalf("unexpected command %s %v", name, args)
+		}
+		mdevCalls++
+		if err := os.WriteFile(device, []byte("node"), 0o600); err != nil {
+			t.Fatalf("write device fixture: %v", err)
+		}
+		return nil, nil
+	}
+	t.Cleanup(func() { runCmd = previous })
+
+	if err := waitForPartitionDevice(context.Background(), device); err != nil {
+		t.Fatalf("waitForPartitionDevice: %v", err)
+	}
+	if mdevCalls != 1 {
+		t.Fatalf("mdev calls = %d, want 1", mdevCalls)
+	}
+}
+
+func TestWaitForPartitionDeviceStopsOnCanceledContext(t *testing.T) {
+	previousRun := runCmd
+	previousStat := statPath
+	runCmd = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if commandString(name, args...) != "mdev -s" {
+			t.Fatalf("unexpected command %s %v", name, args)
+		}
+		return nil, nil
+	}
+	statPath = func(string) (os.FileInfo, error) {
+		return nil, os.ErrNotExist
+	}
+	t.Cleanup(func() {
+		runCmd = previousRun
+		statPath = previousStat
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := waitForPartitionDevice(ctx, "/dev/missing1")
+	if err == nil {
+		t.Fatal("expected canceled context error")
+	}
+	if !strings.Contains(err.Error(), "wait canceled") {
+		t.Fatalf("error = %q, want wait canceled", err.Error())
+	}
+}
+
+func TestWaitForPartitionDeviceReturnsNonMissingStatError(t *testing.T) {
+	previousRun := runCmd
+	previousStat := statPath
+	var mdevCalls int
+	runCmd = func(context.Context, string, ...string) ([]byte, error) {
+		mdevCalls++
+		return nil, nil
+	}
+	statPath = func(string) (os.FileInfo, error) {
+		return nil, os.ErrPermission
+	}
+	t.Cleanup(func() {
+		runCmd = previousRun
+		statPath = previousStat
+	})
+
+	err := waitForPartitionDevice(context.Background(), "/dev/sda1")
+	if err == nil {
+		t.Fatal("expected stat error")
+	}
+	if !strings.Contains(err.Error(), "stat partition device /dev/sda1") ||
+		!strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("error = %q, want stat permission context", err.Error())
+	}
+	if mdevCalls != 0 {
+		t.Fatalf("mdev calls = %d, want 0", mdevCalls)
+	}
+}
+
 func TestSelectSourcePartitionsForAB(t *testing.T) {
 	parts := []sfdiskPartition{
 		{Node: "/dev/loop0p1", Type: efiSystemPartitionGUID, Size: 1024, Number: 1},
@@ -309,5 +435,22 @@ func TestSelectSourceRootPartitionRejectsImplicitMicrosoftBasicData(t *testing.T
 	}
 	if !strings.Contains(err.Error(), "no Linux root partition candidate") {
 		t.Fatalf("error = %q, want Linux root candidate rejection", err.Error())
+	}
+}
+
+func commandString(name string, args ...string) string {
+	parts := append([]string{name}, args...)
+	return strings.Join(parts, " ")
+}
+
+func assertCommands(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("commands = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("commands = %v, want %v", got, want)
+		}
 	}
 }
