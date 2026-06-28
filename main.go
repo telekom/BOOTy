@@ -85,6 +85,7 @@ func main() {
 	if err := setupMountsAndDevices(); err != nil {
 		slog.Error("early mount/device setup failed", "error", err)
 		realm.Reboot()
+		return
 	}
 	loadModules()
 

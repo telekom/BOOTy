@@ -4,7 +4,6 @@ package realm
 
 import (
 	"fmt"
-	"log/slog"
 	"syscall"
 )
 
@@ -58,7 +57,6 @@ func (d *Devices) CreateDevice() error {
 		if d.Device[x].CreateDevice {
 			err := syscall.Mknod(d.Device[x].Path, d.Device[x].Mode, makedev(d.Device[x].Major, d.Device[x].Minor))
 			if err != nil {
-				slog.Error("device error", "name", d.Device[x].Name, "path", d.Device[x].Path, "error", err)
 				return fmt.Errorf("create device %q at %s: %w", d.Device[x].Name, d.Device[x].Path, err)
 			}
 		}
