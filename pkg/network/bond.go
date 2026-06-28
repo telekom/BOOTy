@@ -14,6 +14,15 @@ import (
 	"github.com/vishvananda/netlink"
 )
 
+var (
+	bondLinkAdd          = netlink.LinkAdd
+	bondLinkByName       = netlink.LinkByName
+	bondLinkSetDown      = netlink.LinkSetDown
+	bondLinkSetBondSlave = netlink.LinkSetBondSlave
+	bondLinkSetUp        = netlink.LinkSetUp
+	bondLinkDel          = netlink.LinkDel
+)
+
 // BondMode implements the Mode interface by creating an LACP bond from
 // multiple physical NICs. After Setup the bond interface is available
 // as "bond0" for other modes (static/DHCP) to use.
@@ -49,14 +58,22 @@ func (b *BondMode) Setup(_ context.Context, cfg *Config) error {
 	bond.Miimon = 100 // 100 ms link monitoring interval for failure detection
 	bond.LacpRate = netlink.BOND_LACP_RATE_FAST
 	bond.XmitHashPolicy = netlink.BOND_XMIT_HASH_POLICY_LAYER3_4
+	bondLink := netlink.Link(bond)
 
-	if err := netlink.LinkAdd(bond); err != nil {
+	if err := bondLinkAdd(bond); err != nil {
 		if !errors.Is(err, syscall.EEXIST) {
 			return fmt.Errorf("creating bond0: %w", err)
 		}
+		existing, lookupErr := bondLinkByName("bond0")
+		if lookupErr != nil {
+			return fmt.Errorf("looking up existing bond0: %w", lookupErr)
+		}
+		bondLink = existing
+		b.bond = existing
 		slog.Info("bond interface already exists, reusing", "name", "bond0")
 	} else {
 		slog.Info("created bond interface", "name", "bond0", "mode", bond.Mode)
+		b.bond = bond
 	}
 
 	// Add slave interfaces.
@@ -66,16 +83,16 @@ func (b *BondMode) Setup(_ context.Context, cfg *Config) error {
 		if ifName == "" {
 			continue
 		}
-		link, err := netlink.LinkByName(ifName)
+		link, err := bondLinkByName(ifName)
 		if err != nil {
 			slog.Warn("slave interface not found", "name", ifName, "error", err)
 			continue
 		}
 		// Interface must be down to be enslaved.
-		if err := netlink.LinkSetDown(link); err != nil {
+		if err := bondLinkSetDown(link); err != nil {
 			slog.Warn("failed to bring down slave", "name", ifName, "error", err)
 		}
-		if err := netlink.LinkSetBondSlave(link, &netlink.Bond{LinkAttrs: *bond.Attrs()}); err != nil {
+		if err := bondLinkSetBondSlave(link, &netlink.Bond{LinkAttrs: *bondLink.Attrs()}); err != nil {
 			slog.Warn("failed to enslave interface", "name", ifName, "error", err)
 			continue
 		}
@@ -88,11 +105,11 @@ func (b *BondMode) Setup(_ context.Context, cfg *Config) error {
 	}
 
 	// Bring the bond up.
-	if err := netlink.LinkSetUp(bond); err != nil {
+	if err := bondLinkSetUp(bondLink); err != nil {
 		return fmt.Errorf("bringing up bond0: %w", err)
 	}
 
-	b.bond = bond
+	b.bond = bondLink
 	return nil
 }
 
@@ -104,7 +121,7 @@ func (b *BondMode) WaitForConnectivity(ctx context.Context, target string, timeo
 // Teardown removes the bond interface.
 func (b *BondMode) Teardown(_ context.Context) error {
 	if b.bond != nil {
-		if err := netlink.LinkDel(b.bond); err != nil {
+		if err := bondLinkDel(b.bond); err != nil {
 			slog.Warn("failed to remove bond", "error", err)
 		}
 	}
