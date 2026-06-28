@@ -54,7 +54,10 @@ var (
 	}
 )
 
-const varsPath = "/deploy/vars"
+const (
+	varsPath          = "/deploy/vars"
+	installedRootPath = "/newroot"
+)
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
@@ -766,7 +769,7 @@ func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) bool {
 		return false
 	}
 
-	const grubPath = "/newroot/boot/grub/grub.cfg"
+	const grubPath = installedRootPath + "/boot/grub/grub.cfg"
 	f, err := os.Open(grubPath)
 	if err != nil {
 		slog.Warn("cannot open grub.cfg, skipping kexec", "error", err)
@@ -785,8 +788,8 @@ func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) bool {
 		return false
 	}
 
-	kernel := "/newroot" + entry.Kernel
-	initrd := "/newroot" + entry.Initramfs
+	kernel := resolveKexecPath(installedRootPath, entry.Kernel)
+	initrd := resolveKexecPath(installedRootPath, entry.Initramfs)
 	slog.Info("attempting kexec", "kernel", kernel, "initrd", initrd)
 
 	if err := kexec.Load(kernel, initrd, entry.KernelArgs); err != nil {
@@ -798,6 +801,40 @@ func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) bool {
 		return false
 	}
 	return true
+}
+
+func resolveKexecPath(root, grubPath string) string {
+	path := strings.TrimSpace(grubPath)
+	if path == "" {
+		return ""
+	}
+	candidates := []string{pathInRoot(root, path)}
+	if isRootRelativeBootArtifact(path) {
+		candidates = append(candidates, pathInRoot(filepath.Join(root, "boot"), path))
+	}
+	for _, candidate := range candidates {
+		info, err := os.Stat(candidate)
+		if err == nil && info.Mode().IsRegular() {
+			return candidate
+		}
+	}
+	return candidates[0]
+}
+
+func pathInRoot(root, path string) string {
+	cleaned := filepath.Clean("/" + strings.TrimSpace(path))
+	return filepath.Join(root, strings.TrimPrefix(cleaned, "/"))
+}
+
+func isRootRelativeBootArtifact(path string) bool {
+	trimmed := strings.TrimPrefix(path, "/")
+	if strings.HasPrefix(trimmed, "boot/") {
+		return false
+	}
+	name := filepath.Base(trimmed)
+	return strings.HasPrefix(name, "vmlinuz") ||
+		strings.HasPrefix(name, "initrd") ||
+		strings.HasPrefix(name, "initramfs")
 }
 
 func requiresABKexec(cfg *config.MachineConfig) bool {
