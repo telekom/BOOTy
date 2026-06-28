@@ -365,18 +365,24 @@ func TestValidateImageSourceConfiguredRejectsBlankImage(t *testing.T) {
 }
 
 func TestValidateImageSourceConfiguredAllowsImage(t *testing.T) {
+	srv := newTestImageServer(t, []byte("raw payload"))
+	defer srv.Close()
+	pinnedOCI := "oci://registry.example.invalid/tcaas/node@sha256:" + strings.Repeat("a", 64)
+
 	tests := []struct {
 		name     string
 		source   string
 		checksum string
+		bestURL  string
 	}{
 		{
-			name:   "https",
-			source: "https://images.example.invalid/node.raw",
+			name:    "https",
+			source:  "https://images.example.invalid/node.raw",
+			bestURL: pinnedOCI,
 		},
 		{
 			name:   "http",
-			source: "http://images.example.invalid/node.raw",
+			source: srv.URL + "/node.raw",
 		},
 		{
 			name:     "oci tag with checksum",
@@ -404,6 +410,7 @@ func TestValidateImageSourceConfiguredAllowsImage(t *testing.T) {
 			cfg.Provision.Image.URLs = []string{tt.source}
 			cfg.Provision.Image.Checksum = tt.checksum
 			o := newTestOrchestrator(t, cfg, &mockProvider{})
+			o.bestImageURL = tt.bestURL
 
 			if err := o.validateProvisionInputs(context.Background()); err != nil {
 				t.Fatalf("validateProvisionInputs: %v", err)
