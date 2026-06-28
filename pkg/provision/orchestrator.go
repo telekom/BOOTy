@@ -1313,6 +1313,8 @@ func (o *Orchestrator) verifyImageSignature(ctx context.Context) error {
 	o.bestImageURL = bestURL
 
 	if image.IsOCIReference(bestURL) {
+		// Probe OCI sources even without GPG verification so bad registry
+		// references fail before destructive storage steps begin.
 		ref := image.TrimOCIScheme(bestURL)
 		if err := image.ProbeOCIReference(ctx, ref); err != nil {
 			return fmt.Errorf("probing OCI image source: %w", err)
