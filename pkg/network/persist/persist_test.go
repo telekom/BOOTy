@@ -61,6 +61,9 @@ func TestNetworkConfig_Validate(t *testing.T) {
 		{"static addr", NetworkConfig{
 			Interfaces: []InterfaceConfig{{Name: "eth0", Address: "10.0.0.1/24"}},
 		}, false},
+		{"static ipv6 addr", NetworkConfig{
+			Interfaces: []InterfaceConfig{{Name: "eth0", Address: "fd00::5/64", Gateway: "fd00::1"}},
+		}, false},
 		{"no name", NetworkConfig{
 			Interfaces: []InterfaceConfig{{DHCP: true}},
 		}, true},
@@ -122,6 +125,19 @@ func TestNetworkConfig_Validate(t *testing.T) {
 			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
 			Routes:     []RouteConfig{{Destination: "10.0.0.0/8", Gateway: "10.0.0.1"}},
 		}, false},
+		{"valid ipv6 route and dns", NetworkConfig{
+			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
+			DNS:        DNSConfig{Servers: []string{"2001:4860:4860::8888"}},
+			Routes:     []RouteConfig{{Destination: "default", Gateway: "fd00::1"}},
+		}, false},
+		{"ipv6 route with ipv4 gateway", NetworkConfig{
+			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
+			Routes:     []RouteConfig{{Destination: "2001:db8::/64", Gateway: "10.0.0.1"}},
+		}, true},
+		{"ipv4 route with ipv6 gateway", NetworkConfig{
+			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
+			Routes:     []RouteConfig{{Destination: "10.0.0.0/8", Gateway: "fd00::1"}},
+		}, true},
 		{"invalid route destination", NetworkConfig{
 			Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
 			Routes:     []RouteConfig{{Destination: "10.0.0.0", Gateway: "10.0.0.1"}},
@@ -472,6 +488,29 @@ func TestRenderNetplan_GatewayAndRoutesShareRoutesBlock(t *testing.T) {
 	}
 }
 
+func TestRenderNetplan_IPv6DefaultRoutes(t *testing.T) {
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{
+			{Name: "eth0", Address: "fd00::5/64", Gateway: "fd00::1"},
+		},
+		DNS: DNSConfig{Servers: []string{"2001:4860:4860::8888"}},
+		Routes: []RouteConfig{
+			{Destination: "default", Gateway: "fd00::fe", Metric: 50},
+		},
+	}
+	result := RenderNetplan(cfg)
+	for _, want := range []string{
+		"addresses: [fd00::5/64]",
+		"addresses: [2001:4860:4860::8888]",
+		"- to: ::/0\n          via: fd00::1",
+		"- to: ::/0\n          via: fd00::fe\n          metric: 50",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("missing %q in netplan IPv6 output:\n%s", want, result)
+		}
+	}
+}
+
 func TestRenderNetplan_BondAllFields(t *testing.T) {
 	cfg := &NetworkConfig{
 		Bonds: []BondConfig{
@@ -659,6 +698,38 @@ func TestWriteNetworkd_MTUAndDNS(t *testing.T) {
 	}
 }
 
+func TestWriteNetworkd_IPv6(t *testing.T) {
+	root := t.TempDir()
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{
+			{Name: "eth0", Address: "fd00::10/64", Gateway: "fd00::1"},
+		},
+		DNS: DNSConfig{Servers: []string{"2001:4860:4860::8888"}},
+		Routes: []RouteConfig{
+			{Destination: "default", Gateway: "fd00::1", Metric: 20},
+		},
+	}
+	if err := Write(root, Flatcar, cfg); err != nil {
+		t.Fatalf("Write() error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "etc/systemd/network/10-booty-eth0.network"))
+	if err != nil {
+		t.Fatalf("ReadFile() error: %v", err)
+	}
+	content := string(data)
+	for _, want := range []string{
+		"Address=fd00::10/64",
+		"Gateway=fd00::1",
+		"DNS=2001:4860:4860::8888",
+		"Destination=::/0",
+		"Metric=20",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("missing %q in networkd IPv6 output:\n%s", want, content)
+		}
+	}
+}
+
 func TestWriteNMKeyfiles_DNSAndRoutes(t *testing.T) {
 	root := t.TempDir()
 	cfg := &NetworkConfig{
@@ -690,6 +761,43 @@ func TestWriteNMKeyfiles_DNSAndRoutes(t *testing.T) {
 	}
 	if !strings.Contains(content, "route1=172.16.0.0/12,10.0.0.1") {
 		t.Error("missing route")
+	}
+}
+
+func TestWriteNMKeyfiles_IPv6(t *testing.T) {
+	root := t.TempDir()
+	cfg := &NetworkConfig{
+		Interfaces: []InterfaceConfig{
+			{Name: "enp1s0", Address: "fd00::10/64", Gateway: "fd00::1"},
+		},
+		DNS: DNSConfig{
+			Servers: []string{"2001:4860:4860::8888"},
+			Search:  []string{"example.com"},
+		},
+		Routes: []RouteConfig{
+			{Destination: "default", Gateway: "fd00::1", Metric: 20},
+		},
+	}
+	if err := Write(root, RHEL, cfg); err != nil {
+		t.Fatalf("Write() error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "etc/NetworkManager/system-connections/booty-enp1s0.nmconnection"))
+	if err != nil {
+		t.Fatalf("ReadFile() error: %v", err)
+	}
+	content := string(data)
+	for _, want := range []string{
+		"[ipv4]\nmethod=disabled",
+		"[ipv6]\nmethod=manual",
+		"address1=fd00::10/64",
+		"gateway=fd00::1",
+		"dns=2001:4860:4860::8888",
+		"dns-search=example.com",
+		"route1=::/0,fd00::1,20",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("missing %q in NetworkManager IPv6 output:\n%s", want, content)
+		}
 	}
 }
 
@@ -738,6 +846,114 @@ func TestWriteNMKeyfiles_MultiInterfaceDNSOnce(t *testing.T) {
 	}
 }
 
+func TestWriteNetworkd_BondAndVLAN(t *testing.T) {
+	root := t.TempDir()
+	cfg := &NetworkConfig{
+		Bonds: []BondConfig{{
+			Name:       "bond0",
+			Members:    []string{"eth0", "eth1"},
+			Mode:       "802.3ad",
+			Address:    "10.0.0.5/24",
+			Gateway:    "10.0.0.1",
+			MTU:        9000,
+			LACPRate:   "fast",
+			HashPolicy: "layer3+4",
+		}},
+		VLANs: []VLANConfig{{
+			Parent:  "bond0",
+			ID:      100,
+			Address: "10.100.0.5/24",
+		}},
+		DNS:    DNSConfig{Servers: []string{"8.8.8.8"}},
+		Routes: []RouteConfig{{Destination: "172.16.0.0/12", Gateway: "10.0.0.1"}},
+	}
+	if err := Write(root, Flatcar, cfg); err != nil {
+		t.Fatalf("Write() error: %v", err)
+	}
+	dir := filepath.Join(root, "etc/systemd/network")
+	assertFileContains(t, filepath.Join(dir, "10-booty-bond0.netdev"), []string{
+		"Name=bond0",
+		"Kind=bond",
+		"Mode=802.3ad",
+		"LACPTransmitRate=fast",
+		"TransmitHashPolicy=layer3+4",
+	})
+	assertFileContains(t, filepath.Join(dir, "10-booty-bond-bond0-eth0.network"), []string{
+		"Name=eth0",
+		"Bond=bond0",
+	})
+	assertFileContains(t, filepath.Join(dir, "10-booty-bond0.network"), []string{
+		"Name=bond0",
+		"Address=10.0.0.5/24",
+		"Gateway=10.0.0.1",
+		"VLAN=bond0.100",
+		"MTUBytes=9000",
+		"DNS=8.8.8.8",
+		"Destination=172.16.0.0/12",
+	})
+	assertFileContains(t, filepath.Join(dir, "10-booty-bond0.100.netdev"), []string{
+		"Name=bond0.100",
+		"Kind=vlan",
+		"Id=100",
+	})
+	assertFileContains(t, filepath.Join(dir, "10-booty-bond0.100.network"), []string{
+		"Name=bond0.100",
+		"Address=10.100.0.5/24",
+	})
+}
+
+func TestWriteNMKeyfiles_BondAndVLAN(t *testing.T) {
+	root := t.TempDir()
+	cfg := &NetworkConfig{
+		Bonds: []BondConfig{{
+			Name:       "bond0",
+			Members:    []string{"eth0", "eth1"},
+			Mode:       "802.3ad",
+			Address:    "10.0.0.5/24",
+			Gateway:    "10.0.0.1",
+			MTU:        9000,
+			LACPRate:   "fast",
+			HashPolicy: "layer3+4",
+		}},
+		VLANs: []VLANConfig{{
+			Parent:  "bond0",
+			ID:      100,
+			Address: "10.100.0.5/24",
+		}},
+		DNS:    DNSConfig{Servers: []string{"8.8.8.8"}},
+		Routes: []RouteConfig{{Destination: "172.16.0.0/12", Gateway: "10.0.0.1"}},
+	}
+	if err := Write(root, RHEL, cfg); err != nil {
+		t.Fatalf("Write() error: %v", err)
+	}
+	dir := filepath.Join(root, "etc/NetworkManager/system-connections")
+	assertFileContains(t, filepath.Join(dir, "booty-bond0.nmconnection"), []string{
+		"type=bond",
+		"interface-name=bond0",
+		"mode=802.3ad",
+		"lacp_rate=fast",
+		"xmit_hash_policy=layer3+4",
+		"mtu=9000",
+		"address1=10.0.0.5/24",
+		"gateway=10.0.0.1",
+		"dns=8.8.8.8",
+		"route1=172.16.0.0/12,10.0.0.1",
+	})
+	assertFileContains(t, filepath.Join(dir, "booty-bond0-eth0.nmconnection"), []string{
+		"type=ethernet",
+		"interface-name=eth0",
+		"master=bond0",
+		"slave-type=bond",
+	})
+	assertFileContains(t, filepath.Join(dir, "booty-bond0.100.nmconnection"), []string{
+		"type=vlan",
+		"interface-name=bond0.100",
+		"parent=bond0",
+		"id=100",
+		"address1=10.100.0.5/24",
+	})
+}
+
 func TestWrite_InvalidRootDir(t *testing.T) {
 	cfg := &NetworkConfig{
 		Interfaces: []InterfaceConfig{{Name: "eth0", DHCP: true}},
@@ -747,5 +963,19 @@ func TestWrite_InvalidRootDir(t *testing.T) {
 	}
 	if err := Write("relative/path", Ubuntu, cfg); err == nil {
 		t.Error("expected error for relative rootDir")
+	}
+}
+
+func assertFileContains(t *testing.T, path string, wants []string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error: %v", path, err)
+	}
+	content := string(data)
+	for _, want := range wants {
+		if !strings.Contains(content, want) {
+			t.Errorf("%s missing %q:\n%s", path, want, content)
+		}
 	}
 }

@@ -214,6 +214,9 @@ func (c *NetworkConfig) validateRoutes() error {
 		if err := validateIP(route.Gateway); err != nil {
 			return fmt.Errorf("route %d: invalid gateway: %w", i, err)
 		}
+		if route.Destination != "default" && cidrIsIPv6(route.Destination) != ipIsIPv6(route.Gateway) {
+			return fmt.Errorf("route %d: destination and gateway IP families differ", i)
+		}
 		if route.Metric < 0 {
 			return fmt.Errorf("route %d: metric must be >= 0", i)
 		}
@@ -304,25 +307,29 @@ func validateDNSConfig(cfg *DNSConfig) error {
 }
 
 func validateCIDR(v string) error {
-	prefix, err := netip.ParsePrefix(v)
+	_, err := netip.ParsePrefix(v)
 	if err != nil {
-		return fmt.Errorf("invalid cidr %q", v)
-	}
-	if prefix.Addr().Is6() {
-		return fmt.Errorf("ipv6 cidr %q not supported (renderers are ipv4-only)", v)
+		return fmt.Errorf("invalid cidr %q: %w", v, err)
 	}
 	return nil
 }
 
 func validateIP(v string) error {
-	addr, err := netip.ParseAddr(v)
+	_, err := netip.ParseAddr(v)
 	if err != nil {
-		return fmt.Errorf("invalid ip %q", v)
-	}
-	if addr.Is6() {
-		return fmt.Errorf("ipv6 address %q not supported (renderers are ipv4-only)", v)
+		return fmt.Errorf("invalid ip %q: %w", v, err)
 	}
 	return nil
+}
+
+func cidrIsIPv6(v string) bool {
+	prefix, err := netip.ParsePrefix(v)
+	return err == nil && prefix.Addr().Is6()
+}
+
+func ipIsIPv6(v string) bool {
+	addr, err := netip.ParseAddr(v)
+	return err == nil && addr.Is6()
 }
 
 // RenderNetplan renders the configuration as netplan YAML.
@@ -450,18 +457,36 @@ func renderNetplanIfaceRoutes(b *strings.Builder, gateway string, routes []Route
 	}
 	b.WriteString("      routes:\n")
 	if gateway != "" {
-		fmt.Fprintf(b, "        - to: default\n          via: %s\n", gateway)
+		fmt.Fprintf(b, "        - to: %s\n          via: %s\n", netplanDefaultRoute(gateway), gateway)
 	}
 	for _, r := range routes {
-		fmt.Fprintf(b, "        - to: %s\n          via: %s\n", r.Destination, r.Gateway)
+		fmt.Fprintf(b, "        - to: %s\n          via: %s\n", netplanRouteDestination(r), r.Gateway)
 		if r.Metric > 0 {
 			fmt.Fprintf(b, "          metric: %d\n", r.Metric)
 		}
 	}
 }
 
+func netplanDefaultRoute(gateway string) string {
+	if ipIsIPv6(gateway) {
+		return "::/0"
+	}
+	return "default"
+}
+
+func netplanRouteDestination(r RouteConfig) string {
+	if r.Destination == "default" {
+		return netplanDefaultRoute(r.Gateway)
+	}
+	return r.Destination
+}
+
 // RenderNetworkdUnit renders a systemd-networkd .network unit for an interface.
 func RenderNetworkdUnit(iface *InterfaceConfig) string {
+	return renderNetworkdUnit(iface, nil)
+}
+
+func renderNetworkdUnit(iface *InterfaceConfig, vlans []string) string {
 	var b strings.Builder
 	b.WriteString("[Match]\n")
 	if iface.MAC != "" {
@@ -477,6 +502,9 @@ func RenderNetworkdUnit(iface *InterfaceConfig) string {
 		if iface.Gateway != "" {
 			fmt.Fprintf(&b, "Gateway=%s\n", iface.Gateway)
 		}
+	}
+	for _, vlan := range vlans {
+		fmt.Fprintf(&b, "VLAN=%s\n", vlan)
 	}
 	if iface.MTU > 0 {
 		b.WriteString("\n[Link]\n")
@@ -532,20 +560,166 @@ func writeNetplan(dir string, cfg *NetworkConfig) error {
 }
 
 func writeNetworkd(dir string, cfg *NetworkConfig) error {
-	if len(cfg.Bonds) > 0 || len(cfg.VLANs) > 0 {
-		return fmt.Errorf("networkd renderer does not yet support bonds or vlans")
+	primaryAttached := false
+	parentVLANs := parentVLANMap(cfg.VLANs)
+	handledParents := make(map[string]struct{})
+	if err := writeNetworkdInterfaces(dir, cfg, parentVLANs, handledParents, &primaryAttached); err != nil {
+		return err
 	}
+	if err := writeNetworkdBonds(dir, cfg, parentVLANs, handledParents, &primaryAttached); err != nil {
+		return err
+	}
+	if err := writeNetworkdParentLinks(dir, parentVLANs, handledParents); err != nil {
+		return err
+	}
+	return writeNetworkdVLANs(dir, cfg, &primaryAttached)
+}
+
+func writeNetworkdInterfaces(
+	dir string,
+	cfg *NetworkConfig,
+	parentVLANs map[string][]string,
+	handledParents map[string]struct{},
+	primaryAttached *bool,
+) error {
 	for i := range cfg.Interfaces {
-		content := RenderNetworkdUnit(&cfg.Interfaces[i])
-		if i == 0 && (len(cfg.DNS.Servers) > 0 || len(cfg.DNS.Search) > 0 || len(cfg.Routes) > 0) {
-			content = appendNetworkdDNSRoutes(content, &cfg.DNS, cfg.Routes)
+		iface := &cfg.Interfaces[i]
+		content := renderNetworkdUnit(iface, parentVLANs[iface.Name])
+		content = attachNetworkdPrimary(content, &cfg.DNS, cfg.Routes, primaryAttached, true)
+		if err := writeNetworkdFile(dir, iface.Name, "network", content); err != nil {
+			return fmt.Errorf("write networkd unit for %s: %w", iface.Name, err)
 		}
-		filename := fmt.Sprintf("10-booty-%s.network", filepath.Base(cfg.Interfaces[i].Name))
-		if err := writeFileAtomic(dir, filename, []byte(content), 0o644); err != nil {
-			return fmt.Errorf("write networkd unit for %s: %w", cfg.Interfaces[i].Name, err)
+		handledParents[iface.Name] = struct{}{}
+	}
+	return nil
+}
+
+func writeNetworkdBonds(
+	dir string,
+	cfg *NetworkConfig,
+	parentVLANs map[string][]string,
+	handledParents map[string]struct{},
+	primaryAttached *bool,
+) error {
+	for i := range cfg.Bonds {
+		bond := &cfg.Bonds[i]
+		if err := writeNetworkdBond(dir, bond, parentVLANs[bond.Name], &cfg.DNS, cfg.Routes, primaryAttached); err != nil {
+			return err
+		}
+		handledParents[bond.Name] = struct{}{}
+	}
+	return nil
+}
+
+func writeNetworkdBond(
+	dir string,
+	bond *BondConfig,
+	vlans []string,
+	dns *DNSConfig,
+	routes []RouteConfig,
+	primaryAttached *bool,
+) error {
+	if err := writeNetworkdFile(dir, bond.Name, "netdev", renderNetworkdBondNetdev(bond)); err != nil {
+		return fmt.Errorf("write networkd bond netdev for %s: %w", bond.Name, err)
+	}
+	for _, member := range bond.Members {
+		content := renderNetworkdBondMemberUnit(member, bond.Name)
+		if err := writeNetworkdFile(dir, "bond-"+bond.Name+"-"+member, "network", content); err != nil {
+			return fmt.Errorf("write networkd bond member unit for %s: %w", member, err)
+		}
+	}
+	content := renderNetworkdBondNetwork(bond, vlans)
+	content = attachNetworkdPrimary(content, dns, routes, primaryAttached, bond.Address != "")
+	if err := writeNetworkdFile(dir, bond.Name, "network", content); err != nil {
+		return fmt.Errorf("write networkd bond unit for %s: %w", bond.Name, err)
+	}
+	return nil
+}
+
+func writeNetworkdParentLinks(dir string, parentVLANs map[string][]string, handledParents map[string]struct{}) error {
+	for parent, vlans := range parentVLANs {
+		if _, ok := handledParents[parent]; ok {
+			continue
+		}
+		iface := &InterfaceConfig{Name: parent}
+		content := renderNetworkdUnit(iface, vlans)
+		if err := writeNetworkdFile(dir, parent, "network", content); err != nil {
+			return fmt.Errorf("write networkd vlan parent unit for %s: %w", parent, err)
 		}
 	}
 	return nil
+}
+
+func writeNetworkdVLANs(dir string, cfg *NetworkConfig, primaryAttached *bool) error {
+	for i := range cfg.VLANs {
+		vlan := &cfg.VLANs[i]
+		name := vlanName(vlan)
+		if err := writeNetworkdFile(dir, name, "netdev", renderNetworkdVLANNetdev(vlan)); err != nil {
+			return fmt.Errorf("write networkd vlan netdev for %s: %w", name, err)
+		}
+		content := renderNetworkdVLANNetwork(vlan)
+		content = attachNetworkdPrimary(content, &cfg.DNS, cfg.Routes, primaryAttached, vlan.DHCP || vlan.Address != "")
+		if err := writeNetworkdFile(dir, name, "network", content); err != nil {
+			return fmt.Errorf("write networkd vlan unit for %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func renderNetworkdBondNetdev(bond *BondConfig) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "[NetDev]\nName=%s\nKind=bond\n\n[Bond]\nMode=%s\n", bond.Name, bond.Mode)
+	if bond.LACPRate != "" {
+		fmt.Fprintf(&b, "LACPTransmitRate=%s\n", bond.LACPRate)
+	}
+	if bond.HashPolicy != "" {
+		fmt.Fprintf(&b, "TransmitHashPolicy=%s\n", bond.HashPolicy)
+	}
+	return b.String()
+}
+
+func renderNetworkdBondMemberUnit(member, bondName string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "[Match]\nName=%s\n\n[Network]\nBond=%s\n", member, bondName)
+	return b.String()
+}
+
+func renderNetworkdBondNetwork(bond *BondConfig, vlans []string) string {
+	iface := &InterfaceConfig{Name: bond.Name, Address: bond.Address, Gateway: bond.Gateway, MTU: bond.MTU}
+	return renderNetworkdUnit(iface, vlans)
+}
+
+func renderNetworkdVLANNetdev(vlan *VLANConfig) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "[NetDev]\nName=%s\nKind=vlan\n\n[VLAN]\nId=%d\n", vlanName(vlan), vlan.ID)
+	return b.String()
+}
+
+func renderNetworkdVLANNetwork(vlan *VLANConfig) string {
+	iface := &InterfaceConfig{Name: vlanName(vlan), DHCP: vlan.DHCP, Address: vlan.Address}
+	return renderNetworkdUnit(iface, nil)
+}
+
+func writeNetworkdFile(dir, name, suffix, content string) error {
+	filename := fmt.Sprintf("10-booty-%s.%s", filepath.Base(name), suffix)
+	return writeFileAtomic(dir, filename, []byte(content), 0o644)
+}
+
+func attachNetworkdPrimary(
+	content string,
+	dns *DNSConfig,
+	routes []RouteConfig,
+	primaryAttached *bool,
+	canAttach bool,
+) string {
+	if *primaryAttached || !canAttach {
+		return content
+	}
+	*primaryAttached = true
+	if len(dns.Servers) == 0 && len(dns.Search) == 0 && len(routes) == 0 {
+		return content
+	}
+	return appendNetworkdDNSRoutes(content, dns, routes)
 }
 
 func appendNetworkdDNSRoutes(content string, dns *DNSConfig, routes []RouteConfig) string {
@@ -569,17 +743,23 @@ func appendNetworkdDNSRoutes(content string, dns *DNSConfig, routes []RouteConfi
 	b.WriteString(content)
 	for _, r := range routes {
 		b.WriteString("\n[Route]\n")
-		dst := r.Destination
-		if dst == "default" {
-			dst = "0.0.0.0/0"
-		}
-		fmt.Fprintf(&b, "Destination=%s\n", dst)
+		fmt.Fprintf(&b, "Destination=%s\n", routeDestination(r))
 		fmt.Fprintf(&b, "Gateway=%s\n", r.Gateway)
 		if r.Metric > 0 {
 			fmt.Fprintf(&b, "Metric=%d\n", r.Metric)
 		}
 	}
 	return b.String()
+}
+
+func routeDestination(r RouteConfig) string {
+	if r.Destination != "default" {
+		return r.Destination
+	}
+	if ipIsIPv6(r.Gateway) {
+		return "::/0"
+	}
+	return "0.0.0.0/0"
 }
 
 // renderNMKeyfile renders a NetworkManager keyfile for an interface.
@@ -593,58 +773,265 @@ func renderNMKeyfile(iface *InterfaceConfig, dns *DNSConfig, routes []RouteConfi
 	if iface.MAC != "" {
 		fmt.Fprintf(&b, "mac-address=%s\n", iface.MAC)
 	}
-	b.WriteString("\n[ipv4]\n")
-	if iface.DHCP {
-		b.WriteString("method=auto\n")
-	} else if iface.Address != "" {
-		b.WriteString("method=manual\n")
-		fmt.Fprintf(&b, "address1=%s\n", iface.Address)
-		if iface.Gateway != "" {
-			fmt.Fprintf(&b, "gateway=%s\n", iface.Gateway)
-		}
-	}
-	if len(dns.Servers) > 0 {
-		fmt.Fprintf(&b, "dns=%s\n", strings.Join(dns.Servers, ";"))
-	}
-	if len(dns.Search) > 0 {
-		fmt.Fprintf(&b, "dns-search=%s\n", strings.Join(dns.Search, ";"))
-	}
-	for i, r := range routes {
-		dst := r.Destination
-		if dst == "default" {
-			dst = "0.0.0.0/0"
-		}
-		fmt.Fprintf(&b, "route%d=%s,%s", i+1, dst, r.Gateway)
-		if r.Metric > 0 {
-			fmt.Fprintf(&b, ",%d", r.Metric)
-		}
-		b.WriteByte('\n')
-	}
-	b.WriteString("\n[ipv6]\nmethod=disabled\n")
+	renderNMIPv4(&b, iface, dns, routes)
+	renderNMIPv6(&b, iface, dns, routes)
 	return b.String()
 }
 
-func writeNMKeyfiles(dir string, cfg *NetworkConfig) error {
-	if len(cfg.Bonds) > 0 || len(cfg.VLANs) > 0 {
-		return fmt.Errorf("networkmanager renderer does not yet support bonds or vlans")
+func renderNMIPv4(b *strings.Builder, iface *InterfaceConfig, dns *DNSConfig, routes []RouteConfig) {
+	b.WriteString("\n[ipv4]\n")
+	staticIPv4 := iface.Address != "" && !cidrIsIPv6(iface.Address)
+	switch {
+	case iface.DHCP:
+		b.WriteString("method=auto\n")
+	case staticIPv4:
+		b.WriteString("method=manual\n")
+		fmt.Fprintf(b, "address1=%s\n", iface.Address)
+		if iface.Gateway != "" && !ipIsIPv6(iface.Gateway) {
+			fmt.Fprintf(b, "gateway=%s\n", iface.Gateway)
+		}
+	default:
+		b.WriteString("method=disabled\n")
 	}
+	if iface.DHCP || staticIPv4 {
+		renderNMDNSRoutes(b, dns, routes, false)
+	}
+}
+
+func renderNMIPv6(b *strings.Builder, iface *InterfaceConfig, dns *DNSConfig, routes []RouteConfig) {
+	b.WriteString("\n[ipv6]\n")
+	staticIPv6 := iface.Address != "" && cidrIsIPv6(iface.Address)
+	hasConfig := staticIPv6 || hasFamilyDNSRoutes(dns, routes, true)
+	switch {
+	case staticIPv6:
+		b.WriteString("method=manual\n")
+		fmt.Fprintf(b, "address1=%s\n", iface.Address)
+		if iface.Gateway != "" && ipIsIPv6(iface.Gateway) {
+			fmt.Fprintf(b, "gateway=%s\n", iface.Gateway)
+		}
+	case hasConfig:
+		b.WriteString("method=auto\n")
+	default:
+		b.WriteString("method=disabled\n")
+	}
+	if hasConfig {
+		renderNMDNSRoutes(b, dns, routes, true)
+	}
+}
+
+func renderNMDNSRoutes(b *strings.Builder, dns *DNSConfig, routes []RouteConfig, ipv6 bool) {
+	servers := familyDNSServers(dns, ipv6)
+	if len(servers) > 0 {
+		fmt.Fprintf(b, "dns=%s\n", strings.Join(servers, ";"))
+	}
+	if dns != nil && len(dns.Search) > 0 {
+		fmt.Fprintf(b, "dns-search=%s\n", strings.Join(dns.Search, ";"))
+	}
+	for i, r := range familyRoutes(routes, ipv6) {
+		fmt.Fprintf(b, "route%d=%s,%s", i+1, routeDestination(r), r.Gateway)
+		if r.Metric > 0 {
+			fmt.Fprintf(b, ",%d", r.Metric)
+		}
+		b.WriteByte('\n')
+	}
+}
+
+func hasFamilyDNSRoutes(dns *DNSConfig, routes []RouteConfig, ipv6 bool) bool {
+	return len(familyDNSServers(dns, ipv6)) > 0 || len(familyRoutes(routes, ipv6)) > 0
+}
+
+func familyDNSServers(dns *DNSConfig, ipv6 bool) []string {
+	if dns == nil {
+		return nil
+	}
+	servers := make([]string, 0, len(dns.Servers))
+	for _, server := range dns.Servers {
+		if ipIsIPv6(server) == ipv6 {
+			servers = append(servers, server)
+		}
+	}
+	return servers
+}
+
+func familyRoutes(routes []RouteConfig, ipv6 bool) []RouteConfig {
+	filtered := make([]RouteConfig, 0, len(routes))
+	for _, route := range routes {
+		if routeIsIPv6(route) == ipv6 {
+			filtered = append(filtered, route)
+		}
+	}
+	return filtered
+}
+
+func routeIsIPv6(route RouteConfig) bool {
+	if route.Destination != "default" {
+		return cidrIsIPv6(route.Destination)
+	}
+	return ipIsIPv6(route.Gateway)
+}
+
+func parentVLANMap(vlans []VLANConfig) map[string][]string {
+	parents := make(map[string][]string, len(vlans))
+	for i := range vlans {
+		vlan := &vlans[i]
+		parents[vlan.Parent] = append(parents[vlan.Parent], vlanName(vlan))
+	}
+	return parents
+}
+
+func vlanName(vlan *VLANConfig) string {
+	if vlan.Name != "" {
+		return vlan.Name
+	}
+	return fmt.Sprintf("%s.%d", vlan.Parent, vlan.ID)
+}
+
+func writeNMKeyfiles(dir string, cfg *NetworkConfig) error {
+	primaryAttached := false
+	parentVLANs := parentVLANMap(cfg.VLANs)
+	handledParents := make(map[string]struct{})
+	if err := writeNMInterfaces(dir, cfg, handledParents, &primaryAttached); err != nil {
+		return err
+	}
+	if err := writeNMBonds(dir, cfg, handledParents, &primaryAttached); err != nil {
+		return err
+	}
+	if err := writeNMParentLinks(dir, parentVLANs, handledParents); err != nil {
+		return err
+	}
+	return writeNMVLANs(dir, cfg, &primaryAttached)
+}
+
+func writeNMInterfaces(
+	dir string,
+	cfg *NetworkConfig,
+	handledParents map[string]struct{},
+	primaryAttached *bool,
+) error {
 	var emptyDNS DNSConfig
 	for i := range cfg.Interfaces {
-		var dns *DNSConfig
-		var routes []RouteConfig
-		if i == 0 {
-			dns = &cfg.DNS
-			routes = cfg.Routes
-		} else {
-			dns = &emptyDNS
-		}
-		content := renderNMKeyfile(&cfg.Interfaces[i], dns, routes)
-		filename := fmt.Sprintf("booty-%s.nmconnection", filepath.Base(cfg.Interfaces[i].Name))
+		iface := &cfg.Interfaces[i]
+		dns, routes := nmPrimaryPayload(&cfg.DNS, cfg.Routes, &emptyDNS, primaryAttached, true)
+		content := renderNMKeyfile(iface, dns, routes)
+		filename := nmFilename(iface.Name)
 		if err := writeFileAtomic(dir, filename, []byte(content), 0o600); err != nil {
-			return fmt.Errorf("write nm keyfile for %s: %w", cfg.Interfaces[i].Name, err)
+			return fmt.Errorf("write nm keyfile for %s: %w", iface.Name, err)
+		}
+		handledParents[iface.Name] = struct{}{}
+	}
+	return nil
+}
+
+func writeNMBonds(dir string, cfg *NetworkConfig, handledParents map[string]struct{}, primaryAttached *bool) error {
+	var emptyDNS DNSConfig
+	for i := range cfg.Bonds {
+		bond := &cfg.Bonds[i]
+		dns, routes := nmPrimaryPayload(&cfg.DNS, cfg.Routes, &emptyDNS, primaryAttached, bond.Address != "")
+		if err := writeNMBond(dir, bond, dns, routes); err != nil {
+			return err
+		}
+		handledParents[bond.Name] = struct{}{}
+	}
+	return nil
+}
+
+func writeNMBond(dir string, bond *BondConfig, dns *DNSConfig, routes []RouteConfig) error {
+	content := renderNMBondKeyfile(bond, dns, routes)
+	if err := writeFileAtomic(dir, nmFilename(bond.Name), []byte(content), 0o600); err != nil {
+		return fmt.Errorf("write nm bond keyfile for %s: %w", bond.Name, err)
+	}
+	for _, member := range bond.Members {
+		content := renderNMBondPortKeyfile(bond.Name, member)
+		name := fmt.Sprintf("%s-%s", bond.Name, member)
+		if err := writeFileAtomic(dir, nmFilename(name), []byte(content), 0o600); err != nil {
+			return fmt.Errorf("write nm bond port keyfile for %s: %w", member, err)
 		}
 	}
 	return nil
+}
+
+func writeNMParentLinks(dir string, parentVLANs map[string][]string, handledParents map[string]struct{}) error {
+	for parent := range parentVLANs {
+		if _, ok := handledParents[parent]; ok {
+			continue
+		}
+		content := renderNMKeyfile(&InterfaceConfig{Name: parent}, &DNSConfig{}, nil)
+		if err := writeFileAtomic(dir, nmFilename(parent), []byte(content), 0o600); err != nil {
+			return fmt.Errorf("write nm vlan parent keyfile for %s: %w", parent, err)
+		}
+	}
+	return nil
+}
+
+func writeNMVLANs(dir string, cfg *NetworkConfig, primaryAttached *bool) error {
+	var emptyDNS DNSConfig
+	for i := range cfg.VLANs {
+		vlan := &cfg.VLANs[i]
+		attach := vlan.DHCP || vlan.Address != ""
+		dns, routes := nmPrimaryPayload(&cfg.DNS, cfg.Routes, &emptyDNS, primaryAttached, attach)
+		content := renderNMVLANKeyfile(vlan, dns, routes)
+		name := vlanName(vlan)
+		if err := writeFileAtomic(dir, nmFilename(name), []byte(content), 0o600); err != nil {
+			return fmt.Errorf("write nm vlan keyfile for %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func nmPrimaryPayload(
+	dns *DNSConfig,
+	routes []RouteConfig,
+	emptyDNS *DNSConfig,
+	primaryAttached *bool,
+	canAttach bool,
+) (*DNSConfig, []RouteConfig) {
+	if !canAttach || *primaryAttached {
+		return emptyDNS, nil
+	}
+	*primaryAttached = true
+	return dns, routes
+}
+
+func renderNMBondKeyfile(bond *BondConfig, dns *DNSConfig, routes []RouteConfig) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "[connection]\nid=%s\ntype=bond\ninterface-name=%s\n\n", bond.Name, bond.Name)
+	b.WriteString("[bond]\n")
+	fmt.Fprintf(&b, "mode=%s\n", bond.Mode)
+	if bond.LACPRate != "" {
+		fmt.Fprintf(&b, "lacp_rate=%s\n", bond.LACPRate)
+	}
+	if bond.HashPolicy != "" {
+		fmt.Fprintf(&b, "xmit_hash_policy=%s\n", bond.HashPolicy)
+	}
+	if bond.MTU > 0 {
+		fmt.Fprintf(&b, "\n[ethernet]\nmtu=%d\n", bond.MTU)
+	}
+	iface := &InterfaceConfig{Name: bond.Name, Address: bond.Address, Gateway: bond.Gateway}
+	renderNMIPv4(&b, iface, dns, routes)
+	renderNMIPv6(&b, iface, dns, routes)
+	return b.String()
+}
+
+func renderNMBondPortKeyfile(bondName, member string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "[connection]\nid=%s-%s\ntype=ethernet\n", bondName, member)
+	fmt.Fprintf(&b, "interface-name=%s\nmaster=%s\nslave-type=bond\n\n[ethernet]\n", member, bondName)
+	return b.String()
+}
+
+func renderNMVLANKeyfile(vlan *VLANConfig, dns *DNSConfig, routes []RouteConfig) string {
+	name := vlanName(vlan)
+	var b strings.Builder
+	fmt.Fprintf(&b, "[connection]\nid=%s\ntype=vlan\ninterface-name=%s\n\n", name, name)
+	fmt.Fprintf(&b, "[vlan]\nparent=%s\nid=%d\n", vlan.Parent, vlan.ID)
+	iface := &InterfaceConfig{Name: name, DHCP: vlan.DHCP, Address: vlan.Address}
+	renderNMIPv4(&b, iface, dns, routes)
+	renderNMIPv6(&b, iface, dns, routes)
+	return b.String()
+}
+
+func nmFilename(name string) string {
+	return fmt.Sprintf("booty-%s.nmconnection", filepath.Base(name))
 }
 
 func writeFileAtomic(dir, filename string, content []byte, perm os.FileMode) error {

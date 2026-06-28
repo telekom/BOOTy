@@ -926,8 +926,8 @@ Implemented renderer formats:
 | OS Family | Format | Config Path | Scope |
 |-----------|--------|-------------|-------|
 | Ubuntu | Netplan YAML | `/etc/netplan/` | Unit-tested renderer and explicit provisioning opt-in |
-| RHEL | NetworkManager keyfiles | `/etc/NetworkManager/system-connections/` | Unit-tested renderer and explicit provisioning opt-in; bonds and VLANs are not supported by this writer |
-| Flatcar | systemd-networkd units | `/etc/systemd/network/` | Unit-tested renderer and explicit provisioning opt-in; bonds and VLANs are not supported by this writer |
+| RHEL | NetworkManager keyfiles | `/etc/NetworkManager/system-connections/` | Unit-tested renderer and explicit provisioning opt-in, including static/DHCP interfaces, bonds, and VLANs |
+| Flatcar | systemd-networkd units | `/etc/systemd/network/` | Unit-tested renderer and explicit provisioning opt-in, including static/DHCP interfaces, bonds, and VLANs |
 
 The renderer package can write interface configs, bond settings, addresses,
 gateways, DNS, and VLAN assignments where the selected writer supports them.
