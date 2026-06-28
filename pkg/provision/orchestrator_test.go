@@ -1537,6 +1537,69 @@ func TestSetupRAIDRejectsTooFewUniqueMembersBeforeWipe(t *testing.T) {
 	}
 }
 
+func TestSetupRAIDRejectsDuplicateMembersAcrossArraysBeforeWipe(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{
+		{Name: "md0", Level: 1, Devices: []string{"/dev/sda", "/dev/sdb"}},
+		{Name: "md1", Level: 1, Devices: []string{"/dev/sdb", "/dev/sdc"}},
+	}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	err := o.setupRAID(context.Background())
+	if err == nil {
+		t.Fatal("expected duplicate raid member error")
+	}
+	if !strings.Contains(err.Error(), "configured in both") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cmd.calls) != 0 {
+		t.Fatalf("expected no destructive commands before validation, got %#v", cmd.calls)
+	}
+}
+
+func TestSetupRAIDRejectsUnsafeArrayNameBeforeWipe(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+		Name:    "md/../sda",
+		Level:   1,
+		Devices: []string{"/dev/sda", "/dev/sdb"},
+	}}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	err := o.setupRAID(context.Background())
+	if err == nil {
+		t.Fatal("expected invalid raid array name error")
+	}
+	if !strings.Contains(err.Error(), "invalid raid array name") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cmd.calls) != 0 {
+		t.Fatalf("expected no destructive commands before validation, got %#v", cmd.calls)
+	}
+}
+
+func TestSetupRAIDRejectsExplicitNonArrayTargetBeforeWipe(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.Device = "/dev/sda"
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+		Name:    "md0",
+		Level:   1,
+		Devices: []string{"/dev/sda", "/dev/sdb"},
+	}}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	err := o.setupRAID(context.Background())
+	if err == nil {
+		t.Fatal("expected explicit target mismatch error")
+	}
+	if !strings.Contains(err.Error(), "must match one of the configured raid array devices") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cmd.calls) != 0 {
+		t.Fatalf("expected no destructive commands before target validation, got %#v", cmd.calls)
+	}
+}
+
 func TestProvisionReportsErrorOnStepFailure(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	provider := &mockProvider{}
@@ -1914,6 +1977,25 @@ func TestWipeOrSecureEraseDisksWipesRAIDTargetWithoutSecureErase(t *testing.T) {
 	if !hasCommandCall(cmd.calls, "sgdisk", "--zap-all", "/dev/md0") ||
 		!hasCommandCall(cmd.calls, "wipefs", "-af", "/dev/md0") {
 		t.Fatalf("expected normal wipe of raid target device, got %#v", cmd.calls)
+	}
+}
+
+func TestWipeOrSecureEraseDisksKeepsSecureEraseForNonRAIDTarget(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.SecureErase = true
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+		Name:    "md0",
+		Level:   1,
+		Devices: []string{"/dev/sda", "/dev/sdb"},
+	}}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+
+	if err := o.wipeOrSecureEraseDisks(context.Background()); err != nil {
+		t.Fatalf("wipeOrSecureEraseDisks: %v", err)
+	}
+	if !hasCommandCall(cmd.calls, "hdparm", "-I", "/dev/sda") {
+		t.Fatalf("expected secure erase probe for non-raid target, got %#v", cmd.calls)
 	}
 }
 

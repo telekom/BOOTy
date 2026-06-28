@@ -624,7 +624,13 @@ func (o *Orchestrator) setupRAID(ctx context.Context) error {
 	if len(raids) == 0 {
 		return nil
 	}
+	if err := validateRAIDNames(raids); err != nil {
+		return err
+	}
 	if err := validateRAIDMemberCounts(raids); err != nil {
+		return err
+	}
+	if err := validateRAIDMemberDevicesDisjoint(raids); err != nil {
 		return err
 	}
 	if err := o.selectRAIDTargetDevice(raids); err != nil {
@@ -669,12 +675,35 @@ func normalizedRAIDConfigs(raids []config.RAIDConfig) []config.RAIDConfig {
 	return normalized
 }
 
+func validateRAIDNames(raids []config.RAIDConfig) error {
+	for _, raid := range raids {
+		if _, err := raidDevicePath(raid.Name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func validateRAIDMemberCounts(raids []config.RAIDConfig) error {
 	for _, raid := range raids {
 		minDevices := minRAIDDevicesForLevel(raid.Level)
 		if len(raid.Devices) < minDevices {
 			return fmt.Errorf("raid array %q level %d requires at least %d unique member devices, got %d",
 				raid.Name, raid.Level, minDevices, len(raid.Devices))
+		}
+	}
+	return nil
+}
+
+func validateRAIDMemberDevicesDisjoint(raids []config.RAIDConfig) error {
+	owner := make(map[string]string)
+	for _, raid := range raids {
+		for _, device := range raid.Devices {
+			if previous, ok := owner[device]; ok {
+				return fmt.Errorf("raid member device %s is configured in both %q and %q before destructive storage steps",
+					device, previous, raid.Name)
+			}
+			owner[device] = raid.Name
 		}
 	}
 	return nil
@@ -694,13 +723,20 @@ func minRAIDDevicesForLevel(level int) int {
 }
 
 func (o *Orchestrator) selectRAIDTargetDevice(raids []config.RAIDConfig) error {
-	if strings.TrimSpace(o.cfg.Provision.Disk.Device) != "" {
+	if target := strings.TrimSpace(o.cfg.Provision.Disk.Device); target != "" {
+		if !raidTargetMatchesConfig(target, raids) {
+			return fmt.Errorf("provision.disk.device %s must match one of the configured raid array devices before destructive storage steps", target)
+		}
+		o.cfg.Provision.Disk.Device = target
 		return nil
 	}
 	if len(raids) != 1 {
 		return fmt.Errorf("provision.disk.device is required when %d raid arrays are configured", len(raids))
 	}
-	target := raidDevicePath(raids[0].Name)
+	target, err := raidDevicePath(raids[0].Name)
+	if err != nil {
+		return err
+	}
 	o.cfg.Provision.Disk.Device = target
 	o.targetDisk = target
 	o.log.Info("set disk device from raid configuration", "device", target)
@@ -722,6 +758,16 @@ func uniqueRAIDMemberDevices(raids []config.RAIDConfig) []string {
 	return devices
 }
 
+func raidTargetMatchesConfig(target string, raids []config.RAIDConfig) bool {
+	for _, raid := range raids {
+		device, err := raidDevicePath(raid.Name)
+		if err == nil && target == device {
+			return true
+		}
+	}
+	return false
+}
+
 func uniqueTrimmedRAIDDevices(devices []string) []string {
 	seen := make(map[string]struct{})
 	out := make([]string, 0, len(devices))
@@ -739,8 +785,12 @@ func uniqueTrimmedRAIDDevices(devices []string) []string {
 	return out
 }
 
-func raidDevicePath(name string) string {
-	return "/dev/" + strings.TrimSpace(name)
+func raidDevicePath(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || name == "." || name == ".." || filepath.Base(name) != name {
+		return "", fmt.Errorf("invalid raid array name %q before destructive storage steps", name)
+	}
+	return "/dev/" + name, nil
 }
 
 func (o *Orchestrator) validateProvisionInputs(_ context.Context) error {
@@ -900,7 +950,8 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 		}
 		return fmt.Errorf("target disk is required before wipe-disks")
 	}
-	if len(o.cfg.Provision.Disk.RAID) > 0 && !deprovisionMode {
+	if len(o.cfg.Provision.Disk.RAID) > 0 && !deprovisionMode &&
+		raidTargetMatchesConfig(targetDisk, normalizedRAIDConfigs(o.cfg.Provision.Disk.RAID)) {
 		o.log.Info("wiping raid target device after array creation", "device", targetDisk)
 		return o.disk.WipeDisk(ctx, targetDisk)
 	}
