@@ -805,6 +805,65 @@ func TestChrootRunFallbackOnNotFound(t *testing.T) {
 	}
 }
 
+func TestChrootSyscallFallsBackToShWhenBashMissing(t *testing.T) {
+	mgr := NewManager(newMockCommander())
+	previous := runChrootSyscallCommand
+	t.Cleanup(func() {
+		runChrootSyscallCommand = previous
+	})
+
+	var shells []string
+	runChrootSyscallCommand = func(_ context.Context, _, shell, _ string) ([]byte, error) {
+		shells = append(shells, shell)
+		if shell == "/bin/bash" {
+			return nil, fmt.Errorf("fork/exec /bin/bash: no such file or directory")
+		}
+		return []byte("ok\n"), nil
+	}
+
+	out, err := mgr.chrootSyscall(context.Background(), "/target", "echo ok")
+	if err != nil {
+		t.Fatalf("chrootSyscall() error = %v", err)
+	}
+	if string(out) != "ok\n" {
+		t.Fatalf("output = %q, want ok", out)
+	}
+	want := []string{"/bin/bash", "/bin/sh"}
+	if len(shells) != len(want) {
+		t.Fatalf("shells = %v, want %v", shells, want)
+	}
+	for i := range want {
+		if shells[i] != want[i] {
+			t.Fatalf("shells = %v, want %v", shells, want)
+		}
+	}
+}
+
+func TestChrootSyscallDoesNotFallbackOnBashCommandFailure(t *testing.T) {
+	mgr := NewManager(newMockCommander())
+	previous := runChrootSyscallCommand
+	t.Cleanup(func() {
+		runChrootSyscallCommand = previous
+	})
+
+	var shells []string
+	runChrootSyscallCommand = func(_ context.Context, _, shell, _ string) ([]byte, error) {
+		shells = append(shells, shell)
+		return []byte("permission denied\n"), fmt.Errorf("exit status 126")
+	}
+
+	_, err := mgr.chrootSyscall(context.Background(), "/target", "echo ok")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "chroot syscall /bin/bash") {
+		t.Fatalf("error = %q, want bash syscall context", err.Error())
+	}
+	if len(shells) != 1 || shells[0] != "/bin/bash" {
+		t.Fatalf("shells = %v, want only /bin/bash", shells)
+	}
+}
+
 func TestIsExecNotFound(t *testing.T) {
 	if !isExecNotFound(exec.ErrNotFound) {
 		t.Error("expected true for exec.ErrNotFound")
