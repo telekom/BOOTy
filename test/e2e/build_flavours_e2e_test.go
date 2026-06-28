@@ -273,6 +273,54 @@ func listCPIOContents(t *testing.T, cpioGzPath string) map[string]bool {
 	return files
 }
 
+type cpioEntry struct {
+	mode string
+}
+
+func listCPIOEntries(t *testing.T, cpioGzPath string) map[string]cpioEntry {
+	t.Helper()
+
+	var decompCmd *exec.Cmd
+	if strings.HasSuffix(cpioGzPath, ".zst") {
+		decompCmd = exec.Command("zstd", "-dc", cpioGzPath)
+	} else {
+		decompCmd = exec.Command("gzip", "-dc", cpioGzPath)
+	}
+
+	cpioCmd := exec.Command("cpio", "-tv")
+	cpioCmd.Stderr = nil
+
+	var err error
+	cpioCmd.Stdin, err = decompCmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("pipe setup: %v", err)
+	}
+	if err := decompCmd.Start(); err != nil {
+		t.Fatalf("decompressor start: %v", err)
+	}
+	out, err := cpioCmd.Output()
+	if err != nil {
+		t.Fatalf("cpio verbose listing: %v", err)
+	}
+	if err := decompCmd.Wait(); err != nil {
+		t.Fatalf("decompressor: %v", err)
+	}
+
+	entries := make(map[string]cpioEntry)
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		path := strings.TrimPrefix(fields[len(fields)-1], "./")
+		if path == "" || path == "." {
+			continue
+		}
+		entries[path] = cpioEntry{mode: fields[0]}
+	}
+	return entries
+}
+
 // assertContains checks that the file set contains the given path.
 func assertContains(t *testing.T, files map[string]bool, path, desc string) {
 	t.Helper()
@@ -298,6 +346,31 @@ func assertKernelModuleContains(t *testing.T, files map[string]bool, module stri
 		}
 	}
 	t.Errorf("expected kernel module %s under modules/ in initramfs", module)
+}
+
+func assertRequiredInitDeviceNodes(t *testing.T, files map[string]bool) {
+	t.Helper()
+	for _, node := range []string{"dev/console", "dev/null", "dev/ttyS0"} {
+		assertContains(t, files, node, "required initramfs device node")
+	}
+}
+
+func assertRequiredInitDeviceNodeModes(t *testing.T, entries map[string]cpioEntry) {
+	t.Helper()
+	for path, wantMode := range map[string]string{
+		"dev/console": "crw-------",
+		"dev/null":    "crw-rw-rw-",
+		"dev/ttyS0":   "crw-------",
+	} {
+		entry, ok := entries[path]
+		if !ok {
+			t.Errorf("expected %s metadata in initramfs, not found", path)
+			continue
+		}
+		if entry.mode != wantMode {
+			t.Errorf("%s mode = %q, want %q", path, entry.mode, wantMode)
+		}
+	}
 }
 
 // assertFileSize checks that the cpio.gz file is within the expected size range.
@@ -477,6 +550,7 @@ func TestMicroHasMinimalDirsE2E(t *testing.T) {
 	for _, dir := range []string{"dev", "proc", "sys", "tmp", "etc"} {
 		assertContains(t, files, dir, "required directory")
 	}
+	assertRequiredInitDeviceNodes(t, files)
 }
 
 func TestMicroSizeSmallerThanSlimE2E(t *testing.T) {
@@ -556,6 +630,29 @@ func TestDefaultBuildSucceedsE2E(t *testing.T) {
 		t.Fatal("default initramfs is empty")
 	}
 	t.Logf("Default initramfs size: %.1f MB", float64(info.Size())/(1024*1024))
+}
+
+func TestBuildFlavoursContainInitDeviceNodesE2E(t *testing.T) {
+	dockerAvailable(t)
+	for _, tc := range []struct {
+		name   string
+		target string
+	}{
+		{name: "default"},
+		{name: "slim", target: "slim"},
+		{name: "micro", target: "micro"},
+		{name: "gobgp", target: "gobgp"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dest := t.TempDir()
+			cpioGz := buildTarget(t, tc.target, dest)
+			files := listCPIOContents(t, cpioGz)
+			entries := listCPIOEntries(t, cpioGz)
+
+			assertRequiredInitDeviceNodes(t, files)
+			assertRequiredInitDeviceNodeModes(t, entries)
+		})
+	}
 }
 
 func TestDefaultContainsFRRE2E(t *testing.T) {

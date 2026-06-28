@@ -225,6 +225,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cpio ca-certificates zstd cloud-guest-utils \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
+RUN mkdir -p dev proc run sys tmp etc && \
+    mknod -m 600 dev/console c 5 1 && \
+    mknod -m 666 dev/null c 1 3 && \
+    mknod -m 600 dev/ttyS0 c 4 64
 
 # Pre-built static busybox binary from Docker Hub (cached by Docker layer cache)
 COPY --from=busybox-bin /bin/busybox bin/busybox
@@ -375,6 +379,10 @@ FROM debian:bookworm-slim AS slim-builder
 RUN apt-get update && apt-get install -y --no-install-recommends cpio zstd ca-certificates cloud-guest-utils \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
+RUN mkdir -p dev proc run sys tmp etc && \
+    mknod -m 600 dev/console c 5 1 && \
+    mknod -m 666 dev/null c 1 3 && \
+    mknod -m 600 dev/ttyS0 c 4 64
 
 # Copy busybox binary and create all applet symlinks (same as default variant).
 # This ensures utilities like tail, grep, dmesg, hostname, ps, and xargs are
@@ -430,6 +438,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends cpio zstd \
 # Reuse upx from the dev (Alpine) stage — upx-ucl is not in Debian bookworm main
 COPY --from=dev /usr/bin/upx /usr/local/bin/upx
 WORKDIR /build/initramfs
+RUN mkdir -p dev proc run sys tmp etc && \
+    mknod -m 600 dev/console c 5 1 && \
+    mknod -m 666 dev/null c 1 3 && \
+    mknod -m 600 dev/ttyS0 c 4 64
 
 # Copy busybox binary and create all applet symlinks (same as default variant).
 # This ensures utilities like tail, pgrep, dmesg, lsblk, hostname, ps, grep,
@@ -579,7 +591,10 @@ FROM debian:bookworm-slim AS micro-builder
 RUN apt-get update && apt-get install -y --no-install-recommends cpio ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
-RUN mkdir -p bin sbin dev proc run sys tmp etc
+RUN mkdir -p bin sbin dev proc run sys tmp etc && \
+    mknod -m 600 dev/console c 5 1 && \
+    mknod -m 666 dev/null c 1 3 && \
+    mknod -m 600 dev/ttyS0 c 4 64
 COPY --from=micro-dev /go/src/github.com/telekom/BOOTy/init .
 RUN mkdir -p etc/ssl/certs && cp /etc/ssl/certs/ca-certificates.crt etc/ssl/certs/
 
