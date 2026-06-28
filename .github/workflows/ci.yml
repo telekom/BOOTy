@@ -148,6 +148,7 @@ jobs:
   build:
     name: Build (${{ matrix.arch }})
     needs: [lint, test, security, e2e]
+    timeout-minutes: 20
     strategy:
       matrix:
         include:
@@ -200,6 +201,7 @@ jobs:
     name: Build Flavours (slim + micro + gobgp)
     runs-on: ubuntu-latest
     needs: [lint]
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
         with:
@@ -340,6 +342,7 @@ jobs:
     name: KVM Boot Validation
     runs-on: ubuntu-latest
     needs: [build]
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
         with:
@@ -513,6 +516,7 @@ jobs:
     name: E2E ContainerLab
     runs-on: ubuntu-latest
     needs: [build]
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -642,6 +646,7 @@ jobs:
     name: UEFI ISO Boot Validation
     runs-on: ubuntu-latest
     needs: [build]
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
         with:
@@ -874,6 +879,7 @@ jobs:
   linux-e2e:
     name: Linux E2E (Privileged)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
         with:
@@ -937,6 +943,7 @@ jobs:
     name: E2E Boot (ContainerLab)
     runs-on: ubuntu-latest
     needs: [build]
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1058,6 +1065,7 @@ jobs:
     name: E2E GoBGP PeerModes
     runs-on: ubuntu-latest
     needs: [build]
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1195,6 +1203,7 @@ jobs:
     name: E2E Pure Type-5 Fabric
     runs-on: ubuntu-latest
     needs: [build]
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1336,6 +1345,7 @@ jobs:
     name: E2E EVPN Boot (vrnetlab)
     runs-on: ubuntu-latest
     needs: [build]
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1507,6 +1517,7 @@ jobs:
     name: E2E GoBGP PeerModes (vrnetlab)
     runs-on: ubuntu-latest
     needs: [build]
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
         with:
