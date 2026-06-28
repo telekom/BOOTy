@@ -133,7 +133,7 @@ func Collect(ctx context.Context, opts *CollectOptions) (*CollectResult, error) 
 		manifest.Scan.TotalBytes += artifact.SizeBytes
 	}
 
-	archivePath, archiveBytes, err := writeArchive(opts.OutputDir, &manifest)
+	archivePath, archiveBytes, err := writeArchive(opts.OutputDir, &manifest, opts.MaxBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -411,7 +411,7 @@ func marshalValue(name string, value any, errs *[]MetadataError) json.RawMessage
 	return data
 }
 
-func writeArchive(outputDir string, manifest *Manifest) (archivePath string, archiveBytes int64, err error) {
+func writeArchive(outputDir string, manifest *Manifest, maxBytes int64) (archivePath string, archiveBytes int64, err error) {
 	if outputDir == "" {
 		dir, err := os.MkdirTemp("", "booty-crash-*")
 		if err != nil {
@@ -434,6 +434,9 @@ func writeArchive(outputDir string, manifest *Manifest) (archivePath string, arc
 		if err != nil {
 			return "", 0, fmt.Errorf("stat crash archive: %w", err)
 		}
+		if err := enforceArchiveSize(archivePath, info.Size(), maxBytes); err != nil {
+			return "", info.Size(), err
+		}
 		if manifest.Scan.ArchiveBytes == info.Size() {
 			return archivePath, info.Size(), nil
 		}
@@ -443,7 +446,20 @@ func writeArchive(outputDir string, manifest *Manifest) (archivePath string, arc
 	if err != nil {
 		return "", 0, fmt.Errorf("stat crash archive: %w", err)
 	}
+	if err := enforceArchiveSize(archivePath, info.Size(), maxBytes); err != nil {
+		return "", info.Size(), err
+	}
 	return archivePath, info.Size(), nil
+}
+
+func enforceArchiveSize(archivePath string, archiveBytes, maxBytes int64) error {
+	if maxBytes <= 0 || archiveBytes <= maxBytes {
+		return nil
+	}
+	if err := os.Remove(archivePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove oversized crash archive: %w", err)
+	}
+	return fmt.Errorf("crash archive size %d exceeds limit %d", archiveBytes, maxBytes)
 }
 
 func writeArchiveFile(archivePath string, manifest *Manifest) error {
