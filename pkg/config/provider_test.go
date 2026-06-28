@@ -430,6 +430,7 @@ func TestValidate(t *testing.T) {
 		{name: "enabled sysext accepts https source with sha256", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "https://images.example.invalid/debug.raw", SHA256: strings.Repeat("a", 64)}}}}}},
 		{name: "enabled sysext rejects empty oci digest source", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "oci://registry.example.invalid/tcaas/debug@sha256:"}}}}}, wantErr: "sha256: required"},
 		{name: "enabled sysext accepts oci digest source without sha256", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "oci://registry.example.invalid/tcaas/debug@sha256:" + strings.Repeat("a", 64)}}}}}},
+		{name: "enabled sysext accepts uppercase oci digest source without sha256", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "OCI://registry.example.invalid/tcaas/debug@sha256:" + strings.Repeat("a", 64)}}}}}},
 		{name: "valid token algorithm", cfg: Config{Transport: TransportConfig{TokenAlgorithm: "ES256"}}},
 		{name: "invalid token algorithm", cfg: Config{Transport: TransportConfig{TokenAlgorithm: "HS256"}}, wantErr: "invalid transport.tokenAlgorithm"},
 		{

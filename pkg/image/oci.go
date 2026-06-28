@@ -167,9 +167,11 @@ func formatMediaTypes(mediaTypes []types.MediaType) string {
 	return strings.Join(values, ", ")
 }
 
+const ociSchemePrefix = "oci://"
+
 // IsOCIReference returns true if the URL uses the oci:// scheme.
 func IsOCIReference(url string) bool {
-	return strings.HasPrefix(url, "oci://")
+	return len(url) >= len(ociSchemePrefix) && strings.EqualFold(url[:len(ociSchemePrefix)], ociSchemePrefix)
 }
 
 // IsOCIDigestReference returns true when an oci:// URL is pinned by digest.
@@ -193,5 +195,8 @@ func OCIDigestReference(url string) (bool, error) {
 
 // TrimOCIScheme removes the oci:// prefix from a URL.
 func TrimOCIScheme(url string) string {
-	return strings.TrimPrefix(url, "oci://")
+	if IsOCIReference(url) {
+		return url[len(ociSchemePrefix):]
+	}
+	return url
 }

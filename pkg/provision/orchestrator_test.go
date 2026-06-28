@@ -323,6 +323,112 @@ func TestValidateImageSourceConfiguredRejectsBlankImage(t *testing.T) {
 }
 
 func TestValidateImageSourceConfiguredAllowsImage(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		checksum string
+	}{
+		{
+			name:   "https",
+			source: "https://images.example.invalid/node.raw",
+		},
+		{
+			name:   "http",
+			source: "http://images.example.invalid/node.raw",
+		},
+		{
+			name:     "oci tag with checksum",
+			source:   "oci://registry.example.invalid/tcaas/node:v1",
+			checksum: strings.Repeat("b", 64),
+		},
+		{
+			name:     "oci uppercase scheme with checksum",
+			source:   "OCI://registry.example.invalid/tcaas/node:v1",
+			checksum: strings.Repeat("b", 64),
+		},
+		{
+			name:   "oci digest",
+			source: "oci://registry.example.invalid/tcaas/node@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
+		{
+			name:   "oci uppercase digest",
+			source: "OCI://registry.example.invalid/tcaas/node@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.MachineConfig{}
+			cfg.Provision.Image.URLs = []string{tt.source}
+			cfg.Provision.Image.Checksum = tt.checksum
+			o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+			if err := o.validateProvisionInputs(context.Background()); err != nil {
+				t.Fatalf("validateProvisionInputs: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateImageSourceConfiguredRejectsInvalidSources(t *testing.T) {
+	tests := []struct {
+		name    string
+		sources []string
+		want    string
+	}{
+		{
+			name:    "file URL",
+			sources: []string{"file:///tmp/node.raw"},
+			want:    `unsupported image source scheme "file"`,
+		},
+		{
+			name:    "typo scheme",
+			sources: []string{"htps://images.example.invalid/node.raw"},
+			want:    `unsupported image source scheme "htps"`,
+		},
+		{
+			name:    "relative path",
+			sources: []string{"node.raw"},
+			want:    "unsupported image source without scheme",
+		},
+		{
+			name:    "https missing host",
+			sources: []string{"https:///node.raw"},
+			want:    "missing host",
+		},
+		{
+			name:    "https missing hostname",
+			sources: []string{"https://:443/node.raw"},
+			want:    "missing host",
+		},
+		{
+			name:    "bad oci ref",
+			sources: []string{"oci://registry.example.invalid/%zz"},
+			want:    "invalid OCI image source",
+		},
+		{
+			name:    "valid source plus invalid fallback",
+			sources: []string{"https://images.example.invalid/node.raw", "file:///tmp/node.raw"},
+			want:    `unsupported image source scheme "file"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.MachineConfig{}
+			cfg.Provision.Image.URLs = tt.sources
+			o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+			err := o.validateProvisionInputs(context.Background())
+			if err == nil {
+				t.Fatal("expected invalid image source error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %q, want %q", err.Error(), tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateImageSourceConfiguredNormalizesImageSources(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Image.URLs = []string{"  https://images.example.invalid/node.raw  ", "\t"}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
@@ -332,6 +438,57 @@ func TestValidateImageSourceConfiguredAllowsImage(t *testing.T) {
 	}
 	if got := cfg.Provision.Image.URLs; got[0] != "https://images.example.invalid/node.raw" || got[1] != "" {
 		t.Fatalf("image URLs were not normalized: %#v", got)
+	}
+}
+
+func TestValidateImageSourceConfiguredRedactsSensitiveInvalidSource(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{"https://robot:secret@images.example.invalid/%zz?token=abc#frag"}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err := o.validateProvisionInputs(context.Background())
+	if err == nil {
+		t.Fatal("expected invalid image source error")
+	}
+	for _, leaked := range []string{"robot", "secret", "token=abc", "#frag"} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("error leaked %q: %q", leaked, err.Error())
+		}
+	}
+	if !strings.Contains(err.Error(), "[redacted invalid URL]") {
+		t.Fatalf("error = %q, want invalid URL redaction", err.Error())
+	}
+	requireWrappedOriginalError(t, err)
+}
+
+func TestValidateImageSourceConfiguredRedactsSensitiveOCIReference(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{"oci://robot:secret@registry.example.invalid/%zz?token=abc#frag"}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err := o.validateProvisionInputs(context.Background())
+	if err == nil {
+		t.Fatal("expected invalid OCI image source error")
+	}
+	for _, leaked := range []string{"robot", "secret", "token=abc", "#frag"} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("error leaked %q: %q", leaked, err.Error())
+		}
+	}
+	if !strings.Contains(err.Error(), "[redacted invalid URL]") {
+		t.Fatalf("error = %q, want invalid OCI source redaction", err.Error())
+	}
+	requireWrappedOriginalError(t, err)
+}
+
+func requireWrappedOriginalError(t *testing.T, err error) {
+	t.Helper()
+	redactedErr := errors.Unwrap(err)
+	if redactedErr == nil {
+		t.Fatalf("error %q does not wrap a redacted parser error", err)
+	}
+	if originalErr := errors.Unwrap(redactedErr); originalErr == nil {
+		t.Fatalf("redacted parser error %q does not wrap the original parser error", redactedErr)
 	}
 }
 

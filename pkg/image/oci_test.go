@@ -25,6 +25,56 @@ func startTestRegistry(t *testing.T) *httptest.Server {
 	return httptest.NewServer(registry.New())
 }
 
+func TestOCIReferenceHelpers(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		isOCI bool
+		trim  string
+	}{
+		{
+			name:  "lowercase",
+			input: "oci://registry.example.invalid/node:v1",
+			isOCI: true,
+			trim:  "registry.example.invalid/node:v1",
+		},
+		{
+			name:  "uppercase",
+			input: "OCI://registry.example.invalid/node:v1",
+			isOCI: true,
+			trim:  "registry.example.invalid/node:v1",
+		},
+		{
+			name:  "mixed case",
+			input: "Oci://registry.example.invalid/node:v1",
+			isOCI: true,
+			trim:  "registry.example.invalid/node:v1",
+		},
+		{
+			name:  "http",
+			input: "https://registry.example.invalid/node:v1",
+			isOCI: false,
+			trim:  "https://registry.example.invalid/node:v1",
+		},
+		{
+			name:  "prefix only partial",
+			input: "oci:/registry.example.invalid/node:v1",
+			isOCI: false,
+			trim:  "oci:/registry.example.invalid/node:v1",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsOCIReference(tt.input); got != tt.isOCI {
+				t.Fatalf("IsOCIReference(%q) = %v, want %v", tt.input, got, tt.isOCI)
+			}
+			if got := TrimOCIScheme(tt.input); got != tt.trim {
+				t.Fatalf("TrimOCIScheme(%q) = %q, want %q", tt.input, got, tt.trim)
+			}
+		})
+	}
+}
+
 func pushTestImageToRegistry(t *testing.T, srv *httptest.Server, repoTag string, data []byte) {
 	t.Helper()
 

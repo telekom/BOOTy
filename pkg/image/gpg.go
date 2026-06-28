@@ -57,7 +57,7 @@ func VerifyGPGSignature(ctx context.Context, imageURL, sigURL, pubKeyPath string
 // verifyWithStream opens an HTTP stream for the image and pipes it into
 // gpgv/gpg --verify via stdin, avoiding a full download to disk/tmpfs.
 func verifyWithStream(ctx context.Context, imageURL, keyring, sigFile string) error {
-	if strings.HasPrefix(imageURL, "oci://") {
+	if IsOCIReference(imageURL) {
 		return fmt.Errorf("gpg signature verification is not supported for OCI images (%s)", RedactURL(imageURL))
 	}
 

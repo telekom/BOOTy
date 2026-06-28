@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	ociname "github.com/google/go-containerregistry/pkg/name"
 
 	"github.com/telekom/BOOTy/pkg/cloudinit"
 	"github.com/telekom/BOOTy/pkg/config"
@@ -627,15 +630,8 @@ func (o *Orchestrator) validateProvisionInputs(_ context.Context) error {
 			continue
 		}
 		hasSource = true
-		if !image.IsOCIReference(source) {
-			continue
-		}
-		digestRef, err := image.OCIDigestReference(source)
-		if err != nil {
-			return fmt.Errorf("invalid OCI image source before destructive storage steps: %s: %w", image.RedactURL(source), err)
-		}
-		if !checksumConfigured && !digestRef {
-			return fmt.Errorf("provision OCI image source must use a digest reference or IMAGE_CHECKSUM before destructive storage steps: %s", image.RedactURL(source))
+		if err := validateProvisionImageSource(source, checksumConfigured); err != nil {
+			return err
 		}
 	}
 	if !hasSource {
@@ -646,6 +642,96 @@ func (o *Orchestrator) validateProvisionInputs(_ context.Context) error {
 		return errors.New(imageSignatureChecksumRequiredMessage)
 	}
 	return nil
+}
+
+func validateProvisionImageSource(source string, checksumConfigured bool) error {
+	if image.IsOCIReference(source) {
+		return validateProvisionOCIImageSource(source, checksumConfigured)
+	}
+
+	u, err := url.Parse(source)
+	if err != nil {
+		return fmt.Errorf("invalid image source %q: %w", image.RedactURL(source), redactedProvisionSourceError(err, source))
+	}
+	scheme := strings.ToLower(u.Scheme)
+	switch scheme {
+	case "http", "https":
+		if u.Hostname() == "" {
+			return fmt.Errorf("invalid image source %q: missing host", image.RedactURL(source))
+		}
+		return nil
+	case "":
+		return fmt.Errorf("unsupported image source without scheme: %q", image.RedactURL(source))
+	default:
+		return fmt.Errorf("unsupported image source scheme %q for %q", scheme, image.RedactURL(source))
+	}
+}
+
+func validateProvisionOCIImageSource(source string, checksumConfigured bool) error {
+	ref := strings.TrimSpace(image.TrimOCIScheme(source))
+	if ref == "" {
+		return fmt.Errorf("invalid OCI image source: missing reference")
+	}
+	parsedRef, err := ociname.ParseReference(ref)
+	if err != nil {
+		return fmt.Errorf("invalid OCI image source %q: %w", image.RedactOCIRef(ref), redactedProvisionOCIReferenceError(err, ref))
+	}
+	_, digestRef := parsedRef.(ociname.Digest)
+	if !checksumConfigured && !digestRef {
+		return fmt.Errorf("provision OCI image source must use a digest reference or IMAGE_CHECKSUM before destructive storage steps: %s", image.RedactURL(source))
+	}
+	return nil
+}
+
+func redactOCIReferenceError(err error, ref string) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	redactedRef := image.RedactOCIRef(ref)
+	msg = strings.ReplaceAll(msg, ref, redactedRef)
+	msg = strings.ReplaceAll(msg, "oci://"+ref, "oci://"+redactedRef)
+	return msg
+}
+
+type redactedProvisionSourceErr struct {
+	source string
+	err    error
+}
+
+func redactedProvisionSourceError(err error, source string) error {
+	if err == nil {
+		return nil
+	}
+	return &redactedProvisionSourceErr{source: source, err: err}
+}
+
+func (e *redactedProvisionSourceErr) Error() string {
+	return image.RedactSourceError(e.err, e.source)
+}
+
+func (e *redactedProvisionSourceErr) Unwrap() error {
+	return e.err
+}
+
+type redactedProvisionOCIReferenceErr struct {
+	ref string
+	err error
+}
+
+func redactedProvisionOCIReferenceError(err error, ref string) error {
+	if err == nil {
+		return nil
+	}
+	return &redactedProvisionOCIReferenceErr{ref: ref, err: err}
+}
+
+func (e *redactedProvisionOCIReferenceErr) Error() string {
+	return redactOCIReferenceError(e.err, e.ref)
+}
+
+func (e *redactedProvisionOCIReferenceErr) Unwrap() error {
+	return e.err
 }
 
 func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
