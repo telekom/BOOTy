@@ -158,6 +158,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 		cfg         *config.MachineConfig
 		expect      DryRunStatus
 		wantMessage string
+		wantTarget  string
 	}{
 		{
 			name:   "no images",
@@ -178,11 +179,12 @@ func TestDryRunConfigValidation(t *testing.T) {
 			name: "valid config",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{Hostname: "node1"}
-				c.Provision.TargetOS = config.TargetOSLinux
+				c.Provision.TargetOS = " Linux "
 				c.Provision.Image.URLs = []string{"http://example.com/img"}
 				return c
 			}(),
-			expect: DryRunPass,
+			expect:     DryRunPass,
+			wantTarget: config.TargetOSLinux,
 		},
 		{
 			name: "missing target os",
@@ -191,7 +193,8 @@ func TestDryRunConfigValidation(t *testing.T) {
 				c.Provision.Image.URLs = []string{"http://example.com/img"}
 				return c
 			}(),
-			expect: DryRunFail,
+			expect:      DryRunFail,
+			wantMessage: "before destructive storage steps",
 		},
 		{
 			name: "rhel-like target hint",
@@ -339,6 +342,9 @@ func TestDryRunConfigValidation(t *testing.T) {
 			}
 			if tc.wantMessage != "" && !strings.Contains(result.Message, tc.wantMessage) {
 				t.Errorf("message = %q, want substring %q", result.Message, tc.wantMessage)
+			}
+			if tc.wantTarget != "" && tc.cfg.Provision.TargetOS != tc.wantTarget {
+				t.Errorf("Provision.TargetOS = %q, want %q", tc.cfg.Provision.TargetOS, tc.wantTarget)
 			}
 		})
 	}
