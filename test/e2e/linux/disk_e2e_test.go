@@ -112,12 +112,25 @@ func TestFormatMountUnmount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
 	}
-	defer os.RemoveAll(mountpoint)
+	t.Cleanup(func() {
+		if err := os.RemoveAll(mountpoint); err != nil {
+			t.Logf("cleanup mountpoint %s: %v", mountpoint, err)
+		}
+	})
 
 	// Mount using disk.Manager.
 	if err := mgr.MountPartition(ctx, root.Node, mountpoint); err != nil {
 		t.Fatalf("MountPartition: %v", err)
 	}
+	mounted := true
+	t.Cleanup(func() {
+		if !mounted {
+			return
+		}
+		if err := mgr.Unmount(mountpoint); err != nil {
+			t.Logf("cleanup unmount %s: %v", mountpoint, err)
+		}
+	})
 
 	// Write a test file to verify the mount works.
 	testFile := mountpoint + "/test.txt"
@@ -134,10 +147,10 @@ func TestFormatMountUnmount(t *testing.T) {
 		t.Errorf("file content = %q, want %q", string(data), "hello booty")
 	}
 
-	// Unmount.
 	if err := mgr.Unmount(mountpoint); err != nil {
 		t.Fatalf("Unmount: %v", err)
 	}
+	mounted = false
 
 	// Verify file is no longer accessible (mountpoint empty).
 	entries, err := os.ReadDir(mountpoint)
@@ -195,17 +208,39 @@ func TestBindMountAndTeardown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
 	}
-	defer os.RemoveAll(mountpoint)
+	t.Cleanup(func() {
+		if err := os.RemoveAll(mountpoint); err != nil {
+			t.Logf("cleanup mountpoint %s: %v", mountpoint, err)
+		}
+	})
 
 	if err := mgr.MountPartition(ctx, root.Node, mountpoint); err != nil {
 		t.Fatalf("MountPartition: %v", err)
 	}
-	defer mgr.Unmount(mountpoint) //nolint:errcheck
+	mounted := true
+	t.Cleanup(func() {
+		if !mounted {
+			return
+		}
+		if err := mgr.Unmount(mountpoint); err != nil {
+			t.Logf("cleanup unmount %s: %v", mountpoint, err)
+		}
+	})
 
 	// Create subdirectories for bind mounts.
 	for _, dir := range []string{"dev", "proc", "sys", "run"} {
 		os.MkdirAll(mountpoint+"/"+dir, 0o755)
 	}
+
+	bindsMounted := true
+	t.Cleanup(func() {
+		if !bindsMounted {
+			return
+		}
+		if err := mgr.TeardownChrootBindMounts(mountpoint); err != nil {
+			t.Logf("cleanup chroot bind mounts under %s: %v", mountpoint, err)
+		}
+	})
 
 	// Setup chroot bind mounts.
 	if err := mgr.SetupChrootBindMounts(mountpoint); err != nil {
@@ -225,6 +260,7 @@ func TestBindMountAndTeardown(t *testing.T) {
 	if err := mgr.TeardownChrootBindMounts(mountpoint); err != nil {
 		t.Fatalf("TeardownChrootBindMounts: %v", err)
 	}
+	bindsMounted = false
 }
 
 func TestGrowPartitionAndResize(t *testing.T) {
