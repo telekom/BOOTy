@@ -867,6 +867,10 @@ func (o *Orchestrator) validateProvisionInputs(ctx context.Context) error {
 		return errors.New(imageSignatureChecksumRequiredMessage)
 	}
 
+	return o.validateImageStreamingPrerequisites(ctx, imageSources)
+}
+
+func (o *Orchestrator) validateImageStreamingPrerequisites(ctx context.Context, imageSources []string) error {
 	bestURL := o.bestImageURL
 	if bestURL == "" {
 		var err error
