@@ -714,6 +714,49 @@ func TestCreateEFIBootEntryEmptyPartition(t *testing.T) {
 	}
 }
 
+func TestCreateEFIBootEntryRejectsUnsafeDevicePaths(t *testing.T) {
+	old := efiRuntimeReady
+	efiRuntimeReady = func() (bool, string) { return true, "" }
+	t.Cleanup(func() { efiRuntimeReady = old })
+
+	tests := []struct {
+		name     string
+		diskDev  string
+		bootPart string
+		want     string
+	}{
+		{
+			name:     "unsafe disk",
+			diskDev:  "/dev/sda;touch /tmp/pwned",
+			bootPart: "/dev/sda1",
+			want:     "unsafe EFI boot disk device",
+		},
+		{
+			name:     "unsafe partition",
+			diskDev:  "/dev/sda",
+			bootPart: "/dev/sda1 $(touch /tmp/pwned)",
+			want:     "unsafe EFI boot partition device",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newMockCommander()
+			c := newTestConfigurator(t, cmd)
+
+			err := c.CreateEFIBootEntry(context.Background(), tt.diskDev, tt.bootPart)
+			if err == nil {
+				t.Fatal("CreateEFIBootEntry() error = nil, want unsafe device error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want %q", err, tt.want)
+			}
+			if hasCommandName(cmd.calls, "efibootmgr") {
+				t.Fatalf("unsafe device path reached efibootmgr command, calls=%#v", cmd.calls)
+			}
+		})
+	}
+}
+
 func TestEFILoaderPathUsesRemovableFallback(t *testing.T) {
 	root := t.TempDir()
 	loaderName, err := efiRemovableLoaderName(runtime.GOARCH)
@@ -795,6 +838,31 @@ func TestInstallEFIFallbackLoaderReportsChrootFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "install EFI fallback loader: grub missing") {
 		t.Fatalf("error = %v, want grub output", err)
+	}
+}
+
+func TestInstallEFIFallbackLoaderRejectsUnsafeDiskDevice(t *testing.T) {
+	for _, diskDev := range []string{
+		"/dev/sda;touch /tmp/pwned",
+		"/dev/sda $(touch /tmp/pwned)",
+		" /dev/sda",
+		"/dev/../tmp/fake",
+	} {
+		t.Run(diskDev, func(t *testing.T) {
+			cmd := newMockCommander()
+			c := newTestConfigurator(t, cmd)
+
+			err := c.InstallEFIFallbackLoader(context.Background(), diskDev, "/dev/sda2")
+			if err == nil {
+				t.Fatal("InstallEFIFallbackLoader() error = nil, want unsafe device error")
+			}
+			if !strings.Contains(err.Error(), "unsafe EFI fallback disk device") {
+				t.Fatalf("error = %v, want unsafe disk-device message", err)
+			}
+			if hasCommandName(cmd.calls, "chroot") {
+				t.Fatalf("unsafe disk device reached chroot command, calls=%#v", cmd.calls)
+			}
+		})
 	}
 }
 
@@ -880,6 +948,53 @@ func TestInstallEFIFallbackLoaderWithBundledAssetRequiresTargetGrubConfig(t *tes
 	}
 	if hasCommandName(cmd.calls, "chroot") {
 		t.Fatalf("missing target grub should not fall back to chroot, calls=%#v", cmd.calls)
+	}
+}
+
+func devicePathCaseName(prefix, value string) string {
+	if value == "" {
+		return prefix + "_empty"
+	}
+	name := strings.NewReplacer("/", "_", "\n", `\n`, " ", "_").Replace(value)
+	return prefix + "_" + name
+}
+
+func TestValidateChrootDevicePath(t *testing.T) {
+	valid := []string{
+		"/dev/sda",
+		"/dev/sda1",
+		"/dev/nvme0n1",
+		"/dev/nvme0n1p1",
+		"/dev/disk/by-id/nvme-eui.0000000000000001",
+		"/dev/mapper/vg-root",
+	}
+	for _, value := range valid {
+		t.Run(devicePathCaseName("valid", value), func(t *testing.T) {
+			got, err := validateChrootDevicePath("device", value)
+			if err != nil {
+				t.Fatalf("validateChrootDevicePath(%q) error = %v", value, err)
+			}
+			if got != value {
+				t.Fatalf("validateChrootDevicePath(%q) = %q", value, got)
+			}
+		})
+	}
+
+	invalid := []string{
+		"",
+		"/tmp/sda",
+		"/dev/sda;reboot",
+		"/dev/sda $(reboot)",
+		"/dev/../tmp/sda",
+		"/dev/disk/by-id/bad path",
+		"/dev/sda\n/dev/sdb",
+	}
+	for _, value := range invalid {
+		t.Run(devicePathCaseName("invalid", value), func(t *testing.T) {
+			if _, err := validateChrootDevicePath("device", value); err == nil {
+				t.Fatalf("validateChrootDevicePath(%q) error = nil, want rejection", value)
+			}
+		})
 	}
 }
 
