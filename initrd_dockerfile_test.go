@@ -100,3 +100,54 @@ func TestDockerfileRemovesBusyboxMkfsVfatCollisions(t *testing.T) {
 		t.Error("bin/lsblk must be removed in the GoBGP builder before copying real lsblk, otherwise COPY corrupts bin/busybox")
 	}
 }
+
+func TestDockerfileStampsBuildInfo(t *testing.T) {
+	data, err := os.ReadFile("initrd.Dockerfile")
+	if err != nil {
+		t.Fatalf("cannot read initrd.Dockerfile: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"ARG BOOTY_VERSION=dev",
+		"ARG BOOTY_BUILD=unknown",
+		"ARG BOOTY_FLAVOR=full",
+		"ARG BOOTY_FLAVOR=micro",
+		"-X main.Version=${BOOTY_VERSION}",
+		"-X main.Build=${BOOTY_BUILD}",
+		"-X github.com/telekom/BOOTy/pkg/buildinfo.version=${BOOTY_VERSION}",
+		"-X github.com/telekom/BOOTy/pkg/buildinfo.commit=${BOOTY_BUILD}",
+		"-X github.com/telekom/BOOTy/pkg/buildinfo.flavor=${BOOTY_FLAVOR}",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("initrd.Dockerfile missing build metadata stamp %q", want)
+		}
+	}
+}
+
+func TestReleaseAndNightlyPassInitramfsBuildInfoArgs(t *testing.T) {
+	for _, path := range []string{
+		".github/workflows/release-v2.yml",
+		".github/workflows/nightly.yml",
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("cannot read %s: %v", path, err)
+		}
+		text := string(data)
+		for _, want := range []string{
+			`--build-arg "BOOTY_VERSION=`,
+			`--build-arg "BOOTY_BUILD=`,
+			`--build-arg "BOOTY_FLAVOR=`,
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing build metadata argument %q", path, want)
+			}
+		}
+		if strings.Contains(text, `BOOTY_FLAVOR=default`) {
+			t.Fatalf("%s must stamp default release artifacts as build-info flavor full, not default", path)
+		}
+		if strings.Contains(text, `BOOTY_FLAVOR=${{ matrix.flavor }}`) {
+			t.Fatalf("%s must normalize matrix flavor before stamping build-info flavor", path)
+		}
+	}
+}
