@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"path"
 	"strings"
 
 	imageutil "github.com/telekom/BOOTy/pkg/image"
@@ -300,6 +301,22 @@ func validateABDataPartitionMode(abMode bool, cfg *ABConfig) []string {
 	for i, part := range cfg.DataPartitions {
 		if strings.EqualFold(strings.TrimSpace(part.Filesystem), "vfat") {
 			errs = append(errs, fmt.Sprintf("provision.ab.dataPartitions[%d].filesystem must not be vfat for system-ab shared data", i))
+		}
+		if strings.EqualFold(strings.TrimSpace(part.Filesystem), "swap") {
+			errs = append(errs, fmt.Sprintf("provision.ab.dataPartitions[%d].filesystem must not be swap for system-ab shared data", i))
+		}
+		mountpoint := strings.TrimSpace(part.Mountpoint)
+		if mountpoint == "" {
+			errs = append(errs, fmt.Sprintf("provision.ab.dataPartitions[%d].mountpoint is required for system-ab shared data", i))
+			continue
+		}
+		if !strings.HasPrefix(mountpoint, "/") {
+			errs = append(errs, fmt.Sprintf("provision.ab.dataPartitions[%d].mountpoint %q must be an absolute path", i, mountpoint))
+		}
+		normalizedMountpoint := path.Clean(mountpoint)
+		switch normalizedMountpoint {
+		case "/", "/boot/efi":
+			errs = append(errs, fmt.Sprintf("provision.ab.dataPartitions[%d].mountpoint must not be %q", i, normalizedMountpoint))
 		}
 	}
 	return errs
