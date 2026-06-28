@@ -288,8 +288,8 @@ func TestRAIDLVMProvisionOrderE2E(t *testing.T) {
 	})
 	cmd.set("sfdisk", sfdiskOut, nil)
 
-	imageServer := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done()
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.NotFound(w, nil)
 	}))
 	defer imageServer.Close()
 
@@ -303,7 +303,7 @@ func TestRAIDLVMProvisionOrderE2E(t *testing.T) {
 		},
 	}
 	orch := provision.NewOrchestrator(cfg, newMockProvider(cfg), disk.NewManager(cmd))
-	const provisionHangGuardTimeout = 10 * time.Second
+	const provisionHangGuardTimeout = 2 * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), provisionHangGuardTimeout)
 	defer cancel()
 	_ = orch.Provision(ctx)
