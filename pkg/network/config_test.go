@@ -257,6 +257,18 @@ func TestParseVLANs(t *testing.T) {
 			false,
 		},
 		{
+			"single_with_ipv6_address",
+			"200:eno1:[2001:db8:200::42/64]",
+			[]VLANConfig{{ID: 200, Parent: "eno1", Address: "2001:db8:200::42/64"}},
+			false,
+		},
+		{
+			"single_with_ipv6_address_and_gateway",
+			"200:eno1:[2001:db8:200::42/64]:[2001:db8:200::1]",
+			[]VLANConfig{{ID: 200, Parent: "eno1", Address: "2001:db8:200::42/64", Gateway: "2001:db8:200::1"}},
+			false,
+		},
+		{
 			"multi_vlan",
 			"200:eno1:10.200.0.42/24,300:eno2",
 			[]VLANConfig{
@@ -265,10 +277,24 @@ func TestParseVLANs(t *testing.T) {
 			},
 			false,
 		},
+		{
+			"multi_vlan_mixed_ipv4_ipv6",
+			"200:eno1:10.200.0.42/24,300:eno2:[2001:db8:300::42/64]:[2001:db8:300::1]",
+			[]VLANConfig{
+				{ID: 200, Parent: "eno1", Address: "10.200.0.42/24"},
+				{ID: 300, Parent: "eno2", Address: "2001:db8:300::42/64", Gateway: "2001:db8:300::1"},
+			},
+			false,
+		},
 		{"invalid_no_parent", "200", nil, true},
+		{"invalid_empty_parent", "200:", nil, true},
 		{"invalid_id_zero", "0:eth0", nil, true},
 		{"invalid_id_high", "4095:eth0", nil, true},
 		{"invalid_id_text", "abc:eth0", nil, true},
+		{"invalid_unbracketed_ipv6_address", "200:eno1:2001:db8:200::42/64", nil, true},
+		{"invalid_unbracketed_ipv6_gateway", "200:eno1:10.200.0.42/24:2001:db8:200::1", nil, true},
+		{"invalid_unterminated_ipv6_bracket", "200:eno1:[2001:db8:200::42/64", nil, true},
+		{"invalid_unmatched_ipv6_bracket", "200:eno1:2001:db8:200::42/64]", nil, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

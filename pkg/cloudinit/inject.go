@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -163,6 +164,9 @@ type openStackLink struct {
 	EthernetMACAddress string   `json:"ethernet_mac_address,omitempty"`
 	BondLinks          []string `json:"bond_links,omitempty"`
 	BondMode           string   `json:"bond_mode,omitempty"`
+	VLANID             *int     `json:"vlan_id,omitempty"`
+	VLANLink           string   `json:"vlan_link,omitempty"`
+	VLANMACAddress     *string  `json:"vlan_mac_address,omitempty"`
 	MTU                *int     `json:"mtu,omitempty"`
 }
 
@@ -179,7 +183,7 @@ type openStackNetwork struct {
 
 type openStackRoute struct {
 	Network string `json:"network"`
-	Netmask string `json:"netmask"`
+	Netmask string `json:"netmask,omitempty"`
 	Gateway string `json:"gateway"`
 }
 
@@ -216,8 +220,9 @@ func configDriveNetworkData(nc *NetworkConfig) (openStackNetworkData, error) {
 		if linkID == "" {
 			continue
 		}
-		data.Links = append(data.Links, ethernetLink(linkID, eth.Match, eth.MTU))
-		networks, err := networksForLink(linkID, eth.DHCP4, eth.Addresses, eth.Gateway4)
+		link := ethernetLink(linkID, eth.Match, eth.MTU)
+		data.Links = appendOpenStackLink(data.Links, &link)
+		networks, err := networksForLink(linkID, eth.DHCP4, eth.DHCP6, eth.Addresses, eth.Gateway4, eth.Gateway6)
 		if err != nil {
 			return data, err
 		}
@@ -233,6 +238,13 @@ func configDriveNetworkData(nc *NetworkConfig) (openStackNetworkData, error) {
 		}
 		data = next
 	}
+	for name, vlan := range nc.VLANs {
+		next, err := appendVLANNetworkData(data, strings.TrimSpace(name), &vlan)
+		if err != nil {
+			return data, err
+		}
+		data = next
+	}
 	return data, nil
 }
 
@@ -243,15 +255,34 @@ func appendBondNetworkData(data openStackNetworkData, name string, bond *BondCon
 	for _, iface := range bond.Interfaces {
 		iface = strings.TrimSpace(iface)
 		if iface != "" {
-			data.Links = append(data.Links, ethernetLink(iface, nil, 0))
+			link := ethernetLink(iface, nil, 0)
+			data.Links = appendOpenStackLink(data.Links, &link)
 		}
 	}
-	data.Links = append(data.Links, bondLink(name, bond))
-	networks, err := networksForLink(name, bond.DHCP4, bond.Addresses, bond.Gateway4)
+	link := bondLink(name, bond)
+	data.Links = appendOpenStackLink(data.Links, &link)
+	networks, err := networksForLink(name, bond.DHCP4, bond.DHCP6, bond.Addresses, bond.Gateway4, bond.Gateway6)
 	if err != nil {
 		return data, err
 	}
 	services := servicesForNameservers(bond.Nameservers)
+	attachServicesToNetworks(networks, services)
+	data.Networks = append(data.Networks, networks...)
+	data.Services = append(data.Services, services...)
+	return data, nil
+}
+
+func appendVLANNetworkData(data openStackNetworkData, name string, vlan *VLANConfig) (openStackNetworkData, error) {
+	if name == "" || vlan == nil {
+		return data, nil
+	}
+	link := vlanLink(name, vlan)
+	data.Links = appendOpenStackLink(data.Links, &link)
+	networks, err := networksForLink(name, vlan.DHCP4, vlan.DHCP6, vlan.Addresses, vlan.Gateway4, vlan.Gateway6)
+	if err != nil {
+		return data, err
+	}
+	services := servicesForNameservers(vlan.Nameservers)
 	attachServicesToNetworks(networks, services)
 	data.Networks = append(data.Networks, networks...)
 	data.Services = append(data.Services, services...)
@@ -269,6 +300,18 @@ func ethernetLink(id string, match *MatchConfig, mtu int) openStackLink {
 	return link
 }
 
+func appendOpenStackLink(links []openStackLink, link *openStackLink) []openStackLink {
+	if link == nil {
+		return links
+	}
+	for i := range links {
+		if links[i].ID == link.ID {
+			return links
+		}
+	}
+	return append(links, *link)
+}
+
 func bondLink(id string, bond *BondConfig) openStackLink {
 	link := openStackLink{ID: id, Type: "bond", Name: id}
 	for _, iface := range bond.Interfaces {
@@ -282,30 +325,50 @@ func bondLink(id string, bond *BondConfig) openStackLink {
 	return link
 }
 
-func networksForLink(linkID string, dhcp4 bool, addresses []string, gateway string) ([]openStackNetwork, error) {
-	if dhcp4 || len(addresses) == 0 {
-		return []openStackNetwork{{ID: linkID + "-ipv4", Type: "ipv4_dhcp", Link: linkID}}, nil
+func vlanLink(id string, vlan *VLANConfig) openStackLink {
+	mac := ""
+	return openStackLink{
+		ID:             id,
+		Type:           "vlan",
+		Name:           id,
+		VLANID:         &vlan.ID,
+		VLANLink:       strings.TrimSpace(vlan.Link),
+		VLANMACAddress: &mac,
 	}
+}
+
+func networksForLink(linkID string, dhcp4, dhcp6 bool, addresses []string, gateway4, gateway6 string) ([]openStackNetwork, error) {
 	var networks []openStackNetwork
+	if dhcp4 {
+		networks = append(networks, openStackNetwork{ID: linkID + "-ipv4", Type: "ipv4_dhcp", Link: linkID})
+	}
+	if dhcp6 {
+		networks = append(networks, openStackNetwork{ID: linkID + "-ipv6", Type: "ipv6_dhcp", Link: linkID})
+	}
 	for i, address := range addresses {
-		network, err := staticNetworkForLink(linkID, address, gateway)
+		network, err := staticNetworkForLink(linkID, address, gateway4, gateway6)
 		if err != nil {
 			return nil, err
 		}
-		network.ID = fmt.Sprintf("%s-ipv4-%d", linkID, i)
+		network.ID = fmt.Sprintf("%s-%s-%d", linkID, networkFamily(network.Type), i)
 		networks = append(networks, network)
-	}
-	if len(networks) == 0 {
-		return []openStackNetwork{{ID: linkID + "-ipv4", Type: "ipv4_dhcp", Link: linkID}}, nil
 	}
 	return networks, nil
 }
 
-func staticNetworkForLink(linkID, address, gateway string) (openStackNetwork, error) {
+func staticNetworkForLink(linkID, address, gateway4, gateway6 string) (openStackNetwork, error) {
 	ip, ipNet, err := net.ParseCIDR(strings.TrimSpace(address))
-	if err != nil || ip.To4() == nil {
-		return openStackNetwork{}, fmt.Errorf("invalid IPv4 CIDR %q", address)
+	if err != nil {
+		return openStackNetwork{}, fmt.Errorf("invalid CIDR %q", address)
 	}
+	if ip4 := ip.To4(); ip4 != nil {
+		return staticIPv4Network(linkID, ip4, ipNet, gateway4)
+	}
+	ones, _ := ipNet.Mask.Size()
+	return staticIPv6Network(linkID, ip, ones, gateway6)
+}
+
+func staticIPv4Network(linkID string, ip net.IP, ipNet *net.IPNet, gateway string) (openStackNetwork, error) {
 	network := openStackNetwork{
 		Type:      "ipv4",
 		Link:      linkID,
@@ -313,6 +376,9 @@ func staticNetworkForLink(linkID, address, gateway string) (openStackNetwork, er
 		Netmask:   dottedIPv4Mask(ipNet.Mask),
 	}
 	if gateway = strings.TrimSpace(gateway); gateway != "" {
+		if parsed := net.ParseIP(gateway); parsed == nil || parsed.To4() == nil {
+			return openStackNetwork{}, fmt.Errorf("invalid IPv4 gateway %q", gateway)
+		}
 		network.Gateway = gateway
 		network.Routes = []openStackRoute{{
 			Network: "0.0.0.0",
@@ -321,6 +387,33 @@ func staticNetworkForLink(linkID, address, gateway string) (openStackNetwork, er
 		}}
 	}
 	return network, nil
+}
+
+func staticIPv6Network(linkID string, ip net.IP, prefixLen int, gateway string) (openStackNetwork, error) {
+	network := openStackNetwork{
+		Type:      "ipv6",
+		Link:      linkID,
+		IPAddress: ip.String(),
+		Netmask:   strconv.Itoa(prefixLen),
+	}
+	if gateway = strings.TrimSpace(gateway); gateway != "" {
+		if parsed := net.ParseIP(gateway); parsed == nil || parsed.To4() != nil {
+			return openStackNetwork{}, fmt.Errorf("invalid IPv6 gateway %q", gateway)
+		}
+		network.Gateway = gateway
+		network.Routes = []openStackRoute{{
+			Network: "::/0",
+			Gateway: gateway,
+		}}
+	}
+	return network, nil
+}
+
+func networkFamily(networkType string) string {
+	if strings.HasPrefix(networkType, "ipv6") {
+		return "ipv6"
+	}
+	return "ipv4"
 }
 
 func dottedIPv4Mask(mask net.IPMask) string {

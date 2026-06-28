@@ -210,6 +210,29 @@ func TestParseVLANsWithGateway(t *testing.T) {
 	}
 }
 
+func TestParseVLANsWithIPv6AddressAndGateway(t *testing.T) {
+	vlans, err := network.ParseVLANs("200:eno1:[2001:db8:200::42/64]:[2001:db8:200::1]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vlans) != 1 {
+		t.Fatalf("expected 1 VLAN, got %d", len(vlans))
+	}
+	if vlans[0].Address != "2001:db8:200::42/64" {
+		t.Errorf("Address = %q, want 2001:db8:200::42/64", vlans[0].Address)
+	}
+	if vlans[0].Gateway != "2001:db8:200::1" {
+		t.Errorf("Gateway = %q, want 2001:db8:200::1", vlans[0].Gateway)
+	}
+}
+
+func TestParseVLANsRejectsUnbracketedIPv6Address(t *testing.T) {
+	_, err := network.ParseVLANs("200:eno1:2001:db8:200::42/64")
+	if err == nil {
+		t.Fatal("expected error for unbracketed IPv6 VLAN address")
+	}
+}
+
 func TestParseVLANsInvalidID(t *testing.T) {
 	_, err := network.ParseVLANs("abc:eno1")
 	if err == nil {

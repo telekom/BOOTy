@@ -278,9 +278,12 @@ For trunk ports with multiple VLANs:
 ```bash
 # Compact format: VLAN_ID:PARENT:IP (IP optional)
 export VLANS="200:eno1:10.200.0.42/24,300:eno2"
+export VLANS="200:eno1:[2001:db8:200::42/64]:[2001:db8:200::1]"
 ```
 
 This creates `eno1.200` (static IP) and `eno2.300` (DHCP).
+IPv6 address and gateway fields must be wrapped in brackets because `:` is
+the compact field separator.
 
 ### Programmatic Access
 

@@ -719,11 +719,13 @@ BOOTy supports 802.1Q VLAN tagging via netlink. Configure VLANs with the
 
 ```bash
 export VLANS="200:eno1:10.200.0.42/24,300:eno2"
+export VLANS="200:eno1:[2001:db8:200::42/64]:[2001:db8:200::1]"
 ```
 
 Each VLAN creates a tagged sub-interface (`eno1.200`), assigns the IP address
 (if provided), and brings the link up. VLANs are created after the primary
-network mode is established.
+network mode is established. IPv6 address or gateway fields in `VLANS` must
+be wrapped in brackets because `:` separates fields in the compact format.
 
 ### Kexec Boot
 
@@ -872,7 +874,8 @@ The active provisioning integration currently generates:
   When a provider-id is configured, it is used as the source for instance-id
   and is not written as a separate metadata field.
 - **User data** — hostname and `manage_etc_hosts`
-- **Network config v2** — bonds, addresses, gateways, nameservers
+- **Network config v2** — IPv4/IPv6 addresses and gateways, bonds, VLANs,
+  and nameservers
   (generated from the active provisioning network config)
 
 The cloud-init generator package has fields for richer user-data such as users,
