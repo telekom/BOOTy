@@ -2291,7 +2291,7 @@ func runDebugCmd(label, cmd string) {
 	if trimmed != "" {
 		for _, line := range strings.Split(trimmed, "\n") {
 			if line != "" {
-				slog.Warn("debug", "label", label, "data", line)
+				slog.Warn("debug", "label", label, "data", redactDebugData(line))
 			}
 		}
 	}
