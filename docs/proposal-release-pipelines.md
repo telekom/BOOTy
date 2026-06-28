@@ -90,13 +90,13 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@<pinned-sha>
         with:
           fetch-depth: 0
       - id: version
         run: |
           BASE=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          echo "version=${BASE}-nightly.$(date +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          echo "version=${BASE}-nightly.$(date +%Y%m%d).${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
   build:
     needs: version
@@ -110,10 +110,30 @@ jobs:
     needs: build
     steps:
       - name: Vulnerability scan
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@<pinned-sha>
         with:
           scan-type: fs
           severity: CRITICAL,HIGH
+
+  sbom:
+    needs: build
+    steps:
+      - name: Generate SBOM
+        uses: anchore/sbom-action@<pinned-sha>
+
+  container:
+    needs: [version, build, scan, sbom]
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Push, sign, and attest nightly image
+        run: |
+          docker buildx build --push --provenance=true --metadata-file image-metadata.json ...
+          cosign sign --yes ghcr.io/${{ github.repository }}@sha256:...
+          cosign attest --yes --type spdx --predicate sbom.spdx.json ghcr.io/${{ github.repository }}@sha256:...
 ```
 
 ### Workflow: Release (`release-v2.yml`)

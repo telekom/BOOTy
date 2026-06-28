@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   version:
@@ -16,7 +15,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
       - id: version
@@ -26,7 +25,7 @@ jobs:
             echo "::error::latest tag ${BASE} is not a valid release version"
             exit 1
           fi
-          printf 'version=%s-nightly.%s\n' "${BASE}" "$(date +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          printf 'version=%s-nightly.%s.%s.%s\n' "${BASE}" "$(date +%Y%m%d)" "${GITHUB_RUN_NUMBER}" "${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build (${{ matrix.arch }}/${{ matrix.flavor }})
@@ -38,14 +37,14 @@ jobs:
         flavor: [default, gobgp, slim, micro]
       fail-fast: false
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
           go-version: "1.26"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4.1.0
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5
 
       - name: Build binary
         if: matrix.flavor == 'default'
@@ -86,7 +85,7 @@ jobs:
           esac
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: nightly-${{ matrix.flavor }}-${{ matrix.arch }}
           path: |
@@ -94,16 +93,17 @@ jobs:
             out-${{ matrix.flavor }}/initramfs.cpio.gz
             out-${{ matrix.flavor }}/initramfs.cpio.zst
           if-no-files-found: error
+          retention-days: 14
 
   scan:
     name: Vulnerability Scan
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           scan-type: fs
           scan-ref: .
@@ -117,44 +117,87 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
       - name: Generate SBOM
-        uses: anchore/sbom-action@v0.24.0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
         with:
           format: spdx-json
           output-file: sbom-nightly.spdx.json
 
       - name: Upload SBOM
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: sbom-nightly
           path: sbom-nightly.spdx.json
+          if-no-files-found: error
+          retention-days: 14
 
   container:
     name: Nightly Container Image
-    needs: [version, build, scan]
+    needs: [version, build, scan, sbom]
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4.1.0
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5
 
       - name: Login to GHCR
-        uses: docker/login-action@v4.2.0
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+
+      - name: Download SBOM
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: sbom-nightly
+          path: sbom
+
       - name: Build and push nightly container image
+        id: push
         env:
           NIGHTLY_VERSION: ${{ needs.version.outputs.version }}
         run: |
-          IMAGE="$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]'):${NIGHTLY_VERSION}"
+          IMAGE_REPO="$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          IMAGE="${IMAGE_REPO}:${NIGHTLY_VERSION}"
           docker buildx build --platform linux/amd64 \
             --provenance=true \
             --push \
             -t "${IMAGE}" \
+            --metadata-file image-metadata.json \
             -f initrd.Dockerfile .
+          DIGEST="$(jq -r '."containerimage.digest"' image-metadata.json)"
+          if [ -z "${DIGEST}" ] || [ "${DIGEST}" = "null" ]; then
+            echo "::error::docker buildx did not report a pushed image digest"
+            cat image-metadata.json
+            exit 1
+          fi
+          printf 'image_ref=%s@%s\n' "${IMAGE_REPO}" "${DIGEST}" >> "${GITHUB_OUTPUT}"
+          printf 'image_tag=%s\n' "${IMAGE}" >> "${GITHUB_OUTPUT}"
+
+      - name: Sign nightly container image
+        run: |
+          cosign sign --yes "${{ steps.push.outputs.image_ref }}"
+          cosign verify \
+            --certificate-identity "${{ github.server_url }}/${{ github.repository }}/.github/workflows/nightly.yml@${{ github.ref }}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${{ steps.push.outputs.image_ref }}"
+
+      - name: Attach SBOM attestation
+        run: |
+          test -s sbom/sbom-nightly.spdx.json
+          cosign attest --yes \
+            --predicate sbom/sbom-nightly.spdx.json \
+            --type spdx \
+            "${{ steps.push.outputs.image_ref }}"
