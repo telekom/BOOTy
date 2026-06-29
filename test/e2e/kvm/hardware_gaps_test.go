@@ -146,6 +146,7 @@ func TestProvisionVerifyAndBoot(t *testing.T) {
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":                    "verify-boot-test",
 		"dns_resolver":                "8.8.8.8,1.1.1.1",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":                       baseURL + "/image.gz",
 		"MODE":                        "provision",
 		"DISK_DEVICE":                 "/dev/vda",
@@ -243,6 +244,7 @@ func TestProvisionWithMultipleDisks(t *testing.T) {
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":    "multi-disk-test",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":       baseURL + "/image.gz",
 		"MODE":        "provision",
 		"DISK_DEVICE": "/dev/vda",

@@ -39,6 +39,7 @@ func TestCloudInitInjectionQEMU(t *testing.T) {
 	kernel := findKernel(t)
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":             "cloud-init-test",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":                baseURL + "/image.gz",
 		"MODE":                 "provision",
 		"DISK_DEVICE":          "/dev/vda",
@@ -108,6 +109,7 @@ func TestPostProvisionCommandsQEMU(t *testing.T) {
 	kernel := findKernel(t)
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":            "postcmd-test",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":               baseURL + "/image.gz",
 		"MODE":                "provision",
 		"DISK_DEVICE":         "/dev/vda",
@@ -168,6 +170,7 @@ func TestImageChecksumPassQEMU(t *testing.T) {
 	kernel := findKernel(t)
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":            "checksum-pass-test",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":               baseURL + "/image.gz",
 		"MODE":                "provision",
 		"DISK_DEVICE":         "/dev/vda",
@@ -221,6 +224,7 @@ func TestImageChecksumFailQEMU(t *testing.T) {
 	kernel := findKernel(t)
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":            "checksum-fail-test",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":               baseURL + "/image.gz",
 		"MODE":                "provision",
 		"DISK_DEVICE":         "/dev/vda",
@@ -266,6 +270,7 @@ func TestHealthChecksEndpointQEMU(t *testing.T) {
 	kernel := findKernel(t)
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":              "health-test",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":                 mock.guestURL + "/image.gz",
 		"MODE":                  "provision",
 		"DISK_DEVICE":           "/dev/vda",
@@ -322,6 +327,7 @@ func TestInventoryCollectionEndpointQEMU(t *testing.T) {
 	kernel := findKernel(t)
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":           "inventory-test",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":              mock.guestURL + "/image.gz",
 		"MODE":               "provision",
 		"DISK_DEVICE":        "/dev/vda",
@@ -385,6 +391,7 @@ func TestTelemetryCollectionEndpointQEMU(t *testing.T) {
 	kernel := findKernel(t)
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":           "telemetry-test",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":              mock.guestURL + "/image.gz",
 		"MODE":               "provision",
 		"DISK_DEVICE":        "/dev/vda",
@@ -445,6 +452,7 @@ func TestRescueModeRetryQEMU(t *testing.T) {
 	kernel := findKernel(t)
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":           "rescue-retry-test",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":              "http://10.0.2.2:1/nonexistent.gz",
 		"MODE":               "provision",
 		"DISK_DEVICE":        "/dev/vda",
@@ -517,6 +525,7 @@ func TestDryRunSkipsDiskWritesQEMU(t *testing.T) {
 	kernel := findKernel(t)
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":              "dryrun-features-test",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":                 mock.guestURL + "/image.gz",
 		"MODE":                  "dry-run",
 		"DISK_DEVICE":           "/dev/vda",

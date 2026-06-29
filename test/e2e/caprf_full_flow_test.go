@@ -1389,7 +1389,8 @@ func TestRemoveEFIBootEntriesE2E(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParseVarsFullFieldCoverageE2E(t *testing.T) {
-	vars := `export IMAGE="http://img.local/a.gz,http://img.local/b.gz"
+	vars := `export IMAGE_ALLOW_INSECURE_HTTP="true"
+export IMAGE="http://img.local/a.gz,http://img.local/b.gz"
 export HOSTNAME="full-node"
 export TOKEN="full-token"
 export MODE="provision"

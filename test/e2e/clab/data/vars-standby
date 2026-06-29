@@ -1,3 +1,4 @@
+export IMAGE_ALLOW_INSECURE_HTTP="true"
 export IMAGE="http://10.100.0.10/images/test.img.gz"
 export HOSTNAME="booty-standby-e2e"
 export TOKEN="e2e-fabric-token"

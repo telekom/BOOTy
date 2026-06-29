@@ -854,7 +854,7 @@ func (o *Orchestrator) validateProvisionInputs(ctx context.Context) error {
 		}
 		hasSource = true
 		imageSources = append(imageSources, source)
-		if err := validateProvisionImageSource(source, checksumConfigured); err != nil {
+		if err := validateProvisionImageSource(source, checksumConfigured, o.cfg.Provision.Image.AllowInsecureHTTP); err != nil {
 			return err
 		}
 	}
@@ -895,7 +895,7 @@ func (o *Orchestrator) validateImageStreamingPrerequisites(ctx context.Context, 
 	return nil
 }
 
-func validateProvisionImageSource(source string, checksumConfigured bool) error {
+func validateProvisionImageSource(source string, checksumConfigured, allowInsecureHTTP bool) error {
 	if image.IsOCIReference(source) {
 		return validateProvisionOCIImageSource(source, checksumConfigured)
 	}
@@ -907,6 +907,9 @@ func validateProvisionImageSource(source string, checksumConfigured bool) error 
 	scheme := strings.ToLower(u.Scheme)
 	switch scheme {
 	case "http", "https":
+		if scheme == "http" && !allowInsecureHTTP {
+			return fmt.Errorf("provision image source %q: plain HTTP sources require provision.image.allowInsecureHTTP=true (or IMAGE_ALLOW_INSECURE_HTTP=true via vars)", image.RedactURL(source))
+		}
 		if u.Hostname() == "" {
 			return fmt.Errorf("invalid image source %q: missing host", image.RedactURL(source))
 		}

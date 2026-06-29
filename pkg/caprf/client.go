@@ -1123,6 +1123,9 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) (bool, error)
 	if handled, err := applyIntVar(cfg, key, value); handled {
 		return true, err
 	}
+	if applyProvisionImageBoolVar(cfg, key, value) {
+		return true, nil
+	}
 	if applyCrashArtifactsBoolVar(cfg, key, value) {
 		return true, nil
 	}
@@ -1154,6 +1157,16 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) (bool, error)
 		return applyFeatureToggle(cfg, key, value)
 	}
 	return true, nil
+}
+
+func applyProvisionImageBoolVar(cfg *config.MachineConfig, key, value string) bool {
+	switch key {
+	case "IMAGE_ALLOW_INSECURE_HTTP":
+		cfg.Provision.Image.AllowInsecureHTTP = parseBoolVar(value)
+	default:
+		return false
+	}
+	return true
 }
 
 func applyCrashArtifactsBoolVar(cfg *config.MachineConfig, key, value string) bool {

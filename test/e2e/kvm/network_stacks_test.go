@@ -164,6 +164,7 @@ func TestStaticIPNetworkingQEMU(t *testing.T) {
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":           "static-ip-node",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":              baseURL + "/image.gz",
 		"MODE":               "provision",
 		"DISK_DEVICE":        "/dev/vda",
@@ -210,6 +211,7 @@ func TestBondFormationQEMU(t *testing.T) {
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":           "bond-test-node",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":              baseURL + "/image.gz",
 		"MODE":               "provision",
 		"DISK_DEVICE":        "/dev/vda",
@@ -259,6 +261,7 @@ func TestVLANConfigurationQEMU(t *testing.T) {
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":           "vlan-test-node",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":              baseURL + "/image.gz",
 		"MODE":               "provision",
 		"DISK_DEVICE":        "/dev/vda",
@@ -311,6 +314,7 @@ func TestDHCPFallbackQEMU(t *testing.T) {
 	// BOOTy should detect the absence and use DHCP mode.
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":           "dhcp-fallback-node",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":              baseURL + "/image.gz",
 		"MODE":               "provision",
 		"DISK_DEVICE":        "/dev/vda",
@@ -363,6 +367,7 @@ func TestGoBGPModeDetectionQEMU(t *testing.T) {
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":           "gobgp-detect-node",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":              baseURL + "/image.gz",
 		"MODE":               "provision",
 		"DISK_DEVICE":        "/dev/vda",
@@ -418,6 +423,7 @@ func TestFRRModeDetectionQEMU(t *testing.T) {
 	// and NETWORK_MODE is NOT "gobgp".
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":           "frr-detect-node",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":              baseURL + "/image.gz",
 		"MODE":               "provision",
 		"DISK_DEVICE":        "/dev/vda",
@@ -469,6 +475,7 @@ func TestMultipleVLANsQEMU(t *testing.T) {
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":           "multi-vlan-node",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":              baseURL + "/image.gz",
 		"MODE":               "provision",
 		"DISK_DEVICE":        "/dev/vda",
@@ -528,6 +535,7 @@ func TestBondModeSelectionQEMU(t *testing.T) {
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":           "bond-rr-node",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":              baseURL + "/image.gz",
 		"MODE":               "provision",
 		"DISK_DEVICE":        "/dev/vda",

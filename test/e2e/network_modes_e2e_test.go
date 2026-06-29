@@ -294,6 +294,7 @@ export HOSTNAME="static-node"
 export STATIC_IP="10.1.0.5/24"
 export STATIC_GATEWAY="10.1.0.1"
 export STATIC_IFACE="eth0"
+export IMAGE_ALLOW_INSECURE_HTTP="true"
 export IMAGE="http://img.local/test.gz"
 `
 	cfg, err := caprf.ParseVars(strings.NewReader(vars))
@@ -320,6 +321,7 @@ func TestVarsParsingBondConfig(t *testing.T) {
 export HOSTNAME="bond-node"
 export BOND_INTERFACES="eth0,eth1"
 export BOND_MODE="802.3ad"
+export IMAGE_ALLOW_INSECURE_HTTP="true"
 export IMAGE="http://img.local/test.gz"
 `
 	cfg, err := caprf.ParseVars(strings.NewReader(vars))
@@ -342,6 +344,7 @@ func TestVarsParsingVLANConfig(t *testing.T) {
 	vars := `export MODE="provision"
 export HOSTNAME="vlan-node"
 export VLANS="200:eno1:10.200.0.42/24,300:eno2"
+export IMAGE_ALLOW_INSECURE_HTTP="true"
 export IMAGE="http://img.local/test.gz"
 `
 	cfg, err := caprf.ParseVars(strings.NewReader(vars))
@@ -370,6 +373,7 @@ export HOSTNAME="bgp-node"
 export BGP_PEER_MODE="numbered"
 export BGP_NEIGHBORS="10.0.0.1,10.0.0.2"
 bgp_remote_asn="65200"
+export IMAGE_ALLOW_INSECURE_HTTP="true"
 export IMAGE="http://img.local/test.gz"
 underlay_subnet="10.0.0.0/24"
 asn_server="65001"
@@ -400,6 +404,7 @@ export STATIC_IP="10.1.0.5/24"
 export STATIC_GATEWAY="10.1.0.1"
 export BOND_INTERFACES="eth0,eth1"
 export BOND_MODE="802.3ad"
+export IMAGE_ALLOW_INSECURE_HTTP="true"
 export IMAGE="http://img.local/test.gz"
 `
 	cfg, err := caprf.ParseVars(strings.NewReader(vars))
@@ -426,6 +431,7 @@ export IMAGE="http://img.local/test.gz"
 func TestVarsParsingMultiNICDHCPConfig(t *testing.T) {
 	vars := `export MODE="provision"
 export HOSTNAME="dhcp-multi-nic"
+export IMAGE_ALLOW_INSECURE_HTTP="true"
 export IMAGE="http://img.local/test.gz"
 dns_resolver="8.8.8.8,1.1.1.1"
 `

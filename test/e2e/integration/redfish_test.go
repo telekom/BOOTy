@@ -108,7 +108,8 @@ func TestCAPRFClientStatusReporting(t *testing.T) {
 }
 
 func TestCAPRFVarsParsingRoundTrip(t *testing.T) {
-	vars := `export IMAGE="http://example.com/image.gz"
+	vars := `export IMAGE_ALLOW_INSECURE_HTTP="true"
+export IMAGE="http://example.com/image.gz"
 export HOSTNAME="e2e-test-host"
 export TOKEN="round-trip-token"
 export MODE="provision"
