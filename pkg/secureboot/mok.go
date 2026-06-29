@@ -11,6 +11,11 @@ import (
 	"strings"
 )
 
+// mokutilCommand builds the mokutil exec command; overridable in tests.
+var mokutilCommand = func(ctx context.Context, args ...string) *exec.Cmd {
+	return exec.CommandContext(ctx, "mokutil", args...) //nolint:gosec // trusted cert path
+}
+
 // MOKEnroller handles Machine Owner Key enrollment.
 type MOKEnroller struct {
 	certPath string
@@ -36,7 +41,7 @@ func (m *MOKEnroller) Enroll(ctx context.Context) error {
 	if m.password != "" {
 		args = append(args, "--root-pw", "--simple-hash")
 	}
-	cmd := exec.CommandContext(ctx, "mokutil", args...) //nolint:gosec // trusted cert path
+	cmd := mokutilCommand(ctx, args...)
 	if m.password != "" {
 		// mokutil reads the password from stdin when --root-pw is used.
 		cmd.Stdin = strings.NewReader(m.password + "\n" + m.password + "\n")
@@ -58,7 +63,7 @@ func (m *MOKEnroller) IsEnrolled(ctx context.Context) (bool, error) {
 	if _, err := os.Stat(m.certPath); err != nil {
 		return false, fmt.Errorf("mok certificate not found: %w", err)
 	}
-	out, err := exec.CommandContext(ctx, "mokutil", "--test-key", m.certPath).CombinedOutput() //nolint:gosec // trusted cert path
+	out, err := mokutilCommand(ctx, "--test-key", m.certPath).CombinedOutput()
 	if err != nil {
 		// mokutil --test-key exits non-zero when the key is not enrolled.
 		outStr := strings.TrimSpace(string(out))
