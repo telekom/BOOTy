@@ -55,7 +55,8 @@ func (r *statusRecorder) get() []string {
 // --- Feature Gate: Vars Parsing ---
 
 func TestVarsParsingAllFields(t *testing.T) {
-	vars := `export IMAGE="http://img1.gz http://img2.gz"
+	vars := `export IMAGE_ALLOW_INSECURE_HTTP="true"
+export IMAGE="http://img1.gz http://img2.gz"
 export HOSTNAME="node-42"
 export TOKEN="secret-token"
 export MODE="provision"
@@ -535,7 +536,8 @@ func TestVarsToClientEndToEnd(t *testing.T) {
 
 	srvURL := startServer(t, mux)
 
-	vars := `export IMAGE="http://images.example.com/ubuntu-22.04.gz"
+	vars := `export IMAGE_ALLOW_INSECURE_HTTP="true"
+export IMAGE="http://images.example.com/ubuntu-22.04.gz"
 export HOSTNAME="e2e-node-01"
 export TOKEN="e2e-bearer-token"
 export MODE="provision"
@@ -688,7 +690,8 @@ menuentry 'Ubuntu' {
 // --- Feature Gate: Multiple Image URLs ---
 
 func TestMultipleImageURLsParsing(t *testing.T) {
-	vars := `export IMAGE="http://img1.gz http://img2.gz http://img3.gz"` + "\n"
+	vars := `export IMAGE_ALLOW_INSECURE_HTTP="true"
+export IMAGE="http://img1.gz http://img2.gz http://img3.gz"` + "\n"
 	cfg, err := caprf.ParseVars(strings.NewReader(vars))
 	if err != nil {
 		t.Fatal(err)
@@ -699,7 +702,8 @@ func TestMultipleImageURLsParsing(t *testing.T) {
 }
 
 func TestSingleImageURLParsing(t *testing.T) {
-	vars := `export IMAGE="http://single.gz"` + "\n"
+	vars := `export IMAGE_ALLOW_INSECURE_HTTP="true"
+export IMAGE="http://single.gz"` + "\n"
 	cfg, err := caprf.ParseVars(strings.NewReader(vars))
 	if err != nil {
 		t.Fatal(err)

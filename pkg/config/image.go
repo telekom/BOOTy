@@ -14,7 +14,6 @@ type ImageConfig struct {
 	// Default: false (requires HTTPS or OCI)
 	AllowInsecureHTTP bool `yaml:"allowInsecureHTTP" json:"allowInsecureHTTP"`
 
-
 	// Checksum is the expected hex digest of the raw (decompressed) image.
 	// Verified after streaming completes.
 	// Default: "" (no verification)

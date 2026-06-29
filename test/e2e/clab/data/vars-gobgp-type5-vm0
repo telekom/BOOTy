@@ -1,3 +1,4 @@
+export IMAGE_ALLOW_INSECURE_HTTP="true"
 export IMAGE="http://10.200.0.1/images/test.img.gz"
 export HOSTNAME="booty-type5-vm0-e2e"
 export TOKEN="e2e-type5-token"

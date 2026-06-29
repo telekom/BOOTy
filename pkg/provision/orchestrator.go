@@ -895,7 +895,7 @@ func (o *Orchestrator) validateImageStreamingPrerequisites(ctx context.Context, 
 	return nil
 }
 
-func validateProvisionImageSource(source string, checksumConfigured bool, allowInsecureHTTP bool) error {
+func validateProvisionImageSource(source string, checksumConfigured, allowInsecureHTTP bool) error {
 	if image.IsOCIReference(source) {
 		return validateProvisionOCIImageSource(source, checksumConfigured)
 	}

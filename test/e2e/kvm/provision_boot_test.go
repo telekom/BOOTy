@@ -39,6 +39,7 @@ func TestProvisionAndBootOS(t *testing.T) {
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":    hostname,
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":       baseURL + "/image.gz",
 		"MODE":        "provision",
 		"DISK_DEVICE": "/dev/vda",

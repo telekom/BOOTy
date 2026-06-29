@@ -32,6 +32,7 @@ func TestProvisionVerifyHostnameAndDNS(t *testing.T) {
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":     hostname,
 		"dns_resolver": dnsResolvers,
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":        baseURL + "/image.gz",
 		"MODE":         "provision",
 		"DISK_DEVICE":  "/dev/vda",
@@ -77,6 +78,7 @@ func TestProvisionVerifyGRUBKernelParams(t *testing.T) {
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":                    "grub-test",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":                       baseURL + "/image.gz",
 		"MODE":                        "provision",
 		"DISK_DEVICE":                 "/dev/vda",
@@ -121,6 +123,7 @@ func TestProvisionVerifyKubeletConfig(t *testing.T) {
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":       "kubelet-test",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":          baseURL + "/image.gz",
 		"MODE":           "provision",
 		"DISK_DEVICE":    "/dev/vda",

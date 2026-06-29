@@ -34,6 +34,7 @@ func TestProvisionCompletesAllSteps(t *testing.T) {
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":     "full-steps-test",
 		"dns_resolver": "8.8.8.8",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":        baseURL + "/image.gz",
 		"MODE":         "provision",
 		"DISK_DEVICE":  "/dev/vda",
@@ -98,6 +99,7 @@ func TestKexecLoadAndExecute(t *testing.T) {
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":    "kexec-test",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":       baseURL + "/image.gz",
 		"MODE":        "provision",
 		"DISK_DEVICE": "/dev/vda",
@@ -126,6 +128,7 @@ func TestKexecLoadAndExecute(t *testing.T) {
 		"HOSTNAME":      "kexec-test",
 		"MODE":          "provision",
 		"DISK_DEVICE":   "/dev/vda",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":         baseURL + "/image.gz",
 		"DISABLE_KEXEC": "false",
 	})
@@ -171,6 +174,7 @@ func TestDeprovisionHardOnRealDisk(t *testing.T) {
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":    "deprov-test",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":       baseURL + "/image.gz",
 		"MODE":        "provision",
 		"DISK_DEVICE": "/dev/vda",
@@ -223,6 +227,7 @@ func TestDeprovisionSoftOnRealDisk(t *testing.T) {
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":    "soft-deprov-test",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":       baseURL + "/image.gz",
 		"MODE":        "provision",
 		"DISK_DEVICE": "/dev/vda",
@@ -274,6 +279,7 @@ func TestImageStreamVerifyContent(t *testing.T) {
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":    "image-verify",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":       baseURL + "/image.gz",
 		"MODE":        "provision",
 		"DISK_DEVICE": "/dev/vda",
@@ -319,6 +325,7 @@ func TestDryRunDoesNotModifyDisk(t *testing.T) {
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":    "dryrun-test",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":       baseURL + "/image.gz",
 		"MODE":        "dry-run",
 		"DISK_DEVICE": "/dev/vda",
@@ -371,6 +378,7 @@ func TestUEFIBootloaderInstallAndNativeBoot(t *testing.T) {
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":    "uefi-boot-test",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":       baseURL + "/image.gz",
 		"MODE":        "provision",
 		"DISK_DEVICE": "/dev/vda",
@@ -624,6 +632,7 @@ func TestEFIBootEntryManagementOVMF(t *testing.T) {
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":    "efi-entry-test",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":       baseURL + "/image.gz",
 		"MODE":        "provision",
 		"DISK_DEVICE": "/dev/vda",
@@ -678,6 +687,7 @@ func TestNetworkPersistenceStaticIP(t *testing.T) {
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":        "net-persist-test",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":           baseURL + "/image.gz",
 		"MODE":            "provision",
 		"DISK_DEVICE":     "/dev/vda",

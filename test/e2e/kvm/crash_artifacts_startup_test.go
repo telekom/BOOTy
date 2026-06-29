@@ -41,6 +41,7 @@ func TestCrashArtifactsStartupUploadBeforeImageDownload(t *testing.T) {
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":                             "crash-kvm-node",
 		"INSECURE_TRANSPORT":                   "true",
+		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":                                server.guestURL + "/image.gz",
 		"MODE":                                 "provision",
 		"DISK_DEVICE":                          "/dev/vda",

@@ -38,6 +38,8 @@ func newTestOrchestratorWithCommander(t *testing.T, cfg *config.MachineConfig, p
 	t.Helper()
 	cmd := newMockCommander()
 	mgr := disk.NewManager(cmd)
+	cfg.Provision.Image.AllowInsecureHTTP = true
+	cfg.Provision.Image.AllowInsecureHTTP = true
 	o := NewOrchestrator(cfg, provider, mgr)
 	o.config.rootDir = t.TempDir()
 	return o, cmd
@@ -2112,6 +2114,8 @@ func TestWipeOrSecureEraseDisks(t *testing.T) {
 			}
 			provider := &mockProvider{}
 			mgr := disk.NewManager(cmd)
+			cfg.Provision.Image.AllowInsecureHTTP = true
+			cfg.Provision.Image.AllowInsecureHTTP = true
 			o := NewOrchestrator(cfg, provider, mgr)
 
 			err := o.wipeOrSecureEraseDisks(context.Background())
