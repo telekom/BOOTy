@@ -160,15 +160,21 @@ func waitForLogEntry(t *testing.T, container, entry string, timeout time.Duratio
 
 func waitForLogEntrySince(t *testing.T, container, entry string, timeout time.Duration, since time.Time) bool {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	ctx, cancel := pollContext(t, timeout)
+	defer cancel()
+
+	err := pollUntil(ctx, 2*time.Second, func(context.Context) (bool, string) {
 		logs := getBootyLogsSince(t, container, since)
 		if strings.Contains(logs, entry) {
-			return true
+			return true, ""
 		}
-		time.Sleep(2 * time.Second)
+		return false, fmt.Sprintf("waiting for log entry %q in %s since %s", entry, container, since.UTC().Format(time.RFC3339Nano))
+	})
+	if err != nil {
+		t.Logf("waitForLogEntrySince(%s, %q): %v", container, entry, err)
+		return false
 	}
-	return false
+	return true
 }
 
 // bootyNetworkNeedsRecovery checks if BOOTy can no longer serve as a live
@@ -245,33 +251,45 @@ func restartContainer(t *testing.T, container string) time.Time {
 		t.Logf("Warning: docker restart %s failed: %v\n%s", container, err, out)
 		return restartStarted
 	}
-	// Wait for BOOTy to start inside the container.
-	for i := 0; i < 30; i++ {
+	pollCtx, pollCancel := pollContext(t, 60*time.Second)
+	defer pollCancel()
+	err := pollUntil(pollCtx, 2*time.Second, func(context.Context) (bool, string) {
 		logs := getBootyLogsSince(t, container, restartStarted)
 		if strings.Contains(logs, "starting BOOTy") {
-			t.Logf("Container %s restarted and BOOTy started", container)
-			return restartStarted
+			return true, ""
 		}
-		time.Sleep(2 * time.Second)
+		return false, fmt.Sprintf("waiting for BOOTy restart banner in %s since %s", container, restartStarted.UTC().Format(time.RFC3339Nano))
+	})
+	if err == nil {
+		t.Logf("Container %s restarted and BOOTy started", container)
+		return restartStarted
 	}
-	t.Logf("Warning: container %s restarted but BOOTy startup not detected", container)
+	t.Logf("Warning: container %s restarted but BOOTy startup not detected: %v", container, err)
 	return restartStarted
 }
 
 // waitForAccessLogEntry polls a container's file until it contains the expected string.
 func waitForAccessLogEntry(t *testing.T, container, logPath, entry string, timeout time.Duration) (string, bool) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
+	ctx, cancel := pollContext(t, timeout)
+	defer cancel()
 	var lastOut string
-	for time.Now().Before(deadline) {
+	err := pollUntil(ctx, 3*time.Second, func(context.Context) (bool, string) {
 		out, err := bootDockerExec(t, container, "cat", logPath)
-		if err == nil && strings.Contains(out, entry) {
-			return out, true
-		}
 		lastOut = out
-		time.Sleep(3 * time.Second)
+		if err == nil && strings.Contains(out, entry) {
+			return true, ""
+		}
+		if err != nil {
+			return false, fmt.Sprintf("waiting for %q in %s:%s (last error: %v)", entry, container, logPath, err)
+		}
+		return false, fmt.Sprintf("waiting for %q in %s:%s", entry, container, logPath)
+	})
+	if err != nil {
+		t.Logf("waitForAccessLogEntry(%s, %s, %q): %v", container, logPath, entry, err)
+		return lastOut, false
 	}
-	return lastOut, false
+	return lastOut, true
 }
 
 func waitForBootHTTP(t *testing.T, probe bootHTTPProbe, timeout time.Duration) bool {
@@ -328,14 +346,7 @@ func truncateBootProbeOutput(out string) string {
 
 func bootDeadline(t *testing.T, timeout time.Duration) time.Time {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	if testDeadline, ok := t.Deadline(); ok {
-		capped := testDeadline.Add(-30 * time.Second)
-		if capped.Before(deadline) {
-			return capped
-		}
-	}
-	return deadline
+	return pollDeadline(t, timeout)
 }
 
 func waitForBootPoll(deadline time.Time) bool {
@@ -474,20 +485,26 @@ func TestBootStandbyEntersStandbyLoop(t *testing.T) {
 		"sending heartbeat",
 	}
 
-	deadline := time.Now().Add(45 * time.Second)
-	for time.Now().Before(deadline) {
+	ctx, cancel := pollContext(t, 45*time.Second)
+	defer cancel()
+	foundMarker := ""
+	err := pollUntil(ctx, 2*time.Second, func(context.Context) (bool, string) {
 		logs := getBootyLogs(t, standbyContainer)
 		for _, marker := range markers {
 			if strings.Contains(logs, marker) {
-				t.Logf("standby node reached expected steady-state marker: %s", marker)
-				return
+				foundMarker = marker
+				return true, ""
 			}
 		}
-		time.Sleep(2 * time.Second)
+		return false, "waiting for standby steady-state marker"
+	})
+	if err == nil {
+		t.Logf("standby node reached expected steady-state marker: %s", foundMarker)
+		return
 	}
 
 	logs := getBootyLogs(t, standbyContainer)
-	t.Fatalf("standby loop marker not observed within 45s\nFull logs:\n%s", logs)
+	t.Fatalf("standby loop marker not observed within 45s: %v\nFull logs:\n%s", err, logs)
 }
 
 // --- Log content validation ---

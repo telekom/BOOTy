@@ -143,39 +143,38 @@ func dumpDebugState(t *testing.T) {
 // other sessions being established.
 func waitForBGPPeer(t *testing.T, neighbor string) {
 	t.Helper()
-	// Dual-mode EVPN reaches the spine through rr01 reflection and can converge
-	// slower than direct peers under CI load.
-	deadline := time.Now().Add(2 * bgpConvergeTimeout)
-	for {
-		out, _ := gobgpDockerExecRaw(t, gobgpLabSpine,
-			"vtysh", "-c", "show bgp neighbors "+neighbor+" json")
-		if strings.Contains(out, "Established") {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("BGP peer %s did not reach ESTABLISHED within %s:\n%s",
-				neighbor, bgpConvergeTimeout, out)
-		}
-		time.Sleep(bgpConvergeInterval)
-	}
+	waitForGobgpCondition(t, 2*bgpConvergeTimeout,
+		"BGP peer "+neighbor+" did not reach ESTABLISHED", func(context.Context) (bool, string) {
+			out, _ := gobgpDockerExecRaw(t, gobgpLabSpine,
+				"vtysh", "-c", "show bgp neighbors "+neighbor+" json")
+			if strings.Contains(out, "Established") {
+				return true, ""
+			}
+			return false, out
+		})
 }
 
 // waitForBGPInterface waits for an interface-based peer to appear in the
 // spine's BGP summary with Established state.
 func waitForBGPInterface(t *testing.T, iface string) {
 	t.Helper()
-	deadline := time.Now().Add(bgpConvergeTimeout)
-	for {
-		out, _ := gobgpDockerExecRaw(t, gobgpLabSpine,
-			"vtysh", "-c", "show bgp neighbors "+iface+" json")
-		if strings.Contains(out, "Established") {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("BGP peer on %s did not reach ESTABLISHED within %s:\n%s",
-				iface, bgpConvergeTimeout, out)
-		}
-		time.Sleep(bgpConvergeInterval)
+	waitForGobgpCondition(t, bgpConvergeTimeout,
+		"BGP peer on "+iface+" did not reach ESTABLISHED", func(context.Context) (bool, string) {
+			out, _ := gobgpDockerExecRaw(t, gobgpLabSpine,
+				"vtysh", "-c", "show bgp neighbors "+iface+" json")
+			if strings.Contains(out, "Established") {
+				return true, ""
+			}
+			return false, out
+		})
+}
+
+func waitForGobgpCondition(t *testing.T, timeout time.Duration, description string, condition func(context.Context) (bool, string)) {
+	t.Helper()
+	ctx, cancel := pollContext(t, timeout)
+	defer cancel()
+	if err := pollUntil(ctx, bgpConvergeInterval, condition); err != nil {
+		t.Fatalf("%s: %v", description, err)
 	}
 }
 
@@ -225,19 +224,15 @@ func TestGoBGPUnnumberedUnderlayRoute(t *testing.T) {
 
 	// BOOTy-unnumbered's underlay IP (10.0.0.20) should be in the spine's
 	// BGP table, learned via the unnumbered session.
-	deadline := time.Now().Add(bgpConvergeTimeout)
-	for {
+	waitForGobgpCondition(t, bgpConvergeTimeout, "route 10.0.0.20/32 not learned on spine", func(context.Context) (bool, string) {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabSpine,
 			"vtysh", "-c", "show ip route 10.0.0.20/32")
 		if strings.Contains(out, "10.0.0.20") {
 			t.Log("Underlay route 10.0.0.20/32 present on spine")
-			return
+			return true, ""
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("route 10.0.0.20/32 not learned on spine:\n%s", out)
-		}
-		time.Sleep(bgpConvergeInterval)
-	}
+		return false, out
+	})
 }
 
 // --- Scenario 2: Dual -------------------------------------------------------
@@ -257,19 +252,15 @@ func TestGoBGPDualNumberedEstablished(t *testing.T) {
 
 	// booty-dual also peers with rr01 via eBGP numbered for L2VPN-EVPN.
 	// Check rr01's perspective: neighbor 10.0.3.2 should be ESTABLISHED.
-	deadline := time.Now().Add(bgpConvergeTimeout)
-	for {
+	waitForGobgpCondition(t, bgpConvergeTimeout, "eBGP peer 10.0.3.2 not ESTABLISHED on rr01", func(context.Context) (bool, string) {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabRR,
 			"vtysh", "-c", "show bgp neighbors 10.0.3.2 json")
 		if strings.Contains(out, "Established") {
 			t.Log("Dual mode: numbered eBGP peer ESTABLISHED on rr01")
-			return
+			return true, ""
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("eBGP peer 10.0.3.2 not ESTABLISHED on rr01:\n%s", out)
-		}
-		time.Sleep(bgpConvergeInterval)
-	}
+		return false, out
+	})
 }
 
 func TestGoBGPDualEVPNOnNumberedOnly(t *testing.T) {
@@ -288,19 +279,15 @@ func TestGoBGPDualEVPNOnNumberedOnly(t *testing.T) {
 	}
 
 	// Verify rr01 has L2VPN-EVPN active toward booty-dual.
-	deadline := time.Now().Add(bgpConvergeTimeout)
-	for {
+	waitForGobgpCondition(t, bgpConvergeTimeout, "L2VPN-EVPN not active on rr01 toward booty-dual", func(context.Context) (bool, string) {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabRR,
 			"vtysh", "-c", "show bgp neighbors 10.0.3.2 json")
 		if strings.Contains(strings.ToLower(out), "l2vpnevpn") && strings.Contains(out, "Established") {
 			t.Log("Dual mode: L2VPN-EVPN active on numbered eBGP to rr01")
-			return
+			return true, ""
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("L2VPN-EVPN not active on rr01 toward booty-dual:\n%s", out)
-		}
-		time.Sleep(bgpConvergeInterval)
-	}
+		return false, out
+	})
 }
 
 // --- Scenario 3: Numbered ---------------------------------------------------
@@ -348,19 +335,15 @@ func TestGoBGPNumberedUnderlayRoute(t *testing.T) {
 
 	// BOOTy-numbered's underlay IP (10.0.0.22) should be learned via the
 	// numbered eBGP session.
-	deadline := time.Now().Add(bgpConvergeTimeout)
-	for {
+	waitForGobgpCondition(t, bgpConvergeTimeout, "route 10.0.0.22/32 not learned on spine", func(context.Context) (bool, string) {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabSpine,
 			"vtysh", "-c", "show ip route 10.0.0.22/32")
 		if strings.Contains(out, "10.0.0.22") {
 			t.Log("Underlay route 10.0.0.22/32 present on spine")
-			return
+			return true, ""
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("route 10.0.0.22/32 not learned on spine:\n%s", out)
-		}
-		time.Sleep(bgpConvergeInterval)
-	}
+		return false, out
+	})
 }
 
 // TestGoBGPNumberedGatewayRoute verifies the gateway VTEP host route is
@@ -372,23 +355,19 @@ func TestGoBGPNumberedGatewayRoute(t *testing.T) {
 
 	waitForBGPPeer(t, "10.0.2.2")
 
-	deadline := time.Now().Add(2 * bgpConvergeTimeout)
 	var lastErr error
-	for {
+	waitForGobgpCondition(t, 2*bgpConvergeTimeout, "gateway /32 route not installed via numbered neighbor", func(context.Context) (bool, string) {
 		out, err := gobgpDockerExecRaw(t, gobgpLabNumbered, "ip", "route", "show", "10.0.0.1/32")
 		lastErr = err
 		if strings.Contains(out, "10.0.0.1") && strings.Contains(out, "via 10.0.2.1") {
 			t.Log("Gateway route 10.0.0.1/32 present via numbered neighbor 10.0.2.1")
-			return
+			return true, ""
 		}
-		if time.Now().After(deadline) {
-			if lastErr != nil {
-				t.Fatalf("gateway /32 route not installed via numbered neighbor: %v\n%s", lastErr, out)
-			}
-			t.Fatalf("gateway /32 route not installed via numbered neighbor:\n%s", out)
+		if lastErr != nil {
+			return false, lastErr.Error() + "\n" + out
 		}
-		time.Sleep(bgpConvergeInterval)
-	}
+		return false, out
+	})
 }
 
 // --- Cross-mode: fabric-level connectivity ----------------------------------
@@ -407,19 +386,15 @@ func TestGoBGPRR01SpineBGPEstablished(t *testing.T) {
 	t.Cleanup(func() { dumpDebugState(t) })
 
 	// RR01 ↔ spine iBGP session (10.0.1.2 ↔ 10.0.1.1).
-	deadline := time.Now().Add(bgpConvergeTimeout)
-	for {
+	waitForGobgpCondition(t, bgpConvergeTimeout, "RR01→spine iBGP not ESTABLISHED", func(context.Context) (bool, string) {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabRR,
 			"vtysh", "-c", "show bgp neighbors 10.0.1.1 json")
 		if strings.Contains(out, "Established") {
 			t.Log("RR01 ↔ spine iBGP ESTABLISHED")
-			return
+			return true, ""
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("RR01→spine iBGP not ESTABLISHED:\n%s", out)
-		}
-		time.Sleep(bgpConvergeInterval)
-	}
+		return false, out
+	})
 }
 
 // --- EVPN Data Plane --------------------------------------------------------
@@ -433,20 +408,16 @@ func TestGoBGPUnnumberedEVPNType5OnSpine(t *testing.T) {
 
 	waitForBGPInterface(t, "eth3")
 
-	deadline := time.Now().Add(bgpConvergeTimeout)
-	for {
+	waitForGobgpCondition(t, bgpConvergeTimeout, "EVPN Type-5 route from booty-unnumbered not on spine", func(context.Context) (bool, string) {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabSpine,
 			"vtysh", "-c", "show bgp l2vpn evpn")
 		// BOOTy-unnumbered advertises its host IP as a /32 Type-5 route.
 		if strings.Contains(out, "10.100.0.20") {
 			t.Log("EVPN Type-5 route from booty-unnumbered visible on spine")
-			return
+			return true, ""
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("EVPN Type-5 route from booty-unnumbered not on spine:\n%s", out)
-		}
-		time.Sleep(bgpConvergeInterval)
-	}
+		return false, out
+	})
 }
 
 // TestGoBGPDualEVPNType5OnSpine verifies that the spine receives an EVPN
@@ -460,20 +431,16 @@ func TestGoBGPDualEVPNType5OnSpine(t *testing.T) {
 	// EVPN routes arrive at spine via rr01 iBGP reflection.
 	waitForBGPInterface(t, "eth4")
 
-	deadline := time.Now().Add(bgpConvergeTimeout)
-	for {
+	waitForGobgpCondition(t, bgpConvergeTimeout, "EVPN Type-5 route from booty-dual not on spine", func(context.Context) (bool, string) {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabSpine,
 			"vtysh", "-c", "show bgp l2vpn evpn")
 		// BOOTy-dual advertises its host IP as a /32 Type-5 route.
 		if strings.Contains(out, "10.100.0.21") {
 			t.Log("EVPN Type-5 route from booty-dual visible on spine")
-			return
+			return true, ""
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("EVPN Type-5 route from booty-dual not on spine:\n%s", out)
-		}
-		time.Sleep(bgpConvergeInterval)
-	}
+		return false, out
+	})
 }
 
 // TestGoBGPNumberedEVPNType5OnSpine verifies that the spine receives an EVPN
@@ -484,20 +451,16 @@ func TestGoBGPNumberedEVPNType5OnSpine(t *testing.T) {
 
 	waitForBGPPeer(t, "10.0.2.2")
 
-	deadline := time.Now().Add(bgpConvergeTimeout)
-	for {
+	waitForGobgpCondition(t, bgpConvergeTimeout, "EVPN Type-5 route from booty-numbered not on spine", func(context.Context) (bool, string) {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabSpine,
 			"vtysh", "-c", "show bgp l2vpn evpn")
 		// BOOTy-numbered advertises its host IP as a /32 Type-5 route.
 		if strings.Contains(out, "10.100.0.22") {
 			t.Log("EVPN Type-5 route from booty-numbered visible on spine")
-			return
+			return true, ""
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("EVPN Type-5 route from booty-numbered not on spine:\n%s", out)
-		}
-		time.Sleep(bgpConvergeInterval)
-	}
+		return false, out
+	})
 }
 
 // TestGoBGPUnnumberedVXLANInterface verifies the VXLAN interface is created
@@ -509,18 +472,14 @@ func TestGoBGPUnnumberedVXLANInterface(t *testing.T) {
 	waitForBGPInterface(t, "eth3")
 
 	// Allow time for overlay setup after BGP establishes.
-	deadline := time.Now().Add(bgpConvergeTimeout)
-	for {
+	waitForGobgpCondition(t, bgpConvergeTimeout, "VXLAN interface not found on booty-unnumbered", func(context.Context) (bool, string) {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabUnnumbered, "ip", "-d", "link", "show", "type", "vxlan")
 		if strings.Contains(out, "vxlan") && strings.Contains(out, "id 100") {
 			t.Log("VXLAN interface with VNI 100 present on booty-unnumbered")
-			return
+			return true, ""
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("VXLAN interface not found on booty-unnumbered:\n%s", out)
-		}
-		time.Sleep(bgpConvergeInterval)
-	}
+		return false, out
+	})
 }
 
 // TestGoBGPUnnumberedBridgeProvisionIP verifies the provision IP is assigned
@@ -531,18 +490,14 @@ func TestGoBGPUnnumberedBridgeProvisionIP(t *testing.T) {
 
 	waitForBGPInterface(t, "eth3")
 
-	deadline := time.Now().Add(bgpConvergeTimeout)
-	for {
+	waitForGobgpCondition(t, bgpConvergeTimeout, "provision IP not on bridge", func(context.Context) (bool, string) {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabUnnumbered, "ip", "addr", "show", "dev", "br.provision")
 		if strings.Contains(out, "10.100.0.20") {
 			t.Log("Provision IP 10.100.0.20 assigned on br.provision")
-			return
+			return true, ""
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("provision IP not on bridge:\n%s", out)
-		}
-		time.Sleep(bgpConvergeInterval)
-	}
+		return false, out
+	})
 }
 
 // TestGoBGPUnnumberedGatewayFDB verifies the BUM FDB entry for the gateway
@@ -553,18 +508,14 @@ func TestGoBGPUnnumberedGatewayFDB(t *testing.T) {
 
 	waitForBGPInterface(t, "eth3")
 
-	deadline := time.Now().Add(bgpConvergeTimeout)
-	for {
+	waitForGobgpCondition(t, bgpConvergeTimeout, "BUM FDB entry for gateway not found", func(context.Context) (bool, string) {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabUnnumbered, "bridge", "fdb", "show", "dev", "vx100")
 		if strings.Contains(out, "00:00:00:00:00:00") && strings.Contains(out, "10.0.0.1") {
 			t.Log("Gateway BUM FDB entry present: 00:00:00:00:00:00 → 10.0.0.1")
-			return
+			return true, ""
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("BUM FDB entry for gateway not found:\n%s", out)
-		}
-		time.Sleep(bgpConvergeInterval)
-	}
+		return false, out
+	})
 }
 
 // TestGoBGPUnnumberedGatewayRoute verifies the /32 kernel route to the
@@ -575,18 +526,14 @@ func TestGoBGPUnnumberedGatewayRoute(t *testing.T) {
 
 	waitForBGPInterface(t, "eth3")
 
-	deadline := time.Now().Add(bgpConvergeTimeout)
-	for {
+	waitForGobgpCondition(t, bgpConvergeTimeout, "gateway /32 route not in kernel", func(context.Context) (bool, string) {
 		out, _ := gobgpDockerExecRaw(t, gobgpLabUnnumbered, "ip", "route", "show", "10.0.0.1/32")
 		if strings.Contains(out, "10.0.0.1") {
 			t.Log("Gateway route 10.0.0.1/32 present in kernel")
-			return
+			return true, ""
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("gateway /32 route not in kernel:\n%s", out)
-		}
-		time.Sleep(bgpConvergeInterval)
-	}
+		return false, out
+	})
 }
 
 // TestGoBGPUnnumberedVXLANPingGateway verifies end-to-end VXLAN data plane
@@ -599,23 +546,17 @@ func TestGoBGPUnnumberedVXLANPingGateway(t *testing.T) {
 	waitForBGPInterface(t, "eth3")
 
 	// Give overlay stack time to fully initialize.
-	deadline := time.Now().Add(bgpConvergeTimeout)
-	for {
+	waitForGobgpCondition(t, bgpConvergeTimeout, "VXLAN ping to 10.100.0.1 failed", func(context.Context) (bool, string) {
 		out, err := gobgpDockerExecRaw(t, gobgpLabUnnumbered,
 			"ping", "-c", "1", "-W", "2", "-I", "br.provision", "10.100.0.1")
 		if err == nil && strings.Contains(out, "1 packets received") {
 			t.Log("VXLAN overlay ping to gateway 10.100.0.1 succeeded")
-			return
+			return true, ""
 		}
-		if time.Now().After(deadline) {
-			// Dump diagnostic state before failing.
-			routes, _ := gobgpDockerExecRaw(t, gobgpLabUnnumbered, "ip", "route")
-			fdb, _ := gobgpDockerExecRaw(t, gobgpLabUnnumbered, "bridge", "fdb", "show")
-			t.Fatalf("VXLAN ping to 10.100.0.1 failed after %s:\nping: %s\nroutes: %s\nfdb: %s",
-				bgpConvergeTimeout, out, routes, fdb)
-		}
-		time.Sleep(bgpConvergeInterval)
-	}
+		routes, _ := gobgpDockerExecRaw(t, gobgpLabUnnumbered, "ip", "route")
+		fdb, _ := gobgpDockerExecRaw(t, gobgpLabUnnumbered, "bridge", "fdb", "show")
+		return false, "ping: " + out + "\nroutes: " + routes + "\nfdb: " + fdb
+	})
 }
 
 // TestGoBGPUnnumberedOverlayReachClient verifies that the booty-unnumbered
@@ -627,17 +568,13 @@ func TestGoBGPUnnumberedOverlayReachClient(t *testing.T) {
 
 	waitForBGPInterface(t, "eth3")
 
-	deadline := time.Now().Add(bgpConvergeTimeout)
-	for {
+	waitForGobgpCondition(t, bgpConvergeTimeout, "cannot reach client 10.100.0.100 from booty-unnumbered", func(context.Context) (bool, string) {
 		out, err := gobgpDockerExecRaw(t, gobgpLabUnnumbered,
 			"ping", "-c", "1", "-W", "2", "-I", "br.provision", "10.100.0.100")
 		if err == nil && strings.Contains(out, "1 packets received") {
 			t.Log("Overlay connectivity to client 10.100.0.100 verified")
-			return
+			return true, ""
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("cannot reach client 10.100.0.100 from booty-unnumbered:\n%s", out)
-		}
-		time.Sleep(bgpConvergeInterval)
-	}
+		return false, out
+	})
 }
