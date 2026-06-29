@@ -57,6 +57,7 @@ type mockProvider struct {
 	configs         []*config.MachineConfig
 	firmwareReports [][]byte
 	reportStatusErr error
+	reportStatusErrs []error
 }
 
 type statusReport struct {
@@ -73,6 +74,11 @@ func (p *mockProvider) GetConfig(_ context.Context) (*config.MachineConfig, erro
 
 func (p *mockProvider) ReportStatus(_ context.Context, status config.Status, message string) error {
 	p.statuses = append(p.statuses, statusReport{status: status, message: message})
+	if len(p.reportStatusErrs) > 0 {
+		err := p.reportStatusErrs[0]
+		p.reportStatusErrs = p.reportStatusErrs[1:]
+		return err
+	}
 	return p.reportStatusErr
 }
 

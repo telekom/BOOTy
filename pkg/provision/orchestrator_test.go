@@ -2011,24 +2011,70 @@ func TestReportSuccessSignalsSecureBootReEnable(t *testing.T) {
 	}
 }
 
-func TestReportSuccessStatusFailureCompletesStep(t *testing.T) {
+func TestReportSuccessStatusFailureRetries(t *testing.T) {
+	origPolicy := DefaultPolicies["report-success"]
+	defer func() { DefaultPolicies["report-success"] = origPolicy }()
+	DefaultPolicies["report-success"] = RetryPolicy{MaxRetries: 2, InitialDelay: 0, MaxDelay: 0, Transient: true}
+
 	cfg := &config.MachineConfig{}
 	provider := &mockProvider{reportStatusErr: errors.New("status endpoint unavailable")}
 	o := newTestOrchestrator(t, cfg, provider)
 	cp := &Checkpoint{}
 
 	err := o.executeStep(context.Background(), Step{"report-success", o.reportSuccess}, cp)
+	if err == nil {
+		t.Fatal("expected report-success to fail after retries exhausted")
+	}
+	if cp.IsCompleted("report-success") {
+		t.Fatal("report-success step should not be marked complete on failure")
+	}
+	// Initial + 2 retries = 3 attempts
+	if len(provider.statuses) != 4 { // Wait, executeStep will also call ReportStatus(StatusError) upon failure!
+		// Actually, reportStatusErr is set, so ReportStatus(StatusError) also fails, but it still appends to statuses.
+		// So 3 attempts of StatusSuccess + 1 attempt of StatusError = 4
+		t.Fatalf("expected 4 status reports (3 success retries + 1 error report), got %d", len(provider.statuses))
+	}
+	for i := 0; i < 3; i++ {
+		if provider.statuses[i].status != config.StatusSuccess {
+			t.Fatalf("attempt %d: status = %s, want %s", i+1, provider.statuses[i].status, config.StatusSuccess)
+		}
+	}
+	if provider.statuses[3].status != config.StatusError {
+		t.Fatalf("final error report: status = %s, want %s", provider.statuses[3].status, config.StatusError)
+	}
+}
+
+func TestReportSuccessStatusTransientFailureSucceeds(t *testing.T) {
+	origPolicy := DefaultPolicies["report-success"]
+	defer func() { DefaultPolicies["report-success"] = origPolicy }()
+	DefaultPolicies["report-success"] = RetryPolicy{MaxRetries: 2, InitialDelay: 0, MaxDelay: 0, Transient: true}
+
+	cfg := &config.MachineConfig{}
+	provider := &mockProvider{
+		reportStatusErrs: []error{
+			errors.New("transient error 1"),
+			errors.New("transient error 2"),
+		},
+		reportStatusErr: nil, // 3rd attempt succeeds
+	}
+	o := newTestOrchestrator(t, cfg, provider)
+	cp := &Checkpoint{}
+
+	err := o.executeStep(context.Background(), Step{"report-success", o.reportSuccess}, cp)
 	if err != nil {
-		t.Fatalf("report-success should not fail completed provisioning: %v", err)
+		t.Fatalf("expected report-success to succeed after retries, got error: %v", err)
 	}
 	if !cp.IsCompleted("report-success") {
-		t.Fatal("report-success step was not marked complete")
+		t.Fatal("report-success step should be marked complete")
 	}
-	if len(provider.statuses) != 1 {
-		t.Fatalf("expected one best-effort success report attempt, got %d", len(provider.statuses))
+	// Initial + 2 retries (last one succeeds) = 3 attempts. No StatusError.
+	if len(provider.statuses) != 3 {
+		t.Fatalf("expected 3 success report attempts, got %d", len(provider.statuses))
 	}
-	if provider.statuses[0].status != config.StatusSuccess {
-		t.Fatalf("status = %s, want %s", provider.statuses[0].status, config.StatusSuccess)
+	for i := 0; i < 3; i++ {
+		if provider.statuses[i].status != config.StatusSuccess {
+			t.Fatalf("attempt %d: status = %s, want %s", i+1, provider.statuses[i].status, config.StatusSuccess)
+		}
 	}
 }
 
