@@ -18,7 +18,7 @@ Every E2E test file **must** start with a build tag matching its topology:
 | `e2e_gobgp_type5` | Type-5 per-machine leaf | `make clab-type5-up && make test-e2e-type5` |
 | `e2e_vrnetlab` | QEMU vrnetlab | `make clab-vrnetlab-up && make test-e2e-vrnetlab` |
 | `e2e_gobgp_vrnetlab` | GoBGP QEMU vrnetlab | `make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab` |
-| `e2e_production` | Production-realistic (VRF+DCGW+BFD) | `make clab-production-up && make test-e2e-production` |
+| `e2e_production` | CI-proven production smoke: CAPRF/FRR mode, BGP, EVPN AF, VXLAN, overlay reachability, gateway FDB/route | `make clab-production-up && make test-e2e-production` |
 | `linux_e2e` | Linux root access | `sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m ./test/e2e/linux/...` |
 
 ## Helper Functions
@@ -28,12 +28,12 @@ All helpers must call `t.Helper()` as their first line:
 ```go
 func requireBootLab(t *testing.T) {
     t.Helper()
-    // Check topology availability, skip if not deployed
+    // Check topology availability, fail with a local repro command if not deployed
 }
 ```
 
 Common helpers:
-- `requireXxxLab(t)` — skip if topology not deployed
+- `requireXxxLab(t)` — fail with a local repro command if topology is not deployed
 - `xxxDockerExec(t, container, args...)` — run command in container, fatal on error
 - `xxxDockerExecRaw(t, container, args...)` — run command, return error (non-fatal)
 - `waitForLogEntry(t, container, entry, timeout)` — poll container logs

@@ -645,6 +645,132 @@ jobs:
             sudo containerlab destroy --topo test/e2e/clab/topology.clab.yml --cleanup || true
           fi
 
+  e2e-production:
+    name: E2E Production Smoke (ContainerLab)
+    runs-on: ubuntu-latest
+    needs: [build]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.26"
+
+      - name: Build BOOTy test container image
+        run: test/e2e/clab/docker-build-retry.sh -t booty-test:latest -f test/e2e/clab/booty-test.Dockerfile .
+
+      - name: Generate test disk image
+        run: sudo test/e2e/clab/create-test-image.sh test/e2e/clab/images
+
+      - name: Install ContainerLab
+        run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
+
+      - name: Deploy production topology
+        run: sudo containerlab deploy --topo test/e2e/clab/topology-production.clab.yml
+
+      - name: Run production E2E tests
+        env:
+          GOMAXPROCS: "2"
+        run: |
+          set -euo pipefail
+          make test-e2e-production 2>&1 | tee production-e2e.log
+          if ! grep -q '^=== RUN   TestProduction' production-e2e.log; then
+            echo "::error::production E2E job did not run any TestProduction tests"
+            exit 1
+          fi
+          for expected in \
+            TestProductionBootyStartsSuccessfully \
+            TestProductionCAPRFModeDetected \
+            TestProductionFRRNetworkModeSelected \
+            TestProductionSpineBGPEstablished \
+            TestProductionDCGWBGPEstablished \
+            TestProductionSpineDCGWBGPEstablished \
+            TestProductionEVPNAddressFamilyOnSpine \
+            TestProductionEVPNAddressFamilyOnDCGW \
+            TestProductionVXLANInterfaceCreated \
+            TestProductionProvisionBridgeIP \
+            TestProductionUnderlayRouteOnSpine \
+            TestProductionUnderlayRouteOnDCGW \
+            TestProductionOverlayReachClient \
+            TestProductionOverlayReachNginx \
+            TestProductionOverlayReachCAPRF \
+            TestProductionGatewayFDB \
+            TestProductionGatewayRoute; do
+            if ! grep -q "^=== RUN   ${expected}$" production-e2e.log; then
+              echo "::error::production E2E job did not run ${expected}"
+              exit 1
+            fi
+          done
+          if grep -q '^--- SKIP:' production-e2e.log; then
+            echo "::error::production E2E tests must not skip in CI"
+            grep '^--- SKIP:' production-e2e.log
+            exit 1
+          fi
+
+      - name: Collect production logs
+        if: always()
+        timeout-minutes: 8
+        run: |
+          mkdir -p production-logs
+
+          for node in spine01 dcgw01 booty-prod client nginx caprf-mock; do
+            name="clab-booty-production-lab-${node}"
+            timeout 30 sudo docker logs "${name}" > "production-logs/${node}.log" 2>&1 || echo "(no logs)" >> "production-logs/${node}.log"
+          done
+
+          timeout 15 sudo docker exec clab-booty-production-lab-caprf-mock \
+            cat /var/log/nginx/access.log 2>/dev/null | tee production-logs/caprf-access.log || true
+
+          for node in spine01 dcgw01; do
+            name="clab-booty-production-lab-${node}"
+            for cmd in \
+              "show bgp summary json" \
+              "show bgp l2vpn evpn" \
+              "show bgp l2vpn evpn json" \
+              "show ip route" \
+              "show bfd peers"; do
+              slug=$(echo "$cmd" | tr ' ' '-')
+              timeout 15 sudo docker exec "${name}" \
+                vtysh -c "$cmd" 2>/dev/null | tee "production-logs/${node}-${slug}.txt" || true
+            done
+          done
+
+          for node in spine01 dcgw01 booty-prod client nginx caprf-mock; do
+            name="clab-booty-production-lab-${node}"
+            {
+              echo "=== ip addr show ==="
+              timeout 5 sudo docker exec "${name}" ip addr show 2>&1 || true
+              echo "=== ip route show table all ==="
+              timeout 5 sudo docker exec "${name}" ip route show table all 2>&1 || true
+              echo "=== ip -d link show type vxlan ==="
+              timeout 5 sudo docker exec "${name}" ip -d link show type vxlan 2>&1 || true
+              echo "=== bridge fdb show ==="
+              timeout 5 sudo docker exec "${name}" bridge fdb show 2>&1 || true
+            } > "production-logs/${node}-network.txt" 2>&1
+          done
+
+      - name: Upload production logs
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-e2e-logs
+          path: |
+            production-e2e.log
+            production-logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if command -v containerlab >/dev/null 2>&1; then
+            sudo containerlab destroy --topo test/e2e/clab/topology-production.clab.yml --cleanup || true
+          fi
+
   uefi-iso-boot:
     name: UEFI ISO Boot Validation
     runs-on: ubuntu-latest

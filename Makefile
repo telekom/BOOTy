@@ -35,7 +35,7 @@ CLEAN_FILES := \
 
 CLAB_TEST_IMAGE ?= test/e2e/clab/images/test.img.gz
 
-.PHONY: all build build-all clean install uninstall fmt lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm test-e2e clab-test-image clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-test-image booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-type5-up clab-type5-down test-e2e-type5 clab-production-up clab-production-down test-e2e-production clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic oci-push oci-push-initramfs oci-push-binary
+.PHONY: all build build-all clean install uninstall fmt lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm test-e2e clab-test-image clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-test-image booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-type5-up clab-type5-down test-e2e-type5 clab-production-up clab-production-down test-e2e-production test-e2e-production-full clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic oci-push oci-push-initramfs oci-push-binary
 
 all: lint test install
 
@@ -274,8 +274,10 @@ test-e2e-type5:
 
 # ── Production-realistic e2e targets ───────────────────────────────────────
 
+PRODUCTION_CI_TESTS := ^(TestProductionBootyStartsSuccessfully|TestProductionCAPRFModeDetected|TestProductionFRRNetworkModeSelected|TestProductionSpineBGPEstablished|TestProductionDCGWBGPEstablished|TestProductionSpineDCGWBGPEstablished|TestProductionEVPNAddressFamilyOnSpine|TestProductionEVPNAddressFamilyOnDCGW|TestProductionVXLANInterfaceCreated|TestProductionProvisionBridgeIP|TestProductionUnderlayRouteOnSpine|TestProductionUnderlayRouteOnDCGW|TestProductionOverlayReachClient|TestProductionOverlayReachNginx|TestProductionOverlayReachCAPRF|TestProductionGatewayFDB|TestProductionGatewayRoute)$$
+
 clab-production-up: booty-test-image $(CLAB_TEST_IMAGE)
-	@printf '%s\n' 'Deploying production-realistic topology (VRF + DCGW + BFD)'
+	@printf '%s\n' 'Deploying production-realistic topology'
 	@cd test/e2e/clab && sudo clab deploy --topo topology-production.clab.yml
 
 clab-production-down:
@@ -283,7 +285,11 @@ clab-production-down:
 	@cd test/e2e/clab && sudo clab destroy --topo topology-production.clab.yml --cleanup
 
 test-e2e-production:
-	@printf '%s\n' 'Running production-realistic E2E tests (requires clab-production-up)'
+	@printf '%s\n' 'Running CI-proven production E2E smoke tests (requires clab-production-up)'
+	@go test -tags e2e_production -race -v -run '$(PRODUCTION_CI_TESTS)' -timeout 600s ./test/e2e/integration/...
+
+test-e2e-production-full:
+	@printf '%s\n' 'Running full production E2E tests, including known unproven limitations (requires clab-production-up)'
 	@go test -tags e2e_production -race -v -timeout 600s ./test/e2e/integration/...
 
 # ── DHCP lab targets ───────────────────────────────────────────────────────
