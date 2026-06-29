@@ -141,13 +141,14 @@ done
 		t.Run(tt.name, func(t *testing.T) {
 			logPath := filepath.Join(tmp, tt.name+".oras.log")
 			dockerLogPath := filepath.Join(tmp, tt.name+".docker.log")
-			args := []string{
+			args := make([]string, 0, 6+len(tt.args))
+			args = append(args,
 				"-f", filepath.Join(repoDir, "Makefile"),
 				tt.target,
 				"REPOSITORY=example.invalid/booty",
 				"DOCKERTAG=test",
 				"OCI_ARCH=amd64",
-			}
+			)
 			args = append(args, tt.args...)
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
