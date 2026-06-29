@@ -40,6 +40,12 @@ export TARGET VERSION BUILD TARGETOS TARGETARCH DOCKERTAG REPOSITORY
 all: lint test install
 
 check-build-vars:
+	@reject_multiline() { [ "$$(printf '%s' "$$2" | wc -l | tr -d ' ')" = 0 ] || { printf 'ERROR: invalid %s: %s\n' "$$1" "$$2"; exit 2; }; }; \
+	reject_multiline TARGET "$$TARGET"; \
+	reject_multiline VERSION "$$VERSION"; \
+	reject_multiline BUILD "$$BUILD"; \
+	reject_multiline TARGETOS "$$TARGETOS"; \
+	reject_multiline TARGETARCH "$$TARGETARCH"
 	@printf '%s\n' "$$TARGET" | grep -Eq '^[A-Za-z0-9_./][A-Za-z0-9_./ -]*$$' || { printf 'ERROR: invalid TARGET: %s\n' "$$TARGET"; exit 2; }
 	@case "$$TARGET" in *..*) printf 'ERROR: invalid TARGET: %s\n' "$$TARGET"; exit 2 ;; esac
 	@printf '%s\n' "$$VERSION" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._+~-]*$$' || { printf 'ERROR: invalid VERSION: %s\n' "$$VERSION"; exit 2; }
@@ -48,10 +54,16 @@ check-build-vars:
 	@printf '%s\n' "$$TARGETARCH" | grep -Eq '^[A-Za-z0-9_.-]+$$' || { printf 'ERROR: invalid TARGETARCH: %s\n' "$$TARGETARCH"; exit 2; }
 
 check-docker-vars:
+	@reject_multiline() { [ "$$(printf '%s' "$$2" | wc -l | tr -d ' ')" = 0 ] || { printf 'ERROR: invalid %s: %s\n' "$$1" "$$2"; exit 2; }; }; \
+	reject_multiline REPOSITORY "$$REPOSITORY"; \
+	reject_multiline DOCKERTAG "$$DOCKERTAG"
 	@printf '%s\n' "$$REPOSITORY" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+$$' || { printf 'ERROR: invalid REPOSITORY: %s\n' "$$REPOSITORY"; exit 2; }
 	@printf '%s\n' "$$DOCKERTAG" | grep -Eq '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$$' || { printf 'ERROR: invalid DOCKERTAG: %s\n' "$$DOCKERTAG"; exit 2; }
 
 check-oci-vars: check-docker-vars check-build-vars
+	@reject_multiline() { [ "$$(printf '%s' "$$2" | wc -l | tr -d ' ')" = 0 ] || { printf 'ERROR: invalid %s: %s\n' "$$1" "$$2"; exit 2; }; }; \
+	reject_multiline OCI_FLAVOR "$$OCI_FLAVOR"; \
+	reject_multiline OCI_ARCH "$$OCI_ARCH"
 	@case "$$OCI_FLAVOR" in default|slim|micro|gobgp) ;; *) printf 'ERROR: invalid OCI_FLAVOR: %s\n' "$$OCI_FLAVOR"; exit 2 ;; esac
 	@case "$$OCI_ARCH" in amd64|arm64) ;; *) printf 'ERROR: invalid OCI_ARCH: %s\n' "$$OCI_ARCH"; exit 2 ;; esac
 

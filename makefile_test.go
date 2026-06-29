@@ -37,8 +37,11 @@ func TestMakefileRejectsUnsafeBuildVariables(t *testing.T) {
 	}{
 		{name: "target", arg: "TARGET=booty;touch", want: "invalid TARGET"},
 		{name: "target-leading-dash", arg: "TARGET=-booty", want: "invalid TARGET"},
+		{name: "target-multiline", arg: "TARGET=../bad\nbooty", want: "invalid TARGET"},
 		{name: "version", arg: "VERSION=v1;touch", want: "invalid VERSION"},
+		{name: "version-multiline", arg: "VERSION=bad;touch\nv1", want: "invalid VERSION"},
 		{name: "build", arg: "BUILD=abc;touch", want: "invalid BUILD"},
+		{name: "build-multiline", arg: "BUILD=bad;touch\nabcdef1", want: "invalid BUILD"},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -172,6 +175,33 @@ func TestMakefileRejectsUnsafeTargetForDestructiveTargets(t *testing.T) {
 	}
 }
 
+func TestMakefileRejectsMultilineDockerVariables(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		arg  string
+		want string
+	}{
+		{name: "repository", arg: "REPOSITORY=bad;touch\nghcr.io/telekom/booty", want: "invalid REPOSITORY"},
+		{name: "dockertag", arg: "DOCKERTAG=bad;touch\nv1", want: "invalid DOCKERTAG"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			output, err := runMake(t, "check-docker-vars", tc.arg)
+			if err == nil {
+				t.Fatalf("check-docker-vars accepted multi-line variable %q; output:\n%s", tc.arg, output)
+			}
+			if !strings.Contains(string(output), tc.want) {
+				t.Fatalf("check-docker-vars output = %q, want %q", output, tc.want)
+			}
+		})
+	}
+}
+
 func TestMakefileRejectsUnsafeOCISelectors(t *testing.T) {
 	t.Parallel()
 
@@ -181,7 +211,9 @@ func TestMakefileRejectsUnsafeOCISelectors(t *testing.T) {
 		want string
 	}{
 		{name: "flavor", arg: "OCI_FLAVOR=default;touch", want: "invalid OCI_FLAVOR"},
+		{name: "flavor-multiline", arg: "OCI_FLAVOR=bad;touch\ndefault", want: "invalid OCI_FLAVOR"},
 		{name: "arch", arg: "OCI_ARCH=amd64;touch", want: "invalid OCI_ARCH"},
+		{name: "arch-multiline", arg: "OCI_ARCH=bad;touch\namd64", want: "invalid OCI_ARCH"},
 	}
 	for _, tc := range cases {
 		tc := tc
