@@ -126,15 +126,18 @@ fi
 		"BUILD=abcdef1",
 	}
 	for i := 0; i < 2; i++ {
-		cmd := exec.Command(makePath, args...)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		cmd := exec.CommandContext(ctx, makePath, args...)
 		cmd.Dir = tmp
 		cmd.Env = append(os.Environ(),
 			"PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"),
 			"GO_LOG="+logPath,
 		)
 		if out, err := cmd.CombinedOutput(); err != nil {
+			cancel()
 			t.Fatalf("make build run %d failed: %v\n%s", i+1, err, out)
 		}
+		cancel()
 	}
 	logData, err := os.ReadFile(logPath)
 	if err != nil {
