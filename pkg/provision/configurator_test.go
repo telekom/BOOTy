@@ -268,7 +268,7 @@ func TestRedactCommand(t *testing.T) {
 		{
 			name:  "spaces around equals",
 			input: "run password = secret123 --verbose",
-			want:  "run password =[REDACTED] --verbose",
+			want:  "run password=[REDACTED] --verbose",
 		},
 		{
 			name:  "double-dash password space",
@@ -329,6 +329,21 @@ func TestRedactCommand(t *testing.T) {
 			name:  "no redaction for substring match in key",
 			input: "monkey=banana",
 			want:  "monkey=banana",
+		},
+		{
+			name:  "redact url",
+			input: "curl https://user:pass@example.com?token=123",
+			want:  "curl https://[REDACTED]@example.com?token=[REDACTED]",
+		},
+		{
+			name:  "redact authorization header",
+			input: "curl -H \"Authorization: secret123\" https://example.com",
+			want:  "curl -H \"Authorization: [REDACTED]\" https://example.com",
+		},
+		{
+			name:  "redact bearer token",
+			input: "curl -H \"Auth: Bearer secret123\" https://example.com",
+			want:  "curl -H \"Auth: Bearer [REDACTED] https://example.com",
 		},
 		{
 			name:  "no redaction for monkey prefix",

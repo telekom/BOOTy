@@ -76,9 +76,9 @@ var sensitiveKeyPattern = regexp.MustCompile(
 		`)`,
 )
 
-// redactCommand replaces sensitive key-value patterns in cmd with [REDACTED]
+// redactCommandValues replaces sensitive key-value patterns in cmd with [REDACTED]
 // so that credentials are not written to the system log verbatim.
-func redactCommand(cmd string) string {
+func redactCommandValues(cmd string) string {
 	return sensitiveKeyPattern.ReplaceAllStringFunc(cmd, func(match string) string {
 		if strings.HasPrefix(match, "-") {
 			eqIdx := strings.Index(match, "=")
