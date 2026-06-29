@@ -331,6 +331,21 @@ func TestRedactCommand(t *testing.T) {
 			want:  "monkey=banana",
 		},
 		{
+			name:  "redact url",
+			input: "curl https://user:pass@example.com?token=123",
+			want:  "curl https://[REDACTED]@example.com?token=[REDACTED]",
+		},
+		{
+			name:  "redact authorization header",
+			input: "curl -H \"Authorization: secret123\" https://example.com",
+			want:  "curl -H \"Authorization: [REDACTED]\" https://example.com",
+		},
+		{
+			name:  "redact bearer token",
+			input: "curl -H \"Auth: Bearer secret123\" https://example.com",
+			want:  "curl -H \"Auth: Bearer [REDACTED] https://example.com",
+		},
+		{
 			name:  "no redaction for monkey prefix",
 			input: "cmd --monkey=banana",
 			want:  "cmd --monkey=banana",
