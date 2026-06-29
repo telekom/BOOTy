@@ -161,7 +161,6 @@ on:
       - 'pkg/tpm/**'
       - 'pkg/kexec/**'
       - 'pkg/bios/**'
-      - 'pkg/bootloader/**'
   pull_request:
     paths:
       - 'pkg/secureboot/**'
@@ -169,7 +168,6 @@ on:
       - 'pkg/tpm/**'
       - 'pkg/kexec/**'
       - 'pkg/bios/**'
-      - 'pkg/bootloader/**'
   workflow_dispatch:
 
 jobs:

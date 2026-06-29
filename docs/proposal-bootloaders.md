@@ -1,3 +1,5 @@
+> **Note**: The `pkg/bootloader` package described here was removed in #453 as it was unused scaffolding. Provisioning continues to hard-code GRUB paths directly.
+
 # Proposal: Bootloader Management — GRUB Enhancement + systemd-boot
 
 ## Status: Partially implemented

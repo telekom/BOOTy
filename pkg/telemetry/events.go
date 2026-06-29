@@ -12,12 +12,19 @@ type EventType string
 
 // Event type constants.
 const (
-	EventStepStarted   EventType = "step.started"
-	EventStepCompleted EventType = "step.completed"
-	EventStepFailed    EventType = "step.failed"
-	EventProvStarted   EventType = "provision.started"
-	EventProvCompleted EventType = "provision.completed"
-	EventProvFailed    EventType = "provision.failed"
+	EventStepStarted       EventType = "step.started"
+	EventStepCompleted     EventType = "step.completed"
+	EventStepFailed        EventType = "step.failed"
+	EventProvStarted       EventType = "provision.started"
+	EventProvCompleted     EventType = "provision.completed"
+	EventProvFailed        EventType = "provision.failed"
+	EventDeprovStarted     EventType = "deprovision.started"
+	EventDeprovCompleted   EventType = "deprovision.completed"
+	EventHealthCritical    EventType = "health.critical"
+	EventHealthWarning     EventType = "health.warning"
+	EventRescueActivated   EventType = "rescue.activated"
+	EventFirmwareMismatch  EventType = "firmware.mismatch"
+	EventAttestationFailed EventType = "attestation.failed"
 )
 
 // ProvisionEvent represents a structured provisioning event.

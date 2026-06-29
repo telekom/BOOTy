@@ -31,12 +31,12 @@ Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, read
 - `pkg/rescue/` — Rescue mode policy and failure handling
 - `pkg/ux/` — ASCII art and system info display
 - `pkg/bios/` — BIOS settings management (Dell, HPE, Lenovo, Supermicro)
-- `pkg/bootloader/` — Bootloader detection (GRUB, systemd-boot)
+
 - `pkg/buildinfo/` — Binary build information
 - `pkg/debug/` — Debug utilities
 - `pkg/drivers/` — Architecture-aware kernel driver management
 - `pkg/efi/` — EFI variable operations
-- `pkg/event/` — Provisioning lifecycle webhook events and dispatcher
+
 - `pkg/executil/` — Shared command execution wrappers
 - `pkg/grubcfg/` — GRUB config file parsing
 - `pkg/retry/` — Retry policy framework with exponential backoff
