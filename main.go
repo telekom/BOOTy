@@ -38,10 +38,10 @@ import (
 
 // Version and Build are set via -ldflags at build time.
 var (
-	originalSlogHandler slog.Handler
+	originalSlogHandler   slog.Handler
 	caprfRemoteLogHandler *caprf.RemoteHandler
-	Version = "dev"
-	Build   = "unknown"
+	Version               = "dev"
+	Build                 = "unknown"
 )
 
 var (

@@ -1094,7 +1094,7 @@ func TestFlushObservabilityBeforeReboot(t *testing.T) {
 	var logShipped atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		logShipped.Store(true)
-		w.WriteHeader(200)
+		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
