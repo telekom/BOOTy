@@ -9,6 +9,12 @@ type ImageConfig struct {
 	// Default: [] (required for provisioning)
 	URLs []string `yaml:"urls" json:"urls"`
 
+	// AllowInsecureHTTP permits plain HTTP image sources. This is intended for
+	// local testing/airgapped environments without TLS infrastructure.
+	// Default: false (requires HTTPS or OCI)
+	AllowInsecureHTTP bool `yaml:"allowInsecureHTTP" json:"allowInsecureHTTP"`
+
+
 	// Checksum is the expected hex digest of the raw (decompressed) image.
 	// Verified after streaming completes.
 	// Default: "" (no verification)

@@ -153,7 +153,7 @@ func wipeCommandCalls(calls []mockCall) []mockCall {
 }
 
 func TestClassifyImageStreamErrorChecksumMismatchIsPermanent(t *testing.T) {
-	err := classifyImageStreamError("http://images.local/node.raw", errors.New("checksum mismatch: computed=bad want=good"))
+	err := classifyImageStreamError("https://images.local/node.raw", errors.New("checksum mismatch: computed=bad want=good"))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -166,7 +166,7 @@ func TestClassifyImageStreamErrorChecksumMismatchIsPermanent(t *testing.T) {
 }
 
 func TestClassifyImageStreamErrorNonChecksumRemainsRetryable(t *testing.T) {
-	err := classifyImageStreamError("http://images.local/node.raw", errors.New("connection reset by peer"))
+	err := classifyImageStreamError("https://images.local/node.raw", errors.New("connection reset by peer"))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -506,7 +506,7 @@ func TestValidateProvisionInputsRejectsQCOW2ByNameWithoutQemuImg(t *testing.T) {
 
 	cfg := &config.MachineConfig{}
 	cfg.Provision.TargetOS = config.TargetOSLinux
-	cfg.Provision.Image.URLs = []string{"http://127.0.0.1:1/node.qcow2.gz"}
+	cfg.Provision.Image.URLs = []string{"https://127.0.0.1:1/node.qcow2.gz"}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
 	err := o.validateProvisionInputs(context.Background())
@@ -537,7 +537,7 @@ func TestValidateProvisionInputsAllowsRawWithoutQemuImg(t *testing.T) {
 func TestValidateProvisionInputsAllowsTransientRawProbeFailure(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.TargetOS = config.TargetOSLinux
-	cfg.Provision.Image.URLs = []string{"http://127.0.0.1:1/node.raw"}
+	cfg.Provision.Image.URLs = []string{"https://127.0.0.1:1/node.raw"}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
 	if err := o.validateProvisionInputs(context.Background()); err != nil {
@@ -2373,7 +2373,7 @@ func TestWipeOrSecureEraseDisksAllowsPartitionLayoutWithImageURLsInDeprovisionMo
 	cfg := &config.MachineConfig{
 		Mode: "deprovision",
 	}
-	cfg.Provision.Image.URLs = []string{"http://images.local/node.img.zst"}
+	cfg.Provision.Image.URLs = []string{"https://images.local/node.img.zst"}
 	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 		Table: "gpt",
 		Partitions: []config.Partition{
@@ -2392,7 +2392,7 @@ func TestWipeOrSecureEraseDisksAllowsUnsupportedPartitionLayoutMountpointsInDepr
 	cfg := &config.MachineConfig{
 		Mode: "hard",
 	}
-	cfg.Provision.Image.URLs = []string{"http://images.local/node.img.zst"}
+	cfg.Provision.Image.URLs = []string{"https://images.local/node.img.zst"}
 	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 		Table: "gpt",
 		Partitions: []config.Partition{
@@ -2412,7 +2412,7 @@ func TestWipeOrSecureEraseDisksAllowsPartitionLayoutWithImageURLsInProvisionMode
 	cfg := &config.MachineConfig{
 		Mode: "provision",
 	}
-	cfg.Provision.Image.URLs = []string{"http://images.local/node.img.zst"}
+	cfg.Provision.Image.URLs = []string{"https://images.local/node.img.zst"}
 	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 		Table: "gpt",
 		Partitions: []config.Partition{
@@ -2855,6 +2855,7 @@ func TestVerifyImageSignature_Skipped(t *testing.T) {
 	}))
 	defer srv.Close()
 	cfg.Provision.Image.URLs = []string{srv.URL}
+	cfg.Provision.Image.AllowInsecureHTTP = true
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
@@ -2956,7 +2957,7 @@ func TestVerifyImageSignatureOCIProbeUsesTimeout(t *testing.T) {
 
 func TestVerifyImageSignatureUsesCachedBestImageURL(t *testing.T) {
 	cfg := &config.MachineConfig{}
-	cfg.Provision.Image.URLs = []string{"http://127.0.0.1:1/unreachable.raw"}
+	cfg.Provision.Image.URLs = []string{"https://127.0.0.1:1/unreachable.raw"}
 	cfg.Provision.Image.SignatureURL = "https://example.com/image.sig"
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
@@ -3502,7 +3503,7 @@ func TestABPreserveExistingRejectsUnexpectedLayoutBeforeWipe(t *testing.T) {
 		{Node: "/dev/sda4", Type: disk.LinuxFilesystemGUID, Name: "BOOTY-STATE"},
 	}), nil)
 
-	err := o.streamABImage(context.Background(), "http://image.example/os.raw", nil)
+	err := o.streamABImage(context.Background(), "https://image.example/os.raw", nil)
 	if err == nil {
 		t.Fatal("expected unexpected preserved A/B layout to fail")
 	}
@@ -3659,7 +3660,7 @@ func TestStreamImagePartitionLayoutFailsWithoutImages(t *testing.T) {
 func TestStreamImagePartitionLayoutRejectsPartitionImageMode(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Image.Mode = config.ImageModePartition
-	cfg.Provision.Image.URLs = []string{"http://images.local/node.img.zst"}
+	cfg.Provision.Image.URLs = []string{"https://images.local/node.img.zst"}
 	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 		Table: "gpt",
 		Partitions: []config.Partition{
@@ -3680,7 +3681,7 @@ func TestStreamImagePartitionLayoutRejectsPartitionImageMode(t *testing.T) {
 
 func TestStreamImagePartitionLayoutStreamsDeclaredRoot(t *testing.T) {
 	cfg := &config.MachineConfig{}
-	cfg.Provision.Image.URLs = []string{"http://images.local/node.img.zst"}
+	cfg.Provision.Image.URLs = []string{"https://images.local/node.img.zst"}
 	cfg.Provision.Image.SourceRootLabel = "root-a"
 	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 		Table: "gpt",
@@ -3697,7 +3698,7 @@ func TestStreamImagePartitionLayoutStreamsDeclaredRoot(t *testing.T) {
 	called := false
 	streamRootImageFn = func(_ context.Context, gotURL string, target image.RootTarget, opts ...image.StreamOpts) error {
 		called = true
-		if gotURL != "http://images.local/node.img.zst" {
+		if gotURL != "https://images.local/node.img.zst" {
 			t.Fatalf("stream URL = %q", gotURL)
 		}
 		if target.RootPartition != "/dev/sda2" {
@@ -4445,7 +4446,7 @@ func TestStreamImagePartitionModeWipesDiskFirst(t *testing.T) {
 	cfg.Provision.Image.Mode = "partition"
 	o := NewOrchestrator(cfg, &mockProvider{}, disk.NewManager(cmd))
 	o.targetDisk = "/dev/sda"
-	o.bestImageURL = "http://images.local/node.img.zst"
+	o.bestImageURL = "https://images.local/node.img.zst"
 
 	err := o.streamImage(context.Background())
 	if err == nil {
@@ -4600,4 +4601,25 @@ func TestShouldKeepTargetRootMountedForKexecMatchesKexecGates(t *testing.T) {
 	if ShouldKeepTargetRootMountedForKexec(&config.MachineConfig{}, true) {
 		t.Fatal("firmware changes requiring reboot must not keep target root mounted")
 	}
+}
+
+func TestValidateProvisionInputsHTTPInsecure(t *testing.T) {
+	t.Run("rejects plain http when allowInsecureHTTP is false", func(t *testing.T) {
+		cfg := &config.MachineConfig{Provision: config.ProvisionConfig{TargetOS: "linux", Image: config.ImageConfig{URLs: []string{"http://images.example.invalid/node.raw"}}}}
+		o := newTestOrchestrator(t, cfg, &mockProvider{})
+		o.cfg.Provision.Image.AllowInsecureHTTP = false
+		err := o.validateProvisionInputs(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "plain HTTP sources require") {
+			t.Errorf("expected error about insecure HTTP, got %v", err)
+		}
+	})
+	t.Run("accepts plain http when allowInsecureHTTP is true", func(t *testing.T) {
+		cfg := &config.MachineConfig{Provision: config.ProvisionConfig{TargetOS: "linux", Image: config.ImageConfig{URLs: []string{"http://images.example.invalid/node.raw"}}}}
+		o := newTestOrchestrator(t, cfg, &mockProvider{})
+		o.cfg.Provision.Image.AllowInsecureHTTP = true
+		err := o.validateProvisionInputs(context.Background())
+		if err != nil && strings.Contains(err.Error(), "plain HTTP sources require") {
+			t.Errorf("did not expect error about insecure HTTP, got %v", err)
+		}
+	})
 }
