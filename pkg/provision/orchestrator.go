@@ -2718,7 +2718,7 @@ func (o *Orchestrator) reportSuccess(ctx context.Context) error {
 
 func (o *Orchestrator) reportTerminalSuccess(ctx context.Context, operation, message string) error {
 	if err := o.provider.ReportStatus(ctx, config.StatusSuccess, message); err != nil {
-		o.log.Warn("failed to report terminal success status", "operation", operation, "error", err)
+		return fmt.Errorf("failed to report terminal success status for %s: %w", operation, err)
 	}
 	return nil
 }
