@@ -788,6 +788,9 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 		mode := &network.StaticMode{}
 		if err := mode.Setup(ctx, netCfg); err != nil {
 			slog.Error("static network setup failed, falling back to DHCP", "error", err)
+			if tearErr := mode.Teardown(ctx); tearErr != nil {
+				slog.Warn("static teardown failed during DHCP fallback", "error", tearErr)
+			}
 			return networkModeWithResolvers(ctx, netCfg, dhcpFallback(ctx, netCfg), linkCleanup)
 		}
 		return networkModeWithResolvers(ctx, netCfg, mode, linkCleanup)
