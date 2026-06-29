@@ -225,6 +225,9 @@ func TestOCIPushInitramfsBuildsIsolatedFlavorArtifact(t *testing.T) {
 		"override INITRAMFS_PATH := $(OCI_INITRAMFS_DIR)/$(OCI_INITRAMFS_BASENAME)",
 		"override INITRAMFS_MEDIA_TYPE :=",
 		"export VERSION DOCKERTAG REPOSITORY TARGET OCI_FLAVOR OCI_ARCH OCI_INITRAMFS_DIR INITRAMFS_PATH INITRAMFS_MEDIA_TYPE",
+		"check-oci-vars: check-docker-vars check-build-vars",
+		`case "$$OCI_FLAVOR" in default|slim|micro|gobgp)`,
+		`case "$$OCI_ARCH" in amd64|arm64)`,
 	} {
 		if !strings.Contains(makefile, want) {
 			t.Fatalf("Makefile missing OCI isolation contract %q", want)
@@ -233,11 +236,11 @@ func TestOCIPushInitramfsBuildsIsolatedFlavorArtifact(t *testing.T) {
 
 	recipe := makeTargetRecipe(t, makefile, "oci-push-initramfs")
 	for _, want := range []string{
-		`case "$$OCI_FLAVOR" in default|slim|gobgp|micro)`,
+		`oci-push-initramfs: check-oci-vars`,
 		`target_arg="--target=$$OCI_FLAVOR"`,
 		`docker buildx build --platform "linux/$$OCI_ARCH" $$target_arg`,
 		`--output "type=local,dest=$$OCI_INITRAMFS_DIR"`,
-		`expected $$OCI_FLAVOR/$$OCI_ARCH artifact $$INITRAMFS_PATH was not produced`,
+		`expected %s/%s artifact %s was not produced`,
 	} {
 		if !strings.Contains(recipe, want) {
 			t.Fatalf("oci-push-initramfs recipe missing %q in:\n%s", want, recipe)

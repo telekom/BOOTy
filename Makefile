@@ -2,15 +2,15 @@
 SHELL := /bin/sh
 
 TARGET := booty
-.DEFAULT_GOAL: $(TARGET)
+.DEFAULT_GOAL := build
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0)
-BUILD := `git rev-parse HEAD`
+BUILD := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 
 TARGETOS=linux
 TARGETARCH ?= $(shell go env GOARCH)
 
-LDFLAGS=-trimpath -ldflags "-s -w -X=main.Version=$(VERSION) -X=main.Build=$(BUILD) -extldflags -static"
+GO_LDFLAGS = -s -w -X=main.Version=$$VERSION -X=main.Build=$$BUILD -extldflags -static
 
 SRC = $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 
@@ -22,8 +22,6 @@ COVERAGE_HTML ?= coverage.html
 COVERAGE_THRESHOLD ?= 40.0
 
 CLEAN_FILES := \
-	$(TARGET) \
-	$(TARGET).sha256 \
 	$(COVERAGE_PROFILE) \
 	$(COVERAGE_HTML) \
 	booty.iso \
@@ -35,31 +33,68 @@ CLEAN_FILES := \
 
 CLAB_TEST_IMAGE ?= test/e2e/clab/images/test.img.gz
 
-.PHONY: all build build-all clean install uninstall fmt lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm test-e2e clab-test-image clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-test-image booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-type5-up clab-type5-down test-e2e-type5 clab-production-up clab-production-down test-e2e-production test-e2e-production-full clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic oci-push oci-push-initramfs oci-push-binary
+.PHONY: all build build-all clean install uninstall fmt lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm test-e2e clab-test-image clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-test-image booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-type5-up clab-type5-down test-e2e-type5 clab-production-up clab-production-down test-e2e-production test-e2e-production-full clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic check-build-vars check-docker-vars check-oci-vars oci-push oci-push-initramfs oci-push-binary
+
+export TARGET VERSION BUILD TARGETOS TARGETARCH DOCKERTAG REPOSITORY
 
 all: lint test install
 
-$(TARGET): $(SRC)
-	@GOOS=$(TARGETOS) GOARCH=$(TARGETARCH) go build $(LDFLAGS) -o $(TARGET)
+check-build-vars:
+	@reject_multiline() { [ "$$(printf '%s' "$$2" | wc -l | tr -d ' ')" = 0 ] || { printf 'ERROR: invalid %s: %s\n' "$$1" "$$2"; exit 2; }; }; \
+	reject_multiline TARGET "$$TARGET"; \
+	reject_multiline VERSION "$$VERSION"; \
+	reject_multiline BUILD "$$BUILD"; \
+	reject_multiline TARGETOS "$$TARGETOS"; \
+	reject_multiline TARGETARCH "$$TARGETARCH"
+	@printf '%s\n' "$$TARGET" | grep -Eq '^[A-Za-z0-9_./][A-Za-z0-9_./ -]*$$' || { printf 'ERROR: invalid TARGET: %s\n' "$$TARGET"; exit 2; }
+	@case "$$TARGET" in *..*) printf 'ERROR: invalid TARGET: %s\n' "$$TARGET"; exit 2 ;; esac
+	@printf '%s\n' "$$VERSION" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._+~-]*$$' || { printf 'ERROR: invalid VERSION: %s\n' "$$VERSION"; exit 2; }
+	@printf '%s\n' "$$BUILD" | grep -Eq '^([A-Fa-f0-9]{7,64}|unknown)$$' || { printf 'ERROR: invalid BUILD: %s\n' "$$BUILD"; exit 2; }
+	@printf '%s\n' "$$TARGETOS" | grep -Eq '^[A-Za-z0-9_.-]+$$' || { printf 'ERROR: invalid TARGETOS: %s\n' "$$TARGETOS"; exit 2; }
+	@printf '%s\n' "$$TARGETARCH" | grep -Eq '^[A-Za-z0-9_.-]+$$' || { printf 'ERROR: invalid TARGETARCH: %s\n' "$$TARGETARCH"; exit 2; }
 
-build: $(TARGET)
-	@true
+check-docker-vars:
+	@reject_multiline() { [ "$$(printf '%s' "$$2" | wc -l | tr -d ' ')" = 0 ] || { printf 'ERROR: invalid %s: %s\n' "$$1" "$$2"; exit 2; }; }; \
+	reject_multiline REPOSITORY "$$REPOSITORY"; \
+	reject_multiline DOCKERTAG "$$DOCKERTAG"
+	@printf '%s\n' "$$REPOSITORY" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+$$' || { printf 'ERROR: invalid REPOSITORY: %s\n' "$$REPOSITORY"; exit 2; }
+	@printf '%s\n' "$$DOCKERTAG" | grep -Eq '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$$' || { printf 'ERROR: invalid DOCKERTAG: %s\n' "$$DOCKERTAG"; exit 2; }
 
-build-all: $(SRC)
+check-oci-vars: check-docker-vars check-build-vars
+	@reject_multiline() { [ "$$(printf '%s' "$$2" | wc -l | tr -d ' ')" = 0 ] || { printf 'ERROR: invalid %s: %s\n' "$$1" "$$2"; exit 2; }; }; \
+	reject_multiline OCI_FLAVOR "$$OCI_FLAVOR"; \
+	reject_multiline OCI_ARCH "$$OCI_ARCH"
+	@case "$$OCI_FLAVOR" in default|slim|micro|gobgp) ;; *) printf 'ERROR: invalid OCI_FLAVOR: %s\n' "$$OCI_FLAVOR"; exit 2 ;; esac
+	@case "$$OCI_ARCH" in amd64|arm64) ;; *) printf 'ERROR: invalid OCI_ARCH: %s\n' "$$OCI_ARCH"; exit 2 ;; esac
+
+build: check-build-vars
+	@mkdir -p .build
+	@build_vars="TARGET=$$TARGET TARGETOS=$$TARGETOS TARGETARCH=$$TARGETARCH VERSION=$$VERSION BUILD=$$BUILD"; \
+	vars_file=.build/build.vars; \
+	if [ -f "$$TARGET" ] && [ -f "$$vars_file" ] && [ "$$(cat "$$vars_file")" = "$$build_vars" ] && ! find . -type f -name '*.go' -not -path "./vendor/*" -newer "$$TARGET" | grep -q .; then \
+		printf '%s\n' "$$TARGET is up to date"; \
+		exit 0; \
+	fi; \
+	GOOS="$$TARGETOS" GOARCH="$$TARGETARCH" go build -trimpath -ldflags "$(GO_LDFLAGS)" -o "$$TARGET"; \
+	printf '%s\n' "$$build_vars" > "$$vars_file"
+
+build-all: check-build-vars $(SRC)
 	@mkdir -p dist/amd64 dist/arm64
-	@GOOS=$(TARGETOS) GOARCH=amd64 go build $(LDFLAGS) -o dist/amd64/$(TARGET)
-	@GOOS=$(TARGETOS) GOARCH=arm64 go build $(LDFLAGS) -o dist/arm64/$(TARGET)
+	@GOOS="$$TARGETOS" GOARCH=amd64 go build -trimpath -ldflags "$(GO_LDFLAGS)" -o "dist/amd64/$$TARGET"
+	@GOOS="$$TARGETOS" GOARCH=arm64 go build -trimpath -ldflags "$(GO_LDFLAGS)" -o "dist/arm64/$$TARGET"
 
-clean:
+clean: check-build-vars
+	@rm -f -- "$$TARGET" "$${TARGET}.sha256"
 	@rm -f -- $(CLEAN_FILES)
-	@rm -rf dist
+	@rm -rf dist .build
 
-install:
+install: check-build-vars
 	@echo Building and Installing project
-	@go install $(LDFLAGS)
+	@go install -trimpath -ldflags "$(GO_LDFLAGS)"
 
-uninstall: clean
-	@rm -f $$(which ${TARGET})
+uninstall: check-build-vars clean
+	@target_path=$$(command -v -- "$$TARGET" 2>/dev/null || true); \
+	if [ -n "$$target_path" ]; then rm -f -- "$$target_path"; fi
 
 fmt:
 	@gofmt -l -w $(SRC)
@@ -93,11 +128,11 @@ test:
 	@go tool cover -html=$(COVERAGE_PROFILE) -o $(COVERAGE_HTML)
 	@echo "Coverage report: $(COVERAGE_HTML)"
 
-dockerx86:
-	@docker buildx build --platform linux/amd64 --load -t $(REPOSITORY):$(DOCKERTAG) -f initrd.Dockerfile .
+dockerx86: check-docker-vars
+	@docker buildx build --platform linux/amd64 --load -t "$${REPOSITORY}:$${DOCKERTAG}" -f initrd.Dockerfile .
 
-docker:
-	@docker buildx build --platform linux/amd64,linux/arm64 --push -t $(REPOSITORY):$(DOCKERTAG) -f initrd.Dockerfile .
+docker: check-docker-vars
+	@docker buildx build --platform linux/amd64,linux/arm64 --push -t "$${REPOSITORY}:$${DOCKERTAG}" -f initrd.Dockerfile .
 
 iso:
 	@docker buildx build --platform linux/amd64 --target iso --output type=local,dest=. -f initrd.Dockerfile .
@@ -119,17 +154,17 @@ gobgp-iso:
 	@docker buildx build --platform linux/amd64 --target gobgp-iso --output type=local,dest=. -f initrd.Dockerfile .
 	@echo GoBGP ISO built: booty-gobgp.iso
 
-dockerx86slim:
-	@docker buildx build --platform linux/amd64 --target slim --load -t $(REPOSITORY):$(DOCKERTAG)-slim -f initrd.Dockerfile .
+dockerx86slim: check-docker-vars
+	@docker buildx build --platform linux/amd64 --target slim --load -t "$${REPOSITORY}:$${DOCKERTAG}-slim" -f initrd.Dockerfile .
 
-dockerx86micro:
-	@docker buildx build --platform linux/amd64 --target micro --load -t $(REPOSITORY):$(DOCKERTAG)-micro -f initrd.Dockerfile .
+dockerx86micro: check-docker-vars
+	@docker buildx build --platform linux/amd64 --target micro --load -t "$${REPOSITORY}:$${DOCKERTAG}-micro" -f initrd.Dockerfile .
 
-dockerx86gobgp:
-	@docker buildx build --platform linux/amd64 --target gobgp --load -t $(REPOSITORY):$(DOCKERTAG)-gobgp -f initrd.Dockerfile .
+dockerx86gobgp: check-docker-vars
+	@docker buildx build --platform linux/amd64 --target gobgp --load -t "$${REPOSITORY}:$${DOCKERTAG}-gobgp" -f initrd.Dockerfile .
 
-arm64:
-	@docker buildx build --platform linux/arm64 --load -t $(REPOSITORY):$(DOCKERTAG)-arm64 -f initrd.Dockerfile .
+arm64: check-docker-vars
+	@docker buildx build --platform linux/arm64 --load -t "$${REPOSITORY}:$${DOCKERTAG}-arm64" -f initrd.Dockerfile .
 
 arm64-slim:
 	@mkdir -p dist/arm64
@@ -147,16 +182,16 @@ test-iso:
 	@echo PASS
 
 # This is typically only for quick testing
-getramdisk:
+getramdisk: check-docker-vars
 
-	@ID=$$(docker create $(REPOSITORY):$(DOCKERTAG) null); \
+	@ID=$$(docker create "$${REPOSITORY}:$${DOCKERTAG}" null); \
 	trap 'docker rm "$$ID" >/dev/null 2>&1 || true' EXIT; \
 	docker cp "$$ID:/initramfs.cpio.zst" initramfs.cpio.zst
 	@echo Extracted ramdisk
 
-getramdisk-arm64:
+getramdisk-arm64: check-docker-vars
 	@mkdir -p dist/arm64
-	@ID=$$(docker create $(REPOSITORY):$(DOCKERTAG)-arm64 null); \
+	@ID=$$(docker create "$${REPOSITORY}:$${DOCKERTAG}-arm64" null); \
 	trap 'docker rm "$$ID" >/dev/null 2>&1 || true' EXIT; \
 	docker cp "$$ID:/initramfs.cpio.zst" dist/arm64/initramfs.cpio.zst
 	@echo Extracted ARM64 ramdisk to dist/arm64/
@@ -372,7 +407,7 @@ override OCI_INITRAMFS_BASENAME := $(if $(filter $(OCI_FLAVOR),$(ZSTD_INITRAMFS_
 override INITRAMFS_PATH := $(OCI_INITRAMFS_DIR)/$(OCI_INITRAMFS_BASENAME)
 
 oci-push: oci-push-initramfs oci-push-binary
-	@echo Initramfs and binary OCI artifacts pushed for $(OCI_FLAVOR)/$(OCI_ARCH)
+	@printf 'Initramfs and binary OCI artifacts pushed for %s/%s\n' "$$OCI_FLAVOR" "$$OCI_ARCH"
 
 override INITRAMFS_MEDIA_TYPE := $(if $(filter $(OCI_FLAVOR),$(ZSTD_INITRAMFS_FLAVORS)),application/vnd.cncf.initramfs.layer.v1+zstd,application/vnd.cncf.initramfs.layer.v1+gzip)
 
@@ -380,9 +415,7 @@ export VERSION DOCKERTAG REPOSITORY TARGET OCI_FLAVOR OCI_ARCH OCI_INITRAMFS_DIR
 
 ensure_oci_ref_absent = @ref="$(1)"; err=$$(mktemp "$${TMPDIR:-/tmp}/oci-ref-check.XXXXXX") || { echo "ERROR: could not create temporary file for OCI ref check" >&2; exit 1; }; trap 'rm -f "$$err"' EXIT; if oras manifest fetch "$$ref" >/dev/null 2>"$$err"; then echo "ERROR: OCI artifact $$ref already exists; refusing to overwrite"; exit 1; fi; if ! grep -Eiq '(not found|manifest unknown|name unknown|404)' "$$err"; then echo "ERROR: could not verify OCI artifact $$ref is absent"; cat "$$err" >&2 || true; exit 1; fi
 
-oci-push-initramfs:
-	@case "$$OCI_FLAVOR" in default|slim|gobgp|micro) ;; *) echo "ERROR: unsupported OCI_FLAVOR=$$OCI_FLAVOR (expected: $(VALID_INITRAMFS_FLAVORS))"; exit 1 ;; esac
-	@case "$$OCI_ARCH" in amd64|arm64) ;; *) echo "ERROR: unsupported OCI_ARCH=$$OCI_ARCH (expected: amd64 arm64)"; exit 1 ;; esac
+oci-push-initramfs: check-oci-vars
 	$(call ensure_oci_ref_absent,$${REPOSITORY}/initramfs:$${DOCKERTAG}-$${OCI_FLAVOR}-$${OCI_ARCH})
 	@mkdir -p "$$OCI_INITRAMFS_DIR"
 	@rm -f "$$OCI_INITRAMFS_DIR"/initramfs.cpio.zst "$$OCI_INITRAMFS_DIR"/initramfs.cpio.gz \
@@ -391,7 +424,7 @@ oci-push-initramfs:
 	if [ "$$OCI_FLAVOR" != "default" ]; then target_arg="--target=$$OCI_FLAVOR"; fi; \
 	docker buildx build --platform "linux/$$OCI_ARCH" $$target_arg \
 		--output "type=local,dest=$$OCI_INITRAMFS_DIR" -f initrd.Dockerfile .
-	@test -f "$$INITRAMFS_PATH" || (echo "ERROR: expected $$OCI_FLAVOR/$$OCI_ARCH artifact $$INITRAMFS_PATH was not produced"; exit 1)
+	@test -f "$$INITRAMFS_PATH" || (printf 'ERROR: expected %s/%s artifact %s was not produced\n' "$$OCI_FLAVOR" "$$OCI_ARCH" "$$INITRAMFS_PATH"; exit 1)
 	@sha256sum "$$INITRAMFS_PATH" > "$${INITRAMFS_PATH}.sha256"
 	@oras push "$${REPOSITORY}/initramfs:$${DOCKERTAG}-$${OCI_FLAVOR}-$${OCI_ARCH}" \
 		--annotation "org.opencontainers.image.version=$$VERSION" \
@@ -399,15 +432,15 @@ oci-push-initramfs:
 		--annotation "io.booty.arch=$$OCI_ARCH" \
 		"$${INITRAMFS_PATH}:$${INITRAMFS_MEDIA_TYPE}" \
 		"$${INITRAMFS_PATH}.sha256:text/plain"
-	@echo Pushed "$${REPOSITORY}/initramfs:$${DOCKERTAG}-$${OCI_FLAVOR}-$${OCI_ARCH}"
+	@printf 'Pushed %s/initramfs:%s-%s-%s\n' "$$REPOSITORY" "$$DOCKERTAG" "$$OCI_FLAVOR" "$$OCI_ARCH"
 
-oci-push-binary:
-	@test -f "$$TARGET" || (echo "ERROR: $$TARGET binary not found — run 'make build' first"; exit 1)
+oci-push-binary: check-oci-vars
+	@test -f "$$TARGET" || (printf "ERROR: %s binary not found — run 'make build' first\n" "$$TARGET"; exit 1)
 	$(call ensure_oci_ref_absent,$${REPOSITORY}/binary:$${DOCKERTAG}-$${OCI_ARCH})
-	@sha256sum "$$TARGET" > "$$TARGET.sha256"
+	@sha256sum "$$TARGET" > "$${TARGET}.sha256"
 	@oras push "$${REPOSITORY}/binary:$${DOCKERTAG}-$${OCI_ARCH}" \
 		--annotation "org.opencontainers.image.version=$$VERSION" \
 		--annotation "io.booty.arch=$$OCI_ARCH" \
 		"$${TARGET}:application/vnd.cncf.binary.layer.v1" \
 		"$${TARGET}.sha256:text/plain"
-	@echo Pushed "$${REPOSITORY}/binary:$${DOCKERTAG}-$${OCI_ARCH}"
+	@printf 'Pushed %s/binary:%s-%s\n' "$$REPOSITORY" "$$DOCKERTAG" "$$OCI_ARCH"
