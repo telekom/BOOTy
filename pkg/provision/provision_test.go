@@ -53,10 +53,10 @@ func (m *mockCommander) setResult(key string, output []byte, err error) {
 }
 
 type mockProvider struct {
-	statuses        []statusReport
-	configs         []*config.MachineConfig
-	firmwareReports [][]byte
-	reportStatusErr error
+	statuses         []statusReport
+	configs          []*config.MachineConfig
+	firmwareReports  [][]byte
+	reportStatusErr  error
 	reportStatusErrs []error
 }
 
