@@ -17,14 +17,6 @@ import (
 	"github.com/telekom/BOOTy/pkg/rescue"
 )
 
-func failOrSkipRootUnsafe(t *testing.T, reason string) {
-	t.Helper()
-	if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
-		t.Fatal(reason)
-	}
-	t.Skip(reason)
-}
-
 type mockCommander struct {
 	calls   []mockCall
 	results map[string]mockResult
@@ -722,11 +714,12 @@ func TestFormatMstconfigErrorCompactsOutput(t *testing.T) {
 }
 
 func TestRemoveEFIBootEntriesGracefulOnMissing(t *testing.T) {
-	// RemoveEFIBootEntries runs efibootmgr directly on the host.
-	// Skip when running as root to avoid modifying real EFI variables.
-	if os.Getuid() == 0 {
-		failOrSkipRootUnsafe(t, "skipping under root to avoid touching real EFI boot entries")
+	oldCommand := hostCommandCombinedOutput
+	hostCommandCombinedOutput = func(context.Context, string, ...string) ([]byte, error) {
+		return nil, os.ErrNotExist
 	}
+	t.Cleanup(func() { hostCommandCombinedOutput = oldCommand })
+
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
 	if err := c.RemoveEFIBootEntries(context.Background()); err != nil {
@@ -735,11 +728,20 @@ func TestRemoveEFIBootEntriesGracefulOnMissing(t *testing.T) {
 }
 
 func TestMountEFIVarsReturnsNilOnHost(t *testing.T) {
-	// MountEFIVars calls modprobe + syscall.Mount directly (not via Commander).
-	// Skip when running as root to avoid side effects on the host.
-	if os.Getuid() == 0 {
-		failOrSkipRootUnsafe(t, "skipping under root to avoid mounting efivarfs on the host")
+	oldCommand := hostCommandCombinedOutput
+	hostCommandCombinedOutput = func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("modprobe unavailable"), os.ErrNotExist
 	}
+	t.Cleanup(func() { hostCommandCombinedOutput = oldCommand })
+	oldFirmwarePath := efiFirmwarePath
+	oldVarsPath := efiVarsPath
+	efiFirmwarePath = filepath.Join(t.TempDir(), "missing-efi")
+	efiVarsPath = filepath.Join(efiFirmwarePath, "efivars")
+	t.Cleanup(func() {
+		efiFirmwarePath = oldFirmwarePath
+		efiVarsPath = oldVarsPath
+	})
+
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
 	err := c.MountEFIVars(context.Background())

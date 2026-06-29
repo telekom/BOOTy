@@ -274,7 +274,7 @@ func TestFullProvisionFlow(t *testing.T) {
 			Region:            "eu-central",
 			ExtraKernelParams: "console=ttyS0",
 			Image: config.ImageConfig{
-				URLs: []string{"http://images.local/ubuntu.gz"},
+				URLs: []string{startE2ERawImageServer(t)},
 			},
 			Disk: config.DiskConfig{
 				MinSizeGB: 0,
@@ -917,7 +917,7 @@ menuentry 'Ubuntu Recovery Mode' --class ubuntu {
 // ---------------------------------------------------------------------------
 
 func TestNetworkModeDetectionFromVarsE2E(t *testing.T) {
-	vars := `export IMAGE="http://images.local/ubuntu.gz"
+	vars := fmt.Sprintf(`export IMAGE="%s"
 export HOSTNAME="net-node"
 export TOKEN="net-token"
 export MODE="provision"
@@ -928,7 +928,7 @@ ipmi_subnet="172.16.0.0/24"
 asn_server="65001"
 provision_vni="10100"
 dns_resolver="8.8.8.8,1.1.1.1"
-`
+`, startE2ERawImageServer(t))
 	cfg, err := caprf.ParseVars(strings.NewReader(vars))
 	if err != nil {
 		t.Fatal(err)
@@ -1023,7 +1023,7 @@ func TestFullVarsToProvisionPipelineE2E(t *testing.T) {
 	srv := newCAPRFTestServer()
 	baseURL := startTestServer(t, srv.handler())
 
-	vars := fmt.Sprintf(`export IMAGE="http://images.local/ubuntu.gz"
+	vars := fmt.Sprintf(`export IMAGE="%s"
 export HOSTNAME="pipeline-node"
 export TOKEN="pipeline-token"
 export MODE="provision"
@@ -1038,7 +1038,7 @@ export ERROR_URL="%s/status/error"
 export LOG_URL="%s/log"
 export DEBUG_URL="%s/debug"
 dns_resolver="8.8.8.8"
-`, baseURL, baseURL, baseURL, baseURL, baseURL)
+`, startE2ERawImageServer(t), baseURL, baseURL, baseURL, baseURL, baseURL)
 
 	cfg, err := caprf.ParseVars(strings.NewReader(vars))
 	if err != nil {

@@ -50,6 +50,7 @@ func (o *Orchestrator) DryRun(ctx context.Context) error {
 	}{
 		{"config-validation", o.dryRunConfigValidation},
 		{"image-reachability", o.dryRunImageReachability},
+		{"image-prerequisites", o.dryRunImagePrerequisites},
 		{"image-checksum", o.dryRunImageChecksum},
 		{"image-signature", o.dryRunImageSignature},
 		{"image-mode", o.dryRunImageMode},
@@ -248,6 +249,45 @@ func (o *Orchestrator) dryRunDiskDetection(ctx context.Context) DryRunResult {
 	}
 	return DryRunResult{Status: DryRunPass,
 		Message: fmt.Sprintf("detected disk %s", d)}
+}
+
+func (o *Orchestrator) dryRunImagePrerequisites(ctx context.Context) DryRunResult {
+	if len(o.cfg.Provision.Image.URLs) == 0 {
+		return DryRunResult{Status: DryRunFail, Message: "no image URLs configured"}
+	}
+
+	imageSources := dryRunImageSources(o.cfg.Provision.Image.URLs)
+	if len(imageSources) == 0 {
+		return DryRunResult{Status: DryRunFail, Message: "no image URLs configured"}
+	}
+
+	bestURL, err := image.SelectBestSource(ctx, imageSources)
+	if err != nil {
+		return DryRunResult{Status: DryRunFail,
+			Message: fmt.Sprintf("selecting image source: %v", err)}
+	}
+	if image.IsOCIReference(bestURL) {
+		return DryRunResult{Status: DryRunWarn,
+			Message: "OCI image selected: skipping local image prerequisite check"}
+	}
+	format, err := image.ValidateStreamingPrerequisites(ctx, bestURL)
+	if err != nil {
+		return DryRunResult{Status: DryRunFail,
+			Message: fmt.Sprintf("image prerequisites failed: %v", err)}
+	}
+	return DryRunResult{Status: DryRunPass,
+		Message: fmt.Sprintf("image format %s prerequisites available", format)}
+}
+
+func dryRunImageSources(urls []string) []string {
+	sources := make([]string, 0, len(urls))
+	for _, source := range urls {
+		source = strings.TrimSpace(source)
+		if source != "" {
+			sources = append(sources, source)
+		}
+	}
+	return sources
 }
 
 func (o *Orchestrator) dryRunHealthChecks(ctx context.Context) DryRunResult {

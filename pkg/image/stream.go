@@ -174,6 +174,10 @@ func openAndDecompress(ctx context.Context, url string) (io.Reader, func(), Form
 		cleanup := func() { _ = body.Close() }
 		return reader, cleanup, FormatQCOW2, nil
 	}
+	if format == FormatRaw {
+		cleanup := func() { _ = body.Close() }
+		return reader, cleanup, FormatRaw, nil
+	}
 
 	decompressed, closer, err := Decompressor(reader, format)
 	if err != nil {
@@ -187,7 +191,17 @@ func openAndDecompress(ctx context.Context, url string) (io.Reader, func(), Form
 		}
 		_ = body.Close()
 	}
-	return decompressed, cleanup, format, nil
+
+	effectiveFormat, effectiveReader, err := DetectFormat(decompressed)
+	if err != nil {
+		cleanup()
+		return nil, nil, format, fmt.Errorf("detect decompressed format: %w", err)
+	}
+	slog.Info("detected decompressed image format", "outer_format", format, "payload_format", effectiveFormat)
+	if effectiveFormat == FormatQCOW2 {
+		return effectiveReader, cleanup, FormatQCOW2, nil
+	}
+	return effectiveReader, cleanup, effectiveFormat, nil
 }
 
 // wrapChecksum wraps the reader with a checksum hash if requested.

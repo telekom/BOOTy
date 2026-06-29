@@ -41,7 +41,7 @@ func (d *DHCPMode) Setup(ctx context.Context, _ *Config) error {
 	if d.log == nil {
 		d.log = slog.Default().With("component", "dhcp")
 	}
-	ifaces, err := physicalInterfaces()
+	ifaces, err := physicalInterfaces(ctx)
 	if err != nil {
 		return fmt.Errorf("listing interfaces: %w", err)
 	}
@@ -170,8 +170,8 @@ func (d *DHCPMode) Teardown(_ context.Context) error {
 }
 
 // physicalInterfaces returns non-loopback, non-virtual interfaces.
-func physicalInterfaces() ([]net.Interface, error) {
-	nicNames, err := DetectPhysicalNICs()
+func physicalInterfaces(ctx context.Context) ([]net.Interface, error) {
+	nicNames, err := DetectPhysicalNICsContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("detect physical nics: %w", err)
 	}

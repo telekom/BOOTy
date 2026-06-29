@@ -365,18 +365,24 @@ func TestValidateImageSourceConfiguredRejectsBlankImage(t *testing.T) {
 }
 
 func TestValidateImageSourceConfiguredAllowsImage(t *testing.T) {
+	srv := newTestImageServer(t, []byte("raw payload"))
+	defer srv.Close()
+	pinnedOCI := "oci://registry.example.invalid/tcaas/node@sha256:" + strings.Repeat("a", 64)
+
 	tests := []struct {
 		name     string
 		source   string
 		checksum string
+		bestURL  string
 	}{
 		{
-			name:   "https",
-			source: "https://images.example.invalid/node.raw",
+			name:    "https",
+			source:  "https://images.example.invalid/node.raw",
+			bestURL: pinnedOCI,
 		},
 		{
 			name:   "http",
-			source: "http://images.example.invalid/node.raw",
+			source: srv.URL + "/node.raw",
 		},
 		{
 			name:     "oci tag with checksum",
@@ -404,6 +410,7 @@ func TestValidateImageSourceConfiguredAllowsImage(t *testing.T) {
 			cfg.Provision.Image.URLs = []string{tt.source}
 			cfg.Provision.Image.Checksum = tt.checksum
 			o := newTestOrchestrator(t, cfg, &mockProvider{})
+			o.bestImageURL = tt.bestURL
 
 			if err := o.validateProvisionInputs(context.Background()); err != nil {
 				t.Fatalf("validateProvisionInputs: %v", err)
@@ -472,16 +479,83 @@ func TestValidateImageSourceConfiguredRejectsInvalidSources(t *testing.T) {
 	}
 }
 
-func TestValidateImageSourceConfiguredNormalizesImageSources(t *testing.T) {
+func TestValidateProvisionInputsRejectsQCOW2WithoutQemuImg(t *testing.T) {
+	srv := newTestImageServer(t, append([]byte{0x51, 0x46, 0x49, 0xfb}, []byte("qcow2 payload")...))
+	defer srv.Close()
+	t.Setenv("PATH", t.TempDir())
+
 	cfg := &config.MachineConfig{}
 	cfg.Provision.TargetOS = config.TargetOSLinux
-	cfg.Provision.Image.URLs = []string{"  https://images.example.invalid/node.raw  ", "\t"}
+	cfg.Provision.Image.URLs = []string{srv.URL + "/node.qcow2"}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err := o.validateProvisionInputs(context.Background())
+	if err == nil {
+		t.Fatal("expected qcow2 prerequisite error")
+	}
+	if !strings.Contains(err.Error(), "before destructive storage") ||
+		!strings.Contains(err.Error(), "qemu-img") {
+		t.Fatalf("error = %q, want pre-wipe qemu-img context", err.Error())
+	}
+}
+
+func TestValidateProvisionInputsRejectsQCOW2ByNameWithoutQemuImg(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = config.TargetOSLinux
+	cfg.Provision.Image.URLs = []string{"http://127.0.0.1:1/node.qcow2.gz"}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err := o.validateProvisionInputs(context.Background())
+	if err == nil {
+		t.Fatal("expected qcow2 prerequisite error")
+	}
+	if !strings.Contains(err.Error(), "before destructive storage") ||
+		!strings.Contains(err.Error(), "qemu-img") {
+		t.Fatalf("error = %q, want pre-wipe qemu-img context", err.Error())
+	}
+}
+
+func TestValidateProvisionInputsAllowsRawWithoutQemuImg(t *testing.T) {
+	srv := newTestImageServer(t, []byte("raw payload"))
+	defer srv.Close()
+	t.Setenv("PATH", t.TempDir())
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = config.TargetOSLinux
+	cfg.Provision.Image.URLs = []string{srv.URL + "/node.raw"}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	if err := o.validateProvisionInputs(context.Background()); err != nil {
+		t.Fatalf("expected raw image preflight to pass, got %v", err)
+	}
+}
+
+func TestValidateProvisionInputsAllowsTransientRawProbeFailure(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = config.TargetOSLinux
+	cfg.Provision.Image.URLs = []string{"http://127.0.0.1:1/node.raw"}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	if err := o.validateProvisionInputs(context.Background()); err != nil {
+		t.Fatalf("expected transient image probe failure to warn and continue, got %v", err)
+	}
+}
+
+func TestValidateImageSourceConfiguredNormalizesImageSources(t *testing.T) {
+	srv := newTestImageServer(t, []byte("raw payload"))
+	defer srv.Close()
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = config.TargetOSLinux
+	cfg.Provision.Image.URLs = []string{"  " + srv.URL + "/node.raw  ", "\t"}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
 	if err := o.validateProvisionInputs(context.Background()); err != nil {
 		t.Fatalf("validateProvisionInputs: %v", err)
 	}
-	if got := cfg.Provision.Image.URLs; got[0] != "https://images.example.invalid/node.raw" || got[1] != "" {
+	if got := cfg.Provision.Image.URLs; got[0] != srv.URL+"/node.raw" || got[1] != "" {
 		t.Fatalf("image URLs were not normalized: %#v", got)
 	}
 }
@@ -615,9 +689,10 @@ func TestValidateProvisionInputsRejectsGPGSignatureWithoutChecksum(t *testing.T)
 }
 
 func TestValidateProvisionInputsAllowsGPGSignatureWithChecksum(t *testing.T) {
+	srv := newTestImageServer(t, []byte("booty raw image"))
 	cfg := &config.MachineConfig{}
 	cfg.Provision.TargetOS = config.TargetOSLinux
-	cfg.Provision.Image.URLs = []string{"https://images.example.invalid/node.raw"}
+	cfg.Provision.Image.URLs = []string{srv.URL + "/node.raw"}
 	cfg.Provision.Image.SignatureURL = " https://images.example.invalid/node.raw.sig "
 	cfg.Provision.Image.Checksum = strings.Repeat("a", 64)
 	cfg.Provision.Image.ChecksumType = "sha256"
@@ -697,9 +772,12 @@ func TestValidateProvisionInputsRejectsRHELLikeFamilyBeforeWipe(t *testing.T) {
 }
 
 func TestValidateProvisionInputsAllowsLinuxTarget(t *testing.T) {
+	srv := newTestImageServer(t, []byte("booty raw image"))
+	defer srv.Close()
+
 	cfg := &config.MachineConfig{}
 	cfg.Provision.TargetOS = " Linux "
-	cfg.Provision.Image.URLs = []string{"https://images.example.invalid/linux.raw"}
+	cfg.Provision.Image.URLs = []string{srv.URL + "/linux.raw"}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
 	if err := o.validateProvisionInputs(context.Background()); err != nil {
@@ -2804,6 +2882,26 @@ func TestVerifyImageSignatureOCIProbeUsesTimeout(t *testing.T) {
 	}
 	if !called {
 		t.Fatal("probe was not called")
+	}
+}
+
+func TestVerifyImageSignatureUsesCachedBestImageURL(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{"http://127.0.0.1:1/unreachable.raw"}
+	cfg.Provision.Image.SignatureURL = "https://example.com/image.sig"
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+	o.bestImageURL = "https://images.example.invalid/node.raw"
+
+	err := o.verifyImageSignature(context.Background())
+	if err == nil {
+		t.Fatal("expected missing pub key error")
+	}
+	if !strings.Contains(err.Error(), "no GPG public key") {
+		t.Fatalf("error = %q, want cached URL path to reach pubkey validation", err.Error())
+	}
+	if o.bestImageURL != "https://images.example.invalid/node.raw" {
+		t.Fatalf("bestImageURL = %q, want cached URL preserved", o.bestImageURL)
 	}
 }
 

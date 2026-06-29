@@ -133,11 +133,19 @@ func writeImageToFile(src io.Reader, dest string) error {
 	return nil
 }
 
-// convertQCOW2ToRaw runs qemu-img convert to transform qcow2 to raw.
-func convertQCOW2ToRaw(ctx context.Context, src, dst string) error {
+func requireQCOW2Converter() (string, error) {
 	qemuImg, err := exec.LookPath("qemu-img")
 	if err != nil {
-		return fmt.Errorf("qemu-img not found (install qemu-utils): %w", err)
+		return "", fmt.Errorf("qemu-img not found (install qemu-utils): %w", err)
+	}
+	return qemuImg, nil
+}
+
+// convertQCOW2ToRaw runs qemu-img convert to transform qcow2 to raw.
+func convertQCOW2ToRaw(ctx context.Context, src, dst string) error {
+	qemuImg, err := requireQCOW2Converter()
+	if err != nil {
+		return err
 	}
 
 	slog.Info("converting qcow2 to raw", "src", src, "dst", dst)

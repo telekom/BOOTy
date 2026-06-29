@@ -828,7 +828,7 @@ func raidDevicePath(name string) (string, error) {
 	return "", fmt.Errorf("invalid raid array name %q before destructive storage steps", name)
 }
 
-func (o *Orchestrator) validateProvisionInputs(_ context.Context) error {
+func (o *Orchestrator) validateProvisionInputs(ctx context.Context) error {
 	if err := config.ValidateRequiredProvisionTargetOS(o.cfg.Provision.TargetOS); err != nil {
 		return fmt.Errorf("rejected before destructive storage steps: %w", err)
 	}
@@ -845,6 +845,7 @@ func (o *Orchestrator) validateProvisionInputs(_ context.Context) error {
 	}
 	o.cfg.Provision.Image.Checksum = strings.TrimSpace(o.cfg.Provision.Image.Checksum)
 	checksumConfigured := o.cfg.Provision.Image.Checksum != ""
+	imageSources := make([]string, 0, len(o.cfg.Provision.Image.URLs))
 	hasSource := false
 	for i, source := range o.cfg.Provision.Image.URLs {
 		source = strings.TrimSpace(source)
@@ -853,6 +854,7 @@ func (o *Orchestrator) validateProvisionInputs(_ context.Context) error {
 			continue
 		}
 		hasSource = true
+		imageSources = append(imageSources, source)
 		if err := validateProvisionImageSource(source, checksumConfigured); err != nil {
 			return err
 		}
@@ -864,6 +866,33 @@ func (o *Orchestrator) validateProvisionInputs(_ context.Context) error {
 	if o.cfg.Provision.Image.SignatureURL != "" && !checksumConfigured {
 		return errors.New(imageSignatureChecksumRequiredMessage)
 	}
+
+	return o.validateImageStreamingPrerequisites(ctx, imageSources)
+}
+
+func (o *Orchestrator) validateImageStreamingPrerequisites(ctx context.Context, imageSources []string) error {
+	bestURL := o.bestImageURL
+	if bestURL == "" {
+		var err error
+		bestURL, err = image.SelectBestSource(ctx, imageSources)
+		if err != nil {
+			return fmt.Errorf("selecting image source before destructive storage: %w", err)
+		}
+		o.bestImageURL = bestURL
+	}
+	if image.IsOCIReference(bestURL) {
+		return nil
+	}
+	format, err := image.ValidateStreamingPrerequisites(ctx, bestURL)
+	if err != nil {
+		if image.IsTransientFormatProbeError(err) {
+			o.log.Warn("unable to probe image prerequisites before destructive storage",
+				"url", image.RedactURL(bestURL), "error", err)
+			return nil
+		}
+		return fmt.Errorf("validating image prerequisites before destructive storage: %w", err)
+	}
+	o.log.Info("image prerequisites validated", "url", image.RedactURL(bestURL), "format", format)
 	return nil
 }
 
@@ -1738,17 +1767,21 @@ func (o *Orchestrator) verifyImageSignature(ctx context.Context) error {
 	// intentional tradeoff: signature verification must complete before
 	// writing to disk, and piping the same stream into both GPG and the
 	// block device would require buffering multi-GB images in memory.
-	bestURL, err := image.SelectBestSource(ctx, o.cfg.Provision.Image.URLs)
-	if err != nil {
-		// If signature verification is not configured, URL resolution failures
-		// will be caught by stream-image. Don't block provisioning here.
-		if o.cfg.Provision.Image.SignatureURL == "" {
-			o.log.Info("no image signature URL configured, skipping verification")
-			return nil
+	bestURL := o.bestImageURL
+	if bestURL == "" {
+		var err error
+		bestURL, err = image.SelectBestSource(ctx, o.cfg.Provision.Image.URLs)
+		if err != nil {
+			// If signature verification is not configured, URL resolution failures
+			// will be caught by stream-image. Don't block provisioning here.
+			if o.cfg.Provision.Image.SignatureURL == "" {
+				o.log.Info("no image signature URL configured, skipping verification")
+				return nil
+			}
+			return fmt.Errorf("selecting image source: %w", err)
 		}
-		return fmt.Errorf("selecting image source: %w", err)
+		o.bestImageURL = bestURL
 	}
-	o.bestImageURL = bestURL
 
 	if image.IsOCIReference(bestURL) {
 		// Probe OCI sources even without GPG verification so bad registry

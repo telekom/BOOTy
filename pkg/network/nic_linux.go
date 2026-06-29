@@ -3,6 +3,7 @@
 package network
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -33,7 +34,15 @@ var (
 // links are moved into the namespace. This function retries briefly for both
 // settling cases.
 func DetectPhysicalNICs() ([]string, error) {
+	return DetectPhysicalNICsContext(context.Background())
+}
+
+// DetectPhysicalNICsContext is DetectPhysicalNICs with caller cancellation.
+func DetectPhysicalNICsContext(ctx context.Context) ([]string, error) {
 	for i := range physicalNICMaxRetries {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("detect physical nics canceled: %w", err)
+		}
 		nics, hasTemp, err := detectNICsOnce()
 		if err != nil {
 			return nil, err
@@ -44,7 +53,9 @@ func DetectPhysicalNICs() ([]string, error) {
 		if i == 0 {
 			logNICSettleWait(nics, hasTemp)
 		}
-		sleepFunc(physicalNICRetryInterval)
+		if err := sleepPhysicalNICRetry(ctx); err != nil {
+			return nil, err
+		}
 	}
 
 	// Final attempt: return whatever we have, excluding any remaining clab-* names.
@@ -59,6 +70,21 @@ func DetectPhysicalNICs() ([]string, error) {
 		}
 	}
 	return stable, nil
+}
+
+func sleepPhysicalNICRetry(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		sleepFunc(physicalNICRetryInterval)
+		close(done)
+	}()
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("wait for physical nics to settle: %w", ctx.Err())
+	case <-done:
+		return nil
+	}
 }
 
 const (

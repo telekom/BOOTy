@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -288,18 +286,13 @@ func TestRAIDLVMProvisionOrderE2E(t *testing.T) {
 	})
 	cmd.set("sfdisk", sfdiskOut, nil)
 
-	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.NotFound(w, nil)
-	}))
-	defer imageServer.Close()
-
 	cfg := &config.MachineConfig{
 		Mode:     "provision",
 		Hostname: "raid-node",
 		Network:  config.NetworkConfig{DNSResolvers: "8.8.8.8"},
 		Provision: config.ProvisionConfig{
 			TargetOS: config.TargetOSLinux,
-			Image:    config.ImageConfig{URLs: []string{imageServer.URL + "/test.gz"}},
+			Image:    config.ImageConfig{URLs: []string{startE2ERawImageServer(t)}},
 		},
 	}
 	orch := provision.NewOrchestrator(cfg, newMockProvider(cfg), disk.NewManager(cmd))
@@ -341,7 +334,7 @@ func TestRAIDLVMProvisionOrderE2E(t *testing.T) {
 func TestDryRunFullPassE2E(t *testing.T) {
 	provider := newMockProvider(&config.MachineConfig{})
 	cmd := newMockCommander()
-	cfg := &config.MachineConfig{DryRun: true, Hostname: "dry-run-node", Health: config.HealthConfig{Enabled: false}, Provision: config.ProvisionConfig{Image: config.ImageConfig{URLs: []string{"http://example.com/test.img"}}, Inventory: config.InventoryConfig{Enabled: false}}}
+	cfg := &config.MachineConfig{DryRun: true, Hostname: "dry-run-node", Health: config.HealthConfig{Enabled: false}, Provision: config.ProvisionConfig{Image: config.ImageConfig{URLs: []string{startE2ERawImageServer(t)}}, Inventory: config.InventoryConfig{Enabled: false}}}
 	orch := provision.NewOrchestrator(cfg, provider, disk.NewManager(cmd))
 	_ = orch.DryRun(context.Background())
 	if len(provider.getStatuses()) == 0 {
@@ -368,7 +361,7 @@ func TestDryRunFailsWithoutImagesE2E(t *testing.T) {
 
 func TestDryRunReportsWarningsE2E(t *testing.T) {
 	provider := newMockProvider(&config.MachineConfig{})
-	cfg := &config.MachineConfig{DryRun: true, Hostname: "warn-node", Health: config.HealthConfig{Enabled: false}, Provision: config.ProvisionConfig{Image: config.ImageConfig{URLs: []string{"http://example.com/test.img"}}, Inventory: config.InventoryConfig{Enabled: false}}}
+	cfg := &config.MachineConfig{DryRun: true, Hostname: "warn-node", Health: config.HealthConfig{Enabled: false}, Provision: config.ProvisionConfig{Image: config.ImageConfig{URLs: []string{startE2ERawImageServer(t)}}, Inventory: config.InventoryConfig{Enabled: false}}}
 	orch := provision.NewOrchestrator(cfg, provider, disk.NewManager(newMockCommander()))
 	_ = orch.DryRun(context.Background())
 	if len(provider.getStatuses()) == 0 {

@@ -492,9 +492,10 @@ export MODE="dry-run"
 export DRY_RUN=true
 ```
 
-Dry-run validates: network connectivity, image URL reachability, disk detection,
-partition layout fit, EFI variable access, and health checks. Results are
-reported back to the CAPRF controller as a structured validation report.
+Dry-run validates: network connectivity, image URL reachability, image-format
+prerequisites such as `qemu-img` for QCOW2 sources, disk detection, partition
+layout fit, EFI variable access, and health checks. Results are reported back
+to the CAPRF controller as a structured validation report.
 
 ### Health Checks
 
