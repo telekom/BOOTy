@@ -2028,10 +2028,9 @@ func TestReportSuccessStatusFailureRetries(t *testing.T) {
 	if cp.IsCompleted("report-success") {
 		t.Fatal("report-success step should not be marked complete on failure")
 	}
-	// Initial + 2 retries = 3 attempts
-	if len(provider.statuses) != 4 { // Wait, executeStep will also call ReportStatus(StatusError) upon failure!
-		// Actually, reportStatusErr is set, so ReportStatus(StatusError) also fails, but it still appends to statuses.
-		// So 3 attempts of StatusSuccess + 1 attempt of StatusError = 4
+	// Initial attempt + 2 retries = 3 success attempts.
+	// Step failure triggers 1 final StatusError report. Total = 4.
+	if len(provider.statuses) != 4 {
 		t.Fatalf("expected 4 status reports (3 success retries + 1 error report), got %d", len(provider.statuses))
 	}
 	for i := 0; i < 3; i++ {
