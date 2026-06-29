@@ -13,14 +13,13 @@ import (
 	"syscall"
 	"time"
 
-	exec "github.com/telekom/BOOTy/pkg/executil"
-
 	apipb "github.com/osrg/gobgp/v3/api"
 	"github.com/osrg/gobgp/v3/pkg/server"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/net/ipv6"
 	"google.golang.org/protobuf/types/known/anypb"
 
+	exec "github.com/telekom/BOOTy/pkg/executil"
 	"github.com/telekom/BOOTy/pkg/network"
 )
 
