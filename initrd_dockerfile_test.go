@@ -124,6 +124,21 @@ func TestDockerfileStampsBuildInfo(t *testing.T) {
 	}
 }
 
+func TestDockerfileLVMBuildStepPropagatesMakeFailures(t *testing.T) {
+	data, err := os.ReadFile("initrd.Dockerfile")
+	if err != nil {
+		t.Fatalf("cannot read initrd.Dockerfile: %v", err)
+	}
+
+	text := string(data)
+	if strings.Contains(text, "RUN make; exit 0") {
+		t.Fatal("initrd.Dockerfile must not mask LVM make failures with '; exit 0'")
+	}
+	if !regexp.MustCompile(`(?m)^RUN make\s*$`).MatchString(text) {
+		t.Fatal("initrd.Dockerfile must keep the LVM make step as a standalone failing RUN command")
+	}
+}
+
 func TestReleaseAndNightlyPassInitramfsBuildInfoArgs(t *testing.T) {
 	for _, path := range []string{
 		".github/workflows/release-v2.yml",
