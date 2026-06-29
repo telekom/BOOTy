@@ -121,6 +121,25 @@ func requireStepIndex(t *testing.T, steps []Step, name string) int {
 	return -1
 }
 
+func commandIndex(calls []mockCall, name string, args ...string) int {
+	for i, call := range calls {
+		if call.name != name || len(call.args) != len(args) {
+			continue
+		}
+		match := true
+		for j := range args {
+			if call.args[j] != args[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return i
+		}
+	}
+	return -1
+}
+
 func wipeCommandCalls(calls []mockCall) []mockCall {
 	var out []mockCall
 	for _, call := range calls {
@@ -198,8 +217,8 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 41 {
-		t.Fatalf("expected 41 provisioning steps, got %d", len(steps))
+	if len(steps) != 42 {
+		t.Fatalf("expected 42 provisioning steps, got %d", len(steps))
 	}
 }
 
@@ -216,7 +235,7 @@ func TestProvisionStepsValidateImageSourceBeforeWipe(t *testing.T) {
 	if !ok {
 		t.Fatal("missing validate-provision-inputs step")
 	}
-	for _, name := range []string{"stop-raid", "disable-lvm", "setup-nvme-namespaces", "detect-disk", "wipe-disks"} {
+	for _, name := range []string{"stop-raid", "disable-lvm", "setup-nvme-namespaces", "setup-raid", "detect-disk", "wipe-disks"} {
 		stepIdx, ok := indices[name]
 		if !ok {
 			t.Fatalf("missing %s step", name)
@@ -247,7 +266,7 @@ func TestProvisionStepsVerifyImageBeforeDestructiveStorage(t *testing.T) {
 	if validateIdx >= verifyIdx {
 		t.Fatalf("validate-provision-inputs index %d must be before verify-image index %d", validateIdx, verifyIdx)
 	}
-	for _, name := range []string{"stop-raid", "disable-lvm", "setup-nvme-namespaces", "detect-disk", "wipe-disks"} {
+	for _, name := range []string{"stop-raid", "disable-lvm", "setup-nvme-namespaces", "setup-raid", "detect-disk", "wipe-disks"} {
 		stepIdx, ok := indices[name]
 		if !ok {
 			t.Fatalf("missing %s step", name)
@@ -272,6 +291,26 @@ func TestProvisionStepsDisableLVMBeforeStoppingRAID(t *testing.T) {
 	}
 	if stopIdx >= wipeIdx {
 		t.Fatalf("stop-raid index %d must be before wipe-disks index %d", stopIdx, wipeIdx)
+	}
+}
+
+func TestProvisionStepsSetupRAIDAfterNVMeBeforeDetectDisk(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	steps := o.provisionSteps()
+
+	indices := map[string]int{}
+	for i, step := range steps {
+		indices[step.Name] = i
+	}
+	for _, name := range []string{"setup-nvme-namespaces", "setup-raid", "detect-disk"} {
+		if _, ok := indices[name]; !ok {
+			t.Fatalf("missing step %q", name)
+		}
+	}
+	if indices["setup-nvme-namespaces"] >= indices["setup-raid"] ||
+		indices["setup-raid"] >= indices["detect-disk"] {
+		t.Fatalf("unexpected raid setup order: %#v", indices)
 	}
 }
 
@@ -783,6 +822,9 @@ func TestResumeStateStepsRerunMountSharedDataForCleanupState(t *testing.T) {
 	}
 	if _, ok := stateSteps["enable-lvm"]; !ok {
 		t.Fatal("enable-lvm must rerun on resume because activated LVM devices are volatile after restart")
+	}
+	if _, ok := stateSteps["setup-raid"]; ok {
+		t.Fatal("setup-raid must not rerun on resume because it wipes member devices before creating arrays")
 	}
 	if _, ok := stateSteps["mount-shared-data"]; !ok {
 		t.Fatal("mount-shared-data must rerun on resume to rebuild sharedMounts for teardown cleanup")
@@ -1517,6 +1559,292 @@ func TestCheckpointResumeDoesNotRerunNVMeNamespaceSetup(t *testing.T) {
 	t.Fatalf("setup-nvme-namespaces must remain skippable on resume; calls=%#v", cmd.calls)
 }
 
+func TestCheckpointRecordsRAIDTargetDevice(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+		Name:    "md0",
+		Level:   1,
+		Devices: []string{"/dev/sda", "/dev/sdb"},
+	}}
+	o, _ := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	cp := &Checkpoint{}
+	step := Step{"setup-raid", o.setupRAID}
+	if err := o.executeStep(context.Background(), step, cp); err != nil {
+		t.Fatalf("execute setup-raid: %v", err)
+	}
+	if cp.RAIDTargetDevice != "/dev/md0" {
+		t.Fatalf("checkpoint RAIDTargetDevice = %q, want /dev/md0", cp.RAIDTargetDevice)
+	}
+	if !cp.IsCompleted("setup-raid") {
+		t.Fatal("checkpoint should mark setup-raid complete")
+	}
+}
+
+func TestCheckpointResumeRestoresRAIDTargetDevice(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+		Name:    "md0",
+		Level:   1,
+		Devices: []string{"/dev/sda", "/dev/sdb"},
+	}}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	cp := &Checkpoint{
+		CompletedSteps:   []string{"setup-raid"},
+		RAIDTargetDevice: "/dev/md0",
+	}
+
+	o.restoreCheckpointDerivedState(cp)
+
+	if cfg.Provision.Disk.Device != "/dev/md0" {
+		t.Fatalf("DiskDevice = %q, want checkpoint raid target", cfg.Provision.Disk.Device)
+	}
+	if o.targetDisk != "/dev/md0" {
+		t.Fatalf("targetDisk = %q, want checkpoint raid target", o.targetDisk)
+	}
+}
+
+func TestCheckpointResumeDoesNotRerunRAIDSetup(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+		Name:    "md0",
+		Level:   1,
+		Devices: []string{"/dev/sda", "/dev/sdb"},
+	}}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	cp := &Checkpoint{
+		CompletedSteps:   []string{"setup-raid"},
+		RAIDTargetDevice: "/dev/md0",
+	}
+	o.restoreCheckpointDerivedState(cp)
+
+	stateSteps := resumeStateSteps()
+	step := Step{"setup-raid", o.setupRAID}
+	_, mustRun := stateSteps[step.Name]
+	if cp.IsCompleted(step.Name) && !mustRun {
+		if len(cmd.calls) != 0 {
+			t.Fatalf("completed raid setup should skip without destructive commands, got %#v", cmd.calls)
+		}
+		return
+	}
+	if err := o.executeStep(context.Background(), step, cp); err != nil {
+		t.Fatalf("setup-raid reran unexpectedly: %v", err)
+	}
+	t.Fatalf("setup-raid must remain skippable on resume; calls=%#v", cmd.calls)
+}
+
+func TestSetupRAIDCreatesConfiguredArrayAndSetsSingleArrayTarget(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+		Name:    "md0",
+		Level:   1,
+		Devices: []string{" /dev/sda ", "/dev/sdb", "/dev/sda"},
+	}}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	if err := o.setupRAID(context.Background()); err != nil {
+		t.Fatalf("setupRAID: %v", err)
+	}
+	if cfg.Provision.Disk.Device != "/dev/md0" {
+		t.Fatalf("DiskDevice = %q, want /dev/md0", cfg.Provision.Disk.Device)
+	}
+	if o.targetDisk != "/dev/md0" {
+		t.Fatalf("targetDisk = %q, want /dev/md0", o.targetDisk)
+	}
+	createArgs := []string{"--create", "/dev/md0", "--level", "1", "--raid-devices", "2", "--run", "--force", "--metadata", "1.2", "/dev/sda", "/dev/sdb"}
+	if !hasCommandCall(cmd.calls, "mdadm", createArgs...) {
+		t.Fatalf("expected mdadm create for trimmed unique members, got %#v", cmd.calls)
+	}
+	createIdx := commandIndex(cmd.calls, "mdadm", createArgs...)
+	wipeIdx := commandIndex(cmd.calls, "wipefs", "-af", "/dev/sdb")
+	if wipeIdx == -1 || createIdx == -1 || wipeIdx >= createIdx {
+		t.Fatalf("expected member wipes before mdadm create, calls: %#v", cmd.calls)
+	}
+	if got := commandIndex(cmd.calls, "wipefs", "-af", "/dev/sda"); got == -1 {
+		t.Fatalf("expected /dev/sda member wipe, calls: %#v", cmd.calls)
+	}
+}
+
+func TestSetupRAIDAllowsNestedMDArrayName(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+		Name:    "md/boot",
+		Level:   1,
+		Devices: []string{"/dev/sda", "/dev/sdb"},
+	}}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	if err := o.setupRAID(context.Background()); err != nil {
+		t.Fatalf("setupRAID: %v", err)
+	}
+	if cfg.Provision.Disk.Device != "/dev/md/boot" {
+		t.Fatalf("DiskDevice = %q, want /dev/md/boot", cfg.Provision.Disk.Device)
+	}
+	if o.targetDisk != "/dev/md/boot" {
+		t.Fatalf("targetDisk = %q, want /dev/md/boot", o.targetDisk)
+	}
+	createArgs := []string{"--create", "/dev/md/boot", "--level", "1", "--raid-devices", "2", "--run", "--force", "--metadata", "1.2", "/dev/sda", "/dev/sdb"}
+	if !hasCommandCall(cmd.calls, "mdadm", createArgs...) {
+		t.Fatalf("expected mdadm create for nested md path, got %#v", cmd.calls)
+	}
+}
+
+func TestSetupRAIDTreatsNVMeAutoTargetAsUnset(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.Device = "/dev/nvme0n5"
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+		Name:    "md0",
+		Level:   1,
+		Devices: []string{"/dev/nvme0n1", "/dev/nvme1n1"},
+	}}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.nvmeTargetDevice = "/dev/nvme0n5"
+
+	if err := o.setupRAID(context.Background()); err != nil {
+		t.Fatalf("setupRAID: %v", err)
+	}
+	if cfg.Provision.Disk.Device != "/dev/md0" {
+		t.Fatalf("DiskDevice = %q, want /dev/md0", cfg.Provision.Disk.Device)
+	}
+	if o.targetDisk != "/dev/md0" {
+		t.Fatalf("targetDisk = %q, want /dev/md0", o.targetDisk)
+	}
+	createArgs := []string{"--create", "/dev/md0", "--level", "1", "--raid-devices", "2", "--run", "--force", "--metadata", "1.2", "/dev/nvme0n1", "/dev/nvme1n1"}
+	if !hasCommandCall(cmd.calls, "mdadm", createArgs...) {
+		t.Fatalf("expected mdadm create after nvme auto-target reset, got %#v", cmd.calls)
+	}
+}
+
+func TestSetupRAIDRequiresTargetBeforeMultipleArrayWork(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{
+		{Name: "md0", Level: 1, Devices: []string{"/dev/sda", "/dev/sdb"}},
+		{Name: "md1", Level: 1, Devices: []string{"/dev/sdc", "/dev/sdd"}},
+	}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	err := o.setupRAID(context.Background())
+	if err == nil {
+		t.Fatal("expected explicit target device error")
+	}
+	if !strings.Contains(err.Error(), "provision.disk.device is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cmd.calls) != 0 {
+		t.Fatalf("expected no destructive calls before target is selected, got %#v", cmd.calls)
+	}
+}
+
+func TestSetupRAIDRejectsTooFewUniqueMembersBeforeWipe(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+		Name:    "md0",
+		Level:   1,
+		Devices: []string{"/dev/sda", " /dev/sda "},
+	}}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	err := o.setupRAID(context.Background())
+	if err == nil {
+		t.Fatal("expected unique member count error")
+	}
+	if !strings.Contains(err.Error(), "requires at least 2 unique member devices") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cmd.calls) != 0 {
+		t.Fatalf("expected no destructive commands before validation, got %#v", cmd.calls)
+	}
+}
+
+func TestSetupRAIDRejectsUnsupportedLevelBeforeWipe(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+		Name:    "md0",
+		Level:   7,
+		Devices: []string{"/dev/sda", "/dev/sdb"},
+	}}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	err := o.setupRAID(context.Background())
+	if err == nil {
+		t.Fatal("expected unsupported raid level error")
+	}
+	if !strings.Contains(err.Error(), "unsupported level 7") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cmd.calls) != 0 {
+		t.Fatalf("expected no destructive commands before validation, got %#v", cmd.calls)
+	}
+}
+
+func TestSetupRAIDRejectsDuplicateMembersAcrossArraysBeforeWipe(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{
+		{Name: "md0", Level: 1, Devices: []string{"/dev/sda", "/dev/sdb"}},
+		{Name: "md1", Level: 1, Devices: []string{"/dev/sdb", "/dev/sdc"}},
+	}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	err := o.setupRAID(context.Background())
+	if err == nil {
+		t.Fatal("expected duplicate raid member error")
+	}
+	if !strings.Contains(err.Error(), "configured in both") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cmd.calls) != 0 {
+		t.Fatalf("expected no destructive commands before validation, got %#v", cmd.calls)
+	}
+}
+
+func TestSetupRAIDRejectsUnsafeArrayNameBeforeWipe(t *testing.T) {
+	for _, name := range []string{"md/../sda", "sda", "md/boot/extra", "mdboot"} {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			cfg := &config.MachineConfig{}
+			cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+				Name:    name,
+				Level:   1,
+				Devices: []string{"/dev/sda", "/dev/sdb"},
+			}}
+			o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+			err := o.setupRAID(context.Background())
+			if err == nil {
+				t.Fatal("expected invalid raid array name error")
+			}
+			if !strings.Contains(err.Error(), "invalid raid array name") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(cmd.calls) != 0 {
+				t.Fatalf("expected no destructive commands before validation, got %#v", cmd.calls)
+			}
+		})
+	}
+}
+
+func TestSetupRAIDRejectsExplicitNonArrayTargetBeforeWipe(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.Device = "/dev/sda"
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+		Name:    "md0",
+		Level:   1,
+		Devices: []string{"/dev/sda", "/dev/sdb"},
+	}}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	err := o.setupRAID(context.Background())
+	if err == nil {
+		t.Fatal("expected explicit target mismatch error")
+	}
+	if !strings.Contains(err.Error(), "must match one of the configured raid array devices") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cmd.calls) != 0 {
+		t.Fatalf("expected no destructive commands before target validation, got %#v", cmd.calls)
+	}
+}
+
 func TestProvisionReportsErrorOnStepFailure(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	provider := &mockProvider{}
@@ -1874,6 +2202,48 @@ func TestWipeOrSecureEraseDisksScopesSecureEraseToTargetDisk(t *testing.T) {
 	}
 }
 
+func TestWipeOrSecureEraseDisksWipesRAIDTargetWithoutSecureErase(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.SecureErase = true
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+		Name:    "md0",
+		Level:   1,
+		Devices: []string{"/dev/sda", "/dev/sdb"},
+	}}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/md0"
+
+	if err := o.wipeOrSecureEraseDisks(context.Background()); err != nil {
+		t.Fatalf("wipeOrSecureEraseDisks: %v", err)
+	}
+	if hasCommandName(cmd.calls, "hdparm") || hasCommandName(cmd.calls, "nvme") {
+		t.Fatalf("raid target should not be hardware secure-erased, got %#v", cmd.calls)
+	}
+	if !hasCommandCall(cmd.calls, "sgdisk", "--zap-all", "/dev/md0") ||
+		!hasCommandCall(cmd.calls, "wipefs", "-af", "/dev/md0") {
+		t.Fatalf("expected normal wipe of raid target device, got %#v", cmd.calls)
+	}
+}
+
+func TestWipeOrSecureEraseDisksKeepsSecureEraseForNonRAIDTarget(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.SecureErase = true
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+		Name:    "md0",
+		Level:   1,
+		Devices: []string{"/dev/sda", "/dev/sdb"},
+	}}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+
+	if err := o.wipeOrSecureEraseDisks(context.Background()); err != nil {
+		t.Fatalf("wipeOrSecureEraseDisks: %v", err)
+	}
+	if !hasCommandCall(cmd.calls, "hdparm", "-I", "/dev/sda") {
+		t.Fatalf("expected secure erase probe for non-raid target, got %#v", cmd.calls)
+	}
+}
+
 func TestWipeOrSecureEraseDisksAllowsPartitionLayoutWithImageURLsInDeprovisionMode(t *testing.T) {
 	cfg := &config.MachineConfig{
 		Mode: "deprovision",
@@ -2161,6 +2531,7 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 			"verify-image",
 			"mount-efivarfs",
 			"setup-mellanox",
+			"setup-raid",
 			"detect-disk",
 			"parse-partitions",
 			"enable-lvm",
@@ -2195,6 +2566,7 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 		{"verify-image", func(_ context.Context) error { ran = append(ran, "verify-image"); return nil }},
 		{"mount-efivarfs", func(_ context.Context) error { ran = append(ran, "mount-efivarfs"); return nil }},
 		{"setup-mellanox", func(_ context.Context) error { ran = append(ran, "setup-mellanox"); return nil }},
+		{"setup-raid", func(_ context.Context) error { ran = append(ran, "setup-raid"); return nil }},
 		{"detect-disk", func(_ context.Context) error { ran = append(ran, "detect-disk"); return nil }},
 		{"parse-partitions", func(_ context.Context) error { ran = append(ran, "parse-partitions"); return nil }},
 		{"enable-lvm", func(_ context.Context) error { ran = append(ran, "enable-lvm"); return nil }},

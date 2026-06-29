@@ -22,7 +22,11 @@ type Checkpoint struct {
 	// NVMeTargetDevice stores the namespace device selected by
 	// setup-nvme-namespaces. That step is destructive when repeated, so resume
 	// restores this derived disk device instead of rerunning namespace layout.
-	NVMeTargetDevice string   `json:"nvmeTargetDevice,omitempty"`
+	NVMeTargetDevice string `json:"nvmeTargetDevice,omitempty"`
+	// RAIDTargetDevice stores the md device selected by setup-raid. RAID setup
+	// wipes member devices and creates arrays, so resume restores the target
+	// instead of rerunning the destructive setup step.
+	RAIDTargetDevice string   `json:"raidTargetDevice,omitempty"`
 	CompletedSteps   []string `json:"completedSteps"`
 	// FailureCount is the number of steps that failed at least once
 	// (incremented per executeStep error, not per retry attempt).

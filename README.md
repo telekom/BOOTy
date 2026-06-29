@@ -33,7 +33,7 @@ BOOTy's supported runtime flow is CAPRF-compatible provisioning driven by `/depl
 1. A Redfish BMC mounts an ISO containing a kernel, BOOTy initramfs, and `/deploy/vars` config.
 2. BOOTy reads `/deploy/vars` for machine config, image URLs, and CAPRF server endpoints.
 3. Network connectivity is established via **FRR/EVPN** (BGP underlay) or **DHCP** fallback.
-4. The provisioning pipeline validates input, cleans storage state, prepares NVMe namespaces, detects disks, applies the partition layout, streams the image, mounts shared data, optionally loads sysexts, configures the OS, installs EFI fallbacks, and injects cloud-init. After the orchestrator reports success, `main.go` attempts kexec, falls back to a hard reboot, powers off when requested by provisioning state, or powers off as a safety fallback when A/B `preserveExisting` requires kexec but kexec is unavailable.
+4. The provisioning pipeline validates input, cleans storage state, prepares NVMe namespaces, creates configured RAID arrays, detects disks, applies the partition layout, streams the image, mounts shared data, optionally loads sysexts, configures the OS, installs EFI fallbacks, and injects cloud-init. After the orchestrator reports success, `main.go` attempts kexec, falls back to a hard reboot, powers off when requested by provisioning state, or powers off as a safety fallback when A/B `preserveExisting` requires kexec but kexec is unavailable.
 5. Status, logs, and debug info are shipped back to the CAPRF controller throughout.
 
 PXE or iPXE can still be used by an external boot environment to load the
@@ -58,7 +58,7 @@ CAPRF-compatible `/deploy/vars` file.
 - **Filesystem support** — ext2, ext3, ext4, xfs, btrfs mount/resize; vfat mount/format for EFI system partitions
 - **LLDP discovery** — Raw AF_PACKET-based LLDP listener for switch topology discovery
 - **Post-provision hooks** — Execute arbitrary commands in chroot after OS configuration
-- **41-step provisioning pipeline** — provisioning input validation, RAID cleanup, NVMe namespace setup, disk detection, partition layout, image streaming, shared data mounting, partition growth, LVM, filesystem resize, optional sysext loading, OS configuration, EFI fallback installation, cloud-init injection, EFI boot, Mellanox SR-IOV, post-provision hooks
+- **42-step provisioning pipeline** — provisioning input validation, RAID cleanup, NVMe namespace setup, RAID array setup, disk detection, partition layout, image streaming, shared data mounting, partition growth, LVM, filesystem resize, optional sysext loading, OS configuration, EFI fallback installation, cloud-init injection, EFI boot, Mellanox SR-IOV, post-provision hooks
 - **systemd-sysext provisioning** — Optional digest-checked sysext preload or active loading into the provisioned OS image
 - **Kexec support** — Fast reboot into installed kernel without full BIOS POST (auto-disabled after firmware changes)
 - **Remote logging** — Real-time log and debug shipping to CAPRF controller
@@ -1142,7 +1142,7 @@ and the PR process.
 │   │   ├── persist/           # Persist network config into target OS (netplan, NM, systemd-networkd)
 │   │   ├── vrf/               # VRF configuration and validation
 │   │   └── vlan/              # VLAN 802.1Q tagging via netlink
-│   ├── provision/              # Orchestrator (41-step provision, deprovision)
+│   ├── provision/              # Orchestrator (42-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
 │   ├── realm/                  # Device, mount, network, shell operations
 │   ├── rescue/                 # Rescue mode behavior and retry policy

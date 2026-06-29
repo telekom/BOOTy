@@ -24,6 +24,7 @@ var DefaultPolicies = map[string]RetryPolicy{
 	"report-init":           {MaxRetries: 5, InitialDelay: 2 * time.Second, MaxDelay: 30 * time.Second, Jitter: 0.2, Transient: true},
 	"configure-dns":         {MaxRetries: 5, InitialDelay: 1 * time.Second, MaxDelay: 15 * time.Second, Jitter: 0.1, Transient: true},
 	"stream-image":          {MaxRetries: 3, InitialDelay: 5 * time.Second, MaxDelay: 60 * time.Second, Jitter: 0.3, Transient: true},
+	"setup-raid":            {MaxRetries: 2, InitialDelay: 2 * time.Second, MaxDelay: 10 * time.Second, Jitter: 0.1, Transient: true},
 	"detect-disk":           {MaxRetries: 3, InitialDelay: 2 * time.Second, MaxDelay: 10 * time.Second, Jitter: 0.1, Transient: true},
 	"partprobe":             {MaxRetries: 3, InitialDelay: 1 * time.Second, MaxDelay: 5 * time.Second, Jitter: 0.0, Transient: true},
 	"report-success":        {MaxRetries: 5, InitialDelay: 2 * time.Second, MaxDelay: 30 * time.Second, Jitter: 0.2, Transient: true},

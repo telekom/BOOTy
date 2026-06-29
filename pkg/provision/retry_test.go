@@ -171,7 +171,7 @@ func TestBackoffDelay_WithJitter(t *testing.T) {
 func TestDefaultPolicies(t *testing.T) {
 	required := []string{
 		"report-init", "configure-dns", "stream-image",
-		"detect-disk", "partprobe", "report-success",
+		"setup-raid", "detect-disk", "partprobe", "report-success",
 	}
 	for _, name := range required {
 		if _, ok := DefaultPolicies[name]; !ok {
