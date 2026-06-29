@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+var rootSSHDir = "/root/.ssh"
+
 // Mode determines what happens when provisioning fails.
 type Mode string
 
@@ -196,8 +198,8 @@ func setupSSHKeys(keys []string) error {
 		return nil
 	}
 
-	if err := os.MkdirAll("/root/.ssh", 0o700); err != nil {
-		return fmt.Errorf("creating /root/.ssh: %w", err)
+	if err := os.MkdirAll(rootSSHDir, 0o700); err != nil {
+		return fmt.Errorf("creating %s: %w", rootSSHDir, err)
 	}
 
 	content := ""
@@ -205,7 +207,7 @@ func setupSSHKeys(keys []string) error {
 		content += k + "\n"
 	}
 
-	if err := os.WriteFile("/root/.ssh/authorized_keys", []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(rootSSHDir, "authorized_keys"), []byte(content), 0o600); err != nil {
 		return fmt.Errorf("writing authorized_keys: %w", err)
 	}
 	return nil

@@ -34,6 +34,9 @@ var (
 	efiRuntimeReady              = defaultEFIRuntimeReady
 	isMountPoint                 = defaultIsMountPoint
 	mountedSource                = defaultMountedSource
+	hostCommandCombinedOutput    = defaultHostCommandCombinedOutput
+	efiFirmwarePath              = "/sys/firmware/efi"
+	efiVarsPath                  = "/sys/firmware/efi/efivars"
 	efiFallbackAssetDirectory    = "/usr/lib/booty/efi"
 	newEFIFallbackHandoffID      = defaultEFIFallbackHandoffID
 	installEFIFallbackWithChroot = true
@@ -790,43 +793,49 @@ func (c *Configurator) ConfigureDNS(cfg *config.MachineConfig) error {
 // This is required before any efibootmgr operations.
 func (c *Configurator) MountEFIVars(ctx context.Context) error {
 	// Load the efivarfs module (best-effort — may already be built-in).
-	if out, err := exec.CommandContext(ctx, "modprobe", "efivarfs").CombinedOutput(); err != nil { //nolint:gosec // fixed command
+	if out, err := hostCommandCombinedOutput(ctx, "modprobe", "efivarfs"); err != nil {
 		slog.Info("modprobe efivarfs failed (may be built-in)", "output", strings.TrimSpace(string(out)))
 	}
 
-	efiPath := "/sys/firmware/efi/efivars"
-
 	// Check if already mounted.
-	if isMountPoint(efiPath) {
+	if isMountPoint(efiVarsPath) {
 		slog.Info("efivarfs already mounted")
 		return nil
 	}
 
 	// On non-EFI systems /sys/firmware/efi does not exist; skip gracefully.
-	if _, err := os.Stat("/sys/firmware/efi"); os.IsNotExist(err) {
+	if _, err := os.Stat(efiFirmwarePath); os.IsNotExist(err) {
 		slog.Info("non-EFI system detected, skipping efivarfs mount")
 		return nil
 	}
 
-	if err := os.MkdirAll(efiPath, 0o755); err != nil {
-		slog.Warn("create efivarfs mountpoint failed, continuing without EFI variable access", "error", err, "path", efiPath)
+	if err := os.MkdirAll(efiVarsPath, 0o755); err != nil {
+		slog.Warn("create efivarfs mountpoint failed, continuing without EFI variable access", "error", err, "path", efiVarsPath)
 		return nil
 	}
-	if err := syscall.Mount("efivarfs", efiPath, "efivarfs", 0, ""); err != nil {
-		slog.Warn("mount efivarfs failed, continuing without EFI variable access", "error", err, "path", efiPath)
+	if err := syscall.Mount("efivarfs", efiVarsPath, "efivarfs", 0, ""); err != nil {
+		slog.Warn("mount efivarfs failed, continuing without EFI variable access", "error", err, "path", efiVarsPath)
 		return nil
 	}
-	slog.Info("mounted efivarfs", "path", efiPath)
+	slog.Info("mounted efivarfs", "path", efiVarsPath)
 	return nil
 }
 
+func defaultHostCommandCombinedOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput() //nolint:gosec // host command names are fixed by callers
+	if err != nil {
+		return out, fmt.Errorf("run host command %s: %w", name, err)
+	}
+	return out, nil
+}
+
 func defaultEFIRuntimeReady() (ready bool, reason string) {
-	if _, err := os.Stat("/sys/firmware/efi"); os.IsNotExist(err) {
+	if _, err := os.Stat(efiFirmwarePath); os.IsNotExist(err) {
 		return false, "system not booted in EFI mode"
 	} else if err != nil {
-		return false, fmt.Sprintf("cannot stat /sys/firmware/efi: %v", err)
+		return false, fmt.Sprintf("cannot stat %s: %v", efiFirmwarePath, err)
 	}
-	if !isMountPoint("/sys/firmware/efi/efivars") {
+	if !isMountPoint(efiVarsPath) {
 		return false, "efivarfs not mounted"
 	}
 	return true, ""
@@ -857,7 +866,7 @@ func defaultMountedSource(path string) (string, bool) {
 // on the host's EFI variables via /sys/firmware/efi/efivars.
 func (c *Configurator) RemoveEFIBootEntries(ctx context.Context) error {
 	slog.Info("removing old EFI boot entries")
-	out, err := exec.CommandContext(ctx, "efibootmgr").CombinedOutput() //nolint:gosec // fixed command
+	out, err := hostCommandCombinedOutput(ctx, "efibootmgr")
 	if err != nil {
 		slog.Warn("efibootmgr list failed (non-EFI system?)", "output", string(out), "error", err)
 		return nil
@@ -868,7 +877,7 @@ func (c *Configurator) RemoveEFIBootEntries(ctx context.Context) error {
 		}
 		bootNum := line[4:8]
 		slog.Info("removing EFI boot entry", "entry", bootNum)
-		if out, err := exec.CommandContext(ctx, "efibootmgr", "-b", bootNum, "-B").CombinedOutput(); err != nil { //nolint:gosec // boot entry ID from efibootmgr output
+		if out, err := hostCommandCombinedOutput(ctx, "efibootmgr", "-b", bootNum, "-B"); err != nil {
 			slog.Warn("failed to remove EFI entry", "entry", bootNum, "output", string(out))
 		}
 	}

@@ -772,9 +772,12 @@ func TestValidateProvisionInputsRejectsRHELLikeFamilyBeforeWipe(t *testing.T) {
 }
 
 func TestValidateProvisionInputsAllowsLinuxTarget(t *testing.T) {
+	srv := newTestImageServer(t, []byte("booty raw image"))
+	defer srv.Close()
+
 	cfg := &config.MachineConfig{}
 	cfg.Provision.TargetOS = " Linux "
-	cfg.Provision.Image.URLs = []string{"https://images.example.invalid/linux.raw"}
+	cfg.Provision.Image.URLs = []string{srv.URL + "/linux.raw"}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
 	if err := o.validateProvisionInputs(context.Background()); err != nil {

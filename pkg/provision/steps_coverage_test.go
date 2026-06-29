@@ -245,10 +245,19 @@ func TestOrchestratorRunMachineCommands_NoDirNoOp(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestOrchestratorMountEFIVars_ReturnsNilOnNonEFIHost(t *testing.T) {
-	// Skip when running as root to avoid touching host EFI state.
-	if os.Getuid() == 0 {
-		failOrSkipRootUnsafe(t, "skipping under root to avoid side-effects on efivarfs")
+	oldCommand := hostCommandCombinedOutput
+	hostCommandCombinedOutput = func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("modprobe unavailable"), os.ErrNotExist
 	}
+	t.Cleanup(func() { hostCommandCombinedOutput = oldCommand })
+	oldFirmwarePath := efiFirmwarePath
+	oldVarsPath := efiVarsPath
+	efiFirmwarePath = filepath.Join(t.TempDir(), "missing-efi")
+	efiVarsPath = filepath.Join(efiFirmwarePath, "efivars")
+	t.Cleanup(func() {
+		efiFirmwarePath = oldFirmwarePath
+		efiVarsPath = oldVarsPath
+	})
 
 	cfg := &config.MachineConfig{}
 	provider := &mockProvider{}
@@ -264,10 +273,11 @@ func TestOrchestratorMountEFIVars_ReturnsNilOnNonEFIHost(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestOrchestratorRemoveEFIBootEntries_GracefulWhenMissing(t *testing.T) {
-	// Skip when running as root to avoid touching real EFI boot entries.
-	if os.Getuid() == 0 {
-		failOrSkipRootUnsafe(t, "skipping under root to avoid touching real EFI boot entries")
+	oldCommand := hostCommandCombinedOutput
+	hostCommandCombinedOutput = func(context.Context, string, ...string) ([]byte, error) {
+		return nil, os.ErrNotExist
 	}
+	t.Cleanup(func() { hostCommandCombinedOutput = oldCommand })
 
 	cfg := &config.MachineConfig{}
 	provider := &mockProvider{}

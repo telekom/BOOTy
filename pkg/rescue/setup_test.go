@@ -3,21 +3,26 @@ package rescue
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
 func TestSetupSSHKeys_WritesKeys(t *testing.T) {
-	if os.Getuid() == 0 {
-		if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
-			t.Fatal("running as root in CI would write to real /root/.ssh/authorized_keys")
-		}
-		t.Skip("skipping: running as root would write to real /root/.ssh/authorized_keys")
-	}
-	// Not root — expect permission error writing to /root/.ssh.
+	oldRootSSHDir := rootSSHDir
+	rootSSHDir = filepath.Join(t.TempDir(), ".ssh")
+	t.Cleanup(func() { rootSSHDir = oldRootSSHDir })
+
 	keys := []string{"ssh-rsa AAAA... user@host"}
-	err := setupSSHKeys(keys)
-	if err == nil {
-		t.Error("expected permission error when not running as root")
+	if err := setupSSHKeys(keys); err != nil {
+		t.Fatalf("setupSSHKeys() = %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(rootSSHDir, "authorized_keys"))
+	if err != nil {
+		t.Fatalf("read authorized_keys: %v", err)
+	}
+	if string(got) != "ssh-rsa AAAA... user@host\n" {
+		t.Fatalf("authorized_keys = %q", string(got))
 	}
 }
 
