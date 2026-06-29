@@ -7,11 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/telekom/BOOTy/pkg/bios"
 	_ "github.com/telekom/BOOTy/pkg/bios/dell"
@@ -285,9 +288,25 @@ func TestRAIDLVMProvisionOrderE2E(t *testing.T) {
 	})
 	cmd.set("sfdisk", sfdiskOut, nil)
 
-	cfg := &config.MachineConfig{Mode: "provision", Hostname: "raid-node", Network: config.NetworkConfig{DNSResolvers: "8.8.8.8"}, Provision: config.ProvisionConfig{Image: config.ImageConfig{URLs: []string{"http://img.local/test.gz"}}}}
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.NotFound(w, nil)
+	}))
+	defer imageServer.Close()
+
+	cfg := &config.MachineConfig{
+		Mode:     "provision",
+		Hostname: "raid-node",
+		Network:  config.NetworkConfig{DNSResolvers: "8.8.8.8"},
+		Provision: config.ProvisionConfig{
+			TargetOS: config.TargetOSLinux,
+			Image:    config.ImageConfig{URLs: []string{imageServer.URL + "/test.gz"}},
+		},
+	}
 	orch := provision.NewOrchestrator(cfg, newMockProvider(cfg), disk.NewManager(cmd))
-	_ = orch.Provision(context.Background())
+	const provisionHangGuardTimeout = 2 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), provisionHangGuardTimeout)
+	defer cancel()
+	_ = orch.Provision(ctx)
 
 	calls := cmd.getCalls()
 	mdadmIdx, lvmDisableIdx, lvmEnableIdx := -1, -1, -1

@@ -431,6 +431,7 @@ func TestLoadFullYAMLReference(t *testing.T) {
 		{"Telemetry.MetricsURL", cfg.Telemetry.MetricsURL, "https://caprf.example.com/metrics"},
 		{"Rescue.Mode", cfg.Rescue.Mode, "retry"},
 		{"Rescue.Timeout", cfg.Rescue.Timeout, 300},
+		{"Provision.TargetOS", cfg.Provision.TargetOS, TargetOSLinux},
 		{"Provision.ExtraKernelParams", cfg.Provision.ExtraKernelParams, "console=ttyS0,115200"},
 		{"Provision.FailureDomain", cfg.Provision.FailureDomain, "zone-a"},
 		{"Provision.Region", cfg.Provision.Region, "eu-west-1"},

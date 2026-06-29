@@ -889,6 +889,8 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 
 	strFields := map[string]*string{
 		"HOSTNAME":                    &cfg.Hostname,
+		"PROVISION_TARGET_OS":         &cfg.Provision.TargetOS,
+		"TARGET_OS":                   &cfg.Provision.TargetOS,
 		"TOKEN":                       &cfg.Transport.Token,
 		"MACHINE_EXTRA_KERNEL_PARAMS": &cfg.Provision.ExtraKernelParams,
 		"FAILURE_DOMAIN":              &cfg.Provision.FailureDomain,

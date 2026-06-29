@@ -17,6 +17,8 @@ import (
 // Fields validated:
 //   - Mode: "provision", "deprovision", "soft-deprovision", "soft", "hard",
 //     "standby", "dry-run", "check"
+//   - Provision.TargetOS: empty or "linux"; non-empty unsupported values are rejected
+//     (an explicit value is required later by provision preflight)
 //   - Provision.Image.Mode: "whole-disk", "partition", "ab"
 //   - Provision.Image.ChecksumType: "sha256", "sha512"
 //   - Provision.CloudInit.Datasource: "nocloud", "configdrive"
@@ -46,6 +48,9 @@ func (c *Config) Validate() error {
 	errs = append(errs, c.validateBGP()...)
 	if msg := validateFlatcarCloudInit(c.OSFamily, c.Provision.CloudInit.Enabled); msg != "" {
 		errs = append(errs, msg)
+	}
+	if err := ValidateProvisionTargetOS(c.Provision.TargetOS); err != nil {
+		errs = append(errs, err.Error())
 	}
 	errs = append(errs, c.validatePersistence()...)
 
@@ -225,6 +230,7 @@ func validateImageSourceRootSelectors(cfg *ImageConfig) error {
 // code can use plain equality comparisons without calling ToLower/ToUpper.
 func (c *Config) normalize() {
 	lowerFields := []*string{
+		&c.Provision.TargetOS,
 		&c.Provision.Image.ChecksumType,
 		&c.Network.Mode,
 		&c.Network.BGP.PeerMode,
@@ -258,6 +264,36 @@ func validateDiskRootSelectors(cfg *DiskConfig) error {
 		return fmt.Errorf("provision.disk.rootPartitionLabel and provision.disk.rootPartitionNumber are mutually exclusive")
 	}
 	return nil
+}
+
+// NormalizeProvisionTargetOS returns the canonical provision target OS value.
+func NormalizeProvisionTargetOS(target string) string {
+	return strings.ToLower(strings.TrimSpace(target))
+}
+
+// ValidateProvisionTargetOS rejects target OS classes that BOOTy cannot safely
+// provision with its current Linux/GRUB-oriented flow.
+func ValidateProvisionTargetOS(target string) error {
+	normalized := NormalizeProvisionTargetOS(target)
+	switch normalized {
+	case "", TargetOSLinux:
+		return nil
+	case "windows":
+		return fmt.Errorf("unsupported provision.targetOS %q: Windows targets are not supported", normalized)
+	case "esxi", "vmware-esxi", "vmware_esxi", "vmware esxi":
+		return fmt.Errorf("unsupported provision.targetOS %q: VMware ESXi targets are not supported", normalized)
+	default:
+		return fmt.Errorf("unsupported provision.targetOS %q: only %q is currently accepted", normalized, TargetOSLinux)
+	}
+}
+
+// ValidateRequiredProvisionTargetOS requires an explicit supported target OS
+// before provisioning reaches destructive storage steps.
+func ValidateRequiredProvisionTargetOS(target string) error {
+	if NormalizeProvisionTargetOS(target) == "" {
+		return fmt.Errorf("provision.targetOS required before destructive storage steps: set PROVISION_TARGET_OS=%s or TARGET_OS=%s for Linux-compatible target images", TargetOSLinux, TargetOSLinux)
+	}
+	return ValidateProvisionTargetOS(target)
 }
 
 func validateABConfig(imageMode string, disableKexec bool, cfg *ABConfig) error {

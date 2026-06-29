@@ -69,6 +69,7 @@ func TestCollectInventoryDisabledE2E(t *testing.T) {
 		Network:  config.NetworkConfig{DNSResolvers: "8.8.8.8"},
 		Health:   config.HealthConfig{Enabled: false},
 		Provision: config.ProvisionConfig{
+			TargetOS:  config.TargetOSLinux,
 			Image:     config.ImageConfig{URLs: []string{"http://img.local/test.gz"}},
 			Inventory: config.InventoryConfig{Enabled: false},
 		},
@@ -106,6 +107,7 @@ func TestCollectInventoryEnabledNonFatalE2E(t *testing.T) {
 		Network:  config.NetworkConfig{DNSResolvers: "8.8.8.8"},
 		Health:   config.HealthConfig{Enabled: false},
 		Provision: config.ProvisionConfig{
+			TargetOS:  config.TargetOSLinux,
 			Image:     config.ImageConfig{URLs: []string{"http://img.local/test.gz"}},
 			Inventory: config.InventoryConfig{Enabled: true},
 		},
@@ -145,6 +147,7 @@ func TestCollectInventoryDoesNotCauseErrorE2E(t *testing.T) {
 		Network:  config.NetworkConfig{DNSResolvers: "8.8.8.8"},
 		Health:   config.HealthConfig{Enabled: false},
 		Provision: config.ProvisionConfig{
+			TargetOS:  config.TargetOSLinux,
 			Image:     config.ImageConfig{URLs: []string{"http://img.local/test.gz"}},
 			Inventory: config.InventoryConfig{Enabled: true},
 		},
@@ -188,6 +191,7 @@ func TestHealthChecksDisabledE2E(t *testing.T) {
 		Network:  config.NetworkConfig{DNSResolvers: "8.8.8.8"},
 		Health:   config.HealthConfig{Enabled: false, MinCPUs: 999999},
 		Provision: config.ProvisionConfig{
+			TargetOS:  config.TargetOSLinux,
 			Image:     config.ImageConfig{URLs: []string{"http://img.local/test.gz"}},
 			Inventory: config.InventoryConfig{Enabled: false},
 		},
@@ -234,6 +238,7 @@ func TestHealthChecksPassE2E(t *testing.T) {
 			SkipChecks:  healthSkipHardware,
 		},
 		Provision: config.ProvisionConfig{
+			TargetOS:  config.TargetOSLinux,
 			Image:     config.ImageConfig{URLs: []string{"http://img.local/test.gz"}},
 			Inventory: config.InventoryConfig{Enabled: false},
 		},
@@ -272,6 +277,7 @@ func TestHealthChecksCriticalFailureE2E(t *testing.T) {
 			SkipChecks: healthSkipHardware,
 		},
 		Provision: config.ProvisionConfig{
+			TargetOS:  config.TargetOSLinux,
 			Inventory: config.InventoryConfig{Enabled: false},
 		},
 	}
@@ -310,6 +316,7 @@ func TestSetupNVMeNamespacesSkippedWhenEmptyE2E(t *testing.T) {
 		Network:  config.NetworkConfig{DNSResolvers: "8.8.8.8"},
 		Health:   config.HealthConfig{Enabled: false},
 		Provision: config.ProvisionConfig{
+			TargetOS:  config.TargetOSLinux,
 			Image:     config.ImageConfig{URLs: []string{"http://img.local/test.gz"}},
 			Disk:      config.DiskConfig{NVMeNamespaces: ""},
 			Inventory: config.InventoryConfig{Enabled: false},
@@ -351,6 +358,7 @@ func TestSetupNVMeNamespacesInvalidConfigE2E(t *testing.T) {
 		Network: config.NetworkConfig{DNSResolvers: "8.8.8.8"},
 		Health:  config.HealthConfig{Enabled: false},
 		Provision: config.ProvisionConfig{
+			TargetOS:  config.TargetOSLinux,
 			Image:     config.ImageConfig{URLs: []string{"http://img.local/test.gz"}},
 			Disk:      config.DiskConfig{NVMeNamespaces: "{not valid json"},
 			Inventory: config.InventoryConfig{Enabled: false},
@@ -391,6 +399,7 @@ func TestSetupNVMeNamespacesCommandsCalledE2E(t *testing.T) {
 		Network: config.NetworkConfig{DNSResolvers: "8.8.8.8"},
 		Health:  config.HealthConfig{Enabled: false},
 		Provision: config.ProvisionConfig{
+			TargetOS:  config.TargetOSLinux,
 			Image:     config.ImageConfig{URLs: []string{"http://img.local/test.gz"}},
 			Disk:      config.DiskConfig{NVMeNamespaces: nvmeCfg},
 			Inventory: config.InventoryConfig{Enabled: false},

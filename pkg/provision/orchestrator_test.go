@@ -298,6 +298,7 @@ func TestHardDeprovisionStepsDisableLVMBeforeStoppingRAID(t *testing.T) {
 
 func TestValidateImageSourceConfiguredRejectsMissingImage(t *testing.T) {
 	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = config.TargetOSLinux
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
 	err := o.validateProvisionInputs(context.Background())
@@ -311,6 +312,7 @@ func TestValidateImageSourceConfiguredRejectsMissingImage(t *testing.T) {
 
 func TestValidateImageSourceConfiguredRejectsBlankImage(t *testing.T) {
 	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = config.TargetOSLinux
 	cfg.Provision.Image.URLs = []string{" ", "\t"}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
@@ -359,6 +361,7 @@ func TestValidateImageSourceConfiguredAllowsImage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.MachineConfig{}
+			cfg.Provision.TargetOS = config.TargetOSLinux
 			cfg.Provision.Image.URLs = []string{tt.source}
 			cfg.Provision.Image.Checksum = tt.checksum
 			o := newTestOrchestrator(t, cfg, &mockProvider{})
@@ -415,6 +418,7 @@ func TestValidateImageSourceConfiguredRejectsInvalidSources(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.MachineConfig{}
+			cfg.Provision.TargetOS = config.TargetOSLinux
 			cfg.Provision.Image.URLs = tt.sources
 			o := newTestOrchestrator(t, cfg, &mockProvider{})
 
@@ -431,6 +435,7 @@ func TestValidateImageSourceConfiguredRejectsInvalidSources(t *testing.T) {
 
 func TestValidateImageSourceConfiguredNormalizesImageSources(t *testing.T) {
 	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = config.TargetOSLinux
 	cfg.Provision.Image.URLs = []string{"  https://images.example.invalid/node.raw  ", "\t"}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
@@ -444,6 +449,7 @@ func TestValidateImageSourceConfiguredNormalizesImageSources(t *testing.T) {
 
 func TestValidateImageSourceConfiguredRedactsSensitiveInvalidSource(t *testing.T) {
 	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = config.TargetOSLinux
 	cfg.Provision.Image.URLs = []string{"https://robot:secret@images.example.invalid/%zz?token=abc#frag"}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
@@ -464,6 +470,7 @@ func TestValidateImageSourceConfiguredRedactsSensitiveInvalidSource(t *testing.T
 
 func TestValidateImageSourceConfiguredRedactsSensitiveOCIReference(t *testing.T) {
 	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = config.TargetOSLinux
 	cfg.Provision.Image.URLs = []string{"oci://robot:secret@registry.example.invalid/%zz?token=abc#frag"}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
@@ -495,6 +502,7 @@ func requireWrappedOriginalError(t *testing.T, err error) {
 
 func TestValidateImageSourceRejectsUnpinnedOCIWithoutChecksum(t *testing.T) {
 	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = config.TargetOSLinux
 	cfg.Provision.Image.URLs = []string{
 		"https://images.example.invalid/node.raw",
 		"oci://registry.example.invalid/org/node:latest",
@@ -512,6 +520,7 @@ func TestValidateImageSourceRejectsUnpinnedOCIWithoutChecksum(t *testing.T) {
 
 func TestValidateImageSourceAllowsOCIDigest(t *testing.T) {
 	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = config.TargetOSLinux
 	cfg.Provision.Image.URLs = []string{"oci://registry.example.invalid/org/node@sha256:" + strings.Repeat("a", 64)}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
@@ -522,6 +531,7 @@ func TestValidateImageSourceAllowsOCIDigest(t *testing.T) {
 
 func TestValidateImageSourceAllowsOCITagWithChecksum(t *testing.T) {
 	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = config.TargetOSLinux
 	cfg.Provision.Image.URLs = []string{"oci://registry.example.invalid/org/node:latest"}
 	cfg.Provision.Image.Checksum = "  " + strings.Repeat("b", 64) + "  "
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
@@ -536,6 +546,7 @@ func TestValidateImageSourceAllowsOCITagWithChecksum(t *testing.T) {
 
 func TestValidateImageSourceRejectsMalformedOCI(t *testing.T) {
 	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = config.TargetOSLinux
 	cfg.Provision.Image.URLs = []string{"oci://registry.example.invalid/%zz"}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
@@ -550,6 +561,7 @@ func TestValidateImageSourceRejectsMalformedOCI(t *testing.T) {
 
 func TestValidateProvisionInputsRejectsGPGSignatureWithoutChecksum(t *testing.T) {
 	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = config.TargetOSLinux
 	cfg.Provision.Image.URLs = []string{"https://images.example.invalid/node.raw"}
 	cfg.Provision.Image.SignatureURL = "https://images.example.invalid/node.raw.sig"
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
@@ -565,6 +577,7 @@ func TestValidateProvisionInputsRejectsGPGSignatureWithoutChecksum(t *testing.T)
 
 func TestValidateProvisionInputsAllowsGPGSignatureWithChecksum(t *testing.T) {
 	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = config.TargetOSLinux
 	cfg.Provision.Image.URLs = []string{"https://images.example.invalid/node.raw"}
 	cfg.Provision.Image.SignatureURL = " https://images.example.invalid/node.raw.sig "
 	cfg.Provision.Image.Checksum = strings.Repeat("a", 64)
@@ -579,8 +592,88 @@ func TestValidateProvisionInputsAllowsGPGSignatureWithChecksum(t *testing.T) {
 	}
 }
 
+func TestValidateProvisionInputsRequiresTargetOSBeforeWipe(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{"https://images.example.invalid/linux.raw"}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err := o.validateProvisionInputs(context.Background())
+	if err == nil {
+		t.Fatal("validateProvisionInputs() error = nil, want missing target OS")
+	}
+	if !strings.Contains(err.Error(), "provision.targetOS required") ||
+		!strings.Contains(err.Error(), "before destructive storage steps") {
+		t.Fatalf("error = %q, want missing target OS preflight context", err.Error())
+	}
+}
+
+func TestValidateProvisionInputsRejectsWindowsTargetBeforeWipe(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = "windows"
+	cfg.Provision.Image.URLs = []string{"https://images.example.invalid/windows.raw"}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err := o.validateProvisionInputs(context.Background())
+	if err == nil {
+		t.Fatal("validateProvisionInputs() error = nil, want unsupported Windows target")
+	}
+	if !strings.Contains(err.Error(), "Windows targets are not supported") ||
+		!strings.Contains(err.Error(), "before destructive storage steps") {
+		t.Fatalf("error = %q, want unsupported Windows preflight context", err.Error())
+	}
+}
+
+func TestValidateProvisionInputsRejectsESXiTargetBeforeWipe(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = "vmware-esxi"
+	cfg.Provision.Image.URLs = []string{"https://images.example.invalid/esxi.raw"}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err := o.validateProvisionInputs(context.Background())
+	if err == nil {
+		t.Fatal("validateProvisionInputs() error = nil, want unsupported ESXi target")
+	}
+	if !strings.Contains(err.Error(), "VMware ESXi targets are not supported") ||
+		!strings.Contains(err.Error(), "before destructive storage steps") {
+		t.Fatalf("error = %q, want unsupported ESXi preflight context", err.Error())
+	}
+}
+
+func TestValidateProvisionInputsRejectsRHELLikeFamilyBeforeWipe(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = config.TargetOSLinux
+	cfg.OSFamily = "rhel"
+	cfg.Provision.Image.URLs = []string{"https://images.example.invalid/rhel.raw"}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	err := o.validateProvisionInputs(context.Background())
+	if err == nil {
+		t.Fatal("validateProvisionInputs() error = nil, want unsupported RHEL-like target")
+	}
+	if !strings.Contains(err.Error(), "rhel-like target bootloader support is not implemented") ||
+		!strings.Contains(err.Error(), `osFamily="rhel"`) ||
+		!strings.Contains(err.Error(), "before destructive storage steps") {
+		t.Fatalf("error = %q, want unsupported RHEL-like preflight context", err.Error())
+	}
+}
+
+func TestValidateProvisionInputsAllowsLinuxTarget(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = " Linux "
+	cfg.Provision.Image.URLs = []string{"https://images.example.invalid/linux.raw"}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	if err := o.validateProvisionInputs(context.Background()); err != nil {
+		t.Fatalf("validateProvisionInputs: %v", err)
+	}
+	if cfg.Provision.TargetOS != config.TargetOSLinux {
+		t.Fatalf("Provision.TargetOS = %q, want %q", cfg.Provision.TargetOS, config.TargetOSLinux)
+	}
+}
+
 func TestValidateProvisionInputsRejectsPartitionModeWithPartitionLayout(t *testing.T) {
 	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = config.TargetOSLinux
 	cfg.Provision.Image.Mode = config.ImageModePartition
 	cfg.Provision.Image.URLs = []string{"https://images.example.invalid/node.raw"}
 	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
@@ -602,6 +695,7 @@ func TestValidateProvisionInputsRejectsPartitionModeWithPartitionLayout(t *testi
 
 func TestValidateProvisionInputsRejectsUnsupportedPartitionLayoutMountpoint(t *testing.T) {
 	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = config.TargetOSLinux
 	cfg.Provision.Image.URLs = []string{"https://images.example.invalid/node.raw"}
 	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 		Table: "gpt",
@@ -623,6 +717,7 @@ func TestValidateProvisionInputsRejectsUnsupportedPartitionLayoutMountpoint(t *t
 
 func TestValidateProvisionInputsRejectsLVMBootEFIMountpoint(t *testing.T) {
 	cfg := &config.MachineConfig{}
+	cfg.Provision.TargetOS = config.TargetOSLinux
 	cfg.Provision.Image.URLs = []string{"https://images.example.invalid/node.raw"}
 	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 		Table: "gpt",
@@ -1845,6 +1940,7 @@ func TestValidateProvisionInputsRejectsPartitionLayoutWithoutImageURLsInProvisio
 	cfg := &config.MachineConfig{
 		Mode: "provision",
 	}
+	cfg.Provision.TargetOS = config.TargetOSLinux
 	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 		Table: "gpt",
 		Partitions: []config.Partition{

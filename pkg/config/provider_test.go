@@ -357,6 +357,15 @@ func TestValidate(t *testing.T) {
 		{name: "valid mode provision", cfg: Config{Mode: "provision"}},
 		{name: "valid mode dry-run", cfg: Config{Mode: "dry-run"}},
 		{name: "invalid mode", cfg: Config{Mode: "invalid"}, wantErr: "invalid mode"},
+		{name: "valid provision target os", cfg: Config{Provision: ProvisionConfig{TargetOS: " Linux "}}, wantNormalized: func(t *testing.T, cfg *Config) {
+			t.Helper()
+			if cfg.Provision.TargetOS != TargetOSLinux {
+				t.Fatalf("Provision.TargetOS = %q, want %q", cfg.Provision.TargetOS, TargetOSLinux)
+			}
+		}},
+		{name: "windows provision target os rejected", cfg: Config{Provision: ProvisionConfig{TargetOS: "windows"}}, wantErr: "Windows targets are not supported"},
+		{name: "esxi provision target os rejected", cfg: Config{Provision: ProvisionConfig{TargetOS: "vmware-esxi"}}, wantErr: "VMware ESXi targets are not supported"},
+		{name: "unknown provision target os rejected", cfg: Config{Provision: ProvisionConfig{TargetOS: "sunos"}}, wantErr: "only \"linux\" is currently accepted"},
 		{name: "valid image mode", cfg: Config{Provision: ProvisionConfig{Image: ImageConfig{Mode: "whole-disk"}}}},
 		{name: "invalid image mode", cfg: Config{Provision: ProvisionConfig{Image: ImageConfig{Mode: "raw"}}}, wantErr: "invalid provision.image.mode"},
 		{name: "valid image source root selector", cfg: Config{Provision: ProvisionConfig{Image: ImageConfig{SourceRootLabel: " ROOT-A "}}}, wantNormalized: func(t *testing.T, cfg *Config) {

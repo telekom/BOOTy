@@ -112,6 +112,15 @@ func (o *Orchestrator) dryRunConfigValidation(_ context.Context) DryRunResult {
 	if len(o.cfg.Provision.Image.URLs) == 0 {
 		return DryRunResult{Status: DryRunFail, Message: "no image URLs configured"}
 	}
+	if err := config.ValidateRequiredProvisionTargetOS(o.cfg.Provision.TargetOS); err != nil {
+		return DryRunResult{Status: DryRunFail, Message: fmt.Sprintf("rejected before destructive storage steps: %s", err)}
+	}
+	o.cfg.Provision.TargetOS = config.NormalizeProvisionTargetOS(o.cfg.Provision.TargetOS)
+	osFamily := strings.ToLower(strings.TrimSpace(o.cfg.OSFamily))
+	if osFamily == "rhel" {
+		return DryRunResult{Status: DryRunFail,
+			Message: fmt.Sprintf("osFamily=%q is not supported for provisioning: rhel-like target bootloader support is not implemented: native GRUB2/BLS/vendor EFI paths are required before destructive storage steps", osFamily)}
+	}
 	if o.cfg.Hostname == "" {
 		return DryRunResult{Status: DryRunWarn, Message: "hostname not set"}
 	}

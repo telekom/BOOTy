@@ -276,6 +276,17 @@ func writeDeployVars(t *testing.T, dir string, vars map[string]string) string {
 // Returns path to the cpio.gz file.
 func buildProvisionInitramfs(t *testing.T, vars map[string]string) string {
 	t.Helper()
+	if vars == nil {
+		vars = map[string]string{}
+	}
+	// KVM provision fixtures use Linux target images unless a test explicitly
+	// overrides the target-OS preflight input.
+	_, hasProvisionTargetOS := vars["PROVISION_TARGET_OS"]
+	_, hasTargetOS := vars["TARGET_OS"]
+	if strings.EqualFold(vars["MODE"], "provision") && !hasProvisionTargetOS && !hasTargetOS {
+		vars["PROVISION_TARGET_OS"] = "linux"
+	}
+
 	dir := t.TempDir()
 	rootDir := filepath.Join(dir, "initramfs")
 

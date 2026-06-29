@@ -618,6 +618,14 @@ func (o *Orchestrator) setupNVMeNamespaces(ctx context.Context) error {
 }
 
 func (o *Orchestrator) validateProvisionInputs(_ context.Context) error {
+	if err := config.ValidateRequiredProvisionTargetOS(o.cfg.Provision.TargetOS); err != nil {
+		return fmt.Errorf("rejected before destructive storage steps: %w", err)
+	}
+	o.cfg.Provision.TargetOS = config.NormalizeProvisionTargetOS(o.cfg.Provision.TargetOS)
+	osFamily := strings.ToLower(strings.TrimSpace(o.cfg.OSFamily))
+	if osFamily == "rhel" {
+		return fmt.Errorf("osFamily=%q is not supported for provisioning: rhel-like target bootloader support is not implemented: native GRUB2/BLS/vendor EFI paths are required before destructive storage steps", osFamily)
+	}
 	if err := o.validatePartitionLayoutModeCompatibility(); err != nil {
 		return err
 	}

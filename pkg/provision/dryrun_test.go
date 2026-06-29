@@ -154,9 +154,11 @@ func withMockReadPath(t *testing.T, fn func(string) ([]byte, error)) {
 
 func TestDryRunConfigValidation(t *testing.T) {
 	tests := []struct {
-		name   string
-		cfg    *config.MachineConfig
-		expect DryRunStatus
+		name        string
+		cfg         *config.MachineConfig
+		expect      DryRunStatus
+		wantMessage string
+		wantTarget  string
 	}{
 		{
 			name:   "no images",
@@ -167,6 +169,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 			name: "no hostname",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{}
+				c.Provision.TargetOS = config.TargetOSLinux
 				c.Provision.Image.URLs = []string{"http://example.com/img"}
 				return c
 			}(),
@@ -176,15 +179,39 @@ func TestDryRunConfigValidation(t *testing.T) {
 			name: "valid config",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.TargetOS = " Linux "
 				c.Provision.Image.URLs = []string{"http://example.com/img"}
 				return c
 			}(),
-			expect: DryRunPass,
+			expect:     DryRunPass,
+			wantTarget: config.TargetOSLinux,
+		},
+		{
+			name: "missing target os",
+			cfg: func() *config.MachineConfig {
+				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.Image.URLs = []string{"http://example.com/img"}
+				return c
+			}(),
+			expect:      DryRunFail,
+			wantMessage: "before destructive storage steps",
+		},
+		{
+			name: "rhel-like target hint",
+			cfg: func() *config.MachineConfig {
+				c := &config.MachineConfig{Hostname: "node1", OSFamily: "rhel"}
+				c.Provision.TargetOS = config.TargetOSLinux
+				c.Provision.Image.URLs = []string{"http://example.com/img"}
+				return c
+			}(),
+			expect:      DryRunFail,
+			wantMessage: `osFamily="rhel"`,
 		},
 		{
 			name: "layout without image and hostname",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{}
+				c.Provision.TargetOS = config.TargetOSLinux
 				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 					Table:      "gpt",
 					Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
@@ -197,6 +224,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 			name: "layout without image",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.TargetOS = config.TargetOSLinux
 				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 					Table:      "gpt",
 					Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}},
@@ -209,6 +237,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 			name: "layout with image url without hostname",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{}
+				c.Provision.TargetOS = config.TargetOSLinux
 				c.Provision.Image.URLs = []string{"http://example.com/img"}
 				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 					Table:      "gpt",
@@ -222,6 +251,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 			name: "layout with image url and hostname",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.TargetOS = config.TargetOSLinux
 				c.Provision.Image.URLs = []string{"http://example.com/img"}
 				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 					Table:      "gpt",
@@ -235,6 +265,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 			name: "layout device conflicts with disk device",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.TargetOS = config.TargetOSLinux
 				c.Provision.Image.URLs = []string{"http://example.com/img"}
 				c.Provision.Disk.Device = "/dev/sda"
 				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
@@ -250,6 +281,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 			name: "layout device missing",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.TargetOS = config.TargetOSLinux
 				c.Provision.Image.URLs = []string{"http://example.com/img"}
 				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 					Device:     "/dev/booty-dryrun-missing",
@@ -264,6 +296,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 			name: "layout device is not block device",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.TargetOS = config.TargetOSLinux
 				c.Provision.Image.URLs = []string{"http://example.com/img"}
 				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 					Device:     "/dev/null",
@@ -278,6 +311,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 			name: "partition image mode with layout",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.TargetOS = config.TargetOSLinux
 				c.Provision.Image.Mode = config.ImageModePartition
 				c.Provision.Image.URLs = []string{"http://example.com/img"}
 				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
@@ -292,6 +326,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 			name: "unsupported layout mountpoint",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.TargetOS = config.TargetOSLinux
 				c.Provision.Image.URLs = []string{"http://example.com/img"}
 				c.Provision.Disk.PartitionLayout = &config.PartitionLayout{
 					Table: "gpt",
@@ -312,6 +347,12 @@ func TestDryRunConfigValidation(t *testing.T) {
 			result := o.dryRunConfigValidation(context.Background())
 			if result.Status != tc.expect {
 				t.Errorf("got %s, want %s: %s", result.Status, tc.expect, result.Message)
+			}
+			if tc.wantMessage != "" && !strings.Contains(result.Message, tc.wantMessage) {
+				t.Errorf("message = %q, want substring %q", result.Message, tc.wantMessage)
+			}
+			if tc.wantTarget != "" && tc.cfg.Provision.TargetOS != tc.wantTarget {
+				t.Errorf("Provision.TargetOS = %q, want %q", tc.cfg.Provision.TargetOS, tc.wantTarget)
 			}
 		})
 	}
@@ -1066,6 +1107,7 @@ func TestDryRunAggregation_WarningsReported(t *testing.T) {
 	})
 
 	warnCfg := &config.MachineConfig{Hostname: "test-host"}
+	warnCfg.Provision.TargetOS = config.TargetOSLinux
 	warnCfg.Provision.Image.URLs = []string{srv.URL + "/image.raw"}
 	warnCfg.Provision.Disk.Device = "/dev/mock0"
 	o := NewOrchestrator(
@@ -1125,6 +1167,7 @@ func TestDryRun_AllPass(t *testing.T) {
 	})
 
 	passCfg := &config.MachineConfig{Hostname: "test-host"}
+	passCfg.Provision.TargetOS = config.TargetOSLinux
 	passCfg.Provision.Image.URLs = []string{srv.URL + "/image.raw"}
 	passCfg.Provision.Image.SignatureURL = srv.URL + "/image.raw.sig"
 	passCfg.Provision.Image.GPGPubKey = pubKey
