@@ -5,13 +5,11 @@ package provision
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -22,6 +20,7 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/config"
 	imageutil "github.com/telekom/BOOTy/pkg/image"
+	"github.com/telekom/BOOTy/pkg/network"
 )
 
 const (
@@ -32,17 +31,7 @@ const (
 	maxSysextCatalogBytes   = 1024 * 1024
 )
 
-var sysextHTTPClient = &http.Client{
-	Timeout: 30 * time.Minute,
-	Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
-		DialContext: (&net.Dialer{
-			Timeout: 30 * time.Second,
-		}).DialContext,
-		TLSHandshakeTimeout:   15 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
-	},
-}
+var sysextHTTPClient = network.NewHTTPClient(30 * time.Minute)
 
 type sysextCatalog struct {
 	APIVersion string               `json:"apiVersion"`

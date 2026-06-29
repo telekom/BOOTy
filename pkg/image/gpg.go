@@ -2,33 +2,22 @@ package image
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	exec "github.com/telekom/BOOTy/pkg/executil"
+	"github.com/telekom/BOOTy/pkg/network"
 )
 
 // gpgHTTPClient is a dedicated HTTP client for GPG-related downloads
 // (signatures = small, image streams = large). It sets connection and
 // TLS timeouts but no overall deadline so image verification can
 // stream arbitrarily large images.
-var gpgHTTPClient = &http.Client{
-	Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
-		DialContext: (&net.Dialer{
-			Timeout: 30 * time.Second,
-		}).DialContext,
-		TLSHandshakeTimeout:   15 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
-	},
-}
+var gpgHTTPClient = network.NewHTTPClient(0)
 
 // VerifyGPGSignature downloads a detached GPG signature from sigURL and
 // verifies it against the image at imageURL using the public key at

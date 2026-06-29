@@ -5,19 +5,18 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/subtle"
-	"crypto/tls"
 	"encoding/hex"
 	"fmt"
 	"hash"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/v1/types"
+	"github.com/telekom/BOOTy/pkg/network"
 )
 
 const imageCopyBufferSize = 16 << 20 // 16 MiB
@@ -25,16 +24,7 @@ const imageCopyBufferSize = 16 << 20 // 16 MiB
 // imageHTTPClient is the HTTP client used for image downloads.
 // It sets connect and TLS timeouts to prevent hanging on broken connections
 // while leaving the response body read timeout unlimited (for large images).
-var imageHTTPClient = &http.Client{
-	Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
-		DialContext: (&net.Dialer{
-			Timeout: 30 * time.Second,
-		}).DialContext,
-		TLSHandshakeTimeout:   15 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
-	},
-}
+var imageHTTPClient = network.NewHTTPClient(0)
 
 // StreamOpts are optional parameters for Stream.
 type StreamOpts struct {
