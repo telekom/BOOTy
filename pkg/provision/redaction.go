@@ -5,7 +5,7 @@ package provision
 import "regexp"
 
 var (
-	debugAuthorizationPattern = regexp.MustCompile(`(?i)(^|[\s,;&?"])(authorization)\s*:\s*([^"\s,;]+)`)
+	debugAuthorizationPattern = regexp.MustCompile(`(?i)(^|[\s,;&?"])(authorization)\s*:\s*([^",;]+)`)
 	debugBearerPattern        = regexp.MustCompile(`(?i)\bBearer\s+["']?[^"'\s,;]+["']?`)
 	debugURLCredentialPattern = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.-]*://)[^/\s:@]+:[^@\s/]+@`)
 	debugAssignmentPattern    = regexp.MustCompile(

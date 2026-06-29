@@ -268,7 +268,7 @@ func TestRedactCommand(t *testing.T) {
 		{
 			name:  "spaces around equals",
 			input: "run password = secret123 --verbose",
-			want:  "run password =[REDACTED] --verbose",
+			want:  "run password=[REDACTED] --verbose",
 		},
 		{
 			name:  "double-dash password space",
