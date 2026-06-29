@@ -57,6 +57,12 @@ var (
 			Parent: v.Parent,
 		})
 	}
+	provisionHandoff = provisionHandoffOps{
+		reboot:   realm.RequestReboot,
+		powerOff: realm.RequestPowerOff,
+		shell:    realm.Shell,
+		exit:     os.Exit,
+	}
 )
 
 func setupBondMode(ctx context.Context, cfg *network.Config, bond network.Mode) (network.Mode, error) {
@@ -73,6 +79,17 @@ const (
 	varsPath          = "/deploy/vars"
 	installedRootPath = "/newroot"
 )
+
+type provisionStatusReporter interface {
+	ReportStatus(ctx context.Context, status config.Status, message string) error
+}
+
+type provisionHandoffOps struct {
+	reboot   func() error
+	powerOff func() error
+	shell    func()
+	exit     func(int)
+}
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
@@ -321,27 +338,12 @@ func runCAPRF(ctx context.Context) {
 		realm.Reboot()
 		return
 	case errors.As(modeErr, &provisionErr):
-		if netMode != nil {
-			if err := netMode.Teardown(ctx); err != nil {
-				slog.Warn("network teardown error", "error", err)
-			}
-		}
 		kexeced := tryKexec(cfg, provisionErr.FirmwareChanged)
 		if !kexeced && provision.ShouldKeepTargetRootMountedForKexec(cfg, provisionErr.FirmwareChanged) {
 			cleanupFailedKexecTarget(diskMgr)
 		}
 		time.Sleep(2 * time.Second)
-		if requiresABKexec(cfg) && !kexeced {
-			slog.Error("a/b preserveExisting requires kexec; refusing normal reboot because firmware boot state still points at the active slot")
-			realm.PowerOff()
-			return
-		}
-		if provisionErr.PowerOff {
-			slog.Info("provisioning succeeded, powering off for orchestrator to manage boot")
-			realm.PowerOff()
-		} else {
-			realm.Reboot()
-		}
+		handleProvisionHandoff(ctx, cfg, client, provisionErr, kexeced, provisionHandoff)
 		return
 	}
 
@@ -358,6 +360,58 @@ func runCAPRF(ctx context.Context) {
 	}
 	time.Sleep(2 * time.Second)
 	realm.Reboot()
+}
+
+func handleProvisionHandoff(
+	ctx context.Context,
+	cfg *config.MachineConfig,
+	reporter provisionStatusReporter,
+	provisionErr *runmode.ProvisionCompleteError,
+	kexeced bool,
+	ops provisionHandoffOps,
+) {
+	if requiresABKexec(cfg) && !kexeced {
+		msg := "a/b preserveExisting requires kexec; refusing normal reboot because firmware boot state still points at the active slot"
+		slog.Error(msg)
+		requestProvisionHandoff(ctx, reporter, "power off", ops.powerOff, ops, msg)
+		return
+	}
+
+	if provisionErr.PowerOff {
+		slog.Info("provisioning succeeded, powering off for orchestrator to manage boot")
+		requestProvisionHandoff(ctx, reporter, "power off", ops.powerOff, ops, "power off handoff failed after provisioning success")
+		return
+	}
+
+	requestProvisionHandoff(ctx, reporter, "reboot", ops.reboot, ops, "reboot handoff failed after provisioning success")
+}
+
+func requestProvisionHandoff(
+	ctx context.Context,
+	reporter provisionStatusReporter,
+	action string,
+	request func() error,
+	ops provisionHandoffOps,
+	message string,
+) {
+	if err := request(); err != nil {
+		statusMessage := fmt.Sprintf("%s: %v", message, err)
+		slog.Error("provisioning handoff failed after success report", "action", action, "error", err)
+		reportProvisionHandoffError(ctx, reporter, statusMessage)
+		ops.shell()
+		ops.exit(1)
+		return
+	}
+	ops.exit(0)
+}
+
+func reportProvisionHandoffError(ctx context.Context, reporter provisionStatusReporter, message string) {
+	if reporter == nil {
+		return
+	}
+	if err := reporter.ReportStatus(ctx, config.StatusError, message); err != nil {
+		slog.Warn("failed to report provisioning handoff error", "error", err)
+	}
 }
 
 func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, client *caprf.Client) (network.Mode, error) {
