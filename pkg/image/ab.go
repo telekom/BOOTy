@@ -11,8 +11,9 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"strings"
+
+	exec "github.com/telekom/BOOTy/pkg/executil"
 )
 
 const (

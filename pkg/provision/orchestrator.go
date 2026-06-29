@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -2808,7 +2807,7 @@ func DumpDebugState(failedStep string) {
 
 // hasBinary reports whether the named binary exists in PATH.
 func hasBinary(name string) bool {
-	_, err := exec.LookPath(name)
+	_, err := executil.LookPath(name)
 	return err == nil
 }
 
@@ -2877,7 +2876,7 @@ func debugCtx() (context.Context, context.CancelFunc) {
 func runDebugCmd(label, cmd string) {
 	ctx, cancel := debugCtx()
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "sh", "-c", cmd).CombinedOutput() //nolint:gosec // debug cmds are hardcoded
+	out, err := executil.CommandContext(ctx, "sh", "-c", cmd).CombinedOutput() //nolint:gosec // debug cmds are hardcoded
 	trimmed := strings.TrimSpace(string(out))
 	if trimmed != "" {
 		for _, line := range strings.Split(trimmed, "\n") {

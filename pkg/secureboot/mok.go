@@ -7,8 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"strings"
+
+	exec "github.com/telekom/BOOTy/pkg/executil"
 )
 
 // mokutilCommand builds the mokutil exec command; overridable in tests.

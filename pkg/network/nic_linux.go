@@ -73,9 +73,10 @@ func DetectPhysicalNICsContext(ctx context.Context) ([]string, error) {
 }
 
 func sleepPhysicalNICRetry(ctx context.Context) error {
+	sleep := sleepFunc
 	done := make(chan struct{})
 	go func() {
-		sleepFunc(physicalNICRetryInterval)
+		sleep(physicalNICRetryInterval)
 		close(done)
 	}()
 

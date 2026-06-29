@@ -9,8 +9,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"strings"
+
+	exec "github.com/telekom/BOOTy/pkg/executil"
 )
 
 // Dump holds a structured debug snapshot collected on failure.

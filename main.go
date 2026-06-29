@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -21,6 +23,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/crash"
 	"github.com/telekom/BOOTy/pkg/disk"
+	"github.com/telekom/BOOTy/pkg/executil"
 	"github.com/telekom/BOOTy/pkg/kexec"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/frr"
@@ -98,12 +101,15 @@ func main() {
 	// initramfs the kernel default may only contain /sbin:/bin; make sure
 	// /usr/bin, /usr/sbin, and /usr/local/bin are also reachable.
 	ensurePATH("/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/local/sbin")
+	ctx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stopSignals()
 
 	if err := setupMountsAndDevices(); err != nil {
 		slog.Error("early mount/device setup failed", "error", err)
 		realm.Reboot()
 		return
 	}
+	startPID1ChildReaper(ctx, os.Getpid())
 	loadModules()
 
 	slog.Info("starting BOOTy", "version", Version, "build", Build)
@@ -111,8 +117,196 @@ func main() {
 	ux.SysInfo()
 
 	slog.Info("beginning provisioning process")
-	ctx := context.Background()
 	runCAPRF(ctx)
+}
+
+const orphanReapDelay = 500 * time.Millisecond
+
+type waitExitedChildFunc func(int) (int, syscall.WaitStatus, error)
+
+type childReaper struct {
+	childPIDs func() ([]int, error)
+	managed   func(int) bool
+	wait      waitExitedChildFunc
+}
+
+type signalNotifyFunc func(chan<- os.Signal, ...os.Signal)
+type signalStopFunc func(chan<- os.Signal)
+
+// startPID1ChildReaper reaps daemonized children that get adopted by BOOTy as
+// PID 1. It only waits unmanaged child PIDs so normal exec.Cmd owners keep
+// exclusive ownership of their child exit statuses.
+func startPID1ChildReaper(ctx context.Context, pid int) bool {
+	return startPID1ChildReaperWith(
+		ctx,
+		pid,
+		orphanReapDelay,
+		signal.Notify,
+		signal.Stop,
+		reapUnmanagedExitedChildren,
+	)
+}
+
+func startPID1ChildReaperWith(
+	ctx context.Context,
+	pid int,
+	delay time.Duration,
+	notify signalNotifyFunc,
+	stop signalStopFunc,
+	reap func(),
+) bool {
+	if pid != 1 {
+		return false
+	}
+
+	signals := make(chan os.Signal, 1)
+	notify(signals, syscall.SIGCHLD)
+	go runPID1ChildReaper(ctx, signals, delay, stop, reap)
+	return true
+}
+
+func runPID1ChildReaper(
+	ctx context.Context,
+	signals chan os.Signal,
+	delay time.Duration,
+	stop signalStopFunc,
+	reap func(),
+) {
+	defer stop(signals)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-signals:
+			waitBeforeReaping(ctx, delay, reap)
+		}
+	}
+}
+
+func waitBeforeReaping(ctx context.Context, delay time.Duration, reap func()) {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+		reap()
+	}
+}
+
+func reapUnmanagedExitedChildren() {
+	reapExitedChildrenWith(childReaper{
+		childPIDs: listZombieChildPIDs,
+		managed:   executil.IsManagedChild,
+		wait:      waitExitedChild,
+	})
+}
+
+func waitExitedChild(pid int) (int, syscall.WaitStatus, error) {
+	var status syscall.WaitStatus
+	reapedPID, err := syscall.Wait4(pid, &status, syscall.WNOHANG, nil)
+	if err != nil {
+		return reapedPID, status, fmt.Errorf("wait for exited child %d: %w", pid, err)
+	}
+	return reapedPID, status, nil
+}
+
+func reapExitedChildrenWith(reaper childReaper) {
+	pids, err := reaper.childPIDs()
+	if err != nil {
+		slog.Warn("failed to list child processes", "error", err)
+		return
+	}
+
+	for _, pid := range pids {
+		if reaper.managed(pid) {
+			continue
+		}
+		reapExitedChildWith(pid, reaper.wait)
+	}
+}
+
+func reapExitedChildWith(pid int, waitChild waitExitedChildFunc) {
+	for {
+		reapedPID, status, err := waitChild(pid)
+		if errors.Is(err, syscall.ECHILD) {
+			return
+		}
+		if errors.Is(err, syscall.EINTR) {
+			continue
+		}
+		if err != nil {
+			slog.Warn("failed to reap child process", "error", err)
+			return
+		}
+		if reapedPID <= 0 {
+			return
+		}
+		slog.Debug("reaped orphan child process", "pid", reapedPID, "status", status)
+		return
+	}
+}
+
+func listZombieChildPIDs() ([]int, error) {
+	tasks, err := os.ReadDir("/proc/self/task")
+	if err != nil {
+		return nil, fmt.Errorf("reading task list: %w", err)
+	}
+
+	seen := map[int]bool{}
+	for _, task := range tasks {
+		data, err := os.ReadFile(filepath.Join(string(os.PathSeparator), "proc", "self", "task", task.Name(), "children"))
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("reading task children: %w", err)
+		}
+		for _, field := range strings.Fields(string(data)) {
+			pid, err := strconv.Atoi(field)
+			if err != nil {
+				return nil, fmt.Errorf("parsing child pid %q: %w", field, err)
+			}
+			zombie, err := isZombieProcess(pid)
+			if err != nil {
+				continue
+			}
+			if zombie {
+				seen[pid] = true
+			}
+		}
+	}
+
+	pids := make([]int, 0, len(seen))
+	for pid := range seen {
+		pids = append(pids, pid)
+	}
+	sort.Ints(pids)
+	return pids, nil
+}
+
+func isZombieProcess(pid int) (bool, error) {
+	data, err := os.ReadFile(filepath.Join(string(os.PathSeparator), "proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return false, fmt.Errorf("reading process stat: %w", err)
+	}
+	state, err := procStatState(string(data))
+	if err != nil {
+		return false, err
+	}
+	return state == 'Z', nil
+}
+
+func procStatState(stat string) (byte, error) {
+	end := strings.LastIndex(stat, ")")
+	if end < 0 {
+		return 0, fmt.Errorf("process stat missing command terminator")
+	}
+	fields := strings.Fields(stat[end+1:])
+	if len(fields) == 0 || fields[0] == "" {
+		return 0, fmt.Errorf("process stat missing state")
+	}
+	return fields[0][0], nil
 }
 
 // ensurePATH adds each dir to PATH if not already present, preserving any
@@ -243,10 +437,6 @@ func loadModule(path string) error {
 
 // runCAPRF runs the CAPRF provisioning flow (ISO-based, /deploy/vars config).
 func runCAPRF(ctx context.Context) {
-	// Handle SIGTERM/SIGINT for graceful shutdown.
-	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
-	defer cancel()
-
 	client, err := caprf.New(varsPath)
 	if err != nil {
 		slog.Error("failed to create CAPRF client", "error", err)

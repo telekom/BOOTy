@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"os/exec"
 	"strings"
 	"sync"
 	"syscall"
@@ -20,6 +19,7 @@ import (
 	"golang.org/x/net/ipv6"
 	"google.golang.org/protobuf/types/known/anypb"
 
+	exec "github.com/telekom/BOOTy/pkg/executil"
 	"github.com/telekom/BOOTy/pkg/network"
 )
 

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -531,6 +532,293 @@ func TestSetupNetworkModeExplicitGoBGPFailsClosed(t *testing.T) {
 		!strings.Contains(err.Error(), "invalid underlay AF") {
 		t.Fatalf("error = %q, want GoBGP setup failure context", err.Error())
 	}
+}
+
+func TestStartPID1ChildReaperNoopWhenNotPID1(t *testing.T) {
+	notified := false
+	started := startPID1ChildReaperWith(
+		context.Background(),
+		42,
+		0,
+		func(chan<- os.Signal, ...os.Signal) {
+			notified = true
+		},
+		func(chan<- os.Signal) {
+			t.Fatal("stop called for pid != 1")
+		},
+		func() {
+			t.Fatal("reap called for pid != 1")
+		},
+	)
+
+	if started {
+		t.Fatal("startPID1ChildReaperWith() = true, want false for pid != 1")
+	}
+	if notified {
+		t.Fatal("signal notification registered for pid != 1")
+	}
+}
+
+func TestStartPID1ChildReaperSignalTriggersReapAndStopsOnCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	notified := make(chan chan<- os.Signal, 1)
+	reaped := make(chan struct{}, 1)
+	stopped := make(chan struct{}, 1)
+
+	started := startPID1ChildReaperWith(
+		ctx,
+		1,
+		0,
+		func(ch chan<- os.Signal, _ ...os.Signal) {
+			notified <- ch
+		},
+		func(chan<- os.Signal) {
+			close(stopped)
+		},
+		func() {
+			reaped <- struct{}{}
+		},
+	)
+	if !started {
+		t.Fatal("startPID1ChildReaperWith() = false, want true for pid 1")
+	}
+
+	signals := receiveSignalSink(t, notified, "signal notification")
+	signals <- syscall.SIGCHLD
+	receiveEvent(t, reaped, "reap after SIGCHLD")
+
+	cancel()
+	receiveEvent(t, stopped, "signal stop after cancellation")
+}
+
+func TestStartPID1ChildReaperCancelsDelayedReap(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	notified := make(chan chan<- os.Signal, 1)
+	reaped := make(chan struct{}, 1)
+	stopped := make(chan struct{}, 1)
+
+	startPID1ChildReaperWith(
+		ctx,
+		1,
+		time.Hour,
+		func(ch chan<- os.Signal, _ ...os.Signal) {
+			notified <- ch
+		},
+		func(chan<- os.Signal) {
+			close(stopped)
+		},
+		func() {
+			reaped <- struct{}{}
+		},
+	)
+
+	signals := receiveSignalSink(t, notified, "signal notification")
+	signals <- syscall.SIGCHLD
+	cancel()
+
+	receiveEvent(t, stopped, "signal stop after delayed reap cancellation")
+	assertNoEvent(t, reaped, "reap after cancellation")
+}
+
+func TestReapExitedChildrenWithReapsOnlyUnmanagedChildren(t *testing.T) {
+	var waited []int
+	reapExitedChildrenWith(childReaper{
+		childPIDs: func() ([]int, error) {
+			return []int{11, 22, 33}, nil
+		},
+		managed: func(pid int) bool {
+			return pid == 22
+		},
+		wait: func(pid int) (int, syscall.WaitStatus, error) {
+			waited = append(waited, pid)
+			return pid, 0, nil
+		},
+	})
+
+	want := []int{11, 33}
+	if !intSlicesEqual(waited, want) {
+		t.Fatalf("waited pids = %v, want unmanaged pids %v", waited, want)
+	}
+}
+
+func TestReapExitedChildrenWithStopsWhenNoProcessReady(t *testing.T) {
+	calls := 0
+
+	reapExitedChildWith(42, func(pid int) (int, syscall.WaitStatus, error) {
+		calls++
+		if pid != 42 {
+			t.Fatalf("pid = %d, want 42", pid)
+		}
+		return 0, 0, nil
+	})
+
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1", calls)
+	}
+}
+
+func TestReapExitedChildrenWithStopsOnUnexpectedError(t *testing.T) {
+	calls := 0
+	wantErr := errors.New("wait failure")
+
+	reapExitedChildWith(42, func(pid int) (int, syscall.WaitStatus, error) {
+		calls++
+		if pid != 42 {
+			t.Fatalf("pid = %d, want 42", pid)
+		}
+		return -1, 0, wantErr
+	})
+
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1", calls)
+	}
+}
+
+func TestReapExitedChildrenWithRetriesInterruptedWait(t *testing.T) {
+	calls := 0
+
+	reapExitedChildWith(42, func(pid int) (int, syscall.WaitStatus, error) {
+		calls++
+		if pid != 42 {
+			t.Fatalf("pid = %d, want 42", pid)
+		}
+		switch calls {
+		case 1:
+			return -1, 0, syscall.EINTR
+		case 2:
+			return 42, 0, nil
+		default:
+			return -1, 0, syscall.ECHILD
+		}
+	})
+
+	if calls != 2 {
+		t.Fatalf("calls = %d, want EINTR retry then child reap", calls)
+	}
+}
+
+func TestProcStatState(t *testing.T) {
+	tests := []struct {
+		name    string
+		stat    string
+		want    byte
+		wantErr bool
+	}{
+		{
+			name: "simple process",
+			stat: "123 (sleep) S 1 2 3 4 5",
+			want: 'S',
+		},
+		{
+			name: "zombie process",
+			stat: "456 (daemon) Z 1 2 3 4 5",
+			want: 'Z',
+		},
+		{
+			name: "command contains closing paren",
+			stat: "789 (worker) helper) R 1 2 3 4 5",
+			want: 'R',
+		},
+		{
+			name: "command contains spaces and parentheses",
+			stat: "101 (worker (with spaces)) D 1 2 3 4 5",
+			want: 'D',
+		},
+		{
+			name:    "missing command terminator",
+			stat:    "123 sleep S 1 2 3",
+			wantErr: true,
+		},
+		{
+			name:    "empty stat",
+			stat:    "",
+			wantErr: true,
+		},
+		{
+			name:    "missing state",
+			stat:    "123 (sleep)",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := procStatState(tt.stat)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("procStatState() error = nil, want error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("procStatState(): %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("procStatState() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWaitBeforeReapingRespectsContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	called := false
+	waitBeforeReaping(ctx, time.Hour, func() {
+		called = true
+	})
+
+	if called {
+		t.Fatal("reap called after context cancellation")
+	}
+}
+
+func receiveSignalSink(t *testing.T, ch <-chan chan<- os.Signal, desc string) chan<- os.Signal {
+	t.Helper()
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	select {
+	case got := <-ch:
+		return got
+	case <-timer.C:
+		t.Fatalf("timed out waiting for %s", desc)
+	}
+	return nil
+}
+
+func receiveEvent(t *testing.T, ch <-chan struct{}, desc string) {
+	t.Helper()
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-ch:
+	case <-timer.C:
+		t.Fatalf("timed out waiting for %s", desc)
+	}
+}
+
+func assertNoEvent(t *testing.T, ch <-chan struct{}, desc string) {
+	t.Helper()
+	select {
+	case <-ch:
+		t.Fatalf("unexpected %s", desc)
+	default:
+	}
+}
+
+func intSlicesEqual(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestSetupMountsAndDevicesFailsOnMissingRequiredMount(t *testing.T) {

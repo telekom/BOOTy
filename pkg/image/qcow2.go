@@ -8,9 +8,10 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"syscall"
+
+	exec "github.com/telekom/BOOTy/pkg/executil"
 )
 
 const (

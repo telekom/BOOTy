@@ -2,7 +2,9 @@ package executil
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -67,6 +69,54 @@ func TestExecCommanderSanitizesNewlines(t *testing.T) {
 	}
 	if !strings.Contains(errStr, "line1 line2 line3") {
 		t.Fatalf("newlines should be replaced with spaces, got: %s", errStr)
+	}
+}
+
+func TestCommandContextRegistersManagedChildUntilWait(t *testing.T) {
+	cmd := CommandContext(context.Background(), "sh", "-c", "sleep 60")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	pid := cmd.Process.Pid
+	waited := false
+	defer func() {
+		if waited {
+			return
+		}
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}()
+
+	if !IsManagedChild(pid) {
+		t.Fatalf("pid %d is not registered as managed after Start", pid)
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if err := cmd.Wait(); err == nil {
+		t.Fatal("Wait() error = nil, want killed process error")
+	}
+	waited = true
+	if IsManagedChild(pid) {
+		t.Fatalf("pid %d is still registered as managed after Wait", pid)
+	}
+}
+
+func TestCommandContextOutputCapturesExitErrorStderr(t *testing.T) {
+	cmd := CommandContext(context.Background(), "sh", "-c", "printf stdout; printf stderr >&2; exit 7")
+	out, err := cmd.Output()
+	if err == nil {
+		t.Fatal("Output() error = nil, want exit error")
+	}
+	if string(out) != "stdout" {
+		t.Fatalf("Output() stdout = %q, want stdout", out)
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("Output() error = %T, want wrapped *exec.ExitError", err)
+	}
+	if string(exitErr.Stderr) != "stderr" {
+		t.Fatalf("ExitError.Stderr = %q, want stderr", exitErr.Stderr)
 	}
 }
 
