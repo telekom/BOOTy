@@ -1,0 +1,17 @@
+--- pkg/telemetry/events.go
++++ pkg/telemetry/events.go
+@@ -15,8 +15,14 @@
+ 	EventStepFailed    EventType = "step.failed"
+ 	EventProvStarted   EventType = "provision.started"
+ 	EventProvCompleted EventType = "provision.completed"
+ 	EventProvFailed    EventType = "provision.failed"
++	EventDeprovStarted EventType = "deprovision.started"
++	EventDeprovCompleted EventType = "deprovision.completed"
++	EventHealthCritical  EventType = "health.critical"
++	EventHealthWarning   EventType = "health.warning"
++	EventRescueActivated EventType = "rescue.activated"
++	EventFirmwareMismatch EventType = "firmware.mismatch"
++	EventAttestationFailed EventType = "attestation.failed"
+ )
+ 
+ // ProvisionEvent represents a structured provisioning event.
