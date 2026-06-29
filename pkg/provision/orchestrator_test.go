@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -2802,12 +2804,34 @@ func TestRescueConfig_DefaultsApplied(t *testing.T) {
 
 func TestVerifyImageSignature_Skipped(t *testing.T) {
 	cfg := &config.MachineConfig{}
+	// Give it a valid URL so SelectBestSource doesn't fail
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	cfg.Provision.Image.URLs = []string{srv.URL}
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
 	// No signature URL → should skip without error.
 	if err := o.verifyImageSignature(context.Background()); err != nil {
 		t.Errorf("expected nil, got %v", err)
+	}
+}
+
+func TestVerifyImageSignature_FailsOnUnreachableSource(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.SignatureURL = ""
+	cfg.Provision.Image.URLs = []string{}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	err := o.verifyImageSignature(context.Background())
+	if err == nil {
+		t.Fatal("expected error from source resolution failure, but got nil")
+	}
+	if !strings.Contains(err.Error(), "selecting image source") {
+		t.Fatalf("expected 'selecting image source' error, got: %v", err)
 	}
 }
 

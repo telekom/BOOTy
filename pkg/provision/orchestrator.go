@@ -1772,12 +1772,6 @@ func (o *Orchestrator) verifyImageSignature(ctx context.Context) error {
 		var err error
 		bestURL, err = image.SelectBestSource(ctx, o.cfg.Provision.Image.URLs)
 		if err != nil {
-			// If signature verification is not configured, URL resolution failures
-			// will be caught by stream-image. Don't block provisioning here.
-			if o.cfg.Provision.Image.SignatureURL == "" {
-				o.log.Info("no image signature URL configured, skipping verification")
-				return nil
-			}
 			return fmt.Errorf("selecting image source: %w", err)
 		}
 		o.bestImageURL = bestURL
