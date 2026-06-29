@@ -190,7 +190,6 @@ func resumeStateSteps() map[string]struct{} {
 		"verify-image":              {},
 		"mount-efivarfs":            {},
 		"setup-mellanox":            {},
-		"setup-raid":                {},
 		"detect-disk":               {},
 		"parse-partitions":          {},
 		"enable-lvm":                {},
@@ -220,15 +219,20 @@ func (o *Orchestrator) loadOrCreateCheckpoint() *Checkpoint {
 }
 
 func (o *Orchestrator) restoreCheckpointDerivedState(cp *Checkpoint) {
-	if cp == nil || cp.NVMeTargetDevice == "" {
+	if cp == nil || o.cfg.Provision.Disk.Device != "" {
 		return
 	}
-	if o.cfg.Provision.Disk.NVMeNamespaces == "" || o.cfg.Provision.Disk.Device != "" {
+	if len(o.cfg.Provision.Disk.RAID) > 0 && cp.RAIDTargetDevice != "" {
+		o.cfg.Provision.Disk.Device = cp.RAIDTargetDevice
+		o.targetDisk = cp.RAIDTargetDevice
+		o.log.Info("restored raid target device from checkpoint", "device", cp.RAIDTargetDevice)
 		return
 	}
-	o.cfg.Provision.Disk.Device = cp.NVMeTargetDevice
-	o.nvmeTargetDevice = cp.NVMeTargetDevice
-	o.log.Info("restored nvme target device from checkpoint", "device", cp.NVMeTargetDevice)
+	if o.cfg.Provision.Disk.NVMeNamespaces != "" && cp.NVMeTargetDevice != "" {
+		o.cfg.Provision.Disk.Device = cp.NVMeTargetDevice
+		o.nvmeTargetDevice = cp.NVMeTargetDevice
+		o.log.Info("restored nvme target device from checkpoint", "device", cp.NVMeTargetDevice)
+	}
 }
 
 // executeStep runs a single provisioning step with optional retry, updating
@@ -266,10 +270,19 @@ func (o *Orchestrator) executeStep(ctx context.Context, step Step, cp *Checkpoin
 }
 
 func (o *Orchestrator) recordCheckpointDerivedState(stepName string, cp *Checkpoint) {
-	if cp == nil || stepName != "setup-nvme-namespaces" || o.nvmeTargetDevice == "" {
+	if cp == nil {
 		return
 	}
-	cp.NVMeTargetDevice = o.nvmeTargetDevice
+	switch stepName {
+	case "setup-nvme-namespaces":
+		if o.nvmeTargetDevice != "" {
+			cp.NVMeTargetDevice = o.nvmeTargetDevice
+		}
+	case "setup-raid":
+		if len(o.cfg.Provision.Disk.RAID) > 0 && o.cfg.Provision.Disk.Device != "" {
+			cp.RAIDTargetDevice = o.cfg.Provision.Disk.Device
+		}
+	}
 }
 
 // RescueConfig returns the normalized rescue config derived from machine config.

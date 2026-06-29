@@ -728,8 +728,8 @@ func TestResumeStateStepsRerunMountSharedDataForCleanupState(t *testing.T) {
 	if _, ok := stateSteps["enable-lvm"]; !ok {
 		t.Fatal("enable-lvm must rerun on resume because activated LVM devices are volatile after restart")
 	}
-	if _, ok := stateSteps["setup-raid"]; !ok {
-		t.Fatal("setup-raid must rerun on resume to rebuild configured md devices before disk detection")
+	if _, ok := stateSteps["setup-raid"]; ok {
+		t.Fatal("setup-raid must not rerun on resume because it wipes member devices before creating arrays")
 	}
 	if _, ok := stateSteps["mount-shared-data"]; !ok {
 		t.Fatal("mount-shared-data must rerun on resume to rebuild sharedMounts for teardown cleanup")
@@ -1462,6 +1462,80 @@ func TestCheckpointResumeDoesNotRerunNVMeNamespaceSetup(t *testing.T) {
 		t.Fatalf("setup-nvme-namespaces reran unexpectedly: %v", err)
 	}
 	t.Fatalf("setup-nvme-namespaces must remain skippable on resume; calls=%#v", cmd.calls)
+}
+
+func TestCheckpointRecordsRAIDTargetDevice(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+		Name:    "md0",
+		Level:   1,
+		Devices: []string{"/dev/sda", "/dev/sdb"},
+	}}
+	o, _ := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+
+	cp := &Checkpoint{}
+	step := Step{"setup-raid", o.setupRAID}
+	if err := o.executeStep(context.Background(), step, cp); err != nil {
+		t.Fatalf("execute setup-raid: %v", err)
+	}
+	if cp.RAIDTargetDevice != "/dev/md0" {
+		t.Fatalf("checkpoint RAIDTargetDevice = %q, want /dev/md0", cp.RAIDTargetDevice)
+	}
+	if !cp.IsCompleted("setup-raid") {
+		t.Fatal("checkpoint should mark setup-raid complete")
+	}
+}
+
+func TestCheckpointResumeRestoresRAIDTargetDevice(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+		Name:    "md0",
+		Level:   1,
+		Devices: []string{"/dev/sda", "/dev/sdb"},
+	}}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	cp := &Checkpoint{
+		CompletedSteps:   []string{"setup-raid"},
+		RAIDTargetDevice: "/dev/md0",
+	}
+
+	o.restoreCheckpointDerivedState(cp)
+
+	if cfg.Provision.Disk.Device != "/dev/md0" {
+		t.Fatalf("DiskDevice = %q, want checkpoint raid target", cfg.Provision.Disk.Device)
+	}
+	if o.targetDisk != "/dev/md0" {
+		t.Fatalf("targetDisk = %q, want checkpoint raid target", o.targetDisk)
+	}
+}
+
+func TestCheckpointResumeDoesNotRerunRAIDSetup(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RAID = []config.RAIDConfig{{
+		Name:    "md0",
+		Level:   1,
+		Devices: []string{"/dev/sda", "/dev/sdb"},
+	}}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	cp := &Checkpoint{
+		CompletedSteps:   []string{"setup-raid"},
+		RAIDTargetDevice: "/dev/md0",
+	}
+	o.restoreCheckpointDerivedState(cp)
+
+	stateSteps := resumeStateSteps()
+	step := Step{"setup-raid", o.setupRAID}
+	_, mustRun := stateSteps[step.Name]
+	if cp.IsCompleted(step.Name) && !mustRun {
+		if len(cmd.calls) != 0 {
+			t.Fatalf("completed raid setup should skip without destructive commands, got %#v", cmd.calls)
+		}
+		return
+	}
+	if err := o.executeStep(context.Background(), step, cp); err != nil {
+		t.Fatalf("setup-raid reran unexpectedly: %v", err)
+	}
+	t.Fatalf("setup-raid must remain skippable on resume; calls=%#v", cmd.calls)
 }
 
 func TestSetupRAIDCreatesConfiguredArrayAndSetsSingleArrayTarget(t *testing.T) {
@@ -2421,15 +2495,14 @@ func TestCheckpointResume_StateStepsAlwaysRun(t *testing.T) {
 
 	// stateSteps re-run; stream-image and configure-ssh skip because they are
 	// completed non-state steps.
-	if len(ran) != 13 {
-		t.Errorf("expected 13 state step runs, got %v", ran)
+	if len(ran) != 12 {
+		t.Errorf("expected 12 state step runs, got %v", ran)
 	}
 	for _, name := range []string{
 		"validate-provision-inputs",
 		"verify-image",
 		"mount-efivarfs",
 		"setup-mellanox",
-		"setup-raid",
 		"detect-disk",
 		"parse-partitions",
 		"enable-lvm",
