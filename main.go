@@ -38,6 +38,8 @@ import (
 
 // Version and Build are set via -ldflags at build time.
 var (
+	originalSlogHandler slog.Handler
+	caprfRemoteLogHandler *caprf.RemoteHandler
 	Version = "dev"
 	Build   = "unknown"
 )
@@ -61,9 +63,9 @@ var (
 		})
 	}
 	provisionHandoff = provisionHandoffOps{
-		reboot:   realm.RequestReboot,
-		powerOff: realm.RequestPowerOff,
-		shell:    realm.Shell,
+		reboot:   requestReboot,
+		powerOff: requestPowerOff,
+		shell:    shell,
 		exit:     os.Exit,
 	}
 )
@@ -106,7 +108,7 @@ func main() {
 
 	if err := setupMountsAndDevices(); err != nil {
 		slog.Error("early mount/device setup failed", "error", err)
-		realm.Reboot()
+		reboot()
 		return
 	}
 	startPID1ChildReaper(ctx, os.Getpid())
@@ -436,19 +438,54 @@ func loadModule(path string) error {
 }
 
 // runCAPRF runs the CAPRF provisioning flow (ISO-based, /deploy/vars config).
+func flushObservability() {
+	if originalSlogHandler != nil {
+		slog.SetDefault(slog.New(originalSlogHandler))
+	}
+	if caprfRemoteLogHandler != nil {
+		caprfRemoteLogHandler.Close()
+		caprfRemoteLogHandler = nil
+	}
+}
+
+func reboot() {
+	flushObservability()
+	realm.Reboot()
+}
+
+func requestReboot() error {
+	flushObservability()
+	return realm.RequestReboot()
+}
+
+func requestPowerOff() error {
+	flushObservability()
+	return realm.RequestPowerOff()
+}
+
+func shell() {
+	flushObservability()
+	realm.Shell()
+}
+
+func doKexecExecute() error {
+	flushObservability()
+	return kexec.Execute()
+}
+
 func runCAPRF(ctx context.Context) {
 	client, err := caprf.New(varsPath)
 	if err != nil {
 		slog.Error("failed to create CAPRF client", "error", err)
 		provision.DumpDebugState("caprf-init")
-		realm.Reboot()
+		reboot()
 	}
 
 	cfg, err := client.GetConfig(ctx)
 	if err != nil {
 		slog.Error("failed to get CAPRF config", "error", err)
 		provision.DumpDebugState("config-fetch")
-		realm.Reboot()
+		reboot()
 	}
 
 	// DRY_RUN=true overrides mode before logging.
@@ -458,9 +495,10 @@ func runCAPRF(ctx context.Context) {
 
 	// Wire remote log shipping.
 	if cfg.Transport.LogURL != "" {
-		remote := caprf.NewRemoteHandler(client, slog.Default().Handler(), slog.LevelInfo, 256)
-		defer remote.Close()
-		slog.SetDefault(slog.New(remote))
+		originalSlogHandler = slog.Default().Handler()
+		caprfRemoteLogHandler = caprf.NewRemoteHandler(client, slog.Default().Handler(), slog.LevelInfo, 256)
+		defer flushObservability()
+		slog.SetDefault(slog.New(caprfRemoteLogHandler))
 	}
 
 	slog.Info("CAPRF mode active",
@@ -471,7 +509,7 @@ func runCAPRF(ctx context.Context) {
 
 	netMode, err := setupNetworkAndTokenFlow(ctx, cfg, client)
 	if err != nil {
-		realm.Reboot()
+		reboot()
 	}
 
 	diskMgr := disk.NewManager(nil)
@@ -498,7 +536,7 @@ func runCAPRF(ctx context.Context) {
 				slog.Warn("network teardown error", "error", tearErr)
 			}
 		}
-		realm.Reboot()
+		reboot()
 		return
 	}
 
@@ -516,8 +554,8 @@ func runCAPRF(ctx context.Context) {
 	case errors.As(modeErr, &rescueErr):
 		// Network teardown is intentionally skipped here so SSH access
 		// remains available in the rescue shell.
-		realm.Shell()
-		realm.Reboot()
+		shell()
+		reboot()
 		return
 	case errors.As(modeErr, &rebootErr):
 		if netMode != nil {
@@ -525,7 +563,7 @@ func runCAPRF(ctx context.Context) {
 				slog.Warn("network teardown error", "error", err)
 			}
 		}
-		realm.Reboot()
+		reboot()
 		return
 	case errors.As(modeErr, &provisionErr):
 		kexeced := tryKexec(cfg, provisionErr.FirmwareChanged)
@@ -549,7 +587,7 @@ func runCAPRF(ctx context.Context) {
 		}
 	}
 	time.Sleep(2 * time.Second)
-	realm.Reboot()
+	reboot()
 }
 
 func handleProvisionHandoff(
@@ -646,7 +684,7 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	client.SetTokenRenewalFatalHandler(func() {
 		slog.Error("token renewal exhausted, rebooting")
 		provision.DumpDebugState("jwt-renewal-exhausted")
-		realm.Reboot()
+		reboot()
 	})
 
 	if err := client.StartTokenRenewal(ctx); err != nil {
@@ -1145,7 +1183,7 @@ func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) bool {
 		slog.Warn("kexec load failed, falling back to reboot", "error", err)
 		return false
 	}
-	if err := kexec.Execute(); err != nil {
+	if err := doKexecExecute(); err != nil {
 		slog.Warn("kexec execute failed, falling back to reboot", "error", err)
 		return false
 	}

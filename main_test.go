@@ -6,13 +6,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/telekom/BOOTy/pkg/caprf"
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/realm"
@@ -1082,5 +1087,31 @@ func assertProvisionHandoffSuccess(
 	}
 	if state.exitCode != 0 {
 		t.Fatalf("exit code = %d, want 0", state.exitCode)
+	}
+}
+
+func TestFlushObservabilityBeforeReboot(t *testing.T) {
+	var logShipped atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logShipped.Store(true)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	cfg := &config.MachineConfig{Transport: config.TransportConfig{LogURL: srv.URL}}
+	client := caprf.NewFromConfig(cfg)
+
+	originalSlogHandler = slog.Default().Handler()
+	caprfRemoteLogHandler = caprf.NewRemoteHandler(client, originalSlogHandler, slog.LevelInfo, 100)
+	slog.SetDefault(slog.New(caprfRemoteLogHandler))
+
+	slog.Info("test log")
+	flushObservability()
+
+	// Handler should be restored.
+	slog.Info("post-flush log") // Should not panic
+
+	if !logShipped.Load() {
+		t.Error("log was not shipped before flush returned")
 	}
 }
