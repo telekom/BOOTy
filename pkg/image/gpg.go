@@ -9,9 +9,10 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
+
+	exec "github.com/telekom/BOOTy/pkg/executil"
 )
 
 // gpgHTTPClient is a dedicated HTTP client for GPG-related downloads

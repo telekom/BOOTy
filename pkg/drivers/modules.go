@@ -9,11 +9,12 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	exec "github.com/telekom/BOOTy/pkg/executil"
 )
 
 // Module represents a kernel module with its metadata.

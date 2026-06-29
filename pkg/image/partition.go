@@ -10,13 +10,13 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/blockdev"
+	exec "github.com/telekom/BOOTy/pkg/executil"
 )
 
 // StreamPartitions downloads an image to a tmpfs ramdisk, optionally converts

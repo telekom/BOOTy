@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
@@ -765,7 +764,7 @@ func stopFRRBestEffort(ctx context.Context) error {
 // It uses os.Stderr directly (no pipes) so cmd.Wait returns when the
 // parent process exits, not when all child pipe holders close.
 func runDaemonCmd(ctx context.Context, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := executil.CommandContext(ctx, name, args...)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 

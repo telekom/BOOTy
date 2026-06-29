@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -21,6 +23,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/crash"
 	"github.com/telekom/BOOTy/pkg/disk"
+	"github.com/telekom/BOOTy/pkg/executil"
 	"github.com/telekom/BOOTy/pkg/kexec"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/frr"
@@ -100,13 +103,13 @@ func main() {
 	ensurePATH("/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/local/sbin")
 	ctx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stopSignals()
-	startPID1ChildReaper(ctx, os.Getpid())
 
 	if err := setupMountsAndDevices(); err != nil {
 		slog.Error("early mount/device setup failed", "error", err)
 		realm.Reboot()
 		return
 	}
+	startPID1ChildReaper(ctx, os.Getpid())
 	loadModules()
 
 	slog.Info("starting BOOTy", "version", Version, "build", Build)
@@ -119,29 +122,65 @@ func main() {
 
 const orphanReapDelay = 500 * time.Millisecond
 
-type waitExitedChildFunc func() (int, syscall.WaitStatus, error)
+type waitExitedChildFunc func(int) (int, syscall.WaitStatus, error)
+
+type childReaper struct {
+	childPIDs func() ([]int, error)
+	managed   func(int) bool
+	wait      waitExitedChildFunc
+}
+
+type signalNotifyFunc func(chan<- os.Signal, ...os.Signal)
+type signalStopFunc func(chan<- os.Signal)
 
 // startPID1ChildReaper reaps daemonized children that get adopted by BOOTy as
-// PID 1. The delay gives exec.Cmd.Wait callers first chance to reap processes
-// they started directly.
-func startPID1ChildReaper(ctx context.Context, pid int) {
+// PID 1. It only waits unmanaged child PIDs so normal exec.Cmd owners keep
+// exclusive ownership of their child exit statuses.
+func startPID1ChildReaper(ctx context.Context, pid int) bool {
+	return startPID1ChildReaperWith(
+		ctx,
+		pid,
+		orphanReapDelay,
+		signal.Notify,
+		signal.Stop,
+		reapUnmanagedExitedChildren,
+	)
+}
+
+func startPID1ChildReaperWith(
+	ctx context.Context,
+	pid int,
+	delay time.Duration,
+	notify signalNotifyFunc,
+	stop signalStopFunc,
+	reap func(),
+) bool {
 	if pid != 1 {
-		return
+		return false
 	}
 
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGCHLD)
-	go func() {
-		defer signal.Stop(signals)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-signals:
-				waitBeforeReaping(ctx, orphanReapDelay, reapExitedChildren)
-			}
+	notify(signals, syscall.SIGCHLD)
+	go runPID1ChildReaper(ctx, signals, delay, stop, reap)
+	return true
+}
+
+func runPID1ChildReaper(
+	ctx context.Context,
+	signals chan os.Signal,
+	delay time.Duration,
+	stop signalStopFunc,
+	reap func(),
+) {
+	defer stop(signals)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-signals:
+			waitBeforeReaping(ctx, delay, reap)
 		}
-	}()
+	}
 }
 
 func waitBeforeReaping(ctx context.Context, delay time.Duration, reap func()) {
@@ -155,22 +194,41 @@ func waitBeforeReaping(ctx context.Context, delay time.Duration, reap func()) {
 	}
 }
 
-func reapExitedChildren() {
-	reapExitedChildrenWith(waitExitedChild)
+func reapUnmanagedExitedChildren() {
+	reapExitedChildrenWith(childReaper{
+		childPIDs: listZombieChildPIDs,
+		managed:   executil.IsManagedChild,
+		wait:      waitExitedChild,
+	})
 }
 
-func waitExitedChild() (int, syscall.WaitStatus, error) {
+func waitExitedChild(pid int) (int, syscall.WaitStatus, error) {
 	var status syscall.WaitStatus
-	pid, err := syscall.Wait4(-1, &status, syscall.WNOHANG, nil)
+	reapedPID, err := syscall.Wait4(pid, &status, syscall.WNOHANG, nil)
 	if err != nil {
-		return pid, status, fmt.Errorf("wait for exited child: %w", err)
+		return reapedPID, status, fmt.Errorf("wait for exited child %d: %w", pid, err)
 	}
-	return pid, status, nil
+	return reapedPID, status, nil
 }
 
-func reapExitedChildrenWith(waitChild waitExitedChildFunc) {
+func reapExitedChildrenWith(reaper childReaper) {
+	pids, err := reaper.childPIDs()
+	if err != nil {
+		slog.Warn("failed to list child processes", "error", err)
+		return
+	}
+
+	for _, pid := range pids {
+		if reaper.managed(pid) {
+			continue
+		}
+		reapExitedChildWith(pid, reaper.wait)
+	}
+}
+
+func reapExitedChildWith(pid int, waitChild waitExitedChildFunc) {
 	for {
-		pid, status, err := waitChild()
+		reapedPID, status, err := waitChild(pid)
 		if errors.Is(err, syscall.ECHILD) {
 			return
 		}
@@ -181,11 +239,74 @@ func reapExitedChildrenWith(waitChild waitExitedChildFunc) {
 			slog.Warn("failed to reap child process", "error", err)
 			return
 		}
-		if pid <= 0 {
+		if reapedPID <= 0 {
 			return
 		}
-		slog.Debug("reaped child process", "pid", pid, "status", status)
+		slog.Debug("reaped orphan child process", "pid", reapedPID, "status", status)
+		return
 	}
+}
+
+func listZombieChildPIDs() ([]int, error) {
+	tasks, err := os.ReadDir("/proc/self/task")
+	if err != nil {
+		return nil, fmt.Errorf("reading task list: %w", err)
+	}
+
+	seen := map[int]bool{}
+	for _, task := range tasks {
+		data, err := os.ReadFile(filepath.Join(string(os.PathSeparator), "proc", "self", "task", task.Name(), "children"))
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("reading task children: %w", err)
+		}
+		for _, field := range strings.Fields(string(data)) {
+			pid, err := strconv.Atoi(field)
+			if err != nil {
+				return nil, fmt.Errorf("parsing child pid %q: %w", field, err)
+			}
+			zombie, err := isZombieProcess(pid)
+			if err != nil {
+				continue
+			}
+			if zombie {
+				seen[pid] = true
+			}
+		}
+	}
+
+	pids := make([]int, 0, len(seen))
+	for pid := range seen {
+		pids = append(pids, pid)
+	}
+	sort.Ints(pids)
+	return pids, nil
+}
+
+func isZombieProcess(pid int) (bool, error) {
+	data, err := os.ReadFile(filepath.Join(string(os.PathSeparator), "proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return false, fmt.Errorf("reading process stat: %w", err)
+	}
+	state, err := procStatState(string(data))
+	if err != nil {
+		return false, err
+	}
+	return state == 'Z', nil
+}
+
+func procStatState(stat string) (byte, error) {
+	end := strings.LastIndex(stat, ")")
+	if end < 0 {
+		return 0, fmt.Errorf("process stat missing command terminator")
+	}
+	fields := strings.Fields(stat[end+1:])
+	if len(fields) == 0 || fields[0] == "" {
+		return 0, fmt.Errorf("process stat missing state")
+	}
+	return fields[0][0], nil
 }
 
 // ensurePATH adds each dir to PATH if not already present, preserving any

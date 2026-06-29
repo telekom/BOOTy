@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	exec "github.com/telekom/BOOTy/pkg/executil"
 )
 
 var rootSSHDir = "/root/.ssh"

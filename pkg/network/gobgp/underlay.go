@@ -8,11 +8,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"os/exec"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	exec "github.com/telekom/BOOTy/pkg/executil"
 
 	apipb "github.com/osrg/gobgp/v3/api"
 	"github.com/osrg/gobgp/v3/pkg/server"

@@ -5,10 +5,11 @@ package secureboot
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"testing"
+
+	exec "github.com/telekom/BOOTy/pkg/executil"
 )
 
 func fakeMokutil(t *testing.T, exitCode int, output string) func() {

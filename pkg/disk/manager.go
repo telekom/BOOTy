@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -935,7 +934,7 @@ func waitForDevice(ctx context.Context, device string) error {
 		// Trigger device node creation from /sys entries that may have appeared
 		// since the last poll. mdev -s is fast (~10ms) and idempotent.
 		//nolint:gosec // mdev is a fixed busybox command, no user input
-		if err := exec.CommandContext(ctx, "mdev", "-s").Run(); err != nil {
+		if err := executil.CommandContext(ctx, "mdev", "-s").Run(); err != nil {
 			slog.Debug("mdev -s failed during device wait", "device", device, "error", err)
 		}
 		if _, err := os.Stat(device); err == nil {
@@ -1055,7 +1054,7 @@ func mountedSubpathsFrom(root string, data []byte) ([]string, error) {
 // exitCodeFromError extracts the process exit code from an error chain.
 // Returns -1 if no exit code is found.
 func exitCodeFromError(err error) int {
-	var exitErr *exec.ExitError
+	var exitErr *executil.ExitError
 	if errors.As(err, &exitErr) {
 		return exitErr.ExitCode()
 	}
@@ -1189,7 +1188,7 @@ func (m *Manager) chrootSyscall(ctx context.Context, root, command string) ([]by
 }
 
 func runChrootSyscallExec(ctx context.Context, root, shell, command string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, shell, "-c", command)
+	cmd := executil.CommandContext(ctx, shell, "-c", command)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Chroot: root}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1212,7 +1211,7 @@ func formatChrootSyscallError(root, shell string, out []byte, err error) error {
 
 // isExecNotFound checks whether an error indicates the executable was not found.
 func isExecNotFound(err error) bool {
-	if errors.Is(err, exec.ErrNotFound) {
+	if errors.Is(err, executil.ErrNotFound) {
 		return true
 	}
 	// The Commander wraps errors, so also check the message.

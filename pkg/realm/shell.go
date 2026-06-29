@@ -6,7 +6,8 @@ import (
 	"context"
 	"log/slog"
 	"os"
-	"os/exec"
+
+	exec "github.com/telekom/BOOTy/pkg/executil"
 )
 
 // Shell starts a userland shell. It uses BusyBox setsid + cttyhack to

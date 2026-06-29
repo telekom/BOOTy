@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 
@@ -33,7 +32,7 @@ type ExecCommander struct {
 
 // RunWithInput executes a command with stdin input.
 func (e *ExecCommander) RunWithInput(ctx context.Context, input, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := executil.CommandContext(ctx, name, args...)
 	cmd.Stdin = strings.NewReader(input)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -171,7 +170,7 @@ func (m *Manager) IsLUKSWithError(ctx context.Context, device string) (bool, err
 	}
 	out, err := m.cmd.Run(ctx, "cryptsetup", "isLuks", device)
 	if err != nil {
-		var exitErr *exec.ExitError
+		var exitErr *executil.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
 			// cryptsetup returns exit code 1 when device is not LUKS.
 			return false, nil
