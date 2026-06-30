@@ -616,6 +616,7 @@ func (m *Manager) enableForwarding() error {
 		"/proc/sys/net/ipv6/conf/default/accept_ra_defrtr": "1",
 	}
 
+	var errs []error
 	for path, val := range sysctls {
 		if err := os.WriteFile(path, []byte(val), 0o644); err != nil { //nolint:gosec // sysctl paths are trusted
 			m.log.Debug("Failed to set sysctl", "path", path, "error", err)
