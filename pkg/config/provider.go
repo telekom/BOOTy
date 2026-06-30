@@ -44,3 +44,13 @@ type Provider interface {
 	// ReportFirmware sends a firmware report to the server.
 	ReportFirmware(ctx context.Context, data []byte) error
 }
+
+// TelemetryReporter is an optional provider capability for reporting metrics.
+type TelemetryReporter interface {
+	ReportMetrics(context.Context, []byte) error
+}
+
+// EventReporter is an optional provider capability for reporting lifecycle events.
+type EventReporter interface {
+	SendEvent(context.Context, []byte) error
+}

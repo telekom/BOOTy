@@ -182,7 +182,7 @@ func NewRemoteHandler(client *Client, inner slog.Handler, level slog.Leveler, bu
 		dropped:  &atomic.Int64{},
 		reported: &atomic.Int64{},
 	}
-	go h.drain(ctx)
+	go h.startWorkers(ctx)
 	return h
 }
 
@@ -372,11 +372,25 @@ func (h *RemoteHandler) Close() {
 	})
 }
 
-func (h *RemoteHandler) drain(ctx context.Context) {
+func (h *RemoteHandler) startWorkers(ctx context.Context) {
 	defer close(h.done)
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			h.drainWorker(ctx)
+		}()
+	}
+	wg.Wait()
+}
+
+func (h *RemoteHandler) drainWorker(ctx context.Context) {
 	for msg := range h.buf {
-		if err := h.client.ShipLog(ctx, msg); err != nil {
+		shipCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		if err := h.client.ShipLog(shipCtx, msg); err != nil {
 			h.warnViaInner("failed to ship log to caprf", slog.Any("error", err))
 		}
+		cancel()
 	}
 }
