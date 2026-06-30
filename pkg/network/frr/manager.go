@@ -131,7 +131,7 @@ func (m *Manager) setupInterfaces(cfg *network.Config, underlayIP, overlayIP, br
 	}
 
 	if err := m.enableForwarding(); err != nil {
-		m.log.Warn("Failed to enable IP forwarding", "error", err)
+		return nil, fmt.Errorf("enable forwarding: %w", err)
 	}
 
 	return nics, nil
@@ -565,10 +565,15 @@ func (m *Manager) addBridgeAddress(bridgeName, addr string) error {
 }
 
 func (m *Manager) configureNICs(nics []string, vrfName string, mtu int) error {
+	var errs []error
 	for _, nic := range nics {
 		if err := m.configureNIC(nic, vrfName, mtu); err != nil {
 			m.log.Warn("Failed to configure NIC", "nic", nic, "error", err)
+			errs = append(errs, err)
 		}
+	}
+	if len(errs) > 0 && len(errs) == len(nics) {
+		return fmt.Errorf("failed to configure any NICs: %w", errors.Join(errs...))
 	}
 	return nil
 }
@@ -614,7 +619,11 @@ func (m *Manager) enableForwarding() error {
 	for path, val := range sysctls {
 		if err := os.WriteFile(path, []byte(val), 0o644); err != nil { //nolint:gosec // sysctl paths are trusted
 			m.log.Debug("Failed to set sysctl", "path", path, "error", err)
+			errs = append(errs, err)
 		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to set some sysctls: %w", errors.Join(errs...))
 	}
 	return nil
 }
