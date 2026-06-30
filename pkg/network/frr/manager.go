@@ -131,7 +131,7 @@ func (m *Manager) setupInterfaces(cfg *network.Config, underlayIP, overlayIP, br
 	}
 
 	if err := m.enableForwarding(); err != nil {
-		m.log.Warn("Failed to enable IP forwarding", "error", err)
+		return nil, fmt.Errorf("enable IP forwarding: %w", err)
 	}
 
 	return nics, nil
@@ -565,10 +565,18 @@ func (m *Manager) addBridgeAddress(bridgeName, addr string) error {
 }
 
 func (m *Manager) configureNICs(nics []string, vrfName string, mtu int) error {
+	var errs []error
+	var success bool
 	for _, nic := range nics {
 		if err := m.configureNIC(nic, vrfName, mtu); err != nil {
 			m.log.Warn("Failed to configure NIC", "nic", nic, "error", err)
+			errs = append(errs, err)
+		} else {
+			success = true
 		}
+	}
+	if !success && len(nics) > 0 {
+		return errors.Join(errs...)
 	}
 	return nil
 }
@@ -611,10 +619,15 @@ func (m *Manager) enableForwarding() error {
 		"/proc/sys/net/ipv6/conf/default/accept_ra_defrtr": "1",
 	}
 
+	var errs []error
 	for path, val := range sysctls {
 		if err := os.WriteFile(path, []byte(val), 0o644); err != nil { //nolint:gosec // sysctl paths are trusted
 			m.log.Debug("Failed to set sysctl", "path", path, "error", err)
+			errs = append(errs, fmt.Errorf("failed to set %s: %w", path, err))
 		}
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
 	}
 	return nil
 }
