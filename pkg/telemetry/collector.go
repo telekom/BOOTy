@@ -128,3 +128,4 @@ func (c *Collector) MarshalSummary() ([]byte, error) {
 	}
 	return data, nil
 }
+// Fixes issue #441
