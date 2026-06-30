@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/telekom/BOOTy/pkg/telemetry"
 	"log/slog"
 	"net/url"
 	"os"
@@ -76,11 +77,13 @@ type HealthReporter interface {
 
 // Orchestrator runs the full provisioning pipeline.
 type Orchestrator struct {
-	cfg      *config.MachineConfig
-	provider config.Provider
-	disk     *disk.Manager
-	config   *Configurator
-	log      *slog.Logger
+	cfg       *config.MachineConfig
+	provider  config.Provider
+	disk      *disk.Manager
+	config    *Configurator
+	collector *telemetry.Collector
+	emitter   *telemetry.Emitter
+	log       *slog.Logger
 
 	// Runtime state set during provisioning.
 	targetDisk       string
@@ -153,6 +156,11 @@ func (o *Orchestrator) provisionSteps() []Step {
 
 // Provision runs all provisioning steps sequentially.
 func (o *Orchestrator) Provision(ctx context.Context) error {
+	// Ensure final telemetry is always flushed before exit/reboot.
+	// Uses context.Background() because ctx may be canceled during teardown/error.
+	defer o.flushTelemetry(context.Background())
+	// Ensure final telemetry is always flushed before exit/reboot.
+	defer o.flushTelemetry(ctx)
 	steps := o.provisionSteps()
 
 	cp := o.loadOrCreateCheckpoint()
@@ -3006,4 +3014,19 @@ func redactURLs(urls []string) []string {
 		redacted[i] = image.RedactURL(raw)
 	}
 	return redacted
+}
+
+func (o *Orchestrator) flushTelemetry(ctx context.Context) {
+	if tr, ok := o.provider.(config.TelemetryReporter); ok {
+		if data, err := o.collector.MarshalSummary(); err == nil {
+			_ = tr.ReportMetrics(ctx, data)
+		}
+	}
+	if er, ok := o.provider.(config.EventReporter); ok {
+		if ev := o.emitter.LastEvent(); ev != nil {
+			if data, err := telemetry.MarshalEvent(ev); err == nil {
+				_ = er.SendEvent(ctx, data)
+			}
+		}
+	}
 }
