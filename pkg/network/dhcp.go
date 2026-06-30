@@ -141,6 +141,7 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struc
 		addr, _ := netlink.ParseAddr(cidr.String())
 		if err := netlink.AddrAdd(link, addr); err != nil {
 			d.log.Warn("Failed to assign DHCP address", "iface", ifName, "error", err)
+			winner.Store(0)
 			return
 		}
 		d.log.Info("DHCP lease obtained", "iface", ifName, "addr", cidr.String())
