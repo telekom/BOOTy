@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/telekom/BOOTy/pkg/telemetry"
 	"log/slog"
 	"net/url"
 	"os"
@@ -17,6 +16,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/telekom/BOOTy/pkg/telemetry"
 
 	ociname "github.com/google/go-containerregistry/pkg/name"
 

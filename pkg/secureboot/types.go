@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package secureboot verifies and manages Secure Boot chains.
 package secureboot
 

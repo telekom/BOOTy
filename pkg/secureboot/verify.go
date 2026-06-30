@@ -1,3 +1,5 @@
+//go:build linux
+
 package secureboot
 
 import (
@@ -57,6 +59,7 @@ func (cv *ChainVerifier) Verify() (*ChainResult, error) {
 }
 
 // checkComponentPresence checks whether boot chain binaries exist on disk
+// and validates PE/COFF headers for EFI binaries.
 func (cv *ChainVerifier) checkComponentPresence() []ComponentStatus {
 	specs := []struct {
 		name  string
@@ -90,6 +93,10 @@ func (cv *ChainVerifier) checkComponentPresence() []ComponentStatus {
 	return components
 }
 
+// findValidCandidate scans candidates in order, returning the first that exists
+// and passes PE/COFF validation (for .efi paths). If no candidate passes,
+// the returned ComponentStatus carries an error string that distinguishes
+// "invalid PE/COFF header" (files found but corrupt) from "not found".
 func (cv *ChainVerifier) findValidCandidate(name string, candidates []string) ComponentStatus {
 	status := ComponentStatus{Name: name}
 	var lastValidationErr error
@@ -135,12 +142,14 @@ func (cv *ChainVerifier) findValidCandidate(name string, candidates []string) Co
 func validateDigest(path, expected string) error {
 	f, err := os.Open(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("open: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
-		return err
+		return fmt.Errorf("copy: %w", err)
 	}
 	got := fmt.Sprintf("%x", h.Sum(nil))
 	if !strings.EqualFold(got, expected) {
@@ -149,6 +158,8 @@ func validateDigest(path, expected string) error {
 	return nil
 }
 
+// absPath joins the configured root prefix with an absolute boot path so
+// tests can point the verifier at a temporary directory.
 func (cv *ChainVerifier) absPath(path string) string {
 	root := cv.root
 	if root == "" {
@@ -160,11 +171,18 @@ func (cv *ChainVerifier) absPath(path string) string {
 	return filepath.Join(root, strings.TrimPrefix(path, "/"))
 }
 
+// isEFIPath reports whether path points to a PE/COFF EFI binary.
+// Kernel vmlinuz paths are excluded — they are not PE binaries.
 func isEFIPath(path string) bool {
 	lower := strings.ToLower(path)
 	return strings.HasSuffix(lower, ".efi")
 }
 
+// validatePEHeader opens path as a PE/COFF binary using debug/pe and
+// returns an error if the file is missing, truncated, has an invalid header,
+// or has a machine type that does not match the host architecture.
+// Close errors are propagated when no earlier error occurred, so I/O
+// failures on flaky storage cannot be silently ignored.
 func validatePEHeader(path string) (retErr error) {
 	f, err := pe.Open(path)
 	if err != nil {
@@ -183,6 +201,9 @@ func validatePEHeader(path string) (retErr error) {
 	return validatePEMachineType(f)
 }
 
+// validatePEMachineType returns an error if the PE machine type does not match
+// the host architecture. Only amd64 and arm64 are validated; unknown host
+// architectures are accepted without error to avoid false negatives.
 func validatePEMachineType(f *pe.File) error {
 	var wantMachine uint16
 	switch runtime.GOARCH {

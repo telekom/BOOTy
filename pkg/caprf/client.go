@@ -1129,7 +1129,10 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) (bool, error)
 	if applyCrashArtifactsBoolVar(cfg, key, value) {
 		return true, nil
 	}
+	return applyMiscBoolVar(cfg, key, value)
+}
 
+func applyMiscBoolVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 	switch key {
 	case "DISABLE_KEXEC":
 		cfg.Provision.DisableKexec = parseBoolVar(value)

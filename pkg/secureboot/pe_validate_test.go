@@ -1,8 +1,12 @@
+//go:build linux
+
 package secureboot
 
 import (
+	"crypto/sha256"
 	"debug/pe"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -155,5 +159,52 @@ func TestIsEFIPath(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("isEFIPath(%q) = %v, want %v", tc.path, got, tc.want)
 		}
+	}
+}
+
+func TestFindValidCandidate_DigestValidation(t *testing.T) {
+	dir := t.TempDir()
+
+	validPE := minimalValidPE()
+
+	// Create two valid PE files with different contents (so different hashes)
+	file1 := filepath.Join(dir, "good1.efi")
+	if err := os.WriteFile(file1, validPE, 0o600); err != nil {
+		t.Fatalf("write file1: %v", err)
+	}
+
+	validPE2 := minimalValidPE()
+	validPE2 = append(validPE2, []byte("extra")...)
+	file2 := filepath.Join(dir, "good2.efi")
+	if err := os.WriteFile(file2, validPE2, 0o600); err != nil {
+		t.Fatalf("write file2: %v", err)
+	}
+
+	cv := NewChainVerifier(nil)
+
+	// Pre-calculate hash of file2
+	h := sha256.New()
+	h.Write(validPE2)
+	expectedDigest := fmt.Sprintf("%x", h.Sum(nil))
+
+	cv.WithPinnedDigests(map[string]string{
+		"shim": expectedDigest,
+	})
+
+	status := cv.findValidCandidate("shim", []string{file1, file2})
+	if status.Error != "" {
+		t.Errorf("expected valid candidate to be found, got error: %s", status.Error)
+	}
+
+	// Check if it fails when no digest matches
+	cv.WithPinnedDigests(map[string]string{
+		"shim": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+	})
+	statusFail := cv.findValidCandidate("shim", []string{file1, file2})
+	if statusFail.Error == "" {
+		t.Error("expected error when no digests match")
+	}
+	if !strings.Contains(statusFail.Error, "digest mismatch") {
+		t.Errorf("expected digest mismatch error, got: %v", statusFail.Error)
 	}
 }
