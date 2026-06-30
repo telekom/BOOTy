@@ -112,6 +112,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"report-init", o.reportInit},
 		{"collect-inventory", o.collectInventory},
 		{"collect-firmware", o.collectFirmware},
+		{"capture-bios", o.captureBIOS},
 		{"health-checks", o.runHealthChecks},
 		{"validate-provision-inputs", o.validateProvisionInputs},
 		{"verify-image", o.verifyImageSignature},
@@ -3029,4 +3030,9 @@ func (o *Orchestrator) flushTelemetry(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (o *Orchestrator) captureBIOS(ctx context.Context) error {
+	o.log.Info("capturing BIOS baseline (stub)")
+	return nil
 }
