@@ -149,6 +149,8 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"configure-kubelet", o.configureKubelet},
 		{"configure-grub", o.configureGRUB},
 		{"install-efi-fallback", o.installEFIFallbackLoader},
+		// Validate the final installed boot artifacts after BOOTy has applied
+		// GRUB and EFI fallback mutations, before firmware boot entries point to them.
 		{"verify-secureboot-chain", o.verifySecureBootChain},
 		{"inject-cloudinit", o.injectCloudInit},
 		{"copy-machine-files", o.copyMachineFiles},

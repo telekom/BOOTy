@@ -153,7 +153,7 @@ func validateDigest(path, expected string) error {
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
-			slog.Debug("close artifact after digest validation failed", "path", path, "error", err)
+			slog.Debug("close artifact after digest validation", "path", path, "error", err)
 		}
 	}()
 	h := sha256.New()
