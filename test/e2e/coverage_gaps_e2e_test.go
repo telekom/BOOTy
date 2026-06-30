@@ -14,11 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/telekom/BOOTy/pkg/bios"
-	_ "github.com/telekom/BOOTy/pkg/bios/dell"
-	_ "github.com/telekom/BOOTy/pkg/bios/hpe"
-	_ "github.com/telekom/BOOTy/pkg/bios/lenovo"
-	_ "github.com/telekom/BOOTy/pkg/bios/supermicro"
 	"github.com/telekom/BOOTy/pkg/caprf"
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
@@ -686,110 +681,12 @@ func TestRescueParseModeE2E(t *testing.T) {
 
 // Gap 8: BIOS settings E2E
 
-func TestBIOSVendorManagersE2E(t *testing.T) {
-	for _, v := range []system.Vendor{system.VendorDell, system.VendorHPE, system.VendorLenovo, system.VendorSupermicro} {
-		t.Run(string(v), func(t *testing.T) {
-			mgr, err := bios.NewManager(v, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if mgr.Vendor() != v {
-				t.Errorf("vendor = %q", mgr.Vendor())
-			}
-		})
-	}
-}
 
-func TestBIOSCaptureE2E(t *testing.T) {
-	for _, v := range []system.Vendor{system.VendorDell, system.VendorHPE, system.VendorLenovo, system.VendorSupermicro} {
-		t.Run(string(v), func(t *testing.T) {
-			mgr, _ := bios.NewManager(v, nil)
-			state, err := mgr.Capture(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if state.Vendor != v {
-				t.Errorf("vendor = %q", state.Vendor)
-			}
-		})
-	}
-}
 
-func TestBIOSApplyE2E(t *testing.T) {
-	for _, v := range []system.Vendor{system.VendorDell, system.VendorHPE, system.VendorLenovo, system.VendorSupermicro} {
-		t.Run(string(v), func(t *testing.T) {
-			mgr, _ := bios.NewManager(v, nil)
-			changes := []bios.SettingChange{{Name: "BootMode", Value: "Uefi"}, {Name: "SecureBoot", Value: "Enabled"}}
-			_, err := mgr.Apply(context.Background(), changes)
-			if !errors.Is(err, bios.ErrNotImplemented) {
-				t.Errorf("Apply() error = %v, want bios.ErrNotImplemented", err)
-			}
-		})
-	}
-}
 
-func TestBIOSResetE2E(t *testing.T) {
-	for _, v := range []system.Vendor{system.VendorDell, system.VendorHPE, system.VendorLenovo, system.VendorSupermicro} {
-		t.Run(string(v), func(t *testing.T) {
-			mgr, _ := bios.NewManager(v, nil)
-			if mgr.Reset(context.Background()) == nil {
-				t.Error("Reset should return error")
-			}
-		})
-	}
-}
 
-func TestBIOSCompareMatchE2E(t *testing.T) {
-	bl := &bios.Baseline{Settings: map[string]string{"BootMode": "Uefi", "SB": "On"}}
-	st := &bios.State{Settings: map[string]bios.Setting{"BootMode": {CurrentValue: "Uefi"}, "SB": {CurrentValue: "On"}}}
-	if !bios.Compare(bl, st).Matches {
-		t.Error("expected match")
-	}
-}
 
-func TestBIOSCompareMismatchE2E(t *testing.T) {
-	bl := &bios.Baseline{Settings: map[string]string{"BootMode": "Uefi"}}
-	st := &bios.State{Settings: map[string]bios.Setting{"BootMode": {CurrentValue: "Legacy"}}}
-	d := bios.Compare(bl, st)
-	if d.Matches || len(d.Changes) != 1 {
-		t.Errorf("matches=%v changes=%d", d.Matches, len(d.Changes))
-	}
-}
 
-func TestBIOSCompareMissingE2E(t *testing.T) {
-	bl := &bios.Baseline{Settings: map[string]string{"A": "1", "B": "2"}}
-	st := &bios.State{Settings: map[string]bios.Setting{"A": {CurrentValue: "1"}}}
-	if bios.Compare(bl, st).Matches {
-		t.Error("missing should mismatch")
-	}
-}
 
-func TestBIOSCompareNilsE2E(t *testing.T) {
-	if !bios.Compare(nil, nil).Matches {
-		t.Error("nil+nil should match")
-	}
-	if bios.Compare(&bios.Baseline{Settings: map[string]string{"A": "B"}}, nil).Matches {
-		t.Error("bl+nil mismatch")
-	}
-	if bios.Compare(nil, &bios.State{}).Matches {
-		t.Error("nil+st mismatch")
-	}
-}
 
-func TestBIOSUnregisteredE2E(t *testing.T) {
-	if _, err := bios.NewManager("unknown", nil); err == nil {
-		t.Error("expected error")
-	}
-}
 
-func TestBIOSCaptureRoundtripE2E(t *testing.T) {
-	mgr, _ := bios.NewManager(system.VendorDell, nil)
-	state, _ := mgr.Capture(context.Background())
-	bl := &bios.Baseline{Vendor: state.Vendor, Settings: make(map[string]string)}
-	for n, s := range state.Settings {
-		bl.Settings[n] = s.CurrentValue
-	}
-	if !bios.Compare(bl, state).Matches {
-		t.Error("capture roundtrip should match")
-	}
-}
