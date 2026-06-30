@@ -163,16 +163,16 @@ func TestStaticIPNetworkingQEMU(t *testing.T) {
 	baseURL, targetDisk := prepareProvisionAssets(t)
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":           "static-ip-node",
+		"HOSTNAME":                  "static-ip-node",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":              baseURL + "/image.gz",
-		"MODE":               "provision",
-		"DISK_DEVICE":        "/dev/vda",
-		"STATIC_IP":          "10.0.2.15/24",
-		"STATIC_GATEWAY":     "10.0.2.2",
-		"STATIC_IFACE":       "eth0",
-		"INSECURE_TRANSPORT": "true",
-		"INIT_URL":           baseURL + "/status/init",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
+		"STATIC_IP":                 "10.0.2.15/24",
+		"STATIC_GATEWAY":            "10.0.2.2",
+		"STATIC_IFACE":              "eth0",
+		"INSECURE_TRANSPORT":        "true",
+		"INIT_URL":                  baseURL + "/status/init",
 	})
 
 	kernel := findKernel(t)
@@ -210,17 +210,17 @@ func TestBondFormationQEMU(t *testing.T) {
 	baseURL, targetDisk := prepareProvisionAssets(t)
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":           "bond-test-node",
+		"HOSTNAME":                  "bond-test-node",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":              baseURL + "/image.gz",
-		"MODE":               "provision",
-		"DISK_DEVICE":        "/dev/vda",
-		"BOND_INTERFACES":    "eth0,eth1",
-		"BOND_MODE":          "active-backup",
-		"STATIC_IP":          "10.0.2.15/24",
-		"STATIC_GATEWAY":     "10.0.2.2",
-		"INSECURE_TRANSPORT": "true",
-		"INIT_URL":           baseURL + "/status/init",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
+		"BOND_INTERFACES":           "eth0,eth1",
+		"BOND_MODE":                 "active-backup",
+		"STATIC_IP":                 "10.0.2.15/24",
+		"STATIC_GATEWAY":            "10.0.2.2",
+		"INSECURE_TRANSPORT":        "true",
+		"INIT_URL":                  baseURL + "/status/init",
 	})
 
 	kernel := findKernel(t)
@@ -260,17 +260,17 @@ func TestVLANConfigurationQEMU(t *testing.T) {
 	baseURL, targetDisk := prepareProvisionAssets(t)
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":           "vlan-test-node",
+		"HOSTNAME":                  "vlan-test-node",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":              baseURL + "/image.gz",
-		"MODE":               "provision",
-		"DISK_DEVICE":        "/dev/vda",
-		"VLANS":              "100:eth0:10.100.0.1/24",
-		"STATIC_IP":          "10.0.2.15/24",
-		"STATIC_GATEWAY":     "10.0.2.2",
-		"STATIC_IFACE":       "eth0",
-		"INSECURE_TRANSPORT": "true",
-		"INIT_URL":           baseURL + "/status/init",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
+		"VLANS":                     "100:eth0:10.100.0.1/24",
+		"STATIC_IP":                 "10.0.2.15/24",
+		"STATIC_GATEWAY":            "10.0.2.2",
+		"STATIC_IFACE":              "eth0",
+		"INSECURE_TRANSPORT":        "true",
+		"INIT_URL":                  baseURL + "/status/init",
 	})
 
 	kernel := findKernel(t)
@@ -313,13 +313,13 @@ func TestDHCPFallbackQEMU(t *testing.T) {
 	// Intentionally no STATIC_IP, no BOND_INTERFACES, no FRR/GoBGP vars.
 	// BOOTy should detect the absence and use DHCP mode.
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":           "dhcp-fallback-node",
+		"HOSTNAME":                  "dhcp-fallback-node",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":              baseURL + "/image.gz",
-		"MODE":               "provision",
-		"DISK_DEVICE":        "/dev/vda",
-		"INSECURE_TRANSPORT": "true",
-		"INIT_URL":           baseURL + "/status/init",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
+		"INSECURE_TRANSPORT":        "true",
+		"INIT_URL":                  baseURL + "/status/init",
 	})
 
 	kernel := findKernel(t)
@@ -366,19 +366,19 @@ func TestGoBGPModeDetectionQEMU(t *testing.T) {
 	baseURL, targetDisk := prepareProvisionAssets(t)
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":           "gobgp-detect-node",
+		"HOSTNAME":                  "gobgp-detect-node",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":              baseURL + "/image.gz",
-		"MODE":               "provision",
-		"DISK_DEVICE":        "/dev/vda",
-		"NETWORK_MODE":       "gobgp",
-		"underlay_ip":        "10.0.0.20",
-		"asn_server":         "65001",
-		"provision_vni":      "100",
-		"provision_ip":       "10.100.0.20/24",
-		"provision_gateway":  "10.100.0.1",
-		"INSECURE_TRANSPORT": "true",
-		"INIT_URL":           baseURL + "/status/init",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
+		"NETWORK_MODE":              "gobgp",
+		"underlay_ip":               "10.0.0.20",
+		"asn_server":                "65001",
+		"provision_vni":             "100",
+		"provision_ip":              "10.100.0.20/24",
+		"provision_gateway":         "10.100.0.1",
+		"INSECURE_TRANSPORT":        "true",
+		"INIT_URL":                  baseURL + "/status/init",
 	})
 
 	kernel := findKernel(t)
@@ -422,18 +422,18 @@ func TestFRRModeDetectionQEMU(t *testing.T) {
 	// FRR mode is detected when underlay_subnet + asn_server are present
 	// and NETWORK_MODE is NOT "gobgp".
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":           "frr-detect-node",
+		"HOSTNAME":                  "frr-detect-node",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":              baseURL + "/image.gz",
-		"MODE":               "provision",
-		"DISK_DEVICE":        "/dev/vda",
-		"underlay_subnet":    "10.0.0.0/24",
-		"asn_server":         "65001",
-		"provision_vni":      "100",
-		"overlay_subnet":     "fd00::/64",
-		"dns_resolver":       "8.8.8.8",
-		"INSECURE_TRANSPORT": "true",
-		"INIT_URL":           baseURL + "/status/init",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
+		"underlay_subnet":           "10.0.0.0/24",
+		"asn_server":                "65001",
+		"provision_vni":             "100",
+		"overlay_subnet":            "fd00::/64",
+		"dns_resolver":              "8.8.8.8",
+		"INSECURE_TRANSPORT":        "true",
+		"INIT_URL":                  baseURL + "/status/init",
 	})
 
 	kernel := findKernel(t)
@@ -474,17 +474,17 @@ func TestMultipleVLANsQEMU(t *testing.T) {
 	baseURL, targetDisk := prepareProvisionAssets(t)
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":           "multi-vlan-node",
+		"HOSTNAME":                  "multi-vlan-node",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":              baseURL + "/image.gz",
-		"MODE":               "provision",
-		"DISK_DEVICE":        "/dev/vda",
-		"VLANS":              "100:eth0:10.100.0.1/24,200:eth0:10.200.0.1/24",
-		"STATIC_IP":          "10.0.2.15/24",
-		"STATIC_GATEWAY":     "10.0.2.2",
-		"STATIC_IFACE":       "eth0",
-		"INSECURE_TRANSPORT": "true",
-		"INIT_URL":           baseURL + "/status/init",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
+		"VLANS":                     "100:eth0:10.100.0.1/24,200:eth0:10.200.0.1/24",
+		"STATIC_IP":                 "10.0.2.15/24",
+		"STATIC_GATEWAY":            "10.0.2.2",
+		"STATIC_IFACE":              "eth0",
+		"INSECURE_TRANSPORT":        "true",
+		"INIT_URL":                  baseURL + "/status/init",
 	})
 
 	kernel := findKernel(t)
@@ -534,17 +534,17 @@ func TestBondModeSelectionQEMU(t *testing.T) {
 	baseURL, targetDisk := prepareProvisionAssets(t)
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":           "bond-rr-node",
+		"HOSTNAME":                  "bond-rr-node",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":              baseURL + "/image.gz",
-		"MODE":               "provision",
-		"DISK_DEVICE":        "/dev/vda",
-		"BOND_INTERFACES":    "eth0,eth1",
-		"BOND_MODE":          "balance-rr",
-		"STATIC_IP":          "10.0.2.15/24",
-		"STATIC_GATEWAY":     "10.0.2.2",
-		"INSECURE_TRANSPORT": "true",
-		"INIT_URL":           baseURL + "/status/init",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
+		"BOND_INTERFACES":           "eth0,eth1",
+		"BOND_MODE":                 "balance-rr",
+		"STATIC_IP":                 "10.0.2.15/24",
+		"STATIC_GATEWAY":            "10.0.2.2",
+		"INSECURE_TRANSPORT":        "true",
+		"INIT_URL":                  baseURL + "/status/init",
 	})
 
 	kernel := findKernel(t)

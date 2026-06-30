@@ -1243,6 +1243,82 @@ IMAGE_CHECKSUM_TYPE="sha256"
 	}
 }
 
+func TestParseVarsSecureBootPinnedDigests(t *testing.T) {
+	input := `SECUREBOOT_SHIM_SHA256="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+SECUREBOOT_GRUB_SHA256="sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+SECUREBOOT_KERNEL_SHA256="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := cfg.Provision.SecureBoot.PinnedDigests
+	if got["shim"] != strings.Repeat("a", 64) {
+		t.Errorf("shim digest = %q", got["shim"])
+	}
+	if got["grub"] != "sha256:"+strings.Repeat("b", 64) {
+		t.Errorf("grub digest = %q", got["grub"])
+	}
+	if got["kernel"] != strings.Repeat("c", 64) {
+		t.Errorf("kernel digest = %q", got["kernel"])
+	}
+}
+
+func TestParseVarsSecureBootPinnedDigestsJSON(t *testing.T) {
+	input := `SECUREBOOT_PINNED_DIGESTS='{"shim":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","grub":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}'
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := cfg.Provision.SecureBoot.PinnedDigests
+	if got["shim"] != strings.Repeat("a", 64) {
+		t.Errorf("shim digest = %q", got["shim"])
+	}
+	if got["grub"] != strings.Repeat("b", 64) {
+		t.Errorf("grub digest = %q", got["grub"])
+	}
+}
+
+func TestParseVarsSecureBootPinnedDigestsJSONDoesNotOverrideComponentPins(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{
+			name: "json before component pin",
+			input: `SECUREBOOT_PINNED_DIGESTS='{"shim":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","grub":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","kernel":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}'
+SECUREBOOT_KERNEL_SHA256="dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+`,
+		},
+		{
+			name: "json after component pin",
+			input: `SECUREBOOT_KERNEL_SHA256="dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+SECUREBOOT_PINNED_DIGESTS='{"shim":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","grub":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","kernel":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}'
+`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := ParseVars(strings.NewReader(tc.input))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := cfg.Provision.SecureBoot.PinnedDigests
+			if got["shim"] != strings.Repeat("a", 64) {
+				t.Errorf("shim digest = %q", got["shim"])
+			}
+			if got["grub"] != strings.Repeat("b", 64) {
+				t.Errorf("grub digest = %q", got["grub"])
+			}
+			if got["kernel"] != strings.Repeat("d", 64) {
+				t.Errorf("kernel digest = %q", got["kernel"])
+			}
+		})
+	}
+}
+
 func TestParseVarsSysextConfig(t *testing.T) {
 	input := `SYSEXT_ENABLED="true"
 SYSEXT_DEFAULT_MODE="preload"

@@ -4,6 +4,9 @@ package provision
 
 import (
 	"context"
+	"crypto/sha256"
+	"debug/pe"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -874,7 +878,7 @@ func TestMountBootAndSharedDataStepsPrecedeProvisioningWrites(t *testing.T) {
 	for i, step := range steps {
 		indices[step.Name] = i
 	}
-	for _, name := range []string{"mount-root", "mount-boot", "mount-shared-data", "copy-provisioner-files", "apply-sysexts", "configure-grub", "install-efi-fallback", "create-efi-boot-entry", "teardown-chroot"} {
+	for _, name := range []string{"mount-root", "mount-boot", "mount-shared-data", "copy-provisioner-files", "apply-sysexts", "configure-grub", "install-efi-fallback", "verify-secureboot-chain", "create-efi-boot-entry", "teardown-chroot"} {
 		if _, ok := indices[name]; !ok {
 			t.Fatalf("missing step %q", name)
 		}
@@ -885,7 +889,8 @@ func TestMountBootAndSharedDataStepsPrecedeProvisioningWrites(t *testing.T) {
 		indices["mount-shared-data"] >= indices["apply-sysexts"] ||
 		indices["apply-sysexts"] >= indices["configure-grub"] ||
 		indices["configure-grub"] >= indices["install-efi-fallback"] ||
-		indices["install-efi-fallback"] >= indices["create-efi-boot-entry"] ||
+		indices["install-efi-fallback"] >= indices["verify-secureboot-chain"] ||
+		indices["verify-secureboot-chain"] >= indices["create-efi-boot-entry"] ||
 		indices["create-efi-boot-entry"] >= indices["teardown-chroot"] {
 		t.Fatalf("unexpected boot mount ordering: %#v", indices)
 	}
@@ -4605,6 +4610,143 @@ func TestShouldKeepTargetRootMountedForKexecMatchesKexecGates(t *testing.T) {
 	if ShouldKeepTargetRootMountedForKexec(&config.MachineConfig{}, true) {
 		t.Fatal("firmware changes requiring reboot must not keep target root mounted")
 	}
+}
+
+type telemetryProvider struct {
+	mockProvider
+	metricsReports int
+	eventReports   int
+}
+
+func (p *telemetryProvider) ReportMetrics(_ context.Context, data []byte) error {
+	if len(data) == 0 {
+		return fmt.Errorf("empty metrics payload")
+	}
+	p.metricsReports++
+	return nil
+}
+
+func (p *telemetryProvider) SendEvent(_ context.Context, data []byte) error {
+	if len(data) == 0 {
+		return fmt.Errorf("empty event payload")
+	}
+	p.eventReports++
+	return nil
+}
+
+func TestNewOrchestratorInitializesTelemetry(t *testing.T) {
+	provider := &telemetryProvider{}
+	o := NewOrchestrator(&config.MachineConfig{}, provider, disk.NewManager(newMockCommander()))
+
+	if o.collector == nil {
+		t.Fatal("collector is nil")
+	}
+	if o.emitter == nil {
+		t.Fatal("emitter is nil")
+	}
+	o.emitter.Emit("provision.completed", "", "done", 1)
+	o.flushTelemetry(context.Background())
+
+	if provider.metricsReports != 1 {
+		t.Fatalf("metrics reports = %d, want 1", provider.metricsReports)
+	}
+	if provider.eventReports != 1 {
+		t.Fatalf("event reports = %d, want 1", provider.eventReports)
+	}
+}
+
+func TestFlushTelemetryHandlesNilCollectorAndEmitter(t *testing.T) {
+	provider := &telemetryProvider{}
+	o := NewOrchestrator(&config.MachineConfig{}, provider, disk.NewManager(newMockCommander()))
+	o.collector = nil
+	o.emitter = nil
+
+	o.flushTelemetry(context.Background())
+
+	if provider.metricsReports != 0 {
+		t.Fatalf("metrics reports = %d, want 0", provider.metricsReports)
+	}
+	if provider.eventReports != 0 {
+		t.Fatalf("event reports = %d, want 0", provider.eventReports)
+	}
+}
+
+func TestVerifySecureBootChainEnforcesPinnedDigests(t *testing.T) {
+	root := t.TempDir()
+	withSecureBootRoot(t, root)
+	writeSecureBootArtifact(t, root, "/boot/efi/EFI/BOOT/BOOTX64.EFI", minimalProvisionPE())
+	writeSecureBootArtifact(t, root, "/boot/efi/EFI/ubuntu/grubx64.efi", minimalProvisionPE())
+	writeSecureBootArtifact(t, root, "/boot/vmlinuz", []byte("trusted kernel"))
+
+	shimSum := sha256.Sum256(minimalProvisionPE())
+	grubSum := sha256.Sum256(minimalProvisionPE())
+	kernelSum := sha256.Sum256([]byte("trusted kernel"))
+	cfg := &config.MachineConfig{}
+	cfg.Provision.SecureBoot.PinnedDigests = map[string]string{
+		"shim":   fmt.Sprintf("%x", shimSum[:]),
+		"grub":   "sha256:" + fmt.Sprintf("%x", grubSum[:]),
+		"kernel": fmt.Sprintf("%x", kernelSum[:]),
+	}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+	if err := o.verifySecureBootChain(context.Background()); err != nil {
+		t.Fatalf("verifySecureBootChain() = %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "boot", "vmlinuz"), []byte("tampered kernel"), 0o600); err != nil {
+		t.Fatalf("tamper kernel: %v", err)
+	}
+	err := o.verifySecureBootChain(context.Background())
+	if err == nil {
+		t.Fatal("verifySecureBootChain() error = nil, want digest mismatch")
+	}
+	if !strings.Contains(err.Error(), "kernel: validation failed") {
+		t.Fatalf("verifySecureBootChain() error = %q, want kernel validation failure", err.Error())
+	}
+}
+
+func withSecureBootRoot(t *testing.T, root string) {
+	t.Helper()
+	old := secureBootRoot
+	secureBootRoot = root
+	t.Cleanup(func() { secureBootRoot = old })
+}
+
+func writeSecureBootArtifact(t *testing.T, root, path string, data []byte) {
+	t.Helper()
+	fullPath := filepath.Join(root, strings.TrimPrefix(path, "/"))
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		t.Fatalf("mkdir artifact parent: %v", err)
+	}
+	if err := os.WriteFile(fullPath, data, 0o600); err != nil {
+		t.Fatalf("write artifact %s: %v", path, err)
+	}
+}
+
+func minimalProvisionPE() []byte {
+	const (
+		dosStubSize   = 64
+		peSignature   = 4
+		coffHdrSize   = 20
+		optHdrOffset  = dosStubSize + peSignature + coffHdrSize
+		optHeaderSize = 112
+		magicPE32Plus = uint16(0x020b)
+	)
+	machine := uint16(pe.IMAGE_FILE_MACHINE_AMD64)
+	if runtime.GOARCH == "arm64" {
+		machine = pe.IMAGE_FILE_MACHINE_ARM64
+	}
+	buf := make([]byte, optHdrOffset+optHeaderSize)
+	buf[0] = 'M'
+	buf[1] = 'Z'
+	binary.LittleEndian.PutUint32(buf[0x3c:], dosStubSize)
+	copy(buf[dosStubSize:], []byte("PE\x00\x00"))
+	coffBase := dosStubSize + peSignature
+	binary.LittleEndian.PutUint16(buf[coffBase:], machine)
+	binary.LittleEndian.PutUint16(buf[coffBase+16:], optHeaderSize)
+	binary.LittleEndian.PutUint16(buf[coffBase+18:], 0x0002)
+	binary.LittleEndian.PutUint16(buf[optHdrOffset:], magicPE32Plus)
+	return buf
 }
 
 func TestValidateProvisionInputsHTTPInsecure(t *testing.T) {

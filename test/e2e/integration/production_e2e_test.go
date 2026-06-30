@@ -25,12 +25,12 @@ import (
 const (
 	prodLabPrefix = "clab-booty-production-lab"
 
-	prodSpineContainer = prodLabPrefix + "-spine01"
-	prodDCGWContainer  = prodLabPrefix + "-dcgw01"
-	prodBootyContainer = prodLabPrefix + "-booty-prod"
+	prodSpineContainer  = prodLabPrefix + "-spine01"
+	prodDCGWContainer   = prodLabPrefix + "-dcgw01"
+	prodBootyContainer  = prodLabPrefix + "-booty-prod"
 	prodClientContainer = prodLabPrefix + "-client"
-	prodNginxContainer = prodLabPrefix + "-nginx"
-	prodCAPRFContainer = prodLabPrefix + "-caprf-mock"
+	prodNginxContainer  = prodLabPrefix + "-nginx"
+	prodCAPRFContainer  = prodLabPrefix + "-caprf-mock"
 
 	prodBGPConvergeTimeout  = 90 * time.Second
 	prodBGPConvergeInterval = 2 * time.Second

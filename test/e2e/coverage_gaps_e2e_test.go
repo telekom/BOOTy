@@ -5,7 +5,6 @@ package e2e
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,7 +19,6 @@ import (
 	"github.com/telekom/BOOTy/pkg/efi"
 	"github.com/telekom/BOOTy/pkg/provision"
 	"github.com/telekom/BOOTy/pkg/rescue"
-	"github.com/telekom/BOOTy/pkg/system"
 )
 
 // parseTestVars is a helper for dry-run tests.
@@ -287,7 +285,7 @@ func TestRAIDLVMProvisionOrderE2E(t *testing.T) {
 		Network:  config.NetworkConfig{DNSResolvers: "8.8.8.8"},
 		Provision: config.ProvisionConfig{
 			TargetOS: config.TargetOSLinux,
-			Image:    config.ImageConfig{URLs: []string{startE2ERawImageServer(t)}},
+			Image:    config.ImageConfig{URLs: []string{startE2ERawImageServer(t)}, AllowInsecureHTTP: true},
 		},
 	}
 	orch := provision.NewOrchestrator(cfg, newMockProvider(cfg), disk.NewManager(cmd))
@@ -680,13 +678,3 @@ func TestRescueParseModeE2E(t *testing.T) {
 }
 
 // Gap 8: BIOS settings E2E
-
-
-
-
-
-
-
-
-
-

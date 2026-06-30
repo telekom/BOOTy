@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/telekom/BOOTy/pkg/telemetry"
 	"log/slog"
 	"net/url"
 	"os"
@@ -23,6 +22,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/cloudinit"
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
+	"github.com/telekom/BOOTy/pkg/efi"
 	"github.com/telekom/BOOTy/pkg/executil"
 	"github.com/telekom/BOOTy/pkg/firmware"
 	"github.com/telekom/BOOTy/pkg/health"
@@ -31,6 +31,8 @@ import (
 	"github.com/telekom/BOOTy/pkg/network"
 	networkpersist "github.com/telekom/BOOTy/pkg/network/persist"
 	"github.com/telekom/BOOTy/pkg/rescue"
+	"github.com/telekom/BOOTy/pkg/secureboot"
+	"github.com/telekom/BOOTy/pkg/telemetry"
 )
 
 var readProcCmdline = func() ([]byte, error) {
@@ -44,6 +46,7 @@ var (
 	collectFirmwareFn  = firmware.Collect
 	validateFirmwareFn = firmware.Validate
 	probeOCIReference  = image.ProbeOCIReference
+	secureBootRoot     = newroot
 	mountBootPart      = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
 		return mgr.MountPartition(ctx, device, mountpoint)
 	}
@@ -98,11 +101,13 @@ type Orchestrator struct {
 // NewOrchestrator creates an Orchestrator with the given dependencies.
 func NewOrchestrator(cfg *config.MachineConfig, provider config.Provider, diskMgr *disk.Manager) *Orchestrator {
 	return &Orchestrator{
-		cfg:      cfg,
-		provider: provider,
-		disk:     diskMgr,
-		config:   NewConfigurator(diskMgr),
-		log:      slog.Default().With("component", "provision"),
+		cfg:       cfg,
+		provider:  provider,
+		disk:      diskMgr,
+		config:    NewConfigurator(diskMgr),
+		collector: telemetry.NewCollector(),
+		emitter:   telemetry.NewEmitter(),
+		log:       slog.Default().With("component", "provision"),
 	}
 }
 
@@ -144,6 +149,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"configure-kubelet", o.configureKubelet},
 		{"configure-grub", o.configureGRUB},
 		{"install-efi-fallback", o.installEFIFallbackLoader},
+		{"verify-secureboot-chain", o.verifySecureBootChain},
 		{"inject-cloudinit", o.injectCloudInit},
 		{"copy-machine-files", o.copyMachineFiles},
 		{"run-machine-commands", o.runMachineCommands},
@@ -159,8 +165,6 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 	// Ensure final telemetry is always flushed before exit/reboot.
 	// Uses context.Background() because ctx may be canceled during teardown/error.
 	defer o.flushTelemetry(context.Background())
-	// Ensure final telemetry is always flushed before exit/reboot.
-	defer o.flushTelemetry(ctx)
 	steps := o.provisionSteps()
 
 	cp := o.loadOrCreateCheckpoint()
@@ -2049,6 +2053,30 @@ func (o *Orchestrator) mountBoot(ctx context.Context) error {
 	return nil
 }
 
+func (o *Orchestrator) verifySecureBootChain(_ context.Context) error {
+	pins := o.cfg.Provision.SecureBoot.PinnedDigests
+	if len(pins) == 0 {
+		return nil
+	}
+	result, err := secureboot.NewChainVerifier(efi.NewEFIVarReader("")).
+		WithRoot(secureBootRoot).
+		WithPinnedDigests(pins).
+		Verify()
+	if err != nil {
+		return fmt.Errorf("verifying secure boot chain: %w", err)
+	}
+	var failures []string
+	for _, component := range result.Components {
+		if component.Error != "" {
+			failures = append(failures, fmt.Sprintf("%s: %s", component.Name, component.Error))
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("secure boot chain verification failed: %s", strings.Join(failures, "; "))
+	}
+	return nil
+}
+
 type sharedDataMount struct {
 	device     string
 	mountpoint string
@@ -3017,16 +3045,30 @@ func redactURLs(urls []string) []string {
 }
 
 func (o *Orchestrator) flushTelemetry(ctx context.Context) {
+	o.flushMetrics(ctx)
+	o.flushLastEvent(ctx)
+}
+
+func (o *Orchestrator) flushMetrics(ctx context.Context) {
 	if tr, ok := o.provider.(config.TelemetryReporter); ok {
-		if data, err := o.collector.MarshalSummary(); err == nil {
-			_ = tr.ReportMetrics(ctx, data)
-		}
-	}
-	if er, ok := o.provider.(config.EventReporter); ok {
-		if ev := o.emitter.LastEvent(); ev != nil {
-			if data, err := telemetry.MarshalEvent(ev); err == nil {
-				_ = er.SendEvent(ctx, data)
+		if o.collector != nil {
+			if data, err := o.collector.MarshalSummary(); err == nil {
+				_ = tr.ReportMetrics(ctx, data)
 			}
 		}
+	}
+}
+
+func (o *Orchestrator) flushLastEvent(ctx context.Context) {
+	er, ok := o.provider.(config.EventReporter)
+	if !ok || o.emitter == nil {
+		return
+	}
+	ev := o.emitter.LastEvent()
+	if ev == nil {
+		return
+	}
+	if data, err := telemetry.MarshalEvent(ev); err == nil {
+		_ = er.SendEvent(ctx, data)
 	}
 }

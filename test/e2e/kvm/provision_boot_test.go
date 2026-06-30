@@ -38,11 +38,11 @@ func TestProvisionAndBootOS(t *testing.T) {
 	run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":    hostname,
+		"HOSTNAME":                  hostname,
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":       baseURL + "/image.gz",
-		"MODE":        "provision",
-		"DISK_DEVICE": "/dev/vda",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
 	})
 
 	kernel := findKernel(t)

@@ -337,6 +337,10 @@ root is mounted.
 | `CRASH_ARTIFACTS_UPLOAD_TIMEOUT_SEC` | `120` | Timeout for crash artifact prepare/upload requests |
 | `CRASH_ARTIFACTS_INCLUDE_MEMORY_DUMPS` | `false` | Include raw `vmcore` and systemd coredump files; disabled by default because these can contain process memory and secrets |
 | `SECUREBOOT_REENABLE` | `false` | Signal CAPRF to re-enable Secure Boot after provisioning |
+| `SECUREBOOT_SHIM_SHA256` | — | Expected SHA256 digest for the target shim EFI artifact; accepts bare hex or `sha256:<hex>` |
+| `SECUREBOOT_GRUB_SHA256` | — | Expected SHA256 digest for the target GRUB EFI artifact; accepts bare hex or `sha256:<hex>` |
+| `SECUREBOOT_KERNEL_SHA256` | — | Expected SHA256 digest for the target kernel artifact; accepts bare hex or `sha256:<hex>` |
+| `SECUREBOOT_PINNED_DIGESTS` | — | JSON map of component pins keyed by `shim`, `grub`, and `kernel`; individual digest vars override only their component |
 | `MOK_CERT_PATH` | — | *(Phase 2)* Path to DER-encoded MOK certificate for custom kernel signing |
 | `MOK_PASSWORD` | — | *(Phase 2)* One-time password for MokManager confirmation |
 | `IMAGE_CHECKSUM` | — | Expected hex digest of the raw disk image |

@@ -38,17 +38,17 @@ func TestCloudInitInjectionQEMU(t *testing.T) {
 
 	kernel := findKernel(t)
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":             "cloud-init-test",
+		"HOSTNAME":                  "cloud-init-test",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":                baseURL + "/image.gz",
-		"MODE":                 "provision",
-		"DISK_DEVICE":          "/dev/vda",
-		"STATIC_IP":            "10.0.2.15/24",
-		"STATIC_GATEWAY":       "10.0.2.2",
-		"STATIC_IFACE":         "eth0",
-		"INSECURE_TRANSPORT":   "true",
-		"CLOUDINIT_ENABLED":    "true",
-		"CLOUDINIT_DATASOURCE": "nocloud",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
+		"STATIC_IP":                 "10.0.2.15/24",
+		"STATIC_GATEWAY":            "10.0.2.2",
+		"STATIC_IFACE":              "eth0",
+		"INSECURE_TRANSPORT":        "true",
+		"CLOUDINIT_ENABLED":         "true",
+		"CLOUDINIT_DATASOURCE":      "nocloud",
 	})
 
 	output := runQEMUProvision(t, kernel, initramfs, targetDisk, 5*time.Minute)
@@ -108,16 +108,16 @@ func TestPostProvisionCommandsQEMU(t *testing.T) {
 
 	kernel := findKernel(t)
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":            "postcmd-test",
+		"HOSTNAME":                  "postcmd-test",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":               baseURL + "/image.gz",
-		"MODE":                "provision",
-		"DISK_DEVICE":         "/dev/vda",
-		"STATIC_IP":           "10.0.2.15/24",
-		"STATIC_GATEWAY":      "10.0.2.2",
-		"STATIC_IFACE":        "eth0",
-		"INSECURE_TRANSPORT":  "true",
-		"POST_PROVISION_CMDS": "touch /tmp/post-provision-marker;echo done > /tmp/post-provision-result",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
+		"STATIC_IP":                 "10.0.2.15/24",
+		"STATIC_GATEWAY":            "10.0.2.2",
+		"STATIC_IFACE":              "eth0",
+		"INSECURE_TRANSPORT":        "true",
+		"POST_PROVISION_CMDS":       "touch /tmp/post-provision-marker;echo done > /tmp/post-provision-result",
 	})
 
 	output := runQEMUProvision(t, kernel, initramfs, targetDisk, 5*time.Minute)
@@ -169,17 +169,17 @@ func TestImageChecksumPassQEMU(t *testing.T) {
 
 	kernel := findKernel(t)
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":            "checksum-pass-test",
+		"HOSTNAME":                  "checksum-pass-test",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":               baseURL + "/image.gz",
-		"MODE":                "provision",
-		"DISK_DEVICE":         "/dev/vda",
-		"STATIC_IP":           "10.0.2.15/24",
-		"STATIC_GATEWAY":      "10.0.2.2",
-		"STATIC_IFACE":        "eth0",
-		"INSECURE_TRANSPORT":  "true",
-		"IMAGE_CHECKSUM":      checksum,
-		"IMAGE_CHECKSUM_TYPE": "sha256",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
+		"STATIC_IP":                 "10.0.2.15/24",
+		"STATIC_GATEWAY":            "10.0.2.2",
+		"STATIC_IFACE":              "eth0",
+		"INSECURE_TRANSPORT":        "true",
+		"IMAGE_CHECKSUM":            checksum,
+		"IMAGE_CHECKSUM_TYPE":       "sha256",
 	})
 
 	output := runQEMUProvision(t, kernel, initramfs, targetDisk, 5*time.Minute)
@@ -223,17 +223,17 @@ func TestImageChecksumFailQEMU(t *testing.T) {
 
 	kernel := findKernel(t)
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":            "checksum-fail-test",
+		"HOSTNAME":                  "checksum-fail-test",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":               baseURL + "/image.gz",
-		"MODE":                "provision",
-		"DISK_DEVICE":         "/dev/vda",
-		"STATIC_IP":           "10.0.2.15/24",
-		"STATIC_GATEWAY":      "10.0.2.2",
-		"STATIC_IFACE":        "eth0",
-		"INSECURE_TRANSPORT":  "true",
-		"IMAGE_CHECKSUM":      wrongChecksum,
-		"IMAGE_CHECKSUM_TYPE": "sha256",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
+		"STATIC_IP":                 "10.0.2.15/24",
+		"STATIC_GATEWAY":            "10.0.2.2",
+		"STATIC_IFACE":              "eth0",
+		"INSECURE_TRANSPORT":        "true",
+		"IMAGE_CHECKSUM":            wrongChecksum,
+		"IMAGE_CHECKSUM_TYPE":       "sha256",
 	})
 
 	output := runQEMUProvision(t, kernel, initramfs, targetDisk, 4*time.Minute)
@@ -269,18 +269,18 @@ func TestHealthChecksEndpointQEMU(t *testing.T) {
 
 	kernel := findKernel(t)
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":              "health-test",
+		"HOSTNAME":                  "health-test",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":                 mock.guestURL + "/image.gz",
-		"MODE":                  "provision",
-		"DISK_DEVICE":           "/dev/vda",
-		"STATIC_IP":             "10.0.2.15/24",
-		"STATIC_GATEWAY":        "10.0.2.2",
-		"STATIC_IFACE":          "eth0",
-		"INSECURE_TRANSPORT":    "true",
-		"INIT_URL":              mock.guestURL + "/status/init",
-		"HEALTH_CHECKS_ENABLED": "true",
-		"HEALTH_CHECK_URL":      mock.guestURL + "/health",
+		"IMAGE":                     mock.guestURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
+		"STATIC_IP":                 "10.0.2.15/24",
+		"STATIC_GATEWAY":            "10.0.2.2",
+		"STATIC_IFACE":              "eth0",
+		"INSECURE_TRANSPORT":        "true",
+		"INIT_URL":                  mock.guestURL + "/status/init",
+		"HEALTH_CHECKS_ENABLED":     "true",
+		"HEALTH_CHECK_URL":          mock.guestURL + "/health",
 	})
 
 	output := runQEMUProvision(t, kernel, initramfs, targetDisk, 5*time.Minute)
@@ -326,18 +326,18 @@ func TestInventoryCollectionEndpointQEMU(t *testing.T) {
 
 	kernel := findKernel(t)
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":           "inventory-test",
+		"HOSTNAME":                  "inventory-test",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":              mock.guestURL + "/image.gz",
-		"MODE":               "provision",
-		"DISK_DEVICE":        "/dev/vda",
-		"STATIC_IP":          "10.0.2.15/24",
-		"STATIC_GATEWAY":     "10.0.2.2",
-		"STATIC_IFACE":       "eth0",
-		"INSECURE_TRANSPORT": "true",
-		"INIT_URL":           mock.guestURL + "/status/init",
-		"INVENTORY_ENABLED":  "true",
-		"INVENTORY_URL":      mock.guestURL + "/inventory",
+		"IMAGE":                     mock.guestURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
+		"STATIC_IP":                 "10.0.2.15/24",
+		"STATIC_GATEWAY":            "10.0.2.2",
+		"STATIC_IFACE":              "eth0",
+		"INSECURE_TRANSPORT":        "true",
+		"INIT_URL":                  mock.guestURL + "/status/init",
+		"INVENTORY_ENABLED":         "true",
+		"INVENTORY_URL":             mock.guestURL + "/inventory",
 	})
 
 	output := runQEMUProvision(t, kernel, initramfs, targetDisk, 5*time.Minute)
@@ -390,20 +390,20 @@ func TestTelemetryCollectionEndpointQEMU(t *testing.T) {
 
 	kernel := findKernel(t)
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":           "telemetry-test",
+		"HOSTNAME":                  "telemetry-test",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":              mock.guestURL + "/image.gz",
-		"MODE":               "provision",
-		"DISK_DEVICE":        "/dev/vda",
-		"STATIC_IP":          "10.0.2.15/24",
-		"STATIC_GATEWAY":     "10.0.2.2",
-		"STATIC_IFACE":       "eth0",
-		"INSECURE_TRANSPORT": "true",
-		"INIT_URL":           mock.guestURL + "/status/init",
-		"TELEMETRY_ENABLED":  "true",
-		"TELEMETRY_URL":      mock.guestURL + "/telemetry",
-		"METRICS_URL":        mock.guestURL + "/metrics",
-		"EVENT_URL":          mock.guestURL + "/events",
+		"IMAGE":                     mock.guestURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
+		"STATIC_IP":                 "10.0.2.15/24",
+		"STATIC_GATEWAY":            "10.0.2.2",
+		"STATIC_IFACE":              "eth0",
+		"INSECURE_TRANSPORT":        "true",
+		"INIT_URL":                  mock.guestURL + "/status/init",
+		"TELEMETRY_ENABLED":         "true",
+		"TELEMETRY_URL":             mock.guestURL + "/telemetry",
+		"METRICS_URL":               mock.guestURL + "/metrics",
+		"EVENT_URL":                 mock.guestURL + "/events",
 	})
 
 	output := runQEMUProvision(t, kernel, initramfs, targetDisk, 5*time.Minute)
@@ -451,16 +451,16 @@ func TestRescueModeRetryQEMU(t *testing.T) {
 	// Point to an unreachable URL so the image download fails.
 	kernel := findKernel(t)
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":           "rescue-retry-test",
+		"HOSTNAME":                  "rescue-retry-test",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":              "http://10.0.2.2:1/nonexistent.gz",
-		"MODE":               "provision",
-		"DISK_DEVICE":        "/dev/vda",
-		"STATIC_IP":          "10.0.2.15/24",
-		"STATIC_GATEWAY":     "10.0.2.2",
-		"STATIC_IFACE":       "eth0",
-		"INSECURE_TRANSPORT": "true",
-		"RESCUE_MODE":        "retry",
+		"IMAGE":                     "http://10.0.2.2:1/nonexistent.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
+		"STATIC_IP":                 "10.0.2.15/24",
+		"STATIC_GATEWAY":            "10.0.2.2",
+		"STATIC_IFACE":              "eth0",
+		"INSECURE_TRANSPORT":        "true",
+		"RESCUE_MODE":               "retry",
 	})
 
 	// Use a shorter timeout since this will fail and retry.
@@ -524,17 +524,17 @@ func TestDryRunSkipsDiskWritesQEMU(t *testing.T) {
 
 	kernel := findKernel(t)
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":              "dryrun-features-test",
+		"HOSTNAME":                  "dryrun-features-test",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":                 mock.guestURL + "/image.gz",
-		"MODE":                  "dry-run",
-		"DISK_DEVICE":           "/dev/vda",
-		"STATIC_IP":             "10.0.2.15/24",
-		"STATIC_GATEWAY":        "10.0.2.2",
-		"STATIC_IFACE":          "eth0",
-		"INSECURE_TRANSPORT":    "true",
-		"INIT_URL":              mock.guestURL + "/status/init",
-		"HEALTH_CHECKS_ENABLED": "true",
+		"IMAGE":                     mock.guestURL + "/image.gz",
+		"MODE":                      "dry-run",
+		"DISK_DEVICE":               "/dev/vda",
+		"STATIC_IP":                 "10.0.2.15/24",
+		"STATIC_GATEWAY":            "10.0.2.2",
+		"STATIC_IFACE":              "eth0",
+		"INSECURE_TRANSPORT":        "true",
+		"INIT_URL":                  mock.guestURL + "/status/init",
+		"HEALTH_CHECKS_ENABLED":     "true",
 	})
 
 	output := runQEMUProvision(t, kernel, initramfs, targetDisk, 3*time.Minute)

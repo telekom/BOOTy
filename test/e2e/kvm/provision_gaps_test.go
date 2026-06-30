@@ -32,12 +32,12 @@ func TestProvisionCompletesAllSteps(t *testing.T) {
 	run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":     "full-steps-test",
-		"dns_resolver": "8.8.8.8",
+		"HOSTNAME":                  "full-steps-test",
+		"dns_resolver":              "8.8.8.8",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":        baseURL + "/image.gz",
-		"MODE":         "provision",
-		"DISK_DEVICE":  "/dev/vda",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
 	})
 
 	kernel := findKernel(t)
@@ -98,11 +98,11 @@ func TestKexecLoadAndExecute(t *testing.T) {
 	hostKernel := findKernel(t)
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":    "kexec-test",
+		"HOSTNAME":                  "kexec-test",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":       baseURL + "/image.gz",
-		"MODE":        "provision",
-		"DISK_DEVICE": "/dev/vda",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
 	})
 
 	output := runQEMUProvision(t, hostKernel, initramfs, targetDisk, 5*time.Minute)
@@ -125,12 +125,12 @@ func TestKexecLoadAndExecute(t *testing.T) {
 	// Phase 3: Boot BOOTy again with DISABLE_KEXEC=false so it attempts kexec.
 	// BOOTy should parse /boot/grub/grub.cfg, find the kernel, and kexec into it.
 	kexecInitramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":      "kexec-test",
-		"MODE":          "provision",
-		"DISK_DEVICE":   "/dev/vda",
+		"HOSTNAME":                  "kexec-test",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":         baseURL + "/image.gz",
-		"DISABLE_KEXEC": "false",
+		"IMAGE":                     baseURL + "/image.gz",
+		"DISABLE_KEXEC":             "false",
 	})
 
 	kexecOutput := runQEMUProvision(t, hostKernel, kexecInitramfs, targetDisk, 3*time.Minute)
@@ -173,11 +173,11 @@ func TestDeprovisionHardOnRealDisk(t *testing.T) {
 	run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":    "deprov-test",
+		"HOSTNAME":                  "deprov-test",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":       baseURL + "/image.gz",
-		"MODE":        "provision",
-		"DISK_DEVICE": "/dev/vda",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
 	})
 
 	kernel := findKernel(t)
@@ -226,11 +226,11 @@ func TestDeprovisionSoftOnRealDisk(t *testing.T) {
 	run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":    "soft-deprov-test",
+		"HOSTNAME":                  "soft-deprov-test",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":       baseURL + "/image.gz",
-		"MODE":        "provision",
-		"DISK_DEVICE": "/dev/vda",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
 	})
 
 	kernel := findKernel(t)
@@ -278,11 +278,11 @@ func TestImageStreamVerifyContent(t *testing.T) {
 	run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":    "image-verify",
+		"HOSTNAME":                  "image-verify",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":       baseURL + "/image.gz",
-		"MODE":        "provision",
-		"DISK_DEVICE": "/dev/vda",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
 	})
 
 	kernel := findKernel(t)
@@ -324,11 +324,11 @@ func TestDryRunDoesNotModifyDisk(t *testing.T) {
 	hashBefore := fileChecksum(t, targetDisk)
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":    "dryrun-test",
+		"HOSTNAME":                  "dryrun-test",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":       baseURL + "/image.gz",
-		"MODE":        "dry-run",
-		"DISK_DEVICE": "/dev/vda",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "dry-run",
+		"DISK_DEVICE":               "/dev/vda",
 	})
 
 	kernel := findKernel(t)
@@ -377,11 +377,11 @@ func TestUEFIBootloaderInstallAndNativeBoot(t *testing.T) {
 	run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":    "uefi-boot-test",
+		"HOSTNAME":                  "uefi-boot-test",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":       baseURL + "/image.gz",
-		"MODE":        "provision",
-		"DISK_DEVICE": "/dev/vda",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
 	})
 
 	kernel := findKernel(t)
@@ -631,11 +631,11 @@ func TestEFIBootEntryManagementOVMF(t *testing.T) {
 	run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":    "efi-entry-test",
+		"HOSTNAME":                  "efi-entry-test",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":       baseURL + "/image.gz",
-		"MODE":        "provision",
-		"DISK_DEVICE": "/dev/vda",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
 	})
 
 	kernel := findKernel(t)
@@ -686,18 +686,18 @@ func TestNetworkPersistenceStaticIP(t *testing.T) {
 	run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":        "net-persist-test",
+		"HOSTNAME":                  "net-persist-test",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":           baseURL + "/image.gz",
-		"MODE":            "provision",
-		"DISK_DEVICE":     "/dev/vda",
-		"INIT_URL":        baseURL + "/status/init",
-		"STATIC_IP":       "10.0.2.15/24",
-		"STATIC_GATEWAY":  "10.0.2.2",
-		"STATIC_IFACE":    "eth0",
-		"dns_resolver":    "8.8.8.8,1.1.1.1",
-		"PERSIST_NETWORK": "true",
-		"OS_FAMILY":       "ubuntu",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
+		"INIT_URL":                  baseURL + "/status/init",
+		"STATIC_IP":                 "10.0.2.15/24",
+		"STATIC_GATEWAY":            "10.0.2.2",
+		"STATIC_IFACE":              "eth0",
+		"dns_resolver":              "8.8.8.8,1.1.1.1",
+		"PERSIST_NETWORK":           "true",
+		"OS_FAMILY":                 "ubuntu",
 	})
 
 	kernel := findKernel(t)
