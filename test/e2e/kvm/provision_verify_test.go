@@ -30,12 +30,12 @@ func TestProvisionVerifyHostnameAndDNS(t *testing.T) {
 	run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":     hostname,
-		"dns_resolver": dnsResolvers,
+		"HOSTNAME":                  hostname,
+		"dns_resolver":              dnsResolvers,
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":        baseURL + "/image.gz",
-		"MODE":         "provision",
-		"DISK_DEVICE":  "/dev/vda",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
 	})
 
 	kernel := findKernel(t)
@@ -78,7 +78,7 @@ func TestProvisionVerifyGRUBKernelParams(t *testing.T) {
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
 		"HOSTNAME":                    "grub-test",
-		"IMAGE_ALLOW_INSECURE_HTTP": "true",
+		"IMAGE_ALLOW_INSECURE_HTTP":   "true",
 		"IMAGE":                       baseURL + "/image.gz",
 		"MODE":                        "provision",
 		"DISK_DEVICE":                 "/dev/vda",
@@ -122,14 +122,14 @@ func TestProvisionVerifyKubeletConfig(t *testing.T) {
 	run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
 
 	initramfs := buildProvisionInitramfs(t, map[string]string{
-		"HOSTNAME":       "kubelet-test",
+		"HOSTNAME":                  "kubelet-test",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":          baseURL + "/image.gz",
-		"MODE":           "provision",
-		"DISK_DEVICE":    "/dev/vda",
-		"PROVIDER_ID":    "redfish://10.0.0.1/Systems/1",
-		"FAILURE_DOMAIN": "az-1",
-		"REGION":         "eu-central",
+		"IMAGE":                     baseURL + "/image.gz",
+		"MODE":                      "provision",
+		"DISK_DEVICE":               "/dev/vda",
+		"PROVIDER_ID":               "redfish://10.0.0.1/Systems/1",
+		"FAILURE_DOMAIN":            "az-1",
+		"REGION":                    "eu-central",
 	})
 
 	kernel := findKernel(t)

@@ -886,6 +886,9 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 	if applyNetworkStringVar(cfg, key, value) {
 		return true
 	}
+	if applySecureBootDigestVar(cfg, key, value) {
+		return true
+	}
 
 	strFields := map[string]*string{
 		"HOSTNAME":                    &cfg.Hostname,
@@ -949,6 +952,23 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		return true
 	}
 	return false
+}
+
+func applySecureBootDigestVar(cfg *config.MachineConfig, key, value string) bool {
+	components := map[string]string{
+		"SECUREBOOT_SHIM_SHA256":   "shim",
+		"SECUREBOOT_GRUB_SHA256":   "grub",
+		"SECUREBOOT_KERNEL_SHA256": "kernel",
+	}
+	component, ok := components[key]
+	if !ok {
+		return false
+	}
+	if cfg.Provision.SecureBoot.PinnedDigests == nil {
+		cfg.Provision.SecureBoot.PinnedDigests = make(map[string]string)
+	}
+	cfg.Provision.SecureBoot.PinnedDigests[component] = value
+	return true
 }
 
 func applyNetworkStringVar(cfg *config.MachineConfig, key, value string) bool {
@@ -1038,6 +1058,12 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) error {
 			return fmt.Errorf("invalid SYSEXT_LAYERS: %w", err)
 		}
 		cfg.Provision.Sysext.Layers = layers
+	case "SECUREBOOT_PINNED_DIGESTS":
+		var digests map[string]string
+		if err := unmarshalJSONVar(value, &digests); err != nil {
+			return fmt.Errorf("invalid SECUREBOOT_PINNED_DIGESTS: %w", err)
+		}
+		mergeSecureBootPinnedDigests(cfg, digests)
 	case "AB_DATA_PARTITIONS":
 		var partitions []config.ABDataPartition
 		if err := unmarshalJSONVar(value, &partitions); err != nil {
@@ -1051,6 +1077,17 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) error {
 	}
 
 	return nil
+}
+
+func mergeSecureBootPinnedDigests(cfg *config.MachineConfig, digests map[string]string) {
+	if cfg.Provision.SecureBoot.PinnedDigests == nil {
+		cfg.Provision.SecureBoot.PinnedDigests = make(map[string]string, len(digests))
+	}
+	for component, digest := range digests {
+		if _, exists := cfg.Provision.SecureBoot.PinnedDigests[component]; !exists {
+			cfg.Provision.SecureBoot.PinnedDigests[component] = digest
+		}
+	}
 }
 
 func unmarshalJSONVar(value string, target any) error {
@@ -1129,7 +1166,14 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) (bool, error)
 	if applyCrashArtifactsBoolVar(cfg, key, value) {
 		return true, nil
 	}
+	if applyCoreBoolVar(cfg, key, value) {
+		return true, nil
+	}
 
+	return applyFeatureToggle(cfg, key, value)
+}
+
+func applyCoreBoolVar(cfg *config.MachineConfig, key, value string) bool {
 	switch key {
 	case "DISABLE_KEXEC":
 		cfg.Provision.DisableKexec = parseBoolVar(value)
@@ -1154,9 +1198,9 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) (bool, error)
 	case "AB_PRESERVE_EXISTING":
 		cfg.Provision.AB.PreserveExisting = parseBoolVar(value)
 	default:
-		return applyFeatureToggle(cfg, key, value)
+		return false
 	}
-	return true, nil
+	return true
 }
 
 func applyProvisionImageBoolVar(cfg *config.MachineConfig, key, value string) bool {

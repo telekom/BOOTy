@@ -441,6 +441,7 @@ func loadModule(path string) error {
 func flushObservability() {
 	if originalSlogHandler != nil {
 		slog.SetDefault(slog.New(originalSlogHandler))
+		originalSlogHandler = nil
 	}
 	if caprfRemoteLogHandler != nil {
 		caprfRemoteLogHandler.Close()
@@ -496,7 +497,8 @@ func runCAPRF(ctx context.Context) {
 	// Wire remote log shipping.
 	if cfg.Transport.LogURL != "" {
 		originalSlogHandler = slog.Default().Handler()
-		caprfRemoteLogHandler = caprf.NewRemoteHandler(client, slog.Default().Handler(), slog.LevelInfo, 256)
+		remoteInner := slog.NewTextHandler(os.Stderr, nil)
+		caprfRemoteLogHandler = caprf.NewRemoteHandler(client, remoteInner, slog.LevelInfo, 256)
 		defer flushObservability()
 		slog.SetDefault(slog.New(caprfRemoteLogHandler))
 	}
@@ -1203,17 +1205,46 @@ func resolveKexecPath(root, grubPath string) string {
 		candidates = append(candidates, pathInRoot(filepath.Join(root, "boot"), path))
 	}
 	for _, candidate := range candidates {
-		info, err := os.Stat(candidate)
-		if err == nil && info.Mode().IsRegular() {
-			return candidate
+		resolved, ok, unsafe := resolveKexecCandidate(root, candidate)
+		if ok {
+			return resolved
+		}
+		if unsafe {
+			return ""
 		}
 	}
 	return candidates[0]
 }
 
+func resolveKexecCandidate(root, candidate string) (resolved string, ok, unsafe bool) {
+	if !pathIsWithinRoot(root, candidate) {
+		return "", false, true
+	}
+	if _, err := os.Lstat(candidate); err != nil { //nolint:gosec // candidate is normalized and checked to stay under the mounted target root before lstat.
+		return "", false, !os.IsNotExist(err)
+	}
+	resolved, err := filepath.EvalSymlinks(candidate) //nolint:gosec // resolved symlink target is rechecked against the mounted target root before use.
+	if err != nil {
+		return "", false, true
+	}
+	if !pathIsWithinRoot(root, resolved) {
+		return "", false, true
+	}
+	info, err := os.Stat(resolved) //nolint:gosec // resolved has been evaluated and checked to stay under the mounted target root.
+	if err == nil && info.Mode().IsRegular() {
+		return resolved, true, false
+	}
+	return "", false, false
+}
+
 func pathInRoot(root, path string) string {
 	cleaned := filepath.Clean("/" + strings.TrimSpace(path))
 	return filepath.Join(root, strings.TrimPrefix(cleaned, "/"))
+}
+
+func pathIsWithinRoot(root, candidate string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(candidate))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func isRootRelativeBootArtifact(path string) bool {

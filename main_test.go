@@ -400,6 +400,23 @@ func TestResolveKexecPath(t *testing.T) {
 	}
 }
 
+func TestResolveKexecPathRejectsSymlinkOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "vmlinuz")
+	mustWrite(t, outside)
+	link := filepath.Join(root, "boot", "vmlinuz")
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatalf("mkdir boot dir: %v", err)
+	}
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatalf("symlink outside root: %v", err)
+	}
+
+	if got := resolveKexecPath(root, "/boot/vmlinuz"); got != "" {
+		t.Fatalf("resolveKexecPath() = %q, want rejected outside-root symlink", got)
+	}
+}
+
 func mustWrite(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -1101,9 +1118,11 @@ func TestFlushObservabilityBeforeReboot(t *testing.T) {
 	cfg := &config.MachineConfig{Transport: config.TransportConfig{LogURL: srv.URL}}
 	client := caprf.NewFromConfig(cfg)
 
-	originalSlogHandler = slog.Default().Handler()
-	caprfRemoteLogHandler = caprf.NewRemoteHandler(client, originalSlogHandler, slog.LevelInfo, 100)
+	baseHandler := slog.NewTextHandler(os.Stderr, nil)
+	originalSlogHandler = baseHandler
+	caprfRemoteLogHandler = caprf.NewRemoteHandler(client, baseHandler, slog.LevelInfo, 100)
 	slog.SetDefault(slog.New(caprfRemoteLogHandler))
+	t.Cleanup(flushObservability)
 
 	slog.Info("test log")
 	flushObservability()

@@ -8,6 +8,12 @@ type SecureBootConfig struct {
 	// Default: false
 	ReEnable bool `yaml:"reEnable" json:"reEnable"`
 
+	// PinnedDigests enforces SHA256 digests for expected boot artifacts.
+	// Keys are component names: "shim", "grub", and "kernel".
+	// Values accept bare 64-character hex or "sha256:<hex>".
+	// Default: {} (digest enforcement disabled)
+	PinnedDigests map[string]string `yaml:"pinnedDigests" json:"pinnedDigests"`
+
 	// MOKCertPath is the path to a DER-encoded MOK certificate for enrollment.
 	// The certificate is enrolled via mokutil so the installed OS trusts
 	// custom-signed kernel modules.

@@ -302,6 +302,12 @@ provision:
   secureBoot:
     # reEnable: signal CAPRF to re-enable Secure Boot after provisioning
     reEnable: false
+    # pinnedDigests: optional SHA256 pins for boot artifacts checked after
+    # the target root and ESP are mounted.
+    pinnedDigests:
+      shim: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      grub: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      kernel: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
     mokCertPath: ""
     mokPassword: ""
 

@@ -1252,9 +1252,9 @@ func TestProvisionStepsContainEFIVars(t *testing.T) {
 
 	// Verify total step count includes early provisioning input validation,
 	// setup-nvme-namespaces, setup-raid, mount-boot, mount-shared-data, apply-sysexts,
-	// and EFI fallback install.
-	if len(steps) != 42 {
-		t.Errorf("expected 42 provisioning steps, got %d", len(steps))
+	// EFI fallback install, and secureboot chain verification.
+	if len(steps) != 43 {
+		t.Errorf("expected 43 provisioning steps, got %d", len(steps))
 	}
 }
 

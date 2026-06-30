@@ -89,7 +89,7 @@ digest, ensuring the sealed data is bound to the specified PCR values.
 
 ### Verification
 
-Check Secure Boot components (shim, GRUB, kernel signatures):
+Check Secure Boot components (shim, GRUB, kernel artifacts):
 
 ```go
 import "github.com/telekom/BOOTy/pkg/secureboot"
@@ -101,9 +101,10 @@ for _, c := range result.Components {
 }
 ```
 
-**Note**: `result.Valid` indicates presence of Secure Boot components
-(shim, GRUB), not cryptographic signature verification. PE/COFF
-signature validation is not yet implemented.
+**Note**: Secure Boot verification checks component presence and PE/COFF
+headers for EFI binaries. Configure pinned SHA256 digests for `shim`, `grub`,
+and `kernel` when provisioning must fail on unexpected boot artifacts.
+Full Authenticode trust-chain verification is not yet implemented.
 
 ### MOK Enrollment
 
@@ -167,4 +168,3 @@ summary := collector.Summarize()
 Telemetry reporting to CAPRF is gated on `TelemetryEnabled` in the
 machine config. When enabled, metrics are posted to `MetricsURL` (falls
 back to `TelemetryURL` if MetricsURL is empty).
-

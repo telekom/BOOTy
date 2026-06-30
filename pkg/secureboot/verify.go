@@ -3,6 +3,7 @@ package secureboot
 import (
 	"crypto/sha256"
 	"debug/pe"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -26,10 +27,19 @@ func NewChainVerifier(vars *efi.EFIVarReader) *ChainVerifier {
 	return &ChainVerifier{vars: vars, root: "/", pinnedDigests: make(map[string]string)}
 }
 
+// WithRoot configures the root filesystem where boot artifacts are checked.
+func (cv *ChainVerifier) WithRoot(root string) *ChainVerifier {
+	cv.root = root
+	return cv
+}
+
 // WithPinnedDigests configures the verifier to enforce SHA256 digests for components.
 // The map should be keyed by component name ("shim", "grub", "kernel").
 func (cv *ChainVerifier) WithPinnedDigests(digests map[string]string) *ChainVerifier {
-	cv.pinnedDigests = digests
+	cv.pinnedDigests = make(map[string]string, len(digests))
+	for component, digest := range digests {
+		cv.pinnedDigests[component] = digest
+	}
 	return cv
 }
 
@@ -56,7 +66,7 @@ func (cv *ChainVerifier) Verify() (*ChainResult, error) {
 	return result, nil
 }
 
-// checkComponentPresence checks whether boot chain binaries exist on disk
+// checkComponentPresence checks whether boot chain binaries exist on disk.
 func (cv *ChainVerifier) checkComponentPresence() []ComponentStatus {
 	specs := []struct {
 		name  string
@@ -133,20 +143,40 @@ func (cv *ChainVerifier) findValidCandidate(name string, candidates []string) Co
 }
 
 func validateDigest(path, expected string) error {
+	normalizedExpected, err := normalizeSHA256Digest(expected)
+	if err != nil {
+		return fmt.Errorf("invalid expected digest: %w", err)
+	}
 	f, err := os.Open(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("open artifact: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			slog.Debug("close artifact after digest validation", "path", path, "error", err)
+		}
+	}()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
-		return err
+		return fmt.Errorf("hash artifact: %w", err)
 	}
 	got := fmt.Sprintf("%x", h.Sum(nil))
-	if !strings.EqualFold(got, expected) {
-		return fmt.Errorf("digest mismatch: got %s, want %s", got, expected)
+	if !strings.EqualFold(got, normalizedExpected) {
+		return fmt.Errorf("digest mismatch: got sha256:%s, want sha256:%s", got, normalizedExpected)
 	}
 	return nil
+}
+
+func normalizeSHA256Digest(value string) (string, error) {
+	digest := strings.TrimSpace(strings.ToLower(value))
+	digest = strings.TrimPrefix(digest, "sha256:")
+	if len(digest) != sha256.Size*2 {
+		return "", fmt.Errorf("must be %d hex characters", sha256.Size*2)
+	}
+	if _, err := hex.DecodeString(digest); err != nil {
+		return "", fmt.Errorf("must be hex characters: %w", err)
+	}
+	return digest, nil
 }
 
 func (cv *ChainVerifier) absPath(path string) string {

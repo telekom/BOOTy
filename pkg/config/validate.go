@@ -312,11 +312,31 @@ func validateABConfig(imageMode string, disableKexec bool, cfg *ABConfig) error 
 }
 
 func validateSecureBootConfig(imageMode string, secureBoot *SecureBootConfig, ab *ABConfig) error {
-	if secureBoot == nil || ab == nil || !secureBoot.ReEnable {
+	if secureBoot == nil {
 		return nil
 	}
-	if strings.EqualFold(strings.TrimSpace(imageMode), ImageModeAB) && ab.PreserveExisting {
-		return fmt.Errorf("provision.secureBoot.reEnable requires a hard reboot, but provision.ab.preserveExisting uses kexec")
+	var errs []string
+	for component, digest := range secureBoot.PinnedDigests {
+		switch component {
+		case "shim", "grub", "kernel":
+		default:
+			errs = append(errs, fmt.Sprintf("provision.secureBoot.pinnedDigests[%q]: unsupported component", component))
+			continue
+		}
+		if strings.TrimSpace(digest) == "" {
+			errs = append(errs, fmt.Sprintf("provision.secureBoot.pinnedDigests[%q]: must not be empty", component))
+			continue
+		}
+		if err := validateSysextSHA256(digest); err != nil {
+			errs = append(errs, fmt.Sprintf("provision.secureBoot.pinnedDigests[%q]: %v", component, err))
+		}
+	}
+	if ab != nil && secureBoot.ReEnable &&
+		strings.EqualFold(strings.TrimSpace(imageMode), ImageModeAB) && ab.PreserveExisting {
+		errs = append(errs, "provision.secureBoot.reEnable requires a hard reboot, but provision.ab.preserveExisting uses kexec")
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
 	return nil
 }
