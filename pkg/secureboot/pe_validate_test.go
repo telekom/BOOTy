@@ -112,7 +112,8 @@ func TestFindValidCandidate_SkipsInvalidPEThenFindsValid(t *testing.T) {
 		t.Fatalf("write valid: %v", err)
 	}
 
-	status := findValidCandidate("shim", []string{invalid, valid})
+	cv := NewChainVerifier(nil)
+	status := cv.findValidCandidate("shim", []string{invalid, valid})
 	if status.Error != "" {
 		t.Errorf("expected valid candidate to be found, got error: %s", status.Error)
 	}
@@ -129,15 +130,15 @@ func TestFindValidCandidate_AllInvalidPEReturnsError(t *testing.T) {
 		}
 	}
 
-	status := findValidCandidate("shim", []string{bad1, bad2})
+	cv := NewChainVerifier(nil)
+	status := cv.findValidCandidate("shim", []string{bad1, bad2})
 	if status.Error == "" {
 		t.Error("expected error when all candidates have invalid PE headers")
 	}
-	if !strings.HasPrefix(status.Error, "pe/coff validation failed for all candidates") {
+	if !strings.HasPrefix(status.Error, "validation failed for all candidates") {
 		t.Errorf("expected pe/coff validation failure prefix, got misleading message: %q", status.Error)
 	}
 }
-
 func TestIsEFIPath(t *testing.T) {
 	cases := []struct {
 		path string
