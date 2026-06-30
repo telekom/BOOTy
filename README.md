@@ -305,6 +305,10 @@ root is mounted.
 | `TOKEN_URL` | — | JWT token acquisition endpoint (HTTPS required except localhost) |
 | `TOKEN_ALGORITHM` | — | JWT algorithm override: `RS256` or `ES256` |
 | `SECURE_ERASE` | `false` | Use NVMe format / ATA secure erase instead of partition wipe |
+| `INSECURE_TRANSPORT` | `false` | Allow insecure HTTP connections |
+| `PARTITION_LAYOUT` | — | Custom partition layout specification |
+| `DISK_SERIAL` | — | Target specific disk by serial number |
+| `RESCUE_PASSWORD_HASH` | — | Password hash for rescue mode access |
 | `POST_PROVISION_CMDS` | — | Semicolon-separated commands to run in chroot after provisioning |
 | `RESCUE_MODE` | `reboot` | Failure recovery strategy: `reboot`, `retry`, `shell`, `wait` |
 | `RESCUE_TIMEOUT` | `0` | *(Phase 2)* Rescue wait timeout in seconds (0 = indefinite) |
