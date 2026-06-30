@@ -441,6 +441,7 @@ func loadModule(path string) error {
 func flushObservability() {
 	if originalSlogHandler != nil {
 		slog.SetDefault(slog.New(originalSlogHandler))
+		originalSlogHandler = nil
 	}
 	if caprfRemoteLogHandler != nil {
 		caprfRemoteLogHandler.Close()
@@ -496,7 +497,8 @@ func runCAPRF(ctx context.Context) {
 	// Wire remote log shipping.
 	if cfg.Transport.LogURL != "" {
 		originalSlogHandler = slog.Default().Handler()
-		caprfRemoteLogHandler = caprf.NewRemoteHandler(client, slog.Default().Handler(), slog.LevelInfo, 256)
+		remoteInner := slog.NewTextHandler(os.Stderr, nil)
+		caprfRemoteLogHandler = caprf.NewRemoteHandler(client, remoteInner, slog.LevelInfo, 256)
 		defer flushObservability()
 		slog.SetDefault(slog.New(caprfRemoteLogHandler))
 	}

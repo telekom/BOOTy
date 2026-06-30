@@ -1118,9 +1118,11 @@ func TestFlushObservabilityBeforeReboot(t *testing.T) {
 	cfg := &config.MachineConfig{Transport: config.TransportConfig{LogURL: srv.URL}}
 	client := caprf.NewFromConfig(cfg)
 
-	originalSlogHandler = slog.Default().Handler()
-	caprfRemoteLogHandler = caprf.NewRemoteHandler(client, originalSlogHandler, slog.LevelInfo, 100)
+	baseHandler := slog.NewTextHandler(os.Stderr, nil)
+	originalSlogHandler = baseHandler
+	caprfRemoteLogHandler = caprf.NewRemoteHandler(client, baseHandler, slog.LevelInfo, 100)
 	slog.SetDefault(slog.New(caprfRemoteLogHandler))
+	t.Cleanup(flushObservability)
 
 	slog.Info("test log")
 	flushObservability()

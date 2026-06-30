@@ -166,7 +166,7 @@ func TestClassifyImageStreamErrorChecksumMismatchIsPermanent(t *testing.T) {
 	if !isPermanent(err) {
 		t.Fatalf("checksum mismatch should be permanent: %T %[1]v", err)
 	}
-	if !strings.Contains(err.Error(), "streaming http://images.local/node.raw") {
+	if !strings.Contains(err.Error(), "streaming https://images.local/node.raw") {
 		t.Fatalf("error should include image URL context, got %q", err.Error())
 	}
 }
@@ -225,8 +225,8 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 42 {
-		t.Fatalf("expected 42 provisioning steps, got %d", len(steps))
+	if len(steps) != 43 {
+		t.Fatalf("expected 43 provisioning steps, got %d", len(steps))
 	}
 }
 
