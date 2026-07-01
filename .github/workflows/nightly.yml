@@ -127,7 +127,9 @@ jobs:
           sudo apt-get install -y cpio gzip zstd
 
       - name: Extract initramfs artifacts
-        run: bash hack/extract-initramfs-artifacts.sh nightly-artifacts scan-rootfs
+        run: |
+          sudo bash hack/extract-initramfs-artifacts.sh nightly-artifacts scan-rootfs
+          sudo chown -R "$USER:$USER" scan-rootfs
 
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25

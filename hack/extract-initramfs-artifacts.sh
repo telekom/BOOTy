@@ -41,6 +41,12 @@ extract_cpio() {
   fi
 }
 
+remove_special_files() {
+  local out="$1"
+
+  find -- "${out}" -xdev \( -type b -o -type c -o -type p -o -type s \) -delete
+}
+
 stream_artifact() {
   local artifact="$1"
   case "${artifact}" in
@@ -90,6 +96,7 @@ while IFS= read -r -d '' artifact; do
 
   stream_artifact "${artifact}" | list_cpio | validate_cpio_entries "${artifact}"
   stream_artifact "${artifact}" | (cd "${out}" && extract_cpio)
+  remove_special_files "${out}"
   count=$((count + 1))
 done < <(find "${src}" -type f \( -name '*initramfs.cpio.gz' -o -name '*initramfs.cpio.zst' \) -print0)
 
