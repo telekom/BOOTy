@@ -231,7 +231,8 @@ jobs:
       - name: Attach SBOM attestation
         run: |
           test -s sbom/sbom-nightly.spdx.json
+          jq -e . sbom/sbom-nightly.spdx.json >/dev/null
           cosign attest --yes \
             --predicate sbom/sbom-nightly.spdx.json \
-            --type spdx \
+            --type spdxjson \
             "${{ steps.push.outputs.image_ref }}"
