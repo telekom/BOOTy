@@ -33,6 +33,14 @@ const (
 
 var sysextHTTPClient = network.NewHTTPClient(30 * time.Minute)
 
+var sysextHTTPRetryPolicy = RetryPolicy{
+	MaxRetries:   3,
+	InitialDelay: time.Second,
+	MaxDelay:     5 * time.Second,
+	Jitter:       0.1,
+	Transient:    false,
+}
+
 type sysextCatalog struct {
 	APIVersion string               `json:"apiVersion"`
 	Kind       string               `json:"kind"`
@@ -459,19 +467,7 @@ func openSysextSource(ctx context.Context, source string) (io.ReadCloser, error)
 	}
 	u, err := url.Parse(source)
 	if err == nil && (u.Scheme == "http" || u.Scheme == "https") {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, http.NoBody)
-		if err != nil {
-			return nil, fmt.Errorf("create sysext request %s: %w", redactImageURL(source), redactedSysextSourceError(err, source))
-		}
-		resp, err := sysextHTTPClient.Do(req) //nolint:gosec // configured sysext source URL
-		if err != nil {
-			return nil, fmt.Errorf("fetch sysext %s: %w", redactImageURL(source), redactedSysextSourceError(err, source))
-		}
-		if resp.StatusCode != http.StatusOK {
-			_ = resp.Body.Close()
-			return nil, fmt.Errorf("fetch sysext %s: %s", redactImageURL(source), resp.Status)
-		}
-		return resp.Body, nil
+		return openHTTPSysextSource(ctx, source)
 	}
 	info, err := os.Stat(source) //nolint:gosec // configured local sysext source path, opened read-only below
 	if err != nil {
@@ -485,6 +481,51 @@ func openSysextSource(ctx context.Context, source string) (io.ReadCloser, error)
 		return nil, fmt.Errorf("open sysext source: %w", err)
 	}
 	return file, nil
+}
+
+func openHTTPSysextSource(ctx context.Context, source string) (io.ReadCloser, error) {
+	if _, err := http.NewRequestWithContext(ctx, http.MethodGet, source, http.NoBody); err != nil {
+		return nil, fmt.Errorf("create sysext request %s: %w", redactImageURL(source), redactedSysextSourceError(err, source))
+	}
+
+	var body io.ReadCloser
+	err := WithRetry(ctx, "fetch-sysext-http", sysextHTTPRetryPolicy, func(ctx context.Context) error {
+		rc, err := fetchHTTPSysextAttempt(ctx, source)
+		if err != nil {
+			return err
+		}
+		body = rc
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("fetch sysext %s: %w", redactImageURL(source), redactedSysextSourceError(err, source))
+	}
+	return body, nil
+}
+
+func fetchHTTPSysextAttempt(ctx context.Context, source string) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, http.NoBody)
+	if err != nil {
+		return nil, &PermanentError{Err: err}
+	}
+	resp, err := sysextHTTPClient.Do(req) //nolint:gosec // configured sysext source URL
+	if err != nil {
+		return nil, &TransientError{Err: err}
+	}
+	if resp.StatusCode == http.StatusOK {
+		return resp.Body, nil
+	}
+	_ = resp.Body.Close()
+	if isRetryableSysextHTTPStatus(resp.StatusCode) {
+		return nil, &TransientError{Err: fmt.Errorf("%s", resp.Status)}
+	}
+	return nil, &PermanentError{Err: fmt.Errorf("%s", resp.Status)}
+}
+
+func isRetryableSysextHTTPStatus(statusCode int) bool {
+	return statusCode == http.StatusRequestTimeout ||
+		statusCode == http.StatusTooManyRequests ||
+		statusCode >= http.StatusInternalServerError
 }
 
 func redactSysextOCILogRef(ref string) string {

@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -489,9 +490,100 @@ func TestOpenSysextSourceHTTPBodyTimeout(t *testing.T) {
 	}
 }
 
+func TestOpenSysextSourceHTTPRetriesTransientStatusThenSucceeds(t *testing.T) {
+	withFastSysextHTTPRetry(t)
+
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if attempts.Add(1) == 1 {
+			http.Error(w, "try again", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte("sysext"))
+	}))
+	t.Cleanup(srv.Close)
+
+	rc, err := openSysextSource(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatalf("openSysextSource() error: %v", err)
+	}
+	defer rc.Close()
+
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll() error: %v", err)
+	}
+	if string(got) != "sysext" {
+		t.Fatalf("body = %q, want sysext", got)
+	}
+	if attempts.Load() != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts.Load())
+	}
+}
+
+func TestOpenSysextSourceHTTPPermanentFailureDoesNotRetry(t *testing.T) {
+	withFastSysextHTTPRetry(t)
+
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+		http.Error(w, "missing", http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := openSysextSource(context.Background(), srv.URL)
+	if err == nil {
+		t.Fatal("expected permanent HTTP status error")
+	}
+	if attempts.Load() != 1 {
+		t.Fatalf("attempts = %d, want 1", attempts.Load())
+	}
+	if !strings.Contains(err.Error(), "404 Not Found") {
+		t.Fatalf("error = %q, want HTTP status text", err.Error())
+	}
+}
+
+func TestOpenSysextSourceHTTPClosesRetryableStatusBody(t *testing.T) {
+	withFastSysextHTTPRetry(t)
+
+	var failedBodyClosed atomic.Bool
+	var attempts atomic.Int32
+	oldClient := sysextHTTPClient
+	sysextHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			if attempts.Add(1) == 1 {
+				return &http.Response{
+					StatusCode: http.StatusServiceUnavailable,
+					Status:     "503 Service Unavailable",
+					Body:       &closeTrackingReadCloser{closed: &failedBodyClosed},
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Body:       io.NopCloser(strings.NewReader("sysext")),
+			}, nil
+		}),
+	}
+	t.Cleanup(func() { sysextHTTPClient = oldClient })
+
+	rc, err := openSysextSource(context.Background(), "https://example.invalid/layer.raw")
+	if err != nil {
+		t.Fatalf("openSysextSource() error: %v", err)
+	}
+	defer rc.Close()
+
+	if !failedBodyClosed.Load() {
+		t.Fatal("retryable failure response body was not closed")
+	}
+	if attempts.Load() != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts.Load())
+	}
+}
+
 func TestOpenSysextSourceHTTPStatusErrorRedactsSensitiveURLParts(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		http.Error(w, "not found", http.StatusNotFound)
 	}))
 	t.Cleanup(srv.Close)
 
@@ -515,12 +607,14 @@ func TestOpenSysextSourceHTTPStatusErrorRedactsSensitiveURLParts(t *testing.T) {
 	if !strings.Contains(err.Error(), wantURL) {
 		t.Fatalf("error = %q, want redacted URL %q", err.Error(), wantURL)
 	}
-	if !strings.Contains(err.Error(), "503 Service Unavailable") {
+	if !strings.Contains(err.Error(), "404 Not Found") {
 		t.Fatalf("error = %q, want HTTP status text", err.Error())
 	}
 }
 
 func TestOpenSysextSourceHTTPFetchErrorRedactsAndPreservesCause(t *testing.T) {
+	withFastSysextHTTPRetry(t)
+
 	cause := errors.New("sentinel transport")
 	source := "https://robot:secret@example.invalid/layer.raw?token=abc#frag"
 	oldClient := sysextHTTPClient
@@ -552,6 +646,26 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+type closeTrackingReadCloser struct {
+	closed *atomic.Bool
+}
+
+func (c *closeTrackingReadCloser) Read(_ []byte) (int, error) {
+	return 0, io.EOF
+}
+
+func (c *closeTrackingReadCloser) Close() error {
+	c.closed.Store(true)
+	return nil
+}
+
+func withFastSysextHTTPRetry(t *testing.T) {
+	t.Helper()
+	oldPolicy := sysextHTTPRetryPolicy
+	sysextHTTPRetryPolicy = RetryPolicy{MaxRetries: 3, Transient: false}
+	t.Cleanup(func() { sysextHTTPRetryPolicy = oldPolicy })
 }
 
 func writeSysextSource(t *testing.T, content string) (string, string) {
