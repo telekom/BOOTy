@@ -45,6 +45,7 @@ var (
 	evalRootSymlinks   = filepath.EvalSymlinks
 	collectFirmwareFn  = firmware.Collect
 	validateFirmwareFn = firmware.Validate
+	loadCheckpointFn   = LoadCheckpoint
 	probeOCIReference  = image.ProbeOCIReference
 	secureBootRoot     = newroot
 	mountBootPart      = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
@@ -169,7 +170,10 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 	defer o.flushTelemetry(context.Background())
 	steps := o.provisionSteps()
 
-	cp := o.loadOrCreateCheckpoint()
+	cp, err := o.loadOrCreateCheckpoint()
+	if err != nil {
+		return err
+	}
 	o.restoreCheckpointDerivedState(cp)
 
 	// stateSteps must always re-run on resume because they rebuild in-memory
@@ -217,18 +221,19 @@ func resumeStateSteps() map[string]struct{} {
 // loadOrCreateCheckpoint loads an existing checkpoint when BOOTY_RESUME is set,
 // or returns a fresh checkpoint. Only checkpoints created via BOOTY_RESUME
 // persist to disk; otherwise Save/Remove are no-ops.
-func (o *Orchestrator) loadOrCreateCheckpoint() *Checkpoint {
+func (o *Orchestrator) loadOrCreateCheckpoint() (*Checkpoint, error) {
 	if enabled, _ := strconv.ParseBool(os.Getenv("BOOTY_RESUME")); enabled {
-		cp, cpErr := LoadCheckpoint()
+		cp, cpErr := loadCheckpointFn()
 		if cpErr != nil && !errors.Is(cpErr, ErrNoCheckpoint) {
-			o.log.Warn("failed to load checkpoint, starting fresh", "error", cpErr)
+			o.log.Error("failed to load checkpoint", "error", cpErr)
+			return nil, fmt.Errorf("load checkpoint: %w", cpErr)
 		}
 		if cp != nil {
-			return cp
+			return cp, nil
 		}
-		return &Checkpoint{persist: true}
+		return &Checkpoint{persist: true}, nil
 	}
-	return &Checkpoint{}
+	return &Checkpoint{}, nil
 }
 
 func (o *Orchestrator) restoreCheckpointDerivedState(cp *Checkpoint) {
@@ -277,7 +282,8 @@ func (o *Orchestrator) executeStep(ctx context.Context, step Step, cp *Checkpoin
 	o.recordCheckpointDerivedState(step.Name, cp)
 	cp.MarkStep(step.Name)
 	if saveErr := cp.Save(); saveErr != nil {
-		o.log.Warn("failed to save checkpoint", "error", saveErr)
+		o.log.Error("failed to save checkpoint", "error", saveErr)
+		return fmt.Errorf("save checkpoint after step %s: %w", step.Name, saveErr)
 	}
 	return nil
 }
