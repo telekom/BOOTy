@@ -106,6 +106,13 @@ provision:
 Local provisioner files are preferred for reproducibility and to avoid a second
 network dependency after the OS image has already streamed.
 
+HTTP(S) sysext sources are fetched with ordinary `GET` requests and must return
+`200 OK`. Current BOOTy does not add sysext-specific HTTP retries, issue
+`Range` requests, or resume a partial sysext download after a connection break.
+OCI sources use BOOTy's registry layer fetch path and still verify the final
+sysext digest before installation. Future sysext hardening may add bounded
+HTTP retries, but operators should not rely on that behavior in current main.
+
 BOOTy streams each sysext through SHA256 while copying. Every enabled layer must
 set `sha256`, unless the source is pinned as an OCI digest reference such as
 `oci://registry.example/tcaas/node-tuning@sha256:<digest>`. A mismatch aborts
@@ -143,7 +150,8 @@ networks.
 - Pin every layer with `name`, `version`, `fileName`, and `sha256` or an OCI
   digest reference.
 - Prefer HTTPS, OCI, or local provisioner files. Plain HTTP requires explicit
-  opt-in and is not a production default.
+  opt-in and is not a production default. Prefer local files or OCI digest
+  references when recovery from transient source outages matters.
 - Keep kernel, firmware, bootloader, users, `/etc`, `/var`, and provider state
   in the base image or regular provisioning config, not in sysext.
 - Use BOOTy sysext provisioning for site-specific late binding, such as
