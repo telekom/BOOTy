@@ -10,7 +10,7 @@ Lightweight initramfs agent for bare-metal OS provisioning (not a K8s operator).
 | `pkg/provision/` | State machine for RAID/NVMe/image/disk/shared-data/sysext/network provisioning flow |
 | `pkg/crash/` | Startup crash artifact collection and host metadata correlation |
 | `pkg/realm/` | Low-level Linux primitives: syscalls, mounts, device creation |
-| `pkg/bios/` | Vendor-specific BIOS management (Dell, HPE, Lenovo, Supermicro) |
+| `pkg/firmware/` | Firmware inventory and vendor-specific NIC firmware helpers |
 | `test/e2e/clab/` | ContainerLab topologies for network/provisioning integration tests |
 
 ## WHERE TO LOOK
@@ -40,6 +40,7 @@ Lightweight initramfs agent for bare-metal OS provisioning (not a K8s operator).
 |--------|---------|
 | Compile | `make build` |
 | Unit Tests | `make test` (40% coverage gate) |
+| Formatter Check | `make fmt-check` |
 | Full Initramfs | `make dockerx86` |
 | Build ISO | `make iso` |
 | E2E Network | `make clab-up && make test-e2e-integration` |

@@ -82,6 +82,13 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 		return fmt.Errorf("writing to device: %w", err)
 	}
 
+	if err := verifyChecksum(h, opt); err != nil {
+		slog.Error("checksum mismatch: wiping partition table to prevent booting corrupt image",
+			"device", device, "error", err)
+		wipeLeadingSectors(device)
+		return err
+	}
+
 	if err := syncImageTarget(out, device); err != nil {
 		slog.Error("image sync failed: attempting to wipe partial image", "device", device, "error", err)
 		wipeLeadingSectors(device)
@@ -90,13 +97,6 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 
 	fmt.Println()
 	slog.Info("image written", "bytes", written, "device", device) //nolint:gosec // trusted config values
-
-	if err := verifyChecksum(h, opt); err != nil {
-		slog.Error("checksum mismatch: wiping partition table to prevent booting corrupt image",
-			"device", device, "error", err)
-		wipeLeadingSectors(device)
-		return err
-	}
 	return nil
 }
 

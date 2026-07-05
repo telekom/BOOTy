@@ -341,6 +341,48 @@ func TestStreamChecksumMismatch(t *testing.T) {
 	}
 }
 
+func TestStreamChecksumMismatchDoesNotSyncTarget(t *testing.T) {
+	data := []byte("data for checksum mismatch sync ordering test")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	}))
+	defer srv.Close()
+
+	tmpFile, err := os.CreateTemp(t.TempDir(), "disk-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = tmpFile.Close()
+
+	syncCalled := false
+	withSyncImageTarget(t, func(_ fileSyncer, _ string) error {
+		syncCalled = true
+		return nil
+	})
+
+	err = Stream(context.Background(), srv.URL+"/image.img", tmpFile.Name(), StreamOpts{
+		Checksum:     strings.Repeat("0", sha256.Size*2),
+		ChecksumType: "sha256",
+	})
+	if err == nil {
+		t.Fatal("expected checksum mismatch error")
+	}
+	if syncCalled {
+		t.Fatal("syncImageTarget called before checksum mismatch was returned")
+	}
+}
+
+func withSyncImageTarget(t *testing.T, hook func(fileSyncer, string) error) {
+	t.Helper()
+
+	orig := syncImageTarget
+	syncImageTarget = hook
+	t.Cleanup(func() {
+		syncImageTarget = orig
+	})
+}
+
 func TestStreamChecksumSHA512(t *testing.T) {
 	data := []byte("sha512 checksum test data")
 	h := sha512.Sum512(data)

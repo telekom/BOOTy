@@ -58,3 +58,33 @@ func TestStreamRawToDeviceSyncsTarget(t *testing.T) {
 		t.Fatalf("target prefix = %q, want %q", got[:len(payload)], payload)
 	}
 }
+
+func TestStreamRawToDeviceChecksumMismatchDoesNotSyncTarget(t *testing.T) {
+	dir := t.TempDir()
+	rawPath := filepath.Join(dir, "source.raw")
+	devicePath := filepath.Join(dir, "target.img")
+	payload := []byte("raw image payload with wrong checksum")
+	if err := os.WriteFile(rawPath, payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(devicePath, make([]byte, len(payload)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	syncCalled := false
+	withSyncImageTarget(t, func(_ fileSyncer, _ string) error {
+		syncCalled = true
+		return nil
+	})
+
+	err := streamRawToDevice(rawPath, devicePath, StreamOpts{
+		Checksum:     strings.Repeat("0", 64),
+		ChecksumType: "sha256",
+	})
+	if err == nil {
+		t.Fatal("expected checksum mismatch error")
+	}
+	if syncCalled {
+		t.Fatal("syncImageTarget called before checksum mismatch was returned")
+	}
+}
