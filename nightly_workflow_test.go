@@ -26,6 +26,7 @@ func TestNightlyWorkflowRunsSmallTopologySmokeMatrix(t *testing.T) {
 	requireWorkflowStepRunContains(t, job, "Deploy topology", "make clab-${{ matrix.make_target }}-up")
 	requireWorkflowStepRunContains(t, job, "Run topology smoke test", "set -euo pipefail")
 	requireWorkflowStepRunContains(t, job, "Run topology smoke test", "make test-e2e-${{ matrix.make_target }}")
+	requireWorkflowStepRunContains(t, job, "Collect topology logs", "awk '/^clab-booty-/ { print }'")
 	requireWorkflowStepRunContains(t, job, "Cleanup", "make clab-${{ matrix.make_target }}-down")
 
 	for _, want := range []string{

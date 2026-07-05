@@ -208,7 +208,7 @@ jobs:
         if: always()
         run: |
           mkdir -p topology-logs
-          sudo docker ps -a --format '{{.Names}}' | grep '^clab-booty-' | while read -r name; do
+          sudo docker ps -a --format '{{.Names}}' | awk '/^clab-booty-/ { print }' | while read -r name; do
             sudo docker logs "${name}" > "topology-logs/${name}.log" 2>&1 || true
             sudo docker exec "${name}" ip addr show > "topology-logs/${name}-ip-addr.txt" 2>&1 || true
             sudo docker exec "${name}" ip route show table all > "topology-logs/${name}-routes.txt" 2>&1 || true
