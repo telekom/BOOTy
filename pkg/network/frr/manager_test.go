@@ -153,6 +153,68 @@ func TestAddBGPPeerError(t *testing.T) {
 	}
 }
 
+func TestWriteFRRConfigTightensExistingConfigModeAndSetsFRROwnership(t *testing.T) {
+	dir := t.TempDir()
+	origConfigDir := frrConfigDir
+	origConfigPath := frrConfigPath
+	origVtyshConfigPath := frrVtyshConfigPath
+	origLookup := lookupFRRUser
+	origChown := chownFRRDir
+	frrConfigDir = dir
+	frrConfigPath = filepath.Join(dir, "frr.conf")
+	frrVtyshConfigPath = filepath.Join(dir, "vtysh.conf")
+	lookupFRRUser = func() frrDirOwner {
+		return frrDirOwner{uid: 101, gid: 104, ok: true}
+	}
+
+	var chowned bool
+	chownFRRDir = func(path string, uid, gid int) error {
+		if path != frrConfigPath {
+			t.Fatalf("chown path = %q, want %q", path, frrConfigPath)
+		}
+		if uid != 101 || gid != 104 {
+			t.Fatalf("chown owner = %d:%d, want 101:104", uid, gid)
+		}
+		chowned = true
+		return nil
+	}
+	t.Cleanup(func() {
+		frrConfigDir = origConfigDir
+		frrConfigPath = origConfigPath
+		frrVtyshConfigPath = origVtyshConfigPath
+		lookupFRRUser = origLookup
+		chownFRRDir = origChown
+	})
+
+	if err := os.WriteFile(frrConfigPath, []byte("old config"), 0o644); err != nil {
+		t.Fatalf("seed frr.conf: %v", err)
+	}
+
+	mgr := NewManager(nil)
+	if err := mgr.writeFRRConfig("secret config"); err != nil {
+		t.Fatalf("writeFRRConfig: %v", err)
+	}
+
+	info, err := os.Stat(frrConfigPath)
+	if err != nil {
+		t.Fatalf("stat frr.conf: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("frr.conf mode = %o, want 600", got)
+	}
+	if !chowned {
+		t.Fatal("expected frr.conf to be chowned to the frr user")
+	}
+
+	content, err := os.ReadFile(frrConfigPath)
+	if err != nil {
+		t.Fatalf("read frr.conf: %v", err)
+	}
+	if string(content) != "secret config" {
+		t.Fatalf("frr.conf content = %q", string(content))
+	}
+}
+
 func TestEnsureFRRDirsCreatesRuntimeDirsWithFRROwnership(t *testing.T) {
 	base := t.TempDir()
 	dirs := []string{

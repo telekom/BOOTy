@@ -5,6 +5,7 @@ import (
 	"net"
 	"strings"
 	"text/template"
+	"unicode"
 
 	"github.com/telekom/BOOTy/pkg/network"
 )
@@ -188,6 +189,7 @@ type frrConfigData struct {
 	VRFName          string
 	BGPKeepalive     uint32
 	BGPHold          uint32
+	BGPAuthPassword  string
 	BFDProfile       string
 	BFDTransmitMS    uint32
 	BFDReceiveMS     uint32
@@ -219,6 +221,9 @@ router bgp {{ .ASN }}{{ if .VRFName }} vrf {{ .VRFName }}{{ end }}
 {{- end }}
  neighbor fabric peer-group
  neighbor fabric remote-as external
+{{- if .BGPAuthPassword }}
+ neighbor fabric password {{ .BGPAuthPassword }}
+{{- end }}
 {{- if .LocalASN }}
  neighbor fabric local-as {{ .LocalASN }} no-prepend replace-as
 {{- end }}
@@ -255,6 +260,9 @@ router bgp {{ .ASN }}{{ if .VRFName }} vrf {{ .VRFName }}{{ end }}
 {{- range .DCGWIPs }}
  neighbor {{ . }} remote-as internal
  neighbor {{ . }} update-source {{ $.UnderlayIP }}
+{{- if $.BGPAuthPassword }}
+ neighbor {{ . }} password {{ $.BGPAuthPassword }}
+{{- end }}
 {{- if $.BFDProfile }}
  neighbor {{ . }} bfd profile {{ $.BFDProfile }}
 {{- end }}
@@ -281,12 +289,18 @@ line vty
 // RenderConfig generates the FRR configuration file content using a template.
 // overlayIP is used to detect IPv6 and conditionally add the IPv6 address-family.
 func RenderConfig(cfg *network.Config, underlayIP, overlayIP string, nics []string) (string, error) {
+	bgpAuthPassword, err := normalizeBGPAuthPassword(cfg.BGPAuthPassword)
+	if err != nil {
+		return "", fmt.Errorf("normalize BGP auth password: %w", err)
+	}
+
 	data := frrConfigData{
-		ASN:        cfg.ASN,
-		LocalASN:   cfg.LocalASN,
-		UnderlayIP: underlayIP,
-		NICs:       nics,
-		VRFName:    cfg.VRFName,
+		ASN:             cfg.ASN,
+		LocalASN:        cfg.LocalASN,
+		UnderlayIP:      underlayIP,
+		NICs:            nics,
+		VRFName:         cfg.VRFName,
+		BGPAuthPassword: bgpAuthPassword,
 	}
 
 	if cfg.BGPKeepalive > 0 && cfg.BGPHold > 0 {
@@ -322,4 +336,17 @@ func RenderConfig(cfg *network.Config, underlayIP, overlayIP string, nics []stri
 	}
 
 	return sb.String(), nil
+}
+
+func normalizeBGPAuthPassword(password string) (string, error) {
+	password = strings.TrimSpace(password)
+	if password == "" {
+		return "", nil
+	}
+	if strings.ContainsFunc(password, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r)
+	}) {
+		return "", fmt.Errorf("bgp auth password must not contain whitespace or control characters")
+	}
+	return password, nil
 }

@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -367,6 +368,12 @@ var (
 	chownFRRDir    = os.Chown
 )
 
+var (
+	frrConfigDir       = "/etc/frr"
+	frrConfigPath      = filepath.Join(frrConfigDir, "frr.conf")
+	frrVtyshConfigPath = filepath.Join(frrConfigDir, "vtysh.conf")
+)
+
 func defaultFRRDirOwner() frrDirOwner {
 	data, err := os.ReadFile("/etc/passwd")
 	if err != nil {
@@ -633,16 +640,25 @@ func (m *Manager) enableForwarding() error {
 }
 
 func (m *Manager) writeFRRConfig(conf string) error {
-	if err := os.MkdirAll("/etc/frr", 0o755); err != nil {
-		return fmt.Errorf("create /etc/frr: %w", err)
+	if err := os.MkdirAll(frrConfigDir, 0o755); err != nil {
+		return fmt.Errorf("create FRR config dir %s: %w", frrConfigDir, err)
 	}
-	if err := os.WriteFile("/etc/frr/frr.conf", []byte(conf), 0o644); err != nil {
-		return fmt.Errorf("write frr.conf: %w", err)
+	if err := os.WriteFile(frrConfigPath, []byte(conf), 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", frrConfigPath, err)
+	}
+	owner := lookupFRRUser()
+	if owner.ok {
+		if err := chownFRRDir(frrConfigPath, owner.uid, owner.gid); err != nil {
+			return fmt.Errorf("chown %s: %w", frrConfigPath, err)
+		}
+	}
+	if err := os.Chmod(frrConfigPath, 0o600); err != nil {
+		return fmt.Errorf("chmod %s: %w", frrConfigPath, err)
 	}
 	// vtysh.conf must exist for integrated config mode.
 	vtyshConf := "service integrated-vtysh-config\n"
-	if err := os.WriteFile("/etc/frr/vtysh.conf", []byte(vtyshConf), 0o644); err != nil {
-		return fmt.Errorf("write vtysh.conf: %w", err)
+	if err := os.WriteFile(frrVtyshConfigPath, []byte(vtyshConf), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", frrVtyshConfigPath, err)
 	}
 	return nil
 }

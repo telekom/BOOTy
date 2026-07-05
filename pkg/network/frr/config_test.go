@@ -256,6 +256,85 @@ func TestRenderConfig_Onefabric(t *testing.T) {
 	}
 }
 
+func TestRenderConfig_BGPAuthPassword(t *testing.T) {
+	cfg := network.Config{
+		ASN:             65000,
+		VRFName:         "Vrf_underlay",
+		DCGWIPs:         "10.0.0.1",
+		BGPAuthPassword: "s3cret",
+	}
+	conf, err := RenderConfig(&cfg, "192.168.4.42", "192.168.4.42", []string{"eth0"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{
+		"neighbor fabric password s3cret",
+		"neighbor 10.0.0.1 password s3cret",
+	} {
+		if !strings.Contains(conf, want) {
+			t.Fatalf("config missing BGP auth password directive %q:\n%s", want, conf)
+		}
+	}
+}
+
+func TestRenderConfig_BGPAuthPasswordTrimsOuterWhitespace(t *testing.T) {
+	cfg := network.Config{
+		ASN:             65000,
+		VRFName:         "Vrf_underlay",
+		DCGWIPs:         "10.0.0.1",
+		BGPAuthPassword: "  s3cret  ",
+	}
+	conf, err := RenderConfig(&cfg, "192.168.4.42", "192.168.4.42", []string{"eth0"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(conf, "  s3cret  ") {
+		t.Fatalf("config should not render untrimmed BGP auth password:\n%s", conf)
+	}
+	if !strings.Contains(conf, "neighbor fabric password s3cret") {
+		t.Fatalf("config missing trimmed BGP auth password:\n%s", conf)
+	}
+}
+
+func TestRenderConfig_BGPAuthPasswordRejectsWhitespaceAndControlCharacters(t *testing.T) {
+	for _, password := range []string{
+		"bad password",
+		"bad\tpassword",
+		"bad\npassword",
+		"bad\x7fpassword",
+	} {
+		cfg := network.Config{
+			ASN:             65000,
+			VRFName:         "Vrf_underlay",
+			BGPAuthPassword: password,
+		}
+		conf, err := RenderConfig(&cfg, "192.168.4.42", "192.168.4.42", []string{"eth0"})
+		if err == nil {
+			t.Fatalf("expected invalid BGP auth password error for %q, got config:\n%s", password, conf)
+		}
+		if strings.Contains(err.Error(), password) {
+			t.Fatalf("error should not include BGP auth password value: %v", err)
+		}
+		if !strings.Contains(err.Error(), "normalize BGP auth password: bgp auth password") {
+			t.Fatalf("error should include contextual lowercase BGP auth password message: %v", err)
+		}
+	}
+}
+
+func TestRenderConfig_EmptyBGPAuthPasswordOmitsPassword(t *testing.T) {
+	cfg := network.Config{
+		ASN:     65000,
+		VRFName: "Vrf_underlay",
+	}
+	conf, err := RenderConfig(&cfg, "192.168.4.42", "192.168.4.42", []string{"eth0"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(conf, " password ") {
+		t.Fatalf("config should not contain BGP password directive when auth is empty:\n%s", conf)
+	}
+}
+
 func TestRenderConfig_NoNICs(t *testing.T) {
 	cfg := network.Config{
 		ASN:     65000,
@@ -465,6 +544,51 @@ func TestFRRConfigBuilder_WithBFDAndTimers(t *testing.T) {
 		if !strings.Contains(conf, check) {
 			t.Errorf("BFD/timers config missing %q:\n%s", check, conf)
 		}
+	}
+}
+
+func TestFRRConfigBuilder_WithAuthPassword(t *testing.T) {
+	b := NewFRRConfigBuilder(65000, "10.0.0.1").
+		WithAuthPassword("hunter2").
+		WithOnefabric([]string{"10.0.0.2"}, "10.10.0.0/16", "65000:100").
+		WithNICs([]string{"eth0"}).
+		WithAddressFamily("ipv4", "unicast")
+
+	conf := b.Build()
+
+	for _, want := range []string{
+		"neighbor fabric password hunter2",
+		"neighbor 10.0.0.2 password hunter2",
+	} {
+		if !strings.Contains(conf, want) {
+			t.Fatalf("builder config missing BGP auth password directive %q:\n%s", want, conf)
+		}
+	}
+}
+
+func TestFRRConfigBuilder_InvalidAuthPasswordDoesNotRender(t *testing.T) {
+	b := NewFRRConfigBuilder(65000, "10.0.0.1").
+		WithAuthPassword("bad\nneighbor 10.0.0.3 remote-as internal").
+		WithNICs([]string{"eth0"}).
+		WithAddressFamily("ipv4", "unicast")
+
+	conf := b.Build()
+
+	if strings.Contains(conf, "bad") || strings.Contains(conf, "10.0.0.3") || strings.Contains(conf, " password ") {
+		t.Fatalf("builder config should not render invalid BGP auth password:\n%s", conf)
+	}
+}
+
+func TestFRRConfigBuilder_EmptyAuthPasswordOmitsPassword(t *testing.T) {
+	b := NewFRRConfigBuilder(65000, "10.0.0.1").
+		WithAuthPassword("").
+		WithNICs([]string{"eth0"}).
+		WithAddressFamily("ipv4", "unicast")
+
+	conf := b.Build()
+
+	if strings.Contains(conf, " password ") {
+		t.Fatalf("builder config should not contain BGP password directive when auth is empty:\n%s", conf)
 	}
 }
 
