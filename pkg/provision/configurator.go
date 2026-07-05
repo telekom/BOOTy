@@ -645,10 +645,11 @@ func (c *Configurator) copyTreeIntoChroot(ctx context.Context, srcBase, label st
 // copyTree copies all files from srcBase into destRoot, preserving directory structure.
 // Symlinks are skipped with a warning; paths that escape destRoot are rejected to prevent path traversal.
 func copyTree(ctx context.Context, srcBase, destRoot string) error {
-	cleanDest, err := filepath.Abs(destRoot)
+	destRoot, err := filepath.Abs(destRoot)
 	if err != nil {
 		return fmt.Errorf("resolve dest root: %w", err)
 	}
+	validatedParents := make(map[string]struct{})
 	if err := filepath.WalkDir(srcBase, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return fmt.Errorf("walk %s: %w", path, walkErr)
@@ -665,12 +666,18 @@ func copyTree(ctx context.Context, srcBase, destRoot string) error {
 		if err != nil {
 			return fmt.Errorf("resolve copy path %s relative to %s: %w", path, srcBase, err)
 		}
-		destPath := filepath.Join(cleanDest, relPath)
-
-		// Verify the resolved destination stays within destRoot.
-		absDest, err := filepath.Abs(destPath)
-		if err != nil || (!strings.HasPrefix(absDest, cleanDest+string(filepath.Separator)) && absDest != cleanDest) {
-			return fmt.Errorf("path traversal blocked: %s escapes %s", relPath, cleanDest)
+		destPath := filepath.Join(destRoot, relPath)
+		if err := ensureWithinRoot(destRoot, destPath); err != nil {
+			return fmt.Errorf("validating copy destination %s: %w", destPath, err)
+		}
+		if relPath != "." {
+			parent := filepath.Dir(destPath)
+			if _, ok := validatedParents[parent]; !ok {
+				if err := ensureTargetParentWithinRoot(destRoot, parent); err != nil {
+					return fmt.Errorf("validating copy destination parent %s: %w", parent, err)
+				}
+				validatedParents[parent] = struct{}{}
+			}
 		}
 
 		if d.IsDir() {

@@ -495,6 +495,66 @@ func TestCopyTreeReplacesDanglingDestinationSymlink(t *testing.T) {
 	}
 }
 
+func TestCopyTreeRejectsDestinationParentSymlinkEscape(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	outside := t.TempDir()
+
+	srcEtc := filepath.Join(src, "etc")
+	if err := os.MkdirAll(srcEtc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcEtc, "shadow"), []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dst, "etc")); err != nil {
+		t.Fatal(err)
+	}
+
+	err := copyTree(context.Background(), src, dst)
+	if err == nil {
+		t.Fatal("expected destination parent symlink escape to be rejected")
+	}
+	if !strings.Contains(err.Error(), "target escapes provisioned root") {
+		t.Fatalf("expected target-root escape error, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "shadow")); !os.IsNotExist(err) {
+		t.Fatalf("outside file was written: %v", err)
+	}
+}
+
+func TestCopyTreeAllowsDestinationParentSymlinkInsideRoot(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	srcEtc := filepath.Join(src, "etc")
+	if err := os.MkdirAll(srcEtc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcEtc, "hostname"), []byte("booty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	realEtc := filepath.Join(dst, "real-etc")
+	if err := os.MkdirAll(realEtc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real-etc", filepath.Join(dst, "etc")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyTree(context.Background(), src, dst); err != nil {
+		t.Fatalf("copyTree returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(realEtc, "hostname"))
+	if err != nil {
+		t.Fatalf("expected file through safe destination parent symlink: %v", err)
+	}
+	if string(data) != "booty\n" {
+		t.Fatalf("hostname = %q", data)
+	}
+}
+
 func TestCopyFileCancelledBeforeStart(t *testing.T) {
 	src := t.TempDir()
 	dst := t.TempDir()
