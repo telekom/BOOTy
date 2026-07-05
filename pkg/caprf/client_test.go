@@ -2175,6 +2175,107 @@ func TestRedactedURLRemovesCredentialsQueryAndFragment(t *testing.T) {
 	}
 }
 
+func TestRequireSecureEndpointParseErrorRedactsSensitiveURLParts(t *testing.T) {
+	c := NewFromConfig(&config.MachineConfig{})
+	err := c.requireSecureEndpoint(malformedCAPRFEndpointWithSensitiveParts(), "commands polling")
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	assertCAPRFErrorNoSensitiveURLParts(t, err)
+	assertCAPRFErrorHasInvalidURLCause(t, err)
+}
+
+func TestFetchCommandsCreateRequestErrorRedactsSensitiveURLParts(t *testing.T) {
+	c := NewFromConfig(&config.MachineConfig{
+		Transport: config.TransportConfig{Insecure: true},
+		Agent:     config.AgentConfig{CommandsURL: malformedCAPRFEndpointWithSensitiveParts()},
+	})
+	_, err := c.FetchCommands(context.Background())
+	if err == nil {
+		t.Fatal("expected request construction error")
+	}
+	assertCAPRFErrorNoSensitiveURLParts(t, err)
+	assertCAPRFErrorHasInvalidURLCause(t, err)
+}
+
+func TestAcknowledgeCommandBuildURLErrorRedactsSensitiveURLParts(t *testing.T) {
+	c := NewFromConfig(&config.MachineConfig{
+		Transport: config.TransportConfig{Insecure: true},
+		Agent:     config.AgentConfig{CommandsURL: malformedCAPRFEndpointWithSensitiveParts()},
+	})
+	err := c.AcknowledgeCommand(context.Background(), "cmd-placeholder", "completed", "")
+	if err == nil {
+		t.Fatal("expected ack URL build error")
+	}
+	assertCAPRFErrorNoSensitiveURLParts(t, err)
+	assertCAPRFErrorHasInvalidURLCause(t, err)
+}
+
+func TestDoPostCreateRequestErrorRedactsSensitiveURLParts(t *testing.T) {
+	c := NewFromConfig(&config.MachineConfig{})
+	err := c.doPost(context.Background(), malformedCAPRFEndpointWithSensitiveParts(), "body")
+	if err == nil {
+		t.Fatal("expected request construction error")
+	}
+	assertCAPRFErrorNoSensitiveURLParts(t, err)
+	assertCAPRFErrorHasInvalidURLCause(t, err)
+}
+
+func malformedCAPRFEndpointWithSensitiveParts() string {
+	return "https://user-placeholder:pass-placeholder@example.com/%zz?token=placeholder-token#fragment-placeholder"
+}
+
+func assertCAPRFErrorHasInvalidURLCause(t *testing.T, err error) {
+	t.Helper()
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) {
+		t.Fatalf("expected error chain to contain *url.Error, got %T: %v", err, err)
+	}
+	if urlErr.URL != "<invalid-url>" {
+		t.Fatalf("url.Error.URL = %q, want redacted invalid URL marker", urlErr.URL)
+	}
+}
+
+func assertCAPRFErrorNoSensitiveURLParts(t *testing.T, err error) {
+	t.Helper()
+	assertCAPRFErrorNoSensitiveURLPartsSeen(t, err, map[error]struct{}{})
+}
+
+func assertCAPRFErrorNoSensitiveURLPartsSeen(t *testing.T, err error, seen map[error]struct{}) {
+	t.Helper()
+	if err == nil {
+		return
+	}
+	if _, ok := seen[err]; ok {
+		return
+	}
+	seen[err] = struct{}{}
+	assertNoCAPRFSensitiveURLParts(t, err.Error())
+	assertNoCAPRFSensitiveURLParts(t, fmt.Sprintf("%#v", err))
+
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, child := range joined.Unwrap() {
+			assertCAPRFErrorNoSensitiveURLPartsSeen(t, child, seen)
+		}
+		return
+	}
+	assertCAPRFErrorNoSensitiveURLPartsSeen(t, errors.Unwrap(err), seen)
+}
+
+func assertNoCAPRFSensitiveURLParts(t *testing.T, msg string) {
+	t.Helper()
+	for _, leaked := range []string{
+		"user-placeholder",
+		"pass-placeholder",
+		"token=placeholder-token",
+		"fragment-placeholder",
+	} {
+		if strings.Contains(msg, leaked) {
+			t.Fatalf("error leaked sensitive CAPRF URL part %q: %q", leaked, msg)
+		}
+	}
+}
+
 func TestSetAuthErrorRedactsQueryToken(t *testing.T) {
 	c := &Client{
 		log: slog.Default().With("component", "caprf"),
