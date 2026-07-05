@@ -428,6 +428,29 @@ func TestConfigureDNSReplacesDanglingResolvConfSymlink(t *testing.T) {
 	}
 }
 
+func TestConfigureDNSRejectsInjectedResolverDirective(t *testing.T) {
+	root := t.TempDir()
+	etcDir := filepath.Join(root, "etc")
+	if err := os.MkdirAll(etcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &Configurator{rootDir: root}
+	cfg := &config.MachineConfig{}
+	cfg.Network.DNSResolvers = "8.8.8.8\nsearch evil.example"
+	err := c.ConfigureDNS(cfg)
+	if err == nil {
+		t.Fatal("expected invalid resolver error")
+	}
+	if !strings.Contains(err.Error(), "invalid DNS resolver") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	path := filepath.Join(etcDir, "resolv.conf")
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("resolv.conf should not be written, stat error: %v", statErr)
+	}
+}
+
 func TestConfigureDNSMissingEtcDir(t *testing.T) {
 	root := t.TempDir()
 	// Don't create /etc — ConfigureDNS should skip gracefully.

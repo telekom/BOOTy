@@ -22,6 +22,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
 	exec "github.com/telekom/BOOTy/pkg/executil"
+	"github.com/telekom/BOOTy/pkg/network"
 )
 
 const newroot = "/newroot"
@@ -136,6 +137,12 @@ func (c *Configurator) SetHostname(cfg *config.MachineConfig) error {
 
 // ConfigureKubelet writes kubeadm-compatible kubelet extra args.
 func (c *Configurator) ConfigureKubelet(cfg *config.MachineConfig) error {
+	if cfg == nil {
+		return errors.New("configuring kubelet requires machine config")
+	}
+	if err := config.ValidateKubeletProvisionFields(&cfg.Provision); err != nil {
+		return err
+	}
 	args := kubeletExtraArgs(cfg)
 	if len(args) == 0 {
 		return nil
@@ -758,6 +765,13 @@ func (c *Configurator) ConfigureDNS(cfg *config.MachineConfig) error {
 	if cfg.Network.DNSResolvers == "" {
 		return nil
 	}
+	lines, err := network.ResolverLines(cfg.Network.DNSResolvers)
+	if err != nil {
+		return err
+	}
+	if len(lines) == 0 {
+		return nil
+	}
 	etcDir := filepath.Join(c.rootDir, "etc")
 	if _, err := os.Stat(etcDir); err != nil {
 		if os.IsNotExist(err) {
@@ -768,13 +782,6 @@ func (c *Configurator) ConfigureDNS(cfg *config.MachineConfig) error {
 	}
 	path := filepath.Join(etcDir, "resolv.conf")
 	slog.Info("configuring DNS", "resolvers", cfg.Network.DNSResolvers)
-	var lines []string
-	for _, r := range strings.Split(cfg.Network.DNSResolvers, ",") {
-		r = strings.TrimSpace(r)
-		if r != "" {
-			lines = append(lines, "nameserver "+r)
-		}
-	}
 	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		if err := os.Remove(path); err != nil {
 			return fmt.Errorf("replace resolv.conf symlink: %w", err)

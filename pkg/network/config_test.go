@@ -141,14 +141,14 @@ func TestConfigureResolversRejectsInjectedDirectives(t *testing.T) {
 }
 
 func TestResolverLines(t *testing.T) {
-	lines, err := resolverLines("8.8.8.8, 1.1.1.1, ,2001:4860:4860::8888")
+	lines, err := ResolverLines("8.8.8.8, 1.1.1.1, ,2001:4860:4860::8888")
 	if err != nil {
-		t.Fatalf("resolverLines: %v", err)
+		t.Fatalf("ResolverLines: %v", err)
 	}
 	got := strings.Join(lines, "\n")
 	want := "nameserver 8.8.8.8\nnameserver 1.1.1.1\nnameserver 2001:4860:4860::8888"
 	if got != want {
-		t.Fatalf("resolverLines = %q, want %q", got, want)
+		t.Fatalf("ResolverLines = %q, want %q", got, want)
 	}
 }
 

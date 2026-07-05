@@ -363,6 +363,11 @@ func TestValidate(t *testing.T) {
 				t.Fatalf("Provision.TargetOS = %q, want %q", cfg.Provision.TargetOS, TargetOSLinux)
 			}
 		}},
+		{name: "valid kubelet provider and topology fields", cfg: Config{Provision: ProvisionConfig{ProviderID: "redfish://host/sys/1", FailureDomain: "dc1_az.1", Region: "eu-central-1"}}},
+		{name: "provider id rejects newline", cfg: Config{Provision: ProvisionConfig{ProviderID: "redfish://host/sys/1\n--node-labels=bad=true"}}, wantErr: "provision.providerID must not contain whitespace or control characters"},
+		{name: "provider id rejects shell-breaking whitespace", cfg: Config{Provision: ProvisionConfig{ProviderID: "redfish://host/sys/1 bad"}}, wantErr: "provision.providerID must not contain whitespace or control characters"},
+		{name: "failure domain rejects invalid label value", cfg: Config{Provision: ProvisionConfig{FailureDomain: "-dc1"}}, wantErr: "provision.failureDomain must be a valid Kubernetes label value"},
+		{name: "region rejects long label value", cfg: Config{Provision: ProvisionConfig{Region: strings.Repeat("a", 64)}}, wantErr: "provision.region must be no more than 63 characters"},
 		{name: "windows provision target os rejected", cfg: Config{Provision: ProvisionConfig{TargetOS: "windows"}}, wantErr: "Windows targets are not supported"},
 		{name: "esxi provision target os rejected", cfg: Config{Provision: ProvisionConfig{TargetOS: "vmware-esxi"}}, wantErr: "VMware ESXi targets are not supported"},
 		{name: "unknown provision target os rejected", cfg: Config{Provision: ProvisionConfig{TargetOS: "sunos"}}, wantErr: "only \"linux\" is currently accepted"},
