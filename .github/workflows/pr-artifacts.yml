@@ -13,9 +13,9 @@ permissions:
 
 jobs:
   publish-pr-iso:
-    name: Publish PR BOOTy GoBGP ISO
+    name: Publish PR BOOTy ISO artifacts
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
 
     steps:
       - name: Explain fork PR artifact policy
@@ -40,25 +40,40 @@ jobs:
         if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
-      - name: Build GoBGP ISO artifact
+      - name: Build ISO artifacts
         if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           MERGE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          docker buildx build --platform linux/amd64 --target gobgp-iso \
-            --output type=local,dest=out-gobgp-iso -f initrd.Dockerfile .
+          build_iso() {
+            flavor="$1"
+            target="$2"
+            output="$3"
+            limit_mib="$4"
+            out_dir="out-${flavor}-iso"
 
-          test -f out-gobgp-iso/booty-gobgp.iso
-          max_iso_bytes=$((140 * 1024 * 1024))
-          iso_bytes=$(stat -c%s "out-gobgp-iso/booty-gobgp.iso")
-          echo "GoBGP ISO size: $(numfmt --to=iec "$iso_bytes")"
-          if [ "$iso_bytes" -gt "$max_iso_bytes" ]; then
-            echo "::error::GoBGP ISO is $(numfmt --to=iec "$iso_bytes"), above hard cap $(numfmt --to=iec "$max_iso_bytes")"
-            exit 1
-          fi
-          sha256sum out-gobgp-iso/booty-gobgp.iso > out-gobgp-iso/booty-gobgp.iso.sha256
+            docker buildx build --platform linux/amd64 --target "${target}" \
+              --build-arg "BOOTY_VERSION=pr" \
+              --build-arg "BOOTY_BUILD=${HEAD_SHA}" \
+              --build-arg "BOOTY_FLAVOR=${flavor}" \
+              --output "type=local,dest=${out_dir}" -f initrd.Dockerfile .
+
+            test -f "${out_dir}/${output}"
+            max_iso_bytes=$((limit_mib * 1024 * 1024))
+            iso_bytes=$(stat -c%s "${out_dir}/${output}")
+            echo "${flavor} ISO size: $(numfmt --to=iec "$iso_bytes")"
+            if [ "$iso_bytes" -gt "$max_iso_bytes" ]; then
+              echo "::error::${flavor} ISO is $(numfmt --to=iec "$iso_bytes"), above hard cap $(numfmt --to=iec "$max_iso_bytes")"
+              exit 1
+            fi
+            sha256sum "${out_dir}/${output}" > "${out_dir}/${output}.sha256"
+          }
+
+          build_iso full iso booty.iso 180
+          build_iso gobgp gobgp-iso booty-gobgp.iso 140
+
           python3 - <<'PY'
           import datetime
           import hashlib
@@ -66,9 +81,21 @@ jobs:
           import os
           import pathlib
 
-          iso = pathlib.Path("out-gobgp-iso/booty-gobgp.iso")
+          artifacts = []
+          for flavor, path in (
+              ("default", pathlib.Path("out-full-iso/booty.iso")),
+              ("gobgp", pathlib.Path("out-gobgp-iso/booty-gobgp.iso")),
+          ):
+              artifacts.append(
+                  {
+                      "flavor": flavor,
+                      "name": path.name,
+                      "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                      "size": path.stat().st_size,
+                  }
+              )
           document = {
-              "artifact": "booty-gobgp-pr-iso",
+              "artifact": "booty-pr-isos",
               "head_sha": os.environ["HEAD_SHA"],
               "github_sha": os.environ["MERGE_SHA"],
               "checked_out_sha": os.popen("git rev-parse HEAD").read().strip(),
@@ -77,13 +104,9 @@ jobs:
               "run_id": os.environ["GITHUB_RUN_ID"],
               "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
               "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-              "iso": {
-                  "name": iso.name,
-                  "sha256": hashlib.sha256(iso.read_bytes()).hexdigest(),
-                  "size": iso.stat().st_size,
-              },
+              "isos": artifacts,
           }
-          pathlib.Path("out-gobgp-iso/booty-pr-artifact.json").write_text(
+          pathlib.Path("booty-pr-artifacts.json").write_text(
               json.dumps(document, indent=2, sort_keys=True) + "\n",
               encoding="utf-8",
           )
@@ -97,31 +120,33 @@ jobs:
           import pathlib
           import zipfile
 
-          root = pathlib.Path("out-gobgp-iso")
-          archive_path = pathlib.Path("booty-gobgp-pr-iso.zip")
-          artifact_names = (
-              "booty-gobgp.iso",
-              "booty-gobgp.iso.sha256",
-              "booty-pr-artifact.json",
+          archive_path = pathlib.Path("booty-pr-isos.zip")
+          artifacts = (
+              pathlib.Path("out-full-iso/booty.iso"),
+              pathlib.Path("out-full-iso/booty.iso.sha256"),
+              pathlib.Path("out-gobgp-iso/booty-gobgp.iso"),
+              pathlib.Path("out-gobgp-iso/booty-gobgp.iso.sha256"),
+              pathlib.Path("booty-pr-artifacts.json"),
           )
 
           with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
-              for name in artifact_names:
-                  artifact = root / name
+              for artifact in artifacts:
                   if not artifact.is_file() or artifact.is_symlink():
                       raise SystemExit(f"{artifact} must be a regular non-symlink file")
-                  archive.write(artifact, name)
+                  archive.write(artifact, artifact.name)
           PY
 
       - name: Publish artifact
         if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: booty-gobgp-pr-iso
+          name: booty-pr-isos
           path: |
+            out-full-iso/booty.iso
+            out-full-iso/booty.iso.sha256
             out-gobgp-iso/booty-gobgp.iso
             out-gobgp-iso/booty-gobgp.iso.sha256
-            out-gobgp-iso/booty-pr-artifact.json
+            booty-pr-artifacts.json
           if-no-files-found: error
           retention-days: 14
 
@@ -136,7 +161,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${HEAD_SHA:0:7}"
-          package_url="${GITLAB_API_V4_URL}/projects/${GITLAB_PACKAGE_PROJECT_ID}/packages/generic/booty-pr-artifacts/${version}/booty-gobgp-pr-iso.zip"
+          package_url="${GITLAB_API_V4_URL}/projects/${GITLAB_PACKAGE_PROJECT_ID}/packages/generic/booty-pr-artifacts/${version}/booty-pr-isos.zip"
           required="$(printf '%s' "${GITLAB_PACKAGE_REQUIRED}" | tr '[:upper:]' '[:lower:]')"
           if [ -z "${GITLAB_PACKAGE_TOKEN}" ]; then
             if [ "${required}" = "true" ] || [ "${required}" = "1" ] || [ "${required}" = "yes" ]; then
@@ -155,7 +180,7 @@ jobs:
 
           curl --fail --silent --show-error \
             --header "PRIVATE-TOKEN: ${GITLAB_PACKAGE_TOKEN}" \
-            --upload-file booty-gobgp-pr-iso.zip \
+            --upload-file booty-pr-isos.zip \
             "${package_url}"
           {
             echo "### GitLab generic package"
@@ -188,4 +213,4 @@ jobs:
         run: |
           ENCODED_REF=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['REF_NAME'], safe=''))")
           echo "nightly.link URL (latest artifact on branch):"
-          echo "https://nightly.link/${{ github.repository }}/workflows/pr-artifacts.yml/${ENCODED_REF}/booty-gobgp-pr-iso.zip"
+          echo "https://nightly.link/${{ github.repository }}/workflows/pr-artifacts.yml/${ENCODED_REF}/booty-pr-isos.zip"
