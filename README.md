@@ -104,7 +104,7 @@ cross-compilation hosts for the Go binary.
 | Scope | Current CI proof |
 |-------|------------------|
 | Go binary | `linux/amd64` and `linux/arm64` build jobs |
-| Initramfs artifacts | `linux/amd64` default, slim, micro, and GoBGP build-flavor jobs plus path-filtered `linux/arm64` flavour packaging for initramfs input changes; release builds publish default, slim, micro, and GoBGP for both `linux/amd64` and `linux/arm64` |
+| Initramfs artifacts | `linux/amd64` default, slim, micro, and GoBGP build-flavor jobs plus path-filtered `linux/arm64` flavor packaging for initramfs input changes; release builds publish default, slim, micro, and GoBGP for both `linux/amd64` and `linux/arm64` |
 | Boot/provisioning behavior | x86_64 KVM/QEMU jobs on Ubuntu GitHub runners |
 | Network integration | ContainerLab and vrnetlab jobs on privileged Linux runners, with nightly smoke coverage for DHCP, static, multi-NIC, and bond topologies |
 | Network persistence | Unit tests for Ubuntu/netplan, RHEL/NetworkManager, and Flatcar/systemd-networkd writers plus explicit provisioning opt-in wiring |

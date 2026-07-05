@@ -73,7 +73,7 @@ func TestCIWorkflowRunsProductionE2E(t *testing.T) {
 	}
 }
 
-func TestCIWorkflowBuildsArm64InitramfsFlavoursWhenInputsChange(t *testing.T) {
+func TestCIWorkflowBuildsArm64InitramfsFlavorsWhenInputsChange(t *testing.T) {
 	data, err := os.ReadFile(".github/workflows/ci.yml")
 	if err != nil {
 		t.Fatalf("read ci workflow: %v", err)
@@ -81,25 +81,25 @@ func TestCIWorkflowBuildsArm64InitramfsFlavoursWhenInputsChange(t *testing.T) {
 	text := string(data)
 	wf := loadWorkflow(t, ".github/workflows/ci.yml")
 
-	detect, ok := wf.Jobs["detect-initramfs-flavour-changes"]
+	detect, ok := wf.Jobs["detect-initramfs-flavor-changes"]
 	if !ok {
-		t.Fatal("missing detect-initramfs-flavour-changes job")
+		t.Fatal("missing detect-initramfs-flavor-changes job")
 	}
 	if detect.TimeoutMinutes != 10 {
 		t.Fatalf("detect timeout-minutes = %d, want 10", detect.TimeoutMinutes)
 	}
-	requireWorkflowStepRunContains(t, detect, "Check initramfs flavour inputs", "initrd\\.Dockerfile")
-	requireWorkflowStepRunContains(t, detect, "Check initramfs flavour inputs", ".github/workflows/(ci|nightly|release-v2|pr-artifacts)\\.yml")
+	requireWorkflowStepRunContains(t, detect, "Check initramfs flavor inputs", "initrd\\.Dockerfile")
+	requireWorkflowStepRunContains(t, detect, "Check initramfs flavor inputs", ".github/workflows/(ci|nightly|release-v2|pr-artifacts)\\.yml")
 
-	arm64, ok := wf.Jobs["build-flavours-arm64"]
+	arm64, ok := wf.Jobs["build-flavors-arm64"]
 	if !ok {
-		t.Fatal("missing build-flavours-arm64 job")
+		t.Fatal("missing build-flavors-arm64 job")
 	}
-	if got := needsSet(arm64.Needs); !hasNeeds(got, "lint", "detect-initramfs-flavour-changes") {
-		t.Fatalf("build-flavours-arm64 needs = %v, want lint and detect-initramfs-flavour-changes", got)
+	if got := needsSet(arm64.Needs); !hasNeeds(got, "lint", "detect-initramfs-flavor-changes") {
+		t.Fatalf("build-flavors-arm64 needs = %v, want lint and detect-initramfs-flavor-changes", got)
 	}
-	if arm64.If != "needs.detect-initramfs-flavour-changes.outputs.should-build == 'true'" {
-		t.Fatalf("build-flavours-arm64 if = %q", arm64.If)
+	if arm64.If != "needs.detect-initramfs-flavor-changes.outputs.should-build == 'true'" {
+		t.Fatalf("build-flavors-arm64 if = %q", arm64.If)
 	}
 	requireWorkflowStepRunContains(t, arm64, "Build initramfs (${{ matrix.flavor }}/arm64)", "linux/arm64")
 	requireWorkflowStepRunContains(t, arm64, "Build initramfs (${{ matrix.flavor }}/arm64)", "BOOTY_FLAVOR")
@@ -110,10 +110,10 @@ func TestCIWorkflowBuildsArm64InitramfsFlavoursWhenInputsChange(t *testing.T) {
 		"flavor: slim",
 		"flavor: micro",
 		"ubuntu-24.04-arm",
-		"build-flavour-${{ matrix.flavor }}-arm64",
+		"build-flavor-${{ matrix.flavor }}-arm64",
 	} {
 		if !strings.Contains(text, want) {
-			t.Fatalf("ci workflow missing arm64 flavour coverage marker %q", want)
+			t.Fatalf("ci workflow missing arm64 flavor coverage marker %q", want)
 		}
 	}
 }

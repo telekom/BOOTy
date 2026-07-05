@@ -338,8 +338,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  detect-initramfs-flavour-changes:
-    name: Detect Initramfs Flavour Changes
+  detect-initramfs-flavor-changes:
+    name: Detect Initramfs Flavor Changes
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -351,7 +351,7 @@ jobs:
           persist-credentials: false
 
       - id: changed
-        name: Check initramfs flavour inputs
+        name: Check initramfs flavor inputs
         run: |
           set -euo pipefail
           case "${{ github.event_name }}" in
@@ -379,11 +379,11 @@ jobs:
             echo "should-build=false" >> "$GITHUB_OUTPUT"
           fi
 
-  build-flavours-arm64:
-    name: Build Flavours (arm64 ${{ matrix.flavor }}, path-filtered)
+  build-flavors-arm64:
+    name: Build Flavors (arm64 ${{ matrix.flavor }}, path-filtered)
     runs-on: ubuntu-24.04-arm
-    needs: [lint, detect-initramfs-flavour-changes]
-    if: needs.detect-initramfs-flavour-changes.outputs.should-build == 'true'
+    needs: [lint, detect-initramfs-flavor-changes]
+    if: needs.detect-initramfs-flavor-changes.outputs.should-build == 'true'
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -405,7 +405,7 @@ jobs:
       - name: Assert runner architecture
         run: |
           if [ "$(uname -m)" != "aarch64" ]; then
-            echo "::error::arm64 flavour coverage must run on an aarch64 runner"
+            echo "::error::arm64 flavor coverage must run on an aarch64 runner"
             exit 1
           fi
 
@@ -433,12 +433,12 @@ jobs:
           test -f "out-${{ matrix.flavor }}-arm64/${{ matrix.artifact }}"
           ls -lh "out-${{ matrix.flavor }}-arm64/${{ matrix.artifact }}"
 
-      - name: Upload arm64 flavour artifact
+      - name: Upload arm64 flavor artifact
         if: always()
         continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: build-flavour-${{ matrix.flavor }}-arm64
+          name: build-flavor-${{ matrix.flavor }}-arm64
           path: out-${{ matrix.flavor }}-arm64/${{ matrix.artifact }}
           if-no-files-found: ignore
           retention-days: 7

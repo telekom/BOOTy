@@ -39,7 +39,7 @@ func TestREADMEClarifiesBondLabDoesNotProveLACP(t *testing.T) {
 		"not real LACP negotiation",
 		"does not prove 802.3ad/LACP negotiation",
 		"nightly smoke coverage for DHCP, static, multi-NIC, and bond topologies",
-		"path-filtered `linux/arm64` flavour packaging",
+		"path-filtered `linux/arm64` flavor packaging",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("README missing %q", want)
