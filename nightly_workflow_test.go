@@ -24,6 +24,7 @@ func TestNightlyWorkflowRunsSmallTopologySmokeMatrix(t *testing.T) {
 		t.Fatalf("topology-smoke timeout-minutes = %d, want 35", job.TimeoutMinutes)
 	}
 	requireWorkflowStepRunContains(t, job, "Deploy topology", "make clab-${{ matrix.make_target }}-up")
+	requireWorkflowStepRunContains(t, job, "Run topology smoke test", "set -euo pipefail")
 	requireWorkflowStepRunContains(t, job, "Run topology smoke test", "make test-e2e-${{ matrix.make_target }}")
 	requireWorkflowStepRunContains(t, job, "Cleanup", "make clab-${{ matrix.make_target }}-down")
 

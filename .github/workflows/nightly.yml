@@ -197,7 +197,7 @@ jobs:
 
       - name: Run topology smoke test
         run: |
-          set -o pipefail
+          set -euo pipefail
           make test-e2e-${{ matrix.make_target }} 2>&1 | tee topology-${{ matrix.topology }}.log
           if grep -E '^[[:space:]]*--- SKIP:' topology-${{ matrix.topology }}.log; then
             echo "::error::topology smoke tests skipped in nightly"
