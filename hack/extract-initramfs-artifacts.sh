@@ -34,11 +34,44 @@ list_cpio() {
 }
 
 extract_cpio() {
+  local log rc
+
+  log="$(mktemp)"
+  if run_cpio_extract 2>"${log}"; then
+    rm -f -- "${log}"
+    return 0
+  fi
+
+  rc=$?
+  if mknod_errors_only "${log}"; then
+    cat "${log}" >&2
+    rm -f -- "${log}"
+    return 0
+  fi
+
+  cat "${log}" >&2
+  rm -f -- "${log}"
+  return "${rc}"
+}
+
+run_cpio_extract() {
   if cpio_supports '--no-absolute-filenames'; then
     cpio -idmu --quiet --no-absolute-filenames
   else
     cpio -idmu
   fi
+}
+
+mknod_errors_only() {
+  local log="$1"
+
+  awk '
+    /Cannot mknod: Operation not permitted$/ { found = 1; next }
+    /^[0-9]+ blocks$/ { next }
+    NF == 0 { next }
+    { bad = 1 }
+    END { exit !(found && !bad) }
+  ' "${log}"
 }
 
 remove_special_files() {
