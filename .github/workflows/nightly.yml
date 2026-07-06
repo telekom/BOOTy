@@ -180,9 +180,76 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  topology-smoke:
+    name: Topology Smoke (${{ matrix.topology }})
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - topology: dhcp
+            make_target: dhcp
+          - topology: static
+            make_target: static
+          - topology: multi-nic
+            make_target: multi-nic
+          - topology: bond
+            make_target: bond
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: "1.26"
+
+      - name: Install ContainerLab
+        run: test/e2e/clab/install-containerlab.sh "0.76.1"
+
+      - name: Deploy topology
+        run: make clab-${{ matrix.make_target }}-up
+
+      - name: Run topology smoke test
+        run: |
+          set -euo pipefail
+          make test-e2e-${{ matrix.make_target }} 2>&1 | tee topology-${{ matrix.topology }}.log
+          if grep -E '^[[:space:]]*--- SKIP:' topology-${{ matrix.topology }}.log; then
+            echo "::error::topology smoke tests skipped in nightly"
+            exit 1
+          fi
+
+      - name: Collect topology logs
+        if: always()
+        run: |
+          mkdir -p topology-logs
+          sudo docker ps -a --format '{{.Names}}' | awk '/^clab-booty-/ { print }' | while read -r name; do
+            sudo docker logs "${name}" > "topology-logs/${name}.log" 2>&1 || true
+            sudo docker exec "${name}" ip addr show > "topology-logs/${name}-ip-addr.txt" 2>&1 || true
+            sudo docker exec "${name}" ip route show table all > "topology-logs/${name}-routes.txt" 2>&1 || true
+          done
+
+      - name: Upload topology logs
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: topology-${{ matrix.topology }}-logs
+          path: |
+            topology-${{ matrix.topology }}.log
+            topology-logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: make clab-${{ matrix.make_target }}-down
+
   container:
     name: Nightly Container Image
-    needs: [version, build, scan, sbom]
+    needs: [version, build, scan, sbom, topology-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     if: github.ref == 'refs/heads/main'

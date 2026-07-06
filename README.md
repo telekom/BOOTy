@@ -47,7 +47,9 @@ CAPRF-compatible `/deploy/vars` file.
 - **FRR/EVPN networking** — BGP underlay with VXLAN overlay for data center fabrics (FRR-based)
 - **GoBGP/EVPN networking** — Pure-Go BGP stack with VXLAN overlay (no external daemons)
 - **Static IP networking** — Direct IP assignment via netlink (no external tools)
-- **LACP bond** — 802.3ad link aggregation with configurable bond modes
+- **Bond networking** — configurable bond modes, including 802.3ad/LACP on
+  capable switches; the current ContainerLab bond smoke proves multi-link bond
+  connectivity, not real LACP negotiation
 - **DHCP fallback** — Automatic DHCP on all physical interfaces with connectivity check
 - **Broad NIC driver support** — Intel (e1000e, igb, igc, ixgbe, i40e, ice), Broadcom (tg3, bnxt_en), Mellanox/NVIDIA (mlx4, mlx5), plus virtio for VMs
 - **Multi-format image streaming** — Gzip, lz4, xz, zstd decompression with auto-detection
@@ -102,9 +104,9 @@ cross-compilation hosts for the Go binary.
 | Scope | Current CI proof |
 |-------|------------------|
 | Go binary | `linux/amd64` and `linux/arm64` build jobs |
-| Initramfs artifacts | `linux/amd64` default, slim, micro, and GoBGP build-flavor jobs |
+| Initramfs artifacts | `linux/amd64` default, slim, micro, and GoBGP build-flavor jobs plus path-filtered `linux/arm64` flavor packaging for initramfs input changes; release builds publish default, slim, micro, and GoBGP for both `linux/amd64` and `linux/arm64` |
 | Boot/provisioning behavior | x86_64 KVM/QEMU jobs on Ubuntu GitHub runners |
-| Network integration | ContainerLab and vrnetlab jobs on privileged Linux runners |
+| Network integration | ContainerLab and vrnetlab jobs on privileged Linux runners, with nightly smoke coverage for DHCP, static, multi-NIC, and bond topologies |
 | Network persistence | Unit tests for Ubuntu/netplan, RHEL/NetworkManager, and Flatcar/systemd-networkd writers plus explicit provisioning opt-in wiring |
 
 CI does not currently prove macOS/Windows runtime behavior, non-Linux boot
@@ -392,7 +394,7 @@ root is mounted.
 | `PERSIST_NETWORK` | `false` | Write configured target OS network files during provisioning |
 | `OS_FAMILY` | — | Required when `PERSIST_NETWORK=true`; one of `ubuntu`, `rhel`, `flatcar`. `rhel` network persistence is parsed, but provisioning and dry-run preflight reject it until RHEL-like bootloader support is implemented. |
 | `PROVISION_TARGET_OS` / `TARGET_OS` | — | Required provisioning target OS preflight hint. Only `linux` is accepted; `windows`, `esxi`, and unknown values are rejected before destructive storage steps. |
-| `BOND_INTERFACES` | — | Comma-separated interfaces for LACP bond (e.g. `eth0,eth1`) |
+| `BOND_INTERFACES` | — | Comma-separated interfaces for a Linux bond (e.g. `eth0,eth1`) |
 | `BOND_MODE` | `802.3ad` | Bond mode: `802.3ad`/`lacp`, `balance-rr`, `active-backup`, `balance-xor` |
 | `VLANS` | — | Multi-VLAN config (e.g. `200:eno1:10.200.0.42/24,300:eno2`) |
 | `BGP_PEER_MODE` | `unnumbered` | GoBGP peering mode: `unnumbered`, `dual`, `numbered` |
@@ -417,6 +419,11 @@ root is mounted.
 | `provision_gateway` | — | Gateway VTEP IP for VXLAN BUM flooding and kernel route |
 | `overlay_subnet` | — | Overlay CIDR (e.g. `2a01:598:40a:5481::/64`) |
 | `dns_resolver` | — | Comma-separated DNS server IPs |
+
+The checked-in `topology-lacp.clab.yml` file is retained for compatibility with
+older `clab-lacp-*` target names. It uses a Linux bridge and validates
+multi-link bond connectivity only; it does not prove 802.3ad/LACP negotiation
+against a LACP-capable switch.
 
 ### Debugging
 

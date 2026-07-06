@@ -137,8 +137,9 @@ When your PR introduces new functionality, verify:
 - [ ] New Make targets are documented in `README.md` and this file
 - [ ] New build tags are added to `.github/instructions/e2e-tests.instructions.md`
 - [ ] `.github/copilot-instructions.md` architecture section is up to date
-- [ ] Step count references are consistent across `README.md`,
-      `copilot-instructions.md`, and `CONTRIBUTING.md` (currently 42 steps)
+- [ ] Step count references are consistent with the source-of-truth
+      `TestProvisionStepCount` regression in `pkg/provision/orchestrator_test.go`
+      across `README.md`, `copilot-instructions.md`, and `CONTRIBUTING.md`
 - [ ] New agents/prompts/instructions are listed in `.github/AGENTS.md`
 
 ## License

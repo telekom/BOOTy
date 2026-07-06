@@ -5,10 +5,10 @@ Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, read
 ## Architecture
 
 - `cmd/` — CLI entry point (Cobra)
-- `pkg/provision/` — 42-step provisioning orchestrator
+- `pkg/provision/` — provisioning orchestrator; keep step-count claims consistent with `TestProvisionStepCount`
 - `pkg/config/` — MachineConfig, Provider interface, Status types
 - `pkg/crash/` — Startup crash artifact collection, metadata manifests, CAPRF/S3 upload contracts
-- `pkg/network/` — Pluggable networking: DHCP, static, FRR/EVPN, GoBGP, LACP bonds
+- `pkg/network/` — Pluggable networking: DHCP, static, FRR/EVPN, GoBGP, and Linux bonds
 - `pkg/network/gobgp/` — Pure-Go BGP stack (underlay eBGP + overlay EVPN), three peering modes: unnumbered, dual, numbered
 - `pkg/network/frr/` — FRR config rendering (legacy)
 - `pkg/network/lldp/` — LLDP frame listener (raw AF_PACKET)
