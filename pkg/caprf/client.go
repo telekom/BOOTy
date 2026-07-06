@@ -231,7 +231,8 @@ func (c *Client) FetchCommands(ctx context.Context) ([]config.Command, error) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.cfg.Agent.CommandsURL, http.NoBody)
 	if err != nil {
-		return nil, fmt.Errorf("create commands request: %w", err)
+		redacted := redactedURL(c.cfg.Agent.CommandsURL)
+		return nil, fmt.Errorf("create commands request %s: %w", redacted, redactedURLError(c.cfg.Agent.CommandsURL, err))
 	}
 	if err := c.setAuth(req); err != nil {
 		return nil, err
@@ -281,7 +282,8 @@ func (c *Client) AcknowledgeCommand(ctx context.Context, cmdID, status, message 
 	}
 	ackURL, err := neturl.JoinPath(c.cfg.Agent.CommandsURL, "ack")
 	if err != nil {
-		return fmt.Errorf("build command ack URL: %w", err)
+		redacted := redactedURL(c.cfg.Agent.CommandsURL)
+		return fmt.Errorf("build command ack URL %s: %w", redacted, redactedURLError(c.cfg.Agent.CommandsURL, err))
 	}
 	return c.postJSONWithAuth(ctx, ackURL, data)
 }
@@ -389,7 +391,7 @@ func (c *Client) doPrepareCrashArtifactUpload(ctx context.Context, data []byte) 
 	redacted := redactedURL(rawURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, bytes.NewReader(data))
 	if err != nil {
-		return nil, false, fmt.Errorf("create crash artifact prepare request %s: %w", redacted, err)
+		return nil, false, fmt.Errorf("create crash artifact prepare request %s: %w", redacted, redactedURLError(rawURL, err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if err := c.setAuth(req); err != nil {
@@ -476,7 +478,7 @@ func (c *Client) uploadCrashRaw(ctx context.Context, instructions *crash.Prepare
 		defer body.Close() //nolint:errcheck // best-effort close
 		req, err := http.NewRequestWithContext(ctx, method, instructions.UploadURL, body)
 		if err != nil {
-			return fmt.Errorf("create crash artifact upload request %s: %w", redacted, err)
+			return fmt.Errorf("create crash artifact upload request %s: %w", redacted, redactedURLError(instructions.UploadURL, err))
 		}
 		req.Header.Set("Content-Type", "application/gzip")
 		for key, value := range instructions.Headers {
@@ -495,7 +497,7 @@ func (c *Client) uploadCrashPresignedForm(ctx context.Context, instructions *cra
 		reader, contentType := multipartArchiveReader(ctx, archivePath, instructions.FormFields, "file")
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, instructions.UploadURL, reader)
 		if err != nil {
-			return fmt.Errorf("create crash artifact form upload request %s: %w", redacted, err)
+			return fmt.Errorf("create crash artifact form upload request %s: %w", redacted, redactedURLError(instructions.UploadURL, err))
 		}
 		req.Header.Set("Content-Type", contentType)
 		for key, value := range instructions.Headers {
@@ -522,7 +524,7 @@ func (c *Client) uploadCrashProxyMultipart(ctx context.Context, rawURL string, r
 		reader, contentType := multipartArchiveReader(ctx, archivePath, map[string]string{"manifest": string(manifest)}, "archive")
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, reader)
 		if err != nil {
-			return fmt.Errorf("create crash artifact proxy upload request %s: %w", redacted, err)
+			return fmt.Errorf("create crash artifact proxy upload request %s: %w", redacted, redactedURLError(rawURL, err))
 		}
 		req.Header.Set("Content-Type", contentType)
 		if err := c.applyCrashUploadAuth(req, instructions); err != nil {
@@ -644,6 +646,99 @@ func redactedURL(raw string) string {
 	return u.String()
 }
 
+func redactedURLError(raw string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if urlErr, ok := err.(*neturl.Error); ok { //nolint:errorlint // direct copy avoids retaining the raw URL.
+		sanitized := *urlErr
+		sanitized.URL = redactURLErrorString(raw, urlErr.URL)
+		sanitized.Err = redactedURLError(raw, urlErr.Err)
+		return &sanitized
+	}
+	return errors.New(redactURLErrorString(raw, err.Error()))
+}
+
+func redactURLErrorString(raw, msg string) string {
+	redacted := redactedURL(raw)
+	for _, candidate := range urlRedactionCandidates(raw) {
+		msg = strings.ReplaceAll(msg, candidate, redacted)
+	}
+	return msg
+}
+
+func urlRedactionCandidates(raw string) []string {
+	u, err := neturl.Parse(raw)
+	if err != nil {
+		return invalidURLRedactionCandidates(raw)
+	}
+
+	var candidates []string
+	add := func(value string) {
+		if value == "" {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == value {
+				return
+			}
+		}
+		candidates = append(candidates, value)
+	}
+
+	add(raw)
+	add(u.String())
+	add(u.Redacted())
+	add(u.RawQuery)
+	add(u.Fragment)
+
+	withoutFragment := *u
+	withoutFragment.Fragment = ""
+	add(withoutFragment.String())
+	add(withoutFragment.Redacted())
+	addURLCredentialRedactionCandidates(add, u, &withoutFragment)
+
+	return candidates
+}
+
+func invalidURLRedactionCandidates(raw string) []string {
+	var candidates []string
+	addInvalidURLCandidate := func(value string) {
+		if value != "" {
+			candidates = append(candidates, value)
+		}
+	}
+	addInvalidURLCandidate(raw)
+	if withoutFragment, fragment, ok := strings.Cut(raw, "#"); ok {
+		addInvalidURLCandidate(withoutFragment)
+		addInvalidURLCandidate(fragment)
+	}
+	if withoutQuery, query, ok := strings.Cut(raw, "?"); ok {
+		addInvalidURLCandidate(withoutQuery)
+		addInvalidURLCandidate(query)
+	}
+	return candidates
+}
+
+func addURLCredentialRedactionCandidates(add func(string), u, withoutFragment *neturl.URL) {
+	if u.User == nil {
+		return
+	}
+	username := u.User.Username()
+	userInfo := u.User.String()
+	if userInfo != "" {
+		add(userInfo)
+		add(strings.Replace(u.String(), userInfo+"@", username+":***@", 1))
+		add(strings.Replace(withoutFragment.String(), userInfo+"@", username+":***@", 1))
+	}
+	add(username)
+	if password, ok := u.User.Password(); ok && password != "" {
+		add(password)
+		add(strings.Replace(u.String(), ":"+password+"@", ":***@", 1))
+		add(strings.Replace(withoutFragment.String(), ":"+password+"@", ":***@", 1))
+	}
+}
+
 func (c *Client) postWithAuth(ctx context.Context, url, body string) error {
 	return c.withRetry(ctx, url, func() error {
 		return c.doPost(ctx, url, body)
@@ -731,7 +826,8 @@ func (c *Client) requireSecureEndpoint(rawURL, purpose string) error {
 	}
 	u, err := neturl.Parse(rawURL)
 	if err != nil {
-		return fmt.Errorf("parse %s URL: %w", purpose, err)
+		redacted := redactedURL(rawURL)
+		return fmt.Errorf("parse %s URL %s: %w", purpose, redacted, redactedURLError(rawURL, err))
 	}
 	if u.Scheme == "https" || isLoopback(u.Hostname()) {
 		return nil
@@ -746,7 +842,7 @@ func (c *Client) doPost(ctx context.Context, url, body string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url,
 		strings.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+		return fmt.Errorf("create request %s: %w", redacted, redactedURLError(url, err))
 	}
 	req.Header.Set("Content-Type", "text/plain")
 	if err := c.setAuth(req); err != nil {
@@ -771,7 +867,7 @@ func (c *Client) doPostJSON(ctx context.Context, url string, data []byte) error 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url,
 		bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+		return fmt.Errorf("create request %s: %w", redacted, redactedURLError(url, err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if err := c.setAuth(req); err != nil {
