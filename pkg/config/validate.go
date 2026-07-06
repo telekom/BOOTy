@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"unicode"
 
 	imageutil "github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/network"
@@ -22,6 +23,8 @@ import (
 //   - Provision.Image.Mode: "whole-disk", "partition", "ab"
 //   - Provision.Image.ChecksumType: "sha256", "sha512"
 //   - Provision.CloudInit.Datasource: "nocloud", "configdrive"
+//   - Provision.ProviderID: no whitespace or control characters
+//   - Provision.FailureDomain and Provision.Region: valid Kubernetes label values
 //   - Provision.Disk.RAID[*]: valid level, unique non-empty name without /dev/ prefix,
 //     minimum device count per RAID level
 //   - Network.Mode: "gobgp", "frr", "static", "dhcp"
@@ -52,6 +55,7 @@ func (c *Config) Validate() error {
 	if err := ValidateProvisionTargetOS(c.Provision.TargetOS); err != nil {
 		errs = append(errs, err.Error())
 	}
+	errs = append(errs, validateKubeletProvisionFields(&c.Provision)...)
 	errs = append(errs, c.validatePersistence()...)
 
 	if err := validateRAIDConfig(c.Provision.Disk.RAID); err != nil {
@@ -294,6 +298,68 @@ func ValidateRequiredProvisionTargetOS(target string) error {
 		return fmt.Errorf("provision.targetOS required before destructive storage steps: set PROVISION_TARGET_OS=%s or TARGET_OS=%s for Linux-compatible target images", TargetOSLinux, TargetOSLinux)
 	}
 	return ValidateProvisionTargetOS(target)
+}
+
+// ValidateKubeletProvisionFields validates values rendered into
+// KUBELET_EXTRA_ARGS for the provisioned node.
+func ValidateKubeletProvisionFields(provision *ProvisionConfig) error {
+	errs := validateKubeletProvisionFields(provision)
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func validateKubeletProvisionFields(provision *ProvisionConfig) []string {
+	if provision == nil {
+		return nil
+	}
+	var errs []string
+	if err := validateKubeletProviderID(provision.ProviderID); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := validateKubernetesLabelValue("provision.failureDomain", provision.FailureDomain); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := validateKubernetesLabelValue("provision.region", provision.Region); err != nil {
+		errs = append(errs, err.Error())
+	}
+	return errs
+}
+
+func validateKubeletProviderID(value string) error {
+	for _, r := range value {
+		if unicode.IsControl(r) || unicode.IsSpace(r) {
+			return fmt.Errorf("provision.providerID must not contain whitespace or control characters")
+		}
+	}
+	return nil
+}
+
+func validateKubernetesLabelValue(name, value string) error {
+	if value == "" {
+		return nil
+	}
+	if len(value) > 63 {
+		return fmt.Errorf("%s must be no more than 63 characters", name)
+	}
+	if !isKubernetesLabelValueAlnum(value[0]) || !isKubernetesLabelValueAlnum(value[len(value)-1]) {
+		return fmt.Errorf("%s must be a valid Kubernetes label value", name)
+	}
+	for i := range value {
+		if !isKubernetesLabelValueChar(value[i]) {
+			return fmt.Errorf("%s must be a valid Kubernetes label value", name)
+		}
+	}
+	return nil
+}
+
+func isKubernetesLabelValueChar(b byte) bool {
+	return isKubernetesLabelValueAlnum(b) || b == '-' || b == '_' || b == '.'
+}
+
+func isKubernetesLabelValueAlnum(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
 func validateABConfig(imageMode string, disableKexec bool, cfg *ABConfig) error {

@@ -212,6 +212,57 @@ func TestConfigureKubeletCombinedExtraArgs(t *testing.T) {
 
 }
 
+func TestConfigureKubeletRejectsUnsafeValuesBeforeWritingExtraArgs(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*config.MachineConfig)
+		wantErr string
+	}{
+		{
+			name: "provider id whitespace",
+			mutate: func(cfg *config.MachineConfig) {
+				cfg.Provision.ProviderID = "redfish://host/sys/1 bad"
+			},
+			wantErr: "provision.providerID",
+		},
+		{
+			name: "failure domain label",
+			mutate: func(cfg *config.MachineConfig) {
+				cfg.Provision.FailureDomain = "-dc1"
+			},
+			wantErr: "provision.failureDomain",
+		},
+		{
+			name: "region label",
+			mutate: func(cfg *config.MachineConfig) {
+				cfg.Provision.Region = "eu central"
+			},
+			wantErr: "provision.region",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := newMockCommander()
+			c := newTestConfigurator(t, cmd)
+			cfg := &config.MachineConfig{OSFamily: "ubuntu"}
+			tc.mutate(cfg)
+
+			err := c.ConfigureKubelet(cfg)
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want %q", err, tc.wantErr)
+			}
+			confPath := filepath.Join(c.rootDir, "etc", "default", "kubelet")
+			if _, statErr := os.Stat(confPath); !os.IsNotExist(statErr) {
+				t.Fatalf("kubelet env file should not be written, stat error: %v", statErr)
+			}
+		})
+	}
+}
+
 func TestConfigureKubeletRHELUsesSysconfig(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)

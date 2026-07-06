@@ -125,7 +125,7 @@ func (c *Config) ApplyDefaults() {
 
 // ConfigureResolvers writes DNS resolvers for the active initramfs network.
 func ConfigureResolvers(resolvers string) error {
-	lines, err := resolverLines(resolvers)
+	lines, err := ResolverLines(resolvers)
 	if err != nil {
 		return err
 	}
@@ -153,7 +153,8 @@ func ConfigureResolvers(resolvers string) error {
 	return nil
 }
 
-func resolverLines(resolvers string) ([]string, error) {
+// ResolverLines renders validated resolv.conf nameserver lines.
+func ResolverLines(resolvers string) ([]string, error) {
 	fields := strings.Split(resolvers, ",")
 	lines := make([]string, 0, len(fields))
 	for _, resolver := range fields {

@@ -109,7 +109,7 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 	// are not required — but MTU must be set on physical NICs in all modes
 	// to avoid VXLAN fragmentation (50-byte overhead).
 	if u.cfg.PeerMode != network.PeerModeNumbered {
-		nics, err := u.waitForNICs()
+		nics, err := u.waitForNICs(ctx)
 		if err != nil {
 			return fmt.Errorf("detect NICs: %w", err)
 		}
@@ -262,28 +262,36 @@ func (u *UnderlayTier) createUnderlayDummy() error {
 // waitForNICs detects physical NICs, retrying briefly when only one NIC is
 // found. In containerlab environments, veth links are created after the
 // container starts, so data-plane NICs may not be immediately visible.
-func (u *UnderlayTier) waitForNICs() ([]string, error) {
+func (u *UnderlayTier) waitForNICs(ctx context.Context) ([]string, error) {
 	if len(u.cfg.Interfaces) > 0 {
-		return u.waitForConfiguredNICs()
+		return u.waitForConfiguredNICs(ctx)
 	}
 
 	for range nicRetryCount {
-		nics, err := network.DetectPhysicalNICs()
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("wait for physical NICs: %w", err)
+		}
+		nics, err := network.DetectPhysicalNICsContext(ctx)
 		if err != nil {
 			return nil, err
 		}
 		if len(nics) > 1 {
 			return nics, nil
 		}
-		time.Sleep(nicRetryInterval)
+		if err := sleepNICRetry(ctx); err != nil {
+			return nil, err
+		}
 	}
 	// Return whatever was found on the last scan (may be only 1 NIC).
-	return network.DetectPhysicalNICs()
+	return network.DetectPhysicalNICsContext(ctx)
 }
 
-func (u *UnderlayTier) waitForConfiguredNICs() ([]string, error) {
+func (u *UnderlayTier) waitForConfiguredNICs(ctx context.Context) ([]string, error) {
 	var missing []string
 	for range nicRetryCount {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("wait for configured BGP interfaces: %w", err)
+		}
 		missing = missing[:0]
 		for _, name := range u.cfg.Interfaces {
 			if _, err := netlink.LinkByName(name); err != nil {
@@ -293,9 +301,23 @@ func (u *UnderlayTier) waitForConfiguredNICs() ([]string, error) {
 		if len(missing) == 0 {
 			return append([]string(nil), u.cfg.Interfaces...), nil
 		}
-		time.Sleep(nicRetryInterval)
+		if err := sleepNICRetry(ctx); err != nil {
+			return nil, err
+		}
 	}
 	return nil, fmt.Errorf("configured BGP interface(s) not found: %s", strings.Join(missing, ","))
+}
+
+func sleepNICRetry(ctx context.Context) error {
+	timer := time.NewTimer(nicRetryInterval)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("wait for BGP interface retry: %w", ctx.Err())
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (u *UnderlayTier) configureNICs() error {
@@ -458,7 +480,7 @@ func (u *UnderlayTier) addInterfacePeer(ctx context.Context, iface string, famil
 	// GoBGP's AddPeer has a bug where ExtractNeighborAddress is called before
 	// SetDefaultNeighborConfigValues, so NeighborInterface is never resolved.
 	// Work around by resolving the link-local address ourselves.
-	addr, err := discoverLinkLocalPeer(iface)
+	addr, err := discoverLinkLocalPeer(ctx, iface)
 	if err != nil {
 		return fmt.Errorf("discover link-local peer on %s: %w", iface, err)
 	}
@@ -658,17 +680,21 @@ func (u *UnderlayTier) sendPeriodicRA() {
 // discoverLinkLocalPeer finds the remote peer's link-local IPv6 address on the
 // given interface by polling the NDP neighbor table. An ICMPv6 ping to the
 // all-nodes multicast group is sent first to trigger neighbor discovery.
-func discoverLinkLocalPeer(iface string) (string, error) {
+func discoverLinkLocalPeer(ctx context.Context, iface string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("discover link-local peer canceled: %w", err)
+	}
 	ifi, err := net.InterfaceByName(iface)
 	if err != nil {
 		return "", fmt.Errorf("interface %s: %w", iface, err)
 	}
 
-	// Trigger NDP by pinging the all-nodes multicast address.
-	go triggerNDP(iface)
-
-	discoveryCtx, cancel := context.WithTimeout(context.Background(), nicRetryCount*nicRetryInterval)
+	discoveryTimeout := nicRetryCount * nicRetryInterval
+	discoveryCtx, cancel := context.WithTimeout(ctx, discoveryTimeout)
 	defer cancel()
+
+	// Trigger NDP by pinging the all-nodes multicast address.
+	go triggerNDP(discoveryCtx, iface)
 
 	var fallback string
 	ticker := time.NewTicker(nicRetryInterval)
@@ -690,10 +716,13 @@ func discoverLinkLocalPeer(iface string) (string, error) {
 
 		select {
 		case <-discoveryCtx.Done():
+			if err := ctx.Err(); err != nil {
+				return "", fmt.Errorf("discover link-local peer canceled: %w", err)
+			}
 			if fallback != "" {
 				return fallback, nil
 			}
-			return "", fmt.Errorf("no IPv6 link-local neighbor found on %s after 10s", iface)
+			return "", fmt.Errorf("no IPv6 link-local neighbor found on %s after %s", iface, discoveryTimeout)
 		case <-ticker.C:
 		}
 	}
@@ -702,18 +731,18 @@ func discoverLinkLocalPeer(iface string) (string, error) {
 // triggerNDP sends ICMPv6 packets on the interface to populate the NDP
 // neighbor table and to announce our presence to adjacent FRR switches.
 // It sends both a Router Advertisement (ff02::1) and an echo (ff02::1).
-func triggerNDP(iface string) {
+func triggerNDP(ctx context.Context, iface string) {
 	// Send RA so FRR's zebra learns our link-local for BGP unnumbered.
 	sendRouterAdvertisement(iface)
 
 	// Try raw socket first (requires CAP_NET_RAW).
 	lc := net.ListenConfig{}
-	conn, err := lc.ListenPacket(context.Background(), "ip6:ipv6-icmp", "::"+"%"+iface)
+	conn, err := lc.ListenPacket(ctx, "ip6:ipv6-icmp", "::"+"%"+iface)
 	if err != nil {
 		// Fallback: use ping6 to send an ICMPv6 echo to all-nodes multicast.
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
-		_ = exec.CommandContext(ctx, "ping", "-6", "-c1", "-W1", "-I", iface, "ff02::1").Run() //nolint:gosec // constant args
+		_ = exec.CommandContext(pingCtx, "ping", "-6", "-c1", "-W1", "-I", iface, "ff02::1").Run() //nolint:gosec // constant args
 		return
 	}
 	defer conn.Close() //nolint:errcheck // best-effort NDP solicitation
