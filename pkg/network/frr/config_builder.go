@@ -18,6 +18,7 @@ type FRRConfigBuilder struct {
 
 	peerGroupName string
 	peerRemoteAS  string
+	authPassword  string
 	nics          []string
 
 	bgpKeepalive uint32
@@ -68,6 +69,12 @@ func (b *FRRConfigBuilder) WithNICs(nics []string) *FRRConfigBuilder {
 func (b *FRRConfigBuilder) WithBGPTimers(keepalive, hold uint32) *FRRConfigBuilder {
 	b.bgpKeepalive = keepalive
 	b.bgpHold = hold
+	return b
+}
+
+// WithAuthPassword configures TCP-MD5 authentication for the BGP peer-group.
+func (b *FRRConfigBuilder) WithAuthPassword(password string) *FRRConfigBuilder {
+	b.authPassword, _ = normalizeBGPAuthPassword(password)
 	return b
 }
 
@@ -142,6 +149,9 @@ func (b *FRRConfigBuilder) writeRouterBGP(sb *strings.Builder) {
 
 	fmt.Fprintf(sb, " neighbor %s peer-group\n", b.peerGroupName)
 	fmt.Fprintf(sb, " neighbor %s remote-as %s\n", b.peerGroupName, b.peerRemoteAS)
+	if b.authPassword != "" {
+		fmt.Fprintf(sb, " neighbor %s password %s\n", b.peerGroupName, b.authPassword)
+	}
 	if b.bfdProfileName != "" {
 		fmt.Fprintf(sb, " neighbor %s bfd profile %s\n", b.peerGroupName, b.bfdProfileName)
 	}
@@ -210,6 +220,9 @@ func (b *FRRConfigBuilder) writeOnefabric(sb *strings.Builder) {
 	for _, ip := range b.dcgwIPs {
 		fmt.Fprintf(sb, " neighbor %s remote-as internal\n", ip)
 		fmt.Fprintf(sb, " neighbor %s update-source %s\n", ip, b.routerID)
+		if b.authPassword != "" {
+			fmt.Fprintf(sb, " neighbor %s password %s\n", ip, b.authPassword)
+		}
 	}
 	sb.WriteString(" !\n")
 	sb.WriteString(" address-family l2vpn evpn\n")
