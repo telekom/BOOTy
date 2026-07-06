@@ -34,11 +34,51 @@ list_cpio() {
 }
 
 extract_cpio() {
-  if cpio_supports '--no-absolute-filenames'; then
-    cpio -idmu --quiet --no-absolute-filenames
-  else
-    cpio -idmu
+  local log rc
+
+  log="$(mktemp)"
+  if run_cpio_extract 2>"${log}"; then
+    rm -f -- "${log}"
+    return 0
   fi
+
+  rc=$?
+  if mknod_errors_only "${log}"; then
+    cat "${log}" >&2
+    rm -f -- "${log}"
+    return 0
+  fi
+
+  cat "${log}" >&2
+  rm -f -- "${log}"
+  return "${rc}"
+}
+
+run_cpio_extract() {
+  local args=(-idmu)
+
+  if cpio_supports '--quiet'; then
+    args+=(--quiet)
+  fi
+
+  if cpio_supports '--no-absolute-filenames'; then
+    args+=(--no-absolute-filenames)
+  fi
+
+  cpio "${args[@]}"
+}
+
+mknod_errors_only() {
+  local log="$1"
+
+  awk '
+    /Cannot mknod: Operation not permitted/ { found = 1; next }
+    /^(cpio: )?[0-9]+ blocks$/ { next }
+    /^cpio: Exiting with failure status due to previous errors$/ { next }
+    NF == 0 { next }
+    { bad = 1 }
+    END { exit !(found && !bad) }
+  ' "${log}"
 }
 
 remove_special_files() {
