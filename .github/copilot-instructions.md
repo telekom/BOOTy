@@ -21,7 +21,7 @@ Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, read
 - `pkg/auth/` — JWT token manager (acquisition, renewal, backoff)
 - `pkg/caprf/` — CAPRF controller client (status/log shipping)
 - `pkg/cloudinit/` — Cloud-init NoCloud/ConfigDrive generation
-- `pkg/firmware/` — Firmware version collection from sysfs
+- `pkg/firmware/` — Firmware inventory and vendor-specific NIC firmware helpers
 - `pkg/health/` — Pre-provisioning hardware health checks
 - `pkg/inventory/` — Hardware inventory from sysfs/procfs
 - `pkg/ipmi/` — IPMI operations and helpers
@@ -30,7 +30,7 @@ Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, read
 - `pkg/realm/` — Low-level syscalls (devices, mounts, networking)
 - `pkg/rescue/` — Rescue mode policy and failure handling
 - `pkg/ux/` — ASCII art and system info display
-- `pkg/bios/` — BIOS settings management (Dell, HPE, Lenovo, Supermicro)
+- `pkg/firmware/nic/` — Vendor-specific NIC firmware managers (Intel, Broadcom, Mellanox, ethtool fallback)
 
 - `pkg/buildinfo/` — Binary build information
 - `pkg/debug/` — Debug utilities
@@ -54,6 +54,7 @@ make build              # Compile binary
 make test               # Unit tests with 40% coverage gate
 make lint               # golangci-lint v2
 make fmt                # gofmt + goimports
+make fmt-check          # verify gofmt + goimports without rewriting
 
 # Initramfs build flavors (Linux/Docker)
 make dockerx86          # Full FRR+tools (~80 MB)

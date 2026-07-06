@@ -1099,6 +1099,9 @@ make lint
 # Format code
 make fmt
 
+# Verify formatting without rewriting
+make fmt-check
+
 # E2E tests — ContainerLab (Linux only)
 make clab-test-image                         # Generate the shared test disk image
 make clab-up && make test-e2e-integration       # FRR/EVPN topology
@@ -1129,7 +1132,7 @@ and the PR process.
 ├── initrd.Dockerfile           # Multi-stage initramfs build (default, iso, slim, micro)
 ├── pkg/
 │   ├── auth/                   # JWT token manager (acquisition, renewal, backoff)
-│   ├── bios/                   # BIOS settings management (Dell, HPE, Lenovo, Supermicro)
+│   ├── firmware/nic/           # Vendor-specific NIC firmware managers
 │   ├── bootloader/             # Bootloader detection (GRUB, systemd-boot)
 │   ├── buildinfo/              # Binary build information (version, commit, date)
 │   ├── caprf/                  # CAPRF client (status, log, debug, vars parsing)
@@ -1142,7 +1145,7 @@ and the PR process.
 │   ├── efi/                    # EFI variable and boot entry operations
 │   ├── event/                  # Provisioning lifecycle event types + dispatcher
 │   ├── executil/               # Shared command execution helpers
-│   ├── firmware/               # Firmware version collection from sysfs
+│   ├── firmware/               # Firmware inventory from sysfs and NIC tooling
 │   ├── grubcfg/                # GRUB configuration parser
 │   ├── health/                 # Pre-provisioning hardware health checks
 │   ├── image/                  # Image streaming (HTTP, OCI, gzip/lz4/xz/zstd auto-detect)
