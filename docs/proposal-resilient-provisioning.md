@@ -2,15 +2,20 @@
 
 ## Status: Phase 1 Implemented (PR #41 — retry, checkpoint, error taxonomy)
 
+Phase 1 covers step retry policies, checkpoint persistence, and transient versus
+permanent error classification. HTTP Range-based download resume and watchdog
+self-reboot remain proposed work and are not part of the implemented recovery
+path described by the README.
+
 ## Priority: P1
 
 ## Summary
 
 Make BOOTy's provisioning pipeline self-healing: configurable per-step retry
-policies with exponential backoff, HTTP Range-based resume for image downloads,
-checkpoint/resume from last successful step, structured error taxonomy
-(transient vs permanent), watchdog self-reboot as last resort, and comprehensive
-error reporting with retry history to CAPRF.
+policies with exponential backoff, checkpoint/resume from last successful step,
+structured error taxonomy (transient vs permanent), and comprehensive error
+reporting with retry history to CAPRF. Later phases may add HTTP Range-based
+resume for image downloads and watchdog self-reboot as last-resort recovery.
 
 ## Motivation
 
@@ -55,7 +60,7 @@ import (
 
 // RetryPolicy defines how a provisioning step handles failures.
 type RetryPolicy struct {
-    MaxAttempts  int           // 0 = no retry
+    MaxRetries   int           // 0 = no retry, total attempts = MaxRetries+1
     InitialDelay time.Duration // base delay before first retry
     MaxDelay     time.Duration // cap on exponential backoff
     Jitter       float64       // 0.0-1.0, random delay fraction
@@ -64,20 +69,20 @@ type RetryPolicy struct {
 
 // DefaultPolicies maps step names to their retry policies.
 var DefaultPolicies = map[string]RetryPolicy{
-    "report-init":     {MaxAttempts: 5, InitialDelay: 2 * time.Second, MaxDelay: 30 * time.Second, Jitter: 0.2, Transient: true},
-    "configure-dns":   {MaxAttempts: 5, InitialDelay: 1 * time.Second, MaxDelay: 15 * time.Second, Jitter: 0.1, Transient: true},
-    "stream-image":    {MaxAttempts: 3, InitialDelay: 5 * time.Second, MaxDelay: 60 * time.Second, Jitter: 0.3, Transient: true},
-    "detect-disk":     {MaxAttempts: 3, InitialDelay: 2 * time.Second, MaxDelay: 10 * time.Second, Jitter: 0.1, Transient: true},
-    "partprobe":       {MaxAttempts: 3, InitialDelay: 1 * time.Second, MaxDelay: 5 * time.Second, Jitter: 0.0, Transient: true},
-    "report-success":  {MaxAttempts: 5, InitialDelay: 2 * time.Second, MaxDelay: 30 * time.Second, Jitter: 0.2, Transient: true},
-    "wipe-disks":      {MaxAttempts: 0, Transient: false}, // permanent failures — no retry
-    "create-efi-boot": {MaxAttempts: 2, InitialDelay: 1 * time.Second, MaxDelay: 5 * time.Second, Jitter: 0.0, Transient: true},
+    "report-init":     {MaxRetries: 5, InitialDelay: 2 * time.Second, MaxDelay: 30 * time.Second, Jitter: 0.2, Transient: true},
+    "configure-dns":   {MaxRetries: 5, InitialDelay: 1 * time.Second, MaxDelay: 15 * time.Second, Jitter: 0.1, Transient: true},
+    "stream-image":    {MaxRetries: 3, InitialDelay: 5 * time.Second, MaxDelay: 60 * time.Second, Jitter: 0.3, Transient: true},
+    "detect-disk":     {MaxRetries: 3, InitialDelay: 2 * time.Second, MaxDelay: 10 * time.Second, Jitter: 0.1, Transient: true},
+    "partprobe":       {MaxRetries: 3, InitialDelay: 1 * time.Second, MaxDelay: 5 * time.Second, Jitter: 0.0, Transient: true},
+    "report-success":  {MaxRetries: 5, InitialDelay: 2 * time.Second, MaxDelay: 30 * time.Second, Jitter: 0.2, Transient: true},
+    "wipe-disks":      {MaxRetries: 0, Transient: false}, // permanent failures — no retry
+    "create-efi-boot": {MaxRetries: 2, InitialDelay: 1 * time.Second, MaxDelay: 5 * time.Second, Jitter: 0.0, Transient: true},
 }
 
 // WithRetry executes fn with the given retry policy.
 func WithRetry(ctx context.Context, name string, policy RetryPolicy, fn func(ctx context.Context) error) error {
     var lastErr error
-    for attempt := range policy.MaxAttempts + 1 {
+    for attempt := range policy.MaxRetries + 1 {
         if attempt > 0 {
             delay := time.Duration(float64(policy.InitialDelay) * math.Pow(2, float64(attempt-1)))
             if delay > policy.MaxDelay {
@@ -103,7 +108,7 @@ func WithRetry(ctx context.Context, name string, policy RetryPolicy, fn func(ctx
         }
         return nil // success
     }
-    return fmt.Errorf("%s: exhausted %d attempts: %w", name, policy.MaxAttempts+1, lastErr)
+    return fmt.Errorf("%s: exhausted %d attempts: %w", name, policy.MaxRetries+1, lastErr)
 }
 ```
 
@@ -136,6 +141,12 @@ func isTransient(err error) bool {
 ```
 
 ### Checkpoint/Resume
+
+Current main surfaces checkpoint load errors to the orchestrator. When
+`BOOTY_RESUME=true`, the orchestrator logs malformed, unreadable, or
+undecodable checkpoints and starts a fresh persisted checkpoint. Fail-closed
+handling for corrupt checkpoint state is target hardening, not implemented
+behavior in the current branch.
 
 ```go
 // pkg/provision/checkpoint.go
@@ -181,6 +192,10 @@ func LoadCheckpoint() *Checkpoint {
 ```
 
 ### HTTP Range Resume for Image Download
+
+This section is design material for a future phase. Current provisioning retries
+the `stream-image` step according to `DefaultPolicies`, but does not persist a
+partial HTTP transfer offset for byte-range resume.
 
 ```go
 // pkg/image/resume.go
@@ -267,12 +282,13 @@ No additional binaries needed. This proposal modifies existing Go code only.
 
 | Risk | Mitigation |
 |------|------------|
-| Infinite retry loops | Hard cap via RetryPolicy.MaxAttempts |
-| Checkpoint file corruption | JSON validation on load; ignore corrupt |
+| Infinite retry loops | Hard cap via RetryPolicy.MaxRetries |
+| Checkpoint file corruption | Current main logs load errors and starts fresh; fail-closed handling remains target hardening |
 | Watchdog reboot loop | Exponential backoff between reboots; max attempts |
 | Resume corrupts image | Checksum verification after download completes |
 
 ## Effort Estimate
 
-8–12 engineering days (retry framework + error taxonomy + checkpoint +
-resume + watchdog + tests).
+8–12 engineering days for the original full proposal. Phase 1 implemented the
+retry framework, error taxonomy, and checkpoint support; byte-range resume,
+watchdog handling, and their tests remain future work.

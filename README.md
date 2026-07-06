@@ -455,6 +455,13 @@ On restart, previously completed steps are skipped — except runtime-state step
 in-memory state and mount state (target disk path, partition info, target
 mounts, shared data mount cleanup list, chroot bind mounts).
 
+Treat the checkpoint as the source of truth for completed steps when resume mode
+is enabled. If no checkpoint exists, BOOTy starts a fresh persisted checkpoint
+for the new run. Current BOOTy logs malformed, unreadable, or undecodable
+checkpoint files and starts fresh; it does not yet fail closed on checkpoint
+corruption. Operators who suspect stale or corrupt resume state should remove
+`/tmp/booty-checkpoint.json` before restart to intentionally force a fresh run.
+
 ```bash
 # Enable checkpoint resume
 export BOOTY_RESUME=true
