@@ -22,7 +22,12 @@ const (
 // StandbyMode keeps the machine in a hot-standby loop, sending periodic
 // heartbeats and polling for commands.
 type StandbyMode struct {
-	deps Deps
+	deps             Deps
+	newDeprovisioner func() standbyDeprovisioner
+}
+
+type standbyDeprovisioner interface {
+	Deprovision(context.Context) error
 }
 
 // Name returns the mode identifier.
@@ -202,16 +207,24 @@ func (m *StandbyMode) handleProvision(ctx context.Context, cmd config.Command) *
 
 func (m *StandbyMode) handleDeprovision(ctx context.Context, cmd config.Command) *commandResult {
 	m.deps.Cfg.Mode = "deprovision"
-	orch := provision.NewOrchestrator(m.deps.Cfg, m.deps.Client, m.deps.DiskMgr)
+	orch := m.deprovisioner()
 	if err := orch.Deprovision(ctx); err != nil {
 		slog.Error("hot deprovision failed", "error", err)
 		if ackErr := m.deps.Client.AcknowledgeCommand(ctx, cmd.ID, "failed", fmt.Sprintf("deprovision command failed: %v", err)); ackErr != nil {
 			slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
 		}
-	} else {
-		if ackErr := m.deps.Client.AcknowledgeCommand(ctx, cmd.ID, "completed", ""); ackErr != nil {
-			slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
-		}
+		return &commandResult{err: err}
+	}
+
+	if ackErr := m.deps.Client.AcknowledgeCommand(ctx, cmd.ID, "completed", ""); ackErr != nil {
+		slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
 	}
 	return &commandResult{err: &RebootRequestedError{}}
+}
+
+func (m *StandbyMode) deprovisioner() standbyDeprovisioner {
+	if m.newDeprovisioner != nil {
+		return m.newDeprovisioner()
+	}
+	return provision.NewOrchestrator(m.deps.Cfg, m.deps.Client, m.deps.DiskMgr)
 }

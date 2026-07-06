@@ -13,14 +13,21 @@ import (
 )
 
 type standbyProvider struct {
-	statuses   []config.Status
-	heartbeat  int
-	fetches    int
-	commands   []config.Command
-	statusErr  error
-	heartErr   error
-	commandErr error
-	acks       []string
+	statuses        []config.Status
+	heartbeat       int
+	fetches         int
+	commands        []config.Command
+	statusErr       error
+	heartErr        error
+	commandErr      error
+	statusErrOnCall int
+	acks            []string
+}
+
+type standbyDeprovisionerFunc func(context.Context) error
+
+func (f standbyDeprovisionerFunc) Deprovision(ctx context.Context) error {
+	return f(ctx)
 }
 
 func (p *standbyProvider) GetConfig(_ context.Context) (*config.MachineConfig, error) {
@@ -29,6 +36,9 @@ func (p *standbyProvider) GetConfig(_ context.Context) (*config.MachineConfig, e
 
 func (p *standbyProvider) ReportStatus(_ context.Context, status config.Status, _ string) error {
 	p.statuses = append(p.statuses, status)
+	if p.statusErrOnCall > 0 && len(p.statuses) != p.statusErrOnCall {
+		return nil
+	}
 	return p.statusErr
 }
 
@@ -182,5 +192,37 @@ func TestStandbyInitialCommandCanExit(t *testing.T) {
 	}
 	if len(provider.acks) != 1 || provider.acks[0] != "cmd-1:completed" {
 		t.Fatalf("acks = %v, want completed health-check ack", provider.acks)
+	}
+}
+
+func TestStandbyDeprovisionCommandFailureReturnsErrorWithoutReboot(t *testing.T) {
+	deprovisionErr := errors.New("deprovision status failed")
+	provider := &standbyProvider{
+		commands: []config.Command{{ID: "cmd-1", Type: "deprovision"}},
+	}
+	var deprovisionCalls int
+	mode := &StandbyMode{
+		deps: Deps{Cfg: standbyConfig(), Client: provider},
+		newDeprovisioner: func() standbyDeprovisioner {
+			return standbyDeprovisionerFunc(func(context.Context) error {
+				deprovisionCalls++
+				return deprovisionErr
+			})
+		},
+	}
+
+	err := mode.Run(context.Background())
+	if !errors.Is(err, deprovisionErr) {
+		t.Fatalf("Run error = %v, want deprovision error", err)
+	}
+	var rebootErr *RebootRequestedError
+	if errors.As(err, &rebootErr) {
+		t.Fatalf("Run error = %T %[1]v, did not want RebootRequestedError", err)
+	}
+	if len(provider.acks) != 1 || provider.acks[0] != "cmd-1:failed" {
+		t.Fatalf("acks = %v, want failed deprovision ack", provider.acks)
+	}
+	if deprovisionCalls != 1 {
+		t.Fatalf("deprovision calls = %d, want 1", deprovisionCalls)
 	}
 }
