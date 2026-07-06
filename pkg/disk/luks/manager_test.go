@@ -5,7 +5,10 @@ package luks
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -42,6 +45,28 @@ func TestFormatValidatesInputs(t *testing.T) {
 	}
 	if err := mgr.Format(context.Background(), &Target{Device: "/dev/sda3"}, &Config{}); err == nil {
 		t.Fatal("expected error for empty passphrase")
+	}
+}
+
+func TestExecCommanderRunWithInputErrorOmitsPATH(t *testing.T) {
+	pathValue := t.TempDir()
+	t.Setenv("PATH", pathValue)
+	missingPath := filepath.Join(t.TempDir(), "missing-cryptsetup-for-test")
+
+	_, err := (&ExecCommander{}).RunWithInput(context.Background(), "secret\n", missingPath)
+	if err == nil {
+		t.Fatal("expected command error")
+	}
+
+	errText := err.Error()
+	if !strings.Contains(errText, "exec "+missingPath+":") {
+		t.Fatalf("error = %q, want command name", errText)
+	}
+	if strings.Contains(errText, "PATH:") {
+		t.Fatalf("error includes PATH label: %q", errText)
+	}
+	if strings.Contains(errText, pathValue) || strings.Contains(errText, os.Getenv("PATH")) {
+		t.Fatalf("error leaked PATH value %q: %q", pathValue, errText)
 	}
 }
 

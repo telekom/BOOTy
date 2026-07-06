@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"regexp"
 	"strings"
 
@@ -36,7 +35,7 @@ func (e *ExecCommander) RunWithInput(ctx context.Context, input, name string, ar
 	cmd.Stdin = strings.NewReader(input)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return out, fmt.Errorf("exec %s: %w [PATH: %s]", name, err, os.Getenv("PATH"))
+		return out, fmt.Errorf("exec %s: %w", name, err)
 	}
 	return out, nil
 }

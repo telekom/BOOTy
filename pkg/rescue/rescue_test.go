@@ -3,6 +3,9 @@ package rescue
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -279,7 +282,121 @@ func TestSetupSSHKeys_Empty(t *testing.T) {
 }
 
 func TestSetupPasswordHash_Empty(t *testing.T) {
-	if err := setupPasswordHash(""); err != nil {
-		t.Errorf("setupPasswordHash(\"\") = %v", err)
+	if err := setupPasswordHash(""); err == nil {
+		t.Fatal("expected empty password hash to be rejected")
 	}
+}
+
+func TestValidatePasswordHash(t *testing.T) {
+	tests := []struct {
+		name    string
+		hash    string
+		wantErr bool
+	}{
+		{"md5 crypt", "$1$salt$hash", false},
+		{"bcrypt 2a", "$2a$05$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuu", false},
+		{"bcrypt 2b", "$2b$05$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuu", false},
+		{"bcrypt 2y", "$2y$05$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuu", false},
+		{"sha256 crypt", "$5$rounds=4096$salt$hash", false},
+		{"sha512 crypt", "$6$rounds=4096$salt$hash", false},
+		{"yescrypt", "$y$j9T$salt$hash", false},
+		{"empty", "", true},
+		{"plain text", "plaintext-secret", true},
+		{"unsupported prefix", "$9$salt$hash", true},
+		{"colon delimiter", "$6$salt:0:99999$hash", true},
+		{"newline injection", "$6$salt$hash\nroot::0:0:99999:7:::", true},
+		{"carriage return injection", "$6$salt$hash\rroot::0:0:99999:7:::", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validatePasswordHash(tc.hash)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validatePasswordHash() err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if err != nil && tc.hash != "" && strings.Contains(err.Error(), tc.hash) {
+				t.Fatalf("error leaked rejected hash %q: %v", tc.hash, err)
+			}
+		})
+	}
+}
+
+func TestSetupPasswordHash_WritesValidHash(t *testing.T) {
+	setShadowPath(t, filepath.Join(t.TempDir(), "shadow"))
+
+	hash := "$6$rounds=4096$salt$hash"
+	if err := setupPasswordHash(hash); err != nil {
+		t.Fatalf("setupPasswordHash() = %v", err)
+	}
+
+	got, err := os.ReadFile(shadowPath)
+	if err != nil {
+		t.Fatalf("read shadow: %v", err)
+	}
+	want := "root:$6$rounds=4096$salt$hash:19000:0:99999:7:::\n"
+	if string(got) != want {
+		t.Fatalf("shadow = %q, want %q", string(got), want)
+	}
+}
+
+func TestSetupPasswordHash_RewritesExistingShadowWithTrailingNewline(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "shadow")
+	setShadowPath(t, path)
+
+	original := "root:*:19000:0:99999:7:::"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("seed shadow: %v", err)
+	}
+
+	hash := "$6$rounds=4096$salt$hash"
+	if err := setupPasswordHash(hash); err != nil {
+		t.Fatalf("setupPasswordHash() = %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read shadow: %v", err)
+	}
+	want := "root:$6$rounds=4096$salt$hash:19000:0:99999:7:::\n"
+	if string(got) != want {
+		t.Fatalf("shadow = %q, want %q", string(got), want)
+	}
+}
+
+func TestSetupPasswordHash_RejectsMalformedWithoutWriting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "shadow")
+	setShadowPath(t, path)
+
+	original := "root:*:19000:0:99999:7:::\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("seed shadow: %v", err)
+	}
+
+	rejected := "$6$salt$hash\nattacker:bad:19000:0:99999:7:::"
+	err := setupPasswordHash(rejected)
+	if err == nil {
+		t.Fatal("expected malformed password hash to be rejected")
+	}
+	if strings.Contains(err.Error(), rejected) {
+		t.Fatalf("error leaked rejected hash %q: %v", rejected, err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read shadow: %v", err)
+	}
+	if string(got) != original {
+		t.Fatalf("shadow was modified: got %q, want %q", string(got), original)
+	}
+	if strings.Contains(string(got), "attacker") {
+		t.Fatalf("shadow contains injected account: %q", string(got))
+	}
+}
+
+func setShadowPath(t *testing.T, path string) {
+	t.Helper()
+
+	oldShadowPath := shadowPath
+	shadowPath = path
+	t.Cleanup(func() { shadowPath = oldShadowPath })
 }

@@ -13,7 +13,20 @@ import (
 	exec "github.com/telekom/BOOTy/pkg/executil"
 )
 
-var rootSSHDir = "/root/.ssh"
+var (
+	rootSSHDir = "/root/.ssh"
+	shadowPath = "/etc/shadow"
+)
+
+var supportedPasswordHashPrefixes = []string{
+	"$1$",
+	"$2a$",
+	"$2b$",
+	"$2y$",
+	"$5$",
+	"$6$",
+	"$y$",
+}
 
 // Mode determines what happens when provisioning fails.
 type Mode string
@@ -176,8 +189,10 @@ func Setup(ctx context.Context, cfg *Config) error {
 		return fmt.Errorf("setting up SSH keys: %w", err)
 	}
 
-	if err := setupPasswordHash(cfg.PasswordHash); err != nil {
-		return fmt.Errorf("setting up password: %w", err)
+	if cfg.PasswordHash != "" {
+		if err := setupPasswordHash(cfg.PasswordHash); err != nil {
+			return fmt.Errorf("setting up password: %w", err)
+		}
 	}
 
 	if err := startDropbear(ctx); err != nil {
@@ -216,17 +231,17 @@ func setupSSHKeys(keys []string) error {
 
 // setupPasswordHash sets the root password hash in /etc/shadow.
 func setupPasswordHash(hash string) error {
-	if hash == "" {
-		return nil
+	if err := validatePasswordHash(hash); err != nil {
+		return err
 	}
 
-	shadow, err := os.ReadFile("/etc/shadow")
+	shadow, err := os.ReadFile(shadowPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("reading shadow: %w", err)
 		}
 		entry := fmt.Sprintf("root:%s:19000:0:99999:7:::\n", hash)
-		if wErr := os.WriteFile("/etc/shadow", []byte(entry), 0o600); wErr != nil { //nolint:gosec // G703: fixed rescue-mode shadow path, no user-controlled path
+		if wErr := os.WriteFile(shadowPath, []byte(entry), 0o600); wErr != nil { //nolint:gosec // G703: fixed rescue-mode shadow path, no user-controlled path
 			return fmt.Errorf("writing shadow: %w", wErr)
 		}
 		return nil
@@ -248,10 +263,29 @@ func setupPasswordHash(hash string) error {
 		lines = append(lines, fmt.Sprintf("root:%s:19000:0:99999:7:::", hash))
 	}
 
-	if err := os.WriteFile("/etc/shadow", []byte(strings.Join(lines, "\n")), 0o600); err != nil { //nolint:gosec // G703: fixed rescue-mode shadow path, no user-controlled path
+	serialized := strings.Join(lines, "\n")
+	if !strings.HasSuffix(serialized, "\n") {
+		serialized += "\n"
+	}
+	if err := os.WriteFile(shadowPath, []byte(serialized), 0o600); err != nil { //nolint:gosec // G703: fixed rescue-mode shadow path, no user-controlled path
 		return fmt.Errorf("writing shadow: %w", err)
 	}
 	return nil
+}
+
+func validatePasswordHash(hash string) error {
+	if hash == "" {
+		return fmt.Errorf("rescue password hash must not be empty")
+	}
+	if strings.ContainsAny(hash, ":\r\n") {
+		return fmt.Errorf("invalid rescue password hash: contains forbidden shadow delimiters")
+	}
+	for _, prefix := range supportedPasswordHashPrefixes {
+		if strings.HasPrefix(hash, prefix) {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid rescue password hash: unsupported Linux shadow hash prefix")
 }
 
 // startDropbear starts the dropbear SSH daemon if available.
