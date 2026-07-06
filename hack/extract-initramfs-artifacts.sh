@@ -55,19 +55,26 @@ extract_cpio() {
 }
 
 run_cpio_extract() {
-  if cpio_supports '--no-absolute-filenames'; then
-    cpio -idmu --quiet --no-absolute-filenames
-  else
-    cpio -idmu
+  local args=(-idmu)
+
+  if cpio_supports '--quiet'; then
+    args+=(--quiet)
   fi
+
+  if cpio_supports '--no-absolute-filenames'; then
+    args+=(--no-absolute-filenames)
+  fi
+
+  cpio "${args[@]}"
 }
 
 mknod_errors_only() {
   local log="$1"
 
   awk '
-    /Cannot mknod: Operation not permitted$/ { found = 1; next }
-    /^[0-9]+ blocks$/ { next }
+    /Cannot mknod: Operation not permitted/ { found = 1; next }
+    /^(cpio: )?[0-9]+ blocks$/ { next }
+    /^cpio: Exiting with failure status due to previous errors$/ { next }
     NF == 0 { next }
     { bad = 1 }
     END { exit !(found && !bad) }
