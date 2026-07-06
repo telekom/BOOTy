@@ -2798,8 +2798,18 @@ func TestLoadOrCreateCheckpoint(t *testing.T) {
 			} else {
 				t.Setenv("BOOTY_RESUME", "")
 			}
+			previous := loadCheckpointFn
+			loadCheckpointFn = func() (*Checkpoint, error) {
+				return nil, ErrNoCheckpoint
+			}
+			t.Cleanup(func() {
+				loadCheckpointFn = previous
+			})
 
-			cp := o.loadOrCreateCheckpoint()
+			cp, err := o.loadOrCreateCheckpoint()
+			if err != nil {
+				t.Fatalf("loadOrCreateCheckpoint: %v", err)
+			}
 			if cp == nil {
 				t.Fatal("expected non-nil checkpoint")
 				return
@@ -2808,6 +2818,82 @@ func TestLoadOrCreateCheckpoint(t *testing.T) {
 				t.Errorf("persist = %v, want %v", cp.persist, tc.wantPersist)
 			}
 		})
+	}
+}
+
+func TestLoadOrCreateCheckpointResumeFailsClosedOnLoadError(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+	t.Setenv("BOOTY_RESUME", "true")
+
+	loadErr := errors.New("unmarshal checkpoint: invalid character")
+	previous := loadCheckpointFn
+	loadCheckpointFn = func() (*Checkpoint, error) {
+		return nil, loadErr
+	}
+	t.Cleanup(func() {
+		loadCheckpointFn = previous
+	})
+
+	cp, err := o.loadOrCreateCheckpoint()
+	if err == nil {
+		t.Fatal("expected checkpoint load error")
+	}
+	if cp != nil {
+		t.Fatal("expected nil checkpoint on load error")
+	}
+	if !errors.Is(err, loadErr) {
+		t.Fatalf("expected wrapped load error, got %v", err)
+	}
+}
+
+func TestLoadOrCreateCheckpointResumeStartsFreshWhenMissing(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+	t.Setenv("BOOTY_RESUME", "true")
+
+	previous := loadCheckpointFn
+	loadCheckpointFn = func() (*Checkpoint, error) {
+		return nil, ErrNoCheckpoint
+	}
+	t.Cleanup(func() {
+		loadCheckpointFn = previous
+	})
+
+	cp, err := o.loadOrCreateCheckpoint()
+	if err != nil {
+		t.Fatalf("loadOrCreateCheckpoint: %v", err)
+	}
+	if cp == nil {
+		t.Fatal("expected fresh checkpoint")
+	}
+	if !cp.persist {
+		t.Fatal("expected fresh resume checkpoint to persist")
+	}
+}
+
+func TestExecuteStepReturnsCheckpointSaveErrorAfterSuccess(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+
+	dir := t.TempDir()
+	cpPath := filepath.Join(dir, "checkpoint-dir")
+	if err := os.Mkdir(cpPath, 0o755); err != nil {
+		t.Fatalf("mkdir checkpoint path: %v", err)
+	}
+
+	cp := &Checkpoint{path: cpPath, persist: true}
+	step := Step{"successful-step", func(_ context.Context) error { return nil }}
+
+	err := o.executeStep(context.Background(), step, cp)
+	if err == nil {
+		t.Fatal("expected checkpoint save error")
+	}
+	if !strings.Contains(err.Error(), "save checkpoint after step successful-step") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

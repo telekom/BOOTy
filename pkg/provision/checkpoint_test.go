@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -73,6 +74,25 @@ func TestLoadCheckpoint_Missing(t *testing.T) {
 	}
 	if cp != nil {
 		t.Error("expected nil for missing checkpoint")
+	}
+}
+
+func TestLoadCheckpoint_Malformed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "checkpoint.json")
+	if err := os.WriteFile(path, []byte("{not-json"), 0o600); err != nil {
+		t.Fatalf("write checkpoint: %v", err)
+	}
+
+	cp, err := LoadCheckpointFrom(path)
+	if err == nil {
+		t.Fatal("expected malformed checkpoint to fail")
+	}
+	if cp != nil {
+		t.Fatal("expected nil checkpoint on malformed data")
+	}
+	if !strings.Contains(err.Error(), "unmarshal checkpoint") {
+		t.Fatalf("expected unmarshal checkpoint error, got %v", err)
 	}
 }
 
