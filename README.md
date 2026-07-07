@@ -377,8 +377,8 @@ root is mounted.
 | `CLOUDINIT_ENABLED` | `false` | Generate and inject cloud-init config |
 | `CLOUDINIT_DATASOURCE` | `nocloud` | Cloud-init datasource type: `nocloud` or `configdrive` |
 | `SYSEXT_ENABLED` | `false` | Copy configured systemd-sysext layers into the provisioned root |
-| `SYSEXT_DEFAULT_MODE` | `preload` | Default sysext layer mode: `preload` or `active` |
-| `SYSEXT_CATALOG_DIR` | `/usr/lib/tcaas-sysext/preloaded` | Target catalog directory for preloaded sysext layers |
+| `SYSEXT_DEFAULT_MODE` | `preload` | Default sysext layer mode: `preload` writes an inactive catalog; `active` writes to a systemd-sysext search path |
+| `SYSEXT_CATALOG_DIR` | `/usr/lib/tcaas-sysext/preloaded` | Target inactive catalog directory for preloaded sysext layers; must not be an active systemd-sysext search path |
 | `SYSEXT_ACTIVE_DIR` | `/var/lib/extensions` | Target directory for active sysext layers |
 | `SYSEXT_LAYERS` | — | JSON array of sysext layer objects |
 | `SYSEXT_ALLOW_INSECURE_HTTP` | `false` | Allow plain HTTP sysext sources on controlled provisioning networks |

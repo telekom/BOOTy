@@ -24,11 +24,9 @@ import (
 )
 
 const (
-	defaultSysextCatalogDir = "/usr/lib/tcaas-sysext/preloaded"
-	defaultSysextActiveDir  = "/var/lib/extensions"
-	sysextModePreload       = "preload"
-	sysextModeActive        = "active"
-	maxSysextCatalogBytes   = 1024 * 1024
+	sysextModePreload     = "preload"
+	sysextModeActive      = "active"
+	maxSysextCatalogBytes = 1024 * 1024
 )
 
 var sysextHTTPClient = network.NewHTTPClient(30 * time.Minute)
@@ -289,7 +287,7 @@ func sysextTargetDir(cfg *config.SysextConfig, mode string) (string, error) {
 		if cfg.ActiveDir != "" {
 			return cfg.ActiveDir, nil
 		}
-		return defaultSysextActiveDir, nil
+		return config.DefaultSysextActiveDir, nil
 	case sysextModePreload:
 		return sysextCatalogDir(cfg), nil
 	default:
@@ -301,7 +299,7 @@ func sysextCatalogDir(cfg *config.SysextConfig) string {
 	if cfg.CatalogDir != "" {
 		return cfg.CatalogDir
 	}
-	return defaultSysextCatalogDir
+	return config.DefaultSysextCatalogDir
 }
 
 func sysextVersion(layer *config.SysextLayerConfig) string {

@@ -450,9 +450,17 @@ func TestValidate(t *testing.T) {
 				t.Fatalf("DefaultMode = %q, want preload", cfg.Provision.Sysext.DefaultMode)
 			}
 		}},
+		{name: "normalizes sysext layer mode", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Layers: []SysextLayerConfig{{Name: "debug", Mode: " Active "}}}}}, wantNormalized: func(t *testing.T, cfg *Config) {
+			t.Helper()
+			if cfg.Provision.Sysext.Layers[0].Mode != "active" {
+				t.Fatalf("Layers[0].Mode = %q, want active", cfg.Provision.Sysext.Layers[0].Mode)
+			}
+		}},
 		{name: "invalid sysext default mode", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{DefaultMode: "enabled"}}}, wantErr: "invalid provision.sysext.defaultMode"},
 		{name: "invalid sysext catalog dir", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{CatalogDir: "var/lib/sysext"}}}, wantErr: "provision.sysext.catalogDir"},
 		{name: "invalid sysext active dir", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{ActiveDir: "/"}}}, wantErr: "provision.sysext.activeDir"},
+		{name: "invalid sysext catalog dir active search path", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{CatalogDir: "/usr/lib/extensions"}}}, wantErr: "active systemd-sysext search path"},
+		{name: "invalid sysext catalog dir equals custom active dir", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{CatalogDir: "/opt/tcaas/sysext", ActiveDir: "/opt/tcaas/sysext/"}}}, wantErr: "must differ from provision.sysext.activeDir"},
 		{name: "invalid sysext layer mode", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Layers: []SysextLayerConfig{{Name: "debug", Mode: "now"}}}}}, wantErr: "invalid provision.sysext.layers[0].mode"},
 		{name: "invalid sysext filename", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Layers: []SysextLayerConfig{{Name: "debug", FileName: "../debug.raw"}}}}}, wantErr: "provision.sysext.layers[0].fileName"},
 		{name: "enabled sysext layer requires source", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug"}}}}}, wantErr: "source is required"},
