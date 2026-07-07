@@ -1295,6 +1295,9 @@ func applyCoreBoolVar(cfg *config.MachineConfig, key, value string) bool {
 	if applyOverlayFSBoolVar(cfg, key, value) {
 		return true
 	}
+	if applyOCIPrePullBoolVar(cfg, key, value) {
+		return true
+	}
 	switch key {
 	case "DISABLE_KEXEC":
 		cfg.Provision.DisableKexec = parseBoolVar(value)
@@ -1316,10 +1319,6 @@ func applyCoreBoolVar(cfg *config.MachineConfig, key, value string) bool {
 		cfg.Provision.Sysext.Enabled = parseBoolVar(value)
 	case "SYSEXT_ALLOW_INSECURE_HTTP":
 		cfg.Provision.Sysext.AllowInsecureHTTP = parseBoolVar(value)
-	case "OCI_PREPULL_ENABLED":
-		cfg.Provision.OCIPrePulls.Enabled = parseBoolVar(value)
-	case "OCI_PREPULL_ALLOW_INSECURE":
-		cfg.Provision.OCIPrePulls.AllowInsecure = parseBoolVar(value)
 	case "AB_PRESERVE_EXISTING":
 		cfg.Provision.AB.PreserveExisting = parseBoolVar(value)
 	default:
@@ -1338,6 +1337,18 @@ func applyOverlayFSBoolVar(cfg *config.MachineConfig, key, value string) bool {
 		cfg.Provision.OverlayFS.Swap = parseBoolVar(value)
 	case "OVERLAYFS_DEBUG":
 		cfg.Provision.OverlayFS.Debug = parseBoolVar(value)
+	default:
+		return false
+	}
+	return true
+}
+
+func applyOCIPrePullBoolVar(cfg *config.MachineConfig, key, value string) bool {
+	switch key {
+	case "OCI_PREPULL_ENABLED":
+		cfg.Provision.OCIPrePulls.Enabled = parseBoolVar(value)
+	case "OCI_PREPULL_ALLOW_INSECURE":
+		cfg.Provision.OCIPrePulls.AllowInsecure = parseBoolVar(value)
 	default:
 		return false
 	}
