@@ -1161,6 +1161,56 @@ CLOUDINIT_DATASOURCE="nocloud"
 	}
 }
 
+func TestParseVarsOverlayFSConfig(t *testing.T) {
+	input := `OS_FAMILY="Ubuntu"
+OVERLAYFS_ENABLED="true"
+OVERLAYFS_MODE="device"
+OVERLAYFS_DEVICE="LABEL=BOOTY-OVERLAY"
+OVERLAYFS_DIRECTORY="booty"
+OVERLAYFS_UPPER_DIR="/var/lib/booty/overlayfs/upper"
+OVERLAYFS_WORK_DIR="/var/lib/booty/overlayfs/work"
+OVERLAYFS_TIMEOUT_SEC="30"
+OVERLAYFS_RECURSE="true"
+OVERLAYFS_SWAP="false"
+OVERLAYFS_DEBUG="true"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	overlay := cfg.Provision.OverlayFS
+	if !overlay.Enabled {
+		t.Fatal("OverlayFS.Enabled = false")
+	}
+	if overlay.Mode != "device" {
+		t.Errorf("OverlayFS.Mode = %q, want device", overlay.Mode)
+	}
+	if overlay.Device != "LABEL=BOOTY-OVERLAY" {
+		t.Errorf("OverlayFS.Device = %q", overlay.Device)
+	}
+	if overlay.Directory != "booty" {
+		t.Errorf("OverlayFS.Directory = %q", overlay.Directory)
+	}
+	if overlay.UpperDir != "/var/lib/booty/overlayfs/upper" {
+		t.Errorf("OverlayFS.UpperDir = %q", overlay.UpperDir)
+	}
+	if overlay.WorkDir != "/var/lib/booty/overlayfs/work" {
+		t.Errorf("OverlayFS.WorkDir = %q", overlay.WorkDir)
+	}
+	if overlay.TimeoutSec != 30 {
+		t.Errorf("OverlayFS.TimeoutSec = %d", overlay.TimeoutSec)
+	}
+	if !overlay.Recurse {
+		t.Error("OverlayFS.Recurse = false")
+	}
+	if overlay.Swap {
+		t.Error("OverlayFS.Swap = true")
+	}
+	if !overlay.Debug {
+		t.Error("OverlayFS.Debug = false")
+	}
+}
+
 func TestParseVarsBondConfig(t *testing.T) {
 	input := `BOND_INTERFACES="eth0,eth1"
 BOND_MODE="802.3ad"

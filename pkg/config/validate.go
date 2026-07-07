@@ -71,9 +71,7 @@ func (c *Config) Validate() error {
 			c.Provision.Disk.PartitionLayout = layout
 		}
 	}
-	if err := validateSysextConfig(&c.Provision.Sysext); err != nil {
-		errs = append(errs, err.Error())
-	}
+	errs = append(errs, c.validateProvisionFeatureConfigs()...)
 	if err := validateImageSourceRootSelectors(&c.Provision.Image); err != nil {
 		errs = append(errs, err.Error())
 	}
@@ -90,6 +88,17 @@ func (c *Config) Validate() error {
 
 	c.normalize()
 	return nil
+}
+
+func (c *Config) validateProvisionFeatureConfigs() []string {
+	var errs []string
+	if err := validateSysextConfig(&c.Provision.Sysext); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := validateOverlayFSConfig(&c.Provision.OverlayFS, c.OSFamily); err != nil {
+		errs = append(errs, err.Error())
+	}
+	return errs
 }
 
 func (c *Config) validateEnums() []string {
@@ -241,6 +250,7 @@ func (c *Config) normalize() {
 		&c.Network.BGP.UnderlayAF,
 		&c.Network.BGP.OverlayType,
 		&c.Provision.CloudInit.Datasource,
+		&c.Provision.OverlayFS.Mode,
 		&c.OSFamily,
 		&c.Provision.Sysext.DefaultMode,
 		&c.Provision.AB.Scheme,
@@ -271,6 +281,122 @@ func validateDiskRootSelectors(cfg *DiskConfig) error {
 	}
 	if strings.TrimSpace(cfg.RootPartitionLabel) != "" && cfg.RootPartitionNumber != 0 {
 		return fmt.Errorf("provision.disk.rootPartitionLabel and provision.disk.rootPartitionNumber are mutually exclusive")
+	}
+	return nil
+}
+
+func validateOverlayFSConfig(cfg *OverlayFSConfig, osFamily string) error {
+	errs := validateOverlayFSBaseFields(cfg, osFamily)
+	effectiveMode := overlayFSEffectiveMode(cfg.Mode)
+	errs = append(errs, validateOverlayFSModeFields(cfg, effectiveMode)...)
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+
+	normalizeOverlayFSConfig(cfg)
+	return nil
+}
+
+func validateOverlayFSBaseFields(cfg *OverlayFSConfig, osFamily string) []string {
+	var errs []string
+	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
+	if mode != "" && mode != OverlayFSModeTmpfs && mode != OverlayFSModeDevice {
+		errs = append(errs, fmt.Sprintf("invalid provision.overlayFS.mode %q", cfg.Mode))
+	}
+	if cfg.Enabled && !strings.EqualFold(strings.TrimSpace(osFamily), "ubuntu") {
+		errs = append(errs, "provision.overlayFS.enabled requires osFamily=ubuntu")
+	}
+	if cfg.TimeoutSec < 0 {
+		errs = append(errs, "provision.overlayFS.timeoutSec must be non-negative")
+	}
+	errs = append(errs, validateOverlayFSValues(cfg)...)
+	if err := validateOverlayFSDirs(cfg); err != nil {
+		errs = append(errs, err.Error())
+	}
+	return errs
+}
+
+func validateOverlayFSValues(cfg *OverlayFSConfig) []string {
+	var errs []string
+	if err := validateOverlayFSValue("provision.overlayFS.device", cfg.Device); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := validateOverlayFSValue("provision.overlayFS.directory", cfg.Directory); err != nil {
+		errs = append(errs, err.Error())
+	}
+	return errs
+}
+
+func validateOverlayFSModeFields(cfg *OverlayFSConfig, effectiveMode string) []string {
+	var errs []string
+	if cfg.Enabled && effectiveMode == OverlayFSModeDevice && strings.TrimSpace(cfg.Device) == "" {
+		errs = append(errs, "provision.overlayFS.device required when provision.overlayFS.mode is device")
+	}
+	if effectiveMode == OverlayFSModeTmpfs {
+		errs = append(errs, validateOverlayFSTmpfsFields(cfg)...)
+	}
+	return errs
+}
+
+func validateOverlayFSTmpfsFields(cfg *OverlayFSConfig) []string {
+	var errs []string
+	if strings.TrimSpace(cfg.Device) != "" {
+		errs = append(errs, "provision.overlayFS.device is only valid when provision.overlayFS.mode is device")
+	}
+	if cfg.TimeoutSec != 0 {
+		errs = append(errs, "provision.overlayFS.timeoutSec is only valid when provision.overlayFS.mode is device")
+	}
+	return errs
+}
+
+func overlayFSEffectiveMode(mode string) string {
+	normalized := strings.ToLower(strings.TrimSpace(mode))
+	if normalized == "" {
+		return OverlayFSModeTmpfs
+	}
+	return normalized
+}
+
+func normalizeOverlayFSConfig(cfg *OverlayFSConfig) {
+	cfg.Device = strings.TrimSpace(cfg.Device)
+	cfg.Directory = strings.TrimSpace(cfg.Directory)
+	cfg.UpperDir = strings.TrimSpace(cfg.UpperDir)
+	cfg.WorkDir = strings.TrimSpace(cfg.WorkDir)
+}
+
+func validateOverlayFSValue(name, value string) error {
+	trimmed := strings.TrimSpace(value)
+	if value != "" && trimmed == "" {
+		return fmt.Errorf("%s must not be blank", name)
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) || unicode.IsSpace(r) || r == '"' || r == '\'' || r == ',' {
+			return fmt.Errorf("%s contains unsafe character %q", name, r)
+		}
+	}
+	if strings.Contains(trimmed, "..") {
+		return fmt.Errorf("%s must not contain parent-directory segments", name)
+	}
+	return nil
+}
+
+func validateOverlayFSDirs(cfg *OverlayFSConfig) error {
+	upper := strings.TrimSpace(cfg.UpperDir)
+	work := strings.TrimSpace(cfg.WorkDir)
+	if (upper == "") != (work == "") {
+		return fmt.Errorf("provision.overlayFS.upperDir and provision.overlayFS.workDir must be set together")
+	}
+	if upper == "" {
+		return nil
+	}
+	if err := validateSysextTargetDir(upper); err != nil {
+		return fmt.Errorf("provision.overlayFS.upperDir: %w", err)
+	}
+	if err := validateSysextTargetDir(work); err != nil {
+		return fmt.Errorf("provision.overlayFS.workDir: %w", err)
+	}
+	if path.Clean(upper) == path.Clean(work) {
+		return fmt.Errorf("provision.overlayFS.upperDir and provision.overlayFS.workDir must differ")
 	}
 	return nil
 }
