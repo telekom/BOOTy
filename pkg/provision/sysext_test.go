@@ -74,6 +74,57 @@ func TestApplySysextsPreloadsLayerAndCatalog(t *testing.T) {
 	}
 }
 
+func TestApplySysextsUpdatesExistingPreloadCatalog(t *testing.T) {
+	c := newTestConfigurator(t, newMockCommander())
+	source, digest := writeSysextSource(t, "updated node tuning sysext")
+	targetDir := filepath.Join(c.rootDir, "usr/lib/tcaas-sysext/preloaded")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := sysextCatalog{
+		APIVersion: "imagebuilding.tcaas.telekom.de/v1alpha1",
+		Kind:       "SysextPreloadCatalog",
+		Layers: []sysextCatalogLayer{
+			{Name: "node-tuning", Version: "v1", FileName: "node-tuning.raw", Path: "/stale/node-tuning.raw", Digest: "sha256:stale"},
+			{Name: "debug-tools", Version: "v2", FileName: "debug-tools.raw", Path: "/usr/lib/tcaas-sysext/preloaded/debug-tools.raw", Digest: "sha256:debug"},
+		},
+	}
+	data, err := json.Marshal(existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(targetDir, "catalog.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.SysextConfig{
+		Enabled: true,
+		Layers: []config.SysextLayerConfig{{
+			Name:     "node-tuning",
+			Version:  "v1",
+			Source:   source,
+			FileName: "node-tuning.raw",
+			SHA256:   digest,
+		}},
+	}
+
+	if err := c.ApplySysexts(context.Background(), &cfg); err != nil {
+		t.Fatalf("ApplySysexts() error: %v", err)
+	}
+
+	var catalog sysextCatalog
+	readJSON(t, filepath.Join(targetDir, "catalog.json"), &catalog)
+	if len(catalog.Layers) != 2 {
+		t.Fatalf("catalog layers = %d, want 2", len(catalog.Layers))
+	}
+	if got := catalog.Layers[0]; got.Path != "/usr/lib/tcaas-sysext/preloaded/node-tuning.raw" || got.Digest != "sha256:"+digest {
+		t.Fatalf("updated catalog layer = %#v", got)
+	}
+	if got := catalog.Layers[1]; got.Name != "debug-tools" || got.Digest != "sha256:debug" {
+		t.Fatalf("preserved catalog layer = %#v", got)
+	}
+}
+
 func TestApplySysextsRejectsExistingCatalogSymlink(t *testing.T) {
 	c := newTestConfigurator(t, newMockCommander())
 	source, digest := writeSysextSource(t, "safe catalog")

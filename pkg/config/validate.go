@@ -11,6 +11,11 @@ import (
 	"github.com/telekom/BOOTy/pkg/network"
 )
 
+const (
+	defaultSysextCatalogDir = "/usr/lib/tcaas-sysext/preloaded"
+	defaultSysextActiveDir  = "/var/lib/extensions"
+)
+
 // Validate checks that all enum-like config fields contain known values and
 // that cross-field constraints are satisfied. Empty strings are accepted
 // everywhere — unset fields fall back to documented defaults at runtime.
@@ -251,6 +256,11 @@ func (c *Config) normalize() {
 	for _, f := range lowerFields {
 		if *f != "" {
 			*f = strings.ToLower(strings.TrimSpace(*f))
+		}
+	}
+	for i := range c.Provision.Sysext.Layers {
+		if c.Provision.Sysext.Layers[i].Mode != "" {
+			c.Provision.Sysext.Layers[i].Mode = strings.ToLower(strings.TrimSpace(c.Provision.Sysext.Layers[i].Mode))
 		}
 	}
 	if c.Transport.TokenAlgorithm != "" {
@@ -603,11 +613,19 @@ func validateSysextConfig(cfg *SysextConfig) error {
 	if defaultMode != "" && defaultMode != "preload" && defaultMode != "active" {
 		errs = append(errs, fmt.Sprintf("invalid provision.sysext.defaultMode %q", cfg.DefaultMode))
 	}
+	targetDirsValid := true
 	if err := validateSysextTargetDir(cfg.CatalogDir); err != nil {
 		errs = append(errs, fmt.Sprintf("provision.sysext.catalogDir: %v", err))
+		targetDirsValid = false
 	}
 	if err := validateSysextTargetDir(cfg.ActiveDir); err != nil {
 		errs = append(errs, fmt.Sprintf("provision.sysext.activeDir: %v", err))
+		targetDirsValid = false
+	}
+	if targetDirsValid {
+		if err := validateSysextCatalogPlacement(cfg); err != nil {
+			errs = append(errs, fmt.Sprintf("provision.sysext.catalogDir: %v", err))
+		}
 	}
 	for i := range cfg.Layers {
 		errs = append(errs, validateSysextLayerConfig(cfg.Enabled, cfg.AllowInsecureHTTP, i, &cfg.Layers[i])...)
@@ -616,6 +634,41 @@ func validateSysextConfig(cfg *SysextConfig) error {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+func validateSysextCatalogPlacement(cfg *SysextConfig) error {
+	catalogDir := sysextCatalogDirOrDefault(cfg.CatalogDir)
+	activeDir := sysextActiveDirOrDefault(cfg.ActiveDir)
+	if catalogDir == activeDir {
+		return fmt.Errorf("must differ from provision.sysext.activeDir so preload mode remains inactive")
+	}
+	if isActiveSysextSearchDir(catalogDir) {
+		return fmt.Errorf("must not be an active systemd-sysext search path %q", catalogDir)
+	}
+	return nil
+}
+
+func isActiveSysextSearchDir(dir string) bool {
+	switch dir {
+	case "/etc/extensions", "/run/extensions", "/usr/lib/extensions", "/var/lib/extensions":
+		return true
+	default:
+		return false
+	}
+}
+
+func sysextCatalogDirOrDefault(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return defaultSysextCatalogDir
+	}
+	return path.Clean(strings.TrimSpace(value))
+}
+
+func sysextActiveDirOrDefault(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return defaultSysextActiveDir
+	}
+	return path.Clean(strings.TrimSpace(value))
 }
 
 func validateSysextLayerConfig(enabled, allowInsecureHTTP bool, index int, layer *SysextLayerConfig) []string {

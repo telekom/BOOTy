@@ -14,8 +14,9 @@ type SysextConfig struct {
 	// Valid values: "preload" (default), "active"
 	DefaultMode string `yaml:"defaultMode" json:"defaultMode"`
 
-	// CatalogDir is the target directory inside the provisioned root for
-	// preloaded sysext images and catalog.json.
+	// CatalogDir is the inactive target directory inside the provisioned root
+	// for preloaded sysext images and catalog.json. It must not be an active
+	// systemd-sysext search path.
 	// Default: /usr/lib/tcaas-sysext/preloaded
 	CatalogDir string `yaml:"catalogDir" json:"catalogDir"`
 

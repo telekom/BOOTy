@@ -41,6 +41,20 @@ provision:
         sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 ```
 
+The resulting catalog is a small JSON document at `catalogDir/catalog.json`.
+Each entry records `name`, `version`, `fileName`, absolute target-root `path`,
+and the verified `sha256:<digest>` for the installed image. If a later
+provisioning run preloads the same `name` + `version` + `fileName`, BOOTy
+updates that catalog entry in place and preserves unrelated entries.
+
+The target OS owns activation. A boot-time unit, generator, or higher-level
+controller should read the catalog, select the desired layer entries, verify
+the recorded digest before use, and then make only those selected `.raw` files
+available through the OS's active systemd-sysext search path before running
+`systemd-sysext merge` or starting `systemd-sysext.service`. BOOTy deliberately
+does not enable that service and rejects preload `catalogDir` values that are
+active systemd-sysext search paths such as `/var/lib/extensions`.
+
 ## Active mode
 
 Use `active` only when the provisioned OS should boot with the sysext already in
@@ -107,11 +121,11 @@ Local provisioner files are preferred for reproducibility and to avoid a second
 network dependency after the OS image has already streamed.
 
 HTTP(S) sysext sources are fetched with ordinary `GET` requests and must return
-`200 OK`. Current BOOTy does not add sysext-specific HTTP retries, issue
-`Range` requests, or resume a partial sysext download after a connection break.
-OCI sources use BOOTy's registry layer fetch path and still verify the final
-sysext digest before installation. Future sysext hardening may add bounded
-HTTP retries, but operators should not rely on that behavior in current main.
+`200 OK`. BOOTy retries transient transport failures, `408`, `429`, and `5xx`
+responses with bounded backoff. It does not issue `Range` requests or resume a
+partial sysext download after a connection break. OCI sources use BOOTy's
+registry layer fetch path and still verify the final sysext digest before
+installation.
 
 BOOTy streams each sysext through SHA256 while copying. Every enabled layer must
 set `sha256`, unless the source is pinned as an OCI digest reference such as
