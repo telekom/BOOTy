@@ -53,6 +53,7 @@ type ProvisionConfig struct {
 	CloudInit      CloudInitConfig      `yaml:"cloudInit"      json:"cloudInit"`
 	OverlayFS      OverlayFSConfig      `yaml:"overlayFS"      json:"overlayFS"`
 	Sysext         SysextConfig         `yaml:"sysext"         json:"sysext"`
+	OCIPrePulls    OCIPrePullConfig     `yaml:"ociPrePulls"    json:"ociPrePulls"`
 	AB             ABConfig             `yaml:"ab"             json:"ab"`
 	CrashArtifacts CrashArtifactsConfig `yaml:"crashArtifacts" json:"crashArtifacts"`
 	Inventory      InventoryConfig      `yaml:"inventory"      json:"inventory"`

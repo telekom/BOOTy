@@ -225,8 +225,29 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 44 {
-		t.Fatalf("expected 44 provisioning steps, got %d", len(steps))
+	if len(steps) != 45 {
+		t.Fatalf("expected 45 provisioning steps, got %d", len(steps))
+	}
+}
+
+func TestProvisionStepsPrepareOCIPrePullsAfterResizeBeforeBootConfig(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	steps := o.provisionSteps()
+
+	resizeIdx := requireStepIndex(t, steps, "resize-filesystem")
+	prePullIdx := requireStepIndex(t, steps, "prepare-oci-prepulls")
+	grubIdx := requireStepIndex(t, steps, "configure-grub")
+	successIdx := requireStepIndex(t, steps, "report-success")
+
+	if resizeIdx >= prePullIdx {
+		t.Fatalf("prepare-oci-prepulls index %d must be after resize-filesystem index %d", prePullIdx, resizeIdx)
+	}
+	if prePullIdx >= grubIdx {
+		t.Fatalf("prepare-oci-prepulls index %d must be before configure-grub index %d", prePullIdx, grubIdx)
+	}
+	if prePullIdx >= successIdx {
+		t.Fatalf("prepare-oci-prepulls index %d must be before report-success index %d", prePullIdx, successIdx)
 	}
 }
 
@@ -878,7 +899,7 @@ func TestMountBootAndSharedDataStepsPrecedeProvisioningWrites(t *testing.T) {
 	for i, step := range steps {
 		indices[step.Name] = i
 	}
-	for _, name := range []string{"mount-root", "mount-boot", "mount-shared-data", "configure-overlayfs", "copy-provisioner-files", "apply-sysexts", "configure-grub", "install-efi-fallback", "verify-secureboot-chain", "create-efi-boot-entry", "teardown-chroot"} {
+	for _, name := range []string{"mount-root", "mount-boot", "mount-shared-data", "configure-overlayfs", "copy-provisioner-files", "apply-sysexts", "prepare-oci-prepulls", "configure-grub", "install-efi-fallback", "verify-secureboot-chain", "create-efi-boot-entry", "teardown-chroot"} {
 		if _, ok := indices[name]; !ok {
 			t.Fatalf("missing step %q", name)
 		}
@@ -889,7 +910,8 @@ func TestMountBootAndSharedDataStepsPrecedeProvisioningWrites(t *testing.T) {
 		indices["configure-overlayfs"] >= indices["copy-provisioner-files"] ||
 		indices["mount-shared-data"] >= indices["copy-provisioner-files"] ||
 		indices["mount-shared-data"] >= indices["apply-sysexts"] ||
-		indices["apply-sysexts"] >= indices["configure-grub"] ||
+		indices["apply-sysexts"] >= indices["prepare-oci-prepulls"] ||
+		indices["prepare-oci-prepulls"] >= indices["configure-grub"] ||
 		indices["configure-grub"] >= indices["install-efi-fallback"] ||
 		indices["install-efi-fallback"] >= indices["verify-secureboot-chain"] ||
 		indices["verify-secureboot-chain"] >= indices["create-efi-boot-entry"] ||
