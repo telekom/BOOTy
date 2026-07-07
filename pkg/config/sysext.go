@@ -1,5 +1,13 @@
 package config
 
+const (
+	// DefaultSysextCatalogDir is the inactive target directory for preloaded sysext images and catalog.json.
+	DefaultSysextCatalogDir = "/usr/lib/tcaas-sysext/preloaded"
+
+	// DefaultSysextActiveDir is the target directory for active sysext images.
+	DefaultSysextActiveDir = "/var/lib/extensions"
+)
+
 // SysextConfig controls optional systemd-sysext handling during provisioning.
 //
 // The default mode is "preload": selected sysext images are copied into the
@@ -17,12 +25,12 @@ type SysextConfig struct {
 	// CatalogDir is the inactive target directory inside the provisioned root
 	// for preloaded sysext images and catalog.json. It must not be an active
 	// systemd-sysext search path.
-	// Default: /usr/lib/tcaas-sysext/preloaded
+	// Default: DefaultSysextCatalogDir
 	CatalogDir string `yaml:"catalogDir" json:"catalogDir"`
 
 	// ActiveDir is the target directory inside the provisioned root for active
 	// sysext images.
-	// Default: /var/lib/extensions
+	// Default: DefaultSysextActiveDir
 	ActiveDir string `yaml:"activeDir" json:"activeDir"`
 
 	// AllowInsecureHTTP permits plain HTTP sysext sources. This is intended for

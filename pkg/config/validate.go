@@ -11,11 +11,6 @@ import (
 	"github.com/telekom/BOOTy/pkg/network"
 )
 
-const (
-	defaultSysextCatalogDir = "/usr/lib/tcaas-sysext/preloaded"
-	defaultSysextActiveDir  = "/var/lib/extensions"
-)
-
 // Validate checks that all enum-like config fields contain known values and
 // that cross-field constraints are satisfied. Empty strings are accepted
 // everywhere — unset fields fall back to documented defaults at runtime.
@@ -659,14 +654,14 @@ func isActiveSysextSearchDir(dir string) bool {
 
 func sysextCatalogDirOrDefault(value string) string {
 	if strings.TrimSpace(value) == "" {
-		return defaultSysextCatalogDir
+		return DefaultSysextCatalogDir
 	}
 	return path.Clean(strings.TrimSpace(value))
 }
 
 func sysextActiveDirOrDefault(value string) string {
 	if strings.TrimSpace(value) == "" {
-		return defaultSysextActiveDir
+		return DefaultSysextActiveDir
 	}
 	return path.Clean(strings.TrimSpace(value))
 }
