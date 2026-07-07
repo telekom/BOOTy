@@ -1008,6 +1008,11 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"RESCUE_SSH_PUBKEY":           &cfg.Rescue.SSHPubKey,
 		"RESCUE_PASSWORD_HASH":        &cfg.Rescue.PasswordHash,
 		"CLOUDINIT_DATASOURCE":        &cfg.Provision.CloudInit.Datasource,
+		"OVERLAYFS_MODE":              &cfg.Provision.OverlayFS.Mode,
+		"OVERLAYFS_DEVICE":            &cfg.Provision.OverlayFS.Device,
+		"OVERLAYFS_DIRECTORY":         &cfg.Provision.OverlayFS.Directory,
+		"OVERLAYFS_UPPER_DIR":         &cfg.Provision.OverlayFS.UpperDir,
+		"OVERLAYFS_WORK_DIR":          &cfg.Provision.OverlayFS.WorkDir,
 		"IMAGE_CHECKSUM":              &cfg.Provision.Image.Checksum,
 		"IMAGE_CHECKSUM_TYPE":         &cfg.Provision.Image.ChecksumType,
 		"IMAGE_MODE":                  &cfg.Provision.Image.Mode,
@@ -1283,6 +1288,14 @@ func applyCoreBoolVar(cfg *config.MachineConfig, key, value string) bool {
 		cfg.Health.Enabled = parseBoolVar(value)
 	case "CLOUDINIT_ENABLED":
 		cfg.Provision.CloudInit.Enabled = parseBoolVar(value)
+	case "OVERLAYFS_ENABLED":
+		cfg.Provision.OverlayFS.Enabled = parseBoolVar(value)
+	case "OVERLAYFS_RECURSE":
+		cfg.Provision.OverlayFS.Recurse = parseBoolVar(value)
+	case "OVERLAYFS_SWAP":
+		cfg.Provision.OverlayFS.Swap = parseBoolVar(value)
+	case "OVERLAYFS_DEBUG":
+		cfg.Provision.OverlayFS.Debug = parseBoolVar(value)
 	case "DRY_RUN":
 		cfg.DryRun = parseBoolVar(value)
 	case "INSECURE_TRANSPORT":
@@ -1337,6 +1350,7 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		"IMAGE_SOURCE_ROOT_PARTITION":        &cfg.Provision.Image.SourceRootPartition,
 		"AB_SOURCE_ROOT_PARTITION":           &cfg.Provision.AB.SourceRootPartition,
 		"ROOT_PARTITION_NUMBER":              &cfg.Provision.Disk.RootPartitionNumber,
+		"OVERLAYFS_TIMEOUT_SEC":              &cfg.Provision.OverlayFS.TimeoutSec,
 	}
 
 	if ptr, ok := intFields[key]; ok {

@@ -98,6 +98,14 @@ provision:
   cloudInit:
     enabled: true
     datasource: nocloud
+  overlayFS:
+    enabled: true
+    mode: device
+    device: "LABEL=BOOTY-OVERLAY"
+    directory: "booty"
+    upperDir: "/var/lib/booty/overlayfs/upper"
+    workDir: "/var/lib/booty/overlayfs/work"
+    timeoutSec: 30
   crashArtifacts:
     enabled: true
     prepareURL: "https://caprf.example.com/crash/prepare"
@@ -200,6 +208,18 @@ agent:
 	if cfg.Provision.Firmware.MinBIOS != "2.10" {
 		t.Errorf("Provision.Firmware.MinBIOS = %q", cfg.Provision.Firmware.MinBIOS)
 	}
+	if !cfg.Provision.OverlayFS.Enabled {
+		t.Error("Provision.OverlayFS.Enabled = false")
+	}
+	if cfg.Provision.OverlayFS.Mode != "device" {
+		t.Errorf("Provision.OverlayFS.Mode = %q", cfg.Provision.OverlayFS.Mode)
+	}
+	if cfg.Provision.OverlayFS.Device != "LABEL=BOOTY-OVERLAY" {
+		t.Errorf("Provision.OverlayFS.Device = %q", cfg.Provision.OverlayFS.Device)
+	}
+	if cfg.Provision.OverlayFS.TimeoutSec != 30 {
+		t.Errorf("Provision.OverlayFS.TimeoutSec = %d", cfg.Provision.OverlayFS.TimeoutSec)
+	}
 	if cfg.Provision.CrashArtifacts.MaxMB != 256 {
 		t.Errorf("Provision.CrashArtifacts.MaxMB = %d", cfg.Provision.CrashArtifacts.MaxMB)
 	}
@@ -285,6 +305,92 @@ mode: totally-invalid-mode
 	}
 	if !strings.Contains(err.Error(), "invalid mode") {
 		t.Fatalf("expected 'invalid mode' in error: %v", err)
+	}
+}
+
+func TestValidateOverlayFSConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     Config
+		wantErr string
+	}{
+		{
+			name: "enabled requires ubuntu os family",
+			cfg: Config{
+				OSFamily:  "flatcar",
+				Provision: ProvisionConfig{OverlayFS: OverlayFSConfig{Enabled: true}},
+			},
+			wantErr: "requires osFamily=ubuntu",
+		},
+		{
+			name: "device mode requires device",
+			cfg: Config{
+				OSFamily: "ubuntu",
+				Provision: ProvisionConfig{OverlayFS: OverlayFSConfig{
+					Enabled: true,
+					Mode:    "device",
+				}},
+			},
+			wantErr: "device required",
+		},
+		{
+			name: "unsafe directory",
+			cfg: Config{
+				OSFamily: "ubuntu",
+				Provision: ProvisionConfig{OverlayFS: OverlayFSConfig{
+					Enabled:   true,
+					Directory: "bad,path",
+				}},
+			},
+			wantErr: "provision.overlayFS.directory",
+		},
+		{
+			name: "upper and work set together",
+			cfg: Config{
+				OSFamily: "ubuntu",
+				Provision: ProvisionConfig{OverlayFS: OverlayFSConfig{
+					Enabled:  true,
+					UpperDir: "/var/lib/booty/overlayfs/upper",
+				}},
+			},
+			wantErr: "upperDir and provision.overlayFS.workDir",
+		},
+		{
+			name: "valid device mode normalizes",
+			cfg: Config{
+				OSFamily: "Ubuntu",
+				Provision: ProvisionConfig{OverlayFS: OverlayFSConfig{
+					Enabled:    true,
+					Mode:       "Device",
+					Device:     "LABEL=BOOTY-OVERLAY",
+					Directory:  "booty",
+					UpperDir:   "/var/lib/booty/overlayfs/upper",
+					WorkDir:    "/var/lib/booty/overlayfs/work",
+					TimeoutSec: 30,
+				}},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.cfg.Validate()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Validate() error: %v", err)
+				}
+				if tc.cfg.Provision.OverlayFS.Mode != "device" {
+					t.Fatalf("OverlayFS.Mode = %q, want device", tc.cfg.Provision.OverlayFS.Mode)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("Validate() error = %v, want %q", err, tc.wantErr)
+			}
+		})
 	}
 }
 
@@ -407,6 +513,7 @@ func TestLoadFullYAMLReference(t *testing.T) {
 	}{
 		{"Hostname", cfg.Hostname, "node-01"},
 		{"Mode", cfg.Mode, "provision"},
+		{"OSFamily", cfg.OSFamily, "ubuntu"},
 		{"Network.Mode", cfg.Network.Mode, "gobgp"},
 		{"Network.DNSResolvers", cfg.Network.DNSResolvers, "8.8.8.8,1.1.1.1"},
 		{"Network.BGP.ASN", cfg.Network.BGP.ASN, uint32(65001)},
@@ -445,6 +552,13 @@ func TestLoadFullYAMLReference(t *testing.T) {
 		{"Provision.SecureBoot.PinnedDigests.Kernel", cfg.Provision.SecureBoot.PinnedDigests["kernel"], strings.Repeat("c", 64)},
 		{"Provision.Sysext.DefaultMode", cfg.Provision.Sysext.DefaultMode, "preload"},
 		{"Provision.Sysext.CatalogDir", cfg.Provision.Sysext.CatalogDir, "/usr/lib/tcaas-sysext/preloaded"},
+		{"Provision.OverlayFS.Enabled", cfg.Provision.OverlayFS.Enabled, true},
+		{"Provision.OverlayFS.Mode", cfg.Provision.OverlayFS.Mode, "device"},
+		{"Provision.OverlayFS.Device", cfg.Provision.OverlayFS.Device, "LABEL=BOOTY-OVERLAY"},
+		{"Provision.OverlayFS.Directory", cfg.Provision.OverlayFS.Directory, "booty"},
+		{"Provision.OverlayFS.UpperDir", cfg.Provision.OverlayFS.UpperDir, "/var/lib/booty/overlayfs/upper"},
+		{"Provision.OverlayFS.WorkDir", cfg.Provision.OverlayFS.WorkDir, "/var/lib/booty/overlayfs/work"},
+		{"Provision.OverlayFS.TimeoutSec", cfg.Provision.OverlayFS.TimeoutSec, 30},
 		{"Provision.Firmware.MinBIOS", cfg.Provision.Firmware.MinBIOS, "2.10"},
 		{"Provision.Firmware.MinBMC", cfg.Provision.Firmware.MinBMC, "4.50"},
 		{"Provision.CrashArtifacts.MaxMB", cfg.Provision.CrashArtifacts.MaxMB, 256},

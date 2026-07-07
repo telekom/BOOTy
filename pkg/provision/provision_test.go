@@ -1302,10 +1302,11 @@ func TestProvisionStepsContainEFIVars(t *testing.T) {
 	}
 
 	// Verify total step count includes early provisioning input validation,
-	// setup-nvme-namespaces, setup-raid, mount-boot, mount-shared-data, apply-sysexts,
-	// EFI fallback install, and secureboot chain verification.
-	if len(steps) != 43 {
-		t.Errorf("expected 43 provisioning steps, got %d", len(steps))
+	// setup-nvme-namespaces, setup-raid, mount-boot, mount-shared-data,
+	// overlayFS config, apply-sysexts, EFI fallback install, and secureboot
+	// chain verification.
+	if len(steps) != 44 {
+		t.Errorf("expected 44 provisioning steps, got %d", len(steps))
 	}
 }
 
@@ -1315,7 +1316,7 @@ func TestProvisionStepsConfigureMountedRootBeforeSysexts(t *testing.T) {
 	steps := orch.provisionSteps()
 
 	mountIdx, bootIdx := -1, -1
-	hostnameIdx, filesIdx, dnsIdx := -1, -1, -1
+	overlayIdx, hostnameIdx, filesIdx, dnsIdx := -1, -1, -1, -1
 	sysextIdx, fstabIdx := -1, -1
 	for i, step := range steps {
 		switch step.Name {
@@ -1323,6 +1324,8 @@ func TestProvisionStepsConfigureMountedRootBeforeSysexts(t *testing.T) {
 			mountIdx = i
 		case "mount-boot":
 			bootIdx = i
+		case "configure-overlayfs":
+			overlayIdx = i
 		case "set-hostname":
 			hostnameIdx = i
 		case "copy-provisioner-files":
@@ -1335,19 +1338,21 @@ func TestProvisionStepsConfigureMountedRootBeforeSysexts(t *testing.T) {
 			fstabIdx = i
 		}
 	}
-	if mountIdx == -1 || bootIdx == -1 || hostnameIdx == -1 || filesIdx == -1 || dnsIdx == -1 || sysextIdx == -1 || fstabIdx == -1 {
+	if mountIdx == -1 || bootIdx == -1 || overlayIdx == -1 || hostnameIdx == -1 || filesIdx == -1 || dnsIdx == -1 || sysextIdx == -1 || fstabIdx == -1 {
 		t.Fatalf("missing mounted-root configuration steps")
 	}
 	if mountIdx >= bootIdx ||
-		bootIdx >= hostnameIdx ||
+		bootIdx >= overlayIdx ||
+		overlayIdx >= hostnameIdx ||
 		hostnameIdx >= filesIdx ||
 		filesIdx >= dnsIdx ||
 		dnsIdx >= sysextIdx ||
 		sysextIdx >= fstabIdx {
 		t.Fatalf(
-			"unexpected mounted-root step order: mount=%d boot=%d hostname=%d files=%d dns=%d sysext=%d fstab=%d",
+			"unexpected mounted-root step order: mount=%d boot=%d overlay=%d hostname=%d files=%d dns=%d sysext=%d fstab=%d",
 			mountIdx,
 			bootIdx,
+			overlayIdx,
 			hostnameIdx,
 			filesIdx,
 			dnsIdx,

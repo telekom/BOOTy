@@ -139,6 +139,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"mount-root", o.mountRoot},
 		{"mount-boot", o.mountBoot},
 		{"mount-shared-data", o.mountSharedData},
+		{"configure-overlayfs", o.configureOverlayFS},
 		{"set-hostname", o.setHostname},
 		{"copy-provisioner-files", o.copyProvisionerFiles},
 		{"configure-dns", o.configureDNS},
@@ -430,6 +431,10 @@ func (o *Orchestrator) setHostname(_ context.Context) error {
 
 func (o *Orchestrator) copyProvisionerFiles(ctx context.Context) error {
 	return o.config.CopyProvisionerFiles(ctx)
+}
+
+func (o *Orchestrator) configureOverlayFS(_ context.Context) error {
+	return o.config.ConfigureOverlayFS(&o.cfg.Provision.OverlayFS, o.cfg.OSFamily)
 }
 
 func (o *Orchestrator) configureDNS(_ context.Context) error {

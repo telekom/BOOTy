@@ -225,8 +225,8 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 43 {
-		t.Fatalf("expected 43 provisioning steps, got %d", len(steps))
+	if len(steps) != 44 {
+		t.Fatalf("expected 44 provisioning steps, got %d", len(steps))
 	}
 }
 
@@ -878,13 +878,15 @@ func TestMountBootAndSharedDataStepsPrecedeProvisioningWrites(t *testing.T) {
 	for i, step := range steps {
 		indices[step.Name] = i
 	}
-	for _, name := range []string{"mount-root", "mount-boot", "mount-shared-data", "copy-provisioner-files", "apply-sysexts", "configure-grub", "install-efi-fallback", "verify-secureboot-chain", "create-efi-boot-entry", "teardown-chroot"} {
+	for _, name := range []string{"mount-root", "mount-boot", "mount-shared-data", "configure-overlayfs", "copy-provisioner-files", "apply-sysexts", "configure-grub", "install-efi-fallback", "verify-secureboot-chain", "create-efi-boot-entry", "teardown-chroot"} {
 		if _, ok := indices[name]; !ok {
 			t.Fatalf("missing step %q", name)
 		}
 	}
 	if indices["mount-root"] >= indices["mount-boot"] ||
 		indices["mount-boot"] >= indices["mount-shared-data"] ||
+		indices["mount-shared-data"] >= indices["configure-overlayfs"] ||
+		indices["configure-overlayfs"] >= indices["copy-provisioner-files"] ||
 		indices["mount-shared-data"] >= indices["copy-provisioner-files"] ||
 		indices["mount-shared-data"] >= indices["apply-sysexts"] ||
 		indices["apply-sysexts"] >= indices["configure-grub"] ||

@@ -11,6 +11,7 @@ hostname: node-01          # Machine hostname — used for logging and JWT acqui
 mode: provision            # Operating mode: provision | deprovision | soft-deprovision |
                            #   standby | dry-run | check (default: provision)
 dryRun: false              # Override mode to dry-run when true (default: false)
+osFamily: ubuntu           # Target OS family for target-root writers
 
 # ---------------------------------------------------------------------------
 # Network — configures the in-ramdisk network stack.
@@ -315,6 +316,26 @@ provision:
     enabled: false
     # datasource: nocloud (default) or configdrive
     datasource: nocloud
+
+  overlayFS:
+    # enabled: write Ubuntu overlayroot config into the provisioned root.
+    # Default false; requires osFamily: ubuntu.
+    enabled: true
+    # mode: tmpfs (default, volatile writes) | device (persistent backing fs)
+    mode: device
+    # device: backing filesystem for mode=device. LABEL= and /dev/disk/by-* are supported.
+    device: LABEL=BOOTY-OVERLAY
+    # directory: overlayroot dir= value under the backing filesystem.
+    directory: booty
+    # upperDir/workDir: optional target-root paths BOOTy pre-creates for custom
+    # overlayFS initramfs hooks. They must be backed by persistent storage to be useful.
+    upperDir: /var/lib/booty/overlayfs/upper
+    workDir: /var/lib/booty/overlayfs/work
+    # recurse: false renders recurse=0 so separate data mounts stay writable.
+    recurse: false
+    swap: false
+    debug: false
+    timeoutSec: 30
 
   sysext:
     # enabled: copy selected systemd-sysext images into the provisioned root
