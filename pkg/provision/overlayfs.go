@@ -147,10 +147,22 @@ func overlayFSTargetDir(root, dir string) (string, error) {
 	if !filepath.IsAbs(trimmed) {
 		return "", fmt.Errorf("overlayFS directory %s must be absolute", dir)
 	}
-	if strings.Contains(trimmed, "..") {
+	if filepath.Clean(trimmed) == string(filepath.Separator) {
+		return "", fmt.Errorf("overlayFS directory %s must not be root", dir)
+	}
+	if containsParentPathSegment(trimmed) {
 		return "", fmt.Errorf("overlayFS directory %s must not contain parent-directory segments", dir)
 	}
 	return filepath.Join(root, strings.TrimPrefix(filepath.Clean(trimmed), string(filepath.Separator))), nil
+}
+
+func containsParentPathSegment(dir string) bool {
+	for _, part := range strings.Split(dir, string(filepath.Separator)) {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 func overlayRootDeviceOptions(cfg *config.OverlayFSConfig) []string {

@@ -64,6 +64,35 @@ func TestConfigureOverlayFSTmpfsDefaults(t *testing.T) {
 	}
 }
 
+func TestOverlayFSTargetDirAllowsNonParentDotSegments(t *testing.T) {
+	root := t.TempDir()
+
+	got, err := overlayFSTargetDir(root, "/var/lib/booty/.../upper")
+	if err != nil {
+		t.Fatalf("overlayFSTargetDir() error: %v", err)
+	}
+	want := filepath.Join(root, "var/lib/booty/.../upper")
+	if got != want {
+		t.Fatalf("overlayFSTargetDir() = %q, want %q", got, want)
+	}
+}
+
+func TestOverlayFSTargetDirRejectsInvalidPathSegments(t *testing.T) {
+	root := t.TempDir()
+	tests := []string{
+		"/",
+		"/var/lib/booty/../upper",
+	}
+
+	for _, dir := range tests {
+		t.Run(dir, func(t *testing.T) {
+			if _, err := overlayFSTargetDir(root, dir); err == nil {
+				t.Fatal("expected error")
+			}
+		})
+	}
+}
+
 func TestConfigureOverlayFSSkipsDisabled(t *testing.T) {
 	c := newTestConfigurator(t, newMockCommander())
 

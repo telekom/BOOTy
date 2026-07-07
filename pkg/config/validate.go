@@ -71,12 +71,7 @@ func (c *Config) Validate() error {
 			c.Provision.Disk.PartitionLayout = layout
 		}
 	}
-	if err := validateSysextConfig(&c.Provision.Sysext); err != nil {
-		errs = append(errs, err.Error())
-	}
-	if err := validateOverlayFSConfig(&c.Provision.OverlayFS, c.OSFamily); err != nil {
-		errs = append(errs, err.Error())
-	}
+	errs = append(errs, c.validateProvisionFeatureConfigs()...)
 	if err := validateImageSourceRootSelectors(&c.Provision.Image); err != nil {
 		errs = append(errs, err.Error())
 	}
@@ -93,6 +88,17 @@ func (c *Config) Validate() error {
 
 	c.normalize()
 	return nil
+}
+
+func (c *Config) validateProvisionFeatureConfigs() []string {
+	var errs []string
+	if err := validateSysextConfig(&c.Provision.Sysext); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := validateOverlayFSConfig(&c.Provision.OverlayFS, c.OSFamily); err != nil {
+		errs = append(errs, err.Error())
+	}
+	return errs
 }
 
 func (c *Config) validateEnums() []string {
@@ -275,6 +281,18 @@ func validateDiskRootSelectors(cfg *DiskConfig) error {
 }
 
 func validateOverlayFSConfig(cfg *OverlayFSConfig, osFamily string) error {
+	errs := validateOverlayFSBaseFields(cfg, osFamily)
+	effectiveMode := overlayFSEffectiveMode(cfg.Mode)
+	errs = append(errs, validateOverlayFSModeFields(cfg, effectiveMode)...)
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+
+	normalizeOverlayFSConfig(cfg)
+	return nil
+}
+
+func validateOverlayFSBaseFields(cfg *OverlayFSConfig, osFamily string) []string {
 	var errs []string
 	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
 	if mode != "" && mode != OverlayFSModeTmpfs && mode != OverlayFSModeDevice {
@@ -286,40 +304,59 @@ func validateOverlayFSConfig(cfg *OverlayFSConfig, osFamily string) error {
 	if cfg.TimeoutSec < 0 {
 		errs = append(errs, "provision.overlayFS.timeoutSec must be non-negative")
 	}
+	errs = append(errs, validateOverlayFSValues(cfg)...)
+	if err := validateOverlayFSDirs(cfg); err != nil {
+		errs = append(errs, err.Error())
+	}
+	return errs
+}
+
+func validateOverlayFSValues(cfg *OverlayFSConfig) []string {
+	var errs []string
 	if err := validateOverlayFSValue("provision.overlayFS.device", cfg.Device); err != nil {
 		errs = append(errs, err.Error())
 	}
 	if err := validateOverlayFSValue("provision.overlayFS.directory", cfg.Directory); err != nil {
 		errs = append(errs, err.Error())
 	}
-	if err := validateOverlayFSDirs(cfg); err != nil {
-		errs = append(errs, err.Error())
-	}
+	return errs
+}
 
-	effectiveMode := mode
-	if effectiveMode == "" {
-		effectiveMode = OverlayFSModeTmpfs
-	}
+func validateOverlayFSModeFields(cfg *OverlayFSConfig, effectiveMode string) []string {
+	var errs []string
 	if cfg.Enabled && effectiveMode == OverlayFSModeDevice && strings.TrimSpace(cfg.Device) == "" {
 		errs = append(errs, "provision.overlayFS.device required when provision.overlayFS.mode is device")
 	}
 	if effectiveMode == OverlayFSModeTmpfs {
-		if strings.TrimSpace(cfg.Device) != "" {
-			errs = append(errs, "provision.overlayFS.device is only valid when provision.overlayFS.mode is device")
-		}
-		if cfg.TimeoutSec != 0 {
-			errs = append(errs, "provision.overlayFS.timeoutSec is only valid when provision.overlayFS.mode is device")
-		}
+		errs = append(errs, validateOverlayFSTmpfsFields(cfg)...)
 	}
-	if len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "; "))
-	}
+	return errs
+}
 
+func validateOverlayFSTmpfsFields(cfg *OverlayFSConfig) []string {
+	var errs []string
+	if strings.TrimSpace(cfg.Device) != "" {
+		errs = append(errs, "provision.overlayFS.device is only valid when provision.overlayFS.mode is device")
+	}
+	if cfg.TimeoutSec != 0 {
+		errs = append(errs, "provision.overlayFS.timeoutSec is only valid when provision.overlayFS.mode is device")
+	}
+	return errs
+}
+
+func overlayFSEffectiveMode(mode string) string {
+	normalized := strings.ToLower(strings.TrimSpace(mode))
+	if normalized == "" {
+		return OverlayFSModeTmpfs
+	}
+	return normalized
+}
+
+func normalizeOverlayFSConfig(cfg *OverlayFSConfig) {
 	cfg.Device = strings.TrimSpace(cfg.Device)
 	cfg.Directory = strings.TrimSpace(cfg.Directory)
 	cfg.UpperDir = strings.TrimSpace(cfg.UpperDir)
 	cfg.WorkDir = strings.TrimSpace(cfg.WorkDir)
-	return nil
 }
 
 func validateOverlayFSValue(name, value string) error {

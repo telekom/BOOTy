@@ -1275,6 +1275,9 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) (bool, error)
 }
 
 func applyCoreBoolVar(cfg *config.MachineConfig, key, value string) bool {
+	if applyOverlayFSBoolVar(cfg, key, value) {
+		return true
+	}
 	switch key {
 	case "DISABLE_KEXEC":
 		cfg.Provision.DisableKexec = parseBoolVar(value)
@@ -1288,14 +1291,6 @@ func applyCoreBoolVar(cfg *config.MachineConfig, key, value string) bool {
 		cfg.Health.Enabled = parseBoolVar(value)
 	case "CLOUDINIT_ENABLED":
 		cfg.Provision.CloudInit.Enabled = parseBoolVar(value)
-	case "OVERLAYFS_ENABLED":
-		cfg.Provision.OverlayFS.Enabled = parseBoolVar(value)
-	case "OVERLAYFS_RECURSE":
-		cfg.Provision.OverlayFS.Recurse = parseBoolVar(value)
-	case "OVERLAYFS_SWAP":
-		cfg.Provision.OverlayFS.Swap = parseBoolVar(value)
-	case "OVERLAYFS_DEBUG":
-		cfg.Provision.OverlayFS.Debug = parseBoolVar(value)
 	case "DRY_RUN":
 		cfg.DryRun = parseBoolVar(value)
 	case "INSECURE_TRANSPORT":
@@ -1306,6 +1301,22 @@ func applyCoreBoolVar(cfg *config.MachineConfig, key, value string) bool {
 		cfg.Provision.Sysext.AllowInsecureHTTP = parseBoolVar(value)
 	case "AB_PRESERVE_EXISTING":
 		cfg.Provision.AB.PreserveExisting = parseBoolVar(value)
+	default:
+		return false
+	}
+	return true
+}
+
+func applyOverlayFSBoolVar(cfg *config.MachineConfig, key, value string) bool {
+	switch key {
+	case "OVERLAYFS_ENABLED":
+		cfg.Provision.OverlayFS.Enabled = parseBoolVar(value)
+	case "OVERLAYFS_RECURSE":
+		cfg.Provision.OverlayFS.Recurse = parseBoolVar(value)
+	case "OVERLAYFS_SWAP":
+		cfg.Provision.OverlayFS.Swap = parseBoolVar(value)
+	case "OVERLAYFS_DEBUG":
+		cfg.Provision.OverlayFS.Debug = parseBoolVar(value)
 	default:
 		return false
 	}
