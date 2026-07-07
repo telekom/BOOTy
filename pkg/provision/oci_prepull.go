@@ -272,6 +272,9 @@ func (c *Configurator) ociPrePullDir(cacheDir string, elem ...string) (hostPath,
 	if err := os.MkdirAll(hostPath, 0o755); err != nil {
 		return "", "", fmt.Errorf("create target directory: %w", err)
 	}
+	if err := ensureTargetDirWithinRoot(c.rootDir, hostPath); err != nil {
+		return "", "", err
+	}
 	return hostPath, imagePath, nil
 }
 
@@ -290,7 +293,18 @@ func (c *Configurator) ociPrePullTargetPath(imagePath string) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(hostPath), 0o755); err != nil {
 		return "", fmt.Errorf("create target parent directory: %w", err)
 	}
+	if err := ensureTargetDirWithinRoot(c.rootDir, filepath.Dir(hostPath)); err != nil {
+		return "", err
+	}
 	return hostPath, nil
+}
+
+func ensureTargetDirWithinRoot(root, dir string) error {
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return fmt.Errorf("resolve target directory symlinks: %w", err)
+	}
+	return ensureWithinRoot(root, realDir)
 }
 
 func ociPrePullArchiveName(reference, digest string) string {

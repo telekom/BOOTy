@@ -91,6 +91,40 @@ func TestPrepareOCIPrePullsDisabledNoop(t *testing.T) {
 	}
 }
 
+func TestOCIPrePullDirRejectsTargetDirectorySymlinkEscape(t *testing.T) {
+	c := newTestConfigurator(t, newMockCommander())
+	outside := t.TempDir()
+	archiveDir := filepath.Join(c.rootDir, "var/lib/booty/prepulls/archives")
+	if err := os.MkdirAll(filepath.Dir(archiveDir), 0o755); err != nil {
+		t.Fatalf("create archive parent: %v", err)
+	}
+	if err := os.Symlink(outside, archiveDir); err != nil {
+		t.Fatalf("create archive symlink: %v", err)
+	}
+
+	_, _, err := c.ociPrePullDir("/var/lib/booty/prepulls", "archives")
+	if err == nil || !strings.Contains(err.Error(), "target escapes provisioned root") {
+		t.Fatalf("ociPrePullDir() error = %v, want symlink escape rejection", err)
+	}
+}
+
+func TestOCIPrePullTargetPathRejectsParentSymlinkEscape(t *testing.T) {
+	c := newTestConfigurator(t, newMockCommander())
+	outside := t.TempDir()
+	parent := filepath.Join(c.rootDir, "var/lib/booty/prepulls")
+	if err := os.MkdirAll(filepath.Dir(parent), 0o755); err != nil {
+		t.Fatalf("create cache parent: %v", err)
+	}
+	if err := os.Symlink(outside, parent); err != nil {
+		t.Fatalf("create cache symlink: %v", err)
+	}
+
+	_, err := c.ociPrePullTargetPath("/var/lib/booty/prepulls/catalog.json")
+	if err == nil || !strings.Contains(err.Error(), "target escapes provisioned root") {
+		t.Fatalf("ociPrePullTargetPath() error = %v, want symlink escape rejection", err)
+	}
+}
+
 func TestPrepareOCIPrePullsEndToEndInstallsImporterAndImportsArchive(t *testing.T) {
 	c := newTestConfigurator(t, newMockCommander())
 	restore := stubOCIPrePuller(t, "registry.example.invalid/tcaas/pause@sha256:"+strings.Repeat("a", 64))
