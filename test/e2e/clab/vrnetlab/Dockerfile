@@ -5,7 +5,7 @@
 # Build:  docker build -t booty-vrnetlab:latest -f test/e2e/clab/vrnetlab/Dockerfile .
 
 # ── Stage 1: Build BOOTy static binary ────────────────────────────────
-FROM golang:1.26-alpine AS builder
+FROM golang:1.26.5-alpine AS builder
 RUN apk add --no-cache git ca-certificates gcc linux-headers musl-dev
 COPY go.mod go.sum /src/
 WORKDIR /src
