@@ -1256,6 +1256,35 @@ func TestHandleType5RouteNoGateway(t *testing.T) {
 	overlay.handleType5Route(route, "", nil, false)
 }
 
+func TestHandleType5RouteSkipsLocalProvisionSubnet(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := &OverlayTier{
+		cfg: &Config{
+			RouterID:     "192.168.4.10",
+			ProvisionIP:  "10.200.0.10/24",
+			ProvisionVNI: 1000,
+			BridgeName:   "br.provision",
+		},
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	route := &apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "10.200.0.0",
+		IpPrefixLen: 24,
+		GwAddress:   "192.168.4.1",
+	}
+
+	overlay.handleType5Route(route, "192.168.4.1", nil, false)
+
+	if mock.linkName != "" {
+		t.Fatalf("local provision subnet route should not look up link, got %q", mock.linkName)
+	}
+	if len(mock.routeReplaces) != 0 || len(mock.routeDels) != 0 {
+		t.Fatalf("local provision subnet route should not touch kernel routes: replaces=%d dels=%d",
+			len(mock.routeReplaces), len(mock.routeDels))
+	}
+}
+
 func TestHandleType5RouteInstallsOnlinkGatewayRoute(t *testing.T) {
 	mock := &mockOverlayNetlinkOps{}
 	overlay := &OverlayTier{
@@ -2432,6 +2461,74 @@ func TestOverlayRouteTable(t *testing.T) {
 			overlay := &OverlayTier{cfg: tt.cfg}
 			if got := overlay.overlayRouteTable(); got != tt.want {
 				t.Errorf("overlayRouteTable() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRouteCoveredByProvisionSubnet(t *testing.T) {
+	tests := []struct {
+		name        string
+		provisionIP string
+		prefix      string
+		prefixLen   uint32
+		want        bool
+	}{
+		{
+			name:        "same provision subnet",
+			provisionIP: "10.200.0.10/24",
+			prefix:      "10.200.0.0",
+			prefixLen:   24,
+			want:        true,
+		},
+		{
+			name:        "host route inside provision subnet",
+			provisionIP: "10.200.0.10/24",
+			prefix:      "10.200.0.1",
+			prefixLen:   32,
+			want:        true,
+		},
+		{
+			name:        "broader fabric route remains usable",
+			provisionIP: "10.200.0.10/24",
+			prefix:      "10.200.0.0",
+			prefixLen:   16,
+		},
+		{
+			name:        "default route remains usable",
+			provisionIP: "10.200.0.10/24",
+			prefix:      "0.0.0.0",
+			prefixLen:   0,
+		},
+		{
+			name:        "outside provision subnet",
+			provisionIP: "10.200.0.10/24",
+			prefix:      "10.201.0.0",
+			prefixLen:   24,
+		},
+		{
+			name:        "invalid provision subnet",
+			provisionIP: "not-a-cidr",
+			prefix:      "10.200.0.0",
+			prefixLen:   24,
+		},
+		{
+			name:        "ipv6 route inside provision subnet",
+			provisionIP: "2001:db8::10/64",
+			prefix:      "2001:db8::1",
+			prefixLen:   128,
+			want:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dst, err := parsePrefixRoute(tt.prefix, tt.prefixLen)
+			if err != nil {
+				t.Fatalf("parse prefix: %v", err)
+			}
+			if got := routeCoveredByProvisionSubnet(tt.provisionIP, dst); got != tt.want {
+				t.Fatalf("routeCoveredByProvisionSubnet() = %v, want %v", got, tt.want)
 			}
 		})
 	}
