@@ -31,18 +31,20 @@ const (
 	defaultMTU = 1500
 )
 
-// fdbInstaller abstracts netlink FDB operations for testability.
-type fdbInstaller interface {
+// overlayNetlinkOps abstracts overlay netlink operations for testability.
+type overlayNetlinkOps interface {
 	LinkByName(name string) (netlink.Link, error)
 	NeighSet(neigh *netlink.Neigh) error
 	NeighAppend(neigh *netlink.Neigh) error
 	NeighDel(neigh *netlink.Neigh) error
+	RouteReplace(route *netlink.Route) error
+	RouteDel(route *netlink.Route) error
 }
 
-// netlinkFDB is the production implementation using real netlink calls.
-type netlinkFDB struct{}
+// netlinkOverlayOps is the production implementation using real netlink calls.
+type netlinkOverlayOps struct{}
 
-func (netlinkFDB) LinkByName(name string) (netlink.Link, error) {
+func (netlinkOverlayOps) LinkByName(name string) (netlink.Link, error) {
 	link, err := netlink.LinkByName(name)
 	if err != nil {
 		return nil, fmt.Errorf("link by name %s: %w", name, err)
@@ -50,23 +52,37 @@ func (netlinkFDB) LinkByName(name string) (netlink.Link, error) {
 	return link, nil
 }
 
-func (netlinkFDB) NeighSet(n *netlink.Neigh) error {
+func (netlinkOverlayOps) NeighSet(n *netlink.Neigh) error {
 	if err := netlink.NeighSet(n); err != nil {
 		return fmt.Errorf("neigh set: %w", err)
 	}
 	return nil
 }
 
-func (netlinkFDB) NeighAppend(n *netlink.Neigh) error {
+func (netlinkOverlayOps) NeighAppend(n *netlink.Neigh) error {
 	if err := netlink.NeighAppend(n); err != nil {
 		return fmt.Errorf("neigh append: %w", err)
 	}
 	return nil
 }
 
-func (netlinkFDB) NeighDel(n *netlink.Neigh) error {
+func (netlinkOverlayOps) NeighDel(n *netlink.Neigh) error {
 	if err := netlink.NeighDel(n); err != nil {
 		return fmt.Errorf("neigh del: %w", err)
+	}
+	return nil
+}
+
+func (netlinkOverlayOps) RouteReplace(route *netlink.Route) error {
+	if err := netlink.RouteReplace(route); err != nil {
+		return fmt.Errorf("route replace: %w", err)
+	}
+	return nil
+}
+
+func (netlinkOverlayOps) RouteDel(route *netlink.Route) error {
+	if err := netlink.RouteDel(route); err != nil {
+		return fmt.Errorf("route delete: %w", err)
 	}
 	return nil
 }
@@ -75,12 +91,12 @@ func (netlinkFDB) NeighDel(n *netlink.Neigh) error {
 // When EnableL2 is set, it also handles Type-2 (MAC/IP) and Type-3
 // (Inclusive Multicast) routes for L2 overlay use cases.
 type OverlayTier struct {
-	bgp    *server.BgpServer
-	cfg    *Config
-	log    *slog.Logger
-	cancel context.CancelFunc
-	fdb    fdbInstaller
-	hooks  *overlaySetupHooks
+	bgp        *server.BgpServer
+	cfg        *Config
+	log        *slog.Logger
+	cancel     context.CancelFunc
+	netlinkOps overlayNetlinkOps
+	hooks      *overlaySetupHooks
 
 	// Track resources created by us for clean teardown.
 	createdVRFs     map[string]bool
@@ -111,7 +127,7 @@ func NewOverlayTier(cfg *Config) *OverlayTier {
 	return &OverlayTier{
 		cfg:         cfg,
 		log:         slog.With("tier", "overlay"),
-		fdb:         netlinkFDB{},
+		netlinkOps:  netlinkOverlayOps{},
 		createdVRFs: map[string]bool{},
 	}
 }
@@ -217,7 +233,7 @@ func (o *OverlayTier) Teardown(_ context.Context) error {
 	}
 
 	if o.gatewayFDB != nil {
-		if err := o.fdb.NeighDel(o.gatewayFDB); err != nil {
+		if err := o.netlinkOps.NeighDel(o.gatewayFDB); err != nil {
 			o.log.Debug("failed to remove gateway BUM FDB entry", "vtep", o.gatewayFDB.IP, "error", err)
 		} else {
 			o.log.Info("removed gateway BUM FDB entry", "vtep", o.gatewayFDB.IP)
@@ -474,7 +490,7 @@ func (o *OverlayTier) addGatewayFDB(vxLink netlink.Link) error {
 		Flags:        netlink.NTF_SELF,
 		State:        netlink.NUD_PERMANENT,
 	}
-	if err := o.fdb.NeighAppend(fdb); err != nil {
+	if err := o.netlinkOps.NeighAppend(fdb); err != nil {
 		return fmt.Errorf("append BUM FDB entry for %s: %w", o.cfg.ProvisionGateway, err)
 	}
 	o.gatewayFDB = fdb
@@ -748,23 +764,16 @@ func (o *OverlayTier) handleType5Route(route *apipb.EVPNIPPrefixRoute, vtep stri
 		return
 	}
 
-	link, err := o.fdb.LinkByName(o.cfg.BridgeName)
+	link, err := o.netlinkOps.LinkByName(o.cfg.BridgeName)
 	if err != nil {
 		o.log.Warn("cannot find bridge for route install", "bridge", o.cfg.BridgeName, "error", err)
 		return
 	}
 
-	kr := &netlink.Route{
-		LinkIndex: link.Attrs().Index,
-		Dst:       dst,
-		Gw:        gw,
-	}
-	if tableID := o.overlayRouteTable(); tableID != 0 {
-		kr.Table = tableID
-	}
+	kr := buildType5KernelRoute(link, dst, gw, o.overlayRouteTable())
 
 	if withdraw {
-		if err := netlink.RouteDel(kr); err != nil {
+		if err := o.netlinkOps.RouteDel(kr); err != nil {
 			o.log.Debug("failed to delete route from type-5 withdraw", "dst", dst, "gw", gw, "error", err)
 		} else {
 			o.log.Info("removed route from type-5 withdraw", "dst", dst, "gw", gw)
@@ -772,11 +781,29 @@ func (o *OverlayTier) handleType5Route(route *apipb.EVPNIPPrefixRoute, vtep stri
 		return
 	}
 
-	if err := netlink.RouteReplace(kr); err != nil {
+	if err := o.netlinkOps.RouteReplace(kr); err != nil {
 		o.log.Warn("failed to install route from type-5", "dst", dst, "gw", gw, "error", err)
 	} else {
 		o.log.Info("installed route from type-5", "dst", dst, "gw", gw)
 	}
+}
+
+func buildType5KernelRoute(link netlink.Link, dst *net.IPNet, gw net.IP, tableID int) *netlink.Route {
+	route := &netlink.Route{
+		LinkIndex: link.Attrs().Index,
+		Dst:       dst,
+		Gw:        gw,
+	}
+	if gw != nil {
+		// EVPN Type-5 next-hops are remote VTEPs reached through the L3VNI
+		// bridge. The bridge often only has a /32 provision IP, so Linux must
+		// treat the Type-5 gateway as reachable on this link.
+		route.Flags |= int(netlink.FLAG_ONLINK)
+	}
+	if tableID != 0 {
+		route.Table = tableID
+	}
+	return route
 }
 
 // handleType2Route installs or removes an FDB entry for a remote MAC learned
@@ -812,7 +839,7 @@ func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute,
 	}
 
 	vxlanName := o.vxlanName()
-	vxLink, err := o.fdb.LinkByName(vxlanName)
+	vxLink, err := o.netlinkOps.LinkByName(vxlanName)
 	if err != nil {
 		o.log.Warn("cannot find VXLAN for FDB update", "vxlan", vxlanName, "error", err)
 		return
@@ -828,7 +855,7 @@ func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute,
 	}
 
 	if withdraw {
-		if err := o.fdb.NeighDel(fdb); err != nil {
+		if err := o.netlinkOps.NeighDel(fdb); err != nil {
 			o.log.Debug("failed to delete FDB entry", "mac", mac, "vtep", vtep, "error", err)
 		} else {
 			o.log.Info("removed FDB entry from type-2 withdraw", "mac", mac, "vtep", vtep)
@@ -837,7 +864,7 @@ func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute,
 		return
 	}
 
-	if err := o.fdb.NeighSet(fdb); err != nil {
+	if err := o.netlinkOps.NeighSet(fdb); err != nil {
 		o.log.Debug("failed to add/update FDB entry", "mac", mac, "vtep", vtep, "error", err)
 	} else {
 		o.log.Info("installed FDB entry from type-2 route", "mac", mac, "vtep", vtep)
@@ -863,7 +890,7 @@ func (o *OverlayTier) handleType3Route(route *apipb.EVPNInclusiveMulticastEthern
 	}
 
 	vxlanName := o.vxlanName()
-	vxLink, err := o.fdb.LinkByName(vxlanName)
+	vxLink, err := o.netlinkOps.LinkByName(vxlanName)
 	if err != nil {
 		o.log.Warn("cannot find VXLAN for BUM update", "vxlan", vxlanName, "error", err)
 		return
@@ -879,7 +906,7 @@ func (o *OverlayTier) handleType3Route(route *apipb.EVPNInclusiveMulticastEthern
 	}
 
 	if withdraw {
-		if err := o.fdb.NeighDel(fdb); err != nil {
+		if err := o.netlinkOps.NeighDel(fdb); err != nil {
 			o.log.Debug("failed to delete BUM FDB entry", "vtep", remoteIP, "error", err)
 		} else {
 			o.log.Info("removed BUM FDB entry from type-3 withdraw", "vtep", remoteIP)
@@ -887,7 +914,7 @@ func (o *OverlayTier) handleType3Route(route *apipb.EVPNInclusiveMulticastEthern
 		return
 	}
 
-	if err := o.fdb.NeighAppend(fdb); err != nil {
+	if err := o.netlinkOps.NeighAppend(fdb); err != nil {
 		o.log.Debug("failed to append BUM FDB entry", "vtep", remoteIP, "error", err)
 	} else {
 		o.log.Info("installed BUM FDB entry from type-3 route", "vtep", remoteIP)

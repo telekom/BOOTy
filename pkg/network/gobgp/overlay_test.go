@@ -17,19 +17,23 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
-// mockFDB records FDB operations for assertion in unit tests.
-type mockFDB struct {
-	linkName  string
-	linkErr   error
-	sets      []*netlink.Neigh
-	appends   []*netlink.Neigh
-	dels      []*netlink.Neigh
-	setErr    error
-	appendErr error
-	delErr    error
+// mockOverlayNetlinkOps records overlay netlink operations for assertion in unit tests.
+type mockOverlayNetlinkOps struct {
+	linkName        string
+	linkErr         error
+	sets            []*netlink.Neigh
+	appends         []*netlink.Neigh
+	dels            []*netlink.Neigh
+	routeReplaces   []*netlink.Route
+	routeDels       []*netlink.Route
+	setErr          error
+	appendErr       error
+	delErr          error
+	routeReplaceErr error
+	routeDelErr     error
 }
 
-func (m *mockFDB) LinkByName(name string) (netlink.Link, error) {
+func (m *mockOverlayNetlinkOps) LinkByName(name string) (netlink.Link, error) {
 	m.linkName = name
 	if m.linkErr != nil {
 		return nil, m.linkErr
@@ -37,19 +41,29 @@ func (m *mockFDB) LinkByName(name string) (netlink.Link, error) {
 	return &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Index: 42, Name: name}}, nil
 }
 
-func (m *mockFDB) NeighSet(n *netlink.Neigh) error {
+func (m *mockOverlayNetlinkOps) NeighSet(n *netlink.Neigh) error {
 	m.sets = append(m.sets, n)
 	return m.setErr
 }
 
-func (m *mockFDB) NeighAppend(n *netlink.Neigh) error {
+func (m *mockOverlayNetlinkOps) NeighAppend(n *netlink.Neigh) error {
 	m.appends = append(m.appends, n)
 	return m.appendErr
 }
 
-func (m *mockFDB) NeighDel(n *netlink.Neigh) error {
+func (m *mockOverlayNetlinkOps) NeighDel(n *netlink.Neigh) error {
 	m.dels = append(m.dels, n)
 	return m.delErr
+}
+
+func (m *mockOverlayNetlinkOps) RouteReplace(route *netlink.Route) error {
+	m.routeReplaces = append(m.routeReplaces, route)
+	return m.routeReplaceErr
+}
+
+func (m *mockOverlayNetlinkOps) RouteDel(route *netlink.Route) error {
+	m.routeDels = append(m.routeDels, route)
+	return m.routeDelErr
 }
 
 func TestBuildRouteDistinguisher(t *testing.T) {
@@ -292,11 +306,11 @@ func mustMarshalPath(t *testing.T, nlriMsg interface{ ProtoReflect() protoreflec
 
 func TestProcessRouteUpdateDispatch(t *testing.T) {
 	// processRouteUpdate should not panic on any NLRI type.
-	mock := &mockFDB{}
+	mock := &mockOverlayNetlinkOps{}
 	overlay := &OverlayTier{
-		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
-		log: slog.Default(),
-		fdb: mock,
+		cfg:        &Config{RouterID: "10.0.0.99", ProvisionVNI: 100},
+		log:        slog.Default(),
+		netlinkOps: mock,
 	}
 
 	tests := []struct {
@@ -459,12 +473,12 @@ func TestAddGatewayFDB(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mock := &mockFDB{}
+			mock := &mockOverlayNetlinkOps{}
 			mock.appendErr = tt.appendErr
 			overlay := &OverlayTier{
-				cfg: &Config{ProvisionGateway: tt.gateway, ProvisionVNI: 100},
-				log: slog.Default(),
-				fdb: mock,
+				cfg:        &Config{ProvisionGateway: tt.gateway, ProvisionVNI: 100},
+				log:        slog.Default(),
+				netlinkOps: mock,
 			}
 			vxLink := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Index: 42, Name: "vxlan100"}}
 			err := overlay.addGatewayFDB(vxLink)
@@ -521,9 +535,9 @@ func TestParsePrefixRoute(t *testing.T) {
 
 func TestHandleType5RouteInvalidPrefix(t *testing.T) {
 	overlay := &OverlayTier{
-		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision"},
-		log: slog.Default(),
-		fdb: &mockFDB{},
+		cfg:        &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision"},
+		log:        slog.Default(),
+		netlinkOps: &mockOverlayNetlinkOps{},
 	}
 
 	route := &apipb.EVPNIPPrefixRoute{
@@ -536,11 +550,11 @@ func TestHandleType5RouteInvalidPrefix(t *testing.T) {
 }
 
 func TestHandleType5RouteSelfRoute(t *testing.T) {
-	mock := &mockFDB{}
+	mock := &mockOverlayNetlinkOps{}
 	overlay := &OverlayTier{
-		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision"},
-		log: slog.Default(),
-		fdb: mock,
+		cfg:        &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision"},
+		log:        slog.Default(),
+		netlinkOps: mock,
 	}
 
 	route := &apipb.EVPNIPPrefixRoute{
@@ -552,16 +566,16 @@ func TestHandleType5RouteSelfRoute(t *testing.T) {
 	// Self-originated route (vtep == RouterID) — should be silently skipped.
 	overlay.handleType5Route(route, "10.0.0.99", false)
 	// No route operations should have been attempted.
-	if len(mock.appends) != 0 || len(mock.sets) != 0 {
+	if len(mock.appends) != 0 || len(mock.sets) != 0 || len(mock.routeReplaces) != 0 || len(mock.routeDels) != 0 {
 		t.Error("self-originated type-5 route should be skipped")
 	}
 }
 
 func TestHandleType5RouteNoGateway(t *testing.T) {
 	overlay := &OverlayTier{
-		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision"},
-		log: slog.Default(),
-		fdb: &mockFDB{},
+		cfg:        &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision"},
+		log:        slog.Default(),
+		netlinkOps: &mockOverlayNetlinkOps{},
 	}
 
 	route := &apipb.EVPNIPPrefixRoute{
@@ -572,6 +586,169 @@ func TestHandleType5RouteNoGateway(t *testing.T) {
 
 	// No gateway and no next-hop — should return early.
 	overlay.handleType5Route(route, "", false)
+}
+
+func TestHandleType5RouteInstallsOnlinkGatewayRoute(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := &OverlayTier{
+		cfg: &Config{
+			RouterID:          "192.168.4.10",
+			ProvisionVNI:      1000,
+			BridgeName:        "br.provision",
+			OverlayVRFName:    "Vrf_overlay",
+			OverlayVRFTableID: 20,
+		},
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	route := &apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "10.100.0.0",
+		IpPrefixLen: 24,
+		GwAddress:   "192.168.4.1",
+	}
+
+	overlay.handleType5Route(route, "192.168.4.1", false)
+
+	if len(mock.routeReplaces) != 1 {
+		t.Fatalf("expected 1 route replace, got %d", len(mock.routeReplaces))
+	}
+	installed := mock.routeReplaces[0]
+	if installed.LinkIndex != 42 {
+		t.Errorf("LinkIndex = %d, want 42", installed.LinkIndex)
+	}
+	if installed.Dst.String() != "10.100.0.0/24" {
+		t.Errorf("Dst = %s, want 10.100.0.0/24", installed.Dst)
+	}
+	if !installed.Gw.Equal(net.ParseIP("192.168.4.1")) {
+		t.Errorf("Gw = %s, want 192.168.4.1", installed.Gw)
+	}
+	if installed.Table != 20 {
+		t.Errorf("Table = %d, want 20", installed.Table)
+	}
+	if installed.Flags&int(netlink.FLAG_ONLINK) == 0 {
+		t.Errorf("Flags = %v, want FLAG_ONLINK", installed.Flags)
+	}
+}
+
+func TestHandleType5RouteWithdrawDeletesOnlinkGatewayRoute(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := &OverlayTier{
+		cfg: &Config{
+			RouterID:          "192.168.4.10",
+			ProvisionVNI:      1000,
+			BridgeName:        "br.provision",
+			OverlayVRFName:    "Vrf_overlay",
+			OverlayVRFTableID: 20,
+		},
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	route := &apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "10.100.0.0",
+		IpPrefixLen: 24,
+		GwAddress:   "192.168.4.1",
+	}
+
+	overlay.handleType5Route(route, "192.168.4.1", true)
+
+	if len(mock.routeDels) != 1 {
+		t.Fatalf("expected 1 route delete, got %d", len(mock.routeDels))
+	}
+	deleted := mock.routeDels[0]
+	if deleted.Dst.String() != "10.100.0.0/24" {
+		t.Errorf("Dst = %s, want 10.100.0.0/24", deleted.Dst)
+	}
+	if deleted.Flags&int(netlink.FLAG_ONLINK) == 0 {
+		t.Errorf("Flags = %v, want FLAG_ONLINK", deleted.Flags)
+	}
+}
+
+func TestHandleType5RouteSkipsWhenBridgeMissing(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{linkErr: errors.New("missing bridge")}
+	overlay := &OverlayTier{
+		cfg: &Config{
+			RouterID:   "192.168.4.10",
+			BridgeName: "br.provision",
+		},
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	route := &apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "10.100.0.0",
+		IpPrefixLen: 24,
+		GwAddress:   "192.168.4.1",
+	}
+
+	overlay.handleType5Route(route, "192.168.4.1", false)
+
+	if mock.linkName != "br.provision" {
+		t.Errorf("LinkByName called with %q, want br.provision", mock.linkName)
+	}
+	if len(mock.routeReplaces) != 0 || len(mock.routeDels) != 0 {
+		t.Fatal("missing bridge should not attempt route operations")
+	}
+}
+
+func TestHandleType5RouteKeepsFailedInstallRouteForAssertion(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{routeReplaceErr: errors.New("replace failed")}
+	overlay := &OverlayTier{
+		cfg: &Config{
+			RouterID:   "192.168.4.10",
+			BridgeName: "br.provision",
+		},
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	route := &apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "10.100.0.0",
+		IpPrefixLen: 24,
+		GwAddress:   "0.0.0.0",
+	}
+
+	overlay.handleType5Route(route, "192.168.4.1", false)
+
+	if len(mock.routeReplaces) != 1 {
+		t.Fatalf("expected 1 route replace, got %d", len(mock.routeReplaces))
+	}
+	installed := mock.routeReplaces[0]
+	if installed.Table != 0 {
+		t.Errorf("Table = %d, want default table", installed.Table)
+	}
+	if !installed.Gw.Equal(net.ParseIP("192.168.4.1")) {
+		t.Errorf("Gw = %s, want fallback VTEP gateway", installed.Gw)
+	}
+}
+
+func TestHandleType5RouteKeepsFailedWithdrawRouteForAssertion(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{routeDelErr: errors.New("delete failed")}
+	overlay := &OverlayTier{
+		cfg: &Config{
+			RouterID:          "192.168.4.10",
+			BridgeName:        "br.provision",
+			OverlayVRFName:    "Vrf_overlay",
+			OverlayVRFTableID: 20,
+		},
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	route := &apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "10.100.0.0",
+		IpPrefixLen: 24,
+		GwAddress:   "192.168.4.1",
+	}
+
+	overlay.handleType5Route(route, "192.168.4.1", true)
+
+	if len(mock.routeDels) != 1 {
+		t.Fatalf("expected 1 route delete, got %d", len(mock.routeDels))
+	}
+	deleted := mock.routeDels[0]
+	if deleted.Table != 20 {
+		t.Errorf("Table = %d, want 20", deleted.Table)
+	}
+	if deleted.Flags&int(netlink.FLAG_ONLINK) == 0 {
+		t.Errorf("Flags = %v, want FLAG_ONLINK", deleted.Flags)
+	}
 }
 
 func TestOverlayRouteTable(t *testing.T) {
@@ -601,14 +778,52 @@ func TestOverlayRouteTable(t *testing.T) {
 	}
 }
 
+func TestBuildType5KernelRouteMarksGatewayOnlink(t *testing.T) {
+	dst := &net.IPNet{IP: net.ParseIP("10.100.0.0"), Mask: net.CIDRMask(24, 32)}
+	gw := net.ParseIP("192.168.4.1")
+	link := &netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Index: 42, Name: "br.provision"}}
+
+	route := buildType5KernelRoute(link, dst, gw, 20)
+
+	if route.LinkIndex != 42 {
+		t.Errorf("LinkIndex = %d, want 42", route.LinkIndex)
+	}
+	if route.Dst.String() != "10.100.0.0/24" {
+		t.Errorf("Dst = %s, want 10.100.0.0/24", route.Dst)
+	}
+	if !route.Gw.Equal(gw) {
+		t.Errorf("Gw = %s, want %s", route.Gw, gw)
+	}
+	if route.Table != 20 {
+		t.Errorf("Table = %d, want 20", route.Table)
+	}
+	if route.Flags&int(netlink.FLAG_ONLINK) == 0 {
+		t.Errorf("Flags = %v, want FLAG_ONLINK", route.Flags)
+	}
+}
+
+func TestBuildType5KernelRouteOmitsOnlinkWithoutGateway(t *testing.T) {
+	dst := &net.IPNet{IP: net.ParseIP("10.100.0.0"), Mask: net.CIDRMask(24, 32)}
+	link := &netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Index: 42, Name: "br.provision"}}
+
+	route := buildType5KernelRoute(link, dst, nil, 0)
+
+	if route.Table != 0 {
+		t.Errorf("Table = %d, want 0", route.Table)
+	}
+	if route.Flags&int(netlink.FLAG_ONLINK) != 0 {
+		t.Errorf("Flags = %v, did not expect FLAG_ONLINK", route.Flags)
+	}
+}
+
 // --- Type-2 handler tests ---------------------------------------------------
 
 func TestHandleType2RouteInstallsFDB(t *testing.T) {
-	mock := &mockFDB{}
+	mock := &mockOverlayNetlinkOps{}
 	overlay := &OverlayTier{
-		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
-		log: slog.Default(),
-		fdb: mock,
+		cfg:        &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log:        slog.Default(),
+		netlinkOps: mock,
 	}
 
 	route := &apipb.EVPNMACIPAdvertisementRoute{
@@ -631,11 +846,11 @@ func TestHandleType2RouteInstallsFDB(t *testing.T) {
 }
 
 func TestHandleType2RouteSelfSkipped(t *testing.T) {
-	mock := &mockFDB{}
+	mock := &mockOverlayNetlinkOps{}
 	overlay := &OverlayTier{
-		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
-		log: slog.Default(),
-		fdb: mock,
+		cfg:        &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log:        slog.Default(),
+		netlinkOps: mock,
 	}
 
 	route := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:dd:ee:ff"}
@@ -647,11 +862,11 @@ func TestHandleType2RouteSelfSkipped(t *testing.T) {
 }
 
 func TestHandleType2RouteWithdraw(t *testing.T) {
-	mock := &mockFDB{}
+	mock := &mockOverlayNetlinkOps{}
 	overlay := &OverlayTier{
-		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
-		log: slog.Default(),
-		fdb: mock,
+		cfg:        &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log:        slog.Default(),
+		netlinkOps: mock,
 	}
 	overlay.macVTEP.Store("aa:bb:cc:dd:ee:ff", "10.0.0.1")
 
@@ -667,11 +882,11 @@ func TestHandleType2RouteWithdraw(t *testing.T) {
 }
 
 func TestHandleType2RouteInvalidMAC(t *testing.T) {
-	mock := &mockFDB{}
+	mock := &mockOverlayNetlinkOps{}
 	overlay := &OverlayTier{
-		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
-		log: slog.Default(),
-		fdb: mock,
+		cfg:        &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log:        slog.Default(),
+		netlinkOps: mock,
 	}
 
 	route := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "not-a-mac"}
@@ -685,11 +900,11 @@ func TestHandleType2RouteInvalidMAC(t *testing.T) {
 // --- Type-3 handler tests ---------------------------------------------------
 
 func TestHandleType3RouteAppendsBUM(t *testing.T) {
-	mock := &mockFDB{}
+	mock := &mockOverlayNetlinkOps{}
 	overlay := &OverlayTier{
-		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
-		log: slog.Default(),
-		fdb: mock,
+		cfg:        &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log:        slog.Default(),
+		netlinkOps: mock,
 	}
 
 	route := &apipb.EVPNInclusiveMulticastEthernetTagRoute{IpAddress: "10.0.0.1"}
@@ -707,11 +922,11 @@ func TestHandleType3RouteAppendsBUM(t *testing.T) {
 }
 
 func TestHandleType3RouteSelfSkipped(t *testing.T) {
-	mock := &mockFDB{}
+	mock := &mockOverlayNetlinkOps{}
 	overlay := &OverlayTier{
-		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
-		log: slog.Default(),
-		fdb: mock,
+		cfg:        &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log:        slog.Default(),
+		netlinkOps: mock,
 	}
 
 	route := &apipb.EVPNInclusiveMulticastEthernetTagRoute{IpAddress: "10.0.0.99"}
@@ -723,11 +938,11 @@ func TestHandleType3RouteSelfSkipped(t *testing.T) {
 }
 
 func TestHandleType3RouteWithdraw(t *testing.T) {
-	mock := &mockFDB{}
+	mock := &mockOverlayNetlinkOps{}
 	overlay := &OverlayTier{
-		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
-		log: slog.Default(),
-		fdb: mock,
+		cfg:        &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log:        slog.Default(),
+		netlinkOps: mock,
 	}
 
 	route := &apipb.EVPNInclusiveMulticastEthernetTagRoute{IpAddress: "10.0.0.1"}
@@ -739,11 +954,11 @@ func TestHandleType3RouteWithdraw(t *testing.T) {
 }
 
 func TestHandleType3RouteNoVTEP(t *testing.T) {
-	mock := &mockFDB{}
+	mock := &mockOverlayNetlinkOps{}
 	overlay := &OverlayTier{
-		cfg: &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
-		log: slog.Default(),
-		fdb: mock,
+		cfg:        &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log:        slog.Default(),
+		netlinkOps: mock,
 	}
 
 	route := &apipb.EVPNInclusiveMulticastEthernetTagRoute{IpAddress: ""}
@@ -1316,7 +1531,7 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 		t.Fatalf("marshal MpReachNLRI: %v", err)
 	}
 
-	newOverlay := func(mock *mockFDB) *OverlayTier {
+	newOverlay := func(mock *mockOverlayNetlinkOps) *OverlayTier {
 		return &OverlayTier{
 			cfg: &Config{
 				RouterID:     "10.0.0.99",
@@ -1324,13 +1539,13 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 				ProvisionVNI: 4000,
 				BridgeName:   "br-test",
 			},
-			log: slog.Default(),
-			fdb: mock,
+			log:        slog.Default(),
+			netlinkOps: mock,
 		}
 	}
 
 	t.Run("route with matching RT is dispatched to FDB", func(t *testing.T) {
-		mock := &mockFDB{}
+		mock := &mockOverlayNetlinkOps{}
 		overlay := newOverlay(mock)
 		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
 			Communities: []*anypb.Any{mustRT2(t, 65000, 4000)},
@@ -1350,7 +1565,7 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 	})
 
 	t.Run("route with configured VPNRT is dispatched to FDB", func(t *testing.T) {
-		mock := &mockFDB{}
+		mock := &mockOverlayNetlinkOps{}
 		overlay := newOverlay(mock)
 		overlay.cfg.ASN = 65100
 		overlay.cfg.ProvisionVNI = 1000
@@ -1372,7 +1587,7 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 	})
 
 	t.Run("configured VPNRT is cached for route updates", func(t *testing.T) {
-		mock := &mockFDB{}
+		mock := &mockOverlayNetlinkOps{}
 		overlay := newOverlay(mock)
 		overlay.cfg.ASN = 65100
 		overlay.cfg.ProvisionVNI = 1000
@@ -1402,7 +1617,7 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 	})
 
 	t.Run("route with non-matching RT is skipped", func(t *testing.T) {
-		mock := &mockFDB{}
+		mock := &mockOverlayNetlinkOps{}
 		overlay := newOverlay(mock)
 		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
 			Communities: []*anypb.Any{mustRT2(t, 65001, 1111)},
@@ -1422,7 +1637,7 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 	})
 
 	t.Run("withdrawal with non-matching RT is skipped", func(t *testing.T) {
-		mock := &mockFDB{}
+		mock := &mockOverlayNetlinkOps{}
 		overlay := newOverlay(mock)
 		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
 			Communities: []*anypb.Any{mustRT2(t, 65001, 1111)},
@@ -1443,7 +1658,7 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 	})
 
 	t.Run("withdrawal without RT is not skipped", func(t *testing.T) {
-		mock := &mockFDB{}
+		mock := &mockOverlayNetlinkOps{}
 		overlay := newOverlay(mock)
 		path := &apipb.Path{
 			IsWithdraw: true,
