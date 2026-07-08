@@ -62,14 +62,14 @@ func checkDockerfileModules(t *testing.T, path string, critical []string) {
 func TestDockerfileModuleLoopSyntax(t *testing.T) {
 	checkDockerfileModules(t, "initrd.Dockerfile", []string{
 		"ext4", "xfs", "fat", "vfat", "nls_cp437", "nls_iso8859-1", "scsi_mod", "sd_mod",
-		"virtio_pci", "virtio_net", "virtio_blk", "vxlan",
+		"virtio_pci", "virtio_net", "virtio_blk", "vrf", "vxlan",
 	})
 }
 
 func TestVrnetlabDockerfileModuleLoopSyntax(t *testing.T) {
 	checkDockerfileModules(t, "test/e2e/clab/vrnetlab/Dockerfile", []string{
 		"ext4", "xfs", "fat", "vfat", "nls_cp437", "nls_iso8859-1", "scsi_mod", "sd_mod",
-		"virtio_pci", "virtio_net", "virtio_blk", "virtio_scsi", "vxlan",
+		"virtio_pci", "virtio_net", "virtio_blk", "virtio_scsi", "vrf", "vxlan",
 	})
 }
 
