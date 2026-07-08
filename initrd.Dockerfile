@@ -27,7 +27,7 @@ RUN ./autogen.sh && ./configure --enable-static-programs=sfdisk && make
 RUN strip --strip-all sfdisk.static
 
 # Build BOOTy as an init
-FROM golang:1.26-alpine AS dev
+FROM golang:1.26.5-alpine AS dev
 ARG BOOTY_VERSION=dev
 ARG BOOTY_BUILD=unknown
 ARG BOOTY_FLAVOR=full
@@ -138,7 +138,7 @@ RUN apt-get update && \
     #   QEMU/KVM virtio:  virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev virtio_pci virtio_net failover net_failover
     #   Storage (SCSI):   scsi_mod sd_mod virtio_blk virtio_scsi
     #   Filesystems:      ext4 jbd2 mbcache crc32c_generic xfs btrfs fat vfat nls_cp437 nls_iso8859-1 nls_ascii
-    #   VXLAN/bridge:     dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc
+    #   VRF/VXLAN/bridge: vrf dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc
     #   Intel NICs:       e1000e igb igc ixgbe i40e ice iavf
     #   Broadcom NICs:    tg3 bnxt_en
     #   Mellanox/NVIDIA:  mlx4_core mlx4_en mlx5_core mlxfw
@@ -150,7 +150,7 @@ RUN apt-get update && \
         virtio_pci virtio_net failover net_failover \
         scsi_mod sd_mod virtio_blk virtio_scsi \
         ext4 jbd2 mbcache crc32c_generic xfs btrfs fat vfat nls_cp437 nls_iso8859-1 nls_ascii \
-        dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc \
+        vrf dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc \
         e1000e igb igc ixgbe i40e ice iavf \
         tg3 bnxt_en \
         mlx4_core mlx4_en mlx5_core mlxfw \
@@ -596,7 +596,7 @@ FROM scratch AS gobgp-iso
 COPY --from=gobgp-iso-builder /booty-gobgp.iso .
 
 # ── Micro target: pure-Go BOOTy only, no external binaries ────────────────
-FROM golang:1.26-bookworm AS micro-dev
+FROM golang:1.26.5-bookworm AS micro-dev
 ARG BOOTY_VERSION=dev
 ARG BOOTY_BUILD=unknown
 ARG BOOTY_FLAVOR=micro
