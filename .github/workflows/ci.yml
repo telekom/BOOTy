@@ -1520,10 +1520,14 @@ jobs:
         run: |
           mkdir -p type5-logs
 
-          for node in spine01 leaf01 leaf02 booty-vm0 booty-vm1; do
+          for node in spine01 leaf01 leaf02 booty-vm0 booty-vm1 caprf-mock; do
             name="clab-booty-type5-lab-${node}"
             timeout 30 sudo docker logs "${name}" >> type5-logs/${node}.log 2>&1 || echo "(no logs)"
           done
+          timeout 15 sudo docker exec clab-booty-type5-lab-caprf-mock \
+            cat /var/log/nginx/access.log 2>/dev/null | tee type5-logs/caprf-access.log || true
+          timeout 15 sudo docker exec clab-booty-type5-lab-caprf-mock \
+            wget -qO- http://10.100.0.1/health 2>/dev/null | tee type5-logs/caprf-health.txt || true
 
           # FRR state on spine01.
           for cmd in \
@@ -1550,7 +1554,7 @@ jobs:
           done
 
           # Network state from each container.
-          for node in spine01 leaf01 leaf02 booty-vm0 booty-vm1; do
+          for node in spine01 leaf01 leaf02 booty-vm0 booty-vm1 caprf-mock; do
             name="clab-booty-type5-lab-${node}"
             {
               echo "=== ip -d link show type vxlan ==="
@@ -1559,8 +1563,17 @@ jobs:
               timeout 5 sudo docker exec "${name}" ip addr show 2>&1 || true
               echo "=== ip route show ==="
               timeout 5 sudo docker exec "${name}" ip route show 2>&1 || true
+              echo "=== ip neigh show ==="
+              timeout 5 sudo docker exec "${name}" ip neigh show 2>&1 || true
+              echo "=== ip route get service/VM paths ==="
+              timeout 5 sudo docker exec "${name}" ip route get 10.100.0.1 from 10.200.0.10 2>&1 || true
+              timeout 5 sudo docker exec "${name}" ip route get 10.100.0.1 from 10.200.0.11 2>&1 || true
+              timeout 5 sudo docker exec "${name}" ip route get 10.200.0.10 from 10.100.0.1 2>&1 || true
+              timeout 5 sudo docker exec "${name}" ip route get 10.200.0.11 from 10.100.0.1 2>&1 || true
               echo "=== bridge fdb show ==="
               timeout 5 sudo docker exec "${name}" bridge fdb show 2>&1 || true
+              echo "=== listeners ==="
+              timeout 5 sudo docker exec "${name}" ss -ltnp 2>&1 || true
             } > type5-logs/${node}-network.txt 2>&1
           done
 
