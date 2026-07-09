@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"strings"
+	"syscall"
 	"testing"
 
 	apipb "github.com/osrg/gobgp/v3/api"
@@ -234,13 +235,20 @@ func TestBuildType5PathAttrs(t *testing.T) {
 		t.Fatalf("build NLRI: %v", err)
 	}
 
-	pattrs, err := buildType5PathAttrs(nlri, "10.0.0.1", 65000, 4000, "")
+	pattrs, err := buildType5PathAttrs(nlri, "10.0.0.1", 65000, 4000, "", "62:db:b8:c1:80:52")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Expect 3 attributes: origin, mp-reach, ext-communities.
 	if len(pattrs) != 3 {
 		t.Errorf("got %d path attrs, want 3", len(pattrs))
+	}
+	path := &apipb.Path{Pattrs: pattrs}
+	if !matchesLocalRT(path, 65000, 4000) {
+		t.Fatal("expected exported Type-5 attributes to carry route target 65000:4000")
+	}
+	if got := mustFindRouterMAC(t, path); got != "62:db:b8:c1:80:52" {
+		t.Fatalf("router MAC = %s, want 62:db:b8:c1:80:52", got)
 	}
 }
 
@@ -254,7 +262,7 @@ func TestBuildType5PathAttrsUsesExplicitVPNRT(t *testing.T) {
 		t.Fatalf("build NLRI: %v", err)
 	}
 
-	pattrs, err := buildType5PathAttrs(nlri, "192.168.4.10", 65100, 1000, "65000:1000")
+	pattrs, err := buildType5PathAttrs(nlri, "192.168.4.10", 65100, 1000, "65000:1000", "62:db:b8:c1:80:52")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -264,6 +272,179 @@ func TestBuildType5PathAttrsUsesExplicitVPNRT(t *testing.T) {
 	}
 	if matchesLocalRT(path, 65100, 1000) {
 		t.Fatal("did not expect exported Type-5 attributes to carry fallback local RT")
+	}
+	if got := mustFindRouterMAC(t, path); got != "62:db:b8:c1:80:52" {
+		t.Fatalf("router MAC = %s, want 62:db:b8:c1:80:52", got)
+	}
+}
+
+func TestBuildType5PathAttrsOmitsRouterMACWhenUnset(t *testing.T) {
+	rd, err := buildRouteDistinguisher(65000, 4000)
+	if err != nil {
+		t.Fatalf("build RD: %v", err)
+	}
+	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
+	if err != nil {
+		t.Fatalf("build NLRI: %v", err)
+	}
+
+	pattrs, err := buildType5PathAttrs(nlri, "10.0.0.1", 65000, 4000, "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	path := &apipb.Path{Pattrs: pattrs}
+	if got, err := extractRouterMAC(path); err != nil || got != nil {
+		t.Fatalf("router MAC = %v, err = %v; want nil, nil", got, err)
+	}
+}
+
+func TestBuildType5PathAttrsRejectsInvalidRouterMAC(t *testing.T) {
+	rd, err := buildRouteDistinguisher(65000, 4000)
+	if err != nil {
+		t.Fatalf("build RD: %v", err)
+	}
+	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
+	if err != nil {
+		t.Fatalf("build NLRI: %v", err)
+	}
+
+	_, err = buildType5PathAttrs(nlri, "10.0.0.1", 65000, 4000, "", "not-a-mac")
+	if err == nil {
+		t.Fatal("expected invalid router MAC error")
+	}
+}
+
+func TestBuildType5PathAttrsRejectsEUI64RouterMAC(t *testing.T) {
+	rd, err := buildRouteDistinguisher(65000, 4000)
+	if err != nil {
+		t.Fatalf("build RD: %v", err)
+	}
+	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
+	if err != nil {
+		t.Fatalf("build NLRI: %v", err)
+	}
+
+	_, err = buildType5PathAttrs(nlri, "10.0.0.1", 65000, 4000, "", "02:00:00:ff:fe:00:00:10")
+	if err == nil {
+		t.Fatal("expected EUI-64 router MAC error")
+	}
+}
+
+func TestBuildType5PathAttrsRejectsInvalidVPNRT(t *testing.T) {
+	rd, err := buildRouteDistinguisher(65000, 4000)
+	if err != nil {
+		t.Fatalf("build RD: %v", err)
+	}
+	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
+	if err != nil {
+		t.Fatalf("build NLRI: %v", err)
+	}
+
+	_, err = buildType5PathAttrs(nlri, "10.0.0.1", 65000, 4000, "invalid", "62:db:b8:c1:80:52")
+	if err == nil {
+		t.Fatal("expected invalid VPNRT error")
+	}
+}
+
+func TestAdvertiseType5RejectsInvalidRouterMAC(t *testing.T) {
+	overlay := &OverlayTier{
+		cfg: &Config{
+			ASN:          65000,
+			RouterID:     "192.168.4.10",
+			ProvisionVNI: 4000,
+			ProvisionIP:  "10.100.0.20/24",
+			BridgeMAC:    "not-a-mac",
+		},
+		log: slog.Default(),
+		bgp: server.NewBgpServer(),
+	}
+
+	err := overlay.advertiseType5(context.Background())
+	if err == nil {
+		t.Fatal("expected invalid router MAC error")
+	}
+}
+
+func TestAdvertiseType5PublishesRouterMAC(t *testing.T) {
+	bgp := server.NewBgpServer()
+	go bgp.Serve()
+	t.Cleanup(bgp.Stop)
+	ctx := context.Background()
+	if err := bgp.StartBgp(ctx, &apipb.StartBgpRequest{
+		Global: &apipb.Global{
+			Asn:        65000,
+			RouterId:   "192.168.4.10",
+			ListenPort: -1,
+		},
+	}); err != nil {
+		t.Fatalf("start BGP: %v", err)
+	}
+
+	overlay := &OverlayTier{
+		cfg: &Config{
+			ASN:          65000,
+			RouterID:     "192.168.4.10",
+			ProvisionVNI: 4000,
+			ProvisionIP:  "10.100.0.20/24",
+			BridgeMAC:    "62:db:b8:c1:80:52",
+		},
+		log: slog.Default(),
+		bgp: bgp,
+	}
+
+	if err := overlay.advertiseType5(ctx); err != nil {
+		t.Fatalf("advertise Type-5: %v", err)
+	}
+
+	var paths []*apipb.Path
+	err := bgp.ListPath(ctx, &apipb.ListPathRequest{
+		TableType: apipb.TableType_GLOBAL,
+		Family:    &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+	}, func(dst *apipb.Destination) {
+		paths = append(paths, dst.GetPaths()...)
+	})
+	if err != nil {
+		t.Fatalf("list paths: %v", err)
+	}
+	if len(paths) != 1 {
+		t.Fatalf("expected 1 advertised Type-5 path, got %d", len(paths))
+	}
+	if got := mustFindRouterMAC(t, paths[0]); got != "62:db:b8:c1:80:52" {
+		t.Fatalf("router MAC = %s, want 62:db:b8:c1:80:52", got)
+	}
+}
+
+func TestAdvertiseType5SkipsWithoutProvisionIP(t *testing.T) {
+	overlay := &OverlayTier{
+		cfg: &Config{
+			ASN:          65000,
+			RouterID:     "192.168.4.10",
+			ProvisionVNI: 4000,
+			BridgeMAC:    "not-a-mac",
+		},
+		log: slog.Default(),
+	}
+
+	if err := overlay.advertiseType5(context.Background()); err != nil {
+		t.Fatalf("advertise Type-5 without provision IP: %v", err)
+	}
+}
+
+func TestAdvertiseType5RejectsInvalidProvisionIP(t *testing.T) {
+	overlay := &OverlayTier{
+		cfg: &Config{
+			ASN:          65000,
+			RouterID:     "192.168.4.10",
+			ProvisionVNI: 4000,
+			ProvisionIP:  "not-a-cidr",
+			BridgeMAC:    "62:db:b8:c1:80:52",
+		},
+		log: slog.Default(),
+		bgp: server.NewBgpServer(),
+	}
+
+	if err := overlay.advertiseType5(context.Background()); err == nil {
+		t.Fatal("expected invalid provision IP error")
 	}
 }
 
@@ -301,6 +482,18 @@ func mustMarshalPath(t *testing.T, nlriMsg interface{ ProtoReflect() protoreflec
 		}
 		p.Pattrs = []*anypb.Any{mp}
 	}
+	return p
+}
+
+func mustAddRouteTarget(t *testing.T, p *apipb.Path) *apipb.Path {
+	t.Helper()
+	extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
+		Communities: []*anypb.Any{mustRT2(t, 65000, 4000)},
+	})
+	if err != nil {
+		t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
+	}
+	p.Pattrs = append(p.Pattrs, extComm)
 	return p
 }
 
@@ -352,6 +545,232 @@ func TestProcessRouteUpdateDispatch(t *testing.T) {
 			overlay.processRouteUpdate(tt.path)
 		})
 	}
+}
+
+func TestProcessRouteUpdateGuardAndL2Branches(t *testing.T) {
+	newOverlay := func() (*OverlayTier, *mockOverlayNetlinkOps) {
+		mock := &mockOverlayNetlinkOps{}
+		return &OverlayTier{
+			cfg: &Config{
+				RouterID:     "10.0.0.99",
+				ASN:          65000,
+				ProvisionVNI: 4000,
+				BridgeName:   "br.provision",
+				EnableL2:     true,
+			},
+			log:        slog.Default(),
+			netlinkOps: mock,
+		}, mock
+	}
+	type5Path := mustAddRouteTarget(t, mustMarshalPath(t, &apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "10.100.0.0",
+		IpPrefixLen: 24,
+		GwAddress:   "10.0.0.1",
+	}, "10.0.0.1", false))
+
+	t.Run("invalid import route target skips dispatch", func(t *testing.T) {
+		overlay, mock := newOverlay()
+		overlay.cfg.VPNRT = "not-a-route-target"
+
+		overlay.processRouteUpdate(type5Path)
+
+		if mock.linkName != "" {
+			t.Fatalf("invalid import RT should skip dispatch, got LinkByName(%q)", mock.linkName)
+		}
+	})
+
+	t.Run("invalid NLRI skips dispatch", func(t *testing.T) {
+		overlay, mock := newOverlay()
+		path := mustAddRouteTarget(t, &apipb.Path{
+			Nlri: &anypb.Any{TypeUrl: "type.googleapis.com/invalid.Route", Value: []byte{0xff}},
+		})
+
+		overlay.processRouteUpdate(path)
+
+		if mock.linkName != "" {
+			t.Fatalf("invalid NLRI should skip dispatch, got LinkByName(%q)", mock.linkName)
+		}
+	})
+
+	t.Run("type-2 dispatch runs when L2 is enabled", func(t *testing.T) {
+		overlay, mock := newOverlay()
+		path := mustAddRouteTarget(t, mustMarshalPath(t, &apipb.EVPNMACIPAdvertisementRoute{
+			MacAddress: "aa:bb:cc:dd:ee:ff",
+		}, "10.0.0.1", false))
+
+		overlay.processRouteUpdate(path)
+
+		if len(mock.sets) != 1 {
+			t.Fatalf("expected 1 Type-2 neighbor set, got %d", len(mock.sets))
+		}
+	})
+
+	t.Run("type-3 dispatch runs when L2 is enabled", func(t *testing.T) {
+		overlay, mock := newOverlay()
+		path := mustAddRouteTarget(t, mustMarshalPath(t, &apipb.EVPNInclusiveMulticastEthernetTagRoute{
+			IpAddress: "10.0.0.1",
+		}, "10.0.0.1", false))
+
+		overlay.processRouteUpdate(path)
+
+		if len(mock.appends) != 1 {
+			t.Fatalf("expected 1 Type-3 neighbor append, got %d", len(mock.appends))
+		}
+	})
+
+	t.Run("unhandled EVPN route is ignored", func(t *testing.T) {
+		overlay, mock := newOverlay()
+		path := mustAddRouteTarget(t, mustMarshalPath(t, &apipb.EVPNEthernetAutoDiscoveryRoute{}, "10.0.0.1", false))
+
+		overlay.processRouteUpdate(path)
+
+		if mock.linkName != "" {
+			t.Fatalf("unhandled EVPN route should not touch netlink, got LinkByName(%q)", mock.linkName)
+		}
+	})
+}
+
+func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
+	nlri, err := anypb.New(&apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "10.100.0.0",
+		IpPrefixLen: 24,
+		GwAddress:   "192.168.4.1",
+	})
+	if err != nil {
+		t.Fatalf("marshal NLRI: %v", err)
+	}
+	mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+		NextHops: []string{"192.168.4.1"},
+	})
+	if err != nil {
+		t.Fatalf("marshal MpReachNLRI: %v", err)
+	}
+	extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
+		Communities: []*anypb.Any{
+			mustRT2(t, 65000, 4000),
+			mustRouterMAC(t, "62:db:b8:c1:80:52"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
+	}
+
+	newOverlay := func(mock *mockOverlayNetlinkOps) *OverlayTier {
+		return &OverlayTier{
+			cfg: &Config{
+				RouterID:     "192.168.4.10",
+				ASN:          65000,
+				ProvisionVNI: 4000,
+				BridgeName:   "br.provision",
+			},
+			log:        slog.Default(),
+			netlinkOps: mock,
+		}
+	}
+
+	t.Run("install programs permanent neighbor", func(t *testing.T) {
+		mock := &mockOverlayNetlinkOps{}
+		path := &apipb.Path{Nlri: nlri, Pattrs: []*anypb.Any{mp, extComm}}
+
+		newOverlay(mock).processRouteUpdate(path)
+
+		if len(mock.sets) != 1 {
+			t.Fatalf("expected 1 neighbor set, got %d", len(mock.sets))
+		}
+		assertType5GatewayNeighbor(t, mock.sets[0], "192.168.4.1", "62:db:b8:c1:80:52")
+	})
+
+	t.Run("withdraw deletes permanent neighbor", func(t *testing.T) {
+		mock := &mockOverlayNetlinkOps{}
+		path := &apipb.Path{
+			IsWithdraw: true,
+			Nlri:       nlri,
+			Pattrs:     []*anypb.Any{mp, extComm},
+		}
+
+		newOverlay(mock).processRouteUpdate(path)
+
+		if len(mock.dels) != 1 {
+			t.Fatalf("expected 1 neighbor delete, got %d", len(mock.dels))
+		}
+		assertType5GatewayNeighbor(t, mock.dels[0], "192.168.4.1", "62:db:b8:c1:80:52")
+	})
+
+	t.Run("withdraw uses stored router MAC when communities are omitted", func(t *testing.T) {
+		mock := &mockOverlayNetlinkOps{}
+		overlay := newOverlay(mock)
+		installPath := &apipb.Path{Nlri: nlri, Pattrs: []*anypb.Any{mp, extComm}}
+		withdrawPath := &apipb.Path{
+			IsWithdraw: true,
+			Nlri:       nlri,
+			Pattrs:     []*anypb.Any{mp},
+		}
+
+		overlay.processRouteUpdate(installPath)
+		overlay.processRouteUpdate(withdrawPath)
+
+		if len(mock.dels) != 1 {
+			t.Fatalf("expected 1 neighbor delete, got %d", len(mock.dels))
+		}
+		assertType5GatewayNeighbor(t, mock.dels[0], "192.168.4.1", "62:db:b8:c1:80:52")
+	})
+
+	t.Run("invalid router MAC still installs route without neighbor", func(t *testing.T) {
+		badExtComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*anypb.Any{
+				mustRT2(t, 65000, 4000),
+				mustRouterMAC(t, "not-a-mac"),
+			},
+		})
+		if err != nil {
+			t.Fatalf("marshal bad ExtendedCommunitiesAttribute: %v", err)
+		}
+		mock := &mockOverlayNetlinkOps{}
+
+		newOverlay(mock).processRouteUpdate(&apipb.Path{Nlri: nlri, Pattrs: []*anypb.Any{mp, badExtComm}})
+
+		if len(mock.routeReplaces) != 1 {
+			t.Fatalf("expected 1 route replace, got %d", len(mock.routeReplaces))
+		}
+		if len(mock.sets) != 0 {
+			t.Fatalf("expected no neighbor set for invalid router MAC, got %d", len(mock.sets))
+		}
+	})
+
+	t.Run("invalid router MAC preserves existing neighbor", func(t *testing.T) {
+		badExtComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*anypb.Any{
+				mustRT2(t, 65000, 4000),
+				mustRouterMAC(t, "not-a-mac"),
+			},
+		})
+		if err != nil {
+			t.Fatalf("marshal bad ExtendedCommunitiesAttribute: %v", err)
+		}
+		mock := &mockOverlayNetlinkOps{}
+		overlay := newOverlay(mock)
+
+		overlay.processRouteUpdate(&apipb.Path{Nlri: nlri, Pattrs: []*anypb.Any{mp, extComm}})
+		overlay.processRouteUpdate(&apipb.Path{Nlri: nlri, Pattrs: []*anypb.Any{mp, badExtComm}})
+
+		if len(mock.routeReplaces) != 2 {
+			t.Fatalf("expected 2 route replaces, got %d", len(mock.routeReplaces))
+		}
+		if len(mock.sets) != 1 {
+			t.Fatalf("expected only initial neighbor set, got %d", len(mock.sets))
+		}
+		if len(mock.dels) != 0 {
+			t.Fatalf("invalid router MAC should preserve existing neighbor, got %d deletes", len(mock.dels))
+		}
+		ref, ok := overlay.loadType5GatewayRef("10.100.0.0/24")
+		if !ok {
+			t.Fatal("invalid router MAC should preserve stored Type-5 gateway ref")
+		}
+		if ref.gateway != "192.168.4.1" || ref.routerMAC.String() != "62:db:b8:c1:80:52" {
+			t.Fatalf("stored gateway ref = %+v, want gateway 192.168.4.1 and MAC 62:db:b8:c1:80:52", ref)
+		}
+	})
 }
 
 func TestExtractNextHop(t *testing.T) {
@@ -546,7 +965,7 @@ func TestHandleType5RouteInvalidPrefix(t *testing.T) {
 	}
 
 	// Should return early due to invalid prefix — no panic.
-	overlay.handleType5Route(route, "10.0.0.1", false)
+	overlay.handleType5Route(route, "10.0.0.1", nil, false)
 }
 
 func TestHandleType5RouteSelfRoute(t *testing.T) {
@@ -564,9 +983,10 @@ func TestHandleType5RouteSelfRoute(t *testing.T) {
 	}
 
 	// Self-originated route (vtep == RouterID) — should be silently skipped.
-	overlay.handleType5Route(route, "10.0.0.99", false)
+	overlay.handleType5Route(route, "10.0.0.99", nil, false)
 	// No route operations should have been attempted.
-	if len(mock.appends) != 0 || len(mock.sets) != 0 || len(mock.routeReplaces) != 0 || len(mock.routeDels) != 0 {
+	if len(mock.appends) != 0 || len(mock.sets) != 0 || len(mock.dels) != 0 ||
+		len(mock.routeReplaces) != 0 || len(mock.routeDels) != 0 {
 		t.Error("self-originated type-5 route should be skipped")
 	}
 }
@@ -585,7 +1005,7 @@ func TestHandleType5RouteNoGateway(t *testing.T) {
 	}
 
 	// No gateway and no next-hop — should return early.
-	overlay.handleType5Route(route, "", false)
+	overlay.handleType5Route(route, "", nil, false)
 }
 
 func TestHandleType5RouteInstallsOnlinkGatewayRoute(t *testing.T) {
@@ -607,7 +1027,8 @@ func TestHandleType5RouteInstallsOnlinkGatewayRoute(t *testing.T) {
 		GwAddress:   "192.168.4.1",
 	}
 
-	overlay.handleType5Route(route, "192.168.4.1", false)
+	routerMAC := mustParseMAC(t, "62:db:b8:c1:80:52")
+	overlay.handleType5Route(route, "192.168.4.1", routerMAC, false)
 
 	if len(mock.routeReplaces) != 1 {
 		t.Fatalf("expected 1 route replace, got %d", len(mock.routeReplaces))
@@ -628,6 +1049,10 @@ func TestHandleType5RouteInstallsOnlinkGatewayRoute(t *testing.T) {
 	if installed.Flags&int(netlink.FLAG_ONLINK) == 0 {
 		t.Errorf("Flags = %v, want FLAG_ONLINK", installed.Flags)
 	}
+	if len(mock.sets) != 1 {
+		t.Fatalf("expected 1 neighbor set, got %d", len(mock.sets))
+	}
+	assertType5GatewayNeighbor(t, mock.sets[0], "192.168.4.1", "62:db:b8:c1:80:52")
 }
 
 func TestHandleType5RouteWithdrawDeletesOnlinkGatewayRoute(t *testing.T) {
@@ -649,7 +1074,8 @@ func TestHandleType5RouteWithdrawDeletesOnlinkGatewayRoute(t *testing.T) {
 		GwAddress:   "192.168.4.1",
 	}
 
-	overlay.handleType5Route(route, "192.168.4.1", true)
+	routerMAC := mustParseMAC(t, "62:db:b8:c1:80:52")
+	overlay.handleType5Route(route, "192.168.4.1", routerMAC, true)
 
 	if len(mock.routeDels) != 1 {
 		t.Fatalf("expected 1 route delete, got %d", len(mock.routeDels))
@@ -660,6 +1086,555 @@ func TestHandleType5RouteWithdrawDeletesOnlinkGatewayRoute(t *testing.T) {
 	}
 	if deleted.Flags&int(netlink.FLAG_ONLINK) == 0 {
 		t.Errorf("Flags = %v, want FLAG_ONLINK", deleted.Flags)
+	}
+	if len(mock.dels) != 1 {
+		t.Fatalf("expected 1 neighbor delete, got %d", len(mock.dels))
+	}
+	assertType5GatewayNeighbor(t, mock.dels[0], "192.168.4.1", "62:db:b8:c1:80:52")
+}
+
+func TestHandleType5RouteWithdrawUsesStoredRouterMAC(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := &OverlayTier{
+		cfg: &Config{
+			RouterID:          "192.168.4.10",
+			ProvisionVNI:      1000,
+			BridgeName:        "br.provision",
+			OverlayVRFName:    "Vrf_overlay",
+			OverlayVRFTableID: 20,
+		},
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	route := &apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "10.100.0.0",
+		IpPrefixLen: 24,
+		GwAddress:   "192.168.4.1",
+	}
+
+	overlay.handleType5Route(route, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:52"), false)
+	overlay.handleType5Route(route, "192.168.4.1", nil, true)
+
+	if len(mock.dels) != 1 {
+		t.Fatalf("expected 1 neighbor delete, got %d", len(mock.dels))
+	}
+	assertType5GatewayNeighbor(t, mock.dels[0], "192.168.4.1", "62:db:b8:c1:80:52")
+}
+
+func TestHandleType5RouteKeepsSharedGatewayNeighborUntilLastPrefixWithdraw(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := &OverlayTier{
+		cfg: &Config{
+			RouterID:          "192.168.4.10",
+			ProvisionVNI:      1000,
+			BridgeName:        "br.provision",
+			OverlayVRFName:    "Vrf_overlay",
+			OverlayVRFTableID: 20,
+		},
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	routeA := &apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "10.100.0.0",
+		IpPrefixLen: 24,
+		GwAddress:   "192.168.4.1",
+	}
+	routeB := &apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "10.200.0.0",
+		IpPrefixLen: 24,
+		GwAddress:   "192.168.4.1",
+	}
+	routerMAC := mustParseMAC(t, "62:db:b8:c1:80:52")
+
+	overlay.handleType5Route(routeA, "192.168.4.1", routerMAC, false)
+	overlay.handleType5Route(routeB, "192.168.4.1", routerMAC, false)
+	overlay.handleType5Route(routeA, "192.168.4.1", nil, true)
+
+	if len(mock.dels) != 0 {
+		t.Fatalf("shared gateway neighbor was deleted before the last prefix withdrew")
+	}
+
+	overlay.handleType5Route(routeB, "192.168.4.1", nil, true)
+
+	if len(mock.dels) != 1 {
+		t.Fatalf("expected 1 neighbor delete after last prefix withdraw, got %d", len(mock.dels))
+	}
+	assertType5GatewayNeighbor(t, mock.dels[0], "192.168.4.1", "62:db:b8:c1:80:52")
+}
+
+func TestHandleType5RouteMovesPrefixToNewGateway(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := &OverlayTier{
+		cfg: &Config{
+			RouterID:          "192.168.4.10",
+			ProvisionVNI:      1000,
+			BridgeName:        "br.provision",
+			OverlayVRFName:    "Vrf_overlay",
+			OverlayVRFTableID: 20,
+		},
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	oldRoute := &apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "10.100.0.0",
+		IpPrefixLen: 24,
+		GwAddress:   "192.168.4.1",
+	}
+	newRoute := &apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "10.100.0.0",
+		IpPrefixLen: 24,
+		GwAddress:   "192.168.4.2",
+	}
+
+	overlay.handleType5Route(oldRoute, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:52"), false)
+	overlay.handleType5Route(newRoute, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:53"), false)
+
+	if len(mock.dels) != 1 {
+		t.Fatalf("expected 1 old gateway neighbor delete, got %d", len(mock.dels))
+	}
+	assertType5GatewayNeighbor(t, mock.dels[0], "192.168.4.1", "62:db:b8:c1:80:52")
+
+	overlay.handleType5Route(newRoute, "192.168.4.2", nil, true)
+
+	if len(mock.dels) != 2 {
+		t.Fatalf("expected new gateway delete after withdraw, got %d deletes", len(mock.dels))
+	}
+	assertType5GatewayNeighbor(t, mock.dels[1], "192.168.4.2", "62:db:b8:c1:80:53")
+}
+
+func TestHandleType5RouteInvalidRouterMACMovesPrefixWithoutNewNeighbor(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := &OverlayTier{
+		cfg: &Config{
+			RouterID:          "192.168.4.10",
+			ProvisionVNI:      1000,
+			BridgeName:        "br.provision",
+			OverlayVRFName:    "Vrf_overlay",
+			OverlayVRFTableID: 20,
+		},
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	oldRoute := &apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "10.100.0.0",
+		IpPrefixLen: 24,
+		GwAddress:   "192.168.4.1",
+	}
+	newRoute := &apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "10.100.0.0",
+		IpPrefixLen: 24,
+		GwAddress:   "192.168.4.2",
+	}
+
+	overlay.handleType5Route(oldRoute, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:52"), false)
+	overlay.handleType5RouteWithRouterMACState(newRoute, "192.168.4.2", nil, false, false)
+
+	if len(mock.sets) != 1 {
+		t.Fatalf("expected only initial gateway neighbor set, got %d", len(mock.sets))
+	}
+	if len(mock.dels) != 1 {
+		t.Fatalf("expected old gateway delete after invalid-RMAC gateway move, got %d deletes", len(mock.dels))
+	}
+	assertType5GatewayNeighbor(t, mock.dels[0], "192.168.4.1", "62:db:b8:c1:80:52")
+	ref, ok := overlay.loadType5GatewayRef("10.100.0.0/24")
+	if !ok {
+		t.Fatal("invalid-RMAC gateway move should keep prefix ref for future cleanup")
+	}
+	if ref.gateway != "192.168.4.2" || len(ref.routerMAC) != 0 {
+		t.Fatalf("stored gateway ref = %+v, want gateway 192.168.4.2 with no router MAC", ref)
+	}
+	if _, ok := overlay.type5GatewayMAC.Load("192.168.4.2"); ok {
+		t.Fatal("invalid-RMAC gateway move should not overwrite router MAC cache for new gateway")
+	}
+}
+
+func TestHandleType5RouteKeepsOldGatewayWhenAnotherPrefixStillUsesIt(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := &OverlayTier{
+		cfg: &Config{
+			RouterID:          "192.168.4.10",
+			ProvisionVNI:      1000,
+			BridgeName:        "br.provision",
+			OverlayVRFName:    "Vrf_overlay",
+			OverlayVRFTableID: 20,
+		},
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	routeA := &apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "10.100.0.0",
+		IpPrefixLen: 24,
+		GwAddress:   "192.168.4.1",
+	}
+	routeAMoved := &apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "10.100.0.0",
+		IpPrefixLen: 24,
+		GwAddress:   "192.168.4.2",
+	}
+	routeB := &apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "10.200.0.0",
+		IpPrefixLen: 24,
+		GwAddress:   "192.168.4.1",
+	}
+	oldMAC := mustParseMAC(t, "62:db:b8:c1:80:52")
+
+	overlay.handleType5Route(routeA, "192.168.4.1", oldMAC, false)
+	overlay.handleType5Route(routeB, "192.168.4.1", oldMAC, false)
+	overlay.handleType5Route(routeAMoved, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:53"), false)
+
+	if len(mock.dels) != 0 {
+		t.Fatalf("shared old gateway neighbor was deleted while another prefix still used it")
+	}
+
+	overlay.handleType5Route(routeB, "192.168.4.1", nil, true)
+
+	if len(mock.dels) != 1 {
+		t.Fatalf("expected old gateway delete after remaining old prefix withdrew, got %d", len(mock.dels))
+	}
+	assertType5GatewayNeighbor(t, mock.dels[0], "192.168.4.1", "62:db:b8:c1:80:52")
+}
+
+func TestHandleType5RouteClearsStoredNeighborWhenRouteUpdateHasNoRouterMAC(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := &OverlayTier{
+		cfg: &Config{
+			RouterID:          "192.168.4.10",
+			ProvisionVNI:      1000,
+			BridgeName:        "br.provision",
+			OverlayVRFName:    "Vrf_overlay",
+			OverlayVRFTableID: 20,
+		},
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	route := &apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "10.100.0.0",
+		IpPrefixLen: 24,
+		GwAddress:   "192.168.4.1",
+	}
+
+	overlay.handleType5Route(route, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:52"), false)
+	overlay.handleType5Route(route, "192.168.4.1", nil, false)
+
+	if len(mock.dels) != 1 {
+		t.Fatalf("expected old gateway neighbor delete after no-RMAC update, got %d", len(mock.dels))
+	}
+	assertType5GatewayNeighbor(t, mock.dels[0], "192.168.4.1", "62:db:b8:c1:80:52")
+	if overlay.hasType5GatewayRef("192.168.4.1") {
+		t.Fatal("no-RMAC route update should clear stored Type-5 gateway ref")
+	}
+}
+
+func TestClearType5GatewayNeighborSkipsMissingAndSharedRefs(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := &OverlayTier{
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Index: 42, Name: "br.provision"}}
+	overlay.type5GatewayRefs.Store("10.200.0.0/24", type5GatewayRef{
+		gateway:   "192.168.4.1",
+		routerMAC: mustParseMAC(t, "62:db:b8:c1:80:52"),
+	})
+	overlay.type5GatewayRefs.Store("10.100.0.0/24", type5GatewayRef{
+		gateway:   "192.168.4.1",
+		routerMAC: mustParseMAC(t, "62:db:b8:c1:80:52"),
+	})
+
+	overlay.clearType5GatewayNeighbor(link, "10.0.0.0/24")
+	overlay.clearType5GatewayNeighbor(link, "10.100.0.0/24")
+
+	if len(mock.dels) != 0 {
+		t.Fatalf("expected no neighbor deletes for missing or still-shared refs, got %d", len(mock.dels))
+	}
+}
+
+func TestClearType5GatewayNeighborRestoresRefOnDeleteFailure(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{delErr: errors.New("delete failed")}
+	overlay := &OverlayTier{
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Index: 42, Name: "br.provision"}}
+	overlay.type5GatewayRefs.Store("10.100.0.0/24", type5GatewayRef{
+		gateway:   "192.168.4.1",
+		routerMAC: mustParseMAC(t, "62:db:b8:c1:80:52"),
+	})
+
+	overlay.clearType5GatewayNeighbor(link, "10.100.0.0/24")
+
+	if len(mock.dels) != 1 {
+		t.Fatalf("expected 1 attempted neighbor delete, got %d", len(mock.dels))
+	}
+	if _, ok := overlay.loadType5GatewayRef("10.100.0.0/24"); !ok {
+		t.Fatal("failed clear should restore Type-5 gateway ref for retry")
+	}
+}
+
+func TestHandleType5RouteKeepsNeighborWhenWithdrawRouteDeleteFails(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{routeDelErr: errors.New("delete failed")}
+	overlay := &OverlayTier{
+		cfg: &Config{
+			RouterID:          "192.168.4.10",
+			ProvisionVNI:      1000,
+			BridgeName:        "br.provision",
+			OverlayVRFName:    "Vrf_overlay",
+			OverlayVRFTableID: 20,
+		},
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	route := &apipb.EVPNIPPrefixRoute{
+		IpPrefix:    "10.100.0.0",
+		IpPrefixLen: 24,
+		GwAddress:   "192.168.4.1",
+	}
+
+	overlay.handleType5Route(route, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:52"), false)
+	overlay.handleType5Route(route, "192.168.4.1", nil, true)
+
+	if len(mock.dels) != 0 {
+		t.Fatalf("route delete failure should keep gateway neighbor, got %d neighbor deletes", len(mock.dels))
+	}
+
+	mock.routeDelErr = nil
+	overlay.handleType5Route(route, "192.168.4.1", nil, true)
+
+	if len(mock.dels) != 1 {
+		t.Fatalf("expected retained neighbor to delete after successful retry, got %d deletes", len(mock.dels))
+	}
+	assertType5GatewayNeighbor(t, mock.dels[0], "192.168.4.1", "62:db:b8:c1:80:52")
+}
+
+func TestBuildType5GatewayNeighbor(t *testing.T) {
+	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Index: 42, Name: "br.provision"}}
+
+	t.Run("builds IPv4 permanent neighbor", func(t *testing.T) {
+		neigh := buildType5GatewayNeighbor(link, net.ParseIP("192.168.4.1"), mustParseMAC(t, "62:db:b8:c1:80:52"))
+
+		assertType5GatewayNeighbor(t, neigh, "192.168.4.1", "62:db:b8:c1:80:52")
+	})
+
+	t.Run("skips empty router MAC", func(t *testing.T) {
+		if got := buildType5GatewayNeighbor(link, net.ParseIP("192.168.4.1"), nil); got != nil {
+			t.Fatalf("neighbor = %#v, want nil", got)
+		}
+	})
+
+	t.Run("skips EUI-64 router MAC", func(t *testing.T) {
+		mac := mustParseMAC(t, "02:00:00:ff:fe:00:00:10")
+		if got := buildType5GatewayNeighbor(link, net.ParseIP("192.168.4.1"), mac); got != nil {
+			t.Fatalf("neighbor = %#v, want nil", got)
+		}
+	})
+
+	t.Run("skips IPv6 gateway", func(t *testing.T) {
+		mac := mustParseMAC(t, "62:db:b8:c1:80:52")
+		if got := buildType5GatewayNeighbor(link, net.ParseIP("2001:db8::1"), mac); got != nil {
+			t.Fatalf("neighbor = %#v, want nil", got)
+		}
+	})
+}
+
+func TestSetType5GatewayNeighborSkipsInvalidInputs(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := &OverlayTier{
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Index: 42, Name: "br.provision"}}
+
+	overlay.setType5GatewayNeighbor(link, "10.100.0.0/24", net.ParseIP("192.168.4.1"), nil)
+	overlay.setType5GatewayNeighbor(link, "10.100.0.0/24", net.ParseIP("2001:db8::1"), mustParseMAC(t, "62:db:b8:c1:80:52"))
+
+	if len(mock.sets) != 0 {
+		t.Fatalf("expected no neighbor sets for invalid Type-5 gateway inputs, got %d", len(mock.sets))
+	}
+}
+
+func TestSetType5GatewayNeighborDoesNotTrackFailedSet(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{setErr: errors.New("set failed")}
+	overlay := &OverlayTier{
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Index: 42, Name: "br.provision"}}
+
+	overlay.setType5GatewayNeighbor(
+		link,
+		"10.100.0.0/24",
+		net.ParseIP("192.168.4.1"),
+		mustParseMAC(t, "62:db:b8:c1:80:52"),
+	)
+
+	if len(mock.sets) != 1 {
+		t.Fatalf("expected 1 attempted neighbor set, got %d", len(mock.sets))
+	}
+	if overlay.hasType5GatewayRef("192.168.4.1") {
+		t.Fatal("failed neighbor set should not track a Type-5 gateway ref")
+	}
+}
+
+func TestDeleteType5GatewayNeighborSkipsWhenNoRouterMAC(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := &OverlayTier{
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Index: 42, Name: "br.provision"}}
+
+	overlay.deleteType5GatewayNeighbor(link, "10.100.0.0/24", net.ParseIP("192.168.4.1"), nil)
+
+	if len(mock.dels) != 0 {
+		t.Fatalf("expected no neighbor delete without a router MAC, got %d", len(mock.dels))
+	}
+}
+
+func TestDeleteType5GatewayNeighborUsesCachedRouterMAC(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := &OverlayTier{
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Index: 42, Name: "br.provision"}}
+	overlay.type5GatewayMAC.Store("192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:52"))
+
+	overlay.deleteType5GatewayNeighbor(link, "10.100.0.0/24", net.ParseIP("192.168.4.1"), nil)
+
+	if len(mock.dels) != 1 {
+		t.Fatalf("expected 1 neighbor delete, got %d", len(mock.dels))
+	}
+	assertType5GatewayNeighbor(t, mock.dels[0], "192.168.4.1", "62:db:b8:c1:80:52")
+}
+
+func TestDeleteType5GatewayNeighborIgnoresMalformedStoredRef(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := &OverlayTier{
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Index: 42, Name: "br.provision"}}
+	overlay.type5GatewayRefs.Store("10.100.0.0/24", "not-a-ref")
+
+	overlay.deleteType5GatewayNeighbor(
+		link,
+		"10.100.0.0/24",
+		net.ParseIP("192.168.4.1"),
+		mustParseMAC(t, "62:db:b8:c1:80:52"),
+	)
+
+	if len(mock.dels) != 1 {
+		t.Fatalf("expected malformed stored ref to fall back to supplied gateway/MAC, got %d deletes", len(mock.dels))
+	}
+	assertType5GatewayNeighbor(t, mock.dels[0], "192.168.4.1", "62:db:b8:c1:80:52")
+}
+
+func TestDeleteType5GatewayNeighborPrefersExplicitRouterMAC(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := &OverlayTier{
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Index: 42, Name: "br.provision"}}
+	overlay.type5GatewayRefs.Store("10.100.0.0/24", type5GatewayRef{
+		gateway:   "192.168.4.1",
+		routerMAC: mustParseMAC(t, "62:db:b8:c1:80:52"),
+	})
+
+	overlay.deleteType5GatewayNeighbor(
+		link,
+		"10.100.0.0/24",
+		net.ParseIP("192.168.4.1"),
+		mustParseMAC(t, "62:db:b8:c1:80:53"),
+	)
+
+	if len(mock.dels) != 1 {
+		t.Fatalf("expected 1 neighbor delete, got %d", len(mock.dels))
+	}
+	assertType5GatewayNeighbor(t, mock.dels[0], "192.168.4.1", "62:db:b8:c1:80:53")
+}
+
+func TestDeleteType5GatewayNeighborLogsDeleteFailure(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{delErr: errors.New("delete failed")}
+	overlay := &OverlayTier{
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Index: 42, Name: "br.provision"}}
+
+	overlay.setType5GatewayNeighbor(
+		link,
+		"10.100.0.0/24",
+		net.ParseIP("192.168.4.1"),
+		mustParseMAC(t, "62:db:b8:c1:80:52"),
+	)
+	overlay.deleteType5GatewayNeighbor(link, "10.100.0.0/24", net.ParseIP("192.168.4.1"), nil)
+
+	if len(mock.dels) != 1 {
+		t.Fatalf("expected 1 attempted neighbor delete, got %d", len(mock.dels))
+	}
+	if _, ok := overlay.type5GatewayMAC.Load("192.168.4.1"); !ok {
+		t.Fatal("failed neighbor delete should keep cached router MAC for retry")
+	}
+	if _, ok := overlay.loadType5GatewayRef("10.100.0.0/24"); !ok {
+		t.Fatal("failed neighbor delete should restore Type-5 gateway ref for retry")
+	}
+}
+
+func TestLoadType5GatewayRefRejectsMalformedStoredValue(t *testing.T) {
+	overlay := &OverlayTier{}
+	overlay.type5GatewayRefs.Store("10.100.0.0/24", "not-a-ref")
+
+	if _, ok := overlay.loadType5GatewayRef("10.100.0.0/24"); ok {
+		t.Fatal("expected malformed Type-5 gateway ref to be ignored")
+	}
+}
+
+func TestRouterMACInCommunitiesIgnoresUnmarshalFailures(t *testing.T) {
+	mac, err := routerMACInCommunities([]*anypb.Any{
+		{TypeUrl: "type.googleapis.com/invalid", Value: []byte{0xff}},
+		mustRouterMAC(t, "62:db:b8:c1:80:52"),
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mac.String() != "62:db:b8:c1:80:52" {
+		t.Fatalf("router MAC = %s, want 62:db:b8:c1:80:52", mac)
+	}
+}
+
+func TestRouterMACInCommunitiesRejectsEUI64(t *testing.T) {
+	_, err := routerMACInCommunities([]*anypb.Any{mustRouterMAC(t, "02:00:00:ff:fe:00:00:10")})
+
+	if err == nil {
+		t.Fatal("expected EUI-64 router MAC error")
+	}
+}
+
+func TestExtractRouterMACIgnoresMalformedAndIrrelevantAttributes(t *testing.T) {
+	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0})
+	if err != nil {
+		t.Fatalf("marshal OriginAttribute: %v", err)
+	}
+	extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
+		Communities: []*anypb.Any{mustRouterMAC(t, "62:db:b8:c1:80:52")},
+	})
+	if err != nil {
+		t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
+	}
+
+	mac, err := extractRouterMAC(&apipb.Path{Pattrs: []*anypb.Any{
+		{TypeUrl: "type.googleapis.com/invalid.Attribute", Value: []byte{0xff}},
+		origin,
+		extComm,
+	}})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mac.String() != "62:db:b8:c1:80:52" {
+		t.Fatalf("router MAC = %s, want 62:db:b8:c1:80:52", mac)
 	}
 }
 
@@ -679,7 +1654,7 @@ func TestHandleType5RouteSkipsWhenBridgeMissing(t *testing.T) {
 		GwAddress:   "192.168.4.1",
 	}
 
-	overlay.handleType5Route(route, "192.168.4.1", false)
+	overlay.handleType5Route(route, "192.168.4.1", nil, false)
 
 	if mock.linkName != "br.provision" {
 		t.Errorf("LinkByName called with %q, want br.provision", mock.linkName)
@@ -705,7 +1680,7 @@ func TestHandleType5RouteKeepsFailedInstallRouteForAssertion(t *testing.T) {
 		GwAddress:   "0.0.0.0",
 	}
 
-	overlay.handleType5Route(route, "192.168.4.1", false)
+	overlay.handleType5Route(route, "192.168.4.1", nil, false)
 
 	if len(mock.routeReplaces) != 1 {
 		t.Fatalf("expected 1 route replace, got %d", len(mock.routeReplaces))
@@ -737,7 +1712,7 @@ func TestHandleType5RouteKeepsFailedWithdrawRouteForAssertion(t *testing.T) {
 		GwAddress:   "192.168.4.1",
 	}
 
-	overlay.handleType5Route(route, "192.168.4.1", true)
+	overlay.handleType5Route(route, "192.168.4.1", nil, true)
 
 	if len(mock.routeDels) != 1 {
 		t.Fatalf("expected 1 route delete, got %d", len(mock.routeDels))
@@ -1318,6 +2293,75 @@ func mustPathWithRT(t *testing.T, rts ...*anypb.Any) *apipb.Path {
 		t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
 	}
 	return &apipb.Path{Pattrs: []*anypb.Any{extComm}}
+}
+
+func mustRouterMAC(t *testing.T, mac string) *anypb.Any {
+	t.Helper()
+	a, err := anypb.New(&apipb.RouterMacExtended{Mac: mac})
+	if err != nil {
+		t.Fatalf("marshal RouterMacExtended: %v", err)
+	}
+	return a
+}
+
+func mustParseMAC(t *testing.T, mac string) net.HardwareAddr {
+	t.Helper()
+	hwAddr, err := net.ParseMAC(mac)
+	if err != nil {
+		t.Fatalf("parse MAC %s: %v", mac, err)
+	}
+	return hwAddr
+}
+
+func assertType5GatewayNeighbor(t *testing.T, neigh *netlink.Neigh, ip, mac string) {
+	t.Helper()
+	if neigh == nil {
+		t.Fatal("neighbor is nil")
+	}
+	wantIP := net.ParseIP(ip).To4()
+	if wantIP == nil {
+		t.Fatalf("invalid IPv4 %s", ip)
+	}
+	if neigh.LinkIndex != 42 {
+		t.Errorf("neighbor LinkIndex = %d, want 42", neigh.LinkIndex)
+	}
+	if neigh.Family != syscall.AF_INET {
+		t.Errorf("neighbor Family = %d, want AF_INET", neigh.Family)
+	}
+	if neigh.State != netlink.NUD_PERMANENT {
+		t.Errorf("neighbor State = %d, want NUD_PERMANENT", neigh.State)
+	}
+	if !neigh.IP.Equal(wantIP) {
+		t.Errorf("neighbor IP = %s, want %s", neigh.IP, wantIP)
+	}
+	if neigh.HardwareAddr.String() != mac {
+		t.Errorf("neighbor HardwareAddr = %s, want %s", neigh.HardwareAddr, mac)
+	}
+}
+
+func mustFindRouterMAC(t *testing.T, path *apipb.Path) string {
+	t.Helper()
+	for _, attr := range path.GetPattrs() {
+		msg, err := attr.UnmarshalNew()
+		if err != nil {
+			continue
+		}
+		extComm, ok := msg.(*apipb.ExtendedCommunitiesAttribute)
+		if !ok {
+			continue
+		}
+		for _, community := range extComm.GetCommunities() {
+			msg, err := community.UnmarshalNew()
+			if err != nil {
+				continue
+			}
+			if rmac, ok := msg.(*apipb.RouterMacExtended); ok {
+				return rmac.GetMac()
+			}
+		}
+	}
+	t.Fatal("router MAC extended community not found")
+	return ""
 }
 
 func mustRT2(t *testing.T, asn, vni uint32) *anypb.Any {

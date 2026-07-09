@@ -109,11 +109,25 @@ type OverlayTier struct {
 	// so withdrawals (which lack next-hop) can still delete the right
 	// FDB entry. WatchEvent callbacks may run concurrently.
 	macVTEP sync.Map
+	// type5GatewayMAC tracks Type-5 gateway IP → router MAC mappings so
+	// withdrawals without extended communities can still delete the neighbor.
+	// type5GatewayMu serializes gateway MAC/reference updates and the refcount
+	// scan used before deleting shared gateway neighbors.
+	type5GatewayMu  sync.Mutex
+	type5GatewayMAC sync.Map
+	// type5GatewayRefs tracks Type-5 prefix → gateway references so one
+	// prefix withdrawal cannot delete a shared gateway neighbor.
+	type5GatewayRefs sync.Map
 
 	importRTOnce sync.Once
 	importRTASN  uint32
 	importRTVNI  uint32
 	importRTErr  error
+}
+
+type type5GatewayRef struct {
+	gateway   string
+	routerMAC net.HardwareAddr
 }
 
 type overlaySetupHooks struct {
@@ -554,7 +568,7 @@ func (o *OverlayTier) advertiseType5(ctx context.Context) error {
 		return fmt.Errorf("build EVPN NLRI: %w", err)
 	}
 
-	pattrs, err := buildType5PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI), o.cfg.VPNRT)
+	pattrs, err := buildType5PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI), o.cfg.VPNRT, o.cfg.BridgeMAC)
 	if err != nil {
 		return fmt.Errorf("build path attributes: %w", err)
 	}
@@ -719,7 +733,13 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 
 	switch route := msg.(type) {
 	case *apipb.EVPNIPPrefixRoute:
-		o.handleType5Route(route, vtep, withdraw)
+		routerMAC, err := extractRouterMAC(p)
+		routerMACValid := true
+		if err != nil {
+			o.log.Debug("type-5 route with invalid router MAC", "error", err)
+			routerMACValid = false
+		}
+		o.handleType5RouteWithRouterMACState(route, vtep, routerMAC, routerMACValid, withdraw)
 	case *apipb.EVPNMACIPAdvertisementRoute:
 		if o.cfg.EnableL2 {
 			o.handleType2Route(route, vtep, withdraw)
@@ -736,7 +756,17 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 // handleType5Route installs or removes a kernel route for an IP prefix
 // received via EVPN Type-5 (IP Prefix) route. This is how BOOTy learns
 // the default route (and any other prefixes) from the fabric.
-func (o *OverlayTier) handleType5Route(route *apipb.EVPNIPPrefixRoute, vtep string, withdraw bool) {
+func (o *OverlayTier) handleType5Route(route *apipb.EVPNIPPrefixRoute, vtep string, routerMAC net.HardwareAddr, withdraw bool) {
+	o.handleType5RouteWithRouterMACState(route, vtep, routerMAC, true, withdraw)
+}
+
+func (o *OverlayTier) handleType5RouteWithRouterMACState(
+	route *apipb.EVPNIPPrefixRoute,
+	vtep string,
+	routerMAC net.HardwareAddr,
+	routerMACValid bool,
+	withdraw bool,
+) {
 	// Skip routes originated by this node (e.g., reflected back by the RR).
 	// Installing our own route would override the connected route and break
 	// provisioning connectivity.
@@ -775,9 +805,10 @@ func (o *OverlayTier) handleType5Route(route *apipb.EVPNIPPrefixRoute, vtep stri
 	if withdraw {
 		if err := o.netlinkOps.RouteDel(kr); err != nil {
 			o.log.Debug("failed to delete route from type-5 withdraw", "dst", dst, "gw", gw, "error", err)
-		} else {
-			o.log.Info("removed route from type-5 withdraw", "dst", dst, "gw", gw)
+			return
 		}
+		o.log.Info("removed route from type-5 withdraw", "dst", dst, "gw", gw)
+		o.deleteType5GatewayNeighbor(link, dst.String(), gw, routerMAC)
 		return
 	}
 
@@ -785,7 +816,150 @@ func (o *OverlayTier) handleType5Route(route *apipb.EVPNIPPrefixRoute, vtep stri
 		o.log.Warn("failed to install route from type-5", "dst", dst, "gw", gw, "error", err)
 	} else {
 		o.log.Info("installed route from type-5", "dst", dst, "gw", gw)
+		if !routerMACValid {
+			o.updateType5GatewayRefWithoutRouterMAC(link, dst.String(), gw)
+			return
+		}
+		if len(routerMAC) == 0 {
+			o.clearType5GatewayNeighbor(link, dst.String())
+			return
+		}
+		o.setType5GatewayNeighbor(link, dst.String(), gw, routerMAC)
 	}
+}
+
+func (o *OverlayTier) setType5GatewayNeighbor(link netlink.Link, prefix string, gw net.IP, routerMAC net.HardwareAddr) {
+	o.type5GatewayMu.Lock()
+	defer o.type5GatewayMu.Unlock()
+
+	neigh := buildType5GatewayNeighbor(link, gw, routerMAC)
+	if neigh == nil {
+		return
+	}
+	if err := o.netlinkOps.NeighSet(neigh); err != nil {
+		o.log.Warn("failed to install type-5 gateway neighbor", "ip", gw, "mac", routerMAC, "error", err)
+		return
+	}
+	o.replaceType5GatewayRef(link, prefix, gw, routerMAC)
+	o.log.Info("installed type-5 gateway neighbor", "ip", gw, "mac", routerMAC)
+}
+
+func (o *OverlayTier) updateType5GatewayRefWithoutRouterMAC(link netlink.Link, prefix string, gw net.IP) {
+	o.type5GatewayMu.Lock()
+	defer o.type5GatewayMu.Unlock()
+
+	ref := newType5GatewayRef(gw, nil)
+	oldRef, oldOK := o.loadType5GatewayRef(prefix)
+	if oldOK && oldRef.gateway == ref.gateway {
+		return
+	}
+	o.type5GatewayRefs.Store(prefix, ref)
+	if oldOK && !o.hasType5GatewayRef(oldRef.gateway) {
+		o.deleteType5GatewayRefLocked(link, oldRef)
+	}
+}
+
+func (o *OverlayTier) deleteType5GatewayNeighbor(link netlink.Link, prefix string, gw net.IP, routerMAC net.HardwareAddr) {
+	o.type5GatewayMu.Lock()
+	defer o.type5GatewayMu.Unlock()
+
+	ref := newType5GatewayRef(gw, routerMAC)
+	restoreRef := false
+	if stored, ok := o.loadType5GatewayRef(prefix); ok {
+		ref = stored
+		restoreRef = true
+		if len(routerMAC) != 0 {
+			ref.routerMAC = append(net.HardwareAddr(nil), routerMAC...)
+		}
+	}
+	o.type5GatewayRefs.Delete(prefix)
+	if o.hasType5GatewayRef(ref.gateway) {
+		return
+	}
+
+	if len(ref.routerMAC) == 0 {
+		if stored, ok := o.type5GatewayMAC.Load(ref.gateway); ok {
+			if mac, ok := stored.(net.HardwareAddr); ok {
+				ref.routerMAC = mac
+			}
+		}
+	}
+
+	if !o.deleteType5GatewayRefLocked(link, ref) && restoreRef {
+		o.type5GatewayRefs.Store(prefix, ref)
+	}
+}
+
+func (o *OverlayTier) clearType5GatewayNeighbor(link netlink.Link, prefix string) {
+	o.type5GatewayMu.Lock()
+	defer o.type5GatewayMu.Unlock()
+
+	ref, ok := o.loadType5GatewayRef(prefix)
+	if !ok {
+		return
+	}
+	o.type5GatewayRefs.Delete(prefix)
+	if o.hasType5GatewayRef(ref.gateway) {
+		return
+	}
+	if !o.deleteType5GatewayRefLocked(link, ref) {
+		o.type5GatewayRefs.Store(prefix, ref)
+	}
+}
+
+func (o *OverlayTier) replaceType5GatewayRef(link netlink.Link, prefix string, gw net.IP, routerMAC net.HardwareAddr) {
+	ref := newType5GatewayRef(gw, routerMAC)
+	oldRef, oldOK := o.loadType5GatewayRef(prefix)
+	o.type5GatewayRefs.Store(prefix, ref)
+	o.type5GatewayMAC.Store(ref.gateway, append(net.HardwareAddr(nil), routerMAC...))
+	if oldOK && oldRef.gateway != ref.gateway && !o.hasType5GatewayRef(oldRef.gateway) {
+		o.deleteType5GatewayRefLocked(link, oldRef)
+	}
+}
+
+func (o *OverlayTier) deleteType5GatewayRefLocked(link netlink.Link, ref type5GatewayRef) bool {
+	gw := net.ParseIP(ref.gateway)
+	neigh := buildType5GatewayNeighbor(link, gw, ref.routerMAC)
+	if neigh == nil {
+		return true
+	}
+	if err := o.netlinkOps.NeighDel(neigh); err != nil {
+		o.log.Debug("failed to delete type-5 gateway neighbor", "ip", gw, "mac", ref.routerMAC, "error", err)
+		return false
+	}
+	o.log.Info("deleted type-5 gateway neighbor", "ip", gw, "mac", ref.routerMAC)
+	o.type5GatewayMAC.Delete(ref.gateway)
+	return true
+}
+
+func (o *OverlayTier) loadType5GatewayRef(prefix string) (type5GatewayRef, bool) {
+	stored, ok := o.type5GatewayRefs.Load(prefix)
+	if !ok {
+		return type5GatewayRef{}, false
+	}
+	ref, ok := stored.(type5GatewayRef)
+	if !ok {
+		return type5GatewayRef{}, false
+	}
+	ref.routerMAC = append(net.HardwareAddr(nil), ref.routerMAC...)
+	return ref, true
+}
+
+func newType5GatewayRef(gw net.IP, routerMAC net.HardwareAddr) type5GatewayRef {
+	return type5GatewayRef{
+		gateway:   gw.String(),
+		routerMAC: append(net.HardwareAddr(nil), routerMAC...),
+	}
+}
+
+func (o *OverlayTier) hasType5GatewayRef(gateway string) bool {
+	found := false
+	o.type5GatewayRefs.Range(func(_, value any) bool {
+		ref, ok := value.(type5GatewayRef)
+		found = ok && ref.gateway == gateway
+		return !found
+	})
+	return found
 }
 
 func buildType5KernelRoute(link netlink.Link, dst *net.IPNet, gw net.IP, tableID int) *netlink.Route {
@@ -804,6 +978,23 @@ func buildType5KernelRoute(link netlink.Link, dst *net.IPNet, gw net.IP, tableID
 		route.Table = tableID
 	}
 	return route
+}
+
+func buildType5GatewayNeighbor(link netlink.Link, gw net.IP, routerMAC net.HardwareAddr) *netlink.Neigh {
+	if len(routerMAC) != ethernetMACLength {
+		return nil
+	}
+	ip := gw.To4()
+	if ip == nil {
+		return nil
+	}
+	return &netlink.Neigh{
+		LinkIndex:    link.Attrs().Index,
+		Family:       syscall.AF_INET,
+		State:        netlink.NUD_PERMANENT,
+		IP:           ip,
+		HardwareAddr: routerMAC,
+	}
 }
 
 // handleType2Route installs or removes an FDB entry for a remote MAC learned
@@ -1013,7 +1204,7 @@ func buildEVPNType5NLRI(rd *anypb.Any, provisionIP, gwIP string, label uint32) (
 }
 
 // buildType5PathAttrs builds BGP path attributes for EVPN Type-5 advertisement.
-func buildType5PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32, vpnRT string) ([]*anypb.Any, error) {
+func buildType5PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32, vpnRT, routerMAC string) ([]*anypb.Any, error) {
 	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0}) // IGP
 	if err != nil {
 		return nil, fmt.Errorf("marshal origin: %w", err)
@@ -1035,14 +1226,48 @@ func buildType5PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32, vpnRT
 		return nil, fmt.Errorf("build route target: %w", err)
 	}
 
+	communities := []*anypb.Any{rt}
+	if routerMAC != "" {
+		rmac, err := buildRouterMACExtended(routerMAC)
+		if err != nil {
+			return nil, fmt.Errorf("build router MAC extended community: %w", err)
+		}
+		communities = append(communities, rmac)
+	}
+
 	extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-		Communities: []*anypb.Any{rt},
+		Communities: communities,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal ext-communities: %w", err)
 	}
 
 	return []*anypb.Any{origin, mpReach, extComm}, nil
+}
+
+const ethernetMACLength = 6
+
+func parseRouterMAC(routerMAC string) (net.HardwareAddr, error) {
+	mac, err := net.ParseMAC(routerMAC)
+	if err != nil {
+		return nil, fmt.Errorf("parse router MAC %s: %w", routerMAC, err)
+	}
+	if len(mac) != ethernetMACLength {
+		return nil, fmt.Errorf("parse router MAC %s: expected 48-bit MAC, got %d bytes", routerMAC, len(mac))
+	}
+	return mac, nil
+}
+
+func buildRouterMACExtended(routerMAC string) (*anypb.Any, error) {
+	mac, err := parseRouterMAC(routerMAC)
+	if err != nil {
+		return nil, err
+	}
+	rmac, err := anypb.New(&apipb.RouterMacExtended{Mac: mac.String()})
+	if err != nil {
+		return nil, fmt.Errorf("marshal router MAC: %w", err)
+	}
+	return rmac, nil
 }
 
 // matchesLocalRT reports whether path carries an extended community Route Target
@@ -1081,6 +1306,24 @@ func routeTargetMatchState(path *apipb.Path, localASN, localVNI uint32) (matches
 	return false, hasRouteTarget
 }
 
+func extractRouterMAC(path *apipb.Path) (net.HardwareAddr, error) {
+	for _, attr := range path.GetPattrs() {
+		msg, err := attr.UnmarshalNew()
+		if err != nil {
+			continue
+		}
+		extComm, ok := msg.(*apipb.ExtendedCommunitiesAttribute)
+		if !ok {
+			continue
+		}
+		routerMAC, err := routerMACInCommunities(extComm.GetCommunities())
+		if err != nil || routerMAC != nil {
+			return routerMAC, err
+		}
+	}
+	return nil, nil
+}
+
 func (o *OverlayTier) importRouteTarget() (asn, vni uint32, err error) {
 	o.importRTOnce.Do(func() {
 		if o.cfg == nil {
@@ -1108,6 +1351,25 @@ func rtFoundInCommunities(communities []*anypb.Any, localASN, localVNI uint32) (
 		}
 	}
 	return false, hasRouteTarget
+}
+
+func routerMACInCommunities(communities []*anypb.Any) (net.HardwareAddr, error) {
+	for _, c := range communities {
+		msg, err := c.UnmarshalNew()
+		if err != nil {
+			continue
+		}
+		rmac, ok := msg.(*apipb.RouterMacExtended)
+		if !ok {
+			continue
+		}
+		mac, err := parseRouterMAC(rmac.GetMac())
+		if err != nil {
+			return nil, err
+		}
+		return mac, nil
+	}
+	return nil, nil
 }
 
 func rtCommunityPresent(msg interface{}) bool {
