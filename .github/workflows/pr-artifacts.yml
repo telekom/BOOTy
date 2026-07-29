@@ -30,7 +30,7 @@ jobs:
             echo "For trusted artifact publication, push the branch in this repository or run this workflow manually from a reviewed ref."
           } >> "${GITHUB_STEP_SUMMARY}"
 
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
