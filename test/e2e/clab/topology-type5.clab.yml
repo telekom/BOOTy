@@ -5,12 +5,14 @@
 #   - leaf01 (ASN 65001): pure L3 router for booty-vm0 (no VXLAN)
 #   - leaf02 (ASN 65002): pure L3 router for booty-vm1 (no VXLAN)
 #   - booty-vm0/vm1: GoBGP unnumbered peering with per-machine leaf
+#   - caprf-mock: sidecar in spine01's namespace, serving 10.100.0.1
 #
 # EVPN model: pure Type-5 (L3VNI 1000 only, no L2VNI).
 #   - VMs advertise ipv4 unicast (Type-5 IP prefix routes) via L3VNI 1000.
 #   - Spine uses advertise ipv4 unicast + advertise-all-vni.
 #   - Leaves are pure L3 routers forwarding EVPN + IPv4 between VMs and spine.
 #   - NO Type-2 (MAC/IP) or Type-3 (IMET) routes should exist from VMs.
+#   - No static spine FDB entries: FRR must program VXLAN reachability from Type-5.
 #
 # Note: No VRF used here — GH Actions runner kernel lacks VRF support.
 # Production uses Vrf_underlay, but the EVPN Type-5 behavior is identical.
@@ -18,7 +20,9 @@
 # Address plan:
 #   Underlay: 192.168.4.0/24 (VTEP loopbacks on lo/dummy)
 #     spine01=192.168.4.1  VM0=192.168.4.10  VM1=192.168.4.11
-#   Overlay: 10.0.0.0/24 (router-id), 10.200.0.0/24 (VMs + gateway)
+#   Overlay: 10.0.0.0/24 (router-id), 10.100.0.0/24 (gateway), 10.200.0.0/24 (VM /32s)
+#
+# FRR 10.3.2+ is required; 10.3.1 strips VXLAN ET:8 from transited Type-5 routes.
 #
 # Build the test image first:
 #   docker build -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
@@ -28,7 +32,7 @@ topology:
   nodes:
     spine01:
       kind: linux
-      image: quay.io/frrouting/frr:10.3.1
+      image: quay.io/frrouting/frr:10.3.2
       binds:
         - spine01-type5.frr.conf:/etc/frr/frr.conf:ro
         - daemons:/etc/frr/daemons:ro
@@ -44,20 +48,13 @@ topology:
         - ip link set vxlan1000 master br1000
         - ip link set vxlan1000 up
         - ip link set br1000 up
-        # Gateway IP for VMs — same subnet as provision IPs so VMs can
-        # ARP directly over the VXLAN without a kernel route for a remote subnet.
-        - ip addr add 10.200.0.1/24 dev br1000
+        # Gateway IP for VMs. BOOTy reaches this through EVPN Type-5 routing.
+        - ip addr add 10.100.0.1/24 dev lo
         - sh -c 'echo 1 > /proc/sys/net/ipv4/ip_forward'
-        # BUM FDB entries for BOOTy VTEPs.
-        - bridge fdb append 00:00:00:00:00:00 dev vxlan1000 dst 192.168.4.10
-        - bridge fdb append 00:00:00:00:00:00 dev vxlan1000 dst 192.168.4.11
-        # eth3 → client (L2 on br1000 for test connectivity)
-        - ip link set dev eth3 master br1000
-        - ip link set dev eth3 up
 
     leaf01:
       kind: linux
-      image: quay.io/frrouting/frr:10.3.1
+      image: quay.io/frrouting/frr:10.3.2
       binds:
         - leaf01-type5.frr.conf:/etc/frr/frr.conf:ro
         - daemons:/etc/frr/daemons:ro
@@ -72,7 +69,7 @@ topology:
 
     leaf02:
       kind: linux
-      image: quay.io/frrouting/frr:10.3.1
+      image: quay.io/frrouting/frr:10.3.2
       binds:
         - leaf02-type5.frr.conf:/etc/frr/frr.conf:ro
         - daemons:/etc/frr/daemons:ro
@@ -85,19 +82,24 @@ topology:
         # Proxy-ARP on VM-facing interface so VMs can resolve remote VTEPs.
         - sh -c 'echo 1 > /proc/sys/net/ipv4/conf/eth2/proxy_arp'
 
-    # Test client on the overlay (reaches VMs via VXLAN L3VNI)
-    client:
+    # CAPRF mock sidecar. Sharing spine01's namespace makes nginx bind the
+    # spine service gateway (10.100.0.1), so BOOTy callbacks and image pulls
+    # must traverse EVPN Type-5 routing without any static FDB shortcut.
+    caprf-mock:
       kind: linux
-      image: alpine:3.20
-      exec:
-        - ip addr add 10.200.0.100/24 dev eth1
-        - ip link set dev eth1 up
-      cmd: sleep infinity
+      image: nginx:alpine
+      network-mode: container:spine01
+      startup-delay: 10
+      binds:
+        - caprf-mock.conf:/etc/nginx/nginx.conf:ro
+        - images:/srv/images:ro
+      cmd: sh -c "rm -f /var/log/nginx/access.log && touch /var/log/nginx/access.log && nginx -g 'daemon off;'"
 
     # BOOTy VM0 — GoBGP unnumbered peering with leaf01
     booty-vm0:
       kind: linux
       image: booty-gobgp-test:latest
+      startup-delay: 20
       binds:
         - data/vars-gobgp-type5-vm0:/deploy/vars:ro
       env:
@@ -112,6 +114,7 @@ topology:
     booty-vm1:
       kind: linux
       image: booty-gobgp-test:latest
+      startup-delay: 20
       binds:
         - data/vars-gobgp-type5-vm1:/deploy/vars:ro
       env:
@@ -127,8 +130,6 @@ topology:
     - endpoints: ["spine01:eth1", "leaf01:eth1"]
     # spine01:eth2 <-> leaf02:eth1 — eBGP underlay
     - endpoints: ["spine01:eth2", "leaf02:eth1"]
-    # spine01:eth3 <-> client:eth1 — overlay test client
-    - endpoints: ["spine01:eth3", "client:eth1"]
     # leaf01:eth2 <-> booty-vm0:eth1 — eBGP unnumbered
     - endpoints: ["leaf01:eth2", "booty-vm0:eth1"]
     # leaf02:eth2 <-> booty-vm1:eth1 — eBGP unnumbered
