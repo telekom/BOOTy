@@ -58,3 +58,31 @@ func TestReleaseWorkflowSBOMScansReleaseArtifacts(t *testing.T) {
 	assertStepWithContains(t, upload, "path", "sbom.spdx.json.sha256")
 	assertStepWith(t, upload, "if-no-files-found", "error")
 }
+
+func TestReleaseWorkflowRetriesTransientSBOMDownload(t *testing.T) {
+	wf := loadWorkflow(t, ".github/workflows/release-v2.yml")
+	job := wf.Jobs["sbom"]
+	if job == nil {
+		t.Fatal("missing sbom job")
+	}
+
+	for _, name := range []string{
+		"Generate SBOM (attempt 1)",
+		"Generate SBOM (attempt 2)",
+		"Generate SBOM (attempt 3)",
+	} {
+		step := requireWorkflowStep(t, job, name)
+		assertWorkflowActionPinned(t, step, "anchore/sbom-action")
+		assertStepWith(t, step, "path", "release-artifacts")
+		assertStepWith(t, step, "upload-artifact", "false")
+	}
+
+	first := requireWorkflowStep(t, job, "Generate SBOM (attempt 1)")
+	if first.ContinueOnError != true {
+		t.Fatalf("first SBOM attempt continue-on-error = %v, want true", first.ContinueOnError)
+	}
+	second := requireWorkflowStep(t, job, "Generate SBOM (attempt 2)")
+	if second.If != "steps.sbom-attempt-1.outcome == 'failure'" {
+		t.Fatalf("second SBOM attempt condition = %q", second.If)
+	}
+}
