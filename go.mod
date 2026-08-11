@@ -5,25 +5,25 @@ go 1.26
 require (
 	github.com/digineo/go-dhclient v1.0.2
 	github.com/dustin/go-humanize v1.0.1
-	github.com/google/go-containerregistry v0.21.7
+	github.com/google/go-containerregistry v0.21.9
 	github.com/google/go-tpm v0.9.8
 	github.com/google/gopacket v1.1.19
-	github.com/klauspost/compress v1.19.1
+	github.com/klauspost/compress v1.19.2
 	github.com/osrg/gobgp/v3 v3.37.0
-	github.com/pierrec/lz4/v4 v4.1.27
+	github.com/pierrec/lz4/v4 v4.1.28
 	github.com/spf13/cobra v1.10.2
 	github.com/ulikunitz/xz v0.5.16
 	github.com/vishvananda/netlink v1.3.1
 	github.com/zcalusic/sysinfo v1.1.3
 	golang.org/x/net v0.57.0
 	golang.org/x/sys v0.47.0
-	google.golang.org/protobuf v1.36.11
+	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
 	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13 // indirect
-	github.com/docker/cli v29.5.3+incompatible // indirect
+	github.com/docker/cli v29.6.2+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.9.3 // indirect
 	github.com/eapache/channels v1.1.0 // indirect
 	github.com/eapache/queue v1.1.0 // indirect
