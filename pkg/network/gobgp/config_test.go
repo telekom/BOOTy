@@ -268,18 +268,15 @@ func TestNewConfig(t *testing.T) {
 	}
 }
 
-func TestNewConfigRejectsMissingProvisionGateway(t *testing.T) {
+func TestNewConfigAllowsMissingProvisionGatewayForType5Only(t *testing.T) {
 	_, err := NewConfig(&network.Config{
 		UnderlayIP:   "10.0.0.1",
 		ASN:          65000,
 		ProvisionVNI: 4000,
 		BGPPeerMode:  network.PeerModeUnnumbered,
 	})
-	if err == nil {
-		t.Fatal("expected error for missing provision gateway")
-	}
-	if !strings.Contains(err.Error(), "provision gateway") {
-		t.Fatalf("expected provision gateway error, got %v", err)
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v, want Type-5-only config accepted", err)
 	}
 }
 

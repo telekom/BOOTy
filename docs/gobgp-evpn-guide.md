@@ -126,6 +126,12 @@ By default, BOOTy advertises **Type-5 (IP Prefix)** routes only. These
 announce provisioning host reachability with VXLAN encapsulation info,
 allowing the fabric to route traffic toward BOOTy's VTEP.
 
+Type-5-only advertisements use a `0.0.0.0` EVPN gateway address and retain
+the VTEP as the BGP next hop. They include the VXLAN tunnel-encapsulation and
+router-MAC extended communities. This makes them direct Type-5 routes: peers
+install an on-link route through the VTEP and program the router-MAC FDB entry
+without requiring Type-2 MAC/IP resolution.
+
 When `EVPN_L2_ENABLED=true`, BOOTy also originates:
 
 | Route Type | Purpose |

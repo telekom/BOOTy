@@ -243,10 +243,10 @@ func (c *Config) validateProvisioning() error {
 		return fmt.Errorf("ProvisionVNI %d out of range (must be 1..16777215)", c.ProvisionVNI)
 	}
 	if overlayType, err := ParseOverlayType(c.OverlayType); err == nil && overlayType == OverlayEVPNVXLAN {
-		if c.ProvisionGateway == "" {
+		if c.ProvisionGateway == "" && c.EnableL2 {
 			return fmt.Errorf("provision gateway is required for GoBGP VXLAN data plane")
 		}
-		if ip := net.ParseIP(c.ProvisionGateway); ip == nil || ip.To4() == nil {
+		if c.ProvisionGateway != "" && (net.ParseIP(c.ProvisionGateway) == nil || net.ParseIP(c.ProvisionGateway).To4() == nil) {
 			return fmt.Errorf("provision gateway %q must be a valid IPv4 address", c.ProvisionGateway)
 		}
 	}
