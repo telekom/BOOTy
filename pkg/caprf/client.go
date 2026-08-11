@@ -244,7 +244,7 @@ func (c *Client) FetchCommands(ctx context.Context) ([]config.Command, error) {
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 
-	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound {
+	if resp.StatusCode == http.StatusNoContent {
 		return nil, nil
 	}
 	if resp.StatusCode != http.StatusOK {
