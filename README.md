@@ -949,6 +949,9 @@ return an error immediately. After readiness succeeds, heartbeat and command-pol
 failures are logged and retried on the next tick. `RESCUE_MODE` applies to hot
 provision command failures; deprovision command failures are ACKed as failed
 before BOOTy returns a reboot request.
+Only `204 No Content` denotes an empty command queue; a `404 Not Found` or any
+other unexpected response is treated as a polling failure rather than an empty
+queue.
 
 | Command | Behavior |
 |---------|----------|

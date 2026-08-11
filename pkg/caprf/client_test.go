@@ -1076,6 +1076,25 @@ func TestClientFetchCommandsNoContent(t *testing.T) {
 	}
 }
 
+func TestClientFetchCommandsNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: srv.URL}})
+	cmds, err := client.FetchCommands(context.Background())
+	if err == nil {
+		t.Fatal("expected error on 404")
+	}
+	if cmds != nil {
+		t.Errorf("commands = %v, want nil", cmds)
+	}
+	if !strings.Contains(err.Error(), "status 404") {
+		t.Errorf("error = %q, want status 404", err)
+	}
+}
+
 func TestClientFetchCommandsError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

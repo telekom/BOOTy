@@ -104,7 +104,9 @@ The `caprf.Client` implements real HTTP calls for both endpoints:
 - `Heartbeat(ctx)`: POST to `HeartbeatURL` via `postWithAuth`. Returns nil
   when no URL is configured (backward-compatible no-op).
 - `FetchCommands(ctx)`: GET `CommandsURL` with Authorization header. Decodes
-  JSON array of `config.Command`. Returns nil on `204`/`404`.
+  JSON array of `config.Command`. Returns nil only on `204 No Content`;
+  `404 Not Found` is a polling failure so an incorrect endpoint cannot be
+  mistaken for an empty command queue.
 
 Both methods are tested with `httptest.Server` mocks.
 
