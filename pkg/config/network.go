@@ -142,6 +142,12 @@ type EVPNConfig struct {
 	// Default: false
 	L2Enabled bool `yaml:"l2Enabled" json:"l2Enabled"`
 
+	// Type5Only enables direct EVPN Type-5 routing without an L2 gateway.
+	// In this mode provisionGateway is optional; remote VTEPs are reached
+	// through underlay BGP routes learned from the fabric.
+	// Default: false
+	Type5Only bool `yaml:"type5Only" json:"type5Only"`
+
 	// DCGWIPs is a comma-separated list of Data Center Gateway IPs.
 	// Used in OneFabric topologies for external routing.
 	// Default: ""

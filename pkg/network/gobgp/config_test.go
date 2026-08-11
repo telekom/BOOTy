@@ -269,14 +269,65 @@ func TestNewConfig(t *testing.T) {
 }
 
 func TestNewConfigAllowsMissingProvisionGatewayForType5Only(t *testing.T) {
-	_, err := NewConfig(&network.Config{
-		UnderlayIP:   "10.0.0.1",
-		ASN:          65000,
-		ProvisionVNI: 4000,
-		BGPPeerMode:  network.PeerModeUnnumbered,
+	cfg, err := NewConfig(&network.Config{
+		UnderlayIP:    "10.0.0.1",
+		ASN:           65000,
+		ProvisionVNI:  4000,
+		BGPPeerMode:   network.PeerModeUnnumbered,
+		EVPNType5Only: true,
 	})
 	if err != nil {
 		t.Fatalf("NewConfig() error = %v, want Type-5-only config accepted", err)
+	}
+	if !cfg.Type5Only || !cfg.usesType5Only() {
+		t.Fatal("explicit Type-5-only mode was not preserved")
+	}
+}
+
+func TestNewConfigType5OnlyAndL2AreMutuallyExclusive(t *testing.T) {
+	_, err := NewConfig(&network.Config{
+		UnderlayIP:       "10.0.0.1",
+		ASN:              65000,
+		ProvisionVNI:     4000,
+		ProvisionGateway: testProvisionGateway,
+		BGPPeerMode:      network.PeerModeUnnumbered,
+		EVPNL2Enabled:    true,
+		EVPNType5Only:    true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "cannot both be enabled") {
+		t.Fatalf("NewConfig() error = %v, want mutually exclusive mode error", err)
+	}
+}
+
+func TestConfigUsesExplicitType5OnlyMode(t *testing.T) {
+	if (&Config{}).usesType5Only() {
+		t.Fatal("Type-5-only mode must require an explicit configuration")
+	}
+	if !(&Config{Type5Only: true}).usesType5Only() {
+		t.Fatal("explicit Type5Only configuration was ignored")
+	}
+}
+
+func TestValidateProvisioningRejectsBoundaryErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+	}{
+		{name: "VNI below range", cfg: Config{}},
+		{name: "VNI above range", cfg: Config{ProvisionVNI: 16777216}},
+		{name: "four octet ASN oversized VNI", cfg: Config{ASN: 65536, ProvisionVNI: 65536}},
+		{name: "MTU below VXLAN minimum", cfg: Config{ProvisionVNI: 1, MTU: 625}},
+		{name: "legacy gateway omitted", cfg: Config{ProvisionVNI: 1, OverlayType: string(OverlayEVPNVXLAN)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.cfg.validateProvisioning(); err == nil {
+				t.Fatal("validateProvisioning() error = nil, want error")
+			}
+		})
+	}
+	if err := (&Config{ProvisionVNI: 1, Type5Only: true, MTU: 626}).validateProvisioning(); err != nil {
+		t.Fatalf("validateProvisioning() error = %v, want explicit Type-5-only config accepted", err)
 	}
 }
 

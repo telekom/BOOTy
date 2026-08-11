@@ -66,6 +66,7 @@ type Config struct {
 	NeighborAddrs     []string         // Explicit numbered peer IPs (dual/numbered modes)
 	RemoteASN         uint32           // Remote ASN for numbered peers (0 = same ASN → iBGP)
 	EnableL2          bool             // Enable L2 EVPN overlay (gate Type-2/3 route handling)
+	Type5Only         bool             // Use direct Type-5 routing without an L2 gateway
 	AuthPassword      string           // Optional TCP-MD5 password for BGP peers (empty = no auth)
 	// UnderlayAF selects the BGP address family for underlay sessions.
 	// Machine config accepts only ipv4; other parsed values are unsupported.
@@ -126,6 +127,7 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		NeighborAddrs:       parseNeighborAddrs(netCfg.BGPNeighbors),
 		RemoteASN:           netCfg.BGPRemoteASN,
 		EnableL2:            netCfg.EVPNL2Enabled,
+		Type5Only:           netCfg.EVPNType5Only,
 		AuthPassword:        netCfg.BGPAuthPassword,
 		UnderlayAF:          netCfg.BGPUnderlayAF,
 		OverlayType:         netCfg.BGPOverlayType,
@@ -242,13 +244,8 @@ func (c *Config) validateProvisioning() error {
 	if c.ProvisionVNI == 0 || c.ProvisionVNI > 16777215 {
 		return fmt.Errorf("ProvisionVNI %d out of range (must be 1..16777215)", c.ProvisionVNI)
 	}
-	if overlayType, err := ParseOverlayType(c.OverlayType); err == nil && overlayType == OverlayEVPNVXLAN {
-		if c.ProvisionGateway == "" && c.EnableL2 {
-			return fmt.Errorf("provision gateway is required for GoBGP VXLAN data plane")
-		}
-		if c.ProvisionGateway != "" && (net.ParseIP(c.ProvisionGateway) == nil || net.ParseIP(c.ProvisionGateway).To4() == nil) {
-			return fmt.Errorf("provision gateway %q must be a valid IPv4 address", c.ProvisionGateway)
-		}
+	if err := c.validateOverlayProvisioning(); err != nil {
+		return err
 	}
 
 	// 4-octet ASN RD/RT format can only encode 16-bit VNI values.
@@ -263,6 +260,27 @@ func (c *Config) validateProvisioning() error {
 		return fmt.Errorf("MTU %d too low (minimum %d = 576 IP + 50 VXLAN overhead)", c.MTU, minMTU)
 	}
 	return nil
+}
+
+func (c *Config) validateOverlayProvisioning() error {
+	if c.EnableL2 && c.Type5Only {
+		return fmt.Errorf("type5Only and EnableL2 cannot both be enabled")
+	}
+	if overlayType, err := ParseOverlayType(c.OverlayType); err == nil && overlayType == OverlayEVPNVXLAN {
+		if c.ProvisionGateway == "" && !c.Type5Only {
+			return fmt.Errorf("provision gateway is required for GoBGP VXLAN data plane")
+		}
+		gateway := net.ParseIP(c.ProvisionGateway)
+		if c.ProvisionGateway != "" && (gateway == nil || gateway.To4() == nil) {
+			return fmt.Errorf("provision gateway %q must be a valid IPv4 address", c.ProvisionGateway)
+		}
+	}
+	return nil
+}
+
+// usesType5Only reports whether direct Type-5 routing was explicitly selected.
+func (c *Config) usesType5Only() bool {
+	return c.Type5Only
 }
 
 func (c *Config) validatePolicy() error {

@@ -30,13 +30,9 @@ const (
 	type5LabLeaf2 = "clab-booty-type5-lab-leaf02"
 	type5LabVM0   = "clab-booty-type5-lab-booty-vm0"
 	type5LabVM1   = "clab-booty-type5-lab-booty-vm1"
-	type5LabMock  = "clab-booty-type5-lab-caprf-mock"
 
 	type5ConvergeTimeout  = 90 * time.Second
 	type5ConvergeInterval = 2 * time.Second
-	type5ServiceGateway   = "10.100.0.1"
-	type5ServicePrefix    = "10.100.0.0/24"
-	type5ServiceRoute     = "10.100.0.0"
 )
 
 func requireType5Lab(t *testing.T) {
@@ -116,8 +112,6 @@ func type5DumpDebugState(t *testing.T) {
 		{"ip", "addr", "show"},
 		{"ip", "neigh", "show"},
 		{"bridge", "fdb", "show"},
-		{"ip", "route", "get", "10.200.0.10", "from", type5ServiceGateway},
-		{"ip", "route", "get", "10.200.0.11", "from", type5ServiceGateway},
 	} {
 		out, _ := type5DockerExecRaw(t, type5LabSpine, cmd...)
 		t.Logf("[spine01] %s:\n%s", strings.Join(cmd, " "), out)
@@ -150,7 +144,8 @@ func type5DumpDebugState(t *testing.T) {
 			{"ip", "addr", "show"},
 			{"ip", "neigh", "show"},
 			{"ip", "route", "show"},
-			{"ip", "route", "get", type5ServiceGateway, "from", vm.ip},
+			{"ip", "route", "get", "10.200.0.10", "from", vm.ip},
+			{"ip", "route", "get", "10.200.0.11", "from", vm.ip},
 			{"bridge", "fdb", "show"},
 		} {
 			out, _ := type5DockerExecRaw(t, vm.container, cmd...)
@@ -158,15 +153,6 @@ func type5DumpDebugState(t *testing.T) {
 		}
 	}
 
-	if out, err := type5DockerExecRaw(t, type5LabMock, "cat", "/var/log/nginx/access.log"); err == nil {
-		t.Logf("[caprf-mock] access log:\n%s", out)
-	}
-	if out, err := type5DockerExecRaw(t, type5LabMock, "ss", "-ltnp"); err == nil {
-		t.Logf("[caprf-mock] ss -ltnp:\n%s", out)
-	}
-	if out, err := type5DockerExecRaw(t, type5LabMock, "wget", "-qO-", "http://"+type5ServiceGateway+"/health"); err == nil {
-		t.Logf("[caprf-mock] local health:\n%s", out)
-	}
 }
 
 func type5WaitForBGPInterface(t *testing.T, container, iface string) {
@@ -433,6 +419,9 @@ func TestType5SpineAdvertiseIPv4Unicast(t *testing.T) {
 	if !strings.Contains(out, "advertise-all-vni") {
 		t.Error("spine01 should have 'advertise-all-vni' for EVPN VNI discovery")
 	}
+	if !strings.Contains(out, "neighbor fabric next-hop-self force") {
+		t.Error("spine01 must rewrite reflected underlay next hops for leaf VTEP reachability")
+	}
 	if !strings.Contains(out, "route-target import 65000:1000") {
 		t.Error("spine01 should import RT 65000:1000 for the Type-5 L3VNI")
 	}
@@ -502,20 +491,6 @@ func TestType5VXLANOnVM1(t *testing.T) {
 		}
 		time.Sleep(type5ConvergeInterval)
 	}
-}
-
-func TestType5VXLANNolearningOnSpine(t *testing.T) {
-	requireType5Lab(t)
-	t.Cleanup(func() { type5DumpDebugState(t) })
-
-	out := type5DockerExec(t, type5LabSpine, "ip", "-d", "link", "show", "dev", "vxlan1000")
-	if !strings.Contains(out, "nolearning") {
-		t.Errorf("spine01 vxlan1000 should have nolearning flag:\n%s", out)
-	}
-	if !strings.Contains(out, "id 1000") {
-		t.Errorf("spine01 vxlan1000 should have VNI 1000:\n%s", out)
-	}
-	t.Log("Confirmed: spine01 vxlan1000 has nolearning + VNI 1000")
 }
 
 func type5RouteHasEncapAndRouterMAC(output, prefix string) bool {
@@ -667,69 +642,6 @@ func type5LineHasTokens(line string, tokens ...string) bool {
 		}
 	}
 	return true
-}
-
-func type5HasGatewayBUMFDB(output string) bool {
-	return type5HasLineWithTokens(output, "00:00:00:00:00:00", "dev vx1000", "dst 192.168.4.1")
-}
-
-func type5HasGatewayRMACFDB(output, routerMAC string) bool {
-	routerMAC = strings.ToLower(routerMAC)
-	if routerMAC == "" || routerMAC == "00:00:00:00:00:00" {
-		return false
-	}
-	for _, line := range strings.Split(output, "\n") {
-		fields := strings.Fields(strings.ToLower(line))
-		if len(fields) > 0 && fields[0] == routerMAC &&
-			type5LineHasTokens(line, "dev vx1000", "dst 192.168.4.1") {
-			return true
-		}
-	}
-	return false
-}
-
-func type5HasServiceRoute(output string) bool {
-	return type5HasLineWithTokens(output, type5ServicePrefix, "via 192.168.4.1", "dev br.provision", "onlink")
-}
-
-func type5HasCallbackFrom(output, sourceIP string) bool {
-	for _, line := range strings.Split(output, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 5 || fields[2] != sourceIP {
-			continue
-		}
-		method := strings.TrimPrefix(fields[3], `"`)
-		path := fields[4]
-		if method == "POST" && (path == "/log" ||
-			path == "/status/init" ||
-			path == "/status/heartbeat" ||
-			path == "/status/success" ||
-			path == "/status/error" ||
-			path == "/commands/ack") {
-			return true
-		}
-		if method == "GET" && path == "/commands" {
-			return true
-		}
-	}
-	return false
-}
-
-func type5WaitForServiceRouterMAC(t *testing.T, container string) string {
-	t.Helper()
-	deadline := time.Now().Add(type5ConvergeTimeout)
-	var last string
-	for {
-		out, _ := type5VtyshRaw(t, container, "show bgp l2vpn evpn route type prefix")
-		last = out
-		if routerMAC, ok := type5RouteRouterMACAndNextHop(out, type5ServiceRoute, "192.168.4.1"); ok {
-			return routerMAC
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("service Type-5 route missing ET:8/Rmac/next-hop on %s:\n%s", container, last)
-		}
-		time.Sleep(type5ConvergeInterval)
-	}
 }
 
 func TestType5RouteHasEncapAndRouterMAC(t *testing.T) {
@@ -886,63 +798,33 @@ func TestType5TopologyUsesFRRWithType5EncapRelayFix(t *testing.T) {
 	}
 }
 
-func TestType5GatewayFDBMatchers(t *testing.T) {
-	output := `00:00:00:00:00:00 dev vx1000 dst 192.168.4.1 self permanent
-42:fb:33:87:ea:13 dev vx1000 dst 192.168.4.1 self permanent
-00:00:00:00:00:00 dev vx1000 dst 192.168.4.10 self permanent`
-
-	if !type5HasGatewayBUMFDB(output) {
-		t.Fatal("expected gateway BUM FDB matcher to require zero MAC dst 192.168.4.1")
+func TestType5SpineConfigRewritesUnderlayNextHop(t *testing.T) {
+	data, err := os.ReadFile("../clab/spine01-type5.frr.conf")
+	if err != nil {
+		t.Fatalf("read Type-5 spine config: %v", err)
 	}
-	if !type5HasGatewayRMACFDB(output, "42:fb:33:87:ea:13") {
-		t.Fatal("expected gateway RMAC FDB matcher to require the exact MAC dst 192.168.4.1")
-	}
-	if type5HasGatewayRMACFDB(output, "42:fb:33:87:ea:14") {
-		t.Fatal("wrong RMAC must not satisfy gateway RMAC FDB matcher")
-	}
-	if type5HasGatewayRMACFDB(`00:00:00:00:00:00 dev vx1000 dst 192.168.4.1 self permanent`, "00:00:00:00:00:00") {
-		t.Fatal("zero-MAC BUM FDB must not satisfy RMAC FDB matcher")
+	if !strings.Contains(string(data), "neighbor fabric next-hop-self force") {
+		t.Fatal("Type-5 spine must rewrite underlay next hops so leaves can proxy ARP remote VTEPs")
 	}
 }
 
-func TestType5ServiceRouteMatcher(t *testing.T) {
-	output := `default via 172.20.20.1 dev eth0
-10.100.0.0/24 via 192.168.4.1 dev br.provision onlink
-192.168.4.1 dev br.provision scope link`
-
-	if !type5HasServiceRoute(output) {
-		t.Fatal("expected exact service route line to match")
+func TestType5LeavesAcceptOnlyTheirAttachedVTEP(t *testing.T) {
+	tests := []struct {
+		path, prefixList, vtep string
+	}{
+		{"../clab/leaf01-type5.frr.conf", "vm0-vtep", "192.168.4.10"},
+		{"../clab/leaf02-type5.frr.conf", "vm1-vtep", "192.168.4.11"},
 	}
-	if type5HasServiceRoute("10.100.0.0/24 dev br.provision\n192.168.4.1 dev eth0") {
-		t.Fatal("service route matcher must not combine tokens from separate lines")
-	}
-}
-
-func TestType5CallbackMatcherRequiresBOOTyTrafficFromSource(t *testing.T) {
-	output := `09/Jul/2026:07:57:10 +0000 10.200.0.10 "GET /health HTTP/1.1" 200
-09/Jul/2026:07:57:11 +0000 10.200.0.10 "POST /log HTTP/1.1" 200
-09/Jul/2026:07:57:12 +0000 10.200.0.11 "GET /commands HTTP/1.1" 204
-09/Jul/2026:07:57:13 +0000 10.200.0.12 "POST /status/heartbeat HTTP/1.1" 200
-09/Jul/2026:07:57:14 +0000 10.200.0.13 "POST /status/success HTTP/1.1" 200
-09/Jul/2026:07:57:15 +0000 10.200.0.14 "POST /status/error HTTP/1.1" 500
-09/Jul/2026:07:57:16 +0000 10.200.0.15 "POST /commands/ack HTTP/1.1" 204`
-
-	if !type5HasCallbackFrom(output, "10.200.0.10") {
-		t.Fatal("expected POST /log from VM0 to count as callback traffic")
-	}
-	if !type5HasCallbackFrom(output, "10.200.0.11") {
-		t.Fatal("expected GET /commands from VM1 to count as callback traffic")
-	}
-	for _, sourceIP := range []string{"10.200.0.12", "10.200.0.13", "10.200.0.14", "10.200.0.15"} {
-		if !type5HasCallbackFrom(output, sourceIP) {
-			t.Fatalf("expected callback matcher to accept BOOTy callback from %s", sourceIP)
+	for _, tt := range tests {
+		data, err := os.ReadFile(tt.path)
+		if err != nil {
+			t.Fatalf("read Type-5 leaf config %s: %v", tt.path, err)
 		}
-	}
-	if type5HasCallbackFrom(`09/Jul/2026:07:57:10 +0000 10.200.0.12 "GET /health HTTP/1.1" 200`, "10.200.0.12") {
-		t.Fatal("health probes must not satisfy callback matcher")
-	}
-	if type5HasCallbackFrom(`09/Jul/2026:07:57:13 +0000 10.200.0.100 "POST /log HTTP/1.1" 200`, "10.200.0.10") {
-		t.Fatal("source IP substring must not satisfy callback matcher")
+		config := string(data)
+		if !strings.Contains(config, "neighbor eth2 prefix-list "+tt.prefixList+" in") ||
+			!strings.Contains(config, "ip prefix-list "+tt.prefixList+" seq 5 permit "+tt.vtep+"/32") {
+			t.Fatalf("Type-5 leaf %s must only import its local VTEP %s from eth2", tt.path, tt.vtep)
+		}
 	}
 }
 
@@ -989,6 +871,9 @@ func TestType5VM1ProvisionIP(t *testing.T) {
 }
 
 func TestType5DCGWHasNoL2GatewayState(t *testing.T) {
+	requireType5Lab(t)
+	t.Cleanup(func() { type5DumpDebugState(t) })
+
 	data, err := os.ReadFile("../clab/topology-type5.clab.yml")
 	if err != nil {
 		t.Fatalf("read type-5 topology: %v", err)
@@ -1010,36 +895,95 @@ func TestType5DCGWHasNoL2GatewayState(t *testing.T) {
 		if strings.Contains(string(data), "provision_gateway=") {
 			t.Fatalf("Type-5-only config %s must not set provision_gateway", varsFile)
 		}
+		if !strings.Contains(string(data), `EVPN_TYPE5_ONLY="true"`) {
+			t.Fatalf("Type-5-only config %s must select EVPN_TYPE5_ONLY", varsFile)
+		}
+	}
+	for _, cmd := range [][]string{
+		{"ip", "-d", "link", "show", "type", "vxlan"},
+		{"bridge", "fdb", "show"},
+		{"ip", "addr", "show"},
+	} {
+		out := type5DockerExec(t, type5LabSpine, cmd...)
+		if strings.Contains(out, "vxlan") || strings.Contains(out, "10.100.0.1") {
+			t.Fatalf("Type-5 DCGW must not own L2 gateway state (%s):\n%s", strings.Join(cmd, " "), out)
+		}
 	}
 }
 
-func TestType5VM0ToVM1(t *testing.T) {
-	testType5RemoteVMReachability(t, type5LabVM0, "10.200.0.10", "10.200.0.11")
+func TestType5VM0ImportsVM1(t *testing.T) {
+	testType5RemoteVMReachability(t, type5LabVM0, "10.200.0.10", "10.200.0.11", "192.168.4.11")
 }
 
-func TestType5VM1ToVM0(t *testing.T) {
-	testType5RemoteVMReachability(t, type5LabVM1, "10.200.0.11", "10.200.0.10")
+func TestType5VM1ImportsVM0(t *testing.T) {
+	testType5RemoteVMReachability(t, type5LabVM1, "10.200.0.11", "10.200.0.10", "192.168.4.10")
 }
 
-func testType5RemoteVMReachability(t *testing.T, container, source, destination string) {
+func testType5RemoteVMReachability(t *testing.T, container, source, destination, vtep string) {
 	t.Helper()
 	requireType5Lab(t)
 	t.Cleanup(func() { type5DumpDebugState(t) })
 
 	deadline := time.Now().Add(type5ConvergeTimeout)
 	for {
+		route, _ := type5DockerExecRaw(t, container, "ip", "route", "show", destination+"/32")
+		fdb, _ := type5DockerExecRaw(t, container, "bridge", "fdb", "show", "dev", "vx1000")
 		out, err := type5DockerExecRaw(t, container,
 			"ping", "-c", "1", "-W", "2", "-I", "br.provision", destination)
-		if err == nil && strings.Contains(out, "1 packets received") {
+		if err == nil && strings.Contains(out, "1 packets received") &&
+			type5HasRemoteVMRoute(route, destination, vtep) &&
+			type5HasRouterMACFDBForVTEP(fdb, vtep) {
 			return
 		}
 		if time.Now().After(deadline) {
-			route, _ := type5DockerExecRaw(t, container, "ip", "route", "get", destination, "from", source)
-			fdb, _ := type5DockerExecRaw(t, container, "bridge", "fdb", "show", "dev", "vx1000")
 			t.Fatalf("Type-5 reachability from %s to %s failed after %s:\nping: %s\nroute: %s\nfdb: %s",
 				source, destination, type5ConvergeTimeout, out, route, fdb)
 		}
 		time.Sleep(type5ConvergeInterval)
+	}
+}
+
+func type5HasRemoteVMRoute(output, destination, vtep string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || (fields[0] != destination && fields[0] != destination+"/32") {
+			continue
+		}
+		if type5LineHasTokens(line, "via", vtep, "dev", "br.provision") {
+			return true
+		}
+	}
+	return false
+}
+
+func type5HasRouterMACFDBForVTEP(output, vtep string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(strings.ToLower(line))
+		if len(fields) > 0 && fields[0] != "00:00:00:00:00:00" &&
+			type5LineHasTokens(line, "dst", vtep) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestType5RemoteVMDataPlaneMatchers(t *testing.T) {
+	routes := `10.200.0.11/32 via 192.168.4.11 dev br.provision
+10.200.0.10 via 192.168.4.10 dev br.provision`
+	fdb := `00:00:00:00:00:00 dst 192.168.4.11 self permanent
+02:54:00:00:00:11 dst 192.168.4.11 self permanent`
+
+	if !type5HasRemoteVMRoute(routes, "10.200.0.11", "192.168.4.11") {
+		t.Fatal("expected remote VM Type-5 kernel route to match")
+	}
+	if type5HasRemoteVMRoute(routes, "10.200.0.11", "192.168.4.10") {
+		t.Fatal("wrong VTEP must not satisfy the Type-5 route matcher")
+	}
+	if !type5HasRouterMACFDBForVTEP(fdb, "192.168.4.11") {
+		t.Fatal("expected router-MAC FDB entry for remote VTEP")
+	}
+	if type5HasRouterMACFDBForVTEP("00:00:00:00:00:00 dst 192.168.4.11 self permanent", "192.168.4.11") {
+		t.Fatal("BUM FDB entry must not satisfy the router-MAC FDB matcher")
 	}
 }
 
