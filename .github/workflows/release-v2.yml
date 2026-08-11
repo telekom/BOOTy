@@ -379,6 +379,47 @@ jobs:
 
       - name: Build and push per-arch image
         run: |
+          retry_ghcr() {
+            local description="$1"
+            shift
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if "$@"; then
+                return 0
+              fi
+              if [ "${attempt}" -eq 5 ]; then
+                echo "::error::${description} failed after ${attempt} attempts"
+                return 1
+              fi
+              delay=$((attempt * 5))
+              echo "::warning::${description} failed; retrying in ${delay}s"
+              sleep "${delay}"
+            done
+          }
+
+          ensure_container_ref_absent() {
+            local ref="$1"
+            local attempt err
+            for attempt in 1 2 3 4 5; do
+              err="${RUNNER_TEMP}/container-ref-check-${attempt}.err"
+              if docker buildx imagetools inspect "${ref}" >/dev/null 2>"${err}"; then
+                echo "::error::container image ${ref} already exists; refusing to overwrite"
+                return 1
+              fi
+              if grep -Eiq '(not found|manifest unknown|name unknown|404)' "${err}"; then
+                return 0
+              fi
+              if [ "${attempt}" -eq 5 ]; then
+                echo "::error::could not verify container image ${ref} is absent"
+                cat "${err}" >&2 || true
+                return 1
+              fi
+              delay=$((attempt * 5))
+              echo "::warning::could not verify container image ${ref}; retrying in ${delay}s"
+              sleep "${delay}"
+            done
+          }
+
           VERSION=${GITHUB_REF_NAME#v}
           TARGET_ARG=""
           BUILD_FLAVOR="${{ matrix.flavor }}"
@@ -392,17 +433,8 @@ jobs:
           fi
           IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           REF="${IMAGE}:${IMAGE_TAG}-${{ matrix.arch }}"
-          err="${RUNNER_TEMP}/container-ref-check.err"
-          if docker buildx imagetools inspect "${REF}" >/dev/null 2>"${err}"; then
-            echo "::error::container image ${REF} already exists; refusing to overwrite"
-            exit 1
-          fi
-          if ! grep -Eiq '(not found|manifest unknown|name unknown|404)' "${err}"; then
-            echo "::error::could not verify container image ${REF} is absent"
-            cat "${err}" >&2 || true
-            exit 1
-          fi
-          docker buildx build \
+          ensure_container_ref_absent "${REF}"
+          retry_ghcr "build and publish ${REF}" docker buildx build \
             ${TARGET_ARG} \
             --platform "linux/${{ matrix.arch }}" \
             --build-arg "BOOTY_VERSION=${VERSION}" \
@@ -445,13 +477,32 @@ jobs:
 
       - name: Sign per-arch image
         run: |
+          retry_ghcr() {
+            local description="$1"
+            shift
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if "$@"; then
+                return 0
+              fi
+              if [ "${attempt}" -eq 5 ]; then
+                echo "::error::${description} failed after ${attempt} attempts"
+                return 1
+              fi
+              delay=$((attempt * 5))
+              echo "::warning::${description} failed; retrying in ${delay}s"
+              sleep "${delay}"
+            done
+          }
+
           VERSION=${GITHUB_REF_NAME#v}
           IMAGE_TAG="${VERSION}"
           if [ "${{ matrix.flavor }}" = "gobgp" ]; then
             IMAGE_TAG="${VERSION}-gobgp"
           fi
           IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          cosign sign --yes "${IMAGE}:${IMAGE_TAG}-${{ matrix.arch }}"
+          retry_ghcr "sign ${IMAGE}:${IMAGE_TAG}-${{ matrix.arch }}" \
+            cosign sign --yes "${IMAGE}:${IMAGE_TAG}-${{ matrix.arch }}"
 
   container-manifest:
     name: Container Manifest (${{ matrix.flavor }})
@@ -478,6 +529,47 @@ jobs:
 
       - name: Create and push multi-arch manifest
         run: |
+          ensure_container_ref_absent() {
+            local ref="$1"
+            local attempt err
+            for attempt in 1 2 3 4 5; do
+              err="${RUNNER_TEMP}/container-manifest-ref-check-${attempt}.err"
+              if docker buildx imagetools inspect "${ref}" >/dev/null 2>"${err}"; then
+                echo "::error::container image ${ref} already exists; refusing to overwrite"
+                return 1
+              fi
+              if grep -Eiq '(not found|manifest unknown|name unknown|404)' "${err}"; then
+                return 0
+              fi
+              if [ "${attempt}" -eq 5 ]; then
+                echo "::error::could not verify container image ${ref} is absent"
+                cat "${err}" >&2 || true
+                return 1
+              fi
+              delay=$((attempt * 5))
+              echo "::warning::could not verify container image ${ref}; retrying in ${delay}s"
+              sleep "${delay}"
+            done
+          }
+
+          retry_ghcr() {
+            local description="$1"
+            shift
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if "$@"; then
+                return 0
+              fi
+              if [ "${attempt}" -eq 5 ]; then
+                echo "::error::${description} failed after ${attempt} attempts"
+                return 1
+              fi
+              delay=$((attempt * 5))
+              echo "::warning::${description} failed; retrying in ${delay}s"
+              sleep "${delay}"
+            done
+          }
+
           VERSION=${GITHUB_REF_NAME#v}
           IMAGE_TAG="${VERSION}"
           if [ "${{ matrix.flavor }}" = "gobgp" ]; then
@@ -485,17 +577,8 @@ jobs:
           fi
           IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           REF="${IMAGE}:${IMAGE_TAG}"
-          err="${RUNNER_TEMP}/container-manifest-ref-check.err"
-          if docker buildx imagetools inspect "${REF}" >/dev/null 2>"${err}"; then
-            echo "::error::container image ${REF} already exists; refusing to overwrite"
-            exit 1
-          fi
-          if ! grep -Eiq '(not found|manifest unknown|name unknown|404)' "${err}"; then
-            echo "::error::could not verify container image ${REF} is absent"
-            cat "${err}" >&2 || true
-            exit 1
-          fi
-          docker buildx imagetools create \
+          ensure_container_ref_absent "${REF}"
+          retry_ghcr "create container manifest ${REF}" docker buildx imagetools create \
             -t "${REF}" \
             "${IMAGE}:${IMAGE_TAG}-amd64" \
             "${IMAGE}:${IMAGE_TAG}-arm64"
@@ -505,13 +588,31 @@ jobs:
 
       - name: Sign container image
         run: |
+          retry_ghcr() {
+            local description="$1"
+            shift
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if "$@"; then
+                return 0
+              fi
+              if [ "${attempt}" -eq 5 ]; then
+                echo "::error::${description} failed after ${attempt} attempts"
+                return 1
+              fi
+              delay=$((attempt * 5))
+              echo "::warning::${description} failed; retrying in ${delay}s"
+              sleep "${delay}"
+            done
+          }
+
           VERSION=${GITHUB_REF_NAME#v}
           IMAGE_TAG="${VERSION}"
           if [ "${{ matrix.flavor }}" = "gobgp" ]; then
             IMAGE_TAG="${VERSION}-gobgp"
           fi
           IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]'):${IMAGE_TAG}
-          cosign sign --yes "${IMAGE}"
+          retry_ghcr "sign ${IMAGE}" cosign sign --yes "${IMAGE}"
 
   iso:
     name: ISO (${{ matrix.flavor }})
@@ -732,18 +833,45 @@ jobs:
           CREATED=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
+          retry_ghcr() {
+            local description="$1"
+            shift
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if "$@"; then
+                return 0
+              fi
+              if [ "${attempt}" -eq 5 ]; then
+                echo "::error::${description} failed after ${attempt} attempts"
+                return 1
+              fi
+              delay=$((attempt * 5))
+              echo "::warning::${description} failed; retrying in ${delay}s"
+              sleep "${delay}"
+            done
+          }
+
           ensure_oci_ref_absent() {
             local ref="$1"
-            local err="${RUNNER_TEMP}/oras-ref-check.err"
-            if oras manifest fetch "${ref}" >/dev/null 2>"${err}"; then
-              echo "::error::OCI artifact ${ref} already exists; refusing to overwrite"
-              exit 1
-            fi
-            if ! grep -Eiq '(not found|manifest unknown|name unknown|404)' "${err}"; then
-              echo "::error::could not verify OCI artifact ${ref} is absent"
-              cat "${err}" >&2 || true
-              exit 1
-            fi
+            local attempt err
+            for attempt in 1 2 3 4 5; do
+              err="${RUNNER_TEMP}/oras-ref-check-${attempt}.err"
+              if oras manifest fetch "${ref}" >/dev/null 2>"${err}"; then
+                echo "::error::OCI artifact ${ref} already exists; refusing to overwrite"
+                return 1
+              fi
+              if grep -Eiq '(not found|manifest unknown|name unknown|404)' "${err}"; then
+                return 0
+              fi
+              if [ "${attempt}" -eq 5 ]; then
+                echo "::error::could not verify OCI artifact ${ref} is absent"
+                cat "${err}" >&2 || true
+                return 1
+              fi
+              delay=$((attempt * 5))
+              echo "::warning::could not verify OCI artifact ${ref}; retrying in ${delay}s"
+              sleep "${delay}"
+            done
           }
 
           for flavor in default gobgp slim micro; do
@@ -774,7 +902,7 @@ jobs:
 
             args=("${INITRAMFS}:${MEDIA_TYPE}" "${CHECKSUM}:text/plain")
 
-            oras push "${REF}" \
+            retry_ghcr "publish OCI artifact ${REF}" oras push "${REF}" \
               --artifact-type application/vnd.booty.initramfs.v1 \
               --annotation "org.opencontainers.image.title=BOOTy initramfs (${flavor}/${{ matrix.arch }})" \
               --annotation "org.opencontainers.image.version=${VERSION}" \
@@ -787,11 +915,29 @@ jobs:
               --annotation "io.booty.github.run_id=${{ github.run_id }}" \
               --annotation "io.booty.github.run_attempt=${{ github.run_attempt }}" \
               "${args[@]}"
-            cosign sign --yes "${REF}"
+            retry_ghcr "sign OCI artifact ${REF}" cosign sign --yes "${REF}"
           done
 
       - name: Publish binary artifact
         run: |
+          retry_ghcr() {
+            local description="$1"
+            shift
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if "$@"; then
+                return 0
+              fi
+              if [ "${attempt}" -eq 5 ]; then
+                echo "::error::${description} failed after ${attempt} attempts"
+                return 1
+              fi
+              delay=$((attempt * 5))
+              echo "::warning::${description} failed; retrying in ${delay}s"
+              sleep "${delay}"
+            done
+          }
+
           VERSION=${GITHUB_REF_NAME#v}
           REPO=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           CREATED=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -826,7 +972,7 @@ jobs:
 
           args=("${BINARY}:application/vnd.cncf.binary.layer.v1" "${CHECKSUM}:text/plain")
 
-          oras push "${REF}" \
+          retry_ghcr "publish OCI artifact ${REF}" oras push "${REF}" \
             --artifact-type application/vnd.booty.binary.v1 \
             --annotation "org.opencontainers.image.title=BOOTy binary (${{ matrix.arch }})" \
             --annotation "org.opencontainers.image.version=${VERSION}" \
@@ -838,11 +984,29 @@ jobs:
             --annotation "io.booty.github.run_id=${{ github.run_id }}" \
             --annotation "io.booty.github.run_attempt=${{ github.run_attempt }}" \
             "${args[@]}"
-          cosign sign --yes "${REF}"
+          retry_ghcr "sign OCI artifact ${REF}" cosign sign --yes "${REF}"
 
       - name: Publish SBOM artifact
         if: matrix.arch == 'amd64'
         run: |
+          retry_ghcr() {
+            local description="$1"
+            shift
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if "$@"; then
+                return 0
+              fi
+              if [ "${attempt}" -eq 5 ]; then
+                echo "::error::${description} failed after ${attempt} attempts"
+                return 1
+              fi
+              delay=$((attempt * 5))
+              echo "::warning::${description} failed; retrying in ${delay}s"
+              sleep "${delay}"
+            done
+          }
+
           VERSION=${GITHUB_REF_NAME#v}
           REPO=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           CREATED=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -867,7 +1031,7 @@ jobs:
           fi
 
           echo "Publishing ${REF}"
-          oras push "${REF}" \
+          retry_ghcr "publish OCI artifact ${REF}" oras push "${REF}" \
             --artifact-type application/vnd.booty.sbom.v1 \
             --annotation "org.opencontainers.image.title=BOOTy SBOM" \
             --annotation "org.opencontainers.image.version=${VERSION}" \
@@ -878,4 +1042,4 @@ jobs:
             --annotation "io.booty.github.run_id=${{ github.run_id }}" \
             --annotation "io.booty.github.run_attempt=${{ github.run_attempt }}" \
             "${SBOM}:application/spdx+json"
-          cosign sign --yes "${REF}"
+          retry_ghcr "sign OCI artifact ${REF}" cosign sign --yes "${REF}"

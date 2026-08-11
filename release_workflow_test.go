@@ -2,6 +2,34 @@ package main
 
 import "testing"
 
+func TestReleaseWorkflowRetriesGHCRAuthorizationPropagation(t *testing.T) {
+	wf := loadWorkflow(t, ".github/workflows/release-v2.yml")
+
+	container, ok := wf.Jobs["container"]
+	if !ok {
+		t.Fatal("missing container job")
+	}
+	requireWorkflowStepRunContains(t, container, "Build and push per-arch image", "ensure_container_ref_absent")
+	requireWorkflowStepRunContains(t, container, "Build and push per-arch image", "for attempt in 1 2 3 4 5")
+
+	manifest, ok := wf.Jobs["container-manifest"]
+	if !ok {
+		t.Fatal("missing container-manifest job")
+	}
+	requireWorkflowStepRunContains(t, manifest, "Create and push multi-arch manifest", "ensure_container_ref_absent")
+	requireWorkflowStepRunContains(t, manifest, "Create and push multi-arch manifest", `retry_ghcr "create container manifest`)
+	requireWorkflowStepRunContains(t, manifest, "Sign container image", `retry_ghcr "sign ${IMAGE}"`)
+
+	oci, ok := wf.Jobs["oci-artifacts"]
+	if !ok {
+		t.Fatal("missing oci-artifacts job")
+	}
+	requireWorkflowStepRunContains(t, oci, "Publish initramfs artifacts", "ensure_oci_ref_absent")
+	requireWorkflowStepRunContains(t, oci, "Publish initramfs artifacts", `retry_ghcr "sign OCI artifact`)
+	requireWorkflowStepRunContains(t, oci, "Publish binary artifact", `retry_ghcr "sign OCI artifact`)
+	requireWorkflowStepRunContains(t, oci, "Publish SBOM artifact", `retry_ghcr "sign OCI artifact`)
+}
+
 func TestReleaseWorkflowSBOMScansReleaseArtifacts(t *testing.T) {
 	wf := loadWorkflow(t, ".github/workflows/release-v2.yml")
 	job, ok := wf.Jobs["sbom"]
