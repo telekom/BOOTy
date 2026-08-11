@@ -142,6 +142,12 @@ Release and promotion tags must resolve to commits reachable from `origin/main`;
 the workflows fail closed before building or promoting artifacts when a tag
 points at unmerged history.
 
+GHCR can briefly deny authenticated reads while a new package is being
+initialized. Release publication retries bounded GHCR preflight, manifest, and
+signing operations so that propagation delays do not leave a release tag with
+only partially published assets. Existing tags still fail closed rather than
+being overwritten.
+
 ```yaml
 # .github/workflows/release-v2.yml
 name: Release
