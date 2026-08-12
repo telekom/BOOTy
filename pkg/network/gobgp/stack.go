@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/network"
@@ -15,12 +16,14 @@ import (
 
 // Stack composes underlay and overlay tiers into a network.Mode implementation.
 type Stack struct {
-	underlay *UnderlayTier
-	overlay  *OverlayTier
-	cfg      *Config
-	log      *slog.Logger
-	gateway  *netlink.Route
-	routes   gatewayRouteOps
+	underlay   *UnderlayTier
+	overlay    *OverlayTier
+	cfg        *Config
+	log        *slog.Logger
+	gateway    *netlink.Route
+	routes     gatewayRouteOps
+	vtepMu     sync.Mutex
+	vtepRoutes map[string]*netlink.Route
 }
 
 type gatewayRouteOps interface {
@@ -77,11 +80,12 @@ func NewStack(cfg *Config) *Stack {
 	overlay := NewOverlayTier(cfg)
 
 	return &Stack{
-		underlay: underlay,
-		overlay:  overlay,
-		cfg:      cfg,
-		log:      slog.With("mode", "gobgp"),
-		routes:   netlinkGatewayRouteOps{},
+		underlay:   underlay,
+		overlay:    overlay,
+		cfg:        cfg,
+		log:        slog.With("mode", "gobgp"),
+		routes:     netlinkGatewayRouteOps{},
+		vtepRoutes: map[string]*netlink.Route{},
 	}
 }
 
@@ -111,6 +115,9 @@ func (s *Stack) Setup(ctx context.Context, _ *network.Config) error {
 
 	// Share the BGP server with the overlay tier.
 	s.overlay.SetBgpServer(s.underlay.BgpServer())
+	if s.cfg.ProvisionGateway == "" {
+		s.overlay.ensureVTEPRoute = s.ensureVTEPRoute
+	}
 
 	if err := s.overlay.Setup(ctx); err != nil {
 		// Clean up the underlay that was already started.
@@ -374,6 +381,51 @@ func (s *Stack) teardownGatewayRoute() {
 	s.gateway = nil
 }
 
+func (s *Stack) ensureVTEPRoute(vtep net.IP) error {
+	vtep = vtep.To4()
+	if vtep == nil {
+		return fmt.Errorf("VTEP must be an IPv4 address")
+	}
+	key := vtep.String()
+	s.vtepMu.Lock()
+	defer s.vtepMu.Unlock()
+	if _, ok := s.vtepRoutes[key]; ok {
+		return nil
+	}
+	if len(s.underlay.nics) == 0 {
+		return fmt.Errorf("no underlay NICs available")
+	}
+	nic := s.selectGatewayNIC()
+	link, err := s.gatewayRoutes().LinkByName(nic)
+	if err != nil {
+		return fmt.Errorf("find underlay NIC %s: %w", nic, err)
+	}
+	route := &netlink.Route{
+		Dst:       &net.IPNet{IP: vtep, Mask: net.CIDRMask(32, 32)},
+		LinkIndex: link.Attrs().Index,
+		Scope:     netlink.SCOPE_LINK,
+	}
+	if s.overlay.cfg.VRFName != "" {
+		route.Table = int(s.overlay.cfg.VRFTableID)
+	}
+	if err := s.gatewayRoutes().RouteReplace(route); err != nil {
+		return fmt.Errorf("replace underlay route to VTEP %s via %s: %w", key, nic, err)
+	}
+	s.vtepRoutes[key] = route
+	return nil
+}
+
+func (s *Stack) teardownVTEPRoutes() {
+	s.vtepMu.Lock()
+	defer s.vtepMu.Unlock()
+	for vtep, route := range s.vtepRoutes {
+		if err := s.gatewayRoutes().RouteDel(route); err != nil {
+			s.log.Debug("failed to delete Type-5 VTEP route", "vtep", vtep, "error", err)
+		}
+	}
+	clear(s.vtepRoutes)
+}
+
 func (s *Stack) gatewayRoutes() gatewayRouteOps {
 	if s.routes != nil {
 		return s.routes
@@ -406,6 +458,7 @@ func (s *Stack) Teardown(ctx context.Context) error {
 	var firstErr error
 
 	s.teardownGatewayRoute()
+	s.teardownVTEPRoutes()
 
 	if err := s.overlay.Teardown(ctx); err != nil {
 		s.log.Warn("Overlay teardown error", "error", err)

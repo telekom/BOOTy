@@ -1559,8 +1559,15 @@ jobs:
               timeout 5 sudo docker exec "${name}" ip addr show 2>&1 || true
               echo "=== ip route show ==="
               timeout 5 sudo docker exec "${name}" ip route show 2>&1 || true
+              echo "=== ip neigh show ==="
+              timeout 5 sudo docker exec "${name}" ip neigh show 2>&1 || true
+              echo "=== ip route get VM paths ==="
+              timeout 5 sudo docker exec "${name}" ip route get 10.200.0.10 2>&1 || true
+              timeout 5 sudo docker exec "${name}" ip route get 10.200.0.11 2>&1 || true
               echo "=== bridge fdb show ==="
               timeout 5 sudo docker exec "${name}" bridge fdb show 2>&1 || true
+              echo "=== listeners ==="
+              timeout 5 sudo docker exec "${name}" ss -ltnp 2>&1 || true
             } > type5-logs/${node}-network.txt 2>&1
           done
 

@@ -738,43 +738,7 @@ func ensureNetworkConnectivity(ctx context.Context, cfg *config.MachineConfig, n
 
 // setupNetworkMode detects and configures the appropriate network mode.
 func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.Mode, error) {
-	netCfg := &network.Config{
-		UnderlaySubnet:   cfg.Network.EVPN.UnderlaySubnet,
-		UnderlayIP:       cfg.Network.EVPN.UnderlayIP,
-		OverlaySubnet:    cfg.Network.EVPN.OverlaySubnet,
-		IPMISubnet:       cfg.Network.IPMI.Subnet,
-		ASN:              cfg.Network.BGP.ASN,
-		ProvisionVNI:     cfg.Network.EVPN.ProvisionVNI,
-		ProvisionIP:      cfg.Network.EVPN.ProvisionIP,
-		ProvisionGateway: cfg.Network.EVPN.ProvisionGateway,
-		DNSResolvers:     cfg.Network.DNSResolvers,
-		DCGWIPs:          cfg.Network.EVPN.DCGWIPs,
-		LeafASN:          cfg.Network.EVPN.LeafASN,
-		LocalASN:         cfg.Network.EVPN.LocalASN,
-		OverlayAggregate: cfg.Network.EVPN.OverlayAggregate,
-		VPNRT:            cfg.Network.EVPN.VPNRT,
-		StaticIP:         cfg.Network.Static.IP,
-		StaticGateway:    cfg.Network.Static.Gateway,
-		StaticIface:      cfg.Network.Static.Iface,
-		BondInterfaces:   cfg.Network.Bond.Interfaces,
-		BondMode:         cfg.Network.Bond.Mode,
-		VRFName:          cfg.Network.VRF.Name,
-		VRFTableID:       cfg.Network.VRF.TableID,
-		BGPKeepalive:     cfg.Network.BGP.Keepalive,
-		BGPHold:          cfg.Network.BGP.Hold,
-		BFDTransmitMS:    cfg.Network.BGP.BFDTransmitMS,
-		BFDReceiveMS:     cfg.Network.BGP.BFDReceiveMS,
-		NetworkMode:      cfg.Network.Mode,
-		BGPPeerMode:      network.ParsePeerMode(cfg.Network.BGP.PeerMode),
-		BGPInterfaces:    cfg.Network.BGP.Interfaces,
-		BGPNeighbors:     cfg.Network.BGP.Neighbors,
-		BGPRemoteASN:     cfg.Network.BGP.RemoteASN,
-		BGPUnderlayAF:    cfg.Network.BGP.UnderlayAF,
-		BGPOverlayType:   cfg.Network.BGP.OverlayType,
-		EVPNL2Enabled:    cfg.Network.EVPN.L2Enabled,
-		BGPAuthPassword:  cfg.Network.BGP.AuthPassword,
-		BGPMinPeers:      cfg.Network.BGP.MinPeers,
-	}
+	netCfg := networkConfigFromMachineConfig(cfg)
 
 	// Auto-detect netplan configuration files injected by the provisioner.
 	// Netplan-derived values override vars-based values, allowing the same
@@ -838,6 +802,47 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 
 	slog.Info("using DHCP network mode")
 	return networkModeWithResolvers(ctx, netCfg, dhcpFallback(ctx, netCfg), linkCleanup)
+}
+
+func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
+	return &network.Config{
+		UnderlaySubnet:   cfg.Network.EVPN.UnderlaySubnet,
+		UnderlayIP:       cfg.Network.EVPN.UnderlayIP,
+		OverlaySubnet:    cfg.Network.EVPN.OverlaySubnet,
+		IPMISubnet:       cfg.Network.IPMI.Subnet,
+		ASN:              cfg.Network.BGP.ASN,
+		ProvisionVNI:     cfg.Network.EVPN.ProvisionVNI,
+		ProvisionIP:      cfg.Network.EVPN.ProvisionIP,
+		ProvisionGateway: cfg.Network.EVPN.ProvisionGateway,
+		DNSResolvers:     cfg.Network.DNSResolvers,
+		DCGWIPs:          cfg.Network.EVPN.DCGWIPs,
+		LeafASN:          cfg.Network.EVPN.LeafASN,
+		LocalASN:         cfg.Network.EVPN.LocalASN,
+		OverlayAggregate: cfg.Network.EVPN.OverlayAggregate,
+		VPNRT:            cfg.Network.EVPN.VPNRT,
+		StaticIP:         cfg.Network.Static.IP,
+		StaticGateway:    cfg.Network.Static.Gateway,
+		StaticIface:      cfg.Network.Static.Iface,
+		BondInterfaces:   cfg.Network.Bond.Interfaces,
+		BondMode:         cfg.Network.Bond.Mode,
+		VRFName:          cfg.Network.VRF.Name,
+		VRFTableID:       cfg.Network.VRF.TableID,
+		BGPKeepalive:     cfg.Network.BGP.Keepalive,
+		BGPHold:          cfg.Network.BGP.Hold,
+		BFDTransmitMS:    cfg.Network.BGP.BFDTransmitMS,
+		BFDReceiveMS:     cfg.Network.BGP.BFDReceiveMS,
+		NetworkMode:      cfg.Network.Mode,
+		BGPPeerMode:      network.ParsePeerMode(cfg.Network.BGP.PeerMode),
+		BGPInterfaces:    cfg.Network.BGP.Interfaces,
+		BGPNeighbors:     cfg.Network.BGP.Neighbors,
+		BGPRemoteASN:     cfg.Network.BGP.RemoteASN,
+		BGPUnderlayAF:    cfg.Network.BGP.UnderlayAF,
+		BGPOverlayType:   cfg.Network.BGP.OverlayType,
+		EVPNL2Enabled:    cfg.Network.EVPN.L2Enabled,
+		EVPNType5Only:    cfg.Network.EVPN.Type5Only,
+		BGPAuthPassword:  cfg.Network.BGP.AuthPassword,
+		BGPMinPeers:      cfg.Network.BGP.MinPeers,
+	}
 }
 
 func networkModeWithResolvers(ctx context.Context, netCfg *network.Config, mode network.Mode, cleanup *linkLayerCleanup) (network.Mode, error) {

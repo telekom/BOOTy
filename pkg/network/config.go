@@ -86,6 +86,8 @@ type Config struct {
 
 	// EVPN L2 overlay (Type-2/3 route processing) — disabled by default.
 	EVPNL2Enabled bool // Enable L2 overlay route handling
+	// EVPNType5Only selects direct Type-5 routing without an L2 gateway.
+	EVPNType5Only bool
 
 	// VLAN configuration.
 	VLANs []VLANConfig // 802.1Q VLAN interfaces to create before network mode setup
