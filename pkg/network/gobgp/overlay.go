@@ -389,7 +389,7 @@ func (o *OverlayTier) createVXLANAndBridge() error {
 	// Install a BUM FDB entry so broadcast/unknown/multicast traffic
 	// (e.g. ARP for the gateway) is flooded to the gateway VTEP.
 	// Without this, the VXLAN FDB is empty and BUM frames are dropped.
-	if o.cfg.EnableL2 && o.cfg.ProvisionGateway != "" {
+	if o.shouldInstallGatewayFDB() {
 		if err := o.addGatewayFDB(vxLink); err != nil {
 			o.log.Warn("gateway BUM FDB entry failed (non-fatal)", "error", err)
 		}
@@ -484,6 +484,10 @@ func (o *OverlayTier) addProvisionIP() error {
 
 	o.log.Info("assigned provision IP", "bridge", o.cfg.BridgeName, "ip", o.cfg.ProvisionIP)
 	return nil
+}
+
+func (o *OverlayTier) shouldInstallGatewayFDB() bool {
+	return !o.cfg.Type5Only && o.cfg.ProvisionGateway != ""
 }
 
 // addGatewayFDB installs a BUM (broadcast/unknown/multicast) FDB entry on the

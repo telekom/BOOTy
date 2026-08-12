@@ -80,6 +80,63 @@ func (m *mockOverlayNetlinkOps) RouteDel(route *netlink.Route) error {
 	return m.routeDelErr
 }
 
+func TestShouldInstallGatewayFDB(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+		want bool
+	}{
+		{name: "legacy gateway", cfg: Config{ProvisionGateway: testProvisionGateway}, want: true},
+		{name: "missing gateway", cfg: Config{}, want: false},
+		{name: "explicit Type-5-only", cfg: Config{ProvisionGateway: testProvisionGateway, Type5Only: true}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			overlay := NewOverlayTier(&tt.cfg)
+			if got := overlay.shouldInstallGatewayFDB(); got != tt.want {
+				t.Fatalf("shouldInstallGatewayFDB() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEnsureType5VTEPRoute(t *testing.T) {
+	overlay := NewOverlayTier(&Config{})
+	if _, ok := overlay.ensureType5VTEP("192.168.4.11", false); !ok {
+		t.Fatal("nil VTEP route installer must succeed")
+	}
+
+	overlay.ensureVTEPRoute = func(net.IP) error { return nil }
+	if _, ok := overlay.ensureType5VTEP("192.168.4.11", false); !ok {
+		t.Fatal("successful VTEP route installer must succeed")
+	}
+
+	overlay.ensureVTEPRoute = func(net.IP) error { return errors.New("unreachable") }
+	if _, ok := overlay.ensureType5VTEP("192.168.4.11", false); ok {
+		t.Fatal("failed VTEP route installer must fail")
+	}
+	if vtep, ok := overlay.ensureType5VTEP("invalid", true); !ok || vtep != nil {
+		t.Fatal("withdraw must permit a missing VTEP")
+	}
+}
+
+func TestHandleType5RouteStopsWhenVTEPRouteCannotBeInstalled(t *testing.T) {
+	ops := &mockOverlayNetlinkOps{}
+	overlay := NewOverlayTier(&Config{RouterID: "192.168.4.10", BridgeName: "br.provision"})
+	overlay.netlinkOps = ops
+	overlay.ensureVTEPRoute = func(net.IP) error { return errors.New("unreachable") }
+
+	overlay.handleType5Route(
+		&apipb.EVPNIPPrefixRoute{IpPrefix: "10.200.0.11", IpPrefixLen: 32},
+		"192.168.4.11",
+		nil,
+		false,
+	)
+	if len(ops.routeReplaces) != 0 {
+		t.Fatalf("installed %d Type-5 routes despite missing underlay VTEP reachability", len(ops.routeReplaces))
+	}
+}
+
 func TestBuildRouteDistinguisher(t *testing.T) {
 	tests := []struct {
 		name    string

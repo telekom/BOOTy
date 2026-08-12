@@ -317,7 +317,8 @@ root is mounted.
 | `RESCUE_TIMEOUT` | `0` | *(Phase 2)* Rescue wait timeout in seconds (0 = indefinite) |
 | `RESCUE_SSH_PUBKEY` | — | *(Phase 2)* SSH public key for rescue shell access |
 | `RESCUE_AUTO_MOUNT` | `false` | *(Phase 2)* Auto-mount disks in rescue shell mode |
-| `EVPN_L2_ENABLED` | `false` | Enable EVPN L2 overlay (Type-2/3 route origination and handling) in GoBGP mode. Default is Type-5 only (L3) |
+| `EVPN_L2_ENABLED` | `false` | Enable EVPN L2 overlay (Type-2/3 route origination and handling) in GoBGP mode |
+| `EVPN_TYPE5_ONLY` | `false` | Explicitly select direct EVPN Type-5 routing without an L2 gateway; mutually exclusive with `EVPN_L2_ENABLED` |
 | `HEALTH_CHECKS_ENABLED` | `false` | Run pre-provisioning hardware health checks |
 | `HEALTH_MIN_MEMORY_GB` | `0` | Minimum RAM (GiB) for health check (0 = skip check) |
 | `HEALTH_MIN_CPUS` | `0` | Minimum CPU count for health check (0 = skip check) |
@@ -432,7 +433,7 @@ root is mounted.
 | `asn_server` | — | Local BGP autonomous system number |
 | `provision_vni` | — | VXLAN VNI for the provisioning network. GoBGP rejects `asn_server > 65535` together with `provision_vni > 65535` because 4-octet ASN RD/RT local-admin values are 16-bit. |
 | `provision_ip` | — | IP/mask on the provisioning bridge (e.g. `10.100.0.20/24`) |
-| `provision_gateway` | — | Gateway VTEP IP for VXLAN BUM flooding and kernel route |
+| `provision_gateway` | — | Gateway VTEP IP for VXLAN BUM flooding and kernel route; optional with `EVPN_TYPE5_ONLY=true` |
 | `overlay_subnet` | — | Overlay CIDR (e.g. `2a01:598:40a:5481::/64`) |
 | `dns_resolver` | — | Comma-separated DNS server IPs |
 

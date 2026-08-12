@@ -58,6 +58,17 @@ func TestMergeNetplanConfigPreservesProvisionPrefixForSameHostMask(t *testing.T)
 	}
 }
 
+func TestNetworkConfigFromMachineConfigWiresType5Only(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Network.EVPN.Type5Only = true
+
+	netCfg := networkConfigFromMachineConfig(cfg)
+
+	if !netCfg.EVPNType5Only {
+		t.Fatal("EVPN Type-5-only mode was not wired into the network stack config")
+	}
+}
+
 func TestMergeProvisionIPUsesDetectedNetworkPrefix(t *testing.T) {
 	got := mergeProvisionIP("10.200.0.10/32", "10.200.0.10/24")
 

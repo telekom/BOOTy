@@ -5,14 +5,14 @@
 #   - leaf01 (ASN 65001): pure L3 router for booty-vm0 (no VXLAN)
 #   - leaf02 (ASN 65002): pure L3 router for booty-vm1 (no VXLAN)
 #   - booty-vm0/vm1: GoBGP unnumbered peering with per-machine leaf
-#   - caprf-mock: sidecar in spine01's namespace, serving 10.100.0.1
 #
 # EVPN model: pure Type-5 (L3VNI 1000 only, no L2VNI).
 #   - VMs advertise ipv4 unicast (Type-5 IP prefix routes) via L3VNI 1000.
 #   - Spine uses advertise ipv4 unicast + advertise-all-vni.
 #   - Leaves are pure L3 routers forwarding EVPN + IPv4 between VMs and spine.
+#   - The spine/DCGW owns no VXLAN bridge, L2VNI, SVI, or service IP.
 #   - NO Type-2 (MAC/IP) or Type-3 (IMET) routes should exist from VMs.
-#   - No static spine FDB entries: FRR must program VXLAN reachability from Type-5.
+#   - No static FDB entries: BOOTy must program VM VXLAN reachability from Type-5.
 #
 # Note: No VRF used here — GH Actions runner kernel lacks VRF support.
 # Production uses Vrf_underlay, but the EVPN Type-5 behavior is identical.
@@ -20,7 +20,7 @@
 # Address plan:
 #   Underlay: 192.168.4.0/24 (VTEP loopbacks on lo/dummy)
 #     spine01=192.168.4.1  VM0=192.168.4.10  VM1=192.168.4.11
-#   Overlay: 10.0.0.0/24 (router-id), 10.100.0.0/24 (gateway), 10.200.0.0/24 (VM /32s)
+#   Overlay: 10.0.0.0/24 (router-id), 10.200.0.0/24 (VM /32s)
 #
 # FRR 10.3.2+ is required; 10.3.1 strips VXLAN ET:8 from transited Type-5 routes.
 #

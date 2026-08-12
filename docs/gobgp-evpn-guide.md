@@ -61,10 +61,11 @@ export dns_resolver="8.8.8.8"
 | `asn_server` | Yes | — | Local BGP AS number |
 | `provision_vni` | Yes | — | VXLAN VNI for provisioning network. With `asn_server > 65535`, values above 65535 are rejected because 4-octet ASN RD/RT local-admin values are 16-bit. |
 | `provision_ip` | Yes | — | Overlay IP in CIDR notation (e.g. `10.100.0.20/24`) |
-| `provision_gateway` | Yes | — | Remote VTEP IP (spine/DCGW loopback) for gateway route + BUM FDB |
+| `provision_gateway` | L2 only | — | Remote VTEP IP for gateway route + BUM FDB; optional for direct Type-5 |
 | `dns_resolver` | No | — | DNS resolver IP |
 | `overlay_subnet` | No | — | IPv6 overlay subnet (optional) |
 | `EVPN_L2_ENABLED` | No | `false` | Enable Type-2/3 EVPN route origination and handling |
+| `EVPN_TYPE5_ONLY` | No | `false` | Explicitly select direct Type-5 routing; mutually exclusive with `EVPN_L2_ENABLED` |
 
 GoBGP currently does not implement BFD. `BFD_TRANSMIT_MS` and
 `BFD_RECEIVE_MS` are consumed by the FRR backend; GoBGP relies on keepalive and
@@ -122,9 +123,9 @@ export BGP_REMOTE_ASN="65000"
 
 ### What BOOTy Advertises
 
-By default, BOOTy advertises **Type-5 (IP Prefix)** routes only. These
-announce provisioning host reachability with VXLAN encapsulation info,
-allowing the fabric to route traffic toward BOOTy's VTEP.
+BOOTy advertises **Type-5 (IP Prefix)** routes for provisioning host
+reachability. Set `EVPN_TYPE5_ONLY=true` to use direct Type-5 forwarding
+without a configured gateway VTEP.
 
 Type-5-only advertisements use a `0.0.0.0` EVPN gateway address and retain
 the VTEP as the BGP next hop. They include the VXLAN tunnel-encapsulation and
@@ -155,8 +156,7 @@ Routes originating from BOOTy's own router-id are skipped.
 
 ### Gateway Connectivity
 
-The `provision_gateway` variable is critical for VXLAN data-plane
-operation. When set, BOOTy:
+In an L2 overlay, `provision_gateway` is required. When set, BOOTy:
 
 1. **Installs a /32 kernel route** to the gateway VTEP via the first
    physical NIC (`installGatewayRoute()`). This ensures VXLAN-encapsulated
@@ -166,8 +166,11 @@ operation. When set, BOOTy:
    VTEP (`addGatewayFDB()`). This ensures ARP/broadcast frames are
    flooded to the gateway before dynamic routes arrive.
 
-Without `provision_gateway`, the VXLAN data plane will not function —
-there is no kernel route to deliver encapsulated packets to the remote VTEP.
+For a direct Type-5-only fabric, set `EVPN_TYPE5_ONLY=true` and omit
+`provision_gateway`. BOOTy learns each remote VTEP from the Type-5 next hop,
+installs its underlay /32 reachability route, and programs the router-MAC FDB
+from the route's extended community. DCGWs in this topology must not own an
+L2VNI, SVI, bridge, VXLAN interface, or provisioning gateway address.
 
 ## Network Interfaces Created
 

@@ -877,6 +877,7 @@ vpn_rt="65188:2002"
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if cfg.Network.EVPN.UnderlaySubnet != "192.168.4.0/24" {
 		t.Errorf("UnderlaySubnet = %q", cfg.Network.EVPN.UnderlaySubnet)
 	}
@@ -915,6 +916,16 @@ vpn_rt="65188:2002"
 	}
 	if cfg.Network.EVPN.VPNRT != "65188:2002" {
 		t.Errorf("VPNRT = %q", cfg.Network.EVPN.VPNRT)
+	}
+}
+
+func TestParseVarsEVPNType5Only(t *testing.T) {
+	cfg, err := ParseVars(strings.NewReader(`EVPN_TYPE5_ONLY="true"`))
+	if err != nil {
+		t.Fatalf("ParseVars() error = %v", err)
+	}
+	if !cfg.Network.EVPN.Type5Only {
+		t.Fatal("EVPN_TYPE5_ONLY was not parsed")
 	}
 }
 
