@@ -127,19 +127,24 @@ func extractTunnels(np *Config, cfg *network.Config) {
 		if t.Local != "" && cfg.UnderlayIP == "" {
 			cfg.UnderlayIP = t.Local
 		}
+		if t.Link != "" && cfg.VXLANLink == "" {
+			cfg.VXLANLink = t.Link
+		}
 	}
 }
 
 func extractDummyDevices(np *Config, cfg *network.Config) {
 	for _, name := range sortedKeys(np.Network.DummyDevices) {
-		if cfg.UnderlayIP != "" {
-			break
-		}
 		d := np.Network.DummyDevices[name]
 		for _, addr := range d.Addresses {
 			if strings.HasSuffix(addr, "/32") {
-				cfg.UnderlayIP = strings.TrimSuffix(addr, "/32")
-				break
+				ip := strings.TrimSuffix(addr, "/32")
+				if cfg.UnderlayIP == "" {
+					cfg.UnderlayIP = ip
+				}
+				if cfg.UnderlayDummyName == "" && cfg.UnderlayIP == ip {
+					cfg.UnderlayDummyName = name
+				}
 			}
 		}
 	}

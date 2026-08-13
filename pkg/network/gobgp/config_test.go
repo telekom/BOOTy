@@ -887,6 +887,29 @@ func TestNewConfigMapsBGPInterfaces(t *testing.T) {
 	}
 }
 
+func TestNewConfigMapsNetplanVXLANBinding(t *testing.T) {
+	netCfg := &network.Config{
+		UnderlayIP:        "192.168.4.10",
+		ASN:               65000,
+		ProvisionVNI:      1000,
+		ProvisionGateway:  testProvisionGateway,
+		BGPPeerMode:       network.PeerModeUnnumbered,
+		UnderlayDummyName: "dum.underlay",
+		VXLANLink:         "dum.underlay",
+	}
+
+	cfg, err := NewConfig(netCfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.UnderlayDummyName != "dum.underlay" {
+		t.Errorf("UnderlayDummyName = %q, want dum.underlay", cfg.UnderlayDummyName)
+	}
+	if cfg.VXLANLink != "dum.underlay" {
+		t.Errorf("VXLANLink = %q, want dum.underlay", cfg.VXLANLink)
+	}
+}
+
 func TestNewConfigDefaultsMinEstablishedPeersToOne(t *testing.T) {
 	netCfg := &network.Config{
 		UnderlayIP:       "10.0.0.1",

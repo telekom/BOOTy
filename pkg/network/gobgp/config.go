@@ -54,6 +54,8 @@ type Config struct {
 	OverlayVRFName    string           // Overlay bridge VRF name (default: follows VRFName)
 	VRFTableID        uint32           // Routing table ID for the underlay VRF (default: 1000)
 	OverlayVRFTableID uint32           // Routing table ID for the overlay bridge VRF (default: VRFTableID)
+	UnderlayDummyName string           // Underlay dummy device name (default: "dummy.underlay")
+	VXLANLink         string           // VXLAN underlay link from netplan (optional)
 	MTU               int              // Physical interface MTU (default: 9000)
 	KeepaliveInterval uint64           // BGP keepalive seconds (default: 3)
 	HoldTime          uint64           // BGP hold timer seconds (default: 9)
@@ -116,6 +118,8 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		OverlayVRFName:      overlayVRFName,
 		VRFTableID:          netCfg.VRFTableID,
 		OverlayVRFTableID:   netCfg.OverlayVRFTableID,
+		UnderlayDummyName:   netCfg.UnderlayDummyName,
+		VXLANLink:           netCfg.VXLANLink,
 		MTU:                 netCfg.MTU,
 		KeepaliveInterval:   uint64(netCfg.BGPKeepalive),
 		HoldTime:            uint64(netCfg.BGPHold),

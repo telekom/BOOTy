@@ -403,19 +403,9 @@ func (o *OverlayTier) createVXLANAndBridge() error {
 }
 
 func (o *OverlayTier) createVXLAN(name string) (netlink.Link, error) {
-	vxlanMTU := o.cfg.MTU - vxlanOverhead
-	if vxlanMTU <= 0 {
-		vxlanMTU = defaultMTU
-	}
-
-	srcAddr := net.ParseIP(o.cfg.RouterID)
-	vxlan := &netlink.Vxlan{
-		LinkAttrs:    netlink.LinkAttrs{Name: name},
-		VxlanId:      o.cfg.ProvisionVNI,
-		SrcAddr:      srcAddr,
-		Port:         vxlanPort,
-		Learning:     false,
-		VtepDevIndex: 0,
+	vxlan, err := o.newVXLAN(name)
+	if err != nil {
+		return nil, err
 	}
 
 	if err := netlink.LinkAdd(vxlan); err != nil {
@@ -430,10 +420,61 @@ func (o *OverlayTier) createVXLAN(name string) (netlink.Link, error) {
 	if err != nil {
 		return nil, fmt.Errorf("find VXLAN: %w", err)
 	}
-	if err := netlink.LinkSetMTU(link, vxlanMTU); err != nil {
+	if err := netlink.LinkSetMTU(link, o.vxlanMTU()); err != nil {
 		return nil, fmt.Errorf("set VXLAN MTU: %w", err)
 	}
 	return link, nil
+}
+
+func (o *OverlayTier) newVXLAN(name string) (*netlink.Vxlan, error) {
+	srcAddr := net.ParseIP(o.cfg.RouterID)
+	vtepDevIndex, err := o.vtepDevIndex()
+	if err != nil {
+		return nil, err
+	}
+	vxlan := &netlink.Vxlan{
+		LinkAttrs:    netlink.LinkAttrs{Name: name},
+		VxlanId:      o.cfg.ProvisionVNI,
+		SrcAddr:      srcAddr,
+		Port:         vxlanPort,
+		Learning:     false,
+		VtepDevIndex: vtepDevIndex,
+	}
+	return vxlan, nil
+}
+
+func (o *OverlayTier) vxlanMTU() int {
+	mtu := o.cfg.MTU - vxlanOverhead
+	if mtu <= 0 {
+		return defaultMTU
+	}
+	return mtu
+}
+
+func (o *OverlayTier) vtepDevIndex() (int, error) {
+	linkName := strings.TrimSpace(o.cfg.VXLANLink)
+	if linkName == "" && o.cfg.VRFName != "" {
+		linkName = strings.TrimSpace(o.cfg.UnderlayDummyName)
+		if linkName == "" {
+			linkName = defaultUnderlayDummyName
+		}
+	}
+	if linkName == "" {
+		return 0, nil
+	}
+
+	ops := o.netlinkOps
+	if ops == nil {
+		ops = netlinkOverlayOps{}
+	}
+	link, err := ops.LinkByName(linkName)
+	if err != nil {
+		return 0, fmt.Errorf("find VXLAN underlay link %s: %w", linkName, err)
+	}
+	if link.Attrs() == nil || link.Attrs().Index <= 0 {
+		return 0, fmt.Errorf("VXLAN underlay link %s has invalid index", linkName)
+	}
+	return link.Attrs().Index, nil
 }
 
 func (o *OverlayTier) createBridge() (netlink.Link, error) {

@@ -80,6 +80,83 @@ func (m *mockOverlayNetlinkOps) RouteDel(route *netlink.Route) error {
 	return m.routeDelErr
 }
 
+func TestNewVXLANUsesConfiguredNetplanLink(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := &OverlayTier{
+		cfg: &Config{
+			RouterID:     "192.168.4.10",
+			ProvisionVNI: 1000,
+			VXLANLink:    "dum.underlay",
+		},
+		netlinkOps: mock,
+	}
+
+	vxlan, err := overlay.newVXLAN("vx1000")
+	if err != nil {
+		t.Fatalf("newVXLAN: %v", err)
+	}
+	if vxlan.VtepDevIndex != 42 {
+		t.Errorf("VtepDevIndex = %d, want 42", vxlan.VtepDevIndex)
+	}
+	if mock.linkName != "dum.underlay" {
+		t.Errorf("LinkByName called with %q, want dum.underlay", mock.linkName)
+	}
+}
+
+func TestNewVXLANLeavesDeviceUnboundWithoutNetplanLink(t *testing.T) {
+	overlay := &OverlayTier{
+		cfg:        &Config{RouterID: "192.168.4.10", ProvisionVNI: 1000},
+		netlinkOps: &mockOverlayNetlinkOps{},
+	}
+
+	vxlan, err := overlay.newVXLAN("vx1000")
+	if err != nil {
+		t.Fatalf("newVXLAN: %v", err)
+	}
+	if vxlan.VtepDevIndex != 0 {
+		t.Errorf("VtepDevIndex = %d, want 0", vxlan.VtepDevIndex)
+	}
+}
+
+func TestNewVXLANUsesUnderlayDummyForConfiguredVRF(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := &OverlayTier{
+		cfg: &Config{
+			RouterID: "192.168.4.10",
+			VRFName:  "Vrf_underlay",
+		},
+		netlinkOps: mock,
+	}
+
+	vxlan, err := overlay.newVXLAN("vx1000")
+	if err != nil {
+		t.Fatalf("newVXLAN: %v", err)
+	}
+	if vxlan.VtepDevIndex != 42 {
+		t.Errorf("VtepDevIndex = %d, want 42", vxlan.VtepDevIndex)
+	}
+	if mock.linkName != defaultUnderlayDummyName {
+		t.Errorf("LinkByName called with %q, want %q", mock.linkName, defaultUnderlayDummyName)
+	}
+}
+
+func TestNewVXLANRejectsMissingConfiguredNetplanLink(t *testing.T) {
+	overlay := &OverlayTier{
+		cfg: &Config{
+			RouterID:  "192.168.4.10",
+			VXLANLink: "dum.underlay",
+		},
+		netlinkOps: &mockOverlayNetlinkOps{
+			linkErr: errors.New("not found"),
+		},
+	}
+
+	_, err := overlay.newVXLAN("vx1000")
+	if err == nil || !strings.Contains(err.Error(), "find VXLAN underlay link dum.underlay") {
+		t.Fatalf("newVXLAN error = %v, want missing underlay link context", err)
+	}
+}
+
 func TestShouldInstallGatewayFDB(t *testing.T) {
 	tests := []struct {
 		name string

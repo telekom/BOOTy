@@ -1045,6 +1045,12 @@ func mergeNetplanConfig(dst, src *network.Config) {
 		dst.OverlayVRFName = src.OverlayVRFName
 		dst.OverlayVRFSet = true
 	}
+	if src.UnderlayDummyName != "" {
+		dst.UnderlayDummyName = src.UnderlayDummyName
+	}
+	if src.VXLANLink != "" {
+		dst.VXLANLink = src.VXLANLink
+	}
 	if src.MTU > 0 {
 		dst.MTU = src.MTU
 	}
