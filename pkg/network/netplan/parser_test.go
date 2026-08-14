@@ -577,6 +577,38 @@ func TestToNetworkConfig_ProductionUnderlayVRFOverlayDefault(t *testing.T) {
 	}
 }
 
+func TestToNetworkConfig_VXLANLinkComesFromProvisionTunnel(t *testing.T) {
+	np := &Config{
+		Network: NetworkSection{
+			DummyDevices: map[string]DummyConfig{
+				"dum.underlay": {Addresses: []string{"192.168.4.10/32"}},
+			},
+			Tunnels: map[string]TunnelConfig{
+				// First by name, carries the VNI, but has no link.
+				"vx.1000": {
+					Mode: "vxlan", ID: 1000, Local: "192.168.4.10", Port: 4789,
+				},
+				// Later tunnel with a link that must not be used.
+				"vx.2000": {
+					Mode: "vxlan", ID: 2000, Local: "192.168.4.11",
+					Port: 4789, Link: "dum.other",
+				},
+			},
+		},
+	}
+
+	netCfg := ToNetworkConfig(np, &FRRParams{ASN: 65100, RouterID: "192.168.4.10", EVPN: true})
+	if netCfg.ProvisionVNI != 1000 {
+		t.Errorf("ProvisionVNI = %d, want 1000", netCfg.ProvisionVNI)
+	}
+	if netCfg.VXLANLink != "" {
+		t.Errorf("VXLANLink = %q, want empty", netCfg.VXLANLink)
+	}
+	if netCfg.UnderlayIP != "192.168.4.10" {
+		t.Errorf("UnderlayIP = %q, want 192.168.4.10", netCfg.UnderlayIP)
+	}
+}
+
 func TestToNetworkConfig_OverlayVRFCanDifferFromUnderlayVRF(t *testing.T) {
 	np := &Config{
 		Network: NetworkSection{

@@ -116,19 +116,44 @@ func ToNetworkConfig(np *Config, frr *FRRParams) *network.Config {
 
 func extractTunnels(np *Config, cfg *network.Config) {
 	names := sortedKeys(np.Network.Tunnels)
+
+	// The provision tunnel is the first VXLAN tunnel that carries a VNI.
+	// VNI, local underlay address and underlay link all come from that one
+	// tunnel, so the VXLAN device never binds a link of a different tunnel.
+	var provision TunnelConfig
+	found := false
+	for _, name := range names {
+		t := np.Network.Tunnels[name]
+		if !strings.EqualFold(t.Mode, "vxlan") || t.ID <= 0 {
+			continue
+		}
+		provision = t
+		found = true
+		break
+	}
+
+	if found {
+		if cfg.ProvisionVNI == 0 {
+			cfg.ProvisionVNI = uint32(provision.ID)
+		}
+		if provision.Local != "" && cfg.UnderlayIP == "" {
+			cfg.UnderlayIP = provision.Local
+		}
+		if provision.Link != "" && cfg.VXLANLink == "" {
+			cfg.VXLANLink = provision.Link
+		}
+		return
+	}
+
+	// No tunnel carries a VNI, so no provision VXLAN device exists.
+	// Keep the underlay address hint only.
 	for _, name := range names {
 		t := np.Network.Tunnels[name]
 		if !strings.EqualFold(t.Mode, "vxlan") {
 			continue
 		}
-		if t.ID > 0 && cfg.ProvisionVNI == 0 {
-			cfg.ProvisionVNI = uint32(t.ID)
-		}
 		if t.Local != "" && cfg.UnderlayIP == "" {
 			cfg.UnderlayIP = t.Local
-		}
-		if t.Link != "" && cfg.VXLANLink == "" {
-			cfg.VXLANLink = t.Link
 		}
 	}
 }
