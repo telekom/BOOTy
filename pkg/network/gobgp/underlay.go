@@ -70,6 +70,8 @@ type UnderlayTier struct {
 	pollInterval time.Duration                 // overridable in tests; zero = use default (1s)
 }
 
+const defaultUnderlayDummyName = "dummy.underlay"
+
 // NewUnderlayTier creates a new underlay tier.
 func NewUnderlayTier(cfg *Config) *UnderlayTier {
 	return &UnderlayTier{
@@ -208,7 +210,7 @@ func (u *UnderlayTier) Teardown(_ context.Context) error {
 		}
 	}
 
-	link, err := netlink.LinkByName("dummy.underlay")
+	link, err := netlink.LinkByName(u.underlayDummyName())
 	if err == nil {
 		if delErr := netlink.LinkDel(link); delErr != nil {
 			u.log.Warn("Failed to remove underlay dummy", "error", delErr)
@@ -219,16 +221,17 @@ func (u *UnderlayTier) Teardown(_ context.Context) error {
 }
 
 func (u *UnderlayTier) createUnderlayDummy() error {
+	dummyName := u.underlayDummyName()
 	dummy := &netlink.Dummy{
-		LinkAttrs: netlink.LinkAttrs{Name: "dummy.underlay"},
+		LinkAttrs: netlink.LinkAttrs{Name: dummyName},
 	}
 	if err := netlink.LinkAdd(dummy); err != nil && !errors.Is(err, syscall.EEXIST) {
-		return fmt.Errorf("add dummy.underlay: %w", err)
+		return fmt.Errorf("add %s: %w", dummyName, err)
 	}
 
-	link, err := netlink.LinkByName("dummy.underlay")
+	link, err := netlink.LinkByName(dummyName)
 	if err != nil {
-		return fmt.Errorf("find dummy.underlay: %w", err)
+		return fmt.Errorf("find %s: %w", dummyName, err)
 	}
 
 	addr, err := netlink.ParseAddr(u.cfg.RouterID + "/32")
@@ -237,11 +240,11 @@ func (u *UnderlayTier) createUnderlayDummy() error {
 	}
 
 	if err := netlink.AddrAdd(link, addr); err != nil && !errors.Is(err, syscall.EEXIST) {
-		return fmt.Errorf("add addr to dummy.underlay: %w", err)
+		return fmt.Errorf("add addr to %s: %w", dummyName, err)
 	}
 
 	if err := netlink.LinkSetUp(link); err != nil {
-		return fmt.Errorf("bring up dummy.underlay: %w", err)
+		return fmt.Errorf("bring up %s: %w", dummyName, err)
 	}
 
 	// Assign dummy to VRF for traffic isolation.
@@ -257,6 +260,13 @@ func (u *UnderlayTier) createUnderlayDummy() error {
 
 	u.log.Info("Created underlay dummy", "ip", u.cfg.RouterID)
 	return nil
+}
+
+func (u *UnderlayTier) underlayDummyName() string {
+	if name := strings.TrimSpace(u.cfg.UnderlayDummyName); name != "" {
+		return name
+	}
+	return defaultUnderlayDummyName
 }
 
 // waitForNICs detects physical NICs, retrying briefly when only one NIC is

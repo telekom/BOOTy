@@ -166,6 +166,12 @@ In an L2 overlay, `provision_gateway` is required. When set, BOOTy:
    VTEP (`addGatewayFDB()`). This ensures ARP/broadcast frames are
    flooded to the gateway before dynamic routes arrive.
 
+When netplan defines a VXLAN `link`, BOOTy binds the VXLAN device to that
+underlay link (`VtepDevIndex`) and creates the configured underlay dummy with
+the same name. This preserves the selected VRF's routing table for outer
+VXLAN packets; configurations without an explicit link retain the historical
+unbound behavior unless an underlay VRF is configured.
+
 For a direct Type-5-only fabric, set `EVPN_TYPE5_ONLY=true` and omit
 `provision_gateway`. BOOTy learns each remote VTEP from the Type-5 next hop,
 installs its underlay /32 reachability route, and programs the router-MAC FDB
