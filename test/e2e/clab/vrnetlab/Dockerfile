@@ -6,10 +6,22 @@
 
 # ── Stage 1: Build BOOTy static binary ────────────────────────────────
 FROM golang:1.26.5-alpine AS builder
-RUN apk add --no-cache git ca-certificates gcc linux-headers musl-dev
+RUN set -eu; \
+    n=0; \
+    until apk add --no-cache git ca-certificates gcc linux-headers musl-dev; do \
+      n=$((n+1)); \
+      if [ "$n" -ge 5 ]; then echo "apk add failed after $n attempts" >&2; exit 1; fi; \
+      sleep 10; \
+    done
 COPY go.mod go.sum /src/
 WORKDIR /src
-RUN go mod download
+RUN set -eu; \
+    n=0; \
+    until go mod download; do \
+      n=$((n+1)); \
+      if [ "$n" -ge 5 ]; then echo "go mod download failed after $n attempts" >&2; exit 1; fi; \
+      sleep 10; \
+    done
 COPY . /src
 RUN CGO_ENABLED=1 GOOS=linux go build -a \
     -ldflags "-linkmode external -extldflags '-static' -s -w" \
@@ -17,10 +29,10 @@ RUN CGO_ENABLED=1 GOOS=linux go build -a \
 
 # ── Stage 2: Extract a bootable kernel ────────────────────────────────
 FROM debian:bookworm-slim AS kernel
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends kmod && \
+RUN apt-get -o Acquire::Retries=5 update && \
+    apt-get -o Acquire::Retries=5 install -y --no-install-recommends kmod && \
     REAL_PKG=$(apt-cache depends linux-image-amd64 | awk '/Depends:/{print $2}' | head -1) && \
-    apt-get download "$REAL_PKG" && \
+    apt-get -o Acquire::Retries=5 download "$REAL_PKG" && \
     dpkg-deb -x linux-image-*.deb /tmp/kernel && \
     cp /tmp/kernel/boot/vmlinuz-* /vmlinuz && \
     KVER=$(ls /tmp/kernel/lib/modules/ | head -1) && \
@@ -49,13 +61,14 @@ RUN apt-get update && \
 
 # ── Stage 3: Assemble initramfs ───────────────────────────────────────
 FROM debian:bookworm-slim AS initramfs
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     cpio busybox-static curl gnupg lsb-release ca-certificates \
     e2fsprogs dosfstools gdisk parted lvm2 fdisk util-linux mdadm \
     && rm -rf /var/lib/apt/lists/*
 
 # Install FRR for EVPN networking support inside the VM.
 RUN curl --fail --location --show-error --silent \
+      --retry 5 --retry-delay 5 --retry-connrefused --connect-timeout 30 \
       https://deb.frrouting.org/frr/keys.gpg \
       -o /tmp/frrouting.downloaded.gpg && \
     printf '%s\n' \
@@ -78,7 +91,7 @@ RUN curl --fail --location --show-error --silent \
       /tmp/frrouting.expected-fingerprints /tmp/frrouting.fingerprints && \
     echo "deb [signed-by=/usr/share/keyrings/frrouting.gpg] https://deb.frrouting.org/frr $(lsb_release -s -c) frr-stable" \
       > /etc/apt/sources.list.d/frr.list && \
-    apt-get update && apt-get install -y --no-install-recommends frr && \
+    apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends frr && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /initramfs
@@ -137,7 +150,7 @@ RUN chmod +x /initramfs/init
 
 # ── Stage 4: Runtime container with QEMU ──────────────────────────────
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     qemu-system-x86 qemu-utils iproute2 bridge-utils cpio gzip procps \
     && rm -rf /var/lib/apt/lists/*
 

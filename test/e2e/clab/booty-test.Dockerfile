@@ -4,21 +4,51 @@
 # progresses through stream-image, partprobe, parse-partitions, mount-root,
 # and fails at grow-partition (growpart not available in Alpine).
 FROM golang:1.26-alpine AS builder
-RUN apk add --no-cache git ca-certificates gcc linux-headers musl-dev
+RUN set -eu; \
+    n=0; \
+    until apk add --no-cache git ca-certificates gcc linux-headers musl-dev; do \
+      n=$((n+1)); \
+      if [ "$n" -ge 5 ]; then echo "apk add failed after $n attempts" >&2; exit 1; fi; \
+      sleep 10; \
+    done
 COPY go.mod go.sum /go/src/github.com/telekom/BOOTy/
 WORKDIR /go/src/github.com/telekom/BOOTy
-RUN go mod download
+RUN set -eu; \
+    n=0; \
+    until go mod download; do \
+      n=$((n+1)); \
+      if [ "$n" -ge 5 ]; then echo "go mod download failed after $n attempts" >&2; exit 1; fi; \
+      sleep 10; \
+    done
 COPY . /go/src/github.com/telekom/BOOTy/
 RUN CGO_ENABLED=1 GOOS=linux go build -a \
     -ldflags "-linkmode external -extldflags '-static' -s -w" \
     -o /booty
 
 FROM alpine:3.24
-RUN apk add --no-cache ca-certificates iproute2
+RUN set -eu; \
+    n=0; \
+    until apk add --no-cache ca-certificates iproute2; do \
+      n=$((n+1)); \
+      if [ "$n" -ge 5 ]; then echo "apk add failed after $n attempts" >&2; exit 1; fi; \
+      sleep 10; \
+    done
 # Install FRR from the official Alpine repo for EVPN networking support.
-RUN apk add --no-cache frr
+RUN set -eu; \
+    n=0; \
+    until apk add --no-cache frr; do \
+      n=$((n+1)); \
+      if [ "$n" -ge 5 ]; then echo "apk add failed after $n attempts" >&2; exit 1; fi; \
+      sleep 10; \
+    done
 # Disk provisioning tools needed for full provisioning pipeline.
-RUN apk add --no-cache e2fsprogs dosfstools sgdisk parted lvm2 util-linux
+RUN set -eu; \
+    n=0; \
+    until apk add --no-cache e2fsprogs dosfstools sgdisk parted lvm2 util-linux; do \
+      n=$((n+1)); \
+      if [ "$n" -ge 5 ]; then echo "apk add failed after $n attempts" >&2; exit 1; fi; \
+      sleep 10; \
+    done
 COPY --from=builder /booty /usr/local/bin/booty
 RUN mkdir -p /deploy /tmp /etc/frr /var/run/frr && \
     chown -R frr:frr /etc/frr /var/run/frr

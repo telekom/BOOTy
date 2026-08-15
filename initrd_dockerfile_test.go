@@ -316,3 +316,99 @@ func dockerfileStageBlock(t *testing.T, text, stage string) string {
 	}
 	return block
 }
+
+// dockerfilesWithDownloads lists the Dockerfiles that fetch from the network
+// during a build. Every fetch in these files must retry, because one transient
+// TLS or DNS failure otherwise breaks the whole build.
+var dockerfilesWithDownloads = []string{
+	"initrd.Dockerfile",
+	"test/e2e/clab/vrnetlab/Dockerfile",
+	"test/e2e/clab/booty-test.Dockerfile",
+	"test/e2e/clab/booty-gobgp-test.Dockerfile",
+	"test/e2e/clab/dhcpd-test.Dockerfile",
+}
+
+// downloadRetryChecks maps a network command to the marker that proves it
+// retries. The pattern matches the command in command position only, so a
+// COPY of the curl binary or a package named curl does not count.
+var downloadRetryChecks = []struct {
+	name    string
+	pattern *regexp.Regexp
+	marker  string
+	hint    string
+}{
+	{name: "apt-get", pattern: regexp.MustCompile(`apt-get\s+(update|install|download)\b`), marker: "Acquire::Retries", hint: "-o Acquire::Retries=5"},
+	{name: "apk add", pattern: regexp.MustCompile(`(^|RUN\s+|[;&|]\s*|until\s+|then\s+|do\s+)apk\s+add\b`), marker: "until apk add", hint: "an until retry loop"},
+	{name: "wget", pattern: regexp.MustCompile(`(^|RUN\s+|[;&|]\s*|until\s+|then\s+|do\s+)wget\s`), marker: "--tries=", hint: "--tries=5 --waitretry=10"},
+	{name: "curl", pattern: regexp.MustCompile(`(^|RUN\s+|[;&|]\s*|until\s+|then\s+|do\s+)curl\s`), marker: "--retry ", hint: "--retry 5 --retry-delay 5"},
+	{name: "git clone", pattern: regexp.MustCompile(`(^|RUN\s+|[;&|]\s*|until\s+|then\s+|do\s+)git\s+clone\b`), marker: "until git clone", hint: "an until retry loop"},
+	{name: "git fetch", pattern: regexp.MustCompile(`(^|RUN\s+|[;&|]\s*|until\s+|then\s+|do\s+)git\s+fetch\b`), marker: "until git fetch", hint: "an until retry loop"},
+	{name: "go mod download", pattern: regexp.MustCompile(`(^|RUN\s+|[;&|]\s*|until\s+|then\s+|do\s+)go\s+mod\s+download\b`), marker: "until go mod download", hint: "an until retry loop"},
+}
+
+// TestDockerfileDownloadsRetry fails when a network fetch carries no retry.
+// A retry loop must also fail closed, so every loop needs an explicit exit
+// once the attempts run out. Compare kubernetes-sigs/image-builder#2138,
+// where retries were present but never took effect.
+func TestDockerfileDownloadsRetry(t *testing.T) {
+	for _, path := range dockerfilesWithDownloads {
+		t.Run(path, func(t *testing.T) {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("cannot read %s: %v", path, err)
+			}
+			text := string(data)
+
+			for _, cmd := range dockerfileCommands(text) {
+				for _, check := range downloadRetryChecks {
+					if !check.pattern.MatchString(cmd.text) {
+						continue
+					}
+					if strings.Contains(cmd.text, check.marker) {
+						continue
+					}
+					t.Errorf("%s:%d: %s needs %s", path, cmd.line, check.name, check.hint)
+				}
+			}
+
+			loops := strings.Count(text, "until ")
+			exits := strings.Count(text, `attempts" >&2; exit 1;`)
+			if loops != exits {
+				t.Errorf("%s has %d retry loops but %d fail-closed exits", path, loops, exits)
+			}
+		})
+	}
+}
+
+type dockerfileCommand struct {
+	line int
+	text string
+}
+
+// dockerfileCommands joins line continuations so a command and its flags read
+// as one string, and keeps the line where each command starts.
+func dockerfileCommands(text string) []dockerfileCommand {
+	var commands []dockerfileCommand
+	var current []string
+	start := 0
+
+	for i, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if len(current) == 0 {
+			if strings.HasPrefix(trimmed, "#") || trimmed == "" {
+				continue
+			}
+			start = i + 1
+		}
+		current = append(current, strings.TrimSuffix(trimmed, "\\"))
+		if strings.HasSuffix(trimmed, "\\") {
+			continue
+		}
+		commands = append(commands, dockerfileCommand{line: start, text: strings.Join(current, " ")})
+		current = nil
+	}
+	if len(current) > 0 {
+		commands = append(commands, dockerfileCommand{line: start, text: strings.Join(current, " ")})
+	}
+	return commands
+}
