@@ -4,16 +4,18 @@ topology:
   nodes:
     dhcp-server:
       kind: linux
-      image: networkboot/dhcpd:1.3.0
+      # Built by "make booty-dhcpd-test-image" from dhcpd-test.Dockerfile.
+      image: booty-dhcpd-test:latest
       binds:
         - dhcpd.conf:/etc/dhcp/dhcpd.conf:ro
-      cmd: >
-        sh -ec "
-          touch /var/lib/dhcp/dhcpd.leases &&
-          ip addr add 10.200.0.1/24 dev eth1 &&
-          ip link set dev eth1 up &&
-          exec dhcpd -f -cf /etc/dhcp/dhcpd.conf -pf /var/run/dhcpd.pid eth1
-        "
+      # The node keeps running as PID 1. Containerlab wires eth1 after the
+      # container starts, so the link setup belongs in exec, not in cmd.
+      cmd: sleep infinity
+      exec:
+        - ip addr add 10.200.0.1/24 dev eth1
+        - ip link set dev eth1 up
+        # dhcpd forks into the background, so the node stays up on sleep.
+        - dhcpd -cf /etc/dhcp/dhcpd.conf -pf /var/run/dhcpd.pid eth1
 
     booty:
       kind: linux

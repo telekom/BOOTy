@@ -33,7 +33,7 @@ CLEAN_FILES := \
 
 CLAB_TEST_IMAGE ?= test/e2e/clab/images/test.img.gz
 
-.PHONY: all build build-all clean install uninstall fmt fmt-check lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm test-e2e clab-test-image clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-test-image booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-type5-up clab-type5-down test-e2e-type5 clab-production-up clab-production-down test-e2e-production test-e2e-production-full clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic check check-build-vars check-docker-vars check-oci-vars oci-push oci-push-initramfs oci-push-binary
+.PHONY: all build build-all clean install uninstall fmt fmt-check lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm test-e2e clab-test-image clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-test-image booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-type5-up clab-type5-down test-e2e-type5 clab-production-up clab-production-down test-e2e-production test-e2e-production-full booty-dhcpd-test-image clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic check check-build-vars check-docker-vars check-oci-vars oci-push oci-push-initramfs oci-push-binary
 
 export TARGET VERSION BUILD TARGETOS TARGETARCH DOCKERTAG REPOSITORY
 
@@ -338,7 +338,11 @@ test-e2e-production-full:
 
 # ── DHCP lab targets ───────────────────────────────────────────────────────
 
-clab-dhcp-up:
+booty-dhcpd-test-image:
+	@printf '%s\n' 'Building DHCP server test image'
+	@docker build -t booty-dhcpd-test:latest -f test/e2e/clab/dhcpd-test.Dockerfile test/e2e/clab
+
+clab-dhcp-up: booty-dhcpd-test-image
 	@echo Deploying DHCP test topology
 	@cd test/e2e/clab && sudo clab deploy --topo topology-dhcp.clab.yml
 
