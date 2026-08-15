@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Run govulncheck and fail on non-allowlisted reachable vulnerabilities."""
+"""Run govulncheck and gate on reachable vulnerabilities.
+
+Findings in modules fail the check. Findings in the Go standard library only
+warn. A standard library finding is fixed by a Go toolchain bump, never by a
+change in this repository, so it must not block a pull request. The scan still
+runs in full and every finding stays in the job log.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +23,10 @@ GOVULNCHECK = [
     "-format=json",
     "./...",
 ]
+
+
+# govulncheck reports standard library findings under this module name.
+STDLIB_MODULE = "stdlib"
 
 
 @dataclass(frozen=True)
@@ -61,6 +71,18 @@ def is_symbol_finding(finding: dict[str, Any]) -> bool:
     )
 
 
+def vulnerable_module(finding: dict[str, Any]) -> str:
+    """Return the module that holds the vulnerable symbol.
+
+    govulncheck orders the trace from the vulnerable symbol outwards to the
+    entry point, so the first frame names the affected module.
+    """
+    for frame in finding.get("trace", []):
+        if isinstance(frame, dict) and isinstance(frame.get("module"), str):
+            return frame["module"]
+    return ""
+
+
 def finding_modules(finding: dict[str, Any]) -> set[str]:
     modules: set[str] = set()
     for frame in finding.get("trace", []):
@@ -101,6 +123,8 @@ def main() -> int:
     }
 
     findings: dict[str, set[str]] = {}
+    stdlib: dict[str, set[str]] = {}
+    fixed_versions: dict[str, set[str]] = {}
     for obj in objects:
         finding = obj.get("finding")
         if not isinstance(finding, dict):
@@ -109,6 +133,12 @@ def main() -> int:
         if not isinstance(osv_id, str):
             continue
         if not is_symbol_finding(finding):
+            continue
+        fixed = finding.get("fixed_version")
+        if isinstance(fixed, str) and fixed:
+            fixed_versions.setdefault(osv_id, set()).add(fixed)
+        if vulnerable_module(finding) == STDLIB_MODULE:
+            stdlib.setdefault(osv_id, set()).update(finding_modules(finding))
             continue
         findings.setdefault(osv_id, set()).update(finding_modules(finding))
 
@@ -120,6 +150,16 @@ def main() -> int:
             allowed[osv_id] = modules
             continue
         unexpected[osv_id] = modules
+
+    for osv_id in sorted(stdlib):
+        summary = osv_by_id.get(osv_id, {}).get("summary", "stdlib vulnerability")
+        fixed = ", ".join(sorted(fixed_versions.get(osv_id, set()))) or "unknown"
+        print(
+            f"::warning::Standard library govulncheck finding {osv_id} "
+            f"({summary}). Fixed in Go {fixed}. "
+            f"This does not fail the check, because only a Go toolchain bump "
+            f"clears it."
+        )
 
     for osv_id, modules in sorted(allowed.items()):
         allow = ALLOWLIST[osv_id]
@@ -140,10 +180,15 @@ def main() -> int:
             )
         return 1
 
+    if stdlib:
+        print(
+            f"govulncheck found {len(stdlib)} reachable standard library "
+            f"vulnerabilities, reported as warnings"
+        )
     if not findings:
-        print("govulncheck found no reachable vulnerabilities")
+        print("govulncheck found no reachable module vulnerabilities")
     else:
-        print("govulncheck found only documented allowlisted vulnerabilities")
+        print("govulncheck found only documented allowlisted module vulnerabilities")
     return 0
 
 

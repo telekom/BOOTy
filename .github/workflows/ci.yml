@@ -147,7 +147,11 @@ jobs:
 
   build:
     name: Build (${{ matrix.arch }})
-    needs: [lint, test, security, e2e]
+    # `security` is deliberately not a dependency. The build, the E2E jobs and
+    # the KVM jobs all chain off this job. A single vulnerability report used to
+    # skip that whole chain, which hid unrelated regressions. The security job
+    # still runs and still reports on every pull request.
+    needs: [lint, test, e2e]
     timeout-minutes: 20
     strategy:
       matrix:
