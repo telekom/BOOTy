@@ -4,11 +4,17 @@
 FROM gcc:16 AS lvm
 ARG LVM2_VERSION=2.03.27
 ARG LVM2_SHA256=3133415905b9b46d152d064865d52f32eee4fcbeb0e8a69e3510caeaae0c56a9
-RUN wget -O "LVM2.${LVM2_VERSION}.tgz" "https://mirrors.kernel.org/sourceware/lvm2/LVM2.${LVM2_VERSION}.tgz"
+# A single TLS hiccup on the mirror must not fail the whole build.
+# The checksum below still gates the artifact, so retries cannot hide a
+# corrupt download.
+RUN wget --tries=5 --waitretry=10 --retry-connrefused --timeout=30 \
+      --retry-on-http-error=429,500,502,503,504 \
+      -O "LVM2.${LVM2_VERSION}.tgz" \
+      "https://mirrors.kernel.org/sourceware/lvm2/LVM2.${LVM2_VERSION}.tgz"
 RUN echo "${LVM2_SHA256}  LVM2.${LVM2_VERSION}.tgz" | sha256sum -c -
 RUN tar -xf "LVM2.${LVM2_VERSION}.tgz"
 WORKDIR LVM2.${LVM2_VERSION}
-RUN apt-get update && apt-get install -y libaio-dev libdevmapper-dev
+RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y libaio-dev libdevmapper-dev
 RUN ./configure --enable-static_link --disable-selinux
 RUN sed -i '/DMLIBS = -ldevmapper/ s/$/ -lm -lpthread/' libdm/dm-tools/Makefile
 RUN make
@@ -19,23 +25,50 @@ RUN strip --strip-all lvm
 # Build scripted fdisk (sfdisk)
 FROM gcc:16 AS sfdisk
 ARG UTIL_LINUX_REF=5305e6c70b274f679329b79c0e1ef5a07e9dc1a6
-RUN apt-get update -y && apt-get install -y bison autopoint gettext flex
-RUN git clone --depth 1 --filter=blob:none --no-checkout https://github.com/util-linux/util-linux.git
+RUN apt-get -o Acquire::Retries=5 update -y && apt-get -o Acquire::Retries=5 install -y bison autopoint gettext flex
+RUN set -eu; \
+    n=0; \
+    until git clone --depth 1 --filter=blob:none --no-checkout \
+      https://github.com/util-linux/util-linux.git; do \
+      n=$((n+1)); \
+      if [ "$n" -ge 5 ]; then echo "git clone failed after $n attempts" >&2; exit 1; fi; \
+      rm -rf util-linux; \
+      sleep 10; \
+    done
 WORKDIR util-linux
-RUN git fetch --depth 1 origin "${UTIL_LINUX_REF}" && git checkout --detach "${UTIL_LINUX_REF}"
+RUN set -eu; \
+    n=0; \
+    until git fetch --depth 1 origin "${UTIL_LINUX_REF}"; do \
+      n=$((n+1)); \
+      if [ "$n" -ge 5 ]; then echo "git fetch failed after $n attempts" >&2; exit 1; fi; \
+      sleep 10; \
+    done; \
+    git checkout --detach "${UTIL_LINUX_REF}"
 RUN ./autogen.sh && ./configure --enable-static-programs=sfdisk && make
 RUN strip --strip-all sfdisk.static
 
 # Build BOOTy as an init
-FROM golang:1.26.5-alpine AS dev
+FROM golang:1.26.6-alpine AS dev
 ARG BOOTY_VERSION=dev
 ARG BOOTY_BUILD=unknown
 ARG BOOTY_FLAVOR=full
-RUN apk add --no-cache git ca-certificates gcc linux-headers musl-dev upx
+RUN set -eu; \
+    n=0; \
+    until apk add --no-cache git ca-certificates gcc linux-headers musl-dev upx; do \
+      n=$((n+1)); \
+      if [ "$n" -ge 5 ]; then echo "apk add failed after $n attempts" >&2; exit 1; fi; \
+      sleep 10; \
+    done
 COPY go.mod go.sum /go/src/github.com/telekom/BOOTy/
 WORKDIR /go/src/github.com/telekom/BOOTy
 RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
-    go mod download
+    set -eu; \
+    n=0; \
+    until go mod download; do \
+      n=$((n+1)); \
+      if [ "$n" -ge 5 ]; then echo "go mod download failed after $n attempts" >&2; exit 1; fi; \
+      sleep 10; \
+    done
 COPY . /go/src/github.com/telekom/BOOTy/
 RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
     --mount=type=cache,sharing=locked,id=goroot,target=/root/.cache/go-build \
@@ -53,13 +86,13 @@ RUN upx -9 init
 FROM debian:bookworm-slim AS efi-fallback
 ARG TARGETARCH
 RUN set -eux; \
-    apt-get update; \
+    apt-get -o Acquire::Retries=5 update; \
     case "${TARGETARCH:-amd64}" in \
       arm64) grub_pkg="grub-efi-arm64-bin" ;; \
       amd64) grub_pkg="grub-efi-amd64-bin" ;; \
       *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
-    apt-get install -y --no-install-recommends \
+    apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
       grub-common "${grub_pkg}" ca-certificates; \
     rm -rf /var/lib/apt/lists/*
 RUN set -eux; \
@@ -80,9 +113,10 @@ RUN set -eux; \
 
 # Build FRR (BGP/BFD/Zebra) for EVPN networking — use FRR official stable repo
 FROM debian:bookworm-slim AS frr
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     curl gnupg lsb-release ca-certificates && \
     curl --fail --location --show-error --silent \
+      --retry 5 --retry-delay 5 --retry-connrefused --connect-timeout 30 \
       https://deb.frrouting.org/frr/keys.gpg \
       -o /tmp/frrouting.downloaded.gpg && \
     printf '%s\n' \
@@ -105,7 +139,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       /tmp/frrouting.expected-fingerprints /tmp/frrouting.fingerprints && \
     echo "deb [signed-by=/usr/share/keyrings/frrouting.gpg] https://deb.frrouting.org/frr $(lsb_release -s -c) frr-stable" \
       > /etc/apt/sources.list.d/frr.list && \
-    apt-get update && apt-get install -y --no-install-recommends \
+    apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     frr frr-pythontools && \
     rm -rf /var/lib/apt/lists/*
 
@@ -121,11 +155,11 @@ RUN mkdir -p /frr-libs && \
 # Extract kernel, storage, and NIC driver modules for bare-metal servers
 FROM debian:bookworm-slim AS kernel
 ARG TARGETARCH
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends kmod && \
+RUN apt-get -o Acquire::Retries=5 update && \
+    apt-get -o Acquire::Retries=5 install -y --no-install-recommends kmod && \
     KERNEL_PKG=$([ "$TARGETARCH" = "arm64" ] && echo "linux-image-arm64" || echo "linux-image-amd64") && \
     REAL_PKG=$(apt-cache depends "$KERNEL_PKG" | awk '/Depends:/{print $2}' | head -1) && \
-    apt-get download "$REAL_PKG" && \
+    apt-get -o Acquire::Retries=5 download "$REAL_PKG" && \
     dpkg-deb -x linux-image-*.deb /tmp/kernel && \
     cp /tmp/kernel/boot/vmlinuz-* /vmlinuz && \
     KVER=$(ls /tmp/kernel/lib/modules/ | head -1) && \
@@ -171,7 +205,7 @@ RUN apt-get update && \
 
 # Build disk, system, and firmware tools
 FROM debian:bookworm-slim AS tools
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     binutils \
     mdadm util-linux fdisk e2fsprogs xfsprogs btrfs-progs parted gdisk kpartx dosfstools \
     efibootmgr dmidecode ethtool curl iproute2 bridge-utils \
@@ -229,7 +263,7 @@ RUN strip --strip-all \
 FROM busybox:1.38.0-musl AS busybox-bin
 
 FROM debian:bookworm-slim AS busybox
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     cpio ca-certificates zstd cloud-guest-utils \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
@@ -357,7 +391,7 @@ RUN find . -print0 > ../initramfs.files \
 
 # ── ISO build stage (optional, triggered by --target=iso) ──────────────────
 FROM debian:bookworm-slim AS iso-builder
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     xorriso syslinux syslinux-common isolinux curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -387,7 +421,7 @@ COPY --from=iso-builder /booty.iso .
 
 # ── Slim target: BOOTy + busybox shell + minimal tools, no FRR/LVM ────────
 FROM debian:bookworm-slim AS slim-builder
-RUN apt-get update && apt-get install -y --no-install-recommends cpio zstd ca-certificates cloud-guest-utils \
+RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends cpio zstd ca-certificates cloud-guest-utils \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
 RUN mkdir -p dev proc run sys tmp etc && \
@@ -450,7 +484,7 @@ COPY --from=slim-builder /initramfs.cpio.zst .
 
 # ── GoBGP target: like default but without FRR (GoBGP is in-process Go) ───
 FROM debian:bookworm-slim AS gobgp-builder
-RUN apt-get update && apt-get install -y --no-install-recommends cpio zstd \
+RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends cpio zstd \
     && rm -rf /var/lib/apt/lists/*
 # Reuse upx from the dev (Alpine) stage — upx-ucl is not in Debian bookworm main
 COPY --from=dev /usr/bin/upx /usr/local/bin/upx
@@ -570,7 +604,7 @@ COPY --from=gobgp-builder /initramfs.cpio.zst .
 
 # ── GoBGP ISO target ──────────────────────────────────────────────────────
 FROM debian:bookworm-slim AS gobgp-iso-builder
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     xorriso syslinux syslinux-common isolinux curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -596,14 +630,20 @@ FROM scratch AS gobgp-iso
 COPY --from=gobgp-iso-builder /booty-gobgp.iso .
 
 # ── Micro target: pure-Go BOOTy only, no external binaries ────────────────
-FROM golang:1.26.5-bookworm AS micro-dev
+FROM golang:1.26.6-bookworm AS micro-dev
 ARG BOOTY_VERSION=dev
 ARG BOOTY_BUILD=unknown
 ARG BOOTY_FLAVOR=micro
 COPY go.mod go.sum /go/src/github.com/telekom/BOOTy/
 WORKDIR /go/src/github.com/telekom/BOOTy
 RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
-    go mod download
+    set -eu; \
+    n=0; \
+    until go mod download; do \
+      n=$((n+1)); \
+      if [ "$n" -ge 5 ]; then echo "go mod download failed after $n attempts" >&2; exit 1; fi; \
+      sleep 10; \
+    done
 COPY . /go/src/github.com/telekom/BOOTy/
 RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
     --mount=type=cache,sharing=locked,id=goroot,target=/root/.cache/go-build \
@@ -615,7 +655,7 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
       -X github.com/telekom/BOOTy/pkg/buildinfo.flavor=${BOOTY_FLAVOR}" -o init
 
 FROM debian:bookworm-slim AS micro-builder
-RUN apt-get update && apt-get install -y --no-install-recommends cpio ca-certificates \
+RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends cpio ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
 RUN mkdir -p bin sbin dev proc run sys tmp etc && \
