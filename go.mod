@@ -1,6 +1,6 @@
 module github.com/telekom/BOOTy
 
-go 1.26
+go 1.26.0
 
 require (
 	github.com/digineo/go-dhclient v1.0.2
@@ -16,7 +16,7 @@ require (
 	github.com/vishvananda/netlink v1.3.1
 	github.com/zcalusic/sysinfo v1.1.3
 	golang.org/x/net v0.58.0
-	golang.org/x/sys v0.47.0
+	golang.org/x/sys v0.48.0
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
 )
