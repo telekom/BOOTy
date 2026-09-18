@@ -758,6 +758,10 @@ func TestConfiguratorFileOperationsE2E(t *testing.T) {
 	c := provision.NewConfigurator(diskMgr)
 	root := t.TempDir()
 	c.SetRootDir(root)
+	// Keep serial console resolution hermetic: point the host evidence trees at
+	// empty directories so the outcome does not depend on the runner's UARTs.
+	c.SetHostRoots(t.TempDir(), t.TempDir())
+	c.SetRunDir(t.TempDir())
 
 	cfg := &config.MachineConfig{
 		Hostname: "config-node",

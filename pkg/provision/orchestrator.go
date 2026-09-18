@@ -150,6 +150,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"resize-filesystem", o.resizeFilesystem},
 		{"configure-kubelet", o.configureKubelet},
 		{"prepare-oci-prepulls", o.prepareOCIPrePulls},
+		{"configure-serial-console", o.configureSerialConsole},
 		{"configure-grub", o.configureGRUB},
 		{"install-efi-fallback", o.installEFIFallbackLoader},
 		// Validate the final installed boot artifacts after BOOTy has applied
@@ -2513,6 +2514,14 @@ func (o *Orchestrator) configureKubelet(_ context.Context) error {
 	return o.config.ConfigureKubelet(o.cfg)
 }
 
+// configureSerialConsole resolves the serial console once and persists the
+// getty configuration plus the CAPRF resolution artifact. It runs before
+// configure-grub so an ambiguous console fails the provisioning run before the
+// boot configuration is written.
+func (o *Orchestrator) configureSerialConsole(_ context.Context) error {
+	return o.config.ConfigureSerialConsole(o.cfg)
+}
+
 func (o *Orchestrator) configureGRUB(ctx context.Context) error {
 	return o.config.ConfigureGRUB(ctx, o.cfg)
 }
@@ -2999,7 +3008,7 @@ func stepDebugCmds(step string) []debugCmd {
 			{"proc mounts", "cat /proc/mounts"},
 			{"newroot contents", "ls -la /newroot/ 2>/dev/null || echo '/newroot not found'"},
 		}
-	case "configure-grub", "run-machine-commands", "run-post-provision-cmds", "configure-kubelet":
+	case "configure-serial-console", "configure-grub", "run-machine-commands", "run-post-provision-cmds", "configure-kubelet":
 		return []debugCmd{
 			{"chroot bin", "ls /newroot/bin/ /newroot/usr/bin/ 2>/dev/null | head -50 || true"},
 			{"chroot boot", "ls -la /newroot/boot/ 2>/dev/null || echo '/newroot/boot not found'"},

@@ -46,7 +46,17 @@ func newTestOrchestratorWithCommander(t *testing.T, cfg *config.MachineConfig, p
 	cfg.Provision.Image.AllowInsecureHTTP = true
 	o := NewOrchestrator(cfg, provider, mgr)
 	o.config.rootDir = t.TempDir()
+	withHermeticHostRoots(t, o.config)
 	return o, cmd
+}
+
+// withHermeticHostRoots keeps serial console resolution independent of the
+// sysfs/procfs of the machine running the test suite.
+func withHermeticHostRoots(t *testing.T, c *Configurator) {
+	t.Helper()
+	hostRoot := t.TempDir()
+	c.SetHostRoots(filepath.Join(hostRoot, "sys"), filepath.Join(hostRoot, "proc"))
+	c.SetRunDir(filepath.Join(hostRoot, "run", "booty"))
 }
 
 func withProcCmdline(t *testing.T, cmdline string) {
@@ -225,8 +235,8 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 45 {
-		t.Fatalf("expected 45 provisioning steps, got %d", len(steps))
+	if len(steps) != 46 {
+		t.Fatalf("expected 46 provisioning steps, got %d", len(steps))
 	}
 }
 

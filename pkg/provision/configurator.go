@@ -23,6 +23,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/disk"
 	exec "github.com/telekom/BOOTy/pkg/executil"
 	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/BOOTy/pkg/serialconsole"
 )
 
 const newroot = "/newroot"
@@ -47,6 +48,10 @@ var managedEFIVendors = [...]string{"ubuntu", "debian"}
 
 // safeKernelParams matches only safe characters for kernel command line parameters.
 var safeKernelParams = regexp.MustCompile(`^[a-zA-Z0-9=._\-/ ]*$`)
+
+// virtualTerminalParam matches the kernel virtual terminals, which are valid
+// console values but never carry a serial getty.
+var virtualTerminalParam = regexp.MustCompile(`^tty\d{1,2}$`)
 
 // safeProvisionCommand matches basic command/argument characters while
 // rejecting shell metacharacters that enable command chaining or substitution.
@@ -112,6 +117,18 @@ func firstWhitespaceIndex(s string) int {
 type Configurator struct {
 	disk    *disk.Manager
 	rootDir string // allows override for testing (default: /newroot)
+	// hostSysRoot and hostProcRoot point at the read-only host trees the
+	// serial console resolver inspects. Empty means /sys and /proc.
+	hostSysRoot  string
+	hostProcRoot string
+	// runDir is the initramfs directory the serial console resolution
+	// artifact is published to. Empty means /run/booty.
+	runDir string
+	// serialConsole caches the single console resolution used for both the
+	// kernel command line and the serial getty.
+	serialConsole     serialconsole.Resolution
+	serialConsoleErr  error
+	serialConsoleDone bool
 }
 
 // NewConfigurator creates a Configurator.
@@ -121,6 +138,17 @@ func NewConfigurator(diskMgr *disk.Manager) *Configurator {
 
 // SetRootDir overrides the root directory (for testing).
 func (c *Configurator) SetRootDir(dir string) { c.rootDir = dir }
+
+// SetRunDir overrides the initramfs run directory used to publish artifacts
+// for CAPRF (for testing).
+func (c *Configurator) SetRunDir(dir string) { c.runDir = dir }
+
+// SetHostRoots overrides the read-only host trees inspected for serial console
+// evidence (for testing).
+func (c *Configurator) SetHostRoots(sysRoot, procRoot string) {
+	c.hostSysRoot, c.hostProcRoot = sysRoot, procRoot
+	c.serialConsole, c.serialConsoleErr, c.serialConsoleDone = serialconsole.Resolution{}, nil, false
+}
 
 // SetHostname writes the hostname to /etc/hostname.
 func (c *Configurator) SetHostname(cfg *config.MachineConfig) error {
@@ -365,48 +393,24 @@ func formatKubeletExtraArgs(args []string) string {
 }
 
 // ConfigureGRUB writes GRUB kernel parameters and runs update-grub via chroot.
+//
+// The console parameter comes from the shared serial console resolver, which
+// replaces the former vendor heuristic ("Lenovo means ttyS1"). Exactly one
+// console= parameter is emitted: operator-supplied console tokens are folded
+// into the resolution instead of being appended a second time.
 func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineConfig) error {
 	grubDir := filepath.Join(c.rootDir, "etc", "default", "grub.d")
 	if err := os.MkdirAll(grubDir, 0o755); err != nil {
 		return fmt.Errorf("creating grub.d dir: %w", err)
 	}
 
-	// Detect console: Lenovo uses ttyS1, default ttyS0.
-	console := "ttyS0"
-	if data, err := os.ReadFile("/sys/class/dmi/id/sys_vendor"); err == nil {
-		if strings.Contains(strings.ToLower(string(data)), "lenovo") {
-			console = "ttyS1"
-		}
-	}
-
-	cloudInitDatasourceParam, err := cloudInitKernelDatasourceParam(cfg)
+	grubLine, consoleParam, err := c.grubCmdlineEntry(cfg)
 	if err != nil {
 		return err
 	}
 
-	kernelParams := make([]string, 0, 2)
-	if cloudInitDatasourceParam != "" {
-		kernelParams = append(kernelParams, cloudInitDatasourceParam)
-	}
-	kernelParams = append(kernelParams, "console="+console)
-
-	grubLine := fmt.Sprintf("GRUB_CMDLINE_LINUX=\"%s", strings.Join(kernelParams, " "))
-	if cfg.Provision.ExtraKernelParams != "" {
-		if !safeKernelParams.MatchString(cfg.Provision.ExtraKernelParams) {
-			return fmt.Errorf("unsafe characters in ExtraKernelParams: %q", cfg.Provision.ExtraKernelParams)
-		}
-		grubLine += " " + cfg.Provision.ExtraKernelParams
-	}
-	abRootParam, err := abRootKernelParam(cfg)
-	if err != nil {
-		return err
-	}
-	if abRootParam != "" {
-		grubLine += " " + abRootParam
-	}
-	grubLine += "\"\n"
 	grubPath := filepath.Join(grubDir, "10-caprf-kernel-params.cfg")
-	slog.Info("writing GRUB config", "path", grubPath, "console", console)
+	slog.Info("writing GRUB config", "path", grubPath, "console", consoleParam)
 	if err := os.WriteFile(grubPath, []byte(grubLine), 0o644); err != nil {
 		return fmt.Errorf("writing grub config: %w", err)
 	}
@@ -422,6 +426,100 @@ func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineCon
 		return fmt.Errorf("update-grub: %s: %w", string(out), err)
 	}
 	return nil
+}
+
+// grubCmdlineEntry renders the GRUB drop-in content and the console parameter
+// it carries.
+func (c *Configurator) grubCmdlineEntry(cfg *config.MachineConfig) (line, consoleParam string, err error) {
+	cloudInitDatasourceParam, err := cloudInitKernelDatasourceParam(cfg)
+	if err != nil {
+		return "", "", err
+	}
+	// Validate operator input before touching firmware evidence so unsafe
+	// parameters are reported as such instead of as a console failure.
+	extraParams, err := resolvedExtraKernelParams(cfg)
+	if err != nil {
+		return "", "", err
+	}
+	consoleParam, err = c.serialConsoleKernelParam(cfg)
+	if err != nil {
+		return "", "", err
+	}
+
+	kernelParams := make([]string, 0, 2)
+	if cloudInitDatasourceParam != "" {
+		kernelParams = append(kernelParams, cloudInitDatasourceParam)
+	}
+	if consoleParam != "" {
+		kernelParams = append(kernelParams, consoleParam)
+	}
+
+	grubLine := fmt.Sprintf("GRUB_CMDLINE_LINUX=\"%s", strings.Join(kernelParams, " "))
+	if extraParams != "" {
+		grubLine += " " + extraParams
+	}
+	abRootParam, err := abRootKernelParam(cfg)
+	if err != nil {
+		return "", "", err
+	}
+	if abRootParam != "" {
+		grubLine += " " + abRootParam
+	}
+	return grubLine + "\"\n" + grubSerialTerminalConfig(&c.serialConsole), consoleParam, nil
+}
+
+// resolvedExtraKernelParams validates operator kernel parameters and removes
+// console tokens already represented by the resolved console.
+//
+// Console tokens are validated against the strict console grammar rather than
+// the generic parameter pattern, because a legitimate console value such as
+// ttyS1,115200n8 contains a comma.
+func resolvedExtraKernelParams(cfg *config.MachineConfig) (string, error) {
+	if cfg == nil || cfg.Provision.ExtraKernelParams == "" {
+		return "", nil
+	}
+	kept, dropped := stripConsoleParams(cfg.Provision.ExtraKernelParams)
+	for _, param := range dropped {
+		if err := validateConsoleKernelParam(param); err != nil {
+			return "", err
+		}
+	}
+	if !safeKernelParams.MatchString(kept) {
+		return "", fmt.Errorf("unsafe characters in ExtraKernelParams: %q", cfg.Provision.ExtraKernelParams)
+	}
+	if len(dropped) > 0 {
+		slog.Info("folded operator console parameters into serial console resolution",
+			"dropped", strings.Join(dropped, " "))
+	}
+	return kept, nil
+}
+
+// validateConsoleKernelParam accepts serial console values and the kernel
+// virtual terminals, and rejects anything else before it can reach the
+// resolver or a log line.
+func validateConsoleKernelParam(param string) error {
+	value := strings.TrimPrefix(param, "console=")
+	if _, err := serialconsole.ParseSpec(value); err == nil {
+		return nil
+	}
+	if virtualTerminalParam.MatchString(value) {
+		return nil
+	}
+	return fmt.Errorf("unsupported console parameter in ExtraKernelParams: %q", param)
+}
+
+// grubSerialTerminalConfig points GRUB itself at the resolved port so the
+// bootloader menu and the kernel share one console.
+func grubSerialTerminalConfig(resolution *serialconsole.Resolution) string {
+	if resolution.Console == nil {
+		return ""
+	}
+	unit, ok := resolution.Console.GRUBSerialUnit()
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("GRUB_TERMINAL=\"serial console\"\nGRUB_SERIAL_COMMAND=\"serial --unit=%d --speed=%d\"\n",
+		unit, resolution.Console.Baud)
 }
 
 func cloudInitKernelDatasourceParam(cfg *config.MachineConfig) (string, error) {
