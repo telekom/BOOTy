@@ -15,6 +15,20 @@ Thank you for your interest in contributing! This document covers the developmen
    go mod download
    ```
 
+## Dependency Updates
+
+Dependabot tracks direct and indirect Go modules, workflow actions, and base
+images in all six Dockerfiles through the four configured Docker directories.
+ContainerLab `*.clab.yml` topologies are not Kubernetes manifests and are not
+updated by Dependabot's Docker ecosystem. Keep their external FRR, Alpine,
+nginx and network-multitool image references synchronized manually.
+
+Package pins inside Dockerfile `RUN` instructions, downloaded tool/kernel
+versions, checksums and shell-script image references also need manual updates.
+Locally built `booty-*` images are test artifacts, not upstream dependencies.
+Validate dependency changes with the existing CI and KVM boot matrices before
+merging.
+
 ## Building
 
 ```bash
