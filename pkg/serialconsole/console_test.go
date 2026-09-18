@@ -122,3 +122,18 @@ func TestCompatibleAndMerge(t *testing.T) {
 		t.Fatalf("merge() = %+v, want %+v", got, detailed)
 	}
 }
+
+func TestValidateGettyCompatibilityRejectsNonDefaultFraming(t *testing.T) {
+	cases := []Spec{
+		{Device: "ttyS0", Baud: 115200, Parity: "e", Bits: 7},
+		{Device: "ttyS0", Baud: 115200, Parity: "n", Bits: 8, Flow: "r"},
+	}
+	for _, spec := range cases {
+		if err := spec.ValidateGettyCompatibility(); err == nil {
+			t.Fatalf("ValidateGettyCompatibility(%+v) = nil, want error", spec)
+		}
+	}
+	if err := (Spec{Device: "ttyS0", Baud: 115200, Parity: "n", Bits: 8}).ValidateGettyCompatibility(); err != nil {
+		t.Fatalf("default framing rejected: %v", err)
+	}
+}

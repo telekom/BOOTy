@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -164,6 +165,9 @@ func resolveTier(res *Resolution, tiers []tier, index int, spec Spec) (Resolutio
 		}
 	}
 	final := spec.withDefaults()
+	if err := final.ValidateGettyCompatibility(); err != nil {
+		return failClosed(res, fmt.Errorf("%w: %w", ErrAmbiguous, err))
+	}
 	res.State = StateResolved
 	res.Console = &final
 	res.Reason = fmt.Sprintf("selected %s from %s", final.Device, t.source)
@@ -245,6 +249,9 @@ func (r *Resolver) overrideTier() (tier, bool, error) {
 		}
 		t.evidence = append(t.evidence, evidenceFromSpec(SourceKernelParams, spec, "",
 			"console= parameter in extraKernelParams"))
+	}
+	if override == "" && len(t.evidence) > 0 {
+		t.source = SourceKernelParams
 	}
 	return t, false, nil
 }
@@ -390,7 +397,13 @@ func (r *Resolver) bootConsoleTier(ports []port) tier {
 // cmdlineOnlyEvidence covers kernels that do not export console/active.
 func cmdlineOnlyEvidence(ports []port, specs map[string]Spec) []Evidence {
 	evidence := make([]Evidence, 0, len(specs))
-	for device, spec := range specs {
+	devices := make([]string, 0, len(specs))
+	for device := range specs {
+		devices = append(devices, device)
+	}
+	sort.Strings(devices)
+	for _, device := range devices {
+		spec := specs[device]
 		if _, ok := findPort(ports, device); !ok {
 			continue
 		}

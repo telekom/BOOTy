@@ -50,7 +50,7 @@ var deviceNamePattern = regexp.MustCompile(`^[a-z][a-zA-Z0-9_]*\d{1,3}$`)
 
 // virtualConsolePattern matches the kernel virtual terminals (tty0..tty63),
 // which are not serial ports and can never host a serial getty.
-var virtualConsolePattern = regexp.MustCompile(`^tty\d{1,2}$`)
+var virtualConsolePattern = regexp.MustCompile(`^tty(?:[0-9]|[1-5][0-9]|6[0-3])$`)
 
 // consoleSpecPattern splits a Linux console specification into device and
 // options, for example ttyS1,115200n8r.
@@ -88,6 +88,17 @@ func (s Spec) KernelParam() string {
 // GettyUnit renders the systemd serial getty unit for the resolved device.
 func (s Spec) GettyUnit() string {
 	return "serial-getty@" + s.Device + ".service"
+}
+
+// ValidateGettyCompatibility rejects framing that the generated agetty unit
+// cannot apply explicitly. Resolution fails closed rather than configuring a
+// kernel console and getty with different framing.
+func (s Spec) ValidateGettyCompatibility() error {
+	s = s.withDefaults()
+	if s.Parity != DefaultParity || s.Bits != DefaultBits || s.Flow != "" {
+		return fmt.Errorf("serial console %s uses unsupported getty framing %s", s.Device, s.Options())
+	}
+	return nil
 }
 
 // GRUBSerialUnit reports the GRUB `--unit` index for 8250-style ports. The
