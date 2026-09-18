@@ -50,7 +50,7 @@ var deviceNamePattern = regexp.MustCompile(`^[a-z][a-zA-Z0-9_]*\d{1,3}$`)
 
 // virtualConsolePattern matches the kernel virtual terminals (tty0..tty63),
 // which are not serial ports and can never host a serial getty.
-var virtualConsolePattern = regexp.MustCompile(`^tty(?:[0-9]|[1-5][0-9]|6[0-3])$`)
+var virtualConsolePattern = regexp.MustCompile(`^tty(?:\d|[1-5]\d|6[0-3])$`)
 
 // consoleSpecPattern splits a Linux console specification into device and
 // options, for example ttyS1,115200n8r.
