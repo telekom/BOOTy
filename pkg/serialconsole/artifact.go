@@ -164,15 +164,16 @@ func NewArtifact(res *Resolution, now time.Time, resolveErr error) Artifact {
 
 // MarshalArtifact renders a bounded, deterministic JSON document.
 func MarshalArtifact(artifact *Artifact) ([]byte, error) {
-	if len(artifact.Resolution.Evidence) > maxEvidenceEntries {
-		return nil, fmt.Errorf("serial console artifact carries %d evidence entries, limit is %d",
-			len(artifact.Resolution.Evidence), maxEvidenceEntries)
-	}
 	// Copy every slice so that marshaling never mutates the caller's resolution.
 	out := *artifact
 	out.Resolution.Evidence = boundEvidence(artifact.Resolution.Evidence)
 	out.Resolution.Conflicts = boundStrings(artifact.Resolution.Conflicts)
 	out.Resolution.Degraded = boundStrings(artifact.Resolution.Degraded)
+	if len(artifact.Resolution.Evidence) > maxEvidenceEntries {
+		out.Resolution.Degraded = append(out.Resolution.Degraded,
+			fmt.Sprintf("evidence truncated to %d entries", maxEvidenceEntries))
+		sort.Strings(out.Resolution.Degraded)
+	}
 	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("marshal serial console artifact: %w", err)
@@ -194,6 +195,9 @@ func boundStrings(values []string) []string {
 }
 
 func boundEvidence(entries []Evidence) []Evidence {
+	if len(entries) > maxEvidenceEntries {
+		entries = entries[:maxEvidenceEntries]
+	}
 	out := make([]Evidence, len(entries))
 	copy(out, entries)
 	for i := range out {
