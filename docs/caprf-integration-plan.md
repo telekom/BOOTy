@@ -444,7 +444,12 @@ Operations on mounted root filesystem at `/newroot`:
    - Write `/etc/default/grub.d/10-caprf-kernel-params.cfg`
    - Content includes the selected cloud-init datasource parameter:
      `ds=nocloud` for NoCloud, `ci.datasource=ConfigDrive` for ConfigDrive.
-   - Console selection: Lenovo → ttyS1, default → ttyS0 (from dmidecode)
+   - Console selection: resolved by `pkg/serialconsole` from explicit override,
+     ACPI SPCR, device-tree `stdout-path`, the running boot console, and sysfs
+     UART enumeration. DMI is recorded as context only and never selects a port.
+     Exactly one `console=` parameter is emitted and it fails closed on
+     ambiguous evidence. See
+     [serial-console-resolution.md](serial-console-resolution.md).
    - Run `chroot /newroot update-grub`
 6. **Copy machine files**: Copy files from machine config to root filesystem
 7. **Cloud-init setup**:

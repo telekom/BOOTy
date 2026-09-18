@@ -41,6 +41,7 @@ Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, read
 - `pkg/grubcfg/` — GRUB config file parsing
 - `pkg/retry/` — Retry policy framework with exponential backoff
 - `pkg/secureboot/` — Secure Boot chain setup
+- `pkg/serialconsole/` — Serial console resolution (explicit override, ACPI SPCR, device tree, sysfs, DMI evidence)
 - `pkg/system/` — System-level operations
 - `pkg/telemetry/` — Telemetry and metrics collection
 - `pkg/tpm/` — TPM/TPM2 operations and cryptenroll
