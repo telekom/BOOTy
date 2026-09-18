@@ -228,8 +228,9 @@ func TestConfigureSerialConsoleWritesMatchingGetty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read serial getty drop-in: %v", err)
 	}
-	if !strings.Contains(string(data), "--keep-baud 115200 %I $TERM") {
-		t.Fatalf("drop-in does not pin the resolved baud: %s", data)
+	if !strings.Contains(string(data), "-8 -o") ||
+		!strings.Contains(string(data), "--keep-baud 115200 %I $TERM") {
+		t.Fatalf("drop-in does not pin compatible 8N1 framing and baud: %s", data)
 	}
 	if !strings.Contains(string(data), "ExecStart=\n") {
 		t.Fatalf("drop-in must reset the inherited ExecStart: %s", data)
@@ -419,6 +420,7 @@ func TestConfigureGRUBRejectsUnsupportedConsoleParams(t *testing.T) {
 		{name: "command injection", extra: "console=ttyS0;reboot"},
 		{name: "device path traversal", extra: "console=../../dev/ttyS0"},
 		{name: "unsupported baud", extra: "console=ttyS0,99"},
+		{name: "nonexistent virtual terminal", extra: "console=tty99"},
 	}
 
 	for _, tc := range tests {
