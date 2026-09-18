@@ -458,7 +458,11 @@ func ValidateSerialConsoleOverride(value string) error {
 		strings.EqualFold(trimmed, "disabled") {
 		return nil
 	}
-	if _, err := serialconsole.ParseSpec(trimmed); err != nil {
+	spec, err := serialconsole.ParseSpec(trimmed)
+	if err != nil {
+		return fmt.Errorf("invalid provision.serialConsole %q: %w", value, err)
+	}
+	if err := spec.ValidateGettyCompatibility(); err != nil {
 		return fmt.Errorf("invalid provision.serialConsole %q: %w", value, err)
 	}
 	return nil

@@ -444,3 +444,27 @@ func TestResolveSPCRUnmappedWithoutAddressesFallsBack(t *testing.T) {
 		t.Fatal("unmapped firmware evidence must be recorded as degraded")
 	}
 }
+
+func TestResolveKernelParameterReportsKernelParamSource(t *testing.T) {
+	host := newFakeHost(t)
+	host.addUART("ttyS0", "16550A", 0x3f8)
+	resolver := host.resolver()
+	resolver.ExtraKernelParams = "console=ttyS0,57600n8"
+
+	res, err := resolver.Resolve()
+	requireResolved(t, res, err, "ttyS0", 57600)
+	if res.SelectedBy != SourceKernelParams {
+		t.Fatalf("SelectedBy = %q, want %q", res.SelectedBy, SourceKernelParams)
+	}
+}
+
+func TestCmdlineOnlyEvidenceIsSorted(t *testing.T) {
+	ports := []port{{Device: "ttyS0"}, {Device: "ttyS1"}}
+	evidence := cmdlineOnlyEvidence(ports, map[string]Spec{
+		"ttyS1": {Device: "ttyS1"},
+		"ttyS0": {Device: "ttyS0"},
+	})
+	if len(evidence) != 2 || evidence[0].Device != "ttyS0" || evidence[1].Device != "ttyS1" {
+		t.Fatalf("evidence order = %+v, want ttyS0, ttyS1", evidence)
+	}
+}

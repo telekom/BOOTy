@@ -42,6 +42,10 @@ console anomalies can be correlated per hardware model.
 
 ## Fail-closed conditions
 
+The generated serial-getty unit supports 8N1 framing. If any source resolves
+non-default parity, data bits, or flow control, resolution fails closed instead
+of configuring a kernel console and getty with different framing.
+
 Provisioning aborts with `ErrAmbiguous` when:
 
 - an explicit override is syntactically invalid or names a virtual terminal
