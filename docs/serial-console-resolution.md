@@ -156,7 +156,8 @@ Field contract for consumers:
 | `error` | Set only when resolution failed closed |
 
 All strings are bounded (evidence details truncated to 256 bytes, at most 32
-evidence entries) and contain no credentials or operator-supplied free text
+evidence entries; excess evidence is recorded as a degraded/truncated outcome)
+and contain no credentials or operator-supplied free text
 beyond validated console values.
 
 ## Operator escape hatch
