@@ -51,7 +51,8 @@ var safeKernelParams = regexp.MustCompile(`^[a-zA-Z0-9=._\-/ ]*$`)
 
 // virtualTerminalParam matches the kernel virtual terminals, which are valid
 // console values but never carry a serial getty.
-var virtualTerminalParam = regexp.MustCompile(`^tty\d{1,2}$`)
+var virtualTerminalCandidate = regexp.MustCompile(`^tty\d{1,2}$`)
+var virtualTerminalParam = regexp.MustCompile(`^tty(?:\d|[1-5]\d|6[0-3])$`)
 
 // safeProvisionCommand matches basic command/argument characters while
 // rejecting shell metacharacters that enable command chaining or substitution.
@@ -499,10 +500,13 @@ func resolvedExtraKernelParams(cfg *config.MachineConfig) (string, error) {
 // resolver or a log line.
 func validateConsoleKernelParam(param string) error {
 	value := strings.TrimPrefix(param, "console=")
-	if _, err := serialconsole.ParseSpec(value); err == nil {
-		return nil
+	if virtualTerminalCandidate.MatchString(value) {
+		if virtualTerminalParam.MatchString(value) {
+			return nil
+		}
+		return fmt.Errorf("unsupported virtual terminal console parameter: %q", param)
 	}
-	if virtualTerminalParam.MatchString(value) {
+	if _, err := serialconsole.ParseSpec(value); err == nil {
 		return nil
 	}
 	return fmt.Errorf("unsupported console parameter in ExtraKernelParams: %q", param)

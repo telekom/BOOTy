@@ -163,7 +163,7 @@ func (c *Configurator) persistSerialConsoleArtifact(data []byte) error {
 	return nil
 }
 
-// writeSerialGettyDropIn pins the agetty baud rate of the resolved instance so
+// writeSerialGettyDropIn pins agetty to the resolved 8N1 framing and baud so
 // the getty matches the kernel console exactly.
 func (c *Configurator) writeSerialGettyDropIn(spec serialconsole.Spec) error {
 	dropInDir := path.Join(systemdUnitDir, spec.GettyUnit()+".d")
@@ -184,7 +184,7 @@ func serialGettyDropIn(spec serialconsole.Spec) string {
 	b.WriteString("# Resolution evidence: " + path.Join(serialConsoleArtifactDir, serialconsole.ArtifactFileName) + "\n")
 	b.WriteString("[Service]\n")
 	b.WriteString("ExecStart=\n")
-	fmt.Fprintf(&b, "ExecStart=-/sbin/agetty -o '-p -- \\\\u' --keep-baud %d %%I $TERM\n", spec.Baud)
+	fmt.Fprintf(&b, "ExecStart=-/sbin/agetty -8 -o '-p -- \\\\u' --keep-baud %d %%I $TERM\n", spec.Baud)
 	return b.String()
 }
 

@@ -86,7 +86,7 @@ For a resolution of `ttyS1,115200n8`:
   ```
   [Service]
   ExecStart=
-  ExecStart=-/sbin/agetty -o '-p -- \\u' --keep-baud 115200 %I $TERM
+  ExecStart=-/sbin/agetty -8 -o '-p -- \\u' --keep-baud 115200 %I $TERM
   ```
 
 - `/etc/systemd/system/getty.target.wants/serial-getty@ttyS1.service`
@@ -105,8 +105,10 @@ The artifact is written to two locations:
 | `/var/lib/booty/serial-console.json` (in the provisioned root) | Durable record available after reboot |
 | `/run/booty/serial-console.json` (in the initramfs) | Collected by CAPRF during the provisioning run |
 
-It is always written — including when resolution fails closed — so the
-controller can explain the failure without a serial console.
+The durable target artifact is always written — including when resolution fails
+closed — so the controller can explain the failure without a serial console.
+Publishing the initramfs copy is best-effort: write failures are logged and do
+not abort provisioning.
 
 ```json
 {
