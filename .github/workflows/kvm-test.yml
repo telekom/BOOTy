@@ -110,12 +110,15 @@ jobs:
             -initrd test-initramfs.cpio.gz \
             -append "console=ttyS0 panic=1" \
             -m 512 \
-            -nographic \
+            -display none \
+            -monitor none \
             -no-reboot \
             -net nic,macaddr=52:54:00:12:34:56,model=e1000 \
             -net user \
             -serial file:serial.log \
             2>&1 || true
+
+          python3 -c 'import os; assert os.get_blocking(1), "QEMU left runner stdout nonblocking"'
 
           echo ""
           echo "======================================="

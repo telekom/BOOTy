@@ -74,6 +74,11 @@ make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab
 
 ### Test Requirements
 
+- File-backed QEMU serial checks use `-display none -monitor none`, not
+  `-nographic`: the latter enables a stdio monitor that leaves the Linux runner's
+  shared stdout pipe nonblocking and can make later log writes fail with
+  `Resource temporarily unavailable`. The workflow asserts blocking stdout
+  after QEMU exits, then evaluates the unchanged serial-log boot assertions.
 - **Linux only**: All tests in `pkg/provision/`, `pkg/disk/`, `pkg/network/`, and `pkg/realm/` use `//go:build linux`. Use `GOOS=linux` for compilation on macOS/Windows, but execution requires Linux.
 - **Coverage gate**: `make test` enforces a **40% coverage** minimum. New code should include tests to maintain or increase coverage.
 - **Race detector**: `-race` is enabled by default in all test targets.
