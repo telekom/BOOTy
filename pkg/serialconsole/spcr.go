@@ -67,13 +67,13 @@ func spcrBaud(value byte) (int, error) {
 	case 7:
 		return 115200, nil
 	default:
-		return 0, fmt.Errorf("SPCR baud encoding %d is reserved", value)
+		return 0, fmt.Errorf("acpi spcr baud encoding %d is reserved", value)
 	}
 }
 
 func spcrParity(value byte) (string, error) {
 	if value != 0 {
-		return "", fmt.Errorf("SPCR parity encoding %d is not supported", value)
+		return "", fmt.Errorf("acpi spcr parity encoding %d is not supported", value)
 	}
 	return "n", nil
 }
@@ -94,29 +94,29 @@ func spcrFlow(value byte) string {
 // this resolver must fail closed on.
 func ParseSPCR(data []byte) (SPCRInfo, error) {
 	if len(data) < spcrMinLength {
-		return SPCRInfo{}, fmt.Errorf("SPCR table is %d bytes, minimum is %d", len(data), spcrMinLength)
+		return SPCRInfo{}, fmt.Errorf("acpi spcr table is %d bytes, minimum is %d", len(data), spcrMinLength)
 	}
 	if len(data) > spcrMaxLength {
-		return SPCRInfo{}, fmt.Errorf("SPCR table is %d bytes, maximum is %d", len(data), spcrMaxLength)
+		return SPCRInfo{}, fmt.Errorf("acpi spcr table is %d bytes, maximum is %d", len(data), spcrMaxLength)
 	}
 	if !bytes.Equal(data[0:4], []byte("SPCR")) {
-		return SPCRInfo{}, fmt.Errorf("SPCR table has an invalid signature")
+		return SPCRInfo{}, fmt.Errorf("acpi spcr table has an invalid signature")
 	}
 	declared := int(binary.LittleEndian.Uint32(data[4:8]))
 	if declared < spcrMinLength || declared > len(data) {
-		return SPCRInfo{}, fmt.Errorf("SPCR declared length %d does not fit the %d byte table", declared, len(data))
+		return SPCRInfo{}, fmt.Errorf("acpi spcr declared length %d does not fit the %d byte table", declared, len(data))
 	}
 	class, ok := spcrInterfaceClass(data[spcrOffInterface])
 	if !ok {
-		return SPCRInfo{}, fmt.Errorf("SPCR interface type %#x is not a supported UART class", data[spcrOffInterface])
+		return SPCRInfo{}, fmt.Errorf("acpi spcr interface type %#x is not a supported UART class", data[spcrOffInterface])
 	}
 	space := data[spcrOffAddrSpaceID]
 	if space != acpiAddressSpaceMemory && space != acpiAddressSpaceIO {
-		return SPCRInfo{}, fmt.Errorf("SPCR address space %#x is neither system memory nor system I/O", space)
+		return SPCRInfo{}, fmt.Errorf("acpi spcr address space %#x is neither system memory nor system I/O", space)
 	}
 	address := binary.LittleEndian.Uint64(data[spcrOffAddress : spcrOffAddress+8])
 	if address == 0 {
-		return SPCRInfo{}, fmt.Errorf("SPCR declares no console base address")
+		return SPCRInfo{}, fmt.Errorf("acpi spcr declares no console base address")
 	}
 	baud, err := spcrBaud(data[spcrOffBaud])
 	if err != nil {
@@ -127,7 +127,7 @@ func ParseSPCR(data []byte) (SPCRInfo, error) {
 		return SPCRInfo{}, err
 	}
 	if stop := data[spcrOffStopBits]; stop != 1 {
-		return SPCRInfo{}, fmt.Errorf("SPCR stop-bit encoding %d is not supported", stop)
+		return SPCRInfo{}, fmt.Errorf("acpi spcr stop-bit encoding %d is not supported", stop)
 	}
 	return SPCRInfo{
 		InterfaceType: data[spcrOffInterface],

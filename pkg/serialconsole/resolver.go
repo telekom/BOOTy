@@ -24,7 +24,7 @@ const (
 // firmware evidence.
 //
 // A zero Resolver inspects the live host. Tests set SysRoot and ProcRoot to a
-// fixture tree and may set ReadFile to audit which paths are touched.
+// fixture tree and may set ReadFile to audit regular-file reads; directory and symlink enumeration uses the OS APIs directly.
 type Resolver struct {
 	// SysRoot defaults to /sys.
 	SysRoot string
