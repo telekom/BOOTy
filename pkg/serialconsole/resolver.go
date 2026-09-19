@@ -182,7 +182,7 @@ func mergeTier(t *tier) (Spec, bool, error) {
 		if !e.Selectable || e.Device == "" {
 			continue
 		}
-		spec := Spec{Device: e.Device, Baud: e.Baud, Parity: e.Parity, Bits: e.Bits}
+		spec := Spec{Device: e.Device, Baud: e.Baud, Parity: e.Parity, Bits: e.Bits, Flow: e.Flow}
 		if !found {
 			merged, found = spec, true
 			continue
@@ -277,13 +277,14 @@ func (r *Resolver) spcrTier(ports []port) tier {
 		Device:     device,
 		Baud:       info.Baud,
 		Parity:     info.Parity,
+		Bits:       DefaultBits,
+		Flow:       info.Flow,
 		Selectable: mapped,
 		Address:    fmt.Sprintf("%#x", info.Address),
 		Path:       "/sys/firmware/acpi/tables/SPCR",
 		Detail:     info.Detail(),
 	}
 	if mapped {
-		evidence.Bits = DefaultBits
 		t.evidence = append(t.evidence, evidence)
 		return t
 	}
@@ -349,6 +350,7 @@ func (r *Resolver) deviceTreeTier(ports []port) tier {
 		Baud:       stdout.Spec.Baud,
 		Parity:     stdout.Spec.Parity,
 		Bits:       stdout.Spec.Bits,
+		Flow:       stdout.Spec.Flow,
 		Selectable: mapped,
 		Path:       "/sys/firmware/devicetree/base/chosen/stdout-path",
 		Detail:     fmt.Sprintf("%s node=%s", stdout.Raw, node),
@@ -459,6 +461,7 @@ func evidenceFromSpec(source Source, spec Spec, path, detail string) Evidence {
 		Baud:       spec.Baud,
 		Parity:     spec.Parity,
 		Bits:       spec.Bits,
+		Flow:       spec.Flow,
 		Selectable: spec.Device != "",
 		Path:       path,
 		Detail:     detail,
