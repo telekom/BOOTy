@@ -102,6 +102,11 @@ func newTestConfigurator(t *testing.T, cmd *mockCommander) *Configurator {
 	mgr := disk.NewManager(cmd)
 	c := NewConfigurator(mgr)
 	c.rootDir = root
+	// Keep serial console resolution hermetic: tests must never inspect the
+	// sysfs/procfs of the machine running the test suite.
+	hostRoot := t.TempDir()
+	c.SetHostRoots(filepath.Join(hostRoot, "sys"), filepath.Join(hostRoot, "proc"))
+	c.SetRunDir(filepath.Join(hostRoot, "run", "booty"))
 	return c
 }
 
@@ -1303,10 +1308,10 @@ func TestProvisionStepsContainEFIVars(t *testing.T) {
 
 	// Verify total step count includes early provisioning input validation,
 	// setup-nvme-namespaces, setup-raid, mount-boot, mount-shared-data,
-	// overlayFS config, apply-sysexts, OCI pre-pulls, EFI fallback install,
-	// and secureboot chain verification.
-	if len(steps) != 45 {
-		t.Errorf("expected 45 provisioning steps, got %d", len(steps))
+	// overlayFS config, apply-sysexts, OCI pre-pulls, serial console
+	// resolution, EFI fallback install, and secureboot chain verification.
+	if len(steps) != 46 {
+		t.Errorf("expected 46 provisioning steps, got %d", len(steps))
 	}
 }
 

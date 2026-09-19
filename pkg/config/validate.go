@@ -10,6 +10,7 @@ import (
 	ociname "github.com/google/go-containerregistry/pkg/name"
 	imageutil "github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/BOOTy/pkg/serialconsole"
 )
 
 // Validate checks that all enum-like config fields contain known values and
@@ -55,6 +56,9 @@ func (c *Config) Validate() error {
 		errs = append(errs, msg)
 	}
 	if err := ValidateProvisionTargetOS(c.Provision.TargetOS); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := ValidateSerialConsoleOverride(c.Provision.SerialConsole); err != nil {
 		errs = append(errs, err.Error())
 	}
 	errs = append(errs, validateKubeletProvisionFields(&c.Provision)...)
@@ -443,6 +447,25 @@ func ValidateRequiredProvisionTargetOS(target string) error {
 		return fmt.Errorf("provision.targetOS required before destructive storage steps: set PROVISION_TARGET_OS=%s or TARGET_OS=%s for Linux-compatible target images", TargetOSLinux, TargetOSLinux)
 	}
 	return ValidateProvisionTargetOS(target)
+}
+
+// ValidateSerialConsoleOverride rejects serial console overrides that would
+// not produce a usable kernel console and serial getty. An empty value means
+// "resolve from firmware evidence" and is always valid.
+func ValidateSerialConsoleOverride(value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || strings.EqualFold(trimmed, serialconsole.DisableKeyword) ||
+		strings.EqualFold(trimmed, "disabled") {
+		return nil
+	}
+	spec, err := serialconsole.ParseSpec(trimmed)
+	if err != nil {
+		return fmt.Errorf("invalid provision.serialConsole %q: %w", value, err)
+	}
+	if err := spec.ValidateGettyCompatibility(); err != nil {
+		return fmt.Errorf("invalid provision.serialConsole %q: %w", value, err)
+	}
+	return nil
 }
 
 // ValidateKubeletProvisionFields validates values rendered into
