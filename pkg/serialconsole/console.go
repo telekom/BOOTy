@@ -208,6 +208,9 @@ func compatible(a, b Spec) bool {
 	if a.Bits != 0 && b.Bits != 0 && a.Bits != b.Bits {
 		return false
 	}
+	if a.Flow != "" && b.Flow != "" && a.Flow != b.Flow {
+		return false
+	}
 	return true
 }
 

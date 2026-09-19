@@ -78,6 +78,21 @@ func (h *fakeHost) addDeviceTreeUART(device, node string) {
 	}
 }
 
+func (h *fakeHost) addSPCRFlow(address uint64, baudEncoding, flow byte) {
+	h.t.Helper()
+	table := make([]byte, spcrMinLength)
+	copy(table[0:4], "SPCR")
+	binary.LittleEndian.PutUint32(table[4:8], uint32(len(table)))
+	table[8] = 2
+	table[spcrOffInterface] = 0x00
+	table[spcrOffAddrSpaceID] = acpiAddressSpaceIO
+	binary.LittleEndian.PutUint64(table[spcrOffAddress:], address)
+	table[spcrOffBaud] = baudEncoding
+	table[spcrOffStopBits] = 1
+	table[spcrOffFlowControl] = flow
+	h.writeBytes(filepath.Join("sys", "firmware", "acpi", "tables", "SPCR"), table)
+}
+
 func (h *fakeHost) addSPCR(address uint64, baudEncoding byte) {
 	h.t.Helper()
 	table := make([]byte, spcrMinLength)
@@ -232,6 +247,29 @@ func TestResolveDellStyleSecondPort(t *testing.T) {
 
 	res, err := host.resolver().Resolve()
 	requireResolved(t, res, err, "ttyS1", 115200)
+}
+
+func TestResolveSPCRFlowEvidenceFailsClosedWithoutLosingFlow(t *testing.T) {
+	host := newFakeHost(t)
+	host.addUART("ttyS0", "16550A", 0x3f8)
+	host.addSPCRFlow(0x3f8, 7, 0x02) // RTS/CTS
+
+	res, err := host.resolver().Resolve()
+	if !errors.Is(err, ErrAmbiguous) {
+		t.Fatalf("Resolve() error = %v, want ErrAmbiguous for unsupported flow control", err)
+	}
+	var found bool
+	for _, evidence := range res.Evidence {
+		if evidence.Source == SourceACPISPCR {
+			found = true
+			if evidence.Flow != "r" {
+				t.Fatalf("SPCR evidence Flow = %q, want r", evidence.Flow)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("missing SPCR evidence")
+	}
 }
 
 func TestResolveSPCRWithoutBaudUsesBootConsoleBaud(t *testing.T) {

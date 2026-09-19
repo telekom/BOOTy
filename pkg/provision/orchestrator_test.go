@@ -43,7 +43,6 @@ func newTestOrchestratorWithCommander(t *testing.T, cfg *config.MachineConfig, p
 	cmd := newMockCommander()
 	mgr := disk.NewManager(cmd)
 	cfg.Provision.Image.AllowInsecureHTTP = true
-	cfg.Provision.Image.AllowInsecureHTTP = true
 	o := NewOrchestrator(cfg, provider, mgr)
 	o.config.rootDir = t.TempDir()
 	withHermeticHostRoots(t, o.config)

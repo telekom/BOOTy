@@ -65,6 +65,7 @@ type Evidence struct {
 	Baud   int    `json:"baud,omitempty"`
 	Parity string `json:"parity,omitempty"`
 	Bits   int    `json:"bits,omitempty"`
+	Flow   string `json:"flow,omitempty"`
 	// Address is the firmware-declared UART address, when known.
 	Address string `json:"address,omitempty"`
 	// Selectable marks evidence that may select a console on its own. Host
