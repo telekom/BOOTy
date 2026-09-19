@@ -128,6 +128,13 @@ func (s Spec) withDefaults() Spec {
 	return s
 }
 
+// isVirtualConsoleSpec reports whether a console parameter names a kernel VT.
+func isVirtualConsoleSpec(value string) bool {
+	value = strings.TrimPrefix(strings.TrimSpace(value), "/dev/")
+	device, _, _ := strings.Cut(value, ",")
+	return virtualConsolePattern.MatchString(device)
+}
+
 // ValidateDeviceName checks that name is a plausible serial tty device name.
 func ValidateDeviceName(name string) error {
 	switch {

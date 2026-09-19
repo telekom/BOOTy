@@ -415,6 +415,30 @@ func TestResolveConflictingOperatorParamsFailClosed(t *testing.T) {
 	}
 }
 
+func TestResolveInvalidExtraKernelConsoleFailsClosedWithEvidence(t *testing.T) {
+	host := newFakeHost(t)
+	host.addUART("ttyS0", "16550A", 0x3f8)
+	resolver := host.resolver()
+	resolver.ExtraKernelParams = "console=ttyS0,not-a-baud"
+
+	res, err := resolver.Resolve()
+	if !errors.Is(err, ErrAmbiguous) {
+		t.Fatalf("Resolve() error = %v, want ErrAmbiguous", err)
+	}
+	if res.Console != nil || len(res.Conflicts) == 0 {
+		t.Fatalf("resolution = %+v, want fail-closed conflict", res)
+	}
+	found := false
+	for _, evidence := range res.Evidence {
+		if evidence.Source == SourceKernelParams && strings.Contains(evidence.Detail, "invalid console=") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("invalid kernel parameter was not persisted as evidence")
+	}
+}
+
 func TestResolveExtraKernelParamsIgnoreVirtualTerminal(t *testing.T) {
 	host := newFakeHost(t)
 	host.addUART("ttyS1", "16550A", 0x2f8)
