@@ -96,8 +96,10 @@ func (r *Resolver) Resolve() (Resolution, error) {
 
 	override, disabled, err := r.overrideTier()
 	if err != nil {
+		res.Evidence = append(res.Evidence, override.evidence...)
 		res.Evidence = append(res.Evidence, dmiEvidence...)
-		return failClosed(&res, err)
+		res.Conflicts = append(res.Conflicts, err.Error())
+		return failClosed(&res, fmt.Errorf("%w: %w", ErrAmbiguous, err))
 	}
 	if disabled {
 		res.State = StateDisabled
@@ -245,9 +247,16 @@ func (r *Resolver) overrideTier() (tier, bool, error) {
 	for _, param := range params {
 		spec, err := ParseSpec(param)
 		if err != nil {
-			// A non-serial console such as tty0 is legitimate in
-			// extraKernelParams and is not operator serial intent.
-			continue
+			if isVirtualConsoleSpec(param) {
+				// A non-serial console such as tty0 is legitimate in
+				// extraKernelParams and is not operator serial intent.
+				continue
+			}
+			t.evidence = append(t.evidence, Evidence{
+				Source: SourceKernelParams,
+				Detail: "invalid console= parameter in extraKernelParams: " + truncate(param+": "+err.Error(), maxDetailLen),
+			})
+			return t, false, fmt.Errorf("extraKernelParams contains invalid serial console %q: %w", param, err)
 		}
 		t.evidence = append(t.evidence, evidenceFromSpec(SourceKernelParams, spec, "",
 			"console= parameter in extraKernelParams"))
