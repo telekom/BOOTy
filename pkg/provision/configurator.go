@@ -500,6 +500,7 @@ func resolvedExtraKernelParams(cfg *config.MachineConfig) (string, error) {
 // resolver or a log line.
 func validateConsoleKernelParam(param string) error {
 	value := strings.TrimPrefix(param, "console=")
+	value = strings.TrimPrefix(value, "/dev/")
 	if virtualTerminalCandidate.MatchString(value) {
 		if virtualTerminalParam.MatchString(value) {
 			return nil

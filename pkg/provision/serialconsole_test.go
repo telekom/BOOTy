@@ -440,6 +440,20 @@ func TestConfigureGRUBRejectsUnsupportedConsoleParams(t *testing.T) {
 	}
 }
 
+func TestConfigureGRUBAcceptsVirtualTerminalDevicePath(t *testing.T) {
+	c := newTestConfigurator(t, newMockCommander())
+	host := newSerialHostFixture(t, c)
+	host.addUART("ttyS0", "0x3f8")
+	host.addSPCR(0x3f8)
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.ExtraKernelParams = "console=/dev/tty0 ro"
+
+	if err := c.ConfigureGRUB(context.Background(), cfg); err != nil {
+		t.Fatalf("ConfigureGRUB: %v", err)
+	}
+}
+
 func TestConfigureGRUBKeepsVirtualTerminalConsoleOutOfSerialResolution(t *testing.T) {
 	c := newTestConfigurator(t, newMockCommander())
 	host := newSerialHostFixture(t, c)
