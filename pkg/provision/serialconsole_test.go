@@ -551,3 +551,11 @@ func TestConfigureSerialConsoleResolvesOncePerRun(t *testing.T) {
 		t.Fatalf("kernel console diverged from the getty configuration: %s", content)
 	}
 }
+
+func TestValidateConsoleKernelParamPreservesParseError(t *testing.T) {
+	_, parseErr := serialconsole.ParseSpec("ttyS0,99")
+	err := validateConsoleKernelParam("console=ttyS0,99")
+	if parseErr == nil || err == nil || !strings.Contains(err.Error(), parseErr.Error()) {
+		t.Fatalf("console validation error %v must preserve parse error %v", err, parseErr)
+	}
+}

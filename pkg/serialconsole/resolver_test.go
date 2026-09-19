@@ -481,7 +481,7 @@ func TestResolveNeverTouchesDeviceNodes(t *testing.T) {
 	}
 }
 
-func TestResolveHandlesUnreadableSPCRWithoutPanicking(t *testing.T) {
+func TestResolveHandlesUnparseableSPCRWithoutPanicking(t *testing.T) {
 	host := newFakeHost(t)
 	host.addUART("ttyS0", "16550A", 0x3f8)
 	host.writeBytes(filepath.Join("sys", "firmware", "acpi", "tables", "SPCR"), []byte("junk"))
@@ -489,8 +489,14 @@ func TestResolveHandlesUnreadableSPCRWithoutPanicking(t *testing.T) {
 	res, err := host.resolver().Resolve()
 	requireResolved(t, res, err, "ttyS0", DefaultBaud)
 	if len(res.Degraded) == 0 {
-		t.Fatal("an unreadable SPCR table must be recorded as degraded evidence")
+		t.Fatal("an unparseable SPCR table must be recorded as degraded evidence")
 	}
+	for _, evidence := range res.Evidence {
+		if evidence.Source == SourceACPISPCR && strings.HasPrefix(evidence.Detail, "unparseable SPCR table:") {
+			return
+		}
+	}
+	t.Fatal("missing SPCR parsing failure evidence")
 }
 
 func TestResolveSPCRUnmappedWithoutAddressesFallsBack(t *testing.T) {

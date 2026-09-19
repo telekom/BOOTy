@@ -507,10 +507,10 @@ func validateConsoleKernelParam(param string) error {
 		}
 		return fmt.Errorf("unsupported virtual terminal console parameter: %q", param)
 	}
-	if _, err := serialconsole.ParseSpec(value); err == nil {
-		return nil
+	if _, err := serialconsole.ParseSpec(value); err != nil {
+		return fmt.Errorf("unsupported console parameter in ExtraKernelParams %q: %w", param, err)
 	}
-	return fmt.Errorf("unsupported console parameter in ExtraKernelParams: %q", param)
+	return nil
 }
 
 // grubSerialTerminalConfig points GRUB itself at the resolved port so the

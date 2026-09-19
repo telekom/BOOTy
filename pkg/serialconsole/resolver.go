@@ -279,7 +279,7 @@ func (r *Resolver) spcrTier(ports []port) tier {
 	if err != nil {
 		t.degraded = append(t.degraded, err.Error())
 		t.evidence = append(t.evidence, Evidence{Source: SourceACPISPCR, Path: "/sys/firmware/acpi/tables/SPCR",
-			Detail: "unreadable SPCR table: " + truncate(err.Error(), maxDetailLen)})
+			Detail: "unparseable SPCR table: " + truncate(err.Error(), maxDetailLen)})
 		return t
 	}
 	device, mapped := mapSPCRDevice(ports, info)
