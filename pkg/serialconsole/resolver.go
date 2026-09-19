@@ -178,7 +178,8 @@ func resolveTier(res *Resolution, tiers []tier, index int, spec Spec) (Resolutio
 func mergeTier(t *tier) (Spec, bool, error) {
 	var merged Spec
 	found := false
-	for _, e := range t.evidence {
+	for i := range t.evidence {
+		e := &t.evidence[i]
 		if !e.Selectable || e.Device == "" {
 			continue
 		}
@@ -198,7 +199,8 @@ func mergeTier(t *tier) (Spec, bool, error) {
 
 func baudFromLowerTiers(tiers []tier, device string) (int, Source) {
 	for _, t := range tiers {
-		for _, e := range t.evidence {
+		for i := range t.evidence {
+			e := &t.evidence[i]
 			if e.Device == device && e.Baud != 0 {
 				return e.Baud, t.source
 			}
