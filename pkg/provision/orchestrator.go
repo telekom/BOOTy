@@ -217,7 +217,11 @@ func resumeStateSteps() map[string]struct{} {
 		"mount-boot":                {},
 		"mount-shared-data":         {},
 		"setup-chroot-binds":        {},
-		"teardown-chroot":           {},
+		// Console resolution and GRUB emission must be rerun together after a
+		// resume because the selected console is cached only in memory.
+		"configure-serial-console": {},
+		"configure-grub":           {},
+		"teardown-chroot":          {},
 	}
 }
 

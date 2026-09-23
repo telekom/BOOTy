@@ -280,6 +280,9 @@ func (r *Resolver) spcrTier(ports []port) tier {
 		t.degraded = append(t.degraded, err.Error())
 		t.evidence = append(t.evidence, Evidence{Source: SourceACPISPCR, Path: "/sys/firmware/acpi/tables/SPCR",
 			Detail: "unparseable SPCR table: " + truncate(err.Error(), maxDetailLen)})
+		if len(data) >= spcrMinLength && string(data[:4]) == "SPCR" {
+			t.conflicts = append(t.conflicts, "ACPI SPCR is present but unusable: "+err.Error())
+		}
 		return t
 	}
 	device, mapped := mapSPCRDevice(ports, info)
@@ -321,13 +324,22 @@ func spcrUnmappedOutcome(ports []port, info SPCRInfo, degraded, conflicts []stri
 
 // mapSPCRDevice maps the firmware-declared address onto an enumerated tty.
 func mapSPCRDevice(ports []port, info SPCRInfo) (string, bool) {
+	var classMatch string
+	classMatches := 0
 	for i := range ports {
-		if ports[i].matchesAddress(info.Address) && strings.HasPrefix(ports[i].Device, info.DeviceClass) {
-			return ports[i].Device, true
+		if ports[i].matchesAddress(info.AddressSpace, info.Address) && strings.HasPrefix(ports[i].Device, info.DeviceClass) {
+			classMatch = ports[i].Device
+			classMatches++
 		}
 	}
+	if classMatches == 1 {
+		return classMatch, true
+	}
+	if classMatches > 1 {
+		return "", false
+	}
 	for i := range ports {
-		if ports[i].matchesAddress(info.Address) {
+		if ports[i].matchesAddress(info.AddressSpace, info.Address) {
 			return ports[i].Device, true
 		}
 	}

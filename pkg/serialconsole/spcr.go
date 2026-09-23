@@ -78,12 +78,16 @@ func spcrParity(value byte) (string, error) {
 	return "n", nil
 }
 
-func spcrFlow(value byte) string {
-	// Bit 1 selects hardware RTS/CTS flow control.
-	if value&0x02 != 0 {
-		return "r"
+func spcrFlow(value byte) (string, error) {
+	// Bit 1 selects hardware RTS/CTS flow control. Other bits are
+	// encodings agetty cannot reproduce, so fail closed.
+	if value&^byte(0x02) != 0 {
+		return "", fmt.Errorf("acpi spcr flow-control encoding %#x is not supported", value)
 	}
-	return ""
+	if value&0x02 != 0 {
+		return "r", nil
+	}
+	return "", nil
 }
 
 // ParseSPCR decodes an ACPI SPCR table read from
@@ -129,13 +133,17 @@ func ParseSPCR(data []byte) (SPCRInfo, error) {
 	if stop := data[spcrOffStopBits]; stop != 1 {
 		return SPCRInfo{}, fmt.Errorf("acpi spcr stop-bit encoding %d is not supported", stop)
 	}
+	flow, err := spcrFlow(data[spcrOffFlowControl])
+	if err != nil {
+		return SPCRInfo{}, err
+	}
 	return SPCRInfo{
 		InterfaceType: data[spcrOffInterface],
 		AddressSpace:  space,
 		Address:       address,
 		Baud:          baud,
 		Parity:        parity,
-		Flow:          spcrFlow(data[spcrOffFlowControl]),
+		Flow:          flow,
 		DeviceClass:   class,
 	}, nil
 }

@@ -49,11 +49,18 @@ func (p *port) addressString() string {
 
 // matchesAddress reports whether the port is backed by the given firmware
 // address.
-func (p *port) matchesAddress(addr uint64) bool {
+func (p *port) matchesAddress(space byte, addr uint64) bool {
 	if addr == 0 {
 		return false
 	}
-	return p.IOPort == addr || p.MemBase == addr
+	switch space {
+	case acpiAddressSpaceIO:
+		return p.IOPort == addr
+	case acpiAddressSpaceMemory:
+		return p.MemBase == addr
+	default:
+		return false
+	}
 }
 
 // enumeratePorts lists candidate serial ports below <sysRoot>/class/tty.

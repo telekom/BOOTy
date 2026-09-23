@@ -438,11 +438,11 @@ func (c *Configurator) grubCmdlineEntry(cfg *config.MachineConfig) (line, consol
 	}
 	// Validate operator input before touching firmware evidence so unsafe
 	// parameters are reported as such instead of as a console failure.
-	extraParams, err := resolvedExtraKernelParams(cfg)
+	consoleParam, err = c.serialConsoleKernelParam(cfg)
 	if err != nil {
 		return "", "", err
 	}
-	consoleParam, err = c.serialConsoleKernelParam(cfg)
+	extraParams, err := resolvedExtraKernelParams(cfg, consoleParam == "")
 	if err != nil {
 		return "", "", err
 	}
@@ -475,7 +475,7 @@ func (c *Configurator) grubCmdlineEntry(cfg *config.MachineConfig) (line, consol
 // Console tokens are validated against the strict console grammar rather than
 // the generic parameter pattern, because a legitimate console value such as
 // ttyS1,115200n8 contains a comma.
-func resolvedExtraKernelParams(cfg *config.MachineConfig) (string, error) {
+func resolvedExtraKernelParams(cfg *config.MachineConfig, preserveVirtualConsole bool) (string, error) {
 	if cfg == nil || cfg.Provision.ExtraKernelParams == "" {
 		return "", nil
 	}
@@ -483,6 +483,15 @@ func resolvedExtraKernelParams(cfg *config.MachineConfig) (string, error) {
 	for _, param := range dropped {
 		if err := validateConsoleKernelParam(param); err != nil {
 			return "", err
+		}
+		if preserveVirtualConsole {
+			value := strings.TrimPrefix(strings.TrimPrefix(param, "console="), "/dev/")
+			if virtualTerminalParam.MatchString(value) {
+				if kept != "" {
+					kept += " "
+				}
+				kept += param
+			}
 		}
 	}
 	if !safeKernelParams.MatchString(kept) {
