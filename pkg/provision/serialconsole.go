@@ -280,6 +280,7 @@ func (c *Configurator) pruneSerialGettyLinks(keepUnit string) error {
 	return nil
 }
 
+//nolint:cyclop // bounded filesystem cleanup with explicit symlink safety checks
 func (c *Configurator) pruneSerialGettyDropIns(keepUnit string) error {
 	unitDir := filepath.Join(c.rootDir, strings.TrimPrefix(systemdUnitDir, "/"))
 	if info, err := os.Lstat(unitDir); err == nil && info.Mode()&os.ModeSymlink != 0 {
