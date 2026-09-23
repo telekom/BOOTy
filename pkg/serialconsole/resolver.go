@@ -274,9 +274,9 @@ func (r *Resolver) overrideTier() (tier, bool, error) {
 			}
 			t.evidence = append(t.evidence, Evidence{
 				Source: SourceKernelParams,
-				Detail: "invalid console= parameter in extraKernelParams: " + truncate(err.Error(), maxDetailLen),
+				Detail: "invalid serial console parameter in extraKernelParams",
 			})
-			return t, false, fmt.Errorf("extraKernelParams contains invalid serial console parameter: %w", err)
+			return t, false, fmt.Errorf("extraKernelParams contains invalid serial console parameter")
 		}
 		t.evidence = append(t.evidence, evidenceFromSpec(SourceKernelParams, spec, "",
 			"console= parameter in extraKernelParams"))

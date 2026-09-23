@@ -154,7 +154,7 @@ func TestResolveExplicitOverrideWins(t *testing.T) {
 	host := newFakeHost(t)
 	host.addUART("ttyS0", "16550A", 0x3f8)
 	host.addUART("ttyS1", "16550A", 0x2f8)
-	host.addSPCR(0x3f8, 3)
+	host.addSPCR(0x3f8, 7)
 
 	resolver := host.resolver()
 	resolver.Override = "ttyS1,57600n8"
@@ -206,7 +206,7 @@ func TestResolveLenovoStyleSecondPort(t *testing.T) {
 	host.addDMI("Lenovo", "ThinkSystem SR650 V3")
 	host.addUART("ttyS0", "16550A", 0x3f8)
 	host.addUART("ttyS1", "16550A", 0x2f8)
-	host.addSPCR(0x2f8, 3)
+	host.addSPCR(0x2f8, 7)
 
 	res, err := host.resolver().Resolve()
 	requireResolved(t, res, err, "ttyS1", 115200)
@@ -230,7 +230,7 @@ func TestResolveNonLenovoFirstPort(t *testing.T) {
 	host.addDMI("Dell Inc.", "PowerEdge R660")
 	host.addUART("ttyS0", "16550A", 0x3f8)
 	host.addUART("ttyS1", "16550A", 0x2f8)
-	host.addSPCR(0x3f8, 2)
+	host.addSPCR(0x3f8, 6)
 
 	res, err := host.resolver().Resolve()
 	requireResolved(t, res, err, "ttyS0", 57600)
@@ -243,7 +243,7 @@ func TestResolveDellStyleSecondPort(t *testing.T) {
 	host.addDMI("Dell Inc.", "PowerEdge R760")
 	host.addUART("ttyS0", "16550A", 0x3f8)
 	host.addUART("ttyS1", "16550A", 0x2f8)
-	host.addSPCR(0x2f8, 3)
+	host.addSPCR(0x2f8, 7)
 
 	res, err := host.resolver().Resolve()
 	requireResolved(t, res, err, "ttyS1", 115200)
@@ -252,7 +252,7 @@ func TestResolveDellStyleSecondPort(t *testing.T) {
 func TestResolveSPCRFlowEvidenceFailsClosedWithoutLosingFlow(t *testing.T) {
 	host := newFakeHost(t)
 	host.addUART("ttyS0", "16550A", 0x3f8)
-	host.addSPCRFlow(0x3f8, 3, 0x02) // RTS/CTS
+	host.addSPCRFlow(0x3f8, 7, 0x02) // RTS/CTS
 
 	res, err := host.resolver().Resolve()
 	if !errors.Is(err, ErrAmbiguous) {
@@ -275,14 +275,14 @@ func TestResolveSPCRFlowEvidenceFailsClosedWithoutLosingFlow(t *testing.T) {
 func TestResolveSPCRWithoutBaudUsesBootConsoleBaud(t *testing.T) {
 	host := newFakeHost(t)
 	host.addUART("ttyS1", "16550A", 0x2f8)
-	host.addSPCR(0x2f8, 2)
+	host.addSPCR(0x2f8, 0)
 	host.write(filepath.Join("proc", "cmdline"), "BOOT_IMAGE=/vmlinuz console=tty0 console=ttyS1,57600n8\n")
 	host.write(filepath.Join("sys", "class", "tty", "console", "active"), "tty0 ttyS1\n")
 
 	res, err := host.resolver().Resolve()
 	requireResolved(t, res, err, "ttyS1", 57600)
-	if res.BaudSource != SourceACPISPCR {
-		t.Fatalf("BaudSource = %q, want %q", res.BaudSource, SourceACPISPCR)
+	if res.BaudSource != SourceBootConsole {
+		t.Fatalf("BaudSource = %q, want %q", res.BaudSource, SourceBootConsole)
 	}
 }
 
@@ -292,9 +292,9 @@ func TestResolveSPCRWithoutAnyBaudUsesDefault(t *testing.T) {
 	host.addSPCR(0x3f8, 0)
 
 	res, err := host.resolver().Resolve()
-	requireResolved(t, res, err, "ttyS0", 9600)
-	if res.BaudSource != SourceACPISPCR {
-		t.Fatalf("BaudSource = %q, want %q", res.BaudSource, SourceACPISPCR)
+	requireResolved(t, res, err, "ttyS0", DefaultBaud)
+	if len(res.Degraded) == 0 {
+		t.Fatal("using the default baud must be recorded as degraded evidence")
 	}
 }
 
@@ -430,7 +430,7 @@ func TestResolveInvalidExtraKernelConsoleFailsClosedWithEvidence(t *testing.T) {
 	}
 	found := false
 	for _, evidence := range res.Evidence {
-		if evidence.Source == SourceKernelParams && strings.Contains(evidence.Detail, "invalid console=") {
+		if evidence.Source == SourceKernelParams && evidence.Detail == "invalid serial console parameter in extraKernelParams" {
 			found = true
 		}
 	}
@@ -455,7 +455,7 @@ func TestResolveExtraKernelParamsIgnoreVirtualTerminal(t *testing.T) {
 func TestResolveNeverTouchesDeviceNodes(t *testing.T) {
 	host := newFakeHost(t)
 	host.addUART("ttyS0", "16550A", 0x3f8)
-	host.addSPCR(0x3f8, 3)
+	host.addSPCR(0x3f8, 7)
 	host.addDMI("Lenovo", "ThinkSystem SR650")
 
 	var read []string
@@ -504,7 +504,7 @@ func TestResolveSPCRUnmappedWithoutAddressesFallsBack(t *testing.T) {
 	// A UART with no address attributes at all, as exposed by some virtual
 	// platforms.
 	host.addUART("ttyS0", "16550A", 0)
-	host.addSPCR(0x3f8, 3)
+	host.addSPCR(0x3f8, 7)
 
 	res, err := host.resolver().Resolve()
 	requireResolved(t, res, err, "ttyS0", DefaultBaud)
