@@ -228,6 +228,9 @@ func failClosed(res *Resolution, err error) (Resolution, error) {
 // overrideTier collects explicit operator intent.
 func (r *Resolver) overrideTier() (tier, bool, error) {
 	t := tier{source: SourceOverride}
+	if len(r.ExtraKernelParams) > maxCmdlineBytes {
+		return t, false, fmt.Errorf("extraKernelParams exceeds %d bytes", maxCmdlineBytes)
+	}
 	if r.OverrideSource != "" {
 		t.source = r.OverrideSource
 	}
@@ -397,14 +400,14 @@ func (r *Resolver) deviceTreeTier(ports []port) tier {
 // system keeps the channel that is demonstrably working.
 func (r *Resolver) bootConsoleTier(ports []port) tier {
 	t := tier{source: SourceBootConsole}
-	baudByDevice := map[string]Spec{}
+	baudByDevice := map[string][]Spec{}
 	cmdline := r.readAttr(filepath.Join(r.procRoot(), "cmdline"))
 	for _, param := range ConsoleParamsFromCmdline(cmdline) {
 		spec, err := ParseSpec(param)
 		if err != nil {
 			continue
 		}
-		baudByDevice[spec.Device] = spec
+		baudByDevice[spec.Device] = append(baudByDevice[spec.Device], spec)
 	}
 	for _, device := range strings.Fields(r.readAttr(filepath.Join(r.sysRoot(), "class", "tty", "console", "active"))) {
 		if ValidateDeviceName(device) != nil {
@@ -413,20 +416,29 @@ func (r *Resolver) bootConsoleTier(ports []port) tier {
 		if _, ok := findPort(ports, device); !ok {
 			continue
 		}
-		spec := baudByDevice[device]
-		spec.Device = device
-		t.evidence = append(t.evidence, evidenceFromSpec(SourceBootConsole, spec,
-			"/sys/class/tty/console/active", "console active in the running kernel"))
+		for _, spec := range baudByDevice[device] {
+			spec.Device = device
+			t.evidence = append(t.evidence, evidenceFromSpec(SourceBootConsole, spec,
+				"/sys/class/tty/console/active", "console active in the running kernel"))
+		}
 		delete(baudByDevice, device)
 	}
 	if len(t.evidence) == 0 {
-		t.evidence = append(t.evidence, cmdlineOnlyEvidence(ports, baudByDevice)...)
+		t.evidence = append(t.evidence, cmdlineOnlyEvidenceMulti(ports, baudByDevice)...)
 	}
 	return t
 }
 
 // cmdlineOnlyEvidence covers kernels that do not export console/active.
 func cmdlineOnlyEvidence(ports []port, specs map[string]Spec) []Evidence {
+	multi := make(map[string][]Spec, len(specs))
+	for device, spec := range specs {
+		multi[device] = []Spec{spec}
+	}
+	return cmdlineOnlyEvidenceMulti(ports, multi)
+}
+
+func cmdlineOnlyEvidenceMulti(ports []port, specs map[string][]Spec) []Evidence {
 	evidence := make([]Evidence, 0, len(specs))
 	devices := make([]string, 0, len(specs))
 	for device := range specs {
@@ -434,13 +446,14 @@ func cmdlineOnlyEvidence(ports []port, specs map[string]Spec) []Evidence {
 	}
 	sort.Strings(devices)
 	for _, device := range devices {
-		spec := specs[device]
 		if _, ok := findPort(ports, device); !ok {
 			continue
 		}
-		spec.Device = device
-		evidence = append(evidence, evidenceFromSpec(SourceBootConsole, spec,
-			"/proc/cmdline", "console= parameter of the running kernel"))
+		for _, spec := range specs[device] {
+			spec.Device = device
+			evidence = append(evidence, evidenceFromSpec(SourceBootConsole, spec,
+				"/proc/cmdline", "console= parameter of the running kernel"))
+		}
 	}
 	return evidence
 }

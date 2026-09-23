@@ -62,6 +62,8 @@ func spcrBaud(value byte) (int, error) {
 		return 9600, nil
 	case 4:
 		return 19200, nil
+	case 5:
+		return 38400, nil
 	case 6:
 		return 57600, nil
 	case 7:

@@ -47,7 +47,7 @@ func TestParseSPCR(t *testing.T) {
 }
 
 func TestParseSPCRBaudEncodings(t *testing.T) {
-	tests := map[byte]int{0: 0, 3: 9600, 4: 19200, 6: 57600, 7: 115200}
+	tests := map[byte]int{0: 0, 3: 9600, 4: 19200, 5: 38400, 6: 57600, 7: 115200}
 	for encoded, want := range tests {
 		info, err := ParseSPCR(buildSPCR(t, func(table []byte) { table[spcrOffBaud] = encoded }))
 		if err != nil {
@@ -57,7 +57,7 @@ func TestParseSPCRBaudEncodings(t *testing.T) {
 			t.Fatalf("ParseSPCR(baud=%d).Baud = %d, want %d", encoded, info.Baud, want)
 		}
 	}
-	for _, reserved := range []byte{1, 2, 5, 8, 255} {
+	for _, reserved := range []byte{1, 2, 8, 255} {
 		if _, err := ParseSPCR(buildSPCR(t, func(table []byte) { table[spcrOffBaud] = reserved })); err == nil {
 			t.Fatalf("ParseSPCR(baud=%d) = nil error, want rejection of reserved encoding", reserved)
 		}
