@@ -168,6 +168,7 @@ func NewArtifact(res *Resolution, now time.Time, resolveErr error) Artifact {
 func MarshalArtifact(artifact *Artifact) ([]byte, error) {
 	// Copy every slice so that marshaling never mutates the caller's resolution.
 	out := *artifact
+	out.Resolution.Reason = truncate(artifact.Resolution.Reason, maxDetailLen)
 	out.Resolution.Evidence = boundEvidence(artifact.Resolution.Evidence)
 	out.Resolution.Conflicts = boundStrings(artifact.Resolution.Conflicts)
 	out.Resolution.Degraded = boundStrings(artifact.Resolution.Degraded)

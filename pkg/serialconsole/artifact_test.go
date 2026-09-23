@@ -45,3 +45,23 @@ func TestTruncatePreservesUTF8Boundary(t *testing.T) {
 		t.Fatalf("truncate = %q (%d bytes), want one complete rune", got, len(got))
 	}
 }
+
+func TestMarshalArtifactBoundsResolutionReason(t *testing.T) {
+	resolution := Resolution{State: StateAmbiguous, Reason: "界界界"}
+	artifact := NewArtifact(&resolution, time.Unix(0, 0), nil)
+	artifact.Resolution.Reason = "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789"
+	data, err := MarshalArtifact(&artifact)
+	if err != nil {
+		t.Fatalf("MarshalArtifact() error: %v", err)
+	}
+	var got Artifact
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal artifact: %v", err)
+	}
+	if len(got.Resolution.Reason) > maxDetailLen || !utf8.ValidString(got.Resolution.Reason) {
+		t.Fatalf("reason was not bounded UTF-8: %q", got.Resolution.Reason)
+	}
+	if len(artifact.Resolution.Reason) <= maxDetailLen {
+		t.Fatal("test reason was not oversized")
+	}
+}
