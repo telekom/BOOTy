@@ -252,7 +252,7 @@ func TestResolveDellStyleSecondPort(t *testing.T) {
 func TestResolveSPCRFlowEvidenceFailsClosedWithoutLosingFlow(t *testing.T) {
 	host := newFakeHost(t)
 	host.addUART("ttyS0", "16550A", 0x3f8)
-	host.addSPCRFlow(0x3f8, 7, 0x01) // RTS/CTS
+	host.addSPCRFlow(0x3f8, 7, 0x02) // RTS/CTS
 
 	res, err := host.resolver().Resolve()
 	if !errors.Is(err, ErrAmbiguous) {

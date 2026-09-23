@@ -17,7 +17,7 @@ const (
 	spcrOffParity      = 59
 	spcrOffStopBits    = 60
 	spcrOffFlowControl = 61
-	spcrOffPreciseBaud = 64
+	spcrOffPreciseBaud = 80
 
 	acpiAddressSpaceMemory = 0x00
 	acpiAddressSpaceIO     = 0x01
@@ -63,8 +63,6 @@ func spcrBaud(value byte) (int, error) {
 		return 9600, nil
 	case 4:
 		return 19200, nil
-	case 5:
-		return 38400, nil
 	case 6:
 		return 57600, nil
 	case 7:
@@ -82,12 +80,12 @@ func spcrParity(value byte) (string, error) {
 }
 
 func spcrFlow(value byte) (string, error) {
-	// Bit 0 selects hardware RTS/CTS. Software flow control (bit 1) is not
-	// reproducible by the generated agetty invocation, so fail closed.
-	if value&0x02 != 0 {
+	// Bit 1 selects hardware RTS/CTS. Bit 2 selects software flow control,
+	// which the generated agetty invocation cannot reproduce.
+	if value&0x04 != 0 {
 		return "", fmt.Errorf("acpi spcr flow-control encoding %#x is not supported", value)
 	}
-	if value&0x01 != 0 {
+	if value&0x02 != 0 {
 		return "r", nil
 	}
 	return "", nil
@@ -131,11 +129,14 @@ func ParseSPCR(data []byte) (SPCRInfo, error) {
 	if err != nil {
 		return SPCRInfo{}, err
 	}
-	if precise := binary.LittleEndian.Uint32(data[spcrOffPreciseBaud : spcrOffPreciseBaud+4]); precise != 0 {
-		if precise > maxBaud {
-			return SPCRInfo{}, fmt.Errorf("acpi spcr precise baud rate %d is out of range", precise)
+	if declared >= spcrOffPreciseBaud+4 {
+		precise := binary.LittleEndian.Uint32(data[spcrOffPreciseBaud : spcrOffPreciseBaud+4])
+		if precise != 0 {
+			if precise > maxBaud {
+				return SPCRInfo{}, fmt.Errorf("acpi spcr precise baud rate %d is out of range", precise)
+			}
+			baud = int(precise)
 		}
-		baud = int(precise)
 	}
 	parity, err := spcrParity(data[spcrOffParity])
 	if err != nil {

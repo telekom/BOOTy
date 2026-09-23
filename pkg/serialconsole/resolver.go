@@ -259,7 +259,7 @@ func (r *Resolver) overrideTier() (tier, bool, error) {
 	if override != "" {
 		spec, err := ParseSpec(override)
 		if err != nil {
-			return t, false, fmt.Errorf("explicit serial console override %q is invalid: %w", override, err)
+			return t, false, fmt.Errorf("explicit serial console override is invalid: %w", err)
 		}
 		t.evidence = append(t.evidence, evidenceFromSpec(t.source, spec, "", "explicit operator override"))
 	}

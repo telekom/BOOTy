@@ -47,7 +47,7 @@ func TestParseSPCR(t *testing.T) {
 }
 
 func TestParseSPCRBaudEncodings(t *testing.T) {
-	tests := map[byte]int{0: 0, 3: 9600, 4: 19200, 5: 38400, 6: 57600, 7: 115200}
+	tests := map[byte]int{0: 0, 3: 9600, 4: 19200, 6: 57600, 7: 115200}
 	for encoded, want := range tests {
 		info, err := ParseSPCR(buildSPCR(t, func(table []byte) { table[spcrOffBaud] = encoded }))
 		if err != nil {
@@ -100,7 +100,7 @@ func TestParseSPCRRejectsMalformedTables(t *testing.T) {
 }
 
 func TestParseSPCRFlowControl(t *testing.T) {
-	info, err := ParseSPCR(buildSPCR(t, func(table []byte) { table[spcrOffFlowControl] = 0x01 }))
+	info, err := ParseSPCR(buildSPCR(t, func(table []byte) { table[spcrOffFlowControl] = 0x02 }))
 	if err != nil {
 		t.Fatalf("ParseSPCR: %v", err)
 	}
@@ -110,15 +110,16 @@ func TestParseSPCRFlowControl(t *testing.T) {
 }
 
 func TestParseSPCRRejectsSoftwareFlowControl(t *testing.T) {
-	if _, err := ParseSPCR(buildSPCR(t, func(table []byte) { table[spcrOffFlowControl] = 0x02 })); err == nil {
+	if _, err := ParseSPCR(buildSPCR(t, func(table []byte) { table[spcrOffFlowControl] = 0x04 })); err == nil {
 		t.Fatal("ParseSPCR() accepted unsupported software flow control")
 	}
 }
 
 func TestParseSPCRPreciseBaud(t *testing.T) {
-	info, err := ParseSPCR(buildSPCR(t, func(table []byte) {
-		binary.LittleEndian.PutUint32(table[spcrOffPreciseBaud:spcrOffPreciseBaud+4], 921600)
-	}))
+	table := append(buildSPCR(t, nil), make([]byte, 4)...)
+	binary.LittleEndian.PutUint32(table[4:8], uint32(len(table)))
+	binary.LittleEndian.PutUint32(table[spcrOffPreciseBaud:spcrOffPreciseBaud+4], 921600)
+	info, err := ParseSPCR(table)
 	if err != nil {
 		t.Fatalf("ParseSPCR() error: %v", err)
 	}

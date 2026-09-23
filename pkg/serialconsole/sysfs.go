@@ -176,7 +176,7 @@ func parseHexAttr(value string) uint64 {
 
 func isPresentUARTType(value string) bool {
 	value = strings.TrimSpace(value)
-	return value != "" && !strings.EqualFold(value, unknownUARTType)
+	return value != "" && value != "0" && !strings.EqualFold(value, unknownUARTType)
 }
 
 // findPort returns the enumerated port with the given device name.
