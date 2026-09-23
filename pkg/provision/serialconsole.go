@@ -307,8 +307,8 @@ func (c *Configurator) pruneSerialGettyDropIns(keepUnit string) error {
 		if statErr != nil && !os.IsNotExist(statErr) {
 			return fmt.Errorf("inspect stale serial getty drop-in for %s: %w", unit, statErr)
 		}
-		if statErr == nil && info.Mode()&os.ModeSymlink == 0 {
-			return fmt.Errorf("refusing to remove non-symlink serial getty drop-in: %s", dropIn)
+		if statErr == nil && !info.Mode().IsRegular() {
+			return fmt.Errorf("refusing to remove non-regular serial getty drop-in: %s", dropIn)
 		}
 		if err := os.Remove(dropIn); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove stale serial getty drop-in for %s: %w", unit, err)
