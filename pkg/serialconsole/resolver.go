@@ -156,7 +156,10 @@ func resolveTier(res *Resolution, tiers []tier, index int, spec Spec) (Resolutio
 	res.SelectedBy = t.source
 	res.BaudSource = t.source
 	if spec.Baud == 0 {
-		corroborated, source := baudFromLowerTiers(tiers[index+1:], spec.Device)
+		corroborated, source, err := baudFromLowerTiers(tiers[index+1:], spec)
+		if err != nil {
+			return failClosed(res, fmt.Errorf("%w: %w", ErrAmbiguous, err))
+		}
 		if corroborated != 0 {
 			spec.Baud = corroborated
 			res.BaudSource = source
@@ -199,16 +202,29 @@ func mergeTier(t *tier) (Spec, bool, error) {
 	return merged, found, nil
 }
 
-func baudFromLowerTiers(tiers []tier, device string) (int, Source) {
+func baudFromLowerTiers(tiers []tier, selected Spec) (int, Source, error) {
+	var baud int
+	var source Source
 	for _, t := range tiers {
 		for i := range t.evidence {
 			e := &t.evidence[i]
-			if e.Device == device && e.Baud != 0 {
-				return e.Baud, t.source
+			if !e.Selectable || e.Device != selected.Device {
+				continue
+			}
+			if e.Baud != 0 {
+				if baud != 0 && baud != e.Baud {
+					return 0, "", fmt.Errorf("lower-tier evidence claims both %d and %d baud for %s", baud, e.Baud, selected.Device)
+				}
+				baud, source = e.Baud, t.source
+			}
+			if (e.Parity != "" && selected.Parity != "" && e.Parity != selected.Parity) ||
+				(e.Bits != 0 && selected.Bits != 0 && e.Bits != selected.Bits) ||
+				(e.Flow != "" && selected.Flow != "" && e.Flow != selected.Flow) {
+				return 0, "", fmt.Errorf("lower-tier evidence conflicts with selected framing for %s", selected.Device)
 			}
 		}
 	}
-	return 0, ""
+	return baud, source, nil
 }
 
 func describeSpec(spec Spec) string {
@@ -427,9 +443,7 @@ func (r *Resolver) bootConsoleTier(ports []port) tier {
 		}
 		delete(baudByDevice, device)
 	}
-	if len(t.evidence) == 0 {
-		t.evidence = append(t.evidence, cmdlineOnlyEvidenceMulti(ports, baudByDevice)...)
-	}
+	t.evidence = append(t.evidence, cmdlineOnlyEvidenceMulti(ports, baudByDevice)...)
 	return t
 }
 
