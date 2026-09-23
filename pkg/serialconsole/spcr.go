@@ -40,10 +40,10 @@ type SPCRInfo struct {
 // anything else fails closed rather than guessing a device class.
 func spcrInterfaceClass(interfaceType byte) (string, bool) {
 	switch interfaceType {
-	case 0x00, 0x01, 0x0d, 0x12:
-		// Full 16550, 16450, 16550-subset (DBG2) and 16550 with parameters.
+	case 0x00, 0x01, 0x0d, 0x0e, 0x0f, 0x12:
+		// 16550-compatible UART variants.
 		return "ttyS", true
-	case 0x03, 0x0e, 0x0f:
+	case 0x03, 0x04:
 		// ARM PL011 and SBSA generic UARTs.
 		return "ttyAMA", true
 	default:

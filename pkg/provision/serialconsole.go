@@ -232,6 +232,9 @@ func (c *Configurator) pruneSerialGettyUnits(keepUnit string) error {
 
 func (c *Configurator) pruneSerialGettyLinks(keepUnit string) error {
 	wantsDir := filepath.Join(c.rootDir, strings.TrimPrefix(gettyWantsDir, "/"))
+	if info, err := os.Lstat(wantsDir); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to traverse symlinked serial getty wants dir: %s", wantsDir)
+	}
 	entries, err := os.ReadDir(wantsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -253,6 +256,9 @@ func (c *Configurator) pruneSerialGettyLinks(keepUnit string) error {
 
 func (c *Configurator) pruneSerialGettyDropIns(keepUnit string) error {
 	unitDir := filepath.Join(c.rootDir, strings.TrimPrefix(systemdUnitDir, "/"))
+	if info, err := os.Lstat(unitDir); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to traverse symlinked systemd unit dir: %s", unitDir)
+	}
 	entries, err := os.ReadDir(unitDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -266,6 +272,10 @@ func (c *Configurator) pruneSerialGettyDropIns(keepUnit string) error {
 			continue
 		}
 		dropIn := filepath.Join(unitDir, entry, serialConsoleDropInName)
+		entryPath := filepath.Join(unitDir, entry)
+		if info, err := os.Lstat(entryPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to traverse symlinked serial getty drop-in dir: %s", entryPath)
+		}
 		if err := os.Remove(dropIn); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove stale serial getty drop-in for %s: %w", unit, err)
 		}

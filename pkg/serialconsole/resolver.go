@@ -338,10 +338,16 @@ func mapSPCRDevice(ports []port, info SPCRInfo) (string, bool) {
 	if classMatches > 1 {
 		return "", false
 	}
+	var addressMatch string
+	addressMatches := 0
 	for i := range ports {
 		if ports[i].matchesAddress(info.AddressSpace, info.Address) {
-			return ports[i].Device, true
+			addressMatch = ports[i].Device
+			addressMatches++
 		}
+	}
+	if addressMatches == 1 {
+		return addressMatch, true
 	}
 	return "", false
 }

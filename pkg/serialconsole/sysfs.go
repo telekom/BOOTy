@@ -136,9 +136,14 @@ func (r *Resolver) readDeviceResource(dir string) (ioPort, memBase uint64) {
 }
 
 func (r *Resolver) readOfNode(dir string) string {
-	target, err := os.Readlink(filepath.Join(dir, "device", "of_node"))
+	link := filepath.Join(dir, "device", "of_node")
+	target, err := filepath.EvalSymlinks(link)
 	if err != nil {
 		return ""
+	}
+	base := filepath.Join(r.sysRoot(), "firmware", "devicetree", "base")
+	if rel, err := filepath.Rel(base, target); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "/" + filepath.ToSlash(rel)
 	}
 	target = filepath.ToSlash(filepath.Clean(target))
 	if idx := strings.Index(target, "/base/"); idx >= 0 {
