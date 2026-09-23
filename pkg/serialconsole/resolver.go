@@ -278,8 +278,10 @@ func (r *Resolver) overrideTier() (tier, bool, error) {
 			})
 			return t, false, fmt.Errorf("extraKernelParams contains invalid serial console parameter")
 		}
-		t.evidence = append(t.evidence, evidenceFromSpec(SourceKernelParams, spec, "",
-			"console= parameter in extraKernelParams"))
+		if override == "" {
+			t.evidence = append(t.evidence, evidenceFromSpec(SourceKernelParams, spec, "",
+				"console= parameter in extraKernelParams"))
+		}
 	}
 	if override == "" && len(t.evidence) > 0 {
 		t.source = SourceKernelParams

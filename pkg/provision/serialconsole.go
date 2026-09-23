@@ -261,7 +261,18 @@ func (c *Configurator) pruneSerialGettyLinks(keepUnit string) error {
 		if !isSerialGettyInstance(entry) || entry == keepUnit {
 			continue
 		}
-		if err := os.Remove(filepath.Join(wantsDir, entry)); err != nil && !os.IsNotExist(err) {
+		entryPath := filepath.Join(wantsDir, entry)
+		info, statErr := os.Lstat(entryPath)
+		if statErr != nil {
+			if os.IsNotExist(statErr) {
+				continue
+			}
+			return fmt.Errorf("inspect stale serial getty unit %s: %w", entry, statErr)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			return fmt.Errorf("refusing to remove non-symlink serial getty unit: %s", entryPath)
+		}
+		if err := os.Remove(entryPath); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove stale serial getty unit %s: %w", entry, err)
 		}
 		slog.Info("removed conflicting serial getty unit", "unit", entry)
@@ -290,6 +301,13 @@ func (c *Configurator) pruneSerialGettyDropIns(keepUnit string) error {
 		entryPath := filepath.Join(unitDir, entry)
 		if info, err := os.Lstat(entryPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("refusing to traverse symlinked serial getty drop-in dir: %s", entryPath)
+		}
+		info, statErr := os.Lstat(dropIn)
+		if statErr != nil && !os.IsNotExist(statErr) {
+			return fmt.Errorf("inspect stale serial getty drop-in for %s: %w", unit, statErr)
+		}
+		if statErr == nil && info.Mode()&os.ModeSymlink == 0 {
+			return fmt.Errorf("refusing to remove non-symlink serial getty drop-in: %s", dropIn)
 		}
 		if err := os.Remove(dropIn); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove stale serial getty drop-in for %s: %w", unit, err)
