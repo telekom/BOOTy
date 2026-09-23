@@ -20,8 +20,18 @@ type ProvisionConfig struct {
 
 	// ExtraKernelParams are additional kernel command-line parameters
 	// appended to the installed OS's boot entry.
+	// A console= parameter here is treated as explicit serial console intent
+	// and is folded into the resolved console instead of being appended
+	// verbatim, so the installed system always gets exactly one console.
 	// Default: ""
 	ExtraKernelParams string `yaml:"extraKernelParams" json:"extraKernelParams"`
+
+	// SerialConsole explicitly pins the serial console of the provisioned
+	// system, for example "ttyS1,115200n8" or "ttyS0". It overrides all
+	// firmware evidence (ACPI SPCR, device tree, sysfs, DMI).
+	// Set it to "none" to configure no serial console at all.
+	// Default: "" (resolve from firmware evidence)
+	SerialConsole string `yaml:"serialConsole" json:"serialConsole"`
 
 	// FailureDomain maps to topology.kubernetes.io/zone for the provisioned node.
 	// Default: ""

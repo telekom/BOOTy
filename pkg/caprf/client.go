@@ -995,6 +995,8 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"TARGET_OS":                   &cfg.Provision.TargetOS,
 		"TOKEN":                       &cfg.Transport.Token,
 		"MACHINE_EXTRA_KERNEL_PARAMS": &cfg.Provision.ExtraKernelParams,
+		"MACHINE_SERIAL_CONSOLE":      &cfg.Provision.SerialConsole,
+		"SERIAL_CONSOLE":              &cfg.Provision.SerialConsole,
 		"FAILURE_DOMAIN":              &cfg.Provision.FailureDomain,
 		"REGION":                      &cfg.Provision.Region,
 		"PROVIDER_ID":                 &cfg.Provision.ProviderID,
