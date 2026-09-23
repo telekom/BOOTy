@@ -332,6 +332,18 @@ func TestResolveDeviceTreeStdoutPath(t *testing.T) {
 	}
 }
 
+func TestResolveDeviceTreeUnmappedWithAddressBackedUARTFailsClosed(t *testing.T) {
+	host := newFakeHost(t)
+	host.write(filepath.Join("sys", "class", "tty", "ttyAMA0", "port"), "0x3f8\n")
+	host.write(filepath.Join("sys", "firmware", "devicetree", "base", "chosen", "stdout-path"),
+		"/soc/serial@dead:115200n8\x00")
+
+	res, err := host.resolver().Resolve()
+	if !errors.Is(err, ErrAmbiguous) || res.State != StateAmbiguous {
+		t.Fatalf("Resolve() = state %q err %v, want fail-closed ambiguity", res.State, err)
+	}
+}
+
 func TestResolveBootConsoleWhenFirmwareIsSilent(t *testing.T) {
 	host := newFakeHost(t)
 	host.addUART("ttyS0", "16550A", 0x3f8)

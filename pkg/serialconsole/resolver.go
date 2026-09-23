@@ -410,6 +410,10 @@ func (r *Resolver) deviceTreeTier(ports []port) tier {
 	if !mapped {
 		t.degraded = append(t.degraded, fmt.Sprintf(
 			"device-tree stdout-path node %s does not map to an enumerated tty", node))
+		if len(portsWithAddress(ports)) > 0 {
+			t.conflicts = append(t.conflicts, fmt.Sprintf(
+				"device-tree stdout-path node %s does not map to an enumerated tty while address-backed UARTs exist", node))
+		}
 	}
 	return t
 }
