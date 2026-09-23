@@ -480,6 +480,7 @@ func resolvedExtraKernelParams(cfg *config.MachineConfig, preserveVirtualConsole
 		return "", nil
 	}
 	kept, dropped := stripConsoleParams(cfg.Provision.ExtraKernelParams)
+	virtualConsoleKept := false
 	for _, param := range dropped {
 		if err := validateConsoleKernelParam(param); err != nil {
 			return "", err
@@ -487,10 +488,14 @@ func resolvedExtraKernelParams(cfg *config.MachineConfig, preserveVirtualConsole
 		if preserveVirtualConsole {
 			value := strings.TrimPrefix(strings.TrimPrefix(param, "console="), "/dev/")
 			if virtualTerminalParam.MatchString(value) {
+				if virtualConsoleKept {
+					return "", fmt.Errorf("multiple virtual terminal console parameters are unsupported")
+				}
 				if kept != "" {
 					kept += " "
 				}
 				kept += param
+				virtualConsoleKept = true
 			}
 		}
 	}
