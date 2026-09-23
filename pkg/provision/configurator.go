@@ -485,19 +485,21 @@ func resolvedExtraKernelParams(cfg *config.MachineConfig, preserveVirtualConsole
 		if err := validateConsoleKernelParam(param); err != nil {
 			return "", err
 		}
-		if preserveVirtualConsole {
-			value := strings.TrimPrefix(strings.TrimPrefix(param, "console="), "/dev/")
-			if virtualTerminalParam.MatchString(value) {
-				if virtualConsoleKept {
-					return "", fmt.Errorf("multiple virtual terminal console parameters are unsupported")
-				}
-				if kept != "" {
-					kept += " "
-				}
-				kept += param
-				virtualConsoleKept = true
-			}
+		if !preserveVirtualConsole {
+			continue
 		}
+		value := strings.TrimPrefix(strings.TrimPrefix(param, "console="), "/dev/")
+		if !virtualTerminalParam.MatchString(value) {
+			continue
+		}
+		if virtualConsoleKept {
+			return "", fmt.Errorf("multiple virtual terminal console parameters are unsupported")
+		}
+		if kept != "" {
+			kept += " "
+		}
+		kept += param
+		virtualConsoleKept = true
 	}
 	if !safeKernelParams.MatchString(kept) {
 		return "", fmt.Errorf("unsafe characters in ExtraKernelParams: %q", cfg.Provision.ExtraKernelParams)
