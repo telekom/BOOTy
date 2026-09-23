@@ -116,7 +116,8 @@ func (r *Resolver) readDeviceResource(dir string) (ioPort, memBase uint64) {
 		if len(fields) < 3 {
 			continue
 		}
-		start, err := strconv.ParseUint(strings.TrimPrefix(fields[0], "0x"), 16, 64)
+		startField := strings.SplitN(fields[0], "-", 2)[0]
+		start, err := strconv.ParseUint(strings.TrimPrefix(strings.TrimPrefix(startField, "0x"), "0X"), 16, 64)
 		if err != nil || start == 0 {
 			continue
 		}

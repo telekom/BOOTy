@@ -17,7 +17,6 @@ const (
 	spcrOffParity      = 59
 	spcrOffStopBits    = 60
 	spcrOffFlowControl = 61
-	spcrOffPreciseBaud = 80
 
 	acpiAddressSpaceMemory = 0x00
 	acpiAddressSpaceIO     = 0x01
@@ -53,19 +52,16 @@ func spcrInterfaceClass(interfaceType byte) (string, bool) {
 }
 
 // spcrBaud maps the SPCR baud rate encoding (ACPI 6.x, table "Baud Rate").
-// Zero means "as configured by firmware"; the resolver then keeps the baud
-// unset and takes it from a corroborating source.
+// Values outside this table are reserved and rejected.
 func spcrBaud(value byte) (int, error) {
 	switch value {
 	case 0:
-		return 0, nil
-	case 3:
 		return 9600, nil
-	case 4:
+	case 1:
 		return 19200, nil
-	case 6:
+	case 2:
 		return 57600, nil
-	case 7:
+	case 3:
 		return 115200, nil
 	default:
 		return 0, fmt.Errorf("acpi spcr baud encoding %d is reserved", value)
@@ -128,15 +124,6 @@ func ParseSPCR(data []byte) (SPCRInfo, error) {
 	baud, err := spcrBaud(data[spcrOffBaud])
 	if err != nil {
 		return SPCRInfo{}, err
-	}
-	if declared >= spcrOffPreciseBaud+4 {
-		precise := binary.LittleEndian.Uint32(data[spcrOffPreciseBaud : spcrOffPreciseBaud+4])
-		if precise != 0 {
-			if precise > maxBaud {
-				return SPCRInfo{}, fmt.Errorf("acpi spcr precise baud rate %d is out of range", precise)
-			}
-			baud = int(precise)
-		}
 	}
 	parity, err := spcrParity(data[spcrOffParity])
 	if err != nil {

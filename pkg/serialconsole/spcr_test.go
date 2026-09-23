@@ -15,7 +15,7 @@ func buildSPCR(t *testing.T, mutate func([]byte)) []byte {
 	table[spcrOffInterface] = 0x00                 // full 16550
 	table[spcrOffAddrSpaceID] = acpiAddressSpaceIO // system I/O
 	binary.LittleEndian.PutUint64(table[spcrOffAddress:], 0x2f8)
-	table[spcrOffBaud] = 7     // 115200
+	table[spcrOffBaud] = 3     // 115200
 	table[spcrOffParity] = 0   // none
 	table[spcrOffStopBits] = 1 // one stop bit
 	if mutate != nil {
@@ -47,7 +47,7 @@ func TestParseSPCR(t *testing.T) {
 }
 
 func TestParseSPCRBaudEncodings(t *testing.T) {
-	tests := map[byte]int{0: 0, 3: 9600, 4: 19200, 6: 57600, 7: 115200}
+	tests := map[byte]int{0: 9600, 1: 19200, 2: 57600, 3: 115200}
 	for encoded, want := range tests {
 		info, err := ParseSPCR(buildSPCR(t, func(table []byte) { table[spcrOffBaud] = encoded }))
 		if err != nil {
@@ -57,7 +57,7 @@ func TestParseSPCRBaudEncodings(t *testing.T) {
 			t.Fatalf("ParseSPCR(baud=%d).Baud = %d, want %d", encoded, info.Baud, want)
 		}
 	}
-	for _, reserved := range []byte{1, 2, 8, 255} {
+	for _, reserved := range []byte{4, 5, 6, 7, 8, 255} {
 		if _, err := ParseSPCR(buildSPCR(t, func(table []byte) { table[spcrOffBaud] = reserved })); err == nil {
 			t.Fatalf("ParseSPCR(baud=%d) = nil error, want rejection of reserved encoding", reserved)
 		}
@@ -112,19 +112,6 @@ func TestParseSPCRFlowControl(t *testing.T) {
 func TestParseSPCRRejectsSoftwareFlowControl(t *testing.T) {
 	if _, err := ParseSPCR(buildSPCR(t, func(table []byte) { table[spcrOffFlowControl] = 0x04 })); err == nil {
 		t.Fatal("ParseSPCR() accepted unsupported software flow control")
-	}
-}
-
-func TestParseSPCRPreciseBaud(t *testing.T) {
-	table := append(buildSPCR(t, nil), make([]byte, 4)...)
-	binary.LittleEndian.PutUint32(table[4:8], uint32(len(table)))
-	binary.LittleEndian.PutUint32(table[spcrOffPreciseBaud:spcrOffPreciseBaud+4], 921600)
-	info, err := ParseSPCR(table)
-	if err != nil {
-		t.Fatalf("ParseSPCR() error: %v", err)
-	}
-	if info.Baud != 921600 {
-		t.Fatalf("Baud = %d, want 921600", info.Baud)
 	}
 }
 

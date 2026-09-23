@@ -205,8 +205,15 @@ func (c *Configurator) enableSerialGettyUnit(spec serialconsole.Spec) error {
 		return fmt.Errorf("serial getty wants dir: %w", err)
 	}
 	linkPath := filepath.Join(wantsDir, spec.GettyUnit())
-	if _, err := os.Lstat(linkPath); err == nil {
-		return fmt.Errorf("serial getty unit path already exists: %s", linkPath)
+	if info, err := os.Lstat(linkPath); err == nil {
+		if info.Mode()&os.ModeSymlink == 0 {
+			return fmt.Errorf("serial getty unit path already exists: %s", linkPath)
+		}
+		target, readErr := os.Readlink(linkPath)
+		if readErr != nil || filepath.Clean(target) != filepath.Clean(c.serialGettyTemplatePath()) {
+			return fmt.Errorf("serial getty unit path has unexpected symlink: %s", linkPath)
+		}
+		return nil
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("inspect serial getty unit path: %w", err)
 	}

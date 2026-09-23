@@ -363,6 +363,10 @@ func TestValidate(t *testing.T) {
 		{name: "empty config is valid", cfg: Config{}},
 		{name: "valid mode provision", cfg: Config{Mode: "provision"}},
 		{name: "valid mode dry-run", cfg: Config{Mode: "dry-run"}},
+		{name: "valid serial console disabled", cfg: Config{Provision: ProvisionConfig{SerialConsole: "none"}}},
+		{name: "valid serial console override", cfg: Config{Provision: ProvisionConfig{SerialConsole: "ttyS1,115200n8"}}},
+		{name: "invalid serial console override", cfg: Config{Provision: ProvisionConfig{SerialConsole: "ttyS1,not-a-console"}}, wantErr: "invalid provision.serialConsole"},
+		{name: "unsupported serial console framing", cfg: Config{Provision: ProvisionConfig{SerialConsole: "ttyS1,115200n8r"}}, wantErr: "unsupported getty framing"},
 		{name: "invalid mode", cfg: Config{Mode: "invalid"}, wantErr: "invalid mode"},
 		{name: "valid provision target os", cfg: Config{Provision: ProvisionConfig{TargetOS: " Linux "}}, wantNormalized: func(t *testing.T, cfg *Config) {
 			t.Helper()
