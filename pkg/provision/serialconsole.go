@@ -126,6 +126,9 @@ func (c *Configurator) ConfigureSerialConsole(cfg *config.MachineConfig) error {
 		return err
 	}
 	if resolveErr != nil {
+		if pruneErr := c.pruneSerialGettyUnits(""); pruneErr != nil {
+			return fmt.Errorf("resolve serial console: %w; prune stale serial getty state: %v", resolveErr, pruneErr)
+		}
 		return fmt.Errorf("resolve serial console: %w", resolveErr)
 	}
 	if resolution.Console == nil {
@@ -195,8 +198,14 @@ func (c *Configurator) enableSerialGettyUnit(spec serialconsole.Spec) error {
 	if err != nil {
 		return fmt.Errorf("serial getty wants dir: %w", err)
 	}
+	if info, err := os.Lstat(wantsDir); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to use symlinked serial getty wants dir: %s", wantsDir)
+	}
 	if err := os.MkdirAll(wantsDir, 0o755); err != nil {
 		return fmt.Errorf("create serial getty wants dir: %w", err)
+	}
+	if err := ensureTargetDirWithinRoot(c.rootDir, wantsDir); err != nil {
+		return fmt.Errorf("serial getty wants dir: %w", err)
 	}
 	linkPath := filepath.Join(wantsDir, spec.GettyUnit())
 	if err := os.Remove(linkPath); err != nil && !os.IsNotExist(err) {

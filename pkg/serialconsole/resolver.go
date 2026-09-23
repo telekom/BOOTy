@@ -257,9 +257,9 @@ func (r *Resolver) overrideTier() (tier, bool, error) {
 			}
 			t.evidence = append(t.evidence, Evidence{
 				Source: SourceKernelParams,
-				Detail: "invalid console= parameter in extraKernelParams: " + truncate(param+": "+err.Error(), maxDetailLen),
+				Detail: "invalid console= parameter in extraKernelParams: " + truncate(err.Error(), maxDetailLen),
 			})
-			return t, false, fmt.Errorf("extraKernelParams contains invalid serial console %q: %w", param, err)
+			return t, false, fmt.Errorf("extraKernelParams contains invalid serial console parameter: %w", err)
 		}
 		t.evidence = append(t.evidence, evidenceFromSpec(SourceKernelParams, spec, "",
 			"console= parameter in extraKernelParams"))
@@ -416,7 +416,11 @@ func (r *Resolver) bootConsoleTier(ports []port) tier {
 		if _, ok := findPort(ports, device); !ok {
 			continue
 		}
-		for _, spec := range baudByDevice[device] {
+		specs := baudByDevice[device]
+		if len(specs) == 0 {
+			specs = []Spec{{Device: device}}
+		}
+		for _, spec := range specs {
 			spec.Device = device
 			t.evidence = append(t.evidence, evidenceFromSpec(SourceBootConsole, spec,
 				"/sys/class/tty/console/active", "console active in the running kernel"))

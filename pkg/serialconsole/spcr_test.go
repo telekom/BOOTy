@@ -100,12 +100,30 @@ func TestParseSPCRRejectsMalformedTables(t *testing.T) {
 }
 
 func TestParseSPCRFlowControl(t *testing.T) {
-	info, err := ParseSPCR(buildSPCR(t, func(table []byte) { table[spcrOffFlowControl] = 0x02 }))
+	info, err := ParseSPCR(buildSPCR(t, func(table []byte) { table[spcrOffFlowControl] = 0x01 }))
 	if err != nil {
 		t.Fatalf("ParseSPCR: %v", err)
 	}
 	if info.Flow != "r" {
 		t.Fatalf("Flow = %q, want r", info.Flow)
+	}
+}
+
+func TestParseSPCRRejectsSoftwareFlowControl(t *testing.T) {
+	if _, err := ParseSPCR(buildSPCR(t, func(table []byte) { table[spcrOffFlowControl] = 0x02 })); err == nil {
+		t.Fatal("ParseSPCR() accepted unsupported software flow control")
+	}
+}
+
+func TestParseSPCRPreciseBaud(t *testing.T) {
+	info, err := ParseSPCR(buildSPCR(t, func(table []byte) {
+		binary.LittleEndian.PutUint32(table[spcrOffPreciseBaud:spcrOffPreciseBaud+4], 921600)
+	}))
+	if err != nil {
+		t.Fatalf("ParseSPCR() error: %v", err)
+	}
+	if info.Baud != 921600 {
+		t.Fatalf("Baud = %d, want 921600", info.Baud)
 	}
 }
 
