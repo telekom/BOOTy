@@ -73,6 +73,7 @@ func (s Spec) Options() string {
 	if s.Baud == 0 {
 		return ""
 	}
+	s = s.withDefaults()
 	return fmt.Sprintf("%d%s%d%s", s.Baud, s.Parity, s.Bits, s.Flow)
 }
 

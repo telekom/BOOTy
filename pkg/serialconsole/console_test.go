@@ -137,3 +137,9 @@ func TestValidateGettyCompatibilityRejectsNonDefaultFraming(t *testing.T) {
 		t.Fatalf("default framing rejected: %v", err)
 	}
 }
+
+func TestOptionsFillsPartialFraming(t *testing.T) {
+	if got := (Spec{Device: "ttyS1", Baud: 115200}).Options(); got != "115200n8" {
+		t.Fatalf("Options() = %q, want 115200n8", got)
+	}
+}
