@@ -486,7 +486,7 @@ func (r *Resolver) uniqueUARTTier(ports []port) tier {
 	t := tier{source: SourceSysfsUART}
 	present := make([]port, 0, len(ports))
 	for _, p := range ports {
-		if isPresentUARTType(p.Type) {
+		if p.IsSerial {
 			present = append(present, p)
 		}
 	}

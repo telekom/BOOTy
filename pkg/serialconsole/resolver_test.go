@@ -513,6 +513,15 @@ func TestResolveSPCRUnmappedWithoutAddressesFallsBack(t *testing.T) {
 	}
 }
 
+func TestResolveSysfsAddressBackedUARTWithoutType(t *testing.T) {
+	host := newFakeHost(t)
+	host.write(filepath.Join("sys", "class", "tty", "ttyS0", "port"), "0x3f8\n")
+	host.addSPCR(0x3f8, 7)
+
+	res, err := host.resolver().Resolve()
+	requireResolved(t, res, err, "ttyS0", 115200)
+}
+
 func TestResolveKernelParameterReportsKernelParamSource(t *testing.T) {
 	host := newFakeHost(t)
 	host.addUART("ttyS0", "16550A", 0x3f8)
