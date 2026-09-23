@@ -127,7 +127,7 @@ func (c *Configurator) ConfigureSerialConsole(cfg *config.MachineConfig) error {
 	}
 	if resolveErr != nil {
 		if pruneErr := c.pruneSerialGettyUnits(""); pruneErr != nil {
-			return fmt.Errorf("resolve serial console: %w; prune stale serial getty state: %v", resolveErr, pruneErr)
+			return fmt.Errorf("resolve serial console: %w; prune stale serial getty state: %w", resolveErr, pruneErr)
 		}
 		return fmt.Errorf("resolve serial console: %w", resolveErr)
 	}

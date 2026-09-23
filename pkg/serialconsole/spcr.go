@@ -99,6 +99,8 @@ func spcrFlow(value byte) (string, error) {
 // The parser is strictly bounded and rejects tables it does not fully
 // understand, because a partially understood table is exactly the ambiguity
 // this resolver must fail closed on.
+//
+//nolint:cyclop // the bounded parser validates each independent SPCR field
 func ParseSPCR(data []byte) (SPCRInfo, error) {
 	if len(data) < spcrMinLength {
 		return SPCRInfo{}, fmt.Errorf("acpi spcr table is %d bytes, minimum is %d", len(data), spcrMinLength)
