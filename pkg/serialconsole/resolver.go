@@ -202,6 +202,7 @@ func mergeTier(t *tier) (Spec, bool, error) {
 	return merged, found, nil
 }
 
+//nolint:cyclop // the bounded comparison rejects each conflicting framing field
 func baudFromLowerTiers(tiers []tier, selected Spec) (int, Source, error) {
 	var baud int
 	var source Source
