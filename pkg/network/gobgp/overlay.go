@@ -851,6 +851,12 @@ func (o *OverlayTier) type5RouteState(route *apipb.EVPNIPPrefixRoute, vtep strin
 		o.log.Debug("type-5 route with invalid prefix", "prefix", prefix, "len", prefixLen, "error", err)
 		return type5RouteState{}, false
 	}
+	if routeCoveredByProvisionSubnet(o.cfg.ProvisionIP, dst) {
+		o.log.Info("skipping imported type-5 route covered by local provision subnet", "dst", dst, "provision_ip", o.cfg.ProvisionIP)
+		return type5RouteState{}, false
+	}
+
+	// Resolve the gateway: prefer the NLRI's GwAddress, fall back to next-hop.
 	gwStr := route.GetGwAddress()
 	if gwStr == "" || gwStr == "0.0.0.0" {
 		gwStr = vtep
@@ -1120,6 +1126,22 @@ func (o *OverlayTier) hasType5GatewayFDBRef(vtep string, routerMAC net.HardwareA
 
 func sameType5GatewayRef(a, b type5GatewayRef) bool {
 	return a.gateway == b.gateway && a.vtep == b.vtep && bytes.Equal(a.routerMAC, b.routerMAC)
+}
+
+func routeCoveredByProvisionSubnet(provisionIP string, dst *net.IPNet) bool {
+	if provisionIP == "" || dst == nil {
+		return false
+	}
+	_, provisionNet, err := net.ParseCIDR(provisionIP)
+	if err != nil {
+		return false
+	}
+	dstOnes, dstBits := dst.Mask.Size()
+	provisionOnes, provisionBits := provisionNet.Mask.Size()
+	if dstBits != provisionBits {
+		return false
+	}
+	return dstOnes >= provisionOnes && provisionNet.Contains(dst.IP)
 }
 
 func buildType5KernelRoute(link netlink.Link, dst *net.IPNet, gw net.IP, tableID int) *netlink.Route {
