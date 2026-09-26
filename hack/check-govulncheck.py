@@ -33,6 +33,7 @@ STDLIB_MODULE = "stdlib"
 class AllowlistedVulnerability:
     module: str
     reason: str
+    versions: frozenset[str] | None = None
 
 
 ALLOWLIST = {
@@ -42,6 +43,14 @@ ALLOWLIST = {
     "GO-2026-4736": AllowlistedVulnerability(
         module="github.com/osrg/gobgp/v3",
         reason="latest upstream module, no fixed version reported",
+    ),
+    # Stable gRPC v1.84.0 contains the backported fix for GHSA-2v4p-qf9q-27wj.
+    # Keep this exact-version exception narrow while the Go vulnerability
+    # database catches up with the advisory's Sep 25, 2026 update.
+    "GO-2026-6443": AllowlistedVulnerability(
+        module="google.golang.org/grpc",
+        reason="fixed in stable v1.84.0; exact-version exception pending Go vuln DB refresh",
+        versions=frozenset({"1.84.0"}),
     ),
 }
 
@@ -94,6 +103,18 @@ def finding_modules(finding: dict[str, Any]) -> set[str]:
     return modules
 
 
+def finding_module_versions(finding: dict[str, Any]) -> dict[str, set[str]]:
+    versions: dict[str, set[str]] = {}
+    for frame in finding.get("trace", []):
+        if not isinstance(frame, dict):
+            continue
+        module = frame.get("module")
+        version = frame.get("version")
+        if isinstance(module, str) and isinstance(version, str) and version:
+            versions.setdefault(module, set()).add(version.removeprefix("v"))
+    return versions
+
+
 def main() -> int:
     result = subprocess.run(
         GOVULNCHECK,
@@ -123,6 +144,7 @@ def main() -> int:
     }
 
     findings: dict[str, set[str]] = {}
+    module_versions: dict[str, dict[str, set[str]]] = {}
     stdlib: dict[str, set[str]] = {}
     fixed_versions: dict[str, set[str]] = {}
     for obj in objects:
@@ -141,12 +163,20 @@ def main() -> int:
             stdlib.setdefault(osv_id, set()).update(finding_modules(finding))
             continue
         findings.setdefault(osv_id, set()).update(finding_modules(finding))
+        for module, versions in finding_module_versions(finding).items():
+            module_versions.setdefault(osv_id, {}).setdefault(module, set()).update(versions)
 
     unexpected: dict[str, set[str]] = {}
     allowed: dict[str, set[str]] = {}
     for osv_id, modules in findings.items():
         allow = ALLOWLIST.get(osv_id)
-        if allow and allow.module in modules:
+        observed_versions = module_versions.get(osv_id, {}).get(allow.module, set()) if allow else set()
+        version_match = allow is not None and (
+            allow.versions is None
+            or bool(observed_versions)
+            and observed_versions <= allow.versions
+        )
+        if allow and allow.module in modules and version_match:
             allowed[osv_id] = modules
             continue
         unexpected[osv_id] = modules
