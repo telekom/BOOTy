@@ -9,13 +9,64 @@ updates:
     open-pull-requests-limit: 10
 
   - package-ecosystem: docker
-    # Dockerfile discovery is not recursive. Scan every independent context
-    # and group the same image update across contexts into one pull request.
-    directories:
-      - /
-      - /test/e2e/clab
-      - /test/e2e/clab/vrnetlab
-      - /test/e2e/assets/busybox
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      docker-major:
+        group-by: dependency-name
+        patterns:
+          - "*"
+        update-types:
+          - major
+      docker-minor-patch:
+        group-by: dependency-name
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: docker
+    directory: /test/e2e/clab
+    schedule:
+      interval: weekly
+    groups:
+      docker-major:
+        group-by: dependency-name
+        patterns:
+          - "*"
+        update-types:
+          - major
+      docker-minor-patch:
+        group-by: dependency-name
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: docker
+    directory: /test/e2e/clab/vrnetlab
+    schedule:
+      interval: weekly
+    groups:
+      docker-major:
+        group-by: dependency-name
+        patterns:
+          - "*"
+        update-types:
+          - major
+      docker-minor-patch:
+        group-by: dependency-name
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: docker
+    directory: /test/e2e/assets/busybox
     schedule:
       interval: weekly
     groups:
