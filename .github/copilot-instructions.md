@@ -79,6 +79,16 @@ make clab-vrnetlab-up && make test-e2e-vrnetlab
 - **Naming**: `ctx` for context, `cfg` for config, `mgr` for manager
 - **Imports**: stdlib → external → internal (blank line between groups)
 
+## Reuse upstream before writing helpers
+
+Check in order: standard library → Kubernetes/controller-runtime/client-go/
+apimachinery → Flux `github.com/fluxcd/pkg` → other established libraries →
+`telekom/t-caas-go-library` → custom code last. For BOOTy's retry, digest,
+execution, HTTP, Redfish, netlink, config, and build-info concerns, follow the
+package table and migration candidates in [AGENTS.md](../AGENTS.md#reuse-upstream-libraries-before-writing-helpers).
+Use wrappers only for glue repeated across repositories; contribute that shared
+glue to `telekom/t-caas-go-library` rather than duplicating it.
+
 ## Testing Requirements
 
 Every feature or bug fix **must** include tests at the appropriate level. Do not
