@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 )
@@ -210,7 +209,6 @@ func listExecutables(dir string) ([]string, error) {
 			bins = append(bins, e.Name())
 		}
 	}
-	sort.Strings(bins)
 	return bins, nil
 }
 

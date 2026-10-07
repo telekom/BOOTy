@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -671,7 +672,7 @@ func TestReapExitedChildrenWithReapsOnlyUnmanagedChildren(t *testing.T) {
 	})
 
 	want := []int{11, 33}
-	if !intSlicesEqual(waited, want) {
+	if !slices.Equal(waited, want) {
 		t.Fatalf("waited pids = %v, want unmanaged pids %v", waited, want)
 	}
 }
@@ -842,18 +843,6 @@ func assertNoEvent(t *testing.T, ch <-chan struct{}, desc string) {
 	}
 }
 
-func intSlicesEqual(a, b []int) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
 func TestSetupMountsAndDevicesFailsOnMissingRequiredMount(t *testing.T) {
 	mounts := newFakeEarlyMounts()
 	delete(mounts.mounts, "proc")
@@ -884,7 +873,7 @@ func TestSetupMountsAndDevicesStopsOnMountAllError(t *testing.T) {
 		t.Fatalf("error = %q, want mount all context", err.Error())
 	}
 	wantCalls := []string{"create-folders", "mount-named:dev", "mount-all"}
-	if !stringSlicesEqual(mounts.calls, wantCalls) {
+	if !slices.Equal(mounts.calls, wantCalls) {
 		t.Fatalf("mount calls = %v, want %v", mounts.calls, wantCalls)
 	}
 	if devices.calls != 1 {
@@ -906,7 +895,7 @@ func TestSetupMountsAndDevicesStopsOnCreateFolderError(t *testing.T) {
 		t.Fatalf("error = %q, want create folder context", err.Error())
 	}
 	wantCalls := []string{"create-folders"}
-	if !stringSlicesEqual(mounts.calls, wantCalls) {
+	if !slices.Equal(mounts.calls, wantCalls) {
 		t.Fatalf("mount calls = %v, want %v", mounts.calls, wantCalls)
 	}
 	if devices.calls != 0 {
@@ -928,7 +917,7 @@ func TestSetupMountsAndDevicesStopsOnMountDevError(t *testing.T) {
 		t.Fatalf("error = %q, want mount dev context", err.Error())
 	}
 	wantCalls := []string{"create-folders", "mount-named:dev"}
-	if !stringSlicesEqual(mounts.calls, wantCalls) {
+	if !slices.Equal(mounts.calls, wantCalls) {
 		t.Fatalf("mount calls = %v, want %v", mounts.calls, wantCalls)
 	}
 	if devices.calls != 0 {
@@ -949,7 +938,7 @@ func TestSetupMountsAndDevicesStopsOnCreateDeviceError(t *testing.T) {
 		t.Fatalf("error = %q, want create device context", err.Error())
 	}
 	wantCalls := []string{"create-folders", "mount-named:dev"}
-	if !stringSlicesEqual(mounts.calls, wantCalls) {
+	if !slices.Equal(mounts.calls, wantCalls) {
 		t.Fatalf("mount calls = %v, want %v", mounts.calls, wantCalls)
 	}
 	if devices.calls != 1 {
@@ -965,7 +954,7 @@ func TestSetupMountsAndDevicesSuccess(t *testing.T) {
 		t.Fatalf("setupMountsAndDevicesWith: %v", err)
 	}
 	wantCalls := []string{"create-folders", "mount-named:dev", "mount-all"}
-	if !stringSlicesEqual(mounts.calls, wantCalls) {
+	if !slices.Equal(mounts.calls, wantCalls) {
 		t.Fatalf("mount calls = %v, want %v", mounts.calls, wantCalls)
 	}
 	if devices.calls != 1 {
@@ -1022,18 +1011,6 @@ type fakeEarlyDevices struct {
 func (f *fakeEarlyDevices) CreateDevice() error {
 	f.calls++
 	return f.err
-}
-
-func stringSlicesEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 type provisionHandoffReporter struct {

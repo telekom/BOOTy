@@ -3,9 +3,10 @@ package netplan
 import (
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -32,8 +33,6 @@ func ParseDir(dir string) (*Config, error) {
 			files = append(files, filepath.Join(dir, name))
 		}
 	}
-	sort.Strings(files)
-
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no netplan YAML files in %s", dir)
 	}
@@ -82,11 +81,9 @@ func mergeMaps[V any](dst, src map[string]V) map[string]V {
 		return dst
 	}
 	if dst == nil {
-		dst = make(map[string]V, len(src))
+		return maps.Clone(src)
 	}
-	for k, v := range src {
-		dst[k] = v
-	}
+	maps.Copy(dst, src)
 	return dst
 }
 
@@ -115,7 +112,7 @@ func ToNetworkConfig(np *Config, frr *FRRParams) *network.Config {
 }
 
 func extractTunnels(np *Config, cfg *network.Config) {
-	names := sortedKeys(np.Network.Tunnels)
+	names := slices.Sorted(maps.Keys(np.Network.Tunnels))
 
 	// The provision tunnel is the first VXLAN tunnel that carries a VNI.
 	// VNI, local underlay address and underlay link all come from that one
@@ -159,7 +156,7 @@ func extractTunnels(np *Config, cfg *network.Config) {
 }
 
 func extractDummyDevices(np *Config, cfg *network.Config) {
-	for _, name := range sortedKeys(np.Network.DummyDevices) {
+	for _, name := range slices.Sorted(maps.Keys(np.Network.DummyDevices)) {
 		d := np.Network.DummyDevices[name]
 		for _, addr := range d.Addresses {
 			if strings.HasSuffix(addr, "/32") {
@@ -176,7 +173,7 @@ func extractDummyDevices(np *Config, cfg *network.Config) {
 }
 
 func extractBridges(np *Config, cfg *network.Config) {
-	names := sortedKeys(np.Network.Bridges)
+	names := slices.Sorted(maps.Keys(np.Network.Bridges))
 	for _, name := range names {
 		br := np.Network.Bridges[name]
 		if len(br.Addresses) == 0 {
@@ -198,7 +195,7 @@ func extractBridges(np *Config, cfg *network.Config) {
 }
 
 func extractEthernets(np *Config, cfg *network.Config) (dhcpCount int, dnsList []string) {
-	for _, name := range sortedKeys(np.Network.Ethernets) {
+	for _, name := range slices.Sorted(maps.Keys(np.Network.Ethernets)) {
 		eth := np.Network.Ethernets[name]
 		if eth.DHCP4 != nil && *eth.DHCP4 {
 			dhcpCount++
@@ -232,7 +229,7 @@ func extractEthernets(np *Config, cfg *network.Config) (dhcpCount int, dnsList [
 }
 
 func extractVLANs(np *Config, cfg *network.Config, dnsList []string) []string {
-	for _, vlanName := range sortedKeys(np.Network.VLANs) {
+	for _, vlanName := range slices.Sorted(maps.Keys(np.Network.VLANs)) {
 		v := np.Network.VLANs[vlanName]
 		vc := network.VLANConfig{ID: v.ID, Parent: v.Link}
 		if len(v.Addresses) > 0 {
@@ -253,7 +250,7 @@ func extractVLANs(np *Config, cfg *network.Config, dnsList []string) []string {
 }
 
 func extractBonds(np *Config, cfg *network.Config) {
-	names := sortedKeys(np.Network.Bonds)
+	names := slices.Sorted(maps.Keys(np.Network.Bonds))
 	for _, name := range names {
 		bond := np.Network.Bonds[name]
 		if len(bond.Interfaces) == 0 {
@@ -280,13 +277,13 @@ func extractVRFs(np *Config, cfg *network.Config) {
 		cfg.OverlayVRFSet = true
 	}
 
-	for _, name := range sortedKeys(np.Network.VRFs) {
+	for _, name := range slices.Sorted(maps.Keys(np.Network.VRFs)) {
 		vrf := np.Network.VRFs[name]
 		if cfg.VRFTableID == 0 && vrf.Table > 0 {
 			cfg.VRFTableID = uint32(vrf.Table)
 			cfg.VRFName = name
 		}
-		if cfg.BridgeName != "" && containsString(vrf.Interfaces, cfg.BridgeName) {
+		if cfg.BridgeName != "" && slices.Contains(vrf.Interfaces, cfg.BridgeName) {
 			cfg.OverlayVRFName = name
 			if vrf.Table > 0 {
 				cfg.OverlayVRFTableID = uint32(vrf.Table)
@@ -315,15 +312,6 @@ func ethernetStaticIface(name string, eth *EthernetConfig) string {
 		return ""
 	}
 	return eth.Match.Name
-}
-
-func containsString(items []string, needle string) bool {
-	for _, item := range items {
-		if item == needle {
-			return true
-		}
-	}
-	return false
 }
 
 func applyFRRParams(frr *FRRParams, cfg *network.Config) {
@@ -355,16 +343,6 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 		cfg.BGPPeerMode = network.PeerModeNumbered
 		cfg.BGPNeighbors = strings.Join(frr.NumberedPeers, ",")
 	}
-}
-
-// sortedKeys returns the keys of a map in sorted order for deterministic iteration.
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // joinUnique deduplicates a string slice and joins with commas.
