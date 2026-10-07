@@ -9,7 +9,7 @@ generic helpers.
 
 - `github.com/telekom/t-caas-go-library/pkg/redact` v0.1.0 replaces repeated URL
   candidate-generation/redaction in `pkg/image/redact.go`,
-  `pkg/network/http.go` and `pkg/caprf/client.go`. The package imports only the
+  `pkg/network/http.go`, `pkg/caprf/client.go` and `pkg/auth/manager.go`. The package imports only the
   standard library. This release requires Go 1.26.6, already used by BOOTy's CI.
 - Go 1.26 `log/slog.MultiHandler` replaces the local fan-out implementation.
   The existing type and constructor remain as compatibility aliases/glue.
@@ -18,7 +18,9 @@ generic helpers.
 Keep image/HTTP source context alongside the shared sanitized message. Keep OCI
 reference policy local: image references are not general URLs. CAPRF retains
 its recursively copied, sanitized `url.Error` chain rather than exposing the
-original error through `redact.Wrap`. Image/connectivity callers preserve
+original error through `redact.Wrap`. Auth similarly retains recursively copied
+URL, joined, cancellation and timeout errors; it uses only the shared sanitized
+message, never the wrapper's original cause. Image/connectivity callers preserve
 original causes for `errors.Is/As`; those causes must never be logged. Local
 non-URL secret/path scrubbing also remains unchanged.
 

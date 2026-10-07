@@ -649,3 +649,18 @@ func TestRedactedTokenURLErrorRedactsJoinedErrors(t *testing.T) {
 		t.Fatal("expected redacted joined error to match context.Canceled")
 	}
 }
+
+func TestRedactedTokenURLErrorSanitizesURLFieldComponents(t *testing.T) {
+	rawURL := "https://leaky-user:super-secret@example.com/token?token=abc#frag"
+	err := newRedactedTokenURLError(rawURL, &url.Error{
+		Op: "Post", URL: "super-secret", Err: context.DeadlineExceeded,
+	})
+	assertErrorChainNoSensitiveTokenURLParts(t, err)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("expected sanitized URL error to preserve the deadline cause")
+	}
+	var netErr net.Error
+	if !errors.As(err, &netErr) || !netErr.Timeout() {
+		t.Fatal("expected sanitized URL error to preserve timeout classification")
+	}
+}

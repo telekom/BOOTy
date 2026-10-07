@@ -89,6 +89,12 @@ package table and migration candidates in [AGENTS.md](../AGENTS.md#reuse-upstrea
 Use wrappers only for glue repeated across repositories; contribute that shared
 glue to `telekom/t-caas-go-library` rather than duplicating it.
 
+URL diagnostics in image, connectivity, CAPRF and auth use the stdlib-only
+`github.com/telekom/t-caas-go-library/pkg/redact`; logging fan-out uses Go's
+`slog.MultiHandler`. Keep sanitized auth/CAPRF error trees local and never log
+the original causes retained by `redact.Wrap`. See
+[adoption decisions](../docs/library-adoption.md) for linked dependency limits.
+
 ## Testing Requirements
 
 Every feature or bug fix **must** include tests at the appropriate level. Do not

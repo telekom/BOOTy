@@ -13,9 +13,10 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 	"time"
+
+	"github.com/telekom/t-caas-go-library/pkg/redact"
 )
 
 // TokenResponse represents the server's token endpoint response.
@@ -318,34 +319,15 @@ func defaultBackoff(attempt int) time.Duration {
 }
 
 func redactTokenURL(rawURL string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
+	safe := redact.URL(rawURL)
+	if safe == "[redacted invalid URL]" {
 		return "<invalid-url>"
 	}
-	u.RawQuery = ""
-	u.Fragment = ""
-	u.User = nil
-	return u.String()
-}
-
-type redactedTokenURLError struct {
-	err error
+	return safe
 }
 
 func newRedactedTokenURLError(rawURL string, err error) error {
-	if err == nil {
-		return nil
-	}
-
-	return &redactedTokenURLError{err: redactTokenError(rawURL, err)}
-}
-
-func (e *redactedTokenURLError) Error() string {
-	return e.err.Error()
-}
-
-func (e *redactedTokenURLError) Unwrap() error {
-	return e.err
+	return redactTokenError(rawURL, err)
 }
 
 type redactedWrappedError struct {
@@ -418,7 +400,7 @@ func redactTokenError(rawURL string, err error) error {
 	}
 	if typed, ok := directURLError(err); ok {
 		sanitized := *typed
-		sanitized.URL = redactTokenErrorString(rawURL, typed.URL)
+		sanitized.URL = redact.Wrap(errors.New(redactTokenURL(typed.URL)), rawURL).Error()
 		sanitized.Err = redactTokenError(rawURL, typed.Err)
 		return &sanitized
 	}
@@ -469,84 +451,6 @@ func directURLError(err error) (*url.Error, bool) {
 }
 
 func redactTokenErrorString(rawURL, msg string) string {
-	redacted := redactTokenURL(rawURL)
-	for _, candidate := range tokenURLRedactionCandidates(rawURL) {
-		msg = strings.ReplaceAll(msg, candidate, redacted)
-	}
-	return msg
-}
-
-func tokenURLRedactionCandidates(rawURL string) []string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return invalidTokenURLRedactionCandidates(rawURL)
-	}
-
-	var candidates []string
-	add := func(value string) {
-		if value == "" {
-			return
-		}
-		for _, existing := range candidates {
-			if existing == value {
-				return
-			}
-		}
-		candidates = append(candidates, value)
-	}
-
-	add(rawURL)
-	add(u.String())
-	add(u.Redacted())
-	add(u.RawQuery)
-	add(u.Fragment)
-
-	withoutFragment := *u
-	withoutFragment.Fragment = ""
-	add(withoutFragment.String())
-	add(withoutFragment.Redacted())
-
-	if u.User != nil {
-		addTokenCredentialRedactionCandidates(add, u, &withoutFragment)
-	}
-
-	return candidates
-}
-
-func invalidTokenURLRedactionCandidates(rawURL string) []string {
-	candidates := []string{rawURL}
-	if withoutFragment, _, ok := strings.Cut(rawURL, "#"); ok {
-		candidates = append(candidates, withoutFragment)
-	}
-	return candidates
-}
-
-func addTokenCredentialRedactionCandidates(add func(string), u, withoutFragment *url.URL) {
-	password, ok := u.User.Password()
-	if !ok {
-		return
-	}
-
-	username := u.User.Username()
-	userInfo := u.User.String()
-	if userInfo != "" {
-		add(userInfo)
-		add(strings.Replace(u.String(), userInfo+"@", username+":***@", 1))
-		add(strings.Replace(withoutFragment.String(), userInfo+"@", username+":***@", 1))
-	}
-	add(username)
-	if password != "" {
-		add(password)
-		add(strings.Replace(u.String(), ":"+password+"@", ":***@", 1))
-		add(strings.Replace(withoutFragment.String(), ":"+password+"@", ":***@", 1))
-	}
-	for _, placeholder := range []string{"xxxxx", "***"} {
-		redactedPassword := *u
-		redactedPassword.User = url.UserPassword(username, placeholder)
-		add(redactedPassword.String())
-
-		withoutFragment := redactedPassword
-		withoutFragment.Fragment = ""
-		add(withoutFragment.String())
-	}
+	// Copy only the diagnostic: retaining Wrap's cause would expose unsanitized errors.
+	return fmt.Sprintf("%s: %s", redactTokenURL(rawURL), redact.Wrap(errors.New(msg), rawURL))
 }
