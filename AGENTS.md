@@ -70,8 +70,9 @@ wrapper to `telekom/t-caas-go-library` instead of duplicating it. Existing
 helpers to evaluate as migration candidates (no migration is part of this
 guidance change) are `pkg/provision/retry` → backoff/v5;
 `pkg/image/verify` → go-digest; `pkg/executil` → `os/exec` and `k8s.io/utils/exec`;
-`pkg/buildinfo` → `runtime/debug`; `pkg/logging/multi` → slog fan-out; and
-`pkg/config/loader` → native decoders. Use gofish directly for Redfish; consider
+`pkg/buildinfo` → `runtime/debug`; and `pkg/config/loader` → native decoders.
+URL diagnostics already use shared `pkg/redact`; `pkg/logging/multi` already
+uses stdlib fan-out. Use gofish directly for Redfish; consider
 the shared HTTP test fixture only for `test/e2e/redfish/mock_server.go`,
 not as another Redfish client. Preserve local validation, vendor rules, and
 sanitization where upstream APIs do not provide them. See

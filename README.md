@@ -1364,6 +1364,11 @@ full feature roadmap with priorities and status tracking.
 
 ## Contributing
 
+Before writing helpers, follow the [upstream-first guidance](AGENTS.md#reuse-upstream-libraries-before-writing-helpers).
+BOOTy uses the stdlib-only shared `pkg/redact` for URL diagnostics and Go's
+`slog.MultiHandler` for fan-out; see [library adoption](docs/library-adoption.md)
+for retained policies and linked dependency/size measurements.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding standards, and the PR process.
 
 ## License
