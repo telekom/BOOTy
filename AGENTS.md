@@ -54,7 +54,7 @@ This rule applies even if an adoption change in BOOTy has not merged.
 | HTTP clients and transports | [`net/http`](https://pkg.go.dev/net/http), [`net/url`](https://pkg.go.dev/net/url) | Clone transports when customizing them; set explicit TLS, timeout, and request-context behavior. `URL.Redacted` does not scrub every sensitive field. |
 | HTTP tests | [`net/http/httptest`](https://pkg.go.dev/net/http/httptest) | Use standard test servers and clients before building protocol fixtures. |
 | Redfish | [`github.com/stmcginnis/gofish`](https://pkg.go.dev/github.com/stmcginnis/gofish), [`github.com/stmcginnis/gofish/schemas`](https://pkg.go.dev/github.com/stmcginnis/gofish/schemas) | Use gofish directly for Redfish inventory, reset, boot, and virtual media; keep BOOTy vendor policy local. |
-| Redfish test fixtures | [`net/http/httptest`](https://pkg.go.dev/net/http/httptest) | Shared [`pkg/redfish/redfishtest`](https://github.com/telekom/t-caas-go-library/pull/14) is pending; do not depend on it until merged and its contract fits. |
+| Redfish test fixtures | [`net/http/httptest`](https://pkg.go.dev/net/http/httptest) | Shared [`pkg/redfish/redfishtest`](https://pkg.go.dev/github.com/telekom/t-caas-go-library/pkg/redfish/redfishtest) is released in a nested module; verify its protocol contract before adoption. See [the evaluated incompatibilities](docs/library-adoption.md). |
 | Linux networking | [`github.com/vishvananda/netlink`](https://pkg.go.dev/github.com/vishvananda/netlink) | Use the existing netlink API for link/address/route operations; keep BOOTy-specific orchestration and policy local. |
 | IP addresses and prefixes | [`net/netip`](https://pkg.go.dev/net/netip), [`go4.org/netipx`](https://pkg.go.dev/go4.org/netipx) | Prefer `netip` parsing/comparison and `netipx` ranges/sets; preserve BOOTy's address-family and host-boundary policy. |
 | Shared IP arithmetic | [`github.com/telekom/t-caas-go-library/pkg/netutil`](https://pkg.go.dev/github.com/telekom/t-caas-go-library/pkg/netutil) | Merged package for checked arithmetic, budgeted prefix subdivision, and repeated usable/broadcast conventions; verify semantics before migrating local policy. |
@@ -62,7 +62,7 @@ This rule applies even if an adoption change in BOOTy has not merged.
 | Build metadata | [`runtime/debug`](https://pkg.go.dev/runtime/debug) | Use `ReadBuildInfo` and VCS settings; keep BOOTy's linker variables and presentation local. |
 | Unix syscalls | [`golang.org/x/sys/unix`](https://pkg.go.dev/golang.org/x/sys/unix) | Prefer direct syscalls over shelling out or wrapping a single syscall. |
 
-The source decision guide is [`telekom/t-caas-go-library/docs/upstream-libraries.md`](https://github.com/telekom/t-caas-go-library/blob/main/docs/upstream-libraries.md). That repository is currently private and planned to become public; this local guidance is usable without access to the link. Recommendations are not dependencies to add automatically: check license, dependency weight, Go compatibility, and semantics. Of its merged packages, `pkg/netutil` may help with repeated IP arithmetic. Other merged packages such as `pkg/patch`, `pkg/remoteclient`, `pkg/namespaceselector`, and `pkg/discovery/tracker` target Kubernetes controllers or API clients and are not a fit for BOOTy's PID 1 provisioning agent.
+The source decision guide is [`telekom/t-caas-go-library/docs/upstream-libraries.md`](https://github.com/telekom/t-caas-go-library/blob/main/docs/upstream-libraries.md) in the public library. Recommendations are not dependencies to add automatically: check license, dependency weight, Go compatibility, and semantics. `pkg/redact` is used for shared URL diagnostics; `pkg/netutil` may help with repeated IP arithmetic. Other packages such as `pkg/patch`, `pkg/remoteclient`, `pkg/namespaceselector`, and `pkg/discovery/tracker` target Kubernetes controllers or API clients and are not a fit for BOOTy's PID 1 provisioning agent.
 
 Convenience wrappers belong in BOOTy only when the same glue demonstrably
 repeats across multiple repositories. In that case, contribute the shared
@@ -72,9 +72,11 @@ guidance change) are `pkg/retry` and `pkg/provision/retry` → backoff/v5;
 `pkg/image/verify` → go-digest; `pkg/executil` → `os/exec` and `k8s.io/utils/exec`;
 `pkg/buildinfo` → `runtime/debug`; `pkg/logging/multi` → slog fan-out; and
 `pkg/config/loader` → native decoders. Use gofish directly for Redfish; consider
-the pending shared HTTP test fixture only for `test/e2e/redfish/mock_server.go`,
+the shared HTTP test fixture only for `test/e2e/redfish/mock_server.go`,
 not as another Redfish client. Preserve local validation, vendor rules, and
-sanitization where upstream APIs do not provide them.
+sanitization where upstream APIs do not provide them. See
+[library adoption decisions and size measurements](docs/library-adoption.md)
+for evaluated candidates, retained policies and linked dependency constraints.
 
 ## COMMANDS
 | Action | Command |

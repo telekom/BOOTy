@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/telekom/t-caas-go-library/pkg/redact"
+
 	"github.com/telekom/BOOTy/pkg/auth"
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/crash"
@@ -636,14 +638,11 @@ func (c *Client) doCrashUploadRequest(req *http.Request, redacted string) error 
 }
 
 func redactedURL(raw string) string {
-	u, err := neturl.Parse(raw)
-	if err != nil {
+	safe := redact.URL(raw)
+	if safe == "[redacted invalid URL]" {
 		return "<invalid-url>"
 	}
-	u.RawQuery = ""
-	u.Fragment = ""
-	u.User = nil
-	return u.String()
+	return safe
 }
 
 func redactedURLError(raw string, err error) error {
@@ -652,7 +651,7 @@ func redactedURLError(raw string, err error) error {
 	}
 	if urlErr, ok := err.(*neturl.Error); ok { //nolint:errorlint // direct copy avoids retaining the raw URL.
 		sanitized := *urlErr
-		sanitized.URL = redactURLErrorString(raw, urlErr.URL)
+		sanitized.URL = redactedURL(urlErr.URL)
 		sanitized.Err = redactedURLError(raw, urlErr.Err)
 		return &sanitized
 	}
@@ -660,83 +659,7 @@ func redactedURLError(raw string, err error) error {
 }
 
 func redactURLErrorString(raw, msg string) string {
-	redacted := redactedURL(raw)
-	for _, candidate := range urlRedactionCandidates(raw) {
-		msg = strings.ReplaceAll(msg, candidate, redacted)
-	}
-	return msg
-}
-
-func urlRedactionCandidates(raw string) []string {
-	u, err := neturl.Parse(raw)
-	if err != nil {
-		return invalidURLRedactionCandidates(raw)
-	}
-
-	var candidates []string
-	add := func(value string) {
-		if value == "" {
-			return
-		}
-		for _, existing := range candidates {
-			if existing == value {
-				return
-			}
-		}
-		candidates = append(candidates, value)
-	}
-
-	add(raw)
-	add(u.String())
-	add(u.Redacted())
-	add(u.RawQuery)
-	add(u.Fragment)
-
-	withoutFragment := *u
-	withoutFragment.Fragment = ""
-	add(withoutFragment.String())
-	add(withoutFragment.Redacted())
-	addURLCredentialRedactionCandidates(add, u, &withoutFragment)
-
-	return candidates
-}
-
-func invalidURLRedactionCandidates(raw string) []string {
-	var candidates []string
-	addInvalidURLCandidate := func(value string) {
-		if value != "" {
-			candidates = append(candidates, value)
-		}
-	}
-	addInvalidURLCandidate(raw)
-	if withoutFragment, fragment, ok := strings.Cut(raw, "#"); ok {
-		addInvalidURLCandidate(withoutFragment)
-		addInvalidURLCandidate(fragment)
-	}
-	if withoutQuery, query, ok := strings.Cut(raw, "?"); ok {
-		addInvalidURLCandidate(withoutQuery)
-		addInvalidURLCandidate(query)
-	}
-	return candidates
-}
-
-func addURLCredentialRedactionCandidates(add func(string), u, withoutFragment *neturl.URL) {
-	if u.User == nil {
-		return
-	}
-	username := u.User.Username()
-	userInfo := u.User.String()
-	if userInfo != "" {
-		add(userInfo)
-		add(strings.Replace(u.String(), userInfo+"@", username+":***@", 1))
-		add(strings.Replace(withoutFragment.String(), userInfo+"@", username+":***@", 1))
-	}
-	add(username)
-	if password, ok := u.User.Password(); ok && password != "" {
-		add(password)
-		add(strings.Replace(u.String(), ":"+password+"@", ":***@", 1))
-		add(strings.Replace(withoutFragment.String(), ":"+password+"@", ":***@", 1))
-	}
+	return fmt.Sprintf("%s: %s", redactedURL(raw), redact.Wrap(errors.New(msg), raw))
 }
 
 func (c *Client) postWithAuth(ctx context.Context, url, body string) error {
