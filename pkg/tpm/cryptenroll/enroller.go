@@ -2,7 +2,7 @@ package cryptenroll
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	tpm "github.com/telekom/BOOTy/pkg/tpm"
@@ -84,9 +84,7 @@ func (c *Config) BuildPCRPolicy() *PCRPolicy {
 
 // FormatPCRSelection formats PCR indices for display (e.g. "7+8+9").
 func FormatPCRSelection(pcrs []int) string {
-	sorted := make([]int, len(pcrs))
-	copy(sorted, pcrs)
-	sort.Ints(sorted)
+	sorted := slices.Sorted(slices.Values(pcrs))
 	parts := make([]string, len(sorted))
 	for i, p := range sorted {
 		parts[i] = fmt.Sprintf("%d", p)

@@ -3,10 +3,11 @@ package cloudinit
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -115,7 +116,7 @@ func writeSeedFiles(seedDir, tempPattern string, files map[string][]byte) error 
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	names := sortedSeedFileNames(files)
+	names := slices.Sorted(maps.Keys(files))
 	for _, name := range names {
 		data := files[name]
 		tmp := filepath.Join(tmpDir, name)
@@ -132,15 +133,6 @@ func writeSeedFiles(seedDir, tempPattern string, files map[string][]byte) error 
 		}
 	}
 	return nil
-}
-
-func sortedSeedFileNames(files map[string][]byte) []string {
-	names := make([]string, 0, len(files))
-	for name := range files {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
 }
 
 type openStackMetaData struct {

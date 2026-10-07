@@ -8,7 +8,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -257,7 +256,8 @@ func (c *Configurator) pruneSerialGettyLinks(keepUnit string) error {
 		}
 		return fmt.Errorf("list serial getty wants dir: %w", err)
 	}
-	for _, entry := range sortedNames(entries) {
+	for _, dirEntry := range entries {
+		entry := dirEntry.Name()
 		if !isSerialGettyInstance(entry) || entry == keepUnit {
 			continue
 		}
@@ -293,7 +293,8 @@ func (c *Configurator) pruneSerialGettyDropIns(keepUnit string) error {
 		}
 		return fmt.Errorf("list systemd unit dir: %w", err)
 	}
-	for _, entry := range sortedNames(entries) {
+	for _, dirEntry := range entries {
+		entry := dirEntry.Name()
 		unit, ok := strings.CutSuffix(entry, ".d")
 		if !ok || !isSerialGettyInstance(unit) || unit == keepUnit {
 			continue
@@ -317,15 +318,6 @@ func (c *Configurator) pruneSerialGettyDropIns(keepUnit string) error {
 		_ = os.Remove(filepath.Join(unitDir, entry))
 	}
 	return nil
-}
-
-func sortedNames(entries []os.DirEntry) []string {
-	names := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		names = append(names, entry.Name())
-	}
-	sort.Strings(names)
-	return names
 }
 
 func isSerialGettyInstance(name string) bool {
