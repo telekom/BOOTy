@@ -6,11 +6,13 @@ package network
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -59,9 +61,18 @@ func TestConnectivityResponseAndDiagnosticCharacterization(t *testing.T) {
 }
 
 func TestConnectivityCanceledBeforeRequestCharacterization(t *testing.T) {
+	var requested atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requested.Store(true)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := WaitForHTTP(ctx, "https://example.test", time.Second); err == nil {
-		t.Fatal("canceled connectivity check succeeded")
+	if err := WaitForHTTP(ctx, server.URL, time.Second); !errors.Is(err, context.Canceled) {
+		t.Fatalf("connectivity error = %v, want context.Canceled", err)
+	}
+	if requested.Load() {
+		t.Fatal("canceled connectivity check made a request")
 	}
 }
