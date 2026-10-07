@@ -68,7 +68,7 @@ Convenience wrappers belong in BOOTy only when the same glue demonstrably
 repeats across multiple repositories. In that case, contribute the shared
 wrapper to `telekom/t-caas-go-library` instead of duplicating it. Existing
 helpers to evaluate as migration candidates (no migration is part of this
-guidance change) are `pkg/retry` and `pkg/provision/retry` → backoff/v5;
+guidance change) are `pkg/provision/retry` → backoff/v5;
 `pkg/image/verify` → go-digest; `pkg/executil` → `os/exec` and `k8s.io/utils/exec`;
 `pkg/buildinfo` → `runtime/debug`; `pkg/logging/multi` → slog fan-out; and
 `pkg/config/loader` → native decoders. Use gofish directly for Redfish; consider

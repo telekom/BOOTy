@@ -52,12 +52,12 @@ controller-runtime, gofish, or other non-stdlib dependency to the agent.
 The root library's module graph does contain Kubernetes dependencies; these
 remain a module-download/tooling cost, not linked agent code.
 
-## Evaluated and retained locally
+## Evaluated alternatives
 
 | Candidate | Why adoption is not justified in this change |
 |---|---|
 | `test/e2e/redfish/mock_server.go` → nested `pkg/redfish/redfishtest` v0.1.0 | The shared fake is stdlib-only; gofish is only a compatibility-test dependency. However, the unchanged `TestMockServerVirtualMedia` fails: BOOTy's existing Image-only InsertMedia request implies `Inserted=true`, whereas the shared fake leaves it false. Initial boot override values and collection names also differ. Do not weaken existing tests or introduce protocol-compatibility shims solely to delete a working test fixture. No nested module is retained. |
-| `pkg/retry` → `cenkalti/backoff/v5` | No production call sites currently import this package. A new module would not improve the agent's execution path. |
+| `pkg/retry` → `cenkalti/backoff/v5` | Removed the unreferenced package instead of adding a replacement module. Provisioning and CAPRF retries remain unchanged. |
 | `pkg/provision/retry.go` → `cenkalti/backoff/v5` | Backoff v5 is lighter than apimachinery, but its symmetric jitter, finite MaxInterval and permanent/context termination conventions differ from BOOTy's positive-only jitter, zero-as-uncapped policy, saturating delays and classified error messages. Preserving them needs local policy/backoff adapters, substantially reducing the deletion benefit. Retain the tested implementation rather than pulling Kubernetes wait into the agent. |
 | `pkg/image/verify` → `opencontainers/go-digest` | Already present indirectly, but this package has no production importers. Its running hash, `Actual` output, case-normalization and mismatch diagnostics still require local code. The production streaming path in `pkg/image/stream.go` separately normalizes checksums and wipes corrupt disk metadata; replacing only the suggested helper would not simplify that path. |
 | `pkg/executil` → direct `os/exec` | Already uses `os/exec`; the remaining PID registry prevents PID 1 from stealing managed child exit statuses. Output bounds and sanitized diagnostics are application policy. Removing the wrapper is not equivalent to upstream adoption. |

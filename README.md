@@ -1330,7 +1330,6 @@ and the PR process.
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
 │   ├── realm/                  # Device, mount, network, shell operations
 │   ├── rescue/                 # Rescue mode behavior and retry policy
-│   ├── retry/                  # Shared retry policy framework
 │   ├── secureboot/             # Secure Boot setup and validation helpers
 │   ├── serialconsole/          # Serial console resolution from SPCR/device-tree/sysfs evidence
 │   ├── system/                 # Host-level system operations
