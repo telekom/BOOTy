@@ -1,21 +1,16 @@
 package image
 
 import (
-	"net/url"
+	"fmt"
 	"strings"
+
+	"github.com/telekom/t-caas-go-library/pkg/redact"
 )
 
 // RedactURL strips credentials, query parameters, and fragments from source
 // URLs before they are written to logs or returned in errors.
 func RedactURL(rawURL string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return "[redacted invalid URL]"
-	}
-	u.User = nil
-	u.RawQuery = ""
-	u.Fragment = ""
-	return u.String()
+	return redact.URL(rawURL)
 }
 
 // RedactOCIRef strips credentials from an OCI reference that has already had
@@ -30,15 +25,10 @@ func RedactSourceError(err error, rawSource string) string {
 	if err == nil {
 		return ""
 	}
-	msg := err.Error()
 	if rawSource == "" {
-		return msg
+		return err.Error()
 	}
-	redacted := RedactURL(rawSource)
-	for _, candidate := range sourceRedactionCandidates(rawSource) {
-		msg = strings.ReplaceAll(msg, candidate, redacted)
-	}
-	return msg
+	return fmt.Sprintf("%s: %s", RedactURL(rawSource), redact.Wrap(err, rawSource))
 }
 
 type redactedSourceError struct {
@@ -52,77 +42,6 @@ func (e *redactedSourceError) Error() string {
 
 func (e *redactedSourceError) Unwrap() error {
 	return e.err
-}
-
-func sourceRedactionCandidates(rawSource string) []string {
-	u, err := url.Parse(rawSource)
-	if err != nil {
-		return invalidSourceRedactionCandidates(rawSource)
-	}
-
-	var candidates []string
-	add := func(value string) {
-		if value == "" {
-			return
-		}
-		for _, existing := range candidates {
-			if existing == value {
-				return
-			}
-		}
-		candidates = append(candidates, value)
-	}
-
-	add(rawSource)
-	add(u.String())
-	add(u.Redacted())
-
-	withoutFragment := *u
-	withoutFragment.Fragment = ""
-	add(withoutFragment.String())
-	add(withoutFragment.Redacted())
-
-	addSourceCredentialRedactionCandidates(add, u, &withoutFragment)
-
-	return candidates
-}
-
-func invalidSourceRedactionCandidates(rawSource string) []string {
-	candidates := []string{rawSource}
-	if withoutFragment, _, ok := strings.Cut(rawSource, "#"); ok && withoutFragment != "" {
-		candidates = append(candidates, withoutFragment)
-	}
-	return candidates
-}
-
-func addSourceCredentialRedactionCandidates(add func(string), u, withoutFragment *url.URL) {
-	if u.User == nil {
-		return
-	}
-	password, ok := u.User.Password()
-	if !ok {
-		return
-	}
-
-	username := u.User.Username()
-	userInfo := u.User.String()
-	if userInfo != "" {
-		add(strings.Replace(u.String(), userInfo+"@", username+":***@", 1))
-		add(strings.Replace(withoutFragment.String(), userInfo+"@", username+":***@", 1))
-	}
-	if password != "" {
-		add(strings.Replace(u.String(), ":"+password+"@", ":***@", 1))
-		add(strings.Replace(withoutFragment.String(), ":"+password+"@", ":***@", 1))
-	}
-	for _, placeholder := range []string{"xxxxx", "***"} {
-		redactedPassword := *u
-		redactedPassword.User = url.UserPassword(username, placeholder)
-		add(redactedPassword.String())
-
-		withoutFragment := redactedPassword
-		withoutFragment.Fragment = ""
-		add(withoutFragment.String())
-	}
 }
 
 func redactOCIRefError(err error, ref string) string {

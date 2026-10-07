@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
+
+	"github.com/telekom/t-caas-go-library/pkg/redact"
 )
 
 // WaitForHTTP polls target with HTTP HEAD until reachable.
@@ -71,26 +71,14 @@ func WaitForHTTP(ctx context.Context, target string, timeout time.Duration) erro
 // RedactHTTPURLForLog strips credentials, query parameters, and fragments from
 // HTTP connectivity target URLs before they are written to logs.
 func RedactHTTPURLForLog(rawURL string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return "[redacted invalid URL]"
-	}
-	u.User = nil
-	u.RawQuery = ""
-	u.Fragment = ""
-	return u.String()
+	return redact.URL(rawURL)
 }
 
 func redactHTTPErrorForLog(err error, rawURL string) string {
 	if err == nil {
 		return ""
 	}
-	msg := err.Error()
-	redacted := RedactHTTPURLForLog(rawURL)
-	for _, candidate := range httpURLRedactionCandidates(rawURL) {
-		msg = strings.ReplaceAll(msg, candidate, redacted)
-	}
-	return msg
+	return fmt.Sprintf("%s: %s", RedactHTTPURLForLog(rawURL), redact.Wrap(err, rawURL))
 }
 
 type redactedHTTPError struct {
@@ -104,75 +92,4 @@ func (e *redactedHTTPError) Error() string {
 
 func (e *redactedHTTPError) Unwrap() error {
 	return e.err
-}
-
-func httpURLRedactionCandidates(rawURL string) []string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return invalidHTTPURLRedactionCandidates(rawURL)
-	}
-
-	var candidates []string
-	add := func(value string) {
-		if value == "" {
-			return
-		}
-		for _, existing := range candidates {
-			if existing == value {
-				return
-			}
-		}
-		candidates = append(candidates, value)
-	}
-
-	add(rawURL)
-	add(u.String())
-	add(u.Redacted())
-
-	withoutFragment := *u
-	withoutFragment.Fragment = ""
-	add(withoutFragment.String())
-	add(withoutFragment.Redacted())
-
-	addHTTPCredentialRedactionCandidates(add, u, &withoutFragment)
-
-	return candidates
-}
-
-func invalidHTTPURLRedactionCandidates(rawURL string) []string {
-	candidates := []string{rawURL}
-	if withoutFragment, _, ok := strings.Cut(rawURL, "#"); ok && withoutFragment != "" {
-		candidates = append(candidates, withoutFragment)
-	}
-	return candidates
-}
-
-func addHTTPCredentialRedactionCandidates(add func(string), u, withoutFragment *url.URL) {
-	if u.User == nil {
-		return
-	}
-	password, ok := u.User.Password()
-	if !ok {
-		return
-	}
-
-	username := u.User.Username()
-	userInfo := u.User.String()
-	if userInfo != "" {
-		add(strings.Replace(u.String(), userInfo+"@", username+":***@", 1))
-		add(strings.Replace(withoutFragment.String(), userInfo+"@", username+":***@", 1))
-	}
-	if password != "" {
-		add(strings.Replace(u.String(), ":"+password+"@", ":***@", 1))
-		add(strings.Replace(withoutFragment.String(), ":"+password+"@", ":***@", 1))
-	}
-	for _, placeholder := range []string{"xxxxx", "***"} {
-		redactedPassword := *u
-		redactedPassword.User = url.UserPassword(username, placeholder)
-		add(redactedPassword.String())
-
-		withoutFragment := redactedPassword
-		withoutFragment.Fragment = ""
-		add(withoutFragment.String())
-	}
 }

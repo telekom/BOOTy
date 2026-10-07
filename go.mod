@@ -1,6 +1,6 @@
 module github.com/telekom/BOOTy
 
-go 1.26.0
+go 1.26.6
 
 require (
 	github.com/digineo/go-dhclient v1.0.2
@@ -12,6 +12,7 @@ require (
 	github.com/osrg/gobgp/v3 v3.37.0
 	github.com/pierrec/lz4/v4 v4.1.31
 	github.com/spf13/cobra v1.10.2
+	github.com/telekom/t-caas-go-library v0.1.0
 	github.com/ulikunitz/xz v0.5.17
 	github.com/vishvananda/netlink v1.3.1
 	github.com/zcalusic/sysinfo v1.1.3
