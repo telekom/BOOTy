@@ -1153,7 +1153,12 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 		o.log.Info("wiping raid target device after array creation", "device", targetDisk)
 		return o.disk.WipeDisk(ctx, targetDisk)
 	}
-	for _, device := range []string{targetDisk, strings.TrimSpace(o.mirrorDisk)} {
+	return o.wipeTargetDisks(ctx, []string{targetDisk, strings.TrimSpace(o.mirrorDisk)}, secureErase)
+}
+
+// wipeTargetDisks wipes the root disk and, for mirrored installs, the mirror disk.
+func (o *Orchestrator) wipeTargetDisks(ctx context.Context, devices []string, secureErase bool) error {
+	for _, device := range devices {
 		if device == "" {
 			continue
 		}

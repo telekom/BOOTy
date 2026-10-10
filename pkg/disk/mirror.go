@@ -158,5 +158,8 @@ func CopyBlockDevice(src, dst string) error {
 		_ = out.Close()
 		return fmt.Errorf("sync %s: %w", dst, err)
 	}
-	return out.Close()
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", dst, err)
+	}
+	return nil
 }
