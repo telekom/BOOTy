@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -18,6 +19,10 @@ type FRRParams struct {
 	NumberedPeersV6 []string // IPv6 addresses from "neighbor X remote-as" lines.
 	EVPN            bool     // True if "address-family l2vpn evpn" found.
 	AdvertiseAllVNI bool     // True if "advertise-all-vni" found.
+	// L3VNIs lists VNIs mapped to a VRF ("vni N" at top level for the default
+	// VRF or inside a "vrf" block). FRR advertises only Type-5 routes for them;
+	// advertise-all-vni produces Type-2/Type-3 routes for L2VNIs only.
+	L3VNIs []uint32
 }
 
 // Regex patterns for FRR config extraction.
@@ -69,7 +74,36 @@ func ParseFRRConfigBytes(data []byte) (*FRRParams, error) {
 
 	params.EVPN = reL2VPNEVPN.MatchString(content)
 	params.AdvertiseAllVNI = reAdvertiseAllVNI.MatchString(content)
+	params.L3VNIs = extractL3VNIs(content)
 	return params, nil
+}
+
+// extractL3VNIs returns VNIs that FRR maps to a VRF: a "vni N" statement at
+// the top level (default VRF) or inside a "vrf NAME" block. A "vni N" block
+// under "router bgp" configures an L2VNI and is not included.
+func extractL3VNIs(content string) []uint32 {
+	var vnis []uint32
+	inRouter := false
+	for line := range strings.Lines(content) {
+		trimmed := strings.TrimSpace(line)
+		topLevel := line != "" && line[0] != ' ' && line[0] != '\t'
+		switch {
+		case topLevel && strings.HasPrefix(trimmed, "router "):
+			inRouter = true
+			continue
+		case topLevel && (trimmed == "exit" || trimmed == "exit-vrf" || strings.HasPrefix(trimmed, "vrf ")):
+			inRouter = false
+			continue
+		}
+		fields := strings.Fields(trimmed)
+		if inRouter || len(fields) != 2 || fields[0] != "vni" {
+			continue
+		}
+		if vni, err := strconv.ParseUint(fields[1], 10, 32); err == nil && !slices.Contains(vnis, uint32(vni)) {
+			vnis = append(vnis, uint32(vni))
+		}
+	}
+	return vnis
 }
 
 // extractUnnumberedPeers returns deduplicated interface names from neighbor lines.

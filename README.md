@@ -1142,7 +1142,10 @@ The netplan parser supports ethernets, bonds, bridges, VLANs, tunnels
 file is also present, BOOTy extracts BGP parameters (ASN, router-ID,
 peers, EVPN settings) from it. Pure Type-5 configs that use
 `advertise ipv4 unicast` stay L3-only; `advertise-all-vni` is the opt-in
-signal for L2 EVPN Type-2/Type-3 handling.
+signal for L2 EVPN Type-2/Type-3 handling. As in FRR, `advertise-all-vni`
+does not enable L2 handling when the provisioning VXLAN VNI is declared as
+an L3VNI (`vni N` at the top level or inside a `vrf` block): BOOTy then
+originates only Type-5 routes, like the FRR-based CAPRF legacy deployer.
 
 ### Network Persistence
 

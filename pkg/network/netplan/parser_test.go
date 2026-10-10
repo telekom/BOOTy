@@ -532,6 +532,43 @@ func TestToNetworkConfig_PureType5DoesNotEnableL2(t *testing.T) {
 	}
 }
 
+func TestToNetworkConfig_AdvertiseAllVNIWithL3ProvisionVNIStaysType5(t *testing.T) {
+	newConfig := func() *Config {
+		return &Config{
+			Network: NetworkSection{
+				Ethernets: map[string]EthernetConfig{"eth1": {LinkLocal: []string{"ipv6"}, MTU: 9100}},
+				Tunnels: map[string]TunnelConfig{
+					"vx.1000": {Mode: "vxlan", ID: 1000, Local: "192.168.4.10", Port: 4789},
+				},
+				Bridges: map[string]BridgeConfig{
+					"br.provision": {Interfaces: []string{"vx.1000"}, Addresses: []string{"10.200.0.10/32"}},
+				},
+			},
+		}
+	}
+	tests := []struct {
+		name   string
+		l3VNIs []uint32
+		wantL2 bool
+	}{
+		{name: "provision VNI is the L3VNI", l3VNIs: []uint32{1000}, wantL2: false},
+		{name: "provision VNI is an L2VNI", l3VNIs: []uint32{4000}, wantL2: true},
+		{name: "no L3VNI declared", l3VNIs: nil, wantL2: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			frr := &FRRParams{
+				ASN: 65100, RouterID: "192.168.4.10", UnnumberedPeers: []string{"eth1"},
+				EVPN: true, AdvertiseAllVNI: true, L3VNIs: tt.l3VNIs,
+			}
+			netCfg := ToNetworkConfig(newConfig(), frr)
+			if netCfg.EVPNL2Enabled != tt.wantL2 {
+				t.Fatalf("EVPNL2Enabled = %v, want %v", netCfg.EVPNL2Enabled, tt.wantL2)
+			}
+		})
+	}
+}
+
 func TestToNetworkConfig_ProductionUnderlayVRFOverlayDefault(t *testing.T) {
 	np := &Config{
 		Network: NetworkSection{
