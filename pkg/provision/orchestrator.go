@@ -90,9 +90,10 @@ type Orchestrator struct {
 	log       *slog.Logger
 
 	// Runtime state set during provisioning.
-	targetDisk string
+	targetDisk       string
 	// skippedDisks are the disks in use that a wipe of all disks skipped.
 	skippedDisks     []string
+	mirrorDisk       string // second root disk when DISK_MIRRORING_MODE selected a pair
 	rootPartition    string
 	bootPartition    string
 	sharedMounts     []string
@@ -149,6 +150,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"stream-image", o.streamImage},
 		{"partprobe", o.partprobe},
 		{"parse-partitions", o.parsePartitions},
+		{"mirror-root", o.mirrorRoot},
 		{"check-filesystem", o.checkFilesystem},
 		{"enable-lvm", o.enableLVM},
 		{"mount-root", o.mountRoot},
@@ -163,6 +165,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"setup-chroot-binds", o.setupChrootBinds},
 		{"grow-partition", o.growPartition},
 		{"resize-filesystem", o.resizeFilesystem},
+		{"configure-mdadm", o.configureMdadm},
 		{"configure-kubelet", o.configureKubelet},
 		{"prepare-oci-prepulls", o.prepareOCIPrePulls},
 		{"configure-serial-console", o.configureSerialConsole},
@@ -178,6 +181,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"run-machine-commands", o.runMachineCommands},
 		{"run-post-provision-cmds", o.runPostProvisionCmds},
 		{"create-efi-boot-entry", o.createEFIBootEntry},
+		{"create-mirror-efi-boot-entry", o.createMirrorEFIBootEntry},
 		{"teardown-chroot", o.teardownChroot},
 		{"report-success", o.reportSuccess},
 	}
@@ -231,6 +235,7 @@ func resumeStateSteps() map[string]struct{} {
 		"setup-mellanox":            {},
 		"detect-disk":               {},
 		"parse-partitions":          {},
+		"mirror-root":               {},
 		"enable-lvm":                {},
 		"mount-root":                {},
 		"mount-boot":                {},
@@ -1148,11 +1153,23 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 		o.log.Info("wiping raid target device after array creation", "device", targetDisk)
 		return o.disk.WipeDisk(ctx, targetDisk)
 	}
-	if secureErase {
-		o.log.Info("secure erase enabled, performing hardware-level erase")
-		return o.disk.SecureEraseDisk(ctx, targetDisk)
+	for _, device := range []string{targetDisk, strings.TrimSpace(o.mirrorDisk)} {
+		if device == "" {
+			continue
+		}
+		if err := o.wipeTargetDisk(ctx, device, secureErase); err != nil {
+			return err
+		}
 	}
-	return o.disk.WipeDisk(ctx, targetDisk)
+	return nil
+}
+
+func (o *Orchestrator) wipeTargetDisk(ctx context.Context, device string, secureErase bool) error {
+	if secureErase {
+		o.log.Info("secure erase enabled, performing hardware-level erase", "device", device)
+		return o.disk.SecureEraseDisk(ctx, device)
+	}
+	return o.disk.WipeDisk(ctx, device)
 }
 
 // wipeWithoutTargetSelection handles the wipe policies that do not depend on
@@ -1393,6 +1410,10 @@ func (o *Orchestrator) detectDisk(ctx context.Context) error {
 		o.log.Info("using configured disk serial", "serial", serial, "device", d)
 		o.targetDisk = d
 		return nil
+	}
+
+	if mirrored, err := o.selectMirrorPair(ctx); err != nil || mirrored {
+		return err
 	}
 
 	d, err := o.disk.DetectDisk(ctx, o.cfg.Provision.Disk.MinSizeGB)
@@ -2785,6 +2806,10 @@ var diskLinksDevDir = "/dev"
 func (o *Orchestrator) growPartition(ctx context.Context) error {
 	if o.cfg.Provision.Disk.PartitionLayout != nil {
 		o.log.Info("skipping grow-partition for declarative partition layout")
+		return nil
+	}
+	if o.mirrorDisk != "" {
+		o.log.Info("skipping grow-partition, mirror-root grew the root partition before creating the array")
 		return nil
 	}
 

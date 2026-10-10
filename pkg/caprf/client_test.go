@@ -86,6 +86,7 @@ export MODE="provision"
 export MIN_DISK_SIZE_GB="100"
 export NETWORK_WAIT_MAX_ATTEMPTS="4"
 export DISK_SERIAL_NUMBER="RAID-DISK-1"
+export DISK_MIRRORING_MODE="raid-1"
 export LOG_URL="http://caprf.example.com/log"
 export INIT_URL="http://caprf.example.com/status/init"
 export ERROR_URL="http://caprf.example.com/status/error"
@@ -133,6 +134,9 @@ export DEBUG_URL="http://caprf.example.com/debug"
 	}
 	if cfg.Provision.Disk.SerialNumber != "RAID-DISK-1" {
 		t.Fatalf("unexpected disk serial number: %s", cfg.Provision.Disk.SerialNumber)
+	}
+	if cfg.Provision.Disk.MirroringMode != "raid-1" {
+		t.Fatalf("unexpected disk mirroring mode: %s", cfg.Provision.Disk.MirroringMode)
 	}
 	if cfg.Transport.LogURL != "http://caprf.example.com/log" {
 		t.Fatalf("unexpected log URL: %s", cfg.Transport.LogURL)

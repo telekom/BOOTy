@@ -114,6 +114,15 @@ type DiskConfig struct {
 	// Default: "" (no namespace management)
 	NVMeNamespaces string `yaml:"nvmeNamespaces" json:"nvmeNamespaces"`
 
+	// MirroringMode mirrors the installed root filesystem onto a pair of
+	// equally sized disks with software RAID1, matching the CAPRF
+	// RedfishHost diskMirroringMode field.
+	// Valid values: "raid-1" (require a matching pair), "auto" (mirror when a
+	// matching pair exists, single disk otherwise), "none" or "" (single disk).
+	// Ignored when Device, SerialNumber, RAID or PartitionLayout select the target.
+	// Default: "" (single disk)
+	MirroringMode string `yaml:"mirroringMode" json:"mirroringMode"`
+
 	// RAID defines software RAID arrays to create before partitioning.
 	// Existing arrays are stopped first, then new arrays are assembled.
 	// The resulting /dev/mdX device becomes available for Device or auto-detection.

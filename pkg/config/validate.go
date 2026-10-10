@@ -176,6 +176,9 @@ func (c *Config) validateEnums() []string {
 			return validateEnumLower(c.Network.BGP.PeerMode, "network.bgp.peerMode", "unnumbered", "dual", "numbered")
 		},
 		func() string {
+			return validateEnumLower(c.Provision.Disk.MirroringMode, "provision.disk.mirroringMode", "raid-1", "auto", "none")
+		},
+		func() string {
 			return validateEnumLower(c.Network.BGP.UnderlayAF, "network.bgp.underlayAF", "ipv4")
 		},
 		func() string {

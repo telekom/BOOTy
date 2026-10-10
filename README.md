@@ -62,7 +62,7 @@ CAPRF-compatible `/deploy/vars` file.
 - **Filesystem support** — ext2, ext3, ext4, xfs, btrfs mount/resize; vfat mount/format for EFI system partitions
 - **LLDP discovery** — Raw AF_PACKET-based LLDP listener for switch topology discovery
 - **Post-provision hooks** — Execute arbitrary commands in chroot after OS configuration
-- **46-step provisioning pipeline** — provisioning input validation, RAID cleanup, NVMe namespace setup, RAID array setup, disk detection, partition layout, image streaming, shared data mounting, optional target overlayFS configuration, partition growth, LVM, filesystem resize, optional sysext loading, OCI image pre-pulls, OS configuration, serial console resolution, EFI fallback installation, final Secure Boot chain verification, cloud-init injection, EFI boot, Mellanox SR-IOV, post-provision hooks
+- **49-step provisioning pipeline** — provisioning input validation, RAID cleanup, NVMe namespace setup, RAID array setup, disk detection, partition layout, image streaming, shared data mounting, optional target overlayFS configuration, partition growth, LVM, filesystem resize, optional sysext loading, OCI image pre-pulls, OS configuration, serial console resolution, EFI fallback installation, final Secure Boot chain verification, cloud-init injection, EFI boot, Mellanox SR-IOV, post-provision hooks
 - **systemd-sysext provisioning** — Optional digest-checked sysext preload or active loading into the provisioned OS image
 - **Ubuntu overlayFS configuration** — Optional target-root overlayroot config for immutable Ubuntu images, with tmpfs or operator-provided persistent backing storage
 - **Kexec support** — Fast reboot into installed kernel without full BIOS POST (auto-disabled after firmware changes)
@@ -434,6 +434,7 @@ root is mounted.
 | `AB_SOURCE_ROOT_PARTITION` | — | 1-based source-image partition number to copy when no stable label exists |
 | `DISK_DEVICE` | auto-detect | Explicit disk device path override (e.g. `/dev/sda`) |
 | `DISK_SERIAL_NUMBER` | — | Select the target disk by exact sysfs serial number when `DISK_DEVICE` is unset |
+| `DISK_MIRRORING_MODE` | unset | Mirror the root filesystem with RAID1 across the largest pair of equally sized disks: `raid-1` (pair required), `auto` (single disk when no pair exists), `none`. Ignored when `DISK_DEVICE` or `DISK_SERIAL_NUMBER` selects the disk; rejected with explicit RAID, partition layout or A/B mode |
 | `ROOT_PARTITION_LABEL` | — | Whole-disk image root GPT partition label/PARTLABEL; use when multiple Linux partitions exist |
 | `ROOT_PARTITION_NUMBER` | — | Whole-disk image root partition number; use only when no stable root partition label exists |
 | `IMAGE_SIGNATURE_URL` | — | URL to detached GPG signature for image verification |
@@ -1379,7 +1380,7 @@ vrnetlab topologies and the test levels.
 │   │   ├── persist/           # Persist network config into target OS (netplan, NM, systemd-networkd)
 │   │   ├── vrf/               # VRF configuration and validation
 │   │   └── vlan/              # VLAN 802.1Q tagging via netlink
-│   ├── provision/              # Orchestrator (46-step provision, deprovision)
+│   ├── provision/              # Orchestrator (49-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
 │   ├── realm/                  # Device, mount, network, shell operations
 │   ├── rescue/                 # Rescue mode behavior and retry policy
