@@ -579,3 +579,24 @@ func TestApplyNVMeNamespaceLayoutUsesControllerIDAndListsAllNamespaces(t *testin
 		t.Errorf("attach-ns must use the controller ID from id-ctrl: %#v", cmd.calls)
 	}
 }
+
+func TestApplyNVMeNamespaceLayoutChecksControllerIDBeforeDelete(t *testing.T) {
+	for _, info := range []string{`{"nn":32,"tnvmcap":1024000}`, `{"cntlid":70000,"nn":32,"tnvmcap":1024000}`} {
+		cmd := newMockCommander()
+		cmd.setResult("nvme id-ctrl", []byte(info), nil)
+		cmd.setResult("nvme list-ns", []byte(`{"nsid_list":[{"nsid":3}]}`), nil)
+		cmd.setResult("nvme delete-ns", []byte(""), nil)
+		mgr := NewManager(cmd)
+
+		_, err := mgr.ApplyNVMeNamespaceLayout(t.Context(), []NVMeNamespaceConfig{{
+			Controller: "/dev/nvme0",
+			Namespaces: []NVMeNamespace{{Label: "os", SizePct: 100}},
+		}})
+		if err == nil {
+			t.Fatalf("id-ctrl %s: expected controller ID error", info)
+		}
+		if hasDiskCommandCall(cmd.calls, "nvme", "delete-ns", "/dev/nvme0", "-n", "3") {
+			t.Fatalf("id-ctrl %s: namespaces were deleted before the controller ID was known", info)
+		}
+	}
+}
