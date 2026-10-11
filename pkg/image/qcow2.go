@@ -3,8 +3,10 @@
 package image
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -150,11 +152,7 @@ func convertQCOW2ToRaw(ctx context.Context, src, dst string) error {
 		return err
 	}
 
-	info, err := qemuImgInfo(ctx, qemuImg, src)
-	if err != nil {
-		return fmt.Errorf("qemu-img info: %w", err)
-	}
-	if err := rejectQCOW2ExternalFiles(info); err != nil {
+	if err := rejectQCOW2ExternalFiles(src); err != nil {
 		return err
 	}
 
@@ -170,33 +168,51 @@ func convertQCOW2ToRaw(ctx context.Context, src, dst string) error {
 	return nil
 }
 
-// qemuImgInfo returns `qemu-img info` JSON for a qcow2 file. It is a
-// variable so tests can run without qemu-img.
-var qemuImgInfo = func(ctx context.Context, qemuImg, src string) ([]byte, error) {
-	return exec.CommandContext(ctx, qemuImg, "info", "--output=json", "-f", "qcow2", src).Output() //nolint:gosec,wrapcheck // controlled path
+// qcow2Magic starts every qcow2 image ("QFI\xfb").
+var qcow2Magic = []byte{0x51, 0x46, 0x49, 0xfb}
+
+// qcow2HeaderLen covers the qcow2 v3 header fields up to
+// incompatible_features.
+const qcow2HeaderLen = 80
+
+// qcow2IncompatExternalData is the incompatible feature bit for an external
+// data file.
+const qcow2IncompatExternalData = 1 << 2
+
+// rejectQCOW2ExternalFiles reads the qcow2 header and fails for an image
+// that names a backing file or an external data file. qemu-img convert, and
+// qemu-img info in the QEMU that BOOTy ships, would open that file from the
+// initramfs or the network and copy it into the raw image. The header is
+// parsed in process, so nothing is opened before the check.
+func rejectQCOW2ExternalFiles(path string) error {
+	f, err := os.Open(path) //nolint:gosec // controlled ramdisk path
+	if err != nil {
+		return fmt.Errorf("open qcow2 image: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	header := make([]byte, qcow2HeaderLen)
+	n, err := io.ReadFull(f, header)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return fmt.Errorf("read qcow2 header: %w", err)
+	}
+	return checkQCOW2Header(header[:n])
 }
 
-// rejectQCOW2ExternalFiles fails for a qcow2 image that names a backing
-// file or an external data file. qemu-img convert would read that file from
-// the initramfs or the network and copy it into the raw image.
-func rejectQCOW2ExternalFiles(infoJSON []byte) error {
-	// Pointers detect a present field even when its value is empty.
-	var info struct {
-		BackingFilename *string `json:"backing-filename"`
-		FormatSpecific  struct {
-			Data struct {
-				DataFile *string `json:"data-file"`
-			} `json:"data"`
-		} `json:"format-specific"`
+func checkQCOW2Header(header []byte) error {
+	if len(header) < 72 || !bytes.Equal(header[:4], qcow2Magic) {
+		return fmt.Errorf("not a valid qcow2 header")
 	}
-	if err := json.Unmarshal(infoJSON, &info); err != nil {
-		return fmt.Errorf("parse qemu-img info: %w", err)
-	}
-	if info.BackingFilename != nil {
+	if binary.BigEndian.Uint64(header[8:16]) != 0 {
 		return fmt.Errorf("qcow2 image has a backing file; only self-contained images are supported")
 	}
-	if info.FormatSpecific.Data.DataFile != nil {
-		return fmt.Errorf("qcow2 image has an external data file; only self-contained images are supported")
+	if binary.BigEndian.Uint32(header[4:8]) >= 3 {
+		if len(header) < qcow2HeaderLen {
+			return fmt.Errorf("qcow2 v3 header is truncated")
+		}
+		if binary.BigEndian.Uint64(header[72:80])&qcow2IncompatExternalData != 0 {
+			return fmt.Errorf("qcow2 image has an external data file; only self-contained images are supported")
+		}
 	}
 	return nil
 }
