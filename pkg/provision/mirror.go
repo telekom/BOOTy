@@ -25,6 +25,7 @@ var (
 	copyBlockDeviceFn           = disk.CopyBlockDevice
 	checkMirrorTailSpaceFn      = disk.CheckMirrorTailSpace
 	shrinkFilesystemForMirrorFn = (*disk.Manager).ShrinkFilesystemForMirror
+	unmountInspectionPart       = (*disk.Manager).Unmount
 )
 
 func (o *Orchestrator) mirroringMode() string {
@@ -239,8 +240,9 @@ func (o *Orchestrator) verifyFstabBoot(ctx context.Context, partition string) er
 		return fmt.Errorf("mount %s to read its fstab: %w", rootDev, err)
 	}
 	source, readErr := fstabEntrySource(filepath.Join(dir, "etc", "fstab"), "/boot")
-	if err := o.disk.Unmount(dir); err != nil {
-		o.log.Warn("failed to unmount root inspection mount", "dir", dir, "error", err)
+	// Mirroring must not start while the root filesystem is still mounted.
+	if err := unmountInspectionPart(o.disk, dir); err != nil {
+		return fmt.Errorf("unmount root inspection mount %s: %w", dir, err)
 	}
 	if readErr != nil {
 		return readErr
@@ -300,18 +302,27 @@ func (o *Orchestrator) rewriteMirrorFstab(ctx context.Context, root string) erro
 		arrays["/boot"] = disk.MirrorBootArray
 	}
 	lines := strings.SplitAfter(string(data), "\n")
-	changed := false
+	changed, hasBoot := false, false
 	for i, line := range lines {
 		fields := strings.Fields(line)
 		if len(fields) < 2 || strings.HasPrefix(fields[0], "#") {
 			continue
 		}
+		hasBoot = hasBoot || fields[1] == "/boot"
 		source := fields[0]
 		if replacement := o.mirrorFstabSource(ctx, arrays[fields[1]], source, fields[1]); replacement != "" {
 			o.log.Info("fstab entry now valid from both mirror disks", "mountpoint", fields[1], "from", source, "to", replacement)
 			lines[i] = strings.Replace(line, source, replacement, 1)
 			changed = true
 		}
+	}
+	if arrays["/boot"] != "" && !hasBoot {
+		// An extended boot partition can lack an fstab entry; then
+		// systemd-gpt-auto-generator would mount a raw array member.
+		if lines, err = o.appendMirrorBootFstabEntry(ctx, lines); err != nil {
+			return err
+		}
+		changed = true
 	}
 	if !changed {
 		return nil
@@ -320,6 +331,20 @@ func (o *Orchestrator) rewriteMirrorFstab(ctx context.Context, root string) erro
 		return fmt.Errorf("write fstab: %w", err)
 	}
 	return nil
+}
+
+// appendMirrorBootFstabEntry appends an fstab line that mounts the /boot
+// array.
+func (o *Orchestrator) appendMirrorBootFstabEntry(ctx context.Context, lines []string) ([]string, error) {
+	fsType, err := o.disk.FilesystemType(ctx, disk.MirrorBootArray)
+	if err != nil || fsType == "" {
+		return nil, fmt.Errorf("filesystem type of %s for its fstab entry: %w", disk.MirrorBootArray, err)
+	}
+	o.log.Info("adding fstab entry for the /boot array", "array", disk.MirrorBootArray)
+	if len(lines) > 0 && !strings.HasSuffix(lines[len(lines)-1], "\n") {
+		lines = append(lines, "\n")
+	}
+	return append(lines, fmt.Sprintf("%s /boot %s defaults 0 2\n", disk.MirrorBootArray, fsType)), nil
 }
 
 // mirrorFstabSource returns the replacement for an fstab source that names a
