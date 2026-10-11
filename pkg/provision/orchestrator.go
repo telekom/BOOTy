@@ -2164,6 +2164,10 @@ func bootEFIMountPoint() string {
 }
 
 func (o *Orchestrator) mountBoot(ctx context.Context) error {
+	// A separate /boot must be mounted before the ESP at /boot/efi.
+	if err := o.mountSeparateBoot(ctx); err != nil {
+		return err
+	}
 	if strings.TrimSpace(o.bootPartition) == "" {
 		o.log.Info("skipping boot partition mount; no boot partition detected")
 		return nil
@@ -2879,7 +2883,7 @@ func (o *Orchestrator) teardownChroot(_ context.Context) error {
 		return nil
 	}
 	bindErr := o.disk.TeardownChrootBindMounts(newroot)
-	bootErr := o.unmountBoot()
+	bootErr := errors.Join(o.unmountBoot(), o.unmountSeparateBoot())
 	sharedErr := o.unmountSharedData()
 	unmountErr := o.disk.Unmount(newroot)
 	return errors.Join(bindErr, bootErr, sharedErr, unmountErr)
