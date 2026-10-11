@@ -628,3 +628,20 @@ func TestNVMeResetNamespacesChecksControllerIDBeforeDelete(t *testing.T) {
 		t.Fatal("namespaces were deleted before the controller ID was known")
 	}
 }
+
+func TestNVMeAttachNamespaceUsesControllerID(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("nvme id-ctrl", []byte(`{"cntlid":12}`), nil)
+	cmd.setResult("nvme attach-ns", []byte(""), nil)
+	mgr := NewManager(cmd)
+
+	if err := mgr.AttachNVMeNamespace(t.Context(), "/dev/nvme0", "3"); err != nil {
+		t.Fatalf("AttachNVMeNamespace() error = %v", err)
+	}
+	if !hasDiskCommandCall(cmd.calls, "nvme", "id-ctrl", "/dev/nvme0", "-o", "json") {
+		t.Errorf("id-ctrl was not called: %#v", cmd.calls)
+	}
+	if !hasDiskCommandCall(cmd.calls, "nvme", "attach-ns", "/dev/nvme0", "-n", "3", "-c", "12") {
+		t.Errorf("attach-ns must use cntlid 12: %#v", cmd.calls)
+	}
+}
