@@ -156,6 +156,13 @@ func (o *Orchestrator) resolveFstabSource(ctx context.Context, source string) st
 		ids.node = part.Node
 		devs = append(devs, ids)
 	}
+	if strings.HasPrefix(source, "/dev/") {
+		// Device paths such as /dev/disk/by-uuid/... are symlinks to the
+		// canonical node that sfdisk reports.
+		if resolved, err := filepath.EvalSymlinks(source); err == nil {
+			source = resolved
+		}
+	}
 	return matchFstabSource(source, devs)
 }
 

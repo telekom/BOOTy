@@ -33,7 +33,14 @@ func createSeparateBootTestDiskImage(t *testing.T, sizeMB int) string {
 	}
 
 	loopDev := strings.TrimSpace(string(runOutput(t, "setup loop device", "losetup", "--find", "--show", "--partscan", rawPath)))
-	defer func() { _ = exec.Command("losetup", "-d", loopDev).Run() }()
+	rootMount := filepath.Join(dir, "root")
+	bootMount := filepath.Join(dir, "boot")
+	// Unmount before detaching on every exit path, also after t.Fatal.
+	defer func() {
+		_ = exec.Command("umount", rootMount).Run()
+		_ = exec.Command("umount", bootMount).Run()
+		_ = exec.Command("losetup", "-d", loopDev).Run()
+	}()
 	efiDev, bootDev, rootDev := loopDev+"p1", loopDev+"p2", loopDev+"p3"
 	waitForDevice(t, rootDev, 5*time.Second)
 
@@ -41,7 +48,6 @@ func createSeparateBootTestDiskImage(t *testing.T, sizeMB int) string {
 	run(t, "format boot partition", "mkfs.ext4", "-F", "-q", "-L", "BOOT", bootDev)
 	run(t, "format root partition", "mkfs.ext4", "-F", "-q", rootDev)
 
-	rootMount := filepath.Join(dir, "root")
 	if err := os.MkdirAll(rootMount, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +69,6 @@ func createSeparateBootTestDiskImage(t *testing.T, sizeMB int) string {
 	}
 	run(t, "unmount root", "umount", rootMount)
 
-	bootMount := filepath.Join(dir, "boot")
 	if err := os.MkdirAll(bootMount, 0o755); err != nil {
 		t.Fatal(err)
 	}

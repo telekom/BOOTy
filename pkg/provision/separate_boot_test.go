@@ -119,3 +119,20 @@ func writeTestFile(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestResolveFstabSourceDeviceSymlink(t *testing.T) {
+	dir := t.TempDir()
+	node := filepath.Join(dir, "vda2")
+	writeTestFile(t, node, "")
+	link := filepath.Join(dir, "by-uuid-abcd")
+	if err := os.Symlink(node, link); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := matchFstabSource(resolved, []blockIDs{{node: node}}); got != node {
+		t.Fatalf("matchFstabSource(%q) = %q, want %q", resolved, got, node)
+	}
+}
