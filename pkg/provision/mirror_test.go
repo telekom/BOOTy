@@ -599,3 +599,17 @@ func TestRewriteMirrorFstabFailsWithoutESPUUID(t *testing.T) {
 		t.Fatal("rewriteMirrorFstab() error = nil, want an error when the ESP UUID is unknown")
 	}
 }
+
+func TestMirrorRootRejectsMBRImages(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("mdadm --detail", nil, errors.New("no such array"))
+	o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, disk.NewManager(cmd))
+	o.targetDisk, o.mirrorDisk, o.rootPartition = "/dev/sda", "/dev/sdb", "/dev/sda1"
+	o.targetPartitions = []disk.Partition{{Node: "/dev/sda1", Type: disk.LinuxFilesystemMBRType}}
+	if err := o.mirrorRoot(context.Background()); err == nil {
+		t.Fatal("mirrorRoot() error = nil for an MBR image")
+	}
+	if len(cmd.calls) != 0 {
+		t.Fatalf("mirrorRoot() ran %v for an MBR image", cmd.calls)
+	}
+}

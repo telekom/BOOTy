@@ -115,6 +115,9 @@ func (o *Orchestrator) mirrorRoot(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("determine root partition number: %w", err)
 	}
+	if err := o.requireGPTLayout(); err != nil {
+		return err
+	}
 	bootData, err := o.separateBootPartition(ctx)
 	if err != nil {
 		return err
@@ -186,6 +189,18 @@ func (o *Orchestrator) mirrorPartition(ctx context.Context, array, member string
 		return err
 	}
 	return o.disk.AddMirrorMember(ctx, array, mirrorMember)
+}
+
+// requireGPTLayout rejects MBR images: the second disk gets its layout from
+// sgdisk --replicate, which handles GPT only. MBR partition types are short
+// hexadecimal codes instead of GUIDs.
+func (o *Orchestrator) requireGPTLayout() error {
+	for _, p := range o.targetPartitions {
+		if len(p.Type) != len(disk.LinuxFilesystemGUID) {
+			return fmt.Errorf("disk mirroring needs a GPT image, but partition %s has the MBR type %q", p.Node, p.Type)
+		}
+	}
+	return nil
 }
 
 // GPT partition types that mirroring handles besides root and the ESP.
