@@ -679,9 +679,9 @@ multi-arch platform selection and layer caching.
 | `platform` | string | Target platform in `os/arch[/variant]` format (default: `linux/<host arch>`) |
 | `cacheDir` | string | Cache directory (default: `/mnt/target/.booty-cache/oci`) |
 
-**Note**: Signature verification, parallel downloads, and other advanced
-features listed in the proposal are not yet implemented. Only platform
-matching and layer caching are available in this PR.
+**Note**: None of the features in this guide are implemented. That
+includes platform matching, layer caching, signature verification and
+parallel downloads.
 
 ### Platform Selection
 
