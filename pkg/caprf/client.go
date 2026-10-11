@@ -919,6 +919,9 @@ func unquoteDoubleQuotedVarValue(value string) string {
 }
 
 func applyVar(cfg *config.MachineConfig, key, value string) error {
+	if applyKernelParamsVar(cfg, key, value) {
+		return nil
+	}
 	if applyStringVar(cfg, key, value) {
 		return nil
 	}
@@ -926,6 +929,18 @@ func applyVar(cfg *config.MachineConfig, key, value string) error {
 		return err
 	}
 	return applySpecialVar(cfg, key, value)
+}
+
+// applyKernelParamsVar keeps both kernel parameter variables, in any order.
+// CAPRF writes MACHINE_EXTRA_KERNEL_PARAMS from the machine config. The
+// legacy provision.sh reads EXTRA_KERNEL_PARAMS, which operators set through
+// additionalVars.
+func applyKernelParamsVar(cfg *config.MachineConfig, key, value string) bool {
+	if key != "MACHINE_EXTRA_KERNEL_PARAMS" && key != "EXTRA_KERNEL_PARAMS" {
+		return false
+	}
+	cfg.Provision.ExtraKernelParams = strings.TrimSpace(cfg.Provision.ExtraKernelParams + " " + strings.TrimSpace(value))
+	return true
 }
 
 func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
@@ -1109,11 +1124,6 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) error {
 	}
 
 	switch key {
-	case "MACHINE_EXTRA_KERNEL_PARAMS", "EXTRA_KERNEL_PARAMS":
-		// CAPRF writes MACHINE_EXTRA_KERNEL_PARAMS from the machine config.
-		// The legacy provision.sh reads EXTRA_KERNEL_PARAMS, which operators
-		// set through additionalVars. Keep both, in any order.
-		cfg.Provision.ExtraKernelParams = strings.TrimSpace(cfg.Provision.ExtraKernelParams + " " + strings.TrimSpace(value))
 	case "IMAGE":
 		cfg.Provision.Image.URLs = strings.Fields(strings.ReplaceAll(value, ",", " "))
 	case "OCI_PREPULL_IMAGES":
