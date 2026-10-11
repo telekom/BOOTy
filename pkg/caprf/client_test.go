@@ -2485,3 +2485,14 @@ func TestRequestsLegacyCompatWithInvalidVars(t *testing.T) {
 		t.Fatal("RequestsLegacyCompat() = true for a missing file")
 	}
 }
+
+func TestRequestsLegacyCompatAfterLongLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vars")
+	content := "export SYSEXT_LAYERS=\"" + strings.Repeat("x", 128*1024) + "\"\nexport CAPRF_LEGACY_COMPAT=\"true\""
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !RequestsLegacyCompat(path) {
+		t.Fatal("RequestsLegacyCompat() = false after a 128 KiB line without a final newline")
+	}
+}

@@ -75,19 +75,21 @@ func RequestsLegacyCompat(varsPath string) bool {
 	}
 	defer f.Close() //nolint:errcheck // read-only file
 
-	// The last assignment wins, like in ParseVars.
+	// The last assignment wins, like in ParseVars. bufio.Reader has no line
+	// length limit, so a long earlier entry cannot hide the setting.
 	requested := false
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimPrefix(strings.TrimSpace(scanner.Text()), "export ")
-		key, value, ok := strings.Cut(line, "=")
-		if !ok || key != "CAPRF_LEGACY_COMPAT" {
-			continue
+	reader := bufio.NewReader(f)
+	for {
+		raw, err := reader.ReadString('\n')
+		line := strings.TrimPrefix(strings.TrimSpace(raw), "export ")
+		if key, value, ok := strings.Cut(line, "="); ok && key == "CAPRF_LEGACY_COMPAT" {
+			value, unquoteErr := unquoteVarValue(value)
+			requested = unquoteErr == nil && parseBoolVar(value)
 		}
-		value, err := unquoteVarValue(value)
-		requested = err == nil && parseBoolVar(value)
+		if err != nil {
+			return requested
+		}
 	}
-	return requested
 }
 
 // NewFromConfig creates a CAPRF client from an already-parsed config.

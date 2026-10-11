@@ -23,7 +23,8 @@ const testEFIFallbackPayload = "BOOTy KVM e2e EFI fallback\n"
 // requireProvisionTools requires essential provisioning tools.
 func requireProvisionTools(t *testing.T) {
 	t.Helper()
-	for _, tool := range []string{"sgdisk", "sfdisk", "mkfs.ext4", "mkfs.vfat", "qemu-img", "losetup", "dd", "mount", "umount"} {
+	// growpart is copied into the guest: whole-disk provisioning runs it.
+	for _, tool := range []string{"sgdisk", "sfdisk", "mkfs.ext4", "mkfs.vfat", "qemu-img", "losetup", "dd", "mount", "umount", "growpart"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			failOrSkipUnsupportedHost(t, "%s not available for KVM provisioning test", tool)
 		}

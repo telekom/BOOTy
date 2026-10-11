@@ -966,7 +966,10 @@ an initial heartbeat, and polls commands once before entering the periodic loop
 return an error immediately. After readiness succeeds, heartbeat and command-poll
 failures are logged and retried on the next tick. `RESCUE_MODE` applies to hot
 provision command failures; deprovision command failures are ACKed as failed
-before BOOTy returns a reboot request.
+before BOOTy reboots. With `CAPRF_LEGACY_COMPAT=true`, a failed hot provision
+defaults to `RESCUE_MODE=wait` (ACKed first), a failed deprovision command is
+ACKed and BOOTy waits instead of rebooting, and successful provision and
+deprovision commands power the host off.
 Only `204 No Content` denotes an empty command queue; a `404 Not Found` or any
 other unexpected response is treated as a polling failure rather than an empty
 queue.
