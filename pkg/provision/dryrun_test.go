@@ -523,6 +523,21 @@ func TestDryRunDiskDetection_Configured(t *testing.T) {
 	}
 }
 
+func TestDryRunMirrorPairSkipped(t *testing.T) {
+	for _, dc := range []config.DiskConfig{
+		{},
+		{MirroringMode: "none"},
+		{MirroringMode: "raid-1", SerialNumber: "S123"},
+	} {
+		cfg := &config.MachineConfig{}
+		cfg.Provision.Disk = dc
+		o := NewOrchestrator(cfg, &dryRunProvider{}, newTestDiskManager())
+		if result, ok := o.dryRunMirrorPair(context.Background()); ok {
+			t.Errorf("dryRunMirrorPair(%+v) = %+v, want skipped", dc, result)
+		}
+	}
+}
+
 func TestDryRunDiskDetection_Missing(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Disk.Device = "/dev/nonexistent-disk-xyz"
