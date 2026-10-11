@@ -25,7 +25,7 @@ func separateBootMountPoint() string {
 func (o *Orchestrator) mountSeparateBoot(ctx context.Context) error {
 	mountpoint := separateBootMountPoint()
 	if isMountPoint(mountpoint) {
-		return nil
+		return o.adoptSeparateBoot(ctx, mountpoint)
 	}
 	needed, source, err := separateBootSource(newroot)
 	if err != nil || !needed {
@@ -44,6 +44,25 @@ func (o *Orchestrator) mountSeparateBoot(ctx context.Context) error {
 	if err := o.disk.MountPartition(ctx, device, mountpoint); err != nil {
 		return fmt.Errorf("mounting separate /boot %s: %w", device, err)
 	}
+	o.separateBootMounted = true
+	return nil
+}
+
+// adoptSeparateBoot accepts an existing /boot mount on resume only when it
+// comes from the device of the image fstab /boot entry.
+func (o *Orchestrator) adoptSeparateBoot(ctx context.Context, mountpoint string) error {
+	source, err := fstabSource(filepath.Join(newroot, "etc", "fstab"), "/boot")
+	if err != nil {
+		return err
+	}
+	device := o.resolveFstabSource(ctx, source)
+	if device == "" {
+		return fmt.Errorf("%s is already mounted but the fstab /boot source %q cannot be resolved", mountpoint, source)
+	}
+	if _, err := mountedFromExpectedSource(mountpoint, device, "separate /boot"); err != nil {
+		return err
+	}
+	o.separateBootMounted = true
 	return nil
 }
 
@@ -115,9 +134,10 @@ func (o *Orchestrator) resolveFstabSource(ctx context.Context, source string) st
 // unmountSeparateBoot unmounts the separate /boot mounted by mountSeparateBoot.
 func (o *Orchestrator) unmountSeparateBoot() error {
 	mountpoint := separateBootMountPoint()
-	if !isMountPoint(mountpoint) {
+	if !o.separateBootMounted || !isMountPoint(mountpoint) {
 		return nil
 	}
+	o.separateBootMounted = false
 	if err := o.disk.Unmount(mountpoint); err != nil {
 		return fmt.Errorf("unmount separate /boot %s: %w", mountpoint, err)
 	}

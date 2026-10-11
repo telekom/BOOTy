@@ -84,6 +84,9 @@ func TestLegacyCompatSeparateBootPartitionGetsGRUBConfigQEMU(t *testing.T) {
 	qemuAvailable(t)
 	requireProvisionTools(t)
 	requireDiskInspectTools(t)
+	if _, err := exec.LookPath("blkid"); err != nil {
+		failOrSkipUnsupportedHost(t, "blkid not available for the separate /boot test")
+	}
 
 	rawDisk := createSeparateBootTestDiskImage(t, 512)
 	caprf := startFakeCAPRF(t, compressGzip(t, rawDisk))

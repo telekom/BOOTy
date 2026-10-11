@@ -97,6 +97,8 @@ type Orchestrator struct {
 	bestImageURL     string // resolved by verify-image, reused by stream-image
 	nvmeTargetDevice string
 	firmwareChanged  bool // true if any step changed firmware values requiring hard reboot
+	// separateBootMounted is true while mount-boot owns a separate /boot mount.
+	separateBootMounted bool
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
