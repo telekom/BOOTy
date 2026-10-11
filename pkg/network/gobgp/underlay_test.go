@@ -5,8 +5,6 @@ package gobgp
 import (
 	"context"
 	"errors"
-	"runtime"
-	"strings"
 	"testing"
 	"time"
 )
@@ -50,17 +48,9 @@ func TestTeardownStopsPeriodicRA(t *testing.T) {
 		t.Fatalf("Teardown() error = %v", err)
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
-	for raGoroutineRunning() {
-		if time.Now().After(deadline) {
-			t.Fatal("periodic RA goroutine still running after Teardown")
-		}
-		time.Sleep(10 * time.Millisecond)
+	select {
+	case <-u.raDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("periodic RA goroutine still running after Teardown")
 	}
-}
-
-func raGoroutineRunning() bool {
-	buf := make([]byte, 1<<20)
-	n := runtime.Stack(buf, true)
-	return strings.Contains(string(buf[:n]), "sendPeriodicRA")
 }

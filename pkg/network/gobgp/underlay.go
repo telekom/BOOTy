@@ -66,6 +66,7 @@ type UnderlayTier struct {
 	nics         []string
 	log          *slog.Logger
 	stopRA       chan struct{}                 // signals the periodic RA goroutine to stop
+	raDone       chan struct{}                 // closed when the periodic RA goroutine exits
 	peerCountFn  func(ctx context.Context) int // overridable in tests; nil = use countEstablishedPeers
 	pollInterval time.Duration                 // overridable in tests; zero = use default (1s)
 }
@@ -665,7 +666,11 @@ func sendRouterAdvertisement(iface string) {
 // channel as an argument, because Teardown clears the field after closing it.
 func (u *UnderlayTier) startPeriodicRA() {
 	u.stopRA = make(chan struct{})
-	go u.sendPeriodicRA(u.stopRA)
+	u.raDone = make(chan struct{})
+	go func(stop <-chan struct{}, done chan<- struct{}) {
+		defer close(done)
+		u.sendPeriodicRA(stop)
+	}(u.stopRA, u.raDone)
 }
 
 // sendPeriodicRA sends Router Advertisements on all NICs every 10 seconds
