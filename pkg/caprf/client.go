@@ -944,7 +944,6 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"PROVISION_TARGET_OS":         &cfg.Provision.TargetOS,
 		"TARGET_OS":                   &cfg.Provision.TargetOS,
 		"TOKEN":                       &cfg.Transport.Token,
-		"MACHINE_EXTRA_KERNEL_PARAMS": &cfg.Provision.ExtraKernelParams,
 		"MACHINE_SERIAL_CONSOLE":      &cfg.Provision.SerialConsole,
 		"SERIAL_CONSOLE":              &cfg.Provision.SerialConsole,
 		"FAILURE_DOMAIN":              &cfg.Provision.FailureDomain,
@@ -1110,6 +1109,11 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) error {
 	}
 
 	switch key {
+	case "MACHINE_EXTRA_KERNEL_PARAMS", "EXTRA_KERNEL_PARAMS":
+		// CAPRF writes MACHINE_EXTRA_KERNEL_PARAMS from the machine config.
+		// The legacy provision.sh reads EXTRA_KERNEL_PARAMS, which operators
+		// set through additionalVars. Keep both, in any order.
+		cfg.Provision.ExtraKernelParams = strings.TrimSpace(cfg.Provision.ExtraKernelParams + " " + strings.TrimSpace(value))
 	case "IMAGE":
 		cfg.Provision.Image.URLs = strings.Fields(strings.ReplaceAll(value, ",", " "))
 	case "OCI_PREPULL_IMAGES":

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -2494,5 +2495,23 @@ func TestRequestsLegacyCompatAfterLongLine(t *testing.T) {
 	}
 	if !RequestsLegacyCompat(path) {
 		t.Fatal("RequestsLegacyCompat() = false after a 128 KiB line without a final newline")
+	}
+}
+
+// The legacy provision.sh reads EXTRA_KERNEL_PARAMS (set through CAPRF
+// additionalVars); CAPRF itself writes MACHINE_EXTRA_KERNEL_PARAMS.
+func TestParseVarsExtraKernelParamsKeepsBoth(t *testing.T) {
+	for _, vars := range []string{
+		"MACHINE_EXTRA_KERNEL_PARAMS=\"a=1\"\nEXTRA_KERNEL_PARAMS=\"b=2\"\n",
+		"EXTRA_KERNEL_PARAMS=\"b=2\"\nMACHINE_EXTRA_KERNEL_PARAMS=\"a=1\"\n",
+	} {
+		cfg, err := ParseVars(strings.NewReader(vars))
+		if err != nil {
+			t.Fatal(err)
+		}
+		fields := strings.Fields(cfg.Provision.ExtraKernelParams)
+		if len(fields) != 2 || !slices.Contains(fields, "a=1") || !slices.Contains(fields, "b=2") {
+			t.Fatalf("ExtraKernelParams = %q, want a=1 and b=2", cfg.Provision.ExtraKernelParams)
+		}
 	}
 }

@@ -400,6 +400,9 @@ func formatKubeletExtraArgs(args []string) string {
 // console= parameter is emitted: operator-supplied console tokens are folded
 // into the resolution instead of being appended a second time.
 func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineConfig) error {
+	if cfg != nil && cfg.LegacyCompat {
+		return c.configureGRUBLegacy(ctx, cfg)
+	}
 	grubDir := filepath.Join(c.rootDir, "etc", "default", "grub.d")
 	if err := os.MkdirAll(grubDir, 0o755); err != nil {
 		return fmt.Errorf("creating grub.d dir: %w", err)
