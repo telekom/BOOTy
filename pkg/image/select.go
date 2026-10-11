@@ -87,9 +87,9 @@ func probeURL(ctx context.Context, rawURL string) (time.Duration, error) {
 	defer func() { _ = resp.Body.Close() }()
 	elapsed := time.Since(start)
 
-	if resp.StatusCode >= 400 &&
-		resp.StatusCode != http.StatusMethodNotAllowed &&
-		resp.StatusCode != http.StatusNotImplemented {
+	// The download uses the same GET, so any error status rules the source
+	// out, like `curl --fail` in the legacy probe.
+	if resp.StatusCode >= 400 {
 		return 0, fmt.Errorf("probe returned status %d", resp.StatusCode)
 	}
 	return elapsed, nil
