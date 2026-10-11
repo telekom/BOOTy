@@ -570,13 +570,10 @@ func runCAPRF(ctx context.Context) {
 		reboot()
 		return
 	case errors.As(modeErr, &powerOffErr):
-		if netMode != nil {
-			if err := netMode.Teardown(ctx); err != nil {
-				slog.Warn("network teardown error", "error", err)
-			}
-		}
-		// Do not reboot when the power off fails: CAPRF has not ejected the
-		// ISO yet, so a reboot would run the task again.
+		// Keep the network up, like the provision handoff, so a failed power
+		// off can still be reported. Do not reboot when the power off fails:
+		// CAPRF has not ejected the ISO yet, so a reboot would run the task
+		// again.
 		requestProvisionHandoff(ctx, client, "power off", provisionHandoff.powerOff, provisionHandoff,
 			"power off handoff failed after deprovisioning success")
 		return

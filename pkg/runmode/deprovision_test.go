@@ -11,7 +11,8 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 )
 
-func newTestDeprovisionMode(legacyCompat bool, deprovErr error) *DeprovisionMode {
+func newTestDeprovisionMode(t *testing.T, legacyCompat bool, deprovErr error) *DeprovisionMode {
+	t.Helper()
 	return &DeprovisionMode{
 		deps: Deps{Cfg: &config.MachineConfig{Mode: "deprovision", LegacyCompat: legacyCompat}},
 		newDeprovisioner: func() standbyDeprovisioner {
@@ -21,18 +22,18 @@ func newTestDeprovisionMode(legacyCompat bool, deprovErr error) *DeprovisionMode
 }
 
 func TestDeprovisionModeSuccessExit(t *testing.T) {
-	if err := newTestDeprovisionMode(false, nil).Run(context.Background()); err != nil {
+	if err := newTestDeprovisionMode(t, false, nil).Run(context.Background()); err != nil {
 		t.Fatalf("Run() = %v, want nil (reboot) by default", err)
 	}
 	var powerOff *PowerOffRequestedError
-	if err := newTestDeprovisionMode(true, nil).Run(context.Background()); !errors.As(err, &powerOff) {
+	if err := newTestDeprovisionMode(t, true, nil).Run(context.Background()); !errors.As(err, &powerOff) {
 		t.Fatalf("Run() = %v, want power off request in legacy compat", err)
 	}
 }
 
 func TestDeprovisionModeFailureReturnsByDefault(t *testing.T) {
 	wipeErr := errors.New("wipe failed")
-	if err := newTestDeprovisionMode(false, wipeErr).Run(context.Background()); !errors.Is(err, wipeErr) {
+	if err := newTestDeprovisionMode(t, false, wipeErr).Run(context.Background()); !errors.Is(err, wipeErr) {
 		t.Fatalf("Run() = %v, want %v", err, wipeErr)
 	}
 }
@@ -44,7 +45,7 @@ func TestDeprovisionModeFailureWaitsInLegacyCompat(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- newTestDeprovisionMode(true, wipeErr).Run(ctx) }()
+	go func() { done <- newTestDeprovisionMode(t, true, wipeErr).Run(ctx) }()
 
 	select {
 	case err := <-done:

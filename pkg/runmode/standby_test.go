@@ -227,7 +227,8 @@ func TestStandbyDeprovisionCommandFailureReturnsErrorWithoutReboot(t *testing.T)
 	}
 }
 
-func newLegacyCompatStandby(deprovErr error) *StandbyMode {
+func newLegacyCompatStandby(t *testing.T, deprovErr error) *StandbyMode {
+	t.Helper()
 	cfg := standbyConfig()
 	cfg.LegacyCompat = true
 	return &StandbyMode{
@@ -239,7 +240,7 @@ func newLegacyCompatStandby(deprovErr error) *StandbyMode {
 }
 
 func TestStandbyDeprovisionCommandLegacyCompatPowersOff(t *testing.T) {
-	err := newLegacyCompatStandby(nil).Run(context.Background())
+	err := newLegacyCompatStandby(t, nil).Run(context.Background())
 	var powerOff *PowerOffRequestedError
 	if !errors.As(err, &powerOff) {
 		t.Fatalf("Run error = %v, want power off request", err)
@@ -251,7 +252,7 @@ func TestStandbyDeprovisionCommandLegacyCompatFailureWaits(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- newLegacyCompatStandby(deprovisionErr).Run(ctx) }()
+	go func() { done <- newLegacyCompatStandby(t, deprovisionErr).Run(ctx) }()
 
 	select {
 	case err := <-done:
@@ -270,5 +271,33 @@ func TestStandbyDeprovisionCommandLegacyCompatFailureWaits(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not return after the context ended")
+	}
+}
+
+// A failed hot provision is ACKed before the rescue wait starts.
+func TestStandbyProvisionFailureAcksBeforeWait(t *testing.T) {
+	cfg := standbyConfig()
+	cfg.LegacyCompat = true // rescue mode defaults to wait
+	provider := &standbyProvider{commands: []config.Command{{ID: "p1", Type: "provision"}}}
+	mode := &StandbyMode{deps: Deps{Cfg: cfg, Client: provider}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- mode.Run(ctx) }()
+
+	select {
+	case err := <-done:
+		t.Fatalf("Run returned %v before the context ended", err)
+	case <-time.After(2 * time.Second):
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return after the context ended")
+	}
+	if len(provider.acks) != 1 || provider.acks[0] != "p1:failed" {
+		t.Fatalf("acks = %v, want the failed provision ACKed", provider.acks)
 	}
 }

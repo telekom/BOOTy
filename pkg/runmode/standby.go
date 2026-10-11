@@ -182,6 +182,10 @@ func (m *StandbyMode) handleProvision(ctx context.Context, cmd config.Command) *
 			slog.Info("dropping to rescue shell")
 			return &commandResult{err: &RescueShellError{}}
 		case rescue.ModeWait:
+			// ACK the failure first: standby reports every failed command.
+			if ackErr := m.deps.Client.AcknowledgeCommand(ctx, cmd.ID, "failed", fmt.Sprintf("provision command failed: %v", provErr)); ackErr != nil {
+				slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
+			}
 			slog.Info("waiting for manual intervention")
 			<-ctx.Done()
 			return &commandResult{err: fmt.Errorf("wait mode canceled: %w", ctx.Err())}
