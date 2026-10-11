@@ -184,7 +184,12 @@ func DeriveBridgeMAC(ipmiMAC string) string {
 // deriveBridgeMAC picks the provision bridge MAC, which is also the EVPN
 // router MAC. An explicit netplan bridge macaddress wins. Otherwise the MAC
 // comes from the IPMI MAC, or from the underlay IP when no IPMI MAC is known.
+// The underlay IP is also the BGP router ID, so it must be IPv4 in all cases.
 func deriveBridgeMAC(cfg *network.Config, underlayIP string) (string, error) {
+	underlayMAC, err := deriveBridgeMACFromIP(underlayIP)
+	if err != nil {
+		return "", err
+	}
 	if cfg.BridgeMAC != "" {
 		hw, err := net.ParseMAC(cfg.BridgeMAC)
 		if err != nil {
@@ -198,17 +203,17 @@ func deriveBridgeMAC(cfg *network.Config, underlayIP string) (string, error) {
 	if mac := DeriveBridgeMAC(cfg.IPMIMAC); mac != "" {
 		return mac, nil
 	}
-	return deriveBridgeMACFromIP(underlayIP)
+	return underlayMAC, nil
 }
 
 // deriveBridgeMACFromIP encodes the underlay IPv4 behind the 02:54 prefix,
 // like the legacy configure-frr.py ramdisk script. The underlay IP is the
-// VTEP address, so the MAC is unique per host. The underlay IP is also the
-// BGP router ID, so both the GoBGP and the FRR stack need an IPv4 address.
+// VTEP address, so the MAC is unique per host. Both the GoBGP and the FRR
+// stack use the underlay IP as IPv4 router ID, so other values are an error.
 func deriveBridgeMACFromIP(underlayIP string) (string, error) {
 	ip4 := net.ParseIP(underlayIP).To4()
 	if ip4 == nil {
-		return "", fmt.Errorf("underlay IP %q must be IPv4 for bridge MAC derivation", underlayIP)
+		return "", fmt.Errorf("underlay IP %q must be an IPv4 address", underlayIP)
 	}
 	return bridgeMACFromBytes(ip4), nil
 }

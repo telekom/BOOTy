@@ -114,11 +114,22 @@ func TestDeriveAddresses_BridgeMACOverride(t *testing.T) {
 }
 
 func TestDeriveAddresses_InvalidUnderlayIPForBridgeMAC(t *testing.T) {
-	for _, underlay := range []string{"not-an-ip", "2001:db8::1"} {
-		t.Run(underlay, func(t *testing.T) {
-			cfg := network.Config{UnderlayIP: underlay}
+	tests := []struct {
+		name      string
+		underlay  string
+		ipmiMAC   string
+		bridgeMAC string
+	}{
+		{"not_an_ip", "not-an-ip", "", ""},
+		{"ipv6", "2001:db8::1", "", ""},
+		{"ipv6_with_ipmi_mac", "2001:db8::1", "aa:bb:cc:dd:ee:ff", ""},
+		{"ipv6_with_bridge_mac", "2001:db8::1", "", "02:00:00:00:10:01"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := network.Config{UnderlayIP: tt.underlay, IPMIMAC: tt.ipmiMAC, BridgeMAC: tt.bridgeMAC}
 			if _, _, _, err := DeriveAddresses(&cfg); err == nil {
-				t.Fatal("expected error for a non-IPv4 underlay IP without IPMI MAC")
+				t.Fatal("expected error for a non-IPv4 underlay IP")
 			}
 		})
 	}
