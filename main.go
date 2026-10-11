@@ -481,7 +481,7 @@ func runCAPRF(ctx context.Context) {
 		slog.Error("failed to create CAPRF client", "error", err)
 		provision.DumpDebugState("caprf-init")
 		// The vars file did not parse, but it may still ask for legacy
-		// behaviour: then keep the ramdisk running instead of rebooting.
+		// behavior: then keep the ramdisk running instead of rebooting.
 		failRun(ctx, &config.MachineConfig{LegacyCompat: caprf.RequestsLegacyCompat(varsPath)}, nil,
 			"invalid vars file", reboot)
 		return
