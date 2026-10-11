@@ -5,6 +5,8 @@ package provision
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -45,11 +47,25 @@ func TestDecommissionReportsSuccessWhenWipeAndEFIFail(t *testing.T) {
 
 	provider := &mockProvider{}
 	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{Mode: "decommission"}, provider)
+	sysfs := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sysfs, "block", "sda"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	o.disk.SetSysfsRoot(sysfs)
 	cmd.setResult("wipefs -af", nil, errors.New("defect disk"))
 	cmd.setResult("mdadm --stop", nil, errors.New("no arrays"))
 
 	if err := o.Deprovision(context.Background()); err != nil {
 		t.Fatalf("Deprovision(decommission) = %v, want nil", err)
+	}
+	wiped := false
+	for _, call := range cmd.calls {
+		if call.name == "wipefs" && strings.Join(call.args, " ") == "-af /dev/sda" {
+			wiped = true
+		}
+	}
+	if !wiped {
+		t.Fatalf("decommission did not try to wipe /dev/sda: %v", cmd.calls)
 	}
 	got := make([]config.Status, 0, len(provider.statuses))
 	for _, s := range provider.statuses {
