@@ -294,7 +294,7 @@ root is mounted.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MODE` | `provision` | `provision`, `deprovision`, `soft-deprovision`, `decommission`, `standby`, or `dry-run`. `decommission` wipes all disks and removes all EFI boot entries on a best-effort basis (CAPRF force-clean) |
+| `MODE` | `provision` | `provision`, `deprovision`, `soft-deprovision`, `decommission`, `standby`, or `dry-run`. `decommission` wipes all disks and removes every EFI boot entry listed in `BootOrder` on a best-effort basis (CAPRF force-clean) |
 | `DRY_RUN` | `false` | When `true`, forces `MODE=dry-run`: validates prerequisites without destructive writes |
 | `BOOTY_RESUME` | `false` | Enable checkpoint resume — skip previously completed steps on restart |
 | `DISABLE_KEXEC` | `false` | Skip kexec, always hard-reboot. Must stay `false` for A/B preserve-existing upgrades |
