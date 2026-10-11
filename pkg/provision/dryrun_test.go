@@ -213,6 +213,19 @@ func TestDryRunConfigValidation(t *testing.T) {
 			wantTarget: config.TargetOSLinux,
 		},
 		{
+			name: "disk mirroring with A/B image mode",
+			cfg: func() *config.MachineConfig {
+				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.TargetOS = config.TargetOSLinux
+				c.Provision.Image.URLs = []string{"http://example.com/img"}
+				c.Provision.Image.Mode = config.ImageModeAB
+				c.Provision.Disk.MirroringMode = "raid-1"
+				return c
+			}(),
+			expect:      DryRunFail,
+			wantMessage: "mirroring",
+		},
+		{
 			name: "missing target os",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{Hostname: "node1"}

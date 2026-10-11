@@ -50,6 +50,7 @@ func TestMirrorRootBuildsRAID1AcrossBothDisks(t *testing.T) {
 	for _, want := range [][]string{
 		{"growpart", "--update", "on", "/dev/sda", "2"},
 		{"sgdisk", "--replicate=/dev/sdb", "/dev/sda"},
+		{"wipefs", "-af", "/dev/sdb2"},
 		{"mdadm", "--create", "/dev/md2", "--run", "--level=1", "--raid-devices=2", "--metadata=1.0", "--assume-clean", "/dev/sda2", "missing"},
 		{"mdadm", "--add", "/dev/md2", "/dev/sdb2"},
 	} {

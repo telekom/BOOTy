@@ -110,6 +110,9 @@ func (o *Orchestrator) dryRunConfigValidation(_ context.Context) DryRunResult {
 	if err := o.validatePartitionLayoutConfig(); err != nil {
 		return DryRunResult{Status: DryRunFail, Message: err.Error()}
 	}
+	if err := o.validateMirroringMode(); err != nil {
+		return DryRunResult{Status: DryRunFail, Message: err.Error()}
+	}
 
 	if len(o.cfg.Provision.Image.URLs) == 0 {
 		return DryRunResult{Status: DryRunFail, Message: "no image URLs configured"}

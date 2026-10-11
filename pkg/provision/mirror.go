@@ -123,6 +123,11 @@ func (o *Orchestrator) mirrorRoot(ctx context.Context) error {
 			return fmt.Errorf("copy EFI system partition: %w", err)
 		}
 	}
+	// The replicated partition can still carry an md superblock or
+	// filesystem signature from an earlier install of the second disk.
+	if err := o.disk.WipeFilesystemSignatures(ctx, mirrorRoot); err != nil {
+		return err
+	}
 	if err := o.disk.CreateDegradedMirror(ctx, disk.MirrorRootArray, o.rootPartition); err != nil {
 		return err
 	}
