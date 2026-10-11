@@ -25,7 +25,7 @@ func (o *Orchestrator) probeRootPartition(ctx context.Context, parts []disk.Part
 		if !isLinuxRootPartition(parts[i]) {
 			continue
 		}
-		if err := o.disk.MountPartitionReadOnly(ctx, parts[i].Node, inspect); err != nil {
+		if err := o.disk.MountPartitionInspect(ctx, parts[i].Node, inspect); err != nil {
 			o.log.Info("root probe: cannot mount partition", "partition", parts[i].Node, "error", err)
 			continue
 		}
@@ -42,7 +42,7 @@ func (o *Orchestrator) probeRootPartition(ctx context.Context, parts []disk.Part
 }
 
 func looksLikeRootFilesystem(dir string) bool {
-	if _, err := os.Stat(filepath.Join(dir, "etc", "os-release")); err == nil {
+	if info, err := os.Stat(filepath.Join(dir, "etc", "os-release")); err == nil && info.Mode().IsRegular() {
 		return true
 	}
 	etc, etcErr := os.Stat(filepath.Join(dir, "etc"))

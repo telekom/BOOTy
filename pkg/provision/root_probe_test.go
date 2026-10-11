@@ -21,6 +21,7 @@ func TestLooksLikeRootFilesystem(t *testing.T) {
 		{name: "etc and usr", dirs: []string{"etc", "usr"}, want: true},
 		{name: "only etc", dirs: []string{"etc"}},
 		{name: "data partition", files: []string{"data/file"}},
+		{name: "os-release directory", dirs: []string{"etc/os-release"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
