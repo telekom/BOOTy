@@ -6,58 +6,58 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
 )
 
-func TestDeprovisionModeExitParity(t *testing.T) {
-	wipeErr := errors.New("wipe failed")
-	tests := []struct {
-		name         string
-		legacyCompat bool
-		deprovErr    error
-		wantPowerOff bool
-		wantErr      error
-	}{
-		{name: "success reboots by default"},
-		{name: "success powers off in legacy compat", legacyCompat: true, wantPowerOff: true},
-		{name: "failure returns error by default", deprovErr: wipeErr, wantErr: wipeErr},
-		{name: "failure waits in legacy compat", legacyCompat: true, deprovErr: wipeErr, wantErr: wipeErr},
+func newTestDeprovisionMode(legacyCompat bool, deprovErr error) *DeprovisionMode {
+	return &DeprovisionMode{
+		deps: Deps{Cfg: &config.MachineConfig{Mode: "deprovision", LegacyCompat: legacyCompat}},
+		newDeprovisioner: func() standbyDeprovisioner {
+			return standbyDeprovisionerFunc(func(context.Context) error { return deprovErr })
+		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			waited := false
-			m := &DeprovisionMode{
-				deps: Deps{Cfg: &config.MachineConfig{Mode: "deprovision", LegacyCompat: tt.legacyCompat}},
-				newDeprovisioner: func() standbyDeprovisioner {
-					return standbyDeprovisionerFunc(func(context.Context) error {
-						if tt.deprovErr != nil && tt.legacyCompat {
-							// Run must block until the context ends.
-							waited = true
-							cancel()
-						}
-						return tt.deprovErr
-					})
-				},
-			}
-			defer cancel()
+}
 
-			err := m.Run(ctx)
+func TestDeprovisionModeSuccessExit(t *testing.T) {
+	if err := newTestDeprovisionMode(false, nil).Run(context.Background()); err != nil {
+		t.Fatalf("Run() = %v, want nil (reboot) by default", err)
+	}
+	var powerOff *PowerOffRequestedError
+	if err := newTestDeprovisionMode(true, nil).Run(context.Background()); !errors.As(err, &powerOff) {
+		t.Fatalf("Run() = %v, want power off request in legacy compat", err)
+	}
+}
 
-			var powerOff *PowerOffRequestedError
-			if got := errors.As(err, &powerOff); got != tt.wantPowerOff {
-				t.Fatalf("Run() = %v, want power off request %v", err, tt.wantPowerOff)
-			}
-			if tt.wantErr != nil && !errors.Is(err, tt.wantErr) {
-				t.Fatalf("Run() = %v, want %v", err, tt.wantErr)
-			}
-			if tt.wantErr == nil && !tt.wantPowerOff && err != nil {
-				t.Fatalf("Run() = %v, want nil", err)
-			}
-			if tt.legacyCompat && tt.deprovErr != nil && !waited {
-				t.Fatal("legacy compat failure did not wait for the context")
-			}
-		})
+func TestDeprovisionModeFailureReturnsByDefault(t *testing.T) {
+	wipeErr := errors.New("wipe failed")
+	if err := newTestDeprovisionMode(false, wipeErr).Run(context.Background()); !errors.Is(err, wipeErr) {
+		t.Fatalf("Run() = %v, want %v", err, wipeErr)
+	}
+}
+
+// Legacy evidence: deprovision.sh reports the error and exits the script;
+// the ramdisk keeps running. Run must block until its context ends.
+func TestDeprovisionModeFailureWaitsInLegacyCompat(t *testing.T) {
+	wipeErr := errors.New("wipe failed")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- newTestDeprovisionMode(true, wipeErr).Run(ctx) }()
+
+	select {
+	case err := <-done:
+		t.Fatalf("Run() returned %v before the context ended", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, wipeErr) {
+			t.Fatalf("Run() = %v, want %v", err, wipeErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run() did not return after the context ended")
 	}
 }

@@ -353,8 +353,11 @@ func TestValidateRejectsABPreserveWithLegacyCompat(t *testing.T) {
 	cfg.Provision.AB.RootSizeMB = 8192
 
 	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "disableKexec must be false") {
-		t.Fatalf("Validate() = %v, want kexec requirement error", err)
+	if err == nil || !strings.Contains(err.Error(), "legacyCompat (CAPRF_LEGACY_COMPAT)") {
+		t.Fatalf("Validate() = %v, want legacy compat incompatibility error", err)
+	}
+	if strings.Contains(err.Error(), "disableKexec must be false") {
+		t.Fatalf("Validate() = %v, must not blame disableKexec when it is false", err)
 	}
 }
 

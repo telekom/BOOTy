@@ -227,47 +227,48 @@ func TestStandbyDeprovisionCommandFailureReturnsErrorWithoutReboot(t *testing.T)
 	}
 }
 
-func TestStandbyDeprovisionCommandLegacyCompatExit(t *testing.T) {
+func newLegacyCompatStandby(deprovErr error) *StandbyMode {
+	cfg := standbyConfig()
+	cfg.LegacyCompat = true
+	return &StandbyMode{
+		deps: Deps{Cfg: cfg, Client: &standbyProvider{commands: []config.Command{{ID: "cmd-1", Type: "deprovision"}}}},
+		newDeprovisioner: func() standbyDeprovisioner {
+			return standbyDeprovisionerFunc(func(context.Context) error { return deprovErr })
+		},
+	}
+}
+
+func TestStandbyDeprovisionCommandLegacyCompatPowersOff(t *testing.T) {
+	err := newLegacyCompatStandby(nil).Run(context.Background())
+	var powerOff *PowerOffRequestedError
+	if !errors.As(err, &powerOff) {
+		t.Fatalf("Run error = %v, want power off request", err)
+	}
+}
+
+func TestStandbyDeprovisionCommandLegacyCompatFailureWaits(t *testing.T) {
 	deprovisionErr := errors.New("wipe failed")
-	for _, tt := range []struct {
-		name         string
-		deprovErr    error
-		wantPowerOff bool
-	}{
-		{name: "success powers off", wantPowerOff: true},
-		{name: "failure waits", deprovErr: deprovisionErr},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			cfg := standbyConfig()
-			cfg.LegacyCompat = true
-			provider := &standbyProvider{commands: []config.Command{{ID: "cmd-1", Type: "deprovision"}}}
-			mode := &StandbyMode{
-				deps: Deps{Cfg: cfg, Client: provider},
-				newDeprovisioner: func() standbyDeprovisioner {
-					return standbyDeprovisionerFunc(func(context.Context) error {
-						if tt.deprovErr != nil {
-							cancel() // the failure path must wait for the context
-						}
-						return tt.deprovErr
-					})
-				},
-			}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- newLegacyCompatStandby(deprovisionErr).Run(ctx) }()
 
-			err := mode.Run(ctx)
-
-			var powerOff *PowerOffRequestedError
-			if errors.As(err, &powerOff) != tt.wantPowerOff {
-				t.Fatalf("Run error = %v, want power off %v", err, tt.wantPowerOff)
-			}
-			var rebootErr *RebootRequestedError
-			if errors.As(err, &rebootErr) {
-				t.Fatalf("Run error = %v, legacy compat must not reboot", err)
-			}
-			if tt.deprovErr != nil && !errors.Is(err, tt.deprovErr) {
-				t.Fatalf("Run error = %v, want %v", err, tt.deprovErr)
-			}
-		})
+	select {
+	case err := <-done:
+		t.Fatalf("Run returned %v before the context ended", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, deprovisionErr) {
+			t.Fatalf("Run error = %v, want %v", err, deprovisionErr)
+		}
+		var rebootErr *RebootRequestedError
+		if errors.As(err, &rebootErr) {
+			t.Fatalf("Run error = %v, legacy compat must not reboot", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after the context ended")
 	}
 }
