@@ -299,11 +299,11 @@ func Test_GetIPMIInfo_noIPMINICWithoutSubnet(t *testing.T) {
 		return []net.Addr{&net.IPNet{IP: net.ParseIP("172.20.20.2"), Mask: net.CIDRMask(24, 32)}}, nil
 	}
 
-	if mac, _, err := GetIPMIInfo(""); err == nil {
-		t.Fatalf("got IPMI MAC %q from a data NIC, want an error", mac)
+	if mac, _, err := GetIPMIInfo(""); !errors.Is(err, ErrNoIPMIInterface) {
+		t.Fatalf("GetIPMIInfo() = %q, %v, want ErrNoIPMIInterface", mac, err)
 	}
-	if _, _, err := GetIPMIInfo("not-a-cidr"); err == nil {
-		t.Fatal("expected error for an invalid IPMI subnet")
+	if _, _, err := GetIPMIInfo("not-a-cidr"); err == nil || errors.Is(err, ErrNoIPMIInterface) {
+		t.Fatalf("err = %v for an invalid IPMI subnet, want a configuration error", err)
 	}
 }
 

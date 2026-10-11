@@ -93,12 +93,12 @@ func TestSelectIPMIInterface_NoFallbackToDataNIC(t *testing.T) {
 		"eth0": mockAddr(t, "10.0.0.1/24"),
 	}
 
-	if got, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs), nil); err == nil {
-		t.Fatalf("got interface %q, want an error", got.Name)
+	if _, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs), nil); !errors.Is(err, ErrNoIPMIInterface) {
+		t.Fatalf("err = %v, want ErrNoIPMIInterface", err)
 	}
 	_, other, _ := net.ParseCIDR("172.30.0.0/24")
-	if got, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs), other); err == nil {
-		t.Fatalf("got interface %q outside the IPMI subnet, want an error", got.Name)
+	if _, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs), other); !errors.Is(err, ErrNoIPMIInterface) {
+		t.Fatalf("err = %v for a NIC outside the IPMI subnet, want ErrNoIPMIInterface", err)
 	}
 }
 

@@ -4,6 +4,7 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -151,6 +152,10 @@ var bmcPrefixes = []string{"ipmi", "bmc", "idrac", "ilo", "imm"}
 // mgmtPrefixes are interface name prefixes that suggest a management NIC.
 var mgmtPrefixes = []string{"mgmt", "management"}
 
+// ErrNoIPMIInterface means that no NIC is an IPMI NIC. This is expected on
+// hosts where the BMC NIC is not visible to the host.
+var ErrNoIPMIInterface = errors.New("no IPMI interface found")
+
 // selectIPMIInterface picks the best interface for IPMI info from the provided list.
 // It applies a three-pass ranked selection:
 //  1. BMC-specific name prefixes (ipmi*, bmc*, idrac*, ilo*, imm*)
@@ -187,7 +192,7 @@ func selectIPMIInterfaceWith(ifaces []net.Interface, getAddrs func(net.Interface
 		}
 	}
 
-	return nil, fmt.Errorf("no IPMI interface found")
+	return nil, ErrNoIPMIInterface
 }
 
 func filterAddressed(ifaces []net.Interface, getAddrs func(net.Interface) ([]net.Addr, error)) []net.Interface {
