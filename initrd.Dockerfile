@@ -182,6 +182,7 @@ RUN apt-get -o Acquire::Retries=5 update && \
     #   Mellanox/NVIDIA:  mlx4_core mlx4_en mlx5_core mlxfw
     #   Emulex/Broadcom:  be2net
     #   Device-mapper:    dm_mod dm_crypt (LUKS encryption)
+    #   Software RAID:    md_mod raid1 (DISK_MIRRORING_MODE, explicit RAID arrays)
     #   IPMI:             ipmi_msghandler ipmi_devintf ipmi_si ipmi_ssif
     for m in \
         virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
@@ -198,6 +199,7 @@ RUN apt-get -o Acquire::Retries=5 update && \
         mlx4_core mlx4_en mlx5_core mlxfw \
         be2net \
         dm_mod dm_crypt \
+        md_mod raid1 \
         ipmi_msghandler ipmi_devintf ipmi_si ipmi_ssif; do \
         # Copy module + all transitive dependencies via modprobe
         modprobe --show-depends -d /tmp/kernel -S "$KVER" "$m" 2>/dev/null \

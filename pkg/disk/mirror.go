@@ -87,14 +87,20 @@ func (m *Manager) DetectMirrorPair(_ context.Context, minSizeGB int) (first, sec
 
 var nvmeNamespaceRE = regexp.MustCompile(`^(nvme\d+)n\d+$`)
 
-// physicalDevice returns the sysfs device that backs disk name, such as the
-// NVMe controller for a namespace. It falls back to name when sysfs has no
-// device link, so such disks never count as sharing a device.
+// physicalDevice returns an identity of the physical device behind disk name:
+// the NVMe controller for a namespace, else the serial number or WWID, else
+// the sysfs device. It falls back to name, so such disks never count as
+// sharing a device.
 func (m *Manager) physicalDevice(name string) string {
 	// NVMe namespaces are named nvme<controller or subsystem>n<namespace>,
 	// so namespaces of one drive share the prefix whatever the sysfs layout.
 	if ctrl := nvmeNamespaceRE.FindStringSubmatch(name); ctrl != nil {
 		return "nvme:" + ctrl[1]
+	}
+	// Multipath gives one LUN several block devices with distinct device
+	// links but one serial or WWID.
+	if serial, err := m.readDiskSerial(name); err == nil {
+		return "serial:" + serial
 	}
 	dev, err := filepath.EvalSymlinks(filepath.Join(m.sysfsRoot, "block", name, "device"))
 	if err != nil {

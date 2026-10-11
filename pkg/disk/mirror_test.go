@@ -197,3 +197,17 @@ func TestCheckMirrorTailSpace(t *testing.T) {
 		})
 	}
 }
+
+func TestDetectMirrorPairSkipsPathsToOneLUN(t *testing.T) {
+	sysfs := t.TempDir()
+	writeSysfsBlockDevice(t, sysfs, "sda", "0", 20, "LUN-1")
+	writeSysfsBlockDevice(t, sysfs, "sdb", "0", 20, "LUN-1")
+	if _, _, ok, err := newManagerWithSysfs(newMockCommander(), sysfs).DetectMirrorPair(context.Background(), 0); err != nil || ok {
+		t.Fatalf("DetectMirrorPair() ok=%v err=%v, want no pair for two paths to one LUN", ok, err)
+	}
+	writeSysfsBlockDevice(t, sysfs, "sdc", "0", 20, "LUN-2")
+	first, second, ok, err := newManagerWithSysfs(newMockCommander(), sysfs).DetectMirrorPair(context.Background(), 0)
+	if err != nil || !ok || first != "/dev/sda" || second != "/dev/sdc" {
+		t.Fatalf("DetectMirrorPair() = %s, %s, %v, %v; want /dev/sda and /dev/sdc", first, second, ok, err)
+	}
+}
