@@ -124,6 +124,9 @@ func (o *Orchestrator) mirrorRoot(ctx context.Context) error {
 		return nil
 	}
 
+	if err := o.checkMirrorablePartitions(); err != nil {
+		return err
+	}
 	// Grow before creating the array: metadata 1.0 lives at the end of the
 	// member, past the end of the filesystem the image carried.
 	if err := o.disk.GrowPartition(ctx, o.targetDisk, rootNum); err != nil {
@@ -147,6 +150,26 @@ func (o *Orchestrator) mirrorRoot(ctx context.Context) error {
 		return err
 	}
 	o.rootPartition = disk.MirrorRootArray
+	return nil
+}
+
+// biosBootPartitionGUID is the GPT type of the BIOS boot partition that GRUB
+// embeds its core image into.
+const biosBootPartitionGUID = "21686148-6449-6E6F-744E-656564454649"
+
+// checkMirrorablePartitions rejects images with partitions that mirroring
+// does not cover. Only the root partition is mirrored, the ESP is copied and
+// GRUB is installed into the BIOS boot partition; data on any other partition,
+// such as a separate /boot, would exist on the first disk only.
+func (o *Orchestrator) checkMirrorablePartitions() error {
+	for _, p := range o.targetPartitions {
+		if p.Node == o.rootPartition || p.Node == o.bootPartition ||
+			strings.EqualFold(p.Type, disk.EFISystemPartitionGUID) || strings.EqualFold(p.Type, biosBootPartitionGUID) {
+			continue
+		}
+		return fmt.Errorf("disk mirroring covers only the root, EFI system and BIOS boot partitions, "+
+			"but the image also has partition %s (type %s); a separate /boot or data partition is not mirrored", p.Node, p.Type)
+	}
 	return nil
 }
 

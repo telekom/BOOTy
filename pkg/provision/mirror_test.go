@@ -287,3 +287,32 @@ func TestSingleDiskFallbackSurvivesResume(t *testing.T) {
 			chosen, err, resumed.targetDisk, resumed.mirrorDisk)
 	}
 }
+
+func TestMirrorRootRejectsUnmirroredPartitions(t *testing.T) {
+	const xbootldr = "BC13C2FF-59E6-4262-A352-B275FD6F7172"
+	tests := []struct {
+		name    string
+		parts   []disk.Partition
+		wantErr bool
+	}{
+		{name: "root, BIOS boot and ESP", parts: []disk.Partition{
+			{Node: "/dev/sda1", Type: disk.LinuxFilesystemGUID},
+			{Node: "/dev/sda14", Type: biosBootPartitionGUID},
+			{Node: "/dev/sda15", Type: disk.EFISystemPartitionGUID},
+		}},
+		{name: "separate /boot partition", parts: []disk.Partition{
+			{Node: "/dev/sda1", Type: disk.LinuxFilesystemGUID},
+			{Node: "/dev/sda15", Type: disk.EFISystemPartitionGUID},
+			{Node: "/dev/sda16", Type: xbootldr},
+		}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, newTestDiskManager())
+			o.rootPartition, o.bootPartition, o.targetPartitions = "/dev/sda1", "/dev/sda15", tt.parts
+			if err := o.checkMirrorablePartitions(); (err != nil) != tt.wantErr {
+				t.Fatalf("checkMirrorablePartitions() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}

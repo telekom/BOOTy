@@ -211,3 +211,20 @@ func TestDetectMirrorPairSkipsPathsToOneLUN(t *testing.T) {
 		t.Fatalf("DetectMirrorPair() = %s, %s, %v, %v; want /dev/sda and /dev/sdc", first, second, ok, err)
 	}
 }
+
+func TestDetectMirrorPairRequiresSameSectorSize(t *testing.T) {
+	sysfs := t.TempDir()
+	for name, lbs := range map[string]string{"sda": "512", "sdb": "4096"} {
+		writeSysfsBlockDevice(t, sysfs, name, "0", 20, "")
+		dir := filepath.Join(sysfs, "block", name, "queue")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "logical_block_size"), []byte(lbs+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, ok, err := newManagerWithSysfs(newMockCommander(), sysfs).DetectMirrorPair(context.Background(), 0); err != nil || ok {
+		t.Fatalf("DetectMirrorPair() ok=%v err=%v, want no pair for 512 and 4096 byte sectors", ok, err)
+	}
+}

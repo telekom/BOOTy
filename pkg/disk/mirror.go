@@ -30,38 +30,15 @@ const (
 const MirrorRootArray = "/dev/md2"
 
 // DetectMirrorPair returns the largest pair of non-removable, non-virtual
-// disks with an identical size in bytes on different physical devices. NVMe
+// disks with an identical size in bytes and logical sector size on different
+// physical devices. NVMe
 // namespaces of one controller share a device, so a mirror across them would
 // not survive a drive failure. ok is false when no such pair exists.
 func (m *Manager) DetectMirrorPair(_ context.Context, minSizeGB int) (first, second string, ok bool, err error) {
-	blockDir := m.sysfsRoot + "/block"
-	entries, err := os.ReadDir(blockDir)
+	candidates, err := m.mirrorCandidates(minSizeGB)
 	if err != nil {
-		return "", "", false, fmt.Errorf("reading %s: %w", blockDir, err)
+		return "", "", false, err
 	}
-	allowRemovable := os.Getenv("BOOTY_ALLOW_REMOVABLE") == "true"
-
-	type candidate struct {
-		path   string
-		device string
-		bytes  int64
-	}
-	var candidates []candidate
-	for _, entry := range entries {
-		name := entry.Name()
-		if isVirtualDisk(name) || (!allowRemovable && m.isRemovableMedia(name)) {
-			continue
-		}
-		size, sizeErr := m.readDiskSizeBytes(name)
-		if sizeErr != nil || size <= 0 {
-			continue
-		}
-		if minSizeGB > 0 && size < int64(minSizeGB)*1024*1024*1024 {
-			continue
-		}
-		candidates = append(candidates, candidate{path: "/dev/" + name, device: m.physicalDevice(name), bytes: size})
-	}
-
 	// Largest first, then by name, so the pick is deterministic and a host with
 	// several matching pairs mirrors onto the biggest one.
 	sort.SliceStable(candidates, func(i, j int) bool {
@@ -75,7 +52,9 @@ func (m *Manager) DetectMirrorPair(_ context.Context, minSizeGB int) (first, sec
 			if b.bytes != a.bytes {
 				break
 			}
-			if b.device == a.device {
+			// sgdisk --replicate keeps LBA values, so both disks need the
+			// same logical sector size.
+			if b.device == a.device || b.sectorBytes != a.sectorBytes {
 				continue
 			}
 			slog.Info("selected mirror pair", "disk1", a.path, "disk2", b.path, "sizeBytes", a.bytes)
@@ -83,6 +62,49 @@ func (m *Manager) DetectMirrorPair(_ context.Context, minSizeGB int) (first, sec
 		}
 	}
 	return "", "", false, nil
+}
+
+type mirrorCandidate struct {
+	path        string
+	device      string
+	bytes       int64
+	sectorBytes string
+}
+
+// mirrorCandidates lists the non-removable, non-virtual disks of at least
+// minSizeGB.
+func (m *Manager) mirrorCandidates(minSizeGB int) ([]mirrorCandidate, error) {
+	blockDir := m.sysfsRoot + "/block"
+	entries, err := os.ReadDir(blockDir)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", blockDir, err)
+	}
+	allowRemovable := os.Getenv("BOOTY_ALLOW_REMOVABLE") == "true"
+	var candidates []mirrorCandidate
+	for _, entry := range entries {
+		name := entry.Name()
+		if isVirtualDisk(name) || (!allowRemovable && m.isRemovableMedia(name)) {
+			continue
+		}
+		size, sizeErr := m.readDiskSizeBytes(name)
+		if sizeErr != nil || size <= 0 || (minSizeGB > 0 && size < int64(minSizeGB)*1024*1024*1024) {
+			continue
+		}
+		candidates = append(candidates, mirrorCandidate{
+			path: "/dev/" + name, device: m.physicalDevice(name), bytes: size, sectorBytes: m.logicalBlockSize(name),
+		})
+	}
+	return candidates, nil
+}
+
+// logicalBlockSize returns the logical sector size of disk name, or "512"
+// when sysfs does not report one.
+func (m *Manager) logicalBlockSize(name string) string {
+	data, err := os.ReadFile(filepath.Join(m.sysfsRoot, "block", name, "queue", "logical_block_size")) //nolint:gosec // sysfs path
+	if size := strings.TrimSpace(string(data)); err == nil && size != "" {
+		return size
+	}
+	return "512"
 }
 
 var nvmeNamespaceRE = regexp.MustCompile(`^(nvme\d+)n\d+$`)
