@@ -34,6 +34,7 @@ func TestLegacyCompatDiskSelectionQEMU(t *testing.T) {
 
 	vars := caprf.vars("provision")
 	vars["IMAGE"] = caprf.baseURL + "/image.gz"
+	vars["IMAGE_ALLOW_INSECURE_HTTP"] = "true"
 	initramfs := buildProvisionInitramfs(t, vars)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
