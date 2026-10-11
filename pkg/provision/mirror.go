@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/telekom/BOOTy/pkg/blockdev"
@@ -305,8 +306,11 @@ func (o *Orchestrator) createMirrorEFIBootEntry(ctx context.Context) error {
 	if o.mirrorDisk == "" {
 		return nil
 	}
-	if ok, reason := efiRuntimeReady(); !ok {
-		o.log.Info("no UEFI runtime, installing the BIOS bootloader on the mirror disk", "reason", reason, "disk", o.mirrorDisk)
+	// Decide by the firmware, not by efivarfs: a UEFI host without EFI
+	// variable access still boots from the ESP, and CreateEFIBootEntry only
+	// skips the NVRAM entry then.
+	if !bootedUEFI() {
+		o.log.Info("host booted with BIOS, installing GRUB on both mirror disks", "disk1", o.targetDisk, "disk2", o.mirrorDisk)
 		if err := o.installMirrorBIOSBootloader(ctx); err != nil {
 			return err
 		}
@@ -371,6 +375,41 @@ func (o *Orchestrator) syncMirrorESP(ctx context.Context, mirrorEFI string) erro
 		return fmt.Errorf("copy EFI system partition: %w", err)
 	}
 	return o.mountBoot(ctx)
+}
+
+// bootedUEFI reports whether the host booted through UEFI firmware.
+func bootedUEFI() bool {
+	_, err := os.Stat(efiFirmwarePath)
+	return err == nil
+}
+
+// mountMirrorBoot mounts the separate /boot array at the target /boot, so the
+// configuration steps update the kernels, initramfs and GRUB files that the
+// host boots from. mount-boot calls it before mounting the ESP below it.
+func (o *Orchestrator) mountMirrorBoot(ctx context.Context) error {
+	if !slices.Contains(o.mirrorArrays, disk.MirrorBootArray) {
+		return nil
+	}
+	mountpoint := filepath.Join(newroot, "boot")
+	if isMountPoint(mountpoint) {
+		return nil
+	}
+	if err := mountBootPart(ctx, o.disk, disk.MirrorBootArray, mountpoint); err != nil {
+		return fmt.Errorf("mounting separate /boot %s at %s: %w", disk.MirrorBootArray, mountpoint, err)
+	}
+	return nil
+}
+
+// unmountMirrorBoot unmounts the separate /boot array after the ESP below it.
+func (o *Orchestrator) unmountMirrorBoot() error {
+	mountpoint := filepath.Join(newroot, "boot")
+	if !slices.Contains(o.mirrorArrays, disk.MirrorBootArray) || !isMountPoint(mountpoint) {
+		return nil
+	}
+	if err := o.disk.Unmount(mountpoint); err != nil {
+		return fmt.Errorf("unmount separate /boot %s: %w", mountpoint, err)
+	}
+	return nil
 }
 
 // writeTargetRootFile writes data to path below root without following

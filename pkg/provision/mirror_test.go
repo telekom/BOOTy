@@ -185,11 +185,11 @@ func newTestDiskManager() *disk.Manager {
 
 func TestCreateMirrorEFIBootEntryBIOSInstallsGrubAndCopiesESP(t *testing.T) {
 	var events []string
-	origCopy, origMounted, origMount, origEFI := copyBlockDeviceFn, isMountPoint, mountBootPart, efiRuntimeReady
+	origCopy, origMounted, origMount, origEFI := copyBlockDeviceFn, isMountPoint, mountBootPart, efiFirmwarePath
 	t.Cleanup(func() {
-		copyBlockDeviceFn, isMountPoint, mountBootPart, efiRuntimeReady = origCopy, origMounted, origMount, origEFI
+		copyBlockDeviceFn, isMountPoint, mountBootPart, efiFirmwarePath = origCopy, origMounted, origMount, origEFI
 	})
-	efiRuntimeReady = func() (bool, string) { return false, "unit test" }
+	efiFirmwarePath = filepath.Join(t.TempDir(), "missing-efi")
 	isMountPoint = func(string) bool { return false }
 	copyBlockDeviceFn = func(src, dst string) error {
 		events = append(events, "copy "+src+"->"+dst)
@@ -218,9 +218,9 @@ func TestCreateMirrorEFIBootEntryBIOSInstallsGrubAndCopiesESP(t *testing.T) {
 }
 
 func TestCreateMirrorEFIBootEntryUEFIRequiresESP(t *testing.T) {
-	origEFI := efiRuntimeReady
-	t.Cleanup(func() { efiRuntimeReady = origEFI })
-	efiRuntimeReady = func() (bool, string) { return true, "" }
+	origEFI := efiFirmwarePath
+	t.Cleanup(func() { efiFirmwarePath = origEFI })
+	efiFirmwarePath = t.TempDir()
 
 	o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, newTestDiskManager())
 	o.targetDisk, o.mirrorDisk = "/dev/sda", "/dev/sdb"
@@ -411,5 +411,27 @@ func TestWriteMdadmConf(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestMountMirrorBootMountsArrayBeforeESP(t *testing.T) {
+	var mounts []string
+	origMounted, origMount := isMountPoint, mountBootPart
+	t.Cleanup(func() { isMountPoint, mountBootPart = origMounted, origMount })
+	isMountPoint = func(string) bool { return false }
+	mountBootPart = func(_ context.Context, _ *disk.Manager, device, mountpoint string) error {
+		mounts = append(mounts, device+" "+mountpoint)
+		return nil
+	}
+
+	o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, newTestDiskManager())
+	o.bootPartition = "/dev/sda15"
+	o.mirrorArrays = []string{disk.MirrorRootArray, disk.MirrorBootArray}
+	if err := o.mountBoot(context.Background()); err != nil {
+		t.Fatalf("mountBoot() error = %v", err)
+	}
+	want := []string{disk.MirrorBootArray + " " + filepath.Join(newroot, "boot"), "/dev/sda15 " + bootEFIMountPoint()}
+	if strings.Join(mounts, "|") != strings.Join(want, "|") {
+		t.Fatalf("mounts = %v, want %v", mounts, want)
 	}
 }

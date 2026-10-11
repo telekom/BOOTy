@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -2325,8 +2326,13 @@ func bootEFIMountPoint() string {
 }
 
 func (o *Orchestrator) mountBoot(ctx context.Context) error {
-	// A separate /boot must be mounted before the ESP at /boot/efi.
-	if err := o.mountSeparateBoot(ctx); err != nil {
+	// A separate /boot must be mounted before the ESP at /boot/efi: the
+	// mirror /boot array, or else the /boot entry of the image fstab.
+	mountSeparate := o.mountSeparateBoot
+	if slices.Contains(o.mirrorArrays, disk.MirrorBootArray) {
+		mountSeparate = o.mountMirrorBoot
+	}
+	if err := mountSeparate(ctx); err != nil {
 		return err
 	}
 	if strings.TrimSpace(o.bootPartition) == "" {
@@ -3077,7 +3083,7 @@ func (o *Orchestrator) teardownChroot(_ context.Context) error {
 		return nil
 	}
 	bindErr := o.disk.TeardownChrootBindMounts(newroot)
-	bootErr := errors.Join(o.unmountBoot(), o.unmountSeparateBoot())
+	bootErr := errors.Join(o.unmountBoot(), o.unmountMirrorBoot(), o.unmountSeparateBoot())
 	sharedErr := o.unmountSharedData()
 	unmountErr := o.disk.Unmount(newroot)
 	return errors.Join(bindErr, bootErr, sharedErr, unmountErr)

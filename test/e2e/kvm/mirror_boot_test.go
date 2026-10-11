@@ -29,6 +29,7 @@ for md in /dev/md[0-9]* /dev/md/*; do
 	[ -b "$md" ] && mdadm --wait "$md" >/dev/null 2>&1
 done
 echo "ROOT_SOURCE=$(findmnt -n -o SOURCE /)"
+echo "BOOT_SOURCE=$(findmnt -n -o SOURCE /boot)"
 echo "ESP_PARTUUID=$(findmnt -n -o PARTUUID /boot/efi)"
 cat /proc/mdstat
 efibootmgr -v
@@ -78,7 +79,7 @@ func TestMirroredRootBootFailoverVM(t *testing.T) {
 	}
 	baseURL := startImageServer(t, gzImage)
 
-	initramfs := buildProvisionInitramfsWithFiles(t, map[string]string{
+	vars := map[string]string{
 		"HOSTNAME":                  "mirror-e2e",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
 		"IMAGE":                     baseURL + "/image.gz",
@@ -86,7 +87,11 @@ func TestMirroredRootBootFailoverVM(t *testing.T) {
 		"MIN_DISK_SIZE_GB":          "1",
 		"DISK_MIRRORING_MODE":       "raid-1",
 		"DISABLE_KEXEC":             "true",
-	}, map[string]string{
+	}
+	if n := os.Getenv("MIRROR_ROOT_PARTITION_NUMBER"); n != "" {
+		vars["ROOT_PARTITION_NUMBER"] = n
+	}
+	initramfs := buildProvisionInitramfsWithFiles(t, vars, map[string]string{
 		"file-system/usr/local/lib/booty-mirror-check.sh":           mirrorCheckScript,
 		"file-system/etc/systemd/system/booty-mirror-check.service": mirrorCheckUnit,
 		"machine-commands/enable-mirror-check":                      "systemctl enable booty-mirror-check.service",
@@ -122,7 +127,7 @@ func runMirrorFailover(t *testing.T, kernel, initramfs string, qemuArgs func(dis
 	disk1 := filepath.Join(dir, "disk1.qcow2")
 	disk2 := filepath.Join(dir, "disk2.qcow2")
 	for _, d := range []string{disk1, disk2} {
-		run(t, "create mirror disk", "qemu-img", "create", "-f", "qcow2", d, "4G")
+		run(t, "create mirror disk", "qemu-img", "create", "-f", "qcow2", d, envOrDefault("MIRROR_DISK_SIZE", "4G"))
 	}
 
 	provisionArgs := append(qemuArgs(disk1, disk2),
@@ -141,18 +146,18 @@ func runMirrorFailover(t *testing.T, kernel, initramfs string, qemuArgs func(dis
 	// member is in sync before the first disk is removed.
 	report := mirrorCheckReport(t, "boot with both disks",
 		runMirrorQEMU(t, "boot with both disks", qemuArgs(disk1, disk2), 10*time.Minute))
-	requireRootOnMD(t, report)
-	if !strings.Contains(report, "[2/2] [UU]") {
-		t.Fatalf("root array is not a clean two-member mirror:\n%s", report)
+	requireArraysOnMD(t, report)
+	if got := strings.Count(report, "[2/2] [UU]"); got != mirrorArrayCount() {
+		t.Fatalf("%d clean two-member mirrors, want %d:\n%s", got, mirrorArrayCount(), report)
 	}
 
 	// Boot 2: only the second disk. The second disk must boot on its own and
 	// the initramfs must start the array degraded.
 	report = mirrorCheckReport(t, "boot from second disk only",
 		runMirrorQEMU(t, "boot from second disk only", qemuArgs(disk2), 10*time.Minute))
-	requireRootOnMD(t, report)
-	if !strings.Contains(report, "[2/1]") {
-		t.Fatalf("root array is not degraded to one member:\n%s", report)
+	requireArraysOnMD(t, report)
+	if got := strings.Count(report, "[2/1]"); got != mirrorArrayCount() {
+		t.Fatalf("%d arrays degraded to one member, want %d:\n%s", got, mirrorArrayCount(), report)
 	}
 	return report
 }
@@ -204,11 +209,28 @@ func mirrorCheckReport(t *testing.T, phase string, out []byte) string {
 	return report
 }
 
-func requireRootOnMD(t *testing.T, report string) {
+// mirrorArrayCount is the number of md arrays the image gets: root, plus
+// /boot when MIRROR_SEPARATE_BOOT is set for an image with a separate /boot.
+func mirrorArrayCount() int {
+	if os.Getenv("MIRROR_SEPARATE_BOOT") == "true" {
+		return 2
+	}
+	return 1
+}
+
+// requireArraysOnMD checks that / and, for a separate /boot, /boot are
+// mounted from md arrays.
+func requireArraysOnMD(t *testing.T, report string) {
 	t.Helper()
-	m := regexp.MustCompile(`ROOT_SOURCE=(\S+)`).FindStringSubmatch(report)
-	if m == nil || !strings.HasPrefix(m[1], "/dev/md") {
-		t.Fatalf("root filesystem is not on the md array:\n%s", report)
+	sources := map[string]bool{"ROOT_SOURCE": true, "BOOT_SOURCE": mirrorArrayCount() == 2}
+	for key, required := range sources {
+		if !required {
+			continue
+		}
+		m := regexp.MustCompile(key + `=(\S+)`).FindStringSubmatch(report)
+		if m == nil || !strings.HasPrefix(m[1], "/dev/md") {
+			t.Fatalf("%s is not an md array:\n%s", key, report)
+		}
 	}
 }
 

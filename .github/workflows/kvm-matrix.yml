@@ -238,6 +238,25 @@ jobs:
             setup: |
               cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
               sudo apt-get install -y --no-install-recommends cloud-guest-utils efibootmgr
+          - scenario: mirror-boot-failover-separate-boot
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestMirroredRootBootFailoverVM$"
+            test_timeout: 40m
+            timeout_minutes: 60
+            privileged: true
+            ovmf_vars: OVMF_VARS.fd
+            ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.fd
+            # Ubuntu 24.04 cloud image: separate /boot partition mirrored as md1.
+            mirror_os_image: ubuntu-24.04-server-cloudimg-amd64.img
+            mirror_os_image_url: https://cloud-images.ubuntu.com/releases/noble/release-20260911/ubuntu-24.04-server-cloudimg-amd64.img
+            mirror_os_image_sha256: 612b2c0cc1bc413a6cb8c38fd611794caf0f2b436c50013d8b3794db12ad7354
+            mirror_separate_boot: "true"
+            mirror_root_partition_number: "1"
+            mirror_disk_size: 6G
+            setup: |
+              cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
+              sudo apt-get install -y --no-install-recommends cloud-guest-utils efibootmgr
           - scenario: luks-verify
             qemu_extra: ""
             test_tag: e2e
@@ -448,6 +467,9 @@ jobs:
           OVMF_VARS: ${{ matrix.ovmf_vars && format('{0}/{1}', github.workspace, matrix.ovmf_vars) || '' }}
           OVMF_CODE: ${{ matrix.ovmf_code || '' }}
           MIRROR_OS_IMAGE: ${{ matrix.mirror_os_image && format('{0}/{1}', github.workspace, matrix.mirror_os_image) || '' }}
+          MIRROR_SEPARATE_BOOT: ${{ matrix.mirror_separate_boot || '' }}
+          MIRROR_ROOT_PARTITION_NUMBER: ${{ matrix.mirror_root_partition_number || '' }}
+          MIRROR_DISK_SIZE: ${{ matrix.mirror_disk_size || '' }}
 
       - name: Upload KVM log (${{ matrix.scenario }})
         if: always()
