@@ -971,8 +971,11 @@ type type5Path struct {
 	valid     bool
 }
 
-// type5PathKey identifies a Type-5 NLRI. The gateway is not part of it,
-// so an update that moves a prefix to a new gateway replaces the old path.
+// type5PathKey identifies a Type-5 route. RFC 9136 section 3.1 makes RD,
+// Ethernet tag, IP prefix length and IP prefix the route key; ESI, gateway
+// and label are not part of it. GoBGP keys its RIB the same way
+// (EVPNIPPrefixRoute.String), so an update that changes the gateway of the
+// same key replaces the old path instead of adding a second one.
 func type5PathKey(route *apipb.EVPNIPPrefixRoute) string {
 	rd := route.GetRd()
 	return fmt.Sprintf("%s|%x|%d|%s/%d",
