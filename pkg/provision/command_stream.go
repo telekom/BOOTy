@@ -5,7 +5,6 @@ package provision
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"syscall"
@@ -48,8 +47,8 @@ func defaultRunStreamingCommand(ctx context.Context, onLine func(string), root s
 		for scanner.Scan() {
 			onLine(scanner.Text())
 		}
-		if err := scanner.Err(); errors.Is(err, bufio.ErrTooLong) {
-			onLine("[output line too long, rest of the output dropped]")
+		if err := scanner.Err(); err != nil {
+			onLine(fmt.Sprintf("[output dropped: %v]", err))
 		}
 		// Keep draining so the command never blocks on a full pipe.
 		_, _ = io.Copy(io.Discard, pr)

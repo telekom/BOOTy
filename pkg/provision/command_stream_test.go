@@ -35,7 +35,7 @@ func TestDefaultRunStreamingCommandDropsOverlongLines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("defaultRunStreamingCommand() = %v", err)
 	}
-	if len(lines) == 0 || !strings.Contains(lines[len(lines)-1], "too long") {
+	if len(lines) == 0 || !strings.Contains(lines[len(lines)-1], "output dropped") {
 		t.Fatalf("lines = %d, want the too long marker last", len(lines))
 	}
 }
