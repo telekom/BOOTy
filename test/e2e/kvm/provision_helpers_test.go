@@ -276,6 +276,14 @@ func writeDeployVars(t *testing.T, dir string, vars map[string]string) string {
 // Returns path to the cpio.gz file.
 func buildProvisionInitramfs(t *testing.T, vars map[string]string) string {
 	t.Helper()
+	return buildProvisionInitramfsWithFiles(t, vars, nil)
+}
+
+// buildProvisionInitramfsWithFiles is buildProvisionInitramfs plus extra
+// files, keyed by their path relative to the initramfs root (for example
+// "deploy/machine-commands/commands-0.sh").
+func buildProvisionInitramfsWithFiles(t *testing.T, vars, files map[string]string) string {
+	t.Helper()
 	if vars == nil {
 		vars = map[string]string{}
 	}
@@ -361,8 +369,13 @@ func buildProvisionInitramfs(t *testing.T, vars map[string]string) string {
 	// Write /deploy/vars.
 	writeDeployVars(t, rootDir, vars)
 
-	// Write /deploy/machine-files if any custom files needed.
-	// (subtest-specific; left empty by default)
+	for rel, content := range files {
+		dest := filepath.Join(rootDir, filepath.Clean("/"+rel))
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			t.Fatalf("mkdir for %s: %v", rel, err)
+		}
+		writeFile(t, dest, content)
+	}
 
 	// Write /init script.
 	initScript := `#!/bin/sh
