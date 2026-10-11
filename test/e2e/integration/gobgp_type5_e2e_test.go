@@ -323,6 +323,37 @@ func TestType5VM1DirectExportAsType5(t *testing.T) {
 	}
 }
 
+// TestType5RouterMACPerHost checks that each VM advertises its own router
+// MAC. The VMs have no IPMI, so BOOTy derives the MAC from the underlay IP.
+func TestType5RouterMACPerHost(t *testing.T) {
+	requireType5Lab(t)
+	t.Cleanup(func() { type5DumpDebugState(t) })
+
+	tests := []struct {
+		leaf, prefix, nextHop, wantMAC string
+	}{
+		{type5LabLeaf1, "10.200.0.10", "192.168.4.10", "02:54:c0:a8:04:0a"},
+		{type5LabLeaf2, "10.200.0.11", "192.168.4.11", "02:54:c0:a8:04:0b"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.prefix, func(t *testing.T) {
+			type5WaitForBGPInterface(t, tt.leaf, "eth2")
+			deadline := time.Now().Add(type5ConvergeTimeout)
+			for {
+				out, _ := type5VtyshRaw(t, tt.leaf, "show bgp l2vpn evpn route type prefix")
+				mac, ok := type5RouteRouterMACAndNextHop(out, tt.prefix, tt.nextHop)
+				if ok && mac == tt.wantMAC {
+					return
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("router MAC for %s = %q (found %v), want %s:\n%s", tt.prefix, mac, ok, tt.wantMAC, out)
+				}
+				time.Sleep(type5ConvergeInterval)
+			}
+		})
+	}
+}
+
 func TestType5VM0OverlayAsType5(t *testing.T) {
 	requireType5Lab(t)
 	t.Cleanup(func() { type5DumpDebugState(t) })

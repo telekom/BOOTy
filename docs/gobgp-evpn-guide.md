@@ -142,8 +142,10 @@ The router MAC is the provision bridge MAC. BOOTy selects it in this order:
    `configure-frr.py` ramdisk. An IPv6 underlay uses a 32-bit FNV-1a hash
    of the full address.
 
-The derived MACs are locally administered unicast addresses and are unique
-per host.
+The derived MACs are stable, host specific, locally administered unicast
+addresses. The IPv4 underlay MAC is unique because the underlay IP is the
+VTEP address. The IPMI and IPv6 MACs keep only 4 bytes, so a collision is
+unlikely but possible. Set the netplan `macaddress` if you need a fixed value.
 
 When `EVPN_L2_ENABLED=true`, BOOTy also originates:
 
