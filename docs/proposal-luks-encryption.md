@@ -1,6 +1,6 @@
 # Proposal: Full LUKS Disk Encryption
 
-## Status: Proposed
+## Status: Proposal
 
 An earlier library in `pkg/disk/luks` was never wired into provisioning and
 was removed. The code and file names below are a design sketch, not
