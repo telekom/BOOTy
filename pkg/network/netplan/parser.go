@@ -183,9 +183,6 @@ func extractBridges(np *Config, cfg *network.Config) {
 				break
 			}
 		}
-		if hasVXLAN && br.MACAddress != "" && cfg.BridgeMAC == "" {
-			cfg.BridgeMAC = br.MACAddress
-		}
 		if len(br.Addresses) == 0 {
 			continue
 		}
@@ -194,6 +191,15 @@ func extractBridges(np *Config, cfg *network.Config) {
 			cfg.ProvisionIP = br.Addresses[0]
 			break
 		}
+	}
+
+	// The router MAC must belong to the bridge that BOOTy creates.
+	bridgeName := cfg.BridgeName
+	if bridgeName == "" {
+		bridgeName = network.DefaultBridgeName
+	}
+	if cfg.BridgeMAC == "" {
+		cfg.BridgeMAC = np.Network.Bridges[bridgeName].MACAddress
 	}
 }
 

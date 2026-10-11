@@ -98,6 +98,7 @@ func TestDeriveAddresses_BridgeMACOverride(t *testing.T) {
 	}{
 		{"netplan_macaddress_wins", "02:AA:BB:CC:DD:EE", "02:aa:bb:cc:dd:ee", false},
 		{"invalid_macaddress", "not-a-mac", "", true},
+		{"eui64_macaddress", "02:00:00:00:00:00:10:01", "", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

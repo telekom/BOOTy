@@ -904,9 +904,17 @@ func TestToNetworkConfig_BridgeMAC(t *testing.T) {
 		{"provision_bridge_without_addresses", map[string]BridgeConfig{
 			"br.provision": {Interfaces: []string{"vx.1000"}, MACAddress: "02:00:00:00:10:01"},
 		}, "02:00:00:00:10:01"},
-		{"non_vxlan_bridge_ignored", map[string]BridgeConfig{
+		{"other_bridge_ignored", map[string]BridgeConfig{
 			"br.other":     {Interfaces: []string{"eth1"}, MACAddress: "02:00:00:00:10:02"},
 			"br.provision": {Interfaces: []string{"vx.1000"}, Addresses: []string{"10.100.0.20/32"}},
+		}, ""},
+		{"selected_bridge_mac", map[string]BridgeConfig{
+			"br.a": {Interfaces: []string{"vx.1000"}, MACAddress: "02:00:00:00:10:03"},
+			"br.b": {Interfaces: []string{"vx.1000"}, Addresses: []string{"10.100.0.20/32"}, MACAddress: "02:00:00:00:10:04"},
+		}, "02:00:00:00:10:04"},
+		{"addressless_bridge_not_selected", map[string]BridgeConfig{
+			"br.a": {Interfaces: []string{"vx.1000"}, MACAddress: "02:00:00:00:10:03"},
+			"br.b": {Interfaces: []string{"vx.1000"}, Addresses: []string{"10.100.0.20/32"}},
 		}, ""},
 	}
 	for _, tt := range tests {

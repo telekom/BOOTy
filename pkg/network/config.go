@@ -14,6 +14,9 @@ import (
 
 var resolvConfPath = "/etc/resolv.conf"
 
+// DefaultBridgeName is the provision bridge name when the config sets none.
+const DefaultBridgeName = "br.provision"
+
 // Mode configures network connectivity in the ramdisk.
 type Mode interface {
 	// Setup configures all networking (interfaces, routing, etc.)
@@ -107,7 +110,7 @@ type VLANConfig struct {
 // ApplyDefaults fills in default values for unset fields.
 func (c *Config) ApplyDefaults() {
 	if c.BridgeName == "" {
-		c.BridgeName = "br.provision"
+		c.BridgeName = DefaultBridgeName
 	}
 	// VRFName is intentionally left empty by default — the GoBGP stack
 	// creates a VRF only when VRFName is set via the VRF_NAME env var.

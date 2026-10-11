@@ -190,6 +190,9 @@ func deriveBridgeMAC(cfg *network.Config, underlayIP string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("invalid bridge MAC %q: %w", cfg.BridgeMAC, err)
 		}
+		if len(hw) != 6 {
+			return "", fmt.Errorf("bridge MAC %q is not a 48-bit MAC", cfg.BridgeMAC)
+		}
 		return hw.String(), nil
 	}
 	if mac := DeriveBridgeMAC(cfg.IPMIMAC); mac != "" {
