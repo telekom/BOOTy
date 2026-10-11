@@ -150,6 +150,7 @@ func TestValidateMirroringMode(t *testing.T) {
 		{name: "partition layout", disk: config.DiskConfig{MirroringMode: "auto", PartitionLayout: &config.PartitionLayout{}}, wantErr: true},
 		{name: "A/B image mode", disk: config.DiskConfig{MirroringMode: "raid-1"}, imageMode: config.ImageModeAB, wantErr: true},
 		{name: "partition image mode", disk: config.DiskConfig{MirroringMode: "auto"}, imageMode: config.ImageModePartition, wantErr: true},
+		{name: "NVMe namespace setup", disk: config.DiskConfig{MirroringMode: "raid-1", NVMeNamespaces: "2"}, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -261,5 +262,28 @@ func TestMirrorPairSurvivesResume(t *testing.T) {
 				t.Fatalf("selectMirrorPair() = %v, %s, %s; want the checkpointed pair", mirrored, resumed.targetDisk, resumed.mirrorDisk)
 			}
 		})
+	}
+}
+
+func TestSingleDiskFallbackSurvivesResume(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.MirroringMode = "auto"
+	o := NewOrchestrator(cfg, &mockProvider{}, newTestDiskManager())
+	o.targetDisk = "/dev/sda"
+	cp := &Checkpoint{}
+	o.recordCheckpointDerivedState("detect-disk", cp)
+	if cp.MirrorTargetDisk != "/dev/sda" || cp.MirrorDisk != "" {
+		t.Fatalf("checkpoint disk selection = %q, %q; want /dev/sda and no mirror", cp.MirrorTargetDisk, cp.MirrorDisk)
+	}
+
+	withMockStat(t, func(path string) (os.FileInfo, error) {
+		return fakeFileInfo{name: path, mode: os.ModeDevice}, nil
+	})
+	resumed := NewOrchestrator(cfg, &mockProvider{}, newTestDiskManager())
+	resumed.restoreCheckpointDerivedState(cp)
+	chosen, err := resumed.selectMirrorPair(context.Background())
+	if err != nil || !chosen || resumed.targetDisk != "/dev/sda" || resumed.mirrorDisk != "" {
+		t.Fatalf("selectMirrorPair() = %v, %v, %s, %q; want the single disk from before resume",
+			chosen, err, resumed.targetDisk, resumed.mirrorDisk)
 	}
 }

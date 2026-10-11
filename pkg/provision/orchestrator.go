@@ -272,9 +272,9 @@ func (o *Orchestrator) restoreCheckpointDerivedState(cp *Checkpoint) {
 	if cp == nil || o.cfg.Provision.Disk.Device != "" {
 		return
 	}
-	if cp.MirrorDisk != "" {
+	if cp.MirrorTargetDisk != "" {
 		o.resumeMirrorPair = [2]string{cp.MirrorTargetDisk, cp.MirrorDisk}
-		o.log.Info("restored mirror disk pair from checkpoint", "disk1", cp.MirrorTargetDisk, "disk2", cp.MirrorDisk)
+		o.log.Info("restored mirror disk selection from checkpoint", "disk1", cp.MirrorTargetDisk, "disk2", cp.MirrorDisk)
 	}
 	if len(o.cfg.Provision.Disk.RAID) > 0 && cp.RAIDTargetDevice != "" {
 		o.cfg.Provision.Disk.Device = cp.RAIDTargetDevice
@@ -338,7 +338,7 @@ func (o *Orchestrator) recordCheckpointDerivedState(stepName string, cp *Checkpo
 			cp.RAIDTargetDevice = o.cfg.Provision.Disk.Device
 		}
 	case "detect-disk":
-		if o.mirrorDisk != "" {
+		if mode := o.mirroringMode(); mode == disk.MirroringModeRAID1 || mode == disk.MirroringModeAuto {
 			cp.MirrorTargetDisk, cp.MirrorDisk = o.targetDisk, o.mirrorDisk
 		}
 	}

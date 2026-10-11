@@ -27,9 +27,9 @@ type Checkpoint struct {
 	// wipes member devices and creates arrays, so resume restores the target
 	// instead of rerunning the destructive setup step.
 	RAIDTargetDevice string `json:"raidTargetDevice,omitempty"`
-	// MirrorTargetDisk and MirrorDisk store the disk pair that detect-disk
-	// selected for DISK_MIRRORING_MODE. Resume must keep mirroring onto the
-	// same pair instead of falling back to one disk when a disk disappears.
+	// MirrorTargetDisk and MirrorDisk store the disks that detect-disk
+	// selected for DISK_MIRRORING_MODE; MirrorDisk is empty when auto mode
+	// fell back to one disk. Resume keeps that selection.
 	MirrorTargetDisk string   `json:"mirrorTargetDisk,omitempty"`
 	MirrorDisk       string   `json:"mirrorDisk,omitempty"`
 	CompletedSteps   []string `json:"completedSteps"`

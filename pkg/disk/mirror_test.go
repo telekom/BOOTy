@@ -80,12 +80,14 @@ func TestMirrorCommands(t *testing.T) {
 
 func TestDetectMirrorPairSkipsNamespacesOfOneController(t *testing.T) {
 	tests := []struct {
-		name       string
-		disks      []string
-		wantSecond string
+		name             string
+		disks            []string
+		wantSecond       string
+		perNamespaceLink bool
 	}{
 		{name: "namespaces of one controller only", disks: []string{"nvme0n1", "nvme0n2"}},
 		{name: "second controller available", disks: []string{"nvme0n1", "nvme0n2", "nvme1n1"}, wantSecond: "/dev/nvme1n1"},
+		{name: "namespace device links differ", disks: []string{"nvme0n1", "nvme0n2"}, perNamespaceLink: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -93,6 +95,10 @@ func TestDetectMirrorPairSkipsNamespacesOfOneController(t *testing.T) {
 			for _, name := range tt.disks {
 				writeSysfsBlockDevice(t, sysfs, name, "0", 20, "")
 				ctrl := filepath.Join(sysfs, "ctrl", name[:len("nvme0")])
+				if tt.perNamespaceLink {
+					// Some kernels link each namespace to its own sysfs node.
+					ctrl = filepath.Join(ctrl, name)
+				}
 				if err := os.MkdirAll(ctrl, 0o755); err != nil {
 					t.Fatal(err)
 				}

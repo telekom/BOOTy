@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -84,10 +85,17 @@ func (m *Manager) DetectMirrorPair(_ context.Context, minSizeGB int) (first, sec
 	return "", "", false, nil
 }
 
+var nvmeNamespaceRE = regexp.MustCompile(`^(nvme\d+)n\d+$`)
+
 // physicalDevice returns the sysfs device that backs disk name, such as the
 // NVMe controller for a namespace. It falls back to name when sysfs has no
 // device link, so such disks never count as sharing a device.
 func (m *Manager) physicalDevice(name string) string {
+	// NVMe namespaces are named nvme<controller or subsystem>n<namespace>,
+	// so namespaces of one drive share the prefix whatever the sysfs layout.
+	if ctrl := nvmeNamespaceRE.FindStringSubmatch(name); ctrl != nil {
+		return "nvme:" + ctrl[1]
+	}
 	dev, err := filepath.EvalSymlinks(filepath.Join(m.sysfsRoot, "block", name, "device"))
 	if err != nil {
 		return name

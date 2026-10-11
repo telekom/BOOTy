@@ -43,15 +43,16 @@ func (o *Orchestrator) validateMirroringMode() error {
 	}
 	imageMode := strings.ToLower(strings.TrimSpace(o.cfg.Provision.Image.Mode))
 	if len(o.cfg.Provision.Disk.RAID) > 0 || o.cfg.Provision.Disk.PartitionLayout != nil ||
+		strings.TrimSpace(o.cfg.Provision.Disk.NVMeNamespaces) != "" ||
 		(imageMode != "" && imageMode != config.ImageModeWholeDisk) {
-		return fmt.Errorf("disk mirroring mode %q requires a whole-disk image and cannot be combined with explicit RAID or a partition layout", mode)
+		return fmt.Errorf("disk mirroring mode %q requires a whole-disk image and cannot be combined with explicit RAID, NVMe namespace setup or a partition layout", mode)
 	}
 	return nil
 }
 
 // selectMirrorPair sets targetDisk and mirrorDisk when mirroring is requested
-// and returns true when it chose the pair. It returns false to fall back to
-// single-disk detection.
+// and returns true when it chose the target disk. It returns false to fall
+// back to single-disk detection.
 func (o *Orchestrator) selectMirrorPair(ctx context.Context) (bool, error) {
 	o.mirrorDisk = ""
 	mode := o.mirroringMode()
@@ -62,7 +63,7 @@ func (o *Orchestrator) selectMirrorPair(ctx context.Context) (bool, error) {
 	default:
 		return false, fmt.Errorf("unsupported disk mirroring mode %q", mode)
 	}
-	if o.resumeMirrorPair[1] != "" {
+	if o.resumeMirrorPair[0] != "" {
 		return o.useResumeMirrorPair()
 	}
 	first, second, ok, err := o.disk.DetectMirrorPair(ctx, o.cfg.Provision.Disk.MinSizeGB)
@@ -82,17 +83,21 @@ func (o *Orchestrator) selectMirrorPair(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-// useResumeMirrorPair keeps the pair selected before a resume. Once
-// mirroring has started, falling back to one disk would mount a raw array
-// member, so a missing disk is an error.
+// useResumeMirrorPair keeps the disk selection made before a resume: the
+// mirror pair, or the single disk that auto mode fell back to. Once disks are
+// written, a new selection could mount a raw array member or an unwritten
+// disk, so a missing disk is an error.
 func (o *Orchestrator) useResumeMirrorPair() (bool, error) {
 	for _, dev := range o.resumeMirrorPair {
+		if dev == "" {
+			continue
+		}
 		if _, err := statPath(dev); err != nil {
-			return false, fmt.Errorf("mirror disk %s selected before resume is unavailable: %w", dev, err)
+			return false, fmt.Errorf("disk %s selected before resume is unavailable: %w", dev, err)
 		}
 	}
 	o.targetDisk, o.mirrorDisk = o.resumeMirrorPair[0], o.resumeMirrorPair[1]
-	o.log.Info("mirroring root disk with the pair selected before resume", "disk1", o.targetDisk, "disk2", o.mirrorDisk)
+	o.log.Info("using the disk selection made before resume", "disk1", o.targetDisk, "disk2", o.mirrorDisk)
 	return true, nil
 }
 
@@ -219,11 +224,13 @@ func (o *Orchestrator) createMirrorEFIBootEntry(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// The loader path comes from the mounted ESP, so create the entry first.
-	if err := o.config.CreateEFIBootEntry(ctx, o.mirrorDisk, mirrorEFI); err != nil {
+	// Copy first: a retry after a failed copy then starts over with the
+	// copy, and the entry is only created for a complete ESP. The loader path
+	// comes from the ESP, which syncMirrorESP mounts again.
+	if err := o.syncMirrorESP(ctx, mirrorEFI); err != nil {
 		return err
 	}
-	return o.syncMirrorESP(ctx, mirrorEFI)
+	return o.config.CreateEFIBootEntry(ctx, o.mirrorDisk, mirrorEFI)
 }
 
 // mirrorESP returns the ESP partition of the mirror disk.
