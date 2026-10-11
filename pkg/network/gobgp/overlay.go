@@ -889,10 +889,19 @@ func (o *OverlayTier) addType5Path(prefix string, path *type5Path) {
 		o.markType5Active(prefix, previous)
 		return
 	}
-	for _, p := range o.sortedType5Paths(prefix) {
+	others := o.sortedType5Paths(prefix)
+	for _, p := range others {
 		if p.key != path.key && p.key != previous && o.applyType5Path(p) {
 			o.markType5Active(prefix, p.key)
 			return
+		}
+	}
+	// No path could be installed completely. With several paths the kernel
+	// route may now point at one whose gateway state failed, so remove it.
+	// A single path keeps the old behaviour.
+	if len(others) > 1 {
+		if state, ok := o.type5RouteState(path.route, path.vtep, net.ParseIP(path.vtep)); ok {
+			o.removeType5Prefix(state)
 		}
 	}
 }

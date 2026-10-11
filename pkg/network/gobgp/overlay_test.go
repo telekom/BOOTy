@@ -3862,3 +3862,17 @@ func TestHandleType5RouteWithdrawAfterFailedUpdateRemovesPrefix(t *testing.T) {
 		t.Fatalf("expected the 0/0 route to be deleted whatever its gateway, got %v", mock.routeDels)
 	}
 }
+
+func TestHandleType5RouteRemovesPrefixWhenNoPathInstalls(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := newType5FailoverTestOverlay(mock)
+	routeA, routeB := type5FailoverRoute(t, 1, "192.168.4.1"), type5FailoverRoute(t, 2, "192.168.4.2")
+
+	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
+	mock.setErr = errors.New("neighbor set failed")
+	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
+
+	if len(mock.routeDels) != 1 || mock.routeDels[0].Gw != nil {
+		t.Fatalf("expected the prefix route to be removed when no path installs, got %v", mock.routeDels)
+	}
+}
