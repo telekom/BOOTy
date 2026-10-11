@@ -10,10 +10,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/digineo/go-dhclient"
 	"github.com/google/gopacket/layers"
+	"github.com/vishvananda/netlink"
 )
 
 func TestDHCPMode_Setup(t *testing.T) {
@@ -190,5 +194,41 @@ func TestNewDHCPClientRequestsDefaultParams(t *testing.T) {
 		if string(gotHostname) != hostname {
 			t.Errorf("hostname option = %q, want %q", gotHostname, hostname)
 		}
+	}
+}
+
+func TestLeaseAddrDefaultsMissingNetmask(t *testing.T) {
+	addr, err := leaseAddr(&dhclient.Lease{FixedAddress: net.ParseIP("10.0.2.15")})
+	if err != nil {
+		t.Fatalf("leaseAddr() error = %v", err)
+	}
+	if got := addr.IPNet.String(); got != "10.0.2.15/8" {
+		t.Fatalf("leaseAddr() = %s, want 10.0.2.15/8", got)
+	}
+	if _, err := leaseAddr(&dhclient.Lease{}); err == nil {
+		t.Fatal("leaseAddr() without address should fail")
+	}
+}
+
+func TestOnBoundAcceptsExistingAddressAndRoute(t *testing.T) {
+	origAddr, origRoute := dhcpAddrAdd, dhcpRouteAdd
+	t.Cleanup(func() { dhcpAddrAdd, dhcpRouteAdd = origAddr, origRoute })
+	dhcpAddrAdd = func(netlink.Link, *netlink.Addr) error { return syscall.EEXIST }
+	dhcpRouteAdd = func(*netlink.Route) error { return syscall.EEXIST }
+
+	d := NewDHCPMode()
+	leased := make(chan struct{}, 1)
+	var winner atomic.Int32
+	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth0"}}
+	d.onBound(link, "eth0", leased, &winner)(&dhclient.Lease{
+		FixedAddress: net.ParseIP("10.0.2.15"),
+		Netmask:      net.CIDRMask(24, 32),
+		Router:       []net.IP{net.ParseIP("10.0.2.2")},
+	})
+
+	select {
+	case <-leased:
+	default:
+		t.Fatal("lease with an existing address was not reported as bound")
 	}
 }

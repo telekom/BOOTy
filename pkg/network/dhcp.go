@@ -4,12 +4,14 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"os"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/digineo/go-dhclient"
@@ -138,24 +140,36 @@ func newDHCPClient(iface *net.Interface, hostname string, onBound dhclient.Callb
 	return client
 }
 
+// Netlink seams for onBound tests.
+var (
+	dhcpAddrAdd  = netlink.AddrAdd
+	dhcpRouteAdd = netlink.RouteAdd
+)
+
 // onBound returns a callback that configures the interface address and default route.
 // The winner flag ensures only the first NIC to receive a lease applies netlink changes;
 // subsequent leases are ignored by this callback and do not trigger additional configuration.
+// An address or route that already exists (for example after a network retry) counts as applied.
 func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struct{}, winner *atomic.Int32) func(*dhclient.Lease) {
 	return func(lease *dhclient.Lease) {
 		if !winner.CompareAndSwap(0, 1) {
 			return
 		}
-		cidr := net.IPNet{IP: lease.FixedAddress, Mask: lease.Netmask}
-		addr, _ := netlink.ParseAddr(cidr.String())
-		if err := netlink.AddrAdd(link, addr); err != nil {
+		addr, err := leaseAddr(lease)
+		if err != nil {
+			d.log.Warn("Ignoring DHCP lease", "iface", ifName, "error", err)
+			winner.Store(0)
+			return
+		}
+		if err := dhcpAddrAdd(link, addr); err != nil && !errors.Is(err, syscall.EEXIST) {
 			d.log.Warn("Failed to assign DHCP address", "iface", ifName, "error", err)
 			winner.Store(0)
 			return
 		}
-		d.log.Info("DHCP lease obtained", "iface", ifName, "addr", cidr.String())
+		d.log.Info("DHCP lease obtained", "iface", ifName, "addr", addr.IPNet.String())
 		if len(lease.Router) > 0 {
-			if err := netlink.RouteAdd(&netlink.Route{Gw: lease.Router[0]}); err != nil {
+			err := dhcpRouteAdd(&netlink.Route{Gw: lease.Router[0]})
+			if err != nil && !errors.Is(err, syscall.EEXIST) {
 				d.log.Warn("failed to add default route", "gw", lease.Router[0], "error", err)
 			}
 		}
@@ -164,6 +178,20 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struc
 		default:
 		}
 	}
+}
+
+// leaseAddr builds the interface address from a lease. A lease without a
+// subnet mask option gets the classful default mask, like other clients.
+func leaseAddr(lease *dhclient.Lease) (*netlink.Addr, error) {
+	ip := lease.FixedAddress.To4()
+	if ip == nil {
+		return nil, fmt.Errorf("lease has no IPv4 address")
+	}
+	mask := lease.Netmask
+	if len(mask) == 0 {
+		mask = ip.DefaultMask()
+	}
+	return &netlink.Addr{IPNet: &net.IPNet{IP: ip, Mask: mask}}, nil
 }
 
 // WaitForConnectivity polls the target URL until reachable or timeout.
