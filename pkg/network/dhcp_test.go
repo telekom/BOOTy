@@ -210,16 +210,20 @@ func TestLeaseAddrDefaultsMissingNetmask(t *testing.T) {
 	}
 }
 
-func TestOnBoundAcceptsExistingAddressAndRoute(t *testing.T) {
-	origAddr, origRoute := dhcpAddrAdd, dhcpRouteAdd
-	t.Cleanup(func() { dhcpAddrAdd, dhcpRouteAdd = origAddr, origRoute })
+func TestOnBoundAcceptsExistingAddressAndReplacesDefaultRoute(t *testing.T) {
+	origAddr, origRoute := dhcpAddrAdd, dhcpRouteReplace
+	t.Cleanup(func() { dhcpAddrAdd, dhcpRouteReplace = origAddr, origRoute })
 	dhcpAddrAdd = func(netlink.Link, *netlink.Addr) error { return syscall.EEXIST }
-	dhcpRouteAdd = func(*netlink.Route) error { return syscall.EEXIST }
+	var routes []*netlink.Route
+	dhcpRouteReplace = func(r *netlink.Route) error {
+		routes = append(routes, r)
+		return nil
+	}
 
 	d := NewDHCPMode()
 	leased := make(chan struct{}, 1)
 	var winner atomic.Int32
-	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth0"}}
+	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth0", Index: 7}}
 	d.onBound(link, "eth0", leased, &winner)(&dhclient.Lease{
 		FixedAddress: net.ParseIP("10.0.2.15"),
 		Netmask:      net.CIDRMask(24, 32),
@@ -230,5 +234,18 @@ func TestOnBoundAcceptsExistingAddressAndRoute(t *testing.T) {
 	case <-leased:
 	default:
 		t.Fatal("lease with an existing address was not reported as bound")
+	}
+	if len(routes) != 1 || routes[0].LinkIndex != 7 || !routes[0].Gw.Equal(net.ParseIP("10.0.2.2")) {
+		t.Fatalf("default route = %v, want via 10.0.2.2 on link 7", routes)
+	}
+}
+
+func TestOnBoundInvalidLeaseDoesNotClaimWinner(t *testing.T) {
+	d := NewDHCPMode()
+	var winner atomic.Int32
+	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth0"}}
+	d.onBound(link, "eth0", make(chan struct{}, 1), &winner)(&dhclient.Lease{})
+	if winner.Load() != 0 {
+		t.Fatal("an invalid lease claimed the winner flag")
 	}
 }

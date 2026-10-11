@@ -142,23 +142,24 @@ func newDHCPClient(iface *net.Interface, hostname string, onBound dhclient.Callb
 
 // Netlink seams for onBound tests.
 var (
-	dhcpAddrAdd  = netlink.AddrAdd
-	dhcpRouteAdd = netlink.RouteAdd
+	dhcpAddrAdd      = netlink.AddrAdd
+	dhcpRouteReplace = netlink.RouteReplace
 )
 
 // onBound returns a callback that configures the interface address and default route.
 // The winner flag ensures only the first NIC to receive a lease applies netlink changes;
 // subsequent leases are ignored by this callback and do not trigger additional configuration.
-// An address or route that already exists (for example after a network retry) counts as applied.
+// An address that already exists (for example after a network retry) counts as applied.
 func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struct{}, winner *atomic.Int32) func(*dhclient.Lease) {
 	return func(lease *dhclient.Lease) {
-		if !winner.CompareAndSwap(0, 1) {
-			return
-		}
+		// Validate before claiming the winner, so an unusable lease on one
+		// NIC does not block a usable lease on another NIC.
 		addr, err := leaseAddr(lease)
 		if err != nil {
 			d.log.Warn("Ignoring DHCP lease", "iface", ifName, "error", err)
-			winner.Store(0)
+			return
+		}
+		if !winner.CompareAndSwap(0, 1) {
 			return
 		}
 		if err := dhcpAddrAdd(link, addr); err != nil && !errors.Is(err, syscall.EEXIST) {
@@ -168,9 +169,11 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struc
 		}
 		d.log.Info("DHCP lease obtained", "iface", ifName, "addr", addr.IPNet.String())
 		if len(lease.Router) > 0 {
-			err := dhcpRouteAdd(&netlink.Route{Gw: lease.Router[0]})
-			if err != nil && !errors.Is(err, syscall.EEXIST) {
-				d.log.Warn("failed to add default route", "gw", lease.Router[0], "error", err)
+			// Replace, so a default route left by an earlier attempt or
+			// another NIC does not stay in place.
+			route := &netlink.Route{Gw: lease.Router[0], LinkIndex: link.Attrs().Index}
+			if err := dhcpRouteReplace(route); err != nil {
+				d.log.Warn("failed to set default route", "gw", lease.Router[0], "error", err)
 			}
 		}
 		select {
