@@ -378,11 +378,27 @@ func TestMirrorRootMirrorsSeparateBoot(t *testing.T) {
 }
 
 func TestMdadmArrayLines(t *testing.T) {
-	scan := "ARRAY /dev/md/2 metadata=1.0 name=host:2 UUID=a:b:c:d\n"
-	got := mdadmArrayLines(disk.MirrorRootArray, scan)
-	want := "ARRAY /dev/md2 metadata=1.0 name=host:2 UUID=a:b:c:d"
-	if len(got) != 1 || got[0] != want {
-		t.Fatalf("mdadmArrayLines() = %q, want %q", got, want)
+	tests := []struct {
+		name, array, scan, want string
+	}{
+		{
+			name: "named by array number", array: disk.MirrorRootArray,
+			scan: "ARRAY /dev/md/2 metadata=1.0 name=host:2 UUID=a:b:c:d\n",
+			want: "ARRAY /dev/md2 metadata=1.0 name=host:2 UUID=a:b:c:d",
+		},
+		{
+			name: "scan lists both arrays", array: disk.MirrorBootArray,
+			scan: "ARRAY /dev/md/host:2 metadata=1.0 name=host:2 UUID=a:a:a:a\nARRAY /dev/md/host:1 metadata=1.0 name=host:1 UUID=b:b:b:b\n",
+			want: "ARRAY /dev/md1 metadata=1.0 name=host:1 UUID=b:b:b:b",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mdadmArrayLines(tt.array, tt.scan)
+			if len(got) != 1 || got[0] != tt.want {
+				t.Fatalf("mdadmArrayLines() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

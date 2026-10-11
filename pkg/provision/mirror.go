@@ -409,20 +409,38 @@ func namesPartition(source string) bool {
 const mdadmConfHeader = "# mdadm.conf - written by BOOTy\n\nDEVICE partitions\nHOMEHOST <system>\nMAILADDR root\n\n" +
 	"AUTO +imsm +1.x -all\n\n"
 
-// mdadmArrayLines returns the ARRAY lines of mdadm --detail --scan output with
-// the device named array. mdadm reports /dev/md/<name>; the legacy
-// provisioner records /dev/mdN. Assembly matches arrays by UUID.
+// mdadmArrayLines returns the ARRAY line of array from mdadm --detail --scan
+// output, with the device named array. mdadm reports /dev/md/<name>; the
+// legacy provisioner records /dev/mdN. Assembly matches arrays by UUID. Only
+// the line that belongs to array is kept, so the configuration never lists
+// another array under this name.
 func mdadmArrayLines(array, scan string) []string {
+	num := strings.TrimPrefix(array, "/dev/md")
 	var lines []string
 	for line := range strings.Lines(scan) {
 		fields := strings.Fields(line)
-		if len(fields) < 2 || fields[0] != "ARRAY" {
+		if len(fields) < 2 || fields[0] != "ARRAY" || !mdadmLineIsArray(fields, array, num) {
 			continue
 		}
 		fields[1] = array
 		lines = append(lines, strings.Join(fields, " "))
 	}
 	return lines
+}
+
+// mdadmLineIsArray reports whether the fields of an ARRAY line describe the
+// md device array with number num, by device name or by the array name
+// "<homehost>:<num>" that mdadm --create gives it.
+func mdadmLineIsArray(fields []string, array, num string) bool {
+	if fields[1] == array || fields[1] == "/dev/md/"+num {
+		return true
+	}
+	for _, f := range fields[2:] {
+		if name, ok := strings.CutPrefix(f, "name="); ok && (name == num || strings.HasSuffix(name, ":"+num)) {
+			return true
+		}
+	}
+	return false
 }
 
 // writeMdadmConf writes /etc/mdadm/mdadm.conf, which Debian-based images
