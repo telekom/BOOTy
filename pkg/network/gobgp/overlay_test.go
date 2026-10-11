@@ -3579,3 +3579,63 @@ func TestHandleType5RouteDeletesWithdrawnRouteWhenFallbackFails(t *testing.T) {
 		t.Fatalf("expected withdrawn route via 192.168.4.2 to be deleted, got %v", mock.routeDels)
 	}
 }
+
+func TestHandleType5RouteIgnoredAfterTeardown(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := &OverlayTier{
+		cfg: &Config{
+			RouterID:          "192.168.4.10",
+			ProvisionVNI:      1000,
+			BridgeName:        "br.provision",
+			OverlayVRFName:    "Vrf_overlay",
+			OverlayVRFTableID: 20,
+		},
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	if err := overlay.Teardown(context.Background()); err != nil {
+		t.Fatalf("Teardown() error = %v", err)
+	}
+	route := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, GwAddress: "192.168.4.1"}
+	overlay.handleType5Route(route, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:52"), false)
+
+	if len(mock.routeReplaces) != 0 || len(mock.sets) != 0 {
+		t.Fatalf("route callback changed the kernel after teardown: routes=%d neighbors=%d", len(mock.routeReplaces), len(mock.sets))
+	}
+}
+
+func TestHandleType5RouteFallsBackToPathWhoseInstallFailed(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := &OverlayTier{
+		cfg: &Config{
+			RouterID:          "192.168.4.10",
+			ProvisionVNI:      1000,
+			BridgeName:        "br.provision",
+			OverlayVRFName:    "Vrf_overlay",
+			OverlayVRFTableID: 20,
+		},
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	routeVia := func(rdAdmin uint32, gw string) *apipb.EVPNIPPrefixRoute {
+		rd, err := anypb.New(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAdmin})
+		if err != nil {
+			t.Fatalf("anypb.New: %v", err)
+		}
+		return &apipb.EVPNIPPrefixRoute{Rd: rd, IpPrefix: "0.0.0.0", IpPrefixLen: 0, GwAddress: gw}
+	}
+	routeA, routeB := routeVia(1, "192.168.4.1"), routeVia(2, "192.168.4.2")
+
+	mock.routeReplaceErr = errors.New("transient")
+	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
+	mock.routeReplaceErr = nil
+	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
+	overlay.handleType5Route(routeB, "192.168.4.2", nil, true)
+
+	if len(mock.routeDels) != 0 {
+		t.Fatalf("route deleted although gateway A still advertises it: %v", mock.routeDels)
+	}
+	if last := mock.routeReplaces[len(mock.routeReplaces)-1]; !last.Gw.Equal(net.ParseIP("192.168.4.1")) {
+		t.Fatalf("route gw after B withdraw = %s, want 192.168.4.1", last.Gw)
+	}
+}

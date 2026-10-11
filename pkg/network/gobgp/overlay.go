@@ -128,6 +128,9 @@ type OverlayTier struct {
 	// kernel route uses one of them, so a withdraw falls back to another.
 	type5PathsMu sync.Mutex
 	type5Paths   map[string]map[string]*type5Path
+	// type5Stopped is set by Teardown so a route callback that is still in
+	// flight does not touch the kernel after teardown.
+	type5Stopped bool
 
 	importRTOnce sync.Once
 	importRTASN  uint32
@@ -182,6 +185,9 @@ func (o *OverlayTier) Setup(ctx context.Context) error {
 	if o.bgp == nil {
 		return fmt.Errorf("BGP server not set: call SetBgpServer before Setup")
 	}
+	o.type5PathsMu.Lock()
+	o.type5Stopped = false
+	o.type5PathsMu.Unlock()
 
 	if err := o.setupCreateVXLANAndBridge(); err != nil {
 		return o.cleanupSetupFailure(ctx, "create VXLAN/bridge", err)
@@ -259,6 +265,7 @@ func (o *OverlayTier) Teardown(_ context.Context) error {
 
 	o.type5PathsMu.Lock()
 	o.type5Paths = nil
+	o.type5Stopped = true
 	o.type5PathsMu.Unlock()
 
 	if o.gatewayFDB != nil {
@@ -844,6 +851,9 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 
 	o.type5PathsMu.Lock()
 	defer o.type5PathsMu.Unlock()
+	if o.type5Stopped {
+		return
+	}
 	prefix, key := state.dst.String(), type5PathKey(route)
 	if withdraw {
 		if remaining, ok := o.forgetType5Path(prefix, key); ok {
@@ -857,13 +867,14 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 		o.withdrawType5Route(state, routerMAC)
 		return
 	}
-	if o.installType5Route(state, routerMAC, routerMACValid) {
-		o.rememberType5Path(prefix, key, &type5Path{
-			state:     state,
-			routerMAC: append(net.HardwareAddr(nil), routerMAC...),
-			valid:     routerMACValid,
-		})
-	}
+	// Remember the path even if the install fails, so a later withdraw of
+	// another path can still fall back to it.
+	o.rememberType5Path(prefix, key, &type5Path{
+		state:     state,
+		routerMAC: append(net.HardwareAddr(nil), routerMAC...),
+		valid:     routerMACValid,
+	})
+	o.installType5Route(state, routerMAC, routerMACValid)
 }
 
 type type5RouteState struct {
