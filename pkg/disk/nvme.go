@@ -36,6 +36,9 @@ var nvmeControllerPathRE = regexp.MustCompile(`^/dev/nvme\d+$`)
 // nsidRE validates a namespace ID (positive integer like "1", "2", etc.).
 var nsidRE = regexp.MustCompile(`^[1-9]\d*$`)
 
+// cntlidRE validates an NVMe controller ID. 0 is a valid ID.
+var cntlidRE = regexp.MustCompile(`^\d+$`)
+
 // nvmeDevicePathRE validates NVMe namespace device paths like /dev/nvme0n1.
 var nvmeDevicePathRE = regexp.MustCompile(`^/dev/nvme\d+n\d+$`)
 
@@ -174,10 +177,16 @@ type nvmeNSListOutput struct {
 
 // NVMeListNamespaces lists existing namespace IDs on a controller.
 func (m *Manager) NVMeListNamespaces(ctx context.Context, controller string) ([]string, error) {
+	return m.listNamespaces(ctx, controller)
+}
+
+// listNamespaces runs nvme list-ns with the given extra arguments.
+func (m *Manager) listNamespaces(ctx context.Context, controller string, extraArgs ...string) ([]string, error) {
 	if !nvmeControllerPathRE.MatchString(controller) {
 		return nil, fmt.Errorf("invalid NVMe controller path %q", controller)
 	}
-	out, err := m.cmd.Run(ctx, "nvme", "list-ns", controller, "-o", "json")
+	args := append([]string{"list-ns", controller}, extraArgs...)
+	out, err := m.cmd.Run(ctx, "nvme", append(args, "-o", "json")...)
 	if err != nil {
 		return nil, fmt.Errorf("nvme list-ns %s: %w", controller, err)
 	}
@@ -255,7 +264,9 @@ func (m *Manager) CreateNVMeNamespace(ctx context.Context, controller string, si
 	return "", fmt.Errorf("could not parse NSID from create-ns output: %s", string(out))
 }
 
-// AttachNVMeNamespace attaches a namespace to controller 0.
+// AttachNVMeNamespace attaches a namespace to the controller it was created
+// on. nvme attach-ns needs the controller ID (cntlid), which is not always 0
+// on enterprise and dual-port drives.
 func (m *Manager) AttachNVMeNamespace(ctx context.Context, controller, nsid string) error {
 	if !nvmeControllerPathRE.MatchString(controller) {
 		return fmt.Errorf("invalid NVMe controller path %q", controller)
@@ -263,7 +274,15 @@ func (m *Manager) AttachNVMeNamespace(ctx context.Context, controller, nsid stri
 	if !nsidRE.MatchString(nsid) {
 		return fmt.Errorf("invalid NVMe namespace ID %q", nsid)
 	}
-	out, err := m.cmd.Run(ctx, "nvme", "attach-ns", controller, "-n", nsid, "-c", "0")
+	info, err := m.NVMeIdentifyController(ctx, controller)
+	if err != nil {
+		return fmt.Errorf("identifying controller %s for attach: %w", controller, err)
+	}
+	cntlid, ok := info["cntlid"]
+	if !ok || !cntlidRE.MatchString(cntlid) {
+		return fmt.Errorf("controller %s has no valid cntlid %q", controller, cntlid)
+	}
+	out, err := m.cmd.Run(ctx, "nvme", "attach-ns", controller, "-n", nsid, "-c", cntlid)
 	if err != nil {
 		return fmt.Errorf("nvme attach-ns %s -n %s: %s: %w", controller, nsid, string(out), err)
 	}
@@ -439,7 +458,8 @@ func (m *Manager) tryAttachFallbackNamespace(ctx context.Context, controller str
 }
 
 func (m *Manager) deleteAllNamespaces(ctx context.Context, controller string) error {
-	nsids, err := m.NVMeListNamespaces(ctx, controller)
+	// --all also lists allocated namespaces that are not attached.
+	nsids, err := m.listNamespaces(ctx, controller, "--all")
 	if err != nil {
 		return err
 	}
