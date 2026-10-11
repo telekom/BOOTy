@@ -859,55 +859,73 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 	}
 	prefix, key := dst.String(), type5PathKey(route)
 	if withdraw {
-		remaining := o.forgetType5Path(prefix, key)
-		if active, ok := o.type5Active[prefix]; ok && active != key && len(remaining) > 0 {
-			// An inactive path withdrew. The installed route stays.
-			return
-		}
-		delete(o.type5Active, prefix)
-		for _, p := range remaining {
-			if o.applyType5Path(p) {
-				o.markType5Active(prefix, p.key)
-				o.log.Info("type-5 path withdrawn, keeping route via remaining path",
-					"dst", dst, "withdrawn_vtep", vtep, "vtep", p.vtep)
-				return
-			}
-		}
-		vtepIP, _ := o.ensureType5VTEP(vtep, true)
-		state, ok := o.type5RouteState(route, vtep, vtepIP)
-		if !ok {
-			return
-		}
-		if len(remaining) > 0 {
-			// A failed fallback may have moved the kernel route already.
-			o.removeType5Prefix(state)
-			return
-		}
-		o.withdrawType5Route(state, routerMAC)
+		o.withdrawType5Path(prefix, key, route, vtep, routerMAC)
 		return
 	}
 	// Remember the path before any kernel change, so a later withdraw of
 	// another path can still fall back to it even if this install fails.
-	path := &type5Path{
+	o.addType5Path(prefix, &type5Path{
 		key:       key,
 		route:     route,
 		vtep:      vtep,
 		routerMAC: append(net.HardwareAddr(nil), routerMAC...),
 		valid:     routerMACValid,
-	}
-	o.rememberType5Path(prefix, key, path)
+	})
+}
+
+// addType5Path records and installs a path. If the install fails, the
+// kernel route may have moved already, so the previously installed path,
+// or else another live path, is installed again. The caller holds
+// type5PathsMu.
+func (o *OverlayTier) addType5Path(prefix string, path *type5Path) {
+	o.rememberType5Path(prefix, path.key, path)
 	if o.applyType5Path(path) {
-		o.markType5Active(prefix, key)
+		o.markType5Active(prefix, path.key)
 		return
 	}
-	// The failed install may have moved the kernel route already. Put the
-	// previously installed path back, or forget which path is installed.
-	if active, ok := o.type5Active[prefix]; ok && active != key {
-		if prev := o.type5Paths[prefix][active]; prev != nil && o.applyType5Path(prev) {
+	previous := o.type5Active[prefix]
+	delete(o.type5Active, prefix)
+	if p := o.type5Paths[prefix][previous]; p != nil && previous != path.key && o.applyType5Path(p) {
+		o.markType5Active(prefix, previous)
+		return
+	}
+	for _, p := range o.sortedType5Paths(prefix) {
+		if p.key != path.key && p.key != previous && o.applyType5Path(p) {
+			o.markType5Active(prefix, p.key)
 			return
 		}
 	}
+}
+
+// withdrawType5Path removes a path. If it was the installed one, the route
+// moves to a remaining path, or is deleted when none can be installed.
+// The caller holds type5PathsMu.
+func (o *OverlayTier) withdrawType5Path(prefix, key string, route *apipb.EVPNIPPrefixRoute, vtep string, routerMAC net.HardwareAddr) {
+	remaining := o.forgetType5Path(prefix, key)
+	if active, ok := o.type5Active[prefix]; ok && active != key && len(remaining) > 0 {
+		// An inactive path withdrew. The installed route stays.
+		return
+	}
 	delete(o.type5Active, prefix)
+	for _, p := range remaining {
+		if o.applyType5Path(p) {
+			o.markType5Active(prefix, p.key)
+			o.log.Info("type-5 path withdrawn, keeping route via remaining path",
+				"dst", prefix, "withdrawn_vtep", vtep, "vtep", p.vtep)
+			return
+		}
+	}
+	vtepIP, _ := o.ensureType5VTEP(vtep, true)
+	state, ok := o.type5RouteState(route, vtep, vtepIP)
+	if !ok {
+		return
+	}
+	if len(remaining) > 0 {
+		// A failed fallback may have moved the kernel route already.
+		o.removeType5Prefix(state)
+		return
+	}
+	o.withdrawType5Route(state, routerMAC)
 }
 
 // markType5Active records the installed path of a prefix. The caller holds
@@ -978,11 +996,18 @@ func (o *OverlayTier) forgetType5Path(prefix, key string) []*type5Path {
 		delete(o.type5Paths, prefix)
 		return nil
 	}
-	remaining := make([]*type5Path, 0, len(paths))
+	return o.sortedType5Paths(prefix)
+}
+
+// sortedType5Paths returns the live paths of a prefix in a stable order.
+// The caller holds type5PathsMu.
+func (o *OverlayTier) sortedType5Paths(prefix string) []*type5Path {
+	paths := o.type5Paths[prefix]
+	sorted := make([]*type5Path, 0, len(paths))
 	for _, k := range slices.Sorted(maps.Keys(paths)) {
-		remaining = append(remaining, paths[k])
+		sorted = append(sorted, paths[k])
 	}
-	return remaining
+	return sorted
 }
 
 func (o *OverlayTier) type5RouteState(route *apipb.EVPNIPPrefixRoute, vtep string, vtepIP net.IP) (type5RouteState, bool) {

@@ -3833,3 +3833,18 @@ func TestHandleType5RouteRestoresActivePathWhenNewPathFails(t *testing.T) {
 		t.Fatalf("withdrawing the failed path A deleted the working route: %v", mock.routeDels)
 	}
 }
+
+func TestHandleType5RouteFallsBackWhenSameNLRIUpdateFails(t *testing.T) {
+	mock := &failingNeighborOps{mockOverlayNetlinkOps: &mockOverlayNetlinkOps{}, failIP: "192.168.4.9"}
+	overlay := newType5FailoverTestOverlay(mock)
+	routeA, routeB := type5FailoverRoute(t, 1, "192.168.4.1"), type5FailoverRoute(t, 2, "192.168.4.2")
+	routeBMoved := type5FailoverRoute(t, 2, "192.168.4.9")
+
+	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
+	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
+	overlay.handleType5Route(routeBMoved, "192.168.4.9", mustParseMAC(t, "62:db:b8:c1:80:09"), false)
+
+	if last := mock.routeReplaces[len(mock.routeReplaces)-1]; !last.Gw.Equal(net.ParseIP("192.168.4.1")) {
+		t.Fatalf("route gw after failed same-NLRI update = %s, want fallback 192.168.4.1", last.Gw)
+	}
+}
