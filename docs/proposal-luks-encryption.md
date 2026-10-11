@@ -1,6 +1,10 @@
 # Proposal: Full LUKS Disk Encryption
 
-## Status: In Progress (library implemented in pkg/disk/luks — orchestrator integration pending)
+## Status: Proposed
+
+An earlier library in `pkg/disk/luks` was never wired into provisioning and
+was removed. The code and file names below are a design sketch, not
+existing code.
 
 ## Priority: P1
 
@@ -254,6 +258,8 @@ export LUKS_TPM_PCRS="7"              # PCR binding for TPM2 (default: 7 = Secur
 
 ## Files Changed
 
+These files do not exist yet. They are the planned layout.
+
 | File | Change |
 |------|--------|
 | `pkg/disk/luks/manager.go` | LUKS format/open/close operations |
@@ -265,6 +271,8 @@ export LUKS_TPM_PCRS="7"              # PCR binding for TPM2 (default: 7 = Secur
 | `initrd.Dockerfile` | Add `cryptsetup`, `dmsetup`, dm-crypt modules |
 
 ## Testing
+
+These tests do not exist yet. They are the planned coverage.
 
 ### Unit Tests
 
