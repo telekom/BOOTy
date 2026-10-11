@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"syscall"
 
 	"github.com/telekom/BOOTy/pkg/executil"
 )
@@ -15,15 +16,27 @@ import (
 // maxCommandOutputLine bounds one logged output line of a streamed command.
 const maxCommandOutputLine = 64 * 1024
 
-// runStreamingCommand runs a host command and calls onLine for every line of
-// its combined stdout and stderr while it runs. Tests replace it.
+// runStreamingCommand runs argv, inside the chroot root when root is set,
+// and calls onLine for every line of its combined stdout and stderr while it
+// runs. Tests replace it.
 var runStreamingCommand = defaultRunStreamingCommand
 
-func defaultRunStreamingCommand(ctx context.Context, onLine func(string), name string, args ...string) error {
+func defaultRunStreamingCommand(ctx context.Context, onLine func(string), root string, argv []string) error {
+	if len(argv) == 0 {
+		return fmt.Errorf("run: empty command")
+	}
 	pr, pw := io.Pipe()
 	// executil registers the child, so the PID 1 reaper does not take its
-	// exit status.
-	cmd := executil.CommandContext(ctx, name, args...)
+	// exit status. The chroot uses the syscall, so no host chroot binary is
+	// needed (the micro initramfs has none), and argv[0] is a path inside
+	// root, so skip the host PATH lookup.
+	cmd := executil.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Path = argv[0]
+	cmd.Err = nil
+	if root != "" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Chroot: root}
+		cmd.Dir = "/"
+	}
 	cmd.Stdout = pw
 	cmd.Stderr = pw
 
@@ -46,7 +59,7 @@ func defaultRunStreamingCommand(ctx context.Context, onLine func(string), name s
 	_ = pw.Close()
 	<-scanDone
 	if err != nil {
-		return fmt.Errorf("run %s: %w", name, err)
+		return fmt.Errorf("run %s: %w", argv[0], err)
 	}
 	return nil
 }

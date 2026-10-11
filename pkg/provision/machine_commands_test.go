@@ -37,8 +37,8 @@ type fakeStreaming struct {
 func withFakeStreaming(t *testing.T, f *fakeStreaming) {
 	t.Helper()
 	old := runStreamingCommand
-	runStreamingCommand = func(_ context.Context, onLine func(string), name string, args ...string) error {
-		f.calls = append(f.calls, append([]string{name}, args...))
+	runStreamingCommand = func(_ context.Context, onLine func(string), root string, argv []string) error {
+		f.calls = append(f.calls, append([]string{root}, argv...))
 		for _, line := range f.output {
 			onLine(line)
 		}
@@ -86,8 +86,8 @@ func TestRunMachineCommandsLegacyCompatRunsScripts(t *testing.T) {
 
 	got := fake.calls
 	want := [][]string{
-		{"chroot", c.rootDir, "/bin/sh", "/tmp/booty-machine-commands/commands-2.sh"},
-		{"chroot", c.rootDir, "/tmp/booty-machine-commands/commands-10.sh"},
+		{c.rootDir, "/bin/sh", "/tmp/booty-machine-commands/commands-2.sh"},
+		{c.rootDir, "/tmp/booty-machine-commands/commands-10.sh"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("calls = %v, want %v", got, want)

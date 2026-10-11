@@ -1077,16 +1077,16 @@ func (c *Configurator) runMachineCommandScript(ctx context.Context, name string,
 		}
 	}()
 
-	args := []string{c.rootDir, scriptPath}
+	argv := []string{scriptPath}
 	if !bytes.HasPrefix(content, []byte("#!")) {
-		args = []string{c.rootDir, "/bin/sh", scriptPath}
+		argv = []string{"/bin/sh", scriptPath}
 	}
 	slog.Info("running machine command script", "file", name)
 	// Stream the output to the log while the script runs, like the legacy
 	// `run_script_in_chroot ... | while read line; do log ...; done`.
 	err = runStreamingCommand(ctx, func(line string) {
 		slog.Info("machine command output", "file", name, "line", redactCommand(line))
-	}, "chroot", args...)
+	}, c.rootDir, argv)
 	if err != nil {
 		return fmt.Errorf("machine command %s: %s", name, redactCommand(err.Error()))
 	}
