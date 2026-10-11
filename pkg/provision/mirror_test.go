@@ -565,3 +565,21 @@ func TestReadTargetFstabStaysInRoot(t *testing.T) {
 		t.Fatal("fstabEntrySource() followed an fstab symlink out of the target root")
 	}
 }
+
+func TestRewriteMirrorFstabFailsWithoutESPUUID(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "etc", "fstab"), []byte("PARTUUID=ccc /boot/efi vfat umask=0077 0 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := newMockCommander()
+	cmd.setResult("blkid -s", nil, nil)
+	o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, disk.NewManager(cmd))
+	o.bootPartition = "/dev/sda15"
+	o.mirrorArrays = []string{disk.MirrorRootArray}
+	if err := o.rewriteMirrorFstab(context.Background(), root); err == nil {
+		t.Fatal("rewriteMirrorFstab() error = nil, want an error when the ESP UUID is unknown")
+	}
+}

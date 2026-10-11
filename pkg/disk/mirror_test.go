@@ -5,6 +5,7 @@ package disk
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -254,6 +255,50 @@ func TestShrinkFilesystemForMirror(t *testing.T) {
 			resized := hasDiskCommandCall(cmd.calls, "resize2fs", path, tt.wantResize)
 			if (tt.wantResize != "") != resized {
 				t.Fatalf("resize2fs %s called = %v, want %v (calls %v)", tt.wantResize, resized, tt.wantResize != "", cmd.calls)
+			}
+		})
+	}
+}
+
+func TestDetectMirrorPairSkipsPathsSharingWWID(t *testing.T) {
+	sysfs := t.TempDir()
+	writeSysfsBlockDevice(t, sysfs, "sda", "0", 20, "PATH-A")
+	writeSysfsBlockDevice(t, sysfs, "sdb", "0", 20, "PATH-B")
+	for _, name := range []string{"sda", "sdb"} {
+		if err := os.WriteFile(filepath.Join(sysfs, "block", name, "device", "wwid"), []byte("naa.600a0b80\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, ok, err := newManagerWithSysfs(newMockCommander(), sysfs).DetectMirrorPair(context.Background(), 0); err != nil || ok {
+		t.Fatalf("DetectMirrorPair() ok=%v err=%v, want no pair for two paths with one WWID", ok, err)
+	}
+}
+
+func TestMirrorActive(t *testing.T) {
+	existing := filepath.Join(t.TempDir(), "md2")
+	if err := os.WriteFile(existing, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name       string
+		array      string
+		out        string
+		err        error
+		wantActive bool
+		wantErr    bool
+	}{
+		{name: "assembled", array: existing, wantActive: true},
+		{name: "no device node", array: filepath.Join(t.TempDir(), "md2"), err: errors.New("exit status 1")},
+		{name: "inactive", array: existing, out: "mdadm: md device " + existing + " does not appear to be active.", err: errors.New("exit status 1")},
+		{name: "other failure", array: existing, out: "mdadm: cannot open: Input/output error", err: errors.New("exit status 1"), wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newMockCommander()
+			cmd.setResult("mdadm --detail", []byte(tt.out), tt.err)
+			active, err := NewManager(cmd).MirrorActive(context.Background(), tt.array)
+			if active != tt.wantActive || (err != nil) != tt.wantErr {
+				t.Fatalf("MirrorActive() = %v, %v; want %v, wantErr %v", active, err, tt.wantActive, tt.wantErr)
 			}
 		})
 	}

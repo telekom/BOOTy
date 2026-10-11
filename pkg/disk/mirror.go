@@ -5,8 +5,10 @@ package disk
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -175,10 +177,22 @@ func (m *Manager) CreateDegradedMirror(ctx context.Context, array, member string
 	return nil
 }
 
-// MirrorActive reports whether array is already assembled.
-func (m *Manager) MirrorActive(ctx context.Context, array string) bool {
-	_, err := m.cmd.Run(ctx, "mdadm", "--detail", array)
-	return err == nil
+// MirrorActive reports whether array is already assembled. It reports false
+// only when the array is positively absent or inactive, and an error when
+// mdadm fails otherwise, so callers never take the destructive create path
+// because of a transient failure.
+func (m *Manager) MirrorActive(ctx context.Context, array string) (bool, error) {
+	out, err := m.cmd.Run(ctx, "mdadm", "--detail", array)
+	if err == nil {
+		return true, nil
+	}
+	if _, statErr := os.Stat(array); errors.Is(statErr, fs.ErrNotExist) {
+		return false, nil
+	}
+	if strings.Contains(string(out), "does not appear to be active") {
+		return false, nil
+	}
+	return false, fmt.Errorf("mdadm detail %s: %s: %w", array, strings.TrimSpace(string(out)), err)
 }
 
 // MirrorHasMember reports whether member is a device of the assembled array.

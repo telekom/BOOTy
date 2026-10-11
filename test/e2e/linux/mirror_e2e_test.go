@@ -91,8 +91,8 @@ func TestMirrorRootOnLoopDevices(t *testing.T) {
 		_ = exec.CommandContext(ctx, "mdadm", "--stop", mirrorE2EArray).Run()
 		_ = exec.CommandContext(ctx, "mdadm", "--zero-superblock", root, mirrorRoot).Run()
 	})
-	if !mgr.MirrorActive(ctx, mirrorE2EArray) {
-		t.Fatal("MirrorActive = false after CreateDegradedMirror")
+	if active, err := mgr.MirrorActive(ctx, mirrorE2EArray); err != nil || !active {
+		t.Fatalf("MirrorActive = %v, %v after CreateDegradedMirror", active, err)
 	}
 	if err := mgr.AddMirrorMember(ctx, mirrorE2EArray, mirrorRoot); err != nil {
 		t.Fatalf("AddMirrorMember: %v", err)

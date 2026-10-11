@@ -162,7 +162,11 @@ func (o *Orchestrator) mirrorPartition(ctx context.Context, array, member string
 		return fmt.Errorf("determine partition number of %s: %w", member, err)
 	}
 	mirrorMember := blockdev.PartitionDevicePath(o.mirrorDisk, num)
-	if o.disk.MirrorActive(ctx, array) {
+	active, err := o.disk.MirrorActive(ctx, array)
+	if err != nil {
+		return err
+	}
+	if active {
 		o.log.Info("mirror already assembled", "array", array)
 		present, err := o.disk.MirrorHasMember(ctx, array, mirrorMember)
 		if err != nil || present {
@@ -215,8 +219,11 @@ func (o *Orchestrator) separateBootPartition(ctx context.Context) (string, error
 	}
 	// An assembled /boot array means the partition was identified before
 	// a resume; its member no longer shows the filesystem identifiers.
-	if boot.Node == "" || strings.EqualFold(boot.Type, xbootldrPartitionGUID) || o.disk.MirrorActive(ctx, disk.MirrorBootArray) {
+	if boot.Node == "" || strings.EqualFold(boot.Type, xbootldrPartitionGUID) {
 		return boot.Node, nil
+	}
+	if active, err := o.disk.MirrorActive(ctx, disk.MirrorBootArray); err != nil || active {
+		return boot.Node, err
 	}
 	if err := o.verifyFstabBoot(ctx, boot.Node); err != nil {
 		return "", err
@@ -227,7 +234,11 @@ func (o *Orchestrator) separateBootPartition(ctx context.Context) (string, error
 // verifyFstabBoot checks that the image fstab mounts partition at /boot.
 func (o *Orchestrator) verifyFstabBoot(ctx context.Context, partition string) error {
 	rootDev := o.rootPartition
-	if o.disk.MirrorActive(ctx, disk.MirrorRootArray) {
+	active, err := o.disk.MirrorActive(ctx, disk.MirrorRootArray)
+	if err != nil {
+		return err
+	}
+	if active {
 		rootDev = disk.MirrorRootArray
 	}
 	dir, err := os.MkdirTemp("", "booty-mirror-root-")
@@ -322,7 +333,11 @@ func (o *Orchestrator) rewriteMirrorFstab(ctx context.Context, root string) erro
 		}
 		hasBoot = hasBoot || fields[1] == "/boot"
 		source := fields[0]
-		if replacement := o.mirrorFstabSource(ctx, arrays[fields[1]], source, fields[1]); replacement != "" {
+		replacement, err := o.mirrorFstabSource(ctx, arrays[fields[1]], source, fields[1])
+		if err != nil {
+			return err
+		}
+		if replacement != "" {
 			o.log.Info("fstab entry now valid from both mirror disks", "mountpoint", fields[1], "from", source, "to", replacement)
 			lines[i] = strings.Replace(line, source, replacement, 1)
 			changed = true
@@ -349,8 +364,11 @@ func (o *Orchestrator) rewriteMirrorFstab(ctx context.Context, root string) erro
 // array.
 func (o *Orchestrator) appendMirrorBootFstabEntry(ctx context.Context, lines []string) ([]string, error) {
 	fsType, err := o.disk.FilesystemType(ctx, disk.MirrorBootArray)
-	if err != nil || fsType == "" {
+	if err != nil {
 		return nil, fmt.Errorf("filesystem type of %s for its fstab entry: %w", disk.MirrorBootArray, err)
+	}
+	if fsType == "" {
+		return nil, fmt.Errorf("%s has no filesystem type for its fstab entry", disk.MirrorBootArray)
 	}
 	o.log.Info("adding fstab entry for the /boot array", "array", disk.MirrorBootArray)
 	if last := len(lines) - 1; last >= 0 && lines[last] != "" && !strings.HasSuffix(lines[last], "\n") {
@@ -361,17 +379,22 @@ func (o *Orchestrator) appendMirrorBootFstabEntry(ctx context.Context, lines []s
 
 // mirrorFstabSource returns the replacement for an fstab source that names a
 // partition of one disk, or "" to keep it.
-func (o *Orchestrator) mirrorFstabSource(ctx context.Context, array, source, mountpoint string) string {
+func (o *Orchestrator) mirrorFstabSource(ctx context.Context, array, source, mountpoint string) (string, error) {
 	switch {
 	case array != "" && source != array && namesPartition(source):
-		return array
+		return array, nil
 	case mountpoint == "/boot/efi" && namesPartition(source) && o.bootPartition != "":
 		out, err := o.disk.Run(ctx, "blkid", "-s", "UUID", "-o", "value", o.bootPartition)
-		if uuid := strings.TrimSpace(string(out)); err == nil && uuid != "" {
-			return "UUID=" + uuid
+		if err != nil {
+			return "", fmt.Errorf("read the ESP filesystem UUID of %s for fstab: %w", o.bootPartition, err)
 		}
+		uuid := strings.TrimSpace(string(out))
+		if uuid == "" {
+			return "", fmt.Errorf("the ESP %s has no filesystem UUID for its fstab entry", o.bootPartition)
+		}
+		return "UUID=" + uuid, nil
 	}
-	return ""
+	return "", nil
 }
 
 // namesPartition reports whether an fstab source names a partition rather
