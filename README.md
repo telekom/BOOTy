@@ -815,43 +815,11 @@ success status. The CAPRF controller then re-enables Secure Boot via Redfish
 before the final reboot. If the installed OS does not have signed bootloaders,
 the machine will fail to boot.
 
-### LUKS Encryption (Experimental)
+### LUKS Encryption (Planned)
 
-BOOTy includes a `pkg/disk/luks` library for LUKS2 full-disk encryption of
-provisioned volumes. The library is functional but **not yet integrated into the
-provisioning orchestrator** — environment variable wiring and step ordering are
-planned for a future release.
-
-```bash
-# Planned environment variables (not yet wired):
-export LUKS_ENABLED=true
-export LUKS_PASSPHRASE="initial-setup-passphrase"
-export LUKS_UNLOCK_METHOD=tpm2       # passphrase | tpm2 | clevis | keyfile
-export LUKS_CIPHER=aes-xts-plain64   # optional, default: aes-xts-plain64
-export LUKS_KEY_SIZE=512              # optional, default: 512
-export LUKS_HASH=sha256              # optional, default: sha256
-```
-
-**Lifecycle:**
-
-1. **Format** — Creates LUKS2 volume on target device (`cryptsetup luksFormat --type luks2`)
-2. **Open** — Maps the encrypted volume to `/dev/mapper/<name>` for filesystem creation
-3. **Crypttab** — Generates `/etc/crypttab` with the appropriate unlock method options
-4. **Close** — Unmaps volume after provisioning completes; OS unlocks on next boot
-
-**Unlock Methods:**
-
-| Method | Description | Crypttab Options |
-|--------|-------------|-----------------|
-| `passphrase` | Manual entry at boot | `luks,discard` |
-| `tpm2` | TPM2 PCR-bound key (Phase 2: enrollment) | `tpm2-device=auto,discard` |
-| `clevis` | Network-bound via tang server (Phase 2: enrollment) | `_netdev,discard` |
-| `keyfile` | Key file at path | `luks,discard,keyfile-timeout=30s` |
-
-LUKS format always requires a passphrase for initial volume creation. Post-format
-enrollment (TPM2 PCR binding, clevis tang enrollment) is handled separately after
-the OS is installed. Invalid targets (empty device or mapped name) are silently
-skipped during crypttab generation.
+BOOTy does not encrypt provisioned volumes yet. `LUKS_*` variables in
+`/deploy/vars` are rejected as unsupported. The design is tracked in
+[docs/proposal-luks-encryption.md](docs/proposal-luks-encryption.md).
 
 ### JWT Authentication
 
