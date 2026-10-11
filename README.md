@@ -486,7 +486,10 @@ behaviour where the two differ:
   with resolvers from the vars or netplan.
 - `wipe-disks` wipes every disk, not only the target disk, for provisioning
   and hard deprovisioning, like `wipe_all_disks`: `blkdiscard` on NVMe disks,
-  then signature wipes. Failures are logged and do not stop the run.
+  then signature wipes. Failures are logged and do not stop the run. This
+  does not apply to dry-run, A/B preserve-existing upgrades, explicit RAID
+  configs or a deprovision disk override (`DISK_DEVICE`); those keep the
+  BOOTy wipe rules.
 
 Without the variable, BOOTy keeps its own defaults.
 

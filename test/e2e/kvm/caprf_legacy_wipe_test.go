@@ -31,6 +31,7 @@ func TestLegacyCompatProvisionWipesAllDisksQEMU(t *testing.T) {
 
 	vars := caprf.vars("provision")
 	vars["IMAGE"] = caprf.baseURL + "/image.gz"
+	vars["IMAGE_ALLOW_INSECURE_HTTP"] = "true"
 	vars["DISK_DEVICE"] = "/dev/vda"
 	initramfs := buildProvisionInitramfs(t, vars)
 
