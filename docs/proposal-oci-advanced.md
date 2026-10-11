@@ -1,6 +1,11 @@
 # Proposal: Advanced OCI Image Support
 
-## Status: Phase 1 Implemented (PR #51)
+## Status: Proposed
+
+A Phase 1 manager in `pkg/image/oci` (PR #51) was never wired into
+provisioning and was removed. The live OCI path is `pkg/image/oci.go` and
+`pkg/provision/oci_prepull.go`. The packages, files, tests and APIs below
+are a design sketch, not existing code.
 
 ## Priority: P1
 
@@ -613,6 +618,8 @@ export OCI_PARALLEL="4"                           # concurrent layer downloads
 
 ## Files Changed
 
+These files do not exist. They are the planned layout.
+
 | File | Change |
 |------|--------|
 | `pkg/image/oci/manager.go` | OCI image manager with index resolution + cache-aware pull |
@@ -626,6 +633,8 @@ export OCI_PARALLEL="4"                           # concurrent layer downloads
 | `go.mod` | Add `sigstore/cosign/v2` (optional) |
 
 ## Testing
+
+These tests do not exist. They are the planned coverage.
 
 ### Unit Tests
 
@@ -653,6 +662,9 @@ export OCI_PARALLEL="4"                           # concurrent layer downloads
   - Cache corruption → verify re-download on digest mismatch
 
 ## Usage Guide
+
+This guide describes the planned API. It does not compile against the
+current code.
 
 ### Overview
 
