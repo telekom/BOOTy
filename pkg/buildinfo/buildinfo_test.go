@@ -218,3 +218,18 @@ func TestEstimateComponents_Fields(t *testing.T) {
 		}
 	}
 }
+
+func TestEstimateComponentsHasNoCobra(t *testing.T) {
+	hasViper := false
+	for _, c := range EstimateComponents() {
+		if strings.Contains(c.Component, "cobra") {
+			t.Errorf("component %q lists the removed cobra CLI", c.Component)
+		}
+		if c.Component == "viper" {
+			hasViper = true
+		}
+	}
+	if !hasViper {
+		t.Error("viper component missing")
+	}
+}

@@ -89,7 +89,7 @@ initramfs. This proposal establishes a framework for size management.
 | sarama (Kafka) | ~2 MB |
 | cosign v2 | ~3 MB |
 | OpenTelemetry SDK | ~1.5 MB |
-| cobra + viper | ~1 MB |
+| viper | ~1 MB |
 | FRR binaries + libs | ~30 MB |
 | Kernel modules | ~10 MB |
 | busybox | ~2 MB |
