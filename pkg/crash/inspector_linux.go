@@ -35,7 +35,7 @@ func ShouldInspect(cfg *config.MachineConfig) (ok bool, reason string) {
 		mode = "provision"
 	}
 	switch mode {
-	case "provision", "deprovision", "soft-deprovision", "soft":
+	case "provision", "deprovision", "soft-deprovision", "soft", "decommission":
 		return true, ""
 	case "dry-run":
 		return false, "dry-run"
