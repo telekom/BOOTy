@@ -197,7 +197,7 @@ func matchFstabSource(source string, devs []blockIDs) string {
 	case strings.HasPrefix(source, "LABEL="):
 		want := strings.TrimPrefix(source, "LABEL=")
 		match = func(ids blockIDs) bool { return ids.label != "" && ids.label == want }
-	case strings.HasPrefix(source, "/dev/"):
+	case strings.HasPrefix(source, "/"):
 		match = func(ids blockIDs) bool { return ids.node == source }
 	}
 	found := ""
