@@ -52,8 +52,8 @@ func TestConfigureGRUBLegacyCompat(t *testing.T) {
 			cmd := newMockCommander()
 			c := newTestConfigurator(t, cmd)
 			writeFixture(t, filepath.Join(c.hostSysRoot, "class", "dmi", "id", "sys_vendor"), tt.vendor, 0o644)
-			if tt.updateGRUB {
-				writeFixture(t, filepath.Join(c.rootDir, "usr", "sbin", "update-grub"), "#!/bin/sh\n", 0o755)
+			if !tt.updateGRUB {
+				cmd.setResult("chroot "+c.rootDir, []byte(legacyNoUpdateGRUB+"\n"), nil)
 			}
 			cfg := &config.MachineConfig{LegacyCompat: true}
 			cfg.Provision.ExtraKernelParams = tt.extra
@@ -70,12 +70,12 @@ func TestConfigureGRUBLegacyCompat(t *testing.T) {
 			}
 			ran := false
 			for _, call := range cmd.calls {
-				if call.name == "chroot" && strings.Contains(strings.Join(call.args, " "), "/usr/sbin/update-grub") {
+				if call.name == "chroot" && strings.Contains(strings.Join(call.args, " "), "exec /usr/sbin/update-grub") {
 					ran = true
 				}
 			}
-			if ran != tt.updateGRUB {
-				t.Fatalf("update-grub ran = %v, want %v (calls %v)", ran, tt.updateGRUB, cmd.calls)
+			if !ran {
+				t.Fatalf("update-grub was not looked up inside the target root (calls %v)", cmd.calls)
 			}
 		})
 	}

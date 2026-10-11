@@ -395,6 +395,12 @@ func formatKubeletExtraArgs(args []string) string {
 
 // ConfigureGRUB writes GRUB kernel parameters and runs update-grub via chroot.
 //
+// With CAPRF_LEGACY_COMPAT it follows the legacy provisioner instead: it
+// appends "ds=nocloud console=ttyS0,115200n8" (ttyS1 on Lenovo) and the
+// extra parameters verbatim, so several console= tokens can appear, and it
+// skips update-grub when the image has none. The rest of this comment
+// describes the default mode.
+//
 // The console parameter comes from the shared serial console resolver, which
 // replaces the former vendor heuristic ("Lenovo means ttyS1"). Exactly one
 // console= parameter is emitted: operator-supplied console tokens are folded
