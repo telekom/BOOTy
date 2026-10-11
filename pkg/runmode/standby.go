@@ -202,7 +202,7 @@ func (m *StandbyMode) handleProvision(ctx context.Context, cmd config.Command) *
 		slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
 	}
 
-	return &commandResult{err: &ProvisionCompleteError{FirmwareChanged: orch.FirmwareChanged()}}
+	return &commandResult{err: provisionComplete(orch.FirmwareChanged(), m.deps.Cfg.LegacyCompat)}
 }
 
 func (m *StandbyMode) handleDeprovision(ctx context.Context, cmd config.Command) *commandResult {
@@ -213,11 +213,18 @@ func (m *StandbyMode) handleDeprovision(ctx context.Context, cmd config.Command)
 		if ackErr := m.deps.Client.AcknowledgeCommand(ctx, cmd.ID, "failed", fmt.Sprintf("deprovision command failed: %v", err)); ackErr != nil {
 			slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
 		}
+		if m.deps.Cfg.LegacyCompat {
+			slog.Info("legacy compat: waiting after deprovisioning failure")
+			<-ctx.Done()
+		}
 		return &commandResult{err: err}
 	}
 
 	if ackErr := m.deps.Client.AcknowledgeCommand(ctx, cmd.ID, "completed", ""); ackErr != nil {
 		slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
+	}
+	if m.deps.Cfg.LegacyCompat {
+		return &commandResult{err: &PowerOffRequestedError{}}
 	}
 	return &commandResult{err: &RebootRequestedError{}}
 }

@@ -226,3 +226,48 @@ func TestStandbyDeprovisionCommandFailureReturnsErrorWithoutReboot(t *testing.T)
 		t.Fatalf("deprovision calls = %d, want 1", deprovisionCalls)
 	}
 }
+
+func TestStandbyDeprovisionCommandLegacyCompatExit(t *testing.T) {
+	deprovisionErr := errors.New("wipe failed")
+	for _, tt := range []struct {
+		name         string
+		deprovErr    error
+		wantPowerOff bool
+	}{
+		{name: "success powers off", wantPowerOff: true},
+		{name: "failure waits", deprovErr: deprovisionErr},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			cfg := standbyConfig()
+			cfg.LegacyCompat = true
+			provider := &standbyProvider{commands: []config.Command{{ID: "cmd-1", Type: "deprovision"}}}
+			mode := &StandbyMode{
+				deps: Deps{Cfg: cfg, Client: provider},
+				newDeprovisioner: func() standbyDeprovisioner {
+					return standbyDeprovisionerFunc(func(context.Context) error {
+						if tt.deprovErr != nil {
+							cancel() // the failure path must wait for the context
+						}
+						return tt.deprovErr
+					})
+				},
+			}
+
+			err := mode.Run(ctx)
+
+			var powerOff *PowerOffRequestedError
+			if errors.As(err, &powerOff) != tt.wantPowerOff {
+				t.Fatalf("Run error = %v, want power off %v", err, tt.wantPowerOff)
+			}
+			var rebootErr *RebootRequestedError
+			if errors.As(err, &rebootErr) {
+				t.Fatalf("Run error = %v, legacy compat must not reboot", err)
+			}
+			if tt.deprovErr != nil && !errors.Is(err, tt.deprovErr) {
+				t.Fatalf("Run error = %v, want %v", err, tt.deprovErr)
+			}
+		})
+	}
+}

@@ -81,7 +81,7 @@ func (c *Config) Validate() error {
 	if err := validateImageSourceRootSelectors(&c.Provision.Image); err != nil {
 		errs = append(errs, err.Error())
 	}
-	if err := validateABConfig(c.Provision.Image.Mode, c.Provision.DisableKexec, &c.Provision.AB); err != nil {
+	if err := validateABConfig(c.Provision.Image.Mode, c.KexecDisabled(), &c.Provision.AB); err != nil {
 		errs = append(errs, err.Error())
 	}
 	if err := validateSecureBootConfig(c.Provision.Image.Mode, &c.Provision.SecureBoot, &c.Provision.AB); err != nil {

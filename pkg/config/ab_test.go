@@ -342,6 +342,22 @@ func TestValidateRejectsABPreserveWithDisableKexec(t *testing.T) {
 	}
 }
 
+// CAPRF_LEGACY_COMPAT powers off and never kexecs, so it cannot complete an
+// A/B preserve-existing upgrade either.
+func TestValidateRejectsABPreserveWithLegacyCompat(t *testing.T) {
+	cfg := &Config{LegacyCompat: true}
+	cfg.Provision.Image.Mode = ImageModeAB
+	cfg.Provision.AB.PreserveExisting = true
+	cfg.Provision.AB.ActiveSlot = ABSlotA
+	cfg.Provision.AB.TargetSlot = ABTargetInactive
+	cfg.Provision.AB.RootSizeMB = 8192
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "disableKexec must be false") {
+		t.Fatalf("Validate() = %v, want kexec requirement error", err)
+	}
+}
+
 func TestValidateRejectsABPreserveWithSecureBootReEnable(t *testing.T) {
 	cfg := &Config{}
 	cfg.Provision.Image.Mode = ImageModeAB
