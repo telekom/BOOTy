@@ -36,7 +36,7 @@ CLEAN_FILES := \
 # crash with a newer local Go, so build and run the linter with that version.
 GOLANGCI_LINT_VERSION ?= v2.12.2
 LINT_GOTOOLCHAIN ?= go$(shell sed -n 's/^go //p' go.mod)
-GOLANGCI_LINT ?= $(CURDIR)/bin/golangci-lint-$(GOLANGCI_LINT_VERSION)-$(LINT_GOTOOLCHAIN)
+GOLANGCI_LINT ?= bin/golangci-lint-$(GOLANGCI_LINT_VERSION)-$(LINT_GOTOOLCHAIN)
 
 CLAB_TEST_IMAGE ?= test/e2e/clab/images/test.img.gz
 
