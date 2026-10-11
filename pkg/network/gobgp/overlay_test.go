@@ -3848,3 +3848,17 @@ func TestHandleType5RouteFallsBackWhenSameNLRIUpdateFails(t *testing.T) {
 		t.Fatalf("route gw after failed same-NLRI update = %s, want fallback 192.168.4.1", last.Gw)
 	}
 }
+
+func TestHandleType5RouteWithdrawAfterFailedUpdateRemovesPrefix(t *testing.T) {
+	mock := &failingGatewayRouteOps{mockOverlayNetlinkOps: &mockOverlayNetlinkOps{}, failGw: "192.168.4.9"}
+	overlay := newType5FailoverTestOverlay(mock)
+	routeB, routeBMoved := type5FailoverRoute(t, 2, "192.168.4.2"), type5FailoverRoute(t, 2, "192.168.4.9")
+
+	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
+	overlay.handleType5Route(routeBMoved, "192.168.4.9", mustParseMAC(t, "62:db:b8:c1:80:09"), false)
+	overlay.handleType5Route(routeBMoved, "192.168.4.9", nil, true)
+
+	if len(mock.routeDels) != 1 || mock.routeDels[0].Gw != nil || mock.routeDels[0].Dst.String() != "0.0.0.0/0" {
+		t.Fatalf("expected the 0/0 route to be deleted whatever its gateway, got %v", mock.routeDels)
+	}
+}

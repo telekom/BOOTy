@@ -901,8 +901,10 @@ func (o *OverlayTier) addType5Path(prefix string, path *type5Path) {
 // moves to a remaining path, or is deleted when none can be installed.
 // The caller holds type5PathsMu.
 func (o *OverlayTier) withdrawType5Path(prefix, key string, route *apipb.EVPNIPPrefixRoute, vtep string, routerMAC net.HardwareAddr) {
+	_, tracked := o.type5Paths[prefix][key]
 	remaining := o.forgetType5Path(prefix, key)
-	if active, ok := o.type5Active[prefix]; ok && active != key && len(remaining) > 0 {
+	active, known := o.type5Active[prefix]
+	if known && active != key && len(remaining) > 0 {
 		// An inactive path withdrew. The installed route stays.
 		return
 	}
@@ -920,8 +922,9 @@ func (o *OverlayTier) withdrawType5Path(prefix, key string, route *apipb.EVPNIPP
 	if !ok {
 		return
 	}
-	if len(remaining) > 0 {
-		// A failed fallback may have moved the kernel route already.
+	if len(remaining) > 0 || (tracked && !known) {
+		// A failed fallback or update may have left the kernel route on
+		// another gateway, so delete the prefix route whatever its gateway.
 		o.removeType5Prefix(state)
 		return
 	}
