@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -25,19 +26,23 @@ func (c *Configurator) configureGRUBLegacy(ctx context.Context, cfg *config.Mach
 	if strings.ContainsAny(extra, legacyGRUBUnsafe) {
 		return fmt.Errorf("unsafe characters in ExtraKernelParams: %q", extra)
 	}
-	params := strings.TrimSpace("ds=nocloud " + c.legacyConsoleParam() + " " + extra)
+	abRoot, err := abRootKernelParam(cfg)
+	if err != nil {
+		return err
+	}
+	params := strings.Join(strings.Fields("ds=nocloud "+c.legacyConsoleParam()+" "+extra+" "+abRoot), " ")
 	line := fmt.Sprintf("GRUB_CMDLINE_LINUX=\"$GRUB_CMDLINE_LINUX %s\"\n", params)
 
-	grubDir := filepath.Join(c.rootDir, "etc", "default", "grub.d")
-	if err := os.MkdirAll(grubDir, 0o755); err != nil {
-		return fmt.Errorf("creating grub.d dir: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Join(c.rootDir, "boot", "grub"), 0o755); err != nil {
+	// targetPath refuses paths that leave the target root through symlinks.
+	if _, err := c.targetPath(path.Join("/boot/grub", "grub.cfg")); err != nil {
 		return fmt.Errorf("creating boot grub dir: %w", err)
 	}
-	grubPath := filepath.Join(grubDir, "10-caprf-kernel-params.cfg")
-	slog.Info("writing GRUB config like the legacy CAPRF provisioner", "path", grubPath, "params", params)
-	if err := os.WriteFile(grubPath, []byte(line), 0o644); err != nil { //nolint:gosec // fixed path inside the target root
+	grubPath, err := c.targetPath("/etc/default/grub.d/10-caprf-kernel-params.cfg")
+	if err != nil {
+		return fmt.Errorf("grub drop-in path: %w", err)
+	}
+	slog.Info("writing GRUB config like the legacy CAPRF provisioner", "path", grubPath)
+	if err := writeFileAtomic(grubPath, []byte(line), 0o644); err != nil {
 		return fmt.Errorf("writing grub config: %w", err)
 	}
 
