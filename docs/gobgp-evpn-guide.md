@@ -138,8 +138,9 @@ The router MAC is the provision bridge MAC. BOOTy selects it in this order:
 1. The netplan `macaddress` of the provision bridge, used as given. It must
    be a 48-bit MAC.
 2. `02:54` and the last 4 bytes of the IPMI MAC.
-3. `02:54` and the last 4 bytes of the underlay IP, like the legacy
-   `configure-frr.py` ramdisk.
+3. `02:54` and the 4 bytes of the underlay IPv4, like the legacy
+   `configure-frr.py` ramdisk. An IPv6 underlay uses a 32-bit FNV-1a hash
+   of the full address.
 
 The derived MACs are locally administered unicast addresses and are unique
 per host.

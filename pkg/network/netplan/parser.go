@@ -194,12 +194,8 @@ func extractBridges(np *Config, cfg *network.Config) {
 	}
 
 	// The router MAC must belong to the bridge that BOOTy creates.
-	bridgeName := cfg.BridgeName
-	if bridgeName == "" {
-		bridgeName = network.DefaultBridgeName
-	}
 	if cfg.BridgeMAC == "" {
-		cfg.BridgeMAC = np.Network.Bridges[bridgeName].MACAddress
+		cfg.BridgeMAC = np.Network.Bridges[cfg.BridgeNameOrDefault()].MACAddress
 	}
 }
 

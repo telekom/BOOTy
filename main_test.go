@@ -59,14 +59,27 @@ func TestMergeNetplanConfigPreservesProvisionPrefixForSameHostMask(t *testing.T)
 	}
 }
 
-func TestMergeNetplanConfigCopiesBridgeMAC(t *testing.T) {
-	dst := &network.Config{}
-	src := &network.Config{BridgeMAC: "02:00:00:00:10:01"}
+func TestMergeNetplanConfigBridgeMAC(t *testing.T) {
+	tests := []struct {
+		name      string
+		srcBridge string
+		want      string
+	}{
+		{"default_bridge", "", "02:00:00:00:10:01"},
+		{"same_bridge", "br.provision", "02:00:00:00:10:01"},
+		{"other_bridge", "br_cluster", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dst := &network.Config{}
+			src := &network.Config{BridgeName: tt.srcBridge, BridgeMAC: "02:00:00:00:10:01"}
 
-	mergeNetplanConfig(dst, src)
+			mergeNetplanConfig(dst, src)
 
-	if dst.BridgeMAC != "02:00:00:00:10:01" {
-		t.Fatalf("BridgeMAC = %q, want netplan macaddress", dst.BridgeMAC)
+			if dst.BridgeMAC != tt.want {
+				t.Fatalf("BridgeMAC = %q, want %q", dst.BridgeMAC, tt.want)
+			}
+		})
 	}
 }
 

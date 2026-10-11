@@ -107,6 +107,14 @@ type VLANConfig struct {
 	Gateway string // Default gateway IP (optional)
 }
 
+// BridgeNameOrDefault returns the provision bridge name BOOTy creates.
+func (c *Config) BridgeNameOrDefault() string {
+	if c.BridgeName == "" {
+		return DefaultBridgeName
+	}
+	return c.BridgeName
+}
+
 // ApplyDefaults fills in default values for unset fields.
 func (c *Config) ApplyDefaults() {
 	if c.BridgeName == "" {

@@ -2,6 +2,7 @@ package frr
 
 import (
 	"fmt"
+	"hash/fnv"
 	"net"
 	"strings"
 	"text/template"
@@ -201,15 +202,21 @@ func deriveBridgeMAC(cfg *network.Config, underlayIP string) (string, error) {
 	return deriveBridgeMACFromIP(underlayIP)
 }
 
-// deriveBridgeMACFromIP encodes the last 4 bytes of the underlay IP behind
-// the 02:54 prefix, like the legacy configure-frr.py ramdisk script.
-// The underlay IP is the VTEP address, so the MAC is unique per host.
+// deriveBridgeMACFromIP encodes the underlay IPv4 behind the 02:54 prefix,
+// like the legacy configure-frr.py ramdisk script. The underlay IP is the
+// VTEP address, so the MAC is unique per host. An IPv6 underlay does not fit
+// into 4 bytes, so it uses an FNV-1a hash of the full address.
 func deriveBridgeMACFromIP(underlayIP string) (string, error) {
 	ip := net.ParseIP(underlayIP)
 	if ip == nil {
 		return "", fmt.Errorf("invalid underlay IP %q for bridge MAC derivation", underlayIP)
 	}
-	return bridgeMACFromBytes(ip.To16()[12:]), nil
+	if ip4 := ip.To4(); ip4 != nil {
+		return bridgeMACFromBytes(ip4), nil
+	}
+	h := fnv.New32a()
+	_, _ = h.Write(ip) // hash.Hash never returns an error.
+	return bridgeMACFromBytes(h.Sum(nil)), nil
 }
 
 // bridgeMACFromBytes returns 02:54 followed by 4 host specific bytes.

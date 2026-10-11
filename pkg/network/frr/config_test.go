@@ -72,7 +72,6 @@ func TestDeriveAddresses_BridgeMACWithoutIPMI(t *testing.T) {
 	}{
 		{"ipv4_underlay", "10.0.0.1", "", "02:54:0a:00:00:01"},
 		{"other_ipv4_underlay", "10.0.0.2", "", "02:54:0a:00:00:02"},
-		{"ipv6_underlay", "2001:db8::a0b:c0d", "", "02:54:0a:0b:0c:0d"},
 		{"invalid_ipmi_mac", "192.168.4.7", "invalid", "02:54:c0:a8:04:07"},
 	}
 	for _, tt := range tests {
@@ -134,6 +133,8 @@ func TestBridgeMACUniqueStableLAA(t *testing.T) {
 		{"ip_a", "", "10.0.0.11"},
 		{"ip_b", "", "10.0.0.12"},
 		{"ip_c", "", "10.0.1.11"},
+		{"ipv6_a", "", "2001:db8::1:0:0:1"},
+		{"ipv6_b", "", "2001:db8::2:0:0:1"},
 	}
 	seen := map[string]string{}
 	for _, tt := range tests {
