@@ -136,6 +136,9 @@ func (o *Orchestrator) ensureMirrorMember(ctx context.Context, member string) er
 	return o.disk.AddMirrorMember(ctx, disk.MirrorRootArray, member)
 }
 
+const mirrorGrubConfig = "# Written by BOOTy: the root filesystem is a RAID1 array. Booting by the\n" +
+	"# PARTUUID of one member would bypass the array.\nGRUB_FORCE_PARTUUID=\n"
+
 // configureMdadm records the root array in the installed system and rebuilds
 // its initramfs so the array is assembled before the root filesystem mounts.
 func (o *Orchestrator) configureMdadm(ctx context.Context) error {
@@ -149,6 +152,13 @@ func (o *Orchestrator) configureMdadm(ctx context.Context) error {
 	conf := "# mdadm.conf - written by BOOTy\n\nDEVICE partitions\nHOMEHOST <system>\nMAILADDR root\n\n" + scan
 	if err := writeTargetRootFile(newroot, filepath.Join(newroot, "etc", "mdadm", "mdadm.conf"), []byte(conf)); err != nil {
 		return fmt.Errorf("write mdadm.conf: %w", err)
+	}
+	// Ubuntu cloud images set GRUB_FORCE_PARTUUID, which boots the kernel
+	// without initramfs from one member partition and bypasses the array.
+	// configure-grub runs update-grub after this step, so clear it here.
+	if err := writeTargetRootFile(newroot, filepath.Join(newroot, "etc", "default", "grub.d", "99-booty-mirror.cfg"),
+		[]byte(mirrorGrubConfig)); err != nil {
+		return fmt.Errorf("write grub mirror config: %w", err)
 	}
 	cmd := "if command -v update-initramfs >/dev/null 2>&1; then update-initramfs -u -k all; " +
 		"else dracut --force --regenerate-all; fi"
