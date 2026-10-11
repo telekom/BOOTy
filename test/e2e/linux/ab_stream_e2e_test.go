@@ -192,11 +192,12 @@ func TestStreamABRejectsQCOW2WithExternalDataFile(t *testing.T) {
 	requireTool(t, "qemu-img")
 
 	dataFile := filepath.Join(t.TempDir(), "external.raw")
-	if err := os.WriteFile(dataFile, bytes.Repeat([]byte("TOKEN=supersecret "), 4096), 0o600); err != nil {
-		t.Fatalf("write data file: %v", err)
-	}
 	sourceQCOW2 := filepath.Join(t.TempDir(), "external-data.qcow2")
 	runCmd(t, "qemu-img", "create", "-f", "qcow2", "-o", "data_file="+dataFile+",data_file_raw=on", sourceQCOW2, "64K")
+	// qemu-img create truncates the data file, so write the secret after it.
+	if err := os.WriteFile(dataFile, bytes.Repeat([]byte("TOKEN=supersecret "), 3640), 0o600); err != nil {
+		t.Fatalf("write data file: %v", err)
+	}
 
 	target := createPartitionedRawImage(t, []testPartition{
 		{name: "BOOTY-EFI", sizeMB: 8, typeGUID: "C12A7328-F81F-11D2-BA4B-00A0C93EC93B", payload: repeatedPayload("efi-keep-data", 1024*1024)},
