@@ -552,6 +552,7 @@ func runCAPRF(ctx context.Context) {
 	// so rescue shell SSH access remains available.
 	var rescueErr *runmode.RescueShellError
 	var rebootErr *runmode.RebootRequestedError
+	var powerOffErr *runmode.PowerOffRequestedError
 	var provisionErr *runmode.ProvisionCompleteError
 	switch {
 	case errors.As(modeErr, &rescueErr):
@@ -565,6 +566,17 @@ func runCAPRF(ctx context.Context) {
 			if err := netMode.Teardown(ctx); err != nil {
 				slog.Warn("network teardown error", "error", err)
 			}
+		}
+		reboot()
+		return
+	case errors.As(modeErr, &powerOffErr):
+		if netMode != nil {
+			if err := netMode.Teardown(ctx); err != nil {
+				slog.Warn("network teardown error", "error", err)
+			}
+		}
+		if err := requestPowerOff(); err != nil {
+			slog.Error("power off failed, rebooting", "error", err)
 		}
 		reboot()
 		return
@@ -1179,8 +1191,8 @@ func detectIPMI(netCfg *network.Config) {
 // provisioning (e.g. Mellanox SR-IOV), or when Secure Boot must be re-enabled,
 // since those paths require a firmware-enforced reboot.
 func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) bool {
-	if cfg.Provision.DisableKexec {
-		slog.Info("kexec disabled by configuration, skipping")
+	if cfg.KexecDisabled() {
+		slog.Info("kexec disabled by configuration, skipping", "legacyCompat", cfg.LegacyCompat)
 		return false
 	}
 

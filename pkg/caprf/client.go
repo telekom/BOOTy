@@ -1346,6 +1346,8 @@ func applyFeatureToggle(cfg *config.MachineConfig, key, value string) (bool, err
 		cfg.Telemetry.Enabled = parseBoolVar(value)
 	case "PERSIST_NETWORK":
 		cfg.PersistNetwork = parseBoolVar(value)
+	case "CAPRF_LEGACY_COMPAT":
+		cfg.LegacyCompat = parseBoolVar(value)
 	case "SECUREBOOT_REENABLE":
 		cfg.Provision.SecureBoot.ReEnable = parseBoolVar(value)
 	case "RESCUE_TIMEOUT":

@@ -41,6 +41,15 @@ type Config struct {
 	// Default: ""
 	OSFamily string `yaml:"osFamily" json:"osFamily"`
 
+	// LegacyCompat makes BOOTy behave like the CAPRF legacy shell
+	// provisioner where the two differ. CAPRF sets it through
+	// CAPRF_LEGACY_COMPAT=true when BOOTy replaces the legacy ramdisk.
+	// With it set, BOOTy powers off after a successful provision or
+	// deprovision instead of using kexec or a reboot. After a failed run it
+	// keeps the ramdisk running and waits, like the legacy scripts.
+	// Default: false
+	LegacyCompat bool `yaml:"legacyCompat" json:"legacyCompat"`
+
 	// Cross-cutting configuration sections.
 	Network   NetworkConfig   `yaml:"network"   json:"network"`
 	Transport TransportConfig `yaml:"transport" json:"transport"`
@@ -57,6 +66,12 @@ type Config struct {
 	ProvisionerFiles []string `yaml:"-" json:"-"`
 	MachineFiles     []string `yaml:"-" json:"-"`
 	MachineCommands  []string `yaml:"-" json:"-"`
+}
+
+// KexecDisabled reports whether BOOTy must not kexec into the installed
+// kernel after provisioning.
+func (c *Config) KexecDisabled() bool {
+	return c.Provision.DisableKexec || c.LegacyCompat
 }
 
 // MachineConfig is a type alias for backward compatibility during migration.

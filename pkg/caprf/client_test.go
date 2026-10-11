@@ -2449,3 +2449,21 @@ func TestDoPostErrorRedactsQueryToken(t *testing.T) {
 		t.Fatalf("POST error = %q, want redacted URL context", err.Error())
 	}
 }
+
+func TestParseVarsLegacyCompat(t *testing.T) {
+	for _, tt := range []struct {
+		value string
+		want  bool
+	}{{"true", true}, {"1", true}, {"false", false}, {"", false}} {
+		cfg, err := ParseVars(strings.NewReader("CAPRF_LEGACY_COMPAT=" + tt.value + "\n"))
+		if err != nil {
+			t.Fatalf("ParseVars(%q): %v", tt.value, err)
+		}
+		if cfg.LegacyCompat != tt.want {
+			t.Errorf("CAPRF_LEGACY_COMPAT=%q: LegacyCompat = %v, want %v", tt.value, cfg.LegacyCompat, tt.want)
+		}
+		if cfg.KexecDisabled() != tt.want {
+			t.Errorf("CAPRF_LEGACY_COMPAT=%q: KexecDisabled() = %v, want %v", tt.value, cfg.KexecDisabled(), tt.want)
+		}
+	}
+}
