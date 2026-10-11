@@ -540,6 +540,9 @@ func TestNVMeAttachNamespaceRejectsInvalidInputs(t *testing.T) {
 	if err := mgr.AttachNVMeNamespace(t.Context(), "/dev/nvme0", "abc"); err == nil {
 		t.Fatal("expected error for non-numeric nsid")
 	}
+	if calls := mgr.cmd.(*mockCommander).calls; len(calls) != 0 {
+		t.Fatalf("invalid input must not run nvme commands: %#v", calls)
+	}
 }
 
 func TestNVMeFormatNamespaceRejectsInvalidDevice(t *testing.T) {
@@ -598,5 +601,20 @@ func TestApplyNVMeNamespaceLayoutChecksControllerIDBeforeDelete(t *testing.T) {
 		if hasDiskCommandCall(cmd.calls, "nvme", "delete-ns", "/dev/nvme0", "-n", "3") {
 			t.Fatalf("id-ctrl %s: namespaces were deleted before the controller ID was known", info)
 		}
+	}
+}
+
+func TestNVMeResetNamespacesChecksControllerIDBeforeDelete(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("nvme id-ctrl", []byte(`{"tnvmcap":1024000}`), nil)
+	cmd.setResult("nvme list-ns", []byte(`{"nsid_list":[{"nsid":1}]}`), nil)
+	cmd.setResult("nvme delete-ns", []byte(""), nil)
+	mgr := NewManager(cmd)
+
+	if err := mgr.NVMeResetNamespaces(t.Context(), "/dev/nvme0"); err == nil {
+		t.Fatal("expected controller ID error")
+	}
+	if hasDiskCommandCall(cmd.calls, "nvme", "delete-ns", "/dev/nvme0", "-n", "1") {
+		t.Fatal("namespaces were deleted before the controller ID was known")
 	}
 }

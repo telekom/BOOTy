@@ -268,6 +268,12 @@ func (m *Manager) CreateNVMeNamespace(ctx context.Context, controller string, si
 // on. nvme attach-ns needs the controller ID (cntlid), which is not always 0
 // on enterprise and dual-port drives.
 func (m *Manager) AttachNVMeNamespace(ctx context.Context, controller, nsid string) error {
+	if !nvmeControllerPathRE.MatchString(controller) {
+		return fmt.Errorf("invalid NVMe controller path %q", controller)
+	}
+	if !nsidRE.MatchString(nsid) {
+		return fmt.Errorf("invalid NVMe namespace ID %q", nsid)
+	}
 	cntlid, err := m.nvmeControllerID(ctx, controller)
 	if err != nil {
 		return err
@@ -419,24 +425,28 @@ func (m *Manager) NVMeResetNamespaces(ctx context.Context, controller string) er
 	}
 	slog.Info("resetting nvme namespaces to factory default", "controller", controller)
 
-	if err := m.deleteAllNamespaces(ctx, controller); err != nil {
-		return err
-	}
-
-	// Get total capacity for the default namespace.
+	// Read capacity and controller ID before the destructive delete.
 	totalBytes, err := m.nvmeControllerCapacity(ctx, controller)
 	if err != nil {
 		return fmt.Errorf("reading controller capacity for reset: %w", err)
 	}
+	cntlid, err := m.nvmeControllerID(ctx, controller)
+	if err != nil {
+		return err
+	}
 	sizeBlocks := totalBytes / 512
+
+	if err := m.deleteAllNamespaces(ctx, controller); err != nil {
+		return err
+	}
 
 	// Create and attach single namespace using full capacity.
 	nsid, err := m.CreateNVMeNamespace(ctx, controller, sizeBlocks, 512)
 	if err != nil {
-		m.tryAttachFallbackNamespace(ctx, controller, sizeBlocks)
+		m.tryAttachFallbackNamespace(ctx, controller, sizeBlocks, cntlid)
 		return fmt.Errorf("creating default namespace: %w", err)
 	}
-	if err := m.AttachNVMeNamespace(ctx, controller, nsid); err != nil {
+	if err := m.attachNVMeNamespace(ctx, controller, nsid, cntlid); err != nil {
 		return fmt.Errorf("attaching default namespace: %w", err)
 	}
 
@@ -444,7 +454,7 @@ func (m *Manager) NVMeResetNamespaces(ctx context.Context, controller string) er
 	return nil
 }
 
-func (m *Manager) tryAttachFallbackNamespace(ctx context.Context, controller string, sizeBlocks uint64) {
+func (m *Manager) tryAttachFallbackNamespace(ctx context.Context, controller string, sizeBlocks uint64, cntlid string) {
 	// Avoid leaving the drive without namespaces: try to recreate a minimal
 	// fallback namespace so the controller remains usable.
 	fallbackBlocks := uint64(1 << 21) // 1 GiB @ 512-byte sectors
@@ -465,7 +475,7 @@ func (m *Manager) tryAttachFallbackNamespace(ctx context.Context, controller str
 		return
 	}
 
-	if attachErr := m.AttachNVMeNamespace(ctx, controller, fbNSID); attachErr != nil {
+	if attachErr := m.attachNVMeNamespace(ctx, controller, fbNSID, cntlid); attachErr != nil {
 		slog.Warn("failed to attach fallback namespace after reset failure",
 			"controller", controller,
 			"fallback_nsid", fbNSID,
