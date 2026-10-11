@@ -323,7 +323,7 @@ func TestSeparateBootPartition(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, newTestDiskManager())
 			o.rootPartition, o.bootPartition, o.targetPartitions = "/dev/sda1", "/dev/sda15", tt.parts
-			boot, err := o.separateBootPartition()
+			boot, err := o.separateBootPartition(context.Background())
 			if (err != nil) != tt.wantErr || boot != tt.wantBoot {
 				t.Fatalf("separateBootPartition() = %q, %v; want %q, wantErr %v", boot, err, tt.wantBoot, tt.wantErr)
 			}
@@ -433,5 +433,72 @@ func TestMountMirrorBootMountsArrayBeforeESP(t *testing.T) {
 	want := []string{disk.MirrorBootArray + " " + filepath.Join(newroot, "boot"), "/dev/sda15 " + bootEFIMountPoint()}
 	if strings.Join(mounts, "|") != strings.Join(want, "|") {
 		t.Fatalf("mounts = %v, want %v", mounts, want)
+	}
+}
+
+func TestSeparateBootPartitionNeedsFstabForLinuxType(t *testing.T) {
+	tests := []struct {
+		name     string
+		fstab    string
+		wantBoot string
+		wantErr  bool
+	}{
+		{name: "fstab mounts the partition at /boot by label", fstab: "LABEL=root / ext4 defaults 0 1\nLABEL=BOOT /boot ext4 defaults 0 2\n", wantBoot: "/dev/sda2"},
+		{name: "fstab mounts the partition at /var", fstab: "LABEL=root / ext4 defaults 0 1\nLABEL=BOOT /var ext4 defaults 0 2\n", wantErr: true},
+		{name: "fstab mounts another /boot", fstab: "UUID=other /boot ext4 defaults 0 2\n", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origMount := mountReadOnlyPart
+			t.Cleanup(func() { mountReadOnlyPart = origMount })
+			mountReadOnlyPart = func(_ context.Context, _ *disk.Manager, _, dir string) error {
+				if err := os.MkdirAll(filepath.Join(dir, "etc"), 0o755); err != nil {
+					return err
+				}
+				return os.WriteFile(filepath.Join(dir, "etc", "fstab"), []byte(tt.fstab), 0o644)
+			}
+			cmd := newMockCommander()
+			cmd.setResult("mdadm --detail", nil, errors.New("no such array"))
+			cmd.setResult("blkid -o", []byte("DEVNAME=/dev/sda2\nLABEL=BOOT\nUUID=1234\nTYPE=ext4\n"), nil)
+			o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, disk.NewManager(cmd))
+			o.targetDisk, o.rootPartition = "/dev/sda", "/dev/sda1"
+			o.targetPartitions = []disk.Partition{
+				{Node: "/dev/sda1", Type: disk.LinuxFilesystemGUID, Name: "root"},
+				{Node: "/dev/sda2", Type: disk.LinuxFilesystemGUID},
+			}
+			boot, err := o.separateBootPartition(context.Background())
+			if (err != nil) != tt.wantErr || boot != tt.wantBoot {
+				t.Fatalf("separateBootPartition() = %q, %v; want %q, wantErr %v", boot, err, tt.wantBoot, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestRewriteMirrorFstab(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fstab := "# static\nPARTUUID=aaa / ext4 defaults 0 1\nPARTUUID=bbb /boot ext4 defaults 0 2\n" +
+		"PARTUUID=ccc /boot/efi vfat umask=0077 0 1\nLABEL=data /data ext4 defaults 0 2\n"
+	if err := os.WriteFile(filepath.Join(root, "etc", "fstab"), []byte(fstab), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := newMockCommander()
+	cmd.setResult("blkid -s", []byte("ABCD-1234\n"), nil)
+	o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, disk.NewManager(cmd))
+	o.bootPartition = "/dev/sda15"
+	o.mirrorArrays = []string{disk.MirrorRootArray, disk.MirrorBootArray}
+	if err := o.rewriteMirrorFstab(context.Background(), root); err != nil {
+		t.Fatalf("rewriteMirrorFstab() error = %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "etc", "fstab"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "# static\n/dev/md2 / ext4 defaults 0 1\n/dev/md1 /boot ext4 defaults 0 2\n" +
+		"UUID=ABCD-1234 /boot/efi vfat umask=0077 0 1\nLABEL=data /data ext4 defaults 0 2\n"
+	if string(got) != want {
+		t.Fatalf("fstab =\n%s\nwant\n%s", got, want)
 	}
 }

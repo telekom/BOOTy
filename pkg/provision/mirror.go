@@ -114,7 +114,7 @@ func (o *Orchestrator) mirrorRoot(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("determine root partition number: %w", err)
 	}
-	bootData, err := o.separateBootPartition()
+	bootData, err := o.separateBootPartition(ctx)
 	if err != nil {
 		return err
 	}
@@ -194,25 +194,147 @@ const (
 )
 
 // separateBootPartition returns the image partition, besides root, ESP and
-// BIOS boot, that mirroring also covers: one Linux filesystem or extended
-// boot partition, the separate /boot that the legacy provisioner mirrors as
-// md1. Any other partition is rejected because its data would exist on the
-// first disk only.
-func (o *Orchestrator) separateBootPartition() (string, error) {
-	var boot string
+// BIOS boot, that mirroring also covers: the separate /boot that the legacy
+// provisioner mirrors as md1. An extended boot partition is /boot by type; a
+// Linux filesystem partition must be the /boot entry of the image fstab. Any
+// other partition is rejected because its data would exist on the first disk
+// only.
+func (o *Orchestrator) separateBootPartition(ctx context.Context) (string, error) {
+	var boot disk.Partition
 	for _, p := range o.targetPartitions {
 		switch {
 		case p.Node == o.rootPartition || p.Node == o.bootPartition ||
 			strings.EqualFold(p.Type, disk.EFISystemPartitionGUID) || strings.EqualFold(p.Type, biosBootPartitionGUID):
 			continue
-		case boot == "" && (strings.EqualFold(p.Type, disk.LinuxFilesystemGUID) || strings.EqualFold(p.Type, xbootldrPartitionGUID)):
-			boot = p.Node
+		case boot.Node == "" && (strings.EqualFold(p.Type, disk.LinuxFilesystemGUID) || strings.EqualFold(p.Type, xbootldrPartitionGUID)):
+			boot = p
 		default:
 			return "", fmt.Errorf("disk mirroring covers the root partition, one separate /boot partition, the ESP and "+
 				"the BIOS boot partition, but the image also has partition %s (type %s)", p.Node, p.Type)
 		}
 	}
-	return boot, nil
+	// An assembled /boot array means the partition was identified before
+	// a resume; its member no longer shows the filesystem identifiers.
+	if boot.Node == "" || strings.EqualFold(boot.Type, xbootldrPartitionGUID) || o.disk.MirrorActive(ctx, disk.MirrorBootArray) {
+		return boot.Node, nil
+	}
+	if err := o.verifyFstabBoot(ctx, boot.Node); err != nil {
+		return "", err
+	}
+	return boot.Node, nil
+}
+
+// verifyFstabBoot checks that the image fstab mounts partition at /boot.
+func (o *Orchestrator) verifyFstabBoot(ctx context.Context, partition string) error {
+	rootDev := o.rootPartition
+	if o.disk.MirrorActive(ctx, disk.MirrorRootArray) {
+		rootDev = disk.MirrorRootArray
+	}
+	dir, err := os.MkdirTemp("", "booty-mirror-root-")
+	if err != nil {
+		return fmt.Errorf("create root inspection directory: %w", err)
+	}
+	defer func() { _ = os.Remove(dir) }()
+	if err := mountReadOnlyPart(ctx, o.disk, rootDev, dir); err != nil {
+		return fmt.Errorf("mount %s to read its fstab: %w", rootDev, err)
+	}
+	source, readErr := fstabEntrySource(filepath.Join(dir, "etc", "fstab"), "/boot")
+	if err := o.disk.Unmount(dir); err != nil {
+		o.log.Warn("failed to unmount root inspection mount", "dir", dir, "error", err)
+	}
+	if readErr != nil {
+		return readErr
+	}
+	out, err := o.disk.Run(ctx, "blkid", "-o", "export", partition)
+	if err != nil {
+		return fmt.Errorf("read identifiers of %s: %w", partition, err)
+	}
+	if source == partition {
+		return nil
+	}
+	for line := range strings.Lines(string(out)) {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok && value != "" && (key == "UUID" || key == "LABEL" || key == "PARTUUID") && source == key+"="+value {
+			return nil
+		}
+	}
+	return fmt.Errorf("partition %s is not the /boot of the image fstab (/boot source %q); "+
+		"disk mirroring covers only root and a separate /boot", partition, source)
+}
+
+// fstabEntrySource returns the source of the fstab entry for mountpoint, or
+// "" when there is none.
+func fstabEntrySource(path, mountpoint string) (string, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // fstab of the streamed image
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	for line := range strings.Lines(string(data)) {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && !strings.HasPrefix(fields[0], "#") && fields[1] == mountpoint {
+			return fields[0], nil
+		}
+	}
+	return "", nil
+}
+
+// rewriteMirrorFstab points fstab entries that name a partition of one disk
+// at sources that work from either disk: / and /boot at their md arrays, and
+// a PARTUUID /boot/efi at the ESP filesystem UUID, which the copy shares. The
+// second disk gets new partition GUIDs, and a member partition must never be
+// mounted directly.
+func (o *Orchestrator) rewriteMirrorFstab(ctx context.Context, root string) error {
+	path := filepath.Join(root, "etc", "fstab")
+	data, err := os.ReadFile(path) //nolint:gosec // fstab of the provisioned root
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read fstab: %w", err)
+	}
+	arrays := map[string]string{"/": disk.MirrorRootArray}
+	if slices.Contains(o.mirrorArrays, disk.MirrorBootArray) {
+		arrays["/boot"] = disk.MirrorBootArray
+	}
+	lines := strings.SplitAfter(string(data), "\n")
+	changed := false
+	for i, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || strings.HasPrefix(fields[0], "#") {
+			continue
+		}
+		source := fields[0]
+		if replacement := o.mirrorFstabSource(ctx, arrays[fields[1]], source, fields[1]); replacement != "" {
+			o.log.Info("fstab entry now valid from both mirror disks", "mountpoint", fields[1], "from", source, "to", replacement)
+			lines[i] = strings.Replace(line, source, replacement, 1)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	if err := writeTargetRootFile(root, path, []byte(strings.Join(lines, ""))); err != nil {
+		return fmt.Errorf("write fstab: %w", err)
+	}
+	return nil
+}
+
+// mirrorFstabSource returns the replacement for an fstab source that names a
+// partition of one disk, or "" to keep it.
+func (o *Orchestrator) mirrorFstabSource(ctx context.Context, array, source, mountpoint string) string {
+	switch {
+	case array != "" && source != array && (strings.HasPrefix(source, "PARTUUID=") || strings.HasPrefix(source, "/dev/")):
+		return array
+	case mountpoint == "/boot/efi" && strings.HasPrefix(source, "PARTUUID=") && o.bootPartition != "":
+		out, err := o.disk.Run(ctx, "blkid", "-s", "UUID", "-o", "value", o.bootPartition)
+		if uuid := strings.TrimSpace(string(out)); err == nil && uuid != "" {
+			return "UUID=" + uuid
+		}
+	}
+	return ""
 }
 
 // mdadmConfHeader matches the CAPRF legacy provisioner. AUTO stops mdadm
@@ -276,6 +398,9 @@ func (o *Orchestrator) configureMdadm(ctx context.Context) error {
 		arrayLines = append(arrayLines, mdadmArrayLines(array, scan)...)
 	}
 	if err := writeMdadmConf(newroot, mdadmConfHeader+strings.Join(arrayLines, "\n")+"\n"); err != nil {
+		return err
+	}
+	if err := o.rewriteMirrorFstab(ctx, newroot); err != nil {
 		return err
 	}
 	// Ubuntu cloud images set GRUB_FORCE_PARTUUID, which boots the kernel
@@ -392,7 +517,8 @@ func (o *Orchestrator) mountMirrorBoot(ctx context.Context) error {
 	}
 	mountpoint := filepath.Join(newroot, "boot")
 	if isMountPoint(mountpoint) {
-		return nil
+		_, err := mountedFromExpectedSource(mountpoint, disk.MirrorBootArray, "separate /boot")
+		return err
 	}
 	if err := mountBootPart(ctx, o.disk, disk.MirrorBootArray, mountpoint); err != nil {
 		return fmt.Errorf("mounting separate /boot %s at %s: %w", disk.MirrorBootArray, mountpoint, err)
