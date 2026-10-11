@@ -3639,3 +3639,52 @@ func TestHandleType5RouteFallsBackToPathWhoseInstallFailed(t *testing.T) {
 		t.Fatalf("route gw after B withdraw = %s, want 192.168.4.1", last.Gw)
 	}
 }
+
+func TestHandleType5RouteTriesEveryRemainingPath(t *testing.T) {
+	mock := &failingGatewayRouteOps{mockOverlayNetlinkOps: &mockOverlayNetlinkOps{}, failGw: "192.168.4.1"}
+	overlay := &OverlayTier{
+		cfg: &Config{
+			RouterID:          "192.168.4.10",
+			ProvisionVNI:      1000,
+			BridgeName:        "br.provision",
+			OverlayVRFName:    "Vrf_overlay",
+			OverlayVRFTableID: 20,
+		},
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	routeVia := func(rdAdmin uint32, gw string) *apipb.EVPNIPPrefixRoute {
+		rd, err := anypb.New(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAdmin})
+		if err != nil {
+			t.Fatalf("anypb.New: %v", err)
+		}
+		return &apipb.EVPNIPPrefixRoute{Rd: rd, IpPrefix: "0.0.0.0", IpPrefixLen: 0, GwAddress: gw}
+	}
+	routeA, routeB, routeC := routeVia(1, "192.168.4.1"), routeVia(2, "192.168.4.2"), routeVia(3, "192.168.4.3")
+
+	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
+	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
+	overlay.handleType5Route(routeC, "192.168.4.3", mustParseMAC(t, "62:db:b8:c1:80:03"), false)
+	overlay.handleType5Route(routeC, "192.168.4.3", nil, true)
+
+	if len(mock.routeDels) != 0 {
+		t.Fatalf("route deleted although gateway B is installable: %v", mock.routeDels)
+	}
+	if last := mock.routeReplaces[len(mock.routeReplaces)-1]; !last.Gw.Equal(net.ParseIP("192.168.4.2")) {
+		t.Fatalf("route gw after C withdraw = %s, want 192.168.4.2", last.Gw)
+	}
+}
+
+// failingGatewayRouteOps fails RouteReplace for one gateway.
+type failingGatewayRouteOps struct {
+	*mockOverlayNetlinkOps
+	failGw string
+}
+
+func (m *failingGatewayRouteOps) RouteReplace(route *netlink.Route) error {
+	err := m.mockOverlayNetlinkOps.RouteReplace(route)
+	if route.Gw.Equal(net.ParseIP(m.failGw)) {
+		return errors.New("replace failed")
+	}
+	return err
+}

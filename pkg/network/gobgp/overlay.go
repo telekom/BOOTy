@@ -840,6 +840,14 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 	if vtep == o.cfg.RouterID {
 		return
 	}
+
+	// Hold the lock for the whole update, so Teardown waits for an update
+	// in flight and later updates do not touch the kernel.
+	o.type5PathsMu.Lock()
+	defer o.type5PathsMu.Unlock()
+	if o.type5Stopped {
+		return
+	}
 	vtepIP, ok := o.ensureType5VTEP(vtep, withdraw)
 	if !ok {
 		return
@@ -849,20 +857,14 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 		return
 	}
 
-	o.type5PathsMu.Lock()
-	defer o.type5PathsMu.Unlock()
-	if o.type5Stopped {
-		return
-	}
 	prefix, key := state.dst.String(), type5PathKey(route)
 	if withdraw {
-		if remaining, ok := o.forgetType5Path(prefix, key); ok {
-			o.log.Info("type-5 path withdrawn, keeping route via remaining path",
-				"dst", state.dst, "withdrawn_gw", state.gw, "gw", remaining.state.gw)
+		for _, remaining := range o.forgetType5Path(prefix, key) {
 			if o.installType5Route(remaining.state, remaining.routerMAC, remaining.valid) {
+				o.log.Info("type-5 path withdrawn, keeping route via remaining path",
+					"dst", state.dst, "withdrawn_gw", state.gw, "gw", remaining.state.gw)
 				return
 			}
-			// The kernel route may still use the withdrawn gateway.
 		}
 		o.withdrawType5Route(state, routerMAC)
 		return
@@ -910,16 +912,20 @@ func (o *OverlayTier) rememberType5Path(prefix, key string, path *type5Path) {
 	o.type5Paths[prefix][key] = path
 }
 
-// forgetType5Path removes a withdrawn path and returns a remaining path
-// for the same prefix, if any. The caller holds type5PathsMu.
-func (o *OverlayTier) forgetType5Path(prefix, key string) (*type5Path, bool) {
+// forgetType5Path removes a withdrawn path and returns the remaining paths
+// for the same prefix in a stable order. The caller holds type5PathsMu.
+func (o *OverlayTier) forgetType5Path(prefix, key string) []*type5Path {
 	paths := o.type5Paths[prefix]
 	delete(paths, key)
 	if len(paths) == 0 {
 		delete(o.type5Paths, prefix)
-		return nil, false
+		return nil
 	}
-	return paths[slices.Min(slices.Collect(maps.Keys(paths)))], true
+	remaining := make([]*type5Path, 0, len(paths))
+	for _, k := range slices.Sorted(maps.Keys(paths)) {
+		remaining = append(remaining, paths[k])
+	}
+	return remaining
 }
 
 func (o *OverlayTier) type5RouteState(route *apipb.EVPNIPPrefixRoute, vtep string, vtepIP net.IP) (type5RouteState, bool) {
