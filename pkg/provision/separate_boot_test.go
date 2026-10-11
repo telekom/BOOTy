@@ -3,9 +3,12 @@
 package provision
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/telekom/BOOTy/pkg/config"
 )
 
 // Legacy evidence: provision.sh:366-395 mounts /boot from the image fstab
@@ -134,5 +137,18 @@ func TestResolveFstabSourceDeviceSymlink(t *testing.T) {
 	}
 	if got := matchFstabSource(resolved, []blockIDs{{node: node}}); got != node {
 		t.Fatalf("matchFstabSource(%q) = %q, want %q", resolved, got, node)
+	}
+}
+
+// A declared partition layout owns /boot and the generated fstab.
+func TestMountSeparateBootSkipsPartitionLayout(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	if err := o.mountSeparateBoot(context.Background()); err != nil {
+		t.Fatalf("mountSeparateBoot() = %v", err)
+	}
+	if len(cmd.calls) != 0 || o.separateBootMounted {
+		t.Fatalf("partition layout run touched /boot: %v", cmd.calls)
 	}
 }

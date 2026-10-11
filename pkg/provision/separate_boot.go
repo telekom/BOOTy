@@ -24,6 +24,10 @@ func separateBootMountPoint() string {
 // update-grub and update-initramfs must see it. The device must be a
 // partition of the target disk.
 func (o *Orchestrator) mountSeparateBoot(ctx context.Context) error {
+	if o.cfg.Provision.Disk.PartitionLayout != nil {
+		// A declared partition layout owns the mounts and rewrites fstab.
+		return nil
+	}
 	mountpoint := separateBootMountPoint()
 	if isMountPoint(mountpoint) {
 		return o.adoptSeparateBoot(ctx, mountpoint)
