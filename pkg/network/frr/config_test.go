@@ -114,9 +114,13 @@ func TestDeriveAddresses_BridgeMACOverride(t *testing.T) {
 }
 
 func TestDeriveAddresses_InvalidUnderlayIPForBridgeMAC(t *testing.T) {
-	cfg := network.Config{UnderlayIP: "not-an-ip"}
-	if _, _, _, err := DeriveAddresses(&cfg); err == nil {
-		t.Fatal("expected error for invalid underlay IP without IPMI MAC")
+	for _, underlay := range []string{"not-an-ip", "2001:db8::1"} {
+		t.Run(underlay, func(t *testing.T) {
+			cfg := network.Config{UnderlayIP: underlay}
+			if _, _, _, err := DeriveAddresses(&cfg); err == nil {
+				t.Fatal("expected error for a non-IPv4 underlay IP without IPMI MAC")
+			}
+		})
 	}
 }
 
@@ -133,8 +137,6 @@ func TestBridgeMACUniqueStableLAA(t *testing.T) {
 		{"ip_a", "", "10.0.0.11"},
 		{"ip_b", "", "10.0.0.12"},
 		{"ip_c", "", "10.0.1.11"},
-		{"ipv6_a", "", "2001:db8::1:0:0:1"},
-		{"ipv6_b", "", "2001:db8::2:0:0:1"},
 	}
 	seen := map[string]string{}
 	for _, tt := range tests {
