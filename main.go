@@ -497,6 +497,14 @@ func runCAPRF(ctx context.Context) {
 	network.SetSkipTLSVerify(cfg.Transport.SkipTLSVerify)
 	image.RefreshHTTPClients()
 
+	if cfg.LegacyCompat {
+		// Like copy_files in the legacy common.sh: before any request, so
+		// files such as /etc/hosts also apply to the remote log shipping.
+		if err := provision.ApplyProvisionerFilesToRamdisk(ctx); err != nil {
+			slog.Error("applying provisioner files to the ramdisk failed", "error", err)
+		}
+	}
+
 	// DRY_RUN=true overrides mode before logging.
 	if cfg.DryRun {
 		cfg.Mode = "dry-run"
@@ -516,13 +524,6 @@ func runCAPRF(ctx context.Context) {
 		"mode", cfg.Mode,
 		"image_count", len(cfg.Provision.Image.URLs),
 	)
-
-	if cfg.LegacyCompat {
-		// Like copy_files in the legacy common.sh, before the network starts.
-		if err := provision.ApplyProvisionerFilesToRamdisk(ctx); err != nil {
-			slog.Error("applying provisioner files to the ramdisk failed", "error", err)
-		}
-	}
 
 	// runCtx stops the active mode when JWT renewal is exhausted in legacy
 	// compat, like fail() stops the legacy task.
