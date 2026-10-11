@@ -245,6 +245,31 @@ func TestExtractL3VNIs(t *testing.T) {
 			want: nil,
 		},
 		{
+			name: "VRF block L3VNI with prefix-routes-only",
+			conf: "vrf cluster\n vni 4000 prefix-routes-only\nexit-vrf\n",
+			want: []uint32{4000},
+		},
+		{
+			name: "unindented L2VNI under router bgp is not an L3VNI",
+			conf: "router bgp 65100\naddress-family l2vpn evpn\nadvertise-all-vni\nvni 100\nexit-vni\nexit-address-family\nexit\n",
+			want: nil,
+		},
+		{
+			name: "vni under a non-VRF block is not an L3VNI",
+			conf: "interface vxlan100\n vni 100\nexit\n",
+			want: nil,
+		},
+		{
+			name: "top-level vni after a block closed by bang",
+			conf: "router bgp 65100\n address-family l2vpn evpn\n  advertise-all-vni\n exit-address-family\n!\nvni 1000\n",
+			want: []uint32{1000},
+		},
+		{
+			name: "duplicate and invalid vni statements",
+			conf: "vni 1000\nvni 1000\nvni abc\nvni 99999999999\n",
+			want: []uint32{1000},
+		},
+		{
 			name: "no vni statements",
 			conf: "router bgp 65100\nexit\n",
 			want: nil,

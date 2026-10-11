@@ -79,32 +79,45 @@ func ParseFRRConfigBytes(data []byte) (*FRRParams, error) {
 }
 
 // extractL3VNIs returns VNIs that FRR maps to a VRF: a "vni N" statement at
-// the top level (default VRF) or inside a "vrf NAME" block. A "vni N" block
-// under "router bgp" configures an L2VNI and is not included.
+// the top level (default VRF) or inside a "vrf NAME" block, with or without
+// "prefix-routes-only". A "vni N" under any other block, such as the L2VNI
+// block under "router bgp", is not an L3VNI and is not included.
 func extractL3VNIs(content string) []uint32 {
+	const (
+		blockNone = iota
+		blockVRF
+		blockOther
+	)
 	var vnis []uint32
-	inRouter := false
+	block := blockNone
 	for line := range strings.Lines(content) {
-		trimmed := strings.TrimSpace(line)
-		topLevel := line != "" && line[0] != ' ' && line[0] != '\t'
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		topLevel := line[0] != ' ' && line[0] != '\t'
+		isVNI := fields[0] == "vni" && (len(fields) == 2 || len(fields) == 3 && fields[2] == "prefix-routes-only")
 		switch {
-		case topLevel && strings.HasPrefix(trimmed, "router "):
-			inRouter = true
-			continue
-		case topLevel && (trimmed == "exit" || trimmed == "exit-vrf" || strings.HasPrefix(trimmed, "vrf ")):
-			inRouter = false
-			continue
-		}
-		fields := strings.Fields(trimmed)
-		if inRouter || len(fields) != 2 || fields[0] != "vni" {
-			continue
-		}
-		if vni, err := strconv.ParseUint(fields[1], 10, 32); err == nil && !slices.Contains(vnis, uint32(vni)) {
-			vnis = append(vnis, uint32(vni))
+		case isVNI && (block == blockVRF || topLevel && block == blockNone):
+			if vni, err := strconv.ParseUint(fields[1], 10, 32); err == nil && !slices.Contains(vnis, uint32(vni)) {
+				vnis = append(vnis, uint32(vni))
+			}
+		case !topLevel:
+		case fields[0] == "vrf":
+			block = blockVRF
+		case fields[0] == "!" || fields[0] == "exit" || fields[0] == "exit-vrf" || fields[0] == "end":
+			block = blockNone
+		case slices.Contains(frrBlockKeywords, fields[0]):
+			block = blockOther
 		}
 	}
 	return vnis
 }
+
+// frrBlockKeywords lists top-level FRR statements that open a block whose
+// lines may be written without indentation. A "vni N" inside them is not an
+// L3VNI. Single-line top-level statements do not open a block.
+var frrBlockKeywords = []string{"router", "interface", "route-map", "line", "segment-routing", "mpls", "bfd", "key", "nexthop-group", "pbr-map"}
 
 // extractUnnumberedPeers returns deduplicated interface names from neighbor lines.
 func extractUnnumberedPeers(content string) []string {
