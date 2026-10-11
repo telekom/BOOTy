@@ -1,6 +1,6 @@
 # Proposal: Advanced OCI Image Support
 
-## Status: Proposed
+## Status: Proposal
 
 A Phase 1 manager in `pkg/image/oci` (PR #51) was never wired into
 provisioning and was removed. The live OCI path is `pkg/image/oci.go` and
