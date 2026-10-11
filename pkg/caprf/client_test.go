@@ -2471,7 +2471,7 @@ func TestParseVarsLegacyCompat(t *testing.T) {
 
 func TestRequestsLegacyCompatWithInvalidVars(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "vars")
-	content := "export MODE=\"no-such-mode\"\nexport CAPRF_LEGACY_COMPAT=\"true\"\n"
+	content := "export CAPRF_LEGACY_COMPAT=\"false\"\nexport MODE=\"no-such-mode\"\nexport CAPRF_LEGACY_COMPAT=\"true\"\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -75,6 +75,8 @@ func RequestsLegacyCompat(varsPath string) bool {
 	}
 	defer f.Close() //nolint:errcheck // read-only file
 
+	// The last assignment wins, like in ParseVars.
+	requested := false
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := strings.TrimPrefix(strings.TrimSpace(scanner.Text()), "export ")
@@ -83,9 +85,9 @@ func RequestsLegacyCompat(varsPath string) bool {
 			continue
 		}
 		value, err := unquoteVarValue(value)
-		return err == nil && parseBoolVar(value)
+		requested = err == nil && parseBoolVar(value)
 	}
-	return false
+	return requested
 }
 
 // NewFromConfig creates a CAPRF client from an already-parsed config.
