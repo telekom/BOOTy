@@ -117,3 +117,26 @@ func TestConfigureDNSLegacyCompatKeepsTargetResolvConf(t *testing.T) {
 		t.Fatalf("target resolv.conf changed: link %q, err %v", got, err)
 	}
 }
+
+// The ramdisk root is "/". The old prefix check built "//" and rejected
+// every path below it.
+func TestEnsureWithinRoot(t *testing.T) {
+	tests := []struct {
+		root, target string
+		ok           bool
+	}{
+		{"/", "/etc/hosts", true},
+		{"/", "/", true},
+		{"/newroot", "/newroot/etc/hosts", true},
+		{"/newroot", "/newroot", true},
+		{"/newroot", "/newroot/../etc/hosts", false},
+		{"/newroot", "/newrootx/etc", false},
+		{"/newroot", "/etc", false},
+	}
+	for _, tt := range tests {
+		err := ensureWithinRoot(tt.root, tt.target)
+		if (err == nil) != tt.ok {
+			t.Errorf("ensureWithinRoot(%q, %q) = %v, want ok %v", tt.root, tt.target, err, tt.ok)
+		}
+	}
+}
