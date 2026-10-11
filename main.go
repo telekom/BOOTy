@@ -501,7 +501,14 @@ func runCAPRF(ctx context.Context) {
 		// Like copy_files in the legacy common.sh: before any request, so
 		// files such as /etc/hosts also apply to the remote log shipping.
 		if err := provision.ApplyProvisionerFilesToRamdisk(ctx); err != nil {
-			slog.Error("applying provisioner files to the ramdisk failed", "error", err)
+			// The legacy script stops before the network starts when
+			// copy_files fails, and the ramdisk keeps running. Do not go on
+			// with a partly applied file set.
+			slog.Error("applying provisioner files to the ramdisk failed, waiting", "error", err)
+			provision.DumpDebugState("apply-provisioner-files")
+			<-ctx.Done()
+			reboot()
+			return
 		}
 	}
 
