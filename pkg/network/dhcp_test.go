@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -208,6 +207,9 @@ func TestLeaseAddrDefaultsMissingNetmask(t *testing.T) {
 	if _, err := leaseAddr(&dhclient.Lease{}); err == nil {
 		t.Fatal("leaseAddr() without address should fail")
 	}
+	if _, err := leaseAddr(&dhclient.Lease{FixedAddress: net.ParseIP("10.0.2.15"), Netmask: net.IPMask{255, 0, 255, 0}}); err == nil {
+		t.Fatal("leaseAddr() with a non-contiguous mask should fail")
+	}
 }
 
 func TestOnBoundAcceptsExistingAddressAndReplacesDefaultRoute(t *testing.T) {
@@ -222,7 +224,7 @@ func TestOnBoundAcceptsExistingAddressAndReplacesDefaultRoute(t *testing.T) {
 
 	d := NewDHCPMode()
 	leased := make(chan struct{}, 1)
-	var winner atomic.Int32
+	var winner dhcpWinner
 	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth0", Index: 7}}
 	d.onBound(link, "eth0", leased, &winner)(&dhclient.Lease{
 		FixedAddress: net.ParseIP("10.0.2.15"),
@@ -242,10 +244,35 @@ func TestOnBoundAcceptsExistingAddressAndReplacesDefaultRoute(t *testing.T) {
 
 func TestOnBoundInvalidLeaseDoesNotClaimWinner(t *testing.T) {
 	d := NewDHCPMode()
-	var winner atomic.Int32
+	var winner dhcpWinner
 	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth0"}}
 	d.onBound(link, "eth0", make(chan struct{}, 1), &winner)(&dhclient.Lease{})
-	if winner.Load() != 0 {
+	if winner.won {
 		t.Fatal("an invalid lease claimed the winner flag")
+	}
+}
+
+func TestOnBoundFailedApplyLeavesWinnerForOtherNIC(t *testing.T) {
+	origAddr, origRoute := dhcpAddrAdd, dhcpRouteReplace
+	t.Cleanup(func() { dhcpAddrAdd, dhcpRouteReplace = origAddr, origRoute })
+	dhcpRouteReplace = func(*netlink.Route) error { return nil }
+	dhcpAddrAdd = func(link netlink.Link, _ *netlink.Addr) error {
+		if link.Attrs().Name == "eth0" {
+			return syscall.EPERM
+		}
+		return nil
+	}
+
+	d := NewDHCPMode()
+	var winner dhcpWinner
+	lease := &dhclient.Lease{FixedAddress: net.ParseIP("10.0.2.15"), Netmask: net.CIDRMask(24, 32)}
+	leased0, leased1 := make(chan struct{}, 1), make(chan struct{}, 1)
+	d.onBound(&netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth0"}}, "eth0", leased0, &winner)(lease)
+	d.onBound(&netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth1"}}, "eth1", leased1, &winner)(lease)
+
+	select {
+	case <-leased1:
+	default:
+		t.Fatal("lease on eth1 was not used after eth0 failed to apply")
 	}
 }

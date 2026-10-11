@@ -1,11 +1,10 @@
-//go:build linux_e2e
+//go:build linux && linux_e2e
 
 package network
 
 import (
 	"net"
 	"os"
-	"sync/atomic"
 	"testing"
 
 	"github.com/digineo/go-dhclient"
@@ -30,7 +29,7 @@ func TestDHCPNetlinkLeaseAppliesTwice(t *testing.T) {
 	lease := &dhclient.Lease{FixedAddress: net.ParseIP("198.51.100.7")}
 	for attempt := 1; attempt <= 2; attempt++ {
 		leased := make(chan struct{}, 1)
-		var winner atomic.Int32
+		var winner dhcpWinner
 		d.onBound(link, link.Name, leased, &winner)(lease)
 		select {
 		case <-leased:

@@ -10,7 +10,6 @@ import (
 	"net"
 	"os"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -59,7 +58,7 @@ func (d *DHCPMode) Setup(ctx context.Context, _ *Config) error {
 
 	results := make(chan dhcpResult, len(ifaces))
 	var wg sync.WaitGroup
-	var winner atomic.Int32
+	var winner dhcpWinner
 
 	for i := range ifaces {
 		wg.Add(1)
@@ -92,7 +91,7 @@ func (d *DHCPMode) Setup(ctx context.Context, _ *Config) error {
 
 // probeNIC attempts DHCP on a single interface with a 15 s timeout.
 // On success it sends a dhcpResult to the results channel.
-func (d *DHCPMode) probeNIC(ctx context.Context, iface net.Interface, results chan<- dhcpResult, winner *atomic.Int32) {
+func (d *DHCPMode) probeNIC(ctx context.Context, iface net.Interface, results chan<- dhcpResult, winner *dhcpWinner) {
 	d.log.Info("Attempting DHCP", "interface", iface.Name)
 
 	link, err := netlink.LinkByName(iface.Name)
@@ -147,10 +146,11 @@ var (
 )
 
 // onBound returns a callback that configures the interface address and default route.
-// The winner flag ensures only the first NIC to receive a lease applies netlink changes;
-// subsequent leases are ignored by this callback and do not trigger additional configuration.
+// The winner ensures only the first NIC whose lease applies cleanly configures the host;
+// later leases are ignored. Callbacks wait for an apply in progress, so a lease on another
+// NIC is still used when the first apply fails.
 // An address that already exists (for example after a network retry) counts as applied.
-func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struct{}, winner *atomic.Int32) func(*dhclient.Lease) {
+func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struct{}, winner *dhcpWinner) func(*dhclient.Lease) {
 	return func(lease *dhclient.Lease) {
 		// Validate before claiming the winner, so an unusable lease on one
 		// NIC does not block a usable lease on another NIC.
@@ -159,14 +159,16 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struc
 			d.log.Warn("Ignoring DHCP lease", "iface", ifName, "error", err)
 			return
 		}
-		if !winner.CompareAndSwap(0, 1) {
+		winner.mu.Lock()
+		defer winner.mu.Unlock()
+		if winner.won {
 			return
 		}
 		if err := dhcpAddrAdd(link, addr); err != nil && !errors.Is(err, syscall.EEXIST) {
 			d.log.Warn("Failed to assign DHCP address", "iface", ifName, "error", err)
-			winner.Store(0)
 			return
 		}
+		winner.won = true
 		d.log.Info("DHCP lease obtained", "iface", ifName, "addr", addr.IPNet.String())
 		if len(lease.Router) > 0 {
 			// Replace, so a default route left by an earlier attempt or
@@ -183,6 +185,12 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struc
 	}
 }
 
+// dhcpWinner lets only the first cleanly applied lease configure the host.
+type dhcpWinner struct {
+	mu  sync.Mutex
+	won bool
+}
+
 // leaseAddr builds the interface address from a lease. A lease without a
 // subnet mask option gets the classful default mask, like other clients.
 func leaseAddr(lease *dhclient.Lease) (*netlink.Addr, error) {
@@ -193,6 +201,9 @@ func leaseAddr(lease *dhclient.Lease) (*netlink.Addr, error) {
 	mask := lease.Netmask
 	if len(mask) == 0 {
 		mask = ip.DefaultMask()
+	}
+	if _, bits := mask.Size(); bits != 8*net.IPv4len {
+		return nil, fmt.Errorf("lease has an invalid subnet mask %v", mask)
 	}
 	return &netlink.Addr{IPNet: &net.IPNet{IP: ip, Mask: mask}}, nil
 }
