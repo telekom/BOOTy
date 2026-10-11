@@ -94,6 +94,7 @@ type Orchestrator struct {
 	// skippedDisks are the disks in use that a wipe of all disks skipped.
 	skippedDisks     []string
 	mirrorDisk       string // second root disk when DISK_MIRRORING_MODE selected a pair
+	resumeMirrorPair [2]string // mirror pair restored from a resume checkpoint
 	rootPartition    string
 	bootPartition    string
 	sharedMounts     []string
@@ -271,6 +272,10 @@ func (o *Orchestrator) restoreCheckpointDerivedState(cp *Checkpoint) {
 	if cp == nil || o.cfg.Provision.Disk.Device != "" {
 		return
 	}
+	if cp.MirrorDisk != "" {
+		o.resumeMirrorPair = [2]string{cp.MirrorTargetDisk, cp.MirrorDisk}
+		o.log.Info("restored mirror disk pair from checkpoint", "disk1", cp.MirrorTargetDisk, "disk2", cp.MirrorDisk)
+	}
 	if len(o.cfg.Provision.Disk.RAID) > 0 && cp.RAIDTargetDevice != "" {
 		o.cfg.Provision.Disk.Device = cp.RAIDTargetDevice
 		o.targetDisk = cp.RAIDTargetDevice
@@ -331,6 +336,10 @@ func (o *Orchestrator) recordCheckpointDerivedState(stepName string, cp *Checkpo
 	case "setup-raid":
 		if len(o.cfg.Provision.Disk.RAID) > 0 && o.cfg.Provision.Disk.Device != "" {
 			cp.RAIDTargetDevice = o.cfg.Provision.Disk.Device
+		}
+	case "detect-disk":
+		if o.mirrorDisk != "" {
+			cp.MirrorTargetDisk, cp.MirrorDisk = o.targetDisk, o.mirrorDisk
 		}
 	}
 }

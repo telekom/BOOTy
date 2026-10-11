@@ -49,10 +49,10 @@ WantedBy=multi-user.target
 `
 
 // TestMirroredRootBootFailoverVM installs a real Ubuntu cloud image with
-// DISK_MIRRORING_MODE=raid-1 onto two disks under UEFI, boots the installed
-// system from both disks, then boots it again with the first disk removed.
-// The second boot must come up degraded from the second disk through its own
-// firmware boot entry.
+// DISK_MIRRORING_MODE=raid-1 onto two disks, boots the installed system from
+// both disks, then boots it again with the first disk removed. The second
+// boot must come up degraded from the second disk, under UEFI through the
+// second disk's firmware boot entry and under BIOS through its own GRUB.
 func TestMirroredRootBootFailoverVM(t *testing.T) {
 	requireRoot(t)
 	qemuAvailable(t)
@@ -78,14 +78,6 @@ func TestMirroredRootBootFailoverVM(t *testing.T) {
 	}
 	baseURL := startImageServer(t, gzImage)
 
-	ovmfVars := filepath.Join(dir, "OVMF_VARS.fd")
-	copyBinary(t, ovmfVarsTemplate, ovmfVars)
-	disk1 := filepath.Join(dir, "disk1.qcow2")
-	disk2 := filepath.Join(dir, "disk2.qcow2")
-	for _, d := range []string{disk1, disk2} {
-		run(t, "create mirror disk", "qemu-img", "create", "-f", "qcow2", d, "4G")
-	}
-
 	initramfs := buildProvisionInitramfsWithFiles(t, map[string]string{
 		"HOSTNAME":                  "mirror-e2e",
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
@@ -99,9 +91,41 @@ func TestMirroredRootBootFailoverVM(t *testing.T) {
 		"file-system/etc/systemd/system/booty-mirror-check.service": mirrorCheckUnit,
 		"machine-commands/enable-mirror-check":                      "systemctl enable booty-mirror-check.service",
 	})
-
 	kernel := findKernel(t)
-	provisionArgs := append(mirrorQEMUBaseArgs(ovmfCode, ovmfVars, disk1, disk2),
+
+	t.Run("uefi", func(t *testing.T) {
+		ovmfVars := filepath.Join(t.TempDir(), "OVMF_VARS.fd")
+		copyBinary(t, ovmfVarsTemplate, ovmfVars)
+		report := runMirrorFailover(t, kernel, initramfs, func(disks ...string) []string {
+			return mirrorQEMUBaseArgs([]string{
+				"-drive", "if=pflash,format=raw,readonly=on,file=" + ovmfCode,
+				"-drive", "if=pflash,format=raw,file=" + ovmfVars,
+			}, disks...)
+		})
+		requireBootCurrentOnESP(t, report)
+	})
+
+	// BIOS: SeaBIOS boots the first disk, so booting the second disk alone
+	// needs the GRUB that BOOTy installed into it.
+	t.Run("bios", func(t *testing.T) {
+		runMirrorFailover(t, kernel, initramfs, func(disks ...string) []string {
+			return mirrorQEMUBaseArgs(nil, disks...)
+		})
+	})
+}
+
+// runMirrorFailover provisions two new disks, boots with both and then with
+// only the second disk. It returns the check report of the second boot.
+func runMirrorFailover(t *testing.T, kernel, initramfs string, qemuArgs func(disks ...string) []string) string {
+	t.Helper()
+	dir := t.TempDir()
+	disk1 := filepath.Join(dir, "disk1.qcow2")
+	disk2 := filepath.Join(dir, "disk2.qcow2")
+	for _, d := range []string{disk1, disk2} {
+		run(t, "create mirror disk", "qemu-img", "create", "-f", "qcow2", d, "4G")
+	}
+
+	provisionArgs := append(qemuArgs(disk1, disk2),
 		"-kernel", kernel,
 		"-initrd", initramfs,
 		"-append", "console=ttyS0 panic=1 net.ifnames=0",
@@ -110,31 +134,32 @@ func TestMirroredRootBootFailoverVM(t *testing.T) {
 	)
 	out := runMirrorQEMU(t, "provision", provisionArgs, 15*time.Minute)
 	if !strings.Contains(string(out), "step=report-success") || strings.Contains(string(out), "provisioning step failed") {
-		t.Fatalf("mirrored provisioning did not succeed. tail:\n%s", tail(out, 8000))
+		t.Fatal("mirrored provisioning did not succeed, see the provision output above")
 	}
 
 	// Boot 1: both disks. The check waits for the resync, so the second
 	// member is in sync before the first disk is removed.
 	report := mirrorCheckReport(t, "boot with both disks",
-		runMirrorQEMU(t, "boot with both disks", mirrorQEMUBaseArgs(ovmfCode, ovmfVars, disk1, disk2), 10*time.Minute))
+		runMirrorQEMU(t, "boot with both disks", qemuArgs(disk1, disk2), 10*time.Minute))
 	requireRootOnMD(t, report)
 	if !strings.Contains(report, "[2/2] [UU]") {
 		t.Fatalf("root array is not a clean two-member mirror:\n%s", report)
 	}
 
-	// Boot 2: only the second disk. Firmware must use the second disk's boot
-	// entry and the initramfs must start the array degraded.
+	// Boot 2: only the second disk. The second disk must boot on its own and
+	// the initramfs must start the array degraded.
 	report = mirrorCheckReport(t, "boot from second disk only",
-		runMirrorQEMU(t, "boot from second disk only", mirrorQEMUBaseArgs(ovmfCode, ovmfVars, disk2), 10*time.Minute))
+		runMirrorQEMU(t, "boot from second disk only", qemuArgs(disk2), 10*time.Minute))
 	requireRootOnMD(t, report)
 	if !strings.Contains(report, "[2/1]") {
 		t.Fatalf("root array is not degraded to one member:\n%s", report)
 	}
-	requireBootCurrentOnESP(t, report)
+	return report
 }
 
-// mirrorQEMUBaseArgs returns UEFI QEMU arguments with the given disks.
-func mirrorQEMUBaseArgs(ovmfCode, ovmfVars string, disks ...string) []string {
+// mirrorQEMUBaseArgs returns QEMU arguments with the firmware arguments and
+// the given disks. No firmware arguments means SeaBIOS.
+func mirrorQEMUBaseArgs(firmware []string, disks ...string) []string {
 	args := []string{
 		"-machine", "q35,accel=kvm:tcg",
 		"-cpu", "max",
@@ -142,9 +167,8 @@ func mirrorQEMUBaseArgs(ovmfCode, ovmfVars string, disks ...string) []string {
 		"-smp", "2",
 		"-nographic",
 		"-no-reboot",
-		"-drive", "if=pflash,format=raw,readonly=on,file=" + ovmfCode,
-		"-drive", "if=pflash,format=raw,file=" + ovmfVars,
 	}
+	args = append(args, firmware...)
 	for _, d := range disks {
 		args = append(args, "-drive", fmt.Sprintf("file=%s,format=qcow2,if=virtio", d))
 	}

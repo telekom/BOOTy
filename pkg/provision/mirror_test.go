@@ -5,6 +5,7 @@ package provision
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -179,10 +180,13 @@ func newTestDiskManager() *disk.Manager {
 	return disk.NewManager(newMockCommander())
 }
 
-func TestCreateMirrorEFIBootEntryCopiesESPAndRemounts(t *testing.T) {
+func TestCreateMirrorEFIBootEntryBIOSInstallsGrubAndCopiesESP(t *testing.T) {
 	var events []string
-	origCopy, origMounted, origMount := copyBlockDeviceFn, isMountPoint, mountBootPart
-	t.Cleanup(func() { copyBlockDeviceFn, isMountPoint, mountBootPart = origCopy, origMounted, origMount })
+	origCopy, origMounted, origMount, origEFI := copyBlockDeviceFn, isMountPoint, mountBootPart, efiRuntimeReady
+	t.Cleanup(func() {
+		copyBlockDeviceFn, isMountPoint, mountBootPart, efiRuntimeReady = origCopy, origMounted, origMount, origEFI
+	})
+	efiRuntimeReady = func() (bool, string) { return false, "unit test" }
 	isMountPoint = func(string) bool { return false }
 	copyBlockDeviceFn = func(src, dst string) error {
 		events = append(events, "copy "+src+"->"+dst)
@@ -193,13 +197,69 @@ func TestCreateMirrorEFIBootEntryCopiesESPAndRemounts(t *testing.T) {
 		return nil
 	}
 
-	o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, newTestDiskManager())
+	cmd := newMockCommander()
+	o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, disk.NewManager(cmd))
 	o.targetDisk, o.mirrorDisk, o.bootPartition = "/dev/sda", "/dev/sdb", "/dev/sda1"
 	if err := o.createMirrorEFIBootEntry(context.Background()); err != nil {
 		t.Fatalf("createMirrorEFIBootEntry() error = %v", err)
 	}
+	if !hasProvisionCall(cmd.calls, "chroot", newroot, "/bin/bash", "-c", "grub-install --target=i386-pc /dev/sdb") {
+		t.Fatalf("missing BIOS grub-install for the mirror disk in %v", cmd.calls)
+	}
 	want := []string{"copy /dev/sda1->/dev/sdb1", "mount /dev/sda1 " + bootEFIMountPoint()}
 	if strings.Join(events, "|") != strings.Join(want, "|") {
 		t.Fatalf("events = %v, want %v", events, want)
+	}
+}
+
+func TestCreateMirrorEFIBootEntryUEFIRequiresESP(t *testing.T) {
+	origEFI := efiRuntimeReady
+	t.Cleanup(func() { efiRuntimeReady = origEFI })
+	efiRuntimeReady = func() (bool, string) { return true, "" }
+
+	o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, newTestDiskManager())
+	o.targetDisk, o.mirrorDisk = "/dev/sda", "/dev/sdb"
+	if err := o.createMirrorEFIBootEntry(context.Background()); err == nil {
+		t.Fatal("createMirrorEFIBootEntry() error = nil for a UEFI install without ESP")
+	}
+}
+
+func TestMirrorPairSurvivesResume(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.MirroringMode = "auto"
+	o := NewOrchestrator(cfg, &mockProvider{}, newTestDiskManager())
+	o.targetDisk, o.mirrorDisk = "/dev/sda", "/dev/sdb"
+	cp := &Checkpoint{}
+	o.recordCheckpointDerivedState("detect-disk", cp)
+	if cp.MirrorTargetDisk != "/dev/sda" || cp.MirrorDisk != "/dev/sdb" {
+		t.Fatalf("checkpoint mirror pair = %q, %q", cp.MirrorTargetDisk, cp.MirrorDisk)
+	}
+
+	tests := []struct {
+		name    string
+		missing string
+		wantErr bool
+	}{
+		{name: "both disks present"},
+		{name: "second disk missing", missing: "/dev/sdb", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withMockStat(t, func(path string) (os.FileInfo, error) {
+				if path == tt.missing {
+					return nil, os.ErrNotExist
+				}
+				return fakeFileInfo{name: path, mode: os.ModeDevice}, nil
+			})
+			resumed := NewOrchestrator(cfg, &mockProvider{}, newTestDiskManager())
+			resumed.restoreCheckpointDerivedState(cp)
+			mirrored, err := resumed.selectMirrorPair(context.Background())
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("selectMirrorPair() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && (!mirrored || resumed.targetDisk != "/dev/sda" || resumed.mirrorDisk != "/dev/sdb") {
+				t.Fatalf("selectMirrorPair() = %v, %s, %s; want the checkpointed pair", mirrored, resumed.targetDisk, resumed.mirrorDisk)
+			}
+		})
 	}
 }

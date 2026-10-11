@@ -62,6 +62,9 @@ func (o *Orchestrator) selectMirrorPair(ctx context.Context) (bool, error) {
 	default:
 		return false, fmt.Errorf("unsupported disk mirroring mode %q", mode)
 	}
+	if o.resumeMirrorPair[1] != "" {
+		return o.useResumeMirrorPair()
+	}
 	first, second, ok, err := o.disk.DetectMirrorPair(ctx, o.cfg.Provision.Disk.MinSizeGB)
 	if err != nil {
 		return false, err
@@ -76,6 +79,20 @@ func (o *Orchestrator) selectMirrorPair(ctx context.Context) (bool, error) {
 	o.targetDisk = first
 	o.mirrorDisk = second
 	o.log.Info("mirroring root disk", "mirroringMode", mode, "disk1", first, "disk2", second)
+	return true, nil
+}
+
+// useResumeMirrorPair keeps the pair selected before a resume. Once
+// mirroring has started, falling back to one disk would mount a raw array
+// member, so a missing disk is an error.
+func (o *Orchestrator) useResumeMirrorPair() (bool, error) {
+	for _, dev := range o.resumeMirrorPair {
+		if _, err := statPath(dev); err != nil {
+			return false, fmt.Errorf("mirror disk %s selected before resume is unavailable: %w", dev, err)
+		}
+	}
+	o.targetDisk, o.mirrorDisk = o.resumeMirrorPair[0], o.resumeMirrorPair[1]
+	o.log.Info("mirroring root disk with the pair selected before resume", "disk1", o.targetDisk, "disk2", o.mirrorDisk)
 	return true, nil
 }
 
@@ -160,7 +177,11 @@ func (o *Orchestrator) configureMdadm(ctx context.Context) error {
 		[]byte(mirrorGrubConfig)); err != nil {
 		return fmt.Errorf("write grub mirror config: %w", err)
 	}
-	cmd := "if command -v update-initramfs >/dev/null 2>&1; then update-initramfs -u -k all; " +
+	// Without mdadm in the target, update-initramfs still succeeds but the
+	// initramfs cannot assemble the root array.
+	cmd := "if ! command -v mdadm >/dev/null 2>&1; then " +
+		"echo 'mdadm is not installed in the target image' >&2; exit 1; fi; " +
+		"if command -v update-initramfs >/dev/null 2>&1; then update-initramfs -u -k all; " +
 		"else dracut --force --regenerate-all; fi"
 	if out, err := o.disk.ChrootRun(ctx, newroot, cmd); err != nil {
 		return fmt.Errorf("rebuild initramfs for root mirror: %s: %w", string(out), err)
@@ -168,23 +189,64 @@ func (o *Orchestrator) configureMdadm(ctx context.Context) error {
 	return nil
 }
 
-// createMirrorEFIBootEntry copies the EFI system partition to the second
-// disk and adds a firmware boot entry for it, so the host still boots when
-// the first disk fails. It runs after the last step that writes to the ESP.
+// createMirrorEFIBootEntry makes the second disk bootable on its own, so the
+// host still boots when the first disk fails. On UEFI it adds a firmware boot
+// entry for the second disk; on BIOS it installs GRUB into the second disk.
+// Both copy the ESP, if the image has one, after the last step that writes
+// to it.
 func (o *Orchestrator) createMirrorEFIBootEntry(ctx context.Context) error {
-	if o.mirrorDisk == "" || o.bootPartition == "" {
+	if o.mirrorDisk == "" {
 		return nil
 	}
-	efiNum, err := disk.PartitionNumberChecked(o.bootPartition, o.targetDisk)
-	if err != nil {
-		return fmt.Errorf("determine EFI partition number: %w", err)
+	if ok, reason := efiRuntimeReady(); !ok {
+		o.log.Info("no UEFI runtime, installing the BIOS bootloader on the mirror disk", "reason", reason, "disk", o.mirrorDisk)
+		if err := o.installMirrorBIOSBootloader(ctx); err != nil {
+			return err
+		}
+		if o.bootPartition == "" {
+			return nil
+		}
+		mirrorEFI, err := o.mirrorESP()
+		if err != nil {
+			return err
+		}
+		return o.syncMirrorESP(ctx, mirrorEFI)
 	}
-	mirrorEFI := blockdev.PartitionDevicePath(o.mirrorDisk, efiNum)
+	if o.bootPartition == "" {
+		return fmt.Errorf("the image has no EFI system partition, so the mirror disk %s cannot boot on UEFI", o.mirrorDisk)
+	}
+	mirrorEFI, err := o.mirrorESP()
+	if err != nil {
+		return err
+	}
 	// The loader path comes from the mounted ESP, so create the entry first.
 	if err := o.config.CreateEFIBootEntry(ctx, o.mirrorDisk, mirrorEFI); err != nil {
 		return err
 	}
 	return o.syncMirrorESP(ctx, mirrorEFI)
+}
+
+// mirrorESP returns the ESP partition of the mirror disk.
+func (o *Orchestrator) mirrorESP() (string, error) {
+	efiNum, err := disk.PartitionNumberChecked(o.bootPartition, o.targetDisk)
+	if err != nil {
+		return "", fmt.Errorf("determine EFI partition number: %w", err)
+	}
+	return blockdev.PartitionDevicePath(o.mirrorDisk, efiNum), nil
+}
+
+// installMirrorBIOSBootloader installs GRUB for BIOS boot into the mirror
+// disk from the target root. The replicated partition table carries the BIOS
+// boot partition that GRUB embeds its core image into.
+func (o *Orchestrator) installMirrorBIOSBootloader(ctx context.Context) error {
+	dev, err := validateChrootDevicePath("mirror disk", o.mirrorDisk)
+	if err != nil {
+		return err
+	}
+	if out, err := o.disk.ChrootRun(ctx, newroot, "grub-install --target=i386-pc "+dev); err != nil {
+		return fmt.Errorf("install BIOS bootloader on mirror disk %s: %s: %w", dev, string(out), err)
+	}
+	return nil
 }
 
 // syncMirrorESP copies the ESP block device with the ESP unmounted, so the
