@@ -517,6 +517,13 @@ func runCAPRF(ctx context.Context) {
 		"image_count", len(cfg.Provision.Image.URLs),
 	)
 
+	if cfg.LegacyCompat {
+		// Like copy_files in the legacy common.sh, before the network starts.
+		if err := provision.ApplyProvisionerFilesToRamdisk(ctx); err != nil {
+			slog.Error("applying provisioner files to the ramdisk failed", "error", err)
+		}
+	}
+
 	// runCtx stops the active mode when JWT renewal is exhausted in legacy
 	// compat, like fail() stops the legacy task.
 	runCtx, stopRun := context.WithCancel(ctx)
