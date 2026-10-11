@@ -3,6 +3,7 @@
 package network
 
 import (
+	"context"
 	"net"
 	"os"
 	"runtime"
@@ -14,9 +15,9 @@ import (
 )
 
 // TestDHCPNetlinkLeaseAppliesTwice applies the same lease twice to a real
-// dummy interface, like a network retry does. The second apply hits an
-// existing address and must still report the lease as bound. A lease
-// without a subnet mask must not panic.
+// dummy interface, like a network retry does. The second apply finds the
+// address already there and must still report the lease as bound. A lease
+// without a subnet mask must not panic. Teardown removes the address.
 func TestDHCPNetlinkLeaseAppliesTwice(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Fatal("test requires root (run with sudo)")
@@ -47,6 +48,13 @@ func TestDHCPNetlinkLeaseAppliesTwice(t *testing.T) {
 	}
 	if len(addrs) != 1 || addrs[0].IPNet.String() != "198.51.100.7/24" {
 		t.Fatalf("addresses = %v, want 198.51.100.7/24", addrs)
+	}
+
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatalf("Teardown() error = %v", err)
+	}
+	if addrs, err = netlink.AddrList(link, netlink.FAMILY_V4); err != nil || len(addrs) != 0 {
+		t.Fatalf("addresses after Teardown = %v (err %v), want none", addrs, err)
 	}
 }
 

@@ -212,15 +212,17 @@ func TestLeaseAddrDefaultsMissingNetmask(t *testing.T) {
 	}
 }
 
-func TestOnBoundAcceptsExistingAddressAndReplacesDefaultRoute(t *testing.T) {
-	origAddr, origRoute := dhcpAddrAdd, dhcpRouteReplace
-	t.Cleanup(func() { dhcpAddrAdd, dhcpRouteReplace = origAddr, origRoute })
-	dhcpAddrAdd = func(netlink.Link, *netlink.Addr) error { return syscall.EEXIST }
-	var routes []*netlink.Route
-	dhcpRouteReplace = func(r *netlink.Route) error {
-		routes = append(routes, r)
-		return nil
-	}
+func TestOnBoundReplacesStateAndTeardownRemovesIt(t *testing.T) {
+	origAddr, origAddrDel, origRoute, origRouteDel := dhcpAddrReplace, dhcpAddrDel, dhcpRouteReplace, dhcpRouteDel
+	t.Cleanup(func() {
+		dhcpAddrReplace, dhcpAddrDel, dhcpRouteReplace, dhcpRouteDel = origAddr, origAddrDel, origRoute, origRouteDel
+	})
+	var addrs, delAddrs []*netlink.Addr
+	var routes, delRoutes []*netlink.Route
+	dhcpAddrReplace = func(_ netlink.Link, a *netlink.Addr) error { addrs = append(addrs, a); return nil }
+	dhcpAddrDel = func(_ netlink.Link, a *netlink.Addr) error { delAddrs = append(delAddrs, a); return nil }
+	dhcpRouteReplace = func(r *netlink.Route) error { routes = append(routes, r); return nil }
+	dhcpRouteDel = func(r *netlink.Route) error { delRoutes = append(delRoutes, r); return nil }
 
 	d := NewDHCPMode()
 	leased := make(chan struct{}, 1)
@@ -235,10 +237,20 @@ func TestOnBoundAcceptsExistingAddressAndReplacesDefaultRoute(t *testing.T) {
 	select {
 	case <-leased:
 	default:
-		t.Fatal("lease with an existing address was not reported as bound")
+		t.Fatal("lease was not reported as bound")
+	}
+	if len(addrs) != 1 || addrs[0].IPNet.String() != "10.0.2.15/24" {
+		t.Fatalf("addresses = %v, want 10.0.2.15/24", addrs)
 	}
 	if len(routes) != 1 || routes[0].LinkIndex != 7 || !routes[0].Gw.Equal(net.ParseIP("10.0.2.2")) {
 		t.Fatalf("default route = %v, want via 10.0.2.2 on link 7", routes)
+	}
+
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatalf("Teardown() error = %v", err)
+	}
+	if len(delAddrs) != 1 || len(delRoutes) != 1 {
+		t.Fatalf("Teardown removed addrs=%v routes=%v, want the lease address and route", delAddrs, delRoutes)
 	}
 }
 
@@ -253,10 +265,10 @@ func TestOnBoundInvalidLeaseDoesNotClaimWinner(t *testing.T) {
 }
 
 func TestOnBoundFailedApplyLeavesWinnerForOtherNIC(t *testing.T) {
-	origAddr, origRoute := dhcpAddrAdd, dhcpRouteReplace
-	t.Cleanup(func() { dhcpAddrAdd, dhcpRouteReplace = origAddr, origRoute })
+	origAddr, origRoute := dhcpAddrReplace, dhcpRouteReplace
+	t.Cleanup(func() { dhcpAddrReplace, dhcpRouteReplace = origAddr, origRoute })
 	dhcpRouteReplace = func(*netlink.Route) error { return nil }
-	dhcpAddrAdd = func(link netlink.Link, _ *netlink.Addr) error {
+	dhcpAddrReplace = func(link netlink.Link, _ *netlink.Addr) error {
 		if link.Attrs().Name == "eth0" {
 			return syscall.EPERM
 		}
@@ -278,9 +290,9 @@ func TestOnBoundFailedApplyLeavesWinnerForOtherNIC(t *testing.T) {
 }
 
 func TestOnBoundRouteFailureLeavesWinnerForOtherNIC(t *testing.T) {
-	origAddr, origRoute := dhcpAddrAdd, dhcpRouteReplace
-	t.Cleanup(func() { dhcpAddrAdd, dhcpRouteReplace = origAddr, origRoute })
-	dhcpAddrAdd = func(netlink.Link, *netlink.Addr) error { return nil }
+	origAddr, origRoute := dhcpAddrReplace, dhcpRouteReplace
+	t.Cleanup(func() { dhcpAddrReplace, dhcpRouteReplace = origAddr, origRoute })
+	dhcpAddrReplace = func(netlink.Link, *netlink.Addr) error { return nil }
 	dhcpRouteReplace = func(r *netlink.Route) error {
 		if r.LinkIndex == 1 {
 			return syscall.ENETUNREACH

@@ -22,6 +22,16 @@ import (
 type DHCPMode struct {
 	client *dhclient.Client
 	log    *slog.Logger
+
+	mu      sync.Mutex
+	applied *dhcpApplied // what the winning lease configured; Teardown removes it
+}
+
+// dhcpApplied is the address and default route a lease configured.
+type dhcpApplied struct {
+	link  netlink.Link
+	addr  *netlink.Addr
+	route *netlink.Route
 }
 
 // NewDHCPMode creates a DHCPMode with a component logger.
@@ -141,15 +151,16 @@ func newDHCPClient(iface *net.Interface, hostname string, onBound dhclient.Callb
 
 // Netlink seams for onBound tests.
 var (
-	dhcpAddrAdd      = netlink.AddrAdd
+	dhcpAddrReplace  = netlink.AddrReplace
+	dhcpAddrDel      = netlink.AddrDel
 	dhcpRouteReplace = netlink.RouteReplace
+	dhcpRouteDel     = netlink.RouteDel
 )
 
 // onBound returns a callback that configures the interface address and default route.
 // The winner ensures only the first NIC whose lease applies cleanly configures the host;
 // later leases are ignored. Callbacks wait for an apply in progress, so a lease on another
 // NIC is still used when the first apply fails.
-// An address that already exists (for example after a network retry) counts as applied.
 func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struct{}, winner *dhcpWinner) func(*dhclient.Lease) {
 	return func(lease *dhclient.Lease) {
 		// Validate before claiming the winner, so an unusable lease on one
@@ -164,20 +175,25 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struc
 		if winner.won {
 			return
 		}
-		if err := dhcpAddrAdd(link, addr); err != nil && !errors.Is(err, syscall.EEXIST) {
+		// Replace, so an address left by an earlier lease gets this mask.
+		if err := dhcpAddrReplace(link, addr); err != nil {
 			d.log.Warn("failed to assign DHCP address", "iface", ifName, "error", err)
 			return
 		}
+		var route *netlink.Route
 		if len(lease.Router) > 0 {
 			// Replace, so a default route left by an earlier attempt or
 			// another NIC does not stay in place.
-			route := &netlink.Route{Gw: lease.Router[0], LinkIndex: link.Attrs().Index}
+			route = &netlink.Route{Gw: lease.Router[0], LinkIndex: link.Attrs().Index}
 			if err := dhcpRouteReplace(route); err != nil {
 				d.log.Warn("failed to set default route", "iface", ifName, "gw", lease.Router[0], "error", err)
 				return
 			}
 		}
 		winner.won = true
+		d.mu.Lock()
+		d.applied = &dhcpApplied{link: link, addr: addr, route: route}
+		d.mu.Unlock()
 		d.log.Info("DHCP lease obtained", "iface", ifName, "addr", addr.IPNet.String())
 		select {
 		case leased <- struct{}{}:
@@ -214,12 +230,29 @@ func (d *DHCPMode) WaitForConnectivity(ctx context.Context, target string, timeo
 	return WaitForHTTP(ctx, target, timeout)
 }
 
-// Teardown stops the DHCP client.
+// Teardown stops the DHCP client and removes the address and default route
+// that its lease configured, so a network retry starts clean.
 func (d *DHCPMode) Teardown(_ context.Context) error {
 	if d.client != nil {
 		d.client.Stop()
 	}
-	return nil
+	d.mu.Lock()
+	applied := d.applied
+	d.applied = nil
+	d.mu.Unlock()
+	if applied == nil {
+		return nil
+	}
+	var errs []error
+	if applied.route != nil {
+		if err := dhcpRouteDel(applied.route); err != nil && !errors.Is(err, syscall.ESRCH) {
+			errs = append(errs, fmt.Errorf("delete DHCP default route: %w", err))
+		}
+	}
+	if err := dhcpAddrDel(applied.link, applied.addr); err != nil && !errors.Is(err, syscall.EADDRNOTAVAIL) {
+		errs = append(errs, fmt.Errorf("delete DHCP address: %w", err))
+	}
+	return errors.Join(errs...)
 }
 
 // physicalInterfaces returns non-loopback, non-virtual interfaces.
