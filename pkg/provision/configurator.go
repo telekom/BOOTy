@@ -1064,15 +1064,19 @@ func (c *Configurator) runMachineCommandScript(ctx context.Context, name string,
 		return nil
 	}
 	scriptPath := filepath.Join(machineCommandsChrootDir, name)
-	hostPath, err := c.targetPath(scriptPath)
+	// os.Root keeps every path operation inside the target root, also when
+	// the image or the script itself plants symlinks.
+	root, err := os.OpenRoot(c.rootDir)
 	if err != nil {
-		return fmt.Errorf("machine command %s path: %w", name, err)
+		return fmt.Errorf("machine command %s: open target root: %w", name, err)
 	}
-	if err := writeNewFileNoFollow(hostPath, content, 0o700); err != nil {
+	defer root.Close() //nolint:errcheck // directory handle
+	rel := strings.TrimPrefix(scriptPath, "/")
+	if err := writeScriptInRoot(root, rel, content); err != nil {
 		return fmt.Errorf("machine command %s: write script: %w", name, err)
 	}
 	defer func() {
-		if err := os.Remove(hostPath); err != nil {
+		if err := root.Remove(rel); err != nil && !os.IsNotExist(err) {
 			slog.Warn("removing machine command script failed", "file", name, "error", err)
 		}
 	}()
@@ -1093,25 +1097,26 @@ func (c *Configurator) runMachineCommandScript(ctx context.Context, name string,
 	return nil
 }
 
-// writeNewFileNoFollow replaces path with a new regular file. It removes an
-// existing entry first and never follows a symlink at path, so a target
-// image cannot redirect the write outside its root.
-func writeNewFileNoFollow(path string, content []byte, perm os.FileMode) error {
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove existing %s: %w", path, err)
+// writeScriptInRoot replaces rel inside root with a new executable file.
+func writeScriptInRoot(root *os.Root, rel string, content []byte) error {
+	if err := root.MkdirAll(filepath.Dir(rel), 0o700); err != nil {
+		return fmt.Errorf("create %s: %w", filepath.Dir(rel), err)
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, perm) //nolint:gosec // caller validates path inside the target root
+	if err := root.Remove(rel); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove existing %s: %w", rel, err)
+	}
+	f, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o700)
 	if err != nil {
-		return fmt.Errorf("create %s: %w", path, err)
+		return fmt.Errorf("create %s: %w", rel, err)
 	}
 	if _, err := f.Write(content); err != nil {
 		_ = f.Close()
-		_ = os.Remove(path)
-		return fmt.Errorf("write %s: %w", path, err)
+		_ = root.Remove(rel)
+		return fmt.Errorf("write %s: %w", rel, err)
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(path)
-		return fmt.Errorf("close %s: %w", path, err)
+		_ = root.Remove(rel)
+		return fmt.Errorf("close %s: %w", rel, err)
 	}
 	return nil
 }

@@ -142,3 +142,28 @@ func TestRunMachineCommandsLegacyCompatReplacesStagingSymlink(t *testing.T) {
 		t.Fatalf("file behind the symlink changed: %q, %v", got, err)
 	}
 }
+
+// The staging directory may be a symlink out of the target root, planted by
+// the image or by an earlier script. Nothing outside the root is touched.
+func TestRunMachineCommandsLegacyCompatStagingDirSymlink(t *testing.T) {
+	withMachineCommands(t, map[string]string{"commands-0.sh": "true\n"})
+	fake := &fakeStreaming{}
+	withFakeStreaming(t, fake)
+	c := newTestConfigurator(t, newMockCommander())
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(c.rootDir, "tmp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(c.rootDir, "tmp", "booty-machine-commands")); err != nil {
+		t.Fatal(err)
+	}
+
+	err := c.RunMachineCommands(context.Background(), true)
+	if err == nil {
+		t.Fatal("RunMachineCommands() staged a script through a symlink out of the root")
+	}
+	entries, _ := os.ReadDir(outside)
+	if len(entries) != 0 || len(fake.calls) != 0 {
+		t.Fatalf("outside dir entries = %d, runs = %d; want nothing", len(entries), len(fake.calls))
+	}
+}
