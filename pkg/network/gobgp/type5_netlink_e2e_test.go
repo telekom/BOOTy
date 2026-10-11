@@ -6,11 +6,13 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"runtime"
 	"syscall"
 	"testing"
 
 	apipb "github.com/osrg/gobgp/v3/api"
 	"github.com/vishvananda/netlink"
+	"github.com/vishvananda/netns"
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
@@ -25,6 +27,7 @@ func TestType5NetlinkFailoverKeepsRoute(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Fatal("test requires root (run with sudo)")
 	}
+	enterTestNetns(t)
 	cfg := &Config{
 		RouterID:          "192.0.2.10",
 		ProvisionVNI:      4242,
@@ -51,6 +54,34 @@ func TestType5NetlinkFailoverKeepsRoute(t *testing.T) {
 	overlay.handleType5Route(routeA, "192.0.2.1", nil, true)
 	if routes := type5E2EDefaultRoutes(t); len(routes) != 0 {
 		t.Fatalf("default route left after the last withdraw: %v", routes)
+	}
+}
+
+// enterTestNetns runs the rest of the test in a new network namespace, so
+// the host routing and neighbor tables are never touched.
+func enterTestNetns(t *testing.T) {
+	t.Helper()
+	runtime.LockOSThread()
+	orig, err := netns.Get()
+	if err != nil {
+		t.Fatalf("get netns: %v", err)
+	}
+	ns, err := netns.New()
+	if err != nil {
+		t.Fatalf("new netns: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = netns.Set(orig)
+		_ = ns.Close()
+		_ = orig.Close()
+		runtime.UnlockOSThread()
+	})
+	lo, err := netlink.LinkByName("lo")
+	if err != nil {
+		t.Fatalf("find lo: %v", err)
+	}
+	if err := netlink.LinkSetUp(lo); err != nil {
+		t.Fatalf("set lo up: %v", err)
 	}
 }
 

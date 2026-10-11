@@ -3800,3 +3800,18 @@ func TestHandleType5RouteInactiveWithdrawKeepsActiveRoute(t *testing.T) {
 		t.Fatalf("inactive withdraw touched the active route: dels=%v replaces=%d", mock.routeDels, len(mock.routeReplaces)-replaces)
 	}
 }
+
+func TestHandleType5RouteKeepsGatewayStateWhenPrefixDeleteFails(t *testing.T) {
+	mock := &failingNeighborOps{mockOverlayNetlinkOps: &mockOverlayNetlinkOps{}, failIP: "192.168.4.1"}
+	overlay := newType5FailoverTestOverlay(mock)
+	routeA, routeB := type5FailoverRoute(t, 1, "192.168.4.1"), type5FailoverRoute(t, 2, "192.168.4.2")
+
+	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
+	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
+	mock.routeDelErr = errors.New("delete failed")
+	overlay.handleType5Route(routeB, "192.168.4.2", nil, true)
+
+	if !overlay.hasType5GatewayRef("192.168.4.2") {
+		t.Fatal("gateway state was cleared although the route delete failed")
+	}
+}

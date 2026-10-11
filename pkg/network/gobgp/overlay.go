@@ -1019,7 +1019,9 @@ func (o *OverlayTier) withdrawType5Route(state type5RouteState, routerMAC net.Ha
 func (o *OverlayTier) removeType5Prefix(state type5RouteState) {
 	route := buildType5KernelRoute(state.link, state.dst, nil, o.overlayRouteTable())
 	if err := o.netlinkOps.RouteDel(route); err != nil {
-		o.log.Debug("failed to delete type-5 route after failed fallback", "dst", state.dst, "error", err)
+		// Keep the gateway state, the kernel route may still need it.
+		o.log.Warn("failed to delete type-5 route after failed fallback", "dst", state.dst, "error", err)
+		return
 	}
 	o.log.Warn("no remaining type-5 path could be installed, removed route", "dst", state.dst)
 	o.clearType5GatewayNeighbor(state.link, state.dst.String())
