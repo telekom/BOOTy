@@ -330,7 +330,7 @@ func buildProvisionInitramfsWithFiles(t *testing.T, vars, files map[string]strin
 		// growpart (cloud-guest-utils) is a shell script that needs these.
 		"mktemp", "tr", "touch", "wc", "head", "tail", "cut", "sort",
 		"uniq", "expr", "basename", "dirname", "readlink", "test", "[",
-		"printf", "stat", "true", "false", "env",
+		"printf", "stat", "true", "false", "env", "getopt",
 	} {
 		link := filepath.Join(rootDir, "bin", applet)
 		_ = os.Symlink("busybox", link)
