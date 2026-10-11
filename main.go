@@ -512,7 +512,8 @@ func runCAPRF(ctx context.Context) {
 
 	netMode, err := setupNetworkAndTokenFlow(ctx, cfg, client)
 	if err != nil {
-		reboot()
+		failRun(ctx, cfg, reboot)
+		return
 	}
 
 	diskMgr := disk.NewManager(nil)
@@ -693,11 +694,7 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 		}
 	}
 
-	client.SetTokenRenewalFatalHandler(func() {
-		slog.Error("token renewal exhausted, rebooting")
-		provision.DumpDebugState("jwt-renewal-exhausted")
-		reboot()
-	})
+	client.SetTokenRenewalFatalHandler(func() { tokenRenewalFatal(cfg, reboot) })
 
 	if err := client.StartTokenRenewal(ctx); err != nil {
 		slog.Error("failed to start token renewal", "error", err)
@@ -708,6 +705,29 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	}
 
 	return netMode, nil
+}
+
+// failRun ends a run that failed outside a mode. With legacy compat the
+// ramdisk keeps running like the legacy scripts after fail(); a reboot would
+// boot the ISO and run the task again.
+func failRun(ctx context.Context, cfg *config.MachineConfig, rebootFn func()) {
+	if cfg != nil && cfg.LegacyCompat {
+		slog.Info("legacy compat: keeping the ramdisk running after the failure")
+		<-ctx.Done()
+	}
+	rebootFn()
+}
+
+// tokenRenewalFatal handles exhausted JWT renewal. Legacy compat keeps the
+// ramdisk running instead of rebooting into the ISO.
+func tokenRenewalFatal(cfg *config.MachineConfig, rebootFn func()) {
+	provision.DumpDebugState("jwt-renewal-exhausted")
+	if cfg != nil && cfg.LegacyCompat {
+		slog.Error("token renewal exhausted, keeping the ramdisk running")
+		return
+	}
+	slog.Error("token renewal exhausted, rebooting")
+	rebootFn()
 }
 
 type noopNetworkMode struct{}

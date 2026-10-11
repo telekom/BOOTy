@@ -1175,3 +1175,40 @@ func TestFlushObservabilityBeforeReboot(t *testing.T) {
 		t.Error("log was not shipped before flush returned")
 	}
 }
+
+func TestFailRunLegacyCompatWaitsBeforeReboot(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	rebooted := make(chan struct{})
+	go func() {
+		failRun(ctx, &config.MachineConfig{LegacyCompat: true}, func() { close(rebooted) })
+	}()
+	select {
+	case <-rebooted:
+		t.Fatal("legacy compat rebooted before the context ended")
+	case <-time.After(100 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case <-rebooted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("failRun did not return after the context ended")
+	}
+
+	called := false
+	failRun(context.Background(), &config.MachineConfig{}, func() { called = true })
+	if !called {
+		t.Fatal("default mode must reboot right away")
+	}
+}
+
+func TestTokenRenewalFatalLegacyCompatKeepsRunning(t *testing.T) {
+	rebooted := false
+	tokenRenewalFatal(&config.MachineConfig{LegacyCompat: true}, func() { rebooted = true })
+	if rebooted {
+		t.Fatal("legacy compat rebooted after token renewal exhaustion")
+	}
+	tokenRenewalFatal(&config.MachineConfig{}, func() { rebooted = true })
+	if !rebooted {
+		t.Fatal("default mode must reboot after token renewal exhaustion")
+	}
+}
