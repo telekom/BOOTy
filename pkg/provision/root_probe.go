@@ -36,6 +36,9 @@ func (o *Orchestrator) probeRootPartition(ctx context.Context, parts []disk.Part
 			continue
 		}
 		if err := o.disk.MountPartitionInspect(ctx, parts[i].Node, inspect); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, fmt.Errorf("root probe: %w", ctxErr)
+			}
 			o.log.Info("root probe: cannot mount partition", "partition", parts[i].Node, "error", err)
 			continue
 		}
