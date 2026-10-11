@@ -51,7 +51,7 @@ func TestDecommissionReportsSuccessWhenWipeAndEFIFail(t *testing.T) {
 	t.Cleanup(func() { efiFirmwarePath, efiVarsPath = oldFirmwarePath, oldVarsPath })
 
 	provider := &mockProvider{}
-	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{Mode: "decommission"}, provider)
+	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{Mode: "decommission", LegacyCompat: true}, provider)
 	sysfs := t.TempDir()
 	for _, name := range []string{"sda", "nvme0n1"} {
 		if err := os.MkdirAll(filepath.Join(sysfs, "block", name), 0o755); err != nil {
@@ -114,5 +114,20 @@ func TestEFIBootOrder(t *testing.T) {
 				t.Fatalf("efiBootOrder() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestDecommissionDiscardsNVMeOnlyInLegacyCompat(t *testing.T) {
+	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{Mode: "decommission"}, &mockProvider{})
+	sysfs := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sysfs, "block", "nvme0n1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	o.disk.SetSysfsRoot(sysfs)
+	if err := o.decommissionWipe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if hasCall(cmd.calls, "blkdiscard", "/dev/nvme0n1") {
+		t.Fatal("decommission without legacy compat discarded an NVMe disk")
 	}
 }
