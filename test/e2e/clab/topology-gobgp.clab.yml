@@ -11,22 +11,17 @@
 #   booty-l2          PeerMode=unnumbered  eBGP unnumbered to spine, with
 #                                          EVPN_L2_ENABLED=true and no FRR config
 #
-# Network topology:
+# Network topology (spine01 port → peer):
 #
-#   ┌─────────┐         ┌──────────┐
-#   │  rr01   │◄──iBGP──│ spine01  │◄──eBGP──┐ leaf01
-#   │ ASN65000│  eth1-6  │ ASN65000 │  eth1    │ ASN65001
-#   └────┬────┘         │          │         └──────────┘
-#        │ eth2          │ eth3-5   │
-#        │               │          │
-#   ┌────▼────┐    ┌─────▼─────┐   │
-#   │  booty  │    │   booty   │   │ eth5
-#   │  dual   │    │ unnumbered│   │
-#   └─────────┘    └───────────┘   │
-#                            ┌─────▼─────┐
-#                            │   booty   │
-#                            │ numbered  │
-#                            └───────────┘
+#   leaf01 (ASN 65001) ◄─eBGP─ eth1 ┐
+#   client (br100, L2)  ────── eth2 ┤
+#   booty-unnumbered    ◄─eBGP─ eth3 ┤
+#   booty-dual (IPv4)   ◄─eBGP─ eth4 ┼── spine01 (ASN 65000)
+#   booty-numbered      ◄─eBGP─ eth5 ┤
+#   rr01 (ASN 65000)    ◄─iBGP─ eth6 ┤
+#   booty-l2            ◄─eBGP─ eth7 ┘
+#
+#   rr01 eth2 ◄─iBGP (L2VPN-EVPN)─► booty-dual eth2
 #
 # Build the test image first:
 #   docker build -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
