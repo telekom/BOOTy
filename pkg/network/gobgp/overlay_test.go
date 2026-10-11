@@ -3688,3 +3688,82 @@ func (m *failingGatewayRouteOps) RouteReplace(route *netlink.Route) error {
 	}
 	return err
 }
+
+func TestHandleType5RouteRetriesVTEPRouteForFallbackPath(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := newType5FailoverTestOverlay(mock)
+	vtepFails := true
+	overlay.ensureVTEPRoute = func(vtep net.IP) error {
+		if vtep.Equal(net.ParseIP("192.168.4.1")) && vtepFails {
+			return errors.New("transient underlay error")
+		}
+		return nil
+	}
+	routeA, routeB := type5FailoverRoute(t, 1, "192.168.4.1"), type5FailoverRoute(t, 2, "192.168.4.2")
+
+	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
+	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
+	vtepFails = false
+	overlay.handleType5Route(routeB, "192.168.4.2", nil, true)
+
+	if len(mock.routeDels) != 0 {
+		t.Fatalf("route deleted although gateway A still advertises it: %v", mock.routeDels)
+	}
+	if last := mock.routeReplaces[len(mock.routeReplaces)-1]; !last.Gw.Equal(net.ParseIP("192.168.4.1")) {
+		t.Fatalf("route gw after B withdraw = %s, want 192.168.4.1", last.Gw)
+	}
+}
+
+func TestHandleType5RouteSkipsFallbackWithoutGatewayState(t *testing.T) {
+	mock := &failingNeighborOps{mockOverlayNetlinkOps: &mockOverlayNetlinkOps{}, failIP: "192.168.4.1"}
+	overlay := newType5FailoverTestOverlay(mock)
+	routeA := type5FailoverRoute(t, 1, "192.168.4.1")
+	routeB := type5FailoverRoute(t, 2, "192.168.4.2")
+	routeC := type5FailoverRoute(t, 3, "192.168.4.3")
+
+	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
+	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
+	overlay.handleType5Route(routeC, "192.168.4.3", mustParseMAC(t, "62:db:b8:c1:80:03"), false)
+	overlay.handleType5Route(routeC, "192.168.4.3", nil, true)
+
+	if last := mock.routeReplaces[len(mock.routeReplaces)-1]; !last.Gw.Equal(net.ParseIP("192.168.4.2")) {
+		t.Fatalf("route gw after C withdraw = %s, want 192.168.4.2", last.Gw)
+	}
+}
+
+func newType5FailoverTestOverlay(ops overlayNetlinkOps) *OverlayTier {
+	return &OverlayTier{
+		cfg: &Config{
+			RouterID:          "192.168.4.10",
+			ProvisionVNI:      1000,
+			BridgeName:        "br.provision",
+			OverlayVRFName:    "Vrf_overlay",
+			OverlayVRFTableID: 20,
+		},
+		log:        slog.Default(),
+		netlinkOps: ops,
+	}
+}
+
+func type5FailoverRoute(t *testing.T, rdAssigned uint32, gw string) *apipb.EVPNIPPrefixRoute {
+	t.Helper()
+	rd, err := anypb.New(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAssigned})
+	if err != nil {
+		t.Fatalf("anypb.New: %v", err)
+	}
+	return &apipb.EVPNIPPrefixRoute{Rd: rd, IpPrefix: "0.0.0.0", IpPrefixLen: 0, GwAddress: gw}
+}
+
+// failingNeighborOps fails NeighSet for one gateway neighbor.
+type failingNeighborOps struct {
+	*mockOverlayNetlinkOps
+	failIP string
+}
+
+func (m *failingNeighborOps) NeighSet(n *netlink.Neigh) error {
+	err := m.mockOverlayNetlinkOps.NeighSet(n)
+	if n.IP.Equal(net.ParseIP(m.failIP)) && n.Family == syscall.AF_INET {
+		return errors.New("neighbor set failed")
+	}
+	return err
+}
