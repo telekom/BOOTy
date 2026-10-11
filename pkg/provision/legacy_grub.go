@@ -18,14 +18,24 @@ import (
 // GRUB_CMDLINE_LINUX value of the legacy drop-in.
 const legacyGRUBUnsafe = "\"\\$`\n\r"
 
-// legacyNoUpdateGRUB marks a target root without update-grub.
-const legacyNoUpdateGRUB = "BOOTY_NO_UPDATE_GRUB"
-
-// legacyUpdateGRUBScript runs update-grub from /usr/sbin or /sbin like the
-// legacy provision.sh, or reports that the image has none.
-const legacyUpdateGRUBScript = "if [ -x /usr/sbin/update-grub ]; then exec /usr/sbin/update-grub; " +
-	"elif [ -x /sbin/update-grub ]; then exec /sbin/update-grub; " +
-	"else echo " + legacyNoUpdateGRUB + "; fi"
+// findUpdateGRUB returns /usr/sbin/update-grub or /sbin/update-grub when
+// it is an executable file in the target, like the `-x` checks of the legacy
+// provision.sh. os.Root resolves image symlinks inside the target root and
+// never against the ramdisk, and no target shell is needed for the check.
+func (c *Configurator) findUpdateGRUB() string {
+	root, err := os.OpenRoot(c.rootDir)
+	if err != nil {
+		return ""
+	}
+	defer root.Close() //nolint:errcheck // read-only handle
+	for _, candidate := range []string{"/usr/sbin/update-grub", "/sbin/update-grub"} {
+		info, err := root.Stat(strings.TrimPrefix(candidate, "/"))
+		if err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0 {
+			return candidate
+		}
+	}
+	return ""
+}
 
 // configureGRUBLegacy writes the kernel parameters like provision.sh of the
 // CAPRF legacy provisioner: it appends "ds=nocloud <console> <extra>" to the
@@ -55,14 +65,14 @@ func (c *Configurator) configureGRUBLegacy(ctx context.Context, cfg *config.Mach
 		return fmt.Errorf("writing grub config: %w", err)
 	}
 
-	// Look for update-grub inside the target root, so symlinks in the image
-	// resolve against the image and never against the ramdisk.
-	out, err := c.disk.ChrootRun(ctx, c.rootDir, legacyUpdateGRUBScript)
+	updateGRUB := c.findUpdateGRUB()
+	if updateGRUB == "" {
+		slog.Info("update-grub not found in the target, skipping like the legacy CAPRF provisioner")
+		return nil
+	}
+	out, err := c.disk.ChrootRun(ctx, c.rootDir, updateGRUB)
 	if err != nil {
 		return fmt.Errorf("update-grub: %s: %w", string(out), err)
-	}
-	if strings.Contains(string(out), legacyNoUpdateGRUB) {
-		slog.Info("update-grub not found in the target, skipping like the legacy CAPRF provisioner")
 	}
 	return nil
 }

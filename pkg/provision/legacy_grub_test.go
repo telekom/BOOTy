@@ -52,8 +52,8 @@ func TestConfigureGRUBLegacyCompat(t *testing.T) {
 			cmd := newMockCommander()
 			c := newTestConfigurator(t, cmd)
 			writeFixture(t, filepath.Join(c.hostSysRoot, "class", "dmi", "id", "sys_vendor"), tt.vendor, 0o644)
-			if !tt.updateGRUB {
-				cmd.setResult("chroot "+c.rootDir, []byte(legacyNoUpdateGRUB+"\n"), nil)
+			if tt.updateGRUB {
+				writeFixture(t, filepath.Join(c.rootDir, "usr", "sbin", "update-grub"), "#!/bin/sh\n", 0o755)
 			}
 			cfg := &config.MachineConfig{LegacyCompat: true}
 			cfg.Provision.ExtraKernelParams = tt.extra
@@ -70,12 +70,12 @@ func TestConfigureGRUBLegacyCompat(t *testing.T) {
 			}
 			ran := false
 			for _, call := range cmd.calls {
-				if call.name == "chroot" && strings.Contains(strings.Join(call.args, " "), "exec /usr/sbin/update-grub") {
+				if call.name == "chroot" && strings.Contains(strings.Join(call.args, " "), "/usr/sbin/update-grub") {
 					ran = true
 				}
 			}
-			if !ran {
-				t.Fatalf("update-grub was not looked up inside the target root (calls %v)", cmd.calls)
+			if ran != tt.updateGRUB {
+				t.Fatalf("update-grub ran = %v, want %v (calls %v)", ran, tt.updateGRUB, cmd.calls)
 			}
 		})
 	}
@@ -98,5 +98,53 @@ func TestConfigureSerialConsoleSkippedInLegacyCompat(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(o.config.rootDir, "etc", "systemd")); !os.IsNotExist(err) {
 		t.Fatalf("legacy compat wrote getty configuration: %v", err)
+	}
+}
+
+func TestFindUpdateGRUB(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, root string)
+		want  string
+	}{
+		{name: "usr sbin", setup: func(t *testing.T, root string) {
+			writeFixture(t, filepath.Join(root, "usr", "sbin", "update-grub"), "#!/bin/sh\n", 0o755)
+		}, want: "/usr/sbin/update-grub"},
+		{name: "sbin fallback", setup: func(t *testing.T, root string) {
+			writeFixture(t, filepath.Join(root, "sbin", "update-grub"), "#!/bin/sh\n", 0o755)
+		}, want: "/sbin/update-grub"},
+		{name: "not executable", setup: func(t *testing.T, root string) {
+			writeFixture(t, filepath.Join(root, "usr", "sbin", "update-grub"), "#!/bin/sh\n", 0o644)
+		}},
+		{name: "neither, no shell in the target", setup: func(*testing.T, string) {}},
+		{name: "symlink escaping the root", setup: func(t *testing.T, root string) {
+			outside := t.TempDir()
+			writeFixture(t, filepath.Join(outside, "update-grub"), "#!/bin/sh\n", 0o755)
+			if err := os.MkdirAll(filepath.Join(root, "usr"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, filepath.Join(root, "usr", "sbin")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newMockCommander()
+			c := newTestConfigurator(t, cmd)
+			tt.setup(t, c.rootDir)
+			if got := c.findUpdateGRUB(); got != tt.want {
+				t.Fatalf("findUpdateGRUB() = %q, want %q", got, tt.want)
+			}
+			if tt.want == "" {
+				cfg := &config.MachineConfig{LegacyCompat: true}
+				if err := c.ConfigureGRUB(context.Background(), cfg); err != nil {
+					t.Fatalf("ConfigureGRUB() = %v, want a skip without update-grub", err)
+				}
+				if len(cmd.calls) != 0 {
+					t.Fatalf("ConfigureGRUB() ran %v without update-grub", cmd.calls)
+				}
+			}
+		})
 	}
 }
