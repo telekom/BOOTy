@@ -481,7 +481,7 @@ func TestRewriteMirrorFstab(t *testing.T) {
 		t.Fatal(err)
 	}
 	fstab := "# static\nPARTUUID=aaa / ext4 defaults 0 1\nPARTUUID=bbb /boot ext4 defaults 0 2\n" +
-		"PARTUUID=ccc /boot/efi vfat umask=0077 0 1\nLABEL=data /data ext4 defaults 0 2\n"
+		"/dev/sda15 /boot/efi vfat umask=0077 0 1\nLABEL=data /data ext4 defaults 0 2\n"
 	if err := os.WriteFile(filepath.Join(root, "etc", "fstab"), []byte(fstab), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -525,5 +525,20 @@ func TestRewriteMirrorFstabAddsBootEntry(t *testing.T) {
 	}
 	if want := "LABEL=root / ext4 defaults 0 1\n/dev/md1 /boot ext4 defaults 0 2\n"; string(got) != want {
 		t.Fatalf("fstab = %q, want %q", got, want)
+	}
+}
+
+func TestRewriteMirrorFstabWithoutFstab(t *testing.T) {
+	root := t.TempDir()
+	cmd := newMockCommander()
+	cmd.setResult("blkid -o", []byte("ext4\n"), nil)
+	o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, disk.NewManager(cmd))
+	o.mirrorArrays = []string{disk.MirrorRootArray, disk.MirrorBootArray}
+	if err := o.rewriteMirrorFstab(context.Background(), root); err != nil {
+		t.Fatalf("rewriteMirrorFstab() error = %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "etc", "fstab"))
+	if err != nil || string(got) != "/dev/md1 /boot ext4 defaults 0 2\n" {
+		t.Fatalf("fstab = %q, %v; want the /boot array entry", got, err)
 	}
 }

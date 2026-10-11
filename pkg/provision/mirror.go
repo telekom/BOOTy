@@ -285,16 +285,15 @@ func fstabEntrySource(path, mountpoint string) (string, error) {
 
 // rewriteMirrorFstab points fstab entries that name a partition of one disk
 // at sources that work from either disk: / and /boot at their md arrays, and
-// a PARTUUID /boot/efi at the ESP filesystem UUID, which the copy shares. The
+// a PARTUUID or device path /boot/efi at the ESP filesystem UUID, which the
+// copy shares. The
 // second disk gets new partition GUIDs, and a member partition must never be
 // mounted directly.
 func (o *Orchestrator) rewriteMirrorFstab(ctx context.Context, root string) error {
 	path := filepath.Join(root, "etc", "fstab")
+	// A missing fstab counts as empty: the /boot array still needs an entry.
 	data, err := os.ReadFile(path) //nolint:gosec // fstab of the provisioned root
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read fstab: %w", err)
 	}
 	arrays := map[string]string{"/": disk.MirrorRootArray}
@@ -341,7 +340,7 @@ func (o *Orchestrator) appendMirrorBootFstabEntry(ctx context.Context, lines []s
 		return nil, fmt.Errorf("filesystem type of %s for its fstab entry: %w", disk.MirrorBootArray, err)
 	}
 	o.log.Info("adding fstab entry for the /boot array", "array", disk.MirrorBootArray)
-	if len(lines) > 0 && !strings.HasSuffix(lines[len(lines)-1], "\n") {
+	if last := len(lines) - 1; last >= 0 && lines[last] != "" && !strings.HasSuffix(lines[last], "\n") {
 		lines = append(lines, "\n")
 	}
 	return append(lines, fmt.Sprintf("%s /boot %s defaults 0 2\n", disk.MirrorBootArray, fsType)), nil
@@ -353,7 +352,8 @@ func (o *Orchestrator) mirrorFstabSource(ctx context.Context, array, source, mou
 	switch {
 	case array != "" && source != array && (strings.HasPrefix(source, "PARTUUID=") || strings.HasPrefix(source, "/dev/")):
 		return array
-	case mountpoint == "/boot/efi" && strings.HasPrefix(source, "PARTUUID=") && o.bootPartition != "":
+	case mountpoint == "/boot/efi" && (strings.HasPrefix(source, "PARTUUID=") || strings.HasPrefix(source, "/dev/")) &&
+		o.bootPartition != "":
 		out, err := o.disk.Run(ctx, "blkid", "-s", "UUID", "-o", "value", o.bootPartition)
 		if uuid := strings.TrimSpace(string(out)); err == nil && uuid != "" {
 			return "UUID=" + uuid
