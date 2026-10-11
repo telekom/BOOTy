@@ -44,6 +44,11 @@ func TestDecommissionReportsSuccessWhenWipeAndEFIFail(t *testing.T) {
 		return nil, errors.New("efi failure")
 	}
 	t.Cleanup(func() { hostCommandCombinedOutput = oldCommand })
+	// Never mount the efivarfs of the machine running the tests.
+	oldFirmwarePath, oldVarsPath := efiFirmwarePath, efiVarsPath
+	efiFirmwarePath = filepath.Join(t.TempDir(), "missing-efi")
+	efiVarsPath = filepath.Join(efiFirmwarePath, "efivars")
+	t.Cleanup(func() { efiFirmwarePath, efiVarsPath = oldFirmwarePath, oldVarsPath })
 
 	provider := &mockProvider{}
 	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{Mode: "decommission"}, provider)
