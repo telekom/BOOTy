@@ -1,7 +1,8 @@
 # GoBGP e2e topology: tests all three BGP PeerMode scenarios using containerlab.
 #
-# This topology runs three BOOTy instances with GoBGP (no FRR), each exercising
-# a different BGP session mode:
+# This topology runs four BOOTy instances with GoBGP (no FRR). The first three
+# each use a different BGP session mode. booty-l2 reuses the unnumbered mode
+# to test the explicit EVPN_L2_ENABLED setting:
 #
 #   booty-unnumbered  PeerMode=unnumbered  eBGP unnumbered to spine (all AFI/SAFI)
 #   booty-dual        PeerMode=dual        eBGP unnumbered to spine (IPv4) +
