@@ -5,10 +5,12 @@ package network
 import (
 	"net"
 	"os"
+	"runtime"
 	"testing"
 
 	"github.com/digineo/go-dhclient"
 	"github.com/vishvananda/netlink"
+	"github.com/vishvananda/netns"
 )
 
 // TestDHCPNetlinkLeaseAppliesTwice applies the same lease twice to a real
@@ -19,6 +21,7 @@ func TestDHCPNetlinkLeaseAppliesTwice(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Fatal("test requires root (run with sudo)")
 	}
+	enterTestNetns(t)
 	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "dhcp-e2e0"}}
 	if err := netlink.LinkAdd(link); err != nil {
 		t.Fatalf("add dummy: %v", err)
@@ -45,4 +48,25 @@ func TestDHCPNetlinkLeaseAppliesTwice(t *testing.T) {
 	if len(addrs) != 1 || addrs[0].IPNet.String() != "198.51.100.7/24" {
 		t.Fatalf("addresses = %v, want 198.51.100.7/24", addrs)
 	}
+}
+
+// enterTestNetns runs the rest of the test in a new network namespace, so
+// the host interfaces and routes are never touched.
+func enterTestNetns(t *testing.T) {
+	t.Helper()
+	runtime.LockOSThread()
+	orig, err := netns.Get()
+	if err != nil {
+		t.Fatalf("get netns: %v", err)
+	}
+	ns, err := netns.New()
+	if err != nil {
+		t.Fatalf("new netns: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = netns.Set(orig)
+		_ = ns.Close()
+		_ = orig.Close()
+		runtime.UnlockOSThread()
+	})
 }

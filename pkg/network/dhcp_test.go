@@ -276,3 +276,37 @@ func TestOnBoundFailedApplyLeavesWinnerForOtherNIC(t *testing.T) {
 		t.Fatal("lease on eth1 was not used after eth0 failed to apply")
 	}
 }
+
+func TestOnBoundRouteFailureLeavesWinnerForOtherNIC(t *testing.T) {
+	origAddr, origRoute := dhcpAddrAdd, dhcpRouteReplace
+	t.Cleanup(func() { dhcpAddrAdd, dhcpRouteReplace = origAddr, origRoute })
+	dhcpAddrAdd = func(netlink.Link, *netlink.Addr) error { return nil }
+	dhcpRouteReplace = func(r *netlink.Route) error {
+		if r.LinkIndex == 1 {
+			return syscall.ENETUNREACH
+		}
+		return nil
+	}
+
+	d := NewDHCPMode()
+	var winner dhcpWinner
+	lease := &dhclient.Lease{
+		FixedAddress: net.ParseIP("10.0.2.15"),
+		Netmask:      net.CIDRMask(24, 32),
+		Router:       []net.IP{net.ParseIP("10.0.2.2")},
+	}
+	leased0, leased1 := make(chan struct{}, 1), make(chan struct{}, 1)
+	d.onBound(&netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth0", Index: 1}}, "eth0", leased0, &winner)(lease)
+	d.onBound(&netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth1", Index: 2}}, "eth1", leased1, &winner)(lease)
+
+	select {
+	case <-leased0:
+		t.Fatal("lease on eth0 was reported although its default route failed")
+	default:
+	}
+	select {
+	case <-leased1:
+	default:
+		t.Fatal("lease on eth1 was not used after eth0 failed to set its default route")
+	}
+}

@@ -156,7 +156,7 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struc
 		// NIC does not block a usable lease on another NIC.
 		addr, err := leaseAddr(lease)
 		if err != nil {
-			d.log.Warn("Ignoring DHCP lease", "iface", ifName, "error", err)
+			d.log.Warn("ignoring DHCP lease", "iface", ifName, "error", err)
 			return
 		}
 		winner.mu.Lock()
@@ -165,19 +165,20 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struc
 			return
 		}
 		if err := dhcpAddrAdd(link, addr); err != nil && !errors.Is(err, syscall.EEXIST) {
-			d.log.Warn("Failed to assign DHCP address", "iface", ifName, "error", err)
+			d.log.Warn("failed to assign DHCP address", "iface", ifName, "error", err)
 			return
 		}
-		winner.won = true
-		d.log.Info("DHCP lease obtained", "iface", ifName, "addr", addr.IPNet.String())
 		if len(lease.Router) > 0 {
 			// Replace, so a default route left by an earlier attempt or
 			// another NIC does not stay in place.
 			route := &netlink.Route{Gw: lease.Router[0], LinkIndex: link.Attrs().Index}
 			if err := dhcpRouteReplace(route); err != nil {
-				d.log.Warn("failed to set default route", "gw", lease.Router[0], "error", err)
+				d.log.Warn("failed to set default route", "iface", ifName, "gw", lease.Router[0], "error", err)
+				return
 			}
 		}
+		winner.won = true
+		d.log.Info("DHCP lease obtained", "iface", ifName, "addr", addr.IPNet.String())
 		select {
 		case leased <- struct{}{}:
 		default:
