@@ -113,16 +113,6 @@ func (o *Orchestrator) mirrorRoot(ctx context.Context) error {
 	if err := o.disk.ReplicatePartitionTable(ctx, o.targetDisk, o.mirrorDisk); err != nil {
 		return err
 	}
-	if o.bootPartition != "" {
-		efiNum, numErr := disk.PartitionNumberChecked(o.bootPartition, o.targetDisk)
-		if numErr != nil {
-			return fmt.Errorf("determine EFI partition number: %w", numErr)
-		}
-		mirrorEFI := blockdev.PartitionDevicePath(o.mirrorDisk, efiNum)
-		if err := copyBlockDeviceFn(o.bootPartition, mirrorEFI); err != nil {
-			return fmt.Errorf("copy EFI system partition: %w", err)
-		}
-	}
 	// The replicated partition can still carry an md superblock or
 	// filesystem signature from an earlier install of the second disk.
 	if err := o.disk.WipeFilesystemSignatures(ctx, mirrorRoot); err != nil {
@@ -168,8 +158,9 @@ func (o *Orchestrator) configureMdadm(ctx context.Context) error {
 	return nil
 }
 
-// createMirrorEFIBootEntry adds a firmware boot entry for the second disk so
-// the host still boots when the first disk fails.
+// createMirrorEFIBootEntry copies the EFI system partition to the second
+// disk and adds a firmware boot entry for it, so the host still boots when
+// the first disk fails. It runs after the last step that writes to the ESP.
 func (o *Orchestrator) createMirrorEFIBootEntry(ctx context.Context) error {
 	if o.mirrorDisk == "" || o.bootPartition == "" {
 		return nil
@@ -178,7 +169,24 @@ func (o *Orchestrator) createMirrorEFIBootEntry(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("determine EFI partition number: %w", err)
 	}
-	return o.config.CreateEFIBootEntry(ctx, o.mirrorDisk, blockdev.PartitionDevicePath(o.mirrorDisk, efiNum))
+	mirrorEFI := blockdev.PartitionDevicePath(o.mirrorDisk, efiNum)
+	// The loader path comes from the mounted ESP, so create the entry first.
+	if err := o.config.CreateEFIBootEntry(ctx, o.mirrorDisk, mirrorEFI); err != nil {
+		return err
+	}
+	return o.syncMirrorESP(ctx, mirrorEFI)
+}
+
+// syncMirrorESP copies the ESP block device with the ESP unmounted, so the
+// copy is consistent, and mounts it again for the remaining steps.
+func (o *Orchestrator) syncMirrorESP(ctx context.Context, mirrorEFI string) error {
+	if err := o.unmountBoot(); err != nil {
+		return err
+	}
+	if err := copyBlockDeviceFn(o.bootPartition, mirrorEFI); err != nil {
+		return fmt.Errorf("copy EFI system partition: %w", err)
+	}
+	return o.mountBoot(ctx)
 }
 
 // writeTargetRootFile writes data to path below root without following

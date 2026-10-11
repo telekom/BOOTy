@@ -44,8 +44,8 @@ func TestMirrorRootBuildsRAID1AcrossBothDisks(t *testing.T) {
 	if o.rootPartition != disk.MirrorRootArray {
 		t.Fatalf("rootPartition = %s, want %s", o.rootPartition, disk.MirrorRootArray)
 	}
-	if len(copied) != 1 || copied[0] != "/dev/sda1->/dev/sdb1" {
-		t.Fatalf("EFI copy = %v, want /dev/sda1->/dev/sdb1", copied)
+	if len(copied) != 0 {
+		t.Fatalf("mirrorRoot() copied the ESP %v; create-mirror-efi-boot-entry copies it after the last ESP write", copied)
 	}
 	for _, want := range [][]string{
 		{"growpart", "--update", "on", "/dev/sda", "2"},
@@ -177,4 +177,29 @@ func TestSelectMirrorPairDisabled(t *testing.T) {
 
 func newTestDiskManager() *disk.Manager {
 	return disk.NewManager(newMockCommander())
+}
+
+func TestCreateMirrorEFIBootEntryCopiesESPAndRemounts(t *testing.T) {
+	var events []string
+	origCopy, origMounted, origMount := copyBlockDeviceFn, isMountPoint, mountBootPart
+	t.Cleanup(func() { copyBlockDeviceFn, isMountPoint, mountBootPart = origCopy, origMounted, origMount })
+	isMountPoint = func(string) bool { return false }
+	copyBlockDeviceFn = func(src, dst string) error {
+		events = append(events, "copy "+src+"->"+dst)
+		return nil
+	}
+	mountBootPart = func(_ context.Context, _ *disk.Manager, device, mountpoint string) error {
+		events = append(events, "mount "+device+" "+mountpoint)
+		return nil
+	}
+
+	o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, newTestDiskManager())
+	o.targetDisk, o.mirrorDisk, o.bootPartition = "/dev/sda", "/dev/sdb", "/dev/sda1"
+	if err := o.createMirrorEFIBootEntry(context.Background()); err != nil {
+		t.Fatalf("createMirrorEFIBootEntry() error = %v", err)
+	}
+	want := []string{"copy /dev/sda1->/dev/sdb1", "mount /dev/sda1 " + bootEFIMountPoint()}
+	if strings.Join(events, "|") != strings.Join(want, "|") {
+		t.Fatalf("events = %v, want %v", events, want)
+	}
 }

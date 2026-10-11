@@ -247,6 +247,16 @@ func (o *Orchestrator) dryRunDiskDetection(ctx context.Context) DryRunResult {
 			Message: fmt.Sprintf("configured disk %s exists", o.cfg.Provision.Disk.Device)}
 	}
 
+	if serial := strings.TrimSpace(o.cfg.Provision.Disk.SerialNumber); serial != "" {
+		d, err := o.disk.FindDiskBySerial(ctx, serial, o.cfg.Provision.Disk.MinSizeGB)
+		if err != nil {
+			return DryRunResult{Status: DryRunFail,
+				Message: fmt.Sprintf("configured disk serial %s not found: %v", serial, err)}
+		}
+		return DryRunResult{Status: DryRunPass,
+			Message: fmt.Sprintf("configured disk serial %s is %s", serial, d)}
+	}
+
 	if result, ok := o.dryRunMirrorPair(ctx); ok {
 		return result
 	}
@@ -264,7 +274,7 @@ func (o *Orchestrator) dryRunDiskDetection(ctx context.Context) DryRunResult {
 // ok is false when mirroring is off or auto mode falls back to one disk.
 func (o *Orchestrator) dryRunMirrorPair(ctx context.Context) (DryRunResult, bool) {
 	mode := o.mirroringMode()
-	if (mode != disk.MirroringModeRAID1 && mode != disk.MirroringModeAuto) || o.cfg.Provision.Disk.SerialNumber != "" {
+	if mode != disk.MirroringModeRAID1 && mode != disk.MirroringModeAuto {
 		return DryRunResult{}, false
 	}
 	first, second, found, err := o.disk.DetectMirrorPair(ctx, o.cfg.Provision.Disk.MinSizeGB)

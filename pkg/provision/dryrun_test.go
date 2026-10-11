@@ -527,7 +527,6 @@ func TestDryRunMirrorPairSkipped(t *testing.T) {
 	for _, dc := range []config.DiskConfig{
 		{},
 		{MirroringMode: "none"},
-		{MirroringMode: "raid-1", SerialNumber: "S123"},
 	} {
 		cfg := &config.MachineConfig{}
 		cfg.Provision.Disk = dc
@@ -535,6 +534,16 @@ func TestDryRunMirrorPairSkipped(t *testing.T) {
 		if result, ok := o.dryRunMirrorPair(context.Background()); ok {
 			t.Errorf("dryRunMirrorPair(%+v) = %+v, want skipped", dc, result)
 		}
+	}
+}
+
+func TestDryRunDiskDetection_MissingSerial(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.SerialNumber = "BOOTY-DRYRUN-NO-SUCH-SERIAL"
+	cfg.Provision.Disk.MirroringMode = "raid-1"
+	o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
+	if result := o.dryRunDiskDetection(context.Background()); result.Status != DryRunFail {
+		t.Errorf("got %s, want fail for a missing disk serial: %s", result.Status, result.Message)
 	}
 }
 
