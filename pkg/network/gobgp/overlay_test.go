@@ -3815,3 +3815,21 @@ func TestHandleType5RouteKeepsGatewayStateWhenPrefixDeleteFails(t *testing.T) {
 		t.Fatal("gateway state was cleared although the route delete failed")
 	}
 }
+
+func TestHandleType5RouteRestoresActivePathWhenNewPathFails(t *testing.T) {
+	mock := &failingNeighborOps{mockOverlayNetlinkOps: &mockOverlayNetlinkOps{}, failIP: "192.168.4.1"}
+	overlay := newType5FailoverTestOverlay(mock)
+	routeA, routeB := type5FailoverRoute(t, 1, "192.168.4.1"), type5FailoverRoute(t, 2, "192.168.4.2")
+
+	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
+	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
+
+	if last := mock.routeReplaces[len(mock.routeReplaces)-1]; !last.Gw.Equal(net.ParseIP("192.168.4.2")) {
+		t.Fatalf("route gw after failed A install = %s, want 192.168.4.2 restored", last.Gw)
+	}
+
+	overlay.handleType5Route(routeA, "192.168.4.1", nil, true)
+	if len(mock.routeDels) != 0 {
+		t.Fatalf("withdrawing the failed path A deleted the working route: %v", mock.routeDels)
+	}
+}

@@ -898,7 +898,16 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 	o.rememberType5Path(prefix, key, path)
 	if o.applyType5Path(path) {
 		o.markType5Active(prefix, key)
+		return
 	}
+	// The failed install may have moved the kernel route already. Put the
+	// previously installed path back, or forget which path is installed.
+	if active, ok := o.type5Active[prefix]; ok && active != key {
+		if prev := o.type5Paths[prefix][active]; prev != nil && o.applyType5Path(prev) {
+			return
+		}
+	}
+	delete(o.type5Active, prefix)
 }
 
 // markType5Active records the installed path of a prefix. The caller holds
