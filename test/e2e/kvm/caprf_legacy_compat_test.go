@@ -147,6 +147,7 @@ func TestLegacyCompatProvisionPowersOffQEMU(t *testing.T) {
 func TestLegacyCompatDeprovisionPowersOffQEMU(t *testing.T) {
 	requireRoot(t)
 	qemuAvailable(t)
+	requireProvisionTools(t)
 
 	caprf := startFakeCAPRF(t, "")
 

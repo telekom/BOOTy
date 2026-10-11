@@ -510,9 +510,14 @@ func runCAPRF(ctx context.Context) {
 		"image_count", len(cfg.Provision.Image.URLs),
 	)
 
-	netMode, err := setupNetworkAndTokenFlow(ctx, cfg, client)
+	// runCtx stops the active mode when JWT renewal is exhausted in legacy
+	// compat, like fail() stops the legacy task.
+	runCtx, stopRun := context.WithCancel(ctx)
+	defer stopRun()
+
+	netMode, err := setupNetworkAndTokenFlow(ctx, cfg, client, stopRun)
 	if err != nil {
-		failRun(ctx, cfg, reboot)
+		failRun(ctx, cfg, client, fmt.Sprintf("network or token setup failed: %v", err), reboot)
 		return
 	}
 
@@ -545,7 +550,11 @@ func runCAPRF(ctx context.Context) {
 	}
 
 	slog.Info("executing mode", "mode", mode.Name())
-	modeErr := mode.Run(ctx)
+	modeErr := mode.Run(runCtx)
+	if cfg.LegacyCompat && runCtx.Err() != nil && ctx.Err() == nil {
+		failRun(ctx, cfg, client, "token renewal exhausted, task stopped", reboot)
+		return
+	}
 
 	slog.Info("CAPRF run complete")
 
@@ -655,7 +664,7 @@ func reportProvisionHandoffError(ctx context.Context, reporter provisionStatusRe
 	}
 }
 
-func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, client *caprf.Client) (network.Mode, error) {
+func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, client *caprf.Client, stopRun func()) (network.Mode, error) {
 	if cfg.Mode == "dry-run" {
 		slog.Info("dry-run mode: skipping active network setup and token renewal")
 		return noopNetworkMode{}, nil
@@ -694,7 +703,7 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 		}
 	}
 
-	client.SetTokenRenewalFatalHandler(func() { tokenRenewalFatal(cfg, reboot) })
+	client.SetTokenRenewalFatalHandler(func() { tokenRenewalFatal(cfg, reboot, stopRun) })
 
 	if err := client.StartTokenRenewal(ctx); err != nil {
 		slog.Error("failed to start token renewal", "error", err)
@@ -707,23 +716,31 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	return netMode, nil
 }
 
-// failRun ends a run that failed outside a mode. With legacy compat the
-// ramdisk keeps running like the legacy scripts after fail(); a reboot would
-// boot the ISO and run the task again.
-func failRun(ctx context.Context, cfg *config.MachineConfig, rebootFn func()) {
+// failRun ends a run that failed outside a mode. With legacy compat it
+// reports the error like the legacy fail() and keeps the ramdisk running; a
+// reboot would boot the ISO and run the task again.
+func failRun(ctx context.Context, cfg *config.MachineConfig, reporter provisionStatusReporter, message string, rebootFn func()) {
 	if cfg != nil && cfg.LegacyCompat {
-		slog.Info("legacy compat: keeping the ramdisk running after the failure")
+		slog.Error("legacy compat: run failed, keeping the ramdisk running", "error", message)
+		if reporter != nil {
+			reportCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			if err := reporter.ReportStatus(reportCtx, config.StatusError, message); err != nil {
+				slog.Warn("failed to report the run failure", "error", err)
+			}
+			cancel()
+		}
 		<-ctx.Done()
 	}
 	rebootFn()
 }
 
-// tokenRenewalFatal handles exhausted JWT renewal. Legacy compat keeps the
-// ramdisk running instead of rebooting into the ISO.
-func tokenRenewalFatal(cfg *config.MachineConfig, rebootFn func()) {
+// tokenRenewalFatal handles exhausted JWT renewal. Legacy compat stops the
+// active task with stopRun and then waits instead of rebooting into the ISO.
+func tokenRenewalFatal(cfg *config.MachineConfig, rebootFn, stopRun func()) {
 	provision.DumpDebugState("jwt-renewal-exhausted")
 	if cfg != nil && cfg.LegacyCompat {
-		slog.Error("token renewal exhausted, keeping the ramdisk running")
+		slog.Error("token renewal exhausted, stopping the task")
+		stopRun()
 		return
 	}
 	slog.Error("token renewal exhausted, rebooting")

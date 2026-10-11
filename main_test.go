@@ -1176,11 +1176,19 @@ func TestFlushObservabilityBeforeReboot(t *testing.T) {
 	}
 }
 
-func TestFailRunLegacyCompatWaitsBeforeReboot(t *testing.T) {
+type recordingReporter struct{ statuses []config.Status }
+
+func (r *recordingReporter) ReportStatus(_ context.Context, status config.Status, _ string) error {
+	r.statuses = append(r.statuses, status)
+	return nil
+}
+
+func TestFailRunLegacyCompatReportsAndWaits(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	reporter := &recordingReporter{}
 	rebooted := make(chan struct{})
 	go func() {
-		failRun(ctx, &config.MachineConfig{LegacyCompat: true}, func() { close(rebooted) })
+		failRun(ctx, &config.MachineConfig{LegacyCompat: true}, reporter, "setup failed", func() { close(rebooted) })
 	}()
 	select {
 	case <-rebooted:
@@ -1193,22 +1201,26 @@ func TestFailRunLegacyCompatWaitsBeforeReboot(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("failRun did not return after the context ended")
 	}
+	if len(reporter.statuses) != 1 || reporter.statuses[0] != config.StatusError {
+		t.Fatalf("statuses = %v, want one error report like the legacy fail()", reporter.statuses)
+	}
 
 	called := false
-	failRun(context.Background(), &config.MachineConfig{}, func() { called = true })
+	failRun(context.Background(), &config.MachineConfig{}, nil, "x", func() { called = true })
 	if !called {
 		t.Fatal("default mode must reboot right away")
 	}
 }
 
-func TestTokenRenewalFatalLegacyCompatKeepsRunning(t *testing.T) {
-	rebooted := false
-	tokenRenewalFatal(&config.MachineConfig{LegacyCompat: true}, func() { rebooted = true })
-	if rebooted {
-		t.Fatal("legacy compat rebooted after token renewal exhaustion")
+func TestTokenRenewalFatalLegacyCompatStopsTheTask(t *testing.T) {
+	rebooted, stopped := false, false
+	tokenRenewalFatal(&config.MachineConfig{LegacyCompat: true}, func() { rebooted = true }, func() { stopped = true })
+	if rebooted || !stopped {
+		t.Fatalf("legacy compat: rebooted=%v stopped=%v, want the task stopped without reboot", rebooted, stopped)
 	}
-	tokenRenewalFatal(&config.MachineConfig{}, func() { rebooted = true })
-	if !rebooted {
-		t.Fatal("default mode must reboot after token renewal exhaustion")
+	rebooted, stopped = false, false
+	tokenRenewalFatal(&config.MachineConfig{}, func() { rebooted = true }, func() { stopped = true })
+	if !rebooted || stopped {
+		t.Fatalf("default: rebooted=%v stopped=%v, want a reboot", rebooted, stopped)
 	}
 }
