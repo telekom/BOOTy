@@ -29,14 +29,20 @@ func createDataBeforeRootTestDiskImage(t *testing.T, sizeMB int) string {
 		t.Fatalf("sfdisk failed: %v\n%s", err, out)
 	}
 	loopDev := strings.TrimSpace(string(runOutput(t, "setup loop device", "losetup", "--find", "--show", "--partscan", rawPath)))
-	defer func() { _ = exec.Command("losetup", "-d", loopDev).Run() }()
+	dataMount := filepath.Join(dir, "data")
+	rootMount := filepath.Join(dir, "root")
+	// Unmount before detaching on every exit path, also after t.Fatal.
+	defer func() {
+		_ = exec.Command("umount", dataMount).Run()
+		_ = exec.Command("umount", rootMount).Run()
+		_ = exec.Command("losetup", "-d", loopDev).Run()
+	}()
 	efiDev, dataDev, rootDev := loopDev+"p1", loopDev+"p2", loopDev+"p3"
 	waitForDevice(t, rootDev, 5*time.Second)
 	run(t, "format EFI partition", "mkfs.vfat", "-F", "32", efiDev)
 	run(t, "format data partition", "mkfs.ext4", "-F", "-q", dataDev)
 	run(t, "format root partition", "mkfs.ext4", "-F", "-q", rootDev)
 
-	dataMount := filepath.Join(dir, "data")
 	if err := os.MkdirAll(dataMount, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +50,6 @@ func createDataBeforeRootTestDiskImage(t *testing.T, sizeMB int) string {
 	writeFile(t, filepath.Join(dataMount, "data-marker"), "data\n")
 	run(t, "unmount data", "umount", dataMount)
 
-	rootMount := filepath.Join(dir, "root")
 	if err := os.MkdirAll(rootMount, 0o755); err != nil {
 		t.Fatal(err)
 	}
