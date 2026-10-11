@@ -39,4 +39,3 @@ func TestDefaultRunStreamingCommandDropsOverlongLines(t *testing.T) {
 		t.Fatalf("lines = %d, want the too long marker last", len(lines))
 	}
 }
-

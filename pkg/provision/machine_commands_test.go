@@ -48,9 +48,9 @@ func withFakeStreaming(t *testing.T, f *fakeStreaming) {
 }
 
 func TestCompareMachineCommandNamesUsesCAPRFIndex(t *testing.T) {
-	names := []string{"commands-10.sh", "zz", "commands-2.sh", "commands-0.sh", "aa", "commands-1.sh"}
+	names := []string{"commands-10.sh", "zz", "commands-+1.sh", "commands-2.sh", "commands-0.sh", "aa", "commands-1.sh"}
 	slices.SortStableFunc(names, compareMachineCommandNames)
-	want := []string{"commands-0.sh", "commands-1.sh", "commands-2.sh", "commands-10.sh", "aa", "zz"}
+	want := []string{"commands-0.sh", "commands-1.sh", "commands-2.sh", "commands-10.sh", "aa", "commands-+1.sh", "zz"}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("order = %v, want %v", names, want)
 	}

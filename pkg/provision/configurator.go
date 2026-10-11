@@ -1143,8 +1143,11 @@ func machineCommandIndex(name string) (int, bool) {
 	if !ok {
 		return 0, false
 	}
+	if digits == "" || strings.Trim(digits, "0123456789") != "" {
+		return 0, false
+	}
 	n, err := strconv.Atoi(digits)
-	if err != nil || n < 0 {
+	if err != nil {
 		return 0, false
 	}
 	return n, true
