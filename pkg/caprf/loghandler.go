@@ -289,15 +289,20 @@ func (h *RemoteHandler) Handle(ctx context.Context, r slog.Record) error { //nol
 // late log from a derived logger cannot send on the closed buffer.
 func (h *RemoteHandler) enqueue(line string) {
 	h.gate.mu.RLock()
-	defer h.gate.mu.RUnlock()
-	if h.gate.closed {
-		return
+	closed, sent := h.gate.closed, false
+	if !closed {
+		select {
+		case h.buf <- line:
+			sent = true
+		default:
+		}
 	}
-	select {
-	case h.buf <- line:
-	default:
-		total := h.dropped.Add(1)
-		h.maybeWarnDropped(total)
+	h.gate.mu.RUnlock()
+
+	// Warn outside the lock: the inner handler may block, and Close must
+	// still be able to take the write lock.
+	if !closed && !sent {
+		h.maybeWarnDropped(h.dropped.Add(1))
 	}
 }
 
