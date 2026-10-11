@@ -94,3 +94,28 @@ func TestRunMachineCommandsLegacyCompatFailureStopsProvisioning(t *testing.T) {
 		t.Fatalf("calls = %d, want the run to stop after the failing command", len(cmd.calls))
 	}
 }
+
+// A target image must not redirect the staged script through a symlink.
+func TestRunMachineCommandsLegacyCompatReplacesStagingSymlink(t *testing.T) {
+	withMachineCommands(t, map[string]string{"commands-0.sh": "true\n"})
+	c := newTestConfigurator(t, newMockCommander())
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(outside, []byte("keep\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	staging := filepath.Join(c.rootDir, "tmp", "booty-machine-commands")
+	if err := os.MkdirAll(staging, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(staging, "commands-0.sh")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.RunMachineCommands(context.Background(), true); err != nil {
+		t.Fatalf("RunMachineCommands() = %v", err)
+	}
+	got, err := os.ReadFile(outside)
+	if err != nil || string(got) != "keep\n" {
+		t.Fatalf("file behind the symlink changed: %q, %v", got, err)
+	}
+}

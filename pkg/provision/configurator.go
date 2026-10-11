@@ -1068,7 +1068,7 @@ func (c *Configurator) runMachineCommandScript(ctx context.Context, name string,
 	if err != nil {
 		return fmt.Errorf("machine command %s path: %w", name, err)
 	}
-	if err := os.WriteFile(hostPath, content, 0o700); err != nil { //nolint:gosec // targetPath keeps hostPath inside the target root
+	if err := writeNewFileNoFollow(hostPath, content, 0o700); err != nil {
 		return fmt.Errorf("machine command %s: write script: %w", name, err)
 	}
 	defer func() {
@@ -1090,6 +1090,27 @@ func (c *Configurator) runMachineCommandScript(ctx context.Context, name string,
 	}
 	if err != nil {
 		return fmt.Errorf("machine command %s: %w", name, err)
+	}
+	return nil
+}
+
+// writeNewFileNoFollow replaces path with a new regular file. It removes an
+// existing entry first and never follows a symlink at path, so a target
+// image cannot redirect the write outside its root.
+func writeNewFileNoFollow(path string, content []byte, perm os.FileMode) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove existing %s: %w", path, err)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, perm) //nolint:gosec // caller validates path inside the target root
+	if err != nil {
+		return fmt.Errorf("create %s: %w", path, err)
+	}
+	if _, err := f.Write(content); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", path, err)
 	}
 	return nil
 }
