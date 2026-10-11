@@ -476,7 +476,8 @@ behaviour where the two differ:
   callbacks, the connectivity check and image downloads.
 - Every entry of `/deploy/vars` is exported to the environment, like
   `source vars`. Proxy variables such as `https_proxy` from CAPRF
-  `additionalVars` apply to all requests.
+  `additionalVars` apply to the CAPRF callbacks, the connectivity check and
+  the image downloads.
 
 Without the variable, BOOTy keeps its own defaults.
 

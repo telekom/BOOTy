@@ -77,7 +77,7 @@ func (c *Client) warnTransport() {
 		c.log.Warn("insecure transport enabled: bearer tokens will be sent over plain HTTP")
 	}
 	if c.cfg.Transport.SkipTLSVerify {
-		c.log.Warn("TLS certificate verification disabled, like curl --insecure in the legacy CAPRF provisioner")
+		c.log.Warn("tls certificate verification disabled, like curl --insecure in the legacy CAPRF provisioner")
 	}
 }
 
