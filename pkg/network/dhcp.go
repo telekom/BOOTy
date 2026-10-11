@@ -24,7 +24,7 @@ type DHCPMode struct {
 	log    *slog.Logger
 
 	mu      sync.Mutex
-	applied *dhcpApplied // what the winning lease configured; Teardown removes it
+	applied []dhcpApplied // what leases configured; Teardown removes it
 }
 
 // dhcpApplied is the address and default route a lease configured.
@@ -187,13 +187,16 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struc
 			route = &netlink.Route{Gw: lease.Router[0], LinkIndex: link.Attrs().Index}
 			if err := dhcpRouteReplace(route); err != nil {
 				d.log.Warn("failed to set default route", "iface", ifName, "gw", lease.Router[0], "error", err)
+				// Roll the address back so another NIC can win cleanly.
+				if delErr := dhcpAddrDel(link, addr); delErr != nil {
+					d.log.Warn("failed to remove DHCP address after route failure", "iface", ifName, "error", delErr)
+					d.remember(dhcpApplied{link: link, addr: addr})
+				}
 				return
 			}
 		}
 		winner.won = true
-		d.mu.Lock()
-		d.applied = &dhcpApplied{link: link, addr: addr, route: route}
-		d.mu.Unlock()
+		d.remember(dhcpApplied{link: link, addr: addr, route: route})
 		d.log.Info("DHCP lease obtained", "iface", ifName, "addr", addr.IPNet.String())
 		select {
 		case leased <- struct{}{}:
@@ -240,19 +243,25 @@ func (d *DHCPMode) Teardown(_ context.Context) error {
 	applied := d.applied
 	d.applied = nil
 	d.mu.Unlock()
-	if applied == nil {
-		return nil
-	}
 	var errs []error
-	if applied.route != nil {
-		if err := dhcpRouteDel(applied.route); err != nil && !errors.Is(err, syscall.ESRCH) {
-			errs = append(errs, fmt.Errorf("delete DHCP default route: %w", err))
+	for _, a := range applied {
+		if a.route != nil {
+			if err := dhcpRouteDel(a.route); err != nil && !errors.Is(err, syscall.ESRCH) {
+				errs = append(errs, fmt.Errorf("delete DHCP default route: %w", err))
+			}
+		}
+		if err := dhcpAddrDel(a.link, a.addr); err != nil && !errors.Is(err, syscall.EADDRNOTAVAIL) {
+			errs = append(errs, fmt.Errorf("delete DHCP address: %w", err))
 		}
 	}
-	if err := dhcpAddrDel(applied.link, applied.addr); err != nil && !errors.Is(err, syscall.EADDRNOTAVAIL) {
-		errs = append(errs, fmt.Errorf("delete DHCP address: %w", err))
-	}
 	return errors.Join(errs...)
+}
+
+// remember records state for Teardown to remove.
+func (d *DHCPMode) remember(a dhcpApplied) {
+	d.mu.Lock()
+	d.applied = append(d.applied, a)
+	d.mu.Unlock()
 }
 
 // physicalInterfaces returns non-loopback, non-virtual interfaces.

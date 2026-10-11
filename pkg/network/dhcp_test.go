@@ -290,9 +290,14 @@ func TestOnBoundFailedApplyLeavesWinnerForOtherNIC(t *testing.T) {
 }
 
 func TestOnBoundRouteFailureLeavesWinnerForOtherNIC(t *testing.T) {
-	origAddr, origRoute := dhcpAddrReplace, dhcpRouteReplace
-	t.Cleanup(func() { dhcpAddrReplace, dhcpRouteReplace = origAddr, origRoute })
+	origAddr, origAddrDel, origRoute := dhcpAddrReplace, dhcpAddrDel, dhcpRouteReplace
+	t.Cleanup(func() { dhcpAddrReplace, dhcpAddrDel, dhcpRouteReplace = origAddr, origAddrDel, origRoute })
 	dhcpAddrReplace = func(netlink.Link, *netlink.Addr) error { return nil }
+	var rolledBack []string
+	dhcpAddrDel = func(link netlink.Link, _ *netlink.Addr) error {
+		rolledBack = append(rolledBack, link.Attrs().Name)
+		return nil
+	}
 	dhcpRouteReplace = func(r *netlink.Route) error {
 		if r.LinkIndex == 1 {
 			return syscall.ENETUNREACH
@@ -320,5 +325,8 @@ func TestOnBoundRouteFailureLeavesWinnerForOtherNIC(t *testing.T) {
 	case <-leased1:
 	default:
 		t.Fatal("lease on eth1 was not used after eth0 failed to set its default route")
+	}
+	if len(rolledBack) != 1 || rolledBack[0] != "eth0" {
+		t.Fatalf("rolled back addresses on %v, want eth0", rolledBack)
 	}
 }
