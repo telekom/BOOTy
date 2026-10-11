@@ -47,7 +47,9 @@ topology:
         - ip link set vxlan100 up
         - ip link set br100 up
         - ip addr add 10.100.0.1/24 dev br100
-        # BUM FDB entries for BOOTy VTEPs (BOOTy only advertises Type-5)
+        # Static BUM FDB entries for BOOTy VTEPs. booty-dual and
+        # booty-numbered advertise Type-5 only; booty-unnumbered also
+        # advertises Type-3, which FRR installs next to the static entry.
         - bridge fdb append 00:00:00:00:00:00 dev vxlan100 dst 10.0.0.20
         - bridge fdb append 00:00:00:00:00:00 dev vxlan100 dst 10.0.0.21
         - bridge fdb append 00:00:00:00:00:00 dev vxlan100 dst 10.0.0.22
