@@ -355,7 +355,9 @@ func buildProvisionInitramfsWithFiles(t *testing.T, vars, files map[string]strin
 	essentialTools := []string{
 		"partprobe", "sgdisk", "sfdisk", "mkfs.ext4", "mkfs.vfat", "e2fsck", "resize2fs", "wipefs", "mdadm", "lvm",
 		"losetup", "dd", "growpart", "partx", "blockdev", "flock", "lsblk", "blkdiscard", "blkid",
-		"efibootmgr",
+		// Root disk mirroring: resizepart for growpart and efibootmgr for
+		// the boot entries on UEFI runs.
+		"resizepart", "efibootmgr",
 	}
 	for _, tool := range essentialTools {
 		toolPath, err := exec.LookPath(tool)
@@ -399,7 +401,7 @@ func buildProvisionInitramfsWithFiles(t *testing.T, vars, files map[string]strin
 	// Write /init script.
 	initScript := `#!/bin/sh
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
-for mod in virtio_pci virtio_net e1000 e1000e virtio_scsi sd_mod fat vfat nls_cp437 nls_iso8859-1 nls_ascii nls_utf8; do
+for mod in virtio_pci virtio_net virtio_blk e1000 e1000e virtio_scsi sd_mod fat vfat nls_cp437 nls_iso8859-1 nls_ascii nls_utf8 efivarfs md_mod raid1; do
 	modprobe "$mod" 2>/dev/null || true
 done
 exec /booty
@@ -772,6 +774,7 @@ func copyFilesystemModulesForRelease(t *testing.T, rootDir, release string) {
 		"vfat", "fat", "nls_cp437", "nls_iso8859-1", "nls_ascii", "nls_utf8",
 		"virtio_pci", "virtio_net", "e1000", "e1000e",
 		"virtio_scsi", "sd_mod",
+		"virtio_blk", "md_mod", "raid1", "efivarfs",
 	} {
 		copyKernelModuleWithDependencies(t, rootDir, release, module, copied, map[string]bool{})
 	}

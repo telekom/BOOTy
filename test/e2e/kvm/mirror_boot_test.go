@@ -92,9 +92,9 @@ func TestMirroredRootBootFailoverVM(t *testing.T) {
 		vars["ROOT_PARTITION_NUMBER"] = n
 	}
 	initramfs := buildProvisionInitramfsWithFiles(t, vars, map[string]string{
-		"file-system/usr/local/lib/booty-mirror-check.sh":           mirrorCheckScript,
-		"file-system/etc/systemd/system/booty-mirror-check.service": mirrorCheckUnit,
-		"machine-commands/enable-mirror-check":                      "systemctl enable booty-mirror-check.service",
+		"deploy/file-system/usr/local/lib/booty-mirror-check.sh":           mirrorCheckScript,
+		"deploy/file-system/etc/systemd/system/booty-mirror-check.service": mirrorCheckUnit,
+		"deploy/machine-commands/enable-mirror-check":                      "systemctl enable booty-mirror-check.service",
 	})
 	kernel := findKernel(t)
 
