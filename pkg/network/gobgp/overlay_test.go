@@ -3784,3 +3784,19 @@ func TestHandleType5RouteRemovesPrefixWhenEveryFallbackFails(t *testing.T) {
 		t.Fatal("gateway state of the withdrawn path was not cleared")
 	}
 }
+
+func TestHandleType5RouteInactiveWithdrawKeepsActiveRoute(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := newType5FailoverTestOverlay(mock)
+	routeA, routeB := type5FailoverRoute(t, 1, "192.168.4.1"), type5FailoverRoute(t, 2, "192.168.4.2")
+
+	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
+	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
+	replaces := len(mock.routeReplaces)
+	mock.routeReplaceErr = errors.New("transient")
+	overlay.handleType5Route(routeA, "192.168.4.1", nil, true)
+
+	if len(mock.routeDels) != 0 || len(mock.routeReplaces) != replaces {
+		t.Fatalf("inactive withdraw touched the active route: dels=%v replaces=%d", mock.routeDels, len(mock.routeReplaces)-replaces)
+	}
+}

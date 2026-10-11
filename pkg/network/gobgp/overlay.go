@@ -128,6 +128,9 @@ type OverlayTier struct {
 	// kernel route uses one of them, so a withdraw falls back to another.
 	type5PathsMu sync.Mutex
 	type5Paths   map[string]map[string]*type5Path
+	// type5Active maps a prefix to the key of the path whose install last
+	// succeeded, so withdrawing another path does not touch the route.
+	type5Active map[string]string
 	// type5Stopped is set by Teardown so a route callback that is still in
 	// flight does not touch the kernel after teardown.
 	type5Stopped bool
@@ -265,6 +268,7 @@ func (o *OverlayTier) Teardown(_ context.Context) error {
 
 	o.type5PathsMu.Lock()
 	o.type5Paths = nil
+	o.type5Active = nil
 	o.type5Stopped = true
 	o.type5PathsMu.Unlock()
 
@@ -856,8 +860,14 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 	prefix, key := dst.String(), type5PathKey(route)
 	if withdraw {
 		remaining := o.forgetType5Path(prefix, key)
+		if active, ok := o.type5Active[prefix]; ok && active != key && len(remaining) > 0 {
+			// An inactive path withdrew. The installed route stays.
+			return
+		}
+		delete(o.type5Active, prefix)
 		for _, p := range remaining {
 			if o.applyType5Path(p) {
+				o.markType5Active(prefix, p.key)
 				o.log.Info("type-5 path withdrawn, keeping route via remaining path",
 					"dst", dst, "withdrawn_vtep", vtep, "vtep", p.vtep)
 				return
@@ -879,13 +889,25 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 	// Remember the path before any kernel change, so a later withdraw of
 	// another path can still fall back to it even if this install fails.
 	path := &type5Path{
+		key:       key,
 		route:     route,
 		vtep:      vtep,
 		routerMAC: append(net.HardwareAddr(nil), routerMAC...),
 		valid:     routerMACValid,
 	}
 	o.rememberType5Path(prefix, key, path)
-	o.applyType5Path(path)
+	if o.applyType5Path(path) {
+		o.markType5Active(prefix, key)
+	}
+}
+
+// markType5Active records the installed path of a prefix. The caller holds
+// type5PathsMu.
+func (o *OverlayTier) markType5Active(prefix, key string) {
+	if o.type5Active == nil {
+		o.type5Active = make(map[string]string)
+	}
+	o.type5Active[prefix] = key
 }
 
 // applyType5Path prepares the VTEP route and installs the kernel route and
@@ -912,6 +934,7 @@ type type5RouteState struct {
 // type5Path is one live Type-5 path for a kernel route prefix. It keeps the
 // raw route so a fallback can redo the VTEP route and bridge lookup.
 type type5Path struct {
+	key       string
 	route     *apipb.EVPNIPPrefixRoute
 	vtep      string
 	routerMAC net.HardwareAddr
