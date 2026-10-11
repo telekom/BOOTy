@@ -88,3 +88,24 @@ func TestStreamRawToDeviceChecksumMismatchDoesNotSyncTarget(t *testing.T) {
 		t.Fatal("syncImageTarget called before checksum mismatch was returned")
 	}
 }
+
+func TestRejectQCOW2ExternalFiles(t *testing.T) {
+	tests := []struct {
+		name    string
+		info    string
+		wantErr bool
+	}{
+		{"self-contained", `{"format":"qcow2","format-specific":{"type":"qcow2","data":{"compat":"1.1"}}}`, false},
+		{"backing file", `{"format":"qcow2","backing-filename":"/deploy/vars","backing-filename-format":"raw"}`, true},
+		{"data file", `{"format":"qcow2","format-specific":{"type":"qcow2","data":{"data-file":"/dev/nvme1n1"}}}`, true},
+		{"invalid json", `not json`, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := rejectQCOW2ExternalFiles([]byte(tt.info))
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("rejectQCOW2ExternalFiles() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}

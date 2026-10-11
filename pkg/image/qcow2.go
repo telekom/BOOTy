@@ -4,6 +4,7 @@ package image
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -149,6 +150,14 @@ func convertQCOW2ToRaw(ctx context.Context, src, dst string) error {
 		return err
 	}
 
+	info, err := qemuImgInfo(ctx, qemuImg, src)
+	if err != nil {
+		return fmt.Errorf("qemu-img info: %w", err)
+	}
+	if err := rejectQCOW2ExternalFiles(info); err != nil {
+		return err
+	}
+
 	slog.Info("converting qcow2 to raw", "src", src, "dst", dst)
 	cmd := exec.CommandContext(ctx, qemuImg, "convert", "-f", "qcow2", "-O", "raw", src, dst) //nolint:gosec // controlled paths
 	cmd.Stdout = os.Stdout
@@ -158,6 +167,36 @@ func convertQCOW2ToRaw(ctx context.Context, src, dst string) error {
 	}
 
 	slog.Info("qcow2 conversion complete")
+	return nil
+}
+
+// qemuImgInfo returns `qemu-img info` JSON for a qcow2 file. It is a
+// variable so tests can run without qemu-img.
+var qemuImgInfo = func(ctx context.Context, qemuImg, src string) ([]byte, error) {
+	return exec.CommandContext(ctx, qemuImg, "info", "--output=json", "-f", "qcow2", src).Output() //nolint:gosec,wrapcheck // controlled path
+}
+
+// rejectQCOW2ExternalFiles fails for a qcow2 image that names a backing
+// file or an external data file. qemu-img convert would read that file from
+// the initramfs or the network and copy it into the raw image.
+func rejectQCOW2ExternalFiles(infoJSON []byte) error {
+	var info struct {
+		BackingFilename string `json:"backing-filename"`
+		FormatSpecific  struct {
+			Data struct {
+				DataFile string `json:"data-file"`
+			} `json:"data"`
+		} `json:"format-specific"`
+	}
+	if err := json.Unmarshal(infoJSON, &info); err != nil {
+		return fmt.Errorf("parse qemu-img info: %w", err)
+	}
+	if info.BackingFilename != "" {
+		return fmt.Errorf("qcow2 image has a backing file; only self-contained images are supported")
+	}
+	if info.FormatSpecific.Data.DataFile != "" {
+		return fmt.Errorf("qcow2 image has an external data file; only self-contained images are supported")
+	}
 	return nil
 }
 

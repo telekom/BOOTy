@@ -138,6 +138,10 @@ func TestConvertPreparedQCOW2UsesQemuImg(t *testing.T) {
 	dir := t.TempDir()
 	qemuImg := filepath.Join(dir, "qemu-img")
 	script := `#!/bin/sh
+if [ "$1" = info ]; then
+	echo '{"format":"qcow2"}'
+	exit 0
+fi
 src=
 dst=
 shift
