@@ -1332,7 +1332,6 @@ and the PR process.
 
 ```
 ├── main.go                     # Entry point: CAPRF-compatible runtime flow, kernel module loading
-├── cmd/booty.go                # Cobra CLI entry point
 ├── initrd.Dockerfile           # Multi-stage initramfs build (default, iso, slim, micro)
 ├── pkg/
 │   ├── auth/                   # JWT token manager (acquisition, renewal, backoff)
