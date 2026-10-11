@@ -271,7 +271,7 @@ No additional binaries needed. This proposal reduces binary count.
 | `pkg/features/gobgp.go` | GoBGP build tag registration |
 | `Makefile` | Per-flavor build targets + size-report |
 | `initrd.Dockerfile` | Zstd compression option |
-| `cmd/booty.go` | Feature-gated initialization |
+| `main.go` | Feature-gated initialization |
 | `.github/workflows/ci.yml` | Size regression check |
 
 ## Testing

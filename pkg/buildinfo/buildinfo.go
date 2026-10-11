@@ -113,7 +113,7 @@ func EstimateComponents() []SizeEstimate {
 		{Component: "go-runtime", SizeMB: 5.0, Required: true},
 		{Component: "gobgp-v3", SizeMB: 8.0, BuildTag: "!micro,!slim"},
 		{Component: "go-containerregistry", SizeMB: 3.0, BuildTag: "!micro"},
-		{Component: "cobra+viper", SizeMB: 1.0, Required: true},
+		{Component: "viper", SizeMB: 1.0, Required: true},
 		{Component: "crypto/tls", SizeMB: 1.5, Required: true},
 	}
 }

@@ -4,7 +4,7 @@ Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, read
 
 ## Architecture
 
-- `cmd/` — CLI entry point (Cobra)
+- `main.go` — PID 1 entry point and CAPRF runtime flow
 - `pkg/provision/` — provisioning orchestrator; keep step-count claims consistent with `TestProvisionStepCount`
 - `pkg/config/` — MachineConfig, Provider interface, Status types
 - `pkg/crash/` — Startup crash artifact collection, metadata manifests, CAPRF/S3 upload contracts

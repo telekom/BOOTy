@@ -273,7 +273,7 @@ export KAFKA_COMPRESSION="snappy"  # snappy, lz4, zstd, none
 | `pkg/logging/kafka.go` | Kafka slog handler |
 | `pkg/logging/multi.go` | Multiplexed handler |
 | `pkg/logging/kafka_test.go` | Unit tests |
-| `cmd/booty.go` | Initialize Kafka handler if enabled |
+| `main.go` | Initialize Kafka handler if enabled |
 | `pkg/config/provider.go` | Kafka config fields |
 | `go.mod` | Add `github.com/IBM/sarama` |
 

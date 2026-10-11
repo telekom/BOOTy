@@ -247,7 +247,7 @@ export TELEMETRY_INTERVAL="30"  # export interval in seconds
 | `pkg/telemetry/metrics_test.go` | Unit tests |
 | `pkg/provision/orchestrator.go` | Instrument steps with spans + metrics |
 | `pkg/image/streamer.go` | Add throughput metric recording |
-| `cmd/booty.go` | Initialize telemetry if enabled |
+| `main.go` | Initialize telemetry if enabled |
 | `go.mod` | OpenTelemetry dependencies |
 
 ## Testing
