@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -173,6 +174,9 @@ func TestLegacyCompatDecommissionWipesAndPowersOffQEMU(t *testing.T) {
 	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)
+	if _, err := exec.LookPath("wipefs"); err != nil {
+		failOrSkipUnsupportedHost(t, "wipefs not available for the decommission test")
+	}
 
 	caprf := startFakeCAPRF(t, "")
 
