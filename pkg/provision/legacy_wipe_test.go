@@ -111,3 +111,26 @@ func TestUsesLegacyWipeAllDisks(t *testing.T) {
 		})
 	}
 }
+
+// wipe_all_disks logs a failed blkdiscard and goes on with the next disk
+// and the signature wipe.
+func TestWipeDisksLegacyCompatContinuesAfterDiscardFailure(t *testing.T) {
+	cfg := &config.MachineConfig{Mode: "provision", LegacyCompat: true}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	withFixtureDisks(t, o, "nvme0n1", "nvme1n1")
+	o.targetDisk = "/dev/nvme0n1"
+	cmd.setResult("blkdiscard /dev/nvme0n1", nil, errors.New("discard not supported"))
+
+	if err := o.wipeOrSecureEraseDisks(context.Background()); err != nil {
+		t.Fatalf("wipeOrSecureEraseDisks() = %v, want nil", err)
+	}
+	for _, want := range []struct{ name, args string }{
+		{"blkdiscard", "/dev/nvme1n1"},
+		{"wipefs", "-af /dev/nvme0n1"},
+		{"wipefs", "-af /dev/nvme1n1"},
+	} {
+		if !hasCall(cmd.calls, want.name, want.args) {
+			t.Errorf("missing %s %s after a failed discard: %v", want.name, want.args, cmd.calls)
+		}
+	}
+}
