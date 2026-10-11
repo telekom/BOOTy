@@ -108,16 +108,20 @@ func TestFindUpdateGRUB(t *testing.T) {
 		want  string
 	}{
 		{name: "usr sbin", setup: func(t *testing.T, root string) {
+			t.Helper()
 			writeFixture(t, filepath.Join(root, "usr", "sbin", "update-grub"), "#!/bin/sh\n", 0o755)
 		}, want: "/usr/sbin/update-grub"},
 		{name: "sbin fallback", setup: func(t *testing.T, root string) {
+			t.Helper()
 			writeFixture(t, filepath.Join(root, "sbin", "update-grub"), "#!/bin/sh\n", 0o755)
 		}, want: "/sbin/update-grub"},
 		{name: "not executable", setup: func(t *testing.T, root string) {
+			t.Helper()
 			writeFixture(t, filepath.Join(root, "usr", "sbin", "update-grub"), "#!/bin/sh\n", 0o644)
 		}},
-		{name: "neither, no shell in the target", setup: func(*testing.T, string) {}},
+		{name: "neither, no shell in the target", setup: func(t *testing.T, _ string) { t.Helper() }},
 		{name: "symlink escaping the root", setup: func(t *testing.T, root string) {
+			t.Helper()
 			outside := t.TempDir()
 			writeFixture(t, filepath.Join(outside, "update-grub"), "#!/bin/sh\n", 0o755)
 			if err := os.MkdirAll(filepath.Join(root, "usr"), 0o755); err != nil {
