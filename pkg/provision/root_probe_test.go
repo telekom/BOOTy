@@ -3,9 +3,13 @@
 package provision
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/disk"
 )
 
 // Legacy evidence: provision.sh is_root_partition_mount accepts a filesystem
@@ -43,5 +47,33 @@ func TestLooksLikeRootFilesystem(t *testing.T) {
 				t.Fatalf("looksLikeRootFilesystem() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// On resume, parse-partitions runs again while the root is mounted.
+func TestProbeRootPartitionReusesMountedRoot(t *testing.T) {
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	if err := os.MkdirAll(filepath.Join(o.config.rootDir, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(o.config.rootDir, "etc", "os-release"), []byte("ID=ubuntu\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldSource := mountedSource
+	mountedSource = func(path string) (string, bool) {
+		if path == o.config.rootDir {
+			return "/dev/vda3", true
+		}
+		return "", false
+	}
+	t.Cleanup(func() { mountedSource = oldSource })
+
+	parts := []disk.Partition{
+		{Node: "/dev/vda2", Type: disk.LinuxFilesystemGUID},
+		{Node: "/dev/vda3", Type: disk.LinuxFilesystemGUID},
+	}
+	root, err := o.probeRootPartition(context.Background(), parts, disk.ErrAmbiguousRootPartition)
+	if err != nil || root.Node != "/dev/vda3" {
+		t.Fatalf("probeRootPartition() = %v, %v; want the mounted /dev/vda3", root, err)
 	}
 }

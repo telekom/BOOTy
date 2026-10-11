@@ -15,6 +15,16 @@ import (
 // a root filesystem, like select_root_partition in the CAPRF legacy
 // provision.sh: /etc/os-release, or /etc and /usr directories.
 func (o *Orchestrator) probeRootPartition(ctx context.Context, parts []disk.Partition, ambiguous error) (*disk.Partition, error) {
+	// On resume, mount-root may already have mounted the root. Reuse that
+	// choice instead of mounting the active root a second time.
+	if source, ok := mountedSource(o.config.rootDir); ok {
+		for i := range parts {
+			if isLinuxRootPartition(parts[i]) && sameMountSource(source, parts[i].Node) && looksLikeRootFilesystem(o.config.rootDir) {
+				o.log.Info("root probe: using the mounted root partition", "partition", parts[i].Node)
+				return &parts[i], nil
+			}
+		}
+	}
 	inspect, err := os.MkdirTemp("", "booty-root-probe-")
 	if err != nil {
 		return nil, fmt.Errorf("create root probe mountpoint: %w", err)

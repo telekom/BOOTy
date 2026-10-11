@@ -755,14 +755,14 @@ func (m *Manager) FindBootPartition(parts []Partition) (*Partition, error) {
 	return nil, fmt.Errorf("no EFI system partition found")
 }
 
-// ErrAmbiguousRootPartition reports several unnamed Linux filesystem
-// partitions, so the partition table alone cannot tell which one is root.
+// ErrAmbiguousRootPartition reports several Linux filesystem partitions
+// without exactly one named "root" or "/", so the partition table alone
+// cannot tell which one is root.
 var ErrAmbiguousRootPartition = errors.New("ambiguous Linux root partition candidates")
 
 // FindRootPartition finds the primary Linux filesystem partition.
 // When multiple partitions share a Linux filesystem type, it requires exactly
 // one partition named "root" or "/" to avoid selecting data/state partitions.
-
 func (m *Manager) FindRootPartition(parts []Partition) (*Partition, error) {
 	var candidates []*Partition
 	var namedRoot []*Partition
