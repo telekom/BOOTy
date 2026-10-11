@@ -200,3 +200,23 @@ func TestSelectBestSourceProbesPresignedURLsWithRangedGET(t *testing.T) {
 		t.Fatalf("probe Range header = %q, want bytes=0-0", presignedRange)
 	}
 }
+
+func TestProbeURLRejectsStalledBody(t *testing.T) {
+	release := make(chan struct{})
+	stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusPartialContent)
+		w.(http.Flusher).Flush()
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer stalled.Close()
+	defer close(release)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if _, err := probeURL(ctx, stalled.URL+"/image.raw"); err == nil {
+		t.Fatal("probeURL accepted a source that sent headers but no image byte")
+	}
+}

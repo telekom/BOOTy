@@ -2,7 +2,9 @@ package image
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"net/http"
@@ -85,14 +87,19 @@ func probeURL(ctx context.Context, rawURL string) (time.Duration, error) {
 		return 0, fmt.Errorf("probe request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	elapsed := time.Since(start)
 
 	// The download uses the same GET, so any error status rules the source
 	// out, like `curl --fail` in the legacy probe.
 	if resp.StatusCode >= 400 {
 		return 0, fmt.Errorf("probe returned status %d", resp.StatusCode)
 	}
-	return elapsed, nil
+	// Measure until the first image byte arrives, like curl's time_total
+	// for --range 0-0, so a source that sends headers and then stalls loses.
+	// An empty body ends with io.EOF, which curl accepts as well.
+	if _, err := io.ReadFull(resp.Body, make([]byte, 1)); err != nil && !errors.Is(err, io.EOF) {
+		return 0, fmt.Errorf("probe read: %w", err)
+	}
+	return time.Since(start), nil
 }
 
 // redactHost extracts only the hostname from a URL for safe logging.
