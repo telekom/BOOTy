@@ -26,6 +26,27 @@ func withMachineCommands(t *testing.T, files map[string]string) {
 	t.Cleanup(func() { machineCommandsDir = old })
 }
 
+// fakeStreaming replaces runStreamingCommand. It records each command and
+// emits the given output lines.
+type fakeStreaming struct {
+	calls  [][]string
+	output []string
+	err    error
+}
+
+func withFakeStreaming(t *testing.T, f *fakeStreaming) {
+	t.Helper()
+	old := runStreamingCommand
+	runStreamingCommand = func(_ context.Context, onLine func(string), name string, args ...string) error {
+		f.calls = append(f.calls, append([]string{name}, args...))
+		for _, line := range f.output {
+			onLine(line)
+		}
+		return f.err
+	}
+	t.Cleanup(func() { runStreamingCommand = old })
+}
+
 func TestCompareMachineCommandNamesUsesCAPRFIndex(t *testing.T) {
 	names := []string{"commands-10.sh", "zz", "commands-2.sh", "commands-0.sh", "aa", "commands-1.sh"}
 	slices.SortStableFunc(names, compareMachineCommandNames)
@@ -55,17 +76,15 @@ func TestRunMachineCommandsLegacyCompatRunsScripts(t *testing.T) {
 		"commands-2.sh":  script,
 		"commands-3.sh":  "  \n",
 	})
-	cmd := newMockCommander()
-	c := newTestConfigurator(t, cmd)
+	fake := &fakeStreaming{}
+	withFakeStreaming(t, fake)
+	c := newTestConfigurator(t, newMockCommander())
 
 	if err := c.RunMachineCommands(context.Background(), true); err != nil {
 		t.Fatalf("RunMachineCommands() = %v", err)
 	}
 
-	got := make([][]string, 0, len(cmd.calls))
-	for _, call := range cmd.calls {
-		got = append(got, append([]string{call.name}, call.args...))
-	}
+	got := fake.calls
 	want := [][]string{
 		{"chroot", c.rootDir, "/bin/sh", "/tmp/booty-machine-commands/commands-2.sh"},
 		{"chroot", c.rootDir, "/tmp/booty-machine-commands/commands-10.sh"},
@@ -82,22 +101,26 @@ func TestRunMachineCommandsLegacyCompatRunsScripts(t *testing.T) {
 
 func TestRunMachineCommandsLegacyCompatFailureStopsProvisioning(t *testing.T) {
 	withMachineCommands(t, map[string]string{"commands-0.sh": "false\n", "commands-1.sh": "true\n"})
-	cmd := newMockCommander()
-	c := newTestConfigurator(t, cmd)
-	cmd.setResult("chroot "+c.rootDir, []byte("boom\n"), errors.New("exit status 1"))
+	fake := &fakeStreaming{output: []string{"boom"}, err: errors.New("run chroot: exit status 1 token=secret")}
+	withFakeStreaming(t, fake)
+	c := newTestConfigurator(t, newMockCommander())
 
 	err := c.RunMachineCommands(context.Background(), true)
 	if err == nil || !strings.Contains(err.Error(), "commands-0.sh") {
 		t.Fatalf("RunMachineCommands() = %v, want commands-0.sh failure", err)
 	}
-	if len(cmd.calls) != 1 {
-		t.Fatalf("calls = %d, want the run to stop after the failing command", len(cmd.calls))
+	if strings.Contains(err.Error(), "secret") {
+		t.Fatalf("RunMachineCommands() error leaks a secret: %v", err)
+	}
+	if len(fake.calls) != 1 {
+		t.Fatalf("calls = %d, want the run to stop after the failing command", len(fake.calls))
 	}
 }
 
 // A target image must not redirect the staged script through a symlink.
 func TestRunMachineCommandsLegacyCompatReplacesStagingSymlink(t *testing.T) {
 	withMachineCommands(t, map[string]string{"commands-0.sh": "true\n"})
+	withFakeStreaming(t, &fakeStreaming{})
 	c := newTestConfigurator(t, newMockCommander())
 	outside := filepath.Join(t.TempDir(), "outside")
 	if err := os.WriteFile(outside, []byte("keep\n"), 0o600); err != nil {
