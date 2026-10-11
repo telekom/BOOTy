@@ -235,6 +235,7 @@ func TestDeriveBridgeMAC(t *testing.T) {
 		{"too_short", "aa:bb", ""},
 		{"invalid_hex", "aa:bb:cc:dd:ee:zz", ""},
 		{"empty", "", ""},
+		{"eui64", "aa:bb:cc:dd:ee:ff:00:11", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

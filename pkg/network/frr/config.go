@@ -173,13 +173,13 @@ func uint32ToIP(n uint32) net.IP {
 
 // DeriveBridgeMAC creates a locally administered unicast MAC from the IPMI MAC.
 // It keeps the last 4 bytes of the IPMI MAC behind the 02:54 prefix.
-// It returns an empty string when ipmiMAC is not a valid MAC.
+// It returns an empty string when ipmiMAC is not a valid 48-bit MAC.
 func DeriveBridgeMAC(ipmiMAC string) string {
 	hw, err := net.ParseMAC(ipmiMAC)
-	if err != nil {
+	if err != nil || len(hw) != 6 {
 		return ""
 	}
-	return bridgeMACFromBytes(hw[len(hw)-4:])
+	return bridgeMACFromBytes(hw[2:])
 }
 
 // deriveBridgeMAC picks the provision bridge MAC, which is also the EVPN
