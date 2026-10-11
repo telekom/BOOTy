@@ -1009,6 +1009,9 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	if src.UnderlayIP != "" {
 		dst.UnderlayIP = src.UnderlayIP
 	}
+	if src.BridgeMAC != "" {
+		dst.BridgeMAC = src.BridgeMAC
+	}
 	if src.ProvisionIP != "" {
 		dst.ProvisionIP = mergeProvisionIP(dst.ProvisionIP, src.ProvisionIP)
 	}

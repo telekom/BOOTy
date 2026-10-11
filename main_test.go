@@ -59,6 +59,17 @@ func TestMergeNetplanConfigPreservesProvisionPrefixForSameHostMask(t *testing.T)
 	}
 }
 
+func TestMergeNetplanConfigCopiesBridgeMAC(t *testing.T) {
+	dst := &network.Config{}
+	src := &network.Config{BridgeMAC: "02:00:00:00:10:01"}
+
+	mergeNetplanConfig(dst, src)
+
+	if dst.BridgeMAC != "02:00:00:00:10:01" {
+		t.Fatalf("BridgeMAC = %q, want netplan macaddress", dst.BridgeMAC)
+	}
+}
+
 func TestNetworkConfigFromMachineConfigWiresType5Only(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Network.EVPN.Type5Only = true

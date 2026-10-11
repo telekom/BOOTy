@@ -78,6 +78,7 @@ type Config struct {
 
 	// Common fields.
 	BridgeName        string // Default: "br.provision"
+	BridgeMAC         string // Provision bridge MAC from netplan; empty derives a per-host MAC
 	VRFName           string // Underlay VRF name; empty means default namespace
 	OverlayVRFName    string // Overlay bridge VRF name; empty means default namespace
 	OverlayVRFSet     bool   // OverlayVRFName was explicitly derived from structured config

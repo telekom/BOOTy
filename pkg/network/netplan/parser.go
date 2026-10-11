@@ -176,15 +176,18 @@ func extractBridges(np *Config, cfg *network.Config) {
 	names := slices.Sorted(maps.Keys(np.Network.Bridges))
 	for _, name := range names {
 		br := np.Network.Bridges[name]
-		if len(br.Addresses) == 0 {
-			continue
-		}
 		hasVXLAN := false
 		for _, member := range br.Interfaces {
 			if _, ok := np.Network.Tunnels[member]; ok {
 				hasVXLAN = true
 				break
 			}
+		}
+		if hasVXLAN && br.MACAddress != "" && cfg.BridgeMAC == "" {
+			cfg.BridgeMAC = br.MACAddress
+		}
+		if len(br.Addresses) == 0 {
+			continue
 		}
 		if hasVXLAN && cfg.ProvisionIP == "" {
 			cfg.BridgeName = name
