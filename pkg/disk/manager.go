@@ -758,6 +758,10 @@ func (m *Manager) FindBootPartition(parts []Partition) (*Partition, error) {
 // FindRootPartition finds the primary Linux filesystem partition.
 // When multiple partitions share a Linux filesystem type, it requires exactly
 // one partition named "root" or "/" to avoid selecting data/state partitions.
+// ErrAmbiguousRootPartition reports several unnamed Linux filesystem
+// partitions, so the partition table alone cannot tell which one is root.
+var ErrAmbiguousRootPartition = errors.New("ambiguous Linux root partition candidates")
+
 func (m *Manager) FindRootPartition(parts []Partition) (*Partition, error) {
 	var candidates []*Partition
 	var namedRoot []*Partition
@@ -779,7 +783,7 @@ func (m *Manager) FindRootPartition(parts []Partition) (*Partition, error) {
 	case len(candidates) == 1:
 		return candidates[0], nil
 	case len(candidates) > 1:
-		return nil, fmt.Errorf("ambiguous Linux root partition candidates: %s; name exactly one partition root or /", partitionCandidateList(candidates))
+		return nil, fmt.Errorf("%w: %s; name exactly one partition root or /", ErrAmbiguousRootPartition, partitionCandidateList(candidates))
 	default:
 		return nil, fmt.Errorf("no Linux filesystem partition found")
 	}
