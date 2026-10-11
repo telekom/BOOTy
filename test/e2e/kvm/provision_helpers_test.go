@@ -327,6 +327,10 @@ func buildProvisionInitramfsWithFiles(t *testing.T, vars, files map[string]strin
 		"mknod", "insmod", "modprobe", "setsid", "cttyhack",
 		"chroot", "bash", "ash", "ip", "ifconfig", "udhcpc",
 		"find", "xargs", "grep", "awk", "sed", "mdev",
+		// growpart (cloud-guest-utils) is a shell script that needs these.
+		"mktemp", "tr", "touch", "wc", "head", "tail", "cut", "sort",
+		"uniq", "expr", "basename", "dirname", "readlink", "test", "[",
+		"printf", "stat", "true", "false", "env",
 	} {
 		link := filepath.Join(rootDir, "bin", applet)
 		_ = os.Symlink("busybox", link)
@@ -336,7 +340,7 @@ func buildProvisionInitramfsWithFiles(t *testing.T, vars, files map[string]strin
 	// Copy essential provisioning tools from host with their shared libraries.
 	essentialTools := []string{
 		"partprobe", "sgdisk", "sfdisk", "mkfs.ext4", "mkfs.vfat", "e2fsck", "resize2fs", "wipefs", "mdadm", "lvm",
-		"losetup", "dd",
+		"losetup", "dd", "growpart", "partx", "blockdev", "flock",
 	}
 	for _, tool := range essentialTools {
 		toolPath, err := exec.LookPath(tool)
