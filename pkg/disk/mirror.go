@@ -4,10 +4,12 @@ package disk
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,7 +29,9 @@ const (
 const MirrorRootArray = "/dev/md2"
 
 // DetectMirrorPair returns the largest pair of non-removable, non-virtual
-// disks with an identical size in bytes. ok is false when no such pair exists.
+// disks with an identical size in bytes on different physical devices. NVMe
+// namespaces of one controller share a device, so a mirror across them would
+// not survive a drive failure. ok is false when no such pair exists.
 func (m *Manager) DetectMirrorPair(_ context.Context, minSizeGB int) (first, second string, ok bool, err error) {
 	blockDir := m.sysfsRoot + "/block"
 	entries, err := os.ReadDir(blockDir)
@@ -37,8 +41,9 @@ func (m *Manager) DetectMirrorPair(_ context.Context, minSizeGB int) (first, sec
 	allowRemovable := os.Getenv("BOOTY_ALLOW_REMOVABLE") == "true"
 
 	type candidate struct {
-		path  string
-		bytes int64
+		path   string
+		device string
+		bytes  int64
 	}
 	var candidates []candidate
 	for _, entry := range entries {
@@ -53,7 +58,7 @@ func (m *Manager) DetectMirrorPair(_ context.Context, minSizeGB int) (first, sec
 		if minSizeGB > 0 && size < int64(minSizeGB)*1024*1024*1024 {
 			continue
 		}
-		candidates = append(candidates, candidate{path: "/dev/" + name, bytes: size})
+		candidates = append(candidates, candidate{path: "/dev/" + name, device: m.physicalDevice(name), bytes: size})
 	}
 
 	// Largest first, then by name, so the pick is deterministic and a host with
@@ -64,14 +69,30 @@ func (m *Manager) DetectMirrorPair(_ context.Context, minSizeGB int) (first, sec
 		}
 		return candidates[i].path < candidates[j].path
 	})
-	for i := 0; i+1 < len(candidates); i++ {
-		if candidates[i].bytes == candidates[i+1].bytes {
-			slog.Info("selected mirror pair", "disk1", candidates[i].path, "disk2", candidates[i+1].path,
-				"sizeBytes", candidates[i].bytes)
-			return candidates[i].path, candidates[i+1].path, true, nil
+	for i, a := range candidates {
+		for _, b := range candidates[i+1:] {
+			if b.bytes != a.bytes {
+				break
+			}
+			if b.device == a.device {
+				continue
+			}
+			slog.Info("selected mirror pair", "disk1", a.path, "disk2", b.path, "sizeBytes", a.bytes)
+			return a.path, b.path, true, nil
 		}
 	}
 	return "", "", false, nil
+}
+
+// physicalDevice returns the sysfs device that backs disk name, such as the
+// NVMe controller for a namespace. It falls back to name when sysfs has no
+// device link, so such disks never count as sharing a device.
+func (m *Manager) physicalDevice(name string) string {
+	dev, err := filepath.EvalSymlinks(filepath.Join(m.sysfsRoot, "block", name, "device"))
+	if err != nil {
+		return name
+	}
+	return dev
 }
 
 func (m *Manager) readDiskSizeBytes(name string) (int64, error) {
@@ -119,6 +140,20 @@ func (m *Manager) MirrorActive(ctx context.Context, array string) bool {
 	return err == nil
 }
 
+// MirrorHasMember reports whether member is a device of the assembled array.
+func (m *Manager) MirrorHasMember(ctx context.Context, array, member string) (bool, error) {
+	out, err := m.cmd.Run(ctx, "mdadm", "--detail", array)
+	if err != nil {
+		return false, fmt.Errorf("mdadm detail %s: %s: %w", array, string(out), err)
+	}
+	for line := range strings.Lines(string(out)) {
+		if fields := strings.Fields(line); len(fields) > 0 && fields[len(fields)-1] == member {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // AddMirrorMember adds member to array; the kernel resyncs it in the background.
 func (m *Manager) AddMirrorMember(ctx context.Context, array, member string) error {
 	if out, err := m.cmd.Run(ctx, "mdadm", "--add", array, member); err != nil {
@@ -162,4 +197,65 @@ func CopyBlockDevice(src, dst string) error {
 		return fmt.Errorf("close %s: %w", dst, err)
 	}
 	return nil
+}
+
+// mirrorMetadataReserve is the space kept free for mdadm metadata 1.0 at the
+// end of a member: a superblock 8 KiB before the end plus at most 128 KiB of
+// internal bitmap, rounded up.
+const mirrorMetadataReserve = 1 << 20
+
+// CheckMirrorTailSpace fails unless the filesystem on member ends at least
+// mirrorMetadataReserve bytes before the end of the partition. Metadata 1.0
+// is written at the end of the member, so without that space it would
+// overwrite the filesystem, for example when growpart could not grow the
+// partition because the image already fills the disk.
+func CheckMirrorTailSpace(member string) error {
+	f, err := os.Open(member) //nolint:gosec // block device path from partition scan
+	if err != nil {
+		return fmt.Errorf("open %s: %w", member, err)
+	}
+	defer func() { _ = f.Close() }()
+	partBytes, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		return fmt.Errorf("size of %s: %w", member, err)
+	}
+	fsBytes, err := filesystemSize(f)
+	if err != nil {
+		return fmt.Errorf("filesystem size on %s: %w", member, err)
+	}
+	if fsBytes > uint64(max(partBytes-mirrorMetadataReserve, 0)) { //nolint:gosec // clamped to non-negative
+		return fmt.Errorf("filesystem on %s (%d bytes) leaves no room for mirror metadata in the %d byte partition; "+
+			"the root partition could not grow", member, fsBytes, partBytes)
+	}
+	return nil
+}
+
+// filesystemSize returns the size in bytes that the ext2/3/4, XFS or btrfs
+// filesystem on r records in its superblock.
+func filesystemSize(r io.ReaderAt) (uint64, error) {
+	le, be := binary.LittleEndian, binary.BigEndian
+
+	ext := make([]byte, 1024)
+	if _, err := r.ReadAt(ext, 1024); err == nil && le.Uint16(ext[56:]) == 0xEF53 {
+		blocks := uint64(le.Uint32(ext[4:]))
+		if le.Uint32(ext[96:])&0x80 != 0 { // INCOMPAT_64BIT
+			blocks |= uint64(le.Uint32(ext[0x150:])) << 32
+		}
+		logBlockSize := le.Uint32(ext[24:])
+		if logBlockSize > 16 {
+			return 0, fmt.Errorf("invalid ext block size exponent %d", logBlockSize)
+		}
+		return blocks * (1024 << logBlockSize), nil
+	}
+
+	xfs := make([]byte, 16)
+	if _, err := r.ReadAt(xfs, 0); err == nil && string(xfs[:4]) == "XFSB" {
+		return be.Uint64(xfs[8:]) * uint64(be.Uint32(xfs[4:])), nil
+	}
+
+	btrfs := make([]byte, 0x78)
+	if _, err := r.ReadAt(btrfs, 0x10000); err == nil && string(btrfs[0x40:0x48]) == "_BHRfS_M" {
+		return le.Uint64(btrfs[0x70:]), nil
+	}
+	return 0, fmt.Errorf("no ext, XFS or btrfs superblock found")
 }

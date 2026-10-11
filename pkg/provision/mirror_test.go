@@ -32,6 +32,7 @@ func TestMirrorRootBuildsRAID1AcrossBothDisks(t *testing.T) {
 		return nil
 	}
 	t.Cleanup(func() { copyBlockDeviceFn = orig })
+	stubMirrorTailSpace(t, nil)
 
 	o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, disk.NewManager(cmd))
 	o.targetDisk, o.mirrorDisk = "/dev/sda", "/dev/sdb"
@@ -58,20 +59,63 @@ func TestMirrorRootBuildsRAID1AcrossBothDisks(t *testing.T) {
 	}
 }
 
-func TestMirrorRootReusesAssembledArray(t *testing.T) {
+func stubMirrorTailSpace(t *testing.T, err error) {
+	t.Helper()
+	orig := checkMirrorTailSpaceFn
+	checkMirrorTailSpaceFn = func(string) error { return err }
+	t.Cleanup(func() { checkMirrorTailSpaceFn = orig })
+}
+
+func TestMirrorRootStopsWithoutTailSpace(t *testing.T) {
 	cmd := newMockCommander()
+	cmd.setResult("mdadm --detail", nil, errors.New("no such array"))
+	stubMirrorTailSpace(t, errors.New("no room"))
+
 	o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, disk.NewManager(cmd))
 	o.targetDisk, o.mirrorDisk, o.rootPartition = "/dev/sda", "/dev/sdb", "/dev/sda2"
 
-	if err := o.mirrorRoot(context.Background()); err != nil {
-		t.Fatalf("mirrorRoot() error = %v", err)
+	if err := o.mirrorRoot(context.Background()); err == nil {
+		t.Fatal("mirrorRoot() error = nil, want tail space error")
 	}
-	if o.rootPartition != disk.MirrorRootArray {
-		t.Fatalf("rootPartition = %s, want %s", o.rootPartition, disk.MirrorRootArray)
+	for _, call := range cmd.calls {
+		if call.name == "sgdisk" || (call.name == "mdadm" && len(call.args) > 0 && call.args[0] == "--create") {
+			t.Fatalf("mirrorRoot() ran %s %v after the tail space check failed", call.name, call.args)
+		}
 	}
-	if hasProvisionCall(cmd.calls, "mdadm", "--create", "/dev/md2", "--run", "--level=1", "--raid-devices=2",
-		"--metadata=1.0", "--assume-clean", "/dev/sda2", "missing") {
-		t.Fatal("mirrorRoot() recreated an already assembled array")
+}
+
+func TestMirrorRootReusesAssembledArray(t *testing.T) {
+	const add = "--add /dev/md2 /dev/sdb2"
+	tests := []struct {
+		name    string
+		detail  string
+		wantAdd bool
+	}{
+		{name: "both members present", detail: "   0  8  2  0  active sync  /dev/sda2\n   1  8  18  1  spare rebuilding  /dev/sdb2\n"},
+		{name: "second member missing after failed add", detail: "   0  8  2  0  active sync  /dev/sda2\n   -  0  0  1  removed\n", wantAdd: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newMockCommander()
+			cmd.setResult("mdadm --detail", []byte(tt.detail), nil)
+			o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, disk.NewManager(cmd))
+			o.targetDisk, o.mirrorDisk, o.rootPartition = "/dev/sda", "/dev/sdb", "/dev/sda2"
+
+			if err := o.mirrorRoot(context.Background()); err != nil {
+				t.Fatalf("mirrorRoot() error = %v", err)
+			}
+			if o.rootPartition != disk.MirrorRootArray {
+				t.Fatalf("rootPartition = %s, want %s", o.rootPartition, disk.MirrorRootArray)
+			}
+			for _, call := range cmd.calls {
+				if call.name == "growpart" || call.name == "sgdisk" || (call.name == "mdadm" && call.args[0] == "--create") {
+					t.Fatalf("mirrorRoot() ran %s %v on an assembled array", call.name, call.args)
+				}
+			}
+			if got := hasProvisionCall(cmd.calls, "mdadm", strings.Fields(add)...); got != tt.wantAdd {
+				t.Fatalf("mdadm %s called = %v, want %v", add, got, tt.wantAdd)
+			}
+		})
 	}
 }
 
@@ -87,19 +131,32 @@ func TestMirrorRootWithoutMirrorDiskIsNoop(t *testing.T) {
 	}
 }
 
-func TestSelectMirrorPairRejectsInvalidCombinations(t *testing.T) {
-	for name, disk := range map[string]config.DiskConfig{
-		"unknown mode": {MirroringMode: "raid-5"},
-		"explicit raid": {MirroringMode: "raid-1", RAID: []config.RAIDConfig{
-			{Name: "md0", Level: 1, Devices: []string{"/dev/sda", "/dev/sdb"}},
-		}},
-	} {
-		t.Run(name, func(t *testing.T) {
+func TestValidateMirroringMode(t *testing.T) {
+	raid := []config.RAIDConfig{{Name: "md0", Level: 1, Devices: []string{"/dev/sda", "/dev/sdb"}}}
+	tests := []struct {
+		name      string
+		disk      config.DiskConfig
+		imageMode string
+		wantErr   bool
+	}{
+		{name: "unset"},
+		{name: "none with explicit raid", disk: config.DiskConfig{MirroringMode: "none", RAID: raid}},
+		{name: "raid-1 whole-disk", disk: config.DiskConfig{MirroringMode: "raid-1"}, imageMode: config.ImageModeWholeDisk},
+		{name: "auto with explicit disk", disk: config.DiskConfig{MirroringMode: "auto", Device: "/dev/sda"}},
+		{name: "unknown mode", disk: config.DiskConfig{MirroringMode: "raid-5"}, wantErr: true},
+		{name: "explicit raid", disk: config.DiskConfig{MirroringMode: "raid-1", RAID: raid}, wantErr: true},
+		{name: "partition layout", disk: config.DiskConfig{MirroringMode: "auto", PartitionLayout: &config.PartitionLayout{}}, wantErr: true},
+		{name: "A/B image mode", disk: config.DiskConfig{MirroringMode: "raid-1"}, imageMode: config.ImageModeAB, wantErr: true},
+		{name: "partition image mode", disk: config.DiskConfig{MirroringMode: "auto"}, imageMode: config.ImageModePartition, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.MachineConfig{}
-			cfg.Provision.Disk = disk
+			cfg.Provision.Disk = tt.disk
+			cfg.Provision.Image.Mode = tt.imageMode
 			o := NewOrchestrator(cfg, &mockProvider{}, newTestDiskManager())
-			if _, err := o.selectMirrorPair(context.Background()); err == nil {
-				t.Fatal("selectMirrorPair() error = nil, want error")
+			if err := o.validateMirroringMode(); (err != nil) != tt.wantErr {
+				t.Fatalf("validateMirroringMode() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}

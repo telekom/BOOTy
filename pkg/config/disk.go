@@ -119,7 +119,9 @@ type DiskConfig struct {
 	// RedfishHost diskMirroringMode field.
 	// Valid values: "raid-1" (require a matching pair), "auto" (mirror when a
 	// matching pair exists, single disk otherwise), "none" or "" (single disk).
-	// Ignored when Device, SerialNumber, RAID or PartitionLayout select the target.
+	// Ignored when Device or SerialNumber selects the target disk. Rejected
+	// before any disk is changed when combined with RAID, PartitionLayout or
+	// an image mode other than whole-disk (such as A/B).
 	// Default: "" (single disk)
 	MirroringMode string `yaml:"mirroringMode" json:"mirroringMode"`
 

@@ -964,6 +964,9 @@ func (o *Orchestrator) validateProvisionInputs(ctx context.Context) error {
 	if err := o.validatePartitionLayoutRuntimeSupport(); err != nil {
 		return err
 	}
+	if err := o.validateMirroringMode(); err != nil {
+		return err
+	}
 	o.cfg.Provision.Image.Checksum = strings.TrimSpace(o.cfg.Provision.Image.Checksum)
 	checksumConfigured := o.cfg.Provision.Image.Checksum != ""
 	imageSources := make([]string, 0, len(o.cfg.Provision.Image.URLs))

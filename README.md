@@ -434,7 +434,7 @@ root is mounted.
 | `AB_SOURCE_ROOT_PARTITION` | — | 1-based source-image partition number to copy when no stable label exists |
 | `DISK_DEVICE` | auto-detect | Explicit disk device path override (e.g. `/dev/sda`) |
 | `DISK_SERIAL_NUMBER` | — | Select the target disk by exact sysfs serial number when `DISK_DEVICE` is unset |
-| `DISK_MIRRORING_MODE` | unset | Mirror the root filesystem with RAID1 across the largest pair of equally sized disks: `raid-1` (pair required), `auto` (single disk when no pair exists), `none`. Ignored when `DISK_DEVICE` or `DISK_SERIAL_NUMBER` selects the disk; rejected with explicit RAID, partition layout or A/B mode |
+| `DISK_MIRRORING_MODE` | unset | Mirror the root filesystem with RAID1 across the largest pair of equally sized disks: `raid-1` (pair required), `auto` (single disk when no pair exists), `none`. Equal-size namespaces of one NVMe controller do not count as a pair. Ignored when `DISK_DEVICE` or `DISK_SERIAL_NUMBER` selects the disk; rejected before any disk change with explicit RAID, a partition layout or an image mode other than whole-disk (such as A/B) |
 | `ROOT_PARTITION_LABEL` | — | Whole-disk image root GPT partition label/PARTLABEL; use when multiple Linux partitions exist |
 | `ROOT_PARTITION_NUMBER` | — | Whole-disk image root partition number; use only when no stable root partition label exists |
 | `IMAGE_SIGNATURE_URL` | — | URL to detached GPG signature for image verification |

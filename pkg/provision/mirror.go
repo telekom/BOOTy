@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/telekom/BOOTy/pkg/blockdev"
+	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
 )
 
@@ -19,10 +20,33 @@ import (
 // EFI system partition are copied to the second disk, and the second root
 // partition joins the array and resyncs in the background.
 
-var copyBlockDeviceFn = disk.CopyBlockDevice
+var (
+	copyBlockDeviceFn      = disk.CopyBlockDevice
+	checkMirrorTailSpaceFn = disk.CheckMirrorTailSpace
+)
 
 func (o *Orchestrator) mirroringMode() string {
 	return strings.ToLower(strings.TrimSpace(o.cfg.Provision.Disk.MirroringMode))
+}
+
+// validateMirroringMode rejects mirroring setups that the mirror-root step
+// cannot handle. It runs in validate-provision-inputs, before setup-raid and
+// detect-disk change the disks or the disk selection.
+func (o *Orchestrator) validateMirroringMode() error {
+	mode := o.mirroringMode()
+	switch mode {
+	case "", disk.MirroringModeNone:
+		return nil
+	case disk.MirroringModeRAID1, disk.MirroringModeAuto:
+	default:
+		return fmt.Errorf("unsupported disk mirroring mode %q", mode)
+	}
+	imageMode := strings.ToLower(strings.TrimSpace(o.cfg.Provision.Image.Mode))
+	if len(o.cfg.Provision.Disk.RAID) > 0 || o.cfg.Provision.Disk.PartitionLayout != nil ||
+		(imageMode != "" && imageMode != config.ImageModeWholeDisk) {
+		return fmt.Errorf("disk mirroring mode %q requires a whole-disk image and cannot be combined with explicit RAID or a partition layout", mode)
+	}
+	return nil
 }
 
 // selectMirrorPair sets targetDisk and mirrorDisk when mirroring is requested
@@ -37,9 +61,6 @@ func (o *Orchestrator) selectMirrorPair(ctx context.Context) (bool, error) {
 	case disk.MirroringModeRAID1, disk.MirroringModeAuto:
 	default:
 		return false, fmt.Errorf("unsupported disk mirroring mode %q", mode)
-	}
-	if len(o.cfg.Provision.Disk.RAID) > 0 || o.cfg.Provision.Disk.PartitionLayout != nil || o.isABImageMode() {
-		return false, fmt.Errorf("disk mirroring mode %q cannot be combined with explicit RAID, partition layout or A/B image mode", mode)
 	}
 	first, second, ok, err := o.disk.DetectMirrorPair(ctx, o.cfg.Provision.Disk.MinSizeGB)
 	if err != nil {
@@ -71,7 +92,12 @@ func (o *Orchestrator) mirrorRoot(ctx context.Context) error {
 	mirrorRoot := blockdev.PartitionDevicePath(o.mirrorDisk, rootNum)
 
 	if o.disk.MirrorActive(ctx, disk.MirrorRootArray) {
+		// A resume after a failed mdadm --add finds a degraded array, so
+		// check the second member instead of trusting the assembled array.
 		o.log.Info("root mirror already assembled", "array", disk.MirrorRootArray)
+		if err := o.ensureMirrorMember(ctx, mirrorRoot); err != nil {
+			return err
+		}
 		o.rootPartition = disk.MirrorRootArray
 		return nil
 	}
@@ -79,6 +105,9 @@ func (o *Orchestrator) mirrorRoot(ctx context.Context) error {
 	// Grow before creating the array: metadata 1.0 lives at the end of the
 	// member, past the end of the filesystem the image carried.
 	if err := o.disk.GrowPartition(ctx, o.targetDisk, rootNum); err != nil {
+		return err
+	}
+	if err := checkMirrorTailSpaceFn(o.rootPartition); err != nil {
 		return err
 	}
 	if err := o.disk.ReplicatePartitionTable(ctx, o.targetDisk, o.mirrorDisk); err != nil {
@@ -104,6 +133,14 @@ func (o *Orchestrator) mirrorRoot(ctx context.Context) error {
 	return nil
 }
 
+func (o *Orchestrator) ensureMirrorMember(ctx context.Context, member string) error {
+	present, err := o.disk.MirrorHasMember(ctx, disk.MirrorRootArray, member)
+	if err != nil || present {
+		return err
+	}
+	return o.disk.AddMirrorMember(ctx, disk.MirrorRootArray, member)
+}
+
 // configureMdadm records the root array in the installed system and rebuilds
 // its initramfs so the array is assembled before the root filesystem mounts.
 func (o *Orchestrator) configureMdadm(ctx context.Context) error {
@@ -114,12 +151,8 @@ func (o *Orchestrator) configureMdadm(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	confDir := filepath.Join(newroot, "etc", "mdadm")
-	if err := os.MkdirAll(confDir, 0o755); err != nil {
-		return fmt.Errorf("create %s: %w", confDir, err)
-	}
 	conf := "# mdadm.conf - written by BOOTy\n\nDEVICE partitions\nHOMEHOST <system>\nMAILADDR root\n\n" + scan
-	if err := os.WriteFile(filepath.Join(confDir, "mdadm.conf"), []byte(conf), 0o644); err != nil { //nolint:gosec // standard config file mode
+	if err := writeTargetRootFile(newroot, filepath.Join(newroot, "etc", "mdadm", "mdadm.conf"), []byte(conf)); err != nil {
 		return fmt.Errorf("write mdadm.conf: %w", err)
 	}
 	cmd := "if command -v update-initramfs >/dev/null 2>&1; then update-initramfs -u -k all; " +
@@ -141,4 +174,23 @@ func (o *Orchestrator) createMirrorEFIBootEntry(ctx context.Context) error {
 		return fmt.Errorf("determine EFI partition number: %w", err)
 	}
 	return o.config.CreateEFIBootEntry(ctx, o.mirrorDisk, blockdev.PartitionDevicePath(o.mirrorDisk, efiNum))
+}
+
+// writeTargetRootFile writes data to path below root without following
+// symlinks out of the target root, which comes from the streamed image.
+func writeTargetRootFile(root, path string, data []byte) error {
+	if err := ensureWithinRoot(root, path); err != nil {
+		return err
+	}
+	dir := filepath.Dir(path)
+	if err := ensureTargetParentWithinRoot(root, dir); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+	if err := ensureTargetParentWithinRoot(root, dir); err != nil {
+		return err
+	}
+	return writeFileAtomic(path, data, 0o644)
 }

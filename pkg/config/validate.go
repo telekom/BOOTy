@@ -306,6 +306,7 @@ func (c *Config) normalize() {
 		&c.Provision.TargetOS,
 		&c.Provision.Image.ChecksumType,
 		&c.Provision.Image.ChecksumScope,
+		&c.Provision.Disk.MirroringMode,
 		&c.Network.Mode,
 		&c.Network.WaitMode,
 		&c.Network.BGP.PeerMode,
