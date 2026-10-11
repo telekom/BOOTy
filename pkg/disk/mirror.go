@@ -29,6 +29,10 @@ const (
 // (array name "<homehost>:2").
 const MirrorRootArray = "/dev/md2"
 
+// MirrorBootArray is the md device that mirrors a separate /boot partition,
+// named like the CAPRF legacy provisioner (array name "<homehost>:1").
+const MirrorBootArray = "/dev/md1"
+
 // DetectMirrorPair returns the largest pair of non-removable, non-virtual
 // disks with an identical size in bytes and logical sector size on different
 // physical devices. NVMe
@@ -239,6 +243,49 @@ func CopyBlockDevice(src, dst string) error {
 // end of a member: a superblock 8 KiB before the end plus at most 128 KiB of
 // internal bitmap, rounded up.
 const mirrorMetadataReserve = 1 << 20
+
+// ShrinkFilesystemForMirror shrinks the ext2/3/4 filesystem on member so it
+// ends mirrorMetadataReserve bytes before the end of the partition, which
+// cannot grow when another partition follows it. It does nothing when the
+// filesystem already leaves that space.
+func (m *Manager) ShrinkFilesystemForMirror(ctx context.Context, member string) error {
+	if CheckMirrorTailSpace(member) == nil {
+		return nil
+	}
+	fsType, err := m.fsType(ctx, member)
+	if err != nil {
+		return fmt.Errorf("filesystem type of %s: %w", member, err)
+	}
+	if !strings.HasPrefix(fsType, "ext") {
+		return fmt.Errorf("cannot shrink the %s filesystem on %s for mirror metadata; only ext2/3/4 can shrink", fsType, member)
+	}
+	partBytes, err := deviceSize(member)
+	if err != nil {
+		return err
+	}
+	if err := m.CheckFilesystem(ctx, member); err != nil {
+		return err
+	}
+	size := fmt.Sprintf("%dK", (partBytes-mirrorMetadataReserve)/1024)
+	if out, err := m.cmd.Run(ctx, "resize2fs", member, size); err != nil {
+		return fmt.Errorf("resize2fs %s to %s: %s: %w", member, size, string(out), err)
+	}
+	slog.Info("shrank filesystem for mirror metadata", "device", member, "size", size)
+	return nil
+}
+
+func deviceSize(path string) (int64, error) {
+	f, err := os.Open(path) //nolint:gosec // block device path from partition scan
+	if err != nil {
+		return 0, fmt.Errorf("open %s: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	size, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		return 0, fmt.Errorf("size of %s: %w", path, err)
+	}
+	return size, nil
+}
 
 // CheckMirrorTailSpace fails unless the filesystem on member ends at least
 // mirrorMetadataReserve bytes before the end of the partition. Metadata 1.0

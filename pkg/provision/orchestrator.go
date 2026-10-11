@@ -96,6 +96,7 @@ type Orchestrator struct {
 	mirrorDisk       string // second root disk when DISK_MIRRORING_MODE selected a pair
 	resumeMirrorPair [2]string // mirror pair restored from a resume checkpoint
 	targetPartitions []disk.Partition // partitions parse-partitions found on targetDisk
+	mirrorArrays     []string         // md arrays that mirror-root assembled
 	rootPartition    string
 	bootPartition    string
 	sharedMounts     []string

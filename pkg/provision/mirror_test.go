@@ -5,7 +5,9 @@ package provision
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -204,8 +206,10 @@ func TestCreateMirrorEFIBootEntryBIOSInstallsGrubAndCopiesESP(t *testing.T) {
 	if err := o.createMirrorEFIBootEntry(context.Background()); err != nil {
 		t.Fatalf("createMirrorEFIBootEntry() error = %v", err)
 	}
-	if !hasProvisionCall(cmd.calls, "chroot", newroot, "/bin/bash", "-c", "grub-install --target=i386-pc /dev/sdb") {
-		t.Fatalf("missing BIOS grub-install for the mirror disk in %v", cmd.calls)
+	for _, d := range []string{"/dev/sda", "/dev/sdb"} {
+		if !hasProvisionCall(cmd.calls, "chroot", newroot, "/bin/bash", "-c", "grub-install --target=i386-pc "+d) {
+			t.Fatalf("missing BIOS grub-install for %s in %v", d, cmd.calls)
+		}
 	}
 	want := []string{"copy /dev/sda1->/dev/sdb1", "mount /dev/sda1 " + bootEFIMountPoint()}
 	if strings.Join(events, "|") != strings.Join(want, "|") {
@@ -288,12 +292,12 @@ func TestSingleDiskFallbackSurvivesResume(t *testing.T) {
 	}
 }
 
-func TestMirrorRootRejectsUnmirroredPartitions(t *testing.T) {
-	const xbootldr = "BC13C2FF-59E6-4262-A352-B275FD6F7172"
+func TestSeparateBootPartition(t *testing.T) {
 	tests := []struct {
-		name    string
-		parts   []disk.Partition
-		wantErr bool
+		name     string
+		parts    []disk.Partition
+		wantBoot string
+		wantErr  bool
 	}{
 		{name: "root, BIOS boot and ESP", parts: []disk.Partition{
 			{Node: "/dev/sda1", Type: disk.LinuxFilesystemGUID},
@@ -303,15 +307,108 @@ func TestMirrorRootRejectsUnmirroredPartitions(t *testing.T) {
 		{name: "separate /boot partition", parts: []disk.Partition{
 			{Node: "/dev/sda1", Type: disk.LinuxFilesystemGUID},
 			{Node: "/dev/sda15", Type: disk.EFISystemPartitionGUID},
-			{Node: "/dev/sda16", Type: xbootldr},
+			{Node: "/dev/sda16", Type: xbootldrPartitionGUID},
+		}, wantBoot: "/dev/sda16"},
+		{name: "two extra Linux partitions", parts: []disk.Partition{
+			{Node: "/dev/sda1", Type: disk.LinuxFilesystemGUID},
+			{Node: "/dev/sda2", Type: disk.LinuxFilesystemGUID},
+			{Node: "/dev/sda3", Type: disk.LinuxFilesystemGUID},
+		}, wantErr: true},
+		{name: "swap partition", parts: []disk.Partition{
+			{Node: "/dev/sda1", Type: disk.LinuxFilesystemGUID},
+			{Node: "/dev/sda2", Type: "0657FD6D-A4AB-43C4-84E5-0933C84B4F4F"},
 		}, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, newTestDiskManager())
 			o.rootPartition, o.bootPartition, o.targetPartitions = "/dev/sda1", "/dev/sda15", tt.parts
-			if err := o.checkMirrorablePartitions(); (err != nil) != tt.wantErr {
-				t.Fatalf("checkMirrorablePartitions() error = %v, wantErr %v", err, tt.wantErr)
+			boot, err := o.separateBootPartition()
+			if (err != nil) != tt.wantErr || boot != tt.wantBoot {
+				t.Fatalf("separateBootPartition() = %q, %v; want %q, wantErr %v", boot, err, tt.wantBoot, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestMirrorRootMirrorsSeparateBoot(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("mdadm --detail", nil, errors.New("no such array"))
+	stubMirrorTailSpace(t, nil)
+	var shrunk []string
+	origShrink := shrinkFilesystemForMirrorFn
+	shrinkFilesystemForMirrorFn = func(_ *disk.Manager, _ context.Context, member string) error {
+		shrunk = append(shrunk, member)
+		return nil
+	}
+	t.Cleanup(func() { shrinkFilesystemForMirrorFn = origShrink })
+
+	o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, disk.NewManager(cmd))
+	o.targetDisk, o.mirrorDisk = "/dev/sda", "/dev/sdb"
+	o.rootPartition, o.bootPartition = "/dev/sda1", "/dev/sda15"
+	o.targetPartitions = []disk.Partition{
+		{Node: "/dev/sda1", Type: disk.LinuxFilesystemGUID},
+		{Node: "/dev/sda15", Type: disk.EFISystemPartitionGUID},
+		{Node: "/dev/sda16", Type: xbootldrPartitionGUID},
+	}
+	if err := o.mirrorRoot(context.Background()); err != nil {
+		t.Fatalf("mirrorRoot() error = %v", err)
+	}
+	if len(shrunk) != 1 || shrunk[0] != "/dev/sda16" {
+		t.Fatalf("shrunk filesystems = %v, want /dev/sda16", shrunk)
+	}
+	if strings.Join(o.mirrorArrays, ",") != disk.MirrorRootArray+","+disk.MirrorBootArray {
+		t.Fatalf("mirrorArrays = %v", o.mirrorArrays)
+	}
+	for _, want := range [][]string{
+		{"wipefs", "-af", "/dev/sdb16"},
+		{"mdadm", "--create", "/dev/md1", "--run", "--level=1", "--raid-devices=2", "--metadata=1.0", "--assume-clean", "/dev/sda16", "missing"},
+		{"mdadm", "--add", "/dev/md1", "/dev/sdb16"},
+		{"mdadm", "--add", "/dev/md2", "/dev/sdb1"},
+	} {
+		if !hasProvisionCall(cmd.calls, want[0], want[1:]...) {
+			t.Errorf("missing command %v", want)
+		}
+	}
+}
+
+func TestMdadmArrayLines(t *testing.T) {
+	scan := "ARRAY /dev/md/2 metadata=1.0 name=host:2 UUID=a:b:c:d\n"
+	got := mdadmArrayLines(disk.MirrorRootArray, scan)
+	want := "ARRAY /dev/md2 metadata=1.0 name=host:2 UUID=a:b:c:d"
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("mdadmArrayLines() = %q, want %q", got, want)
+	}
+}
+
+func TestWriteMdadmConf(t *testing.T) {
+	for _, shipsEtcConf := range []bool{false, true} {
+		t.Run(fmt.Sprintf("image ships /etc/mdadm.conf=%v", shipsEtcConf), func(t *testing.T) {
+			root := t.TempDir()
+			alt := filepath.Join(root, "etc", "mdadm.conf")
+			if shipsEtcConf {
+				if err := os.MkdirAll(filepath.Dir(alt), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(alt, []byte("ARRAY /dev/md0 UUID=old\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			const content = "AUTO +imsm +1.x -all\nARRAY /dev/md2 UUID=new\n"
+			if err := writeMdadmConf(root, content); err != nil {
+				t.Fatalf("writeMdadmConf() error = %v", err)
+			}
+			wantPaths := []string{filepath.Join(root, "etc", "mdadm", "mdadm.conf")}
+			if shipsEtcConf {
+				wantPaths = append(wantPaths, alt)
+			} else if fileExists(alt) {
+				t.Fatalf("writeMdadmConf() created %s although the image has none", alt)
+			}
+			for _, path := range wantPaths {
+				data, err := os.ReadFile(path)
+				if err != nil || string(data) != content {
+					t.Fatalf("%s = %q, %v; want %q", path, data, err, content)
+				}
 			}
 		})
 	}

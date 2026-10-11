@@ -228,3 +228,33 @@ func TestDetectMirrorPairRequiresSameSectorSize(t *testing.T) {
 		t.Fatalf("DetectMirrorPair() ok=%v err=%v, want no pair for 512 and 4096 byte sectors", ok, err)
 	}
 }
+
+func TestShrinkFilesystemForMirror(t *testing.T) {
+	const mib = 1 << 20
+	tests := []struct {
+		name       string
+		size       int64
+		fsType     string
+		wantResize string
+		wantErr    bool
+	}{
+		{name: "ext4 filling its partition shrinks", size: 64 * mib, fsType: "ext4", wantResize: "64512K"},
+		{name: "ext4 with tail space stays", size: 128 * mib, fsType: "ext4"},
+		{name: "xfs filling its partition fails", size: 64 * mib, fsType: "xfs", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeSuperblockImage(t, tt.size, 1024, extSuperblock(64*mib/4096, 2))
+			cmd := newMockCommander()
+			cmd.setResult("blkid -o", []byte(tt.fsType+"\n"), nil)
+			err := NewManager(cmd).ShrinkFilesystemForMirror(context.Background(), path)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ShrinkFilesystemForMirror() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			resized := hasDiskCommandCall(cmd.calls, "resize2fs", path, tt.wantResize)
+			if (tt.wantResize != "") != resized {
+				t.Fatalf("resize2fs %s called = %v, want %v (calls %v)", tt.wantResize, resized, tt.wantResize != "", cmd.calls)
+			}
+		})
+	}
+}
