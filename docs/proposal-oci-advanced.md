@@ -618,7 +618,8 @@ export OCI_PARALLEL="4"                           # concurrent layer downloads
 
 ## Files Changed
 
-These files do not exist. They are the planned layout.
+These are the planned changes. New files do not exist yet, and the
+listed existing files do not have these changes yet.
 
 | File | Change |
 |------|--------|
@@ -663,13 +664,13 @@ These tests do not exist. They are the planned coverage.
 
 ## Usage Guide
 
-This guide describes the planned API. It does not compile against the
-current code.
+This guide describes the planned API. None of the manager APIs below
+exist, and the code does not compile against the current tree.
 
 ### Overview
 
-The OCI image manager extends BOOTy's image streaming with multi-arch
-platform selection and layer caching.
+The proposed OCI image manager would extend BOOTy's image streaming with
+multi-arch platform selection and layer caching.
 
 ### Configuration
 
