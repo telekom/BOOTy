@@ -36,7 +36,9 @@ CLEAN_FILES := \
 # crash with a newer local Go, so build and run the linter with that version.
 GOLANGCI_LINT_VERSION ?= v2.12.2
 LINT_GOTOOLCHAIN ?= go$(shell sed -n 's/^go //p' go.mod)
-GOLANGCI_LINT ?= bin/golangci-lint-$(GOLANGCI_LINT_VERSION)-$(LINT_GOTOOLCHAIN)-$(shell go env GOHOSTOS)-$(shell go env GOHOSTARCH)
+LINT_HOSTOS := $(shell go env GOHOSTOS)
+LINT_EXE := $(if $(filter windows,$(LINT_HOSTOS)),.exe)
+GOLANGCI_LINT ?= bin/golangci-lint-$(GOLANGCI_LINT_VERSION)-$(LINT_GOTOOLCHAIN)-$(LINT_HOSTOS)-$(shell go env GOHOSTARCH)$(LINT_EXE)
 
 CLAB_TEST_IMAGE ?= test/e2e/clab/images/test.img.gz
 
@@ -107,7 +109,7 @@ $(GOLANGCI_LINT):
 	@mkdir -p $(@D)
 	@tmp=$$(mktemp -d) && \
 	GOTOOLCHAIN=$(LINT_GOTOOLCHAIN) GOBIN="$$tmp" go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) && \
-	mv "$$tmp/golangci-lint" $@ && rmdir "$$tmp"
+	mv "$$tmp/golangci-lint$(LINT_EXE)" "$@" && rmdir "$$tmp"
 
 fmt: $(GOLANGCI_LINT)
 	@gofmt -l -w $(SRC)
