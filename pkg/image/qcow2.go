@@ -180,21 +180,22 @@ var qemuImgInfo = func(ctx context.Context, qemuImg, src string) ([]byte, error)
 // file or an external data file. qemu-img convert would read that file from
 // the initramfs or the network and copy it into the raw image.
 func rejectQCOW2ExternalFiles(infoJSON []byte) error {
+	// Pointers detect a present field even when its value is empty.
 	var info struct {
-		BackingFilename string `json:"backing-filename"`
+		BackingFilename *string `json:"backing-filename"`
 		FormatSpecific  struct {
 			Data struct {
-				DataFile string `json:"data-file"`
+				DataFile *string `json:"data-file"`
 			} `json:"data"`
 		} `json:"format-specific"`
 	}
 	if err := json.Unmarshal(infoJSON, &info); err != nil {
 		return fmt.Errorf("parse qemu-img info: %w", err)
 	}
-	if info.BackingFilename != "" {
+	if info.BackingFilename != nil {
 		return fmt.Errorf("qcow2 image has a backing file; only self-contained images are supported")
 	}
-	if info.FormatSpecific.Data.DataFile != "" {
+	if info.FormatSpecific.Data.DataFile != nil {
 		return fmt.Errorf("qcow2 image has an external data file; only self-contained images are supported")
 	}
 	return nil

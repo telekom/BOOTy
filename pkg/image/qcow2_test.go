@@ -98,6 +98,8 @@ func TestRejectQCOW2ExternalFiles(t *testing.T) {
 		{"self-contained", `{"format":"qcow2","format-specific":{"type":"qcow2","data":{"compat":"1.1"}}}`, false},
 		{"backing file", `{"format":"qcow2","backing-filename":"/deploy/vars","backing-filename-format":"raw"}`, true},
 		{"data file", `{"format":"qcow2","format-specific":{"type":"qcow2","data":{"data-file":"/dev/nvme1n1"}}}`, true},
+		{"empty backing file", `{"format":"qcow2","backing-filename":""}`, true},
+		{"empty data file", `{"format":"qcow2","format-specific":{"type":"qcow2","data":{"data-file":""}}}`, true},
 		{"invalid json", `not json`, true},
 	}
 	for _, tt := range tests {
