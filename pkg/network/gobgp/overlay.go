@@ -855,17 +855,25 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 	}
 	prefix, key := dst.String(), type5PathKey(route)
 	if withdraw {
-		for _, remaining := range o.forgetType5Path(prefix, key) {
-			if o.applyType5Path(remaining) {
+		remaining := o.forgetType5Path(prefix, key)
+		for _, p := range remaining {
+			if o.applyType5Path(p) {
 				o.log.Info("type-5 path withdrawn, keeping route via remaining path",
-					"dst", dst, "withdrawn_vtep", vtep, "vtep", remaining.vtep)
+					"dst", dst, "withdrawn_vtep", vtep, "vtep", p.vtep)
 				return
 			}
 		}
 		vtepIP, _ := o.ensureType5VTEP(vtep, true)
-		if state, ok := o.type5RouteState(route, vtep, vtepIP); ok {
-			o.withdrawType5Route(state, routerMAC)
+		state, ok := o.type5RouteState(route, vtep, vtepIP)
+		if !ok {
+			return
 		}
+		if len(remaining) > 0 {
+			// A failed fallback may have moved the kernel route already.
+			o.removeType5Prefix(state)
+			return
+		}
+		o.withdrawType5Route(state, routerMAC)
 		return
 	}
 	// Remember the path before any kernel change, so a later withdraw of
@@ -982,6 +990,18 @@ func (o *OverlayTier) withdrawType5Route(state type5RouteState, routerMAC net.Ha
 
 // installType5Route installs the kernel route and gateway state. It reports
 // whether the kernel route and the required gateway state were installed.
+// removeType5Prefix deletes the kernel route for a prefix whatever its
+// gateway, and the gateway state of that prefix. It is used when no
+// remaining path could be installed completely.
+func (o *OverlayTier) removeType5Prefix(state type5RouteState) {
+	route := buildType5KernelRoute(state.link, state.dst, nil, o.overlayRouteTable())
+	if err := o.netlinkOps.RouteDel(route); err != nil {
+		o.log.Debug("failed to delete type-5 route after failed fallback", "dst", state.dst, "error", err)
+	}
+	o.log.Warn("no remaining type-5 path could be installed, removed route", "dst", state.dst)
+	o.clearType5GatewayNeighbor(state.link, state.dst.String())
+}
+
 func (o *OverlayTier) installType5Route(state type5RouteState, routerMAC net.HardwareAddr, valid bool) bool {
 	route := buildType5KernelRoute(state.link, state.dst, state.gw, o.overlayRouteTable())
 	if err := o.netlinkOps.RouteReplace(route); err != nil {

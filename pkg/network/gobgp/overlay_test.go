@@ -3575,8 +3575,8 @@ func TestHandleType5RouteDeletesWithdrawnRouteWhenFallbackFails(t *testing.T) {
 	mock.routeReplaceErr = errors.New("replace failed")
 	overlay.handleType5Route(routeB, "192.168.4.2", nil, true)
 
-	if len(mock.routeDels) != 1 || !mock.routeDels[0].Gw.Equal(net.ParseIP("192.168.4.2")) {
-		t.Fatalf("expected withdrawn route via 192.168.4.2 to be deleted, got %v", mock.routeDels)
+	if len(mock.routeDels) != 1 || mock.routeDels[0].Dst.String() != "0.0.0.0/0" {
+		t.Fatalf("expected the 0/0 route to be deleted after the failed fallback, got %v", mock.routeDels)
 	}
 }
 
@@ -3766,4 +3766,21 @@ func (m *failingNeighborOps) NeighSet(n *netlink.Neigh) error {
 		return errors.New("neighbor set failed")
 	}
 	return err
+}
+
+func TestHandleType5RouteRemovesPrefixWhenEveryFallbackFails(t *testing.T) {
+	mock := &failingNeighborOps{mockOverlayNetlinkOps: &mockOverlayNetlinkOps{}, failIP: "192.168.4.1"}
+	overlay := newType5FailoverTestOverlay(mock)
+	routeA, routeB := type5FailoverRoute(t, 1, "192.168.4.1"), type5FailoverRoute(t, 2, "192.168.4.2")
+
+	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
+	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
+	overlay.handleType5Route(routeB, "192.168.4.2", nil, true)
+
+	if len(mock.routeDels) != 1 || mock.routeDels[0].Gw != nil || mock.routeDels[0].Dst.String() != "0.0.0.0/0" {
+		t.Fatalf("expected the 0/0 route to be deleted whatever its gateway, got %v", mock.routeDels)
+	}
+	if overlay.hasType5GatewayRef("192.168.4.2") {
+		t.Fatal("gateway state of the withdrawn path was not cleared")
+	}
 }
