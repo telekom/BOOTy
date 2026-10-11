@@ -480,7 +480,11 @@ func runCAPRF(ctx context.Context) {
 	if err != nil {
 		slog.Error("failed to create CAPRF client", "error", err)
 		provision.DumpDebugState("caprf-init")
-		reboot()
+		// The vars file did not parse, but it may still ask for legacy
+		// behaviour: then keep the ramdisk running instead of rebooting.
+		failRun(ctx, &config.MachineConfig{LegacyCompat: caprf.RequestsLegacyCompat(varsPath)}, nil,
+			"invalid vars file", reboot)
+		return
 	}
 
 	cfg, err := client.GetConfig(ctx)
@@ -551,7 +555,7 @@ func runCAPRF(ctx context.Context) {
 
 	slog.Info("executing mode", "mode", mode.Name())
 	modeErr := mode.Run(runCtx)
-	if cfg.LegacyCompat && runCtx.Err() != nil && ctx.Err() == nil {
+	if cfg.LegacyCompat && runCtx.Err() != nil && ctx.Err() == nil && !isTerminalSuccess(modeErr) {
 		failRun(ctx, cfg, client, "token renewal exhausted, task stopped", reboot)
 		return
 	}
@@ -732,6 +736,14 @@ func failRun(ctx context.Context, cfg *config.MachineConfig, reporter provisionS
 		<-ctx.Done()
 	}
 	rebootFn()
+}
+
+// isTerminalSuccess reports a mode result that completed its task. Such a
+// result wins over a renewal failure that arrives at the same time.
+func isTerminalSuccess(modeErr error) bool {
+	var provisionErr *runmode.ProvisionCompleteError
+	var powerOffErr *runmode.PowerOffRequestedError
+	return errors.As(modeErr, &provisionErr) || errors.As(modeErr, &powerOffErr)
 }
 
 // tokenRenewalFatal handles exhausted JWT renewal. Legacy compat stops the

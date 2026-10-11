@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -2465,5 +2466,22 @@ func TestParseVarsLegacyCompat(t *testing.T) {
 		if cfg.KexecDisabled() != tt.want {
 			t.Errorf("CAPRF_LEGACY_COMPAT=%q: KexecDisabled() = %v, want %v", tt.value, cfg.KexecDisabled(), tt.want)
 		}
+	}
+}
+
+func TestRequestsLegacyCompatWithInvalidVars(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vars")
+	content := "export MODE=\"no-such-mode\"\nexport CAPRF_LEGACY_COMPAT=\"true\"\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(path); err == nil {
+		t.Fatal("New() accepted an invalid mode")
+	}
+	if !RequestsLegacyCompat(path) {
+		t.Fatal("RequestsLegacyCompat() = false, want true")
+	}
+	if RequestsLegacyCompat(filepath.Join(t.TempDir(), "missing")) {
+		t.Fatal("RequestsLegacyCompat() = true for a missing file")
 	}
 }

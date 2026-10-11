@@ -65,6 +65,29 @@ func New(varsPath string) (*Client, error) {
 	return c, nil
 }
 
+// RequestsLegacyCompat reports whether the vars file sets
+// CAPRF_LEGACY_COMPAT to a true value. It reads only that key, so it also
+// works when the rest of the file does not parse.
+func RequestsLegacyCompat(varsPath string) bool {
+	f, err := os.Open(varsPath) //nolint:gosec // trusted path from ISO
+	if err != nil {
+		return false
+	}
+	defer f.Close() //nolint:errcheck // read-only file
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimPrefix(strings.TrimSpace(scanner.Text()), "export ")
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || key != "CAPRF_LEGACY_COMPAT" {
+			continue
+		}
+		value, err := unquoteVarValue(value)
+		return err == nil && parseBoolVar(value)
+	}
+	return false
+}
+
 // NewFromConfig creates a CAPRF client from an already-parsed config.
 func NewFromConfig(cfg *config.MachineConfig) *Client {
 	c := &Client{

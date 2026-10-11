@@ -1224,3 +1224,12 @@ func TestTokenRenewalFatalLegacyCompatStopsTheTask(t *testing.T) {
 		t.Fatalf("default: rebooted=%v stopped=%v, want a reboot", rebooted, stopped)
 	}
 }
+
+func TestIsTerminalSuccess(t *testing.T) {
+	if !isTerminalSuccess(&runmode.ProvisionCompleteError{}) || !isTerminalSuccess(&runmode.PowerOffRequestedError{}) {
+		t.Fatal("completed task results must count as success")
+	}
+	if isTerminalSuccess(errors.New("canceled")) || isTerminalSuccess(nil) {
+		t.Fatal("errors and nil are not terminal success")
+	}
+}
