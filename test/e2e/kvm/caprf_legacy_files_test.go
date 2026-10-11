@@ -52,8 +52,12 @@ func TestLegacyCompatProvisionerFilesStayInRamdiskQEMU(t *testing.T) {
 	rootMount, cleanup := mountQcow2(t, targetDisk)
 	defer cleanup()
 	for _, rel := range []string{"etc/booty-legacy-marker", "etc/hosts", "etc/frr/frr.conf.example"} {
-		if _, err := os.Stat(filepath.Join(rootMount, rel)); err == nil {
+		_, err := os.Stat(filepath.Join(rootMount, rel))
+		switch {
+		case err == nil:
 			t.Errorf("provisioner file %s reached the installed OS", rel)
+		case !os.IsNotExist(err):
+			t.Errorf("cannot check %s on the installed OS: %v", rel, err)
 		}
 	}
 }
