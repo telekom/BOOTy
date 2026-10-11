@@ -438,6 +438,9 @@ func (m *Manager) detectDiskLegacyCAPRF(ctx context.Context, minSizeGB int) (str
 		out, err := m.cmd.Run(ctx, "lsblk", "--nodeps", "--noheadings", "--include", majors,
 			"--output", "PATH,SIZE", "--bytes")
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return "", fmt.Errorf("detect disk: %w", ctxErr)
+			}
 			// The legacy script reads lsblk through process substitution and
 			// ignores its exit status.
 			slog.Warn("lsblk failed", "include", majors, "error", err, "output", string(out))

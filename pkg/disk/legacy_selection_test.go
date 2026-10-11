@@ -97,3 +97,16 @@ func TestDetectDiskLegacyCAPRF(t *testing.T) {
 		})
 	}
 }
+
+func TestDetectDiskLegacyCAPRFStopsOnCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	mgr := NewManager(lsblkCommander{
+		byMajors: map[string]string{"8": "/dev/sda 107374182400\n"},
+		fail:     map[string]bool{"259,253": true},
+	})
+	mgr.SetLegacyCAPRFSelection(true)
+	if _, err := mgr.DetectDisk(ctx, 0); !errors.Is(err, context.Canceled) {
+		t.Fatalf("DetectDisk() = %v, want context.Canceled", err)
+	}
+}
