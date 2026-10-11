@@ -8,7 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os/exec"
+
+	"github.com/telekom/BOOTy/pkg/executil"
 )
 
 // maxCommandOutputLine bounds one logged output line of a streamed command.
@@ -20,7 +21,9 @@ var runStreamingCommand = defaultRunStreamingCommand
 
 func defaultRunStreamingCommand(ctx context.Context, onLine func(string), name string, args ...string) error {
 	pr, pw := io.Pipe()
-	cmd := exec.CommandContext(ctx, name, args...)
+	// executil registers the child, so the PID 1 reaper does not take its
+	// exit status.
+	cmd := executil.CommandContext(ctx, name, args...)
 	cmd.Stdout = pw
 	cmd.Stderr = pw
 

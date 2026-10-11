@@ -1106,9 +1106,11 @@ func writeNewFileNoFollow(path string, content []byte, perm os.FileMode) error {
 	}
 	if _, err := f.Write(content); err != nil {
 		_ = f.Close()
+		_ = os.Remove(path)
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
 		return fmt.Errorf("close %s: %w", path, err)
 	}
 	return nil
