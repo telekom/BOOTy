@@ -83,35 +83,57 @@ func ParseFRRConfigBytes(data []byte) (*FRRParams, error) {
 // "prefix-routes-only". A "vni N" under any other block, such as the L2VNI
 // block under "router bgp", is not an L3VNI and is not included.
 func extractL3VNIs(content string) []uint32 {
-	const (
-		blockNone = iota
-		blockVRF
-		blockOther
-	)
 	var vnis []uint32
-	block := blockNone
+	block := frrBlockNone
 	for line := range strings.Lines(content) {
 		fields := strings.Fields(line)
 		if len(fields) == 0 {
 			continue
 		}
 		topLevel := line[0] != ' ' && line[0] != '\t'
-		isVNI := fields[0] == "vni" && (len(fields) == 2 || len(fields) == 3 && fields[2] == "prefix-routes-only")
-		switch {
-		case isVNI && (block == blockVRF || topLevel && block == blockNone):
-			if vni, err := strconv.ParseUint(fields[1], 10, 32); err == nil && !slices.Contains(vnis, uint32(vni)) {
-				vnis = append(vnis, uint32(vni))
+		if vni, ok := parseL3VNI(fields); ok && (block == frrBlockVRF || topLevel && block == frrBlockNone) {
+			if !slices.Contains(vnis, vni) {
+				vnis = append(vnis, vni)
 			}
-		case !topLevel:
-		case fields[0] == "vrf":
-			block = blockVRF
-		case fields[0] == "!" || fields[0] == "exit" || fields[0] == "exit-vrf" || fields[0] == "end":
-			block = blockNone
-		case slices.Contains(frrBlockKeywords, fields[0]):
-			block = blockOther
+			continue
+		}
+		if topLevel {
+			block = nextFRRBlock(block, fields[0])
 		}
 	}
 	return vnis
+}
+
+// frrBlock is the kind of top-level FRR block a config line belongs to.
+type frrBlock int
+
+const (
+	frrBlockNone frrBlock = iota
+	frrBlockVRF
+	frrBlockOther
+)
+
+// parseL3VNI parses "vni N" or "vni N prefix-routes-only".
+func parseL3VNI(fields []string) (uint32, bool) {
+	if fields[0] != "vni" || (len(fields) != 2 && (len(fields) != 3 || fields[2] != "prefix-routes-only")) {
+		return 0, false
+	}
+	vni, err := strconv.ParseUint(fields[1], 10, 32)
+	return uint32(vni), err == nil
+}
+
+// nextFRRBlock returns the block that a top-level line starting with keyword
+// opens or closes.
+func nextFRRBlock(current frrBlock, keyword string) frrBlock {
+	switch {
+	case keyword == "vrf":
+		return frrBlockVRF
+	case keyword == "!" || keyword == "exit" || keyword == "exit-vrf" || keyword == "end":
+		return frrBlockNone
+	case slices.Contains(frrBlockKeywords, keyword):
+		return frrBlockOther
+	}
+	return current
 }
 
 // frrBlockKeywords lists top-level FRR statements that open a block whose
