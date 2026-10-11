@@ -127,7 +127,7 @@ type OverlayTier struct {
 	// Two gateways can advertise the same prefix with different RDs. The
 	// kernel route uses one of them, so a withdraw falls back to another.
 	type5PathsMu sync.Mutex
-	type5Paths   map[string]map[string]type5Path
+	type5Paths   map[string]map[string]*type5Path
 
 	importRTOnce sync.Once
 	importRTASN  uint32
@@ -849,14 +849,16 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 		if remaining, ok := o.forgetType5Path(prefix, key); ok {
 			o.log.Info("type-5 path withdrawn, keeping route via remaining path",
 				"dst", state.dst, "withdrawn_gw", state.gw, "gw", remaining.state.gw)
-			o.installType5Route(remaining.state, remaining.routerMAC, remaining.valid)
-			return
+			if o.installType5Route(remaining.state, remaining.routerMAC, remaining.valid) {
+				return
+			}
+			// The kernel route may still use the withdrawn gateway.
 		}
 		o.withdrawType5Route(state, routerMAC)
 		return
 	}
 	if o.installType5Route(state, routerMAC, routerMACValid) {
-		o.rememberType5Path(prefix, key, type5Path{
+		o.rememberType5Path(prefix, key, &type5Path{
 			state:     state,
 			routerMAC: append(net.HardwareAddr(nil), routerMAC...),
 			valid:     routerMACValid,
@@ -887,24 +889,24 @@ func type5PathKey(route *apipb.EVPNIPPrefixRoute) string {
 }
 
 // rememberType5Path records a live path. The caller holds type5PathsMu.
-func (o *OverlayTier) rememberType5Path(prefix, key string, path type5Path) {
+func (o *OverlayTier) rememberType5Path(prefix, key string, path *type5Path) {
 	if o.type5Paths == nil {
-		o.type5Paths = make(map[string]map[string]type5Path)
+		o.type5Paths = make(map[string]map[string]*type5Path)
 	}
 	if o.type5Paths[prefix] == nil {
-		o.type5Paths[prefix] = make(map[string]type5Path)
+		o.type5Paths[prefix] = make(map[string]*type5Path)
 	}
 	o.type5Paths[prefix][key] = path
 }
 
 // forgetType5Path removes a withdrawn path and returns a remaining path
 // for the same prefix, if any. The caller holds type5PathsMu.
-func (o *OverlayTier) forgetType5Path(prefix, key string) (type5Path, bool) {
+func (o *OverlayTier) forgetType5Path(prefix, key string) (*type5Path, bool) {
 	paths := o.type5Paths[prefix]
 	delete(paths, key)
 	if len(paths) == 0 {
 		delete(o.type5Paths, prefix)
-		return type5Path{}, false
+		return nil, false
 	}
 	return paths[slices.Min(slices.Collect(maps.Keys(paths)))], true
 }
