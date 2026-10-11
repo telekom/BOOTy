@@ -204,8 +204,7 @@ func (o *Orchestrator) separateBootPartition(ctx context.Context) (string, error
 	var boot disk.Partition
 	for _, p := range o.targetPartitions {
 		switch {
-		case p.Node == o.rootPartition || p.Node == o.bootPartition ||
-			strings.EqualFold(p.Type, disk.EFISystemPartitionGUID) || strings.EqualFold(p.Type, biosBootPartitionGUID):
+		case p.Node == o.rootPartition || p.Node == o.bootPartition || strings.EqualFold(p.Type, biosBootPartitionGUID):
 			continue
 		case boot.Node == "" && (strings.EqualFold(p.Type, disk.LinuxFilesystemGUID) || strings.EqualFold(p.Type, xbootldrPartitionGUID)):
 			boot = p
@@ -239,7 +238,7 @@ func (o *Orchestrator) verifyFstabBoot(ctx context.Context, partition string) er
 	if err := mountReadOnlyPart(ctx, o.disk, rootDev, dir); err != nil {
 		return fmt.Errorf("mount %s to read its fstab: %w", rootDev, err)
 	}
-	source, readErr := fstabEntrySource(filepath.Join(dir, "etc", "fstab"), "/boot")
+	source, readErr := fstabEntrySource(dir, "/boot")
 	// Mirroring must not start while the root filesystem is still mounted.
 	if err := unmountInspectionPart(o.disk, dir); err != nil {
 		return fmt.Errorf("unmount root inspection mount %s: %w", dir, err)
@@ -256,7 +255,7 @@ func (o *Orchestrator) verifyFstabBoot(ctx context.Context, partition string) er
 	}
 	for line := range strings.Lines(string(out)) {
 		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
-		if ok && value != "" && (key == "UUID" || key == "LABEL" || key == "PARTUUID") && source == key+"="+value {
+		if ok && value != "" && slices.Contains(fstabIdentifierKeys, key) && source == key+"="+value {
 			return nil
 		}
 	}
@@ -264,15 +263,15 @@ func (o *Orchestrator) verifyFstabBoot(ctx context.Context, partition string) er
 		"disk mirroring covers only root and a separate /boot", partition, source)
 }
 
-// fstabEntrySource returns the source of the fstab entry for mountpoint, or
-// "" when there is none.
-func fstabEntrySource(path, mountpoint string) (string, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // fstab of the streamed image
-	if os.IsNotExist(err) {
-		return "", nil
-	}
+// fstabIdentifierKeys are the blkid keys that fstab sources can name.
+var fstabIdentifierKeys = []string{"UUID", "LABEL", "PARTUUID", "PARTLABEL"}
+
+// fstabEntrySource returns the source of the entry for mountpoint in the
+// fstab of root, or "" when there is none.
+func fstabEntrySource(root, mountpoint string) (string, error) {
+	data, err := readTargetFstab(root)
 	if err != nil {
-		return "", fmt.Errorf("read %s: %w", path, err)
+		return "", err
 	}
 	for line := range strings.Lines(string(data)) {
 		fields := strings.Fields(line)
@@ -283,18 +282,32 @@ func fstabEntrySource(path, mountpoint string) (string, error) {
 	return "", nil
 }
 
+// readTargetFstab reads etc/fstab below root without following symlinks out
+// of root; the file comes from the streamed image. A missing fstab is empty.
+func readTargetFstab(root string) ([]byte, error) {
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, fmt.Errorf("open target root %s: %w", root, err)
+	}
+	defer func() { _ = r.Close() }()
+	data, err := r.ReadFile(filepath.Join("etc", "fstab"))
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("read fstab below %s: %w", root, err)
+	}
+	return data, nil
+}
+
 // rewriteMirrorFstab points fstab entries that name a partition of one disk
 // at sources that work from either disk: / and /boot at their md arrays, and
-// a PARTUUID or device path /boot/efi at the ESP filesystem UUID, which the
-// copy shares. The
-// second disk gets new partition GUIDs, and a member partition must never be
-// mounted directly.
+// a /boot/efi that names a partition at the ESP filesystem UUID, which the
+// copy shares. The second disk gets new partition GUIDs, a partition label
+// matches both disks, and a member partition must never be mounted directly.
 func (o *Orchestrator) rewriteMirrorFstab(ctx context.Context, root string) error {
 	path := filepath.Join(root, "etc", "fstab")
 	// A missing fstab counts as empty: the /boot array still needs an entry.
-	data, err := os.ReadFile(path) //nolint:gosec // fstab of the provisioned root
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read fstab: %w", err)
+	data, err := readTargetFstab(root)
+	if err != nil {
+		return err
 	}
 	arrays := map[string]string{"/": disk.MirrorRootArray}
 	if slices.Contains(o.mirrorArrays, disk.MirrorBootArray) {
@@ -350,16 +363,21 @@ func (o *Orchestrator) appendMirrorBootFstabEntry(ctx context.Context, lines []s
 // partition of one disk, or "" to keep it.
 func (o *Orchestrator) mirrorFstabSource(ctx context.Context, array, source, mountpoint string) string {
 	switch {
-	case array != "" && source != array && (strings.HasPrefix(source, "PARTUUID=") || strings.HasPrefix(source, "/dev/")):
+	case array != "" && source != array && namesPartition(source):
 		return array
-	case mountpoint == "/boot/efi" && (strings.HasPrefix(source, "PARTUUID=") || strings.HasPrefix(source, "/dev/")) &&
-		o.bootPartition != "":
+	case mountpoint == "/boot/efi" && namesPartition(source) && o.bootPartition != "":
 		out, err := o.disk.Run(ctx, "blkid", "-s", "UUID", "-o", "value", o.bootPartition)
 		if uuid := strings.TrimSpace(string(out)); err == nil && uuid != "" {
 			return "UUID=" + uuid
 		}
 	}
 	return ""
+}
+
+// namesPartition reports whether an fstab source names a partition rather
+// than a filesystem.
+func namesPartition(source string) bool {
+	return strings.HasPrefix(source, "PARTUUID=") || strings.HasPrefix(source, "PARTLABEL=") || strings.HasPrefix(source, "/dev/")
 }
 
 // mdadmConfHeader matches the CAPRF legacy provisioner. AUTO stops mdadm

@@ -314,6 +314,11 @@ func TestSeparateBootPartition(t *testing.T) {
 			{Node: "/dev/sda2", Type: disk.LinuxFilesystemGUID},
 			{Node: "/dev/sda3", Type: disk.LinuxFilesystemGUID},
 		}, wantErr: true},
+		{name: "second ESP", parts: []disk.Partition{
+			{Node: "/dev/sda1", Type: disk.LinuxFilesystemGUID},
+			{Node: "/dev/sda15", Type: disk.EFISystemPartitionGUID},
+			{Node: "/dev/sda16", Type: disk.EFISystemPartitionGUID},
+		}, wantErr: true},
 		{name: "swap partition", parts: []disk.Partition{
 			{Node: "/dev/sda1", Type: disk.LinuxFilesystemGUID},
 			{Node: "/dev/sda2", Type: "0657FD6D-A4AB-43C4-84E5-0933C84B4F4F"},
@@ -446,6 +451,7 @@ func TestSeparateBootPartitionNeedsFstabForLinuxType(t *testing.T) {
 		{name: "fstab mounts the partition at /boot by label", fstab: "LABEL=root / ext4 defaults 0 1\nLABEL=BOOT /boot ext4 defaults 0 2\n", wantBoot: "/dev/sda2"},
 		{name: "fstab mounts the partition at /var", fstab: "LABEL=root / ext4 defaults 0 1\nLABEL=BOOT /var ext4 defaults 0 2\n", wantErr: true},
 		{name: "fstab mounts another /boot", fstab: "UUID=other /boot ext4 defaults 0 2\n", wantErr: true},
+		{name: "fstab mounts the partition at /boot by partition label", fstab: "PARTLABEL=boot /boot ext4 defaults 0 2\n", wantBoot: "/dev/sda2"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -460,7 +466,7 @@ func TestSeparateBootPartitionNeedsFstabForLinuxType(t *testing.T) {
 			}
 			cmd := newMockCommander()
 			cmd.setResult("mdadm --detail", nil, errors.New("no such array"))
-			cmd.setResult("blkid -o", []byte("DEVNAME=/dev/sda2\nLABEL=BOOT\nUUID=1234\nTYPE=ext4\n"), nil)
+			cmd.setResult("blkid -o", []byte("DEVNAME=/dev/sda2\nLABEL=BOOT\nUUID=1234\nTYPE=ext4\nPARTLABEL=boot\n"), nil)
 			o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, disk.NewManager(cmd))
 			o.targetDisk, o.rootPartition = "/dev/sda", "/dev/sda1"
 			o.targetPartitions = []disk.Partition{
@@ -480,7 +486,7 @@ func TestRewriteMirrorFstab(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	fstab := "# static\nPARTUUID=aaa / ext4 defaults 0 1\nPARTUUID=bbb /boot ext4 defaults 0 2\n" +
+	fstab := "# static\nPARTUUID=aaa / ext4 defaults 0 1\nPARTLABEL=boot /boot ext4 defaults 0 2\n" +
 		"/dev/sda15 /boot/efi vfat umask=0077 0 1\nLABEL=data /data ext4 defaults 0 2\n"
 	if err := os.WriteFile(filepath.Join(root, "etc", "fstab"), []byte(fstab), 0o644); err != nil {
 		t.Fatal(err)
@@ -540,5 +546,22 @@ func TestRewriteMirrorFstabWithoutFstab(t *testing.T) {
 	got, err := os.ReadFile(filepath.Join(root, "etc", "fstab"))
 	if err != nil || string(got) != "/dev/md1 /boot ext4 defaults 0 2\n" {
 		t.Fatalf("fstab = %q, %v; want the /boot array entry", got, err)
+	}
+}
+
+func TestReadTargetFstabStaysInRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "fstab")
+	if err := os.WriteFile(outside, []byte("host /boot ext4 defaults 0 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "etc", "fstab")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fstabEntrySource(root, "/boot"); err == nil {
+		t.Fatal("fstabEntrySource() followed an fstab symlink out of the target root")
 	}
 }
