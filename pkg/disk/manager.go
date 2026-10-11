@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -356,8 +357,11 @@ func (m *Manager) CreateRAIDArray(ctx context.Context, name string, level int, d
 	return nil
 }
 
-// DetectDisk finds the target disk for provisioning. Prefers NVMe, falls back to SATA/SAS.
-// Removable media (USB drives, SD cards) are rejected unless BOOTY_ALLOW_REMOVABLE=true.
+// DetectDisk finds the target disk for provisioning. By default it prefers
+// NVMe, then the largest disk, and rejects removable media (USB drives, SD
+// cards) unless BOOTY_ALLOW_REMOVABLE=true. With SetLegacyCAPRFSelection it
+// takes the first disk in legacy lsblk order instead (NVMe and virtio, then
+// SCSI/SATA) and, like the legacy script, does not skip removable media.
 func (m *Manager) DetectDisk(ctx context.Context, minSizeGB int) (string, error) {
 	if m.legacyCAPRFSelection {
 		return m.detectDiskLegacyCAPRF(ctx, minSizeGB)
@@ -431,6 +435,10 @@ func (m *Manager) detectDiskPreferNVMe(minSizeGB int) (string, error) {
 var legacyCAPRFDiskMajors = []string{"259,253", "8"}
 
 func (m *Manager) detectDiskLegacyCAPRF(ctx context.Context, minSizeGB int) (string, error) {
+	const maxMinSizeGB = math.MaxInt64 >> 30
+	if minSizeGB < 0 || int64(minSizeGB) > maxMinSizeGB {
+		return "", fmt.Errorf("minimum disk size %d GB is out of range", minSizeGB)
+	}
 	minBytes := int64(minSizeGB) << 30
 	slog.Info("detecting target disk like the legacy CAPRF provisioner", "minSizeBytes", minBytes)
 	var candidates []string

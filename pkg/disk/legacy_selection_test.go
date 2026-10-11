@@ -5,6 +5,7 @@ package disk
 import (
 	"context"
 	"errors"
+	"math"
 	"strconv"
 	"testing"
 )
@@ -108,5 +109,15 @@ func TestDetectDiskLegacyCAPRFStopsOnCancel(t *testing.T) {
 	mgr.SetLegacyCAPRFSelection(true)
 	if _, err := mgr.DetectDisk(ctx, 0); !errors.Is(err, context.Canceled) {
 		t.Fatalf("DetectDisk() = %v, want context.Canceled", err)
+	}
+}
+
+func TestDetectDiskLegacyCAPRFRejectsOverflowingMinimum(t *testing.T) {
+	mgr := NewManager(lsblkCommander{byMajors: map[string]string{"8": "/dev/sda 1024\n"}})
+	mgr.SetLegacyCAPRFSelection(true)
+	for _, minSizeGB := range []int{-1, math.MaxInt} {
+		if _, err := mgr.DetectDisk(context.Background(), minSizeGB); err == nil {
+			t.Fatalf("DetectDisk(min %d) selected a disk, want an error", minSizeGB)
+		}
 	}
 }
