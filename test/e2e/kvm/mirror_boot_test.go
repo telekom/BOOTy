@@ -95,9 +95,9 @@ func TestMirroredRootBootFailoverVM(t *testing.T) {
 		"DISK_MIRRORING_MODE":       "raid-1",
 		"DISABLE_KEXEC":             "true",
 	}, map[string]string{
-		"usr/local/lib/booty-mirror-check.sh":                                   mirrorCheckScript,
-		"etc/systemd/system/booty-mirror-check.service":                         mirrorCheckUnit,
-		"etc/systemd/system/multi-user.target.wants/booty-mirror-check.service": mirrorCheckUnit,
+		"file-system/usr/local/lib/booty-mirror-check.sh":           mirrorCheckScript,
+		"file-system/etc/systemd/system/booty-mirror-check.service": mirrorCheckUnit,
+		"machine-commands/enable-mirror-check":                      "systemctl enable booty-mirror-check.service",
 	})
 
 	kernel := findKernel(t)
@@ -157,9 +157,9 @@ func runMirrorQEMU(t *testing.T, phase string, args []string, timeout time.Durat
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "qemu-system-x86_64", args...).CombinedOutput()
 	if ctx.Err() != nil {
-		t.Fatalf("QEMU %s timed out after %s. tail:\n%s", phase, timeout, tail(out, 6000))
+		t.Fatalf("QEMU %s timed out after %s. output:\n%s", phase, timeout, readableSerial(out))
 	}
-	t.Logf("QEMU %s exited (%v). tail:\n%s", phase, err, tail(out, 3000))
+	t.Logf("QEMU %s exited (%v). output:\n%s", phase, err, readableSerial(out))
 	return out
 }
 
@@ -202,4 +202,20 @@ func requireBootCurrentOnESP(t *testing.T, report string) {
 		t.Fatalf("firmware booted Boot%s %q, not the entry for the second disk ESP %s:\n%s",
 			current[1], entry, esp[1], report)
 	}
+}
+
+// readableSerial drops ANSI escapes and systemd progress spinner lines from
+// serial output so the full log stays readable in the test output.
+func readableSerial(out []byte) string {
+	ansi := regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`)
+	var b strings.Builder
+	for _, line := range strings.Split(ansi.ReplaceAllString(string(out), ""), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.Contains(line, "A start job is running") || strings.TrimSpace(line) == "M" {
+			continue
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
