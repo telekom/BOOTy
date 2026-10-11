@@ -492,8 +492,8 @@ func TestNVMeResetNamespaces_DeleteFails(t *testing.T) {
 	mgr := NewManager(cmd)
 
 	err := mgr.NVMeResetNamespaces(t.Context(), "/dev/nvme0")
-	if err == nil {
-		t.Fatal("expected error when delete-ns fails")
+	if err == nil || !strings.Contains(err.Error(), "delete failed") {
+		t.Fatalf("error = %v, want the delete-ns error", err)
 	}
 	if !hasDiskCommandCall(cmd.calls, "nvme", "delete-ns", "/dev/nvme0", "-n", "1") {
 		t.Fatalf("delete-ns was not attempted: %#v", cmd.calls)
