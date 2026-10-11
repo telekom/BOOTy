@@ -482,6 +482,8 @@ COPY --from=tools /usr/sbin/mkfs.xfs sbin/mkfs.xfs
 COPY --from=tools /usr/sbin/xfs_growfs sbin/xfs_growfs
 COPY --from=tools /usr/sbin/xfs_repair sbin/xfs_repair
 COPY --from=tools /usr/bin/btrfs bin/btrfs
+# UEFI boot entries for the target disk and, with DISK_MIRRORING_MODE, the mirror disk.
+COPY --from=tools /usr/bin/efibootmgr bin/efibootmgr
 
 # Copy pre-collected shared libraries (slim was previously missing lib copying
 # entirely, breaking all dynamically linked tool binaries at runtime).
