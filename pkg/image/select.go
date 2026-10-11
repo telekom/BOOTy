@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// SelectBestSource probes multiple image URLs with HEAD requests and returns
+// SelectBestSource probes multiple image URLs with ranged GET requests and returns
 // the one with the lowest response time. If only one URL is provided, it is
 // returned directly. OCI references (oci://) are returned as-is without probing.
 func SelectBestSource(ctx context.Context, urls []string) (string, error) {
@@ -66,15 +66,18 @@ func SelectBestSource(ctx context.Context, urls []string) (string, error) {
 	return httpURLs[0], nil
 }
 
-// probeURL sends a HEAD request to measure connectivity latency.
+// probeURL measures connectivity latency with a GET for the first byte,
+// like the `curl --range 0-0` probe of the CAPRF legacy provisioner.
+// Presigned URLs are often bound to GET and reject HEAD.
 func probeURL(ctx context.Context, rawURL string) (time.Duration, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodHead, rawURL, http.NoBody)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, rawURL, http.NoBody)
 	if err != nil {
 		return 0, fmt.Errorf("creating probe request: %w", err)
 	}
+	req.Header.Set("Range", "bytes=0-0")
 
 	start := time.Now()
 	resp, err := gpgHTTPClient.Do(req) //nolint:gosec // URL from trusted config

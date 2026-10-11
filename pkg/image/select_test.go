@@ -182,3 +182,35 @@ func TestRedactHost(t *testing.T) {
 		})
 	}
 }
+
+// Legacy evidence: provision.sh pick_best_source probes with
+// `curl --range 0-0` (a GET) because presigned URLs bound to GET reject HEAD.
+func TestSelectBestSourceProbesPresignedURLsWithRangedGET(t *testing.T) {
+	var presignedRange string
+	presigned := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		presignedRange = r.Header.Get("Range")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte("x"))
+	}))
+	defer presigned.Close()
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer slow.Close()
+
+	got, err := SelectBestSource(context.Background(), []string{slow.URL + "/img", presigned.URL + "/img?X-Amz-Signature=abc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != presigned.URL+"/img?X-Amz-Signature=abc" {
+		t.Fatalf("SelectBestSource() = %s, want the faster presigned source", got)
+	}
+	if presignedRange != "bytes=0-0" {
+		t.Fatalf("probe Range header = %q, want bytes=0-0", presignedRange)
+	}
+}
