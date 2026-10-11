@@ -21,7 +21,8 @@ func separateBootMountPoint() string {
 // when the root filesystem carries no /boot/grub, like provision.sh of the
 // CAPRF legacy provisioner. Images such as the Ubuntu 24.04 cloud image keep
 // grub.cfg, kernels and initramfs on a separate /boot partition, so
-// update-grub and update-initramfs must see it.
+// update-grub and update-initramfs must see it. The device must be a
+// partition of the target disk.
 func (o *Orchestrator) mountSeparateBoot(ctx context.Context) error {
 	mountpoint := separateBootMountPoint()
 	if isMountPoint(mountpoint) {
@@ -37,7 +38,7 @@ func (o *Orchestrator) mountSeparateBoot(ctx context.Context) error {
 	}
 	device := o.resolveFstabSource(ctx, source)
 	if device == "" {
-		o.log.Warn("cannot resolve the /boot fstab source, keeping /boot on the root filesystem", "source", source)
+		o.log.Warn("cannot resolve the /boot fstab source on the target disk, keeping /boot on the root filesystem", "source", source)
 		return nil
 	}
 	o.log.Info("mounting separate /boot", "device", device, "mountpoint", mountpoint)
@@ -51,13 +52,13 @@ func (o *Orchestrator) mountSeparateBoot(ctx context.Context) error {
 // adoptSeparateBoot accepts an existing /boot mount on resume only when it
 // comes from the device of the image fstab /boot entry.
 func (o *Orchestrator) adoptSeparateBoot(ctx context.Context, mountpoint string) error {
-	source, err := fstabSource(filepath.Join(newroot, "etc", "fstab"), "/boot")
+	source, err := targetFstabSource(newroot, "/boot")
 	if err != nil {
 		return err
 	}
 	device := o.resolveFstabSource(ctx, source)
 	if device == "" {
-		return fmt.Errorf("%s is already mounted but the fstab /boot source %q cannot be resolved", mountpoint, source)
+		return fmt.Errorf("%s is already mounted but the fstab /boot source %q cannot be resolved on the target disk", mountpoint, source)
 	}
 	if _, err := mountedFromExpectedSource(mountpoint, device, "separate /boot"); err != nil {
 		return err
@@ -67,18 +68,43 @@ func (o *Orchestrator) adoptSeparateBoot(ctx context.Context, mountpoint string)
 }
 
 // separateBootSource reports whether root lacks /boot/grub and returns the
-// fstab source of its /boot entry, if any.
+// fstab source of its /boot entry, if any. It never follows a symlink out of
+// root: an image whose /boot, /etc or /etc/fstab is a symlink is treated as
+// having no separate /boot.
 func separateBootSource(root string) (needed bool, source string, err error) {
-	if _, err := os.Stat(filepath.Join(root, "boot", "grub")); err == nil {
+	boot := filepath.Join(root, "boot")
+	info, err := os.Lstat(boot)
+	if err != nil || !info.IsDir() {
+		return false, "", nil //nolint:nilerr // no plain /boot directory: nothing to mount
+	}
+	if _, err := os.Lstat(filepath.Join(boot, "grub")); err == nil {
 		return false, "", nil
 	}
-	source, err = fstabSource(filepath.Join(root, "etc", "fstab"), "/boot")
+	source, err = targetFstabSource(root, "/boot")
 	return true, source, err
+}
+
+// targetFstabSource reads the fstab source for target from root/etc/fstab
+// without following symlinks.
+func targetFstabSource(root, target string) (string, error) {
+	for _, p := range []string{filepath.Join(root, "etc"), filepath.Join(root, "etc", "fstab")} {
+		info, err := os.Lstat(p)
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("inspect %s: %w", p, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", nil
+		}
+	}
+	return fstabSource(filepath.Join(root, "etc", "fstab"), target)
 }
 
 // fstabSource returns the source field of the first fstab entry for target.
 func fstabSource(path, target string) (string, error) {
-	f, err := os.Open(path) //nolint:gosec // fstab of the provisioned root
+	f, err := os.Open(path) //nolint:gosec // fstab of the provisioned root, checked by the caller
 	if os.IsNotExist(err) {
 		return "", nil
 	}
@@ -103,32 +129,81 @@ func fstabSource(path, target string) (string, error) {
 	return "", nil
 }
 
+// blockIDs holds the identifiers of one partition of the target disk.
+type blockIDs struct {
+	node, uuid, label, partUUID string
+}
+
 // resolveFstabSource maps an fstab source (UUID=, PARTUUID=, LABEL= or a
-// device path) to a device node with blkid. It returns "" when it cannot.
+// device path) to exactly one partition of the target disk. It returns ""
+// when no partition or more than one matches, so a label such as BOOT on
+// another disk can never be mounted.
 func (o *Orchestrator) resolveFstabSource(ctx context.Context, source string) string {
-	var args []string
+	parts, err := o.disk.ParsePartitions(ctx, o.targetDisk)
+	if err != nil {
+		o.log.Warn("cannot list target disk partitions", "disk", o.targetDisk, "error", err)
+		return ""
+	}
+	devs := make([]blockIDs, 0, len(parts))
+	for _, part := range parts {
+		out, err := o.disk.Run(ctx, "blkid", "-o", "export", part.Node)
+		if err != nil {
+			// blkid fails for partitions without a filesystem signature.
+			devs = append(devs, blockIDs{node: part.Node})
+			continue
+		}
+		ids := parseBlkidExport(string(out))
+		ids.node = part.Node
+		devs = append(devs, ids)
+	}
+	return matchFstabSource(source, devs)
+}
+
+func parseBlkidExport(out string) blockIDs {
+	var ids blockIDs
+	for _, line := range strings.Split(out, "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "UUID":
+			ids.uuid = value
+		case "LABEL":
+			ids.label = value
+		case "PARTUUID":
+			ids.partUUID = value
+		}
+	}
+	return ids
+}
+
+func matchFstabSource(source string, devs []blockIDs) string {
+	match := func(ids blockIDs) bool { return false }
 	switch {
 	case strings.HasPrefix(source, "UUID="):
-		args = []string{"-U", strings.TrimPrefix(source, "UUID=")}
+		want := strings.TrimPrefix(source, "UUID=")
+		match = func(ids blockIDs) bool { return ids.uuid != "" && strings.EqualFold(ids.uuid, want) }
 	case strings.HasPrefix(source, "PARTUUID="):
-		args = []string{"-t", source, "-o", "device"}
+		want := strings.TrimPrefix(source, "PARTUUID=")
+		match = func(ids blockIDs) bool { return ids.partUUID != "" && strings.EqualFold(ids.partUUID, want) }
 	case strings.HasPrefix(source, "LABEL="):
-		args = []string{"-L", strings.TrimPrefix(source, "LABEL=")}
+		want := strings.TrimPrefix(source, "LABEL=")
+		match = func(ids blockIDs) bool { return ids.label != "" && ids.label == want }
 	case strings.HasPrefix(source, "/dev/"):
-		return source
-	default:
-		return ""
+		match = func(ids blockIDs) bool { return ids.node == source }
 	}
-	out, err := o.disk.Run(ctx, "blkid", args...)
-	if err != nil {
-		o.log.Warn("blkid failed", "source", source, "error", err)
-		return ""
+	found := ""
+	for _, ids := range devs {
+		if !match(ids) {
+			continue
+		}
+		if found != "" {
+			return ""
+		}
+		found = ids.node
 	}
-	device := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
-	if !strings.HasPrefix(device, "/dev/") {
-		return ""
-	}
-	return device
+	return found
 }
 
 // unmountSeparateBoot unmounts the separate /boot mounted by mountSeparateBoot.
@@ -137,9 +212,9 @@ func (o *Orchestrator) unmountSeparateBoot() error {
 	if !o.separateBootMounted || !isMountPoint(mountpoint) {
 		return nil
 	}
-	o.separateBootMounted = false
 	if err := o.disk.Unmount(mountpoint); err != nil {
 		return fmt.Errorf("unmount separate /boot %s: %w", mountpoint, err)
 	}
+	o.separateBootMounted = false
 	return nil
 }

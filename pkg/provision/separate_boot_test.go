@@ -3,13 +3,9 @@
 package provision
 
 import (
-	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/telekom/BOOTy/pkg/config"
 )
 
 // Legacy evidence: provision.sh:366-395 mounts /boot from the image fstab
@@ -35,6 +31,9 @@ func TestSeparateBootSource(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, "boot"), 0o755); err != nil {
+				t.Fatal(err)
+			}
 			if tt.grubOnRoot {
 				if err := os.MkdirAll(filepath.Join(root, "boot", "grub"), 0o755); err != nil {
 					t.Fatal(err)
@@ -54,32 +53,60 @@ func TestSeparateBootSource(t *testing.T) {
 	}
 }
 
-func TestResolveFstabSource(t *testing.T) {
-	tests := []struct {
-		source   string
-		blkidKey string
-		out      string
-		err      error
-		want     string
-	}{
-		{source: "UUID=abcd", blkidKey: "blkid -U", out: "/dev/vda16\n", want: "/dev/vda16"},
-		{source: "PARTUUID=1234", blkidKey: "blkid -t", out: "/dev/vda16\n", want: "/dev/vda16"},
-		{source: "LABEL=BOOT", blkidKey: "blkid -L", out: "/dev/vda16\n", want: "/dev/vda16"},
-		{source: "/dev/sda2", want: "/dev/sda2"},
-		{source: "LABEL=BOOT", blkidKey: "blkid -L", err: errors.New("not found")},
-		{source: "LABEL=BOOT", blkidKey: "blkid -L", out: "garbage\n"},
-		{source: "tmpfs"},
+func TestSeparateBootSourceIgnoresSymlinks(t *testing.T) {
+	outside := t.TempDir()
+	writeTestFile(t, filepath.Join(outside, "fstab"), "LABEL=BOOT /boot ext4 defaults 0 2\n")
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "boot"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "etc")); err != nil {
+		t.Fatal(err)
+	}
+	if _, source, err := separateBootSource(root); err != nil || source != "" {
+		t.Fatalf("separateBootSource() = %q, %v; must not read an fstab outside the root", source, err)
+	}
+
+	root2 := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root2, "boot")); err != nil {
+		t.Fatal(err)
+	}
+	if needed, _, err := separateBootSource(root2); err != nil || needed {
+		t.Fatalf("separateBootSource() = %v, %v; a /boot symlink must not be mounted over", needed, err)
+	}
+}
+
+func TestParseBlkidExport(t *testing.T) {
+	got := parseBlkidExport("DEVNAME=/dev/vda2\nLABEL=BOOT\nUUID=abcd\nTYPE=ext4\nPARTUUID=1234\n")
+	if got.label != "BOOT" || got.uuid != "abcd" || got.partUUID != "1234" {
+		t.Fatalf("parseBlkidExport() = %+v", got)
+	}
+}
+
+// Only one partition of the target disk may match, so a generic label on
+// another disk or a cloned UUID is never mounted.
+func TestMatchFstabSource(t *testing.T) {
+	devs := []blockIDs{
+		{node: "/dev/vda1", label: "UEFI", uuid: "1111"},
+		{node: "/dev/vda2", label: "BOOT", uuid: "2222", partUUID: "p2"},
+		{node: "/dev/vda3", label: "root", uuid: "3333"},
+		{node: "/dev/vda4", label: "dup", uuid: "4444"},
+		{node: "/dev/vda5", label: "dup", uuid: "5555"},
+	}
+	tests := []struct{ source, want string }{
+		{"LABEL=BOOT", "/dev/vda2"},
+		{"UUID=2222", "/dev/vda2"},
+		{"PARTUUID=p2", "/dev/vda2"},
+		{"/dev/vda2", "/dev/vda2"},
+		{"/dev/sdb1", ""},
+		{"LABEL=dup", ""},
+		{"LABEL=missing", ""},
+		{"tmpfs", ""},
 	}
 	for _, tt := range tests {
-		t.Run(tt.source, func(t *testing.T) {
-			o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{}, &mockProvider{})
-			if tt.blkidKey != "" {
-				cmd.setResult(tt.blkidKey, []byte(tt.out), tt.err)
-			}
-			if got := o.resolveFstabSource(context.Background(), tt.source); got != tt.want {
-				t.Fatalf("resolveFstabSource(%q) = %q, want %q", tt.source, got, tt.want)
-			}
-		})
+		if got := matchFstabSource(tt.source, devs); got != tt.want {
+			t.Errorf("matchFstabSource(%q) = %q, want %q", tt.source, got, tt.want)
+		}
 	}
 }
 
