@@ -118,6 +118,30 @@ func TestMergeProvisionIPUsesDetectedInvalidCIDR(t *testing.T) {
 	}
 }
 
+func TestMergeNetplanConfigEVPNMode(t *testing.T) {
+	tests := []struct {
+		name                   string
+		dstL2, dstType5, srcL2 bool
+		wantL2, wantType5      bool
+	}{
+		{name: "no mode anywhere", wantL2: false},
+		{name: "L2 inferred from FRR", srcL2: true, wantL2: true},
+		{name: "L2 from vars kept", dstL2: true, wantL2: true},
+		{name: "explicit Type-5 only wins over inferred L2", dstType5: true, srcL2: true, wantType5: true},
+		{name: "explicit Type-5 only kept", dstType5: true, wantType5: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dst := &network.Config{EVPNL2Enabled: tt.dstL2, EVPNType5Only: tt.dstType5}
+			mergeNetplanConfig(dst, &network.Config{EVPNL2Enabled: tt.srcL2})
+			if dst.EVPNL2Enabled != tt.wantL2 || dst.EVPNType5Only != tt.wantType5 {
+				t.Fatalf("EVPNL2Enabled=%v EVPNType5Only=%v, want %v %v",
+					dst.EVPNL2Enabled, dst.EVPNType5Only, tt.wantL2, tt.wantType5)
+			}
+		})
+	}
+}
+
 func TestMergeNetplanConfigOverridesStaticAddressPair(t *testing.T) {
 	dst := &network.Config{StaticIP: "192.0.2.10/24", StaticIface: "eth9"}
 	src := &network.Config{StaticIP: "10.1.2.3/24"}

@@ -1025,7 +1025,9 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	if src.BGPNeighbors != "" {
 		dst.BGPNeighbors = src.BGPNeighbors
 	}
-	if src.EVPNL2Enabled {
+	// An explicit EVPN_TYPE5_ONLY wins over L2 handling inferred from the
+	// FRR config, so operators can force Type-5 only routing.
+	if src.EVPNL2Enabled && !dst.EVPNType5Only {
 		dst.EVPNL2Enabled = true
 	}
 	if src.BondInterfaces != "" {
