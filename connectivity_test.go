@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -66,6 +67,7 @@ func TestSetLegacyRamdiskHostname(t *testing.T) {
 		{name: "default mode", cfg: config.MachineConfig{Hostname: "node-1"}, want: "node-1"},
 		{name: "deprovision keeps the name", cfg: config.MachineConfig{Mode: "deprovision", Hostname: "node-1"}},
 		{name: "no hostname", cfg: config.MachineConfig{Mode: "provision"}},
+		{name: "dry run", cfg: config.MachineConfig{Mode: "provision", Hostname: "node-1", DryRun: true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -78,5 +80,18 @@ func TestSetLegacyRamdiskHostname(t *testing.T) {
 				t.Fatalf("hostname = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// A failed sethostname is only logged; the run goes on.
+func TestSetLegacyRamdiskHostnameFailureIsLogged(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	setLegacyRamdiskHostname(&config.MachineConfig{Hostname: "node-1"}, func([]byte) error { return errors.New("operation not permitted") })
+	if !strings.Contains(logs.String(), "setting the ramdisk hostname failed") {
+		t.Fatalf("logs = %q, want the warning", logs.String())
 	}
 }

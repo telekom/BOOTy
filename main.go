@@ -762,7 +762,7 @@ func failRun(ctx context.Context, cfg *config.MachineConfig, reporter provisionS
 // `hostname "$HOSTNAME"` at the start of the CAPRF legacy provision.sh, so
 // FRR, syslog and DHCP use the machine name. A failure is only logged.
 func setLegacyRamdiskHostname(cfg *config.MachineConfig, sethostname func([]byte) error) {
-	if (cfg.Mode != "provision" && cfg.Mode != "") || cfg.Hostname == "" {
+	if cfg.DryRun || (cfg.Mode != "provision" && cfg.Mode != "") || cfg.Hostname == "" {
 		return
 	}
 	if err := sethostname([]byte(cfg.Hostname)); err != nil {
