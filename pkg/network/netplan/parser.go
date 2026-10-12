@@ -216,12 +216,7 @@ func extractEthernets(np *Config, cfg *network.Config) (dhcpCount int, dnsList [
 		if eth.Nameservers != nil {
 			dnsList = append(dnsList, eth.Nameservers.Addresses...)
 		}
-		if cfg.StaticIP == "" {
-			if addr := firstAddress(eth.Addresses); addr != "" {
-				cfg.StaticIP = addr
-				cfg.StaticIface = ethernetStaticIface(name, &eth)
-			}
-		}
+		applyEthernetMatch(name, &eth, cfg)
 		for _, r := range eth.Routes {
 			if r.To == "default" && r.Via != "" && cfg.StaticGateway == "" {
 				cfg.StaticGateway = r.Via
@@ -308,9 +303,32 @@ func firstAddress(addresses []string) string {
 	return ""
 }
 
+// applyEthernetMatch records netplan set-name renames and the first static
+// address with the NIC or match it belongs to.
+func applyEthernetMatch(name string, eth *EthernetConfig, cfg *network.Config) {
+	if eth.Match != nil && eth.SetName != "" {
+		cfg.LinkRenames = append(cfg.LinkRenames, network.LinkMatch{Name: eth.Match.Name, MAC: eth.Match.MAC, SetName: eth.SetName})
+	}
+	if cfg.StaticIP != "" {
+		return
+	}
+	addr := firstAddress(eth.Addresses)
+	if addr == "" {
+		return
+	}
+	cfg.StaticIP = addr
+	cfg.StaticIface = ethernetStaticIface(name, eth)
+	if cfg.StaticIface == "" && eth.Match != nil {
+		cfg.StaticMatch = &network.LinkMatch{Name: eth.Match.Name, MAC: eth.Match.MAC}
+	}
+}
+
 func ethernetStaticIface(name string, eth *EthernetConfig) string {
 	if eth.Match == nil {
 		return name
+	}
+	if eth.SetName != "" {
+		return eth.SetName
 	}
 	if eth.Match.Name == "" {
 		return ""

@@ -3,6 +3,7 @@ package netplan
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/network"
@@ -1049,5 +1050,46 @@ func TestHasNetplanFiles_NotADir(t *testing.T) {
 	writeFile(t, filepath.Dir(file), "netplan", "x")
 	if _, err := HasNetplanFiles(file); err == nil {
 		t.Error("HasNetplanFiles() on a file = nil error, want error")
+	}
+}
+
+// Legacy evidence: CAPRF e2e (test/e2e/lib.sh) gives the old deployer
+// `match: {name: enp*s4}` with `set-name: hbn`, which netplan applies.
+func TestToNetworkConfig_SetNameRenamesAndNamesTheStaticNIC(t *testing.T) {
+	np := &Config{
+		Network: NetworkSection{
+			Ethernets: map[string]EthernetConfig{
+				"hbn": {
+					Match:     &MatchConfig{Name: "enp*s4"},
+					SetName:   "hbn",
+					Addresses: []string{"10.254.0.2/31"},
+				},
+			},
+		},
+	}
+	netCfg := ToNetworkConfig(np, nil)
+	if netCfg.StaticIface != "hbn" {
+		t.Errorf("StaticIface = %q, want hbn", netCfg.StaticIface)
+	}
+	want := []network.LinkMatch{{Name: "enp*s4", SetName: "hbn"}}
+	if !reflect.DeepEqual(netCfg.LinkRenames, want) {
+		t.Errorf("LinkRenames = %+v, want %+v", netCfg.LinkRenames, want)
+	}
+}
+
+func TestToNetworkConfig_StaticMatchWithoutSetName(t *testing.T) {
+	np := &Config{
+		Network: NetworkSection{
+			Ethernets: map[string]EthernetConfig{
+				"uplink": {
+					Match:     &MatchConfig{MAC: "52:54:00:12:34:56"},
+					Addresses: []string{"10.1.2.3/24"},
+				},
+			},
+		},
+	}
+	netCfg := ToNetworkConfig(np, nil)
+	if netCfg.StaticMatch == nil || netCfg.StaticMatch.MAC != "52:54:00:12:34:56" {
+		t.Errorf("StaticMatch = %+v, want the MAC match", netCfg.StaticMatch)
 	}
 }
