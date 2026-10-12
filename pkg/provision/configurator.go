@@ -411,24 +411,25 @@ func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineCon
 	if cfg != nil && cfg.LegacyCompat {
 		return c.configureGRUBLegacy(ctx, cfg)
 	}
-	grubDir := filepath.Join(c.rootDir, "etc", "default", "grub.d")
-	if err := os.MkdirAll(grubDir, 0o755); err != nil {
-		return fmt.Errorf("creating grub.d dir: %w", err)
-	}
-
 	grubLine, consoleParam, err := c.grubCmdlineEntry(cfg)
 	if err != nil {
 		return err
 	}
 
-	grubPath := filepath.Join(grubDir, "10-caprf-kernel-params.cfg")
+	// targetPath refuses parents that leave the target root through
+	// symlinks, and writeFileAtomic replaces a symlink at the target path
+	// instead of following it. This step reruns on resume, after machine
+	// files with symlinks may already be in place.
+	grubPath, err := c.targetPath("/etc/default/grub.d/10-caprf-kernel-params.cfg")
+	if err != nil {
+		return fmt.Errorf("grub drop-in path: %w", err)
+	}
 	slog.Info("writing GRUB config", "path", grubPath, "console", consoleParam)
-	if err := os.WriteFile(grubPath, []byte(grubLine), 0o644); err != nil {
+	if err := writeFileAtomic(grubPath, []byte(grubLine), 0o644); err != nil {
 		return fmt.Errorf("writing grub config: %w", err)
 	}
 
-	bootGrubDir := filepath.Join(c.rootDir, "boot", "grub")
-	if err := os.MkdirAll(bootGrubDir, 0o755); err != nil {
+	if _, err := c.targetPath("/boot/grub/grub.cfg"); err != nil {
 		return fmt.Errorf("creating boot grub dir: %w", err)
 	}
 
@@ -811,9 +812,23 @@ func ApplyProvisionerFilesToRamdisk(ctx context.Context) error {
 }
 
 // CopyMachineFiles copies files from /deploy/machine-files/ to the root.
+// Symlinks are kept as links, like `cp -rf` in the CAPRF legacy
+// provisioner. This step runs after every host-side writer into the root,
+// so a link cannot redirect a later BOOTy write.
 func (c *Configurator) CopyMachineFiles(ctx context.Context) error {
-	return c.copyTreeIntoChroot(ctx, "/deploy/machine-files", "machine files")
+	const srcBase = "/deploy/machine-files"
+	if _, err := os.Stat(srcBase); os.IsNotExist(err) {
+		slog.Info("no directory found", "label", "machine files", "path", srcBase)
+		return nil
+	}
+	slog.Info("copying files", "label", "machine files", "src", srcBase)
+	return copyTreeWith(ctx, srcBase, c.rootDir, true)
 }
+
+// chrootBindDirs are bind-mounted from the ramdisk while the chroot is set
+// up. Machine files below them would land in the live ramdisk, not in the
+// installed system, so they are skipped.
+var chrootBindDirs = map[string]bool{"dev": true, "proc": true, "sys": true, "run": true}
 
 // copyTreeIntoChroot copies all files from srcBase into the chroot root.
 // If srcBase does not exist, it logs and returns nil.
@@ -829,6 +844,12 @@ func (c *Configurator) copyTreeIntoChroot(ctx context.Context, srcBase, label st
 // copyTree copies all files from srcBase into destRoot, preserving directory structure.
 // Symlinks are skipped with a warning; paths that escape destRoot are rejected to prevent path traversal.
 func copyTree(ctx context.Context, srcBase, destRoot string) error {
+	return copyTreeWith(ctx, srcBase, destRoot, false)
+}
+
+// copyTreeWith copies srcBase into destRoot. With keepSymlinks, symlinks are
+// recreated as links and never followed; otherwise they are skipped.
+func copyTreeWith(ctx context.Context, srcBase, destRoot string, keepSymlinks bool) error {
 	destRoot, err := filepath.Abs(destRoot)
 	if err != nil {
 		return fmt.Errorf("resolve dest root: %w", err)
@@ -841,37 +862,69 @@ func copyTree(ctx context.Context, srcBase, destRoot string) error {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("copy tree canceled: %w", err)
 		}
-		// Skip symlinks with a warning to prevent following links that escape the tree.
-		if d.Type()&os.ModeSymlink != 0 {
+		// DirEntry.Type can be zero on some filesystems, so use Lstat info.
+		info, err := d.Info()
+		if err != nil {
+			return fmt.Errorf("stat %s: %w", path, err)
+		}
+		isSymlink := info.Mode()&os.ModeSymlink != 0
+		if isSymlink && !keepSymlinks {
+			// Skip symlinks with a warning to prevent following links that escape the tree.
 			slog.Warn("skipping symlink in copy tree", "path", path)
 			return nil
 		}
-		relPath, err := filepath.Rel(srcBase, path)
-		if err != nil {
-			return fmt.Errorf("resolve copy path %s relative to %s: %w", path, srcBase, err)
-		}
-		destPath := filepath.Join(destRoot, relPath)
-		if err := ensureWithinRoot(destRoot, destPath); err != nil {
-			return fmt.Errorf("validating copy destination %s: %w", destPath, err)
-		}
-		if relPath != "." {
-			parent := filepath.Dir(destPath)
-			if _, ok := validatedParents[parent]; !ok {
-				if err := ensureTargetParentWithinRoot(destRoot, parent); err != nil {
-					return fmt.Errorf("validating copy destination parent %s: %w", parent, err)
+		if keepSymlinks {
+			if rel, relErr := filepath.Rel(srcBase, path); relErr == nil && chrootBindDirs[strings.SplitN(rel, string(filepath.Separator), 2)[0]] {
+				slog.Warn("skipping machine file below a chroot bind mount", "path", path)
+				if d.IsDir() {
+					return filepath.SkipDir
 				}
-				validatedParents[parent] = struct{}{}
+				return nil
 			}
 		}
-
+		destPath, err := copyTreeDestination(srcBase, destRoot, path, validatedParents)
+		if err != nil {
+			return err
+		}
+		if isSymlink {
+			// Like cp, refuse to replace a directory with a link.
+			if existing, err := os.Lstat(destPath); err == nil && existing.IsDir() {
+				return fmt.Errorf("cannot replace directory %s with symlink %s", destPath, path)
+			}
+			return copySymlink(path, destPath)
+		}
 		if d.IsDir() {
-			return os.MkdirAll(destPath, 0o755)
+			return os.MkdirAll(destPath, 0o755) //nolint:gosec // destPath and its parent are checked by copyTreeDestination
 		}
 		return copyFile(ctx, path, destPath)
 	}); err != nil {
 		return fmt.Errorf("copy tree from %s: %w", srcBase, err)
 	}
 	return nil
+}
+
+// copyTreeDestination maps a source path to its destination under destRoot
+// and checks that the destination and its parent stay inside destRoot.
+func copyTreeDestination(srcBase, destRoot, path string, validatedParents map[string]struct{}) (string, error) {
+	relPath, err := filepath.Rel(srcBase, path)
+	if err != nil {
+		return "", fmt.Errorf("resolve copy path %s relative to %s: %w", path, srcBase, err)
+	}
+	destPath := filepath.Join(destRoot, relPath)
+	if err := ensureWithinRoot(destRoot, destPath); err != nil {
+		return "", fmt.Errorf("validating copy destination %s: %w", destPath, err)
+	}
+	if relPath == "." {
+		return destPath, nil
+	}
+	parent := filepath.Dir(destPath)
+	if _, ok := validatedParents[parent]; !ok {
+		if err := ensureTargetParentWithinRoot(destRoot, parent); err != nil {
+			return "", fmt.Errorf("validating copy destination parent %s: %w", parent, err)
+		}
+		validatedParents[parent] = struct{}{}
+	}
+	return destPath, nil
 }
 
 // RunMachineCommands executes commands from /deploy/machine-commands/ in chroot.
