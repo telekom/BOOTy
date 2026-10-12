@@ -34,6 +34,9 @@ type Session struct {
 	ConnectRetry  uint32
 	// Families are the activated address families.
 	Families []string
+	// AllowASIn is the "allowas-in" count of the activated address
+	// families (the largest one), 0 when unset.
+	AllowASIn int
 	// BFD and BFDProfile request a BFD session.
 	BFD        bool
 	BFDProfile string
@@ -112,6 +115,7 @@ func (c *Config) session(r *Router, n *Neighbor) (Session, error) {
 	}
 
 	s.Families = families(r, n)
+	s.AllowASIn = allowASIn(r, n)
 	return s, nil
 }
 
@@ -204,6 +208,20 @@ func families(r *Router, n *Neighbor) []string {
 		}
 	}
 	return out
+}
+
+// allowASIn returns the largest "allowas-in" count set for the peer or
+// its group in an address family. GoBGP has one count per peer.
+func allowASIn(r *Router, n *Neighbor) int {
+	count := 0
+	for i := range r.AddressFamilies {
+		for _, an := range r.AddressFamilies[i].Neighbors {
+			if an.Name == n.Name || n.Group != "" && an.Name == n.Group {
+				count = max(count, an.AllowASIn)
+			}
+		}
+	}
+	return count
 }
 
 func familyName(af *AddressFamily) string {

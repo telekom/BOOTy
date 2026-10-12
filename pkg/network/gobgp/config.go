@@ -83,6 +83,9 @@ type Config struct {
 	// Sessions are the peers of the provisioner FRR config. When set they
 	// replace PeerMode, Interfaces, NeighborAddrs, RemoteASN and the timers.
 	Sessions []network.BGPSession
+	// MultipathRelax is "bgp bestpath as-path multipath-relax": equal-cost
+	// paths may have different AS paths of the same length.
+	MultipathRelax bool
 	// Policy configures BGP import/export communities and route attributes.
 	Policy *PolicyConfig
 	// GracefulRestart configures BGP graceful restart behavior.
@@ -140,6 +143,7 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		OverlayType:         netCfg.BGPOverlayType,
 		MinEstablishedPeers: netCfg.BGPMinPeers,
 		Sessions:            netCfg.BGPSessions,
+		MultipathRelax:      netCfg.BGPMultipathRelax,
 	}
 
 	cfg.ApplyDefaults()

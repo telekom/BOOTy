@@ -1355,6 +1355,7 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	}
 	if len(src.BGPSessions) > 0 {
 		dst.BGPSessions = src.BGPSessions
+		dst.BGPMultipathRelax = src.BGPMultipathRelax
 	}
 }
 

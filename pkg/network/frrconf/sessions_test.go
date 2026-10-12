@@ -137,3 +137,21 @@ func TestSessionsNumberedOwnASIsInternal(t *testing.T) {
 		t.Fatalf("session = %+v, want iBGP with 65101", s)
 	}
 }
+
+// "allowas-in" on the group reaches the members; without a count FRR
+// uses 3 (FRR bgp_as_allow_in topotest).
+func TestSessionsAllowASIn(t *testing.T) {
+	got := mustSessions(t, `router bgp 65101
+ neighbor leaf peer-group
+ neighbor leaf remote-as 65500
+ neighbor eth1 interface peer-group leaf
+ neighbor 192.0.2.1 remote-as 65500
+ address-family ipv4 unicast
+  neighbor leaf allowas-in
+  neighbor 192.0.2.1 allowas-in 5
+ exit-address-family
+`)
+	if got[0].AllowASIn != 3 || got[1].AllowASIn != 5 {
+		t.Fatalf("AllowASIn = %d, %d, want 3 and 5", got[0].AllowASIn, got[1].AllowASIn)
+	}
+}

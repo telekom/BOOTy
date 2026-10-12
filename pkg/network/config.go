@@ -99,6 +99,8 @@ type Config struct {
 	// GoBGP uses them instead of BGPPeerMode, BGPInterfaces and
 	// BGPNeighbors.
 	BGPSessions []BGPSession
+	// BGPMultipathRelax is "bgp bestpath as-path multipath-relax".
+	BGPMultipathRelax bool
 
 	// Common fields.
 	BridgeName        string // Default: "br.provision"
@@ -140,8 +142,10 @@ type BGPSession struct {
 	IPv4Unicast bool
 	IPv6Unicast bool
 	L2VPNEVPN   bool
-	BFD         bool
-	BFDProfile  string
+	// AllowASIn is the "allowas-in" count, 0 when unset.
+	AllowASIn  int
+	BFD        bool
+	BFDProfile string
 }
 
 // VLANConfig holds configuration for a single 802.1Q VLAN interface.

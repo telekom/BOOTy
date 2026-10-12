@@ -7,9 +7,8 @@
 // expected FRR result and against the shadow node, as seen from the leaf
 // and from the route reflectors (differential check, #630 section 4.3).
 //
-// BOOTy has no FIB writer before slice c, so the route reflectors are not
-// reachable from its VRF on their own. ensureRRRoutes installs the routes
-// that zebra installs on the shadow node.
+// The route reflectors are reachable only over routes learned from the
+// leaf, so the RR sessions also prove the FIB writer (C17).
 //
 // Prerequisites:
 //
@@ -24,7 +23,6 @@ import (
 	"reflect"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -144,25 +142,6 @@ func waitView(t *testing.T, container, neighbor string, want sessionView) {
 	}
 }
 
-var rrRoutesOnce sync.Once
-
-// ensureRRRoutes installs the leaf-learned RR routes in the BOOTy VRF
-// table, as zebra does on the shadow node. Stand-in for the slice c FIB
-// writer.
-func ensureRRRoutes(t *testing.T) {
-	t.Helper()
-	rrRoutesOnce.Do(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)
-		defer cancel()
-		script := `for i in $(seq 1 60); do ip link show Vrf_underlay >/dev/null 2>&1 && break; sleep 2; done
-for n in 1 2; do ip route replace 198.51.100.$n/32 vrf Vrf_underlay src 192.0.2.17 \
-  nexthop via inet6 fe80::1 dev ens1f0np0 nexthop via inet6 fe80::1 dev ens1f1np1; done`
-		if out, err := prodtplExec(ctx, prodtplBooty, "sh", "-c", script); err != nil {
-			t.Fatalf("install RR routes: %v\n%s", err, out)
-		}
-	})
-}
-
 // Both uplinks peer with the leaf (C5), with local-as 65501 replacing the
 // real ASN (C6), the template timers 30/90 (C7) and only ipv4 unicast
 // (C8: "no bgp default ipv4-unicast", only "neighbor leaf activate").
@@ -223,7 +202,6 @@ func TestProdTplLocalASReplaceASPath(t *testing.T) {
 // Both route reflectors: iBGP from "remote-as internal" (C4), sessions in
 // Vrf_underlay (C3), timers from the dcgw peer-group, l2vpn evpn only.
 func TestProdTplRRSessions(t *testing.T) {
-	ensureRRRoutes(t)
 	want := sessionView{State: "Established", RemoteAS: prodtplASN, LocalAS: prodtplASN,
 		HoldMsecs: 90000, KeepMsecs: 30000, Families: []string{"l2VpnEvpn"}}
 	for _, node := range []prodtplNode{prodtplShadowNode, prodtplBootyNode} {
@@ -238,7 +216,6 @@ func TestProdTplRRSessions(t *testing.T) {
 // dcgw02 is passive, so its sessions exist only because the servers
 // connect out of Vrf_underlay. Its local port is the BGP port.
 func TestProdTplRRSessionVRFOutbound(t *testing.T) {
-	ensureRRRoutes(t)
 	for _, node := range []prodtplNode{prodtplShadowNode, prodtplBootyNode} {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		n, err := prodtplNeighbor(ctx, prodtplDCGW2, node.underlay)
@@ -252,10 +229,105 @@ func TestProdTplRRSessionVRFOutbound(t *testing.T) {
 	}
 }
 
+// prodtplRoutes returns the BGP routes of the underlay VRF as prefix ->
+// sorted next hop devices. The loopback of the other server is renamed to
+// "other-server", so BOOTy and the shadow node compare equal.
+func prodtplRoutes(ctx context.Context, node prodtplNode) (map[string][]string, error) {
+	container, args := prodtplBooty, []string{"ip", "-j", "route", "show", "table", "10", "proto", "bgp"}
+	other := prodtplShadowNode.underlay
+	if node.name == "shadow" {
+		container, args = prodtplShadow, []string{"ip", "-j", "route", "show", "vrf", "Vrf_underlay", "proto", "bgp"}
+		other = prodtplBootyNode.underlay
+	}
+	out, err := prodtplExec(ctx, container, args...)
+	if err != nil {
+		return nil, err
+	}
+	var routes []struct {
+		Dst      string `json:"dst"`
+		Dev      string `json:"dev"`
+		Nexthops []struct {
+			Dev string `json:"dev"`
+		} `json:"nexthops"`
+	}
+	if err := json.Unmarshal([]byte(out), &routes); err != nil {
+		return nil, fmt.Errorf("decode routes of %s: %w", node.name, err)
+	}
+	got := map[string][]string{}
+	for _, r := range routes {
+		dst := r.Dst
+		if dst == other {
+			dst = "other-server"
+		}
+		devs := []string{}
+		if r.Dev != "" {
+			devs = append(devs, r.Dev)
+		}
+		for _, nh := range r.Nexthops {
+			devs = append(devs, nh.Dev)
+		}
+		slices.Sort(devs)
+		got[dst] = devs
+	}
+	return got, nil
+}
+
+func waitRoutes(t *testing.T, node prodtplNode, want map[string][]string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)
+	defer cancel()
+	for {
+		got, err := prodtplRoutes(ctx, node)
+		if err == nil && reflect.DeepEqual(got, want) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("%s: BGP routes in Vrf_underlay = %v (%v), want %v", node.name, got, err, want)
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+func prodtplRoutesVia(devs ...string) map[string][]string {
+	return map[string][]string{"198.51.100.1": devs, "198.51.100.2": devs, "other-server": devs}
+}
+
+// The learned routes are in the VRF table with ECMP over both uplinks,
+// like zebra installs them on the shadow node (C17, C10).
+func TestProdTplFIBRoutes(t *testing.T) {
+	want := prodtplRoutesVia("ens1f0np0", "ens1f1np1")
+	for _, node := range []prodtplNode{prodtplShadowNode, prodtplBootyNode} {
+		waitRoutes(t, node, want)
+	}
+}
+
+// A withdrawn uplink session removes its next hop; the session coming
+// back adds it again.
+func TestProdTplFIBWithdraw(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)
+	defer cancel()
+	leafShutdown := func(port string, on bool) {
+		stmt := "neighbor " + port + " shutdown"
+		if !on {
+			stmt = "no " + stmt
+		}
+		if out, err := prodtplExec(ctx, prodtplLeaf, "vtysh", "-c", "configure terminal", "-c", "router bgp 65500", "-c", stmt); err != nil {
+			t.Fatalf("leaf %s: %v\n%s", stmt, err, out)
+		}
+	}
+	for _, node := range []prodtplNode{prodtplShadowNode, prodtplBootyNode} {
+		port := node.leafPorts[0]
+		leafShutdown(port, true)
+		waitRoutes(t, node, prodtplRoutesVia("ens1f1np1"))
+		leafShutdown(port, false)
+		waitRoutes(t, node, prodtplRoutesVia("ens1f0np0", "ens1f1np1"))
+	}
+}
+
 // With outbound BGP connects from BOOTy dropped, dcgw01 must open the
 // session into Vrf_underlay and the BOOTy listener must accept it.
 func TestProdTplRRSessionVRFInbound(t *testing.T) {
-	ensureRRRoutes(t)
 	ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)
 	defer cancel()
 	rule := []string{"OUTPUT", "-p", "tcp", "--syn", "-d", "198.51.100.1", "--dport", "179", "-j", "DROP"}

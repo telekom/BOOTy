@@ -29,6 +29,9 @@ type FRRParams struct {
 	// Sessions are the resolved BGP peers. Each keeps its own remote-as,
 	// local-as, timers and address families.
 	Sessions []network.BGPSession
+	// MultipathRelax is set when a router has "bgp bestpath as-path
+	// multipath-relax".
+	MultipathRelax bool
 	// Model is the full parsed configuration.
 	Model *frrconf.Config
 }
@@ -69,6 +72,7 @@ func ParseFRRConfigBytesWith(data []byte, name string, strict bool) (*FRRParams,
 			params.RouterID = r.RouterID
 		}
 		addPeers(params, r)
+		params.MultipathRelax = params.MultipathRelax || r.MultipathRelax
 		for j := range r.AddressFamilies {
 			af := &r.AddressFamilies[j]
 			if af.SAFI == "evpn" {
@@ -153,6 +157,7 @@ func toBGPSession(s *frrconf.Session) network.BGPSession {
 		IPv4Unicast:   slices.Contains(s.Families, frrconf.FamilyIPv4Unicast),
 		IPv6Unicast:   slices.Contains(s.Families, frrconf.FamilyIPv6Unicast),
 		L2VPNEVPN:     slices.Contains(s.Families, frrconf.FamilyL2VPNEVPN),
+		AllowASIn:     s.AllowASIn,
 		BFD:           s.BFD,
 		BFDProfile:    s.BFDProfile,
 	}

@@ -1675,6 +1675,8 @@ jobs:
             TestProdTplLocalASReplaceASPath \
             TestProdTplRRSessions \
             TestProdTplRRSessionVRFOutbound \
+            TestProdTplFIBRoutes \
+            TestProdTplFIBWithdraw \
             TestProdTplRRSessionVRFInbound; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl.log; then
               echo "::error::${expected} did not pass"

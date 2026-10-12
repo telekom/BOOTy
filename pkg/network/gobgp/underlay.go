@@ -18,6 +18,7 @@ import (
 	"github.com/osrg/gobgp/v3/pkg/server"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/net/ipv6"
+	"golang.org/x/sys/unix"
 	"google.golang.org/protobuf/types/known/anypb"
 
 	exec "github.com/telekom/BOOTy/pkg/executil"
@@ -67,6 +68,9 @@ type UnderlayTier struct {
 	nics         []string
 	log          *slog.Logger
 	stopRA       chan struct{}                 // signals the periodic RA goroutine to stop
+	stopFIB      context.CancelFunc            // stops the FIB writer
+	fibDone      chan struct{}                 // closed when the FIB writer has removed its routes
+	peerDevs     map[string]string             // unnumbered peer address -> interface
 	raDone       chan struct{}                 // closed when the periodic RA goroutine exits
 	peerCountFn  func(ctx context.Context) int // overridable in tests; nil = use countEstablishedPeers
 	pollInterval time.Duration                 // overridable in tests; zero = use default (1s)
@@ -133,6 +137,10 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 
 	if err := u.announceUnderlayRoute(ctx); err != nil {
 		return fmt.Errorf("announce underlay route: %w", err)
+	}
+
+	if len(u.cfg.Sessions) > 0 {
+		u.startFIBWriter()
 	}
 
 	// Start periodic Router Advertisements so FRR's zebra continuously
@@ -203,6 +211,11 @@ func (u *UnderlayTier) Teardown(_ context.Context) error {
 	if u.stopRA != nil {
 		close(u.stopRA)
 		u.stopRA = nil
+	}
+	if u.stopFIB != nil {
+		u.stopFIB()
+		<-u.fibDone
+		u.stopFIB = nil
 	}
 
 	if u.bgp != nil {
@@ -491,6 +504,33 @@ func (u *UnderlayTier) needsNICs() bool {
 	return u.cfg.PeerMode != network.PeerModeNumbered
 }
 
+// startFIBWriter installs the learned unicast routes into the session VRF
+// table (the main table without a VRF), like zebra does for bgpd.
+func (u *UnderlayTier) startFIBWriter() {
+	table := unix.RT_TABLE_MAIN
+	if u.hasVRFSession() {
+		table = int(u.cfg.VRFTableID)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	u.stopFIB = cancel
+	u.fibDone = make(chan struct{})
+	w := newFIBWriter(u.bgp, table, u.cfg.ASN, u.cfg.MultipathRelax, u.peerDev)
+	go func() {
+		defer close(u.fibDone)
+		w.run(ctx)
+	}()
+}
+
+// peerDev returns the interface of an unnumbered peer address, with or
+// without a zone.
+func (u *UnderlayTier) peerDev(neighbor string) string {
+	host, zone, _ := strings.Cut(neighbor, "%")
+	if zone != "" {
+		return zone
+	}
+	return u.peerDevs[host]
+}
+
 // acceptVRFConnections lets peers in a VRF open sessions. The GoBGP
 // listener is not bound to a VRF; with tcp_l3mdev_accept the kernel hands
 // connections that arrive in a VRF to it (FRR bgpd listens per VRF).
@@ -542,6 +582,13 @@ func (u *UnderlayTier) addSessionPeers(ctx context.Context) error {
 				lastErr = err
 				continue
 			}
+		}
+		if s.Interface {
+			if u.peerDevs == nil {
+				u.peerDevs = map[string]string{}
+			}
+			host, _, _ := strings.Cut(addr, "%")
+			u.peerDevs[host] = s.Name
 		}
 		peer := buildSessionPeer(u.cfg, s, addr)
 		if err := u.bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: peer}); err != nil {
