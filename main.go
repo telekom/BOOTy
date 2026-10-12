@@ -1134,9 +1134,9 @@ func mergeNetplanConfig(dst, src *network.Config) {
 		dst.BGPPeerMode = src.BGPPeerMode
 	}
 	if src.BGPNeighbors != "" {
+		// The FRR config sets the numbered peers and their remote ASN
+		// together; 0 means iBGP and must replace a vars value too.
 		dst.BGPNeighbors = src.BGPNeighbors
-	}
-	if src.BGPRemoteASN > 0 {
 		dst.BGPRemoteASN = src.BGPRemoteASN
 	}
 	mergeInferredEVPNL2(dst, src)
