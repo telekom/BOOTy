@@ -80,3 +80,37 @@ func TestHTTPImageDownloadIgnoresSlowConsumer(t *testing.T) {
 		t.Fatal("no data after the slow consumer pause")
 	}
 }
+
+func TestHTTPImageDownloadKeepsSlowButSteadyStream(t *testing.T) {
+	orig := imageIdleReadTimeout
+	t.Cleanup(func() { imageIdleReadTimeout = orig })
+	imageIdleReadTimeout = 200 * time.Millisecond
+
+	const chunks, chunkSize = 8, 1024
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Gaps stay below the idle timeout, the total time is twice as long.
+		for range chunks {
+			_, _ = w.Write(make([]byte, chunkSize))
+			w.(http.Flusher).Flush()
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(imageIdleReadTimeout / 4):
+			}
+		}
+	}))
+	defer srv.Close()
+
+	body, err := httpGetWithRetry(context.Background(), srv.URL+"/image.raw")
+	if err != nil {
+		t.Fatalf("httpGetWithRetry() = %v", err)
+	}
+	defer func() { _ = body.Close() }()
+	data, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("ReadAll() of a slow but steady stream = %v", err)
+	}
+	if len(data) != chunks*chunkSize {
+		t.Fatalf("got %d bytes, want %d", len(data), chunks*chunkSize)
+	}
+}
