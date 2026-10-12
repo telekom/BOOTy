@@ -173,6 +173,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 	// Ensure final telemetry is always flushed before exit/reboot.
 	// Uses context.Background() because ctx may be canceled during teardown/error.
 	defer o.flushTelemetry(context.Background())
+	o.releaseStaleTargetMounts()
 	steps := o.provisionSteps()
 
 	cp, err := o.loadOrCreateCheckpoint()
@@ -2847,6 +2848,30 @@ func (o *Orchestrator) unmountBoot() error {
 		return fmt.Errorf("unmount boot mountpoint %s: %w", mountpoint, err)
 	}
 	return nil
+}
+
+// unmountTargetTree unmounts the target root and everything below it. It is
+// a variable so tests can run without real mounts.
+var unmountTargetTree = func(d *disk.Manager, root string) error {
+	return d.UnmountRecursive(root)
+}
+
+// releaseStaleTargetMounts unmounts what a failed earlier attempt left
+// mounted, so a rescue retry does not wipe and re-image a disk under a live
+// mount or run fsck on a mounted root. It is best-effort and a no-op on a
+// first run.
+func (o *Orchestrator) releaseStaleTargetMounts() {
+	if !isMountPoint(newroot) {
+		return
+	}
+	o.log.Warn("target root still mounted from an earlier attempt, unmounting", "root", newroot)
+	if err := o.unmountSharedData(); err != nil {
+		o.log.Warn("failed to unmount shared data from earlier attempt", "error", err)
+	}
+	if err := unmountTargetTree(o.disk, newroot); err != nil {
+		o.log.Warn("failed to unmount target root from earlier attempt", "root", newroot, "error", err)
+	}
+	o.sharedMounts = nil
 }
 
 func (o *Orchestrator) unmountSharedData() error {
