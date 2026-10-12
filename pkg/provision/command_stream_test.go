@@ -94,3 +94,32 @@ func TestDefaultRunStreamingCommandCancelKillsGroup(t *testing.T) {
 		t.Fatalf("cancellation took %s", elapsed)
 	}
 }
+
+// A failing script must not leave its background children running.
+func TestDefaultRunStreamingCommandKillsChildrenAfterFailure(t *testing.T) {
+	old := streamWaitDelay
+	streamWaitDelay = 200 * time.Millisecond
+	t.Cleanup(func() { streamWaitDelay = old })
+
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	err := defaultRunStreamingCommand(context.Background(), func(string) {}, "",
+		[]string{"/bin/sh", "-c", "sleep 30 & echo $! > " + pidFile + "; exit 3"})
+	if err == nil {
+		t.Fatal("failing script returned nil")
+	}
+	data, readErr := os.ReadFile(pidFile)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+	deadline := time.Now().Add(5 * time.Second)
+	for syscall.Kill(pid, 0) == nil {
+		if state, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)); err != nil || strings.Contains(string(state), ") Z ") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("background child %d still runs after the failed script", pid)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}

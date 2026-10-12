@@ -101,10 +101,13 @@ func defaultRunStreamingCommand(ctx context.Context, onLine func(string), root s
 	<-scanDone
 	// ErrWaitDelay only means a background child still held the output
 	// pipes after the script exited with status 0.
-	if errors.Is(err, exec.ErrWaitDelay) {
-		// Stop the children that still hold the pipes, so they cannot keep
-		// running into the next provisioning steps.
+	// Stop any children left in the group, after success and after failure,
+	// so they cannot keep changing the target in later steps.
+	if cmd.Process != nil {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	if errors.Is(err, exec.ErrWaitDelay) {
+		// Only children still held the pipes; the script itself succeeded.
 		return nil
 	}
 	if err != nil {
