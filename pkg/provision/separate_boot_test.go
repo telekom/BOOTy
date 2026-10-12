@@ -4,11 +4,13 @@ package provision
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/disk"
 )
 
 // Legacy evidence: provision.sh:366-395 mounts /boot from the image fstab
@@ -17,6 +19,7 @@ func TestSeparateBootSource(t *testing.T) {
 	tests := []struct {
 		name       string
 		grubOnRoot bool
+		noBootDir  bool
 		fstab      string
 		wantNeeded bool
 		wantSource string
@@ -28,14 +31,18 @@ func TestSeparateBootSource(t *testing.T) {
 			wantNeeded: true,
 			wantSource: "LABEL=BOOT",
 		},
+		{name: "missing boot dir", noBootDir: true, fstab: "LABEL=BOOT /boot ext4 defaults 0 2\n", wantNeeded: true, wantSource: "LABEL=BOOT"},
+		{name: "escaped label", fstab: "LABEL=BOOT\\040VOL /boot ext4 defaults 0 2\n", wantNeeded: true, wantSource: "LABEL=BOOT VOL"},
 		{name: "no boot entry", fstab: "UUID=1 / ext4 defaults 0 1\n#LABEL=BOOT /boot ext4 defaults 0 2\n", wantNeeded: true},
 		{name: "no fstab", wantNeeded: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
-			if err := os.MkdirAll(filepath.Join(root, "boot"), 0o755); err != nil {
-				t.Fatal(err)
+			if !tt.noBootDir {
+				if err := os.MkdirAll(filepath.Join(root, "boot"), 0o755); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if tt.grubOnRoot {
 				if err := os.MkdirAll(filepath.Join(root, "boot", "grub"), 0o755); err != nil {
@@ -80,8 +87,8 @@ func TestSeparateBootSourceIgnoresSymlinks(t *testing.T) {
 }
 
 func TestParseBlkidExport(t *testing.T) {
-	got := parseBlkidExport("DEVNAME=/dev/vda2\nLABEL=BOOT\nUUID=abcd\nTYPE=ext4\nPARTUUID=1234\n")
-	if got.label != "BOOT" || got.uuid != "abcd" || got.partUUID != "1234" {
+	got := parseBlkidExport("DEVNAME=/dev/vda2\nLABEL=BOOT\\ VOL\nUUID=abcd\nTYPE=ext4\nPARTUUID=1234\n")
+	if got.label != "BOOT VOL" || got.uuid != "abcd" || got.partUUID != "1234" {
 		t.Fatalf("parseBlkidExport() = %+v", got)
 	}
 }
@@ -150,5 +157,66 @@ func TestMountSeparateBootSkipsPartitionLayout(t *testing.T) {
 	}
 	if len(cmd.calls) != 0 || o.separateBootMounted {
 		t.Fatalf("partition layout run touched /boot: %v", cmd.calls)
+	}
+}
+
+// funcCommander answers commands with a function, so a test can vary the
+// output per partition.
+type funcCommander func(name string, args ...string) ([]byte, error)
+
+func (f funcCommander) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	return f(name, args...)
+}
+
+func TestResolveFstabSourceOnTargetDisk(t *testing.T) {
+	sfdisk := `{"partitiontable":{"label":"gpt","device":"/dev/vda","partitions":[
+		{"node":"/dev/vda1","start":2048,"size":102400,"type":"C12A7328-F81F-11D2-BA4B-00A0C93EC93B"},
+		{"node":"/dev/vda2","start":104448,"size":131072,"type":"BC13C2FF-59E6-4262-A352-B275FD6F7172"},
+		{"node":"/dev/vda3","start":235520,"size":900000,"type":"0FC63DAF-8483-4772-8E79-3D69D8477DE4"}]}}`
+	blkid := map[string]string{
+		"/dev/vda1": "LABEL=UEFI\nUUID=1111\n",
+		"/dev/vda2": "LABEL=BOOT\\ VOL\nUUID=2222\nPARTUUID=p2\n",
+		"/dev/vda3": "garbage",
+	}
+	cmd := funcCommander(func(name string, args ...string) ([]byte, error) {
+		switch name {
+		case "sfdisk":
+			return []byte(sfdisk), nil
+		case "blkid":
+			out, ok := blkid[args[len(args)-1]]
+			if !ok {
+				return nil, errors.New("no signature")
+			}
+			return []byte(out), nil
+		}
+		return nil, nil
+	})
+	o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, disk.NewManager(cmd))
+	o.targetDisk = "/dev/vda"
+	for source, want := range map[string]string{
+		"LABEL=BOOT VOL": "/dev/vda2",
+		"UUID=2222":      "/dev/vda2",
+		"PARTUUID=p2":    "/dev/vda2",
+		"LABEL=root":     "",
+		"/dev/vdb1":      "",
+	} {
+		if got := o.resolveFstabSource(context.Background(), source); got != want {
+			t.Errorf("resolveFstabSource(%q) = %q, want %q", source, got, want)
+		}
+	}
+
+	failing := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, disk.NewManager(funcCommander(
+		func(string, ...string) ([]byte, error) { return nil, errors.New("sfdisk failed") })))
+	failing.targetDisk = "/dev/vda"
+	if got := failing.resolveFstabSource(context.Background(), "LABEL=BOOT"); got != "" {
+		t.Fatalf("resolveFstabSource() = %q with a failing sfdisk, want empty", got)
+	}
+}
+
+func TestDecodeFstabField(t *testing.T) {
+	for in, want := range map[string]string{"LABEL=BOOT\\040VOL": "LABEL=BOOT VOL", "/boot": "/boot", "a\\9xy": "a\\9xy"} {
+		if got := decodeFstabField(in); got != want {
+			t.Errorf("decodeFstabField(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

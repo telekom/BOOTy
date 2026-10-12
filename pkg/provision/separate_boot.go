@@ -78,11 +78,18 @@ func (o *Orchestrator) adoptSeparateBoot(ctx context.Context, mountpoint string)
 func separateBootSource(root string) (needed bool, source string, err error) {
 	boot := filepath.Join(root, "boot")
 	info, err := os.Lstat(boot)
-	if err != nil || !info.IsDir() {
-		return false, "", nil //nolint:nilerr // no plain /boot directory: nothing to mount
-	}
-	if _, err := os.Lstat(filepath.Join(boot, "grub")); err == nil {
+	switch {
+	case os.IsNotExist(err):
+		// The fstab can still declare /boot; mounting creates the directory.
+	case err != nil:
+		return false, "", fmt.Errorf("inspect %s: %w", boot, err)
+	case !info.IsDir():
+		// A symlink or file at /boot is not a mountpoint BOOTy uses.
 		return false, "", nil
+	default:
+		if _, err := os.Lstat(filepath.Join(boot, "grub")); err == nil {
+			return false, "", nil
+		}
 	}
 	source, err = targetFstabSource(root, "/boot")
 	return true, source, err
@@ -123,8 +130,8 @@ func fstabSource(path, target string) (string, error) {
 		if len(fields) < 2 || strings.HasPrefix(fields[0], "#") {
 			continue
 		}
-		if fields[1] == target {
-			return fields[0], nil
+		if decodeFstabField(fields[1]) == target {
+			return decodeFstabField(fields[0]), nil
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -170,6 +177,44 @@ func (o *Orchestrator) resolveFstabSource(ctx context.Context, source string) st
 	return matchFstabSource(source, devs)
 }
 
+// decodeFstabField decodes the octal escapes of fstab fields, such as \040
+// for a space.
+func decodeFstabField(field string) string {
+	var b strings.Builder
+	for i := 0; i < len(field); i++ {
+		if field[i] == '\\' && i+3 < len(field) && isOctal(field[i+1:i+4]) {
+			n := (int(field[i+1]-'0') << 6) | (int(field[i+2]-'0') << 3) | int(field[i+3]-'0')
+			b.WriteByte(byte(n))
+			i += 3
+			continue
+		}
+		b.WriteByte(field[i])
+	}
+	return b.String()
+}
+
+func isOctal(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '7' {
+			return false
+		}
+	}
+	return len(s) == 3
+}
+
+// unescapeBlkidValue removes the shell escaping of blkid -o export, which
+// writes a label "BOOT VOL" as BOOT\ VOL.
+func unescapeBlkidValue(value string) string {
+	var b strings.Builder
+	for i := 0; i < len(value); i++ {
+		if value[i] == '\\' && i+1 < len(value) {
+			i++
+		}
+		b.WriteByte(value[i])
+	}
+	return b.String()
+}
+
 func parseBlkidExport(out string) blockIDs {
 	var ids blockIDs
 	for _, line := range strings.Split(out, "\n") {
@@ -177,6 +222,7 @@ func parseBlkidExport(out string) blockIDs {
 		if !ok {
 			continue
 		}
+		value = unescapeBlkidValue(value)
 		switch key {
 		case "UUID":
 			ids.uuid = value
