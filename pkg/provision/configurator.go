@@ -875,6 +875,9 @@ func copyTreeWith(ctx context.Context, srcBase, destRoot string, keepSymlinks bo
 		if err != nil {
 			return err
 		}
+		if skip, skipErr := skipBindMountAlias(destRoot, destPath, d, keepSymlinks); skip {
+			return skipErr
+		}
 		if isSymlink {
 			return copyKeptSymlink(path, destPath)
 		}
@@ -900,10 +903,53 @@ func skipCopyTreeEntry(srcBase, path string, d os.DirEntry, isSymlink, keepSymli
 		return false, nil
 	}
 	rel, err := filepath.Rel(srcBase, path)
-	if err != nil || !chrootBindDirs[strings.SplitN(rel, string(filepath.Separator), 2)[0]] {
+	if err != nil {
+		return false, fmt.Errorf("resolve copy path %s relative to %s: %w", path, srcBase, err)
+	}
+	if !chrootBindDirs[strings.SplitN(rel, string(filepath.Separator), 2)[0]] {
 		return false, nil
 	}
 	slog.Warn("skipping machine file below a chroot bind mount", "path", path)
+	if d.IsDir() {
+		return true, filepath.SkipDir
+	}
+	return true, nil
+}
+
+// skipBindMountAlias reports whether destPath, after resolving the existing
+// symlinks in the target, lands at or below a chroot bind mount. This
+// catches an image link such as alias -> dev, which the lexical check in
+// skipCopyTreeEntry cannot see. A skipped directory returns
+// filepath.SkipDir as the error.
+func skipBindMountAlias(destRoot, destPath string, d os.DirEntry, keepSymlinks bool) (bool, error) {
+	if !keepSymlinks || destPath == destRoot {
+		return false, nil
+	}
+	existing, suffix := filepath.Dir(destPath), filepath.Base(destPath)
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			return true, fmt.Errorf("inspect copy destination %s: %w", existing, err)
+		}
+		existing, suffix = filepath.Dir(existing), filepath.Join(filepath.Base(existing), suffix)
+	}
+	realExisting, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return true, fmt.Errorf("resolve copy destination %s: %w", existing, err)
+	}
+	realRoot, err := filepath.EvalSymlinks(destRoot)
+	if err != nil {
+		return true, fmt.Errorf("resolve copy root %s: %w", destRoot, err)
+	}
+	rel, err := filepath.Rel(realRoot, filepath.Join(realExisting, suffix))
+	if err != nil {
+		return true, fmt.Errorf("resolve copy destination %s: %w", destPath, err)
+	}
+	if !chrootBindDirs[strings.SplitN(rel, string(filepath.Separator), 2)[0]] {
+		return false, nil
+	}
+	slog.Warn("skipping machine file that resolves below a chroot bind mount", "path", destPath)
 	if d.IsDir() {
 		return true, filepath.SkipDir
 	}

@@ -1704,3 +1704,27 @@ func TestCopyTreeWithKeptSymlinksSkipsChrootBindDirs(t *testing.T) {
 		t.Fatalf("regular top-level file was not copied: %v", err)
 	}
 }
+
+func TestCopyTreeWithKeptSymlinksSkipsBindDirAlias(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(src, "alias"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "alias", "null"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dst, "dev"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The image links alias to dev, which is a live bind mount during the copy.
+	if err := os.Symlink("dev", filepath.Join(dst, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyTreeWith(context.Background(), src, dst, true); err != nil {
+		t.Fatalf("copyTreeWith() = %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(dst, "dev", "null")); !os.IsNotExist(err) {
+		t.Fatalf("machine file was written through alias into dev/: %v", err)
+	}
+}
