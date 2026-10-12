@@ -204,9 +204,9 @@ func (o *Orchestrator) softDeprovision(ctx context.Context) error {
 	}
 	// A member of a DISK_MIRRORING_MODE array mounts as a plain filesystem,
 	// but writing to it bypasses the array, and the other disk stays
-	// bootable. Hard deprovision wipes both disks.
+	// bootable. Hard deprovision without a device override wipes both disks.
 	if fsType, err := o.disk.FilesystemType(ctx, root.Node); err == nil && fsType == "linux_raid_member" {
-		return fmt.Errorf("root partition %s is a RAID member of a mirrored install; soft deprovision supports single-disk roots only, use hard deprovision", root.Node)
+		return fmt.Errorf("root partition %s is a RAID member of a mirrored install; soft deprovision supports single-disk roots only, use hard deprovision without a device override", root.Node)
 	}
 	if err := o.disk.MountPartition(ctx, root.Node, newroot); err != nil {
 		return fmt.Errorf("mounting root: %w", err)

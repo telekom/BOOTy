@@ -408,7 +408,7 @@ func (o *Orchestrator) mirrorFstabSource(ctx context.Context, array, source, mou
 	case array != "" && source != array && namesPartition(source):
 		return array, nil
 	case mountpoint == "/boot/efi" && namesPartition(source) && o.bootPartition != "":
-		// ponytail: both ESP copies share this FAT UUID, like legacy, so
+		// Caveat: both ESP copies share this FAT UUID, like legacy, so
 		// either disk mounts /boot/efi alone, but later bootloader updates
 		// reach only the mounted copy. Keep both in sync (for example
 		// grub-multi-install) if stale second-disk ESPs become a problem.
