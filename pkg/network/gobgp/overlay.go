@@ -1078,8 +1078,6 @@ func (o *OverlayTier) withdrawType5Route(state type5RouteState, routerMAC net.Ha
 	o.deleteType5GatewayNeighbor(state.link, state.dst.String(), state.gw, state.vtep, routerMAC)
 }
 
-// installType5Route installs the kernel route and gateway state. It reports
-// whether the kernel route and the required gateway state were installed.
 // removeType5Prefix deletes the kernel route for a prefix whatever its
 // gateway, and the gateway state of that prefix. It is used when no
 // remaining path could be installed completely.
@@ -1092,11 +1090,6 @@ func (o *OverlayTier) removeType5Prefix(state type5RouteState) {
 	}
 	o.log.Warn("no remaining type-5 path could be installed, removed route", "dst", state.dst)
 	o.clearType5GatewayNeighbor(state.link, state.dst.String())
-}
-
-func (o *OverlayTier) installType5Route(state type5RouteState, routerMAC net.HardwareAddr, valid bool) bool {
-	ok, _ := o.installType5RouteDetailed(state, routerMAC, valid)
-	return ok
 }
 
 // installType5RouteDetailed also reports whether the kernel route was
