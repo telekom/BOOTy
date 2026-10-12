@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"syscall"
 	"testing"
@@ -128,5 +129,12 @@ func TestClassifyTransportError(t *testing.T) {
 				t.Fatalf("errors.Is(%v, %v) = false", err, tt.sentinel)
 			}
 		})
+	}
+}
+
+func TestRedactedURLErrorDropsUnknownOperation(t *testing.T) {
+	err := redactedURLError("https://caprf.example/upload", &url.Error{Op: "EVIL-SECRET", URL: "https://caprf.example/upload", Err: errors.New("x")})
+	if strings.Contains(err.Error(), "EVIL-SECRET") {
+		t.Fatalf("error contains a server-controlled method: %v", err)
 	}
 }

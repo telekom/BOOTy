@@ -752,7 +752,11 @@ func redactedURLError(raw string, err error) error {
 	redirected := false
 	var urlErr *neturl.Error
 	if errors.As(err, &urlErr) {
-		op = urlErr.Op
+		// net/http copies the request method into Op, and some methods come
+		// from CAPRF responses, so only known values are kept.
+		if allowedURLErrorOps[urlErr.Op] {
+			op = urlErr.Op
+		}
 		// url.Parse reports the URL without its fragment, so only compare
 		// for requests. A different URL there means a redirect was followed.
 		redirected = op != "parse" && urlErr.URL != raw
@@ -766,6 +770,12 @@ func redactedURLError(raw string, err error) error {
 		URL: redactedURL(raw),
 		Err: &transportCause{cause: cause, sentinel: sentinel, timeout: timeout},
 	}
+}
+
+// allowedURLErrorOps are the url.Error operations that redactedURLError may
+// show. Anything else is reported as "request".
+var allowedURLErrorOps = map[string]bool{
+	"Get": true, "Head": true, "Post": true, "Put": true, "Patch": true, "Delete": true, "parse": true,
 }
 
 // transportCause is a fixed transport failure cause. Unwrap returns
