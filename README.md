@@ -318,7 +318,7 @@ root is mounted.
 | `DISK_SELECTION` | `prefer-nvme` | `lsblk` selects the first large enough disk in legacy `lsblk` order. Preset by `CAPRF_LEGACY_COMPAT` |
 | `WIPE_ALL_DISKS` | `false` | Wipe every disk, not only the target, like `wipe_all_disks`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `DISCARD_NVME` | `false` | `blkdiscard` every NVMe disk before a wipe of all disks. Preset by `CAPRF_LEGACY_COMPAT` |
-| `NETWORK_WAIT_MAX_ATTEMPTS` | `15` | CAPRF legacy compat only: 20 second network wait rounds before the run fails |
+| `NETWORK_WAIT_MAX_ATTEMPTS` | `15` | CAPRF legacy compat only: 20 second network wait rounds before the run fails (0-100000, 0 means 15) |
 | `BOOTY_ALLOW_REMOVABLE` | `false` | Allow USB/removable media as provisioning target |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters |
 | `EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters, read by the CAPRF legacy provisioner. Appended to `MACHINE_EXTRA_KERNEL_PARAMS` |

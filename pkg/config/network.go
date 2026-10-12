@@ -1,5 +1,9 @@
 package config
 
+// MaxNetworkWaitAttempts bounds NETWORK_WAIT_MAX_ATTEMPTS (about 23 days of
+// 20 second rounds), so the wait time cannot overflow.
+const MaxNetworkWaitAttempts = 100000
+
 // NetworkConfig defines how BOOTy configures network connectivity in the
 // ramdisk. It supports multiple network modes: EVPN/BGP (via FRR or GoBGP),
 // static IP assignment, LACP bonding, and DHCP fallback.

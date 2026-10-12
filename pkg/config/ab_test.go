@@ -448,6 +448,10 @@ func TestValidateRejectsNegativeNetworkWaitAttempts(t *testing.T) {
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "waitMaxAttempts") {
 		t.Fatalf("Validate() = %v, want a waitMaxAttempts error", err)
 	}
+	cfg = &Config{LegacyCompat: true, Network: NetworkConfig{WaitMaxAttempts: MaxNetworkWaitAttempts + 1}}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "waitMaxAttempts") {
+		t.Fatalf("Validate() = %v, want an upper bound error", err)
+	}
 	// The field is ignored outside legacy compat.
 	cfg = &Config{Network: NetworkConfig{WaitMaxAttempts: -1}}
 	if err := cfg.Validate(); err != nil {
