@@ -407,3 +407,41 @@ func TestOnBoundRenewalRouteFailureKeepsPreviousLease(t *testing.T) {
 		t.Fatalf("applied state = %v, want the previous lease 10.0.2.15/24", d.applied)
 	}
 }
+
+func TestOnBoundRenewalKeepsRouteAndRestoresMask(t *testing.T) {
+	origAddr, origAddrDel, origRoute := dhcpAddrReplace, dhcpAddrDel, dhcpRouteReplace
+	t.Cleanup(func() { dhcpAddrReplace, dhcpAddrDel, dhcpRouteReplace = origAddr, origAddrDel, origRoute })
+	var set []string
+	dhcpAddrReplace = func(_ netlink.Link, a *netlink.Addr) error {
+		set = append(set, a.IPNet.String())
+		return nil
+	}
+	dhcpAddrDel = func(netlink.Link, *netlink.Addr) error { return nil }
+	failRoute := false
+	dhcpRouteReplace = func(*netlink.Route) error {
+		if failRoute {
+			return syscall.ENETUNREACH
+		}
+		return nil
+	}
+
+	d := NewDHCPMode()
+	var winner dhcpWinner
+	eth0 := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth0", Index: 1}}
+	bound := d.onBound(eth0, "eth0", make(chan struct{}, 1), &winner)
+	gw := []net.IP{net.ParseIP("10.0.2.2")}
+
+	bound(&dhclient.Lease{FixedAddress: net.ParseIP("10.0.2.15"), Netmask: net.CIDRMask(24, 32), Router: gw})
+	// Renewal without a router option keeps the tracked default route.
+	bound(&dhclient.Lease{FixedAddress: net.ParseIP("10.0.2.15"), Netmask: net.CIDRMask(24, 32)})
+	if len(d.applied) != 1 || d.applied[0].route == nil {
+		t.Fatalf("applied state = %v, want the default route kept", d.applied)
+	}
+
+	// Renewal with a new mask whose route fails restores the old mask.
+	failRoute = true
+	bound(&dhclient.Lease{FixedAddress: net.ParseIP("10.0.2.15"), Netmask: net.CIDRMask(16, 32), Router: gw})
+	if want := []string{"10.0.2.15/24", "10.0.2.15/24", "10.0.2.15/16", "10.0.2.15/24"}; !slices.Equal(set, want) {
+		t.Fatalf("addresses set = %v, want %v", set, want)
+	}
+}

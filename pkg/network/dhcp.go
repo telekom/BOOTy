@@ -223,6 +223,12 @@ type dhcpWinner struct {
 func (d *DHCPMode) dropUnappliedAddr(link netlink.Link, addr *netlink.Addr) {
 	for _, a := range d.applied {
 		if a.link.Attrs().Index == link.Attrs().Index && a.addr.IP.Equal(addr.IP) {
+			// Same IP: put the previous mask back if the renewal changed it.
+			if a.addr.IPNet.String() != addr.IPNet.String() {
+				if err := dhcpAddrReplace(link, a.addr); err != nil {
+					d.log.Warn("failed to restore DHCP address", "iface", link.Attrs().Name, "error", err)
+				}
+			}
 			return
 		}
 	}
@@ -252,6 +258,10 @@ func (d *DHCPMode) applyRenewal(link netlink.Link, ifName string, addr *netlink.
 	}
 	kept := make([]dhcpApplied, 0, len(d.applied)+1)
 	for _, a := range d.applied {
+		// A renewal without a router option leaves the default route as it is.
+		if route == nil && a.link.Attrs().Index == link.Attrs().Index {
+			route = a.route
+		}
 		if a.link.Attrs().Index == link.Attrs().Index && !a.addr.IP.Equal(addr.IP) {
 			if err := dhcpAddrDel(a.link, a.addr); err != nil {
 				d.log.Warn("failed to remove superseded DHCP address", "iface", ifName, "error", err)
