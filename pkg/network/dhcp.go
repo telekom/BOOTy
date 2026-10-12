@@ -221,12 +221,13 @@ type dhcpWinner struct {
 // step failed, unless it is the address already applied on the link. The
 // caller holds d.mu.
 func (d *DHCPMode) dropUnappliedAddr(link netlink.Link, addr *netlink.Addr) {
-	for _, a := range d.applied {
+	for i, a := range d.applied {
 		if a.link.Attrs().Index == link.Attrs().Index && a.addr.IP.Equal(addr.IP) {
 			// Same IP: put the previous mask back if the renewal changed it.
 			if a.addr.IPNet.String() != addr.IPNet.String() {
 				if err := dhcpAddrReplace(link, a.addr); err != nil {
 					d.log.Warn("failed to restore DHCP address", "iface", link.Attrs().Name, "error", err)
+					d.applied[i].addr = addr // track what the kernel has
 				}
 			}
 			return
