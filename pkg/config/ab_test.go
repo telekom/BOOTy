@@ -442,3 +442,10 @@ func TestValidateRejectsBlankABSourceRootSelector(t *testing.T) {
 		t.Fatalf("Validate() error = %q", got)
 	}
 }
+
+func TestValidateRejectsNegativeNetworkWaitAttempts(t *testing.T) {
+	cfg := &Config{Network: NetworkConfig{WaitMaxAttempts: -1}}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "waitMaxAttempts") {
+		t.Fatalf("Validate() = %v, want a waitMaxAttempts error", err)
+	}
+}

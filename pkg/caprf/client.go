@@ -1489,6 +1489,7 @@ func applyCrashArtifactsBoolVar(cfg *config.MachineConfig, key, value string) bo
 func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 	intFields := map[string]*int{
 		"MIN_DISK_SIZE_GB":                   &cfg.Provision.Disk.MinSizeGB,
+		"NETWORK_WAIT_MAX_ATTEMPTS":          &cfg.Network.WaitMaxAttempts,
 		"NUM_VFS":                            &cfg.Provision.Disk.NumVFs,
 		"HEALTH_MIN_MEMORY_GB":               &cfg.Health.MinMemoryGB,
 		"HEALTH_MIN_CPUS":                    &cfg.Health.MinCPUs,

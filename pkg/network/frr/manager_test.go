@@ -718,3 +718,67 @@ func TestWaitForHTTPWithFRRSkipTLSVerify(t *testing.T) {
 		t.Fatalf("waitForHTTPWithFRR() = %v, want success with verification off", err)
 	}
 }
+
+// Legacy evidence: wait_for_network in common.sh restarts FRR after every
+// failed 20 second round, and restart_frr keeps an Established session.
+func TestWaitForHTTPWithFRRLegacyRecovery(t *testing.T) {
+	tests := []struct {
+		name         string
+		summary      string
+		wantRestarts bool
+	}{
+		{name: "restart without session", summary: `{"default":{"ipv4Unicast":{"peers":{"eth0":{"state":"Active"}}}}}`, wantRestarts: true},
+		{name: "keep established session", summary: `{"default":{},"Vrf_underlay":{"ipv4Unicast":{"peers":{"eth0":{"state":"Established"}}}}}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origInterval := legacyFRRRestartInterval
+			legacyFRRRestartInterval = time.Millisecond
+			t.Cleanup(func() { legacyFRRRestartInterval = origInterval })
+			restarts := 0
+			origRun := runFRRDaemonCommand
+			runFRRDaemonCommand = func(context.Context, string, ...string) error {
+				restarts++
+				return nil
+			}
+			t.Cleanup(func() { runFRRDaemonCommand = origRun })
+
+			cmd := newMockFRRCommander()
+			cmd.setResult("vtysh -c", []byte(tt.summary), nil)
+			mgr := NewManager(cmd)
+			mgr.cfg.LegacyFRRRecovery = true
+			mgr.frrStartMethod = frrStartSystemctl
+
+			srv := httptest.NewServer(http.NotFoundHandler())
+			target := srv.URL
+			srv.Close()
+			if err := waitForHTTPWithFRR(context.Background(), target, 2500*time.Millisecond, mgr); err == nil {
+				t.Fatal("waitForHTTPWithFRR() = nil for a closed server")
+			}
+			if got := restarts > 0; got != tt.wantRestarts {
+				t.Fatalf("restarts = %d, want restarts %v", restarts, tt.wantRestarts)
+			}
+		})
+	}
+}
+
+// A caller deadline, as in legacy compat, must still dump the FRR state.
+func TestWaitForHTTPWithFRRDumpsStateOnCallerDeadline(t *testing.T) {
+	cmd := newMockFRRCommander()
+	mgr := NewManager(cmd)
+	srv := httptest.NewServer(http.NotFoundHandler())
+	target := srv.URL
+	srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if err := waitForHTTPWithFRR(ctx, target, time.Minute, mgr); err == nil {
+		t.Fatal("waitForHTTPWithFRR() = nil for a closed server")
+	}
+	dumped := false
+	for _, call := range cmd.calls {
+		dumped = dumped || call == "vtysh -c"
+	}
+	if !dumped {
+		t.Fatalf("calls = %v, want the FRR state dump", cmd.calls)
+	}
+}

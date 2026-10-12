@@ -23,6 +23,12 @@ type NetworkConfig struct {
 	// Default: ""
 	DNSResolvers string `yaml:"dnsResolvers" json:"dnsResolvers"`
 
+	// WaitMaxAttempts is the number of 20 second connectivity rounds in
+	// CAPRF legacy compat mode, like NETWORK_WAIT_MAX_ATTEMPTS of the legacy
+	// provisioner. Ignored outside legacy compat.
+	// Default: 0 (15 rounds, about 5 minutes)
+	WaitMaxAttempts int `yaml:"waitMaxAttempts" json:"waitMaxAttempts"`
+
 	// Sub-sections grouped by network concern.
 	BGP    BGPConfig    `yaml:"bgp"    json:"bgp"`
 	EVPN   EVPNConfig   `yaml:"evpn"   json:"evpn"`
