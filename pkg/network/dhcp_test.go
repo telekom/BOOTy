@@ -22,8 +22,11 @@ import (
 )
 
 func TestDHCPMode_Setup(t *testing.T) {
-	// Without root the probe cannot bring links up, and test containers have
-	// no physical NICs, so no lease can be obtained here.
+	// Fake an empty link list, so the test never probes the host NICs and
+	// does not depend on root or on a DHCP server being reachable.
+	t.Cleanup(snapshotNICFns())
+	linkList = func() ([]netlink.Link, error) { return nil, nil }
+	sleepFunc = func(time.Duration) {}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	d := &DHCPMode{}
