@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/telekom/BOOTy/pkg/disk"
 )
@@ -55,10 +54,17 @@ func (o *Orchestrator) probeRootPartition(ctx context.Context, parts []disk.Part
 }
 
 func looksLikeRootFilesystem(dir string) bool {
-	if info, err := os.Stat(filepath.Join(dir, "etc", "os-release")); err == nil && info.Mode().IsRegular() {
+	// os.Root resolves symlinks inside dir only, so a candidate with
+	// etc -> /etc is judged by its own content, not by the ramdisk.
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return false
+	}
+	defer root.Close() //nolint:errcheck // read-only handle
+	if info, err := root.Stat("etc/os-release"); err == nil && info.Mode().IsRegular() {
 		return true
 	}
-	etc, etcErr := os.Stat(filepath.Join(dir, "etc"))
-	usr, usrErr := os.Stat(filepath.Join(dir, "usr"))
+	etc, etcErr := root.Stat("etc")
+	usr, usrErr := root.Stat("usr")
 	return etcErr == nil && usrErr == nil && etc.IsDir() && usr.IsDir()
 }

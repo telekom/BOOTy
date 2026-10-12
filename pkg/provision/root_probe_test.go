@@ -77,3 +77,43 @@ func TestProbeRootPartitionReusesMountedRoot(t *testing.T) {
 		t.Fatalf("probeRootPartition() = %v, %v; want the mounted /dev/vda3", root, err)
 	}
 }
+
+// Symlinks out of the candidate must not make it look like a root.
+func TestLooksLikeRootFilesystemIgnoresEscapingSymlinks(t *testing.T) {
+	outside := t.TempDir()
+	for _, d := range []string{"etc", "usr"} {
+		if err := os.MkdirAll(filepath.Join(outside, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(outside, "etc", "os-release"), []byte("ID=x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	data := t.TempDir()
+	for _, d := range []string{"etc", "usr"} {
+		if err := os.Symlink(filepath.Join(outside, d), filepath.Join(data, d)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if looksLikeRootFilesystem(data) {
+		t.Fatal("a data partition with etc and usr symlinks out of it was taken as root")
+	}
+
+	// A relative link inside the candidate still counts.
+	rel := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(rel, "usr", "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rel, "usr", "lib", "os-release"), []byte("ID=x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(rel, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../usr/lib/os-release", filepath.Join(rel, "etc", "os-release")); err != nil {
+		t.Fatal(err)
+	}
+	if !looksLikeRootFilesystem(rel) {
+		t.Fatal("a root with etc/os-release -> ../usr/lib/os-release was rejected")
+	}
+}
