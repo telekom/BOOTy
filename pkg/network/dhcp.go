@@ -159,21 +159,26 @@ var (
 
 // replaceLeaseAddr sets addr on link. The kernel keys IPv4 addresses by
 // address and prefix, so AddrReplace alone would keep the same IP with an
-// older prefix next to the new one. Those entries are removed first.
+// older prefix next to the new one. Those entries are removed after the new
+// address is in place, so a failure never leaves the link without the lease.
 func replaceLeaseAddr(link netlink.Link, addr *netlink.Addr) error {
+	if err := netlink.AddrReplace(link, addr); err != nil {
+		return err //nolint:wrapcheck // callers add context
+	}
 	existing, err := netlink.AddrList(link, netlink.FAMILY_V4)
 	if err != nil {
-		return fmt.Errorf("list addresses: %w", err)
+		slog.Warn("failed to list addresses for DHCP prefix cleanup", "iface", link.Attrs().Name, "error", err)
+		return nil
 	}
 	for i := range existing {
 		a := &existing[i]
 		if a.IP.Equal(addr.IP) && a.IPNet.String() != addr.IPNet.String() {
 			if err := netlink.AddrDel(link, a); err != nil && !errors.Is(err, syscall.EADDRNOTAVAIL) {
-				return fmt.Errorf("remove %s: %w", a.IPNet, err)
+				slog.Warn("failed to remove DHCP address with an old prefix", "iface", link.Attrs().Name, "addr", a.IPNet, "error", err)
 			}
 		}
 	}
-	return netlink.AddrReplace(link, addr) //nolint:wrapcheck // callers add context
+	return nil
 }
 
 // onBound returns a callback that configures the interface address and default route.
