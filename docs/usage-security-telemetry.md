@@ -7,12 +7,11 @@ linked.
 
 ## Secure Boot
 
-The provisioning flow uses these keys:
-
-| Key | Effect |
-|-----|--------|
-| `SECUREBOOT_REENABLE` | BOOTy appends `SECUREBOOT_REENABLE=true` to the success status message and skips kexec. CAPRF then turns Secure Boot on. |
-| `SECUREBOOT_SHIM_SHA256`, `SECUREBOOT_GRUB_SHA256`, `SECUREBOOT_KERNEL_SHA256`, `SECUREBOOT_PINNED_DIGESTS` | Pin the SHA256 digests of the installed shim, GRUB EFI binary and kernel. |
+`SECUREBOOT_REENABLE=true` appends `SECUREBOOT_REENABLE=true` to the success
+status message and skips kexec. CAPRF then turns Secure Boot on. The
+`SECUREBOOT_*_SHA256` and `SECUREBOOT_PINNED_DIGESTS` keys pin the SHA256
+digests of the installed shim, GRUB EFI binary and kernel.
+[Secure Boot](configuration.md#secure-boot) lists the keys.
 
 The `verify-secureboot-chain` step runs only when at least one digest is
 pinned. It then looks for all three components in the installed root:
@@ -58,12 +57,11 @@ LUKS unlock. See [proposal-cryptenroll-tpm.md](proposal-cryptenroll-tpm.md).
 
 ## Telemetry
 
-| Key | Effect |
-|-----|--------|
-| `TELEMETRY_ENABLED` | Turns on the two POST requests below. |
-| `METRICS_URL` | Receives the metrics summary as JSON. |
-| `TELEMETRY_URL` | Used when `METRICS_URL` is not set. |
-| `EVENT_URL` | Receives the last provisioning event. |
+`TELEMETRY_ENABLED=true` turns on the telemetry POST requests. `METRICS_URL`,
+or `TELEMETRY_URL` when `METRICS_URL` is not set, receives the metrics
+summary as JSON. `EVENT_URL` receives the last provisioning event.
+[Health, inventory, firmware and telemetry](configuration.md#health-inventory-firmware-and-telemetry)
+lists the keys.
 
 When a provisioning run ends, with success or with an error, BOOTy posts the
 metrics summary. The requests use the CAPRF token and up to 3 attempts. A

@@ -426,8 +426,8 @@ BOOTy selects the ramdisk network stack from the vars: GoBGP with
 (`BOND_INTERFACES`, `VLANS`) add link layers below the stack. Netplan files
 from the provisioner override these keys.
 
-[docs/configuration.md](docs/configuration.md#common-network) lists every
-network key with its default and its values. [docs/networking.md](docs/networking.md)
+[docs/configuration.md](docs/configuration.md#common-network) lists the
+network keys in the Common network, GoBGP and EVPN, and FRR sections. [docs/networking.md](docs/networking.md)
 describes the stack selection, the peer modes and the EVPN route modes.
 
 The checked-in `topology-lacp.clab.yml` file is retained for compatibility with
