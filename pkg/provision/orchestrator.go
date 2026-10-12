@@ -2646,6 +2646,14 @@ func (o *Orchestrator) growPartition(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("determine partition number of %s: %w", target, err)
 	}
+	if target != o.rootPartition {
+		// The legacy provisioner runs e2fsck -p -f before growpart, so an
+		// uncorrectable filesystem stops the run before the partition
+		// table changes.
+		if err := o.disk.CheckExtFilesystemPreen(ctx, target); err != nil {
+			return fmt.Errorf("check partition before growing: %w", err)
+		}
+	}
 	return o.disk.GrowPartition(ctx, o.targetDisk, partNum)
 }
 
@@ -2696,11 +2704,8 @@ func (o *Orchestrator) resizeFilesystem(ctx context.Context) error {
 		return err
 	}
 	if target != o.rootPartition {
-		// The grown partition is not mounted: check it like the legacy
-		// e2fsck -p -f, then resize it offline.
-		if err := o.disk.CheckExtFilesystemPreen(ctx, target); err != nil {
-			return fmt.Errorf("check grown partition: %w", err)
-		}
+		// The grown partition is not mounted. grow-partition checked it
+		// with e2fsck -p -f, so resize it offline.
 		return o.disk.ResizeFilesystem(ctx, target, "")
 	}
 	return o.disk.ResizeFilesystem(ctx, o.rootPartition, newroot)

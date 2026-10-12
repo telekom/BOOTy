@@ -4966,7 +4966,7 @@ func TestGrowPartitionLegacyCompatGrowsLastLinuxPartition(t *testing.T) {
 			got = append(got, c.name+" "+strings.Join(c.args, " "))
 		}
 	}
-	want := []string{"growpart --update on /dev/sda 3", "e2fsck -p -f /dev/sda3", "resize2fs /dev/sda3"}
+	want := []string{"e2fsck -p -f /dev/sda3", "growpart --update on /dev/sda 3", "resize2fs /dev/sda3"}
 	if strings.Join(got, ";") != strings.Join(want, ";") {
 		t.Fatalf("commands = %q, want %q", got, want)
 	}
@@ -5081,5 +5081,27 @@ func TestGrowPartitionLegacyCompatMBRGrowsRoot(t *testing.T) {
 	want := []string{"growpart --update on /dev/sda 1", "resize2fs /dev/sda1"}
 	if strings.Join(got, ";") != strings.Join(want, ";") {
 		t.Fatalf("commands = %q, want %q", got, want)
+	}
+}
+
+// Legacy evidence: provision.sh runs e2fsck -p -f before growpart. A
+// filesystem error stops the run before the partition table changes.
+func TestGrowPartitionLegacyCompatCheckFailureKeepsPartitionTable(t *testing.T) {
+	cfg := &config.MachineConfig{LegacyCompat: true}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.rootPartition = "/dev/sda2"
+	cmd.setResult("sfdisk --json", []byte(`{"partitiontable":{"partitions":[
+		{"node":"/dev/sda2","type":"0FC63DAF-8483-4772-8E79-3D69D8477DE4"},
+		{"node":"/dev/sda3","type":"0FC63DAF-8483-4772-8E79-3D69D8477DE4"}]}}`), nil)
+	cmd.setResult("e2fsck -p", nil, errors.New("e2fsck failed"))
+
+	if err := o.growPartition(context.Background()); err == nil {
+		t.Fatal("growPartition() = nil, want the e2fsck error")
+	}
+	for _, c := range cmd.calls {
+		if c.name == "growpart" {
+			t.Fatalf("growpart ran after a failed e2fsck: %v", c)
+		}
 	}
 }
