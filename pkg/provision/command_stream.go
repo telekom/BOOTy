@@ -5,8 +5,8 @@ package provision
 import (
 	"bufio"
 	"context"
-	"fmt"
 	"errors"
+	"fmt"
 	"io"
 	"os/exec"
 	"syscall"
