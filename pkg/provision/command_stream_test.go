@@ -57,3 +57,17 @@ func TestDefaultRunStreamingCommandDoesNotWaitForBackgroundChildren(t *testing.T
 		t.Fatalf("command returned after %s, the background child held it", elapsed)
 	}
 }
+
+// Cancellation kills the script and its background children.
+func TestDefaultRunStreamingCommandCancelKillsGroup(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := defaultRunStreamingCommand(ctx, func(string) {}, "", []string{"/bin/sh", "-c", "sleep 30 & sleep 30"})
+	if err == nil {
+		t.Fatal("canceled command returned nil")
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("cancellation took %s", elapsed)
+	}
+}

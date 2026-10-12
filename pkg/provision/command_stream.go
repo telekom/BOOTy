@@ -74,7 +74,16 @@ func defaultRunStreamingCommand(ctx context.Context, onLine func(string), root s
 		cmd.SysProcAttr.Chroot = root
 		cmd.Dir = "/"
 	}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		// ESRCH: the group already exited, which is not a failure.
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return err
+		}
+		return nil
+	}
 	cmd.WaitDelay = streamWaitDelay
 	cmd.Stdout = pw
 	cmd.Stderr = pw
