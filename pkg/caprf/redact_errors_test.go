@@ -2,11 +2,15 @@ package caprf
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -81,5 +85,48 @@ func TestTransportErrorsRedactRedirectTarget(t *testing.T) {
 		if strings.Contains(err.Error(), "REDIRECTSECRET") {
 			t.Fatalf("redirect error leaks the signature: %v", err)
 		}
+	}
+}
+
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "i/o timeout" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return false }
+
+func TestClassifyTransportError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		op       string
+		cause    string
+		timeout  bool
+		sentinel error
+	}{
+		{"canceled", fmt.Errorf("wrap: %w", context.Canceled), "Post", "canceled", false, context.Canceled},
+		{"deadline", fmt.Errorf("wrap: %w", context.DeadlineExceeded), "Post", "timeout", true, context.DeadlineExceeded},
+		{"net timeout", timeoutErr{}, "Post", "timeout", true, nil},
+		{"dns", &net.DNSError{Err: "no such host", Name: "secret.example"}, "Post", "dns lookup failed", false, nil},
+		{"refused", &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}, "Post", "connection refused", false, nil},
+		{"reset", &net.OpError{Op: "read", Err: syscall.ECONNRESET}, "Post", "connection reset", false, nil},
+		{"tls authority", x509.UnknownAuthorityError{}, "Get", "tls error", false, nil},
+		{"tls record", tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"}, "Get", "tls error", false, nil},
+		{"parse", errors.New(`invalid URL escape "%zz"`), "parse", "invalid URL", false, nil},
+		{"other", errors.New("server said ?token=SECRET"), "Post", "transport error", false, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cause, timeout, sentinel := classifyTransportError(tt.err, tt.op)
+			if cause != tt.cause || timeout != tt.timeout || !errors.Is(sentinel, tt.sentinel) || (tt.sentinel == nil && sentinel != nil) {
+				t.Fatalf("classifyTransportError() = %q, %v, %v; want %q, %v, %v", cause, timeout, sentinel, tt.cause, tt.timeout, tt.sentinel)
+			}
+			err := redactedURLError("https://user:pw@caprf.example/x?token=SECRET", tt.err)
+			if strings.Contains(err.Error(), "SECRET") || strings.Contains(err.Error(), "pw@") {
+				t.Fatalf("error leaks credentials: %v", err)
+			}
+			if tt.sentinel != nil && !errors.Is(err, tt.sentinel) {
+				t.Fatalf("errors.Is(%v, %v) = false", err, tt.sentinel)
+			}
+		})
 	}
 }
