@@ -879,8 +879,19 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 // type5PathsMu.
 func (o *OverlayTier) addType5Path(prefix string, path *type5Path) {
 	o.rememberType5Path(prefix, path.key, path)
-	if o.applyType5Path(path) {
+	ok, routeChanged := o.applyType5PathDetailed(path)
+	if ok {
 		o.markType5Active(prefix, path.key)
+		return
+	}
+	if !routeChanged {
+		// The kernel route was not touched. Another installed path stays
+		// installed. If this was an update of the installed path itself,
+		// the recorded path no longer matches the kernel, so forget which
+		// path is installed and let a later withdraw delete by prefix.
+		if o.type5Active[prefix] == path.key {
+			delete(o.type5Active, prefix)
+		}
 		return
 	}
 	previous := o.type5Active[prefix]
@@ -952,15 +963,22 @@ func (o *OverlayTier) markType5Active(prefix, key string) {
 // applyType5Path prepares the VTEP route and installs the kernel route and
 // gateway state for one path. The caller holds type5PathsMu.
 func (o *OverlayTier) applyType5Path(p *type5Path) bool {
+	ok, _ := o.applyType5PathDetailed(p)
+	return ok
+}
+
+// applyType5PathDetailed is applyType5Path that also reports whether the
+// kernel route was replaced, even if the gateway state then failed.
+func (o *OverlayTier) applyType5PathDetailed(p *type5Path) (ok, routeChanged bool) {
 	vtepIP, ok := o.ensureType5VTEP(p.vtep, false)
 	if !ok {
-		return false
+		return false, false
 	}
 	state, ok := o.type5RouteState(p.route, p.vtep, vtepIP)
 	if !ok {
-		return false
+		return false, false
 	}
-	return o.installType5Route(state, p.routerMAC, p.valid)
+	return o.installType5RouteDetailed(state, p.routerMAC, p.valid)
 }
 
 type type5RouteState struct {
@@ -1077,10 +1095,17 @@ func (o *OverlayTier) removeType5Prefix(state type5RouteState) {
 }
 
 func (o *OverlayTier) installType5Route(state type5RouteState, routerMAC net.HardwareAddr, valid bool) bool {
+	ok, _ := o.installType5RouteDetailed(state, routerMAC, valid)
+	return ok
+}
+
+// installType5RouteDetailed also reports whether the kernel route was
+// replaced, so a caller can tell a failed route from failed gateway state.
+func (o *OverlayTier) installType5RouteDetailed(state type5RouteState, routerMAC net.HardwareAddr, valid bool) (ok, routeChanged bool) {
 	route := buildType5KernelRoute(state.link, state.dst, state.gw, o.overlayRouteTable())
 	if err := o.netlinkOps.RouteReplace(route); err != nil {
 		o.log.Warn("failed to install route from type-5", "dst", state.dst, "gw", state.gw, "error", err)
-		return false
+		return false, false
 	}
 	o.log.Info("installed route from type-5", "dst", state.dst, "gw", state.gw)
 	switch {
@@ -1089,9 +1114,9 @@ func (o *OverlayTier) installType5Route(state type5RouteState, routerMAC net.Har
 	case len(routerMAC) == 0:
 		o.clearType5GatewayNeighbor(state.link, state.dst.String())
 	default:
-		return o.setType5GatewayNeighbor(state.link, state.dst.String(), state.gw, state.vtep, routerMAC)
+		return o.setType5GatewayNeighbor(state.link, state.dst.String(), state.gw, state.vtep, routerMAC), true
 	}
-	return true
+	return true, true
 }
 
 func (o *OverlayTier) ensureType5VTEP(vtep string, withdraw bool) (net.IP, bool) {

@@ -3522,6 +3522,7 @@ func TestHandleType5RouteKeepsRouteWhileAnotherGatewayAdvertisesIt(t *testing.T)
 		netlinkOps: mock,
 	}
 	routeVia := func(rdAdmin uint32, gw string) *apipb.EVPNIPPrefixRoute {
+		t.Helper()
 		rd, err := anypb.New(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAdmin})
 		if err != nil {
 			t.Fatalf("anypb.New: %v", err)
@@ -3565,6 +3566,7 @@ func TestHandleType5RouteDeletesWithdrawnRouteWhenFallbackFails(t *testing.T) {
 		netlinkOps: mock,
 	}
 	routeVia := func(rdAdmin uint32, gw string) *apipb.EVPNIPPrefixRoute {
+		t.Helper()
 		rd, err := anypb.New(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAdmin})
 		if err != nil {
 			t.Fatalf("anypb.New: %v", err)
@@ -3621,6 +3623,7 @@ func TestHandleType5RouteFallsBackToPathWhoseInstallFailed(t *testing.T) {
 		netlinkOps: mock,
 	}
 	routeVia := func(rdAdmin uint32, gw string) *apipb.EVPNIPPrefixRoute {
+		t.Helper()
 		rd, err := anypb.New(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAdmin})
 		if err != nil {
 			t.Fatalf("anypb.New: %v", err)
@@ -3657,6 +3660,7 @@ func TestHandleType5RouteTriesEveryRemainingPath(t *testing.T) {
 		netlinkOps: mock,
 	}
 	routeVia := func(rdAdmin uint32, gw string) *apipb.EVPNIPPrefixRoute {
+		t.Helper()
 		rd, err := anypb.New(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAdmin})
 		if err != nil {
 			t.Fatalf("anypb.New: %v", err)
@@ -3940,5 +3944,21 @@ func TestOverlayTeardownWaitsForInFlightType5Update(t *testing.T) {
 	overlay.handleType5Route(type5FailoverRoute(t, 2, "192.168.4.2"), "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
 	if vtepRoutes.Load() != before {
 		t.Fatal("an update after Teardown added a VTEP route")
+	}
+}
+
+func TestHandleType5RouteKeepsActiveRouteWhenNewRouteReplaceFails(t *testing.T) {
+	mock := &failingGatewayRouteOps{mockOverlayNetlinkOps: &mockOverlayNetlinkOps{}, failGw: "192.168.4.2"}
+	overlay := newType5FailoverTestOverlay(mock)
+	routeA, routeB := type5FailoverRoute(t, 1, "192.168.4.1"), type5FailoverRoute(t, 2, "192.168.4.2")
+
+	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
+	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
+
+	if len(mock.routeDels) != 0 {
+		t.Fatalf("working route via A was deleted after B failed to install: %v", mock.routeDels)
+	}
+	if got := overlay.type5Active["0.0.0.0/0"]; got != type5PathKey(routeA) {
+		t.Fatalf("active path = %q, want A", got)
 	}
 }
