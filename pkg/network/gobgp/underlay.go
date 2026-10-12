@@ -254,6 +254,14 @@ func (u *UnderlayTier) createUnderlayDummy() error {
 		return fmt.Errorf("add addr to %s: %w", dummyName, err)
 	}
 
+	// The VXLAN device can bind to the dummy (netplan tunnel "link"); its
+	// MTU must fit under the dummy MTU, like the template's "mtu: 9100".
+	if u.cfg.MTU > 0 {
+		if err := netlink.LinkSetMTU(link, u.cfg.MTU); err != nil {
+			return fmt.Errorf("set %s MTU: %w", dummyName, err)
+		}
+	}
+
 	if err := netlink.LinkSetUp(link); err != nil {
 		return fmt.Errorf("bring up %s: %w", dummyName, err)
 	}

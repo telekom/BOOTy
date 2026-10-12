@@ -292,8 +292,9 @@ Kept current as slices land.
 |---|---|---|---|
 | N2 set-name, MAC match | `TestLegacyCompatNetplanSetNameQEMU` | KVM `caprf-legacy-compat` | planned |
 | C2, N4 unknown statements and keys | unit and mutation tests only (a failing parse is fully observable without a lab) | `Test` | planned |
-| C1, C4, C5, C6, C7, C8 | lab `peer_group_members_established`, `local_as_replace_as_path`, `own_asn_loop_rejected`, `timers_negotiated`, `default_afi_only_evpn_to_rr` | E2E Production Templates (new) | planned |
-| C3 VRF-bound RR sessions, both directions | lab `rr_session_vrf_outbound`, `rr_session_vrf_inbound` | same | planned |
+| C1, C4, C5, C6, C7, C8 | `TestProdTplLeafSessions`, `TestProdTplLocalASReplaceASPath`, `TestProdTplRRSessions` (peer-group members, local-as, timers, per-peer AFs; each also against the shadow FRR node) | E2E Production Templates | all fail on slice a (sessions from first-match heuristics), see the slice b PR |
+| C6 own ASN loop check | lab `own_asn_loop_rejected` | same | planned (slice e, with `allowas-in`) |
+| C3 VRF-bound RR sessions, both directions | `TestProdTplRRSessionVRFOutbound`, `TestProdTplRRSessionVRFInbound` | same | both fail on slice a, see the slice b PR |
 | C5 RFC 5549 routes | lab `unnumbered_rfc5549_routes` | same | planned |
 | C9 | lab `ebgp_requires_policy` | same | planned |
 | N1, N3 devices | differential lab kernel-state comparison (`ip -j link`, `ip -j addr`, `bridge -j link`) | same | planned |
