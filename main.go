@@ -843,7 +843,11 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 	// Auto-detect netplan configuration files injected by the provisioner.
 	// Netplan-derived values override vars-based values, allowing the same
 	// config format used by the old deployer to work as a drop-in with BOOTy.
-	if npCfg := detectNetplanConfig(); npCfg != nil {
+	npCfg, err := detectNetplanConfig(deployNetplanDir, deployFRRConfPath)
+	if err != nil {
+		return nil, err
+	}
+	if npCfg != nil {
 		mergeNetplanConfig(netCfg, npCfg)
 	}
 	keepProvisionerResolvConf(cfg, netCfg)
@@ -1070,33 +1074,40 @@ func dhcpFallback(ctx context.Context, netCfg *network.Config) network.Mode {
 	return dhcp
 }
 
+// Paths of the netplan and FRR files in the provisioner's file-system overlay.
+const (
+	deployNetplanDir  = "/deploy/file-system/etc/netplan"
+	deployFRRConfPath = "/deploy/file-system/etc/frr/frr.conf"
+)
+
 // detectNetplanConfig checks for netplan YAML files in the provisioner's
 // file-system overlay. If found, it parses them (and any FRR config) into
-// a network.Config. Returns nil if no netplan files are present.
-func detectNetplanConfig() *network.Config {
-	const netplanDir = "/deploy/file-system/etc/netplan"
-	const frrConfPath = "/deploy/file-system/etc/frr/frr.conf"
-
+// a network.Config. Returns nil if no netplan files are present. Files that
+// are present but cannot be parsed are an error: falling back to vars would
+// bring up a different network than the operator configured.
+func detectNetplanConfig(netplanDir, frrConfPath string) (*network.Config, error) {
 	if !netplan.HasNetplanFiles(netplanDir) {
-		return nil
+		return nil, nil
 	}
 	slog.Info("detected netplan configuration files", "dir", netplanDir)
 
 	np, err := netplan.ParseDir(netplanDir)
 	if err != nil {
-		slog.Warn("failed to parse netplan files, falling back to vars", "error", err)
-		return nil
+		return nil, fmt.Errorf("parse netplan files in %s: %w", netplanDir, err)
 	}
 
 	var frrParams *netplan.FRRParams
-	if data, frrErr := os.ReadFile(frrConfPath); frrErr == nil {
+	data, frrErr := os.ReadFile(frrConfPath)
+	switch {
+	case frrErr == nil:
 		parsed, parseErr := netplan.ParseFRRConfigBytes(data)
 		if parseErr != nil {
-			slog.Warn("failed to parse FRR config", "error", parseErr)
-		} else {
-			frrParams = parsed
-			slog.Info("parsed FRR configuration", "asn", frrParams.ASN, "evpn", frrParams.EVPN)
+			return nil, fmt.Errorf("parse FRR config %s: %w", frrConfPath, parseErr)
 		}
+		frrParams = parsed
+		slog.Info("parsed FRR configuration", "asn", frrParams.ASN, "evpn", frrParams.EVPN)
+	case !errors.Is(frrErr, os.ErrNotExist):
+		return nil, fmt.Errorf("read FRR config %s: %w", frrConfPath, frrErr)
 	}
 
 	cfg := netplan.ToNetworkConfig(np, frrParams)
@@ -1104,7 +1115,7 @@ func detectNetplanConfig() *network.Config {
 		"mode", cfg.NetworkMode, "asn", cfg.ASN,
 		"vni", cfg.ProvisionVNI, "underlay", cfg.UnderlayIP,
 	)
-	return cfg
+	return cfg, nil
 }
 
 // mergeNetplanConfig overrides dst fields with values from the netplan-derived
