@@ -91,13 +91,17 @@ statement that BOOTy does not implement is also an error, unless
 BOOTy takes these values from netplan:
 
 - The first VXLAN tunnel with an `id` gives the provision VNI, the underlay
-  IP (`local`) and the VXLAN underlay link (`link`).
+  IP (`local`), the VXLAN underlay link (`link`) and the VXLAN device name.
 - A dummy device address with `/32` gives the underlay IP and the underlay
   dummy name.
-- The bridge that contains a tunnel and has an address gives the bridge name
-  and the provision IP. Its `macaddress` gives the router MAC.
-- The first ethernet address gives the static IP; a `default` route gives
-  the static gateway. `nameservers` give the DNS resolvers.
+- The first bridge that contains a tunnel gives the bridge name. A bridge
+  that contains a tunnel and has an address gives the provision IP. The
+  `macaddress` of the bridge gives the router MAC.
+- The addresses of `lo` stay on `lo`, like the IPv6 `/128` provisioning
+  address of the bm4x templates. GoBGP adds them instead of the overlay
+  loopback address.
+- The first other ethernet address gives the static IP; a `default` route
+  gives the static gateway. `nameservers` give the DNS resolvers.
 - VLANs, the first bond, and VRFs with a table.
 
 BOOTy takes these values from `frr.conf`:
@@ -109,6 +113,12 @@ BOOTy takes these values from `frr.conf`:
   and `127.0.0.0/8`, like FRR.
 - `advertise-all-vni` and the L3VNIs select the EVPN route mode (see
   [EVPN route modes](#evpn-route-modes-gobgp)).
+- `ip route P blackhole` and `ipv6 route P blackhole` give blackhole routes
+  in the main table, with protocol 196 and metric 20 like zebra.
+- When the provision VNI is an L3VNI, the `network` lines of its VRF give
+  Type-5 routes for each address family that `advertise ipv4 unicast` or
+  `advertise ipv6 unicast` selects (see
+  [Routes BOOTy originates](#routes-booty-originates)).
 
 ### BGP sessions
 
@@ -362,7 +372,7 @@ on purpose although they are not in the templates:
 Both stacks:
 
 - Use the provision bridge `br.provision` and the VXLAN device `vx<VNI>`
-  with UDP port 4789 and MAC learning off. The VXLAN MTU is the NIC MTU
+  (GoBGP: the netplan bridge and tunnel names when set) with UDP port 4789 and MAC learning off. The VXLAN MTU is the NIC MTU
   minus 50. The NIC MTU is 9000, or the largest netplan `mtu`.
 - Put the underlay IP on the `dummy.underlay` device (FRR falls back to
   `lo`) and the overlay IP on `lo`.
@@ -402,14 +412,17 @@ This section applies to GoBGP. FRR ignores the EVPN mode settings.
 
 BOOTy decides the mode in this order:
 
-1. `EVPN_TYPE5_ONLY=true` selects Type-5-only.
-2. `EVPN_L2_ENABLED=true` selects L2.
-3. Auto-detection: the provisioner `frr.conf` contains `advertise-all-vni`,
-   and the provision VNI is not an FRR L3VNI. This selects L2. An L3VNI is a
-   `vni N` (optionally `prefix-routes-only`) at the top level of `frr.conf`
-   or inside a `vrf` block. BOOTy checks the provision VNI after it merges
-   the vars, so a VNI from `/deploy/vars` also counts.
-4. Otherwise: Type-5 with gateway.
+1. The provision VNI is an FRR L3VNI: Type-5-only, like FRR, which
+   originates only Type-5 routes for an L3VNI. An L3VNI is a `vni N`
+   (optionally `prefix-routes-only`) at the top level of `frr.conf` or
+   inside a `vrf` block. BOOTy checks the provision VNI after it merges the
+   vars, so a VNI from `/deploy/vars` also counts. This wins over
+   `EVPN_L2_ENABLED=true`.
+2. `EVPN_TYPE5_ONLY=true` selects Type-5-only.
+3. `EVPN_L2_ENABLED=true` selects L2.
+4. Auto-detection: the provisioner `frr.conf` contains `advertise-all-vni`.
+   This selects L2.
+5. Otherwise: Type-5 with gateway.
 
 `EVPN_TYPE5_ONLY=true` wins over auto-detected L2. `EVPN_TYPE5_ONLY=true`
 together with `EVPN_L2_ENABLED=true` is an error: the GoBGP setup fails
@@ -436,6 +449,7 @@ router ID as next hop. The route target is `vpn_rt`, or
 | Route | Content | Mode |
 |---|---|---|
 | Type-5 (IP prefix) | `/32` of the `provision_ip` host address, gateway `0.0.0.0`, label = VNI, extended communities: route target, VXLAN encapsulation, router MAC | All. Skipped when `provision_ip` is empty |
+| Type-5 (IP prefix) | Each `network` of the L3VNI VRF in `frr.conf` (see [Netplan and FRR config input](#netplan-and-frr-config-input)), gateway `0.0.0.0` or `::`, same label and extended communities. Like the FRR import check, only a prefix that is a `lo` address, the `provision_ip` prefix or a blackhole route is advertised. BOOTy logs the others. | Type-5-only from an L3VNI |
 | Type-3 (IMET) | Router ID, PMSI tunnel type ingress replication | L2 |
 | Type-2 (MAC/IP) | Bridge MAC and `provision_ip` host address | L2 |
 
@@ -450,7 +464,7 @@ routes whose next hop is its own router ID.
 
 | Route | Action |
 |---|---|
-| Type-5 | Installs an on-link kernel route for the prefix through the route gateway on the provision bridge, in the overlay VRF table when one is set. A gateway of `0.0.0.0` means the VTEP (next hop). With a router MAC, BOOTy also installs a neighbor entry for the gateway and an FDB entry `router MAC -> VTEP`. A withdraw removes them. |
+| Type-5 | Installs an on-link kernel route for the prefix through the route gateway on the provision bridge, in the overlay VRF table when one is set. A gateway of `0.0.0.0` or `::` means the VTEP (next hop). With a router MAC, BOOTy also installs a neighbor entry for the gateway and an FDB entry `router MAC -> VTEP`. A withdraw removes them. An IPv6 prefix over an IPv4 VTEP is installed like zebra: gateway `::ffff:<VTEP>`, protocol `bgp`, metric 20, and the neighbor entry `extern_learn NOARP`. BOOTy does not install a route for the prefix of a blackhole route; the static route wins, as in zebra. |
 | Type-2 (L2 only) | Installs the FDB entry `MAC -> VTEP`. A withdraw removes it. |
 | Type-3 (L2 only) | Installs the BUM FDB entry `00:00:00:00:00:00 -> VTEP`. A withdraw removes it. |
 
@@ -460,7 +474,7 @@ routes whose next hop is its own router ID.
 |---|---|---|---|
 | BUM FDB entry `00:00:00:00:00:00 -> provision_gateway` on `vx<VNI>` | Yes | No | No |
 | `/32` route to `provision_gateway` | Yes | No | Yes |
-| `/32` route to each remote VTEP from a Type-5 next hop | No | Yes | No |
+| `/32` route to each remote VTEP from a Type-5 next hop | No | Yes, except with `frr.conf` sessions: then the routes learned from the fabric reach the VTEP | No |
 
 The underlay `/32` routes use a fabric NIC with link scope. With
 `VRF_NAME`, BOOTy uses the first NIC in the VRF and the VRF table. Without

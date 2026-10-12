@@ -1684,7 +1684,10 @@ jobs:
             TestProdTplFIBRoutes \
             TestProdTplFIBWithdraw \
             TestProdTplUplinkCarrierLoss \
-            TestProdTplRRSessionVRFInbound; do
+            TestProdTplRRSessionVRFInbound \
+            TestProdTplType5IPv6Install \
+            TestProdTplType5Origination \
+            TestProdTplType5CAPRFOverIPv6; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl.log; then
               echo "::error::${expected} did not pass"
               exit 1
@@ -1700,7 +1703,7 @@ jobs:
         timeout-minutes: 5
         run: |
           mkdir -p prodtpl-logs
-          for node in leaf01 dcgw01 dcgw02 shadow booty caprf-mock; do
+          for node in leaf01 dcgw01 dcgw02 shadow booty native caprf-mock caprf6; do
             name="clab-booty-prodtpl-lab-${node}"
             timeout 30 sudo docker logs "${name}" > "prodtpl-logs/${node}.log" 2>&1 || true
             {
@@ -1708,6 +1711,12 @@ jobs:
               timeout 5 sudo docker exec "${name}" ip -d addr show 2>&1 || true
               echo "=== ip route show table all ==="
               timeout 5 sudo docker exec "${name}" ip route show table all 2>&1 || true
+              echo "=== ip -6 route show table all ==="
+              timeout 5 sudo docker exec "${name}" ip -6 route show table all 2>&1 || true
+              echo "=== ip neigh ==="
+              timeout 5 sudo docker exec "${name}" ip neigh show 2>&1 || true
+              echo "=== bridge fdb ==="
+              timeout 5 sudo docker exec "${name}" bridge fdb show 2>&1 || true
               echo "=== ss -tn ==="
               timeout 5 sudo docker exec "${name}" ss -tn 2>&1 || true
             } > "prodtpl-logs/${node}-network.txt" 2>&1

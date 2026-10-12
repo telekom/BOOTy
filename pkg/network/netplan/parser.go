@@ -222,18 +222,22 @@ func extractTunnels(np *Config, cfg *network.Config) {
 	// VNI, local underlay address and underlay link all come from that one
 	// tunnel, so the VXLAN device never binds a link of a different tunnel.
 	var provision TunnelConfig
+	provisionName := ""
 	found := false
 	for _, name := range names {
 		t := np.Network.Tunnels[name]
 		if !strings.EqualFold(t.Mode, "vxlan") || t.ID <= 0 {
 			continue
 		}
-		provision = t
+		provision, provisionName = t, name
 		found = true
 		break
 	}
 
 	if found {
+		if cfg.VXLANName == "" {
+			cfg.VXLANName = provisionName
+		}
 		if cfg.ProvisionVNI == 0 {
 			cfg.ProvisionVNI = uint32(provision.ID)
 		}
@@ -287,10 +291,15 @@ func extractBridges(np *Config, cfg *network.Config) {
 				break
 			}
 		}
-		if len(br.Addresses) == 0 {
+		if !hasVXLAN {
 			continue
 		}
-		if hasVXLAN && cfg.ProvisionIP == "" {
+		// The provision bridge is the first bridge with a VXLAN port. The
+		// bm4x L3VNI bridge has no address; it still names the bridge.
+		if cfg.BridgeName == "" {
+			cfg.BridgeName = name
+		}
+		if len(br.Addresses) > 0 && cfg.ProvisionIP == "" {
 			cfg.BridgeName = name
 			cfg.ProvisionIP = br.Addresses[0]
 			break
@@ -317,6 +326,11 @@ func extractEthernets(np *Config, cfg *network.Config) (dhcpCount int, dnsList [
 		}
 		if eth.Nameservers != nil {
 			dnsList = append(dnsList, eth.Nameservers.Addresses...)
+		}
+		if name == "lo" && eth.Match == nil {
+			// Addresses on lo are host addresses, not a static uplink.
+			cfg.LoopbackAddrs = append(cfg.LoopbackAddrs, eth.Addresses...)
+			continue
 		}
 		applyEthernetMatch(name, &eth, cfg)
 		if eth.Match == nil {
@@ -472,6 +486,11 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 		cfg.UnderlayIP = frr.RouterID
 	}
 	cfg.EVPNL3VNIs = frr.L3VNIs
+	cfg.BlackholeRoutes = frr.BlackholeRoutes
+	if cfg.ProvisionVNI != 0 && slices.Contains(frr.L3VNIs, cfg.ProvisionVNI) {
+		cfg.EVPNType5Only = true
+		cfg.Type5Networks = type5Networks(frr.Model, cfg.ProvisionVNI)
+	}
 	cfg.BGPSessions = frr.Sessions
 	cfg.BGPMultipathRelax = frr.MultipathRelax
 	if frr.AdvertiseAllVNI {

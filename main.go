@@ -1073,7 +1073,13 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 		BGPUnderlayAF:     cfg.Network.BGP.UnderlayAF,
 		BGPOverlayType:    cfg.Network.BGP.OverlayType,
 		EVPNL2Enabled:     cfg.Network.EVPN.L2Enabled,
-		EVPNType5Only:     cfg.Network.EVPN.Type5Only,
+		EVPNType5Only:     cfg.Network.EVPN.Type5Only != nil && *cfg.Network.EVPN.Type5Only,
+		EVPNType5OnlySet:  cfg.Network.EVPN.Type5Only != nil,
+		Type5Networks:     splitList(cfg.Network.EVPN.Type5Networks),
+		LoopbackAddrs:     splitList(cfg.Network.LoopbackAddresses),
+		BlackholeRoutes:   splitList(cfg.Network.BlackholeRoutes),
+		BridgeName:        cfg.Network.EVPN.BridgeName,
+		VXLANName:         cfg.Network.EVPN.VXLANName,
 		BGPAuthPassword:   cfg.Network.BGP.AuthPassword,
 		BGPMinPeers:       cfg.Network.BGP.MinPeers,
 	}
@@ -1299,7 +1305,7 @@ func mergeNetplanConfig(dst, src *network.Config) {
 		dst.BGPNeighbors = src.BGPNeighbors
 		dst.BGPRemoteASN = src.BGPRemoteASN
 	}
-	mergeInferredEVPNL2(dst, src)
+	mergeInferredEVPNMode(dst, src)
 	if src.BondInterfaces != "" {
 		dst.BondInterfaces = src.BondInterfaces
 	}
@@ -1326,6 +1332,18 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	}
 	if src.VXLANLink != "" {
 		dst.VXLANLink = src.VXLANLink
+	}
+	if src.VXLANName != "" {
+		dst.VXLANName = src.VXLANName
+	}
+	if len(src.LoopbackAddrs) > 0 {
+		dst.LoopbackAddrs = src.LoopbackAddrs
+	}
+	if len(src.BlackholeRoutes) > 0 {
+		dst.BlackholeRoutes = src.BlackholeRoutes
+	}
+	if len(src.Type5Networks) > 0 {
+		dst.Type5Networks = src.Type5Networks
 	}
 	if src.MTU > 0 {
 		dst.MTU = src.MTU
@@ -1359,27 +1377,37 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	}
 }
 
-// mergeInferredEVPNL2 applies the EVPN mode inferred from the FRR config.
-// An explicit EVPN_TYPE5_ONLY wins, so operators can force Type-5 only
-// routing. The L3VNI check is repeated with the merged provision VNI because
-// the VNI can come from /deploy/vars when the netplan files do not set it.
-func mergeInferredEVPNL2(dst, src *network.Config) {
-	if dst.EVPNType5Only {
-		return
-	}
+// mergeInferredEVPNMode applies the EVPN mode inferred from the FRR config.
+// A provision VNI that the FRR config maps to a VRF is an L3VNI: FRR
+// originates only Type-5 routes for it, so Type-5 only is the default
+// unless provision_gateway is set (then the mode and its BUM FDB entry stay
+// as before). An explicit EVPN_TYPE5_ONLY (true or false) or
+// EVPN_L2_ENABLED=true wins. Otherwise advertise-all-vni enables L2 EVPN
+// unless EVPN_TYPE5_ONLY forces Type-5 only. The L3VNI check uses the
+// merged provision VNI because the VNI can come from /deploy/vars when the
+// netplan files do not set it.
+func mergeInferredEVPNMode(dst, src *network.Config) {
 	if slices.Contains(src.EVPNL3VNIs, dst.ProvisionVNI) {
-		// An L3VNI has no L2 gateway, like FRR. Without provision_gateway
-		// (the bm4x IPv6 provisioning network) that is Type-5 only. With
-		// a gateway the mode stays as before, so its BUM FDB entry stays.
-		if !dst.EVPNL2Enabled && dst.ProvisionGateway == "" {
+		if !dst.EVPNType5OnlySet && !dst.EVPNL2Enabled && dst.ProvisionGateway == "" {
+			slog.Info("netplan: provision VNI is an FRR L3VNI, using Type-5 routes only", "vni", dst.ProvisionVNI)
 			dst.EVPNType5Only = true
 		}
-		slog.Info("netplan: provision VNI is an FRR L3VNI, using Type-5 routes only", "vni", dst.ProvisionVNI)
 		return
 	}
-	if src.EVPNL2Enabled {
+	if src.EVPNL2Enabled && !dst.EVPNType5Only {
 		dst.EVPNL2Enabled = true
 	}
+}
+
+// splitList splits a comma-separated vars value and drops empty entries.
+func splitList(value string) []string {
+	var out []string
+	for _, f := range strings.Split(value, ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 func mergeProvisionIP(existing, detected string) string {

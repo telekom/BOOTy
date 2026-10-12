@@ -115,7 +115,9 @@ func (s *Stack) Setup(ctx context.Context, _ *network.Config) error {
 
 	// Share the BGP server with the overlay tier.
 	s.overlay.SetBgpServer(s.underlay.BgpServer())
-	if s.cfg.ProvisionGateway == "" {
+	// With FRR config sessions the FIB writer installs the VTEP routes
+	// learned from the fabric, like zebra.
+	if s.cfg.ProvisionGateway == "" && len(s.cfg.Sessions) == 0 {
 		s.overlay.ensureVTEPRoute = s.ensureVTEPRoute
 	}
 

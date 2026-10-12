@@ -1876,20 +1876,20 @@ func TestBuildType5GatewayNeighbor(t *testing.T) {
 	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Index: 42, Name: "br.provision"}}
 
 	t.Run("builds IPv4 permanent neighbor", func(t *testing.T) {
-		neigh := buildType5GatewayNeighbor(link, net.ParseIP("192.168.4.1"), mustParseMAC(t, "62:db:b8:c1:80:52"))
+		neigh := buildType5GatewayNeighbor(link, net.ParseIP("192.168.4.1").To4(), mustParseMAC(t, "62:db:b8:c1:80:52"))
 
 		assertType5GatewayNeighbor(t, neigh, "192.168.4.1", "62:db:b8:c1:80:52")
 	})
 
 	t.Run("skips empty router MAC", func(t *testing.T) {
-		if got := buildType5GatewayNeighbor(link, net.ParseIP("192.168.4.1"), nil); got != nil {
+		if got := buildType5GatewayNeighbor(link, net.ParseIP("192.168.4.1").To4(), nil); got != nil {
 			t.Fatalf("neighbor = %#v, want nil", got)
 		}
 	})
 
 	t.Run("skips EUI-64 router MAC", func(t *testing.T) {
 		mac := mustParseMAC(t, "02:00:00:ff:fe:00:00:10")
-		if got := buildType5GatewayNeighbor(link, net.ParseIP("192.168.4.1"), mac); got != nil {
+		if got := buildType5GatewayNeighbor(link, net.ParseIP("192.168.4.1").To4(), mac); got != nil {
 			t.Fatalf("neighbor = %#v, want nil", got)
 		}
 	})
@@ -2060,8 +2060,8 @@ func TestSetType5GatewayNeighborRollsBackFailedFDBSet(t *testing.T) {
 	overlay.setType5GatewayNeighbor(
 		link,
 		"10.100.0.0/24",
-		net.ParseIP("192.168.4.1"),
-		net.ParseIP("192.168.4.1"),
+		net.ParseIP("192.168.4.1").To4(),
+		net.ParseIP("192.168.4.1").To4(),
 		mustParseMAC(t, "62:db:b8:c1:80:52"),
 	)
 
@@ -2097,8 +2097,8 @@ func TestSetType5GatewayNeighborToleratesRollbackDeleteFailure(t *testing.T) {
 	overlay.setType5GatewayNeighbor(
 		link,
 		"10.100.0.0/24",
-		net.ParseIP("192.168.4.1"),
-		net.ParseIP("192.168.4.1"),
+		net.ParseIP("192.168.4.1").To4(),
+		net.ParseIP("192.168.4.1").To4(),
 		mustParseMAC(t, "62:db:b8:c1:80:52"),
 	)
 
@@ -2123,7 +2123,7 @@ func TestDeleteType5GatewayNeighborSkipsWhenNoRouterMAC(t *testing.T) {
 	}
 	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Index: 42, Name: "br.provision"}}
 
-	overlay.deleteType5GatewayNeighbor(link, "10.100.0.0/24", net.ParseIP("192.168.4.1"), nil, nil)
+	overlay.deleteType5GatewayNeighbor(link, "10.100.0.0/24", net.ParseIP("192.168.4.1").To4(), nil, nil)
 
 	if len(mock.dels) != 0 {
 		t.Fatalf("expected no neighbor delete without a router MAC, got %d", len(mock.dels))
@@ -2143,8 +2143,8 @@ func TestDeleteType5GatewayNeighborUsesCachedRouterMAC(t *testing.T) {
 	overlay.deleteType5GatewayNeighbor(
 		link,
 		"10.100.0.0/24",
-		net.ParseIP("192.168.4.1"),
-		net.ParseIP("192.168.4.1"),
+		net.ParseIP("192.168.4.1").To4(),
+		net.ParseIP("192.168.4.1").To4(),
 		nil,
 	)
 
@@ -2167,8 +2167,8 @@ func TestDeleteType5GatewayNeighborIgnoresMalformedStoredRef(t *testing.T) {
 	overlay.deleteType5GatewayNeighbor(
 		link,
 		"10.100.0.0/24",
-		net.ParseIP("192.168.4.1"),
-		net.ParseIP("192.168.4.1"),
+		net.ParseIP("192.168.4.1").To4(),
+		net.ParseIP("192.168.4.1").To4(),
 		mustParseMAC(t, "62:db:b8:c1:80:52"),
 	)
 
@@ -2195,8 +2195,8 @@ func TestDeleteType5GatewayNeighborPrefersExplicitRouterMAC(t *testing.T) {
 	overlay.deleteType5GatewayNeighbor(
 		link,
 		"10.100.0.0/24",
-		net.ParseIP("192.168.4.1"),
-		net.ParseIP("192.168.4.1"),
+		net.ParseIP("192.168.4.1").To4(),
+		net.ParseIP("192.168.4.1").To4(),
 		mustParseMAC(t, "62:db:b8:c1:80:53"),
 	)
 
@@ -2218,15 +2218,15 @@ func TestDeleteType5GatewayNeighborLogsDeleteFailure(t *testing.T) {
 	overlay.setType5GatewayNeighbor(
 		link,
 		"10.100.0.0/24",
-		net.ParseIP("192.168.4.1"),
-		net.ParseIP("192.168.4.1"),
+		net.ParseIP("192.168.4.1").To4(),
+		net.ParseIP("192.168.4.1").To4(),
 		mustParseMAC(t, "62:db:b8:c1:80:52"),
 	)
 	overlay.deleteType5GatewayNeighbor(
 		link,
 		"10.100.0.0/24",
-		net.ParseIP("192.168.4.1"),
-		net.ParseIP("192.168.4.1"),
+		net.ParseIP("192.168.4.1").To4(),
+		net.ParseIP("192.168.4.1").To4(),
 		nil,
 	)
 
@@ -2267,15 +2267,15 @@ func TestDeleteType5GatewayNeighborRestoresRefOnPartialDeleteFailure(t *testing.
 			overlay.setType5GatewayNeighbor(
 				link,
 				"10.100.0.0/24",
-				net.ParseIP("192.168.4.1"),
-				net.ParseIP("192.168.4.1"),
+				net.ParseIP("192.168.4.1").To4(),
+				net.ParseIP("192.168.4.1").To4(),
 				mustParseMAC(t, "62:db:b8:c1:80:52"),
 			)
 			overlay.deleteType5GatewayNeighbor(
 				link,
 				"10.100.0.0/24",
-				net.ParseIP("192.168.4.1"),
-				net.ParseIP("192.168.4.1"),
+				net.ParseIP("192.168.4.1").To4(),
+				net.ParseIP("192.168.4.1").To4(),
 				nil,
 			)
 
