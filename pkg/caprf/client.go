@@ -785,11 +785,13 @@ func redactedURLErrorFor(raws []string, err error) error {
 var embeddedURLPattern = regexp.MustCompile(`https?://[^\s"']+`)
 
 // embeddedUserinfoPattern finds userinfo left in error messages.
-var embeddedUserinfoPattern = regexp.MustCompile(`//[^/\s"'@]+@`)
+var embeddedUserinfoPattern = regexp.MustCompile(`//[^/@]+@`)
 
-// embeddedQueryPattern finds query strings and fragments left in error
-// messages inside a path, for example /x?sig=... or /x#token=....
-var embeddedQueryPattern = regexp.MustCompile(`[?#][^\s"']+`)
+// embeddedQueryPattern finds a query string or fragment left in an error
+// message, for example /x?sig=... or /x#token=.... The rest of the message
+// is dropped, because quotes or spaces inside a malformed value are not a
+// safe end.
+var embeddedQueryPattern = regexp.MustCompile(`[?#].*`)
 
 // redactedNetError keeps the timeout flag of a net.Error with a redacted
 // message.
