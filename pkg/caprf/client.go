@@ -17,6 +17,7 @@ import (
 	neturl "net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -762,13 +763,18 @@ func redactedURLErrorFor(raws []string, err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return context.DeadlineExceeded
 	}
-	msg := fmt.Sprintf("%s: %s", redactedURL(raws[0]), redact.Wrap(errors.New(err.Error()), raws...))
+	inner := redact.Wrap(errors.New(err.Error()), raws...).Error()
+	msg := fmt.Sprintf("%s: %s", redactedURL(raws[0]), embeddedURLPattern.ReplaceAllStringFunc(inner, redactedURL))
 	var netErr net.Error
 	if errors.As(err, &netErr) {
 		return &redactedNetError{msg: msg, timeout: netErr.Timeout()}
 	}
 	return errors.New(msg)
 }
+
+// embeddedURLPattern finds URLs inside error messages that are not known to
+// the caller, for example a malformed redirect Location.
+var embeddedURLPattern = regexp.MustCompile(`https?://[^\s"']+`)
 
 // redactedNetError keeps the timeout flag of a net.Error with a redacted
 // message.

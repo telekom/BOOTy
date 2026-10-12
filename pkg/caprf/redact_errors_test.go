@@ -58,17 +58,22 @@ func TestTransportErrorsKeepCancelAndTimeout(t *testing.T) {
 }
 
 func TestTransportErrorsRedactRedirectTarget(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "http://127.0.0.1:1/target?X-Amz-Signature=REDIRECTSECRET", http.StatusFound)
-	}))
-	defer srv.Close()
-
-	c := NewFromConfig(&config.MachineConfig{})
-	err := c.doPost(context.Background(), srv.URL+"/start", "{}")
-	if err == nil {
-		t.Fatal("expected an error from the unreachable redirect target")
-	}
-	if strings.Contains(err.Error(), "REDIRECTSECRET") {
-		t.Fatalf("redirect error leaks the signature: %v", err)
+	for _, location := range []string{
+		"http://127.0.0.1:1/target?X-Amz-Signature=REDIRECTSECRET",
+		"http://127.0.0.1:1/%zz?X-Amz-Signature=REDIRECTSECRET", // malformed Location
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Location", location)
+			w.WriteHeader(http.StatusFound)
+		}))
+		c := NewFromConfig(&config.MachineConfig{})
+		err := c.doPost(context.Background(), srv.URL+"/start", "{}")
+		srv.Close()
+		if err == nil {
+			t.Fatalf("%s: expected an error from the redirect target", location)
+		}
+		if strings.Contains(err.Error(), "REDIRECTSECRET") {
+			t.Fatalf("redirect error leaks the signature: %v", err)
+		}
 	}
 }
