@@ -4141,6 +4141,8 @@ func TestOverlaySetupAdvertisesType2And3OnlyWithL2(t *testing.T) {
 				hooks: &overlaySetupHooks{
 					createVXLANAndBridge: func() error { return nil },
 					addProvisionIP:       func() error { return nil },
+					// A failed Setup must not run the real host teardown.
+					teardown: func(context.Context) error { return nil },
 				},
 			}
 			if err := overlay.Setup(context.Background()); err != nil {
