@@ -1,170 +1,87 @@
-# Usage Guide: Security, Telemetry & Boot Management
+# Security and Telemetry: Current State
 
-This guide covers features introduced in PR #71: TPM attestation and
-sealing, Secure Boot verification, MOK enrollment, telemetry collection,
-bootloader detection, GRUB config parsing, and retry utilities.
+This page describes what the Secure Boot, TPM and telemetry code does on
+`main` today. [Configuration](configuration.md) lists the keys with their
+defaults. Items marked "Planned" are not implemented. Their proposal is
+linked.
 
-## Environment Variables
+## Secure Boot
 
-| Variable | Type | Description |
-|----------|------|-------------|
-| `TELEMETRY_ENABLED` | bool | Enable provisioning metrics collection |
-| `TELEMETRY_URL` | string | POST endpoint for metrics snapshot |
-| `METRICS_URL` | string | POST endpoint for provisioning metrics (overrides TELEMETRY_URL) |
-| `EVENT_URL` | string | POST endpoint for provisioning events |
-| `SECUREBOOT_REENABLE` | bool | Signal CAPRF to re-enable Secure Boot after provisioning |
-| `MOK_CERT_PATH` | string | Path to DER-encoded MOK certificate for enrollment |
-| `MOK_PASSWORD` | string | One-time password for MokManager confirmation |
+The provisioning flow uses these keys:
 
-## TPM Operations (`pkg/tpm/`)
+| Key | Effect |
+|-----|--------|
+| `SECUREBOOT_REENABLE` | BOOTy appends `SECUREBOOT_REENABLE=true` to the success status message and skips kexec. CAPRF then turns Secure Boot on. |
+| `SECUREBOOT_SHIM_SHA256`, `SECUREBOOT_GRUB_SHA256`, `SECUREBOOT_KERNEL_SHA256`, `SECUREBOOT_PINNED_DIGESTS` | Pin the SHA256 digests of the installed shim, GRUB EFI binary and kernel. |
 
-### Detection
+The `verify-secureboot-chain` step runs only when at least one digest is
+pinned. It then looks for all three components in the installed root:
 
-```go
-import "github.com/telekom/BOOTy/pkg/tpm"
+- shim: `/boot/efi/EFI/BOOT/BOOTX64.EFI` or `BOOTAA64.EFI`,
+- GRUB: `grubx64.efi` under `/boot/efi/EFI/<distro>/` for ubuntu, centos,
+  redhat, fedora, sles and debian,
+- kernel: `/boot/vmlinuz` or `/boot/vmlinuz-linux`.
 
-// Detect TPM hardware (reads /sys/class/tpm/tpm0).
-info := tpm.Detect()
-fmt.Printf("Present: %v, Version: %s\n", info.Present, info.Version)
-```
+An EFI binary must have a valid PE/COFF header. A component with a pin must
+match its digest. The step fails provisioning when a component is missing
+or no candidate passes. The step does not check signatures, and it does not
+need Secure Boot to be on.
 
-### PCR Measurement
+Planned: Authenticode signature checks of the boot chain. See
+[proposal-secureboot-full-chain.md](proposal-secureboot-full-chain.md).
 
-Extend TPM Platform Configuration Registers with file or data hashes:
+Planned: MOK enrollment. BOOTy parses `MOK_CERT_PATH` and `MOK_PASSWORD`,
+but no code uses them. The `pkg/secureboot` library has a `mokutil` wrapper
+(`NewMOKEnroller`), but the provisioning flow does not call it. See
+[proposal-secureboot.md](proposal-secureboot.md).
 
-```go
-dev, err := tpm.Open()  // opens /dev/tpmrm0 or /dev/tpm0
-defer dev.Close()
+## TPM
 
-// Measure a file into PCR 8.
-digest, err := dev.MeasureFile(8, "/boot/vmlinuz")
+The provisioning flow, the inventory and the debug dump do not use the TPM.
+No vars key controls it.
 
-// Measure arbitrary data from an io.Reader.
-digest, err = dev.MeasureReader(8, reader)
+The `pkg/tpm` library has these functions for later use:
 
-// Read current PCR value.
-val, err := dev.ReadPCR(8)
-```
+- `Detect` reads TPM presence, version and the SHA256 PCR values from
+  `/sys/class/tpm/tpm0`.
+- `Open` opens `/dev/tpmrm0` or `/dev/tpm0`. The device can read and extend
+  PCRs, measure a file or a reader into a PCR, create an ECDSA quote over
+  PCRs, and seal or unseal data to PCR values.
+- `VerifyQuoteSignature` and `VerifyQuoteAgainstPolicy` check a quote.
 
-### Attestation (Quotes)
+`pkg/tpm/cryptenroll` holds only the config and the PCR policy for a
+`systemd-cryptenroll` setup. It runs no command.
 
-Generate TPM2 quotes for remote attestation:
+Planned: measured boot and attestation in the provisioning flow. See
+[proposal-tpm-attestation.md](proposal-tpm-attestation.md). Planned: TPM2
+LUKS unlock. See [proposal-cryptenroll-tpm.md](proposal-cryptenroll-tpm.md).
 
-```go
-// Quote PCRs 0, 1, 7 with a server-provided nonce.
-quote, err := dev.Quote([]int{0, 1, 7}, nonce)
+## Telemetry
 
-// Verify the quote signature (ECDSA P-256).
-valid, err := tpm.VerifyQuoteSignature(quote)
+| Key | Effect |
+|-----|--------|
+| `TELEMETRY_ENABLED` | Turns on the two POST requests below. |
+| `METRICS_URL` | Receives the metrics summary as JSON. |
+| `TELEMETRY_URL` | Used when `METRICS_URL` is not set. |
+| `EVENT_URL` | Receives the last provisioning event. |
 
-// Verify quote against a policy (expected PCR values).
-result := tpm.VerifyQuoteAgainstPolicy(quote, &tpm.PCRPolicy{
-    PCRs: []tpm.GoldenPCR{
-        {Index: 0, Digest: expectedDigest0},
-        {Index: 7, Digest: expectedDigest7},
-    },
-})
-// result.Valid, result.Mismatches
+When a provisioning run ends, with success or with an error, BOOTy posts the
+metrics summary. The requests use the CAPRF token and up to 3 attempts. A
+failed request does not change the result of the run.
 
-// Serialize for transport to attestation server.
-data, err := tpm.MarshalQuote(quote)
-```
+The provisioning steps do not feed the telemetry collector yet. So the
+summary has no step, image or disk data. The event emitter gets no events,
+so BOOTy sends nothing to `EVENT_URL`.
 
-### Secret Sealing
+The `pkg/telemetry` library also has counters, gauges, histograms and a step
+tracker. The provisioning flow does not use them.
 
-Seal secrets to TPM PCR state (e.g., disk encryption keys):
+Planned: step metrics, events and exporters. See
+[proposal-telemetry-enhanced.md](proposal-telemetry-enhanced.md) and
+[proposal-observability.md](proposal-observability.md).
 
-```go
-// Seal a secret — only unsealable when PCRs match current values.
-sealed, err := dev.SealSecret([]int{0, 1, 7}, []byte("encryption-key"))
+## Boot loader
 
-// Unseal — fails if PCR values have changed.
-plaintext, err := dev.UnsealSecret([]int{0, 1, 7}, sealed)
-```
-
-The sealing uses a trial policy session to compute the correct AuthPolicy
-digest, ensuring the sealed data is bound to the specified PCR values.
-
-## Secure Boot (`pkg/secureboot/`)
-
-### Verification
-
-Check Secure Boot components (shim, GRUB, kernel artifacts):
-
-```go
-import "github.com/telekom/BOOTy/pkg/secureboot"
-
-result := secureboot.Verify("/mnt/target")
-fmt.Printf("Secure Boot: %v\n", result.Valid)
-for _, c := range result.Components {
-    fmt.Printf("  %s: signed=%v trusted=%v\n", c.Name, c.Signed, c.Trusted)
-}
-```
-
-**Note**: Secure Boot verification checks component presence and PE/COFF
-headers for EFI binaries. Configure pinned SHA256 digests for `shim`, `grub`,
-and `kernel` when provisioning must fail on unexpected boot artifacts.
-Full Authenticode trust-chain verification is not yet implemented.
-
-### MOK Enrollment
-
-Enroll Machine Owner Keys for custom kernel/module signing:
-
-```go
-enroller := secureboot.NewMOKEnroller("/path/to/cert.der", "one-time-password")
-
-// Enroll — queues certificate for next reboot.
-err := enroller.Enroll()
-
-// Check enrollment status.
-enrolled, err := enroller.IsEnrolled()
-```
-
-MOK enrollment requires `mokutil` to be available in the target system.
-The one-time password is used during the MokManager EFI prompt at next
-reboot.
-
-## Telemetry (`pkg/telemetry/`)
-
-### Step Tracking
-
-Track provisioning step durations and outcomes:
-
-```go
-import "github.com/telekom/BOOTy/pkg/telemetry"
-
-tracker := telemetry.NewStepTracker()
-tracker.StartStep("download-image")
-// ... do work ...
-tracker.EndStep("download-image", nil)  // or pass error
-
-// Record retries.
-tracker.RecordRetry("download-image")
-```
-
-### Metrics
-
-Monotonically increasing counters:
-
-```go
-counter := &telemetry.Counter{}
-counter.Add(1)    // increments by 1
-counter.Add(-1)   // ignored (counters are monotonic)
-counter.Add(0)    // ignored
-fmt.Println(counter.Value())
-```
-
-### Collection and Reporting
-
-```go
-collector := telemetry.NewCollector()
-collector.SetImage(&telemetry.ImageInfo{Name: "ubuntu-22.04", Size: 2048})
-collector.SetDisk(&telemetry.DiskInfo{Path: "/dev/sda", Size: 480})
-
-// Get summary (safe — returns copies, not aliased pointers).
-summary := collector.Summarize()
-```
-
-Telemetry reporting to CAPRF is gated on `TelemetryEnabled` in the
-machine config. When enabled, metrics are posted to `MetricsURL` (falls
-back to `TelemetryURL` if MetricsURL is empty).
+The provisioning flow supports GRUB only. There is no boot loader detection
+and no systemd-boot support. Planned: see
+[proposal-bootloaders.md](proposal-bootloaders.md).
