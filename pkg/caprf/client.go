@@ -765,6 +765,8 @@ func redactedURLErrorFor(raws []string, err error) error {
 	}
 	inner := redact.Wrap(errors.New(err.Error()), raws...).Error()
 	inner = embeddedURLPattern.ReplaceAllStringFunc(inner, redactedURL)
+	// Protocol-relative or malformed URLs can still carry user:password@.
+	inner = embeddedUserinfoPattern.ReplaceAllString(inner, "//[REDACTED]@")
 	// Drop any remaining query string or fragment, for example from a
 	// malformed relative redirect Location that is not a full URL.
 	inner = embeddedQueryPattern.ReplaceAllStringFunc(inner, func(m string) string {
@@ -781,6 +783,9 @@ func redactedURLErrorFor(raws []string, err error) error {
 // embeddedURLPattern finds URLs inside error messages that are not known to
 // the caller, for example a malformed redirect Location.
 var embeddedURLPattern = regexp.MustCompile(`https?://[^\s"']+`)
+
+// embeddedUserinfoPattern finds userinfo left in error messages.
+var embeddedUserinfoPattern = regexp.MustCompile(`//[^/\s"'@]+@`)
 
 // embeddedQueryPattern finds query strings and fragments left in error
 // messages inside a path, for example /x?sig=... or /x#token=....
