@@ -449,3 +449,36 @@ func TestOnBoundRenewalDropsRouteAndRestoresMask(t *testing.T) {
 		t.Fatalf("addresses set = %v, want %v", set, want)
 	}
 }
+
+func TestOnBoundRenewalTracksAddressWhenRollbackFails(t *testing.T) {
+	origAddr, origAddrDel, origRoute := dhcpAddrReplace, dhcpAddrDel, dhcpRouteReplace
+	t.Cleanup(func() { dhcpAddrReplace, dhcpAddrDel, dhcpRouteReplace = origAddr, origAddrDel, origRoute })
+	dhcpAddrReplace = func(netlink.Link, *netlink.Addr) error { return nil }
+	dhcpAddrDel = func(netlink.Link, *netlink.Addr) error { return syscall.EBUSY }
+	failRoute := false
+	dhcpRouteReplace = func(*netlink.Route) error {
+		if failRoute {
+			return syscall.ENETUNREACH
+		}
+		return nil
+	}
+
+	d := NewDHCPMode()
+	var winner dhcpWinner
+	eth0 := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth0", Index: 1}}
+	bound := d.onBound(eth0, "eth0", make(chan struct{}, 1), &winner)
+	gw := []net.IP{net.ParseIP("10.0.2.2")}
+	bound(&dhclient.Lease{FixedAddress: net.ParseIP("10.0.2.15"), Netmask: net.CIDRMask(24, 32), Router: gw})
+	failRoute = true
+	bound(&dhclient.Lease{FixedAddress: net.ParseIP("10.0.2.16"), Netmask: net.CIDRMask(24, 32), Router: gw})
+
+	found := false
+	for _, a := range d.applied {
+		if a.addr.IPNet.String() == "10.0.2.16/24" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("applied state = %v, want the address whose rollback failed tracked for Teardown", d.applied)
+	}
+}

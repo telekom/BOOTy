@@ -233,8 +233,10 @@ func (d *DHCPMode) dropUnappliedAddr(link netlink.Link, addr *netlink.Addr) {
 			return
 		}
 	}
-	if err := dhcpAddrDel(link, addr); err != nil {
+	if err := dhcpAddrDel(link, addr); err != nil && !errors.Is(err, syscall.EADDRNOTAVAIL) {
 		d.log.Warn("failed to roll back renewed DHCP address", "iface", link.Attrs().Name, "error", err)
+		// Keep tracking it, so Teardown can still remove it.
+		d.applied = append(d.applied, dhcpApplied{link: link, addr: addr})
 	}
 }
 
