@@ -217,6 +217,20 @@ type dhcpWinner struct {
 	iface string
 }
 
+// dropUnappliedAddr removes a renewed address that was set before a later
+// step failed, unless it is the address already applied on the link. The
+// caller holds d.mu.
+func (d *DHCPMode) dropUnappliedAddr(link netlink.Link, addr *netlink.Addr) {
+	for _, a := range d.applied {
+		if a.link.Attrs().Index == link.Attrs().Index && a.addr.IP.Equal(addr.IP) {
+			return
+		}
+	}
+	if err := dhcpAddrDel(link, addr); err != nil {
+		d.log.Warn("failed to roll back renewed DHCP address", "iface", link.Attrs().Name, "error", err)
+	}
+}
+
 // applyRenewal applies a renewed or rebound lease of the winning NIC. A
 // changed address replaces the old one, and the default route follows the
 // lease. Failures are logged and the previous state stays.
@@ -225,34 +239,32 @@ func (d *DHCPMode) applyRenewal(link netlink.Link, ifName string, addr *netlink.
 		d.log.Warn("failed to apply renewed DHCP address", "iface", ifName, "error", err)
 		return
 	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	var route *netlink.Route
 	if len(lease.Router) > 0 {
 		route = &netlink.Route{Gw: lease.Router[0], LinkIndex: link.Attrs().Index}
 		if err := dhcpRouteReplace(route); err != nil {
 			d.log.Warn("failed to apply renewed default route", "iface", ifName, "gw", lease.Router[0], "error", err)
-			route = nil
+			d.dropUnappliedAddr(link, addr)
+			return
 		}
 	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	kept := d.applied[:0]
+	kept := make([]dhcpApplied, 0, len(d.applied)+1)
 	for _, a := range d.applied {
-		if a.link.Attrs().Index != link.Attrs().Index {
-			kept = append(kept, a)
-			continue
-		}
-		if !a.addr.IPNet.IP.Equal(addr.IPNet.IP) {
+		if a.link.Attrs().Index == link.Attrs().Index && !a.addr.IP.Equal(addr.IP) {
 			if err := dhcpAddrDel(a.link, a.addr); err != nil {
 				d.log.Warn("failed to remove superseded DHCP address", "iface", ifName, "error", err)
 				kept = append(kept, a)
-				continue
 			}
+			continue
 		}
-		if route == nil {
-			route = a.route
+		if a.link.Attrs().Index != link.Attrs().Index {
+			kept = append(kept, a)
 		}
 	}
-	d.applied = append(kept, dhcpApplied{link: link, addr: addr, route: route})
+	kept = append(kept, dhcpApplied{link: link, addr: addr, route: route})
+	d.applied = kept
 	d.log.Info("DHCP lease renewed", "iface", ifName, "addr", addr.IPNet.String())
 }
 

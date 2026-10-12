@@ -370,3 +370,40 @@ func TestOnBoundAppliesRenewalOfWinningNIC(t *testing.T) {
 		t.Fatalf("applied state = %v, want only 10.0.2.16/24", d.applied)
 	}
 }
+
+func TestOnBoundRenewalRouteFailureKeepsPreviousLease(t *testing.T) {
+	origAddr, origAddrDel, origRoute := dhcpAddrReplace, dhcpAddrDel, dhcpRouteReplace
+	t.Cleanup(func() { dhcpAddrReplace, dhcpAddrDel, dhcpRouteReplace = origAddr, origAddrDel, origRoute })
+	var deleted []string
+	dhcpAddrReplace = func(netlink.Link, *netlink.Addr) error { return nil }
+	dhcpAddrDel = func(_ netlink.Link, a *netlink.Addr) error {
+		deleted = append(deleted, a.IPNet.String())
+		return nil
+	}
+	failRoute := false
+	dhcpRouteReplace = func(*netlink.Route) error {
+		if failRoute {
+			return syscall.ENETUNREACH
+		}
+		return nil
+	}
+
+	d := NewDHCPMode()
+	var winner dhcpWinner
+	eth0 := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth0", Index: 1}}
+	bound := d.onBound(eth0, "eth0", make(chan struct{}, 1), &winner)
+	lease := func(ip string) *dhclient.Lease {
+		return &dhclient.Lease{FixedAddress: net.ParseIP(ip), Netmask: net.CIDRMask(24, 32), Router: []net.IP{net.ParseIP("10.0.2.2")}}
+	}
+
+	bound(lease("10.0.2.15"))
+	failRoute = true
+	bound(lease("10.0.2.16"))
+
+	if want := []string{"10.0.2.16/24"}; !slices.Equal(deleted, want) {
+		t.Fatalf("deleted = %v, want only the new address rolled back", deleted)
+	}
+	if len(d.applied) != 1 || d.applied[0].addr.IPNet.String() != "10.0.2.15/24" {
+		t.Fatalf("applied state = %v, want the previous lease 10.0.2.15/24", d.applied)
+	}
+}
