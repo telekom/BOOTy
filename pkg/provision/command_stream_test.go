@@ -65,17 +65,7 @@ func TestDefaultRunStreamingCommandDoesNotWaitForBackgroundChildren(t *testing.T
 		t.Fatal(err)
 	}
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
-	deadline := time.Now().Add(5 * time.Second)
-	for syscall.Kill(pid, 0) == nil {
-		// A killed child stays a zombie until its parent reaps it; check the state.
-		if state, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)); err != nil || strings.Contains(string(state), ") Z ") {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("background child %d still runs after the step", pid)
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+	waitProcessGone(t, pid)
 	if elapsed := time.Since(start); elapsed > 10*time.Second {
 		t.Fatalf("command returned after %s, the background child held it", elapsed)
 	}
@@ -112,14 +102,28 @@ func TestDefaultRunStreamingCommandKillsChildrenAfterFailure(t *testing.T) {
 		t.Fatal(readErr)
 	}
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
-	deadline := time.Now().Add(5 * time.Second)
-	for syscall.Kill(pid, 0) == nil {
+	waitProcessGone(t, pid)
+}
+
+// waitProcessGone fails the test when pid still runs after 5 seconds. A
+// killed child stays a zombie until its parent reaps it, which counts as gone.
+func waitProcessGone(t *testing.T, pid int) {
+	t.Helper()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	timeout := time.NewTimer(5 * time.Second)
+	defer timeout.Stop()
+	for {
+		if syscall.Kill(pid, 0) != nil {
+			return
+		}
 		if state, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)); err != nil || strings.Contains(string(state), ") Z ") {
-			break
+			return
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("background child %d still runs after the failed script", pid)
+		select {
+		case <-ticker.C:
+		case <-timeout.C:
+			t.Fatalf("process %d still runs", pid)
 		}
-		time.Sleep(50 * time.Millisecond)
 	}
 }

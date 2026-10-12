@@ -5,6 +5,7 @@ package provision
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -183,5 +184,15 @@ func TestRunMachineCommandsLegacyCompatCreatesSharedTmp(t *testing.T) {
 	}
 	if info.Mode()&os.ModeSticky == 0 || info.Mode().Perm() != 0o777 {
 		t.Fatalf("/tmp mode = %v, want sticky 0777", info.Mode())
+	}
+}
+
+// The error keeps its cause, so a canceled run reports context.Canceled.
+func TestRunMachineCommandsLegacyCompatKeepsErrorChain(t *testing.T) {
+	withMachineCommands(t, map[string]string{"commands-0.sh": "true\n"})
+	withFakeStreaming(t, &fakeStreaming{err: fmt.Errorf("run /bin/sh: %w", context.Canceled)})
+	c := newTestConfigurator(t, newMockCommander())
+	if err := c.RunMachineCommands(context.Background(), true); !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunMachineCommands() = %v, want context.Canceled in the chain", err)
 	}
 }

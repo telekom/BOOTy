@@ -1059,7 +1059,7 @@ func (c *Configurator) runMachineCommand(ctx context.Context, name, content stri
 
 // runMachineCommandScript copies the script into the target root, runs it
 // there and removes it again.
-func (c *Configurator) runMachineCommandScript(ctx context.Context, name string, content []byte) error {
+func (c *Configurator) runMachineCommandScript(ctx context.Context, name string, content []byte) (retErr error) {
 	if strings.TrimSpace(string(content)) == "" {
 		return nil
 	}
@@ -1076,8 +1076,9 @@ func (c *Configurator) runMachineCommandScript(ctx context.Context, name string,
 		return fmt.Errorf("machine command %s: write script: %w", name, err)
 	}
 	defer func() {
+		// The script may hold credentials: a leftover copy fails the step.
 		if err := root.Remove(rel); err != nil && !os.IsNotExist(err) {
-			slog.Warn("removing machine command script failed", "file", name, "error", err)
+			retErr = errors.Join(retErr, fmt.Errorf("machine command %s: remove staged script: %w", name, err))
 		}
 	}()
 
@@ -1092,10 +1093,21 @@ func (c *Configurator) runMachineCommandScript(ctx context.Context, name string,
 		slog.Info("machine command output", "file", name, "line", redactCommand(line))
 	}, c.rootDir, argv)
 	if err != nil {
-		return fmt.Errorf("machine command %s: %s", name, redactCommand(err.Error()))
+		return &redactedCommandError{msg: fmt.Sprintf("machine command %s: %s", name, redactCommand(err.Error())), err: err}
 	}
 	return nil
 }
+
+// redactedCommandError shows a redacted message but keeps the cause for
+// errors.Is and errors.As, for example context.Canceled.
+type redactedCommandError struct {
+	msg string
+	err error
+}
+
+func (e *redactedCommandError) Error() string { return e.msg }
+
+func (e *redactedCommandError) Unwrap() error { return e.err }
 
 // writeScriptInRoot replaces rel inside root with a new executable file.
 func writeScriptInRoot(root *os.Root, rel string, content []byte) error {
