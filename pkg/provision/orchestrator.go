@@ -2698,7 +2698,7 @@ func (o *Orchestrator) resizeFilesystem(ctx context.Context) error {
 	if target != o.rootPartition {
 		// The grown partition is not mounted: check it like the legacy
 		// e2fsck -p -f, then resize it offline.
-		if err := o.disk.CheckFilesystem(ctx, target); err != nil {
+		if err := o.disk.CheckExtFilesystemPreen(ctx, target); err != nil {
 			return fmt.Errorf("check grown partition: %w", err)
 		}
 		return o.disk.ResizeFilesystem(ctx, target, "")

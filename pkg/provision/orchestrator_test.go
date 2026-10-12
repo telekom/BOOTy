@@ -4934,6 +4934,9 @@ func TestCollectFirmwareLegacyCompatLogsNICFirmware(t *testing.T) {
 	}
 	if len(provider.firmwareReports) != 0 {
 		t.Fatalf("firmware reports = %d, want none without FIRMWARE_REPORT", len(provider.firmwareReports))
+	}
+}
+
 // Legacy evidence: provision.sh grows the last GPT Linux partition, which
 // can be a data partition after the root.
 func TestGrowPartitionLegacyCompatGrowsLastLinuxPartition(t *testing.T) {
@@ -4963,7 +4966,7 @@ func TestGrowPartitionLegacyCompatGrowsLastLinuxPartition(t *testing.T) {
 			got = append(got, c.name+" "+strings.Join(c.args, " "))
 		}
 	}
-	want := []string{"growpart --update on /dev/sda 3", "e2fsck -fy /dev/sda3", "resize2fs /dev/sda3"}
+	want := []string{"growpart --update on /dev/sda 3", "e2fsck -p -f /dev/sda3", "resize2fs /dev/sda3"}
 	if strings.Join(got, ";") != strings.Join(want, ";") {
 		t.Fatalf("commands = %q, want %q", got, want)
 	}
