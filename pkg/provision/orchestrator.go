@@ -2859,15 +2859,15 @@ var unmountTargetTree = func(d *disk.Manager, root string) error {
 }
 
 // releaseStaleTargetMounts unmounts what a failed earlier attempt left
-// mounted, so a rescue retry does not wipe and re-image a disk under a live
-// mount or run fsck on a mounted root. It is a no-op on a first run. When
-// the target root stays mounted it returns an error, because the next steps
-// would destroy a disk that is still in use.
+// mounted under the target root, so a rescue retry does not wipe and
+// re-image a disk under a live mount or run fsck on a mounted root. The
+// recursive unmount reads the mount table itself, so a mount table read
+// failure or a stale child mount stops provisioning instead of being
+// missed. It is a no-op on a first run.
 func (o *Orchestrator) releaseStaleTargetMounts() error {
-	if !isMountPoint(newroot) {
-		return nil
+	if isMountPoint(newroot) {
+		o.log.Warn("target root still mounted from an earlier attempt, unmounting", "root", newroot)
 	}
-	o.log.Warn("target root still mounted from an earlier attempt, unmounting", "root", newroot)
 	if err := o.unmountSharedData(); err != nil {
 		// The recursive unmount below also covers these mounts.
 		o.log.Warn("failed to unmount shared data from earlier attempt", "error", err)

@@ -3,8 +3,10 @@
 package provision
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -76,4 +78,25 @@ func TestDisableGRUBConfig(t *testing.T) {
 			t.Fatal("disableGRUBConfig() = nil, want error when boot/grub is not a directory")
 		}
 	})
+}
+
+func TestDisableGRUBAndUnmountReturnsUnmountError(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "boot/grub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "boot/grub/grub.cfg"), []byte("menuentry"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	busy := errors.New("busy")
+	err := disableGRUBAndUnmount(root, func(string) error { return busy })
+	if !errors.Is(err, busy) {
+		t.Fatalf("disableGRUBAndUnmount() = %v, want the unmount error", err)
+	}
+
+	// Both errors are kept when the rename also fails.
+	err = disableGRUBAndUnmount(t.TempDir(), func(string) error { return busy })
+	if !errors.Is(err, busy) || !strings.Contains(err.Error(), "no grub.cfg") {
+		t.Fatalf("disableGRUBAndUnmount() = %v, want both errors", err)
+	}
 }

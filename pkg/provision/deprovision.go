@@ -176,9 +176,14 @@ func (o *Orchestrator) softDeprovision(ctx context.Context) error {
 	if err := o.disk.MountPartition(ctx, root.Node, newroot); err != nil {
 		return fmt.Errorf("mounting root: %w", err)
 	}
-	disableErr := disableGRUBConfig(newroot)
-	// The rename must reach the disk, so an unmount failure is an error.
-	if err := o.disk.Unmount(newroot); err != nil {
+	return disableGRUBAndUnmount(newroot, o.disk.Unmount)
+}
+
+// disableGRUBAndUnmount disables GRUB under root and unmounts root. The
+// rename must reach the disk, so an unmount failure is an error too.
+func disableGRUBAndUnmount(root string, unmount func(string) error) error {
+	disableErr := disableGRUBConfig(root)
+	if err := unmount(root); err != nil {
 		return errors.Join(disableErr, fmt.Errorf("unmounting root: %w", err))
 	}
 	return disableErr

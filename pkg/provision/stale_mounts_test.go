@@ -21,17 +21,11 @@ func TestReleaseStaleTargetMounts(t *testing.T) {
 	}
 	o := &Orchestrator{log: slog.Default(), sharedMounts: []string{"/newroot/var/lib/data"}}
 
+	// The root probe can miss a stale child mount or fail to read the mount
+	// table, so the recursive cleanup must run anyway.
 	isMountPoint = func(string) bool { return false }
 	if err := o.releaseStaleTargetMounts(); err != nil {
-		t.Fatalf("first run: %v", err)
-	}
-	if len(unmounted) != 0 {
-		t.Fatalf("first run unmounted %v, want nothing", unmounted)
-	}
-
-	isMountPoint = func(path string) bool { return path == newroot }
-	if err := o.releaseStaleTargetMounts(); err != nil {
-		t.Fatalf("retry: %v", err)
+		t.Fatalf("releaseStaleTargetMounts() = %v", err)
 	}
 	if len(unmounted) != 1 || unmounted[0] != newroot {
 		t.Fatalf("unmounted = %v, want [%s]", unmounted, newroot)
@@ -40,8 +34,8 @@ func TestReleaseStaleTargetMounts(t *testing.T) {
 		t.Fatalf("sharedMounts = %v, want reset", o.sharedMounts)
 	}
 
-	unmountTargetTree = func(*disk.Manager, string) error { return errors.New("busy") }
+	unmountTargetTree = func(*disk.Manager, string) error { return errors.New("read mounts: permission denied") }
 	if err := o.releaseStaleTargetMounts(); err == nil {
-		t.Fatal("releaseStaleTargetMounts() = nil, want error when the target root stays mounted")
+		t.Fatal("releaseStaleTargetMounts() = nil, want error when the target root may stay mounted")
 	}
 }
