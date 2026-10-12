@@ -39,10 +39,14 @@ func TestValidateRAIDMinimumDeviceCount(t *testing.T) {
 		devices []string
 		wantErr string
 	}{
+		{"raid0 with 1 device", 0, []string{"/dev/sda"}, "level 0 requires at least 2 devices, got 1"},
+		{"raid0 with 2 devices", 0, []string{"/dev/sda", "/dev/sdb"}, ""},
+		{"raid1 with 1 device", 1, []string{"/dev/sda"}, "level 1 requires at least 2 devices, got 1"},
 		{"raid1 with 2 devices", 1, []string{"/dev/sda", "/dev/sdb"}, ""},
 		{"raid5 with 2 devices", 5, []string{"/dev/sda", "/dev/sdb"}, "level 5 requires at least 3 devices, got 2"},
 		{"raid5 with 3 devices", 5, []string{"/dev/sda", "/dev/sdb", "/dev/sdc"}, ""},
 		{"raid6 with 3 devices", 6, []string{"/dev/sda", "/dev/sdb", "/dev/sdc"}, "level 6 requires at least 4 devices, got 3"},
+		{"raid6 with 4 devices", 6, []string{"/dev/sda", "/dev/sdb", "/dev/sdc", "/dev/sdd"}, ""},
 		{"raid10 with 3 devices", 10, []string{"/dev/sda", "/dev/sdb", "/dev/sdc"}, "level 10 requires at least 4 devices, got 3"},
 		{"raid10 with 4 devices", 10, []string{"/dev/sda", "/dev/sdb", "/dev/sdc", "/dev/sdd"}, ""},
 	}
