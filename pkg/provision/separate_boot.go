@@ -255,7 +255,9 @@ func unescapeBlkidValue(value string) string {
 func parseBlkidExport(out string) blockIDs {
 	var ids blockIDs
 	for _, line := range strings.Split(out, "\n") {
-		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		// Keep trailing spaces: blkid escapes a label ending in a space as
+		// "LABEL=BOOT\\ ".
+		key, value, ok := strings.Cut(strings.TrimRight(line, "\r"), "=")
 		if !ok {
 			continue
 		}

@@ -258,3 +258,51 @@ func TestCanonicalFstabSource(t *testing.T) {
 		}
 	}
 }
+
+func TestParseBlkidExportKeepsTrailingSpace(t *testing.T) {
+	got := parseBlkidExport("LABEL=BOOT\\ \nUUID=1\n")
+	if got.label != "BOOT " {
+		t.Fatalf("label = %q, want %q", got.label, "BOOT ")
+	}
+	if matchFstabSource(decodeFstabField("LABEL=BOOT\\040"), []blockIDs{{node: "/dev/vda2", label: got.label}}) != "/dev/vda2" {
+		t.Fatal("fstab LABEL=BOOT\\040 does not match the blkid label")
+	}
+}
+
+// The ESP inside /boot must be unmounted before /boot itself.
+func TestTeardownUnmountsESPBeforeSeparateBoot(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.DisableKexec = true
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.bootPartition = "/dev/vda1"
+	o.separateBootMounted = true
+
+	mounted := map[string]bool{bootEFIMountPoint(): true, separateBootMountPoint(): true}
+	oldIsMountPoint := isMountPoint
+	isMountPoint = func(path string) bool { return mounted[path] }
+	t.Cleanup(func() { isMountPoint = oldIsMountPoint })
+	var order []string
+	restore := disk.SetUnmountFuncForTest(func(target string, _ int) error {
+		order = append(order, target)
+		delete(mounted, target)
+		return nil
+	})
+	t.Cleanup(restore)
+
+	_ = o.teardownChroot(context.Background())
+	esp, boot := -1, -1
+	for i, target := range order {
+		switch target {
+		case bootEFIMountPoint():
+			esp = i
+		case separateBootMountPoint():
+			boot = i
+		}
+	}
+	if esp < 0 || boot < 0 || esp > boot {
+		t.Fatalf("unmount order = %v, want the ESP before /boot", order)
+	}
+	if o.separateBootMounted {
+		t.Fatal("separate /boot still marked as mounted after teardown")
+	}
+}
