@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -554,6 +555,13 @@ func (o *Orchestrator) createMirrorEFIBootEntry(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if ready, reason := efiRuntimeReady(); !ready {
+		// Without NVRAM access the second disk boots only through the
+		// removable fallback loader that the copied ESP must carry.
+		if err := requireRemovableEFILoader(bootEFIMountPoint()); err != nil {
+			return fmt.Errorf("no EFI boot entry for mirror disk %s (%s): %w", o.mirrorDisk, reason, err)
+		}
+	}
 	// Copy first: a retry after a failed copy then starts over with the
 	// copy, and the entry is only created for a complete ESP. The loader path
 	// comes from the ESP, which syncMirrorESP mounts again.
@@ -561,6 +569,27 @@ func (o *Orchestrator) createMirrorEFIBootEntry(ctx context.Context) error {
 		return err
 	}
 	return o.config.CreateEFIBootEntry(ctx, o.mirrorDisk, mirrorEFI)
+}
+
+// requireRemovableEFILoader checks that the ESP mounted at espDir carries the
+// removable fallback loader that firmware boots without a boot entry.
+func requireRemovableEFILoader(espDir string) error {
+	name, err := efiRemovableLoaderName(runtime.GOARCH)
+	if err != nil {
+		return err
+	}
+	bootDir := filepath.Join(espDir, "EFI", "BOOT")
+	entries, err := os.ReadDir(bootDir)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read %s: %w", bootDir, err)
+	}
+	for _, e := range entries {
+		// vfat names are case-insensitive.
+		if strings.EqualFold(e.Name(), name) {
+			return nil
+		}
+	}
+	return fmt.Errorf("the ESP has no removable fallback loader EFI/BOOT/%s", name)
 }
 
 // mirrorESP returns the ESP partition of the mirror disk.

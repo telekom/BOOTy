@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -611,5 +612,25 @@ func TestMirrorRootRejectsMBRImages(t *testing.T) {
 	}
 	if len(cmd.calls) != 0 {
 		t.Fatalf("mirrorRoot() ran %v for an MBR image", cmd.calls)
+	}
+}
+
+func TestRequireRemovableEFILoader(t *testing.T) {
+	esp := t.TempDir()
+	if err := requireRemovableEFILoader(esp); err == nil {
+		t.Fatal("requireRemovableEFILoader() error = nil for an ESP without fallback loader")
+	}
+	name, err := efiRemovableLoaderName(runtime.GOARCH)
+	if err != nil {
+		t.Skipf("no removable loader name for %s", runtime.GOARCH)
+	}
+	if err := os.MkdirAll(filepath.Join(esp, "EFI", "BOOT"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(esp, "EFI", "BOOT", strings.ToLower(name)), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireRemovableEFILoader(esp); err != nil {
+		t.Fatalf("requireRemovableEFILoader() error = %v with %s present", err, name)
 	}
 }
