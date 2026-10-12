@@ -1086,7 +1086,11 @@ const (
 // are present but cannot be parsed are an error: falling back to vars would
 // bring up a different network than the operator configured.
 func detectNetplanConfig(netplanDir, frrConfPath string) (*network.Config, error) {
-	if !netplan.HasNetplanFiles(netplanDir) {
+	found, err := netplan.HasNetplanFiles(netplanDir)
+	if err != nil {
+		return nil, err //nolint:wrapcheck // already names the dir
+	}
+	if !found {
 		return nil, nil //nolint:nilnil // no netplan files means no netplan config, not an error
 	}
 	slog.Info("detected netplan configuration files", "dir", netplanDir)

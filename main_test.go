@@ -1299,6 +1299,13 @@ func TestDetectNetplanConfigRejectsMalformedFiles(t *testing.T) {
 			t.Fatalf("detectNetplanConfig() = %v, %v, want nil, nil", cfg, err)
 		}
 	})
+	t.Run("unreadable netplan dir", func(t *testing.T) {
+		notDir := filepath.Join(t.TempDir(), "netplan")
+		writeFile(t, notDir, "x")
+		if _, err := detectNetplanConfig(notDir, "/nonexistent/frr.conf"); err == nil {
+			t.Fatal("detectNetplanConfig() = nil error, want error for a netplan path that is not a dir")
+		}
+	})
 	t.Run("valid netplan without frr.conf", func(t *testing.T) {
 		dir := t.TempDir()
 		writeFile(t, filepath.Join(dir, "50-booty.yaml"), validNetplan)
