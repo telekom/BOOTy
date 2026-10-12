@@ -154,6 +154,9 @@ func TestValidateMirroringMode(t *testing.T) {
 		{name: "A/B image mode", disk: config.DiskConfig{MirroringMode: "raid-1"}, imageMode: config.ImageModeAB, wantErr: true},
 		{name: "partition image mode", disk: config.DiskConfig{MirroringMode: "auto"}, imageMode: config.ImageModePartition, wantErr: true},
 		{name: "NVMe namespace setup", disk: config.DiskConfig{MirroringMode: "raid-1", NVMeNamespaces: "2"}, wantErr: true},
+		{name: "explicit disk ignores A/B", disk: config.DiskConfig{MirroringMode: "raid-1", Device: "/dev/sda"}, imageMode: config.ImageModeAB},
+		{name: "explicit serial ignores explicit raid", disk: config.DiskConfig{MirroringMode: "auto", SerialNumber: "S1", RAID: raid}},
+		{name: "explicit disk still checks the mode", disk: config.DiskConfig{MirroringMode: "raid-5", Device: "/dev/sda"}, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

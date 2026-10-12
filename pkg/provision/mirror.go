@@ -45,6 +45,11 @@ func (o *Orchestrator) validateMirroringMode() error {
 	default:
 		return fmt.Errorf("unsupported disk mirroring mode %q", mode)
 	}
+	// detect-disk ignores the mirroring mode when DISK_DEVICE or
+	// DISK_SERIAL_NUMBER selects the disk, so no combination is rejected then.
+	if strings.TrimSpace(o.cfg.Provision.Disk.Device) != "" || strings.TrimSpace(o.cfg.Provision.Disk.SerialNumber) != "" {
+		return nil
+	}
 	imageMode := strings.ToLower(strings.TrimSpace(o.cfg.Provision.Image.Mode))
 	if len(o.cfg.Provision.Disk.RAID) > 0 || o.cfg.Provision.Disk.PartitionLayout != nil ||
 		strings.TrimSpace(o.cfg.Provision.Disk.NVMeNamespaces) != "" ||
@@ -400,6 +405,10 @@ func (o *Orchestrator) mirrorFstabSource(ctx context.Context, array, source, mou
 	case array != "" && source != array && namesPartition(source):
 		return array, nil
 	case mountpoint == "/boot/efi" && namesPartition(source) && o.bootPartition != "":
+		// ponytail: both ESP copies share this FAT UUID, like legacy, so
+		// either disk mounts /boot/efi alone, but later bootloader updates
+		// reach only the mounted copy. Keep both in sync (for example
+		// grub-multi-install) if stale second-disk ESPs become a problem.
 		out, err := o.disk.Run(ctx, "blkid", "-s", "UUID", "-o", "value", o.bootPartition)
 		if err != nil {
 			return "", fmt.Errorf("read the ESP filesystem UUID of %s for fstab: %w", o.bootPartition, err)
@@ -419,9 +428,11 @@ func namesPartition(source string) bool {
 	return strings.HasPrefix(source, "PARTUUID=") || strings.HasPrefix(source, "PARTLABEL=") || strings.HasPrefix(source, "/dev/")
 }
 
-// mdadmConfHeader matches the CAPRF legacy provisioner. AUTO stops mdadm
-// from assembling arrays that are not listed, such as foreign arrays on
-// other disks, at boot.
+// mdadmConfHeader matches raid_save_mdadm_config of the CAPRF legacy
+// provisioner. The first AUTO match wins, so unlisted arrays with 1.x or IMSM
+// metadata still auto-assemble, as with legacy and without an AUTO line; only
+// other metadata types (0.90, DDF) are refused. The mirror arrays assemble
+// from their ARRAY lines regardless.
 const mdadmConfHeader = "# mdadm.conf - written by BOOTy\n\nDEVICE partitions\nHOMEHOST <system>\nMAILADDR root\n\n" +
 	"AUTO +imsm +1.x -all\n\n"
 
