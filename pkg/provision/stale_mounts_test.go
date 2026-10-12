@@ -3,6 +3,7 @@
 package provision
 
 import (
+	"errors"
 	"log/slog"
 	"testing"
 
@@ -21,17 +22,26 @@ func TestReleaseStaleTargetMounts(t *testing.T) {
 	o := &Orchestrator{log: slog.Default(), sharedMounts: []string{"/newroot/var/lib/data"}}
 
 	isMountPoint = func(string) bool { return false }
-	o.releaseStaleTargetMounts()
+	if err := o.releaseStaleTargetMounts(); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
 	if len(unmounted) != 0 {
 		t.Fatalf("first run unmounted %v, want nothing", unmounted)
 	}
 
 	isMountPoint = func(path string) bool { return path == newroot }
-	o.releaseStaleTargetMounts()
+	if err := o.releaseStaleTargetMounts(); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
 	if len(unmounted) != 1 || unmounted[0] != newroot {
 		t.Fatalf("unmounted = %v, want [%s]", unmounted, newroot)
 	}
 	if len(o.sharedMounts) != 0 {
 		t.Fatalf("sharedMounts = %v, want reset", o.sharedMounts)
+	}
+
+	unmountTargetTree = func(*disk.Manager, string) error { return errors.New("busy") }
+	if err := o.releaseStaleTargetMounts(); err == nil {
+		t.Fatal("releaseStaleTargetMounts() = nil, want error when the target root stays mounted")
 	}
 }

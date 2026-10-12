@@ -52,4 +52,28 @@ func TestDisableGRUBConfig(t *testing.T) {
 			t.Fatal("disableGRUBConfig() = nil, want error when no grub.cfg exists")
 		}
 	})
+	t.Run("grub dir symlink out of root fails", func(t *testing.T) {
+		root, outside := t.TempDir(), t.TempDir()
+		write(t, outside, "grub.cfg")
+		if err := os.MkdirAll(filepath.Join(root, "boot"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(root, "boot/grub")); err != nil {
+			t.Fatal(err)
+		}
+		if err := disableGRUBConfig(root); err == nil {
+			t.Fatal("disableGRUBConfig() = nil, want error for grub dir outside root")
+		}
+		if _, err := os.Stat(filepath.Join(outside, "grub.cfg")); err != nil {
+			t.Fatalf("grub.cfg outside root was touched: %v", err)
+		}
+	})
+	t.Run("stat error other than ENOENT fails", func(t *testing.T) {
+		root := t.TempDir()
+		write(t, root, "boot/grub")
+		write(t, root, "boot/grub2/grub.cfg")
+		if err := disableGRUBConfig(root); err == nil {
+			t.Fatal("disableGRUBConfig() = nil, want error when boot/grub is not a directory")
+		}
+	})
 }

@@ -173,7 +173,9 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 	// Ensure final telemetry is always flushed before exit/reboot.
 	// Uses context.Background() because ctx may be canceled during teardown/error.
 	defer o.flushTelemetry(context.Background())
-	o.releaseStaleTargetMounts()
+	if err := o.releaseStaleTargetMounts(); err != nil {
+		return err
+	}
 	steps := o.provisionSteps()
 
 	cp, err := o.loadOrCreateCheckpoint()
@@ -2858,20 +2860,23 @@ var unmountTargetTree = func(d *disk.Manager, root string) error {
 
 // releaseStaleTargetMounts unmounts what a failed earlier attempt left
 // mounted, so a rescue retry does not wipe and re-image a disk under a live
-// mount or run fsck on a mounted root. It is best-effort and a no-op on a
-// first run.
-func (o *Orchestrator) releaseStaleTargetMounts() {
+// mount or run fsck on a mounted root. It is a no-op on a first run. When
+// the target root stays mounted it returns an error, because the next steps
+// would destroy a disk that is still in use.
+func (o *Orchestrator) releaseStaleTargetMounts() error {
 	if !isMountPoint(newroot) {
-		return
+		return nil
 	}
 	o.log.Warn("target root still mounted from an earlier attempt, unmounting", "root", newroot)
 	if err := o.unmountSharedData(); err != nil {
+		// The recursive unmount below also covers these mounts.
 		o.log.Warn("failed to unmount shared data from earlier attempt", "error", err)
 	}
 	if err := unmountTargetTree(o.disk, newroot); err != nil {
-		o.log.Warn("failed to unmount target root from earlier attempt", "root", newroot, "error", err)
+		return fmt.Errorf("unmounting target root %s left by an earlier attempt: %w", newroot, err)
 	}
 	o.sharedMounts = nil
+	return nil
 }
 
 func (o *Orchestrator) unmountSharedData() error {
