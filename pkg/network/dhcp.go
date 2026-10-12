@@ -259,9 +259,13 @@ func (d *DHCPMode) applyRenewal(link netlink.Link, ifName string, addr *netlink.
 	}
 	kept := make([]dhcpApplied, 0, len(d.applied)+1)
 	for _, a := range d.applied {
-		// A renewal without a router option leaves the default route as it is.
-		if route == nil && a.link.Attrs().Index == link.Attrs().Index {
-			route = a.route
+		// RFC 2131 4.4.5: a renewal without a router option drops the old
+		// default route. If that fails, keep tracking it for Teardown.
+		if route == nil && a.route != nil && a.link.Attrs().Index == link.Attrs().Index {
+			if err := dhcpRouteDel(a.route); err != nil && !errors.Is(err, syscall.ESRCH) {
+				d.log.Warn("failed to remove the old DHCP default route", "iface", ifName, "error", err)
+				route = a.route
+			}
 		}
 		if a.link.Attrs().Index == link.Attrs().Index && !a.addr.IP.Equal(addr.IP) {
 			if err := dhcpAddrDel(a.link, a.addr); err != nil {
