@@ -80,7 +80,7 @@ func defaultRunStreamingCommand(ctx context.Context, onLine func(string), root s
 		}
 		// ESRCH: the group already exited, which is not a failure.
 		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-			return err
+			return fmt.Errorf("kill process group %d: %w", cmd.Process.Pid, err)
 		}
 		return nil
 	}
