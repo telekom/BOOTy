@@ -220,3 +220,22 @@ func TestDecodeFstabField(t *testing.T) {
 		}
 	}
 }
+
+// The ESP mountpoint check after mounting /boot rejects an efi symlink out
+// of the target root.
+func TestESPMountpointMustStayInRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "boot"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "boot", "efi")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureTargetParentWithinRoot(root, filepath.Join(root, "boot", "efi")); err == nil {
+		t.Fatal("an efi symlink out of the root was accepted")
+	}
+	if err := ensureTargetParentWithinRoot(root, filepath.Join(root, "boot", "grub")); err != nil {
+		t.Fatalf("a missing mountpoint below the root was rejected: %v", err)
+	}
+}

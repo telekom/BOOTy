@@ -2175,6 +2175,12 @@ func (o *Orchestrator) mountBoot(ctx context.Context) error {
 		return nil
 	}
 	mountpoint := bootEFIMountPoint()
+	// A separate /boot comes from the image and may hold an efi symlink.
+	if o.separateBootMounted {
+		if err := ensureTargetParentWithinRoot(newroot, mountpoint); err != nil {
+			return fmt.Errorf("ESP mountpoint %s: %w", mountpoint, err)
+		}
+	}
 	if isMountPoint(mountpoint) {
 		source, err := mountedFromExpectedSource(mountpoint, o.bootPartition, "boot partition")
 		if err != nil {
