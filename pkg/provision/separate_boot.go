@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -172,14 +173,45 @@ func (o *Orchestrator) resolveFstabSource(ctx context.Context, source string) st
 		ids.node = part.Node
 		devs = append(devs, ids)
 	}
-	if strings.HasPrefix(source, "/dev/") {
-		// Device paths such as /dev/disk/by-uuid/... are symlinks to the
-		// canonical node that sfdisk reports.
-		if resolved, err := filepath.EvalSymlinks(source); err == nil {
-			source = resolved
+	return matchFstabSource(canonicalFstabSource(source), devs)
+}
+
+// canonicalFstabSource maps /dev/disk/by-uuid|by-partuuid|by-label links to
+// UUID=, PARTUUID= and LABEL= sources, because the initramfs has no udev to
+// create those links, and resolves other device symlinks to their node.
+func canonicalFstabSource(source string) string {
+	for prefix, key := range map[string]string{
+		"/dev/disk/by-uuid/":     "UUID=",
+		"/dev/disk/by-partuuid/": "PARTUUID=",
+		"/dev/disk/by-label/":    "LABEL=",
+	} {
+		if id, ok := strings.CutPrefix(source, prefix); ok {
+			return key + decodeUdevEscapes(id)
 		}
 	}
-	return matchFstabSource(source, devs)
+	if strings.HasPrefix(source, "/dev/") {
+		if resolved, err := filepath.EvalSymlinks(source); err == nil {
+			return resolved
+		}
+	}
+	return source
+}
+
+// decodeUdevEscapes decodes the \xNN escapes udev uses in link names, such as
+// \x20 for a space.
+func decodeUdevEscapes(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+3 < len(s) && s[i+1] == 'x' {
+			if n, err := strconv.ParseUint(s[i+2:i+4], 16, 8); err == nil {
+				b.WriteByte(byte(n))
+				i += 3
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 // decodeFstabField decodes the octal escapes of fstab fields, such as \040

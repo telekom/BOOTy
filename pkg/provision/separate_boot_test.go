@@ -244,3 +244,17 @@ func TestESPMountpointMustStayInRoot(t *testing.T) {
 		t.Fatalf("a missing mountpoint below the root was rejected: %v", err)
 	}
 }
+
+func TestCanonicalFstabSource(t *testing.T) {
+	for in, want := range map[string]string{
+		"/dev/disk/by-uuid/2222":          "UUID=2222",
+		"/dev/disk/by-partuuid/p2":        "PARTUUID=p2",
+		"/dev/disk/by-label/BOOT\\x20VOL": "LABEL=BOOT VOL",
+		"LABEL=BOOT":                      "LABEL=BOOT",
+		"/dev/vda2":                       "/dev/vda2",
+	} {
+		if got := canonicalFstabSource(in); got != want {
+			t.Errorf("canonicalFstabSource(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
