@@ -4950,6 +4950,10 @@ func TestGrowPartitionLegacyCompatGrowsLastLinuxPartition(t *testing.T) {
 	if err := o.growPartition(context.Background()); err != nil {
 		t.Fatalf("growPartition() = %v", err)
 	}
+	// A resumed run starts resize-filesystem with fresh state.
+	o = NewOrchestrator(cfg, &mockProvider{}, o.disk)
+	o.targetDisk = "/dev/sda"
+	o.rootPartition = "/dev/sda2"
 	if err := o.resizeFilesystem(context.Background()); err != nil {
 		t.Fatalf("resizeFilesystem() = %v", err)
 	}
@@ -4976,9 +4980,6 @@ func TestGrowPartitionLegacyCompatKeepsRootWhenLast(t *testing.T) {
 
 	if err := o.growPartition(context.Background()); err != nil {
 		t.Fatalf("growPartition() = %v", err)
-	}
-	if o.grownPartition != "" {
-		t.Fatalf("grownPartition = %q, want the root path", o.grownPartition)
 	}
 	last := cmd.calls[len(cmd.calls)-1]
 	if last.name != "growpart" || strings.Join(last.args, " ") != "--update on /dev/sda 2" {

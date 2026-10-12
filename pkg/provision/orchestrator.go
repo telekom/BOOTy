@@ -92,7 +92,6 @@ type Orchestrator struct {
 	// Runtime state set during provisioning.
 	targetDisk       string
 	rootPartition    string
-	grownPartition   string // legacy compat: last Linux partition when it is not the root
 	bootPartition    string
 	sharedMounts     []string
 	bestImageURL     string // resolved by verify-image, reused by stream-image
@@ -2639,23 +2638,36 @@ func (o *Orchestrator) growPartition(ctx context.Context) error {
 		return nil
 	}
 
-	target := o.rootPartition
-	if o.cfg.LegacyCompat {
-		last, err := o.lastLinuxPartition(ctx)
-		if err != nil {
-			return err
-		}
-		if last != "" && last != o.rootPartition {
-			o.log.Info("legacy compat: growing the last Linux partition", "partition", last, "root", o.rootPartition)
-			o.grownPartition = last
-			target = last
-		}
+	target, err := o.growTarget(ctx)
+	if err != nil {
+		return err
 	}
 	partNum, err := disk.PartitionNumberChecked(target, o.targetDisk)
 	if err != nil {
 		return fmt.Errorf("determine partition number of %s: %w", target, err)
 	}
 	return o.disk.GrowPartition(ctx, o.targetDisk, partNum)
+}
+
+// growTarget returns the partition that grow-partition and
+// resize-filesystem work on: the root, or in legacy compat the last Linux
+// partition. Both steps compute it from the partition table, so a resumed
+// run resizes the same partition.
+func (o *Orchestrator) growTarget(ctx context.Context) (string, error) {
+	if !o.cfg.LegacyCompat {
+		return o.rootPartition, nil
+	}
+	last, err := o.lastLinuxPartition(ctx)
+	if err != nil {
+		return "", err
+	}
+	if last == "" {
+		return o.rootPartition, nil
+	}
+	if last != o.rootPartition {
+		o.log.Info("legacy compat: the last Linux partition is not the root", "partition", last, "root", o.rootPartition)
+	}
+	return last, nil
 }
 
 // lastLinuxPartition returns the last partition with the GPT Linux
@@ -2676,13 +2688,20 @@ func (o *Orchestrator) lastLinuxPartition(ctx context.Context) (string, error) {
 }
 
 func (o *Orchestrator) resizeFilesystem(ctx context.Context) error {
-	if o.grownPartition != "" {
+	if o.cfg.Provision.Disk.PartitionLayout != nil {
+		return o.disk.ResizeFilesystem(ctx, o.rootPartition, newroot)
+	}
+	target, err := o.growTarget(ctx)
+	if err != nil {
+		return err
+	}
+	if target != o.rootPartition {
 		// The grown partition is not mounted: check it like the legacy
 		// e2fsck -p -f, then resize it offline.
-		if err := o.disk.CheckFilesystem(ctx, o.grownPartition); err != nil {
+		if err := o.disk.CheckFilesystem(ctx, target); err != nil {
 			return fmt.Errorf("check grown partition: %w", err)
 		}
-		return o.disk.ResizeFilesystem(ctx, o.grownPartition, "")
+		return o.disk.ResizeFilesystem(ctx, target, "")
 	}
 	return o.disk.ResizeFilesystem(ctx, o.rootPartition, newroot)
 }
