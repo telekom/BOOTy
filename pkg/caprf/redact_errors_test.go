@@ -56,3 +56,19 @@ func TestTransportErrorsKeepCancelAndTimeout(t *testing.T) {
 		t.Fatalf("timeout error leaks the signature: %v", err)
 	}
 }
+
+func TestTransportErrorsRedactRedirectTarget(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://127.0.0.1:1/target?X-Amz-Signature=REDIRECTSECRET", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	c := NewFromConfig(&config.MachineConfig{})
+	err := c.doPost(context.Background(), srv.URL+"/start", "{}")
+	if err == nil {
+		t.Fatal("expected an error from the unreachable redirect target")
+	}
+	if strings.Contains(err.Error(), "REDIRECTSECRET") {
+		t.Fatalf("redirect error leaks the signature: %v", err)
+	}
+}

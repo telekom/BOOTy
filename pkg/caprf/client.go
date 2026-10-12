@@ -17,6 +17,7 @@ import (
 	neturl "net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -739,13 +740,19 @@ func redactedURL(raw string) string {
 }
 
 func redactedURLError(raw string, err error) error {
+	return redactedURLErrorFor([]string{raw}, err)
+}
+
+// redactedURLErrorFor redacts every URL in raws from err. A *url.Error adds
+// its own URL, which differs from the request URL after a redirect.
+func redactedURLErrorFor(raws []string, err error) error {
 	if err == nil {
 		return nil
 	}
 	if urlErr, ok := err.(*neturl.Error); ok { //nolint:errorlint // direct copy avoids retaining the raw URL.
 		sanitized := *urlErr
 		sanitized.URL = redactedURL(urlErr.URL)
-		sanitized.Err = redactedURLError(raw, urlErr.Err)
+		sanitized.Err = redactedURLErrorFor(append(slices.Clone(raws), urlErr.URL), urlErr.Err)
 		return &sanitized
 	}
 	// Keep cancellation and timeout classification for retry and callers.
@@ -755,11 +762,12 @@ func redactedURLError(raw string, err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return context.DeadlineExceeded
 	}
+	msg := fmt.Sprintf("%s: %s", redactedURL(raws[0]), redact.Wrap(errors.New(err.Error()), raws...))
 	var netErr net.Error
 	if errors.As(err, &netErr) {
-		return &redactedNetError{msg: redactURLErrorString(raw, err.Error()), timeout: netErr.Timeout()}
+		return &redactedNetError{msg: msg, timeout: netErr.Timeout()}
 	}
-	return errors.New(redactURLErrorString(raw, err.Error()))
+	return errors.New(msg)
 }
 
 // redactedNetError keeps the timeout flag of a net.Error with a redacted
@@ -772,10 +780,6 @@ type redactedNetError struct {
 func (e *redactedNetError) Error() string   { return e.msg }
 func (e *redactedNetError) Timeout() bool   { return e.timeout }
 func (e *redactedNetError) Temporary() bool { return false }
-
-func redactURLErrorString(raw, msg string) string {
-	return fmt.Sprintf("%s: %s", redactedURL(raw), redact.Wrap(errors.New(msg), raw))
-}
 
 func (c *Client) postWithAuth(ctx context.Context, url, body string) error {
 	return c.withRetry(ctx, url, func() error {
