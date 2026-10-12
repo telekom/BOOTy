@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -328,5 +329,44 @@ func TestOnBoundRouteFailureLeavesWinnerForOtherNIC(t *testing.T) {
 	}
 	if len(rolledBack) != 1 || rolledBack[0] != "eth0" {
 		t.Fatalf("rolled back addresses on %v, want eth0", rolledBack)
+	}
+}
+
+func TestOnBoundAppliesRenewalOfWinningNIC(t *testing.T) {
+	origAddr, origAddrDel, origRoute := dhcpAddrReplace, dhcpAddrDel, dhcpRouteReplace
+	t.Cleanup(func() { dhcpAddrReplace, dhcpAddrDel, dhcpRouteReplace = origAddr, origAddrDel, origRoute })
+	var set, deleted []string
+	dhcpAddrReplace = func(link netlink.Link, a *netlink.Addr) error {
+		set = append(set, link.Attrs().Name+" "+a.IPNet.String())
+		return nil
+	}
+	dhcpAddrDel = func(link netlink.Link, a *netlink.Addr) error {
+		deleted = append(deleted, link.Attrs().Name+" "+a.IPNet.String())
+		return nil
+	}
+	dhcpRouteReplace = func(*netlink.Route) error { return nil }
+
+	d := NewDHCPMode()
+	var winner dhcpWinner
+	eth0 := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth0", Index: 1}}
+	eth1 := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth1", Index: 2}}
+	bound0 := d.onBound(eth0, "eth0", make(chan struct{}, 1), &winner)
+	bound1 := d.onBound(eth1, "eth1", make(chan struct{}, 1), &winner)
+	lease := func(ip string) *dhclient.Lease {
+		return &dhclient.Lease{FixedAddress: net.ParseIP(ip), Netmask: net.CIDRMask(24, 32)}
+	}
+
+	bound0(lease("10.0.2.15"))
+	bound1(lease("10.0.3.15"))
+	bound0(lease("10.0.2.16"))
+
+	if want := []string{"eth0 10.0.2.15/24", "eth0 10.0.2.16/24"}; !slices.Equal(set, want) {
+		t.Fatalf("addresses set = %v, want %v", set, want)
+	}
+	if want := []string{"eth0 10.0.2.15/24"}; !slices.Equal(deleted, want) {
+		t.Fatalf("addresses deleted = %v, want %v", deleted, want)
+	}
+	if len(d.applied) != 1 || d.applied[0].addr.IPNet.String() != "10.0.2.16/24" {
+		t.Fatalf("applied state = %v, want only 10.0.2.16/24", d.applied)
 	}
 }

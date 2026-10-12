@@ -173,6 +173,11 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struc
 		winner.mu.Lock()
 		defer winner.mu.Unlock()
 		if winner.won {
+			// Renewals and rebinds of the winning client update the host;
+			// leases on other NICs are ignored.
+			if winner.iface == ifName {
+				d.applyRenewal(link, ifName, addr, lease)
+			}
 			return
 		}
 		// Replace, so an address left by an earlier lease gets this mask.
@@ -195,7 +200,7 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struc
 				return
 			}
 		}
-		winner.won = true
+		winner.won, winner.iface = true, ifName
 		d.remember(dhcpApplied{link: link, addr: addr, route: route})
 		d.log.Info("DHCP lease obtained", "iface", ifName, "addr", addr.IPNet.String())
 		select {
@@ -207,8 +212,48 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struc
 
 // dhcpWinner lets only the first cleanly applied lease configure the host.
 type dhcpWinner struct {
-	mu  sync.Mutex
-	won bool
+	mu    sync.Mutex
+	won   bool
+	iface string
+}
+
+// applyRenewal applies a renewed or rebound lease of the winning NIC. A
+// changed address replaces the old one, and the default route follows the
+// lease. Failures are logged and the previous state stays.
+func (d *DHCPMode) applyRenewal(link netlink.Link, ifName string, addr *netlink.Addr, lease *dhclient.Lease) {
+	if err := dhcpAddrReplace(link, addr); err != nil {
+		d.log.Warn("failed to apply renewed DHCP address", "iface", ifName, "error", err)
+		return
+	}
+	var route *netlink.Route
+	if len(lease.Router) > 0 {
+		route = &netlink.Route{Gw: lease.Router[0], LinkIndex: link.Attrs().Index}
+		if err := dhcpRouteReplace(route); err != nil {
+			d.log.Warn("failed to apply renewed default route", "iface", ifName, "gw", lease.Router[0], "error", err)
+			route = nil
+		}
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	kept := d.applied[:0]
+	for _, a := range d.applied {
+		if a.link.Attrs().Index != link.Attrs().Index {
+			kept = append(kept, a)
+			continue
+		}
+		if !a.addr.IPNet.IP.Equal(addr.IPNet.IP) {
+			if err := dhcpAddrDel(a.link, a.addr); err != nil {
+				d.log.Warn("failed to remove superseded DHCP address", "iface", ifName, "error", err)
+				kept = append(kept, a)
+				continue
+			}
+		}
+		if route == nil {
+			route = a.route
+		}
+	}
+	d.applied = append(kept, dhcpApplied{link: link, addr: addr, route: route})
+	d.log.Info("DHCP lease renewed", "iface", ifName, "addr", addr.IPNet.String())
 }
 
 // leaseAddr builds the interface address from a lease. A lease without a
