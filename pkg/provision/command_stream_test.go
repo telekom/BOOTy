@@ -4,8 +4,13 @@ package provision
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -49,9 +54,27 @@ func TestDefaultRunStreamingCommandDoesNotWaitForBackgroundChildren(t *testing.T
 	t.Cleanup(func() { streamWaitDelay = old })
 
 	start := time.Now()
-	err := defaultRunStreamingCommand(context.Background(), func(string) {}, "", []string{"/bin/sh", "-c", "sleep 30 & echo started"})
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	err := defaultRunStreamingCommand(context.Background(), func(string) {}, "",
+		[]string{"/bin/sh", "-c", "sleep 30 & echo $! > " + pidFile + "; echo started"})
 	if err != nil {
 		t.Fatalf("defaultRunStreamingCommand() = %v, want nil: the script itself succeeded", err)
+	}
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+	deadline := time.Now().Add(5 * time.Second)
+	for syscall.Kill(pid, 0) == nil {
+		// A killed child stays a zombie until its parent reaps it; check the state.
+		if state, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)); err != nil || strings.Contains(string(state), ") Z ") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("background child %d still runs after the step", pid)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	if elapsed := time.Since(start); elapsed > 10*time.Second {
 		t.Fatalf("command returned after %s, the background child held it", elapsed)
