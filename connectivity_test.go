@@ -55,3 +55,28 @@ func TestEnsureNetworkConnectivityRedactsTargetInLogs(t *testing.T) {
 		t.Fatalf("logs = %q, want redacted target context", got)
 	}
 }
+
+func TestSetLegacyRamdiskHostname(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  config.MachineConfig
+		want string
+	}{
+		{name: "provision", cfg: config.MachineConfig{Mode: "provision", Hostname: "node-1"}, want: "node-1"},
+		{name: "default mode", cfg: config.MachineConfig{Hostname: "node-1"}, want: "node-1"},
+		{name: "deprovision keeps the name", cfg: config.MachineConfig{Mode: "deprovision", Hostname: "node-1"}},
+		{name: "no hostname", cfg: config.MachineConfig{Mode: "provision"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ""
+			setLegacyRamdiskHostname(&tt.cfg, func(name []byte) error {
+				got = string(name)
+				return nil
+			})
+			if got != tt.want {
+				t.Fatalf("hostname = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
