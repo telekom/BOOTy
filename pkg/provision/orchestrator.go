@@ -116,6 +116,7 @@ func NewOrchestrator(cfg *config.MachineConfig, provider config.Provider, diskMg
 func (o *Orchestrator) provisionSteps() []Step {
 	return []Step{
 		{"report-init", o.reportInit},
+		{"release-stale-mounts", o.releaseStaleTargetMounts},
 		{"collect-inventory", o.collectInventory},
 		{"collect-firmware", o.collectFirmware},
 		{"health-checks", o.runHealthChecks},
@@ -173,9 +174,6 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 	// Ensure final telemetry is always flushed before exit/reboot.
 	// Uses context.Background() because ctx may be canceled during teardown/error.
 	defer o.flushTelemetry(context.Background())
-	if err := o.releaseStaleTargetMounts(); err != nil {
-		return err
-	}
 	steps := o.provisionSteps()
 
 	cp, err := o.loadOrCreateCheckpoint()
@@ -211,6 +209,8 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 
 func resumeStateSteps() map[string]struct{} {
 	return map[string]struct{}{
+		// A resumed run can still find mounts from the interrupted attempt.
+		"release-stale-mounts":      {},
 		"validate-provision-inputs": {},
 		"verify-image":              {},
 		"mount-efivarfs":            {},
@@ -2863,8 +2863,9 @@ var unmountTargetTree = func(d *disk.Manager, root string) error {
 // re-image a disk under a live mount or run fsck on a mounted root. The
 // recursive unmount reads the mount table itself, so a mount table read
 // failure or a stale child mount stops provisioning instead of being
-// missed. It is a no-op on a first run.
-func (o *Orchestrator) releaseStaleTargetMounts() error {
+// missed. It runs as a step right after report-init, so a failure is
+// reported to CAPRF like any other step error. It is a no-op on a first run.
+func (o *Orchestrator) releaseStaleTargetMounts(_ context.Context) error {
 	if isMountPoint(newroot) {
 		o.log.Warn("target root still mounted from an earlier attempt, unmounting", "root", newroot)
 	}
