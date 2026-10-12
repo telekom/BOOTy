@@ -1136,6 +1136,9 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	if src.BGPNeighbors != "" {
 		dst.BGPNeighbors = src.BGPNeighbors
 	}
+	if src.BGPRemoteASN > 0 {
+		dst.BGPRemoteASN = src.BGPRemoteASN
+	}
 	mergeInferredEVPNL2(dst, src)
 	if src.BondInterfaces != "" {
 		dst.BondInterfaces = src.BondInterfaces

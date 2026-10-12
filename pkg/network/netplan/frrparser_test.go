@@ -3,6 +3,8 @@ package netplan
 import (
 	"slices"
 	"testing"
+
+	"github.com/telekom/BOOTy/pkg/network"
 )
 
 func TestParseFRRConfigBytes_Basic(t *testing.T) {
@@ -318,7 +320,50 @@ exit-address-family
 	if want := []string{"192.0.2.1"}; !slices.Equal(params.NumberedPeers, want) {
 		t.Errorf("NumberedPeers = %v, want %v", params.NumberedPeers, want)
 	}
+	if params.RemoteASN != 65500 {
+		t.Errorf("RemoteASN = %d, want 65500", params.RemoteASN)
+	}
 	if !params.EVPN || !params.AdvertiseAllVNI {
 		t.Errorf("EVPN = %v, AdvertiseAllVNI = %v, want both true", params.EVPN, params.AdvertiseAllVNI)
+	}
+}
+
+// A numbered peer must keep its own remote-as. The network config has one
+// remote ASN, so configs it can not express fail instead of dialing a peer
+// with a wrong ASN.
+func TestParseFRRConfigBytes_NumberedRemoteASN(t *testing.T) {
+	tests := []struct {
+		name    string
+		peers   string
+		want    uint32
+		wantErr bool
+	}{
+		{"ibgp number", "neighbor 192.0.2.1 remote-as 65200\n", 0, false},
+		{"ibgp internal", "neighbor 192.0.2.1 remote-as internal\n", 0, false},
+		{"ebgp", "neighbor 192.0.2.1 remote-as 65500\nneighbor 192.0.2.2 remote-as 65500\n", 65500, false},
+		{"mixed", "neighbor 192.0.2.1 remote-as 65500\nneighbor 192.0.2.2 remote-as 65200\n", 0, true},
+		{"external", "neighbor 192.0.2.1 remote-as external\n", 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params, err := ParseFRRConfigBytes([]byte("router bgp 65200\n" + tt.peers))
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ParseFRRConfigBytes() = nil error, want an error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseFRRConfigBytes() = %v", err)
+			}
+			if params.RemoteASN != tt.want {
+				t.Errorf("RemoteASN = %d, want %d", params.RemoteASN, tt.want)
+			}
+			cfg := &network.Config{}
+			applyFRRParams(params, cfg)
+			if cfg.BGPRemoteASN != tt.want {
+				t.Errorf("BGPRemoteASN = %d, want %d", cfg.BGPRemoteASN, tt.want)
+			}
+		})
 	}
 }

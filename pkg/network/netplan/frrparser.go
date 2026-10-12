@@ -17,8 +17,12 @@ type FRRParams struct {
 	UnnumberedPeers []string // Interface names from "neighbor X interface" lines.
 	NumberedPeers   []string // IPv4 addresses from "neighbor X remote-as" lines.
 	NumberedPeersV6 []string // IPv6 addresses from "neighbor X remote-as" lines.
-	EVPN            bool     // True if "address-family l2vpn evpn" found.
-	AdvertiseAllVNI bool     // True if "advertise-all-vni" found.
+	// RemoteASN is the remote-as of the IPv4 numbered peers when it is not
+	// the router ASN. All of them must use the same remote-as, because the
+	// network config has one remote ASN for numbered peers.
+	RemoteASN       uint32
+	EVPN            bool // True if "address-family l2vpn evpn" found.
+	AdvertiseAllVNI bool // True if "advertise-all-vni" found.
 	// L3VNIs lists VNIs mapped to a VRF ("vni N" at top level for the default
 	// VRF or inside a "vrf" block). FRR advertises only Type-5 routes for them;
 	// advertise-all-vni produces Type-2/Type-3 routes for L2VNIs only.
@@ -66,6 +70,11 @@ func ParseFRRConfigBytes(data []byte) (*FRRParams, error) {
 
 	params.UnnumberedPeers = extractUnnumberedPeers(content)
 	params.NumberedPeers = extractNumberedPeers(content, reNeighborIPv4, "169.254.", "127.")
+	remoteASN, err := numberedRemoteASN(content, params.ASN)
+	if err != nil {
+		return nil, err
+	}
+	params.RemoteASN = remoteASN
 	params.NumberedPeersV6 = extractNumberedPeers(content, reNeighborIPv6, "fd00:7:caa5:", "fe80:")
 
 	if m := reLocalAS.FindStringSubmatch(content); len(m) > 1 {
@@ -180,4 +189,34 @@ func shouldSkipPeer(ip string, prefixes []string) bool {
 		}
 	}
 	return false
+}
+
+// numberedRemoteASN returns the remote-as of the IPv4 numbered peers when
+// it differs from the router ASN, and 0 for iBGP peers. The network config
+// has a single remote ASN for numbered peers, so peers with different
+// remote-as values or with "remote-as external" are an error instead of
+// sessions with a wrong ASN.
+func numberedRemoteASN(content string, routerASN uint32) (uint32, error) {
+	var found uint32
+	for _, m := range reNeighborIPv4.FindAllStringSubmatch(content, -1) {
+		if shouldSkipPeer(m[1], []string{"169.254.", "127."}) {
+			continue
+		}
+		asn := routerASN
+		if m[2] != "internal" {
+			v, err := strconv.ParseUint(m[2], 10, 32)
+			if err != nil {
+				return 0, fmt.Errorf("neighbor %s remote-as %s: only a number or internal is supported", m[1], m[2])
+			}
+			asn = uint32(v)
+		}
+		if found != 0 && asn != found {
+			return 0, fmt.Errorf("numbered neighbors use different remote-as values %d and %d", found, asn)
+		}
+		found = asn
+	}
+	if found == routerASN {
+		return 0, nil
+	}
+	return found, nil
 }
