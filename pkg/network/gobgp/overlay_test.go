@@ -8,8 +8,11 @@ import (
 	"log/slog"
 	"net"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 
 	apipb "github.com/osrg/gobgp/v3/api"
 	"github.com/osrg/gobgp/v3/pkg/server"
@@ -3874,5 +3877,68 @@ func TestHandleType5RouteRemovesPrefixWhenNoPathInstalls(t *testing.T) {
 
 	if len(mock.routeDels) != 1 || mock.routeDels[0].Gw != nil {
 		t.Fatalf("expected the prefix route to be removed when no path installs, got %v", mock.routeDels)
+	}
+}
+
+// blockingRouteOps blocks the first RouteReplace until release is closed.
+type blockingRouteOps struct {
+	*mockOverlayNetlinkOps
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (b *blockingRouteOps) RouteReplace(route *netlink.Route) error {
+	b.once.Do(func() {
+		close(b.entered)
+		<-b.release
+	})
+	return b.mockOverlayNetlinkOps.RouteReplace(route)
+}
+
+func TestOverlayTeardownWaitsForInFlightType5Update(t *testing.T) {
+	ops := &blockingRouteOps{
+		mockOverlayNetlinkOps: &mockOverlayNetlinkOps{},
+		entered:               make(chan struct{}),
+		release:               make(chan struct{}),
+	}
+	overlay := newType5FailoverTestOverlay(ops)
+	var vtepRoutes atomic.Int32
+	overlay.ensureVTEPRoute = func(net.IP) error {
+		vtepRoutes.Add(1)
+		return nil
+	}
+	route := type5FailoverRoute(t, 1, "192.168.4.1")
+
+	updateDone := make(chan struct{})
+	go func() {
+		defer close(updateDone)
+		overlay.handleType5Route(route, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
+	}()
+	<-ops.entered
+
+	teardownDone := make(chan struct{})
+	go func() {
+		defer close(teardownDone)
+		_ = overlay.Teardown(context.Background())
+	}()
+	select {
+	case <-teardownDone:
+		t.Fatal("Teardown returned while a Type-5 update was still changing the kernel")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(ops.release)
+	<-updateDone
+	select {
+	case <-teardownDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Teardown did not finish after the update returned")
+	}
+
+	before := vtepRoutes.Load()
+	overlay.handleType5Route(type5FailoverRoute(t, 2, "192.168.4.2"), "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
+	if vtepRoutes.Load() != before {
+		t.Fatal("an update after Teardown added a VTEP route")
 	}
 }

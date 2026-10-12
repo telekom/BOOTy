@@ -71,9 +71,14 @@ func enterTestNetns(t *testing.T) {
 		t.Fatalf("new netns: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = netns.Set(orig)
+		defer func() { _ = orig.Close() }()
 		_ = ns.Close()
-		_ = orig.Close()
+		if err := netns.Set(orig); err != nil {
+			// Keep the thread locked: the runtime then retires it instead
+			// of reusing a thread that is still in the test namespace.
+			t.Errorf("restore network namespace: %v", err)
+			return
+		}
 		runtime.UnlockOSThread()
 	})
 	lo, err := netlink.LinkByName("lo")
