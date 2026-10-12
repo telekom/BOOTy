@@ -705,3 +705,20 @@ func TestSoftDeprovisionRejectsMirroredRoot(t *testing.T) {
 		t.Fatalf("softDeprovision() error = %v, want the mirrored root rejection", err)
 	}
 }
+
+// Soft deprovision must not mount the root when blkid fails: the root may
+// be a RAID member.
+func TestSoftDeprovisionFailsWhenRootTypeUnknown(t *testing.T) {
+	withMockStat(t, func(path string) (os.FileInfo, error) {
+		return fakeFileInfo{name: path, mode: os.ModeDevice}, nil
+	})
+	cmd := newMockCommander()
+	cmd.setResult("sfdisk --json", sfdiskJSON(t, []disk.Partition{{Node: "/dev/sda1", Type: disk.LinuxFilesystemGUID}}), nil)
+	cmd.setResult("blkid -o", nil, errors.New("blkid failed"))
+	cfg := &config.MachineConfig{}
+	cfg.Deprovision.Device = "/dev/sda"
+	o := NewOrchestrator(cfg, &mockProvider{}, disk.NewManager(cmd))
+	if err := o.softDeprovision(context.Background()); err == nil || !strings.Contains(err.Error(), "root filesystem type") {
+		t.Fatalf("softDeprovision() = %v, want a filesystem type error", err)
+	}
+}

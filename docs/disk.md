@@ -324,8 +324,12 @@ The `setup-raid` step:
 
 ## Disk Mirroring
 
-Planned (#581): RAID-1 root disk mirroring with `DISK_MIRRORING_MODE`. On
-`main`, BOOTy ignores `DISK_MIRRORING_MODE`.
+`DISK_MIRRORING_MODE` mirrors the installed system with RAID1 across two
+disks, like the CAPRF legacy provisioner: root as `/dev/md2`, a separate
+`/boot` as `/dev/md1`. `raid-1` needs a pair of disks with equal size and
+sector size, `auto` falls back to one disk, `none` is the default. See
+[Configuration](configuration.md#disk-and-image) and the `DISK_MIRRORING_MODE`
+row of the README for the full rules.
 
 ## NVMe Namespaces
 

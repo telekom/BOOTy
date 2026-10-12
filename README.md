@@ -605,7 +605,7 @@ is in the ramdisk, so it helps only when provisioning runs again in the same
 boot, for example with `RESCUE_MODE=retry`. A new run skips the completed
 steps, except the steps that rebuild runtime state or check safety rules:
 `validate-provision-inputs`, `verify-image`, `mount-efivarfs`,
-`setup-mellanox`, `detect-disk`, `parse-partitions`, `enable-lvm`,
+`setup-mellanox`, `detect-disk`, `parse-partitions`, `mirror-root`, `enable-lvm`,
 `mount-root`, `mount-boot`, `mount-shared-data`, `setup-chroot-binds`,
 `configure-serial-console`, `configure-grub` and `teardown-chroot`.
 
