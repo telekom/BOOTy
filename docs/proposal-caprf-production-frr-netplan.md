@@ -21,14 +21,14 @@ Each decision below cites the FRR docs, source or test.
 |---|---|---|
 | bm4x-operator `internal/controller/infra/redfish/provcfg/templates` (cit/t-caas/bm4x-operator origin/main b90274c) | `etc/frr/frr.conf.tpl`, `etc/netplan/netplan.yaml.tpl`, `etc/resolv.conf.tpl` | Production. Rendered by `template.go` into the CAPRF provisioner config Secret `prov-<host>`. The inputs are listed in 1.3. |
 | CAPRF `test/e2e/lib.sh` `generate_evpn_provisioner_config`, `deploy_type` `old` | same paths | e2e copy of the production files. Differences: `frr defaults datacenter`, `frr version 9.1`, numbered `remote-as external` peer, netplan `match: {name: enp*s4}` with `set-name: hbn`. |
-| CAPRF `test/e2e/lib.sh`, `deploy_type` `booty` | same paths | BOOTy-only variant. It is removed once BOOTy handles the `old` files (section 6, slice g). |
+| CAPRF `test/e2e/lib.sh`, `deploy_type` `booty` | same paths | BOOTy-only variant. It is removed once BOOTy handles the `old` files (section 5, slice g). |
 | CAPRF `test/e2e/lib.sh` `generate_dhcp_provisioner_config` (`old`) | `/etc/netplan/10-provision.yaml` | `match: {name: "en*"}` and `{name: "eth*"}` with `dhcp4: true`. |
 | CAPRF `cmd/genimg` | `/deploy/netplan/config.yaml` | Dev tool only, DHCP. |
 | kindmetal | none | Its FRR templates are fabric-side only. In the CAPRF-on-kindmetal flow, the bm4x-operator renders the files against the kindmetal BM4X mock API. |
 
 No producer emits netplan `vlans`, `bonds` or `routes`. BOOTy keeps its
 existing VLAN and bond support from the vars and netplan files, and the
-tests cover it (section 5). It is not new work in this stream.
+tests cover it (section 4). It is not new work in this stream.
 
 ### 1.2 FRR version
 
@@ -74,7 +74,7 @@ stream.
 | C3 | `router bgp N vrf Vrf_underlay`, `router bgp N vrf default` | One BGP instance per VRF. | One global instance. VRF from netplan only. | Model: one instance per VRF. GoBGP: underlay instance sessions bound to `Vrf_underlay`. | a, b |
 | C4 | `neighbor dcgw peer-group`, `remote-as internal`, `neighbor <RR> peer-group dcgw` | Members inherit the group's `remote-as`, timers, BFD, AFs and policies. A member override wins (`tests/bgpd/test_peer_attr.c`). `internal` means peer AS = local AS. | RR peers lost. `BGPPeerMode=unnumbered`. | Numbered iBGP to every RR. Source and listener in `Vrf_underlay` (`Transport.BindInterface`, plus `net.ipv4.tcp_l3mdev_accept=1` or a VRF-bound listener). Only l2vpn evpn is active. | b |
 | C5 | `neighbor leaf remote-as 65500`, `neighbor <nic> interface peer-group leaf` (every non-SRIOV port) | Unnumbered eBGP over IPv6 link-local with extended next hop (RFC 5549). | First uplink only. Peers are auto-detected NICs. | All listed uplinks. Validate the NIC list against netplan ethernets. | b |
-| C6 | `neighbor leaf local-as 65501 no-prepend replace-as` | `no-prepend`: L is not added to received paths. `replace-as`: only L is sent outbound. `replace-as` requires `no-prepend`. eBGP only (`doc/user/bgp.rst:1568-1584`). | Parsed by the old regex only when indented. GoBGP ignores `LocalASN`. | GoBGP v3 local-as is no-prepend replace-as by design (`fsm.go:829`, `table/path.go:256`, `oc/util.go:133`): map it to `PeerConf.LocalAsn`. Plain `local-as X` or only one keyword is a hard error. | b |
+| C6 | `neighbor leaf local-as 65501 no-prepend replace-as` | `no-prepend`: L is not added to received paths. `replace-as`: only L is sent outbound. `replace-as` requires `no-prepend`. eBGP only (`doc/user/bgp.rst:1568-1584`). | Parsed by the old regex only when indented. GoBGP ignores `LocalASN`. | GoBGP v3 local-as is no-prepend replace-as by design (`fsm.go:829`, `table/path.go:256`, `oc/util.go:133`): map it to `PeerConf.LocalAsn`. Plain `local-as X` or only one keyword is a hard error. Gap to close: GoBGP's inbound AS-loop check uses only the peer's local AS (`pkg/server/peer.go:607-610`, `hasOwnASLoop`), while FRR also rejects paths that contain the real ASN. BOOTy adds an import check for the real ASN (subject to `allowas-in`, C11) and a lab test for it. | b |
 | C7 | `timers 30 90`, `timers connect 5` | Per-neighbor values override the profile. Negotiated hold = min of both sides; keepalive follows (`bgp.rst:1731-1739`). Profile defaults: traditional 60/180/120, datacenter 3/9/10 (`bgpd/bgp_vty.c:105-116` at 8.2.2). | Not parsed. GoBGP defaults. | `Timers.Config` keepalive, hold, connect-retry. Template defaults follow the `frr defaults` line. | b |
 | C8 | `no bgp default ipv4-unicast`, `address-family ... activate` | Without the default, only activated AFs are negotiated (`bgp_default_afi_safi` topotest). | One AF set per mode. | Per-peer AF list from the model. | b |
 | C9 | `no bgp ebgp-requires-policy` | Traditional profile: eBGP without policy sends and accepts nothing unless disabled (`bgp.rst:442-452`). | Not modelled. | Model the flag. Without it, under `traditional`, an eBGP peer without policy gets no routes, like FRR. | b |
@@ -87,11 +87,11 @@ stream.
 | C16 | IPv6 `/128` provisioning address on `lo`; `network <addr>/128`, `network <prefix>`; `advertise ipv6 unicast`; `ipv6 route <prefix> blackhole` | `network` is advertised only when the prefix is in the RIB (import-check, `bgp.rst:1057-1065`); the blackhole route puts the prefix there. `advertise ipv6 unicast` creates Type-5 only (`bgp.rst:2885-2895`). | `lo` becomes the static interface (`StaticIP=<addr>/128`, `StaticIface=lo`). No Type-5 IPv6. | Address on `lo` (not a static interface). Blackhole route in the kernel. Type-5 IPv6 originated for both `network` lines. | d, e |
 | C17 | Routes learned from the fabric (RR reachability over the unnumbered sessions, default route) | zebra installs the best paths into the VRF table, with IPv6 link-local next hops on the interface and ECMP. | GoBGP installs nothing into the kernel (`pkg/network/gobgp/underlay.go` has no RouteReplace). | FIB writer ("mini zebra"): IPv4 and IPv6 unicast RIB to kernel routes in the VRF table, link-local next hops with device, multipath, withdraw. | c |
 | C18 | IPv6 Type-5 install over the IPv4 VTEP | zebra installs next hop `::ffff:<VTEP>` on the L3VNI bridge, with a permanent neighbor entry for that address with the RMAC, and an FDB entry RMAC to VTEP (`bgp_evpn_rt5` topotest, 10.x `test_router_check_ip`). | `overlay.go:846-870` falls back to the IPv4 VTEP as gateway. `buildType5KernelRoute` (1125-1141) puts an IPv4 gateway on an IPv6 destination. `buildType5GatewayNeighbor` (1143-1158) returns nil for IPv6. | Install like zebra. | d |
-| C19 | BFD: `neighbor X bfd`, `bfd profile fabric`, `transmit-interval 150`, `receive-interval 150` | Defaults: detect multiplier 3, 300/300 ms. An unknown profile falls back to the defaults (`doc/user/bfd.rst:115-171`, `bfd_profiles_topo1`). BFD down tears the session down (`bfd_topo1`). | Not parsed. GoBGP has no BFD. | Own minimal BFD (section 3.6). | BFD (after b) |
+| C19 | BFD: `neighbor X bfd`, `bfd profile fabric`, `transmit-interval 150`, `receive-interval 150` | Defaults: detect multiplier 3, 300/300 ms. An unknown profile falls back to the defaults (`doc/user/bfd.rst:115-120` for the fallback, `147-171` for the defaults, `bfd_profiles_topo1`). BFD down tears the session down (`bfd_topo1`). | Not parsed. GoBGP has no BFD. | Own minimal BFD (section 3.6). | BFD (after b) |
 | C20 | `vni N` at top level, `advertise-all-vni` | `advertise-all-vni` creates Type-2/3 for L2VNIs only. A top-level `vni` maps the default VRF to an L3VNI. | Done (#582 and existing README table). | Keep. Covered by the Type-5-only and Type-2/3+Type-5 labs. | f |
 | C21 | `no bgp suppress-duplicates`, `no ip forwarding`, `service integrated-vtysh-config`, `hostname`, `log ...`, `frr version`, `frr defaults` | Daemon and logging options. | Ignored. | Accept and record in the model. `frr defaults` selects the timer defaults (C7). `no ip forwarding` is a no-op in the ramdisk. | a |
-| N1 | netplan ethernets keyed by port name: `mtu`, `link-local: [ipv6]`, `accept-ra`, `emit-lldp`, `ipv6-address-generation: eui64` | netplan semantics | MTU only. | Apply all keys. `emit-lldp` is accepted; BOOTy has an LLDP package but does not need to send. | a, c |
-| N2 | `match` with `name` glob or `macaddress`, `set-name` | netplan renames the single match before use. | Ignored. | Done in this stream (set-name and match PR, folded in). | a |
+| N1 | netplan ethernets keyed by port name: `mtu`, `link-local: [ipv6]`, `accept-ra`, `emit-lldp`, `ipv6-address-generation: eui64` | netplan semantics | `mtu` sets the MTU. `link-local: [ipv6]` adds an auto-detected interface (`parser.go:207-212`). Other keys are ignored. | Apply all keys. `emit-lldp` is accepted; BOOTy has an LLDP package but does not need to send. | a, c |
+| N2 | `match` with `name` glob or `macaddress`, `set-name` | netplan renames the single match before use. | Partial: a literal `match.name` becomes the static interface (`parser.go:309-321`); `macaddress` is parsed but unused; `set-name` is not in the types. | Its own PR before slice a (`network.ApplyLinkRenames`, `network.ResolveLinkMatch`). | before a |
 | N3 | `vrfs` (`table`, `interfaces`), `dummy-devices`, `tunnels` vxlan (`id`, `local`, `link`, `port`, `macaddress`, `hairpin`, `mac-learning`, `arp-proxy`, `port-mac-learning`, `mtu`), `bridges` (`macaddress`, `parameters.stp`, `interfaces`, `mtu`) | netplan semantics | First-match heuristics (`extractBonds`, `extractVRFs`). `BridgeName` lost. VTEP not bound to `link`. | Model every device. Apply with netlink. The netplan bridge MAC is the RMAC; apply the same MAC to `vx.<VNI>` as the template does. | a, c |
 | N4 | Unknown netplan keys | netplan rejects them. | Ignored. | Hard error. | a |
 
@@ -126,8 +126,11 @@ stream.
   - `SoftReconfigInbound`
   - `EBGPRequiresPolicy`
   - the `frr defaults` profile
-- The existing `network.Config` is filled from the model. This slice
-  changes no behavior; it only makes more fields available.
+- The existing `network.Config` is filled from the model with the same
+  derivation rules as today, so sessions and routes do not change in this
+  slice. One behavior changes on purpose: an unknown FRR statement or
+  netplan key now fails the run (C2, N4). Configs that parse today with
+  ignored statements fail after this slice.
 
 ### 3.2 Sessions (slice b)
 
@@ -183,8 +186,13 @@ BFD). BOOTy implements a minimal BFD in its own package
 - Poll/Final sequence for parameter changes (RFC 5880 6.5).
 - Demand mode and echo mode stay off. Authentication is not supported. A
   config that asks for authentication or echo fails the run.
-- Session down shuts the GoBGP peer down; session up enables it again
-  (FRR `bfd_topo1`). Every state change is logged.
+- BFD Up to Down stops the BGP session; BFD Up on a peer that is not
+  established starts a connect attempt at once. This is what FRR 8.2.2
+  does (`bgpd/bgp_bfd.c` `bfd_session_status_update`: `BGP_Stop` on
+  Up to Down, `BGP_Start` on Up). FRR does not hold the session down while
+  BFD is down; the normal connect timer runs, and BOOTy does the same
+  (GoBGP `ResetPeer` on Down, a connect kick on Up). Every state change is
+  logged.
 - Unit tests:
   - the state machine (RFC 5880 6.8.6 transitions)
   - detection time math (6.8.4)
@@ -205,7 +213,7 @@ BFD lands after slice b.
 | Implicit deny | Rendered explicitly as the last route-map entry (`config/agent-cra-frr/frr.conf.tpl:23-70`) | Same: explicit final reject in the GoBGP policy. |
 | L2VNI RT | Left empty so FRR auto-derives (`pkg/reconciler/intent/builder/l2a.go:773-780`) | Same rule: auto-derive like `form_auto_rt` when none is configured. |
 | Netlink apply | `pkg/nl/create.go` `createVRF`, `createBridge`, `createVXLAN` (learning off, port 4789, VtepDevIndex) | Same pattern. BOOTy also binds the VTEP to the netplan `link` device. |
-| set-name | `ensureInterfaceName` via `LinkSetName` (`pkg/reconciler/agent-hbn-l2/nodenetplanconfig_reconciler.go:373`) | Same (`network.ApplyLinkRenames`). |
+| set-name | `ensureInterfaceName` via `LinkSetName` (`pkg/reconciler/agent-hbn-l2/nodenetplanconfig_reconciler.go:373`) | Same, in `network.ApplyLinkRenames` from the N2 PR. |
 | BFD | Not rendered | Section 3.6. |
 | e2e | ContainerLab with kind nodes; no route-type, BFD or failover assertions (`e2etests/framework/frr.go`) | Uses the vtysh JSON helper idea and adds route-type, failover, BFD and differential assertions. |
 
@@ -281,7 +289,12 @@ Kept current as slices land.
 | Construct | e2e test | CI job | Fails without feature (evidence) |
 |---|---|---|---|
 | N2 set-name, MAC match | `TestLegacyCompatNetplanSetNameQEMU` | KVM `caprf-legacy-compat` | planned |
-| C1, C4, C5, C6, C7, C8 | lab `peer_group_members_established`, `local_as_replace_as_path`, `timers_negotiated` | E2E Production Templates (new) | planned |
+| C2, N4 unknown statements and keys | unit and mutation tests only (a failing parse is fully observable without a lab) | `Test` | planned |
+| C1, C4, C5, C6, C7, C8 | lab `peer_group_members_established`, `local_as_replace_as_path`, `own_asn_loop_rejected`, `timers_negotiated`, `default_afi_only_evpn_to_rr` | E2E Production Templates (new) | planned |
+| C3 VRF-bound RR sessions, both directions | lab `rr_session_vrf_outbound`, `rr_session_vrf_inbound` | same | planned |
+| C5 RFC 5549 routes | lab `unnumbered_rfc5549_routes` | same | planned |
+| C9 | lab `ebgp_requires_policy` | same | planned |
+| N1, N3 devices | differential lab kernel-state comparison (`ip -j link`, `ip -j addr`, `bridge -j link`) | same | planned |
 | C10, C17 | lab `ecmp_two_uplinks`, fault `drop_uplink` | same | planned |
 | C13, C14, C11 | lab `route_map_tag_in`, `route_map_deny_tag_out`, `allowas_in` | same | planned |
 | C15 | lab `explicit_rt_import_export` | same | planned |
@@ -294,16 +307,17 @@ Kept current as slices land.
 ## 5. Slices (one PR each, at most four not ready at a time)
 
 1. #634: regex fix for unindented lines (C1, interim).
-2. a: block parser, model, golden and mutation tests. No behavior change.
-   The set-name and match work (N2) goes in first as its own PR.
-3. b: peer-groups, `remote-as internal`, local-as, timers, all uplinks, AFs,
+2. N2: set-name and match, its own PR.
+3. a: block parser, model, golden and mutation tests. Sessions and routes
+   do not change; unknown statements and keys fail (3.1).
+4. b: peer-groups, `remote-as internal`, local-as, timers, all uplinks, AFs,
    VRF-bound sessions.
-4. c: FIB writer.
-5. d: IPv6 Type-5 install.
-6. e: route-map subset, RT, `network`, blackhole, allowas-in.
-7. f: production-template ContainerLab with the shadow FRR node.
-8. BFD (section 3.6), after slice b.
-9. g: CAPRF switch. The e2e `booty` fixtures go away; BOOTy gets the `old`
+5. c: FIB writer.
+6. d: IPv6 Type-5 install.
+7. e: route-map subset, RT, `network`, blackhole, allowas-in.
+8. f: production-template ContainerLab with the shadow FRR node.
+9. BFD (section 3.6), after slice b.
+10. g: CAPRF switch. The e2e `booty` fixtures go away; BOOTy gets the `old`
    files. Needs a BOOTy release.
 
 ## 6. Open questions
