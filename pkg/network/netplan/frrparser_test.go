@@ -337,23 +337,6 @@ func TestParseFRRConfigBytes_RejectsUnsupported(t *testing.T) {
 	}
 }
 
-// Every unnumbered FRR peer must be a netplan ethernet (or its set-name).
-func TestCheckSessionInterfaces(t *testing.T) {
-	frr, err := ParseFRRConfigBytes([]byte("router bgp 65101\n neighbor hbn interface remote-as external\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	np := &Config{}
-	np.Network.Ethernets = map[string]EthernetConfig{"uplink": {SetName: "hbn"}}
-	if err := CheckSessionInterfaces(np, frr); err != nil {
-		t.Fatalf("CheckSessionInterfaces() = %v, want nil for the set-name", err)
-	}
-	np.Network.Ethernets = map[string]EthernetConfig{"eth1": {}}
-	if err := CheckSessionInterfaces(np, frr); err == nil {
-		t.Fatal("CheckSessionInterfaces() = nil, want an error for a missing interface")
-	}
-}
-
 // FRR_CONFIG_STRICT=false logs each skipped statement with the file and
 // the line, and keeps the rest of the configuration.
 func TestParseFRRConfigBytesWithLenientWarns(t *testing.T) {

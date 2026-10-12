@@ -152,26 +152,3 @@ func toBGPSession(s *frrconf.Session) network.BGPSession {
 	}
 	return out
 }
-
-// CheckSessionInterfaces fails when an unnumbered FRR peer names an
-// interface that the netplan files do not configure (an ethernets key or
-// its set-name). Like the legacy ramdisk, the provisioner must list every
-// uplink in both files.
-func CheckSessionInterfaces(np *Config, frr *FRRParams) error {
-	if frr == nil {
-		return nil
-	}
-	known := map[string]bool{}
-	for name := range np.Network.Ethernets {
-		known[name] = true
-		if setName := np.Network.Ethernets[name].SetName; setName != "" {
-			known[setName] = true
-		}
-	}
-	for i := range frr.Sessions {
-		if s := &frr.Sessions[i]; s.Interface && !known[s.Name] {
-			return fmt.Errorf("FRR neighbor %s interface is not in the netplan ethernets", s.Name)
-		}
-	}
-	return nil
-}
