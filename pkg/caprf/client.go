@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,11 +18,10 @@ import (
 	neturl "net/url"
 	"os"
 	"path/filepath"
-	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/telekom/t-caas-go-library/pkg/redact"
@@ -740,69 +740,77 @@ func redactedURL(raw string) string {
 	return safe
 }
 
+// redactedURLError turns an HTTP or URL error into a *url.Error whose text is
+// built only from the URL we chose (reduced by redactedURL), the operation and
+// a fixed cause. Server-controlled text, such as a redirect Location or an
+// upstream message, is never included.
 func redactedURLError(raw string, err error) error {
-	return redactedURLErrorFor([]string{raw}, err)
-}
-
-// redactedURLErrorFor redacts every URL in raws from err. A *url.Error adds
-// its own URL, which differs from the request URL after a redirect.
-func redactedURLErrorFor(raws []string, err error) error {
 	if err == nil {
 		return nil
 	}
-	if urlErr, ok := err.(*neturl.Error); ok { //nolint:errorlint // direct copy avoids retaining the raw URL.
-		sanitized := *urlErr
-		sanitized.URL = redactedURL(urlErr.URL)
-		sanitized.Err = redactedURLErrorFor(append(slices.Clone(raws), urlErr.URL), urlErr.Err)
-		return &sanitized
+	op := "request"
+	redirected := false
+	var urlErr *neturl.Error
+	if errors.As(err, &urlErr) {
+		op = urlErr.Op
+		// url.Parse reports the URL without its fragment, so only compare
+		// for requests. A different URL there means a redirect was followed.
+		redirected = op != "parse" && urlErr.URL != raw
 	}
-	// Keep cancellation and timeout classification for retry and callers.
-	if errors.Is(err, context.Canceled) {
-		return context.Canceled
+	cause, sentinel, timeout := classifyTransportError(err, op)
+	if redirected {
+		cause += " after redirect"
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return context.DeadlineExceeded
+	return &neturl.Error{
+		Op:  op,
+		URL: redactedURL(raw),
+		Err: &transportCause{cause: cause, sentinel: sentinel, timeout: timeout},
 	}
-	inner := redact.Wrap(errors.New(err.Error()), raws...).Error()
-	inner = embeddedURLPattern.ReplaceAllStringFunc(inner, redactedURL)
-	// Protocol-relative or malformed URLs can still carry user:password@.
-	inner = embeddedUserinfoPattern.ReplaceAllString(inner, "//[REDACTED]@")
-	// Drop any remaining query string or fragment, for example from a
-	// malformed relative redirect Location that is not a full URL.
-	inner = embeddedQueryPattern.ReplaceAllStringFunc(inner, func(m string) string {
-		return m[:1] + "[REDACTED]"
-	})
-	msg := fmt.Sprintf("%s: %s", redactedURL(raws[0]), inner)
+}
+
+// transportCause is a fixed transport failure cause. Unwrap returns
+// context.Canceled or context.DeadlineExceeded when that was the cause, so
+// errors.Is keeps working, and Timeout keeps the net.Error classification.
+type transportCause struct {
+	cause    string
+	sentinel error
+	timeout  bool
+}
+
+func (e *transportCause) Error() string   { return e.cause }
+func (e *transportCause) Unwrap() error   { return e.sentinel }
+func (e *transportCause) Timeout() bool   { return e.timeout }
+func (e *transportCause) Temporary() bool { return false }
+
+// classifyTransportError maps err to a fixed cause.
+func classifyTransportError(err error, op string) (cause string, sentinel error, timeout bool) {
 	var netErr net.Error
-	if errors.As(err, &netErr) {
-		return &redactedNetError{msg: msg, timeout: netErr.Timeout()}
+	var dnsErr *net.DNSError
+	var certErr *tls.CertificateVerificationError
+	var authorityErr x509.UnknownAuthorityError
+	var hostnameErr x509.HostnameError
+	var recordErr tls.RecordHeaderError
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "canceled", context.Canceled, false
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout", context.DeadlineExceeded, true
+	case errors.As(err, &netErr) && netErr.Timeout():
+		return "timeout", nil, true
+	case errors.As(err, &dnsErr):
+		return "dns lookup failed", nil, false
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection refused", nil, false
+	case errors.Is(err, syscall.ECONNRESET):
+		return "connection reset", nil, false
+	case errors.As(err, &certErr), errors.As(err, &authorityErr), errors.As(err, &hostnameErr), errors.As(err, &recordErr):
+		return "tls error", nil, false
+	case op == "parse":
+		return "invalid URL", nil, false
+	default:
+		return "transport error", nil, false
 	}
-	return errors.New(msg)
 }
-
-// embeddedURLPattern finds URLs inside error messages that are not known to
-// the caller, for example a malformed redirect Location.
-var embeddedURLPattern = regexp.MustCompile(`https?://[^\s"']+`)
-
-// embeddedUserinfoPattern finds userinfo left in error messages.
-var embeddedUserinfoPattern = regexp.MustCompile(`//[^/@]+@`)
-
-// embeddedQueryPattern finds a query string or fragment left in an error
-// message, for example /x?sig=... or /x#token=.... The rest of the message
-// is dropped, because quotes or spaces inside a malformed value are not a
-// safe end.
-var embeddedQueryPattern = regexp.MustCompile(`[?#].*`)
-
-// redactedNetError keeps the timeout flag of a net.Error with a redacted
-// message.
-type redactedNetError struct {
-	msg     string
-	timeout bool
-}
-
-func (e *redactedNetError) Error() string   { return e.msg }
-func (e *redactedNetError) Timeout() bool   { return e.timeout }
-func (e *redactedNetError) Temporary() bool { return false }
 
 func (c *Client) postWithAuth(ctx context.Context, url, body string) error {
 	return c.withRetry(ctx, url, func() error {

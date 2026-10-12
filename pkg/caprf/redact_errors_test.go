@@ -66,6 +66,7 @@ func TestTransportErrorsRedactRedirectTarget(t *testing.T) {
 		"//user:REDIRECTSECRET@127.0.0.1:1/%zz",                 // malformed protocol-relative Location
 		"/%zz?note='&X-Amz-Signature=REDIRECTSECRET",            // quote inside the query
 		"//us'er:REDIRECTSECRET@127.0.0.1:1/%zz",                // quote inside the userinfo
+		"/%zz?a=\" b' X-Amz-Signature=REDIRECTSECRET#\"c",       // attacker-controlled delimiters
 	} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Location", location)
