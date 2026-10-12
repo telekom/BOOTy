@@ -1087,7 +1087,7 @@ const (
 // bring up a different network than the operator configured.
 func detectNetplanConfig(netplanDir, frrConfPath string) (*network.Config, error) {
 	if !netplan.HasNetplanFiles(netplanDir) {
-		return nil, nil
+		return nil, nil //nolint:nilnil // no netplan files means no netplan config, not an error
 	}
 	slog.Info("detected netplan configuration files", "dir", netplanDir)
 
