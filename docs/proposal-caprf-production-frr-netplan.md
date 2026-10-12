@@ -299,6 +299,7 @@ Kept current as slices land.
 | C9 | lab `ebgp_requires_policy` | same | planned |
 | N1, N3 devices | differential lab kernel-state comparison (`ip -j link`, `ip -j addr`, `bridge -j link`) | same | planned |
 | C10, C17, C11 | `TestProdTplFIBRoutes` (ECMP over both uplinks, also against the shadow node), `TestProdTplFIBWithdraw` (uplink session down and up), `TestProdTplRRSessions` (RRs reachable only over FIB routes with the router AS in the path); fault `drop_uplink` (link down) in slice f | same | fail on slice b, see the slice c PR |
+| C17 carrier loss (`bgp fast-external-failover`, on by default) | `TestProdTplUplinkCarrierLoss` (the next hop leaves the VRF table within 2 s, also on the shadow node; ECMP comes back with the carrier) | same | fails without the carrier watch (fd177071): BOOTy still had both next hops after 2.1 s, see the slice c PR |
 | C13, C14 | lab `route_map_tag_in`, `route_map_deny_tag_out` | same | planned |
 | C15 | lab `explicit_rt_import_export` | same | planned |
 | C16, C18 | lab `type5_ipv6_install`, `network_blackhole_import_check` | same | planned |
