@@ -335,7 +335,7 @@ func (c *Client) FetchCommands(ctx context.Context) ([]config.Command, error) {
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
-		return nil, fmt.Errorf("fetch commands: %w", err)
+		return nil, fmt.Errorf("fetch commands: %w", redactedURLError(req.URL.String(), err))
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 
@@ -494,7 +494,7 @@ func (c *Client) doPrepareCrashArtifactUpload(ctx context.Context, data []byte) 
 	}
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
-		return nil, true, fmt.Errorf("post %s: %w", redacted, err)
+		return nil, true, fmt.Errorf("post %s: %w", redacted, redactedURLError(req.URL.String(), err))
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
@@ -720,7 +720,7 @@ func (c *Client) doCrashUploadRequest(req *http.Request, redacted string) error 
 	client := newHTTPClient(c.crashUploadTimeout(), false)
 	resp, err := client.Do(req) //nolint:gosec // URL from trusted config or CAPRF response
 	if err != nil {
-		return fmt.Errorf("upload crash artifact to %s: %w", redacted, err)
+		return fmt.Errorf("upload crash artifact to %s: %w", redacted, redactedURLError(req.URL.String(), err))
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 	_, _ = io.Copy(io.Discard, resp.Body)
@@ -871,7 +871,7 @@ func (c *Client) doPost(ctx context.Context, url, body string) error {
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
-		return fmt.Errorf("POST %s: %w", redacted, err)
+		return fmt.Errorf("POST %s: %w", redacted, redactedURLError(req.URL.String(), err))
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 	_, _ = io.Copy(io.Discard, resp.Body)
@@ -896,7 +896,7 @@ func (c *Client) doPostJSON(ctx context.Context, url string, data []byte) error 
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
-		return fmt.Errorf("POST %s: %w", redacted, err)
+		return fmt.Errorf("POST %s: %w", redacted, redactedURLError(req.URL.String(), err))
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 	_, _ = io.Copy(io.Discard, resp.Body)
