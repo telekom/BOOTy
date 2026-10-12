@@ -700,3 +700,22 @@ func TestConfigureGRUBDoesNotFollowSymlinkedDropIn(t *testing.T) {
 		t.Fatalf("drop-in content = %q, want the GRUB kernel parameters", data)
 	}
 }
+
+func TestEFILoaderPathRejectsLinkedLoader(t *testing.T) {
+	root := t.TempDir()
+	hostLoader := filepath.Join(t.TempDir(), "shimx64.efi")
+	if err := os.WriteFile(hostLoader, []byte("host"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	efiDir := filepath.Join(root, "boot", "efi", "EFI", "ubuntu")
+	if err := os.MkdirAll(efiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A kept machine-file link must not count as a loader on the ESP.
+	if err := os.Symlink(hostLoader, filepath.Join(efiDir, "shimx64.efi")); err != nil {
+		t.Fatal(err)
+	}
+	if loader, err := efiLoaderPath(root, "amd64"); err == nil {
+		t.Fatalf("efiLoaderPath() = %q, want error for a linked loader", loader)
+	}
+}

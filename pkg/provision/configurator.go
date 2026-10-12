@@ -1307,7 +1307,7 @@ func efiLoaderPath(rootDir, arch string) (string, error) {
 	for _, vendor := range managedEFIVendors {
 		shimPath := filepath.Join(rootDir, "boot", "efi", "EFI", vendor, shimName)
 		checked = append(checked, shimPath)
-		_, err = os.Stat(shimPath)
+		err = statEFILoader(rootDir, shimPath)
 		if err == nil {
 			return `\EFI\` + vendor + `\` + shimName, nil
 		}
@@ -1317,7 +1317,7 @@ func efiLoaderPath(rootDir, arch string) (string, error) {
 
 		grubPath := filepath.Join(rootDir, "boot", "efi", "EFI", vendor, grubName)
 		checked = append(checked, grubPath)
-		_, err = os.Stat(grubPath)
+		err = statEFILoader(rootDir, grubPath)
 		if err == nil {
 			return `\EFI\` + vendor + `\` + grubName, nil
 		}
@@ -1326,7 +1326,7 @@ func efiLoaderPath(rootDir, arch string) (string, error) {
 		}
 	}
 	checked = append(checked, removablePath)
-	_, err = os.Stat(removablePath)
+	err = statEFILoader(rootDir, removablePath)
 	if err == nil {
 		return `\EFI\BOOT\` + removableName, nil
 	}
@@ -1334,6 +1334,24 @@ func efiLoaderPath(rootDir, arch string) (string, error) {
 		return "", fmt.Errorf("stat removable EFI loader %s: %w", removablePath, err)
 	}
 	return "", fmt.Errorf("no EFI loader found: checked %s", strings.Join(checked, ", "))
+}
+
+// statEFILoader checks that loader is a regular file inside rootDir. A
+// link, or a link in an ancestor that leaves the target root, does not
+// count, because firmware cannot follow it on the ESP. A missing loader
+// returns an error for which os.IsNotExist is true.
+func statEFILoader(rootDir, loader string) error {
+	if err := ensureTargetParentWithinRoot(rootDir, filepath.Dir(loader)); err != nil {
+		return err
+	}
+	info, err := os.Lstat(loader)
+	if err != nil {
+		return err //nolint:wrapcheck // callers check os.IsNotExist
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("EFI loader %s is not a regular file", loader)
+	}
+	return nil
 }
 
 func isManagedEFIBootEntryLine(line string) bool {
