@@ -62,16 +62,27 @@ func TestConfigurationDocListsEveryVarsKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read configuration reference: %v", err)
 	}
+	// Only table rows count, so a key named in prose or in the Planned list
+	// does not satisfy the check.
+	var rows strings.Builder
+	for line := range strings.Lines(string(doc)) {
+		if strings.HasPrefix(line, "| ") {
+			rows.WriteString(line)
+		}
+	}
 	keys := map[string]struct{}{}
 	for _, m := range varsKeyPattern.FindAllStringSubmatch(string(src), -1) {
 		keys[m[1]+m[2]+m[3]] = struct{}{}
 	}
-	if len(keys) < 100 {
-		t.Fatalf("found only %d vars keys in pkg/caprf/client.go; update varsKeyPattern", len(keys))
+	// One key per parser handler, so a regexp that misses a handler fails.
+	for _, sentinel := range []string{"IMAGE", "OCI_PREPULL_CACHE_DIR", "SECUREBOOT_SHIM_SHA256", "EXTRA_KERNEL_PARAMS", "RESCUE_TIMEOUT", "vrf_table_id", "asn_server"} {
+		if _, ok := keys[sentinel]; !ok {
+			t.Fatalf("varsKeyPattern does not find %q in pkg/caprf/client.go; update the pattern", sentinel)
+		}
 	}
 	for key := range keys {
-		if !strings.Contains(string(doc), "`"+key+"`") {
-			t.Errorf("docs/configuration.md does not list vars key %q", key)
+		if !strings.Contains(rows.String(), "`"+key+"`") {
+			t.Errorf("docs/configuration.md has no table row for vars key %q", key)
 		}
 	}
 }

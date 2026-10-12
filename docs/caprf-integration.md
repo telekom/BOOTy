@@ -33,12 +33,10 @@ and reads its input from the `/deploy` directory of the ramdisk:
 
 - A line is `KEY=VALUE` or `export KEY=VALUE`. Empty lines and lines that
   start with `#` are ignored.
-- A value in double quotes keeps a backslash escape only for `$`, `` ` ``,
-  `"` and `\`. A value in single quotes is literal.
 - BOOTy does not run the file as a shell script. It does not expand
   variables or command substitutions.
-- When a key occurs more than once, the last line wins.
-- BOOTy ignores unknown keys. `LUKS_*` keys are an error.
+- Quoting, comments, duplicate keys and unknown keys are described in
+  [Vars file format](configuration.md#vars-file-format).
 - A value that does not parse, or a configuration that fails validation,
   stops the run. See [End of a run](#end-of-a-run).
 
@@ -136,6 +134,7 @@ URL is empty, BOOTy skips the callback.
 | TLS certificate check for callbacks, the connectivity check and image downloads | Verified against the system roots | Not verified, like `curl --insecure` |
 | TLS certificate check for the crash artifact upload | Verified | Verified |
 | `http://` image URLs | Need `IMAGE_ALLOW_INSECURE_HTTP=true` | Allowed |
+| `TOKEN_URL` | HTTPS required (plain HTTP only for loopback). TLS verified. No proxy. | Same |
 | Proxy (`https_proxy`, `http_proxy`, `no_proxy`) | Read from the process environment. `/deploy/vars` entries do not reach the environment. | Every `/deploy/vars` entry is exported, so proxy entries apply. |
 
 Planned (#624): redact URL query strings in transport errors.

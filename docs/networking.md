@@ -105,7 +105,8 @@ BOOTy takes these values from `frr.conf`:
   [EVPN route modes](#evpn-route-modes-gobgp)).
 
 A value from netplan overrides the same value from the vars. An empty
-netplan value keeps the vars value. When netplan and the FRR config give an
+netplan value keeps the vars value. `VLANS` is the exception: BOOTy parses it
+after the netplan merge, so `VLANS` from the vars replaces the netplan VLANs. When netplan and the FRR config give an
 ASN and a VNI, BOOTy sets the stack to GoBGP. This overrides
 `NETWORK_MODE`.
 
@@ -114,7 +115,7 @@ ASN and a VNI, BOOTy sets the stack to GoBGP. This overrides
 | Feature | FRR | GoBGP |
 |---|---|---|
 | Implementation | FRR daemons (`zebra`, `bgpd`, `bfdd`), config rendered to `/etc/frr/frr.conf` | In-process GoBGP library, no daemons, no gRPC API |
-| Image flavors | Default flavor only (`make iso`, `make docker`, `make dockerx86`). `slim`, `micro`, `gobgp` and `gobgp-iso` ship no FRR binaries | All flavors. The BOOTy binary is the same in every flavor |
+| Image flavors | Default and `iso` flavors only (`make iso`, `make docker`, `make dockerx86`). `slim`, `micro`, `gobgp` and `gobgp-iso` ship no FRR binaries | All flavors. The BOOTy binary is the same in every flavor |
 | Peer modes | Unnumbered only, on all detected physical NICs. `BGP_PEER_MODE`, `BGP_INTERFACES` and `BGP_NEIGHBORS` are ignored | `unnumbered`, `dual`, `numbered` (see [GoBGP peer modes](#gobgp-peer-modes)) |
 | Remote AS | Peer group with `remote-as external` (eBGP only) | Unnumbered: learned from the peer OPEN. Numbered: `BGP_REMOTE_ASN`, `0` means iBGP |
 | BFD | Yes. `BFD_TRANSMIT_MS` and `BFD_RECEIVE_MS` together create the `datacenter` BFD profile on the fabric peers and the DCGWs | No. BFD values are rejected by config validation and by the GoBGP setup |
@@ -198,7 +199,7 @@ is fatal.
 Without `provision_gateway`, the L2 and default modes fail with
 `provision gateway is required for GoBGP VXLAN data plane`. With
 `BGP_OVERLAY_TYPE=none`, BOOTy creates no overlay and does not need the
-gateway.
+gateway. GoBGP still requires `provision_vni` in every overlay type.
 
 ### Routes BOOTy originates
 

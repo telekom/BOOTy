@@ -77,7 +77,7 @@ values are false.
 |-----|---------|--------|-------------|
 | `MODE` | `provision` | `provision`, `deprovision`, `hard`, `soft-deprovision`, `soft`, `decommission`, `standby`, `dry-run`, `check` | Operating mode. `hard` is an alias of `deprovision`, `soft` is an alias of `soft-deprovision`. `deprovision` wipes the disks and removes the EFI boot entries. `soft-deprovision` renames `grub.cfg`. `decommission` wipes every disk and removes every EFI boot entry, and logs failures without stopping. `check` runs the health checks only. |
 | `DRY_RUN` | `false` | boolean | Sets `MODE=dry-run`. Dry-run skips the network setup and the token flow, runs read-only checks and reports the result. |
-| `HOSTNAME` | (unset) | host name | Machine name. BOOTy writes it into the target OS, sends it to `TOKEN_URL`, and in legacy compat sets it as the ramdisk host name. |
+| `HOSTNAME` | (unset) | host name | Machine name. BOOTy writes it into the target OS, sends it to `TOKEN_URL`, and in legacy compat sets it as the ramdisk host name for provisioning. |
 | `PROVISION_TARGET_OS` | (unset) | `linux` | Target OS class. Provisioning preflight fails when it is empty or not `linux`. Alias: `TARGET_OS`. |
 | `TARGET_OS` | (unset) | `linux` | Alias of `PROVISION_TARGET_OS`. |
 | `OS_FAMILY` | (unset) | `ubuntu`, `rhel`, `flatcar` | Target OS family. Required by `PERSIST_NETWORK=true`. `OVERLAYFS_ENABLED=true` requires `ubuntu`. `flatcar` rejects `CLOUDINIT_ENABLED=true`. `rhel` rejects `PERSIST_NETWORK=true`. |
@@ -91,7 +91,7 @@ values are false.
 | `REGION` | (unset) | Kubernetes label value | Kubelet node label `topology.kubernetes.io/region`. |
 | `PROVIDER_ID` | (unset) | string without white space | Kubelet `--provider-id`. Cloud-init also uses it as the instance ID. |
 | `POST_PROVISION_CMDS` | (unset) | commands separated by `;` | Commands that run in the target root chroot near the end of provisioning. Each command can contain only letters, digits, white space and `_ . / : = , @ % + -`. A failed command fails the provisioning. |
-| `NUM_VFS` | `0` | integer | Number of SR-IOV VFs to set with `mstconfig` on each Mellanox NIC. `0` skips the step. A positive value fails the run when no Mellanox NIC or `mstconfig` device is found. |
+| `NUM_VFS` | `0` | integer | Number of SR-IOV VFs to set with `mstconfig` on each Mellanox NIC. `0` skips the step. A positive value fails the run when no Mellanox NIC or `mstconfig` device is found. In legacy compat, `0` means 32 and missing NICs or `mstconfig` are skipped. See [CAPRF legacy compatibility](#caprf-legacy-compatibility). |
 
 ## CAPRF endpoints, authentication and transport
 
@@ -108,8 +108,10 @@ values are false.
 | `TOKEN_ALGORITHM` | (unset) | `RS256`, `ES256` | JWT signing algorithm that BOOTy requests from `TOKEN_URL`. Empty leaves the choice to the server. |
 | `INSECURE_TRANSPORT` | `false` | boolean | Send the bearer token over plain HTTP. Without it, BOOTy refuses to send the token to an `http://` URL that is not a loopback address. Legacy compat sets it. |
 
-The HTTP clients use the standard proxy variables (`https_proxy`,
-`http_proxy`, `no_proxy`) from the process environment.
+The CAPRF callback, connectivity check and image HTTP clients use the
+standard proxy variables (`https_proxy`, `http_proxy`, `no_proxy`) from the
+process environment. The `TOKEN_URL` client uses no proxy and always verifies
+TLS, also in legacy compat.
 
 ## CAPRF legacy compatibility
 
@@ -124,6 +126,10 @@ The HTTP clients use the standard proxy variables (`https_proxy`,
 - No kexec. `DISABLE_KEXEC` has no further effect.
 - The default `RESCUE_MODE` for a failed provisioning is `wait`.
 - `MACHINE_SERIAL_CONSOLE` is ignored.
+- `setup-mellanox` raises `NUM_OF_VFS` to 32 (or `NUM_VFS`) on every
+  ConnectX Ethernet function. It skips quietly without `mstconfig` or such a
+  NIC.
+- For provisioning, the ramdisk takes the `HOSTNAME`.
 - `AB_PRESERVE_EXISTING=true` is rejected.
 
 [CAPRF legacy migration](caprf-legacy-migration.md) describes all
@@ -205,7 +211,7 @@ that FRR also reads say so.
 | `underlay_ip` | (unset) | IP address | Underlay loopback address and router ID. Takes precedence over `underlay_subnet`. FRR also reads it. |
 | `underlay_subnet` | (unset) | CIDR | Underlay subnet. BOOTy derives the address from the IPMI address and `ipmi_subnet`. It reads the IPMI address from a host NIC named `ipmi*`, `bmc*`, `idrac*`, `ilo*`, `imm*`, `mgmt*` or `management*`, or with an address in `ipmi_subnet`. Without such a NIC, set `underlay_ip`. FRR also reads it. |
 | `overlay_subnet` | (unset) | CIDR | Overlay subnet. BOOTy derives the overlay address like the underlay address. Without it the overlay address is the underlay address. FRR also reads it. |
-| `provision_vni` | (unset) | uint32 | VXLAN VNI of the provisioning network. GoBGP rejects `asn_server` above 65535 together with `provision_vni` above 65535. |
+| `provision_vni` | (unset) | uint32 | VXLAN VNI of the provisioning network. Required for GoBGP in every overlay type (1 to 16777215). GoBGP rejects `asn_server` above 65535 together with `provision_vni` above 65535. |
 | `provision_ip` | (unset) | CIDR | Address on the provisioning bridge. |
 | `provision_gateway` | (unset) | IP address | Gateway VTEP for BUM flooding and the kernel route. Optional with `EVPN_TYPE5_ONLY=true`. FRR ignores it. |
 | `vpn_rt` | (unset) | `ASN:value` | Explicit EVPN route target. FRR also reads it with `dcgw_ips`. |

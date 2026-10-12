@@ -18,15 +18,13 @@ the [configuration reference](configuration.md).
    refuses to provision without it. The legacy scripts do not use it.
 3. Do not move hosts that use `DISK_MIRRORING_MODE=raid-1` yet. BOOTy
    ignores the variable and installs on one disk. Planned (#581).
-4. Check the machine commands. BOOTy rejects shell syntax in them until
-   #587 is merged.
-5. Check images with a separate `/boot` partition. BOOTy does not mount it
-   until #595 is merged.
-6. Check hosts with Mellanox NICs. BOOTy sets VFs only with `NUM_VFS`.
-   Planned (#617).
-7. Check machine files that contain symlinks. BOOTy skips them until #629 is
-   merged.
-8. Remove `AB_PRESERVE_EXISTING=true`. It cannot be combined with
+4. Check the machine commands. BOOTy rejects shell syntax in them.
+   Planned (#587).
+5. Check images with a separate `/boot` partition. BOOTy does not mount it.
+   Planned (#595).
+6. Check machine files that contain symlinks. BOOTy skips them.
+   Planned (#629).
+7. Remove `AB_PRESERVE_EXISTING=true`. It cannot be combined with
    `CAPRF_LEGACY_COMPAT=true`.
 
 ## What CAPRF_LEGACY_COMPAT changes
@@ -108,7 +106,7 @@ Detail for these rows is in [Disk handling](disk.md).
 | Extra kernel parameters: `MACHINE_EXTRA_KERNEL_PARAMS` and `EXTRA_KERNEL_PARAMS` (from `additionalVars`) | Both read. `EXTRA_KERNEL_PARAMS` goes after `MACHINE_EXTRA_KERNEL_PARAMS`. `console=` tokens are merged into the resolved console. | Both read, same order, appended verbatim. A value with `"`, `\`, `$`, a backtick or a line break fails the run. | Merged (#594) |
 | `hostname "$HOSTNAME"` in the ramdisk | Not set in the ramdisk. `/etc/hostname` of the installed OS is written in both modes. | Set for provisioning. A failure is only logged. | Merged (#626) |
 | `nic_firmware` log lines with the firmware version of every NIC (`ethtool`) | Only with `FIRMWARE_REPORT=true`, as a JSON report to `FIRMWARE_URL` | `nic_firmware` log lines on every provision, also without `FIRMWARE_REPORT` | Merged (#628) |
-| `setup_mellanox_num_of_vfs` on every provision: set `NUM_OF_VFS=32` when lower, skip quietly without `mstconfig` or ConnectX NIC | Only with `NUM_VFS` > 0: sets `SRIOV_EN` and `NUM_OF_VFS`. Fails without a Mellanox NIC. A change forces a reboot instead of kexec. | Same as default | Planned (#617) |
+| `setup_mellanox_num_of_vfs` on every provision: set `NUM_OF_VFS=32` when lower, skip quietly without `mstconfig` or ConnectX NIC | Only with `NUM_VFS` > 0: sets `SRIOV_EN` and `NUM_OF_VFS`. Fails without a Mellanox NIC. A change forces a reboot instead of kexec. | On every provision: raises `NUM_OF_VFS` to 32 (or `NUM_VFS`) with `mstconfig` in the ramdisk on each ConnectX-4/5/6/6 Dx/6 Lx/7 Ethernet function. Skips quietly without `mstconfig` or such a NIC. A failed `mstconfig` query or set fails the run. | Merged (#617) |
 | Machine commands: each file runs as a script in a chroot (`#!` line or `/bin/sh`), in CAPRF index order | Each file is one command. Shell syntax (`;`, `\|`, `&&`, `>`, `<`, `$(`, backtick) is rejected. Files run in name order. | Same as default | Planned (#587) |
 | Machine files: `cp -rfv`, symlinks kept | Copied, symlinks skipped | Same as default | Planned (#629) |
 

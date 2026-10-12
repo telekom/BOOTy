@@ -151,7 +151,9 @@ Config validation rejects these combinations:
 The initramfs agent reads the vars file `/deploy/vars`:
 
 ```sh
-export IMAGE="oci://registry.example.com/tcaas/os-node:v2"
+export PROVISION_TARGET_OS="linux"
+# Pin the OCI image by digest. A mutable tag needs IMAGE_CHECKSUM.
+export IMAGE="oci://registry.example.com/tcaas/os-node@sha256:<digest>"
 export IMAGE_MODE="ab"
 export AB_SCHEME="dual-root"
 export AB_ACTIVE_SLOT="a"
@@ -175,7 +177,8 @@ export AB_DATA_PARTITIONS='[{"label":"BOOTY-HOME","mountpoint":"/home","filesyst
 
 ## YAML Example
 
-The same settings in the `pkg/config` YAML schema:
+The same settings in the `pkg/config` YAML schema. The runtime reads only
+`/deploy/vars`, not YAML. The schema is for library users and tests.
 
 ```yaml
 provision:

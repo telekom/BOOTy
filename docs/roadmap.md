@@ -108,7 +108,7 @@ Design, Affected Files, Risks, and Effort Estimate.
 | [SecureBoot Lifecycle](proposal-secureboot.md) | Partial: `SECUREBOOT_REENABLE` and digest pins; MOK enrollment not implemented |
 | [Observability (Metrics)](proposal-observability.md) | Partial: endpoints exist; steps do not feed the collector |
 | [LUKS Encryption](proposal-luks-encryption.md) | Planned: library only; the vars parser rejects `LUKS_*` keys |
-| CAPRF legacy parity | Implemented: `CAPRF_LEGACY_COMPAT`, see [caprf-legacy-migration.md](caprf-legacy-migration.md) |
+| CAPRF legacy parity | Partial (open rows in the parity matrix): `CAPRF_LEGACY_COMPAT`, see [caprf-legacy-migration.md](caprf-legacy-migration.md) |
 
 The [configuration reference](configuration.md) lists the keys that are
 implemented today.

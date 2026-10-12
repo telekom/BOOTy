@@ -391,12 +391,12 @@ root is mounted.
 | `ROOT_PARTITION_NUMBER` | — | Whole-disk image root partition number; use only when no stable root partition label exists |
 | `IMAGE_SIGNATURE_URL` | — | URL to detached GPG signature for image verification |
 | `IMAGE_GPG_PUBKEY` | — | Path to GPG public key for image signature verification |
-| `LUKS_ENABLED` | `false` | *(Planned)* Enable LUKS2 encryption for target partitions |
-| `LUKS_PASSPHRASE` | — | *(Planned)* Passphrase for initial LUKS volume creation |
-| `LUKS_UNLOCK_METHOD` | `passphrase` | *(Planned)* Unlock method: `passphrase`, `tpm2`, `clevis`, `keyfile` |
-| `LUKS_CIPHER` | `aes-xts-plain64` | *(Planned)* LUKS2 cipher algorithm |
-| `LUKS_KEY_SIZE` | `512` | *(Planned)* LUKS2 key size in bits |
-| `LUKS_HASH` | `sha256` | *(Planned)* LUKS2 hash algorithm |
+| `LUKS_ENABLED` | `false` | *(Planned, not accepted: a `LUKS_*` key in `/deploy/vars` fails the run)* Enable LUKS2 encryption for target partitions |
+| `LUKS_PASSPHRASE` | (unset) | *(Planned, not accepted: a `LUKS_*` key in `/deploy/vars` fails the run)* Passphrase for initial LUKS volume creation |
+| `LUKS_UNLOCK_METHOD` | `passphrase` | *(Planned, not accepted: a `LUKS_*` key in `/deploy/vars` fails the run)* Unlock method: `passphrase`, `tpm2`, `clevis`, `keyfile` |
+| `LUKS_CIPHER` | `aes-xts-plain64` | *(Planned, not accepted: a `LUKS_*` key in `/deploy/vars` fails the run)* LUKS2 cipher algorithm |
+| `LUKS_KEY_SIZE` | `512` | *(Planned, not accepted: a `LUKS_*` key in `/deploy/vars` fails the run)* LUKS2 key size in bits |
+| `LUKS_HASH` | `sha256` | *(Planned, not accepted: a `LUKS_*` key in `/deploy/vars` fails the run)* LUKS2 hash algorithm |
 | `NUM_VFS` | `0` | Number of SR-IOV virtual functions for Mellanox NICs (0 = skip) |
 | `NVME_NAMESPACES` | — | JSON config for NVMe namespace creation (e.g. `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":100}]}]`) |
 | `CLOUDINIT_ENABLED` | `false` | Generate and inject cloud-init config |
@@ -437,10 +437,10 @@ root is mounted.
 | `BGP_NEIGHBORS` | — | Comma-separated peer IPs (required for `dual` and `numbered` modes) |
 | `BGP_REMOTE_ASN` | — | Remote ASN for numbered peers (0 or omitted = iBGP) |
 | `BGP_UNDERLAY_AF` | `ipv4` | Underlay address family. Only `ipv4` is implemented; `ipv6` and `dual-stack` are rejected during config validation. |
-| `BGP_OVERLAY_TYPE` | `evpn-vxlan` | Overlay encapsulation: `evpn-vxlan`, `l3vpn`, `none` |
+| `BGP_OVERLAY_TYPE` | `evpn-vxlan` | Overlay encapsulation: `evpn-vxlan` or `none`. `l3vpn` passes validation, but GoBGP setup rejects it as not implemented |
 | `BGP_AUTH_PASSWORD` | — | Optional TCP-MD5 password for all BGP peers (empty = no authentication) |
-| `VRF_TABLE_ID` | `1` | VRF routing table ID (0 uses default of 1) |
-| `VRF_NAME` | — | Explicit VRF name for GoBGP stack isolation (auto-generated if empty) |
+| `VRF_TABLE_ID` | `1000` | VRF routing table ID. `0` and `1` become `1000` |
+| `VRF_NAME` | (unset) | VRF name. Empty means no VRF (default routing table). FRR and GoBGP read it |
 | `BGP_KEEPALIVE` | `0` | Optional BGP keepalive timer in seconds (0 = stack default) |
 | `BGP_HOLD` | `0` | Optional BGP hold timer in seconds (0 = stack default) |
 | `BGP_MIN_PEERS` | `1` | Minimum number of BGP peers that must reach ESTABLISHED state before underlay is considered ready |
@@ -935,8 +935,9 @@ For each detected Mellanox device, BOOTy runs
 firmware and needs a hard reboot, so BOOTy skips kexec when SR-IOV changed.
 When `NUM_VFS` is positive, missing Mellanox NICs, missing `/dev/mst` pciconf
 devices, or `mstconfig` failures abort provisioning instead of silently
-continuing without the requested firmware change. Planned (#617): set the VFs
-like the CAPRF legacy provisioner in legacy compat.
+continuing without the requested firmware change. In CAPRF legacy compat the
+rules differ: see
+[CAPRF legacy migration](docs/caprf-legacy-migration.md#installed-os-configuration).
 
 ### Secure Erase
 
@@ -1032,7 +1033,8 @@ OS. Supported datasource types are `nocloud` and `configdrive`.
 
 ```bash
 export CLOUDINIT_ENABLED=true
-export CLOUDINIT_DATASOURCE=nocloud    # nocloud (default) or configdrive
+# nocloud (default) or configdrive
+export CLOUDINIT_DATASOURCE=nocloud
 ```
 
 When enabled, BOOTy writes cloud-init seed data to the appropriate path
