@@ -1,6 +1,6 @@
 # Proposal: Full FRR and Netplan Parity in GoBGP Mode for CAPRF
 
-## Status: Draft design, under review
+## Status: Accepted design, implementation in progress
 
 Decision: BOOTy extends its own parser and its GoBGP stack. The parser and
 the stack must cover the full networking feature set that the legacy CAPRF
@@ -69,7 +69,7 @@ stream.
 
 | # | Construct (bm4x template line) | FRR semantics (reference) | BOOTy today | Target | Slice |
 |---|---|---|---|---|---|
-| C1 | Block lines without indentation (`neighbor` at column 0) | Leading blanks are ignored. A line that does not fit the current node is retried in the parent nodes (`lib/command.c:1227-1276`, `command_config_read_one_line`). | Regexes need leading blanks. Only lines after a blank line match. Second uplink, `local-as` and the RR peers are lost. | Block parser with FRR node semantics. | a (regex fix in #632 first) |
+| C1 | Block lines without indentation (`neighbor` at column 0) | Leading blanks are ignored. A line that does not fit the current node is retried in the parent nodes (`lib/command.c:1227-1276`, `command_config_read_one_line`). | Regexes need leading blanks. Only lines after a blank line match. Second uplink, `local-as` and the RR peers are lost. | Block parser with FRR node semantics. | a (regex fix in #634 first) |
 | C2 | Unknown statements | FRR logs an error and goes on. | Silently ignored. | Hard error with file and line number. Deliberate difference from FRR: a silent drop would hide a parity gap. | a |
 | C3 | `router bgp N vrf Vrf_underlay`, `router bgp N vrf default` | One BGP instance per VRF. | One global instance. VRF from netplan only. | Model: one instance per VRF. GoBGP: underlay instance sessions bound to `Vrf_underlay`. | a, b |
 | C4 | `neighbor dcgw peer-group`, `remote-as internal`, `neighbor <RR> peer-group dcgw` | Members inherit the group's `remote-as`, timers, BFD, AFs and policies. A member override wins (`tests/bgpd/test_peer_attr.c`). `internal` means peer AS = local AS. | RR peers lost. `BGPPeerMode=unnumbered`. | Numbered iBGP to every RR. Source and listener in `Vrf_underlay` (`Transport.BindInterface`, plus `net.ipv4.tcp_l3mdev_accept=1` or a VRF-bound listener). Only l2vpn evpn is active. | b |
@@ -87,7 +87,7 @@ stream.
 | C16 | IPv6 `/128` provisioning address on `lo`; `network <addr>/128`, `network <prefix>`; `advertise ipv6 unicast`; `ipv6 route <prefix> blackhole` | `network` is advertised only when the prefix is in the RIB (import-check, `bgp.rst:1057-1065`); the blackhole route puts the prefix there. `advertise ipv6 unicast` creates Type-5 only (`bgp.rst:2885-2895`). | `lo` becomes the static interface (`StaticIP=<addr>/128`, `StaticIface=lo`). No Type-5 IPv6. | Address on `lo` (not a static interface). Blackhole route in the kernel. Type-5 IPv6 originated for both `network` lines. | d, e |
 | C17 | Routes learned from the fabric (RR reachability over the unnumbered sessions, default route) | zebra installs the best paths into the VRF table, with IPv6 link-local next hops on the interface and ECMP. | GoBGP installs nothing into the kernel (`pkg/network/gobgp/underlay.go` has no RouteReplace). | FIB writer ("mini zebra"): IPv4 and IPv6 unicast RIB to kernel routes in the VRF table, link-local next hops with device, multipath, withdraw. | c |
 | C18 | IPv6 Type-5 install over the IPv4 VTEP | zebra installs next hop `::ffff:<VTEP>` on the L3VNI bridge, with a permanent neighbor entry for that address with the RMAC, and an FDB entry RMAC to VTEP (`bgp_evpn_rt5` topotest, 10.x `test_router_check_ip`). | `overlay.go:846-870` falls back to the IPv4 VTEP as gateway. `buildType5KernelRoute` (1125-1141) puts an IPv4 gateway on an IPv6 destination. `buildType5GatewayNeighbor` (1143-1158) returns nil for IPv6. | Install like zebra. | d |
-| C19 | BFD: `neighbor X bfd`, `bfd profile fabric`, `transmit-interval 150`, `receive-interval 150` | Defaults: detect multiplier 3, 300/300 ms. An unknown profile falls back to the defaults (`doc/user/bfd.rst:115-171`, `bfd_profiles_topo1`). BFD down tears the session down (`bfd_topo1`). | Not parsed. GoBGP has no BFD. | Decision pending (section 3.6). | after decision |
+| C19 | BFD: `neighbor X bfd`, `bfd profile fabric`, `transmit-interval 150`, `receive-interval 150` | Defaults: detect multiplier 3, 300/300 ms. An unknown profile falls back to the defaults (`doc/user/bfd.rst:115-171`, `bfd_profiles_topo1`). BFD down tears the session down (`bfd_topo1`). | Not parsed. GoBGP has no BFD. | Own minimal BFD (section 3.6). | BFD (after b) |
 | C20 | `vni N` at top level, `advertise-all-vni` | `advertise-all-vni` creates Type-2/3 for L2VNIs only. A top-level `vni` maps the default VRF to an L3VNI. | Done (#582 and existing README table). | Keep. Covered by the Type-5-only and Type-2/3+Type-5 labs. | f |
 | C21 | `no bgp suppress-duplicates`, `no ip forwarding`, `service integrated-vtysh-config`, `hostname`, `log ...`, `frr version`, `frr defaults` | Daemon and logging options. | Ignored. | Accept and record in the model. `frr defaults` selects the timer defaults (C7). `no ip forwarding` is a no-op in the ramdisk. | a |
 | N1 | netplan ethernets keyed by port name: `mtu`, `link-local: [ipv6]`, `accept-ra`, `emit-lldp`, `ipv6-address-generation: eui64` | netplan semantics | MTU only. | Apply all keys. `emit-lldp` is accepted; BOOTy has an LLDP package but does not need to send. | a, c |
@@ -167,24 +167,35 @@ stream.
 
   Anything else fails.
 
-### 3.6 BFD (decision needed)
+### 3.6 BFD (decided: own minimal implementation)
 
-- Go has no usable BFD library: GoBGP has no BFD, and nwop never renders
-  peer BFD (it only emits an empty `bfd` block). This leaves two options:
-  - **BFD-1 (recommended):** a minimal RFC 5880/5881 implementation.
-    - Single-hop asynchronous mode, UDP 3784, IPv4 and IPv6 link-local.
-    - No echo mode and no authentication. The template uses neither.
-    - Session state drives the GoBGP peer: BFD down shuts the peer down,
-      BFD up enables it again, like FRR.
-    - Profile intervals and the defaults of `doc/user/bfd.rst:147-171`.
-    - Tested against the FRR leaf in ContainerLab: session up, intervals
-      negotiated, failover time on link loss.
-    - Estimated size: about 800 lines plus tests.
-  - **BFD-2:** document BFD as the one explicit gap. The lab then proves
-    that a leaf with `neighbor <group> bfd` still establishes BGP when the
-    host has no BFD. FRR does this when the peer never answers BFD; the
-    session is not held down.
-- No BFD code is written before the decision.
+Go has no usable BFD library (GoBGP has no BFD; nwop never renders peer
+BFD). BOOTy implements a minimal BFD in its own package
+(`pkg/network/bfd`):
+
+- RFC 5880 and RFC 5881: single-hop, asynchronous mode, UDP 3784, IPv4 and
+  IPv6 link-local.
+- Desired min TX, required min RX and detect multiplier come from
+  `bfd profile` and `neighbor ... bfd profile`. When unset, the FRR 8.2.2
+  defaults apply: multiplier 3, 300 ms RX and TX (`doc/user/bfd.rst:147-171`).
+  An unknown profile falls back to the defaults, like FRR
+  (`bfd_profiles_topo1`).
+- Poll/Final sequence for parameter changes (RFC 5880 6.5).
+- Demand mode and echo mode stay off. Authentication is not supported. A
+  config that asks for authentication or echo fails the run.
+- Session down shuts the GoBGP peer down; session up enables it again
+  (FRR `bfd_topo1`). Every state change is logged.
+- Unit tests:
+  - the state machine (RFC 5880 6.8.6 transitions)
+  - detection time math (6.8.4)
+  - Poll/Final handling
+- ContainerLab e2e against the FRR leaf:
+  - session Up
+  - negotiated intervals in `show bfd peers json`
+  - failover within detect multiplier x interval when an uplink is cut
+  - the differential check against the shadow FRR node
+
+BFD lands after slice b.
 
 ### 3.7 nwop: followed and different
 
@@ -236,7 +247,7 @@ attribution.
 | lab `explicit_rt_import_export` | `evpn_type5_test_topo1/test_evpn_type5_topo1.py::test_RT_verification_manual_p0` |
 | lab `type5_ipv6_install` | 10.x `bgp_evpn_rt5/test_bgp_evpn.py::test_router_check_ip`, `::test_evpn_remove_ipv6` |
 | lab `network_blackhole_import_check` | `bgp_basic_functionality_topo1/...::test_advertise_network_using_network_command`; `all_protocol_startup` (`ipv6 route ... blackhole`) |
-| lab `bfd_profile_values` / `bfd_failover` (BFD-1) | `bfd_profiles_topo1/test_bfd_profiles_topo1.py::test_bfd_profile_values`; `bfd_topo1/test_bfd_topo1.py::test_bfd_fast_convergence` |
+| lab `bfd_profile_values` / `bfd_failover` | `bfd_profiles_topo1/test_bfd_profiles_topo1.py::test_bfd_profile_values`; `bfd_topo1/test_bfd_topo1.py::test_bfd_fast_convergence` |
 
 ### 4.3 Differential ContainerLab (slice f)
 
@@ -275,14 +286,14 @@ Kept current as slices land.
 | C13, C14, C11 | lab `route_map_tag_in`, `route_map_deny_tag_out`, `allowas_in` | same | planned |
 | C15 | lab `explicit_rt_import_export` | same | planned |
 | C16, C18 | lab `type5_ipv6_install`, `network_blackhole_import_check` | same | planned |
-| C19 | lab `bfd_profile_values`, `bfd_failover` (BFD-1) or `bfd_leaf_without_host_bfd` (BFD-2) | same | planned |
+| C19 | lab `bfd_profile_values`, `bfd_failover` | same | planned |
 | C20 | existing `E2E Pure Type-5 Fabric`, `E2E EVPN Boot (vrnetlab)` plus the new matrix | existing and new | existing |
 | VLAN, bond | existing `E2E ContainerLab` (LACP topology), VLAN unit and lab tests | existing | existing |
 | Full template set | differential lab + KVM ISO run | same + KVM | planned |
 
 ## 5. Slices (one PR each, at most four not ready at a time)
 
-1. #632: regex fix for unindented lines (C1, interim).
+1. #634: regex fix for unindented lines (C1, interim).
 2. a: block parser, model, golden and mutation tests. No behavior change.
    The set-name and match work (N2) goes in first as its own PR.
 3. b: peer-groups, `remote-as internal`, local-as, timers, all uplinks, AFs,
@@ -291,14 +302,13 @@ Kept current as slices land.
 5. d: IPv6 Type-5 install.
 6. e: route-map subset, RT, `network`, blackhole, allowas-in.
 7. f: production-template ContainerLab with the shadow FRR node.
-8. BFD, after the decision.
+8. BFD (section 3.6), after slice b.
 9. g: CAPRF switch. The e2e `booty` fixtures go away; BOOTy gets the `old`
    files. Needs a BOOTy release.
 
 ## 6. Open questions
 
-1. BFD: BFD-1 or BFD-2 (section 3.6).
-2. Exact FRR version in the legacy base image (1.2).
-3. Should BOOTy also accept the CAPRF `old` e2e variants (`frr defaults
+1. Exact FRR version in the legacy base image (1.2).
+2. Should BOOTy also accept the CAPRF `old` e2e variants (`frr defaults
    datacenter`, `frr version 9.1`)? Proposed: yes, and the defaults follow
    the `frr defaults` line.
