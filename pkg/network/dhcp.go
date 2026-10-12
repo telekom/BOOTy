@@ -289,7 +289,7 @@ func (d *DHCPMode) applyRenewal(link netlink.Link, ifName string, addr *netlink.
 // subnet mask option gets the classful default mask, like other clients.
 func leaseAddr(lease *dhclient.Lease) (*netlink.Addr, error) {
 	ip := lease.FixedAddress.To4()
-	if ip == nil {
+	if ip == nil || ip.IsUnspecified() {
 		return nil, fmt.Errorf("lease has no IPv4 address")
 	}
 	mask := lease.Netmask

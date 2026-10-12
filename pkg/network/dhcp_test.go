@@ -208,6 +208,9 @@ func TestLeaseAddrDefaultsMissingNetmask(t *testing.T) {
 	if _, err := leaseAddr(&dhclient.Lease{}); err == nil {
 		t.Fatal("leaseAddr() without address should fail")
 	}
+	if _, err := leaseAddr(&dhclient.Lease{FixedAddress: net.IPv4zero}); err == nil {
+		t.Fatal("leaseAddr() with 0.0.0.0 should fail")
+	}
 	if _, err := leaseAddr(&dhclient.Lease{FixedAddress: net.ParseIP("10.0.2.15"), Netmask: net.IPMask{255, 0, 255, 0}}); err == nil {
 		t.Fatal("leaseAddr() with a non-contiguous mask should fail")
 	}
