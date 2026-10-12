@@ -5051,3 +5051,32 @@ func TestEnsureMountpointWithinRoot(t *testing.T) {
 		t.Fatal("relative symlink escaping the root was accepted")
 	}
 }
+
+// An image without a GPT Linux partition, such as an MBR image, keeps the
+// root as the grow target.
+func TestGrowPartitionLegacyCompatMBRGrowsRoot(t *testing.T) {
+	cfg := &config.MachineConfig{LegacyCompat: true}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.rootPartition = "/dev/sda1"
+	cmd.setResult("sfdisk --json", []byte(`{"partitiontable":{"label":"dos","partitions":[
+		{"node":"/dev/sda1","type":"83"},
+		{"node":"/dev/sda2","type":"83"}]}}`), nil)
+
+	if err := o.growPartition(context.Background()); err != nil {
+		t.Fatalf("growPartition() = %v", err)
+	}
+	if err := o.resizeFilesystem(context.Background()); err != nil {
+		t.Fatalf("resizeFilesystem() = %v", err)
+	}
+	var got []string
+	for _, c := range cmd.calls {
+		if c.name == "growpart" || c.name == "e2fsck" || c.name == "resize2fs" {
+			got = append(got, c.name+" "+strings.Join(c.args, " "))
+		}
+	}
+	want := []string{"growpart --update on /dev/sda 1", "resize2fs /dev/sda1"}
+	if strings.Join(got, ";") != strings.Join(want, ";") {
+		t.Fatalf("commands = %q, want %q", got, want)
+	}
+}
