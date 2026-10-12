@@ -49,7 +49,10 @@ func TestDefaultRunStreamingCommandDoesNotWaitForBackgroundChildren(t *testing.T
 	t.Cleanup(func() { streamWaitDelay = old })
 
 	start := time.Now()
-	_ = defaultRunStreamingCommand(context.Background(), func(string) {}, "", []string{"/bin/sh", "-c", "sleep 30 & echo started"})
+	err := defaultRunStreamingCommand(context.Background(), func(string) {}, "", []string{"/bin/sh", "-c", "sleep 30 & echo started"})
+	if err != nil {
+		t.Fatalf("defaultRunStreamingCommand() = %v, want nil: the script itself succeeded", err)
+	}
 	if elapsed := time.Since(start); elapsed > 10*time.Second {
 		t.Fatalf("command returned after %s, the background child held it", elapsed)
 	}

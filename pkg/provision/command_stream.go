@@ -6,7 +6,9 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"errors"
 	"io"
+	"os/exec"
 	"syscall"
 	"time"
 
@@ -68,6 +70,11 @@ func defaultRunStreamingCommand(ctx context.Context, onLine func(string), root s
 	err := cmd.Run()
 	_ = pw.Close()
 	<-scanDone
+	// ErrWaitDelay only means a background child still held the output
+	// pipes after the script exited with status 0.
+	if errors.Is(err, exec.ErrWaitDelay) {
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("run %s: %w", argv[0], err)
 	}
