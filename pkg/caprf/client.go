@@ -637,12 +637,20 @@ func (c *Client) uploadCrashProxyMultipart(ctx context.Context, rawURL string, r
 	})
 }
 
+// Test hooks around the multipart writer goroutine.
+var (
+	multipartWriterStarted = func() {}
+	multipartWriterExited  = func() {}
+)
+
 func multipartArchiveReader(ctx context.Context, archivePath string, fields map[string]string, fileField string) (body io.ReadCloser, contentType string) {
 	pr, pw := io.Pipe()
 	writer := multipart.NewWriter(pw)
 	contentType = writer.FormDataContentType()
 	done := make(chan struct{})
+	multipartWriterStarted()
 	go func() {
+		defer multipartWriterExited()
 		defer close(done)
 		defer pw.Close()     //nolint:errcheck // best-effort close
 		defer writer.Close() //nolint:errcheck // CloseWithError reports failures

@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,16 +28,22 @@ func TestCrashFormUploadClosesReaderWhenRequestIsNotSent(t *testing.T) {
 		AuthMode:   crash.AuthModeBearer,
 	}
 
-	before := runtime.NumGoroutine()
+	origStart, origExit := multipartWriterStarted, multipartWriterExited
+	t.Cleanup(func() { multipartWriterStarted, multipartWriterExited = origStart, origExit })
+	var started atomic.Int32
+	exited := make(chan struct{}, 16)
+	multipartWriterStarted = func() { started.Add(1) }
+	multipartWriterExited = func() { exited <- struct{}{} }
+
 	if err := c.uploadCrashPresignedForm(context.Background(), instructions, archive); err == nil {
 		t.Fatal("expected an auth mode error")
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for runtime.NumGoroutine() > before {
-		if time.Now().After(deadline) {
-			t.Fatalf("goroutines = %d, want <= %d: multipart writer leaked", runtime.NumGoroutine(), before)
+	timeout := time.After(5 * time.Second)
+	for i := int32(0); i < started.Load(); i++ {
+		select {
+		case <-exited:
+		case <-timeout:
+			t.Fatalf("multipart writer leaked: %d of %d writers exited", i, started.Load())
 		}
-		runtime.Gosched()
-		time.Sleep(10 * time.Millisecond)
 	}
 }
