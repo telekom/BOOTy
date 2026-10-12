@@ -330,10 +330,9 @@ func ethernetStaticIface(name string, eth *EthernetConfig) string {
 	if eth.SetName != "" {
 		return eth.SetName
 	}
-	if eth.Match.Name == "" {
-		return ""
-	}
-	if strings.ContainsAny(eth.Match.Name, "*?[]") {
+	// A glob or a MAC must be resolved against the NICs; a literal name
+	// alone names the NIC.
+	if eth.Match.Name == "" || eth.Match.MAC != "" || strings.ContainsAny(eth.Match.Name, "*?[]") {
 		return ""
 	}
 	return eth.Match.Name

@@ -1093,3 +1093,23 @@ func TestToNetworkConfig_StaticMatchWithoutSetName(t *testing.T) {
 		t.Errorf("StaticMatch = %+v, want the MAC match", netCfg.StaticMatch)
 	}
 }
+
+// A literal name together with a MAC must keep both constraints, so the
+// address never goes to a NIC with that name but another MAC.
+func TestToNetworkConfig_StaticMatchNameAndMAC(t *testing.T) {
+	np := &Config{
+		Network: NetworkSection{
+			Ethernets: map[string]EthernetConfig{
+				"uplink": {
+					Match:     &MatchConfig{Name: "eth1", MAC: "52:54:00:12:34:56"},
+					Addresses: []string{"10.1.2.3/24"},
+				},
+			},
+		},
+	}
+	netCfg := ToNetworkConfig(np, nil)
+	want := &network.LinkMatch{Name: "eth1", MAC: "52:54:00:12:34:56"}
+	if netCfg.StaticIface != "" || !reflect.DeepEqual(netCfg.StaticMatch, want) {
+		t.Errorf("StaticIface = %q, StaticMatch = %+v, want no fixed interface and %+v", netCfg.StaticIface, netCfg.StaticMatch, want)
+	}
+}
