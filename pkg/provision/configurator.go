@@ -868,30 +868,15 @@ func copyTreeWith(ctx context.Context, srcBase, destRoot string, keepSymlinks bo
 			return fmt.Errorf("stat %s: %w", path, err)
 		}
 		isSymlink := info.Mode()&os.ModeSymlink != 0
-		if isSymlink && !keepSymlinks {
-			// Skip symlinks with a warning to prevent following links that escape the tree.
-			slog.Warn("skipping symlink in copy tree", "path", path)
-			return nil
-		}
-		if keepSymlinks {
-			if rel, relErr := filepath.Rel(srcBase, path); relErr == nil && chrootBindDirs[strings.SplitN(rel, string(filepath.Separator), 2)[0]] {
-				slog.Warn("skipping machine file below a chroot bind mount", "path", path)
-				if d.IsDir() {
-					return filepath.SkipDir
-				}
-				return nil
-			}
+		if skip, skipErr := skipCopyTreeEntry(srcBase, path, d, isSymlink, keepSymlinks); skip {
+			return skipErr
 		}
 		destPath, err := copyTreeDestination(srcBase, destRoot, path, validatedParents)
 		if err != nil {
 			return err
 		}
 		if isSymlink {
-			// Like cp, refuse to replace a directory with a link.
-			if existing, err := os.Lstat(destPath); err == nil && existing.IsDir() {
-				return fmt.Errorf("cannot replace directory %s with symlink %s", destPath, path)
-			}
-			return copySymlink(path, destPath)
+			return copyKeptSymlink(path, destPath)
 		}
 		if d.IsDir() {
 			return os.MkdirAll(destPath, 0o755) //nolint:gosec // destPath and its parent are checked by copyTreeDestination
@@ -901,6 +886,36 @@ func copyTreeWith(ctx context.Context, srcBase, destRoot string, keepSymlinks bo
 		return fmt.Errorf("copy tree from %s: %w", srcBase, err)
 	}
 	return nil
+}
+
+// skipCopyTreeEntry reports whether copyTreeWith skips path. A skipped
+// directory returns filepath.SkipDir as the error.
+func skipCopyTreeEntry(srcBase, path string, d os.DirEntry, isSymlink, keepSymlinks bool) (bool, error) {
+	if !keepSymlinks {
+		if isSymlink {
+			// Skip symlinks with a warning to prevent following links that escape the tree.
+			slog.Warn("skipping symlink in copy tree", "path", path)
+			return true, nil
+		}
+		return false, nil
+	}
+	rel, err := filepath.Rel(srcBase, path)
+	if err != nil || !chrootBindDirs[strings.SplitN(rel, string(filepath.Separator), 2)[0]] {
+		return false, nil
+	}
+	slog.Warn("skipping machine file below a chroot bind mount", "path", path)
+	if d.IsDir() {
+		return true, filepath.SkipDir
+	}
+	return true, nil
+}
+
+// copyKeptSymlink recreates a link, but like cp never replaces a directory.
+func copyKeptSymlink(path, destPath string) error {
+	if existing, err := os.Lstat(destPath); err == nil && existing.IsDir() {
+		return fmt.Errorf("cannot replace directory %s with symlink %s", destPath, path)
+	}
+	return copySymlink(path, destPath)
 }
 
 // copyTreeDestination maps a source path to its destination under destRoot
