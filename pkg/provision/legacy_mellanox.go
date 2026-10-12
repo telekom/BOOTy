@@ -89,8 +89,8 @@ func (c *Configurator) setupMellanoxLegacy(ctx context.Context, numVFs int) (boo
 	return changed, nil
 }
 
-// legacyConnectXFunctions returns the PCI addresses (bus:dev.fn without the
-// domain, like lspci) of ConnectX Ethernet functions.
+// legacyConnectXFunctions returns the PCI addresses (domain:bus:dev.fn) of
+// ConnectX Ethernet functions.
 func legacyConnectXFunctions() ([]string, error) {
 	entries, err := os.ReadDir(pciDevicesRoot)
 	if err != nil {
@@ -106,11 +106,9 @@ func legacyConnectXFunctions() ([]string, error) {
 		if !strings.HasPrefix(readSysfsValue(dir, "class"), "0x0200") {
 			continue
 		}
-		addr := entry.Name()
-		if _, rest, ok := strings.Cut(addr, ":"); ok && strings.Count(addr, ":") == 2 {
-			addr = rest
-		}
-		nics = append(nics, addr)
+		// Keep the full domain:bus:dev.fn; mstconfig accepts it, and a host
+		// with several PCI domains needs it to name the right function.
+		nics = append(nics, entry.Name())
 	}
 	return nics, nil
 }

@@ -61,7 +61,7 @@ func mstCalls(calls []mockCall) []string {
 func TestSetupMellanoxLegacy(t *testing.T) {
 	withPCIDevices(t, map[string][3]string{
 		"0000:3b:00.0": {"0x15b3", "0x1017", "0x020000"}, // ConnectX-5 port 1
-		"0000:3b:00.1": {"0x15b3", "0x1017", "0x020000"}, // ConnectX-5 port 2
+		"0001:3b:00.0": {"0x15b3", "0x1017", "0x020000"}, // ConnectX-5 in PCI domain 1
 		"0000:5e:00.0": {"0x15b3", "0x1015", "0x020000"}, // ConnectX-4 Lx: not matched
 		"0000:af:00.0": {"0x15b3", "0x101b", "0x020700"}, // ConnectX-6 in IB mode
 		"0000:00:1f.6": {"0x8086", "0x15bb", "0x020000"}, // Intel NIC
@@ -75,8 +75,8 @@ func TestSetupMellanoxLegacy(t *testing.T) {
 		t.Fatalf("setupMellanoxLegacy() = %v, %v; want changed", changed, err)
 	}
 	want := []string{
-		"-d 3b:00.0 q", "-y -d 3b:00.0 s NUM_OF_VFS=32",
-		"-d 3b:00.1 q", "-y -d 3b:00.1 s NUM_OF_VFS=32",
+		"-d 0000:3b:00.0 q", "-y -d 0000:3b:00.0 s NUM_OF_VFS=32",
+		"-d 0001:3b:00.0 q", "-y -d 0001:3b:00.0 s NUM_OF_VFS=32",
 	}
 	if got := mstCalls(cmd.calls); !reflect.DeepEqual(got, want) {
 		t.Fatalf("mstconfig calls = %v, want %v", got, want)
@@ -124,5 +124,23 @@ func TestSetupMellanoxStepDefaultIsOptIn(t *testing.T) {
 	}
 	if len(mstCalls(cmd.calls)) != 0 {
 		t.Fatalf("default mode ran mstconfig: %v", cmd.calls)
+	}
+}
+
+// The orchestrator step must take the legacy path in compat mode.
+func TestSetupMellanoxStepLegacyCompat(t *testing.T) {
+	withPCIDevices(t, map[string][3]string{"0000:3b:00.0": {"0x15b3", "0x1017", "0x020000"}})
+	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{LegacyCompat: true}, &mockProvider{})
+	cmd.setResult("mstconfig -d", []byte("NUM_OF_VFS 8\n"), nil)
+
+	if err := o.setupMellanox(context.Background()); err != nil {
+		t.Fatalf("setupMellanox() = %v", err)
+	}
+	want := []string{"-d 0000:3b:00.0 q", "-y -d 0000:3b:00.0 s NUM_OF_VFS=32"}
+	if got := mstCalls(cmd.calls); !reflect.DeepEqual(got, want) {
+		t.Fatalf("mstconfig calls = %v, want %v", got, want)
+	}
+	if !o.FirmwareChanged() {
+		t.Fatal("FirmwareChanged() = false after NUM_OF_VFS changed")
 	}
 }
