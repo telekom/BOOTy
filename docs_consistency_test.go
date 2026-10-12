@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -43,6 +44,34 @@ func TestREADMEClarifiesBondLabDoesNotProveLACP(t *testing.T) {
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("README missing %q", want)
+		}
+	}
+}
+
+// varsKeyPattern matches the vars keys that pkg/caprf/client.go accepts: map
+// entries such as `"KEY": &cfg...` or `"KEY": "shim"`, single-key `case "KEY":`
+// lines and `key == "KEY"` comparisons.
+var varsKeyPattern = regexp.MustCompile(`(?m)^\s*(?:case "([A-Za-z0-9_]+)":|"([A-Za-z_][A-Za-z0-9_]*)":\s+(?:&cfg|")|.*key == "([A-Za-z0-9_]+)")`)
+
+func TestConfigurationDocListsEveryVarsKey(t *testing.T) {
+	src, err := os.ReadFile("pkg/caprf/client.go")
+	if err != nil {
+		t.Fatalf("read vars parser: %v", err)
+	}
+	doc, err := os.ReadFile("docs/configuration.md")
+	if err != nil {
+		t.Fatalf("read configuration reference: %v", err)
+	}
+	keys := map[string]struct{}{}
+	for _, m := range varsKeyPattern.FindAllStringSubmatch(string(src), -1) {
+		keys[m[1]+m[2]+m[3]] = struct{}{}
+	}
+	if len(keys) < 100 {
+		t.Fatalf("found only %d vars keys in pkg/caprf/client.go; update varsKeyPattern", len(keys))
+	}
+	for key := range keys {
+		if !strings.Contains(string(doc), "`"+key+"`") {
+			t.Errorf("docs/configuration.md does not list vars key %q", key)
 		}
 	}
 }
