@@ -481,7 +481,9 @@ behaviour where the two differ:
 - Files in `/deploy/file-system` (CAPRF `provisionerConfig.files`) are copied
   into the ramdisk root before the network starts, like `copy_files`. Netplan
   files get mode `0600`. They are not copied into the installed OS, and BOOTy
-  does not write the installed OS `/etc/resolv.conf`.
+  does not write the installed OS `/etc/resolv.conf`. A provisioner
+  `/etc/resolv.conf` stays in place in the ramdisk; BOOTy does not replace it
+  with resolvers from the vars or netplan.
 
 Without the variable, BOOTy keeps its own defaults.
 

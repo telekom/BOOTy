@@ -763,6 +763,21 @@ func (c *Configurator) CopyProvisionerFiles(ctx context.Context) error {
 	return c.copyTreeIntoChroot(ctx, provisionerFilesDir, "provisioner files")
 }
 
+// SetProvisionerFilesDirForTest points the provisioner files directory at
+// dir and returns a function that restores it. Tests only.
+func SetProvisionerFilesDirForTest(dir string) func() {
+	old := provisionerFilesDir
+	provisionerFilesDir = dir
+	return func() { provisionerFilesDir = old }
+}
+
+// HasProvisionerResolvConf reports whether the CAPRF provisioner files carry
+// an /etc/resolv.conf for the ramdisk.
+func HasProvisionerResolvConf() bool {
+	info, err := os.Stat(filepath.Join(provisionerFilesDir, "etc", "resolv.conf"))
+	return err == nil && info.Mode().IsRegular()
+}
+
 // ApplyProvisionerFilesToRamdisk copies the CAPRF provisioner files from
 // /deploy/file-system/ into the running ramdisk, like copy_files in the CAPRF
 // legacy common.sh. Netplan files get mode 0600, as in the legacy script.

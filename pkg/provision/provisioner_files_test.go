@@ -140,3 +140,14 @@ func TestEnsureWithinRoot(t *testing.T) {
 		}
 	}
 }
+
+func TestHasProvisionerResolvConf(t *testing.T) {
+	withProvisionerFiles(t, map[string]os.FileMode{"etc/hosts": 0o644})
+	if HasProvisionerResolvConf() {
+		t.Fatal("HasProvisionerResolvConf() = true without the file")
+	}
+	withProvisionerFiles(t, map[string]os.FileMode{"etc/resolv.conf": 0o644})
+	if !HasProvisionerResolvConf() {
+		t.Fatal("HasProvisionerResolvConf() = false with the file")
+	}
+}

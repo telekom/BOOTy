@@ -824,6 +824,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 	if npCfg := detectNetplanConfig(); npCfg != nil {
 		mergeNetplanConfig(netCfg, npCfg)
 	}
+	keepProvisionerResolvConf(cfg, netCfg)
 
 	// Parse VLAN configuration.
 	if cfg.Network.VLAN.Config != "" {
@@ -920,6 +921,16 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 		EVPNType5Only:    cfg.Network.EVPN.Type5Only,
 		BGPAuthPassword:  cfg.Network.BGP.AuthPassword,
 		BGPMinPeers:      cfg.Network.BGP.MinPeers,
+	}
+}
+
+// keepProvisionerResolvConf leaves the provisioner /etc/resolv.conf in the
+// ramdisk alone in legacy compat: copy_files puts it in place and the
+// legacy scripts never rewrite it.
+func keepProvisionerResolvConf(cfg *config.MachineConfig, netCfg *network.Config) {
+	if cfg.LegacyCompat && provision.HasProvisionerResolvConf() {
+		slog.Info("legacy compat: keeping the provisioner resolv.conf in the ramdisk")
+		netCfg.DNSResolvers = ""
 	}
 }
 
