@@ -234,6 +234,7 @@ func TestLegacyCompatGrowsLastLinuxPartitionQEMU(t *testing.T) {
 		t.Fatalf("append data partition: %v\n%s", err, out)
 	}
 	loopDev := strings.TrimSpace(string(runOutput(t, "attach image", "losetup", "--find", "--show", "--partscan", rawDisk)))
+	t.Cleanup(func() { _ = exec.Command("losetup", "-d", loopDev).Run() })
 	waitForDevice(t, loopDev+"p3", 5*time.Second)
 	run(t, "format data partition", "mkfs.ext4", "-F", "-q", loopDev+"p3")
 	run(t, "detach image", "losetup", "-d", loopDev)
