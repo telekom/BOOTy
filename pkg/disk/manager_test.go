@@ -977,17 +977,26 @@ func TestResizeFilesystemUsesDetectedType(t *testing.T) {
 			t.Fatalf("ext4 must not fall back to xfs_growfs: %#v", cmd.calls)
 		}
 	})
-	t.Run("xfs runs only xfs_growfs", func(t *testing.T) {
-		cmd := newMockCommander()
-		mgr := NewManager(cmd)
-		cmd.setResult("blkid -o", []byte("xfs\n"), nil)
-		if err := mgr.ResizeFilesystem(context.Background(), "/dev/sda2", "/newroot"); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(cmd.calls) != 2 || cmd.calls[1].name != "xfs_growfs" {
-			t.Fatalf("expected blkid then xfs_growfs, got %#v", cmd.calls)
-		}
-	})
+	for _, tt := range []struct {
+		fsType   string
+		wantName string
+		wantArgs []string
+	}{
+		{"xfs", "xfs_growfs", []string{"/newroot"}},
+		{"btrfs", "btrfs", []string{"filesystem", "resize", "max", "/newroot"}},
+	} {
+		t.Run(tt.fsType+" runs only its tool on the mountpoint", func(t *testing.T) {
+			cmd := newMockCommander()
+			mgr := NewManager(cmd)
+			cmd.setResult("blkid -o", []byte(tt.fsType+"\n"), nil)
+			if err := mgr.ResizeFilesystem(context.Background(), "/dev/sda2", "/newroot"); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(cmd.calls) != 2 || !hasDiskCommandCall(cmd.calls[1:], tt.wantName, tt.wantArgs...) {
+				t.Fatalf("expected blkid then %s %v, got %#v", tt.wantName, tt.wantArgs, cmd.calls)
+			}
+		})
+	}
 }
 
 func TestResizeFilesystemVFATUnsupported(t *testing.T) {
