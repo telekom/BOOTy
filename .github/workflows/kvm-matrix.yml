@@ -226,8 +226,9 @@ jobs:
             qemu_extra: ""
             test_tag: e2e
             test_regex: "^TestMirroredRootBootFailoverVM$"
-            test_timeout: 40m
-            timeout_minutes: 60
+            # Two subtests of at most 8 + 6 + 6 minutes plus image preparation.
+            test_timeout: 50m
+            timeout_minutes: 70
             privileged: true
             ovmf_vars: OVMF_VARS.fd
             ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.fd
@@ -242,8 +243,9 @@ jobs:
             qemu_extra: ""
             test_tag: e2e
             test_regex: "^TestMirroredRootBootFailoverVM$"
-            test_timeout: 40m
-            timeout_minutes: 60
+            # Two subtests of at most 8 + 6 + 6 minutes plus image preparation.
+            test_timeout: 50m
+            timeout_minutes: 70
             privileged: true
             ovmf_vars: OVMF_VARS.fd
             ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.fd

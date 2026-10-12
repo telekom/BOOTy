@@ -137,7 +137,7 @@ func runMirrorFailover(t *testing.T, kernel, initramfs string, qemuArgs func(dis
 		"-net", "nic,model=virtio",
 		"-net", "user",
 	)
-	out := runMirrorQEMU(t, "provision", provisionArgs, 15*time.Minute)
+	out := runMirrorQEMU(t, "provision", provisionArgs, 8*time.Minute)
 	if !strings.Contains(string(out), "step=report-success") || strings.Contains(string(out), "provisioning step failed") {
 		t.Fatal("mirrored provisioning did not succeed, see the provision output above")
 	}
@@ -145,7 +145,7 @@ func runMirrorFailover(t *testing.T, kernel, initramfs string, qemuArgs func(dis
 	// Boot 1: both disks. The check waits for the resync, so the second
 	// member is in sync before the first disk is removed.
 	report := mirrorCheckReport(t, "boot with both disks",
-		runMirrorQEMU(t, "boot with both disks", qemuArgs(disk1, disk2), 10*time.Minute))
+		runMirrorQEMU(t, "boot with both disks", qemuArgs(disk1, disk2), 6*time.Minute))
 	requireArraysOnMD(t, report)
 	if got := strings.Count(report, "[2/2] [UU]"); got != mirrorArrayCount() {
 		t.Fatalf("%d clean two-member mirrors, want %d:\n%s", got, mirrorArrayCount(), report)
@@ -154,7 +154,7 @@ func runMirrorFailover(t *testing.T, kernel, initramfs string, qemuArgs func(dis
 	// Boot 2: only the second disk. The second disk must boot on its own and
 	// the initramfs must start the array degraded.
 	report = mirrorCheckReport(t, "boot from second disk only",
-		runMirrorQEMU(t, "boot from second disk only", qemuArgs(disk2), 10*time.Minute))
+		runMirrorQEMU(t, "boot from second disk only", qemuArgs(disk2), 6*time.Minute))
 	requireArraysOnMD(t, report)
 	if got := strings.Count(report, "[2/1]"); got != mirrorArrayCount() {
 		t.Fatalf("%d arrays degraded to one member, want %d:\n%s", got, mirrorArrayCount(), report)
