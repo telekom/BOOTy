@@ -25,16 +25,18 @@ type FRRParams struct {
 	L3VNIs []uint32
 }
 
-// Regex patterns for FRR config extraction.
+// Regex patterns for FRR config extraction. FRR accepts block lines with and
+// without indentation (the bm4x-operator template writes "neighbor" lines at
+// column 0), so the patterns allow any leading blanks but never a newline.
 var (
-	reRouterBGP       = regexp.MustCompile(`(?m)^router\s+bgp\s+(\d+)`)
-	reRouterID        = regexp.MustCompile(`(?m)^\s+bgp\s+router-id\s+(\S+)`)
-	reNeighborIface   = regexp.MustCompile(`(?m)^\s+neighbor\s+(\S+)\s+interface\s+(?:remote-as|peer-group)`)
-	reNeighborIPv4    = regexp.MustCompile(`(?m)^\s+neighbor\s+(\d+\.\d+\.\d+\.\d+)\s+remote-as\s+(\S+)`)
-	reNeighborIPv6    = regexp.MustCompile(`(?m)^\s+neighbor\s+([0-9a-fA-F]*:[0-9a-fA-F:]+)\s+remote-as\s+(\S+)`)
-	reL2VPNEVPN       = regexp.MustCompile(`(?m)^\s+address-family\s+l2vpn\s+evpn`)
-	reAdvertiseAllVNI = regexp.MustCompile(`(?m)^\s+advertise-all-vni`)
-	reLocalAS         = regexp.MustCompile(`(?m)^\s+neighbor\s+\S+\s+local-as\s+(\d+)`)
+	reRouterBGP       = regexp.MustCompile(`(?m)^router[ \t]+bgp[ \t]+(\d+)`)
+	reRouterID        = regexp.MustCompile(`(?m)^[ \t]*bgp[ \t]+router-id[ \t]+(\S+)`)
+	reNeighborIface   = regexp.MustCompile(`(?m)^[ \t]*neighbor[ \t]+(\S+)[ \t]+interface[ \t]+(?:remote-as|peer-group)`)
+	reNeighborIPv4    = regexp.MustCompile(`(?m)^[ \t]*neighbor[ \t]+(\d+\.\d+\.\d+\.\d+)[ \t]+remote-as[ \t]+(\S+)`)
+	reNeighborIPv6    = regexp.MustCompile(`(?m)^[ \t]*neighbor[ \t]+([0-9a-fA-F]*:[0-9a-fA-F:]+)[ \t]+remote-as[ \t]+(\S+)`)
+	reL2VPNEVPN       = regexp.MustCompile(`(?m)^[ \t]*address-family[ \t]+l2vpn[ \t]+evpn`)
+	reAdvertiseAllVNI = regexp.MustCompile(`(?m)^[ \t]*advertise-all-vni`)
+	reLocalAS         = regexp.MustCompile(`(?m)^[ \t]*neighbor[ \t]+\S+[ \t]+local-as[ \t]+(\d+)`)
 )
 
 // ParseFRRConfig extracts networking parameters from an FRR configuration file.

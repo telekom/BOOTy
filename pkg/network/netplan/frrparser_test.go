@@ -287,3 +287,38 @@ func TestExtractL3VNIs(t *testing.T) {
 		})
 	}
 }
+
+// The bm4x-operator production template writes block lines without
+// indentation. FRR reads them, so the parser must find every uplink, the
+// local-as and the router-id there too.
+func TestParseFRRConfigBytes_UnindentedBlockLines(t *testing.T) {
+	cfg := `router bgp 4210000017 vrf Vrf_underlay
+bgp router-id 192.0.2.17
+neighbor leaf peer-group
+neighbor leaf remote-as 65500
+neighbor leaf local-as 65501 no-prepend replace-as
+neighbor ens1f0np0 interface peer-group leaf
+neighbor ens1f1np1 interface peer-group leaf
+neighbor 192.0.2.1 remote-as 65500
+!
+address-family l2vpn evpn
+advertise-all-vni
+exit-address-family
+`
+	params, err := ParseFRRConfigBytes([]byte(cfg))
+	if err != nil {
+		t.Fatalf("ParseFRRConfigBytes() = %v", err)
+	}
+	if params.RouterID != "192.0.2.17" || params.LocalASN != 65501 {
+		t.Errorf("RouterID = %q, LocalASN = %d, want 192.0.2.17 and 65501", params.RouterID, params.LocalASN)
+	}
+	if want := []string{"ens1f0np0", "ens1f1np1"}; !slices.Equal(params.UnnumberedPeers, want) {
+		t.Errorf("UnnumberedPeers = %v, want %v", params.UnnumberedPeers, want)
+	}
+	if want := []string{"192.0.2.1"}; !slices.Equal(params.NumberedPeers, want) {
+		t.Errorf("NumberedPeers = %v, want %v", params.NumberedPeers, want)
+	}
+	if !params.EVPN || !params.AdvertiseAllVNI {
+		t.Errorf("EVPN = %v, AdvertiseAllVNI = %v, want both true", params.EVPN, params.AdvertiseAllVNI)
+	}
+}
