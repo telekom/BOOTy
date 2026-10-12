@@ -1,8 +1,10 @@
 package netplan
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"maps"
@@ -56,9 +58,17 @@ func ParseFile(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
+	return parseBytes(path, data)
+}
+
+// parseBytes decodes netplan YAML. Unknown keys are an error, like netplan
+// itself, so a setting BOOTy does not implement is never dropped silently.
+func parseBytes(name string, data []byte) (*Config, error) {
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("unmarshal %s: %w", path, err)
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("unmarshal %s: %w", name, err)
 	}
 	return &cfg, nil
 }

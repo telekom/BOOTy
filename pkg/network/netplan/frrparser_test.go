@@ -194,6 +194,8 @@ func TestParseFRRConfigBytes_DuplicateNeighbors(t *testing.T) {
 	// Same interface appears multiple times (e.g. in different address families).
 	conf := `
 router bgp 65100
+ neighbor fabric peer-group
+ neighbor fabric remote-as external
  neighbor eth0 interface remote-as external
  neighbor eth0 interface peer-group fabric
  !
@@ -257,18 +259,13 @@ func TestExtractL3VNIs(t *testing.T) {
 			want: nil,
 		},
 		{
-			name: "vni under a non-VRF block is not an L3VNI",
-			conf: "interface vxlan100\n vni 100\nexit\n",
-			want: nil,
-		},
-		{
 			name: "top-level vni after a block closed by bang",
 			conf: "router bgp 65100\n address-family l2vpn evpn\n  advertise-all-vni\n exit-address-family\n!\nvni 1000\n",
 			want: []uint32{1000},
 		},
 		{
-			name: "duplicate and invalid vni statements",
-			conf: "vni 1000\nvni 1000\nvni abc\nvni 99999999999\n",
+			name: "duplicate vni statements",
+			conf: "vni 1000\nvni 1000\n",
 			want: []uint32{1000},
 		},
 		{
@@ -325,6 +322,20 @@ exit-address-family
 	}
 	if !params.EVPN || !params.AdvertiseAllVNI {
 		t.Errorf("EVPN = %v, AdvertiseAllVNI = %v, want both true", params.EVPN, params.AdvertiseAllVNI)
+	}
+}
+
+// Statements BOOTy does not implement fail with their line number instead
+// of being ignored.
+func TestParseFRRConfigBytes_RejectsUnsupported(t *testing.T) {
+	for _, conf := range []string{
+		"interface vxlan100\n vni 100\nexit\n",
+		"vni 1000\nvni abc\n",
+		"vni 99999999999\n",
+	} {
+		if _, err := ParseFRRConfigBytes([]byte(conf)); err == nil {
+			t.Errorf("ParseFRRConfigBytes(%q) = nil error, want an error", conf)
+		}
 	}
 }
 

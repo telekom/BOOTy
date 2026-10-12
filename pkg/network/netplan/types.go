@@ -11,6 +11,7 @@ type Config struct {
 // NetworkSection is the "network:" block inside a netplan YAML file.
 type NetworkSection struct {
 	Version      int                       `yaml:"version,omitempty"`
+	Renderer     string                    `yaml:"renderer,omitempty"`
 	Ethernets    map[string]EthernetConfig `yaml:"ethernets,omitempty"`
 	Bonds        map[string]BondConfig     `yaml:"bonds,omitempty"`
 	Tunnels      map[string]TunnelConfig   `yaml:"tunnels,omitempty"`
@@ -88,6 +89,7 @@ type TunnelConfig struct {
 	Remote          string   `yaml:"remote,omitempty"`
 	Port            int      `yaml:"port,omitempty"`
 	Link            string   `yaml:"link,omitempty"`
+	MACAddress      string   `yaml:"macaddress,omitempty"`
 	MTU             int      `yaml:"mtu,omitempty"`
 	LinkLocal       []string `yaml:"link-local,omitempty"`
 	Hairpin         *bool    `yaml:"hairpin,omitempty"`
