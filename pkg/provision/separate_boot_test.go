@@ -19,6 +19,7 @@ func TestSeparateBootSource(t *testing.T) {
 	tests := []struct {
 		name       string
 		grubOnRoot bool
+		grubFile   bool
 		noBootDir  bool
 		fstab      string
 		wantNeeded bool
@@ -31,6 +32,7 @@ func TestSeparateBootSource(t *testing.T) {
 			wantNeeded: true,
 			wantSource: "LABEL=BOOT",
 		},
+		{name: "grub is a file, not a directory", grubFile: true, fstab: "LABEL=BOOT /boot ext4 defaults 0 2\n", wantNeeded: true, wantSource: "LABEL=BOOT"},
 		{name: "missing boot dir", noBootDir: true, fstab: "LABEL=BOOT /boot ext4 defaults 0 2\n", wantNeeded: true, wantSource: "LABEL=BOOT"},
 		{name: "escaped label", fstab: "LABEL=BOOT\\040VOL /boot ext4 defaults 0 2\n", wantNeeded: true, wantSource: "LABEL=BOOT VOL"},
 		{name: "no boot entry", fstab: "UUID=1 / ext4 defaults 0 1\n#LABEL=BOOT /boot ext4 defaults 0 2\n", wantNeeded: true},
@@ -43,6 +45,9 @@ func TestSeparateBootSource(t *testing.T) {
 				if err := os.MkdirAll(filepath.Join(root, "boot"), 0o755); err != nil {
 					t.Fatal(err)
 				}
+			}
+			if tt.grubFile {
+				writeTestFile(t, filepath.Join(root, "boot", "grub"), "")
 			}
 			if tt.grubOnRoot {
 				if err := os.MkdirAll(filepath.Join(root, "boot", "grub"), 0o755); err != nil {

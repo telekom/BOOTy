@@ -87,8 +87,13 @@ func separateBootSource(root string) (needed bool, source string, err error) {
 		// A symlink or file at /boot is not a mountpoint BOOTy uses.
 		return false, "", nil
 	default:
-		if _, err := os.Lstat(filepath.Join(boot, "grub")); err == nil {
+		grub, err := os.Lstat(filepath.Join(boot, "grub"))
+		switch {
+		case err == nil && grub.IsDir():
+			// GRUB lives on the root filesystem.
 			return false, "", nil
+		case err != nil && !os.IsNotExist(err):
+			return false, "", fmt.Errorf("inspect %s: %w", filepath.Join(boot, "grub"), err)
 		}
 	}
 	source, err = targetFstabSource(root, "/boot")
