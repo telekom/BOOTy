@@ -431,6 +431,14 @@ func namesPartition(source string) bool {
 	return strings.HasPrefix(source, "PARTUUID=") || strings.HasPrefix(source, "PARTLABEL=") || strings.HasPrefix(source, "/dev/")
 }
 
+// mirrorInitramfsCmd rebuilds the target initramfs with update-initramfs, or
+// dracut where that is missing. Without mdadm in the target, update-initramfs
+// still succeeds but the initramfs cannot assemble the root array.
+const mirrorInitramfsCmd = "if ! command -v mdadm >/dev/null 2>&1; then " +
+	"echo 'mdadm is not installed in the target image' >&2; exit 1; fi; " +
+	"if command -v update-initramfs >/dev/null 2>&1; then update-initramfs -u -k all; " +
+	"else dracut --force --regenerate-all; fi"
+
 // mdadmConfHeader matches raid_save_mdadm_config of the CAPRF legacy
 // provisioner. The first AUTO match wins, so unlisted arrays with 1.x or IMSM
 // metadata still auto-assemble, as with legacy and without an AUTO line; only
@@ -524,13 +532,7 @@ func (o *Orchestrator) configureMdadm(ctx context.Context) error {
 		[]byte(mirrorGrubConfig)); err != nil {
 		return fmt.Errorf("write grub mirror config: %w", err)
 	}
-	// Without mdadm in the target, update-initramfs still succeeds but the
-	// initramfs cannot assemble the root array.
-	cmd := "if ! command -v mdadm >/dev/null 2>&1; then " +
-		"echo 'mdadm is not installed in the target image' >&2; exit 1; fi; " +
-		"if command -v update-initramfs >/dev/null 2>&1; then update-initramfs -u -k all; " +
-		"else dracut --force --regenerate-all; fi"
-	if out, err := o.disk.ChrootRun(ctx, newroot, cmd); err != nil {
+	if out, err := o.disk.ChrootRun(ctx, newroot, mirrorInitramfsCmd); err != nil {
 		return fmt.Errorf("rebuild initramfs for root mirror: %s: %w", string(out), err)
 	}
 	return nil
@@ -599,7 +601,7 @@ func requireRemovableEFILoader(espDir string) error {
 	}
 	for _, e := range entries {
 		// vfat names are case-insensitive.
-		if strings.EqualFold(e.Name(), name) {
+		if strings.EqualFold(e.Name(), name) && e.Type().IsRegular() {
 			return nil
 		}
 	}

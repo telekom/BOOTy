@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -636,5 +637,55 @@ func TestRequireRemovableEFILoader(t *testing.T) {
 	}
 	if err := requireRemovableEFILoader(esp); err != nil {
 		t.Fatalf("requireRemovableEFILoader() error = %v with %s present", err, name)
+	}
+}
+
+func TestMirrorInitramfsCmd(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh")
+	}
+	tests := []struct {
+		name    string
+		tools   map[string]string // tool name -> exit status
+		want    string
+		wantErr bool
+	}{
+		{name: "update-initramfs preferred", tools: map[string]string{"mdadm": "0", "update-initramfs": "0", "dracut": "0"}, want: "update-initramfs -u -k all"},
+		{name: "dracut without update-initramfs", tools: map[string]string{"mdadm": "0", "dracut": "0"}, want: "dracut --force --regenerate-all"},
+		{name: "dracut failure propagates", tools: map[string]string{"mdadm": "0", "dracut": "3"}, want: "dracut --force --regenerate-all", wantErr: true},
+		{name: "no mdadm", tools: map[string]string{"update-initramfs": "0"}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bin, log := t.TempDir(), filepath.Join(t.TempDir(), "calls")
+			for tool, status := range tt.tools {
+				script := "#!" + sh + "\necho \"" + tool + " $*\" >> " + log + "\nexit " + status + "\n"
+				if err := os.WriteFile(filepath.Join(bin, tool), []byte(script), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cmd := exec.CommandContext(context.Background(), sh, "-c", mirrorInitramfsCmd)
+			cmd.Env = []string{"PATH=" + bin}
+			err := cmd.Run()
+			calls, _ := os.ReadFile(log)
+			if (err != nil) != tt.wantErr || (tt.want != "" && strings.TrimSpace(string(calls)) != tt.want) {
+				t.Fatalf("run = %v, calls %q; want %q, wantErr %v", err, calls, tt.want, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestRequireRemovableEFILoaderRejectsDirectory(t *testing.T) {
+	name, err := efiRemovableLoaderName(runtime.GOARCH)
+	if err != nil {
+		t.Skipf("no removable loader name for %s", runtime.GOARCH)
+	}
+	esp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(esp, "EFI", "BOOT", name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireRemovableEFILoader(esp); err == nil {
+		t.Fatal("requireRemovableEFILoader() accepted a directory as the fallback loader")
 	}
 }
