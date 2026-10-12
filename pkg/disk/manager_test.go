@@ -963,6 +963,33 @@ func TestResizeFilesystemExt4(t *testing.T) {
 	}
 }
 
+func TestResizeFilesystemUsesDetectedType(t *testing.T) {
+	t.Run("ext4 failure reports resize2fs", func(t *testing.T) {
+		cmd := newMockCommander()
+		mgr := NewManager(cmd)
+		cmd.setResult("blkid -o", []byte("ext4\n"), nil)
+		cmd.setResult("resize2fs /dev/sda2", []byte("Bad magic number in super-block"), fmt.Errorf("exit 1"))
+		err := mgr.ResizeFilesystem(context.Background(), "/dev/sda2", "/newroot")
+		if err == nil || !strings.Contains(err.Error(), "Bad magic number") {
+			t.Fatalf("error = %v, want the resize2fs output", err)
+		}
+		if hasDiskCommandCall(cmd.calls, "xfs_growfs", "/newroot") {
+			t.Fatalf("ext4 must not fall back to xfs_growfs: %#v", cmd.calls)
+		}
+	})
+	t.Run("xfs runs only xfs_growfs", func(t *testing.T) {
+		cmd := newMockCommander()
+		mgr := NewManager(cmd)
+		cmd.setResult("blkid -o", []byte("xfs\n"), nil)
+		if err := mgr.ResizeFilesystem(context.Background(), "/dev/sda2", "/newroot"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(cmd.calls) != 2 || cmd.calls[1].name != "xfs_growfs" {
+			t.Fatalf("expected blkid then xfs_growfs, got %#v", cmd.calls)
+		}
+	})
+}
+
 func TestResizeFilesystemVFATUnsupported(t *testing.T) {
 	cmd := newMockCommander()
 	mgr := NewManager(cmd)
