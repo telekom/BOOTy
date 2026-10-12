@@ -151,11 +151,30 @@ func newDHCPClient(iface *net.Interface, hostname string, onBound dhclient.Callb
 
 // Netlink seams for onBound tests.
 var (
-	dhcpAddrReplace  = netlink.AddrReplace
+	dhcpAddrReplace  = replaceLeaseAddr
 	dhcpAddrDel      = netlink.AddrDel
 	dhcpRouteReplace = netlink.RouteReplace
 	dhcpRouteDel     = netlink.RouteDel
 )
+
+// replaceLeaseAddr sets addr on link. The kernel keys IPv4 addresses by
+// address and prefix, so AddrReplace alone would keep the same IP with an
+// older prefix next to the new one. Those entries are removed first.
+func replaceLeaseAddr(link netlink.Link, addr *netlink.Addr) error {
+	existing, err := netlink.AddrList(link, netlink.FAMILY_V4)
+	if err != nil {
+		return fmt.Errorf("list addresses: %w", err)
+	}
+	for i := range existing {
+		a := &existing[i]
+		if a.IP.Equal(addr.IP) && a.IPNet.String() != addr.IPNet.String() {
+			if err := netlink.AddrDel(link, a); err != nil && !errors.Is(err, syscall.EADDRNOTAVAIL) {
+				return fmt.Errorf("remove %s: %w", a.IPNet, err)
+			}
+		}
+	}
+	return netlink.AddrReplace(link, addr) //nolint:wrapcheck // callers add context
+}
 
 // onBound returns a callback that configures the interface address and default route.
 // The winner ensures only the first NIC whose lease applies cleanly configures the host;
