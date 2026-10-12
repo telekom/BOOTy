@@ -144,3 +144,39 @@ func TestSetupMellanoxStepLegacyCompat(t *testing.T) {
 		t.Fatal("FirmwareChanged() = false after NUM_OF_VFS changed")
 	}
 }
+
+func TestSetupMellanoxLegacyNumVFsOverride(t *testing.T) {
+	withPCIDevices(t, map[string][3]string{"0000:3b:00.0": {"0x15b3", "0x1017", "0x020000"}})
+	cmd := newMockCommander()
+	cmd.setResult("mstconfig -d", []byte("NUM_OF_VFS 8\n"), nil)
+	c := newTestConfigurator(t, cmd)
+
+	changed, err := c.setupMellanoxLegacy(context.Background(), 16)
+	if err != nil || !changed {
+		t.Fatalf("setupMellanoxLegacy(16) = %v, %v; want changed", changed, err)
+	}
+	want := []string{"-d 0000:3b:00.0 q", "-y -d 0000:3b:00.0 s NUM_OF_VFS=16"}
+	if got := mstCalls(cmd.calls); !reflect.DeepEqual(got, want) {
+		t.Fatalf("mstconfig calls = %v, want %v", got, want)
+	}
+
+	cmd = newMockCommander()
+	cmd.setResult("mstconfig -d", []byte("NUM_OF_VFS 16\n"), nil)
+	c = newTestConfigurator(t, cmd)
+	if changed, err := c.setupMellanoxLegacy(context.Background(), 16); err != nil || changed {
+		t.Fatalf("setupMellanoxLegacy(16) with 16 configured = %v, %v; want unchanged", changed, err)
+	}
+}
+
+func TestSetupMellanoxLegacySetFailure(t *testing.T) {
+	withPCIDevices(t, map[string][3]string{"0000:3b:00.0": {"0x15b3", "0x1017", "0x020000"}})
+	cmd := newMockCommander()
+	cmd.setResult("mstconfig -d", []byte("NUM_OF_VFS 8\n"), nil)
+	cmd.setResult("mstconfig -y", []byte("write failed"), errors.New("exit status 3"))
+	c := newTestConfigurator(t, cmd)
+
+	changed, err := c.setupMellanoxLegacy(context.Background(), 0)
+	if err == nil || changed {
+		t.Fatalf("setupMellanoxLegacy() = %v, %v; want the set failure and no change", changed, err)
+	}
+}
