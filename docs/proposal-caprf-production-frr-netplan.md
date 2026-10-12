@@ -191,7 +191,7 @@ BFD). BOOTy implements a minimal BFD in its own package
   does (`bgpd/bgp_bfd.c` `bfd_session_status_update`: `BGP_Stop` on
   Up to Down, `BGP_Start` on Up). FRR does not hold the session down while
   BFD is down; the normal connect timer runs, and BOOTy does the same
-  (GoBGP `ResetPeer` on Down, a connect kick on Up). Every state change is
+  (GoBGP `ResetPeer` with `soft=false` on Down, and again on Up when the peer is not established, so the FSM starts connecting at once). Every state change is
   logged.
 - Unit tests:
   - the state machine (RFC 5880 6.8.6 transitions)
@@ -252,6 +252,8 @@ attribution.
 | lab `timers_negotiated` | `bgp_basic_functionality_topo1/test_bgp_basic_functionality.py::test_bgp_timers_functionality` |
 | lab `route_map_tag_in` / `route_map_deny_tag_out` | `bgp_route_map/test_route_map_topo2.py::test_add_and_remove_community_list_referenced_by_rmap_p0`, `::test_set_localpref_weight_to_ebgp_and_med_to_ibgp_peers_p0`; `bgp_multiview_topo1` (`additive`) |
 | lab `allowas_in` | `bgp_as_allow_in/test_bgp_as_allow_in.py::test_bgp_allowas_in_p0` |
+| lab `own_asn_loop_rejected` | `bgp_as_allow_in/test_bgp_as_allow_in.py::test_bgp_allowas_in_p0` (the path without allowas-in is rejected) |
+| lab `rr_session_vrf_outbound`, `rr_session_vrf_inbound` | No FRR equivalent. BOOTy specific (GoBGP sockets bound to the VRF). |
 | lab `explicit_rt_import_export` | `evpn_type5_test_topo1/test_evpn_type5_topo1.py::test_RT_verification_manual_p0` |
 | lab `type5_ipv6_install` | 10.x `bgp_evpn_rt5/test_bgp_evpn.py::test_router_check_ip`, `::test_evpn_remove_ipv6` |
 | lab `network_blackhole_import_check` | `bgp_basic_functionality_topo1/...::test_advertise_network_using_network_command`; `all_protocol_startup` (`ipv6 route ... blackhole`) |
