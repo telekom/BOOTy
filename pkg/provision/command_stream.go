@@ -9,14 +9,19 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/executil"
 )
 
-// maxCommandOutputLine bounds one logged output line of a streamed command.
-const maxCommandOutputLine = 64 * 1024
+// maxCommandOutputLine bounds one output line of a streamed command, and
+// maxCutLineLog bounds what is logged of a longer line.
+const (
+	maxCommandOutputLine = 64 * 1024
+	maxCutLineLog        = 4096
+)
 
 // streamWaitDelay bounds how long a finished command may keep its output
 // pipes open through background children. Tests shorten it.
@@ -26,6 +31,28 @@ var streamWaitDelay = 30 * time.Second
 // and calls onLine for every line of its combined stdout and stderr while it
 // runs. Tests replace it.
 var runStreamingCommand = defaultRunStreamingCommand
+
+// streamLines calls onLine for every line of r. A line longer than
+// maxCommandOutputLine is cut, marked and skipped up to its end, and the
+// lines after it are still reported.
+func streamLines(r io.Reader, onLine func(string)) {
+	reader := bufio.NewReaderSize(r, maxCommandOutputLine)
+	for {
+		line, err := reader.ReadSlice('\n')
+		switch {
+		case errors.Is(err, bufio.ErrBufferFull):
+			onLine(string(line[:min(len(line), maxCutLineLog)]) + " [line cut]")
+			for errors.Is(err, bufio.ErrBufferFull) {
+				_, err = reader.ReadSlice('\n')
+			}
+		case len(line) > 0:
+			onLine(strings.TrimRight(string(line), "\r\n"))
+		}
+		if err != nil && !errors.Is(err, bufio.ErrBufferFull) {
+			return
+		}
+	}
+}
 
 func defaultRunStreamingCommand(ctx context.Context, onLine func(string), root string, argv []string) error {
 	if len(argv) == 0 {
@@ -55,14 +82,7 @@ func defaultRunStreamingCommand(ctx context.Context, onLine func(string), root s
 	scanDone := make(chan struct{})
 	go func() {
 		defer close(scanDone)
-		scanner := bufio.NewScanner(pr)
-		scanner.Buffer(make([]byte, 0, 4096), maxCommandOutputLine)
-		for scanner.Scan() {
-			onLine(scanner.Text())
-		}
-		if err := scanner.Err(); err != nil {
-			onLine(fmt.Sprintf("[output dropped: %v]", err))
-		}
+		streamLines(pr, onLine)
 		// Keep draining so the command never blocks on a full pipe.
 		_, _ = io.Copy(io.Discard, pr)
 	}()

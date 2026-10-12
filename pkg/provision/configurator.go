@@ -1099,6 +1099,16 @@ func (c *Configurator) runMachineCommandScript(ctx context.Context, name string,
 
 // writeScriptInRoot replaces rel inside root with a new executable file.
 func writeScriptInRoot(root *os.Root, rel string, content []byte) error {
+	// The staging directory lives in /tmp. Create a missing /tmp with the
+	// usual shared sticky mode, never root-only.
+	if _, err := root.Stat("tmp"); os.IsNotExist(err) {
+		if err := root.Mkdir("tmp", 0o755); err != nil {
+			return fmt.Errorf("create /tmp: %w", err)
+		}
+		if err := root.Chmod("tmp", os.ModeSticky|0o777); err != nil {
+			return fmt.Errorf("chmod /tmp: %w", err)
+		}
+	}
 	if err := root.MkdirAll(filepath.Dir(rel), 0o700); err != nil {
 		return fmt.Errorf("create %s: %w", filepath.Dir(rel), err)
 	}

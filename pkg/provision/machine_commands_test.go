@@ -167,3 +167,21 @@ func TestRunMachineCommandsLegacyCompatStagingDirSymlink(t *testing.T) {
 		t.Fatalf("outside dir entries = %d, runs = %d; want nothing", len(entries), len(fake.calls))
 	}
 }
+
+// A target without /tmp gets a shared sticky /tmp, not a root-only one.
+func TestRunMachineCommandsLegacyCompatCreatesSharedTmp(t *testing.T) {
+	withMachineCommands(t, map[string]string{"commands-0.sh": "true\n"})
+	withFakeStreaming(t, &fakeStreaming{})
+	c := newTestConfigurator(t, newMockCommander())
+
+	if err := c.RunMachineCommands(context.Background(), true); err != nil {
+		t.Fatalf("RunMachineCommands() = %v", err)
+	}
+	info, err := os.Stat(filepath.Join(c.rootDir, "tmp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSticky == 0 || info.Mode().Perm() != 0o777 {
+		t.Fatalf("/tmp mode = %v, want sticky 0777", info.Mode())
+	}
+}
