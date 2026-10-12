@@ -757,7 +757,7 @@ func redactedURLError(raw string, err error) error {
 		// for requests. A different URL there means a redirect was followed.
 		redirected = op != "parse" && urlErr.URL != raw
 	}
-	cause, sentinel, timeout := classifyTransportError(err, op)
+	cause, timeout, sentinel := classifyTransportError(err, op)
 	if redirected {
 		cause += " after redirect"
 	}
@@ -783,7 +783,7 @@ func (e *transportCause) Timeout() bool   { return e.timeout }
 func (e *transportCause) Temporary() bool { return false }
 
 // classifyTransportError maps err to a fixed cause.
-func classifyTransportError(err error, op string) (cause string, sentinel error, timeout bool) {
+func classifyTransportError(err error, op string) (cause string, timeout bool, sentinel error) {
 	var netErr net.Error
 	var dnsErr *net.DNSError
 	var certErr *tls.CertificateVerificationError
@@ -792,23 +792,23 @@ func classifyTransportError(err error, op string) (cause string, sentinel error,
 	var recordErr tls.RecordHeaderError
 	switch {
 	case errors.Is(err, context.Canceled):
-		return "canceled", context.Canceled, false
+		return "canceled", false, context.Canceled
 	case errors.Is(err, context.DeadlineExceeded):
-		return "timeout", context.DeadlineExceeded, true
+		return "timeout", true, context.DeadlineExceeded
 	case errors.As(err, &netErr) && netErr.Timeout():
-		return "timeout", nil, true
+		return "timeout", true, nil
 	case errors.As(err, &dnsErr):
-		return "dns lookup failed", nil, false
+		return "dns lookup failed", false, nil
 	case errors.Is(err, syscall.ECONNREFUSED):
-		return "connection refused", nil, false
+		return "connection refused", false, nil
 	case errors.Is(err, syscall.ECONNRESET):
-		return "connection reset", nil, false
+		return "connection reset", false, nil
 	case errors.As(err, &certErr), errors.As(err, &authorityErr), errors.As(err, &hostnameErr), errors.As(err, &recordErr):
-		return "tls error", nil, false
+		return "tls error", false, nil
 	case op == "parse":
-		return "invalid URL", nil, false
+		return "invalid URL", false, nil
 	default:
-		return "transport error", nil, false
+		return "transport error", false, nil
 	}
 }
 
