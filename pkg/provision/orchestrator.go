@@ -646,7 +646,7 @@ func (o *Orchestrator) logNICFirmware() {
 	o.log.Info("nic_firmware action=check")
 	report, err := collectFirmwareFn()
 	if err != nil {
-		o.log.Warn("NIC firmware collection failed", "error", err)
+		o.log.Warn("nic firmware collection failed", "error", err)
 		return
 	}
 	for _, n := range report.NICs {

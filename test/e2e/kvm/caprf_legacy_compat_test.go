@@ -141,8 +141,15 @@ func TestLegacyCompatProvisionPowersOffQEMU(t *testing.T) {
 	assertProvisionSucceeded(t, output)
 	caprf.requireStatuses(t, "init", "success")
 	// Legacy provision.sh logs the firmware of every NIC.
-	if !strings.Contains(string(output), "nic_firmware") || !strings.Contains(string(output), "nic=eth0") {
-		t.Fatalf("legacy compat did not log the NIC firmware. tail:\n%s", tail(output, 4000))
+	nicLine := false
+	for _, line := range strings.Split(string(output), "\n") {
+		if strings.Contains(line, "nic_firmware") && strings.Contains(line, "nic=eth0") && strings.Contains(line, "version=") {
+			nicLine = true
+			break
+		}
+	}
+	if !nicLine {
+		t.Fatalf("legacy compat did not log the NIC firmware of eth0. tail:\n%s", tail(output, 4000))
 	}
 	requirePowerOff(t, output)
 	// Legacy provision.sh runs `hostname "$HOSTNAME"` first.

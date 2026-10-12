@@ -444,3 +444,13 @@ func TestCollectNICFirmwareFromEthtool(t *testing.T) {
 		t.Fatalf("NICs = %+v, want eth0 with the ethtool version", report.NICs)
 	}
 }
+
+// The real ethtool helper returns "" for NICs without driver info, such as
+// loopback, and for missing NICs. A real NIC is covered by the KVM test.
+func TestEthtoolFirmwareVersionErrorPaths(t *testing.T) {
+	for _, iface := range []string{"lo", "booty-missing0"} {
+		if got := ethtoolFirmwareVersion(iface); got != "" {
+			t.Errorf("ethtoolFirmwareVersion(%q) = %q, want empty", iface, got)
+		}
+	}
+}
