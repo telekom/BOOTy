@@ -2,9 +2,13 @@ package caprf
 
 import (
 	"context"
+	"errors"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
 )
@@ -23,5 +27,32 @@ func TestTransportErrorsRedactQueryCredentials(t *testing.T) {
 	}
 	if err := c.doPost(context.Background(), leakURL, "{}"); err == nil || strings.Contains(err.Error(), "SECRETSIG123") {
 		t.Fatalf("doPost error leaks or is nil: %v", err)
+	}
+}
+
+func TestTransportErrorsKeepCancelAndTimeout(t *testing.T) {
+	c := NewFromConfig(&config.MachineConfig{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := c.doPost(ctx, leakURL, "{}"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("doPost with canceled context = %v, want context.Canceled", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(2 * time.Second):
+		}
+	}))
+	defer srv.Close()
+	c.httpClient = &http.Client{Timeout: 50 * time.Millisecond}
+	err := c.doPost(context.Background(), srv.URL+"/?X-Amz-Signature=SECRETSIG123", "{}")
+	var netErr net.Error
+	if !errors.As(err, &netErr) || !netErr.Timeout() {
+		t.Fatalf("doPost timeout = %v, want a net.Error with Timeout()", err)
+	}
+	if strings.Contains(err.Error(), "SECRETSIG123") {
+		t.Fatalf("timeout error leaks the signature: %v", err)
 	}
 }

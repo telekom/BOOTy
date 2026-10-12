@@ -748,8 +748,30 @@ func redactedURLError(raw string, err error) error {
 		sanitized.Err = redactedURLError(raw, urlErr.Err)
 		return &sanitized
 	}
+	// Keep cancellation and timeout classification for retry and callers.
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return &redactedNetError{msg: redactURLErrorString(raw, err.Error()), timeout: netErr.Timeout()}
+	}
 	return errors.New(redactURLErrorString(raw, err.Error()))
 }
+
+// redactedNetError keeps the timeout flag of a net.Error with a redacted
+// message.
+type redactedNetError struct {
+	msg     string
+	timeout bool
+}
+
+func (e *redactedNetError) Error() string   { return e.msg }
+func (e *redactedNetError) Timeout() bool   { return e.timeout }
+func (e *redactedNetError) Temporary() bool { return false }
 
 func redactURLErrorString(raw, msg string) string {
 	return fmt.Sprintf("%s: %s", redactedURL(raw), redact.Wrap(errors.New(msg), raw))
