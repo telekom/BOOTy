@@ -381,9 +381,11 @@ func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 // before it is aborted. The total download time stays unlimited.
 var imageIdleReadTimeout = 2 * time.Minute
 
-// idleTimeoutBody cancels the request when no Read returns for idle, so a
-// server that stops sending without closing the connection cannot hang
-// provisioning.
+// idleTimeoutBody cancels the request when one Read of the body blocks for
+// longer than idle, so a server that stops sending without closing the
+// connection cannot hang provisioning. The timer only runs while a Read is
+// in progress, so a slow consumer (device write, decompression) does not
+// count as a stall.
 type idleTimeoutBody struct {
 	io.ReadCloser
 	idle    time.Duration
@@ -398,15 +400,17 @@ func newIdleTimeoutBody(body io.ReadCloser, cancel context.CancelFunc, idle time
 		b.stalled.Store(true)
 		cancel()
 	})
+	b.timer.Stop()
 	return b
 }
 
 func (b *idleTimeoutBody) Read(p []byte) (int, error) {
+	b.timer.Reset(b.idle)
 	n, err := b.ReadCloser.Read(p)
+	b.timer.Stop()
 	if err != nil && b.stalled.Load() {
 		return n, fmt.Errorf("image download stalled: no data for %s", b.idle)
 	}
-	b.timer.Reset(b.idle)
 	return n, err //nolint:wrapcheck // io.EOF must stay unwrapped
 }
 

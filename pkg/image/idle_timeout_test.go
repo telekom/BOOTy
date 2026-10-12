@@ -48,17 +48,14 @@ func TestHTTPImageDownloadAbortsWhenServerStalls(t *testing.T) {
 	}
 }
 
-func TestHTTPImageDownloadKeepsSlowButSteadyStream(t *testing.T) {
+func TestHTTPImageDownloadIgnoresSlowConsumer(t *testing.T) {
 	orig := imageIdleReadTimeout
 	t.Cleanup(func() { imageIdleReadTimeout = orig })
-	imageIdleReadTimeout = 200 * time.Millisecond
+	imageIdleReadTimeout = 50 * time.Millisecond
 
+	payload := make([]byte, 64<<10)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		for range 5 {
-			_, _ = w.Write(make([]byte, 1024))
-			w.(http.Flusher).Flush()
-			time.Sleep(80 * time.Millisecond)
-		}
+		_, _ = w.Write(payload)
 	}))
 	defer srv.Close()
 
@@ -67,8 +64,19 @@ func TestHTTPImageDownloadKeepsSlowButSteadyStream(t *testing.T) {
 		t.Fatalf("httpGetWithRetry() = %v", err)
 	}
 	defer func() { _ = body.Close() }()
-	data, err := io.ReadAll(body)
-	if err != nil || len(data) != 5*1024 {
-		t.Fatalf("ReadAll() = %d bytes, %v; want 5120 bytes", len(data), err)
+
+	buf := make([]byte, 1024)
+	if _, err := body.Read(buf); err != nil {
+		t.Fatalf("first Read() = %v", err)
+	}
+	// A consumer that takes longer than the idle timeout between reads,
+	// like a slow device write, must not abort the download.
+	<-time.After(4 * imageIdleReadTimeout)
+	rest, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("ReadAll() after a slow consumer = %v", err)
+	}
+	if len(rest) == 0 {
+		t.Fatal("no data after the slow consumer pause")
 	}
 }
