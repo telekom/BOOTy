@@ -218,7 +218,7 @@ func (m *Manager) DiscardNVMeDisks(ctx context.Context) {
 		return
 	}
 	for _, entry := range entries {
-		if !strings.HasPrefix(entry.Name(), "nvme") {
+		if !strings.HasPrefix(entry.Name(), "nvme") || nvmePathNodeRE.MatchString(entry.Name()) {
 			continue
 		}
 		dev := "/dev/" + entry.Name()
