@@ -8,12 +8,17 @@ import (
 	"fmt"
 	"io"
 	"syscall"
+	"time"
 
 	"github.com/telekom/BOOTy/pkg/executil"
 )
 
 // maxCommandOutputLine bounds one logged output line of a streamed command.
 const maxCommandOutputLine = 64 * 1024
+
+// streamWaitDelay bounds how long a finished command may keep its output
+// pipes open through background children. Tests shorten it.
+var streamWaitDelay = 30 * time.Second
 
 // runStreamingCommand runs argv, inside the chroot root when root is set,
 // and calls onLine for every line of its combined stdout and stderr while it
@@ -32,10 +37,16 @@ func defaultRunStreamingCommand(ctx context.Context, onLine func(string), root s
 	cmd := executil.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Path = argv[0]
 	cmd.Err = nil
+	// Own process group: cancellation kills the script and its background
+	// children, and WaitDelay stops a child that keeps the pipes open from
+	// blocking the step after the script exited.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if root != "" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Chroot: root}
+		cmd.SysProcAttr.Chroot = root
 		cmd.Dir = "/"
 	}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = streamWaitDelay
 	cmd.Stdout = pw
 	cmd.Stderr = pw
 

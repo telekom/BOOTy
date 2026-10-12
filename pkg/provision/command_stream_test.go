@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDefaultRunStreamingCommandStreamsLines(t *testing.T) {
@@ -37,5 +38,19 @@ func TestDefaultRunStreamingCommandDropsOverlongLines(t *testing.T) {
 	}
 	if len(lines) == 0 || !strings.Contains(lines[len(lines)-1], "output dropped") {
 		t.Fatalf("lines = %d, want the too long marker last", len(lines))
+	}
+}
+
+// A background child that keeps stdout open must not block the step after
+// the script itself exited.
+func TestDefaultRunStreamingCommandDoesNotWaitForBackgroundChildren(t *testing.T) {
+	old := streamWaitDelay
+	streamWaitDelay = 200 * time.Millisecond
+	t.Cleanup(func() { streamWaitDelay = old })
+
+	start := time.Now()
+	_ = defaultRunStreamingCommand(context.Background(), func(string) {}, "", []string{"/bin/sh", "-c", "sleep 30 & echo started"})
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("command returned after %s, the background child held it", elapsed)
 	}
 }
