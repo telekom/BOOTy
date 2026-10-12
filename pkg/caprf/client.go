@@ -764,7 +764,11 @@ func redactedURLErrorFor(raws []string, err error) error {
 		return context.DeadlineExceeded
 	}
 	inner := redact.Wrap(errors.New(err.Error()), raws...).Error()
-	msg := fmt.Sprintf("%s: %s", redactedURL(raws[0]), embeddedURLPattern.ReplaceAllStringFunc(inner, redactedURL))
+	inner = embeddedURLPattern.ReplaceAllStringFunc(inner, redactedURL)
+	// Drop any remaining query string, for example from a malformed
+	// relative redirect Location that is not a full URL.
+	inner = embeddedQueryPattern.ReplaceAllString(inner, "?[REDACTED]")
+	msg := fmt.Sprintf("%s: %s", redactedURL(raws[0]), inner)
 	var netErr net.Error
 	if errors.As(err, &netErr) {
 		return &redactedNetError{msg: msg, timeout: netErr.Timeout()}
@@ -775,6 +779,9 @@ func redactedURLErrorFor(raws []string, err error) error {
 // embeddedURLPattern finds URLs inside error messages that are not known to
 // the caller, for example a malformed redirect Location.
 var embeddedURLPattern = regexp.MustCompile(`https?://[^\s"']+`)
+
+// embeddedQueryPattern finds query strings left in error messages.
+var embeddedQueryPattern = regexp.MustCompile(`\?[^\s"']+`)
 
 // redactedNetError keeps the timeout flag of a net.Error with a redacted
 // message.

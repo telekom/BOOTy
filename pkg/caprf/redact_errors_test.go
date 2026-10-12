@@ -61,6 +61,7 @@ func TestTransportErrorsRedactRedirectTarget(t *testing.T) {
 	for _, location := range []string{
 		"http://127.0.0.1:1/target?X-Amz-Signature=REDIRECTSECRET",
 		"http://127.0.0.1:1/%zz?X-Amz-Signature=REDIRECTSECRET", // malformed Location
+		"/%zz?X-Amz-Signature=REDIRECTSECRET",                   // malformed relative Location
 	} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Location", location)
