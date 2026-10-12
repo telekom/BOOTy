@@ -1251,6 +1251,9 @@ func detectNetplanConfig(netplanDir, frrConfPath string, netplanStrict, frrStric
 		return nil, fmt.Errorf("read FRR config %s: %w", frrConfPath, frrErr)
 	}
 
+	if err := netplan.CheckSessionInterfaces(np, frrParams); err != nil {
+		return nil, fmt.Errorf("provisioner network files: %w", err)
+	}
 	cfg := netplan.ToNetworkConfig(np, frrParams)
 	slog.Info("netplan config loaded",
 		"mode", cfg.NetworkMode, "asn", cfg.ASN,
@@ -1344,6 +1347,9 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	}
 	if len(src.Interfaces) > 0 {
 		dst.Interfaces = src.Interfaces
+	}
+	if len(src.BGPSessions) > 0 {
+		dst.BGPSessions = src.BGPSessions
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/frrconf"
 )
 
@@ -19,17 +20,15 @@ type FRRParams struct {
 	UnnumberedPeers []string // Interface names from "neighbor X interface" lines.
 	NumberedPeers   []string // IPv4 addresses from "neighbor X remote-as" lines.
 	NumberedPeersV6 []string // IPv6 addresses from "neighbor X remote-as" lines.
-	// RemoteASN is the remote-as of the IPv4 numbered peers when it is not
-	// the router ASN. All of them must use the same remote-as, because the
-	// network config has one remote ASN for numbered peers.
-	RemoteASN       uint32
-	EVPN            bool // True if "address-family l2vpn evpn" found.
-	AdvertiseAllVNI bool // True if "advertise-all-vni" found.
+	EVPN            bool     // True if "address-family l2vpn evpn" found.
+	AdvertiseAllVNI bool     // True if "advertise-all-vni" found.
 	// L3VNIs lists VNIs mapped to a VRF ("vni N" at top level for the default
 	// VRF or inside a "vrf" block). FRR advertises only Type-5 routes for them;
 	// advertise-all-vni produces Type-2/Type-3 routes for L2VNIs only.
-	L3VNIs       []uint32
-	numberedSeen bool
+	L3VNIs []uint32
+	// Sessions are the resolved BGP peers. Each keeps its own remote-as,
+	// local-as, timers and address families.
+	Sessions []network.BGPSession
 	// Model is the full parsed configuration.
 	Model *frrconf.Config
 }
@@ -69,9 +68,7 @@ func ParseFRRConfigBytesWith(data []byte, name string, strict bool) (*FRRParams,
 		if params.RouterID == "" {
 			params.RouterID = r.RouterID
 		}
-		if err := addPeers(params, r); err != nil {
-			return nil, err
-		}
+		addPeers(params, r)
 		for j := range r.AddressFamilies {
 			af := &r.AddressFamilies[j]
 			if af.SAFI == "evpn" {
@@ -79,6 +76,13 @@ func ParseFRRConfigBytesWith(data []byte, name string, strict bool) (*FRRParams,
 				params.AdvertiseAllVNI = params.AdvertiseAllVNI || af.AdvertiseAllVNI
 			}
 		}
+	}
+	sessions, err := model.Sessions()
+	if err != nil {
+		return nil, fmt.Errorf("frr config: %w", err)
+	}
+	for i := range sessions {
+		params.Sessions = append(params.Sessions, toBGPSession(&sessions[i]))
 	}
 	for _, v := range model.VRFVNIs {
 		if !slices.Contains(params.L3VNIs, v.VNI) {
@@ -90,7 +94,7 @@ func ParseFRRConfigBytesWith(data []byte, name string, strict bool) (*FRRParams,
 
 // addPeers collects interface peers, numbered peers with their own
 // remote-as, and the first local-as, in config order.
-func addPeers(params *FRRParams, r *frrconf.Router) error {
+func addPeers(params *FRRParams, r *frrconf.Router) {
 	for i := range r.Neighbors {
 		n := &r.Neighbors[i]
 		if params.LocalASN == 0 && n.LocalAS != nil {
@@ -103,44 +107,15 @@ func addPeers(params *FRRParams, r *frrconf.Router) error {
 				params.UnnumberedPeers = append(params.UnnumberedPeers, n.Name)
 			}
 		case n.RemoteAS != nil:
-			if addNumberedPeer(params, n.Name) {
-				if err := setRemoteASN(params, n, r.ASN); err != nil {
-					return err
-				}
-			}
+			addNumberedPeer(params, n.Name)
 		}
 	}
-	return nil
 }
 
-// setRemoteASN records the remote-as of an IPv4 numbered peer. The network
-// config has a single remote ASN for numbered peers, so peers with
-// different remote-as values or with "remote-as external" are an error
-// instead of sessions with a wrong ASN. iBGP peers leave it at 0.
-func setRemoteASN(params *FRRParams, n *frrconf.Neighbor, routerASN uint32) error {
-	asn := routerASN
-	switch n.RemoteAS.Kind {
-	case frrconf.RemoteASExternal:
-		return fmt.Errorf("neighbor %s remote-as external: only a number or internal is supported", n.Name)
-	case frrconf.RemoteASNumber:
-		asn = n.RemoteAS.Number
-	}
-	if asn == routerASN {
-		asn = 0
-	}
-	if params.numberedSeen && asn != params.RemoteASN {
-		return fmt.Errorf("numbered neighbors use different remote-as values")
-	}
-	params.numberedSeen, params.RemoteASN = true, asn
-	return nil
-}
-
-// addNumberedPeer records a numbered peer and reports whether it is an
-// IPv4 peer that BOOTy dials.
-func addNumberedPeer(params *FRRParams, name string) bool {
+func addNumberedPeer(params *FRRParams, name string) {
 	addr, err := netip.ParseAddr(name)
 	if err != nil {
-		return false
+		return
 	}
 	list, skip := &params.NumberedPeers, []string{"169.254.", "127."}
 	if !addr.Is4() {
@@ -148,11 +123,55 @@ func addNumberedPeer(params *FRRParams, name string) bool {
 	}
 	for _, p := range skip {
 		if strings.HasPrefix(name, p) {
-			return false
+			return
 		}
 	}
 	if !slices.Contains(*list, name) {
 		*list = append(*list, name)
 	}
-	return addr.Is4()
+}
+
+func toBGPSession(s *frrconf.Session) network.BGPSession {
+	out := network.BGPSession{
+		Name:          s.Name,
+		Interface:     s.Interface,
+		VRF:           s.VRF,
+		Internal:      s.Internal,
+		RemoteASN:     s.RemoteASN,
+		KeepaliveTime: s.KeepaliveTime,
+		HoldTime:      s.HoldTime,
+		ConnectRetry:  s.ConnectRetry,
+		IPv4Unicast:   slices.Contains(s.Families, frrconf.FamilyIPv4Unicast),
+		IPv6Unicast:   slices.Contains(s.Families, frrconf.FamilyIPv6Unicast),
+		L2VPNEVPN:     slices.Contains(s.Families, frrconf.FamilyL2VPNEVPN),
+		BFD:           s.BFD,
+		BFDProfile:    s.BFDProfile,
+	}
+	if s.LocalAS != nil {
+		out.LocalASN = s.LocalAS.ASN
+	}
+	return out
+}
+
+// CheckSessionInterfaces fails when an unnumbered FRR peer names an
+// interface that the netplan files do not configure (an ethernets key or
+// its set-name). Like the legacy ramdisk, the provisioner must list every
+// uplink in both files.
+func CheckSessionInterfaces(np *Config, frr *FRRParams) error {
+	if frr == nil {
+		return nil
+	}
+	known := map[string]bool{}
+	for name := range np.Network.Ethernets {
+		known[name] = true
+		if setName := np.Network.Ethernets[name].SetName; setName != "" {
+			known[setName] = true
+		}
+	}
+	for i := range frr.Sessions {
+		if s := &frr.Sessions[i]; s.Interface && !known[s.Name] {
+			return fmt.Errorf("FRR neighbor %s interface is not in the netplan ethernets", s.Name)
+		}
+	}
+	return nil
 }
