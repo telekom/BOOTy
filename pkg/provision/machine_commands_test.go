@@ -3,9 +3,11 @@
 package provision
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -194,5 +196,28 @@ func TestRunMachineCommandsLegacyCompatKeepsErrorChain(t *testing.T) {
 	c := newTestConfigurator(t, newMockCommander())
 	if err := c.RunMachineCommands(context.Background(), true); !errors.Is(err, context.Canceled) {
 		t.Fatalf("RunMachineCommands() = %v, want context.Canceled in the chain", err)
+	}
+}
+
+// Legacy evidence: provision.sh pipes the script output into log line by
+// line. BOOTy logs every line, redacted.
+func TestRunMachineCommandsLegacyCompatLogsOutputLines(t *testing.T) {
+	withMachineCommands(t, map[string]string{"commands-0.sh": "true\n"})
+	withFakeStreaming(t, &fakeStreaming{output: []string{"hello", "token=secret"}})
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	c := newTestConfigurator(t, newMockCommander())
+
+	if err := c.RunMachineCommands(context.Background(), true); err != nil {
+		t.Fatalf("RunMachineCommands() = %v", err)
+	}
+	got := logs.String()
+	if !strings.Contains(got, `msg="machine command output" file=commands-0.sh line=hello`) {
+		t.Errorf("logs = %q, want the hello output line", got)
+	}
+	if strings.Contains(got, "secret") || strings.Count(got, `msg="machine command output"`) != 2 {
+		t.Errorf("logs = %q, want both lines with the token redacted", got)
 	}
 }
