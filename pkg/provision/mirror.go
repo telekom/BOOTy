@@ -287,7 +287,10 @@ func (o *Orchestrator) verifyFstabBoot(ctx context.Context, partition string) er
 	}
 	for line := range strings.Lines(string(out)) {
 		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
-		if ok && value != "" && slices.Contains(fstabIdentifierKeys, key) && source == key+"="+value {
+		if !ok || value == "" || !slices.Contains(fstabIdentifierKeys, key) {
+			continue
+		}
+		if source == key+"="+value || source == "/dev/disk/by-"+strings.ToLower(key)+"/"+value {
 			return nil
 		}
 	}

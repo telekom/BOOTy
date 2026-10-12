@@ -472,6 +472,7 @@ func TestSeparateBootPartitionNeedsFstabForLinuxType(t *testing.T) {
 		{name: "fstab mounts the partition at /var", fstab: "LABEL=root / ext4 defaults 0 1\nLABEL=BOOT /var ext4 defaults 0 2\n", wantErr: true},
 		{name: "fstab mounts another /boot", fstab: "UUID=other /boot ext4 defaults 0 2\n", wantErr: true},
 		{name: "fstab mounts the partition at /boot by partition label", fstab: "PARTLABEL=boot /boot ext4 defaults 0 2\n", wantBoot: "/dev/sda2"},
+		{name: "fstab mounts the partition at /boot by uuid symlink", fstab: "/dev/disk/by-uuid/1234 /boot ext4 defaults 0 2\n", wantBoot: "/dev/sda2"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
