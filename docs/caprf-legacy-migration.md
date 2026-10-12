@@ -16,8 +16,8 @@ the [configuration reference](configuration.md).
    [Enable CAPRF legacy compatibility](caprf-integration.md#enable-caprf-legacy-compatibility).
 2. Set `TARGET_OS=linux`, for example through CAPRF `additionalVars`. BOOTy
    refuses to provision without it. The legacy scripts do not use it.
-3. Do not move hosts that use `DISK_MIRRORING_MODE=raid-1` yet. BOOTy
-   ignores the variable and installs on one disk. Planned (#581).
+3. Hosts with `DISK_MIRRORING_MODE=raid-1` get the legacy RAID1 mirror
+   (#581). Check that the image is GPT partitioned and has mdadm.
 4. Machine commands need no change. With `CAPRF_LEGACY_COMPAT=true` (or
    `MACHINE_COMMANDS_MODE=script`) each file runs as a script, in CAPRF
    index order. Merged (#587).
@@ -113,7 +113,7 @@ Detail for these rows is in [Disk handling](disk.md).
 | `_select_single_disk`: first disk of at least `MIN_DISK_SIZE_GB` in `lsblk` order, NVMe and virtio first, then SCSI/SATA. Removable media are not skipped. | Without `DISK_DEVICE` or `DISK_SERIAL`: NVMe first, then the largest disk. Removable media are skipped unless `BOOTY_ALLOW_REMOVABLE=true`. | Legacy order. A USB disk can be selected when no NVMe or virtio disk qualifies. | Merged (#590) | `DISK_SELECTION=lsblk` |
 | Grow the last GPT Linux partition, `e2fsck -p -f` before `growpart` | Grow the root partition | The last GPT Linux partition, also a data partition after the root. `e2fsck -p -f` before `growpart`, offline `resize2fs`. The root keeps its size. | Merged (#625) | `GROW_PARTITION=last-linux` |
 | Mount a separate `/boot` from the image `fstab` when the root has no `/boot/grub` | Not mounted. `update-grub` writes `grub.cfg` on the root filesystem. | Same as default | Planned (#595) | Not needed |
-| `DISK_MIRRORING_MODE=raid-1`: RAID1 `/dev/md2` over two disks | Variable ignored. One disk. | Same as default | Planned (#581) | Not needed |
+| `DISK_MIRRORING_MODE=raid-1`: RAID1 `/dev/md2` over two disks | RAID1 `/dev/md2` (root) and `/dev/md1` (separate `/boot`) over the largest pair of equal disks | Same as default | Merged (#581) | Not needed |
 
 ### Transport and configuration input
 

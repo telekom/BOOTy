@@ -200,11 +200,11 @@ behaviour changes of this mode.
 | `ROOT_PARTITION_LABEL` | (unset) | GPT partition name | Root partition of a whole-disk image. Excludes `ROOT_PARTITION_NUMBER`. |
 | `ROOT_PARTITION_NUMBER` | `0` | 1-based partition number | Root partition of a whole-disk image when it has no stable label. |
 | `PARTITION_LAYOUT` | (unset) | JSON object | Declarative GPT layout with optional LVM. An invalid layout stops the parse. |
+| `DISK_MIRRORING_MODE` | (unset) | `raid-1`, `auto`, `none` | Mirror the installed system with RAID1 across a pair of disks with equal size and sector size, like the CAPRF legacy provisioner. `raid-1` needs a pair, `auto` falls back to one disk, `none` is the default. Ignored when `DISK_DEVICE` or `DISK_SERIAL_NUMBER` selects the disk. See the README table for the full rules. |
 | `NVME_NAMESPACES` | (unset) | JSON array | NVMe namespaces to create before disk detection, for example `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":100}]}]`. |
 
 [Disk](disk.md) describes disk selection, wipe rules and the layout format.
-The config fields `provision.disk.raid` (software RAID), `deprovision.device` and `deprovision.secureErase` have no vars key, so the runtime can not set them. Planned (#581): `DISK_MIRRORING_MODE` for a
-mirrored root disk.
+The config fields `provision.disk.raid` (software RAID), `deprovision.device` and `deprovision.secureErase` have no vars key, so the runtime can not set them. `DISK_MIRRORING_MODE` mirrors the root disk instead.
 
 ## A/B partitioning
 
@@ -433,5 +433,4 @@ BOOTy parses these keys, but no code acts on the value:
 - `LUKS_*` keys, for example `LUKS_ENABLED`: the parser rejects every key
   that starts with `LUKS_`. The `pkg/disk/luks` library is not part of the
   provisioning flow.
-- Planned (#581): `DISK_MIRRORING_MODE`.
-
+- Planned (#622): `NETWORK_WAIT_MAX_ATTEMPTS`.
