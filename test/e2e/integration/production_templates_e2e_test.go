@@ -325,6 +325,42 @@ func TestProdTplFIBWithdraw(t *testing.T) {
 	}
 }
 
+// Losing the carrier of one uplink ends its session at once (FRR
+// fast-external-failover), so its next hop leaves the VRF table within
+// about a second instead of after the 90 s hold time. The carrier coming
+// back restores ECMP.
+func TestProdTplUplinkCarrierLoss(t *testing.T) {
+	const maxFailover = 2 * time.Second // includes docker exec latency
+	for _, node := range []prodtplNode{prodtplShadowNode, prodtplBootyNode} {
+		ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)
+		port := node.leafPorts[0]
+		start := time.Now()
+		if out, err := prodtplExec(ctx, prodtplLeaf, "ip", "link", "set", port, "down"); err != nil {
+			cancel()
+			t.Fatalf("leaf %s down: %v\n%s", port, err, out)
+		}
+		want := prodtplRoutesVia("ens1f1np1")
+		for {
+			got, err := prodtplRoutes(ctx, node)
+			if err == nil && reflect.DeepEqual(got, want) {
+				break
+			}
+			if time.Since(start) > maxFailover {
+				cancel()
+				t.Fatalf("%s: routes %v (%v) %s after carrier loss, want %v within %s", node.name, got, err, time.Since(start), want, maxFailover)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Logf("%s: next hop removed %s after carrier loss", node.name, time.Since(start).Round(10*time.Millisecond))
+		if out, err := prodtplExec(ctx, prodtplLeaf, "ip", "link", "set", port, "up"); err != nil {
+			cancel()
+			t.Fatalf("leaf %s up: %v\n%s", port, err, out)
+		}
+		cancel()
+		waitRoutes(t, node, prodtplRoutesVia("ens1f0np0", "ens1f1np1"))
+	}
+}
+
 // With outbound BGP connects from BOOTy dropped, dcgw01 must open the
 // session into Vrf_underlay and the BOOTy listener must accept it.
 func TestProdTplRRSessionVRFInbound(t *testing.T) {

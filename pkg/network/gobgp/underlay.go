@@ -71,6 +71,8 @@ type UnderlayTier struct {
 	stopFIB      context.CancelFunc            // stops the FIB writer
 	fibDone      chan struct{}                 // closed when the FIB writer has removed its routes
 	peerDevs     map[string]string             // unnumbered peer address -> interface
+	ifacePeers   map[string]string             // interface -> unnumbered peer address as added
+	stopCarrier  chan struct{}                 // stops the carrier watch
 	raDone       chan struct{}                 // closed when the periodic RA goroutine exits
 	peerCountFn  func(ctx context.Context) int // overridable in tests; nil = use countEstablishedPeers
 	pollInterval time.Duration                 // overridable in tests; zero = use default (1s)
@@ -141,6 +143,7 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 
 	if len(u.cfg.Sessions) > 0 {
 		u.startFIBWriter()
+		u.startCarrierWatch()
 	}
 
 	// Start periodic Router Advertisements so FRR's zebra continuously
@@ -211,6 +214,10 @@ func (u *UnderlayTier) Teardown(_ context.Context) error {
 	if u.stopRA != nil {
 		close(u.stopRA)
 		u.stopRA = nil
+	}
+	if u.stopCarrier != nil {
+		close(u.stopCarrier)
+		u.stopCarrier = nil
 	}
 	if u.stopFIB != nil {
 		u.stopFIB()
@@ -521,6 +528,21 @@ func (u *UnderlayTier) startFIBWriter() {
 	}()
 }
 
+// startCarrierWatch stops and starts unnumbered sessions with the carrier
+// of their interface, like FRR fast-external-failover.
+func (u *UnderlayTier) startCarrierWatch() {
+	if len(u.ifacePeers) == 0 {
+		return
+	}
+	w := &carrierWatch{bgp: u.bgp, peers: u.ifacePeers, down: map[string]bool{}, log: u.log}
+	u.stopCarrier = make(chan struct{})
+	if err := w.start(u.stopCarrier); err != nil {
+		u.log.Warn("watch uplink carrier; sessions end only after the hold time", "error", err)
+		close(u.stopCarrier)
+		u.stopCarrier = nil
+	}
+}
+
 // peerDev returns the interface of an unnumbered peer address, with or
 // without a zone.
 func (u *UnderlayTier) peerDev(neighbor string) string {
@@ -589,6 +611,10 @@ func (u *UnderlayTier) addSessionPeers(ctx context.Context) error {
 			}
 			host, _, _ := strings.Cut(addr, "%")
 			u.peerDevs[host] = s.Name
+			if u.ifacePeers == nil {
+				u.ifacePeers = map[string]string{}
+			}
+			u.ifacePeers[s.Name] = addr
 		}
 		peer := buildSessionPeer(u.cfg, s, addr)
 		if err := u.bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: peer}); err != nil {

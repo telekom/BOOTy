@@ -1677,6 +1677,7 @@ jobs:
             TestProdTplRRSessionVRFOutbound \
             TestProdTplFIBRoutes \
             TestProdTplFIBWithdraw \
+            TestProdTplUplinkCarrierLoss \
             TestProdTplRRSessionVRFInbound; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl.log; then
               echo "::error::${expected} did not pass"
