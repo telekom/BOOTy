@@ -689,3 +689,19 @@ func TestRequireRemovableEFILoaderRejectsDirectory(t *testing.T) {
 		t.Fatal("requireRemovableEFILoader() accepted a directory as the fallback loader")
 	}
 }
+
+func TestSoftDeprovisionRejectsMirroredRoot(t *testing.T) {
+	withMockStat(t, func(path string) (os.FileInfo, error) {
+		return fakeFileInfo{name: path, mode: os.ModeDevice}, nil
+	})
+	cmd := newMockCommander()
+	cmd.setResult("sfdisk --json", sfdiskJSON(t, []disk.Partition{{Node: "/dev/sda1", Type: disk.LinuxFilesystemGUID}}), nil)
+	cmd.setResult("blkid -o", []byte("linux_raid_member\n"), nil)
+	cfg := &config.MachineConfig{}
+	cfg.Deprovision.Device = "/dev/sda"
+	o := NewOrchestrator(cfg, &mockProvider{}, disk.NewManager(cmd))
+	// The check runs before the root is mounted.
+	if err := o.softDeprovision(context.Background()); err == nil || !strings.Contains(err.Error(), "RAID member") {
+		t.Fatalf("softDeprovision() error = %v, want the mirrored root rejection", err)
+	}
+}
