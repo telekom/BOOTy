@@ -643,7 +643,7 @@ func (o *Orchestrator) setupMellanox(ctx context.Context) error {
 // nic_firmware lines of the CAPRF legacy provision.sh. The log shipping
 // sends the lines to LOG_URL.
 func (o *Orchestrator) logNICFirmware() {
-	o.log.Info("nic_firmware action=check")
+	o.log.Info("nic_firmware", "action", "check")
 	report, err := collectFirmwareFn()
 	if err != nil {
 		o.log.Warn("nic firmware collection failed", "error", err)
