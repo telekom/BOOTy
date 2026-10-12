@@ -4934,6 +4934,55 @@ func TestCollectFirmwareLegacyCompatLogsNICFirmware(t *testing.T) {
 	}
 	if len(provider.firmwareReports) != 0 {
 		t.Fatalf("firmware reports = %d, want none without FIRMWARE_REPORT", len(provider.firmwareReports))
+// Legacy evidence: provision.sh grows the last GPT Linux partition, which
+// can be a data partition after the root.
+func TestGrowPartitionLegacyCompatGrowsLastLinuxPartition(t *testing.T) {
+	cfg := &config.MachineConfig{LegacyCompat: true}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.rootPartition = "/dev/sda2"
+	cmd.setResult("sfdisk --json", []byte(`{"partitiontable":{"partitions":[
+		{"node":"/dev/sda1","type":"C12A7328-F81F-11D2-BA4B-00A0C93EC93B"},
+		{"node":"/dev/sda2","type":"0FC63DAF-8483-4772-8E79-3D69D8477DE4"},
+		{"node":"/dev/sda3","type":"0fc63daf-8483-4772-8e79-3d69d8477de4"},
+		{"node":"/dev/sda4","type":"0657FD6D-A4AB-43C4-84E5-0933C84B4F4F"}]}}`), nil)
+
+	if err := o.growPartition(context.Background()); err != nil {
+		t.Fatalf("growPartition() = %v", err)
+	}
+	if err := o.resizeFilesystem(context.Background()); err != nil {
+		t.Fatalf("resizeFilesystem() = %v", err)
+	}
+	var got []string
+	for _, c := range cmd.calls {
+		if c.name == "growpart" || c.name == "e2fsck" || c.name == "resize2fs" {
+			got = append(got, c.name+" "+strings.Join(c.args, " "))
+		}
+	}
+	want := []string{"growpart --update on /dev/sda 3", "e2fsck -fy /dev/sda3", "resize2fs /dev/sda3"}
+	if strings.Join(got, ";") != strings.Join(want, ";") {
+		t.Fatalf("commands = %q, want %q", got, want)
+	}
+}
+
+func TestGrowPartitionLegacyCompatKeepsRootWhenLast(t *testing.T) {
+	cfg := &config.MachineConfig{LegacyCompat: true}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.rootPartition = "/dev/sda2"
+	cmd.setResult("sfdisk --json", []byte(`{"partitiontable":{"partitions":[
+		{"node":"/dev/sda1","type":"C12A7328-F81F-11D2-BA4B-00A0C93EC93B"},
+		{"node":"/dev/sda2","type":"0FC63DAF-8483-4772-8E79-3D69D8477DE4"}]}}`), nil)
+
+	if err := o.growPartition(context.Background()); err != nil {
+		t.Fatalf("growPartition() = %v", err)
+	}
+	if o.grownPartition != "" {
+		t.Fatalf("grownPartition = %q, want the root path", o.grownPartition)
+	}
+	last := cmd.calls[len(cmd.calls)-1]
+	if last.name != "growpart" || strings.Join(last.args, " ") != "--update on /dev/sda 2" {
+		t.Fatalf("last command = %v, want growpart of the root partition", last)
 	}
 }
 

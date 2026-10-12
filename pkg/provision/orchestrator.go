@@ -92,6 +92,7 @@ type Orchestrator struct {
 	// Runtime state set during provisioning.
 	targetDisk       string
 	rootPartition    string
+	grownPartition   string // legacy compat: last Linux partition when it is not the root
 	bootPartition    string
 	sharedMounts     []string
 	bestImageURL     string // resolved by verify-image, reused by stream-image
@@ -2638,14 +2639,51 @@ func (o *Orchestrator) growPartition(ctx context.Context) error {
 		return nil
 	}
 
-	partNum, err := disk.PartitionNumberChecked(o.rootPartition, o.targetDisk)
+	target := o.rootPartition
+	if o.cfg.LegacyCompat {
+		last, err := o.lastLinuxPartition(ctx)
+		if err != nil {
+			return err
+		}
+		if last != "" && last != o.rootPartition {
+			o.log.Info("legacy compat: growing the last Linux partition", "partition", last, "root", o.rootPartition)
+			o.grownPartition = last
+			target = last
+		}
+	}
+	partNum, err := disk.PartitionNumberChecked(target, o.targetDisk)
 	if err != nil {
-		return fmt.Errorf("determine root partition number: %w", err)
+		return fmt.Errorf("determine partition number of %s: %w", target, err)
 	}
 	return o.disk.GrowPartition(ctx, o.targetDisk, partNum)
 }
 
+// lastLinuxPartition returns the last partition with the GPT Linux
+// filesystem type, like provision.sh of the CAPRF legacy provisioner, which
+// grows that partition and not the root. It returns "" when there is none.
+func (o *Orchestrator) lastLinuxPartition(ctx context.Context) (string, error) {
+	parts, err := o.disk.ParsePartitions(ctx, o.targetDisk)
+	if err != nil {
+		return "", fmt.Errorf("list partitions of %s: %w", o.targetDisk, err)
+	}
+	last := ""
+	for _, part := range parts {
+		if strings.EqualFold(part.Type, disk.LinuxFilesystemGUID) {
+			last = part.Node
+		}
+	}
+	return last, nil
+}
+
 func (o *Orchestrator) resizeFilesystem(ctx context.Context) error {
+	if o.grownPartition != "" {
+		// The grown partition is not mounted: check it like the legacy
+		// e2fsck -p -f, then resize it offline.
+		if err := o.disk.CheckFilesystem(ctx, o.grownPartition); err != nil {
+			return fmt.Errorf("check grown partition: %w", err)
+		}
+		return o.disk.ResizeFilesystem(ctx, o.grownPartition, "")
+	}
 	return o.disk.ResizeFilesystem(ctx, o.rootPartition, newroot)
 }
 
