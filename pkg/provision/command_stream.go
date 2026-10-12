@@ -106,6 +106,10 @@ func defaultRunStreamingCommand(ctx context.Context, onLine func(string), root s
 	if cmd.Process != nil {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		// A canceled step never counts as success, and keeps the context error.
+		return fmt.Errorf("run %s: %w", argv[0], errors.Join(ctxErr, err))
+	}
 	if errors.Is(err, exec.ErrWaitDelay) {
 		// Only children still held the pipes; the script itself succeeded.
 		return nil

@@ -4,6 +4,7 @@ package provision
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -77,8 +78,8 @@ func TestDefaultRunStreamingCommandCancelKillsGroup(t *testing.T) {
 	defer cancel()
 	start := time.Now()
 	err := defaultRunStreamingCommand(ctx, func(string) {}, "", []string{"/bin/sh", "-c", "sleep 30 & sleep 30"})
-	if err == nil {
-		t.Fatal("canceled command returned nil")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("defaultRunStreamingCommand() = %v, want context.DeadlineExceeded", err)
 	}
 	if elapsed := time.Since(start); elapsed > 10*time.Second {
 		t.Fatalf("cancellation took %s", elapsed)
