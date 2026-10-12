@@ -714,6 +714,8 @@ var (
 	// legacyFRRRestartInterval is the round length of the CAPRF legacy
 	// wait_for_network.
 	legacyFRRRestartInterval = 20 * time.Second
+	// dumpFRRStateInBackground logs the FRR state without blocking the caller.
+	dumpFRRStateInBackground = func(m *Manager) { go m.DumpFRRState() }
 	frrDaemonStartDelay      = 500 * time.Millisecond
 	frrDaemonStopWait        = 3 * time.Second
 	frrDaemonKillWait        = time.Second
@@ -1143,9 +1145,10 @@ func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duratio
 		select {
 		case <-ctx.Done():
 			if mgr != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				// A caller deadline is a timeout too: keep the diagnostics.
+				// A caller deadline is a timeout too: keep the diagnostics,
+				// but do not delay the failure report past the deadline.
 				log.Warn("connectivity deadline reached, dumping FRR state for diagnostics")
-				mgr.DumpFRRState()
+				dumpFRRStateInBackground(mgr)
 			}
 			return fmt.Errorf("connectivity check canceled: %w", ctx.Err())
 		case <-time.After(1 * time.Second):

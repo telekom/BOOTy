@@ -764,8 +764,12 @@ func TestWaitForHTTPWithFRRLegacyRecovery(t *testing.T) {
 
 // A caller deadline, as in legacy compat, must still dump the FRR state.
 func TestWaitForHTTPWithFRRDumpsStateOnCallerDeadline(t *testing.T) {
-	cmd := newMockFRRCommander()
-	mgr := NewManager(cmd)
+	dumped := make(chan struct{}, 1)
+	orig := dumpFRRStateInBackground
+	dumpFRRStateInBackground = func(*Manager) { dumped <- struct{}{} }
+	t.Cleanup(func() { dumpFRRStateInBackground = orig })
+
+	mgr := NewManager(newMockFRRCommander())
 	srv := httptest.NewServer(http.NotFoundHandler())
 	target := srv.URL
 	srv.Close()
@@ -774,11 +778,9 @@ func TestWaitForHTTPWithFRRDumpsStateOnCallerDeadline(t *testing.T) {
 	if err := waitForHTTPWithFRR(ctx, target, time.Minute, mgr); err == nil {
 		t.Fatal("waitForHTTPWithFRR() = nil for a closed server")
 	}
-	dumped := false
-	for _, call := range cmd.calls {
-		dumped = dumped || call == "vtysh -c"
-	}
-	if !dumped {
-		t.Fatalf("calls = %v, want the FRR state dump", cmd.calls)
+	select {
+	case <-dumped:
+	default:
+		t.Fatal("no FRR state dump at the caller deadline")
 	}
 }

@@ -444,8 +444,13 @@ func TestValidateRejectsBlankABSourceRootSelector(t *testing.T) {
 }
 
 func TestValidateRejectsNegativeNetworkWaitAttempts(t *testing.T) {
-	cfg := &Config{Network: NetworkConfig{WaitMaxAttempts: -1}}
+	cfg := &Config{LegacyCompat: true, Network: NetworkConfig{WaitMaxAttempts: -1}}
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "waitMaxAttempts") {
 		t.Fatalf("Validate() = %v, want a waitMaxAttempts error", err)
+	}
+	// The field is ignored outside legacy compat.
+	cfg = &Config{Network: NetworkConfig{WaitMaxAttempts: -1}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() = %v, want nil outside legacy compat", err)
 	}
 }
