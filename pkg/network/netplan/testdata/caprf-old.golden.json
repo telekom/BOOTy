@@ -2,6 +2,7 @@
   "Interfaces": [
     "auto-detect"
   ],
+  "LegacyFRRRecovery": false,
   "UnderlaySubnet": "",
   "UnderlayIP": "192.168.4.11",
   "OverlaySubnet": "",
