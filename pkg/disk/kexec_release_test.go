@@ -40,8 +40,17 @@ proc /newroot/proc proc rw 0 0
 		return nil
 	}
 
-	if err := NewManager(nil).UnmountOrRemountReadOnly("/newroot"); err != nil {
+	report, err := NewManager(nil).UnmountOrRemountReadOnly("/newroot")
+	if err != nil {
 		t.Fatalf("UnmountOrRemountReadOnly() = %v", err)
+	}
+	wantReport := ReleaseReport{
+		Unmounted: []string{"/newroot/boot/efi", "/newroot/proc", "/newroot"},
+		ReadOnly:  []string{"/newroot/boot"},
+		LeftAlone: []string{"/newroot/dev"},
+	}
+	if !reflect.DeepEqual(report, wantReport) {
+		t.Errorf("report = %+v, want %+v", report, wantReport)
 	}
 	if want := []string{"/newroot/boot/efi", "/newroot"}; !reflect.DeepEqual(unmounted, want) {
 		t.Errorf("unmounted %v, want %v (deepest first, nothing outside the root)", unmounted, want)
@@ -52,8 +61,11 @@ proc /newroot/proc proc rw 0 0
 	}
 
 	remountReadOnlyFunc = func(string) error { return errors.New("busy too") }
-	err := NewManager(nil).UnmountOrRemountReadOnly("/newroot")
+	report, err = NewManager(nil).UnmountOrRemountReadOnly("/newroot")
 	if err == nil || !strings.Contains(err.Error(), "remount read-only") {
 		t.Fatalf("UnmountOrRemountReadOnly() = %v, want the remount error", err)
+	}
+	if !reflect.DeepEqual(report.StillWrite, []string{"/newroot/boot"}) {
+		t.Errorf("StillWrite = %v, want [/newroot/boot]", report.StillWrite)
 	}
 }

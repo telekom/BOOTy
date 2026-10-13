@@ -67,6 +67,17 @@ exit 1
 	}
 	// KEXEC_UNMOUNT_TARGET: the root was unmounted before kexec, so the
 	// second kernel mounts a clean ext4 without journal recovery.
+	// The root is really unmounted, not only remounted read-only: no file of
+	// the target (grub.cfg, kernel, initramfs) stays open.
+	release := ""
+	for line := range strings.Lines(out) {
+		if strings.Contains(line, "released target filesystems before kexec") {
+			release = line
+		}
+	}
+	if !strings.Contains(release, "/newroot]") || !strings.Contains(release, "readOnly=[]") {
+		t.Fatalf("the target root was not unmounted before kexec: %q. tail:\n%s", release, tail([]byte(out), 4000))
+	}
 	if _, second, ok := strings.Cut(out, "attempting kexec"); !ok || strings.Contains(second, "recovery required") {
 		t.Fatalf("the target root needed journal recovery after kexec. tail:\n%s", tail([]byte(out), 4000))
 	}

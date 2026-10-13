@@ -621,7 +621,7 @@ func runCAPRF(ctx context.Context) {
 			"power off handoff failed after deprovisioning success")
 		return
 	case errors.As(modeErr, &provisionErr):
-		kexeced := tryKexec(cfg, provisionErr.FirmwareChanged, func() error {
+		kexeced := tryKexec(cfg, provisionErr.FirmwareChanged, func() (disk.ReleaseReport, error) {
 			return diskMgr.UnmountOrRemountReadOnly(installedRootPath)
 		})
 		if !kexeced && provision.ShouldKeepTargetRootMountedForKexec(cfg, provisionErr.FirmwareChanged) {
@@ -1367,7 +1367,7 @@ func detectIPMI(netCfg *network.Config) {
 // After the kernel and initramfs are loaded, releaseTarget unmounts the
 // target root (busy mounts are remounted read-only), so the installed OS
 // does not start with filesystems that need journal recovery.
-func tryKexec(cfg *config.MachineConfig, firmwareChanged bool, releaseTarget func() error) bool {
+func tryKexec(cfg *config.MachineConfig, firmwareChanged bool, releaseTarget func() (disk.ReleaseReport, error)) bool {
 	if cfg.KexecDisabled() {
 		slog.Info("kexec disabled by configuration, skipping", "successAction", cfg.SuccessAction)
 		return false
@@ -1389,9 +1389,10 @@ func tryKexec(cfg *config.MachineConfig, firmwareChanged bool, releaseTarget fun
 		slog.Warn("cannot open grub.cfg, skipping kexec", "error", err)
 		return false
 	}
-	defer func() { _ = f.Close() }()
-
 	entries, err := kexec.ParseGrubCfg(f)
+	// Close grub.cfg now: an open file keeps its filesystem busy, and the
+	// target is unmounted before kexec.
+	_ = f.Close()
 	if err != nil {
 		slog.Warn("failed to parse grub.cfg", "error", err)
 		return false
@@ -1410,18 +1411,29 @@ func tryKexec(cfg *config.MachineConfig, firmwareChanged bool, releaseTarget fun
 		slog.Warn("kexec load failed, falling back to reboot", "error", err)
 		return false
 	}
-	if config.BoolOr(cfg.Provision.KexecUnmountTarget, true) {
-		if err := releaseTarget(); err != nil {
-			slog.Warn("target filesystems are still writable at kexec, the installed OS may replay their journal", "error", err)
-		} else {
-			slog.Info("unmounted target filesystems before kexec", "root", installedRootPath)
-		}
-	}
+	releaseKexecTarget(cfg, releaseTarget)
 	if err := doKexecExecute(); err != nil {
 		slog.Warn("kexec execute failed, falling back to reboot", "error", err)
 		return false
 	}
 	return true
+}
+
+// releaseKexecTarget runs releaseTarget unless KEXEC_UNMOUNT_TARGET=false
+// and logs what happened to the target mounts. Failures only warn: the data
+// is synced, and kexec still beats a firmware reboot.
+func releaseKexecTarget(cfg *config.MachineConfig, releaseTarget func() (disk.ReleaseReport, error)) {
+	if !config.BoolOr(cfg.Provision.KexecUnmountTarget, true) {
+		slog.Info("KEXEC_UNMOUNT_TARGET=false, keeping the target mounted for kexec", "root", installedRootPath)
+		return
+	}
+	r, err := releaseTarget()
+	slog.Info("released target filesystems before kexec", "root", installedRootPath,
+		"unmounted", r.Unmounted, "readOnly", r.ReadOnly, "leftAlone", r.LeftAlone)
+	if err != nil {
+		slog.Warn("target filesystems are still writable at kexec, the installed OS may replay their journal",
+			"writable", r.StillWrite, "error", err)
+	}
 }
 
 func resolveKexecPath(root, grubPath string) string {

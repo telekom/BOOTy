@@ -1231,37 +1231,50 @@ func (m *Manager) UnmountRecursive(root string) error {
 	return errors.Join(errs...)
 }
 
+// ReleaseReport says what UnmountOrRemountReadOnly did with each mount.
+type ReleaseReport struct {
+	Unmounted  []string // unmounted
+	ReadOnly   []string // busy block device mounts, remounted read-only
+	LeftAlone  []string // busy virtual mounts (proc, sysfs, the /dev bind), left as they are
+	StillWrite []string // busy block device mounts that could not be remounted read-only
+}
+
 // UnmountOrRemountReadOnly unmounts root and its children, deepest first,
 // so that every filesystem below root is clean on disk, for example before
-// kexec. A busy mount of a block device is remounted read-only instead.
-// Mounts of virtual filesystems (proc, sysfs, the /dev bind) are only
-// unmounted.
-func (m *Manager) UnmountOrRemountReadOnly(root string) error {
+// kexec. Only a busy mount of a block device is remounted read-only
+// instead. A busy virtual mount (proc, sysfs, the /dev bind) is left as
+// it is. The error lists the block device mounts that stay writable.
+func (m *Manager) UnmountOrRemountReadOnly(root string) (ReleaseReport, error) {
+	var r ReleaseReport
 	targets, err := mountedSubpaths(root)
 	if err != nil {
-		return err
+		return r, err
 	}
 	sources, err := mountSources()
 	if err != nil {
-		return err
+		return r, err
 	}
 	var errs []error
 	for _, target := range targets {
 		err := unmountFunc(target, 0)
 		if err == nil || errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOENT) {
+			r.Unmounted = append(r.Unmounted, target)
 			continue
 		}
 		if !strings.HasPrefix(sources[target], "/dev/") {
 			slog.Warn("cannot unmount, leaving it", "mount", target, "error", err)
+			r.LeftAlone = append(r.LeftAlone, target)
 			continue
 		}
 		if rerr := remountReadOnlyFunc(target); rerr != nil {
+			r.StillWrite = append(r.StillWrite, target)
 			errs = append(errs, fmt.Errorf("unmount %s: %w; remount read-only: %w", target, err, rerr))
 			continue
 		}
 		slog.Info("remounted busy mount read-only", "mount", target, "unmountError", err)
+		r.ReadOnly = append(r.ReadOnly, target)
 	}
-	return errors.Join(errs...)
+	return r, errors.Join(errs...)
 }
 
 var remountReadOnlyFunc = func(target string) error {
