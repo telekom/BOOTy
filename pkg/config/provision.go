@@ -96,6 +96,15 @@ type ProvisionConfig struct {
 	// Default: nil (true)
 	KexecUnmountTarget *bool `yaml:"kexecUnmountTarget,omitempty" json:"kexecUnmountTarget,omitempty"`
 
+	// EFIBootEntryRequired makes EFI boot entry management mandatory on
+	// systems booted via UEFI: a failure to mount efivarfs, or to create the
+	// EFI boot entry (provisioning) or remove the managed entries
+	// (deprovisioning) fails the run, like the CAPRF legacy scripts. false
+	// logs a warning and continues. BIOS systems skip these steps, and
+	// MODE=decommission is always best effort.
+	// Default: nil (true)
+	EFIBootEntryRequired *bool `yaml:"efiBootEntryRequired,omitempty" json:"efiBootEntryRequired,omitempty"`
+
 	// DisableKexec skips kexec into the installed kernel and forces a hard reboot.
 	// Automatically set to true in dry-run mode.
 	// Default: false

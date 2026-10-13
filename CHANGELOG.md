@@ -124,6 +124,11 @@ behaviour.
   exists, at most `DISK_SETTLE_TIMEOUT_SEC` (default 30, max 600, `0` turns it
   off). A `DISK_DEVICE` below `/dev/disk/` (by-id, by-path) now fails at once:
   the ramdisk has no udev to create these links (#670).
+- On a system booted via UEFI, a failure to mount efivarfs, to create the EFI
+  boot entry or to remove the managed EFI boot entries now fails provisioning or
+  deprovisioning, like the legacy scripts. Before, BOOTy logged a warning and
+  reported success. `EFI_BOOT_ENTRY_REQUIRED=false` keeps the warning.
+  `MODE=decommission` stays best effort (#669).
 
 ### Behaviour behind `CAPRF_LEGACY_COMPAT=true`
 

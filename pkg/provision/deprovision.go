@@ -60,7 +60,7 @@ func (o *Orchestrator) deprovisionSteps(mode string) []Step {
 	case "decommission":
 		steps = append(steps,
 			Step{"decommission-wipe", o.decommissionWipe},
-			Step{"mount-efivarfs", o.mountEFIVars},
+			Step{"mount-efivarfs", o.mountEFIVarsBestEffort},
 			Step{"remove-all-efi-entries", o.removeAllEFIBootEntries},
 		)
 	default:
