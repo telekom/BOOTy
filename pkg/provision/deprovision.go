@@ -65,12 +65,15 @@ func (o *Orchestrator) deprovisionSteps(mode string) []Step {
 		)
 	default:
 		steps = append(steps,
+			// The EFI entry steps run before the wipe: when the EFI
+			// variables are unavailable, the run fails before it destroys
+			// anything (the legacy script removed them after the wipe).
+			Step{"mount-efivarfs", o.mountEFIVars},
+			Step{"remove-efi-entries", o.removeEFIBootEntries},
 			Step{"select-deprovision-disk", o.selectDeprovisionDisk},
 			Step{"disable-lvm", o.disableLVM},
 			Step{"stop-raid", o.stopRAID},
 			Step{"wipe-disks", o.wipeOrSecureEraseDisks},
-			Step{"mount-efivarfs", o.mountEFIVars},
-			Step{"remove-efi-entries", o.removeEFIBootEntries},
 		)
 	}
 	return append(steps, Step{"report-success", o.reportDeprovisionSuccess})

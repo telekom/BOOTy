@@ -1264,16 +1264,20 @@ func (c *Configurator) MountEFIVars(ctx context.Context) error {
 	}
 
 	// On non-EFI systems /sys/firmware/efi does not exist; skip gracefully.
-	if _, err := os.Stat(efiFirmwarePath); os.IsNotExist(err) {
+	uefi, err := bootedViaUEFI()
+	if err != nil {
+		return err
+	}
+	if !uefi {
 		slog.Info("non-EFI system detected, skipping efivarfs mount")
 		return nil
 	}
 
 	if err := os.MkdirAll(efiVarsPath, 0o755); err != nil {
-		return fmt.Errorf("create efivarfs mountpoint %s: %w", efiVarsPath, err)
+		return fmt.Errorf("create efivarfs mountpoint %s: %w: %w", efiVarsPath, ErrEFIVarsUnavailable, err)
 	}
 	if err := mountEFIVarFS("efivarfs", efiVarsPath, "efivarfs", 0, ""); err != nil {
-		return fmt.Errorf("mount efivarfs at %s (is the efivarfs module in the ramdisk?): %w", efiVarsPath, err)
+		return fmt.Errorf("mount efivarfs at %s (is the efivarfs module in the ramdisk?): %w: %w", efiVarsPath, ErrEFIVarsUnavailable, err)
 	}
 	slog.Info("mounted efivarfs", "path", efiVarsPath)
 	return nil
@@ -1288,10 +1292,25 @@ func SetEFIFirmwarePathForTest(path string) func() {
 	return func() { efiFirmwarePath, efiVarsPath = oldFirmware, oldVars }
 }
 
+// ErrEFIVarsUnavailable marks a failure to reach the EFI variables (NVRAM):
+// efivarfs can not be mounted, efibootmgr is missing or can not read them,
+// or the firmware refuses to delete a boot entry (a locked boot order).
+// EFI_BOOT_ENTRY_REQUIRED=false turns only these errors into warnings.
+var ErrEFIVarsUnavailable = errors.New("EFI variables unavailable")
+
 // bootedViaUEFI reports whether the firmware booted the ramdisk via UEFI.
-func bootedViaUEFI() bool {
+// Only a missing /sys/firmware/efi means BIOS; another stat error is an
+// error.
+func bootedViaUEFI() (bool, error) {
 	_, err := os.Stat(efiFirmwarePath)
-	return err == nil
+	switch {
+	case err == nil:
+		return true, nil
+	case os.IsNotExist(err):
+		return false, nil
+	default:
+		return false, fmt.Errorf("detect UEFI boot: %w", err)
+	}
 }
 
 func defaultHostCommandCombinedOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -1306,10 +1325,12 @@ func defaultHostCommandCombinedOutput(ctx context.Context, name string, args ...
 const efiNotBootedReason = "system not booted in EFI mode"
 
 func defaultEFIRuntimeReady() (ready bool, reason string) {
-	if _, err := os.Stat(efiFirmwarePath); os.IsNotExist(err) {
+	uefi, err := bootedViaUEFI()
+	if err != nil {
+		return false, err.Error()
+	}
+	if !uefi {
 		return false, efiNotBootedReason
-	} else if err != nil {
-		return false, fmt.Sprintf("cannot stat %s: %v", efiFirmwarePath, err)
 	}
 	if !isMountPoint(efiVarsPath) {
 		return false, "efivarfs not mounted"
@@ -1344,14 +1365,21 @@ func defaultMountedSource(path string) (string, bool) {
 // or remove the entries, like remove_efi_boot_entries of the CAPRF legacy
 // scripts.
 func (c *Configurator) RemoveEFIBootEntries(ctx context.Context) error {
-	if !bootedViaUEFI() {
+	uefi, err := bootedViaUEFI()
+	if err != nil {
+		return err
+	}
+	if !uefi {
 		slog.Info("non-EFI system, skipping EFI boot entry removal")
 		return nil
 	}
 	slog.Info("removing old EFI boot entries")
 	out, err := hostCommandCombinedOutput(ctx, "efibootmgr")
+	if errors.Is(err, exec.ErrNotFound) {
+		return fmt.Errorf("efibootmgr is not in the ramdisk, cannot remove the EFI boot entries: %w: %w", ErrEFIVarsUnavailable, err)
+	}
 	if err != nil {
-		return fmt.Errorf("efibootmgr list: %s: %w", strings.TrimSpace(string(out)), err)
+		return fmt.Errorf("efibootmgr list: %s: %w: %w", strings.TrimSpace(string(out)), ErrEFIVarsUnavailable, err)
 	}
 	var errs []error
 	for _, line := range strings.Split(string(out), "\n") {
@@ -1361,7 +1389,7 @@ func (c *Configurator) RemoveEFIBootEntries(ctx context.Context) error {
 		bootNum := line[4:8]
 		slog.Info("removing EFI boot entry", "entry", bootNum)
 		if out, err := hostCommandCombinedOutput(ctx, "efibootmgr", "-b", bootNum, "-B"); err != nil {
-			errs = append(errs, fmt.Errorf("efibootmgr remove Boot%s: %s: %w", bootNum, strings.TrimSpace(string(out)), err))
+			errs = append(errs, fmt.Errorf("efibootmgr remove Boot%s: %s: %w: %w", bootNum, strings.TrimSpace(string(out)), ErrEFIVarsUnavailable, err))
 		}
 	}
 	return errors.Join(errs...)
@@ -1428,7 +1456,7 @@ func (c *Configurator) CreateEFIBootEntry(ctx context.Context, diskDev, bootPart
 			slog.Warn("skipping EFI boot entry creation", "reason", reason)
 			return nil
 		}
-		return fmt.Errorf("create EFI boot entry: %s", reason)
+		return fmt.Errorf("create EFI boot entry: %s: %w", reason, ErrEFIVarsUnavailable)
 	}
 
 	var err error

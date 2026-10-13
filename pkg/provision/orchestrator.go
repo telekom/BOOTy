@@ -648,14 +648,16 @@ func (o *Orchestrator) mountEFIVarsBestEffort(ctx context.Context) error {
 	return nil
 }
 
-// efiEntryResult returns err, or logs it and returns nil when
-// EFI_BOOT_ENTRY_REQUIRED=false. The configurator returns no error on BIOS
-// systems, so only UEFI failures get here.
+// efiEntryResult returns err. With EFI_BOOT_ENTRY_REQUIRED=false it logs
+// and drops errors that only mean "EFI variables unavailable"
+// (ErrEFIVarsUnavailable); other errors, such as a failed efibootmgr -c or
+// a missing EFI loader, stay fatal. The configurator returns no error on
+// BIOS systems, so only UEFI failures get here.
 func (o *Orchestrator) efiEntryResult(action string, err error) error {
 	if err == nil {
 		return nil
 	}
-	if !config.BoolOr(o.cfg.Provision.EFIBootEntryRequired, true) {
+	if !config.BoolOr(o.cfg.Provision.EFIBootEntryRequired, true) && errors.Is(err, ErrEFIVarsUnavailable) {
 		o.log.Warn(action+" failed, continuing because EFI_BOOT_ENTRY_REQUIRED=false", "error", err)
 		return nil
 	}

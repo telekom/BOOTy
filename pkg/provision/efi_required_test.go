@@ -5,11 +5,14 @@ package provision
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+
+	exec "github.com/telekom/BOOTy/pkg/executil"
 
 	"github.com/telekom/BOOTy/pkg/config"
 )
@@ -76,6 +79,14 @@ func TestEFIBootEntryStepsFailOnUEFI(t *testing.T) {
 			efiReady: func() (bool, string) { return false, "efivarfs not mounted" }},
 		{name: "create skipped on BIOS", step: createStep, commands: efibootmgr("", nil, nil),
 			efiReady: func() (bool, string) { return false, efiNotBootedReason }},
+		// The opt-out covers only unavailable EFI variables.
+		{name: "create without EFI loader, not required", uefi: true, required: new(false), step: createStep, commands: efibootmgr("", nil, nil),
+			efiReady: func() (bool, string) { return true, "" }, wantErr: "no EFI loader found"},
+		{name: "efibootmgr missing on UEFI", uefi: true, step: removeStep,
+			commands: func(string, ...string) ([]byte, error) { return nil, fmt.Errorf("run: %w", exec.ErrNotFound) },
+			wantErr:  "efibootmgr is not in the ramdisk"},
+		{name: "efibootmgr missing on UEFI, not required", uefi: true, required: new(false), step: removeStep,
+			commands: func(string, ...string) ([]byte, error) { return nil, fmt.Errorf("run: %w", exec.ErrNotFound) }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -129,4 +140,32 @@ func TestDecommissionMountsEFIVarsBestEffort(t *testing.T) {
 		return
 	}
 	t.Fatal("decommission has no mount-efivarfs step")
+}
+
+// Only a missing /sys/firmware/efi means BIOS; any other stat error fails.
+func TestBootedViaUEFIStatError(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(SetEFIFirmwarePathForTest(filepath.Join(file, "efi"))) // ENOTDIR
+	if _, err := bootedViaUEFI(); err == nil {
+		t.Fatal("bootedViaUEFI() = nil error for ENOTDIR, want an error")
+	}
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	if err := o.removeEFIBootEntries(context.Background()); err == nil {
+		t.Fatal("removeEFIBootEntries() = nil, want the stat error")
+	}
+}
+
+// Deprovision touches the EFI variables before it wipes a disk.
+func TestDeprovisionRemovesEFIEntriesBeforeWipe(t *testing.T) {
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	idx := map[string]int{}
+	for i, step := range o.deprovisionSteps("hard") {
+		idx[step.Name] = i
+	}
+	if idx["mount-efivarfs"] >= idx["remove-efi-entries"] || idx["remove-efi-entries"] >= idx["wipe-disks"] {
+		t.Fatalf("deprovision step order = %v, want mount-efivarfs, remove-efi-entries before wipe-disks", idx)
+	}
 }
