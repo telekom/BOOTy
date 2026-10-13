@@ -95,3 +95,35 @@ func TestApplyLinkRenamesCanceled(t *testing.T) {
 		t.Fatalf("ApplyLinkRenames = %v, want context.Canceled", err)
 	}
 }
+
+// If the NIC does not come up after the rename, renameLink restores the old
+// name and brings the NIC up again: ApplyLinkRenames rolls back only the
+// renames that succeeded.
+func TestRenameLinkRestoresNameWhenSetUpFails(t *testing.T) {
+	byName, down, setName, up := renameLinkByName, renameLinkSetDown, renameLinkSetName, renameLinkSetUp
+	t.Cleanup(func() {
+		renameLinkByName, renameLinkSetDown, renameLinkSetName, renameLinkSetUp = byName, down, setName, up
+	})
+	link := &netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "enp1s4", Flags: net.FlagUp}}
+	var calls []string
+	ups := 0
+	renameLinkByName = func(string) (netlink.Link, error) { return link, nil }
+	renameLinkSetDown = func(netlink.Link) error { calls = append(calls, "down"); return nil }
+	renameLinkSetName = func(_ netlink.Link, name string) error { calls = append(calls, "name "+name); return nil }
+	renameLinkSetUp = func(netlink.Link) error {
+		calls = append(calls, "up")
+		if ups++; ups == 1 {
+			return errors.New("up failed")
+		}
+		return nil
+	}
+
+	err := renameLink("enp1s4", "hbn")
+
+	if err == nil || !strings.Contains(err.Error(), "up failed") {
+		t.Fatalf("renameLink error = %v, want the set-up error", err)
+	}
+	if want := "down,name hbn,up,name enp1s4,up"; strings.Join(calls, ",") != want {
+		t.Fatalf("calls = %s, want %s", strings.Join(calls, ","), want)
+	}
+}

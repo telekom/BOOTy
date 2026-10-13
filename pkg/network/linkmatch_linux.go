@@ -82,27 +82,46 @@ func undoRenames(done [][2]string, err error) error {
 	return errors.Join(errs...)
 }
 
+// Netlink calls of renameLink; tests replace them.
+var (
+	renameLinkByName  = netlink.LinkByName
+	renameLinkSetDown = netlink.LinkSetDown
+	renameLinkSetName = netlink.LinkSetName
+	renameLinkSetUp   = netlink.LinkSetUp
+)
+
 func renameLink(from, to string) error {
-	link, err := netlink.LinkByName(from)
+	link, err := renameLinkByName(from)
 	if err != nil {
 		return fmt.Errorf("find %s: %w", from, err)
 	}
 	// The kernel renames only links that are down. Keep the admin state, so
 	// a failed rename does not leave the provisioning NIC down.
 	wasUp := link.Attrs().Flags&net.FlagUp != 0
-	if err := netlink.LinkSetDown(link); err != nil {
+	if err := renameLinkSetDown(link); err != nil {
 		return fmt.Errorf("set %s down: %w", from, err)
 	}
-	renameErr := netlink.LinkSetName(link, to)
+	renameErr := renameLinkSetName(link, to)
 	if renameErr != nil {
 		renameErr = fmt.Errorf("rename %s to %s: %w", from, to, renameErr)
 	}
-	if wasUp {
-		if err := netlink.LinkSetUp(link); err != nil {
-			return errors.Join(renameErr, fmt.Errorf("set %s up again: %w", from, err))
-		}
+	if !wasUp {
+		return renameErr
 	}
-	return renameErr
+	if err := renameLinkSetUp(link); err != nil {
+		errs := []error{renameErr, fmt.Errorf("set %s up again: %w", to, err)}
+		if renameErr == nil {
+			// The caller rolls back only renames that returned nil, so
+			// restore the old name and admin state here.
+			if err := renameLinkSetName(link, from); err != nil {
+				errs = append(errs, fmt.Errorf("restore name %s: %w", from, err))
+			} else if err := renameLinkSetUp(link); err != nil {
+				errs = append(errs, fmt.Errorf("set %s up after restoring the name: %w", from, err))
+			}
+		}
+		return errors.Join(errs...)
+	}
+	return nil
 }
 
 // ResolveLinkMatch returns the single physical NIC that m selects.
