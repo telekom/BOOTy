@@ -863,9 +863,9 @@ func networkWait(cfg *config.MachineConfig) (int, time.Duration) {
 	if !cfg.LegacyCompat {
 		return 3, 5 * time.Minute
 	}
-	rounds := cfg.Network.WaitMaxAttempts
-	if rounds <= 0 {
-		rounds = 15
+	rounds := 15
+	if n := cfg.Network.WaitMaxAttempts; n != nil {
+		rounds = *n // an explicit 0 fails at once, like the legacy loop
 	}
 	return 1, time.Duration(rounds) * 20 * time.Second
 }

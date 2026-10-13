@@ -29,9 +29,10 @@ type NetworkConfig struct {
 
 	// WaitMaxAttempts is the number of 20 second connectivity rounds in
 	// CAPRF legacy compat mode, like NETWORK_WAIT_MAX_ATTEMPTS of the legacy
-	// provisioner. Ignored outside legacy compat.
-	// Default: 0 (15 rounds, about 5 minutes)
-	WaitMaxAttempts int `yaml:"waitMaxAttempts" json:"waitMaxAttempts"`
+	// provisioner. Ignored outside legacy compat. Unset (nil) means 15
+	// rounds, about 5 minutes. An explicit 0 means no round: the run fails
+	// at once, like ${NETWORK_WAIT_MAX_ATTEMPTS:-15} with the value 0.
+	WaitMaxAttempts *int `yaml:"waitMaxAttempts,omitempty" json:"waitMaxAttempts,omitempty"`
 
 	// Sub-sections grouped by network concern.
 	BGP    BGPConfig    `yaml:"bgp"    json:"bgp"`

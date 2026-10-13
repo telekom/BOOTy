@@ -155,7 +155,7 @@ behaviour changes of this mode.
 
 | Key | Default | Values | Effect |
 |-----|---------|--------|--------|
-| `NETWORK_WAIT_MAX_ATTEMPTS` | `0` (15 rounds) | integer 0-100000 | Legacy compat only: the number of 20 second connectivity rounds before the run fails. In FRR mode, FRR restarts after each failed round unless a BGP session is established. Ignored without `CAPRF_LEGACY_COMPAT`. |
+| `NETWORK_WAIT_MAX_ATTEMPTS` | (unset, 15 rounds) | integer 0-100000 | Legacy compat only: the number of 20 second connectivity rounds before the run fails. `0` means no round: the run fails at once, like `${NETWORK_WAIT_MAX_ATTEMPTS:-15}` in the legacy provisioner. In FRR mode, FRR restarts after each failed round unless a BGP session is established. Ignored without `CAPRF_LEGACY_COMPAT`. |
 
 ## Disk and image
 

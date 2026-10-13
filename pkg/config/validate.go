@@ -175,7 +175,7 @@ func (c *Config) validateBGP() []string {
 	bfdReceive := c.Network.BGP.BFDReceiveMS
 
 	var errs []string
-	if c.LegacyCompat && (c.Network.WaitMaxAttempts < 0 || c.Network.WaitMaxAttempts > MaxNetworkWaitAttempts) {
+	if n := c.Network.WaitMaxAttempts; c.LegacyCompat && n != nil && (*n < 0 || *n > MaxNetworkWaitAttempts) {
 		errs = append(errs, fmt.Sprintf("network.waitMaxAttempts (NETWORK_WAIT_MAX_ATTEMPTS) must be 0-%d", MaxNetworkWaitAttempts))
 	}
 	if (bfdTransmit == 0) != (bfdReceive == 0) {

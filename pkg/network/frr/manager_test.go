@@ -784,3 +784,22 @@ func TestWaitForHTTPWithFRRDumpsStateOnCallerDeadline(t *testing.T) {
 		t.Fatal("no FRR state dump at the caller deadline")
 	}
 }
+
+// NETWORK_WAIT_MAX_ATTEMPTS=0 in legacy compat gives a zero timeout: the
+// wait fails at once and does not dump the FRR state (about a minute).
+func TestWaitForConnectivityZeroTimeoutFailsAtOnce(t *testing.T) {
+	cmd := newMockFRRCommander()
+	mgr := NewManager(cmd)
+	mgr.cfg.LegacyFRRRecovery = true
+	start := time.Now()
+	err := mgr.WaitForConnectivity(context.Background(), "http://127.0.0.1:1/", 0)
+	if err == nil || !strings.Contains(err.Error(), "no attempt") {
+		t.Fatalf("err = %v, want the no-attempt timeout", err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("took %s, want an immediate failure", d)
+	}
+	if len(cmd.calls) != 0 {
+		t.Fatalf("FRR commands ran: %v", cmd.calls)
+	}
+}

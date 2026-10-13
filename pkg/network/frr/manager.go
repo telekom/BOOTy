@@ -1108,6 +1108,11 @@ func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duratio
 		return fmt.Errorf("empty connectivity target URL")
 	}
 	logTarget := network.RedactHTTPURLForLog(target)
+	if timeout <= 0 {
+		// NETWORK_WAIT_MAX_ATTEMPTS=0 in legacy compat: no round, the run
+		// fails at once like the legacy loop, without the FRR state dump.
+		return fmt.Errorf("network connectivity timeout after %s (no attempt)", timeout)
+	}
 
 	deadline := time.Now().Add(timeout)
 	client := network.NewHTTPClient(10 * time.Second)

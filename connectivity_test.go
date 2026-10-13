@@ -104,9 +104,10 @@ func TestNetworkWait(t *testing.T) {
 		wantTimeout  time.Duration
 	}{
 		{name: "default", wantAttempts: 3, wantTimeout: 5 * time.Minute},
-		{name: "attempts ignored outside compat", cfg: config.MachineConfig{Network: config.NetworkConfig{WaitMaxAttempts: 2}}, wantAttempts: 3, wantTimeout: 5 * time.Minute},
+		{name: "attempts ignored outside compat", cfg: config.MachineConfig{Network: config.NetworkConfig{WaitMaxAttempts: new(2)}}, wantAttempts: 3, wantTimeout: 5 * time.Minute},
 		{name: "legacy default", cfg: config.MachineConfig{LegacyCompat: true}, wantAttempts: 1, wantTimeout: 300 * time.Second},
-		{name: "legacy attempts", cfg: config.MachineConfig{LegacyCompat: true, Network: config.NetworkConfig{WaitMaxAttempts: 3}}, wantAttempts: 1, wantTimeout: 60 * time.Second},
+		{name: "legacy attempts", cfg: config.MachineConfig{LegacyCompat: true, Network: config.NetworkConfig{WaitMaxAttempts: new(3)}}, wantAttempts: 1, wantTimeout: 60 * time.Second},
+		{name: "legacy explicit zero", cfg: config.MachineConfig{LegacyCompat: true, Network: config.NetworkConfig{WaitMaxAttempts: new(0)}}, wantAttempts: 1, wantTimeout: 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
