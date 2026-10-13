@@ -28,6 +28,13 @@ DEVNAME=/dev/nvme0n1p2
 LABEL=data/a b
 UUID=5d7a1d2b-1111-2222-3333-444455556666
 TYPE=ext4
+
+DEVNAME=/dev/sdb1
+UUID=aaaa-raid-array
+UUID_SUB=bbbb-member
+LABEL=host:0
+TYPE=linux_raid_member
+PARTUUID=0f2c3a5e-11
 `), nil)
 	devDir := t.TempDir()
 	// A stale link from an earlier run is replaced.
@@ -51,11 +58,18 @@ TYPE=ext4
 		"by-label/cloudimg-rootfs":                     "../../sda2",
 		`by-label/data\x2fa\x20b`:                      "../../nvme0n1p2",
 		`by-partlabel/EFI\x20System\x20Partition`:      "../../sda1",
+		"by-partuuid/0f2c3a5e-11":                      "../../sdb1", // every partition
 	}
 	for rel, target := range want {
 		got, err := os.Readlink(filepath.Join(devDir, "disk", rel))
 		if err != nil || got != target {
 			t.Errorf("link %s -> %q (%v), want %q", rel, got, err, target)
+		}
+	}
+	// RAID members share the array UUID; udev makes no fs links for them.
+	for _, rel := range []string{"by-uuid/aaaa-raid-array", "by-label/host:0"} {
+		if _, err := os.Lstat(filepath.Join(devDir, "disk", rel)); !os.IsNotExist(err) {
+			t.Errorf("link %s exists for a RAID member", rel)
 		}
 	}
 	if _, err := os.Lstat(stale); !os.IsNotExist(err) {
@@ -71,5 +85,20 @@ func TestCreateDiskLinksBlkidWithoutDevices(t *testing.T) {
 	cmd.setResult("blkid -c", nil, makeExitError(2))
 	if err := NewManager(cmd).CreateDiskLinks(context.Background(), t.TempDir()); err != nil {
 		t.Fatalf("CreateDiskLinks() = %v, want nil when blkid finds no device", err)
+	}
+}
+
+func TestCreateDiskLinksFailsWhenBlkidFails(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("blkid -c", nil, makeExitError(4))
+	if err := NewManager(cmd).CreateDiskLinks(context.Background(), t.TempDir()); err == nil {
+		t.Fatal("CreateDiskLinks() = nil, want an error when blkid fails with exit code 4")
+	}
+}
+
+func TestParseBlkidExportKeepsTrailingSpaces(t *testing.T) {
+	got := ParseBlkidExport("DEVNAME=/dev/vda2\r\nLABEL=BOOT\\ \nUUID=1\n\nDEVNAME=/dev/vda3\n")
+	if len(got) != 2 || got[0]["LABEL"] != "BOOT " || got[0]["UUID"] != "1" || got[1]["DEVNAME"] != "/dev/vda3" {
+		t.Fatalf("ParseBlkidExport() = %q", got)
 	}
 }

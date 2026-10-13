@@ -2648,14 +2648,24 @@ func (o *Orchestrator) setupChrootBinds(ctx context.Context) error {
 			return fmt.Errorf("chroot bind target %s: %w", rel, err)
 		}
 	}
-	if config.BoolOr(o.cfg.Provision.DiskLinks, true) {
-		// The chroot sees the ramdisk /dev, so update-grub finds
-		// /dev/disk/by-uuid/<root UUID> and writes root=UUID=.
-		if err := o.disk.CreateDiskLinks(ctx, diskLinksDevDir); err != nil {
-			return fmt.Errorf("creating /dev/disk links: %w", err)
-		}
+	if err := o.createDiskLinks(ctx); err != nil {
+		return err
 	}
 	return o.disk.SetupChrootBindMounts(newroot)
+}
+
+// createDiskLinks creates the /dev/disk links before /dev is bound into the
+// target (DISK_LINKS). The chroot sees the ramdisk /dev, so update-grub
+// finds /dev/disk/by-uuid/<root UUID> and writes root=UUID=.
+func (o *Orchestrator) createDiskLinks(ctx context.Context) error {
+	if !config.BoolOr(o.cfg.Provision.DiskLinks, true) {
+		o.log.Info("DISK_LINKS=false, not creating /dev/disk links")
+		return nil
+	}
+	if err := o.disk.CreateDiskLinks(ctx, diskLinksDevDir); err != nil {
+		return fmt.Errorf("creating /dev/disk links: %w", err)
+	}
+	return nil
 }
 
 // diskLinksDevDir is the /dev of the ramdisk. Tests replace it.

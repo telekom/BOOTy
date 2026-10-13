@@ -1,3 +1,5 @@
+//go:build linux
+
 package disk
 
 import (
@@ -11,11 +13,24 @@ import (
 
 // diskLinkDirs maps blkid export keys to the /dev/disk directories that
 // udev's 60-persistent-storage.rules create for them.
-var diskLinkDirs = []struct{ key, dir string }{
-	{"UUID", "by-uuid"},
-	{"PARTUUID", "by-partuuid"},
-	{"LABEL", "by-label"},
-	{"PARTLABEL", "by-partlabel"},
+// fsLink marks the links that udev creates only for filesystems, swap and
+// crypto containers (ID_FS_USAGE filesystem|other|crypto). Partition links
+// exist for every partition.
+var diskLinkDirs = []struct {
+	key, dir string
+	fsLink   bool
+}{
+	{"UUID", "by-uuid", true},
+	{"PARTUUID", "by-partuuid", false},
+	{"LABEL", "by-label", true},
+	{"PARTLABEL", "by-partlabel", false},
+}
+
+// isMemberSignature reports a RAID or LVM member (ID_FS_USAGE raid), such as
+// linux_raid_member or LVM2_member. Its UUID is the array or volume group
+// UUID, which every member shares; udev makes no by-uuid link for it.
+func isMemberSignature(fsType string) bool {
+	return strings.HasSuffix(fsType, "_member") || fsType == "drbd"
 }
 
 // CreateDiskLinks creates the /dev/disk/by-uuid, by-partuuid, by-label and
@@ -24,15 +39,40 @@ var diskLinkDirs = []struct{ key, dir string }{
 // (update-grub) does not find /dev/disk/by-uuid/<root UUID> and writes
 // root=/dev/sdXN, which breaks the boot when the disk order changes.
 // Existing links in these directories are replaced. When two devices carry
-// the same value, the first one in blkid order wins.
+// the same value, the first one in blkid order wins and a warning is
+// logged: a disk that was not wiped can hold a copy of the image with the
+// same filesystem UUID, and then root=UUID= is ambiguous on the installed
+// system too (the legacy scripts had the same limit).
 func (m *Manager) CreateDiskLinks(ctx context.Context, devDir string) error {
 	// -c /dev/null: probe the devices, never trust a blkid cache file.
 	out, err := m.cmd.Run(ctx, "blkid", "-c", "/dev/null", "-o", "export")
-	if err != nil && strings.TrimSpace(string(out)) != "" {
-		return fmt.Errorf("blkid: %s: %w", strings.TrimSpace(string(out)), err)
+	if err != nil {
+		// blkid exits 2 without output when no device has a signature.
+		// Anything else (blkid missing, killed, canceled) fails: without the
+		// links update-grub silently writes root=/dev/sdXN again.
+		if exitCodeFromError(err) != 2 || strings.TrimSpace(string(out)) != "" {
+			return fmt.Errorf("blkid: %s: %w", strings.TrimSpace(string(out)), err)
+		}
+		out = nil
 	}
-	// blkid exits 2 without output when no device has a signature.
 
+	if err := resetDiskLinkDirs(devDir); err != nil {
+		return err
+	}
+	created := 0
+	for _, dev := range ParseBlkidExport(string(out)) {
+		n, err := linkDevice(devDir, dev)
+		if err != nil {
+			return err
+		}
+		created += n
+	}
+	slog.Info("created /dev/disk links", "count", created)
+	return nil
+}
+
+// resetDiskLinkDirs empties the link directories below devDir/disk.
+func resetDiskLinkDirs(devDir string) error {
 	for _, d := range diskLinkDirs {
 		dir := filepath.Join(devDir, "disk", d.dir)
 		if err := os.RemoveAll(dir); err != nil {
@@ -42,67 +82,32 @@ func (m *Manager) CreateDiskLinks(ctx context.Context, devDir string) error {
 			return fmt.Errorf("create %s: %w", dir, err)
 		}
 	}
-	created := 0
-	for _, dev := range parseBlkidExport(string(out)) {
-		name, ok := strings.CutPrefix(dev["DEVNAME"], "/dev/")
-		if !ok || name == "" {
-			continue
-		}
-		for _, d := range diskLinkDirs {
-			value := dev[d.key]
-			if value == "" {
-				continue
-			}
-			link := filepath.Join(devDir, "disk", d.dir, encodeDevLinkName(value))
-			if err := os.Symlink("../../"+name, link); err != nil {
-				if os.IsExist(err) {
-					slog.Warn("duplicate disk link, keeping the first device", "link", link, "device", dev["DEVNAME"])
-					continue
-				}
-				return fmt.Errorf("create %s: %w", link, err)
-			}
-			created++
-		}
-	}
-	slog.Info("created /dev/disk links", "count", created)
 	return nil
 }
 
-// parseBlkidExport parses `blkid -o export`: KEY=value lines, one block per
-// device, blocks separated by empty lines.
-func parseBlkidExport(out string) []map[string]string {
-	var devices []map[string]string
-	cur := map[string]string{}
-	flush := func() {
-		if len(cur) > 0 {
-			devices = append(devices, cur)
-			cur = map[string]string{}
-		}
+// linkDevice creates the links of one blkid device and returns their count.
+func linkDevice(devDir string, dev map[string]string) (int, error) {
+	name, ok := strings.CutPrefix(dev["DEVNAME"], "/dev/")
+	if !ok || name == "" {
+		return 0, nil
 	}
-	for line := range strings.Lines(out) {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			flush()
+	created := 0
+	for _, d := range diskLinkDirs {
+		value := dev[d.key]
+		if value == "" || (d.fsLink && isMemberSignature(dev["TYPE"])) {
 			continue
 		}
-		if key, value, ok := strings.Cut(line, "="); ok {
-			cur[key] = unescapeBlkidValue(value)
+		link := filepath.Join(devDir, "disk", d.dir, encodeDevLinkName(value))
+		if err := os.Symlink("../../"+name, link); err != nil {
+			if os.IsExist(err) {
+				slog.Warn("duplicate disk link, keeping the first device", "link", link, "device", dev["DEVNAME"])
+				continue
+			}
+			return created, fmt.Errorf("create %s: %w", link, err)
 		}
+		created++
 	}
-	flush()
-	return devices
-}
-
-// unescapeBlkidValue undoes the backslash escaping of `blkid -o export`.
-func unescapeBlkidValue(v string) string {
-	var b strings.Builder
-	for i := 0; i < len(v); i++ {
-		if v[i] == '\\' && i+1 < len(v) {
-			i++
-		}
-		b.WriteByte(v[i])
-	}
-	return b.String()
+	return created, nil
 }
 
 // encodeDevLinkName escapes a link name like udev's encode_devnode_name:
