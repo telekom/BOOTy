@@ -122,10 +122,17 @@ func TestWaitForConnectivityContextCancel(t *testing.T) {
 	cmd := newMockFRRCommander()
 	mgr := NewManager(cmd)
 
+	// A loopback server that never answers: hermetic, also with an HTTP
+	// proxy in the environment (Go never proxies loopback addresses).
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	err := mgr.WaitForConnectivity(ctx, "http://192.0.2.1:9999/unreachable", 30*time.Second)
+	err := mgr.WaitForConnectivity(ctx, srv.URL+"/unreachable", 30*time.Second)
 	if err == nil {
 		t.Fatal("expected context cancel error")
 	}
