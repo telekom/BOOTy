@@ -1231,6 +1231,58 @@ func (m *Manager) UnmountRecursive(root string) error {
 	return errors.Join(errs...)
 }
 
+// UnmountOrRemountReadOnly unmounts root and its children, deepest first,
+// so that every filesystem below root is clean on disk, for example before
+// kexec. A busy mount of a block device is remounted read-only instead.
+// Mounts of virtual filesystems (proc, sysfs, the /dev bind) are only
+// unmounted.
+func (m *Manager) UnmountOrRemountReadOnly(root string) error {
+	targets, err := mountedSubpaths(root)
+	if err != nil {
+		return err
+	}
+	sources, err := mountSources()
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, target := range targets {
+		err := unmountFunc(target, 0)
+		if err == nil || errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOENT) {
+			continue
+		}
+		if !strings.HasPrefix(sources[target], "/dev/") {
+			slog.Warn("cannot unmount, leaving it", "mount", target, "error", err)
+			continue
+		}
+		if rerr := remountReadOnlyFunc(target); rerr != nil {
+			errs = append(errs, fmt.Errorf("unmount %s: %w; remount read-only: %w", target, err, rerr))
+			continue
+		}
+		slog.Info("remounted busy mount read-only", "mount", target, "unmountError", err)
+	}
+	return errors.Join(errs...)
+}
+
+var remountReadOnlyFunc = func(target string) error {
+	return syscall.Mount("", target, "", syscall.MS_REMOUNT|syscall.MS_RDONLY, "")
+}
+
+// mountSources maps each mount point in /proc/mounts to its source.
+func mountSources() (map[string]string, error) {
+	data, err := readMountsFile("/proc/mounts")
+	if err != nil {
+		return nil, fmt.Errorf("read mounts: %w", err)
+	}
+	sources := map[string]string{}
+	for line := range strings.Lines(string(data)) {
+		if fields := strings.Fields(line); len(fields) >= 2 {
+			sources[fields[1]] = fields[0]
+		}
+	}
+	return sources, nil
+}
+
 func mountedSubpaths(root string) ([]string, error) {
 	data, err := readMountsFile("/proc/mounts")
 	if err != nil {

@@ -388,7 +388,7 @@ func TestTryKexecSkipsWhenSecureBootReEnableRequested(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.SecureBoot.ReEnable = true
 
-	if tryKexec(cfg, false) {
+	if tryKexec(cfg, false, func() error { return nil }) {
 		t.Fatal("tryKexec returned true when secure boot re-enable requires hard reboot")
 	}
 }

@@ -621,7 +621,9 @@ func runCAPRF(ctx context.Context) {
 			"power off handoff failed after deprovisioning success")
 		return
 	case errors.As(modeErr, &provisionErr):
-		kexeced := tryKexec(cfg, provisionErr.FirmwareChanged)
+		kexeced := tryKexec(cfg, provisionErr.FirmwareChanged, func() error {
+			return diskMgr.UnmountOrRemountReadOnly(installedRootPath)
+		})
 		if !kexeced && provision.ShouldKeepTargetRootMountedForKexec(cfg, provisionErr.FirmwareChanged) {
 			cleanupFailedKexecTarget(diskMgr)
 		}
@@ -1361,7 +1363,11 @@ func detectIPMI(netCfg *network.Config) {
 // Skips kexec when disabled by config toggle, when firmware was changed during
 // provisioning (e.g. Mellanox SR-IOV), or when Secure Boot must be re-enabled,
 // since those paths require a firmware-enforced reboot.
-func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) bool {
+//
+// After the kernel and initramfs are loaded, releaseTarget unmounts the
+// target root (busy mounts are remounted read-only), so the installed OS
+// does not start with filesystems that need journal recovery.
+func tryKexec(cfg *config.MachineConfig, firmwareChanged bool, releaseTarget func() error) bool {
 	if cfg.KexecDisabled() {
 		slog.Info("kexec disabled by configuration, skipping", "successAction", cfg.SuccessAction)
 		return false
@@ -1403,6 +1409,13 @@ func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) bool {
 	if err := kexec.Load(kernel, initrd, entry.KernelArgs); err != nil {
 		slog.Warn("kexec load failed, falling back to reboot", "error", err)
 		return false
+	}
+	if config.BoolOr(cfg.Provision.KexecUnmountTarget, true) {
+		if err := releaseTarget(); err != nil {
+			slog.Warn("target filesystems are still writable at kexec, the installed OS may replay their journal", "error", err)
+		} else {
+			slog.Info("unmounted target filesystems before kexec", "root", installedRootPath)
+		}
 	}
 	if err := doKexecExecute(); err != nil {
 		slog.Warn("kexec execute failed, falling back to reboot", "error", err)
