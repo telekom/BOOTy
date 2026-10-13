@@ -1296,6 +1296,36 @@ func assertNoType5NetlinkChanges(t *testing.T, mock *mockOverlayNetlinkOps) {
 	}
 }
 
+func TestType5RouteStateGateway(t *testing.T) {
+	overlay := &OverlayTier{
+		cfg:        &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision"},
+		log:        slog.Default(),
+		netlinkOps: &mockOverlayNetlinkOps{},
+	}
+	for _, tt := range []struct {
+		prefix, gw, want string
+	}{
+		{"10.50.0.0", "", "10.0.0.1"},
+		{"10.50.0.0", "0.0.0.0", "10.0.0.1"},
+		{"10.50.0.0", "10.0.0.7", "10.0.0.7"},
+		{"2001:db8::", "::", "::ffff:10.0.0.1"},
+		{"10.50.0.0", "not-an-ip", ""},
+	} {
+		route := &apipb.EVPNIPPrefixRoute{IpPrefix: tt.prefix, IpPrefixLen: 24, GwAddress: tt.gw}
+		state, ok := overlay.type5RouteState(route, "10.0.0.1", net.ParseIP("10.0.0.1"))
+		if tt.want == "" {
+			if ok {
+				t.Errorf("gateway %q: state %+v, want none", tt.gw, state)
+			}
+			continue
+		}
+		// An IPv6 route needs the 16-byte IPv4-mapped form.
+		if !ok || !state.gw.Equal(net.ParseIP(tt.want)) || isMappedGateway(state.gw) != strings.Contains(tt.prefix, ":") {
+			t.Errorf("gateway %q of %s: got %v (%v), want %s", tt.gw, tt.prefix, state.gw, ok, tt.want)
+		}
+	}
+}
+
 func TestHandleType5RouteInstallsOnlinkGatewayRoute(t *testing.T) {
 	mock := &mockOverlayNetlinkOps{}
 	overlay := &OverlayTier{

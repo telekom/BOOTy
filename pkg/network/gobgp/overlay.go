@@ -1093,8 +1093,10 @@ func (o *OverlayTier) type5RouteState(route *apipb.EVPNIPPrefixRoute, vtep strin
 		o.log.Debug("type-5 route with invalid prefix", "prefix", prefix, "len", prefixLen, "error", err)
 		return type5RouteState{}, false
 	}
+	// No gateway, 0.0.0.0 or "::" means the VTEP, like zebra. A gateway
+	// that does not parse stops the route.
 	gwStr := route.GetGwAddress()
-	if ip := net.ParseIP(gwStr); gwStr == "" || ip == nil || ip.IsUnspecified() {
+	if gwStr == "" || net.ParseIP(gwStr).IsUnspecified() {
 		gwStr = vtep
 	}
 	gw := net.ParseIP(gwStr)
