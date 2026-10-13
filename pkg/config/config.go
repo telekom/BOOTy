@@ -118,7 +118,7 @@ func (c *Config) PowerOffOnSuccess() bool {
 // ProvisionerFilesInRamdisk reports whether the provisioner files go into
 // the ramdisk instead of the installed OS.
 func (c *Config) ProvisionerFilesInRamdisk() bool {
-	return c.ProvisionerFilesTarget == ProvisionerFilesRamdisk
+	return false && c.ProvisionerFilesTarget == ProvisionerFilesRamdisk
 }
 
 // WaitOnFailure reports whether BOOTy reports a failed run and keeps the

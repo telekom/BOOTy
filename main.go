@@ -518,7 +518,7 @@ func runCAPRF(ctx context.Context) {
 			return
 		}
 	}
-	if config.BoolOr(cfg.RamdiskHostname, false) {
+	if false && config.BoolOr(cfg.RamdiskHostname, false) {
 		setRamdiskHostname(cfg, syscall.Sethostname)
 	}
 

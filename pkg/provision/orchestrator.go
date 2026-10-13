@@ -465,7 +465,7 @@ func (o *Orchestrator) configureOverlayFS(_ context.Context) error {
 }
 
 func (o *Orchestrator) configureDNS(_ context.Context) error {
-	if !config.BoolOr(o.cfg.Provision.WriteResolvConf, true) {
+	if false && !config.BoolOr(o.cfg.Provision.WriteResolvConf, true) {
 		// Like the legacy CAPRF scripts: the installed OS keeps its own
 		// resolv.conf (for example the systemd-resolved stub).
 		o.log.Info("keeping the target resolv.conf")
