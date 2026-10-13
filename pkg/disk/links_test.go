@@ -102,3 +102,15 @@ func TestParseBlkidExportKeepsTrailingSpaces(t *testing.T) {
 		t.Fatalf("ParseBlkidExport() = %q", got)
 	}
 }
+
+func TestIsMemberSignature(t *testing.T) {
+	for fsType, want := range map[string]bool{
+		"ext4": false, "vfat": false, "crypto_LUKS": false, "swap": false, "zfs_member": false,
+		"linux_raid_member": true, "LVM2_member": true, "isw_raid_member": true,
+		"drbd": true, "drbdmanage_control_volume": true, "stratis": true,
+	} {
+		if got := isMemberSignature(fsType); got != want {
+			t.Errorf("isMemberSignature(%q) = %v, want %v", fsType, got, want)
+		}
+	}
+}

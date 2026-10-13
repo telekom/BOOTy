@@ -26,11 +26,19 @@ var diskLinkDirs = []struct {
 	{"PARTLABEL", "by-partlabel", false},
 }
 
-// isMemberSignature reports a RAID or LVM member (ID_FS_USAGE raid), such as
-// linux_raid_member or LVM2_member. Its UUID is the array or volume group
-// UUID, which every member shares; udev makes no by-uuid link for it.
+// isMemberSignature reports a member of a RAID, LVM or storage pool (blkid
+// usage "raid"), such as linux_raid_member, LVM2_member, drbd or stratis.
+// Its UUID is the array or pool UUID, which every member shares; udev
+// makes no by-uuid or by-label link for it. zfs_member is a filesystem for
+// blkid, and udev links it.
 func isMemberSignature(fsType string) bool {
-	return strings.HasSuffix(fsType, "_member") || fsType == "drbd"
+	switch fsType {
+	case "zfs_member":
+		return false
+	case "drbd", "drbdmanage_control_volume", "stratis":
+		return true
+	}
+	return strings.HasSuffix(fsType, "_member")
 }
 
 // CreateDiskLinks creates the /dev/disk/by-uuid, by-partuuid, by-label and
