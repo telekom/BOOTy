@@ -103,6 +103,9 @@ type Orchestrator struct {
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
 func NewOrchestrator(cfg *config.MachineConfig, provider config.Provider, diskMgr *disk.Manager) *Orchestrator {
+	if diskMgr != nil {
+		diskMgr.SetQuickWipe(cfg.Provision.Disk.WipeDepth == config.WipeDepthQuick)
+	}
 	return &Orchestrator{
 		cfg:       cfg,
 		provider:  provider,

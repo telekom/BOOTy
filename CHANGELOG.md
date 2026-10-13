@@ -34,6 +34,12 @@ behaviour.
 - Netplan `set-name` renames the single NIC that its `match` selects, and a glob
   or MAC `match` selects the NIC of a static address, like `netplan apply`.
   Before, BOOTy ignored `set-name` and used the first NIC (#641).
+- Disk wipes are thorough: before the partition table, BOOTy stops LVM,
+  dm-crypt and MD devices on the disk, removes PV labels and MD superblocks,
+  wipes the signatures and the first and last MiB of every partition, then the
+  disk edges, and runs `blkdiscard` where supported. A restored old partition
+  table finds nothing. `WIPE_DEPTH=quick` (preset by `CAPRF_LEGACY_COMPAT`)
+  keeps the old disk-only wipe (#667)
 - A provisioner netplan file or `frr.conf` that exists but does not parse
   (malformed YAML, invalid values such as an out-of-range ASN) now fails the
   network setup and the run. Before, BOOTy fell back to the vars. Unknown YAML

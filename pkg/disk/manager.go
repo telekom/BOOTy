@@ -46,6 +46,8 @@ type Manager struct {
 	// legacyCAPRFSelection makes DetectDisk pick the disk like the CAPRF
 	// legacy provisioner. See SetLegacyCAPRFSelection.
 	legacyCAPRFSelection bool
+	// quickWipe limits the wipe to the disk signatures. See SetQuickWipe.
+	quickWipe bool
 }
 
 // SetLegacyCAPRFSelection makes DetectDisk select the target disk like
@@ -132,18 +134,15 @@ func isNoArraysFound(out []byte, err error) bool {
 	return strings.Contains(combined, "no arrays found")
 }
 
-// WipeDisk clears partition-table and filesystem signatures on a single device.
-// This is a quick erase (no data overwrite) suitable for pre-streaming cleanup.
+// WipeDisk clears the partitions and the partition table of a single device.
+// It does not overwrite the data. See wipeDevice and SetQuickWipe.
 func (m *Manager) WipeDisk(ctx context.Context, device string) error {
 	device = strings.TrimSpace(device)
 	if device == "" {
 		return fmt.Errorf("wipe disk: device is required")
 	}
-	slog.Info("wiping disk signatures", "device", device)
-	if out, err := m.cmd.Run(ctx, "sgdisk", "--zap-all", device); err != nil {
-		slog.Debug("sgdisk zap failed (may not be GPT)", "device", device, "output", string(out), "err", err)
-	}
-	if _, err := m.cmd.Run(ctx, "wipefs", "-af", device); err != nil {
+	slog.Info("wiping disk", "device", device, "quick", m.quickWipe)
+	if err := m.wipeDevice(ctx, device); err != nil {
 		return fmt.Errorf("wipefs %s: %w", device, err)
 	}
 	return nil
@@ -163,11 +162,10 @@ func (m *Manager) WipeFilesystemSignatures(ctx context.Context, device string) e
 	return nil
 }
 
-// WipeAllDisks runs wipefs on all block devices excluding loop and CD-ROM.
-// This performs a quick erase: clears partition tables and filesystem signatures
-// without overwriting data.
+// WipeAllDisks wipes all block devices excluding loop and CD-ROM, like
+// WipeDisk.
 func (m *Manager) WipeAllDisks(ctx context.Context) error {
-	slog.Info("wiping all disk signatures (quick erase)")
+	slog.Info("wiping all disks", "quick", m.quickWipe)
 	blockDir := filepath.Join(m.sysfsRoot, "block")
 	entries, err := os.ReadDir(blockDir)
 	if err != nil {
@@ -184,11 +182,7 @@ func (m *Manager) WipeAllDisks(ctx context.Context) error {
 		}
 		dev := "/dev/" + name
 		slog.Info("wiping disk", "device", dev)
-		// Clear partition table with sgdisk --zap-all first, then wipefs.
-		if out, err := m.cmd.Run(ctx, "sgdisk", "--zap-all", dev); err != nil {
-			slog.Debug("sgdisk zap failed (may not be GPT)", "device", dev, "output", string(out))
-		}
-		if _, err := m.cmd.Run(ctx, "wipefs", "-af", dev); err != nil {
+		if err := m.wipeDevice(ctx, dev); err != nil {
 			slog.Warn("wipefs failed", "device", dev, "error", err)
 			errs = append(errs, fmt.Errorf("%s: %w", dev, err))
 		} else {

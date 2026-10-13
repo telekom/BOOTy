@@ -263,6 +263,7 @@ func TestWipeDiskValidationAndCommands(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := newMockCommander()
 			mgr := NewManager(cmd)
+			mgr.SetQuickWipe(true)
 
 			err := mgr.WipeDisk(context.Background(), tt.device)
 			if tt.wantErr != "" {
