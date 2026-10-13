@@ -111,7 +111,7 @@ target when no NVMe or virtio disk qualifies, also without
 The kernel names disks in the order in which it finds them. On a host with
 more than one disk of a bus, the names can change between boots: in a lab run
 (TCAAS-862) the same 40 GB disk was `sda` in one boot and `sdb` in the next.
-Both automatic rules then can select another disk in the next boot:
+These selections can then pick another disk in the next boot:
 
 - `DISK_SELECTION=lsblk` takes the first disk in `lsblk` order. When more
   than one disk of the selected bus (NVMe and virtio, or SCSI and SATA)
@@ -119,8 +119,8 @@ Both automatic rules then can select another disk in the next boot:
   the candidates.
 - `prefer-nvme` takes the largest disk, and the name order decides between
   disks of the same size.
-- `DISK_DEVICE=/dev/sdX` names a disk by its kernel name and has the same
-  problem.
+- `DISK_DEVICE=/dev/sdX` is not an automatic rule, but it names the disk
+  by its kernel name and has the same problem.
 
 On hosts with more than one disk, select the root disk by a stable value:
 

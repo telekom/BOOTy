@@ -507,7 +507,7 @@ func (m *Manager) detectDiskLegacyCAPRF(ctx context.Context, minSizeGB int) (str
 		// The kernel names disks of one bus in probe order, which can change
 		// between boots (lab: the 40 GB disk was sda in one boot, sdb in the
 		// next). The lsblk order then picks another disk.
-		slog.Warn("lsblk disk selection is ambiguous: several disks of the same bus qualify and their names can change between boots; select the root disk with DISK_SERIAL_NUMBER or DISK_DEVICE",
+		slog.Warn("lsblk disk selection is ambiguous: several disks of the same bus qualify and their names can change between boots; select the root disk with DISK_SERIAL_NUMBER, and exclude smaller disks with MIN_DISK_SIZE_GB",
 			"selected", firstBus[0], "candidates", strings.Join(firstBus, ","))
 	}
 	slog.Info("selected disk", "device", candidates[0])

@@ -131,11 +131,13 @@ func TestDetectDiskLegacyCAPRFRejectsOverflowingMinimum(t *testing.T) {
 func TestDetectDiskLegacyCAPRFWarnsOnAmbiguousBus(t *testing.T) {
 	for name, tt := range map[string]struct {
 		byMajors map[string]string
+		want     string
 		warn     bool
 	}{
-		"two SCSI disks":           {byMajors: map[string]string{"8": "/dev/sda 42949672960\n/dev/sdb 42949672960\n"}, warn: true},
-		"one NVMe, two SCSI disks": {byMajors: map[string]string{"259,253": "/dev/nvme0n1 42949672960\n", "8": "/dev/sda 1\n/dev/sdb 1\n"}},
-		"one SCSI disk":            {byMajors: map[string]string{"8": "/dev/sda 42949672960\n"}},
+		"two SCSI disks":           {byMajors: map[string]string{"8": "/dev/sda 42949672960\n/dev/sdb 42949672960\n"}, want: "/dev/sda", warn: true},
+		"two NVMe disks":           {byMajors: map[string]string{"259,253": "/dev/nvme0n1 42949672960\n/dev/nvme1n1 42949672960\n"}, want: "/dev/nvme0n1", warn: true},
+		"one NVMe, two SCSI disks": {byMajors: map[string]string{"259,253": "/dev/nvme0n1 42949672960\n", "8": "/dev/sda 1\n/dev/sdb 1\n"}, want: "/dev/nvme0n1"},
+		"one SCSI disk":            {byMajors: map[string]string{"8": "/dev/sda 42949672960\n"}, want: "/dev/sda"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var logs bytes.Buffer
@@ -145,11 +147,15 @@ func TestDetectDiskLegacyCAPRFWarnsOnAmbiguousBus(t *testing.T) {
 
 			mgr := NewManager(lsblkCommander{byMajors: tt.byMajors})
 			mgr.SetLegacyCAPRFSelection(true)
-			if _, err := mgr.DetectDisk(context.Background(), 0); err != nil {
+			got, err := mgr.DetectDisk(context.Background(), 0)
+			if err != nil {
 				t.Fatalf("DetectDisk() = %v", err)
 			}
-			if got := strings.Contains(logs.String(), "lsblk disk selection is ambiguous"); got != tt.warn {
-				t.Fatalf("ambiguity warning = %v, want %v. logs:\n%s", got, tt.warn, logs.String())
+			if got != tt.want {
+				t.Fatalf("DetectDisk() = %q, want %q", got, tt.want)
+			}
+			if warned := strings.Contains(logs.String(), "lsblk disk selection is ambiguous"); warned != tt.warn {
+				t.Fatalf("ambiguity warning = %v, want %v. logs:\n%s", warned, tt.warn, logs.String())
 			}
 		})
 	}
