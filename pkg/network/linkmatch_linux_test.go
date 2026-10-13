@@ -3,7 +3,10 @@
 package network
 
 import (
+	"context"
+	"errors"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/vishvananda/netlink"
@@ -41,12 +44,12 @@ func TestResolveLinkMatchInjectedLinks(t *testing.T) {
 		{LinkMatch{Name: "enp*", MAC: "02:00:00:00:00:02"}, "enp1s4"},
 		{LinkMatch{Name: "ens1f0*"}, "ens1f0np0"},
 	} {
-		if got, err := ResolveLinkMatch(tt.m); err != nil || got != tt.want {
+		if got, err := ResolveLinkMatch(context.Background(), tt.m); err != nil || got != tt.want {
 			t.Errorf("ResolveLinkMatch(%+v) = %q, %v, want %q", tt.m, got, err, tt.want)
 		}
 	}
 	for _, m := range []LinkMatch{{Name: "enp*"}, {Name: "wl*"}} {
-		if got, err := ResolveLinkMatch(m); err == nil {
+		if got, err := ResolveLinkMatch(context.Background(), m); err == nil {
 			t.Errorf("ResolveLinkMatch(%+v) = %q, want an error", m, got)
 		}
 	}
@@ -62,11 +65,33 @@ func TestApplyLinkRenamesRejectsExcludedNames(t *testing.T) {
 		return nil, nil
 	}
 	for _, name := range []string{"local0", "br-prov", "bond1", "vx.3000"} {
-		if err := ApplyLinkRenames([]LinkMatch{{Name: "enp1*", SetName: name}}); err == nil {
+		if err := ApplyLinkRenames(context.Background(), []LinkMatch{{Name: "enp1*", SetName: name}}); err == nil {
 			t.Errorf("set-name %q: no error", name)
 		}
 	}
 	if listed {
 		t.Fatal("NICs were listed for a rejected set-name")
+	}
+}
+
+// A failed rename undoes the renames before it, newest first.
+func TestUndoRenamesJoinsErrors(t *testing.T) {
+	err := undoRenames(nil, errors.New("rename failed"))
+	if err == nil || err.Error() != "rename failed" {
+		t.Fatalf("undoRenames without renames = %v", err)
+	}
+	// Undoing a rename of a link that does not exist reports both errors.
+	err = undoRenames([][2]string{{"enp1s0", "booty-test-missing"}}, errors.New("rename failed"))
+	if err == nil || !strings.Contains(err.Error(), "rename failed") || !strings.Contains(err.Error(), "undo rename enp1s0 to booty-test-missing") {
+		t.Fatalf("undoRenames = %v, want both errors", err)
+	}
+}
+
+// A canceled setup stops the NIC detection of a rename at once.
+func TestApplyLinkRenamesCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := ApplyLinkRenames(ctx, []LinkMatch{{Name: "enp1*", SetName: "hbn"}}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ApplyLinkRenames = %v, want context.Canceled", err)
 	}
 }

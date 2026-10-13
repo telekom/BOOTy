@@ -1362,7 +1362,7 @@ func TestPrepareLinkLayersResolvesStaticMatch(t *testing.T) {
 		{"several matches", "", errors.New("selects 2 NICs"), ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			resolveLinkMatch = func(network.LinkMatch) (string, error) { return tt.nic, tt.err }
+			resolveLinkMatch = func(context.Context, network.LinkMatch) (string, error) { return tt.nic, tt.err }
 			netCfg := &network.Config{StaticIP: "10.0.0.5/24", StaticMatch: &network.LinkMatch{Name: "enp*"}}
 			if _, err := prepareLinkLayers(context.Background(), netCfg); err != nil {
 				t.Fatalf("prepareLinkLayers: %v", err)

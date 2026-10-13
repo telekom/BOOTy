@@ -3,6 +3,7 @@
 package network
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,8 +16,8 @@ import (
 // physicalLinks returns the NICs that DetectPhysicalNICs finds, with
 // their MACs. It uses the same NIC rules and the same wait for settling
 // ContainerLab names, so a renamed ContainerLab veth is a NIC here too.
-func physicalLinks() ([]LinkCandidate, error) {
-	names, err := DetectPhysicalNICs()
+func physicalLinks(ctx context.Context) ([]LinkCandidate, error) {
+	names, err := DetectPhysicalNICsContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -35,16 +36,19 @@ func physicalLinks() ([]LinkCandidate, error) {
 
 // ApplyLinkRenames renames NICs like netplan set-name. Like netplan, a
 // rename needs exactly one matching NIC; other cases are logged and skipped.
-func ApplyLinkRenames(renames []LinkMatch) error {
+// When a rename fails, the renames done before it are undone in reverse
+// order, so a failed setup leaves the NIC names as they were.
+func ApplyLinkRenames(ctx context.Context, renames []LinkMatch) error {
+	var done [][2]string // from, to
 	for _, r := range renames {
 		// BOOTy finds NICs by name; a NIC renamed to an excluded name
 		// (lo*, br*, bond*, vx*, ...) would no longer be a NIC for it.
 		if isExcluded(r.SetName) {
-			return fmt.Errorf("netplan set-name %q: BOOTy does not treat names with this prefix as NICs (%v)", r.SetName, excludedPrefixes)
+			return undoRenames(done, fmt.Errorf("netplan set-name %q: BOOTy does not treat names with this prefix as NICs (%v)", r.SetName, excludedPrefixes))
 		}
-		links, err := physicalLinks()
+		links, err := physicalLinks(ctx)
 		if err != nil {
-			return err
+			return undoRenames(done, err)
 		}
 		names := r.Matches(links)
 		if len(names) != 1 {
@@ -55,11 +59,27 @@ func ApplyLinkRenames(renames []LinkMatch) error {
 			continue
 		}
 		if err := renameLink(names[0], r.SetName); err != nil {
-			return err
+			return undoRenames(done, err)
 		}
+		done = append(done, [2]string{names[0], r.SetName})
 		slog.Info("renamed NIC like netplan set-name", "from", names[0], "to", r.SetName)
 	}
 	return nil
+}
+
+// undoRenames reverts the done renames in reverse order and joins the
+// errors of the rollback to err.
+func undoRenames(done [][2]string, err error) error {
+	errs := []error{err}
+	for i := len(done) - 1; i >= 0; i-- {
+		from, to := done[i][0], done[i][1]
+		if rerr := renameLink(to, from); rerr != nil {
+			errs = append(errs, fmt.Errorf("undo rename %s to %s: %w", from, to, rerr))
+		} else {
+			slog.Info("undid netplan set-name after a failed rename", "from", to, "to", from)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func renameLink(from, to string) error {
@@ -86,8 +106,8 @@ func renameLink(from, to string) error {
 }
 
 // ResolveLinkMatch returns the single physical NIC that m selects.
-func ResolveLinkMatch(m LinkMatch) (string, error) {
-	links, err := physicalLinks()
+func ResolveLinkMatch(ctx context.Context, m LinkMatch) (string, error) {
+	links, err := physicalLinks(ctx)
 	if err != nil {
 		return "", err
 	}

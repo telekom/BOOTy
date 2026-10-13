@@ -1015,11 +1015,11 @@ var resolveLinkMatch = network.ResolveLinkMatch
 
 func prepareLinkLayers(ctx context.Context, netCfg *network.Config) (*linkLayerCleanup, error) {
 	cleanup := &linkLayerCleanup{}
-	if err := network.ApplyLinkRenames(netCfg.LinkRenames); err != nil {
+	if err := network.ApplyLinkRenames(ctx, netCfg.LinkRenames); err != nil {
 		return nil, fmt.Errorf("netplan set-name: %w", err)
 	}
 	if netCfg.StaticIface == "" && netCfg.StaticMatch != nil {
-		name, err := resolveLinkMatch(*netCfg.StaticMatch)
+		name, err := resolveLinkMatch(ctx, *netCfg.StaticMatch)
 		if err != nil {
 			slog.Warn("netplan match for the static address did not select one NIC, using the first NIC", "error", err)
 		} else {
