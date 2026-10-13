@@ -76,6 +76,7 @@ topology:
         - ip link set Vrf_underlay up
         - ip link set ens1f0np0 master Vrf_underlay mtu 9100 up
         - ip link set ens1f1np1 master Vrf_underlay mtu 9100 up
+        - ip link set ens1f2np2 master Vrf_underlay mtu 9100 up
         - ip link add dum.underlay type dummy
         - ip link set dum.underlay master Vrf_underlay mtu 9100 up
         - ip addr add 192.0.2.18/32 dev dum.underlay
@@ -98,6 +99,19 @@ topology:
         - dd if=/dev/zero of=/tmp/disk.img bs=1M count=0 seek=2048
         - sh -c 'test -b /dev/loop0 || mknod -m 660 /dev/loop0 b 7 0'
         - losetup /dev/loop0 /tmp/disk.img
+
+    # eBGP test peer (AS 65510) of BOOTy and the shadow node. It shows the
+    # route-maps: DENY-TAG-FABRIC-OUT keeps the fabric routes from it, and
+    # TAG-FABRIC-IN (local-pref 90 on the leaf path) makes its longer path
+    # to 198.18.0.0/24 the best one.
+    tester:
+      kind: linux
+      image: quay.io/frrouting/frr:10.3.1
+      binds:
+        - prodtpl-tester.frr.conf:/etc/frr/frr.conf:ro
+        - daemons:/etc/frr/daemons:ro
+      exec:
+        - sh -c 'for i in 1 2; do ip link set dev eth$i mtu 9100 up; done'
 
     # IPv6 CAPRF mock behind the L3VNI gateway.
     caprf6:
@@ -148,6 +162,8 @@ topology:
     - endpoints: ["leaf01:eth5", "dcgw01:eth1"]
     - endpoints: ["leaf01:eth6", "dcgw02:eth1"]
     - endpoints: ["dcgw01:eth2", "caprf6:eth1"]
+    - endpoints: ["tester:eth1", "booty:ens1f2np2"]
+    - endpoints: ["tester:eth2", "shadow:ens1f2np2"]
     - endpoints: ["leaf01:eth7", "native:ens1f0np0"]
     - endpoints: ["leaf01:eth8", "native:ens1f1np1"]
     - endpoints: ["leaf01:eth9", "native-vrf:ens1f0np0"]
