@@ -219,7 +219,7 @@ func mappedGatewayRoute(route *netlink.Route, del bool) error {
 		req.AddData(nl.NewRtAttr(unix.RTA_PRIORITY, nl.Uint32Attr(uint32(route.Priority))))
 	}
 	if _, err := req.Execute(unix.NETLINK_ROUTE, 0); err != nil {
-		return fmt.Errorf("route %s via %s: %w", route.Dst, net.IP(route.Gw.To16()), err)
+		return fmt.Errorf("route %s via %s: %w", route.Dst, gatewayKey(route.Gw), err)
 	}
 	return nil
 }
@@ -241,7 +241,7 @@ func mappedGatewayNeigh(n *netlink.Neigh, del bool) error {
 		req.AddData(nl.NewRtAttr(unix.NDA_LLADDR, n.HardwareAddr))
 	}
 	if _, err := req.Execute(unix.NETLINK_ROUTE, 0); err != nil {
-		return fmt.Errorf("neighbor %s: %w", net.IP(n.IP.To16()), err)
+		return fmt.Errorf("neighbor %s: %w", gatewayKey(n.IP), err)
 	}
 	return nil
 }

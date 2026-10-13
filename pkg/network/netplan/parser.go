@@ -487,23 +487,9 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 	}
 	cfg.EVPNL3VNIs = frr.L3VNIs
 	cfg.BlackholeRoutes = frr.BlackholeRoutes
-	if cfg.ProvisionVNI != 0 && slices.Contains(frr.L3VNIs, cfg.ProvisionVNI) {
-		cfg.EVPNType5Only = true
-		cfg.Type5Networks = type5Networks(frr.Model, cfg.ProvisionVNI)
-	}
 	cfg.BGPSessions = frr.Sessions
 	cfg.BGPMultipathRelax = frr.MultipathRelax
-	if frr.AdvertiseAllVNI {
-		// advertise-all-vni only yields Type-2/Type-3 routes for L2VNIs. When
-		// the provisioning VNI is an L3VNI the fabric is pure Type-5, as with
-		// the FRR-based legacy deployer, so BOOTy must not originate MAC/IP or
-		// IMET routes for it.
-		if cfg.ProvisionVNI != 0 && slices.Contains(frr.L3VNIs, cfg.ProvisionVNI) {
-			slog.Info("netplan: provision VNI is an FRR L3VNI, using Type-5 only", "vni", cfg.ProvisionVNI)
-		} else {
-			cfg.EVPNL2Enabled = true
-		}
-	}
+	applyEVPNMode(frr, cfg)
 	cfg.InterfaceNames = append(cfg.InterfaceNames, frr.UnnumberedPeers...)
 	hasUnnumbered := len(frr.UnnumberedPeers) > 0
 	hasNumbered := len(frr.NumberedPeers) > 0
@@ -518,6 +504,19 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 		cfg.BGPPeerMode = network.PeerModeNumbered
 		cfg.BGPNeighbors = strings.Join(frr.NumberedPeers, ",")
 	}
+}
+
+// applyEVPNMode selects the EVPN mode of the provision VNI. An L3VNI gets
+// only Type-5 routes, like FRR (advertise-all-vni yields Type-2/Type-3
+// routes for L2VNIs only), and its "network" lines are originated.
+func applyEVPNMode(frr *FRRParams, cfg *network.Config) {
+	if cfg.ProvisionVNI != 0 && slices.Contains(frr.L3VNIs, cfg.ProvisionVNI) {
+		slog.Info("netplan: provision VNI is an FRR L3VNI, using Type-5 only", "vni", cfg.ProvisionVNI)
+		cfg.EVPNType5Only = true
+		cfg.Type5Networks = type5Networks(frr.Model, cfg.ProvisionVNI)
+		return
+	}
+	cfg.EVPNL2Enabled = frr.AdvertiseAllVNI
 }
 
 // joinUnique deduplicates a string slice and joins with commas.
