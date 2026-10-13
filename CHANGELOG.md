@@ -175,6 +175,9 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 ### Features
 
+- GoBGP mode opens one BGP session per `frr.conf` neighbor with its own
+  attributes (peer-groups, `remote-as internal`, `local-as`, timers, address
+  families, VRF), also on FRR uplinks that netplan does not list (#643).
 - `MODE=decommission`: wipe all disks (best effort), remove every EFI
   `BootOrder` entry, report success (#586)
 - `SUCCESS_ACTION` (`reboot`|`poweroff`), `FAILURE_ACTION` (`reboot`|`wait`) and
