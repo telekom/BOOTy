@@ -1693,7 +1693,8 @@ jobs:
             TestProdTplType5Origination \
             TestProdTplType5CAPRFOverIPv6 \
             TestProdTplBFDSessions \
-            TestProdTplBFDFailover; do
+            TestProdTplBFDFailover \
+            TestProdTplLocalASLoopCheck; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl.log; then
               echo "::error::${expected} did not pass"
               exit 1

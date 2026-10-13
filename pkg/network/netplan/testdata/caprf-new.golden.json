@@ -52,9 +52,9 @@
   "BGPMinPeers": 0,
   "BGPSessions": [
     {
-      "Name": "hbn",
+      "Name": "eth1",
       "Interface": true,
-      "VRF": "Vrf_underlay",
+      "VRF": "",
       "Internal": false,
       "RemoteASN": 0,
       "LocalASN": 0,
@@ -71,10 +71,15 @@
       "BFDProfile": "",
       "BFDTransmitMS": 0,
       "BFDReceiveMS": 0,
-      "BFDDetectMult": 0
+      "BFDDetectMult": 0,
+      "RouteMaps": null
     }
   ],
   "BGPMultipathRelax": false,
+  "BGPRouteMaps": [],
+  "BGPCommunityLists": [],
+  "BGPRouteMapIn": "",
+  "BGPRouteMapOut": "",
   "BGPLocalAS": 0,
   "BGPNeighborVRF": "",
   "BGPConnectRetry": 0,
@@ -99,6 +104,14 @@
   ],
   "LoopbackAddrs": null,
   "BlackholeRoutes": null,
-  "Type5Networks": null,
+  "EVPNImportRTs": [
+    "65000:1000"
+  ],
+  "EVPNExportRTs": [
+    "65000:1000"
+  ],
+  "Type5Networks": [
+    "192.168.4.11/32"
+  ],
   "VLANs": null
 }

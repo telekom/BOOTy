@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"slices"
 	"strings"
 	"time"
 
@@ -97,6 +98,16 @@ type Config struct {
 	BFDTransmitMS uint32
 	BFDReceiveMS  uint32
 	BFDDetectMult uint32
+	// RouteMaps and CommunityLists define the route-maps of the sessions;
+	// RouteMapIn and RouteMapOut apply to the native peers.
+	RouteMaps      []network.RouteMap
+	CommunityLists []network.CommunityList
+	RouteMapIn     string
+	RouteMapOut    string
+	// ImportRTs and ExportRTs are the EVPN route targets ("ASN:value");
+	// empty lists use VPNRT or ASN:VNI.
+	ImportRTs []string
+	ExportRTs []string
 	// InstallRoutes runs the FIB writer, like zebra.
 	InstallRoutes bool
 	// FastExternalFailover stops unnumbered sessions on carrier loss.
@@ -175,6 +186,12 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		ConnectRetry:         uint64(netCfg.BGPConnectRetry),
 		InstallRoutes:        netCfg.BGPInstallRoutes,
 		FastExternalFailover: fastExternalFailover(netCfg),
+		RouteMaps:            netCfg.BGPRouteMaps,
+		CommunityLists:       netCfg.BGPCommunityLists,
+		RouteMapIn:           netCfg.BGPRouteMapIn,
+		RouteMapOut:          netCfg.BGPRouteMapOut,
+		ImportRTs:            netCfg.EVPNImportRTs,
+		ExportRTs:            netCfg.EVPNExportRTs,
 		BFDTransmitMS:        netCfg.BFDTransmitMS,
 		BFDReceiveMS:         netCfg.BFDReceiveMS,
 		BFDDetectMult:        netCfg.BFDDetectMult,
@@ -258,6 +275,11 @@ func (c *Config) Validate() error {
 	}
 	if err := c.validateTimers(); err != nil {
 		return err
+	}
+	for _, spec := range slices.Concat(c.ImportRTs, c.ExportRTs) {
+		if _, _, err := ParseRouteTarget(spec); err != nil {
+			return fmt.Errorf("EVPN route target: %w", err)
+		}
 	}
 	if (c.BFDTransmitMS == 0) != (c.BFDReceiveMS == 0) {
 		return fmt.Errorf("BFD_TRANSMIT_MS and BFD_RECEIVE_MS must be set together")

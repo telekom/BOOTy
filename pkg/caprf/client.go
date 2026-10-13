@@ -1310,6 +1310,10 @@ func applyNetworkStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"UNDERLAY_DUMMY_NAME": &cfg.Network.EVPN.UnderlayDummyName,
 		"OVERLAY_VRF_NAME":    &cfg.Network.VRF.OverlayName,
 		"BGP_NEIGHBOR_VRF":    &cfg.Network.BGP.NeighborVRF,
+		"BGP_ROUTE_MAP_IN":    &cfg.Network.BGP.RouteMapIn,
+		"BGP_ROUTE_MAP_OUT":   &cfg.Network.BGP.RouteMapOut,
+		"EVPN_RT_IMPORT":      &cfg.Network.EVPN.ImportRouteTargets,
+		"EVPN_RT_EXPORT":      &cfg.Network.EVPN.ExportRouteTargets,
 	}
 
 	if ptr, ok := strFields[key]; ok {
@@ -1712,6 +1716,14 @@ func applyNetworkOptionVar(cfg *config.MachineConfig, key, value string) (bool, 
 		cfg.Network.BGP.AllowASIn = new(uint32(n))
 	case "MTU":
 		if err := setIntField(&cfg.Network.MTU, value); err != nil {
+			return true, fmt.Errorf("invalid %s: %w", key, err)
+		}
+	case "BGP_ROUTE_MAPS":
+		if err := unmarshalJSONVar(value, &cfg.Network.BGP.RouteMaps); err != nil {
+			return true, fmt.Errorf("invalid %s: %w", key, err)
+		}
+	case "BGP_COMMUNITY_LISTS":
+		if err := unmarshalJSONVar(value, &cfg.Network.BGP.CommunityLists); err != nil {
 			return true, fmt.Errorf("invalid %s: %w", key, err)
 		}
 	default:

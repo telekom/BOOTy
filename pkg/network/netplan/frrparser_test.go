@@ -381,13 +381,13 @@ func TestParseFRRConfigWarnsUnapplied(t *testing.T) {
 	warned := func(stmt string) bool {
 		return strings.Contains(out, `statement="`+stmt+`"`) || strings.Contains(out, "statement="+stmt+" ")
 	}
-	for _, stmt := range []string{"route-map", "soft-reconfiguration inbound", "[no] bgp ebgp-requires-policy", "[no] bgp suppress-duplicates"} {
+	for _, stmt := range []string{"soft-reconfiguration inbound", "[no] bgp ebgp-requires-policy", "[no] bgp suppress-duplicates"} {
 		if !warned(stmt) {
 			t.Errorf("no warning for %q in:\n%s", stmt, out)
 		}
 	}
 	// GoBGP mode applies these.
-	for _, stmt := range []string{"allowas-in", "bgp bestpath as-path multipath-relax"} {
+	for _, stmt := range []string{"allowas-in", "bgp bestpath as-path multipath-relax", "route-map"} {
 		if warned(stmt) {
 			t.Errorf("warning for the applied %q in:\n%s", stmt, out)
 		}

@@ -1088,6 +1088,12 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 		MTU:               cfg.Network.MTU,
 		OverlayVRFTableID: cfg.Network.VRF.OverlayTableID,
 		BGPLocalAS:        cfg.Network.BGP.LocalAS,
+		BGPRouteMaps:      cfg.Network.BGP.RouteMaps,
+		BGPCommunityLists: cfg.Network.BGP.CommunityLists,
+		BGPRouteMapIn:     cfg.Network.BGP.RouteMapIn,
+		BGPRouteMapOut:    cfg.Network.BGP.RouteMapOut,
+		EVPNImportRTs:     splitList(cfg.Network.EVPN.ImportRouteTargets),
+		EVPNExportRTs:     splitList(cfg.Network.EVPN.ExportRouteTargets),
 		BGPNeighborVRF:    cfg.Network.BGP.NeighborVRF,
 		BGPConnectRetry:   cfg.Network.BGP.ConnectRetry,
 		BGPAuthPassword:   cfg.Network.BGP.AuthPassword,
@@ -1132,6 +1138,9 @@ func applyBGPOptions(o *config.BGPConfig, n *network.Config) {
 		if o.NeighborVRF != "" && !s.Interface && s.VRF == "" {
 			s.VRF = o.NeighborVRF
 		}
+		if o.RouteMapIn != "" || o.RouteMapOut != "" {
+			s.RouteMaps = explicitRouteMaps(s, o.RouteMapIn, o.RouteMapOut)
+		}
 		if s.BFD && o.BFDTransmitMS > 0 {
 			s.BFDTransmitMS, s.BFDReceiveMS = o.BFDTransmitMS, o.BFDReceiveMS
 		}
@@ -1139,6 +1148,32 @@ func applyBGPOptions(o *config.BGPConfig, n *network.Config) {
 			s.BFDDetectMult = o.BFDDetectMultiplier
 		}
 	}
+}
+
+// explicitRouteMaps applies BGP_ROUTE_MAP_IN/OUT to every activated family
+// of a session; an unset direction keeps the frr.conf route-map.
+func explicitRouteMaps(s *network.BGPSession, in, out string) []network.SessionRouteMaps {
+	var fams []string
+	for f, on := range map[string]bool{"ipv4-unicast": s.IPv4Unicast, "ipv6-unicast": s.IPv6Unicast, "l2vpn-evpn": s.L2VPNEVPN} {
+		if on {
+			fams = append(fams, f)
+		}
+	}
+	slices.Sort(fams)
+	maps := make([]network.SessionRouteMaps, 0, len(fams))
+	for _, f := range fams {
+		rm := network.SessionRouteMaps{Family: f, In: in, Out: out}
+		for _, old := range s.RouteMaps {
+			if old.Family == f && in == "" {
+				rm.In = old.In
+			}
+			if old.Family == f && out == "" {
+				rm.Out = old.Out
+			}
+		}
+		maps = append(maps, rm)
+	}
+	return maps
 }
 
 func boolOr(v *bool, def bool) bool {
@@ -1424,6 +1459,7 @@ func mergeNetplanConfig(dst, src *network.Config) {
 		dst.BGPSessions = src.BGPSessions
 		dst.BGPMultipathRelax = src.BGPMultipathRelax
 	}
+	mergeBGPPolicy(dst, src)
 }
 
 // nativeWins keeps a set native value; an unset one takes the parsed value.
@@ -1464,6 +1500,25 @@ func mergeInferredEVPNMode(dst, src *network.Config) {
 	}
 	if src.EVPNL2Enabled && !dst.EVPNType5Only {
 		dst.EVPNL2Enabled = true
+	}
+}
+
+// mergeBGPPolicy adds the frr.conf route-maps, community-lists and route
+// targets. Values from the vars win: a vars route-map or community-list of
+// the same name, and vpn_rt or explicit route target lists.
+func mergeBGPPolicy(dst, src *network.Config) {
+	for _, rm := range src.BGPRouteMaps {
+		if !slices.ContainsFunc(dst.BGPRouteMaps, func(d network.RouteMap) bool { return d.Name == rm.Name }) {
+			dst.BGPRouteMaps = append(dst.BGPRouteMaps, rm)
+		}
+	}
+	for _, cl := range src.BGPCommunityLists {
+		if !slices.ContainsFunc(dst.BGPCommunityLists, func(d network.CommunityList) bool { return d.Name == cl.Name }) {
+			dst.BGPCommunityLists = append(dst.BGPCommunityLists, cl)
+		}
+	}
+	if dst.VPNRT == "" && len(dst.EVPNImportRTs) == 0 && len(dst.EVPNExportRTs) == 0 {
+		dst.EVPNImportRTs, dst.EVPNExportRTs = src.EVPNImportRTs, src.EVPNExportRTs
 	}
 }
 

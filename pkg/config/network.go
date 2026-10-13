@@ -1,5 +1,7 @@
 package config
 
+import "github.com/telekom/BOOTy/pkg/network"
+
 // MaxNetworkWaitAttempts bounds NETWORK_WAIT_MAX_ATTEMPTS (about 23 days of
 // 20 second rounds), so the wait time cannot overflow.
 const MaxNetworkWaitAttempts = 100000
@@ -216,6 +218,20 @@ type BGPConfig struct {
 	// Default: 0 (BFD off; FRR's default is 300)
 	BFDReceiveMS uint32 `yaml:"bfdReceiveMS" json:"bfdReceiveMS"`
 
+	// RouteMaps and CommunityLists define route-maps like FRR, with the
+	// subset BOOTy implements (permit/deny entries in sequence order,
+	// "match community", "set local-preference", "set community
+	// [additive]", implicit deny). A route-map of the same name in the
+	// provisioner frr.conf is replaced.
+	RouteMaps      []network.RouteMap      `yaml:"routeMaps,omitempty" json:"routeMaps,omitempty"`
+	CommunityLists []network.CommunityList `yaml:"communityLists,omitempty" json:"communityLists,omitempty"`
+
+	// RouteMapIn and RouteMapOut apply to every peer in every address
+	// family, like "neighbor X route-map M in|out". An explicit value also
+	// replaces the frr.conf route-maps of the sessions.
+	RouteMapIn  string `yaml:"routeMapIn" json:"routeMapIn"`
+	RouteMapOut string `yaml:"routeMapOut" json:"routeMapOut"`
+
 	// BFDDetectMultiplier is the BFD detect multiplier (GoBGP), 2 to 255.
 	// An explicit value replaces the multiplier of frr.conf BFD sessions.
 	// Default: 0 (3, or the frr.conf profile value)
@@ -267,6 +283,13 @@ type EVPNConfig struct {
 	// provision VNI to a VRF (L3VNI), like FRR; an explicit value wins.
 	// Default: unset (false without an L3VNI)
 	Type5Only *bool `yaml:"type5Only,omitempty" json:"type5Only,omitempty"`
+
+	// ImportRouteTargets and ExportRouteTargets are comma-separated EVPN
+	// route targets ("ASN:value"), like FRR "route-target import|export".
+	// They win over vpnRT and over the provisioner frr.conf.
+	// Default: "" (vpnRT, the frr.conf value, or ASN:VNI)
+	ImportRouteTargets string `yaml:"importRouteTargets" json:"importRouteTargets"`
+	ExportRouteTargets string `yaml:"exportRouteTargets" json:"exportRouteTargets"`
 
 	// Type5Networks is a comma-separated list of prefixes that BOOTy
 	// originates as EVPN Type-5 routes, like FRR "network" lines with

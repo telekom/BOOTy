@@ -219,9 +219,8 @@ The FRR stack (`NETWORK_MODE=frr`) does not use `BGP_SESSIONS`; BOOTy logs
 a warning when it is set there.
 
 These statements are parsed but not applied yet, and BOOTy logs one
-warning per statement: `route-map ... in|out`,
-`soft-reconfiguration inbound`, `[no] bgp ebgp-requires-policy` and
-`[no] bgp suppress-duplicates`.
+warning per statement: `soft-reconfiguration inbound`,
+`[no] bgp ebgp-requires-policy` and `[no] bgp suppress-duplicates`.
 
 Native config and parsed files merge like this: a native list
 (`network.bgp.sessions`) replaces the parsed list as a whole, with one info

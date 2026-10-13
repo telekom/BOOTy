@@ -46,6 +46,8 @@ type Session struct {
 	// BFD and BFDProfile request a BFD session.
 	BFD        bool
 	BFDProfile string
+	// RouteMaps are the route-maps per activated address family.
+	RouteMaps []SessionRouteMaps
 	// BFD timers from the profile, with the FRR defaults for unset
 	// values and for an unknown profile (doc/user/bfd.rst).
 	BFDTransmitMS uint32
@@ -161,6 +163,7 @@ func (c *Config) session(r *Router, n *Neighbor) (Session, error) {
 	s.Families = families(r, n)
 	s.AllowASIn = allowASIn(r, n)
 	s.FastExternalFailover = r.FastExternalFailover == nil || *r.FastExternalFailover
+	s.RouteMaps = routeMaps(r, n, s.Families)
 	return s, nil
 }
 
@@ -268,6 +271,46 @@ func allowASIn(r *Router, n *Neighbor) int {
 		}
 	}
 	return count
+}
+
+// SessionRouteMaps are the "neighbor X route-map M in|out" of a session in
+// one address family. A value of the peer wins over its peer-group.
+type SessionRouteMaps struct {
+	Family string
+	In     string
+	Out    string
+}
+
+func routeMaps(r *Router, n *Neighbor, fams []string) []SessionRouteMaps {
+	var out []SessionRouteMaps
+	for _, f := range fams {
+		rm := SessionRouteMaps{Family: f}
+		for i := range r.AddressFamilies {
+			if af := &r.AddressFamilies[i]; familyName(af) == f {
+				// The group first and the peer last, so the peer wins.
+				rm.apply(af, n.Group)
+				rm.apply(af, n.Name)
+			}
+		}
+		if rm.In != "" || rm.Out != "" {
+			out = append(out, rm)
+		}
+	}
+	return out
+}
+
+func (rm *SessionRouteMaps) apply(af *AddressFamily, name string) {
+	for _, an := range af.Neighbors {
+		if name == "" || an.Name != name {
+			continue
+		}
+		if an.RouteMapIn != "" {
+			rm.In = an.RouteMapIn
+		}
+		if an.RouteMapOut != "" {
+			rm.Out = an.RouteMapOut
+		}
+	}
 }
 
 func familyName(af *AddressFamily) string {
