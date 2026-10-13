@@ -33,7 +33,7 @@ BOOTy's supported runtime flow is CAPRF-compatible provisioning driven by `/depl
 1. A Redfish BMC mounts an ISO that contains a kernel, the BOOTy initramfs, and the `/deploy/vars` file.
 2. BOOTy reads `/deploy/vars` for the machine config, the image URLs, and the CAPRF endpoints. [docs/configuration.md](docs/configuration.md) lists every key.
 3. BOOTy sets up the ramdisk network: **GoBGP/EVPN** (`NETWORK_MODE=gobgp`), **FRR/EVPN** (BGP underlay), **static** IP, or **DHCP**. FRR and static setup fall back to DHCP when they fail. See [docs/networking.md](docs/networking.md).
-4. The provisioning pipeline validates input, cleans storage state, prepares NVMe namespaces, detects disks, applies the partition layout, streams the image, mounts shared data, optionally configures target overlayFS and sysexts, configures the OS, installs EFI fallbacks, and injects cloud-init. After a successful run, BOOTy tries kexec into the installed kernel and falls back to a hard reboot. It powers off instead when CAPRF legacy compatibility is on, or when an A/B `preserveExisting` upgrade needs kexec and kexec is not available.
+4. The provisioning pipeline validates input, cleans storage state, prepares NVMe namespaces, detects disks, applies the partition layout, streams the image, mounts shared data, optionally configures target overlayFS and sysexts, configures the OS, installs EFI fallbacks, and injects cloud-init. After a successful run, BOOTy tries kexec into the installed kernel and falls back to a hard reboot. It powers off instead with `SUCCESS_ACTION=poweroff` (preset by CAPRF legacy compatibility), or when an A/B `preserveExisting` upgrade needs kexec and kexec is not available.
 5. BOOTy sends status callbacks and, with `LOG_URL`, its log lines to the CAPRF controller. See [docs/caprf-integration.md](docs/caprf-integration.md).
 
 PXE or iPXE can still be used by an external boot environment to load the
@@ -274,9 +274,10 @@ dns_resolver="8.8.8.8"
 Comments must be on their own lines: BOOTy keeps text after a value as part of
 the value. BOOTy sends the bearer token only to HTTPS or loopback URLs, unless
 `INSECURE_TRANSPORT=true`. Plain `http://` image URLs need
-`IMAGE_ALLOW_INSECURE_HTTP=true`. `CAPRF_LEGACY_COMPAT=true` sets both. When
+`IMAGE_ALLOW_INSECURE_HTTP=true`. `CAPRF_LEGACY_COMPAT=true` presets both. When
 `TOKEN_URL` is set and the JWT exchange or renewal fails, BOOTy reboots. With
-`CAPRF_LEGACY_COMPAT=true` it reports the error and keeps the ramdisk running.
+`FAILURE_ACTION=wait` (preset by `CAPRF_LEGACY_COMPAT=true`) it reports the
+error and keeps the ramdisk running.
 [docs/configuration.md](docs/configuration.md) describes the file format and
 every key.
 
@@ -310,8 +311,13 @@ root is mounted.
 | `DRY_RUN` | `false` | When `true`, forces `MODE=dry-run`: validates prerequisites without destructive writes |
 | `BOOTY_RESUME` | `false` | Enable checkpoint resume — skip previously completed steps on restart |
 | `DISABLE_KEXEC` | `false` | Skip kexec, always hard-reboot. Must stay `false` for A/B preserve-existing upgrades |
-| `CAPRF_LEGACY_COMPAT` | `false` | Behave like the CAPRF legacy shell provisioner. See [CAPRF legacy compatibility](#caprf-legacy-compatibility) |
+| `CAPRF_LEGACY_COMPAT` | `false` | Preset that behaves like the CAPRF legacy shell provisioner. See [CAPRF legacy compatibility](#caprf-legacy-compatibility) |
+| `SUCCESS_ACTION` | `reboot` | `poweroff` powers off after a successful run instead of kexec or reboot. Preset by `CAPRF_LEGACY_COMPAT` |
+| `FAILURE_ACTION` | `reboot` | `wait` reports a failed run and keeps the ramdisk running. Default of `RESCUE_MODE`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `MIN_DISK_SIZE_GB` | `0` | Minimum disk size filter (0 = no minimum) |
+| `DISK_SELECTION` | `prefer-nvme` | `lsblk` selects the first large enough disk in legacy `lsblk` order. Preset by `CAPRF_LEGACY_COMPAT` |
+| `WIPE_ALL_DISKS` | `false` | Wipe every disk, not only the target, like `wipe_all_disks`. Preset by `CAPRF_LEGACY_COMPAT` |
+| `DISCARD_NVME` | `false` | `blkdiscard` every NVMe disk before a wipe of all disks. Preset by `CAPRF_LEGACY_COMPAT` |
 | `BOOTY_ALLOW_REMOVABLE` | `false` | Allow USB/removable media as provisioning target |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters |
 | `EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters, read by the CAPRF legacy provisioner. Appended to `MACHINE_EXTRA_KERNEL_PARAMS` |
@@ -326,7 +332,9 @@ root is mounted.
 | `TOKEN_URL` | — | JWT token acquisition endpoint (HTTPS required except localhost) |
 | `TOKEN_ALGORITHM` | — | JWT algorithm override: `RS256` or `ES256` |
 | `SECURE_ERASE` | `false` | Use NVMe format / ATA secure erase instead of partition wipe |
-| `INSECURE_TRANSPORT` | `false` | Allow insecure HTTP connections |
+| `INSECURE_TRANSPORT` | `false` | Allow insecure HTTP connections. Preset by `CAPRF_LEGACY_COMPAT` |
+| `SKIP_TLS_VERIFY` | `false` | Skip TLS certificate checks for CAPRF callbacks, the connectivity check and images, like `curl --insecure`. Never for `TOKEN_URL`. Preset by `CAPRF_LEGACY_COMPAT` |
+| `EXPORT_VARS` | `false` | Export every `/deploy/vars` entry to the environment, like `source vars`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `PARTITION_LAYOUT` | — | Custom partition layout specification |
 | `DISK_SERIAL` | — | Target specific disk by serial number |
 | `RESCUE_PASSWORD_HASH` | — | Password hash for rescue mode access |
@@ -420,40 +428,15 @@ root is mounted.
 
 #### Network Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `NETWORK_MODE` | — | Network mode override: `gobgp` for pure-Go BGP stack |
-| `STATIC_IP` | — | Static IP in CIDR notation (e.g. `10.0.0.5/24`) |
-| `STATIC_GATEWAY` | — | Default gateway for static networking |
-| `STATIC_IFACE` | — | Target interface for static IP and non-bond cloud-init network config |
-| `PERSIST_NETWORK` | `false` | Write configured target OS network files during provisioning |
-| `OS_FAMILY` | — | Required when `PERSIST_NETWORK=true`; one of `ubuntu`, `rhel`, `flatcar`. `rhel` network persistence is parsed, but provisioning and dry-run preflight reject it until RHEL-like bootloader support is implemented. |
-| `PROVISION_TARGET_OS` / `TARGET_OS` | — | Required provisioning target OS preflight hint. Only `linux` is accepted; `windows`, `esxi`, and unknown values are rejected before destructive storage steps. |
-| `BOND_INTERFACES` | — | Comma-separated interfaces for a Linux bond (e.g. `eth0,eth1`) |
-| `BOND_MODE` | `802.3ad` | Bond mode: `802.3ad`/`lacp`, `balance-rr`, `active-backup`, `balance-xor` |
-| `VLANS` | — | Multi-VLAN config (e.g. `200:eno1:10.200.0.42/24,300:eno2`) |
-| `BGP_PEER_MODE` | `unnumbered` | GoBGP peering mode: `unnumbered`, `dual`, `numbered` |
-| `BGP_INTERFACES` | — | Optional comma-separated interface allowlist for unnumbered/dual GoBGP peers; empty means all detected physical NICs |
-| `BGP_NEIGHBORS` | — | Comma-separated peer IPs (required for `dual` and `numbered` modes) |
-| `BGP_REMOTE_ASN` | — | Remote ASN for numbered peers (0 or omitted = iBGP) |
-| `BGP_UNDERLAY_AF` | `ipv4` | Underlay address family. Only `ipv4` is implemented; `ipv6` and `dual-stack` are rejected during config validation. |
-| `BGP_OVERLAY_TYPE` | `evpn-vxlan` | Overlay encapsulation: `evpn-vxlan` or `none`. `l3vpn` passes validation, but GoBGP setup rejects it as not implemented |
-| `BGP_AUTH_PASSWORD` | — | Optional TCP-MD5 password for all BGP peers (empty = no authentication) |
-| `VRF_TABLE_ID` | `1000` | VRF routing table ID. `0` and `1` become `1000` |
-| `VRF_NAME` | (unset) | VRF name. Empty means no VRF (default routing table). FRR and GoBGP read it |
-| `BGP_KEEPALIVE` | `0` | Optional BGP keepalive timer in seconds (0 = stack default) |
-| `BGP_HOLD` | `0` | Optional BGP hold timer in seconds (0 = stack default) |
-| `BGP_MIN_PEERS` | `1` | Minimum number of BGP peers that must reach ESTABLISHED state before underlay is considered ready |
-| `BFD_TRANSMIT_MS` | `0` | FRR-only BFD transmit interval in milliseconds; must be set together with `BFD_RECEIVE_MS` and is rejected for `NETWORK_MODE=gobgp` |
-| `BFD_RECEIVE_MS` | `0` | FRR-only BFD receive interval in milliseconds; must be set together with `BFD_TRANSMIT_MS` and is rejected for `NETWORK_MODE=gobgp` |
-| `underlay_subnet` | — | Underlay CIDR for FRR mode (e.g. `192.168.4.0/24`) |
-| `underlay_ip` | — | Underlay loopback / router-ID for GoBGP mode |
-| `asn_server` | — | Local BGP autonomous system number |
-| `provision_vni` | — | VXLAN VNI for the provisioning network. GoBGP rejects `asn_server > 65535` together with `provision_vni > 65535` because 4-octet ASN RD/RT local-admin values are 16-bit. |
-| `provision_ip` | — | IP/mask on the provisioning bridge (e.g. `10.100.0.20/24`) |
-| `provision_gateway` | — | Gateway VTEP IP for VXLAN BUM flooding and kernel route; optional with `EVPN_TYPE5_ONLY=true` |
-| `overlay_subnet` | — | Overlay CIDR (e.g. `2a01:598:40a:5481::/64`) |
-| `dns_resolver` | — | Comma-separated DNS server IPs |
+BOOTy selects the ramdisk network stack from the vars: GoBGP with
+`NETWORK_MODE=gobgp`, FRR with `asn_server` and `underlay_subnet` or
+`underlay_ip`, static with `STATIC_IP`, otherwise DHCP. Bond and VLAN keys
+(`BOND_INTERFACES`, `VLANS`) add link layers below the stack. Netplan files
+from the provisioner override these keys.
+
+[docs/configuration.md](docs/configuration.md#common-network) lists the
+network keys in the Common network, GoBGP and EVPN, and FRR sections. [docs/networking.md](docs/networking.md)
+describes the stack selection, the peer modes and the EVPN route modes.
 
 The checked-in `topology-lacp.clab.yml` file is retained for compatibility with
 older `clab-lacp-*` target names. It uses a Linux bridge and validates
@@ -464,20 +447,23 @@ against a LACP-capable switch.
 
 CAPRF sets `CAPRF_LEGACY_COMPAT=true` when it runs BOOTy in place of its
 legacy shell provisioner (`internal/provision/files/*.sh` in
-cluster-api-provider-redfish). With the variable set, BOOTy keeps the legacy
-behaviour where the two differ:
+cluster-api-provider-redfish). The variable is a preset: it sets the options
+that the vars file does not set, and an explicit option wins. The options are
+listed in [CAPRF legacy compatibility](docs/configuration.md#caprf-legacy-compatibility).
+With the variable set, BOOTy keeps the legacy behaviour where the two differ:
 
-- After a successful provision or deprovision, BOOTy powers the host off. It
-  does not kexec or reboot. CAPRF then ejects the ISO and powers the host on.
+- After a successful provision or deprovision, BOOTy powers the host off
+  (`SUCCESS_ACTION=poweroff`). It does not kexec or reboot. CAPRF then ejects
+  the ISO and powers the host on.
 - After a failed provision or deprovision, BOOTy reports the error and keeps
-  the ramdisk running, like `RESCUE_MODE=wait`. An explicit `RESCUE_MODE`
-  still wins for provisioning.
+  the ramdisk running (`FAILURE_ACTION=wait`), like `RESCUE_MODE=wait`. An
+  explicit `RESCUE_MODE` still wins for provisioning.
 - `setup-mellanox` raises `NUM_OF_VFS` to 32 (or `NUM_VFS`) with `mstconfig`
   on every ConnectX-4/5/6/6 Dx/6 Lx/7 Ethernet function, like
   `setup_mellanox_num_of_vfs`, and skips quietly without `mstconfig` or such
   NICs. Without the variable `NUM_VFS` stays opt-in.
 - Without `DISK_DEVICE` or `DISK_SERIAL`, the target disk is the first disk
-  of at least `MIN_DISK_SIZE_GB` in `lsblk` order, NVMe and virtio disks
+  (`DISK_SELECTION=lsblk`) of at least `MIN_DISK_SIZE_GB` in `lsblk` order, NVMe and virtio disks
   first, then SCSI/SATA disks, like `_select_single_disk`. BOOTy otherwise
   prefers NVMe and then the largest disk. Like the legacy script, this order
   does not skip removable media: a USB disk (SCSI major 8) can be selected
@@ -488,10 +474,12 @@ behaviour where the two differ:
   BOOTy does not resolve the console from firmware and does not write getty
   units in this mode.
 - Transport follows the legacy `curl --insecure` calls: CAPRF callbacks and
-  image URLs may use plain HTTP, and TLS certificates are not verified for
-  callbacks, the connectivity check and image downloads.
+  image URLs may use plain HTTP (`INSECURE_TRANSPORT=true`,
+  `IMAGE_ALLOW_INSECURE_HTTP=true`), and TLS certificates are not verified
+  for callbacks, the connectivity check and image downloads
+  (`SKIP_TLS_VERIFY=true`).
 - Every entry of `/deploy/vars` is exported to the environment, like
-  `source vars`. Proxy variables such as `https_proxy` from CAPRF
+  `source vars` (`EXPORT_VARS=true`). Proxy variables such as `https_proxy` from CAPRF
   `additionalVars` apply to the CAPRF callbacks, the connectivity check and
   the image downloads.
 - Files in `/deploy/file-system` (CAPRF `provisionerConfig.files`) are copied
@@ -501,9 +489,9 @@ behaviour where the two differ:
   `/etc/resolv.conf` stays in place in the ramdisk; BOOTy does not replace it
   with resolvers from the vars or netplan.
 - `wipe-disks` wipes every disk, not only the target disk, for provisioning
-  and hard deprovisioning, like `wipe_all_disks`: `blkdiscard` on NVMe disks,
-  then signature wipes. `MODE=decommission` also runs `blkdiscard` on every
-  NVMe disk in this mode. Failures are logged and do not stop the run. This
+  and hard deprovisioning, like `wipe_all_disks` (`WIPE_ALL_DISKS=true`):
+  `blkdiscard` on NVMe disks (`DISCARD_NVME=true`), then signature wipes.
+  `MODE=decommission` also runs `blkdiscard` on every NVMe disk in this mode. Failures are logged and do not stop the run. This
   does not apply to dry-run, A/B preserve-existing upgrades, explicit RAID
   configs or a deprovision disk override (`DISK_DEVICE`); those keep the
   BOOTy wipe rules.
@@ -511,6 +499,10 @@ behaviour where the two differ:
   `hostname "$HOSTNAME"` in `provision.sh`.
 - BOOTy logs the firmware version of every NIC (`nic_firmware`), like
   `provision.sh`, also without `FIRMWARE_REPORT`.
+- `grow-partition` grows the last GPT Linux filesystem partition, like
+  `provision.sh`, also when it is a data partition after the root. That
+  partition then gets `e2fsck` and `resize2fs`, and the root filesystem keeps
+  its size. BOOTy otherwise grows the root partition.
 
 Without the variable, BOOTy keeps its own defaults.
 
@@ -567,18 +559,10 @@ can not be read or decoded, provisioning fails with `load checkpoint`. Remove
 
 ### Rescue Mode
 
-`RESCUE_MODE` sets what BOOTy does after a failed provisioning:
-
-| Mode | Behavior |
-|------|----------|
-| `reboot` | Default. Reboot and let the external orchestration retry. |
-| `retry` | Run provisioning again after 30 s, at most 3 times, then reboot. |
-| `shell` | Start a shell on the console. |
-| `wait` | Keep the ramdisk running for manual work. Default with `CAPRF_LEGACY_COMPAT=true`. |
-
-In `shell` and `wait` modes, BOOTy installs `RESCUE_SSH_PUBKEY` and
-`RESCUE_PASSWORD_HASH` for root, starts `dropbear`, and mounts the found disks
-when `RESCUE_AUTO_MOUNT=true`.
+`RESCUE_MODE` sets what BOOTy does after a failed provisioning: `reboot`
+(default), `retry`, `shell` or `wait` (default with `FAILURE_ACTION=wait`,
+which `CAPRF_LEGACY_COMPAT=true` presets). In `shell` and `wait` modes, BOOTy can give SSH
+access with `RESCUE_SSH_PUBKEY` and mount the found disks.
 
 ```bash
 export RESCUE_MODE=wait
@@ -586,10 +570,8 @@ export RESCUE_SSH_PUBKEY="ssh-ed25519 AAAAC3NzaC1... admin@ops"
 export RESCUE_AUTO_MOUNT=true
 ```
 
-In standby mode, `RESCUE_MODE` also applies to failed `provision` commands.
-BOOTy acknowledges a failed command to the controller with the error message.
-`RESCUE_TIMEOUT` is parsed, but no code uses it. See
-[Rescue](docs/configuration.md#rescue).
+[Rescue modes](docs/caprf-integration.md#rescue-modes) describes each mode.
+[Rescue](docs/configuration.md#rescue) lists the keys.
 
 ### Dry-Run Mode
 
@@ -880,8 +862,8 @@ export TOKEN_ALGORITHM="RS256"
 
 When `TOKEN_URL` is not set, BOOTy uses the static `TOKEN` for all requests.
 When it is set, a failed exchange or exhausted renewal reboots the host. With
-`CAPRF_LEGACY_COMPAT=true`, BOOTy reports the error and keeps the ramdisk
-running instead. `TOKEN_URL` must use HTTPS, except for `localhost`,
+`FAILURE_ACTION=wait`, BOOTy reports the error and keeps the ramdisk running
+instead. `TOKEN_URL` must use HTTPS, except for `localhost`,
 `127.0.0.1` and `::1`.
 
 ### VLAN Support
@@ -916,7 +898,7 @@ export DISABLE_KEXEC=true
 
 BOOTy skips kexec when firmware values changed during provisioning (for
 example Mellanox SR-IOV), with `SECUREBOOT_REENABLE=true`, and with
-`CAPRF_LEGACY_COMPAT=true`, which powers off instead. If GRUB parsing fails or
+`SUCCESS_ACTION=poweroff`, which powers off instead. If GRUB parsing fails or
 the kernel or initramfs is not found, BOOTy falls back to a `reboot(2)`
 syscall.
 
@@ -955,7 +937,7 @@ export SECURE_ERASE=true
 
 A missing `nvme` or `hdparm` tool fails provisioning, so BOOTy does not
 silently downgrade an explicit secure erase request. Deprovisioning,
-decommission and the legacy compat wipe of all disks do not read
+decommission and the wipe of all disks (`WIPE_ALL_DISKS=true`) do not read
 `SECURE_ERASE`.
 
 ### Post-Provision Commands
@@ -989,10 +971,11 @@ an initial heartbeat, and polls commands once before entering the periodic loop
 return an error immediately. After readiness succeeds, heartbeat and command-poll
 failures are logged and retried on the next tick. `RESCUE_MODE` applies to hot
 provision command failures; deprovision command failures are ACKed as failed
-before BOOTy reboots. With `CAPRF_LEGACY_COMPAT=true`, a failed hot provision
+before BOOTy reboots. With `FAILURE_ACTION=wait`, a failed hot provision
 defaults to `RESCUE_MODE=wait` (ACKed first), a failed deprovision command is
-ACKed and BOOTy waits instead of rebooting, and successful provision and
-deprovision commands power the host off.
+ACKed and BOOTy waits instead of rebooting. With `SUCCESS_ACTION=poweroff`,
+successful provision and deprovision commands power the host off. Both are
+preset by `CAPRF_LEGACY_COMPAT=true`.
 Only `204 No Content` denotes an empty command queue; a `404 Not Found` or any
 other unexpected response is treated as a polling failure rather than an empty
 queue.
@@ -1262,43 +1245,30 @@ flavor.
 ## Development
 
 ```bash
-# Build binary
-make build
+make build       # Build the binary
+make test        # Unit tests with the race detector and the coverage gate
+make lint        # golangci-lint for the Linux build
+make fmt-check   # Check the formatting. "make fmt" rewrites the files.
 
-# Run unit tests with coverage (40% coverage gate)
-make test
+# E2E tests without KVM (Linux). Some tests build the initramfs with Docker.
+make test-e2e
 
-# Run linter (golangci-lint v2)
-make lint
+# ContainerLab E2E (Linux, root): start a topology, then run its tests.
+make clab-test-image
+make clab-up && make test-e2e-integration
+make clab-type5-up && make test-e2e-type5
 
-# Format code
-make fmt
-
-# Verify formatting without rewriting
-make fmt-check
-
-# E2E tests — ContainerLab (Linux only)
-make clab-test-image                         # Generate the shared test disk image
-make clab-up && make test-e2e-integration       # FRR/EVPN topology
-make clab-gobgp-up && make test-e2e-gobgp        # GoBGP topology
-make clab-boot-up && make test-e2e-boot          # Boot orchestrator
-make clab-dhcp-up && make test-e2e-dhcp          # DHCP mode topology
-make clab-bond-up && make test-e2e-bond          # Bond mode topology
-make clab-lacp-up && make test-e2e-lacp          # Backward-compatible alias for bond mode
-make clab-static-up && make test-e2e-static      # Static IP topology
-make clab-multi-nic-up && make test-e2e-multi-nic # Multi-NIC discovery and config
-
-# E2E tests — KVM/QEMU vrnetlab (Linux + KVM)
-make clab-vrnetlab-up && make test-e2e-vrnetlab   # Full EVPN boot flow
-make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab  # GoBGP with FRR fabric + QEMU VMs
-
-# Linux-only E2E (disk/mount/loop device, requires root)
+# Disk, mount and loop device E2E (Linux, root)
 sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m ./test/e2e/linux/...
-sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestType5Netlink' ./pkg/network/gobgp/
+
+# KVM E2E (Linux, root, QEMU). BOOTY_KERNEL and BOOTY_INITRAMFS select the
+# kernel and the initramfs. .github/workflows/kvm-matrix.yml shows the CI setup.
+make test-kvm
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for coding standards, test requirements,
-and the PR process.
+[CONTRIBUTING.md](CONTRIBUTING.md#testing) lists all ContainerLab and
+vrnetlab topologies and the test levels.
+[docs/e2e-test-matrix.md](docs/e2e-test-matrix.md) describes the E2E suites.
 
 ## Project Structure
 
@@ -1322,7 +1292,6 @@ and the PR process.
 │   ├── event/                  # Provisioning lifecycle event types + dispatcher
 │   ├── executil/               # Shared command execution helpers
 │   ├── firmware/               # Firmware inventory from sysfs and NIC tooling
-│   ├── grubcfg/                # GRUB configuration parser
 │   ├── health/                 # Pre-provisioning hardware health checks
 │   ├── image/                  # Image streaming (HTTP, OCI, gzip/lz4/xz/zstd auto-detect)
 │   ├── inventory/              # Hardware inventory from sysfs/procfs

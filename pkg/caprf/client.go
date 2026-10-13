@@ -56,17 +56,16 @@ func New(varsPath string) (*Client, error) {
 		return nil, fmt.Errorf("parse vars: %w", err)
 	}
 
-	if cfg.LegacyCompat {
-		// The legacy scripts `source` the vars file, which exports every
-		// entry. Proxy settings such as https_proxy then apply to all
-		// requests.
+	if config.BoolOr(cfg.Transport.ExportVars, false) {
+		// Like `source vars` in the legacy scripts: export every entry.
+		// Proxy settings such as https_proxy then apply to all requests.
 		if err := exportVars(varsPath); err != nil {
 			return nil, fmt.Errorf("export vars: %w", err)
 		}
 	}
 
 	c := &Client{
-		httpClient: newHTTPClient(30*time.Second, cfg.Transport.SkipTLSVerify),
+		httpClient: newHTTPClient(30*time.Second, config.BoolOr(cfg.Transport.SkipTLSVerify, false)),
 		cfg:        cfg,
 		log:        slog.Default().With("component", "caprf"),
 	}
@@ -75,10 +74,10 @@ func New(varsPath string) (*Client, error) {
 }
 
 func (c *Client) warnTransport() {
-	if c.cfg.Transport.Insecure {
+	if config.BoolOr(c.cfg.Transport.Insecure, false) {
 		c.log.Warn("insecure transport enabled: bearer tokens will be sent over plain HTTP")
 	}
-	if c.cfg.Transport.SkipTLSVerify {
+	if config.BoolOr(c.cfg.Transport.SkipTLSVerify, false) {
 		c.log.Warn("tls certificate verification disabled, like curl --insecure in the legacy CAPRF provisioner")
 	}
 }
@@ -135,37 +134,48 @@ func isShellIdentifier(s string) bool {
 	return true
 }
 
-// RequestsLegacyCompat reports whether the vars file sets
-// CAPRF_LEGACY_COMPAT to a true value. It reads only that key, so it also
-// works when the rest of the file does not parse.
-func RequestsLegacyCompat(varsPath string) bool {
+// FailureConfig reads only CAPRF_LEGACY_COMPAT and FAILURE_ACTION from the
+// vars file and returns a config with the resulting FailureAction. It also
+// works when the rest of the file does not parse, so BOOTy can still wait
+// instead of rebooting after a vars file error.
+func FailureConfig(varsPath string) *config.MachineConfig {
+	cfg := &config.MachineConfig{}
 	f, err := os.Open(varsPath) //nolint:gosec // trusted path from ISO
 	if err != nil {
-		return false
+		return cfg
 	}
 	defer f.Close() //nolint:errcheck // read-only file
 
 	// The last assignment wins, like in ParseVars. bufio.Reader has no line
 	// length limit, so a long earlier entry cannot hide the setting.
-	requested := false
 	reader := bufio.NewReader(f)
 	for {
 		raw, err := reader.ReadString('\n')
 		line := strings.TrimPrefix(strings.TrimSpace(raw), "export ")
-		if key, value, ok := strings.Cut(line, "="); ok && key == "CAPRF_LEGACY_COMPAT" {
+		if key, value, ok := strings.Cut(line, "="); ok {
 			value, unquoteErr := unquoteVarValue(value)
-			requested = unquoteErr == nil && parseBoolVar(value)
+			switch key {
+			case "CAPRF_LEGACY_COMPAT":
+				cfg.LegacyCompat = unquoteErr == nil && parseBoolVar(value)
+			case "FAILURE_ACTION":
+				if unquoteErr != nil {
+					value = ""
+				}
+				cfg.FailureAction = strings.ToLower(strings.TrimSpace(value))
+			}
 		}
 		if err != nil {
-			return requested
+			break
 		}
 	}
+	cfg.ApplyPresets()
+	return cfg
 }
 
 // NewFromConfig creates a CAPRF client from an already-parsed config.
 func NewFromConfig(cfg *config.MachineConfig) *Client {
 	c := &Client{
-		httpClient: newHTTPClient(30*time.Second, cfg.Transport.SkipTLSVerify),
+		httpClient: newHTTPClient(30*time.Second, config.BoolOr(cfg.Transport.SkipTLSVerify, false)),
 		cfg:        cfg,
 		log:        slog.Default().With("component", "caprf"),
 	}
@@ -883,7 +893,7 @@ func (c *Client) setAuth(req *http.Request) error {
 	if tok == "" {
 		return nil
 	}
-	if req.URL != nil && req.URL.Scheme != "https" && !isLoopback(req.URL.Hostname()) && !c.cfg.Transport.Insecure {
+	if req.URL != nil && req.URL.Scheme != "https" && !isLoopback(req.URL.Hostname()) && !config.BoolOr(c.cfg.Transport.Insecure, false) {
 		redacted := redactedURL(req.URL.String())
 		c.warnInsecureOnce(redacted)
 		return fmt.Errorf("%w: refusing bearer token on non-HTTPS request %s", errInsecureTransport, redacted)
@@ -922,7 +932,7 @@ func (c *Client) warnInsecureOnce(rawURL string) {
 }
 
 func (c *Client) requireSecureEndpoint(rawURL, purpose string) error {
-	if c.cfg.Transport.Insecure {
+	if config.BoolOr(c.cfg.Transport.Insecure, false) {
 		return nil
 	}
 	u, err := neturl.Parse(rawURL)
@@ -1071,7 +1081,7 @@ func unquoteDoubleQuotedVarValue(value string) string {
 }
 
 func applyVar(cfg *config.MachineConfig, key, value string) error {
-	if applyStringVar(cfg, key, value) {
+	if applyParityVar(cfg, key, value) || applyStringVar(cfg, key, value) {
 		return nil
 	}
 	if handled, err := applyUint32Var(cfg, key, value); handled {
@@ -1382,9 +1392,6 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) (bool, error)
 	if handled, err := applyIntVar(cfg, key, value); handled {
 		return true, err
 	}
-	if applyProvisionImageBoolVar(cfg, key, value) {
-		return true, nil
-	}
 	if applyCrashArtifactsBoolVar(cfg, key, value) {
 		return true, nil
 	}
@@ -1417,8 +1424,6 @@ func applyCoreBoolVar(cfg *config.MachineConfig, key, value string) bool {
 		cfg.Provision.CloudInit.Enabled = parseBoolVar(value)
 	case "DRY_RUN":
 		cfg.DryRun = parseBoolVar(value)
-	case "INSECURE_TRANSPORT":
-		cfg.Transport.Insecure = parseBoolVar(value)
 	case "SYSEXT_ENABLED":
 		cfg.Provision.Sysext.Enabled = parseBoolVar(value)
 	case "SYSEXT_ALLOW_INSECURE_HTTP":
@@ -1466,16 +1471,6 @@ func parseOCIPrePullImages(value string) []config.OCIPrePullImageConfig {
 		images = append(images, config.OCIPrePullImageConfig{Reference: ref})
 	}
 	return images
-}
-
-func applyProvisionImageBoolVar(cfg *config.MachineConfig, key, value string) bool {
-	switch key {
-	case "IMAGE_ALLOW_INSECURE_HTTP":
-		cfg.Provision.Image.AllowInsecureHTTP = parseBoolVar(value)
-	default:
-		return false
-	}
-	return true
 }
 
 func applyCrashArtifactsBoolVar(cfg *config.MachineConfig, key, value string) bool {

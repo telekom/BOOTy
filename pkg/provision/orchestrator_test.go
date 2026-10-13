@@ -44,7 +44,7 @@ func newTestOrchestratorWithCommander(t *testing.T, cfg *config.MachineConfig, p
 	t.Helper()
 	cmd := newMockCommander()
 	mgr := disk.NewManager(cmd)
-	cfg.Provision.Image.AllowInsecureHTTP = true
+	cfg.Provision.Image.AllowInsecureHTTP = new(true)
 	o := NewOrchestrator(cfg, provider, mgr)
 	o.config.rootDir = t.TempDir()
 	withHermeticHostRoots(t, o.config)
@@ -236,8 +236,8 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 46 {
-		t.Fatalf("expected 46 provisioning steps, got %d", len(steps))
+	if len(steps) != 47 {
+		t.Fatalf("expected 47 provisioning steps, got %d", len(steps))
 	}
 }
 
@@ -2154,8 +2154,8 @@ func TestWipeOrSecureEraseDisks(t *testing.T) {
 			}
 			provider := &mockProvider{}
 			mgr := disk.NewManager(cmd)
-			cfg.Provision.Image.AllowInsecureHTTP = true
-			cfg.Provision.Image.AllowInsecureHTTP = true
+			cfg.Provision.Image.AllowInsecureHTTP = new(true)
+			cfg.Provision.Image.AllowInsecureHTTP = new(true)
 			o := NewOrchestrator(cfg, provider, mgr)
 
 			err := o.wipeOrSecureEraseDisks(context.Background())
@@ -2977,8 +2977,8 @@ func TestRescueConfig_DefaultsApplied(t *testing.T) {
 	}
 }
 
-func TestRescueConfig_LegacyCompatWaits(t *testing.T) {
-	cfg := &config.MachineConfig{LegacyCompat: true}
+func TestRescueConfig_FailureActionWaitWaits(t *testing.T) {
+	cfg := &config.MachineConfig{FailureAction: config.FailureActionWait}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 	if rc := o.RescueConfig(); rc.Mode != "wait" {
 		t.Errorf("Mode = %q, want wait like the legacy CAPRF scripts", rc.Mode)
@@ -2986,14 +2986,14 @@ func TestRescueConfig_LegacyCompatWaits(t *testing.T) {
 
 	cfg.Rescue.Mode = "retry"
 	if rc := o.RescueConfig(); rc.Mode != "retry" {
-		t.Errorf("Mode = %q, explicit rescue mode must win over legacy compat", rc.Mode)
+		t.Errorf("Mode = %q, explicit rescue mode must win over FAILURE_ACTION", rc.Mode)
 	}
 }
 
-func TestShouldKeepTargetRootMountedForKexec_LegacyCompat(t *testing.T) {
-	cfg := &config.MachineConfig{LegacyCompat: true}
+func TestShouldKeepTargetRootMountedForKexec_SuccessActionPowerOff(t *testing.T) {
+	cfg := &config.MachineConfig{SuccessAction: config.SuccessActionPowerOff}
 	if ShouldKeepTargetRootMountedForKexec(cfg, false) {
-		t.Error("legacy compat powers off, so the target root must not stay mounted for kexec")
+		t.Error("SUCCESS_ACTION=poweroff powers off, so the target root must not stay mounted for kexec")
 	}
 }
 
@@ -3005,7 +3005,7 @@ func TestVerifyImageSignature_Skipped(t *testing.T) {
 	}))
 	defer srv.Close()
 	cfg.Provision.Image.URLs = []string{srv.URL}
-	cfg.Provision.Image.AllowInsecureHTTP = true
+	cfg.Provision.Image.AllowInsecureHTTP = new(true)
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
@@ -4894,7 +4894,7 @@ func TestValidateProvisionInputsHTTPInsecure(t *testing.T) {
 	t.Run("rejects plain http when allowInsecureHTTP is false", func(t *testing.T) {
 		cfg := &config.MachineConfig{Provision: config.ProvisionConfig{TargetOS: "linux", Image: config.ImageConfig{URLs: []string{"http://images.example.invalid/node.raw"}}}}
 		o := newTestOrchestrator(t, cfg, &mockProvider{})
-		o.cfg.Provision.Image.AllowInsecureHTTP = false
+		o.cfg.Provision.Image.AllowInsecureHTTP = new(false)
 		err := o.validateProvisionInputs(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "plain HTTP sources require") {
 			t.Errorf("expected error about insecure HTTP, got %v", err)
@@ -4903,7 +4903,7 @@ func TestValidateProvisionInputsHTTPInsecure(t *testing.T) {
 	t.Run("accepts plain http when allowInsecureHTTP is true", func(t *testing.T) {
 		cfg := &config.MachineConfig{Provision: config.ProvisionConfig{TargetOS: "linux", Image: config.ImageConfig{URLs: []string{"http://images.example.invalid/node.raw"}}}}
 		o := newTestOrchestrator(t, cfg, &mockProvider{})
-		o.cfg.Provision.Image.AllowInsecureHTTP = true
+		o.cfg.Provision.Image.AllowInsecureHTTP = new(true)
 		err := o.validateProvisionInputs(context.Background())
 		if err != nil && strings.Contains(err.Error(), "plain HTTP sources require") {
 			t.Errorf("did not expect error about insecure HTTP, got %v", err)
@@ -4934,6 +4934,59 @@ func TestCollectFirmwareLegacyCompatLogsNICFirmware(t *testing.T) {
 	}
 	if len(provider.firmwareReports) != 0 {
 		t.Fatalf("firmware reports = %d, want none without FIRMWARE_REPORT", len(provider.firmwareReports))
+	}
+}
+
+// Legacy evidence: provision.sh grows the last GPT Linux partition, which
+// can be a data partition after the root.
+func TestGrowPartitionLegacyCompatGrowsLastLinuxPartition(t *testing.T) {
+	cfg := &config.MachineConfig{LegacyCompat: true}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.rootPartition = "/dev/sda2"
+	cmd.setResult("sfdisk --json", []byte(`{"partitiontable":{"partitions":[
+		{"node":"/dev/sda1","type":"C12A7328-F81F-11D2-BA4B-00A0C93EC93B"},
+		{"node":"/dev/sda2","type":"0FC63DAF-8483-4772-8E79-3D69D8477DE4"},
+		{"node":"/dev/sda3","type":"0fc63daf-8483-4772-8e79-3d69d8477de4"},
+		{"node":"/dev/sda4","type":"0657FD6D-A4AB-43C4-84E5-0933C84B4F4F"}]}}`), nil)
+
+	if err := o.growPartition(context.Background()); err != nil {
+		t.Fatalf("growPartition() = %v", err)
+	}
+	// A resumed run starts resize-filesystem with fresh state.
+	o = NewOrchestrator(cfg, &mockProvider{}, o.disk)
+	o.targetDisk = "/dev/sda"
+	o.rootPartition = "/dev/sda2"
+	if err := o.resizeFilesystem(context.Background()); err != nil {
+		t.Fatalf("resizeFilesystem() = %v", err)
+	}
+	var got []string
+	for _, c := range cmd.calls {
+		if c.name == "growpart" || c.name == "e2fsck" || c.name == "resize2fs" {
+			got = append(got, c.name+" "+strings.Join(c.args, " "))
+		}
+	}
+	want := []string{"e2fsck -p -f /dev/sda3", "growpart --update on /dev/sda 3", "resize2fs /dev/sda3"}
+	if strings.Join(got, ";") != strings.Join(want, ";") {
+		t.Fatalf("commands = %q, want %q", got, want)
+	}
+}
+
+func TestGrowPartitionLegacyCompatKeepsRootWhenLast(t *testing.T) {
+	cfg := &config.MachineConfig{LegacyCompat: true}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.rootPartition = "/dev/sda2"
+	cmd.setResult("sfdisk --json", []byte(`{"partitiontable":{"partitions":[
+		{"node":"/dev/sda1","type":"C12A7328-F81F-11D2-BA4B-00A0C93EC93B"},
+		{"node":"/dev/sda2","type":"0FC63DAF-8483-4772-8E79-3D69D8477DE4"}]}}`), nil)
+
+	if err := o.growPartition(context.Background()); err != nil {
+		t.Fatalf("growPartition() = %v", err)
+	}
+	last := cmd.calls[len(cmd.calls)-1]
+	if last.name != "growpart" || strings.Join(last.args, " ") != "--update on /dev/sda 2" {
+		t.Fatalf("last command = %v, want growpart of the root partition", last)
 	}
 }
 
@@ -4999,5 +5052,56 @@ func TestEnsureMountpointWithinRoot(t *testing.T) {
 	}
 	if err := ensureMountpointWithinRoot(root, filepath.Join(root, "run")); err == nil {
 		t.Fatal("relative symlink escaping the root was accepted")
+	}
+}
+
+// An image without a GPT Linux partition, such as an MBR image, keeps the
+// root as the grow target.
+func TestGrowPartitionLegacyCompatMBRGrowsRoot(t *testing.T) {
+	cfg := &config.MachineConfig{LegacyCompat: true}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.rootPartition = "/dev/sda1"
+	cmd.setResult("sfdisk --json", []byte(`{"partitiontable":{"label":"dos","partitions":[
+		{"node":"/dev/sda1","type":"83"},
+		{"node":"/dev/sda2","type":"83"}]}}`), nil)
+
+	if err := o.growPartition(context.Background()); err != nil {
+		t.Fatalf("growPartition() = %v", err)
+	}
+	if err := o.resizeFilesystem(context.Background()); err != nil {
+		t.Fatalf("resizeFilesystem() = %v", err)
+	}
+	var got []string
+	for _, c := range cmd.calls {
+		if c.name == "growpart" || c.name == "e2fsck" || c.name == "resize2fs" {
+			got = append(got, c.name+" "+strings.Join(c.args, " "))
+		}
+	}
+	want := []string{"growpart --update on /dev/sda 1", "resize2fs /dev/sda1"}
+	if strings.Join(got, ";") != strings.Join(want, ";") {
+		t.Fatalf("commands = %q, want %q", got, want)
+	}
+}
+
+// Legacy evidence: provision.sh runs e2fsck -p -f before growpart. A
+// filesystem error stops the run before the partition table changes.
+func TestGrowPartitionLegacyCompatCheckFailureKeepsPartitionTable(t *testing.T) {
+	cfg := &config.MachineConfig{LegacyCompat: true}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.rootPartition = "/dev/sda2"
+	cmd.setResult("sfdisk --json", []byte(`{"partitiontable":{"partitions":[
+		{"node":"/dev/sda2","type":"0FC63DAF-8483-4772-8E79-3D69D8477DE4"},
+		{"node":"/dev/sda3","type":"0FC63DAF-8483-4772-8E79-3D69D8477DE4"}]}}`), nil)
+	cmd.setResult("e2fsck -p", nil, errors.New("e2fsck failed"))
+
+	if err := o.growPartition(context.Background()); err == nil {
+		t.Fatal("growPartition() = nil, want the e2fsck error")
+	}
+	for _, c := range cmd.calls {
+		if c.name == "growpart" {
+			t.Fatalf("growpart ran after a failed e2fsck: %v", c)
+		}
 	}
 }

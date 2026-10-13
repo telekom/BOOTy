@@ -320,7 +320,7 @@ export HOSTNAME="worker-01"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.Transport.Insecure {
+	if !config.BoolOr(cfg.Transport.Insecure, false) {
 		t.Fatal("expected InsecureTransport=true")
 	}
 }
@@ -2236,7 +2236,7 @@ func TestSetAuth(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c := &Client{
 				log: slog.Default().With("component", "caprf"),
-				cfg: &config.MachineConfig{Transport: config.TransportConfig{Token: tt.token, Insecure: tt.insecureTransport}},
+				cfg: &config.MachineConfig{Transport: config.TransportConfig{Token: tt.token, Insecure: new(tt.insecureTransport)}},
 			}
 			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, tt.url, http.NoBody)
 			if err != nil {
@@ -2303,7 +2303,7 @@ func TestRequireSecureEndpointParseErrorRedactsSensitiveURLParts(t *testing.T) {
 
 func TestFetchCommandsCreateRequestErrorRedactsSensitiveURLParts(t *testing.T) {
 	c := NewFromConfig(&config.MachineConfig{
-		Transport: config.TransportConfig{Insecure: true},
+		Transport: config.TransportConfig{Insecure: new(true)},
 		Agent:     config.AgentConfig{CommandsURL: malformedCAPRFEndpointWithSensitiveParts()},
 	})
 	_, err := c.FetchCommands(context.Background())
@@ -2316,7 +2316,7 @@ func TestFetchCommandsCreateRequestErrorRedactsSensitiveURLParts(t *testing.T) {
 
 func TestAcknowledgeCommandBuildURLErrorRedactsSensitiveURLParts(t *testing.T) {
 	c := NewFromConfig(&config.MachineConfig{
-		Transport: config.TransportConfig{Insecure: true},
+		Transport: config.TransportConfig{Insecure: new(true)},
 		Agent:     config.AgentConfig{CommandsURL: malformedCAPRFEndpointWithSensitiveParts()},
 	})
 	err := c.AcknowledgeCommand(context.Background(), "cmd-placeholder", "completed", "")
@@ -2469,7 +2469,57 @@ func TestParseVarsLegacyCompat(t *testing.T) {
 	}
 }
 
-func TestRequestsLegacyCompatWithInvalidVars(t *testing.T) {
+func TestParseVarsDiskOptions(t *testing.T) {
+	cfg, err := ParseVars(strings.NewReader("DISK_SELECTION=lsblk\nWIPE_ALL_DISKS=true\nDISCARD_NVME=yes\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := cfg.Provision.Disk
+	if d.Selection != "lsblk" || !config.BoolOr(d.WipeAllDisks, false) || !config.BoolOr(d.DiscardNVMe, false) {
+		t.Fatalf("disk = %q %v %v, want lsblk true true", d.Selection, d.WipeAllDisks, d.DiscardNVMe)
+	}
+	// Explicit values win over the CAPRF_LEGACY_COMPAT preset.
+	cfg, err = ParseVars(strings.NewReader("WIPE_ALL_DISKS=false\nDISK_SELECTION=prefer-nvme\nCAPRF_LEGACY_COMPAT=true\nDISCARD_NVME=false\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d = cfg.Provision.Disk
+	if d.Selection != "prefer-nvme" || config.BoolOr(d.WipeAllDisks, true) || config.BoolOr(d.DiscardNVMe, true) {
+		t.Fatalf("disk = %q %v %v, want the explicit values", d.Selection, d.WipeAllDisks, d.DiscardNVMe)
+	}
+	if _, err := ParseVars(strings.NewReader("DISK_SELECTION=largest\n")); err == nil {
+		t.Fatal("ParseVars accepted DISK_SELECTION=largest")
+	}
+}
+
+func TestParseVarsLifecycleActions(t *testing.T) {
+	tests := []struct {
+		vars         string
+		wantPowerOff bool
+		wantWait     bool
+	}{
+		{vars: "SUCCESS_ACTION=poweroff\n", wantPowerOff: true},
+		{vars: "FAILURE_ACTION=WAIT\n", wantWait: true},
+		{vars: "CAPRF_LEGACY_COMPAT=true\n", wantPowerOff: true, wantWait: true},
+		{vars: "SUCCESS_ACTION=reboot\nCAPRF_LEGACY_COMPAT=true\n", wantWait: true},
+		{vars: "CAPRF_LEGACY_COMPAT=true\nFAILURE_ACTION=reboot\n", wantPowerOff: true},
+	}
+	for _, tt := range tests {
+		cfg, err := ParseVars(strings.NewReader(tt.vars))
+		if err != nil {
+			t.Fatalf("ParseVars(%q): %v", tt.vars, err)
+		}
+		if cfg.PowerOffOnSuccess() != tt.wantPowerOff || cfg.WaitOnFailure() != tt.wantWait {
+			t.Errorf("ParseVars(%q): PowerOffOnSuccess=%v WaitOnFailure=%v, want %v %v",
+				tt.vars, cfg.PowerOffOnSuccess(), cfg.WaitOnFailure(), tt.wantPowerOff, tt.wantWait)
+		}
+	}
+	if _, err := ParseVars(strings.NewReader("SUCCESS_ACTION=halt\n")); err == nil {
+		t.Fatal("ParseVars accepted SUCCESS_ACTION=halt")
+	}
+}
+
+func TestFailureConfigWithInvalidVars(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "vars")
 	content := "export CAPRF_LEGACY_COMPAT=\"false\"\nexport MODE=\"no-such-mode\"\nexport CAPRF_LEGACY_COMPAT=\"true\"\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
@@ -2478,22 +2528,47 @@ func TestRequestsLegacyCompatWithInvalidVars(t *testing.T) {
 	if _, err := New(path); err == nil {
 		t.Fatal("New() accepted an invalid mode")
 	}
-	if !RequestsLegacyCompat(path) {
-		t.Fatal("RequestsLegacyCompat() = false, want true")
+	if !FailureConfig(path).WaitOnFailure() {
+		t.Fatal("FailureConfig() does not wait with CAPRF_LEGACY_COMPAT=true")
 	}
-	if RequestsLegacyCompat(filepath.Join(t.TempDir(), "missing")) {
-		t.Fatal("RequestsLegacyCompat() = true for a missing file")
+	if FailureConfig(filepath.Join(t.TempDir(), "missing")).WaitOnFailure() {
+		t.Fatal("FailureConfig() waits for a missing file")
 	}
 }
 
-func TestRequestsLegacyCompatAfterLongLine(t *testing.T) {
+func TestFailureConfigNativeOptionAndPrecedence(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{name: "native wait", content: "export FAILURE_ACTION=\"Wait\"\nexport MODE=\"no-such-mode\"\n", want: true},
+		{name: "native reboot", content: "export FAILURE_ACTION=reboot\n", want: false},
+		{name: "explicit reboot wins over preset", content: "export CAPRF_LEGACY_COMPAT=true\nexport FAILURE_ACTION=reboot\n", want: false},
+		{name: "explicit wait without preset", content: "export CAPRF_LEGACY_COMPAT=false\nexport FAILURE_ACTION=wait\n", want: true},
+		{name: "unset", content: "export MODE=provision\n", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "vars")
+			if err := os.WriteFile(path, []byte(tt.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got := FailureConfig(path).WaitOnFailure(); got != tt.want {
+				t.Fatalf("WaitOnFailure() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFailureConfigAfterLongLine(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "vars")
 	content := "export SYSEXT_LAYERS=\"" + strings.Repeat("x", 128*1024) + "\"\nexport CAPRF_LEGACY_COMPAT=\"true\""
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if !RequestsLegacyCompat(path) {
-		t.Fatal("RequestsLegacyCompat() = false after a 128 KiB line without a final newline")
+	if !FailureConfig(path).WaitOnFailure() {
+		t.Fatal("FailureConfig() misses CAPRF_LEGACY_COMPAT after a 128 KiB line without a final newline")
 	}
 }
 

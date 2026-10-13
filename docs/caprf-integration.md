@@ -92,7 +92,7 @@ changed.
 |--------|-----------------|
 | `provision` | Runs the provisioning pipeline: writes the image to the target disk and configures the installed OS. |
 | `deprovision`, `hard` | Wipes the disks and removes the EFI boot entries. Without a disk override it wipes every disk. |
-| `soft-deprovision`, `soft` | Renames `/boot/grub/grub.cfg` to `grub.cfg.bak` on the installed root. The disk is not wiped. |
+| `soft-deprovision`, `soft` | Renames `grub.cfg` to `grub.cfg.bak` in `/boot/grub` and `/boot/grub2` on the installed root. The disk is not wiped. An existing `grub.cfg.bak` counts as done, so a rerun succeeds. If no `grub.cfg` or `grub.cfg.bak` exists, or the root cannot be unmounted after the rename, BOOTy reports an error, not success. |
 | `decommission` | Wipes every disk and removes every EFI boot entry in `BootOrder`. Failures are logged and do not stop the run. CAPRF uses this mode for the `force-clean` annotation. |
 | `standby` | Sends a heartbeat to `HEARTBEAT_URL` every 30 seconds and polls `COMMANDS_URL` every 10 seconds. It runs the `provision`, `deprovision`, `reboot` and `health-check` commands. Both URLs are required. |
 | `dry-run` | Runs read-only checks (configuration, image, disk, EFI, health) and reports the result. It does not set up the network and does not write to disks. `DRY_RUN=true` selects this mode. |
@@ -110,7 +110,7 @@ URL is empty, BOOTy skips the callback.
 |----------|---------------------|------|
 | `INIT_URL` | At the start of provision and deprovision (`report-init` step). Standby sends `standby`, check mode sends `health-check`. BOOTy also uses `INIT_URL` as the connectivity check target. | `provisioning started` |
 | `SUCCESS_URL` | At the end of a successful run (`report-success` step), and for dry-run and check results. | `provisioning complete` or `deprovisioning complete`, or a check summary |
-| `ERROR_URL` | When a step fails, when a handoff fails, and, with `CAPRF_LEGACY_COMPAT=true`, when the run fails before or outside a mode. | `step <name> failed: <error>` or a short failure message |
+| `ERROR_URL` | When a step fails, when a handoff fails, and, with `FAILURE_ACTION=wait`, when the run fails before or outside a mode. | `step <name> failed: <error>` or a short failure message |
 | `LOG_URL` | For every log record at level `INFO` or higher. BOOTy redacts attributes with sensitive names, buffers 256 lines and drops lines when the buffer is full. | One log line |
 | `DEBUG_URL` | Never. BOOTy reads the variable but sends nothing to it. Diagnostic dumps go to the log and through `LOG_URL`. | |
 
@@ -122,20 +122,23 @@ URL is empty, BOOTy skips the callback.
   `TOKEN_ALGORITHM` accepts `RS256` or `ES256`.
 - If the JWT exchange fails, the run fails. See [End of a run](#end-of-a-run).
 - If the JWT renewal fails for good, BOOTy reboots. With
-  `CAPRF_LEGACY_COMPAT=true`, BOOTy stops the active task, reports the error
-  and waits.
+  `FAILURE_ACTION=wait` (preset by `CAPRF_LEGACY_COMPAT=true`), BOOTy stops
+  the active task, reports the error and waits.
 
 ## Transport rules
 
-| Rule | Default | `CAPRF_LEGACY_COMPAT=true` |
-|------|---------|----------------------------|
-| Bearer token over plain HTTP | Refused, the request fails. Allowed only for `https://` or loopback URLs, or with `INSECURE_TRANSPORT=true`. | Allowed |
-| `COMMANDS_URL` and crash artifact URLs over plain HTTP | Refused, except for loopback or with `INSECURE_TRANSPORT=true` | Allowed |
-| TLS certificate check for callbacks, the connectivity check and image downloads | Verified against the system roots | Not verified, like `curl --insecure` |
-| TLS certificate check for the crash artifact upload | Verified | Verified |
-| `http://` image URLs | Need `IMAGE_ALLOW_INSECURE_HTTP=true` | Allowed |
-| `TOKEN_URL` | HTTPS required (plain HTTP only for loopback). TLS verified. No proxy. | Same |
-| Proxy (`https_proxy`, `http_proxy`, `no_proxy`) | Read from the process environment. `/deploy/vars` entries do not reach the environment. | Every `/deploy/vars` entry is exported, so proxy entries apply. |
+Each rule has its own option. `CAPRF_LEGACY_COMPAT=true` presets all of them
+to the legacy value; an explicit option wins.
+
+| Rule | Default | Legacy value | Option (preset value) |
+|------|---------|--------------|-----------------------|
+| Bearer token over plain HTTP | Refused, the request fails. Allowed only for `https://` or loopback URLs. | Allowed | `INSECURE_TRANSPORT=true` |
+| `COMMANDS_URL` and crash artifact URLs over plain HTTP | Refused, except for loopback | Allowed | `INSECURE_TRANSPORT=true` |
+| TLS certificate check for callbacks, the connectivity check and image downloads | Verified against the system roots | Not verified, like `curl --insecure`. BOOTy logs a warning. | `SKIP_TLS_VERIFY=true` |
+| TLS certificate check for the crash artifact upload | Verified | Verified | None, always verified |
+| `http://` image URLs | Refused | Allowed | `IMAGE_ALLOW_INSECURE_HTTP=true` |
+| `TOKEN_URL` | HTTPS required (plain HTTP only for loopback). TLS verified. No proxy. | Same | None, `SKIP_TLS_VERIFY` and the exported proxy never apply |
+| Proxy (`https_proxy`, `http_proxy`, `no_proxy`) | Read from the process environment. `/deploy/vars` entries do not reach the environment. | Every `/deploy/vars` entry is exported, so proxy entries apply. | `EXPORT_VARS=true` |
 
 Planned (#624): redact URL query strings in transport errors.
 
@@ -145,11 +148,17 @@ Planned (#624): redact URL query strings in transport errors.
 `SIGINT`, and then reboots. BOOTy runs `sync` before every reboot, power off
 and kexec.
 
-| Result | Default | `CAPRF_LEGACY_COMPAT=true` |
+`SUCCESS_ACTION` selects the end of a successful run and `FAILURE_ACTION`
+the end of a failed run. `CAPRF_LEGACY_COMPAT=true` presets
+`SUCCESS_ACTION=poweroff` and `FAILURE_ACTION=wait`; an explicit value wins.
+The right column shows the result with `SUCCESS_ACTION=poweroff` for the
+success rows and `FAILURE_ACTION=wait` for the failure rows.
+
+| Result | Default (`reboot`) | `SUCCESS_ACTION=poweroff` or `FAILURE_ACTION=wait` |
 |--------|---------|----------------------------|
 | Provision success | Report success, then kexec into the default GRUB entry of the installed OS. If kexec is not allowed or fails, reboot. | Report success, then power off. No kexec. |
 | Deprovision success (all deprovision modes) | Report success, then reboot | Report success, then power off |
-| Provision failure | Report the error, then apply `RESCUE_MODE` (default `reboot`) | Report the error, then apply `RESCUE_MODE` (default `wait`) |
+| Provision failure | Report the error, then apply `RESCUE_MODE` (default `reboot`) | Report the error, then apply `RESCUE_MODE` (default `wait`). See [Rescue modes](#rescue-modes). |
 | Deprovision failure | Report the error, then reboot | Report the error, then wait |
 | `/deploy/vars` does not parse | Reboot. No callback is possible. | Wait. No callback is possible. |
 | Network setup, connectivity check or JWT exchange fails | Reboot | Report the error, then wait |
@@ -168,9 +177,9 @@ BOOTy skips kexec and reboots when one of these is true:
 - the installed root has no usable `/boot/grub/grub.cfg` entry.
 
 An A/B upgrade with `AB_PRESERVE_EXISTING=true` needs kexec. If kexec does
-not happen, BOOTy powers off instead of a reboot. `CAPRF_LEGACY_COMPAT=true`
-cannot be combined with `AB_PRESERVE_EXISTING=true`; the configuration is
-rejected.
+not happen, BOOTy powers off instead of a reboot. `SUCCESS_ACTION=poweroff`
+(also through the `CAPRF_LEGACY_COMPAT=true` preset) cannot be combined with
+`AB_PRESERVE_EXISTING=true`; the configuration is rejected.
 
 ### Rescue modes
 
@@ -179,10 +188,22 @@ rejected.
 
 | `RESCUE_MODE` | What BOOTy does |
 |---------------|-----------------|
-| `reboot` | Reboot. This is the default without `CAPRF_LEGACY_COMPAT`. |
-| `retry` | Run the pipeline again after 30 seconds, up to 3 times, then reboot. |
+| `reboot` | Reboot. This is the default unless `FAILURE_ACTION=wait`. |
+| `retry` | Run the pipeline again after 30 seconds, up to 3 times, then reboot. Each run first unmounts what the failed run left under the target root. |
 | `shell` | Open a rescue shell on the console. Reboot when the shell exits. |
-| `wait` | Wait. This is the default with `CAPRF_LEGACY_COMPAT=true`. |
+| `wait` | Wait. This is the default with `FAILURE_ACTION=wait`. |
+
+An explicit `RESCUE_MODE` wins over `FAILURE_ACTION` for a failed provision.
+`FAILURE_ACTION` only selects the default:
+
+| `RESCUE_MODE` | `FAILURE_ACTION` | Failed provision |
+|---------------|------------------|------------------|
+| (unset) | (unset) or `reboot` | Reboot |
+| (unset) | `wait` (or `CAPRF_LEGACY_COMPAT=true`) | Wait |
+| `reboot`, `retry`, `shell` or `wait` | any | That rescue mode |
+
+`FAILURE_ACTION` alone decides a failed deprovision and a failure before or
+outside a mode. `RESCUE_MODE` has no effect there.
 
 For `shell` and `wait`, BOOTy installs `RESCUE_SSH_PUBKEY` for root, sets
 `RESCUE_PASSWORD_HASH`, starts `dropbear` if the ramdisk has it, and mounts
@@ -195,12 +216,16 @@ in place of its legacy shell provisioner.
 
 - `true`, `1` and `yes` enable it, in any letter case. Other values disable
   it. When the key occurs more than once, the last line wins.
-- `caprf.RequestsLegacyCompat` reads only this key. So a `/deploy/vars` file
-  that does not parse still selects the legacy failure handling: BOOTy waits
-  instead of a reboot.
-- `Config.normalize` then applies the legacy transport rules. This has the
-  effect of `INSECURE_TRANSPORT=true` and `IMAGE_ALLOW_INSECURE_HTTP=true`,
-  and it turns TLS certificate verification off.
+- `CAPRF_LEGACY_COMPAT` is a preset: `Config.Validate` sets each option that
+  it implies and that the vars file does not set. An explicit option always
+  wins. The list is in
+  [CAPRF legacy compatibility](configuration.md#caprf-legacy-compatibility).
+- `caprf.FailureConfig` reads only `CAPRF_LEGACY_COMPAT` and
+  `FAILURE_ACTION`. So a `/deploy/vars` file that does not parse still
+  selects the failure handling: BOOTy waits instead of a reboot.
+- The preset includes the legacy transport rules: `INSECURE_TRANSPORT=true`,
+  `IMAGE_ALLOW_INSECURE_HTTP=true`, `SKIP_TLS_VERIFY=true` and
+  `EXPORT_VARS=true`. See [Transport rules](#transport-rules).
 
 The full list of changes is in
 [What CAPRF_LEGACY_COMPAT changes](caprf-legacy-migration.md#what-caprf_legacy_compat-changes).

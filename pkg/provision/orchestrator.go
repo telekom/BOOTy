@@ -97,6 +97,8 @@ type Orchestrator struct {
 	bestImageURL     string // resolved by verify-image, reused by stream-image
 	nvmeTargetDevice string
 	firmwareChanged  bool // true if any step changed firmware values requiring hard reboot
+	// separateBootMounted is true while mount-boot owns a separate /boot mount.
+	separateBootMounted bool
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
@@ -116,6 +118,7 @@ func NewOrchestrator(cfg *config.MachineConfig, provider config.Provider, diskMg
 func (o *Orchestrator) provisionSteps() []Step {
 	return []Step{
 		{"report-init", o.reportInit},
+		{"release-stale-mounts", o.releaseStaleTargetMounts},
 		{"collect-inventory", o.collectInventory},
 		{"collect-firmware", o.collectFirmware},
 		{"health-checks", o.runHealthChecks},
@@ -208,6 +211,8 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 
 func resumeStateSteps() map[string]struct{} {
 	return map[string]struct{}{
+		// A resumed run can still find mounts from the interrupted attempt.
+		"release-stale-mounts":      {},
 		"validate-provision-inputs": {},
 		"verify-image":              {},
 		"mount-efivarfs":            {},
@@ -316,9 +321,9 @@ func (o *Orchestrator) recordCheckpointDerivedState(stepName string, cp *Checkpo
 // RescueConfig returns the normalized rescue config derived from machine config.
 func (o *Orchestrator) RescueConfig() *rescue.Config {
 	cfg := &rescue.Config{Mode: rescue.ModeReboot}
-	if o.cfg.LegacyCompat {
-		// The legacy CAPRF scripts report the error and leave the ramdisk
-		// running, so CAPRF decides what happens next.
+	if o.cfg.WaitOnFailure() {
+		// Like the legacy CAPRF scripts: report the error and leave the
+		// ramdisk running, so CAPRF decides what happens next.
 		cfg.Mode = rescue.ModeWait
 	}
 	if o.cfg.Rescue.Mode != "" {
@@ -924,7 +929,7 @@ func (o *Orchestrator) validateProvisionInputs(ctx context.Context) error {
 		}
 		hasSource = true
 		imageSources = append(imageSources, source)
-		if err := validateProvisionImageSource(source, checksumConfigured, o.cfg.Provision.Image.AllowInsecureHTTP); err != nil {
+		if err := validateProvisionImageSource(source, checksumConfigured, config.BoolOr(o.cfg.Provision.Image.AllowInsecureHTTP, false)); err != nil {
 			return err
 		}
 	}
@@ -1106,24 +1111,24 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 }
 
 // wipeWithoutTargetSelection handles the wipe policies that do not depend on
-// the target disk: A/B preserve-existing skips the wipe, and legacy compat
+// the target disk: A/B preserve-existing skips the wipe, and WIPE_ALL_DISKS
 // wipes every disk.
 func (o *Orchestrator) wipeWithoutTargetSelection(ctx context.Context) (bool, error) {
 	if o.isABImageMode() && o.cfg.Provision.AB.PreserveExisting {
 		o.log.Info("A/B preserveExisting enabled, skipping whole-disk wipe")
 		return true, nil
 	}
-	if o.usesLegacyWipeAllDisks() {
-		return true, o.wipeAllDisksLegacy(ctx)
+	if o.usesWipeAllDisks() {
+		return true, o.wipeAllDisks(ctx)
 	}
 	return false, nil
 }
 
-// usesLegacyWipeAllDisks reports whether wipe-disks follows wipe_all_disks
-// of the CAPRF legacy scripts: provision and hard deprovision wipe every
-// disk, not only the target disk.
-func (o *Orchestrator) usesLegacyWipeAllDisks() bool {
-	if !o.cfg.LegacyCompat || o.cfg.Mode == "dry-run" || len(o.cfg.Provision.Disk.RAID) > 0 {
+// usesWipeAllDisks reports whether wipe-disks follows wipe_all_disks of the
+// CAPRF legacy scripts (WIPE_ALL_DISKS): provision and hard deprovision wipe
+// every disk, not only the target disk.
+func (o *Orchestrator) usesWipeAllDisks() bool {
+	if !config.BoolOr(o.cfg.Provision.Disk.WipeAllDisks, false) || o.cfg.Mode == "dry-run" || len(o.cfg.Provision.Disk.RAID) > 0 {
 		return false
 	}
 	if config.IsDeprovisionMode(o.cfg.Mode) {
@@ -1132,13 +1137,16 @@ func (o *Orchestrator) usesLegacyWipeAllDisks() bool {
 	return true
 }
 
-// wipeAllDisksLegacy discards NVMe disks and clears the signatures of every
-// disk. Like the legacy script it logs failures and never fails the run.
-func (o *Orchestrator) wipeAllDisksLegacy(ctx context.Context) error {
-	o.log.Info("legacy compat: wiping all disks")
-	o.disk.DiscardNVMeDisks(ctx)
+// wipeAllDisks discards NVMe disks with DISCARD_NVME and clears the
+// signatures of every disk. Like the legacy script it logs failures and
+// never fails the run.
+func (o *Orchestrator) wipeAllDisks(ctx context.Context) error {
+	o.log.Info("wiping all disks")
+	if config.BoolOr(o.cfg.Provision.Disk.DiscardNVMe, false) {
+		o.disk.DiscardNVMeDisks(ctx)
+	}
 	if err := o.disk.WipeAllDisks(ctx); err != nil {
-		o.log.Warn("legacy compat: disk wipe failed, continuing", "error", err)
+		o.log.Warn("disk wipe failed, continuing", "error", err)
 	}
 	return nil
 }
@@ -2161,11 +2169,21 @@ func bootEFIMountPoint() string {
 }
 
 func (o *Orchestrator) mountBoot(ctx context.Context) error {
+	// A separate /boot must be mounted before the ESP at /boot/efi.
+	if err := o.mountSeparateBoot(ctx); err != nil {
+		return err
+	}
 	if strings.TrimSpace(o.bootPartition) == "" {
 		o.log.Info("skipping boot partition mount; no boot partition detected")
 		return nil
 	}
 	mountpoint := bootEFIMountPoint()
+	// A separate /boot comes from the image and may hold an efi symlink.
+	if o.separateBootMounted {
+		if err := ensureTargetParentWithinRoot(newroot, mountpoint); err != nil {
+			return fmt.Errorf("esp mountpoint %s: %w", mountpoint, err)
+		}
+	}
 	if isMountPoint(mountpoint) {
 		source, err := mountedFromExpectedSource(mountpoint, o.bootPartition, "boot partition")
 		if err != nil {
@@ -2635,14 +2653,76 @@ func (o *Orchestrator) growPartition(ctx context.Context) error {
 		return nil
 	}
 
-	partNum, err := disk.PartitionNumberChecked(o.rootPartition, o.targetDisk)
+	target, err := o.growTarget(ctx)
 	if err != nil {
-		return fmt.Errorf("determine root partition number: %w", err)
+		return err
+	}
+	partNum, err := disk.PartitionNumberChecked(target, o.targetDisk)
+	if err != nil {
+		return fmt.Errorf("determine partition number of %s: %w", target, err)
+	}
+	if target != o.rootPartition {
+		// The legacy provisioner runs e2fsck -p -f before growpart, so an
+		// uncorrectable filesystem stops the run before the partition
+		// table changes.
+		if err := o.disk.CheckExtFilesystemPreen(ctx, target); err != nil {
+			return fmt.Errorf("check partition before growing: %w", err)
+		}
 	}
 	return o.disk.GrowPartition(ctx, o.targetDisk, partNum)
 }
 
+// growTarget returns the partition that grow-partition and
+// resize-filesystem work on: the root, or in legacy compat the last Linux
+// partition. Both steps compute it from the partition table, so a resumed
+// run resizes the same partition.
+func (o *Orchestrator) growTarget(ctx context.Context) (string, error) {
+	if !o.cfg.LegacyCompat {
+		return o.rootPartition, nil
+	}
+	last, err := o.lastLinuxPartition(ctx)
+	if err != nil {
+		return "", err
+	}
+	if last == "" {
+		return o.rootPartition, nil
+	}
+	if last != o.rootPartition {
+		o.log.Info("legacy compat: the last Linux partition is not the root", "partition", last, "root", o.rootPartition)
+	}
+	return last, nil
+}
+
+// lastLinuxPartition returns the last partition with the GPT Linux
+// filesystem type, like provision.sh of the CAPRF legacy provisioner, which
+// grows that partition and not the root. It returns "" when there is none.
+func (o *Orchestrator) lastLinuxPartition(ctx context.Context) (string, error) {
+	parts, err := o.disk.ParsePartitions(ctx, o.targetDisk)
+	if err != nil {
+		return "", fmt.Errorf("list partitions of %s: %w", o.targetDisk, err)
+	}
+	last := ""
+	for _, part := range parts {
+		if strings.EqualFold(part.Type, disk.LinuxFilesystemGUID) {
+			last = part.Node
+		}
+	}
+	return last, nil
+}
+
 func (o *Orchestrator) resizeFilesystem(ctx context.Context) error {
+	if o.cfg.Provision.Disk.PartitionLayout != nil {
+		return o.disk.ResizeFilesystem(ctx, o.rootPartition, newroot)
+	}
+	target, err := o.growTarget(ctx)
+	if err != nil {
+		return err
+	}
+	if target != o.rootPartition {
+		// The grown partition is not mounted. grow-partition checked it
+		// with e2fsck -p -f, so resize it offline.
+		return o.disk.ResizeFilesystem(ctx, target, "")
+	}
 	return o.disk.ResizeFilesystem(ctx, o.rootPartition, newroot)
 }
 
@@ -2814,7 +2894,7 @@ func (o *Orchestrator) teardownChroot(_ context.Context) error {
 		return nil
 	}
 	bindErr := o.disk.TeardownChrootBindMounts(newroot)
-	bootErr := o.unmountBoot()
+	bootErr := errors.Join(o.unmountBoot(), o.unmountSeparateBoot())
 	sharedErr := o.unmountSharedData()
 	unmountErr := o.disk.Unmount(newroot)
 	return errors.Join(bindErr, bootErr, sharedErr, unmountErr)
@@ -2846,6 +2926,34 @@ func (o *Orchestrator) unmountBoot() error {
 	if err := o.disk.Unmount(mountpoint); err != nil {
 		return fmt.Errorf("unmount boot mountpoint %s: %w", mountpoint, err)
 	}
+	return nil
+}
+
+// unmountTargetTree unmounts the target root and everything below it. It is
+// a variable so tests can run without real mounts.
+var unmountTargetTree = func(d *disk.Manager, root string) error {
+	return d.UnmountRecursive(root)
+}
+
+// releaseStaleTargetMounts unmounts what a failed earlier attempt left
+// mounted under the target root, so a rescue retry does not wipe and
+// re-image a disk under a live mount or run fsck on a mounted root. The
+// recursive unmount reads the mount table itself, so a mount table read
+// failure or a stale child mount stops provisioning instead of being
+// missed. It runs as a step right after report-init, so a failure is
+// reported to CAPRF like any other step error. It is a no-op on a first run.
+func (o *Orchestrator) releaseStaleTargetMounts(_ context.Context) error {
+	if isMountPoint(newroot) {
+		o.log.Warn("target root still mounted from an earlier attempt, unmounting", "root", newroot)
+	}
+	if err := o.unmountSharedData(); err != nil {
+		// The recursive unmount below also covers these mounts.
+		o.log.Warn("failed to unmount shared data from earlier attempt", "error", err)
+	}
+	if err := unmountTargetTree(o.disk, newroot); err != nil {
+		return fmt.Errorf("unmounting target root %s left by an earlier attempt: %w", newroot, err)
+	}
+	o.sharedMounts = nil
 	return nil
 }
 
