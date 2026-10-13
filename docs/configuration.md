@@ -312,8 +312,9 @@ default and `iso` build flavors contain the FRR daemons.
 
 | Key | Default | Values | Description |
 |-----|---------|--------|-------------|
-| `BFD_TRANSMIT_MS` | `0` | uint32, ms | BFD transmit interval. Set it together with `BFD_RECEIVE_MS`. Rejected with `NETWORK_MODE=gobgp`. Alias: `bfd_transmit_ms`. |
-| `BFD_RECEIVE_MS` | `0` | uint32, ms | BFD receive interval. Set it together with `BFD_TRANSMIT_MS`. Rejected with `NETWORK_MODE=gobgp`. Alias: `bfd_receive_ms`. |
+| `BFD_TRANSMIT_MS` | `0` | 10 to 60000, ms | BFD transmit interval. Set it together with `BFD_RECEIVE_MS`. FRR: BFD on the fabric peers. GoBGP: BFD on every native peer (single-hop on unnumbered and connected peers, multihop on the others, like FRR), and the interval of `frr.conf` BFD sessions. YAML `network.bgp.bfdTransmitMS`. Alias: `bfd_transmit_ms`. |
+| `BFD_RECEIVE_MS` | `0` | 10 to 60000, ms | BFD receive interval. Set it together with `BFD_TRANSMIT_MS`. YAML `network.bgp.bfdReceiveMS`. Alias: `bfd_receive_ms`. |
+| `BFD_DETECT_MULTIPLIER` | `0` (3) | 2 to 255 | BFD detect multiplier (GoBGP). An explicit value replaces the multiplier of `frr.conf` BFD sessions. YAML `network.bgp.bfdDetectMultiplier`. |
 | `dcgw_ips` | (unset) | IP addresses separated by commas | Data center gateway iBGP peers. Turns on the onefabric FRR template. |
 | `overlay_aggregate` | (unset) | CIDR | Aggregate address in the onefabric template. |
 | `local_asn` | `0` | uint32 | `local-as` for the fabric peers. |

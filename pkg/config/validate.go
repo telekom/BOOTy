@@ -262,18 +262,29 @@ func (c *Config) validateNetworkOptions() []string {
 }
 
 func (c *Config) validateBGP() []string {
-	bfdTransmit := c.Network.BGP.BFDTransmitMS
-	bfdReceive := c.Network.BGP.BFDReceiveMS
-
 	errs := append(c.validateNetworkOptions(), c.validateSessions()...)
+	errs = append(errs, c.validateBFD()...)
 	if n := c.Network.WaitMaxAttempts; strings.EqualFold(strings.TrimSpace(c.Network.WaitMode), NetworkWaitRounds) && n != nil && (*n < 0 || *n > MaxNetworkWaitAttempts) {
 		errs = append(errs, fmt.Sprintf("network.waitMaxAttempts (NETWORK_WAIT_MAX_ATTEMPTS) must be 0-%d", MaxNetworkWaitAttempts))
 	}
+	return errs
+}
+
+// validateBFD checks the BFD timers with the FRR ranges.
+func (c *Config) validateBFD() []string {
+	bfdTransmit := c.Network.BGP.BFDTransmitMS
+	bfdReceive := c.Network.BGP.BFDReceiveMS
+	var errs []string
 	if (bfdTransmit == 0) != (bfdReceive == 0) {
 		errs = append(errs, "network.bgp.bfdTransmitMS and network.bgp.bfdReceiveMS must be set together")
 	}
-	if strings.EqualFold(strings.TrimSpace(c.Network.Mode), "gobgp") && (bfdTransmit > 0 || bfdReceive > 0) {
-		errs = append(errs, "network.mode=gobgp does not support BFD; use network.mode=frr or BGP keepalive/hold timers")
+	if m := c.Network.BGP.BFDDetectMultiplier; m == 1 || m > 255 {
+		errs = append(errs, fmt.Sprintf("network.bgp.bfdDetectMultiplier %d must be 2 to 255", m))
+	}
+	for _, iv := range []uint32{bfdTransmit, bfdReceive} {
+		if iv != 0 && (iv < 10 || iv > 60000) {
+			errs = append(errs, fmt.Sprintf("BFD interval %d ms must be 10 to 60000, like FRR", iv))
+		}
 	}
 	return errs
 }

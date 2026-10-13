@@ -200,15 +200,22 @@ type BGPConfig struct {
 	// (nil) means on with frr.conf sessions and off without them.
 	FastExternalFailover *bool `yaml:"fastExternalFailover,omitempty" json:"fastExternalFailover,omitempty"`
 
-	// BFDTransmitMS is the FRR-only BFD transmit interval in milliseconds.
-	// BFD timers must be configured as a pair and are rejected for GoBGP mode.
-	// Default: 0 (BFD disabled; typical value when enabled: 300)
+	// BFDTransmitMS is the BFD transmit interval in milliseconds. Set
+	// together with BFDReceiveMS it turns BFD on for the FRR stack and for
+	// the native GoBGP peers, and replaces the interval of frr.conf BFD
+	// sessions.
+	// Default: 0 (BFD off; FRR's default is 300)
 	BFDTransmitMS uint32 `yaml:"bfdTransmitMS" json:"bfdTransmitMS"`
 
-	// BFDReceiveMS is the FRR-only BFD receive interval in milliseconds.
-	// BFD timers must be configured as a pair and are rejected for GoBGP mode.
-	// Default: 0 (BFD disabled; typical value when enabled: 300)
+	// BFDReceiveMS is the BFD receive interval in milliseconds, see
+	// BFDTransmitMS.
+	// Default: 0 (BFD off; FRR's default is 300)
 	BFDReceiveMS uint32 `yaml:"bfdReceiveMS" json:"bfdReceiveMS"`
+
+	// BFDDetectMultiplier is the BFD detect multiplier (GoBGP), 2 to 255.
+	// An explicit value replaces the multiplier of frr.conf BFD sessions.
+	// Default: 0 (3, or the frr.conf profile value)
+	BFDDetectMultiplier uint32 `yaml:"bfdDetectMultiplier" json:"bfdDetectMultiplier"`
 }
 
 // EVPNConfig holds EVPN/VXLAN overlay parameters for BGP-based network modes.

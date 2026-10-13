@@ -181,7 +181,7 @@ func TestNewConfig(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "reject_bfd_pair",
+			name: "accept_bfd_pair",
 			netCfg: &network.Config{
 				UnderlayIP:     "10.0.0.1",
 				ASN:            65000,
@@ -191,8 +191,8 @@ func TestNewConfig(t *testing.T) {
 				BFDReceiveMS:   150,
 				BGPUnderlayAF:  "ipv4",
 				BGPOverlayType: "evpn-vxlan",
+				EVPNType5Only:  true,
 			},
-			wantErr: true,
 		},
 		{
 			name: "supported_underlay_af_and_overlay_type_wired",

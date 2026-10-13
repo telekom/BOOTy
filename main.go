@@ -1066,6 +1066,7 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 		BGPHold:           cfg.Network.BGP.Hold,
 		BFDTransmitMS:     cfg.Network.BGP.BFDTransmitMS,
 		BFDReceiveMS:      cfg.Network.BGP.BFDReceiveMS,
+		BFDDetectMult:     cfg.Network.BGP.BFDDetectMultiplier,
 		NetworkMode:       cfg.Network.Mode,
 		BGPPeerMode:       network.ParsePeerMode(cfg.Network.BGP.PeerMode),
 		BGPInterfaces:     cfg.Network.BGP.Interfaces,
@@ -1130,6 +1131,12 @@ func applyBGPOptions(o *config.BGPConfig, n *network.Config) {
 		}
 		if o.NeighborVRF != "" && !s.Interface && s.VRF == "" {
 			s.VRF = o.NeighborVRF
+		}
+		if s.BFD && o.BFDTransmitMS > 0 {
+			s.BFDTransmitMS, s.BFDReceiveMS = o.BFDTransmitMS, o.BFDReceiveMS
+		}
+		if s.BFD && o.BFDDetectMultiplier > 0 {
+			s.BFDDetectMult = o.BFDDetectMultiplier
 		}
 	}
 }

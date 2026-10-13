@@ -25,6 +25,7 @@ import (
 
 	exec "github.com/telekom/BOOTy/pkg/executil"
 	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/BOOTy/pkg/network/bfd"
 )
 
 // Underlay network constants.
@@ -80,6 +81,7 @@ type UnderlayTier struct {
 	raDone       chan struct{}                                 // closed when the periodic RA goroutine exits
 	peerCountFn  func(ctx context.Context) int                 // overridable in tests; nil = use countEstablishedPeers
 	pollInterval time.Duration                                 // overridable in tests; zero = use default (1s)
+	bfd          *bfd.Manager                                  // BFD sessions of the peers
 }
 
 const defaultUnderlayDummyName = "dummy.underlay"
@@ -145,6 +147,7 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 		return fmt.Errorf("announce underlay route: %w", err)
 	}
 
+	u.startBFD()
 	if u.cfg.InstallRoutes {
 		u.startFIBWriter()
 	}
@@ -230,6 +233,10 @@ func (u *UnderlayTier) Teardown(_ context.Context) error {
 		u.stopFIB()
 		<-u.fibDone
 		u.stopFIB = nil
+	}
+	if u.bfd != nil {
+		u.bfd.Close()
+		u.bfd = nil
 	}
 
 	if u.bgp != nil {
@@ -734,9 +741,6 @@ func (u *UnderlayTier) addSessionPeers(ctx context.Context) error {
 	var lastErr error
 	for i := range u.cfg.Sessions {
 		s := &u.cfg.Sessions[i]
-		if s.BFD {
-			u.log.Warn("BFD is not implemented yet; the session runs without it", "neighbor", s.Name, "profile", s.BFDProfile)
-		}
 		addr := s.Name
 		if s.Interface {
 			var err error
