@@ -175,12 +175,13 @@ The `initrd.Dockerfile` supports multiple build targets via `--target`:
 
 | Target | Size | Networking | Disk Tools | Use Case |
 |--------|------|-----------|------------|----------|
-| *(default)* | ~80 MB | FRR/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production bare-metal provisioning |
-| `gobgp` | ~45 MB | GoBGP/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production without FRR dependency |
+| *(default)* | ~52 MB | FRR/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production bare-metal provisioning |
+| `gobgp` | ~47 MB | GoBGP/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production without FRR dependency |
 | `iso` | ~100 MB | FRR/EVPN + DHCP | Full | Bootable ISO for Redfish virtual media |
 | `gobgp-iso` | ~65 MB | GoBGP/EVPN + DHCP | Full | Bootable GoBGP ISO for Redfish virtual media |
-| `slim` | ~15 MB | DHCP only | Provisioning basics, no LVM/FRR | Lightweight provisioning without BGP |
+| `slim` | ~42 MB | DHCP only | Provisioning basics, no LVM/FRR | Lightweight provisioning without BGP |
 | `micro` | ~10 MB | None (pure Go) | None | Minimal agent, custom network stack |
+| `kernel-image` | ~8 MB | n/a | n/a | The Debian `vmlinuz` that matches the shipped modules, for QEMU tests |
 
 #### ARM64 Targets
 
@@ -237,6 +238,25 @@ automatically at boot from the `/modules/` directory in the initramfs.
 **Mellanox SR-IOV**: ConnectX-4+ cards are automatically detected via sysfs PCI vendor
 ID (`/sys/bus/pci/devices/*/vendor`) — no `lspci` binary needed. SR-IOV is configured
 using `mstconfig` during provisioning (requires a hard reboot to apply firmware changes).
+
+### Storage Controllers and RAID
+
+The default, gobgp and slim flavors ship these modules of the Debian kernel and
+load them at boot. `efivarfs` is skipped on BIOS systems. Before BOOTy selects
+the target disk or wipes all disks, it waits until the set of disks did not
+change for 2 seconds (`DISK_SETTLE_TIMEOUT_SEC`, default 30), because HBA
+drivers scan their buses asynchronously.
+
+| Class | Modules | Hardware |
+|-------|---------|----------|
+| NVMe | `nvme`, `nvme-core` | NVMe SSDs |
+| SATA | `ahci`, `libahci`, `libata` | Onboard SATA/AHCI |
+| SAS/RAID HBA | `megaraid_sas` | Broadcom/LSI MegaRAID (Dell PERC, Lenovo ThinkSystem RAID) |
+| SAS HBA | `mpt3sas` | Broadcom/LSI SAS3 HBAs (HBA330, 9300/9400) |
+| SAS/RAID HBA | `smartpqi`, `hpsa` | Microchip SmartRAID/SmartHBA, HPE Smart Array |
+| VM | `virtio_blk`, `virtio_scsi` | QEMU/KVM |
+| Software RAID | `md-mod`, `raid0`, `raid1`, `raid10`, `raid456` | `mdadm` RAID 0/1/10/5/6 |
+| Other | `loop`, `dm-mod`, `dm-crypt`, `efivarfs`, `8021q` | Loop images, LUKS, EFI variables, VLANs |
 
 ## Usage
 

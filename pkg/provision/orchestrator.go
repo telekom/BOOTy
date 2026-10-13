@@ -101,6 +101,8 @@ type Orchestrator struct {
 	firmwareChanged  bool // true if any step changed firmware values requiring hard reboot
 	// separateBootMounted is true while mount-boot owns a separate /boot mount.
 	separateBootMounted bool
+	// disksSettled is true after waitForDisks ran.
+	disksSettled bool
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
@@ -1265,7 +1267,23 @@ func validateSupportedLayoutMountpoint(mountpoint string) error {
 	}
 }
 
+// waitForDisks waits once per run for the block devices to settle
+// (provision.disk.settleTimeoutSec), so a disk behind a slow HBA scan is
+// seen by the disk selection and the wipe of all disks.
+func (o *Orchestrator) waitForDisks(ctx context.Context) {
+	if o.disksSettled {
+		return
+	}
+	o.disksSettled = true
+	timeout := 30
+	if t := o.cfg.Provision.Disk.SettleTimeoutSec; t != nil {
+		timeout = *t
+	}
+	o.disk.WaitForStableDisks(ctx, 2*time.Second, time.Duration(timeout)*time.Second)
+}
+
 func (o *Orchestrator) detectDisk(ctx context.Context) error {
+	o.waitForDisks(ctx)
 	if o.cfg.Provision.Disk.PartitionLayout != nil {
 		layoutDevice := strings.TrimSpace(o.cfg.Provision.Disk.PartitionLayout.Device)
 		o.cfg.Provision.Disk.PartitionLayout.Device = layoutDevice

@@ -172,7 +172,7 @@ RUN apt-get -o Acquire::Retries=5 update && \
     #   QEMU/KVM virtio:  virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev virtio_pci virtio_net failover net_failover
     #   Storage (SCSI):   scsi_mod sd_mod virtio_blk virtio_scsi
     #   Storage (HW):     nvme ahci megaraid_sas mpt3sas smartpqi hpsa loop
-    #   Software RAID:    md_mod raid0 raid1 raid10 (mdadm)
+    #   Software RAID:    md_mod raid0 raid1 raid10 raid456 (mdadm; RAID 5/6 need raid456)
     #   EFI variables:    efivarfs (efibootmgr)
     #   Filesystems:      ext4 jbd2 mbcache crc32c_generic xfs btrfs fat vfat nls_cp437 nls_iso8859-1 nls_ascii
     #   VRF/VXLAN/bridge: vrf dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc
@@ -188,7 +188,7 @@ RUN apt-get -o Acquire::Retries=5 update && \
         virtio_pci virtio_net failover net_failover \
         scsi_mod sd_mod virtio_blk virtio_scsi \
         nvme ahci megaraid_sas mpt3sas smartpqi hpsa loop \
-        md_mod raid0 raid1 raid10 \
+        md_mod raid0 raid1 raid10 raid456 \
         efivarfs \
         ext4 jbd2 mbcache crc32c_generic xfs btrfs fat vfat nls_cp437 nls_iso8859-1 nls_ascii \
         vrf dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc \

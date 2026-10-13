@@ -66,7 +66,7 @@ func TestDockerfileModuleLoopSyntax(t *testing.T) {
 		// Storage controllers, software RAID and EFI variables are modules
 		// of the Debian kernel.
 		"nvme", "ahci", "megaraid_sas", "mpt3sas", "smartpqi", "hpsa", "loop",
-		"md_mod", "raid1", "raid10", "efivarfs", "8021q",
+		"md_mod", "raid1", "raid10", "raid456", "efivarfs", "8021q",
 		"mlx5_core", "ice", "i40e", "bnxt_en", "tg3", "igb",
 	})
 }

@@ -98,11 +98,14 @@ behaviour.
   renames the link that has this systemd predictable name (naming scheme v255).
   `PREDICTABLE_NIC_NAMES=false` turns it off (#673).
 - The default, gobgp and slim initramfs ship the NVMe, AHCI, MegaRAID, mpt3sas,
-  SmartPQI and HPSA storage drivers, software RAID (`md_mod`, `raid0/1/10`),
-  `loop`, `8021q` and `efivarfs` modules. Before, only virtio disks were
-  visible on the Debian kernel. The default flavor's busybox applets (`sh`,
-  `sync`, `blockdev`, `setsid`) work again; their links pointed into the build
-  directory (#670).
+  SmartPQI and HPSA storage drivers, software RAID (`md_mod`, `raid0/1/10`,
+  `raid456`), `loop`, `8021q` and `efivarfs` modules. Before, only virtio disks
+  were visible on the Debian kernel. `efivarfs` is not loaded on BIOS systems.
+  The default flavor's busybox applets (`sh`, `sync`, `blockdev`, `setsid`)
+  work again; their links pointed into the build directory. Before the target
+  disk selection and a wipe of all disks, BOOTy waits until the set of disks is
+  stable for 2 seconds, at most `DISK_SETTLE_TIMEOUT_SEC` (default 30, `0`
+  turns it off) (#670).
 
 ### Behaviour behind `CAPRF_LEGACY_COMPAT=true`
 

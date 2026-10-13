@@ -66,6 +66,7 @@ func (c *Config) Validate() error {
 	errs = append(errs, validateKubeletProvisionFields(&c.Provision)...)
 	errs = append(errs, c.validatePersistence()...)
 
+	errs = append(errs, validateDiskSettle(&c.Provision.Disk)...)
 	if err := validateRAIDConfig(c.Provision.Disk.RAID); err != nil {
 		errs = append(errs, err.Error())
 	}
@@ -1092,4 +1093,12 @@ func validateEnumUpper(value, name string, allowed ...string) string {
 		return ""
 	}
 	return validateEnum(strings.ToUpper(strings.TrimSpace(value)), name, allowed...)
+}
+
+// validateDiskSettle rejects a negative disk settle timeout.
+func validateDiskSettle(d *DiskConfig) []string {
+	if t := d.SettleTimeoutSec; t != nil && *t < 0 {
+		return []string{fmt.Sprintf("provision.disk.settleTimeoutSec must not be negative, got %d", *t)}
+	}
+	return nil
 }

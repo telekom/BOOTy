@@ -79,6 +79,7 @@ func (o *Orchestrator) deprovisionSteps(mode string) []Step {
 // decommissionWipe matches decommission_wipe in the CAPRF legacy
 // deprovision.sh: wipe every disk, log failures and continue.
 func (o *Orchestrator) decommissionWipe(ctx context.Context) error {
+	o.waitForDisks(ctx)
 	if err := o.disk.DisableLVM(ctx); err != nil {
 		o.log.Warn("decommission: disabling LVM failed, continuing", "error", err)
 	}
@@ -116,7 +117,8 @@ func (o *Orchestrator) removeAllEFIBootEntries(ctx context.Context) error {
 	return nil
 }
 
-func (o *Orchestrator) selectDeprovisionDisk(_ context.Context) error {
+func (o *Orchestrator) selectDeprovisionDisk(ctx context.Context) error {
+	o.waitForDisks(ctx)
 	device, err := o.configuredDeprovisionDisk()
 	if err != nil {
 		return err
