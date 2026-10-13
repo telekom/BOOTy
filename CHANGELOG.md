@@ -191,6 +191,14 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 ### Features
 
+- GoBGP mode applies the netplan device settings of the provision VXLAN device,
+  the bridge and the NICs like systemd-networkd (MTU, MAC, learning, ARP proxy,
+  hairpin, link-local, `accept-ra`), and `frr.conf` `[no] ip[v6] forwarding`.
+  With the bm4x templates, `ip_forward` is now 0. New keys `VXLAN_MTU`,
+  `VXLAN_MAC`, `VXLAN_LEARNING`, `VXLAN_ARP_PROXY`, `VXLAN_PORT_HAIRPIN`,
+  `VXLAN_PORT_LEARNING`, `VXLAN_IPV6_LINK_LOCAL`, `VXLAN_ACCEPT_RA`,
+  `BRIDGE_MTU`, `BRIDGE_IPV6_LINK_LOCAL`, `BRIDGE_ACCEPT_RA`, `ACCEPT_RA_OFF`,
+  `IP_FORWARDING`, `IPV6_FORWARDING` (#668).
 - GoBGP mode applies the `frr.conf` route-maps and community-lists, explicit
   and automatic EVPN route targets, and the `local-as` AS path loop check. New
   keys `BGP_ROUTE_MAPS`, `BGP_COMMUNITY_LISTS`, `BGP_ROUTE_MAP_IN`,
