@@ -176,6 +176,9 @@ func TestNICFirmwareOptionsAndLegacyPreset(t *testing.T) {
 	}
 	if err := (&Config{Provision: ProvisionConfig{Firmware: FirmwareConfig{NumVFsMode: "max"}}}).Validate(); err == nil {
 		t.Fatal("Validate() accepted provision.firmware.numVFsMode=max")
+	}
+}
+
 func TestImageChecksumScopeValidation(t *testing.T) {
 	cfg := Config{Provision: ProvisionConfig{Image: ImageConfig{ChecksumScope: " Decompressed "}}}
 	if err := cfg.Validate(); err != nil {
