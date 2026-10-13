@@ -903,6 +903,12 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 		netCfg.VLANs = vlans
 	}
 
+	if config.BoolOr(cfg.Network.PredictableNames, true) {
+		if err := network.ApplyPredictableNames(ctx, netCfg); err != nil {
+			return nil, fmt.Errorf("predictable NIC names: %w", err)
+		}
+	}
+
 	linkCleanup, err := prepareLinkLayers(ctx, netCfg)
 	if err != nil {
 		return nil, err
