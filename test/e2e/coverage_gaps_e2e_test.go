@@ -498,6 +498,7 @@ func TestCreateEFIBootEntryShimE2E(t *testing.T) {
 }
 
 func TestRemoveEFIBootEntriesGracefulE2E(t *testing.T) {
+	t.Cleanup(provision.SetEFIFirmwarePathForTest(filepath.Join(t.TempDir(), "no-efi"))) // BIOS host: never touch the runner NVRAM
 	c := provision.NewConfigurator(disk.NewManager(newMockCommander()))
 	c.SetRootDir(t.TempDir())
 	if err := c.RemoveEFIBootEntries(context.Background()); err != nil {

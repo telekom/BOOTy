@@ -1279,6 +1279,15 @@ func (c *Configurator) MountEFIVars(ctx context.Context) error {
 	return nil
 }
 
+// SetEFIFirmwarePathForTest points /sys/firmware/efi (and its efivars) at
+// path and returns a function that restores them. A missing path makes the
+// host look like a BIOS system. Tests only.
+func SetEFIFirmwarePathForTest(path string) func() {
+	oldFirmware, oldVars := efiFirmwarePath, efiVarsPath
+	efiFirmwarePath, efiVarsPath = path, filepath.Join(path, "efivars")
+	return func() { efiFirmwarePath, efiVarsPath = oldFirmware, oldVars }
+}
+
 // bootedViaUEFI reports whether the firmware booted the ramdisk via UEFI.
 func bootedViaUEFI() bool {
 	_, err := os.Stat(efiFirmwarePath)
