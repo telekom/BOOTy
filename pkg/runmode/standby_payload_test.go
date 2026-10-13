@@ -39,8 +39,8 @@ func payloadStandby(t *testing.T, cmds []config.Command, deprovision func(*confi
 	cfg.Agent.DeprovisionSuccessAction = config.AgentDeprovisionStandby
 	provider := &payloadProvider{standbyProvider: &standbyProvider{commands: cmds}}
 	mode := &StandbyMode{deps: Deps{Cfg: cfg, Client: provider}}
-	mode.newDeprovisioner = func() standbyDeprovisioner {
-		return standbyDeprovisionerFunc(func(context.Context) error { return deprovision(mode.deps.Cfg) })
+	mode.newDeprovisioner = func(cfg *config.MachineConfig) standbyDeprovisioner {
+		return standbyDeprovisionerFunc(func(context.Context) error { return deprovision(cfg) })
 	}
 	return mode, provider
 }

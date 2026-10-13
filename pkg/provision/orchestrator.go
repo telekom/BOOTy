@@ -109,7 +109,8 @@ func NewOrchestrator(cfg *config.MachineConfig, provider config.Provider, diskMg
 		diskMgr = diskMgr.WithQuickWipe(cfg.Provision.Disk.WipeDepth == config.WipeDepthQuick)
 		// The disk options follow the config of this run, also when a standby
 		// command payload changes them. WithQuickWipe returned a copy, so the
-		// shared manager does not change.
+		// shared manager does not change and the next run
+		// starts from its own config.
 		diskMgr.SetLegacyCAPRFSelection(cfg.Provision.Disk.Selection == config.DiskSelectionLsblk)
 	}
 	return &Orchestrator{

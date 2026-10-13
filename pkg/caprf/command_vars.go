@@ -18,11 +18,26 @@ import (
 //
 // The payload can not change the settings that the running ramdisk already
 // uses: the transport (tokens, callback URLs, TLS), the agent endpoints, the
-// network, MODE, DRY_RUN and CAPRF_LEGACY_COMPAT. Such a payload is an error.
+// network, MODE, DRY_RUN and CAPRF_LEGACY_COMPAT. It can not change a URL
+// that BOOTy posts to with the bearer token (inventory, firmware, health,
+// telemetry, crash artifacts). Unknown keys are rejected too. A payload
+// with only blank and comment lines returns no keys.
+//
+// The base is the vars file that BOOTy read at start; MergeCommandVars does
+// not read /deploy/vars again.
 func MergeCommandVars(base, payload []byte) (cfg *config.MachineConfig, keys []string, err error) {
 	keys, err = payloadKeys(payload)
-	if err != nil {
+	if err != nil || len(keys) == 0 {
 		return nil, nil, err
+	}
+	var unknown []string
+	for _, k := range keys {
+		if !knownVarKey(k) {
+			unknown = append(unknown, k)
+		}
+	}
+	if len(unknown) > 0 {
+		return nil, nil, fmt.Errorf("unknown payload keys %s", strings.Join(unknown, ","))
 	}
 	ref, err := ParseVars(bytes.NewReader(base))
 	if err != nil {
@@ -44,6 +59,14 @@ func MergeCommandVars(base, payload []byte) (cfg *config.MachineConfig, keys []s
 		{"MODE", ref.Mode, cfg.Mode},
 		{"DRY_RUN", ref.DryRun, cfg.DryRun},
 		{"CAPRF_LEGACY_COMPAT", ref.LegacyCompat, cfg.LegacyCompat},
+		// URLs that receive bearer-token POSTs.
+		{"INVENTORY_URL", ref.Provision.Inventory.URL, cfg.Provision.Inventory.URL},
+		{"FIRMWARE_URL", ref.Provision.Firmware.URL, cfg.Provision.Firmware.URL},
+		{"HEALTH_CHECK_URL", ref.Health.ReportURL, cfg.Health.ReportURL},
+		{"telemetry", []string{ref.Telemetry.URL, ref.Telemetry.MetricsURL, ref.Telemetry.EventURL},
+			[]string{cfg.Telemetry.URL, cfg.Telemetry.MetricsURL, cfg.Telemetry.EventURL}},
+		{"crash artifact", []string{ref.Provision.CrashArtifacts.PrepareURL, ref.Provision.CrashArtifacts.UploadURL},
+			[]string{cfg.Provision.CrashArtifacts.PrepareURL, cfg.Provision.CrashArtifacts.UploadURL}},
 	} {
 		if !reflect.DeepEqual(s.ref, s.cand) {
 			fixed = append(fixed, s.name)
@@ -56,20 +79,24 @@ func MergeCommandVars(base, payload []byte) (cfg *config.MachineConfig, keys []s
 	return cfg, keys, nil
 }
 
-// payloadKeys returns the sorted, unique keys of the payload lines.
+// payloadKeys returns the sorted, unique keys of the payload lines, read
+// like ParseVars reads them. Blank and comment lines are skipped; any other
+// line without "=" is an error.
 func payloadKeys(payload []byte) ([]string, error) {
 	var keys []string
 	scanner := bufio.NewScanner(bytes.NewReader(payload))
-	for scanner.Scan() {
-		if key, _, ok := parseVarLine(scanner.Text()); ok {
-			keys = append(keys, strings.TrimSpace(key))
+	for n := 1; scanner.Scan(); n++ {
+		line := strings.TrimSpace(scanner.Text())
+		key, _, ok := parseVarLine(line)
+		switch {
+		case ok:
+			keys = append(keys, key)
+		case line != "" && !strings.HasPrefix(line, "#"):
+			return nil, fmt.Errorf("payload line %d is not KEY=VALUE", n)
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scan payload: %w", err)
-	}
-	if len(keys) == 0 {
-		return nil, fmt.Errorf("payload has no KEY=VALUE line")
 	}
 	slices.Sort(keys)
 	return slices.Compact(keys), nil

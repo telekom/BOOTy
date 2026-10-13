@@ -1035,7 +1035,7 @@ func ParseVars(r io.Reader) (*config.MachineConfig, error) {
 			legacyExtraKernelParams = strings.TrimSpace(value)
 			continue
 		}
-		if err := applyVar(cfg, key, value); err != nil {
+		if err := applyVar(cfg, key, value); err != nil && !errors.Is(err, errUnknownVar) {
 			return nil, fmt.Errorf("parse var %s: %w", key, err)
 		}
 	}
@@ -1331,9 +1331,22 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) error {
 		if strings.HasPrefix(key, "LUKS_") {
 			return fmt.Errorf("%s is not supported yet", key)
 		}
+		return errUnknownVar
 	}
 
 	return nil
+}
+
+// errUnknownVar marks a key that no vars handler reads. ParseVars ignores
+// such keys; a standby command payload rejects them.
+var errUnknownVar = errors.New("unknown vars key")
+
+// knownVarKey reports whether a vars handler reads key.
+func knownVarKey(key string) bool {
+	if key == "EXTRA_KERNEL_PARAMS" {
+		return true
+	}
+	return !errors.Is(applyVar(&config.MachineConfig{}, key, ""), errUnknownVar)
 }
 
 func mergeSecureBootPinnedDigests(cfg *config.MachineConfig, digests map[string]string) {

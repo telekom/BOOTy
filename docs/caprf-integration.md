@@ -155,14 +155,18 @@ HOSTNAME=worker-07
 EXTRA_KERNEL_PARAMS=intel_iommu=on
 ```
 
-- BOOTy reads `/deploy/vars` again, appends the payload lines and parses
-  the result as one vars file. So a payload entry wins over the same key in
-  `/deploy/vars`, and the [vars file rules](configuration.md#vars-file-format)
-  apply: the last entry wins, `EXTRA_KERNEL_PARAMS` still goes after
+- BOOTy appends the payload lines to the `/deploy/vars` content that it
+  read at start (it does not read the file again) and parses the result as
+  one vars file. So a payload entry wins over the same key in `/deploy/vars`,
+  and the [vars file rules](configuration.md#vars-file-format) apply: the
+  last entry wins, `EXTRA_KERNEL_PARAMS` still goes after
   `MACHINE_EXTRA_KERNEL_PARAMS`, `CAPRF_LEGACY_COMPAT` presets fill only
   unset options, and `Config.Validate` checks the result.
-- The payload applies to that command only. After a command that returns to
-  standby, BOOTy uses `/deploy/vars` again.
+- The payload applies to that command only: BOOTy builds a separate config
+  for the command and does not change the config of the standby loop. The
+  next command starts from `/deploy/vars` again.
+- `EXPORT_VARS=true` exports only the `/deploy/vars` entries at start. The
+  payload keys are not exported to the process environment.
 - The ramdisk already uses some settings, so a payload can not change them:
   the transport (`TOKEN`, `TOKEN_URL`, `TOKEN_ALGORITHM`, `INIT_URL`,
   `SUCCESS_URL`, `ERROR_URL`, `LOG_URL`, `DEBUG_URL`, `INSECURE_TRANSPORT`,
@@ -172,12 +176,22 @@ EXTRA_KERNEL_PARAMS=intel_iommu=on
   [GoBGP and EVPN](configuration.md#gobgp-and-evpn) and
   [FRR](configuration.md#frr)), `MODE`, `DRY_RUN` and `CAPRF_LEGACY_COMPAT`.
   The command type selects the mode.
-- BOOTy rejects a payload that changes one of these settings, that has no
-  `KEY=VALUE` line, that does not parse or that fails validation. It does
-  not run the command, ACKs it as `failed` with
-  `invalid <type> payload: <reason>` and stays in standby.
+- A payload can not redirect a request that carries the bearer token:
+  `INVENTORY_URL`, `FIRMWARE_URL`, `HEALTH_CHECK_URL`, `TELEMETRY_URL`,
+  `METRICS_URL`, `EVENT_URL`, `CRASH_ARTIFACTS_PREPARE_URL` and
+  `CRASH_ARTIFACTS_UPLOAD_URL` are fixed too.
+- BOOTy rejects a payload that changes one of these settings, that has an
+  unknown key (also a misspelled one), a line that is not `KEY=VALUE`, a
+  value that does not parse, or that fails validation. It does not run the
+  command, ACKs it as `failed` with `invalid <type> payload: <reason>` (the
+  reason lists unknown keys) and stays in standby.
+- A payload with only blank and comment lines counts as no payload.
 - The `completed` ACK names the payload keys, for example
   `provisioning complete with payload keys EXTRA_KERNEL_PARAMS,HOSTNAME`.
+- Trust: BOOTy trusts the payload as much as `/deploy/vars`. It can change
+  the image, the disk and the kernel parameters. Serve `COMMANDS_URL` over
+  HTTPS with a certificate that BOOTy verifies: do not use
+  `INSECURE_TRANSPORT` or `SKIP_TLS_VERIFY` for agent mode in production.
 
 ### End of a command
 

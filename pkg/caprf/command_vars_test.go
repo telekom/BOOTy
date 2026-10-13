@@ -49,8 +49,16 @@ func TestMergeCommandVarsRejectsRuntimeSettings(t *testing.T) {
 		"DRY_RUN=true":                               "DRY_RUN",
 		"CAPRF_LEGACY_COMPAT=true":                   "CAPRF_LEGACY_COMPAT",
 		"STANDBY_DEPROVISION_SUCCESS_ACTION=standby": "agent",
-		"no assignment":                              "no KEY=VALUE line",
-		"":                                           "no KEY=VALUE line",
+		"no assignment":                              "line 1 is not KEY=VALUE",
+		"HOSTNAME=x\nno assignment":                  "line 2 is not KEY=VALUE",
+		"HOSTNMAE=typo\nHOSTNAME=x":                  "unknown payload keys HOSTNMAE",
+		"HOSTNAME =x":                                "unknown payload keys HOSTNAME ",
+		"INVENTORY_URL=https://x.example.com/inv":    "INVENTORY_URL",
+		"FIRMWARE_URL=https://x.example.com/fw":      "FIRMWARE_URL",
+		"HEALTH_CHECK_URL=https://x.example.com/h":   "HEALTH_CHECK_URL",
+		"METRICS_URL=https://x.example.com/m":        "telemetry",
+		"CRASH_ARTIFACTS_UPLOAD_URL=https://x/u":     "crash artifact",
+		"LOG_URL=https://x.example.com/log":          "transport",
 		"SUCCESS_ACTION=later":                       "successAction",
 		"LUKS_DEVICE=/dev/sda":                       "LUKS_DEVICE",
 	} {
@@ -71,5 +79,15 @@ func TestMergeCommandVarsKeepsPresetRules(t *testing.T) {
 	}
 	if cfg.SuccessAction != "reboot" || cfg.FailureAction != "wait" {
 		t.Fatalf("success %q failure %q, want the payload value and the preset", cfg.SuccessAction, cfg.FailureAction)
+	}
+}
+
+// Blank and comment lines are no payload: no keys, no config.
+func TestMergeCommandVarsEmptyPayload(t *testing.T) {
+	for _, payload := range []string{"", "  \n\t\n", "# only a comment\n\n"} {
+		cfg, keys, err := MergeCommandVars([]byte(commandBaseVars), []byte(payload))
+		if err != nil || cfg != nil || len(keys) != 0 {
+			t.Errorf("payload %q: cfg %v keys %v err %v, want no payload", payload, cfg, keys, err)
+		}
 	}
 }
