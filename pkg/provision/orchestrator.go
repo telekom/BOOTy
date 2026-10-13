@@ -2640,7 +2640,7 @@ func (o *Orchestrator) applySysexts(ctx context.Context) error {
 	return o.config.ApplySysexts(ctx, &o.cfg.Provision.Sysext)
 }
 
-func (o *Orchestrator) setupChrootBinds(_ context.Context) error {
+func (o *Orchestrator) setupChrootBinds(ctx context.Context) error {
 	// mount(2) follows symlinks; refuse bind targets that leave the root,
 	// for example links left by an earlier run before a resume.
 	for _, rel := range []string{"dev", "proc", "sys", "run"} {
@@ -2648,8 +2648,18 @@ func (o *Orchestrator) setupChrootBinds(_ context.Context) error {
 			return fmt.Errorf("chroot bind target %s: %w", rel, err)
 		}
 	}
+	if config.BoolOr(o.cfg.Provision.DiskLinks, true) {
+		// The chroot sees the ramdisk /dev, so update-grub finds
+		// /dev/disk/by-uuid/<root UUID> and writes root=UUID=.
+		if err := o.disk.CreateDiskLinks(ctx, diskLinksDevDir); err != nil {
+			return fmt.Errorf("creating /dev/disk links: %w", err)
+		}
+	}
 	return o.disk.SetupChrootBindMounts(newroot)
 }
+
+// diskLinksDevDir is the /dev of the ramdisk. Tests replace it.
+var diskLinksDevDir = "/dev"
 
 func (o *Orchestrator) growPartition(ctx context.Context) error {
 	if o.cfg.Provision.Disk.PartitionLayout != nil {
