@@ -31,6 +31,9 @@ behaviour.
 
 ### Behaviour changes in all modes
 
+- The provisioner `frr.conf` is read with a block parser that follows FRR's
+  reading rules. A statement that BOOTy does not implement, or an unknown netplan
+  key, now fails the network setup and the run (#642).
 - Netplan `set-name` renames the single NIC that its `match` selects, and a glob
   or MAC `match` selects the NIC of a static address, like `netplan apply`.
   Before, BOOTy ignored `set-name` and used the first NIC (#641).
