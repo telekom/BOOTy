@@ -141,6 +141,9 @@ func (c *Config) validateEnums() []string {
 			return validateEnumLower(c.Rescue.Mode, "rescue.mode", "reboot", "retry", "shell", "wait")
 		},
 		func() string {
+			return validateEnumLower(c.Provision.MachineCommandsMode, "provision.machineCommandsMode", MachineCommandsCommand, MachineCommandsScript)
+		},
+		func() string {
 			return validateEnumLower(c.SuccessAction, "successAction", SuccessActionReboot, SuccessActionPowerOff)
 		},
 		func() string {
@@ -311,6 +314,7 @@ func (c *Config) normalize() {
 		&c.Provision.AB.ActiveSlot,
 		&c.Provision.AB.TargetSlot,
 		&c.Rescue.Mode,
+		&c.Provision.MachineCommandsMode,
 		&c.SuccessAction,
 		&c.FailureAction,
 		&c.Provision.Disk.Selection,

@@ -2756,6 +2756,23 @@ func TestParseVarsNetworkWaitMode(t *testing.T) {
 	}
 }
 
+func TestParseVarsMachineCommandsMode(t *testing.T) {
+	for vars, want := range map[string]string{
+		"MACHINE_COMMANDS_MODE=script\n":                            "script",
+		"CAPRF_LEGACY_COMPAT=true\n":                                "script",
+		"CAPRF_LEGACY_COMPAT=true\nMACHINE_COMMANDS_MODE=command\n": "command",
+		"CAPRF_LEGACY_COMPAT=false\n":                               "",
+	} {
+		cfg, err := ParseVars(strings.NewReader(vars))
+		if err != nil {
+			t.Fatalf("ParseVars(%q): %v", vars, err)
+		}
+		if got := cfg.Provision.MachineCommandsMode; got != want {
+			t.Errorf("ParseVars(%q): MachineCommandsMode = %q, want %q", vars, got, want)
+		}
+	}
+}
+
 func TestParseVarsNetworkWaitMaxAttemptsExplicitZero(t *testing.T) {
 	cfg, err := ParseVars(strings.NewReader("NETWORK_WAIT_MAX_ATTEMPTS=0\n"))
 	if err != nil {

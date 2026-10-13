@@ -260,3 +260,29 @@ func TestDiskSettleTimeoutBounds(t *testing.T) {
 		}
 	}
 }
+
+func TestMachineCommandsModeAndLegacyPreset(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		cfg  Config
+		want string
+	}{
+		{name: "default"},
+		{name: "native", cfg: Config{Provision: ProvisionConfig{MachineCommandsMode: "Script"}}, want: MachineCommandsScript},
+		{name: "preset", cfg: Config{LegacyCompat: true}, want: MachineCommandsScript},
+		{name: "explicit command wins over preset", cfg: Config{LegacyCompat: true, Provision: ProvisionConfig{MachineCommandsMode: "command"}}, want: MachineCommandsCommand},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := tt.cfg
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("Validate() = %v", err)
+			}
+			if got := cfg.Provision.MachineCommandsMode; got != tt.want {
+				t.Fatalf("MachineCommandsMode = %q, want %q", got, tt.want)
+			}
+		})
+	}
+	if err := (&Config{Provision: ProvisionConfig{MachineCommandsMode: "shell"}}).Validate(); err == nil {
+		t.Fatal("Validate() accepted provision.machineCommandsMode=shell")
+	}
+}
