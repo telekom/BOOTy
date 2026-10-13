@@ -44,7 +44,8 @@ import (
 //   - Network.LoopbackAddresses, Network.BlackholeRoutes, Network.EVPN.Type5Networks:
 //     comma-separated CIDRs
 //   - Network.BGP.AllowASIn: 0 to 10; Network.EVPN.BridgeMAC: 48-bit MAC;
-//     Network.MTU: 0 or 626 to 65535
+//     Network.MTU: 0 or 626 to 65535; Network.Overlay.VXLANMAC: 48-bit MAC;
+//     Network.Overlay.VXLANMTU, BridgeMTU: 0 or 576 to 65535
 //   - Cross-field: Network.BGP.Neighbors required when PeerMode is "dual" or "numbered"
 //
 // Validate also calls normalize(), which lowercases/uppercases case-insensitive
@@ -250,13 +251,34 @@ func (c *Config) validateNetworkOptions() []string {
 	if n := c.Network.BGP.AllowASIn; n != nil && *n > 10 {
 		errs = append(errs, fmt.Sprintf("network.bgp.allowASIn %d must be 0 to 10", *n))
 	}
-	if mac := strings.TrimSpace(c.Network.EVPN.BridgeMAC); mac != "" {
-		if hw, err := net.ParseMAC(mac); err != nil || len(hw) != 6 {
-			errs = append(errs, fmt.Sprintf("network.evpn.bridgeMAC %q is not a 48-bit MAC address", mac))
-		}
-	}
 	if mtu := c.Network.MTU; mtu != 0 && (mtu < 626 || mtu > 65535) {
 		errs = append(errs, fmt.Sprintf("network.mtu %d must be 626 to 65535 (576 IP + 50 VXLAN)", mtu))
+	}
+	return append(errs, c.validateOverlayDevices()...)
+}
+
+// validateOverlayDevices checks the MAC addresses and MTUs of the provision
+// bridge and VXLAN device.
+func (c *Config) validateOverlayDevices() []string {
+	var errs []string
+	o := &c.Network.Overlay
+	for _, m := range []struct{ name, value string }{
+		{"network.evpn.bridgeMAC", c.Network.EVPN.BridgeMAC},
+		{"network.overlay.vxlanMAC", o.VXLANMAC},
+	} {
+		if mac := strings.TrimSpace(m.value); mac != "" {
+			if hw, err := net.ParseMAC(mac); err != nil || len(hw) != 6 {
+				errs = append(errs, fmt.Sprintf("%s %q is not a 48-bit MAC address", m.name, mac))
+			}
+		}
+	}
+	for _, m := range []struct {
+		name  string
+		value int
+	}{{"network.overlay.vxlanMTU", o.VXLANMTU}, {"network.overlay.bridgeMTU", o.BridgeMTU}} {
+		if m.value != 0 && (m.value < 576 || m.value > 65535) {
+			errs = append(errs, fmt.Sprintf("%s %d must be 576 to 65535", m.name, m.value))
+		}
 	}
 	return errs
 }

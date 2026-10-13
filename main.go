@@ -1088,6 +1088,10 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 		MTU:               cfg.Network.MTU,
 		OverlayVRFTableID: cfg.Network.VRF.OverlayTableID,
 		BGPLocalAS:        cfg.Network.BGP.LocalAS,
+		OverlayDevices:    cfg.Network.Overlay,
+		NoAcceptRA:        splitList(cfg.Network.NoAcceptRA),
+		IPForwarding:      cfg.Network.IPForwarding,
+		IPv6Forwarding:    cfg.Network.IPv6Forwarding,
 		BGPRouteMaps:      cfg.Network.BGP.RouteMaps,
 		BGPCommunityLists: cfg.Network.BGP.CommunityLists,
 		BGPRouteMapIn:     cfg.Network.BGP.RouteMapIn,
@@ -1466,6 +1470,17 @@ func mergeNetplanConfig(dst, src *network.Config) {
 		dst.BGPMultipathRelax = src.BGPMultipathRelax
 	}
 	mergeBGPPolicy(dst, src)
+	mergeOverlayDevices(&dst.OverlayDevices, &src.OverlayDevices)
+	if len(src.NoAcceptRA) > 0 {
+		dst.NoAcceptRA = src.NoAcceptRA
+	}
+	// "no ip forwarding" in frr.conf is a default; an explicit option wins.
+	if dst.IPForwarding == nil {
+		dst.IPForwarding = src.IPForwarding
+	}
+	if dst.IPv6Forwarding == nil {
+		dst.IPv6Forwarding = src.IPv6Forwarding
+	}
 }
 
 // nativeWins keeps a set native value; an unset one takes the parsed value.
@@ -1529,6 +1544,29 @@ func mergeBGPPolicy(dst, src *network.Config) {
 	}
 	if len(dst.EVPNImportRTs) == 0 && len(dst.EVPNExportRTs) == 0 {
 		dst.EVPNImportRTs, dst.EVPNExportRTs = src.EVPNImportRTs, src.EVPNExportRTs
+	}
+}
+
+// mergeOverlayDevices takes every device setting that netplan sets.
+func mergeOverlayDevices(dst, src *network.OverlayDevices) {
+	if src.VXLANMTU > 0 {
+		dst.VXLANMTU = src.VXLANMTU
+	}
+	if src.BridgeMTU > 0 {
+		dst.BridgeMTU = src.BridgeMTU
+	}
+	if src.VXLANMAC != "" {
+		dst.VXLANMAC = src.VXLANMAC
+	}
+	for _, f := range []struct{ d, s **bool }{
+		{&dst.VXLANLearning, &src.VXLANLearning}, {&dst.VXLANARPProxy, &src.VXLANARPProxy},
+		{&dst.PortHairpin, &src.PortHairpin}, {&dst.PortLearning, &src.PortLearning},
+		{&dst.VXLANLinkLocal, &src.VXLANLinkLocal}, {&dst.BridgeLinkLocal, &src.BridgeLinkLocal},
+		{&dst.VXLANAcceptRA, &src.VXLANAcceptRA}, {&dst.BridgeAcceptRA, &src.BridgeAcceptRA},
+	} {
+		if *f.s != nil {
+			*f.d = *f.s
+		}
 	}
 }
 

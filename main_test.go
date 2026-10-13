@@ -2090,3 +2090,31 @@ func TestMergeNetplanConfigNativeBridgeMAC(t *testing.T) {
 		t.Fatalf("BridgeMAC = %q, want the native 02:00:00:00:aa:01", dst.BridgeMAC)
 	}
 }
+
+// Netplan device settings win; frr.conf forwarding is only a default.
+func TestMergeNetplanConfigOverlayDevices(t *testing.T) {
+	dst := &network.Config{
+		OverlayDevices: network.OverlayDevices{VXLANMTU: 8000, VXLANMAC: "02:00:00:00:00:01", PortHairpin: new(false)},
+		IPForwarding:   new(true),
+	}
+	src := &network.Config{
+		OverlayDevices: network.OverlayDevices{VXLANMTU: 9000, VXLANLinkLocal: new(false)},
+		NoAcceptRA:     []string{"ens1f0np0"},
+		IPForwarding:   new(false),
+		IPv6Forwarding: new(false),
+	}
+
+	mergeNetplanConfig(dst, src)
+
+	d := dst.OverlayDevices
+	if d.VXLANMTU != 9000 || d.VXLANMAC != "02:00:00:00:00:01" || d.PortHairpin == nil || *d.PortHairpin ||
+		d.VXLANLinkLocal == nil || *d.VXLANLinkLocal {
+		t.Errorf("overlay devices = %+v", d)
+	}
+	if !*dst.IPForwarding || dst.IPv6Forwarding == nil || *dst.IPv6Forwarding {
+		t.Errorf("forwarding = %v %v, want explicit true and frr.conf false", *dst.IPForwarding, dst.IPv6Forwarding)
+	}
+	if !slices.Equal(dst.NoAcceptRA, []string{"ens1f0np0"}) {
+		t.Errorf("NoAcceptRA = %v", dst.NoAcceptRA)
+	}
+}

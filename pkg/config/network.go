@@ -69,6 +69,20 @@ type NetworkConfig struct {
 	// Default: nil (true)
 	PredictableNames *bool `yaml:"predictableNames,omitempty" json:"predictableNames,omitempty"`
 
+	// Overlay holds the device settings of the provision VXLAN device and
+	// bridge (GoBGP), like the netplan tunnel and bridge keys. The netplan
+	// values win.
+	Overlay network.OverlayDevices `yaml:"overlay,omitempty" json:"overlay,omitempty"`
+
+	// NoAcceptRA is a comma-separated list of NICs that ignore IPv6 router
+	// advertisements, like netplan "accept-ra: false".
+	NoAcceptRA string `yaml:"noAcceptRA" json:"noAcceptRA"`
+
+	// IPForwarding and IPv6Forwarding set the forwarding sysctls (GoBGP).
+	// Unset (nil) means on, or off with frr.conf "no ip forwarding".
+	IPForwarding   *bool `yaml:"ipForwarding,omitempty" json:"ipForwarding,omitempty"`
+	IPv6Forwarding *bool `yaml:"ipv6Forwarding,omitempty" json:"ipv6Forwarding,omitempty"`
+
 	// MTU is the MTU of the fabric NICs and the underlay dummy (GoBGP);
 	// the VXLAN MTU is 50 less. The largest netplan "mtu" wins.
 	// Default: 0 (9000)

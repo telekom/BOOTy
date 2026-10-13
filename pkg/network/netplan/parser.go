@@ -247,6 +247,7 @@ func extractTunnels(np *Config, cfg *network.Config) {
 		if provision.Link != "" && cfg.VXLANLink == "" {
 			cfg.VXLANLink = ethernetName(np, provision.Link)
 		}
+		applyTunnelDevice(&provision, &cfg.OverlayDevices)
 		return
 	}
 
@@ -310,6 +311,11 @@ func extractBridges(np *Config, cfg *network.Config) {
 	if cfg.BridgeMAC == "" {
 		cfg.BridgeMAC = np.Network.Bridges[cfg.BridgeNameOrDefault()].MACAddress
 	}
+	if br, ok := np.Network.Bridges[cfg.BridgeNameOrDefault()]; ok {
+		cfg.OverlayDevices.BridgeMTU = br.MTU
+		cfg.OverlayDevices.BridgeLinkLocal = linkLocalIPv6(br.LinkLocal)
+		cfg.OverlayDevices.BridgeAcceptRA = br.AcceptRA
+	}
 }
 
 func extractEthernets(np *Config, cfg *network.Config) (dhcpCount int, dnsList []string) {
@@ -318,14 +324,14 @@ func extractEthernets(np *Config, cfg *network.Config) (dhcpCount int, dnsList [
 		if eth.DHCP4 != nil && *eth.DHCP4 {
 			dhcpCount++
 		}
-		for _, ll := range eth.LinkLocal {
-			if strings.EqualFold(ll, "ipv6") {
-				cfg.Interfaces = append(cfg.Interfaces, "auto-detect")
-				break
-			}
+		if slices.ContainsFunc(eth.LinkLocal, isIPv6) {
+			cfg.Interfaces = append(cfg.Interfaces, "auto-detect")
 		}
 		if eth.Nameservers != nil {
 			dnsList = append(dnsList, eth.Nameservers.Addresses...)
+		}
+		if eth.AcceptRA != nil && !*eth.AcceptRA {
+			cfg.NoAcceptRA = append(cfg.NoAcceptRA, name)
 		}
 		if name == "lo" && eth.Match == nil {
 			// Addresses on lo are host addresses, not a static uplink.
@@ -437,6 +443,30 @@ func ethernetName(np *Config, id string) string {
 	return id
 }
 
+// applyTunnelDevice takes the device settings of the provision tunnel.
+func applyTunnelDevice(t *TunnelConfig, d *network.OverlayDevices) {
+	d.VXLANMTU = t.MTU
+	d.VXLANMAC = t.MACAddress
+	d.VXLANLearning = t.MACLearning
+	d.VXLANARPProxy = t.ARPProxy
+	d.PortHairpin = t.Hairpin
+	d.PortLearning = t.PortMACLearning
+	d.VXLANLinkLocal = linkLocalIPv6(t.LinkLocal)
+	d.VXLANAcceptRA = t.AcceptRA
+}
+
+// linkLocalIPv6 reports whether a netplan link-local list asks for an IPv6
+// link-local address; nil when the key is not set (networkd default).
+func linkLocalIPv6(list []string) *bool {
+	if list == nil {
+		return nil
+	}
+	v := slices.ContainsFunc(list, isIPv6)
+	return &v
+}
+
+func isIPv6(linkLocal string) bool { return strings.EqualFold(linkLocal, "ipv6") }
+
 // applyEthernetMatch records netplan set-name renames and the first static
 // address with the NIC or match it belongs to.
 func applyEthernetMatch(name string, eth *EthernetConfig, cfg *network.Config) {
@@ -487,6 +517,14 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 	}
 	cfg.EVPNL3VNIs = frr.L3VNIs
 	cfg.BlackholeRoutes = frr.BlackholeRoutes
+	if frr.Model != nil {
+		// Only an explicit "[no] ip[v6] forwarding" changes the GoBGP
+		// default (on): zebra would keep the kernel default (off), but
+		// without accept-ra: false the NICs would then take router
+		// advertisements of the fabric.
+		cfg.IPForwarding = frr.Model.IPForwarding
+		cfg.IPv6Forwarding = frr.Model.IPv6Forwarding
+	}
 	cfg.BGPSessions = frr.Sessions
 	cfg.BGPMultipathRelax = frr.MultipathRelax
 	if frr.Model != nil {

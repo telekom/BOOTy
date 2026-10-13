@@ -131,9 +131,10 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 		return err
 	}
 
-	if err := enableForwarding(u.log); err != nil {
+	if err := enableForwarding(u.log, u.cfg.IPForwarding, u.cfg.IPv6Forwarding); err != nil {
 		return fmt.Errorf("enable forwarding: %w", err)
 	}
+	u.disableAcceptRA()
 	if err := u.acceptVRFConnections(); err != nil {
 		return err
 	}
@@ -1206,4 +1207,13 @@ func isOwnAddress(ifi *net.Interface, ip net.IP) bool {
 		}
 	}
 	return false
+}
+
+// disableAcceptRA applies netplan "accept-ra: false" to the NICs.
+func (u *UnderlayTier) disableAcceptRA() {
+	for _, nic := range u.cfg.NoAcceptRA {
+		if err := setAcceptRA(nic, false); err != nil {
+			u.log.Warn("accept-ra: false not applied", "nic", nic, "error", err)
+		}
+	}
 }

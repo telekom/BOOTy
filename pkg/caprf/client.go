@@ -1730,6 +1730,24 @@ func applyFeatureToggle(cfg *config.MachineConfig, key, value string) (bool, err
 	return true, nil
 }
 
+// networkBoolOption returns the optional boolean network option of a
+// vars key.
+func networkBoolOption(cfg *config.MachineConfig, key string) **bool {
+	o := &cfg.Network.Overlay
+	return map[string]**bool{
+		"VXLAN_LEARNING":         &o.VXLANLearning,
+		"VXLAN_ARP_PROXY":        &o.VXLANARPProxy,
+		"VXLAN_PORT_HAIRPIN":     &o.PortHairpin,
+		"VXLAN_PORT_LEARNING":    &o.PortLearning,
+		"VXLAN_IPV6_LINK_LOCAL":  &o.VXLANLinkLocal,
+		"VXLAN_ACCEPT_RA":        &o.VXLANAcceptRA,
+		"BRIDGE_IPV6_LINK_LOCAL": &o.BridgeLinkLocal,
+		"BRIDGE_ACCEPT_RA":       &o.BridgeAcceptRA,
+		"IP_FORWARDING":          &cfg.Network.IPForwarding,
+		"IPV6_FORWARDING":        &cfg.Network.IPv6Forwarding,
+	}[key]
+}
+
 // applyNetworkOptionVar handles the native options of values that the
 // provisioner frr.conf can also set. Unset options stay nil.
 func applyNetworkOptionVar(cfg *config.MachineConfig, key, value string) (bool, error) {
@@ -1746,6 +1764,32 @@ func applyNetworkOptionVar(cfg *config.MachineConfig, key, value string) (bool, 
 		if err := setIntField(&cfg.Network.MTU, value); err != nil {
 			return true, fmt.Errorf("invalid %s: %w", key, err)
 		}
+	default:
+		return applyDeviceOptionVar(cfg, key, value)
+	}
+	return true, nil
+}
+
+// applyDeviceOptionVar handles the native options of the netplan device
+// settings.
+func applyDeviceOptionVar(cfg *config.MachineConfig, key, value string) (bool, error) {
+	if b := networkBoolOption(cfg, key); b != nil {
+		*b = new(parseBoolVar(value))
+		return true, nil
+	}
+	switch key {
+	case "VXLAN_MTU", "BRIDGE_MTU":
+		mtu := &cfg.Network.Overlay.VXLANMTU
+		if key == "BRIDGE_MTU" {
+			mtu = &cfg.Network.Overlay.BridgeMTU
+		}
+		if err := setIntField(mtu, value); err != nil {
+			return true, fmt.Errorf("invalid %s: %w", key, err)
+		}
+	case "VXLAN_MAC":
+		cfg.Network.Overlay.VXLANMAC = value
+	case "ACCEPT_RA_OFF":
+		cfg.Network.NoAcceptRA = value
 	default:
 		return false, nil
 	}

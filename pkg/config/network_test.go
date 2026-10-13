@@ -40,3 +40,21 @@ func TestValidateNetworkOptionRanges(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateOverlayDevices(t *testing.T) {
+	c := &Config{}
+	c.Network.Overlay.VXLANMAC = "02:54:c0:00:02:13"
+	c.Network.Overlay.VXLANMTU = 9000
+	c.Network.Overlay.BridgeMTU = 576
+	if err := c.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	c.Network.Overlay.VXLANMAC = "02:54:c0"
+	c.Network.Overlay.BridgeMTU = 70000
+	err := c.Validate()
+	for _, want := range []string{`network.overlay.vxlanMAC "02:54:c0"`, "network.overlay.bridgeMTU 70000"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Validate = %v, want %q", err, want)
+		}
+	}
+}
