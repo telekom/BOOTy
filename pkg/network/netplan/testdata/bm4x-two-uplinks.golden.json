@@ -3,6 +3,7 @@
     "auto-detect",
     "auto-detect"
   ],
+  "LegacyFRRRecovery": false,
   "UnderlaySubnet": "",
   "UnderlayIP": "192.0.2.17",
   "OverlaySubnet": "",
