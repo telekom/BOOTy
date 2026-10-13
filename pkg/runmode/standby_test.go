@@ -22,6 +22,7 @@ type standbyProvider struct {
 	commandErr      error
 	statusErrOnCall int
 	acks            []string
+	ackMessages     []string
 }
 
 type standbyDeprovisionerFunc func(context.Context) error
@@ -54,8 +55,9 @@ func (p *standbyProvider) FetchCommands(_ context.Context) ([]config.Command, er
 	return p.commands, p.commandErr
 }
 
-func (p *standbyProvider) AcknowledgeCommand(_ context.Context, cmdID, status, _ string) error {
+func (p *standbyProvider) AcknowledgeCommand(_ context.Context, cmdID, status, message string) error {
 	p.acks = append(p.acks, cmdID+":"+status)
+	p.ackMessages = append(p.ackMessages, message)
 	return nil
 }
 
