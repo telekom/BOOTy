@@ -48,6 +48,8 @@ type Manager struct {
 	legacyCAPRFSelection bool
 	// quickWipe limits the wipe to the disk signatures. See SetQuickWipe.
 	quickWipe bool
+	// procRoot is read by refuseInUse; empty skips the check.
+	procRoot string
 }
 
 // SetLegacyCAPRFSelection makes DetectDisk select the target disk like
@@ -59,11 +61,17 @@ func (m *Manager) SetLegacyCAPRFSelection(enabled bool) {
 }
 
 // NewManager creates a Manager with the given Commander (nil = ExecCommander).
+// Only a manager that runs real commands checks /proc before it wipes a
+// disk (refuseInUse): a test commander changes no disk.
 func NewManager(cmd Commander) *Manager {
 	if cmd == nil {
 		cmd = &ExecCommander{}
 	}
-	return &Manager{cmd: cmd, sysfsRoot: "/sys"}
+	m := &Manager{cmd: cmd, sysfsRoot: "/sys"}
+	if _, isExec := cmd.(*ExecCommander); isExec {
+		m.procRoot = "/proc"
+	}
+	return m
 }
 
 // SetSysfsRoot changes the sysfs root that disk discovery reads, "/sys" by
@@ -141,6 +149,9 @@ func (m *Manager) WipeDisk(ctx context.Context, device string) error {
 	if device == "" {
 		return fmt.Errorf("wipe disk: device is required")
 	}
+	if err := m.refuseInUse(device); err != nil {
+		return err
+	}
 	slog.Info("wiping disk", "device", device, "quick", m.quickWipe)
 	if err := m.wipeDevice(ctx, device); err != nil {
 		return fmt.Errorf("wipefs %s: %w", device, err)
@@ -154,6 +165,9 @@ func (m *Manager) WipeFilesystemSignatures(ctx context.Context, device string) e
 	device = strings.TrimSpace(device)
 	if device == "" {
 		return fmt.Errorf("wipe filesystem signatures: device is required")
+	}
+	if err := m.refuseInUse(device); err != nil {
+		return err
 	}
 	slog.Info("wiping filesystem signatures", "device", device)
 	if _, err := m.cmd.Run(ctx, "wipefs", "-af", device); err != nil {
@@ -181,6 +195,11 @@ func (m *Manager) WipeAllDisks(ctx context.Context) error {
 			continue
 		}
 		dev := "/dev/" + name
+		if err := m.refuseInUse(dev); err != nil {
+			slog.Error("disk is in use, not wiped", "device", dev, "error", err)
+			errs = append(errs, err)
+			continue
+		}
 		slog.Info("wiping disk", "device", dev)
 		if err := m.wipeDevice(ctx, dev); err != nil {
 			slog.Warn("wipefs failed", "device", dev, "error", err)
@@ -216,6 +235,10 @@ func (m *Manager) DiscardNVMeDisks(ctx context.Context) {
 			continue
 		}
 		dev := "/dev/" + entry.Name()
+		if err := m.refuseInUse(dev); err != nil {
+			slog.Error("disk is in use, not discarded", "device", dev, "error", err)
+			continue
+		}
 		if out, err := m.cmd.Run(ctx, "blkdiscard", dev); err != nil {
 			slog.Info("blkdiscard failed, falling back to signature wipe", "device", dev, "error", err, "output", string(out))
 			continue
@@ -284,6 +307,9 @@ func (m *Manager) SecureEraseDisk(ctx context.Context, device string) error {
 
 // secureEraseNVMe performs NVMe User Data Erase via nvme format command.
 func (m *Manager) secureEraseNVMe(ctx context.Context, dev string) error {
+	if err := m.refuseInUse(dev); err != nil {
+		return err
+	}
 	slog.Info("NVMe secure erase", "device", dev)
 	// ses=1: User Data Erase, ses=2: Crypto Erase (not all drives support it).
 	out, err := m.cmd.Run(ctx, "nvme", "format", dev, "--ses=1", "--force")
@@ -302,6 +328,9 @@ func (m *Manager) secureEraseNVMe(ctx context.Context, dev string) error {
 
 // secureEraseSATA performs ATA SECURITY ERASE UNIT via hdparm.
 func (m *Manager) secureEraseSATA(ctx context.Context, dev string) error {
+	if err := m.refuseInUse(dev); err != nil {
+		return err
+	}
 	slog.Info("SATA secure erase", "device", dev)
 	pwd, err := temporaryErasePassword()
 	if err != nil {

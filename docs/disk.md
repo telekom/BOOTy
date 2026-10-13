@@ -185,6 +185,18 @@ depth overwrites all data; use `SECURE_ERASE` for that.
   systems (with their UUIDs) are found again. The legacy `wipe_all_disks` did
   less (`wipefs -af` on each disk).
 
+BOOTy never wipes, discards or secure-erases a disk that is in use. Before
+each of these operations it reads `/proc/self/mountinfo` and `/proc/swaps`.
+A device counts as in use when it backs a mounted file system or an active
+swap area, directly or through a device on top (LVM, dm-crypt and MD, through
+`/sys/class/block/<dev>/slaves`); a partition in use makes its disk in use.
+Such a disk is not touched and the wipe reports `refusing to wipe <dev>: it
+backs ...`: `WipeDisk` and secure erase fail, a wipe of all disks wipes the
+other disks and reports the refused ones. If `/proc/self/mountinfo` cannot be
+read, BOOTy refuses the wipe. In the ramdisk nothing is mounted from a disk,
+so this changes nothing there. It protects a host that runs BOOTy in a
+privileged container, where `/sys/block` lists the host disks.
+
 "All disks" means every entry in `/sys/block` except the virtual devices listed
 in [Automatic Detection](#automatic-detection). This includes removable media.
 

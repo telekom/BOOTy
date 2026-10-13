@@ -137,3 +137,73 @@ func TestQuickWipeKeepsPartitionSignatures(t *testing.T) {
 		}
 	}
 }
+
+// partitionedLoop returns a loop disk with one 64 MiB partition.
+func partitionedLoop(t *testing.T) string {
+	t.Helper()
+	loop := createRawLoopDevice(t, 128)
+	sfdisk := exec.Command("sfdisk", loop)
+	sfdisk.Stdin = strings.NewReader("label: gpt\nsize=64M\n")
+	if out, err := sfdisk.CombinedOutput(); err != nil {
+		t.Fatalf("sfdisk: %s: %v", out, err)
+	}
+	waitForBlock(t, loop+"p1")
+	return loop
+}
+
+// The CI runner incident: BOOTy in a privileged container wiped the disks
+// of the host. A disk that backs a mounted file system (also through LVM)
+// or an active swap area is never wiped, with either depth.
+func TestWipeRefusesDisksInUse(t *testing.T) {
+	requireRoot(t)
+	for _, tool := range []string{"sfdisk", "lvm", "mkfs.ext4", "mkswap", "swapon", "wipefs"} {
+		requireTool(t, tool)
+	}
+
+	mounted := partitionedLoop(t)
+	runCmd(t, "mkfs.ext4", "-q", "-F", mounted+"p1")
+	mnt := t.TempDir()
+	runCmd(t, "mount", mounted+"p1", mnt)
+	t.Cleanup(func() { _ = exec.Command("umount", mnt).Run() })
+
+	lvmDisk := partitionedLoop(t)
+	vg := fmt.Sprintf("bootyinuse%d", time.Now().UnixNano()%1_000_000)
+	runCmd(t, "lvm", "pvcreate", "-ff", "-y", lvmDisk+"p1")
+	runCmd(t, "lvm", "vgcreate", vg, lvmDisk+"p1")
+	t.Cleanup(func() { _ = exec.Command("lvm", "vgremove", "-ff", "-y", vg).Run() })
+	runCmd(t, "lvm", "lvcreate", "-y", "-L", "16M", "-n", "lv", vg)
+	runCmd(t, "mkfs.ext4", "-q", "-F", "/dev/"+vg+"/lv")
+	lvMnt := t.TempDir()
+	runCmd(t, "mount", "/dev/"+vg+"/lv", lvMnt)
+	t.Cleanup(func() {
+		_ = exec.Command("umount", lvMnt).Run()
+		_ = exec.Command("lvm", "vgchange", "-an", vg).Run()
+	})
+
+	swap := partitionedLoop(t)
+	runCmd(t, "mkswap", swap+"p1")
+	runCmd(t, "swapon", swap+"p1")
+	t.Cleanup(func() { _ = exec.Command("swapoff", swap+"p1").Run() })
+
+	for _, quick := range []bool{false, true} {
+		mgr := disk.NewManager(nil)
+		mgr.SetQuickWipe(quick)
+		for device, want := range map[string]string{
+			mounted:        "mounted at " + mnt,
+			mounted + "p1": "mounted at " + mnt,
+			lvmDisk:        "mounted at " + lvMnt,
+			swap:           "active swap",
+		} {
+			err := mgr.WipeDisk(context.Background(), device)
+			if err == nil || !strings.Contains(err.Error(), "refusing to wipe") || !strings.Contains(err.Error(), want) {
+				t.Fatalf("quick=%v: WipeDisk(%s) = %v, want a refusal naming %q", quick, device, err, want)
+			}
+		}
+	}
+	for part, want := range map[string]string{mounted + "p1": "ext4", lvmDisk + "p1": "LVM2_member", swap + "p1": "swap"} {
+		out, _ := exec.Command("wipefs", "--noheadings", "--output", "TYPE", part).CombinedOutput()
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("%s lost its %s signature: %q", part, want, out)
+		}
+	}
+}
