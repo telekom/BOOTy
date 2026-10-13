@@ -229,11 +229,10 @@ func collectValidationErrors(validators []func() string) []string {
 	return errs
 }
 
-func (c *Config) validateBGP() []string {
-	bfdTransmit := c.Network.BGP.BFDTransmitMS
-	bfdReceive := c.Network.BGP.BFDReceiveMS
-
-	errs := c.validateSessions()
+// validateNetworkOptions checks the native options of values that the
+// provisioner netplan and frr.conf can also set.
+func (c *Config) validateNetworkOptions() []string {
+	var errs []string
 	if n := c.Network.WaitMaxAttempts; strings.EqualFold(strings.TrimSpace(c.Network.WaitMode), NetworkWaitRounds) && n != nil && (*n < 0 || *n > MaxNetworkWaitAttempts) {
 		errs = append(errs, fmt.Sprintf("network.waitMaxAttempts (NETWORK_WAIT_MAX_ATTEMPTS) must be 0-%d", MaxNetworkWaitAttempts))
 	}
@@ -262,6 +261,14 @@ func (c *Config) validateBGP() []string {
 	if mtu := c.Network.MTU; mtu != 0 && (mtu < 626 || mtu > 65535) {
 		errs = append(errs, fmt.Sprintf("network.mtu %d must be 626 to 65535 (576 IP + 50 VXLAN)", mtu))
 	}
+	return errs
+}
+
+func (c *Config) validateBGP() []string {
+	bfdTransmit := c.Network.BGP.BFDTransmitMS
+	bfdReceive := c.Network.BGP.BFDReceiveMS
+
+	errs := append(c.validateNetworkOptions(), c.validateSessions()...)
 	if (bfdTransmit == 0) != (bfdReceive == 0) {
 		errs = append(errs, "network.bgp.bfdTransmitMS and network.bgp.bfdReceiveMS must be set together")
 	}

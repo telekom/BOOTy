@@ -1683,6 +1683,20 @@ func applyFeatureToggle(cfg *config.MachineConfig, key, value string) (bool, err
 	case "EVPN_TYPE5_ONLY":
 		v := parseBoolVar(value)
 		cfg.Network.EVPN.Type5Only = &v
+	case "BGP_UNDERLAY_AF":
+		cfg.Network.BGP.UnderlayAF = value
+	case "BGP_OVERLAY_TYPE":
+		cfg.Network.BGP.OverlayType = value
+	default:
+		return applyNetworkOptionVar(cfg, key, value)
+	}
+	return true, nil
+}
+
+// applyNetworkOptionVar handles the native options of values that the
+// provisioner frr.conf can also set. Unset options stay nil.
+func applyNetworkOptionVar(cfg *config.MachineConfig, key, value string) (bool, error) {
+	switch key {
 	case "BGP_INSTALL_ROUTES":
 		cfg.Network.BGP.InstallRoutes = new(parseBoolVar(value))
 	case "BGP_ALLOWAS_IN":
@@ -1695,10 +1709,6 @@ func applyFeatureToggle(cfg *config.MachineConfig, key, value string) (bool, err
 		if err := setIntField(&cfg.Network.MTU, value); err != nil {
 			return true, fmt.Errorf("invalid %s: %w", key, err)
 		}
-	case "BGP_UNDERLAY_AF":
-		cfg.Network.BGP.UnderlayAF = value
-	case "BGP_OVERLAY_TYPE":
-		cfg.Network.BGP.OverlayType = value
 	default:
 		return false, nil
 	}
