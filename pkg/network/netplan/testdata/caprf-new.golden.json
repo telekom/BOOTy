@@ -89,8 +89,6 @@
   ],
   "LoopbackAddrs": null,
   "BlackholeRoutes": null,
-  "Type5Networks": [
-    "192.168.4.11/32"
-  ],
+  "Type5Networks": null,
   "VLANs": null
 }
