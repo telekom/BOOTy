@@ -128,8 +128,12 @@ func streamSelectedImagePayload(ctx context.Context, url string, target ABTarget
 	if len(opts) > 0 {
 		opt = opts[0]
 	}
+	opt, err := withDownloadChecksum(opt)
+	if err != nil {
+		return err
+	}
 
-	src, cleanup, format, err := openAndDecompress(ctx, url)
+	src, cleanup, format, err := openAndDecompress(ctx, url, opt.download)
 	if err != nil {
 		return err
 	}
