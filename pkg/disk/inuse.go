@@ -17,13 +17,13 @@ import (
 )
 
 // FakeDisks marks a Commander that changes no real disk, such as a test
-// double. refuseInUse skips the /proc check for it. Every other Commander,
+// double. CheckNotInUse skips the /proc check for it. Every other Commander,
 // also a wrapper around ExecCommander, gets the check.
 type FakeDisks interface {
 	FakeDisks()
 }
 
-// refuseInUse returns an error when device, or a device on it, backs a
+// CheckNotInUse returns an error when device, or a device on it, backs a
 // mounted file system or an active swap area. Every destructive disk
 // operation calls it first. A device on top counts through the slaves of
 // dm and MD devices (LVM, dm-crypt, RAID), a partition makes its disk busy,
@@ -34,13 +34,13 @@ type FakeDisks interface {
 //
 // /proc/self/mountinfo is per mount namespace: a mount that only another
 // namespace (another container) sees is not found.
-func (m *Manager) refuseInUse(device string) error {
+func (m *Manager) CheckNotInUse(device string) error {
 	if _, fake := m.cmd.(FakeDisks); fake {
 		return nil
 	}
 	busy, err := m.busyDevices()
 	if err != nil {
-		return fmt.Errorf("refusing to wipe %s: cannot check whether it is in use: %w", device, err)
+		return fmt.Errorf("refusing to wipe %s: %w: %w", device, ErrInUseCheck, err)
 	}
 	if reason, ok := busy[blockName(device)]; ok {
 		return &InUseError{Device: device, Reason: reason}
@@ -48,7 +48,15 @@ func (m *Manager) refuseInUse(device string) error {
 	return nil
 }
 
-// InUseError is the refusal of refuseInUse for a disk that is in use. A
+// ErrInUseCheck marks a failed in-use check. A wipe of all disks fails
+// with it; it never skips a disk that it could not check.
+var ErrInUseCheck = errors.New("cannot check whether it is in use")
+
+// ErrAllDisksInUse is the error of a wipe of all disks that skipped every
+// disk because each one is in use.
+var ErrAllDisksInUse = errors.New("no disk wiped: every disk is in use")
+
+// InUseError is the refusal of CheckNotInUse for a disk that is in use. A
 // wipe of all disks skips such a disk; a wipe of a selected disk fails.
 type InUseError struct {
 	Device, Reason string
@@ -61,7 +69,7 @@ func (e *InUseError) Error() string {
 // skipInUse reports whether a wipe of all disks skips dev because it is in
 // use. Any other check error is returned: the wipe of all disks then fails.
 func (m *Manager) skipInUse(dev string) (bool, error) {
-	err := m.refuseInUse(dev)
+	err := m.CheckNotInUse(dev)
 	var inUse *InUseError
 	if errors.As(err, &inUse) {
 		slog.Warn("disk is in use, skipping it in the wipe of all disks", "device", dev, "reason", inUse.Reason)

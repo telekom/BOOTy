@@ -209,15 +209,24 @@ Such a disk is not touched:
 
 - A selected disk (`DISK_DEVICE`, `DISK_SERIAL_NUMBER`, the detected install
   target, the deprovision disk) fails the wipe with `refusing to wipe <dev>:
-  it backs ...`.
+  it backs ...`. With `WIPE_ALL_DISKS=true`, provisioning checks the selected
+  target disk first and fails the same way.
 - A wipe of all disks (hard deprovision without a disk override,
   `decommission`, `WIPE_ALL_DISKS=true`, secure erase of all disks) skips the
-  disk with a WARN line naming it and the mount, for example the USB stick
-  that the ramdisk booted from, and wipes the other disks.
+  disk with a WARN line naming it and the mount, and wipes the other disks.
+  The deprovision success status names the skipped disks
+  (`deprovisioning complete; not wiped, in use: /dev/sdX`). When every disk
+  is in use, nothing is wiped and the run fails.
 
 If `/proc/self/mountinfo` cannot be read, or sysfs (`/sys/dev/block`,
 `/sys/class/block`, `/sys/fs/btrfs/<uuid>/devices`) is missing or does not
-resolve, BOOTy refuses the wipe, also a wipe of all disks. The mount source
+resolve, BOOTy refuses the wipe and the run fails. This also holds for
+`decommission` and `WIPE_ALL_DISKS=true`, which otherwise log a failed disk
+wipe and go on, like the legacy `wipe_all_disks`.
+
+The boot medium is not protected: the ramdisk does not mount the ISO or USB
+stick that it booted from, so a wipe of all disks wipes it like any other
+disk. The mount source
 counts too, for file systems that report an anonymous device number: btrfs
 (with all devices of a multi-device btrfs) and bcachefs (with every device of
 a `/dev/a:/dev/b` source). ZFS names a pool and dataset, not a device, so a

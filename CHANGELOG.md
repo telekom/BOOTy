@@ -131,8 +131,11 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 ### Security
 
-- disk: wipes, discards and secure erase refuse a disk that backs a mounted
-  file system or an active swap area, also through LVM, dm-crypt or MD (#667)
+- disk: wipes, discards and secure erase do not touch a disk that backs a
+  mounted file system or an active swap area, also through LVM, dm-crypt or
+  MD. A wipe of all disks skips such a disk and goes on (the success status
+  names it); a selected target disk fails the run, and so does a failed check
+  (#667)
 - qcow2 images with a backing file or an external data file are rejected before
   `qemu-img convert` (#609)
 - CAPRF transport errors carry only scheme, host, path and a fixed cause (#624)

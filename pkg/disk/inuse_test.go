@@ -4,6 +4,7 @@ package disk
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -81,7 +82,7 @@ func inUseFixture(t *testing.T) *Manager {
 }
 
 // guardedCommander records commands like mockCommander but is not a
-// FakeDisks commander, so refuseInUse runs.
+// FakeDisks commander, so CheckNotInUse runs.
 type guardedCommander struct{ mock *mockCommander }
 
 func (g guardedCommander) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -106,15 +107,15 @@ func TestRefuseInUse(t *testing.T) {
 		"/dev/sdj":  "mounted at /bc", // bcachefs, first device
 		"/dev/sdk":  "mounted at /bc", // bcachefs, second device
 	} {
-		err := m.refuseInUse(device)
+		err := m.CheckNotInUse(device)
 		if want == "" {
 			if err != nil {
-				t.Errorf("refuseInUse(%s) = %v, want nil", device, err)
+				t.Errorf("CheckNotInUse(%s) = %v, want nil", device, err)
 			}
 			continue
 		}
 		if err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("refuseInUse(%s) = %v, want %q", device, err, want)
+			t.Errorf("CheckNotInUse(%s) = %v, want %q", device, err, want)
 		}
 	}
 }
@@ -133,10 +134,11 @@ func TestWipesSkipDisksInUse(t *testing.T) {
 	if len(cmd.calls) != 0 {
 		t.Fatalf("commands ran on busy disks: %v", callList(cmd.calls))
 	}
-	// A wipe of all disks skips the busy disks (for example the boot stick
-	// of the ramdisk) and succeeds.
-	if err := m.WipeAllDisks(context.Background()); err != nil {
-		t.Fatalf("WipeAllDisks() = %v, want the busy disks skipped", err)
+	// A wipe of all disks skips the busy disks (the mounted root and swap
+	// disks of the fixture) and succeeds.
+	skipped, err := m.WipeAllDisks(context.Background())
+	if err != nil || !slices.Equal(skipped, []string{"/dev/sda", "/dev/sdc"}) {
+		t.Fatalf("WipeAllDisks() = %v, %v; want sda and sdc skipped", skipped, err)
 	}
 	if !slices.Contains(callList(cmd.calls), "wipefs -af /dev/sdb") {
 		t.Fatalf("WipeAllDisks did not wipe the free disk: %v", callList(cmd.calls))
@@ -148,8 +150,50 @@ func TestWipesSkipDisksInUse(t *testing.T) {
 	}
 	// When the check can not be made, the wipe of all disks fails.
 	m.procDir = t.TempDir()
-	if err := m.WipeAllDisks(context.Background()); err == nil || !strings.Contains(err.Error(), "cannot check") {
-		t.Fatalf("WipeAllDisks() without mountinfo = %v, want an error", err)
+	if _, err := m.WipeAllDisks(context.Background()); !errors.Is(err, ErrInUseCheck) {
+		t.Fatalf("WipeAllDisks() without mountinfo = %v, want ErrInUseCheck", err)
+	}
+}
+
+// Every disk in use: nothing is wiped, and that is an error.
+func TestWipeAllDisksFailsWhenEveryDiskIsInUse(t *testing.T) {
+	m := inUseFixture(t)
+	if err := os.RemoveAll(filepath.Join(m.sysfsRoot, "block", "sdb")); err != nil {
+		t.Fatal(err)
+	}
+	skipped, err := m.WipeAllDisks(context.Background())
+	if !errors.Is(err, ErrAllDisksInUse) || len(skipped) != 2 {
+		t.Fatalf("WipeAllDisks() = %v, %v; want ErrAllDisksInUse", skipped, err)
+	}
+}
+
+// The secure erase of all disks skips the busy disks like the wipe.
+func TestSecureEraseAllDisksSkipsDisksInUse(t *testing.T) {
+	m := inUseFixture(t)
+	cmd := m.cmd.(guardedCommander).mock
+	skipped, err := m.SecureEraseAllDisks(context.Background())
+	if !slices.Equal(skipped, []string{"/dev/sda", "/dev/sdc"}) {
+		t.Fatalf("SecureEraseAllDisks() skipped %v (err %v), want sda and sdc", skipped, err)
+	}
+	for _, c := range callList(cmd.calls) {
+		if !strings.Contains(c, "/dev/sdb") {
+			t.Fatalf("SecureEraseAllDisks ran %q on a busy disk", c)
+		}
+	}
+}
+
+// A btrfs devices entry that can not be read fails the check.
+func TestRefuseInUseFailsOnUnreadableBtrfsDevices(t *testing.T) {
+	m := inUseFixture(t)
+	devices := filepath.Join(m.sysfsRoot, "fs", "btrfs", "4f2c", "devices")
+	if err := os.RemoveAll(devices); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(devices, nil, 0o644); err != nil { // not a directory
+		t.Fatal(err)
+	}
+	if err := m.CheckNotInUse("/dev/sdb"); !errors.Is(err, ErrInUseCheck) {
+		t.Fatalf("CheckNotInUse() = %v, want ErrInUseCheck", err)
 	}
 }
 
@@ -157,13 +201,13 @@ func TestWipesSkipDisksInUse(t *testing.T) {
 func TestRefuseInUseFailsClosed(t *testing.T) {
 	m := inUseFixture(t)
 	m.procDir = t.TempDir()
-	if err := m.refuseInUse("/dev/sdb"); err == nil || !strings.Contains(err.Error(), "cannot check") {
-		t.Fatalf("refuseInUse() without mountinfo = %v, want an error", err)
+	if err := m.CheckNotInUse("/dev/sdb"); err == nil || !strings.Contains(err.Error(), "cannot check") {
+		t.Fatalf("CheckNotInUse() without mountinfo = %v, want an error", err)
 	}
 	m = inUseFixture(t)
 	m.sysfsRoot = t.TempDir()
-	if err := m.refuseInUse("/dev/sdb"); err == nil || !strings.Contains(err.Error(), "cannot check") {
-		t.Fatalf("refuseInUse() without sysfs = %v, want an error", err)
+	if err := m.CheckNotInUse("/dev/sdb"); err == nil || !strings.Contains(err.Error(), "cannot check") {
+		t.Fatalf("CheckNotInUse() without sysfs = %v, want an error", err)
 	}
 }
 
