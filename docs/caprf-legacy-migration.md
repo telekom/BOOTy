@@ -54,7 +54,12 @@ The variable changes these behaviours:
   (`DISK_SELECTION=lsblk`), and `wipe-disks` wipes every disk like
   `wipe_all_disks` (`WIPE_ALL_DISKS=true`), with signature wipes on the disks
   only (`WIPE_DEPTH=quick`). `decommission` also discards NVMe disks
-  (`DISCARD_NVME=true`).
+  (`DISCARD_NVME=true`). `grow-partition` grows the last GPT Linux partition
+  like `provision.sh` (`GROW_PARTITION=last-linux`); it expects ext4 on a
+  data partition after the root.
+- **Network wait.** BOOTy waits like `wait_for_network`: one network setup
+  and `NETWORK_WAIT_MAX_ATTEMPTS` rounds of 20 seconds
+  (`NETWORK_WAIT_MODE=rounds`).
 - **GRUB and console.** The kernel parameters are written like
   `provision.sh`. BOOTy writes no getty units (`GRUB_CMDLINE_MODE=append`).
 - **Ramdisk hostname and NIC firmware log** are set and written like
