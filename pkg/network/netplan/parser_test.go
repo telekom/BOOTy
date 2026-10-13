@@ -1113,3 +1113,28 @@ func TestToNetworkConfig_StaticMatchNameAndMAC(t *testing.T) {
 		t.Errorf("StaticIface = %q, StaticMatch = %+v, want no fixed interface and %+v", netCfg.StaticIface, netCfg.StaticMatch, want)
 	}
 }
+
+// Bonds, VLANs and tunnels name an ethernet by its netplan ID. With
+// set-name the NIC has the new name when BOOTy uses it, like netplan.
+func TestToNetworkConfig_SetNameTranslatesDependentLinks(t *testing.T) {
+	np := &Config{Network: NetworkSection{
+		Ethernets: map[string]EthernetConfig{
+			"up0":   {Match: &MatchConfig{Name: "enp1s*"}, SetName: "hbn0"},
+			"up1":   {Match: &MatchConfig{MAC: "02:00:00:00:00:02"}, SetName: "hbn1"},
+			"plain": {},
+		},
+		Bonds:   map[string]BondConfig{"bond0": {Interfaces: []string{"up0", "up1", "plain"}}},
+		VLANs:   map[string]VLANConfig{"vlan100": {ID: 100, Link: "up0"}},
+		Tunnels: map[string]TunnelConfig{"vx.3000": {Mode: "vxlan", ID: 3000, Link: "up1"}},
+	}}
+	cfg := ToNetworkConfig(np, nil)
+	if cfg.BondInterfaces != "hbn0,hbn1,plain" {
+		t.Errorf("BondInterfaces = %q", cfg.BondInterfaces)
+	}
+	if len(cfg.VLANs) != 1 || cfg.VLANs[0].Parent != "hbn0" {
+		t.Errorf("VLANs = %+v", cfg.VLANs)
+	}
+	if cfg.VXLANLink != "hbn1" {
+		t.Errorf("VXLANLink = %q", cfg.VXLANLink)
+	}
+}

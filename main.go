@@ -1010,13 +1010,16 @@ func networkModeWithResolvers(ctx context.Context, netCfg *network.Config, mode 
 	return wrapLinkLayerMode(mode, cleanup), nil
 }
 
+// resolveLinkMatch is network.ResolveLinkMatch; tests replace it.
+var resolveLinkMatch = network.ResolveLinkMatch
+
 func prepareLinkLayers(ctx context.Context, netCfg *network.Config) (*linkLayerCleanup, error) {
 	cleanup := &linkLayerCleanup{}
 	if err := network.ApplyLinkRenames(netCfg.LinkRenames); err != nil {
 		return nil, fmt.Errorf("netplan set-name: %w", err)
 	}
 	if netCfg.StaticIface == "" && netCfg.StaticMatch != nil {
-		name, err := network.ResolveLinkMatch(*netCfg.StaticMatch)
+		name, err := resolveLinkMatch(*netCfg.StaticMatch)
 		if err != nil {
 			slog.Warn("netplan match for the static address did not select one NIC, using the first NIC", "error", err)
 		} else {

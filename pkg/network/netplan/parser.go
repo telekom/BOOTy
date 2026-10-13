@@ -139,7 +139,7 @@ func extractTunnels(np *Config, cfg *network.Config) {
 			cfg.UnderlayIP = provision.Local
 		}
 		if provision.Link != "" && cfg.VXLANLink == "" {
-			cfg.VXLANLink = provision.Link
+			cfg.VXLANLink = ethernetName(np, provision.Link)
 		}
 		return
 	}
@@ -233,7 +233,7 @@ func extractEthernets(np *Config, cfg *network.Config) (dhcpCount int, dnsList [
 func extractVLANs(np *Config, cfg *network.Config, dnsList []string) []string {
 	for _, vlanName := range slices.Sorted(maps.Keys(np.Network.VLANs)) {
 		v := np.Network.VLANs[vlanName]
-		vc := network.VLANConfig{ID: v.ID, Parent: v.Link}
+		vc := network.VLANConfig{ID: v.ID, Parent: ethernetName(np, v.Link)}
 		if len(v.Addresses) > 0 {
 			vc.Address = v.Addresses[0]
 		}
@@ -258,7 +258,11 @@ func extractBonds(np *Config, cfg *network.Config) {
 		if len(bond.Interfaces) == 0 {
 			continue
 		}
-		cfg.BondInterfaces = strings.Join(bond.Interfaces, ",")
+		members := make([]string, len(bond.Interfaces))
+		for i, m := range bond.Interfaces {
+			members[i] = ethernetName(np, m)
+		}
+		cfg.BondInterfaces = strings.Join(members, ",")
 		if bond.Parameters != nil && bond.Parameters.Mode != "" {
 			cfg.BondMode = bond.Parameters.Mode
 		}
@@ -301,6 +305,16 @@ func firstAddress(addresses []string) string {
 		}
 	}
 	return ""
+}
+
+// ethernetName returns the kernel name of a netplan ethernet ID. Bonds,
+// VLANs and tunnels refer to an ethernet by its ID; with set-name the NIC
+// is renamed before BOOTy uses it, like netplan does.
+func ethernetName(np *Config, id string) string {
+	if eth, ok := np.Network.Ethernets[id]; ok && eth.Match != nil && eth.SetName != "" {
+		return eth.SetName
+	}
+	return id
 }
 
 // applyEthernetMatch records netplan set-name renames and the first static

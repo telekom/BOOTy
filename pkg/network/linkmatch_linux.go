@@ -3,8 +3,10 @@
 package network
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 
 	"github.com/vishvananda/netlink"
 )
@@ -56,14 +58,22 @@ func renameLink(from, to string) error {
 	if err != nil {
 		return fmt.Errorf("find %s: %w", from, err)
 	}
-	// The kernel renames only links that are down.
+	// The kernel renames only links that are down. Keep the admin state, so
+	// a failed rename does not leave the provisioning NIC down.
+	wasUp := link.Attrs().Flags&net.FlagUp != 0
 	if err := netlink.LinkSetDown(link); err != nil {
 		return fmt.Errorf("set %s down: %w", from, err)
 	}
-	if err := netlink.LinkSetName(link, to); err != nil {
-		return fmt.Errorf("rename %s to %s: %w", from, to, err)
+	renameErr := netlink.LinkSetName(link, to)
+	if renameErr != nil {
+		renameErr = fmt.Errorf("rename %s to %s: %w", from, to, renameErr)
 	}
-	return nil
+	if wasUp {
+		if err := netlink.LinkSetUp(link); err != nil {
+			return errors.Join(renameErr, fmt.Errorf("set %s up again: %w", from, err))
+		}
+	}
+	return renameErr
 }
 
 // ResolveLinkMatch returns the single physical NIC that m selects.
