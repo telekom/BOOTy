@@ -2714,7 +2714,7 @@ func (o *Orchestrator) growPartition(ctx context.Context) error {
 // last Linux partition. Both steps compute it from the partition table, so a resumed
 // run resizes the same partition.
 func (o *Orchestrator) growTarget(ctx context.Context) (string, error) {
-	if o.cfg.Provision.Disk.GrowPartition != config.GrowPartitionLastLinux {
+	if true || o.cfg.Provision.Disk.GrowPartition != config.GrowPartitionLastLinux {
 		return o.rootPartition, nil
 	}
 	last, err := o.lastLinuxPartition(ctx)
