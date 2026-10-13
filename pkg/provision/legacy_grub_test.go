@@ -3,7 +3,9 @@
 package provision
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,6 +101,26 @@ func TestConfigureSerialConsoleSkippedInAppendMode(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(o.config.rootDir, "etc", "systemd")); !os.IsNotExist(err) {
 		t.Fatalf("GRUB_CMDLINE_MODE=append wrote getty configuration: %v", err)
+	}
+}
+
+// Append mode ignores MACHINE_SERIAL_CONSOLE and says so.
+func TestConfigureSerialConsoleAppendModeWarnsAboutOverride(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.GRUBCmdlineMode = config.GRUBCmdlineAppend
+	cfg.Provision.SerialConsole = "ttyS1,115200n8"
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	if err := o.configureSerialConsole(context.Background()); err != nil {
+		t.Fatalf("configureSerialConsole() = %v", err)
+	}
+	got := logs.String()
+	if !strings.Contains(got, "level=WARN") || !strings.Contains(got, "serial console override ignored") || !strings.Contains(got, "MACHINE_SERIAL_CONSOLE=ttyS1,115200n8") {
+		t.Fatalf("logs = %q, want a warning with the ignored override", got)
 	}
 }
 

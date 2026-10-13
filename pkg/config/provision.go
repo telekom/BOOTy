@@ -35,8 +35,9 @@ type ProvisionConfig struct {
 
 	// GRUBCmdlineMode selects how BOOTy writes the kernel parameters to
 	// /etc/default/grub.d/10-caprf-kernel-params.cfg.
-	// "resolved": one console= from the serial console resolver, a GRUB
-	// serial terminal and getty units; update-grub must exist.
+	// "resolved": the serial console resolver picks at most one console;
+	// for that console BOOTy writes console=, a GRUB serial terminal and
+	// getty units (none with SerialConsole "none"); update-grub must exist.
 	// "append": like provision.sh of the CAPRF legacy provisioner, append
 	// "ds=nocloud console=ttyS0,115200n8 <ExtraKernelParams>" (ttyS1 on
 	// Lenovo) to the image GRUB_CMDLINE_LINUX, run update-grub only when

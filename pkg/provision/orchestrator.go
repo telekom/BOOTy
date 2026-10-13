@@ -2739,7 +2739,7 @@ func (o *Orchestrator) configureSerialConsole(_ context.Context) error {
 		// Like the legacy provisioner: console= only on the kernel command
 		// line, the getty units of the image stay as they are.
 		if o.cfg.Provision.SerialConsole != "" {
-			o.log.Warn("GRUB_CMDLINE_MODE=append ignores MACHINE_SERIAL_CONSOLE", "serialConsole", o.cfg.Provision.SerialConsole)
+			o.log.Warn("serial console override ignored with GRUB_CMDLINE_MODE=append", "MACHINE_SERIAL_CONSOLE", o.cfg.Provision.SerialConsole)
 		}
 		o.log.Info("serial console comes from the kernel command line only")
 		return nil
