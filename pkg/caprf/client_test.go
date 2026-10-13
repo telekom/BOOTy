@@ -2973,6 +2973,7 @@ BRIDGE_MTU=8950
 BRIDGE_IPV6_LINK_LOCAL=false
 BRIDGE_ACCEPT_RA=true
 ACCEPT_RA_OFF=ens1f0np0,ens1f1np1
+LLDP_EMIT=ens1f0np0
 IP_FORWARDING=false
 IPV6_FORWARDING=true
 `))
@@ -3002,6 +3003,9 @@ IPV6_FORWARDING=true
 	}
 	if cfg.Network.NoAcceptRA != "ens1f0np0,ens1f1np1" {
 		t.Errorf("ACCEPT_RA_OFF = %q", cfg.Network.NoAcceptRA)
+	}
+	if cfg.Network.EmitLLDP != "ens1f0np0" {
+		t.Errorf("LLDP_EMIT = %q", cfg.Network.EmitLLDP)
 	}
 	if _, err := ParseVars(strings.NewReader("BRIDGE_MTU=big\n")); err == nil {
 		t.Error("BRIDGE_MTU=big parsed without error")

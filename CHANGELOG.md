@@ -198,7 +198,8 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   `VXLAN_MAC`, `VXLAN_LEARNING`, `VXLAN_ARP_PROXY`, `VXLAN_PORT_HAIRPIN`,
   `VXLAN_PORT_LEARNING`, `VXLAN_IPV6_LINK_LOCAL`, `VXLAN_ACCEPT_RA`,
   `BRIDGE_MTU`, `BRIDGE_IPV6_LINK_LOCAL`, `BRIDGE_ACCEPT_RA`, `ACCEPT_RA_OFF`,
-  `IP_FORWARDING`, `IPV6_FORWARDING` (#668).
+  `IP_FORWARDING`, `IPV6_FORWARDING`. NICs with netplan `emit-lldp: true` (or
+  `LLDP_EMIT`) send LLDP frames like networkd (#668).
 - GoBGP mode applies the `frr.conf` route-maps and community-lists, explicit
   and automatic EVPN route targets, and the `local-as` AS path loop check. New
   keys `BGP_ROUTE_MAPS`, `BGP_COMMUNITY_LISTS`, `BGP_ROUTE_MAP_IN`,

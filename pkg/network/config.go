@@ -169,6 +169,8 @@ type Config struct {
 	OverlayDevices OverlayDevices
 	// NoAcceptRA lists the NICs with netplan "accept-ra: false".
 	NoAcceptRA []string
+	// EmitLLDP lists the NICs with netplan "emit-lldp: true".
+	EmitLLDP []string
 	// IPForwarding and IPv6Forwarding set the forwarding sysctls; nil keeps
 	// the GoBGP default (on). frr.conf "no ip forwarding" sets false.
 	IPForwarding   *bool

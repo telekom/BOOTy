@@ -205,6 +205,9 @@
   "NoAcceptRA": [
     "ens1f0np0"
   ],
+  "EmitLLDP": [
+    "ens1f0np0"
+  ],
   "IPForwarding": false,
   "IPv6Forwarding": false,
   "VLANs": null

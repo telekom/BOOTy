@@ -78,6 +78,10 @@ type NetworkConfig struct {
 	// advertisements, like netplan "accept-ra: false".
 	NoAcceptRA string `yaml:"noAcceptRA" json:"noAcceptRA"`
 
+	// EmitLLDP is a comma-separated list of NICs that send LLDP frames like
+	// systemd-networkd with netplan "emit-lldp: true" (GoBGP).
+	EmitLLDP string `yaml:"emitLLDP" json:"emitLLDP"`
+
 	// IPForwarding and IPv6Forwarding set the forwarding sysctls (GoBGP).
 	// Unset (nil) means on, or off with frr.conf "no ip forwarding".
 	IPForwarding   *bool `yaml:"ipForwarding,omitempty" json:"ipForwarding,omitempty"`

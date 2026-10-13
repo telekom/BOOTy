@@ -1676,7 +1676,7 @@ jobs:
           GOMAXPROCS: "2"
         run: |
           set -o pipefail
-          go test -tags e2e_prodtpl -v -race -count=1 -timeout 15m ./test/e2e/integration/... 2>&1 | tee e2e-prodtpl.log
+          go test -tags e2e_prodtpl -v -race -count=1 -timeout 20m ./test/e2e/integration/... 2>&1 | tee e2e-prodtpl.log
           for expected in \
             TestProdTplLeafSessions \
             TestProdTplLocalASReplaceASPath \
@@ -1698,7 +1698,8 @@ jobs:
             TestProdTplRouteMapDenyTaggedOut \
             TestProdTplRouteMapTagIn \
             TestProdTplKernelDevices \
-            TestProdTplRRRestart; do
+            TestProdTplRRRestart \
+            TestProdTplLLDP; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl.log; then
               echo "::error::${expected} did not pass"
               exit 1

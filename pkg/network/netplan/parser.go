@@ -330,9 +330,7 @@ func extractEthernets(np *Config, cfg *network.Config) (dhcpCount int, dnsList [
 		if eth.Nameservers != nil {
 			dnsList = append(dnsList, eth.Nameservers.Addresses...)
 		}
-		if eth.AcceptRA != nil && !*eth.AcceptRA {
-			cfg.NoAcceptRA = append(cfg.NoAcceptRA, name)
-		}
+		applyEthernetFlags(np, name, &eth, cfg)
 		if name == "lo" && eth.Match == nil {
 			// Addresses on lo are host addresses, not a static uplink.
 			cfg.LoopbackAddrs = append(cfg.LoopbackAddrs, eth.Addresses...)
@@ -441,6 +439,17 @@ func ethernetName(np *Config, id string) string {
 		return eth.SetName
 	}
 	return id
+}
+
+// applyEthernetFlags takes accept-ra: false and emit-lldp of an ethernet,
+// under the name the NIC has after set-name.
+func applyEthernetFlags(np *Config, id string, eth *EthernetConfig, cfg *network.Config) {
+	if eth.AcceptRA != nil && !*eth.AcceptRA {
+		cfg.NoAcceptRA = append(cfg.NoAcceptRA, ethernetName(np, id))
+	}
+	if eth.EmitLLDP != nil && *eth.EmitLLDP {
+		cfg.EmitLLDP = append(cfg.EmitLLDP, ethernetName(np, id))
+	}
 }
 
 // applyTunnelDevice takes the device settings of the provision tunnel.

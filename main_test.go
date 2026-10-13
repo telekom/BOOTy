@@ -2100,6 +2100,7 @@ func TestMergeNetplanConfigOverlayDevices(t *testing.T) {
 	src := &network.Config{
 		OverlayDevices: network.OverlayDevices{VXLANMTU: 9000, VXLANLinkLocal: new(false)},
 		NoAcceptRA:     []string{"ens1f0np0"},
+		EmitLLDP:       []string{"ens1f0np0"},
 		IPForwarding:   new(false),
 		IPv6Forwarding: new(false),
 	}
@@ -2114,7 +2115,7 @@ func TestMergeNetplanConfigOverlayDevices(t *testing.T) {
 	if !*dst.IPForwarding || dst.IPv6Forwarding == nil || *dst.IPv6Forwarding {
 		t.Errorf("forwarding = %v %v, want explicit true and frr.conf false", *dst.IPForwarding, dst.IPv6Forwarding)
 	}
-	if !slices.Equal(dst.NoAcceptRA, []string{"ens1f0np0"}) {
-		t.Errorf("NoAcceptRA = %v", dst.NoAcceptRA)
+	if !slices.Equal(dst.NoAcceptRA, []string{"ens1f0np0"}) || !slices.Equal(dst.EmitLLDP, []string{"ens1f0np0"}) {
+		t.Errorf("NoAcceptRA = %v, EmitLLDP = %v", dst.NoAcceptRA, dst.EmitLLDP)
 	}
 }

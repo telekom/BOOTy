@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1248,5 +1249,21 @@ func TestToNetworkConfigInterfaceNames(t *testing.T) {
 	}
 	if got := ToNetworkConfig(np, nil).InterfaceNames; !reflect.DeepEqual(got, []string{"enp1s0", "enp2s0"}) {
 		t.Fatalf("InterfaceNames without frr.conf = %v", got)
+	}
+}
+
+// accept-ra: false and emit-lldp: true apply to the NIC under its set-name.
+func TestToNetworkConfig_EthernetFlagsUseSetName(t *testing.T) {
+	off, on := false, true
+	np := &Config{Network: NetworkSection{
+		Ethernets: map[string]EthernetConfig{
+			"up0":   {Match: &MatchConfig{Name: "enp1s*"}, SetName: "hbn0", AcceptRA: &off, EmitLLDP: &on},
+			"plain": {AcceptRA: &off, EmitLLDP: &on},
+			"quiet": {EmitLLDP: &off},
+		},
+	}}
+	cfg := ToNetworkConfig(np, nil)
+	if !slices.Equal(cfg.NoAcceptRA, []string{"plain", "hbn0"}) || !slices.Equal(cfg.EmitLLDP, []string{"plain", "hbn0"}) {
+		t.Errorf("NoAcceptRA = %v, EmitLLDP = %v", cfg.NoAcceptRA, cfg.EmitLLDP)
 	}
 }

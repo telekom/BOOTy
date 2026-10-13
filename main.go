@@ -1090,6 +1090,7 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 		BGPLocalAS:        cfg.Network.BGP.LocalAS,
 		OverlayDevices:    cfg.Network.Overlay,
 		NoAcceptRA:        splitList(cfg.Network.NoAcceptRA),
+		EmitLLDP:          splitList(cfg.Network.EmitLLDP),
 		IPForwarding:      cfg.Network.IPForwarding,
 		IPv6Forwarding:    cfg.Network.IPv6Forwarding,
 		BGPRouteMaps:      cfg.Network.BGP.RouteMaps,
@@ -1473,6 +1474,9 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	mergeOverlayDevices(&dst.OverlayDevices, &src.OverlayDevices)
 	if len(src.NoAcceptRA) > 0 {
 		dst.NoAcceptRA = src.NoAcceptRA
+	}
+	if len(src.EmitLLDP) > 0 {
+		dst.EmitLLDP = src.EmitLLDP
 	}
 	// "no ip forwarding" in frr.conf is a default; an explicit option wins.
 	if dst.IPForwarding == nil {

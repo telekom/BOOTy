@@ -1790,6 +1790,8 @@ func applyDeviceOptionVar(cfg *config.MachineConfig, key, value string) (bool, e
 		cfg.Network.Overlay.VXLANMAC = value
 	case "ACCEPT_RA_OFF":
 		cfg.Network.NoAcceptRA = value
+	case "LLDP_EMIT":
+		cfg.Network.EmitLLDP = value
 	default:
 		return false, nil
 	}

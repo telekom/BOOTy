@@ -115,6 +115,7 @@ type Config struct {
 	// netplan, frr.conf or the native options.
 	OverlayDevices network.OverlayDevices
 	NoAcceptRA     []string
+	EmitLLDP       []string
 	IPForwarding   *bool
 	IPv6Forwarding *bool
 	// InstallRoutes runs the FIB writer, like zebra.
@@ -197,6 +198,7 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		FastExternalFailover: fastExternalFailover(netCfg),
 		OverlayDevices:       netCfg.OverlayDevices,
 		NoAcceptRA:           netCfg.NoAcceptRA,
+		EmitLLDP:             netCfg.EmitLLDP,
 		IPForwarding:         netCfg.IPForwarding,
 		IPv6Forwarding:       netCfg.IPv6Forwarding,
 		RouteMaps:            netCfg.BGPRouteMaps,
