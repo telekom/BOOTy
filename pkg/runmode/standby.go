@@ -4,8 +4,10 @@ package runmode
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -183,9 +185,12 @@ func (m *StandbyMode) handleRunCommand(ctx context.Context, cmd config.Command) 
 // agent, network) keep their live values.
 func (m *StandbyMode) commandConfig(payload []byte) (runCfg *config.MachineConfig, keys []string, err error) {
 	live := m.deps.Cfg
-	base := *live
+	base, err := cloneConfig(live)
+	if err != nil {
+		return nil, nil, err
+	}
 	if len(payload) == 0 {
-		return &base, nil, nil
+		return base, nil, nil
 	}
 	p, ok := m.deps.Client.(commandConfigProvider)
 	if !ok {
@@ -196,15 +201,34 @@ func (m *StandbyMode) commandConfig(payload []byte) (runCfg *config.MachineConfi
 		return nil, nil, err
 	}
 	if len(keys) == 0 { // only blank or comment lines
-		return &base, nil, nil
+		return base, nil, nil
 	}
-	runCfg.Transport = live.Transport
-	runCfg.Agent = live.Agent
-	runCfg.Network = live.Network
-	runCfg.ProvisionerFiles = live.ProvisionerFiles
-	runCfg.MachineFiles = live.MachineFiles
-	runCfg.MachineCommands = live.MachineCommands
+	// The live settings, from the deep copy, so the run can not change them.
+	runCfg.Transport = base.Transport
+	runCfg.Agent = base.Agent
+	runCfg.Network = base.Network
+	runCfg.ProvisionerFiles = base.ProvisionerFiles
+	runCfg.MachineFiles = base.MachineFiles
+	runCfg.MachineCommands = base.MachineCommands
 	return runCfg, keys, nil
+}
+
+// cloneConfig returns a deep copy of c, so that a run that changes slices,
+// maps or pointers of its config does not change c.
+func cloneConfig(c *config.MachineConfig) (*config.MachineConfig, error) {
+	data, err := json.Marshal(c)
+	if err != nil {
+		return nil, fmt.Errorf("copy config: %w", err)
+	}
+	var out config.MachineConfig
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("copy config: %w", err)
+	}
+	// Not in JSON.
+	out.ProvisionerFiles = slices.Clone(c.ProvisionerFiles)
+	out.MachineFiles = slices.Clone(c.MachineFiles)
+	out.MachineCommands = slices.Clone(c.MachineCommands)
+	return &out, nil
 }
 
 // ack reports a command result. A failed ACK is logged only.

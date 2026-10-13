@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"slices"
 	"strings"
@@ -46,7 +47,10 @@ func MergeCommandVars(base, payload []byte) (cfg *config.MachineConfig, keys []s
 	merged := slices.Concat(base, []byte("\n"), payload)
 	cfg, err = ParseVars(bytes.NewReader(merged))
 	if err != nil {
-		return nil, nil, fmt.Errorf("payload: %w", err)
+		// The parse and validation errors can quote values; the error goes
+		// into the command ACK, so it names only the keys.
+		slog.Warn("command payload does not parse or validate", "keys", strings.Join(keys, ","), "error", err)
+		return nil, nil, fmt.Errorf("payload keys %s do not parse or validate", strings.Join(keys, ","))
 	}
 	var fixed []string
 	for _, s := range []struct {

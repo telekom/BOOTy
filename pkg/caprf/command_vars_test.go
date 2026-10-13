@@ -59,7 +59,7 @@ func TestMergeCommandVarsRejectsRuntimeSettings(t *testing.T) {
 		"METRICS_URL=https://x.example.com/m":        "telemetry",
 		"CRASH_ARTIFACTS_UPLOAD_URL=https://x/u":     "crash artifact",
 		"LOG_URL=https://x.example.com/log":          "transport",
-		"SUCCESS_ACTION=later":                       "successAction",
+		"SUCCESS_ACTION=later":                       "payload keys SUCCESS_ACTION do not parse or validate",
 		"LUKS_DEVICE=/dev/sda":                       "LUKS_DEVICE",
 	} {
 		_, _, err := MergeCommandVars([]byte(commandBaseVars), []byte(payload))
@@ -88,6 +88,16 @@ func TestMergeCommandVarsEmptyPayload(t *testing.T) {
 		cfg, keys, err := MergeCommandVars([]byte(commandBaseVars), []byte(payload))
 		if err != nil || cfg != nil || len(keys) != 0 {
 			t.Errorf("payload %q: cfg %v keys %v err %v, want no payload", payload, cfg, keys, err)
+		}
+	}
+}
+
+// A rejection names keys, never values: the error goes into the ACK.
+func TestMergeCommandVarsErrorsHaveNoValues(t *testing.T) {
+	for _, payload := range []string{"SUCCESS_ACTION=s3cr3t", "MIN_DISK_SIZE_GB=s3cr3t", "SYSEXT_LAYERS=s3cr3t"} {
+		_, _, err := MergeCommandVars([]byte(commandBaseVars), []byte(payload))
+		if err == nil || strings.Contains(err.Error(), "s3cr3t") {
+			t.Errorf("payload %q: error %v, want an error without the value", payload, err)
 		}
 	}
 }

@@ -19,6 +19,7 @@ TOKEN=base-token
 HEARTBEAT_URL=https://caprf.example.com/agent/heartbeat
 COMMANDS_URL=https://caprf.example.com/agent/commands
 EXTRA_KERNEL_PARAMS=fromvars=t1
+IMAGE=https://images.example.com/a.img
 `
 
 // payloadProvider merges payloads like caprf.Client.CommandConfig.
@@ -151,5 +152,23 @@ func TestStandbyPayloadNeedsProviderSupport(t *testing.T) {
 	_ = mode.Run(context.Background())
 	if !slices.Equal(provider.acks, []string{"d1:failed", "r1:completed"}) {
 		t.Fatalf("acks = %v", provider.acks)
+	}
+}
+
+// The command config is a deep copy: a run that changes its slices does not
+// change the base config.
+func TestStandbyCommandConfigIsADeepCopy(t *testing.T) {
+	for _, payload := range [][]byte{nil, []byte("HOSTNAME=x")} {
+		mode, _ := payloadStandby(t, []config.Command{
+			{ID: "d1", Type: "deprovision", Payload: payload},
+			{ID: "r1", Type: "reboot"},
+		}, func(c *config.MachineConfig) error {
+			c.Provision.Image.URLs[0] = "changed"
+			return nil
+		})
+		_ = mode.Run(context.Background())
+		if got := mode.deps.Cfg.Provision.Image.URLs[0]; got != "https://images.example.com/a.img" {
+			t.Fatalf("payload %q: base image URL = %q after the run", payload, got)
+		}
 	}
 }

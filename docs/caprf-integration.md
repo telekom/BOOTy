@@ -184,7 +184,7 @@ EXTRA_KERNEL_PARAMS=intel_iommu=on
   unknown key (also a misspelled one), a line that is not `KEY=VALUE`, a
   value that does not parse, or that fails validation. It does not run the
   command, ACKs it as `failed` with `invalid <type> payload: <reason>` (the
-  reason lists unknown keys) and stays in standby.
+  reason names the keys, never their values) and stays in standby.
 - A payload with only blank and comment lines counts as no payload.
 - The `completed` ACK names the payload keys, for example
   `provisioning complete with payload keys EXTRA_KERNEL_PARAMS,HOSTNAME`.
