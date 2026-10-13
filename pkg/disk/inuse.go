@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -26,7 +27,8 @@ type FakeDisks interface {
 // mounted file system or an active swap area. Every destructive disk
 // operation calls it first. A device on top counts through the slaves of
 // dm and MD devices (LVM, dm-crypt, RAID), a partition makes its disk busy,
-// and a multi-device btrfs makes all its devices busy. So the running root
+// and a multi-device btrfs or bcachefs makes all its devices busy. ZFS is
+// not covered: its mount source is a pool/dataset, not a device. So the running root
 // and the disks of a host that runs BOOTy in a container are not wiped.
 // When the check can not be made, the wipe is refused.
 //
@@ -41,9 +43,31 @@ func (m *Manager) refuseInUse(device string) error {
 		return fmt.Errorf("refusing to wipe %s: cannot check whether it is in use: %w", device, err)
 	}
 	if reason, ok := busy[blockName(device)]; ok {
-		return fmt.Errorf("refusing to wipe %s: it backs %s", device, reason)
+		return &InUseError{Device: device, Reason: reason}
 	}
 	return nil
+}
+
+// InUseError is the refusal of refuseInUse for a disk that is in use. A
+// wipe of all disks skips such a disk; a wipe of a selected disk fails.
+type InUseError struct {
+	Device, Reason string
+}
+
+func (e *InUseError) Error() string {
+	return fmt.Sprintf("refusing to wipe %s: it backs %s", e.Device, e.Reason)
+}
+
+// skipInUse reports whether a wipe of all disks skips dev because it is in
+// use. Any other check error is returned: the wipe of all disks then fails.
+func (m *Manager) skipInUse(dev string) (bool, error) {
+	err := m.refuseInUse(dev)
+	var inUse *InUseError
+	if errors.As(err, &inUse) {
+		slog.Warn("disk is in use, skipping it in the wipe of all disks", "device", dev, "reason", inUse.Reason)
+		return true, nil
+	}
+	return false, err
 }
 
 // blockName returns the kernel name of a /dev path, following symlinks
@@ -109,11 +133,14 @@ func (m *Manager) markMounts(busy map[string]string) error {
 		case !errors.Is(err, fs.ErrNotExist):
 			return fmt.Errorf("resolve device %s: %w", fields[2], err)
 		}
-		// btrfs, ZFS and bcachefs report an anonymous device number; the
-		// source names the device.
+		// btrfs and bcachefs report an anonymous device number; the source
+		// names the device, for a multi-device bcachefs as /dev/a:/dev/b.
+		// ZFS names a pool/dataset, so a ZFS pool disk is not found.
 		if strings.HasPrefix(source, "/dev/") {
-			if err := m.markBusy(busy, blockName(source), reason); err != nil {
-				return err
+			for _, dev := range strings.Split(source, ":") {
+				if err := m.markBusy(busy, blockName(dev), reason); err != nil {
+					return err
+				}
 			}
 		}
 		if fstype == "btrfs" {
@@ -140,7 +167,10 @@ func (m *Manager) markBtrfsMembers(busy map[string]string, name, reason string) 
 	}
 	for _, fsys := range filesystems {
 		devices, err := os.ReadDir(filepath.Join(m.sysfsRoot, "fs", "btrfs", fsys.Name(), "devices"))
-		if err != nil || !slices.ContainsFunc(devices, func(d os.DirEntry) bool { return d.Name() == name }) {
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("read btrfs devices of %s: %w", fsys.Name(), err)
+		}
+		if !slices.ContainsFunc(devices, func(d os.DirEntry) bool { return d.Name() == name }) {
 			continue
 		}
 		for _, d := range devices {

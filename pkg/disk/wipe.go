@@ -155,12 +155,18 @@ func (m *Manager) zeroEdges(ctx context.Context, device string, size json.Number
 	if bytes, err := size.Int64(); err == nil {
 		sectors = bytes / 512
 	}
+	// A device smaller than 1 MiB gets zeros up to its end; a device of
+	// unknown size gets the first MiB.
+	count := int64(edgeSectors)
+	if sectors > 0 && sectors < count {
+		count = sectors
+	}
 	offsets := []int64{0}
-	if sectors > 2*edgeSectors {
+	if sectors > edgeSectors {
 		offsets = append(offsets, sectors-edgeSectors)
 	}
 	for _, seek := range offsets {
-		args := []string{"if=/dev/zero", "of=" + device, "bs=512", "count=" + strconv.Itoa(edgeSectors),
+		args := []string{"if=/dev/zero", "of=" + device, "bs=512", "count=" + strconv.FormatInt(count, 10),
 			"seek=" + strconv.FormatInt(seek, 10), "conv=notrunc,fsync"}
 		if out, err := m.cmd.Run(ctx, "dd", args...); err != nil {
 			logStepFailure("cannot zero the device edge", device, out, err)

@@ -4,6 +4,7 @@ package disk
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strconv"
@@ -136,6 +137,28 @@ func TestQuickWipeTouchesTheDiskOnly(t *testing.T) {
 	for _, c := range callList(cmd.calls) {
 		if !strings.HasSuffix(c, " /dev/sda") || strings.HasPrefix(c, "blkdiscard") || strings.HasPrefix(c, "dd ") {
 			t.Fatalf("quick wipe ran %q", c)
+		}
+	}
+}
+
+// zeroEdges stays inside a small device: no write after its end.
+func TestZeroEdgesClampsToTheDevice(t *testing.T) {
+	for _, tt := range []struct {
+		size string
+		want []string
+	}{
+		{"524288", []string{"count=1024 seek=0"}},                          // 512 KiB
+		{"1572864", []string{"count=2048 seek=0", "count=2048 seek=1024"}}, // 1.5 MiB: both edges overlap
+		{"", []string{"count=2048 seek=0"}},                                // unknown size
+	} {
+		cmd := newMockCommander()
+		NewManager(cmd).zeroEdges(context.Background(), "/dev/x", json.Number(tt.size))
+		got := make([]string, 0, len(cmd.calls))
+		for _, c := range cmd.calls {
+			got = append(got, c.args[3]+" "+c.args[4])
+		}
+		if !slices.Equal(got, tt.want) {
+			t.Errorf("size %q: dd %v, want %v", tt.size, got, tt.want)
 		}
 	}
 }

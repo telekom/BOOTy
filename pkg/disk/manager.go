@@ -189,9 +189,12 @@ func (m *Manager) WipeAllDisks(ctx context.Context) error {
 			continue
 		}
 		dev := "/dev/" + name
-		if err := m.refuseInUse(dev); err != nil {
-			slog.Error("disk is in use, not wiped", "device", dev, "error", err)
+		skip, err := m.skipInUse(dev)
+		if err != nil {
 			errs = append(errs, err)
+			continue
+		}
+		if skip {
 			continue
 		}
 		slog.Info("wiping disk", "device", dev)
@@ -259,6 +262,14 @@ func (m *Manager) SecureEraseAllDisks(ctx context.Context) error {
 			continue
 		}
 		dev := "/dev/" + name
+		skip, err := m.skipInUse(dev)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if skip {
+			continue
+		}
 		if strings.HasPrefix(name, "nvme") {
 			if err := m.secureEraseNVMe(ctx, dev); err != nil {
 				errs = append(errs, err)

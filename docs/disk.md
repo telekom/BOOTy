@@ -182,9 +182,10 @@ use `SECURE_ERASE`.
   device without discard support only logs this. When the old partition table
   is written back, `blkid` and `wipefs` find no file system, PV, array or LUKS
   header in the partitions. A holder that cannot be stopped and a failed
-  `wipefs` on the disk fail the wipe; the other failed steps are logged (at
-  INFO when the tool is not in the ramdisk, for example `lvm` in the slim
-  flavor).
+  `wipefs` on the disk fail the wipe. This includes an active LV, dm-crypt
+  mapping or MD array when `lvm`, `cryptsetup` or `mdadm` is not in the
+  ramdisk (for example the slim flavor): the wipe fails. The other failed
+  steps are logged, at INFO when the tool is missing.
   The wipe also runs before every image write of a provision (`wipe-disks`),
   so each provision discards the whole target disk. On a large thin
   provisioned LUN or a slow device the discard can take minutes; set
@@ -204,13 +205,23 @@ each of these operations it reads `/proc/self/mountinfo` and `/proc/swaps`.
 A device counts as in use when it backs a mounted file system or an active
 swap area, directly or through a device on top (LVM, dm-crypt and MD, through
 `/sys/class/block/<dev>/slaves`); a partition in use makes its disk in use.
-Such a disk is not touched and the wipe reports `refusing to wipe <dev>: it
-backs ...`: `WipeDisk` and secure erase fail, a wipe of all disks wipes the
-other disks and reports the refused ones. If `/proc/self/mountinfo` cannot be
-read, or sysfs (`/sys/dev/block`, `/sys/class/block`) is missing or does
-not resolve, BOOTy refuses the wipe. The mount source counts too, for file
-systems such as btrfs that report an anonymous device number, and all
-devices of a multi-device btrfs (`/sys/fs/btrfs/<uuid>/devices`). In the
+Such a disk is not touched:
+
+- A selected disk (`DISK_DEVICE`, `DISK_SERIAL_NUMBER`, the detected install
+  target, the deprovision disk) fails the wipe with `refusing to wipe <dev>:
+  it backs ...`.
+- A wipe of all disks (hard deprovision without a disk override,
+  `decommission`, `WIPE_ALL_DISKS=true`, secure erase of all disks) skips the
+  disk with a WARN line naming it and the mount, for example the USB stick
+  that the ramdisk booted from, and wipes the other disks.
+
+If `/proc/self/mountinfo` cannot be read, or sysfs (`/sys/dev/block`,
+`/sys/class/block`, `/sys/fs/btrfs/<uuid>/devices`) is missing or does not
+resolve, BOOTy refuses the wipe, also a wipe of all disks. The mount source
+counts too, for file systems that report an anonymous device number: btrfs
+(with all devices of a multi-device btrfs) and bcachefs (with every device of
+a `/dev/a:/dev/b` source). ZFS names a pool and dataset, not a device, so a
+disk of a mounted ZFS pool is not found. In the
 ramdisk nothing is mounted from a disk, so this changes nothing there. It
 protects a host that runs BOOTy in a privileged container, where
 `/sys/block` lists the host disks. The check is limited to the mount
