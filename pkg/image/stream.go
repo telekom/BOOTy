@@ -235,6 +235,15 @@ func wrapChecksum(r io.Reader, opt StreamOpts) (io.Reader, hash.Hash, error) {
 // Its text "checksum mismatch" also marks the error as permanent.
 var ErrChecksumMismatch = errors.New("checksum mismatch")
 
+// checksumScopeHint names the bytes that a checksum covered.
+func checksumScopeHint(opt StreamOpts) string {
+	if opt.ChecksumScope == ChecksumScopeDownload {
+		return "IMAGE_CHECKSUM_SCOPE=download: the file as downloaded; " +
+			"set IMAGE_CHECKSUM_SCOPE=decompressed for a digest of the decompressed image"
+	}
+	return "IMAGE_CHECKSUM_SCOPE=decompressed: the decompressed image"
+}
+
 // verifyChecksum validates the hash digest against the expected checksum.
 // It verifies a download-scope checksum of opt first.
 func verifyChecksum(h hash.Hash, opt StreamOpts) error {
@@ -250,7 +259,7 @@ func verifyChecksum(h hash.Hash, opt StreamOpts) error {
 	}
 	got := hex.EncodeToString(h.Sum(nil))
 	if subtle.ConstantTimeCompare([]byte(got), []byte(opt.Checksum)) != 1 {
-		return fmt.Errorf("%w: computed=%s want=%s", ErrChecksumMismatch,
+		return fmt.Errorf("%w (%s): computed=%s want=%s", ErrChecksumMismatch, checksumScopeHint(opt),
 			got[:min(8, len(got))], opt.Checksum[:min(8, len(opt.Checksum))])
 	}
 	slog.Info("checksum verified", "type", opt.ChecksumType)

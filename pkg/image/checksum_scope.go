@@ -54,6 +54,7 @@ func withDownloadChecksum(opt StreamOpts) (StreamOpts, error) {
 	if err != nil {
 		return opt, err
 	}
+	normalized.ChecksumScope = ChecksumScopeDownload
 	opt.download = &downloadChecksum{opt: normalized, h: h}
 	opt.Checksum, opt.ChecksumType = "", ""
 	return opt, nil
@@ -93,10 +94,7 @@ func (d *downloadChecksum) verify() error {
 			d.err = fmt.Errorf("reading the rest of the download for its checksum: %w", err)
 			return
 		}
-		if err := verifyChecksum(d.h, d.opt); err != nil {
-			d.err = fmt.Errorf("%w (IMAGE_CHECKSUM_SCOPE=download hashes the file as downloaded; "+
-				"set IMAGE_CHECKSUM_SCOPE=decompressed for a digest of the decompressed image)", err)
-		}
+		d.err = verifyChecksum(d.h, d.opt)
 	})
 	return d.err
 }

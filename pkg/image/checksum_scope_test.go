@@ -8,8 +8,10 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -102,8 +104,8 @@ func TestStreamChecksumScope(t *testing.T) {
 				}
 				err := Stream(context.Background(), url, disk, tt.opt)
 				if tt.wantFail {
-					if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
-						t.Fatalf("Stream() = %v, want checksum mismatch", err)
+					if err == nil || !strings.Contains(err.Error(), "checksum mismatch") || !strings.Contains(err.Error(), "IMAGE_CHECKSUM_SCOPE=") {
+						t.Fatalf("Stream() = %v, want a checksum mismatch that names the scope", err)
 					}
 					return
 				}
@@ -157,18 +159,46 @@ func TestDownloadToFileVerifiesDownloadChecksum(t *testing.T) {
 	}
 }
 
-// TestStreamRootVerifiesDownloadChecksum covers the root and A/B stream
-// path, which stops reading the payload after the root partition. The image
-// carries data past the root partition, so a download-scope checksum must
-// wait for the decompressor before it hashes the rest (zstd read-ahead).
-func TestStreamRootVerifiesDownloadChecksum(t *testing.T) {
-	// Incompressible data, so the compressed stream is still being read
-	// when the root partition is done.
-	tailData := make([]byte, 8<<20)
+// randomRootGPTImage is a GPT image with a rootSectors-sector root
+// partition of random data and a random tail after the partition table end.
+// Random data does not compress, so a decoder is still reading the download
+// when the root partition is done.
+func randomRootGPTImage(t *testing.T, rootSectors uint64) []byte {
+	t.Helper()
+	const rootStart = 4096
+	sectors := rootStart + rootSectors + 34
+	const tailSize = 4 << 20
+	raw := make([]byte, sectors*gptSectorSize, sectors*gptSectorSize+tailSize)
+	header := raw[gptSectorSize : 2*gptSectorSize]
+	copy(header[:8], "EFI PART")
+	binary.LittleEndian.PutUint32(header[8:12], 0x00010000)
+	binary.LittleEndian.PutUint32(header[12:16], 92)
+	binary.LittleEndian.PutUint64(header[24:32], 1)
+	binary.LittleEndian.PutUint64(header[32:40], sectors-1)
+	binary.LittleEndian.PutUint64(header[40:48], 2048)
+	binary.LittleEndian.PutUint64(header[48:56], sectors-34)
+	binary.LittleEndian.PutUint64(header[72:80], 2)
+	binary.LittleEndian.PutUint32(header[80:84], 128)
+	binary.LittleEndian.PutUint32(header[84:88], 128)
+	writeGPTEntry(raw, 0, []byte{
+		0xaf, 0x3d, 0xc6, 0x0f, 0x83, 0x84, 0x72, 0x47,
+		0x8e, 0x79, 0x3d, 0x69, 0xd8, 0x47, 0x7d, 0xe4,
+	}, rootStart, rootStart+rootSectors-1, "rootfs")
+	if _, err := rand.Read(raw[rootStart*gptSectorSize : (rootStart+rootSectors)*gptSectorSize]); err != nil {
+		t.Fatal(err)
+	}
+	tailData := make([]byte, tailSize)
 	if _, err := rand.Read(tailData); err != nil {
 		t.Fatal(err)
 	}
-	raw := append(testGPTImage(t), tailData...)
+	return append(raw, tailData...)
+}
+
+// TestStreamRootVerifiesDownloadChecksum covers the root and A/B stream
+// path, which stops reading the payload after the root partition, with a
+// multi-MiB random root and a random tail (run it with -race).
+func TestStreamRootVerifiesDownloadChecksum(t *testing.T) {
+	raw := randomRootGPTImage(t, 8192) // 4 MiB root
 	for _, format := range []string{"gz", "zst"} {
 		downloaded := compressForTest(t, format, raw)
 		url := serveBytes(t, downloaded) + "/image.raw." + format
@@ -187,6 +217,37 @@ func TestStreamRootVerifiesDownloadChecksum(t *testing.T) {
 					t.Fatalf("%s: StreamRoot(%s) = %v, want error %v", format, tt.checksum[:8], err, tt.wantErr)
 				}
 			}
+		}
+	}
+}
+
+// TestDownloadChecksumVerifyWithOpenDecoder reads part of a zstd payload
+// and verifies the download checksum while the decoder is still open, like
+// streamABRaw after the root partition. Nothing may read the body
+// concurrently (fails under -race with a read-ahead decoder).
+func TestDownloadChecksumVerifyWithOpenDecoder(t *testing.T) {
+	payload := make([]byte, 16<<20)
+	if _, err := rand.Read(payload); err != nil {
+		t.Fatal(err)
+	}
+	downloaded := compressForTest(t, "zst", payload)
+	for range 3 {
+		opt, err := withDownloadChecksum(StreamOpts{Checksum: sha256Hex(downloaded)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		dec, closer, err := Decompressor(opt.download.source(bytes.NewReader(downloaded)), FormatZstd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.ReadFull(dec, make([]byte, 1<<20)); err != nil {
+			t.Fatal(err)
+		}
+		if err := opt.download.verify(); err != nil {
+			t.Fatalf("verify() = %v", err)
+		}
+		if closer != nil {
+			_ = closer.Close()
 		}
 	}
 }
@@ -214,7 +275,7 @@ func TestStreamChecksumScopeTrailingData(t *testing.T) {
 		if (err != nil) != tt.wantErr {
 			t.Fatalf("Stream(%s) = %v, want error %v", tt.checksum[:8], err, tt.wantErr)
 		}
-		if tt.wantErr && (!errors.Is(err, ErrChecksumMismatch) || !strings.Contains(err.Error(), "IMAGE_CHECKSUM_SCOPE=decompressed")) {
+		if tt.wantErr && (!errors.Is(err, ErrChecksumMismatch) || !strings.Contains(err.Error(), "IMAGE_CHECKSUM_SCOPE=download")) {
 			t.Fatalf("Stream() = %v, want a checksum mismatch that names IMAGE_CHECKSUM_SCOPE", err)
 		}
 	}

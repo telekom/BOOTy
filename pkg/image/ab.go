@@ -221,9 +221,10 @@ func streamABRaw(ctx context.Context, src io.Reader, target ABTargets, opt Strea
 		dst:   target.RootPartition,
 	})
 
-	// Read the payload to its end for a download-scope checksum too, so the
-	// decompressor is done before the rest of the download is hashed.
-	if err := copyABStreamRanges(ctx, stream, ranges, checksum != nil || opt.download != nil); err != nil {
+	// A download-scope checksum does not decompress the rest: verify()
+	// hashes the remaining raw download. The zstd decoder runs without a
+	// read-ahead goroutine (Decompressor), so nothing else reads the body.
+	if err := copyABStreamRanges(ctx, stream, ranges, checksum != nil); err != nil {
 		return err
 	}
 	if err := verifyChecksum(checksum, opt); err != nil {
