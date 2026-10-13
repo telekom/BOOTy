@@ -6,8 +6,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -156,23 +158,64 @@ func TestDownloadToFileVerifiesDownloadChecksum(t *testing.T) {
 }
 
 // TestStreamRootVerifiesDownloadChecksum covers the root and A/B stream
-// path, which does not read the image to its end on its own.
+// path, which stops reading the payload after the root partition. The image
+// carries data past the root partition, so a download-scope checksum must
+// wait for the decompressor before it hashes the rest (zstd read-ahead).
 func TestStreamRootVerifiesDownloadChecksum(t *testing.T) {
-	raw := testGPTImage(t)
-	downloaded := compressForTest(t, "gz", raw)
-	url := serveBytes(t, downloaded) + "/image.raw.gz"
+	// Incompressible data, so the compressed stream is still being read
+	// when the root partition is done.
+	tailData := make([]byte, 8<<20)
+	if _, err := rand.Read(tailData); err != nil {
+		t.Fatal(err)
+	}
+	raw := append(testGPTImage(t), tailData...)
+	for _, format := range []string{"gz", "zst"} {
+		downloaded := compressForTest(t, format, raw)
+		url := serveBytes(t, downloaded) + "/image.raw." + format
+		for _, tt := range []struct {
+			checksum string
+			wantErr  bool
+		}{
+			{checksum: sha256Hex(downloaded)},
+			{checksum: sha256Hex(raw), wantErr: true},
+		} {
+			for range 3 {
+				root := filepath.Join(t.TempDir(), "root.img")
+				createTargetFile(t, root)
+				err := StreamRoot(context.Background(), url, RootTarget{RootPartition: root}, StreamOpts{Checksum: tt.checksum})
+				if (err != nil) != tt.wantErr {
+					t.Fatalf("%s: StreamRoot(%s) = %v, want error %v", format, tt.checksum[:8], err, tt.wantErr)
+				}
+			}
+		}
+	}
+}
+
+// TestStreamChecksumScopeTrailingData: data after the last compressed frame
+// (a zstd skippable frame, as padding) belongs to the download, so the
+// download-scope digest covers it.
+func TestStreamChecksumScopeTrailingData(t *testing.T) {
+	data := bytes.Repeat([]byte("payload "), 8192)
+	skippable := append([]byte{0x50, 0x2a, 0x4d, 0x18, 8, 0, 0, 0}, []byte("PADDING!")...)
+	downloaded := append(compressForTest(t, "zst", data), skippable...)
+	url := serveBytes(t, downloaded) + "/image.raw.zst"
 	for _, tt := range []struct {
 		checksum string
 		wantErr  bool
 	}{
 		{checksum: sha256Hex(downloaded)},
-		{checksum: sha256Hex(raw), wantErr: true},
+		{checksum: sha256Hex(downloaded[:len(downloaded)-len(skippable)]), wantErr: true},
 	} {
-		root := filepath.Join(t.TempDir(), "root.img")
-		createTargetFile(t, root)
-		err := StreamRoot(context.Background(), url, RootTarget{RootPartition: root}, StreamOpts{Checksum: tt.checksum})
+		disk := filepath.Join(t.TempDir(), "disk.img")
+		if err := os.WriteFile(disk, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		err := Stream(context.Background(), url, disk, StreamOpts{Checksum: tt.checksum})
 		if (err != nil) != tt.wantErr {
-			t.Fatalf("StreamRoot(%s) = %v, want error %v", tt.checksum[:8], err, tt.wantErr)
+			t.Fatalf("Stream(%s) = %v, want error %v", tt.checksum[:8], err, tt.wantErr)
+		}
+		if tt.wantErr && (!errors.Is(err, ErrChecksumMismatch) || !strings.Contains(err.Error(), "IMAGE_CHECKSUM_SCOPE=decompressed")) {
+			t.Fatalf("Stream() = %v, want a checksum mismatch that names IMAGE_CHECKSUM_SCOPE", err)
 		}
 	}
 }

@@ -13,7 +13,9 @@ import (
 const (
 	// ChecksumScopeDownload checks the bytes as downloaded, before
 	// decompression or qcow2 conversion. Checksum files published next to
-	// an image (image.raw.lz4.sha256) cover these bytes.
+	// an image (image.raw.lz4.sha256) cover these bytes. For oci:// sources
+	// these are the uncompressed layer bytes (layer.Uncompressed()), not the
+	// compressed blob that the layer digest covers.
 	ChecksumScopeDownload = "download"
 	// ChecksumScopeDecompressed checks the decompressed image. For qcow2
 	// images it checks the converted raw image.
@@ -91,7 +93,10 @@ func (d *downloadChecksum) verify() error {
 			d.err = fmt.Errorf("reading the rest of the download for its checksum: %w", err)
 			return
 		}
-		d.err = verifyChecksum(d.h, d.opt)
+		if err := verifyChecksum(d.h, d.opt); err != nil {
+			d.err = fmt.Errorf("%w (IMAGE_CHECKSUM_SCOPE=download hashes the file as downloaded; "+
+				"set IMAGE_CHECKSUM_SCOPE=decompressed for a digest of the decompressed image)", err)
+		}
 	})
 	return d.err
 }

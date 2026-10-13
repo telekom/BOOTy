@@ -6,6 +6,7 @@ import (
 	"crypto/sha512"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -95,6 +96,12 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 	buf := make([]byte, imageCopyBufferSize)
 	written, err := io.CopyBuffer(out, io.TeeReader(src, counter), buf)
 	stopProgress()
+	if errors.Is(err, ErrChecksumMismatch) {
+		slog.Error("checksum mismatch: wiping partition table to prevent booting corrupt image",
+			"device", device, "error", err)
+		wipeLeadingSectors(device)
+		return err //nolint:wrapcheck // ErrChecksumMismatch from verifyAtEOF, already descriptive
+	}
 	if err != nil {
 		slog.Error("image write failed: wiping partial image", "device", device, "error", err)
 		wipeLeadingSectors(device)
@@ -224,6 +231,10 @@ func wrapChecksum(r io.Reader, opt StreamOpts) (io.Reader, hash.Hash, error) {
 	return io.TeeReader(r, h), h, nil
 }
 
+// ErrChecksumMismatch is the error of an IMAGE_CHECKSUM that does not match.
+// Its text "checksum mismatch" also marks the error as permanent.
+var ErrChecksumMismatch = errors.New("checksum mismatch")
+
 // verifyChecksum validates the hash digest against the expected checksum.
 // It verifies a download-scope checksum of opt first.
 func verifyChecksum(h hash.Hash, opt StreamOpts) error {
@@ -239,7 +250,7 @@ func verifyChecksum(h hash.Hash, opt StreamOpts) error {
 	}
 	got := hex.EncodeToString(h.Sum(nil))
 	if subtle.ConstantTimeCompare([]byte(got), []byte(opt.Checksum)) != 1 {
-		return fmt.Errorf("checksum mismatch: computed=%s want=%s",
+		return fmt.Errorf("%w: computed=%s want=%s", ErrChecksumMismatch,
 			got[:min(8, len(got))], opt.Checksum[:min(8, len(opt.Checksum))])
 	}
 	slog.Info("checksum verified", "type", opt.ChecksumType)
