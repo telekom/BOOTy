@@ -64,6 +64,37 @@ func TestApplyProvisionerFilesToRamdisk(t *testing.T) {
 	}
 }
 
+// copyTree skips symlinks, so a linked resolv.conf or etc directory is
+// never applied and must not count as a provisioner resolv.conf.
+func TestHasProvisionerResolvConfIgnoresSymlinks(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "resolv.conf")
+	if err := os.WriteFile(target, []byte("nameserver 192.0.2.1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := withProvisionerFiles(t, map[string]os.FileMode{"etc/resolv.conf": 0o644})
+	if !HasProvisionerResolvConf() {
+		t.Fatal("HasProvisionerResolvConf() = false for a regular file")
+	}
+	if err := os.Remove(filepath.Join(src, "etc", "resolv.conf")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(src, "etc", "resolv.conf")); err != nil {
+		t.Fatal(err)
+	}
+	if HasProvisionerResolvConf() {
+		t.Error("HasProvisionerResolvConf() = true for a symlinked resolv.conf")
+	}
+	if err := os.RemoveAll(filepath.Join(src, "etc")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Dir(target), filepath.Join(src, "etc")); err != nil {
+		t.Fatal(err)
+	}
+	if HasProvisionerResolvConf() {
+		t.Error("HasProvisionerResolvConf() = true for a symlinked etc directory")
+	}
+}
+
 func TestApplyProvisionerFilesToRamdiskWithoutFiles(t *testing.T) {
 	old := provisionerFilesDir
 	provisionerFilesDir = filepath.Join(t.TempDir(), "missing")
