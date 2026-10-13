@@ -5,6 +5,7 @@ package disk
 import (
 	"context"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -71,17 +72,43 @@ func TestThoroughWipeOrder(t *testing.T) {
 func TestThoroughWipeLogsStepFailuresAndFailsOnDiskWipefs(t *testing.T) {
 	cmd := newMockCommander()
 	cmd.setResult("lsblk --json", []byte(wipeTestTree), nil)
-	cmd.setResult("lvm lvchange", nil, errors.New("in use"))
+	cmd.setResult("lvm pvremove", nil, errors.New("not a PV"))
 	cmd.setResult("dd if=/dev/zero", nil, errors.New("read-only"))
 	cmd.setResult("blkdiscard /dev/sda", nil, errors.New("not supported"))
+	cmd.setResult("sgdisk --zap-all", nil, errors.New("no GPT"))
 	if err := NewManager(cmd).WipeDisk(context.Background(), "/dev/sda"); err != nil {
 		t.Fatalf("WipeDisk() = %v, want step failures only logged", err)
 	}
+	// The best-effort steps ran (a quick wipe would skip them).
+	for _, step := range []string{"lvm pvremove -ff -y /dev/sda1", "blkdiscard /dev/sda"} {
+		if !slices.Contains(callList(cmd.calls), step) {
+			t.Fatalf("step %q did not run: %v", step, callList(cmd.calls))
+		}
+	}
 
-	cmd = newMockCommander()
-	cmd.setResult("wipefs -af", nil, errors.New("busy"))
-	if err := NewManager(cmd).WipeDisk(context.Background(), "/dev/sda"); err == nil {
-		t.Fatal("WipeDisk() = nil, want the disk wipefs error")
+	for _, quick := range []bool{false, true} {
+		cmd = newMockCommander()
+		cmd.setResult("wipefs -af", nil, errors.New("busy"))
+		if err := NewManager(cmd).WithQuickWipe(quick).WipeDisk(context.Background(), "/dev/sda"); err == nil {
+			t.Fatalf("quick=%v: WipeDisk() = nil, want the disk wipefs error", quick)
+		}
+	}
+}
+
+// A holder that can not be stopped keeps its members in use: the wipe
+// fails before it changes the disk.
+func TestThoroughWipeFailsWhenAHolderDoesNotStop(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("lsblk --json", []byte(wipeTestTree), nil)
+	cmd.setResult("lvm lvchange", nil, errors.New("in use"))
+	err := NewManager(cmd).WipeDisk(context.Background(), "/dev/sda")
+	if err == nil || !strings.Contains(err.Error(), "stop lvm /dev/mapper/vg0-root") {
+		t.Fatalf("WipeDisk() = %v, want the holder error", err)
+	}
+	for _, c := range callList(cmd.calls) {
+		if strings.HasPrefix(c, "wipefs") || strings.HasPrefix(c, "sgdisk") || strings.HasPrefix(c, "dd ") {
+			t.Fatalf("the wipe went on after the holder error: %q", c)
+		}
 	}
 }
 
@@ -102,7 +129,7 @@ func TestQuickWipeTouchesTheDiskOnly(t *testing.T) {
 	cmd := newMockCommander()
 	cmd.setResult("lsblk --json", []byte(wipeTestTree), nil)
 	mgr := NewManager(cmd)
-	mgr.SetQuickWipe(true)
+	mgr = mgr.WithQuickWipe(true)
 	if err := mgr.WipeDisk(context.Background(), "/dev/sda"); err != nil {
 		t.Fatalf("WipeDisk() = %v", err)
 	}

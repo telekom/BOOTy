@@ -126,7 +126,7 @@ func TestQuickWipeKeepsPartitionSignatures(t *testing.T) {
 	f.teardown() // the quick wipe does not stop holders; free the partitions
 
 	mgr := disk.NewManager(nil)
-	mgr.SetQuickWipe(true)
+	mgr = mgr.WithQuickWipe(true)
 	if err := mgr.WipeDisk(context.Background(), f.loop); err != nil {
 		t.Fatalf("WipeDisk() = %v", err)
 	}
@@ -187,7 +187,7 @@ func TestWipeRefusesDisksInUse(t *testing.T) {
 
 	for _, quick := range []bool{false, true} {
 		mgr := disk.NewManager(nil)
-		mgr.SetQuickWipe(quick)
+		mgr = mgr.WithQuickWipe(quick)
 		for device, want := range map[string]string{
 			mounted:        "mounted at " + mnt,
 			mounted + "p1": "mounted at " + mnt,

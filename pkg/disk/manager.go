@@ -46,10 +46,10 @@ type Manager struct {
 	// legacyCAPRFSelection makes DetectDisk pick the disk like the CAPRF
 	// legacy provisioner. See SetLegacyCAPRFSelection.
 	legacyCAPRFSelection bool
-	// quickWipe limits the wipe to the disk signatures. See SetQuickWipe.
+	// quickWipe limits the wipe to the disk signatures. See WithQuickWipe.
 	quickWipe bool
-	// procRoot is read by refuseInUse; empty skips the check.
-	procRoot string
+	// procDir replaces /proc in tests. See refuseInUse.
+	procDir string
 }
 
 // SetLegacyCAPRFSelection makes DetectDisk select the target disk like
@@ -61,17 +61,11 @@ func (m *Manager) SetLegacyCAPRFSelection(enabled bool) {
 }
 
 // NewManager creates a Manager with the given Commander (nil = ExecCommander).
-// Only a manager that runs real commands checks /proc before it wipes a
-// disk (refuseInUse): a test commander changes no disk.
 func NewManager(cmd Commander) *Manager {
 	if cmd == nil {
 		cmd = &ExecCommander{}
 	}
-	m := &Manager{cmd: cmd, sysfsRoot: "/sys"}
-	if _, isExec := cmd.(*ExecCommander); isExec {
-		m.procRoot = "/proc"
-	}
-	return m
+	return &Manager{cmd: cmd, sysfsRoot: "/sys"}
 }
 
 // SetSysfsRoot changes the sysfs root that disk discovery reads, "/sys" by
@@ -143,7 +137,7 @@ func isNoArraysFound(out []byte, err error) bool {
 }
 
 // WipeDisk clears the partitions and the partition table of a single device.
-// It does not overwrite the data. See wipeDevice and SetQuickWipe.
+// It does not overwrite the data. See wipeDevice and WithQuickWipe.
 func (m *Manager) WipeDisk(ctx context.Context, device string) error {
 	device = strings.TrimSpace(device)
 	if device == "" {

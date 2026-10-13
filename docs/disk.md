@@ -163,8 +163,12 @@ The lookup fails when:
 
 ## Wipe Behaviour
 
-`WIPE_DEPTH` selects what a wipe of a disk does. Neither
-depth overwrites all data; use `SECURE_ERASE` for that.
+`WIPE_DEPTH` selects what a wipe of a disk does. A wipe does not write over
+all data. `quick` leaves the data in place. `thorough` ends with `blkdiscard`
+of the whole disk: on most SSDs and NVMe disks the discarded blocks then read
+as zeros or are no longer readable, so this works like an erase of the
+complete disk, but the drive does not guarantee it. For a guaranteed erase
+use `SECURE_ERASE`.
 
 - `thorough` (default): BOOTy lists the partitions and the devices on top of
   the disk with `lsblk`. It stops the LVM logical volumes
@@ -177,8 +181,18 @@ depth overwrites all data; use `SECURE_ERASE` for that.
   first and the last MiB of the disk and runs `blkdiscard` on the disk. A
   device without discard support only logs this. When the old partition table
   is written back, `blkid` and `wipefs` find no file system, PV, array or LUKS
-  header in the partitions. Failed steps are logged; only a failed `wipefs` on
-  the disk fails the wipe.
+  header in the partitions. A holder that cannot be stopped and a failed
+  `wipefs` on the disk fail the wipe; the other failed steps are logged (at
+  INFO when the tool is not in the ramdisk, for example `lvm` in the slim
+  flavor).
+  The wipe also runs before every image write of a provision (`wipe-disks`),
+  so each provision discards the whole target disk. On a large thin
+  provisioned LUN or a slow device the discard can take minutes; set
+  `WIPE_DEPTH=quick` when that matters.
+  Stopping a holder deactivates the whole LV or array: an LVM VG or MD array
+  that spans the wiped disk and a disk that is not wiped stops, and the
+  members on the other disk keep their labels, so the VG or array is
+  incomplete afterwards. BOOTy removes labels only on the wiped disk.
 - `quick` (preset by `CAPRF_LEGACY_COMPAT=true`): `sgdisk --zap-all` and then
   `wipefs -af` on the disk only. The partition contents stay: when the old
   partition table is written back, the LVM PVs and VGs, MD members and file
@@ -193,9 +207,15 @@ swap area, directly or through a device on top (LVM, dm-crypt and MD, through
 Such a disk is not touched and the wipe reports `refusing to wipe <dev>: it
 backs ...`: `WipeDisk` and secure erase fail, a wipe of all disks wipes the
 other disks and reports the refused ones. If `/proc/self/mountinfo` cannot be
-read, BOOTy refuses the wipe. In the ramdisk nothing is mounted from a disk,
-so this changes nothing there. It protects a host that runs BOOTy in a
-privileged container, where `/sys/block` lists the host disks.
+read, or sysfs (`/sys/dev/block`, `/sys/class/block`) is missing or does
+not resolve, BOOTy refuses the wipe. The mount source counts too, for file
+systems such as btrfs that report an anonymous device number, and all
+devices of a multi-device btrfs (`/sys/fs/btrfs/<uuid>/devices`). In the
+ramdisk nothing is mounted from a disk, so this changes nothing there. It
+protects a host that runs BOOTy in a privileged container, where
+`/sys/block` lists the host disks. The check is limited to the mount
+namespace of BOOTy: a disk that only another container or the host mounts is
+not found, so do not run a deprovision in a container that sees host disks.
 
 "All disks" means every entry in `/sys/block` except the virtual devices listed
 in [Automatic Detection](#automatic-detection). This includes removable media.

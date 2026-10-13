@@ -5,6 +5,7 @@ package disk
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -14,11 +15,15 @@ import (
 // much at the start and the end of each partition and of the disk.
 const edgeSectors = 2048
 
-// SetQuickWipe makes WipeDisk and WipeAllDisks clear only the signatures of
-// the disk itself (sgdisk --zap-all and wipefs), like the CAPRF legacy
-// wipe_all_disks. The default is the thorough wipe, see wipeDevice.
-func (m *Manager) SetQuickWipe(enabled bool) {
-	m.quickWipe = enabled
+// WithQuickWipe returns a copy of the manager whose WipeDisk and
+// WipeAllDisks clear only the signatures of the disk itself (sgdisk
+// --zap-all and wipefs), like the CAPRF legacy wipe_all_disks, when quick
+// is true. The default is the thorough wipe, see wipeDevice. The copy keeps
+// a shared manager unchanged, so each run selects its own depth.
+func (m *Manager) WithQuickWipe(quick bool) *Manager {
+	c := *m
+	c.quickWipe = quick
+	return &c
 }
 
 // blockNode is one device of `lsblk --json --bytes --paths`.
@@ -36,15 +41,18 @@ type blockNode struct {
 // removes the LVM PV and MD superblocks, the signatures (wipefs) and the
 // first and last MiB of every partition, then the partition table (GPT with
 // its backup and MBR), the disk signatures and the first and last MiB of the
-// disk, and discards the disk where the device supports it. Only the final
-// disk wipefs fails the wipe; the other steps log failures.
+// disk, and discards the disk where the device supports it. A holder that
+// can not be stopped and a failed disk wipefs fail the wipe; the other steps
+// log failures.
 func (m *Manager) wipeDevice(ctx context.Context, device string) error {
 	var root *blockNode
 	if !m.quickWipe {
 		root = m.blockTree(ctx, device)
 	}
 	if root != nil {
-		m.releaseHolders(ctx, root.Children)
+		if err := m.releaseHolders(ctx, root.Children); err != nil {
+			return err
+		}
 		for i := range root.Children {
 			if root.Children[i].Type == "part" {
 				m.wipeMember(ctx, &root.Children[i])
@@ -53,7 +61,7 @@ func (m *Manager) wipeDevice(ctx context.Context, device string) error {
 		m.removeMembership(ctx, root)
 	}
 	if out, err := m.cmd.Run(ctx, "sgdisk", "--zap-all", device); err != nil {
-		slog.Debug("sgdisk zap failed (may not be GPT)", "device", device, "output", string(out), "err", err)
+		logStepFailure("sgdisk --zap-all failed, wipefs clears the partition table signatures", device, out, err)
 	}
 	if _, err := m.cmd.Run(ctx, "wipefs", "-af", device); err != nil {
 		return err
@@ -65,7 +73,7 @@ func (m *Manager) wipeDevice(ctx context.Context, device string) error {
 		m.zeroEdges(ctx, device, root.Size)
 	}
 	if out, err := m.cmd.Run(ctx, "blkdiscard", device); err != nil {
-		slog.Debug("blkdiscard not supported or failed", "device", device, "output", strings.TrimSpace(string(out)), "error", err)
+		slog.Info("blkdiscard not supported or failed", "device", device, "output", strings.TrimSpace(string(out)), "error", err)
 	}
 	return nil
 }
@@ -88,11 +96,14 @@ func (m *Manager) blockTree(ctx context.Context, device string) *blockNode {
 }
 
 // releaseHolders stops the LVM, dm-crypt and MD devices in the tree, the
-// top ones first, so that their members can be wiped.
-func (m *Manager) releaseHolders(ctx context.Context, nodes []blockNode) {
+// top ones first, so that their members can be wiped. A device that can not
+// be stopped fails the wipe: its members are still in use.
+func (m *Manager) releaseHolders(ctx context.Context, nodes []blockNode) error {
 	for i := range nodes {
 		n := &nodes[i]
-		m.releaseHolders(ctx, n.Children)
+		if err := m.releaseHolders(ctx, n.Children); err != nil {
+			return err
+		}
 		var name string
 		var args []string
 		switch {
@@ -106,10 +117,10 @@ func (m *Manager) releaseHolders(ctx context.Context, nodes []blockNode) {
 			continue
 		}
 		if out, err := m.cmd.Run(ctx, name, args...); err != nil {
-			slog.Warn("cannot stop device before the wipe", "device", n.Name, "type", n.Type,
-				"output", strings.TrimSpace(string(out)), "error", err)
+			return fmt.Errorf("stop %s %s before the wipe: %s: %w", n.Type, n.Name, strings.TrimSpace(string(out)), err)
 		}
 	}
+	return nil
 }
 
 // wipeMember clears one partition: membership, signatures, first and last MiB.
@@ -134,8 +145,7 @@ func (m *Manager) removeMembership(ctx context.Context, n *blockNode) {
 		return
 	}
 	if out, err := m.cmd.Run(ctx, name, args...); err != nil {
-		slog.Warn("cannot remove the member label", "device", n.Name, "fstype", n.FSType,
-			"output", strings.TrimSpace(string(out)), "error", err)
+		logStepFailure("cannot remove the member label, wipefs clears it", n.Name, out, err)
 	}
 }
 
@@ -153,8 +163,17 @@ func (m *Manager) zeroEdges(ctx context.Context, device string, size json.Number
 		args := []string{"if=/dev/zero", "of=" + device, "bs=512", "count=" + strconv.Itoa(edgeSectors),
 			"seek=" + strconv.FormatInt(seek, 10), "conv=notrunc,fsync"}
 		if out, err := m.cmd.Run(ctx, "dd", args...); err != nil {
-			slog.Warn("cannot zero the device edge", "device", device, "seek", seek,
-				"output", strings.TrimSpace(string(out)), "error", err)
+			logStepFailure("cannot zero the device edge", device, out, err)
 		}
 	}
+}
+
+// logStepFailure logs a failed best-effort wipe step: at INFO when the tool
+// is missing (the slim flavor has no lvm or mdadm), else at WARN.
+func logStepFailure(msg, device string, out []byte, err error) {
+	if isExecNotFound(err) {
+		slog.Info(msg+": tool not available", "device", device, "error", err)
+		return
+	}
+	slog.Warn(msg, "device", device, "output", strings.TrimSpace(string(out)), "error", err)
 }
