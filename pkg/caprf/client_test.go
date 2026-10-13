@@ -2724,7 +2724,7 @@ func TestParseVarsNetworkWaitMode(t *testing.T) {
 		"NETWORK_WAIT_MODE=rounds\n":                            "rounds",
 		"CAPRF_LEGACY_COMPAT=true\n":                            "rounds",
 		"CAPRF_LEGACY_COMPAT=true\nNETWORK_WAIT_MODE=default\n": "default",
-		"HOSTNAME=x\n":                                          "",
+		"CAPRF_LEGACY_COMPAT=false\n":                           "",
 	} {
 		cfg, err := ParseVars(strings.NewReader(vars))
 		if err != nil {
