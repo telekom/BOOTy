@@ -65,7 +65,7 @@ echo "    Loop device: ${LOOP_DEV}"
 # udev create them, and without udev (containers) they never appear in /dev:
 # re-read the table while sysfs lacks a partition and (re)create the node from
 # its sysfs major:minor.
-for _ in $(seq 1 100); do
+for iter in $(seq 1 100); do
     missing=0
     for n in 1 2; do
         part="${LOOP_DEV}p${n}"
@@ -74,14 +74,19 @@ for _ in $(seq 1 100); do
             missing=1
             continue
         fi
-        want="$(cat "${sysdev}")"
-        # A node left from an earlier loop device can point elsewhere.
-        if [ "$(stat -c '%Hr:%Lr' "${part}" 2>/dev/null)" != "${want}" ] || [ ! -b "${part}" ]; then
+        want="$(cat "${sysdev}" 2>/dev/null)" || { missing=1; continue; }
+        # A node left from an earlier loop device can point elsewhere. Give
+        # udev and devtmpfs about a second before creating the node here.
+        if [ "${iter}" -gt 3 ] && { [ "$(stat -c '%Hr:%Lr' "${part}" 2>/dev/null)" != "${want}" ] || [ ! -b "${part}" ]; }; then
             rm -f "${part}"
             mknod "${part}" b "${want%%:*}" "${want##*:}" 2>/dev/null || true
         fi
-        # A partition that the kernel still adds or removes cannot be read.
-        blockdev --getsize64 "${part}" >/dev/null 2>&1 || missing=1
+        # The node must match sysfs, and a partition that the kernel still
+        # adds or removes cannot be read.
+        if [ "$(stat -c '%Hr:%Lr' "${part}" 2>/dev/null)" != "${want}" ] ||
+            ! blockdev --getsize64 "${part}" >/dev/null 2>&1; then
+            missing=1
+        fi
     done
     [ "${missing}" -eq 0 ] && break
     partx --update "${LOOP_DEV}" 2>/dev/null || true

@@ -5,6 +5,7 @@
 package loopdev
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -19,7 +20,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-var partitionRe = regexp.MustCompile(`^(/dev/loop[0-9]+)p([0-9]+)$`)
+var partitionRe = regexp.MustCompile(`^(/dev/loop\d+)p(\d+)$`)
 
 // SplitPartition returns the loop device and the partition number of a
 // loop partition path such as /dev/loop3p2.
@@ -38,72 +39,87 @@ func SplitPartition(path string) (dev string, part int, ok bool) {
 // Attach attaches image to a free loop device with partition scanning and
 // waits for partitions 1..parts. It detaches the device again on error.
 func Attach(image string, parts int) (string, error) {
-	out, err := exec.Command("losetup", "--find", "--show", "--partscan", image).CombinedOutput()
+	ctx := context.Background()
+	out, err := exec.CommandContext(ctx, "losetup", "--find", "--show", "--partscan", image).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("losetup %s: %w: %s", image, err, out)
 	}
 	dev := strings.TrimSpace(string(out))
 	if err := WaitPartitions(dev, parts, 30*time.Second); err != nil {
-		_ = exec.Command("losetup", "--detach", dev).Run()
+		_ = exec.CommandContext(ctx, "losetup", "--detach", dev).Run()
 		return "", err
 	}
 	return dev, nil
 }
 
-// WaitPartitions waits until dev has block device nodes for partitions
-// 1..parts. While a partition is missing in sysfs it asks the kernel to
-// re-read the partition table; when sysfs has it but /dev does not (no udev),
-// it creates the node from the sysfs major:minor.
+// nodeGrace is how long WaitPartitions leaves a partition that sysfs lists
+// to udev or devtmpfs before it creates the /dev node itself. A node that
+// WaitPartitions creates is not removed by devtmpfs on detach.
+const nodeGrace = time.Second
+
+// WaitPartitions waits until dev has usable block device nodes for
+// partitions 1..parts. While a partition is missing in sysfs it asks the
+// kernel to re-read the partition table. When sysfs lists a partition but
+// /dev has no matching node after nodeGrace (no udev, or a node left from an
+// earlier loop device), it creates the node from the sysfs major:minor.
 func WaitPartitions(dev string, parts int, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	for {
-		missing := missingPartitions(dev, parts)
+		missing, lastErr := missingPartitions(dev, parts, time.Since(start) >= nodeGrace)
 		if len(missing) == 0 {
 			return nil
 		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("partitions %v of %s did not appear within %s", missing, dev, timeout)
+		if ctx.Err() != nil {
+			return fmt.Errorf("partitions %v of %s not ready within %s: %w", missing, dev, timeout, lastErr)
 		}
 		if _, err := exec.LookPath("partx"); err == nil {
-			_ = exec.Command("partx", "--update", dev).Run()
+			_ = exec.CommandContext(ctx, "partx", "--update", dev).Run()
 		}
-		_ = exec.Command("partprobe", dev).Run()
+		_ = exec.CommandContext(ctx, "partprobe", dev).Run()
 		if _, err := exec.LookPath("udevadm"); err == nil {
-			_ = exec.Command("udevadm", "settle", "--timeout=2").Run()
+			_ = exec.CommandContext(ctx, "udevadm", "settle", "--timeout=2").Run()
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 }
 
-// missingPartitions returns the partition numbers that the kernel does not
-// list in sysfs yet. For the listed ones it makes sure that /dev has a node
-// with the sysfs major:minor: without udev the node is missing, and a node
-// left from an earlier loop device can point to another partition.
-func missingPartitions(dev string, parts int) []int {
+// missingPartitions returns the partitions that are not ready and the last
+// reason.
+func missingPartitions(dev string, parts int, mknod bool) ([]int, error) {
 	var missing []int
+	var lastErr error
 	for i := 1; i <= parts; i++ {
-		if err := ensureNode(fmt.Sprintf("%sp%d", dev, i)); err != nil {
+		if err := ensureNode(fmt.Sprintf("%sp%d", dev, i), mknod); err != nil {
 			missing = append(missing, i)
+			lastErr = err
 		}
 	}
-	return missing
+	return missing, lastErr
 }
 
-func ensureNode(node string) error {
-	data, err := os.ReadFile(filepath.Join("/sys/class/block", filepath.Base(node), "dev"))
+// ensureNode checks that node matches the sysfs major:minor and can be
+// read. With mknod it replaces a missing or stale node.
+func ensureNode(node string, mknod bool) error {
+	data, err := os.ReadFile("/sys/class/block/" + filepath.Base(node) + "/dev")
 	if err != nil {
-		return err
+		return fmt.Errorf("read sysfs dev of %s: %w", node, err)
 	}
 	var major, minor uint32
 	if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d:%d", &major, &minor); err != nil {
-		return fmt.Errorf("parse %s dev: %w", node, err)
+		return fmt.Errorf("parse sysfs dev of %s: %w", node, err)
 	}
 	want := unix.Mkdev(major, minor)
 	var st unix.Stat_t
-	if err := unix.Stat(node, &st); err == nil {
-		if st.Mode&unix.S_IFMT == unix.S_IFBLK && uint64(st.Rdev) == want {
-			return usable(node)
-		}
+	statErr := unix.Stat(node, &st)
+	if statErr == nil && st.Mode&unix.S_IFMT == unix.S_IFBLK && uint64(st.Rdev) == want { //nolint:unconvert // Rdev is int32 on darwin
+		return usable(node)
+	}
+	if !mknod {
+		return fmt.Errorf("%s has no node for %d:%d yet", node, major, minor)
+	}
+	if statErr == nil {
 		if err := os.Remove(node); err != nil {
 			return fmt.Errorf("remove stale %s: %w", node, err)
 		}
@@ -119,9 +135,9 @@ func ensureNode(node string) error {
 func usable(node string) error {
 	f, err := os.Open(node)
 	if err != nil {
-		return err
+		return fmt.Errorf("open %s: %w", node, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	size, err := f.Seek(0, io.SeekEnd)
 	if err != nil {
 		return fmt.Errorf("size of %s: %w", node, err)
