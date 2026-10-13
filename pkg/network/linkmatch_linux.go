@@ -7,24 +7,28 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"slices"
 
 	"github.com/vishvananda/netlink"
 )
 
-// physicalLinks returns the physical NICs, the links of netlink type
-// "device" except loopback.
+// physicalLinks returns the NICs that DetectPhysicalNICs finds, with
+// their MACs. It uses the same NIC rules and the same wait for settling
+// ContainerLab names, so a renamed ContainerLab veth is a NIC here too.
 func physicalLinks() ([]LinkCandidate, error) {
+	names, err := DetectPhysicalNICs()
+	if err != nil {
+		return nil, err
+	}
 	links, err := linkList()
 	if err != nil {
 		return nil, fmt.Errorf("list links: %w", err)
 	}
 	var out []LinkCandidate
 	for _, l := range links {
-		attrs := l.Attrs()
-		if l.Type() != "device" || attrs.Name == "lo" {
-			continue
+		if attrs := l.Attrs(); slices.Contains(names, attrs.Name) {
+			out = append(out, LinkCandidate{Name: attrs.Name, MAC: attrs.HardwareAddr.String()})
 		}
-		out = append(out, LinkCandidate{Name: attrs.Name, MAC: attrs.HardwareAddr.String()})
 	}
 	return out, nil
 }
