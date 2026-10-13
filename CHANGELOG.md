@@ -131,7 +131,7 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 - disk: hidden NVMe multipath path nodes are skipped (#632)
 - A kernel module that never loads is logged at WARN (#631)
 
-### CI and tests
+### CI, build and tests
 
 - KVM scenarios `caprf-legacy-compat`, `caprf-native-parity` and `kexec-persist`
   (#585, #648, #607)
@@ -366,7 +366,7 @@ Feature and hardening release: fail-closed provisioning, stricter image and secu
 
 - Release tags must be annotated SemVer tags without build metadata, reachable from `main`, without an existing release (#326, #343, #356)
 - Provisioning requires `PROVISION_TARGET_OS` or `TARGET_OS`; only `linux` is accepted (#342)
-- Plain HTTP image sources need explicit opt-in (#465). `TOKEN_URL` must use HTTPS except for localhost
+- Plain HTTP image sources need `IMAGE_ALLOW_INSECURE_HTTP=true` (#465). `TOKEN_URL` must use HTTPS except for localhost
 - OCI image sources must be digest-pinned or come with `IMAGE_CHECKSUM` (#305); `IMAGE_SIGNATURE_URL` requires `IMAGE_CHECKSUM` (#319)
 - `PERSIST_NETWORK=true` requires `OS_FAMILY`; RHEL persistence and Flatcar cloud-init fail closed (#285, #309, #367)
 - Non-bond cloud-init network generation requires `STATIC_IFACE` (#310)
