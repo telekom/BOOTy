@@ -101,3 +101,11 @@ func TestMergeCommandVarsErrorsHaveNoValues(t *testing.T) {
 		}
 	}
 }
+
+// Only the key that fails is named.
+func TestMergeCommandVarsNamesOnlyTheBadKey(t *testing.T) {
+	_, _, err := MergeCommandVars([]byte(commandBaseVars), []byte("HOSTNAME=ok\nSUCCESS_ACTION=s3cr3t\n"))
+	if err == nil || err.Error() != "payload keys SUCCESS_ACTION do not parse or validate" {
+		t.Fatalf("error = %v", err)
+	}
+}

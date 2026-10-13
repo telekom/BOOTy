@@ -47,10 +47,12 @@ func MergeCommandVars(base, payload []byte) (cfg *config.MachineConfig, keys []s
 	merged := slices.Concat(base, []byte("\n"), payload)
 	cfg, err = ParseVars(bytes.NewReader(merged))
 	if err != nil {
-		// The parse and validation errors can quote values; the error goes
-		// into the command ACK, so it names only the keys.
-		slog.Warn("command payload does not parse or validate", "keys", strings.Join(keys, ","), "error", err)
-		return nil, nil, fmt.Errorf("payload keys %s do not parse or validate", strings.Join(keys, ","))
+		// The parse and validation errors can quote values. The error goes
+		// into the command ACK and the log goes to LOG_URL, so both name
+		// only the keys.
+		bad := strings.Join(badPayloadKeys(base, payload, keys), ",")
+		slog.Warn("command payload does not parse or validate", "keys", bad)
+		return nil, nil, fmt.Errorf("payload keys %s do not parse or validate", bad)
 	}
 	var fixed []string
 	for _, s := range []struct {
@@ -104,4 +106,27 @@ func payloadKeys(payload []byte) ([]string, error) {
 	}
 	slices.Sort(keys)
 	return slices.Compact(keys), nil
+}
+
+// badPayloadKeys returns the payload keys whose lines alone, appended to
+// base, do not parse or validate. When each key passes alone, the keys only
+// fail together and all are returned.
+func badPayloadKeys(base, payload []byte, keys []string) []string {
+	var bad []string
+	for _, k := range keys {
+		var lines []byte
+		for line := range strings.Lines(string(payload)) {
+			if key, _, ok := parseVarLine(line); ok && key == k {
+				lines = append(lines, line...)
+				lines = append(lines, '\n')
+			}
+		}
+		if _, err := ParseVars(bytes.NewReader(slices.Concat(base, []byte("\n"), lines))); err != nil {
+			bad = append(bad, k)
+		}
+	}
+	if len(bad) == 0 {
+		return keys
+	}
+	return bad
 }

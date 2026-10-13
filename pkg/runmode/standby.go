@@ -5,6 +5,7 @@ package runmode
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -164,8 +165,12 @@ type commandConfigProvider interface {
 func (m *StandbyMode) handleRunCommand(ctx context.Context, cmd config.Command) *commandResult {
 	runCfg, keys, err := m.commandConfig(cmd.Payload)
 	if err != nil {
-		slog.Error("rejected command payload", "id", cmd.ID, "type", cmd.Type, "error", err)
-		m.ack(ctx, cmd.ID, "failed", fmt.Sprintf("invalid %s payload: %v", cmd.Type, err))
+		message := fmt.Sprintf("invalid %s payload: %v", cmd.Type, err)
+		if errors.Is(err, errCopyConfig) {
+			message = fmt.Sprintf("%s command failed: %v", cmd.Type, err)
+		}
+		slog.Error("command not run", "id", cmd.ID, "type", cmd.Type, "error", err)
+		m.ack(ctx, cmd.ID, "failed", message)
 		return nil
 	}
 	runCfg.Mode = cmd.Type
@@ -213,16 +218,19 @@ func (m *StandbyMode) commandConfig(payload []byte) (runCfg *config.MachineConfi
 	return runCfg, keys, nil
 }
 
+// errCopyConfig marks a failed copy of the base config: not a payload error.
+var errCopyConfig = errors.New("cannot copy the config")
+
 // cloneConfig returns a deep copy of c, so that a run that changes slices,
 // maps or pointers of its config does not change c.
 func cloneConfig(c *config.MachineConfig) (*config.MachineConfig, error) {
 	data, err := json.Marshal(c)
 	if err != nil {
-		return nil, fmt.Errorf("copy config: %w", err)
+		return nil, fmt.Errorf("%w: %w", errCopyConfig, err)
 	}
 	var out config.MachineConfig
 	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, fmt.Errorf("copy config: %w", err)
+		return nil, fmt.Errorf("%w: %w", errCopyConfig, err)
 	}
 	// Not in JSON.
 	out.ProvisionerFiles = slices.Clone(c.ProvisionerFiles)
