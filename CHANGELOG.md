@@ -97,6 +97,12 @@ behaviour.
   exist (for example `enp1s0` while the ramdisk calls the NIC `eth0`), BOOTy
   renames the link that has this systemd predictable name (naming scheme v255).
   `PREDICTABLE_NIC_NAMES=false` turns it off (#673).
+- The default, gobgp and slim initramfs ship the NVMe, AHCI, MegaRAID, mpt3sas,
+  SmartPQI and HPSA storage drivers, software RAID (`md_mod`, `raid0/1/10`),
+  `loop`, `8021q` and `efivarfs` modules. Before, only virtio disks were
+  visible on the Debian kernel. The default flavor's busybox applets (`sh`,
+  `sync`, `blockdev`, `setsid`) work again; their links pointed into the build
+  directory (#670).
 
 ### Behaviour behind `CAPRF_LEGACY_COMPAT=true`
 

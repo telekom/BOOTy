@@ -335,6 +335,23 @@ jobs:
           if grep -q "bin/vtysh" gobgp-files.txt; then echo "FAIL: vtysh present in gobgp"; exit 1; fi
           echo "PASS: gobgp contents verified"
 
+      - name: Verify kernel modules and applet links
+        run: |
+          # The Debian kernel builds storage controllers, software RAID and
+          # efivarfs as modules. Without them only virtio disks are visible,
+          # mdadm --create fails and efibootmgr has no EFI variables.
+          for flavor in default gobgp slim; do
+            zstd -dc "out-${flavor}/initramfs.cpio.zst" | cpio -t 2>/dev/null > "${flavor}-modules.txt"
+            for ko in nvme nvme-core ahci libahci megaraid_sas mpt3sas smartpqi hpsa md-mod raid1 raid10 efivarfs loop 8021q; do
+              grep -Eq "^(\./)?modules/${ko}\.ko(\.[a-z]+)?$" "${flavor}-modules.txt" || { echo "FAIL: ${flavor} has no modules/${ko}.ko"; exit 1; }
+            done
+            if grep -Eq '^(\./)?modules/bonding\.ko' "${flavor}-modules.txt"; then echo "FAIL: ${flavor} ships bonding.ko, loading it creates bond0"; exit 1; fi
+            # Applet links must resolve inside the ramdisk, not to the build directory.
+            mkdir -p "x-${flavor}" && (cd "x-${flavor}" && zstd -dc "../out-${flavor}/initramfs.cpio.zst" | cpio -id 'bin/*' 2>/dev/null)
+            if find "x-${flavor}/bin" -type l -lname '/build/*' | grep -q .; then echo "FAIL: ${flavor} has applet links into the build directory"; exit 1; fi
+          done
+          echo "PASS: storage, RAID and efivarfs modules and relative applet links in default, gobgp and slim"
+
       - name: Upload build flavour artifacts
         if: always()
         continue-on-error: true
