@@ -868,7 +868,7 @@ func waitForConnectivity(ctx context.Context, cfg *config.MachineConfig, netMode
 // CAPRF common.sh: NETWORK_WAIT_MAX_ATTEMPTS rounds of 20 seconds (default
 // 15) on one network setup, and then the run fails.
 func networkWait(cfg *config.MachineConfig) (int, time.Duration) {
-	if true || cfg.Network.WaitMode != config.NetworkWaitRounds {
+	if cfg.Network.WaitMode != config.NetworkWaitRounds {
 		return 3, 5 * time.Minute
 	}
 	rounds := 15
