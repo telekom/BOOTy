@@ -894,7 +894,8 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 	// Auto-detect netplan configuration files injected by the provisioner.
 	// Netplan-derived values override vars-based values, allowing the same
 	// config format used by the old deployer to work as a drop-in with BOOTy.
-	npCfg, err := detectNetplanConfig(deployNetplanDir, deployFRRConfPath)
+	npCfg, err := detectNetplanConfig(deployNetplanDir, deployFRRConfPath,
+		strictOption(cfg.Network.NetplanStrict), strictOption(cfg.Network.FRRStrict))
 	if err != nil {
 		return nil, err
 	}
@@ -1156,8 +1157,10 @@ const (
 // file-system overlay. If found, it parses them (and any FRR config) into
 // a network.Config. Returns nil if no netplan files are present. Files that
 // are present but cannot be parsed are an error: falling back to vars would
-// bring up a different network than the operator configured.
-func detectNetplanConfig(netplanDir, frrConfPath string) (*network.Config, error) {
+// bring up a different network than the operator configured. Without
+// netplanStrict or frrStrict, a key or statement that BOOTy does not
+// implement is logged and skipped instead.
+func detectNetplanConfig(netplanDir, frrConfPath string, netplanStrict, frrStrict bool) (*network.Config, error) {
 	found, err := netplan.HasNetplanFiles(netplanDir)
 	if err != nil {
 		return nil, err //nolint:wrapcheck // already names the dir
@@ -1167,7 +1170,7 @@ func detectNetplanConfig(netplanDir, frrConfPath string) (*network.Config, error
 	}
 	slog.Info("detected netplan configuration files", "dir", netplanDir)
 
-	np, err := netplan.ParseDir(netplanDir)
+	np, err := netplan.ParseDirWith(netplanDir, netplanStrict)
 	if err != nil {
 		return nil, fmt.Errorf("parse netplan files in %s: %w", netplanDir, err)
 	}
@@ -1176,7 +1179,7 @@ func detectNetplanConfig(netplanDir, frrConfPath string) (*network.Config, error
 	data, frrErr := os.ReadFile(frrConfPath)
 	switch {
 	case frrErr == nil:
-		parsed, parseErr := netplan.ParseFRRConfigBytes(data)
+		parsed, parseErr := netplan.ParseFRRConfigBytesWith(data, frrStrict)
 		if parseErr != nil {
 			return nil, fmt.Errorf("parse FRR config %s: %w", frrConfPath, parseErr)
 		}
@@ -1541,3 +1544,6 @@ func requiresABKexec(cfg *config.MachineConfig) bool {
 	return strings.EqualFold(strings.TrimSpace(cfg.Provision.Image.Mode), config.ImageModeAB) &&
 		cfg.Provision.AB.PreserveExisting
 }
+
+// strictOption is the value of a strictness option; unset means strict.
+func strictOption(v *bool) bool { return v == nil || *v }

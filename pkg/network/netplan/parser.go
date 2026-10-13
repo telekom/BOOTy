@@ -20,8 +20,15 @@ import (
 
 // ParseDir reads all .yaml files from dir (sorted lexicographically) and
 // returns a merged Config.  Later files override earlier ones at the
-// top-level map key level (ethernets, tunnels, bridges, etc.).
+// top-level map key level (ethernets, tunnels, bridges, etc.). A key that
+// BOOTy does not know is an error.
 func ParseDir(dir string) (*Config, error) {
+	return ParseDirWith(dir, true)
+}
+
+// ParseDirWith is ParseDir. With strict false (NETPLAN_STRICT=false) an
+// unknown key is logged with its line and skipped.
+func ParseDirWith(dir string, strict bool) (*Config, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("read netplan dir %s: %w", dir, err)
@@ -43,7 +50,7 @@ func ParseDir(dir string) (*Config, error) {
 
 	merged := &Config{Network: NetworkSection{Version: 2}}
 	for _, f := range files {
-		cfg, err := ParseFile(f)
+		cfg, err := parseFile(f, strict)
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", f, err)
 		}
@@ -54,23 +61,59 @@ func ParseDir(dir string) (*Config, error) {
 
 // ParseFile reads a single netplan YAML file.
 func ParseFile(path string) (*Config, error) {
+	return parseFile(path, true)
+}
+
+func parseFile(path string, strict bool) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
-	return parseBytes(path, data)
+	return parseBytes(path, data, strict)
 }
 
 // parseBytes decodes netplan YAML. Unknown keys are an error, like netplan
 // itself, so a setting BOOTy does not implement is never dropped silently.
-func parseBytes(name string, data []byte) (*Config, error) {
-	var cfg Config
-	dec := yaml.NewDecoder(bytes.NewReader(data))
-	dec.KnownFields(true)
-	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
+// Without strict, each unknown key is logged with its line and skipped.
+func parseBytes(name string, data []byte, strict bool) (*Config, error) {
+	cfg, err := decode(data, true)
+	if err == nil {
+		return cfg, nil
+	}
+	var typeErr *yaml.TypeError
+	if strict || !errors.As(err, &typeErr) || !onlyUnknownKeys(typeErr) {
 		return nil, fmt.Errorf("unmarshal %s: %w", name, err)
 	}
+	for _, e := range typeErr.Errors {
+		slog.Warn("netplan key ignored (NETPLAN_STRICT=false)", "file", name, "error", e)
+	}
+	cfg, err = decode(data, false)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal %s: %w", name, err)
+	}
+	return cfg, nil
+}
+
+func decode(data []byte, known bool) (*Config, error) {
+	var cfg Config
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(known)
+	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
+		return nil, err //nolint:wrapcheck // the caller names the file
+	}
 	return &cfg, nil
+}
+
+// onlyUnknownKeys reports whether every decode error is an unknown key, so
+// that a lenient decode drops nothing but those keys. A wrong value type
+// stays an error.
+func onlyUnknownKeys(e *yaml.TypeError) bool {
+	for _, msg := range e.Errors {
+		if !strings.Contains(msg, "not found in type") {
+			return false
+		}
+	}
+	return true
 }
 
 // mergeConfig merges src into dst at the map-key level.

@@ -16,7 +16,7 @@
   "Routers": [
     {
       "ASN": 65101,
-      "VRF": "",
+      "VRF": "Vrf_underlay",
       "RouterID": "192.168.4.11",
       "EBGPRequiresPolicy": false,
       "SuppressDuplicates": null,
@@ -24,7 +24,7 @@
       "MultipathRelax": false,
       "Neighbors": [
         {
-          "Name": "eth1",
+          "Name": "hbn",
           "PeerGroup": false,
           "Interface": true,
           "Group": "",
@@ -48,10 +48,10 @@
           "Networks": [
             "192.168.4.11/32"
           ],
-          "RedistributeConnected": true,
+          "RedistributeConnected": false,
           "Neighbors": [
             {
-              "Name": "eth1",
+              "Name": "hbn",
               "Activate": true,
               "SoftReconfigInbound": false,
               "AllowASIn": 0,
@@ -75,7 +75,7 @@
           "RedistributeConnected": false,
           "Neighbors": [
             {
-              "Name": "eth1",
+              "Name": "hbn",
               "Activate": true,
               "SoftReconfigInbound": false,
               "AllowASIn": 0,
@@ -84,6 +84,49 @@
             }
           ],
           "AdvertiseAllVNI": true,
+          "AdvertiseDefaultGW": false,
+          "AdvertiseIPv4Unicast": false,
+          "AdvertiseIPv6Unicast": false,
+          "RouteTargetImport": null,
+          "RouteTargetExport": null,
+          "L2VNIs": null,
+          "Line": 16
+        }
+      ],
+      "Line": 6
+    },
+    {
+      "ASN": 65101,
+      "VRF": "",
+      "RouterID": "192.168.4.11",
+      "EBGPRequiresPolicy": null,
+      "SuppressDuplicates": null,
+      "DefaultIPv4Unicast": null,
+      "MultipathRelax": false,
+      "Neighbors": null,
+      "AddressFamilies": [
+        {
+          "AFI": "ipv4",
+          "SAFI": "unicast",
+          "Networks": null,
+          "RedistributeConnected": true,
+          "Neighbors": null,
+          "AdvertiseAllVNI": false,
+          "AdvertiseDefaultGW": false,
+          "AdvertiseIPv4Unicast": false,
+          "AdvertiseIPv6Unicast": false,
+          "RouteTargetImport": null,
+          "RouteTargetExport": null,
+          "L2VNIs": null,
+          "Line": 24
+        },
+        {
+          "AFI": "l2vpn",
+          "SAFI": "evpn",
+          "Networks": null,
+          "RedistributeConnected": false,
+          "Neighbors": null,
+          "AdvertiseAllVNI": false,
           "AdvertiseDefaultGW": false,
           "AdvertiseIPv4Unicast": true,
           "AdvertiseIPv6Unicast": false,
@@ -94,10 +137,10 @@
             "65000:1000"
           ],
           "L2VNIs": null,
-          "Line": 17
+          "Line": 28
         }
       ],
-      "Line": 6
+      "Line": 21
     }
   ],
   "RouteMaps": null,

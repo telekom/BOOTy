@@ -83,7 +83,10 @@ present but cannot be read or parsed is an error and network setup stops.
 This covers a netplan path that is not a readable directory, a netplan file
 that does not parse, and an `frr.conf` that cannot be read or does not
 parse. BOOTy does not fall back to the vars in these cases, because that
-would bring up a different network than the operator configured.
+would bring up a different network than the operator configured. A key or
+statement that BOOTy does not implement is also an error, unless
+`NETPLAN_STRICT` or `FRR_CONFIG_STRICT` is `false` (see
+[Strict input and the accepted grammar](#strict-input-and-the-accepted-grammar)).
 
 BOOTy takes these values from netplan:
 
@@ -114,6 +117,63 @@ netplan value keeps the vars value. `VLANS` is the exception: BOOTy parses it
 after the netplan merge, so `VLANS` from the vars replaces the netplan VLANs. When netplan and the FRR config give an
 ASN and a VNI, BOOTy sets the stack to GoBGP. This overrides
 `NETWORK_MODE`.
+
+### Strict input and the accepted grammar
+
+BOOTy reads `frr.conf` with a block parser that follows FRR's reading rules
+(`lib/command.c`, `command_config_read_one_line`): indentation does not
+matter, lines that start with `!` or `#` are comments, and a statement that
+does not fit the current node is retried in the parent nodes. The parser
+stays in the node where the statement matched.
+
+By default both inputs are strict. A netplan key or an `frr.conf` statement
+that BOOTy does not implement fails the network setup. The error names the
+line, the statement and the node the parser was in, for example
+`parse FRR config /deploy/file-system/etc/frr/frr.conf: line 31 "maximum-paths 8": statement not supported by BOOTy (in router bgp 4210000017 vrf Vrf_underlay > address-family ipv4 unicast)`.
+`FRR_CONFIG_STRICT=false` and `NETPLAN_STRICT=false` (YAML
+`network.frrStrict`, `network.netplanStrict`) log a warning with the line for
+each such statement or key and go on without it. A netplan value of the wrong
+type stays an error in both modes.
+
+Accepted `frr.conf` statements, per node:
+
+| Node | Statements |
+|---|---|
+| top level | `frr version V`, `frr defaults traditional\|datacenter`, `hostname H`, `log stdout\|syslog [LEVEL]`, `log file PATH [LEVEL]`, `service integrated-vtysh-config`, `[no] ip forwarding`, `[no] ipv6 forwarding`, `vni N [prefix-routes-only]`, `ip route P blackhole`, `ipv6 route P blackhole`, `router bgp ASN [vrf NAME]`, `bfd`, `route-map NAME permit\|deny SEQ`, `bgp community-list standard NAME [seq N] permit\|deny COMMUNITY...`, `vrf NAME`, `line vty`, `exit`, `end` |
+| `vrf NAME` | `vni N [prefix-routes-only]`, `exit-vrf`, `exit` |
+| `router bgp` | `bgp router-id A.B.C.D`, `[no] bgp ebgp-requires-policy`, `[no] bgp suppress-duplicates`, `[no] bgp default ipv4-unicast`, `bgp bestpath as-path multipath-relax`, `neighbor NAME peer-group`, `neighbor IFNAME interface [peer-group G \| remote-as R]`, `neighbor ADDR peer-group G`, `neighbor X remote-as ASN\|internal\|external`, `neighbor X local-as N [no-prepend [replace-as]]`, `neighbor X bfd [profile P]`, `neighbor X timers K H`, `neighbor X timers connect N`, `address-family ipv4 [unicast]\|ipv6 [unicast]\|l2vpn evpn`, `exit` |
+| `address-family ipv4\|ipv6` | `network P`, `redistribute connected`, `neighbor X activate`, `neighbor X soft-reconfiguration inbound`, `neighbor X allowas-in [N]`, `neighbor X route-map NAME in\|out`, `exit-address-family` |
+| `address-family l2vpn evpn` | the neighbor statements above, `advertise-all-vni`, `advertise-default-gw`, `advertise ipv4\|ipv6 unicast`, `route-target import\|export\|both RT`, `vni N` (opens an L2VNI block with `rd RD`, `route-target ... RT`, `exit-vni`), `exit-address-family` |
+| `route-map` | `match community LIST`, `set local-preference N`, `set community AA:NN... [additive]`, `exit` |
+| `bfd` | `profile NAME` (opens a profile with `transmit-interval`, `receive-interval` 10-60000, `detect-multiplier` 2-255), `exit` |
+| `line vty` | `exit` |
+
+These statements have no effect on routing in FRR either, so BOOTy accepts
+and ignores them also in strict mode: `neighbor X description TEXT` (the
+neighbor must exist), `[no] bgp log-neighbor-changes`, `debug ...`,
+`log timestamp precision N`. In netplan, `optional` on ethernets, bonds,
+tunnels, bridges and VLANs is accepted and ignored: it only changes whether
+`systemd-networkd-wait-online` waits for the device.
+
+Everything else is rejected, for example the statements that the templates
+do not use today but that change routing: `maximum-paths`, `redistribute
+connected route-map`, `ip prefix-list`, `neighbor X capability
+extended-nexthop`, `neighbor X ebgp-multihop`, `neighbor X password`,
+`bgp graceful-restart`, `set metric`, BFD `echo-mode`, and in netplan
+`gateway4`, `routes` with `on-link` or `type`, bond `dhcp4`, bond `routes`
+and bond parameters such as `up-delay`. These constructs are rejected
+on purpose although they are not in the templates:
+
+- a UTF-8 byte order mark at the start of `frr.conf` (the first statement
+  does not match),
+- `neighbor IFNAME interface v6only`,
+- well-known communities such as `no-export` in `set community` or in a
+  community-list (only `AA:NN` is accepted),
+- expanded community-lists,
+- static routes with a next hop, a distance or `Null0` (only `blackhole`
+  without a distance),
+- `ip route` and `ipv6 route` inside a `vrf` block (BOOTy installs static
+  routes only in the main table).
 
 ## FRR and GoBGP compared
 

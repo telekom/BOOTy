@@ -1,15 +1,19 @@
 network:
   version: 2
+  vrfs:
+    Vrf_underlay:
+      table: 10
+      interfaces:
+      - hbn
+      - dum.underlay
   ethernets:
-    eth1:
+    hbn:
       match:
-        name: eth1
+        name: eth0
+      set-name: hbn
+      accept-ra: false
       link-local: [ipv6]
-      accept-ra: true
-      ipv6-address-generation: eui64
       mtu: 9100
-      addresses:
-      - 10.254.0.2/31
   dummy-devices:
     dum.underlay:
       addresses:

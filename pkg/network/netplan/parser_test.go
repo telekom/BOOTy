@@ -1138,3 +1138,32 @@ func TestToNetworkConfig_SetNameTranslatesDependentLinks(t *testing.T) {
 		t.Errorf("VXLANLink = %q", cfg.VXLANLink)
 	}
 }
+
+// NETPLAN_STRICT: an unknown key fails in strict mode and is skipped without
+// it. A value of the wrong type fails in both modes. "optional" only changes
+// systemd-networkd-wait-online and is accepted.
+func TestParseDirStrictness(t *testing.T) {
+	for _, tt := range []struct {
+		name, yaml          string
+		strictOK, lenientOK bool
+	}{
+		{"optional", "network:\n  ethernets:\n    eth0:\n      optional: true\n      mtu: 9000\n", true, true},
+		{"unknown key", "network:\n  ethernets:\n    eth0:\n      wakeonlan: true\n      mtu: 9000\n", false, true},
+		{"wrong type", "network:\n  ethernets:\n    eth0:\n      wakeonlan: true\n      mtu: big\n", false, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, dir, "50.yaml", tt.yaml)
+			if _, err := ParseDirWith(dir, true); (err == nil) != tt.strictOK {
+				t.Errorf("strict: %v, want ok=%v", err, tt.strictOK)
+			}
+			cfg, err := ParseDirWith(dir, false)
+			if (err == nil) != tt.lenientOK {
+				t.Fatalf("lenient: %v, want ok=%v", err, tt.lenientOK)
+			}
+			if err == nil && cfg.Network.Ethernets["eth0"].MTU != 9000 {
+				t.Errorf("lenient MTU = %d, want the known keys kept", cfg.Network.Ethernets["eth0"].MTU)
+			}
+		})
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -34,7 +35,7 @@ type ParseError struct {
 }
 
 func (e *ParseError) Error() string {
-	return fmt.Sprintf("frr.conf line %d %q: %v", e.Line, e.Text, e.Err)
+	return fmt.Sprintf("line %d %q: %v", e.Line, e.Text, e.Err)
 }
 
 func (e *ParseError) Unwrap() error { return e.Err }
@@ -61,6 +62,19 @@ type parser struct {
 // command_config_read_one_line). A statement that no node accepts is an
 // error: BOOTy implements only the statements listed in this package.
 func Parse(data []byte) (*Config, error) {
+	return ParseWith(data, Options{})
+}
+
+// Options change how Parse treats a statement that BOOTy does not accept.
+type Options struct {
+	// Lenient skips such a statement instead of failing (FRR_CONFIG_STRICT
+	// =false). Warn gets each skipped statement.
+	Lenient bool
+	Warn    func(*ParseError)
+}
+
+// ParseWith is Parse with options.
+func ParseWith(data []byte, o Options) (*Config, error) {
 	p := &parser{cfg: &Config{}, stack: []node{nodeConfig}}
 	for i, raw := range strings.Split(string(data), "\n") {
 		p.line = i + 1
@@ -69,22 +83,79 @@ func Parse(data []byte) (*Config, error) {
 			continue
 		}
 		if err := p.statement(fields); err != nil {
-			return nil, &ParseError{Line: p.line, Text: strings.TrimSpace(raw), Err: err}
+			pe := &ParseError{Line: p.line, Text: strings.TrimSpace(raw), Err: err}
+			if !o.Lenient {
+				return nil, pe
+			}
+			if o.Warn != nil {
+				o.Warn(pe)
+			}
 		}
 	}
 	return p.cfg, nil
 }
 
-// statement applies one statement in the deepest node that accepts it.
+// statement applies one statement in the deepest node that accepts it. If
+// no node accepts it, the parser stays in its node and the error names it.
 func (p *parser) statement(f []string) error {
-	for depth := len(p.stack) - 1; depth >= 0; depth-- {
-		p.stack = p.stack[:depth+1]
+	saved := slices.Clone(p.stack)
+	for depth := len(saved) - 1; depth >= 0; depth-- {
+		p.stack = slices.Clone(saved[:depth+1])
 		err := p.apply(p.stack[depth], f)
-		if !errors.Is(err, errNoMatch) {
-			return err
+		if errors.Is(err, errNoMatch) {
+			continue
 		}
+		if err != nil {
+			p.stack = saved
+			return fmt.Errorf("%w (in %s)", err, p.context(saved))
+		}
+		return nil
 	}
-	return errors.New("statement not supported by BOOTy")
+	p.stack = saved
+	return fmt.Errorf("statement not supported by BOOTy (in %s)", p.context(saved))
+}
+
+// context names the nodes of a stack, like "router bgp 65000 >
+// address-family l2vpn evpn".
+func (p *parser) context(stack []node) string {
+	if len(stack) == 1 {
+		return "the top level"
+	}
+	parts := make([]string, 0, len(stack)-1)
+	for _, n := range stack[1:] {
+		parts = append(parts, p.nodeName(n))
+	}
+	return strings.Join(parts, " > ")
+}
+
+func (p *parser) nodeName(n node) string {
+	switch n {
+	case nodeBGP:
+		r := p.currentRouter()
+		if r.VRF != "" {
+			return fmt.Sprintf("router bgp %d vrf %s", r.ASN, r.VRF)
+		}
+		return fmt.Sprintf("router bgp %d", r.ASN)
+	case nodeAF:
+		af := p.currentRouter().AddressFamilies[p.af]
+		return "address-family " + af.AFI + " " + af.SAFI
+	case nodeRouteMap:
+		rm := p.cfg.RouteMaps[p.rmIndex]
+		e := rm.Entries[p.rmEntry]
+		return fmt.Sprintf("route-map %s %s %d", rm.Name, e.Action, e.Seq)
+	case nodeBFD:
+		return "bfd"
+	case nodeBFDProfile:
+		return "profile " + p.cfg.BFDProfiles[p.profile].Name
+	case nodeVRF:
+		return "vrf " + p.vrf
+	case nodeLineVTY:
+		return "line vty"
+	case nodeL2VNI:
+		af := p.currentRouter().AddressFamilies[p.af]
+		return fmt.Sprintf("vni %d", af.L2VNIs[len(af.L2VNIs)-1].VNI)
+	}
+	return "config"
 }
 
 func (p *parser) push(n node) { p.stack = append(p.stack, n) }
@@ -154,7 +225,8 @@ func (p *parser) configStatement(f []string) error {
 		}
 	case has(f, "hostname") && len(f) == 2:
 		p.cfg.Hostname = f[1]
-	case isLogStatement(f):
+	case isLogStatement(f), has(f, "debug") && len(f) >= 2:
+		// No effect on routing: log and debug output only.
 	case is(f, "service", "integrated-vtysh-config"):
 	case is(f, "ip", "forwarding"), is(f, "no", "ip", "forwarding"):
 		v := f[0] != "no"
@@ -192,7 +264,8 @@ func isLogStatement(f []string) bool {
 	switch {
 	case has(f, "log", "stdout") && len(f) <= 3,
 		has(f, "log", "syslog") && len(f) <= 3,
-		has(f, "log", "file") && (len(f) == 3 || len(f) == 4):
+		has(f, "log", "file") && (len(f) == 3 || len(f) == 4),
+		has(f, "log", "timestamp", "precision") && len(f) == 4:
 		return true
 	}
 	return false
@@ -249,6 +322,10 @@ func (p *parser) vrfStatement(f []string) error {
 	switch {
 	case has(f, "vni"):
 		return p.vni(f, p.vrf)
+	case has(f, "ip", "route"), has(f, "ipv6", "route"):
+		// A route of the VRF table; BOOTy installs static routes only in
+		// the main table.
+		return fmt.Errorf("static routes inside vrf %s are not supported", p.vrf)
 	case is(f, "exit-vrf"), is(f, "exit"):
 		p.pop()
 		return nil
@@ -275,6 +352,8 @@ func (p *parser) bgpStatement(f []string) error {
 		r.DefaultIPv4Unicast = boolPtr(f[0] != "no")
 	case is(f, "bgp", "bestpath", "as-path", "multipath-relax"):
 		r.MultipathRelax = true
+	case is(f, "bgp", "log-neighbor-changes"), is(f, "no", "bgp", "log-neighbor-changes"):
+		// Logging only.
 	case has(f, "neighbor") && len(f) >= 3:
 		return p.neighborStatement(r, f[1], f[2:])
 	case has(f, "address-family"):
@@ -316,6 +395,12 @@ func (p *parser) neighborStatement(r *Router, name string, rest []string) error 
 		return nil
 	case rest[0] == "interface":
 		return p.interfaceNeighbor(r, name, rest[1:])
+	case rest[0] == "description":
+		// Free text without effect on the session. FRR needs a known peer.
+		if findNeighbor(r, name) == nil {
+			return fmt.Errorf("neighbor %s is not defined", name)
+		}
+		return nil
 	case len(rest) == 2 && rest[0] == "peer-group":
 		if n := findNeighbor(r, name); n == nil || !n.PeerGroup && !n.Interface {
 			if _, err := netip.ParseAddr(name); err != nil {

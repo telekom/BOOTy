@@ -39,6 +39,9 @@ type EthernetConfig struct {
 	DelayVirtualFunctionsRebind *bool         `yaml:"delay-virtual-functions-rebind,omitempty"`
 	IPv6AddressGeneration       string        `yaml:"ipv6-address-generation,omitempty"`
 	SetName                     string        `yaml:"set-name,omitempty"`
+	// Optional is accepted and ignored: it only changes whether
+	// systemd-networkd-wait-online waits for the device.
+	Optional *bool `yaml:"optional,omitempty"`
 }
 
 // MatchConfig matches physical devices by name or MAC.
@@ -71,6 +74,9 @@ type BondConfig struct {
 	IgnoreCarrier *bool           `yaml:"ignore-carrier,omitempty"`
 	Addresses     []string        `yaml:"addresses,omitempty"`
 	Parameters    *BondParameters `yaml:"parameters,omitempty"`
+	// Optional is accepted and ignored: it only changes whether
+	// systemd-networkd-wait-online waits for the device.
+	Optional *bool `yaml:"optional,omitempty"`
 }
 
 // BondParameters holds bond tuning parameters.
@@ -98,6 +104,9 @@ type TunnelConfig struct {
 	PortMACLearning *bool    `yaml:"port-mac-learning,omitempty"`
 	AcceptRA        *bool    `yaml:"accept-ra,omitempty"`
 	IgnoreCarrier   *bool    `yaml:"ignore-carrier,omitempty"`
+	// Optional is accepted and ignored: it only changes whether
+	// systemd-networkd-wait-online waits for the device.
+	Optional *bool `yaml:"optional,omitempty"`
 }
 
 // BridgeConfig describes a network bridge.
@@ -110,6 +119,9 @@ type BridgeConfig struct {
 	MACAddress    string        `yaml:"macaddress,omitempty"`
 	AcceptRA      *bool         `yaml:"accept-ra,omitempty"`
 	IgnoreCarrier *bool         `yaml:"ignore-carrier,omitempty"`
+	// Optional is accepted and ignored: it only changes whether
+	// systemd-networkd-wait-online waits for the device.
+	Optional *bool `yaml:"optional,omitempty"`
 }
 
 // BridgeParams holds bridge-specific parameters.
@@ -126,6 +138,9 @@ type VLANConfig struct {
 	MTU         int           `yaml:"mtu,omitempty"`
 	Nameservers *DNSConfig    `yaml:"nameservers,omitempty"`
 	Routes      []RouteConfig `yaml:"routes,omitempty"`
+	// Optional is accepted and ignored: it only changes whether
+	// systemd-networkd-wait-online waits for the device.
+	Optional *bool `yaml:"optional,omitempty"`
 }
 
 // DummyConfig describes a dummy (virtual loopback) device.

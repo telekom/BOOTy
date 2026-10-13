@@ -212,3 +212,79 @@ vni 200
 		t.Fatalf("VRFVNIs = %+v, want %+v", cfg.VRFVNIs, want)
 	}
 }
+
+// Statements without effect on routing are accepted in strict mode and do
+// not change the model; "#" lines are comments like "!" lines.
+func TestParseNoOpStatements(t *testing.T) {
+	base := "router bgp 65000\n neighbor leaf peer-group\n neighbor leaf remote-as external\n"
+	want, err := Parse([]byte(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		" neighbor leaf description uplink to leaf01",
+		" bgp log-neighbor-changes",
+		" no bgp log-neighbor-changes",
+		"debug bgp updates",
+		"log timestamp precision 6",
+		"# a comment",
+		"   #indented comment with router bgp 1",
+	} {
+		t.Run(stmt, func(t *testing.T) {
+			got, err := Parse([]byte(base + stmt + "\n"))
+			if err != nil {
+				t.Fatalf("Parse() = %v", err)
+			}
+			got.Routers[0].Line, want.Routers[0].Line = 0, 0
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("model changed:\n got  %+v\n want %+v", got, want)
+			}
+		})
+	}
+	if _, err := Parse([]byte(base + " neighbor other description x\n")); err == nil {
+		t.Fatal("description of an undefined neighbor parsed")
+	}
+}
+
+// A static route inside a vrf block is a route of the VRF table, which
+// BOOTy does not install: it is rejected, not moved to the main table.
+func TestParseRejectsVRFStaticRoute(t *testing.T) {
+	cfg, err := Parse([]byte("vrf red\n ip route 192.0.2.0/24 blackhole\nexit-vrf\n"))
+	if err == nil || !strings.Contains(err.Error(), "static routes inside vrf red") {
+		t.Fatalf("Parse() = %+v, %v, want the vrf static route error", cfg, err)
+	}
+}
+
+// The error names the node the parser is in, also after a statement that
+// popped to a parent node.
+func TestParseErrorNamesTheNode(t *testing.T) {
+	for _, tt := range []struct{ conf, want string }{
+		{"router bgp 65000\n address-family l2vpn evpn\n  maximum-paths 8\n", "(in router bgp 65000 > address-family l2vpn evpn)"},
+		{"router bgp 65000\n address-family ipv4 unicast\n exit-address-family\n maximum-paths 8\n", "(in router bgp 65000)"},
+		{"route-map RM permit 10\n set metric 5\n", "(in route-map RM permit 10)"},
+		{"bgp graceful-restart\n", "(in the top level)"},
+		{"router bgp 65000\n neighbor 192.0.2.1 remote-as 99999999999\n", "invalid remote-as \"99999999999\" (in router bgp 65000)"},
+	} {
+		_, err := Parse([]byte(tt.conf))
+		if err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("Parse(%q) = %v, want %q", tt.conf, err, tt.want)
+		}
+	}
+}
+
+// Lenient mode (FRR_CONFIG_STRICT=false) reports every statement it skips
+// with its line and keeps the node, so the next statements still apply.
+func TestParseLenient(t *testing.T) {
+	var skipped []int
+	cfg, err := ParseWith([]byte("router bgp 65000\n address-family ipv4 unicast\n  maximum-paths 8\n  network 192.0.2.0/24\nip prefix-list PL seq 5 permit 192.0.2.0/24\n"),
+		Options{Lenient: true, Warn: func(e *ParseError) { skipped = append(skipped, e.Line) }})
+	if err != nil {
+		t.Fatalf("ParseWith() = %v", err)
+	}
+	if !reflect.DeepEqual(skipped, []int{3, 5}) {
+		t.Fatalf("skipped lines = %v, want [3 5]", skipped)
+	}
+	if nets := cfg.Routers[0].AddressFamilies[0].Networks; !reflect.DeepEqual(nets, []string{"192.0.2.0/24"}) {
+		t.Fatalf("networks = %v: the statement after a skipped one must stay in the address-family", nets)
+	}
+}
