@@ -1269,7 +1269,9 @@ func validateSupportedLayoutMountpoint(mountpoint string) error {
 
 // waitForDisks waits once per run for the block devices to settle
 // (provision.disk.settleTimeoutSec), so a disk behind a slow HBA scan is
-// seen by the disk selection and the wipe of all disks.
+// seen by the disk selection and the wipe of all disks. A configured
+// DISK_DEVICE or DISK_SERIAL_NUMBER is also waited for, within the same
+// timeout.
 func (o *Orchestrator) waitForDisks(ctx context.Context) {
 	if o.disksSettled {
 		return
@@ -1279,8 +1281,31 @@ func (o *Orchestrator) waitForDisks(ctx context.Context) {
 	if t := o.cfg.Provision.Disk.SettleTimeoutSec; t != nil {
 		timeout = *t
 	}
-	o.disk.WaitForStableDisks(ctx, 2*time.Second, time.Duration(timeout)*time.Second)
+	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
+	o.disk.WaitForStableDisks(ctx, diskSettleStable, time.Duration(timeout)*time.Second)
+	device := strings.TrimSpace(o.cfg.Provision.Disk.Device)
+	serial := strings.TrimSpace(o.cfg.Provision.Disk.SerialNumber)
+	for (device != "" || serial != "") && time.Now().Before(deadline) {
+		if device != "" {
+			if _, err := os.Stat(device); err == nil {
+				return
+			}
+		} else if _, err := o.disk.FindDiskBySerial(ctx, serial, o.cfg.Provision.Disk.MinSizeGB); err == nil {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(diskSettlePoll):
+		}
+	}
 }
+
+// Settle timing of waitForDisks; tests shorten it.
+var (
+	diskSettleStable = 2 * time.Second
+	diskSettlePoll   = 250 * time.Millisecond
+)
 
 func (o *Orchestrator) detectDisk(ctx context.Context) error {
 	o.waitForDisks(ctx)

@@ -347,7 +347,8 @@ jobs:
             done
             if grep -Eq '^(\./)?modules/bonding\.ko' "${flavor}-modules.txt"; then echo "FAIL: ${flavor} ships bonding.ko, loading it creates bond0"; exit 1; fi
             # Applet links must resolve inside the ramdisk, not to the build directory.
-            mkdir -p "x-${flavor}" && (cd "x-${flavor}" && zstd -dc "../out-${flavor}/initramfs.cpio.zst" | cpio -id 2>/dev/null)
+            # Device nodes need root to create; the links do not.
+            mkdir -p "x-${flavor}" && (cd "x-${flavor}" && zstd -dc "../out-${flavor}/initramfs.cpio.zst" | cpio -id -f 'dev/*')
             if find "x-${flavor}" -type l -lname '/build/*' | grep .; then echo "FAIL: ${flavor} has links into the build directory"; exit 1; fi
             # Relative links must resolve inside the extracted ramdisk.
             if (cd "x-${flavor}" && find bin sbin -xtype l | grep .); then echo "FAIL: ${flavor} has dangling links"; exit 1; fi
