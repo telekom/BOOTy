@@ -87,8 +87,14 @@ type Config struct {
 	// MultipathRelax is "bgp bestpath as-path multipath-relax": equal-cost
 	// paths may have different AS paths of the same length.
 	MultipathRelax bool
-	// FastExternalFailover allows the carrier watch of the unnumbered
-	// sessions ("bgp fast-external-failover"); default true like FRR.
+	// LocalAS, NeighborVRF and AllowASIn configure the native peers
+	// (PeerMode); Sessions carry their own values.
+	LocalAS     uint32
+	NeighborVRF string
+	AllowASIn   uint32
+	// InstallRoutes runs the FIB writer, like zebra.
+	InstallRoutes bool
+	// FastExternalFailover stops unnumbered sessions on carrier loss.
 	FastExternalFailover bool
 	// LoopbackAddrs are added to lo instead of OverlayIP.
 	LoopbackAddrs []string
@@ -161,6 +167,11 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		MinEstablishedPeers:  netCfg.BGPMinPeers,
 		Sessions:             netCfg.BGPSessions,
 		MultipathRelax:       netCfg.BGPMultipathRelax,
+		LocalAS:              netCfg.BGPLocalAS,
+		NeighborVRF:          netCfg.BGPNeighborVRF,
+		AllowASIn:            netCfg.BGPAllowASIn,
+		ConnectRetry:         uint64(netCfg.BGPConnectRetry),
+		InstallRoutes:        netCfg.BGPInstallRoutes,
 		FastExternalFailover: netCfg.BGPFastExternalFailover == nil || *netCfg.BGPFastExternalFailover,
 	}
 

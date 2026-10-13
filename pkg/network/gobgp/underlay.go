@@ -142,8 +142,10 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 		return fmt.Errorf("announce underlay route: %w", err)
 	}
 
-	if len(u.cfg.Sessions) > 0 {
+	if u.cfg.InstallRoutes {
 		u.startFIBWriter()
+	}
+	if u.cfg.FastExternalFailover {
 		u.startCarrierWatch()
 	}
 
@@ -656,6 +658,9 @@ func (u *UnderlayTier) acceptVRFConnections() error {
 }
 
 func (u *UnderlayTier) hasVRFSession() bool {
+	if len(u.cfg.Sessions) == 0 {
+		return u.cfg.NeighborVRF != ""
+	}
 	for i := range u.cfg.Sessions {
 		if sessionVRF(&u.cfg.Sessions[i]) != "" {
 			return true
@@ -695,15 +700,7 @@ func (u *UnderlayTier) addSessionPeers(ctx context.Context) error {
 			}
 		}
 		if s.Interface {
-			if u.peerDevs == nil {
-				u.peerDevs = map[string]string{}
-			}
-			host, _, _ := strings.Cut(addr, "%")
-			u.peerDevs[host] = s.Name
-			if u.ifacePeers == nil {
-				u.ifacePeers = map[string]string{}
-			}
-			u.ifacePeers[s.Name] = addr
+			u.recordInterfacePeer(s.Name, addr)
 		}
 		peer := buildSessionPeer(u.cfg, s, addr)
 		if err := u.bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: peer}); err != nil {
@@ -720,6 +717,20 @@ func (u *UnderlayTier) addSessionPeers(ctx context.Context) error {
 		return fmt.Errorf("no BGP peers added: %w", lastErr)
 	}
 	return nil
+}
+
+// recordInterfacePeer remembers an unnumbered peer for the FIB writer
+// (next hop device) and the carrier watch.
+func (u *UnderlayTier) recordInterfacePeer(iface, addr string) {
+	if u.peerDevs == nil {
+		u.peerDevs = map[string]string{}
+	}
+	host, _, _ := strings.Cut(addr, "%")
+	u.peerDevs[host] = iface
+	if u.ifacePeers == nil {
+		u.ifacePeers = map[string]string{}
+	}
+	u.ifacePeers[iface] = addr
 }
 
 func (u *UnderlayTier) addInterfacePeers(ctx context.Context, families []*apipb.AfiSafi) (int, error) {
@@ -760,6 +771,7 @@ func (u *UnderlayTier) addInterfacePeer(ctx context.Context, iface string, famil
 	}
 
 	peer := buildInterfacePeer(u.cfg, iface, addr, families)
+	u.recordInterfacePeer(iface, addr)
 
 	if u.cfg.AuthPassword != "" {
 		u.log.Info("tcp-md5 authentication configured for BGP peer", "interface", iface)
