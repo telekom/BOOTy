@@ -51,3 +51,22 @@ func TestResolveLinkMatchInjectedLinks(t *testing.T) {
 		}
 	}
 }
+
+// A set-name that BOOTy would not see as a NIC fails before the rename.
+func TestApplyLinkRenamesRejectsExcludedNames(t *testing.T) {
+	restore := snapshotNICFns()
+	defer restore()
+	listed := false
+	linkList = func() ([]netlink.Link, error) {
+		listed = true
+		return nil, nil
+	}
+	for _, name := range []string{"local0", "br-prov", "bond1", "vx.3000"} {
+		if err := ApplyLinkRenames([]LinkMatch{{Name: "enp1*", SetName: name}}); err == nil {
+			t.Errorf("set-name %q: no error", name)
+		}
+	}
+	if listed {
+		t.Fatal("NICs were listed for a rejected set-name")
+	}
+}

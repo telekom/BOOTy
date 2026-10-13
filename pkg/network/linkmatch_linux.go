@@ -37,6 +37,11 @@ func physicalLinks() ([]LinkCandidate, error) {
 // rename needs exactly one matching NIC; other cases are logged and skipped.
 func ApplyLinkRenames(renames []LinkMatch) error {
 	for _, r := range renames {
+		// BOOTy finds NICs by name; a NIC renamed to an excluded name
+		// (lo*, br*, bond*, vx*, ...) would no longer be a NIC for it.
+		if isExcluded(r.SetName) {
+			return fmt.Errorf("netplan set-name %q: BOOTy does not treat names with this prefix as NICs (%v)", r.SetName, excludedPrefixes)
+		}
 		links, err := physicalLinks()
 		if err != nil {
 			return err

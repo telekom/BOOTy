@@ -4,6 +4,7 @@ package kvm
 
 import (
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -50,5 +51,11 @@ func TestLegacyCompatNetplanSetNameQEMU(t *testing.T) {
 	caprf.requireStatuses(t, "init", "success")
 	if !strings.Contains(string(output), "renamed NIC like netplan set-name") || !strings.Contains(string(output), "to=prov0") {
 		t.Fatalf("BOOTy did not rename the NIC to prov0. tail:\n%s", tail(output, 4000))
+	}
+	// QEMU user networking also answers DHCP, so the run would succeed
+	// after a DHCP fallback too: the static address must be on prov0.
+	if !regexp.MustCompile(`msg="static IP configured".* iface=prov0 address=10\.0\.2\.15/24`).Match(output) ||
+		strings.Contains(string(output), "falling back to DHCP") {
+		t.Fatalf("BOOTy did not configure the static address on prov0. tail:\n%s", tail(output, 4000))
 	}
 }
