@@ -51,9 +51,9 @@
   "BGPMinPeers": 0,
   "BGPSessions": [
     {
-      "Name": "eth1",
+      "Name": "hbn",
       "Interface": true,
-      "VRF": "",
+      "VRF": "Vrf_underlay",
       "Internal": false,
       "RemoteASN": 0,
       "LocalASN": 0,
