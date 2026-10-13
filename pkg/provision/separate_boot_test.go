@@ -34,6 +34,8 @@ func TestSeparateBootSource(t *testing.T) {
 		},
 		{name: "grub is a file, not a directory", grubFile: true, fstab: "LABEL=BOOT /boot ext4 defaults 0 2\n", wantNeeded: true, wantSource: "LABEL=BOOT"},
 		{name: "missing boot dir", noBootDir: true, fstab: "LABEL=BOOT /boot ext4 defaults 0 2\n", wantNeeded: true, wantSource: "LABEL=BOOT"},
+		{name: "trailing slash", fstab: "LABEL=BOOT /boot/ ext4 defaults 0 2\n", wantNeeded: true, wantSource: "LABEL=BOOT"},
+		{name: "double slash", fstab: "LABEL=BOOT //boot ext4 defaults 0 2\n", wantNeeded: true, wantSource: "LABEL=BOOT"},
 		{name: "escaped label", fstab: "LABEL=BOOT\\040VOL /boot ext4 defaults 0 2\n", wantNeeded: true, wantSource: "LABEL=BOOT VOL"},
 		{name: "no boot entry", fstab: "UUID=1 / ext4 defaults 0 1\n#LABEL=BOOT /boot ext4 defaults 0 2\n", wantNeeded: true},
 		{name: "no fstab", wantNeeded: true},

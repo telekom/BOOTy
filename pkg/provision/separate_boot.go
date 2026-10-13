@@ -120,6 +120,7 @@ func targetFstabSource(root, target string) (string, error) {
 }
 
 // fstabSource returns the source field of the first fstab entry for target.
+// Mountpoints are compared as cleaned paths, so "/boot/" is "/boot".
 func fstabSource(path, target string) (string, error) {
 	f, err := os.Open(path) //nolint:gosec // fstab of the provisioned root, checked by the caller
 	if os.IsNotExist(err) {
@@ -136,7 +137,7 @@ func fstabSource(path, target string) (string, error) {
 		if len(fields) < 2 || strings.HasPrefix(fields[0], "#") {
 			continue
 		}
-		if decodeFstabField(fields[1]) == target {
+		if filepath.Clean(decodeFstabField(fields[1])) == filepath.Clean(target) {
 			return decodeFstabField(fields[0]), nil
 		}
 	}
