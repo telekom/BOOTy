@@ -233,9 +233,6 @@ func collectValidationErrors(validators []func() string) []string {
 // provisioner netplan and frr.conf can also set.
 func (c *Config) validateNetworkOptions() []string {
 	var errs []string
-	if n := c.Network.WaitMaxAttempts; strings.EqualFold(strings.TrimSpace(c.Network.WaitMode), NetworkWaitRounds) && n != nil && (*n < 0 || *n > MaxNetworkWaitAttempts) {
-		errs = append(errs, fmt.Sprintf("network.waitMaxAttempts (NETWORK_WAIT_MAX_ATTEMPTS) must be 0-%d", MaxNetworkWaitAttempts))
-	}
 	for _, list := range []struct{ name, value string }{
 		{"network.loopbackAddresses", c.Network.LoopbackAddresses},
 		{"network.blackholeRoutes", c.Network.BlackholeRoutes},
@@ -269,6 +266,9 @@ func (c *Config) validateBGP() []string {
 	bfdReceive := c.Network.BGP.BFDReceiveMS
 
 	errs := append(c.validateNetworkOptions(), c.validateSessions()...)
+	if n := c.Network.WaitMaxAttempts; strings.EqualFold(strings.TrimSpace(c.Network.WaitMode), NetworkWaitRounds) && n != nil && (*n < 0 || *n > MaxNetworkWaitAttempts) {
+		errs = append(errs, fmt.Sprintf("network.waitMaxAttempts (NETWORK_WAIT_MAX_ATTEMPTS) must be 0-%d", MaxNetworkWaitAttempts))
+	}
 	if (bfdTransmit == 0) != (bfdReceive == 0) {
 		errs = append(errs, "network.bgp.bfdTransmitMS and network.bgp.bfdReceiveMS must be set together")
 	}
