@@ -1243,16 +1243,46 @@ func TestFailRunFailureActionWaitReportsAndWaits(t *testing.T) {
 	}
 }
 
-func TestTokenRenewalFatalFailureActionWaitStopsTheTask(t *testing.T) {
-	rebooted, stopped := false, false
-	tokenRenewalFatal(&config.MachineConfig{FailureAction: config.FailureActionWait}, func() { rebooted = true }, func() { stopped = true })
-	if rebooted || !stopped {
-		t.Fatalf("FAILURE_ACTION=wait: rebooted=%v stopped=%v, want the task stopped without reboot", rebooted, stopped)
+func TestTokenRenewalFatalStopsTheTask(t *testing.T) {
+	prevGrace := tokenShutdownGrace
+	tokenShutdownGrace = 10 * time.Millisecond
+	t.Cleanup(func() { tokenShutdownGrace = prevGrace; tokenFatalReason.Store(nil) })
+
+	// FAILURE_ACTION=wait: stop the task, no reboot.
+	var rebooted atomic.Bool
+	stopped := false
+	tokenRenewalFatal(&config.MachineConfig{FailureAction: config.FailureActionWait}, errors.New("renewal failed after 5 attempts"),
+		func() { rebooted.Store(true) }, func() { stopped = true })
+	time.Sleep(50 * time.Millisecond)
+	if rebooted.Load() || !stopped {
+		t.Fatalf("FAILURE_ACTION=wait: rebooted=%v stopped=%v, want the task stopped without reboot", rebooted.Load(), stopped)
 	}
-	rebooted, stopped = false, false
-	tokenRenewalFatal(&config.MachineConfig{}, func() { rebooted = true }, func() { stopped = true })
-	if !rebooted || stopped {
-		t.Fatalf("default: rebooted=%v stopped=%v, want a reboot", rebooted, stopped)
+	if got := tokenStopMessage(); got != "token renewal failed, task stopped: renewal failed after 5 attempts" {
+		t.Fatalf("stop message = %q", got)
+	}
+
+	// Default: stop the task; reboot when it does not stop in time.
+	stopped = false
+	rebootedCh := make(chan struct{})
+	tokenRenewalFatal(&config.MachineConfig{}, errors.New("expired"), func() { close(rebootedCh) }, func() { stopped = true })
+	if !stopped {
+		t.Fatal("default: the task was not stopped")
+	}
+	select {
+	case <-rebootedCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("default: no reboot after the grace period")
+	}
+}
+
+// tokenShutdown reports the reason, then waits (FAILURE_ACTION=wait) or
+// reboots.
+func TestTokenShutdownReportsTheReason(t *testing.T) {
+	reporter := &recordingReporter{}
+	rebooted := false
+	tokenShutdown(context.Background(), &config.MachineConfig{}, reporter, "token renewal failed, task stopped: x", func() { rebooted = true })
+	if !rebooted || len(reporter.statuses) != 1 || reporter.statuses[0] != config.StatusError {
+		t.Fatalf("rebooted=%v statuses=%v, want one error report and a reboot", rebooted, reporter.statuses)
 	}
 }
 

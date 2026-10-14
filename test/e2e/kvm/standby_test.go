@@ -32,7 +32,7 @@ type agentAck struct {
 
 func (f *fakeCAPRF) agentRoutes(mux *http.ServeMux) {
 	authorized := func(w http.ResponseWriter, r *http.Request) bool {
-		if r.Header.Get("Authorization") != "Bearer "+fakeCAPRFToken {
+		if !f.authorized(r) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return false
 		}
@@ -210,4 +210,20 @@ func TestStandbyDeprovisionReturnsToStandbyQEMU(t *testing.T) {
 	if got := strings.TrimSpace(readProvisionedFile(t, rootMount, "etc/hostname")); got != "standby-redeploy" {
 		t.Fatalf("/etc/hostname = %q, want the provisioned hostname", got)
 	}
+}
+
+// authorized accepts the bootstrap token and every unexpired token that the
+// token endpoint issued.
+func (f *fakeCAPRF) authorized(r *http.Request) bool {
+	tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !ok {
+		return false
+	}
+	if tok == fakeCAPRFToken {
+		return true
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	exp, found := f.issued[tok]
+	return found && time.Now().Before(exp)
 }

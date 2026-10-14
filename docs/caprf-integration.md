@@ -211,9 +211,44 @@ EXTRA_KERNEL_PARAMS=intel_iommu=on
   and renews the JWT in the background. This needs `TOKEN` and `HOSTNAME`.
   `TOKEN_ALGORITHM` accepts `RS256` or `ES256`.
 - If the JWT exchange fails, the run fails. See [End of a run](#end-of-a-run).
-- If the JWT renewal fails for good, BOOTy reboots. With
-  `FAILURE_ACTION=wait` (preset by `CAPRF_LEGACY_COMPAT=true`), BOOTy stops
-  the active task, reports the error and waits.
+
+### Token renewal and expiry
+
+A long agent mode run outlives a token. BOOTy renews or stops in time:
+
+- With `TOKEN_URL`, BOOTy renews the JWT `TOKEN_RENEW_MARGIN_SECONDS` before
+  it expires (default 20% of the `expires_in` lifetime). A failed attempt is
+  retried `TOKEN_RENEW_RETRIES` times (default 5) with a backoff that starts
+  at `TOKEN_RENEW_BACKOFF_SECONDS` (default 1 s), doubles up to 60 s and
+  never waits past the expiry. The attempts stop when the token expires.
+- Without `TOKEN_URL`, BOOTy can not renew `TOKEN`. With `TOKEN_EXPIRES_AT`
+  it stops `TOKEN_RENEW_MARGIN_SECONDS` before that time, while the token
+  still works for the report.
+- When the renewal fails for good, the token expires, or the
+  `TOKEN_EXPIRES_AT` margin is reached, BOOTy stops the active task (the
+  standby loop or a running command), reports
+  `token renewal failed, task stopped: <reason>` to `ERROR_URL` and ends like
+  a failed run: it reboots, or waits with `FAILURE_ACTION=wait` (preset by
+  `CAPRF_LEGACY_COMPAT=true`). A task that does not stop within 2 minutes is
+  ended with a reboot (not with `FAILURE_ACTION=wait`).
+- `CAPRF_LEGACY_COMPAT` presets none of the token options: the legacy
+  provisioner had no renewal, and the defaults only act when CAPRF sends
+  `TOKEN_URL` or `TOKEN_EXPIRES_AT`.
+
+CAPRF today: the machine token is an opaque random token (not a JWT) that
+lives as long as `--provision-timeout` (default 30 minutes) plus 30 seconds of
+clock skew grace. CAPRF has no token or renewal endpoint and does not send the
+expiry, so a standby agent gets `401` after 30 minutes. The smallest contract
+that closes this, with no new BOOTy code:
+
+| Method and path | Request | Response |
+|-----------------|---------|----------|
+| `POST /agent/token` (rendered as `TOKEN_URL`) | `Authorization: Bearer <current token>`; JSON body ignored | `200` with `{"access_token": "<new token for the same machine>", "expires_in": <seconds>}`. The old token stays valid until it expires. |
+
+CAPRF issues the first token at boot in the same way, so BOOTy exchanges
+`TOKEN` at start and renews before each expiry. Until CAPRF serves it, CAPRF
+can render `TOKEN_EXPIRES_AT` (the issue time plus the token lifetime), and
+BOOTy ends the run cleanly before the token expires.
 
 ## Transport rules
 
@@ -252,7 +287,7 @@ success rows and `FAILURE_ACTION=wait` for the failure rows.
 | Deprovision failure | Report the error, then reboot | Report the error, then wait |
 | `/deploy/vars` does not parse | Reboot. No callback is possible. | Wait. No callback is possible. |
 | Network setup, connectivity check or JWT exchange fails | Reboot | Report the error, then wait |
-| JWT renewal fails for good | Reboot | Stop the task, report the error, then wait |
+| Token renewal fails for good, the token expires or `TOKEN_EXPIRES_AT` is reached | Stop the task, report the error, then reboot | Stop the task, report the error, then wait |
 | Reboot or power off request fails after success | Report the error, then open a shell. After a deprovision reboot, BOOTy opens the shell without a report. | Report the error, then open a shell |
 | Dry-run or check ends | Reboot | Reboot |
 | Standby `reboot` command | Reboot | Reboot |
