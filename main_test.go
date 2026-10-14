@@ -1320,7 +1320,7 @@ func TestPredictableNamesFromNetplanAndFRR(t *testing.T) {
 	if err := os.WriteFile(frrPath, []byte(frrConf), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	npCfg, err := detectNetplanConfig(netplanDir, frrPath)
+	npCfg, err := detectNetplanConfig(netplanDir, frrPath, true, true)
 	if err != nil || npCfg == nil {
 		t.Fatalf("detectNetplanConfig() = %v, %v", npCfg, err)
 	}
