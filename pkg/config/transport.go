@@ -30,8 +30,10 @@ type TransportConfig struct {
 
 	// TokenExpiresInSeconds is the lifetime of Token in seconds, counted from
 	// the start of BOOTy, for a token that BOOTy can not renew. It does not
-	// depend on the ramdisk clock. CAPRF renders it before the boot, so the
-	// count errs on the safe side. It wins over TokenExpiresAt.
+	// depend on the ramdisk clock. BOOTy starts after the virtual media
+	// insert and the boot, so the count runs late by that time: CAPRF must
+	// subtract a boot allowance. It wins over TokenExpiresAt. With TokenURL
+	// both are ignored: the expires_in of the exchange is authoritative.
 	// Default: 0 (unset)
 	TokenExpiresInSeconds int `yaml:"tokenExpiresInSeconds" json:"tokenExpiresInSeconds"`
 

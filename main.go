@@ -595,8 +595,9 @@ func runCAPRF(ctx context.Context) {
 	slog.Info("executing mode", "mode", mode.Name())
 	modeErr := mode.Run(runCtx)
 	if isTerminalSuccess(modeErr) {
-		// A completed task wins over a token failure at the same moment:
-		// the grace reboot must not cut the handoff.
+		// A completed task wins over a token failure at the same moment
+		// or later: the grace reboot must not cut the handoff.
+		tokenTaskDone.Store(true)
 		stopTokenGraceReboot()
 	}
 	if runCtx.Err() != nil && ctx.Err() == nil && !isTerminalSuccess(modeErr) {
@@ -824,6 +825,11 @@ var tokenShutdownGrace = 2 * time.Minute
 // (tokenShutdown). Without FAILURE_ACTION=wait a task that does not stop
 // within tokenShutdownGrace is ended with a reboot.
 func tokenRenewalFatal(cfg *config.MachineConfig, reason error, rebootFn, stopRun func()) {
+	if tokenTaskDone.Load() {
+		// The task already completed; the handoff owns the end of the run.
+		slog.Warn("token can not be renewed after the task completed", "reason", reason)
+		return
+	}
 	provision.DumpDebugState("jwt-renewal-exhausted")
 	msg := fmt.Sprintf("token renewal failed, task stopped: %v", reason)
 	tokenFatalReason.Store(&msg)
@@ -833,6 +839,10 @@ func tokenRenewalFatal(cfg *config.MachineConfig, reason error, rebootFn, stopRu
 		tokenGraceTimer.Store(time.AfterFunc(tokenShutdownGrace, rebootFn))
 	}
 }
+
+// tokenTaskDone is set when the mode completed its task; a later token
+// failure then arms no grace reboot.
+var tokenTaskDone atomic.Bool
 
 // tokenGraceTimer is the pending grace reboot of tokenRenewalFatal.
 var tokenGraceTimer atomic.Pointer[time.Timer]

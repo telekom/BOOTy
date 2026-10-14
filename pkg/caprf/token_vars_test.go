@@ -2,7 +2,10 @@ package caprf
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -79,5 +82,38 @@ func TestTokenExpiryWithoutRenewalCallsTheFatalHandler(t *testing.T) {
 				t.Fatal("no fatal call")
 			}
 		})
+	}
+}
+
+// With TOKEN_URL the expires_in of the exchange is authoritative: a short
+// TOKEN_EXPIRES_IN or TOKEN_EXPIRES_AT from the vars does not stop the run.
+func TestTokenURLExchangeWinsOverTheExpiryVars(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(auth.TokenResponse{AccessToken: "exchanged", ExpiresIn: 3600})
+	}))
+	defer srv.Close()
+	cfg, err := ParseVars(strings.NewReader("HOSTNAME=m1\nTOKEN=bootstrap\nTOKEN_URL=" + srv.URL + "/agent/token\n" +
+		"TOKEN_EXPIRES_IN=1\nTOKEN_EXPIRES_AT=" + time.Now().Add(-time.Minute).Format(time.RFC3339) + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := NewFromConfig(cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := c.AcquireToken(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fatal := make(chan error, 1)
+	c.SetTokenRenewalFatalHandler(func(err error) { fatal <- err })
+	if err := c.StartTokenRenewal(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-fatal:
+		t.Fatalf("the vars expiry stopped a token with a fresh expires_in: %v", err)
+	case <-time.After(1500 * time.Millisecond):
+	}
+	if c.CurrentToken() != "exchanged" {
+		t.Fatalf("token = %q, want the exchanged one", c.CurrentToken())
 	}
 }

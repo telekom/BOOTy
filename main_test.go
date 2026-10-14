@@ -1289,6 +1289,20 @@ func TestTokenGraceRebootStopsOnTerminalSuccess(t *testing.T) {
 	}
 }
 
+// A token failure after the task completed arms no grace reboot.
+func TestTokenRenewalFatalAfterTaskDone(t *testing.T) {
+	prevGrace := tokenShutdownGrace
+	tokenShutdownGrace = 20 * time.Millisecond
+	tokenTaskDone.Store(true)
+	t.Cleanup(func() { tokenShutdownGrace = prevGrace; tokenTaskDone.Store(false); tokenFatalReason.Store(nil) })
+	var rebooted, stopped atomic.Bool
+	tokenRenewalFatal(&config.MachineConfig{}, errors.New("expired"), func() { rebooted.Store(true) }, func() { stopped.Store(true) })
+	time.Sleep(100 * time.Millisecond)
+	if rebooted.Load() || stopped.Load() {
+		t.Fatalf("rebooted=%v stopped=%v after the task completed, want neither", rebooted.Load(), stopped.Load())
+	}
+}
+
 // messageReporter records the reported messages.
 type messageReporter struct{ messages []string }
 

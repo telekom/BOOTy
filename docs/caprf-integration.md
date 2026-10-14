@@ -221,11 +221,16 @@ A long agent mode run outlives a token. BOOTy renews or stops in time:
   retried `TOKEN_RENEW_RETRIES` times (default 5) with a backoff that starts
   at `TOKEN_RENEW_BACKOFF_SECONDS` (default 1 s), doubles up to 60 s and
   never waits past the expiry. The attempts stop when the token expires.
+- With `TOKEN_URL`, the exchange at start returns a fresh `expires_in`. It is
+  authoritative: BOOTy ignores `TOKEN_EXPIRES_IN` and `TOKEN_EXPIRES_AT`,
+  which are only fallbacks for a token that BOOTy can not renew.
 - Without `TOKEN_URL`, BOOTy can not renew `TOKEN`. With `TOKEN_EXPIRES_IN`
   (seconds from the start of BOOTy) or `TOKEN_EXPIRES_AT` (RFC 3339, needs a
   correct ramdisk clock; BOOTy does not sync the time) it stops
   `TOKEN_RENEW_MARGIN_SECONDS` before the expiry, while the token still works
-  for the report. `TOKEN_EXPIRES_IN` wins.
+  for the report. `TOKEN_EXPIRES_IN` wins. BOOTy starts after the virtual
+  media insert and the boot, so it sees `TOKEN_EXPIRES_IN` late by that time;
+  CAPRF subtracts a boot allowance from the value it renders.
 - The margin is at most half the lifetime, so a renewed token is not renewed
   again at once.
 - When the renewal fails for good, the token expires, or the
@@ -251,8 +256,8 @@ that closes this, with no new BOOTy code:
 
 CAPRF issues the first token at boot in the same way, so BOOTy exchanges
 `TOKEN` at start and renews before each expiry. Until CAPRF serves it, CAPRF
-can render `TOKEN_EXPIRES_IN` (the token lifetime in seconds), and BOOTy ends
-the run cleanly before the token expires.
+can render `TOKEN_EXPIRES_IN` (the token lifetime in seconds minus a boot
+allowance), and BOOTy ends the run cleanly before the token expires.
 
 ## Transport rules
 
