@@ -28,12 +28,14 @@ var bgpWords = []string{
 var afWords = []string{
 	"network", "aggregate-address", "redistribute", "maximum-paths", "neighbor",
 	"table-map", "distance", "bgp", "import", "export", "rd", "rt", "label",
-	"nexthop", "route-map", "sid", "exit-address-family", "exit",
+	"nexthop", "route-map", "sid", "route-target", "route-target6", "rt6",
+	"exit-address-family", "exit",
 }
 
 // evpnWords are the commands of BGP_EVPN_NODE (address-family l2vpn evpn).
 var evpnWords = []string{
-	"advertise", "advertise-all-vni", "advertise-default-gw", "autort",
+	"advertise", "advertise-all-vni", "advertise-default-gw",
+	"advertise-svi-ip", "advertise-pip", "autort",
 	"default-originate", "dup-addr-detection", "exit-address-family",
 	"flooding", "disable-ead-evi-rx", "disable-ead-evi-tx", "use-es-l3nhg",
 	"neighbor", "network", "rd", "route-target", "vni", "exit",
@@ -41,8 +43,9 @@ var evpnWords = []string{
 
 // evpnNeighborWords are the neighbor attributes of BGP_EVPN_NODE.
 var evpnNeighborWords = []string{
-	"activate", "allowas-in", "attribute-unchanged", "route-map",
-	"route-reflector-client", "route-server-client", "soft-reconfiguration",
+	"activate", "allowas-in", "attribute-unchanged", "next-hop-self",
+	"route-map", "route-reflector-client", "route-server-client",
+	"soft-reconfiguration",
 }
 
 // afNeighborWords are the neighbor attributes of an address-family. FRR

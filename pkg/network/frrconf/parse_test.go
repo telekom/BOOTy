@@ -475,3 +475,27 @@ func TestParseLenientNoOpener(t *testing.T) {
 		}
 	}
 }
+
+// vrf-policy opens a node (vnc), so it stays an error in lenient mode.
+func TestParseLenientVRFPolicyOpener(t *testing.T) {
+	_, err := ParseWith([]byte("router bgp 65000\n vrf-policy red\n  rd 65000:1\n"), Options{Lenient: true, Warn: func(*ParseError) {}})
+	var pe *ParseError
+	if !errors.As(err, &pe) || pe.Line != 2 {
+		t.Fatalf("ParseWith(lenient) = %v, want an error on line 2", err)
+	}
+}
+
+// next-hop-self, advertise-svi-ip and advertise-pip are commands of the
+// l2vpn evpn address-family in FRR 8.2.2, so skipping them keeps the
+// parser there.
+func TestParseLenientEVPNNodeKnown(t *testing.T) {
+	for _, stmt := range []string{"neighbor leaf next-hop-self", "advertise-svi-ip", "advertise-pip ip 192.0.2.1"} {
+		cfg, err := ParseWith([]byte("router bgp 65000\n neighbor leaf peer-group\n neighbor leaf remote-as external\n address-family l2vpn evpn\n  "+stmt+"\n  advertise-all-vni\n"), Options{Lenient: true, Warn: func(*ParseError) {}})
+		if err != nil {
+			t.Fatalf("%q: ParseWith() = %v", stmt, err)
+		}
+		if !cfg.Routers[0].AddressFamilies[0].AdvertiseAllVNI {
+			t.Errorf("%q: advertise-all-vni not applied to l2vpn evpn", stmt)
+		}
+	}
+}
