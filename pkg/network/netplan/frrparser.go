@@ -47,15 +47,15 @@ func ParseFRRConfig(path string) (*FRRParams, error) {
 // derives the parameters the network stack uses today. A statement BOOTy
 // does not implement is an error.
 func ParseFRRConfigBytes(data []byte) (*FRRParams, error) {
-	return ParseFRRConfigBytesWith(data, true)
+	return ParseFRRConfigBytesWith(data, "frr.conf", true)
 }
 
 // ParseFRRConfigBytesWith is ParseFRRConfigBytes. With strict false
 // (FRR_CONFIG_STRICT=false) a statement BOOTy does not implement is logged
-// with its line and skipped.
-func ParseFRRConfigBytesWith(data []byte, strict bool) (*FRRParams, error) {
+// with the file name and its line and skipped.
+func ParseFRRConfigBytesWith(data []byte, name string, strict bool) (*FRRParams, error) {
 	model, err := frrconf.ParseWith(data, frrconf.Options{Lenient: !strict, Warn: func(e *frrconf.ParseError) {
-		slog.Warn("frr.conf statement ignored (FRR_CONFIG_STRICT=false)", "line", e.Line, "statement", e.Text, "error", e.Err)
+		slog.Warn("frr.conf statement skipped (FRR_CONFIG_STRICT=false)", "file", name, "line", e.Line, "statement", e.Text, "error", e.Err)
 	}})
 	if err != nil {
 		return nil, err //nolint:wrapcheck // the ParseError names the line; the caller names the file

@@ -1199,3 +1199,20 @@ func TestParseDirLenientLimitsAndWarnings(t *testing.T) {
 		t.Fatalf("log = %q, want a warning naming line 4 and wakeonlan", out)
 	}
 }
+
+// Route keys that BOOTy does not apply fail in strict mode; lenient mode
+// drops the route, so a "table: 100" default is not the main-table gateway.
+func TestParseDirRouteKeys(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "50.yaml", "network:\n  ethernets:\n    eth0:\n      addresses: [192.0.2.10/24]\n      routes:\n        - to: default\n          via: 192.0.2.1\n          table: 100\n")
+	if _, err := ParseDirWith(dir, true); err == nil || !strings.Contains(err.Error(), "eth0 route to default") {
+		t.Fatalf("strict: %v, want the route error", err)
+	}
+	np, err := ParseDirWith(dir, false)
+	if err != nil {
+		t.Fatalf("lenient: %v", err)
+	}
+	if cfg := ToNetworkConfig(np, nil); cfg.StaticGateway != "" {
+		t.Fatalf("StaticGateway = %q, want none from the table 100 route", cfg.StaticGateway)
+	}
+}

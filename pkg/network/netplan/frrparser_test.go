@@ -1,7 +1,10 @@
 package netplan
 
 import (
+	"bytes"
+	"log/slog"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/network"
@@ -376,5 +379,30 @@ func TestParseFRRConfigBytes_NumberedRemoteASN(t *testing.T) {
 				t.Errorf("BGPRemoteASN = %d, want %d", cfg.BGPRemoteASN, tt.want)
 			}
 		})
+	}
+}
+
+// FRR_CONFIG_STRICT=false logs each skipped statement with the file and
+// the line, and keeps the rest of the configuration.
+func TestParseFRRConfigBytesWithLenientWarns(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	params, err := ParseFRRConfigBytesWith([]byte("router bgp 65000\n maximum-paths 8\n neighbor eth0 interface remote-as external\n"), "/deploy/frr.conf", false)
+	if err != nil {
+		t.Fatalf("ParseFRRConfigBytesWith() = %v", err)
+	}
+	if params.ASN != 65000 || len(params.UnnumberedPeers) != 1 {
+		t.Fatalf("params = %+v, want ASN 65000 and the eth0 peer", params)
+	}
+	out := buf.String()
+	for _, want := range []string{"FRR_CONFIG_STRICT=false", "file=/deploy/frr.conf", "line=2", `"maximum-paths 8"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log %q lacks %q", out, want)
+		}
+	}
+	if _, err := ParseFRRConfigBytesWith([]byte("router bgp 65000\n maximum-paths 8\n"), "/deploy/frr.conf", true); err == nil {
+		t.Error("strict mode accepted maximum-paths")
 	}
 }

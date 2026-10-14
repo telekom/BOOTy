@@ -1179,7 +1179,7 @@ func detectNetplanConfig(netplanDir, frrConfPath string, netplanStrict, frrStric
 	data, frrErr := os.ReadFile(frrConfPath)
 	switch {
 	case frrErr == nil:
-		parsed, parseErr := netplan.ParseFRRConfigBytesWith(data, frrStrict)
+		parsed, parseErr := netplan.ParseFRRConfigBytesWith(data, frrConfPath, frrStrict)
 		if parseErr != nil {
 			return nil, fmt.Errorf("parse FRR config %s: %w", frrConfPath, parseErr)
 		}

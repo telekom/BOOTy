@@ -132,29 +132,57 @@ line, the statement and the node the parser was in, for example
 `parse FRR config /deploy/file-system/etc/frr/frr.conf: line 31 "maximum-paths 8": statement not supported by BOOTy (in router bgp 4210000017 vrf Vrf_underlay > address-family ipv4 unicast)`.
 `FRR_CONFIG_STRICT=false` and `NETPLAN_STRICT=false` (YAML
 `network.frrStrict`, `network.netplanStrict`) log a warning with the line for
-each such statement or key and go on without it.
+each such statement or key and go on without it. The FRR warning names the
+file and the line.
 
 Lenient mode skips only what BOOTy does not implement. These stay errors in
 both modes:
 
 - an invalid value, such as `remote-as 65oo1`, a router-id that is not an
   IPv4 address or a network with prefix length 33;
-- an unsupported statement that opens a block (it starts with `router`,
-  `vrf`, `interface`, `address-family`, `route-map`, `bfd`, `profile`,
-  `line`, `vni` or another FRR node keyword, also a known opener with
-  unknown arguments such as `router bgp 65000 view foo`): skipping it would
-  apply its body to the enclosing node;
+- an unsupported statement that opens a block: skipping it would apply its
+  body to the enclosing node. The FRR 8.2.2 node keywords are `router`,
+  `vrf`, `interface`, `address-family`, `vni`, `route-map`, `bfd`, `profile`
+  and `peer` (BFD), `line`, `key`, `segment-routing`, `srv6`, `locators`,
+  `locator`, `mpls`, `l2vpn`, `pseudowire`, `pbr-map`, `nexthop-group`,
+  `rpki`, `bmp`, `vnc`, `link-params`, `affinity-map` and `evpn`. A known
+  opener with unknown arguments, such as `router bgp 65000 view foo`, is
+  rejected too;
 - `neighbor IFNAME interface` with an undefined peer-group;
 - in netplan, a value of the wrong type, and an unknown key under `match`
   (it would select other NICs) or in a route (`on-link`, `type` and similar
   change the route).
+
+A netplan route with `table`, `metric`, `scope` or `from` fails in strict
+mode. BOOTy parses these keys but does not apply them. In lenient mode the
+route is dropped with a warning, so a default route with `table: 100` does
+not become the main-table gateway.
+
+FRR applies a statement in the deepest node of the stack that has it and
+stays in that node. For a skipped statement, BOOTy looks the first word up
+in a table of the FRR 8.2.2 commands per node and moves to the same node
+as FRR, so the next statements land where FRR puts them. Example: `neighbor
+leaf capability extended-nexthop` inside `address-family l2vpn evpn` is a
+router-node command, so FRR leaves the address-family; a following
+`neighbor leaf activate` is then also skipped instead of being applied to
+l2vpn evpn. If no node of the stack has the statement, FRR stays where it
+is, and so does BOOTy. Each later statement of the same block is applied
+with a warning ("FRR may apply it in another node"), until a statement of a
+parent node ends the block. The table covers the commands of FRR 8.2.2; for
+a command it does not cover, the node can differ from FRR's, and the
+warnings show where.
 
 A skipped statement does not change the model: for example `neighbor swp1
 interface v6only` does not create the neighbor. Lenient mode is still a
 risk: a skipped statement that changes routing in FRR (for example
 `maximum-paths`) has no effect in BOOTy, and only the warning shows it.
 
-Accepted `frr.conf` statements, per node:
+Accepted `frr.conf` statements, per node. "Accepted" means parsed and
+validated. Of these, this release applies: `router bgp` (ASN), `bgp
+router-id`, interface and numbered neighbors with their `remote-as`, the
+first `local-as`, `address-family l2vpn evpn` with `advertise-all-vni`, and
+the L3VNIs from `vni N`. BOOTy reads the other statements into its model;
+later releases apply them, and this list grows with them.
 
 | Node | Statements |
 |---|---|

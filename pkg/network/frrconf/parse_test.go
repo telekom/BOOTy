@@ -1,9 +1,12 @@
 package frrconf
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -333,5 +336,95 @@ func TestParseLenientKeepsState(t *testing.T) {
 	}
 	if len(cfg.StaticRoutes) != 0 || !reflect.DeepEqual(r.AddressFamilies[0].Networks, []string{"198.51.100.0/24"}) {
 		t.Fatalf("static routes %+v, networks %v", cfg.StaticRoutes, r.AddressFamilies[0].Networks)
+	}
+}
+
+// A skipped statement moves the parser to the node where FRR applies it
+// (lib/command.c node fallback): "neighbor X capability extended-nexthop"
+// is a router-node command, so FRR leaves the address-family, and the
+// following "neighbor leaf activate" and "advertise-all-vni" do not land in
+// the l2vpn evpn address-family either.
+func TestParseLenientFollowsFRRNode(t *testing.T) {
+	var warned []string
+	cfg, err := ParseWith([]byte(`router bgp 65000
+ neighbor leaf peer-group
+ neighbor leaf remote-as external
+ address-family l2vpn evpn
+  neighbor leaf capability extended-nexthop
+  neighbor leaf activate
+  advertise-all-vni
+`), Options{Lenient: true, Warn: func(e *ParseError) { warned = append(warned, fmt.Sprintf("%d %v", e.Line, e.Err)) }})
+	if err != nil {
+		t.Fatalf("ParseWith() = %v", err)
+	}
+	af := cfg.Routers[0].AddressFamilies[0]
+	if len(af.Neighbors) != 0 || af.AdvertiseAllVNI {
+		t.Fatalf("l2vpn evpn = %+v, want nothing applied after the router-node statement", af)
+	}
+	if len(warned) != 3 || !strings.Contains(warned[0], "(in router bgp 65000)") {
+		t.Fatalf("warnings = %q, want lines 5-7 skipped, the first in the router node", warned)
+	}
+}
+
+// A statement that FRR does not know in any node of the stack leaves the
+// parser where it is, and every following statement of the same block is
+// applied with a warning, because FRR may put it elsewhere. A statement of
+// a parent node ends the block.
+func TestParseLenientWarnsAfterUnknownStatement(t *testing.T) {
+	var warned []int
+	_, err := ParseWith([]byte(`router bgp 65000
+ address-family ipv4 unicast
+  frobnicate now
+  network 192.0.2.0/24
+  redistribute connected
+ exit-address-family
+ bgp router-id 192.0.2.1
+`), Options{Lenient: true, Warn: func(e *ParseError) { warned = append(warned, e.Line) }})
+	if err != nil {
+		t.Fatalf("ParseWith() = %v", err)
+	}
+	if !reflect.DeepEqual(warned, []int{3, 4, 5, 6}) {
+		t.Fatalf("warned lines = %v, want [3 4 5 6] (the skipped one and the rest of its block)", warned)
+	}
+}
+
+// BFD "peer" opens a node in FRR: it stays an error in lenient mode, so its
+// body cannot change the profile it would otherwise land in.
+func TestParseLenientBFDPeer(t *testing.T) {
+	for _, opener := range []string{"peer 192.0.2.1", "bmp targets t1", "l2vpn x type vpls"} {
+		_, err := ParseWith([]byte("bfd\n profile fabric\n  transmit-interval 150\n "+opener+"\n  receive-interval 50\n"), Options{Lenient: true})
+		var pe *ParseError
+		if !errors.As(err, &pe) || pe.Line != 4 {
+			t.Errorf("%q: ParseWith(lenient) = %v, want an error on line 4", opener, err)
+		}
+	}
+}
+
+// Invalid input changes nothing: "set community additive" alone does not
+// set additive, and "neighbor ADDR remote-as N extra" creates no peer.
+func TestParseRejectedStatementsLeaveNoState(t *testing.T) {
+	cfg, err := ParseWith([]byte("route-map RM permit 10\n set community additive\nrouter bgp 65000\n neighbor 192.0.2.1 remote-as 65001 extra\n"), Options{Lenient: true, Warn: func(*ParseError) {}})
+	if err != nil {
+		t.Fatalf("ParseWith() = %v", err)
+	}
+	if cfg.RouteMaps[0].Entries[0].SetCommunityAdditive {
+		t.Error("set community additive without communities set additive")
+	}
+	if len(cfg.Routers[0].Neighbors) != 0 {
+		t.Errorf("neighbors = %+v, want no peer from the rejected statement", cfg.Routers[0].Neighbors)
+	}
+}
+
+// Without a Warn function, lenient mode still logs every skipped statement.
+func TestParseLenientDefaultWarn(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	if _, err := ParseWith([]byte("router bgp 65000\n maximum-paths 8\n"), Options{Lenient: true}); err != nil {
+		t.Fatal(err)
+	}
+	if out := buf.String(); !strings.Contains(out, "line=2") || !strings.Contains(out, "maximum-paths 8") {
+		t.Fatalf("log = %q, want the skipped statement with its line", out)
 	}
 }

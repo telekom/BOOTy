@@ -3,6 +3,7 @@ package frrconf
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"slices"
 	"strconv"
@@ -39,7 +40,19 @@ func unsupported(reason string) error {
 // blockOpeners are the first words of statements that open a node in FRR.
 // An unsupported one stays an error in lenient mode: skipping the opener
 // would apply its body to the enclosing node.
-var blockOpeners = []string{"router", "vrf", "interface", "address-family", "route-map", "bfd", "profile", "line", "vni", "segment-routing", "mpls", "pbr-map", "nexthop-group", "key", "rpki", "srv6", "evpn", "pseudowire"}
+//
+// The list covers the FRR 8.2.2 vtysh node table: router (bgp, ospf, ospf6,
+// rip, ripng, isis, openfabric, eigrp, babel, pim), vrf, interface,
+// address-family, vni, route-map, bfd with its profile and peer nodes, line,
+// key chain and key, segment-routing, srv6, locators and locator, mpls ldp,
+// l2vpn and pseudowire, pbr-map, nexthop-group, rpki, bmp targets, vnc,
+// link-params, affinity-map and evpn mh.
+var blockOpeners = []string{
+	"router", "vrf", "interface", "address-family", "vni", "route-map", "bfd",
+	"profile", "peer", "line", "key", "segment-routing", "srv6", "locators",
+	"locator", "mpls", "l2vpn", "pseudowire", "pbr-map", "nexthop-group",
+	"rpki", "bmp", "vnc", "link-params", "affinity-map", "evpn",
+}
 
 // ParseError is a statement BOOTy does not accept.
 type ParseError struct {
@@ -67,6 +80,12 @@ type parser struct {
 	profile int // index into cfg.BFDProfiles
 	vrf     string
 	line    int
+	text    string
+	warn    func(*ParseError)
+	// unsure is the stack depth of a skipped statement that FRR does not
+	// know in any node of the stack. The statements after it in the same
+	// block may land in another node in FRR; each gets a warning.
+	unsure int
 }
 
 // Parse reads an FRR configuration. Leading blanks do not matter and lines
@@ -85,29 +104,47 @@ type Options struct {
 	// =false). Warn gets each skipped statement. An invalid value and an
 	// unsupported statement that opens a block stay errors.
 	Lenient bool
-	Warn    func(*ParseError)
+	// Warn gets each skipped statement; nil logs it with slog.
+	Warn func(*ParseError)
 }
 
 // ParseWith is Parse with options.
 func ParseWith(data []byte, o Options) (*Config, error) {
-	p := &parser{cfg: &Config{}, stack: []node{nodeConfig}}
+	warn := o.Warn
+	if warn == nil {
+		warn = func(e *ParseError) {
+			slog.Warn("frr.conf statement skipped", "line", e.Line, "statement", e.Text, "error", e.Err)
+		}
+	}
+	p := &parser{cfg: &Config{}, stack: []node{nodeConfig}, warn: warn}
 	for i, raw := range strings.Split(string(data), "\n") {
 		p.line = i + 1
+		p.text = strings.TrimSpace(raw)
 		fields := strings.Fields(raw)
 		if len(fields) == 0 || strings.HasPrefix(fields[0], "!") || strings.HasPrefix(fields[0], "#") {
 			continue
 		}
 		if err := p.statement(fields); err != nil {
-			pe := &ParseError{Line: p.line, Text: strings.TrimSpace(raw), Err: err}
-			if !o.Lenient || !errors.Is(err, errUnsupported) || slices.Contains(blockOpeners, fields[0]) {
+			pe := &ParseError{Line: p.line, Text: p.text, Err: err}
+			if !o.Lenient || !errors.Is(err, errUnsupported) || slices.Contains(blockOpeners, unNo(fields)[0]) {
 				return nil, pe
 			}
-			if o.Warn != nil {
-				o.Warn(pe)
-			}
+			p.warn(pe)
 		}
 	}
 	return p.cfg, nil
+}
+
+// errAfterSkipped marks a statement that follows a skipped one in the same
+// block when FRR's node for the skipped one is not known.
+var errAfterSkipped = errors.New("applied after a skipped statement that FRR does not know; FRR may apply it in another node")
+
+// unNo drops a leading "no".
+func unNo(f []string) []string {
+	if len(f) > 1 && f[0] == "no" {
+		return f[1:]
+	}
+	return f
 }
 
 // statement applies one statement in the deepest node that accepts it. If
@@ -124,10 +161,41 @@ func (p *parser) statement(f []string) error {
 			p.stack = saved
 			return fmt.Errorf("%w (in %s)", err, p.context(saved))
 		}
+		p.afterApply(depth)
 		return nil
 	}
+	// No node of BOOTy accepts it. FRR applies a command it knows in the
+	// deepest node of the stack that has it, and stays there; move there
+	// too, so the next statements land where FRR puts them.
+	for depth := len(saved) - 1; depth >= 0; depth-- {
+		if knownIn(saved[depth], f) {
+			p.stack = slices.Clone(saved[:depth+1])
+			if depth < p.unsure {
+				p.unsure = 0
+			}
+			return fmt.Errorf("statement %w (in %s)", errUnsupported, p.context(p.stack))
+		}
+	}
 	p.stack = saved
+	// At the top level there is no parent node to drift to.
+	if len(saved) > 1 && (p.unsure == 0 || len(saved) < p.unsure) {
+		p.unsure = len(saved)
+	}
 	return fmt.Errorf("statement %w (in %s)", errUnsupported, p.context(saved))
+}
+
+// afterApply warns about a statement that was applied in the block of a
+// skipped statement whose FRR node is not known, and ends that block when a
+// statement is applied in a parent node.
+func (p *parser) afterApply(depth int) {
+	if p.unsure == 0 {
+		return
+	}
+	if depth+1 < p.unsure {
+		p.unsure = 0
+		return
+	}
+	p.warn(&ParseError{Line: p.line, Text: p.text, Err: errAfterSkipped})
 }
 
 // context names the nodes of a stack, like "router bgp 65000 >
@@ -428,19 +496,27 @@ func (p *parser) neighborStatement(r *Router, name string, rest []string) error 
 		p.neighbor(r, name).Group = rest[1]
 		return nil
 	}
-	n := findNeighbor(r, name)
-	if n == nil {
-		// FRR accepts "neighbor ADDR remote-as" for a new peer. Every other
-		// attribute needs a known peer or peer-group.
-		if rest[0] != "remote-as" {
-			return fmt.Errorf("neighbor %s is not defined", name)
-		}
-		if _, err := netip.ParseAddr(name); err != nil {
-			return fmt.Errorf("neighbor %s is not an address, an interface or a peer-group", name)
-		}
-		n = p.neighbor(r, name)
+	if n := findNeighbor(r, name); n != nil {
+		return p.neighborAttribute(n, rest)
 	}
-	return p.neighborAttribute(n, rest)
+	return p.newNeighbor(r, name, rest)
+}
+
+// newNeighbor reads "neighbor ADDR remote-as R" for a new peer: FRR accepts
+// it for an address, every other attribute needs a known peer or
+// peer-group. The statement is checked before the peer exists, so a
+// rejected one leaves no peer behind.
+func (p *parser) newNeighbor(r *Router, name string, rest []string) error {
+	if rest[0] != "remote-as" {
+		return fmt.Errorf("neighbor %s is not defined", name)
+	}
+	if _, err := netip.ParseAddr(name); err != nil {
+		return fmt.Errorf("neighbor %s is not an address, an interface or a peer-group", name)
+	}
+	if err := p.neighborAttribute(&Neighbor{}, rest); err != nil {
+		return err
+	}
+	return p.neighborAttribute(p.neighbor(r, name), rest)
 }
 
 // interfaceNeighbor reads "neighbor IFNAME interface [peer-group G |
@@ -769,8 +845,8 @@ func (p *parser) routeMapStatement(f []string) error {
 		e.SetLocalPreference = &v
 	case has(f, "set", "community") && len(f) >= 3:
 		comms := f[2:]
-		if comms[len(comms)-1] == "additive" {
-			e.SetCommunityAdditive = true
+		additive := comms[len(comms)-1] == "additive"
+		if additive {
 			comms = comms[:len(comms)-1]
 		}
 		if len(comms) == 0 {
@@ -781,7 +857,7 @@ func (p *parser) routeMapStatement(f []string) error {
 				return err
 			}
 		}
-		e.SetCommunities = append([]string(nil), comms...)
+		e.SetCommunities, e.SetCommunityAdditive = append([]string(nil), comms...), additive
 	case has(f, "match", "community") && len(f) == 3:
 		e.MatchCommunity = f[2]
 	case is(f, "exit"):

@@ -56,7 +56,50 @@ func ParseDirWith(dir string, strict bool) (*Config, error) {
 		}
 		mergeConfig(merged, cfg)
 	}
+	if err := checkRoutes(merged, strict); err != nil {
+		return nil, fmt.Errorf("netplan files in %s: %w", dir, err)
+	}
 	return merged, nil
+}
+
+// checkRoutes handles route keys that BOOTy parses but does not apply:
+// table, metric, scope and from. A default route with "table: 100" would
+// otherwise become the main-table gateway. Strict mode fails; lenient
+// mode logs and drops the route.
+func checkRoutes(np *Config, strict bool) error {
+	check := func(dev string, routes []RouteConfig) ([]RouteConfig, error) {
+		kept := routes[:0:0]
+		for _, r := range routes {
+			if r.Table == 0 && r.Metric == 0 && r.Scope == "" && r.From == "" {
+				kept = append(kept, r)
+				continue
+			}
+			if strict {
+				return nil, fmt.Errorf("%s route to %s: table, metric, scope and from are not supported by BOOTy", dev, r.To)
+			}
+			slog.Warn("netplan route skipped (NETPLAN_STRICT=false): table, metric, scope and from are not supported", "device", dev, "to", r.To)
+		}
+		return kept, nil
+	}
+	for name := range np.Network.Ethernets {
+		eth := np.Network.Ethernets[name]
+		routes, err := check(name, eth.Routes)
+		if err != nil {
+			return err
+		}
+		eth.Routes = routes
+		np.Network.Ethernets[name] = eth
+	}
+	for name := range np.Network.VLANs {
+		vlan := np.Network.VLANs[name]
+		routes, err := check(name, vlan.Routes)
+		if err != nil {
+			return err
+		}
+		vlan.Routes = routes
+		np.Network.VLANs[name] = vlan
+	}
+	return nil
 }
 
 // ParseFile reads a single netplan YAML file.
