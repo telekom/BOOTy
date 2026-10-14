@@ -1460,8 +1460,8 @@ func detectIPMI(netCfg *network.Config) {
 // since those paths require a firmware-enforced reboot.
 //
 // After the kernel and initramfs are loaded, releaseTarget unmounts the
-// target root (busy block device mounts are remounted read-only), so the installed OS
-// does not start with filesystems that need journal recovery.
+// target root (busy block device mounts are remounted read-only), so the
+// installed OS does not start with filesystems that need journal recovery.
 func tryKexec(cfg *config.MachineConfig, firmwareChanged bool, releaseTarget func() (disk.ReleaseReport, error)) bool {
 	if cfg.KexecDisabled() {
 		slog.Info("kexec disabled by configuration, skipping", "successAction", cfg.SuccessAction)
