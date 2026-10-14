@@ -151,6 +151,9 @@ func TestBootedViaUEFIStatError(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(SetEFIFirmwarePathForTest(filepath.Join(file, "efi"))) // ENOTDIR
+	oldMarkers := containerMarkers
+	containerMarkers = nil // not in a container, whatever runs the test
+	t.Cleanup(func() { containerMarkers = oldMarkers })
 	if _, err := bootedViaUEFI(); err == nil {
 		t.Fatal("bootedViaUEFI() = nil error for ENOTDIR, want an error")
 	}
