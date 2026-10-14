@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -260,7 +261,7 @@ func (o *Orchestrator) reportDeprovisionSuccess(ctx context.Context) error {
 // SkippedDisks returns the disks in use that the wipe of all disks of the
 // last run skipped.
 func (o *Orchestrator) SkippedDisks() []string {
-	return o.skippedDisks
+	return slices.Clone(o.skippedDisks)
 }
 
 // NotWipedNote is the status and ACK suffix that names skipped disks, or
