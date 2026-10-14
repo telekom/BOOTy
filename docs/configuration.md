@@ -164,7 +164,7 @@ behaviour changes of this mode.
 | Key | Default | Values | Effect |
 |-----|---------|--------|--------|
 | `NETWORK_WAIT_MODE` | `default` | `default`, `rounds` | `default`: up to 3 network setups, each waiting up to 5 minutes. `rounds`: like the legacy `wait_for_network`, one network setup and `NETWORK_WAIT_MAX_ATTEMPTS` rounds of 20 seconds; in FRR mode, FRR restarts after each failed round unless a BGP session is established. YAML `network.waitMode`. Preset: `rounds`. |
-| `NETWORK_WAIT_MAX_ATTEMPTS` | (unset, 15 rounds) | integer 0-100000 | With `NETWORK_WAIT_MODE=rounds`: the number of 20 second connectivity rounds before the run fails. `0` means no round: the run fails at once, like `${NETWORK_WAIT_MAX_ATTEMPTS:-15}` in the legacy provisioner. Ignored with the default wait. YAML `network.waitMaxAttempts`. |
+| `NETWORK_WAIT_MAX_ATTEMPTS` | (unset or empty, 15 rounds) | integer 0-100000 | With `NETWORK_WAIT_MODE=rounds`: the number of 20 second connectivity rounds before the run fails. `0` means no round: the run fails at once, like `${NETWORK_WAIT_MAX_ATTEMPTS:-15}` in the legacy provisioner. Ignored with the default wait. YAML `network.waitMaxAttempts`. |
 
 ## Disk and image
 

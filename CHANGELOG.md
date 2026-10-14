@@ -198,6 +198,8 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 - GoBGP mode: an L3VNI provision VNI without `provision_gateway` (bm4x IPv6
   provisioning network) selects Type-5 only, instead of failing with
   `provision gateway is required for GoBGP VXLAN data plane` (#662).
+- caprf: an empty integer vars value (`NETWORK_WAIT_MAX_ATTEMPTS=`, `NUM_VFS=`, ...)
+  keeps the default, like `${KEY:-default}` in the legacy scripts (#675)
 - network: VRF devices no longer count as physical NICs (#605)
 - network: a DHCP lease without a subnet mask no longer panics PID 1 (#608)
 - gobgp: the periodic RA goroutine stops on teardown (#600)
