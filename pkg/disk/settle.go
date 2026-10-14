@@ -65,7 +65,7 @@ var errDiskBelowMinimum = errors.New("disk below the minimum size")
 // number exists, like FindDiskBySerial, but logs only at debug level, so a
 // wait loop can poll it. Errors that waiting can not fix (unreadable
 // sysfs, a matching disk below the minimum size, several disks with the
-// serial) are returned.
+// serial) are returned. A disk that reports 0 sectors is not there yet.
 func (m *Manager) HasDiskWithSerial(ctx context.Context, serial string, minSizeGB int) (bool, error) {
 	allowRemovable := os.Getenv("BOOTY_ALLOW_REMOVABLE") == "true"
 	matches, _, err := m.findDiskBySerialWithSysfs(serial, minSizeGB, allowRemovable)
