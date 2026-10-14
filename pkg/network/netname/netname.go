@@ -7,12 +7,18 @@ package netname
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 )
+
+// maxOnboardIndex is the largest firmware index net_id accepts
+// (NAMING_16BIT_INDEX).
+const maxOnboardIndex = 65535
 
 // Names returns the predictable names of the Ethernet link ifname in the
 // default NamePolicy order: onboard (eno), slot (ens), path (enp). The first
@@ -43,19 +49,25 @@ func Names(sysfs, ifname string) []string {
 	if addr.domain > 0 {
 		domain = fmt.Sprintf("P%d", addr.domain)
 	}
-	function := ""
-	if addr.function > 0 || isMultifunction(sysfs, addr) {
-		function = fmt.Sprintf("f%d", addr.function)
+	device, function := addr.device, addr.function
+	if readTrim(filepath.Join(filepath.Dir(dev), "ari_enabled")) == "1" {
+		// ARI: the device number is part of the function number.
+		function += device * 8
+		device = 0
+	}
+	fn := ""
+	if function > 0 || isMultifunction(sysfs, addr) {
+		fn = fmt.Sprintf("f%d", function)
 	}
 
 	var names []string
-	if index := onboardIndex(dev); index > 0 {
+	if index, ok := onboardIndex(dev); ok {
 		names = append(names, fmt.Sprintf("eno%d%s", index, suffix))
 	}
-	if slot := hotplugSlot(sysfs, dev); slot > 0 {
-		names = append(names, fmt.Sprintf("en%ss%d%s%s", domain, slot, function, suffix))
+	if slot := hotplugSlot(sysfs, addr); slot > 0 {
+		names = append(names, fmt.Sprintf("en%ss%d%s%s", domain, slot, fn, suffix))
 	}
-	names = append(names, fmt.Sprintf("en%sp%ds%d%s%s", domain, addr.bus, addr.device, function, suffix))
+	names = append(names, fmt.Sprintf("en%sp%ds%d%s%s", domain, addr.bus, device, fn, suffix))
 	return names
 }
 
@@ -76,9 +88,16 @@ func (a pciAddress) slotPrefix() string {
 	return fmt.Sprintf("%04x:%02x:%02x", a.domain, a.bus, a.device)
 }
 
-// portSuffix is n<phys_port_name>, or d<dev_port> for a non-zero dev_port.
+// switchdevVF matches a switchdev VF representor port name (pf0vf3).
+var switchdevVF = regexp.MustCompile(`^pf\d+vf(\d+)$`)
+
+// portSuffix is r<vf> for a switchdev VF representor, n<phys_port_name>,
+// or d<dev_port> for a non-zero dev_port.
 func portSuffix(netDir string) string {
 	if name := readTrim(filepath.Join(netDir, "phys_port_name")); name != "" {
+		if m := switchdevVF.FindStringSubmatch(name); m != nil {
+			return "r" + m[1]
+		}
 		return "n" + name
 	}
 	if port, err := strconv.Atoi(readTrim(filepath.Join(netDir, "dev_port"))); err == nil && port > 0 {
@@ -88,46 +107,43 @@ func portSuffix(netDir string) string {
 }
 
 // onboardIndex is the firmware index of an onboard device: ACPI _DSM
-// (acpi_index) first, then SMBIOS type 41 (index). systemd ignores indexes
-// above 16383.
-func onboardIndex(dev string) int {
+// (acpi_index, 0 is valid) if the file exists, else SMBIOS type 41
+// (index). Indexes above maxOnboardIndex are ignored.
+func onboardIndex(dev string) (int, bool) {
 	for _, f := range []string{"acpi_index", "index"} {
-		if i, err := strconv.Atoi(readTrim(filepath.Join(dev, f))); err == nil && i > 0 && i <= 16383 {
-			return i
+		v := readTrim(filepath.Join(dev, f))
+		if v == "" {
+			continue
 		}
+		i, err := strconv.Atoi(v)
+		if err != nil || i < 0 || i > maxOnboardIndex {
+			return 0, false
+		}
+		return i, true
 	}
-	return 0
+	return 0, false
 }
 
-// hotplugSlot returns the number of the PCI hotplug slot of the device or of
-// the nearest PCI bridge above it, like net_id. Slot directories that are not
-// a positive number ("0", "0-1") are ignored, so QEMU q35 root ports give
-// path names (enp1s0).
-func hotplugSlot(sysfs, dev string) int {
+// hotplugSlot returns the number of the PCI hotplug slot whose address is
+// the device's domain:bus:device. Slot directories that are not a positive
+// number ("0", "0-1") are ignored, so QEMU q35 root ports give path names
+// (enp1s0). Slots of parent bridges are not used.
+func hotplugSlot(sysfs string, addr pciAddress) int {
 	slotsDir := filepath.Join(sysfs, "bus", "pci", "slots")
 	entries, err := os.ReadDir(slotsDir)
 	if err != nil {
 		return 0
 	}
-	for d := dev; ; d = filepath.Dir(d) {
-		addr, ok := parsePCIAddress(filepath.Base(d))
-		if !ok {
-			return 0
+	for _, e := range entries {
+		slot, err := strconv.Atoi(e.Name())
+		if err != nil || slot <= 0 {
+			continue
 		}
-		for _, e := range entries {
-			slot, err := strconv.Atoi(e.Name())
-			if err != nil || slot <= 0 {
-				continue
-			}
-			if readTrim(filepath.Join(slotsDir, e.Name(), "address")) == addr.slotPrefix() {
-				return slot
-			}
-		}
-		// The slot of a bridge names only a single device behind it.
-		if isMultifunction(sysfs, addr) {
-			return 0
+		if readTrim(filepath.Join(slotsDir, e.Name(), "address")) == addr.slotPrefix() {
+			return slot
 		}
 	}
+	return 0
 }
 
 // isMultifunction reports whether the PCI device has more than one
@@ -143,34 +159,41 @@ func isMultifunction(sysfs string, a pciAddress) bool {
 	return len(siblings) > 1
 }
 
-// Plan maps kernel link names to the predictable names that the wanted
-// interface names ask for. A link is renamed only to a wanted name that is
-// one of its own predictable names and that no link has yet.
-func Plan(sysfs string, links, wanted []string) map[string]string {
-	renames := map[string]string{}
-	for _, want := range wanted {
-		if want == "" || slices.Contains(links, want) || slices.Contains(mapValues(renames), want) {
-			continue
-		}
-		for _, link := range links {
-			if _, taken := renames[link]; taken {
-				continue
-			}
-			if slices.Contains(Names(sysfs, link), want) {
-				renames[link] = want
-				break
-			}
-		}
-	}
-	return renames
+// Rename is one planned rename.
+type Rename struct {
+	From, To string
 }
 
-func mapValues(m map[string]string) []string {
-	values := make([]string, 0, len(m))
-	for _, v := range m {
-		values = append(values, v)
+// Plan maps kernel link names to the wanted names that are one of their
+// predictable names. A wanted name that two links compute is ambiguous and
+// skipped with a warning. A link that computes two wanted names gets the
+// first one; the other is logged.
+func Plan(sysfs string, links, wanted []string) []Rename {
+	var renames []Rename
+	for _, want := range wanted {
+		if want == "" || slices.Contains(links, want) || slices.ContainsFunc(renames, func(r Rename) bool { return r.To == want }) {
+			continue
+		}
+		var owners []string
+		for _, link := range links {
+			if slices.Contains(Names(sysfs, link), want) {
+				owners = append(owners, link)
+			}
+		}
+		switch {
+		case len(owners) == 0:
+			continue
+		case len(owners) > 1:
+			slog.Warn("several NICs have this predictable name, not renaming", "name", want, "nics", owners)
+			continue
+		}
+		if i := slices.IndexFunc(renames, func(r Rename) bool { return r.From == owners[0] }); i >= 0 {
+			slog.Warn("NIC already gets another configured name", "nic", owners[0], "name", renames[i].To, "also", want)
+			continue
+		}
+		renames = append(renames, Rename{From: owners[0], To: want})
 	}
-	return values
+	return renames
 }
 
 func readTrim(path string) string {

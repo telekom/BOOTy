@@ -1259,6 +1259,9 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	if len(src.LinkRenames) > 0 {
 		dst.LinkRenames = src.LinkRenames
 	}
+	if len(src.InterfaceNames) > 0 {
+		dst.InterfaceNames = src.InterfaceNames
+	}
 	if src.StaticGateway != "" {
 		dst.StaticGateway = src.StaticGateway
 	}

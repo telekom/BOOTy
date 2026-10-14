@@ -41,13 +41,17 @@ func TestApplyPredictableNames(t *testing.T) {
 	defer restore()
 	oldSysfs := predictableSysfs
 	predictableSysfs = fakeNICSysfs(t)
-	byName, down, setName, up := renameLinkByName, renameLinkSetDown, renameLinkSetName, renameLinkSetUp
+	byName, down, setName, up, exists := renameLinkByName, renameLinkSetDown, renameLinkSetName, renameLinkSetUp, linkExists
 	t.Cleanup(func() {
 		predictableSysfs = oldSysfs
-		renameLinkByName, renameLinkSetDown, renameLinkSetName, renameLinkSetUp = byName, down, setName, up
+		renameLinkByName, renameLinkSetDown, renameLinkSetName, renameLinkSetUp, linkExists = byName, down, setName, up, exists
 	})
+	present := map[string]bool{"eth0": true, "eth1": true}
+	linkExists = func(name string) bool { return present[name] }
+	listed := false
 	mac, _ := net.ParseMAC("02:00:00:00:00:01")
 	linkList = func() ([]netlink.Link, error) {
+		listed = true
 		return []netlink.Link{
 			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "eth0", HardwareAddr: mac}},
 			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "eth1", HardwareAddr: mac}},
@@ -65,7 +69,7 @@ func TestApplyPredictableNames(t *testing.T) {
 	}
 
 	// bm4x frr.conf: neighbor enp1s0 interface, neighbor enp2s0 interface.
-	if err := ApplyPredictableNames(context.Background(), &Config{BGPInterfaces: "enp1s0, enp2s0"}); err != nil {
+	if err := ApplyPredictableNames(context.Background(), &Config{InterfaceNames: []string{"enp1s0", "enp2s0"}}); err != nil {
 		t.Fatalf("ApplyPredictableNames() = %v", err)
 	}
 	if len(renamed) != 2 || !reflect.DeepEqual(map[string]bool{renamed[0]: true, renamed[1]: true},
@@ -73,12 +77,28 @@ func TestApplyPredictableNames(t *testing.T) {
 		t.Fatalf("renames = %v, want eth0>enp1s0 and eth1>enp2s0", renamed)
 	}
 
-	// A config with the kernel names renames nothing.
-	renamed = nil
+	// A config with the kernel names renames nothing and does not even
+	// list the NICs.
+	renamed, listed = nil, false
 	if err := ApplyPredictableNames(context.Background(), &Config{StaticIface: "eth0", BondInterfaces: "eth0,eth1"}); err != nil {
 		t.Fatalf("ApplyPredictableNames() = %v", err)
 	}
-	if len(renamed) != 0 {
-		t.Fatalf("renames = %v, want none", renamed)
+	if len(renamed) != 0 || listed {
+		t.Fatalf("renames = %v, NICs listed = %v, want none and false", renamed, listed)
+	}
+}
+
+func TestConfiguredInterfaceNames(t *testing.T) {
+	c := &Config{
+		StaticIface:    "enp1s0",
+		InterfaceNames: []string{"enp1s0", "enp2s0"},
+		BGPInterfaces:  "enp2s0,ens1f0np0",
+		LinkRenames:    []LinkMatch{{Name: "enp*s4", SetName: "hbn"}, {Name: "eno1", SetName: "mgmt"}},
+		StaticMatch:    &LinkMatch{Name: "ens2f0"},
+		Interfaces:     []string{"auto-detect"},
+	}
+	want := []string{"enp1s0", "enp2s0", "ens1f0np0", "eno1", "ens2f0"}
+	if got := ConfiguredInterfaceNames(c); !reflect.DeepEqual(got, want) {
+		t.Fatalf("ConfiguredInterfaceNames() = %v, want %v", got, want)
 	}
 }
