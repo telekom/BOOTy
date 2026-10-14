@@ -511,7 +511,6 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 // routes for L2VNIs only), and its "network" lines are originated.
 func applyEVPNMode(frr *FRRParams, cfg *network.Config) {
 	if cfg.ProvisionVNI != 0 && slices.Contains(frr.L3VNIs, cfg.ProvisionVNI) {
-		slog.Info("netplan: provision VNI is an FRR L3VNI, using Type-5 only", "vni", cfg.ProvisionVNI)
 		cfg.EVPNType5Only = true
 		cfg.Type5Networks = type5Networks(frr.Model, cfg.ProvisionVNI)
 		return

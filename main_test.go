@@ -23,6 +23,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/BOOTy/pkg/network/gobgp"
 	"github.com/telekom/BOOTy/pkg/network/netplan"
 	"github.com/telekom/BOOTy/pkg/provision"
 	"github.com/telekom/BOOTy/pkg/realm"
@@ -1750,5 +1751,37 @@ func TestFastExternalFailoverBothForms(t *testing.T) {
 	}
 	if _, err := caprf.ParseVars(strings.NewReader("BGP_FAST_EXTERNAL_FAILOVER=sometimes\n")); err == nil {
 		t.Error("vars: BGP_FAST_EXTERNAL_FAILOVER=sometimes parsed")
+	}
+}
+
+// The BM4X lab failure (#662): the rendered bm4x templates without
+// provision_gateway must pass the GoBGP config check after the netplan
+// merge, because the L3VNI selects Type-5 only. Chains the real parse,
+// the merge and gobgp.Config.Validate.
+func TestBM4XTemplatesWithoutGatewayValidate(t *testing.T) {
+	fixture := filepath.Join("pkg", "network", "frrconf", "testdata", "bm4x", "two-uplinks")
+	data, err := os.ReadFile(filepath.Join(fixture, "netplan.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "50-bm4x.yaml"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	npCfg, err := detectNetplanConfig(dir, filepath.Join(fixture, "frr.conf"), true, true)
+	if err != nil {
+		t.Fatalf("detectNetplanConfig() = %v", err)
+	}
+	netCfg := networkConfigFromMachineConfig(&config.MachineConfig{})
+	mergeNetplanConfig(netCfg, npCfg)
+	if !netCfg.EVPNType5Only || netCfg.ProvisionGateway != "" {
+		t.Fatalf("Type-5 only = %v, gateway %q, want Type-5 only without a gateway", netCfg.EVPNType5Only, netCfg.ProvisionGateway)
+	}
+	cfg, err := gobgp.NewConfig(netCfg)
+	if err != nil {
+		t.Fatalf("gobgp.NewConfig() = %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() = %v, want the bm4x templates to pass without provision_gateway", err)
 	}
 }
