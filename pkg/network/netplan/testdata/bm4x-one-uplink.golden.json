@@ -26,7 +26,6 @@
   "LinkRenames": null,
   "InterfaceNames": [
     "ens1f0np0",
-    "lo",
     "ens1f0np0"
   ],
   "BondInterfaces": "",
