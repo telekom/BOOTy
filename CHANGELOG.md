@@ -106,8 +106,8 @@ behaviour.
   `IMAGE_CHECKSUM_SCOPE=decompressed`, else the run fails with "checksum
   mismatch". For `oci://` sources nothing changes: both scopes hash the
   uncompressed layer.
-- Before kexec, BOOTy unmounts the target filesystems (a busy one is remounted
-  read-only), so the installed OS does not replay the ext4 journal of `/` or
+- Before kexec, BOOTy unmounts the target filesystems (a busy block device
+  mount is remounted read-only), so the installed OS does not replay the ext4 journal of `/` or
   `/boot`. `KEXEC_UNMOUNT_TARGET=false` turns it off (#672).
 - When the netplan files, `frr.conf` or vars name an interface that does not
   exist (for example `enp1s0` while the ramdisk calls the NIC `eth0`), BOOTy

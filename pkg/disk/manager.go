@@ -1237,6 +1237,10 @@ func (m *Manager) UnmountRecursive(root string) error {
 	return errors.Join(errs...)
 }
 
+// ErrMountsUnknown is returned by UnmountOrRemountReadOnly when /proc/mounts
+// can not be read, so nothing is known about the target mounts.
+var ErrMountsUnknown = errors.New("mounts unknown")
+
 // ReleaseReport says what UnmountOrRemountReadOnly did with each mount.
 type ReleaseReport struct {
 	Unmounted  []string // unmounted
@@ -1254,11 +1258,11 @@ func (m *Manager) UnmountOrRemountReadOnly(root string) (ReleaseReport, error) {
 	var r ReleaseReport
 	targets, err := mountedSubpaths(root)
 	if err != nil {
-		return r, err
+		return r, fmt.Errorf("%w: %w", ErrMountsUnknown, err)
 	}
 	sources, err := mountSources()
 	if err != nil {
-		return r, err
+		return r, fmt.Errorf("%w: %w", ErrMountsUnknown, err)
 	}
 	var errs []error
 	for _, target := range targets {
