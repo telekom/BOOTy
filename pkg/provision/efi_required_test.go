@@ -17,13 +17,21 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 )
 
+// withContainerMarkers sets the container marker files for the test, so the
+// result does not depend on the machine that runs it (nil: no container).
+func withContainerMarkers(t *testing.T, markers []string) {
+	t.Helper()
+	old := containerMarkers
+	containerMarkers = markers
+	t.Cleanup(func() { containerMarkers = old })
+}
+
 // withEFIFirmware points /sys/firmware/efi at a temporary path that exists
 // (UEFI boot) or not (BIOS boot). efivarfs is never mounted there.
 func withEFIFirmware(t *testing.T, uefi bool) {
 	t.Helper()
-	oldFirmwarePath, oldVarsPath, oldMarkers := efiFirmwarePath, efiVarsPath, containerMarkers
-	t.Cleanup(func() { containerMarkers = oldMarkers })
-	containerMarkers = nil // the test decides, not the machine running it
+	withContainerMarkers(t, nil)
+	oldFirmwarePath, oldVarsPath := efiFirmwarePath, efiVarsPath
 	efiFirmwarePath = filepath.Join(t.TempDir(), "efi")
 	efiVarsPath = filepath.Join(efiFirmwarePath, "efivars")
 	if uefi {
@@ -151,9 +159,7 @@ func TestBootedViaUEFIStatError(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(SetEFIFirmwarePathForTest(filepath.Join(file, "efi"))) // ENOTDIR
-	oldMarkers := containerMarkers
-	containerMarkers = nil // not in a container, whatever runs the test
-	t.Cleanup(func() { containerMarkers = oldMarkers })
+	withContainerMarkers(t, nil)
 	if _, err := bootedViaUEFI(); err == nil {
 		t.Fatal("bootedViaUEFI() = nil error for ENOTDIR, want an error")
 	}
@@ -223,20 +229,63 @@ func TestCreateEFIBootEntryEFIBootMgrFailures(t *testing.T) {
 }
 
 // In a container the host /sys/firmware/efi is visible; BOOTy must not
-// touch the host EFI variables.
+// touch the host EFI variables in any EFI step (real efiRuntimeReady).
 func TestEFIStepsSkippedInContainer(t *testing.T) {
 	withEFIFirmware(t, true)
 	marker := filepath.Join(t.TempDir(), ".dockerenv")
 	if err := os.WriteFile(marker, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	old := containerMarkers
-	containerMarkers = []string{marker}
-	t.Cleanup(func() { containerMarkers = old })
+	withContainerMarkers(t, []string{marker})
 	called := false
 	withHostCommands(t, func(string, ...string) ([]byte, error) { called = true; return nil, errors.New("must not run") })
+	oldMount := mountEFIVarFS
+	mountEFIVarFS = func(string, string, string, uintptr, string) error { called = true; return syscall.ENODEV }
+	t.Cleanup(func() { mountEFIVarFS = oldMount })
+	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{}, &mockProvider{})
+	o.targetDisk, o.bootPartition = "/dev/sda", "/dev/sda1"
+	for name, step := range map[string]func(*Orchestrator) error{"mount": mountStep, "remove": removeStep, "create": createStep} {
+		if err := step(o); err != nil {
+			t.Errorf("%s in a container = %v, want a skip", name, err)
+		}
+	}
+	o.config.RemoveAllEFIBootEntries(context.Background())
+	if called {
+		t.Fatal("an EFI step touched the host EFI variables from a container")
+	}
+	for _, c := range cmd.calls {
+		if c.name == "efibootmgr" {
+			t.Fatalf("efibootmgr ran in a container: %v", c.args)
+		}
+	}
+}
+
+// MODE=decommission skips the removal of every entry on BIOS, like
+// remove_all_efi_boot_entries.
+func TestRemoveAllEFIBootEntriesSkipsOnBIOS(t *testing.T) {
+	withEFIFirmware(t, false)
+	called := false
+	withHostCommands(t, func(string, ...string) ([]byte, error) { called = true; return nil, nil })
 	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
-	if err := o.removeEFIBootEntries(context.Background()); err != nil || called {
-		t.Fatalf("removeEFIBootEntries() = %v, efibootmgr called = %v, want a skip", err, called)
+	o.config.RemoveAllEFIBootEntries(context.Background())
+	if called {
+		t.Fatal("RemoveAllEFIBootEntries ran efibootmgr on BIOS")
+	}
+}
+
+// A failed efivars mountpoint creation is "EFI variables unavailable".
+func TestMountEFIVarsMkdirFailure(t *testing.T) {
+	withEFIFirmware(t, true)
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := efiVarsPath
+	efiVarsPath = filepath.Join(file, "efivars") // ENOTDIR
+	t.Cleanup(func() { efiVarsPath = old })
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	err := o.config.MountEFIVars(context.Background())
+	if !errors.Is(err, ErrEFIVarsUnavailable) {
+		t.Fatalf("MountEFIVars() = %v, want ErrEFIVarsUnavailable", err)
 	}
 }

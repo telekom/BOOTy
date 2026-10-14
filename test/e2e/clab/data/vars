@@ -22,6 +22,3 @@ export dns_resolver="8.8.8.8,1.1.1.1"
 export PROVIDER_ID="redfish://clab-e2e/host-01"
 export REGION="eu-central-1"
 export FAILURE_DOMAIN="rack-a"
-# BOOTy runs in a container on a UEFI CI runner: /sys/firmware/efi is the
-# host one and efivarfs can not be mounted, so EFI entries are best effort.
-export EFI_BOOT_ENTRY_REQUIRED="false"

@@ -18,6 +18,3 @@ export dns_resolver="8.8.8.8"
 # The node runs in a privileged container, so /sys/block lists the disks of
 # the CI runner. Wipe only the loop disk of the node.
 export DISK_DEVICE="/dev/loop63"
-# BOOTy runs in a container on a UEFI CI runner: /sys/firmware/efi is the
-# host one and efivarfs can not be mounted, so EFI entries are best effort.
-export EFI_BOOT_ENTRY_REQUIRED="false"

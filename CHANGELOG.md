@@ -127,14 +127,15 @@ behaviour.
 - On a system booted via UEFI, a failure to mount efivarfs, to create the EFI
   boot entry or to remove the managed EFI boot entries now fails provisioning or
   deprovisioning, like the legacy scripts. Before, BOOTy logged a warning and
-  reported success. Hosts that can be affected: a locked boot order (Lenovo
-  XCC, HPE iLO, Dell iDRAC), a kernel with `efi=noruntime`, a ramdisk without
-  `efivarfs.ko` or `efibootmgr`. `EFI_BOOT_ENTRY_REQUIRED=false` turns only
-  these "EFI variables unavailable" failures into warnings (also a missing
-  `efibootmgr` on create); a failed `efibootmgr -c` or a missing EFI loader
-  always fails the run. Deprovisioning removes
-  the entries before it wipes a disk. `MODE=decommission` stays best effort.
-  The slim flavor now ships `efibootmgr` (#669).
+  reported success. `EFI_BOOT_ENTRY_REQUIRED=false` turns only "EFI variables
+  unavailable" failures into warnings: efivarfs can not be mounted
+  (`efi=noruntime`, `noefi`, a ramdisk without `efivarfs.ko`), `efibootmgr` is
+  missing or can not read the variables, or the firmware refuses to delete an
+  entry (a locked boot order on Lenovo XCC, HPE iLO, Dell iDRAC). A failed
+  `efibootmgr -c` or a missing EFI loader always fails the run, also when the
+  firmware refuses the new entry. Deprovisioning removes the entries before it
+  wipes a disk. In a container BOOTy skips the EFI steps. `MODE=decommission`
+  stays best effort. The slim flavor now ships `efibootmgr` (#669).
 
 ### Behaviour behind `CAPRF_LEGACY_COMPAT=true`
 

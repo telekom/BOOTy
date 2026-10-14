@@ -1418,6 +1418,10 @@ func (c *Configurator) RemoveEFIBootEntries(ctx context.Context) error {
 // best-effort basis, like remove_all_efi_boot_entries in the CAPRF legacy
 // common.sh. Failures are logged and never returned.
 func (c *Configurator) RemoveAllEFIBootEntries(ctx context.Context) {
+	if uefi, err := bootedViaUEFI(); err != nil || !uefi {
+		slog.Info("skipping the removal of every EFI boot entry", "uefi", uefi, "error", err)
+		return
+	}
 	out, err := hostCommandCombinedOutput(ctx, "efibootmgr")
 	if err != nil {
 		slog.Warn("efibootmgr list failed (non-EFI system?)", "output", string(out), "error", err)

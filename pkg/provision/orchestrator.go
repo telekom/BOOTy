@@ -661,7 +661,8 @@ func (o *Orchestrator) efiEntryResult(action string, err error) error {
 		o.log.Warn(action+" failed, continuing because EFI_BOOT_ENTRY_REQUIRED=false", "error", err)
 		return nil
 	}
-	return fmt.Errorf("%s: %w", action, err)
+	// The step name and err already say what failed.
+	return err
 }
 
 func (o *Orchestrator) createEFIBootEntry(ctx context.Context) error {
