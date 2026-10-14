@@ -1269,10 +1269,10 @@ func validateSupportedLayoutMountpoint(mountpoint string) error {
 
 // waitForDisks waits once per run for the block devices to settle
 // (provision.disk.settleTimeoutSec), so a disk behind a slow HBA scan is
-// seen by the disk selection and the wipe of all disks. A configured
-// DISK_DEVICE or DISK_SERIAL_NUMBER is also waited for, within the same
-// timeout.
-func (o *Orchestrator) waitForDisks(ctx context.Context) {
+// seen by the disk selection and the wipe of all disks. When the selection
+// uses a configured device path or serial number, it also waits for that
+// disk, within the same timeout.
+func (o *Orchestrator) waitForDisks(ctx context.Context, device, serial string) {
 	if o.disksSettled {
 		return
 	}
@@ -1283,14 +1283,12 @@ func (o *Orchestrator) waitForDisks(ctx context.Context) {
 	}
 	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
 	o.disk.WaitForStableDisks(ctx, diskSettleStable, time.Duration(timeout)*time.Second)
-	device := strings.TrimSpace(o.cfg.Provision.Disk.Device)
-	serial := strings.TrimSpace(o.cfg.Provision.Disk.SerialNumber)
 	for (device != "" || serial != "") && time.Now().Before(deadline) {
 		if device != "" {
 			if _, err := os.Stat(device); err == nil {
 				return
 			}
-		} else if _, err := o.disk.FindDiskBySerial(ctx, serial, o.cfg.Provision.Disk.MinSizeGB); err == nil {
+		} else if o.disk.HasDiskWithSerial(ctx, serial, o.cfg.Provision.Disk.MinSizeGB) {
 			return
 		}
 		select {
@@ -1301,6 +1299,17 @@ func (o *Orchestrator) waitForDisks(ctx context.Context) {
 	}
 }
 
+// checkRamdiskDevicePath rejects a /dev/disk/... path: the ramdisk has no
+// udev, so these links do not exist when the disk is selected, and waiting
+// for them only delays the failure.
+func checkRamdiskDevicePath(name, device string) error {
+	if strings.HasPrefix(device, "/dev/disk/") {
+		return fmt.Errorf("%s %s: the ramdisk has no udev, so /dev/disk/by-id, by-path and the other /dev/disk links do not exist; "+
+			"use the kernel name (/dev/sda, /dev/nvme0n1) or DISK_SERIAL_NUMBER", name, device)
+	}
+	return nil
+}
+
 // Settle timing of waitForDisks; tests shorten it.
 var (
 	diskSettleStable = 2 * time.Second
@@ -1308,7 +1317,21 @@ var (
 )
 
 func (o *Orchestrator) detectDisk(ctx context.Context) error {
-	o.waitForDisks(ctx)
+	device := strings.TrimSpace(o.cfg.Provision.Disk.Device)
+	if err := checkRamdiskDevicePath("configured disk device", device); err != nil {
+		return err
+	}
+	waitSerial := ""
+	if pl := o.cfg.Provision.Disk.PartitionLayout; pl != nil && strings.TrimSpace(pl.Device) != "" {
+		// The layout device wins and is used as it is.
+		device = strings.TrimSpace(pl.Device)
+		if strings.HasPrefix(device, "/dev/disk/") {
+			device = ""
+		}
+	} else if device == "" {
+		waitSerial = strings.TrimSpace(o.cfg.Provision.Disk.SerialNumber)
+	}
+	o.waitForDisks(ctx, device, waitSerial)
 	if o.cfg.Provision.Disk.PartitionLayout != nil {
 		layoutDevice := strings.TrimSpace(o.cfg.Provision.Disk.PartitionLayout.Device)
 		o.cfg.Provision.Disk.PartitionLayout.Device = layoutDevice

@@ -1095,10 +1095,13 @@ func validateEnumUpper(value, name string, allowed ...string) string {
 	return validateEnum(strings.ToUpper(strings.TrimSpace(value)), name, allowed...)
 }
 
-// validateDiskSettle rejects a negative disk settle timeout.
+// MaxDiskSettleTimeoutSec caps provision.disk.settleTimeoutSec (10 minutes).
+const MaxDiskSettleTimeoutSec = 600
+
+// validateDiskSettle rejects a disk settle timeout outside 0..600 seconds.
 func validateDiskSettle(d *DiskConfig) []string {
-	if t := d.SettleTimeoutSec; t != nil && *t < 0 {
-		return []string{fmt.Sprintf("provision.disk.settleTimeoutSec must not be negative, got %d", *t)}
+	if t := d.SettleTimeoutSec; t != nil && (*t < 0 || *t > MaxDiskSettleTimeoutSec) {
+		return []string{fmt.Sprintf("provision.disk.settleTimeoutSec must be between 0 and %d, got %d", MaxDiskSettleTimeoutSec, *t)}
 	}
 	return nil
 }

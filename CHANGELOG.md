@@ -104,8 +104,10 @@ behaviour.
   The default flavor's busybox applets (`sh`, `sync`, `blockdev`, `setsid`)
   work again; their links pointed into the build directory. Before the target
   disk selection and a wipe of all disks, BOOTy waits until the set of disks is
-  stable for 2 seconds, at most `DISK_SETTLE_TIMEOUT_SEC` (default 30, `0`
-  turns it off) (#670).
+  stable for 2 seconds and the configured `DISK_DEVICE` or `DISK_SERIAL_NUMBER`
+  exists, at most `DISK_SETTLE_TIMEOUT_SEC` (default 30, max 600, `0` turns it
+  off). A `DISK_DEVICE` below `/dev/disk/` (by-id, by-path) now fails at once:
+  the ramdisk has no udev to create these links (#670).
 
 ### Behaviour behind `CAPRF_LEGACY_COMPAT=true`
 

@@ -55,3 +55,20 @@ func (m *Manager) blockDevices() []string {
 	}
 	return names
 }
+
+// HasDiskWithSerial reports whether exactly one disk with this serial
+// number exists, like FindDiskBySerial, but logs only at debug level, so a
+// wait loop can poll it.
+func (m *Manager) HasDiskWithSerial(ctx context.Context, serial string, minSizeGB int) bool {
+	allowRemovable := os.Getenv("BOOTY_ALLOW_REMOVABLE") == "true"
+	matches, _, err := m.findDiskBySerialWithSysfs(serial, minSizeGB, allowRemovable)
+	if err == nil && len(matches) == 0 {
+		var lsblkErr error
+		matches, _, lsblkErr = m.findDiskBySerialWithLSBLK(ctx, serial, minSizeGB, allowRemovable)
+		if lsblkErr != nil {
+			slog.Debug("lsblk serial lookup failed", "serial", serial, "error", lsblkErr)
+		}
+	}
+	slog.Debug("waiting for disk serial", "serial", serial, "matches", matches)
+	return len(matches) == 1
+}
