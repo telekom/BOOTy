@@ -183,8 +183,8 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   use that the wipe of all disks skipped, like the success status (#679)
 - Token renewal and expiry: `TOKEN_RENEW_MARGIN_SECONDS`,
   `TOKEN_RENEW_RETRIES` and `TOKEN_RENEW_BACKOFF_SECONDS` control the
-  `TOKEN_URL` renewal; `TOKEN_EXPIRES_AT` names the expiry of a token without
-  renewal. When the token can not be renewed or expires, BOOTy stops the
+  `TOKEN_URL` renewal; `TOKEN_EXPIRES_IN` and `TOKEN_EXPIRES_AT` name the expiry
+  of a token without renewal. When the token can not be renewed or expires, BOOTy stops the
   active task, reports the reason to `ERROR_URL` and ends like a failed run
   (#680)
 

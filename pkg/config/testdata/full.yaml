@@ -134,6 +134,7 @@ transport:
 
   # Token expiry without tokenURL (RFC 3339) and the renewal policy.
   tokenExpiresAt: "2026-10-14T12:00:00Z"
+  tokenExpiresInSeconds: 1800
   tokenRenewMarginSeconds: 120
   tokenRenewRetries: 7
   tokenRenewBackoffSeconds: 2

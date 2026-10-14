@@ -27,38 +27,48 @@ import (
 // check that it renews it in time, and that it stops cleanly, reports the
 // reason and reboots when it can not.
 
-// A token without TOKEN_URL and with TOKEN_EXPIRES_AT: BOOTy stops the
-// standby loop the margin before the expiry and reports why.
+// A token without TOKEN_URL and with TOKEN_EXPIRES_IN or TOKEN_EXPIRES_AT:
+// BOOTy stops the standby loop the margin before the expiry and reports why.
 func TestStandbyTokenExpiresWithoutRenewalQEMU(t *testing.T) {
 	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)
 
-	caprf := startFakeCAPRF(t, "")
-	targetDisk := filepath.Join(t.TempDir(), "standby-token.qcow2")
-	run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "1G")
+	for name, expiry := range map[string]func() (string, string){
+		"expires in": func() (string, string) { return "TOKEN_EXPIRES_IN", "90" },
+		"expires at": func() (string, string) {
+			return "TOKEN_EXPIRES_AT", time.Now().Add(90 * time.Second).UTC().Format(time.RFC3339)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			caprf := startFakeCAPRF(t, "")
+			targetDisk := filepath.Join(t.TempDir(), "standby-token.qcow2")
+			run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "1G")
 
-	vars := caprf.standbyVars()
-	vars["TOKEN_EXPIRES_AT"] = time.Now().Add(90 * time.Second).UTC().Format(time.RFC3339)
-	vars["TOKEN_RENEW_MARGIN_SECONDS"] = "30"
+			vars := caprf.standbyVars()
+			key, value := expiry()
+			vars[key] = value
+			vars["TOKEN_RENEW_MARGIN_SECONDS"] = "30"
 
-	start := time.Now()
-	output := runQEMUProvision(t, findKernel(t), buildProvisionInitramfs(t, vars), targetDisk, 4*time.Minute)
-	t.Logf("standby token expiry output tail:\n%s", tail(output, 3000))
-	if d := time.Since(start); d > 2*time.Minute {
-		t.Fatalf("guest ran %v, want a stop about 60 s after the start", d)
-	}
-	if !strings.Contains(string(output), "reboot: Restarting system") {
-		t.Fatalf("guest did not reboot after the token stop. tail:\n%s", tail(output, 4000))
-	}
-	caprf.mu.Lock()
-	defer caprf.mu.Unlock()
-	if !strings.Contains(caprf.messages["error"], "token renewal failed, task stopped") ||
-		!strings.Contains(caprf.messages["error"], "no TOKEN_URL") {
-		t.Fatalf("error report = %q, statuses %v", caprf.messages["error"], caprf.statuses)
-	}
-	if caprf.heartbeats == 0 {
-		t.Fatal("no heartbeat before the stop")
+			start := time.Now()
+			output := runQEMUProvision(t, findKernel(t), buildProvisionInitramfs(t, vars), targetDisk, 4*time.Minute)
+			t.Logf("standby token expiry output tail:\n%s", tail(output, 3000))
+			if d := time.Since(start); d > 2*time.Minute {
+				t.Fatalf("guest ran %v, want a stop about 60 s after the start", d)
+			}
+			if !strings.Contains(string(output), "reboot: Restarting system") {
+				t.Fatalf("guest did not reboot after the token stop. tail:\n%s", tail(output, 4000))
+			}
+			caprf.mu.Lock()
+			defer caprf.mu.Unlock()
+			if !strings.Contains(caprf.messages["error"], "token renewal failed, task stopped") ||
+				!strings.Contains(caprf.messages["error"], "no TOKEN_URL") {
+				t.Fatalf("error report = %q, statuses %v", caprf.messages["error"], caprf.statuses)
+			}
+			if caprf.heartbeats == 0 {
+				t.Fatal("no heartbeat before the stop")
+			}
+		})
 	}
 }
 

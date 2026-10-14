@@ -530,6 +530,7 @@ func TestLoadFullYAMLReference(t *testing.T) {
 		{"Transport.Token", cfg.Transport.Token, "bootstrap-token-xyz"},
 		{"Transport.TokenAlgorithm", cfg.Transport.TokenAlgorithm, "RS256"},
 		{"Transport.TokenExpiresAt", cfg.Transport.TokenExpiresAt, "2026-10-14T12:00:00Z"},
+		{"Transport.TokenExpiresInSeconds", cfg.Transport.TokenExpiresInSeconds, 1800},
 		{"Transport.TokenRenewMarginSeconds", cfg.Transport.TokenRenewMarginSeconds, 120},
 		{"Transport.TokenRenewRetries", cfg.Transport.TokenRenewRetries, 7},
 		{"Transport.TokenRenewBackoffSeconds", cfg.Transport.TokenRenewBackoffSeconds, 2},

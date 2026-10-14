@@ -1112,6 +1112,9 @@ func validateDiskSettle(d *DiskConfig) []string {
 	return nil
 }
 
+// MaxTokenRenewRetries bounds TOKEN_RENEW_RETRIES.
+const MaxTokenRenewRetries = 100
+
 // validateTokenRenewal checks the token expiry and renewal options.
 func validateTokenRenewal(t *TransportConfig) []string {
 	var errs []string
@@ -1126,11 +1129,15 @@ func validateTokenRenewal(t *TransportConfig) []string {
 	}{
 		{"transport.tokenRenewMarginSeconds (TOKEN_RENEW_MARGIN_SECONDS)", t.TokenRenewMarginSeconds},
 		{"transport.tokenRenewRetries (TOKEN_RENEW_RETRIES)", t.TokenRenewRetries},
+		{"transport.tokenExpiresInSeconds (TOKEN_EXPIRES_IN)", t.TokenExpiresInSeconds},
 		{"transport.tokenRenewBackoffSeconds (TOKEN_RENEW_BACKOFF_SECONDS)", t.TokenRenewBackoffSeconds},
 	} {
 		if f.value < 0 {
 			errs = append(errs, f.name+" must not be negative")
 		}
+	}
+	if t.TokenRenewRetries > MaxTokenRenewRetries {
+		errs = append(errs, fmt.Sprintf("transport.tokenRenewRetries (TOKEN_RENEW_RETRIES) must be at most %d", MaxTokenRenewRetries))
 	}
 	return errs
 }

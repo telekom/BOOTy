@@ -15,6 +15,8 @@ func applyTokenVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 	case "TOKEN_EXPIRES_AT":
 		cfg.Transport.TokenExpiresAt = value
 		return true, nil
+	case "TOKEN_EXPIRES_IN":
+		field = &cfg.Transport.TokenExpiresInSeconds
 	case "TOKEN_RENEW_MARGIN_SECONDS":
 		field = &cfg.Transport.TokenRenewMarginSeconds
 	case "TOKEN_RENEW_RETRIES":

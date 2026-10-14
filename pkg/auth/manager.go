@@ -81,7 +81,7 @@ func NewTokenManager(tokenURL, bootstrapToken string, log *slog.Logger) (*TokenM
 			},
 		},
 		log:     log.WithGroup("auth"),
-		backoff: defaultBackoff,
+		backoff: cappedBackoff(DefaultRenewBackoff),
 		policy:  RenewalPolicy{Retries: DefaultRenewRetries},
 	}, nil
 }
@@ -120,21 +120,33 @@ func (tm *TokenManager) SetRenewalPolicy(p RenewalPolicy) {
 	if p.Retries <= 0 {
 		p.Retries = DefaultRenewRetries
 	}
+	if p.Backoff <= 0 {
+		p.Backoff = DefaultRenewBackoff
+	}
 	tm.policy = p
-	if p.Backoff > 0 {
-		tm.backoff = func(attempt int) time.Duration {
-			return min(p.Backoff<<attempt, MaxRenewBackoff)
+	tm.backoff = cappedBackoff(p.Backoff)
+}
+
+// cappedBackoff doubles base per attempt up to MaxRenewBackoff, without a
+// shift that could overflow.
+func cappedBackoff(base time.Duration) func(attempt int) time.Duration {
+	return func(attempt int) time.Duration {
+		d := base
+		for i := 0; i < attempt && d < MaxRenewBackoff; i++ {
+			d *= 2
 		}
+		return min(d, MaxRenewBackoff)
 	}
 }
 
 // RenewMargin returns how long before expiry the renewal starts: the
-// configured margin, or 20% of the lifetime. It never exceeds the lifetime.
+// configured margin, or 20% of the lifetime. It is at most half the
+// lifetime, so a renewed token is never renewed again at once.
 func RenewMargin(margin, lifetime time.Duration) time.Duration {
 	if margin <= 0 {
 		margin = time.Duration(float64(lifetime) * defaultMarginFraction)
 	}
-	return min(margin, lifetime)
+	return min(margin, lifetime/2)
 }
 
 // SetAlgorithm configures the token algorithm (e.g. RS256, ES256) sent in requests.
@@ -381,10 +393,6 @@ func errOrNone(err error) error {
 		return errors.New("no renewal attempt")
 	}
 	return err
-}
-
-func defaultBackoff(attempt int) time.Duration {
-	return time.Duration(1<<attempt) * time.Second
 }
 
 func redactTokenURL(rawURL string) string {

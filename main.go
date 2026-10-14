@@ -594,6 +594,11 @@ func runCAPRF(ctx context.Context) {
 
 	slog.Info("executing mode", "mode", mode.Name())
 	modeErr := mode.Run(runCtx)
+	if isTerminalSuccess(modeErr) {
+		// A completed task wins over a token failure at the same moment:
+		// the grace reboot must not cut the handoff.
+		stopTokenGraceReboot()
+	}
 	if runCtx.Err() != nil && ctx.Err() == nil && !isTerminalSuccess(modeErr) {
 		tokenShutdown(ctx, cfg, client, tokenStopMessage(), reboot)
 		return
@@ -825,7 +830,17 @@ func tokenRenewalFatal(cfg *config.MachineConfig, reason error, rebootFn, stopRu
 	slog.Error("token can not be renewed, stopping the task", "reason", reason)
 	stopRun()
 	if cfg == nil || !cfg.WaitOnFailure() {
-		time.AfterFunc(tokenShutdownGrace, rebootFn)
+		tokenGraceTimer.Store(time.AfterFunc(tokenShutdownGrace, rebootFn))
+	}
+}
+
+// tokenGraceTimer is the pending grace reboot of tokenRenewalFatal.
+var tokenGraceTimer atomic.Pointer[time.Timer]
+
+// stopTokenGraceReboot cancels a pending grace reboot.
+func stopTokenGraceReboot() {
+	if t := tokenGraceTimer.Load(); t != nil {
+		t.Stop()
 	}
 }
 

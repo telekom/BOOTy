@@ -20,11 +20,20 @@ type TransportConfig struct {
 	TokenAlgorithm string `yaml:"tokenAlgorithm" json:"tokenAlgorithm"`
 
 	// TokenExpiresAt is the expiry of Token as an RFC 3339 time, for a token
-	// that BOOTy can not renew (no TokenURL). BOOTy stops the run
+	// that BOOTy can not renew (no TokenURL). It needs a correct ramdisk
+	// clock (RTC); BOOTy does not sync the time. Prefer
+	// TokenExpiresInSeconds. BOOTy stops the run
 	// TokenRenewMarginSeconds before it, reports the reason and ends like a
 	// failed run (FailureAction).
 	// Default: "" (expiry unknown, no shutdown)
 	TokenExpiresAt string `yaml:"tokenExpiresAt" json:"tokenExpiresAt"`
+
+	// TokenExpiresInSeconds is the lifetime of Token in seconds, counted from
+	// the start of BOOTy, for a token that BOOTy can not renew. It does not
+	// depend on the ramdisk clock. CAPRF renders it before the boot, so the
+	// count errs on the safe side. It wins over TokenExpiresAt.
+	// Default: 0 (unset)
+	TokenExpiresInSeconds int `yaml:"tokenExpiresInSeconds" json:"tokenExpiresInSeconds"`
 
 	// TokenRenewMarginSeconds is how long before the token expiry BOOTy
 	// renews the token (TokenURL) or, without TokenURL, stops at

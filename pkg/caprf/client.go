@@ -41,6 +41,9 @@ type Client struct {
 	// onTokenFatal ends the run when the token can not be renewed or
 	// expires. See SetTokenRenewalFatalHandler.
 	onTokenFatal func(error)
+	// started is the creation time of the client, the start of
+	// TOKEN_EXPIRES_IN.
+	started time.Time
 	// vars is the raw /deploy/vars file, the base of standby command payloads.
 	vars         []byte
 	insecureWarn sync.Map
@@ -73,6 +76,7 @@ func New(varsPath string) (*Client, error) {
 		cfg:        cfg,
 		vars:       vars,
 		log:        slog.Default().With("component", "caprf"),
+		started:    time.Now(),
 	}
 	c.warnTransport()
 	return c, nil
@@ -192,6 +196,7 @@ func NewFromConfig(cfg *config.MachineConfig) *Client {
 		httpClient: newHTTPClient(30*time.Second, config.BoolOr(cfg.Transport.SkipTLSVerify, false)),
 		cfg:        cfg,
 		log:        slog.Default().With("component", "caprf"),
+		started:    time.Now(),
 	}
 	c.warnTransport()
 	return c
@@ -256,12 +261,18 @@ func (c *Client) StartTokenRenewal(ctx context.Context) error {
 	if c.tokenManager != nil {
 		return c.tokenManager.StartRenewal(ctx)
 	}
-	if c.cfg.Transport.TokenExpiresAt == "" {
+	var expiresAt time.Time
+	switch {
+	case c.cfg.Transport.TokenExpiresInSeconds > 0:
+		// Counted from the start of BOOTy, independent of the RTC.
+		expiresAt = c.started.Add(time.Duration(c.cfg.Transport.TokenExpiresInSeconds) * time.Second)
+	case c.cfg.Transport.TokenExpiresAt != "":
+		var err error
+		if expiresAt, err = time.Parse(time.RFC3339, c.cfg.Transport.TokenExpiresAt); err != nil {
+			return fmt.Errorf("parse TOKEN_EXPIRES_AT: %w", err)
+		}
+	default:
 		return nil
-	}
-	expiresAt, err := time.Parse(time.RFC3339, c.cfg.Transport.TokenExpiresAt)
-	if err != nil {
-		return fmt.Errorf("parse TOKEN_EXPIRES_AT: %w", err)
 	}
 	go c.watchTokenExpiry(ctx, expiresAt)
 	return nil
@@ -278,7 +289,7 @@ func (c *Client) watchTokenExpiry(ctx context.Context, expiresAt time.Time) {
 	case <-ctx.Done():
 		return
 	}
-	err := fmt.Errorf("%w: the token expires at %s and there is no TOKEN_URL to renew it",
+	err := fmt.Errorf("%w: the token expires at %s (TOKEN_EXPIRES_IN or TOKEN_EXPIRES_AT) and there is no TOKEN_URL to renew it",
 		auth.ErrTokenExpired, expiresAt.Format(time.RFC3339))
 	c.log.Error("token expiry reached", "error", err)
 	if c.onTokenFatal != nil {

@@ -212,8 +212,8 @@ func TestStandbyDeprovisionReturnsToStandbyQEMU(t *testing.T) {
 	}
 }
 
-// authorized accepts the bootstrap token and every unexpired token that the
-// token endpoint issued.
+// authorized accepts the bootstrap token and every token that the token
+// endpoint issued and that has not expired.
 func (f *fakeCAPRF) authorized(r *http.Request) bool {
 	tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !ok {
@@ -225,5 +225,6 @@ func (f *fakeCAPRF) authorized(r *http.Request) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	exp, found := f.issued[tok]
-	return found && time.Now().Before(exp)
+	// 30 s clock skew grace, like the CAPRF token provider.
+	return found && time.Now().Before(exp.Add(30*time.Second))
 }

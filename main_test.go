@@ -1275,14 +1275,51 @@ func TestTokenRenewalFatalStopsTheTask(t *testing.T) {
 	}
 }
 
-// tokenShutdown reports the reason, then waits (FAILURE_ACTION=wait) or
-// reboots.
+// A task that completes at the same moment cancels the grace reboot.
+func TestTokenGraceRebootStopsOnTerminalSuccess(t *testing.T) {
+	prevGrace := tokenShutdownGrace
+	tokenShutdownGrace = 50 * time.Millisecond
+	t.Cleanup(func() { tokenShutdownGrace = prevGrace; tokenFatalReason.Store(nil) })
+	var rebooted atomic.Bool
+	tokenRenewalFatal(&config.MachineConfig{}, errors.New("expired"), func() { rebooted.Store(true) }, func() {})
+	stopTokenGraceReboot()
+	time.Sleep(150 * time.Millisecond)
+	if rebooted.Load() {
+		t.Fatal("the grace reboot fired after the task completed")
+	}
+}
+
+// messageReporter records the reported messages.
+type messageReporter struct{ messages []string }
+
+func (r *messageReporter) ReportStatus(_ context.Context, _ config.Status, message string) error {
+	r.messages = append(r.messages, message)
+	return nil
+}
+
+// tokenShutdown reports the reason without a token, then reboots.
 func TestTokenShutdownReportsTheReason(t *testing.T) {
-	reporter := &recordingReporter{}
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev); tokenFatalReason.Store(nil) })
+	prevGrace := tokenShutdownGrace
+	tokenShutdownGrace = time.Hour
+	t.Cleanup(func() { tokenShutdownGrace = prevGrace; stopTokenGraceReboot() })
+
+	// The reason as the auth package builds it: URL and status, no token.
+	tokenRenewalFatal(&config.MachineConfig{}, errors.New("renewal failed after 5 attempts: renew token from https://caprf.example.com/agent/token: status 503"),
+		func() {}, func() {})
+	reporter := &messageReporter{}
 	rebooted := false
-	tokenShutdown(context.Background(), &config.MachineConfig{}, reporter, "token renewal failed, task stopped: x", func() { rebooted = true })
-	if !rebooted || len(reporter.statuses) != 1 || reporter.statuses[0] != config.StatusError {
-		t.Fatalf("rebooted=%v statuses=%v, want one error report and a reboot", rebooted, reporter.statuses)
+	tokenShutdown(context.Background(), &config.MachineConfig{}, reporter, tokenStopMessage(), func() { rebooted = true })
+	if !rebooted || len(reporter.messages) != 1 || !strings.Contains(reporter.messages[0], "status 503") {
+		t.Fatalf("rebooted=%v messages=%v, want one error report and a reboot", rebooted, reporter.messages)
+	}
+	for _, text := range []string{reporter.messages[0], logs.String()} {
+		if strings.Contains(text, "Bearer") || strings.Contains(text, "secret") {
+			t.Fatalf("token material in %q", text)
+		}
 	}
 }
 
