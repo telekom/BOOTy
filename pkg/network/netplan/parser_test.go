@@ -106,9 +106,14 @@ network:
       embedded-switch-mode: switchdev
       delay-virtual-functions-rebind: true
 `)
-	cfg, err := ParseFile(filepath.Join(dir, "10-node-network.yaml"))
+	// The source-routed default routes ("from") are not applied by BOOTy,
+	// so strict parsing rejects the file; lenient parsing drops them.
+	if _, err := ParseFile(filepath.Join(dir, "10-node-network.yaml")); err == nil || !strings.Contains(err.Error(), "hbn route to default") {
+		t.Fatalf("ParseFile = %v, want the route error for from", err)
+	}
+	cfg, err := parseFile(filepath.Join(dir, "10-node-network.yaml"), false)
 	if err != nil {
-		t.Fatalf("ParseFile: %v", err)
+		t.Fatalf("parseFile(lenient): %v", err)
 	}
 	bond, ok := cfg.Network.Bonds["sriovbond"]
 	if !ok {
@@ -140,12 +145,8 @@ network:
 	if sriov.EmbeddedSwitchMode != "switchdev" {
 		t.Errorf("embedded-switch-mode = %q, want switchdev", sriov.EmbeddedSwitchMode)
 	}
-	hbn := cfg.Network.Ethernets["hbn"]
-	if len(hbn.Routes) != 2 {
-		t.Errorf("hbn routes = %d, want 2", len(hbn.Routes))
-	}
-	if hbn.Routes[0].From != "10.1.2.3" {
-		t.Errorf("route from = %q, want 10.1.2.3", hbn.Routes[0].From)
+	if hbn := cfg.Network.Ethernets["hbn"]; len(hbn.Routes) != 0 {
+		t.Errorf("hbn routes = %+v, want the from routes dropped", hbn.Routes)
 	}
 }
 
@@ -1214,5 +1215,14 @@ func TestParseDirRouteKeys(t *testing.T) {
 	}
 	if cfg := ToNetworkConfig(np, nil); cfg.StaticGateway != "" {
 		t.Fatalf("StaticGateway = %q, want none from the table 100 route", cfg.StaticGateway)
+	}
+}
+
+// ParseFile applies the route key check too.
+func TestParseFileRouteKeys(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "50.yaml", "network:\n  ethernets:\n    eth0:\n      routes:\n        - to: default\n          via: 192.0.2.1\n          metric: 50\n")
+	if _, err := ParseFile(filepath.Join(dir, "50.yaml")); err == nil || !strings.Contains(err.Error(), "eth0 route to default") {
+		t.Fatalf("ParseFile() = %v, want the route error", err)
 	}
 }

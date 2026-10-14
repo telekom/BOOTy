@@ -56,9 +56,6 @@ func ParseDirWith(dir string, strict bool) (*Config, error) {
 		}
 		mergeConfig(merged, cfg)
 	}
-	if err := checkRoutes(merged, strict); err != nil {
-		return nil, fmt.Errorf("netplan files in %s: %w", dir, err)
-	}
 	return merged, nil
 }
 
@@ -112,7 +109,14 @@ func parseFile(path string, strict bool) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
-	return parseBytes(path, data, strict)
+	cfg, err := parseBytes(path, data, strict)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkRoutes(cfg, strict); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return cfg, nil
 }
 
 // parseBytes decodes netplan YAML. Unknown keys are an error, like netplan

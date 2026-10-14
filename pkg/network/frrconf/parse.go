@@ -51,7 +51,7 @@ var blockOpeners = []string{
 	"router", "vrf", "interface", "address-family", "vni", "route-map", "bfd",
 	"profile", "peer", "line", "key", "segment-routing", "srv6", "locators",
 	"locator", "mpls", "l2vpn", "pseudowire", "pbr-map", "nexthop-group",
-	"rpki", "bmp", "vnc", "link-params", "affinity-map", "evpn",
+	"rpki", "bmp", "vnc", "vrf-policy", "link-params", "affinity-map", "evpn",
 }
 
 // ParseError is a statement BOOTy does not accept.
@@ -168,9 +168,9 @@ func (p *parser) statement(f []string) error {
 	// deepest node of the stack that has it, and stays there; move there
 	// too, so the next statements land where FRR puts them.
 	for depth := len(saved) - 1; depth >= 0; depth-- {
-		if knownIn(saved[depth], f) {
+		if knownIn(saved[depth], p.inEVPN(saved[depth]), f) {
 			p.stack = slices.Clone(saved[:depth+1])
-			if depth < p.unsure {
+			if depth+1 < p.unsure {
 				p.unsure = 0
 			}
 			return fmt.Errorf("statement %w (in %s)", errUnsupported, p.context(p.stack))
@@ -182,6 +182,11 @@ func (p *parser) statement(f []string) error {
 		p.unsure = len(saved)
 	}
 	return fmt.Errorf("statement %w (in %s)", errUnsupported, p.context(saved))
+}
+
+// inEVPN reports whether n is the l2vpn evpn address-family node.
+func (p *parser) inEVPN(n node) bool {
+	return n == nodeAF && p.currentRouter().AddressFamilies[p.af].SAFI == "evpn"
 }
 
 // afterApply warns about a statement that was applied in the block of a

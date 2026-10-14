@@ -13,24 +13,36 @@ var configWords = []string{
 	"banner", "debug", "ip", "ipv6", "vni", "router", "bfd", "route-map", "bgp",
 	"vrf", "interface", "line", "key", "access-list", "agentx", "zebra", "table",
 	"allow-external-route-update", "fpm", "mpls", "segment-routing", "pbr-map",
-	"nexthop-group", "l2vpn", "rpki", "username", "evpn", "end", "exit",
+	"nexthop-group", "l2vpn", "rpki", "username", "evpn", "router-id",
+	"ptm-enable", "dump", "pseudowire", "end", "exit",
 }
 
 var bgpWords = []string{
 	"bgp", "neighbor", "address-family", "network", "aggregate-address",
 	"redistribute", "maximum-paths", "distance", "timers", "coalesce-time",
 	"read-quanta", "write-quanta", "update-delay", "table-map", "vnc", "bmp",
-	"segment-routing", "sid", "exit",
+	"segment-routing", "exit",
 }
 
+// afWords are the commands of the unicast address-families.
 var afWords = []string{
 	"network", "aggregate-address", "redistribute", "maximum-paths", "neighbor",
 	"table-map", "distance", "bgp", "import", "export", "rd", "rt", "label",
-	"nexthop", "advertise", "advertise-all-vni", "advertise-default-gw",
-	"advertise-svi-ip", "advertise-pip", "vni", "route-target", "autort",
-	"default-originate", "flooding", "dup-addr-detection", "disable-ead-evi-rx",
-	"disable-ead-evi-tx", "use-es-l3nhg", "ead-es-frag", "ead-es-route-target",
-	"exit-address-family", "exit",
+	"nexthop", "route-map", "sid", "exit-address-family", "exit",
+}
+
+// evpnWords are the commands of BGP_EVPN_NODE (address-family l2vpn evpn).
+var evpnWords = []string{
+	"advertise", "advertise-all-vni", "advertise-default-gw", "autort",
+	"default-originate", "dup-addr-detection", "exit-address-family",
+	"flooding", "disable-ead-evi-rx", "disable-ead-evi-tx", "use-es-l3nhg",
+	"neighbor", "network", "rd", "route-target", "vni", "exit",
+}
+
+// evpnNeighborWords are the neighbor attributes of BGP_EVPN_NODE.
+var evpnNeighborWords = []string{
+	"activate", "allowas-in", "attribute-unchanged", "route-map",
+	"route-reflector-client", "route-server-client", "soft-reconfiguration",
 }
 
 // afNeighborWords are the neighbor attributes of an address-family. FRR
@@ -41,10 +53,11 @@ var afNeighborWords = []string{
 	"distribute-list", "filter-list", "maximum-prefix", "maximum-prefix-out",
 	"next-hop-self", "prefix-list", "remove-private-AS", "route-map",
 	"route-reflector-client", "route-server-client", "send-community",
-	"soft-reconfiguration", "unsuppress-map", "weight",
+	"soft-reconfiguration", "unsuppress-map", "weight", "advertise-map",
+	"disable-addpath-rx", "nexthop-local",
 }
 
-var l2vniWords = []string{"rd", "route-target", "advertise-default-gw", "advertise-svi-ip", "exit-vni", "exit"}
+var l2vniWords = []string{"rd", "route-target", "advertise-svi-ip", "advertise-subnet", "exit-vni", "exit"}
 
 var routeMapWords = []string{"match", "set", "call", "on-match", "continue", "description", "exit"}
 
@@ -59,35 +72,39 @@ var vrfWords = []string{"vni", "ip", "ipv6", "netns", "exit-vrf", "exit"}
 
 var lineVTYWords = []string{"exec-timeout", "login", "access-class", "ipv6", "exit"}
 
+// nodeWords are the command tables of the nodes other than the
+// address-families.
+var nodeWords = map[node][]string{
+	nodeConfig:     configWords,
+	nodeBGP:        bgpWords,
+	nodeL2VNI:      l2vniWords,
+	nodeRouteMap:   routeMapWords,
+	nodeBFD:        bfdWords,
+	nodeBFDProfile: bfdProfileWords,
+	nodeVRF:        vrfWords,
+	nodeLineVTY:    lineVTYWords,
+}
+
 // knownIn reports whether FRR has a command in node n that starts like f.
-func knownIn(n node, f []string) bool {
-	if len(f) > 1 && f[0] == "no" {
-		f = f[1:]
+// evpn selects the l2vpn evpn address-family for nodeAF.
+func knownIn(n node, evpn bool, f []string) bool {
+	f = unNo(f)
+	if n == nodeAF {
+		return knownInAF(evpn, f)
 	}
-	switch n {
-	case nodeConfig:
-		return slices.Contains(configWords, f[0])
-	case nodeBGP:
-		return slices.Contains(bgpWords, f[0])
-	case nodeAF:
-		if f[0] == "neighbor" {
-			return isAFNeighborAttr(f)
-		}
-		return slices.Contains(afWords, f[0])
-	case nodeL2VNI:
-		return slices.Contains(l2vniWords, f[0])
-	case nodeRouteMap:
-		return slices.Contains(routeMapWords, f[0])
-	case nodeBFD:
-		return slices.Contains(bfdWords, f[0])
-	case nodeBFDProfile:
-		return slices.Contains(bfdProfileWords, f[0])
-	case nodeVRF:
-		return slices.Contains(vrfWords, f[0])
-	case nodeLineVTY:
-		return slices.Contains(lineVTYWords, f[0])
+	return slices.Contains(nodeWords[n], f[0])
+}
+
+func knownInAF(evpn bool, f []string) bool {
+	switch {
+	case evpn && f[0] == "neighbor":
+		return len(f) > 2 && slices.Contains(evpnNeighborWords, f[2])
+	case evpn:
+		return slices.Contains(evpnWords, f[0])
+	case f[0] == "neighbor":
+		return isAFNeighborAttr(f)
 	}
-	return false
+	return slices.Contains(afWords, f[0])
 }
 
 // isAFNeighborAttr reports whether "neighbor X ATTR ..." is an

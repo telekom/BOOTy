@@ -262,7 +262,7 @@ func TestParseRejectsVRFStaticRoute(t *testing.T) {
 // popped to a parent node.
 func TestParseErrorNamesTheNode(t *testing.T) {
 	for _, tt := range []struct{ conf, want string }{
-		{"router bgp 65000\n address-family l2vpn evpn\n  maximum-paths 8\n", "(in router bgp 65000 > address-family l2vpn evpn)"},
+		{"router bgp 65000\n address-family l2vpn evpn\n  frobnicate 8\n", "(in router bgp 65000 > address-family l2vpn evpn)"},
 		{"router bgp 65000\n address-family ipv4 unicast\n exit-address-family\n maximum-paths 8\n", "(in router bgp 65000)"},
 		{"route-map RM permit 10\n set metric 5\n", "(in route-map RM permit 10)"},
 		{"bgp graceful-restart\n", "(in the top level)"},
@@ -426,5 +426,52 @@ func TestParseLenientDefaultWarn(t *testing.T) {
 	}
 	if out := buf.String(); !strings.Contains(out, "line=2") || !strings.Contains(out, "maximum-paths 8") {
 		t.Fatalf("log = %q, want the skipped statement with its line", out)
+	}
+}
+
+// The l2vpn evpn address-family (BGP_EVPN_NODE) has fewer commands than the
+// unicast ones: maximum-paths, redistribute, send-community and the like
+// move FRR to the router node, so a following advertise-all-vni is not an
+// EVPN statement any more.
+func TestParseLenientEVPNNode(t *testing.T) {
+	for _, stmt := range []string{
+		"bgp graceful-restart", "redistribute connected", "maximum-paths 8",
+		"aggregate-address 192.0.2.0/24", "neighbor leaf send-community",
+		"neighbor leaf prefix-list PL in", "neighbor leaf maximum-prefix 100",
+	} {
+		t.Run(stmt, func(t *testing.T) {
+			cfg, err := ParseWith([]byte("router bgp 65000\n neighbor leaf peer-group\n neighbor leaf remote-as external\n address-family l2vpn evpn\n  "+stmt+"\n  advertise-all-vni\n"), Options{Lenient: true, Warn: func(*ParseError) {}})
+			if err != nil {
+				t.Fatalf("ParseWith() = %v", err)
+			}
+			if cfg.Routers[0].AddressFamilies[0].AdvertiseAllVNI {
+				t.Fatal("advertise-all-vni applied to l2vpn evpn after FRR left the address-family")
+			}
+		})
+	}
+}
+
+// A skipped statement that FRR knows in the same node keeps the warnings
+// of an earlier unknown statement of that block going.
+func TestParseLenientUnsureSurvivesKnownSkip(t *testing.T) {
+	var warned []int
+	_, err := ParseWith([]byte("router bgp 65000\n address-family ipv4 unicast\n  frobnicate now\n  maximum-paths 8\n  network 192.0.2.0/24\n"),
+		Options{Lenient: true, Warn: func(e *ParseError) { warned = append(warned, e.Line) }})
+	if err != nil {
+		t.Fatalf("ParseWith() = %v", err)
+	}
+	if !reflect.DeepEqual(warned, []int{3, 4, 5}) {
+		t.Fatalf("warned lines = %v, want [3 4 5]", warned)
+	}
+}
+
+// "no" in front of a block opener is still a block opener.
+func TestParseLenientNoOpener(t *testing.T) {
+	for _, stmt := range []string{"no router ospf", "no vrf red", "no bfd"} {
+		_, err := ParseWith([]byte("router bgp 65000\n"+stmt+"\n"), Options{Lenient: true, Warn: func(*ParseError) {}})
+		var pe *ParseError
+		if !errors.As(err, &pe) || pe.Line != 2 {
+			t.Errorf("%q: ParseWith(lenient) = %v, want an error on line 2", stmt, err)
+		}
 	}
 }

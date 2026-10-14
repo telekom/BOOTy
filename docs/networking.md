@@ -145,7 +145,8 @@ both modes:
   `vrf`, `interface`, `address-family`, `vni`, `route-map`, `bfd`, `profile`
   and `peer` (BFD), `line`, `key`, `segment-routing`, `srv6`, `locators`,
   `locator`, `mpls`, `l2vpn`, `pseudowire`, `pbr-map`, `nexthop-group`,
-  `rpki`, `bmp`, `vnc`, `link-params`, `affinity-map` and `evpn`. A known
+  `rpki`, `bmp`, `vnc`, `vrf-policy`, `link-params`, `affinity-map` and
+  `evpn`, also after `no`. A known
   opener with unknown arguments, such as `router bgp 65000 view foo`, is
   rejected too;
 - `neighbor IFNAME interface` with an undefined peer-group;
@@ -168,9 +169,15 @@ router-node command, so FRR leaves the address-family; a following
 l2vpn evpn. If no node of the stack has the statement, FRR stays where it
 is, and so does BOOTy. Each later statement of the same block is applied
 with a warning ("FRR may apply it in another node"), until a statement of a
-parent node ends the block. The table covers the commands of FRR 8.2.2; for
-a command it does not cover, the node can differ from FRR's, and the
-warnings show where.
+parent node ends the block. The table (`pkg/network/frrconf/known.go`) has
+the first words of the FRR 8.2.2 commands of the nodes that BOOTy parses:
+top level, `router bgp`, the unicast address-families, `address-family
+l2vpn evpn` (its own, shorter list, with its own neighbor attributes), the
+L2VNI block, `route-map`, `bfd` and its profile, `vrf` and `line vty`. It
+decides by the first word (and the neighbor attribute), not by the full
+command syntax, and it does not cover the commands of other daemons. For a
+statement outside the table the node can differ from FRR's; the warnings
+show where.
 
 A skipped statement does not change the model: for example `neighbor swp1
 interface v6only` does not create the neighbor. Lenient mode is still a
