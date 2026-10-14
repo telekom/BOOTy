@@ -1282,13 +1282,14 @@ func (o *Orchestrator) waitForDisks(ctx context.Context, device, serial string) 
 		timeout = *t
 	}
 	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
-	o.disk.WaitForStableDisks(ctx, diskSettleStable, time.Duration(timeout)*time.Second)
+	o.disk.WaitForStableDisks(ctx, diskSettleStable, diskSettlePoll, time.Duration(timeout)*time.Second)
 	for (device != "" || serial != "") && time.Now().Before(deadline) {
 		if device != "" {
 			if _, err := os.Stat(device); err == nil {
 				return
 			}
-		} else if o.disk.HasDiskWithSerial(ctx, serial, o.cfg.Provision.Disk.MinSizeGB) {
+		} else if found, err := o.disk.HasDiskWithSerial(ctx, serial, o.cfg.Provision.Disk.MinSizeGB); found || err != nil {
+			// An error that waiting can not fix: the selection reports it.
 			return
 		}
 		select {

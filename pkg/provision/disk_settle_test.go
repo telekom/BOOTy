@@ -20,20 +20,30 @@ func shortDiskSettle(t *testing.T) {
 	t.Cleanup(func() { diskSettleStable, diskSettlePoll = oldStable, oldPoll })
 }
 
-// The selection waits for the configured disk path, not only for a stable
-// /sys/block (the stable window here is far shorter than the delay).
+// The selection waits for the disk path it uses, not for another
+// configured path (the stable window and poll are far shorter than the
+// delay): the wanted disk appears at 150 ms, the other never appears. A
+// wait for the wrong path runs into the 5 s timeout.
 func TestDiskSelectionWaitsForConfiguredDevice(t *testing.T) {
 	shortDiskSettle(t)
-	for _, step := range []string{"detect-disk", "select-deprovision-disk", "deprovision.device"} {
+	for _, step := range []string{"DISK_DEVICE", "PARTITION_LAYOUT device", "deprovision.device"} {
 		t.Run(step, func(t *testing.T) {
 			late := filepath.Join(t.TempDir(), "late-disk")
+			never := filepath.Join(t.TempDir(), "never-disk")
 			cfg := &config.MachineConfig{}
 			cfg.Provision.Disk.SettleTimeoutSec = new(5)
-			if step == "deprovision.device" {
-				cfg.Deprovision.Device = late
-				cfg.Provision.Disk.Device = "/dev/never-used"
-			} else {
+			fnName := "detect-disk"
+			switch step {
+			case "DISK_DEVICE":
 				cfg.Provision.Disk.Device = late
+			case "PARTITION_LAYOUT device":
+				cfg.Provision.Disk.Device = never
+				cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{Device: late, Table: "gpt",
+					Partitions: []config.Partition{{Label: "root", Mountpoint: "/"}}}
+			case "deprovision.device":
+				cfg.Deprovision.Device = late
+				cfg.Provision.Disk.Device = never
+				fnName = "select-deprovision-disk"
 			}
 			o := newTestOrchestrator(t, cfg, &mockProvider{})
 			o.disk.SetSysfsRoot(t.TempDir())
@@ -42,12 +52,16 @@ func TestDiskSelectionWaitsForConfiguredDevice(t *testing.T) {
 				_ = os.WriteFile(late, nil, 0o600)
 			}()
 			fn := o.detectDisk
-			if step != "detect-disk" {
+			if fnName != "detect-disk" {
 				fn = o.selectDeprovisionDisk
 			}
+			start := time.Now()
 			_ = fn(context.Background()) // the late "disk" is a file, not a block device
 			if _, err := os.Stat(late); err != nil {
 				t.Fatalf("%s returned before the configured disk appeared", step)
+			}
+			if elapsed := time.Since(start); elapsed > 2*time.Second {
+				t.Fatalf("%s waited %v: it waited for a disk the selection does not use", step, elapsed)
 			}
 		})
 	}
@@ -76,8 +90,8 @@ func TestDiskSelectionWaitsForSerial(t *testing.T) {
 	}()
 	start := time.Now()
 	_ = o.detectDisk(context.Background())
-	if time.Since(start) < 150*time.Millisecond {
-		t.Fatalf("detect-disk returned after %v, before the disk with the serial appeared", time.Since(start))
+	if elapsed := time.Since(start); elapsed < 150*time.Millisecond || elapsed > 2*time.Second {
+		t.Fatalf("detect-disk returned after %v, want after the disk with the serial appeared (150 ms)", elapsed)
 	}
 	if o.targetDisk != "/dev/sdb" {
 		t.Fatalf("targetDisk = %q, want /dev/sdb", o.targetDisk)
@@ -124,5 +138,36 @@ func TestDiskSelectionRejectsUdevLinks(t *testing.T) {
 		if time.Since(start) > 5*time.Second {
 			t.Fatalf("%s waited %v before failing", step, time.Since(start))
 		}
+	}
+}
+
+// Two disks with the serial: waiting can not help, the selection fails at
+// once instead of after the timeout.
+func TestDiskSelectionSerialErrorEndsWait(t *testing.T) {
+	shortDiskSettle(t)
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.SettleTimeoutSec = new(5)
+	cfg.Provision.Disk.SerialNumber = "SN-DUP"
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	sysfs := t.TempDir()
+	for _, name := range []string{"sda", "sdb"} {
+		dev := filepath.Join(sysfs, "block", name)
+		if err := os.MkdirAll(filepath.Join(dev, "device"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for f, v := range map[string]string{"removable": "0", "size": "2097152", "device/serial": "SN-DUP"} {
+			if err := os.WriteFile(filepath.Join(dev, f), []byte(v+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	o.disk.SetSysfsRoot(sysfs)
+	start := time.Now()
+	err := o.detectDisk(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "multiple disks") {
+		t.Fatalf("detect-disk = %v, want the duplicate serial error", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("detect-disk waited %v for an error that waiting can not fix", elapsed)
 	}
 }

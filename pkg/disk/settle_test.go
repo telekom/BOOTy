@@ -11,9 +11,6 @@ import (
 )
 
 func TestWaitForStableDisksWaitsForLateDisk(t *testing.T) {
-	old := settlePoll
-	settlePoll = 5 * time.Millisecond
-	t.Cleanup(func() { settlePoll = old })
 	sysfs := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(sysfs, "block", "nvme0n1"), 0o755); err != nil {
 		t.Fatal(err)
@@ -26,7 +23,7 @@ func TestWaitForStableDisksWaitsForLateDisk(t *testing.T) {
 		_ = os.MkdirAll(filepath.Join(sysfs, "block", "sda"), 0o755)
 	}()
 	start := time.Now()
-	m.WaitForStableDisks(context.Background(), 100*time.Millisecond, 5*time.Second)
+	m.WaitForStableDisks(context.Background(), 100*time.Millisecond, 5*time.Millisecond, 5*time.Second)
 	if _, err := os.Stat(filepath.Join(sysfs, "block", "sda")); err != nil {
 		t.Fatal("returned before the late disk appeared")
 	}
@@ -42,8 +39,8 @@ func TestWaitForStableDisksDisabledAndBounded(t *testing.T) {
 	m := NewManager(newMockCommander())
 	m.SetSysfsRoot(t.TempDir())
 	start := time.Now()
-	m.WaitForStableDisks(context.Background(), time.Hour, 0)
-	m.WaitForStableDisks(context.Background(), time.Hour, 50*time.Millisecond)
+	m.WaitForStableDisks(context.Background(), time.Hour, time.Millisecond, 0)
+	m.WaitForStableDisks(context.Background(), time.Hour, time.Millisecond, 50*time.Millisecond)
 	if time.Since(start) > 2*time.Second {
 		t.Fatalf("waited %v, want the bound", time.Since(start))
 	}
