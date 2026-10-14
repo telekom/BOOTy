@@ -2812,6 +2812,14 @@ func TestParseVarsEmptyIntegersKeepDefaults(t *testing.T) {
 		t.Fatalf("empty integers changed the config: wait=%v numVFs=%d hold=%d table=%d",
 			cfg.Network.WaitMaxAttempts, cfg.Provision.Disk.NumVFs, cfg.Network.BGP.Hold, cfg.Network.VRF.TableID)
 	}
+	// A later empty value resets an earlier one, like `source vars`.
+	cfg, err = ParseVars(strings.NewReader("NUM_VFS=8\nNUM_VFS=\nBGP_HOLD=9\nBGP_HOLD=\nNETWORK_WAIT_MAX_ATTEMPTS=3\nNETWORK_WAIT_MAX_ATTEMPTS=\n"))
+	if err != nil {
+		t.Fatalf("ParseVars() = %v", err)
+	}
+	if cfg.Provision.Disk.NumVFs != 0 || cfg.Network.BGP.Hold != 0 || cfg.Network.WaitMaxAttempts != nil {
+		t.Fatalf("empty values did not reset: numVFs=%d hold=%d wait=%v", cfg.Provision.Disk.NumVFs, cfg.Network.BGP.Hold, cfg.Network.WaitMaxAttempts)
+	}
 	if _, err := ParseVars(strings.NewReader("NETWORK_WAIT_MAX_ATTEMPTS=x\n")); err == nil {
 		t.Fatal("ParseVars() accepted NETWORK_WAIT_MAX_ATTEMPTS=x")
 	}

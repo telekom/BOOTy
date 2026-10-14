@@ -1282,7 +1282,8 @@ func applyUint32Var(cfg *config.MachineConfig, key, value string) (bool, error) 
 
 	if ptr, ok := uint32Fields[key]; ok {
 		if strings.TrimSpace(value) == "" {
-			return true, nil // empty keeps the default, like ${KEY:-default}
+			*ptr = 0 // empty means the default, like ${KEY:-default}
+			return true, nil
 		}
 		n, err := strconv.ParseUint(value, 10, 32)
 		if err != nil {
@@ -1623,11 +1624,11 @@ func parseBoolVar(value string) bool {
 	return v == "true" || v == "1" || v == "yes"
 }
 
-// setIntField sets an int field from a string value.
-// setIntField parses an integer vars value. An empty value keeps the
-// default, like ${KEY:-default} in the legacy scripts.
+// setIntField parses an integer vars value. An empty value resets the
+// field to zero, the default, like ${KEY:-default} in the legacy scripts.
 func setIntField(field *int, value string) error {
 	if strings.TrimSpace(value) == "" {
+		*field = 0
 		return nil
 	}
 	n, err := strconv.Atoi(value)

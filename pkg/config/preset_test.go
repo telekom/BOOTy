@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestLifecycleOptionsAndLegacyPreset(t *testing.T) {
 	tests := []struct {
@@ -284,5 +287,27 @@ func TestMachineCommandsModeAndLegacyPreset(t *testing.T) {
 	}
 	if err := (&Config{Provision: ProvisionConfig{MachineCommandsMode: "shell"}}).Validate(); err == nil {
 		t.Fatal("Validate() accepted provision.machineCommandsMode=shell")
+	}
+}
+
+// Errors of the CAPRF parity options name the YAML option and the vars key.
+func TestParityOptionErrorsNameBothKeys(t *testing.T) {
+	for want, cfg := range map[string]Config{
+		"network.waitMode (NETWORK_WAIT_MODE)":                  {Network: NetworkConfig{WaitMode: "x"}},
+		"network.waitMaxAttempts (NETWORK_WAIT_MAX_ATTEMPTS)":   {Network: NetworkConfig{WaitMode: NetworkWaitRounds, WaitMaxAttempts: new(-1)}},
+		"provision.machineCommandsMode (MACHINE_COMMANDS_MODE)": {Provision: ProvisionConfig{MachineCommandsMode: "x"}},
+		"successAction (SUCCESS_ACTION)":                        {SuccessAction: "x"},
+		"failureAction (FAILURE_ACTION)":                        {FailureAction: "x"},
+		"provision.disk.selection (DISK_SELECTION)":             {Provision: ProvisionConfig{Disk: DiskConfig{Selection: "x"}}},
+		"provisionerFilesTarget (PROVISIONER_FILES_TARGET)":     {ProvisionerFilesTarget: "x"},
+		"provision.grubCmdlineMode (GRUB_CMDLINE_MODE)":         {Provision: ProvisionConfig{GRUBCmdlineMode: "x"}},
+		"provision.firmware.numVFsMode (NUM_VFS_MODE)":          {Provision: ProvisionConfig{Firmware: FirmwareConfig{NumVFsMode: "x"}}},
+		"provision.disk.growPartition (GROW_PARTITION)":         {Provision: ProvisionConfig{Disk: DiskConfig{GrowPartition: "x"}}},
+		"provision.disk.wipeDepth (WIPE_DEPTH)":                 {Provision: ProvisionConfig{Disk: DiskConfig{WipeDepth: "x"}}},
+	} {
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Validate() = %v, want an error naming %q", err, want)
+		}
 	}
 }

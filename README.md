@@ -354,7 +354,7 @@ root is mounted.
 | `NETPLAN_STRICT` | `true` | `false` logs and skips unknown provisioner netplan keys instead of failing. Wrong value types and unknown keys under `match` or in `routes` still fail |
 | `MACHINE_COMMANDS_MODE` | `command` | `script` runs each `/deploy/machine-commands` file as a script, like `run_script_in_chroot`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `NETWORK_WAIT_MODE` | `default` | `rounds` waits like the legacy `wait_for_network`: one network setup and `NETWORK_WAIT_MAX_ATTEMPTS` rounds of 20 seconds. Preset by `CAPRF_LEGACY_COMPAT` |
-| `NETWORK_WAIT_MAX_ATTEMPTS` | unset (15) | With `NETWORK_WAIT_MODE=rounds`: 20 second network wait rounds before the run fails (0-100000). `0` means no round: the run fails at once, like the legacy provisioner |
+| `NETWORK_WAIT_MAX_ATTEMPTS` | unset or empty (15) | With `NETWORK_WAIT_MODE=rounds`: 20 second network wait rounds before the run fails (0-100000). `0` means no round: the run fails at once, like the legacy provisioner |
 | `BOOTY_ALLOW_REMOVABLE` | `false` | Allow USB/removable media as provisioning target |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters |
 | `EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters, read by the CAPRF legacy provisioner. Appended to `MACHINE_EXTRA_KERNEL_PARAMS` |
