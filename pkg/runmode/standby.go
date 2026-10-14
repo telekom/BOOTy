@@ -326,7 +326,11 @@ func (m *StandbyMode) handleDeprovision(ctx context.Context, cmd config.Command,
 		return &commandResult{err: err}
 	}
 
-	m.ack(ctx, cmd.ID, "completed", ackMessage("deprovisioning complete", keys))
+	message := ackMessage("deprovisioning complete", keys)
+	if s, ok := orch.(interface{ SkippedDisks() []string }); ok {
+		message += provision.NotWipedNote(s.SkippedDisks())
+	}
+	m.ack(ctx, cmd.ID, "completed", message)
 	if cfg.Agent.DeprovisionSuccessAction == config.AgentDeprovisionStandby {
 		slog.Info("deprovisioning complete, returning to standby")
 		if err := m.deps.Client.ReportStatus(ctx, config.StatusInit, "standby"); err != nil {
