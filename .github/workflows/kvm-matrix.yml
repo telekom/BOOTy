@@ -209,6 +209,12 @@ jobs:
             test_regex: "^TestUEFIEFIBootEntry"
             privileged: true
             setup: ""
+          - scenario: production-templates
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestProdTplTemplatesQEMU$"
+            privileged: true
+            setup: ""
           - scenario: bootloader-smoke
             qemu_extra: ""
             test_tag: e2e
