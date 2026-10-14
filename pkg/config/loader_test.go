@@ -596,6 +596,9 @@ func TestLoadFullYAMLReference(t *testing.T) {
 		{"Provision.Disk.GrowPartition", cfg.Provision.Disk.GrowPartition, GrowPartitionLastLinux},
 		{"Provision.Firmware.LogNICs", showBool(cfg.Provision.Firmware.LogNICs), "true"},
 		{"Provision.Firmware.NumVFsMode", cfg.Provision.Firmware.NumVFsMode, NumVFsModeRaise},
+		{"Provision.DiskLinks", showBool(cfg.Provision.DiskLinks), "false"},
+		{"Provision.KexecUnmountTarget", showBool(cfg.Provision.KexecUnmountTarget), "false"},
+		{"Network.PredictableNames", showBool(cfg.Network.PredictableNames), "false"},
 	}
 
 	for _, c := range checks {

@@ -1,8 +1,8 @@
 # full.yaml — complete BOOTy configuration reference.
 #
 # This file documents every supported field with its type, valid values, and
-# default. It is loaded by TestLoadFullYAMLReference in loader_test.go to verify that all
-# fields round-trip correctly.
+# default. It is loaded by TestLoadFullYAMLReference in loader_test.go to
+# verify that all fields round-trip correctly.
 #
 # A production config only needs the fields relevant to the active mode — all
 # other sections are optional and default to zero values.
@@ -40,6 +40,10 @@ network:
   # waitMaxAttempts (NETWORK_WAIT_MAX_ATTEMPTS): rounds with waitMode rounds
   # (unset: 15; 0 fails at once)
   waitMaxAttempts: 15
+
+  # predictableNames (PREDICTABLE_NIC_NAMES): rename NICs to the predictable
+  # names that the config uses (default: true)
+  predictableNames: false
 
   bgp:
     # asn is the local BGP Autonomous System Number. ASN > 0 activates BGP networking.
@@ -250,6 +254,12 @@ provision:
   # machineCommandsMode (MACHINE_COMMANDS_MODE): command (default) | script
   # (each /deploy/machine-commands file runs as a script, like run_script_in_chroot)
   machineCommandsMode: script
+
+  # diskLinks (DISK_LINKS): create /dev/disk/by-* links before the target chroot (default: true)
+  diskLinks: false
+
+  # kexecUnmountTarget (KEXEC_UNMOUNT_TARGET): unmount the target filesystems before kexec (default: true)
+  kexecUnmountTarget: false
 
   # postProvisionCmds: commands run in chroot after provisioning completes
   postProvisionCmds:
