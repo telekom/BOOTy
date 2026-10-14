@@ -1482,7 +1482,11 @@ func (c *Configurator) CreateEFIBootEntry(ctx context.Context, diskDev, bootPart
 	partNum := partNumberFromDevice(bootPart)
 
 	out, err := c.disk.Run(ctx, "efibootmgr", "-c", "-d", diskDev, "-p", partNum, "-L", label, "-l", loader)
+	if errors.Is(err, exec.ErrNotFound) {
+		return fmt.Errorf("efibootmgr is not in the ramdisk, cannot create the EFI boot entry: %w: %w", ErrEFIVarsUnavailable, err)
+	}
 	if err != nil {
+		// efibootmgr ran and failed: not an "EFI variables unavailable" case.
 		return fmt.Errorf("efibootmgr create: %s: %w", string(out), err)
 	}
 	slog.Info("EFI boot entry created", "output", string(out))

@@ -169,3 +169,50 @@ func TestDeprovisionRemovesEFIEntriesBeforeWipe(t *testing.T) {
 		t.Fatalf("deprovision step order = %v, want mount-efivarfs, remove-efi-entries before wipe-disks", idx)
 	}
 }
+
+// The create path: a missing efibootmgr is "EFI variables unavailable"
+// (opt-out possible), a failed efibootmgr -c stays fatal.
+func TestCreateEFIBootEntryEFIBootMgrFailures(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		runErr   error
+		required *bool
+		wantErr  string
+	}{
+		{name: "missing, required", runErr: fmt.Errorf("run: %w", exec.ErrNotFound), wantErr: "efibootmgr is not in the ramdisk"},
+		{name: "missing, not required", runErr: fmt.Errorf("run: %w", exec.ErrNotFound), required: new(false)},
+		{name: "-c fails, required", runErr: errors.New("exit status 5"), wantErr: "efibootmgr create"},
+		{name: "-c fails, not required", runErr: errors.New("exit status 5"), required: new(false), wantErr: "efibootmgr create"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			withEFIFirmware(t, true)
+			old := efiRuntimeReady
+			efiRuntimeReady = func() (bool, string) { return true, "" }
+			t.Cleanup(func() { efiRuntimeReady = old })
+			cfg := &config.MachineConfig{}
+			cfg.Provision.EFIBootEntryRequired = tt.required
+			o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+			cmd.setResult("efibootmgr -c", []byte("Could not prepare Boot variable"), tt.runErr)
+			loaderDir := filepath.Join(o.config.rootDir, "boot", "efi", "EFI", "ubuntu")
+			if err := os.MkdirAll(loaderDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range []string{"shimx64.efi", "shimaa64.efi"} {
+				if err := os.WriteFile(filepath.Join(loaderDir, f), []byte("shim"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			o.targetDisk, o.bootPartition = "/dev/sda", "/dev/sda1"
+			err := o.createEFIBootEntry(context.Background())
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("createEFIBootEntry() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("createEFIBootEntry() = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}

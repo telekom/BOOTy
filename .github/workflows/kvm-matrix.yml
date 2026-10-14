@@ -201,6 +201,8 @@ jobs:
             setup: |
               docker buildx build --platform linux/amd64 --output type=local,dest=out-flavor -f initrd.Dockerfile .
               docker buildx build --platform linux/amd64 --target kernel-image --output type=local,dest=out-flavor -f initrd.Dockerfile .
+          # Boots the runner kernel (efivarfs built in). The BOOTy kernel with
+          # efivarfs.ko is covered by flavor-storage-controllers under OVMF.
           - scenario: uefi-efi-entries
             qemu_extra: ""
             test_tag: e2e

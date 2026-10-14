@@ -130,8 +130,9 @@ behaviour.
   reported success. Hosts that can be affected: a locked boot order (Lenovo
   XCC, HPE iLO, Dell iDRAC), a kernel with `efi=noruntime`, a ramdisk without
   `efivarfs.ko` or `efibootmgr`. `EFI_BOOT_ENTRY_REQUIRED=false` turns only
-  these "EFI variables unavailable" failures into warnings; a failed
-  `efibootmgr -c` or a missing EFI loader stays fatal. Deprovisioning removes
+  these "EFI variables unavailable" failures into warnings (also a missing
+  `efibootmgr` on create); a failed `efibootmgr -c` or a missing EFI loader
+  always fails the run. Deprovisioning removes
   the entries before it wipes a disk. `MODE=decommission` stays best effort.
   The slim flavor now ships `efibootmgr` (#669).
 
