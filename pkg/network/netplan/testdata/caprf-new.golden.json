@@ -30,6 +30,9 @@
       "SetName": "hbn"
     }
   ],
+  "InterfaceNames": [
+    "hbn"
+  ],
   "BondInterfaces": "",
   "BondMode": "",
   "VRFTableID": 10,

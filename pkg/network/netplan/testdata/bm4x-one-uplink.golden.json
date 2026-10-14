@@ -24,6 +24,11 @@
   "StaticIface": "lo",
   "StaticMatch": null,
   "LinkRenames": null,
+  "InterfaceNames": [
+    "ens1f0np0",
+    "lo",
+    "ens1f0np0"
+  ],
   "BondInterfaces": "",
   "BondMode": "",
   "VRFTableID": 10,
