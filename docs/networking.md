@@ -132,18 +132,37 @@ line, the statement and the node the parser was in, for example
 `parse FRR config /deploy/file-system/etc/frr/frr.conf: line 31 "maximum-paths 8": statement not supported by BOOTy (in router bgp 4210000017 vrf Vrf_underlay > address-family ipv4 unicast)`.
 `FRR_CONFIG_STRICT=false` and `NETPLAN_STRICT=false` (YAML
 `network.frrStrict`, `network.netplanStrict`) log a warning with the line for
-each such statement or key and go on without it. A netplan value of the wrong
-type stays an error in both modes.
+each such statement or key and go on without it.
+
+Lenient mode skips only what BOOTy does not implement. These stay errors in
+both modes:
+
+- an invalid value, such as `remote-as 65oo1`, a router-id that is not an
+  IPv4 address or a network with prefix length 33;
+- an unsupported statement that opens a block (it starts with `router`,
+  `vrf`, `interface`, `address-family`, `route-map`, `bfd`, `profile`,
+  `line`, `vni` or another FRR node keyword, also a known opener with
+  unknown arguments such as `router bgp 65000 view foo`): skipping it would
+  apply its body to the enclosing node;
+- `neighbor IFNAME interface` with an undefined peer-group;
+- in netplan, a value of the wrong type, and an unknown key under `match`
+  (it would select other NICs) or in a route (`on-link`, `type` and similar
+  change the route).
+
+A skipped statement does not change the model: for example `neighbor swp1
+interface v6only` does not create the neighbor. Lenient mode is still a
+risk: a skipped statement that changes routing in FRR (for example
+`maximum-paths`) has no effect in BOOTy, and only the warning shows it.
 
 Accepted `frr.conf` statements, per node:
 
 | Node | Statements |
 |---|---|
 | top level | `frr version V`, `frr defaults traditional\|datacenter`, `hostname H`, `log stdout\|syslog [LEVEL]`, `log file PATH [LEVEL]`, `service integrated-vtysh-config`, `[no] ip forwarding`, `[no] ipv6 forwarding`, `vni N [prefix-routes-only]`, `ip route P blackhole`, `ipv6 route P blackhole`, `router bgp ASN [vrf NAME]`, `bfd`, `route-map NAME permit\|deny SEQ`, `bgp community-list standard NAME [seq N] permit\|deny COMMUNITY...`, `vrf NAME`, `line vty`, `exit`, `end` |
-| `vrf NAME` | `vni N [prefix-routes-only]`, `exit-vrf`, `exit` |
-| `router bgp` | `bgp router-id A.B.C.D`, `[no] bgp ebgp-requires-policy`, `[no] bgp suppress-duplicates`, `[no] bgp default ipv4-unicast`, `bgp bestpath as-path multipath-relax`, `neighbor NAME peer-group`, `neighbor IFNAME interface [peer-group G \| remote-as R]`, `neighbor ADDR peer-group G`, `neighbor X remote-as ASN\|internal\|external`, `neighbor X local-as N [no-prepend [replace-as]]`, `neighbor X bfd [profile P]`, `neighbor X timers K H`, `neighbor X timers connect N`, `address-family ipv4 [unicast]\|ipv6 [unicast]\|l2vpn evpn`, `exit` |
-| `address-family ipv4\|ipv6` | `network P`, `redistribute connected`, `neighbor X activate`, `neighbor X soft-reconfiguration inbound`, `neighbor X allowas-in [N]`, `neighbor X route-map NAME in\|out`, `exit-address-family` |
-| `address-family l2vpn evpn` | the neighbor statements above, `advertise-all-vni`, `advertise-default-gw`, `advertise ipv4\|ipv6 unicast`, `route-target import\|export\|both RT`, `vni N` (opens an L2VNI block with `rd RD`, `route-target ... RT`, `exit-vni`), `exit-address-family` |
+| `vrf NAME` | `vni N [prefix-routes-only]`, `exit-vrf` or `exit` |
+| `router bgp` | `bgp router-id A.B.C.D`, `[no] bgp ebgp-requires-policy`, `[no] bgp suppress-duplicates`, `[no] bgp default ipv4-unicast`, `bgp bestpath as-path multipath-relax`, `neighbor NAME peer-group`, `neighbor IFNAME interface [peer-group G \| remote-as R]`, `neighbor ADDR peer-group G`, `neighbor X remote-as ASN\|internal\|external`, `neighbor X local-as N [no-prepend [replace-as]]`, `neighbor X bfd [profile P]`, `neighbor X timers K H`, `neighbor X timers connect N`, `address-family ipv4 [unicast]\|ipv6 [unicast]\|l2vpn evpn`, `exit` (also `end` and the top-level statements, which leave the node) |
+| `address-family ipv4\|ipv6` | `network P`, `redistribute connected`, `neighbor X activate`, `neighbor X soft-reconfiguration inbound`, `neighbor X allowas-in [N]`, `neighbor X route-map NAME in\|out`, `exit-address-family` or `exit` |
+| `address-family l2vpn evpn` | the neighbor statements above, `advertise-all-vni`, `advertise-default-gw`, `advertise ipv4\|ipv6 unicast`, `route-target import\|export\|both RT`, `vni N` (opens an L2VNI block with `rd RD`, `route-target ... RT`, `exit-vni` or `exit`), `exit-address-family` or `exit` |
 | `route-map` | `match community LIST`, `set local-preference N`, `set community AA:NN... [additive]`, `exit` |
 | `bfd` | `profile NAME` (opens a profile with `transmit-interval`, `receive-interval` 10-60000, `detect-multiplier` 2-255), `exit` |
 | `line vty` | `exit` |

@@ -1430,6 +1430,10 @@ func TestDetectNetplanConfigRejectsMalformedFiles(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), `line 2 "maximum-paths 8"`) {
 			t.Fatalf("strict frr.conf: %v, want an error naming line 2", err)
 		}
+		// One prefix: main names the file, the parse error the line.
+		if want := "parse FRR config " + frr + `: line 2 "maximum-paths 8": statement not supported by BOOTy (in router bgp 65000)`; err.Error() != want {
+			t.Fatalf("strict frr.conf error\n got  %s\n want %s", err, want)
+		}
 		cfg, err := detectNetplanConfig(dir, frr, false, false)
 		if err != nil || cfg == nil || cfg.ASN != 65000 {
 			t.Fatalf("lenient: %+v, %v, want the config with ASN 65000", cfg, err)
@@ -1476,5 +1480,22 @@ func TestPrepareLinkLayersResolvesStaticMatch(t *testing.T) {
 				t.Fatalf("StaticIface = %q, want %q", netCfg.StaticIface, tt.want)
 			}
 		})
+	}
+}
+
+// Unset strictness options mean strict; each key sets only its own input.
+func TestInputStrictness(t *testing.T) {
+	off := false
+	cfg := &config.MachineConfig{}
+	if np, frr := inputStrictness(cfg); !np || !frr {
+		t.Fatalf("unset: netplan %v frr %v, want both strict", np, frr)
+	}
+	cfg.Network.FRRStrict = &off
+	if np, frr := inputStrictness(cfg); !np || frr {
+		t.Fatalf("FRR_CONFIG_STRICT=false: netplan %v frr %v", np, frr)
+	}
+	cfg.Network.FRRStrict, cfg.Network.NetplanStrict = nil, &off
+	if np, frr := inputStrictness(cfg); np || !frr {
+		t.Fatalf("NETPLAN_STRICT=false: netplan %v frr %v", np, frr)
 	}
 }

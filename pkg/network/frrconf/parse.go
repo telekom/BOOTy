@@ -27,6 +27,20 @@ const (
 // errNoMatch means the statement is not valid in the tried node.
 var errNoMatch = errors.New("no match")
 
+// errUnsupported marks a statement that BOOTy does not implement. Only such
+// statements are skipped in lenient mode; an invalid value stays an error.
+var errUnsupported = errors.New("not supported by BOOTy")
+
+// unsupported wraps a reason as errUnsupported.
+func unsupported(reason string) error {
+	return fmt.Errorf("%s: %w", reason, errUnsupported)
+}
+
+// blockOpeners are the first words of statements that open a node in FRR.
+// An unsupported one stays an error in lenient mode: skipping the opener
+// would apply its body to the enclosing node.
+var blockOpeners = []string{"router", "vrf", "interface", "address-family", "route-map", "bfd", "profile", "line", "vni", "segment-routing", "mpls", "pbr-map", "nexthop-group", "key", "rpki", "srv6", "evpn", "pseudowire"}
+
 // ParseError is a statement BOOTy does not accept.
 type ParseError struct {
 	Line int
@@ -68,7 +82,8 @@ func Parse(data []byte) (*Config, error) {
 // Options change how Parse treats a statement that BOOTy does not accept.
 type Options struct {
 	// Lenient skips such a statement instead of failing (FRR_CONFIG_STRICT
-	// =false). Warn gets each skipped statement.
+	// =false). Warn gets each skipped statement. An invalid value and an
+	// unsupported statement that opens a block stay errors.
 	Lenient bool
 	Warn    func(*ParseError)
 }
@@ -84,7 +99,7 @@ func ParseWith(data []byte, o Options) (*Config, error) {
 		}
 		if err := p.statement(fields); err != nil {
 			pe := &ParseError{Line: p.line, Text: strings.TrimSpace(raw), Err: err}
-			if !o.Lenient {
+			if !o.Lenient || !errors.Is(err, errUnsupported) || slices.Contains(blockOpeners, fields[0]) {
 				return nil, pe
 			}
 			if o.Warn != nil {
@@ -112,7 +127,7 @@ func (p *parser) statement(f []string) error {
 		return nil
 	}
 	p.stack = saved
-	return fmt.Errorf("statement not supported by BOOTy (in %s)", p.context(saved))
+	return fmt.Errorf("statement %w (in %s)", errUnsupported, p.context(saved))
 }
 
 // context names the nodes of a stack, like "router bgp 65000 >
@@ -285,7 +300,7 @@ func (p *parser) vni(f []string, vrf string) error {
 
 func (p *parser) staticRoute(f []string) error {
 	if len(f) != 4 || f[3] != "blackhole" {
-		return errors.New("only blackhole static routes are supported")
+		return unsupported("only blackhole static routes are supported")
 	}
 	prefix, err := netip.ParsePrefix(f[2])
 	if err != nil {
@@ -325,7 +340,7 @@ func (p *parser) vrfStatement(f []string) error {
 	case has(f, "ip", "route"), has(f, "ipv6", "route"):
 		// A route of the VRF table; BOOTy installs static routes only in
 		// the main table.
-		return fmt.Errorf("static routes inside vrf %s are not supported", p.vrf)
+		return unsupported("static routes inside vrf " + p.vrf)
 	case is(f, "exit-vrf"), is(f, "exit"):
 		p.pop()
 		return nil
@@ -407,7 +422,11 @@ func (p *parser) neighborStatement(r *Router, name string, rest []string) error 
 				return fmt.Errorf("neighbor %s is not an address", name)
 			}
 		}
-		return p.joinGroup(r, p.neighbor(r, name), rest[1])
+		if err := checkGroup(r, rest[1]); err != nil {
+			return err
+		}
+		p.neighbor(r, name).Group = rest[1]
+		return nil
 	}
 	n := findNeighbor(r, name)
 	if n == nil {
@@ -424,26 +443,44 @@ func (p *parser) neighborStatement(r *Router, name string, rest []string) error 
 	return p.neighborAttribute(n, rest)
 }
 
+// interfaceNeighbor reads "neighbor IFNAME interface [peer-group G |
+// remote-as R]". It checks the statement before it creates the neighbor, so
+// a rejected statement does not leave a peer behind.
 func (p *parser) interfaceNeighbor(r *Router, name string, rest []string) error {
-	n := p.neighbor(r, name)
-	n.Interface = true
+	var group string
+	var ras *RemoteAS
 	switch {
 	case len(rest) == 0:
-		return nil
 	case len(rest) == 2 && rest[0] == "peer-group":
-		return p.joinGroup(r, n, rest[1])
-	case rest[0] == "remote-as":
-		return p.neighborAttribute(n, rest)
+		if err := checkGroup(r, rest[1]); err != nil {
+			return err
+		}
+		group = rest[1]
+	case len(rest) == 2 && rest[0] == "remote-as":
+		v, err := parseRemoteAS(rest[1])
+		if err != nil {
+			return err
+		}
+		ras = &v
+	default:
+		return errNoMatch
 	}
-	return errNoMatch
+	n := p.neighbor(r, name)
+	n.Interface = true
+	if group != "" {
+		n.Group = group
+	}
+	if ras != nil {
+		n.RemoteAS = ras
+	}
+	return nil
 }
 
-func (p *parser) joinGroup(r *Router, n *Neighbor, group string) error {
-	g := findNeighbor(r, group)
-	if g == nil || !g.PeerGroup {
+// checkGroup reports an error unless group is a defined peer-group.
+func checkGroup(r *Router, group string) error {
+	if g := findNeighbor(r, group); g == nil || !g.PeerGroup {
 		return fmt.Errorf("peer-group %s is not defined", group)
 	}
-	n.Group = group
 	return nil
 }
 
@@ -542,7 +579,7 @@ func (p *parser) addressFamily(r *Router, f []string) error {
 	case is(f, "address-family", "l2vpn", "evpn"):
 		afi, safi = "l2vpn", "evpn"
 	default:
-		return errors.New("unsupported address-family")
+		return unsupported("address-family " + strings.Join(f[1:], " "))
 	}
 	for i := range r.AddressFamilies {
 		if r.AddressFamilies[i].AFI == afi && r.AddressFamilies[i].SAFI == safi {
@@ -759,7 +796,7 @@ func (p *parser) routeMapStatement(f []string) error {
 // COMMUNITY...".
 func (p *parser) communityList(f []string) error {
 	if len(f) < 6 || f[2] != "standard" {
-		return errors.New("only standard community-lists are supported")
+		return unsupported("only standard community-lists")
 	}
 	name, rest := f[3], f[4:]
 	if rest[0] == "seq" {
@@ -885,7 +922,7 @@ func validateExtCommunity(rt string) error {
 	}
 	if addr, err := netip.ParseAddr(a); err == nil {
 		if !addr.Is4() {
-			return errors.New("IPv6 route targets are not supported")
+			return unsupported("IPv6 route targets")
 		}
 		if _, err := strconv.ParseUint(b, 10, 16); err != nil {
 			return errors.New("want IPv4:NN with a 16-bit NN")

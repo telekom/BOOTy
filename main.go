@@ -894,8 +894,8 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 	// Auto-detect netplan configuration files injected by the provisioner.
 	// Netplan-derived values override vars-based values, allowing the same
 	// config format used by the old deployer to work as a drop-in with BOOTy.
-	npCfg, err := detectNetplanConfig(deployNetplanDir, deployFRRConfPath,
-		strictOption(cfg.Network.NetplanStrict), strictOption(cfg.Network.FRRStrict))
+	netplanStrict, frrStrict := inputStrictness(cfg)
+	npCfg, err := detectNetplanConfig(deployNetplanDir, deployFRRConfPath, netplanStrict, frrStrict)
 	if err != nil {
 		return nil, err
 	}
@@ -1545,5 +1545,9 @@ func requiresABKexec(cfg *config.MachineConfig) bool {
 		cfg.Provision.AB.PreserveExisting
 }
 
-// strictOption is the value of a strictness option; unset means strict.
-func strictOption(v *bool) bool { return v == nil || *v }
+// inputStrictness returns NETPLAN_STRICT and FRR_CONFIG_STRICT; unset
+// means strict.
+func inputStrictness(cfg *config.MachineConfig) (netplanStrict, frrStrict bool) {
+	strict := func(v *bool) bool { return v == nil || *v }
+	return strict(cfg.Network.NetplanStrict), strict(cfg.Network.FRRStrict)
+}

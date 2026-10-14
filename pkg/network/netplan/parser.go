@@ -104,12 +104,14 @@ func decode(data []byte, known bool) (*Config, error) {
 	return &cfg, nil
 }
 
-// onlyUnknownKeys reports whether every decode error is an unknown key, so
-// that a lenient decode drops nothing but those keys. A wrong value type
-// stays an error.
+// onlyUnknownKeys reports whether every decode error is an unknown key that
+// a lenient decode may drop. A wrong value type stays an error, and so does
+// an unknown key under "match" (it would select other NICs) or in a route
+// (on-link, type and the like change the route).
 func onlyUnknownKeys(e *yaml.TypeError) bool {
 	for _, msg := range e.Errors {
-		if !strings.Contains(msg, "not found in type") {
+		if !strings.Contains(msg, "not found in type") ||
+			strings.HasSuffix(msg, "netplan.MatchConfig") || strings.HasSuffix(msg, "netplan.RouteConfig") {
 			return false
 		}
 	}

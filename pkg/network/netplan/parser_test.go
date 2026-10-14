@@ -1,9 +1,12 @@
 package netplan
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/network"
@@ -1165,5 +1168,34 @@ func TestParseDirStrictness(t *testing.T) {
 				t.Errorf("lenient MTU = %d, want the known keys kept", cfg.Network.Ethernets["eth0"].MTU)
 			}
 		})
+	}
+}
+
+// Lenient mode still fails on an unknown key under match or in a route,
+// and it logs every key it skips with its line.
+func TestParseDirLenientLimitsAndWarnings(t *testing.T) {
+	for _, y := range []string{
+		"network:\n  ethernets:\n    up0:\n      match:\n        driver: mlx5_core\n",
+		"network:\n  ethernets:\n    eth0:\n      routes:\n        - to: default\n          via: 192.0.2.1\n          on-link: true\n",
+		"network:\n  ethernets:\n    eth0:\n      routes:\n        - to: 192.0.2.0/24\n          type: blackhole\n",
+	} {
+		dir := t.TempDir()
+		writeFile(t, dir, "50.yaml", y)
+		if _, err := ParseDirWith(dir, false); err == nil {
+			t.Errorf("lenient parse of %q passed, want an error", y)
+		}
+	}
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	dir := t.TempDir()
+	writeFile(t, dir, "50.yaml", "network:\n  ethernets:\n    eth0:\n      wakeonlan: true\n      mtu: 9000\n")
+	if _, err := ParseDirWith(dir, false); err != nil {
+		t.Fatal(err)
+	}
+	if out := buf.String(); !strings.Contains(out, "NETPLAN_STRICT=false") || !strings.Contains(out, "line 4: field wakeonlan") {
+		t.Fatalf("log = %q, want a warning naming line 4 and wakeonlan", out)
 	}
 }

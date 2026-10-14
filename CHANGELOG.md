@@ -34,7 +34,8 @@ behaviour.
 - The provisioner `frr.conf` is read with a block parser that follows FRR's
   reading rules. A statement that BOOTy does not implement, or an unknown netplan
   key, now fails the network setup and the run. `FRR_CONFIG_STRICT=false` and
-  `NETPLAN_STRICT=false` log and skip them instead. Statements without effect on
+  `NETPLAN_STRICT=false` log and skip them instead (invalid values and
+  unsupported block openers still fail). Statements without effect on
   routing (`neighbor X description`, `bgp log-neighbor-changes`, netplan
   `optional`) pass in both modes (#642).
 - Netplan `set-name` renames the single NIC that its `match` selects, and a glob

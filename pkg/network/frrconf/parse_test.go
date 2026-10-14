@@ -288,3 +288,50 @@ func TestParseLenient(t *testing.T) {
 		t.Fatalf("networks = %v: the statement after a skipped one must stay in the address-family", nets)
 	}
 }
+
+// Lenient mode skips only unsupported statements. An invalid value and an
+// unsupported statement that opens a block stay errors: skipping a block
+// opener would apply its body to the enclosing node.
+func TestParseLenientLimits(t *testing.T) {
+	base := "router bgp 65000\n neighbor leaf peer-group\n neighbor leaf remote-as external\n address-family ipv4 unicast\n"
+	for _, stmt := range []string{
+		" neighbor 192.0.2.1 remote-as 65oo1",
+		" bgp router-id 300.1.1.1",
+		" network 192.0.2.0/33",
+		"router ospf",
+		"router bgp 65000 view foo",
+		"interface eth0",
+		" address-family ipv4 multicast",
+		"vrf red blue",
+		" neighbor swp2 interface peer-group UNDEF",
+	} {
+		t.Run(stmt, func(t *testing.T) {
+			_, err := ParseWith([]byte(base+stmt+"\n"), Options{Lenient: true})
+			var pe *ParseError
+			if !errors.As(err, &pe) || pe.Line != 5 {
+				t.Fatalf("ParseWith(lenient) = %v, want a ParseError on line 5", err)
+			}
+		})
+	}
+}
+
+// A rejected "neighbor IFNAME interface ..." leaves no neighbor behind, and
+// a statement that failed in a parent node leaves the parser in its node.
+func TestParseLenientKeepsState(t *testing.T) {
+	cfg, err := ParseWith([]byte(`router bgp 65000
+ neighbor swp1 interface v6only
+ address-family ipv4 unicast
+  ip route 192.0.2.0/24 192.0.2.1
+  network 198.51.100.0/24
+`), Options{Lenient: true})
+	if err != nil {
+		t.Fatalf("ParseWith() = %v", err)
+	}
+	r := cfg.Routers[0]
+	if len(r.Neighbors) != 0 {
+		t.Fatalf("neighbors = %+v, want none from the rejected interface statement", r.Neighbors)
+	}
+	if len(cfg.StaticRoutes) != 0 || !reflect.DeepEqual(r.AddressFamilies[0].Networks, []string{"198.51.100.0/24"}) {
+		t.Fatalf("static routes %+v, networks %v", cfg.StaticRoutes, r.AddressFamilies[0].Networks)
+	}
+}
