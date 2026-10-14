@@ -1298,10 +1298,29 @@ func SetEFIFirmwarePathForTest(path string) func() {
 // EFI_BOOT_ENTRY_REQUIRED=false turns only these errors into warnings.
 var ErrEFIVarsUnavailable = errors.New("EFI variables unavailable")
 
+// containerMarkers are files that container runtimes create (Docker,
+// Podman). A booted ramdisk never has them. Tests replace the list.
+var containerMarkers = []string{"/.dockerenv", "/run/.containerenv"}
+
+func inContainer() bool {
+	for _, m := range containerMarkers {
+		if _, err := os.Stat(m); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // bootedViaUEFI reports whether the firmware booted the ramdisk via UEFI.
 // Only a missing /sys/firmware/efi means BIOS; another stat error is an
 // error.
 func bootedViaUEFI() (bool, error) {
+	if inContainer() {
+		// A container (ContainerLab tests) sees the host /sys/firmware/efi;
+		// never touch the host's EFI variables.
+		slog.Info("running in a container, skipping the EFI boot entry steps")
+		return false, nil
+	}
 	_, err := os.Stat(efiFirmwarePath)
 	switch {
 	case err == nil:

@@ -21,7 +21,9 @@ import (
 // (UEFI boot) or not (BIOS boot). efivarfs is never mounted there.
 func withEFIFirmware(t *testing.T, uefi bool) {
 	t.Helper()
-	oldFirmwarePath, oldVarsPath := efiFirmwarePath, efiVarsPath
+	oldFirmwarePath, oldVarsPath, oldMarkers := efiFirmwarePath, efiVarsPath, containerMarkers
+	t.Cleanup(func() { containerMarkers = oldMarkers })
+	containerMarkers = nil // the test decides, not the machine running it
 	efiFirmwarePath = filepath.Join(t.TempDir(), "efi")
 	efiVarsPath = filepath.Join(efiFirmwarePath, "efivars")
 	if uefi {
@@ -214,5 +216,24 @@ func TestCreateEFIBootEntryEFIBootMgrFailures(t *testing.T) {
 				t.Fatalf("createEFIBootEntry() = %v, want %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// In a container the host /sys/firmware/efi is visible; BOOTy must not
+// touch the host EFI variables.
+func TestEFIStepsSkippedInContainer(t *testing.T) {
+	withEFIFirmware(t, true)
+	marker := filepath.Join(t.TempDir(), ".dockerenv")
+	if err := os.WriteFile(marker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := containerMarkers
+	containerMarkers = []string{marker}
+	t.Cleanup(func() { containerMarkers = old })
+	called := false
+	withHostCommands(t, func(string, ...string) ([]byte, error) { called = true; return nil, errors.New("must not run") })
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	if err := o.removeEFIBootEntries(context.Background()); err != nil || called {
+		t.Fatalf("removeEFIBootEntries() = %v, efibootmgr called = %v, want a skip", err, called)
 	}
 }
