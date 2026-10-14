@@ -4,6 +4,7 @@ package disk
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -43,5 +44,31 @@ func TestWaitForStableDisksDisabledAndBounded(t *testing.T) {
 	m.WaitForStableDisks(context.Background(), time.Hour, time.Millisecond, 50*time.Millisecond)
 	if time.Since(start) > 2*time.Second {
 		t.Fatalf("waited %v, want the bound", time.Since(start))
+	}
+}
+
+// A disk that lsblk finds by serial but that is below the minimum size is
+// an error at once, not "not there yet".
+func TestHasDiskWithSerialLsblkTooSmall(t *testing.T) {
+	sysfs := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sysfs, "block", "sdb"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sysfs, "block", "sdb", "size"), []byte("4194304\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sysfs, "block", "sdb", "removable"), []byte("0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := newMockCommander()
+	cmd.setResult("lsblk --nodeps", []byte("/dev/sdb SN-SMALL\n"), nil)
+	m := NewManager(cmd)
+	m.SetSysfsRoot(sysfs)
+	found, err := m.HasDiskWithSerial(context.Background(), "SN-SMALL", 100)
+	if found || err == nil || !errors.Is(err, errDiskBelowMinimum) {
+		t.Fatalf("HasDiskWithSerial() = %v, %v, want the below-minimum error", found, err)
+	}
+	if found, err := m.HasDiskWithSerial(context.Background(), "SN-SMALL", 1); !found || err != nil {
+		t.Fatalf("HasDiskWithSerial(min 1 GB) = %v, %v, want found", found, err)
 	}
 }

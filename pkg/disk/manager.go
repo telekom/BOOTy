@@ -657,7 +657,7 @@ func (m *Manager) findDiskBySerialWithLSBLK(ctx context.Context, serial string, 
 			return nil, observed, fmt.Errorf("read size for disk with serial %q at %s: %w", serial, path, err)
 		}
 		if minSizeGB > 0 && sizeGB < minSizeGB {
-			return nil, observed, fmt.Errorf("disk with serial %q at %s is %d GB, below minimum %d GB", serial, path, sizeGB, minSizeGB)
+			return nil, observed, fmt.Errorf("disk with serial %q at %s is %d GB, below minimum %d GB: %w", serial, path, sizeGB, minSizeGB, errDiskBelowMinimum)
 		}
 		matches = append(matches, path)
 	}
