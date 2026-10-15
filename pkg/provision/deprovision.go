@@ -139,6 +139,13 @@ func (o *Orchestrator) selectDeprovisionDisk(ctx context.Context) error {
 		return nil
 	}
 	o.targetDisk = device
+	// If a configured target is a member of an assembled BOOTy mirror, retain
+	// its companion before stop-raid tears the array down. Auto mode may also
+	// have selected a single disk, so only an observed array membership expands
+	// the wipe scope.
+	if err := o.captureMirrorCompanion(ctx, device); err != nil {
+		return err
+	}
 	o.log.Info("using configured deprovision disk", "device", device)
 	return nil
 }
@@ -296,4 +303,101 @@ func NotWipedNote(disks []string) string {
 		return ""
 	}
 	return "; not wiped, in use: " + strings.Join(disks, ", ")
+}
+
+func canonicalBlockDevice(device string) string {
+	if !strings.HasPrefix(device, "/dev/disk/") {
+		return device
+	}
+	resolved, err := evalRootSymlinks(device)
+	if err != nil || !strings.HasPrefix(resolved, "/dev/") {
+		return ""
+	}
+	return resolved
+}
+
+func wholeDiskForPartition(device string) string {
+	if !strings.HasPrefix(device, "/dev/") {
+		return ""
+	}
+	name := strings.TrimPrefix(device, "/dev/")
+	if strings.HasPrefix(name, "nvme") || strings.HasPrefix(name, "mmcblk") || strings.HasPrefix(name, "loop") || strings.HasPrefix(name, "nbd") {
+		if i := strings.LastIndexByte(name, 'p'); i > 0 && allDigits(name[i+1:]) {
+			return "/dev/" + name[:i]
+		}
+		return device
+	}
+	i := len(name)
+	for i > 0 && name[i-1] >= '0' && name[i-1] <= '9' {
+		i--
+	}
+	if i < len(name) && i > 0 {
+		return "/dev/" + name[:i]
+	}
+	return device
+}
+
+func allDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func (o *Orchestrator) captureMirrorCompanion(ctx context.Context, target string) error {
+	mode := o.mirroringMode()
+	if mode != disk.MirroringModeRAID1 && mode != disk.MirroringModeAuto {
+		return nil
+	}
+	originalTarget := target
+	target = canonicalBlockDevice(target)
+	if target == "" {
+		return fmt.Errorf("refusing scoped deprovision: cannot resolve configured disk alias %q", originalTarget)
+	}
+	targetDisk := wholeDiskForPartition(target)
+	var companion string
+	for _, array := range []string{disk.MirrorRootArray, disk.MirrorBootArray} {
+		members, err := o.disk.MirrorMembers(ctx, array)
+		if err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "no such") || strings.Contains(strings.ToLower(err.Error()), "not found") {
+				continue
+			}
+			return err
+		}
+		disks := make(map[string]struct{}, len(members))
+		for _, member := range members {
+			originalMember := member
+			member = canonicalBlockDevice(member)
+			if member == "" {
+				return fmt.Errorf("refusing scoped deprovision: cannot resolve mirror member %q", originalMember)
+			}
+			if disk := wholeDiskForPartition(member); disk != "" {
+				disks[disk] = struct{}{}
+			}
+		}
+		if _, ok := disks[targetDisk]; !ok {
+			continue
+		}
+		if len(disks) != 2 {
+			return fmt.Errorf("refusing scoped deprovision: mirror array %s has %d whole-disk members, want exactly 2", array, len(disks))
+		}
+		for candidate := range disks {
+			if candidate == targetDisk {
+				continue
+			}
+			if companion != "" && companion != candidate {
+				return fmt.Errorf("refusing scoped deprovision: mirror arrays disagree on companion disk (%s and %s)", companion, candidate)
+			}
+			companion = candidate
+		}
+	}
+	if companion != "" {
+		o.mirrorDisk = companion
+	}
+	return nil
 }

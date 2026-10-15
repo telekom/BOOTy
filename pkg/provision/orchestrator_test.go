@@ -5219,3 +5219,75 @@ func TestNewOrchestratorKeepsSharedDiskManager(t *testing.T) {
 		t.Fatal("the next run used the lsblk order of the previous payload")
 	}
 }
+
+func TestDeprovisionHardCapturesMirrorCompanion(t *testing.T) {
+	cfg := &config.MachineConfig{Mode: "deprovision"}
+	cfg.Provision.Disk.Device = "/dev/sda"
+	cfg.Provision.Disk.MirroringMode = "auto"
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	withMockBlockDevices(t, "/dev/disk/by-id/root", "/dev/sda", "/dev/sdb")
+	oldEval := evalRootSymlinks
+	evalRootSymlinks = func(path string) (string, error) {
+		if path == "/dev/disk/by-id/root" {
+			return "/dev/sda", nil
+		}
+		return path, nil
+	}
+	t.Cleanup(func() { evalRootSymlinks = oldEval })
+	cfg.Provision.Disk.Device = "/dev/disk/by-id/root"
+	cmd.setResult("mdadm --detail", []byte("  0 active sync /dev/sda2\n  1 active sync /dev/sdb2\n"), nil)
+
+	if err := o.selectDeprovisionDisk(context.Background()); err != nil {
+		t.Fatalf("selectDeprovisionDisk() = %v", err)
+	}
+	if o.mirrorDisk != "/dev/sdb" {
+		t.Fatalf("mirrorDisk = %q, want /dev/sdb", o.mirrorDisk)
+	}
+	if err := o.wipeOrSecureEraseDisks(context.Background()); err != nil {
+		t.Fatalf("wipeOrSecureEraseDisks() = %v", err)
+	}
+	wipes := wipeCommandCalls(cmd.calls)
+	if !hasCommandCall(wipes, "sgdisk", "--zap-all", "/dev/sda") || !hasCommandCall(wipes, "sgdisk", "--zap-all", "/dev/sdb") {
+		t.Fatalf("expected both mirror disks wiped, got %#v", wipes)
+	}
+}
+
+func TestWholeDiskForPartition(t *testing.T) {
+	for device, want := range map[string]string{
+		"/dev/sda2":      "/dev/sda",
+		"/dev/nvme0n1p2": "/dev/nvme0n1",
+		"/dev/nvme0n1":   "/dev/nvme0n1",
+		"/dev/mmcblk0p1": "/dev/mmcblk0",
+		"/dev/mmcblk0":   "/dev/mmcblk0",
+		"/dev/sda":       "/dev/sda",
+	} {
+		if got := wholeDiskForPartition(device); got != want {
+			t.Errorf("wholeDiskForPartition(%q) = %q, want %q", device, got, want)
+		}
+	}
+}
+
+func TestDeprovisionHardRejectsUnresolvedMirrorMember(t *testing.T) {
+	cfg := &config.MachineConfig{Mode: "deprovision"}
+	cfg.Provision.Disk.Device = "/dev/sda"
+	cfg.Provision.Disk.MirroringMode = "auto"
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	withMockBlockDevices(t, "/dev/sda")
+	cmd.setResult("mdadm --detail", []byte("  0 active sync /dev/sda2\n  1 active sync /dev/disk/by-id/missing\n"), nil)
+	oldEval := evalRootSymlinks
+	evalRootSymlinks = func(path string) (string, error) {
+		if path == "/dev/disk/by-id/missing" {
+			return "", os.ErrNotExist
+		}
+		return path, nil
+	}
+	t.Cleanup(func() { evalRootSymlinks = oldEval })
+
+	err := o.selectDeprovisionDisk(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "cannot resolve mirror member") {
+		t.Fatalf("selectDeprovisionDisk() = %v, want unresolved-member refusal", err)
+	}
+	if len(wipeCommandCalls(cmd.calls)) != 0 {
+		t.Fatalf("expected no wipe commands after refusal, got %#v", cmd.calls)
+	}
+}

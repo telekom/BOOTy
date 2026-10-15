@@ -302,7 +302,7 @@ func TestMirrorActive(t *testing.T) {
 		wantErr    bool
 	}{
 		{name: "assembled", array: existing, wantActive: true},
-		{name: "no device node", array: filepath.Join(t.TempDir(), "md2"), err: errors.New("exit status 1")},
+		{name: "no device node", array: filepath.Join(t.TempDir(), "md2"), out: "mdadm: No arrays found in config file or automatically", err: errors.New("exit status 1")},
 		{name: "inactive", array: existing, out: "mdadm: md device " + existing + " does not appear to be active.", err: errors.New("exit status 1"), wantActive: true},
 		{name: "other failure", array: existing, out: "mdadm: cannot open: Input/output error", err: errors.New("exit status 1"), wantErr: true},
 	}
@@ -314,6 +314,12 @@ func TestMirrorActive(t *testing.T) {
 					mockResult{output: []byte(tt.out), err: tt.err},
 					mockResult{output: []byte("active"), err: nil},
 				)
+			} else if tt.name == "no device node" {
+				cmd.setSequence("mdadm --detail",
+					mockResult{output: []byte(tt.out), err: tt.err},
+					mockResult{output: []byte(""), err: tt.err},
+				)
+				cmd.setResult("mdadm --assemble", []byte(tt.out), tt.err)
 			} else {
 				cmd.setResult("mdadm --detail", []byte(tt.out), tt.err)
 			}
@@ -325,5 +331,28 @@ func TestMirrorActive(t *testing.T) {
 				t.Fatalf("inactive array was not assembled: %v", cmd.calls)
 			}
 		})
+	}
+}
+
+func TestMirrorMembersParsesOnlyDeviceRows(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("mdadm --detail", []byte(""+
+		"/dev/md2:\n"+
+		"      Number   Major   Minor   RaidDevice State\n"+
+		"         0       8        2        0      active sync   /dev/sda2\n"+
+		"         1       8       18        1      faulty         /dev/sdb2\n"+
+		"   2       8       34        -        spare rebuilding  /dev/sdc2\n"), nil)
+	members, err := NewManager(cmd).MirrorMembers(context.Background(), MirrorRootArray)
+	if err != nil {
+		t.Fatalf("MirrorMembers() error = %v", err)
+	}
+	want := []string{"/dev/sda2", "/dev/sdb2", "/dev/sdc2"}
+	if len(members) != len(want) {
+		t.Fatalf("MirrorMembers() = %#v, want %#v", members, want)
+	}
+	for i := range want {
+		if members[i] != want[i] {
+			t.Fatalf("MirrorMembers()[%d] = %q, want %q", i, members[i], want[i])
+		}
 	}
 }

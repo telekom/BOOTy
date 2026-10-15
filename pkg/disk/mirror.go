@@ -231,11 +231,17 @@ func (m *Manager) MirrorActive(ctx context.Context, array string) (bool, error) 
 	if err == nil {
 		return true, nil
 	}
-	if _, statErr := os.Stat(array); errors.Is(statErr, fs.ErrNotExist) {
-		return false, nil
-	}
-	if strings.Contains(string(out), "does not appear to be active") {
-		if assembleOut, assembleErr := m.cmd.Run(ctx, "mdadm", "--assemble", "--scan"); assembleErr != nil {
+	_, statErr := os.Stat(array)
+	inactive := strings.Contains(string(out), "does not appear to be active")
+	missing := errors.Is(statErr, fs.ErrNotExist)
+	if inactive || missing {
+		assembleOut, assembleErr := m.cmd.Run(ctx, "mdadm", "--assemble", "--scan")
+		if assembleErr != nil {
+			// A fresh install has no md metadata yet. mdadm reports this as a
+			// normal no-arrays result; callers may safely take the create path.
+			if missing && strings.Contains(strings.ToLower(string(assembleOut)), "no arrays") {
+				return false, nil
+			}
 			return false, fmt.Errorf("mdadm assemble %s: %s: %w", array, strings.TrimSpace(string(assembleOut)), assembleErr)
 		}
 		if _, detailErr := m.cmd.Run(ctx, "mdadm", "--detail", array); detailErr != nil {
@@ -258,6 +264,31 @@ func (m *Manager) MirrorHasMember(ctx context.Context, array, member string) (bo
 		}
 	}
 	return false, nil
+}
+
+// MirrorMembers returns the block devices currently listed in an assembled array.
+func (m *Manager) MirrorMembers(ctx context.Context, array string) ([]string, error) {
+	out, err := m.cmd.Run(ctx, "mdadm", "--detail", array)
+	if err != nil {
+		return nil, fmt.Errorf("mdadm detail %s: %s: %w", array, string(out), err)
+	}
+	var members []string
+	for line := range strings.Lines(string(out)) {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		device := fields[len(fields)-1]
+		// Member rows begin with the numeric RAID-device index. This excludes
+		// headers and other detail lines that happen to end in a device path.
+		if len(fields) > 1 && strings.HasPrefix(device, "/dev/") {
+			if _, indexErr := strconv.Atoi(fields[0]); indexErr != nil {
+				continue
+			}
+			members = append(members, device)
+		}
+	}
+	return members, nil
 }
 
 // AddMirrorMember adds member to array; the kernel resyncs it in the background.

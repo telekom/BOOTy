@@ -479,6 +479,7 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 		// IMET routes for it.
 		if cfg.ProvisionVNI != 0 && slices.Contains(frr.L3VNIs, cfg.ProvisionVNI) {
 			slog.Info("netplan: provision VNI is an FRR L3VNI, using Type-5 only", "vni", cfg.ProvisionVNI)
+			cfg.EVPNType5Only = true
 		} else {
 			cfg.EVPNL2Enabled = true
 		}
