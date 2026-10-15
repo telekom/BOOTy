@@ -55,7 +55,7 @@
   "MTU": 9100,
   "NetworkMode": "gobgp",
   "EVPNL2Enabled": false,
-  "EVPNType5Only": false,
+  "EVPNType5Only": true,
   "EVPNL3VNIs": [
     3000
   ],

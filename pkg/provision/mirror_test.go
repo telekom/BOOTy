@@ -30,6 +30,7 @@ func hasProvisionCall(calls []mockCall, name string, args ...string) bool {
 func TestMirrorRootBuildsRAID1AcrossBothDisks(t *testing.T) {
 	cmd := newMockCommander()
 	cmd.setResult("mdadm --detail", nil, errors.New("no such array"))
+	cmd.setResult("mdadm --assemble", []byte("mdadm: No arrays found in config file or automatically"), errors.New("exit status 1"))
 	var copied []string
 	orig := copyBlockDeviceFn
 	copyBlockDeviceFn = func(src, dst string) error {
@@ -185,7 +186,10 @@ func TestSelectMirrorPairDisabled(t *testing.T) {
 }
 
 func newTestDiskManager() *disk.Manager {
-	return disk.NewManager(newMockCommander())
+	cmd := newMockCommander()
+	cmd.setResult("mdadm --detail", nil, errors.New("no such array"))
+	cmd.setResult("mdadm --assemble", []byte("mdadm: No arrays found in config file or automatically"), errors.New("exit status 1"))
+	return disk.NewManager(cmd)
 }
 
 func TestCreateMirrorEFIBootEntryBIOSInstallsGrubAndCopiesESP(t *testing.T) {
@@ -344,6 +348,7 @@ func TestSeparateBootPartition(t *testing.T) {
 func TestMirrorRootMirrorsSeparateBoot(t *testing.T) {
 	cmd := newMockCommander()
 	cmd.setResult("mdadm --detail", nil, errors.New("no such array"))
+	cmd.setResult("mdadm --assemble", []byte("mdadm: No arrays found in config file or automatically"), errors.New("exit status 1"))
 	stubMirrorTailSpace(t, nil)
 	var shrunk []string
 	origShrink := shrinkFilesystemForMirrorFn
@@ -483,6 +488,7 @@ func TestSeparateBootPartitionNeedsFstabForLinuxType(t *testing.T) {
 			}
 			cmd := newMockCommander()
 			cmd.setResult("mdadm --detail", nil, errors.New("no such array"))
+			cmd.setResult("mdadm --assemble", []byte("mdadm: No arrays found in config file or automatically"), errors.New("exit status 1"))
 			cmd.setResult("blkid -o", []byte("DEVNAME=/dev/sda2\nLABEL=BOOT\nUUID=1234\nTYPE=ext4\nPARTLABEL=boot\n"), nil)
 			o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, disk.NewManager(cmd))
 			o.targetDisk, o.rootPartition = "/dev/sda", "/dev/sda1"
@@ -604,6 +610,7 @@ func TestRewriteMirrorFstabFailsWithoutESPUUID(t *testing.T) {
 func TestMirrorRootRejectsMBRImages(t *testing.T) {
 	cmd := newMockCommander()
 	cmd.setResult("mdadm --detail", nil, errors.New("no such array"))
+	cmd.setResult("mdadm --assemble", []byte("mdadm: No arrays found in config file or automatically"), errors.New("exit status 1"))
 	o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, disk.NewManager(cmd))
 	o.targetDisk, o.mirrorDisk, o.rootPartition = "/dev/sda", "/dev/sdb", "/dev/sda1"
 	o.targetPartitions = []disk.Partition{{Node: "/dev/sda1", Type: disk.LinuxFilesystemMBRType}}

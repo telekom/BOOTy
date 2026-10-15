@@ -126,10 +126,17 @@ func (o *Orchestrator) selectDeprovisionDisk(ctx context.Context) error {
 	if device == "" {
 		device, name = strings.TrimSpace(o.cfg.Provision.Disk.Device), "provision.disk.device/DISK_DEVICE"
 	}
-	if err := checkRamdiskDevicePath(name, device); err != nil {
-		return err
+	// udev aliases are valid for deprovisioning when they already exist, but
+	// can never appear in the ramdisk. Validate them before waiting so a
+	// missing alias fails promptly; kernel device paths retain wait-for-device
+	// behavior below.
+	if strings.HasPrefix(device, "/dev/disk/") {
+		if err := validateConfiguredBlockDevice(name, device); err != nil {
+			return err
+		}
+	} else {
+		o.waitForDisks(ctx, device, "")
 	}
-	o.waitForDisks(ctx, device, "")
 	device, err := o.configuredDeprovisionDisk()
 	if err != nil {
 		return err
@@ -137,6 +144,9 @@ func (o *Orchestrator) selectDeprovisionDisk(ctx context.Context) error {
 	if device == "" {
 		o.log.Info("no deprovision disk override configured; hard deprovision will wipe all disks")
 		return nil
+	}
+	if canonical := canonicalBlockDevice(device); canonical != "" {
+		device = canonical
 	}
 	o.targetDisk = device
 	// If a configured target is a member of an assembled BOOTy mirror, retain
@@ -362,42 +372,53 @@ func (o *Orchestrator) captureMirrorCompanion(ctx context.Context, target string
 	targetDisk := wholeDiskForPartition(target)
 	var companion string
 	for _, array := range []string{disk.MirrorRootArray, disk.MirrorBootArray} {
-		members, err := o.disk.MirrorMembers(ctx, array)
+		arrayCompanion, err := o.mirrorArrayCompanion(ctx, array, targetDisk)
 		if err != nil {
-			if strings.Contains(strings.ToLower(err.Error()), "no such") || strings.Contains(strings.ToLower(err.Error()), "not found") {
-				continue
-			}
 			return err
 		}
-		disks := make(map[string]struct{}, len(members))
-		for _, member := range members {
-			originalMember := member
-			member = canonicalBlockDevice(member)
-			if member == "" {
-				return fmt.Errorf("refusing scoped deprovision: cannot resolve mirror member %q", originalMember)
-			}
-			if disk := wholeDiskForPartition(member); disk != "" {
-				disks[disk] = struct{}{}
-			}
-		}
-		if _, ok := disks[targetDisk]; !ok {
+		if arrayCompanion == "" {
 			continue
 		}
-		if len(disks) != 2 {
-			return fmt.Errorf("refusing scoped deprovision: mirror array %s has %d whole-disk members, want exactly 2", array, len(disks))
+		if companion != "" && companion != arrayCompanion {
+			return fmt.Errorf("refusing scoped deprovision: mirror arrays disagree on companion disk (%s and %s)", companion, arrayCompanion)
 		}
-		for candidate := range disks {
-			if candidate == targetDisk {
-				continue
-			}
-			if companion != "" && companion != candidate {
-				return fmt.Errorf("refusing scoped deprovision: mirror arrays disagree on companion disk (%s and %s)", companion, candidate)
-			}
-			companion = candidate
-		}
+		companion = arrayCompanion
 	}
 	if companion != "" {
 		o.mirrorDisk = companion
 	}
 	return nil
+}
+
+func (o *Orchestrator) mirrorArrayCompanion(ctx context.Context, array, targetDisk string) (string, error) {
+	members, err := o.disk.MirrorMembers(ctx, array)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "no such") || strings.Contains(strings.ToLower(err.Error()), "not found") {
+			return "", nil
+		}
+		return "", err
+	}
+	disks := make(map[string]struct{}, len(members))
+	for _, originalMember := range members {
+		member := canonicalBlockDevice(originalMember)
+		if member == "" {
+			return "", fmt.Errorf("refusing scoped deprovision: cannot resolve mirror member %q", originalMember)
+		}
+		wholeDisk := wholeDiskForPartition(member)
+		if wholeDisk != "" {
+			disks[wholeDisk] = struct{}{}
+		}
+	}
+	if _, ok := disks[targetDisk]; !ok {
+		return "", nil
+	}
+	if len(disks) != 2 {
+		return "", fmt.Errorf("refusing scoped deprovision: mirror array %s has %d whole-disk members, want exactly 2", array, len(disks))
+	}
+	for candidate := range disks {
+		if candidate != targetDisk {
+			return candidate, nil
+		}
+	}
+	return "", nil
 }

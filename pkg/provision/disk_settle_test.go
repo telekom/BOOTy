@@ -60,8 +60,8 @@ func TestDiskSelectionWaitsForConfiguredDevice(t *testing.T) {
 			if _, err := os.Stat(late); err != nil {
 				t.Fatalf("%s returned before the configured disk appeared", step)
 			}
-			if elapsed := time.Since(start); elapsed > 2*time.Second {
-				t.Fatalf("%s waited %v: it waited for a disk the selection does not use", step, elapsed)
+			if elapsed := time.Since(start); elapsed < 150*time.Millisecond || elapsed > 2*time.Second {
+				t.Fatalf("%s waited %v, want the configured disk wait without an unnecessary delay", step, elapsed)
 			}
 		})
 	}
@@ -121,7 +121,7 @@ func TestDecommissionWaitsForStableDisks(t *testing.T) {
 
 // A /dev/disk/by-id DISK_DEVICE can not exist without udev: fail at once.
 func TestDiskSelectionRejectsUdevLinks(t *testing.T) {
-	for _, step := range []string{"detect-disk", "select-deprovision-disk"} {
+	for _, step := range []string{"detect-disk"} {
 		cfg := &config.MachineConfig{}
 		cfg.Provision.Disk.SettleTimeoutSec = new(30)
 		cfg.Provision.Disk.Device = "/dev/disk/by-id/nvme-SAMSUNG_123"
@@ -138,6 +138,19 @@ func TestDiskSelectionRejectsUdevLinks(t *testing.T) {
 		if time.Since(start) > 5*time.Second {
 			t.Fatalf("%s waited %v before failing", step, time.Since(start))
 		}
+	}
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.SettleTimeoutSec = new(30)
+	cfg.Deprovision.Device = "/dev/disk/by-id/missing"
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	withMockStat(t, func(string) (os.FileInfo, error) { return nil, os.ErrNotExist })
+	start := time.Now()
+	err := o.selectDeprovisionDisk(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "file does not exist") {
+		t.Fatalf("select-deprovision-disk missing alias = %v, want missing-path error", err)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Fatalf("select-deprovision-disk waited %v before failing", time.Since(start))
 	}
 }
 

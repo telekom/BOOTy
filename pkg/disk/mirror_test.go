@@ -309,18 +309,19 @@ func TestMirrorActive(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := newMockCommander()
-			if tt.name == "inactive" {
+			switch tt.name {
+			case "inactive":
 				cmd.setSequence("mdadm --detail",
 					mockResult{output: []byte(tt.out), err: tt.err},
 					mockResult{output: []byte("active"), err: nil},
 				)
-			} else if tt.name == "no device node" {
+			case "no device node":
 				cmd.setSequence("mdadm --detail",
 					mockResult{output: []byte(tt.out), err: tt.err},
 					mockResult{output: []byte(""), err: tt.err},
 				)
 				cmd.setResult("mdadm --assemble", []byte(tt.out), tt.err)
-			} else {
+			default:
 				cmd.setResult("mdadm --detail", []byte(tt.out), tt.err)
 			}
 			active, err := NewManager(cmd).MirrorActive(context.Background(), tt.array)
