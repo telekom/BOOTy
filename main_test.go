@@ -1838,6 +1838,30 @@ func TestMergeInferredEVPNModeNumberedLab(t *testing.T) {
 	}
 }
 
+// network.bgp.bfdProfiles replaces the frr.conf profiles: the frr.conf BFD
+// sessions take the native timers, an unknown profile the FRR defaults.
+func TestApplyNativeBFDProfiles(t *testing.T) {
+	tx := uint32(150)
+	netCfg := &network.Config{BGPSessions: []network.BGPSession{
+		{Name: "a", BFD: true, BFDProfile: "fabric", BFDTransmitMS: 300, BFDReceiveMS: 300, BFDDetectMult: 3},
+		{Name: "b", BFD: true, BFDProfile: "other", BFDTransmitMS: 50, BFDReceiveMS: 50, BFDDetectMult: 5},
+		{Name: "c"},
+	}}
+	bgp := &config.BGPConfig{BFDProfiles: []config.BFDProfileConfig{{Name: "fabric", TransmitInterval: &tx, DetectMultiplier: new(uint32(4))}}}
+	if err := applyNativeSessions(bgp, netCfg); err != nil {
+		t.Fatal(err)
+	}
+	got := netCfg.BGPSessions
+	if got[0].BFDTransmitMS != 150 || got[0].BFDReceiveMS != 300 || got[0].BFDDetectMult != 4 ||
+		got[1].BFDTransmitMS != 300 || got[1].BFDDetectMult != 3 || got[2].BFDTransmitMS != 0 {
+		t.Fatalf("sessions = %+v", got)
+	}
+	bad := &config.BGPConfig{BFDProfiles: []config.BFDProfileConfig{{Name: "fabric", DetectMultiplier: new(uint32(1))}}}
+	if err := applyNativeSessions(bad, netCfg); err == nil || !strings.Contains(err.Error(), "detect-multiplier 1 out of range 2-255") {
+		t.Fatalf("applyNativeSessions() = %v, want the range error", err)
+	}
+}
+
 // The BM4X lab failure (#662): the rendered bm4x templates without
 // provision_gateway must pass the GoBGP config check after the netplan
 // merge, because the L3VNI selects Type-5 only. Chains the real parse,

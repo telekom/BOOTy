@@ -1736,7 +1736,7 @@ func applyNativeSessions(bgp *config.BGPConfig, netCfg *network.Config) error {
 		}
 	}
 	if !bgp.HasSessions() {
-		return nil
+		return applyNativeBFDProfiles(bgp, netCfg)
 	}
 	native := *bgp
 	native.ASN = netCfg.ASN
@@ -1775,6 +1775,25 @@ func keepFastExternalFailover(native, parsed []network.BGPSession) {
 
 // setPeerVars returns the vars keys of the scalar peer setup that are set,
 // before the netplan merge changes them.
+// applyNativeBFDProfiles gives the frr.conf BFD sessions the timers of the
+// native profiles, which replace the frr.conf profiles as a whole.
+func applyNativeBFDProfiles(bgp *config.BGPConfig, netCfg *network.Config) error {
+	if len(bgp.BFDProfiles) == 0 {
+		return nil
+	}
+	model, err := bgp.BFDModel()
+	if err != nil {
+		return fmt.Errorf("native BFD profiles: %w", err)
+	}
+	slog.Info("network.bgp.bfdProfiles replaces the frr.conf BFD profiles", "native", len(bgp.BFDProfiles))
+	for i := range netCfg.BGPSessions {
+		if s := &netCfg.BGPSessions[i]; s.BFD {
+			s.BFDTransmitMS, s.BFDReceiveMS, s.BFDDetectMult = model.BFDTimers(s.BFDProfile)
+		}
+	}
+	return nil
+}
+
 func setPeerVars(netCfg *network.Config) []string {
 	var set []string
 	for _, v := range []struct {

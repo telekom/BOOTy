@@ -193,7 +193,8 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 - GoBGP mode runs BFD (RFC 5880, 5881, 5883) for `frr.conf` neighbors with
   `bfd`, with the profile timers, and drops the BGP session when BFD goes down.
-  New key `BFD_DETECT_MULTIPLIER` (#655).
+  New keys `BFD_DETECT_MULTIPLIER` and `BFD_PROFILES` (YAML
+  `network.bgp.bfdProfiles`, the native `bfd` / `profile` blocks) (#655).
 - Native vars keys and YAML fields for every provisioner network value of GoBGP
   mode (`BGP_LOCAL_AS`, `BGP_NEIGHBOR_VRF`, `BGP_CONNECT_RETRY`, `BGP_ALLOWAS_IN`,
   `BGP_INSTALL_ROUTES`,

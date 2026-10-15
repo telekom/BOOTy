@@ -110,6 +110,10 @@ type BGPConfig struct {
 	Sessions   []BGPSessionConfig `yaml:"sessions,omitempty" json:"sessions,omitempty"`
 	PeerGroups []BGPSessionConfig `yaml:"peerGroups,omitempty" json:"peerGroups,omitempty"`
 	Defaults   string             `yaml:"defaults,omitempty" json:"defaults,omitempty"`
+	// BFDProfiles are the BFD profiles of the sessions' bfdProfile, like
+	// the frr.conf "bfd / profile" blocks. A non-empty list replaces the
+	// frr.conf profiles as a whole.
+	BFDProfiles []BFDProfileConfig `yaml:"bfdProfiles,omitempty" json:"bfdProfiles,omitempty"`
 
 	// PeerMode controls how BGP neighbor sessions are established.
 	// Valid values: "unnumbered" (default), "dual", "numbered"

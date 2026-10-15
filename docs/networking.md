@@ -147,6 +147,11 @@ same resolution:
 - `neighbor X allowas-in [N]` (native `allowASIn`, FRR's default N is 3)
   accepts paths with the own AS up to N times. GoBGP has one count per
   session, so a session uses the highest count of its families.
+- `neighbor X bfd [profile P]` (native `bfd`, `bfdProfile`) runs BFD with
+  the timers of the `bfd` / `profile P` block (native
+  `network.bgp.bfdProfiles`, `BFD_PROFILES`). An unknown profile and unset
+  values use the FRR defaults 300 ms, 300 ms, 3. Intervals outside 10 to
+  60000 ms and a multiplier outside 2 to 255 fail in both forms.
 - `bgp bestpath as-path multipath-relax` (native `network.bgp.multipathRelax`,
   `BGP_MULTIPATH_RELAX`) installs equal-cost paths with different AS paths
   of the same length as one multipath route.
@@ -207,11 +212,11 @@ These statements are parsed but not applied yet, and BOOTy logs one
 warning per statement: `route-map ... in|out`,
 `soft-reconfiguration inbound`, `[no] bgp ebgp-requires-policy` and
 `[no] bgp suppress-duplicates`.
-`neighbor X bfd` is logged as not implemented yet.
 
 Native config and parsed files merge like this: a native list
 (`network.bgp.sessions`) replaces the parsed list as a whole, with one info
-log line; there is no element-wise merge. A native scalar that is set
+log line; there is no element-wise merge. `network.bgp.bfdProfiles` replaces
+the `frr.conf` BFD profiles the same way, also for the `frr.conf` sessions. A native scalar that is set
 (`network.bgp.multipathRelax`) overrides the parsed value; unset keeps it.
 
 A key that exists in earlier releases keeps its rule for CAPRF

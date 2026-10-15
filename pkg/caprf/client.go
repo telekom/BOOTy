@@ -1652,7 +1652,11 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		*strict = &v
 		return true, nil
 	}
-	if list, ok := map[string]*[]config.BGPSessionConfig{"BGP_SESSIONS": &cfg.Network.BGP.Sessions, "BGP_PEER_GROUPS": &cfg.Network.BGP.PeerGroups}[key]; ok {
+	if list, ok := map[string]any{
+		"BGP_SESSIONS":    &cfg.Network.BGP.Sessions,
+		"BGP_PEER_GROUPS": &cfg.Network.BGP.PeerGroups,
+		"BFD_PROFILES":    &cfg.Network.BGP.BFDProfiles,
+	}[key]; ok {
 		// A JSON list, like network.bgp.sessions in YAML.
 		if err := json.Unmarshal([]byte(value), list); err != nil {
 			return true, fmt.Errorf("invalid %s: %w", key, err)

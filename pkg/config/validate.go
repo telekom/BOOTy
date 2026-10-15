@@ -1223,6 +1223,9 @@ func validateSessionInputs(b *BGPConfig) []string {
 	if d := b.Defaults; d != "" && d != string(frrconf.ProfileTraditional) && d != string(frrconf.ProfileDatacenter) {
 		errs = append(errs, fmt.Sprintf("network.bgp.defaults %q must be traditional or datacenter", d))
 	}
+	if _, err := b.BFDModel(); err != nil {
+		errs = append(errs, err.Error())
+	}
 	if !b.HasSessions() && (len(b.PeerGroups) > 0 || b.Defaults != "") {
 		errs = append(errs, "network.bgp.peerGroups and network.bgp.defaults (BGP_PEER_GROUPS, BGP_DEFAULTS) apply only with network.bgp.sessions (BGP_SESSIONS)")
 	}
