@@ -485,10 +485,10 @@ func mdadmLineIsArray(fields []string, array, num string) bool {
 // read, and also /etc/mdadm.conf when the image ships one, because mdadm and
 // dracut use that file when it exists.
 func writeMdadmConf(root, content string) error {
-	paths := []string{filepath.Join(root, "etc", "mdadm", "mdadm.conf")}
-	if alt := filepath.Join(root, "etc", "mdadm.conf"); fileExists(alt) {
-		paths = append(paths, alt)
-	}
+	// dracut reads /etc/mdadm.conf, while Debian's initramfs tooling reads
+	// /etc/mdadm/mdadm.conf. Write both so a target that did not ship the
+	// dracut path still assembles the mirror during early boot.
+	paths := []string{filepath.Join(root, "etc", "mdadm", "mdadm.conf"), filepath.Join(root, "etc", "mdadm.conf")}
 	for _, path := range paths {
 		if err := writeTargetRootFile(root, path, []byte(content)); err != nil {
 			return fmt.Errorf("write %s: %w", path, err)

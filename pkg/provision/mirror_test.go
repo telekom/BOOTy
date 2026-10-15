@@ -424,12 +424,7 @@ func TestWriteMdadmConf(t *testing.T) {
 			if err := writeMdadmConf(root, content); err != nil {
 				t.Fatalf("writeMdadmConf() error = %v", err)
 			}
-			wantPaths := []string{filepath.Join(root, "etc", "mdadm", "mdadm.conf")}
-			if shipsEtcConf {
-				wantPaths = append(wantPaths, alt)
-			} else if fileExists(alt) {
-				t.Fatalf("writeMdadmConf() created %s although the image has none", alt)
-			}
+			wantPaths := []string{filepath.Join(root, "etc", "mdadm", "mdadm.conf"), alt}
 			for _, path := range wantPaths {
 				data, err := os.ReadFile(path)
 				if err != nil || string(data) != content {

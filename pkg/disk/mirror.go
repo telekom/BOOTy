@@ -168,7 +168,7 @@ func (m *Manager) ReplicatePartitionTable(ctx context.Context, src, dst string) 
 // around it without copying data.
 func (m *Manager) CreateDegradedMirror(ctx context.Context, array, member string) error {
 	out, err := m.cmd.Run(ctx, "mdadm", "--create", array,
-		"--run", "--level=1", "--raid-devices=2", "--metadata=1.0", "--assume-clean",
+		"--run", "--force", "--level=1", "--raid-devices=2", "--metadata=1.0", "--assume-clean",
 		member, "missing")
 	if err != nil {
 		return fmt.Errorf("mdadm create %s with %s: %s: %w", array, member, string(out), err)
