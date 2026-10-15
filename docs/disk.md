@@ -472,12 +472,11 @@ partition. With `PARTITION_LAYOUT`, it uses the partition with mountpoint
 `/boot/efi`. The `mount-boot` step mounts it at `/boot/efi` in the target root.
 Without an EFI system partition, BOOTy logs a warning and skips the mount.
 
-BOOTy does not read the `/etc/fstab` of the image. If the image keeps `/boot` on
-a separate partition, BOOTy does not mount it. Steps that use `/boot`, such as
-the GRUB configuration and kexec, then see the `/boot` directory of the root
-filesystem.
-
-Planned (#595): mount a separate `/boot` from the image fstab.
+For mirrored whole-disk images, BOOTy reads the image `/etc/fstab`, identifies
+the separate `/boot` partition (or the GPT XBOOTLDR partition), mirrors it as
+`/dev/md1`, and mounts that array before GRUB and initramfs updates. Ambiguous
+extra Linux partitions are rejected. Non-mirrored images keep `/boot` on the
+root filesystem unless a declarative partition layout supplies the mount.
 
 ## Filesystem Check, Partition Growth and Resize
 
