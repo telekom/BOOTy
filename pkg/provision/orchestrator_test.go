@@ -5061,6 +5061,24 @@ func TestGrowPartitionLastLinuxKeepsRootWhenLast(t *testing.T) {
 	}
 }
 
+func TestResizeFilesystemMirroringUsesRootArray(t *testing.T) {
+	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{}, &mockProvider{})
+	o.rootPartition = "/dev/sda2"
+	o.mirrorDisk = "/dev/sdb"
+	if err := o.resizeFilesystem(context.Background()); err != nil {
+		t.Fatalf("resizeFilesystem() = %v", err)
+	}
+	var got string
+	for _, c := range cmd.calls {
+		if c.name == "resize2fs" {
+			got = strings.Join(c.args, " ")
+		}
+	}
+	if got != disk.MirrorRootArray {
+		t.Fatalf("resize2fs target = %q, want %q", got, disk.MirrorRootArray)
+	}
+}
+
 // Machine files keep symlinks, so no step after copy-machine-files may write
 // into the target root from the host. Steps that only run commands in the
 // chroot or touch firmware are fine.

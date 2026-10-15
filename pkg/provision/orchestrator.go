@@ -91,11 +91,11 @@ type Orchestrator struct {
 	log       *slog.Logger
 
 	// Runtime state set during provisioning.
-	targetDisk       string
+	targetDisk string
 	// skippedDisks are the disks in use that a wipe of all disks skipped.
 	skippedDisks     []string
-	mirrorDisk       string // second root disk when DISK_MIRRORING_MODE selected a pair
-	resumeMirrorPair [2]string // mirror pair restored from a resume checkpoint
+	mirrorDisk       string           // second root disk when DISK_MIRRORING_MODE selected a pair
+	resumeMirrorPair [2]string        // mirror pair restored from a resume checkpoint
 	targetPartitions []disk.Partition // partitions parse-partitions found on targetDisk
 	mirrorArrays     []string         // md arrays that mirror-root assembled
 	rootPartition    string
@@ -2899,6 +2899,12 @@ func (o *Orchestrator) lastLinuxPartition(ctx context.Context) (string, error) {
 func (o *Orchestrator) resizeFilesystem(ctx context.Context) error {
 	if o.cfg.Provision.Disk.PartitionLayout != nil {
 		return o.disk.ResizeFilesystem(ctx, o.rootPartition, newroot)
+	}
+	// mirror-root grows the source partition before creating /dev/md2.  The
+	// legacy last-linux selector must never make us resize a raw RAID member;
+	// the mounted array is the only safe target after mirroring.
+	if o.mirrorDisk != "" {
+		return o.disk.ResizeFilesystem(ctx, disk.MirrorRootArray, newroot)
 	}
 	target, err := o.growTarget(ctx)
 	if err != nil {
