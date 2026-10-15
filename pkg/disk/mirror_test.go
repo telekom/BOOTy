@@ -262,8 +262,8 @@ func TestShrinkFilesystemForMirror(t *testing.T) {
 
 func TestDetectMirrorPairSkipsPathsSharingWWID(t *testing.T) {
 	sysfs := t.TempDir()
-	writeSysfsBlockDevice(t, sysfs, "sda", "0", 20, "PATH-A")
-	writeSysfsBlockDevice(t, sysfs, "sdb", "0", 20, "PATH-B")
+	writeSysfsBlockDevice(t, sysfs, "sda", "0", 20, "")
+	writeSysfsBlockDevice(t, sysfs, "sdb", "0", 20, "")
 	for _, name := range []string{"sda", "sdb"} {
 		if err := os.WriteFile(filepath.Join(sysfs, "block", name, "device", "wwid"), []byte("naa.600a0b80\n"), 0o644); err != nil {
 			t.Fatal(err)

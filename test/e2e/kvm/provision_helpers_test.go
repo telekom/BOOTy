@@ -3,10 +3,8 @@
 package kvm
 
 import (
-	"compress/gzip"
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -232,12 +230,14 @@ func compressGzip(t *testing.T, src string) string {
 	}
 	defer out.Close()
 
-	gz := gzip.NewWriter(out)
-	if _, err := io.Copy(gz, in); err != nil {
+	// The mirror test converts a cloud image to a large raw file, mostly
+	// sparse/zero-filled. Use gzip's fast level: the guest only needs a valid
+	// gzip stream, while the default level can spend the whole 15-minute test
+	// budget compressing unused image space on a busy runner.
+	cmd := exec.Command("gzip", "-1", "-c", src)
+	cmd.Stdout = out
+	if err := cmd.Run(); err != nil {
 		t.Fatalf("gzip copy: %v", err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatalf("gzip close: %v", err)
 	}
 
 	return dst
