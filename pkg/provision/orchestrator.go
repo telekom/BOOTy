@@ -1406,18 +1406,8 @@ func (o *Orchestrator) detectDisk(ctx context.Context) error {
 		}
 	}
 
-	// If a specific disk device is configured, validate and use it directly.
-	if o.cfg.Provision.Disk.Device != "" {
-		info, err := os.Stat(o.cfg.Provision.Disk.Device)
-		if err != nil {
-			return fmt.Errorf("configured disk device %s: %w", o.cfg.Provision.Disk.Device, err)
-		}
-		if info.Mode()&os.ModeDevice == 0 || info.Mode()&os.ModeCharDevice != 0 {
-			return fmt.Errorf("configured disk device %s is not a block device", o.cfg.Provision.Disk.Device)
-		}
-		o.log.Info("using configured disk device", "device", o.cfg.Provision.Disk.Device)
-		o.targetDisk = o.cfg.Provision.Disk.Device
-		return nil
+	if handled, err := o.useConfiguredDisk(); handled || err != nil {
+		return err
 	}
 
 	serial := strings.TrimSpace(o.cfg.Provision.Disk.SerialNumber)
@@ -1442,6 +1432,26 @@ func (o *Orchestrator) detectDisk(ctx context.Context) error {
 	}
 	o.targetDisk = d
 	return nil
+}
+
+// useConfiguredDisk validates an explicit disk override. Keeping this branch
+// separate from automatic and serial selection also keeps the selection flow
+// easy to audit: an explicit device is never replaced by auto-detection.
+func (o *Orchestrator) useConfiguredDisk() (bool, error) {
+	device := strings.TrimSpace(o.cfg.Provision.Disk.Device)
+	if device == "" {
+		return false, nil
+	}
+	info, err := os.Stat(device)
+	if err != nil {
+		return true, fmt.Errorf("configured disk device %s: %w", device, err)
+	}
+	if info.Mode()&os.ModeDevice == 0 || info.Mode()&os.ModeCharDevice != 0 {
+		return true, fmt.Errorf("configured disk device %s is not a block device", device)
+	}
+	o.log.Info("using configured disk device", "device", device)
+	o.targetDisk = device
+	return true, nil
 }
 
 func (o *Orchestrator) applyPartitionLayout(ctx context.Context) error {

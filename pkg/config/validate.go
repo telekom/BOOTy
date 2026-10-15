@@ -120,6 +120,10 @@ func (c *Config) validateProvisionFeatureConfigs() []string {
 }
 
 func (c *Config) validateEnums() []string {
+	return append(c.validatePrimaryEnums(), c.validateFeatureEnums()...)
+}
+
+func (c *Config) validatePrimaryEnums() []string {
 	validators := []func() string{
 		func() string {
 			return validateEnum(c.Mode, "mode", "provision", "deprovision", "soft-deprovision", "soft", "hard", "decommission", "standby", "dry-run", "check")
@@ -178,6 +182,12 @@ func (c *Config) validateEnums() []string {
 		func() string {
 			return validateEnumLower(c.Provision.Disk.MirroringMode, "provision.disk.mirroringMode", "raid-1", "auto", "none")
 		},
+	}
+	return collectValidationErrors(validators)
+}
+
+func (c *Config) validateFeatureEnums() []string {
+	validators := []func() string{
 		func() string {
 			return validateEnumLower(c.Network.BGP.UnderlayAF, "network.bgp.underlayAF", "ipv4")
 		},
@@ -195,6 +205,10 @@ func (c *Config) validateEnums() []string {
 		},
 	}
 
+	return collectValidationErrors(validators)
+}
+
+func collectValidationErrors(validators []func() string) []string {
 	var errs []string
 	for _, v := range validators {
 		if msg := v(); msg != "" {
