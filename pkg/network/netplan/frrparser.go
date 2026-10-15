@@ -181,15 +181,9 @@ func warnUnapplied(model *frrconf.Config) {
 		if r.SuppressDuplicates != nil {
 			warn(r.Line, "[no] bgp suppress-duplicates", "router", r.ASN)
 		}
-		if r.MultipathRelax {
-			warn(r.Line, "bgp bestpath as-path multipath-relax", "router", r.ASN)
-		}
 		for j := range r.AddressFamilies {
 			af := &r.AddressFamilies[j]
 			for _, n := range af.Neighbors {
-				if n.AllowASIn > 0 {
-					warn(af.Line, "allowas-in", "neighbor", n.Name, "family", af.AFI+" "+af.SAFI)
-				}
 				if n.RouteMapIn != "" || n.RouteMapOut != "" {
 					warn(af.Line, "route-map", "neighbor", n.Name, "family", af.AFI+" "+af.SAFI, "in", n.RouteMapIn, "out", n.RouteMapOut)
 				}

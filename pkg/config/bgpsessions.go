@@ -43,6 +43,10 @@ type BGPSessionConfig struct {
 	// Families are the activated address families: ipv4-unicast,
 	// ipv6-unicast, l2vpn-evpn. Families of the peer-group add to them.
 	Families []string `yaml:"families,omitempty" json:"families,omitempty"`
+	// AllowASIn accepts paths with the own AS up to this many times in each
+	// of Families, like "neighbor X allowas-in N" (1-10; FRR's default
+	// without N is 3). 0 is unset.
+	AllowASIn int `yaml:"allowASIn,omitempty" json:"allowASIn,omitempty"`
 	// BFD and BFDProfile request a BFD session ("neighbor X bfd [profile P]").
 	BFD        bool   `yaml:"bfd,omitempty" json:"bfd,omitempty"`
 	BFDProfile string `yaml:"bfdProfile,omitempty" json:"bfdProfile,omitempty"`
@@ -207,6 +211,9 @@ func addNeighbor(r *frrconf.Router, s *BGPSessionConfig, group bool) error {
 		}
 		n.LocalAS = &frrconf.LocalAS{ASN: s.LocalAS, NoPrepend: true, ReplaceAS: true}
 	}
+	if s.AllowASIn < 0 || s.AllowASIn > 10 {
+		return fmt.Errorf("%s: invalid allowas-in count %d, must be 1-10", what, s.AllowASIn)
+	}
 	r.Neighbors = append(r.Neighbors, n)
 	for _, f := range s.Families {
 		afi, ok := sessionFamilies[f]
@@ -218,7 +225,7 @@ func addNeighbor(r *frrconf.Router, s *BGPSessionConfig, group bool) error {
 			r.AddressFamilies = append(r.AddressFamilies, frrconf.AddressFamily{AFI: afi[0], SAFI: afi[1]})
 			i = len(r.AddressFamilies) - 1
 		}
-		r.AddressFamilies[i].Neighbors = append(r.AddressFamilies[i].Neighbors, frrconf.AFNeighbor{Name: s.Name, Activate: true})
+		r.AddressFamilies[i].Neighbors = append(r.AddressFamilies[i].Neighbors, frrconf.AFNeighbor{Name: s.Name, Activate: true, AllowASIn: s.AllowASIn})
 	}
 	return nil
 }

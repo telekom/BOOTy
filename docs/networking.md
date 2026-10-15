@@ -134,6 +134,12 @@ same resolution:
 - The VRF of the `router bgp` block binds the session to that VRF.
 - An interface neighbor is unnumbered: BOOTy finds the peer's IPv6
   link-local address on the interface.
+- `neighbor X allowas-in [N]` (native `allowASIn`, FRR's default N is 3)
+  accepts paths with the own AS up to N times. GoBGP has one count per
+  session, so a session uses the highest count of its families.
+- `bgp bestpath as-path multipath-relax` (native `network.bgp.multipathRelax`,
+  `BGP_MULTIPATH_RELAX`) installs equal-cost paths with different AS paths
+  of the same length as one multipath route.
 
 With these sessions, the vars `BGP_PEER_MODE`, `BGP_INTERFACES`,
 `BGP_NEIGHBORS`, `BGP_REMOTE_ASN`, `BGP_KEEPALIVE` and `BGP_HOLD` no longer
@@ -160,14 +166,15 @@ The FRR stack (`NETWORK_MODE=frr`) does not use `BGP_SESSIONS`; BOOTy logs
 a warning when it is set there.
 
 These statements are parsed but not applied yet, and BOOTy logs one
-warning per statement: `allowas-in`, `route-map ... in|out`,
-`soft-reconfiguration inbound`, `[no] bgp ebgp-requires-policy`,
-`[no] bgp suppress-duplicates` and `bgp bestpath as-path multipath-relax`.
+warning per statement: `route-map ... in|out`,
+`soft-reconfiguration inbound`, `[no] bgp ebgp-requires-policy` and
+`[no] bgp suppress-duplicates`.
 `neighbor X bfd` is logged as not implemented yet.
 
 Native config and parsed files merge like this: a native list
 (`network.bgp.sessions`) replaces the parsed list as a whole, with one info
-log line; there is no element-wise merge.
+log line; there is no element-wise merge. A native scalar that is set
+(`network.bgp.multipathRelax`) overrides the parsed value; unset keeps it.
 
 A value from netplan overrides the same value from the vars. An empty
 netplan value keeps the vars value. `VLANS` is the exception: BOOTy parses it

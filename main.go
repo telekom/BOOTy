@@ -1633,6 +1633,9 @@ func inputStrictness(cfg *config.MachineConfig) (netplanStrict, frrStrict bool) 
 // applyNativeSessions resolves network.bgp.sessions with the merged ASN.
 // The native list replaces the frr.conf sessions as a whole.
 func applyNativeSessions(bgp *config.BGPConfig, netCfg *network.Config) error {
+	if bgp.MultipathRelax != nil {
+		netCfg.BGPMultipathRelax = *bgp.MultipathRelax
+	}
 	if !bgp.HasSessions() {
 		return nil
 	}

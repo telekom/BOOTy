@@ -93,6 +93,10 @@ type BGPConfig struct {
 	Sessions   []BGPSessionConfig `yaml:"sessions,omitempty" json:"sessions,omitempty"`
 	PeerGroups []BGPSessionConfig `yaml:"peerGroups,omitempty" json:"peerGroups,omitempty"`
 	Defaults   string             `yaml:"defaults,omitempty" json:"defaults,omitempty"`
+	// MultipathRelax is "bgp bestpath as-path multipath-relax": equal-cost
+	// paths with different AS paths of the same length form one multipath
+	// route. Set, it overrides the frr.conf value.
+	MultipathRelax *bool `yaml:"multipathRelax,omitempty" json:"multipathRelax,omitempty"`
 
 	// PeerMode controls how BGP neighbor sessions are established.
 	// Valid values: "unnumbered" (default), "dual", "numbered"

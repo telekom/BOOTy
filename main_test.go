@@ -23,6 +23,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/BOOTy/pkg/network/netplan"
 	"github.com/telekom/BOOTy/pkg/provision"
 	"github.com/telekom/BOOTy/pkg/realm"
 	"github.com/telekom/BOOTy/pkg/runmode"
@@ -1652,5 +1653,41 @@ func TestApplyNativeSessions(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "BGP_HOLD") {
 		t.Errorf("warning for an unset key: %q", buf.String())
+	}
+}
+
+// "bgp bestpath as-path multipath-relax" and network.bgp.multipathRelax
+// give the same flag; a native value overrides the parsed one. The
+// unsupported variant fails in both forms.
+func TestApplyNativeMultipathRelax(t *testing.T) {
+	parsed, err := netplan.ParseFRRConfigBytes([]byte("router bgp 65000\n bgp bestpath as-path multipath-relax\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vars, err := caprf.ParseVars(strings.NewReader("BGP_MULTIPATH_RELAX=true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := &network.Config{}
+	if err := applyNativeSessions(&vars.Network.BGP, native); err != nil {
+		t.Fatal(err)
+	}
+	if !parsed.MultipathRelax || native.BGPMultipathRelax != parsed.MultipathRelax {
+		t.Fatalf("frr.conf %v, native %v, want both true", parsed.MultipathRelax, native.BGPMultipathRelax)
+	}
+
+	merged := &network.Config{BGPMultipathRelax: true}
+	if err := applyNativeSessions(&config.BGPConfig{MultipathRelax: new(false)}, merged); err != nil {
+		t.Fatal(err)
+	}
+	if merged.BGPMultipathRelax {
+		t.Error("native multipathRelax false did not override the frr.conf value")
+	}
+
+	if _, err := netplan.ParseFRRConfigBytes([]byte("router bgp 65000\n bgp bestpath as-path multipath-relax as-set\n")); err == nil {
+		t.Error("frr.conf: multipath-relax as-set parsed without error")
+	}
+	if _, err := caprf.ParseVars(strings.NewReader("BGP_MULTIPATH_RELAX=as-set\n")); err == nil {
+		t.Error("vars: BGP_MULTIPATH_RELAX=as-set parsed without error")
 	}
 }
