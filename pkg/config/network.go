@@ -221,8 +221,8 @@ type BGPConfig struct {
 	// RouteMaps and CommunityLists define route-maps like FRR, with the
 	// subset BOOTy implements (permit/deny entries in sequence order,
 	// "match community", "set local-preference", "set community
-	// [additive]", implicit deny). A route-map of the same name in the
-	// provisioner frr.conf is replaced.
+	// [additive]", implicit deny). A non-empty list replaces the
+	// provisioner frr.conf list as a whole.
 	RouteMaps      []network.RouteMap      `yaml:"routeMaps,omitempty" json:"routeMaps,omitempty"`
 	CommunityLists []network.CommunityList `yaml:"communityLists,omitempty" json:"communityLists,omitempty"`
 

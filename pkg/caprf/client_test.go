@@ -2903,6 +2903,20 @@ BFD_PROFILES=[{"name":"fabric","transmitInterval":150,"receiveInterval":150,"det
 	if _, err := ParseVars(strings.NewReader("BGP_SESSIONS=[{\n")); err == nil {
 		t.Fatal("BGP_SESSIONS with broken JSON parsed without error")
 	}
+	// An unknown field fails like in the YAML config.
+	for _, v := range []string{
+		`BGP_SESSIONS=[{"name":"192.0.2.1","remoteAs":"internal"}]`,
+		`BGP_ROUTE_MAPS=[{"name":"M","entries":[{"seq":10,"setMetric":10}]}]`,
+		`BGP_COMMUNITY_LISTS=[{"name":"C","entries":[{"communities":["1:1"]}]}] x`,
+	} {
+		if _, err := ParseVars(strings.NewReader(v + "\n")); err == nil {
+			t.Errorf("%s parsed without error", v)
+		}
+	}
+	cfg, err = ParseVars(strings.NewReader(`BGP_SESSIONS=[{"name":"192.0.2.1","remoteAS":"internal","families":["l2vpn-evpn"],"routeMaps":[{"family":"l2vpn-evpn","in":"IN"}]}]` + "\n"))
+	if err != nil || cfg.Network.BGP.Sessions[0].RouteMaps[0].In != "IN" {
+		t.Fatalf("session route-maps: %v", err)
+	}
 }
 
 func TestParseVarsNativeBGPAndDeviceOptions(t *testing.T) {

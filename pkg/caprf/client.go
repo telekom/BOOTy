@@ -1446,6 +1446,29 @@ func unmarshalJSONVar(value string, target any) error {
 	return nil
 }
 
+// strictJSONVar is unmarshalJSONVar that rejects unknown fields.
+func strictJSONVar(value string, target any) error {
+	decode := func(s string) error {
+		dec := json.NewDecoder(strings.NewReader(s))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(target); err != nil {
+			return err
+		}
+		if dec.More() {
+			return errors.New("data after the JSON value")
+		}
+		return nil
+	}
+	err := decode(value)
+	if normalized := normalizeGoQuotedJSONWhitespace(value); err != nil && normalized != value {
+		err = decode(normalized)
+	}
+	if err != nil {
+		return fmt.Errorf("unmarshal JSON var: %w", err)
+	}
+	return nil
+}
+
 func normalizeGoQuotedJSONWhitespace(value string) string {
 	var b strings.Builder
 	b.Grow(len(value))
@@ -1657,12 +1680,16 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		return true, nil
 	}
 	if list, ok := map[string]any{
-		"BGP_SESSIONS":    &cfg.Network.BGP.Sessions,
-		"BGP_PEER_GROUPS": &cfg.Network.BGP.PeerGroups,
-		"BFD_PROFILES":    &cfg.Network.BGP.BFDProfiles,
+		"BGP_SESSIONS":        &cfg.Network.BGP.Sessions,
+		"BGP_PEER_GROUPS":     &cfg.Network.BGP.PeerGroups,
+		"BFD_PROFILES":        &cfg.Network.BGP.BFDProfiles,
+		"BGP_ROUTE_MAPS":      &cfg.Network.BGP.RouteMaps,
+		"BGP_COMMUNITY_LISTS": &cfg.Network.BGP.CommunityLists,
 	}[key]; ok {
-		// A JSON list, like network.bgp.sessions in YAML.
-		if err := json.Unmarshal([]byte(value), list); err != nil {
+		// A JSON list, like network.bgp.sessions in YAML. An unknown field
+		// fails, like in the YAML config, so an unsupported statement is
+		// not dropped.
+		if err := strictJSONVar(value, list); err != nil {
 			return true, fmt.Errorf("invalid %s: %w", key, err)
 		}
 		return true, nil
@@ -1716,14 +1743,6 @@ func applyNetworkOptionVar(cfg *config.MachineConfig, key, value string) (bool, 
 		cfg.Network.BGP.AllowASIn = new(uint32(n))
 	case "MTU":
 		if err := setIntField(&cfg.Network.MTU, value); err != nil {
-			return true, fmt.Errorf("invalid %s: %w", key, err)
-		}
-	case "BGP_ROUTE_MAPS":
-		if err := unmarshalJSONVar(value, &cfg.Network.BGP.RouteMaps); err != nil {
-			return true, fmt.Errorf("invalid %s: %w", key, err)
-		}
-	case "BGP_COMMUNITY_LISTS":
-		if err := unmarshalJSONVar(value, &cfg.Network.BGP.CommunityLists); err != nil {
 			return true, fmt.Errorf("invalid %s: %w", key, err)
 		}
 	default:

@@ -1862,6 +1862,44 @@ func TestApplyNativeBFDProfiles(t *testing.T) {
 	}
 }
 
+// The bm4x route-maps and community-list from frr.conf and from the native
+// vars are the same; a native list replaces the frr.conf list as a whole.
+// "set metric" fails in both forms.
+func TestNativeRouteMapsEqualFRRConf(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("pkg", "network", "frrconf", "testdata", "bm4x", "two-uplinks", "frr.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	params, err := netplan.ParseFRRConfigBytes(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed := netplan.ToNetworkConfig(&netplan.Config{}, params)
+	vars, err := caprf.ParseVars(strings.NewReader(`BGP_ROUTE_MAPS=[{"name":"TAG-FABRIC-IN","entries":[{"seq":10,"setLocalPreference":90,"setCommunities":["65169:200"],"setCommunityAdditive":true}]},{"name":"DENY-TAG-FABRIC-OUT","entries":[{"seq":10,"deny":true,"matchCommunity":"cm-received-fabric"},{"seq":20}]}]
+BGP_COMMUNITY_LISTS=[{"name":"cm-received-fabric","entries":[{"communities":["65169:200"]}]}]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := networkConfigFromMachineConfig(vars)
+	if !reflect.DeepEqual(native.BGPRouteMaps, parsed.BGPRouteMaps) || !reflect.DeepEqual(native.BGPCommunityLists, parsed.BGPCommunityLists) {
+		t.Fatalf("native %+v %+v\nfrr.conf %+v %+v", native.BGPRouteMaps, native.BGPCommunityLists, parsed.BGPRouteMaps, parsed.BGPCommunityLists)
+	}
+
+	merged := &network.Config{BGPRouteMaps: []network.RouteMap{{Name: "ONLY"}}}
+	mergeBGPPolicy(merged, parsed)
+	if len(merged.BGPRouteMaps) != 1 || merged.BGPRouteMaps[0].Name != "ONLY" || !reflect.DeepEqual(merged.BGPCommunityLists, parsed.BGPCommunityLists) {
+		t.Fatalf("merged route-maps %+v, community-lists %+v", merged.BGPRouteMaps, merged.BGPCommunityLists)
+	}
+
+	if _, err := netplan.ParseFRRConfigBytes([]byte("route-map M permit 10\n set metric 10\nexit\n")); err == nil {
+		t.Error("frr.conf: set metric parsed without error")
+	}
+	if _, err := caprf.ParseVars(strings.NewReader(`BGP_ROUTE_MAPS=[{"name":"M","entries":[{"seq":10,"setMetric":10}]}]` + "\n")); err == nil {
+		t.Error("vars: setMetric parsed without error")
+	}
+}
+
 // The BM4X lab failure (#662): the rendered bm4x templates without
 // provision_gateway must pass the GoBGP config check after the netplan
 // merge, because the L3VNI selects Type-5 only. Chains the real parse,

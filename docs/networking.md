@@ -147,6 +147,10 @@ same resolution:
 - `neighbor X allowas-in [N]` (native `allowASIn`, FRR's default N is 3)
   accepts paths with the own AS up to N times. GoBGP has one count per
   session, so a session uses the highest count of its families.
+- `neighbor X route-map M in|out` in an address family (native `routeMaps`
+  with `family`, `in`, `out`) sets the route-maps of the session in that
+  family; the peer's value wins over its peer-group's. The route-maps come
+  from `frr.conf` or from `network.bgp.routeMaps` (`BGP_ROUTE_MAPS`).
 - `neighbor X bfd [profile P]` (native `bfd`, `bfdProfile`) runs BFD with
   the timers of the `bfd` / `profile P` block (native
   `network.bgp.bfdProfiles`, `BFD_PROFILES`). An unknown profile and unset
@@ -224,8 +228,10 @@ warning per statement: `soft-reconfiguration inbound`,
 
 Native config and parsed files merge like this: a native list
 (`network.bgp.sessions`) replaces the parsed list as a whole, with one info
-log line; there is no element-wise merge. `network.bgp.bfdProfiles` replaces
-the `frr.conf` BFD profiles the same way, also for the `frr.conf` sessions. A native scalar that is set
+log line; there is no element-wise merge. `network.bgp.bfdProfiles`,
+`network.bgp.routeMaps` and `network.bgp.communityLists` replace the
+`frr.conf` lists the same way, also for the `frr.conf` sessions. In the
+vars, an unknown field of a JSON list fails, like in the YAML config. A native scalar that is set
 (`network.bgp.multipathRelax`) overrides the parsed value; unset keeps it.
 
 A key that exists in earlier releases keeps its rule for CAPRF

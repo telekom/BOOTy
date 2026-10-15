@@ -1503,19 +1503,21 @@ func mergeInferredEVPNMode(dst, src *network.Config) {
 	}
 }
 
-// mergeBGPPolicy adds the frr.conf route-maps, community-lists and route
-// targets. Values from the vars win: a vars route-map or community-list of
-// the same name, and vpn_rt or explicit route target lists.
+// mergeBGPPolicy takes the frr.conf route-maps, community-lists and route
+// targets. A non-empty native list replaces the frr.conf list as a whole;
+// vpn_rt or explicit route target lists win over the frr.conf targets.
 func mergeBGPPolicy(dst, src *network.Config) {
-	for _, rm := range src.BGPRouteMaps {
-		if !slices.ContainsFunc(dst.BGPRouteMaps, func(d network.RouteMap) bool { return d.Name == rm.Name }) {
-			dst.BGPRouteMaps = append(dst.BGPRouteMaps, rm)
-		}
+	switch {
+	case len(dst.BGPRouteMaps) == 0:
+		dst.BGPRouteMaps = src.BGPRouteMaps
+	case len(src.BGPRouteMaps) > 0:
+		slog.Info("network.bgp.routeMaps replaces the frr.conf route-maps", "native", len(dst.BGPRouteMaps), "frr.conf", len(src.BGPRouteMaps))
 	}
-	for _, cl := range src.BGPCommunityLists {
-		if !slices.ContainsFunc(dst.BGPCommunityLists, func(d network.CommunityList) bool { return d.Name == cl.Name }) {
-			dst.BGPCommunityLists = append(dst.BGPCommunityLists, cl)
-		}
+	switch {
+	case len(dst.BGPCommunityLists) == 0:
+		dst.BGPCommunityLists = src.BGPCommunityLists
+	case len(src.BGPCommunityLists) > 0:
+		slog.Info("network.bgp.communityLists replaces the frr.conf community-lists", "native", len(dst.BGPCommunityLists), "frr.conf", len(src.BGPCommunityLists))
 	}
 	if dst.VPNRT == "" && len(dst.EVPNImportRTs) == 0 && len(dst.EVPNExportRTs) == 0 {
 		dst.EVPNImportRTs, dst.EVPNExportRTs = src.EVPNImportRTs, src.EVPNExportRTs
