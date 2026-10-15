@@ -5,6 +5,7 @@ package kvm
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
