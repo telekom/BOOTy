@@ -221,7 +221,9 @@ func (m *Manager) AddMirrorMember(ctx context.Context, array, member string) err
 // MirrorScan returns "mdadm --detail --scan" output for array, suitable for
 // mdadm.conf.
 func (m *Manager) MirrorScan(ctx context.Context, array string) (string, error) {
-	out, err := m.cmd.Run(ctx, "mdadm", "--detail", "--scan", array)
+	// mdadm's --scan form accepts no array operand; filter the returned ARRAY
+	// records at the caller.
+	out, err := m.cmd.Run(ctx, "mdadm", "--detail", "--scan")
 	if err != nil {
 		return "", fmt.Errorf("mdadm detail scan %s: %s: %w", array, string(out), err)
 	}
