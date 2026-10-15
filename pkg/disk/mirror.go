@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -60,7 +61,7 @@ func (m *Manager) DetectMirrorPair(_ context.Context, minSizeGB int) (first, sec
 			}
 			// sgdisk --replicate keeps LBA values, so both disks need the
 			// same logical sector size.
-			if b.device == a.device || b.sectorBytes != a.sectorBytes {
+			if b.device == a.device || b.sectorBytes != a.sectorBytes || identitiesOverlap(a.identities, b.identities) {
 				continue
 			}
 			slog.Info("selected mirror pair", "disk1", a.path, "disk2", b.path, "sizeBytes", a.bytes)
@@ -73,6 +74,7 @@ func (m *Manager) DetectMirrorPair(_ context.Context, minSizeGB int) (first, sec
 type mirrorCandidate struct {
 	path        string
 	device      string
+	identities  []string
 	bytes       int64
 	sectorBytes string
 }
@@ -97,7 +99,7 @@ func (m *Manager) mirrorCandidates(minSizeGB int) ([]mirrorCandidate, error) {
 			continue
 		}
 		candidates = append(candidates, mirrorCandidate{
-			path: "/dev/" + name, device: m.physicalDevice(name), bytes: size, sectorBytes: m.logicalBlockSize(name),
+			path: "/dev/" + name, device: m.physicalDevice(name), identities: m.diskIdentities(name), bytes: size, sectorBytes: m.logicalBlockSize(name),
 		})
 	}
 	return candidates, nil
@@ -114,6 +116,49 @@ func (m *Manager) logicalBlockSize(name string) string {
 }
 
 var nvmeNamespaceRE = regexp.MustCompile(`^(nvme\d+)n\d+$`)
+
+func identitiesOverlap(a, b []string) bool {
+	seen := make(map[string]struct{}, len(a))
+	for _, id := range a {
+		seen[id] = struct{}{}
+	}
+	for _, id := range b {
+		if _, ok := seen[id]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// diskIdentities returns every stable identifier reported for a disk. A
+// multipath device can expose different serial and WWID values through
+// different paths; any shared identifier means the paths are one physical LUN.
+func (m *Manager) diskIdentities(name string) []string {
+	var ids []string
+	for _, source := range []struct {
+		path string
+		vpd  bool
+	}{
+		{filepath.Join(m.sysfsRoot, "block", name, "device", "serial"), false},
+		{filepath.Join(m.sysfsRoot, "block", name, "serial"), false},
+		{filepath.Join(m.sysfsRoot, "block", name, "device", "wwid"), false},
+		{filepath.Join(m.sysfsRoot, "block", name, "device", "vpd_pg80"), true},
+		{filepath.Join(m.sysfsRoot, "block", name, "device", "vpd_pg83"), true},
+	} {
+		data, err := os.ReadFile(source.path)
+		if err != nil {
+			continue
+		}
+		id := printableIdentifier(data)
+		if source.vpd {
+			id = printableSCSIVPDIdentifier(data)
+		}
+		if id != "" && !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
 
 // physicalDevice returns an identity of the physical device behind disk name:
 // the serial number or WWID, else the NVMe controller for a namespace, else
@@ -190,7 +235,13 @@ func (m *Manager) MirrorActive(ctx context.Context, array string) (bool, error) 
 		return false, nil
 	}
 	if strings.Contains(string(out), "does not appear to be active") {
-		return false, nil
+		if assembleOut, assembleErr := m.cmd.Run(ctx, "mdadm", "--assemble", "--scan"); assembleErr != nil {
+			return false, fmt.Errorf("mdadm assemble %s: %s: %w", array, strings.TrimSpace(string(assembleOut)), assembleErr)
+		}
+		if _, detailErr := m.cmd.Run(ctx, "mdadm", "--detail", array); detailErr != nil {
+			return false, fmt.Errorf("mdadm array %s remains inactive after assemble: %w", array, detailErr)
+		}
+		return true, nil
 	}
 	return false, fmt.Errorf("mdadm detail %s: %s: %w", array, strings.TrimSpace(string(out)), err)
 }

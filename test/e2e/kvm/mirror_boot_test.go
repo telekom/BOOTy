@@ -167,7 +167,7 @@ func runMirrorFailover(t *testing.T, kernel, initramfs string, qemuArgs func(dis
 func mirrorQEMUBaseArgs(firmware []string, disks ...string) []string {
 	args := []string{
 		"-machine", "q35,accel=kvm:tcg",
-		"-cpu", "max",
+		"-cpu", mirrorQEMUCPUModel(),
 		"-m", "2048",
 		"-smp", "2",
 		"-nographic",
@@ -178,6 +178,16 @@ func mirrorQEMUBaseArgs(firmware []string, disks ...string) []string {
 		args = append(args, "-drive", fmt.Sprintf("file=%s,format=qcow2,if=virtio", d))
 	}
 	return append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)
+}
+
+// mirrorQEMUCPUModel avoids asking KVM to emulate the synthetic "max" CPU.
+// TCG still uses "max" when /dev/kvm is unavailable, preserving portability
+// on developer hosts and non-KVM CI runners.
+func mirrorQEMUCPUModel() string {
+	if _, err := os.Stat("/dev/kvm"); err == nil {
+		return "host"
+	}
+	return "max"
 }
 
 func runMirrorQEMU(t *testing.T, phase string, args []string, timeout time.Duration) []byte {

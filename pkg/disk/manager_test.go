@@ -16,8 +16,9 @@ import (
 
 // mockCommander records calls and returns preset results.
 type mockCommander struct {
-	calls   []mockCall
-	results map[string]mockResult
+	calls     []mockCall
+	results   map[string]mockResult
+	sequences map[string][]mockResult
 }
 
 type mockCall struct {
@@ -31,7 +32,7 @@ type mockResult struct {
 }
 
 func newMockCommander() *mockCommander {
-	return &mockCommander{results: make(map[string]mockResult)}
+	return &mockCommander{results: make(map[string]mockResult), sequences: make(map[string][]mockResult)}
 }
 
 // FakeDisks: this commander changes no real disk (disk.FakeDisks).
@@ -43,6 +44,11 @@ func (m *mockCommander) Run(_ context.Context, name string, args ...string) ([]b
 	if len(args) > 0 {
 		key = name + " " + args[0]
 	}
+	if sequence := m.sequences[key]; len(sequence) > 0 {
+		r := sequence[0]
+		m.sequences[key] = sequence[1:]
+		return r.output, r.err
+	}
 	if r, ok := m.results[key]; ok {
 		return r.output, r.err
 	}
@@ -52,6 +58,10 @@ func (m *mockCommander) Run(_ context.Context, name string, args ...string) ([]b
 
 func (m *mockCommander) setResult(key string, output []byte, err error) {
 	m.results[key] = mockResult{output: output, err: err}
+}
+
+func (m *mockCommander) setSequence(key string, results ...mockResult) {
+	m.sequences[key] = results
 }
 
 func hasDiskCommandCall(calls []mockCall, name string, args ...string) bool {
