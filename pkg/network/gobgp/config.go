@@ -348,8 +348,13 @@ func validateSessions(sessions []network.BGPSession) error {
 		if !s.Interface && net.ParseIP(s.Name) == nil {
 			return fmt.Errorf("BGP neighbor %q is not an address", s.Name)
 		}
-		if s.HoldTime != 0 && s.HoldTime < 3 {
-			return fmt.Errorf("BGP neighbor %s: hold time %d must be 0 or >= 3", s.Name, s.HoldTime)
+		if s.HoldTime == 0 || s.KeepaliveTime == 0 {
+			// FRR "timers 0 0" disables keepalives and the hold timer;
+			// GoBGP would replace 0 with 30/90 instead.
+			return fmt.Errorf("BGP neighbor %s: timers %d %d: 0 is not supported", s.Name, s.KeepaliveTime, s.HoldTime)
+		}
+		if s.HoldTime < 3 {
+			return fmt.Errorf("BGP neighbor %s: hold time %d must be at least 3", s.Name, s.HoldTime)
 		}
 		if !s.IPv4Unicast && !s.IPv6Unicast && !s.L2VPNEVPN {
 			return fmt.Errorf("BGP neighbor %s has no activated address family", s.Name)

@@ -81,9 +81,8 @@ func ParseFRRConfigBytesWith(data []byte, name string, strict bool) (*FRRParams,
 	if err != nil {
 		return nil, fmt.Errorf("frr config: %w", err)
 	}
-	for i := range sessions {
-		params.Sessions = append(params.Sessions, toBGPSession(&sessions[i]))
-	}
+	params.Sessions = BGPSessions(sessions)
+	warnUnapplied(model)
 	for _, v := range model.VRFVNIs {
 		if !slices.Contains(params.L3VNIs, v.VNI) {
 			params.L3VNIs = append(params.L3VNIs, v.VNI)
@@ -131,6 +130,16 @@ func addNumberedPeer(params *FRRParams, name string) {
 	}
 }
 
+// BGPSessions converts resolved FRR sessions (from frr.conf or from the
+// native network.bgp.sessions) into the network stack sessions.
+func BGPSessions(sessions []frrconf.Session) []network.BGPSession {
+	out := make([]network.BGPSession, 0, len(sessions))
+	for i := range sessions {
+		out = append(out, toBGPSession(&sessions[i]))
+	}
+	return out
+}
+
 func toBGPSession(s *frrconf.Session) network.BGPSession {
 	out := network.BGPSession{
 		Name:          s.Name,
@@ -151,4 +160,38 @@ func toBGPSession(s *frrconf.Session) network.BGPSession {
 		out.LocalASN = s.LocalAS.ASN
 	}
 	return out
+}
+
+// warnUnapplied logs each parsed statement that GoBGP mode does not apply
+// yet, so it is not dropped silently.
+func warnUnapplied(model *frrconf.Config) {
+	warn := func(line int, stmt string, args ...any) {
+		slog.Warn("frr.conf statement parsed but not applied yet", append([]any{"line", line, "statement", stmt}, args...)...)
+	}
+	for i := range model.Routers {
+		r := &model.Routers[i]
+		if r.EBGPRequiresPolicy != nil {
+			warn(r.Line, "[no] bgp ebgp-requires-policy", "router", r.ASN)
+		}
+		if r.SuppressDuplicates != nil {
+			warn(r.Line, "[no] bgp suppress-duplicates", "router", r.ASN)
+		}
+		if r.MultipathRelax {
+			warn(r.Line, "bgp bestpath as-path multipath-relax", "router", r.ASN)
+		}
+		for j := range r.AddressFamilies {
+			af := &r.AddressFamilies[j]
+			for _, n := range af.Neighbors {
+				if n.AllowASIn > 0 {
+					warn(af.Line, "allowas-in", "neighbor", n.Name, "family", af.AFI+" "+af.SAFI)
+				}
+				if n.RouteMapIn != "" || n.RouteMapOut != "" {
+					warn(af.Line, "route-map", "neighbor", n.Name, "family", af.AFI+" "+af.SAFI, "in", n.RouteMapIn, "out", n.RouteMapOut)
+				}
+				if n.SoftReconfigInbound {
+					warn(af.Line, "soft-reconfiguration inbound", "neighbor", n.Name, "family", af.AFI+" "+af.SAFI)
+				}
+			}
+		}
+	}
 }

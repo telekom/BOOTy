@@ -3,6 +3,7 @@ package netplan
 import (
 	"bytes"
 	"log/slog"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -359,5 +360,27 @@ func TestParseFRRConfigBytesWithLenientWarns(t *testing.T) {
 	}
 	if _, err := ParseFRRConfigBytesWith([]byte("router bgp 65000\n maximum-paths 8\n"), "/deploy/frr.conf", true); err == nil {
 		t.Error("strict mode accepted maximum-paths")
+	}
+}
+
+// Statements GoBGP mode parses but does not apply yet are logged, one line
+// per statement, not dropped silently.
+func TestParseFRRConfigWarnsUnapplied(t *testing.T) {
+	data, err := os.ReadFile("../frrconf/testdata/bm4x/two-uplinks/frr.conf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	if _, err := ParseFRRConfigBytes(data); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, stmt := range []string{"allowas-in", "route-map", "soft-reconfiguration inbound", "[no] bgp ebgp-requires-policy", "[no] bgp suppress-duplicates", "bgp bestpath as-path multipath-relax"} {
+		if !strings.Contains(out, `statement="`+stmt+`"`) && !strings.Contains(out, "statement="+stmt+" ") {
+			t.Errorf("no warning for %q in:\n%s", stmt, out)
+		}
 	}
 }

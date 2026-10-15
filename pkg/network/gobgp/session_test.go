@@ -48,17 +48,29 @@ func TestBuildSessionPeer(t *testing.T) {
 }
 
 func TestValidateSessions(t *testing.T) {
-	ok := network.BGPSession{Name: "192.0.2.1", HoldTime: 9, IPv4Unicast: true}
+	ok := network.BGPSession{Name: "192.0.2.1", KeepaliveTime: 3, HoldTime: 9, IPv4Unicast: true}
 	if err := validateSessions([]network.BGPSession{ok}); err != nil {
 		t.Fatalf("validateSessions() = %v", err)
 	}
 	for name, s := range map[string]network.BGPSession{
-		"bad address": {Name: "leaf", HoldTime: 9, IPv4Unicast: true},
-		"hold 2":      {Name: "192.0.2.1", HoldTime: 2, IPv4Unicast: true},
-		"no family":   {Name: "192.0.2.1", HoldTime: 9},
+		"bad address": {Name: "leaf", KeepaliveTime: 3, HoldTime: 9, IPv4Unicast: true},
+		"hold 2":      {Name: "192.0.2.1", KeepaliveTime: 3, HoldTime: 2, IPv4Unicast: true},
+		"no family":   {Name: "192.0.2.1", KeepaliveTime: 3, HoldTime: 9},
+		// FRR "timers 0 0" disables keepalives; GoBGP would use 30/90.
+		"timers 0 0":  {Name: "192.0.2.1", IPv4Unicast: true},
+		"keepalive 0": {Name: "192.0.2.1", HoldTime: 9, IPv4Unicast: true},
 	} {
 		if err := validateSessions([]network.BGPSession{s}); err == nil {
 			t.Errorf("%s: validateSessions() = nil, want an error", name)
 		}
+	}
+}
+
+// An iBGP session uses the router AS even when the session has no remote
+// AS of its own (native or older inputs).
+func TestBuildSessionPeerInternalWithoutRemoteASN(t *testing.T) {
+	p := buildSessionPeer(&Config{ASN: 65000}, &network.BGPSession{Name: "192.0.2.1", Internal: true, IPv4Unicast: true}, "192.0.2.1")
+	if p.Conf.PeerAsn != 65000 {
+		t.Fatalf("PeerAsn = %d, want the router AS 65000", p.Conf.PeerAsn)
 	}
 }

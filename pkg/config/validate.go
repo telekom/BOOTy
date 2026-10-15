@@ -205,7 +205,7 @@ func (c *Config) validateBGP() []string {
 	bfdTransmit := c.Network.BGP.BFDTransmitMS
 	bfdReceive := c.Network.BGP.BFDReceiveMS
 
-	var errs []string
+	errs := c.validateSessions()
 	if n := c.Network.WaitMaxAttempts; strings.EqualFold(strings.TrimSpace(c.Network.WaitMode), NetworkWaitRounds) && n != nil && (*n < 0 || *n > MaxNetworkWaitAttempts) {
 		errs = append(errs, fmt.Sprintf("network.waitMaxAttempts (NETWORK_WAIT_MAX_ATTEMPTS) must be 0-%d", MaxNetworkWaitAttempts))
 	}
@@ -1138,6 +1138,30 @@ func validateTokenRenewal(t *TransportConfig) []string {
 	}
 	if t.TokenRenewRetries > MaxTokenRenewRetries {
 		errs = append(errs, fmt.Sprintf("transport.tokenRenewRetries (TOKEN_RENEW_RETRIES) must be at most %d", MaxTokenRenewRetries))
+	}
+	return errs
+}
+
+// validateSessions checks network.bgp.sessions with the frr.conf rules.
+func (c *Config) validateSessions() []string {
+	if !c.Network.BGP.HasSessions() {
+		return nil
+	}
+	sessions, err := c.Network.BGP.ResolveSessions()
+	if err != nil {
+		return []string{err.Error()}
+	}
+	var errs []string
+	for i := range sessions {
+		s := &sessions[i]
+		switch {
+		case s.KeepaliveTime == 0 || s.HoldTime == 0:
+			errs = append(errs, fmt.Sprintf("network.bgp.sessions %s: timers %d %d: 0 is not supported", s.Name, s.KeepaliveTime, s.HoldTime))
+		case s.HoldTime < 3:
+			errs = append(errs, fmt.Sprintf("network.bgp.sessions %s: hold time %d must be at least 3", s.Name, s.HoldTime))
+		case len(s.Families) == 0:
+			errs = append(errs, fmt.Sprintf("network.bgp.sessions %s: no address family", s.Name))
+		}
 	}
 	return errs
 }

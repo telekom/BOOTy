@@ -437,7 +437,7 @@ func TestParseLenientEVPNNode(t *testing.T) {
 	for _, stmt := range []string{
 		"bgp graceful-restart", "redistribute connected", "maximum-paths 8",
 		"aggregate-address 192.0.2.0/24", "neighbor leaf send-community",
-		"neighbor leaf prefix-list PL in", "neighbor leaf maximum-prefix 100",
+		"neighbor leaf prefix-list PL in",
 	} {
 		t.Run(stmt, func(t *testing.T) {
 			cfg, err := ParseWith([]byte("router bgp 65000\n neighbor leaf peer-group\n neighbor leaf remote-as external\n address-family l2vpn evpn\n  "+stmt+"\n  advertise-all-vni\n"), Options{Lenient: true, Warn: func(*ParseError) {}})
@@ -490,6 +490,21 @@ func TestParseLenientVRFPolicyOpener(t *testing.T) {
 // parser there.
 func TestParseLenientEVPNNodeKnown(t *testing.T) {
 	for _, stmt := range []string{"neighbor leaf next-hop-self", "advertise-svi-ip", "advertise-pip ip 192.0.2.1"} {
+		cfg, err := ParseWith([]byte("router bgp 65000\n neighbor leaf peer-group\n neighbor leaf remote-as external\n address-family l2vpn evpn\n  "+stmt+"\n  advertise-all-vni\n"), Options{Lenient: true, Warn: func(*ParseError) {}})
+		if err != nil {
+			t.Fatalf("%q: ParseWith() = %v", stmt, err)
+		}
+		if !cfg.Routers[0].AddressFamilies[0].AdvertiseAllVNI {
+			t.Errorf("%q: advertise-all-vni not applied to l2vpn evpn", stmt)
+		}
+	}
+}
+
+// In the current FRR (10.3), maximum-prefix and soo are neighbor commands
+// of the l2vpn evpn address-family too (FRR 8.2.2 had them only in the
+// unicast families), so skipping them keeps the parser there.
+func TestParseLenientEVPNNodeCurrentFRR(t *testing.T) {
+	for _, stmt := range []string{"neighbor leaf maximum-prefix 100", "neighbor leaf soo 65000:1", "mac-vrf soo 65000:1"} {
 		cfg, err := ParseWith([]byte("router bgp 65000\n neighbor leaf peer-group\n neighbor leaf remote-as external\n address-family l2vpn evpn\n  "+stmt+"\n  advertise-all-vni\n"), Options{Lenient: true, Warn: func(*ParseError) {}})
 		if err != nil {
 			t.Fatalf("%q: ParseWith() = %v", stmt, err)

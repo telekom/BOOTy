@@ -41,7 +41,7 @@ type Session struct {
 }
 
 // ProfileTimers returns keepalive, hold and connect-retry defaults of an
-// "frr defaults" profile (FRR 8.2.2 bgpd/bgp_vty.c, doc/user/bgp.rst).
+// "frr defaults" profile (bgpd/bgp_vty.c, doc/user/bgp.rst; the same in FRR 8.2.2 and 10.3).
 // Without the line the daemon profile applies. The legacy ramdisk daemons
 // file sets frr_profile="datacenter", so that is the default here.
 func ProfileTimers(p Profile) (keepalive, hold, connect uint32) {
@@ -119,6 +119,12 @@ func (c *Config) session(r *Router, n *Neighbor) (Session, error) {
 // "external" is any other AS.
 func setRemoteAS(s *Session, n, g *Neighbor, ownASN uint32) error {
 	ras := n.RemoteAS
+	if ras != nil && g != nil && g.RemoteAS != nil && *ras != *g.RemoteAS {
+		// FRR rejects a member remote-as that differs from the
+		// peer-group's (BGP_ERR_PEER_GROUP_MEMBER,
+		// BGP_ERR_PEER_GROUP_AS_MISMATCH). The same value is harmless.
+		return fmt.Errorf("remote-as on a member of peer-group %s, which has its own remote-as", g.Name)
+	}
 	if ras == nil && g != nil {
 		ras = g.RemoteAS
 	}
@@ -152,6 +158,10 @@ func checkLocalAS(s *Session, ownASN uint32) error {
 	}
 	if la.ASN == ownASN {
 		return fmt.Errorf("local-as %d is the router AS", la.ASN)
+	}
+	if la.ASN == s.RemoteASN {
+		// FRR: BGP_ERR_CANNOT_HAVE_LOCAL_AS_SAME_AS_REMOTE_AS.
+		return fmt.Errorf("local-as %d is the remote AS", la.ASN)
 	}
 	return nil
 }

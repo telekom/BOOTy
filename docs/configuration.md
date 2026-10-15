@@ -264,15 +264,18 @@ that FRR also reads say so.
 | `vpn_rt` | (unset) | `ASN:value` | Explicit EVPN route target. FRR also reads it with `dcgw_ips`. |
 | `EVPN_L2_ENABLED` | `false` | boolean | Originate and handle Type-2 and Type-3 routes. Excludes `EVPN_TYPE5_ONLY`. |
 | `EVPN_TYPE5_ONLY` | `false` | boolean | Direct Type-5 routing without an L2 gateway. Excludes `EVPN_L2_ENABLED`. Also selected when the provisioner `frr.conf` maps the provision VNI to a VRF (L3VNI) and neither `provision_gateway` nor `EVPN_L2_ENABLED=true` is set. |
-| `BGP_PEER_MODE` | `unnumbered` | `unnumbered`, `dual`, `numbered` | Peering mode. |
-| `BGP_INTERFACES` | all physical NICs | interface names separated by commas | Interfaces for unnumbered and dual peers. |
-| `BGP_NEIGHBORS` | (unset) | IP addresses separated by commas | Numbered peers. Required for `dual` and `numbered`. |
-| `BGP_REMOTE_ASN` | `0` | uint32 | Remote ASN of numbered peers. `0` means iBGP. Alias: `bgp_remote_asn`. |
+| `BGP_SESSIONS` | (unset) | JSON list | GoBGP sessions in the native form of the `frr.conf` neighbors (YAML `network.bgp.sessions`): `name`, `interface`, `vrf`, `peerGroup`, `remoteAS` (number, `internal`, `external`), `localAS` with `localASMode` (`no-prepend-replace-as`, the only mode), `keepalive`, `hold`, `connectRetry`, `families` (`ipv4-unicast`, `ipv6-unicast`, `l2vpn-evpn`), `bfd`, `bfdProfile`. Resolved with the `frr.conf` rules: unset fields come from the peer-group, then from `BGP_DEFAULTS`. A non-empty list replaces the `frr.conf` sessions as a whole. Validation rejects a missing remote AS, other local-as modes, local-as equal to the router or remote AS, a member remote AS that differs from its group's, timers 0, hold below 3 and a session without a family. See [Networking](networking.md#bgp-sessions). |
+| `BGP_PEER_GROUPS` | (unset) | JSON list | Peer-groups of `BGP_SESSIONS`, same fields (YAML `network.bgp.peerGroups`). |
+| `BGP_DEFAULTS` | `datacenter` | `traditional`, `datacenter` | Timer profile of `BGP_SESSIONS`, like `frr defaults`: traditional 60/180/120 s, datacenter 3/9/10 s (keepalive, hold, connect retry). YAML `network.bgp.defaults`. |
+| `BGP_PEER_MODE` | `unnumbered` | `unnumbered`, `dual`, `numbered` | Peering mode. With BGP sessions (from `frr.conf` or `BGP_SESSIONS`) GoBGP mode ignores it and logs a warning. |
+| `BGP_INTERFACES` | all physical NICs | interface names separated by commas | Interfaces for unnumbered and dual peers. With BGP sessions (from `frr.conf` or `BGP_SESSIONS`) GoBGP mode ignores it and logs a warning. |
+| `BGP_NEIGHBORS` | (unset) | IP addresses separated by commas | Numbered peers. Required for `dual` and `numbered`. With BGP sessions (from `frr.conf` or `BGP_SESSIONS`) GoBGP mode ignores it and logs a warning. |
+| `BGP_REMOTE_ASN` | `0` | uint32 | Remote ASN of numbered peers. `0` means iBGP. Alias: `bgp_remote_asn`. With BGP sessions (from `frr.conf` or `BGP_SESSIONS`) GoBGP mode ignores it and logs a warning. |
 | `BGP_UNDERLAY_AF` | `ipv4` | `ipv4` | Underlay address family. Validation rejects other values. |
 | `BGP_OVERLAY_TYPE` | `evpn-vxlan` | `evpn-vxlan`, `none` | Overlay type. Validation also accepts `l3vpn`, but the GoBGP setup rejects it as not implemented. |
 | `BGP_MIN_PEERS` | `1` | integer | Number of established peers that make the underlay ready. `0` means 1. |
-| `BGP_KEEPALIVE` | `0` | uint32, seconds | Keepalive timer. `0` gives 3 s in GoBGP. FRR uses it only together with `BGP_HOLD`. Alias: `bgp_keepalive`. |
-| `BGP_HOLD` | `0` | uint32, seconds | Hold timer. `0` gives 9 s in GoBGP. FRR uses it only together with `BGP_KEEPALIVE`. Alias: `bgp_hold`. |
+| `BGP_KEEPALIVE` | `0` | uint32, seconds | Keepalive timer. `0` gives 3 s in GoBGP. FRR uses it only together with `BGP_HOLD`. Alias: `bgp_keepalive`. With BGP sessions (from `frr.conf` or `BGP_SESSIONS`) GoBGP mode ignores it and logs a warning. |
+| `BGP_HOLD` | `0` | uint32, seconds | Hold timer. `0` gives 9 s in GoBGP. FRR uses it only together with `BGP_KEEPALIVE`. Alias: `bgp_hold`. With BGP sessions (from `frr.conf` or `BGP_SESSIONS`) GoBGP mode ignores it and logs a warning. |
 | `BGP_AUTH_PASSWORD` | (unset) | string without white space | TCP-MD5 password for all peers. FRR also reads it. |
 | `VRF_NAME` | (unset) | VRF name | Underlay VRF. Empty means no VRF. FRR renders `router bgp ASN vrf NAME`. Alias: `vrf_name`. |
 | `VRF_TABLE_ID` | `1000` | uint32 | Routing table of `VRF_NAME`. `0` and `1` become `1000`. Alias: `vrf_table_id`. |
