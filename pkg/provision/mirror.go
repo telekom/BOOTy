@@ -495,11 +495,6 @@ func writeMdadmConf(root, content string) error {
 	return nil
 }
 
-func fileExists(path string) bool {
-	_, err := os.Lstat(path)
-	return err == nil
-}
-
 const mirrorGrubConfig = "# Written by BOOTy: the root filesystem is a RAID1 array. Booting by the\n" +
 	"# PARTUUID of one member would bypass the array.\nGRUB_FORCE_PARTUUID=\n"
 
