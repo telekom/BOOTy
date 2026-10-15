@@ -79,6 +79,7 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
       -X github.com/telekom/BOOTy/pkg/buildinfo.commit=${BOOTY_BUILD} \
       -X github.com/telekom/BOOTy/pkg/buildinfo.flavor=${BOOTY_FLAVOR}" -o init
 RUN upx -9 init
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o esp-sync ./cmd/booty-esp-sync
 
 # Build a removable UEFI fallback loader that BOOTy can copy into a target ESP.
 # The embedded config loads EFI/BOOT/grub.cfg from the ESP; BOOTy writes that
@@ -303,6 +304,8 @@ COPY --from=lvm /LVM2.2.03.27/tools/lvm sbin/
 RUN for cmd in pvcreate vgs vgcreate lvcreate; do ln -sf lvm "sbin/${cmd}"; done
 COPY --from=sfdisk /util-linux/sfdisk.static bin/sfdisk
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
+RUN mkdir -p usr/lib/booty
+COPY --from=dev /go/src/github.com/telekom/BOOTy/esp-sync usr/lib/booty/booty-esp-sync
 COPY --from=efi-fallback /out/ usr/lib/booty/efi/
 
 # FRR binaries for EVPN networking
@@ -453,6 +456,8 @@ RUN cp /usr/bin/growpart bin/growpart
 
 # BOOTy init binary (static, CGO-enabled)
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
+RUN mkdir -p usr/lib/booty
+COPY --from=dev /go/src/github.com/telekom/BOOTy/esp-sync usr/lib/booty/booty-esp-sync
 
 # Minimal networking tools (DHCP mode — no FRR, no BGP)
 COPY --from=tools /sbin/ip bin/ip
@@ -526,6 +531,8 @@ COPY --from=busybox /build/initramfs/bin/growpart bin/growpart
 
 # BOOTy init binary (with GoBGP compiled in)
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
+RUN mkdir -p usr/lib/booty
+COPY --from=dev /go/src/github.com/telekom/BOOTy/esp-sync usr/lib/booty/booty-esp-sync
 COPY --from=efi-fallback /out/ usr/lib/booty/efi/
 
 # LVM + sfdisk for disk management

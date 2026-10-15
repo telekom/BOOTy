@@ -2954,22 +2954,37 @@ func (o *Orchestrator) configureGRUB(ctx context.Context) error {
 }
 
 func (o *Orchestrator) installEFIFallbackLoader(ctx context.Context) error {
-	if !o.isABImageMode() {
-		return nil
-	}
-	if o.cfg.Provision.AB.PreserveExisting {
+	if o.isABImageMode() && !o.cfg.Provision.AB.PreserveExisting {
+		if strings.TrimSpace(o.bootPartition) == "" {
+			o.log.Info("skipping EFI fallback loader installation; no boot partition detected")
+		} else {
+			mountpoint := bootEFIMountPoint()
+			if !isMountPoint(mountpoint) {
+				return fmt.Errorf("cannot install EFI fallback loader: boot partition %s is not mounted at %s", o.bootPartition, mountpoint)
+			}
+			if err := o.config.InstallEFIFallbackLoader(ctx, o.targetDisk, o.rootPartition); err != nil {
+				return err
+			}
+		}
+	} else if o.isABImageMode() {
 		o.log.Info("A/B preserveExisting enabled, preserving existing EFI fallback loader")
+	}
+	if o.mirrorDisk == "" || strings.TrimSpace(o.bootPartition) == "" {
 		return nil
 	}
-	if strings.TrimSpace(o.bootPartition) == "" {
-		o.log.Info("skipping EFI fallback loader installation; no boot partition detected")
-		return nil
+	sourceUUID, err := o.disk.Run(ctx, "blkid", "-s", "PARTUUID", "-o", "value", o.bootPartition)
+	if err != nil {
+		return fmt.Errorf("read source ESP PARTUUID: %w", err)
 	}
-	mountpoint := bootEFIMountPoint()
-	if !isMountPoint(mountpoint) {
-		return fmt.Errorf("cannot install EFI fallback loader: boot partition %s is not mounted at %s", o.bootPartition, mountpoint)
+	mirrorESP, err := o.mirrorESP()
+	if err != nil {
+		return err
 	}
-	return o.config.InstallEFIFallbackLoader(ctx, o.targetDisk, o.rootPartition)
+	destinationUUID, err := o.disk.Run(ctx, "blkid", "-s", "PARTUUID", "-o", "value", mirrorESP)
+	if err != nil {
+		return fmt.Errorf("read mirror ESP PARTUUID: %w", err)
+	}
+	return o.config.InstallESPSync(string(sourceUUID), string(destinationUUID))
 }
 
 func (o *Orchestrator) injectCloudInit(_ context.Context) error {

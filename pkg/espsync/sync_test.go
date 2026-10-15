@@ -1,0 +1,62 @@
+//go:build linux
+
+package espsync
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestCopyTreeMirrorsNestedFilesAndDeletesStaleEntries(t *testing.T) {
+	source, destination := t.TempDir(), t.TempDir()
+	if err := os.MkdirAll(filepath.Join(source, "EFI", "Vendor", "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "EFI", "Vendor", "nested", "loader.efi"), []byte("v2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(destination, "stale"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CopyTree(source, destination); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(destination, "EFI", "Vendor", "nested", "loader.efi"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "v2" {
+		t.Fatalf("got %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(destination, "stale")); !os.IsNotExist(err) {
+		t.Fatalf("stale path remains: %v", err)
+	}
+}
+
+func TestCopyTreeRejectsSameDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := CopyTree(dir, dir); err == nil {
+		t.Fatal("expected identity rejection")
+	}
+}
+
+func TestCopyTreePreservesSymlinks(t *testing.T) {
+	source, destination := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "loader"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("loader", filepath.Join(source, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := CopyTree(source, destination); err != nil {
+		t.Fatal(err)
+	}
+	target, err := os.Readlink(filepath.Join(destination, "link"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target != "loader" {
+		t.Fatalf("link target %q", target)
+	}
+}

@@ -643,6 +643,80 @@ func (c *Configurator) InstallEFIFallbackLoader(ctx context.Context, diskDev, ro
 	return nil
 }
 
+const espSyncService = `[Unit]
+Description=Synchronize the mirrored EFI system partition
+After=local-fs.target
+ConditionPathIsMountPoint=/boot/efi
+
+[Service]
+Type=simple
+ExecStart=/usr/local/libexec/booty-esp-sync --source /boot/efi --source-partuuid %s --destination /dev/disk/by-partuuid/%s --lock /run/lock/booty-esp-sync.lock
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+`
+
+// InstallESPSync installs the target-side synchronizer only for a mirrored
+// installation. PARTUUIDs are recorded so the service never guesses a peer
+// disk from filesystem UUIDs shared by both ESPs.
+func (c *Configurator) InstallESPSync(sourcePartUUID, destinationPartUUID string) error {
+	sourcePartUUID = strings.TrimSpace(sourcePartUUID)
+	destinationPartUUID = strings.TrimSpace(destinationPartUUID)
+	if sourcePartUUID == "" || destinationPartUUID == "" || sourcePartUUID == destinationPartUUID {
+		return fmt.Errorf("invalid mirrored ESP PARTUUIDs")
+	}
+	for name, value := range map[string]string{"source": sourcePartUUID, "destination": destinationPartUUID} {
+		for _, r := range value {
+			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F') || r == '-') {
+				return fmt.Errorf("invalid %s ESP PARTUUID %q", name, value)
+			}
+		}
+	}
+	asset := filepath.Join(ramdiskRoot, "usr", "lib", "booty", "booty-esp-sync")
+	if _, err := os.Stat(asset); err != nil {
+		return fmt.Errorf("ESP synchronizer asset %s: %w", asset, err)
+	}
+	const helper = "/usr/local/libexec/booty-esp-sync"
+	helperPath := filepath.Join(c.rootDir, strings.TrimPrefix(helper, "/"))
+	if err := ensureTargetParentWithinRoot(c.rootDir, filepath.Dir(helperPath)); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(helperPath), 0o755); err != nil {
+		return fmt.Errorf("create ESP synchronizer directory: %w", err)
+	}
+	if err := copyRegularFile(asset, helperPath, 0o755); err != nil {
+		return fmt.Errorf("install ESP synchronizer: %w", err)
+	}
+	configPath := filepath.Join(c.rootDir, "etc", "booty", "esp-sync.conf")
+	config := fmt.Sprintf("source_partuuid=%s\ndestination_partuuid=%s\n", sourcePartUUID, destinationPartUUID)
+	if err := writeTargetRootFile(c.rootDir, configPath, []byte(config)); err != nil {
+		return fmt.Errorf("write ESP synchronizer config: %w", err)
+	}
+	unitPath := filepath.Join(c.rootDir, "etc", "systemd", "system", "booty-esp-sync.service")
+	unit := fmt.Sprintf(espSyncService, sourcePartUUID, destinationPartUUID)
+	if err := writeTargetRootFile(c.rootDir, unitPath, []byte(unit)); err != nil {
+		return fmt.Errorf("write ESP synchronizer service: %w", err)
+	}
+	wants := filepath.Join(c.rootDir, "etc", "systemd", "system", "multi-user.target.wants")
+	if err := ensureTargetParentWithinRoot(c.rootDir, wants); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(wants, 0o755); err != nil {
+		return fmt.Errorf("create ESP synchronizer wants directory: %w", err)
+	}
+	link := filepath.Join(wants, "booty-esp-sync.service")
+	if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("replace ESP synchronizer enablement: %w", err)
+	}
+	if err := os.Symlink("../booty-esp-sync.service", link); err != nil {
+		return fmt.Errorf("enable ESP synchronizer: %w", err)
+	}
+	slog.Info("installed mirrored ESP synchronizer", "sourcePartUUID", sourcePartUUID, "destinationPartUUID", destinationPartUUID)
+	return nil
+}
+
 func (c *Configurator) installBundledEFIFallbackLoader(rootDev string) error {
 	loaderName, err := efiRemovableLoaderName(runtime.GOARCH)
 	if err != nil {
