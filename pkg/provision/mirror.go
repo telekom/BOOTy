@@ -440,12 +440,10 @@ const mirrorInitramfsCmd = "if ! command -v mdadm >/dev/null 2>&1; then " +
 	"else dracut --force --regenerate-all; fi"
 
 // mdadmConfHeader matches raid_save_mdadm_config of the CAPRF legacy
-// provisioner. The first AUTO match wins, so unlisted arrays with 1.x or IMSM
-// metadata still auto-assemble, as with legacy and without an AUTO line; only
-// other metadata types (0.90, DDF) are refused. The mirror arrays assemble
-// from their ARRAY lines regardless.
+// provisioner. Only the explicitly recorded mirror arrays may assemble;
+// foreign arrays must never be activated during boot.
 const mdadmConfHeader = "# mdadm.conf - written by BOOTy\n\nDEVICE partitions\nHOMEHOST <system>\nMAILADDR root\n\n" +
-	"AUTO +imsm +1.x -all\n\n"
+	"AUTO -all\n\n"
 
 // mdadmArrayLines returns the ARRAY line of array from mdadm --detail --scan
 // output, with the device named array. mdadm reports /dev/md/<name>; the

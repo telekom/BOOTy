@@ -420,7 +420,7 @@ func TestWriteMdadmConf(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			const content = "AUTO +imsm +1.x -all\nARRAY /dev/md2 UUID=new\n"
+			const content = "AUTO -all\nARRAY /dev/md2 UUID=new\n"
 			if err := writeMdadmConf(root, content); err != nil {
 				t.Fatalf("writeMdadmConf() error = %v", err)
 			}
