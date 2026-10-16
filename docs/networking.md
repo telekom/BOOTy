@@ -260,6 +260,9 @@ rule of every key:
 | `BGP_NEIGHBOR_VRF` | `router bgp N vrf X` | `network.bgp.neighborVRF` | session default |
 | `BGP_CONNECT_RETRY` | `neighbor X timers connect N` | `network.bgp.connectRetry` | session default |
 | `BGP_ALLOWAS_IN` | `neighbor X allowas-in N` | `network.bgp.allowASIn` | session default |
+| `BFD_PROFILES` | `frr.conf` `bfd` / `profile NAME` | `network.bgp.bfdProfiles` | list replaces, also for the `frr.conf` sessions |
+| `BFD_TRANSMIT_MS`, `BFD_RECEIVE_MS` | profile timers | `network.bgp.bfdTransmitMS`, `network.bgp.bfdReceiveMS` | native wins, for the sessions with BFD |
+| `BFD_DETECT_MULTIPLIER` | profile `detect-multiplier` | `network.bgp.bfdDetectMultiplier` | native wins, for the sessions with BFD |
 
 ### Strict input and the accepted grammar
 
