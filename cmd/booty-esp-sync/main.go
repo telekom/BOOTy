@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -45,7 +46,9 @@ func main() {
 
 func runOnce(source, sourcePartUUID, firstPartUUID, secondPartUUID, destination, mountpoint, lockPath, marker string) {
 	if firstPartUUID != "" {
-		if err := syncPair(source, firstPartUUID, secondPartUUID, mountpoint, lockPath, marker); err != nil {
+		pair := &pairSync{source: source, firstPartUUID: firstPartUUID, secondPartUUID: secondPartUUID,
+			mountpoint: mountpoint, lockPath: lockPath, marker: marker}
+		if err := pair.sync(); err != nil {
 			fatal(err)
 		}
 		return
@@ -72,14 +75,15 @@ func runOnce(source, sourcePartUUID, firstPartUUID, secondPartUUID, destination,
 
 func runService(source, sourcePartUUID, firstPartUUID, secondPartUUID, destination, mountpoint, lockPath, marker string) error {
 	if firstPartUUID != "" {
-		if err := syncPair(source, firstPartUUID, secondPartUUID, mountpoint, lockPath, marker); err != nil {
+		pair := &pairSync{source: source, firstPartUUID: firstPartUUID, secondPartUUID: secondPartUUID,
+			mountpoint: mountpoint, lockPath: lockPath, marker: marker}
+		if err := pair.sync(); err != nil {
 			return err
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 		defer stop()
-		return espsync.WatchFuncWithMarker(source, func() error {
-			return syncPair(source, firstPartUUID, secondPartUUID, mountpoint, lockPath, marker)
-		}, marker, ctx.Done())
+		// pair.sync writes the marker itself, only after a real copy.
+		return espsync.WatchFunc(source, pair.sync, ctx.Done())
 	}
 	mounted, err := mountDestination(destination, mountpoint)
 	if err != nil {
@@ -105,25 +109,52 @@ func runService(source, sourcePartUUID, firstPartUUID, secondPartUUID, destinati
 	return espsync.WatchWithMarker(source, target, lockPath, marker, ctx.Done())
 }
 
-func syncPair(source, firstPartUUID, secondPartUUID, mountpoint, lockPath, marker string) error {
-	return espsync.WithLock(lockPath, func() error {
-		destination, err := espsync.PeerDevice(source, firstPartUUID, secondPartUUID)
+// peerDevice resolves the other ESP of the mirrored pair; tests replace it.
+var peerDevice = espsync.PeerDevice
+
+// pairSync copies the mounted ESP to the other ESP of a mirrored pair.
+type pairSync struct {
+	source, firstPartUUID, secondPartUUID, mountpoint, lockPath, marker string
+	// degraded is true while the peer ESP is missing, so the degraded
+	// state is logged once and not on every change of the source.
+	degraded bool
+}
+
+// sync copies the source ESP to its peer. When the peer partition is missing,
+// for example after a boot from one disk of a degraded mirror, there is
+// nothing to synchronize: it logs that once and returns nil, so the service
+// keeps watching instead of exiting and restarting in a loop.
+func (p *pairSync) sync() error {
+	return espsync.WithLock(p.lockPath, func() error {
+		destination, err := peerDevice(p.source, p.firstPartUUID, p.secondPartUUID)
 		if err != nil {
 			return err
 		}
-		mounted, err := mountDestination(destination, mountpoint)
+		if _, err := os.Stat(destination); errors.Is(err, fs.ErrNotExist) {
+			if !p.degraded {
+				slog.Warn("peer EFI system partition is missing, the mirror is degraded; nothing to synchronize",
+					"source", p.source, "peer", destination)
+				p.degraded = true
+			}
+			return nil
+		}
+		if p.degraded {
+			slog.Info("peer EFI system partition is back", "peer", destination)
+			p.degraded = false
+		}
+		mounted, err := mountDestination(destination, p.mountpoint)
 		if err != nil {
 			return err
 		}
 		if mounted {
-			defer unmount(mountpoint)
+			defer unmount(p.mountpoint)
 		}
-		target := mountpointOrDestination(mounted, mountpoint, destination)
-		slog.Info("synchronizing EFI system partition", "source", source, "destination", target)
-		if err := espsync.CopyTree(source, target); err != nil {
+		target := mountpointOrDestination(mounted, p.mountpoint, destination)
+		slog.Info("synchronizing EFI system partition", "source", p.source, "destination", target)
+		if err := espsync.CopyTree(p.source, target); err != nil {
 			return err
 		}
-		return espsync.WriteMarker(marker)
+		return espsync.WriteMarker(p.marker)
 	})
 }
 
