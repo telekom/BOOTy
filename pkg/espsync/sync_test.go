@@ -96,3 +96,49 @@ func TestWriteMarkerUsesAtomicRename(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCopyTreeReplacesDestinationDirectoryWithFile(t *testing.T) {
+	source, destination := t.TempDir(), t.TempDir()
+	if err := os.MkdirAll(filepath.Join(source, "EFI", "BOOT"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "EFI", "BOOT", "loader"), []byte("file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(destination, "EFI", "BOOT", "loader"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := CopyTree(source, destination); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(destination, "EFI", "BOOT", "loader"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "file" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestCopyTreeReplacesDestinationDirectoryWithSymlink(t *testing.T) {
+	source, destination := t.TempDir(), t.TempDir()
+	if err := os.MkdirAll(filepath.Join(source, "EFI"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("target", filepath.Join(source, "EFI", "loader")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(destination, "EFI", "loader"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := CopyTree(source, destination); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.Readlink(filepath.Join(destination, "EFI", "loader"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "target" {
+		t.Fatalf("got %q", got)
+	}
+}

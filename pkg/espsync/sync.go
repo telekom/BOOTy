@@ -204,13 +204,18 @@ func pruneTree(destination, staged string) error {
 		} else if err != nil {
 			return err
 		}
-		if entry.IsDir() {
+		if entry.IsDir() && stagedEntryIsDir(stagedPath) {
 			if err := pruneTree(path, stagedPath); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+func stagedEntryIsDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func replacePath(destination, staged string) error {
