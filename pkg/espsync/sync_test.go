@@ -5,7 +5,9 @@ package espsync
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestCopyTreeMirrorsNestedFilesAndDeletesStaleEntries(t *testing.T) {
@@ -170,5 +172,77 @@ func TestCopyTreeStagesInsideDestinationFilesystem(t *testing.T) {
 	}
 	if string(got) != "cross-filesystem" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestCopyTreeCleansOwnedStagingAndSkipsSourceLeftovers(t *testing.T) {
+	source, destination := t.TempDir(), t.TempDir()
+	if err := os.MkdirAll(filepath.Join(source, "EFI", "BOOT"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "EFI", "BOOT", "bootx64.efi"), []byte("current"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(source, stagingPrefix+"leftover"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, stagingPrefix+"leftover", "ignored"), []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(destination, stagingPrefix+"crashed"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(destination, stagingPrefix+"crashed", "ignored"), []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CopyTree(source, destination); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(destination, stagingPrefix+"crashed")); !os.IsNotExist(err) {
+		t.Fatalf("owned stale staging remains: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(destination, stagingPrefix+"leftover")); !os.IsNotExist(err) {
+		t.Fatalf("source staging leaked into destination: %v", err)
+	}
+}
+
+func TestWithLockSerializesFullCallbackLifetime(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), "sync.lock")
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	secondEntered := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		if err := WithLock(lockPath, func() error {
+			close(firstEntered)
+			<-releaseFirst
+			return nil
+		}); err != nil {
+			t.Errorf("first lock: %v", err)
+		}
+	}()
+	<-firstEntered
+	go func() {
+		defer wg.Done()
+		if err := WithLock(lockPath, func() error {
+			close(secondEntered)
+			return nil
+		}); err != nil {
+			t.Errorf("second lock: %v", err)
+		}
+	}()
+	select {
+	case <-secondEntered:
+		t.Fatal("second callback entered before first callback released lock")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseFirst)
+	wg.Wait()
+	select {
+	case <-secondEntered:
+	case <-time.After(time.Second):
+		t.Fatal("second callback did not enter after first callback completed")
 	}
 }

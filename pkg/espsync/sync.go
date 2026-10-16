@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,6 +20,8 @@ import (
 
 const defaultDebounce = 750 * time.Millisecond
 
+const stagingPrefix = ".booty-esp-sync-staging-"
+
 // CopyTree makes destination an exact, safe copy of source. It stages every
 // regular file beside its final name and only removes stale destination paths
 // after the source walk succeeds.
@@ -27,21 +30,53 @@ func CopyTree(source, destination string) error {
 	if err != nil {
 		return err
 	}
+	if err := cleanStaging(destination); err != nil {
+		return fmt.Errorf("clean stale staging: %w", err)
+	}
 	// Keep staging on the destination filesystem. ESP destinations are often
 	// mounted VFAT filesystems, while their parent (/run) is a different
 	// filesystem; a sibling staging directory would make Rename return EXDEV.
-	staged, err := os.MkdirTemp(destination, ".booty-staging-")
+	staged, err := os.MkdirTemp(destination, stagingPrefix)
 	if err != nil {
 		return fmt.Errorf("create staging: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(staged) }()
 	if err := copyDir(source, staged); err != nil {
+		if cleanupErr := os.RemoveAll(staged); cleanupErr != nil {
+			return fmt.Errorf("copy source: %w (cleanup staging: %v)", err, cleanupErr)
+		}
 		return err
 	}
 	if err := syncTree(staged, destination); err != nil {
+		if cleanupErr := os.RemoveAll(staged); cleanupErr != nil {
+			return fmt.Errorf("sync destination: %w (cleanup staging: %v)", err, cleanupErr)
+		}
 		return err
 	}
+	if err := os.RemoveAll(staged); err != nil {
+		return fmt.Errorf("remove staging: %w", err)
+	}
 	return nil
+}
+
+func cleanStaging(destination string) error {
+	entries, err := os.ReadDir(destination)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !isStagingName(entry.Name()) {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(destination, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func isStagingName(name string) bool {
+	return strings.HasPrefix(name, stagingPrefix)
 }
 
 func validateRoots(source, destination string) (string, string, error) {
@@ -90,6 +125,12 @@ func copyDir(source, destination string) error {
 			return err
 		}
 		if rel == "." {
+			return nil
+		}
+		if isStagingName(entry.Name()) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		target := filepath.Join(destination, rel)
