@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -237,13 +238,20 @@ func productionTemplateKernelRelease(t *testing.T, kernel string) string {
 	if strings.HasPrefix(base, "vmlinuz-") {
 		return strings.TrimPrefix(base, "vmlinuz-")
 	}
-	if release := kernelRelease(); release != "" {
-		if st, err := os.Stat(filepath.Join("/lib/modules", release)); err == nil && st.IsDir() {
-			return release
-		}
+	data, err := os.ReadFile(kernel)
+	if err != nil {
+		t.Fatalf("read kernel %s: %v", kernel, err)
 	}
-	t.Fatalf("cannot determine module release for kernel %s", kernel)
-	return ""
+	releaseMatch := regexp.MustCompile(`Linux version ([^ \x00]+)`)
+	match := releaseMatch.FindSubmatch(data)
+	if len(match) != 2 {
+		t.Fatalf("cannot determine embedded module release for kernel %s", kernel)
+	}
+	release := string(match[1])
+	if st, err := os.Stat(filepath.Join("/lib/modules", release)); err != nil || !st.IsDir() {
+		t.Fatalf("kernel %s requires module release %s, but /lib/modules/%s is unavailable", kernel, release, release)
+	}
+	return release
 }
 
 // addProdTplModules puts the VRF, VXLAN, bridge and dummy modules of the
