@@ -3,6 +3,7 @@
 package gobgp
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -529,6 +530,12 @@ func (u *UnderlayTier) startFIBWriter() {
 			tables[vrf], vrfs[t] = t, vrf
 		}
 	}
+	// The native peers of BGP_PEER_MODE use BGP_NEIGHBOR_VRF.
+	nativeTable := unix.RT_TABLE_MAIN
+	if len(u.cfg.Sessions) == 0 && u.cfg.NeighborVRF != "" {
+		nativeTable = u.vrfTable(u.cfg.NeighborVRF)
+		vrfs[nativeTable] = u.cfg.NeighborVRF
+	}
 	sessionOf := func(neighbor string) *network.BGPSession {
 		host, _, _ := strings.Cut(neighbor, "%")
 		dev := u.peerDev(neighbor)
@@ -544,8 +551,12 @@ func (u *UnderlayTier) startFIBWriter() {
 		relax:   u.cfg.MultipathRelax,
 		peerDev: u.peerDev,
 		localAS: func(neighbor string) uint32 {
-			if s := sessionOf(neighbor); s != nil && s.LocalASN != 0 {
-				return s.LocalASN
+			if s := sessionOf(neighbor); s != nil {
+				return cmp.Or(s.LocalASN, u.cfg.ASN)
+			}
+			// BGP_LOCAL_AS applies to the native unnumbered peers.
+			if u.peerDev(neighbor) != "" && u.cfg.LocalAS != 0 {
+				return u.cfg.LocalAS
 			}
 			return u.cfg.ASN
 		},
@@ -553,7 +564,7 @@ func (u *UnderlayTier) startFIBWriter() {
 			if s := sessionOf(neighbor); s != nil {
 				return tables[sessionVRF(s)]
 			}
-			return unix.RT_TABLE_MAIN
+			return nativeTable
 		},
 	}
 	// Like zebra with "linkdown" next hops: the kernel skips an ECMP member
