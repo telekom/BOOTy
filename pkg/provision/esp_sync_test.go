@@ -38,7 +38,7 @@ func TestInstallESPSyncInstallsOnlyExplicitTargetArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(unit), "/dev/disk/by-partuuid/22222222-2222-2222-2222-222222222222") {
+	if !strings.Contains(string(unit), "--partuuid-b 22222222-2222-2222-2222-222222222222") {
 		t.Fatalf("unit has wrong destination: %s", unit)
 	}
 	if _, err := os.Lstat(filepath.Join(root, "etc", "systemd", "system", "multi-user.target.wants", "booty-esp-sync.service")); err != nil {
