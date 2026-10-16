@@ -82,7 +82,7 @@ func isStagingName(name string) bool {
 }
 
 func validateRoots(source, destination string) (sourceAbs, destinationAbs string, err error) {
-	source, err := filepath.Abs(source)
+	source, err = filepath.Abs(source)
 	if err != nil {
 		return "", "", err
 	}
@@ -188,6 +188,45 @@ func copyFileFromRoot(root *os.Root, source, destination string, mode os.FileMod
 		return err
 	}
 	return output.Close()
+}
+
+func syncTree(staged, destination string) error {
+	// Prune before moving staged entries. Moving a staged file would otherwise
+	// make the staged manifest disappear and the subsequent prune would delete
+	// the freshly installed destination file.
+	if err := pruneTree(destination, staged); err != nil {
+		return err
+	}
+	if err := filepath.WalkDir(staged, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(staged, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		target := filepath.Join(destination, rel)
+		if entry.IsDir() {
+			if info, err := os.Lstat(target); err == nil && !info.IsDir() {
+				if err := os.RemoveAll(target); err != nil {
+					return err
+				}
+			} else if err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			return os.MkdirAll(target, 0o755)
+		}
+		if err := replacePath(target, path); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	return nil
 }
 
 func pruneTree(destination, staged string) error {
