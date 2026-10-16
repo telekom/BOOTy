@@ -600,6 +600,9 @@ func parseRemoteAS(v string) (RemoteAS, error) {
 		return RemoteAS{Kind: RemoteASInternal}, nil
 	case "external":
 		return RemoteAS{Kind: RemoteASExternal}, nil
+	case "auto":
+		// FRR 10 "remote-as auto" learns iBGP or eBGP from the peer.
+		return RemoteAS{}, unsupported("remote-as auto is not supported; use a number, internal or external")
 	}
 	asn, err := parseUint32(v, "remote-as")
 	if err != nil {

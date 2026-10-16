@@ -145,9 +145,10 @@ func setRemoteAS(s *Session, n, g *Neighbor, ownASN uint32) error {
 	switch ras.Kind {
 	case RemoteASInternal:
 		if s.LocalAS != nil {
-			// "internal" is the router AS; with a local-as the number says
-			// which AS is meant.
-			return fmt.Errorf("local-as %d with remote-as internal: use remote-as %d", local, local)
+			// FRR 10.3 accepts this as an asymmetric iBGP session: its OPEN
+			// carries the local-as, but it expects the router AS from the
+			// peer. GoBGP has one AS per side and can not do that.
+			return fmt.Errorf("local-as %d with remote-as internal is not supported: FRR sends the local-as but expects the router AS from the peer, which GoBGP can not do; use remote-as %d for iBGP in AS %d", local, local, local)
 		}
 		s.Internal, s.RemoteASN = true, local
 	case RemoteASExternal:

@@ -151,8 +151,12 @@ These errors stop the setup in both inputs and are not relaxed by
 
 - a neighbor without remote-as;
 - a local-as mode other than `no-prepend replace-as`;
-- local-as equal to the router AS, or a local-as with `remote-as internal`
-  (use the number);
+- local-as equal to the router AS, or a local-as with `remote-as internal`.
+  FRR 10.3 accepts the second as an asymmetric iBGP session (its OPEN
+  carries the local-as, but it expects the router AS from the peer); GoBGP
+  has one AS per side and can not do that. Use the local-as as a number
+  for iBGP in that AS;
+- `remote-as auto` (FRR 10), which BOOTy does not support;
 - a member remote-as that differs from its peer-group's;
 - `timers` with 0, or a hold time below 3 (FRR `timers 0 0` disables
   keepalives; GoBGP would replace 0 with 30/90);

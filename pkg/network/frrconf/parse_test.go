@@ -583,3 +583,10 @@ func TestParseLenientSBFD(t *testing.T) {
 		t.Errorf("profiles %+v, %d warnings, want the profile and one warning", cfg.BFDProfiles, warns)
 	}
 }
+
+// FRR 10 "remote-as auto" is not supported.
+func TestParseRemoteASAuto(t *testing.T) {
+	if _, err := Parse([]byte("router bgp 65000\n neighbor 192.0.2.1 remote-as auto\n")); err == nil || !strings.Contains(err.Error(), "remote-as auto is not supported") {
+		t.Fatalf("Parse() = %v, want the remote-as auto error", err)
+	}
+}

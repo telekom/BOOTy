@@ -156,6 +156,7 @@ func TestValidateNativeSessions(t *testing.T) {
 		{"sessions:\n  - {name: 192.0.2.1, remoteAS: external, families: [ipv4-unicast]}\n  - {name: 192.0.2.1, remoteAS: internal, families: [ipv4-unicast]}\n", "defined twice"},
 		{"sessions:\n  - {name: 192.0.2.1, remoteAS: external, families: [ipv4-unicast]}\n  - {name: 192.0.2.1, vrf: Vrf_b, remoteAS: external, families: [ipv4-unicast]}\n", ""},
 		{"sessions:\n  - {name: 192.0.2.1, remoteAS: 65001, families: [ipv4-unicast]}\n", ""},
+		{"sessions:\n  - {name: 192.0.2.1, remoteAS: auto, families: [ipv4-unicast]}\n", "must be a number, internal or external"},
 	} {
 		c := &Config{}
 		if err := yaml.Unmarshal([]byte(tt.yaml), &c.Network.BGP); err != nil {
