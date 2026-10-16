@@ -37,6 +37,9 @@ type Session struct {
 	// AllowASIn is the "allowas-in" count of the activated address
 	// families (the largest one), 0 when unset.
 	AllowASIn int
+	// FastExternalFailover is "bgp fast-external-failover" of the router:
+	// on unless "no bgp fast-external-failover" (the FRR default).
+	FastExternalFailover bool
 	// BFD and BFDProfile request a BFD session.
 	BFD        bool
 	BFDProfile string
@@ -116,6 +119,7 @@ func (c *Config) session(r *Router, n *Neighbor) (Session, error) {
 
 	s.Families = families(r, n)
 	s.AllowASIn = allowASIn(r, n)
+	s.FastExternalFailover = r.FastExternalFailover == nil || *r.FastExternalFailover
 	return s, nil
 }
 

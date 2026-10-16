@@ -52,12 +52,12 @@ exit-address-family
 		return Session{Name: name, Interface: true, VRF: "Vrf_underlay", RemoteASN: 65500,
 			LocalAS:       &LocalAS{ASN: 65501, NoPrepend: true, ReplaceAS: true},
 			KeepaliveTime: 30, HoldTime: 90, ConnectRetry: 30,
-			Families: []string{FamilyIPv4Unicast}, BFD: true, BFDProfile: "fabric", Line: line}
+			Families: []string{FamilyIPv4Unicast}, BFD: true, BFDProfile: "fabric", FastExternalFailover: true, Line: line}
 	}
 	dcgw := func(name string, keepalive, hold uint32, line int) Session {
 		return Session{Name: name, VRF: "Vrf_underlay", Internal: true, RemoteASN: 4210000017,
 			KeepaliveTime: keepalive, HoldTime: hold, ConnectRetry: 5,
-			Families: []string{FamilyL2VPNEVPN}, Line: line}
+			Families: []string{FamilyL2VPNEVPN}, FastExternalFailover: true, Line: line}
 	}
 	want := []Session{
 		leaf("ens1f0np0", 13), leaf("ens1f1np1", 14),

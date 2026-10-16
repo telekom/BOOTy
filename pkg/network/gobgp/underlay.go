@@ -73,6 +73,7 @@ type UnderlayTier struct {
 	peerDevs     map[string]string             // unnumbered peer address -> interface
 	ifacePeers   map[string]string             // interface -> unnumbered peer address as added
 	stopCarrier  chan struct{}                 // stops the carrier watch
+	carrierDone  <-chan struct{}               // closed when the carrier watch ended
 	raDone       chan struct{}                 // closed when the periodic RA goroutine exits
 	peerCountFn  func(ctx context.Context) int // overridable in tests; nil = use countEstablishedPeers
 	pollInterval time.Duration                 // overridable in tests; zero = use default (1s)
@@ -217,6 +218,7 @@ func (u *UnderlayTier) Teardown(_ context.Context) error {
 	}
 	if u.stopCarrier != nil {
 		close(u.stopCarrier)
+		<-u.carrierDone // no Disable/EnablePeer after the server stops
 		u.stopCarrier = nil
 	}
 	if u.stopFIB != nil {
@@ -513,34 +515,103 @@ func (u *UnderlayTier) needsNICs() bool {
 
 // startFIBWriter installs the learned unicast routes into the session VRF
 // table (the main table without a VRF), like zebra does for bgpd.
+// Each session's routes go to the table of its VRF, like FRR keeps one RIB
+// per "router bgp N vrf X".
 func (u *UnderlayTier) startFIBWriter() {
-	table := unix.RT_TABLE_MAIN
-	if u.hasVRFSession() {
-		table = int(u.cfg.VRFTableID)
+	vrfs := map[int]string{}
+	tables := map[string]int{"": unix.RT_TABLE_MAIN}
+	for i := range u.cfg.Sessions {
+		vrf := sessionVRF(&u.cfg.Sessions[i])
+		if _, ok := tables[vrf]; !ok {
+			t := u.vrfTable(vrf)
+			tables[vrf], vrfs[t] = t, vrf
+		}
+	}
+	sessionOf := func(neighbor string) *network.BGPSession {
+		host, _, _ := strings.Cut(neighbor, "%")
+		dev := u.peerDev(neighbor)
+		for i := range u.cfg.Sessions {
+			s := &u.cfg.Sessions[i]
+			if s.Interface && s.Name == dev || !s.Interface && s.Name == host {
+				return s
+			}
+		}
+		return nil
+	}
+	sel := &fibSelector{
+		relax:   u.cfg.MultipathRelax,
+		peerDev: u.peerDev,
+		localAS: func(neighbor string) uint32 {
+			if s := sessionOf(neighbor); s != nil && s.LocalASN != 0 {
+				return s.LocalASN
+			}
+			return u.cfg.ASN
+		},
+		table: func(neighbor string) int {
+			if s := sessionOf(neighbor); s != nil {
+				return tables[sessionVRF(s)]
+			}
+			return unix.RT_TABLE_MAIN
+		},
+	}
+	// Like zebra with "linkdown" next hops: the kernel skips an ECMP member
+	// at once when its NIC loses carrier.
+	for _, nic := range sessionInterfaces(u.cfg.Sessions) {
+		for _, fam := range []string{"ipv4", "ipv6"} {
+			path := "/proc/sys/net/" + fam + "/conf/" + nic + "/ignore_routes_with_linkdown"
+			if err := os.WriteFile(path, []byte("1"), 0o644); err != nil { //nolint:gosec // sysctl path of a session NIC
+				u.log.Warn("set ignore_routes_with_linkdown", "interface", nic, "error", err)
+			}
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	u.stopFIB = cancel
 	u.fibDone = make(chan struct{})
-	w := newFIBWriter(u.bgp, table, u.cfg.ASN, u.cfg.MultipathRelax, u.peerDev)
+	w := newFIBWriter(u.bgp, sel, vrfs)
 	go func() {
 		defer close(u.fibDone)
 		w.run(ctx)
 	}()
 }
 
+// vrfTable returns the routing table of a VRF device; the configured
+// underlay table when the device is not there yet.
+func (u *UnderlayTier) vrfTable(vrf string) int {
+	if link, err := netlink.LinkByName(vrf); err == nil {
+		if v, ok := link.(*netlink.Vrf); ok {
+			return int(v.Table)
+		}
+	}
+	return int(u.cfg.VRFTableID)
+}
+
 // startCarrierWatch stops and starts unnumbered sessions with the carrier
-// of their interface, like FRR fast-external-failover.
+// of their interface, like FRR fast-external-failover (on by default; off
+// with "no bgp fast-external-failover" or fastExternalFailover: false).
 func (u *UnderlayTier) startCarrierWatch() {
-	if len(u.ifacePeers) == 0 {
+	if !u.cfg.FastExternalFailover {
 		return
 	}
-	w := &carrierWatch{bgp: u.bgp, peers: u.ifacePeers, down: map[string]bool{}, log: u.log}
+	peers := map[string]string{}
+	for i := range u.cfg.Sessions {
+		s := &u.cfg.Sessions[i]
+		if addr, ok := u.ifacePeers[s.Name]; ok && s.Interface && s.FastExternalFailover {
+			peers[s.Name] = addr
+		}
+	}
+	if len(peers) == 0 {
+		return
+	}
+	w := newCarrierWatch(u.bgp, peers, u.log)
 	u.stopCarrier = make(chan struct{})
-	if err := w.start(u.stopCarrier); err != nil {
+	done, err := w.start(u.stopCarrier)
+	if err != nil {
 		u.log.Warn("watch uplink carrier; sessions end only after the hold time", "error", err)
 		close(u.stopCarrier)
 		u.stopCarrier = nil
+		return
 	}
+	u.carrierDone = done
 }
 
 // peerDev returns the interface of an unnumbered peer address, with or

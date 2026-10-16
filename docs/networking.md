@@ -140,6 +140,35 @@ same resolution:
 - `bgp bestpath as-path multipath-relax` (native `network.bgp.multipathRelax`,
   `BGP_MULTIPATH_RELAX`) installs equal-cost paths with different AS paths
   of the same length as one multipath route.
+- `[no] bgp fast-external-failover` (native
+  `network.bgp.fastExternalFailover`, `BGP_FAST_EXTERNAL_FAILOVER`; on by
+  default like FRR) stops an unnumbered session as soon as its NIC loses
+  carrier.
+
+GoBGP mode installs the learned IPv4 and IPv6 unicast routes like zebra:
+into the table of each session's VRF (the main table without a VRF), with
+protocol `bgp` and metric 20, as ECMP over the paths of equal cost. Equal
+cost follows FRR 10.3: the same local preference, AS path length, origin
+and peer type, the same MED for the same leftmost AS, and without
+multipath-relax eBGP paths from the same neighbor AS or iBGP paths with the
+same AS path. A next hop that is not on a connected network is resolved to
+its connected gateway (zebra next hop tracking) and again on every kernel
+route change; a next hop that does not resolve is skipped with a warning
+at most once a minute. The first event of a burst updates the kernel at
+once, the rest 200 ms later, and every 30 s BOOTy reinstalls all routes,
+so routes the kernel dropped come back. The session NICs get
+`ignore_routes_with_linkdown=1`, so a dead ECMP member is skipped at once.
+
+Merge rules for these keys (a set native value wins, a non-empty native
+list replaces the parsed list as a whole with one info log line):
+
+| Key | Parsed source | Native | Rule |
+|-----|---------------|--------|------|
+| `BGP_SESSIONS`, `BGP_PEER_GROUPS` | `frr.conf` neighbors | `network.bgp.sessions`, `network.bgp.peerGroups` | list replaces |
+| `BGP_DEFAULTS` | `frr defaults` | `network.bgp.defaults` | native only (timer profile of the native sessions) |
+| `allowASIn` (session field) | `neighbor X allowas-in [N]` | `network.bgp.sessions[].allowASIn` | part of the session list |
+| `BGP_MULTIPATH_RELAX` | `bgp bestpath as-path multipath-relax` | `network.bgp.multipathRelax` | native wins |
+| `BGP_FAST_EXTERNAL_FAILOVER` | `[no] bgp fast-external-failover` | `network.bgp.fastExternalFailover` | native wins, for every session |
 
 With these sessions, the vars `BGP_PEER_MODE`, `BGP_INTERFACES`,
 `BGP_NEIGHBORS`, `BGP_REMOTE_ASN`, `BGP_KEEPALIVE` and `BGP_HOLD` no longer
@@ -271,7 +300,7 @@ later releases apply them, and this list grows with them.
 |---|---|
 | top level | `frr version V`, `frr defaults traditional\|datacenter`, `hostname H`, `log stdout\|syslog [LEVEL]`, `log file PATH [LEVEL]`, `service integrated-vtysh-config`, `[no] ip forwarding`, `[no] ipv6 forwarding`, `vni N [prefix-routes-only]`, `ip route P blackhole`, `ipv6 route P blackhole`, `router bgp ASN [vrf NAME]`, `bfd`, `route-map NAME permit\|deny SEQ`, `bgp community-list standard NAME [seq N] permit\|deny COMMUNITY...`, `vrf NAME`, `line vty`, `exit`, `end` |
 | `vrf NAME` | `vni N [prefix-routes-only]`, `exit-vrf` or `exit` |
-| `router bgp` | `bgp router-id A.B.C.D`, `[no] bgp ebgp-requires-policy`, `[no] bgp suppress-duplicates`, `[no] bgp default ipv4-unicast`, `bgp bestpath as-path multipath-relax`, `neighbor NAME peer-group`, `neighbor IFNAME interface [peer-group G \| remote-as R]`, `neighbor ADDR peer-group G`, `neighbor X remote-as ASN\|internal\|external`, `neighbor X local-as N [no-prepend [replace-as]]`, `neighbor X bfd [profile P]`, `neighbor X timers K H`, `neighbor X timers connect N`, `address-family ipv4 [unicast]\|ipv6 [unicast]\|l2vpn evpn`, `exit` (also `end` and the top-level statements, which leave the node) |
+| `router bgp` | `bgp router-id A.B.C.D`, `[no] bgp ebgp-requires-policy`, `[no] bgp suppress-duplicates`, `[no] bgp default ipv4-unicast`, `bgp bestpath as-path multipath-relax`, `[no] bgp fast-external-failover`, `neighbor NAME peer-group`, `neighbor IFNAME interface [peer-group G \| remote-as R]`, `neighbor ADDR peer-group G`, `neighbor X remote-as ASN\|internal\|external`, `neighbor X local-as N [no-prepend [replace-as]]`, `neighbor X bfd [profile P]`, `neighbor X timers K H`, `neighbor X timers connect N`, `address-family ipv4 [unicast]\|ipv6 [unicast]\|l2vpn evpn`, `exit` (also `end` and the top-level statements, which leave the node) |
 | `address-family ipv4\|ipv6` | `network P`, `redistribute connected`, `neighbor X activate`, `neighbor X soft-reconfiguration inbound`, `neighbor X allowas-in [N]`, `neighbor X route-map NAME in\|out`, `exit-address-family` or `exit` |
 | `address-family l2vpn evpn` | the neighbor statements above, `advertise-all-vni`, `advertise-default-gw`, `advertise ipv4\|ipv6 unicast`, `route-target import\|export\|both RT`, `vni N` (opens an L2VNI block with `rd RD`, `route-target ... RT`, `exit-vni` or `exit`), `exit-address-family` or `exit` |
 | `route-map` | `match community LIST`, `set local-preference N`, `set community AA:NN... [additive]`, `exit` |
@@ -323,7 +352,7 @@ on purpose although they are not in the templates:
 | `EVPN_L2_ENABLED`, `EVPN_TYPE5_ONLY`, `provision_gateway` | Ignored | Used |
 | DCGW (OneFabric) | `dcgw_ips` adds iBGP DCGW neighbors. `overlay_aggregate` and `vpn_rt` apply only with `dcgw_ips` | `dcgw_ips` and `overlay_aggregate` are ignored. `vpn_rt` sets the EVPN route target |
 | `local_asn` | `neighbor fabric local-as N no-prepend replace-as` | Ignored. Each session has its own `local-as` |
-| Kernel routes | Zebra installs the learned routes | BOOTy installs only the routes in [Kernel state per mode](#kernel-state-per-mode). GoBGP does not install learned routes |
+| Kernel routes | Zebra installs the learned routes | With BGP sessions, BOOTy installs the learned unicast routes like zebra (see [BGP sessions](#bgp-sessions)). Without sessions, only the routes in [Kernel state per mode](#kernel-state-per-mode) |
 | Wait behaviour | Restarts FRR every 120 s while the target is not reachable. Dumps the FRR state on timeout | Waits for peers, then polls the target |
 
 `leaf_asn` is parsed but no stack uses it.

@@ -1636,6 +1636,12 @@ func applyNativeSessions(bgp *config.BGPConfig, netCfg *network.Config) error {
 	if bgp.MultipathRelax != nil {
 		netCfg.BGPMultipathRelax = *bgp.MultipathRelax
 	}
+	if v := bgp.FastExternalFailover; v != nil {
+		netCfg.BGPFastExternalFailover = v
+		for i := range netCfg.BGPSessions {
+			netCfg.BGPSessions[i].FastExternalFailover = *v
+		}
+	}
 	if !bgp.HasSessions() {
 		return nil
 	}

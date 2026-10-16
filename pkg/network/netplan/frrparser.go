@@ -146,20 +146,21 @@ func BGPSessions(sessions []frrconf.Session) []network.BGPSession {
 
 func toBGPSession(s *frrconf.Session) network.BGPSession {
 	out := network.BGPSession{
-		Name:          s.Name,
-		Interface:     s.Interface,
-		VRF:           s.VRF,
-		Internal:      s.Internal,
-		RemoteASN:     s.RemoteASN,
-		KeepaliveTime: s.KeepaliveTime,
-		HoldTime:      s.HoldTime,
-		ConnectRetry:  s.ConnectRetry,
-		IPv4Unicast:   slices.Contains(s.Families, frrconf.FamilyIPv4Unicast),
-		IPv6Unicast:   slices.Contains(s.Families, frrconf.FamilyIPv6Unicast),
-		L2VPNEVPN:     slices.Contains(s.Families, frrconf.FamilyL2VPNEVPN),
-		AllowASIn:     s.AllowASIn,
-		BFD:           s.BFD,
-		BFDProfile:    s.BFDProfile,
+		Name:                 s.Name,
+		Interface:            s.Interface,
+		VRF:                  s.VRF,
+		Internal:             s.Internal,
+		RemoteASN:            s.RemoteASN,
+		KeepaliveTime:        s.KeepaliveTime,
+		HoldTime:             s.HoldTime,
+		ConnectRetry:         s.ConnectRetry,
+		IPv4Unicast:          slices.Contains(s.Families, frrconf.FamilyIPv4Unicast),
+		IPv6Unicast:          slices.Contains(s.Families, frrconf.FamilyIPv6Unicast),
+		L2VPNEVPN:            slices.Contains(s.Families, frrconf.FamilyL2VPNEVPN),
+		AllowASIn:            s.AllowASIn,
+		FastExternalFailover: s.FastExternalFailover,
+		BFD:                  s.BFD,
+		BFDProfile:           s.BFDProfile,
 	}
 	if s.LocalAS != nil {
 		out.LocalASN = s.LocalAS.ASN

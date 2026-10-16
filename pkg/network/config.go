@@ -101,6 +101,9 @@ type Config struct {
 	BGPSessions []BGPSession
 	// BGPMultipathRelax is "bgp bestpath as-path multipath-relax".
 	BGPMultipathRelax bool
+	// BGPFastExternalFailover is the native fast-external-failover
+	// setting; nil keeps the session values (FRR default on).
+	BGPFastExternalFailover *bool
 
 	// Common fields.
 	BridgeName        string // Default: "br.provision"
@@ -143,9 +146,12 @@ type BGPSession struct {
 	IPv6Unicast bool
 	L2VPNEVPN   bool
 	// AllowASIn is the "allowas-in" count, 0 when unset.
-	AllowASIn  int
-	BFD        bool
-	BFDProfile string
+	AllowASIn int
+	// FastExternalFailover stops an unnumbered session as soon as its
+	// interface loses carrier (FRR "bgp fast-external-failover").
+	FastExternalFailover bool
+	BFD                  bool
+	BFDProfile           string
 }
 
 // VLANConfig holds configuration for a single 802.1Q VLAN interface.

@@ -16,6 +16,7 @@
 package integration
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -243,15 +244,34 @@ func prodtplRoutes(ctx context.Context, node prodtplNode) (map[string][]string, 
 	if err != nil {
 		return nil, err
 	}
+	type hop struct {
+		Dev     string `json:"dev"`
+		Gateway string `json:"gateway"`
+		Via     struct {
+			Host string `json:"host"`
+		} `json:"via"`
+	}
 	var routes []struct {
-		Dst      string `json:"dst"`
-		Dev      string `json:"dev"`
-		Nexthops []struct {
-			Dev string `json:"dev"`
-		} `json:"nexthops"`
+		Dst    string `json:"dst"`
+		Metric int    `json:"metric"`
+		hop
+		Nexthops []hop `json:"nexthops"`
 	}
 	if err := json.Unmarshal([]byte(out), &routes); err != nil {
 		return nil, fmt.Errorf("decode routes of %s: %w", node.name, err)
+	}
+	leaf, err := prodtplLeafLinkLocals(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Each next hop as "device via gateway metric N"; the leaf link-local
+	// addresses differ per link, so they become "leaf".
+	nexthop := func(h hop, metric int) string {
+		gw := cmp.Or(h.Gateway, h.Via.Host)
+		if leaf[gw] {
+			gw = "leaf"
+		}
+		return fmt.Sprintf("%s via %s metric %d", h.Dev, gw, metric)
 	}
 	got := map[string][]string{}
 	for _, r := range routes {
@@ -259,17 +279,40 @@ func prodtplRoutes(ctx context.Context, node prodtplNode) (map[string][]string, 
 		if dst == other {
 			dst = "other-server"
 		}
-		devs := []string{}
+		hops := []string{}
 		if r.Dev != "" {
-			devs = append(devs, r.Dev)
+			hops = append(hops, nexthop(r.hop, r.Metric))
 		}
 		for _, nh := range r.Nexthops {
-			devs = append(devs, nh.Dev)
+			hops = append(hops, nexthop(nh, r.Metric))
 		}
-		slices.Sort(devs)
-		got[dst] = devs
+		slices.Sort(hops)
+		got[dst] = hops
 	}
 	return got, nil
+}
+
+// prodtplLeafLinkLocals returns the IPv6 link-local addresses of the leaf.
+func prodtplLeafLinkLocals(ctx context.Context) (map[string]bool, error) {
+	out, err := prodtplExec(ctx, prodtplLeaf, "ip", "-j", "-6", "addr", "show", "scope", "link")
+	if err != nil {
+		return nil, err
+	}
+	var links []struct {
+		AddrInfo []struct {
+			Local string `json:"local"`
+		} `json:"addr_info"`
+	}
+	if err := json.Unmarshal([]byte(out), &links); err != nil {
+		return nil, fmt.Errorf("decode leaf addresses: %w", err)
+	}
+	lls := map[string]bool{}
+	for _, l := range links {
+		for _, a := range l.AddrInfo {
+			lls[a.Local] = true
+		}
+	}
+	return lls, nil
 }
 
 func waitRoutes(t *testing.T, node prodtplNode, want map[string][]string) {
@@ -290,7 +333,12 @@ func waitRoutes(t *testing.T, node prodtplNode, want map[string][]string) {
 }
 
 func prodtplRoutesVia(devs ...string) map[string][]string {
-	return map[string][]string{"198.51.100.1": devs, "198.51.100.2": devs, "other-server": devs}
+	hops := make([]string, 0, len(devs))
+	for _, d := range devs {
+		// Like zebra: the leaf link-local gateway (RFC 5549) and metric 20.
+		hops = append(hops, d+" via leaf metric 20")
+	}
+	return map[string][]string{"198.51.100.1": hops, "198.51.100.2": hops, "other-server": hops}
 }
 
 // The learned routes are in the VRF table with ECMP over both uplinks,
