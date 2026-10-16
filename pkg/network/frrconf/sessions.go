@@ -154,6 +154,18 @@ func (c *Config) session(r *Router, n *Neighbor) (Session, error) {
 	s.ConnectRetry = pick(n.ConnectRetry, g, func(x *Neighbor) *uint32 { return x.ConnectRetry }, connect)
 	s.ConnectRetrySet = n.ConnectRetry != nil || g != nil && g.ConnectRetry != nil
 
+	c.sessionBFD(&s, n, g)
+
+	s.Families = families(r, n)
+	s.AllowASIn = allowASIn(r, n)
+	s.FastExternalFailover = r.FastExternalFailover == nil || *r.FastExternalFailover
+	s.RouteMaps = routeMaps(r, n, s.Families)
+	return s, nil
+}
+
+// sessionBFD sets the BFD flag, profile and timers of a session; the peer
+// value wins over its peer-group.
+func (c *Config) sessionBFD(s *Session, n, g *Neighbor) {
 	s.BFD, s.BFDProfile = n.BFD, n.BFDProfile
 	if g != nil {
 		s.BFD = s.BFD || g.BFD
@@ -164,12 +176,6 @@ func (c *Config) session(r *Router, n *Neighbor) (Session, error) {
 	if s.BFD {
 		s.BFDTransmitMS, s.BFDReceiveMS, s.BFDDetectMult = c.BFDTimers(s.BFDProfile)
 	}
-
-	s.Families = families(r, n)
-	s.AllowASIn = allowASIn(r, n)
-	s.FastExternalFailover = r.FastExternalFailover == nil || *r.FastExternalFailover
-	s.RouteMaps = routeMaps(r, n, s.Families)
-	return s, nil
 }
 
 // setRemoteAS resolves the remote-as: "internal" and the own ASN are iBGP,
