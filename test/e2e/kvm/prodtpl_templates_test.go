@@ -63,7 +63,7 @@ func TestProdTplTemplatesQEMU(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	addProdTplModules(t, files, strings.TrimPrefix(filepath.Base(real), "vmlinuz-"))
+	addProdTplModules(t, files, productionTemplateKernelRelease(t, real))
 
 	leaf := startProdTplLeaf(t)
 	for _, tap := range []string{"tpl0", "tpl1"} {
@@ -225,6 +225,25 @@ func waitFor(t *testing.T, ctx context.Context, what string, ok func() bool) {
 		case <-time.After(2 * time.Second):
 		}
 	}
+}
+
+// productionTemplateKernelRelease resolves the module tree for the kernel
+// passed to QEMU. Ubuntu runners commonly expose /boot/vmlinuz as a symlink
+// whose resolved basename is just "vmlinuz", so deriving the release only
+// from that basename incorrectly selects /lib/modules/vmlinuz.
+func productionTemplateKernelRelease(t *testing.T, kernel string) string {
+	t.Helper()
+	base := filepath.Base(kernel)
+	if strings.HasPrefix(base, "vmlinuz-") {
+		return strings.TrimPrefix(base, "vmlinuz-")
+	}
+	if release := kernelRelease(); release != "" {
+		if st, err := os.Stat(filepath.Join("/lib/modules", release)); err == nil && st.IsDir() {
+			return release
+		}
+	}
+	t.Fatalf("cannot determine module release for kernel %s", kernel)
+	return ""
 }
 
 // addProdTplModules puts the VRF, VXLAN, bridge and dummy modules of the
