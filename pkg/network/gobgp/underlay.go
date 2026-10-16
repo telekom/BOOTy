@@ -69,16 +69,17 @@ type UnderlayTier struct {
 	cfg          *Config
 	nics         []string
 	log          *slog.Logger
-	stopRA       chan struct{}                 // signals the periodic RA goroutine to stop
-	stopFIB      context.CancelFunc            // stops the FIB writer
-	fibDone      chan struct{}                 // closed when the FIB writer has removed its routes
-	peerDevs     map[string]string             // unnumbered peer address -> interface
-	ifacePeers   map[string]string             // interface -> unnumbered peer address as added
-	stopCarrier  chan struct{}                 // stops the carrier watch
-	carrierDone  <-chan struct{}               // closed when the carrier watch ended
-	raDone       chan struct{}                 // closed when the periodic RA goroutine exits
-	peerCountFn  func(ctx context.Context) int // overridable in tests; nil = use countEstablishedPeers
-	pollInterval time.Duration                 // overridable in tests; zero = use default (1s)
+	stopRA       chan struct{}                                 // signals the periodic RA goroutine to stop
+	stopFIB      context.CancelFunc                            // stops the FIB writer
+	fibDone      chan struct{}                                 // closed when the FIB writer has removed its routes
+	peerDevs     map[string]string                             // unnumbered peer address -> interface
+	discoverPeer func(context.Context, string) (string, error) // overridable in tests; nil = discoverLinkLocalPeer
+	ifacePeers   map[string]string                             // interface -> unnumbered peer address as added
+	stopCarrier  chan struct{}                                 // stops the carrier watch
+	carrierDone  <-chan struct{}                               // closed when the carrier watch ended
+	raDone       chan struct{}                                 // closed when the periodic RA goroutine exits
+	peerCountFn  func(ctx context.Context) int                 // overridable in tests; nil = use countEstablishedPeers
+	pollInterval time.Duration                                 // overridable in tests; zero = use default (1s)
 }
 
 const defaultUnderlayDummyName = "dummy.underlay"
@@ -522,20 +523,58 @@ func (u *UnderlayTier) needsNICs() bool {
 // Each session's routes go to the table of its VRF, like FRR keeps one RIB
 // per "router bgp N vrf X".
 func (u *UnderlayTier) startFIBWriter() {
-	vrfs := map[int]string{}
+	sel, vrfs := u.fibSelector(u.vrfTable)
+	// Like zebra with "linkdown" next hops: the kernel skips an ECMP member
+	// at once when its NIC loses carrier.
+	for _, err := range ignoreLinkdownRoutes("/proc/sys/net", sessionInterfaces(u.cfg.Sessions)) {
+		u.log.Warn("set ignore_routes_with_linkdown", "error", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	u.stopFIB = cancel
+	u.fibDone = make(chan struct{})
+	w := newFIBWriter(u.bgp, sel, vrfs)
+	go func() {
+		defer close(u.fibDone)
+		w.run(ctx)
+	}()
+}
+
+// nativeTables returns the routing tables of the BGP_PEER_MODE peers and
+// the VRF devices of those tables. Like FRR, a peer on an interface of a
+// VRF belongs to that VRF's "router bgp": the unnumbered peers use the
+// table of VRF_NAME, which holds their NICs, and the numbered peers that
+// of BGP_NEIGHBOR_VRF. Without a VRF it is the main table.
+func nativeTables(cfg *Config, vrfTable func(string) int) (unnumbered, numbered int, vrfs map[int]string) {
+	vrfs = map[int]string{}
+	unnumbered, numbered = unix.RT_TABLE_MAIN, unix.RT_TABLE_MAIN
+	if cfg.VRFName != "" {
+		unnumbered = vrfTable(cfg.VRFName)
+		vrfs[unnumbered] = cfg.VRFName
+	}
+	if cfg.NeighborVRF != "" {
+		numbered = vrfTable(cfg.NeighborVRF)
+		vrfs[numbered] = cfg.NeighborVRF
+	}
+	return unnumbered, numbered, vrfs
+}
+
+// fibSelector builds the route selection of the FIB writer: the table and
+// the effective local AS of each neighbor.
+func (u *UnderlayTier) fibSelector(vrfTable func(string) int) (sel *fibSelector, vrfs map[int]string) {
+	vrfs = map[int]string{}
 	tables := map[string]int{"": unix.RT_TABLE_MAIN}
 	for i := range u.cfg.Sessions {
 		vrf := sessionVRF(&u.cfg.Sessions[i])
 		if _, ok := tables[vrf]; !ok {
-			t := u.vrfTable(vrf)
+			t := vrfTable(vrf)
 			tables[vrf], vrfs[t] = t, vrf
 		}
 	}
-	// The native peers of BGP_PEER_MODE use BGP_NEIGHBOR_VRF.
-	nativeTable := unix.RT_TABLE_MAIN
-	if len(u.cfg.Sessions) == 0 && u.cfg.NeighborVRF != "" {
-		nativeTable = u.vrfTable(u.cfg.NeighborVRF)
-		vrfs[nativeTable] = u.cfg.NeighborVRF
+	unnumbered, numbered := unix.RT_TABLE_MAIN, unix.RT_TABLE_MAIN
+	if len(u.cfg.Sessions) == 0 {
+		var native map[int]string
+		unnumbered, numbered, native = nativeTables(u.cfg, vrfTable)
+		maps.Copy(vrfs, native)
 	}
 	sessionOf := func(neighbor string) *network.BGPSession {
 		host, _, _ := strings.Cut(neighbor, "%")
@@ -548,7 +587,7 @@ func (u *UnderlayTier) startFIBWriter() {
 		}
 		return nil
 	}
-	sel := &fibSelector{
+	sel = &fibSelector{
 		relax:   u.cfg.MultipathRelax,
 		peerDev: u.peerDev,
 		localAS: func(neighbor string) uint32 {
@@ -565,22 +604,13 @@ func (u *UnderlayTier) startFIBWriter() {
 			if s := sessionOf(neighbor); s != nil {
 				return tables[sessionVRF(s)]
 			}
-			return nativeTable
+			if u.peerDev(neighbor) != "" {
+				return unnumbered
+			}
+			return numbered
 		},
 	}
-	// Like zebra with "linkdown" next hops: the kernel skips an ECMP member
-	// at once when its NIC loses carrier.
-	for _, err := range ignoreLinkdownRoutes("/proc/sys/net", sessionInterfaces(u.cfg.Sessions)) {
-		u.log.Warn("set ignore_routes_with_linkdown", "error", err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	u.stopFIB = cancel
-	u.fibDone = make(chan struct{})
-	w := newFIBWriter(u.bgp, sel, vrfs)
-	go func() {
-		defer close(u.fibDone)
-		w.run(ctx)
-	}()
+	return sel, vrfs
 }
 
 // ignoreLinkdownRoutes sets ignore_routes_with_linkdown=1 for IPv4 and
@@ -782,7 +812,11 @@ func (u *UnderlayTier) addInterfacePeer(ctx context.Context, iface string, famil
 	// GoBGP's AddPeer has a bug where ExtractNeighborAddress is called before
 	// SetDefaultNeighborConfigValues, so NeighborInterface is never resolved.
 	// Work around by resolving the link-local address ourselves.
-	addr, err := discoverLinkLocalPeer(ctx, iface)
+	discover := discoverLinkLocalPeer
+	if u.discoverPeer != nil {
+		discover = u.discoverPeer
+	}
+	addr, err := discover(ctx, iface)
 	if err != nil {
 		return fmt.Errorf("discover link-local peer on %s: %w", iface, err)
 	}

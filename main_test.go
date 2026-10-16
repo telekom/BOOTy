@@ -1957,3 +1957,14 @@ func TestNetworkConfigFromMachineConfigOverlayVRF(t *testing.T) {
 		}
 	}
 }
+
+// BRIDGE_MAC is a key of this release: a set native MAC wins over the
+// netplan macaddress of the same bridge.
+func TestMergeNetplanConfigNativeBridgeMAC(t *testing.T) {
+	dst := &network.Config{BridgeMAC: "02:00:00:00:aa:01"}
+	src := &network.Config{BridgeMAC: "02:00:00:00:10:01"}
+	mergeNetplanConfig(dst, src)
+	if dst.BridgeMAC != "02:00:00:00:aa:01" {
+		t.Fatalf("BridgeMAC = %q, want the native 02:00:00:00:aa:01", dst.BridgeMAC)
+	}
+}

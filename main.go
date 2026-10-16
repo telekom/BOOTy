@@ -1103,14 +1103,14 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 }
 
 // applyBGPOptions applies the BGP options that frr.conf can also set. With
-// frr.conf sessions the default is FRR's (routes installed); native
-// configs default it off. fast-external-failover is set in
+// any BGP sessions (frr.conf or network.bgp.sessions) the default is FRR's
+// (routes installed); the BGP_PEER_MODE peers default it off. fast-external-failover is set in
 // applyNativeSessions. An explicit router option wins. The peer options
 // (local-as, VRF, connect retry, allowas-in) are defaults for the sessions
 // that do not set the value themselves.
 func applyBGPOptions(o *config.BGPConfig, n *network.Config) {
-	fromFRR := len(n.BGPSessions) > 0
-	n.BGPInstallRoutes = boolOr(o.InstallRoutes, fromFRR)
+	withSessions := len(n.BGPSessions) > 0
+	n.BGPInstallRoutes = boolOr(o.InstallRoutes, withSessions)
 	if o.MultipathRelax != nil {
 		n.BGPMultipathRelax = *o.MultipathRelax
 	}

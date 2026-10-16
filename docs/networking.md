@@ -167,11 +167,12 @@ its connected gateway (zebra next hop tracking) and again on every kernel
 route change. BOOTy takes the one gateway the kernel uses for it; zebra
 installs every ECMP member of the resolving route. A next hop that does
 not resolve is skipped with a warning at most once a minute. The first
-event of a burst updates the kernel at once, the rest 200 ms later, and every 30 s BOOTy reinstalls all routes,
-so routes the kernel dropped come back. The session NICs get
-`ignore_routes_with_linkdown=1`, so a dead ECMP member is skipped at once.
+event of a burst updates the kernel at once, the rest 200 ms later, and
+every 30 s BOOTy reinstalls all routes, so routes the kernel dropped come
+back. The session NICs get `ignore_routes_with_linkdown=1`, so a dead ECMP
+member is skipped at once.
 
-The merge rule of each key is in the table under
+The merge rule of each key is in the table at the end of
 [Netplan and FRR config input](#netplan-and-frr-config-input).
 
 With these sessions, the vars `BGP_PEER_MODE`, `BGP_INTERFACES`,
@@ -218,16 +219,18 @@ compatibility: a value from netplan overrides the same value from the
 vars, and an empty netplan value keeps the vars value. A key that this
 release adds follows the native rule: a set native value wins, and a
 non-empty native list replaces the parsed list as a whole (one info log
-line). The table under [BGP sessions](#bgp-sessions) lists the keys of
-this release with their rule.
+line).
 
 `VLANS` is the exception: BOOTy parses it after the netplan merge, so
 `VLANS` from the vars replaces the netplan VLANs. When netplan and the FRR
 config give an ASN and a VNI, BOOTy sets the stack to GoBGP. This overrides
-line). The peer keys `BGP_LOCAL_AS`, `BGP_NEIGHBOR_VRF`,
-`BGP_CONNECT_RETRY` and `BGP_ALLOWAS_IN` are defaults: they fill only the
-session fields that the `frr.conf` or `BGP_SESSIONS` session and its
-peer-group do not set.
+`NETWORK_MODE`.
+
+The peer keys `BGP_LOCAL_AS`, `BGP_NEIGHBOR_VRF`, `BGP_CONNECT_RETRY` and
+`BGP_ALLOWAS_IN` are defaults: they fill only the session fields that the
+`frr.conf` or `BGP_SESSIONS` session and its peer-group do not set. The
+rule of every key:
+
 | Key | Parsed source | Native | Rule |
 |-----|---------------|--------|------|
 | `NETWORK_MODE`, `asn_server`, `provision_vni`, `underlay_ip`, `provision_ip`, `dns_resolver`, `STATIC_*`, `BOND_*`, `VRF_NAME`, `VRF_TABLE_ID`, `BGP_PEER_MODE`, `BGP_NEIGHBORS`, `BGP_REMOTE_ASN`, `EVPN_L2_ENABLED` | netplan, `frr.conf` | vars keys of earlier releases | netplan or `frr.conf` wins |
@@ -252,8 +255,6 @@ peer-group do not set.
 | `BGP_NEIGHBOR_VRF` | `router bgp N vrf X` | `network.bgp.neighborVRF` | session default |
 | `BGP_CONNECT_RETRY` | `neighbor X timers connect N` | `network.bgp.connectRetry` | session default |
 | `BGP_ALLOWAS_IN` | `neighbor X allowas-in N` | `network.bgp.allowASIn` | session default |
-
-`NETWORK_MODE`.
 
 ### Strict input and the accepted grammar
 
