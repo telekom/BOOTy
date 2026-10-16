@@ -332,6 +332,15 @@ func buildProvisionInitramfsWithFiles(t *testing.T, vars, files map[string]strin
 		buildBooty(t, bootyBin)
 	}
 	copyBinary(t, bootyBin, filepath.Join(rootDir, "booty"))
+	// The mirrored-ESP provisioner installs this helper from the ramdisk.
+	// Keep the KVM fixture equivalent to the production initrd image so the
+	// failover tests exercise installation and synchronization together.
+	espSyncBin := filepath.Join(dir, "booty-esp-sync")
+	buildESPSync(t, espSyncBin)
+	if err := os.MkdirAll(filepath.Join(rootDir, "usr", "lib", "booty"), 0o755); err != nil {
+		t.Fatalf("create ESP synchronizer asset directory: %v", err)
+	}
+	copyBinary(t, espSyncBin, filepath.Join(rootDir, "usr", "lib", "booty", "booty-esp-sync"))
 
 	// Copy busybox.
 	busyboxBin := findBusybox(t)
@@ -719,6 +728,15 @@ func mountReadOnlyWithRetry(t *testing.T, devPath, mountDir string, beforeRetry 
 		time.Sleep(200 * time.Millisecond)
 	}
 	t.Fatalf("mount provisioned root: mount [-o ro %s %s] failed: %v\n%s", devPath, mountDir, err, out)
+}
+
+func buildESPSync(t *testing.T, output string) {
+	t.Helper()
+	cmd := exec.Command("go", "build", "-trimpath", "-ldflags", "-s -w", "-o", output, "./cmd/booty-esp-sync")
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build ESP synchronizer: %v\n%s", err, out)
+	}
 }
 
 func buildBooty(t *testing.T, output string) {

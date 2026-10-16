@@ -45,13 +45,13 @@ func CopyTree(source, destination string) error {
 	defer func() { _ = os.RemoveAll(staged) }()
 	if err := copyDir(source, staged); err != nil {
 		if cleanupErr := os.RemoveAll(staged); cleanupErr != nil {
-			return fmt.Errorf("copy source: %w (cleanup staging: %v)", err, cleanupErr)
+			return fmt.Errorf("copy source: %w (cleanup staging: %w)", err, cleanupErr)
 		}
 		return err
 	}
 	if err := syncTree(staged, destination); err != nil {
 		if cleanupErr := os.RemoveAll(staged); cleanupErr != nil {
-			return fmt.Errorf("sync destination: %w (cleanup staging: %v)", err, cleanupErr)
+			return fmt.Errorf("sync destination: %w (cleanup staging: %w)", err, cleanupErr)
 		}
 		return err
 	}
@@ -81,7 +81,7 @@ func isStagingName(name string) bool {
 	return strings.HasPrefix(name, stagingPrefix)
 }
 
-func validateRoots(source, destination string) (string, string, error) {
+func validateRoots(source, destination string) (sourceAbs, destinationAbs string, err error) {
 	source, err := filepath.Abs(source)
 	if err != nil {
 		return "", "", err
@@ -118,6 +118,11 @@ func validateRoots(source, destination string) (string, string, error) {
 }
 
 func copyDir(source, destination string) error {
+	root, err := os.OpenRoot(source)
+	if err != nil {
+		return fmt.Errorf("open source root: %w", err)
+	}
+	defer root.Close()
 	return filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -139,13 +144,14 @@ func copyDir(source, destination string) error {
 		}
 		switch info.Mode() & os.ModeType {
 		case 0:
-			if err := copyFile(path, target, info.Mode().Perm()); err != nil {
+			relSource := filepath.ToSlash(rel)
+			if err := copyFileFromRoot(root, relSource, target, info.Mode().Perm()); err != nil {
 				return err
 			}
 		case os.ModeDir:
 			return os.MkdirAll(target, info.Mode().Perm())
 		case os.ModeSymlink:
-			link, err := os.Readlink(path)
+			link, err := root.Readlink(filepath.ToSlash(rel))
 			if err != nil {
 				return err
 			}
@@ -160,15 +166,15 @@ func copyDir(source, destination string) error {
 	})
 }
 
-func copyFile(source, destination string, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
-		return err
-	}
-	input, err := os.Open(source)
+func copyFileFromRoot(root *os.Root, source, destination string, mode os.FileMode) error {
+	input, err := root.Open(source)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", source, err)
 	}
 	defer func() { _ = input.Close() }()
+	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+		return err
+	}
 	output, err := os.OpenFile(destination, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_EXCL, mode.Perm())
 	if err != nil {
 		return fmt.Errorf("create %s: %w", destination, err)
@@ -182,45 +188,6 @@ func copyFile(source, destination string, mode os.FileMode) error {
 		return err
 	}
 	return output.Close()
-}
-
-func syncTree(staged, destination string) error {
-	// Prune before moving staged entries. Moving a staged file would otherwise
-	// make the staged manifest disappear and the subsequent prune would delete
-	// the freshly installed destination file.
-	if err := pruneTree(destination, staged); err != nil {
-		return err
-	}
-	if err := filepath.WalkDir(staged, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		rel, err := filepath.Rel(staged, path)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return nil
-		}
-		target := filepath.Join(destination, rel)
-		if entry.IsDir() {
-			if info, err := os.Lstat(target); err == nil && !info.IsDir() {
-				if err := os.RemoveAll(target); err != nil {
-					return err
-				}
-			} else if err != nil && !os.IsNotExist(err) {
-				return err
-			}
-			return os.MkdirAll(target, 0o755)
-		}
-		if err := replacePath(target, path); err != nil {
-			return err
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-	return nil
 }
 
 func pruneTree(destination, staged string) error {
@@ -358,6 +325,7 @@ func WatchFunc(source string, sync func() error, done <-chan struct{}) error {
 	return WatchFuncWithMarker(source, sync, "", done)
 }
 
+// WatchFuncWithMarker recursively observes source, debounces changes, and writes marker after successful callbacks.
 func WatchFuncWithMarker(source string, sync func() error, marker string, done <-chan struct{}) error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -400,6 +368,7 @@ func WatchFuncWithMarker(source string, sync func() error, marker string, done <
 	}
 }
 
+// WriteMarker records a successful synchronization timestamp at marker.
 func WriteMarker(marker string) error {
 	return writeMarker(marker)
 }
