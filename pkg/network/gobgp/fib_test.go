@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux && linux_e2e
 
 package gobgp
 
@@ -124,9 +124,10 @@ func waitFIB(t *testing.T, h *netlink.Handle, want []string) {
 	t.Fatalf("table 1000 = %q, want %q", got, want)
 }
 
-// The FIB writer against the kernel (root only): it installs routes with
-// metric 20 into the session VRF table, resolves a recursive next hop to
-// its connected gateway, skips an unresolvable one, removes a withdrawn
+// The FIB writer against the kernel (root only, CI job Linux E2E): it
+// installs routes with metric 20 into the session VRF table, resolves a
+// recursive next hop to its connected gateway, skips an unresolvable next
+// hop and one that is its own address, removes a withdrawn
 // route, reinstalls a route the kernel lost and cleans up when it stops.
 func TestFIBWriterKernel(t *testing.T) {
 	if os.Geteuid() != 0 {
@@ -187,6 +188,8 @@ func TestFIBWriterKernel(t *testing.T) {
 	fibTestAnnounce(t, fabric, "198.51.100.0/24", "10.99.0.2", false)
 	fibTestAnnounce(t, fabric, "203.0.113.0/24", "10.98.0.5", false)
 	fibTestAnnounce(t, fabric, "192.0.2.99/32", "10.97.0.1", false)
+	// A next hop that is BOOTy's own address gives no route.
+	fibTestAnnounce(t, fabric, "192.0.2.98/32", "10.99.0.1", false)
 	waitFIB(t, h, []string{"198.51.100.0/24 via 10.99.0.2 metric 20", "203.0.113.0/24 via 10.99.0.3 metric 20"})
 
 	fibTestAnnounce(t, fabric, "198.51.100.0/24", "10.99.0.2", true)

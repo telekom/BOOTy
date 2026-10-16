@@ -100,13 +100,11 @@ func (w *fibWriter) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-changed:
-			// Leading edge: the first event of a burst reconciles at
-			// once, the rest of the burst once after fibDebounce.
-			if pending != nil {
-				continue
-			}
-			if wait := fibDebounce - time.Since(last); wait > 0 {
-				pending = time.After(wait)
+			now, wait := debounce(pending != nil, time.Since(last))
+			if !now {
+				if pending == nil {
+					pending = time.After(wait)
+				}
 				continue
 			}
 		case <-pending:
@@ -119,6 +117,20 @@ func (w *fibWriter) run(ctx context.Context) {
 			w.log.Warn("FIB update failed", "error", err)
 		}
 	}
+}
+
+// debounce decides on an event: leading edge, so the first event of a
+// burst reconciles at once (now) and the rest of the burst once, wait
+// later. pending is a reconcile already scheduled, sinceLast the time
+// since the last reconcile.
+func debounce(pending bool, sinceLast time.Duration) (now bool, wait time.Duration) {
+	switch {
+	case pending:
+		return false, 0
+	case sinceLast >= fibDebounce:
+		return true, 0
+	}
+	return false, fibDebounce - sinceLast
 }
 
 // watchUnderlay calls notify on every kernel route change that is not

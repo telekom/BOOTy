@@ -1736,6 +1736,14 @@ func TestFastExternalFailoverBothForms(t *testing.T) {
 	if !on.BGPSessions[0].FastExternalFailover {
 		t.Error("native fastExternalFailover true did not override frr.conf")
 	}
+	// Native sessions without their own setting keep a frr.conf "no".
+	replaced := &network.Config{ASN: 65000, BGPSessions: parsed.Sessions}
+	if err := applyNativeSessions(&config.BGPConfig{Sessions: []config.BGPSessionConfig{{Name: "eth0", Interface: true, RemoteAS: "external", Families: []string{"ipv4-unicast"}}}}, replaced); err != nil {
+		t.Fatal(err)
+	}
+	if replaced.BGPSessions[0].FastExternalFailover {
+		t.Error("native sessions lost the frr.conf no bgp fast-external-failover")
+	}
 	if _, err := netplan.ParseFRRConfigBytes([]byte("router bgp 65000\n bgp fast-external-failover now\n")); err == nil {
 		t.Error("frr.conf: bgp fast-external-failover now parsed")
 	}

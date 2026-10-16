@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -556,13 +557,8 @@ func (u *UnderlayTier) startFIBWriter() {
 	}
 	// Like zebra with "linkdown" next hops: the kernel skips an ECMP member
 	// at once when its NIC loses carrier.
-	for _, nic := range sessionInterfaces(u.cfg.Sessions) {
-		for _, fam := range []string{"ipv4", "ipv6"} {
-			path := "/proc/sys/net/" + fam + "/conf/" + nic + "/ignore_routes_with_linkdown"
-			if err := os.WriteFile(path, []byte("1"), 0o644); err != nil { //nolint:gosec // sysctl path of a session NIC
-				u.log.Warn("set ignore_routes_with_linkdown", "interface", nic, "error", err)
-			}
-		}
+	for _, err := range ignoreLinkdownRoutes("/proc/sys/net", sessionInterfaces(u.cfg.Sessions)) {
+		u.log.Warn("set ignore_routes_with_linkdown", "error", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	u.stopFIB = cancel
@@ -572,6 +568,21 @@ func (u *UnderlayTier) startFIBWriter() {
 		defer close(u.fibDone)
 		w.run(ctx)
 	}()
+}
+
+// ignoreLinkdownRoutes sets ignore_routes_with_linkdown=1 for IPv4 and
+// IPv6 on the NICs under the sysctl root (/proc/sys/net).
+func ignoreLinkdownRoutes(root string, nics []string) []error {
+	var errs []error
+	for _, nic := range nics {
+		for _, fam := range []string{"ipv4", "ipv6"} {
+			path := filepath.Join(root, fam, "conf", nic, "ignore_routes_with_linkdown")
+			if err := os.WriteFile(path, []byte("1"), 0o644); err != nil { //nolint:gosec // sysctl path of a session NIC
+				errs = append(errs, err)
+			}
+		}
+	}
+	return errs
 }
 
 // vrfTable returns the routing table of a VRF device; the configured
@@ -585,20 +596,28 @@ func (u *UnderlayTier) vrfTable(vrf string) int {
 	return int(u.cfg.VRFTableID)
 }
 
+// carrierPeers returns the unnumbered peers the carrier watch acts on:
+// none with fast-external-failover off globally, else the interface
+// sessions with it on. Numbered sessions have no own interface.
+func carrierPeers(cfg *Config, ifacePeers map[string]string) map[string]string {
+	peers := map[string]string{}
+	if !cfg.FastExternalFailover {
+		return peers
+	}
+	for i := range cfg.Sessions {
+		s := &cfg.Sessions[i]
+		if addr, ok := ifacePeers[s.Name]; ok && s.Interface && s.FastExternalFailover {
+			peers[s.Name] = addr
+		}
+	}
+	return peers
+}
+
 // startCarrierWatch stops and starts unnumbered sessions with the carrier
 // of their interface, like FRR fast-external-failover (on by default; off
 // with "no bgp fast-external-failover" or fastExternalFailover: false).
 func (u *UnderlayTier) startCarrierWatch() {
-	if !u.cfg.FastExternalFailover {
-		return
-	}
-	peers := map[string]string{}
-	for i := range u.cfg.Sessions {
-		s := &u.cfg.Sessions[i]
-		if addr, ok := u.ifacePeers[s.Name]; ok && s.Interface && s.FastExternalFailover {
-			peers[s.Name] = addr
-		}
-	}
+	peers := carrierPeers(u.cfg, u.ifacePeers)
 	if len(peers) == 0 {
 		return
 	}

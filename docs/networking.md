@@ -143,7 +143,8 @@ same resolution:
 - `[no] bgp fast-external-failover` (native
   `network.bgp.fastExternalFailover`, `BGP_FAST_EXTERNAL_FAILOVER`; on by
   default like FRR) stops an unnumbered session as soon as its NIC loses
-  carrier.
+  carrier. Native sessions without the setting keep a `frr.conf` `no bgp
+  fast-external-failover` of the same VRF.
 
 GoBGP mode installs the learned IPv4 and IPv6 unicast routes like zebra:
 into the table of each session's VRF (the main table without a VRF), with
@@ -153,7 +154,8 @@ and peer type, the same MED for the same leftmost AS, and without
 multipath-relax eBGP paths from the same neighbor AS or iBGP paths with the
 same AS path. A next hop that is not on a connected network is resolved to
 its connected gateway (zebra next hop tracking) and again on every kernel
-route change; a next hop that does not resolve is skipped with a warning
+route change. BOOTy takes the one gateway the kernel uses for it; zebra
+installs every ECMP member of the resolving route; a next hop that does not resolve is skipped with a warning
 at most once a minute. The first event of a burst updates the kernel at
 once, the rest 200 ms later, and every 30 s BOOTy reinstalls all routes,
 so routes the kernel dropped come back. The session NICs get
