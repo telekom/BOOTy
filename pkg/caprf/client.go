@@ -1452,7 +1452,7 @@ func strictJSONVar(value string, target any) error {
 		dec := json.NewDecoder(strings.NewReader(s))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(target); err != nil {
-			return err
+			return fmt.Errorf("decode JSON value: %w", err)
 		}
 		if dec.More() {
 			return errors.New("data after the JSON value")
