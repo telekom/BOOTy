@@ -199,22 +199,48 @@ func TestWipeDisksWipeAllDisksContinuesAfterDiscardFailure(t *testing.T) {
 // (common.sh:545-567) before the wipe. It stops every array and zeroes the
 // superblock of every linux_raid_member, whole disks and partitions, because
 // the quick wipe leaves metadata 1.0 superblocks at the partition ends.
-func TestStopRAIDZeroesRAIDSuperblocks(t *testing.T) {
+// RAID_SUPERBLOCK_CLEAR=all (preset by CAPRF_LEGACY_COMPAT) does that in
+// stop-raid; the default "wiped" zeroes only the disks that wipe-disks wipes.
+func TestRAIDSuperblockClear(t *testing.T) {
+	const all = "-ln -o PATH,FSTYPE"
 	lsblk := []byte("/dev/sda \n/dev/sda1 vfat\n/dev/sda2 linux_raid_member\n/dev/sdb linux_raid_member\n/dev/sdc \n")
 	for _, tt := range []struct {
-		name      string
-		mode      string
-		target    string
-		mirror    string
-		wantLsblk string
+		name     string
+		mode     string
+		clear    string
+		legacy   bool
+		wipeAll  bool
+		target   string
+		mirror   string
+		wantStop string // lsblk args in stop-raid, "" for none
+		wantWipe string // lsblk args in wipe-disks, "" for none
 	}{
-		{name: "provision covers every disk", mode: "provision", wantLsblk: "-ln -o PATH,FSTYPE"},
-		{name: "hard deprovision without override covers every disk", mode: "hard", wantLsblk: "-ln -o PATH,FSTYPE"},
-		{name: "hard deprovision with override covers the wiped disks", mode: "hard", target: "/dev/sda", mirror: "/dev/sdb",
-			wantLsblk: "-ln -o PATH,FSTYPE /dev/sda /dev/sdb"},
+		{name: "provision wiped: target and mirror", mode: "provision", target: "/dev/sda", mirror: "/dev/sdb",
+			wantWipe: all + " /dev/sda /dev/sdb"},
+		{name: "provision wiped: single target", mode: "provision", clear: "wiped", target: "/dev/sda",
+			wantWipe: all + " /dev/sda"},
+		{name: "provision wiped: wipe all disks", mode: "provision", wipeAll: true, target: "/dev/sda", wantWipe: all},
+		{name: "provision all", mode: "provision", clear: "all", target: "/dev/sda", wantStop: all},
+		{name: "provision legacy preset", mode: "provision", legacy: true, target: "/dev/sda", wantStop: all},
+		{name: "provision legacy with explicit wiped", mode: "provision", legacy: true, clear: "wiped", target: "/dev/sda", wantWipe: all + " /dev/sda"},
+		{name: "hard deprovision wiped without override", mode: "hard", clear: "wiped", wantStop: all},
+		{name: "hard deprovision all without override", mode: "hard", clear: "all", wantStop: all},
+		{name: "hard deprovision wiped with override", mode: "hard", clear: "wiped", target: "/dev/sda", mirror: "/dev/sdb",
+			wantStop: all + " /dev/sda /dev/sdb"},
+		{name: "hard deprovision all with override", mode: "hard", clear: "all", target: "/dev/sda", mirror: "/dev/sdb",
+			wantStop: all + " /dev/sda /dev/sdb"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{Mode: tt.mode}, &mockProvider{})
+			cfg := &config.MachineConfig{Mode: tt.mode, LegacyCompat: tt.legacy}
+			cfg.Provision.Disk.RAIDSuperblockClear = tt.clear
+			cfg.Provision.Disk.WipeAllDisks = new(tt.wipeAll)
+			cfg.Provision.Disk.WipeDepth = config.WipeDepthQuick
+			cfg.Provision.Disk.DiscardNVMe = new(false)
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("Validate() = %v", err)
+			}
+			o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+			withFixtureDisks(t, o, "sda", "sdb", "sdc")
 			o.targetDisk, o.mirrorDisk = tt.target, tt.mirror
 			cmd.setResult("lsblk -ln", lsblk, nil)
 			var steps []Step
@@ -223,31 +249,65 @@ func TestStopRAIDZeroesRAIDSuperblocks(t *testing.T) {
 			} else {
 				steps = o.deprovisionSteps(tt.mode)
 			}
-			var stopRAID func(context.Context) error
-			for _, s := range steps {
-				if s.Name == "stop-raid" {
-					stopRAID = s.Fn
+			step := func(name string) func(context.Context) error {
+				for _, s := range steps {
+					if s.Name == name {
+						return s.Fn
+					}
 				}
+				t.Fatalf("no %s step in %s", name, tt.mode)
+				return nil
 			}
-			if stopRAID == nil {
-				t.Fatalf("no stop-raid step in %s", tt.mode)
-			}
-			if err := stopRAID(context.Background()); err != nil {
+
+			if err := step("stop-raid")(context.Background()); err != nil {
 				t.Fatalf("stop-raid error = %v", err)
 			}
-			stopIdx := commandIndex(cmd.calls, "mdadm", "--stop", "--scan")
-			lsblkIdx := commandIndex(cmd.calls, "lsblk", strings.Fields(tt.wantLsblk)...)
-			if stopIdx < 0 || lsblkIdx < stopIdx {
-				t.Fatalf("want mdadm --stop --scan, then lsblk %s; calls %v", tt.wantLsblk, cmd.calls)
+			if commandIndex(cmd.calls, "mdadm", "--stop", "--scan") != 0 {
+				t.Fatalf("stop-raid must stop the arrays first: %v", cmd.calls)
 			}
-			for _, dev := range []string{"/dev/sda2", "/dev/sdb"} {
-				if !hasCall(cmd.calls, "mdadm", "--zero-superblock "+dev) {
-					t.Fatalf("superblock of %s not zeroed: %v", dev, cmd.calls)
+			assertRAIDClear(t, "stop-raid", cmd.calls, tt.wantStop)
+
+			cmd.calls = nil
+			// The wipe itself runs too, so wipe the superblocks before it.
+			if tt.mode == "provision" {
+				if err := o.wipeOrSecureEraseDisks(context.Background()); err != nil {
+					t.Fatalf("wipe-disks error = %v", err)
+				}
+				assertRAIDClear(t, "wipe-disks", cmd.calls, tt.wantWipe)
+				if tt.wantWipe != "" && commandIndex(cmd.calls, "lsblk", strings.Fields(tt.wantWipe)...) >
+					commandIndex(cmd.calls, "wipefs", "-af", "/dev/sda") {
+					t.Fatalf("superblocks zeroed after the wipe: %v", cmd.calls)
 				}
 			}
-			if hasCall(cmd.calls, "mdadm", "--zero-superblock /dev/sda1") {
-				t.Fatalf("zeroed a device that is no RAID member: %v", cmd.calls)
-			}
 		})
+	}
+}
+
+// assertRAIDClear checks that calls list superblocks with exactly the lsblk
+// args want, or not at all for an empty want, and zero only the members.
+func assertRAIDClear(t *testing.T, step string, calls []mockCall, want string) {
+	t.Helper()
+	var lsblkCalls []string
+	for _, c := range calls {
+		if c.name == "lsblk" && len(c.args) > 0 && c.args[0] == "-ln" {
+			lsblkCalls = append(lsblkCalls, strings.Join(c.args, " "))
+		}
+	}
+	if want == "" {
+		if len(lsblkCalls) != 0 || hasCommandName(calls, "mdadm") && commandIndex(calls, "mdadm", "--zero-superblock", "/dev/sdb") >= 0 {
+			t.Fatalf("%s zeroed RAID superblocks: %v", step, calls)
+		}
+		return
+	}
+	if len(lsblkCalls) != 1 || lsblkCalls[0] != want {
+		t.Fatalf("%s listed %v, want lsblk %s", step, lsblkCalls, want)
+	}
+	for _, dev := range []string{"/dev/sda2", "/dev/sdb"} {
+		if !hasCall(calls, "mdadm", "--zero-superblock "+dev) {
+			t.Fatalf("%s did not zero %s: %v", step, dev, calls)
+		}
+	}
+	if hasCall(calls, "mdadm", "--zero-superblock /dev/sda1") {
+		t.Fatalf("%s zeroed a device that is no RAID member: %v", step, calls)
 	}
 }

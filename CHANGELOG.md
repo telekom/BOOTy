@@ -31,11 +31,14 @@ behaviour.
 
 ### Behaviour changes in all modes
 
-- `stop-raid` of provisioning and hard deprovision zeroes the superblock of
-  every `linux_raid_member` (whole disks and partitions) after it stops the
-  arrays, like `clear_mdadm_superblocks` of the CAPRF provisioner. A hard
-  deprovision with a device override does this only on the selected disk and
-  its mirror companion (#581).
+- Provisioning and hard deprovision zero the superblock of every
+  `linux_raid_member` (whole disks and partitions) on the disks they wipe,
+  after `stop-raid` stopped the arrays: provisioning on the target and mirror
+  disk, or on every disk with `WIPE_ALL_DISKS=true`; hard deprovision on the
+  device override and its mirror companion, else on every disk. The new
+  `RAID_SUPERBLOCK_CLEAR=all` (preset by `CAPRF_LEGACY_COMPAT`) zeroes them on
+  every disk of the host in `stop-raid`, like `clear_mdadm_superblocks` of the
+  CAPRF provisioner (#581).
 - A provisioner netplan route with `from`, `table`, `metric` or `scope` now
   fails the network setup (with `NETPLAN_STRICT=false` it is dropped with a
   warning). BOOTy does not apply these keys; before, the `via` of a `from:`
@@ -218,8 +221,9 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   across two equal disks, like the CAPRF provisioner. It copies the ESP to the
   second disk with a `<label>-disk2` UEFI boot entry, installs GRUB on both
   disks on BIOS, and installs the `booty-esp-sync` service that copies later
-  ESP changes to the other disk. `stop-raid` zeroes old RAID superblocks like
-  the legacy script. Soft deprovision refuses a mirrored root (#581)
+  ESP changes to the other disk. Soft deprovision refuses a mirrored root (#581)
+- `RAID_SUPERBLOCK_CLEAR` (`wiped`|`all`): disks on which provisioning zeroes
+  old RAID superblocks (#581)
 
 ### Security
 

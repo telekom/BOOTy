@@ -75,6 +75,21 @@ type DiskConfig struct {
 	// Default: "" (thorough)
 	WipeDepth string `yaml:"wipeDepth" json:"wipeDepth"`
 
+	// RAIDSuperblockClear selects the disks on which provisioning zeroes the
+	// MD superblock of every linux_raid_member after stop-raid stopped the
+	// arrays. The quick wipe keeps metadata 1.0 superblocks at the end of old
+	// member partitions, which a replicated or restored partition table
+	// brings back.
+	// "wiped": only the disks that wipe-disks wipes, right before the wipe:
+	// the target disk and its mirror disk, or every disk with WipeAllDisks.
+	// "all": every disk, in stop-raid, like clear_mdadm_superblocks of the
+	// CAPRF legacy provisioner.
+	// Hard deprovision wipes the deprovision device and its mirror companion,
+	// or every disk, and zeroes the superblocks on these disks with both values.
+	// Valid values: "wiped", "all". Preset by legacyCompat: "all".
+	// Default: "" (wiped)
+	RAIDSuperblockClear string `yaml:"raidSuperblockClear" json:"raidSuperblockClear"`
+
 	// GrowPartition selects the partition that grow-partition and
 	// resize-filesystem enlarge to fill the disk.
 	// "root": the root partition.

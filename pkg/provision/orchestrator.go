@@ -637,19 +637,36 @@ func splitCommaValues(raw string) []string {
 	return values
 }
 
-// stopRAID stops every MD array and then zeroes the superblocks of all RAID
-// members on the host, like clear_mdadm_superblocks of the CAPRF legacy
-// provisioner, so no old array comes back after the wipe.
+// stopRAID stops every MD array. With RAID_SUPERBLOCK_CLEAR=all it then
+// zeroes the superblocks of all RAID members on the host, like
+// clear_mdadm_superblocks of the CAPRF legacy provisioner. With the default
+// "wiped", wipe-disks zeroes them on the disks it wipes, which are known only
+// after detect-disk.
 func (o *Orchestrator) stopRAID(ctx context.Context) error {
 	if err := o.disk.StopRAIDArrays(ctx); err != nil {
 		return err
 	}
+	if o.cfg.Provision.Disk.RAIDSuperblockClear != config.RAIDSuperblockClearAll {
+		return nil
+	}
 	return o.disk.ClearRAIDSuperblocks(ctx)
 }
 
-// stopRAIDForDeprovision is stop-raid of hard deprovision. With a device
-// override it zeroes the RAID superblocks only on the disks that the wipe
-// covers: the selected disk and its mirror companion.
+// clearWipedRAIDSuperblocks zeroes the RAID superblocks on the disks that
+// the provisioning wipe-disks step is about to wipe, for the default
+// RAID_SUPERBLOCK_CLEAR=wiped. No disks means every disk (WIPE_ALL_DISKS).
+// Deprovisioning zeroes them in stop-raid, and with "all" stop-raid did it.
+func (o *Orchestrator) clearWipedRAIDSuperblocks(ctx context.Context, disks ...string) error {
+	if config.IsDeprovisionMode(o.cfg.Mode) || o.cfg.Provision.Disk.RAIDSuperblockClear == config.RAIDSuperblockClearAll {
+		return nil
+	}
+	return o.disk.ClearRAIDSuperblocks(ctx, disks...)
+}
+
+// stopRAIDForDeprovision is stop-raid of hard deprovision. It zeroes the
+// RAID superblocks on the disks that the wipe covers, with both
+// RAID_SUPERBLOCK_CLEAR values: with a device override the selected disk and
+// its mirror companion, else every disk.
 func (o *Orchestrator) stopRAIDForDeprovision(ctx context.Context) error {
 	if err := o.disk.StopRAIDArrays(ctx); err != nil {
 		return err
@@ -1191,7 +1208,14 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 		o.log.Info("wiping raid target device after array creation", "device", targetDisk)
 		return o.disk.WipeDisk(ctx, targetDisk)
 	}
-	return o.wipeTargetDisks(ctx, []string{targetDisk, strings.TrimSpace(o.mirrorDisk)}, secureErase)
+	disks := []string{targetDisk}
+	if mirror := strings.TrimSpace(o.mirrorDisk); mirror != "" {
+		disks = append(disks, mirror)
+	}
+	if err := o.clearWipedRAIDSuperblocks(ctx, disks...); err != nil {
+		return err
+	}
+	return o.wipeTargetDisks(ctx, disks, secureErase)
 }
 
 // wipeTargetDisks wipes the root disk and, for mirrored installs, the mirror disk.
@@ -1230,6 +1254,9 @@ func (o *Orchestrator) wipeWithoutTargetSelection(ctx context.Context) (bool, er
 			if err := o.disk.CheckNotInUse(target); err != nil {
 				return true, err
 			}
+		}
+		if err := o.clearWipedRAIDSuperblocks(ctx); err != nil {
+			return true, err
 		}
 		return true, o.wipeAllDisks(ctx)
 	}

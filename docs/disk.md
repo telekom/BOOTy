@@ -32,9 +32,9 @@ See [docs/configuration.md](configuration.md) for each variable:
 - Target disk: `DISK_DEVICE`, `DISK_SERIAL`, `DISK_SERIAL_NUMBER`,
   `DISK_SELECTION`, `MIN_DISK_SIZE_GB`, `BOOTY_ALLOW_REMOVABLE`
 - Wipe: `MODE`, `SECURE_ERASE`, `WIPE_DEPTH`, `WIPE_ALL_DISKS`,
-  `DISCARD_NVME`, `DRY_RUN`, `CAPRF_LEGACY_COMPAT` (presets
-  `DISK_SELECTION=lsblk`, `WIPE_DEPTH=quick`, `WIPE_ALL_DISKS=true` and
-  `DISCARD_NVME=true`)
+  `DISCARD_NVME`, `RAID_SUPERBLOCK_CLEAR`, `DRY_RUN`, `CAPRF_LEGACY_COMPAT`
+  (presets `DISK_SELECTION=lsblk`, `WIPE_DEPTH=quick`, `WIPE_ALL_DISKS=true`,
+  `DISCARD_NVME=true` and `RAID_SUPERBLOCK_CLEAR=all`)
 - Layout: `PARTITION_LAYOUT`, `IMAGE_MODE`, `IMAGE_SOURCE_ROOT_LABEL`,
   `IMAGE_SOURCE_ROOT_PARTITION`
 - Root partition: `ROOT_PARTITION_LABEL`, `ROOT_PARTITION_NUMBER`
@@ -52,10 +52,14 @@ The provisioning pipeline then runs the disk steps in this order:
 
 1. `disable-lvm` and `stop-raid`: deactivate LVM volume groups
    (`lvm vgchange -an`) and stop all md arrays (`mdadm --stop --scan`).
+   With `RAID_SUPERBLOCK_CLEAR=all`, `stop-raid` then zeroes the RAID
+   superblocks on every disk.
 2. `setup-nvme-namespaces`: apply `NVME_NAMESPACES`.
 3. `setup-raid`: wipe the RAID member disks and create the arrays.
 4. `detect-disk`: select the target disk.
-5. `wipe-disks`: wipe the target disk or all disks.
+5. `wipe-disks`: wipe the target disk or all disks. With the default
+   `RAID_SUPERBLOCK_CLEAR=wiped`, it first zeroes the RAID superblocks on
+   the disks that it wipes.
 6. `apply-partition-layout`: create the declared GPT layout and LVM volumes.
 7. `stream-image`: write the image.
 8. `partprobe`, `parse-partitions`: read the new partition table and find the
@@ -336,14 +340,17 @@ sector size, `auto` falls back to one disk, `none` is the default. See
 [Configuration](configuration.md#disk-and-image) and the `DISK_MIRRORING_MODE`
 row of the README for the full rules.
 
-Before the disks are selected, the `stop-raid` step stops every MD array and
-zeroes the superblock of every `linux_raid_member` (whole disks and
-partitions), like `clear_mdadm_superblocks` of the legacy provisioner. The
-quick wipe (`WIPE_DEPTH=quick`, preset by `CAPRF_LEGACY_COMPAT`) does not
+The quick wipe (`WIPE_DEPTH=quick`, preset by `CAPRF_LEGACY_COMPAT`) does not
 clear the metadata 1.0 superblocks at the end of old member partitions, so a
-replicated partition table would bring them back. Hard deprovision does the
-same; with a device override only on the selected disk and its mirror
-companion. BOOTy never assembles existing arrays while it provisions: the
+replicated partition table would bring them back. So BOOTy zeroes the
+superblock of every `linux_raid_member` (whole disks and partitions) after
+`stop-raid` stopped the arrays. `RAID_SUPERBLOCK_CLEAR` selects the disks:
+`wiped` (default) zeroes them in `wipe-disks`, only on the target disk and the
+mirror disk, or on every disk with `WIPE_ALL_DISKS=true`; `all` (preset by
+`CAPRF_LEGACY_COMPAT`) zeroes them in `stop-raid` on every disk, like
+`clear_mdadm_superblocks` of the legacy provisioner. Hard deprovision zeroes
+them on the disks it wipes: with a device override the selected disk and its
+mirror companion, else every disk. BOOTy never assembles existing arrays while it provisions: the
 ramdisk has no `mdadm.conf`, so a scan would also start foreign or stale
 arrays. The installed system gets `/etc/mdadm/mdadm.conf` (and
 `/etc/mdadm.conf`) with the legacy line `AUTO +imsm +1.x -all` and the

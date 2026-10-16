@@ -348,6 +348,7 @@ root is mounted.
 | `DISK_SELECTION` | `prefer-nvme` | `lsblk` selects the first large enough disk in legacy `lsblk` order. Preset by `CAPRF_LEGACY_COMPAT` |
 | `WIPE_ALL_DISKS` | `false` | Wipe every disk, not only the target, like `wipe_all_disks`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `WIPE_DEPTH` | `thorough` | `thorough`: stop LVM, dm-crypt and MD on the disk, clear every partition, the partition table and the disk edges, then `blkdiscard` the disk. `quick`: `sgdisk --zap-all` and `wipefs -af` on the disk only. Preset `quick` by `CAPRF_LEGACY_COMPAT`. See [docs/disk.md](docs/disk.md#wipe-behaviour) |
+| `RAID_SUPERBLOCK_CLEAR` | `wiped` | Disks on which provisioning zeroes old RAID superblocks (`mdadm --zero-superblock` on every `linux_raid_member`): `wiped` only the disks that `wipe-disks` wipes, right before the wipe; `all` every disk in `stop-raid`, like `clear_mdadm_superblocks`. Hard deprovision zeroes them on the disks it wipes with both values. Preset by `CAPRF_LEGACY_COMPAT`: `all` |
 | `GROW_PARTITION` | `root` | `last-linux` grows the last GPT Linux partition like the legacy `provision.sh`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `DISCARD_NVME` | `false` | `blkdiscard` every NVMe disk before a wipe of all disks. Preset by `CAPRF_LEGACY_COMPAT` |
 | `FRR_CONFIG_STRICT` | `true` | `false` logs and skips provisioner `frr.conf` statements that BOOTy does not implement instead of failing. Invalid values and unsupported block openers still fail. See [Networking](docs/networking.md#strict-input-and-the-accepted-grammar) |

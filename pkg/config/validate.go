@@ -174,6 +174,10 @@ func (c *Config) validatePrimaryEnums() []string {
 			return validateEnumLower(c.Provision.Disk.WipeDepth, "provision.disk.wipeDepth (WIPE_DEPTH)", WipeDepthThorough, WipeDepthQuick)
 		},
 		func() string {
+			return validateEnumLower(c.Provision.Disk.RAIDSuperblockClear, "provision.disk.raidSuperblockClear (RAID_SUPERBLOCK_CLEAR)",
+				RAIDSuperblockClearWiped, RAIDSuperblockClearAll)
+		},
+		func() string {
 			return validateEnumLower(c.Agent.DeprovisionSuccessAction, "agent.deprovisionSuccessAction", AgentDeprovisionStandby)
 		},
 		func() string {
@@ -342,6 +346,7 @@ func (c *Config) normalize() {
 		&c.Provision.GRUBCmdlineMode,
 		&c.Provision.Firmware.NumVFsMode,
 		&c.Provision.Disk.WipeDepth,
+		&c.Provision.Disk.RAIDSuperblockClear,
 		&c.Provision.Disk.GrowPartition,
 		&c.Agent.DeprovisionSuccessAction,
 	}

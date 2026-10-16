@@ -2670,6 +2670,23 @@ func TestParseVarsGrowPartition(t *testing.T) {
 	}
 }
 
+func TestParseVarsRAIDSuperblockClear(t *testing.T) {
+	for vars, want := range map[string]string{
+		"RAID_SUPERBLOCK_CLEAR=all\n":                             "all",
+		"CAPRF_LEGACY_COMPAT=true\n":                              "all",
+		"CAPRF_LEGACY_COMPAT=true\nRAID_SUPERBLOCK_CLEAR=wiped\n": "wiped",
+		"HOSTNAME=x\n": "",
+	} {
+		cfg, err := ParseVars(strings.NewReader(vars))
+		if err != nil {
+			t.Fatalf("ParseVars(%q): %v", vars, err)
+		}
+		if got := cfg.Provision.Disk.RAIDSuperblockClear; got != want {
+			t.Errorf("ParseVars(%q): RAIDSuperblockClear = %q, want %q", vars, got, want)
+		}
+	}
+}
+
 func TestParseVarsLifecycleActions(t *testing.T) {
 	tests := []struct {
 		vars         string

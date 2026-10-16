@@ -54,7 +54,9 @@ The variable changes these behaviours:
 - **Disks.** The target disk is selected like `_select_single_disk`
   (`DISK_SELECTION=lsblk`), and `wipe-disks` wipes every disk like
   `wipe_all_disks` (`WIPE_ALL_DISKS=true`), with signature wipes on the disks
-  only (`WIPE_DEPTH=quick`). `decommission` also discards NVMe disks
+  only (`WIPE_DEPTH=quick`). `stop-raid` zeroes the RAID superblocks on
+  every disk like `clear_mdadm_superblocks` (`RAID_SUPERBLOCK_CLEAR=all`).
+  `decommission` also discards NVMe disks
   (`DISCARD_NVME=true`). `grow-partition` grows the last GPT Linux partition
   like `provision.sh` (`GROW_PARTITION=last-linux`); it expects ext4 on a
   data partition after the root.
@@ -113,6 +115,7 @@ Detail for these rows is in [Disk handling](disk.md).
 | `_select_single_disk`: first disk of at least `MIN_DISK_SIZE_GB` in `lsblk` order, NVMe and virtio first, then SCSI/SATA. Removable media are not skipped. | Without `DISK_DEVICE` or `DISK_SERIAL`: NVMe first, then the largest disk. Removable media are skipped unless `BOOTY_ALLOW_REMOVABLE=true`. | Legacy order. A USB disk can be selected when no NVMe or virtio disk qualifies. | Merged (#590) | `DISK_SELECTION=lsblk` |
 | Grow the last GPT Linux partition, `e2fsck -p -f` before `growpart` | Grow the root partition | The last GPT Linux partition, also a data partition after the root. `e2fsck -p -f` before `growpart`, offline `resize2fs`. The root keeps its size. | Merged (#625) | `GROW_PARTITION=last-linux` |
 | Mount a separate `/boot` from the image `fstab` when the root has no `/boot/grub` | Not mounted. `update-grub` writes `grub.cfg` on the root filesystem. | Same as default | Planned (#595) | Not needed |
+| `clear_mdadm_superblocks` before the wipe: stop every array, `mdadm --zero-superblock` on every `linux_raid_member` of the host | Provision zeroes the superblocks only on the disks that `wipe-disks` wipes (the target and its mirror disk, or every disk with `WIPE_ALL_DISKS=true`), right before the wipe | Every disk, in `stop-raid` | Merged (#581) | `RAID_SUPERBLOCK_CLEAR` (`all`) |
 | `DISK_MIRRORING_MODE=raid-1`: RAID1 `/dev/md2` over two disks | RAID1 `/dev/md2` (root) and `/dev/md1` (separate `/boot`) over the largest pair of equal disks | Same as default | Merged (#581) | Not needed |
 
 ### Transport and configuration input
