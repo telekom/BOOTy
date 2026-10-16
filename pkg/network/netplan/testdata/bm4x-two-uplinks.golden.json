@@ -274,6 +274,6 @@
     "ens1f1np1"
   ],
   "IPForwarding": false,
-  "IPv6Forwarding": false,
+  "IPv6Forwarding": null,
   "VLANs": null
 }

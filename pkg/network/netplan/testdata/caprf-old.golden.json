@@ -123,7 +123,8 @@
   "NoAcceptRA": [
     "hbn"
   ],
-  "IPForwarding": false,
-  "IPv6Forwarding": false,
+  "EmitLLDP": null,
+  "IPForwarding": null,
+  "IPv6Forwarding": null,
   "VLANs": null
 }

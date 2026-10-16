@@ -52,9 +52,9 @@
   "BGPMinPeers": 0,
   "BGPSessions": [
     {
-      "Name": "eth1",
+      "Name": "hbn",
       "Interface": true,
-      "VRF": "",
+      "VRF": "Vrf_underlay",
       "Internal": false,
       "RemoteASN": 0,
       "LocalASN": 0,
@@ -112,9 +112,7 @@
   "EVPNExportRTs": [
     "65000:1000"
   ],
-  "Type5Networks": [
-    "192.168.4.11/32"
-  ],
+  "Type5Networks": null,
   "OverlayDevices": {
     "vxlanMTU": 9000,
     "vxlanLearning": false,
@@ -124,8 +122,11 @@
     "bridgeAcceptRA": false,
     "bridgeMTU": 9000
   },
-  "NoAcceptRA": null,
-  "IPForwarding": false,
-  "IPv6Forwarding": false,
+  "NoAcceptRA": [
+    "hbn"
+  ],
+  "EmitLLDP": null,
+  "IPForwarding": null,
+  "IPv6Forwarding": null,
   "VLANs": null
 }
