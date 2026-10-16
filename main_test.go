@@ -1778,6 +1778,51 @@ func TestFastExternalFailoverBothForms(t *testing.T) {
 	}
 }
 
+// The inference path of TestGoBGPRouteModeType5Only with the real inputs
+// of the numbered lab node (test/e2e/clab/data/*-gobgp-numbered): its
+// provision VNI is an FRR L3VNI. With its provision_gateway the mode stays
+// as configured (#662); without it, mergeInferredEVPNMode selects Type-5
+// only and logs the choice once.
+func TestMergeInferredEVPNModeNumberedLab(t *testing.T) {
+	data := filepath.Join("test", "e2e", "clab", "data")
+	f, err := os.Open(filepath.Join(data, "vars-gobgp-numbered"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	cfg, err := caprf.ParseVars(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs := filepath.Join(data, "fs-gobgp-numbered", "etc")
+	npCfg, err := detectNetplanConfig(filepath.Join(fs, "netplan"), filepath.Join(fs, "frr", "frr.conf"), true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged := func(gateway string) (*network.Config, string) {
+		var buf bytes.Buffer
+		prev := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+		defer slog.SetDefault(prev)
+		c := *cfg
+		c.Network.EVPN.ProvisionGateway = gateway
+		n := networkConfigFromMachineConfig(&c)
+		mergeNetplanConfig(n, npCfg)
+		return n, buf.String()
+	}
+	if cfg.Network.EVPN.ProvisionGateway == "" {
+		t.Fatal("the lab vars no longer set provision_gateway; update this test")
+	}
+	n, logs := merged(cfg.Network.EVPN.ProvisionGateway)
+	if n.EVPNType5Only || n.EVPNL2Enabled || strings.Contains(logs, "provision VNI is an FRR L3VNI") {
+		t.Errorf("with provision_gateway: Type-5 only %v, L2 %v, log %q; want the configured mode", n.EVPNType5Only, n.EVPNL2Enabled, logs)
+	}
+	n, logs = merged("")
+	if !n.EVPNType5Only || n.EVPNL2Enabled || strings.Count(logs, "provision VNI is an FRR L3VNI") != 1 {
+		t.Errorf("without provision_gateway: Type-5 only %v, L2 %v, log %q; want Type-5 only, logged once", n.EVPNType5Only, n.EVPNL2Enabled, logs)
+	}
+}
+
 // The BM4X lab failure (#662): the rendered bm4x templates without
 // provision_gateway must pass the GoBGP config check after the netplan
 // merge, because the L3VNI selects Type-5 only. Chains the real parse,
