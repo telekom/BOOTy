@@ -43,7 +43,7 @@ func TestResolveProductionTemplateKernelRelease(t *testing.T) {
 			if err := os.WriteFile(kernel, []byte(tt.contents), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			got, err := resolveProductionTemplateKernelRelease(kernel, modules)
+			got, err := resolveProductionTemplateKernelRelease(kernel, modules, "")
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("error = %v, wantErr %v", err, tt.wantErr)
 			}

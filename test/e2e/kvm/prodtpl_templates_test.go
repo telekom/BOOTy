@@ -234,19 +234,20 @@ func waitFor(t *testing.T, ctx context.Context, what string, ok func() bool) {
 // from that basename incorrectly selects /lib/modules/vmlinuz.
 func productionTemplateKernelRelease(t *testing.T, kernel string) string {
 	t.Helper()
-	release, err := resolveProductionTemplateKernelRelease(kernel, "/lib/modules")
+	releaseHint := strings.TrimSpace(os.Getenv("BOOTY_KERNEL_RELEASE"))
+	release, err := resolveProductionTemplateKernelRelease(kernel, "/lib/modules", releaseHint)
 	if err != nil {
 		t.Fatalf("resolve kernel module release for %s: %v", kernel, err)
 	}
 	return release
 }
 
-func resolveProductionTemplateKernelRelease(kernel, modulesRoot string) (string, error) {
+func resolveProductionTemplateKernelRelease(kernel, modulesRoot, releaseHint string) (string, error) {
 	base := filepath.Base(kernel)
-	var release string
-	if strings.HasPrefix(base, "vmlinuz-") {
+	var release = strings.TrimSpace(releaseHint)
+	if release == "" && strings.HasPrefix(base, "vmlinuz-") {
 		release = strings.TrimPrefix(base, "vmlinuz-")
-	} else {
+	} else if release == "" {
 		// Ubuntu's /boot/vmlinuz is commonly a symlink into
 		// /usr/lib/modules/<release>/vmlinuz. This path metadata remains
 		// reliable when the image itself is compressed.

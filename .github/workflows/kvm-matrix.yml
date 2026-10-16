@@ -420,6 +420,9 @@ jobs:
             dpkg-deb -x linux-image*.deb /tmp/kernel-extract
             KERNEL=$(ls /tmp/kernel-extract/boot/vmlinuz-* | head -1)
           fi
+          KERNEL_RELEASE=$(basename "$KERNEL" | sed 's/^vmlinuz-//')
+          test -n "$KERNEL_RELEASE"
+          echo "BOOTY_KERNEL_RELEASE=$KERNEL_RELEASE" >> "$GITHUB_ENV"
           sudo cp "$KERNEL" vmlinuz
           sudo chmod 644 vmlinuz
 
