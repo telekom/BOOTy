@@ -171,12 +171,6 @@ event of a burst updates the kernel at once, the rest 200 ms later, and every 30
 so routes the kernel dropped come back. The session NICs get
 `ignore_routes_with_linkdown=1`, so a dead ECMP member is skipped at once.
 
-| `EVPN_TYPE5_ONLY` | provision VNI is an `frr.conf` L3VNI | `network.evpn.type5Only` | an explicit value wins |
-| `LOOPBACK_ADDRESSES` | netplan `lo` addresses | `network.loopbackAddresses` | list replaces |
-| `BLACKHOLE_ROUTES` | `frr.conf` `ip[v6] route P blackhole` | `network.blackholeRoutes` | list replaces |
-| `EVPN_TYPE5_NETWORKS` | `frr.conf` `network` with `advertise ipv4\|ipv6 unicast` | `network.evpn.type5Networks` | list replaces |
-| `VXLAN_NAME` | netplan tunnel name | `network.evpn.vxlanName` | native wins |
-| `BRIDGE_NAME` | netplan bridge name | `network.evpn.bridgeName` | native wins |
 The merge rule of each key is in the table under
 [Netplan and FRR config input](#netplan-and-frr-config-input).
 
@@ -242,11 +236,12 @@ peer-group do not set.
 | `allowASIn` (session field) | `neighbor X allowas-in [N]` | `network.bgp.sessions[].allowASIn` | part of the session list |
 | `BGP_MULTIPATH_RELAX` | `bgp bestpath as-path multipath-relax` | `network.bgp.multipathRelax` | native wins |
 | `BGP_FAST_EXTERNAL_FAILOVER` | `[no] bgp fast-external-failover` | `network.bgp.fastExternalFailover` | native wins, for every session and the `BGP_PEER_MODE` peers (off for them when unset) |
-| `EVPN_TYPE5_ONLY` | provision VNI is an `frr.conf` L3VNI | `network.evpn.type5Only` | native wins |
+| `EVPN_TYPE5_ONLY` | provision VNI is an `frr.conf` L3VNI | `network.evpn.type5Only` | an explicit value wins |
 | `LOOPBACK_ADDRESSES` | netplan `lo` addresses | `network.loopbackAddresses` | list replaces |
 | `BLACKHOLE_ROUTES` | `frr.conf` `ip[v6] route P blackhole` | `network.blackholeRoutes` | list replaces |
 | `EVPN_TYPE5_NETWORKS` | `frr.conf` `network` with `advertise ipv4\|ipv6 unicast` | `network.evpn.type5Networks` | list replaces |
 | `VXLAN_NAME` | netplan tunnel name | `network.evpn.vxlanName` | native wins |
+| `BRIDGE_NAME` | netplan bridge name | `network.evpn.bridgeName` | native wins |
 | `BRIDGE_MAC` | netplan bridge `macaddress` | `network.evpn.bridgeMAC` | native wins |
 | `VXLAN_LINK` | netplan tunnel `link` | `network.evpn.vxlanLink` | native wins |
 | `UNDERLAY_DUMMY_NAME` | netplan dummy device | `network.evpn.underlayDummyName` | native wins |

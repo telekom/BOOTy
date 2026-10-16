@@ -74,10 +74,9 @@ func TestMergeNetplanConfigPrecedence(t *testing.T) {
 		UnderlayIP: "192.0.2.17", VXLANName: "vx.parsed", BridgeName: "br.parsed",
 		LoopbackAddrs: []string{"2001:db8::17/128", "2001:db8::18/128"},
 	}
-	native := &network.Config{UnderlayIP: "192.0.2.99", VXLANName: "vx.native", BridgeName: "br.native", LoopbackAddrs: []string{"2001:db8::99/128"}}
 	parsed.MTU, parsed.OverlayVRFSet = 9100, true
 	native := &network.Config{
-		UnderlayIP: "192.0.2.99", VXLANName: "vx.native", LoopbackAddrs: []string{"2001:db8::99/128"},
+		UnderlayIP: "192.0.2.99", VXLANName: "vx.native", BridgeName: "br.native", LoopbackAddrs: []string{"2001:db8::99/128"},
 		MTU: 9000, OverlayVRFName: "Vrf_native", OverlayVRFSet: true,
 	}
 	mergeNetplanConfig(native, parsed)
@@ -98,7 +97,6 @@ func TestMergeNetplanConfigPrecedence(t *testing.T) {
 	if unset.BridgeName != "br.parsed" {
 		t.Errorf("unset BRIDGE_NAME %s, want the netplan bridge", unset.BridgeName)
 	}
-	if unset.VXLANName != "vx.parsed" || len(unset.LoopbackAddrs) != 2 {
 	if unset.VXLANName != "vx.parsed" || len(unset.LoopbackAddrs) != 2 || unset.MTU != 9100 || !unset.OverlayVRFSet || unset.OverlayVRFName != "" {
 		t.Errorf("unset native keys = %s %v, want the parsed values", unset.VXLANName, unset.LoopbackAddrs)
 	}
