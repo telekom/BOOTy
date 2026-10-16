@@ -2110,7 +2110,8 @@ func TestMergeNetplanConfigOverlayDevices(t *testing.T) {
 	mergeNetplanConfig(dst, src)
 
 	d := dst.OverlayDevices
-	if d.VXLANMTU != 9000 || d.VXLANMAC != "02:00:00:00:00:01" || d.PortHairpin == nil || *d.PortHairpin ||
+	// A set native value wins; netplan fills the unset ones.
+	if d.VXLANMTU != 8000 || d.VXLANMAC != "02:00:00:00:00:01" || d.PortHairpin == nil || *d.PortHairpin ||
 		d.VXLANLinkLocal == nil || *d.VXLANLinkLocal {
 		t.Errorf("overlay devices = %+v", d)
 	}
