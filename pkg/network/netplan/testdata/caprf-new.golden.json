@@ -71,6 +71,11 @@
     }
   ],
   "BGPMultipathRelax": false,
+  "BGPLocalAS": 0,
+  "BGPNeighborVRF": "",
+  "BGPConnectRetry": 0,
+  "BGPAllowASIn": 0,
+  "BGPInstallRoutes": false,
   "BGPFastExternalFailover": null,
   "BridgeName": "br.provision",
   "BridgeMAC": "",

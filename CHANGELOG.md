@@ -193,7 +193,7 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 - Native vars keys and YAML fields for every provisioner network value of GoBGP
   mode (`BGP_LOCAL_AS`, `BGP_NEIGHBOR_VRF`, `BGP_CONNECT_RETRY`, `BGP_ALLOWAS_IN`,
-  `BGP_MULTIPATH_RELAX`, `BGP_INSTALL_ROUTES`, `BGP_FAST_EXTERNAL_FAILOVER`,
+  `BGP_INSTALL_ROUTES`,
   `BRIDGE_MAC`, `VXLAN_LINK`, `UNDERLAY_DUMMY_NAME`, `MTU`, `OVERLAY_VRF_NAME`,
   `OVERLAY_VRF_TABLE_ID`). A set value wins over netplan and `frr.conf`; the
   four peer keys are defaults for the sessions that do not set the value
