@@ -133,13 +133,13 @@ func mountDestination(device, mountpoint string) (bool, error) {
 		return false, nil
 	}
 	if err != nil && !os.IsNotExist(err) {
-		return false, err
+		return false, fmt.Errorf("stat ESP device: %w", err)
 	}
 	if !filepath.IsAbs(mountpoint) {
 		return false, fmt.Errorf("mountpoint must be absolute")
 	}
 	if err := os.MkdirAll(mountpoint, 0o700); err != nil {
-		return false, err
+		return false, fmt.Errorf("create ESP mountpoint: %w", err)
 	}
 	if err := unix.Mount(device, mountpoint, "vfat", unix.MS_NODEV|unix.MS_NOSUID|unix.MS_NOEXEC, "umask=0077"); err != nil {
 		return false, fmt.Errorf("mount destination ESP: %w", err)

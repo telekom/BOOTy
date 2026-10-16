@@ -732,7 +732,7 @@ func mountReadOnlyWithRetry(t *testing.T, devPath, mountDir string, beforeRetry 
 
 func buildESPSync(t *testing.T, output string) {
 	t.Helper()
-	cmd := exec.Command("go", "build", "-trimpath", "-ldflags", "-s -w", "-o", output, "./cmd/booty-esp-sync")
+	cmd := exec.Command("go", "build", "-trimpath", "-ldflags", "-s -w", "-o", output, "github.com/telekom/BOOTy/cmd/booty-esp-sync")
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build ESP synchronizer: %v\n%s", err, out)
