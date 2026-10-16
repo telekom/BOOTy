@@ -15,6 +15,13 @@ func TestResolveProductionTemplateKernelRelease(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	pathKernelRoot := filepath.Join(t.TempDir(), "usr", "lib", "modules", "6.1.0-test")
+	if err := os.MkdirAll(pathKernelRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pathKernelRoot, "vmlinuz"), []byte("compressed image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		name     string
@@ -24,6 +31,7 @@ func TestResolveProductionTemplateKernelRelease(t *testing.T) {
 		wantErr  bool
 	}{
 		{name: "versioned image", kernel: "vmlinuz-6.1.0-test", want: "6.1.0-test"},
+		{name: "compressed image path", kernel: filepath.Join(pathKernelRoot, "vmlinuz"), want: "6.1.0-test"},
 		{name: "embedded image", kernel: "vmlinuz", contents: "header Linux version 6.2.0-test SMP", want: "6.2.0-test"},
 		{name: "mismatched modules", kernel: "vmlinuz", contents: "Linux version 6.3.0-test", wantErr: true},
 		{name: "missing modules", kernel: "vmlinuz-6.4.0-test", wantErr: true},

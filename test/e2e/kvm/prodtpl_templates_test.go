@@ -247,16 +247,28 @@ func resolveProductionTemplateKernelRelease(kernel, modulesRoot string) (string,
 	if strings.HasPrefix(base, "vmlinuz-") {
 		release = strings.TrimPrefix(base, "vmlinuz-")
 	} else {
-		data, err := os.ReadFile(kernel)
-		if err != nil {
-			return "", fmt.Errorf("read kernel: %w", err)
+		// Ubuntu's /boot/vmlinuz is commonly a symlink into
+		// /usr/lib/modules/<release>/vmlinuz. This path metadata remains
+		// reliable when the image itself is compressed.
+		parts := strings.Split(filepath.Clean(kernel), string(filepath.Separator))
+		for i := 0; i+1 < len(parts); i++ {
+			if parts[i] == "modules" && parts[i+1] != "" {
+				release = parts[i+1]
+				break
+			}
 		}
-		releaseMatch := regexp.MustCompile(`Linux version ([^ \x00]+)`)
-		match := releaseMatch.FindSubmatch(data)
-		if len(match) != 2 {
-			return "", fmt.Errorf("kernel has no embedded Linux release")
+		if release == "" {
+			data, err := os.ReadFile(kernel)
+			if err != nil {
+				return "", fmt.Errorf("read kernel: %w", err)
+			}
+			releaseMatch := regexp.MustCompile(`Linux version ([^ \x00]+)`)
+			match := releaseMatch.FindSubmatch(data)
+			if len(match) != 2 {
+				return "", fmt.Errorf("kernel has no embedded Linux release")
+			}
+			release = string(match[1])
 		}
-		release = string(match[1])
 	}
 	if st, err := os.Stat(filepath.Join(modulesRoot, release)); err != nil || !st.IsDir() {
 		return "", fmt.Errorf("module release %s is unavailable under %s", release, modulesRoot)
