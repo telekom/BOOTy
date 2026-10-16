@@ -412,7 +412,7 @@ func TestEBGPRequiresPolicyInGoBGP(t *testing.T) {
 				t.Fatal("session not established")
 			}
 			// Updates follow within a second; wait longer before counting.
-			for end := time.Now().Add(5 * time.Second); time.Now().Before(end) && !(count(booty) == 2 && count(fabric) == 2); {
+			for end := time.Now().Add(5 * time.Second); time.Now().Before(end) && (count(booty) != 2 || count(fabric) != 2); {
 				time.Sleep(200 * time.Millisecond)
 			}
 			want := map[bool]int{true: 1, false: 2}[required]
