@@ -104,6 +104,9 @@ type Config struct {
 	CommunityLists []network.CommunityList
 	RouteMapIn     string
 	RouteMapOut    string
+	// EBGPRequiresPolicy applies "bgp ebgp-requires-policy" to the native
+	// peers; sessions carry their own value.
+	EBGPRequiresPolicy bool
 	// ImportRTs and ExportRTs are the EVPN route targets ("ASN:value");
 	// empty lists use VPNRT or ASN:VNI.
 	ImportRTs []string
@@ -190,6 +193,7 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		CommunityLists:       netCfg.BGPCommunityLists,
 		RouteMapIn:           netCfg.BGPRouteMapIn,
 		RouteMapOut:          netCfg.BGPRouteMapOut,
+		EBGPRequiresPolicy:   netCfg.BGPEBGPRequiresPolicy,
 		ImportRTs:            netCfg.EVPNImportRTs,
 		ExportRTs:            netCfg.EVPNExportRTs,
 		BFDTransmitMS:        netCfg.BFDTransmitMS,

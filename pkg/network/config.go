@@ -109,6 +109,9 @@ type Config struct {
 	BGPCommunityLists []CommunityList
 	BGPRouteMapIn     string
 	BGPRouteMapOut    string
+	// BGPEBGPRequiresPolicy applies "bgp ebgp-requires-policy" to the
+	// native peers of BGP_PEER_MODE (off by default).
+	BGPEBGPRequiresPolicy bool
 	// BGPLocalAS is the local-as of the native unnumbered peers.
 	BGPLocalAS uint32
 	// BGPNeighborVRF binds the native numbered peers to a VRF device.
@@ -198,6 +201,10 @@ type BGPSession struct {
 	// RouteMaps are the route-maps per address family ("ipv4-unicast",
 	// "ipv6-unicast", "l2vpn-evpn").
 	RouteMaps []SessionRouteMaps
+	// EBGPRequiresPolicy rejects the routes of an eBGP session in each
+	// family and direction without a route-map, like FRR "bgp
+	// ebgp-requires-policy".
+	EBGPRequiresPolicy bool
 }
 
 // SessionRouteMaps are the import (In) and export (Out) route-maps of a

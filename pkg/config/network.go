@@ -232,6 +232,13 @@ type BGPConfig struct {
 	RouteMapIn  string `yaml:"routeMapIn" json:"routeMapIn"`
 	RouteMapOut string `yaml:"routeMapOut" json:"routeMapOut"`
 
+	// EBGPRequiresPolicy is FRR "bgp ebgp-requires-policy": an eBGP peer
+	// without a route-map in a family and direction exchanges no routes
+	// there. Unset means on for frr.conf and network.bgp.sessions
+	// sessions (unless frr.conf has "no bgp ebgp-requires-policy") and off
+	// for the BGP_PEER_MODE peers. A set value applies to all of them.
+	EBGPRequiresPolicy *bool `yaml:"ebgpRequiresPolicy,omitempty" json:"ebgpRequiresPolicy,omitempty"`
+
 	// BFDDetectMultiplier is the BFD detect multiplier (GoBGP), 2 to 255.
 	// An explicit value replaces the multiplier of frr.conf BFD sessions.
 	// Default: 0 (3, or the frr.conf profile value)

@@ -76,7 +76,8 @@
           "in": "TAG-FABRIC-IN",
           "out": "DENY-TAG-FABRIC-OUT"
         }
-      ]
+      ],
+      "EBGPRequiresPolicy": false
     },
     {
       "Name": "ens1f1np1",
@@ -105,7 +106,8 @@
           "in": "TAG-FABRIC-IN",
           "out": "DENY-TAG-FABRIC-OUT"
         }
-      ]
+      ],
+      "EBGPRequiresPolicy": false
     },
     {
       "Name": "198.51.100.1",
@@ -134,7 +136,8 @@
           "in": "TAG-FABRIC-IN",
           "out": "DENY-TAG-FABRIC-OUT"
         }
-      ]
+      ],
+      "EBGPRequiresPolicy": false
     },
     {
       "Name": "198.51.100.2",
@@ -163,7 +166,8 @@
           "in": "TAG-FABRIC-IN",
           "out": "DENY-TAG-FABRIC-OUT"
         }
-      ]
+      ],
+      "EBGPRequiresPolicy": false
     },
     {
       "Name": "198.51.100.3",
@@ -192,7 +196,8 @@
           "in": "TAG-FABRIC-IN",
           "out": "DENY-TAG-FABRIC-OUT"
         }
-      ]
+      ],
+      "EBGPRequiresPolicy": false
     }
   ],
   "BGPMultipathRelax": true,
@@ -238,6 +243,7 @@
   ],
   "BGPRouteMapIn": "",
   "BGPRouteMapOut": "",
+  "BGPEBGPRequiresPolicy": false,
   "BGPLocalAS": 0,
   "BGPNeighborVRF": "",
   "BGPConnectRetry": 0,

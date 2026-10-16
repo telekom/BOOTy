@@ -48,6 +48,10 @@ type Session struct {
 	BFDProfile string
 	// RouteMaps are the route-maps per activated address family.
 	RouteMaps []SessionRouteMaps
+	// EBGPRequiresPolicy is "bgp ebgp-requires-policy" of the router: on
+	// unless "no bgp ebgp-requires-policy" (the current FRR default). It
+	// matters only for eBGP sessions.
+	EBGPRequiresPolicy bool
 	// BFD timers from the profile, with the FRR defaults for unset
 	// values and for an unknown profile (doc/user/bfd.rst).
 	BFDTransmitMS uint32
@@ -124,6 +128,7 @@ func (c *Config) session(r *Router, n *Neighbor) (Session, error) {
 		g = findNeighbor(r, n.Group)
 	}
 	s := Session{Name: n.Name, Interface: n.Interface, Line: n.Line}
+	s.EBGPRequiresPolicy = r.EBGPRequiresPolicy == nil || *r.EBGPRequiresPolicy
 	if r.VRF != "default" {
 		s.VRF = r.VRF
 	}

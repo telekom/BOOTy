@@ -147,6 +147,14 @@ same resolution:
 - `neighbor X allowas-in [N]` (native `allowASIn`, FRR's default N is 3)
   accepts paths with the own AS up to N times. GoBGP has one count per
   session, so a session uses the highest count of its families.
+- `bgp ebgp-requires-policy` is on unless the router has `no bgp
+  ebgp-requires-policy`, like current FRR (`bgpd/bgp_route.c`,
+  `bgp_inbound_policy_exists`). An eBGP session without a route-map in a
+  family and direction then exchanges no routes there; BOOTy logs each
+  such session, family and direction at info level. Native sessions follow
+  the same default; `network.bgp.ebgpRequiresPolicy`
+  (`BGP_EBGP_REQUIRES_POLICY`) sets it for all sessions, and it is off for
+  the `BGP_PEER_MODE` peers unless set.
 - `neighbor X route-map M in|out` in an address family (native `routeMaps`
   with `family`, `in`, `out`) sets the route-maps of the session in that
   family; the peer's value wins over its peer-group's. The route-maps come
@@ -224,7 +232,9 @@ a warning when it is set there.
 
 These statements are parsed but not applied yet, and BOOTy logs one
 warning per statement: `soft-reconfiguration inbound`,
-`[no] bgp ebgp-requires-policy` and `[no] bgp suppress-duplicates`.
+`[no] bgp suppress-duplicates` (it changes no routes), and `rd` and
+`route-target` of a `vni` block (BOOTy creates no L2VNI of its own, so they
+are only checked).
 
 Native config and parsed files merge like this: a native list
 (`network.bgp.sessions`) replaces the parsed list as a whole, with one info

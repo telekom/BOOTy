@@ -321,3 +321,104 @@ func mustRD(t *testing.T) *anypb.Any {
 	}
 	return rd
 }
+
+// "bgp ebgp-requires-policy": an eBGP peer without a route-map in a family
+// and direction gets reject statements there; iBGP peers and peers with
+// the rule off get none.
+func TestBuildPolicyEBGPRequiresPolicy(t *testing.T) {
+	peers := []policyPeer{
+		{name: "192.0.2.1", addr: netip.MustParseAddr("192.0.2.1"), requirePolicy: true, families: []string{"ipv4-unicast", "l2vpn-evpn"},
+			routeMaps: []network.SessionRouteMaps{{Family: "ipv4-unicast", In: "TAG-FABRIC-IN"}}},
+		{name: "192.0.2.2", addr: netip.MustParseAddr("192.0.2.2"), families: []string{"ipv4-unicast"}},
+	}
+	p, err := buildPolicy(peers, templateMaps, templateLists)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []policyReject{{"192.0.2.1", "out", "ipv4-unicast"}, {"192.0.2.1", "in", "l2vpn-evpn"}, {"192.0.2.1", "out", "l2vpn-evpn"}}
+	if len(p.rejected) != len(want) {
+		t.Fatalf("rejected = %v, want %v", p.rejected, want)
+	}
+	for i := range want {
+		if p.rejected[i] != want[i] {
+			t.Errorf("rejected[%d] = %v, want %v", i, p.rejected[i], want[i])
+		}
+	}
+	var names []string
+	for _, st := range append(append([]*apipb.Statement{}, p.im...), p.ex...) {
+		if strings.HasPrefix(st.GetName(), "ebgp-requires-policy") {
+			names = append(names, st.GetName())
+			if st.GetActions().GetRouteAction() != apipb.RouteAction_REJECT {
+				t.Errorf("%s does not reject", st.GetName())
+			}
+		}
+	}
+	if got := strings.Join(names, " "); got != "ebgp-requires-policy-in-l2vpn-evpn ebgp-requires-policy-out-ipv4-unicast ebgp-requires-policy-out-l2vpn-evpn" {
+		t.Errorf("statements = %s", got)
+	}
+}
+
+// In GoBGP: with the rule on and no route-map, the eBGP peer exchanges no
+// routes, like FRR; with it off, both routes go through.
+func TestEBGPRequiresPolicyInGoBGP(t *testing.T) {
+	for _, required := range []bool{true, false} {
+		t.Run(map[bool]string{true: "on", false: "off"}[required], func(t *testing.T) {
+			ctx := context.Background()
+			port := freePort(t)
+			fabric := startServer(t, 65500, "10.0.0.1", port)
+			booty := startServer(t, 4210000017, "192.0.2.17", -1)
+			addr := "127.0.0.1"
+			if err := fabric.AddPeer(ctx, &apipb.AddPeerRequest{Peer: &apipb.Peer{
+				Conf:      &apipb.PeerConf{NeighborAddress: addr, PeerAsn: 4210000017},
+				Transport: &apipb.Transport{PassiveMode: true},
+				AfiSafis:  ipv4Families(),
+			}}); err != nil {
+				t.Fatal(err)
+			}
+			if err := booty.AddPeer(ctx, &apipb.AddPeerRequest{Peer: &apipb.Peer{
+				Conf:      &apipb.PeerConf{NeighborAddress: addr, PeerAsn: 65500},
+				Transport: &apipb.Transport{RemotePort: uint32(port)}, //nolint:gosec // test port
+				AfiSafis:  ipv4Families(),
+				Timers:    &apipb.Timers{Config: &apipb.TimersConfig{ConnectRetry: 1}},
+			}}); err != nil {
+				t.Fatal(err)
+			}
+			u := &UnderlayTier{bgp: booty, log: slog.Default(), cfg: &Config{Sessions: []network.BGPSession{
+				{Name: addr, RemoteASN: 65500, IPv4Unicast: true, EBGPRequiresPolicy: required},
+			}}}
+			if err := u.installPolicies(ctx); err != nil {
+				t.Fatal(err)
+			}
+			addRoute(t, fabric, "198.51.100.0/24", 0)
+			addRoute(t, booty, "192.0.2.17/32", 0)
+			count := func(s *server.BgpServer) int {
+				n := 0
+				_ = s.ListPath(ctx, &apipb.ListPathRequest{TableType: apipb.TableType_GLOBAL, Family: ipv4Families()[0].GetConfig().GetFamily()},
+					func(*apipb.Destination) { n++ })
+				return n
+			}
+			established := func() bool {
+				up := false
+				_ = booty.ListPeer(ctx, &apipb.ListPeerRequest{Address: addr}, func(p *apipb.Peer) {
+					up = p.GetState().GetSessionState() == apipb.PeerState_ESTABLISHED
+				})
+				return up
+			}
+			deadline := time.Now().Add(30 * time.Second)
+			for time.Now().Before(deadline) && !established() {
+				time.Sleep(200 * time.Millisecond)
+			}
+			if !established() {
+				t.Fatal("session not established")
+			}
+			// Updates follow within a second; wait longer before counting.
+			for end := time.Now().Add(5 * time.Second); time.Now().Before(end) && !(count(booty) == 2 && count(fabric) == 2); {
+				time.Sleep(200 * time.Millisecond)
+			}
+			want := map[bool]int{true: 1, false: 2}[required]
+			if b, f := count(booty), count(fabric); b != want || f != want {
+				t.Errorf("routes: booty %d, fabric %d, want %d each", b, f, want)
+			}
+		})
+	}
+}

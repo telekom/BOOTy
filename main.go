@@ -1124,8 +1124,14 @@ func applyBGPOptions(o *config.BGPConfig, n *network.Config) {
 	if o.AllowASIn != nil {
 		n.BGPAllowASIn = *o.AllowASIn
 	}
+	if o.EBGPRequiresPolicy != nil {
+		n.BGPEBGPRequiresPolicy = *o.EBGPRequiresPolicy
+	}
 	for i := range n.BGPSessions {
 		s := &n.BGPSessions[i]
+		if o.EBGPRequiresPolicy != nil {
+			s.EBGPRequiresPolicy = *o.EBGPRequiresPolicy
+		}
 		if o.AllowASIn != nil && s.AllowASIn == 0 {
 			s.AllowASIn = int(*o.AllowASIn)
 		}

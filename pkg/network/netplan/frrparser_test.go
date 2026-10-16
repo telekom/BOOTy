@@ -381,15 +381,29 @@ func TestParseFRRConfigWarnsUnapplied(t *testing.T) {
 	warned := func(stmt string) bool {
 		return strings.Contains(out, `statement="`+stmt+`"`) || strings.Contains(out, "statement="+stmt+" ")
 	}
-	for _, stmt := range []string{"soft-reconfiguration inbound", "[no] bgp ebgp-requires-policy", "[no] bgp suppress-duplicates"} {
+	for _, stmt := range []string{"soft-reconfiguration inbound", "[no] bgp suppress-duplicates"} {
 		if !warned(stmt) {
 			t.Errorf("no warning for %q in:\n%s", stmt, out)
 		}
 	}
 	// GoBGP mode applies these.
-	for _, stmt := range []string{"allowas-in", "bgp bestpath as-path multipath-relax", "route-map"} {
+	for _, stmt := range []string{"allowas-in", "bgp bestpath as-path multipath-relax", "route-map", "[no] bgp ebgp-requires-policy"} {
 		if warned(stmt) {
 			t.Errorf("warning for the applied %q in:\n%s", stmt, out)
 		}
+	}
+}
+
+// The rd and route-targets of a vni block are parsed only and warned.
+func TestParseFRRConfigWarnsVNIRD(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	if _, err := ParseFRRConfigBytes([]byte("router bgp 65000\n address-family l2vpn evpn\n  vni 100\n   rd 192.0.2.1:100\n  exit-vni\n")); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "vni rd/route-target") {
+		t.Errorf("no warning for the vni rd: %s", buf.String())
 	}
 }

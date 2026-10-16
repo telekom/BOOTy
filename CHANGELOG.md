@@ -197,7 +197,9 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   `BGP_ROUTE_MAP_OUT`, `EVPN_RT_IMPORT`, `EVPN_RT_EXPORT` (#659). Native
   sessions take per-family `routeMaps`; native route-map and community-list
   lists replace the `frr.conf` lists as a whole, and the native JSON vars
-  lists reject unknown fields.
+  lists reject unknown fields. `bgp ebgp-requires-policy` is applied like
+  current FRR (on unless `no bgp ebgp-requires-policy`; new key
+  `BGP_EBGP_REQUIRES_POLICY`, YAML `network.bgp.ebgpRequiresPolicy`).
 - GoBGP mode runs BFD (RFC 5880, 5881, 5883) for `frr.conf` neighbors with
   `bfd`, with the profile timers, and drops the BGP session when BFD goes down.
   New keys `BFD_DETECT_MULTIPLIER` and `BFD_PROFILES` (YAML

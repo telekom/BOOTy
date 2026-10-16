@@ -70,7 +70,8 @@
       "BFDTransmitMS": 0,
       "BFDReceiveMS": 0,
       "BFDDetectMult": 0,
-      "RouteMaps": null
+      "RouteMaps": null,
+      "EBGPRequiresPolicy": false
     }
   ],
   "BGPMultipathRelax": false,
@@ -78,6 +79,7 @@
   "BGPCommunityLists": [],
   "BGPRouteMapIn": "",
   "BGPRouteMapOut": "",
+  "BGPEBGPRequiresPolicy": false,
   "BGPLocalAS": 0,
   "BGPNeighborVRF": "",
   "BGPConnectRetry": 0,

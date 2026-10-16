@@ -527,6 +527,7 @@ func TestLoadFullYAMLReference(t *testing.T) {
 		{"Network.BGP.BFDTransmitMS", cfg.Network.BGP.BFDTransmitMS, uint32(0)},
 		{"Network.BGP.PeerGroups[0].RouteMaps", fmt.Sprint(cfg.Network.BGP.PeerGroups[0].RouteMaps), "[{ipv4-unicast TAG-FABRIC-IN DENY-TAG-FABRIC-OUT}]"},
 		{"Network.BGP.RouteMaps", fmt.Sprintf("%s %d %d", cfg.Network.BGP.RouteMaps[1].Name, len(cfg.Network.BGP.RouteMaps[1].Entries), *cfg.Network.BGP.RouteMaps[0].Entries[0].SetLocalPreference), "DENY-TAG-FABRIC-OUT 2 90"},
+		{"Network.BGP.EBGPRequiresPolicy", *cfg.Network.BGP.EBGPRequiresPolicy, false},
 		{"Network.BGP.CommunityLists", fmt.Sprint(cfg.Network.BGP.CommunityLists), "[{cm-received-fabric [{false [65169:200]}]}]"},
 		{"Network.BGP.BFDProfiles", fmt.Sprintf("%s %d %d %d", cfg.Network.BGP.BFDProfiles[0].Name, *cfg.Network.BGP.BFDProfiles[0].TransmitInterval, *cfg.Network.BGP.BFDProfiles[0].ReceiveInterval, *cfg.Network.BGP.BFDProfiles[0].DetectMultiplier), "fabric 150 150 3"},
 		{"Network.BGP.BFDReceiveMS", cfg.Network.BGP.BFDReceiveMS, uint32(0)},

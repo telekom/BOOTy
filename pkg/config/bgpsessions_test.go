@@ -18,6 +18,7 @@ const bm4xNativeSessions = `
 asn: 4210000017
 defaults: traditional
 multipathRelax: true
+ebgpRequiresPolicy: false
 bfdProfiles:
   - {name: fabric, transmitInterval: 150, receiveInterval: 150}
 peerGroups:

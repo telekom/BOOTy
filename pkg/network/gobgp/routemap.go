@@ -25,7 +25,15 @@ type policyPeer struct {
 	routeMaps []network.SessionRouteMaps
 	localAS   uint32
 	allowASIn int
+	// requirePolicy is "bgp ebgp-requires-policy" for an eBGP peer;
+	// families are its activated address families.
+	requirePolicy bool
+	families      []string
 }
+
+// policyReject is one family and direction of a peer whose routes
+// "bgp ebgp-requires-policy" rejects.
+type policyReject struct{ peer, dir, fam string }
 
 // Names of the GoBGP policies BOOTy installs as the global import and
 // export policies.
@@ -42,8 +50,9 @@ const (
 // permit entry applies its sets and stops, a matching deny entry rejects,
 // and a route that no entry matches is rejected (implicit deny).
 type bgpPolicy struct {
-	sets   []*apipb.DefinedSet
-	im, ex []*apipb.Statement
+	sets     []*apipb.DefinedSet
+	im, ex   []*apipb.Statement
+	rejected []policyReject
 }
 
 func buildPolicy(peers []policyPeer, maps []network.RouteMap, lists []network.CommunityList) (*bgpPolicy, error) {
@@ -69,6 +78,7 @@ func buildPolicy(peers []policyPeer, maps []network.RouteMap, lists []network.Co
 	slices.SortFunc(order, func(a, b key) int {
 		return strings.Compare(a.dir+a.rm+a.fam, b.dir+b.rm+b.fam)
 	})
+	p.requirePolicy(peers)
 	for _, k := range order {
 		i := slices.IndexFunc(maps, func(m network.RouteMap) bool { return m.Name == k.rm })
 		if i < 0 {
@@ -162,6 +172,54 @@ func (p *bgpPolicy) communitySets(name string, lists []network.CommunityList) ([
 		names = append(names, set)
 	}
 	return names, nil
+}
+
+// requirePolicy rejects, like FRR "bgp ebgp-requires-policy"
+// (bgpd/bgp_route.c, bgp_inbound_policy_exists and
+// bgp_outbound_policy_exists), the routes of an eBGP peer in each family
+// and direction that has no route-map. Route-maps are the only policy
+// BOOTy has.
+func (p *bgpPolicy) requirePolicy(peers []policyPeer) {
+	type key struct{ dir, fam string }
+	members := map[key][]string{}
+	for _, peer := range peers {
+		if !peer.requirePolicy {
+			continue
+		}
+		for _, fam := range peer.families {
+			i := slices.IndexFunc(peer.routeMaps, func(rm network.SessionRouteMaps) bool { return rm.Family == fam })
+			for _, dir := range []string{"in", "out"} {
+				if i >= 0 && (dir == "in" && peer.routeMaps[i].In != "" || dir == "out" && peer.routeMaps[i].Out != "") {
+					continue
+				}
+				k := key{dir, fam}
+				members[k] = append(members[k], hostPrefix(peer.addr))
+				p.rejected = append(p.rejected, policyReject{peer.name, dir, fam})
+			}
+		}
+	}
+	keys := make([]key, 0, len(members))
+	for k := range members {
+		keys = append(keys, k)
+	}
+	slices.SortFunc(keys, func(a, b key) int { return strings.Compare(a.dir+a.fam, b.dir+b.fam) })
+	for _, k := range keys {
+		name := fmt.Sprintf("ebgp-requires-policy-%s-%s", k.dir, k.fam)
+		p.sets = append(p.sets, &apipb.DefinedSet{DefinedType: apipb.DefinedType_NEIGHBOR, Name: name, List: members[k]})
+		st := &apipb.Statement{
+			Name: name,
+			Conditions: &apipb.Conditions{
+				NeighborSet: &apipb.MatchSet{Type: apipb.MatchSet_ANY, Name: name},
+				AfiSafiIn:   []*apipb.Family{familyOf(k.fam)},
+			},
+			Actions: &apipb.Actions{RouteAction: apipb.RouteAction_REJECT},
+		}
+		if k.dir == "in" {
+			p.im = append(p.im, st)
+		} else {
+			p.ex = append(p.ex, st)
+		}
+	}
 }
 
 // localASChecks rejects paths that carry the local-as more often than
@@ -277,6 +335,10 @@ func (u *UnderlayTier) installPolicies(ctx context.Context) error {
 	for _, peer := range peers {
 		_ = u.bgp.ResetPeer(ctx, &apipb.ResetPeerRequest{Address: peer.name, Soft: true, Direction: apipb.ResetPeerRequest_BOTH})
 	}
+	for _, r := range p.rejected {
+		u.log.Info("eBGP peer has no route-map, routes rejected like FRR bgp ebgp-requires-policy",
+			"peer", r.peer, "family", r.fam, "direction", r.dir)
+	}
 	u.log.Info("installed BGP route policies", "import_statements", len(p.im), "export_statements", len(p.ex))
 	return nil
 }
@@ -285,10 +347,11 @@ func (u *UnderlayTier) installPolicies(ctx context.Context) error {
 // or the native peers with BGP_ROUTE_MAP_IN/OUT in every family.
 func (u *UnderlayTier) policyPeers() []policyPeer {
 	var out []policyPeer
-	add := func(name string, maps []network.SessionRouteMaps, localAS uint32, allow int) {
-		a, err := netip.ParseAddr(name)
+	add := func(peer policyPeer) {
+		a, err := netip.ParseAddr(peer.name)
 		if err == nil {
-			out = append(out, policyPeer{name: name, addr: a, routeMaps: maps, localAS: localAS, allowASIn: allow})
+			peer.addr = a
+			out = append(out, peer)
 		}
 	}
 	if len(u.cfg.Sessions) > 0 {
@@ -298,7 +361,10 @@ func (u *UnderlayTier) policyPeers() []policyPeer {
 			if s.Interface {
 				name = u.ifacePeers[s.Name]
 			}
-			add(name, s.RouteMaps, s.LocalASN, s.AllowASIn)
+			add(policyPeer{
+				name: name, routeMaps: s.RouteMaps, localAS: s.LocalASN, allowASIn: s.AllowASIn,
+				requirePolicy: s.EBGPRequiresPolicy && !s.Internal, families: sessionFamilyNames(s),
+			})
 		}
 		return out
 	}
@@ -308,11 +374,27 @@ func (u *UnderlayTier) policyPeers() []policyPeer {
 			maps = append(maps, network.SessionRouteMaps{Family: f, In: u.cfg.RouteMapIn, Out: u.cfg.RouteMapOut})
 		}
 	}
+	all := []string{"ipv4-unicast", "ipv6-unicast", "l2vpn-evpn"}
 	for _, name := range u.ifacePeers {
-		add(name, maps, u.cfg.LocalAS, int(u.cfg.AllowASIn))
+		add(policyPeer{
+			name: name, routeMaps: maps, localAS: u.cfg.LocalAS, allowASIn: int(u.cfg.AllowASIn),
+			requirePolicy: u.cfg.EBGPRequiresPolicy, families: all,
+		})
 	}
+	ebgp := u.cfg.RemoteASN != 0 && u.cfg.RemoteASN != u.cfg.ASN
 	for _, name := range u.cfg.NeighborAddrs {
-		add(name, maps, 0, int(u.cfg.AllowASIn))
+		add(policyPeer{name: name, routeMaps: maps, allowASIn: int(u.cfg.AllowASIn), requirePolicy: u.cfg.EBGPRequiresPolicy && ebgp, families: all})
 	}
+	return out
+}
+
+func sessionFamilyNames(s *network.BGPSession) []string {
+	var out []string
+	for f, on := range map[string]bool{"ipv4-unicast": s.IPv4Unicast, "ipv6-unicast": s.IPv6Unicast, "l2vpn-evpn": s.L2VPNEVPN} {
+		if on {
+			out = append(out, f)
+		}
+	}
+	slices.Sort(out)
 	return out
 }

@@ -170,6 +170,8 @@ func toBGPSession(s *frrconf.Session) network.BGPSession {
 		BFDTransmitMS:        s.BFDTransmitMS,
 		BFDReceiveMS:         s.BFDReceiveMS,
 		BFDDetectMult:        s.BFDDetectMult,
+
+		EBGPRequiresPolicy: s.EBGPRequiresPolicy,
 	}
 	if s.LocalAS != nil {
 		out.LocalASN = s.LocalAS.ASN
@@ -188,9 +190,6 @@ func warnUnapplied(model *frrconf.Config) {
 	}
 	for i := range model.Routers {
 		r := &model.Routers[i]
-		if r.EBGPRequiresPolicy != nil {
-			warn(r.Line, "[no] bgp ebgp-requires-policy", "router", r.ASN)
-		}
 		if r.SuppressDuplicates != nil {
 			warn(r.Line, "[no] bgp suppress-duplicates", "router", r.ASN)
 		}
@@ -199,6 +198,13 @@ func warnUnapplied(model *frrconf.Config) {
 			for _, n := range af.Neighbors {
 				if n.SoftReconfigInbound {
 					warn(af.Line, "soft-reconfiguration inbound", "neighbor", n.Name, "family", af.AFI+" "+af.SAFI)
+				}
+			}
+			// BOOTy creates no L2VNI devices of its own; their rd and
+			// route-targets are only checked.
+			for _, v := range af.L2VNIs {
+				if v.RD != "" || len(v.RouteTargetImport)+len(v.RouteTargetExport) > 0 {
+					warn(v.Line, "vni rd/route-target", "vni", v.VNI, "rd", v.RD)
 				}
 			}
 		}

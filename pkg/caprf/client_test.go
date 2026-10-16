@@ -2928,6 +2928,7 @@ BGP_MULTIPATH_RELAX=true
 BGP_INSTALL_ROUTES=false
 BGP_FAST_EXTERNAL_FAILOVER=true
 BFD_DETECT_MULTIPLIER=4
+BGP_EBGP_REQUIRES_POLICY=false
 BRIDGE_MAC=02:54:c0:00:02:13
 VXLAN_LINK=dum.underlay
 UNDERLAY_DUMMY_NAME=dum.underlay
@@ -2947,7 +2948,8 @@ OVERLAY_VRF_TABLE_ID=20
 	}
 	// An explicit 0 and an explicit false are set, not unset.
 	if b.AllowASIn == nil || *b.AllowASIn != 0 || b.InstallRoutes == nil || *b.InstallRoutes ||
-		b.MultipathRelax == nil || !*b.MultipathRelax || b.FastExternalFailover == nil || !*b.FastExternalFailover {
+		b.MultipathRelax == nil || !*b.MultipathRelax || b.FastExternalFailover == nil || !*b.FastExternalFailover ||
+		b.EBGPRequiresPolicy == nil || *b.EBGPRequiresPolicy {
 		t.Errorf("BGP options = %v %v %v %v", b.AllowASIn, b.InstallRoutes, b.MultipathRelax, b.FastExternalFailover)
 	}
 	if e.BridgeMAC != "02:54:c0:00:02:13" || e.VXLANLink != "dum.underlay" || e.UnderlayDummyName != "dum.underlay" {

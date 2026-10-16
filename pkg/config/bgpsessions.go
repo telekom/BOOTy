@@ -141,7 +141,7 @@ func (b *BGPConfig) frrModel() (*frrconf.Config, error) {
 		if r, ok := routers[vrf]; ok {
 			return r
 		}
-		r := &frrconf.Router{ASN: b.ASN, VRF: vrf, DefaultIPv4Unicast: new(false), FastExternalFailover: b.FastExternalFailover}
+		r := &frrconf.Router{ASN: b.ASN, VRF: vrf, DefaultIPv4Unicast: new(false), FastExternalFailover: b.FastExternalFailover, EBGPRequiresPolicy: b.EBGPRequiresPolicy}
 		routers[vrf] = r
 		vrfs = append(vrfs, vrf)
 		return r

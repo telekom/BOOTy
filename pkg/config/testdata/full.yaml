@@ -131,6 +131,9 @@ network:
         entries:
           - {seq: 10, deny: true, matchCommunity: cm-received-fabric}
           - {seq: 20}
+    # ebgpRequiresPolicy (BGP_EBGP_REQUIRES_POLICY): FRR "bgp ebgp-requires-policy";
+    # unset: on for frr.conf and sessions, off for the peerMode peers
+    ebgpRequiresPolicy: false
     communityLists:
       - name: cm-received-fabric
         entries:
