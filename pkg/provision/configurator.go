@@ -650,7 +650,7 @@ ConditionPathIsMountPoint=/boot/efi
 
 [Service]
 Type=simple
-ExecStart=/usr/local/libexec/booty-esp-sync --source /boot/efi --source-partuuid %s --destination /dev/disk/by-partuuid/%s --lock /run/lock/booty-esp-sync.lock --marker /run/booty/esp-sync.ready
+ExecStart=/usr/local/libexec/booty-esp-sync --source /boot/efi --partuuid-a %s --partuuid-b %s --lock /run/lock/booty-esp-sync.lock --marker /run/booty/esp-sync.ready
 Restart=on-failure
 RestartSec=5s
 

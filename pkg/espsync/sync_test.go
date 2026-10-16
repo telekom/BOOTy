@@ -60,3 +60,36 @@ func TestCopyTreePreservesSymlinks(t *testing.T) {
 		t.Fatalf("link target %q", target)
 	}
 }
+
+func TestCopyTreeReplacesExistingLoaderWithoutDeletingItFirst(t *testing.T) {
+	source, destination := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "EFI", "BOOT", "bootx64.efi"), []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(destination, "EFI", "BOOT"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(destination, "EFI", "BOOT", "bootx64.efi"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CopyTree(source, destination); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(destination, "EFI", "BOOT", "bootx64.efi"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "new" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestWriteMarkerUsesAtomicRename(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "run", "booty-esp-sync.ready")
+	if err := WriteMarker(marker); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal(err)
+	}
+}

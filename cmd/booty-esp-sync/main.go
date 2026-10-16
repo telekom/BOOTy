@@ -19,26 +19,37 @@ import (
 
 func main() {
 	source := flag.String("source", "/boot/efi", "mounted source ESP")
-	sourcePartUUID := flag.String("source-partuuid", "", "expected source ESP PARTUUID")
+	firstPartUUID := flag.String("partuuid-a", "", "first mirrored ESP PARTUUID")
+	secondPartUUID := flag.String("partuuid-b", "", "second mirrored ESP PARTUUID")
+	sourcePartUUID := flag.String("source-partuuid", "", "legacy fixed source ESP PARTUUID")
 	destination := flag.String("destination", "", "destination ESP block device or mounted directory")
 	mountpoint := flag.String("mountpoint", "/run/booty/esp-sync", "private destination mountpoint")
 	lockPath := flag.String("lock", "/run/lock/booty-esp-sync.lock", "synchronization lock")
 	marker := flag.String("marker", "/run/booty/esp-sync.ready", "optional marker written after a successful synchronization")
 	once := flag.Bool("once", false, "synchronize once and exit")
 	flag.Parse()
-	if *destination == "" {
+	if (*firstPartUUID == "") != (*secondPartUUID == "") {
+		fatal(errors.New("partuuid-a and partuuid-b must be provided together"))
+	}
+	if *destination == "" && *firstPartUUID == "" {
 		fatal(errors.New("destination is required"))
 	}
 	if *once {
-		runOnce(*source, *sourcePartUUID, *destination, *mountpoint, *lockPath, *marker)
+		runOnce(*source, *sourcePartUUID, *firstPartUUID, *secondPartUUID, *destination, *mountpoint, *lockPath, *marker)
 		return
 	}
-	if err := runService(*source, *sourcePartUUID, *destination, *mountpoint, *lockPath, *marker); err != nil {
+	if err := runService(*source, *sourcePartUUID, *firstPartUUID, *secondPartUUID, *destination, *mountpoint, *lockPath, *marker); err != nil {
 		fatal(err)
 	}
 }
 
-func runOnce(source, sourcePartUUID, destination, mountpoint, lockPath, marker string) {
+func runOnce(source, sourcePartUUID, firstPartUUID, secondPartUUID, destination, mountpoint, lockPath, marker string) {
+	if firstPartUUID != "" {
+		if err := syncPair(source, firstPartUUID, secondPartUUID, mountpoint, lockPath, marker); err != nil {
+			fatal(err)
+		}
+		return
+	}
 	mounted, err := mountDestination(destination, mountpoint)
 	if err != nil {
 		fatal(err)
@@ -59,7 +70,17 @@ func runOnce(source, sourcePartUUID, destination, mountpoint, lockPath, marker s
 	}
 }
 
-func runService(source, sourcePartUUID, destination, mountpoint, lockPath, marker string) error {
+func runService(source, sourcePartUUID, firstPartUUID, secondPartUUID, destination, mountpoint, lockPath, marker string) error {
+	if firstPartUUID != "" {
+		if err := syncPair(source, firstPartUUID, secondPartUUID, mountpoint, lockPath, marker); err != nil {
+			return err
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+		defer stop()
+		return espsync.WatchFuncWithMarker(source, func() error {
+			return syncPair(source, firstPartUUID, secondPartUUID, mountpoint, lockPath, marker)
+		}, marker, ctx.Done())
+	}
 	mounted, err := mountDestination(destination, mountpoint)
 	if err != nil {
 		return err
@@ -82,6 +103,24 @@ func runService(source, sourcePartUUID, destination, mountpoint, lockPath, marke
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	return espsync.WatchWithMarker(source, target, lockPath, marker, ctx.Done())
+}
+
+func syncPair(source, firstPartUUID, secondPartUUID, mountpoint, lockPath, marker string) error {
+	destination, err := espsync.PeerDevice(source, firstPartUUID, secondPartUUID)
+	if err != nil {
+		return err
+	}
+	mounted, err := mountDestination(destination, mountpoint)
+	if err != nil {
+		return err
+	}
+	if mounted {
+		defer unmount(mountpoint)
+	}
+	if err := espsync.RunOnce(source, mountpointOrDestination(mounted, mountpoint, destination), lockPath); err != nil {
+		return err
+	}
+	return espsync.WriteMarker(marker)
 }
 
 func mountDestination(device, mountpoint string) (bool, error) {

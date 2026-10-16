@@ -208,13 +208,26 @@ func pruneTree(destination, staged string) error {
 }
 
 func replacePath(destination, staged string) error {
-	if err := os.RemoveAll(destination); err != nil {
-		return err
-	}
 	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 		return err
 	}
+	if err := os.Rename(staged, destination); err == nil {
+		return nil
+	} else if !isDirectory(destination) {
+		return err
+	}
+	// A directory cannot be atomically replaced by a regular file or symlink
+	// on POSIX/FAT. The normal path above remains rename-over-existing and
+	// therefore never exposes a missing boot file for matching entry types.
+	if err := os.RemoveAll(destination); err != nil {
+		return err
+	}
 	return os.Rename(staged, destination)
+}
+
+func isDirectory(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // RunOnce serializes a copy across service instances using flock.
@@ -249,19 +262,45 @@ func ValidateMountedSource(source, partUUID string) error {
 	return nil
 }
 
+// PeerDevice returns the other ESP in a mirrored pair. It resolves the
+// mounted source device on every call so failover and remounts select the
+// current peer rather than a provisioning-time path.
+func PeerDevice(source, firstPartUUID, secondPartUUID string) (string, error) {
+	var mounted unix.Stat_t
+	if err := unix.Stat(source, &mounted); err != nil {
+		return "", fmt.Errorf("stat mounted source: %w", err)
+	}
+	for _, pair := range [][2]string{{firstPartUUID, secondPartUUID}, {secondPartUUID, firstPartUUID}} {
+		var device unix.Stat_t
+		if err := unix.Stat("/dev/disk/by-partuuid/"+pair[0], &device); err != nil {
+			continue
+		}
+		if int64(mounted.Dev) == int64(device.Rdev) {
+			return "/dev/disk/by-partuuid/" + pair[1], nil
+		}
+	}
+	return "", fmt.Errorf("mounted source does not match mirrored ESP pair %q or %q", firstPartUUID, secondPartUUID)
+}
+
 // Watch recursively observes source and debounces nested changes.
 func Watch(source, destination, lockPath string, done <-chan struct{}) error {
-	return watch(source, destination, lockPath, "", done)
+	return WatchFunc(source, func() error { return RunOnce(source, destination, lockPath) }, done)
 }
 
 // WatchWithMarker behaves like Watch and writes marker after every successful
 // synchronization. The marker is useful to boot integration tests and local
 // operators because it records that the initial copy completed.
 func WatchWithMarker(source, destination, lockPath, marker string, done <-chan struct{}) error {
-	return watch(source, destination, lockPath, marker, done)
+	return WatchFuncWithMarker(source, func() error { return RunOnce(source, destination, lockPath) }, marker, done)
 }
 
-func watch(source, destination, lockPath, marker string, done <-chan struct{}) error {
+// WatchFunc recursively observes source and runs sync after each debounced
+// change. The callback may resolve a destination dynamically for failover.
+func WatchFunc(source string, sync func() error, done <-chan struct{}) error {
+	return WatchFuncWithMarker(source, sync, "", done)
+}
+
+func WatchFuncWithMarker(source string, sync func() error, marker string, done <-chan struct{}) error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
@@ -294,7 +333,7 @@ func watch(source, destination, lockPath, marker string, done <-chan struct{}) e
 				slog.Warn("EFI watcher error", "error", err)
 			}
 		case <-timer.C:
-			if err := RunOnce(source, destination, lockPath); err != nil {
+			if err := sync(); err != nil {
 				slog.Error("EFI synchronization failed", "error", err)
 			} else if err := writeMarker(marker); err != nil {
 				slog.Error("write EFI synchronization marker", "error", err)
