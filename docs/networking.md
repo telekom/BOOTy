@@ -165,8 +165,8 @@ multipath-relax eBGP paths from the same neighbor AS or iBGP paths with the
 same AS path. A next hop that is not on a connected network is resolved to
 its connected gateway (zebra next hop tracking) and again on every kernel
 route change. BOOTy takes the one gateway the kernel uses for it; zebra
-installs every ECMP member of the resolving route; a next hop that does not resolve is skipped with a warning
-at most once a minute. The first event of a burst updates the kernel at
+installs every ECMP member of the resolving route. A next hop that does
+not resolve is skipped with a warning at most once a minute. The first event of a burst updates the kernel at
 once, the rest 200 ms later, and every 30 s BOOTy reinstalls all routes,
 so routes the kernel dropped come back. The session NICs get
 `ignore_routes_with_linkdown=1`, so a dead ECMP member is skipped at once.
@@ -181,6 +181,12 @@ list replaces the parsed list as a whole with one info log line):
 | `allowASIn` (session field) | `neighbor X allowas-in [N]` | `network.bgp.sessions[].allowASIn` | part of the session list |
 | `BGP_MULTIPATH_RELAX` | `bgp bestpath as-path multipath-relax` | `network.bgp.multipathRelax` | native wins |
 | `BGP_FAST_EXTERNAL_FAILOVER` | `[no] bgp fast-external-failover` | `network.bgp.fastExternalFailover` | native wins, for every session |
+| `EVPN_TYPE5_ONLY` | provision VNI is an `frr.conf` L3VNI | `network.evpn.type5Only` | an explicit value wins |
+| `LOOPBACK_ADDRESSES` | netplan `lo` addresses | `network.loopbackAddresses` | list replaces |
+| `BLACKHOLE_ROUTES` | `frr.conf` `ip[v6] route P blackhole` | `network.blackholeRoutes` | list replaces |
+| `EVPN_TYPE5_NETWORKS` | `frr.conf` `network` with `advertise ipv4\|ipv6 unicast` | `network.evpn.type5Networks` | list replaces |
+| `VXLAN_NAME` | netplan tunnel name | `network.evpn.vxlanName` | native wins |
+| `BRIDGE_NAME` | netplan bridge name | `network.evpn.bridgeName` | native wins |
 
 With these sessions, the vars `BGP_PEER_MODE`, `BGP_INTERFACES`,
 `BGP_NEIGHBORS`, `BGP_REMOTE_ASN`, `BGP_KEEPALIVE` and `BGP_HOLD` no longer
@@ -226,10 +232,12 @@ compatibility: a value from netplan overrides the same value from the
 vars, and an empty netplan value keeps the vars value. A key that this
 release adds follows the native rule: a set native value wins, and a
 non-empty native list replaces the parsed list as a whole (one info log
-line). `LOOPBACK_ADDRESSES`, `BLACKHOLE_ROUTES`, `EVPN_TYPE5_NETWORKS` and
-`VXLAN_NAME` follow the native rule. `VLANS` is the exception: BOOTy parses it
-after the netplan merge, so `VLANS` from the vars replaces the netplan VLANs. When netplan and the FRR config give an
-ASN and a VNI, BOOTy sets the stack to GoBGP. This overrides
+line). The table under [BGP sessions](#bgp-sessions) lists the keys of
+this release with their rule.
+
+`VLANS` is the exception: BOOTy parses it after the netplan merge, so
+`VLANS` from the vars replaces the netplan VLANs. When netplan and the FRR
+config give an ASN and a VNI, BOOTy sets the stack to GoBGP. This overrides
 `NETWORK_MODE`.
 
 ### Strict input and the accepted grammar
@@ -248,8 +256,14 @@ stays in the node where the statement matched.
 
 By default both inputs are strict. A netplan key or an `frr.conf` statement
 that BOOTy does not implement fails the network setup. The error names the
-line, the statement and the node the parser was in, for example
-`parse FRR config /deploy/file-system/etc/frr/frr.conf: line 31 "maximum-paths 8": statement not supported by BOOTy (in router bgp 4210000017 vrf Vrf_underlay > address-family ipv4 unicast)`.
+line, the statement and the node the parser was in, for example:
+
+```text
+parse FRR config /deploy/file-system/etc/frr/frr.conf: line 31
+"maximum-paths 8": statement not supported by BOOTy
+(in router bgp 4210000017 vrf Vrf_underlay > address-family ipv4 unicast)
+```
+
 `FRR_CONFIG_STRICT=false` and `NETPLAN_STRICT=false` (YAML
 `network.frrStrict`, `network.netplanStrict`) log a warning with the line for
 each such statement or key and go on without it. The FRR warning names the
@@ -377,8 +391,8 @@ on purpose although they are not in the templates:
 Both stacks:
 
 - Use the provision bridge `br.provision` and the VXLAN device `vx<VNI>`
-  (GoBGP: the netplan bridge and tunnel names when set) with UDP port 4789 and MAC learning off. The VXLAN MTU is the NIC MTU
-  minus 50. The NIC MTU is 9000, or the largest netplan `mtu`.
+  (GoBGP: the netplan bridge and tunnel names when set) with UDP port 4789
+  and MAC learning off. The VXLAN MTU is the NIC MTU minus 50. The NIC MTU is 9000, or the largest netplan `mtu`.
 - Put the underlay IP on the `dummy.underlay` device (FRR falls back to
   `lo`) and the overlay IP on `lo`.
 - Enable IPv4 and IPv6 forwarding and disable reverse-path filtering.
@@ -421,8 +435,8 @@ BOOTy decides the mode in this order:
    originates only Type-5 routes for an L3VNI. An L3VNI is a `vni N`
    (optionally `prefix-routes-only`) at the top level of `frr.conf` or
    inside a `vrf` block. BOOTy checks the provision VNI after it merges the
-   vars, so a VNI from `/deploy/vars` also counts. This wins over
-   `EVPN_L2_ENABLED=true`.
+   vars, so a VNI from `/deploy/vars` also counts. An explicit
+   `EVPN_TYPE5_ONLY`, `EVPN_L2_ENABLED=true` or `provision_gateway` wins.
 2. `EVPN_TYPE5_ONLY=true` selects Type-5-only.
 3. `EVPN_L2_ENABLED=true` selects L2.
 4. Auto-detection: the provisioner `frr.conf` contains `advertise-all-vni`.

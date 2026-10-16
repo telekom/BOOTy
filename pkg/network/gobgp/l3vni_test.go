@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 	"slices"
 	"syscall"
 	"testing"
@@ -160,5 +161,32 @@ func TestAdvertiseType5NetworksImportCheck(t *testing.T) {
 	want := []string{"2001:db8:40a:5481::/64", "2001:db8:40a:5481::17/128"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("advertised %v, want %v", got, want)
+	}
+}
+
+// The import check accepts a covering local route, like FRR's default
+// "bgp network import-check" (exact match only with "import-check exact").
+func TestLocalPrefixCovering(t *testing.T) {
+	o := &OverlayTier{cfg: &Config{
+		LoopbackAddrs:   []string{"2001:db8:40a:5481::17/128"},
+		BlackholeRoutes: []string{"2001:db8:40a:5481::/64"},
+		ProvisionIP:     "10.100.0.20/24",
+	}}
+	for _, tt := range []struct {
+		prefix string
+		want   bool
+	}{
+		{"2001:db8:40a:5481::17/128", true},
+		{"2001:db8:40a:5481::/64", true},
+		{"2001:db8:40a:5481:1::/80", true},
+		{"2001:db8:40a::/48", false},
+		{"10.100.0.0/24", true},
+		{"10.100.0.128/25", true},
+		{"10.100.0.0/16", false},
+		{"192.0.2.0/24", false},
+	} {
+		if got := o.localPrefix(netip.MustParsePrefix(tt.prefix)); got != tt.want {
+			t.Errorf("localPrefix(%s) = %v, want %v", tt.prefix, got, tt.want)
+		}
 	}
 }

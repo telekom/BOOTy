@@ -99,13 +99,14 @@ func (o *OverlayTier) isBlackhole(prefix string) bool {
 	})
 }
 
-// localPrefix reports whether prefix is in the local RIB: the connected
-// prefix of a lo or provision bridge address, or a blackhole route. FRR
-// advertises a "network" only then (import check, doc/user/bgp.rst
-// "bgp network import-check").
+// localPrefix reports whether a route in the local RIB covers prefix: the
+// connected prefix of a lo or provision bridge address, or a blackhole
+// route, equal to or less specific than prefix. FRR advertises a "network"
+// only then (import check, doc/user/bgp.rst "bgp network import-check";
+// an exact match is needed only with "import-check exact").
 func (o *OverlayTier) localPrefix(prefix netip.Prefix) bool {
 	for _, p := range slices.Concat(o.cfg.LoopbackAddrs, o.cfg.BlackholeRoutes, []string{o.cfg.ProvisionIP}) {
-		if pp, err := netip.ParsePrefix(p); err == nil && pp.Masked() == prefix {
+		if pp, err := netip.ParsePrefix(p); err == nil && pp.Bits() <= prefix.Bits() && pp.Masked().Contains(prefix.Addr()) {
 			return true
 		}
 	}

@@ -1286,6 +1286,7 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	if src.UnderlayIP != "" {
 		dst.UnderlayIP = src.UnderlayIP
 	}
+	nativeWins(&dst.BridgeName, src.BridgeName)
 	// The netplan MAC belongs to one bridge. Only use it for that bridge.
 	if src.BridgeMAC != "" && src.BridgeNameOrDefault() == dst.BridgeNameOrDefault() {
 		dst.BridgeMAC = src.BridgeMAC

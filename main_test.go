@@ -70,19 +70,25 @@ func TestMergeNetplanConfigPreservesProvisionPrefixForSameHostMask(t *testing.T)
 // list as a whole.
 func TestMergeNetplanConfigPrecedence(t *testing.T) {
 	parsed := &network.Config{
-		UnderlayIP: "192.0.2.17", VXLANName: "vx.parsed",
+		UnderlayIP: "192.0.2.17", VXLANName: "vx.parsed", BridgeName: "br.parsed",
 		LoopbackAddrs: []string{"2001:db8::17/128", "2001:db8::18/128"},
 	}
-	native := &network.Config{UnderlayIP: "192.0.2.99", VXLANName: "vx.native", LoopbackAddrs: []string{"2001:db8::99/128"}}
+	native := &network.Config{UnderlayIP: "192.0.2.99", VXLANName: "vx.native", BridgeName: "br.native", LoopbackAddrs: []string{"2001:db8::99/128"}}
 	mergeNetplanConfig(native, parsed)
 	if native.UnderlayIP != "192.0.2.17" {
 		t.Errorf("legacy underlay_ip = %s, want the netplan value", native.UnderlayIP)
+	}
+	if native.BridgeName != "br.native" {
+		t.Errorf("native BRIDGE_NAME %s, want the native value", native.BridgeName)
 	}
 	if native.VXLANName != "vx.native" || !slices.Equal(native.LoopbackAddrs, []string{"2001:db8::99/128"}) {
 		t.Errorf("native VXLAN_NAME %s, LOOPBACK_ADDRESSES %v, want the native values", native.VXLANName, native.LoopbackAddrs)
 	}
 	unset := &network.Config{}
 	mergeNetplanConfig(unset, parsed)
+	if unset.BridgeName != "br.parsed" {
+		t.Errorf("unset BRIDGE_NAME %s, want the netplan bridge", unset.BridgeName)
+	}
 	if unset.VXLANName != "vx.parsed" || len(unset.LoopbackAddrs) != 2 {
 		t.Errorf("unset native keys = %s %v, want the parsed values", unset.VXLANName, unset.LoopbackAddrs)
 	}
@@ -91,16 +97,21 @@ func TestMergeNetplanConfigPrecedence(t *testing.T) {
 func TestMergeNetplanConfigBridgeMAC(t *testing.T) {
 	tests := []struct {
 		name      string
+		dstBridge string
 		srcBridge string
 		want      string
 	}{
-		{"default_bridge", "", "02:00:00:00:10:01"},
-		{"same_bridge", "br.provision", "02:00:00:00:10:01"},
-		{"other_bridge", "br_cluster", ""},
+		{"default_bridge", "", "", "02:00:00:00:10:01"},
+		{"same_bridge", "", "br.provision", "02:00:00:00:10:01"},
+		// The netplan bridge becomes the provision bridge (native unset),
+		// so its MAC applies.
+		{"netplan_bridge", "", "br_cluster", "02:00:00:00:10:01"},
+		// BRIDGE_NAME names another bridge: the netplan MAC is not its MAC.
+		{"native_other_bridge", "br.native", "br_cluster", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dst := &network.Config{}
+			dst := &network.Config{BridgeName: tt.dstBridge}
 			src := &network.Config{BridgeName: tt.srcBridge, BridgeMAC: "02:00:00:00:10:01"}
 
 			mergeNetplanConfig(dst, src)
@@ -1852,5 +1863,36 @@ func TestBM4XTemplatesWithoutGatewayValidate(t *testing.T) {
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() = %v, want the bm4x templates to pass without provision_gateway", err)
+	}
+}
+
+// The bm4x templates and the native vars give the same Type-5 settings.
+func TestType5KeysEqualBM4XTemplates(t *testing.T) {
+	dir := filepath.Join("pkg", "network", "frrconf", "testdata", "bm4x", "two-uplinks")
+	parsed, err := detectNetplanConfig(dir, filepath.Join(dir, "frr.conf"), true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged := networkConfigFromMachineConfig(&config.MachineConfig{})
+	mergeNetplanConfig(merged, parsed)
+	vars, err := caprf.ParseVars(strings.NewReader(strings.Join([]string{
+		"LOOPBACK_ADDRESSES=" + strings.Join(merged.LoopbackAddrs, ","),
+		"BLACKHOLE_ROUTES=" + strings.Join(merged.BlackholeRoutes, ","),
+		"EVPN_TYPE5_NETWORKS=" + strings.Join(merged.Type5Networks, ","),
+		"VXLAN_NAME=" + merged.VXLANName,
+		"EVPN_TYPE5_ONLY=true",
+	}, "\n") + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := networkConfigFromMachineConfig(vars)
+	want := []string{"2001:db8:40a:5481::17/128", "2001:db8:40a:5481::/64"}
+	if !slices.Equal(merged.LoopbackAddrs, want[:1]) || !slices.Equal(merged.BlackholeRoutes, want[1:]) || !slices.Equal(merged.Type5Networks, want) ||
+		merged.VXLANName != "vx.3000" || !merged.EVPNType5Only {
+		t.Fatalf("templates = lo %v blackholes %v networks %v vxlan %q type5only %v", merged.LoopbackAddrs, merged.BlackholeRoutes, merged.Type5Networks, merged.VXLANName, merged.EVPNType5Only)
+	}
+	if !slices.Equal(native.LoopbackAddrs, merged.LoopbackAddrs) || !slices.Equal(native.BlackholeRoutes, merged.BlackholeRoutes) ||
+		!slices.Equal(native.Type5Networks, merged.Type5Networks) || native.VXLANName != merged.VXLANName || native.EVPNType5Only != merged.EVPNType5Only {
+		t.Fatalf("native = lo %v blackholes %v networks %v vxlan %q type5only %v", native.LoopbackAddrs, native.BlackholeRoutes, native.Type5Networks, native.VXLANName, native.EVPNType5Only)
 	}
 }
