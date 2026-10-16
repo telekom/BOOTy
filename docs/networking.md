@@ -410,11 +410,11 @@ risk: a skipped statement that changes routing in FRR (for example
 
 Accepted `frr.conf` statements, per node. "Accepted" means parsed and
 validated. GoBGP mode applies all routing statements among them, also
-`frr defaults` (the session timer profile) and `[no] bgp default
-ipv4-unicast` (see [BGP sessions](#bgp-sessions)), except these, which are
-parsed and validated only: `redistribute connected`, `neighbor X
-soft-reconfiguration inbound`, `advertise-default-gw`, `[no] bgp
-ebgp-requires-policy` (BOOTy behaves like `no bgp ebgp-requires-policy`),
+`frr defaults` (the session timer profile), `[no] bgp default
+ipv4-unicast` and `[no] bgp ebgp-requires-policy` (see
+[BGP sessions](#bgp-sessions)), except these, which are parsed and
+validated only: `redistribute connected`,
+`neighbor X soft-reconfiguration inbound`, `advertise-default-gw`,
 `[no] bgp suppress-duplicates`, `rd` and `route-target` of an L2VNI block
 and `hostname`. FRR mode passes the file to FRR.
 
