@@ -77,6 +77,19 @@ BOOTy reads provisioner netplan files when they exist:
 | `/deploy/file-system/etc/netplan/*.yaml` or `*.yml` | Netplan v2 (ethernets, bonds, bridges, VLANs, VXLAN tunnels, dummy devices, VRFs, routes) |
 | `/deploy/file-system/etc/frr/frr.conf` | Optional FRR config |
 
+`network.devices` (`NETWORK_DEVICES`) is the native form of the netplan
+files: the keys of their `network:` section, read by the same parser with
+the same checks. When it is set, BOOTy uses it instead of the provisioner
+netplan files (one info log line when both exist), so both forms give the
+same network config. Native devices are always strict: an unknown key or
+an unsupported route key fails.
+
+GoBGP mode sets the sysctls of the legacy ramdisk: `ip_forward` and IPv6
+`forwarding` (on, or off with `[no] ip[v6] forwarding` in `frr.conf`;
+`IP_FORWARDING` and `IPV6_FORWARDING` set them natively), `rp_filter` 0 for
+`all` and `default`, and `accept_ra` 2 with `accept_ra_defrtr` 1 for `all`
+and `default`. Netplan `accept-ra` (`ACCEPT_RA_OFF`) then sets single NICs.
+
 Both inputs are optional: without netplan files BOOTy uses the vars only,
 and without `frr.conf` it uses the netplan values without FRR. A file that is
 present but cannot be read or parsed is an error and network setup stops.
@@ -307,6 +320,11 @@ rule of every key:
 | `EVPN_RT_IMPORT`, `EVPN_RT_EXPORT` | `frr.conf` `route-target import\|export` | `network.evpn.importRouteTargets`, `network.evpn.exportRouteTargets` | list replaces |
 | `vpn_rt` | `frr.conf` route targets, else FRR's auto route target of an `frr.conf` L3VNI | `network.evpn.vpnRT` | netplan wins: the `frr.conf` route targets win over `vpn_rt`, as in FRR; `vpn_rt` applies only without them |
 | `BGP_EBGP_REQUIRES_POLICY` | `[no] bgp ebgp-requires-policy` | `network.bgp.ebgpRequiresPolicy` | native wins, for every session; unset is on for sessions, off for `BGP_PEER_MODE` peers |
+| `NETWORK_DEVICES` | the provisioner netplan files | `network.devices` | replaces the netplan files as a whole |
+| `VXLAN_MTU`, `VXLAN_MAC`, `VXLAN_LEARNING`, `VXLAN_ARP_PROXY`, `VXLAN_PORT_HAIRPIN`, `VXLAN_PORT_LEARNING`, `VXLAN_IPV6_LINK_LOCAL`, `VXLAN_ACCEPT_RA` | netplan tunnel `mtu`, `macaddress`, `mac-learning`, `arp-proxy`, `hairpin`, `port-mac-learning`, `link-local`, `accept-ra` | `network.overlay.*` | native wins |
+| `BRIDGE_MTU`, `BRIDGE_IPV6_LINK_LOCAL`, `BRIDGE_ACCEPT_RA` | netplan bridge `mtu`, `link-local`, `accept-ra` | `network.overlay.*` | native wins |
+| `ACCEPT_RA_OFF`, `LLDP_EMIT` | netplan ethernet `accept-ra: false`, `emit-lldp: true` | `network.noAcceptRA`, `network.emitLLDP` | list replaces |
+| `IP_FORWARDING`, `IPV6_FORWARDING` | `frr.conf` `[no] ip[v6] forwarding` | `network.ipForwarding`, `network.ipv6Forwarding` | native wins |
 
 ### Strict input and the accepted grammar
 

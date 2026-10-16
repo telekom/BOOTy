@@ -30,6 +30,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/crash"
 	"github.com/telekom/BOOTy/pkg/health"
+	"github.com/telekom/BOOTy/pkg/network/netplan"
 )
 
 // Client communicates with the CAPRF provisioning server.
@@ -1649,6 +1650,16 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 			return true, fmt.Errorf("invalid %s: %w", key, err)
 		}
 		cfg.Provision.Disk.SettleTimeoutSec = &n
+		return true, nil
+	}
+	if key == "NETWORK_DEVICES" {
+		// The netplan "network:" section as JSON, checked like a netplan
+		// file; unknown keys always fail.
+		np, err := netplan.ParseBytesWith(key, []byte("network: "+value), true)
+		if err != nil {
+			return true, fmt.Errorf("invalid %s: %w", key, err)
+		}
+		cfg.Network.Devices = &np.Network
 		return true, nil
 	}
 	if key == "NETWORK_WAIT_MAX_ATTEMPTS" {

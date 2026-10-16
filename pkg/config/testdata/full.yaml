@@ -34,6 +34,31 @@ network:
   # dnsResolvers is a comma-separated list of DNS server IPs.
   dnsResolvers: "8.8.8.8,1.1.1.1"
 
+  # devices (NETWORK_DEVICES as JSON): the native form of the provisioner
+  # netplan, the same keys as its "network:" section. Set, it replaces the
+  # provisioner netplan files as a whole.
+  devices:
+    version: 2
+    ethernets:
+      uplink0:
+        match: {name: ens1f0np0}
+        set-name: ens1f0np0
+        mtu: 9100
+        accept-ra: false
+        link-local: [ipv6]
+        emit-lldp: true
+      lo:
+        addresses: ["2001:db8:40a:5481::17/128"]
+        nameservers: {addresses: ["2001:db8::53"]}
+    vrfs:
+      Vrf_underlay: {table: 10, interfaces: [ens1f0np0, dum.underlay]}
+    dummy-devices:
+      dum.underlay: {addresses: ["192.0.2.17/32"], mtu: 9100}
+    tunnels:
+      vx.3000: {mode: vxlan, id: 3000, link: dum.underlay, local: 192.0.2.17, port: 4789, mtu: 9050, mac-learning: false}
+    bridges:
+      br.provision: {interfaces: [vx.3000], macaddress: "02:54:c0:00:02:13", addresses: ["2001:db8:40a:5481::17/64"]}
+
   # waitMode (NETWORK_WAIT_MODE): default (up to 3 setups, 5 minutes each) |
   # rounds (one setup, waitMaxAttempts rounds of 20 s, like wait_for_network)
   waitMode: rounds

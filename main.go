@@ -957,7 +957,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 	// Netplan-derived values override vars-based values, allowing the same
 	// config format used by the old deployer to work as a drop-in with BOOTy.
 	netplanStrict, frrStrict := inputStrictness(cfg)
-	npCfg, err := detectNetplanConfig(deployNetplanDir, deployFRRConfPath, netplanStrict, frrStrict)
+	npCfg, err := detectNetplanConfigWith(deployNetplanDir, deployFRRConfPath, netplanStrict, frrStrict, cfg.Network.Devices)
 	if err != nil {
 		return nil, err
 	}
@@ -1346,18 +1346,33 @@ const (
 // netplanStrict or frrStrict, a key or statement that BOOTy does not
 // implement is logged and skipped instead.
 func detectNetplanConfig(netplanDir, frrConfPath string, netplanStrict, frrStrict bool) (*network.Config, error) {
+	return detectNetplanConfigWith(netplanDir, frrConfPath, netplanStrict, frrStrict, nil)
+}
+
+// detectNetplanConfigWith is detectNetplanConfig with the native devices
+// (network.devices), which replace the provisioner netplan files as a whole.
+func detectNetplanConfigWith(netplanDir, frrConfPath string, netplanStrict, frrStrict bool, devices *netplan.NetworkSection) (*network.Config, error) {
 	found, err := netplan.HasNetplanFiles(netplanDir)
 	if err != nil {
 		return nil, err //nolint:wrapcheck // already names the dir
 	}
-	if !found {
+	var np *netplan.Config
+	switch {
+	case devices != nil:
+		if found {
+			slog.Info("network.devices replaces the provisioner netplan files", "dir", netplanDir)
+		}
+		np = &netplan.Config{Network: *devices}
+		if err := netplan.Check(np); err != nil {
+			return nil, fmt.Errorf("network.devices: %w", err)
+		}
+	case !found:
 		return nil, nil //nolint:nilnil // no netplan files means no netplan config, not an error
-	}
-	slog.Info("detected netplan configuration files", "dir", netplanDir)
-
-	np, err := netplan.ParseDirWith(netplanDir, netplanStrict)
-	if err != nil {
-		return nil, fmt.Errorf("parse netplan files in %s: %w", netplanDir, err)
+	default:
+		slog.Info("detected netplan configuration files", "dir", netplanDir)
+		if np, err = netplan.ParseDirWith(netplanDir, netplanStrict); err != nil {
+			return nil, fmt.Errorf("parse netplan files in %s: %w", netplanDir, err)
+		}
 	}
 
 	var frrParams *netplan.FRRParams
@@ -1472,12 +1487,8 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	}
 	mergeBGPPolicy(dst, src)
 	mergeOverlayDevices(&dst.OverlayDevices, &src.OverlayDevices)
-	if len(src.NoAcceptRA) > 0 {
-		dst.NoAcceptRA = src.NoAcceptRA
-	}
-	if len(src.EmitLLDP) > 0 {
-		dst.EmitLLDP = src.EmitLLDP
-	}
+	nativeList("network.noAcceptRA", &dst.NoAcceptRA, src.NoAcceptRA)
+	nativeList("network.emitLLDP", &dst.EmitLLDP, src.EmitLLDP)
 	// "no ip forwarding" in frr.conf is a default; an explicit option wins.
 	if dst.IPForwarding == nil {
 		dst.IPForwarding = src.IPForwarding
@@ -1551,26 +1562,19 @@ func mergeBGPPolicy(dst, src *network.Config) {
 	}
 }
 
-// mergeOverlayDevices takes every device setting that netplan sets.
+// mergeOverlayDevices takes every device setting that netplan sets and the
+// native options do not set (native wins).
 func mergeOverlayDevices(dst, src *network.OverlayDevices) {
-	if src.VXLANMTU > 0 {
-		dst.VXLANMTU = src.VXLANMTU
-	}
-	if src.BridgeMTU > 0 {
-		dst.BridgeMTU = src.BridgeMTU
-	}
-	if src.VXLANMAC != "" {
-		dst.VXLANMAC = src.VXLANMAC
-	}
+	nativeWins(&dst.VXLANMTU, src.VXLANMTU)
+	nativeWins(&dst.BridgeMTU, src.BridgeMTU)
+	nativeWins(&dst.VXLANMAC, src.VXLANMAC)
 	for _, f := range []struct{ d, s **bool }{
 		{&dst.VXLANLearning, &src.VXLANLearning}, {&dst.VXLANARPProxy, &src.VXLANARPProxy},
 		{&dst.PortHairpin, &src.PortHairpin}, {&dst.PortLearning, &src.PortLearning},
 		{&dst.VXLANLinkLocal, &src.VXLANLinkLocal}, {&dst.BridgeLinkLocal, &src.BridgeLinkLocal},
 		{&dst.VXLANAcceptRA, &src.VXLANAcceptRA}, {&dst.BridgeAcceptRA, &src.BridgeAcceptRA},
 	} {
-		if *f.s != nil {
-			*f.d = *f.s
-		}
+		nativeWins(f.d, *f.s)
 	}
 }
 

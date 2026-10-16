@@ -14,6 +14,7 @@ import (
 	imageutil "github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/frrconf"
+	"github.com/telekom/BOOTy/pkg/network/netplan"
 	"github.com/telekom/BOOTy/pkg/serialconsole"
 )
 
@@ -234,6 +235,11 @@ func collectValidationErrors(validators []func() string) []string {
 // provisioner netplan and frr.conf can also set.
 func (c *Config) validateNetworkOptions() []string {
 	var errs []string
+	if d := c.Network.Devices; d != nil {
+		if err := netplan.Check(&netplan.Config{Network: *d}); err != nil {
+			errs = append(errs, "network.devices: "+err.Error())
+		}
+	}
 	for _, list := range []struct{ name, value string }{
 		{"network.loopbackAddresses", c.Network.LoopbackAddresses},
 		{"network.blackholeRoutes", c.Network.BlackholeRoutes},

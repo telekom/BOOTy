@@ -119,6 +119,22 @@ func parseFile(path string, strict bool) (*Config, error) {
 	return cfg, nil
 }
 
+// ParseBytesWith decodes one netplan document with the checks of a
+// netplan file. strict is NETPLAN_STRICT.
+func ParseBytesWith(name string, data []byte, strict bool) (*Config, error) {
+	cfg, err := parseBytes(name, data, strict)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkRoutes(cfg, strict); err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	return cfg, nil
+}
+
+// Check applies the strict route checks of a netplan file to cfg.
+func Check(cfg *Config) error { return checkRoutes(cfg, true) }
+
 // parseBytes decodes netplan YAML. Unknown keys are an error, like netplan
 // itself, so a setting BOOTy does not implement is never dropped silently.
 // Without strict, each unknown key is logged with its line and skipped.

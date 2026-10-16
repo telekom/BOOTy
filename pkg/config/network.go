@@ -1,6 +1,9 @@
 package config
 
-import "github.com/telekom/BOOTy/pkg/network"
+import (
+	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/BOOTy/pkg/network/netplan"
+)
 
 // MaxNetworkWaitAttempts bounds NETWORK_WAIT_MAX_ATTEMPTS (about 23 days of
 // 20 second rounds), so the wait time cannot overflow.
@@ -73,6 +76,14 @@ type NetworkConfig struct {
 	// bridge (GoBGP), like the netplan tunnel and bridge keys. The netplan
 	// values win.
 	Overlay network.OverlayDevices `yaml:"overlay,omitempty" json:"overlay,omitempty"`
+
+	// Devices is the native form of the provisioner netplan: the same keys
+	// as its "network:" section (ethernets with match, set-name, addresses,
+	// mtu, accept-ra, link-local, routes and nameservers; vrfs,
+	// dummy-devices, tunnels, bridges, bonds, vlans). Set, it replaces the
+	// provisioner netplan files as a whole and goes through the same
+	// parser, so both forms give the same network config.
+	Devices *netplan.NetworkSection `yaml:"devices,omitempty" json:"devices,omitempty"`
 
 	// NoAcceptRA is a comma-separated list of NICs that ignore IPv6 router
 	// advertisements, like netplan "accept-ra: false".

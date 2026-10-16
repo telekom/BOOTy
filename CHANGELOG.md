@@ -199,7 +199,9 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   `VXLAN_PORT_LEARNING`, `VXLAN_IPV6_LINK_LOCAL`, `VXLAN_ACCEPT_RA`,
   `BRIDGE_MTU`, `BRIDGE_IPV6_LINK_LOCAL`, `BRIDGE_ACCEPT_RA`, `ACCEPT_RA_OFF`,
   `IP_FORWARDING`, `IPV6_FORWARDING`. NICs with netplan `emit-lldp: true` (or
-  `LLDP_EMIT`) send LLDP frames like networkd (#668).
+  `LLDP_EMIT`) send LLDP frames like networkd (#668). A set value of these keys
+  wins over netplan. `NETWORK_DEVICES` (YAML `network.devices`) is the native
+  form of the provisioner netplan and replaces the netplan files as a whole.
 - GoBGP mode applies the `frr.conf` route-maps and community-lists, explicit
   and automatic EVPN route targets, and the `local-as` AS path loop check. New
   keys `BGP_ROUTE_MAPS`, `BGP_COMMUNITY_LISTS`, `BGP_ROUTE_MAP_IN`,
