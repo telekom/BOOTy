@@ -2953,6 +2953,7 @@ func (o *Orchestrator) configureGRUB(ctx context.Context) error {
 	return o.config.ConfigureGRUB(ctx, o.cfg)
 }
 
+//nolint:nestif // bootloader policy branches are deliberately kept adjacent to the install step.
 func (o *Orchestrator) installEFIFallbackLoader(ctx context.Context) error {
 	if o.isABImageMode() && !o.cfg.Provision.AB.PreserveExisting {
 		if strings.TrimSpace(o.bootPartition) == "" {

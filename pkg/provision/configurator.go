@@ -661,7 +661,7 @@ WantedBy=multi-user.target
 // InstallESPSync installs the target-side synchronizer only for a mirrored
 // installation. PARTUUIDs are recorded so the service never guesses a peer
 // disk from filesystem UUIDs shared by both ESPs.
-func validateESPPARTUUIDs(sourcePartUUID, destinationPartUUID string) (string, string, error) {
+func validateESPPARTUUIDs(sourcePartUUID, destinationPartUUID string) (source, destination string, err error) {
 	sourcePartUUID = strings.TrimSpace(sourcePartUUID)
 	destinationPartUUID = strings.TrimSpace(destinationPartUUID)
 	if sourcePartUUID == "" || destinationPartUUID == "" || sourcePartUUID == destinationPartUUID {

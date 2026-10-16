@@ -30,7 +30,7 @@ const stagingPrefix = ".booty-esp-sync-staging-"
 func CopyTree(source, destination string) error {
 	source, destination, err := validateRoots(source, destination)
 	if err != nil {
-		return err
+		return fmt.Errorf("ESP synchronization: %w", err)
 	}
 	if err := cleanStaging(destination); err != nil {
 		return fmt.Errorf("clean stale staging: %w", err)
@@ -47,13 +47,13 @@ func CopyTree(source, destination string) error {
 		if cleanupErr := os.RemoveAll(staged); cleanupErr != nil {
 			return fmt.Errorf("copy source: %w (cleanup staging: %w)", err, cleanupErr)
 		}
-		return err
+		return fmt.Errorf("ESP synchronization: %w", err)
 	}
 	if err := syncTree(staged, destination); err != nil {
 		if cleanupErr := os.RemoveAll(staged); cleanupErr != nil {
 			return fmt.Errorf("sync destination: %w (cleanup staging: %w)", err, cleanupErr)
 		}
-		return err
+		return fmt.Errorf("ESP synchronization: %w", err)
 	}
 	if err := os.RemoveAll(staged); err != nil {
 		return fmt.Errorf("remove staging: %w", err)
@@ -64,14 +64,14 @@ func CopyTree(source, destination string) error {
 func cleanStaging(destination string) error {
 	entries, err := os.ReadDir(destination)
 	if err != nil {
-		return err
+		return fmt.Errorf("ESP synchronization: %w", err)
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() || !isStagingName(entry.Name()) {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(destination, entry.Name())); err != nil {
-			return err
+			return fmt.Errorf("ESP synchronization: %w", err)
 		}
 	}
 	return nil
@@ -84,11 +84,11 @@ func isStagingName(name string) bool {
 func validateRoots(source, destination string) (sourceAbs, destinationAbs string, err error) {
 	source, err = filepath.Abs(source)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("validate ESP roots: %w", err)
 	}
 	destination, err = filepath.Abs(destination)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("validate ESP roots: %w", err)
 	}
 	if source == destination {
 		return "", "", errors.New("source and destination are identical")
@@ -106,10 +106,10 @@ func validateRoots(source, destination string) (sourceAbs, destinationAbs string
 	}
 	var sourceStat, destinationStat syscall.Stat_t
 	if err := syscall.Stat(source, &sourceStat); err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("validate ESP roots: %w", err)
 	}
 	if err := syscall.Stat(destination, &destinationStat); err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("validate ESP roots: %w", err)
 	}
 	if sourceStat.Dev == destinationStat.Dev && sourceStat.Ino == destinationStat.Ino {
 		return "", "", errors.New("source and destination resolve to the same directory")
@@ -122,14 +122,19 @@ func copyDir(source, destination string) error {
 	if err != nil {
 		return fmt.Errorf("open source root: %w", err)
 	}
-	defer root.Close()
-	return filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
+	defer func() { _ = root.Close() }()
+	stagedRoot, err := os.OpenRoot(destination)
+	if err != nil {
+		return fmt.Errorf("open staged root: %w", err)
+	}
+	defer func() { _ = stagedRoot.Close() }()
+	if err := filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		rel, err := filepath.Rel(source, path)
 		if err != nil {
-			return err
+			return fmt.Errorf("ESP synchronization: %w", err)
 		}
 		if rel == "." {
 			return nil
@@ -140,30 +145,33 @@ func copyDir(source, destination string) error {
 		target := filepath.Join(destination, rel)
 		info, err := entry.Info()
 		if err != nil {
-			return err
+			return fmt.Errorf("ESP synchronization: %w", err)
 		}
-		switch info.Mode() & os.ModeType {
-		case 0:
-			relSource := filepath.ToSlash(rel)
-			if err := copyFileFromRoot(root, relSource, target, info.Mode().Perm()); err != nil {
-				return err
-			}
-		case os.ModeDir:
-			return os.MkdirAll(target, info.Mode().Perm())
-		case os.ModeSymlink:
-			link, err := root.Readlink(filepath.ToSlash(rel))
-			if err != nil {
-				return err
-			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return err
-			}
-			return os.Symlink(link, target)
-		default:
-			return fmt.Errorf("unsupported ESP entry %s", path)
+		return copyEntry(root, stagedRoot, rel, target, path, info)
+	}); err != nil {
+		return fmt.Errorf("walk source ESP: %w", err)
+	}
+	return nil
+}
+
+func copyEntry(sourceRoot, stagedRoot *os.Root, rel, target, path string, info os.FileInfo) error {
+	switch info.Mode() & os.ModeType {
+	case 0:
+		return copyFileFromRoot(sourceRoot, filepath.ToSlash(rel), target, info.Mode().Perm())
+	case os.ModeDir:
+		return fmt.Errorf("create ESP directory %s: %w", target, os.MkdirAll(target, info.Mode().Perm()))
+	case os.ModeSymlink:
+		link, err := sourceRoot.Readlink(filepath.ToSlash(rel))
+		if err != nil {
+			return fmt.Errorf("read source symlink %s: %w", path, err)
 		}
-		return nil
-	})
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return fmt.Errorf("create symlink parent %s: %w", target, err)
+		}
+		return fmt.Errorf("create ESP symlink %s: %w", rel, stagedRoot.Symlink(link, filepath.ToSlash(rel)))
+	default:
+		return fmt.Errorf("unsupported ESP entry %s", path)
+	}
 }
 
 func copyFileFromRoot(root *os.Root, source, destination string, mode os.FileMode) error {
@@ -173,7 +181,7 @@ func copyFileFromRoot(root *os.Root, source, destination string, mode os.FileMod
 	}
 	defer func() { _ = input.Close() }()
 	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
-		return err
+		return fmt.Errorf("ESP synchronization: %w", err)
 	}
 	output, err := os.OpenFile(destination, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_EXCL, mode.Perm())
 	if err != nil {
@@ -185,9 +193,9 @@ func copyFileFromRoot(root *os.Root, source, destination string, mode os.FileMod
 	}
 	if err := output.Sync(); err != nil {
 		_ = output.Close()
-		return err
+		return fmt.Errorf("ESP synchronization: %w", err)
 	}
-	return output.Close()
+	return fmt.Errorf("close ESP output: %w", output.Close())
 }
 
 func syncTree(staged, destination string) error {
@@ -195,7 +203,7 @@ func syncTree(staged, destination string) error {
 	// make the staged manifest disappear and the subsequent prune would delete
 	// the freshly installed destination file.
 	if err := pruneTree(destination, staged); err != nil {
-		return err
+		return fmt.Errorf("ESP synchronization: %w", err)
 	}
 	if err := filepath.WalkDir(staged, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -203,7 +211,7 @@ func syncTree(staged, destination string) error {
 		}
 		rel, err := filepath.Rel(staged, path)
 		if err != nil {
-			return err
+			return fmt.Errorf("ESP synchronization: %w", err)
 		}
 		if rel == "." {
 			return nil
@@ -212,19 +220,19 @@ func syncTree(staged, destination string) error {
 		if entry.IsDir() {
 			if info, err := os.Lstat(target); err == nil && !info.IsDir() {
 				if err := os.RemoveAll(target); err != nil {
-					return err
+					return fmt.Errorf("ESP synchronization: %w", err)
 				}
 			} else if err != nil && !os.IsNotExist(err) {
-				return err
+				return fmt.Errorf("ESP synchronization: %w", err)
 			}
 			return os.MkdirAll(target, 0o755)
 		}
 		if err := replacePath(target, path); err != nil {
-			return err
+			return fmt.Errorf("ESP synchronization: %w", err)
 		}
 		return nil
 	}); err != nil {
-		return err
+		return fmt.Errorf("ESP synchronization: %w", err)
 	}
 	return nil
 }
@@ -232,7 +240,7 @@ func syncTree(staged, destination string) error {
 func pruneTree(destination, staged string) error {
 	entries, err := os.ReadDir(destination)
 	if err != nil {
-		return err
+		return fmt.Errorf("ESP synchronization: %w", err)
 	}
 	for _, entry := range entries {
 		path := filepath.Join(destination, entry.Name())
@@ -247,11 +255,11 @@ func pruneTree(destination, staged string) error {
 			}
 			continue
 		} else if err != nil {
-			return err
+			return fmt.Errorf("ESP synchronization: %w", err)
 		}
 		if entry.IsDir() && stagedEntryIsDir(stagedPath) {
 			if err := pruneTree(path, stagedPath); err != nil {
-				return err
+				return fmt.Errorf("ESP synchronization: %w", err)
 			}
 		}
 	}
@@ -265,20 +273,20 @@ func stagedEntryIsDir(path string) bool {
 
 func replacePath(destination, staged string) error {
 	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
-		return err
+		return fmt.Errorf("ESP synchronization: %w", err)
 	}
 	if err := os.Rename(staged, destination); err == nil {
 		return nil
 	} else if !isDirectory(destination) {
-		return err
+		return fmt.Errorf("ESP synchronization: %w", err)
 	}
 	// A directory cannot be atomically replaced by a regular file or symlink
 	// on POSIX/FAT. The normal path above remains rename-over-existing and
 	// therefore never exposes a missing boot file for matching entry types.
 	if err := os.RemoveAll(destination); err != nil {
-		return err
+		return fmt.Errorf("ESP synchronization: %w", err)
 	}
-	return os.Rename(staged, destination)
+	return fmt.Errorf("install staged ESP path: %w", os.Rename(staged, destination))
 }
 
 func isDirectory(path string) bool {
@@ -299,11 +307,11 @@ func RunOnce(source, destination, lockPath string) error {
 func WithLock(lockPath string, fn func() error) error {
 	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		return err
+		return fmt.Errorf("ESP synchronization: %w", err)
 	}
 	defer func() { _ = lock.Close() }()
 	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
-		return err
+		return fmt.Errorf("ESP synchronization: %w", err)
 	}
 	defer func() { _ = unix.Flock(int(lock.Fd()), unix.LOCK_UN) }()
 	return fn()
@@ -365,14 +373,17 @@ func WatchFunc(source string, sync func() error, done <-chan struct{}) error {
 }
 
 // WatchFuncWithMarker recursively observes source, debounces changes, and writes marker after successful callbacks.
+// WatchFuncWithMarker handles watcher lifecycle, debounce, callback, and marker sequencing.
+//
+//nolint:cyclop // select branches encode independent watcher lifecycle states.
 func WatchFuncWithMarker(source string, sync func() error, marker string, done <-chan struct{}) error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		return err
+		return fmt.Errorf("ESP synchronization: %w", err)
 	}
 	defer func() { _ = watcher.Close() }()
 	if err := addDirs(watcher, source); err != nil {
-		return err
+		return fmt.Errorf("ESP synchronization: %w", err)
 	}
 	timer := time.NewTimer(time.Hour)
 	if !timer.Stop() {
@@ -417,38 +428,41 @@ func writeMarker(marker string) error {
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
-		return err
+		return fmt.Errorf("ESP synchronization: %w", err)
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(marker), ".booty-esp-sync-marker-")
 	if err != nil {
-		return err
+		return fmt.Errorf("ESP synchronization: %w", err)
 	}
 	tmpName := tmp.Name()
 	defer func() { _ = os.Remove(tmpName) }()
 	if _, err := fmt.Fprintf(tmp, "%s\n", time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		_ = tmp.Close()
-		return err
+		return fmt.Errorf("ESP synchronization: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
-		return err
+		return fmt.Errorf("ESP synchronization: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return err
+		return fmt.Errorf("ESP synchronization: %w", err)
 	}
-	return os.Rename(tmpName, marker)
+	return fmt.Errorf("install synchronization marker: %w", os.Rename(tmpName, marker))
 }
 
 func addDirs(w *fsnotify.Watcher, root string) error {
-	return filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
-			return err
+			return fmt.Errorf("ESP synchronization: %w", err)
 		}
 		if entry.IsDir() {
 			return w.Add(path)
 		}
 		return nil
-	})
+	}); err != nil {
+		return fmt.Errorf("walk watched ESP: %w", err)
+	}
+	return nil
 }
 
 func resetTimer(timer *time.Timer, delay time.Duration) {
