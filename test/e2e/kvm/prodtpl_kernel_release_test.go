@@ -39,7 +39,10 @@ func TestResolveProductionTemplateKernelRelease(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			kernel := filepath.Join(t.TempDir(), tt.kernel)
+			kernel := tt.kernel
+			if !filepath.IsAbs(kernel) {
+				kernel = filepath.Join(t.TempDir(), kernel)
+			}
 			if err := os.WriteFile(kernel, []byte(tt.contents), 0o644); err != nil {
 				t.Fatal(err)
 			}
