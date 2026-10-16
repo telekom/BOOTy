@@ -31,6 +31,11 @@ behaviour.
 
 ### Behaviour changes in all modes
 
+- `stop-raid` of provisioning and hard deprovision zeroes the superblock of
+  every `linux_raid_member` (whole disks and partitions) after it stops the
+  arrays, like `clear_mdadm_superblocks` of the CAPRF provisioner. A hard
+  deprovision with a device override does this only on the selected disk and
+  its mirror companion (#581).
 - A provisioner netplan route with `from`, `table`, `metric` or `scope` now
   fails the network setup (with `NETPLAN_STRICT=false` it is dropped with a
   warning). BOOTy does not apply these keys; before, the `via` of a `from:`
@@ -208,6 +213,13 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   of a token without renewal. When the token can not be renewed or expires, BOOTy stops the
   active task, reports the reason to `ERROR_URL` and ends like a failed run
   (#680)
+- `DISK_MIRRORING_MODE` (`raid-1`|`auto`|`none`): mirrors the root as
+  `/dev/md2` and a separate `/boot` as `/dev/md1` with RAID1 metadata 1.0
+  across two equal disks, like the CAPRF provisioner. It copies the ESP to the
+  second disk with a `<label>-disk2` UEFI boot entry, installs GRUB on both
+  disks on BIOS, and installs the `booty-esp-sync` service that copies later
+  ESP changes to the other disk. `stop-raid` zeroes old RAID superblocks like
+  the legacy script. Soft deprovision refuses a mirrored root (#581)
 
 ### Security
 
