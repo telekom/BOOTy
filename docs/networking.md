@@ -153,8 +153,8 @@ same resolution:
 - `[no] bgp fast-external-failover` (native
   `network.bgp.fastExternalFailover`, `BGP_FAST_EXTERNAL_FAILOVER`; on by
   default like FRR) stops an unnumbered session as soon as its NIC loses
-  carrier. Native sessions without the setting keep a `frr.conf` `no bgp
-  fast-external-failover` of the same VRF.
+  carrier. Native sessions without the setting keep a
+  `no bgp fast-external-failover` of `frr.conf` in the same VRF.
 
 GoBGP mode installs the learned IPv4 and IPv6 unicast routes like zebra:
 into the table of each session's VRF (the main table without a VRF), with

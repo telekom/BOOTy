@@ -1183,6 +1183,7 @@ jobs:
           # TestFIBWriterKernel creates a VRF in a network namespace; the
           # Azure runner kernel has the module in linux-modules-extra.
           if ! sudo modprobe vrf; then
+            sudo apt-get update -qq
             sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)"
             sudo modprobe vrf
           fi
