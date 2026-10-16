@@ -41,12 +41,13 @@ type Session struct {
 }
 
 // ProfileTimers returns keepalive, hold and connect-retry defaults of an
-// "frr defaults" profile (bgpd/bgp_vty.c, doc/user/bgp.rst; the same in FRR 8.2.2 and 10.3).
+// "frr defaults" profile in current FRR (bgpd/bgp_vty.c, bgpd/bgpd.h
+// BGP_DEFAULT_CONNECT_RETRY; FRR 8.2.2 had a traditional connect retry of 120).
 // Without the line the daemon profile applies. The legacy ramdisk daemons
 // file sets frr_profile="datacenter", so that is the default here.
 func ProfileTimers(p Profile) (keepalive, hold, connect uint32) {
 	if p == ProfileTraditional {
-		return 60, 180, 120
+		return 60, 180, 30
 	}
 	return 3, 9, 10
 }
@@ -82,10 +83,6 @@ func (c *Config) session(r *Router, n *Neighbor) (Session, error) {
 		s.VRF = r.VRF
 	}
 
-	if err := setRemoteAS(&s, n, g, r.ASN); err != nil {
-		return s, err
-	}
-
 	la := n.LocalAS
 	if la == nil && g != nil {
 		la = g.LocalAS
@@ -93,6 +90,9 @@ func (c *Config) session(r *Router, n *Neighbor) (Session, error) {
 	if la != nil {
 		v := *la
 		s.LocalAS = &v
+	}
+	if err := setRemoteAS(&s, n, g, r.ASN); err != nil {
+		return s, err
 	}
 	if err := checkLocalAS(&s, r.ASN); err != nil {
 		return s, err
@@ -131,13 +131,25 @@ func setRemoteAS(s *Session, n, g *Neighbor, ownASN uint32) error {
 	if ras == nil {
 		return fmt.Errorf("no remote-as")
 	}
+	// The session is iBGP when the peer AS is the effective local AS: the
+	// local-as when set, else the router AS (FRR 10.3 peer_calc_sort with
+	// change_local_as; GoBGP compares PeerAsn and LocalAsn the same way).
+	local := ownASN
+	if s.LocalAS != nil {
+		local = s.LocalAS.ASN
+	}
 	switch ras.Kind {
 	case RemoteASInternal:
-		s.Internal, s.RemoteASN = true, ownASN
+		if s.LocalAS != nil {
+			// "internal" is the router AS; with a local-as the number says
+			// which AS is meant.
+			return fmt.Errorf("local-as %d with remote-as internal: use remote-as %d", local, local)
+		}
+		s.Internal, s.RemoteASN = true, local
 	case RemoteASExternal:
 	default:
 		s.RemoteASN = ras.Number
-		s.Internal = ras.Number == ownASN
+		s.Internal = ras.Number == local
 	}
 	return nil
 }
@@ -153,15 +165,9 @@ func checkLocalAS(s *Session, ownASN uint32) error {
 	if !la.NoPrepend || !la.ReplaceAS {
 		return fmt.Errorf("local-as %d needs no-prepend replace-as; other local-as modes are not supported", la.ASN)
 	}
-	if s.Internal {
-		return fmt.Errorf("local-as is allowed only for eBGP peers")
-	}
 	if la.ASN == ownASN {
+		// FRR: BGP_ERR_CANNOT_HAVE_LOCAL_AS_SAME_AS.
 		return fmt.Errorf("local-as %d is the router AS", la.ASN)
-	}
-	if la.ASN == s.RemoteASN {
-		// FRR: BGP_ERR_CANNOT_HAVE_LOCAL_AS_SAME_AS_REMOTE_AS.
-		return fmt.Errorf("local-as %d is the remote AS", la.ASN)
 	}
 	return nil
 }

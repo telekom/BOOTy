@@ -1,10 +1,14 @@
 package config
 
 import (
+	"cmp"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/telekom/BOOTy/pkg/network/frrconf"
 )
@@ -24,8 +28,9 @@ type BGPSessionConfig struct {
 	VRF string `yaml:"vrf,omitempty" json:"vrf,omitempty"`
 	// PeerGroup is the peer-group of a session.
 	PeerGroup string `yaml:"peerGroup,omitempty" json:"peerGroup,omitempty"`
-	// RemoteAS is a number, "internal" or "external".
-	RemoteAS string `yaml:"remoteAS,omitempty" json:"remoteAS,omitempty"`
+	// RemoteAS is a number, "internal" or "external". JSON and YAML take
+	// the number with or without quotes.
+	RemoteAS RemoteAS `yaml:"remoteAS,omitempty" json:"remoteAS,omitempty"`
 	// LocalAS is "local-as N"; LocalASMode must then be
 	// "no-prepend-replace-as" (the default), the only mode BOOTy has.
 	LocalAS     uint32 `yaml:"localAS,omitempty" json:"localAS,omitempty"`
@@ -41,6 +46,33 @@ type BGPSessionConfig struct {
 	// BFD and BFDProfile request a BFD session ("neighbor X bfd [profile P]").
 	BFD        bool   `yaml:"bfd,omitempty" json:"bfd,omitempty"`
 	BFDProfile string `yaml:"bfdProfile,omitempty" json:"bfdProfile,omitempty"`
+}
+
+// RemoteAS is a remote-as value: a number, "internal" or "external".
+type RemoteAS string
+
+// UnmarshalJSON accepts a JSON number as well as a string.
+func (r *RemoteAS) UnmarshalJSON(b []byte) error {
+	var n json.Number
+	if err := json.Unmarshal(b, &n); err == nil {
+		*r = RemoteAS(n.String())
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return fmt.Errorf("remoteAS must be a number or a string: %w", err)
+	}
+	*r = RemoteAS(s)
+	return nil
+}
+
+// UnmarshalYAML accepts an unquoted number as well as a string.
+func (r *RemoteAS) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind != yaml.ScalarNode {
+		return fmt.Errorf("line %d: remoteAS must be a number or a string", n.Line)
+	}
+	*r = RemoteAS(n.Value)
+	return nil
 }
 
 // localASModeReplace is the only local-as mode: "no-prepend replace-as".
@@ -71,20 +103,16 @@ func (b *BGPConfig) ResolveSessions() ([]frrconf.Session, error) {
 }
 
 func (b *BGPConfig) frrModel() (*frrconf.Config, error) {
-	model := &frrconf.Config{Defaults: frrconf.ProfileDatacenter}
-	switch b.Defaults {
-	case "", string(frrconf.ProfileDatacenter):
-	case string(frrconf.ProfileTraditional):
-		model.Defaults = frrconf.ProfileTraditional
-	default:
-		return nil, fmt.Errorf("network.bgp.defaults %q must be traditional or datacenter", b.Defaults)
+	model, err := b.emptyModel()
+	if err != nil {
+		return nil, err
 	}
+	vrfName := func(vrf string) string { return cmp.Or(vrf, "default") }
 	routers := map[string]*frrconf.Router{}
 	var vrfs []string
+	seen := map[[2]string]bool{}
 	router := func(vrf string) *frrconf.Router {
-		if vrf == "" {
-			vrf = "default"
-		}
+		vrf = vrfName(vrf)
 		if r, ok := routers[vrf]; ok {
 			return r
 		}
@@ -95,12 +123,17 @@ func (b *BGPConfig) frrModel() (*frrconf.Config, error) {
 	}
 	for i := range b.Sessions {
 		s := &b.Sessions[i]
+		key := [2]string{vrfName(s.VRF), s.Name}
+		if seen[key] {
+			return nil, fmt.Errorf("network.bgp.sessions %s: defined twice in VRF %s", s.Name, key[0])
+		}
+		seen[key] = true
+		g, err := b.sessionGroup(s, key[0], vrfName)
+		if err != nil {
+			return nil, err
+		}
 		r := router(s.VRF)
-		if s.PeerGroup != "" && slices.IndexFunc(r.Neighbors, func(n frrconf.Neighbor) bool { return n.Name == s.PeerGroup }) < 0 {
-			g := slices.IndexFunc(b.PeerGroups, func(g BGPSessionConfig) bool { return g.Name == s.PeerGroup })
-			if g < 0 {
-				return nil, fmt.Errorf("network.bgp.sessions %s: peer-group %s is not defined", s.Name, s.PeerGroup)
-			}
+		if g >= 0 && slices.IndexFunc(r.Neighbors, func(n frrconf.Neighbor) bool { return n.Name == s.PeerGroup }) < 0 {
 			if err := addNeighbor(r, &b.PeerGroups[g], true); err != nil {
 				return nil, err
 			}
@@ -115,6 +148,41 @@ func (b *BGPConfig) frrModel() (*frrconf.Config, error) {
 	return model, nil
 }
 
+// emptyModel returns the model with the defaults profile, after checking
+// the peer-groups.
+func (b *BGPConfig) emptyModel() (*frrconf.Config, error) {
+	model := &frrconf.Config{Defaults: frrconf.ProfileDatacenter}
+	switch b.Defaults {
+	case "", string(frrconf.ProfileDatacenter):
+	case string(frrconf.ProfileTraditional):
+		model.Defaults = frrconf.ProfileTraditional
+	default:
+		return nil, fmt.Errorf("network.bgp.defaults %q must be traditional or datacenter", b.Defaults)
+	}
+	for i := range b.PeerGroups {
+		if g := &b.PeerGroups[i]; g.Interface || g.PeerGroup != "" {
+			return nil, fmt.Errorf("network.bgp.peerGroups %s: interface and peerGroup are session fields, not peer-group fields", g.Name)
+		}
+	}
+	return model, nil
+}
+
+// sessionGroup returns the index of the peer-group of s, -1 without one,
+// checked against the session's VRF.
+func (b *BGPConfig) sessionGroup(s *BGPSessionConfig, vrf string, vrfName func(string) string) (int, error) {
+	if s.PeerGroup == "" {
+		return -1, nil
+	}
+	i := slices.IndexFunc(b.PeerGroups, func(g BGPSessionConfig) bool { return g.Name == s.PeerGroup })
+	if i < 0 {
+		return -1, fmt.Errorf("network.bgp.sessions %s: peer-group %s is not defined", s.Name, s.PeerGroup)
+	}
+	if gv := b.PeerGroups[i].VRF; gv != "" && vrfName(gv) != vrf {
+		return -1, fmt.Errorf("network.bgp.sessions %s: VRF %s differs from the VRF %s of peer-group %s", s.Name, vrf, vrfName(gv), s.PeerGroup)
+	}
+	return i, nil
+}
+
 // addNeighbor adds a session or peer-group with its address families.
 func addNeighbor(r *frrconf.Router, s *BGPSessionConfig, group bool) error {
 	what := "network.bgp.sessions " + s.Name
@@ -126,11 +194,8 @@ func addNeighbor(r *frrconf.Router, s *BGPSessionConfig, group bool) error {
 		KeepaliveTime: s.Keepalive, HoldTime: s.Hold, ConnectRetry: s.ConnectRetry,
 		BFD: s.BFD, BFDProfile: s.BFDProfile,
 	}
-	if group {
-		n.Group = ""
-	}
 	if s.RemoteAS != "" {
-		ras, err := parseRemoteAS(s.RemoteAS)
+		ras, err := parseRemoteAS(string(s.RemoteAS))
 		if err != nil {
 			return fmt.Errorf("%s: %w", what, err)
 		}

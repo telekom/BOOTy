@@ -122,11 +122,15 @@ same resolution:
 - `remote-as` is a number, `internal` (iBGP, the router AS) or `external`
   (any other AS, learned from the peer's OPEN).
 - `local-as N no-prepend replace-as` is the only local-as mode; GoBGP sends
-  only N and does not add it to received paths.
+  only N and does not add it to received paths. Like FRR 10.3, the session
+  is iBGP when the remote AS is the effective local AS (the local-as, else
+  the router AS): `remote-as 65501` with `local-as 65501` is iBGP in AS 65501.
 - `timers K H` and `timers connect N` are per session. Without them the
-  profile applies: traditional 60/180/120 s, datacenter 3/9/10 s.
+  profile applies (current FRR): traditional 60/180/30 s, datacenter 3/9/10 s.
 - The activated address families are those of the neighbor and its
-  peer-group. IPv4 unicast is active unless `no bgp default ipv4-unicast`.
+  peer-group. In `frr.conf`, IPv4 unicast is active unless `no bgp default
+  ipv4-unicast`. Native sessions have no default family: list
+  `ipv4-unicast` in `families` when the session needs it.
 - The VRF of the `router bgp` block binds the session to that VRF.
 - An interface neighbor is unnumbered: BOOTy finds the peer's IPv6
   link-local address on the interface.
@@ -141,11 +145,19 @@ These errors stop the setup in both inputs and are not relaxed by
 
 - a neighbor without remote-as;
 - a local-as mode other than `no-prepend replace-as`;
-- local-as equal to the router AS or to the remote AS;
+- local-as equal to the router AS, or a local-as with `remote-as internal`
+  (use the number);
 - a member remote-as that differs from its peer-group's;
 - `timers` with 0, or a hold time below 3 (FRR `timers 0 0` disables
   keepalives; GoBGP would replace 0 with 30/90);
-- a session without an address family.
+- a session without an address family;
+- native only: a session name that is not an IP address without
+  `interface: true`, the same session name twice in one VRF, `interface` or
+  `peerGroup` on a peer-group, a peer-group `vrf` that differs from its
+  member's, and `peerGroups` or `defaults` without `sessions`.
+
+The FRR stack (`NETWORK_MODE=frr`) does not use `BGP_SESSIONS`; BOOTy logs
+a warning when it is set there.
 
 These statements are parsed but not applied yet, and BOOTy logs one
 warning per statement: `allowas-in`, `route-map ... in|out`,

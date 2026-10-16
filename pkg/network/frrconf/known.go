@@ -61,14 +61,14 @@ var afNeighborWords = []string{
 	"next-hop-self", "prefix-list", "remove-private-AS", "route-map",
 	"route-reflector-client", "route-server-client", "send-community",
 	"soft-reconfiguration", "unsuppress-map", "weight", "advertise-map",
-	"disable-addpath-rx", "nexthop-local",
+	"disable-addpath-rx", "nexthop-local", "soo", "dampening", "addpath-rx-paths-limit",
 }
 
 var l2vniWords = []string{"rd", "route-target", "advertise-default-gw", "advertise-svi-ip", "advertise-subnet", "exit-vni", "exit"}
 
 var routeMapWords = []string{"match", "set", "call", "on-match", "continue", "description", "exit"}
 
-var bfdWords = []string{"profile", "peer", "exit"}
+var bfdWords = []string{"profile", "peer", "sbfd", "exit"}
 
 var bfdProfileWords = []string{
 	"transmit-interval", "receive-interval", "detect-multiplier", "echo-mode",

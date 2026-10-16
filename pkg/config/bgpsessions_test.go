@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"reflect"
 	"strings"
@@ -88,10 +89,10 @@ func TestNativeSessionsRejectLikeFRRConf(t *testing.T) {
 			"supported",
 		},
 		{
-			"local-as is the remote AS",
-			"router bgp 65000\n neighbor 192.0.2.1 remote-as 65001\n neighbor 192.0.2.1 local-as 65001 no-prepend replace-as\n",
-			"asn: 65000\nsessions:\n  - {name: 192.0.2.1, remoteAS: \"65001\", localAS: 65001, families: [ipv4-unicast]}\n",
-			"local-as 65001 is the remote AS",
+			"local-as is the router AS",
+			"router bgp 65000\n neighbor 192.0.2.1 remote-as 65001\n neighbor 192.0.2.1 local-as 65000 no-prepend replace-as\n",
+			"asn: 65000\nsessions:\n  - {name: 192.0.2.1, remoteAS: \"65001\", localAS: 65000, families: [ipv4-unicast]}\n",
+			"local-as 65000 is the router AS",
 		},
 		{
 			"member remote-as",
@@ -135,6 +136,17 @@ func TestValidateNativeSessions(t *testing.T) {
 		{"sessions:\n  - {name: 192.0.2.1, remoteAS: external, families: [vpnv4]}\n", "family \"vpnv4\""},
 		{"defaults: cloud\nsessions:\n  - {name: 192.0.2.1, remoteAS: external, families: [ipv4-unicast]}\n", "traditional or datacenter"},
 		{"sessions:\n  - {name: 192.0.2.1, peerGroup: nope, families: [ipv4-unicast]}\n", "peer-group nope is not defined"},
+		{"peerGroups:\n  - {name: g, remoteAS: external}\n", "apply only with network.bgp.sessions"},
+		{"defaults: traditional\n", "apply only with network.bgp.sessions"},
+		{"defaults: cloud\n", "traditional or datacenter"},
+		{"sessions:\n  - {name: leaf0, remoteAS: external, families: [ipv4-unicast]}\n", "not an IP address"},
+		{"sessions:\n  - {name: eth0, interface: true, remoteAS: external, families: [ipv4-unicast]}\n", ""},
+		{"peerGroups:\n  - {name: g, interface: true, remoteAS: external}\nsessions:\n  - {name: eth0, interface: true, peerGroup: g, families: [ipv4-unicast]}\n", "session fields"},
+		{"peerGroups:\n  - {name: g, peerGroup: h, remoteAS: external}\nsessions:\n  - {name: 192.0.2.1, peerGroup: g, families: [ipv4-unicast]}\n", "session fields"},
+		{"peerGroups:\n  - {name: g, vrf: Vrf_a, remoteAS: external}\nsessions:\n  - {name: 192.0.2.1, vrf: Vrf_b, peerGroup: g, families: [ipv4-unicast]}\n", "differs from the VRF Vrf_a"},
+		{"sessions:\n  - {name: 192.0.2.1, remoteAS: external, families: [ipv4-unicast]}\n  - {name: 192.0.2.1, remoteAS: internal, families: [ipv4-unicast]}\n", "defined twice"},
+		{"sessions:\n  - {name: 192.0.2.1, remoteAS: external, families: [ipv4-unicast]}\n  - {name: 192.0.2.1, vrf: Vrf_b, remoteAS: external, families: [ipv4-unicast]}\n", ""},
+		{"sessions:\n  - {name: 192.0.2.1, remoteAS: 65001, families: [ipv4-unicast]}\n", ""},
 	} {
 		c := &Config{}
 		if err := yaml.Unmarshal([]byte(tt.yaml), &c.Network.BGP); err != nil {
@@ -144,5 +156,26 @@ func TestValidateNativeSessions(t *testing.T) {
 		if tt.want == "" && err != nil || tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)) {
 			t.Errorf("%q: Validate = %v, want %q", tt.yaml, err, tt.want)
 		}
+	}
+}
+
+// remoteAS takes a number with or without quotes, in YAML and JSON.
+func TestRemoteASNumberOrString(t *testing.T) {
+	var y BGPSessionConfig
+	if err := yaml.Unmarshal([]byte("{name: a, remoteAS: 65001}"), &y); err != nil || y.RemoteAS != "65001" {
+		t.Fatalf("YAML number: %q %v", y.RemoteAS, err)
+	}
+	for _, in := range []string{`{"name":"a","remoteAS":65001}`, `{"name":"a","remoteAS":"65001"}`} {
+		var j BGPSessionConfig
+		if err := json.Unmarshal([]byte(in), &j); err != nil || j.RemoteAS != "65001" {
+			t.Fatalf("JSON %s: %q %v", in, j.RemoteAS, err)
+		}
+	}
+	var bad BGPSessionConfig
+	if err := json.Unmarshal([]byte(`{"name":"a","remoteAS":[1]}`), &bad); err == nil {
+		t.Fatal("JSON list remoteAS parsed")
+	}
+	if err := yaml.Unmarshal([]byte("{name: a, remoteAS: [1]}"), &bad); err == nil {
+		t.Fatal("YAML list remoteAS parsed")
 	}
 }

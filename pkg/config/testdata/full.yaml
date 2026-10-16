@@ -81,7 +81,7 @@ network:
     # neighbors. A session inherits unset fields from its peer-group. A
     # non-empty sessions list replaces the frr.conf sessions; with sessions,
     # peerMode, interfaces, neighbors, remoteASN, keepalive and hold do not apply.
-    # defaults: timer profile, traditional (60/180/120) | datacenter (3/9/10, default)
+    # defaults: timer profile, traditional (60/180/30) | datacenter (3/9/10, default)
     defaults: traditional
     peerGroups:
       - name: leaf

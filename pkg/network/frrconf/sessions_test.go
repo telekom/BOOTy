@@ -51,7 +51,7 @@ exit-address-family
 	leaf := func(name string, line int) Session {
 		return Session{Name: name, Interface: true, VRF: "Vrf_underlay", RemoteASN: 65500,
 			LocalAS:       &LocalAS{ASN: 65501, NoPrepend: true, ReplaceAS: true},
-			KeepaliveTime: 30, HoldTime: 90, ConnectRetry: 120,
+			KeepaliveTime: 30, HoldTime: 90, ConnectRetry: 30,
 			Families: []string{FamilyIPv4Unicast}, BFD: true, BFDProfile: "fabric", Line: line}
 	}
 	dcgw := func(name string, keepalive, hold uint32, line int) Session {
@@ -76,7 +76,7 @@ func TestSessionsProfileDefaults(t *testing.T) {
 		profile             string
 		keepalive, hold, cr uint32
 	}{
-		{"frr defaults traditional\n", 60, 180, 120},
+		{"frr defaults traditional\n", 60, 180, 30},
 		{"frr defaults datacenter\n", 3, 9, 10},
 		{"", 3, 9, 10},
 	}
@@ -100,7 +100,8 @@ func TestSessionsRejects(t *testing.T) {
 		{"no remote-as", "router bgp 65101\n neighbor g peer-group\n neighbor 192.0.2.1 peer-group g\n", "no remote-as"},
 		{"plain local-as", "router bgp 65101\n neighbor 192.0.2.1 remote-as 65500\n neighbor 192.0.2.1 local-as 65501\n", "no-prepend replace-as"},
 		{"no-prepend only", "router bgp 65101\n neighbor 192.0.2.1 remote-as 65500\n neighbor 192.0.2.1 local-as 65501 no-prepend\n", "no-prepend replace-as"},
-		{"ibgp local-as", "router bgp 65101\n neighbor 192.0.2.1 remote-as internal\n neighbor 192.0.2.1 local-as 65501 no-prepend replace-as\n", "only for eBGP"},
+		{"ibgp local-as", "router bgp 65101\n neighbor 192.0.2.1 remote-as internal\n neighbor 192.0.2.1 local-as 65501 no-prepend replace-as\n", "with remote-as internal"},
+		{"local-as router AS", "router bgp 65101\n neighbor 192.0.2.1 remote-as 65500\n neighbor 192.0.2.1 local-as 65101 no-prepend replace-as\n", "is the router AS"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -112,6 +113,20 @@ func TestSessionsRejects(t *testing.T) {
 				t.Fatalf("Sessions() = %v, want an error with %q", err, tt.want)
 			}
 		})
+	}
+}
+
+// remote-as N with local-as N is iBGP with AS N, like FRR 10.3
+// (peer_calc_sort uses the local-as) and GoBGP; a remote-as equal to the
+// router AS is eBGP from the local-as.
+func TestSessionsLocalASDecidesSort(t *testing.T) {
+	s := mustSessions(t, "router bgp 65101\n neighbor 192.0.2.1 remote-as 65501\n neighbor 192.0.2.1 local-as 65501 no-prepend replace-as\n")[0]
+	if !s.Internal || s.RemoteASN != 65501 || s.LocalAS.ASN != 65501 {
+		t.Errorf("session = %+v, want iBGP in AS 65501", s)
+	}
+	s = mustSessions(t, "router bgp 65101\n neighbor 192.0.2.1 remote-as 65101\n neighbor 192.0.2.1 local-as 65501 no-prepend replace-as\n")[0]
+	if s.Internal || s.RemoteASN != 65101 {
+		t.Errorf("session = %+v, want eBGP to 65101 from local-as 65501", s)
 	}
 }
 

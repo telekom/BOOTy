@@ -1,6 +1,8 @@
 package gobgp
 
 import (
+	"cmp"
+
 	apipb "github.com/osrg/gobgp/v3/api"
 
 	"github.com/telekom/BOOTy/pkg/network"
@@ -92,9 +94,11 @@ func ipv4Families() []*apipb.AfiSafi {
 // the peer address; for an unnumbered session it is the discovered
 // link-local address.
 func buildSessionPeer(cfg *Config, s *network.BGPSession, addr string) *apipb.Peer {
+	// iBGP peers are in the effective local AS: the local-as when set,
+	// else the router AS.
 	peerASN := s.RemoteASN
-	if s.Internal {
-		peerASN = cfg.ASN
+	if s.Internal && peerASN == 0 {
+		peerASN = cmp.Or(s.LocalASN, cfg.ASN)
 	}
 	peer := &apipb.Peer{
 		Conf: &apipb.PeerConf{

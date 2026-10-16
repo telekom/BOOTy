@@ -1007,6 +1007,9 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 	}
 
 	if netCfg.IsFRRMode() {
+		if cfg.Network.BGP.HasSessions() {
+			slog.Warn("network.bgp.sessions (BGP_SESSIONS) applies to GoBGP mode only; the FRR stack ignores it")
+		}
 		detectIPMI(netCfg)
 		slog.Info("using FRR/EVPN network mode", "asn", cfg.Network.BGP.ASN)
 		mgr := frr.NewManager(nil)

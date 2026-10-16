@@ -753,6 +753,9 @@ func (p *parser) l2vniStatement(f []string) error {
 		v.RD = f[1]
 	case has(f, "route-target") && len(f) == 3:
 		return addRouteTarget(&v.RouteTargetImport, &v.RouteTargetExport, f[1], f[2])
+	case is(f, "advertise-default-gw"):
+		// FRR has it per VNI too (bgp_evpn_vty.c, bgp_evpn_advertise_default_gw_vni).
+		v.AdvertiseDefaultGW = true
 	case is(f, "exit-vni"), is(f, "exit"):
 		p.pop()
 	default:

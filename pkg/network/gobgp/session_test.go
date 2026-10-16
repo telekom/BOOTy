@@ -68,6 +68,15 @@ func TestValidateSessions(t *testing.T) {
 
 // An iBGP session uses the router AS even when the session has no remote
 // AS of its own (native or older inputs).
+// remote-as N with local-as N: iBGP in AS N, so GoBGP gets PeerAsn and
+// LocalAsn N.
+func TestBuildSessionPeerInternalLocalAS(t *testing.T) {
+	p := buildSessionPeer(&Config{ASN: 65000}, &network.BGPSession{Name: "192.0.2.1", Internal: true, RemoteASN: 65501, LocalASN: 65501, IPv4Unicast: true}, "192.0.2.1")
+	if p.Conf.PeerAsn != 65501 || p.Conf.LocalAsn != 65501 {
+		t.Fatalf("PeerAsn %d LocalAsn %d, want 65501 for both", p.Conf.PeerAsn, p.Conf.LocalAsn)
+	}
+}
+
 func TestBuildSessionPeerInternalWithoutRemoteASN(t *testing.T) {
 	p := buildSessionPeer(&Config{ASN: 65000}, &network.BGPSession{Name: "192.0.2.1", Internal: true, IPv4Unicast: true}, "192.0.2.1")
 	if p.Conf.PeerAsn != 65000 {
