@@ -251,6 +251,17 @@ func ValidateMountedSource(source, partUUID string) error {
 
 // Watch recursively observes source and debounces nested changes.
 func Watch(source, destination, lockPath string, done <-chan struct{}) error {
+	return watch(source, destination, lockPath, "", done)
+}
+
+// WatchWithMarker behaves like Watch and writes marker after every successful
+// synchronization. The marker is useful to boot integration tests and local
+// operators because it records that the initial copy completed.
+func WatchWithMarker(source, destination, lockPath, marker string, done <-chan struct{}) error {
+	return watch(source, destination, lockPath, marker, done)
+}
+
+func watch(source, destination, lockPath, marker string, done <-chan struct{}) error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
@@ -285,9 +296,42 @@ func Watch(source, destination, lockPath string, done <-chan struct{}) error {
 		case <-timer.C:
 			if err := RunOnce(source, destination, lockPath); err != nil {
 				slog.Error("EFI synchronization failed", "error", err)
+			} else if err := writeMarker(marker); err != nil {
+				slog.Error("write EFI synchronization marker", "error", err)
 			}
 		}
 	}
+}
+
+func WriteMarker(marker string) error {
+	return writeMarker(marker)
+}
+
+func writeMarker(marker string) error {
+	if marker == "" {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(marker), ".booty-esp-sync-marker-")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+	if _, err := fmt.Fprintf(tmp, "%s\n", time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, marker)
 }
 
 func addDirs(w *fsnotify.Watcher, root string) error {

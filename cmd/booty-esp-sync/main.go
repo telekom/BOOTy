@@ -23,21 +23,22 @@ func main() {
 	destination := flag.String("destination", "", "destination ESP block device or mounted directory")
 	mountpoint := flag.String("mountpoint", "/run/booty/esp-sync", "private destination mountpoint")
 	lockPath := flag.String("lock", "/run/lock/booty-esp-sync.lock", "synchronization lock")
+	marker := flag.String("marker", "/run/booty/esp-sync.ready", "optional marker written after a successful synchronization")
 	once := flag.Bool("once", false, "synchronize once and exit")
 	flag.Parse()
 	if *destination == "" {
 		fatal(errors.New("destination is required"))
 	}
 	if *once {
-		runOnce(*source, *sourcePartUUID, *destination, *mountpoint, *lockPath)
+		runOnce(*source, *sourcePartUUID, *destination, *mountpoint, *lockPath, *marker)
 		return
 	}
-	if err := runService(*source, *sourcePartUUID, *destination, *mountpoint, *lockPath); err != nil {
+	if err := runService(*source, *sourcePartUUID, *destination, *mountpoint, *lockPath, *marker); err != nil {
 		fatal(err)
 	}
 }
 
-func runOnce(source, sourcePartUUID, destination, mountpoint, lockPath string) {
+func runOnce(source, sourcePartUUID, destination, mountpoint, lockPath, marker string) {
 	mounted, err := mountDestination(destination, mountpoint)
 	if err != nil {
 		fatal(err)
@@ -53,9 +54,12 @@ func runOnce(source, sourcePartUUID, destination, mountpoint, lockPath string) {
 	if err := espsync.RunOnce(source, mountpointOrDestination(mounted, mountpoint, destination), lockPath); err != nil {
 		fatal(err)
 	}
+	if err := espsync.WriteMarker(marker); err != nil {
+		fatal(err)
+	}
 }
 
-func runService(source, sourcePartUUID, destination, mountpoint, lockPath string) error {
+func runService(source, sourcePartUUID, destination, mountpoint, lockPath, marker string) error {
 	mounted, err := mountDestination(destination, mountpoint)
 	if err != nil {
 		return err
@@ -72,9 +76,12 @@ func runService(source, sourcePartUUID, destination, mountpoint, lockPath string
 	if err := espsync.RunOnce(source, target, lockPath); err != nil {
 		return err
 	}
+	if err := espsync.WriteMarker(marker); err != nil {
+		return err
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	return espsync.Watch(source, target, lockPath, ctx.Done())
+	return espsync.WatchWithMarker(source, target, lockPath, marker, ctx.Done())
 }
 
 func mountDestination(device, mountpoint string) (bool, error) {

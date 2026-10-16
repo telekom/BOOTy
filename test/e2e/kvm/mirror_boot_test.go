@@ -19,9 +19,11 @@ const (
 	mirrorCheckEnd   = "BOOTY-MIRROR-CHECK-END"
 )
 
-// mirrorCheckScript runs in the provisioned OS on every boot. It waits for a
-// running resync, prints the root device, the RAID state and the firmware
-// boot entries to the serial console, then powers the VM off.
+// mirrorCheckScript runs in the provisioned OS on every boot. It waits for the
+// ESP synchronizer, writes a nested loader marker, and checks that a marker
+// written during the previous boot survived onto the currently selected ESP.
+// It then prints the root device, RAID state and firmware entries before
+// powering the VM off.
 const mirrorCheckScript = `#!/bin/sh
 exec >/dev/ttyS0 2>&1
 echo "` + mirrorCheckBegin + `"
@@ -31,6 +33,24 @@ done
 echo "ROOT_SOURCE=$(findmnt -n -o SOURCE /)"
 echo "BOOT_SOURCE=$(findmnt -n -o SOURCE /boot)"
 echo "ESP_PARTUUID=$(findmnt -n -o PARTUUID /boot/efi)"
+for i in $(seq 1 60); do
+  [ -f /run/booty/esp-sync.ready ] && break
+  sleep 1
+done
+echo "ESP_SYNC_READY=$(test -f /run/booty/esp-sync.ready && echo yes || echo no)"
+state=/var/lib/booty/mirror-check-boot-count
+count=0
+[ -r "$state" ] && count=$(cat "$state")
+esp_marker=/boot/efi/EFI/BOOTY/mirror-loader-marker
+if [ "$count" -gt 0 ]; then
+  echo "ESP_PREVIOUS_MARKER=$(test -f "$esp_marker" && echo yes || echo no)"
+fi
+mkdir -p "$(dirname "$esp_marker")"
+printf '%s\\n' "$(findmnt -n -o PARTUUID /boot/efi)" > "$esp_marker"
+mkdir -p "$(dirname "$state")"
+printf '%s\\n' $((count + 1)) > "$state"
+sleep 5
+echo "ESP_NESTED_MARKER=$(test -f "$esp_marker" && echo yes || echo no)"
 cat /proc/mdstat
 efibootmgr -v
 echo "` + mirrorCheckEnd + `"
@@ -142,8 +162,9 @@ func runMirrorFailover(t *testing.T, kernel, initramfs string, qemuArgs func(dis
 		t.Fatal("mirrored provisioning did not succeed, see the provision output above")
 	}
 
-	// Boot 1: both disks. The check waits for the resync, so the second
-	// member is in sync before the first disk is removed.
+	// Boot 1: both disks. The check waits for the resync and writes a nested
+	// loader marker, so the second member is in sync before the first disk is
+	// removed.
 	report := mirrorCheckReport(t, "boot with both disks",
 		runMirrorQEMU(t, "boot with both disks", qemuArgs(disk1, disk2), 6*time.Minute))
 	requireArraysOnMD(t, report)
@@ -151,13 +172,30 @@ func runMirrorFailover(t *testing.T, kernel, initramfs string, qemuArgs func(dis
 		t.Fatalf("%d clean two-member mirrors, want %d:\n%s", got, mirrorArrayCount(), report)
 	}
 
-	// Boot 2: only the second disk. The second disk must boot on its own and
-	// the initramfs must start the array degraded.
+	// Boot 2: only the second disk. The second disk must boot on its own, the
+	// initramfs must start the array degraded, and the nested marker written to
+	// disk one must be present on disk two.
 	report = mirrorCheckReport(t, "boot from second disk only",
 		runMirrorQEMU(t, "boot from second disk only", qemuArgs(disk2), 6*time.Minute))
 	requireArraysOnMD(t, report)
 	if got := strings.Count(report, "[2/1]"); got != mirrorArrayCount() {
 		t.Fatalf("%d arrays degraded to one member, want %d:\n%s", got, mirrorArrayCount(), report)
+	}
+	if !strings.Contains(report, "ESP_PREVIOUS_MARKER=yes") {
+		t.Fatalf("second ESP did not contain the nested marker from the first boot:\n%s", report)
+	}
+
+	// Boot 3: only the first disk. This exercises the reverse direction: the
+	// marker written while disk two was the mounted source must return to disk
+	// one before this boot.
+	report = mirrorCheckReport(t, "boot from first disk after reverse sync",
+		runMirrorQEMU(t, "boot from first disk after reverse sync", qemuArgs(disk1), 6*time.Minute))
+	requireArraysOnMD(t, report)
+	if got := strings.Count(report, "[2/1]"); got != mirrorArrayCount() {
+		t.Fatalf("%d arrays degraded to one member after reverse failover, want %d:\n%s", got, mirrorArrayCount(), report)
+	}
+	if !strings.Contains(report, "ESP_PREVIOUS_MARKER=yes") {
+		t.Fatalf("first ESP did not contain the nested marker from the reverse boot:\n%s", report)
 	}
 	return report
 }
