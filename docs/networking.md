@@ -166,8 +166,8 @@ same AS path. A next hop that is not on a connected network is resolved to
 its connected gateway (zebra next hop tracking) and again on every kernel
 route change. BOOTy takes the one gateway the kernel uses for it; zebra
 installs every ECMP member of the resolving route. A next hop that does
-not resolve is skipped with a warning at most once a minute. The first event of a burst updates the kernel at
-once, the rest 200 ms later, and every 30 s BOOTy reinstalls all routes,
+not resolve is skipped with a warning at most once a minute. The first
+event of a burst updates the kernel at once, the rest 200 ms later, and every 30 s BOOTy reinstalls all routes,
 so routes the kernel dropped come back. The session NICs get
 `ignore_routes_with_linkdown=1`, so a dead ECMP member is skipped at once.
 
@@ -392,7 +392,8 @@ Both stacks:
 
 - Use the provision bridge `br.provision` and the VXLAN device `vx<VNI>`
   (GoBGP: the netplan bridge and tunnel names when set) with UDP port 4789
-  and MAC learning off. The VXLAN MTU is the NIC MTU minus 50. The NIC MTU is 9000, or the largest netplan `mtu`.
+  and MAC learning off. The VXLAN MTU is the NIC MTU minus 50. The NIC MTU
+  is 9000, or the largest netplan `mtu`.
 - Put the underlay IP on the `dummy.underlay` device (FRR falls back to
   `lo`) and the overlay IP on `lo`.
 - Enable IPv4 and IPv6 forwarding and disable reverse-path filtering.

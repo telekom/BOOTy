@@ -29,6 +29,7 @@ func TestL3VNINetlinkState(t *testing.T) {
 	enterTestNetns(t)
 	cfg := &Config{
 		RouterID:        "192.0.2.10",
+		OverlayIP:       "2001:db8:ff::10",
 		ProvisionVNI:    4242,
 		BridgeName:      "br-l3e2e",
 		LoopbackAddrs:   []string{"2001:db8:40a:5481::17/128"},
@@ -38,7 +39,8 @@ func TestL3VNINetlinkState(t *testing.T) {
 	overlay := NewOverlayTier(cfg)
 	overlay.log = slog.Default()
 
-	if err := overlay.addLoopbackAddrs(); err != nil {
+	// The netplan lo addresses replace the overlay IP.
+	if err := overlay.addOverlayLoopback(); err != nil {
 		t.Fatal(err)
 	}
 	if err := overlay.installBlackholes(); err != nil {
@@ -94,8 +96,14 @@ func TestL3VNINetlinkState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.ContainsFunc(addrs, func(a netlink.Addr) bool { return a.IPNet.String() == "2001:db8:40a:5481::17/128" }) {
-		t.Fatalf("lo addresses = %v, want 2001:db8:40a:5481::17/128", addrs)
+	var global []string
+	for _, a := range addrs {
+		if !a.IP.IsLoopback() && !a.IP.IsLinkLocalUnicast() {
+			global = append(global, a.IPNet.String())
+		}
+	}
+	if !slices.Equal(global, []string{"2001:db8:40a:5481::17/128"}) {
+		t.Fatalf("lo addresses = %v, want only the netplan 2001:db8:40a:5481::17/128, not the overlay IP", global)
 	}
 
 	if err := overlay.netlinkOps.RouteDel(route); err != nil {
