@@ -234,24 +234,34 @@ func waitFor(t *testing.T, ctx context.Context, what string, ok func() bool) {
 // from that basename incorrectly selects /lib/modules/vmlinuz.
 func productionTemplateKernelRelease(t *testing.T, kernel string) string {
 	t.Helper()
-	base := filepath.Base(kernel)
-	if strings.HasPrefix(base, "vmlinuz-") {
-		return strings.TrimPrefix(base, "vmlinuz-")
-	}
-	data, err := os.ReadFile(kernel)
+	release, err := resolveProductionTemplateKernelRelease(kernel, "/lib/modules")
 	if err != nil {
-		t.Fatalf("read kernel %s: %v", kernel, err)
-	}
-	releaseMatch := regexp.MustCompile(`Linux version ([^ \x00]+)`)
-	match := releaseMatch.FindSubmatch(data)
-	if len(match) != 2 {
-		t.Fatalf("cannot determine embedded module release for kernel %s", kernel)
-	}
-	release := string(match[1])
-	if st, err := os.Stat(filepath.Join("/lib/modules", release)); err != nil || !st.IsDir() {
-		t.Fatalf("kernel %s requires module release %s, but /lib/modules/%s is unavailable", kernel, release, release)
+		t.Fatalf("resolve kernel module release for %s: %v", kernel, err)
 	}
 	return release
+}
+
+func resolveProductionTemplateKernelRelease(kernel, modulesRoot string) (string, error) {
+	base := filepath.Base(kernel)
+	var release string
+	if strings.HasPrefix(base, "vmlinuz-") {
+		release = strings.TrimPrefix(base, "vmlinuz-")
+	} else {
+		data, err := os.ReadFile(kernel)
+		if err != nil {
+			return "", fmt.Errorf("read kernel: %w", err)
+		}
+		releaseMatch := regexp.MustCompile(`Linux version ([^ \x00]+)`)
+		match := releaseMatch.FindSubmatch(data)
+		if len(match) != 2 {
+			return "", fmt.Errorf("kernel has no embedded Linux release")
+		}
+		release = string(match[1])
+	}
+	if st, err := os.Stat(filepath.Join(modulesRoot, release)); err != nil || !st.IsDir() {
+		return "", fmt.Errorf("module release %s is unavailable under %s", release, modulesRoot)
+	}
+	return release, nil
 }
 
 // addProdTplModules puts the VRF, VXLAN, bridge and dummy modules of the
