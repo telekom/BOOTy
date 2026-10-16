@@ -159,7 +159,10 @@ func copyEntry(sourceRoot, stagedRoot *os.Root, rel, target, path string, info o
 	case 0:
 		return copyFileFromRoot(sourceRoot, filepath.ToSlash(rel), target, info.Mode().Perm())
 	case os.ModeDir:
-		return fmt.Errorf("create ESP directory %s: %w", target, os.MkdirAll(target, info.Mode().Perm()))
+		if err := os.MkdirAll(target, info.Mode().Perm()); err != nil {
+			return fmt.Errorf("create ESP directory %s: %w", target, err)
+		}
+		return nil
 	case os.ModeSymlink:
 		link, err := sourceRoot.Readlink(filepath.ToSlash(rel))
 		if err != nil {
@@ -168,7 +171,10 @@ func copyEntry(sourceRoot, stagedRoot *os.Root, rel, target, path string, info o
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return fmt.Errorf("create symlink parent %s: %w", target, err)
 		}
-		return fmt.Errorf("create ESP symlink %s: %w", rel, stagedRoot.Symlink(link, filepath.ToSlash(rel)))
+		if err := stagedRoot.Symlink(link, filepath.ToSlash(rel)); err != nil {
+			return fmt.Errorf("create ESP symlink %s: %w", rel, err)
+		}
+		return nil
 	default:
 		return fmt.Errorf("unsupported ESP entry %s", path)
 	}
@@ -289,7 +295,10 @@ func replacePath(destination, staged string) error {
 	if err := os.RemoveAll(destination); err != nil {
 		return fmt.Errorf("ESP synchronization: %w", err)
 	}
-	return fmt.Errorf("install staged ESP path: %w", os.Rename(staged, destination))
+	if err := os.Rename(staged, destination); err != nil {
+		return fmt.Errorf("install staged ESP path: %w", err)
+	}
+	return nil
 }
 
 func isDirectory(path string) bool {
@@ -450,7 +459,10 @@ func writeMarker(marker string) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("ESP synchronization: %w", err)
 	}
-	return fmt.Errorf("install synchronization marker: %w", os.Rename(tmpName, marker))
+	if err := os.Rename(tmpName, marker); err != nil {
+		return fmt.Errorf("install synchronization marker: %w", err)
+	}
+	return nil
 }
 
 func addDirs(w *fsnotify.Watcher, root string) error {
