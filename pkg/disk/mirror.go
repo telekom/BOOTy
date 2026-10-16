@@ -226,28 +226,22 @@ func (m *Manager) CreateDegradedMirror(ctx context.Context, array, member string
 // only when the array is positively absent or inactive, and an error when
 // mdadm fails otherwise, so callers never take the destructive create path
 // because of a transient failure.
+//
+// It never assembles arrays. The ramdisk has no mdadm.conf, so mdadm
+// --assemble --scan would activate any array it finds: a foreign data array,
+// or a stale md1 on the second disk after a quick-wipe reprovision that then
+// keeps the fresh /boot out of the mirror. The CAPRF legacy provisioner never
+// assembles during provisioning either.
 func (m *Manager) MirrorActive(ctx context.Context, array string) (bool, error) {
 	out, err := m.cmd.Run(ctx, "mdadm", "--detail", array)
 	if err == nil {
 		return true, nil
 	}
-	_, statErr := os.Stat(array)
-	inactive := strings.Contains(string(out), "does not appear to be active")
-	missing := errors.Is(statErr, fs.ErrNotExist)
-	if inactive || missing {
-		assembleOut, assembleErr := m.cmd.Run(ctx, "mdadm", "--assemble", "--scan")
-		if assembleErr != nil {
-			// A fresh install has no md metadata yet. mdadm reports this as a
-			// normal no-arrays result; callers may safely take the create path.
-			if missing && strings.Contains(strings.ToLower(string(assembleOut)), "no arrays") {
-				return false, nil
-			}
-			return false, fmt.Errorf("mdadm assemble %s: %s: %w", array, strings.TrimSpace(string(assembleOut)), assembleErr)
-		}
-		if _, detailErr := m.cmd.Run(ctx, "mdadm", "--detail", array); detailErr != nil {
-			return false, fmt.Errorf("mdadm array %s remains inactive after assemble: %w", array, detailErr)
-		}
-		return true, nil
+	if strings.Contains(string(out), "does not appear to be active") {
+		return false, nil
+	}
+	if _, statErr := os.Stat(array); errors.Is(statErr, fs.ErrNotExist) {
+		return false, nil
 	}
 	return false, fmt.Errorf("mdadm detail %s: %s: %w", array, strings.TrimSpace(string(out)), err)
 }

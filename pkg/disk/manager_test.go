@@ -5,6 +5,7 @@ package disk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -257,6 +258,59 @@ func TestStopRAIDArraysError(t *testing.T) {
 	cmd.setResult("mdadm --stop", []byte("mdadm: cannot stop /dev/md0: Device or resource busy"), fmt.Errorf("exec mdadm: exit 1"))
 	if err := mgr.StopRAIDArrays(context.Background()); err == nil {
 		t.Fatal("expected error for genuine mdadm stop failure")
+	}
+}
+
+func TestClearRAIDSuperblocks(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("lsblk -ln", []byte(""+
+		"/dev/sda \n"+
+		"/dev/sda1 vfat\n"+
+		"/dev/sda2 linux_raid_member\n"+
+		"/dev/sdb linux_raid_member\n"+
+		"/dev/sdc \n"+
+		"/dev/sdc1 ext4\n"+
+		"/dev/nvme0n1p3 linux_raid_member\n"), nil)
+	cmd.setSequence("mdadm --zero-superblock",
+		mockResult{},
+		// A failed zeroing is logged and the others still run.
+		mockResult{output: []byte("mdadm: Couldn't open /dev/sdb for write"), err: errors.New("exit status 1")},
+	)
+	if err := NewManager(cmd).ClearRAIDSuperblocks(context.Background()); err != nil {
+		t.Fatalf("ClearRAIDSuperblocks() error = %v", err)
+	}
+	var zeroed []string
+	for _, call := range cmd.calls {
+		if call.name == "mdadm" {
+			if len(call.args) != 2 || call.args[0] != "--zero-superblock" {
+				t.Fatalf("unexpected mdadm call %v", call.args)
+			}
+			zeroed = append(zeroed, call.args[1])
+		}
+	}
+	if want := "/dev/sda2,/dev/sdb,/dev/nvme0n1p3"; strings.Join(zeroed, ",") != want {
+		t.Fatalf("zeroed %v, want %s", zeroed, want)
+	}
+	if !hasDiskCommandCall(cmd.calls, "lsblk", "-ln", "-o", "PATH,FSTYPE") {
+		t.Fatalf("lsblk not called for all block devices: %v", cmd.calls)
+	}
+}
+
+func TestClearRAIDSuperblocksScopedToDisks(t *testing.T) {
+	cmd := newMockCommander()
+	if err := NewManager(cmd).ClearRAIDSuperblocks(context.Background(), "/dev/sda", "/dev/sdb"); err != nil {
+		t.Fatalf("ClearRAIDSuperblocks() error = %v", err)
+	}
+	if !hasDiskCommandCall(cmd.calls, "lsblk", "-ln", "-o", "PATH,FSTYPE", "/dev/sda", "/dev/sdb") {
+		t.Fatalf("lsblk not limited to the given disks: %v", cmd.calls)
+	}
+}
+
+func TestClearRAIDSuperblocksListError(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("lsblk -ln", []byte("lsblk: failed"), errors.New("exit status 1"))
+	if err := NewManager(cmd).ClearRAIDSuperblocks(context.Background()); err == nil {
+		t.Fatal("ClearRAIDSuperblocks() succeeded although lsblk failed")
 	}
 }
 

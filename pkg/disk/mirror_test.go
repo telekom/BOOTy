@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -302,36 +303,72 @@ func TestMirrorActive(t *testing.T) {
 		wantErr    bool
 	}{
 		{name: "assembled", array: existing, wantActive: true},
-		{name: "no device node", array: filepath.Join(t.TempDir(), "md2"), out: "mdadm: No arrays found in config file or automatically", err: errors.New("exit status 1")},
-		{name: "inactive", array: existing, out: "mdadm: md device " + existing + " does not appear to be active.", err: errors.New("exit status 1"), wantActive: true},
+		{name: "no device node", array: filepath.Join(t.TempDir(), "md2"), out: "mdadm: cannot open /dev/md2: No such file or directory", err: errors.New("exit status 1")},
+		{name: "inactive", array: existing, out: "mdadm: md device " + existing + " does not appear to be active.", err: errors.New("exit status 1")},
 		{name: "other failure", array: existing, out: "mdadm: cannot open: Input/output error", err: errors.New("exit status 1"), wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := newMockCommander()
-			switch tt.name {
-			case "inactive":
-				cmd.setSequence("mdadm --detail",
-					mockResult{output: []byte(tt.out), err: tt.err},
-					mockResult{output: []byte("active"), err: nil},
-				)
-			case "no device node":
-				cmd.setSequence("mdadm --detail",
-					mockResult{output: []byte(tt.out), err: tt.err},
-					mockResult{output: []byte(""), err: tt.err},
-				)
-				cmd.setResult("mdadm --assemble", []byte(tt.out), tt.err)
-			default:
-				cmd.setResult("mdadm --detail", []byte(tt.out), tt.err)
-			}
+			cmd.setResult("mdadm --detail", []byte(tt.out), tt.err)
 			active, err := NewManager(cmd).MirrorActive(context.Background(), tt.array)
 			if active != tt.wantActive || (err != nil) != tt.wantErr {
 				t.Fatalf("MirrorActive() = %v, %v; want %v, wantErr %v", active, err, tt.wantActive, tt.wantErr)
 			}
-			if tt.name == "inactive" && !hasDiskCommandCall(cmd.calls, "mdadm", "--assemble", "--scan") {
-				t.Fatalf("inactive array was not assembled: %v", cmd.calls)
-			}
+			assertNoMdadmAssemble(t, cmd.calls)
 		})
+	}
+}
+
+// assertNoMdadmAssemble fails when mdadm --assemble ran. Without an
+// mdadm.conf in the ramdisk it would activate every array it finds.
+func assertNoMdadmAssemble(t *testing.T, calls []mockCall) {
+	t.Helper()
+	for _, call := range calls {
+		if call.name == "mdadm" && slices.Contains(call.args, "--assemble") {
+			t.Fatalf("mdadm --assemble ran: %v", calls)
+		}
+	}
+}
+
+// A foreign data array on another disk must stay inactive: assembling it
+// would make it busy and break mirroring. MirrorActive reports the absent
+// mirror array without touching it.
+func TestMirrorActiveLeavesForeignArrayAlone(t *testing.T) {
+	cmd := newMockCommander()
+	missing := filepath.Join(t.TempDir(), "md2")
+	cmd.setResult("mdadm --detail", []byte("mdadm: cannot open "+missing+": No such file or directory"), errors.New("exit status 1"))
+	// A scan would find the foreign array if anything asked for it.
+	cmd.setResult("mdadm --assemble", []byte("mdadm: /dev/md/data has been started with 4 drives."), nil)
+	active, err := NewManager(cmd).MirrorActive(context.Background(), missing)
+	if err != nil || active {
+		t.Fatalf("MirrorActive() = %v, %v; want false, nil", active, err)
+	}
+	assertNoMdadmAssemble(t, cmd.calls)
+}
+
+// After a quick-wipe reprovision, the second disk can still carry the md1
+// superblock of the earlier install. MirrorActive must report the fresh /boot
+// array as not active, so the create path adds the new partition, instead of
+// assembling the stale array and finding it already complete.
+func TestMirrorActiveDoesNotAssembleStaleBootArray(t *testing.T) {
+	cmd := newMockCommander()
+	node := filepath.Join(t.TempDir(), "md1")
+	if err := os.WriteFile(node, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd.setSequence("mdadm --detail",
+		mockResult{output: []byte("mdadm: md device " + node + " does not appear to be active."), err: errors.New("exit status 1")},
+		// The stale array would look complete if it were assembled.
+		mockResult{output: []byte("   0   8   1   0   active sync   /dev/sda1\n   1   8  17   1   active sync   /dev/sdb1\n")},
+	)
+	active, err := NewManager(cmd).MirrorActive(context.Background(), node)
+	if err != nil || active {
+		t.Fatalf("MirrorActive() = %v, %v; want false, nil", active, err)
+	}
+	assertNoMdadmAssemble(t, cmd.calls)
+	if len(cmd.calls) != 1 {
+		t.Fatalf("MirrorActive ran %d commands, want only mdadm --detail: %v", len(cmd.calls), cmd.calls)
 	}
 }
 
