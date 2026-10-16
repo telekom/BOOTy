@@ -53,6 +53,7 @@
       "KeepaliveTime": 30,
       "HoldTime": 90,
       "ConnectRetry": 120,
+      "ConnectRetrySet": false,
       "IPv4Unicast": true,
       "IPv6Unicast": false,
       "L2VPNEVPN": false,
@@ -68,7 +69,8 @@
           "in": "TAG-FABRIC-IN",
           "out": "DENY-TAG-FABRIC-OUT"
         }
-      ]
+      ],
+      "EBGPRequiresPolicy": false
     },
     {
       "Name": "ens1f1np1",
@@ -80,6 +82,7 @@
       "KeepaliveTime": 30,
       "HoldTime": 90,
       "ConnectRetry": 120,
+      "ConnectRetrySet": false,
       "IPv4Unicast": true,
       "IPv6Unicast": false,
       "L2VPNEVPN": false,
@@ -95,7 +98,8 @@
           "in": "TAG-FABRIC-IN",
           "out": "DENY-TAG-FABRIC-OUT"
         }
-      ]
+      ],
+      "EBGPRequiresPolicy": false
     },
     {
       "Name": "198.51.100.1",
@@ -107,6 +111,7 @@
       "KeepaliveTime": 30,
       "HoldTime": 90,
       "ConnectRetry": 5,
+      "ConnectRetrySet": true,
       "IPv4Unicast": false,
       "IPv6Unicast": false,
       "L2VPNEVPN": true,
@@ -122,7 +127,8 @@
           "in": "TAG-FABRIC-IN",
           "out": "DENY-TAG-FABRIC-OUT"
         }
-      ]
+      ],
+      "EBGPRequiresPolicy": false
     }
   ],
   "BGPMultipathRelax": true,
@@ -168,6 +174,7 @@
   ],
   "BGPRouteMapIn": "",
   "BGPRouteMapOut": "",
+  "BGPEBGPRequiresPolicy": false,
   "BGPLocalAS": 0,
   "BGPNeighborVRF": "",
   "BGPConnectRetry": 0,
