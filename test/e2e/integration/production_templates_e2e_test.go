@@ -35,6 +35,8 @@ const (
 	prodtplBooty  = "clab-booty-prodtpl-lab-booty"
 	prodtplShadow = "clab-booty-prodtpl-lab-shadow"
 	prodtplNative = "clab-booty-prodtpl-lab-native"
+	// prodtplNativeVRF has VRF_NAME but no BGP_NEIGHBOR_VRF.
+	prodtplNativeVRF = "clab-booty-prodtpl-lab-native-vrf"
 
 	prodtplASN     = 4210000017
 	prodtplLocalAS = 65501
@@ -55,12 +57,15 @@ var (
 	// prodtplNativeNode is BOOTy with the L3VNI values from vars keys.
 	prodtplNativeNode = prodtplNode{"native", "192.0.2.19", []string{"eth7", "eth8"}}
 	prodtplServers    = []prodtplNode{prodtplShadowNode, prodtplBootyNode, prodtplNativeNode}
+	// prodtplNativeVRFNode has only the leaf sessions, so it is not in
+	// prodtplServers.
+	prodtplNativeVRFNode = prodtplNode{"native-vrf", "192.0.2.20", []string{"eth9", "eth10"}}
 )
 
 // prodtplOthers returns the underlay addresses of the other servers.
 func prodtplOthers(node prodtplNode) []string {
 	var others []string
-	for _, n := range prodtplServers {
+	for _, n := range append(slices.Clone(prodtplServers), prodtplNativeVRFNode) {
 		if n.name != node.name {
 			others = append(others, n.underlay)
 		}
@@ -420,6 +425,28 @@ func TestProdTplUplinkCarrierLoss(t *testing.T) {
 		}
 		cancel()
 		waitRoutes(t, node, prodtplRoutesVia("ens1f0np0", "ens1f1np1"))
+	}
+}
+
+// With VRF_NAME and no BGP_NEIGHBOR_VRF, the routes of the peers on the
+// Vrf_underlay NICs go into the Vrf_underlay table, because FRR puts an
+// interface peer of a VRF into the "router bgp" of that VRF (as on the
+// shadow node). The main table gets no BGP routes.
+func TestProdTplNativeVRFNameFIB(t *testing.T) {
+	node := prodtplNativeVRFNode
+	session := sessionView{State: "Established", RemoteAS: prodtplLocalAS, LocalAS: 65500,
+		HoldMsecs: 90000, KeepMsecs: 30000, Families: []string{"ipv4Unicast"}}
+	for _, port := range node.leafPorts {
+		waitView(t, prodtplLeaf, port, session)
+	}
+	want := prodtplRoutesVia("ens1f0np0", "ens1f1np1")
+	waitRoutes(t, prodtplShadowNode, want)
+	waitRoutes(t, node, want)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	out, err := prodtplExec(ctx, prodtplNativeVRF, "ip", "route", "show", "table", "main", "proto", "bgp")
+	if err != nil || strings.TrimSpace(out) != "" {
+		t.Fatalf("%s: BGP routes in the main table: %q (%v), want none", node.name, out, err)
 	}
 }
 

@@ -10,6 +10,7 @@
 #   shadow ens1f0np0/ens1f1np1 ── leaf01 eth3/eth4
 #   dcgw01 eth1 ── leaf01 eth5, dcgw02 eth1 ── leaf01 eth6
 #   native ens1f0np0/ens1f1np1 ── leaf01 eth7/eth8   (BOOTy, native vars keys only)
+#   native-vrf ens1f0np0/ens1f1np1 ── leaf01 eth9/eth10 (unnumbered only, VRF_NAME without BGP_NEIGHBOR_VRF)
 #   booty, shadow, native ── dcgw01, dcgw02 (iBGP l2vpn evpn in Vrf_underlay, via leaf01)
 #
 # dcgw01 is also the gateway of the provision L3VNI 3000 (#630 slice d):
@@ -34,7 +35,7 @@ topology:
         - prodtpl-leaf01.frr.conf:/etc/frr/frr.conf:ro
         - daemons:/etc/frr/daemons:ro
       exec:
-        - sh -c 'for i in 1 2 3 4 5 6 7 8; do ip link set dev eth$i mtu 9100 up; done'
+        - sh -c 'for i in 1 2 3 4 5 6 7 8 9 10; do ip link set dev eth$i mtu 9100 up; done'
 
     dcgw01:
       kind: linux
@@ -119,6 +120,17 @@ topology:
       env:
         BOOTY_NO_REBOOT: "1"
 
+    # Native vars keys with only the leaf sessions: VRF_NAME, no
+    # BGP_NEIGHBOR_VRF.
+    native-vrf:
+      kind: linux
+      image: booty-gobgp-test:latest
+      startup-delay: 20
+      binds:
+        - data/vars-prodtpl-native-vrf:/deploy/vars:ro
+      env:
+        BOOTY_NO_REBOOT: "1"
+
     caprf-mock:
       kind: linux
       image: nginx:alpine
@@ -138,3 +150,5 @@ topology:
     - endpoints: ["dcgw01:eth2", "caprf6:eth1"]
     - endpoints: ["leaf01:eth7", "native:ens1f0np0"]
     - endpoints: ["leaf01:eth8", "native:ens1f1np1"]
+    - endpoints: ["leaf01:eth9", "native-vrf:ens1f0np0"]
+    - endpoints: ["leaf01:eth10", "native-vrf:ens1f1np1"]
