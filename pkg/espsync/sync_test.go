@@ -63,6 +63,9 @@ func TestCopyTreePreservesSymlinks(t *testing.T) {
 
 func TestCopyTreeReplacesExistingLoaderWithoutDeletingItFirst(t *testing.T) {
 	source, destination := t.TempDir(), t.TempDir()
+	if err := os.MkdirAll(filepath.Join(source, "EFI", "BOOT"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(source, "EFI", "BOOT", "bootx64.efi"), []byte("new"), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -149,6 +149,12 @@ func copyFile(source, destination string, mode os.FileMode) error {
 }
 
 func syncTree(staged, destination string) error {
+	// Prune before moving staged entries. Moving a staged file would otherwise
+	// make the staged manifest disappear and the subsequent prune would delete
+	// the freshly installed destination file.
+	if err := pruneTree(destination, staged); err != nil {
+		return err
+	}
 	if err := filepath.WalkDir(staged, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -178,7 +184,7 @@ func syncTree(staged, destination string) error {
 	}); err != nil {
 		return err
 	}
-	return pruneTree(destination, staged)
+	return nil
 }
 
 func pruneTree(destination, staged string) error {
