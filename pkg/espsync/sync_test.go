@@ -189,6 +189,12 @@ func TestCopyTreeCleansOwnedStagingAndSkipsSourceLeftovers(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source, stagingPrefix+"leftover", "ignored"), []byte("stale"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(source, "EFI", stagingPrefix+"nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "EFI", stagingPrefix+"nested", "loader"), []byte("legitimate"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(destination, stagingPrefix+"crashed"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -203,6 +209,13 @@ func TestCopyTreeCleansOwnedStagingAndSkipsSourceLeftovers(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(destination, stagingPrefix+"leftover")); !os.IsNotExist(err) {
 		t.Fatalf("source staging leaked into destination: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(destination, "EFI", stagingPrefix+"nested", "loader"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "legitimate" {
+		t.Fatalf("nested reserved-prefix data = %q", got)
 	}
 }
 

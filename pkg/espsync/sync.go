@@ -23,8 +23,10 @@ const defaultDebounce = 750 * time.Millisecond
 const stagingPrefix = ".booty-esp-sync-staging-"
 
 // CopyTree makes destination an exact, safe copy of source. It stages every
-// regular file beside its final name and only removes stale destination paths
-// after the source walk succeeds.
+// regular file on the destination filesystem and only removes stale
+// destination paths after the source walk succeeds. Root-level directories
+// named with stagingPrefix are reserved for crash recovery and are omitted
+// from the source root.
 func CopyTree(source, destination string) error {
 	source, destination, err := validateRoots(source, destination)
 	if err != nil {
@@ -65,7 +67,7 @@ func cleanStaging(destination string) error {
 		return err
 	}
 	for _, entry := range entries {
-		if !isStagingName(entry.Name()) {
+		if !entry.IsDir() || !isStagingName(entry.Name()) {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(destination, entry.Name())); err != nil {
@@ -127,7 +129,7 @@ func copyDir(source, destination string) error {
 		if rel == "." {
 			return nil
 		}
-		if isStagingName(entry.Name()) {
+		if filepath.Dir(rel) == "." && isStagingName(entry.Name()) {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}
