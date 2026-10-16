@@ -235,9 +235,19 @@ non-empty native list replaces the parsed list as a whole (one info log
 line). The table under [BGP sessions](#bgp-sessions) lists the keys of
 this release with their rule.
 
+| Rule | Keys (YAML fields alike) |
+|------|--------------------------|
+| netplan or `frr.conf` wins (earlier releases) | `NETWORK_MODE`, `asn_server`, `provision_vni`, `underlay_ip`, `provision_ip`, `dns_resolver`, `STATIC_*`, `BOND_*`, `VRF_NAME`, `VRF_TABLE_ID`, `BGP_PEER_MODE`, `BGP_NEIGHBORS`, `BGP_REMOTE_ASN`, `EVPN_L2_ENABLED` |
+| native wins, a set scalar | `VXLAN_NAME`, `BRIDGE_MAC`, `VXLAN_LINK`, `UNDERLAY_DUMMY_NAME`, `MTU`, `OVERLAY_VRF_NAME`, `OVERLAY_VRF_TABLE_ID`, `EVPN_TYPE5_ONLY`, `BGP_DEFAULTS`, `BGP_MULTIPATH_RELAX`, `BGP_INSTALL_ROUTES`, `BGP_FAST_EXTERNAL_FAILOVER` |
+| native wins, a non-empty list replaces | `LOOPBACK_ADDRESSES`, `BLACKHOLE_ROUTES`, `EVPN_TYPE5_NETWORKS`, `BGP_SESSIONS` with `BGP_PEER_GROUPS` |
+| session default | `BGP_LOCAL_AS`, `BGP_NEIGHBOR_VRF`, `BGP_CONNECT_RETRY`, `BGP_ALLOWAS_IN` | `VLANS` is the exception: BOOTy parses it
 `VLANS` is the exception: BOOTy parses it after the netplan merge, so
 `VLANS` from the vars replaces the netplan VLANs. When netplan and the FRR
 config give an ASN and a VNI, BOOTy sets the stack to GoBGP. This overrides
+line). The peer keys `BGP_LOCAL_AS`, `BGP_NEIGHBOR_VRF`,
+`BGP_CONNECT_RETRY` and `BGP_ALLOWAS_IN` are defaults: they fill only the
+session fields that the `frr.conf` or `BGP_SESSIONS` session and its
+peer-group do not set.
 `NETWORK_MODE`.
 
 ### Strict input and the accepted grammar

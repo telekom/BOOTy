@@ -60,6 +60,7 @@
       "KeepaliveTime": 3,
       "HoldTime": 9,
       "ConnectRetry": 10,
+      "ConnectRetrySet": false,
       "IPv4Unicast": true,
       "IPv6Unicast": false,
       "L2VPNEVPN": true,

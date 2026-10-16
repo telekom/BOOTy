@@ -1105,8 +1105,9 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 // applyBGPOptions applies the BGP options that frr.conf can also set. With
 // frr.conf sessions the default is FRR's (routes installed); native
 // configs default it off. fast-external-failover is set in
-// applyNativeSessions. An explicit option wins
-// either way, also over the per-peer frr.conf values.
+// applyNativeSessions. An explicit router option wins. The peer options
+// (local-as, VRF, connect retry, allowas-in) are defaults for the sessions
+// that do not set the value themselves.
 func applyBGPOptions(o *config.BGPConfig, n *network.Config) {
 	fromFRR := len(n.BGPSessions) > 0
 	n.BGPInstallRoutes = boolOr(o.InstallRoutes, fromFRR)
@@ -1118,16 +1119,16 @@ func applyBGPOptions(o *config.BGPConfig, n *network.Config) {
 	}
 	for i := range n.BGPSessions {
 		s := &n.BGPSessions[i]
-		if o.AllowASIn != nil {
+		if o.AllowASIn != nil && s.AllowASIn == 0 {
 			s.AllowASIn = int(*o.AllowASIn)
 		}
-		if o.ConnectRetry > 0 {
-			s.ConnectRetry = o.ConnectRetry
+		if o.ConnectRetry > 0 && !s.ConnectRetrySet {
+			s.ConnectRetry, s.ConnectRetrySet = o.ConnectRetry, true
 		}
-		if o.LocalAS > 0 && !s.Internal {
+		if o.LocalAS > 0 && !s.Internal && s.LocalASN == 0 {
 			s.LocalASN = o.LocalAS
 		}
-		if o.NeighborVRF != "" && !s.Interface {
+		if o.NeighborVRF != "" && !s.Interface && s.VRF == "" {
 			s.VRF = o.NeighborVRF
 		}
 	}
@@ -1343,8 +1344,8 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	}
 	nativeWins(&dst.BridgeName, src.BridgeName)
 	// The netplan MAC belongs to one bridge. Only use it for that bridge.
-	if src.BridgeMAC != "" && src.BridgeNameOrDefault() == dst.BridgeNameOrDefault() {
-		dst.BridgeMAC = src.BridgeMAC
+	if src.BridgeNameOrDefault() == dst.BridgeNameOrDefault() {
+		nativeWins(&dst.BridgeMAC, src.BridgeMAC)
 	}
 	if src.ProvisionIP != "" {
 		dst.ProvisionIP = mergeProvisionIP(dst.ProvisionIP, src.ProvisionIP)
@@ -1371,32 +1372,24 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	if src.VRFTableID > 0 {
 		dst.VRFTableID = src.VRFTableID
 	}
-	if src.OverlayVRFTableID > 0 {
-		dst.OverlayVRFTableID = src.OverlayVRFTableID
-	}
+	nativeWins(&dst.OverlayVRFTableID, src.OverlayVRFTableID)
 	if src.VRFName != "" {
 		dst.VRFName = src.VRFName
 	}
-	if src.OverlayVRFSet {
+	if src.OverlayVRFSet && !dst.OverlayVRFSet {
 		// Preserve an explicitly empty overlay VRF name: it means the overlay
 		// should stay in the default namespace, not that the value is unset.
 		dst.OverlayVRFName = src.OverlayVRFName
 		dst.OverlayVRFSet = true
 	}
-	if src.UnderlayDummyName != "" {
-		dst.UnderlayDummyName = src.UnderlayDummyName
-	}
-	if src.VXLANLink != "" {
-		dst.VXLANLink = src.VXLANLink
-	}
+	nativeWins(&dst.UnderlayDummyName, src.UnderlayDummyName)
+	nativeWins(&dst.VXLANLink, src.VXLANLink)
 	// Keys that this release adds: a set native value wins.
 	nativeWins(&dst.VXLANName, src.VXLANName)
 	nativeList("network.loopbackAddresses", &dst.LoopbackAddrs, src.LoopbackAddrs)
 	nativeList("network.blackholeRoutes", &dst.BlackholeRoutes, src.BlackholeRoutes)
 	nativeList("network.evpn.type5Networks", &dst.Type5Networks, src.Type5Networks)
-	if src.MTU > 0 {
-		dst.MTU = src.MTU
-	}
+	nativeWins(&dst.MTU, src.MTU)
 	if src.DNSResolvers != "" {
 		dst.DNSResolvers = src.DNSResolvers
 	}

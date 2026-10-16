@@ -165,6 +165,8 @@ type BGPSession struct {
 	KeepaliveTime uint32
 	HoldTime      uint32
 	ConnectRetry  uint32
+	// ConnectRetrySet is true when the session sets its connect timer.
+	ConnectRetrySet bool
 	// Activated address families.
 	IPv4Unicast bool
 	IPv6Unicast bool
