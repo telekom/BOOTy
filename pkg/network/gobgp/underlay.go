@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"os"
 	"path/filepath"
@@ -614,6 +615,11 @@ func (u *UnderlayTier) vrfTable(vrf string) int {
 func carrierPeers(cfg *Config, ifacePeers map[string]string) map[string]string {
 	peers := map[string]string{}
 	if !cfg.FastExternalFailover {
+		return peers
+	}
+	if len(cfg.Sessions) == 0 {
+		// The unnumbered BGP_PEER_MODE peers.
+		maps.Copy(peers, ifacePeers)
 		return peers
 	}
 	for i := range cfg.Sessions {

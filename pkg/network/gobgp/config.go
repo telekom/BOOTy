@@ -172,7 +172,7 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		AllowASIn:            netCfg.BGPAllowASIn,
 		ConnectRetry:         uint64(netCfg.BGPConnectRetry),
 		InstallRoutes:        netCfg.BGPInstallRoutes,
-		FastExternalFailover: netCfg.BGPFastExternalFailover == nil || *netCfg.BGPFastExternalFailover,
+		FastExternalFailover: fastExternalFailover(netCfg),
 	}
 
 	cfg.ApplyDefaults()
@@ -464,4 +464,13 @@ func deriveImportRouteTarget(c *Config) (asn, vni uint32, err error) {
 // IsiBGP returns true when the numbered peers use the same ASN (iBGP).
 func (c *Config) IsiBGP() bool {
 	return c.RemoteASN == 0 || c.RemoteASN == c.ASN
+}
+
+// fastExternalFailover is the explicit setting, else on with sessions (the
+// FRR default) and off for the BGP_PEER_MODE peers.
+func fastExternalFailover(n *network.Config) bool {
+	if n.BGPFastExternalFailover != nil {
+		return *n.BGPFastExternalFailover
+	}
+	return len(n.BGPSessions) > 0
 }

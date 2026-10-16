@@ -241,7 +241,7 @@ peer-group do not set.
 | `BGP_DEFAULTS` | `frr defaults` | `network.bgp.defaults` | timer profile of the native sessions |
 | `allowASIn` (session field) | `neighbor X allowas-in [N]` | `network.bgp.sessions[].allowASIn` | part of the session list |
 | `BGP_MULTIPATH_RELAX` | `bgp bestpath as-path multipath-relax` | `network.bgp.multipathRelax` | native wins |
-| `BGP_FAST_EXTERNAL_FAILOVER` | `[no] bgp fast-external-failover` | `network.bgp.fastExternalFailover` | native wins, for every session |
+| `BGP_FAST_EXTERNAL_FAILOVER` | `[no] bgp fast-external-failover` | `network.bgp.fastExternalFailover` | native wins, for every session and the `BGP_PEER_MODE` peers (off for them when unset) |
 | `EVPN_TYPE5_ONLY` | provision VNI is an `frr.conf` L3VNI | `network.evpn.type5Only` | native wins |
 | `LOOPBACK_ADDRESSES` | netplan `lo` addresses | `network.loopbackAddresses` | list replaces |
 | `BLACKHOLE_ROUTES` | `frr.conf` `ip[v6] route P blackhole` | `network.blackholeRoutes` | list replaces |
