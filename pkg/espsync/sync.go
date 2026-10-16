@@ -27,23 +27,19 @@ func CopyTree(source, destination string) error {
 	if err != nil {
 		return err
 	}
-	staged := destination + ".booty-staging"
-	if err := os.RemoveAll(staged); err != nil {
-		return fmt.Errorf("remove staging: %w", err)
-	}
-	if err := os.MkdirAll(staged, 0o755); err != nil {
+	// Keep staging on the destination filesystem. ESP destinations are often
+	// mounted VFAT filesystems, while their parent (/run) is a different
+	// filesystem; a sibling staging directory would make Rename return EXDEV.
+	staged, err := os.MkdirTemp(destination, ".booty-staging-")
+	if err != nil {
 		return fmt.Errorf("create staging: %w", err)
 	}
+	defer func() { _ = os.RemoveAll(staged) }()
 	if err := copyDir(source, staged); err != nil {
-		_ = os.RemoveAll(staged)
 		return err
 	}
 	if err := syncTree(staged, destination); err != nil {
-		_ = os.RemoveAll(staged)
 		return err
-	}
-	if err := os.RemoveAll(staged); err != nil {
-		return fmt.Errorf("remove staging: %w", err)
 	}
 	return nil
 }
@@ -194,6 +190,9 @@ func pruneTree(destination, staged string) error {
 	}
 	for _, entry := range entries {
 		path := filepath.Join(destination, entry.Name())
+		if filepath.Clean(path) == filepath.Clean(staged) {
+			continue
+		}
 		rel := entry.Name()
 		stagedPath := filepath.Join(staged, rel)
 		if _, err := os.Lstat(stagedPath); os.IsNotExist(err) {
@@ -243,6 +242,15 @@ func isDirectory(path string) bool {
 
 // RunOnce serializes a copy across service instances using flock.
 func RunOnce(source, destination, lockPath string) error {
+	return WithLock(lockPath, func() error {
+		slog.Info("synchronizing EFI system partition", "source", source, "destination", destination)
+		return CopyTree(source, destination)
+	})
+}
+
+// WithLock serializes the complete mount, copy and unmount operation used by
+// a dynamically resolved mirrored peer.
+func WithLock(lockPath string, fn func() error) error {
 	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
@@ -252,8 +260,7 @@ func RunOnce(source, destination, lockPath string) error {
 		return err
 	}
 	defer func() { _ = unix.Flock(int(lock.Fd()), unix.LOCK_UN) }()
-	slog.Info("synchronizing EFI system partition", "source", source, "destination", destination)
-	return CopyTree(source, destination)
+	return fn()
 }
 
 // ValidateMountedSource proves that source is backed by the expected ESP

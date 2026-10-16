@@ -106,21 +106,25 @@ func runService(source, sourcePartUUID, firstPartUUID, secondPartUUID, destinati
 }
 
 func syncPair(source, firstPartUUID, secondPartUUID, mountpoint, lockPath, marker string) error {
-	destination, err := espsync.PeerDevice(source, firstPartUUID, secondPartUUID)
-	if err != nil {
-		return err
-	}
-	mounted, err := mountDestination(destination, mountpoint)
-	if err != nil {
-		return err
-	}
-	if mounted {
-		defer unmount(mountpoint)
-	}
-	if err := espsync.RunOnce(source, mountpointOrDestination(mounted, mountpoint, destination), lockPath); err != nil {
-		return err
-	}
-	return espsync.WriteMarker(marker)
+	return espsync.WithLock(lockPath, func() error {
+		destination, err := espsync.PeerDevice(source, firstPartUUID, secondPartUUID)
+		if err != nil {
+			return err
+		}
+		mounted, err := mountDestination(destination, mountpoint)
+		if err != nil {
+			return err
+		}
+		if mounted {
+			defer unmount(mountpoint)
+		}
+		target := mountpointOrDestination(mounted, mountpoint, destination)
+		slog.Info("synchronizing EFI system partition", "source", source, "destination", target)
+		if err := espsync.CopyTree(source, target); err != nil {
+			return err
+		}
+		return espsync.WriteMarker(marker)
+	})
 }
 
 func mountDestination(device, mountpoint string) (bool, error) {

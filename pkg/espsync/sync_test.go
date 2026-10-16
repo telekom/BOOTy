@@ -142,3 +142,33 @@ func TestCopyTreeReplacesDestinationDirectoryWithSymlink(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestCopyTreeStagesInsideDestinationFilesystem(t *testing.T) {
+	source := t.TempDir()
+	destination, err := os.MkdirTemp("/dev/shm", "booty-esp-destination-")
+	if err != nil {
+		t.Skipf("tmpfs unavailable: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(destination) })
+	linkParent := t.TempDir()
+	destinationPath := filepath.Join(linkParent, "mounted-esp")
+	if err := os.Symlink(destination, destinationPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(source, "EFI", "BOOT"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "EFI", "BOOT", "bootx64.efi"), []byte("cross-filesystem"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CopyTree(source, destinationPath); err != nil {
+		t.Fatalf("copy across parent and mounted filesystems: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(destination, "EFI", "BOOT", "bootx64.efi"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "cross-filesystem" {
+		t.Fatalf("got %q", got)
+	}
+}
