@@ -170,6 +170,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"grow-partition", o.growPartition},
 		{"resize-filesystem", o.resizeFilesystem},
 		{"configure-mdadm", o.configureMdadm},
+		{"install-esp-sync", o.installESPSync},
 		{"configure-kubelet", o.configureKubelet},
 		{"prepare-oci-prepulls", o.prepareOCIPrePulls},
 		{"configure-serial-console", o.configureSerialConsole},
@@ -636,8 +637,30 @@ func splitCommaValues(raw string) []string {
 	return values
 }
 
+// stopRAID stops every MD array and then zeroes the superblocks of all RAID
+// members on the host, like clear_mdadm_superblocks of the CAPRF legacy
+// provisioner, so no old array comes back after the wipe.
 func (o *Orchestrator) stopRAID(ctx context.Context) error {
-	return o.disk.StopRAIDArrays(ctx)
+	if err := o.disk.StopRAIDArrays(ctx); err != nil {
+		return err
+	}
+	return o.disk.ClearRAIDSuperblocks(ctx)
+}
+
+// stopRAIDForDeprovision is stop-raid of hard deprovision. With a device
+// override it zeroes the RAID superblocks only on the disks that the wipe
+// covers: the selected disk and its mirror companion.
+func (o *Orchestrator) stopRAIDForDeprovision(ctx context.Context) error {
+	if err := o.disk.StopRAIDArrays(ctx); err != nil {
+		return err
+	}
+	var scope []string
+	for _, d := range []string{o.targetDisk, o.mirrorDisk} {
+		if d != "" {
+			scope = append(scope, d)
+		}
+	}
+	return o.disk.ClearRAIDSuperblocks(ctx, scope...)
 }
 
 func (o *Orchestrator) disableLVM(ctx context.Context) error {
@@ -2970,6 +2993,13 @@ func (o *Orchestrator) installEFIFallbackLoader(ctx context.Context) error {
 	} else if o.isABImageMode() {
 		o.log.Info("A/B preserveExisting enabled, preserving existing EFI fallback loader")
 	}
+	return nil
+}
+
+// installESPSync installs the booty-esp-sync service into a mirrored target
+// with an ESP. The service copies changes of the mounted ESP to the ESP on
+// the other mirror disk after boot, so bootloader updates reach both disks.
+func (o *Orchestrator) installESPSync(ctx context.Context) error {
 	if o.mirrorDisk == "" || strings.TrimSpace(o.bootPartition) == "" {
 		return nil
 	}

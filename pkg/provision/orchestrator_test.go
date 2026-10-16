@@ -244,8 +244,8 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 50 {
-		t.Fatalf("expected 50 provisioning steps, got %d", len(steps))
+	if len(steps) != 51 {
+		t.Fatalf("expected 51 provisioning steps, got %d", len(steps))
 	}
 }
 
@@ -5221,20 +5221,12 @@ func TestNewOrchestratorKeepsSharedDiskManager(t *testing.T) {
 }
 
 func TestDeprovisionHardCapturesMirrorCompanion(t *testing.T) {
+	withSysBlock(t, "sda", "sda/sda2", "sdb", "sdb/sdb2")
 	cfg := &config.MachineConfig{Mode: "deprovision"}
 	cfg.Provision.Disk.Device = "/dev/sda"
 	cfg.Provision.Disk.MirroringMode = "auto"
 	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
-	withMockBlockDevices(t, "/dev/disk/by-id/root", "/dev/sda", "/dev/sdb")
-	oldEval := evalRootSymlinks
-	evalRootSymlinks = func(path string) (string, error) {
-		if path == "/dev/disk/by-id/root" {
-			return "/dev/sda", nil
-		}
-		return path, nil
-	}
-	t.Cleanup(func() { evalRootSymlinks = oldEval })
-	cfg.Provision.Disk.Device = "/dev/disk/by-id/root"
+	withMockBlockDevices(t, "/dev/sda", "/dev/sdb")
 	cmd.setResult("mdadm --detail", []byte("  0 active sync /dev/sda2\n  1 active sync /dev/sdb2\n"), nil)
 
 	if err := o.selectDeprovisionDisk(context.Background()); err != nil {
@@ -5252,7 +5244,41 @@ func TestDeprovisionHardCapturesMirrorCompanion(t *testing.T) {
 	}
 }
 
+// withSysBlock builds a /sys/class/block fixture. Each entry is "disk" or
+// "disk/partition"; a partition directory has the partition attribute and
+// sits below its disk, like in sysfs. md and dm devices are virtual disks.
+func withSysBlock(t *testing.T, entries ...string) {
+	t.Helper()
+	root := t.TempDir()
+	class := filepath.Join(root, "class", "block")
+	if err := os.MkdirAll(class, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		devDir := filepath.Join(root, "devices", "pci0000:00", "block", entry)
+		if strings.HasPrefix(entry, "md") || strings.HasPrefix(entry, "dm-") {
+			devDir = filepath.Join(root, "devices", "virtual", "block", entry)
+		}
+		if err := os.MkdirAll(devDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(entry, "/") {
+			if err := os.WriteFile(filepath.Join(devDir, "partition"), []byte("2\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Symlink(devDir, filepath.Join(class, filepath.Base(entry))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := sysBlockRoot
+	sysBlockRoot = class
+	t.Cleanup(func() { sysBlockRoot = old })
+}
+
 func TestWholeDiskForPartition(t *testing.T) {
+	withSysBlock(t, "sda", "sda/sda2", "nvme0n1", "nvme0n1/nvme0n1p2", "mmcblk0", "mmcblk0/mmcblk0p1",
+		"md2", "dm-0", "nvme1n1", "loop0", "loop0/loop0p1")
 	for device, want := range map[string]string{
 		"/dev/sda2":      "/dev/sda",
 		"/dev/nvme0n1p2": "/dev/nvme0n1",
@@ -5260,14 +5286,27 @@ func TestWholeDiskForPartition(t *testing.T) {
 		"/dev/mmcblk0p1": "/dev/mmcblk0",
 		"/dev/mmcblk0":   "/dev/mmcblk0",
 		"/dev/sda":       "/dev/sda",
+		"/dev/loop0p1":   "/dev/loop0",
+		// Name parsing took these for partitions of /dev/md and /dev/dm-.
+		"/dev/md2":  "/dev/md2",
+		"/dev/dm-0": "/dev/dm-0",
+		// A whole NVMe namespace ends in a digit too.
+		"/dev/nvme1n1": "/dev/nvme1n1",
 	} {
-		if got := wholeDiskForPartition(device); got != want {
-			t.Errorf("wholeDiskForPartition(%q) = %q, want %q", device, got, want)
+		got, err := wholeDiskForPartition(device)
+		if err != nil || got != want {
+			t.Errorf("wholeDiskForPartition(%q) = %q, %v; want %q", device, got, err, want)
+		}
+	}
+	for _, device := range []string{"/dev/sdz9", "sda2"} {
+		if got, err := wholeDiskForPartition(device); err == nil {
+			t.Errorf("wholeDiskForPartition(%q) = %q, want an error", device, got)
 		}
 	}
 }
 
 func TestDeprovisionHardRejectsUnresolvedMirrorMember(t *testing.T) {
+	withSysBlock(t, "sda", "sda/sda2", "sdb", "sdb/sdb2")
 	cfg := &config.MachineConfig{Mode: "deprovision"}
 	cfg.Provision.Disk.Device = "/dev/sda"
 	cfg.Provision.Disk.MirroringMode = "auto"

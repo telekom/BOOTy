@@ -72,7 +72,7 @@ func (o *Orchestrator) deprovisionSteps(mode string) []Step {
 			Step{"remove-efi-entries", o.removeEFIBootEntries},
 			Step{"select-deprovision-disk", o.selectDeprovisionDisk},
 			Step{"disable-lvm", o.disableLVM},
-			Step{"stop-raid", o.stopRAID},
+			Step{"stop-raid", o.stopRAIDForDeprovision},
 			Step{"wipe-disks", o.wipeOrSecureEraseDisks},
 		)
 	}
@@ -126,17 +126,13 @@ func (o *Orchestrator) selectDeprovisionDisk(ctx context.Context) error {
 	if device == "" {
 		device, name = strings.TrimSpace(o.cfg.Provision.Disk.Device), "provision.disk.device/DISK_DEVICE"
 	}
-	// udev aliases are valid for deprovisioning when they already exist, but
-	// can never appear in the ramdisk. Validate them before waiting so a
-	// missing alias fails promptly; kernel device paths retain wait-for-device
-	// behavior below.
-	if strings.HasPrefix(device, "/dev/disk/") {
-		if err := validateConfiguredBlockDevice(name, device); err != nil {
-			return err
-		}
-	} else {
-		o.waitForDisks(ctx, device, "")
+	// The ramdisk has no udev and BOOTy creates no /dev/disk links before
+	// the deprovision disk selection, so an alias can never exist here.
+	// detect-disk of provisioning uses the same rule.
+	if err := checkRamdiskDevicePath(name, device); err != nil {
+		return err
 	}
+	o.waitForDisks(ctx, device, "")
 	device, err := o.configuredDeprovisionDisk()
 	if err != nil {
 		return err
@@ -144,9 +140,6 @@ func (o *Orchestrator) selectDeprovisionDisk(ctx context.Context) error {
 	if device == "" {
 		o.log.Info("no deprovision disk override configured; hard deprovision will wipe all disks")
 		return nil
-	}
-	if canonical := canonicalBlockDevice(device); canonical != "" {
-		device = canonical
 	}
 	o.targetDisk = device
 	// If a configured target is a member of an assembled BOOTy mirror, retain
@@ -171,6 +164,9 @@ func (o *Orchestrator) configuredDeprovisionDisk() (string, error) {
 		device := strings.TrimSpace(candidate.device)
 		if device == "" {
 			continue
+		}
+		if err := checkRamdiskDevicePath(candidate.name, device); err != nil {
+			return "", err
 		}
 		if err := validateConfiguredBlockDevice(candidate.name, device); err != nil {
 			return "", err
@@ -326,37 +322,27 @@ func canonicalBlockDevice(device string) string {
 	return resolved
 }
 
-func wholeDiskForPartition(device string) string {
+// wholeDiskForPartition returns the whole disk that holds device, or device
+// itself when it is no partition, such as a whole disk, /dev/md2 or
+// /dev/dm-0. It asks sysfs instead of parsing the name: a partition has a
+// "partition" attribute, and its sysfs directory sits in the directory of
+// its parent disk. A device that sysfs does not know is an error, because
+// then the wipe scope can not be told.
+func wholeDiskForPartition(device string) (string, error) {
 	if !strings.HasPrefix(device, "/dev/") {
-		return ""
+		return "", fmt.Errorf("%q is not a /dev/ path", device)
 	}
-	name := strings.TrimPrefix(device, "/dev/")
-	if strings.HasPrefix(name, "nvme") || strings.HasPrefix(name, "mmcblk") || strings.HasPrefix(name, "loop") || strings.HasPrefix(name, "nbd") {
-		if i := strings.LastIndexByte(name, 'p'); i > 0 && allDigits(name[i+1:]) {
-			return "/dev/" + name[:i]
-		}
-		return device
+	dir := filepath.Join(sysBlockRoot, filepath.Base(device))
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s in sysfs: %w", device, err)
 	}
-	i := len(name)
-	for i > 0 && name[i-1] >= '0' && name[i-1] <= '9' {
-		i--
+	if _, err := os.Stat(filepath.Join(resolved, "partition")); errors.Is(err, fs.ErrNotExist) {
+		return device, nil
+	} else if err != nil {
+		return "", fmt.Errorf("check whether %s is a partition: %w", device, err)
 	}
-	if i < len(name) && i > 0 {
-		return "/dev/" + name[:i]
-	}
-	return device
-}
-
-func allDigits(value string) bool {
-	if value == "" {
-		return false
-	}
-	for _, r := range value {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
+	return "/dev/" + filepath.Base(filepath.Dir(resolved)), nil
 }
 
 func (o *Orchestrator) captureMirrorCompanion(ctx context.Context, target string) error {
@@ -364,12 +350,10 @@ func (o *Orchestrator) captureMirrorCompanion(ctx context.Context, target string
 	if mode != disk.MirroringModeRAID1 && mode != disk.MirroringModeAuto {
 		return nil
 	}
-	originalTarget := target
-	target = canonicalBlockDevice(target)
-	if target == "" {
-		return fmt.Errorf("refusing scoped deprovision: cannot resolve configured disk alias %q", originalTarget)
+	targetDisk, err := wholeDiskForPartition(target)
+	if err != nil {
+		return fmt.Errorf("refusing scoped deprovision: %w", err)
 	}
-	targetDisk := wholeDiskForPartition(target)
 	var companion string
 	for _, array := range []string{disk.MirrorRootArray, disk.MirrorBootArray} {
 		arrayCompanion, err := o.mirrorArrayCompanion(ctx, array, targetDisk)
@@ -404,10 +388,11 @@ func (o *Orchestrator) mirrorArrayCompanion(ctx context.Context, array, targetDi
 		if member == "" {
 			return "", fmt.Errorf("refusing scoped deprovision: cannot resolve mirror member %q", originalMember)
 		}
-		wholeDisk := wholeDiskForPartition(member)
-		if wholeDisk != "" {
-			disks[wholeDisk] = struct{}{}
+		wholeDisk, err := wholeDiskForPartition(member)
+		if err != nil {
+			return "", fmt.Errorf("refusing scoped deprovision: mirror member %s: %w", originalMember, err)
 		}
+		disks[wholeDisk] = struct{}{}
 	}
 	if _, ok := disks[targetDisk]; !ok {
 		return "", nil

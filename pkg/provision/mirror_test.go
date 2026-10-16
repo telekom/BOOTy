@@ -30,7 +30,6 @@ func hasProvisionCall(calls []mockCall, name string, args ...string) bool {
 func TestMirrorRootBuildsRAID1AcrossBothDisks(t *testing.T) {
 	cmd := newMockCommander()
 	cmd.setResult("mdadm --detail", nil, errors.New("no such array"))
-	cmd.setResult("mdadm --assemble", []byte("mdadm: No arrays found in config file or automatically"), errors.New("exit status 1"))
 	var copied []string
 	orig := copyBlockDeviceFn
 	copyBlockDeviceFn = func(src, dst string) error {
@@ -188,7 +187,6 @@ func TestSelectMirrorPairDisabled(t *testing.T) {
 func newTestDiskManager() *disk.Manager {
 	cmd := newMockCommander()
 	cmd.setResult("mdadm --detail", nil, errors.New("no such array"))
-	cmd.setResult("mdadm --assemble", []byte("mdadm: No arrays found in config file or automatically"), errors.New("exit status 1"))
 	return disk.NewManager(cmd)
 }
 
@@ -348,7 +346,6 @@ func TestSeparateBootPartition(t *testing.T) {
 func TestMirrorRootMirrorsSeparateBoot(t *testing.T) {
 	cmd := newMockCommander()
 	cmd.setResult("mdadm --detail", nil, errors.New("no such array"))
-	cmd.setResult("mdadm --assemble", []byte("mdadm: No arrays found in config file or automatically"), errors.New("exit status 1"))
 	stubMirrorTailSpace(t, nil)
 	var shrunk []string
 	origShrink := shrinkFilesystemForMirrorFn
@@ -488,7 +485,6 @@ func TestSeparateBootPartitionNeedsFstabForLinuxType(t *testing.T) {
 			}
 			cmd := newMockCommander()
 			cmd.setResult("mdadm --detail", nil, errors.New("no such array"))
-			cmd.setResult("mdadm --assemble", []byte("mdadm: No arrays found in config file or automatically"), errors.New("exit status 1"))
 			cmd.setResult("blkid -o", []byte("DEVNAME=/dev/sda2\nLABEL=BOOT\nUUID=1234\nTYPE=ext4\nPARTLABEL=boot\n"), nil)
 			o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, disk.NewManager(cmd))
 			o.targetDisk, o.rootPartition = "/dev/sda", "/dev/sda1"
@@ -610,7 +606,6 @@ func TestRewriteMirrorFstabFailsWithoutESPUUID(t *testing.T) {
 func TestMirrorRootRejectsMBRImages(t *testing.T) {
 	cmd := newMockCommander()
 	cmd.setResult("mdadm --detail", nil, errors.New("no such array"))
-	cmd.setResult("mdadm --assemble", []byte("mdadm: No arrays found in config file or automatically"), errors.New("exit status 1"))
 	o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, disk.NewManager(cmd))
 	o.targetDisk, o.mirrorDisk, o.rootPartition = "/dev/sda", "/dev/sdb", "/dev/sda1"
 	o.targetPartitions = []disk.Partition{{Node: "/dev/sda1", Type: disk.LinuxFilesystemMBRType}}
@@ -722,5 +717,163 @@ func TestSoftDeprovisionFailsWhenRootTypeUnknown(t *testing.T) {
 	o := NewOrchestrator(cfg, &mockProvider{}, disk.NewManager(cmd))
 	if err := o.softDeprovision(context.Background()); err == nil || !strings.Contains(err.Error(), "root filesystem type") {
 		t.Fatalf("softDeprovision() = %v, want a filesystem type error", err)
+	}
+}
+
+// stubMirrorESPCopy makes createMirrorEFIBootEntry run on UEFI without
+// touching block devices or mounts.
+func stubMirrorESPCopy(t *testing.T, ready bool) {
+	t.Helper()
+	origCopy, origMounted, origMount, origEFI, origReady := copyBlockDeviceFn, isMountPoint, mountBootPart, efiFirmwarePath, efiRuntimeReady
+	t.Cleanup(func() {
+		copyBlockDeviceFn, isMountPoint, mountBootPart, efiFirmwarePath, efiRuntimeReady = origCopy, origMounted, origMount, origEFI, origReady
+	})
+	efiFirmwarePath = t.TempDir()
+	efiRuntimeReady = func() (bool, string) {
+		if ready {
+			return true, ""
+		}
+		return false, "efivarfs not mounted"
+	}
+	isMountPoint = func(string) bool { return false }
+	copyBlockDeviceFn = func(string, string) error { return nil }
+	mountBootPart = func(context.Context, *disk.Manager, string, string) error { return nil }
+}
+
+func writeTestEFILoader(t *testing.T, root string, rel ...string) {
+	t.Helper()
+	path := filepath.Join(append([]string{root, "boot", "efi", "EFI"}, rel...)...)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("loader"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCreateMirrorEFIBootEntryLabelsSecondDisk(t *testing.T) {
+	stubMirrorESPCopy(t, true)
+	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{}, &mockProvider{})
+	o.targetDisk, o.mirrorDisk, o.bootPartition = "/dev/sda", "/dev/sdb", "/dev/sda1"
+	shim, _, err := efiLoaderNames(runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestEFILoader(t, o.config.rootDir, "ubuntu", shim)
+	if err := o.createMirrorEFIBootEntry(context.Background()); err != nil {
+		t.Fatalf("createMirrorEFIBootEntry() error = %v", err)
+	}
+	// Legacy raid_configure_efibootmgr: -L "${EFI_BOOT_ENTRY_LABEL}-disk2".
+	if !hasProvisionCall(cmd.calls, "efibootmgr", "-c", "-d", "/dev/sdb", "-p", "1", "-L", "ubuntu-disk2", "-l", `\EFI\ubuntu\`+shim) {
+		t.Fatalf("missing efibootmgr entry ubuntu-disk2 for /dev/sdb: %v", cmd.calls)
+	}
+}
+
+func TestCreateMirrorEFIBootEntryHonorsEFIBootEntryRequired(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		required *bool
+		wantErr  bool
+	}{
+		{name: "required by default", wantErr: true},
+		{name: "not required", required: new(false)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			stubMirrorESPCopy(t, true)
+			cfg := &config.MachineConfig{}
+			cfg.Provision.EFIBootEntryRequired = tt.required
+			o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+			o.targetDisk, o.mirrorDisk, o.bootPartition = "/dev/sda", "/dev/sdb", "/dev/sda1"
+			shim, _, err := efiLoaderNames(runtime.GOARCH)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeTestEFILoader(t, o.config.rootDir, "ubuntu", shim)
+			cmd.setResult("efibootmgr -c", nil, fmt.Errorf("run: %w", exec.ErrNotFound))
+			err = o.createMirrorEFIBootEntry(context.Background())
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("createMirrorEFIBootEntry() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestCreateMirrorEFIBootEntrySkipsEntryWithoutEFIVariables(t *testing.T) {
+	stubMirrorESPCopy(t, false)
+	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{}, &mockProvider{})
+	o.targetDisk, o.mirrorDisk, o.bootPartition = "/dev/sda", "/dev/sdb", "/dev/sda1"
+	name, err := efiRemovableLoaderName(runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestEFILoader(t, o.config.rootDir, "BOOT", name)
+	if err := o.createMirrorEFIBootEntry(context.Background()); err != nil {
+		t.Fatalf("createMirrorEFIBootEntry() error = %v", err)
+	}
+	if hasCommandName(cmd.calls, "efibootmgr") {
+		t.Fatalf("efibootmgr ran without EFI variables: %v", cmd.calls)
+	}
+}
+
+func TestConfigureMdadmAtWritesTargetFiles(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fstab := "PARTUUID=root-a / ext4 defaults 0 1\nPARTUUID=esp-a /boot/efi vfat umask=0077 0 1\n"
+	if err := os.WriteFile(filepath.Join(root, "etc", "fstab"), []byte(fstab), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := newMockCommander()
+	cmd.setResult("mdadm --detail", []byte("ARRAY /dev/md/2 metadata=1.0 name=host:2 UUID=aaaa:bbbb:cccc:dddd\n"+
+		"ARRAY /dev/md/data metadata=1.2 name=host:data UUID=1111:2222:3333:4444\n"), nil)
+	cmd.setResult("blkid -s", []byte("ABCD-1234\n"), nil)
+	o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, disk.NewManager(cmd))
+	o.targetDisk, o.mirrorDisk, o.bootPartition = "/dev/sda", "/dev/sdb", "/dev/sda1"
+	o.mirrorArrays = []string{disk.MirrorRootArray}
+
+	if err := o.configureMdadmAt(context.Background(), root); err != nil {
+		t.Fatalf("configureMdadmAt() error = %v", err)
+	}
+
+	wantConf := "# mdadm.conf - written by BOOTy\n\nDEVICE partitions\nHOMEHOST <system>\nMAILADDR root\n\n" +
+		"AUTO +imsm +1.x -all\n\nARRAY /dev/md2 metadata=1.0 name=host:2 UUID=aaaa:bbbb:cccc:dddd\n"
+	for _, rel := range []string{"etc/mdadm/mdadm.conf", "etc/mdadm.conf"} {
+		got, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		if string(got) != wantConf {
+			t.Fatalf("%s =\n%s\nwant\n%s", rel, got, wantConf)
+		}
+	}
+	gotFstab, err := os.ReadFile(filepath.Join(root, "etc", "fstab"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "/dev/md2 / ext4 defaults 0 1\nUUID=ABCD-1234 /boot/efi vfat umask=0077 0 1\n"; string(gotFstab) != want {
+		t.Fatalf("fstab =\n%s\nwant\n%s", gotFstab, want)
+	}
+	grub, err := os.ReadFile(filepath.Join(root, "etc", "default", "grub.d", "99-booty-mirror.cfg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(grub) != mirrorGrubConfig {
+		t.Fatalf("99-booty-mirror.cfg = %q, want %q", grub, mirrorGrubConfig)
+	}
+	if !hasProvisionCall(cmd.calls, "chroot", root, "/bin/bash", "-c", mirrorInitramfsCmd) {
+		t.Fatalf("initramfs not rebuilt in %s: %v", root, cmd.calls)
+	}
+}
+
+func TestConfigureMdadmAtWithoutMirrorDoesNothing(t *testing.T) {
+	root := t.TempDir()
+	cmd := newMockCommander()
+	o := NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, disk.NewManager(cmd))
+	if err := o.configureMdadmAt(context.Background(), root); err != nil {
+		t.Fatalf("configureMdadmAt() error = %v", err)
+	}
+	if entries, _ := os.ReadDir(root); len(entries) != 0 || len(cmd.calls) != 0 {
+		t.Fatalf("configureMdadmAt() without mirror wrote %v and ran %v", entries, cmd.calls)
 	}
 }

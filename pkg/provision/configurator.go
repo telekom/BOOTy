@@ -658,9 +658,8 @@ RestartSec=5s
 WantedBy=multi-user.target
 `
 
-// InstallESPSync installs the target-side synchronizer only for a mirrored
-// installation. PARTUUIDs are recorded so the service never guesses a peer
-// disk from filesystem UUIDs shared by both ESPs.
+// validateESPPARTUUIDs trims both ESP PARTUUIDs and rejects empty, equal
+// or malformed values, which end up on the service command line.
 func validateESPPARTUUIDs(sourcePartUUID, destinationPartUUID string) (source, destination string, err error) {
 	sourcePartUUID = strings.TrimSpace(sourcePartUUID)
 	destinationPartUUID = strings.TrimSpace(destinationPartUUID)
@@ -1560,6 +1559,21 @@ func isHexString(s string) bool {
 // since efibootmgr requires EFI firmware NVRAM access. On UEFI a missing
 // efivarfs is an error.
 func (c *Configurator) CreateEFIBootEntry(ctx context.Context, diskDev, bootPart string) error {
+	return c.createEFIBootEntry(ctx, diskDev, bootPart, "")
+}
+
+// mirrorEFIBootEntrySuffix is appended to the label of the firmware boot
+// entry for the second mirror disk, like "${EFI_BOOT_ENTRY_LABEL}-disk2" in
+// raid_configure_efibootmgr of the CAPRF legacy provisioner.
+const mirrorEFIBootEntrySuffix = "-disk2"
+
+// CreateMirrorEFIBootEntry creates the firmware boot entry for the ESP copy
+// on the second mirror disk, labeled "<label>-disk2".
+func (c *Configurator) CreateMirrorEFIBootEntry(ctx context.Context, diskDev, bootPart string) error {
+	return c.createEFIBootEntry(ctx, diskDev, bootPart, mirrorEFIBootEntrySuffix)
+}
+
+func (c *Configurator) createEFIBootEntry(ctx context.Context, diskDev, bootPart, labelSuffix string) error {
 	if bootPart == "" {
 		slog.Warn("no EFI partition found, skipping EFI boot entry creation")
 		return nil
@@ -1590,7 +1604,7 @@ func (c *Configurator) CreateEFIBootEntry(ctx context.Context, diskDev, bootPart
 	if err != nil {
 		return fmt.Errorf("detect EFI loader: %w", err)
 	}
-	label := efiBootEntryLabel(loader)
+	label := efiBootEntryLabel(loader) + labelSuffix
 
 	// Determine partition number from the partition device path.
 	partNum := partNumberFromDevice(bootPart)
@@ -1690,6 +1704,9 @@ func isManagedEFIBootEntryLine(line string) bool {
 	if label == "" {
 		return false
 	}
+	// The entry of the second mirror disk is "<vendor>-disk2". The legacy
+	// removal pattern "Boot<n>* (ubuntu)" matches it too.
+	label = strings.TrimSuffix(strings.ToLower(label), mirrorEFIBootEntrySuffix)
 	for _, vendor := range managedEFIVendors {
 		if strings.EqualFold(label, vendor) {
 			return true

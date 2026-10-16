@@ -120,37 +120,40 @@ func TestDecommissionWaitsForStableDisks(t *testing.T) {
 }
 
 // A /dev/disk/by-id DISK_DEVICE can not exist without udev: fail at once.
+// Provisioning and every deprovision mode use the same rule.
 func TestDiskSelectionRejectsUdevLinks(t *testing.T) {
-	for _, step := range []string{"detect-disk"} {
-		cfg := &config.MachineConfig{}
-		cfg.Provision.Disk.SettleTimeoutSec = new(30)
-		cfg.Provision.Disk.Device = "/dev/disk/by-id/nvme-SAMSUNG_123"
-		o := newTestOrchestrator(t, cfg, &mockProvider{})
-		fn := o.detectDisk
-		if step != "detect-disk" {
-			fn = o.selectDeprovisionDisk
-		}
-		start := time.Now()
-		err := fn(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "no udev") {
-			t.Fatalf("%s = %v, want the no-udev error", step, err)
-		}
-		if time.Since(start) > 5*time.Second {
-			t.Fatalf("%s waited %v before failing", step, time.Since(start))
-		}
-	}
-	cfg := &config.MachineConfig{}
-	cfg.Provision.Disk.SettleTimeoutSec = new(30)
-	cfg.Deprovision.Device = "/dev/disk/by-id/missing"
-	o := newTestOrchestrator(t, cfg, &mockProvider{})
-	withMockStat(t, func(string) (os.FileInfo, error) { return nil, os.ErrNotExist })
-	start := time.Now()
-	err := o.selectDeprovisionDisk(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "file does not exist") {
-		t.Fatalf("select-deprovision-disk missing alias = %v, want missing-path error", err)
-	}
-	if time.Since(start) > 5*time.Second {
-		t.Fatalf("select-deprovision-disk waited %v before failing", time.Since(start))
+	for _, tt := range []struct {
+		step  string
+		field string
+	}{
+		{step: "detect-disk", field: "disk"},
+		{step: "select-deprovision-disk", field: "disk"},
+		{step: "select-deprovision-disk", field: "deprovision"},
+		{step: "soft-deprovision", field: "deprovision"},
+	} {
+		t.Run(tt.step+"/"+tt.field, func(t *testing.T) {
+			cfg := &config.MachineConfig{}
+			cfg.Provision.Disk.SettleTimeoutSec = new(30)
+			if tt.field == "disk" {
+				cfg.Provision.Disk.Device = "/dev/disk/by-id/nvme-SAMSUNG_123"
+			} else {
+				cfg.Deprovision.Device = "/dev/disk/by-id/nvme-SAMSUNG_123"
+			}
+			o := newTestOrchestrator(t, cfg, &mockProvider{})
+			fn := map[string]func(context.Context) error{
+				"detect-disk":             o.detectDisk,
+				"select-deprovision-disk": o.selectDeprovisionDisk,
+				"soft-deprovision":        o.softDeprovision,
+			}[tt.step]
+			start := time.Now()
+			err := fn(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "no udev") {
+				t.Fatalf("%s = %v, want the no-udev error", tt.step, err)
+			}
+			if time.Since(start) > 5*time.Second {
+				t.Fatalf("%s waited %v before failing", tt.step, time.Since(start))
+			}
+		})
 	}
 }
 
