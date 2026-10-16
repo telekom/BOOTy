@@ -183,6 +183,12 @@ func TestCopyTreeCleansOwnedStagingAndSkipsSourceLeftovers(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source, "EFI", "BOOT", "bootx64.efi"), []byte("current"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(source, stagingPrefix+"root-file"), []byte("legitimate-root-file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("EFI/BOOT/bootx64.efi", filepath.Join(source, stagingPrefix+"root-link")); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(source, stagingPrefix+"leftover"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -216,6 +222,20 @@ func TestCopyTreeCleansOwnedStagingAndSkipsSourceLeftovers(t *testing.T) {
 	}
 	if string(got) != "legitimate" {
 		t.Fatalf("nested reserved-prefix data = %q", got)
+	}
+	got, err = os.ReadFile(filepath.Join(destination, stagingPrefix+"root-file"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "legitimate-root-file" {
+		t.Fatalf("root reserved-prefix file = %q", got)
+	}
+	link, err := os.Readlink(filepath.Join(destination, stagingPrefix+"root-link"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if link != "EFI/BOOT/bootx64.efi" {
+		t.Fatalf("root reserved-prefix symlink = %q", link)
 	}
 }
 

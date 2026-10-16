@@ -129,11 +129,8 @@ func copyDir(source, destination string) error {
 		if rel == "." {
 			return nil
 		}
-		if filepath.Dir(rel) == "." && isStagingName(entry.Name()) {
-			if entry.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
+		if entry.IsDir() && filepath.Dir(rel) == "." && isStagingName(entry.Name()) {
+			return filepath.SkipDir
 		}
 		target := filepath.Join(destination, rel)
 		info, err := entry.Info()
