@@ -46,9 +46,9 @@ if [ "$count" -gt 0 ]; then
   echo "ESP_PREVIOUS_MARKER=$(test -f "$esp_marker" && echo yes || echo no)"
 fi
 mkdir -p "$(dirname "$esp_marker")"
-printf '%s\\n' "$(findmnt -n -o PARTUUID /boot/efi)" > "$esp_marker"
+printf '%s\n' "$(findmnt -n -o PARTUUID /boot/efi)" > "$esp_marker"
 mkdir -p "$(dirname "$state")"
-printf '%s\\n' $((count + 1)) > "$state"
+printf '%s\n' $((count + 1)) > "$state"
 sleep 5
 echo "ESP_NESTED_MARKER=$(test -f "$esp_marker" && echo yes || echo no)"
 cat /proc/mdstat
