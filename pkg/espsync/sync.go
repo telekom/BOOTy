@@ -195,7 +195,10 @@ func copyFileFromRoot(root *os.Root, source, destination string, mode os.FileMod
 		_ = output.Close()
 		return fmt.Errorf("ESP synchronization: %w", err)
 	}
-	return fmt.Errorf("close ESP output: %w", output.Close())
+	if err := output.Close(); err != nil {
+		return fmt.Errorf("close ESP output: %w", err)
+	}
+	return nil
 }
 
 func syncTree(staged, destination string) error {
