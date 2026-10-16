@@ -149,6 +149,50 @@ Detail for these rows is in [Networking](networking.md).
 | EVPN through FRR with the provisioner netplan and `frr.conf` | Reads the provisioner netplan and `frr.conf` as input and sets up FRR or GoBGP. A key or statement that BOOTy does not implement fails the setup | Reads the files like the default and also applies them to the ramdisk | See [Netplan and FRR config input](networking.md#netplan-and-frr-config-input) | `FRR_CONFIG_STRICT`, `NETPLAN_STRICT` (`true`; `false` skips what BOOTy does not implement) |
 | `wait_for_network`: `NETWORK_WAIT_MAX_ATTEMPTS` rounds of 20 seconds (default 15), restart FRR, then `fail()` | Up to 3 network setups, each followed by an HTTP `HEAD` poll on `INIT_URL` (see [Connectivity check](networking.md#connectivity-check)) | One network setup. `NETWORK_WAIT_MAX_ATTEMPTS` rounds of 20 seconds (default 15); in FRR mode FRR restarts after each failed round unless a BGP session is established. Then BOOTy reports the error and waits. | Merged (#622) | `NETWORK_WAIT_MODE` / `network.waitMode` (`rounds`) |
 
+### Network acceptance against the legacy ramdisk
+
+BOOTy replaces the legacy ramdisk only when the fabric cannot tell the two
+apart. This section lists what the legacy ramdisk does on the network, what
+BOOTy does, and which test proves it.
+
+The legacy ramdisk (`image-building/deployer-base-image` 0.3.0) runs Ubuntu
+with systemd-networkd (through netplan) and FRR from the `frr-stable` channel,
+so always the latest FRR. Its `bgpd` and `bfdd` read the production `frr.conf`
+of the bm4x-operator (`internal/controller/infra/redfish/provcfg/templates`).
+That file has `frr version 8.2.2` and `frr defaults traditional`; the reference
+behaviour is the current FRR with that file:
+
+- Profile `traditional`: keepalive 60 s, hold 180 s, connect retry 30 s for
+  values that the file does not set. The template sets `timers 30 90` for the
+  leaf and route reflector peers and `timers connect 5` for the route
+  reflectors.
+- BFD profile `fabric` (150 ms, 150 ms, multiplier 3) on all BGP peers.
+- netplan `emit-lldp: true` on the fabric NICs: networkd sends LLDP frames.
+  networkd also receives LLDP frames from routers (its default
+  `LLDP=routers-only`); nothing in the ramdisk reads them.
+- No lldpd. The fabric NICs have MTU 9100, the VXLAN device and the bridge
+  9000.
+
+| Requirement | BOOTy | Lab evidence (containerlab, against an FRR node with the same files) | kindmetal evidence (CAPRF e2e, real legacy ramdisk) | Status |
+|-------------|-------|----------------------------------------------------------------------|-----------------------------------------------------|--------|
+| Sessions, address families, local-as, VRF-bound route reflectors | GoBGP sessions from `frr.conf` | `TestProdTplLeafSessions`, `TestProdTplRRSessions`, `TestProdTplLocalASReplaceASPath` | Not yet: the CAPRF fixtures give the two ramdisks different files | Merged (#643), native keys Planned (#654) |
+| Timers and profile defaults | `frr defaults` profile and `timers` lines | session tests above | leaf `show bgp vrf all neighbors json` in the CAPRF fabric snapshot | Merged (#643) |
+| Routes, ECMP, next hops (RFC 5549) | FIB writer like zebra | `TestProdTplFIBRoutes`, `TestProdTplRFC5549Routes` | fabric snapshot (routes and routing tables) | Merged (#645), Planned (#681) |
+| EVPN route types (Type-5 only for an L3VNI, IPv6) | GoBGP Type-5 | `TestProdTplType5*` | `e2e-kindmetal-booty-evpn` Type-2/Type-3 absence checks | Merged (#582, #651) |
+| BFD | own RFC 5880 implementation | `TestProdTplBFDSessions`, `TestProdTplBFDFailover` | Not yet: the CAPRF fixture has no BFD | Planned (#655) |
+| Route-maps, route targets, local-as loop check | GoBGP policies | `TestProdTplRouteMap*`, `TestProdTplLocalASLoopCheck` | Not yet | Planned (#659, #668) |
+| VTEP, VXLAN and bridge devices, MTU, `accept-ra`, forwarding | netplan keys applied like networkd | `TestProdTplKernelDevices` | fabric snapshot (MTU, ARP/ND of the leaf port) | Planned (#668) |
+| LLDP sent on every fabric NIC | frames like networkd | `TestProdTplLLDP` | Not yet: the kindmetal pod bridge drops LLDP frames and the leaves have no LLDP agent | Planned (#668) |
+| LLDP received | `pkg/network/lldp` can listen, but BOOTy does not start it | none | none | Not implemented |
+| Switch faults: link flap, BGP reset, leaf down and up | carrier watch, BFD, GoBGP reconnect | `TestProdTplUplinkCarrierLoss`, `TestProdTplBFDFailover`, `TestProdTplRRRestart` | CAPRF `EVPN_FABRIC_FAULTS` in both EVPN jobs (`bgp-reset`, `link-flap`, `leaf-down`) | Merged (#645) for carrier loss, Planned (#655, #668); kindmetal Planned (CAPRF !291) |
+| Both leaves of a host down one after the other | as above | one uplink at a time in the lab | Not yet: needs a dual-homed CAPRF fixture | Not implemented |
+| Native configuration only (no netplan, no `frr.conf`) | vars and YAML keys for every value of the files | the vars-only server in every lab test | Not yet | Planned (#654 and later) |
+
+Known differences that the kindmetal comparison must measure and then fix or
+accept: BGP capabilities that FRR sends and GoBGP does not (FQDN, graceful
+restart helper, software version), the minimum route advertisement interval
+(GoBGP has none), and the LLDP TLVs.
+
 ### Common pipeline
 
 These legacy functions have a BOOTy step with the same effect in both modes.
