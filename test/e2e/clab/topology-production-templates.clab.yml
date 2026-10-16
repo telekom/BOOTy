@@ -77,6 +77,7 @@ topology:
         - ip link set ens1f0np0 master Vrf_underlay mtu 9100 up
         - ip link set ens1f1np1 master Vrf_underlay mtu 9100 up
         - ip link set ens1f2np2 master Vrf_underlay mtu 9100 up
+        - ip link set ens1f3np3 mtu 9100 up
         - ip link add dum.underlay type dummy
         - ip link set dum.underlay master Vrf_underlay mtu 9100 up
         - ip addr add 192.0.2.18/32 dev dum.underlay
@@ -84,7 +85,7 @@ topology:
         # What netplan/networkd makes of the template: link-local: [] is
         # addrgenmode none, accept-ra: false is accept_ra 0, hairpin and
         # port-mac-learning are bridge port flags.
-        - sh -c 'for d in ens1f0np0 ens1f1np1 ens1f2np2; do sysctl -qw net.ipv6.conf.$d.accept_ra=0; done'
+        - sh -c 'for d in ens1f0np0 ens1f1np1 ens1f2np2 ens1f3np3; do sysctl -qw net.ipv6.conf.$d.accept_ra=0; done'
         - ip link add vx.3000 type vxlan id 3000 local 192.0.2.18 dstport 4789 nolearning noproxy dev dum.underlay
         - ip link add br.provision address 02:54:c0:00:02:12 type bridge stp_state 0
         - ip link set vx.3000 addrgenmode none
@@ -119,7 +120,7 @@ topology:
         - prodtpl-tester.frr.conf:/etc/frr/frr.conf:ro
         - daemons:/etc/frr/daemons:ro
       exec:
-        - sh -c 'for i in 1 2; do ip link set dev eth$i mtu 9100 up; done'
+        - sh -c 'for i in 1 2 3 4; do ip link set dev eth$i mtu 9100 up; done'
 
     # IPv6 CAPRF mock behind the L3VNI gateway.
     caprf6:
@@ -172,6 +173,9 @@ topology:
     - endpoints: ["dcgw01:eth2", "caprf6:eth1"]
     - endpoints: ["tester:eth1", "booty:ens1f2np2"]
     - endpoints: ["tester:eth2", "shadow:ens1f2np2"]
+    # Default VRF sessions without "no bgp ebgp-requires-policy".
+    - endpoints: ["tester:eth3", "booty:ens1f3np3"]
+    - endpoints: ["tester:eth4", "shadow:ens1f3np3"]
     - endpoints: ["leaf01:eth7", "native:ens1f0np0"]
     - endpoints: ["leaf01:eth8", "native:ens1f1np1"]
     - endpoints: ["leaf01:eth9", "native-vrf:ens1f0np0"]

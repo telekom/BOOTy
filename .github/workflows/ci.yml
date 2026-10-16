@@ -1697,6 +1697,7 @@ jobs:
             TestProdTplLocalASLoopCheck \
             TestProdTplRouteMapDenyTaggedOut \
             TestProdTplRouteMapTagIn \
+            TestProdTplEBGPRequiresPolicy \
             TestProdTplKernelDevices \
             TestProdTplRRRestart \
             TestProdTplLLDP; do

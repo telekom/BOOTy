@@ -138,3 +138,40 @@ func TestProdTplRouteMapTagIn(t *testing.T) {
 		cancel()
 	}
 }
+
+// "bgp ebgp-requires-policy" stays on in the default VRF router of both
+// servers (only Vrf_underlay has "no bgp ebgp-requires-policy"). The
+// tester session there comes up, but like FRR, BOOTy neither accepts the
+// tester prefix nor sends routes to the tester.
+func TestProdTplEBGPRequiresPolicy(t *testing.T) {
+	for _, tt := range []struct {
+		node prodtplNode
+		port string
+	}{{prodtplShadowNode, "eth4"}, {prodtplBootyNode, "eth3"}} {
+		t.Run(tt.node.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)
+			defer cancel()
+			for {
+				n, err := prodtplNeighbor(ctx, prodtplTester, tt.port)
+				if err == nil && n["bgpState"] == "Established" {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatalf("tester session on %s not established: %v %v", tt.port, n["bgpState"], err)
+				case <-time.After(2 * time.Second):
+				}
+			}
+			// Updates go out within a few seconds of the session.
+			time.Sleep(15 * time.Second)
+			got, err := prodtplReceived(ctx, tt.port)
+			if err != nil || len(got) != 0 {
+				t.Errorf("tester received %v (%v) from %s, want nothing", got, err, tt.node.name)
+			}
+			out, err := prodtplExec(ctx, prodtplContainer(tt.node), "ip", "route", "show", prodtplTesterPrefix)
+			if err != nil || strings.Contains(out, "ens1f3np3") {
+				t.Errorf("%s main table has %q (%v), want no route over ens1f3np3", tt.node.name, out, err)
+			}
+		})
+	}
+}
