@@ -221,8 +221,13 @@ Native config and parsed files merge like this: a native list
 log line; there is no element-wise merge. A native scalar that is set
 (`network.bgp.multipathRelax`) overrides the parsed value; unset keeps it.
 
-A value from netplan overrides the same value from the vars. An empty
-netplan value keeps the vars value. `VLANS` is the exception: BOOTy parses it
+A key that exists in earlier releases keeps its rule for CAPRF
+compatibility: a value from netplan overrides the same value from the
+vars, and an empty netplan value keeps the vars value. A key that this
+release adds follows the native rule: a set native value wins, and a
+non-empty native list replaces the parsed list as a whole (one info log
+line). `LOOPBACK_ADDRESSES`, `BLACKHOLE_ROUTES`, `EVPN_TYPE5_NETWORKS` and
+`VXLAN_NAME` follow the native rule. `VLANS` is the exception: BOOTy parses it
 after the netplan merge, so `VLANS` from the vars replaces the netplan VLANs. When netplan and the FRR config give an
 ASN and a VNI, BOOTy sets the stack to GoBGP. This overrides
 `NETWORK_MODE`.

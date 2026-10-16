@@ -1333,18 +1333,11 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	if src.VXLANLink != "" {
 		dst.VXLANLink = src.VXLANLink
 	}
-	if src.VXLANName != "" {
-		dst.VXLANName = src.VXLANName
-	}
-	if len(src.LoopbackAddrs) > 0 {
-		dst.LoopbackAddrs = src.LoopbackAddrs
-	}
-	if len(src.BlackholeRoutes) > 0 {
-		dst.BlackholeRoutes = src.BlackholeRoutes
-	}
-	if len(src.Type5Networks) > 0 {
-		dst.Type5Networks = src.Type5Networks
-	}
+	// Keys that this release adds: a set native value wins.
+	nativeWins(&dst.VXLANName, src.VXLANName)
+	nativeList("network.loopbackAddresses", &dst.LoopbackAddrs, src.LoopbackAddrs)
+	nativeList("network.blackholeRoutes", &dst.BlackholeRoutes, src.BlackholeRoutes)
+	nativeList("network.evpn.type5Networks", &dst.Type5Networks, src.Type5Networks)
 	if src.MTU > 0 {
 		dst.MTU = src.MTU
 	}
@@ -1374,6 +1367,25 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	if len(src.BGPSessions) > 0 {
 		dst.BGPSessions = src.BGPSessions
 		dst.BGPMultipathRelax = src.BGPMultipathRelax
+	}
+}
+
+// nativeWins keeps a set native value; an unset one takes the parsed value.
+func nativeWins[T comparable](dst *T, parsed T) {
+	var zero T
+	if *dst == zero {
+		*dst = parsed
+	}
+}
+
+// nativeList keeps a non-empty native list as a whole and logs that it
+// replaces the parsed list; an empty one takes the parsed list.
+func nativeList[T any](name string, dst *[]T, parsed []T) {
+	switch {
+	case len(*dst) == 0:
+		*dst = parsed
+	case len(parsed) > 0:
+		slog.Info(name+" replaces the netplan or frr.conf value", "native", len(*dst), "parsed", len(parsed))
 	}
 }
 

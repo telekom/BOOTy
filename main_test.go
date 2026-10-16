@@ -64,6 +64,30 @@ func TestMergeNetplanConfigPreservesProvisionPrefixForSameHostMask(t *testing.T)
 	}
 }
 
+// The two merge rules: a key that exists on main keeps "netplan wins" for
+// CAPRF compatibility; a key that this release adds follows "native wins":
+// a set native scalar wins, a non-empty native list replaces the parsed
+// list as a whole.
+func TestMergeNetplanConfigPrecedence(t *testing.T) {
+	parsed := &network.Config{
+		UnderlayIP: "192.0.2.17", VXLANName: "vx.parsed",
+		LoopbackAddrs: []string{"2001:db8::17/128", "2001:db8::18/128"},
+	}
+	native := &network.Config{UnderlayIP: "192.0.2.99", VXLANName: "vx.native", LoopbackAddrs: []string{"2001:db8::99/128"}}
+	mergeNetplanConfig(native, parsed)
+	if native.UnderlayIP != "192.0.2.17" {
+		t.Errorf("legacy underlay_ip = %s, want the netplan value", native.UnderlayIP)
+	}
+	if native.VXLANName != "vx.native" || !slices.Equal(native.LoopbackAddrs, []string{"2001:db8::99/128"}) {
+		t.Errorf("native VXLAN_NAME %s, LOOPBACK_ADDRESSES %v, want the native values", native.VXLANName, native.LoopbackAddrs)
+	}
+	unset := &network.Config{}
+	mergeNetplanConfig(unset, parsed)
+	if unset.VXLANName != "vx.parsed" || len(unset.LoopbackAddrs) != 2 {
+		t.Errorf("unset native keys = %s %v, want the parsed values", unset.VXLANName, unset.LoopbackAddrs)
+	}
+}
+
 func TestMergeNetplanConfigBridgeMAC(t *testing.T) {
 	tests := []struct {
 		name      string
