@@ -113,29 +113,33 @@ func TestBFDChanged(t *testing.T) {
 }
 
 // Like FRR bgpd (last_event > peer->uptime, in seconds), a BFD Down in
-// the second the BGP session came up does not reset it; a later one and
-// one of a session that is not up do.
+// the second the BGP session came up does not reset it; an earlier uptime,
+// an uptime in the future (the clock stepped back) and a session that is
+// not up reset it.
 func TestBFDChangedAtBGPStart(t *testing.T) {
-	var resets int
-	var at time.Time
-	up := true
-	u := &UnderlayTier{log: slog.Default(),
-		resetBGP:  func(context.Context, string, string) { resets++ },
-		bgpUptime: func(context.Context, string) (time.Time, bool) { return at, up },
-	}
-	p := &bfd.Peer{Name: "198.51.100.2"}
-	at = time.Now()
-	u.bfdChanged(p, bfd.StateUp, bfd.StateDown, bfd.DiagNeighborSaysDown)
-	if resets != 0 {
-		t.Fatal("a BFD Down in the second the BGP session came up reset it")
-	}
-	at = time.Now().Add(-2 * time.Second)
-	u.bfdChanged(p, bfd.StateUp, bfd.StateDown, bfd.DiagNeighborSaysDown)
-	up = false
-	at = time.Now()
-	u.bfdChanged(p, bfd.StateUp, bfd.StateDown, bfd.DiagNeighborSaysDown)
-	if resets != 2 {
-		t.Fatalf("resets = %d, want 2 (a session up for 2 s, a session not up)", resets)
+	now := time.Unix(1_000_000, 500_000_000)
+	for _, tt := range []struct {
+		name  string
+		at    time.Time
+		up    bool
+		reset bool
+	}{
+		{"same second", now.Add(-400 * time.Millisecond), true, false},
+		{"up for 2 s", now.Add(-2 * time.Second), true, true},
+		{"uptime in the future (clock stepped back)", now.Add(time.Hour), true, true},
+		{"not up", now, false, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resets := 0
+			u := &UnderlayTier{log: slog.Default(), now: func() time.Time { return now },
+				resetBGP:  func(context.Context, string, string) { resets++ },
+				bgpUptime: func(context.Context, string) (time.Time, bool) { return tt.at, tt.up },
+			}
+			u.bfdChanged(&bfd.Peer{Name: "198.51.100.2"}, bfd.StateUp, bfd.StateDown, bfd.DiagNeighborSaysDown)
+			if (resets == 1) != tt.reset {
+				t.Fatalf("resets = %d, want a reset %v", resets, tt.reset)
+			}
+		})
 	}
 }
 

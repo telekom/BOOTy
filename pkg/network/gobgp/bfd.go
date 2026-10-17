@@ -155,8 +155,8 @@ func bfdTimers(txMS, rxMS, mult uint32) bfd.Timers {
 // BFD Up; GoBGP has no API for that, its Active state connects within
 // 1 to 2 s by itself.
 //
-// Like bgpd, a BFD Down only resets a BGP session that came up in an
-// earlier second (bss->last_event > peer->uptime, both in seconds): a
+// Like bgpd, a BFD Down does not reset a BGP session that came up in the
+// same second (bss->last_event > peer->uptime, both in seconds): a
 // route reflector with "update-source" re-keys its BFD session for us
 // when the BGP session comes up (bgp_peer_bfd_update_source), so the BFD
 // session we just brought Up goes Down in that second. The FRR shadow
@@ -172,7 +172,14 @@ func (u *UnderlayTier) bfdChanged(p *bfd.Peer, from, to bfd.State, diag bfd.Diag
 	if uptime == nil {
 		uptime = u.establishedAt
 	}
-	if at, ok := uptime(ctx, p.Name); ok && time.Now().Unix() <= at.Unix() {
+	now := time.Now
+	if u.now != nil {
+		now = u.now
+	}
+	// Only the same second: GoBGP's uptime is wall-clock time, and a time
+	// sync that steps the clock back puts it in the future (FRR compares
+	// monotonic times). Then the BFD Down resets the session as usual.
+	if at, ok := uptime(ctx, p.Name); ok && now().Unix() == at.Unix() {
 		u.log.Info("BFD down in the second the BGP session came up, not resetting it, like FRR", "peer", p.Name, "diag", diag)
 		return
 	}

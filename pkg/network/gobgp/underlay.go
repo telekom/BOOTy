@@ -81,6 +81,7 @@ type UnderlayTier struct {
 	connected    func(netip.Addr, string) bool                   // overridable in tests; nil = connectedInVRF
 	resetBGP     func(context.Context, string, string)           // overridable in tests; nil = resetPeer
 	bgpUptime    func(context.Context, string) (time.Time, bool) // overridable in tests; nil = establishedAt
+	now          func() time.Time                                // overridable in tests; nil = time.Now
 	ifacePeers   map[string]string                               // interface -> unnumbered peer address as added
 	// ifacePeerConfs are the GoBGP peers as added, by interface, to move
 	// to a new link-local address of the switch.
