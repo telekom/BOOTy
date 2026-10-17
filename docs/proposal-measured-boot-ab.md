@@ -373,6 +373,13 @@ already uses `github.com/google/go-tpm`.
 - Flatcar boots with GRUB, so a `/usr` update changes PCR 4, 8 and 9. Bind
   `ROOT` encryption to PCR 7, pcrlock or Tang (see [proposal-flatcar.md](proposal-flatcar.md)).
 
+## kexec limitations
+
+The kexec handoff skips the firmware, so boot counting, `BootNext`, measured
+boot, Secure Boot verification by shim and pending firmware changes do not
+apply to the kexec'd kernel. The full list, with a kexec or reboot decision
+table, is in `docs/kexec.md` (PR #705).
+
 ## Related proposals
 
 - [proposal-tpm-attestation.md](proposal-tpm-attestation.md)

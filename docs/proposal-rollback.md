@@ -195,6 +195,13 @@ A small node-side tool `booty-ab` (same repo, separate binary like
   `USR-A` and `USR-B`, handled by GRUB `gptprio` and `update_engine`. BOOTy
   must not interfere (see [proposal-flatcar.md](proposal-flatcar.md)).
 
+## kexec limitations
+
+The kexec handoff skips the firmware, so boot counting, `BootNext`, measured
+boot, Secure Boot verification by shim and pending firmware changes do not
+apply to the kexec'd kernel. The full list, with a kexec or reboot decision
+table, is in `docs/kexec.md` (PR #705).
+
 ## Related proposals
 
 - [ab-partitioning.md](ab-partitioning.md)
