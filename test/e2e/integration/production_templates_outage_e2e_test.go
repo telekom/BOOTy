@@ -197,3 +197,41 @@ func TestProdTplOneDropPerFault(t *testing.T) {
 		})
 	}
 }
+
+// The config path of the old single-leaf CAPRF fixture (lab variant
+// caprf-old: scalar BGP_PEER_MODE=unnumbered, the main table, one uplink,
+// a leaf link-local set by hand). The leaf port is down for 60 s and comes
+// back with another MAC and the hand-set fe80::100 again, like the
+// kindmetal fixture after a leaf outage; there GoBGP logged "Can't find
+// configuration for a new passive connection Key=fe80::100%eth1" every
+// 120 s and the session never came back, the legacy ramdisk recovered in 5
+// to 6 s. Runs only in that variant (it is not a CI variant).
+func TestProdTplCAPRFOldOutage(t *testing.T) {
+	if prodtplVariant != "caprf-old" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second+prodtplTimeout)
+	defer cancel()
+	port := prodtplNativeNode.leafPorts[0]
+	handSet := func() {
+		if out, err := prodtplExec(ctx, prodtplLeaf, "sh", "-c", "ip -6 addr add fe80::100/64 dev "+port+" 2>/dev/null || true"); err != nil {
+			t.Fatalf("hand-set fe80::100: %v: %s", err, out)
+		}
+	}
+	handSet()
+	if _, err := prodtplWaitEstablished(ctx, port); err != nil {
+		t.Fatal(err)
+	}
+	if err := prodtplLeafPort(ctx, port, "02:00:00:00:0c:01", 60*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	handSet()
+	d, err := prodtplWaitEstablished(ctx, port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("native (caprf-old path): Established %s after the 60 s outage", d.Round(10*time.Millisecond))
+	if d > 10*time.Second {
+		t.Errorf("Established after %s, want within 10 s (legacy ramdisk 5 to 6 s)", d)
+	}
+}
