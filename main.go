@@ -500,11 +500,14 @@ func requestPowerOff() error {
 	return realm.RequestPowerOff()
 }
 
+// restoreFirmwareLLDP is a seam for TestBeforeHandoffRestoresFirmwareLLDP.
+var restoreFirmwareLLDP = nicfw.RestoreFirmwareLLDP
+
 // beforeHandoff runs before BOOTy hands the machine on: it puts back the
 // NIC firmware LLDP flags it changed (ice keeps them across boots) and
 // flushes the log shipping.
 func beforeHandoff() {
-	if n, err := nicfw.RestoreFirmwareLLDP(); err != nil {
+	if n, err := restoreFirmwareLLDP(); err != nil {
 		slog.Warn("firmware LLDP agent not restored", "error", err)
 	} else if n > 0 {
 		slog.Info("firmware LLDP agent restored", "flags", n)
