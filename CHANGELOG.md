@@ -204,6 +204,12 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   nht resolve-via-default` (off with datacenter). The FQDN capability
   carries the system host name like FRR; the new key `BGP_HOSTNAME` (YAML
   `network.bgp.hostname`) sets it.
+- GoBGP mode originates its EVPN routes with FRR's route distinguisher
+  `<router-id>:<n>` instead of `asn_server:provision_vni` on every host, and
+  with MED 0 on the underlay `/32` and the Type-5 routes, like FRR. BFD
+  advertises Required Min Echo RX 50 ms like FRR bfdd. New key `EVPN_RD`
+  (YAML `network.evpn.rd`); `frr.conf` `rd` in the VRF's `address-family
+  l2vpn evpn` is accepted.
 - BOOTy receives LLDP on every physical NIC, logs each new or changed
   neighbor and reports the current neighbors in the hardware inventory
   (`lldpNeighbors`). New key `LLDP_RECEIVE` (YAML `network.lldpReceive`, on by

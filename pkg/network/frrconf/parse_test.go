@@ -624,3 +624,22 @@ func TestParseFastExternalFailover(t *testing.T) {
 		t.Fatalf("router %v sessions %+v (%v), want off", cfg.Routers[0].FastExternalFailover, s, err)
 	}
 }
+
+// "rd" in the l2vpn evpn address family of a VRF sets the RD of its EVPN
+// routes; it must be ASN:NN or IPv4:NN.
+func TestParseVRFRD(t *testing.T) {
+	conf := "router bgp 65000 vrf Vrf_x\n address-family l2vpn evpn\n  rd 192.0.2.17:9\n exit-address-family\n"
+	m, err := Parse([]byte(conf))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Routers[0].AddressFamilies[0].RD; got != "192.0.2.17:9" {
+		t.Fatalf("RD = %q", got)
+	}
+	if _, err := Parse([]byte(strings.Replace(conf, "192.0.2.17:9", "nope", 1))); err == nil {
+		t.Fatal("rd nope accepted")
+	}
+	if _, err := Parse([]byte("router bgp 65000\n address-family ipv4 unicast\n  rd 65000:1\n")); err == nil {
+		t.Fatal("rd outside l2vpn evpn accepted")
+	}
+}

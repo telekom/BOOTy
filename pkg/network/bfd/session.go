@@ -13,6 +13,12 @@ type Timers struct {
 	DetectMult    uint8
 }
 
+// requiredMinEchoRx is the Required Min Echo RX Interval that FRR bfdd
+// advertises by default (bfd.h BFD_DEF_REQ_MIN_ECHO_RX), also with echo
+// mode off. A peer's echo packets are addressed to the peer itself, so the
+// forwarding plane returns them; bfdd does not answer them either.
+const requiredMinEchoRx = 50 * time.Millisecond
+
 // slowTx is the transmit interval while the session is not Up (RFC 5880
 // 6.8.3: at least one second; FRR bfdd uses one second).
 const slowTx = time.Second
@@ -161,13 +167,14 @@ func (s *Session) NeedFinal() bool { return s.sendFinal }
 // without Poll (RFC 5880 6.5).
 func (s *Session) Packet() Packet {
 	p := Packet{
-		Diag:              s.diag,
-		State:             s.state,
-		DetectMult:        s.timers.DetectMult,
-		MyDiscriminator:   s.localDiscr,
-		YourDiscriminator: s.remoteDiscr,
-		DesiredMinTxUS:    toUS(s.desiredTx),
-		RequiredMinRxUS:   toUS(s.timers.RequiredMinRx),
+		Diag:                s.diag,
+		State:               s.state,
+		DetectMult:          s.timers.DetectMult,
+		MyDiscriminator:     s.localDiscr,
+		YourDiscriminator:   s.remoteDiscr,
+		DesiredMinTxUS:      toUS(s.desiredTx),
+		RequiredMinRxUS:     toUS(s.timers.RequiredMinRx),
+		RequiredMinEchoRxUS: toUS(requiredMinEchoRx),
 	}
 	if s.sendFinal {
 		p.Final = true

@@ -127,7 +127,7 @@ func (o *OverlayTier) advertiseType5Networks(ctx context.Context) error {
 			o.log.Warn("network is not in the local RIB, not advertised (import check)", "prefix", prefix)
 			continue
 		}
-		rd, err := buildRouteDistinguisher(o.cfg.ASN, vni)
+		rd, err := o.routeDistinguisher(o.cfg.RD)
 		if err != nil {
 			return fmt.Errorf("build route distinguisher: %w", err)
 		}
