@@ -35,7 +35,7 @@ func prodtplPathMetrics(v any) []float64 {
 }
 
 // prodtplServerRDs returns, per server underlay address, the RDs of its
-// EVPN routes at dcgw01 and the MEDs of their Type-5 paths.
+// EVPN routes at dcgw01 (native-vrf has no RR sessions) and the MEDs of their Type-5 paths.
 func prodtplServerRDs(ctx context.Context) (rds map[string][]string, meds map[string][]float64, err error) {
 	out, err := prodtplExec(ctx, prodtplDCGW1, "vtysh", "-c", "show bgp l2vpn evpn json")
 	if err != nil {
@@ -52,7 +52,7 @@ func prodtplServerRDs(ctx context.Context) (rds map[string][]string, meds map[st
 		if !ok || !found {
 			continue
 		}
-		for _, node := range append(prodtplServers, prodtplNativeVRFNode) {
+		for _, node := range prodtplServers {
 			if ip != node.underlay {
 				continue
 			}
@@ -79,7 +79,7 @@ func TestProdTplRDAndMED(t *testing.T) {
 	for {
 		var err error
 		rds, meds, err = prodtplServerRDs(ctx)
-		if err == nil && len(rds) == len(prodtplServers)+1 {
+		if err == nil && len(rds) == len(prodtplServers) {
 			break
 		}
 		select {
