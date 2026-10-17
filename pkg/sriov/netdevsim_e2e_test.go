@@ -5,6 +5,7 @@ package sriov
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -44,7 +45,20 @@ func newNetdevsim(t *testing.T, id, ports int) *netdevsim {
 		}
 	})
 	n.waitPorts(t, ports)
+	settleUdev(t)
 	return n
+}
+
+// settleUdev waits until udev has handled the new netdevs, so it does not
+// rename a port while a test reads it. Hosts without udev skip this.
+func settleUdev(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("udevadm"); err != nil {
+		return
+	}
+	if out, err := exec.CommandContext(t.Context(), "udevadm", "settle", "--timeout=10").CombinedOutput(); err != nil {
+		t.Logf("udevadm settle: %v: %s", err, out)
+	}
 }
 
 // waitPorts waits until the device has want port netdevs (udev may rename
