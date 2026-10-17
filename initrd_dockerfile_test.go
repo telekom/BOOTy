@@ -240,7 +240,7 @@ func TestSlimDockerfileIncludesResizeAndRepairTools(t *testing.T) {
 		t.Fatalf("cannot read initrd.Dockerfile: %v", err)
 	}
 	text := string(data)
-	start := strings.Index(text, "FROM debian:bookworm-slim AS slim-builder")
+	start := strings.Index(text, "FROM debian:trixie-slim AS slim-builder")
 	if start < 0 {
 		t.Fatal("cannot find slim-builder stage")
 	}
@@ -474,6 +474,25 @@ func TestDockerfileFlavorsShipEFIBootMgr(t *testing.T) {
 		}
 		if !strings.Contains(string(data[m[0]:end]), "COPY --from=tools /usr/bin/efibootmgr bin/efibootmgr") {
 			t.Errorf("stage %s does not ship efibootmgr", name)
+		}
+	}
+}
+
+// TestDockerfilePrunesUnusedLibsBeforePacking: the builders copy the library
+// sets of every tool, so each flavor must prune the libraries of the tools it
+// does not ship, and must do so after the last COPY and before cpio runs.
+func TestDockerfilePrunesUnusedLibsBeforePacking(t *testing.T) {
+	data, err := os.ReadFile("initrd.Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stage := range []string{"busybox", "slim-builder", "gobgp-builder"} {
+		block := dockerfileStageBlock(t, string(data), stage)
+		prune := strings.Index(block, "RUN prune-initramfs-libs.sh .")
+		pack := strings.Index(block, "cpio --null")
+		lastCopy := strings.LastIndex(block, "\nCOPY --from=")
+		if prune < 0 || pack < 0 || prune > pack || lastCopy > prune {
+			t.Errorf("stage %s must run prune-initramfs-libs.sh after its last COPY --from and before cpio", stage)
 		}
 	}
 }

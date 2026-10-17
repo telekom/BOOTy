@@ -15,6 +15,7 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
+	"github.com/telekom/BOOTy/pkg/oob"
 )
 
 // Deprovision runs the deprovisioning pipeline.
@@ -31,12 +32,18 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 	o.log.Info("starting deprovisioning", "mode", mode)
 
 	steps := o.deprovisionSteps(mode)
+	defer o.flushTelemetry(context.Background())
+	tracker := o.collector.Steps()
 
 	for i, step := range steps {
 		o.log.Info("deprovisioning step", "step", step.Name, "index", i+1, "total", len(steps))
-		if err := step.Fn(ctx); err != nil {
-			msg := fmt.Sprintf("step %s failed: %v", step.Name, err)
+		tracker.StartStep(step.Name)
+		err := WithCode(step.Name, step.Fn(ctx))
+		tracker.EndStep(step.Name, err)
+		if err != nil {
+			msg := stepFailureMessage(step.Name, err)
 			o.log.Error("deprovisioning step failed", "step", step.Name, "error", err)
+			oob.Fail(step.Name, CodeOf(err))
 			DumpDebugState(step.Name)
 			if reportErr := o.provider.ReportStatus(ctx, config.StatusError, msg); reportErr != nil {
 				o.log.Error("failed to report error status", "error", reportErr)
@@ -44,6 +51,7 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 			return fmt.Errorf("deprovision step %s: %w", step.Name, err)
 		}
 	}
+	oob.Done()
 	return nil
 }
 
@@ -293,13 +301,35 @@ func renameGRUBConfig(cfg, bak string) (bool, error) {
 }
 
 func (o *Orchestrator) reportDeprovisionSuccess(ctx context.Context) error {
-	return o.reportTerminalSuccess(ctx, "deprovisioning", "deprovisioning complete"+NotWipedNote(o.skippedDisks))
+	return o.reportTerminalSuccess(ctx, "deprovisioning", "deprovisioning complete"+NotWipedNote(o.skippedDisks)+o.eraseFallbackNote())
 }
 
 // SkippedDisks returns the disks in use that the wipe of all disks of the
 // last run skipped.
 func (o *Orchestrator) SkippedDisks() []string {
 	return slices.Clone(o.skippedDisks)
+}
+
+// SecureEraseFallbacks returns the disks of the last run that got the plain
+// wipe instead of the secure erase (SECURE_ERASE_FALLBACK=wipe).
+func (o *Orchestrator) SecureEraseFallbacks() []string {
+	if o.disk == nil {
+		return nil
+	}
+	return o.disk.SecureEraseFallbacks()
+}
+
+func (o *Orchestrator) eraseFallbackNote() string {
+	return EraseFallbackNote(o.SecureEraseFallbacks())
+}
+
+// EraseFallbackNote is the status and ACK suffix that names the disks that
+// got the plain wipe instead of the secure erase, or "" when there are none.
+func EraseFallbackNote(disks []string) string {
+	if len(disks) == 0 {
+		return ""
+	}
+	return "; secure erase not done, wiped instead (SECURE_ERASE_FALLBACK=wipe): " + strings.Join(disks, ", ")
 }
 
 // NotWipedNote is the status and ACK suffix that names skipped disks, or

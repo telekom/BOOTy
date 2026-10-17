@@ -31,6 +31,20 @@ behaviour.
 
 ### Behaviour changes in all modes
 
+- The `ERROR_URL` body of a failed provision or deprovision step now carries a
+  stable failure code: `step <name> failed [BOOTY-<AREA>-<NNN>]: <error>`.
+  [docs/failure-codes.md](docs/failure-codes.md) lists the codes (#706).
+- The ramdisk is built from Debian 13 trixie instead of 12 bookworm and runs
+  the Debian-signed Linux 6.12 LTS kernel instead of 6.1. The default and
+  gobgp initramfs are about 6 MB smaller, slim about 3.4 MB larger (newer
+  kernel modules and the added NIC drivers), the kernel about 4 MB larger. The opt-in
+  `KERNEL_SUITE=trixie-backports` build argument selects Linux 7.x; do not use
+  it with RAID or `DISK_MIRRORING_MODE`, because target OS kernels up to 6.18
+  cannot assemble md arrays created on 6.19 or later (#701).
+- The default and gobgp initramfs ship `sg_sanitize` and `sg_format`
+  (sg3-utils) and all flavors the `sg` module, for the SAS secure erase (#701).
+- The initramfs ships the VF drivers `igbvf` and `ixgbevf` and the NIC drivers
+  `qede`, `cxgb4`, `sfc` and `ionic` (#701).
 - Provisioning and hard deprovision zero the superblock of every
   `linux_raid_member` (whole disks and partitions) on the disks they wipe,
   after `stop-raid` stopped the arrays: provisioning on the target and mirror
@@ -161,6 +175,15 @@ behaviour.
   firmware refuses the new entry. Deprovisioning removes the entries before it
   wipes a disk. In a container BOOTy skips the EFI steps. `MODE=decommission`
   stays best effort. The slim flavor now ships `efibootmgr` (#669).
+- `SECURE_ERASE=true` (and the YAML `deprovision.secureErase`) no longer
+  falls back to a signature wipe on its own. A failed erase, a security-frozen
+  or unsupported drive, a disk without an erase method and a missing erase tool
+  fail the run with the reason. The new `SECURE_ERASE_FALLBACK=wipe` allows the
+  wipe, logs it at `WARN` and names the disk in the success status. The method
+  follows the media type: `nvme format` for NVMe, `hdparm` only for ATA disks
+  (sysfs vendor `ATA`), `sg_sanitize` or `sg_format` for SAS disks, which took
+  the `hdparm` path before. The ATA frozen check no longer reads `not frozen`
+  as frozen. The plain wipe and `CAPRF_LEGACY_COMPAT` do not change (#704)
 - BOOTy sets the clock before the first request that checks a TLS
   certificate: from `NTP_SERVERS`, the DHCP option 42 servers or the `Date`
   header of the CAPRF connectivity target, whose certificate chain is checked
@@ -199,6 +222,19 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 ### Features
 
+- Out-of-band status: a fixed `BOOTY1 run=... phase=... code=... step=...
+  result=...` line on every active console at each phase change and at the
+  end of a run, also when the network setup fails (`OOB_STATUS`, default
+  `serial`). The network failure report to `ERROR_URL` carries its failure code.
+  A run that fails before a mode (vars file, network, token) now logs the
+  failure at `ERROR` and writes the status line also with
+  `FAILURE_ACTION=reboot` (#718).
+- `OOB_EFI_VAR=true` stores the end of a run in the `BootyLastResult` UEFI
+  variable when it changes, and the next run logs it (#718).
+- The `METRICS_URL` summary has step data: duration, status (done, failed or
+  skipped), retries, and the error and failure code of a failed step, for
+  provision and deprovision runs. A deprovision run now posts the summary too
+  (#706).
 - GoBGP mode applies the netplan device settings of the provision VXLAN device,
   the bridge and the NICs like systemd-networkd (MTU, MAC, learning, ARP proxy,
   hairpin, link-local, `accept-ra`), and `frr.conf` `[no] ip[v6] forwarding`.
@@ -322,6 +358,15 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   timeout (#627)
 - Machine-files symlinks are recreated, never followed (#629)
 - `SKIP_TLS_VERIFY` never applies to `TOKEN_URL` or the crash upload (#589, #650)
+- `pkg/tpm` attestation (library only; provisioning does not use it yet): the
+  AK is a restricted ECDSA P-256 signing key of the endorsement hierarchy,
+  `MakeCredential` and `ActivateCredential` bind it to the EK, and
+  `VerifyQuote` checks a quote against a trusted AK, the nonce and the signed
+  PCR digest. `VerifyQuoteSignature`, which used the key carried in the
+  quote, and the `PubKeyX`, `PubKeyY` and `PCRDigest` quote fields are
+  removed. BOOTy PCR events move from PCR 8, 9, 10, 14 and 15 (GRUB, IMA,
+  shim, systemd) to PCR 23 (`PCRBooty`); the cryptenroll proposal no longer
+  binds PCR 14 (#707)
 
 ### Fixes
 

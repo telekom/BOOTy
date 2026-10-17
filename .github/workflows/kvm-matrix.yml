@@ -27,6 +27,8 @@ on:
       - "pkg/image/**"
       - "pkg/network/**"
       - "pkg/ux/**"
+      - "pkg/oob/**"
+      - "oob_status.go"
       - "pkg/timesync/**"
       - "go.mod"
       - "go.sum"
@@ -60,6 +62,8 @@ on:
       - "pkg/image/**"
       - "pkg/network/**"
       - "pkg/ux/**"
+      - "pkg/oob/**"
+      - "oob_status.go"
       - "pkg/timesync/**"
       - "go.mod"
       - "go.sum"
@@ -219,6 +223,14 @@ jobs:
             test_regex: "^TestUEFIEFIBootEntry"
             privileged: true
             setup: ""
+          # Forced network failure under OVMF: the BOOTY1 console line and the
+          # BootyLastResult variable, read again after a reboot (NVRAM persists).
+          - scenario: oob-status
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestOOBStatus"
+            privileged: true
+            setup: ""
           - scenario: production-templates
             qemu_extra: ""
             test_tag: e2e
@@ -347,7 +359,7 @@ jobs:
           sudo apt-get "${apt_opts[@]}" update
           # Keep the runner kernel (the /boot/vmlinuz-*-azure image sorts first).
           # The "Prepare kernel" step downloads a kernel package if /boot has none.
-          sudo DEBIAN_FRONTEND=noninteractive apt-get "${apt_opts[@]}" install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools cpio zstd busybox-static xorriso isolinux syslinux-common fdisk util-linux e2fsprogs dosfstools parted mdadm lvm2 gdisk cloud-guest-utils efibootmgr
+          sudo DEBIAN_FRONTEND=noninteractive apt-get "${apt_opts[@]}" install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools cpio zstd busybox-static xorriso isolinux syslinux-common fdisk util-linux e2fsprogs dosfstools parted mdadm lvm2 gdisk cloud-guest-utils efibootmgr nvme-cli hdparm
 
       - name: Load KVM network modules
         run: |
