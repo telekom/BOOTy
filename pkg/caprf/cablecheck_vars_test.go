@@ -13,6 +13,9 @@ func TestCableCheckVars(t *testing.T) {
 	if cfg.Network.LLDP.Profile != "bm4x-cablecheck" || cfg.Network.LLDP.EmitAll == nil || *cfg.Network.LLDP.EmitAll {
 		t.Fatalf("lldp = %+v", cfg.Network.LLDP)
 	}
+	if cfg, err := ParseVars(strings.NewReader("NIC_FW_LLDP=keep\n")); err != nil || cfg.Network.NICFirmwareLLDP != "keep" {
+		t.Fatalf("NIC_FW_LLDP: %+v, %v", cfg.Network, err)
+	}
 	if _, err := ParseVars(strings.NewReader("LLDP_EMIT_ALL=maybe\n")); err == nil {
 		t.Fatal("LLDP_EMIT_ALL=maybe accepted")
 	}
