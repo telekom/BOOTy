@@ -252,6 +252,21 @@ Use Option C only for Talos if the image write path cannot embed the config
 - Should the support matrix live in `docs/` as a generated table from the
   profile code?
 
+## systemd-boot
+
+- The matrix column "Bootloader" maps to `BOOTLOADER=auto|grub|systemd-boot|uki`
+  from [proposal-systemd-boot.md](proposal-systemd-boot.md). Families with systemd-boot today or as an option: NixOS,
+  Debian, Ubuntu, Fedora (optional), Talos (UKI, verify). RHEL-likes and
+  Flatcar use GRUB.
+- The BLS parser of this proposal is shared with systemd-boot Type #1
+  entries. UKI targets need the UKI extraction or a reboot handoff.
+
+## Flatcar
+
+The Flatcar row of the matrix is detailed in [proposal-flatcar.md](proposal-flatcar.md): real image with GPG
+verification, Ignition on the OEM partition, gptprio A/B owned by Flatcar,
+and reboot handoff. BOOTy A/B mode is not used for Flatcar.
+
 ## Related proposals
 
 - [proposal-bootloaders.md](proposal-bootloaders.md)
@@ -260,3 +275,5 @@ Use Option C only for Talos if the image write path cannot embed the config
 - [proposal-oci-advanced.md](proposal-oci-advanced.md)
 - [proposal-arm64-support.md](proposal-arm64-support.md)
 - [proposal-talos.md](proposal-talos.md)
+- [proposal-systemd-boot.md](proposal-systemd-boot.md)
+- [proposal-flatcar.md](proposal-flatcar.md)

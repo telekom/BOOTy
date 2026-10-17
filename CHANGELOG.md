@@ -492,10 +492,10 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   `docs/caprf-legacy-migration.md`, `docs/networking.md`, `docs/disk.md` (#633)
 - README sections link to the canonical docs (#647)
 - Design for full FRR and netplan parity in GoBGP mode (#630)
-- Design proposals for the provisioning roadmap: OS targets, Windows, ESXi,
-  Talos, sysext and confext, measured boot for A/B, CAPI, BMC boot, UEFI,
-  firmware, testing, image delivery, disk lifecycle, rollback, tracing and
-  multi-arch, with a prioritized index (#700)
+- Design proposals for the provisioning roadmap (40 topics, among them OS
+  targets, systemd-boot, Flatcar, Talos, measured boot for A/B, CAPI, BMC
+  boot and out-of-band diagnostics, metrics, logs, SR-IOV and firmware), with
+  a prioritized index and a "highest impact now" ranking (#700)
 
 ### Dependencies
 

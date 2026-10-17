@@ -197,8 +197,16 @@ EVPN networking. BOOTy skips its Linux-root steps for the `talos` profile from
 - Do we need EVPN in Talos itself, or only during provisioning? Talos does not
   run FRR by default.
 
+## systemd-boot
+
+- Newer Talos releases boot UKIs with systemd-boot on UEFI and keep GRUB for
+  BIOS and upgraded older installs (verify per release). Talos owns its boot
+  entries; BOOTy only writes the image and the config volume, then reboots.
+  BOOTy must not apply `BOOTLOADER` settings from [proposal-systemd-boot.md](proposal-systemd-boot.md) to Talos.
+
 ## Related proposals
 
 - [proposal-os-targets.md](proposal-os-targets.md)
 - [proposal-capi-integration.md](proposal-capi-integration.md)
 - [proposal-measured-boot-ab.md](proposal-measured-boot-ab.md)
+- [proposal-systemd-boot.md](proposal-systemd-boot.md)

@@ -213,9 +213,17 @@ Keep the CLI path as a fallback during migration.
 - Is a signed erase report required for audits?
 - Is burn-in wanted in this tool, or in a vendor acceptance process?
 
+## Follow-up proposals
+
+- The burn-in mode is expanded in [proposal-burn-in.md](proposal-burn-in.md).
+- The erase report becomes a signed decommission certificate in
+  [proposal-certified-decommission.md](proposal-certified-decommission.md).
+
 ## Related proposals
 
 - [disk.md](disk.md)
 - [proposal-health-checks.md](proposal-health-checks.md)
 - [proposal-nvme-namespaces.md](proposal-nvme-namespaces.md)
 - [proposal-go-binary-replacement.md](proposal-go-binary-replacement.md)
+- [proposal-burn-in.md](proposal-burn-in.md)
+- [proposal-certified-decommission.md](proposal-certified-decommission.md)

@@ -114,8 +114,16 @@ CAPRF does not use `RedfishHost.spec.architecture` to pick artifacts.
   or device tree)?
 - Do arm64 CI runners with KVM exist?
 
+## systemd-boot
+
+- arm64 uses `systemd-bootaa64.efi`, `BOOTAA64.EFI` and arm64 UKIs; the
+  root partition type GUID differs per architecture in the Discoverable
+  Partitions Specification. The loader name helper must cover systemd-boot
+  too (see [proposal-systemd-boot.md](proposal-systemd-boot.md)).
+
 ## Related proposals
 
 - [proposal-arm64-support.md](proposal-arm64-support.md)
 - [proposal-os-targets.md](proposal-os-targets.md)
 - [proposal-oci-advanced.md](proposal-oci-advanced.md)
+- [proposal-systemd-boot.md](proposal-systemd-boot.md)
