@@ -30,6 +30,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/inventory"
 	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/BOOTy/pkg/network/lldp"
 	networkpersist "github.com/telekom/BOOTy/pkg/network/persist"
 	"github.com/telekom/BOOTy/pkg/rescue"
 	"github.com/telekom/BOOTy/pkg/secureboot"
@@ -403,6 +404,7 @@ func (o *Orchestrator) collectInventory(ctx context.Context) error {
 		return nil // non-fatal
 	}
 
+	inv.LLDPNeighbors = lldp.Neighbors()
 	data, err := json.Marshal(inv)
 	if err != nil {
 		o.log.Warn("Failed to marshal hardware inventory", "error", err)
@@ -413,7 +415,8 @@ func (o *Orchestrator) collectInventory(ctx context.Context) error {
 		"cpus", len(inv.CPUs),
 		"disks", len(inv.Disks),
 		"nics", len(inv.NICs),
-		"pci_devices", len(inv.PCIDevices))
+		"pci_devices", len(inv.PCIDevices),
+		"lldp_neighbors", len(inv.LLDPNeighbors))
 
 	if err := o.provider.ReportInventory(ctx, data); err != nil {
 		o.log.Warn("Failed to report hardware inventory", "error", err)
