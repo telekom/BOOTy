@@ -657,6 +657,30 @@ RUN xorriso -as mkisofs \
 FROM scratch AS gobgp-iso
 COPY --from=gobgp-iso-builder /booty-gobgp.iso .
 
+# ── Cable check ISO target ────────────────────────────────────────────────
+# The GoBGP ISO with hack/check-iso/vars as /deploy/vars, in an
+# uncompressed cpio archive before the zstd initramfs (like early
+# microcode: the kernel does not unpack data after a zstd archive). One
+# generic ISO for every host: MODE=check, links mode, bm4x LLDP identity
+# and CHECK_HOLD=until-poweroff.
+FROM gobgp-builder AS check-iso-vars
+COPY hack/check-iso/vars /deploy-root/deploy/vars
+RUN cd /deploy-root && find . | cpio -o -H newc > /deploy.cpio
+
+FROM gobgp-iso-builder AS check-iso-builder
+COPY --from=check-iso-vars /deploy.cpio /deploy.cpio
+RUN cat /deploy.cpio /iso/boot/initrd.img > /initrd.img && mv /initrd.img /iso/boot/initrd.img \
+    && xorriso -as mkisofs \
+    -o /booty-check.iso \
+    -b isolinux/isolinux.bin \
+    -c isolinux/boot.cat \
+    -no-emul-boot -boot-load-size 4 -boot-info-table \
+    -isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin \
+    /iso
+
+FROM scratch AS check-iso
+COPY --from=check-iso-builder /booty-check.iso .
+
 # ── Micro target: pure-Go BOOTy only, no external binaries ────────────────
 FROM golang:1.27.1-bookworm AS micro-dev
 ARG BOOTY_VERSION=dev

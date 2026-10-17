@@ -14,12 +14,13 @@ topology:
     leaf01:
       kind: linux
       image: booty-lldpd-test:latest
+      # lldpd is the main process: started from an exec it stalled now and
+      # then. It picks up eth1 and eth2 when containerlab adds them; the
+      # system name is the container hostname, leaf01.
+      cmd: lldpd -d -I eth1,eth2
       exec:
         - ip link set eth1 up
         - ip link set eth2 up
-        # Foreground with debug output into the container log.
-        - sh -c 'lldpd -d -I eth1,eth2 > /proc/1/fd/1 2>&1 &'
-        - lldpcli configure system hostname leaf01
 
     booty:
       kind: linux
@@ -28,7 +29,8 @@ topology:
       # The test starts BOOTy once the leaf runs lldpd and the links exist.
       cmd: sleep infinity
       binds:
-        - data/vars-cablecheck:/deploy/vars:ro
+        # The vars of the cable check ISO (make check-iso).
+        - ../../../hack/check-iso/vars:/deploy/vars:ro
       env:
         BOOTY_NO_REBOOT: "1"
 
