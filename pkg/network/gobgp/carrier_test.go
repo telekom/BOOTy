@@ -5,11 +5,13 @@ package gobgp
 import (
 	"context"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	apipb "github.com/osrg/gobgp/v4/api"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"
@@ -184,8 +186,118 @@ func TestCarrierWatchRARepeat(t *testing.T) {
 	}
 	w = newWatch()
 	w.handle("ens1f0np0", true)
-	w.stopRATimers()
+	w.stopTimers()
 	if n := count(300 * time.Millisecond); n != 1 {
 		t.Fatalf("RAs after carrier up and stop = %d, want 1", n)
+	}
+}
+
+// The start waits startDelay after the carrier came back; a carrier
+// loss or the end of the watch in that time cancels it.
+func TestCarrierWatchDelayedStart(t *testing.T) {
+	started := make(chan string, 4)
+	newWatch := func() *carrierWatch {
+		return &carrierWatch{
+			peers:      map[string]string{"ens1f0np0": "fe80::1%ens1f0np0"},
+			down:       map[string]bool{"ens1f0np0": true},
+			disable:    func(context.Context, string) error { return nil },
+			enable:     func(_ context.Context, addr string) error { started <- addr; return nil },
+			announce:   func(string) {},
+			startDelay: 100 * time.Millisecond,
+			log:        slog.Default(),
+		}
+	}
+	starts := func(within time.Duration) int {
+		n, deadline := 0, time.After(within)
+		for {
+			select {
+			case <-started:
+				n++
+			case <-deadline:
+				return n
+			}
+		}
+	}
+	w := newWatch()
+	w.handle("ens1f0np0", true)
+	if n := starts(50 * time.Millisecond); n != 0 {
+		t.Fatalf("starts before the delay = %d, want 0", n)
+	}
+	if n := starts(150 * time.Millisecond); n != 1 {
+		t.Fatalf("starts after the delay = %d, want 1", n)
+	}
+	w = newWatch()
+	w.handle("ens1f0np0", true)
+	w.handle("ens1f0np0", false)
+	if n := starts(250 * time.Millisecond); n != 0 {
+		t.Fatalf("starts after a new carrier loss = %d, want 0", n)
+	}
+	w = newWatch()
+	w.handle("ens1f0np0", true)
+	w.stopTimers()
+	if n := starts(250 * time.Millisecond); n != 0 {
+		t.Fatalf("starts after the watch stopped = %d, want 0", n)
+	}
+}
+
+// The carrier coming back starts the session as a new GoBGP peer 1 s
+// later. It connects 1.5 to 2 s after its start, not after the 5 s Idle
+// hold of an enabled peer in GoBGP v4, and after the leaf, which
+// connects about 2 s after the link. A plain listener stands in for the
+// leaf, which on a real carrier loss never got the NOTIFICATION.
+func TestCarrierWatchStartsNewPeer(t *testing.T) {
+	ctx := context.Background()
+	var lc net.ListenConfig
+	l, err := lc.Listen(ctx, "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	accepted := make(chan time.Time, 64)
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			accepted <- time.Now()
+			_ = c.Close()
+		}
+	}()
+	booty := startServer(t, 4210000017, "192.0.2.17", -1)
+	const addr = "127.0.0.1"
+	peer := &apipb.Peer{
+		Conf:      &apipb.PeerConf{NeighborAddress: addr, PeerAsn: 65500},
+		Transport: &apipb.Transport{RemotePort: uint32(l.Addr().(*net.TCPAddr).Port)}, //nolint:gosec // test port
+		Timers:    bgpTimers(&Config{ConnectRetry: 5, KeepaliveInterval: 3, HoldTime: 9}),
+	}
+	if err := booty.AddPeer(ctx, &apipb.AddPeerRequest{Peer: peer}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-accepted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no connection attempt of the new peer")
+	}
+	w := newCarrierWatch(booty, map[string]string{"eth1": addr}, map[string]*apipb.Peer{addr: peer}, slog.Default())
+	w.announce = func(string) {}
+	t.Cleanup(w.stopTimers)
+	w.handle("eth1", false)
+	time.Sleep(time.Second)
+	start := time.Now()
+	w.handle("eth1", true)
+	for {
+		select {
+		case at := <-accepted:
+			if at.Before(start) {
+				continue
+			}
+			if d := at.Sub(start); d < 2400*time.Millisecond || d > 3500*time.Millisecond {
+				t.Fatalf("first connection %s after the carrier, want 2.5 to 3 s", d)
+			}
+			return
+		case <-time.After(5 * time.Second):
+			t.Fatal("no connection within 5 s after the carrier came back")
+		}
 	}
 }

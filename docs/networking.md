@@ -194,12 +194,14 @@ same resolution:
   10.3, the session is multihop (RFC 5883) only for an iBGP peer that is
   not on a connected network of its VRF. When BFD goes from Up to Down,
   BOOTy resets the BGP session and connects again after 1 s, like the FRR
-  start timer. Known deviation: the peer gets Cease/Administrative Reset
+  start timer. GoBGP's own connect follows 1.5 to 2 s after that; in the
+  lab the ECMP route is back 4.3 to 4.5 s after the leaf sends again,
+  where FRR, which also connects at BFD Up, takes 2.5 s. Known deviation: the peer gets Cease/Administrative Reset
   (subcode 4), not Cease/BFD Down (subcode 10, RFC 9384), because the
   GoBGP API sends no other subcode. Only the peer log shows it. A
   second deviation: when the peer ends the session (for example `clear
   bgp` on the leaf), GoBGP waits a fixed 5 s in Idle, where FRR waits 1 s,
-  and refuses connections in that time. BOOTy then connects by itself 1
+  and refuses connections in that time. BOOTy then connects by itself 1.5
   to 2 s later; a peer that must open the session itself retries after
   its connect timer.
 - `bgp bestpath as-path multipath-relax` (native `network.bgp.multipathRelax`,
@@ -209,7 +211,12 @@ same resolution:
   `network.bgp.fastExternalFailover`, `BGP_FAST_EXTERNAL_FAILOVER`; on by
   default like FRR) stops an unnumbered session as soon as its NIC loses
   carrier. Native sessions without the setting keep a
-  `no bgp fast-external-failover` of `frr.conf` in the same VRF.
+  `no bgp fast-external-failover` of `frr.conf` in the same VRF. When the
+  carrier returns, BOOTy sends a Router Advertisement and starts the
+  session 1 s later. GoBGP connects 1.5 to 2 s after the start, so the
+  leaf, which connects once its link-local address passed DAD and BFD is
+  up, connects first and the two connections do not collide. In the lab
+  the ECMP route is back 3.5 to 4 s after the link.
 
 GoBGP mode installs the learned IPv4 and IPv6 unicast routes like zebra:
 into the table of each session's VRF (the main table without a VRF), with

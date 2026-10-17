@@ -7,7 +7,7 @@ import (
 	"net/netip"
 	"time"
 
-	apipb "github.com/osrg/gobgp/v3/api"
+	apipb "github.com/osrg/gobgp/v4/api"
 	"github.com/vishvananda/netlink"
 
 	"github.com/telekom/BOOTy/pkg/network/bfd"
@@ -152,7 +152,8 @@ func bfdTimers(txMS, rxMS, mult uint32) bfd.Timers {
 // sends Cease/Administrative Reset, not Cease/BFD Down (RFC 9384), and
 // connects again after idleHoldAfterReset. FRR also starts a connect at
 // BFD Up; GoBGP has no API for that, its Active state connects within
-// 1 to 2 s by itself.
+// 1.5 to 2 s by itself (pkg/server/fsm.go:967, minConnectRetryInterval 2
+// with 0.75 to 1 jitter since GoBGP v4.0.0).
 func (u *UnderlayTier) bfdChanged(p *bfd.Peer, from, to bfd.State, diag bfd.Diag) {
 	if from != bfd.StateUp || to != bfd.StateDown {
 		return
