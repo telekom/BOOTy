@@ -234,6 +234,11 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   renders as `aa:bb:cc:dd:ee:ff`. BOOTy no longer reports its own frames as a
   neighbor. New key `LLDP_NEIGHBOR_WAIT` (YAML `check.lldpNeighborWait`): check
   mode waits for a neighbor on every NIC with carrier.
+- New diagnosis command for the rescue shell: `booty lldp neighbors` and
+  `booty lldp status` (`--json`) show the LLDP neighbors and what BOOTy sends,
+  from the live state of the running BOOTy (`/run/booty/lldp.json`), or with
+  a short capture when BOOTy is not running. The ramdisk no longer needs
+  `lldpcli` for LLDP diagnosis.
 - GoBGP mode applies the netplan device settings of the provision VXLAN device,
   the bridge and the NICs like systemd-networkd (MTU, MAC, learning, ARP proxy,
   hairpin, link-local, `accept-ra`), and `frr.conf` `[no] ip[v6] forwarding`.
