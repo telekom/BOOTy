@@ -175,17 +175,17 @@ behaviour is the current FRR with that file:
 
 | Requirement | BOOTy | Lab evidence (containerlab, against an FRR node with the same files) | kindmetal evidence (CAPRF e2e, real legacy ramdisk) | Status |
 |-------------|-------|----------------------------------------------------------------------|-----------------------------------------------------|--------|
-| Sessions, address families, local-as, VRF-bound route reflectors | GoBGP sessions from `frr.conf` | `TestProdTplLeafSessions`, `TestProdTplRRSessions`, `TestProdTplLocalASReplaceASPath` | Not yet: the CAPRF fixtures give the two ramdisks different files | Merged (#643), native keys Planned (#654) |
-| Timers and profile defaults | `frr defaults` profile and `timers` lines | session tests above | leaf `show bgp vrf all neighbors json` in the CAPRF fabric snapshot | Merged (#643) |
+| Sessions, address families, local-as, VRF-bound route reflectors | GoBGP sessions from `frr.conf` | `TestProdTplLeafSessions`, `TestProdTplRRSessions`, `TestProdTplLocalASReplaceASPath` | CAPRF production-shaped fixture (`test/e2e/evpn-bm4x`, CAPRF !292): both ramdisks get the same files from the bm4x templates; sessions to two leaves and two route reflectors, and `fabric-parity-diff` | Merged (#643), native keys Planned (#654) |
+| Timers and profile defaults | `frr defaults` profile and `timers` lines | session tests above | CAPRF !292: negotiated 30/90 at both leaves | Merged (#643) |
 | Routes, ECMP, next hops (RFC 5549) | FIB writer like zebra | `TestProdTplFIBRoutes`, `TestProdTplRFC5549Routes` | fabric snapshot (routes and routing tables) | Merged (#645), Planned (#681) |
 | EVPN route types (Type-5 only for an L3VNI, IPv6) | GoBGP Type-5 | `TestProdTplType5*` | `e2e-kindmetal-booty-evpn` Type-2/Type-3 absence checks | Merged (#582, #651) |
-| BFD | own RFC 5880 implementation | `TestProdTplBFDSessions`, `TestProdTplBFDFailover` | Not yet: the CAPRF fixture has no BFD | Planned (#655) |
-| Route-maps, route targets, local-as loop check | GoBGP policies | `TestProdTplRouteMap*`, `TestProdTplLocalASLoopCheck` | Not yet | Planned (#659, #668) |
+| BFD | own RFC 5880 implementation | `TestProdTplBFDSessions`, `TestProdTplBFDFailover` | CAPRF !292: single-hop BFD at both leaves (remote 150/150/3) and multihop BFD at both route reflectors | Planned (#655) |
+| Route-maps, route targets, local-as loop check | GoBGP policies | `TestProdTplRouteMap*`, `TestProdTplLocalASLoopCheck` | CAPRF !292 gives the template route-maps to both ramdisks; their effect shows only in `fabric-parity-diff` | Planned (#659, #668) |
 | VTEP, VXLAN and bridge devices, MTU, `accept-ra`, forwarding | netplan keys applied like networkd | `TestProdTplKernelDevices` | fabric snapshot (MTU, ARP/ND of the leaf port) | Planned (#668) |
 | LLDP sent on every fabric NIC | frames like networkd | `TestProdTplLLDP` | CAPRF `EVPN_EXPECT_LLDP` in both EVPN jobs: the leaf must receive an LLDP frame from every host (CAPRF !291) | Planned (#668) |
-| LLDP received | `pkg/network/lldp` can listen, but BOOTy does not start it | none | none: the kindmetal leaves send no LLDP frames | Not implemented |
+| LLDP received | `pkg/network/lldp` can listen, but BOOTy does not start it | none | none yet: the leaves of CAPRF !292 send LLDP frames on every host port, ready for a receive test | Not implemented |
 | Switch faults: link flap, BGP reset, leaf down and up | carrier watch, BFD, GoBGP reconnect | `TestProdTplUplinkCarrierLoss`, `TestProdTplBFDFailover`, `TestProdTplRRRestart` | CAPRF `EVPN_FABRIC_FAULTS` in both EVPN jobs (`bgp-reset`, `link-flap`, `leaf-down`) | Merged (#645) for carrier loss, Planned (#655, #668); kindmetal Planned (CAPRF !291) |
-| Both leaves of a host down one after the other | as above | one uplink at a time in the lab | Not yet: needs a dual-homed CAPRF fixture | Not implemented |
+| Both leaves of a host down one after the other | as above | one uplink at a time in the lab | CAPRF !292 `leaves-bounce`: leaf01 down and up, then leaf02; the other leaf keeps the host and dcgw01 keeps one next hop; ECMP over both leaves before | kindmetal Planned (CAPRF !292) |
 | Native configuration only (no netplan, no `frr.conf`) | vars and YAML keys for every value of the files | the vars-only server in every lab test | Not yet | Planned (#654 and later) |
 
 Known differences, found with the CAPRF fabric snapshots (legacy ramdisk FRR
@@ -200,7 +200,12 @@ Known differences, found with the CAPRF fabric snapshots (legacy ramdisk FRR
   Recheck with a release that contains the carrier watch (#645) and the
   connect retry option (#654).
 - The minimum route advertisement interval (GoBGP has none) and the LLDP
-  TLVs are not compared yet.
+  TLVs are compared by `fabric-parity-diff` in CAPRF !292.
+
+`fabric-parity-diff` accepts a difference only when an entry of the CAPRF
+`test/e2e/evpn-bm4x/parity-allowlist.yaml` covers that field and names the
+gap. The capability gaps above are in that list, marked open: each must be
+implemented in BOOTy or accepted here.
 
 ### Common pipeline
 
