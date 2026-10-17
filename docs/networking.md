@@ -803,7 +803,9 @@ level has the TLVs of the one before. The identity profile is separate:
 
 Without an IEEE OUI that Telekom owns, BOOTy sends no organizationally
 specific TLVs of its own; the extra host data goes into the system
-description. `full` sends the DMI serial number to the switch. BOOTy sends
+description. `full` sends the DMI serial number to the switch, which the
+check result and the inventory leave out; [cable
+check](cable-check.md#host-identity-what-goes-where) has both decisions. BOOTy sends
 the LLDP-MED TLVs without waiting for the switch to send LLDP-MED first,
 as lldpd does with `-M`. With every string at its limit, a frame has about
 1.2 KB (`TestFrameBudget`), below the 1500-byte LLDPDU limit.
