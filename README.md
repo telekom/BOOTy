@@ -175,11 +175,11 @@ The `initrd.Dockerfile` supports multiple build targets via `--target`:
 
 | Target | Size | Networking | Disk Tools | Use Case |
 |--------|------|-----------|------------|----------|
-| *(default)* | ~48 MB | FRR/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production bare-metal provisioning |
-| `gobgp` | ~43 MB | GoBGP/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production without FRR dependency |
+| *(default)* | ~47 MB | FRR/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production bare-metal provisioning |
+| `gobgp` | ~42 MB | GoBGP/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production without FRR dependency |
 | `iso` | ~61 MB | FRR/EVPN + DHCP | Full | Bootable ISO for Redfish virtual media |
-| `gobgp-iso` | ~57 MB | GoBGP/EVPN + DHCP | Full | Bootable GoBGP ISO for Redfish virtual media |
-| `slim` | ~37 MB | DHCP only | Provisioning basics, no LVM/FRR | Lightweight provisioning without BGP |
+| `gobgp-iso` | ~56 MB | GoBGP/EVPN + DHCP | Full | Bootable GoBGP ISO for Redfish virtual media |
+| `slim` | ~30 MB | DHCP only | Provisioning basics, no LVM/FRR | Lightweight provisioning without BGP |
 | `micro` | ~10 MB | None (pure Go) | None | Minimal agent, custom network stack |
 | `kernel-image` | ~12 MB | n/a | n/a | The Debian `vmlinuz` that matches the shipped modules, for QEMU tests |
 

@@ -35,8 +35,9 @@ behaviour.
   stable failure code: `step <name> failed [BOOTY-<AREA>-<NNN>]: <error>`.
   [docs/failure-codes.md](docs/failure-codes.md) lists the codes (#706).
 - The ramdisk is built from Debian 13 trixie instead of 12 bookworm and runs
-  the Debian-signed Linux 6.12 LTS kernel instead of 6.1. The initramfs is
-  about 7.5 MB smaller, the kernel about 4 MB larger. The opt-in
+  the Debian-signed Linux 6.12 LTS kernel instead of 6.1. The default and
+  gobgp initramfs are about 6 MB smaller, slim about 3.4 MB larger (newer
+  kernel modules and the added NIC drivers), the kernel about 4 MB larger. The opt-in
   `KERNEL_SUITE=trixie-backports` build argument selects Linux 7.x; do not use
   it with RAID or `DISK_MIRRORING_MODE`, because target OS kernels up to 6.18
   cannot assemble md arrays created on 6.19 or later (#701).
