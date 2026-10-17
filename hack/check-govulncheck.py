@@ -19,7 +19,7 @@ from typing import Any
 GOVULNCHECK = [
     "go",
     "run",
-    "golang.org/x/vuln/cmd/govulncheck@v1.4.0",
+    "golang.org/x/vuln/cmd/govulncheck@v1.8.0",
     "-format=json",
     "./...",
 ]
