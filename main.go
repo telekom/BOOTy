@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -641,14 +642,17 @@ func runCAPRF(ctx context.Context) {
 			// A standby command ran with its own config (payload).
 			cfg = provisionErr.Cfg
 		}
+		// Stop BGP and BFD cleanly before the kexec or the reboot (the link
+		// stays up during both, unlike a power off).
+		stopNetwork := stopNetworkOnce(ctx, netMode)
 		kexeced := tryKexec(cfg, provisionErr.FirmwareChanged, func() (disk.ReleaseReport, error) {
 			return diskMgr.UnmountOrRemountReadOnly(installedRootPath)
-		})
+		}, stopNetwork)
 		if !kexeced && provision.ShouldKeepTargetRootMountedForKexec(cfg, provisionErr.FirmwareChanged) {
 			cleanupFailedKexecTarget(diskMgr)
 		}
 		time.Sleep(2 * time.Second)
-		handleProvisionHandoff(ctx, cfg, client, provisionErr, kexeced, provisionHandoff)
+		handleProvisionHandoff(ctx, cfg, client, provisionErr, kexeced, withNetworkStopBeforeReboot(provisionHandoff, stopNetwork))
 		return
 	}
 
@@ -665,6 +669,47 @@ func runCAPRF(ctx context.Context) {
 	}
 	time.Sleep(2 * time.Second)
 	reboot()
+}
+
+// networkStopTimeout bounds the network teardown before a kexec or reboot;
+// tests shorten it.
+var networkStopTimeout = 5 * time.Second
+
+// stopNetworkOnce returns a function that tears the network mode down once
+// and waits at most networkStopTimeout. GoBGP sends a Cease NOTIFICATION to
+// every peer (StopBgp) and BFD sends AdminDown (bfd.Manager.Close), so the
+// switch drops the sessions at once instead of after the BFD detection time
+// or the BGP hold timer, and the next OS can peer without waiting.
+func stopNetworkOnce(ctx context.Context, netMode network.Mode) func() {
+	return sync.OnceFunc(func() {
+		if netMode == nil {
+			return
+		}
+		done := make(chan error, 1)
+		go func() { done <- netMode.Teardown(context.WithoutCancel(ctx)) }()
+		select {
+		case err := <-done:
+			if err != nil {
+				slog.Warn("network teardown before the handoff failed", "error", err)
+				return
+			}
+			slog.Info("network stopped before the handoff")
+		case <-time.After(networkStopTimeout):
+			slog.Warn("network teardown before the handoff did not finish, going on", "timeout", networkStopTimeout)
+		}
+	})
+}
+
+// withNetworkStopBeforeReboot returns ops whose reboot stops the network
+// first. A power off keeps it: the link goes down with the power, and a
+// failed power off can still be reported.
+func withNetworkStopBeforeReboot(ops provisionHandoffOps, stopNetwork func()) provisionHandoffOps {
+	reboot := ops.reboot
+	ops.reboot = func() error {
+		stopNetwork()
+		return reboot()
+	}
+	return ops
 }
 
 func handleProvisionHandoff(
@@ -1682,7 +1727,10 @@ func detectIPMI(netCfg *network.Config) {
 // After the kernel and initramfs are loaded, releaseTarget unmounts the
 // target root (busy block device mounts are remounted read-only), so the
 // installed OS does not start with filesystems that need journal recovery.
-func tryKexec(cfg *config.MachineConfig, firmwareChanged bool, releaseTarget func() (disk.ReleaseReport, error)) bool {
+//
+// stopNetwork runs after the load, right before the kexec: a failed load
+// keeps the network for the reboot fallback and its error report.
+func tryKexec(cfg *config.MachineConfig, firmwareChanged bool, releaseTarget func() (disk.ReleaseReport, error), stopNetwork func()) bool {
 	if cfg.KexecDisabled() {
 		slog.Info("kexec disabled by configuration, skipping", "successAction", cfg.SuccessAction)
 		return false
@@ -1727,6 +1775,7 @@ func tryKexec(cfg *config.MachineConfig, firmwareChanged bool, releaseTarget fun
 		return false
 	}
 	releaseKexecTarget(cfg, releaseTarget)
+	stopNetwork()
 	if err := doKexecExecute(); err != nil {
 		slog.Warn("kexec execute failed, falling back to reboot", "error", err)
 		return false
