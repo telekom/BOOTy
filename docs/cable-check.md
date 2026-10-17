@@ -43,6 +43,17 @@ checks the cabling from the host side, after `LLDP_NEIGHBOR_WAIT`:
 | `lldp-neighbor-present` | a NIC with carrier has no LLDP neighbor | warn |
 | `cabling-match` | a NIC is on another switch port than `CHECK_EXPECTED_CABLING` says, a NIC with a neighbor is not in it, or an expected NIC is missing (skipped without an expected cabling) | block |
 | `uplink-dual-homed` | all NICs with a neighbor reach the same switch (chassis ID) | warn |
+| `link-speed` | a NIC with carrier runs below `minSpeedMbps` or not at its expected `speedMbps` | warn |
+| `link-flaps` | a NIC lost carrier more than `maxFlaps` times (default 2) since the driver loaded (`carrier_down_count`) | warn |
+| `link-errors` | a NIC has more than `maxErrors` (default 0) receive and transmit errors since the driver loaded | warn |
+| `fec` | a NIC has uncorrectable FEC blocks, or runs 25G or faster without FEC | warn |
+| `pcie-link` | the PCIe link of a NIC runs below the speed or width that the device can (downtrained) | warn |
+
+BOOTy reads the link state over ethtool netlink (`LINKMODES`, `LINKSTATE`,
+`FEC` with statistics), the error counters from the netdev statistics and
+the carrier losses and the PCIe link from sysfs. Values that a driver does
+not report stay out of the document: virtio has no FEC, a veth no PCIe
+link. The counters are totals since the driver loaded, not rates.
 
 The switch port of a neighbor is its port ID when that is a name (subtype
 `ifname`, `interface-alias`, or a `local` ID that is not a number);
@@ -60,6 +71,11 @@ which makes the run fail (status `error`).
 | `lldpMissing` | `lldp-neighbor-present` |
 | `cablingMismatch` | `cabling-match` |
 | `dualHoming` | `uplink-dual-homed` |
+| `linkSpeed`, `minSpeedMbps` | `link-speed` |
+| `linkFlaps`, `maxFlaps` | `link-flaps` |
+| `linkErrors`, `maxErrors` | `link-errors` |
+| `fec` | `fec` |
+| `pcie` | `pcie-link` |
 
 Example: `CHECK_THRESHOLDS='{"lldpMissing":"block","dualHoming":"off"}'`.
 

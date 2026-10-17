@@ -19,7 +19,7 @@ func collect(nics []string) []Link {
 	neighbors := lldp.Neighbors()
 	links := make([]Link, 0, len(nics))
 	for _, nic := range nics {
-		l := Link{Ifname: nic, Driver: ethtool.Driver(nic)}
+		l := Link{Ifname: nic, Driver: ethtool.Driver(nic), State: linkState(nic), PCIe: pcie(nic)}
 		if ifi, err := net.InterfaceByName(nic); err == nil {
 			l.MAC = ifi.HardwareAddr.String()
 			l.Carrier = ifi.Flags&net.FlagRunning != 0

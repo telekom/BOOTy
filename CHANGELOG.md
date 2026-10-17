@@ -240,6 +240,9 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   result document goes to the log and the sinks of `CHECK_RESULT_SINKS`:
   `file`, `http` (`CHECK_RESULT_URL`), `caprf` and `bm4x-report` (the diff in
   the bm4x `ConnectionReport` form). YAML `check.*`.
+- The cabling profile also checks the links: speed and duplex, carrier losses,
+  error counters, FEC and its uncorrectable blocks (over ethtool netlink, no
+  `ethtool` binary), and PCIe downtraining.
 - GoBGP mode applies the netplan device settings of the provision VXLAN device,
   the bridge and the NICs like systemd-networkd (MTU, MAC, learning, ARP proxy,
   hairpin, link-local, `accept-ra`), and `frr.conf` `[no] ip[v6] forwarding`.
