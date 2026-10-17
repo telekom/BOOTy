@@ -2070,6 +2070,25 @@ func TestNetworkConfigFromMachineConfigBFD(t *testing.T) {
 	}
 }
 
+// The native device options reach the network config.
+func TestNetworkConfigFromMachineConfigDevices(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Network.Overlay = network.OverlayDevices{VXLANMTU: 9000, BridgeMTU: 8900, BridgeSTP: new(false), VXLANLinkLocal: new(false)}
+	cfg.Network.NoAcceptRA = "ens1f0np0, ens1f1np1"
+	cfg.Network.EmitLLDP = "ens1f0np0"
+	cfg.Network.IPForwarding, cfg.Network.IPv6Forwarding = new(false), new(true)
+	n := networkConfigFromMachineConfig(cfg)
+	if !reflect.DeepEqual(n.OverlayDevices, cfg.Network.Overlay) {
+		t.Errorf("OverlayDevices = %+v, want %+v", n.OverlayDevices, cfg.Network.Overlay)
+	}
+	if !slices.Equal(n.NoAcceptRA, []string{"ens1f0np0", "ens1f1np1"}) || !slices.Equal(n.EmitLLDP, []string{"ens1f0np0"}) {
+		t.Errorf("NoAcceptRA %v EmitLLDP %v", n.NoAcceptRA, n.EmitLLDP)
+	}
+	if n.IPForwarding == nil || *n.IPForwarding || n.IPv6Forwarding == nil || !*n.IPv6Forwarding {
+		t.Errorf("forwarding = %v %v, want false and true", n.IPForwarding, n.IPv6Forwarding)
+	}
+}
+
 func TestNetworkConfigFromMachineConfigOverlayVRF(t *testing.T) {
 	for _, tt := range []struct{ name, wantName string }{{"default", ""}, {"Vrf_cust", "Vrf_cust"}} {
 		cfg := &config.MachineConfig{}

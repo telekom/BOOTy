@@ -104,7 +104,6 @@ topology:
       binds:
         - data/vars-prodtpl-booty:/deploy/vars:ro
         - data/fs-prodtpl-booty:/deploy/file-system:ro
-        - data/machine-id-booty:/etc/machine-id:ro
       env:
         BOOTY_NO_REBOOT: "1"
       exec:
@@ -143,7 +142,6 @@ topology:
       startup-delay: 20
       binds:
         - data/vars-prodtpl-native:/deploy/vars:ro
-        - data/machine-id-native:/etc/machine-id:ro
       env:
         BOOTY_NO_REBOOT: "1"
 

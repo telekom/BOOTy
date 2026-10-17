@@ -116,7 +116,7 @@ func setAcceptRA(dev string, on bool) error {
 	if on {
 		val = "1"
 	}
-	p := "/proc/sys/net/ipv6/conf/" + dev + "/accept_ra"
+	p := procSysNet + "/ipv6/conf/" + dev + "/accept_ra"
 	if err := os.WriteFile(p, []byte(val), 0o644); err != nil { //nolint:gosec // sysctl path
 		return fmt.Errorf("set %s: %w", p, err)
 	}

@@ -4,11 +4,14 @@ package lldp
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -48,14 +51,11 @@ type Info struct {
 	PrettyHostname string // system description; omitted when empty
 }
 
-// SystemInfo reads the machine ID, the hostname and the pretty hostname
-// like systemd. A missing machine ID leaves MachineID empty: the frames
-// then use the NIC MAC as chassis ID.
+// SystemInfo reads the machine ID of the boot, the hostname and the pretty
+// hostname like systemd. Without a machine ID (it could not be written)
+// the frames use the NIC MAC as chassis ID, a BOOTy extension.
 func SystemInfo() Info {
-	info := Info{}
-	if b, err := os.ReadFile("/etc/machine-id"); err == nil {
-		info.MachineID = strings.TrimSpace(string(b))
-	}
+	info := Info{MachineID: machineID()}
 	info.SystemName, _ = os.Hostname()
 	if b, err := os.ReadFile("/etc/machine-info"); err == nil {
 		for _, l := range strings.Split(string(b), "\n") {
@@ -65,6 +65,41 @@ func SystemInfo() Info {
 		}
 	}
 	return info
+}
+
+// machineIDPath holds the machine ID of this boot. It is not
+// /etc/machine-id: the ramdisk has none, a value there could come with the
+// image (the same on every host) or from the provisioned OS, and BOOTy must
+// neither reuse it nor write one into the OS. /run starts empty at every
+// boot.
+var machineIDPath = "/run/booty/machine-id"
+
+// machineID returns the machine ID of this boot, the chassis ID of the
+// LLDP frames. Like systemd when it boots the legacy ramdisk with an empty
+// /etc/machine-id, BOOTy creates a random one (32 hex digits) at first use;
+// a restart of BOOTy in the same boot keeps it. It returns "" only when the
+// ID cannot be created or written.
+func machineID() string {
+	if b, err := os.ReadFile(machineIDPath); err == nil {
+		if id := strings.TrimSpace(string(b)); id != "" {
+			return id
+		}
+	}
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return ""
+	}
+	// A version 4 UUID, like sd_id128_randomize.
+	b[6] = b[6]&0x0f | 0x40
+	b[8] = b[8]&0x3f | 0x80
+	id := hex.EncodeToString(b[:])
+	if err := os.MkdirAll(filepath.Dir(machineIDPath), 0o755); err != nil { //nolint:gosec // world-readable like /etc/machine-id
+		return ""
+	}
+	if err := os.WriteFile(machineIDPath, []byte(id+"\n"), 0o444); err != nil { //nolint:gosec // world-readable like /etc/machine-id
+		return ""
+	}
+	return id
 }
 
 // Frame returns the Ethernet frame that networkd sends on a NIC.

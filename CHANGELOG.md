@@ -208,7 +208,10 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   link-local address and `accept_ra` 0, the uplinks have `accept_ra` 0, the
   bridge STP follows `parameters: stp`, `ip_forward` is 0, and IPv6
   forwarding is now 0 by default in GoBGP mode (it was 1), so Neighbor
-  Advertisements no longer carry the Router flag.
+  Advertisements no longer carry the Router flag. The LLDP chassis ID is a
+  machine ID per boot (locally assigned, 32 hex digits) like networkd; BOOTy
+  creates it in `/run/booty/machine-id` and never uses or writes
+  `/etc/machine-id`.
 - GoBGP mode applies the `frr.conf` route-maps and community-lists, explicit
   and automatic EVPN route targets, and the `local-as` AS path loop check. New
   keys `BGP_ROUTE_MAPS`, `BGP_COMMUNITY_LISTS`, `BGP_ROUTE_MAP_IN`,

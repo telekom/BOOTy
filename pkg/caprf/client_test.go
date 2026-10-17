@@ -2972,6 +2972,7 @@ VXLAN_ACCEPT_RA=false
 BRIDGE_MTU=8950
 BRIDGE_IPV6_LINK_LOCAL=false
 BRIDGE_ACCEPT_RA=true
+BRIDGE_STP=false
 ACCEPT_RA_OFF=ens1f0np0,ens1f1np1
 LLDP_EMIT=ens1f0np0
 IP_FORWARDING=false
@@ -2988,6 +2989,7 @@ IPV6_FORWARDING=true
 		"VXLAN_LEARNING": o.VXLANLearning, "VXLAN_PORT_LEARNING": o.PortLearning,
 		"VXLAN_IPV6_LINK_LOCAL": o.VXLANLinkLocal, "VXLAN_ACCEPT_RA": o.VXLANAcceptRA,
 		"BRIDGE_IPV6_LINK_LOCAL": o.BridgeLinkLocal, "IP_FORWARDING": cfg.Network.IPForwarding,
+		"BRIDGE_STP": o.BridgeSTP,
 	} {
 		if got == nil || *got {
 			t.Errorf("%s = %v, want explicit false", name, got)

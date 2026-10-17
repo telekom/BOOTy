@@ -73,11 +73,12 @@ func prodtplLLDPView(frame []byte) string {
 }
 
 // The templates (BOOTy) and LLDP_EMIT (vars-only server) send, on both
-// uplinks, frames to the nearest-bridge address with the machine ID as
-// locally assigned chassis ID (subtype 7, 32 hex digits, like networkd;
-// the lab gives each container an /etc/machine-id like systemd does), the
-// interface name as port ID, TTL 120, the hostname and the networkd
-// capabilities: station, bridge and router supported, station enabled.
+// uplinks, frames to the nearest-bridge address with the machine ID of the
+// boot as locally assigned chassis ID (subtype 7, 32 hex digits, like
+// networkd; the ramdisk has no /etc/machine-id, so BOOTy creates one in
+// /run/booty/machine-id like systemd does at boot), the interface name as
+// port ID, TTL 120, the hostname and the networkd capabilities: station,
+// bridge and router supported, station enabled.
 func TestProdTplLLDP(t *testing.T) {
 	for _, node := range []prodtplNode{prodtplBootyNode, prodtplNativeNode} {
 		c := prodtplContainer(node)
@@ -85,7 +86,7 @@ func TestProdTplLLDP(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s hostname: %v", node.name, err)
 		}
-		id, err := prodtplExec(context.Background(), c, "cat", "/etc/machine-id")
+		id, err := prodtplExec(context.Background(), c, "cat", "/run/booty/machine-id")
 		if err != nil {
 			t.Fatalf("%s machine ID: %v", node.name, err)
 		}

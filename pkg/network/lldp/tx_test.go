@@ -5,6 +5,10 @@ package lldp
 import (
 	"encoding/binary"
 	"net"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/google/gopacket"
@@ -68,5 +72,40 @@ func TestFrameLikeNetworkd(t *testing.T) {
 		if v.Type == layers.LLDPTLVSysDescription {
 			t.Errorf("fallback frame has a system description TLV %q", v.Value)
 		}
+	}
+}
+
+// BOOTy creates a machine ID for the boot like systemd (32 hex digits, a
+// version 4 UUID), keeps it under /run (never /etc) and uses it again.
+// When it cannot write it, there is no machine ID and the frames fall
+// back to the MAC.
+func TestMachineIDPerBoot(t *testing.T) {
+	if !strings.HasPrefix(machineIDPath, "/run/") {
+		t.Fatalf("machine ID path %s, want one under /run", machineIDPath)
+	}
+	orig := machineIDPath
+	t.Cleanup(func() { machineIDPath = orig })
+	machineIDPath = filepath.Join(t.TempDir(), "booty", "machine-id")
+	id := machineID()
+	if !regexp.MustCompile(`^[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}$`).MatchString(id) {
+		t.Fatalf("machine ID %q, want 32 hex digits of a version 4 UUID", id)
+	}
+	if again := machineID(); again != id {
+		t.Fatalf("machine ID changed: %q then %q", id, again)
+	}
+	if b, err := os.ReadFile(machineIDPath); err != nil || string(b) != id+"\n" {
+		t.Fatalf("machine-id file = %q (%v)", b, err)
+	}
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	machineIDPath = filepath.Join(file, "machine-id") // its directory is a file
+	if got := machineID(); got != "" {
+		t.Fatalf("machine ID %q although its directory can not be created, want none", got)
+	}
+	machineIDPath = t.TempDir() // a directory: the write fails, also as root
+	if got := machineID(); got != "" {
+		t.Fatalf("machine ID %q although it can not be written, want none", got)
 	}
 }

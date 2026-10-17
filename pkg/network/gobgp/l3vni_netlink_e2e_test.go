@@ -136,7 +136,7 @@ func TestL3VNINetlinkOverlayDevices(t *testing.T) {
 		OverlayDevices: network.OverlayDevices{
 			VXLANMTU: 9000, VXLANMAC: "02:54:c0:00:02:13", VXLANLearning: new(false), VXLANARPProxy: new(false),
 			PortHairpin: new(true), PortLearning: new(false), VXLANLinkLocal: new(false), BridgeLinkLocal: new(false),
-			VXLANAcceptRA: new(false), BridgeAcceptRA: new(false), BridgeMTU: 9000, BridgeSTP: new(true),
+			VXLANAcceptRA: new(false), BridgeAcceptRA: new(false), BridgeMTU: 8900, BridgeSTP: new(true),
 		},
 	}
 	overlay := NewOverlayTier(cfg)
@@ -156,8 +156,9 @@ func TestL3VNINetlinkOverlayDevices(t *testing.T) {
 	if !ok || v.Attrs().MTU != 9000 || v.Attrs().HardwareAddr.String() != "02:54:c0:00:02:13" || v.Learning || v.Proxy {
 		t.Errorf("VXLAN device = %+v, want MTU 9000, MAC 02:54:c0:00:02:13, no learning, no proxy", vx)
 	}
-	if br.Attrs().MTU != 9000 {
-		t.Errorf("bridge MTU = %d, want 9000", br.Attrs().MTU)
+	// 8900, not the 9000 of its VXLAN port: the bridge MTU is set itself.
+	if br.Attrs().MTU != 8900 {
+		t.Errorf("bridge MTU = %d, want 8900", br.Attrs().MTU)
 	}
 	pi, err := netlink.LinkGetProtinfo(vx)
 	if err != nil {
