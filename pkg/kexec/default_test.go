@@ -91,7 +91,7 @@ func TestDefaultEntryRefusesWhatOnlyGRUBCanResolve(t *testing.T) {
 		{name: "conditional linux lines", fixture: "ubuntu-2404-gcp", grubDir: "boot/grub", want: "linux command inside a condition"},
 		{name: "BLS", fixture: "centos-stream-9", grubDir: "boot/grub2", want: "BLS"},
 		// linux$suf $gptprio_kernel: the kernel comes from gptprio.next.
-		{name: "Flatcar", fixture: "flatcar", grubDir: "boot/grub", want: "configfile"},
+		{name: "Flatcar", fixture: "flatcar", grubDir: "boot/grub", want: "command smbios"},
 		// GRUB would boot next_entry once and clear it; BOOTy can not.
 		{name: "next_entry", fixture: "ubuntu-2204-cloud", grubDir: "boot/grub", env: map[string]string{"next_entry": "1>1"}, want: "next_entry"},
 		// The Ubuntu initrdless fallback and saved-entry logic.
@@ -270,5 +270,72 @@ func TestLexWords(t *testing.T) {
 	}
 	if got := splitCommands(`if [ x ]; then insmod a; echo 'x;y'; fi # comment`); len(got) != 4 || got[2] != `echo 'x;y'` {
 		t.Fatalf("commands = %q", got)
+	}
+}
+
+func TestDefaultEntryTopLevelAllowList(t *testing.T) {
+	body := "menuentry 'x' {\n linux /vmlinuz root=/dev/sda2\n}\n"
+	for name, top := range map[string]string{
+		"eval":          "eval 'set default=1'",
+		"regexp":        "regexp --set=x a b",
+		"probe":         "probe --set=uuid --fs-uuid hd0,gpt2",
+		"load_env -f":   "load_env -f /boot/other.env",
+		"unset":         "unset default",
+		"unknown":       "chainloader /x.efi",
+		"configfile":    "configfile /boot/other.cfg",
+		"fwsetup other": "fwsetup",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := DefaultEntry(writeGrub(t, "set default=0\n"+top+"\n"+body, ""))
+			if !errors.Is(err, ErrUnsupported) {
+				t.Fatalf("err = %v, want ErrUnsupported", err)
+			}
+		})
+	}
+	// The generated commands pass.
+	ok := "set default=0\nload_env\ninsmod part_gpt\nterminal_output console\nexport a\nfwsetup --is-supported\n" +
+		"if [ -n x ]; then\n unset initrdless_boot_fallback_triggered\nfi\n" + body
+	if _, err := DefaultEntry(writeGrub(t, ok, "")); err != nil {
+		t.Fatalf("generated commands refused: %v", err)
+	}
+}
+
+// Values expand when they are set, like GRUB, and only once.
+func TestDefaultEntryExpandsAtAssignment(t *testing.T) {
+	cfg := "set default=0\nset b=one\nset a=\"x $b\"\nset lit='$b'\nmenuentry 'x' {\n linux /vmlinuz $a $lit\n}\n"
+	e, err := DefaultEntry(writeGrub(t, cfg, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.KernelArgs != "x one $b" {
+		t.Fatalf("args = %q, want x one $b", e.KernelArgs)
+	}
+	// A value that uses an unsure variable makes the variable unsure.
+	cfg = "set default=0\nif [ x ]; then\n set b=one\nfi\nset a=$b\nmenuentry 'x' {\n linux /vmlinuz $a\n}\n"
+	if _, err := DefaultEntry(writeGrub(t, cfg, "")); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("err = %v, want ErrUnsupported", err)
+	}
+	// search --set changes a variable that was set before.
+	cfg = "set default=0\nset kp=quiet\nsearch --set=kp abc\nmenuentry 'x' {\n linux /vmlinuz $kp\n}\n"
+	if _, err := DefaultEntry(writeGrub(t, cfg, "")); !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "$kp") {
+		t.Fatalf("err = %v, want ErrUnsupported for $kp", err)
+	}
+}
+
+// GRUB takes the first entry whose id or title matches, in order, and only
+// plain decimal numbers.
+func TestDefaultEntryMatchesLikeGRUB(t *testing.T) {
+	entries := "menuentry 'foo' --id a {\n linux /first\n}\nmenuentry 'b' --id foo {\n linux /second\n}\n"
+	e, err := DefaultEntry(writeGrub(t, "set default=foo\n"+entries, ""))
+	if err != nil || e.Kernel != "/first" {
+		t.Fatalf("entry = %+v, %v; want the first entry whose title or id matches", e, err)
+	}
+	if e, err := DefaultEntry(writeGrub(t, "set default=1\n"+entries, "")); err != nil || e.Kernel != "/second" {
+		t.Fatalf("default 1: %+v, %v", e, err)
+	}
+	for _, d := range []string{"01", "+1", "-1", "1x"} {
+		if _, err := DefaultEntry(writeGrub(t, "set default="+d+"\n"+entries, "")); !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("default %q: err = %v, want ErrUnsupported", d, err)
+		}
 	}
 }

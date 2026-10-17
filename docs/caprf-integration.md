@@ -327,8 +327,20 @@ any doubt, reboot. It does not emulate GRUB; it accepts the shapes that
 - Entries of the generated commands only: `insmod`, `echo`, `recordfail`,
   `load_video`, `gfxmode`, `set root=`, `search --set=root`, one `linux`
   and at most one `initrd` with one file, both outside conditions.
+- Outside entries only the generated commands: `set`, assignments,
+  `export`, `insmod`, `load_env` (not `-f`), `save_env`, `terminal_input`,
+  `terminal_output`, `terminal`, `serial`, `font`, `loadfont`,
+  `load_video`, `background_image`, `echo`, `true`, `search`,
+  `fwsetup --is-supported`, the generated `unset` of
+  `initrdless_boot_fallback_triggered`, the `41_custom` source line, and
+  `if`, `function`, `menuentry` and `submenu` blocks. Function bodies run
+  only when an allow-listed entry command calls them.
+- The default is matched like GRUB: a plain decimal number (no sign, no
+  leading zero) is a position; otherwise the first entry whose id or title
+  matches, in order.
 - Variables that `grub.cfg` sets once and unconditionally at the top level
-  are expanded like GRUB (no expansion in single quotes, a backslash
+  are expanded like GRUB, when they are set (`set a=$b` takes the value
+  of `b` at that line) (no expansion in single quotes, a backslash
   escapes, an unquoted value splits into words); `$vt_handoff` is dropped.
   A kernel argument with blanks is quoted for the kernel.
 
@@ -337,7 +349,8 @@ and clears it), `prev_saved_entry`, `initrdfail` or `prev_entry` (the
 Ubuntu initrdless fallback); for any other conditional default; for a
 default entry inside a condition or a number after one; for any other
 command in the entry (`set`, `search`/`probe`/`regexp --set` of another
-variable, `source`, an unknown function); for a `linux` or `initrd` inside
+variable, `source`, an unknown function); for `eval`, `regexp`, `probe`,
+`unset`, `load_env -f` or any unknown command outside entries; for a `linux` or `initrd` inside
 a condition; for BLS (`blscfg`, RHEL-likes), Flatcar (`configfile`, gptprio
 kernel), any `source` or `configfile` (except the `41_custom` line when
 the image has no `custom.cfg`); for an unknown or conditional variable,

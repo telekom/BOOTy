@@ -66,19 +66,19 @@ func literalWords(cmd string) []string {
 // variable that grub.cfg does not set once and unconditionally at the top
 // level returns ErrUnsupported.
 func (s *grubScript) expandWords(cmd string, extra map[string]string) ([]string, error) {
-	var lookup func(string, int) ([]string, error)
-	lookup = func(name string, depth int) ([]string, error) {
+	lookup := func(name string, _ int) ([]string, error) {
 		if v, ok := extra[name]; ok {
 			return strings.Fields(v), nil
 		}
 		if cosmeticVars[name] {
 			return nil, nil
 		}
-		raw, ok := s.vars[name]
+		value, ok := s.vars[name]
 		if !ok || s.unsure[name] {
 			return nil, fmt.Errorf("%w: variable $%s is not set once and unconditionally in grub.cfg", ErrUnsupported, name)
 		}
-		return lexWords(raw, lookup, depth+1)
+		// The value was expanded when it was set; it is not expanded again.
+		return strings.Fields(value), nil
 	}
 	return lexWords(cmd, lookup, 0)
 }

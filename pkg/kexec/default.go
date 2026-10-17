@@ -302,53 +302,144 @@ func setsOnlyRoot(words []string) bool {
 // customSources are the 41_custom lines of grub-mkconfig.
 var customSources = []string{"${config_directory}/custom.cfg", "$prefix/custom.cfg"}
 
+// topCommands are the commands that grub-mkconfig puts outside entries
+// and that BOOTy accepts. Anything else outside a function body is a
+// problem: eval, regexp, probe, load_env -f, configfile, unknown commands.
+var topCommands = []string{"set", "export", "insmod", "save_env", "load_env", "terminal_input",
+	"terminal_output", "terminal", "serial", "font", "loadfont", "load_video", "background_image",
+	"echo", "true", "search"}
+
+// generatedUnsets are the variables that grub-mkconfig unsets
+// (01_track_initrdless_boot_fallback on Ubuntu).
+var generatedUnsets = []string{"initrdless_boot_fallback_triggered"}
+
 func (s *grubScript) topCommand(raw string, words []string, stack []block, customCfg bool) {
-	inBlock := len(stack) > 0
-	switch words[0] {
-	case "blscfg":
-		s.fail("BLS entries (blscfg)")
-	case "source", ".", "configfile", "extract_entries_source", "extract_entries_configfile":
-		if len(words) == 2 && slices.Contains(customSources, words[1]) && !customCfg {
-			return // 41_custom without a custom.cfg loads nothing
+	if slices.ContainsFunc(stack, func(b block) bool { return b.kind == blockFunction }) {
+		// A function body runs only when an entry calls it, and entries may
+		// only call the allow-listed functions. Its sets are unsure.
+		if name, ok := assignedName(words); ok {
+			s.unsure[name] = true
 		}
-		s.fail("%s %s", words[0], strings.Join(words[1:], " "))
-	case "search", "probe", "regexp", "eval", "getenv":
-		for i, w := range words {
-			if name, ok := strings.CutPrefix(w, "--set="); ok {
-				s.unsure[name] = true
-			} else if (w == "--set" || w == "-s") && i+1 < len(words) {
-				s.unsure[words[i+1]] = true
-			}
+		return
+	}
+	if problem := topProblem(words, customCfg); problem != "" {
+		s.fail("%s", problem)
+		return
+	}
+	switch words[0] {
+	case "unset":
+		s.unsure[words[1]] = true
+	case "search":
+		for _, name := range setTargets(words) {
+			s.unsure[name] = true
 		}
 	default:
-		s.assignment(raw, words, stack, inBlock)
+		s.assignment(raw, words, stack, len(stack) > 0)
 	}
 }
 
-// assignment records "set name=value" and "name=value".
-func (s *grubScript) assignment(raw string, words []string, stack []block, inBlock bool) {
+// topChecks hold the commands that are allowed outside entries only with
+// some arguments; each returns the problem or "".
+var topChecks = map[string]func(args []string, customCfg bool) string{
+	"blscfg": func([]string, bool) string { return "BLS entries (blscfg)" },
+	"source": checkSource,
+	".":      checkSource,
+	"load_env": func(args []string, _ bool) string {
+		if slices.ContainsFunc(args, func(w string) bool { return w == "-f" || strings.HasPrefix(w, "--file") }) {
+			return "load_env from another file"
+		}
+		return ""
+	},
+	"unset": func(args []string, _ bool) string {
+		if len(args) == 1 && slices.Contains(generatedUnsets, args[0]) {
+			return ""
+		}
+		return "unset " + strings.Join(args, " ")
+	},
+	// 30_uefi-firmware checks for the firmware entry; it boots nothing.
+	"fwsetup": func(args []string, _ bool) string {
+		if len(args) == 1 && args[0] == "--is-supported" {
+			return ""
+		}
+		return "command fwsetup"
+	},
+}
+
+// checkSource accepts only the 41_custom line, and only without custom.cfg.
+func checkSource(args []string, customCfg bool) string {
+	if len(args) == 1 && slices.Contains(customSources, args[0]) && !customCfg {
+		return ""
+	}
+	return "source " + strings.Join(args, " ")
+}
+
+// topProblem is why a command outside entries makes BOOTy reboot, or "".
+func topProblem(words []string, customCfg bool) string {
+	if check, ok := topChecks[words[0]]; ok {
+		return check(words[1:], customCfg)
+	}
+	if slices.Contains(topCommands, words[0]) {
+		return ""
+	}
+	if _, ok := assignedName(words); ok {
+		return ""
+	}
+	return "command " + words[0]
+}
+
+// setTargets returns the variables of the --set options of a command.
+func setTargets(words []string) []string {
+	var names []string
+	for i, w := range words {
+		if name, ok := strings.CutPrefix(w, "--set="); ok {
+			names = append(names, name)
+		} else if (w == "--set" || w == "-s") && i+1 < len(words) {
+			names = append(names, words[i+1])
+		}
+	}
+	return names
+}
+
+// assignedName returns the variable of "set name=value" or "name=value".
+func assignedName(words []string) (string, bool) {
 	w := words
 	if w[0] == "set" && len(w) > 1 {
 		w = w[1:]
 	}
 	if len(w) != 1 {
-		return
+		return "", false
 	}
 	name, _, ok := strings.Cut(w[0], "=")
 	if !ok || name == "" || strings.ContainsAny(name, "$ ") {
+		return "", false
+	}
+	return name, true
+}
+
+// assignment records "set name=value" and "name=value". The value is
+// expanded now, like GRUB does: "set a=$b" takes the current value of b.
+// A value that does not expand makes the variable unsure.
+func (s *grubScript) assignment(raw string, words []string, stack []block, inBlock bool) {
+	name, ok := assignedName(words)
+	if !ok {
 		return
 	}
 	// The raw value keeps its quotes for the expansion.
-	rawValue := raw[strings.Index(raw, "=")+1:]
+	rawValue := strings.TrimSpace(raw[strings.Index(raw, "=")+1:])
 	if name == "default" {
-		s.defaultAssignment(strings.TrimSpace(rawValue), stack)
+		s.defaultAssignment(rawValue, stack)
 		return
 	}
 	if _, seen := s.vars[name]; seen || inBlock {
 		s.unsure[name] = true
 		return
 	}
-	s.vars[name] = strings.TrimSpace(rawValue)
+	value, err := s.expandWords(rawValue, nil)
+	if err != nil {
+		s.unsure[name] = true
+		return
+	}
+	s.vars[name] = strings.Join(value, " ")
 }
 
 // defaultAssignment accepts an unconditional "set default" and the
@@ -434,24 +525,31 @@ func (s *grubScript) resolve(spec string) (*grubItem, error) {
 }
 
 func findItem(items []*grubItem, part string) *grubItem {
-	if n, err := strconv.Atoi(part); err == nil {
-		if n < 0 || n >= len(items) || slices.ContainsFunc(items[:n+1], func(it *grubItem) bool { return it.conditional }) {
+	if isDecimal(part) {
+		n, err := strconv.Atoi(part)
+		if err != nil || n >= len(items) || slices.ContainsFunc(items[:n+1], func(it *grubItem) bool { return it.conditional }) {
 			return nil
 		}
 		return items[n]
 	}
-	for _, match := range []func(*grubItem) bool{
-		func(it *grubItem) bool { return it.id == part },
-		func(it *grubItem) bool { return it.title == part },
-	} {
-		if i := slices.IndexFunc(items, match); i >= 0 {
-			if items[i].conditional {
-				return nil
-			}
-			return items[i]
-		}
+	if strings.TrimLeft(part, "+-0123456789") == "" {
+		return nil // a sign or a leading zero: GRUB parses it differently
 	}
-	return nil
+	// Like GRUB: the first entry whose id or title matches, in order.
+	i := slices.IndexFunc(items, func(it *grubItem) bool { return it.id == part || it.title == part })
+	if i < 0 || items[i].conditional {
+		return nil
+	}
+	return items[i]
+}
+
+// isDecimal reports a plain decimal number: digits only, no sign, no
+// leading zero.
+func isDecimal(s string) bool {
+	if s == "" || s != "0" && s[0] == '0' {
+		return false
+	}
+	return strings.Trim(s, "0123456789") == ""
 }
 
 func (s *grubScript) bootEntry(item *grubItem) (*BootEntry, error) {
