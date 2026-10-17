@@ -360,7 +360,7 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 - Design proposals for the provisioning roadmap: OS targets, Windows, ESXi,
   Talos, sysext and confext, measured boot for A/B, CAPI, BMC boot, UEFI,
   firmware, testing, image delivery, disk lifecycle, rollback, tracing and
-  multi-arch, with a prioritized index
+  multi-arch, with a prioritized index (#700)
 
 ### Dependencies
 
