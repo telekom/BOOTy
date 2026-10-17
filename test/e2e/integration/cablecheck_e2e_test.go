@@ -295,6 +295,10 @@ func TestCableCheckDiff(t *testing.T) {
 			LLDP   *struct {
 				SystemName string `json:"systemName"`
 			} `json:"lldp"`
+			State *struct {
+				SpeedMbps int    `json:"speedMbps"`
+				Duplex    string `json:"duplex"`
+			} `json:"link"`
 		} `json:"links"`
 	}
 	b = cablecheckFile(t, "/run/booty/check-result.json")
@@ -310,11 +314,12 @@ func TestCableCheckDiff(t *testing.T) {
 	}
 	leaf := 0
 	for _, l := range doc.Links {
-		if (l.Ifname == "eth1" || l.Ifname == "eth2") && l.LLDP != nil && l.LLDP.SystemName == "leaf01" {
+		if (l.Ifname == "eth1" || l.Ifname == "eth2") && l.LLDP != nil && l.LLDP.SystemName == "leaf01" &&
+			l.State != nil && l.State.SpeedMbps == 10000 && l.State.Duplex == "full" { // veth over ethtool netlink
 			leaf++
 		}
 	}
 	if leaf != 2 {
-		t.Errorf("leaf01 is the neighbor of %d of eth1, eth2: %s", leaf, b)
+		t.Errorf("leaf01 at 10000 Mb/s full duplex on %d of eth1, eth2: %s", leaf, b)
 	}
 }
