@@ -464,31 +464,38 @@ RUN find . -print0 > ../initramfs.files \
     && rm ../initramfs.cpio
 
 # ── ISO build stage (optional, triggered by --target=iso) ──────────────────
-# UEFI El Torito image: Debian shim (Microsoft UEFI CA) + Debian-signed GRUB,
+# UEFI boot image: Debian shim (Microsoft UEFI CA) + Debian-signed GRUB,
 # which verifies the Debian-signed kernel, so the ISO boots with Secure Boot.
-# EFI_ISO_LABELS lists the ISO volume labels its grub.cfg searches; the
-# default also finds the ISOs that CAPRF renders from the BOOTy base image.
-# amd64 only, like ISOLINUX.
+# The package versions are pinned; bump them together when trixie updates
+# shim or GRUB (an old version leaves the mirror, so the build fails loudly).
+# The manifest records the versions and SHA-256 sums, and the ISO ships it as
+# /boot/efi-manifest.txt. amd64 only, like ISOLINUX.
 FROM debian:trixie-slim AS efi-boot
-ARG EFI_ISO_LABELS="BOOTY caas-deploy-image"
+ARG SHIM_SIGNED_VERSION=1.51~1+deb13u1+16.1-2~deb13u1
+ARG SHIM_HELPERS_VERSION=1+16.1+2~deb13u1
+ARG GRUB_SIGNED_VERSION=1+2.12+9+deb13u2
+ARG SOURCE_DATE_EPOCH=0
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
-    shim-signed shim-helpers-amd64-signed grub-efi-amd64-signed dosfstools mtools \
+    "shim-signed=${SHIM_SIGNED_VERSION}" "shim-helpers-amd64-signed=${SHIM_HELPERS_VERSION}" \
+    "grub-efi-amd64-signed=${GRUB_SIGNED_VERSION}" dosfstools mtools \
     && rm -rf /var/lib/apt/lists/*
 COPY hack/make-efiboot.sh /usr/local/bin/
-# EFI_ISO_LABELS is split into one argument per label on purpose.
-RUN make-efiboot.sh /efiboot.img ${EFI_ISO_LABELS}
+RUN make-efiboot.sh /efiboot.img /efi-manifest.txt
 
 # Shared by every ISO target (and reusable for other ISOs): BIOS ISOLINUX +
-# UEFI El Torito + isohybrid MBR/GPT, see hack/make-iso.sh.
+# UEFI El Torito + isohybrid MBR + GPT with an ESP, see hack/make-iso.sh.
 FROM debian:trixie-slim AS iso-tools
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     xorriso isolinux syslinux-common \
     && rm -rf /var/lib/apt/lists/*
 COPY hack/make-iso.sh /usr/local/bin/
 COPY --from=efi-boot /efiboot.img /efiboot.img
+COPY --from=efi-boot /efi-manifest.txt /efi-manifest.txt
 
 FROM iso-tools AS iso-builder
 ARG ISO_VOLID=BOOTY
+ARG SOURCE_DATE_EPOCH=0
+COPY --from=efi-boot /efi-manifest.txt /iso/boot/efi-manifest.txt
 COPY --from=busybox /initramfs.cpio.zst /iso/boot/initrd.img
 # Use the standard Debian kernel (has all common NIC drivers as modules)
 COPY --from=kernel /vmlinuz /iso/boot/vmlinuz
@@ -691,6 +698,8 @@ COPY --from=gobgp-builder /initramfs.cpio.zst .
 # ── GoBGP ISO target ──────────────────────────────────────────────────────
 FROM iso-tools AS gobgp-iso-builder
 ARG ISO_VOLID=BOOTY
+ARG SOURCE_DATE_EPOCH=0
+COPY --from=efi-boot /efi-manifest.txt /iso/boot/efi-manifest.txt
 COPY --from=gobgp-builder /initramfs.cpio.zst /iso/boot/initrd.img
 COPY --from=kernel /vmlinuz /iso/boot/vmlinuz
 RUN make-iso.sh /iso /efiboot.img /booty-gobgp.iso "$ISO_VOLID"

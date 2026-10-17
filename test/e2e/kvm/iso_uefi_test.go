@@ -117,6 +117,75 @@ func TestISOFirmwareUEFIUSB(t *testing.T) {
 	runQEMUSmoke(t, isoQEMUArgs(t, "uefi", media), 4*time.Minute, "iso-uefi-usb", true)
 }
 
+// TestISOFirmwareBIOSUSB boots the ISO as a disk on BIOS: the isohybrid MBR
+// starts ISOLINUX.
+func TestISOFirmwareBIOSUSB(t *testing.T) {
+	qemuAvailable(t)
+	iso := bootyISO(t)
+	media := []string{
+		"-drive", fmt.Sprintf("file=%s,format=raw,if=none,id=d0,readonly=on", iso),
+		"-device", "virtio-blk-pci,drive=d0,bootindex=1",
+	}
+	runQEMUSmoke(t, isoQEMUArgs(t, "bios", media), 4*time.Minute, "iso-bios-usb", true)
+}
+
+// wrongMediaMarker is printed by the decoy disk of
+// TestISOFirmwareIgnoresOtherBootyDisk if GRUB loads its config.
+const wrongMediaMarker = "WRONG-MEDIA-BOOTED"
+
+// decoyDisk builds an ISO9660 image with the BOOTy volume label and GRUB
+// configs at every path that BOOTy's GRUB could read.
+func decoyDisk(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("xorriso"); err != nil {
+		failOrSkipUnsupportedHost(t, "xorriso not available")
+	}
+	root := filepath.Join(t.TempDir(), "decoy")
+	cfg := "echo " + wrongMediaMarker + "\nsleep 60\n"
+	for _, p := range []string{"boot/grub/grub.cfg", "EFI/debian/grub.cfg", "EFI/BOOT/grub.cfg"} {
+		full := filepath.Join(root, p)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(cfg), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	img := filepath.Join(t.TempDir(), "decoy.iso")
+	if out, err := exec.Command("xorriso", "-as", "mkisofs", "-o", img, "-V", "BOOTY", "-r", root).CombinedOutput(); err != nil {
+		t.Fatalf("build decoy disk: %v\n%s", err, out)
+	}
+	return img
+}
+
+// TestISOFirmwareIgnoresOtherBootyDisk attaches a second disk with the same
+// volume label and GRUB configs. GRUB enumerates disks before CDs, so a
+// label search would load the decoy. BOOTy must boot from its own medium,
+// from CD and from USB.
+func TestISOFirmwareIgnoresOtherBootyDisk(t *testing.T) {
+	qemuAvailable(t)
+	iso := bootyISO(t)
+	decoy := decoyDisk(t)
+	decoyArgs := []string{
+		"-drive", fmt.Sprintf("file=%s,format=raw,if=none,id=decoy,readonly=on", decoy),
+		"-device", "virtio-blk-pci,drive=decoy,bootindex=2", // in the boot order, so OVMF connects it
+	}
+	usb := []string{
+		"-device", "qemu-xhci",
+		"-drive", fmt.Sprintf("file=%s,format=raw,if=none,id=usb0,readonly=on", iso),
+		"-device", "usb-storage,drive=usb0,bootindex=1",
+	}
+	for name, media := range map[string][]string{"cd": isoCDArgs(iso), "usb": usb} {
+		t.Run(name, func(t *testing.T) {
+			args := isoQEMUArgs(t, "secureboot", append(append([]string{}, decoyArgs...), media...))
+			out := runQEMUSmoke(t, args, 4*time.Minute, "iso-decoy-"+name, true)
+			if strings.Contains(string(out), wrongMediaMarker) {
+				t.Fatalf("GRUB loaded the config of the decoy disk; tail:\n%s", tail(out, 2000))
+			}
+		})
+	}
+}
+
 // TestISOFirmwareSecureBoot checks the whole signature chain: the firmware
 // accepts shim (Microsoft UEFI CA), shim accepts GRUB (Debian CA), GRUB
 // accepts the kernel through shim, and the kernel locks itself down.
