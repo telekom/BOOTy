@@ -241,11 +241,16 @@ automatically at boot from the `/modules/` directory in the initramfs.
 | **Intel** | `i40e` | X710, XL710, XXV710 | 10/25/40G |
 | **Intel** | `ice` | E810 | 25/50/100G |
 | **Intel** | `iavf` | Adaptive Virtual Function | VF |
+| **Intel** | `igbvf`, `ixgbevf` | I350 / 82576 VF, 82599 / X540 / X550 VF | VF |
 | **Broadcom** | `tg3` | NetXtreme BCM57xx | 1G |
 | **Broadcom** | `bnxt_en` | NetXtreme-E/C BCM573xx/574xx | 10/25/50/100G |
 | **NVIDIA/Mellanox** | `mlx4_core`/`mlx4_en` | ConnectX-3 | 10/40G |
 | **NVIDIA/Mellanox** | `mlx5_core` | ConnectX-4/5/6/7, BlueField | 10/25/40/50/100/200/400G |
 | **Emulex/Broadcom** | `be2net` | OneConnect OCe14xxx | 10G |
+| **QLogic/Marvell** | `qede` | FastLinQ QL41xxx/QL45xxx (needs `qed` firmware files, not shipped) | 10/25/40/50/100G |
+| **Chelsio** | `cxgb4` | T4/T5/T6 | 10/25/40/100G |
+| **AMD/Solarflare** | `sfc` | SFN8000, X2 series | 10/25/100G |
+| **AMD Pensando** | `ionic` | Pensando DSC | 25/100G |
 | **QEMU/KVM** | `virtio_net` | VirtIO NIC | Virtual |
 
 **Mellanox SR-IOV**: ConnectX-4+ cards are automatically detected via sysfs PCI vendor

@@ -42,6 +42,8 @@ behaviour.
   cannot assemble md arrays created on 6.19 or later (#701).
 - The default and gobgp initramfs ship `sg_sanitize` and `sg_format`
   (sg3-utils) and all flavors the `sg` module, for the SAS secure erase (#701).
+- The initramfs ships the VF drivers `igbvf` and `ixgbevf` and the NIC drivers
+  `qede`, `cxgb4`, `sfc` and `ionic` (#701).
 - Provisioning and hard deprovision zero the superblock of every
   `linux_raid_member` (whole disks and partitions) on the disks they wipe,
   after `stop-raid` stopped the arrays: provisioning on the target and mirror
