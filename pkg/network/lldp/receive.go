@@ -15,8 +15,11 @@ import (
 
 // receiver keeps the latest LLDP neighbor of each interface until its TTL
 // ends, like the receive side of lldpd. A frame with TTL 0 (shutdown)
-// removes the neighbor at once.
+// removes the neighbor at once. It keeps one neighbor per interface: a
+// second chassis on the same link (a hub, or two agents of one switch)
+// replaces the first; the fabric has one switch port per NIC.
 type receiver struct {
+	started   time.Time
 	mu        sync.Mutex
 	neighbors map[string]Neighbor
 	expires   map[string]time.Time
@@ -33,7 +36,7 @@ var current struct {
 // Receive listens for LLDP frames on every interface until ctx ends and
 // logs each new or changed neighbor. Neighbors returns what it learned.
 func Receive(ctx context.Context, ifaces []string, log *slog.Logger) {
-	r := &receiver{neighbors: map[string]Neighbor{}, expires: map[string]time.Time{}, log: log}
+	r := &receiver{started: time.Now(), neighbors: map[string]Neighbor{}, expires: map[string]time.Time{}, log: log}
 	current.Lock()
 	current.r = r
 	current.Unlock()
@@ -53,6 +56,33 @@ func Neighbors() []Neighbor {
 	return r.list(time.Now())
 }
 
+// NeighborsWithin returns the current LLDP neighbors. While none is known
+// yet, it waits until Receive has run for wait (one transmit interval of
+// the switch, 30 s with lldpd and networkd), so a report soon after the
+// start does not miss them. Without Receive it returns at once.
+func NeighborsWithin(ctx context.Context, wait time.Duration) []Neighbor {
+	current.Lock()
+	r := current.r
+	current.Unlock()
+	if r == nil {
+		return nil
+	}
+	for {
+		n := r.list(time.Now())
+		if len(n) > 0 || time.Since(r.started) >= wait {
+			return n
+		}
+		select {
+		case <-ctx.Done():
+			return n
+		case <-time.After(neighborPoll):
+		}
+	}
+}
+
+// neighborPoll is the time between two looks of NeighborsWithin.
+var neighborPoll = 500 * time.Millisecond
+
 func (r *receiver) receiveOn(ctx context.Context, iface string) {
 	fd, err := openRX(iface)
 	if err != nil {
@@ -62,11 +92,7 @@ func (r *receiver) receiveOn(ctx context.Context, iface string) {
 	defer func() { _ = unix.Close(fd) }()
 	buf := make([]byte, 1600)
 	for ctx.Err() == nil {
-		n, _, err := unix.Recvfrom(fd, buf, 0)
-		if err != nil || n < 14 {
-			continue // read timeout: check ctx again
-		}
-		if nb := parseLLDP(buf[14:n], iface); nb != nil {
+		if nb := readNeighbor(fd, buf, iface); nb != nil {
 			r.record(nb, time.Now())
 		}
 	}
