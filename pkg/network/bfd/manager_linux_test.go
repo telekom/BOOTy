@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"slices"
 	"testing"
 	"time"
 
@@ -28,7 +29,7 @@ func TestManagerSingleHopTTL(t *testing.T) {
 		default:
 		}
 	})
-	t.Cleanup(m.Close)
+	t.Cleanup(func() { closeWithin(t, m) })
 	timers := Timers{DesiredMinTx: time.Second, RequiredMinRx: time.Second, DetectMult: 3}
 	if err := m.Add(&Peer{Name: "self", Addr: netip.MustParseAddr("127.0.0.1"), Timers: timers}); err != nil {
 		t.Fatal(err)
@@ -95,7 +96,7 @@ func TestManagerFastTxAfterUp(t *testing.T) {
 		default:
 		}
 	})
-	t.Cleanup(m.Close)
+	t.Cleanup(func() { closeWithin(t, m) })
 	timers := Timers{DesiredMinTx: 150 * time.Millisecond, RequiredMinRx: 150 * time.Millisecond, DetectMult: 3}
 	if err := m.Add(&Peer{Name: "self", Addr: netip.MustParseAddr("127.0.0.1"), Timers: timers}); err != nil {
 		t.Fatal(err)
@@ -126,15 +127,33 @@ func TestManagerReplace(t *testing.T) {
 		default:
 		}
 	})
-	t.Cleanup(m.Close)
+	t.Cleanup(func() { closeWithin(t, m) })
 	timers := Timers{DesiredMinTx: time.Second, RequiredMinRx: time.Second, DetectMult: 3}
 	// 192.0.2.1 never answers; 127.0.0.1 is the session itself.
 	if err := m.Add(&Peer{Name: "old", Addr: netip.MustParseAddr("192.0.2.1"), Timers: timers}); err != nil {
 		t.Fatal(err)
 	}
+	m.mu.Lock()
+	var old *run
+	for _, r := range m.runs {
+		old = r
+	}
+	m.mu.Unlock()
 	if err := m.Replace("old", "new", netip.MustParseAddr("127.0.0.1")); err != nil {
 		t.Fatal(err)
 	}
+	select {
+	case <-old.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the loop of the replaced session still runs")
+	}
+	m.mu.Lock()
+	for _, l := range m.listeners {
+		if slices.Contains(l.runs, old) {
+			t.Error("the listener still hands packets to the replaced session")
+		}
+	}
+	m.mu.Unlock()
 	if err := m.Replace("old", "x", netip.MustParseAddr("127.0.0.1")); err == nil {
 		t.Fatal("Replace of a removed session succeeded")
 	}
@@ -154,5 +173,18 @@ func TestManagerReplace(t *testing.T) {
 		case <-deadline:
 			t.Fatal("the replaced session did not come Up")
 		}
+	}
+}
+
+// closeWithin closes a manager and fails instead of hanging when a session
+// loop does not end.
+func closeWithin(t *testing.T, m *Manager) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { m.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Error("Manager.Close did not return within 5 s")
 	}
 }
