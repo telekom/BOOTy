@@ -19,13 +19,14 @@ var (
 			`([A-Za-z0-9_.-]*(?:password|passwd|passphrase|token|secret|credential|authorization|auth|private)[A-Za-z0-9_.-]*|` +
 			`(?:api[-_]?key|secret[-_]?key|private[-_]?key|access[-_]?key|luks[-_]?key|master[-_]?key|volume[-_]?key|key))` +
 			`\s*([=:])\s*("[^"]*"|'[^']*'|[^\s,;&]+)`)
-	sensitiveWordValuePattern = regexp.MustCompile(`(?i)\b(password|passwd|passphrase|token|secret|credential|authorization)\s+("[^"]*"|'[^']*'|[^\s,;]+)`)
 )
 
 // RedactText replaces known secret shapes in free text with [REDACTED]:
 // PEM private key blocks, JWTs, LUKS key dumps, Authorization headers,
 // bearer tokens, URL user info, and values of sensitive keys such as
-// password=, token: or "passphrase x".
+// password= or token:. It leaves prose such as "token can not be renewed"
+// alone, so it is safe on every log line; pkg/provision adds the
+// "password <value>" word rule for command lines.
 func RedactText(s string) string {
 	s = pemPrivateKeyPattern.ReplaceAllString(s, `[REDACTED PRIVATE KEY]`)
 	s = jwtPattern.ReplaceAllString(s, `[REDACTED]`)
@@ -33,6 +34,5 @@ func RedactText(s string) string {
 	s = authorizationPattern.ReplaceAllString(s, `${1}${2}: [REDACTED]`)
 	s = bearerPattern.ReplaceAllString(s, `Bearer [REDACTED]`)
 	s = urlCredentialPattern.ReplaceAllString(s, `${1}[REDACTED]@`)
-	s = sensitiveAssignPattern.ReplaceAllString(s, `${1}${2}${3}[REDACTED]`)
-	return sensitiveWordValuePattern.ReplaceAllString(s, `${1} [REDACTED]`)
+	return sensitiveAssignPattern.ReplaceAllString(s, `${1}${2}${3}[REDACTED]`)
 }
