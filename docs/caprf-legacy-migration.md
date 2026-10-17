@@ -182,16 +182,25 @@ behaviour is the current FRR with that file:
 | BFD | own RFC 5880 implementation | `TestProdTplBFDSessions`, `TestProdTplBFDFailover` | Not yet: the CAPRF fixture has no BFD | Planned (#655) |
 | Route-maps, route targets, local-as loop check | GoBGP policies | `TestProdTplRouteMap*`, `TestProdTplLocalASLoopCheck` | Not yet | Planned (#659, #668) |
 | VTEP, VXLAN and bridge devices, MTU, `accept-ra`, forwarding | netplan keys applied like networkd | `TestProdTplKernelDevices` | fabric snapshot (MTU, ARP/ND of the leaf port) | Planned (#668) |
-| LLDP sent on every fabric NIC | frames like networkd | `TestProdTplLLDP` | Not yet: the kindmetal pod bridge drops LLDP frames and the leaves have no LLDP agent | Planned (#668) |
-| LLDP received | `pkg/network/lldp` can listen, but BOOTy does not start it | none | none | Not implemented |
+| LLDP sent on every fabric NIC | frames like networkd | `TestProdTplLLDP` | CAPRF `EVPN_EXPECT_LLDP` in both EVPN jobs: the leaf must receive an LLDP frame from every host (CAPRF !291) | Planned (#668) |
+| LLDP received | `pkg/network/lldp` can listen, but BOOTy does not start it | none | none: the kindmetal leaves send no LLDP frames | Not implemented |
 | Switch faults: link flap, BGP reset, leaf down and up | carrier watch, BFD, GoBGP reconnect | `TestProdTplUplinkCarrierLoss`, `TestProdTplBFDFailover`, `TestProdTplRRRestart` | CAPRF `EVPN_FABRIC_FAULTS` in both EVPN jobs (`bgp-reset`, `link-flap`, `leaf-down`) | Merged (#645) for carrier loss, Planned (#655, #668); kindmetal Planned (CAPRF !291) |
 | Both leaves of a host down one after the other | as above | one uplink at a time in the lab | Not yet: needs a dual-homed CAPRF fixture | Not implemented |
 | Native configuration only (no netplan, no `frr.conf`) | vars and YAML keys for every value of the files | the vars-only server in every lab test | Not yet | Planned (#654 and later) |
 
-Known differences that the kindmetal comparison must measure and then fix or
-accept: BGP capabilities that FRR sends and GoBGP does not (FQDN, graceful
-restart helper, software version), the minimum route advertisement interval
-(GoBGP has none), and the LLDP TLVs.
+Known differences, found with the CAPRF fabric snapshots (legacy ramdisk FRR
+10.2.1 against BOOTy 0.2.0-rc.12), that must be fixed or accepted:
+
+- BGP capabilities that the legacy ramdisk sends and BOOTy does not: graceful
+  restart (helper, restart time 120 s), long-lived graceful restart, hostname,
+  software version, dynamic capability, enhanced route refresh, extended
+  message, add-path receive, paths-limit.
+- Recovery after a 60 s leaf outage: about 5 s for the legacy ramdisk,
+  about 175 s for rc.12. rc.12 also does not react to a 5 s carrier loss.
+  Recheck with a release that contains the carrier watch (#645) and the
+  connect retry option (#654).
+- The minimum route advertisement interval (GoBGP has none) and the LLDP
+  TLVs are not compared yet.
 
 ### Common pipeline
 
