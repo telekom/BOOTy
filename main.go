@@ -33,6 +33,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/network/gobgp"
 	"github.com/telekom/BOOTy/pkg/network/netplan"
 	"github.com/telekom/BOOTy/pkg/network/vlan"
+	"github.com/telekom/BOOTy/pkg/oob"
 	"github.com/telekom/BOOTy/pkg/provision"
 	"github.com/telekom/BOOTy/pkg/realm"
 	"github.com/telekom/BOOTy/pkg/runmode"
@@ -551,6 +552,8 @@ func runCAPRF(ctx context.Context) {
 		"mode", cfg.Mode,
 		"image_count", len(cfg.Provision.Image.URLs),
 	)
+	startOOBStatus(ctx, cfg)
+	oob.Phase("network")
 
 	// runCtx stops the active mode when JWT renewal is exhausted and
 	// FAILURE_ACTION=wait, like fail() stops the legacy task.
@@ -559,7 +562,7 @@ func runCAPRF(ctx context.Context) {
 
 	netMode, err := setupNetworkAndTokenFlow(ctx, cfg, client, stopRun)
 	if err != nil {
-		failRun(ctx, cfg, client, fmt.Sprintf("network or token setup failed: %v", err), reboot)
+		failRun(ctx, cfg, client, fmt.Sprintf("network or token setup failed [%s]: %v", networkFailed(err), err), reboot)
 		return
 	}
 
@@ -593,6 +596,7 @@ func runCAPRF(ctx context.Context) {
 	}
 
 	slog.Info("executing mode", "mode", mode.Name())
+	oob.Phase(mode.Name())
 	modeErr := mode.Run(runCtx)
 	if isTerminalSuccess(modeErr) {
 		// A completed task wins over a token failure at the same moment
@@ -729,7 +733,7 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	// rebuild the entire network stack before giving up.
 	netMode, err := setupNetworkMode(ctx, cfg)
 	if err != nil {
-		return nil, err
+		return nil, &provision.CodedError{Code: provision.CodeNetworkSetup, Err: err}
 	}
 	connectivityTarget := cfg.Transport.InitURL
 	if connectivityTarget == "" {
@@ -744,7 +748,7 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	if connectivityTarget != "" {
 		activeMode, err := ensureNetworkConnectivity(ctx, cfg, netMode, connectivityTarget)
 		if err != nil {
-			return nil, err
+			return nil, &provision.CodedError{Code: provision.CodeConnectivity, Err: err}
 		}
 		netMode = activeMode
 	}
@@ -754,7 +758,7 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 		slog.Error("failed to acquire jwt token", "error", err)
 		if cfg.Transport.TokenURL != "" {
 			provision.DumpDebugState("jwt-acquire")
-			return nil, err
+			return nil, &provision.CodedError{Code: provision.CodeAuth, Err: err}
 		}
 	}
 
@@ -764,7 +768,7 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 		slog.Error("failed to start token renewal", "error", err)
 		if cfg.Transport.TokenURL != "" {
 			provision.DumpDebugState("jwt-renewal-start")
-			return nil, err
+			return nil, &provision.CodedError{Code: provision.CodeAuth, Err: err}
 		}
 	}
 
