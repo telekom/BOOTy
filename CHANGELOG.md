@@ -173,6 +173,13 @@ behaviour.
   (sysfs vendor `ATA`), `sg_sanitize` or `sg_format` for SAS disks, which took
   the `hdparm` path before. The ATA frozen check no longer reads `not frozen`
   as frozen. The plain wipe and `CAPRF_LEGACY_COMPAT` do not change (#704)
+- GoBGP mode runs GoBGP 4.10.0 (was 3.37.0). It sends the Extended Message
+  capability (RFC 8654) like FRR, and its peer events appear in the BOOTy log
+  (component `gobgp`). GoBGP retries a connection after 0.75 to 1 times the
+  connect retry timer and at least 2 s (was 1 to 2 times, at least 1 s). An
+  unnumbered session that lost carrier starts again 1 s after the carrier
+  returns. A `local-as` session still rejects paths with the router AS, now
+  through the BOOTy import policy (#699).
 
 ### Behaviour behind `CAPRF_LEGACY_COMPAT=true`
 
@@ -389,6 +396,9 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 - `github.com/pierrec/lz4/v4` 4.1.31 to 4.1.33 (#578)
 - `anchore/sbom-action` 0.24.2 to 0.24.3 (#579)
 - `oras-project/setup-oras` 2.0.1 to 2.0.2 (#580)
+- GoBGP 3.37.0 to 4.10.0, Go 1.26.6 to 1.27.2, golangci-lint 2.12.2 to 2.15.0,
+  govulncheck 1.4.0 to 1.9.0, `docker/setup-buildx-action` 4.4.1,
+  `actions/upload-artifact` 7.0.2 everywhere, and indirect modules (#699)
 
 ### Upgrade notes for CAPRF
 

@@ -157,6 +157,9 @@ func waitView(t *testing.T, container, neighbor string, want sessionView) {
 		}
 		select {
 		case <-ctx.Done():
+			for _, c := range []string{prodtplBooty, prodtplNative, prodtplNativeVRF} { // DIAGNOSTIC, temporary
+				diagDump(t, c)
+			}
 			t.Fatalf("%s neighbor %s: got %s, want %+v", container, neighbor, last, want)
 		case <-time.After(2 * time.Second):
 		}
@@ -351,6 +354,7 @@ func waitRoutes(t *testing.T, node prodtplNode, want map[string][]string) {
 		}
 		select {
 		case <-ctx.Done():
+			diagDump(t, prodtplContainer(node)) // DIAGNOSTIC, temporary
 			t.Fatalf("%s: BGP routes in Vrf_underlay = %v (%v), want %v", node.name, got, err, want)
 		case <-time.After(2 * time.Second):
 		}
@@ -550,5 +554,24 @@ func prodtplInbound(t *testing.T, node prodtplNode) {
 func TestProdTplLocalASLoopCheck(t *testing.T) {
 	for _, node := range prodtplServers {
 		waitRoutes(t, node, prodtplRoutesVia(prodtplUplinks...))
+	}
+}
+
+// diagDump logs the BGP lines of a BOOTy node. DIAGNOSTIC, temporary.
+func diagDump(t *testing.T, container string) {
+	t.Helper()
+	out, _ := exec.CommandContext(context.Background(), "docker", "logs", container).CombinedOutput()
+	lines := strings.Split(string(out), "\n")
+	var keep []string
+	for _, l := range lines {
+		if strings.Contains(l, "gobgp") || strings.Contains(l, "carrier") || strings.Contains(l, "BFD") || strings.Contains(l, "bfd") || strings.Contains(l, "BGP") || strings.Contains(l, "peer") {
+			keep = append(keep, l)
+		}
+	}
+	if len(keep) > 150 {
+		keep = append(keep[:60], keep[len(keep)-90:]...)
+	}
+	for _, l := range keep {
+		t.Log("DIAG " + container + " " + l)
 	}
 }

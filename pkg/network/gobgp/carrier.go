@@ -6,10 +6,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/server"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/server"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
@@ -35,23 +36,44 @@ type carrierWatch struct {
 	// the watch.
 	raRepeat time.Duration
 	raTimers map[string]*time.Timer
-	log      *slog.Logger
+	// startDelay starts the peer this long after the carrier returns; 0
+	// starts it at once. The new GoBGP peer connects 1.5 to 2 s after its
+	// start (pkg/server/fsm.go:967), so with 1 s its first connect comes
+	// after the leaf's: the leaf connects once its link-local address
+	// passed DAD and BFD is up, about 2 s after the link. The leaf's
+	// connection then wins without a collision. When both connect at
+	// once, GoBGP v4 can lose both connections and waits 5 s in Idle.
+	// ponytail: fixed delay; start at BFD Up if leaves connect later.
+	startDelay  time.Duration
+	startTimers map[string]*time.Timer
+	// mu serializes the link updates and the delayed starts; stopped
+	// ends the delayed starts with the watch.
+	mu      sync.Mutex
+	stopped bool
+	log     *slog.Logger
 }
 
-func newCarrierWatch(bgp *server.BgpServer, peers map[string]string, log *slog.Logger) *carrierWatch {
+func newCarrierWatch(bgp *server.BgpServer, peers map[string]string, confs map[string]*apipb.Peer, log *slog.Logger) *carrierWatch {
 	return &carrierWatch{
 		peers: peers,
 		down:  map[string]bool{},
 		disable: func(ctx context.Context, addr string) error {
 			return bgp.DisablePeer(ctx, &apipb.DisablePeerRequest{Address: addr, Communication: "interface down"}) //nolint:wrapcheck // logged with the peer
 		},
+		// FRR starts the peer at once on interface up. GoBGP v4 holds an
+		// enabled peer 5 s in Idle (holdtimeIdle, pkg/server/fsm.go:912;
+		// v3 took the 1 s idle hold of the BFD reset during the outage),
+		// a new peer starts at once. So the peer is added again.
 		enable: func(ctx context.Context, addr string) error {
-			return bgp.EnablePeer(ctx, &apipb.EnablePeerRequest{Address: addr}) //nolint:wrapcheck // logged with the peer
+			if err := bgp.DeletePeer(ctx, &apipb.DeletePeerRequest{Address: addr}); err != nil {
+				return err //nolint:wrapcheck // logged with the peer
+			}
+			return bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: confs[addr]}) //nolint:wrapcheck // logged with the peer
 		},
-		announce: sendRouterAdvertisement,
-		// GoBGP connects 2 to 3 s after the enable.
-		raRepeat: time.Second,
-		log:      log,
+		announce:   sendRouterAdvertisement,
+		raRepeat:   time.Second,
+		startDelay: time.Second,
+		log:        log,
 	}
 }
 
@@ -73,7 +95,7 @@ func (w *carrierWatch) start(stop chan struct{}) (<-chan struct{}, error) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		defer w.stopRATimers()
+		defer w.stopTimers()
 		for u := range updates {
 			w.handleUpdate(u)
 		}
@@ -91,6 +113,8 @@ func (w *carrierWatch) handleUpdate(u netlink.LinkUpdate) {
 }
 
 func (w *carrierWatch) handle(iface string, carrier bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	addr, ok := w.peers[iface]
 	if !ok || w.down[iface] == !carrier {
 		return
@@ -98,6 +122,9 @@ func (w *carrierWatch) handle(iface string, carrier bool) {
 	w.down[iface] = !carrier
 	ctx := context.Background()
 	if !carrier {
+		if t := w.startTimers[iface]; t != nil {
+			t.Stop()
+		}
 		w.log.Info("uplink lost carrier, stopping its BGP session", "interface", iface, "neighbor", addr)
 		if err := w.disable(ctx, addr); err != nil {
 			w.log.Warn("stop BGP session", "neighbor", addr, "error", err)
@@ -115,14 +142,38 @@ func (w *carrierWatch) handle(iface string, carrier bool) {
 		}
 		w.raTimers[iface] = time.AfterFunc(w.raRepeat, func() { w.announce(iface) })
 	}
+	if w.startDelay == 0 {
+		w.startPeer(ctx, addr)
+		return
+	}
+	if w.startTimers == nil {
+		w.startTimers = map[string]*time.Timer{}
+	}
+	w.startTimers[iface] = time.AfterFunc(w.startDelay, func() {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		if !w.stopped && !w.down[iface] {
+			w.startPeer(ctx, addr)
+		}
+	})
+}
+
+func (w *carrierWatch) startPeer(ctx context.Context, addr string) {
 	if err := w.enable(ctx, addr); err != nil {
 		w.log.Warn("start BGP session", "neighbor", addr, "error", err)
 	}
 }
 
-// stopRATimers stops the repeated RAs; it runs on the update goroutine.
-func (w *carrierWatch) stopRATimers() {
+// stopTimers stops the repeated RAs and the delayed starts; it runs on
+// the update goroutine when the watch ends.
+func (w *carrierWatch) stopTimers() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.stopped = true
 	for _, t := range w.raTimers {
+		t.Stop()
+	}
+	for _, t := range w.startTimers {
 		t.Stop()
 	}
 }
