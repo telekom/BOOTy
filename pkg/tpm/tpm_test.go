@@ -13,6 +13,8 @@ func TestPCRDescription(t *testing.T) {
 	}{
 		{PCRFirmware, "platform firmware"},
 		{PCRSecureBoot, "secure boot policy"},
+		{PCRGRUBCmds, "GRUB commands"},
+		{PCRGRUBFiles, "GRUB loaded files (kernel, initramfs)"},
 		{PCRBooty, "BOOTy runtime events"},
 		{99, "unknown"},
 	}

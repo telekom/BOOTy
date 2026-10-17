@@ -135,7 +135,9 @@ func TestAttestationSWTPM(t *testing.T) {
 		}
 		log.Add(PCRBooty, event, digest)
 	}
-	pcrs := []int{PCRSecureBoot, PCRBooty}
+	// The BOOTy boot chain (shim and GRUB in 4, GRUB commands in 8, kernel
+	// and initramfs in 9) and the BOOTy events (23).
+	pcrs := []int{PCRBootLoader, PCRGRUBCmds, PCRGRUBFiles, PCRBooty}
 	nonce := randomBytes(t, 32)
 	quote, err := d.Quote(pcrs, nonce)
 	if err != nil {
@@ -196,7 +198,8 @@ func TestAttestationSWTPM(t *testing.T) {
 
 	t.Run("wrong PCR value", func(t *testing.T) {
 		forged := *quote
-		forged.PCRValues = map[int][]byte{PCRSecureBoot: quote.PCRValues[PCRSecureBoot], PCRBooty: HashBytes([]byte("forged"))}
+		forged.PCRValues = maps.Clone(quote.PCRValues)
+		forged.PCRValues[PCRBooty] = HashBytes([]byte("forged"))
 		if err := VerifyQuote(ak, &forged, nonce); !errors.Is(err, ErrQuotePCRMismatch) {
 			t.Fatalf("VerifyQuote with a forged PCR 23 = %v, want ErrQuotePCRMismatch", err)
 		}
@@ -213,7 +216,7 @@ func TestAttestationSWTPM(t *testing.T) {
 	t.Run("unsigned extra PCR value", func(t *testing.T) {
 		extra := *quote
 		extra.PCRValues = maps.Clone(quote.PCRValues)
-		extra.PCRValues[PCRBootLoader] = HashBytes([]byte("not quoted"))
+		extra.PCRValues[PCRSecureBoot] = HashBytes([]byte("not quoted"))
 		if err := VerifyQuote(ak, &extra, nonce); !errors.Is(err, ErrQuotePCRMismatch) {
 			t.Fatalf("VerifyQuote with a PCR outside the quote = %v, want ErrQuotePCRMismatch", err)
 		}
@@ -396,5 +399,43 @@ func TestQuoteRequiresNonce(t *testing.T) {
 	}
 	if err := VerifyQuote(nil, &AttestationQuote{}, nil); err == nil {
 		t.Fatal("VerifyQuote without an expected nonce succeeded")
+	}
+}
+
+// MakeCredential refuses an EK public area that is not a TCG EK: a key the
+// device controls could decrypt the credential without the TPM.
+func TestMakeCredentialRejectsNonTCGEK(t *testing.T) {
+	d := openSWTPM(t)
+	ek, err := d.EKPublic()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ak, err := d.AKPublic()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := MakeCredential(ek, ak, []byte("s")); err != nil {
+		t.Fatalf("MakeCredential with the TPM EK: %v", err)
+	}
+	for name, mutate := range map[string]func(*tpm2.TPMTPublic){
+		"not restricted":       func(p *tpm2.TPMTPublic) { p.ObjectAttributes.Restricted = false },
+		"not a decryption key": func(p *tpm2.TPMTPublic) { p.ObjectAttributes.Decrypt = false },
+		"signing key":          func(p *tpm2.TPMTPublic) { p.ObjectAttributes.SignEncrypt = true },
+		"not fixedTPM":         func(p *tpm2.TPMTPublic) { p.ObjectAttributes.FixedTPM = false },
+		"not fixed parent":     func(p *tpm2.TPMTPublic) { p.ObjectAttributes.FixedParent = false },
+		"imported key":         func(p *tpm2.TPMTPublic) { p.ObjectAttributes.SensitiveDataOrigin = false },
+		"no auth policy":       func(p *tpm2.TPMTPublic) { p.AuthPolicy = tpm2.TPM2BDigest{} },
+		"another auth policy":  func(p *tpm2.TPMTPublic) { p.AuthPolicy = tpm2.TPM2BDigest{Buffer: make([]byte, 32)} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			pub, err := tpm2.Unmarshal[tpm2.TPMTPublic](ek)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutate(pub)
+			if _, _, err := MakeCredential(tpm2.Marshal(*pub), ak, []byte("s")); !errors.Is(err, ErrEKNotTCG) {
+				t.Fatalf("MakeCredential = %v, want ErrEKNotTCG", err)
+			}
+		})
 	}
 }

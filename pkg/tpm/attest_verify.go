@@ -45,6 +45,7 @@ func MarshalQuote(quote *AttestationQuote) ([]byte, error) {
 // Errors of VerifyQuote.
 var (
 	ErrAKNotRestricted  = errors.New("AK is not a restricted fixedTPM signing key")
+	ErrEKNotTCG         = errors.New("EK is not a restricted fixedTPM decryption key with the TCG EK policy")
 	ErrQuoteSignature   = errors.New("quote signature does not verify with the trusted AK")
 	ErrQuoteNonce       = errors.New("quote nonce does not match the expected nonce")
 	ErrQuotePCRMismatch = errors.New("PCR values do not match the signed PCR digest")
@@ -89,11 +90,30 @@ func restrictedSigningKey(a tpm2.TPMAObject) bool {
 	return a.Restricted && a.SignEncrypt && !a.Decrypt && a.FixedTPM && a.FixedParent && a.SensitiveDataOrigin
 }
 
+// checkEK checks that an EK public area has the attributes and the auth
+// policy (PolicySecret(TPM_RH_ENDORSEMENT)) of the TCG EK templates: a
+// restricted decryption key that never left the TPM it was generated in.
+func checkEK(ek *tpm2.TPMTPublic) error {
+	a := ek.ObjectAttributes
+	if !a.Restricted || !a.Decrypt || a.SignEncrypt || !a.FixedTPM || !a.FixedParent || !a.SensitiveDataOrigin ||
+		!bytes.Equal(ek.AuthPolicy.Buffer, ekTCGPolicy) {
+		return ErrEKNotTCG
+	}
+	return nil
+}
+
+// ekTCGPolicy is the auth policy digest of the TCG EK templates (low range,
+// SHA-256): PolicySecret(TPM_RH_ENDORSEMENT).
+var ekTCGPolicy = tpm2.RSAEKTemplate.AuthPolicy.Buffer
+
 // MakeCredential is the verifier side of credential activation. It checks
-// that akPublic is a restricted signing key and encrypts secret to the EK so
-// that only the TPM holding this EK and this AK can recover it with
-// ActivateCredential. The verifier must trust ekPublic first (EK
-// certificate check). Send credentialBlob and encryptedSecret to the device.
+// that akPublic is a restricted signing key and that ekPublic has the TCG
+// EK attributes and policy, and encrypts secret to the EK so that only the
+// TPM holding this EK and this AK can recover it with ActivateCredential.
+// The verifier must trust ekPublic first (EK certificate check): without
+// it, a successful activation proves only that the same TPM holds the EK
+// and the AK, not that it is a genuine TPM. Send credentialBlob and
+// encryptedSecret to the device.
 func MakeCredential(ekPublic, akPublic, secret []byte) (credentialBlob, encryptedSecret []byte, err error) {
 	_, ak, err := parseAK(akPublic)
 	if err != nil {
@@ -106,6 +126,9 @@ func MakeCredential(ekPublic, akPublic, secret []byte) (credentialBlob, encrypte
 	ek, err := tpm2.Unmarshal[tpm2.TPMTPublic](ekPublic)
 	if err != nil {
 		return nil, nil, fmt.Errorf("parsing EK public: %w", err)
+	}
+	if err := checkEK(ek); err != nil {
+		return nil, nil, err
 	}
 	ekKey, err := tpm2.ImportEncapsulationKey(ek)
 	if err != nil {
@@ -149,6 +172,11 @@ func VerifyQuote(akPublic []byte, quote *AttestationQuote, nonce []byte) error {
 	attest, err := tpm2.Unmarshal[tpm2.TPMSAttest](quote.QuoteData)
 	if err != nil {
 		return fmt.Errorf("parsing quote: %w", err)
+	}
+	// Defense in depth: the restricted AK already signs only data that
+	// starts with TPM_GENERATED_VALUE.
+	if attest.Magic != tpm2.TPMGeneratedValue {
+		return errors.New("quote data is not TPM-generated")
 	}
 	if subtle.ConstantTimeCompare(attest.ExtraData.Buffer, nonce) != 1 {
 		return ErrQuoteNonce

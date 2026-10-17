@@ -175,7 +175,7 @@ func (o *Orchestrator) Attest(ctx context.Context) error {
         return fmt.Errorf("get attestation nonce: %w", err)
     }
 
-    quote, sig, err := o.tpm.Quote([]int{0, 1, 4, 7, 23}, nonce)
+    quote, sig, err := o.tpm.Quote([]int{0, 1, 4, 7, 8, 9, 23}, nonce)
     if err != nil {
         return fmt.Errorf("generate TPM quote: %w", err)
     }

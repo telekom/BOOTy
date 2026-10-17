@@ -58,6 +58,9 @@ The `pkg/tpm` library has these functions for later use:
 1. The device sends `EKPublic` and `AKPublic`. The verifier checks the EK
    (for example the EK certificate of the TPM vendor; BOOTy does not read
    it yet) and calls `MakeCredential(ek, ak, secret)` with a random secret.
+   `MakeCredential` checks that the EK public area has the TCG EK
+   attributes (restricted decryption key, `fixedTPM`, `fixedParent`,
+   `sensitiveDataOrigin`) and the TCG EK auth policy.
 2. The device calls `ActivateCredential` and returns the secret. The TPM
    releases it only when it holds this EK and an object with exactly this AK
    public area. Then the verifier trusts the AK.
@@ -67,6 +70,11 @@ The `pkg/tpm` library has these functions for later use:
    is TPM-generated, the nonce, and that `quote.PCRValues` hash to the
    signed PCR digest. Then it compares the PCR values with the expected
    values (`VerifyQuoteAgainstPolicy`, or `ReplayMeasurementLog` for PCR 23).
+
+Without the EK certificate check, a successful activation proves only that
+the same TPM holds the EK and the AK, not that it is a genuine TPM: a
+software TPM passes too. The device code assumes empty authorization values
+for the endorsement and owner hierarchies, as on a freshly cleared TPM.
 
 The AK is a restricted ECDSA P-256 signing key (`fixedTPM`, `fixedParent`,
 `sensitiveDataOrigin`): it signs only data that the TPM generated, so it
@@ -82,9 +90,9 @@ BOOTy follows the
 | PCR | Owner | BOOTy use |
 | --- | --- | --- |
 | 0 to 7 | Firmware; 7 is the Secure Boot policy | Read and quote only |
-| 8, 9 | GRUB | None |
+| 8, 9 | GRUB: commands (8), loaded files such as the BOOTy kernel and initramfs (9) | Read and quote only |
 | 10 | IMA | None |
-| 11 to 13 | systemd-stub (UKI sections, command line, sysexts) | Read and quote only |
+| 11 to 13 | systemd-stub (UKI sections, command line, sysexts); only for a future UKI boot | None today |
 | 14 | shim MokList | None. Do not bind LUKS keys to it |
 | 15 | systemd machine identity and volume keys | None |
 | 16 | Debug | None |
@@ -95,8 +103,13 @@ PCR 23 and keeps the order in a `MeasurementLog`; the verifier replays the
 log. PCR 15 is not used, because after a kexec handoff the target OS keeps
 the PCR values of the BOOTy boot, and systemd in the target expects only
 its own events in PCR 15. PCR 23 can be reset by software, so a verifier
-must not trust PCR 23 alone: the BOOTy binary itself is measured by the
-firmware and systemd-stub (PCR 4 and 11). systemd NvPCRs (NV index based
+must not trust PCR 23 alone. The BOOTy ISO boots through shim and GRUB, not
+a UKI: the firmware measures shim and GRUB into PCR 4, and GRUB measures the
+kernel and the initramfs (which contains BOOTy) into PCR 9 and its commands
+into PCR 8. A quote must cover PCR 4, 8 and 9 together with PCR 23. The
+verifier matches PCR 4, 8 and 9 against the expected values of the BOOTy
+release first, and only then replays the PCR 23 log. PCR 11 applies only to
+a future UKI boot. systemd NvPCRs (NV index based
 PCRs) are an option for later; they need TPM NV space and systemd support
 in the target.
 
