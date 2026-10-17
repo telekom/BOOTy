@@ -6,7 +6,8 @@ contract: what BOOTy guarantees to the Kubernetes side (the SR-IOV network
 operator, the DRA SR-IOV driver and the T-CaaS node tuning) when it hands
 the host over to the installed OS.
 
-The design is in [proposal-sriov-nic-config.md](proposal-sriov-nic-config.md).
+The design is in `docs/proposal-sriov-nic-config.md` of the provisioning
+proposals (PR #700, branch `docs/provisioning-proposals`, not merged yet).
 
 ## Report
 
@@ -72,8 +73,9 @@ runs the representors and tc-flower offload.
 
 BOOTy guarantees at the handoff, for every PF port:
 
-1. The inventory has the `sriov` report of the port, read after every
-   change that BOOTy made.
+1. The inventory has the `sriov` report of the port, as `collect-inventory`
+   read it. BOOTy makes no SR-IOV change in this version, so the report is
+   the state at the handoff.
 2. BOOTy never leaves VFs or a switchdev eSwitch behind that it created:
    the installed OS starts with the state that the NIC firmware and the OS
    driver defaults give (`sriovNumVFs` 0, eSwitch `legacy`).
@@ -94,7 +96,7 @@ BOOTy does not guarantee:
 
 | Consumer | Uses | Field |
 |----------|------|-------|
-| DRA SR-IOV driver (`k8snetworkplumbingwg/dra-driver-sriov`) | eSwitch mode and detection (`phys_switch_id`, upstream PR #120), PF name, vendor and device ID, NUMA node, link type | `eswitch.mode`, `physSwitchId`, `interface`, `vendorId`, `deviceId`, `numaNode`, `linkType` |
+| DRA SR-IOV driver (`k8snetworkplumbingwg/dra-driver-sriov`) | eSwitch mode (the driver reads it through devlink and assumes legacy without it; eSwitch detection by `phys_switch_id` was proposed in upstream PR #120, closed without merge), PF name, vendor and device ID, NUMA node, link type | `eswitch.mode`, `physSwitchId`, `interface`, `vendorId`, `deviceId`, `numaNode`, `linkType` |
 | DRA representor and tc-flower work (upstream issues #121, #122) | Whether the hardware can run switchdev | `eswitch.capability` |
 | DRA VF attributes (upstream #123) and sriov-cni | VF limits | `sriovTotalVFs` |
 | t-co `SRIOVIntegration` gate | The `SRIOVEnabled` bootstrap input that taints SR-IOV worker groups. The input should come from this report (`sriovCapable` and `sriovTotalVFs` of the profile PFs), not from a manual flag. | `sriovCapable`, `sriovTotalVFs` |
