@@ -305,6 +305,23 @@ KVM lab, the same host and test, seconds:
 GitHub runners (KVM matrix job `agent-cycle-timing`, PR #715 before and
 PR #716 after): cold 18.9 to 15.7 s, agent 27.7 to 9.2 s.
 
+kindmetal, CAPRF BOOTy L2 e2e through the real controller (cycle report of
+CAPRF !297, 7 hosts, mean seconds; 6 hosts in the second run because one
+mirrored host failed its disk selection with the newer BOOTy build):
+
+| Phase | pinned BOOTy 0.2.0-rc.12 (!297) | BOOTy #724 build (!299) |
+|---|---:|---:|
+| deprovision: power off | 15.4 | 3.0 |
+| provision: power off and on | 91.0 | 10.4 |
+| provision: ramdisk boot, network, task | 335.9 | 331.0 |
+| cycle (mean deprovision + mean provision) | 470.6 | 375.8 |
+
+rc.12 kexecs or reboots after the success callback without telling CAPRF.
+CAPRF then sent a graceful shutdown to the new OS and waited for its 90 s
+timeout before it forced the host off: the handoff race of section 4.7,
+measured. The #724 build names the handoff (`poweroff` here, because CAPRF
+asks for legacy compat); with `kexec` the provision power cycle drops out.
+
 The EFI runtime services survive BOOTy's kexec on x86: in the KVM `kexec`
 scenario under OVMF the target lists the EFI variables (PR #725). So kexec
 needs no reboot fallback for targets that use `efibootmgr`.
