@@ -236,7 +236,7 @@ func collectValidationErrors(validators []func() string) []string {
 func (c *Config) validateNetworkOptions() []string {
 	var errs []string
 	if d := c.Network.Devices; d != nil {
-		if err := netplan.Check(&netplan.Config{Network: *d}); err != nil {
+		if err := netplan.Check(&netplan.Config{Network: *d.Section()}); err != nil {
 			errs = append(errs, "network.devices: "+err.Error())
 		}
 	}

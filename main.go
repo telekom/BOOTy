@@ -957,7 +957,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 	// Netplan-derived values override vars-based values, allowing the same
 	// config format used by the old deployer to work as a drop-in with BOOTy.
 	netplanStrict, frrStrict := inputStrictness(cfg)
-	npCfg, err := detectNetplanConfigWith(deployNetplanDir, deployFRRConfPath, netplanStrict, frrStrict, cfg.Network.Devices)
+	npCfg, err := detectNetplanConfigWith(deployNetplanDir, deployFRRConfPath, netplanStrict, frrStrict, cfg.Network.Devices.Section())
 	if err != nil {
 		return nil, err
 	}
@@ -1573,6 +1573,7 @@ func mergeOverlayDevices(dst, src *network.OverlayDevices) {
 		{&dst.PortHairpin, &src.PortHairpin}, {&dst.PortLearning, &src.PortLearning},
 		{&dst.VXLANLinkLocal, &src.VXLANLinkLocal}, {&dst.BridgeLinkLocal, &src.BridgeLinkLocal},
 		{&dst.VXLANAcceptRA, &src.VXLANAcceptRA}, {&dst.BridgeAcceptRA, &src.BridgeAcceptRA},
+		{&dst.BridgeSTP, &src.BridgeSTP},
 	} {
 		nativeWins(f.d, *f.s)
 	}

@@ -118,7 +118,8 @@
     "bridgeLinkLocal": false,
     "vxlanAcceptRA": false,
     "bridgeAcceptRA": false,
-    "bridgeMTU": 9000
+    "bridgeMTU": 9000,
+    "bridgeSTP": false
   },
   "NoAcceptRA": [
     "hbn"

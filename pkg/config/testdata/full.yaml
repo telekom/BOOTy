@@ -70,6 +70,34 @@ network:
   # names that the config uses (default: true)
   predictableNames: false
 
+  # overlay: device settings of the provision VXLAN device and bridge
+  # (GoBGP), like the netplan tunnel and bridge keys (VXLAN_MTU, VXLAN_MAC,
+  # VXLAN_LEARNING, VXLAN_ARP_PROXY, VXLAN_PORT_HAIRPIN, VXLAN_PORT_LEARNING,
+  # VXLAN_IPV6_LINK_LOCAL, VXLAN_ACCEPT_RA, BRIDGE_MTU, BRIDGE_IPV6_LINK_LOCAL,
+  # BRIDGE_ACCEPT_RA, BRIDGE_STP). Unset values keep the GoBGP defaults.
+  overlay:
+    vxlanMTU: 9000
+    vxlanMAC: "02:54:c0:00:02:13"
+    vxlanLearning: false
+    vxlanARPProxy: false
+    portHairpin: true
+    portLearning: false
+    vxlanLinkLocal: false
+    vxlanAcceptRA: false
+    bridgeMTU: 9000
+    bridgeLinkLocal: false
+    bridgeAcceptRA: false
+    bridgeSTP: false
+
+  # noAcceptRA (ACCEPT_RA_OFF): NICs that ignore IPv6 router advertisements.
+  noAcceptRA: "ens1f0np0,ens1f1np1"
+  # emitLLDP (LLDP_EMIT): NICs that send LLDP like systemd-networkd.
+  emitLLDP: "ens1f0np0,ens1f1np1"
+  # ipForwarding / ipv6Forwarding (IP_FORWARDING, IPV6_FORWARDING): the
+  # forwarding sysctls (GoBGP).
+  ipForwarding: false
+  ipv6Forwarding: false
+
   # loopbackAddresses: comma-separated CIDRs that GoBGP adds to lo, like
   # netplan "lo: addresses".
   # mtu: fabric NIC and underlay dummy MTU (GoBGP, default 9000)

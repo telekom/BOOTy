@@ -62,4 +62,11 @@ func TestFrameLikeNetworkd(t *testing.T) {
 	if l.ChassisID.Subtype != layers.LLDPChassisIDSubTypeMACAddr || net.HardwareAddr(l.ChassisID.ID).String() != mac.String() || info.SysDescription != "" {
 		t.Errorf("fallback chassis %v %x, description %q", l.ChassisID.Subtype, l.ChassisID.ID, info.SysDescription)
 	}
+	// networkd sends no system description TLV at all without a pretty
+	// hostname, not an empty one.
+	for _, v := range l.Values {
+		if v.Type == layers.LLDPTLVSysDescription {
+			t.Errorf("fallback frame has a system description TLV %q", v.Value)
+		}
+	}
 }

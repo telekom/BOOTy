@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -72,10 +73,11 @@ func prodtplLLDPView(frame []byte) string {
 }
 
 // The templates (BOOTy) and LLDP_EMIT (vars-only server) send, on both
-// uplinks, frames to the nearest-bridge address with the NIC MAC as chassis
-// ID (the containers have no machine ID), the interface name as port ID,
-// TTL 120, the hostname and the networkd capabilities: station, bridge and
-// router supported, station enabled.
+// uplinks, frames to the nearest-bridge address with the machine ID as
+// locally assigned chassis ID (subtype 7, 32 hex digits, like networkd;
+// the lab gives each container an /etc/machine-id like systemd does), the
+// interface name as port ID, TTL 120, the hostname and the networkd
+// capabilities: station, bridge and router supported, station enabled.
 func TestProdTplLLDP(t *testing.T) {
 	for _, node := range []prodtplNode{prodtplBootyNode, prodtplNativeNode} {
 		c := prodtplContainer(node)
@@ -83,14 +85,22 @@ func TestProdTplLLDP(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s hostname: %v", node.name, err)
 		}
+		id, err := prodtplExec(context.Background(), c, "cat", "/etc/machine-id")
+		if err != nil {
+			t.Fatalf("%s machine ID: %v", node.name, err)
+		}
+		id = strings.TrimSpace(id)
+		if !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(id) {
+			t.Fatalf("%s machine ID %q, want 32 hex digits", node.name, id)
+		}
 		for i, nic := range []string{"ens1f0np0", "ens1f1np1"} {
 			mac, err := prodtplExec(context.Background(), c, "cat", "/sys/class/net/"+nic+"/address")
 			if err != nil {
 				t.Fatalf("%s %s MAC: %v", node.name, nic, err)
 			}
 			mac = strings.TrimSpace(mac)
-			want := fmt.Sprintf("dst=01:80:c2:00:00:0e src=%s chassis=4:%s port=5:%s ttl=120 name=%s caps=0094/0080",
-				mac, mac, nic, strings.TrimSpace(host))
+			want := fmt.Sprintf("dst=01:80:c2:00:00:0e src=%s chassis=7:%s port=5:%s ttl=120 name=%s caps=0094/0080",
+				mac, id, nic, strings.TrimSpace(host))
 			// A frame every 30 s after the first four.
 			ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)
 			frame, err := prodtplLLDPFrame(ctx, node.leafPorts[i])

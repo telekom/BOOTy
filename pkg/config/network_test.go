@@ -3,6 +3,8 @@ package config
 import (
 	"strings"
 	"testing"
+
+	"github.com/telekom/BOOTy/pkg/network/netplan"
 )
 
 func TestValidateNetworkPrefixLists(t *testing.T) {
@@ -31,6 +33,19 @@ func TestValidateNetworkOptionRanges(t *testing.T) {
 		{"allowASIn 10", func(c *Config) { c.Network.BGP.AllowASIn = new(uint32(10)) }, ""},
 		{"bad bridgeMAC", func(c *Config) { c.Network.EVPN.BridgeMAC = "02:00:00:00:10" }, "is not a 48-bit MAC address"},
 		{"bridgeMAC", func(c *Config) { c.Network.EVPN.BridgeMAC = "02:00:00:00:10:01" }, ""},
+		{"vxlanMTU 575", func(c *Config) { c.Network.Overlay.VXLANMTU = 575 }, "network.overlay.vxlanMTU 575 must be 576 to 65535"},
+		{"vxlanMTU 576", func(c *Config) { c.Network.Overlay.VXLANMTU = 576 }, ""},
+		{"bridgeMTU 575", func(c *Config) { c.Network.Overlay.BridgeMTU = 575 }, "network.overlay.bridgeMTU 575 must be 576 to 65535"},
+		{"devices route metric", func(c *Config) {
+			c.Network.Devices = &NetworkDevices{Ethernets: map[string]netplan.EthernetConfig{
+				"eth0": {Routes: []netplan.RouteConfig{{To: "default", Via: "192.0.2.1", Metric: 50}}},
+			}}
+		}, "network.devices: "},
+		{"devices", func(c *Config) {
+			c.Network.Devices = &NetworkDevices{Ethernets: map[string]netplan.EthernetConfig{
+				"eth0": {Routes: []netplan.RouteConfig{{To: "default", Via: "192.0.2.1"}}},
+			}}
+		}, ""},
 	} {
 		c := &Config{}
 		tt.set(c)

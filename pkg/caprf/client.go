@@ -1659,7 +1659,7 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		if err != nil {
 			return true, fmt.Errorf("invalid %s: %w", key, err)
 		}
-		cfg.Network.Devices = &np.Network
+		cfg.Network.Devices = (*config.NetworkDevices)(&np.Network)
 		return true, nil
 	}
 	if key == "NETWORK_WAIT_MAX_ATTEMPTS" {
@@ -1754,6 +1754,7 @@ func networkBoolOption(cfg *config.MachineConfig, key string) **bool {
 		"VXLAN_ACCEPT_RA":        &o.VXLANAcceptRA,
 		"BRIDGE_IPV6_LINK_LOCAL": &o.BridgeLinkLocal,
 		"BRIDGE_ACCEPT_RA":       &o.BridgeAcceptRA,
+		"BRIDGE_STP":             &o.BridgeSTP,
 		"IP_FORWARDING":          &cfg.Network.IPForwarding,
 		"IPV6_FORWARDING":        &cfg.Network.IPv6Forwarding,
 	}[key]

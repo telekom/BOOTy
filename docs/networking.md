@@ -84,8 +84,9 @@ netplan files (one info log line when both exist), so both forms give the
 same network config. Native devices are always strict: an unknown key or
 an unsupported route key fails.
 
-GoBGP mode sets the sysctls of the legacy ramdisk: `ip_forward` and IPv6
-`forwarding` (on, or off with `[no] ip[v6] forwarding` in `frr.conf`;
+GoBGP mode sets the sysctls of the legacy ramdisk: `ip_forward` (on, or
+off with `no ip forwarding` in `frr.conf`) and IPv6 `forwarding` (off, the
+kernel default that zebra and netplan keep, or on with `ipv6 forwarding`;
 `IP_FORWARDING` and `IPV6_FORWARDING` set them natively), `rp_filter` 0 for
 `all` and `default`, and `accept_ra` 2 with `accept_ra_defrtr` 1 for `all`
 and `default`. Netplan `accept-ra` (`ACCEPT_RA_OFF`) then sets single NICs.
@@ -323,6 +324,7 @@ rule of every key:
 | `NETWORK_DEVICES` | the provisioner netplan files | `network.devices` | replaces the netplan files as a whole |
 | `VXLAN_MTU`, `VXLAN_MAC`, `VXLAN_LEARNING`, `VXLAN_ARP_PROXY`, `VXLAN_PORT_HAIRPIN`, `VXLAN_PORT_LEARNING`, `VXLAN_IPV6_LINK_LOCAL`, `VXLAN_ACCEPT_RA` | netplan tunnel `mtu`, `macaddress`, `mac-learning`, `arp-proxy`, `hairpin`, `port-mac-learning`, `link-local`, `accept-ra` | `network.overlay.*` | native wins |
 | `BRIDGE_MTU`, `BRIDGE_IPV6_LINK_LOCAL`, `BRIDGE_ACCEPT_RA` | netplan bridge `mtu`, `link-local`, `accept-ra` | `network.overlay.*` | native wins |
+| `BRIDGE_STP` | netplan bridge `parameters` (`stp`, on when the block has no `stp`) | `network.overlay.bridgeSTP` | native wins |
 | `ACCEPT_RA_OFF`, `LLDP_EMIT` | netplan ethernet `accept-ra: false`, `emit-lldp: true` | `network.noAcceptRA`, `network.emitLLDP` | list replaces |
 | `IP_FORWARDING`, `IPV6_FORWARDING` | `frr.conf` `[no] ip[v6] forwarding` | `network.ipForwarding`, `network.ipv6Forwarding` | native wins |
 
@@ -484,7 +486,9 @@ Both stacks:
   is 9000, or the largest netplan `mtu`.
 - Put the underlay IP on the `dummy.underlay` device (FRR falls back to
   `lo`) and the overlay IP on `lo`.
-- Enable IPv4 and IPv6 forwarding and disable reverse-path filtering.
+- Disable reverse-path filtering. The FRR stack enables IPv4 and IPv6
+  forwarding; GoBGP mode keeps IPv6 forwarding off by default like the
+  legacy ramdisk (see [Netplan and FRR config input](#netplan-and-frr-config-input)).
 - Use `VRF_NAME` as the underlay VRF when set. Without it, they use the
   default routing table. `VRF_TABLE_ID` defaults to 1000. GoBGP replaces
   table 1 with 1000 and logs a warning.

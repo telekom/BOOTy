@@ -8,6 +8,8 @@ import (
 	"os"
 
 	"github.com/vishvananda/netlink"
+	"github.com/vishvananda/netlink/nl"
+	"golang.org/x/sys/unix"
 )
 
 // This file applies the netplan device settings (systemd-networkd
@@ -74,6 +76,41 @@ func (o *OverlayTier) applyPortSettings(port netlink.Link) error {
 	return nil
 }
 
+// applyBridgeSettings sets the netplan MTU and STP of the bridge.
+func (o *OverlayTier) applyBridgeSettings(br netlink.Link) error {
+	if mtu := o.cfg.OverlayDevices.BridgeMTU; mtu > 0 {
+		if err := netlink.LinkSetMTU(br, mtu); err != nil {
+			return fmt.Errorf("set bridge MTU: %w", err)
+		}
+	}
+	if stp := o.cfg.OverlayDevices.BridgeSTP; stp != nil {
+		return setBridgeSTP(br, *stp)
+	}
+	return nil
+}
+
+// setBridgeSTP sets the spanning tree of a bridge (IFLA_BR_STP_STATE);
+// netlink.Bridge has no field for it.
+func setBridgeSTP(link netlink.Link, on bool) error {
+	state := uint32(0)
+	if on {
+		state = 1
+	}
+	req := nl.NewNetlinkRequest(unix.RTM_NEWLINK, unix.NLM_F_ACK)
+	msg := nl.NewIfInfomsg(unix.AF_UNSPEC)
+	msg.Index = int32(link.Attrs().Index) //nolint:gosec // an interface index
+	req.AddData(msg)
+	info := nl.NewRtAttr(unix.IFLA_LINKINFO, nil)
+	info.AddRtAttr(nl.IFLA_INFO_KIND, nl.NonZeroTerminated("bridge"))
+	data := info.AddRtAttr(nl.IFLA_INFO_DATA, nil)
+	data.AddRtAttr(nl.IFLA_BR_STP_STATE, nl.Uint32Attr(state))
+	req.AddData(info)
+	if _, err := req.Execute(unix.NETLINK_ROUTE, 0); err != nil {
+		return fmt.Errorf("set STP on %s: %w", link.Attrs().Name, err)
+	}
+	return nil
+}
+
 func setAcceptRA(dev string, on bool) error {
 	val := "0"
 	if on {
@@ -88,10 +125,13 @@ func setAcceptRA(dev string, on bool) error {
 
 func boolValue(b *bool) bool { return b != nil && *b }
 
-// sysctlBool is "1" unless b is set to false.
-func sysctlBool(b *bool) string {
-	if b != nil && !*b {
-		return "0"
+// sysctlBool is the sysctl value of b, or of def when b is unset.
+func sysctlBool(b *bool, def bool) string {
+	if b == nil {
+		b = &def
 	}
-	return "1"
+	if *b {
+		return "1"
+	}
+	return "0"
 }

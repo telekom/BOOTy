@@ -5,6 +5,7 @@ package integration
 
 import (
 	"context"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -15,7 +16,8 @@ import (
 // reflector and the gateway of the L3VNI: every server must withdraw its
 // Type-5 routes, gateway neighbor entry and FDB entry, keep the routes of
 // the other servers (reflected by dcgw02), and install everything again
-// when dcgw01 is back, like the shadow node.
+// when dcgw01 is back, like the shadow node: each server withdraws within
+// max(shadow + 2 s, 5 s) and recovers within shadow + 10 s.
 func TestProdTplRRRestart(t *testing.T) {
 	gwRoute := "route default via ::ffff:198.51.100.1 dev br.provision [onlink] proto bgp metric 20"
 	otherRoute := "route other-lo via ::ffff:other-vtep dev br.provision [onlink] proto bgp metric 20"
@@ -29,10 +31,10 @@ func TestProdTplRRRestart(t *testing.T) {
 	start := time.Now()
 	// The outage lasts until dcgw01 peers with the leaf again (8 to 70 s
 	// in the lab), so all servers are polled together.
-	withdrawn := map[string]bool{}
+	withdrawn := map[string]time.Duration{}
 	for len(withdrawn) < len(prodtplServers) {
 		for _, node := range prodtplServers {
-			if withdrawn[node.name] {
+			if _, ok := withdrawn[node.name]; ok {
 				continue
 			}
 			got, err := prodtplL3VNIState(ctx, node)
@@ -53,8 +55,8 @@ func TestProdTplRRRestart(t *testing.T) {
 			if others != 2 {
 				t.Errorf("%s lost the routes of the other servers during the outage: %q", node.name, got)
 			}
-			withdrawn[node.name] = true
-			t.Logf("%s: dcgw01 routes withdrawn %v after the crash", node.name, time.Since(start).Round(10*time.Millisecond))
+			withdrawn[node.name] = time.Since(start)
+			t.Logf("%s: dcgw01 routes withdrawn %v after the crash", node.name, withdrawn[node.name].Round(10*time.Millisecond))
 		}
 		select {
 		case <-ctx.Done():
@@ -63,11 +65,41 @@ func TestProdTplRRRestart(t *testing.T) {
 		}
 	}
 
+	maxWithdraw := max(withdrawn["shadow"]+2*time.Second, 5*time.Second)
+	for name, d := range withdrawn {
+		if d > maxWithdraw {
+			t.Errorf("%s withdrew the dcgw01 routes %v after the crash, want within %v (shadow %v)", name, d, maxWithdraw, withdrawn["shadow"])
+		}
+	}
+
+	// Recovery: all servers are polled together until their L3VNI state is
+	// complete again.
+	recovered := map[string]time.Duration{}
+	for len(recovered) < len(prodtplServers) {
+		for _, node := range prodtplServers {
+			if _, ok := recovered[node.name]; ok {
+				continue
+			}
+			if got, err := prodtplL3VNIState(ctx, node); err == nil && reflect.DeepEqual(got, prodtplL3VNIWant(node)) {
+				recovered[node.name] = time.Since(start)
+				t.Logf("%s: recovered %v after the crash", node.name, recovered[node.name].Round(10*time.Millisecond))
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("not every server recovered: %v", recovered)
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	for _, name := range []string{"booty", "native"} {
+		if d := recovered[name]; d > recovered["shadow"]+10*time.Second {
+			t.Errorf("%s recovered %v after the crash, want within shadow + 10 s (shadow %v)", name, d, recovered["shadow"])
+		}
+	}
 	want := sessionView{State: "Established", RemoteAS: prodtplASN, LocalAS: prodtplASN,
 		HoldMsecs: 90000, KeepMsecs: 30000, Families: []string{"l2VpnEvpn"}}
 	for _, node := range prodtplServers {
 		waitView(t, prodtplDCGW1, node.underlay, want)
 	}
 	prodtplWaitL3VNI(t)
-	t.Logf("all servers recovered %v after the crash", time.Since(start).Round(time.Second))
 }

@@ -74,13 +74,33 @@ func prodtplDeviceView(ctx context.Context, node prodtplNode) ([]string, error) 
 	for _, a := range addrs {
 		add("%s", a)
 	}
-	// IPv6 forwarding stays on in BOOTy: the template has no "ipv6
-	// forwarding" line, and off would need accept-ra: false on every NIC.
-	fwd, err := prodtplExec(ctx, c, "cat", "/proc/sys/net/ipv4/ip_forward")
-	if err != nil {
-		return nil, err
+	// Both forwarding sysctls: the template has "no ip forwarding" and no
+	// "ipv6 forwarding" line, so IPv6 keeps the kernel default.
+	for _, p := range []string{"/proc/sys/net/ipv4/ip_forward", "/proc/sys/net/ipv6/conf/all/forwarding"} {
+		fwd, err := prodtplExec(ctx, c, "cat", p)
+		if err != nil {
+			return nil, err
+		}
+		add("%s=%s", p, strings.TrimSpace(fwd))
 	}
-	add("/proc/sys/net/ipv4/ip_forward=%s", strings.TrimSpace(fwd))
+	// The Router flag of the server's Neighbor Advertisements (set with
+	// IPv6 forwarding on) as the leaf keeps it for the server's link-local
+	// address on each uplink.
+	for i, port := range node.leafPorts {
+		var neigh []struct {
+			Dst   string   `json:"dst"`
+			State []string `json:"state"`
+			Flags []string `json:"flags"`
+		}
+		if err := prodtplJSON(ctx, prodtplLeaf, &neigh, "ip", "-6", "-j", "neigh", "show", "dev", port); err != nil {
+			return nil, err
+		}
+		for _, n := range neigh {
+			if strings.HasPrefix(n.Dst, "fe80:") && !slices.Contains(n.State, "FAILED") {
+				add("uplink%d leaf neigh router=%v", i, slices.Contains(n.Flags, "router"))
+			}
+		}
+	}
 	slices.Sort(view)
 	return view, nil
 }
@@ -120,27 +140,41 @@ func prodtplAddrView(ctx context.Context, c string) ([]string, error) {
 // Like a differential `ip -d link`, `ip addr`, `bridge link` and sysctl
 // comparison: the VXLAN device and the bridge follow the netplan keys
 // (mtu, macaddress, mac-learning, arp-proxy, hairpin, port-mac-learning,
-// link-local: [], accept-ra: false) and "no ip forwarding" holds.
+// link-local: [], accept-ra: false), "no ip forwarding" holds, IPv6
+// forwarding stays off, and the leaf sees the same Router flag.
 func TestProdTplKernelDevices(t *testing.T) {
-	views := map[string][]string{}
-	for _, node := range prodtplServers {
-		ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)
-		var v []string
-		var err error
-		for {
-			v, err = prodtplDeviceView(ctx, node)
-			if err == nil && len(v) > 0 {
-				break
+	ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)
+	defer cancel()
+	// Polled until BOOTy and the vars-only server look like the shadow
+	// node: the RA and NA state settles after the sessions are up.
+	var views map[string][]string
+	var lastErr error
+	for {
+		views, lastErr = map[string][]string{}, nil
+		for _, node := range prodtplServers {
+			v, err := prodtplDeviceView(ctx, node)
+			if err != nil {
+				lastErr = err
 			}
-			select {
-			case <-ctx.Done():
-				cancel()
-				t.Fatalf("%s devices: %v", node.name, err)
-			case <-time.After(2 * time.Second):
-			}
+			views[node.name] = v
 		}
-		cancel()
-		views[node.name] = v
+		if lastErr == nil && len(views["shadow"]) > 0 &&
+			reflect.DeepEqual(views["booty"], views["shadow"]) && reflect.DeepEqual(views["native"], views["shadow"]) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			if lastErr != nil {
+				t.Fatalf("devices: %v", lastErr)
+			}
+			for _, name := range []string{"booty", "native"} {
+				if !reflect.DeepEqual(views[name], views["shadow"]) {
+					t.Errorf("%s differs from the shadow node:\n%s", name, diffLines(views[name], views["shadow"]))
+				}
+			}
+			return
+		case <-time.After(2 * time.Second):
+		}
 	}
 	for _, want := range []string{
 		"vx.3000 kind=vxlan mtu=9000 master=br.provision up=true addrgenmode=none",
@@ -149,14 +183,10 @@ func TestProdTplKernelDevices(t *testing.T) {
 		"br.provision kind=bridge mtu=9000 master= up=true addrgenmode=none",
 		"ens1f0np0 accept_ra=0",
 		"/proc/sys/net/ipv4/ip_forward=0",
+		"/proc/sys/net/ipv6/conf/all/forwarding=0",
 	} {
 		if !slices.Contains(views["shadow"], want) {
 			t.Fatalf("shadow (the reference) lacks %q:\n%s", want, strings.Join(views["shadow"], "\n"))
-		}
-	}
-	for _, name := range []string{"booty", "native"} {
-		if !reflect.DeepEqual(views[name], views["shadow"]) {
-			t.Errorf("%s differs from the shadow node:\n%s", name, diffLines(views[name], views["shadow"]))
 		}
 	}
 }

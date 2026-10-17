@@ -425,10 +425,8 @@ func (o *OverlayTier) createVXLANAndBridge() error {
 	if err := o.applyPortSettings(vxLink); err != nil {
 		return err
 	}
-	if mtu := o.cfg.OverlayDevices.BridgeMTU; mtu > 0 {
-		if err := netlink.LinkSetMTU(brLink, mtu); err != nil {
-			return fmt.Errorf("set bridge MTU: %w", err)
-		}
+	if err := o.applyBridgeSettings(brLink); err != nil {
+		return err
 	}
 
 	// Assign bridge to the configured overlay VRF. Production-like netplan

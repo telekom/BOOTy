@@ -71,6 +71,8 @@ topology:
       binds:
         - prodtpl-shadow.frr.conf:/etc/frr/frr.conf:ro
         - daemons:/etc/frr/daemons:ro
+        # A machine ID, like systemd creates on the legacy ramdisk.
+        - data/machine-id-shadow:/etc/machine-id:ro
       exec:
         - ip link add Vrf_underlay type vrf table 10
         - ip link set Vrf_underlay up
@@ -102,6 +104,7 @@ topology:
       binds:
         - data/vars-prodtpl-booty:/deploy/vars:ro
         - data/fs-prodtpl-booty:/deploy/file-system:ro
+        - data/machine-id-booty:/etc/machine-id:ro
       env:
         BOOTY_NO_REBOOT: "1"
       exec:
@@ -140,6 +143,7 @@ topology:
       startup-delay: 20
       binds:
         - data/vars-prodtpl-native:/deploy/vars:ro
+        - data/machine-id-native:/etc/machine-id:ro
       env:
         BOOTY_NO_REBOOT: "1"
 

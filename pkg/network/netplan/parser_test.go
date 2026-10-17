@@ -1267,3 +1267,34 @@ func TestToNetworkConfig_EthernetFlagsUseSetName(t *testing.T) {
 		t.Errorf("NoAcceptRA = %v, EmitLLDP = %v", cfg.NoAcceptRA, cfg.EmitLLDP)
 	}
 }
+
+// Bridge STP follows netplan: no parameters block keeps the kernel default
+// (nil), a parameters block without stp turns it on, stp: false off.
+func TestBridgeSTPLikeNetplan(t *testing.T) {
+	for _, tt := range []struct {
+		params string
+		want   *bool
+	}{
+		{"", nil},
+		{"\n      parameters: {}", new(true)},
+		{"\n      parameters:\n        forward-delay: 0", nil}, // unknown key: rejected below
+		{"\n      parameters:\n        stp: true", new(true)},
+		{"\n      parameters:\n        stp: false", new(false)},
+	} {
+		data := "network:\n  version: 2\n  bridges:\n    br.provision:\n      interfaces: []" + tt.params + "\n"
+		np, err := ParseBytesWith("test", []byte(data), true)
+		if strings.Contains(tt.params, "forward-delay") {
+			if err == nil {
+				t.Error("unknown bridge parameter accepted")
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("%q: %v", tt.params, err)
+		}
+		got := ToNetworkConfig(np, nil).OverlayDevices.BridgeSTP
+		if (got == nil) != (tt.want == nil) || got != nil && *got != *tt.want {
+			t.Errorf("%q: BridgeSTP = %v, want %v", tt.params, got, tt.want)
+		}
+	}
+}

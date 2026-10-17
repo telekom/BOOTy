@@ -1,6 +1,10 @@
 package config
 
 import (
+	"fmt"
+
+	"gopkg.in/yaml.v3"
+
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/netplan"
 )
@@ -82,8 +86,9 @@ type NetworkConfig struct {
 	// mtu, accept-ra, link-local, routes and nameservers; vrfs,
 	// dummy-devices, tunnels, bridges, bonds, vlans). Set, it replaces the
 	// provisioner netplan files as a whole and goes through the same
-	// parser, so both forms give the same network config.
-	Devices *netplan.NetworkSection `yaml:"devices,omitempty" json:"devices,omitempty"`
+	// parser, so both forms give the same network config. It is always
+	// strict, also when the rest of the config is loaded leniently.
+	Devices *NetworkDevices `yaml:"devices,omitempty" json:"devices,omitempty"`
 
 	// NoAcceptRA is a comma-separated list of NICs that ignore IPv6 router
 	// advertisements, like netplan "accept-ra: false".
@@ -94,7 +99,8 @@ type NetworkConfig struct {
 	EmitLLDP string `yaml:"emitLLDP" json:"emitLLDP"`
 
 	// IPForwarding and IPv6Forwarding set the forwarding sysctls (GoBGP).
-	// Unset (nil) means on, or off with frr.conf "no ip forwarding".
+	// Unset (nil) means the frr.conf "[no] ip[v6] forwarding", else IPv4 on
+	// and IPv6 off, like the legacy ramdisk.
 	IPForwarding   *bool `yaml:"ipForwarding,omitempty" json:"ipForwarding,omitempty"`
 	IPv6Forwarding *bool `yaml:"ipv6Forwarding,omitempty" json:"ipv6Forwarding,omitempty"`
 
@@ -455,4 +461,39 @@ type IPMIConfig struct {
 	// Example: "172.30.0.0/24"
 	// Default: ""
 	Subnet string `yaml:"subnet" json:"subnet"`
+}
+
+// NetworkDevices is network.devices: the "network:" section of a netplan
+// file. Decoding it runs the strict netplan parser, like NETWORK_DEVICES
+// and the provisioner files, so an unknown key fails even when Load is
+// not strict.
+type NetworkDevices netplan.NetworkSection
+
+// UnmarshalYAML parses the node as a strict netplan "network:" section.
+func (d *NetworkDevices) UnmarshalYAML(node *yaml.Node) error {
+	b, err := yaml.Marshal(map[string]*yaml.Node{"network": node})
+	if err != nil {
+		return fmt.Errorf("network.devices: %w", err)
+	}
+	return d.parse(b)
+}
+
+// UnmarshalJSON parses a JSON object as a strict netplan "network:"
+// section (JSON is YAML).
+func (d *NetworkDevices) UnmarshalJSON(b []byte) error {
+	return d.parse(append([]byte("network: "), b...))
+}
+
+func (d *NetworkDevices) parse(b []byte) error {
+	np, err := netplan.ParseBytesWith("network.devices", b, true)
+	if err != nil {
+		return err //nolint:wrapcheck // the netplan error names network.devices
+	}
+	*d = NetworkDevices(np.Network)
+	return nil
+}
+
+// Section returns the devices as netplan section, nil when unset.
+func (d *NetworkDevices) Section() *netplan.NetworkSection {
+	return (*netplan.NetworkSection)(d)
 }

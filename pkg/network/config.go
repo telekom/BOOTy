@@ -172,7 +172,8 @@ type Config struct {
 	// EmitLLDP lists the NICs with netplan "emit-lldp: true".
 	EmitLLDP []string
 	// IPForwarding and IPv6Forwarding set the forwarding sysctls; nil keeps
-	// the GoBGP default (on). frr.conf "no ip forwarding" sets false.
+	// the GoBGP default: IPv4 on, IPv6 off (the kernel default the legacy
+	// ramdisk keeps). frr.conf "[no] ip[v6] forwarding" sets them.
 	IPForwarding   *bool
 	IPv6Forwarding *bool
 
@@ -241,6 +242,10 @@ type OverlayDevices struct {
 	VXLANAcceptRA  *bool `json:"vxlanAcceptRA,omitempty" yaml:"vxlanAcceptRA,omitempty"`
 	BridgeAcceptRA *bool `json:"bridgeAcceptRA,omitempty" yaml:"bridgeAcceptRA,omitempty"`
 	BridgeMTU      int   `json:"bridgeMTU,omitempty" yaml:"bridgeMTU,omitempty"`
+	// BridgeSTP is the spanning tree of the provision bridge, like netplan
+	// bridge parameters stp: a parameters block without stp means on.
+	// nil keeps the kernel default (off).
+	BridgeSTP *bool `json:"bridgeSTP,omitempty" yaml:"bridgeSTP,omitempty"`
 }
 
 // SessionRouteMaps are the import (In) and export (Out) route-maps of a

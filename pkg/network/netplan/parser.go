@@ -331,7 +331,19 @@ func extractBridges(np *Config, cfg *network.Config) {
 		cfg.OverlayDevices.BridgeMTU = br.MTU
 		cfg.OverlayDevices.BridgeLinkLocal = linkLocalIPv6(br.LinkLocal)
 		cfg.OverlayDevices.BridgeAcceptRA = br.AcceptRA
+		cfg.OverlayDevices.BridgeSTP = bridgeSTP(br.Parameters)
 	}
+}
+
+// bridgeSTP is the spanning tree of a netplan bridge: like netplan, a
+// parameters block turns it on unless it says "stp: false"; without the
+// block networkd keeps the kernel default (off), so nil.
+func bridgeSTP(p *BridgeParams) *bool {
+	if p == nil {
+		return nil
+	}
+	on := p.STP == nil || *p.STP
+	return &on
 }
 
 func extractEthernets(np *Config, cfg *network.Config) (dhcpCount int, dnsList []string) {
@@ -544,9 +556,8 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 	cfg.BlackholeRoutes = frr.BlackholeRoutes
 	if frr.Model != nil {
 		// Only an explicit "[no] ip[v6] forwarding" changes the GoBGP
-		// default (on): zebra would keep the kernel default (off), but
-		// without accept-ra: false the NICs would then take router
-		// advertisements of the fabric.
+		// defaults: IPv4 on, IPv6 off like the kernel default that zebra
+		// keeps.
 		cfg.IPForwarding = frr.Model.IPForwarding
 		cfg.IPv6Forwarding = frr.Model.IPv6Forwarding
 	}
