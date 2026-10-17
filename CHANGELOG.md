@@ -357,6 +357,8 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   `docs/caprf-legacy-migration.md`, `docs/networking.md`, `docs/disk.md` (#633)
 - README sections link to the canonical docs (#647)
 - Design for full FRR and netplan parity in GoBGP mode (#630)
+- `docs/kexec.md`: how the kexec handoff works and every known limitation
+  and drawback, with a kexec or reboot decision table
 
 ### Dependencies
 
