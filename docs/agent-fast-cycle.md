@@ -155,9 +155,12 @@ token renewal of !288):
 3. **Release.** The deprovision ACK `completed` releases the host. CAPRF
    keeps the host in `AgentReady` while heartbeats arrive.
 4. **Provision.** A new RedfishMachine that claims an `AgentReady` host
-   gets a `provision` command with the payload instead of the ISO steps
-   (`buildImage`, `insertVirtualMedia`, `rebootSystem`). `handleEvents`
-   waits for `init` and `success` as today.
+   gets a `provision` command instead of the ISO steps (`buildImage`,
+   `insertVirtualMedia`, `rebootSystem`). The payload is a deploy archive
+   (PR #730): the tar.gz of the deploy tree that the ISO builder renders
+   for the new machine, with its vars, cloud-init seed and machine files.
+   A vars-only payload is not enough, the per-machine data are files.
+   `handleEvents` waits for `init` and `success` as today.
 5. **Handoff.** The success message names the handoff (section 4.7). For
    `kexec` and `reboot` CAPRF does not power cycle; for `poweroff` it keeps
    today's `shutdownSystem`, `turnOnSystem`.
@@ -169,7 +172,7 @@ token renewal of !288):
 | `GET /agent/commands` | Long poll: with `?wait=<s>` (BOOTy sends 20) the server holds the request until a command is queued or the wait ends, capped at 25 s. Without the parameter it answers at once (compatible). |
 | `POST /agent/commands/ack` | The ACK ends the command. CAPRF records it on the machine (event and condition). |
 | `POST /agent/heartbeat` | Unchanged. |
-| token endpoint (!288) | The agent token is bound to the host, not to the job. On a new job CAPRF rotates it: the next renewal returns a token of the new job generation, the old one is revoked after the ACK of the previous job. A payload can not change `TOKEN` (contract), so the rotation goes through renewal. |
+| token endpoint (!288) | The agent keeps the token of the job that booted it (machine identity of the deprovision). CAPRF keeps an agent registry per host (`host -> agent identity, last heartbeat`); the provision job of the next machine queues its command and subscribes to events under the agent identity. An idle agent renews its token through `TOKEN_URL`. The token is revoked when the provision ends (BOOTy leaves the ramdisk) or the host takes the cold path. A payload can not change `TOKEN` (contract). |
 
 ### Timeouts and fallback
 
@@ -299,14 +302,26 @@ KVM lab, the same host and test, seconds:
 | cold (two ISO boots) | 25.0 | 22.6 |
 | agent (one boot, two commands) | 30.3 | 10.2 |
 
+GitHub runners (KVM matrix job `agent-cycle-timing`, PR #715 before and
+PR #716 after): cold 18.9 to 15.7 s, agent 27.7 to 9.2 s.
+
+The EFI runtime services survive BOOTy's kexec on x86: in the KVM `kexec`
+scenario under OVMF the target lists the EFI variables (PR #725). So kexec
+needs no reboot fallback for targets that use `efibootmgr`.
+
 ## Implementation status
 
 | Item | Where | State |
 |---|---|---|
 | Cycle timing test and CI report | BOOTy KVM matrix | PR |
 | Long poll, re-poll, disk settle once, no handoff sleep, RAM log | BOOTy standby | PR |
-| Handoff in the success message | BOOTy and CAPRF | planned |
-| Eject at `init`, skip power cycle on kexec | CAPRF | planned |
-| Agent reuse in the controller, long poll server | CAPRF | planned |
-| CAPRF cycle timing job | CAPRF e2e | planned |
+| GRUB default entry for kexec (`DefaultEntry`, real fixtures) | BOOTy | PR #720 |
+| Handoff in the success message | BOOTy | PR #724 |
+| BGP Cease and BFD AdminDown before kexec and reboot | BOOTy | PR #723 |
+| KVM `kexec` scenario kexecs; EFI runtime after kexec verified | BOOTy | PR #725 |
+| Deploy archive payload (per-job files for the agent) | BOOTy | PR #730 |
+| Eject at `init`, skip power cycle for kexec and reboot | CAPRF | !296 |
+| CAPRF cycle timing job (cold path) | CAPRF e2e | !297 |
+| Long poll server | CAPRF | !298 (on !68) |
+| Agent reuse in the controller (registry, deprovision to standby, provision by command, fallback) | CAPRF | planned; needs !68, !288 and !285 on one branch |
 | Wipe skip and parallel wipe, preload, module order | BOOTy | proposed |
