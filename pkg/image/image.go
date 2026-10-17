@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/dustin/go-humanize"
+
+	"github.com/telekom/BOOTy/pkg/watchdog"
 )
 
 // WriteCounter counts the number of bytes written to it. It implements to the io.Writer interface
@@ -41,12 +43,19 @@ func startProgressTicker(counter *WriteCounter) func() {
 	done := make(chan struct{})
 	var once sync.Once
 	go func() {
+		var last uint64
 		for {
 			select {
 			case <-done:
 				return
 			case <-ticker.C:
-				tickerProgress(counter.Total.Load())
+				total := counter.Total.Load()
+				tickerProgress(total)
+				if total != last {
+					// Written bytes are progress of the image step.
+					watchdog.Progress()
+					last = total
+				}
 			}
 		}
 	}()
