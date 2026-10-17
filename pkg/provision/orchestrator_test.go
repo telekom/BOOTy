@@ -2044,7 +2044,8 @@ func TestReportSuccess(t *testing.T) {
 	if provider.statuses[0].status != config.StatusSuccess {
 		t.Errorf("expected StatusSuccess, got %v", provider.statuses[0].status)
 	}
-	if provider.statuses[0].message != "provisioning complete" {
+	// No grub.cfg under /newroot in the test: BOOTy reboots.
+	if provider.statuses[0].message != "provisioning complete handoff=reboot" {
 		t.Errorf("expected default success message, got %q", provider.statuses[0].message)
 	}
 }
