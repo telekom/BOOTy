@@ -145,7 +145,7 @@ func TestParseLLDPSwitchFrames(t *testing.T) {
 
 // BOOTy's bm4x frame, read back: the MAC port ID renders in colon form.
 func TestParseLLDPBM4XFrame(t *testing.T) {
-	b, err := Frame("ens1f0np0", []byte{0x3c, 0xfd, 0xfe, 0xa1, 0xb2, 0xc3}, Info{MachineID: "m", Profile: ProfileBM4XCableCheck})
+	b, err := Frame("ens1f0np0", []byte{0x3c, 0xfd, 0xfe, 0xa1, 0xb2, 0xc3}, &Info{MachineID: "m", Profile: ProfileBM4XCableCheck})
 	if err != nil {
 		t.Fatal(err)
 	}

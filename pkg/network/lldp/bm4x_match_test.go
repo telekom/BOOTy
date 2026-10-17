@@ -98,7 +98,7 @@ func TestBM4XMatchesCableCheckFrames(t *testing.T) {
 		bm4xInterface
 	}{{"3C:FD:FE:A1:B2:C3", bm4xInterface{"site1com5k01", "ens1f0np0"}}}
 
-	frame, err := Frame("ens1f0np0", mac, Info{MachineID: "0123456789abcdef0123456789abcdef", SystemName: "booty", Profile: ProfileBM4XCableCheck})
+	frame, err := Frame("ens1f0np0", mac, &Info{MachineID: "0123456789abcdef0123456789abcdef", SystemName: "booty", Profile: ProfileBM4XCableCheck})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestBM4XMatchesCableCheckFrames(t *testing.T) {
 		t.Fatalf("resolved = %+v, want %+v", got, want)
 	}
 
-	frame, err = Frame("ens1f0np0", mac, Info{MachineID: "0123456789abcdef0123456789abcdef", SystemName: "booty"})
+	frame, err = Frame("ens1f0np0", mac, &Info{MachineID: "0123456789abcdef0123456789abcdef", SystemName: "booty"})
 	if err != nil {
 		t.Fatal(err)
 	}

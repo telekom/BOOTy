@@ -253,6 +253,7 @@
     "ens1f1np1"
   ],
   "LLDPProfile": "",
+  "LLDPAnnounce": "",
   "LLDPEmitAll": false,
   "IPForwarding": false,
   "IPv6Forwarding": null,

@@ -53,9 +53,13 @@ type Info struct {
 	// CarrierOnly skips NICs without carrier instead of trying to send
 	// (LLDP_EMIT_ALL). The bm4x-cablecheck profile always does.
 	CarrierOnly bool
+	// Announce is the announce level; "" is AnnounceParity. System is the
+	// host data that the standard and full levels send.
+	Announce string
+	System   System
 }
 
-func (i Info) carrierOnly() bool {
+func (i *Info) carrierOnly() bool {
 	return i.CarrierOnly || i.Profile == ProfileBM4XCableCheck
 }
 
@@ -63,7 +67,7 @@ func (i Info) carrierOnly() bool {
 // hostname like systemd. Without a machine ID (it could not be written)
 // the frames use the NIC MAC as chassis ID, a BOOTy extension.
 func SystemInfo() Info {
-	info := Info{MachineID: machineID()}
+	info := Info{MachineID: machineID(), System: readSystem()}
 	info.SystemName, _ = os.Hostname()
 	if b, err := os.ReadFile("/etc/machine-info"); err == nil {
 		for _, l := range strings.Split(string(b), "\n") {
@@ -114,7 +118,7 @@ func machineID() string {
 // bm4x-cablecheck profile sends the NIC MAC as port ID (subtype 3), the
 // interface name as port description, like lldpd, and the system name
 // "bare-minimal"; the rest stays as networkd sends it.
-func Frame(ifname string, mac net.HardwareAddr, info Info) ([]byte, error) {
+func Frame(ifname string, mac net.HardwareAddr, info *Info) ([]byte, error) {
 	chassis := layers.LLDPChassisID{Subtype: layers.LLDPChassisIDSubTypeLocal, ID: []byte(info.MachineID)}
 	if info.MachineID == "" {
 		chassis = layers.LLDPChassisID{Subtype: layers.LLDPChassisIDSubTypeMACAddr, ID: mac}
@@ -135,6 +139,9 @@ func Frame(ifname string, mac net.HardwareAddr, info Info) ([]byte, error) {
 		values = append(values, tlv(layers.LLDPTLVSysDescription, info.PrettyHostname))
 	}
 	values = append(values, layers.LinkLayerDiscoveryValue{Type: layers.LLDPTLVSysCapabilities, Length: 4, Value: caps})
+	if info.Announce == AnnounceStandard || info.Announce == AnnounceFull {
+		values = announce(values, ifname, mac, info)
+	}
 	buf := gopacket.NewSerializeBuffer()
 	err := gopacket.SerializeLayers(buf, gopacket.SerializeOptions{},
 		&layers.Ethernet{SrcMAC: mac, DstMAC: nearestBridge, EthernetType: layers.EthernetTypeLinkLayerDiscovery},
@@ -159,7 +166,7 @@ func tlv(t layers.LLDPTLVType, s string) layers.LinkLayerDiscoveryValue {
 
 // Emit sends LLDP frames on every NIC until ctx ends, like networkd with
 // EmitLLDP=yes. It returns a function that waits for the senders.
-func Emit(ctx context.Context, ifaces []string, info Info, log *slog.Logger) (wait func()) {
+func Emit(ctx context.Context, ifaces []string, info *Info, log *slog.Logger) (wait func()) {
 	var wg sync.WaitGroup
 	for _, iface := range ifaces {
 		wg.Add(1)
@@ -171,7 +178,7 @@ func Emit(ctx context.Context, ifaces []string, info Info, log *slog.Logger) (wa
 	return wg.Wait
 }
 
-func emitOn(ctx context.Context, iface string, info Info, log *slog.Logger) {
+func emitOn(ctx context.Context, iface string, info *Info, log *slog.Logger) {
 	if info.Profile == ProfileBM4XCableCheck {
 		log.Info("sending LLDP frames with the bm4x-cablecheck identity")
 	} else {
@@ -198,7 +205,7 @@ func emitOn(ctx context.Context, iface string, info Info, log *slog.Logger) {
 	}
 }
 
-func send(iface string, info Info) error {
+func send(iface string, info *Info) error {
 	ifi, err := net.InterfaceByName(iface)
 	if err != nil {
 		return fmt.Errorf("interface %s: %w", iface, err)

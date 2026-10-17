@@ -160,6 +160,15 @@ type LLDPConfig struct {
 	// emitLLDP (netplan "emit-lldp: true") NICs, in every network mode.
 	// Default: nil (on with the bm4x-cablecheck profile, else off)
 	EmitAll *bool `yaml:"emitAll,omitempty" json:"emitAll,omitempty"`
+
+	// Announce selects the TLVs besides the identity: "parity" (what
+	// networkd sends), "standard" (a BOOTy system description, a port
+	// description with driver and PCI address, the management addresses,
+	// the 802.3 MAC/PHY and maximum frame size TLVs) or "full" (standard
+	// plus the host identity in the system description and the LLDP-MED
+	// inventory).
+	// Default: "" (parity)
+	Announce string `yaml:"announce,omitempty" json:"announce,omitempty"`
 }
 
 // EmitAllNICs reports whether BOOTy sends LLDP on every physical NIC.

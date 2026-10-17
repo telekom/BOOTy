@@ -136,6 +136,7 @@
   ],
   "EmitLLDP": null,
   "LLDPProfile": "",
+  "LLDPAnnounce": "",
   "LLDPEmitAll": false,
   "IPForwarding": null,
   "IPv6Forwarding": null,

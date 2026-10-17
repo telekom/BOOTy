@@ -124,6 +124,7 @@ type Config struct {
 	NoAcceptRA     []string
 	EmitLLDP       []string
 	LLDPProfile    string
+	LLDPAnnounce   string
 	IPForwarding   *bool
 	IPv6Forwarding *bool
 	// InstallRoutes runs the FIB writer, like zebra.
@@ -214,6 +215,7 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		NoAcceptRA:           netCfg.NoAcceptRA,
 		EmitLLDP:             emitLLDP(netCfg),
 		LLDPProfile:          netCfg.LLDPProfile,
+		LLDPAnnounce:         netCfg.LLDPAnnounce,
 		IPForwarding:         netCfg.IPForwarding,
 		IPv6Forwarding:       netCfg.IPv6Forwarding,
 		RouteMaps:            netCfg.BGPRouteMaps,

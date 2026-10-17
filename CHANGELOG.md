@@ -248,6 +248,11 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   alarm and warning flags) from the module memory over ethtool netlink, and
   fails on an alarm (`optics-alarm`, block) and warns on a warning
   (`optics-warning`).
+- New key `LLDP_ANNOUNCE` (YAML `network.lldp.announce`): `standard` adds a
+  BOOTy system description, a port description with driver and PCI address,
+  the management addresses, the 802.3 MAC/PHY status and the maximum frame
+  size; `full` adds the host identity and the LLDP-MED inventory. The default
+  `parity` sends the networkd frames as before.
 - GoBGP mode applies the netplan device settings of the provision VXLAN device,
   the bridge and the NICs like systemd-networkd (MTU, MAC, learning, ARP proxy,
   hairpin, link-local, `accept-ra`), and `frr.conf` `[no] ip[v6] forwarding`.
