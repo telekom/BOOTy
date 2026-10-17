@@ -411,11 +411,14 @@ func TestBuildType5PathAttrs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Expect 3 attributes: origin, mp-reach, ext-communities.
-	if len(pattrs) != 3 {
-		t.Errorf("got %d path attrs, want 3", len(pattrs))
+	// Expect 4 attributes: origin, mp-reach, ext-communities, MED 0.
+	if len(pattrs) != 4 {
+		t.Errorf("got %d path attrs, want 4", len(pattrs))
 	}
 	path := &apipb.Path{Pattrs: pattrs}
+	if med, ok := pathMED(t, path); !ok || med != 0 {
+		t.Fatalf("MED = %d (%v), want 0 like FRR", med, ok)
+	}
 	if got := mustFindEncapTunnelType(t, path); got != vxlanTunnelType {
 		t.Fatalf("encapsulation tunnel type = %d, want %d", got, vxlanTunnelType)
 	}
@@ -563,6 +566,8 @@ func TestAdvertiseType5PublishesRouterMAC(t *testing.T) {
 			ProvisionIP:  "10.200.0.10/32",
 			BridgeMAC:    "62:db:b8:c1:80:52",
 			VPNRT:        "65000:1000",
+			RD:           "192.168.4.10:2",
+			L2RD:         "192.168.4.10:3",
 		},
 		log: slog.Default(),
 		bgp: bgp,
@@ -580,6 +585,9 @@ func TestAdvertiseType5PublishesRouterMAC(t *testing.T) {
 		t.Fatalf("expected 1 advertised Type-5 path, got %d", len(paths))
 	}
 	route := mustFindType5Route(t, paths[0])
+	if got := rdString(t, route.GetRd()); got != "192.168.4.10:2" {
+		t.Fatalf("type-5 RD = %s, want the VRF RD 192.168.4.10:2", got)
+	}
 	if route.GetIpPrefix() != "10.200.0.10" {
 		t.Fatalf("type-5 prefix = %s, want 10.200.0.10", route.GetIpPrefix())
 	}
@@ -3975,6 +3983,8 @@ func l2AdvertiseTestConfig(enableL2 bool) *Config {
 		BridgeMAC:    "62:db:b8:c1:80:52",
 		VPNRT:        "65000:1000",
 		EnableL2:     enableL2,
+		RD:           "192.168.4.10:2",
+		L2RD:         "192.168.4.10:3",
 	}
 }
 
@@ -3996,6 +4006,9 @@ func TestAdvertiseType3PublishesIMETWithIngressReplication(t *testing.T) {
 		t.Fatalf("unmarshal NLRI: %v", err)
 	}
 	route := msg.(*apipb.EVPNInclusiveMulticastEthernetTagRoute)
+	if got := rdString(t, route.GetRd()); got != "192.168.4.10:3" {
+		t.Fatalf("type-3 RD = %s, want the L2VNI RD 192.168.4.10:3", got)
+	}
 	if route.GetIpAddress() != "192.168.4.10" || route.GetEthernetTag() != 0 {
 		t.Fatalf("IMET route = ip %s tag %d, want ip 192.168.4.10 tag 0", route.GetIpAddress(), route.GetEthernetTag())
 	}
@@ -4040,6 +4053,9 @@ func TestAdvertiseType2PublishesBridgeMACAndIP(t *testing.T) {
 		t.Fatalf("unmarshal NLRI: %v", err)
 	}
 	route := msg.(*apipb.EVPNMACIPAdvertisementRoute)
+	if got := rdString(t, route.GetRd()); got != "192.168.4.10:3" {
+		t.Fatalf("type-2 RD = %s, want the L2VNI RD 192.168.4.10:3", got)
+	}
 	if route.GetMacAddress() != "62:db:b8:c1:80:52" {
 		t.Fatalf("type-2 MAC = %s, want bridge MAC 62:db:b8:c1:80:52", route.GetMacAddress())
 	}
