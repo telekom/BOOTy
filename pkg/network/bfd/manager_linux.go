@@ -211,6 +211,21 @@ func (m *Manager) loop(r *run) {
 	defer txTimer.Stop()
 	detect := time.NewTimer(time.Hour)
 	defer detect.Stop()
+	iv := r.sess.TxInterval()
+	// reschedule sends the next periodic packet at a lower interval at
+	// once. The peer's detection time follows the interval: FRR bfdd
+	// advertises its slow Required Min RX (1 s) until its own Poll
+	// completes, then detects in 3 x 150 ms. A packet still due after the
+	// old 1 s timer would come too late (kindmetal: Down with diag 3 about
+	// 450 ms after every Up). A higher interval waits for the timer.
+	reschedule := func() {
+		if next := r.sess.TxInterval(); next != iv {
+			if next < iv {
+				txTimer.Reset(m.nextTx(r))
+			}
+			iv = next
+		}
+	}
 	for {
 		select {
 		case <-m.ctx.Done():
@@ -221,20 +236,15 @@ func (m *Manager) loop(r *run) {
 		case <-r.stop:
 			return
 		case p := <-r.rx:
-			if m.received(r, &p) {
-				// The interval changes with the state: Up advertises the
-				// fast DesiredMinTx at once, and the peer's detection time
-				// follows it. Waiting out the slow start interval would let
-				// the peer time out (FRR bfdd then sends Down, diag 3 here).
-				txTimer.Reset(m.nextTx(r))
-			}
+			m.received(r, &p)
+			reschedule()
 			detect.Reset(r.sess.DetectionTime())
 		case <-detect.C:
 			from := r.sess.State()
 			if r.sess.CheckTimeout(time.Now()) {
 				m.changed(r, from)
 				m.sendNow(r)
-				txTimer.Reset(m.nextTx(r))
+				reschedule()
 			}
 			detect.Reset(time.Hour)
 		case <-txTimer.C:
@@ -246,7 +256,7 @@ func (m *Manager) loop(r *run) {
 
 // received hands a packet to the state machine and reports a state
 // change. A state change or a Poll is answered at once.
-func (m *Manager) received(r *run, p *Packet) bool {
+func (m *Manager) received(r *run, p *Packet) bool { //nolint:unparam // the result documents the state change
 	from := r.sess.State()
 	changed := r.sess.Receive(p, time.Now())
 	if changed {
