@@ -60,13 +60,15 @@ func TestDeprovisionHandoff(t *testing.T) {
 	}{
 		{name: "reboot", want: HandoffReboot},
 		{name: "poweroff", cfg: config.MachineConfig{SuccessAction: config.SuccessActionPowerOff}, want: HandoffPowerOff},
-		{name: "standby", cfg: config.MachineConfig{Agent: config.AgentConfig{
+		{name: "standby", cfg: config.MachineConfig{StandbyCommand: true, Agent: config.AgentConfig{
 			CommandsURL: "https://caprf/agent/commands", DeprovisionSuccessAction: config.AgentDeprovisionStandby,
 		}}, want: HandoffStandby},
-		// Without the agent endpoints the option has no effect.
-		{name: "standby option outside standby", cfg: config.MachineConfig{Agent: config.AgentConfig{
-			DeprovisionSuccessAction: config.AgentDeprovisionStandby,
+		// MODE=deprovision with the agent vars that CAPRF renders into every
+		// ISO: BOOTy ends the run, it does not stay in standby.
+		{name: "standby option in MODE=deprovision", cfg: config.MachineConfig{Agent: config.AgentConfig{
+			CommandsURL: "https://caprf/agent/commands", DeprovisionSuccessAction: config.AgentDeprovisionStandby,
 		}}, want: HandoffReboot},
+		{name: "standby command without the option", cfg: config.MachineConfig{StandbyCommand: true}, want: HandoffReboot},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := deprovisionHandoff(&tc.cfg); got != tc.want {

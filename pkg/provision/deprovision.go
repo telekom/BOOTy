@@ -313,11 +313,13 @@ func (o *Orchestrator) reportDeprovisionSuccess(ctx context.Context) error {
 const HandoffStandby = "standby"
 
 // deprovisionHandoff is what BOOTy does after a successful deprovision:
-// stay in standby, power off, or reboot. CAPRF waits for a power off, and
+// stay in standby (only a command of a standby run: CAPRF renders
+// COMMANDS_URL into every ISO, so the URL says nothing), power off, or
+// reboot. CAPRF waits for a power off, and
 // powers a rebooting host off at once (the disks are wiped).
 func deprovisionHandoff(cfg *config.MachineConfig) string {
 	switch {
-	case cfg.Agent.DeprovisionSuccessAction == config.AgentDeprovisionStandby && cfg.Agent.CommandsURL != "":
+	case cfg.StandbyCommand && cfg.Agent.DeprovisionSuccessAction == config.AgentDeprovisionStandby:
 		return HandoffStandby
 	case cfg.PowerOffOnSuccess():
 		return HandoffPowerOff

@@ -123,9 +123,9 @@ OS: `handoff=kexec`, `handoff=reboot` or `handoff=poweroff`
 
 | Method | When | What CAPRF does |
 |--------|------|-----------------|
-| `poweroff` | `SUCCESS_ACTION=poweroff` (also `CAPRF_LEGACY_COMPAT=true`), or A/B preserve-existing without a kexec entry | Waits for power off, ejects the media, powers on. |
+| `poweroff` | `SUCCESS_ACTION=poweroff` (also `CAPRF_LEGACY_COMPAT=true`), or A/B preserve-existing without a GRUB entry that BOOTy can resolve | Waits for power off, ejects the media, powers on. |
 | `reboot` | kexec disabled, `SECUREBOOT_REENABLE=true`, firmware values changed, or no GRUB entry that BOOTy can resolve | Ejects the media and does not power cycle: BOOTy reboots. |
-| `kexec` | Otherwise | Ejects the media and does not power cycle: BOOTy kexecs. If the kexec load or execute fails, BOOTy reboots. |
+| `kexec` | Otherwise | Ejects the media and does not power cycle: BOOTy kexecs. If the kexec load or execute fails, BOOTy reboots; with A/B preserve-existing it powers off instead, because the firmware still boots the active slot (see below). |
 
 A power cycle after `kexec` or `reboot` would cut the first boot of the
 installed OS (cloud-init, Ignition). Older CAPRF releases ignore the field.
@@ -135,9 +135,15 @@ not-wiped note (`deprovisioning complete handoff=reboot; not wiped, ...`):
 
 | Method | When | What CAPRF does |
 |--------|------|-----------------|
-| `standby` | Standby `deprovision` command with `STANDBY_DEPROVISION_SUCCESS_ACTION=standby` | Leaves the host running: the agent waits for the next command. |
+| `standby` | A `deprovision` command of a standby run with `STANDBY_DEPROVISION_SUCCESS_ACTION=standby` (not `MODE=deprovision`) | Leaves the host running: the agent waits for the next command. |
 | `poweroff` | `SUCCESS_ACTION=poweroff` | Waits for the power off. |
 | `reboot` | Otherwise | Powers the host off at once: the disks are wiped, and a wait for a power off that does not come costs the grace period. |
+
+A/B preserve-existing never reboots after a provision: the firmware boot
+path still points at the active slot, so without a kexec BOOTy powers off
+and the host stays off until CAPRF or an operator acts (CAPRF's A/B flow
+leaves the host running for the kexec and does not power cycle).
+
 The kexec limitations and the decision table are in [kexec.md](kexec.md).
 
 ## Agent mode contract
