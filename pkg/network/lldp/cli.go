@@ -120,7 +120,9 @@ func captureNeighbors(errOut io.Writer, deps CLIDeps, timeout time.Duration, now
 	}
 	neighbors := capture(context.Background(), nics, timeout)
 	for i := range neighbors {
-		neighbors[i].FirstSeen, neighbors[i].LastSeen = now, now
+		if neighbors[i].LastSeen.IsZero() { // a capture without the frame time
+			neighbors[i].FirstSeen, neighbors[i].LastSeen = now, now
+		}
 	}
 	return neighbors, nil
 }
@@ -195,7 +197,7 @@ func printStatus(out io.Writer, s *State, now time.Time) {
 		if !t.LastTX.IsZero() {
 			last = now.Sub(t.LastTX).Truncate(time.Second).String() + " ago"
 		}
-		_, _ = fmt.Fprintf(out, "Interface: %s (profile %s, %d frames, last %s)\n", t.Interface, t.Profile, t.Frames, last)
+		_, _ = fmt.Fprintf(out, "Interface: %s (profile %s, announce %s, %d frames, last %s)\n", t.Interface, t.Profile, t.Announce, t.Frames, last)
 		if t.Error != "" {
 			_, _ = fmt.Fprintf(out, "  %-14s %s\n", "Not sent:", t.Error)
 		}

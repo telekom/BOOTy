@@ -29,6 +29,7 @@ type State struct {
 type TxState struct {
 	Interface string    `json:"interface"`
 	Profile   string    `json:"profile"`
+	Announce  string    `json:"announce"`
 	LastTX    time.Time `json:"lastTX,omitzero"`
 	Frames    int       `json:"frames"`
 	// Error is why the last frame was not sent, "no carrier" when the NIC
@@ -46,7 +47,7 @@ var live struct {
 
 // recordTX notes a send attempt and writes the state file. frame is nil
 // when the NIC had no carrier.
-func recordTX(iface, profile string, frame []byte, err error, now time.Time) {
+func recordTX(iface string, info *Info, frame []byte, err error, now time.Time) {
 	live.Lock()
 	byIface := func(t TxState) bool { return t.Interface == iface }
 	if !slices.ContainsFunc(live.tx, byIface) {
@@ -54,7 +55,7 @@ func recordTX(iface, profile string, frame []byte, err error, now time.Time) {
 		slices.SortFunc(live.tx, func(a, b TxState) int { return strings.Compare(a.Interface, b.Interface) })
 	}
 	t := &live.tx[slices.IndexFunc(live.tx, byIface)]
-	t.Profile = cmp.Or(profile, ProfileNetworkd)
+	t.Profile, t.Announce = cmp.Or(info.Profile, ProfileNetworkd), cmp.Or(info.Announce, AnnounceParity)
 	switch {
 	case err != nil:
 		t.Error = err.Error()

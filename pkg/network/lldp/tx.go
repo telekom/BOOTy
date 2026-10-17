@@ -231,7 +231,7 @@ func emitOn(ctx context.Context, iface string, info *Info, log *slog.Logger) {
 	failed := false
 	for n := 0; ; n++ {
 		frame, err := sendFrame(iface, info, Frame)
-		recordTX(iface, info.Profile, frame, err, time.Now())
+		recordTX(iface, info, frame, err, time.Now())
 		if err != nil && !failed {
 			// Log once; the NIC may come back (carrier, rename).
 			log.Warn("LLDP frame not sent", "error", err)
