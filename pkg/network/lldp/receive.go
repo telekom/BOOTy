@@ -96,6 +96,7 @@ func (r *receiver) receiveOn(ctx context.Context, iface string) {
 	for ctx.Err() == nil {
 		if nb := r.read(fd, buf, iface); nb != nil {
 			r.record(nb, time.Now())
+			writeState(time.Now())
 		}
 	}
 }
