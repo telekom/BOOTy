@@ -711,9 +711,12 @@ func (u *UnderlayTier) acceptVRFConnections() error {
 	return nil
 }
 
+// hasVRFSession reports a BGP session in a VRF: an frr.conf or native
+// session with a VRF, BGP_NEIGHBOR_VRF, or native unnumbered peers on the
+// VRF_NAME NICs (FRR puts them into the "router bgp" of that VRF).
 func (u *UnderlayTier) hasVRFSession() bool {
 	if len(u.cfg.Sessions) == 0 {
-		return u.cfg.NeighborVRF != ""
+		return u.cfg.NeighborVRF != "" || u.cfg.VRFName != "" && u.cfg.PeerMode != network.PeerModeNumbered
 	}
 	for i := range u.cfg.Sessions {
 		if sessionVRF(&u.cfg.Sessions[i]) != "" {

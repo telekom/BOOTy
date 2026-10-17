@@ -1686,6 +1686,7 @@ jobs:
             TestProdTplFIBWithdraw \
             TestProdTplUplinkCarrierLoss \
             TestProdTplNativeVRFNameFIB \
+            TestProdTplLeafSessionVRFInbound \
             TestProdTplRRSessionVRFInbound \
             TestProdTplType5IPv6Install \
             TestProdTplType5Origination \

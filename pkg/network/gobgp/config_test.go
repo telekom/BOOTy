@@ -1137,4 +1137,16 @@ func TestNativePeerOptions(t *testing.T) {
 	if u.hasVRFSession() {
 		t.Fatal("no VRF without BGP_NEIGHBOR_VRF")
 	}
+	// Like FRR, unnumbered peers on the VRF_NAME NICs are in that VRF, so
+	// the leaf may connect into it (tcp_l3mdev_accept).
+	for _, mode := range []network.PeerMode{"", network.PeerModeUnnumbered, network.PeerModeDual} {
+		u.cfg = &Config{ASN: 65000, VRFName: "Vrf_underlay", PeerMode: mode}
+		if !u.hasVRFSession() {
+			t.Fatalf("peer mode %q: unnumbered peers in VRF_NAME must count as a VRF session", mode)
+		}
+	}
+	u.cfg = &Config{ASN: 65000, VRFName: "Vrf_underlay", PeerMode: network.PeerModeNumbered}
+	if u.hasVRFSession() {
+		t.Fatal("numbered peer mode: VRF_NAME alone has no session in a VRF")
+	}
 }

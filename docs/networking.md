@@ -177,8 +177,7 @@ every 30 s BOOTy reinstalls all routes, so routes the kernel dropped come
 back. The session NICs get `ignore_routes_with_linkdown=1`, so a dead ECMP
 member is skipped at once.
 
-The merge rule of each key is in the table at the end of
-[Netplan and FRR config input](#netplan-and-frr-config-input).
+The merge rule of each key is in the table at the end of this subsection.
 
 With these sessions, the vars `BGP_PEER_MODE`, `BGP_INTERFACES`,
 `BGP_NEIGHBORS`, `BGP_REMOTE_ASN`, `BGP_KEEPALIVE` and `BGP_HOLD` no longer
