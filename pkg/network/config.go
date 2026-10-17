@@ -104,6 +104,15 @@ type Config struct {
 	BGPMultipathRelax bool
 	// BGPCapabilities are the optional capabilities of the OPEN message.
 	BGPCapabilities BGPCapabilities
+	// BGPDefaults is the "frr defaults" profile, "traditional" or
+	// "datacenter": BGP_DEFAULTS, else frr.conf, else datacenter (the
+	// profile of the legacy daemons file). It selects the FRR 10.3
+	// defaults that depend on it (bgpd/bgp_vty.c FRR_CFG_DEFAULT_*).
+	BGPDefaults string
+	// BGPHostname is BGP_HOSTNAME: when set, the ramdisk host name before
+	// BGP starts, because GoBGP sends the system host name as the FQDN
+	// capability.
+	BGPHostname string
 	// BGPRouteMaps and BGPCommunityLists define the route-maps that the
 	// sessions name; BGPRouteMapIn and BGPRouteMapOut apply to the native
 	// peers in every address family.
@@ -300,12 +309,11 @@ type BGPCapabilities struct {
 	// FRR default helper mode: no address family tuples, so a peer does
 	// not keep BOOTy's routes when the session ends, while BOOTy keeps the
 	// routes of a restarting peer. It also sends long-lived graceful
-	// restart (RFC 9494) with LLGRStaleTime.
+	// restart (RFC 9494); in helper mode GoBGP sends it without family
+	// tuples, so a stale time has no effect and is not configurable.
 	GracefulRestart bool
 	// GracefulRestartTime is the restart time in seconds (FRR 120).
 	GracefulRestartTime uint32
-	// LLGRStaleTime is the long-lived stale time in seconds (FRR 0).
-	LLGRStaleTime uint32
 	// AddPathReceive is the add-path capability (RFC 7911) with receive in
 	// every address family, like FRR.
 	AddPathReceive bool

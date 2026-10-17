@@ -13,7 +13,7 @@ import (
 // as helper (no family tuples), long-lived graceful restart, add-path
 // receive; the software version only when asked for.
 func TestSetCapabilities(t *testing.T) {
-	frr := network.BGPCapabilities{GracefulRestart: true, GracefulRestartTime: 120, LLGRStaleTime: 7, AddPathReceive: true, SoftwareVersion: true}
+	frr := network.BGPCapabilities{GracefulRestart: true, GracefulRestartTime: 120, AddPathReceive: true, SoftwareVersion: true}
 	for _, caps := range []network.BGPCapabilities{frr, {}} {
 		cfg := &Config{ASN: 65000, Capabilities: caps}
 		for name, p := range map[string]*apipb.Peer{
@@ -29,7 +29,7 @@ func TestSetCapabilities(t *testing.T) {
 			for _, af := range p.GetAfiSafis() {
 				llgr := af.GetLongLivedGracefulRestart().GetConfig()
 				if af.GetMpGracefulRestart().GetConfig().GetEnabled() != caps.GracefulRestart ||
-					llgr.GetEnabled() != caps.GracefulRestart || llgr.GetRestartTime() != caps.LLGRStaleTime ||
+					llgr.GetEnabled() != caps.GracefulRestart || llgr.GetRestartTime() != 0 ||
 					af.GetAddPaths().GetConfig().GetReceive() != caps.AddPathReceive || af.GetAddPaths().GetConfig().GetSendMax() != 0 {
 					t.Errorf("%s peer with %+v: family %v gr %v llgr %v add-path %v", name, caps, af.GetConfig().GetFamily(),
 						af.GetMpGracefulRestart(), llgr, af.GetAddPaths())
@@ -67,5 +67,23 @@ func TestPeerModeFamilies(t *testing.T) {
 	}
 	if _, _, err := peerModeFamilies("bogus"); err == nil {
 		t.Error("an unknown peer mode must fail")
+	}
+}
+
+// NewConfig passes the capabilities to the peers and turns zebra's
+// resolve-via-default on only for "frr defaults traditional".
+func TestNewConfigCapabilitiesAndProfile(t *testing.T) {
+	caps := network.BGPCapabilities{GracefulRestart: true, GracefulRestartTime: 90, AddPathReceive: true, SoftwareVersion: true}
+	for profile, via := range map[string]bool{"traditional": true, "datacenter": false} {
+		cfg, err := NewConfig(&network.Config{
+			UnderlayIP: "10.0.0.1", ASN: 65000, ProvisionVNI: 4000, BGPPeerMode: network.PeerModeUnnumbered, EVPNType5Only: true,
+			BGPCapabilities: caps, BGPDefaults: profile,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Capabilities != caps || cfg.ResolveViaDefault != via {
+			t.Errorf("%s: capabilities %+v resolve-via-default %v, want %+v %v", profile, cfg.Capabilities, cfg.ResolveViaDefault, caps, via)
+		}
 	}
 }

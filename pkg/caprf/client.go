@@ -1301,6 +1301,7 @@ func applyNetworkStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"BGP_NEIGHBORS":       &cfg.Network.BGP.Neighbors,
 		"BGP_AUTH_PASSWORD":   &cfg.Network.BGP.AuthPassword,
 		"BGP_DEFAULTS":        &cfg.Network.BGP.Defaults,
+		"BGP_HOSTNAME":        &cfg.Network.BGP.Hostname,
 		"LOOPBACK_ADDRESSES":  &cfg.Network.LoopbackAddresses,
 		"BLACKHOLE_ROUTES":    &cfg.Network.BlackholeRoutes,
 		"EVPN_TYPE5_NETWORKS": &cfg.Network.EVPN.Type5Networks,
@@ -1346,7 +1347,6 @@ func applyUint32Var(cfg *config.MachineConfig, key, value string) (bool, error) 
 		"BGP_LOCAL_AS":              &cfg.Network.BGP.LocalAS,
 		"BGP_CONNECT_RETRY":         &cfg.Network.BGP.ConnectRetry,
 		"BGP_GRACEFUL_RESTART_TIME": &cfg.Network.BGP.GracefulRestartTime,
-		"BGP_LLGR_STALE_TIME":       &cfg.Network.BGP.LLGRStaleTime,
 		"OVERLAY_VRF_TABLE_ID":      &cfg.Network.VRF.OverlayTableID,
 	}
 

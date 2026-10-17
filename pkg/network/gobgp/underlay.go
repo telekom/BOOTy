@@ -551,7 +551,6 @@ func (u *UnderlayTier) needsNICs() bool {
 // Each session's routes go to the table of its VRF, like FRR keeps one RIB
 // per "router bgp N vrf X".
 func (u *UnderlayTier) startFIBWriter() {
-	sel, vrfs := u.fibSelector(u.vrfTable)
 	// Like zebra with "linkdown" next hops: the kernel skips an ECMP member
 	// at once when its NIC loses carrier.
 	for _, err := range ignoreLinkdownRoutes("/proc/sys/net", sessionInterfaces(u.cfg.Sessions)) {
@@ -560,11 +559,20 @@ func (u *UnderlayTier) startFIBWriter() {
 	ctx, cancel := context.WithCancel(context.Background())
 	u.stopFIB = cancel
 	u.fibDone = make(chan struct{})
-	w := newFIBWriter(u.bgp, sel, vrfs)
+	w := u.buildFIBWriter(u.vrfTable)
 	go func() {
 		defer close(u.fibDone)
 		w.run(ctx)
 	}()
+}
+
+// buildFIBWriter returns the FIB writer of the sessions, with the zebra
+// "ip nht resolve-via-default" of the profile.
+func (u *UnderlayTier) buildFIBWriter(vrfTable func(string) int) *fibWriter {
+	sel, vrfs := u.fibSelector(vrfTable)
+	w := newFIBWriter(u.bgp, sel, vrfs)
+	w.resolveViaDefault = u.cfg.ResolveViaDefault
+	return w
 }
 
 // nativeTables returns the routing tables of the BGP_PEER_MODE peers and
