@@ -105,10 +105,35 @@ func pick(got, want map[string]bfdView) map[string]bfdView {
 	return out
 }
 
+// maxRestore bounds the time from a working link to ECMP again. FRR
+// connects 1 s after BFD down (BGP_INIT_START_TIMER); the GoBGP default
+// idle hold time after a reset is 30 s.
+const maxRestore = 10 * time.Second
+
+// waitRoutesWithin waits like waitRoutes, but at most maxWait, and returns
+// how long it took.
+func waitRoutesWithin(t *testing.T, node prodtplNode, want map[string][]string, maxWait time.Duration) time.Duration {
+	t.Helper()
+	start := time.Now()
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		got, err := prodtplRoutes(ctx, node)
+		cancel()
+		if err == nil && reflect.DeepEqual(got, want) {
+			return time.Since(start)
+		}
+		if time.Since(start) > maxWait {
+			t.Fatalf("%s: routes %v (%v) after %s, want %v within %s", node.name, got, err, time.Since(start), want, maxWait)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 // Mirrors FRR bfd_topo1 test_bfd_fast_convergence: the leaf stops sending
 // on one uplink while the carrier stays up. BFD (3 x 300 ms at the server)
 // ends the BGP session long before the 90 s hold time, so the next hop
-// leaves the VRF table. The link coming back restores ECMP.
+// leaves the VRF table. The link coming back restores ECMP within
+// maxRestore, as on the shadow node.
 func TestProdTplBFDFailover(t *testing.T) {
 	const maxFailover = 2500 * time.Millisecond // 900 ms detection + docker exec latency
 	for _, node := range prodtplServers {
@@ -139,6 +164,34 @@ func TestProdTplBFDFailover(t *testing.T) {
 			t.Fatalf("leaf %s restore: %v\n%s", port, err, out)
 		}
 		cancel()
-		waitRoutes(t, node, prodtplRoutesVia("ens1f0np0", "ens1f1np1"))
+		d := waitRoutesWithin(t, node, prodtplRoutesVia("ens1f0np0", "ens1f1np1"), maxRestore)
+		t.Logf("%s: ECMP back %s after the leaf sends again", node.name, d.Round(10*time.Millisecond))
+	}
+}
+
+// A switch port that fails for longer than the BFD detection time: carrier
+// loss, then the BFD timeout, then the link back. The session comes back
+// within maxRestore, as on the shadow node, not after the 30 s GoBGP idle
+// hold time.
+func TestProdTplCarrierLossPastBFD(t *testing.T) {
+	for _, node := range prodtplServers {
+		t.Run(node.name, func(t *testing.T) {
+			port := node.leafPorts[0]
+			link := func(state string) {
+				ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+				defer cancel()
+				if out, err := prodtplExec(ctx, prodtplLeaf, "ip", "link", "set", port, state); err != nil {
+					t.Fatalf("leaf %s %s: %v\n%s", port, state, err, out)
+				}
+			}
+			waitRoutes(t, node, prodtplRoutesVia("ens1f0np0", "ens1f1np1"))
+			link("down")
+			t.Cleanup(func() { link("up") })
+			waitRoutesWithin(t, node, prodtplRoutesVia("ens1f1np1"), 5*time.Second)
+			time.Sleep(3 * time.Second) // past the 900 ms BFD detection time
+			link("up")
+			d := waitRoutesWithin(t, node, prodtplRoutesVia("ens1f0np0", "ens1f1np1"), maxRestore)
+			t.Logf("%s: ECMP back %s after the carrier came back", node.name, d.Round(10*time.Millisecond))
+		})
 	}
 }
