@@ -88,23 +88,26 @@ func TestValidateLLDPPortIDFormat(t *testing.T) {
 	}
 }
 
-// The firmware LLDP agent is stopped in check mode unless kept, and in
-// other modes only when asked.
+// The firmware LLDP agent is stopped only with the bm4x-cablecheck
+// profile unless kept, or when asked; a plain check run keeps it (ice
+// keeps the setting across boots).
 func TestDisableNICFirmwareLLDP(t *testing.T) {
 	for _, tt := range []struct {
-		mode, value string
-		want        bool
+		mode, profile, value string
+		want                 bool
 	}{
-		{"check", "", true},
-		{"check", "keep", false},
-		{"provision", "", false},
-		{"", "", false},
-		{"provision", "disable", true},
+		{"check", "", "", false},
+		{"check", "bm4x-cablecheck", "", true},
+		{"check", "bm4x-cablecheck", "keep", false},
+		{"provision", "bm4x-cablecheck", "", true},
+		{"provision", "", "", false},
+		{"provision", "", "disable", true},
 	} {
 		c := &Config{Mode: tt.mode}
+		c.Network.LLDP.Profile = tt.profile
 		c.Network.NICFirmwareLLDP = tt.value
 		if got := c.DisableNICFirmwareLLDP(); got != tt.want {
-			t.Errorf("mode %q value %q: %v, want %v", tt.mode, tt.value, got, tt.want)
+			t.Errorf("%+v: %v, want %v", tt, got, tt.want)
 		}
 	}
 	c := &Config{}

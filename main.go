@@ -484,20 +484,32 @@ func flushObservability() {
 
 func reboot() {
 	watchdogHandoff(false)
-	flushObservability()
+	beforeHandoff()
 	realm.Reboot()
 }
 
 func requestReboot() error {
 	watchdogHandoff(false)
-	flushObservability()
+	beforeHandoff()
 	return realm.RequestReboot()
 }
 
 func requestPowerOff() error {
 	watchdogHandoff(true)
-	flushObservability()
+	beforeHandoff()
 	return realm.RequestPowerOff()
+}
+
+// beforeHandoff runs before BOOTy hands the machine on: it puts back the
+// NIC firmware LLDP flags it changed (ice keeps them across boots) and
+// flushes the log shipping.
+func beforeHandoff() {
+	if n, err := ethtool.RestoreFirmwareLLDP(); err != nil {
+		slog.Warn("firmware LLDP agent not restored", "error", err)
+	} else if n > 0 {
+		slog.Info("firmware LLDP agent restored", "flags", n)
+	}
+	flushObservability()
 }
 
 func shell() {
@@ -519,7 +531,7 @@ var (
 // goes quiet.
 func doKexecExecute(stopNetwork func()) error {
 	watchdogHandoff(false)
-	flushLogs()
+	beforeHandoff()
 	stopNetwork()
 	return kexecExecute()
 }
@@ -939,14 +951,17 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 		return noopNetworkMode{}, func() {}, nil
 	}
 
+	// Before the network setup: a driver may reset the port when the flag
+	// changes, which would drop BGP sessions set up before.
+	if cfg.DisableNICFirmwareLLDP() {
+		disableNICFirmwareLLDP(ctx)
+	}
+
 	// Set up networking with retry — if connectivity fails, teardown and
 	// rebuild the entire network stack before giving up.
 	netMode, err := setupNetworkModeFn(ctx, cfg)
 	if err != nil {
 		return nil, func() {}, &provision.CodedError{Code: provision.CodeNetworkSetup, Err: err}
-	}
-	if cfg.DisableNICFirmwareLLDP() {
-		disableNICFirmwareLLDP(ctx)
 	}
 	if lldpReceiveEnabled(cfg) {
 		startLLDPReceive(ctx)

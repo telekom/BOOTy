@@ -113,10 +113,12 @@ type NetworkConfig struct {
 	// LLDP selects what BOOTy sends in its LLDP frames and on which NICs.
 	LLDP LLDPConfig `yaml:"lldp,omitempty" json:"lldp,omitempty"`
 
-	// NICFirmwareLLDP is "disable" to stop the firmware LLDP agent of Intel
-	// NICs (i40e private flag disable-fw-lldp on, ice fw-lldp-agent off), so
-	// LLDP frames reach BOOTy and BOOTy's frames go out, or "keep".
-	// Default: "" (disable in check mode, else keep)
+	// NICFirmwareLLDP is "disable" to stop the firmware LLDP agent (and
+	// with it the firmware DCBX) of Intel NICs (i40e private flag
+	// disable-fw-lldp on, ice fw-lldp-agent off), so LLDP frames reach BOOTy
+	// and BOOTy's frames go out, or "keep". BOOTy restores the values it
+	// found before it hands off (reboot, kexec, power off).
+	// Default: "" (disable with the bm4x-cablecheck profile, else keep)
 	NICFirmwareLLDP string `yaml:"nicFirmwareLLDP,omitempty" json:"nicFirmwareLLDP,omitempty"`
 
 	// IPForwarding and IPv6Forwarding set the forwarding sysctls (GoBGP).
@@ -187,10 +189,11 @@ const (
 )
 
 // DisableNICFirmwareLLDP reports whether BOOTy stops the firmware LLDP
-// agent of the NICs: network.nicFirmwareLLDP, else only in check mode.
+// agent of the NICs: network.nicFirmwareLLDP, else only for the
+// bm4x-cablecheck LLDP profile.
 func (c *Config) DisableNICFirmwareLLDP() bool {
 	if c.Network.NICFirmwareLLDP == "" {
-		return c.Mode == "check"
+		return c.Network.LLDP.Profile == lldp.ProfileBM4XCableCheck
 	}
 	return c.Network.NICFirmwareLLDP == NICFirmwareLLDPDisable
 }
