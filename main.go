@@ -469,16 +469,19 @@ func flushObservability() {
 }
 
 func reboot() {
+	watchdogHandoff(false)
 	flushObservability()
 	realm.Reboot()
 }
 
 func requestReboot() error {
+	watchdogHandoff(false)
 	flushObservability()
 	return realm.RequestReboot()
 }
 
 func requestPowerOff() error {
+	watchdogHandoff(true)
 	flushObservability()
 	return realm.RequestPowerOff()
 }
@@ -489,6 +492,7 @@ func shell() {
 }
 
 func doKexecExecute() error {
+	watchdogHandoff(false)
 	flushObservability()
 	return kexec.Execute()
 }
@@ -536,6 +540,7 @@ func runCAPRF(ctx context.Context) {
 	if cfg.DryRun {
 		cfg.Mode = "dry-run"
 	}
+	startWatchdog(ctx, cfg)
 
 	// Wire remote log shipping.
 	if cfg.Transport.LogURL != "" {

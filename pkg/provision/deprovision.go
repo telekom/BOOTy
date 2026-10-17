@@ -15,6 +15,7 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
+	"github.com/telekom/BOOTy/pkg/watchdog"
 )
 
 // Deprovision runs the deprovisioning pipeline.
@@ -31,9 +32,11 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 	o.log.Info("starting deprovisioning", "mode", mode)
 
 	steps := o.deprovisionSteps(mode)
+	defer watchdog.Idle()
 
 	for i, step := range steps {
 		o.log.Info("deprovisioning step", "step", step.Name, "index", i+1, "total", len(steps))
+		watchdog.Step(step.Name)
 		if err := step.Fn(ctx); err != nil {
 			msg := fmt.Sprintf("step %s failed: %v", step.Name, err)
 			o.log.Error("deprovisioning step failed", "step", step.Name, "error", err)

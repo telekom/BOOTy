@@ -452,6 +452,56 @@ does.
 | `RESCUE_AUTO_MOUNT` | `false` | boolean | Mount the found disks in `shell` and `wait` modes. |
 | `RESCUE_TIMEOUT` | `0` | integer, seconds | Parsed, but no code uses the value. |
 
+## Hardware watchdog
+
+With `WATCHDOG_ENABLE=true` BOOTy arms a hardware watchdog right after it
+reads the vars file, before the network setup, and pets it from a
+supervisor goroutine. A hung run resets the host by itself, also when the
+kernel hangs (stuck NVMe or HBA firmware, a process in `D` state), instead
+of waiting for the CAPRF provision timeout.
+
+- Device: `WATCHDOG_DEVICE`, else `/dev/watchdog0`, then `/dev/watchdog`.
+  BOOTy first loads the drivers in `/modules/watchdog` of the ramdisk:
+  `iTCO_wdt` (with `lpc_ich` and `i2c_i801`), `sp5100_tco`, `ipmi_watchdog`,
+  `wdat_wdt` and `i6300esb`. They load only with `WATCHDOG_ENABLE`, so a host
+  without it keeps its firmware watchdog behaviour. BOOTy sets the timeout
+  with `WDIOC_SETTIMEOUT` and uses the value that the driver reports.
+- IPMI fallback: without a device and with `WATCHDOG_IPMI_FALLBACK=true`,
+  BOOTy programs the BMC watchdog with `ipmitool raw 0x06 0x24` (Set Watchdog
+  Timer, hard reset) and pets it with `raw 0x06 0x22` (Reset Watchdog Timer).
+- Progress: BOOTy pets every third of the timeout. During a provisioning or
+  deprovisioning step it pets only while the step makes progress: the step
+  start counts, and so do written image bytes. A step without progress for
+  its budget stops the keepalive; BOOTy logs `BOOTY-WDT-001` with the step
+  name, and the hardware resets the host at most one timeout later. Outside
+  a step (network setup, standby, a rescue shell, `FAILURE_ACTION=wait`)
+  BOOTy pets as long as it runs.
+- Budgets: a step may run without progress for `WATCHDOG_TIMEOUT_SEC`. Steps
+  that can run long without progress have built-in budgets: `wipe-disks` and
+  `decommission-wipe` 6 h; `stream-image` (image modes that write with `dd`),
+  `mirror-root`, `check-filesystem`, `resize-filesystem`,
+  `run-machine-commands` and `run-post-provision-cmds` 1 h.
+  `WATCHDOG_STEP_BUDGETS` overrides them by step name.
+- Handoff: before kexec and reboot BOOTy disarms the watchdog with the magic
+  close (`V`), or with `WATCHDOG_HANDOFF=keep` leaves it armed for a target OS
+  that takes it over (systemd `RuntimeWatchdogSec`). The target must open
+  the device within the timeout, including firmware POST time on a reboot.
+  Drivers that stop the watchdog on reboot (`watchdog_stop_on_reboot`) still
+  disarm it at kexec and reboot; the BMC watchdog stays armed. A power off
+  always disarms the watchdog, because a BMC watchdog would power the host on
+  again. A kernel with `nowayout` ignores the magic close.
+- Dry-run mode does not arm the watchdog. A missing device is logged as an
+  error and the run goes on without a watchdog.
+
+| Key | Default | Values | Description |
+|-----|---------|--------|-------------|
+| `WATCHDOG_ENABLE` | `false` | boolean (`true`, `false`, `1`, `0`, `yes`, `no`) | Arm the hardware watchdog. Other values are rejected. YAML `watchdog.enable`. |
+| `WATCHDOG_TIMEOUT_SEC` | `0` (300) | integer, seconds, 10-3600 | Hardware timeout, and the default step budget. The driver may round it. YAML `watchdog.timeoutSeconds`. |
+| `WATCHDOG_DEVICE` | (unset) (`/dev/watchdog0`, then `/dev/watchdog`) | clean absolute path under `/dev/` | Watchdog device. YAML `watchdog.device`. |
+| `WATCHDOG_HANDOFF` | (unset) (`stop`) | `stop`, `keep` | `stop` disarms the watchdog at kexec and reboot; `keep` leaves it armed for the target OS. A power off always disarms it. YAML `watchdog.handoff`. |
+| `WATCHDOG_IPMI_FALLBACK` | `false` | boolean | Arm the BMC watchdog through IPMI when no watchdog device exists. Needs `ipmitool` and `/dev/ipmi0`. YAML `watchdog.ipmiFallback`. |
+| `WATCHDOG_STEP_BUDGETS` | (unset) | JSON object, step name to seconds (1-86400) | Time a step may run without progress, for example `{"wipe-disks":28800}`. Overrides the built-in budgets. YAML `watchdog.stepBudgets`. |
+
 ## Process environment
 
 BOOTy reads these variables from its process environment, not from the
