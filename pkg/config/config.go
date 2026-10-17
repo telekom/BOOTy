@@ -90,6 +90,7 @@ type Config struct {
 	Network   NetworkConfig   `yaml:"network"   json:"network"`
 	Transport TransportConfig `yaml:"transport" json:"transport"`
 	Health    HealthConfig    `yaml:"health"    json:"health"`
+	Check     CheckConfig     `yaml:"check"     json:"check"`
 	Telemetry TelemetryConfig `yaml:"telemetry" json:"telemetry"`
 	Rescue    RescueConfig    `yaml:"rescue"    json:"rescue"`
 

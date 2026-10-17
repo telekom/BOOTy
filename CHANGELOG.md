@@ -221,6 +221,11 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 - New network mode `NETWORK_MODE=links` (YAML `network.mode: links`): every
   physical NIC up with IPv6 link-local only, no DHCP, no address, no route and
   no BGP. It is for link-layer checks such as the LLDP cable check.
+- New key `CHECK_HOLD` (YAML `check.hold`): `until-poweroff` or a duration
+  keeps `MODE=check` running after the checks instead of rebooting. New build
+  target `make check-iso` (`booty-check.iso`): one generic ISO for the bm4x
+  cable check with `hack/check-iso/vars` baked in. See
+  [docs/cable-check.md](docs/cable-check.md).
 - GoBGP mode applies the netplan device settings of the provision VXLAN device,
   the bridge and the NICs like systemd-networkd (MTU, MAC, learning, ARP proxy,
   hairpin, link-local, `accept-ra`), and `frr.conf` `[no] ip[v6] forwarding`.

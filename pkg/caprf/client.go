@@ -1203,6 +1203,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"FIRMWARE_MIN_BMC":            &cfg.Provision.Firmware.MinBMC,
 		"HEALTH_SKIP_CHECKS":          &cfg.Health.SkipChecks,
 		"HEALTH_CHECK_URL":            &cfg.Health.ReportURL,
+		"CHECK_HOLD":                  &cfg.Check.Hold,
 		"IMAGE_SIGNATURE_URL":         &cfg.Provision.Image.SignatureURL,
 		"IMAGE_GPG_PUBKEY":            &cfg.Provision.Image.GPGPubKey,
 		"TELEMETRY_URL":               &cfg.Telemetry.URL,

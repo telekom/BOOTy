@@ -16,6 +16,9 @@ func TestCableCheckVars(t *testing.T) {
 	if cfg, err := ParseVars(strings.NewReader("NIC_FW_LLDP=keep\n")); err != nil || cfg.Network.NICFirmwareLLDP != "keep" {
 		t.Fatalf("NIC_FW_LLDP: %+v, %v", cfg.Network, err)
 	}
+	if cfg, err := ParseVars(strings.NewReader("CHECK_HOLD=until-poweroff\n")); err != nil || cfg.Check.Hold != "until-poweroff" {
+		t.Fatalf("CHECK_HOLD: %+v, %v", cfg.Check, err)
+	}
 	if _, err := ParseVars(strings.NewReader("LLDP_EMIT_ALL=maybe\n")); err == nil {
 		t.Fatal("LLDP_EMIT_ALL=maybe accepted")
 	}
