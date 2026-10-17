@@ -388,6 +388,7 @@ rule of every key:
 | `BGP_GRACEFUL_RESTART`, `BGP_GRACEFUL_RESTART_TIME`, `BGP_ADDPATH_RX`, `BGP_SOFTWARE_VERSION` | none: `frr.conf` graceful restart and capability statements are rejected | `network.bgp.gracefulRestart`, `gracefulRestartTime`, `addPathReceive`, `softwareVersion` | native only; unset is the FRR default (for `BGP_SOFTWARE_VERSION`, of the `frr defaults` profile) |
 | `BGP_HOSTNAME` | none: FRR ignores the `frr.conf` `hostname` line and sends the system host name | `network.bgp.hostname` | native only; unset keeps the system host name |
 | `LLDP_RECEIVE` | none: the legacy ramdisk does not receive LLDP | `network.lldpReceive` | native only; unset is on |
+| `NIC_FW_LLDP` | none | `network.nicFirmwareLLDP` | native only; unset is `disable` in check mode, else `keep` |
 | `LLDP_PROFILE`, `LLDP_PORT_ID_FORMAT`, `LLDP_EMIT_ALL` | none | `network.lldp.profile`, `network.lldp.portIDFormat`, `network.lldp.emitAll` | native only; unset is the networkd identity on the `LLDP_EMIT` NICs |
 | `IP_FORWARDING`, `IPV6_FORWARDING` | `frr.conf` `[no] ip[v6] forwarding` | `network.ipForwarding`, `network.ipv6Forwarding` | native wins |
 
@@ -727,6 +728,14 @@ network mode. `pkg/network/lldp/bm4x_match_test.go` ports the bm4x-api
 matching code to Go (the source lines are in the file) and runs it on
 BOOTy's frames; `TestCableCheckLLDP` (containerlab, an lldpd leaf) checks
 what a switch reports.
+
+Intel 700 and 800 series NICs run an LLDP agent in the firmware. While it
+runs, it takes the LLDP frames of the switch, and the host's own frames do
+not go out reliably. `NIC_FW_LLDP=disable` (YAML `network.nicFirmwareLLDP`,
+the default in check mode) stops it through the driver private flag over
+ethtool netlink: i40e `disable-fw-lldp` on, ice `fw-lldp-agent` off. BOOTy
+does this after the network setup and before it starts LLDP. The flag lasts
+until the driver is reloaded.
 
 #### Port ID format
 

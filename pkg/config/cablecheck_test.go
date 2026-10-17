@@ -87,3 +87,29 @@ func TestValidateLLDPPortIDFormat(t *testing.T) {
 		t.Fatalf("portIDFormat = %q", cfg.Network.LLDP.PortIDFormat)
 	}
 }
+
+// The firmware LLDP agent is stopped in check mode unless kept, and in
+// other modes only when asked.
+func TestDisableNICFirmwareLLDP(t *testing.T) {
+	for _, tt := range []struct {
+		mode, value string
+		want        bool
+	}{
+		{"check", "", true},
+		{"check", "keep", false},
+		{"provision", "", false},
+		{"", "", false},
+		{"provision", "disable", true},
+	} {
+		c := &Config{Mode: tt.mode}
+		c.Network.NICFirmwareLLDP = tt.value
+		if got := c.DisableNICFirmwareLLDP(); got != tt.want {
+			t.Errorf("mode %q value %q: %v, want %v", tt.mode, tt.value, got, tt.want)
+		}
+	}
+	c := &Config{}
+	c.Network.NICFirmwareLLDP = "off"
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "network.nicFirmwareLLDP (NIC_FW_LLDP)") {
+		t.Fatalf("Validate = %v, want a NIC_FW_LLDP error", err)
+	}
+}

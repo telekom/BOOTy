@@ -113,6 +113,12 @@ type NetworkConfig struct {
 	// LLDP selects what BOOTy sends in its LLDP frames and on which NICs.
 	LLDP LLDPConfig `yaml:"lldp,omitempty" json:"lldp,omitempty"`
 
+	// NICFirmwareLLDP is "disable" to stop the firmware LLDP agent of Intel
+	// NICs (i40e private flag disable-fw-lldp on, ice fw-lldp-agent off), so
+	// LLDP frames reach BOOTy and BOOTy's frames go out, or "keep".
+	// Default: "" (disable in check mode, else keep)
+	NICFirmwareLLDP string `yaml:"nicFirmwareLLDP,omitempty" json:"nicFirmwareLLDP,omitempty"`
+
 	// IPForwarding and IPv6Forwarding set the forwarding sysctls (GoBGP).
 	// Unset (nil) means the frr.conf "[no] ip[v6] forwarding", else IPv4 on
 	// and IPv6 off, like the legacy ramdisk.
@@ -172,6 +178,21 @@ type LLDPConfig struct {
 // EmitAllNICs reports whether BOOTy sends LLDP on every physical NIC.
 func (l LLDPConfig) EmitAllNICs() bool {
 	return BoolOr(l.EmitAll, l.Profile == lldp.ProfileBM4XCableCheck)
+}
+
+// Values of NetworkConfig.NICFirmwareLLDP.
+const (
+	NICFirmwareLLDPKeep    = "keep"
+	NICFirmwareLLDPDisable = "disable"
+)
+
+// DisableNICFirmwareLLDP reports whether BOOTy stops the firmware LLDP
+// agent of the NICs: network.nicFirmwareLLDP, else only in check mode.
+func (c *Config) DisableNICFirmwareLLDP() bool {
+	if c.Network.NICFirmwareLLDP == "" {
+		return c.Mode == "check"
+	}
+	return c.Network.NICFirmwareLLDP == NICFirmwareLLDPDisable
 }
 
 // BGPConfig holds BGP peering and tuning parameters.
