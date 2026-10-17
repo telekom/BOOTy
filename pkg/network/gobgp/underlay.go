@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"maps"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,6 +76,8 @@ type UnderlayTier struct {
 	fibDone      chan struct{}                                 // closed when the FIB writer has removed its routes
 	peerDevs     map[string]string                             // unnumbered peer address -> interface
 	discoverPeer func(context.Context, string) (string, error) // overridable in tests; nil = discoverLinkLocalPeer
+	connected    func(netip.Addr, string) bool                 // overridable in tests; nil = connectedInVRF
+	resetBGP     func(context.Context, string, string)         // overridable in tests; nil = resetPeer
 	ifacePeers   map[string]string                             // interface -> unnumbered peer address as added
 	stopCarrier  chan struct{}                                 // stops the carrier watch
 	carrierDone  <-chan struct{}                               // closed when the carrier watch ended

@@ -43,7 +43,7 @@ func (u *UnderlayTier) bfdPeers() []bfd.Peer {
 			if s.Interface {
 				peers = u.appendIfacePeer(peers, s.Name, t)
 			} else {
-				peers = u.appendNumberedPeer(peers, s.Name, sessionVRF(s), t)
+				peers = u.appendNumberedPeer(peers, s.Name, sessionVRF(s), s.Internal, t)
 			}
 		}
 		return peers
@@ -56,7 +56,7 @@ func (u *UnderlayTier) bfdPeers() []bfd.Peer {
 		peers = u.appendIfacePeer(peers, iface, t)
 	}
 	for _, addr := range u.cfg.NeighborAddrs {
-		peers = u.appendNumberedPeer(peers, addr, u.cfg.NeighborVRF, t)
+		peers = u.appendNumberedPeer(peers, addr, u.cfg.NeighborVRF, u.cfg.IsiBGP(), t)
 	}
 	return peers
 }
@@ -73,37 +73,64 @@ func (u *UnderlayTier) appendIfacePeer(peers []bfd.Peer, iface string, t bfd.Tim
 	return append(peers, bfd.Peer{Name: name, Addr: addr, Device: iface, Timers: t})
 }
 
-// appendNumberedPeer adds the session of a numbered peer. Like FRR bgpd, a
-// peer outside the connected prefixes is multihop (RFC 5883), sent from
-// the router ID; the session is bound to the VRF of the BGP session.
-func (u *UnderlayTier) appendNumberedPeer(peers []bfd.Peer, name, vrf string, t bfd.Timers) []bfd.Peer {
+// appendNumberedPeer adds the session of a numbered peer, bound to the VRF
+// of the BGP session. Like FRR 10.3 bgpd (bgp_bfd.h PEER_IS_MULTIHOP), an
+// iBGP peer that is not on a connected network of that VRF is multihop
+// (RFC 5883) and sent from the router ID; an eBGP peer is single-hop
+// (BOOTy has no ebgp-multihop).
+func (u *UnderlayTier) appendNumberedPeer(peers []bfd.Peer, name, vrf string, internal bool, t bfd.Timers) []bfd.Peer {
 	addr, err := netip.ParseAddr(name)
 	if err != nil {
 		return peers
 	}
 	p := bfd.Peer{Name: name, Addr: addr, Device: vrf, Timers: t}
-	if !connected(addr) {
+	connected := u.connected
+	if connected == nil {
+		connected = connectedInVRF
+	}
+	if internal && !connected(addr, vrf) {
 		p.Multihop = true
 		p.Local, _ = netip.ParseAddr(u.cfg.RouterID)
 	}
 	return append(peers, p)
 }
 
-// connected reports whether addr is in the prefix of a local address
-// (host routes do not count).
-func connected(addr netip.Addr) bool {
-	addrs, err := netlink.AddrList(nil, netlink.FAMILY_ALL)
+// connectedInVRF reports whether addr is in the prefix of an address on a
+// link of the VRF ("" is the default VRF), like FRR shared_network. Host
+// routes do not count.
+func connectedInVRF(addr netip.Addr, vrf string) bool {
+	links, err := netlink.LinkList()
 	if err != nil {
 		return false
 	}
-	for _, a := range addrs {
-		ones, bits := a.Mask.Size()
-		if ones == bits {
+	vrfs := map[int]string{}
+	for _, l := range links {
+		if l.Type() == "vrf" {
+			vrfs[l.Attrs().Index] = l.Attrs().Name
+		}
+	}
+	for _, l := range links {
+		a := l.Attrs()
+		in := vrfs[a.MasterIndex]
+		if _, isVRF := vrfs[a.Index]; isVRF {
+			in = a.Name
+		}
+		if in != vrf {
 			continue
 		}
-		ip, ok := netip.AddrFromSlice(a.IP)
-		if ok && netip.PrefixFrom(ip.Unmap(), ones).Masked().Contains(addr.Unmap()) {
-			return true
+		addrs, err := netlink.AddrList(l, netlink.FAMILY_ALL)
+		if err != nil {
+			continue
+		}
+		for _, la := range addrs {
+			ones, bits := la.Mask.Size()
+			if ones == bits {
+				continue
+			}
+			ip, ok := netip.AddrFromSlice(la.IP)
+			if ok && netip.PrefixFrom(ip.Unmap(), ones).Masked().Contains(addr.Unmap()) {
+				return true
+			}
 		}
 	}
 	return false
@@ -120,37 +147,28 @@ func bfdTimers(txMS, rxMS, mult uint32) bfd.Timers {
 	}
 }
 
-// bfdChanged couples BFD to BGP like FRR 8.2.2 bgpd (bgp_bfd.c
-// bfd_session_status_update): BFD Up to Down stops the BGP session, and
-// BFD Up starts a connect at once when the session waits for its connect
-// timer (BGP_Start acts only in Idle; GoBGP waits in Idle or Active).
+// bfdChanged couples BFD to BGP like FRR 10.3 bgpd (bgp_bfd.c
+// bfd_session_status_update): BFD Up to Down ends the BGP session. GoBGP
+// sends Cease/Administrative Reset, not Cease/BFD Down (RFC 9384), and
+// connects again after idleHoldAfterReset. FRR also starts a connect at
+// BFD Up; GoBGP has no API for that, its Active state connects within
+// 1 to 2 s by itself.
 func (u *UnderlayTier) bfdChanged(p *bfd.Peer, from, to bfd.State, diag bfd.Diag) {
+	if from != bfd.StateUp || to != bfd.StateDown {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	switch {
-	case from == bfd.StateUp && to == bfd.StateDown:
-		u.log.Warn("BFD down, stopping the BGP session", "peer", p.Name, "diag", diag)
-		u.resetPeer(ctx, p.Name, "BFD down")
-	case to == bfd.StateUp && u.waiting(ctx, p.Name):
-		u.log.Info("BFD up, connecting the BGP session", "peer", p.Name)
-		u.resetPeer(ctx, p.Name, "BFD up")
+	u.log.Warn("BFD down, resetting the BGP session", "peer", p.Name, "diag", diag)
+	reset := u.resetBGP
+	if reset == nil {
+		reset = u.resetPeer
 	}
+	reset(ctx, p.Name, "BFD down")
 }
 
 func (u *UnderlayTier) resetPeer(ctx context.Context, addr, reason string) {
 	if err := u.bgp.ResetPeer(ctx, &apipb.ResetPeerRequest{Address: addr, Communication: reason}); err != nil {
 		u.log.Warn("reset BGP peer", "peer", addr, "error", err)
 	}
-}
-
-// waiting reports a BGP session in Idle or Active: it waits for the next
-// connect. A session in Connect, OpenSent, OpenConfirm or Established is
-// left alone, so BFD Up never cuts a running handshake.
-func (u *UnderlayTier) waiting(ctx context.Context, addr string) bool {
-	w := false
-	_ = u.bgp.ListPeer(ctx, &apipb.ListPeerRequest{Address: addr}, func(p *apipb.Peer) {
-		st := p.GetState().GetSessionState()
-		w = st == apipb.PeerState_IDLE || st == apipb.PeerState_ACTIVE
-	})
-	return w
 }

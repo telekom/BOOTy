@@ -196,13 +196,14 @@ BFD). BOOTy implements a minimal BFD in its own package
 - Poll/Final sequence for parameter changes (RFC 5880 6.5).
 - Demand mode and echo mode stay off. Authentication is not supported. A
   config that asks for authentication or echo fails the run.
-- BFD Up to Down stops the BGP session; BFD Up on a peer that is not
-  established starts a connect attempt at once. This is what FRR 8.2.2
-  does (`bgpd/bgp_bfd.c` `bfd_session_status_update`: `BGP_Stop` on
-  Up to Down, `BGP_Start` on Up). FRR does not hold the session down while
-  BFD is down; the normal connect timer runs, and BOOTy does the same
-  (GoBGP `ResetPeer` with `soft=false` on Down, and again on Up when the peer is not established, so the FSM starts connecting at once). Every state change is
-  logged.
+- BFD Up to Down stops the BGP session, like FRR 10.3 (`bgpd/bgp_bfd.c`
+  `bfd_session_status_update`: Cease/BFD Down and `BGP_Stop`). FRR then
+  waits `BGP_INIT_START_TIMER` (1 s) in Idle and connects again
+  (`bgp_stop_with_notify`). BOOTy uses GoBGP `ResetPeer` with an idle hold
+  time of 1 s after a reset (GoBGP default 30 s); GoBGP sends Cease
+  subcode 4, not 10. FRR also sends `BGP_Start` on BFD Up for a peer that
+  is not established; GoBGP has no API for it and connects 1 to 2 s after
+  Idle anyway. Every state change is logged.
 - Unit tests:
   - the state machine (RFC 5880 6.8.6 transitions)
   - detection time math (6.8.4)

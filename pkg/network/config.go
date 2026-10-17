@@ -83,7 +83,7 @@ type Config struct {
 	OverlayVRFTableID uint32 // Routing table ID for the overlay bridge VRF (default: VRFTableID)
 	BGPKeepalive      uint32 // BGP keepalive interval in seconds (0 = FRR default)
 	BGPHold           uint32 // BGP hold timer in seconds (0 = FRR default)
-	BFDTransmitMS     uint32 // FRR-only BFD transmit interval in ms (0 = disabled)
+	BFDTransmitMS     uint32 // BFD transmit interval in ms of the native peers (0 = no BFD)
 	BFDReceiveMS      uint32 // FRR-only BFD receive interval in ms (0 = disabled)
 	BFDDetectMult     uint32 // BFD detect multiplier (0 = 3)
 
