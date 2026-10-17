@@ -5,6 +5,7 @@ package lldp
 import (
 	"context"
 	"log/slog"
+	"net"
 	"slices"
 	"strings"
 	"sync"
@@ -111,11 +112,21 @@ func (r *receiver) record(n *Neighbor, now time.Time) {
 		delete(r.expires, n.Interface)
 		return
 	}
-	if !known || r.expires[n.Interface].Before(now) || old.ChassisID != n.ChassisID || old.PortID != n.PortID ||
-		old.SystemName != n.SystemName {
-		r.log.Info("LLDP neighbor", "interface", n.Interface, "chassisID", n.ChassisID, "portID", n.PortID,
-			"systemName", n.SystemName, "ttl", n.TTL)
+	expired := known && r.expires[n.Interface].Before(now)
+	switch {
+	case known && !expired && sameNeighbor(&old, n):
+		n.FirstSeen, n.Changes = old.FirstSeen, old.Changes
+	default:
+		n.FirstSeen = now
+		if known {
+			n.Changes = old.Changes + 1
+		}
+		r.log.Info("LLDP neighbor", "interface", n.Interface, "chassisID", n.ChassisID,
+			"portID", n.PortID, "portIDSubtype", n.PortIDSubtype, "portDescription", n.PortDescription,
+			"systemName", n.SystemName, "mgmtAddresses", n.MgmtAddresses, "vlan", n.VLAN,
+			"maxFrameSize", n.MaxFrameSize, "ttl", n.TTL, "changes", n.Changes)
 	}
+	n.LastSeen = now
 	r.neighbors[n.Interface] = *n
 	r.expires[n.Interface] = now.Add(time.Duration(n.TTL) * time.Second)
 }
@@ -124,11 +135,52 @@ func (r *receiver) list(now time.Time) []Neighbor {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var out []Neighbor
-	for iface, n := range r.neighbors {
+	for iface := range r.neighbors {
 		if r.expires[iface].After(now) {
-			out = append(out, n)
+			out = append(out, r.neighbors[iface])
 		}
 	}
 	slices.SortFunc(out, func(a, b Neighbor) int { return strings.Compare(a.Interface, b.Interface) })
 	return out
+}
+
+// hasCarrier reports whether a NIC has carrier; a test seam.
+var hasCarrier = func(iface string) bool {
+	ifi, err := net.InterfaceByName(iface)
+	return err == nil && ifi.Flags&net.FlagRunning != 0
+}
+
+// WaitForNeighbors waits until every NIC with carrier has an LLDP
+// neighbor, or until timeout. It returns the NICs with carrier that have
+// none. A switch sends every 30 s, so a timeout of 90 s covers a lost
+// frame.
+func WaitForNeighbors(ctx context.Context, ifaces []string, timeout time.Duration) []string {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	for {
+		missing := missingNeighbors(ifaces, Neighbors())
+		if len(missing) == 0 || ctx.Err() != nil {
+			return missing
+		}
+		select {
+		case <-ctx.Done():
+		case <-tick.C:
+		}
+	}
+}
+
+// missingNeighbors lists the NICs with carrier and no neighbor.
+func missingNeighbors(ifaces []string, neighbors []Neighbor) []string {
+	var missing []string
+	for _, iface := range ifaces {
+		if !hasCarrier(iface) {
+			continue
+		}
+		if !slices.ContainsFunc(neighbors, func(n Neighbor) bool { return n.Interface == iface }) {
+			missing = append(missing, iface)
+		}
+	}
+	return missing
 }

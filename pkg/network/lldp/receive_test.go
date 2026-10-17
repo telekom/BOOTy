@@ -137,3 +137,41 @@ func TestOwnFrame(t *testing.T) {
 		}
 	}
 }
+
+// FirstSeen stays while the same neighbor sends; a different neighbor on
+// the interface, or the same one after its TTL ran out, counts as a change.
+func TestReceiverChanges(t *testing.T) {
+	r := &receiver{neighbors: map[string]Neighbor{}, expires: map[string]time.Time{}, log: slog.Default()}
+	t0 := time.Unix(1000, 0)
+	n := Neighbor{ChassisID: "leaf01", PortID: "eth1", Interface: "ens1f0np0", TTL: 120}
+	for i, step := range []struct {
+		at        time.Duration
+		chassis   string
+		firstSeen time.Duration
+		changes   int
+	}{
+		{0, "leaf01", 0, 0},
+		{30 * time.Second, "leaf01", 0, 0},                  // same neighbor
+		{60 * time.Second, "leaf02", 60 * time.Second, 1},   // cable moved
+		{400 * time.Second, "leaf02", 400 * time.Second, 2}, // back after the TTL
+	} {
+		f := n
+		f.ChassisID = step.chassis
+		r.record(&f, t0.Add(step.at))
+		got := r.neighbors["ens1f0np0"]
+		if !got.FirstSeen.Equal(t0.Add(step.firstSeen)) || got.Changes != step.changes || !got.LastSeen.Equal(t0.Add(step.at)) {
+			t.Fatalf("step %d: first %v last %v changes %d", i, got.FirstSeen.Sub(t0), got.LastSeen.Sub(t0), got.Changes)
+		}
+	}
+}
+
+// Only NICs with carrier need a neighbor.
+func TestMissingNeighbors(t *testing.T) {
+	orig := hasCarrier
+	t.Cleanup(func() { hasCarrier = orig })
+	hasCarrier = func(iface string) bool { return iface != "eno1" }
+	got := missingNeighbors([]string{"eno1", "ens1f0np0", "ens1f1np1"}, []Neighbor{{Interface: "ens1f0np0"}})
+	if !reflect.DeepEqual(got, []string{"ens1f1np1"}) {
+		t.Fatalf("missing = %v, want [ens1f1np1]", got)
+	}
+}
