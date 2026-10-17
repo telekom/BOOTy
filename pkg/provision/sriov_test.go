@@ -217,6 +217,9 @@ func TestConfigureSRIOVVerifyRebootNeedsCAPRF(t *testing.T) {
 	if !o.FirmwareChanged() {
 		t.Fatal("the stored firmware change still needs the reboot at the end")
 	}
+	if code := CodeOf(WithCode("configure-sriov", err)); code != "BOOTY-HW-006" {
+		t.Fatalf("failure code %q", code)
+	}
 
 	cfg.Provision.SRIOV.VerifyReboot = sriov.VerifyRebootOff
 	o = newTestOrchestrator(t, cfg, provider)

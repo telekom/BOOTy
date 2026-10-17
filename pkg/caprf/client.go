@@ -1199,7 +1199,6 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"LOG_URL":                     &cfg.Transport.LogURL,
 		"INIT_URL":                    &cfg.Transport.InitURL,
 		"ERROR_URL":                   &cfg.Transport.ErrorURL,
-		"REBOOT_URL":                  &cfg.Transport.RebootURL,
 		"SUCCESS_URL":                 &cfg.Transport.SuccessURL,
 		"DEBUG_URL":                   &cfg.Transport.DebugURL,
 		"RESCUE_MODE":                 &cfg.Rescue.Mode,
