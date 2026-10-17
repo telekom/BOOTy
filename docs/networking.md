@@ -157,7 +157,12 @@ same resolution:
   BOOTy resets the BGP session and connects again after 1 s, like the FRR
   start timer. Known deviation: the peer gets Cease/Administrative Reset
   (subcode 4), not Cease/BFD Down (subcode 10, RFC 9384), because the
-  GoBGP API sends no other subcode. Only the peer log shows it.
+  GoBGP API sends no other subcode. Only the peer log shows it. A
+  second deviation: when the peer ends the session (for example `clear
+  bgp` on the leaf), GoBGP waits a fixed 5 s in Idle, where FRR waits 1 s,
+  and refuses connections in that time. BOOTy then connects by itself 1
+  to 2 s later; a peer that must open the session itself retries after
+  its connect timer.
 - `bgp bestpath as-path multipath-relax` (native `network.bgp.multipathRelax`,
   `BGP_MULTIPATH_RELAX`) installs equal-cost paths with different AS paths
   of the same length as one multipath route.
