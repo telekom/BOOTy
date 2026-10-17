@@ -219,6 +219,7 @@ RUN if [ -n "$KERNEL_SUITE" ]; then \
     #   Filesystems:      ext4 jbd2 mbcache crc32c_generic crc32c-cryptoapi xfs btrfs fat vfat nls_cp437 nls_iso8859-1 nls_ascii
     #   VRF/VXLAN/bridge: vrf dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc
     #   VLAN:             8021q (bonding is left out: loading it creates bond0)
+    #   Socket diag:      inet_diag tcp_diag udp_diag (ss and other sock_diag users)
     #   Intel NICs:       e1000e igb igc ixgbe i40e ice iavf igbvf ixgbevf (iavf, igbvf, ixgbevf: SR-IOV VFs)
     #   Broadcom NICs:    tg3 bnxt_en
     #   Mellanox/NVIDIA:  mlx4_core mlx4_en mlx5_core mlxfw
@@ -257,6 +258,7 @@ RUN if [ -n "$KERNEL_SUITE" ]; then \
         ext4 jbd2 mbcache crc32c_generic crc32c-cryptoapi xfs btrfs fat vfat nls_cp437 nls_iso8859-1 nls_ascii \
         vrf dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc \
         8021q \
+        inet_diag tcp_diag udp_diag \
         e1000e igb igc ixgbe i40e ice iavf igbvf ixgbevf \
         tg3 bnxt_en \
         mlx4_core mlx4_en mlx5_core mlxfw \

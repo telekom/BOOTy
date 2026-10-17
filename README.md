@@ -275,7 +275,7 @@ asynchronously.
 | SAS/RAID HBA | `smartpqi`, `hpsa` | Microchip SmartRAID/SmartHBA, HPE Smart Array |
 | VM | `virtio_blk`, `virtio_scsi` | QEMU/KVM |
 | Software RAID | `md-mod`, `raid0`, `raid1`, `raid10`, `raid456` | `mdadm` RAID 0/1/10/5/6 |
-| Other | `loop`, `dm-mod`, `dm-crypt`, `efivarfs`, `8021q`, `sg` | Loop images, LUKS, EFI variables, VLANs, SCSI generic access |
+| Other | `loop`, `dm-mod`, `dm-crypt`, `efivarfs`, `8021q`, `sg`, `inet_diag`, `tcp_diag`, `udp_diag` | Loop images, LUKS, EFI variables, VLANs, SCSI generic access, socket diagnostics (`ss`) |
 
 ## Usage
 
