@@ -299,6 +299,10 @@ that FRR also reads say so.
 | `VRF_TABLE_ID` | `1000` | uint32 | Routing table of `VRF_NAME`. `0` and `1` become `1000`. Alias: `vrf_table_id`. |
 | `OVERLAY_VRF_NAME` | (unset) | VRF name or `default` | VRF of the provision bridge (GoBGP). `default` keeps the bridge in the default VRF, like the bm4x netplan. Unset means `VRF_NAME`. A set value wins over netplan. YAML `network.vrf.overlayName`. |
 | `OVERLAY_VRF_TABLE_ID` | `0` | uint32 | Routing table of `OVERLAY_VRF_NAME`. `0` means `VRF_TABLE_ID`. A set value wins over netplan. YAML `network.vrf.overlayTableID`. |
+| `BFD_TRANSMIT_MS` | `0` | 10 to 60000, ms | BFD transmit interval. Set it together with `BFD_RECEIVE_MS`. GoBGP: BFD on every native peer (single-hop, but multihop for an iBGP peer that is not on a connected network of its VRF, like FRR), and an explicit value replaces the interval of `frr.conf` BFD sessions. FRR also reads it: BFD on the fabric peers. YAML `network.bgp.bfdTransmitMS`. Alias: `bfd_transmit_ms`. |
+| `BFD_RECEIVE_MS` | `0` | 10 to 60000, ms | BFD receive interval. Set it together with `BFD_TRANSMIT_MS`. FRR also reads it. YAML `network.bgp.bfdReceiveMS`. Alias: `bfd_receive_ms`. |
+| `BFD_PROFILES` | (unset) | JSON list | BFD profiles of the `bfdProfile` of `BGP_SESSIONS` and of the `frr.conf` neighbors, like `bfd` / `profile NAME`: `name`, `transmitInterval` and `receiveInterval` (ms, 10 to 60000), `detectMultiplier` (2 to 255). Unset values and an unknown profile use the FRR defaults 300 ms, 300 ms, 3. A non-empty list replaces the `frr.conf` profiles as a whole. YAML `network.bgp.bfdProfiles`. |
+| `BFD_DETECT_MULTIPLIER` | `0` (3) | 2 to 255 | BFD detect multiplier (GoBGP). An explicit value replaces the multiplier of `frr.conf` BFD sessions. YAML `network.bgp.bfdDetectMultiplier`. |
 
 The lowercase aliases `bgp_keepalive`, `bgp_hold`, `bgp_remote_asn`,
 `vrf_name` and `vrf_table_id` set the same values as the uppercase keys.
@@ -312,10 +316,6 @@ default and `iso` build flavors contain the FRR daemons.
 
 | Key | Default | Values | Description |
 |-----|---------|--------|-------------|
-| `BFD_TRANSMIT_MS` | `0` | 10 to 60000, ms | BFD transmit interval. Set it together with `BFD_RECEIVE_MS`. FRR: BFD on the fabric peers. GoBGP: BFD on every native peer (single-hop on unnumbered and connected peers, multihop on the others, like FRR), and the interval of `frr.conf` BFD sessions. YAML `network.bgp.bfdTransmitMS`. Alias: `bfd_transmit_ms`. |
-| `BFD_RECEIVE_MS` | `0` | 10 to 60000, ms | BFD receive interval. Set it together with `BFD_TRANSMIT_MS`. YAML `network.bgp.bfdReceiveMS`. Alias: `bfd_receive_ms`. |
-| `BFD_PROFILES` | (unset) | JSON list | BFD profiles of the `bfdProfile` of `BGP_SESSIONS` and of the `frr.conf` neighbors, like `bfd` / `profile NAME`: `name`, `transmitInterval` and `receiveInterval` (ms, 10 to 60000), `detectMultiplier` (2 to 255). Unset values and an unknown profile use the FRR defaults 300 ms, 300 ms, 3. A non-empty list replaces the `frr.conf` profiles as a whole. YAML `network.bgp.bfdProfiles`. |
-| `BFD_DETECT_MULTIPLIER` | `0` (3) | 2 to 255 | BFD detect multiplier (GoBGP). An explicit value replaces the multiplier of `frr.conf` BFD sessions. YAML `network.bgp.bfdDetectMultiplier`. |
 | `dcgw_ips` | (unset) | IP addresses separated by commas | Data center gateway iBGP peers. Turns on the onefabric FRR template. |
 | `overlay_aggregate` | (unset) | CIDR | Aggregate address in the onefabric template. |
 | `local_asn` | `0` | uint32 | `local-as` for the fabric peers. |
