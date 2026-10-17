@@ -123,6 +123,7 @@ type Config struct {
 	OverlayDevices network.OverlayDevices
 	NoAcceptRA     []string
 	EmitLLDP       []string
+	LLDPProfile    string
 	IPForwarding   *bool
 	IPv6Forwarding *bool
 	// InstallRoutes runs the FIB writer, like zebra.
@@ -211,7 +212,8 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		FastExternalFailover: fastExternalFailover(netCfg),
 		OverlayDevices:       netCfg.OverlayDevices,
 		NoAcceptRA:           netCfg.NoAcceptRA,
-		EmitLLDP:             netCfg.EmitLLDP,
+		EmitLLDP:             emitLLDP(netCfg),
+		LLDPProfile:          netCfg.LLDPProfile,
 		IPForwarding:         netCfg.IPForwarding,
 		IPv6Forwarding:       netCfg.IPv6Forwarding,
 		RouteMaps:            netCfg.BGPRouteMaps,
@@ -532,4 +534,13 @@ func fastExternalFailover(n *network.Config) bool {
 		return *n.BGPFastExternalFailover
 	}
 	return len(n.BGPSessions) > 0
+}
+
+// emitLLDP lists the NICs that the underlay sends LLDP on: none when the
+// caller sends on every NIC (LLDPEmitAll).
+func emitLLDP(netCfg *network.Config) []string {
+	if netCfg.LLDPEmitAll {
+		return nil
+	}
+	return netCfg.EmitLLDP
 }

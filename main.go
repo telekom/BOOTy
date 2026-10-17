@@ -736,6 +736,9 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	if config.BoolOr(cfg.Network.LLDPReceive, true) {
 		startLLDPReceive(ctx)
 	}
+	if cfg.Network.LLDP.EmitAllNICs() {
+		startLLDPEmitAll(ctx, cfg.Network.LLDP.Profile)
+	}
 	connectivityTarget := cfg.Transport.InitURL
 	if connectivityTarget == "" {
 		connectivityTarget = cfg.Transport.SuccessURL
@@ -968,7 +971,6 @@ func networkWait(cfg *config.MachineConfig) (int, time.Duration) {
 	return 1, time.Duration(rounds) * 20 * time.Second
 }
 
-// setupNetworkMode detects and configures the appropriate network mode.
 // startLLDPReceive logs and records the LLDP neighbors of every physical
 // NIC for the rest of the run. The legacy ramdisk only sends LLDP.
 func startLLDPReceive(ctx context.Context) {
@@ -980,6 +982,21 @@ func startLLDPReceive(ctx context.Context) {
 	lldp.Receive(ctx, nics, slog.With("component", "lldp"))
 }
 
+// startLLDPEmitAll sends LLDP frames on every physical NIC with carrier for
+// the rest of the run (LLDP_EMIT_ALL), in every network mode.
+func startLLDPEmitAll(ctx context.Context, profile string) {
+	nics, err := network.DetectPhysicalNICsContext(ctx)
+	if err != nil || len(nics) == 0 {
+		slog.Warn("LLDP not sent: no physical NICs", "error", err)
+		return
+	}
+	info := lldp.SystemInfo()
+	info.Profile = profile
+	info.CarrierOnly = true
+	lldp.Emit(ctx, nics, info, slog.With("component", "lldp"))
+}
+
+// setupNetworkMode detects and configures the appropriate network mode.
 func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.Mode, error) {
 	netCfg := networkConfigFromMachineConfig(cfg)
 
@@ -1121,6 +1138,8 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 		OverlayDevices:    cfg.Network.Overlay,
 		NoAcceptRA:        splitList(cfg.Network.NoAcceptRA),
 		EmitLLDP:          splitList(cfg.Network.EmitLLDP),
+		LLDPProfile:       cfg.Network.LLDP.Profile,
+		LLDPEmitAll:       cfg.Network.LLDP.EmitAllNICs(),
 		IPForwarding:      cfg.Network.IPForwarding,
 		IPv6Forwarding:    cfg.Network.IPv6Forwarding,
 		BGPRouteMaps:      cfg.Network.BGP.RouteMaps,
