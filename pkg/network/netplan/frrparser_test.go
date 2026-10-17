@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/telekom/BOOTy/pkg/network/frrconf"
 )
 
 func TestParseFRRConfigBytes_Basic(t *testing.T) {
@@ -405,5 +407,18 @@ func TestParseFRRConfigWarnsVNIRD(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "vni rd/route-target") {
 		t.Errorf("no warning for the vni rd: %s", buf.String())
+	}
+}
+
+// Without route-target lines FRR uses the auto route target
+// (AS & 0xFFFF):VNI; for the 4-byte ASN 4210000017 that is 32913:3000.
+func TestL3VNIAutoRouteTarget4ByteASN(t *testing.T) {
+	model := &frrconf.Config{
+		VRFVNIs: []frrconf.VRFVNI{{VNI: 3000}},
+		Routers: []frrconf.Router{{ASN: 4210000017, VRF: "default"}},
+	}
+	imp, exp := l3vniRouteTargets(model, 3000)
+	if strings.Join(imp, " ") != "32913:3000" || strings.Join(exp, " ") != "32913:3000" {
+		t.Fatalf("auto route targets = %v / %v, want 32913:3000", imp, exp)
 	}
 }

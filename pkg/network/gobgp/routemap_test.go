@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -420,5 +421,108 @@ func TestEBGPRequiresPolicyInGoBGP(t *testing.T) {
 				t.Errorf("routes: booty %d, fabric %d, want %d each", b, f, want)
 			}
 		})
+	}
+}
+
+// Every statement of a route-map and of "bgp ebgp-requires-policy" matches
+// only its own family: l2vpn-evpn and ipv6-unicast as well as ipv4-unicast.
+func TestBuildPolicyFamilies(t *testing.T) {
+	want := map[string][2]string{
+		"ipv4-unicast": {"AFI_IP", "SAFI_UNICAST"},
+		"ipv6-unicast": {"AFI_IP6", "SAFI_UNICAST"},
+		"l2vpn-evpn":   {"AFI_L2VPN", "SAFI_EVPN"},
+	}
+	peers := []policyPeer{{
+		name: "192.0.2.1", addr: netip.MustParseAddr("192.0.2.1"), requirePolicy: true,
+		families: []string{"ipv4-unicast", "ipv6-unicast", "l2vpn-evpn"},
+		routeMaps: []network.SessionRouteMaps{
+			{Family: "l2vpn-evpn", In: "TAG-FABRIC-IN", Out: "DENY-TAG-FABRIC-OUT"},
+			{Family: "ipv6-unicast", In: "TAG-FABRIC-IN"},
+		},
+	}}
+	p, err := buildPolicy(peers, templateMaps, templateLists)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]int{}
+	for _, st := range append(append([]*apipb.Statement{}, p.im...), p.ex...) {
+		var fam string
+		for f := range want {
+			if strings.Contains(st.GetName(), "-"+f) {
+				fam = f
+			}
+		}
+		if fam == "" {
+			t.Fatalf("statement %s names no family", st.GetName())
+		}
+		got := st.GetConditions().GetAfiSafiIn()
+		if len(got) != 1 || got[0].GetAfi().String() != want[fam][0] || got[0].GetSafi().String() != want[fam][1] {
+			t.Errorf("%s: AfiSafiIn %v, want %v", st.GetName(), got, want[fam])
+		}
+		seen[fam]++
+	}
+	// evpn: in and out maps; ipv6: in map and a requires-policy reject out;
+	// ipv4: requires-policy rejects in and out.
+	if seen["l2vpn-evpn"] == 0 || seen["ipv6-unicast"] == 0 || seen["ipv4-unicast"] != 2 {
+		t.Fatalf("statements per family = %v", seen)
+	}
+}
+
+// A community-list entry with two communities matches only a route with
+// both (FRR: all communities of the entry), so the condition is ALL.
+func TestBuildPolicyCommunityListAll(t *testing.T) {
+	lists := []network.CommunityList{{Name: "cm-received-fabric", Entries: []network.CommunityListEntry{{Communities: []string{"65169:200", "65169:201"}}}}}
+	peers := []policyPeer{{name: "192.0.2.1", addr: netip.MustParseAddr("192.0.2.1"),
+		routeMaps: []network.SessionRouteMaps{{Family: "ipv4-unicast", Out: "DENY-TAG-FABRIC-OUT"}}}}
+	p, err := buildPolicy(peers, templateMaps, lists)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cond := p.ex[0].GetConditions().GetCommunitySet()
+	if cond.GetType() != apipb.MatchSet_ALL {
+		t.Fatalf("community condition %v, want ALL", cond)
+	}
+	for _, set := range p.sets {
+		if set.GetName() == cond.GetName() && strings.Join(set.GetList(), " ") != "65169:200 65169:201" {
+			t.Fatalf("community set %v, want both communities", set.GetList())
+		}
+	}
+}
+
+// The BGP_PEER_MODE peers: BGP_ROUTE_MAP_IN/OUT in every family,
+// BGP_LOCAL_AS and BGP_ALLOWAS_IN on the unnumbered peers, and
+// BGP_EBGP_REQUIRES_POLICY on the unnumbered peers (always eBGP) and on
+// numbered eBGP peers, not on numbered iBGP peers.
+func TestPolicyPeersNative(t *testing.T) {
+	maps := []network.SessionRouteMaps{
+		{Family: "ipv4-unicast", In: "TAG-FABRIC-IN", Out: "DENY-TAG-FABRIC-OUT"},
+		{Family: "ipv6-unicast", In: "TAG-FABRIC-IN", Out: "DENY-TAG-FABRIC-OUT"},
+		{Family: "l2vpn-evpn", In: "TAG-FABRIC-IN", Out: "DENY-TAG-FABRIC-OUT"},
+	}
+	all := []string{"ipv4-unicast", "ipv6-unicast", "l2vpn-evpn"}
+	for _, tt := range []struct {
+		name      string
+		remoteASN uint32
+		numbered  bool // requirePolicy of the numbered peer
+	}{{"eBGP", 65100, true}, {"iBGP", 0, false}} {
+		t.Run(tt.name, func(t *testing.T) {
+			u := &UnderlayTier{
+				cfg: &Config{ASN: 65000, RemoteASN: tt.remoteASN, RouteMapIn: "TAG-FABRIC-IN", RouteMapOut: "DENY-TAG-FABRIC-OUT",
+					LocalAS: 65501, AllowASIn: 3, EBGPRequiresPolicy: true, NeighborAddrs: []string{"198.51.100.1"}},
+				ifacePeers: map[string]string{"eth1": "fe80::1%eth1"},
+			}
+			want := []policyPeer{
+				{name: "fe80::1%eth1", addr: netip.MustParseAddr("fe80::1%eth1"), routeMaps: maps, localAS: 65501, allowASIn: 3, requirePolicy: true, families: all},
+				{name: "198.51.100.1", addr: netip.MustParseAddr("198.51.100.1"), routeMaps: maps, allowASIn: 3, requirePolicy: tt.numbered, families: all},
+			}
+			if got := u.policyPeers(); !reflect.DeepEqual(got, want) {
+				t.Fatalf("policyPeers =\n%+v\nwant\n%+v", got, want)
+			}
+		})
+	}
+	// Without BGP_ROUTE_MAP_IN/OUT the peers have no route-maps.
+	u := &UnderlayTier{cfg: &Config{ASN: 65000}, ifacePeers: map[string]string{"eth1": "fe80::1%eth1"}}
+	if got := u.policyPeers(); len(got) != 1 || got[0].routeMaps != nil || got[0].requirePolicy {
+		t.Fatalf("policyPeers without options = %+v", got)
 	}
 }

@@ -2024,6 +2024,40 @@ func TestApplyBGPOptions(t *testing.T) {
 	})
 }
 
+// BGP_ROUTE_MAP_IN alone replaces only the in route-maps; the frr.conf out
+// route-map of each family stays.
+func TestApplyBGPOptionsRouteMapInKeepsOut(t *testing.T) {
+	n := &network.Config{BGPSessions: []network.BGPSession{{Name: "eth1", Interface: true, IPv4Unicast: true,
+		RouteMaps: []network.SessionRouteMaps{{Family: "ipv4-unicast", In: "TAG-FABRIC-IN", Out: "DENY-TAG-FABRIC-OUT"}}}}}
+	applyBGPOptions(&config.BGPConfig{RouteMapIn: "NATIVE-IN"}, n)
+	want := []network.SessionRouteMaps{{Family: "ipv4-unicast", In: "NATIVE-IN", Out: "DENY-TAG-FABRIC-OUT"}}
+	if !reflect.DeepEqual(n.BGPSessions[0].RouteMaps, want) {
+		t.Fatalf("route-maps = %+v, want %+v", n.BGPSessions[0].RouteMaps, want)
+	}
+}
+
+// The frr.conf route targets win over the legacy vpn_rt key, as in FRR;
+// native route target lists win over both; vpn_rt stays for configs
+// without frr.conf route targets.
+func TestMergeBGPPolicyRouteTargets(t *testing.T) {
+	frr := &network.Config{EVPNImportRTs: []string{"65169:3000"}, EVPNExportRTs: []string{"65169:3000"}}
+	dst := &network.Config{VPNRT: "65000:100"}
+	mergeBGPPolicy(dst, frr)
+	if strings.Join(dst.EVPNImportRTs, ",") != "65169:3000" || strings.Join(dst.EVPNExportRTs, ",") != "65169:3000" {
+		t.Fatalf("with vpn_rt: route targets %v / %v, want the frr.conf ones", dst.EVPNImportRTs, dst.EVPNExportRTs)
+	}
+	dst = &network.Config{VPNRT: "65000:100", EVPNImportRTs: []string{"1:1"}}
+	mergeBGPPolicy(dst, frr)
+	if strings.Join(dst.EVPNImportRTs, ",") != "1:1" || len(dst.EVPNExportRTs) != 0 {
+		t.Fatalf("native lists: %v / %v, want the native import list only", dst.EVPNImportRTs, dst.EVPNExportRTs)
+	}
+	dst = &network.Config{VPNRT: "65000:100"}
+	mergeBGPPolicy(dst, &network.Config{})
+	if dst.VPNRT != "65000:100" || len(dst.EVPNImportRTs) != 0 {
+		t.Fatalf("without frr.conf route targets: %+v", dst)
+	}
+}
+
 // The native BFD timers reach the network config.
 func TestNetworkConfigFromMachineConfigBFD(t *testing.T) {
 	cfg := &config.MachineConfig{}

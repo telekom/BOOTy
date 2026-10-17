@@ -219,3 +219,24 @@ func TestSessionsEBGPRequiresPolicy(t *testing.T) {
 		t.Error("no bgp ebgp-requires-policy: on, want off")
 	}
 }
+
+// A route-map of the peer wins over the one of its peer-group in the same
+// direction; the other direction still comes from the group.
+func TestSessionsPeerRouteMapOverridesGroup(t *testing.T) {
+	s := mustSessions(t, `router bgp 65101
+no bgp default ipv4-unicast
+neighbor leaf peer-group
+neighbor leaf remote-as 65500
+neighbor 192.0.2.1 peer-group leaf
+address-family ipv4 unicast
+  neighbor leaf activate
+  neighbor leaf route-map GROUP-IN in
+  neighbor leaf route-map GROUP-OUT out
+  neighbor 192.0.2.1 route-map PEER-IN in
+exit-address-family
+`)[0]
+	want := []SessionRouteMaps{{Family: FamilyIPv4Unicast, In: "PEER-IN", Out: "GROUP-OUT"}}
+	if !reflect.DeepEqual(s.RouteMaps, want) {
+		t.Fatalf("route-maps = %+v, want %+v", s.RouteMaps, want)
+	}
+}
