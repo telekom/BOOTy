@@ -311,7 +311,20 @@ BOOTy skips kexec and reboots when one of these is true:
 - `DISABLE_KEXEC=true`,
 - `SECUREBOOT_REENABLE=true`,
 - a step changed firmware values, for example the Mellanox SR-IOV setup,
-- the installed root has no usable `/boot/grub/grub.cfg` entry.
+- the installed root has no usable GRUB entry (see below).
+
+BOOTy kexecs the entry that GRUB would boot. It reads `/boot/grub/grub.cfg`,
+then `/boot/grub2/grub.cfg`, takes `next_entry` from `grubenv` when it is
+set, else the `set default` of `grub.cfg` (with `${saved_entry}` from
+`grubenv` for `GRUB_DEFAULT=saved`), and follows submenu paths by number,
+id or title (`1>2`, `gnulinux-advanced-...>gnulinux-...`). It expands
+variables that `grub.cfg` sets once outside blocks and drops `$vt_handoff`.
+It reboots instead when only GRUB can resolve the entry: BLS entries
+(`blscfg`, RHEL-likes), an entry with more than one `linux` command
+(conditional kernel lines), a kernel or argument from a variable that GRUB
+sets in a function or a condition (Flatcar `gptprio`), several initrds, a
+default number after a conditional entry, or a default that is a submenu
+or does not exist.
 
 An A/B upgrade with `AB_PRESERVE_EXISTING=true` needs kexec. If kexec does
 not happen, BOOTy powers off instead of a reboot. `SUCCESS_ACTION=poweroff`
