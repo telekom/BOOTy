@@ -151,14 +151,27 @@ same resolution:
   ebgp-requires-policy`, like current FRR (`bgpd/bgp_route.c`,
   `bgp_inbound_policy_exists`). An eBGP session without a route-map in a
   family and direction then exchanges no routes there; BOOTy logs each
-  such session, family and direction at info level. Native sessions follow
+  such session, family and direction at warning level, like FRR's
+  `zlog_warn`. Native sessions follow
   the same default; `network.bgp.ebgpRequiresPolicy`
   (`BGP_EBGP_REQUIRES_POLICY`) sets it for all sessions, and it is off for
   the `BGP_PEER_MODE` peers unless set.
 - `neighbor X route-map M in|out` in an address family (native `routeMaps`
   with `family`, `in`, `out`) sets the route-maps of the session in that
   family; the peer's value wins over its peer-group's. The route-maps come
-  from `frr.conf` or from `network.bgp.routeMaps` (`BGP_ROUTE_MAPS`).
+  from `frr.conf` or from `network.bgp.routeMaps` (`BGP_ROUTE_MAPS`). A
+  route-map that a session names but that is not defined stops the setup
+  (fail-fast); FRR instead denies all routes of that peer in that
+  direction. A community-list `deny` entry stops the setup too.
+- Route-map coverage: the production template (bm4x-operator provcfg
+  `frr.conf.tpl`) uses `route-map NAME permit|deny SEQ`, `set
+  local-preference`, `set community ... additive`, and `match community`
+  with a standard community-list of `permit` entries, and BOOTy implements
+  all of them in both forms. No template uses the other constructs, so they
+  are rejected: `match ip address prefix-list`, `ip prefix-list`, as-path
+  lists and `match as-path`, `set metric`, `set as-path prepend`,
+  `continue`, `on-match`, expanded community-lists, EVPN matches (`match
+  evpn route-type|vni`) and community-list `deny` entries.
 - `neighbor X bfd [profile P]` (native `bfd`, `bfdProfile`) runs BFD with
   the timers of the `bfd` / `profile P` block (native
   `network.bgp.bfdProfiles`, `BFD_PROFILES`). An unknown profile and unset
@@ -291,7 +304,8 @@ rule of every key:
 | `routeMaps` (session field) | `neighbor X route-map M in\|out` | `network.bgp.sessions[].routeMaps` | part of the session list |
 | `BGP_ROUTE_MAPS`, `BGP_COMMUNITY_LISTS` | `frr.conf` `route-map`, `bgp community-list` | `network.bgp.routeMaps`, `network.bgp.communityLists` | list replaces |
 | `BGP_ROUTE_MAP_IN`, `BGP_ROUTE_MAP_OUT` | session route-maps | `network.bgp.routeMapIn`, `network.bgp.routeMapOut` | native wins, for every session and family |
-| `EVPN_RT_IMPORT`, `EVPN_RT_EXPORT` | `frr.conf` `route-target import\|export` | `network.evpn.importRouteTargets`, `network.evpn.exportRouteTargets` | list replaces; also wins over `vpn_rt` |
+| `EVPN_RT_IMPORT`, `EVPN_RT_EXPORT` | `frr.conf` `route-target import\|export` | `network.evpn.importRouteTargets`, `network.evpn.exportRouteTargets` | list replaces |
+| `vpn_rt` | `frr.conf` route targets, else FRR's auto route target of an `frr.conf` L3VNI | `network.evpn.vpnRT` | netplan wins: the `frr.conf` route targets win over `vpn_rt`, as in FRR; `vpn_rt` applies only without them |
 | `BGP_EBGP_REQUIRES_POLICY` | `[no] bgp ebgp-requires-policy` | `network.bgp.ebgpRequiresPolicy` | native wins, for every session; unset is on for sessions, off for `BGP_PEER_MODE` peers |
 
 ### Strict input and the accepted grammar
@@ -323,8 +337,10 @@ parse FRR config /deploy/file-system/etc/frr/frr.conf: line 31
 each such statement or key and go on without it. The FRR warning names the
 file and the line.
 
-Lenient mode skips only what BOOTy does not implement. These stay errors in
-both modes:
+Lenient mode skips only what BOOTy does not implement. An unsupported
+statement inside a route-map, such as `set metric` or `match ip address
+prefix-list`, is then skipped, so the route-map matches or sets less than in
+FRR and the policy changes. These stay errors in both modes:
 
 - an invalid value, such as `remote-as 65oo1`, a router-id that is not an
   IPv4 address or a network with prefix length 33;

@@ -200,6 +200,10 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   lists reject unknown fields. `bgp ebgp-requires-policy` is applied like
   current FRR (on unless `no bgp ebgp-requires-policy`; new key
   `BGP_EBGP_REQUIRES_POLICY`, YAML `network.bgp.ebgpRequiresPolicy`).
+  Native eBGP sessions (`BGP_SESSIONS`) without route-maps now exchange no
+  routes: give them `routeMaps` or set `BGP_EBGP_REQUIRES_POLICY=false`. The
+  rejected families are logged at WARN. The `frr.conf` route targets now win
+  over `vpn_rt`, as in FRR (#659).
 - GoBGP mode runs BFD (RFC 5880, 5881, 5883) for `frr.conf` neighbors with
   `bfd`, with the profile timers, and drops the BGP session when BFD goes down.
   New keys `BFD_DETECT_MULTIPLIER` and `BFD_PROFILES` (YAML

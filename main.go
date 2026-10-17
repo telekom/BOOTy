@@ -1510,8 +1510,10 @@ func mergeInferredEVPNMode(dst, src *network.Config) {
 }
 
 // mergeBGPPolicy takes the frr.conf route-maps, community-lists and route
-// targets. A non-empty native list replaces the frr.conf list as a whole;
-// vpn_rt or explicit route target lists win over the frr.conf targets.
+// targets. A non-empty native list replaces the frr.conf list as a whole.
+// The frr.conf route targets win over the legacy vpn_rt key (as for every
+// key that exists on main, and as in FRR); vpn_rt applies only without
+// frr.conf and native route targets.
 func mergeBGPPolicy(dst, src *network.Config) {
 	switch {
 	case len(dst.BGPRouteMaps) == 0:
@@ -1525,7 +1527,7 @@ func mergeBGPPolicy(dst, src *network.Config) {
 	case len(src.BGPCommunityLists) > 0:
 		slog.Info("network.bgp.communityLists replaces the frr.conf community-lists", "native", len(dst.BGPCommunityLists), "frr.conf", len(src.BGPCommunityLists))
 	}
-	if dst.VPNRT == "" && len(dst.EVPNImportRTs) == 0 && len(dst.EVPNExportRTs) == 0 {
+	if len(dst.EVPNImportRTs) == 0 && len(dst.EVPNExportRTs) == 0 {
 		dst.EVPNImportRTs, dst.EVPNExportRTs = src.EVPNImportRTs, src.EVPNExportRTs
 	}
 }

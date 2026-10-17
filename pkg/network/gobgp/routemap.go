@@ -336,7 +336,7 @@ func (u *UnderlayTier) installPolicies(ctx context.Context) error {
 		_ = u.bgp.ResetPeer(ctx, &apipb.ResetPeerRequest{Address: peer.name, Soft: true, Direction: apipb.ResetPeerRequest_BOTH})
 	}
 	for _, r := range p.rejected {
-		u.log.Info("eBGP peer has no route-map, routes rejected like FRR bgp ebgp-requires-policy",
+		u.log.Warn("eBGP peer has no route-map, routes rejected like FRR bgp ebgp-requires-policy",
 			"peer", r.peer, "family", r.fam, "direction", r.dir)
 	}
 	u.log.Info("installed BGP route policies", "import_statements", len(p.im), "export_statements", len(p.ex))

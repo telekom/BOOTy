@@ -294,7 +294,7 @@ type EVPNConfig struct {
 	// ImportRouteTargets and ExportRouteTargets are comma-separated EVPN
 	// route targets ("ASN:value"), like FRR "route-target import|export".
 	// They win over vpnRT and over the provisioner frr.conf.
-	// Default: "" (vpnRT, the frr.conf value, or ASN:VNI)
+	// Default: "" (the frr.conf value, else vpnRT, else ASN:VNI)
 	ImportRouteTargets string `yaml:"importRouteTargets" json:"importRouteTargets"`
 	ExportRouteTargets string `yaml:"exportRouteTargets" json:"exportRouteTargets"`
 
