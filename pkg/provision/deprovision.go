@@ -24,6 +24,7 @@ import (
 // Mode "decommission" wipes all disks and removes all EFI boot entries on a
 // best-effort basis, so defect or missing devices do not stop it.
 func (o *Orchestrator) Deprovision(ctx context.Context) error {
+	defer watchdog.Idle()
 	mode := o.cfg.Mode
 	if mode == "" {
 		mode = "hard"
@@ -32,11 +33,10 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 	o.log.Info("starting deprovisioning", "mode", mode)
 
 	steps := o.deprovisionSteps(mode)
-	defer watchdog.Idle()
 
 	for i, step := range steps {
-		o.log.Info("deprovisioning step", "step", step.Name, "index", i+1, "total", len(steps))
 		watchdog.Step(step.Name)
+		o.log.Info("deprovisioning step", "step", step.Name, "index", i+1, "total", len(steps))
 		if err := step.Fn(ctx); err != nil {
 			msg := fmt.Sprintf("step %s failed: %v", step.Name, err)
 			o.log.Error("deprovisioning step failed", "step", step.Name, "error", err)
