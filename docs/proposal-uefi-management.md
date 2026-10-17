@@ -237,6 +237,16 @@ in-band `.auth` updates.
   the NICs and GPUs in the fleet).
 - Is `BootNext` honored by every vendor after a BMC-initiated reset?
 
+## systemd-boot
+
+- systemd-boot adds its own variables under the vendor GUID
+  `4a67b082-0a4c-41cf-b6c7-440b29bb8c4f` (`LoaderEntryDefault`,
+  `LoaderEntryOneShot`, `LoaderFeatures`, verify the full list). The audit
+  reports them; the writer sets the default and one-shot entries.
+- The firmware entry for systemd-boot is "Linux Boot Manager" pointing to
+  `\EFI\systemd\systemd-boot<arch>.efi`, or shim when chained. See
+  [proposal-systemd-boot.md](proposal-systemd-boot.md).
+
 ## Related proposals
 
 - [proposal-secureboot.md](proposal-secureboot.md)
@@ -244,3 +254,4 @@ in-band `.auth` updates.
 - [proposal-bootloaders.md](proposal-bootloaders.md)
 - [proposal-measured-boot-ab.md](proposal-measured-boot-ab.md)
 - [proposal-firmware-lifecycle.md](proposal-firmware-lifecycle.md)
+- [proposal-systemd-boot.md](proposal-systemd-boot.md)

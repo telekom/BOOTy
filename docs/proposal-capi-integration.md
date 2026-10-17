@@ -274,6 +274,19 @@ stay. When `EVENTS_URL` is set, BOOTy sends the same data there.
 - Should the network data format follow OpenStack `network_data.json` or
   netplan v2?
 
+## Metrics, logs and identity on the event contract
+
+- The `MetricsSnapshot` kind and the failure codes are defined in
+  [proposal-provisioning-metrics.md](proposal-provisioning-metrics.md);
+  streaming mode in [proposal-streaming-telemetry.md](proposal-streaming-telemetry.md).
+- Log records with `run_id`, `seq` and `code` are defined in
+  [proposal-log-shipping.md](proposal-log-shipping.md); CAPRF ingests them on
+  `/log` in NDJSON.
+- When no event arrives, CAPRF reads the out-of-band record from
+  [proposal-bmc-out-of-band-diagnostics.md](proposal-bmc-out-of-band-diagnostics.md).
+- mTLS client identity for all channels: [proposal-credential-identity.md](proposal-credential-identity.md).
+- Flatcar bootstrap uses the Ignition format (see [proposal-flatcar.md](proposal-flatcar.md)).
+
 ## Related proposals
 
 - [caprf-integration.md](caprf-integration.md)
@@ -283,3 +296,9 @@ stay. When `EVENTS_URL` is set, BOOTy sends the same data there.
 - [proposal-webhooks.md](proposal-webhooks.md)
 - [proposal-firmware-lifecycle.md](proposal-firmware-lifecycle.md)
 - [proposal-rollback.md](proposal-rollback.md)
+- [proposal-provisioning-metrics.md](proposal-provisioning-metrics.md)
+- [proposal-log-shipping.md](proposal-log-shipping.md)
+- [proposal-bmc-out-of-band-diagnostics.md](proposal-bmc-out-of-band-diagnostics.md)
+- [proposal-streaming-telemetry.md](proposal-streaming-telemetry.md)
+- [proposal-flatcar.md](proposal-flatcar.md)
+- [proposal-credential-identity.md](proposal-credential-identity.md)

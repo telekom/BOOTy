@@ -365,6 +365,14 @@ already uses `github.com/google/go-tpm`.
 5. Do all TPMs in the fleet have EK certificates in NV? Some vendors do not
    provision them (verify per vendor).
 
+## systemd-boot and Flatcar
+
+- Option B (signed PCR 11 policy) needs UKIs booted through systemd-boot or
+  directly by the firmware. [proposal-systemd-boot.md](proposal-systemd-boot.md) defines how BOOTy installs them, uses boot
+  counting for the slot switch, and why kexec skips the stub measurements.
+- Flatcar boots with GRUB, so a `/usr` update changes PCR 4, 8 and 9. Bind
+  `ROOT` encryption to PCR 7, pcrlock or Tang (see [proposal-flatcar.md](proposal-flatcar.md)).
+
 ## Related proposals
 
 - [proposal-tpm-attestation.md](proposal-tpm-attestation.md)
@@ -374,3 +382,5 @@ already uses `github.com/google/go-tpm`.
 - [proposal-secureboot-full-chain.md](proposal-secureboot-full-chain.md)
 - [proposal-uefi-management.md](proposal-uefi-management.md)
 - [proposal-rollback.md](proposal-rollback.md)
+- [proposal-systemd-boot.md](proposal-systemd-boot.md)
+- [proposal-flatcar.md](proposal-flatcar.md)

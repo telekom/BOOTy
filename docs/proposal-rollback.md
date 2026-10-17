@@ -184,6 +184,17 @@ A small node-side tool `booty-ab` (same repo, separate binary like
 - Is the BMC watchdog reliable across the fleet?
 - Do we keep kexec for trial boots at all once `BootNext` works?
 
+## systemd-boot boot counting and Flatcar gptprio
+
+- On systemd-boot targets, boot counting (`+tries` in the entry name and
+  `systemd-bless-boot`) replaces `BootNext` for the trial boot; `BootNext`
+  stays the generic path for GRUB targets. [proposal-systemd-boot.md](proposal-systemd-boot.md) has the entry naming and the
+  `LoaderEntryOneShot` flow. Both can complement each other: `BootNext` for
+  the firmware entry, counters for the entry inside systemd-boot.
+- Flatcar has its own rollback: GPT priority, tries and successful bits on
+  `USR-A` and `USR-B`, handled by GRUB `gptprio` and `update_engine`. BOOTy
+  must not interfere (see [proposal-flatcar.md](proposal-flatcar.md)).
+
 ## Related proposals
 
 - [ab-partitioning.md](ab-partitioning.md)
@@ -191,3 +202,5 @@ A small node-side tool `booty-ab` (same repo, separate binary like
 - [proposal-measured-boot-ab.md](proposal-measured-boot-ab.md)
 - [proposal-capi-integration.md](proposal-capi-integration.md)
 - [proposal-ipmi-local.md](proposal-ipmi-local.md)
+- [proposal-systemd-boot.md](proposal-systemd-boot.md)
+- [proposal-flatcar.md](proposal-flatcar.md)

@@ -215,9 +215,19 @@ Keep `SYSEXT_LAYERS` as the single list. Do not add `CONFEXT_LAYERS`.
 - Who owns the verity signing key? Is it the same key as the UKI signing key?
 - Should BOOTy refuse an incompatible layer, or warn and skip it?
 
+## systemd-boot and Flatcar
+
+- The `stub` mode needs a UKI target with systemd-stub (see [proposal-systemd-boot.md](proposal-systemd-boot.md)); the
+  stub measures `extra.d` sysexts into PCR 13.
+- Flatcar activates sysexts through `/etc/extensions` and ships OEM sysexts
+  on the OEM partition; per-version layers must match the `/usr` slot (see
+  [proposal-flatcar.md](proposal-flatcar.md)).
+
 ## Related proposals
 
 - [sysext-provisioning.md](sysext-provisioning.md)
 - [ab-partitioning.md](ab-partitioning.md)
 - [proposal-measured-boot-ab.md](proposal-measured-boot-ab.md)
 - [proposal-image-signatures.md](proposal-image-signatures.md)
+- [proposal-systemd-boot.md](proposal-systemd-boot.md)
+- [proposal-flatcar.md](proposal-flatcar.md)

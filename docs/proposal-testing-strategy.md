@@ -228,6 +228,14 @@ OS and TPM scenarios are counted in their own proposals.
   scenarios?
 - What regression threshold is acceptable given CI noise?
 
+## systemd-boot and Flatcar scenarios
+
+- systemd-boot: `sdboot-type1`, `sdboot-uki`, `sdboot-secureboot`,
+  `sdboot-ab-counting`, `sdboot-xbootldr` (see [proposal-systemd-boot.md](proposal-systemd-boot.md)).
+- Flatcar: `flatcar-stable`, `flatcar-update-switch`, `flatcar-sysext`,
+  `flatcar-secureboot`, `flatcar-tpm-luks` (see [proposal-flatcar.md](proposal-flatcar.md)). The existing
+  `flatcar-like-usra-system-ab` scenario only tests the generic source rule.
+
 ## Related proposals
 
 - [proposal-ci-testing-matrix.md](proposal-ci-testing-matrix.md)
@@ -235,3 +243,5 @@ OS and TPM scenarios are counted in their own proposals.
 - [proposal-os-targets.md](proposal-os-targets.md)
 - [proposal-measured-boot-ab.md](proposal-measured-boot-ab.md)
 - [proposal-image-delivery.md](proposal-image-delivery.md)
+- [proposal-systemd-boot.md](proposal-systemd-boot.md)
+- [proposal-flatcar.md](proposal-flatcar.md)

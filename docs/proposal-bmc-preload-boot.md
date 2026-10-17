@@ -265,6 +265,16 @@ need short windows. P3 through the sysext catalog of the target slot.
 - Can the generic ISO keep Secure Boot on with the current shim and kernel
   signing?
 
+## BOOTy as a UKI, and out-of-band status
+
+- The generic signed BOOTy artifact for HTTP boot is a UKI (kernel,
+  initramfs and command line in one signed PE file), booted directly by the
+  firmware without systemd-boot. The per-machine part stays in the runtime
+  seed. UKI build rules are in [proposal-systemd-boot.md](proposal-systemd-boot.md).
+- When the network fails during or after this boot, BOOTy reports through
+  the BMC as described in
+  [proposal-bmc-out-of-band-diagnostics.md](proposal-bmc-out-of-band-diagnostics.md).
+
 ## Related proposals
 
 - [proposal-uefi-management.md](proposal-uefi-management.md)
@@ -272,3 +282,5 @@ need short windows. P3 through the sysext catalog of the target slot.
 - [proposal-ipmi-local.md](proposal-ipmi-local.md)
 - [proposal-image-delivery.md](proposal-image-delivery.md)
 - [proposal-measured-boot-ab.md](proposal-measured-boot-ab.md)
+- [proposal-systemd-boot.md](proposal-systemd-boot.md)
+- [proposal-bmc-out-of-band-diagnostics.md](proposal-bmc-out-of-band-diagnostics.md)
