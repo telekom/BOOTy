@@ -133,6 +133,8 @@
     "hbn"
   ],
   "EmitLLDP": null,
+  "LLDPProfile": "",
+  "LLDPEmitAll": false,
   "IPForwarding": null,
   "IPv6Forwarding": null,
   "VLANs": null

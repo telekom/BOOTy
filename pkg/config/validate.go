@@ -15,6 +15,7 @@ import (
 	imageutil "github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/frrconf"
+	"github.com/telekom/BOOTy/pkg/network/lldp"
 	"github.com/telekom/BOOTy/pkg/network/netplan"
 	"github.com/telekom/BOOTy/pkg/serialconsole"
 )
@@ -143,6 +144,9 @@ func (c *Config) validatePrimaryEnums() []string {
 		},
 		func() string {
 			return validateEnumLower(c.Network.Mode, "network.mode", "gobgp", "frr", "static", "dhcp")
+		},
+		func() string {
+			return validateEnum(c.Network.LLDP.Profile, "network.lldp.profile (LLDP_PROFILE)", lldp.ProfileNetworkd, lldp.ProfileBM4XCableCheck)
 		},
 		func() string {
 			return validateEnumLower(c.Network.WaitMode, "network.waitMode (NETWORK_WAIT_MODE)", NetworkWaitDefault, NetworkWaitRounds)

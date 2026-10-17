@@ -339,6 +339,7 @@ rule of every key:
 | `BGP_GRACEFUL_RESTART`, `BGP_GRACEFUL_RESTART_TIME`, `BGP_ADDPATH_RX`, `BGP_SOFTWARE_VERSION` | none: `frr.conf` graceful restart and capability statements are rejected | `network.bgp.gracefulRestart`, `gracefulRestartTime`, `addPathReceive`, `softwareVersion` | native only; unset is the FRR default (for `BGP_SOFTWARE_VERSION`, of the `frr defaults` profile) |
 | `BGP_HOSTNAME` | none: FRR ignores the `frr.conf` `hostname` line and sends the system host name | `network.bgp.hostname` | native only; unset keeps the system host name |
 | `LLDP_RECEIVE` | none: the legacy ramdisk does not receive LLDP | `network.lldpReceive` | native only; unset is on |
+| `LLDP_PROFILE`, `LLDP_EMIT_ALL` | none | `network.lldp.profile`, `network.lldp.emitAll` | native only; unset is the networkd identity on the `LLDP_EMIT` NICs |
 | `IP_FORWARDING`, `IPV6_FORWARDING` | `frr.conf` `[no] ip[v6] forwarding` | `network.ipForwarding`, `network.ipv6Forwarding` | native wins |
 
 ### Strict input and the accepted grammar
@@ -597,6 +598,42 @@ enabled). With `LLDP_RECEIVE` (on by default) BOOTy also listens on every
 physical NIC, logs each new or changed neighbor and adds the current
 neighbors to the hardware inventory report; the legacy ramdisk only
 sends.
+
+### LLDP identity profiles
+
+`LLDP_PROFILE` (YAML `network.lldp.profile`) selects the identity of the
+sent frames. The default `networkd` sends the frames above, byte for byte
+(`TestFrameNetworkdGolden`).
+
+`bm4x-cablecheck` sends the identity that the bm4x connection check
+matches. The check runs on the switch side: bm4x-api asks NSO for the LLDP
+neighbor tables of the switches and treats a neighbor as a compute port when
+its system name is `bare-minimal` (or none, or `UNKNOWN_DEVICE`) and its
+port ID is a MAC address in the form `aa:bb:cc:dd:ee:ff`
+(`Connection.isToMacAddress`). It then looks the MAC up in NetBox. So the
+profile sends:
+
+| TLV | `networkd` | `bm4x-cablecheck` |
+|---|---|---|
+| Chassis ID | machine ID (subtype 7) | the same |
+| Port ID | interface name (subtype 5) | NIC MAC (subtype 3) |
+| TTL | 120 | the same |
+| Port description | none | interface name, like lldpd |
+| System name | hostname | `bare-minimal` |
+| System description | `PRETTY_HOSTNAME` when set | the same |
+| Capabilities | station, bridge, router; station enabled | the same |
+
+With this profile BOOTy sends on every physical NIC with carrier
+(`LLDP_EMIT_ALL`, YAML `network.lldp.emitAll`, defaults to on), in every
+network mode. `pkg/network/lldp/bm4x_match_test.go` ports the bm4x-api
+matching code to Go (the source lines are in the file) and runs it on
+BOOTy's frames; `TestCableCheckLLDP` (containerlab, an lldpd leaf) checks
+what a switch reports.
+
+Open point: the bm4x pattern needs the colon form of the MAC. lldpd and
+Junos show a MAC port ID in that form; NX-OS shows `aabb.ccdd.eeff`. bm4x-api
+passes the NSO string through unchanged, so on NX-OS leaves the match
+depends on NSO converting the form.
 
 ## GoBGP peer modes
 

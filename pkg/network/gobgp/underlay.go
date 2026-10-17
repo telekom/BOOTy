@@ -1239,7 +1239,9 @@ func (u *UnderlayTier) startLLDP() {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	wait := lldp.Emit(ctx, u.cfg.EmitLLDP, lldp.SystemInfo(), u.log.With("component", "lldp"))
+	info := lldp.SystemInfo()
+	info.Profile = u.cfg.LLDPProfile
+	wait := lldp.Emit(ctx, u.cfg.EmitLLDP, info, u.log.With("component", "lldp"))
 	u.stopLLDP = func() {
 		cancel()
 		wait()
