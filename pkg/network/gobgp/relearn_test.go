@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -171,20 +172,23 @@ func TestPlaceholderPeers(t *testing.T) {
 // The peer moves only when the old address is silent, and only to a
 // candidate that answers on the BGP port.
 func TestChooseMoved(t *testing.T) {
+	var mu sync.Mutex // probes can outlive chooseMoved
 	alive := map[string]bool{}
+	set := func(addr string, up bool) { mu.Lock(); alive[addr] = up; mu.Unlock() }
 	orig := bgpProbe
 	t.Cleanup(func() { bgpProbe = orig })
-	bgpProbe = func(_ context.Context, addr, _ string) bool { return alive[addr] }
+	bgpProbe = func(_ context.Context, addr, _ string) bool { mu.Lock(); defer mu.Unlock(); return alive[addr] }
 	cands := []string{"fe80::2%eth1", "fe80::3%eth1"}
-	alive["fe80::1%eth1"], alive["fe80::3%eth1"] = true, true
+	set("fe80::1%eth1", true)
+	set("fe80::3%eth1", true)
 	if got := chooseMoved(context.Background(), "fe80::1%eth1", cands); got != "" {
 		t.Fatalf("moved to %q while the old address answers", got)
 	}
-	alive["fe80::1%eth1"] = false
+	set("fe80::1%eth1", false)
 	if got := chooseMoved(context.Background(), "fe80::1%eth1", cands); got != "fe80::3%eth1" {
 		t.Fatalf("moved to %q, want the answering fe80::3%%eth1", got)
 	}
-	alive["fe80::3%eth1"] = false
+	set("fe80::3%eth1", false)
 	if got := chooseMoved(context.Background(), "fe80::1%eth1", cands); got != "" {
 		t.Fatalf("moved to %q, but no candidate answers", got)
 	}
