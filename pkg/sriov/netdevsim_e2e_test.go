@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -246,5 +247,32 @@ func TestNetdevsimRuntimeSwitchdevAndReset(t *testing.T) {
 	pfs := netdevsimPFs(t, n)
 	if len(pfs) != 1 || pfs[0].NumVFs != 0 || pfs[0].Eswitch.Mode != EswitchLegacy {
 		t.Fatalf("after the handoff reset: %+v", pfs)
+	}
+}
+
+// TestNetdevsimDevlinkParams reads devlink parameters of the real kernel.
+// netdevsim has max_macs and test1 in the driverinit mode only, so the
+// backend must report them as not stored in the NIC, and a missing
+// parameter as missing.
+func TestNetdevsimDevlinkParams(t *testing.T) {
+	n := newNetdevsim(t, 4713, 1)
+	pfs := waitPFs(t, n, 1)
+	want := &FirmwareSettings{DevlinkParams: []Setting{{"max_macs", "32"}, {"test1", "true"}, {"no_such_param", "1"}}}
+	r, err := NewDevlinkParams().Read(t.Context(), &pfs[0], want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reasons := map[string]string{}
+	for _, u := range r.Unsupported {
+		reasons[u.Setting] = u.Reason
+	}
+	for setting, sub := range map[string]string{
+		"devlinkParams.max_macs":      "not stored in the NIC (modes [driverinit])",
+		"devlinkParams.test1":         "not stored in the NIC (modes [driverinit])",
+		"devlinkParams.no_such_param": "has no devlink parameter no_such_param",
+	} {
+		if !strings.Contains(reasons[setting], sub) {
+			t.Errorf("%s: %q, want %q", setting, reasons[setting], sub)
+		}
 	}
 }

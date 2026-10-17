@@ -19,6 +19,7 @@ var newSRIOVRunner = func(cfg *sriov.Config, log *slog.Logger) sriovRunner {
 	return &sriov.Reconciler{
 		Config:   cfg,
 		Discover: sriov.NewInspector().Discover,
+		Backends: sriov.DefaultBackends(log),
 		Runtime:  sriov.NewKernelRuntime(),
 		Log:      log,
 	}

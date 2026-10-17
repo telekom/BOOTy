@@ -118,10 +118,10 @@ func Assign(profiles []Profile, pfs []PF) ([]Assignment, []Finding, error) {
 }
 
 // checkFirmware compares the firmware settings of a profile with the
-// stored values (read, from a backend) and the active values (the kernel).
-// note explains a missing read.
-func checkFirmware(a Assignment, read *FirmwareRead, note string) []Finding {
-	items := firmwareItems(&a.Profile.Firmware, a.PF, read)
+// stored values (from the backends) and the active values (the kernel, or
+// the backend).
+func checkFirmware(a Assignment, v *firmwareView) []Finding {
+	items := firmwareItems(&a.Profile.Firmware, a.PF, v)
 	findings := make([]Finding, 0, len(items))
 	for _, it := range items {
 		f := Finding{Profile: a.Profile.Name, Interface: a.PF.Interface, Level: LevelFirmware,
@@ -134,13 +134,10 @@ func checkFirmware(a Assignment, read *FirmwareRead, note string) []Finding {
 			f.Detail = "the stored value is not active: a firmware reset or power cycle is pending, or the BIOS blocks it"
 		case it.active != "" && it.active != it.want:
 			f.Status = StatusDrift
-			f.Detail = note
+			f.Detail = v.notes[it.setting]
 		case it.stored == "" && it.active == "":
 			f.Status = StatusUnverified
-			f.Detail = note
-			if reason, ok := read.unsupported(it.setting); ok {
-				f.Detail = reason
-			}
+			f.Detail = v.notes[it.setting]
 		}
 		findings = append(findings, f)
 	}

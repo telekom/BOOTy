@@ -145,6 +145,52 @@ status other than `ok` and `applied`):
 
 BOOTy logs a summary line `SR-IOV compliance` with the finding counts.
 
+### Firmware backends
+
+A backend reads and stores the firmware settings of a NIC family. A PF port
+can have several; each setting belongs to the first backend that reads a
+value for it, and its apply goes there. `NIC_TOOLS` decides which backends
+BOOTy may use.
+
+| Backend | `NIC_TOOLS` | NICs | Settings | Takes effect |
+|---------|-------------|------|----------|--------------|
+| `mstconfig` (mstflint) | `opensource` | NVIDIA ConnectX-4 Lx to 8 and BlueField (`mlx5_core`), ConnectX-3 (`mlx4_core`) | `sriovEnabled` (`SRIOV_EN`), `maxVFs` (`NUM_OF_VFS`), `linkType` (`LINK_TYPE_P<port>`), any `nvConfig` parameter, for example `CQE_COMPRESSION`, `FLEX_PARSER_PROFILE_ENABLE`, `NUM_VF_MSIX`, or the BlueField `INTERNAL_CPU_OFFLOAD_ENGINE` (DPU or NIC mode) | after the reboot |
+| `mlxconfig` (MFT) | `vendor` | same, when a site flavor ships MFT and mstconfig is missing | same | after the reboot |
+| `devlink` | `kernel` | every driver with devlink parameters in the permanent mode, for example `bnxt_en` | `sriovEnabled` (generic `enable_sriov`), `devlinkParams` | after the reboot |
+| `ethtool` | `opensource` | Intel `ice`, `i40e` | `fwLLDPAgent` (`fw-lldp-agent` on ice, `disable-fw-lldp` inverted on i40e) | at once, no reboot |
+
+`mstconfig -e -d <pci> query` gives the default, the current (active) and
+the next-boot (stored) value of every NV parameter, so BOOTy also sees a
+pending reset of a parameter that the kernel does not show. All changes for
+one port go in one `mstconfig -y -d <pci> set` call. mstflint 4.31 is in
+the default ramdisk (Debian trixie package `mstflint`, licence BSD-2-clause
+or GPL-2). The port of `LINK_TYPE_P<n>` comes from `phys_port_name`
+(`p0` is port 1), else from the PCI function.
+
+When no backend reads a setting, the finding names the vendor tool:
+
+| Family | Driver | Firmware tool without a BOOTy backend |
+|--------|--------|---------------------------------------|
+| Intel E810, X710, X540/X550 | `ice`, `i40e`, `ixgbe` | VF limit and SR-IOV enable are in the NVM: `nvmupdate64e` (vendor flavor) or the Redfish NIC attributes of the BMC. The active value (`sriovTotalVFs`) is still checked. |
+| Broadcom NetXtreme-E | `bnxt_en` | VF limit: `niccli` or `bnxtnvm` (vendor flavor) or Redfish; SR-IOV enable works through devlink. |
+| Marvell/QLogic FastLinQ | `qede` | vendor NVM tool or Redfish |
+| Chelsio T5/T6 | `cxgb4` | firmware configuration file and `cxgbtool` |
+| AMD Solarflare | `sfc`, `sfc_ef100` | `sfboot` (vendor flavor) |
+| AMD Pensando | `ionic` | vendor tooling |
+
+With `onDrift: apply`, BOOTy stores the drifted settings and, when a
+backend says so, reboots instead of kexec (`FirmwareChanged`). A NIC that
+needs a cold power cycle for a setting shows `pending-reset` in the next
+run; CAPRF should power-cycle the host then.
+
+#### setup-mellanox and the profiles
+
+When a profile sets `sriovEnabled` or `maxVFs` and can match a ConnectX
+port (`vendorId` `15b3`, a `mlx*_core` driver, or neither in the match),
+the profiles own `NUM_OF_VFS` and `setup-mellanox` (`NUM_VFS`,
+`NUM_VFS_MODE`) does nothing. Otherwise the two would write different
+values on every provision.
+
 ### Runtime settings
 
 Runtime settings do not survive the kexec or the reboot into the installed
@@ -230,7 +276,8 @@ the t-co side has to settle the key.
 
 | Setting | Owner |
 |---------|-------|
-| ConnectX `NUM_OF_VFS`, `SRIOV_EN` | BOOTy (`setup-mellanox`, `NUM_VFS`). |
+| ConnectX `NUM_OF_VFS`, `SRIOV_EN` | BOOTy: the SR-IOV profiles when they set them, else `setup-mellanox` (`NUM_VFS`). |
+| Other NV parameters, permanent devlink parameters, Intel firmware LLDP | BOOTy when a profile sets them. |
 | ConnectX `FLEX_PARSER_PROFILE_ENABLE`, `CQE_COMPRESSION`, `NUM_OF_VFS` from the OS | The T-CaaS compute profile (`mellanox_cfg.service`, inputs `FlexParserProfileEnable`, `CqeCompression`, `NumOfVFs`) writes them with `mstconfig` on every OS boot. They take effect only after the next reboot. |
 | Runtime state | SR-IOV network operator or DRA driver. |
 
