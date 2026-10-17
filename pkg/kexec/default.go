@@ -678,8 +678,8 @@ func (s *grubScript) bootEntry(item *grubItem) (*BootEntry, error) {
 // but BOOTy kexecs only with an initrd, and the initrd branch is GRUB's
 // own fallback for the same kernel and root: it boots on every image,
 // also when the initrdless boot would fail. BOOTy leaves grubenv as it is.
-// Both branches must load the same kernel, and the entry must have no
-// other kernel command.
+// The else line must be the then line plus one trailing panic=-1, and the
+// entry must have no other kernel command.
 func (item *grubItem) useInitrdFallback() error {
 	then, els := item.fallback[0], item.fallback[1]
 	if len(then.linux)+len(then.initrd)+len(els.linux)+len(els.initrd) == 0 {
@@ -691,9 +691,11 @@ func (item *grubItem) useInitrdFallback() error {
 	case len(then.linux) != 1 || len(then.initrd) != 1 || len(els.linux) != 1 || len(els.initrd) != 0:
 		return fmt.Errorf("%w: entry %q: initrd fallback of an unknown shape", ErrUnsupported, item.title)
 	}
+	// The generated else line is the then line plus panic=-1; anything
+	// else (root, init, runlevel) would boot what GRUB never boots.
 	thenWords, elseWords := literalWords(then.linux[0]), literalWords(els.linux[0])
-	if len(thenWords) < 2 || len(elseWords) < 2 || thenWords[1] != elseWords[1] {
-		return fmt.Errorf("%w: entry %q: the initrd fallback loads another kernel", ErrUnsupported, item.title)
+	if len(thenWords) < 2 || !slices.Equal(elseWords, append(slices.Clone(thenWords), "panic=-1")) {
+		return fmt.Errorf("%w: entry %q: the initrd fallback branches differ in more than panic=-1", ErrUnsupported, item.title)
 	}
 	item.linux, item.initrd = then.linux, then.initrd
 	return nil

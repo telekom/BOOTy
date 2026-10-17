@@ -329,8 +329,9 @@ any doubt, reboot. It does not emulate GRUB; it accepts the shapes that
   and at most one `initrd` with one file, both outside conditions. The one
   exception is the initrdless boot fallback of Ubuntu cloud images
   (`GRUB_FORCE_PARTUUID`): `if [ "${initrdfail}" = 1 ]` with `linux` and
-  `initrd` in the then branch and the same kernel without `initrd` in the
-  else branch. GRUB boots the initrdless branch while `grubenv` has no
+  `initrd` in the then branch and, in the else branch, the same `linux`
+  line plus one trailing `panic=-1` and no `initrd`; any other difference
+  reboots. GRUB boots the initrdless branch while `grubenv` has no
   `initrdfail`; BOOTy kexecs the initrd branch, GRUB's own fallback for
   the same kernel and root, because kexec needs an initrd and that branch
   boots on every image. `grubenv` stays as it is.

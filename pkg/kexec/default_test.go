@@ -422,6 +422,12 @@ func TestDefaultEntryInitrdlessFallback(t *testing.T) {
 	}
 	for name, cfg := range map[string]string{
 		"other kernel":     fallback("  linux /a ro\n  initrd /i", "  linux /b ro panic=-1"),
+		"other root":       fallback("  linux /a root=/dev/sda1 ro\n  initrd /i", "  linux /a root=/dev/sda2 ro panic=-1"),
+		"single in then":   fallback("  linux /a ro single\n  initrd /i", "  linux /a ro panic=-1"),
+		"init in else":     fallback("  linux /a ro\n  initrd /i", "  linux /a ro init=/bin/sh panic=-1"),
+		"panic not last":   fallback("  linux /a ro\n  initrd /i", "  linux /a panic=-1 ro"),
+		"no panic":         fallback("  linux /a ro\n  initrd /i", "  linux /a ro"),
+		"two panics":       fallback("  linux /a ro\n  initrd /i", "  linux /a ro panic=-1 panic=-1"),
 		"no initrd":        fallback("  linux /a ro", "  linux /a ro panic=-1"),
 		"initrd in else":   fallback("  linux /a ro\n  initrd /i", "  linux /a ro panic=-1\n  initrd /i"),
 		"kernel outside":   strings.Replace(fallback("  linux /a ro\n  initrd /i", "  linux /a ro panic=-1"), " initrdfail\n", " initrdfail\n linux /c\n", 1),
