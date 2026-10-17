@@ -20,6 +20,7 @@ on:
       - "pkg/firmware/**"
       - "pkg/health/**"
       - "pkg/inventory/**"
+      - "pkg/sriov/**"
       - "pkg/provision/**"
       - "pkg/rescue/**"
       - "pkg/runmode/**"
@@ -59,6 +60,7 @@ on:
       - "pkg/firmware/**"
       - "pkg/health/**"
       - "pkg/inventory/**"
+      - "pkg/sriov/**"
       - "pkg/provision/**"
       - "pkg/rescue/**"
       - "pkg/runmode/**"
@@ -307,6 +309,14 @@ jobs:
             qemu_extra: ""
             test_tag: e2e
             test_regex: "^TestOOBStatus"
+            privileged: true
+            setup: ""
+          # QEMU igb (82576) with SR-IOV on q35: inventory, VFs, VF
+          # attributes and the handoff reset of configure-sriov.
+          - scenario: sriov-igb
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestSRIOVIgbProvisionQEMU$"
             privileged: true
             setup: ""
           - scenario: production-templates
