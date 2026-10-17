@@ -368,6 +368,8 @@ func buildProvisionInitramfsWithFiles(t *testing.T, vars, files map[string]strin
 		// Root disk mirroring: resizepart for growpart and efibootmgr for
 		// the boot entries on UEFI runs.
 		"resizepart", "efibootmgr",
+		// SECURE_ERASE: NVMe Format and ATA Security Erase.
+		"nvme", "hdparm",
 	}
 	for _, tool := range essentialTools {
 		toolPath, err := exec.LookPath(tool)
@@ -794,6 +796,8 @@ func copyFilesystemModulesForRelease(t *testing.T, rootDir, release string) {
 		"virtio_pci", "virtio_net", "e1000", "e1000e",
 		"virtio_scsi", "sd_mod",
 		"virtio_blk", "md_mod", "raid1", "efivarfs",
+		// Secure erase tests attach NVMe and AHCI disks.
+		"nvme", "ahci",
 	} {
 		copyKernelModuleWithDependencies(t, rootDir, release, module, copied, map[string]bool{})
 	}
