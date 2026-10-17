@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -65,9 +66,11 @@ func prodtplBFDPeers(ctx context.Context, container string) (map[string]bfdView,
 // when the BGP session comes up ("update-source lo",
 // bgp_peer_bfd_update_source), so the server's new BFD session goes Down
 // in that second. FRR (the shadow node) keeps the BGP session, like bgpd's
-// last_event > peer->uptime; BOOTy must too. dcgw01 and dcgw02 must have
-// dropped the sessions of BOOTy no more often than the shadow node's. This
-// is the first test of the lab, so nothing else dropped them yet.
+// last_event > peer->uptime; BOOTy must too: it must not have reset an RR
+// session for BFD by now (this is the first test of the lab). The RR drop
+// counters are only logged: an RR also resets a session itself when the
+// lab setup activates its address families after the session came up
+// ("No AFI/SAFI activated for peer"), which is not BOOTy's doing.
 func TestProdTplRRSessionsNotResetAtStart(t *testing.T) {
 	want := sessionView{State: "Established", RemoteAS: prodtplASN, LocalAS: prodtplASN,
 		HoldMsecs: 90000, KeepMsecs: 30000, Families: []string{"l2VpnEvpn"}}
@@ -75,21 +78,26 @@ func TestProdTplRRSessionsNotResetAtStart(t *testing.T) {
 		for _, node := range prodtplServers {
 			waitView(t, rr, node.underlay, want)
 		}
-		time.Sleep(5 * time.Second) // a reset follows within a second
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		drops := map[string]float64{}
-		for _, node := range prodtplServers {
-			n, err := prodtplNeighbor(ctx, rr, node.underlay)
-			if err != nil {
-				cancel()
-				t.Fatal(err)
+	}
+	time.Sleep(5 * time.Second) // a reset follows within a second
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	for _, node := range prodtplServers {
+		for _, rr := range []string{prodtplDCGW1, prodtplDCGW2} {
+			if n, err := prodtplNeighbor(ctx, rr, node.underlay); err == nil {
+				t.Logf("%s: %s session dropped %v times (%v)", rr, node.name, n["connectionsDropped"], n["lastResetDueTo"])
 			}
-			drops[node.name], _ = n["connectionsDropped"].(float64)
 		}
-		cancel()
-		for _, node := range prodtplServers {
-			if drops[node.name] > drops["shadow"] {
-				t.Errorf("%s dropped the %s session %v times at the start, the shadow's %v", rr, node.name, drops[node.name], drops["shadow"])
+		if node.name == "shadow" {
+			continue
+		}
+		out, err := exec.CommandContext(ctx, "docker", "logs", prodtplContainer(node)).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s logs: %v", node.name, err)
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.Contains(line, "BFD down, resetting the BGP session") && strings.Contains(line, "peer=198.51.100.") {
+				t.Errorf("%s reset an RR session at the start: %s", node.name, line)
 			}
 		}
 	}
