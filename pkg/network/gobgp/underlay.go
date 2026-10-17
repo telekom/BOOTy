@@ -947,11 +947,16 @@ func (u *UnderlayTier) announceUnderlayRoute(ctx context.Context) error {
 		return fmt.Errorf("build as-path attr: %w", err)
 	}
 
+	med, err := localMED()
+	if err != nil {
+		return err
+	}
+
 	_, err = u.bgp.AddPath(ctx, &apipb.AddPathRequest{
 		Path: &apipb.Path{
 			Family: &apipb.Family{Afi: apipb.Family_AFI_IP, Safi: apipb.Family_SAFI_UNICAST},
 			Nlri:   nlri,
-			Pattrs: []*anypb.Any{origin, nexthop, aspath},
+			Pattrs: []*anypb.Any{origin, nexthop, aspath, med},
 		},
 	})
 	if err != nil {

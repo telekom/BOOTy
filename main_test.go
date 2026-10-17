@@ -2096,6 +2096,22 @@ func TestMergeBGPPolicyRouteTargets(t *testing.T) {
 	}
 }
 
+// EVPN_RD wins over the frr.conf rd; the FRR instance ids come from
+// frr.conf.
+func TestMergeBGPPolicyRD(t *testing.T) {
+	frr := &network.Config{EVPNRD: "192.0.2.17:9", EVPNRDIndex: 2, BGPInstances: 2}
+	dst := &network.Config{}
+	mergeBGPPolicy(dst, frr)
+	if dst.EVPNRD != "192.0.2.17:9" || dst.EVPNRDIndex != 2 || dst.BGPInstances != 2 {
+		t.Fatalf("frr.conf RD: %+v", dst)
+	}
+	dst = &network.Config{EVPNRD: "65000:7"}
+	mergeBGPPolicy(dst, frr)
+	if dst.EVPNRD != "65000:7" {
+		t.Fatalf("EVPN_RD = %q, want the native 65000:7", dst.EVPNRD)
+	}
+}
+
 // The native BFD timers reach the network config.
 func TestNetworkConfigFromMachineConfigBFD(t *testing.T) {
 	cfg := &config.MachineConfig{}

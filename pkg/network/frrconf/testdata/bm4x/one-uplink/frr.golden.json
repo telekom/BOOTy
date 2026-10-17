@@ -121,6 +121,7 @@
           "AdvertiseIPv6Unicast": false,
           "RouteTargetImport": null,
           "RouteTargetExport": null,
+          "RD": "",
           "L2VNIs": null,
           "Line": 37
         },
@@ -145,6 +146,7 @@
           "AdvertiseIPv6Unicast": false,
           "RouteTargetImport": null,
           "RouteTargetExport": null,
+          "RD": "",
           "L2VNIs": null,
           "Line": 46
         }
@@ -177,6 +179,7 @@
           "AdvertiseIPv6Unicast": false,
           "RouteTargetImport": null,
           "RouteTargetExport": null,
+          "RD": "",
           "L2VNIs": null,
           "Line": 58
         },
@@ -196,6 +199,7 @@
           "RouteTargetExport": [
             "65169:3000"
           ],
+          "RD": "",
           "L2VNIs": null,
           "Line": 63
         }
