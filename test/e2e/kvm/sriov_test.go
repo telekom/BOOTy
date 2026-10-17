@@ -88,7 +88,8 @@ func TestSRIOVIgbProvisionQEMU(t *testing.T) {
 		t.Fatal(err)
 	}
 	files := map[string]string{}
-	addKernelModules(t, files, productionTemplateKernelRelease(t, real), "igb")
+	// tcp_diag (with inet_diag) lets the in-use guard read the TCP sockets.
+	addKernelModules(t, files, productionTemplateKernelRelease(t, real), "igb", "tcp_diag")
 	if _, ok := files["modules/igb.ko"]; !ok {
 		t.Fatalf("igb module of the guest kernel not found; modules: %v", mapKeys(files))
 	}
