@@ -207,6 +207,8 @@ func (r *Reconciler) enforce(log *slog.Logger, res *Result) error {
 		f := &res.Findings[i]
 		if f.Compliant() {
 			compliant++
+			log.Info("SR-IOV setting", "profile", f.Profile, "interface", f.Interface, "level", f.Level,
+				"setting", f.Setting, "want", f.Want, "got", f.Got, "status", f.Status, "detail", f.Detail)
 			continue
 		}
 		log.Warn("SR-IOV drift", "profile", f.Profile, "interface", f.Interface, "level", f.Level,

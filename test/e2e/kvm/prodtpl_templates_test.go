@@ -282,7 +282,15 @@ func resolveProductionTemplateKernelRelease(kernel, modulesRoot, releaseHint str
 // initramfs (initrd.Dockerfile). Compressed modules are decompressed.
 func addProdTplModules(t *testing.T, files map[string]string, release string) {
 	t.Helper()
-	for _, m := range []string{"vrf", "dummy", "vxlan", "bridge"} {
+	addKernelModules(t, files, release, "vrf", "dummy", "vxlan", "bridge")
+}
+
+// addKernelModules puts the modules and their dependencies of the guest
+// kernel into /modules, where BOOTy loads them. Compressed modules are
+// decompressed.
+func addKernelModules(t *testing.T, files map[string]string, release string, modules ...string) {
+	t.Helper()
+	for _, m := range modules {
 		out, err := exec.Command("modprobe", "--show-depends", "-S", release, m).Output()
 		if err != nil {
 			t.Logf("modprobe --show-depends %s: %v (built in?)", m, err)
