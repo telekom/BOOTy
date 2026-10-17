@@ -118,6 +118,26 @@ func netdevsimPFs(t *testing.T, n *netdevsim) []PF {
 	return pfs
 }
 
+// waitPFs waits until Discover reports want PF ports of the device: udev
+// can rename a port while Discover reads it.
+func waitPFs(t *testing.T, n *netdevsim, want int) []PF {
+	t.Helper()
+	deadline := time.After(10 * time.Second)
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		pfs := netdevsimPFs(t, n)
+		if len(pfs) == want {
+			return pfs
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("netdevsim PF ports = %+v, want %d", pfs, want)
+		case <-tick.C:
+		}
+	}
+}
+
 // TestNetdevsimDiscover reads a two-port netdevsim device with two VFs
 // through sysfs, devlink and rtnetlink of the running kernel.
 func TestNetdevsimDiscover(t *testing.T) {
@@ -125,10 +145,7 @@ func TestNetdevsimDiscover(t *testing.T) {
 	n.setMaxVFs(t, 8)
 	writeSys(t, filepath.Join(n.dir, "sriov_numvfs"), "2")
 
-	pfs := netdevsimPFs(t, n)
-	if len(pfs) != 2 {
-		t.Fatalf("netdevsim PF ports = %+v, want 2", pfs)
-	}
+	pfs := waitPFs(t, n, 2)
 	for _, pf := range pfs {
 		if pf.Driver != "netdevsim" || pf.PortCount != 2 || pf.NumVFs != 2 || pf.LinkType != LinkTypeEthernet {
 			t.Errorf("%s: driver %q ports %d numVFs %d linkType %q", pf.Interface, pf.Driver, pf.PortCount, pf.NumVFs, pf.LinkType)
