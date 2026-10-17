@@ -16,39 +16,14 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Neighbor represents a discovered LLDP neighbor (switch).
-type Neighbor struct {
-	ChassisID   string
-	PortID      string
-	SystemName  string
-	Description string
-	Interface   string // local interface where LLDP was received
-	TTL         uint16
-}
-
 // Listen captures LLDP frames on the given interface until a frame is received
 // or the context expires. Uses raw AF_PACKET sockets (no libpcap needed).
 func Listen(ctx context.Context, iface string, timeout time.Duration) (*Neighbor, error) {
-	ifi, err := net.InterfaceByName(iface)
+	fd, err := openRX(iface)
 	if err != nil {
-		return nil, fmt.Errorf("interface %s: %w", iface, err)
-	}
-
-	// Create raw socket for LLDP EtherType 0x88cc.
-	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW, int(htons(0x88cc)))
-	if err != nil {
-		return nil, fmt.Errorf("raw socket: %w", err)
+		return nil, err
 	}
 	defer func() { _ = unix.Close(fd) }()
-
-	// Bind to specific interface.
-	addr := unix.SockaddrLinklayer{
-		Protocol: htons(0x88cc),
-		Ifindex:  ifi.Index,
-	}
-	if err := unix.Bind(fd, &addr); err != nil {
-		return nil, fmt.Errorf("bind to %s: %w", iface, err)
-	}
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -61,12 +36,6 @@ func Listen(ctx context.Context, iface string, timeout time.Duration) (*Neighbor
 		case <-ctx.Done():
 			return nil, fmt.Errorf("LLDP timeout on %s: %w", iface, ctx.Err())
 		default:
-		}
-
-		// Set a short read deadline so we can check context cancellation.
-		tv := unix.Timeval{Sec: 1}
-		if err := unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &tv); err != nil {
-			return nil, fmt.Errorf("setting read timeout: %w", err)
 		}
 
 		n, _, err := unix.Recvfrom(fd, buf, 0)
@@ -88,6 +57,29 @@ func Listen(ctx context.Context, iface string, timeout time.Duration) (*Neighbor
 			return neighbor, nil
 		}
 	}
+}
+
+// openRX opens a raw socket that receives the LLDP frames of iface, with
+// a 1 s read timeout.
+func openRX(iface string) (int, error) {
+	ifi, err := net.InterfaceByName(iface)
+	if err != nil {
+		return -1, fmt.Errorf("interface %s: %w", iface, err)
+	}
+	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW, int(htons(0x88cc)))
+	if err != nil {
+		return -1, fmt.Errorf("raw socket: %w", err)
+	}
+	if err := unix.Bind(fd, &unix.SockaddrLinklayer{Protocol: htons(0x88cc), Ifindex: ifi.Index}); err != nil {
+		_ = unix.Close(fd)
+		return -1, fmt.Errorf("bind to %s: %w", iface, err)
+	}
+	tv := unix.Timeval{Sec: 1}
+	if err := unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &tv); err != nil {
+		_ = unix.Close(fd)
+		return -1, fmt.Errorf("setting read timeout: %w", err)
+	}
+	return fd, nil
 }
 
 // DiscoverAll listens for LLDP on all provided interfaces concurrently.

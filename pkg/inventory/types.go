@@ -1,7 +1,11 @@
 // Package inventory collects hardware inventory from sysfs and procfs.
 package inventory
 
-import "time"
+import (
+	"time"
+
+	"github.com/telekom/BOOTy/pkg/network/lldp"
+)
 
 // HardwareInventory is the full hardware report collected during provisioning.
 type HardwareInventory struct {
@@ -13,6 +17,8 @@ type HardwareInventory struct {
 	NICs         []NICInfo     `json:"nics"`
 	PCIDevices   []PCIDevice   `json:"pciDevices,omitempty"`
 	Accelerators []Accelerator `json:"accelerators,omitempty"`
+	// LLDPNeighbors are the switches seen on the physical NICs.
+	LLDPNeighbors []lldp.Neighbor `json:"lldpNeighbors,omitempty"`
 }
 
 // SystemInfo holds DMI system identification data.

@@ -1654,6 +1654,9 @@ jobs:
       - name: Build GoBGP test image
         run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
 
+      - name: Build networkd test image
+        run: test/e2e/clab/docker-build-retry.sh -t booty-networkd-test:latest -f test/e2e/clab/networkd-test.Dockerfile test/e2e/clab
+
       - name: Install ContainerLab
         run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
@@ -1702,6 +1705,8 @@ jobs:
             TestProdTplRRRestart \
             TestProdTplLLDP \
             TestProdTplOpenCapabilities \
+            TestProdTplLLDPLikeNetworkd \
+            TestProdTplLLDPReceive \
             TestProdTplRFC5549Routes \
             TestProdTplEBGPWithoutPolicy; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl.log; then
@@ -1719,7 +1724,7 @@ jobs:
         timeout-minutes: 5
         run: |
           mkdir -p prodtpl-logs
-          for node in leaf01 dcgw01 dcgw02 shadow booty native native-vrf tester caprf-mock caprf6; do
+          for node in leaf01 dcgw01 dcgw02 shadow booty native native-vrf tester networkd caprf-mock caprf6; do
             name="clab-booty-prodtpl-lab-${node}"
             timeout 30 sudo docker logs "${name}" > "prodtpl-logs/${node}.log" 2>&1 || true
             {
@@ -1780,6 +1785,9 @@ jobs:
       - name: Build GoBGP test image
         run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
 
+      - name: Build networkd test image
+        run: test/e2e/clab/docker-build-retry.sh -t booty-networkd-test:latest -f test/e2e/clab/networkd-test.Dockerfile test/e2e/clab
+
       - name: Install ContainerLab
         run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
@@ -1828,6 +1836,8 @@ jobs:
             TestProdTplRRRestart \
             TestProdTplLLDP \
             TestProdTplOpenCapabilities \
+            TestProdTplLLDPLikeNetworkd \
+            TestProdTplLLDPReceive \
             TestProdTplRFC5549Routes \
             TestProdTplEBGPWithoutPolicy; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl-one-uplink.log; then
@@ -1907,6 +1917,9 @@ jobs:
       - name: Build GoBGP test image
         run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
 
+      - name: Build networkd test image
+        run: test/e2e/clab/docker-build-retry.sh -t booty-networkd-test:latest -f test/e2e/clab/networkd-test.Dockerfile test/e2e/clab
+
       - name: Install ContainerLab
         run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
@@ -1955,6 +1968,8 @@ jobs:
             TestProdTplRRRestart \
             TestProdTplLLDP \
             TestProdTplOpenCapabilities \
+            TestProdTplLLDPLikeNetworkd \
+            TestProdTplLLDPReceive \
             TestProdTplRFC5549Routes \
             TestProdTplEBGPWithoutPolicy; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl-native-model.log; then
