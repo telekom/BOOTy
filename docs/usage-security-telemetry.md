@@ -161,9 +161,10 @@ BOOTY1 run=<id8> phase=<phase> code=<code> step=<step> result=<result>
 
 - `run`: 8 random hex characters per BOOTy start.
 - `phase`: `network`, then the mode (`provision`, `deprovision`, `standby`,
-  `check`, `dry-run`).
+  `check`, `dry-run`); `-` before the config is loaded.
 - `code` and `step`: the [failure code](failure-codes.md) and the failed
-  step (`network-setup` for a failed network or token setup), else `-`.
+  step (`network-setup` for a failed network or token setup, `config` for an
+  invalid vars file), else `-`.
 - `result`: `running` at a phase change, `success` or `failed` at the end.
 
 Every field has at most 48 characters of `A-Z a-z 0-9 . _ -`; other
@@ -179,8 +180,9 @@ non-volatile UEFI variable `BootyLastResult-f0821f58-5fcc-46a7-8fbd-47f665a67d7f
 {"v":1,"mode":"provision","phase":"network","step":"network-setup","code":"BOOTY-NET-002","result":"failed","booty":"v0.2.0"}
 ```
 
-The record has no run ID and no time. BOOTy writes it only when the content
-changes, so a host that fails the same way in a loop does not write NVRAM
+The record has no run ID and no time. efivarfs marks the variable immutable
+after it is created; BOOTy clears the flag for the write and sets it again,
+like `efibootmgr`. BOOTy writes the variable only when the content changes, so a host that fails the same way in a loop does not write NVRAM
 again. The next BOOTy start with `OOB_EFI_VAR=true` logs the stored record
 (`previous BOOTy run result`). The installed OS can read it from
 `/sys/firmware/efi/efivars`.

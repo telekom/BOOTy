@@ -15,19 +15,30 @@ import (
 
 const consoleActivePath = "/sys/class/tty/console/active"
 
+// oobRun is the run ID of every status line of this BOOTy start.
+var oobRun = oob.NewRunID()
+
 // startOOBStatus installs the out-of-band status reporter (OOB_STATUS,
 // OOB_EFI_VAR). With OOB_EFI_VAR it logs the result of the previous run.
+// Without a config (nil) it installs the default serial reporter, so a
+// failure before the config is loaded also gets a status line.
 func startOOBStatus(ctx context.Context, cfg *config.MachineConfig) {
 	opts := oob.Options{
-		Serial:   cfg.Telemetry.OOBStatus != config.OOBStatusOff,
+		Serial:   true,
 		Consoles: oob.ActiveConsoles(consoleActivePath),
-		Mode:     cfg.Mode,
 		Version:  Version,
+		Run:      oobRun,
 	}
+	if cfg == nil {
+		oob.Install(oob.NewReporter(&opts))
+		return
+	}
+	opts.Serial = cfg.Telemetry.OOBStatus != config.OOBStatusOff
+	opts.Mode = cfg.Mode
 	if config.BoolOr(cfg.Telemetry.OOBEFIVar, false) {
 		opts.Vars = efiVarsForOOB(ctx)
 	}
-	r := oob.NewReporter(opts)
+	r := oob.NewReporter(&opts)
 	slog.Info("out-of-band status", "run", r.Run(), "serial", opts.Serial, "efi_var", opts.Vars != nil)
 	oob.Install(r)
 }
@@ -44,12 +55,4 @@ func efiVarsForOOB(ctx context.Context) *efi.EFIVarReader {
 	vars := efi.NewEFIVarReader("")
 	oob.LogLastResult(vars)
 	return vars
-}
-
-// networkFailed reports a failed network or token setup out of band and
-// returns its failure code.
-func networkFailed(err error) string {
-	code := provision.CodeOf(err)
-	oob.Fail("network-setup", code)
-	return code
 }

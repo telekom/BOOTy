@@ -47,6 +47,18 @@ func TestLineSanitizesAndLimits(t *testing.T) {
 	}
 }
 
+// MaxLineLen is the real bound: five fields of maximum length reach it.
+func TestLineMaxLength(t *testing.T) {
+	long := strings.Repeat("z", 2*MaxFieldLen)
+	got := Line(&Status{Run: long, Phase: long, Code: long, Step: long, Result: long})
+	if len(got) != MaxLineLen {
+		t.Fatalf("longest line is %d bytes, MaxLineLen %d", len(got), MaxLineLen)
+	}
+	if r := NewReporter(&Options{Run: "0a1b2c3d"}); r.Run() != "0a1b2c3d" {
+		t.Fatalf("Run() = %q, want the given run ID", r.Run())
+	}
+}
+
 func TestRecordRoundTripAndLimits(t *testing.T) {
 	rec := Record{Mode: "provision", Phase: "network", Step: "network-setup", Code: "BOOTY-NET-002", Result: ResultFailed, Booty: "v0.2.0"}
 	data, err := EncodeRecord(&rec)
@@ -123,7 +135,7 @@ func TestReporterWritesLinesToEveryConsoleAndVarOnChange(t *testing.T) {
 	vars := efi.NewEFIVarReader(varsDir)
 	opts := Options{Serial: true, Consoles: consoles, Vars: vars, Mode: "provision", Version: "v1"}
 
-	r := NewReporter(opts)
+	r := NewReporter(&opts)
 	if len(r.Run()) != 8 {
 		t.Fatalf("run ID %q, want 8 characters", r.Run())
 	}
@@ -148,7 +160,7 @@ func TestReporterWritesLinesToEveryConsoleAndVarOnChange(t *testing.T) {
 	if err := os.Chtimes(varPath, old, old); err != nil {
 		t.Fatal(err)
 	}
-	next := NewReporter(opts)
+	next := NewReporter(&opts)
 	next.Phase("network")
 	next.Fail("network-setup", "BOOTY-NET-002")
 	if st, _ := os.Stat(varPath); !st.ModTime().Equal(old) {
@@ -169,7 +181,7 @@ func TestReporterSerialOffAndNoVars(t *testing.T) {
 	if err := os.WriteFile(console, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r := NewReporter(Options{Consoles: []string{console}})
+	r := NewReporter(&Options{Consoles: []string{console}})
 	r.Phase("provision")
 	r.Fail("detect-disk", "BOOTY-DSK-006")
 	if got := readFile(t, console); got != "" {
@@ -183,7 +195,7 @@ func TestPackageFunctionsUseInstalledReporter(t *testing.T) {
 		t.Fatal(err)
 	}
 	Phase("provision") // nothing installed: no-op
-	r := NewReporter(Options{Serial: true, Consoles: []string{console}})
+	r := NewReporter(&Options{Serial: true, Consoles: []string{console}})
 	Install(r)
 	t.Cleanup(func() { Install(nil) })
 	Phase("provision")

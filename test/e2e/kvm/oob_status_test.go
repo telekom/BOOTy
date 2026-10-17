@@ -13,14 +13,18 @@ import (
 var (
 	oobNetworkFailedLine = regexp.MustCompile(`BOOTY1 run=[0-9a-f]{8} phase=network code=BOOTY-NET-002 step=network-setup result=failed`)
 	oobNetworkPhaseLine  = regexp.MustCompile(`BOOTY1 run=[0-9a-f]{8} phase=network code=- step=- result=running`)
-	oobPreviousResult    = regexp.MustCompile(`previous BOOTy run result.*phase=network step=network-setup code=BOOTY-NET-002 result=failed`)
+	oobPreviousResult    = regexp.MustCompile(`previous BOOTy run result"? mode=provision phase=network step=network-setup code=BOOTY-NET-002 result=failed`)
+	oobPreviousDeprov    = regexp.MustCompile(`previous BOOTy run result"? mode=deprovision phase=network step=network-setup code=BOOTY-NET-002 result=failed`)
 )
 
 // TestOOBStatusNetworkFailureQEMU forces a network failure (no wait round)
 // under OVMF with a persistent NVRAM file. The first boot writes the BOOTY1
 // failure line to the serial console and the BootyLastResult variable. The
 // second boot, a reboot with the same NVRAM, reads and logs the stored
-// result, fails the same way and does not write the unchanged variable.
+// result, fails the same way and does not write the unchanged variable. The
+// third boot ends with another result (deprovision mode): efivarfs made the
+// variable immutable, and BOOTy must still rewrite it. The fourth boot logs
+// the new content.
 func TestOOBStatusNetworkFailureQEMU(t *testing.T) {
 	requireRoot(t)
 	qemuAvailable(t)
@@ -64,5 +68,29 @@ func TestOOBStatusNetworkFailureQEMU(t *testing.T) {
 	}
 	if strings.Contains(text, "wrote the BootyLastResult UEFI variable") {
 		t.Fatalf("second boot wrote an unchanged result to NVRAM. tail:\n%s", tail(out, 4000))
+	}
+
+	deprovision := caprf.nativeVars("deprovision")
+	deprovision["NETWORK_WAIT_MODE"] = "rounds"
+	deprovision["NETWORK_WAIT_MAX_ATTEMPTS"] = "0"
+	deprovision["OOB_EFI_VAR"] = "true"
+	deprovisionInitramfs := buildProvisionInitramfs(t, deprovision)
+	out = runQEMUUEFI(t, ovmfCode, ovmfVars, deprovisionInitramfs, targetDisk, "", 3*time.Minute)
+	text = string(out)
+	if !oobPreviousResult.MatchString(text) || !oobNetworkFailedLine.MatchString(text) {
+		t.Fatalf("third boot did not log the stored result or the failure line. tail:\n%s", tail(out, 4000))
+	}
+	if strings.Contains(text, "writing the BootyLastResult UEFI variable failed") ||
+		!strings.Contains(text, "wrote the BootyLastResult UEFI variable") {
+		t.Fatalf("third boot did not rewrite the changed result. tail:\n%s", tail(out, 4000))
+	}
+
+	out = runQEMUUEFI(t, ovmfCode, ovmfVars, deprovisionInitramfs, targetDisk, "", 3*time.Minute)
+	text = string(out)
+	if !oobPreviousDeprov.MatchString(text) {
+		t.Fatalf("fourth boot did not log the rewritten result. tail:\n%s", tail(out, 4000))
+	}
+	if strings.Contains(text, "wrote the BootyLastResult UEFI variable") {
+		t.Fatalf("fourth boot wrote an unchanged result to NVRAM. tail:\n%s", tail(out, 4000))
 	}
 }

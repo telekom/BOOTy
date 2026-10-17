@@ -495,13 +495,14 @@ func doKexecExecute() error {
 }
 
 func runCAPRF(ctx context.Context) {
+	startOOBStatus(ctx, nil)
 	client, err := caprf.New(varsPath)
 	if err != nil {
 		slog.Error("failed to create CAPRF client", "error", err)
 		provision.DumpDebugState("caprf-init")
 		// The vars file did not parse, but it may still ask to wait on
 		// failure: then keep the ramdisk running instead of rebooting.
-		failRun(ctx, caprf.FailureConfig(varsPath), nil,
+		failRun(ctx, caprf.FailureConfig(varsPath), nil, "config", provision.CodeConfig,
 			"invalid vars file", reboot)
 		return
 	}
@@ -562,7 +563,8 @@ func runCAPRF(ctx context.Context) {
 
 	netMode, err := setupNetworkAndTokenFlow(ctx, cfg, client, stopRun)
 	if err != nil {
-		failRun(ctx, cfg, client, fmt.Sprintf("network or token setup failed [%s]: %v", networkFailed(err), err), reboot)
+		code := provision.CodeOf(err)
+		failRun(ctx, cfg, client, "network-setup", code, fmt.Sprintf("network or token setup failed [%s]: %v", code, err), reboot)
 		return
 	}
 
@@ -775,12 +777,15 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	return netMode, nil
 }
 
-// failRun ends a run that failed outside a mode. With FAILURE_ACTION=wait it
-// reports the error like the legacy fail() and keeps the ramdisk running; a
-// reboot would boot the ISO and run the task again.
-func failRun(ctx context.Context, cfg *config.MachineConfig, reporter provisionStatusReporter, message string, rebootFn func()) {
+// failRun ends a run that failed outside a mode in step with the failure
+// code: it logs the failure and writes the BOOTY1 failed line. With
+// FAILURE_ACTION=wait it reports the error like the legacy fail() and keeps
+// the ramdisk running; a reboot would boot the ISO and run the task again.
+func failRun(ctx context.Context, cfg *config.MachineConfig, reporter provisionStatusReporter, step, code, message string, rebootFn func()) {
+	slog.Error("run failed", "step", step, "code", code, "error", message)
+	oob.Fail(step, code)
 	if cfg != nil && cfg.WaitOnFailure() {
-		slog.Error("run failed, keeping the ramdisk running", "error", message)
+		slog.Info("keeping the ramdisk running after the failure")
 		if reporter != nil {
 			reportCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			if err := reporter.ReportStatus(reportCtx, config.StatusError, message); err != nil {

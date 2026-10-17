@@ -43,8 +43,9 @@ const (
 	// MaxRecordLen caps the encoded record. Seven fields of MaxFieldLen and
 	// the JSON keys fit.
 	MaxRecordLen = 512
-	// MaxLineLen caps the status line, newline included.
-	MaxLineLen = 256
+	// MaxLineLen is the longest status line, newline included: the fixed
+	// text and five fields of MaxFieldLen.
+	MaxLineLen = len("BOOTY1 run= phase= code= step= result=\n") + 5*MaxFieldLen
 )
 
 // Status is one status line.
@@ -138,6 +139,8 @@ type Options struct {
 	Vars *efi.EFIVarReader
 	// Mode and Version go into the variable.
 	Mode, Version string
+	// Run is the run ID of the lines; empty picks a new one (NewRunID).
+	Run string
 }
 
 // Reporter writes the status of one run.
@@ -148,11 +151,20 @@ type Reporter struct {
 	phase string
 }
 
-// NewReporter returns a reporter with a new random 8-character run ID.
-func NewReporter(opts Options) *Reporter {
+// NewRunID returns a random 8-character run ID.
+func NewRunID() string {
 	id := make([]byte, 4)
 	_, _ = rand.Read(id) // crypto/rand.Read never returns an error
-	return &Reporter{opts: opts, run: hex.EncodeToString(id)}
+	return hex.EncodeToString(id)
+}
+
+// NewReporter returns a reporter for opts.
+func NewReporter(opts *Options) *Reporter {
+	run := opts.Run
+	if run == "" {
+		run = NewRunID()
+	}
+	return &Reporter{opts: *opts, run: run}
 }
 
 // Run returns the run ID of the status lines.
