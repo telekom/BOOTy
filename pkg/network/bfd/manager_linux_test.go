@@ -82,3 +82,77 @@ func TestManagerSingleHopTTL(t *testing.T) {
 		t.Fatal("a single-hop packet with TTL 255 did not take the session Down")
 	}
 }
+
+// A session with fast timers that talks to itself stays Up: on Up it
+// advertises 150 ms at once, so its next packet must follow within the
+// detection time of 450 ms, not after the 1 s of the slow start. Before,
+// it timed out about 450 ms after Up, like FRR bfdd did at the leaves.
+func TestManagerFastTxAfterUp(t *testing.T) {
+	changes := make(chan change, 64)
+	m := NewManager(slog.Default(), func(_ *Peer, from, to State, _ Diag) {
+		select {
+		case changes <- change{from, to}:
+		default:
+		}
+	})
+	t.Cleanup(m.Close)
+	timers := Timers{DesiredMinTx: 150 * time.Millisecond, RequiredMinRx: 150 * time.Millisecond, DetectMult: 3}
+	if err := m.Add(&Peer{Name: "self", Addr: netip.MustParseAddr("127.0.0.1"), Timers: timers}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(10 * time.Second)
+	for up := false; !up; {
+		select {
+		case c := <-changes:
+			up = c.to == StateUp
+		case <-deadline:
+			t.Fatal("the session did not come Up")
+		}
+	}
+	select {
+	case c := <-changes:
+		t.Fatalf("session left Up: %v -> %v", c.from, c.to)
+	case <-time.After(3 * time.Second):
+	}
+}
+
+// Replace moves a session to a new address: the old one stops and the
+// new one comes Up with its own packets.
+func TestManagerReplace(t *testing.T) {
+	changes := make(chan string, 64)
+	m := NewManager(slog.Default(), func(p *Peer, _, to State, _ Diag) {
+		select {
+		case changes <- p.Name + " " + to.String():
+		default:
+		}
+	})
+	t.Cleanup(m.Close)
+	timers := Timers{DesiredMinTx: time.Second, RequiredMinRx: time.Second, DetectMult: 3}
+	// 192.0.2.1 never answers; 127.0.0.1 is the session itself.
+	if err := m.Add(&Peer{Name: "old", Addr: netip.MustParseAddr("192.0.2.1"), Timers: timers}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Replace("old", "new", netip.MustParseAddr("127.0.0.1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Replace("old", "x", netip.MustParseAddr("127.0.0.1")); err == nil {
+		t.Fatal("Replace of a removed session succeeded")
+	}
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case c := <-changes:
+			if c == "new Up" {
+				m.mu.Lock()
+				n := len(m.runs)
+				m.mu.Unlock()
+				if n != 1 {
+					t.Fatalf("%d sessions after Replace, want 1", n)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("the replaced session did not come Up")
+		}
+	}
+}

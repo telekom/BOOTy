@@ -10,6 +10,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/netip"
+	"slices"
 	"strconv"
 	"sync"
 	"syscall"
@@ -30,6 +31,9 @@ const (
 	// minMultihopTTL is the FRR bfdd default "minimum-ttl 254".
 	minMultihopTTL = 254
 )
+
+// ErrNoSession is returned by Replace for a name without a session.
+var ErrNoSession = errors.New("no session")
 
 // Peer is one BFD session to create.
 type Peer struct {
@@ -84,6 +88,7 @@ type run struct {
 	tx   net.PacketConn
 	dst  *net.UDPAddr
 	rx   chan Packet
+	stop chan struct{} // closed by Replace
 }
 
 // NewManager returns a manager that reports state changes to onChange.
@@ -114,6 +119,7 @@ func (m *Manager) Add(p *Peer) error {
 		tx:   tx,
 		dst:  &net.UDPAddr{IP: p.Addr.AsSlice(), Port: port, Zone: p.Addr.Zone()},
 		rx:   make(chan Packet, 16),
+		stop: make(chan struct{}),
 	}
 	key := listenerKey{device: p.Device, v6: p.Addr.Is6() && !p.Addr.Is4In6(), port: port}
 	l, ok := m.listeners[key]
@@ -134,6 +140,45 @@ func (m *Manager) Add(p *Peer) error {
 	m.log.Info("bfd session added", "peer", p.Name, "address", p.Addr, "device", p.Device, "multihop", p.Multihop,
 		"tx", p.Timers.DesiredMinTx, "rx", p.Timers.RequiredMinRx, "multiplier", p.Timers.DetectMult)
 	return nil
+}
+
+// Replace moves the session named old to a new peer name and address,
+// with the same device and timers, as a new session starting Down. It is
+// for an unnumbered peer whose link-local address changed: the old
+// address no longer answers, so nothing is sent to it.
+func (m *Manager) Replace(old, name string, addr netip.Addr) error {
+	m.mu.Lock()
+	var r *run
+	for d, x := range m.runs {
+		if x.peer.Name == old {
+			r = x
+			delete(m.runs, d)
+		}
+	}
+	if r == nil {
+		m.mu.Unlock()
+		return fmt.Errorf("bfd %s: %w", old, ErrNoSession)
+	}
+	for _, l := range m.listeners {
+		l.runs = slices.DeleteFunc(l.runs, func(x *run) bool { return x == r })
+	}
+	close(r.stop)
+	m.mu.Unlock()
+	p := r.peer
+	p.Name, p.Addr = name, addr
+	return m.Add(&p)
+}
+
+// Names returns the names of the sessions.
+func (m *Manager) Names() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	names := make([]string, 0, len(m.runs))
+	for _, r := range m.runs {
+		names = append(names, r.peer.Name)
+	}
+	slices.Sort(names)
+	return names
 }
 
 // Close stops every session. Like bfdd on shutdown, it sends AdminDown so
@@ -166,6 +211,21 @@ func (m *Manager) loop(r *run) {
 	defer txTimer.Stop()
 	detect := time.NewTimer(time.Hour)
 	defer detect.Stop()
+	iv := r.sess.TxInterval()
+	// reschedule sends the next periodic packet at a lower interval at
+	// once. The peer's detection time follows the interval: FRR bfdd
+	// advertises its slow Required Min RX (1 s) until its own Poll
+	// completes, then detects in 3 x 150 ms. A packet still due after the
+	// old 1 s timer would come too late (kindmetal: Down with diag 3 about
+	// 450 ms after every Up). A higher interval waits for the timer.
+	reschedule := func() {
+		if next := r.sess.TxInterval(); next != iv {
+			if next < iv {
+				txTimer.Reset(m.nextTx(r))
+			}
+			iv = next
+		}
+	}
 	for {
 		select {
 		case <-m.ctx.Done():
@@ -173,25 +233,30 @@ func (m *Manager) loop(r *run) {
 			p.State, p.Diag = StateAdminDown, DiagAdminDown
 			m.send(r, &p)
 			return
+		case <-r.stop:
+			return
 		case p := <-r.rx:
 			m.received(r, &p)
+			reschedule()
 			detect.Reset(r.sess.DetectionTime())
 		case <-detect.C:
 			from := r.sess.State()
 			if r.sess.CheckTimeout(time.Now()) {
 				m.changed(r, from)
 				m.sendNow(r)
+				reschedule()
 			}
 			detect.Reset(time.Hour)
 		case <-txTimer.C:
-			txTimer.Reset(m.periodic(r))
+			m.periodic(r)
+			txTimer.Reset(m.nextTx(r))
 		}
 	}
 }
 
-// received hands a packet to the state machine. A state change or a Poll
-// is answered at once.
-func (m *Manager) received(r *run, p *Packet) {
+// received hands a packet to the state machine and reports a state
+// change. A state change or a Poll is answered at once.
+func (m *Manager) received(r *run, p *Packet) bool { //nolint:unparam // the result documents the state change
 	from := r.sess.State()
 	changed := r.sess.Receive(p, time.Now())
 	if changed {
@@ -200,16 +265,22 @@ func (m *Manager) received(r *run, p *Packet) {
 	if changed || r.sess.NeedFinal() {
 		m.sendNow(r)
 	}
+	return changed
 }
 
-// periodic sends the periodic packet and returns the time to the next.
-func (m *Manager) periodic(r *run) time.Duration {
+// periodic sends the periodic packet, unless the peer asked for none.
+func (m *Manager) periodic(r *run) {
+	if r.sess.TxInterval() > 0 {
+		m.sendNow(r)
+	}
+}
+
+// nextTx is the time to the next periodic packet.
+func (m *Manager) nextTx(r *run) time.Duration {
 	iv := r.sess.TxInterval()
 	if iv <= 0 {
 		return slowTx
 	}
-	p := r.sess.Packet()
-	m.send(r, &p)
 	return jitter(iv, r.peer.Timers.DetectMult)
 }
 
