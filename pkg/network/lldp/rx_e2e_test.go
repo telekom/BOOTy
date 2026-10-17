@@ -30,7 +30,13 @@ func TestOpenRXGroupsAndOwnFrames(t *testing.T) {
 	t.Cleanup(func() { _ = netlink.LinkDel(la) })
 	a, _ := netlink.LinkByName("lldptsta")
 	b, _ := netlink.LinkByName("lldptstb")
-	for _, l := range []netlink.Link{a, b} {
+	// udev on CI runners gives new veths another MAC after creation
+	// (MACAddressPolicy); set fixed ones after it and read them back.
+	time.Sleep(500 * time.Millisecond)
+	for i, l := range []netlink.Link{a, b} {
+		if err := netlink.LinkSetHardwareAddr(l, net.HardwareAddr{2, 0, 0, 0, 0x11, byte(i)}); err != nil {
+			t.Fatal(err)
+		}
 		if err := netlink.LinkSetUp(l); err != nil {
 			t.Fatal(err)
 		}
@@ -81,8 +87,12 @@ func TestOpenRXGroupsAndOwnFrames(t *testing.T) {
 		return nil
 	}
 	foreign := net.HardwareAddr{2, 0, 0, 0, 0x99, 0x99}
-	sendFrom(a.Attrs().HardwareAddr, "other-host") // reflected: our MAC
-	sendFrom(foreign, "our-machine")               // our chassis ID
+	own, err := net.InterfaceByName("lldptsta")
+	if err != nil || own.HardwareAddr.String() != "02:00:00:00:11:00" {
+		t.Fatalf("lldptsta MAC = %v (%v), want 02:00:00:00:11:00", own, err)
+	}
+	sendFrom(own.HardwareAddr, "other-host") // reflected: our MAC
+	sendFrom(foreign, "our-machine")         // our chassis ID
 	if nb := read(); nb != nil {
 		t.Fatalf("own frame read as neighbor %+v", nb)
 	}
