@@ -244,3 +244,35 @@ func TestDeployArchiveModeIgnoresUmask(t *testing.T) {
 		}
 	}
 }
+
+// The path caps hold on their own: the entry limit is high, so only the
+// length or depth check can reject these archives, and paths at the caps
+// pass.
+func TestDeployArchivePathCaps(t *testing.T) {
+	defer func(n int) { maxArchiveEntries = n }(maxArchiveEntries)
+	maxArchiveEntries = 1000
+	atDepth := "deploy/" + strings.Repeat("d/", 15) + "f" // 16 levels below deploy/
+	tooDeep := "deploy/" + strings.Repeat("d/", 16) + "f" // 17 levels
+	// Components below the 255 byte name limit of the file system.
+	long := "deploy/" + strings.Repeat(strings.Repeat("x", 99)+"/", 4)
+	atLength := long + strings.Repeat("y", 512-len(long))
+	tooLong := atLength + "x"
+	for name, tc := range map[string]struct {
+		path string
+		ok   bool
+	}{
+		"at the depth":  {atDepth, true},
+		"too deep":      {tooDeep, false},
+		"at the length": {atLength, true},
+		"too long":      {tooLong, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			useDeployRoot(t)
+			_, _, err := (&Client{vars: []byte(baseAgentVars)}).CommandConfig(
+				deployArchive(t, validVars, archiveEntry{name: tc.path, body: "x"}))
+			if (err == nil) != tc.ok {
+				t.Fatalf("path of %d bytes: err = %v, want ok=%t", len(tc.path), err, tc.ok)
+			}
+		})
+	}
+}

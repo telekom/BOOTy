@@ -254,7 +254,8 @@ func (u *unpacker) mkdirs(rel string) error {
 	return nil
 }
 
-// Path limits of an archive entry.
+// Path limits of an archive entry: bytes of the whole name, and levels
+// below deploy/.
 const (
 	maxArchivePathLen   = 512
 	maxArchivePathDepth = 16
@@ -268,9 +269,6 @@ func archivePath(name string) (string, error) {
 		return "", fmt.Errorf("deploy archive entry path is longer than %d bytes", maxArchivePathLen)
 	}
 	trimmed := strings.TrimPrefix(name, "./")
-	if strings.Count(strings.TrimSuffix(trimmed, "/"), "/") >= maxArchivePathDepth {
-		return "", fmt.Errorf("deploy archive entry %q is deeper than %d levels", name, maxArchivePathDepth)
-	}
 	for _, part := range strings.Split(strings.TrimSuffix(trimmed, "/"), "/") {
 		if part == ".." {
 			return "", fmt.Errorf("deploy archive entry %q has a parent directory element", name)
@@ -283,6 +281,9 @@ func archivePath(name string) (string, error) {
 	rel, ok := strings.CutPrefix(clean, "deploy/")
 	if !ok || path.IsAbs(trimmed) || rel == "" || rel == "." {
 		return "", fmt.Errorf("deploy archive entry %q is outside deploy/", name)
+	}
+	if strings.Count(rel, "/")+1 > maxArchivePathDepth {
+		return "", fmt.Errorf("deploy archive entry %q is more than %d levels below deploy/", name, maxArchivePathDepth)
 	}
 	return rel, nil
 }
