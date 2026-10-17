@@ -72,7 +72,7 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
 COPY . /go/src/github.com/telekom/BOOTy/
 RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
     --mount=type=cache,sharing=locked,id=goroot,target=/root/.cache/go-build \
-    CGO_ENABLED=1 GOOS=linux go build -a -trimpath -ldflags "-linkmode external -extldflags '-static' -s -w \
+    CGO_ENABLED=1 GOOS=linux go build -a -trimpath -tags grpcnotrace -ldflags "-linkmode external -extldflags '-static' -s -w \
       -X main.Version=${BOOTY_VERSION} \
       -X main.Build=${BOOTY_BUILD} \
       -X github.com/telekom/BOOTy/pkg/buildinfo.version=${BOOTY_VERSION} \
@@ -654,7 +654,7 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
 COPY . /go/src/github.com/telekom/BOOTy/
 RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
     --mount=type=cache,sharing=locked,id=goroot,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -a -trimpath -ldflags "-s -w \
+    CGO_ENABLED=0 GOOS=linux go build -a -trimpath -tags grpcnotrace -ldflags "-s -w \
       -X main.Version=${BOOTY_VERSION} \
       -X main.Build=${BOOTY_BUILD} \
       -X github.com/telekom/BOOTy/pkg/buildinfo.version=${BOOTY_VERSION} \
