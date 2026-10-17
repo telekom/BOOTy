@@ -1063,6 +1063,19 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 		return nil, err
 	}
 
+	// links mode is explicit only: link-local, no DHCP, no BGP.
+	if netCfg.IsLinksMode() {
+		slog.Info("using links network mode")
+		mode := &network.LinksMode{}
+		if err := mode.Setup(ctx, netCfg); err != nil {
+			if cleanupErr := linkCleanup.Teardown(ctx); cleanupErr != nil {
+				slog.Warn("link-layer cleanup after links setup failure failed", "error", cleanupErr)
+			}
+			return nil, fmt.Errorf("links network setup: %w", err)
+		}
+		return networkModeWithResolvers(ctx, netCfg, mode, linkCleanup)
+	}
+
 	// Priority: GoBGP > FRR > Static > DHCP.
 	if netCfg.IsGoBGPMode() {
 		detectIPMI(netCfg)
