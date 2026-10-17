@@ -7,7 +7,9 @@ import (
 	"errors"
 	"log/slog"
 	"net/netip"
+	"os"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -156,8 +158,8 @@ func TestPlaceholderPeers(t *testing.T) {
 	if err := u.addInterfacePeer(ctx, "lo", ipv4Families()); err != nil {
 		t.Fatal(err)
 	}
-	if got := u.ifacePeer("lo"); got != placeholderPeer("lo") {
-		t.Fatalf("native peer on lo = %q", got)
+	if got := u.ifacePeer("lo"); got != placeholderPeer("lo") || u.ifacePeerConfs["lo"].GetConf().GetNeighborAddress() != placeholderPeer("lo") {
+		t.Fatalf("native peer on lo = %q, configuration %v", got, u.ifacePeerConfs["lo"])
 	}
 	if err := u.addInterfacePeer(ctx, "nonexistent0", ipv4Families()); err == nil {
 		t.Fatal("a NIC without carrier got a peer")
@@ -191,5 +193,81 @@ func TestChooseMoved(t *testing.T) {
 	set("fe80::3%eth1", false)
 	if got := chooseMoved(context.Background(), "fe80::1%eth1", cands); got != "" {
 		t.Fatalf("moved to %q, but no candidate answers", got)
+	}
+}
+
+// A failed move is tried again in the next round; the carrier watch uses
+// the relearner's current address; Setup's relearner starts only with
+// unnumbered peers and Teardown stops it.
+func TestRelearnerRetryAndWiring(t *testing.T) {
+	fail := true
+	var tries int
+	r := &relearner{
+		peers:       func() map[string]string { return map[string]string{"eth1": "fe80::1%eth1"} },
+		established: func(context.Context, string) bool { return false },
+		carrier:     func(string) bool { return true },
+		moved:       func(context.Context, string, string) string { return "fe80::2%eth1" },
+		replace: func(context.Context, string, string, string) error {
+			tries++
+			if fail {
+				fail = false
+				return errors.New("busy")
+			}
+			return nil
+		},
+		log: slog.Default(),
+	}
+	t0 := time.Unix(1000, 0)
+	for i := range 6 {
+		r.check(context.Background(), t0.Add(time.Duration(i)*time.Second))
+	}
+	if tries != 2 {
+		t.Fatalf("replace tried %d times, want a retry after the failure", tries)
+	}
+
+	u := &UnderlayTier{cfg: &Config{}, log: slog.Default()}
+	u.recordInterfacePeer("eth1", "fe80::1%eth1")
+	w := u.newCarrierWatch(map[string]string{"eth1": "fe80::1%eth1"})
+	u.peerMu.Lock()
+	u.ifacePeers["eth1"] = "fe80::2%eth1"
+	u.peerMu.Unlock()
+	if w.current == nil || w.current("eth1") != "fe80::2%eth1" {
+		t.Fatal("the carrier watch does not use the current peer address")
+	}
+
+	u.startRelearn()
+	if u.stopRelearn == nil {
+		t.Fatal("no relearner for an unnumbered peer")
+	}
+	u.stopRelearn()
+	select {
+	case <-u.relearnDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the relearner did not stop")
+	}
+	none := &UnderlayTier{cfg: &Config{}, log: slog.Default()}
+	if none.startRelearn(); none.stopRelearn != nil {
+		t.Fatal("a relearner without unnumbered peers")
+	}
+}
+
+// Setup starts the relearner after the peers and the carrier watch, and
+// Teardown stops it before the server (Setup needs a full stack, so the
+// source is checked).
+func TestSetupStartsRelearner(t *testing.T) {
+	src, err := os.ReadFile("underlay.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	setup := body[strings.Index(body, "func (u *UnderlayTier) Setup("):]
+	setup = setup[:strings.Index(setup, "\n}\n")]
+	teardown := body[strings.Index(body, "func (u *UnderlayTier) Teardown("):]
+	teardown = teardown[:strings.Index(teardown, "\n}\n")]
+	if !strings.Contains(setup, "u.startRelearn()") || strings.Index(setup, "u.startRelearn()") < strings.Index(setup, "u.setupBGP(ctx)") {
+		t.Fatal("Setup does not start the relearner after the peers")
+	}
+	if !strings.Contains(teardown, "u.stopRelearn()") || strings.Index(teardown, "u.stopRelearn()") > strings.Index(teardown, "u.bgp.Stop()") {
+		t.Fatal("Teardown does not stop the relearner before the BGP server")
 	}
 }

@@ -713,8 +713,7 @@ func (u *UnderlayTier) startCarrierWatch() {
 	if len(peers) == 0 {
 		return
 	}
-	w := newCarrierWatch(u.bgp, peers, u.log)
-	w.current = u.ifacePeer
+	w := u.newCarrierWatch(peers)
 	u.stopCarrier = make(chan struct{})
 	done, err := w.start(u.stopCarrier)
 	if err != nil {
@@ -724,6 +723,14 @@ func (u *UnderlayTier) startCarrierWatch() {
 		return
 	}
 	u.carrierDone = done
+}
+
+// newCarrierWatch returns the carrier watch of the peers; it acts on the
+// current address of each peer, which the relearner may change.
+func (u *UnderlayTier) newCarrierWatch(peers map[string]string) *carrierWatch {
+	w := newCarrierWatch(u.bgp, peers, u.log)
+	w.current = u.ifacePeer
+	return w
 }
 
 // peerDev returns the interface of an unnumbered peer address, with or
