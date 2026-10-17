@@ -312,6 +312,11 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   `configure-sriov` step checks the firmware settings against the stored and
   the active values and warns, fails or applies per `SRIOV_ON_DRIFT`;
   `NIC_TOOLS` limits the tools
+- `configure-sriov` applies the runtime settings of the SR-IOV profiles in
+  the ramdisk through generic kernel interfaces (`sriov_numvfs` in sysfs, the
+  devlink eSwitch mode, the rtnetlink VF attributes), checks them, and
+  restores the state before the handoff (`runtime.handoff: reset`, the
+  default). It never changes the eSwitch of a port the ramdisk network uses
 
 ### Security
 

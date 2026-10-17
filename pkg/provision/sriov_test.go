@@ -79,7 +79,7 @@ func TestProvisionStepsConfigureSRIOVAfterMellanox(t *testing.T) {
 
 func TestNewSRIOVRunnerIsReconciler(t *testing.T) {
 	r, ok := newSRIOVRunner(&sriov.Config{}, slog.Default()).(*sriov.Reconciler)
-	if !ok || r.Discover == nil || r.Config == nil {
+	if !ok || r.Discover == nil || r.Config == nil || r.Runtime == nil {
 		t.Fatalf("runner %+v", r)
 	}
 }
