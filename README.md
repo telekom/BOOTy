@@ -191,7 +191,10 @@ modules are signed, so they load under lockdown. `--build-arg KERNEL_SUITE=trixi
 selects the newest Debian-signed kernel (Linux 7.x). Do not use it with
 `DISK_MIRRORING_MODE` or explicit RAID: md arrays created on Linux 6.19 or
 later cannot be assembled by kernels up to 6.18, which includes the kernels of
-the usual target OS images.
+the usual target OS images. This is upstream behaviour by design (Linux commit
+a4166f1c4893, "md: Fix forward incompatibility from configurable logical block
+size"); no mdadm option, md module parameter or sysfs setting stops a new 1.x
+array from storing its logical block size.
 
 #### ARM64 Targets
 

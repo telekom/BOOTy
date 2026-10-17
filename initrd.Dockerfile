@@ -162,6 +162,7 @@ RUN mkdir -p /frr-libs && \
 # logical block size in the superblock, and kernels up to 6.18 (all supported
 # target OS kernels today) refuse to assemble them. BOOTy creates the
 # DISK_MIRRORING_MODE and explicit RAID arrays that the installed OS assembles.
+# Upstream keeps this by design (commit a4166f1c4893) and has no opt-out.
 FROM debian:trixie-slim AS kernel
 ARG TARGETARCH
 ARG KERNEL_SUITE=
