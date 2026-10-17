@@ -30,10 +30,10 @@ func newLogSink(t *testing.T) *logSink {
 	s := &logSink{arrived: make(chan string, 100)}
 	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		s.arrived <- string(body)
 		s.mu.Lock()
 		block, fail := s.block, s.fail
 		s.mu.Unlock()
+		s.arrived <- string(body) // after the read: a test may swap block now
 		if block != nil {
 			select {
 			case <-block:
@@ -104,6 +104,9 @@ func TestLogRingEvictionOrder(t *testing.T) {
 	r.push(1, "i3") // evicts i1
 	r.push(2, "w2") // evicts i2
 	r.push(0, "d2") // nothing ranks at or below debug: d2 itself is dropped
+	if got, want := strings.Join(ringLines(r), ","), "w1,e1,i3,w2"; got != want {
+		t.Fatalf("ring after d2 = %s, want %s", got, want)
+	}
 	r.push(3, "e2") // evicts i3
 	r.push(3, "e3") // evicts w1, the oldest of the lowest rank left
 
@@ -180,18 +183,41 @@ func TestRemoteHandlerSlowSinkKeepsWarnAndError(t *testing.T) {
 	s.block = nil
 	s.mu.Unlock()
 	close(block)
+
+	// Second round: the sender holds "second" while two more INFO lines
+	// are evicted. The next summary reports only these.
+	s.waitArrived(t, "w2")
+	block2 := make(chan struct{})
+	s.mu.Lock()
+	s.block = block2
+	s.mu.Unlock()
+	log.Info("second")
+	s.waitArrived(t, "second")
+	log.Info("i4")
+	log.Warn("w3")
+	log.Warn("w4")
+	log.Warn("w5")
+	log.Info("i5")  // evicts i4
+	log.Error("e2") // evicts i5
+	s.mu.Lock()
+	s.block = nil
+	s.mu.Unlock()
+	close(block2)
 	h.Close()
 
 	want := []string{
 		"[INFO] first",
 		"[WARN] remote log handler dropped lines code=BOOTY-LOG-001 debug=1 info=2 warn=0 error=0",
 		"[WARN] w1", "[ERROR] e1", "[INFO] i3", "[WARN] w2",
+		"[INFO] second",
+		"[WARN] remote log handler dropped lines code=BOOTY-LOG-001 debug=0 info=2 warn=0 error=0",
+		"[WARN] w3", "[WARN] w4", "[WARN] w5", "[ERROR] e2",
 	}
 	if got := s.received(); strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("received:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
-	if got := h.DroppedCount(); got != 3 {
-		t.Fatalf("DroppedCount = %d, want 3", got)
+	if got := h.DroppedCount(); got != 5 {
+		t.Fatalf("DroppedCount = %d, want 5", got)
 	}
 }
 
@@ -317,7 +343,7 @@ func TestRemoteHandlerRedactsSecretValuesBeforeBuffering(t *testing.T) {
 	jwt := "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJib290eSJ9.c2lnbmF0dXJlLXZhbHVl"
 	log.Info("calling https://robot:urlpass@caprf.example/token with Authorization: Bearer hdr-token")
 	log.Info("token exchange", "response", "access_token="+jwt)
-	log.Warn("cryptsetup failed", "output", "luksKey=lukssecret passphrase hunter2")
+	log.Warn("cryptsetup failed", "output", "luksKey=lukssecret LUKS_PASSPHRASE=hunter2")
 	log.Error("bad key", "detail", "-----BEGIN RSA PRIVATE KEY-----\nMIIEsecret\n-----END RSA PRIVATE KEY-----")
 
 	for _, line := range ringLines(h.sink.ring) {

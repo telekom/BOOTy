@@ -502,7 +502,9 @@ func (h *RemoteHandler) Close() {
 		case <-s.done:
 		case <-timer.C:
 			s.cancel()
-			h.warnViaInner("remote log flush deadline reached",
+			// The canceled line in flight counts as dropped, not
+			// as undelivered.
+			h.warnViaInner("remote log flush deadline reached; the canceled line in flight counts as dropped",
 				slog.Duration("timeout", s.flushTimeout),
 				slog.Int("undelivered", s.ring.len()))
 		}
