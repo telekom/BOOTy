@@ -43,6 +43,9 @@ func DefaultEntry(root string) (*BootEntry, error) {
 		return nil, fmt.Errorf("%w: %s: %s", ErrUnsupported, cfgPath, cfg.problem)
 	}
 	env := readGrubenv(filepath.Join(filepath.Dir(cfgPath), "grubenv"))
+	if err := cfg.applyGrubenv(env); err != nil {
+		return nil, err
+	}
 	spec, err := cfg.defaultSpec(env)
 	if err != nil {
 		return nil, err
@@ -315,8 +318,14 @@ var generatedUnsets = []string{"initrdless_boot_fallback_triggered"}
 
 func (s *grubScript) topCommand(raw string, words []string, stack []block, customCfg bool) {
 	if slices.ContainsFunc(stack, func(b block) bool { return b.kind == blockFunction }) {
-		// A function body runs only when an entry calls it, and entries may
-		// only call the allow-listed functions. Its sets are unsure.
+		// A function body runs where it is called, at the top level or in an
+		// entry. It gets the top-level allow-list plus the entry helpers, and
+		// may not set the default, load files or a kernel. Its sets are
+		// unsure.
+		if problem := functionProblem(words, customCfg); problem != "" {
+			s.fail("function body: %s", problem)
+			return
+		}
 		if name, ok := assignedName(words); ok {
 			s.unsure[name] = true
 		}
@@ -385,6 +394,23 @@ func topProblem(words []string, customCfg bool) string {
 		return ""
 	}
 	return "command " + words[0]
+}
+
+// functionProblem is why a command of a function body makes BOOTy reboot,
+// or "".
+func functionProblem(words []string, customCfg bool) string {
+	if name, ok := assignedName(words); ok && name == "default" {
+		return "set default"
+	}
+	switch {
+	case slices.Contains([]string{"source", ".", "configfile"}, words[0]):
+		return words[0]
+	case strings.HasPrefix(words[0], "linux") || strings.HasPrefix(words[0], "initrd"):
+		return words[0]
+	case slices.Contains(entryCommands, words[0]):
+		return ""
+	}
+	return topProblem(words, customCfg)
 }
 
 // setTargets returns the variables of the --set options of a command.
@@ -480,6 +506,20 @@ func newGrubItem(words []string) *grubItem {
 		}
 	}
 	return item
+}
+
+// applyGrubenv accounts for load_env: GRUB imports every grubenv variable
+// at the load_env line, also default. BOOTy does not track where that line
+// is, so a grubenv default is refused and every other grubenv variable is
+// unsure (saved_entry and next_entry are handled by defaultSpec).
+func (s *grubScript) applyGrubenv(env map[string]string) error {
+	if _, ok := env["default"]; ok {
+		return fmt.Errorf("%w: grubenv sets default", ErrUnsupported)
+	}
+	for key := range env {
+		s.unsure[key] = true
+	}
+	return nil
 }
 
 // defaultSpec is the default that GRUB uses. Every grubenv state that the

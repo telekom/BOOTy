@@ -333,8 +333,11 @@ any doubt, reboot. It does not emulate GRUB; it accepts the shapes that
   `load_video`, `background_image`, `echo`, `true`, `search`,
   `fwsetup --is-supported`, the generated `unset` of
   `initrdless_boot_fallback_triggered`, the `41_custom` source line, and
-  `if`, `function`, `menuentry` and `submenu` blocks. Function bodies run
-  only when an allow-listed entry command calls them.
+  `if`, `function`, `menuentry` and `submenu` blocks. Function bodies get
+  the same allow-list plus the entry helpers and may not set the default,
+  `source` a file or run `linux` or `initrd`.
+- `grubenv` variables count as unknown wherever they are used, because
+  `load_env` imports them where it runs; a `default` in `grubenv` reboots.
 - The default is matched like GRUB: a plain decimal number (no sign, no
   leading zero) is a position; otherwise the first entry whose id or title
   matches, in order.

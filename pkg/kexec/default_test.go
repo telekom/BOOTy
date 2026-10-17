@@ -339,3 +339,46 @@ func TestDefaultEntryMatchesLikeGRUB(t *testing.T) {
 		}
 	}
 }
+
+// Function bodies run where they are called; they get the allow-lists and
+// may not set the default, load files or a kernel.
+func TestDefaultEntryChecksFunctionBodies(t *testing.T) {
+	entry := "menuentry 'x' {\n load_video\n linux /vmlinuz root=/dev/sda2\n}\n"
+	for name, body := range map[string]string{
+		"set default": " set default=1",
+		"source":      " source /boot/extra.cfg",
+		"linux":       " linux /evil",
+		"initrd":      " initrd /evil.img",
+		"unknown":     " chainloader /x.efi",
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := "set default=0\nfunction load_video {\n" + body + "\n}\nload_video\n" + entry
+			if _, err := DefaultEntry(writeGrub(t, cfg, "")); !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "function body") {
+				t.Fatalf("err = %v, want ErrUnsupported for the function body", err)
+			}
+		})
+	}
+	// The generated bodies pass.
+	ok := "set default=0\nfunction load_video {\n if [ x$feature_all_video_module = xy ]; then\n  insmod all_video\n else\n  insmod efi_gop\n fi\n}\n" +
+		"function gfxmode {\n set gfxpayload=\"${1}\"\n if [ \"${1}\" = \"keep\" ]; then\n  set vt_handoff=vt.handoff=7\n else\n  set vt_handoff=\n fi\n}\n" +
+		"function recordfail {\n set recordfail=1\n if [ -n \"${have_grubenv}\" ]; then if [ -z \"${boot_once}\" ]; then save_env recordfail; fi; fi\n}\n" + entry
+	if _, err := DefaultEntry(writeGrub(t, ok, "")); err != nil {
+		t.Fatalf("generated function bodies refused: %v", err)
+	}
+}
+
+// load_env imports every grubenv variable, also default, where it runs.
+func TestDefaultEntryGrubenvImports(t *testing.T) {
+	entry := "menuentry 'x' {\n linux /vmlinuz $kp\n}\nmenuentry 'y' {\n linux /other\n}\n"
+	cfg := "load_env\nset default=0\nset kp=quiet\n" + entry
+	if _, err := DefaultEntry(writeGrub(t, cfg, "default=1\n")); !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "grubenv sets default") {
+		t.Fatalf("grubenv default: err = %v", err)
+	}
+	if _, err := DefaultEntry(writeGrub(t, cfg, "kp=other\n")); !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "$kp") {
+		t.Fatalf("grubenv variable used in the kernel line: err = %v", err)
+	}
+	e, err := DefaultEntry(writeGrub(t, cfg, "recordfail=1\n"))
+	if err != nil || e.KernelArgs != "quiet" {
+		t.Fatalf("unrelated grubenv variable: %+v, %v", e, err)
+	}
+}
