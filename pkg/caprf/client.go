@@ -1146,6 +1146,9 @@ func applyVar(cfg *config.MachineConfig, key, value string) error {
 	if handled, err := applyTokenVar(cfg, key, value); handled {
 		return err
 	}
+	if handled, err := applySRIOVVar(cfg, key, value); handled {
+		return err
+	}
 	return applySpecialVar(cfg, key, value)
 }
 
