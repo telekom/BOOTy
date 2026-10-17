@@ -317,6 +317,14 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   devlink eSwitch mode, the rtnetlink VF attributes), checks them, and
   restores the state before the handoff (`runtime.handoff: reset`, the
   default). It never changes the eSwitch of a port the ramdisk network uses
+- SR-IOV firmware backends for `configure-sriov`: `mstconfig` (mstflint, NV
+  config of ConnectX and BlueField with stored and active values),
+  `mlxconfig` (MFT, `NIC_TOOLS=vendor`), devlink parameters in the permanent
+  mode (Broadcom `enable_sriov` and others) and the Intel firmware LLDP
+  private flags. Families without a backend report the vendor tool. With
+  `SRIOV_ON_DRIFT=apply` BOOTy stores the drifted settings and reboots
+  instead of kexec when they need it. A profile that sets the ConnectX VFs
+  replaces `setup-mellanox`
 
 ### Security
 

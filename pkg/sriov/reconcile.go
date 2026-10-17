@@ -59,45 +59,54 @@ func (r *Reconciler) Run(ctx context.Context) (*Result, error) {
 }
 
 // firmware reads, checks and, with onDrift apply, stores the firmware
-// settings of one PF port.
+// settings of one PF port. Each drifted setting goes to the backend that
+// read it.
 func (r *Reconciler) firmware(ctx context.Context, a Assignment) (findings []Finding, reboot bool) {
-	if !hasFirmwareSettings(&a.Profile.Firmware) {
+	want := &a.Profile.Firmware
+	if !hasFirmwareSettings(want) {
 		return nil, false
 	}
-	backend, note := backendFor(r.Backends, a.PF, r.Config.Tools())
-	var read *FirmwareRead
-	if backend != nil {
-		var err error
-		read, err = backend.Read(ctx, a.PF, &a.Profile.Firmware)
-		if err != nil {
-			read, note = nil, fmt.Sprintf("%s read: %v", backend.Name(), err)
-		}
-	}
-	findings = checkFirmware(a, read, note)
+	view := readFirmware(ctx, r.Backends, a.PF, want, r.Config.Tools())
+	findings = checkFirmware(a, view)
 	if r.Config.DriftAction(a.Profile) != OnDriftApply {
 		return findings, false
 	}
-	var drifted []string
+	byOwner := map[FirmwareBackend][]string{}
+	var owners []FirmwareBackend
 	for i := range findings {
-		if findings[i].Status == StatusDrift {
-			drifted = append(drifted, findings[i].Setting)
+		f := &findings[i]
+		if f.Status != StatusDrift {
+			continue
+		}
+		b, ok := view.owner[f.Setting]
+		if !ok {
+			f.Status, f.Detail = StatusFailed, "cannot apply: "+view.notes[f.Setting]
+			continue
+		}
+		if _, seen := byOwner[b]; !seen {
+			owners = append(owners, b)
+		}
+		byOwner[b] = append(byOwner[b], f.Setting)
+	}
+	for _, b := range owners {
+		needReboot, err := b.Apply(ctx, a.PF, changeFor(want, byOwner[b]))
+		status, detail := StatusApplied, "active now"
+		switch {
+		case err != nil:
+			status, detail = StatusFailed, fmt.Sprintf("%s apply: %v", b.Name(), err)
+		case needReboot:
+			detail = "takes effect after the reboot"
+			reboot = true
+		}
+		for _, name := range byOwner[b] {
+			for i := range findings {
+				if findings[i].Setting == name {
+					findings[i].Status, findings[i].Detail = status, detail
+				}
+			}
 		}
 	}
-	if len(drifted) == 0 {
-		return findings, false
-	}
-	status, detail := StatusApplied, "takes effect after the reboot"
-	if backend == nil || read == nil {
-		status, detail = StatusFailed, "cannot apply: "+note
-	} else if err := backend.Apply(ctx, a.PF, changeFor(&a.Profile.Firmware, drifted)); err != nil {
-		status, detail = StatusFailed, fmt.Sprintf("%s apply: %v", backend.Name(), err)
-	}
-	for i := range findings {
-		if findings[i].Status == StatusDrift {
-			findings[i].Status, findings[i].Detail = status, detail
-		}
-	}
-	return findings, status == StatusApplied
+	return findings, reboot
 }
 
 // runtime applies the runtime settings, checks the result, and with
