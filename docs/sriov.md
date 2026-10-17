@@ -63,6 +63,91 @@ The kernel has no VF LAG capability query. BOOTy reports:
 | `bnxt_en` | `unknown` with two PF ports and a devlink eSwitch (needs TruFlow firmware), `unsupported` otherwise. |
 | Other drivers | `unsupported`. |
 
+## Profiles
+
+A profile is the desired SR-IOV state of one NIC kind in a host class.
+CAPRF passes the profiles of the host class in `SRIOV_PROFILES` (a JSON
+list) or YAML `provision.sriov.profiles`:
+
+```yaml
+provision:
+  sriov:
+    onDrift: fail          # SRIOV_ON_DRIFT: warn (default), fail, apply
+    nicTools: opensource   # NIC_TOOLS: kernel, opensource (default), vendor
+    profiles:
+      - name: cx6dx
+        match: {vendorId: "15b3", deviceId: "101d"}
+        firmware:
+          sriovEnabled: true
+          maxVFs: 64
+          linkType: eth
+          nvConfig:
+            - {name: CQE_COMPRESSION, value: "1"}
+        runtime:
+          numVFs: 8
+          eswitchMode: switchdev
+          vfDefaults: {spoofChk: true, trust: false}
+          vfs:
+            - {index: 0, mac: "02:00:00:00:00:10", vlan: 100, qos: 3, maxTxRate: 10000}
+      - name: e810
+        match: {driver: ice}
+        optional: true
+        firmware: {fwLLDPAgent: false}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `name` | 1 to 63 letters, digits, `.`, `_`, `-`; unique. |
+| `match` | `vendorId` and `deviceId` (four lower-case hex digits), `driver`, `mac`, `interface` (a name or a shell pattern such as `ens1f*`). Every set field must match; at least one is required. A PF port that matches two profiles fails the run. |
+| `firmware.sriovEnabled` | SR-IOV in the NIC firmware. Active value: `sriovCapable`. |
+| `firmware.maxVFs` | VF limit, 0 to 65535. Active value: `sriovTotalVFs`. |
+| `firmware.linkType` | `eth` or `ib` (VPI adapters). Active value: `linkType`. |
+| `firmware.fwLLDPAgent` | Intel firmware LLDP/DCBX agent; `false` lets the host run LLDP and DCBX. |
+| `firmware.nvConfig` | More NVIDIA/Mellanox NV parameters as `{name, value}` with the `mstconfig` names. `SRIOV_EN`, `NUM_OF_VFS` and `LINK_TYPE_P<n>` are rejected: use the fields above. |
+| `firmware.devlinkParams` | devlink parameters in the permanent (NIC-stored) mode as `{name, value}`. |
+| `runtime.numVFs` | `sriov_numvfs`; not above `firmware.maxVFs`. |
+| `runtime.eswitchMode` | `legacy` or `switchdev`. |
+| `runtime.vfDefaults`, `runtime.vfs[]` | VF attributes: `trust`, `spoofChk`, `vlan` (0 to 4095), `qos` (0 to 7, needs a VLAN), `minTxRate`, `maxTxRate` (Mbit/s), `linkState` (`auto`, `enable`, `disable`); `vfs[]` also `index` and `mac` (unicast). They need `numVFs` > 0. |
+| `runtime.handoff` | `reset` (default) or `keep`. |
+| `onDrift` | Overrides `SRIOV_ON_DRIFT` for this profile. |
+| `optional` | The profile may match no PF port; otherwise that is drift. |
+
+### Drift check
+
+The `configure-sriov` step runs after `setup-mellanox`. Without profiles it
+does nothing. It compares every firmware setting of a profile with two
+values:
+
+- the stored value, which a firmware backend reads from the NIC (NV config
+  or a permanent devlink parameter), and
+- the active value, which the kernel shows (`sriovCapable`,
+  `sriovTotalVFs`, `linkType`).
+
+| Status | Meaning |
+|--------|---------|
+| `ok` | The setting has the wanted value. |
+| `drift` | The stored value differs, or the active value differs and there is no stored value. |
+| `pending-reset` | The stored value is right, the active one is not: a firmware reset or a power cycle is pending, or the BIOS blocks it (for example SR-IOV off in the BIOS). |
+| `unverified` | Neither value is readable, for example no backend for the driver or `NIC_TOOLS` excludes it. |
+| `applied` | BOOTy stored the value; it takes effect after the reboot. |
+| `failed` | The apply failed or is not possible. |
+
+`onDrift` decides what happens to a profile that is not compliant (any
+status other than `ok` and `applied`):
+
+- `warn` logs every finding (`SR-IOV drift`) and goes on.
+- `fail` stops provisioning with the findings.
+- `apply` stores the drifted settings through the backend of the driver.
+  BOOTy then reboots instead of kexec, so the new values are active in the
+  installed OS. A `pending-reset` finding is not applied again: a reboot
+  already happened before BOOTy ran, so another one would loop. It fails the
+  run and asks for a power cycle or a BIOS check.
+
+BOOTy logs a summary line `SR-IOV compliance` with the finding counts.
+
+This version does not apply runtime settings; a profile with runtime
+settings reports them as `unverified`.
+
 ## Handoff contract
 
 The handoff is the kexec into the installed OS, or the reboot when a
@@ -80,6 +165,9 @@ BOOTy guarantees at the handoff, for every PF port:
 3. A firmware-level setting that BOOTy changed is active: BOOTy reboots
    instead of kexec after the change, so `sriovTotalVFs`, the link type and
    the SR-IOV enable are the new values in the installed OS.
+4. With profiles, every firmware setting of every matched PF port is
+   compliant, or the run failed (`onDrift` `fail` or `apply`), or the drift
+   is in the log (`warn`).
 
 BOOTy does not guarantee:
 
