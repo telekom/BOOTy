@@ -193,6 +193,33 @@ EXTRA_KERNEL_PARAMS=intel_iommu=on
   HTTPS with a certificate that BOOTy verifies: do not use
   `INSECURE_TRANSPORT` or `SKIP_TLS_VERIFY` for agent mode in production.
 
+### Deploy archive payload
+
+A payload that starts with the gzip magic bytes is a deploy archive: a
+gzip-compressed tar of the per-job deploy tree, the same content as the
+`deploy.cpio` of a CAPRF ISO. A standby agent that was booted for one job
+needs it for the next one, because the cloud-init seed and the machine
+files are files, not vars.
+
+| Entry | Use |
+|-------|-----|
+| `deploy/vars` | Required. The vars of the job, a complete vars file. |
+| `deploy/machine-files/` | Replaces `/deploy/machine-files` (cloud-init seed, machine files). |
+| `deploy/machine-commands/` | Replaces `/deploy/machine-commands`. |
+| `deploy/file-system/` | Replaces `/deploy/file-system` (provisioner files). |
+
+- A directory that the archive does not have is removed, so no file of the
+  previous job stays.
+- The settings that the running ramdisk uses keep their values from
+  `/deploy/vars`, as for a vars payload: transport (the agent token),
+  agent, network, `MODE`, `DRY_RUN`, `CAPRF_LEGACY_COMPAT` and the URLs that
+  carry the bearer token. The archive values of these keys are ignored, not
+  rejected: CAPRF renders the archive with the same builder as an ISO.
+- Only directories, regular files and symlinks are allowed. An entry
+  outside `deploy/` or below a symlink of the archive fails the command.
+  The unpacked size is at most 64 MiB; the command response at most
+  16 MiB.
+
 ### End of a command
 
 | Command | Result | What BOOTy does |
