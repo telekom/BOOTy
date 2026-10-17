@@ -68,8 +68,7 @@ func prodtplServerRDs(ctx context.Context) (rds map[string][]string, meds map[st
 }
 
 // BOOTy originates its EVPN routes with FRR's automatic RD
-// "<router-id>:<n>" (the same n as the shadow node with the same
-// template) and MED 0 on the Type-5 routes and the underlay /32, like
+// "<router-id>:<n>" (n = 2 for the template order) and MED 0 on the Type-5 routes and the underlay /32, like
 // FRR. Before, every host used 4210000017:3000 and sent no MED.
 func TestProdTplRDAndMED(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)
@@ -88,21 +87,27 @@ func TestProdTplRDAndMED(t *testing.T) {
 		case <-time.After(2 * time.Second):
 		}
 	}
-	shadow := rds[prodtplShadowNode.underlay]
-	if len(shadow) != 1 {
-		t.Fatalf("shadow RDs = %v, want one", shadow)
-	}
-	_, n, _ := strings.Cut(shadow[0], ":")
+	// FRR's n is the vrf_rd_id that bgpd hands out at run time: the
+	// shadow node showed 2 and 3 in different runs of the same lab. BOOTy
+	// derives it from the template order (2), so the shadow is only
+	// checked for the <router-id>:<n> form.
 	for _, node := range prodtplServers {
-		if got, want := rds[node.underlay], node.underlay+":"+n; len(got) != 1 || got[0] != want {
-			t.Errorf("%s: RDs %v, want [%s] like the shadow node", node.name, got, want)
+		got := rds[node.underlay]
+		want := node.underlay + ":2"
+		switch {
+		case node.name == "shadow":
+			if len(got) != 1 || !strings.HasPrefix(got[0], node.underlay+":") {
+				t.Errorf("shadow: RDs %v, want one <router-id>:<n>", got)
+			}
+		case len(got) != 1 || got[0] != want:
+			t.Errorf("%s: RDs %v, want [%s] (shadow %v)", node.name, got, want, rds[prodtplShadowNode.underlay])
 		}
 		if len(meds[node.underlay]) == 0 {
 			t.Errorf("%s: no Type-5 paths at dcgw01", node.name)
 		}
 		for _, m := range meds[node.underlay] {
 			if m != 0 {
-				t.Errorf("%s: Type-5 MED %v at dcgw01, want 0 like the shadow node (%v)", node.name, m, meds[prodtplShadowNode.underlay])
+				t.Errorf("%s: Type-5 MED %v at dcgw01, want 0 like FRR", node.name, m)
 			}
 		}
 		out, err := prodtplExec(ctx, prodtplLeaf, "vtysh", "-c", "show bgp ipv4 unicast "+node.underlay+"/32 json")
