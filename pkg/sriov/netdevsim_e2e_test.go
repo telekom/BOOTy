@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"testing"
 	"time"
@@ -20,6 +21,10 @@ type netdevsim struct {
 }
 
 const netdevsimBus = "/sys/bus/netdevsim"
+
+// physPortRe matches the phys_port_name of a netdevsim PF port. The port
+// numbers are not always 0 and 1.
+var physPortRe = regexp.MustCompile(`^p\d+$`)
 
 // newNetdevsim creates a netdevsim device with ports ports in the current
 // network namespace and removes it at the end of the test.
@@ -131,7 +136,7 @@ func TestNetdevsimDiscover(t *testing.T) {
 		if pf.Eswitch.Capability != CapSupported || pf.Eswitch.Mode != EswitchLegacy {
 			t.Errorf("%s: eswitch %+v, want supported legacy", pf.Interface, pf.Eswitch)
 		}
-		if pf.PhysPortName != "p0" && pf.PhysPortName != "p1" {
+		if !physPortRe.MatchString(pf.PhysPortName) {
 			t.Errorf("%s: phys_port_name %q", pf.Interface, pf.PhysPortName)
 		}
 		if pf.PhysSwitchID == "" {
