@@ -1,0 +1,98 @@
+//go:build linux
+
+package lldp
+
+import (
+	"cmp"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+)
+
+// StatePath is where the running BOOTy keeps its LLDP state for the
+// "booty lldp" diagnosis command; /run is a tmpfs.
+var StatePath = "/run/booty/lldp.json"
+
+// State is the LLDP state of the running BOOTy.
+type State struct {
+	PID       int        `json:"pid"`
+	UpdatedAt time.Time  `json:"updatedAt"`
+	Transmit  []TxState  `json:"transmit"`
+	Neighbors []Neighbor `json:"neighbors"`
+}
+
+// TxState is the sender of one NIC.
+type TxState struct {
+	Interface string    `json:"interface"`
+	Profile   string    `json:"profile"`
+	LastTX    time.Time `json:"lastTX,omitzero"`
+	Frames    int       `json:"frames"`
+	// Error is why the last frame was not sent, "no carrier" when the NIC
+	// waits for its link.
+	Error string `json:"error,omitempty"`
+	// Frame is the last sent frame, decoded.
+	Frame *Neighbor `json:"frame,omitempty"`
+}
+
+// live is the transmit state of this process.
+var live struct {
+	sync.Mutex
+	tx []TxState
+}
+
+// recordTX notes a send attempt and writes the state file. frame is nil
+// when the NIC had no carrier.
+func recordTX(iface, profile string, frame []byte, err error, now time.Time) {
+	live.Lock()
+	byIface := func(t TxState) bool { return t.Interface == iface }
+	if !slices.ContainsFunc(live.tx, byIface) {
+		live.tx = append(live.tx, TxState{Interface: iface})
+		slices.SortFunc(live.tx, func(a, b TxState) int { return strings.Compare(a.Interface, b.Interface) })
+	}
+	t := &live.tx[slices.IndexFunc(live.tx, byIface)]
+	t.Profile = cmp.Or(profile, ProfileNetworkd)
+	switch {
+	case err != nil:
+		t.Error = err.Error()
+	case frame == nil:
+		t.Error = "no carrier"
+	default:
+		t.Error, t.LastTX = "", now
+		t.Frames++
+		if len(frame) > 14 {
+			t.Frame = parseLLDP(frame[14:], iface)
+		}
+	}
+	live.Unlock()
+	writeState(now)
+}
+
+// stateWrite serializes the writers of the state file (senders and
+// receivers).
+var stateWrite sync.Mutex
+
+// writeState writes the state file atomically. Errors are ignored: the
+// file is only for diagnosis.
+func writeState(now time.Time) {
+	stateWrite.Lock()
+	defer stateWrite.Unlock()
+	live.Lock()
+	s := State{PID: os.Getpid(), UpdatedAt: now.UTC(), Transmit: slices.Clone(live.tx), Neighbors: Neighbors()}
+	live.Unlock()
+	b, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(StatePath), 0o755); err != nil { //nolint:gosec // readable diagnosis
+		return
+	}
+	tmp := StatePath + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o644); err != nil { //nolint:gosec // readable diagnosis
+		return
+	}
+	_ = os.Rename(tmp, StatePath)
+}

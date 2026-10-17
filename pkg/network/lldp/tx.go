@@ -179,7 +179,9 @@ func emitOn(ctx context.Context, iface string, info Info, log *slog.Logger) {
 	}
 	failed := false
 	for n := 0; ; n++ {
-		if err := send(iface, info); err != nil && !failed {
+		frame, err := send(iface, info)
+		recordTX(iface, info.Profile, frame, err, time.Now())
+		if err != nil && !failed {
 			// Log once; the NIC may come back (carrier, rename).
 			log.Warn("LLDP frame not sent", "error", err)
 			failed = true
@@ -198,27 +200,28 @@ func emitOn(ctx context.Context, iface string, info Info, log *slog.Logger) {
 	}
 }
 
-func send(iface string, info Info) error {
+// send sends one frame and returns it; nil when the NIC has no carrier.
+func send(iface string, info Info) ([]byte, error) {
 	ifi, err := net.InterfaceByName(iface)
 	if err != nil {
-		return fmt.Errorf("interface %s: %w", iface, err)
+		return nil, fmt.Errorf("interface %s: %w", iface, err)
 	}
 	if info.carrierOnly() && ifi.Flags&net.FlagRunning == 0 {
-		return nil // no carrier: send once the link is up
+		return nil, nil // no carrier: send once the link is up
 	}
 	frame, err := Frame(iface, ifi.HardwareAddr, info)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW, 0)
 	if err != nil {
-		return fmt.Errorf("raw socket: %w", err)
+		return nil, fmt.Errorf("raw socket: %w", err)
 	}
 	defer func() { _ = unix.Close(fd) }()
 	addr := &unix.SockaddrLinklayer{Protocol: htons(0x88cc), Ifindex: ifi.Index, Halen: 6}
 	copy(addr.Addr[:], nearestBridge)
 	if err := unix.Sendto(fd, frame, 0, addr); err != nil {
-		return fmt.Errorf("send on %s: %w", iface, err)
+		return nil, fmt.Errorf("send on %s: %w", iface, err)
 	}
-	return nil
+	return frame, nil
 }

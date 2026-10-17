@@ -70,6 +70,7 @@ func (r *receiver) receiveOn(ctx context.Context, iface string) {
 		}
 		if nb := parseLLDP(buf[14:n], iface); nb != nil {
 			r.record(nb, time.Now())
+			writeState(time.Now())
 		}
 	}
 }
