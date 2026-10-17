@@ -1701,6 +1701,7 @@ jobs:
             TestProdTplKernelDevices \
             TestProdTplRRRestart \
             TestProdTplLLDP \
+            TestProdTplOpenCapabilities \
             TestProdTplRFC5549Routes \
             TestProdTplEBGPWithoutPolicy; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl.log; then
@@ -1826,6 +1827,7 @@ jobs:
             TestProdTplKernelDevices \
             TestProdTplRRRestart \
             TestProdTplLLDP \
+            TestProdTplOpenCapabilities \
             TestProdTplRFC5549Routes \
             TestProdTplEBGPWithoutPolicy; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl-one-uplink.log; then
@@ -1952,6 +1954,7 @@ jobs:
             TestProdTplKernelDevices \
             TestProdTplRRRestart \
             TestProdTplLLDP \
+            TestProdTplOpenCapabilities \
             TestProdTplRFC5549Routes \
             TestProdTplEBGPWithoutPolicy; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl-native-model.log; then

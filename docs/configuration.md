@@ -327,6 +327,11 @@ that FRR also reads say so.
 | `BFD_RECEIVE_MS` | `0` | 10 to 60000, ms | BFD receive interval. Set it together with `BFD_TRANSMIT_MS`. FRR also reads it. YAML `network.bgp.bfdReceiveMS`. Alias: `bfd_receive_ms`. |
 | `BFD_PROFILES` | (unset) | JSON list | BFD profiles of the `bfdProfile` of `BGP_SESSIONS` and of the `frr.conf` neighbors, like `bfd` / `profile NAME`: `name`, `transmitInterval` and `receiveInterval` (ms, 10 to 60000), `detectMultiplier` (2 to 255). Unset values and an unknown profile use the FRR defaults 300 ms, 300 ms, 3. A non-empty list replaces the `frr.conf` profiles as a whole. YAML `network.bgp.bfdProfiles`. |
 | `BFD_DETECT_MULTIPLIER` | `0` (3) | 2 to 255 | BFD detect multiplier (GoBGP). An explicit value replaces the multiplier of `frr.conf` BFD sessions. YAML `network.bgp.bfdDetectMultiplier`. |
+| `BGP_GRACEFUL_RESTART` | `true` | boolean | GoBGP sends the graceful restart (RFC 4724) and long-lived graceful restart (RFC 9494) capabilities like the FRR default helper mode: without address family tuples, so a peer does not keep BOOTy's routes when the session ends, and BOOTy keeps the routes of a restarting peer for its restart time. `false` sends neither, like FRR `bgp graceful-restart-disable`. YAML `network.bgp.gracefulRestart`. |
+| `BGP_GRACEFUL_RESTART_TIME` | `120` | 1 to 4095, s | Restart time of the graceful restart capability, like FRR `bgp graceful-restart restart-time`. YAML `network.bgp.gracefulRestartTime`. |
+| `BGP_LLGR_STALE_TIME` | `0` | 0 to 16777215, s | Stale time of the long-lived graceful restart capability, like FRR `bgp long-lived-graceful-restart stale-time`. YAML `network.bgp.llgrStaleTime`. |
+| `BGP_ADDPATH_RX` | `true` | boolean | GoBGP sends the add-path capability (RFC 7911) with receive in every address family, like FRR. YAML `network.bgp.addPathReceive`. |
+| `BGP_SOFTWARE_VERSION` | `false` | boolean | GoBGP also sends the software version capability to eBGP peers, like FRR `neighbor X capability software-version`. iBGP peers always get it, as in FRR. YAML `network.bgp.softwareVersion`. |
 
 The lowercase aliases `bgp_keepalive`, `bgp_hold`, `bgp_remote_asn`,
 `vrf_name` and `vrf_table_id` set the same values as the uppercase keys.

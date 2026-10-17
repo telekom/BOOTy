@@ -46,6 +46,10 @@ func TestValidateNetworkOptionRanges(t *testing.T) {
 				"eth0": {Routes: []netplan.RouteConfig{{To: "default", Via: "192.0.2.1"}}},
 			}}
 		}, ""},
+		{"gracefulRestartTime 4096", func(c *Config) { c.Network.BGP.GracefulRestartTime = 4096 }, "gracefulRestartTime 4096 must be 1 to 4095"},
+		{"gracefulRestartTime 4095", func(c *Config) { c.Network.BGP.GracefulRestartTime = 4095 }, ""},
+		{"llgrStaleTime 2^24", func(c *Config) { c.Network.BGP.LLGRStaleTime = 1 << 24 }, "llgrStaleTime 16777216 must be 0 to 16777215"},
+		{"llgrStaleTime 2^24-1", func(c *Config) { c.Network.BGP.LLGRStaleTime = 1<<24 - 1 }, ""},
 	} {
 		c := &Config{}
 		tt.set(c)

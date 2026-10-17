@@ -502,20 +502,19 @@ func (u *UnderlayTier) addPeers(ctx context.Context) error {
 	var added int
 	var lastErr error
 
-	switch u.cfg.PeerMode {
-	case network.PeerModeUnnumbered:
-		added, lastErr = u.addInterfacePeers(ctx, allFamilies())
-	case network.PeerModeDual:
-		added, lastErr = u.addInterfacePeers(ctx, ipv4Families())
-		n, err := u.addNumberedPeers(ctx, allFamilies())
+	iface, numbered, err := peerModeFamilies(u.cfg.PeerMode)
+	if err != nil {
+		return err
+	}
+	if iface != nil {
+		added, lastErr = u.addInterfacePeers(ctx, iface())
+	}
+	if numbered != nil {
+		n, err := u.addNumberedPeers(ctx, numbered())
 		added += n
 		if err != nil {
 			lastErr = err
 		}
-	case network.PeerModeNumbered:
-		added, lastErr = u.addNumberedPeers(ctx, allFamilies())
-	default:
-		return fmt.Errorf("unsupported peer mode: %q", u.cfg.PeerMode)
 	}
 
 	if added == 0 && lastErr != nil {

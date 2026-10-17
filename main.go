@@ -3,6 +3,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -1125,6 +1126,13 @@ func applyBGPOptions(o *config.BGPConfig, n *network.Config) {
 	n.BGPInstallRoutes = boolOr(o.InstallRoutes, withSessions)
 	if o.MultipathRelax != nil {
 		n.BGPMultipathRelax = *o.MultipathRelax
+	}
+	n.BGPCapabilities = network.BGPCapabilities{
+		GracefulRestart:     boolOr(o.GracefulRestart, true),
+		GracefulRestartTime: cmp.Or(o.GracefulRestartTime, 120),
+		LLGRStaleTime:       o.LLGRStaleTime,
+		AddPathReceive:      boolOr(o.AddPathReceive, true),
+		SoftwareVersion:     boolOr(o.SoftwareVersion, false),
 	}
 	if o.AllowASIn != nil {
 		n.BGPAllowASIn = *o.AllowASIn

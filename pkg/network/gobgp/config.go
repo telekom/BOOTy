@@ -88,6 +88,8 @@ type Config struct {
 	// MultipathRelax is "bgp bestpath as-path multipath-relax": equal-cost
 	// paths may have different AS paths of the same length.
 	MultipathRelax bool
+	// Capabilities are the optional capabilities of every peer.
+	Capabilities network.BGPCapabilities
 	// LocalAS, NeighborVRF and AllowASIn configure the native peers
 	// (PeerMode); Sessions carry their own values.
 	LocalAS     uint32
@@ -190,6 +192,7 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		MinEstablishedPeers:  netCfg.BGPMinPeers,
 		Sessions:             netCfg.BGPSessions,
 		MultipathRelax:       netCfg.BGPMultipathRelax,
+		Capabilities:         netCfg.BGPCapabilities,
 		LocalAS:              netCfg.BGPLocalAS,
 		NeighborVRF:          netCfg.BGPNeighborVRF,
 		AllowASIn:            netCfg.BGPAllowASIn,
