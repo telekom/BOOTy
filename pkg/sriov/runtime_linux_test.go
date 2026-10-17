@@ -76,6 +76,10 @@ func TestKernelRuntimeSetNumVFs(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "p0", "device"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// sysfs has the file already; SetNumVFs only writes it.
+	if err := os.WriteFile(filepath.Join(dir, "p0", "device", "sriov_numvfs"), []byte("0"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	k := &KernelRuntime{SysNet: dir}
 	if err := k.SetNumVFs(&PF{Interface: "p0"}, 4); err != nil {
 		t.Fatal(err)
