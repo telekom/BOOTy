@@ -197,7 +197,7 @@ RUN if [ -n "$KERNEL_SUITE" ]; then \
     # Target modules — transitive dependencies resolved via modprobe --show-depends.
     # Module categories:
     #   QEMU/KVM virtio:  virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev virtio_pci virtio_net failover net_failover
-    #   Storage (SCSI):   scsi_mod sd_mod virtio_blk virtio_scsi
+    #   Storage (SCSI):   scsi_mod sd_mod sg virtio_blk virtio_scsi (sg: SCSI generic for sg3-utils)
     #   Storage (HW):     nvme ahci megaraid_sas mpt3sas smartpqi hpsa loop
     #   Software RAID:    md_mod raid0 raid1 raid10 raid456 (mdadm; RAID 5/6 need raid456)
     #   EFI variables:    efivarfs (efibootmgr)
@@ -214,7 +214,7 @@ RUN if [ -n "$KERNEL_SUITE" ]; then \
     for m in \
         virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
         virtio_pci virtio_net failover net_failover \
-        scsi_mod sd_mod virtio_blk virtio_scsi \
+        scsi_mod sd_mod sg virtio_blk virtio_scsi \
         nvme ahci megaraid_sas mpt3sas smartpqi hpsa loop \
         md_mod raid0 raid1 raid10 raid456 \
         efivarfs \
@@ -251,7 +251,7 @@ RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 instal
     binutils \
     mdadm util-linux fdisk e2fsprogs xfsprogs btrfs-progs parted gdisk kpartx dosfstools \
     efibootmgr dmidecode ethtool curl iproute2 bridge-utils \
-    hdparm nvme-cli mstflint lldpd gpgv qemu-utils \
+    hdparm nvme-cli sg3-utils mstflint lldpd gpgv qemu-utils \
     dropbear-bin cryptsetup-bin ipmitool \
     && rm -rf /var/lib/apt/lists/*
 
@@ -266,7 +266,7 @@ RUN mkdir -p /tool-libs /tool-libs-full && \
         /usr/sbin/xfs_growfs /usr/sbin/xfs_repair \
         /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk /usr/sbin/sfdisk \
         /sbin/partprobe /usr/bin/partx /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
-        /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
+        /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme /usr/bin/sg_sanitize /usr/bin/sg_format \
         /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
         /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /sbin/blkid /usr/sbin/losetup \
         /sbin/cryptsetup /usr/bin/ipmitool 2>/dev/null \
@@ -294,7 +294,7 @@ RUN strip --strip-all \
         /usr/sbin/xfs_growfs /usr/sbin/xfs_repair \
         /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk /usr/sbin/sfdisk \
         /sbin/partprobe /usr/bin/partx /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
-        /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
+        /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme /usr/bin/sg_sanitize /usr/bin/sg_format \
         /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
         /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /sbin/blkid /usr/sbin/losetup /usr/bin/gpgv /usr/bin/qemu-img \
         /sbin/cryptsetup /usr/bin/ipmitool
@@ -373,9 +373,11 @@ COPY --from=tools /usr/bin/curl bin/curl
 COPY --from=tools /sbin/ip bin/ip
 COPY --from=tools /sbin/bridge bin/bridge
 
-# Secure erase tools
+# Secure erase tools (sg3-utils: SCSI SANITIZE and FORMAT UNIT for SAS disks)
 COPY --from=tools /sbin/hdparm bin/hdparm
 COPY --from=tools /usr/sbin/nvme bin/nvme
+COPY --from=tools /usr/bin/sg_sanitize bin/sg_sanitize
+COPY --from=tools /usr/bin/sg_format bin/sg_format
 
 # LUKS disk encryption
 COPY --from=tools /sbin/cryptsetup sbin/cryptsetup
@@ -587,9 +589,11 @@ COPY --from=tools /usr/bin/curl bin/curl
 COPY --from=tools /sbin/ip bin/ip
 COPY --from=tools /sbin/bridge bin/bridge
 
-# Secure erase tools
+# Secure erase tools (sg3-utils: SCSI SANITIZE and FORMAT UNIT for SAS disks)
 COPY --from=tools /sbin/hdparm bin/hdparm
 COPY --from=tools /usr/sbin/nvme bin/nvme
+COPY --from=tools /usr/bin/sg_sanitize bin/sg_sanitize
+COPY --from=tools /usr/bin/sg_format bin/sg_format
 
 # LUKS disk encryption
 COPY --from=tools /sbin/cryptsetup sbin/cryptsetup
