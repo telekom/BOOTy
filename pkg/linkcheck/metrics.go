@@ -92,7 +92,10 @@ func fecProblems(l *Link) []string {
 
 // laneRate is the speed of one lane: the speed divided by the lanes that
 // the driver reports, else by the usual lane count of the speed (40G and
-// 100G have 4 lanes, 50G 2, 400G 8).
+// 100G have 4 lanes, 50G 2, 400G 8). An unknown lane count of a PAM4 link
+// (100G-R2 or -R1) gives 25G here, which still needs FEC: only the 25G
+// exception codes of fecRequired turn it off, and those name NRZ modules
+// with 4 (100G) or 1 (25G) lanes.
 func laneRate(s *LinkState) int {
 	lanes := s.Lanes
 	if lanes == 0 {

@@ -1,6 +1,7 @@
 package linkcheck
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -128,6 +129,40 @@ func TestFECRequired(t *testing.T) {
 		}
 		if got := len(fecProblems(l)) > 0; got != tt.want {
 			t.Errorf("%s: FEC problem = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+// From the EEPROM to the verdict: a 25G SFP28 needs FEC unless byte 36
+// of its A0h page names a long-reach optic or a CA-N cable.
+func TestFECRequiredFromSFPEEPROM(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		code byte
+		want bool
+	}{
+		{"25GBASE-SR", 0x02, true},
+		{"25GBASE-LR", 0x03, false},
+		{"25GBASE-ER", 0x04, false},
+		{"25GBASE-CR CA-L", 0x0b, true},
+		{"25GBASE-CR CA-S", 0x0c, true},
+		{"25GBASE-CR CA-N", 0x0d, false},
+		{"no code", 0x00, true},
+	} {
+		a0 := make([]byte, 128) // SFF-8472 A0h, no digital diagnostics (byte 92 = 0)
+		a0[0], a0[36] = 0x03, tt.code
+		mod, err := sff.Decode(func(addr, page, offset, length int) ([]byte, error) {
+			if addr != 0x50 || page != 0 || offset+length > len(a0) {
+				return nil, errors.New("no such page")
+			}
+			return a0[offset : offset+length], nil
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		l := &Link{Carrier: true, Module: mod, State: &LinkState{SpeedMbps: 25000, Lanes: 1, FEC: &FEC{Active: "off"}}}
+		if got := fecRequired(l); got != tt.want {
+			t.Errorf("%s: fecRequired = %v, want %v", tt.name, got, tt.want)
 		}
 	}
 }

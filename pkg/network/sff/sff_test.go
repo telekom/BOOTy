@@ -258,3 +258,29 @@ func TestDecodeSFPLimits(t *testing.T) {
 		t.Fatal("no module decoded")
 	}
 }
+
+// SFP28 modules carry the SFF-8024 extended compliance code in A0h byte
+// 36 (SFF-8472 table 5-3); the FEC rule needs it for 25G LR and CA-N.
+func TestDecodeSFP28Compliance(t *testing.T) {
+	for _, tt := range []struct {
+		code byte
+		want string
+	}{
+		{0x02, "100GBASE-SR4 or 25GBASE-SR"},
+		{0x03, "100GBASE-LR4 or 25GBASE-LR"},
+		{0x0b, "100GBASE-CR4 or 25GBASE-CR CA-L"},
+		{0x0c, "25GBASE-CR CA-S"},
+		{0x0d, "25GBASE-CR CA-N"},
+		{0x7f, "0x7f"},
+	} {
+		m := sfp28()
+		m.set(0x50, 0, 36, tt.code)
+		got, err := Decode(m.reader(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Compliance != tt.code || got.ComplianceName != tt.want {
+			t.Errorf("byte 36 = 0x%02x: compliance 0x%02x %q, want %q", tt.code, got.Compliance, got.ComplianceName, tt.want)
+		}
+	}
+}
