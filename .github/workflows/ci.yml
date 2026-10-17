@@ -1714,7 +1714,9 @@ jobs:
             TestProdTplRRRestart \
             TestProdTplLLDP \
             TestProdTplRFC5549Routes \
-            TestProdTplEBGPWithoutPolicy; do
+            TestProdTplEBGPWithoutPolicy \
+            TestProdTplLongOutageNewLinkLocal \
+            TestProdTplOneDropPerFault; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl.log; then
               echo "::error::${expected} did not pass"
               exit 1
@@ -1839,7 +1841,9 @@ jobs:
             TestProdTplRRRestart \
             TestProdTplLLDP \
             TestProdTplRFC5549Routes \
-            TestProdTplEBGPWithoutPolicy; do
+            TestProdTplEBGPWithoutPolicy \
+            TestProdTplLongOutageNewLinkLocal \
+            TestProdTplOneDropPerFault; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl-one-uplink.log; then
               echo "::error::${expected} did not pass"
               exit 1
@@ -1965,7 +1969,9 @@ jobs:
             TestProdTplRRRestart \
             TestProdTplLLDP \
             TestProdTplRFC5549Routes \
-            TestProdTplEBGPWithoutPolicy; do
+            TestProdTplEBGPWithoutPolicy \
+            TestProdTplLongOutageNewLinkLocal \
+            TestProdTplOneDropPerFault; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl-native-model.log; then
               echo "::error::${expected} did not pass"
               exit 1
