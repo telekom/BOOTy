@@ -4,6 +4,7 @@
 package lldp
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -11,8 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
 	"golang.org/x/sys/unix"
 )
 
@@ -31,6 +30,7 @@ func Listen(ctx context.Context, iface string, timeout time.Duration) (*Neighbor
 	slog.Info("listening for LLDP frames", "interface", iface, "timeout", timeout)
 
 	buf := make([]byte, 1600)
+	mac := nicMAC(iface)
 	for {
 		select {
 		case <-ctx.Done():
@@ -38,11 +38,11 @@ func Listen(ctx context.Context, iface string, timeout time.Duration) (*Neighbor
 		default:
 		}
 
-		n, _, err := unix.Recvfrom(fd, buf, 0)
+		n, from, err := unix.Recvfrom(fd, buf, 0)
 		if err != nil {
 			continue // timeout — re-check context
 		}
-		if n < 14 {
+		if n < 14 || ownFrame(buf[:n], from, mac) {
 			continue
 		}
 
@@ -118,46 +118,6 @@ func DiscoverAll(ctx context.Context, ifaces []string, timeout time.Duration) []
 	return neighbors
 }
 
-// parseLLDP extracts LLDP neighbor information from raw LLDP payload.
-func parseLLDP(data []byte, iface string) *Neighbor {
-	pkt := gopacket.NewPacket(data, layers.LayerTypeLinkLayerDiscovery, gopacket.NoCopy)
-
-	lldpLayer := pkt.Layer(layers.LayerTypeLinkLayerDiscovery)
-	if lldpLayer == nil {
-		return nil
-	}
-	lldp, ok := lldpLayer.(*layers.LinkLayerDiscovery)
-	if !ok {
-		return nil
-	}
-
-	n := &Neighbor{
-		Interface: iface,
-		TTL:       lldp.TTL,
-	}
-
-	switch lldp.ChassisID.Subtype {
-	case layers.LLDPChassisIDSubTypeMACAddr:
-		if len(lldp.ChassisID.ID) >= 6 {
-			n.ChassisID = net.HardwareAddr(lldp.ChassisID.ID).String()
-		}
-	default:
-		n.ChassisID = sanitizeLLDP(string(lldp.ChassisID.ID))
-	}
-
-	n.PortID = sanitizeLLDP(string(lldp.PortID.ID))
-
-	infoLayer := pkt.Layer(layers.LayerTypeLinkLayerDiscoveryInfo)
-	if infoLayer != nil {
-		if info, ok := infoLayer.(*layers.LinkLayerDiscoveryInfo); ok {
-			n.SystemName = sanitizeLLDP(info.SysName)
-			n.Description = sanitizeLLDP(info.SysDescription)
-		}
-	}
-
-	return n
-}
-
 // GetInterfaceNames returns names of all physical (non-loopback, up) interfaces.
 func GetInterfaceNames() ([]string, error) {
 	ifaces, err := net.Interfaces()
@@ -188,6 +148,24 @@ func sanitizeLLDP(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// ownFrame reports whether an Ethernet frame read from the packet socket
+// of a NIC is one that BOOTy sent on it: the socket sees the outgoing
+// frames, and a switch or bridge may reflect them (source MAC = the NIC).
+func ownFrame(frame []byte, from unix.Sockaddr, mac net.HardwareAddr) bool {
+	if ll, ok := from.(*unix.SockaddrLinklayer); ok && ll.Pkttype == unix.PACKET_OUTGOING {
+		return true
+	}
+	return len(mac) == 6 && len(frame) >= 12 && bytes.Equal(frame[6:12], mac)
+}
+
+// nicMAC returns the MAC of a NIC, nil when it is gone.
+func nicMAC(iface string) net.HardwareAddr {
+	if ifi, err := net.InterfaceByName(iface); err == nil {
+		return ifi.HardwareAddr
+	}
+	return nil
 }
 
 func htons(v uint16) uint16 {
