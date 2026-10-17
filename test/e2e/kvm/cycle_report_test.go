@@ -139,23 +139,43 @@ func (r cycleReport) cycle(name string) (cycleRun, bool) {
 
 // regressionPolicy says when a cycle total counts as a regression: when it
 // grows by more than Percent and by more than MinSeconds over the baseline.
+// The cold cycle has its own MinSeconds: it is two boots and noisier, the
+// agent cycles are short, so a few seconds already matter there.
 type regressionPolicy struct {
-	Percent    float64
-	MinSeconds float64
+	Percent        float64
+	MinSeconds     float64 // cold cycle
+	AgentMinSecond float64 // agent and agent-boot cycles
+}
+
+func (p regressionPolicy) minSeconds(cycle string) float64 {
+	if cycle == "cold" {
+		return p.MinSeconds
+	}
+	return p.AgentMinSecond
+}
+
+// comparable reports whether base can be the baseline of cur: a run under
+// TCG is several times slower than under KVM, so other accelerators are
+// not compared.
+func comparable(cur, base cycleReport) bool {
+	return cur.Accel == base.Accel
 }
 
 // regressions lists the cycles of cur that are slower than in base.
 func regressions(cur, base cycleReport, p regressionPolicy) []string {
+	if !comparable(cur, base) {
+		return nil
+	}
 	var out []string
 	for _, c := range cur.Cycles {
 		b, ok := base.cycle(c.Name)
 		if !ok || b.TotalSeconds <= 0 {
 			continue
 		}
-		delta := c.TotalSeconds - b.TotalSeconds
-		if delta > p.MinSeconds && delta/b.TotalSeconds*100 > p.Percent {
+		delta, minSec := c.TotalSeconds-b.TotalSeconds, p.minSeconds(c.Name)
+		if delta > minSec && delta/b.TotalSeconds*100 > p.Percent {
 			out = append(out, fmt.Sprintf("%s cycle %.1fs vs %.1fs on main (+%.0f%%, limit %.0f%% and %.0fs)",
-				c.Name, c.TotalSeconds, b.TotalSeconds, delta/b.TotalSeconds*100, p.Percent, p.MinSeconds))
+				c.Name, c.TotalSeconds, b.TotalSeconds, delta/b.TotalSeconds*100, p.Percent, minSec))
 		}
 	}
 	return out
@@ -236,10 +256,25 @@ func TestCyclePhasesBetween(t *testing.T) {
 func TestCycleRegressions(t *testing.T) {
 	base := cycleReport{Cycles: []cycleRun{{Name: "cold", TotalSeconds: 100}, {Name: "agent", TotalSeconds: 20}}}
 	cur := cycleReport{Cycles: []cycleRun{{Name: "cold", TotalSeconds: 130}, {Name: "agent", TotalSeconds: 26}, {Name: "new", TotalSeconds: 5}}}
-	got := regressions(cur, base, regressionPolicy{Percent: 20, MinSeconds: 10})
-	// agent grew 30 % but only 6 s: below MinSeconds.
-	if len(got) != 1 || !strings.HasPrefix(got[0], "cold cycle 130.0s vs 100.0s") {
-		t.Fatalf("regressions = %q", got)
+	p := regressionPolicy{Percent: 20, MinSeconds: 10, AgentMinSecond: 2}
+	got := regressions(cur, base, p)
+	if len(got) != 2 || !strings.HasPrefix(got[0], "cold cycle 130.0s vs 100.0s") || !strings.HasPrefix(got[1], "agent cycle 26.0s") {
+		t.Fatalf("regressions = %q, want cold and agent", got)
+	}
+	// The agent cycle grew 30 % by 6 s: above its 2 s, below the cold 10 s.
+	if got := regressions(cur, base, regressionPolicy{Percent: 20, MinSeconds: 10, AgentMinSecond: 10}); len(got) != 1 {
+		t.Fatalf("regressions with a 10 s agent minimum = %q, want only cold", got)
+	}
+	// A TCG run is not compared with a KVM baseline.
+	tcg := cur
+	tcg.Accel = "tcg"
+	base.Accel = "kvm"
+	cur.Accel = "kvm"
+	if got := regressions(tcg, base, p); got != nil {
+		t.Fatalf("regressions across accelerators = %q, want none", got)
+	}
+	if got := regressions(cur, base, p); len(got) != 2 {
+		t.Fatalf("regressions with the same accelerator = %q", got)
 	}
 	md := markdown(cur, &base)
 	if !strings.Contains(md, "| total | 130.0 (+30.0) | 26.0 (+6.0) | 5.0 |") {

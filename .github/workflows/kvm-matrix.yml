@@ -557,10 +557,12 @@ jobs:
           MIRROR_ROOT_PARTITION_NUMBER: ${{ matrix.mirror_root_partition_number || '' }}
           MIRROR_DISK_SIZE: ${{ matrix.mirror_disk_size || '' }}
           BOOTY_CYCLE_REPORT: ${{ matrix.scenario == 'agent-cycle-timing' && format('{0}/cycle-timing.json', github.workspace) || '' }}
-          # Repository variables: warn (default) or fail, percent and seconds.
+          # Repository variables: warn (default) or fail, percent, and the minimum
+          # growth in seconds of the cold and of the agent cycles.
           BOOTY_CYCLE_REGRESSION_MODE: ${{ vars.BOOTY_CYCLE_REGRESSION_MODE || 'warn' }}
           BOOTY_CYCLE_REGRESSION_PCT: ${{ vars.BOOTY_CYCLE_REGRESSION_PCT || '25' }}
           BOOTY_CYCLE_REGRESSION_MIN_SECONDS: ${{ vars.BOOTY_CYCLE_REGRESSION_MIN_SECONDS || '10' }}
+          BOOTY_CYCLE_REGRESSION_AGENT_MIN_SECONDS: ${{ vars.BOOTY_CYCLE_REGRESSION_AGENT_MIN_SECONDS || '2' }}
 
       - name: Upload KVM log (${{ matrix.scenario }})
         if: always()

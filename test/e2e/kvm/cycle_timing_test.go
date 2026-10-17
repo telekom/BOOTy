@@ -323,9 +323,13 @@ func publishCycleReport(t *testing.T, r cycleReport) {
 	var regs []string
 	if base != nil {
 		md += fmt.Sprintf("\nBaseline: main %s, accel %s. Delta in parentheses.\n", base.Commit, base.Accel)
+		if !comparable(r, *base) {
+			md += fmt.Sprintf("\nNot compared: this run used %s, the baseline %s.\n", r.Accel, base.Accel)
+		}
 		regs = regressions(r, *base, regressionPolicy{
-			Percent:    envFloat("BOOTY_CYCLE_REGRESSION_PCT", 25),
-			MinSeconds: envFloat("BOOTY_CYCLE_REGRESSION_MIN_SECONDS", 10),
+			Percent:        envFloat("BOOTY_CYCLE_REGRESSION_PCT", 25),
+			MinSeconds:     envFloat("BOOTY_CYCLE_REGRESSION_MIN_SECONDS", 10),
+			AgentMinSecond: envFloat("BOOTY_CYCLE_REGRESSION_AGENT_MIN_SECONDS", 2),
 		})
 		for _, reg := range regs {
 			md += "\n**Regression:** " + reg + "\n"
