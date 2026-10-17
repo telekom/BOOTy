@@ -167,7 +167,7 @@ behaviour.
   at the time it claims. It writes the RTC. A host with a wrong RTC now
   provisions over TLS without `SKIP_TLS_VERIFY`. `TIME_SYNC=off` keeps the old
   behaviour. A certificate that is not valid at the local clock now gives an
-  error that names the skew (`BOOTY-TIM-002`) (#PRNUM).
+  error that names the skew (`BOOTY-TIM-002`) (#713).
 
 ### Behaviour behind `CAPRF_LEGACY_COMPAT=true`
 
@@ -305,7 +305,7 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   old RAID superblocks (#581)
 - Time sync before TLS: `TIME_SYNC` (`off`|`auto`|`require`), `NTP_SERVERS`,
   `TIME_MAX_SKEW_SEC` and `TIME_WRITE_RTC`, YAML `time.*`. See
-  [time sync](docs/configuration.md#time-sync) (#PRNUM)
+  [time sync](docs/configuration.md#time-sync) (#713)
 
 ### Security
 
