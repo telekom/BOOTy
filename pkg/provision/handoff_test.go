@@ -51,3 +51,27 @@ func TestPlannedHandoff(t *testing.T) {
 		})
 	}
 }
+
+func TestDeprovisionHandoff(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  config.MachineConfig
+		want string
+	}{
+		{name: "reboot", want: HandoffReboot},
+		{name: "poweroff", cfg: config.MachineConfig{SuccessAction: config.SuccessActionPowerOff}, want: HandoffPowerOff},
+		{name: "standby", cfg: config.MachineConfig{Agent: config.AgentConfig{
+			CommandsURL: "https://caprf/agent/commands", DeprovisionSuccessAction: config.AgentDeprovisionStandby,
+		}}, want: HandoffStandby},
+		// Without the agent endpoints the option has no effect.
+		{name: "standby option outside standby", cfg: config.MachineConfig{Agent: config.AgentConfig{
+			DeprovisionSuccessAction: config.AgentDeprovisionStandby,
+		}}, want: HandoffReboot},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := deprovisionHandoff(&tc.cfg); got != tc.want {
+				t.Fatalf("deprovisionHandoff = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
