@@ -972,12 +972,14 @@ The route distinguisher is `EVPN_RD`, else the `rd` of the L3VNI VRF in
 lowest free id from 1 when it is created, in `frr.conf` order, and an L2VNI
 the next one. With the bm4x template (`router bgp vrf Vrf_underlay`, then
 `router bgp vrf default` with L3VNI 3000) the Type-5 routes get
-`<router-id>:2`, as measured on the FRR 10.3.1 shadow node. Without
+`<router-id>:2`, as on the FRR 10.3.1 shadow node in most lab runs. Without
 `frr.conf` the native peers stand for the template: `2` when the neighbor
 VRF differs from the L3VNI VRF, else `1`. The Type-2 and Type-3 routes of
 an L2VNI get the id after the instances. The id depends on the order in
-which bgpd creates instances and VNIs; the kindmetal legacy ramdisk (FRR
-10.2.1) showed `:3` for the same template. Peers treat the RD as opaque, so
+which bgpd creates instances and VNIs: the shadow node also showed `:3`
+in one lab run, and the kindmetal legacy ramdisk (FRR 10.2.1) `:3`, for
+the same template. BOOTy uses the order of the configuration, so its RD
+is stable. Peers treat the RD as opaque, so
 only its uniqueness per host matters. Before, every host used
 `asn_server:provision_vni`.
 
