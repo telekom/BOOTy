@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -13,33 +12,35 @@ import (
 
 // ErrUnsupported marks a boot configuration that BOOTy can not resolve the
 // way GRUB would. The caller reboots through the firmware instead of
-// starting a kernel that GRUB would not start.
+// starting a kernel that GRUB might not start: any doubt, reboot.
 var ErrUnsupported = errors.New("boot entry can not be resolved without GRUB")
 
 // grubConfigPaths are the GRUB configurations below a root, in order:
 // Debian and Ubuntu, then RHEL-likes and SUSE.
 var grubConfigPaths = []string{filepath.Join("boot", "grub", "grub.cfg"), filepath.Join("boot", "grub2", "grub.cfg")}
 
-// cosmeticVars are GRUB variables that only change the console handover.
-// GRUB sets them in functions, so BOOTy can not evaluate them; an empty
-// value is what GRUB uses in text mode.
-var cosmeticVars = map[string]bool{"vt_handoff": true}
-
 // DefaultEntry returns the entry that GRUB boots by default from the
-// installed root: the grub.cfg of boot/grub or boot/grub2, the default of
-// grub.cfg, next_entry and saved_entry of grubenv, and submenu paths
-// ("1>2" or titles and ids). Variables in the kernel line are expanded when
-// grub.cfg sets them unconditionally. Every case that needs GRUB script
-// evaluation (BLS entries, conditional kernel lines, variables set in
-// functions or conditions, several initrds) returns ErrUnsupported.
+// installed root. It does not emulate GRUB: it accepts only the shapes that
+// grub-mkconfig generates on Debian and Ubuntu (see docs/caprf-integration.md
+// "kexec boot entry") and returns ErrUnsupported for everything else, among
+// them BLS (RHEL-likes) and Flatcar.
+//
+// Accepted: an unconditional "set default", or the generated
+// `if [ "${next_entry}" ] ; then ... else set default=X fi` block with
+// next_entry unset in grubenv; ${saved_entry} from grubenv; a numeric,
+// id or title path through submenus; entries made of the generated
+// commands (insmod, echo, recordfail, load_video, gfxmode, set root,
+// search --set=root, one linux and at most one initrd, outside conditions);
+// variables set once and unconditionally at the top level; $vt_handoff.
 func DefaultEntry(root string) (*BootEntry, error) {
 	cfgPath, data, err := readGrubConfig(root)
 	if err != nil {
 		return nil, err
 	}
-	cfg := parseGrubScript(string(data))
-	if cfg.bls {
-		return nil, fmt.Errorf("%w: %s uses BLS entries (blscfg)", ErrUnsupported, cfgPath)
+	_, statErr := os.Stat(filepath.Join(filepath.Dir(cfgPath), "custom.cfg"))
+	cfg := parseGrubScript(string(data), statErr == nil)
+	if cfg.problem != "" {
+		return nil, fmt.Errorf("%w: %s: %s", ErrUnsupported, cfgPath, cfg.problem)
 	}
 	env := readGrubenv(filepath.Join(filepath.Dir(cfgPath), "grubenv"))
 	spec, err := cfg.defaultSpec(env)
@@ -75,137 +76,301 @@ type grubItem struct {
 	title, id string
 	submenu   bool
 	children  []*grubItem
-	linux     [][]string // the words after each linux command
-	initrd    [][]string
-	badLinux  string // a linux command with a variable name, like linux$suf
+	linux     []string // raw commands
+	initrd    []string
+	// problem is the first command of the entry that is not in the
+	// allow-list, or a kernel line inside a condition.
+	problem string
 	// conditional is an item inside an if or function block: GRUB may or
-	// may not add it, so the numbers of the items after it are unsure.
+	// may not add it.
 	conditional bool
+}
+
+type blockKind int
+
+const (
+	blockMenu blockKind = iota
+	blockSubmenu
+	blockIf
+	blockFunction
+	blockLoop
+)
+
+type block struct {
+	kind   blockKind
+	cond   string // normalized condition of an if
+	inElse bool
+}
+
+type defaultSet struct {
+	value string
+	// nextEntryElse: the else branch of the generated next_entry block.
+	nextEntryElse bool
 }
 
 type grubScript struct {
 	items    []*grubItem
-	defaults []string          // values of "set default=" outside entries
-	vars     map[string]string // variables set once, outside blocks
-	unsure   map[string]bool   // variables set in blocks or more than once
-	bls      bool
+	defaults []defaultSet
+	vars     map[string]string // variables set once, unconditionally, at the top level
+	unsure   map[string]bool   // variables set in blocks, more than once, or by --set
+	problem  string            // the first script-level reason to reboot
 }
 
-type block int
+// nextEntryCond is the condition of the generated next_entry block.
+const nextEntryCond = `[ "${next_entry}" ]`
 
-const (
-	blockMenu block = iota
-	blockSubmenu
-	blockOther // function, if
-)
-
-// parseGrubScript reads the structure of a grub.cfg: entries, submenus,
-// "set" commands and their nesting. It does not run the script.
-func parseGrubScript(text string) *grubScript {
+// parseGrubScript reads the structure of a grub.cfg. It does not run it.
+func parseGrubScript(text string, customCfg bool) *grubScript {
 	s := &grubScript{vars: map[string]string{}, unsure: map[string]bool{}}
 	var stack []block
-	var menus []*grubItem // open menuentry and submenu items
+	var menus []*grubItem
 	for _, raw := range strings.Split(text, "\n") {
-		words := shellWords(strings.TrimSpace(raw))
-		if len(words) == 0 || strings.HasPrefix(words[0], "#") {
-			continue
+		for _, cmd := range splitCommands(raw) {
+			stack, menus = s.command(cmd, stack, menus, customCfg)
 		}
-		switch words[0] {
-		case "menuentry", "submenu":
-			item := newGrubItem(words)
-			item.conditional = slices.Contains(stack, blockOther)
-			if len(menus) > 0 {
-				parent := menus[len(menus)-1]
-				parent.children = append(parent.children, item)
-			} else {
-				s.items = append(s.items, item)
-			}
-			menus = append(menus, item)
-			kind := blockMenu
-			if item.submenu {
-				kind = blockSubmenu
-			}
-			stack = append(stack, kind)
-			continue
-		case "}":
-			if n := len(stack); n > 0 {
-				if stack[n-1] != blockOther {
-					menus = menus[:len(menus)-1]
-				}
-				stack = stack[:n-1]
-			}
-			continue
-		}
-		s.command(words, stack, menus)
-		stack = nestBlocks(words, stack)
 	}
 	return s
 }
 
-// nestBlocks applies the if, while and function openings and the fi and
-// done closings of one line to the block stack. Keywords count only in
-// command position: first word, or after a word that ends with ";", or
-// after then, else, do.
-func nestBlocks(words []string, stack []block) []block {
-	cmdPos := true
-	for _, w := range words {
-		word := strings.TrimSuffix(w, ";")
-		if cmdPos {
-			switch word {
-			case "if", "while", "until", "function":
-				stack = append(stack, blockOther)
-			case "fi", "done":
-				if n := len(stack); n > 0 && stack[n-1] == blockOther {
-					stack = stack[:n-1]
-				}
-			}
-		}
-		cmdPos = strings.HasSuffix(w, ";") || word == "then" || word == "else" || word == "do"
+func (s *grubScript) fail(format string, args ...any) {
+	if s.problem == "" {
+		s.problem = fmt.Sprintf(format, args...)
 	}
-	return stack
 }
 
-func (s *grubScript) command(words []string, stack []block, menus []*grubItem) {
-	inEntry := len(menus) > 0 && !menus[len(menus)-1].submenu
+// command handles one command of a line. Leading then, else and do are
+// keywords of the enclosing block.
+func (s *grubScript) command(raw string, stack []block, menus []*grubItem, customCfg bool) ([]block, []*grubItem) {
+	raw, words := stripKeywords(raw, stack)
+	if len(words) == 0 || strings.HasPrefix(words[0], "#") {
+		return stack, menus
+	}
+	if stack, menus, ok := s.blockCommand(raw, words, stack, menus); ok {
+		return stack, menus
+	}
+	if entry := currentEntry(stack, menus); entry != nil {
+		entryCommand(entry, raw, words, stack)
+		return stack, menus
+	}
+	s.topCommand(raw, words, stack, customCfg)
+	return stack, menus
+}
+
+// stripKeywords drops a leading then, do or else; else switches the
+// enclosing if to its else branch.
+func stripKeywords(raw string, stack []block) (cmd string, words []string) {
+	words = literalWords(raw)
+	for len(words) > 0 && slices.Contains([]string{"then", "do", "else"}, words[0]) {
+		if n := len(stack); words[0] == "else" && n > 0 && stack[n-1].kind == blockIf {
+			stack[n-1].inElse = true
+		}
+		raw = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(raw), words[0]))
+		words = words[1:]
+	}
+	return raw, words
+}
+
+// blockCommand opens and closes entries, submenus, conditions, loops and
+// functions. ok is false for any other command.
+func (s *grubScript) blockCommand(raw string, words []string, stack []block, menus []*grubItem) (newStack []block, newMenus []*grubItem, ok bool) {
+	n := len(stack)
+	switch words[0] {
+	case "menuentry", "submenu":
+		stack, menus = s.openMenu(words, stack, menus)
+	case "}", "fi", "done":
+		stack, menus = closeBlock(words[0], stack, menus)
+	case "if":
+		stack = append(stack, block{kind: blockIf, cond: normalizeCond(raw)})
+	case "elif":
+		if n > 0 && stack[n-1].kind == blockIf {
+			stack[n-1].cond, stack[n-1].inElse = "elif", true
+		}
+	case "while", "until", "for":
+		stack = append(stack, block{kind: blockLoop})
+	case "function":
+		stack = append(stack, block{kind: blockFunction})
+	default:
+		return stack, menus, false
+	}
+	return stack, menus, true
+}
+
+func (s *grubScript) openMenu(words []string, stack []block, menus []*grubItem) ([]block, []*grubItem) {
+	item := newGrubItem(words)
+	item.conditional = slices.ContainsFunc(stack, func(b block) bool { return b.kind >= blockIf })
+	if len(menus) > 0 {
+		menus[len(menus)-1].children = append(menus[len(menus)-1].children, item)
+	} else {
+		s.items = append(s.items, item)
+	}
+	kind := blockMenu
+	if item.submenu {
+		kind = blockSubmenu
+	}
+	return append(stack, block{kind: kind}), append(menus, item)
+}
+
+// closeBlock pops the block that "}" (entry, submenu, function) or fi and
+// done (condition, loop) end.
+func closeBlock(word string, stack []block, menus []*grubItem) ([]block, []*grubItem) {
+	n := len(stack)
+	if n == 0 {
+		return stack, menus
+	}
+	top := stack[n-1].kind
+	if word != "}" && top < blockIf {
+		return stack, menus
+	}
+	if top <= blockSubmenu {
+		menus = menus[:len(menus)-1]
+	}
+	return stack[:n-1], menus
+}
+
+// currentEntry is the menuentry that the command is in, or nil.
+func currentEntry(stack []block, menus []*grubItem) *grubItem {
+	for i := len(stack) - 1; i >= 0; i-- {
+		switch stack[i].kind {
+		case blockMenu:
+			return menus[len(menus)-1]
+		case blockSubmenu:
+			return nil
+		}
+	}
+	return nil
+}
+
+// insideCondition reports an if or loop block inside the current entry.
+func insideCondition(stack []block) bool {
+	for i := len(stack) - 1; i >= 0 && stack[i].kind > blockSubmenu; i-- {
+		if stack[i].kind == blockIf || stack[i].kind == blockLoop {
+			return true
+		}
+	}
+	return false
+}
+
+// entryCommands are the commands that grub-mkconfig puts into an entry
+// and that do not change which kernel boots with which arguments.
+var entryCommands = []string{"insmod", "echo", "recordfail", "load_video", "gfxmode"}
+
+func entryCommand(entry *grubItem, raw string, words []string, stack []block) {
 	switch {
-	case words[0] == "blscfg":
-		s.bls = true
-	case inEntry:
-		item := menus[len(menus)-1]
-		switch words[0] {
-		case "linux", "linux16", "linuxefi":
-			item.linux = append(item.linux, words[1:])
-		case "initrd", "initrd16", "initrdefi":
-			item.initrd = append(item.initrd, words[1:])
-		default:
-			if strings.HasPrefix(words[0], "linux$") || strings.HasPrefix(words[0], "linux${") {
-				item.badLinux = words[0]
-			}
-		}
-	case len(menus) == 0:
-		s.assignment(words, len(stack) > 0)
+	case slices.Contains([]string{"linux", "linux16", "linuxefi"}, words[0]):
+		entry.linux = append(entry.linux, raw)
+	case slices.Contains([]string{"initrd", "initrd16", "initrdefi"}, words[0]):
+		entry.initrd = append(entry.initrd, raw)
+	}
+	if problem := entryProblem(words, stack); problem != "" && entry.problem == "" {
+		entry.problem = problem
 	}
 }
 
-// assignment records "set name=value" and "name=value" outside entries.
-func (s *grubScript) assignment(words []string, inBlock bool) {
+// entryProblem is why a command of an entry makes BOOTy reboot, or "".
+func entryProblem(words []string, stack []block) string {
+	switch {
+	case slices.Contains([]string{"linux", "linux16", "linuxefi", "initrd", "initrd16", "initrdefi"}, words[0]):
+		if insideCondition(stack) {
+			return words[0] + " command inside a condition"
+		}
+		return ""
+	case strings.HasPrefix(words[0], "linux$") || strings.HasPrefix(words[0], "linux${"):
+		return "kernel command " + words[0]
+	case words[0] == "set" && len(words) == 2 && strings.HasPrefix(words[1], "root="),
+		words[0] == "search" && setsOnlyRoot(words),
+		slices.Contains(entryCommands, words[0]):
+		return ""
+	default:
+		return "command " + words[0]
+	}
+}
+
+// setsOnlyRoot reports a search command whose --set target is root.
+func setsOnlyRoot(words []string) bool {
+	target := ""
+	for i, w := range words {
+		switch {
+		case strings.HasPrefix(w, "--set="):
+			target = strings.TrimPrefix(w, "--set=")
+		case (w == "--set" || w == "-s") && i+1 < len(words):
+			target = words[i+1]
+		}
+	}
+	return target == "root"
+}
+
+// customSources are the 41_custom lines of grub-mkconfig.
+var customSources = []string{"${config_directory}/custom.cfg", "$prefix/custom.cfg"}
+
+func (s *grubScript) topCommand(raw string, words []string, stack []block, customCfg bool) {
+	inBlock := len(stack) > 0
+	switch words[0] {
+	case "blscfg":
+		s.fail("BLS entries (blscfg)")
+	case "source", ".", "configfile", "extract_entries_source", "extract_entries_configfile":
+		if len(words) == 2 && slices.Contains(customSources, words[1]) && !customCfg {
+			return // 41_custom without a custom.cfg loads nothing
+		}
+		s.fail("%s %s", words[0], strings.Join(words[1:], " "))
+	case "search", "probe", "regexp", "eval", "getenv":
+		for i, w := range words {
+			if name, ok := strings.CutPrefix(w, "--set="); ok {
+				s.unsure[name] = true
+			} else if (w == "--set" || w == "-s") && i+1 < len(words) {
+				s.unsure[words[i+1]] = true
+			}
+		}
+	default:
+		s.assignment(raw, words, stack, inBlock)
+	}
+}
+
+// assignment records "set name=value" and "name=value".
+func (s *grubScript) assignment(raw string, words []string, stack []block, inBlock bool) {
 	w := words
 	if w[0] == "set" && len(w) > 1 {
 		w = w[1:]
 	}
-	name, value, ok := strings.Cut(w[0], "=")
-	if !ok || name == "" || len(w) > 1 && words[0] != "set" {
+	if len(w) != 1 {
 		return
 	}
+	name, _, ok := strings.Cut(w[0], "=")
+	if !ok || name == "" || strings.ContainsAny(name, "$ ") {
+		return
+	}
+	// The raw value keeps its quotes for the expansion.
+	rawValue := raw[strings.Index(raw, "=")+1:]
 	if name == "default" {
-		s.defaults = append(s.defaults, value)
+		s.defaultAssignment(strings.TrimSpace(rawValue), stack)
 		return
 	}
 	if _, seen := s.vars[name]; seen || inBlock {
 		s.unsure[name] = true
 		return
 	}
-	s.vars[name] = value
+	s.vars[name] = strings.TrimSpace(rawValue)
+}
+
+// defaultAssignment accepts an unconditional "set default" and the
+// generated next_entry block. Any other conditional default is a problem.
+func (s *grubScript) defaultAssignment(rawValue string, stack []block) {
+	value := strings.Join(literalWords(rawValue), " ")
+	switch {
+	case len(stack) == 0:
+		s.defaults = append(s.defaults, defaultSet{value: rawValue})
+	case len(stack) == 1 && stack[0].kind == blockIf && stack[0].cond == nextEntryCond && !stack[0].inElse && value == "${next_entry}":
+		// The then branch only runs with next_entry set, which is refused.
+	case len(stack) == 1 && stack[0].kind == blockIf && stack[0].cond == nextEntryCond && stack[0].inElse:
+		s.defaults = append(s.defaults, defaultSet{value: rawValue, nextEntryElse: true})
+	default:
+		s.fail("conditional default %s", value)
+	}
+}
+
+func normalizeCond(raw string) string {
+	cond := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(raw), "if"))
+	cond = strings.TrimSpace(strings.TrimSuffix(cond, "then"))
+	return strings.Join(strings.Fields(strings.TrimSuffix(strings.TrimSpace(cond), ";")), " ")
 }
 
 func newGrubItem(words []string) *grubItem {
@@ -226,29 +391,23 @@ func newGrubItem(words []string) *grubItem {
 	return item
 }
 
-// defaultSpec is the default that GRUB uses: next_entry of grubenv when
-// set (Debian and Ubuntu grub.cfg read it first), else the "set default"
-// of grub.cfg with ${saved_entry} from grubenv. An empty default is "0".
+// defaultSpec is the default that GRUB uses. Every grubenv state that the
+// generated script handles with logic BOOTy does not run is refused:
+// next_entry (GRUB would consume it), prev_saved_entry, and the Ubuntu
+// initrdless fallback (initrdfail, prev_entry).
 func (s *grubScript) defaultSpec(env map[string]string) (string, error) {
-	if env["next_entry"] != "" {
-		return env["next_entry"], nil
-	}
-	saved := env["saved_entry"]
-	if env["prev_saved_entry"] != "" {
-		saved = env["prev_saved_entry"]
+	for _, key := range []string{"next_entry", "prev_saved_entry", "initrdfail", "prev_entry"} {
+		if env[key] != "" {
+			return "", fmt.Errorf("%w: grubenv sets %s", ErrUnsupported, key)
+		}
 	}
 	spec := "0"
 	for _, d := range s.defaults {
-		switch d {
-		case "${next_entry}", "$next_entry":
-		case "${saved_entry}", "$saved_entry":
-			spec = saved
-		default:
-			if strings.Contains(d, "$") {
-				return "", fmt.Errorf("%w: default %q", ErrUnsupported, d)
-			}
-			spec = d
+		words, err := s.expandWords(d.value, map[string]string{"saved_entry": env["saved_entry"]})
+		if err != nil {
+			return "", fmt.Errorf("default: %w", err)
 		}
+		spec = strings.Join(words, " ")
 	}
 	if spec == "" {
 		spec = "0"
@@ -256,15 +415,15 @@ func (s *grubScript) defaultSpec(env map[string]string) (string, error) {
 	return spec, nil
 }
 
-// resolve finds the item of a default like "0", "1>2", a title or an id,
-// or "gnulinux-advanced-x>gnulinux-5.15-advanced-x".
+// resolve finds the item of a default like "0", "1>2", a title or an id.
+// An item inside a condition, or a number after one, is refused.
 func (s *grubScript) resolve(spec string) (*grubItem, error) {
 	items := s.items
 	var item *grubItem
 	for _, part := range strings.Split(spec, ">") {
 		item = findItem(items, part)
 		if item == nil {
-			return nil, fmt.Errorf("%w: no entry %q of default %q", ErrUnsupported, part, spec)
+			return nil, fmt.Errorf("%w: no unconditional entry %q of default %q", ErrUnsupported, part, spec)
 		}
 		items = item.children
 	}
@@ -276,24 +435,20 @@ func (s *grubScript) resolve(spec string) (*grubItem, error) {
 
 func findItem(items []*grubItem, part string) *grubItem {
 	if n, err := strconv.Atoi(part); err == nil {
-		if n < 0 || n >= len(items) {
+		if n < 0 || n >= len(items) || slices.ContainsFunc(items[:n+1], func(it *grubItem) bool { return it.conditional }) {
 			return nil
-		}
-		for _, it := range items[:n+1] {
-			if it.conditional {
-				return nil // the number depends on a condition
-			}
 		}
 		return items[n]
 	}
-	for _, it := range items {
-		if it.id == part {
-			return it
-		}
-	}
-	for _, it := range items {
-		if it.title == part {
-			return it
+	for _, match := range []func(*grubItem) bool{
+		func(it *grubItem) bool { return it.id == part },
+		func(it *grubItem) bool { return it.title == part },
+	} {
+		if i := slices.IndexFunc(items, match); i >= 0 {
+			if items[i].conditional {
+				return nil
+			}
+			return items[i]
 		}
 	}
 	return nil
@@ -301,80 +456,58 @@ func findItem(items []*grubItem, part string) *grubItem {
 
 func (s *grubScript) bootEntry(item *grubItem) (*BootEntry, error) {
 	switch {
-	case item.badLinux != "":
-		return nil, fmt.Errorf("%w: entry %q loads the kernel with %q", ErrUnsupported, item.title, item.badLinux)
-	case len(item.linux) != 1 || len(item.linux[0]) == 0:
-		return nil, fmt.Errorf("%w: entry %q has %d linux commands (conditional or none)", ErrUnsupported, item.title, len(item.linux))
-	case len(item.initrd) > 1 || len(item.initrd) == 1 && len(item.initrd[0]) != 1:
-		return nil, fmt.Errorf("%w: entry %q has several initrds", ErrUnsupported, item.title)
+	case item.problem != "":
+		return nil, fmt.Errorf("%w: entry %q: %s", ErrUnsupported, item.title, item.problem)
+	case len(item.linux) != 1:
+		return nil, fmt.Errorf("%w: entry %q has %d linux commands", ErrUnsupported, item.title, len(item.linux))
+	case len(item.initrd) > 1:
+		return nil, fmt.Errorf("%w: entry %q has %d initrd commands", ErrUnsupported, item.title, len(item.initrd))
 	}
-	words, err := s.expandWords(item.linux[0])
+	words, err := s.expandWords(item.linux[0], nil)
 	if err != nil {
 		return nil, fmt.Errorf("entry %q: %w", item.title, err)
 	}
-	if len(words) == 0 {
+	if len(words) < 2 {
 		return nil, fmt.Errorf("%w: entry %q has no kernel", ErrUnsupported, item.title)
 	}
-	entry := &BootEntry{Name: item.title, Kernel: words[0], KernelArgs: strings.Join(words[1:], " ")}
+	args, err := kernelArgs(words[2:])
+	if err != nil {
+		return nil, fmt.Errorf("entry %q: %w", item.title, err)
+	}
+	entry := &BootEntry{Name: item.title, Kernel: words[1], KernelArgs: args}
 	if len(item.initrd) == 1 {
-		initrd, err := s.expandWords(item.initrd[0])
-		if err != nil || len(initrd) != 1 {
-			return nil, fmt.Errorf("%w: entry %q: initrd %v", ErrUnsupported, item.title, item.initrd[0])
+		initrd, err := s.expandWords(item.initrd[0], nil)
+		if err != nil || len(initrd) != 2 {
+			return nil, fmt.Errorf("%w: entry %q: initrd needs exactly one file", ErrUnsupported, item.title)
 		}
-		entry.Initramfs = initrd[0]
+		entry.Initramfs = initrd[1]
 	}
 	return entry, nil
 }
 
-var varRE = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
-
-// expandWords expands $name and ${name} like GRUB, for variables that
-// grub.cfg sets once outside blocks; a cosmetic variable becomes empty.
-// Any other variable returns ErrUnsupported. Empty words are dropped.
-func (s *grubScript) expandWords(words []string) ([]string, error) {
-	var out []string
+// kernelArgs joins the words to a kernel command line. A word with blanks
+// is quoted like the kernel parses it; a word with a double quote is
+// refused, the kernel has no escape for it.
+func kernelArgs(words []string) (string, error) {
+	out := make([]string, 0, len(words))
 	for _, w := range words {
-		v, err := s.expand(w, 0)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, strings.Fields(v)...)
-	}
-	return out, nil
-}
-
-func (s *grubScript) expand(w string, depth int) (string, error) {
-	if depth > 5 {
-		return "", fmt.Errorf("%w: variables nest too deep in %q", ErrUnsupported, w)
-	}
-	var firstErr error
-	out := varRE.ReplaceAllStringFunc(w, func(m string) string {
-		sub := varRE.FindStringSubmatch(m)
-		name := sub[1] + sub[2]
-		value, ok := s.vars[name]
 		switch {
-		case cosmeticVars[name]:
-			return ""
-		case !ok || s.unsure[name]:
-			if firstErr == nil {
-				firstErr = fmt.Errorf("%w: variable $%s is not set unconditionally in grub.cfg", ErrUnsupported, name)
-			}
-			return m
+		case strings.Contains(w, `"`):
+			return "", fmt.Errorf("%w: kernel argument with a double quote", ErrUnsupported)
+		case strings.ContainsAny(w, " \t"):
+			out = append(out, `"`+w+`"`)
+		default:
+			out = append(out, w)
 		}
-		v, err := s.expand(value, depth+1)
-		if err != nil && firstErr == nil {
-			firstErr = err
-		}
-		return v
-	})
-	return out, firstErr
+	}
+	return strings.Join(out, " "), nil
 }
 
 // readGrubenv reads a GRUB environment block: name=value lines, "#"
 // padding and comments. A missing file is an empty environment.
 func readGrubenv(path string) map[string]string {
 	env := map[string]string{}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path below the installed root
 	if err != nil {
 		return env
 	}
@@ -384,36 +517,4 @@ func readGrubenv(path string) map[string]string {
 		}
 	}
 	return env
-}
-
-// shellWords splits a GRUB script line into words. Quotes group words and
-// are removed; a ";" at the end of a word stays part of it.
-func shellWords(line string) []string {
-	var words []string
-	var cur strings.Builder
-	var quote rune
-	inWord := false
-	for _, r := range line {
-		switch {
-		case quote != 0 && r == quote:
-			quote = 0
-		case quote != 0:
-			cur.WriteRune(r)
-		case r == '\'' || r == '"':
-			quote, inWord = r, true
-		case r == ' ' || r == '\t':
-			if inWord {
-				words = append(words, cur.String())
-				cur.Reset()
-				inWord = false
-			}
-		default:
-			cur.WriteRune(r)
-			inWord = true
-		}
-	}
-	if inWord {
-		words = append(words, cur.String())
-	}
-	return words
 }

@@ -313,18 +313,35 @@ BOOTy skips kexec and reboots when one of these is true:
 - a step changed firmware values, for example the Mellanox SR-IOV setup,
 - the installed root has no usable GRUB entry (see below).
 
-BOOTy kexecs the entry that GRUB would boot. It reads `/boot/grub/grub.cfg`,
-then `/boot/grub2/grub.cfg`, takes `next_entry` from `grubenv` when it is
-set, else the `set default` of `grub.cfg` (with `${saved_entry}` from
-`grubenv` for `GRUB_DEFAULT=saved`), and follows submenu paths by number,
-id or title (`1>2`, `gnulinux-advanced-...>gnulinux-...`). It expands
-variables that `grub.cfg` sets once outside blocks and drops `$vt_handoff`.
-It reboots instead when only GRUB can resolve the entry: BLS entries
-(`blscfg`, RHEL-likes), an entry with more than one `linux` command
-(conditional kernel lines), a kernel or argument from a variable that GRUB
-sets in a function or a condition (Flatcar `gptprio`), several initrds, a
-default number after a conditional entry, or a default that is a submenu
-or does not exist.
+BOOTy kexecs the entry that GRUB would boot, and only when it is sure:
+any doubt, reboot. It does not emulate GRUB; it accepts the shapes that
+`grub-mkconfig` generates on Debian and Ubuntu (`kexec.DefaultEntry`):
+
+- `grub.cfg` from `/boot/grub`, then `/boot/grub2`.
+- The default is an unconditional `set default`, or the generated
+  `if [ "${next_entry}" ] ; then ... else set default=X fi` block.
+  `${saved_entry}` comes from `grubenv` (`GRUB_DEFAULT=saved`); an empty
+  default is entry 0.
+- Submenu paths by number, id or title (`1>2`,
+  `gnulinux-advanced-...>gnulinux-...`).
+- Entries of the generated commands only: `insmod`, `echo`, `recordfail`,
+  `load_video`, `gfxmode`, `set root=`, `search --set=root`, one `linux`
+  and at most one `initrd` with one file, both outside conditions.
+- Variables that `grub.cfg` sets once and unconditionally at the top level
+  are expanded like GRUB (no expansion in single quotes, a backslash
+  escapes, an unquoted value splits into words); `$vt_handoff` is dropped.
+  A kernel argument with blanks is quoted for the kernel.
+
+BOOTy reboots instead when `grubenv` sets `next_entry` (GRUB boots it once
+and clears it), `prev_saved_entry`, `initrdfail` or `prev_entry` (the
+Ubuntu initrdless fallback); for any other conditional default; for a
+default entry inside a condition or a number after one; for any other
+command in the entry (`set`, `search`/`probe`/`regexp --set` of another
+variable, `source`, an unknown function); for a `linux` or `initrd` inside
+a condition; for BLS (`blscfg`, RHEL-likes), Flatcar (`configfile`, gptprio
+kernel), any `source` or `configfile` (except the `41_custom` line when
+the image has no `custom.cfg`); for an unknown or conditional variable,
+several initrds, or a kernel argument with a double quote.
 
 An A/B upgrade with `AB_PRESERVE_EXISTING=true` needs kexec. If kexec does
 not happen, BOOTy powers off instead of a reboot. `SUCCESS_ACTION=poweroff`
