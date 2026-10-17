@@ -145,8 +145,39 @@ status other than `ok` and `applied`):
 
 BOOTy logs a summary line `SR-IOV compliance` with the finding counts.
 
-This version does not apply runtime settings; a profile with runtime
-settings reports them as `unverified`.
+### Runtime settings
+
+Runtime settings do not survive the kexec or the reboot into the installed
+OS. BOOTy applies them in the ramdisk to prove that the PF ports can run
+them, checks the result, and by default restores the state from before:
+
+1. Group the PF ports by device (devlink handle): ports of one device share
+   `sriov_numvfs` and the eSwitch. Two ports of a device that want
+   different values fail.
+2. eSwitch mode through devlink (`DEVLINK_CMD_ESWITCH_SET`), with the VFs
+   off first. BOOTy never changes the eSwitch of a port the ramdisk uses (a
+   master device, an address other than IPv6 link-local, or a unicast route
+   through it, such as the BGP unnumbered routes): mlx5 replaces the PF
+   netdev by the uplink representor in switchdev mode, which would drop the
+   provisioning network.
+3. `sriov_numvfs` through sysfs, through 0 when the count changes.
+4. VF attributes through rtnetlink on the PF netdev, for each VF below
+   `numVFs`: `vfDefaults` merged with the `vfs[]` entry of the index. MAC,
+   VLAN and QoS, min and max rate, spoof check, trust and link state, in the
+   order of `ip link set <pf> vf N`.
+5. Read the ports again and compare `eswitchMode`, `numVFs` and each VF
+   (`vfs[N]`, with the wanted and the read attributes).
+6. `handoff: reset` (the default) turns the VFs off, restores the eSwitch
+   mode if BOOTy changed it and restores an earlier VF count, then checks
+   it (`handoff`). `handoff: keep` leaves the state, for modes in which the
+   ramdisk keeps running (standby, agent).
+
+Runtime findings are `ok` or `failed`. `onDrift` `warn` logs a failure,
+`fail` and `apply` stop the run. The runtime settings use only kernel
+interfaces, so they work on every driver that implements them: `mlx5_core`,
+`ice`, `i40e`, `ixgbe`, `bnxt_en`, `qede`, `cxgb4`, `sfc` and `igb`. In
+switchdev mode, mlx5 does not take VLAN, QoS, trust and spoof check through
+the PF netdev; those fail with the driver error.
 
 ## Handoff contract
 
@@ -159,9 +190,11 @@ BOOTy guarantees at the handoff, for every PF port:
 
 1. The inventory has the `sriov` report of the port, read after every
    change that BOOTy made.
-2. BOOTy never leaves VFs or a switchdev eSwitch behind that it created:
-   the installed OS starts with the state that the NIC firmware and the OS
-   driver defaults give (`sriovNumVFs` 0, eSwitch `legacy`).
+2. BOOTy never leaves VFs or a switchdev eSwitch behind that it created
+   (`handoff: reset`, the default): the installed OS starts with the state
+   that the NIC firmware and the OS driver defaults give (`sriovNumVFs` 0,
+   eSwitch `legacy`). With profiles, the runtime settings of every matched
+   PF port worked in the ramdisk, or the run failed.
 3. A firmware-level setting that BOOTy changed is active: BOOTy reboots
    instead of kexec after the change, so `sriovTotalVFs`, the link type and
    the SR-IOV enable are the new values in the installed OS.

@@ -189,3 +189,62 @@ func TestNetdevsimDiscover(t *testing.T) {
 		t.Fatalf("rtnetlink VFs: %+v", pfs)
 	}
 }
+
+func netdevsimReconcile(t *testing.T, n *netdevsim, rt RuntimeSettings) *Result {
+	t.Helper()
+	waitPFs(t, n, 1)
+	p := Profile{Name: "nsim", Match: Match{Driver: "netdevsim"}, Runtime: rt}
+	r := &Reconciler{Config: &Config{Profiles: []Profile{p}, OnDrift: OnDriftFail},
+		Discover: func() ([]PF, error) { return netdevsimPFs(t, n), nil },
+		Runtime:  NewKernelRuntime()}
+	res, err := r.Run(t.Context())
+	if err != nil {
+		t.Fatalf("reconcile: %v\nfindings: %+v", err, res.Findings)
+	}
+	return res
+}
+
+// TestNetdevsimRuntimeVFAttributes creates VFs and sets every VF attribute
+// through sysfs and rtnetlink, keeps them, and reads them back.
+func TestNetdevsimRuntimeVFAttributes(t *testing.T) {
+	n := newNetdevsim(t, 4711, 1)
+	n.setMaxVFs(t, 8)
+	netdevsimReconcile(t, n, RuntimeSettings{NumVFs: ptr(2), Handoff: HandoffKeep,
+		VFDefaults: VFSettings{Trust: ptr(true), SpoofChk: ptr(false), LinkState: "disable"},
+		VFs: []VFOverride{{Index: 1, MAC: "02:00:00:00:47:11",
+			VFSettings: VFSettings{VLAN: ptr(100), QoS: ptr(3), MaxTxRate: ptr(1000), SpoofChk: ptr(true)}}}})
+
+	pfs := netdevsimPFs(t, n)
+	if len(pfs) != 1 || pfs[0].NumVFs != 2 || len(pfs[0].VFs) != 2 {
+		t.Fatalf("PF after apply: %+v", pfs)
+	}
+	vf0, vf1 := findVF(pfs[0].VFs, 0), findVF(pfs[0].VFs, 1)
+	if !vf0.Trust || vf0.SpoofChk || vf0.LinkState != "disable" {
+		t.Errorf("VF 0 = %+v", vf0)
+	}
+	if vf1.MAC != "02:00:00:00:47:11" || vf1.VLAN != 100 || vf1.QoS != 3 || vf1.MaxTxRate != 1000 || !vf1.SpoofChk || !vf1.Trust {
+		t.Errorf("VF 1 = %+v", vf1)
+	}
+}
+
+// TestNetdevsimRuntimeSwitchdevAndReset switches the eSwitch to switchdev
+// with VFs, checks the result, and lets the handoff reset restore legacy
+// mode without VFs.
+func TestNetdevsimRuntimeSwitchdevAndReset(t *testing.T) {
+	n := newNetdevsim(t, 4712, 1)
+	n.setMaxVFs(t, 8)
+	res := netdevsimReconcile(t, n, RuntimeSettings{NumVFs: ptr(2), EswitchMode: EswitchSwitchdev})
+	var handoff bool
+	for _, f := range res.Findings {
+		if f.Setting == SettingHandoff {
+			handoff = f.Status == StatusOK
+		}
+	}
+	if !handoff {
+		t.Fatalf("no successful handoff reset: %+v", res.Findings)
+	}
+	pfs := netdevsimPFs(t, n)
+	if len(pfs) != 1 || pfs[0].NumVFs != 0 || pfs[0].Eswitch.Mode != EswitchLegacy {
+		t.Fatalf("after the handoff reset: %+v", pfs)
+	}
+}

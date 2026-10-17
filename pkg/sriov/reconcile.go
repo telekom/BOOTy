@@ -15,7 +15,9 @@ type Reconciler struct {
 	Discover func() ([]PF, error)
 	// Backends are the firmware backends, tried in order.
 	Backends []FirmwareBackend
-	Log      *slog.Logger
+	// Runtime applies the runtime settings; nil reports them unverified.
+	Runtime RuntimeOps
+	Log     *slog.Logger
 }
 
 // Result is the outcome of a reconcile.
@@ -51,8 +53,8 @@ func (r *Reconciler) Run(ctx context.Context) (*Result, error) {
 		fw, reboot := r.firmware(ctx, a)
 		res.Findings = append(res.Findings, fw...)
 		res.Reboot = res.Reboot || reboot
-		res.Findings = append(res.Findings, r.runtime(a)...)
 	}
+	res.Findings = append(res.Findings, r.runtime(assignments)...)
 	return res, r.enforce(log, res)
 }
 
@@ -98,15 +100,90 @@ func (r *Reconciler) firmware(ctx context.Context, a Assignment) (findings []Fin
 	return findings, status == StatusApplied
 }
 
-// runtime reports the runtime settings of a profile. This version does not
-// apply them.
-func (r *Reconciler) runtime(a Assignment) []Finding {
-	rt := &a.Profile.Runtime
-	if rt.NumVFs == nil && rt.EswitchMode == "" {
+// runtime applies the runtime settings, checks the result, and with
+// handoff reset (the default) restores the state from before the apply.
+// Runtime settings do not survive the handoff; BOOTy applies them to prove
+// that the PF ports can run them.
+func (r *Reconciler) runtime(assignments []Assignment) []Finding {
+	if r.Runtime == nil {
+		var out []Finding
+		for _, a := range assignments {
+			if hasRuntimeSettings(&a.Profile.Runtime) {
+				out = append(out, Finding{Profile: a.Profile.Name, Interface: a.PF.Interface, Level: LevelRuntime,
+					Setting: "runtime", Status: StatusUnverified, Detail: "no runtime access"})
+			}
+		}
+		return out
+	}
+	devs, findings := runtimeDevices(assignments)
+	if len(devs) == 0 {
+		return findings
+	}
+	for _, d := range devs {
+		applyDevice(r.Runtime, d)
+	}
+	now := r.discoverByName()
+	for _, d := range devs {
+		for _, a := range d.assignments {
+			pf, ok := now[a.PF.Interface]
+			if !ok {
+				findings = append(findings, Finding{Profile: a.Profile.Name, Interface: a.PF.Interface, Level: LevelRuntime,
+					Setting: "runtime", Status: StatusFailed, Detail: "PF port missing after the apply"})
+				continue
+			}
+			findings = append(findings, verifyRuntime(a, pf, d.errs)...)
+		}
+	}
+	return append(findings, r.handoff(devs)...)
+}
+
+// handoff restores every changed device that does not keep its runtime
+// state, then checks the VF count and the eSwitch mode again.
+func (r *Reconciler) handoff(devs []*runtimeDevice) []Finding {
+	var reset []*runtimeDevice
+	errs := map[*runtimeDevice]error{}
+	for _, d := range devs {
+		if d.changed && !d.keep {
+			errs[d] = resetDevice(r.Runtime, d)
+			reset = append(reset, d)
+		}
+	}
+	if len(reset) == 0 {
 		return nil
 	}
-	return []Finding{{Profile: a.Profile.Name, Interface: a.PF.Interface, Level: LevelRuntime,
-		Setting: "runtime", Status: StatusUnverified, Detail: "this BOOTy version does not apply runtime settings"}}
+	now := r.discoverByName()
+	var out []Finding
+	for _, d := range reset {
+		a := d.assignments[0]
+		want := fmt.Sprintf("numVFs=%d eswitch=%s", d.origNumVFs, d.origEswitch)
+		f := Finding{Profile: a.Profile.Name, Interface: a.PF.Interface, Level: LevelRuntime,
+			Setting: SettingHandoff, Want: want, Status: StatusOK}
+		if pf, ok := now[a.PF.Interface]; ok {
+			f.Got = fmt.Sprintf("numVFs=%d eswitch=%s", pf.NumVFs, pf.Eswitch.Mode)
+		}
+		if f.Got != f.Want {
+			f.Status = StatusFailed
+		}
+		if errs[d] != nil {
+			f.Status, f.Detail = StatusFailed, errs[d].Error()
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// discoverByName reports the PF ports by interface; a failed discovery is
+// an empty map, so every check after it fails.
+func (r *Reconciler) discoverByName() map[string]*PF {
+	pfs, err := r.Discover()
+	out := make(map[string]*PF, len(pfs))
+	if err != nil {
+		return out
+	}
+	for i := range pfs {
+		out[pfs[i].Interface] = &pfs[i]
+	}
+	return out
 }
 
 // enforce logs the findings and fails for the profiles that require it.
