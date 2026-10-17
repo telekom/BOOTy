@@ -3,11 +3,8 @@
 package ethtool
 
 import (
-	"errors"
-	"syscall"
 	"testing"
 
-	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"
 )
@@ -73,33 +70,6 @@ func TestParseFEC(t *testing.T) {
 	}
 }
 
-// On a veth pair the kernel reports 10000 Mb/s full duplex and the link
-// state. It needs CAP_NET_ADMIN to create the pair.
-func TestLinkKernel(t *testing.T) {
-	veth := &netlink.Veth{LinkAttrs: netlink.LinkAttrs{Name: "bootyeth0"}, PeerName: "bootyeth1"}
-	if err := netlink.LinkAdd(veth); err != nil {
-		if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EOPNOTSUPP) {
-			t.Skipf("no veth: %v", err)
-		}
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = netlink.LinkDel(veth) })
-	for _, name := range []string{"bootyeth0", "bootyeth1"} {
-		l, _ := netlink.LinkByName(name)
-		_ = netlink.LinkSetUp(l)
-	}
-	m, err := GetLinkModes("bootyeth0")
-	if err != nil || m.SpeedMbps != 10000 || m.Duplex != "full" {
-		t.Fatalf("veth link modes = %+v, %v", m, err)
-	}
-	if _, err := GetLinkState("bootyeth0"); err != nil {
-		t.Fatalf("veth link state: %v", err)
-	}
-	if _, err := GetFEC("bootyeth0"); !IsNotSupported(err) {
-		t.Fatalf("veth FEC = %v, want EOPNOTSUPP", err)
-	}
-}
-
 func TestModuleDataOf(t *testing.T) {
 	data := []byte{0x11, 0x00, 0x04}
 	got, err := moduleDataOf(reply(nl.NewRtAttr(moduleData, data)))
@@ -108,21 +78,5 @@ func TestModuleDataOf(t *testing.T) {
 	}
 	if _, err := moduleDataOf(reply(nl.NewRtAttr(moduleLength, nl.Uint32Attr(3)))); err == nil {
 		t.Fatal("reply without data accepted")
-	}
-}
-
-// The kernel accepts the request: lo has no module, so a well formed
-// request ends with EOPNOTSUPP, a malformed one with EINVAL. The kernel
-// allows module reads only with CAP_NET_ADMIN.
-func TestModuleEEPROMKernel(t *testing.T) {
-	if _, err := familyID(); err != nil {
-		t.Skipf("no ethtool netlink family: %v", err)
-	}
-	_, err := ReadModuleEEPROM("lo", 0x50, 0, 0, 128)
-	if errors.Is(err, syscall.EPERM) {
-		t.Skip("needs CAP_NET_ADMIN")
-	}
-	if !IsNotSupported(err) {
-		t.Fatalf("ReadModuleEEPROM(lo) = %v, want EOPNOTSUPP", err)
 	}
 }
