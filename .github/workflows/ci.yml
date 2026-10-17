@@ -1228,6 +1228,28 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  bfd-frr-interop:
+    name: BFD FRR interop (${{ matrix.frr }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # The legacy ramdisk and kindmetal leaves run 10.2.1, the lab 10.3.1.
+        frr: ["10.2.1", "10.3.1"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: BFD against FRR bfdd (150/150/3, 6 recoveries, no flap)
+        shell: bash
+        run: |
+          set -eo pipefail
+          mkdir -p "$HOME/go/pkg/mod"
+          CYCLES=6 test/e2e/bfd/frr-interop.sh "quay.io/frrouting/frr:${{ matrix.frr }}" 2>&1 | tee bfd-frr-interop.log
+          grep -q '^--- PASS: TestFRRInterop' bfd-frr-interop.log
+
   e2e-boot:
     name: E2E Boot (ContainerLab)
     runs-on: ubuntu-latest
