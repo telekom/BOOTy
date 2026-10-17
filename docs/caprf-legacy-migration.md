@@ -200,8 +200,16 @@ Results in the production-shaped CAPRF fixture (CAPRF !292, kindmetal):
   result (CAPRF !294). BOOTy 0.2.0-rc.12 cannot set up this network.
 - The fabric sees the same with template files and with native vars.
 
-Differences that `fabric-parity-diff` still reports for BOOTy `main` (open,
-to be fixed or accepted):
+Fix PRs in the CAPRF fixture: #710 removes the route distinguisher, MED and
+BFD echo differences (CAPRF !301: the template-files run passes every spec,
+and `fabric-parity-diff` finds no unexplained difference; the extended next
+hop capability on the route reflector sessions is accepted as documented).
+#703 makes BOOTy recover in the single-leaf fixture after a 60 s outage
+(CAPRF !300: the whole old EVPN job passes), but its BFD change causes BFD
+Up/Down storms on the production-shaped fixture.
+
+Differences that `fabric-parity-diff` reports for BOOTy `main` without the
+fix PRs (open, to be fixed or accepted):
 
 - Route distinguisher: BOOTy uses `<AS>:<VNI>` (4210000017:3000) on every
   host; FRR uses `<router-id>:<n>`, unique per host.
