@@ -78,3 +78,11 @@ func TestDisableNICFirmwareLLDP(t *testing.T) {
 		t.Fatalf("Validate = %v, want a NIC_FW_LLDP error", err)
 	}
 }
+
+func TestValidateLinksMode(t *testing.T) {
+	c := &Config{}
+	c.Network.Mode = "links"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("network.mode links: %v", err)
+	}
+}
