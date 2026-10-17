@@ -26,7 +26,11 @@ func (m *CheckMode) Name() string { return "check" }
 func (m *CheckMode) Run(ctx context.Context) error {
 	cfg := m.deps.Cfg
 	_ = m.deps.Client.ReportStatus(ctx, config.StatusInit, "health-check")
-	waitForLLDPNeighbors(ctx, cfg.Check.NeighborWait())
+	if config.BoolOr(cfg.Network.LLDPReceive, true) {
+		waitForLLDPNeighbors(ctx, cfg.Check.NeighborWait())
+	} else if cfg.Check.NeighborWait() > 0 {
+		slog.Info("LLDP neighbor wait skipped: LLDP receive is off")
+	}
 
 	checks := []health.Check{
 		&health.DiskPresenceCheck{},

@@ -722,6 +722,12 @@ socket also sees them). A neighbor has:
 | `inventory` | LLDP-MED inventory | hardware, firmware and software revision, serial number, manufacturer, model, asset ID |
 | `firstSeen`, `lastSeen`, `changes` | | When the neighbor appeared and sent last; how often the neighbor of the NIC changed or came back after its TTL ran out. |
 
+Junos caveat: Junos sends the port name in the port description only when
+the interface has no description of its own; with a configured interface
+description, neither TLV names the port. `set protocols lldp
+port-id-subtype interface-name` on the leaf makes the port ID the port
+name.
+
 All strings are sanitized (control characters replaced, at most 255
 bytes). `LLDP_NEIGHBOR_WAIT` (check mode) waits until every NIC with
 carrier has a neighbor.
