@@ -319,7 +319,7 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   quote, and the `PubKeyX`, `PubKeyY` and `PCRDigest` quote fields are
   removed. BOOTy PCR events move from PCR 8, 9, 10, 14 and 15 (GRUB, IMA,
   shim, systemd) to PCR 23 (`PCRBooty`); the cryptenroll proposal no longer
-  binds PCR 14 (#PRTPM)
+  binds PCR 14 (#707)
 
 ### Fixes
 
