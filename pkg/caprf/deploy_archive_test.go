@@ -12,7 +12,8 @@ import (
 
 type archiveEntry struct {
 	name, body, link string
-	dir              bool
+	typ              byte
+	mode             int64
 }
 
 func deployArchive(t *testing.T, entries ...archiveEntry) []byte {
@@ -21,12 +22,15 @@ func deployArchive(t *testing.T, entries ...archiveEntry) []byte {
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
 	for _, e := range entries {
-		hdr := &tar.Header{Name: e.name, Mode: 0o644, Size: int64(len(e.body)), Typeflag: tar.TypeReg}
-		switch {
-		case e.dir:
-			hdr.Typeflag, hdr.Mode, hdr.Size = tar.TypeDir, 0o755, 0
-		case e.link != "":
-			hdr.Typeflag, hdr.Linkname, hdr.Size = tar.TypeSymlink, e.link, 0
+		hdr := &tar.Header{Name: e.name, Mode: 0o644, Typeflag: tar.TypeReg, Linkname: e.link, Uid: 4242, Gid: 4242}
+		if e.typ != 0 {
+			hdr.Typeflag = e.typ
+		}
+		if e.mode != 0 {
+			hdr.Mode = e.mode
+		}
+		if hdr.Typeflag == tar.TypeReg {
+			hdr.Size = int64(len(e.body))
 		}
 		if err := tw.WriteHeader(hdr); err != nil {
 			t.Fatal(err)
@@ -47,15 +51,22 @@ func deployArchive(t *testing.T, entries ...archiveEntry) []byte {
 }
 
 const baseAgentVars = "TOKEN=agent-token\nMODE=standby\nINIT_URL=https://caprf/status/init\n" +
-	"HEARTBEAT_URL=https://caprf/agent/heartbeat\nCOMMANDS_URL=https://caprf/agent/commands\nHOSTNAME=old\n"
+	"HEARTBEAT_URL=https://caprf/agent/heartbeat\nCOMMANDS_URL=https://caprf/agent/commands\n" +
+	"FIRMWARE_URL=https://caprf/firmware\nHOSTNAME=old\n"
 
-// The archive of the next job replaces the per-job files and vars; the
-// agent keeps its token and endpoints.
-func TestDeployArchiveConfigReplacesJobFiles(t *testing.T) {
-	root := t.TempDir()
-	t.Cleanup(func(prev string) func() { return func() { deployRoot = prev } }(deployRoot))
+// validVars is a deploy/vars that passes, so in the unsafe-entry tests only
+// the guard under test can fail the archive.
+var validVars = archiveEntry{name: "deploy/vars", body: "HOSTNAME=worker-7\n"}
+
+// useDeployRoot points deployRoot at a temp /deploy with files of a
+// previous job and returns it.
+func useDeployRoot(t *testing.T) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "deploy")
+	prev := deployRoot
+	t.Cleanup(func() { deployRoot = prev })
 	deployRoot = root
-	for _, f := range []string{"machine-files/old", "machine-commands/old.sh", "file-system/etc/old"} {
+	for _, f := range []string{"machine-files/old", "machine-commands/old.sh", "file-system/etc/old", "vars"} {
 		p := filepath.Join(root, f)
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)
@@ -64,11 +75,18 @@ func TestDeployArchiveConfigReplacesJobFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	return root
+}
+
+// The archive of the next job replaces the per-job files; the agent keeps
+// its token, endpoints and bearer URLs.
+func TestDeployArchiveConfigReplacesJobFiles(t *testing.T) {
+	root := useDeployRoot(t)
 	payload := deployArchive(t,
-		archiveEntry{name: "deploy/", dir: true},
-		archiveEntry{name: "deploy/vars", body: "TOKEN=job-token\nMODE=provision\nINIT_URL=https://caprf/status/init\nHOSTNAME=worker-7\n"},
-		archiveEntry{name: "deploy/machine-files/etc/cloud/nocloud/user-data", body: "#cloud-config\n"},
-		archiveEntry{name: "deploy/machine-files/etc/localtime", link: "/usr/share/zoneinfo/UTC"},
+		archiveEntry{name: "deploy/", typ: tar.TypeDir},
+		archiveEntry{name: "deploy/vars", body: "TOKEN=job-token\nMODE=provision\nFIRMWARE_URL=https://evil/fw\nHOSTNAME=worker-7\n"},
+		archiveEntry{name: "deploy/machine-files/etc/cloud/nocloud/user-data", body: "#cloud-config\n", mode: 0o4666},
+		archiveEntry{name: "deploy/machine-commands/10-run.sh", body: "#!/bin/sh\n", mode: 0o700},
 	)
 
 	c := &Client{vars: []byte(baseAgentVars)}
@@ -76,58 +94,92 @@ func TestDeployArchiveConfigReplacesJobFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Hostname != "worker-7" || cfg.Transport.Token != "agent-token" || cfg.Mode != "standby" {
-		t.Fatalf("hostname %q token %q mode %q, want the archive hostname and the agent token and mode", cfg.Hostname, cfg.Transport.Token, cfg.Mode)
+	if cfg.Hostname != "worker-7" || cfg.Transport.Token != "agent-token" || cfg.Mode != "standby" ||
+		cfg.Provision.Firmware.URL != "https://caprf/firmware" {
+		t.Fatalf("hostname %q token %q mode %q firmware %q, want the archive hostname and the live agent settings",
+			cfg.Hostname, cfg.Transport.Token, cfg.Mode, cfg.Provision.Firmware.URL)
 	}
-	if strings.Join(keys, ",") != "HOSTNAME,INIT_URL,MODE,TOKEN" {
+	if strings.Join(keys, ",") != "FIRMWARE_URL,HOSTNAME,MODE,TOKEN" {
 		t.Fatalf("keys = %v", keys)
 	}
-	if b, err := os.ReadFile(filepath.Join(root, "machine-files/etc/cloud/nocloud/user-data")); err != nil || string(b) != "#cloud-config\n" {
-		t.Fatalf("user-data = %q, %v", b, err)
+	for file, mode := range map[string]os.FileMode{
+		"machine-files/etc/cloud/nocloud/user-data": 0o644, // setuid and world write dropped
+		"machine-commands/10-run.sh":                0o755,
+	} {
+		fi, err := os.Lstat(filepath.Join(root, file))
+		if err != nil || fi.Mode() != mode {
+			t.Fatalf("%s: mode %v, %v; want %v", file, fi.Mode(), err, mode)
+		}
 	}
-	if l, err := os.Readlink(filepath.Join(root, "machine-files/etc/localtime")); err != nil || l != "/usr/share/zoneinfo/UTC" {
-		t.Fatalf("symlink = %q, %v", l, err)
-	}
-	for _, gone := range []string{"machine-files/old", "machine-commands", "file-system"} {
+	for _, gone := range []string{"machine-files/old", "file-system"} {
 		if _, err := os.Lstat(filepath.Join(root, gone)); !os.IsNotExist(err) {
 			t.Fatalf("%s of the previous job still exists (%v)", gone, err)
 		}
 	}
-	if left, _ := filepath.Glob(filepath.Join(root, ".archive-*")); len(left) != 0 {
+	if b, _ := os.ReadFile(filepath.Join(root, "vars")); string(b) != "old" {
+		t.Fatal("the archive changed /deploy/vars")
+	}
+	if left, _ := filepath.Glob(filepath.Join(filepath.Dir(root), ".booty-archive-*")); len(left) != 0 {
 		t.Fatalf("staging left behind: %v", left)
 	}
 }
 
+// Each archive has a valid deploy/vars: only the guard can reject it, and
+// /deploy stays unchanged.
 func TestDeployArchiveRejectsUnsafeEntries(t *testing.T) {
+	defer func(b int64, n int) { maxDeployArchive, maxArchiveEntries = b, n }(maxDeployArchive, maxArchiveEntries)
+	maxDeployArchive, maxArchiveEntries = 64, 5
 	for name, entries := range map[string][]archiveEntry{
-		"outside deploy": {{name: "etc/passwd", body: "x"}},
-		"dot dot":        {{name: "deploy/../etc/passwd", body: "x"}},
-		"below symlink":  {{name: "deploy/machine-files/l", link: "/etc"}, {name: "deploy/machine-files/l/passwd", body: "x"}},
-		"no vars":        {{name: "deploy/machine-files/a", body: "x"}},
-		"device":         {{name: "deploy/vars", body: "HOSTNAME=x\n"}, {name: "deploy/machine-files/dev", body: ""}},
+		// Proven tar-slip: a symlink, then a file of the same name.
+		"symlink then file": {validVars, {name: "deploy/machine-files/x", typ: tar.TypeSymlink, link: "/etc/passwd"}, {name: "deploy/machine-files/x", body: "pwned"}},
+		"symlink":           {validVars, {name: "deploy/machine-files/l", typ: tar.TypeSymlink, link: "../"}},
+		"top-level symlink": {validVars, {name: "deploy/machine-files", typ: tar.TypeSymlink, link: "/etc"}},
+		"vars symlink":      {{name: "deploy/vars", typ: tar.TypeSymlink, link: "/etc/shadow"}},
+		"hard link":         {validVars, {name: "deploy/machine-files/h", typ: tar.TypeLink, link: "deploy/vars"}},
+		"device":            {validVars, {name: "deploy/machine-files/null", typ: tar.TypeChar}},
+		"duplicate file":    {validVars, {name: "deploy/machine-files/a", body: "1"}, {name: "deploy/machine-files/a", body: "2"}},
+		"outside deploy":    {validVars, {name: "etc/passwd", body: "x"}},
+		"dot dot":           {validVars, {name: "deploy/../etc/passwd", body: "x"}},
+		"dot dot inside":    {validVars, {name: "deploy/machine-files/../../etc/passwd", body: "x"}},
+		"absolute":          {validVars, {name: "/deploy/machine-files/a", body: "x"}},
+		"empty name":        {validVars, {name: "", body: "x"}},
+		"too large":         {validVars, {name: "deploy/machine-files/big", body: strings.Repeat("x", 65)}},
+		"too many entries":  {validVars, {name: "deploy/a/1", body: ""}, {name: "deploy/a/2", body: ""}, {name: "deploy/a/3", body: ""}, {name: "deploy/a/4", body: ""}, {name: "deploy/a/5", body: ""}},
+		"no vars":           {{name: "deploy/machine-files/a", body: "x"}},
+		"unknown vars key":  {{name: "deploy/vars", body: "HOSTNAME=x\nNOT_A_BOOTY_KEY=secret-value\n"}},
+		"bad vars line":     {{name: "deploy/vars", body: "HOSTNAME=x\nnot a line with secret-value\n"}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			payload := deployArchive(t, entries...)
-			if name == "device" {
-				payload = deviceArchive(t)
-			}
-			if _, err := applyDeployArchive(payload, t.TempDir()); err == nil {
+			root := useDeployRoot(t)
+			c := &Client{vars: []byte(baseAgentVars)}
+			_, _, err := c.CommandConfig(deployArchive(t, entries...))
+			if err == nil {
 				t.Fatal("unsafe archive applied")
+			}
+			if strings.Contains(err.Error(), "secret-value") {
+				t.Fatalf("error leaks a value: %v", err)
+			}
+			if b, err := os.ReadFile(filepath.Join(root, "machine-files/old")); err != nil || string(b) != "old" {
+				t.Fatalf("/deploy changed by a rejected archive: %q, %v", b, err)
 			}
 		})
 	}
 }
 
-func deviceArchive(t *testing.T) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gz)
-	_ = tw.WriteHeader(&tar.Header{Name: "deploy/vars", Mode: 0o644, Size: 0, Typeflag: tar.TypeReg})
-	_ = tw.WriteHeader(&tar.Header{Name: "deploy/machine-files/null", Mode: 0o644, Typeflag: tar.TypeChar})
-	_ = tw.Close()
-	_ = gz.Close()
-	return buf.Bytes()
+// At the limits the archive still applies (the guards are not off by one).
+func TestDeployArchiveAtTheLimits(t *testing.T) {
+	defer func(b int64, n int) { maxDeployArchive, maxArchiveEntries = b, n }(maxDeployArchive, maxArchiveEntries)
+	maxDeployArchive, maxArchiveEntries = 64, 3
+	useDeployRoot(t)
+	vars := "HOSTNAME=worker-7\n"
+	payload := deployArchive(t,
+		archiveEntry{name: "deploy/vars", body: vars},
+		archiveEntry{name: "deploy/machine-files/a", body: strings.Repeat("x", 64-len(vars))},
+		archiveEntry{name: "deploy/", typ: tar.TypeDir},
+	)
+	if _, _, err := (&Client{vars: []byte(baseAgentVars)}).CommandConfig(payload); err != nil {
+		t.Fatalf("archive at the limits rejected: %v", err)
+	}
 }
 
 func TestIsDeployArchive(t *testing.T) {

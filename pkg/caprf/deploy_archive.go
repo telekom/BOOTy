@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/telekom/BOOTy/pkg/config"
 )
@@ -22,6 +23,16 @@ import (
 // booted for one job (a deprovision) needs them for the next job (the
 // provision of another machine): the cloud-init seed and the machine files
 // are files, not vars.
+//
+// BOOTy runs as root, so the archive is untrusted input:
+//   - only directories and regular files; symlinks, hard links and every
+//     other type fail the archive,
+//   - every entry is below deploy/, without "..",
+//   - files are created with O_EXCL|O_NOFOLLOW in a fresh staging directory,
+//     with normalized modes (0644, or 0755 with an execute bit) and the
+//     owner of BOOTy,
+//   - at most maxArchiveEntries entries and maxDeployArchive bytes,
+//   - deploy/vars is parsed and validated before /deploy changes.
 
 // deployRoot is the deploy directory of the ramdisk; tests change it.
 var deployRoot = "/deploy"
@@ -29,15 +40,24 @@ var deployRoot = "/deploy"
 // deployArchiveDirs are the per-job directories that an archive replaces.
 var deployArchiveDirs = []string{"machine-files", "machine-commands", "file-system"}
 
-// maxDeployArchive bounds the unpacked size of an archive in RAM.
-const maxDeployArchive = 64 << 20
+// Limits of a deploy archive; tests lower them.
+var (
+	maxDeployArchive  int64 = 64 << 20
+	maxArchiveEntries       = 10000
+)
 
 func isDeployArchive(payload []byte) bool {
 	return len(payload) > 2 && payload[0] == 0x1f && payload[1] == 0x8b
 }
 
-// deployArchiveConfig applies a deploy archive and returns the config of
-// its vars. The settings that the running ramdisk uses (transport, agent,
+// errArchiveVars is the error of archive vars that do not parse or validate.
+// It names no value: values can be secrets, and the error goes into the
+// command ACK and the log.
+var errArchiveVars = errors.New("deploy archive vars do not parse or validate")
+
+// deployArchiveConfig unpacks a deploy archive, validates its vars, then
+// replaces the per-job directories of /deploy and returns the config of
+// the vars. The settings that the running ramdisk uses (transport, agent,
 // network, MODE, DRY_RUN, CAPRF_LEGACY_COMPAT and the bearer-token URLs)
 // keep the values of the base vars: the agent keeps its token and network.
 func deployArchiveConfig(base, payload []byte) (cfg *config.MachineConfig, keys []string, err error) {
@@ -45,17 +65,22 @@ func deployArchiveConfig(base, payload []byte) (cfg *config.MachineConfig, keys 
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse base vars: %w", err)
 	}
-	vars, err := applyDeployArchive(payload, deployRoot)
+	staging, err := os.MkdirTemp(filepath.Dir(deployRoot), ".booty-archive-")
+	if err != nil {
+		return nil, nil, fmt.Errorf("deploy archive staging: %w", err)
+	}
+	defer os.RemoveAll(staging) //nolint:errcheck // best-effort cleanup of the staging tree
+
+	tree := filepath.Join(staging, "deploy")
+	if err := unpackDeployArchive(payload, tree); err != nil {
+		return nil, nil, err
+	}
+	cfg, keys, err = archiveVarsConfig(filepath.Join(tree, "vars"))
 	if err != nil {
 		return nil, nil, err
 	}
-	keys, err = payloadKeys(vars)
-	if err != nil {
-		return nil, nil, fmt.Errorf("deploy archive vars: %w", err)
-	}
-	cfg, err = ParseVars(bytes.NewReader(vars))
-	if err != nil {
-		return nil, nil, fmt.Errorf("deploy archive vars do not parse or validate: %w", err)
+	if err := swapDeployDirs(tree, deployRoot, filepath.Join(staging, "old")); err != nil {
+		return nil, nil, err
 	}
 	cfg.Transport, cfg.Agent, cfg.Network = ref.Transport, ref.Agent, ref.Network
 	cfg.Mode, cfg.DryRun, cfg.LegacyCompat = ref.Mode, ref.DryRun, ref.LegacyCompat
@@ -68,46 +93,75 @@ func deployArchiveConfig(base, payload []byte) (cfg *config.MachineConfig, keys 
 	return cfg, keys, nil
 }
 
-// applyDeployArchive unpacks the archive next to root, replaces the
-// per-job directories of root with the unpacked ones (a directory that the
-// archive does not have is removed) and returns deploy/vars.
-func applyDeployArchive(payload []byte, root string) ([]byte, error) {
-	staging, err := os.MkdirTemp(root, ".archive-")
+// archiveVarsConfig reads and validates deploy/vars of the staging tree.
+// Like a vars payload, an unknown key fails it; errors name keys only.
+func archiveVarsConfig(varsPath string) (cfg *config.MachineConfig, keys []string, err error) {
+	vars, err := os.ReadFile(varsPath) //nolint:gosec // path in our staging directory
 	if err != nil {
-		return nil, fmt.Errorf("deploy archive staging: %w", err)
+		return nil, nil, errors.New("deploy archive has no deploy/vars")
 	}
-	defer os.RemoveAll(staging) //nolint:errcheck // best-effort cleanup of the staging tree
-	if err := unpackDeployArchive(payload, staging); err != nil {
-		return nil, err
-	}
-	vars, err := os.ReadFile(filepath.Join(staging, "vars"))
+	keys, err = payloadKeys(vars)
 	if err != nil {
-		return nil, fmt.Errorf("deploy archive has no deploy/vars: %w", err)
+		return nil, nil, errArchiveVars
 	}
-	for _, dir := range deployArchiveDirs {
-		dst := filepath.Join(root, dir)
-		if err := os.RemoveAll(dst); err != nil {
-			return nil, fmt.Errorf("replace %s: %w", dst, err)
-		}
-		if err := os.Rename(filepath.Join(staging, dir), dst); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("replace %s: %w", dst, err)
+	var unknown []string
+	for _, k := range keys {
+		if !knownVarKey(k) {
+			unknown = append(unknown, k)
 		}
 	}
-	return vars, nil
+	if len(unknown) > 0 {
+		return nil, nil, fmt.Errorf("deploy archive vars have unknown keys %s", strings.Join(unknown, ","))
+	}
+	cfg, err = ParseVars(bytes.NewReader(vars))
+	if err != nil {
+		return nil, nil, errArchiveVars
+	}
+	return cfg, keys, nil
 }
 
-// unpackDeployArchive writes the deploy/ entries of a tar.gz below dst.
-// Only directories, regular files and symlinks are allowed; no entry may
-// leave dst or pass through a symlink of the archive.
+// swapDeployDirs moves the per-job directories of root to old and the
+// ones of tree into root. A failure moves the old ones back.
+func swapDeployDirs(tree, root, old string) error {
+	if err := os.Mkdir(old, 0o700); err != nil {
+		return fmt.Errorf("deploy archive: %w", err)
+	}
+	var moved []string
+	restore := func() {
+		for _, dir := range moved {
+			_ = os.RemoveAll(filepath.Join(root, dir))
+			_ = os.Rename(filepath.Join(old, dir), filepath.Join(root, dir))
+		}
+	}
+	for _, dir := range deployArchiveDirs {
+		if err := os.Rename(filepath.Join(root, dir), filepath.Join(old, dir)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			restore()
+			return fmt.Errorf("replace %s: %w", dir, err)
+		}
+		moved = append(moved, dir)
+	}
+	for _, dir := range deployArchiveDirs {
+		if err := os.Rename(filepath.Join(tree, dir), filepath.Join(root, dir)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			restore()
+			return fmt.Errorf("replace %s: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+// unpackDeployArchive writes the deploy/ entries of a tar.gz into dst, a
+// directory that must not exist yet.
 func unpackDeployArchive(payload []byte, dst string) error {
 	gz, err := gzip.NewReader(bytes.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("deploy archive: %w", err)
 	}
+	if err := os.Mkdir(dst, 0o755); err != nil {
+		return fmt.Errorf("deploy archive: %w", err)
+	}
 	tr := tar.NewReader(gz)
-	links := map[string]bool{}
-	var total int64
-	for {
+	budget := maxDeployArchive
+	for entries := 0; ; entries++ {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			return nil
@@ -115,75 +169,82 @@ func unpackDeployArchive(payload []byte, dst string) error {
 		if err != nil {
 			return fmt.Errorf("deploy archive: %w", err)
 		}
-		rel, err := archivePath(hdr.Name, links)
-		if err != nil || rel == "" {
-			if err != nil {
-				return err
-			}
+		if entries >= maxArchiveEntries {
+			return fmt.Errorf("deploy archive has more than %d entries", maxArchiveEntries)
+		}
+		rel, err := archivePath(hdr.Name)
+		if err != nil {
+			return err
+		}
+		if rel == "" {
 			continue
 		}
 		target := filepath.Join(dst, filepath.FromSlash(rel))
-		total += hdr.Size
-		if total > maxDeployArchive {
-			return fmt.Errorf("deploy archive is larger than %d bytes", maxDeployArchive)
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			err = os.MkdirAll(target, 0o755)
+		case tar.TypeReg:
+			budget, err = writeArchiveFile(tr, target, hdr.Mode, budget)
+		default:
+			// Symlinks and hard links would let a later entry write through
+			// them, outside the staging directory.
+			return fmt.Errorf("deploy archive entry %q has the unsupported type %q: only directories and regular files", hdr.Name, hdr.Typeflag)
 		}
-		if err := writeArchiveEntry(tr, hdr, target); err != nil {
-			return err
-		}
-		if hdr.Typeflag == tar.TypeSymlink {
-			links[rel] = true
+		if err != nil {
+			return fmt.Errorf("deploy archive entry %q: %w", hdr.Name, err)
 		}
 	}
 }
 
 // archivePath returns the path of an entry below deploy/, or "" for the
-// deploy directory itself. It rejects paths outside deploy/ and paths
-// below a symlink of the archive.
-func archivePath(name string, links map[string]bool) (string, error) {
-	clean := path.Clean(strings.TrimPrefix(name, "./"))
-	rel, ok := strings.CutPrefix(clean, "deploy/")
-	switch {
-	case clean == "deploy":
-		return "", nil
-	case !ok || rel == "" || strings.HasPrefix(rel, "../") || rel == ".." || path.IsAbs(clean):
-		return "", fmt.Errorf("deploy archive entry %q is outside deploy/", name)
-	}
-	for p := path.Dir(rel); p != "."; p = path.Dir(p) {
-		if links[p] {
-			return "", fmt.Errorf("deploy archive entry %q is below the symlink %s", name, p)
+// deploy directory itself. Paths outside deploy/, with ".." or absolute
+// paths fail.
+func archivePath(name string) (string, error) {
+	trimmed := strings.TrimPrefix(name, "./")
+	for _, part := range strings.Split(strings.TrimSuffix(trimmed, "/"), "/") {
+		if part == ".." {
+			return "", fmt.Errorf("deploy archive entry %q has a parent directory element", name)
 		}
+	}
+	clean := path.Clean(trimmed)
+	if clean == "deploy" {
+		return "", nil
+	}
+	rel, ok := strings.CutPrefix(clean, "deploy/")
+	if !ok || path.IsAbs(trimmed) || rel == "" || rel == "." {
+		return "", fmt.Errorf("deploy archive entry %q is outside deploy/", name)
 	}
 	return rel, nil
 }
 
-func writeArchiveEntry(tr *tar.Reader, hdr *tar.Header, target string) error {
+// writeArchiveFile creates a new file: O_EXCL fails on any existing name,
+// O_NOFOLLOW on a symlink. The mode is 0644, or 0755 with an execute bit.
+// It returns the byte budget that is left.
+func writeArchiveFile(r io.Reader, target string, mode, budget int64) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return fmt.Errorf("deploy archive %s: %w", hdr.Name, err)
+		return budget, fmt.Errorf("create directory: %w", err)
 	}
-	switch hdr.Typeflag {
-	case tar.TypeDir:
-		if err := os.MkdirAll(target, 0o755); err != nil {
-			return fmt.Errorf("deploy archive %s: %w", hdr.Name, err)
-		}
-	case tar.TypeReg:
-		f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode&0o777)) //nolint:gosec // path checked by archivePath
-		if err != nil {
-			return fmt.Errorf("deploy archive %s: %w", hdr.Name, err)
-		}
-		_, err = io.CopyN(f, tr, hdr.Size)
-		if cerr := f.Close(); err == nil {
-			err = cerr
-		}
-		if err != nil {
-			return fmt.Errorf("deploy archive %s: %w", hdr.Name, err)
-		}
-	case tar.TypeSymlink:
-		// Machine files keep their symlinks; the link target is not followed.
-		if err := os.Symlink(hdr.Linkname, target); err != nil {
-			return fmt.Errorf("deploy archive %s: %w", hdr.Name, err)
-		}
-	default:
-		return fmt.Errorf("deploy archive entry %q has the unsupported type %q", hdr.Name, hdr.Typeflag)
+	perm := os.FileMode(0o644)
+	if mode&0o111 != 0 {
+		perm = 0o755
 	}
-	return nil
+	f, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY|syscall.O_NOFOLLOW, perm) //nolint:gosec // path checked by archivePath
+	if err != nil {
+		return budget, fmt.Errorf("create file: %w", err)
+	}
+	n, err := io.Copy(f, io.LimitReader(r, budget+1))
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return budget, err
+	}
+	if n > budget {
+		return 0, fmt.Errorf("deploy archive is larger than %d bytes", maxDeployArchive)
+	}
+	// The mode is set explicitly: OpenFile applies the umask.
+	if err := os.Chmod(target, perm); err != nil {
+		return budget, fmt.Errorf("set mode: %w", err)
+	}
+	return budget - n, nil
 }
