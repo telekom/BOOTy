@@ -212,16 +212,23 @@ to be fixed or accepted):
 - Capabilities that only the legacy ramdisk sends: graceful restart
   (helper, 120 s), long-lived graceful restart, enhanced route refresh,
   extended message, add-path receive, paths-limit. BOOTy `main` now sends
-  hostname, dynamic and software version capabilities.
+  hostname, dynamic and software version capabilities. #697 adds graceful
+  restart, long-lived graceful restart and add-path receive (CAPRF !295:
+  every acceptance spec passes with 60 s leaf outages); then only the
+  graceful restart R bit, enhanced route refresh, extended message and
+  paths-limit differ.
 
 Behaviour differences seen in the fault runs:
 
 - After a leaf comes back, BOOTy's BFD goes Up and, within a second, Down
   again (the leaf signals down), which resets the new BGP session once
   more. The legacy ramdisk resets it once.
-- In the CAPRF single-leaf EVPN fixture, BOOTy `main` does not bring the
-  unnumbered leaf session back after a 60 s leaf outage; the legacy ramdisk
-  recovers in about 5 s.
+- In the CAPRF single-leaf EVPN fixture, BOOTy `main` (and #697) does not
+  bring the unnumbered leaf session back after a 60 s leaf outage; the
+  legacy ramdisk recovers in about 5 s. In the production-shaped fixture
+  BOOTy recovers from 60 s outages of each leaf in 5 to 11 s, so the
+  difference comes from the single-leaf fixture's configuration path
+  (`BGP_PEER_MODE=unnumbered`, `remote-as external`, main table).
 
 `fabric-parity-diff` accepts a difference only when an entry of the CAPRF
 `test/e2e/evpn-bm4x/parity-allowlist.yaml` covers that field and names the
