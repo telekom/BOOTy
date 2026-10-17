@@ -226,6 +226,14 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   target `make check-iso` (`booty-check.iso`): one generic ISO for the bm4x
   cable check with `hack/check-iso/vars` baked in. See
   [docs/cable-check.md](docs/cable-check.md).
+- LLDP receive reports more of each neighbor: the chassis and port ID
+  subtypes, the port description, all management addresses, the system
+  capabilities, the 802.1 port VLAN and VLAN names, link aggregation, the
+  802.3 MAC/PHY status and maximum frame size, the LLDP-MED inventory, and when
+  the neighbor appeared, sent last and how often it changed. A MAC port ID
+  renders as `aa:bb:cc:dd:ee:ff`. BOOTy no longer reports its own frames as a
+  neighbor. New key `LLDP_NEIGHBOR_WAIT` (YAML `check.lldpNeighborWait`): check
+  mode waits for a neighbor on every NIC with carrier.
 - GoBGP mode applies the netplan device settings of the provision VXLAN device,
   the bridge and the NICs like systemd-networkd (MTU, MAC, learning, ARP proxy,
   hairpin, link-local, `accept-ra`), and `frr.conf` `[no] ip[v6] forwarding`.

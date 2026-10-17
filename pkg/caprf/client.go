@@ -1156,7 +1156,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 	if applySecureBootDigestVar(cfg, key, value) {
 		return true
 	}
-	if applyOCIPrePullStringVar(cfg, key, value) || applyAgentStringVar(cfg, key, value) {
+	if applyOCIPrePullStringVar(cfg, key, value) || applyAgentStringVar(cfg, key, value) || applyCheckStringVar(cfg, key, value) {
 		return true
 	}
 
@@ -1203,7 +1203,6 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"FIRMWARE_MIN_BMC":            &cfg.Provision.Firmware.MinBMC,
 		"HEALTH_SKIP_CHECKS":          &cfg.Health.SkipChecks,
 		"HEALTH_CHECK_URL":            &cfg.Health.ReportURL,
-		"CHECK_HOLD":                  &cfg.Check.Hold,
 		"IMAGE_SIGNATURE_URL":         &cfg.Provision.Image.SignatureURL,
 		"IMAGE_GPG_PUBKEY":            &cfg.Provision.Image.GPGPubKey,
 		"TELEMETRY_URL":               &cfg.Telemetry.URL,
@@ -1230,6 +1229,19 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		return true
 	}
 	return false
+}
+
+// applyCheckStringVar handles the check mode keys.
+func applyCheckStringVar(cfg *config.MachineConfig, key, value string) bool {
+	switch key {
+	case "CHECK_HOLD":
+		cfg.Check.Hold = value
+	case "LLDP_NEIGHBOR_WAIT":
+		cfg.Check.LLDPNeighborWait = value
+	default:
+		return false
+	}
+	return true
 }
 
 func applyAgentStringVar(cfg *config.MachineConfig, key, value string) bool {
