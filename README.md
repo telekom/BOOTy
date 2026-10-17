@@ -175,13 +175,23 @@ The `initrd.Dockerfile` supports multiple build targets via `--target`:
 
 | Target | Size | Networking | Disk Tools | Use Case |
 |--------|------|-----------|------------|----------|
-| *(default)* | ~52 MB | FRR/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production bare-metal provisioning |
-| `gobgp` | ~47 MB | GoBGP/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production without FRR dependency |
-| `iso` | ~100 MB | FRR/EVPN + DHCP | Full | Bootable ISO for Redfish virtual media |
-| `gobgp-iso` | ~65 MB | GoBGP/EVPN + DHCP | Full | Bootable GoBGP ISO for Redfish virtual media |
-| `slim` | ~42 MB | DHCP only | Provisioning basics, no LVM/FRR | Lightweight provisioning without BGP |
+| *(default)* | ~48 MB | FRR/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production bare-metal provisioning |
+| `gobgp` | ~43 MB | GoBGP/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production without FRR dependency |
+| `iso` | ~61 MB | FRR/EVPN + DHCP | Full | Bootable ISO for Redfish virtual media |
+| `gobgp-iso` | ~57 MB | GoBGP/EVPN + DHCP | Full | Bootable GoBGP ISO for Redfish virtual media |
+| `slim` | ~37 MB | DHCP only | Provisioning basics, no LVM/FRR | Lightweight provisioning without BGP |
 | `micro` | ~10 MB | None (pure Go) | None | Minimal agent, custom network stack |
-| `kernel-image` | ~8 MB | n/a | n/a | The Debian `vmlinuz` that matches the shipped modules, for QEMU tests |
+| `kernel-image` | ~12 MB | n/a | n/a | The Debian `vmlinuz` that matches the shipped modules, for QEMU tests |
+
+The build stages use Debian 13 (trixie) packages. The kernel and its modules
+come from the Debian-signed `linux-image-amd64` (or `linux-image-arm64`) of
+trixie, Linux 6.12 LTS with security updates. The kernel carries the Debian
+Secure Boot signature (loaded through a shim that trusts the Debian CA) and its
+modules are signed, so they load under lockdown. `--build-arg KERNEL_SUITE=trixie-backports`
+selects the newest Debian-signed kernel (Linux 7.x). Do not use it with
+`DISK_MIRRORING_MODE` or explicit RAID: md arrays created on Linux 6.19 or
+later cannot be assembled by kernels up to 6.18, which includes the kernels of
+the usual target OS images.
 
 #### ARM64 Targets
 
@@ -1289,7 +1299,7 @@ a new binary:
 
 1. **Install the package** in the `tools` build stage:
 ```dockerfile
-# In the 'tools' stage (FROM debian:bookworm-slim AS tools)
+# In the 'tools' stage (FROM debian:trixie-slim AS tools)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     your-package \
     && rm -rf /var/lib/apt/lists/*
