@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,7 +22,15 @@ import (
 const (
 	ackTimeout        = 10 * time.Second
 	heartbeatInterval = 30 * time.Second
-	pollInterval      = 10 * time.Second
+)
+
+// pollInterval is the shortest time between the starts of two command
+// polls, and repollAfterCommands the pause after a poll that returned
+// commands; tests change them. The short pause bounds the poll rate when a
+// server returns commands on every poll.
+var (
+	pollInterval        = 10 * time.Second
+	repollAfterCommands = time.Second
 )
 
 // StandbyMode keeps the machine in a hot-standby loop, sending periodic
@@ -52,24 +62,30 @@ func (m *StandbyMode) Run(ctx context.Context) error {
 		return err
 	}
 
-	slog.Info("entering standby mode")
+	// The ramdisk runs from RAM only (CAPRF may eject the ISO): the RAM in
+	// use is the footprint of kernel, unpacked initramfs and BOOTy.
+	total, available := memInfoMiB(procMemInfo)
+	slog.Info("entering standby mode", "memTotalMiB", total, "memAvailableMiB", available)
 	if err := m.deps.Client.ReportStatus(ctx, config.StatusInit, "standby"); err != nil {
 		return fmt.Errorf("standby status readiness: %w", err)
 	}
 	if err := m.deps.Client.Heartbeat(ctx); err != nil {
 		return fmt.Errorf("standby heartbeat readiness: %w", err)
 	}
-	if result, handled, err := m.pollCommands(ctx); err != nil {
+	pollStart := time.Now()
+	result, ran, err := m.pollCommands(ctx)
+	if err != nil {
 		return fmt.Errorf("standby command readiness: %w", err)
-	} else if handled {
+	}
+	if result != nil {
 		return result.err
 	}
 
 	heartbeatTicker := time.NewTicker(heartbeatInterval)
 	defer heartbeatTicker.Stop()
 
-	pollTicker := time.NewTicker(pollInterval)
-	defer pollTicker.Stop()
+	nextPoll := time.NewTimer(nextPollDelay(pollStart, ran))
+	defer nextPoll.Stop()
 
 	for {
 		select {
@@ -82,15 +98,16 @@ func (m *StandbyMode) Run(ctx context.Context) error {
 				slog.Warn("heartbeat failed", "error", err)
 			}
 
-		case <-pollTicker.C:
-			result, handled, err := m.pollCommands(ctx)
-			if err != nil {
+		case <-nextPoll.C:
+			start := time.Now()
+			result, ran, err = m.pollCommands(ctx)
+			switch {
+			case err != nil:
 				slog.Warn("command poll failed", "error", err)
-				continue
-			}
-			if handled {
+			case result != nil:
 				return result.err
 			}
+			nextPoll.Reset(nextPollDelay(start, ran))
 		}
 	}
 }
@@ -116,18 +133,33 @@ func (m *StandbyMode) validateConfig() error {
 	return nil
 }
 
-func (m *StandbyMode) pollCommands(ctx context.Context) (*commandResult, bool, error) {
+// pollCommands fetches the pending commands and runs them. A result that
+// is not nil ends standby. ran reports that there were commands.
+func (m *StandbyMode) pollCommands(ctx context.Context) (result *commandResult, ran bool, err error) {
 	cmds, err := m.deps.Client.FetchCommands(ctx)
 	if err != nil {
 		return nil, false, err
 	}
 	for _, cmd := range cmds {
-		result := m.handleCommand(ctx, cmd)
-		if result != nil {
-			return result, true, nil
+		if r := m.handleCommand(ctx, cmd); r != nil {
+			return r, true, nil
 		}
 	}
-	return nil, false, nil
+	return nil, len(cmds) > 0, nil
+}
+
+// nextPollDelay is the wait before the next poll. A poll starts
+// pollInterval after the start of the previous one, so after a long poll
+// that the server held open (caprf.CommandsWait) the next one starts at
+// once. After commands that returned to standby (a deprovision with
+// STANDBY_DEPROVISION_SUCCESS_ACTION=standby) the next poll follows after
+// repollAfterCommands, so CAPRF can queue the next command right after the
+// ACK.
+func nextPollDelay(start time.Time, ran bool) time.Duration {
+	if ran {
+		return min(repollAfterCommands, max(0, pollInterval-time.Since(start)))
+	}
+	return max(0, pollInterval-time.Since(start))
 }
 
 type commandResult struct {
@@ -356,4 +388,33 @@ func (m *StandbyMode) deprovisioner(cfg *config.MachineConfig) standbyDeprovisio
 		return m.newDeprovisioner(cfg)
 	}
 	return provision.NewOrchestrator(cfg, m.deps.Client, m.deps.DiskMgr)
+}
+
+// procMemInfo is /proc/meminfo; tests replace it.
+var procMemInfo = "/proc/meminfo"
+
+// memInfoMiB returns MemTotal and MemAvailable of a meminfo file in MiB,
+// or zeros when it can not be read.
+func memInfoMiB(path string) (total, available int64) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		kb, err := strconv.ParseInt(fields[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		switch fields[0] {
+		case "MemTotal:":
+			total = kb / 1024
+		case "MemAvailable:":
+			available = kb / 1024
+		}
+	}
+	return total, available
 }
