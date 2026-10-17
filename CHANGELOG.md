@@ -379,6 +379,9 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   minimum devices (#620)
 - `make lint` uses the CI golangci-lint version (#603)
 - Removed dead code: FRR config builder (#615), duplicate grub config parser (#621)
+- KVM matrix scenario `sriov-igb`: a provision with a QEMU igb NIC with
+  SR-IOV checks the SR-IOV inventory, the VF creation with attributes and the
+  handoff reset; the privileged Linux E2E job runs the SR-IOV netdevsim tests
 
 ### Docs
 
