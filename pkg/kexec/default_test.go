@@ -382,3 +382,23 @@ func TestDefaultEntryGrubenvImports(t *testing.T) {
 		t.Fatalf("unrelated grubenv variable: %+v, %v", e, err)
 	}
 }
+
+// Commands on the first line of a function, and search --set=default, at
+// the top level, in a function and in an entry.
+func TestDefaultEntryLastGaps(t *testing.T) {
+	entry := "menuentry 'x' {\n linux /vmlinuz\n}\nmenuentry 'y' {\n linux /other\n}\n"
+	for name, tc := range map[string]struct{ cfg, want string }{
+		"one-line function":          {"set default=0\nfunction load_video { set default=1; }\nload_video\n" + entry, "first line"},
+		"one-line function no semi":  {"set default=0\nfunction f { insmod x\n}\n" + entry, "first line"},
+		"search default top level":   {"set default=0\nsearch --no-floppy --set=default --label y\n" + entry, "search --set=default"},
+		"search -s default top":      {"set default=0\nsearch -s default --label y\n" + entry, "search --set=default"},
+		"search default in function": {"set default=0\nfunction load_video {\n search --set default --label y\n}\nload_video\n" + entry, "search --set=default"},
+		"search default in entry":    {"set default=0\nmenuentry 'x' {\n search --set=default --label y\n linux /vmlinuz\n}\n", "command search"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := DefaultEntry(writeGrub(t, tc.cfg, "")); !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want ErrUnsupported with %q", err, tc.want)
+			}
+		})
+	}
+}

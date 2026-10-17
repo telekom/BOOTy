@@ -191,6 +191,11 @@ func (s *grubScript) blockCommand(raw string, words []string, stack []block, men
 	case "while", "until", "for":
 		stack = append(stack, block{kind: blockLoop})
 	case "function":
+		// grub-mkconfig writes "function name {" alone on its line; commands
+		// after the "{" would run unchecked.
+		if len(words) != 3 || words[2] != "{" {
+			s.fail("function definition with commands on its first line")
+		}
 		stack = append(stack, block{kind: blockFunction})
 	default:
 		return stack, menus, false
@@ -350,6 +355,12 @@ func (s *grubScript) topCommand(raw string, words []string, stack []block, custo
 // topChecks hold the commands that are allowed outside entries only with
 // some arguments; each returns the problem or "".
 var topChecks = map[string]func(args []string, customCfg bool) string{
+	"search": func(args []string, _ bool) string {
+		if slices.Contains(setTargets(args), "default") {
+			return "search --set=default"
+		}
+		return ""
+	},
 	"blscfg": func([]string, bool) string { return "BLS entries (blscfg)" },
 	"source": checkSource,
 	".":      checkSource,
