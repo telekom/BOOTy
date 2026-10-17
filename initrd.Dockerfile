@@ -379,6 +379,10 @@ COPY --from=frr /frr-libs/ .
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
 
+# Drop the libraries that no shipped executable loads.
+COPY hack/prune-initramfs-libs.sh /usr/local/bin/
+RUN prune-initramfs-libs.sh .
+
 # Package initramfs
 RUN find . -print0 > ../initramfs.files \
     && cpio --null -ov --format=newc < ../initramfs.files > ../initramfs.cpio \
@@ -479,6 +483,10 @@ COPY --from=tools /tool-libs/ .
 # Kernel modules: storage controllers, software RAID and efivarfs are modules
 # of the Debian kernel, and slim ships mdadm and the disk tools.
 COPY --from=kernel /modules/ modules/
+
+# Drop the libraries of the tools that slim does not ship.
+COPY hack/prune-initramfs-libs.sh /usr/local/bin/
+RUN prune-initramfs-libs.sh .
 
 # Package slim initramfs
 RUN find . -print0 > ../initramfs.files \
@@ -584,6 +592,10 @@ COPY --from=tools /tool-libs-full/ .
 
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
+
+# Drop the libraries that no shipped executable loads.
+COPY hack/prune-initramfs-libs.sh /usr/local/bin/
+RUN prune-initramfs-libs.sh .
 
 # Package GoBGP initramfs with zstd compression (no FRR binaries — GoBGP runs in-process)
 # zstd -19 achieves ~10–20% better ratio than gzip with much faster decompression.
