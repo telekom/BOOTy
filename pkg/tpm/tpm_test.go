@@ -13,11 +13,7 @@ func TestPCRDescription(t *testing.T) {
 	}{
 		{PCRFirmware, "platform firmware"},
 		{PCRSecureBoot, "secure boot policy"},
-		{PCRBinary, "BOOTy binary"},
-		{PCRImage, "OS image checksum"},
-		{PCRConfig, "provisioning config"},
-		{PCRProvisioner, "provisioner identity"},
-		{PCROSImage, "OS image streaming"},
+		{PCRBooty, "BOOTy runtime events"},
 		{99, "unknown"},
 	}
 	for _, tt := range tests {
@@ -26,6 +22,14 @@ func TestPCRDescription(t *testing.T) {
 				t.Errorf("PCRDescription(%d) = %q, want %q", tt.pcr, got, tt.want)
 			}
 		})
+	}
+}
+
+// BOOTy must not extend a PCR that GRUB, IMA, systemd-stub, shim or systemd
+// own (UAPI TPM PCR registry).
+func TestPCRBootyAvoidsRegisteredPCRs(t *testing.T) {
+	if PCRBooty < 16 || PCRBooty == 16 || PCRBooty > 23 {
+		t.Fatalf("PCRBooty = %d, collides with the PCR registry", PCRBooty)
 	}
 }
 
