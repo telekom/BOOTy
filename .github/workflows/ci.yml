@@ -1797,7 +1797,7 @@ jobs:
       - name: Deploy production template topology
         run: |
           eval "$(sh test/e2e/clab/prodtpl-variant.sh one-uplink)"
-          sudo --preserve-env=PRODTPL_BOOTY_FS,PRODTPL_SHADOW_FRR,PRODTPL_SHADOW_SETUP,PRODTPL_LEAF_SETUP,PRODTPL_NATIVE_VARS containerlab deploy --topo test/e2e/clab/topology-production-templates.clab.yml
+          sudo --preserve-env=PRODTPL_BOOTY_FS,PRODTPL_SHADOW_FRR,PRODTPL_SHADOW_SETUP,PRODTPL_LEAF_SETUP,PRODTPL_NATIVE_VARS,PRODTPL_NATIVE_VRF_VARS containerlab deploy --topo test/e2e/clab/topology-production-templates.clab.yml
 
       - name: Run production template E2E tests
         env:
@@ -1924,7 +1924,7 @@ jobs:
       - name: Deploy production template topology
         run: |
           eval "$(sh test/e2e/clab/prodtpl-variant.sh native-model)"
-          sudo --preserve-env=PRODTPL_BOOTY_FS,PRODTPL_SHADOW_FRR,PRODTPL_SHADOW_SETUP,PRODTPL_LEAF_SETUP,PRODTPL_NATIVE_VARS containerlab deploy --topo test/e2e/clab/topology-production-templates.clab.yml
+          sudo --preserve-env=PRODTPL_BOOTY_FS,PRODTPL_SHADOW_FRR,PRODTPL_SHADOW_SETUP,PRODTPL_LEAF_SETUP,PRODTPL_NATIVE_VARS,PRODTPL_NATIVE_VRF_VARS containerlab deploy --topo test/e2e/clab/topology-production-templates.clab.yml
 
       - name: Run production template E2E tests
         env:
