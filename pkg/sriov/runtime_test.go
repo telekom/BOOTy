@@ -364,3 +364,16 @@ func TestEffectiveVF(t *testing.T) {
 		t.Fatalf("missing VF: %s / %s", w, g)
 	}
 }
+
+func TestFindVF(t *testing.T) {
+	vfs := []VF{{Index: 3, MAC: "c"}, {Index: 1, MAC: "a"}, {Index: 2, MAC: "b"}}
+	if v := findVF(vfs, 1); v == nil || v.MAC != "a" {
+		t.Fatalf("findVF(1) = %+v", v)
+	}
+	if v := findVF(vfs, 3); v == nil || v.MAC != "c" {
+		t.Fatalf("findVF(3) = %+v", v)
+	}
+	if findVF(vfs, 0) != nil {
+		t.Fatal("findVF(0) must be nil")
+	}
+}
