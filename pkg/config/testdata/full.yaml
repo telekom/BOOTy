@@ -382,7 +382,7 @@ rescue:
   autoMountDisks: false
 
 # ---------------------------------------------------------------------------
-# Time — clock sync before the first TLS certificate check.
+# Time: clock sync before the first TLS certificate check.
 # ---------------------------------------------------------------------------
 time:
   # sync (TIME_SYNC): off | auto (default) | require

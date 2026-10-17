@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"sync"
 	"time"
 
 	"github.com/telekom/t-caas-go-library/pkg/redact"
@@ -17,21 +16,23 @@ import (
 // DateProbe reads the time from the HTTP Date header of a server, the CAPRF
 // connectivity target. It sends a HEAD request without credentials.
 //
-// The local clock may be years off, so the TLS handshake can not check the
-// certificate validity period. The probe checks the chain, the host name and
-// the key usage like crypto/tls, but at the time of the Date header instead
-// of the local clock: the server must hold the key of a certificate that is
-// valid at the time it claims. The time is then authenticated.
+// The TLS handshake checks the certificate like every other client. When
+// the local clock is outside the validity period of the server certificate,
+// the probe connects again with the certificate check at a time inside that
+// period, and then checks the chain, the host name and the key usage again
+// at the time of the Date header: the server must hold the key of a
+// certificate that is valid at the time it claims. The time is then
+// authenticated.
 type DateProbe struct {
 	// Now returns the local wall clock. Tests fake it to simulate skew.
 	Now func() time.Time
 	// Roots is the trust anchor set. Nil uses the system roots, like the
 	// CAPRF and image clients.
 	Roots *x509.CertPool
-	// SkipTLSVerify (SKIP_TLS_VERIFY) skips the chain check. The time is
-	// then unauthenticated.
+	// SkipTLSVerify (SKIP_TLS_VERIFY) skips the certificate check, like the
+	// CAPRF and image clients. The time is then unauthenticated.
 	SkipTLSVerify bool
-	// Timeout bounds the request.
+	// Timeout bounds each request.
 	Timeout time.Duration
 }
 
@@ -45,62 +46,21 @@ func (p DateProbe) Probe(ctx context.Context, rawURL string) (Sample, error) {
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
 		return Sample{}, fmt.Errorf("date probe %s: not an HTTP(S) URL", safe)
 	}
-	timeout := p.Timeout
-	if timeout <= 0 {
-		timeout = 10 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	verify := u.Scheme == "https" && !p.SkipTLSVerify
 
-	var (
-		mu    sync.Mutex
-		state *tls.ConnectionState
-	)
-	client := &http.Client{
-		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
-			TLSClientConfig: &tls.Config{
-				MinVersion: tls.VersionTLS12,
-				// The chain is checked below, at the time of the Date header.
-				InsecureSkipVerify: true, //nolint:gosec // verified in verifyAt
-				VerifyConnection: func(cs tls.ConnectionState) error {
-					mu.Lock()
-					state = &cs
-					mu.Unlock()
-					return nil
-				},
-			},
-			DisableKeepAlives: true,
-		},
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	sample, date, state, err := p.head(ctx, rawURL, nil)
+	if err != nil && verify && IsCertTimeError(err) {
+		// The local clock is outside the certificate validity: check the
+		// handshake at a time inside it, and the chain at the Date time
+		// below.
+		at := validityMiddle(err)
+		sample, date, state, err = p.head(ctx, rawURL, func() time.Time { return at })
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, rawURL, http.NoBody)
 	if err != nil {
 		return Sample{}, fmt.Errorf("date probe %s: %w", safe, redact.Wrap(err, rawURL))
 	}
-	now := p.now()
-	t1 := now()
-	start := time.Now()
-	resp, err := client.Do(req)
-	rtt := time.Since(start)
-	if err != nil {
-		return Sample{}, fmt.Errorf("date probe %s: %w", safe, redact.Wrap(err, rawURL))
-	}
-	_ = resp.Body.Close()
-	date, err := http.ParseTime(resp.Header.Get("Date"))
-	if err != nil {
-		return Sample{}, fmt.Errorf("date probe %s: %w", safe, errNoDate)
-	}
-	// The header has a resolution of one second: take the middle of the
-	// second, at the middle of the round trip.
-	offset := date.Add(500 * time.Millisecond).Sub(t1.Add(rtt / 2))
-	sample := Sample{Source: "caprf-date", Offset: offset, RTT: rtt, Resolution: 2 * time.Second}
-
-	if u.Scheme == "https" && !p.SkipTLSVerify {
-		mu.Lock()
-		cs := state
-		mu.Unlock()
-		if err := verifyAt(cs, u.Hostname(), date, p.Roots); err != nil {
+	if verify {
+		if err := verifyAt(state, u.Hostname(), date, p.Roots); err != nil {
 			return Sample{}, fmt.Errorf("date probe %s: %w", safe, err)
 		}
 		sample.Authenticated = true
@@ -108,11 +68,69 @@ func (p DateProbe) Probe(ctx context.Context, rawURL string) (Sample, error) {
 	return sample, nil
 }
 
+// head sends one HEAD request. tlsTime, when set, is the time of the TLS
+// certificate check instead of the local clock.
+func (p DateProbe) head(ctx context.Context, rawURL string, tlsTime func() time.Time) (Sample, time.Time, *tls.ConnectionState, error) {
+	timeout := p.Timeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if tlsTime == nil {
+		tlsTime = p.Now // nil: the TLS check uses the local clock
+	}
+	client := &http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			TLSClientConfig: &tls.Config{
+				MinVersion:         tls.VersionTLS12,
+				RootCAs:            p.Roots,
+				Time:               tlsTime,
+				InsecureSkipVerify: p.SkipTLSVerify, //nolint:gosec // opt-in legacy CAPRF parity (curl --insecure)
+			},
+			DisableKeepAlives: true,
+		},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, rawURL, http.NoBody)
+	if err != nil {
+		return Sample{}, time.Time{}, nil, fmt.Errorf("create request: %w", err)
+	}
+	t1 := p.now()()
+	start := time.Now()
+	resp, err := client.Do(req)
+	rtt := time.Since(start)
+	if err != nil {
+		return Sample{}, time.Time{}, nil, err //nolint:wrapcheck // Probe adds the redacted URL
+	}
+	_ = resp.Body.Close()
+	date, err := http.ParseTime(resp.Header.Get("Date"))
+	if err != nil {
+		return Sample{}, time.Time{}, nil, errNoDate
+	}
+	// The header has a resolution of one second: take the middle of the
+	// second, at the middle of the round trip.
+	offset := date.Add(500 * time.Millisecond).Sub(t1.Add(rtt / 2))
+	return Sample{Source: "caprf-date", Offset: offset, RTT: rtt, Resolution: 2 * time.Second}, date, resp.TLS, nil
+}
+
 func (p DateProbe) now() func() time.Time {
 	if p.Now != nil {
 		return p.Now
 	}
 	return time.Now
+}
+
+// validityMiddle returns the middle of the validity period of the
+// certificate in a validity error.
+func validityMiddle(err error) time.Time {
+	var certErr x509.CertificateInvalidError
+	if !errors.As(err, &certErr) || certErr.Cert == nil {
+		return time.Time{}
+	}
+	c := certErr.Cert
+	return c.NotBefore.Add(c.NotAfter.Sub(c.NotBefore) / 2)
 }
 
 // verifyAt checks the server chain like crypto/tls does for a client, at the

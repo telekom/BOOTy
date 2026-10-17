@@ -149,12 +149,14 @@ callbacks, the crash artifact upload and the image download.
   answer counts. CAPRF renders `NTP_SERVERS` into the vars file like any
   other key.
 - CAPRF `Date` header: BOOTy sends one `HEAD` request without credentials to
-  the connectivity target (`INIT_URL`, else `SUCCESS_URL`). For an `https`
-  URL it checks the certificate chain, the host name and the key usage
-  against the system roots at the time of the `Date` header instead of the
-  local clock. The time is then authenticated: the server holds the key of a
-  certificate that was valid at the time it claims. With `SKIP_TLS_VERIFY` or
-  an `http` URL the time is not authenticated.
+  the connectivity target (`INIT_URL`, else `SUCCESS_URL`), with the normal
+  certificate check against the system roots. When the local clock is
+  outside the validity period of the server certificate, it sends the
+  request again with the check at a time inside that period. In both cases
+  it then checks the chain, the host name and the key usage again at the
+  time of the `Date` header. The time is then authenticated: the server
+  holds the key of a certificate that is valid at the time it claims. With
+  `SKIP_TLS_VERIFY` or an `http` URL the time is not authenticated.
 - Choice: NTP is the most precise. When the authenticated `Date` time also
   answers and differs from NTP by more than `TIME_MAX_SKEW_SEC`, BOOTy logs an
   error and uses the `Date` time, because plain NTP is not authenticated.
