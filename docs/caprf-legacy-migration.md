@@ -208,6 +208,13 @@ hop capability on the route reflector sessions is accepted as documented).
 (CAPRF !300: the whole old EVPN job passes), but its BFD change causes BFD
 Up/Down storms on the production-shaped fixture.
 
+A combined build of these fixes (#736: #703 with its BFD fix, #710, #698,
+#697 on `main`) passes everything in CAPRF !303: the single-leaf EVPN job,
+the production-shaped fixture with template files and with native vars
+(60 s outages of each leaf, BGP reset, link flap, one dropped session per
+fault like the legacy ramdisk), and `fabric-parity-diff` with only the
+documented differences left.
+
 Differences that `fabric-parity-diff` reports for BOOTy `main` without the
 fix PRs (open, to be fixed or accepted):
 
