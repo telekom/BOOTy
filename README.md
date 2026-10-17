@@ -177,8 +177,8 @@ The `initrd.Dockerfile` supports multiple build targets via `--target`:
 |--------|------|-----------|------------|----------|
 | *(default)* | ~47 MB | FRR/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production bare-metal provisioning |
 | `gobgp` | ~42 MB | GoBGP/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production without FRR dependency |
-| `iso` | ~61 MB | FRR/EVPN + DHCP | Full | Bootable ISO for Redfish virtual media |
-| `gobgp-iso` | ~56 MB | GoBGP/EVPN + DHCP | Full | Bootable GoBGP ISO for Redfish virtual media |
+| `iso` | ~66 MB | FRR/EVPN + DHCP | Full | Bootable ISO for Redfish virtual media |
+| `gobgp-iso` | ~61 MB | GoBGP/EVPN + DHCP | Full | Bootable GoBGP ISO for Redfish virtual media |
 | `slim` | ~30 MB | DHCP only | Provisioning basics, no LVM/FRR | Lightweight provisioning without BGP |
 | `micro` | ~10 MB | None (pure Go) | None | Minimal agent, custom network stack |
 | `kernel-image` | ~12 MB | n/a | n/a | The Debian `vmlinuz` that matches the shipped modules, for QEMU tests |
@@ -195,6 +195,29 @@ the usual target OS images. This is upstream behaviour by design (Linux commit
 a4166f1c4893, "md: Fix forward incompatibility from configurable logical block
 size"); no mdadm option, md module parameter or sysfs setting stops a new 1.x
 array from storing its logical block size.
+
+#### ISO boot paths
+
+The `iso` and `gobgp-iso` targets boot on:
+
+- BIOS (and UEFI with CSM) through ISOLINUX, with a serial console on `ttyS0`;
+- UEFI from CD or virtual media through the El Torito EFI image;
+- UEFI from a USB stick or disk image, through the isohybrid GPT EFI system
+  partition;
+- UEFI with Secure Boot and the factory (Microsoft) keys: the EFI image holds
+  Debian's shim (signed by the Microsoft UEFI CA), Debian's signed GRUB and
+  shim's MokManager. GRUB verifies the Debian-signed kernel through shim, and
+  the kernel then locks itself down (see [Secure Boot](#secure-boot)).
+
+`hack/make-efiboot.sh` builds the EFI image and `hack/make-iso.sh` packs the
+ISO; other ISOs (for example a cable-check ISO) can reuse both, or the
+`efi-boot` and `iso-tools` stages. The ISO volume label is `BOOTY`
+(`--build-arg ISO_VOLID=...`). GRUB in the EFI image finds the ISO by label
+and loads `/boot/grub/grub.cfg` from it; `--build-arg EFI_ISO_LABELS="..."`
+sets the labels it searches. The default also contains `caas-deploy-image`,
+the label of the ISOs that CAPRF renders, so CAPRF can reuse
+`/boot/efiboot.img` from the BOOTy ISO. The kernel command line of an ISO boot
+is `console=tty0 console=ttyS0,115200n8`. The ISOs are amd64 only.
 
 #### ARM64 Targets
 
@@ -917,6 +940,22 @@ digests of the installed shim, GRUB and kernel. The `verify-secureboot-chain`
 step fails provisioning on a mismatch. MOK enrollment (`MOK_CERT_PATH`,
 `MOK_PASSWORD`) is not implemented. See
 [Secure Boot](docs/configuration.md#secure-boot).
+
+When the BOOTy ISO boots with Secure Boot, the kernel runs in lockdown
+`integrity` mode. Measured in QEMU with OVMF, the Microsoft keys, shim and the
+Debian 6.12 kernel:
+
+| Interface | BOOTy users | Under Secure Boot |
+|-----------|-------------|-------------------|
+| Module loading (`finit_module`) | all shipped modules | works: the modules are signed |
+| `kexec_file_load` of a Debian-signed kernel | `tryKexec` | works (Debian CA from shim's MOK list) |
+| `kexec_file_load` of a kernel signed by another vendor (Ubuntu, Flatcar) or unsigned | `tryKexec` | refused (`ENOKEY`, `ENODATA`); BOOTy reboots through the firmware instead |
+| `kexec_load` (legacy syscall) | not used | refused |
+| efivarfs writes | `efibootmgr`, `booty-esp-sync`, `BootyLastResult` | work |
+| SCSI `SG_IO` and NVMe admin ioctls | `hdparm`, `sg_sanitize`, `sg_format`, `nvme` | work |
+| PCI config space writes (`/sys/bus/pci/devices/*/config`) and PCI BAR `mmap` | `mstflint`, `mstconfig` (Mellanox SR-IOV, `NUM_VFS`) | refused: in-band Mellanox firmware configuration fails; configure SR-IOV out of band or with Secure Boot off |
+| `/dev/mem`, `/dev/port`, `ioperm` | `dmidecode` fallback only (it reads `/sys/firmware/dmi/tables` first) | refused |
+| `/dev/ipmi0` | `ipmitool` | not restricted by lockdown (not measured: no IPMI device in QEMU) |
 
 ### LUKS Encryption (Planned)
 

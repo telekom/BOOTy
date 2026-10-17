@@ -464,31 +464,35 @@ RUN find . -print0 > ../initramfs.files \
     && rm ../initramfs.cpio
 
 # ── ISO build stage (optional, triggered by --target=iso) ──────────────────
-FROM debian:trixie-slim AS iso-builder
+# UEFI El Torito image: Debian shim (Microsoft UEFI CA) + Debian-signed GRUB,
+# which verifies the Debian-signed kernel, so the ISO boots with Secure Boot.
+# EFI_ISO_LABELS lists the ISO volume labels its grub.cfg searches; the
+# default also finds the ISOs that CAPRF renders from the BOOTy base image.
+# amd64 only, like ISOLINUX.
+FROM debian:trixie-slim AS efi-boot
+ARG EFI_ISO_LABELS="BOOTY caas-deploy-image"
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
-    xorriso syslinux syslinux-common isolinux curl ca-certificates \
+    shim-signed shim-helpers-amd64-signed grub-efi-amd64-signed dosfstools mtools \
     && rm -rf /var/lib/apt/lists/*
+COPY hack/make-efiboot.sh /usr/local/bin/
+# EFI_ISO_LABELS is split into one argument per label on purpose.
+RUN make-efiboot.sh /efiboot.img ${EFI_ISO_LABELS}
 
+# Shared by every ISO target (and reusable for other ISOs): BIOS ISOLINUX +
+# UEFI El Torito + isohybrid MBR/GPT, see hack/make-iso.sh.
+FROM debian:trixie-slim AS iso-tools
+RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+    xorriso isolinux syslinux-common \
+    && rm -rf /var/lib/apt/lists/*
+COPY hack/make-iso.sh /usr/local/bin/
+COPY --from=efi-boot /efiboot.img /efiboot.img
+
+FROM iso-tools AS iso-builder
+ARG ISO_VOLID=BOOTY
 COPY --from=busybox /initramfs.cpio.zst /iso/boot/initrd.img
-
 # Use the standard Debian kernel (has all common NIC drivers as modules)
 COPY --from=kernel /vmlinuz /iso/boot/vmlinuz
-
-# ISOLINUX bootloader
-RUN mkdir -p /iso/isolinux && \
-    cp /usr/lib/ISOLINUX/isolinux.bin /iso/isolinux/ && \
-    cp /usr/lib/syslinux/modules/bios/ldlinux.c32 /iso/isolinux/
-
-RUN printf 'DEFAULT booty\nLABEL booty\n  KERNEL /boot/vmlinuz\n  APPEND initrd=/boot/initrd.img console=tty0 console=ttyS0,115200n8\n' \
-    > /iso/isolinux/isolinux.cfg
-
-RUN xorriso -as mkisofs \
-    -o /booty.iso \
-    -b isolinux/isolinux.bin \
-    -c isolinux/boot.cat \
-    -no-emul-boot -boot-load-size 4 -boot-info-table \
-    -isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin \
-    /iso
+RUN make-iso.sh /iso /efiboot.img /booty.iso "$ISO_VOLID"
 
 FROM scratch AS iso
 COPY --from=iso-builder /booty.iso .
@@ -685,28 +689,11 @@ FROM scratch AS gobgp
 COPY --from=gobgp-builder /initramfs.cpio.zst .
 
 # ── GoBGP ISO target ──────────────────────────────────────────────────────
-FROM debian:trixie-slim AS gobgp-iso-builder
-RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
-    xorriso syslinux syslinux-common isolinux curl ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
+FROM iso-tools AS gobgp-iso-builder
+ARG ISO_VOLID=BOOTY
 COPY --from=gobgp-builder /initramfs.cpio.zst /iso/boot/initrd.img
 COPY --from=kernel /vmlinuz /iso/boot/vmlinuz
-
-RUN mkdir -p /iso/isolinux && \
-    cp /usr/lib/ISOLINUX/isolinux.bin /iso/isolinux/ && \
-    cp /usr/lib/syslinux/modules/bios/ldlinux.c32 /iso/isolinux/
-
-RUN printf 'DEFAULT booty\nLABEL booty\n  KERNEL /boot/vmlinuz\n  APPEND initrd=/boot/initrd.img console=tty0 console=ttyS0,115200n8\n' \
-    > /iso/isolinux/isolinux.cfg
-
-RUN xorriso -as mkisofs \
-    -o /booty-gobgp.iso \
-    -b isolinux/isolinux.bin \
-    -c isolinux/boot.cat \
-    -no-emul-boot -boot-load-size 4 -boot-info-table \
-    -isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin \
-    /iso
+RUN make-iso.sh /iso /efiboot.img /booty-gobgp.iso "$ISO_VOLID"
 
 FROM scratch AS gobgp-iso
 COPY --from=gobgp-iso-builder /booty-gobgp.iso .
