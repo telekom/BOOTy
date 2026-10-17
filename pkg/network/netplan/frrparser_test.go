@@ -442,7 +442,8 @@ func TestL3VNIRD(t *testing.T) {
 		{"repeated block", frrconf.Config{VRFVNIs: []frrconf.VRFVNI{{VNI: 3000}}, Routers: []frrconf.Router{{VRF: "Vrf_underlay"}, {VRF: "Vrf_underlay"}, {}}}, "", 2, 2},
 		{"explicit rd", frrconf.Config{VRFVNIs: []frrconf.VRFVNI{{VNI: 3000, VRF: "Vrf_p"}}, Routers: []frrconf.Router{{}, {VRF: "Vrf_p", AddressFamilies: evpn("65000:9")}}}, "65000:9", 2, 2},
 		{"no router for the VRF", frrconf.Config{VRFVNIs: []frrconf.VRFVNI{{VNI: 3000, VRF: "Vrf_p"}}, Routers: []frrconf.Router{{}}}, "", 2, 2},
-		{"L2VNI", frrconf.Config{Routers: []frrconf.Router{{}, {VRF: "Vrf_underlay"}}}, "", 0, 2},
+		{"L2VNI", frrconf.Config{Routers: []frrconf.Router{{VRF: "Vrf_underlay"}, {}}}, "", 2, 2},
+		{"L2VNI without a default VRF instance", frrconf.Config{Routers: []frrconf.Router{{VRF: "Vrf_underlay"}}}, "", 1, 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			rd, index, instances := l3vniRD(&tt.model, 3000)

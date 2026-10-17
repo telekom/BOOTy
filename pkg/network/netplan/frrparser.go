@@ -282,6 +282,7 @@ func l3vniRouteTargets(model *frrconf.Config, vni uint32) (imp, exp []string) {
 // from 1 when it is created, in frr.conf order (bgpd.c bgp_create); a VRF
 // without a "router bgp" gets an instance when its L3VNI appears, after
 // the configured ones. It returns that n and the number of instances.
+// For a VNI that is not an L3VNI, n is the id of the default VRF instance.
 func l3vniRD(model *frrconf.Config, vni uint32) (rd string, index, instances int) {
 	vrf, ok := "", false
 	for _, v := range model.VRFVNIs {
@@ -307,9 +308,14 @@ func l3vniRD(model *frrconf.Config, vni uint32) (rd string, index, instances int
 		}
 	}
 	instances = len(seen)
-	if ok && index == 0 {
+	switch {
+	case ok && index == 0:
 		instances++
 		index = instances
+	case !ok:
+		// An L2VNI: BOOTy's Type-5 route of the provision address is in
+		// the default VRF.
+		index = max(slices.Index(seen, "")+1, 1)
 	}
 	return rd, index, instances
 }
