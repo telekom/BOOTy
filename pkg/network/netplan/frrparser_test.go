@@ -471,3 +471,18 @@ func TestL3VNIRD(t *testing.T) {
 		})
 	}
 }
+
+// applyEVPNMode sets the RD ids also in L2 mode: the provision VNI is an
+// L2VNI, BOOTy's Type-5 route uses the default VRF instance's id and the
+// L2VNI the id after the instances.
+func TestApplyEVPNModeL2RD(t *testing.T) {
+	frr := &FRRParams{AdvertiseAllVNI: true, Model: &frrconf.Config{
+		Routers: []frrconf.Router{{VRF: "Vrf_underlay"}, {}},
+	}}
+	cfg := &network.Config{ProvisionVNI: 100}
+	applyEVPNMode(frr, cfg)
+	if !cfg.EVPNL2Enabled || cfg.EVPNType5Only || cfg.EVPNRDIndex != 2 || cfg.BGPInstances != 2 {
+		t.Fatalf("L2 mode: L2 %v Type-5 only %v RD index %d instances %d; want true false 2 2",
+			cfg.EVPNL2Enabled, cfg.EVPNType5Only, cfg.EVPNRDIndex, cfg.BGPInstances)
+	}
+}
