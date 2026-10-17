@@ -175,48 +175,57 @@ behaviour is the current FRR with that file:
 
 | Requirement | BOOTy | Lab evidence (containerlab, against an FRR node with the same files) | kindmetal evidence (CAPRF e2e, real legacy ramdisk) | Status |
 |-------------|-------|----------------------------------------------------------------------|-----------------------------------------------------|--------|
-| Sessions, address families, local-as, VRF-bound route reflectors | GoBGP sessions from `frr.conf` | `TestProdTplLeafSessions`, `TestProdTplRRSessions`, `TestProdTplLocalASReplaceASPath` | CAPRF production-shaped fixture (`test/e2e/evpn-bm4x`, CAPRF !292): both ramdisks get the same files from the bm4x templates; sessions to two leaves and two route reflectors, and `fabric-parity-diff` | Merged (#643), native keys Planned (#654) |
+| Sessions, address families, local-as, VRF-bound route reflectors | GoBGP sessions from `frr.conf` | `TestProdTplLeafSessions`, `TestProdTplRRSessions`, `TestProdTplLocalASReplaceASPath` | CAPRF production-shaped fixture (`test/e2e/evpn-bm4x`, CAPRF !292): both ramdisks get the same files from the bm4x templates; sessions to two leaves and two route reflectors, and `fabric-parity-diff` | Merged (#643), native keys Merged (#654) |
 | Timers and profile defaults | `frr defaults` profile and `timers` lines | session tests above | CAPRF !292: negotiated 30/90 at both leaves | Merged (#643) |
-| Routes, ECMP, next hops (RFC 5549) | FIB writer like zebra | `TestProdTplFIBRoutes`, `TestProdTplRFC5549Routes` | fabric snapshot (routes and routing tables) | Merged (#645), Planned (#681) |
+| Routes, ECMP, next hops (RFC 5549) | FIB writer like zebra | `TestProdTplFIBRoutes`, `TestProdTplRFC5549Routes` | fabric snapshot (routes and routing tables) | Merged (#645), Planned (#681) for the RFC 5549 lab test |
 | EVPN route types (Type-5 only for an L3VNI, IPv6) | GoBGP Type-5 | `TestProdTplType5*` | `e2e-kindmetal-booty-evpn` Type-2/Type-3 absence checks | Merged (#582, #651) |
-| BFD | own RFC 5880 implementation | `TestProdTplBFDSessions`, `TestProdTplBFDFailover` | CAPRF !292: single-hop BFD at both leaves (remote 150/150/3) and multihop BFD at both route reflectors | Planned (#655) |
-| Route-maps, route targets, local-as loop check | GoBGP policies | `TestProdTplRouteMap*`, `TestProdTplLocalASLoopCheck` | CAPRF !292 gives the template route-maps to both ramdisks; their effect shows only in `fabric-parity-diff` | Planned (#659, #668) |
-| VTEP, VXLAN and bridge devices, MTU, `accept-ra`, forwarding | netplan keys applied like networkd | `TestProdTplKernelDevices` | fabric snapshot (MTU, ARP/ND of the leaf port) | Planned (#668) |
-| LLDP sent on every fabric NIC | frames like networkd | `TestProdTplLLDP` | CAPRF `EVPN_EXPECT_LLDP` in both EVPN jobs: the leaf must receive an LLDP frame from every host (CAPRF !291) | Planned (#668) |
+| BFD | own RFC 5880 implementation | `TestProdTplBFDSessions`, `TestProdTplBFDFailover` | CAPRF !292: single-hop BFD at both leaves (remote 150/150/3) and multihop BFD at both route reflectors | Merged (#655) |
+| Route-maps, route targets, local-as loop check | GoBGP policies | `TestProdTplRouteMap*`, `TestProdTplLocalASLoopCheck` | CAPRF !292 gives the template route-maps to both ramdisks; their effect shows only in `fabric-parity-diff` | Merged (#659, #668) |
+| VTEP, VXLAN and bridge devices, MTU, `accept-ra`, forwarding | netplan keys applied like networkd | `TestProdTplKernelDevices` | fabric snapshot (MTU, ARP/ND of the leaf port) | Merged (#668) |
+| LLDP sent on every fabric NIC | frames like networkd | `TestProdTplLLDP` | CAPRF `EVPN_EXPECT_LLDP` in both EVPN jobs: the leaf must receive an LLDP frame from every host (CAPRF !291) | Merged (#668) |
 | LLDP received | `pkg/network/lldp` can listen, but BOOTy does not start it | none | none yet: the leaves of CAPRF !292 send LLDP frames on every host port, ready for a receive test | Not implemented |
-| Switch faults: link flap, BGP reset, leaf down and up | carrier watch, BFD, GoBGP reconnect | `TestProdTplUplinkCarrierLoss`, `TestProdTplBFDFailover`, `TestProdTplRRRestart` | CAPRF `EVPN_FABRIC_FAULTS` in both EVPN jobs (`bgp-reset`, `link-flap`, `leaf-down`) | Merged (#645) for carrier loss, Planned (#655, #668); kindmetal Planned (CAPRF !291) |
-| Both leaves of a host down one after the other | as above | one uplink at a time in the lab | CAPRF !292 `leaves-bounce`: leaf01 down and up, then leaf02; the other leaf keeps the host and dcgw01 keeps one next hop; ECMP over both leaves before | kindmetal Planned (CAPRF !292) |
-| Native configuration only (no netplan, no `frr.conf`) | vars and YAML keys for every value of the files | the vars-only server in every lab test | Not yet | Planned (#654 and later) |
+| Switch faults: link flap, BGP reset, leaf down and up | carrier watch, BFD, GoBGP reconnect | `TestProdTplUplinkCarrierLoss`, `TestProdTplBFDFailover`, `TestProdTplRRRestart` | CAPRF `EVPN_FABRIC_FAULTS` in both EVPN jobs (`bgp-reset`, `link-flap`, `leaf-down`) | Merged (#645, #655, #668); kindmetal: CAPRF !291 and !292 |
+| Both leaves of a host down one after the other | as above | one uplink at a time in the lab | CAPRF !292 `leaves-bounce`: leaf01 down and up, then leaf02; the other leaf keeps the host and dcgw01 keeps one next hop; ECMP over both leaves before | kindmetal: passes with BOOTy `main` (CAPRF !293) |
+| Native configuration only (no netplan, no `frr.conf`) | vars and YAML keys for every value of the files | the vars-only server in every lab test | CAPRF !292 native variant: passes every acceptance spec with BOOTy `main` (CAPRF !293) | Merged (#654 and later) |
 
-Known differences, found with the CAPRF fabric snapshots (legacy ramdisk FRR
-10.2.1 against BOOTy 0.2.0-rc.12), that must be fixed or accepted:
+Results in the production-shaped CAPRF fixture (CAPRF !292, kindmetal):
 
-- BGP capabilities that the legacy ramdisk sends and BOOTy does not: graceful
-  restart (helper, restart time 120 s), long-lived graceful restart, hostname,
-  software version, dynamic capability, enhanced route refresh, extended
-  message, add-path receive, paths-limit.
-- Recovery after a 60 s leaf outage: about 5 s for the legacy ramdisk,
-  about 175 s for rc.12. rc.12 also does not react to a 5 s carrier loss.
-  Recheck with a release that contains the carrier watch (#645) and the
-  connect retry option (#654).
-- The minimum route advertisement interval (GoBGP has none) and the LLDP
-  TLVs are compared by `fabric-parity-diff` in CAPRF !292.
+- The legacy ramdisk passes every acceptance spec (CAPRF job 407514447).
+- BOOTy `main` 0a4b1eaf (#654, #655, #659, #668) passes every acceptance
+  spec too, both with the bm4x template files and with native vars only
+  (CAPRF !293, jobs 407554688 and 407554689): sessions to both leaves with
+  30/90, BFD, ECMP at the route reflector, IPv6 Type-5 only, LLDP from both
+  NICs, and recovery from both leaves going down in turn, a BGP reset and a
+  link flap while the image downloads. The head of #681 gives the same
+  result (CAPRF !294). BOOTy 0.2.0-rc.12 cannot set up this network.
+- The fabric sees the same with template files and with native vars.
 
-The production-shaped CAPRF fixture is proven with the legacy ramdisk (CAPRF
-!292, job 407514447): sessions to both leaves with the negotiated timers
-30/90, BFD 150/150/3 at the leaves and multihop BFD at both route
-reflectors, two next hops at the route reflector to every host VTEP, only
-IPv6 Type-5 routes with RT 65169:3000, LLDP frames from both NICs with the
-template port names, and recovery from both leaves going down one after the
-other, a BGP reset and a link flap while the image downloads. BOOTy
-0.2.0-rc.12 cannot set up this network yet (`provision gateway is required`,
-fixed by #662 on `main`); the BOOTy job turns green with a release that
-contains the GoBGP parity stack.
+Differences that `fabric-parity-diff` still reports for BOOTy `main` (open,
+to be fixed or accepted):
+
+- Route distinguisher: BOOTy uses `<AS>:<VNI>` (4210000017:3000) on every
+  host; FRR uses `<router-id>:<n>`, unique per host.
+- BOOTy sends no MED on the routes it originates; FRR sends MED 0.
+- BFD: BOOTy announces Required Min Echo RX 0; FRR 50 ms.
+- BOOTy sends the extended next hop capability on the route reflector
+  sessions; FRR does not.
+- Capabilities that only the legacy ramdisk sends: graceful restart
+  (helper, 120 s), long-lived graceful restart, enhanced route refresh,
+  extended message, add-path receive, paths-limit. BOOTy `main` now sends
+  hostname, dynamic and software version capabilities.
+
+Behaviour differences seen in the fault runs:
+
+- After a leaf comes back, BOOTy's BFD goes Up and, within a second, Down
+  again (the leaf signals down), which resets the new BGP session once
+  more. The legacy ramdisk resets it once.
+- In the CAPRF single-leaf EVPN fixture, BOOTy `main` does not bring the
+  unnumbered leaf session back after a 60 s leaf outage; the legacy ramdisk
+  recovers in about 5 s.
 
 `fabric-parity-diff` accepts a difference only when an entry of the CAPRF
 `test/e2e/evpn-bm4x/parity-allowlist.yaml` covers that field and names the
-gap. The capability gaps above are in that list, marked open: each must be
-implemented in BOOTy or accepted here.
+gap. The open capability gaps above are in that list.
 
 ### Common pipeline
 
