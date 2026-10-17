@@ -2290,7 +2290,7 @@ func TestDeprovisionSecureEraseFallbackWipeIsReported(t *testing.T) {
 	if err := o.reportDeprovisionSuccess(context.Background()); err != nil {
 		t.Fatalf("reportDeprovisionSuccess: %v", err)
 	}
-	want := "deprovisioning complete; secure erase not done, wiped instead (SECURE_ERASE_FALLBACK=wipe): /dev/sdb"
+	want := "deprovisioning complete handoff=reboot; secure erase not done, wiped instead (SECURE_ERASE_FALLBACK=wipe): /dev/sdb"
 	if got := provider.statuses[len(provider.statuses)-1].message; got != want {
 		t.Fatalf("success status = %q, want %q", got, want)
 	}

@@ -110,7 +110,7 @@ URL is empty, BOOTy skips the callback.
 | Variable | When BOOTy calls it | Body |
 |----------|---------------------|------|
 | `INIT_URL` | At the start of provision and deprovision (`report-init` step). Standby sends `standby`, check mode sends `health-check`. BOOTy also uses `INIT_URL` as the connectivity check target. | `provisioning started`, or `deprovisioning started` in the deprovision modes |
-| `SUCCESS_URL` | At the end of a successful run (`report-success` step), and for dry-run and check results. | `provisioning complete handoff=<method>` or `deprovisioning complete`, or a check summary. See [Handoff](#handoff). |
+| `SUCCESS_URL` | At the end of a successful run (`report-success` step), and for dry-run and check results. | `provisioning complete handoff=<method>` or `deprovisioning complete handoff=<method>`, or a check summary. See [Handoff](#handoff). |
 | `ERROR_URL` | When a step fails, when a handoff fails, and, with `FAILURE_ACTION=wait`, when the run fails before or outside a mode. | `step <name> failed [<code>]: <error>` with a [failure code](failure-codes.md), or a short failure message |
 | `LOG_URL` | For every log record at level `INFO` or higher. BOOTy redacts attributes with sensitive names, buffers 256 lines and drops lines when the buffer is full. | One log line |
 | `DEBUG_URL` | Never. BOOTy reads the variable but sends nothing to it. Diagnostic dumps go to the log and through `LOG_URL`. | |
@@ -129,6 +129,15 @@ OS: `handoff=kexec`, `handoff=reboot` or `handoff=poweroff`
 
 A power cycle after `kexec` or `reboot` would cut the first boot of the
 installed OS (cloud-init, Ignition). Older CAPRF releases ignore the field.
+
+The deprovision success message names its handoff too, before the
+not-wiped note (`deprovisioning complete handoff=reboot; not wiped, ...`):
+
+| Method | When | What CAPRF does |
+|--------|------|-----------------|
+| `standby` | Standby `deprovision` command with `STANDBY_DEPROVISION_SUCCESS_ACTION=standby` | Leaves the host running: the agent waits for the next command. |
+| `poweroff` | `SUCCESS_ACTION=poweroff` | Waits for the power off. |
+| `reboot` | Otherwise | Powers the host off at once: the disks are wiped, and a wait for a power off that does not come costs the grace period. |
 The kexec limitations and the decision table are in [kexec.md](kexec.md).
 
 ## Agent mode contract
