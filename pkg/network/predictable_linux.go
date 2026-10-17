@@ -62,14 +62,29 @@ func missingLinks(names []string) []string {
 // nicWaitInterval is the time between two looks for the configured NICs.
 var nicWaitInterval = 500 * time.Millisecond
 
+// producedLinks are the configured names that BOOTy creates or gives
+// itself: the VXLAN link, the bond, and the netplan set-name targets.
+func producedLinks(c *Config) []string {
+	names := []string{c.VXLANLink}
+	if c.IsBondMode() {
+		names = append(names, "bond0")
+	}
+	for _, r := range c.LinkRenames {
+		names = append(names, r.SetName)
+	}
+	return names
+}
+
 // waitForConfiguredNICs waits up to NICWait (NIC_WAIT_SECONDS) until every
 // configured NIC exists or one NIC has it as its predictable name, and
 // returns the renames. NICs can appear after BOOTy starts: a driver brings
 // up its ports late, or containerlab moves the veths into the namespace.
-// The VXLAN link is left out, because BOOTy creates it. After the wait it
-// goes on with the NICs it has, and the setup reports what is missing.
+// The names that BOOTy creates or gives itself (producedLinks) are not
+// waited for. After the wait it goes on with the NICs it has, and the
+// setup reports what is missing.
 func waitForConfiguredNICs(ctx context.Context, c *Config, missing []string) ([]netname.Rename, error) {
-	nics := slices.DeleteFunc(slices.Clone(missing), func(n string) bool { return n == c.VXLANLink })
+	produced := producedLinks(c)
+	nics := slices.DeleteFunc(slices.Clone(missing), func(n string) bool { return slices.Contains(produced, n) })
 	deadline := time.Now().Add(c.NICWait)
 	for logged := false; ; logged = true {
 		links, err := physicalLinks(ctx)

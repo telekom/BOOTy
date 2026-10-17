@@ -963,6 +963,18 @@ func networkWait(cfg *config.MachineConfig) (int, time.Duration) {
 // NIC_WAIT_SECONDS.
 const defaultNICWaitSeconds = 30
 
+// nicWait is the wait for configured NICs: NIC_WAIT_SECONDS, 0 for the
+// default, -1 for none.
+func nicWait(seconds int) time.Duration {
+	switch {
+	case seconds < 0:
+		return 0
+	case seconds == 0:
+		return defaultNICWaitSeconds * time.Second
+	}
+	return time.Duration(seconds) * time.Second
+}
+
 func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (_ network.Mode, err error) {
 	defer func() {
 		// Every failure of the setup is visible in the log, also when the
@@ -1002,10 +1014,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (_ network
 	}
 
 	if config.BoolOr(cfg.Network.PredictableNames, true) {
-		netCfg.NICWait = defaultNICWaitSeconds * time.Second
-		if n := cfg.Network.NICWaitSeconds; n > 0 {
-			netCfg.NICWait = time.Duration(n) * time.Second
-		}
+		netCfg.NICWait = nicWait(cfg.Network.NICWaitSeconds)
 		if err := network.ApplyPredictableNames(ctx, netCfg); err != nil {
 			return nil, fmt.Errorf("predictable NIC names: %w", err)
 		}

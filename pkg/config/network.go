@@ -79,6 +79,7 @@ type NetworkConfig struct {
 	// NICWaitSeconds is the longest wait for the NICs that the netplan,
 	// frr.conf or vars name and that do not exist yet (a driver that brings
 	// up its ports late). After it the setup goes on with the NICs it has.
+	// -1 does not wait.
 	// Default: 0 (30 seconds)
 	NICWaitSeconds int `yaml:"nicWaitSeconds,omitempty" json:"nicWaitSeconds,omitempty"`
 

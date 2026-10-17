@@ -3,11 +3,14 @@
 package network
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -71,8 +74,13 @@ func TestApplyPredictableNames(t *testing.T) {
 	}
 
 	// bm4x frr.conf: neighbor enp1s0 interface, neighbor enp2s0 interface.
-	if err := ApplyPredictableNames(context.Background(), &Config{InterfaceNames: []string{"enp1s0", "enp2s0"}}); err != nil {
+	// The NICs that have the names as predictable names end the wait.
+	start := time.Now()
+	if err := ApplyPredictableNames(context.Background(), &Config{InterfaceNames: []string{"enp1s0", "enp2s0"}, NICWait: 10 * time.Second}); err != nil {
 		t.Fatalf("ApplyPredictableNames() = %v", err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("waited %s although eth0 and eth1 have the predictable names", d)
 	}
 	if len(renamed) != 2 || !reflect.DeepEqual(map[string]bool{renamed[0]: true, renamed[1]: true},
 		map[string]bool{"eth0>enp1s0": true, "eth1>enp2s0": true}) {
@@ -149,5 +157,57 @@ func TestApplyPredictableNamesWaitsForNICs(t *testing.T) {
 	}
 	if d := time.Since(start); d < 20*time.Millisecond || d > 5*time.Second {
 		t.Fatalf("wait for a missing NIC took %s, want NICWait", d)
+	}
+}
+
+// Names that BOOTy creates or gives itself are not waited for: bond0 of a
+// netplan bond, a netplan set-name target. A NIC that never appears ends
+// the wait after NICWait with a warning; a canceled context ends it at
+// once with an error.
+func TestWaitForConfiguredNICsProducedAndEnd(t *testing.T) {
+	restore := snapshotNICFns()
+	defer restore()
+	exists, interval := linkExists, nicWaitInterval
+	t.Cleanup(func() { linkExists, nicWaitInterval = exists, interval })
+	sleepFunc = func(time.Duration) {}
+	nicWaitInterval = time.Millisecond
+	mac, _ := net.ParseMAC("02:00:00:00:00:01")
+	linkExists = func(name string) bool { return name == "eth0" || name == "eth1" }
+	linkList = func() ([]netlink.Link, error) {
+		return []netlink.Link{
+			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "eth0", HardwareAddr: mac}},
+			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "eth1", HardwareAddr: mac}},
+		}, nil
+	}
+	for name, c := range map[string]*Config{
+		"bond":     {StaticIface: "bond0", BondInterfaces: "eth0,eth1", NICWait: 10 * time.Second},
+		"set-name": {InterfaceNames: []string{"hbn"}, LinkRenames: []LinkMatch{{Name: "eth0", SetName: "hbn"}}, NICWait: 10 * time.Second},
+	} {
+		start := time.Now()
+		if err := ApplyPredictableNames(context.Background(), c); err != nil {
+			t.Fatal(err)
+		}
+		if d := time.Since(start); d > 5*time.Second {
+			t.Errorf("%s: waited %s for a name that BOOTy gives itself", name, d)
+		}
+	}
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	if err := ApplyPredictableNames(context.Background(), &Config{InterfaceNames: []string{"ens9f9"}, NICWait: 20 * time.Millisecond}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "configured NICs are missing after the wait") || !strings.Contains(buf.String(), "ens9f9") {
+		t.Fatalf("log = %s, want the missing NIC at WARN", buf.String())
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(20*time.Millisecond, cancel)
+	start := time.Now()
+	err := ApplyPredictableNames(ctx, &Config{InterfaceNames: []string{"ens9f9"}, NICWait: 10 * time.Second})
+	if err == nil || time.Since(start) > 5*time.Second {
+		t.Fatalf("canceled wait = %v after %s, want an error at once", err, time.Since(start))
 	}
 }
