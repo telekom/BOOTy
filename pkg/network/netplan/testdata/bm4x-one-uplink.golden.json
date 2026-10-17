@@ -218,6 +218,8 @@
   "EmitLLDP": [
     "ens1f0np0"
   ],
+  "LLDPProfile": "",
+  "LLDPEmitAll": false,
   "IPForwarding": false,
   "IPv6Forwarding": null,
   "VLANs": null

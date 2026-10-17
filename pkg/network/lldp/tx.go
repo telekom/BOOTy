@@ -49,6 +49,14 @@ type Info struct {
 	MachineID      string // chassis ID (locally assigned), like networkd
 	SystemName     string // hostname
 	PrettyHostname string // system description; omitted when empty
+	Profile        string // identity profile; "" is ProfileNetworkd
+	// CarrierOnly skips NICs without carrier instead of trying to send
+	// (LLDP_EMIT_ALL). The bm4x-cablecheck profile always does.
+	CarrierOnly bool
+}
+
+func (i Info) carrierOnly() bool {
+	return i.CarrierOnly || i.Profile == ProfileBM4XCableCheck
 }
 
 // SystemInfo reads the machine ID of the boot, the hostname and the pretty
@@ -102,16 +110,27 @@ func machineID() string {
 	return id
 }
 
-// Frame returns the Ethernet frame that networkd sends on a NIC.
+// Frame returns the Ethernet frame that networkd sends on a NIC. The
+// bm4x-cablecheck profile sends the NIC MAC as port ID (subtype 3), the
+// interface name as port description, like lldpd, and the system name
+// "bare-minimal"; the rest stays as networkd sends it.
 func Frame(ifname string, mac net.HardwareAddr, info Info) ([]byte, error) {
 	chassis := layers.LLDPChassisID{Subtype: layers.LLDPChassisIDSubTypeLocal, ID: []byte(info.MachineID)}
 	if info.MachineID == "" {
 		chassis = layers.LLDPChassisID{Subtype: layers.LLDPChassisIDSubTypeMACAddr, ID: mac}
 	}
+	port := layers.LLDPPortID{Subtype: layers.LLDPPortIDSubtypeIfaceName, ID: []byte(ifname)}
 	caps := make([]byte, 4)
 	binary.BigEndian.PutUint16(caps[0:], capSupported)
 	binary.BigEndian.PutUint16(caps[2:], capEnabled)
-	values := []layers.LinkLayerDiscoveryValue{tlv(layers.LLDPTLVSysName, info.SystemName)}
+	var values []layers.LinkLayerDiscoveryValue
+	sysName := info.SystemName
+	if info.Profile == ProfileBM4XCableCheck {
+		port = layers.LLDPPortID{Subtype: layers.LLDPPortIDSubtypeMACAddr, ID: mac}
+		values = append(values, tlv(layers.LLDPTLVPortDescription, ifname))
+		sysName = BM4XSystemName
+	}
+	values = append(values, tlv(layers.LLDPTLVSysName, sysName))
 	if info.PrettyHostname != "" {
 		values = append(values, tlv(layers.LLDPTLVSysDescription, info.PrettyHostname))
 	}
@@ -121,7 +140,7 @@ func Frame(ifname string, mac net.HardwareAddr, info Info) ([]byte, error) {
 		&layers.Ethernet{SrcMAC: mac, DstMAC: nearestBridge, EthernetType: layers.EthernetTypeLinkLayerDiscovery},
 		&layers.LinkLayerDiscovery{
 			ChassisID: chassis,
-			PortID:    layers.LLDPPortID{Subtype: layers.LLDPPortIDSubtypeIfaceName, ID: []byte(ifname)},
+			PortID:    port,
 			TTL:       txTTL,
 			Values:    values,
 		})
@@ -153,7 +172,11 @@ func Emit(ctx context.Context, ifaces []string, info Info, log *slog.Logger) (wa
 }
 
 func emitOn(ctx context.Context, iface string, info Info, log *slog.Logger) {
-	log.Info("sending LLDP frames like networkd EmitLLDP=yes")
+	if info.Profile == ProfileBM4XCableCheck {
+		log.Info("sending LLDP frames with the bm4x-cablecheck identity")
+	} else {
+		log.Info("sending LLDP frames like networkd EmitLLDP=yes")
+	}
 	failed := false
 	for n := 0; ; n++ {
 		if err := send(iface, info); err != nil && !failed {
@@ -179,6 +202,9 @@ func send(iface string, info Info) error {
 	ifi, err := net.InterfaceByName(iface)
 	if err != nil {
 		return fmt.Errorf("interface %s: %w", iface, err)
+	}
+	if info.carrierOnly() && ifi.Flags&net.FlagRunning == 0 {
+		return nil // no carrier: send once the link is up
 	}
 	frame, err := Frame(iface, ifi.HardwareAddr, info)
 	if err != nil {
