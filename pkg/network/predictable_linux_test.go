@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/vishvananda/netlink"
 )
@@ -100,5 +102,52 @@ func TestConfiguredInterfaceNames(t *testing.T) {
 	want := []string{"enp1s0", "enp2s0", "ens1f0np0", "eno1", "ens2f0"}
 	if got := ConfiguredInterfaceNames(c); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ConfiguredInterfaceNames() = %v, want %v", got, want)
+	}
+}
+
+// The configured NICs that do not exist yet are waited for (they appear
+// late, like containerlab veths or a slow driver), up to NICWait; the
+// VXLAN link, which BOOTy creates, is not waited for.
+func TestApplyPredictableNamesWaitsForNICs(t *testing.T) {
+	restore := snapshotNICFns()
+	defer restore()
+	exists, interval := linkExists, nicWaitInterval
+	t.Cleanup(func() { linkExists, nicWaitInterval = exists, interval })
+	sleepFunc = func(time.Duration) {}
+	nicWaitInterval = time.Millisecond
+	mac, _ := net.ParseMAC("02:00:00:00:00:01")
+	var mu sync.Mutex
+	present := map[string]bool{"ens1f0np0": true}
+	lists := 0
+	linkExists = func(name string) bool { mu.Lock(); defer mu.Unlock(); return present[name] }
+	linkList = func() ([]netlink.Link, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if lists++; lists == 3 {
+			present["ens1f1np1"] = true
+		}
+		links := make([]netlink.Link, 0, len(present))
+		for name := range present {
+			links = append(links, &netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: name, HardwareAddr: mac}})
+		}
+		return links, nil
+	}
+	c := &Config{InterfaceNames: []string{"ens1f0np0", "ens1f1np1"}, VXLANLink: "dum.underlay", NICWait: 10 * time.Second}
+	start := time.Now()
+	if err := ApplyPredictableNames(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if !linkExists("ens1f1np1") || time.Since(start) > 5*time.Second {
+		t.Fatalf("returned after %s before ens1f1np1 appeared (lists %d)", time.Since(start), lists)
+	}
+
+	// A NIC that never appears ends the wait after NICWait, without error.
+	c = &Config{InterfaceNames: []string{"ens1f0np0", "ens9f9"}, NICWait: 20 * time.Millisecond}
+	start = time.Now()
+	if err := ApplyPredictableNames(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d < 20*time.Millisecond || d > 5*time.Second {
+		t.Fatalf("wait for a missing NIC took %s, want NICWait", d)
 	}
 }
