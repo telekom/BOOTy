@@ -21,6 +21,7 @@ has no host-specific data, so one ISO serves every host:
 | `LLDP_PROFILE` | `bm4x-cablecheck` | Port ID = NIC MAC, system name `bare-minimal`, on every NIC with carrier ([identity profiles](networking.md#lldp-identity-profiles)). |
 | `CHECK_HOLD` | `until-poweroff` | Keep the links and LLDP up after the checks until bm4x powers the host off (`STOP_LLDP`). |
 | `LLDP_NEIGHBOR_WAIT` | `90s` | Before the checks, wait until every NIC with carrier has an LLDP neighbor. |
+| `CHECK_PROFILES` | `health,cabling` | Also run the host-side cabling checks; their result goes to the log (serial console). |
 
 Check mode also stops the firmware LLDP agent of Intel NICs
 (`NIC_FW_LLDP`, default `disable` in check mode).
@@ -31,6 +32,61 @@ off and ejects the ISO. The kernel sends the first frame on each NIC within
 seconds of BOOTy starting and then one every 30 s (TTL 120 s), like
 systemd-networkd and lldpd. bm4x waits `redfish.image-boot` (60 s in
 production) after the boot.
+
+## Host-side checks
+
+With `CHECK_PROFILES=health,cabling` (set in the check ISO) BOOTy also
+checks the cabling from the host side, after `LLDP_NEIGHBOR_WAIT`:
+
+| Check | Fails when | Default action |
+|---|---|---|
+| `lldp-neighbor-present` | a NIC with carrier has no LLDP neighbor | warn |
+| `cabling-match` | a NIC is on another switch port than `CHECK_EXPECTED_CABLING` says, a NIC with a neighbor is not in it, or an expected NIC is missing (skipped without an expected cabling) | block |
+| `uplink-dual-homed` | all NICs with a neighbor reach the same switch (chassis ID) | warn |
+
+The switch port of a neighbor is its port ID when that is a name (subtype
+`ifname`, `interface-alias`, or a `local` ID that is not a number);
+otherwise, such as for the Junos ifIndex or the lldpd MAC port ID, it is
+the port description. Switch names compare without case.
+
+### Thresholds
+
+`CHECK_THRESHOLDS` (YAML `check.thresholds`) sets the action of each check:
+`off` skips it, `warn` reports a failure as a warning, `block` as critical,
+which makes the run fail (status `error`).
+
+| Key | Check |
+|---|---|
+| `lldpMissing` | `lldp-neighbor-present` |
+| `cablingMismatch` | `cabling-match` |
+| `dualHoming` | `uplink-dual-homed` |
+
+Example: `CHECK_THRESHOLDS='{"lldpMissing":"block","dualHoming":"off"}'`.
+
+### Result document and sinks
+
+One result document (`schema: booty.check/v1`) holds the host, the status
+(`pass`, `warn` or `fail`), every check result (health and cabling), every
+NIC with its LLDP neighbor and expected port, and the diff. The log always
+gets one line per check and a summary; `CHECK_RESULT_SINKS` adds `file`,
+`http`, `caprf` and `bm4x-report`. A failing sink is logged and the others
+still run.
+
+The `bm4x-report` sink writes the diff in the form of the bm4x
+`ConnectionReport`:
+
+```json
+{"diff":[{"a":{"hostname":"site1com5k01","interfaceName":"ens1f1np1"},
+  "bactual":{"hostname":"site1lsw5k11","interfaceName":"et-0/0/4"},
+  "bexpected":{"hostname":"site1lsw5k11","interfaceName":"et-0/0/3"}}]}
+```
+
+`a` is the host NIC, `bactual` the switch port that LLDP shows and
+`bexpected` the expected one. `deviceName` and `deviceStatus`, which only
+NetBox knows, are left out. The names `bactual` and `bexpected` are what
+Jackson writes for the Lombok getters `getBActual` and `getBExpected` of
+`ConnectionEntry`; verify them against a real bm4x job output before bm4x
+reads this report.
 
 ## Hold
 
@@ -53,4 +109,6 @@ checks:
 - `TestCheckISOQEMU` boots a built `booty-check.iso` from CD
   (`BOOTY_CHECK_ISO=booty-check.iso`) with the same checks.
 - The containerlab lab `topology-cablecheck.clab.yml` shows what an lldpd
-  leaf reports for BOOTy (`TestCableCheckLLDP`).
+  leaf reports for BOOTy (`TestCableCheckLLDP`). Its vars are the ISO vars
+  plus an expected cabling with one wrong port; `TestCableCheckDiff` checks
+  the bm4x report and the result document.
