@@ -1968,6 +1968,32 @@ func TestApplyBGPOptions(t *testing.T) {
 			t.Fatalf("sessions = %+v, want %+v", n.BGPSessions, want)
 		}
 	})
+	// The BFD keys are native wins: set values replace the frr.conf
+	// profile values of the sessions with bfd.
+	t.Run("BFD timers win", func(t *testing.T) {
+		n := &network.Config{BGPSessions: []network.BGPSession{
+			{Name: "eth1", Interface: true, BFD: true, BFDTransmitMS: 300, BFDReceiveMS: 300, BFDDetectMult: 3},
+			{Name: "eth2", Interface: true},
+		}}
+		applyBGPOptions(&config.BGPConfig{BFDTransmitMS: 150, BFDReceiveMS: 200, BFDDetectMultiplier: 5}, n)
+		want := []network.BGPSession{
+			{Name: "eth1", Interface: true, BFD: true, BFDTransmitMS: 150, BFDReceiveMS: 200, BFDDetectMult: 5},
+			{Name: "eth2", Interface: true},
+		}
+		if !reflect.DeepEqual(n.BGPSessions, want) {
+			t.Fatalf("sessions = %+v, want %+v", n.BGPSessions, want)
+		}
+	})
+}
+
+// The native BFD timers reach the network config.
+func TestNetworkConfigFromMachineConfigBFD(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Network.BGP.BFDTransmitMS, cfg.Network.BGP.BFDReceiveMS, cfg.Network.BGP.BFDDetectMultiplier = 150, 200, 5
+	n := networkConfigFromMachineConfig(cfg)
+	if n.BFDTransmitMS != 150 || n.BFDReceiveMS != 200 || n.BFDDetectMult != 5 {
+		t.Fatalf("BFD = %d/%d x%d, want 150/200 x5", n.BFDTransmitMS, n.BFDReceiveMS, n.BFDDetectMult)
+	}
 }
 
 func TestNetworkConfigFromMachineConfigOverlayVRF(t *testing.T) {

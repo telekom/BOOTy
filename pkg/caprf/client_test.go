@@ -2913,6 +2913,7 @@ BGP_ALLOWAS_IN=0
 BGP_MULTIPATH_RELAX=true
 BGP_INSTALL_ROUTES=false
 BGP_FAST_EXTERNAL_FAILOVER=true
+BFD_DETECT_MULTIPLIER=4
 BRIDGE_MAC=02:54:c0:00:02:13
 VXLAN_LINK=dum.underlay
 UNDERLAY_DUMMY_NAME=dum.underlay
@@ -2926,6 +2927,9 @@ OVERLAY_VRF_TABLE_ID=20
 	b, e := cfg.Network.BGP, cfg.Network.EVPN
 	if b.LocalAS != 65501 || b.NeighborVRF != "Vrf_underlay" || b.ConnectRetry != 5 {
 		t.Errorf("BGP = local-as %d, VRF %q, connect %d", b.LocalAS, b.NeighborVRF, b.ConnectRetry)
+	}
+	if b.BFDDetectMultiplier != 4 {
+		t.Errorf("BFD_DETECT_MULTIPLIER = %d, want 4", b.BFDDetectMultiplier)
 	}
 	// An explicit 0 and an explicit false are set, not unset.
 	if b.AllowASIn == nil || *b.AllowASIn != 0 || b.InstallRoutes == nil || *b.InstallRoutes ||

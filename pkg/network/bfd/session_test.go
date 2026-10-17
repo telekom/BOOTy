@@ -66,14 +66,18 @@ func TestSessionIgnoresOtherDiscriminator(t *testing.T) {
 func TestSessionDetectionTime(t *testing.T) {
 	now := time.Unix(100, 0)
 	s := NewSession(fabric, 11)
-	s.Receive(remote(StateInit, 11), now)
-	if got, want := s.DetectionTime(), 900*time.Millisecond; got != want {
-		t.Fatalf("detection time = %s, want %s (3 x max(150ms, 300ms))", got, want)
+	// The detection time uses the multiplier of the remote system (RFC
+	// 5880 6.8.4), here 4, not the local 3.
+	p := remote(StateInit, 11)
+	p.DetectMult = 4
+	s.Receive(p, now)
+	if got, want := s.DetectionTime(), 1200*time.Millisecond; got != want {
+		t.Fatalf("detection time = %s, want %s (remote 4 x max(150ms, 300ms))", got, want)
 	}
-	if s.CheckTimeout(now.Add(900 * time.Millisecond)) {
+	if s.CheckTimeout(now.Add(1200 * time.Millisecond)) {
 		t.Fatal("down at exactly the detection time")
 	}
-	if !s.CheckTimeout(now.Add(901*time.Millisecond)) || s.State() != StateDown || s.Diag() != DiagTimeExpired {
+	if !s.CheckTimeout(now.Add(1201*time.Millisecond)) || s.State() != StateDown || s.Diag() != DiagTimeExpired {
 		t.Fatalf("after the detection time: %s diag %d, want Down diag 1", s.State(), s.Diag())
 	}
 	if s.RemoteDiscriminator() != 0 {
