@@ -79,10 +79,11 @@
   "BGPCapabilities": {
     "GracefulRestart": false,
     "GracefulRestartTime": 0,
-    "LLGRStaleTime": 0,
     "AddPathReceive": false,
     "SoftwareVersion": false
   },
+  "BGPDefaults": "datacenter",
+  "BGPHostname": "",
   "BGPRouteMaps": [],
   "BGPCommunityLists": [],
   "BGPRouteMapIn": "",

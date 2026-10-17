@@ -190,9 +190,7 @@ func setCapabilities(p *apipb.Peer, c *network.BGPCapabilities) {
 	for _, af := range p.AfiSafis {
 		if c.GracefulRestart {
 			af.MpGracefulRestart = &apipb.MpGracefulRestart{Config: &apipb.MpGracefulRestartConfig{Enabled: true}}
-			af.LongLivedGracefulRestart = &apipb.LongLivedGracefulRestart{Config: &apipb.LongLivedGracefulRestartConfig{
-				Enabled: true, RestartTime: c.LLGRStaleTime,
-			}}
+			af.LongLivedGracefulRestart = &apipb.LongLivedGracefulRestart{Config: &apipb.LongLivedGracefulRestartConfig{Enabled: true}}
 		}
 		if c.AddPathReceive {
 			af.AddPaths = &apipb.AddPaths{Config: &apipb.AddPathsConfig{Receive: true}}
