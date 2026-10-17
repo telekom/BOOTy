@@ -214,6 +214,10 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   on every physical NIC with carrier; `LLDP_EMIT_ALL` (YAML
   `network.lldp.emitAll`) also does that for the default `networkd` identity.
   The default frames do not change.
+- New key `NIC_FW_LLDP` (YAML `network.nicFirmwareLLDP`): `disable` stops the
+  firmware LLDP agent of Intel NICs (i40e `disable-fw-lldp` on, ice
+  `fw-lldp-agent` off) over ethtool netlink, without the `ethtool` binary. The
+  default is `disable` in check mode and `keep` in the other modes.
 - GoBGP mode applies the netplan device settings of the provision VXLAN device,
   the bridge and the NICs like systemd-networkd (MTU, MAC, learning, ARP proxy,
   hairpin, link-local, `accept-ra`), and `frr.conf` `[no] ip[v6] forwarding`.

@@ -149,6 +149,9 @@ func (c *Config) validatePrimaryEnums() []string {
 			return validateEnum(c.Network.LLDP.Profile, "network.lldp.profile (LLDP_PROFILE)", lldp.ProfileNetworkd, lldp.ProfileBM4XCableCheck)
 		},
 		func() string {
+			return validateEnum(c.Network.NICFirmwareLLDP, "network.nicFirmwareLLDP (NIC_FW_LLDP)", NICFirmwareLLDPKeep, NICFirmwareLLDPDisable)
+		},
+		func() string {
 			return validateEnumLower(c.Network.WaitMode, "network.waitMode (NETWORK_WAIT_MODE)", NetworkWaitDefault, NetworkWaitRounds)
 		},
 		func() string {

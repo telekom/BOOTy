@@ -1295,6 +1295,7 @@ func applyNetworkStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"VLANS":               &cfg.Network.VLAN.Config,
 		"NETWORK_MODE":        &cfg.Network.Mode,
 		"LLDP_PROFILE":        &cfg.Network.LLDP.Profile,
+		"NIC_FW_LLDP":         &cfg.Network.NICFirmwareLLDP,
 		"VRF_NAME":            &cfg.Network.VRF.Name,
 		"vrf_name":            &cfg.Network.VRF.Name,
 		"BGP_PEER_MODE":       &cfg.Network.BGP.PeerMode,

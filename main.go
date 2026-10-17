@@ -30,6 +30,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/kexec"
 	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/BOOTy/pkg/network/ethtool"
 	"github.com/telekom/BOOTy/pkg/network/frr"
 	"github.com/telekom/BOOTy/pkg/network/gobgp"
 	"github.com/telekom/BOOTy/pkg/network/lldp"
@@ -733,6 +734,9 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	if err != nil {
 		return nil, err
 	}
+	if cfg.DisableNICFirmwareLLDP() {
+		disableNICFirmwareLLDP(ctx)
+	}
 	if config.BoolOr(cfg.Network.LLDPReceive, true) {
 		startLLDPReceive(ctx)
 	}
@@ -980,6 +984,26 @@ func startLLDPReceive(ctx context.Context) {
 		return
 	}
 	lldp.Receive(ctx, nics, slog.With("component", "lldp"))
+}
+
+// disableNICFirmwareLLDP stops the firmware LLDP agent of the Intel NICs
+// (NIC_FW_LLDP), which otherwise takes the LLDP frames of the switch. A
+// failure is only logged: the check can still run on the other NICs.
+func disableNICFirmwareLLDP(ctx context.Context) {
+	nics, err := network.DetectPhysicalNICsContext(ctx)
+	if err != nil {
+		slog.Warn("firmware LLDP agent not disabled: no physical NICs", "error", err)
+		return
+	}
+	for _, nic := range nics {
+		flag, err := ethtool.DisableFirmwareLLDP(nic)
+		switch {
+		case err != nil:
+			slog.Warn("firmware LLDP agent not disabled", "interface", nic, "flag", flag, "error", err)
+		case flag != "":
+			slog.Info("firmware LLDP agent disabled", "interface", nic, "flag", flag)
+		}
+	}
 }
 
 // startLLDPEmitAll sends LLDP frames on every physical NIC with carrier for
