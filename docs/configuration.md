@@ -471,20 +471,36 @@ of waiting for the CAPRF provision timeout.
   Timer, hard reset) and pets it with `raw 0x06 0x22` (Reset Watchdog Timer).
 - Progress: BOOTy pets every third of the timeout. During a provisioning or
   deprovisioning step it pets only while the step makes progress: the step
-  start counts, and so do written image bytes. A step without progress for
+  start counts, and so do written image bytes and every finished disk
+  command. A step without progress for
   its budget stops the keepalive; BOOTy logs `BOOTY-WDT-001` with the step
   name, and the hardware resets the host at most one timeout later. Outside
   a step (network setup, standby, a rescue shell, `FAILURE_ACTION=wait`)
   BOOTy pets as long as it runs.
-- Budgets: a step may run without progress for `WATCHDOG_TIMEOUT_SEC`. Steps
-  that can run long without progress have built-in budgets: `wipe-disks` and
-  `decommission-wipe` 6 h; `stream-image` (image modes that write with `dd`),
-  `mirror-root`, `check-filesystem`, `resize-filesystem`,
-  `run-machine-commands` and `run-post-provision-cmds` 1 h.
-  `WATCHDOG_STEP_BUDGETS` overrides them by step name.
+- Budgets: a step may run this long without progress, then the keepalive
+  stops. Steps not in the table use `WATCHDOG_TIMEOUT_SEC`.
+  `WATCHDOG_STEP_BUDGETS` overrides any entry by step name. Wipe and erase
+  steps report progress after every disk command (`wipefs`, `hdparm`,
+  `nvme format`, `sg_sanitize`, `dd`), because the overwrite runs inside one
+  command in the drive firmware without byte progress; one firmware
+  overwrite of a 20 TB hard disk takes about 22 h, so their budget is 48 h
+  per command.
+
+  | Step | Default budget | Why |
+  |------|----------------|-----|
+  | `wipe-disks`, `decommission-wipe` | 48 h per disk command | Secure erase, sanitize and firmware overwrite of large disks |
+  | `collect-firmware`, `setup-mellanox` | 1 h | Firmware reads and NIC firmware changes |
+  | `setup-raid`, `setup-nvme-namespaces` | 1 h | Array creation and namespace changes wait for devices |
+  | `apply-partition-layout`, `grow-partition` | 1 h | Partitioning and growth wait for devices and udev |
+  | `stream-image` | 1 h | Image modes that write with `dd`; the HTTP download reports every written byte |
+  | `mirror-root`, `check-filesystem`, `resize-filesystem` | 1 h | Copies and file system checks of large file systems |
+  | `run-machine-commands`, `run-post-provision-cmds` | 1 h | Operator commands |
+  | every other step | `WATCHDOG_TIMEOUT_SEC` (300 s) | |
+
 - Handoff: before kexec and reboot BOOTy disarms the watchdog with the magic
   close (`V`), or with `WATCHDOG_HANDOFF=keep` leaves it armed for a target OS
-  that takes it over (systemd `RuntimeWatchdogSec`). The target must open
+  that takes it over (systemd `RuntimeWatchdogSec`); see the caveats in the
+  [watchdog runbook](caprf-integration.md#hardware-watchdog). The target must open
   the device within the timeout, including firmware POST time on a reboot.
   Drivers that stop the watchdog on reboot (`watchdog_stop_on_reboot`) still
   disarm it at kexec and reboot; the BMC watchdog stays armed. A power off

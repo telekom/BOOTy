@@ -108,8 +108,10 @@ func TestSupervisorStepBudgets(t *testing.T) {
 		idle    time.Duration
 		wantPet bool
 	}{
-		{"wipe-disks", 5 * time.Hour, true}, // built-in 6 h
-		{"wipe-disks", 7 * time.Hour, false},
+		{"wipe-disks", 47 * time.Hour, true}, // built-in 48 h
+		{"wipe-disks", 49 * time.Hour, false},
+		{"setup-raid", 50 * time.Minute, true}, // built-in 1 h, longer than the timeout
+		{"setup-raid", 61 * time.Minute, false},
 		{"run-machine-commands", 4 * time.Minute, true}, // override of the built-in 1 h
 		{"run-machine-commands", 6 * time.Minute, false},
 		{"custom", 80 * time.Second, true},

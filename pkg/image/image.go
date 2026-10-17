@@ -36,10 +36,14 @@ func tickerProgress(byteCounter uint64) {
 	fmt.Printf("\rDownloading... %s complete", humanize.Bytes(byteCounter))
 }
 
+// progressTickInterval is the interval of the download progress; a test
+// seam.
+var progressTickInterval = 2 * time.Second
+
 // startProgressTicker starts a background goroutine that logs download progress
 // every 2 seconds. Returns a stop function that cleanly shuts down the goroutine.
 func startProgressTicker(counter *WriteCounter) func() {
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(progressTickInterval)
 	done := make(chan struct{})
 	var once sync.Once
 	go func() {

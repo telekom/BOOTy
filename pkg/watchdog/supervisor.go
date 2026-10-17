@@ -29,11 +29,25 @@ type Device interface {
 }
 
 // DefaultStepBudgets are the built-in budgets of steps that can run long
-// without reporting progress: secure erase, image writes with dd, file
-// system checks and operator commands. WATCHDOG_STEP_BUDGETS overrides them.
+// without reporting progress. WATCHDOG_STEP_BUDGETS overrides them.
+//
+// Wipe and erase steps report progress after every disk command (see
+// ProgressRunner), but one firmware overwrite or sanitize of a large hard
+// disk is one command: about 22 h for 20 TB. Their budget is 48 h per
+// command.
 var DefaultStepBudgets = map[string]time.Duration{
-	"wipe-disks":              6 * time.Hour,
-	"decommission-wipe":       6 * time.Hour,
+	"wipe-disks":        48 * time.Hour,
+	"decommission-wipe": 48 * time.Hour,
+	// Firmware reads and NIC firmware changes, RAID and NVMe namespace
+	// setup, partitioning and partition growth wait for devices and tools.
+	"collect-firmware":       time.Hour,
+	"setup-mellanox":         time.Hour,
+	"setup-raid":             time.Hour,
+	"setup-nvme-namespaces":  time.Hour,
+	"apply-partition-layout": time.Hour,
+	"grow-partition":         time.Hour,
+	// Image writes with dd (A/B modes), mirroring, file system checks and
+	// operator commands.
 	"stream-image":            time.Hour,
 	"mirror-root":             time.Hour,
 	"check-filesystem":        time.Hour,
