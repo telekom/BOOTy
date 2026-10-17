@@ -796,8 +796,6 @@ func copyFilesystemModulesForRelease(t *testing.T, rootDir, release string) {
 		"virtio_pci", "virtio_net", "e1000", "e1000e",
 		"virtio_scsi", "sd_mod",
 		"virtio_blk", "md_mod", "raid1", "efivarfs",
-		// Secure erase tests attach NVMe and AHCI disks.
-		"nvme", "ahci",
 	} {
 		copyKernelModuleWithDependencies(t, rootDir, release, module, copied, map[string]bool{})
 	}

@@ -27,6 +27,9 @@ func TestDiskWipeSecureEraseQEMU(t *testing.T) {
 		}
 	}
 	image := compressGzip(t, createChrootCapableTestDiskImage(t, 512))
+	// BOOTy loads the flat /modules directory; the runner kernel has AHCI
+	// as a module.
+	ahci := flatModuleFiles(t, "ahci")
 
 	t.Run("nvme format", func(t *testing.T) {
 		disk := filepath.Join(t.TempDir(), "nvme.raw")
@@ -36,7 +39,7 @@ func TestDiskWipeSecureEraseQEMU(t *testing.T) {
 		const markerOff = 2<<30 - 1<<20
 		writeAt(t, disk, markerOff, marker)
 
-		caprf, output := runSecureEraseQEMU(t, image, map[string]string{
+		caprf, output := runSecureEraseQEMU(t, image, nil, map[string]string{
 			"DISK_DEVICE": "/dev/nvme0n1",
 			// quick: no blkdiscard, so only the format can clear the marker.
 			"WIPE_DEPTH": "quick",
@@ -69,7 +72,7 @@ func TestDiskWipeSecureEraseQEMU(t *testing.T) {
 	}
 
 	t.Run("ata without security fails", func(t *testing.T) {
-		caprf, output := runSecureEraseQEMU(t, image, map[string]string{"DISK_DEVICE": "/dev/sda"}, sata(t)...)
+		caprf, output := runSecureEraseQEMU(t, image, ahci, map[string]string{"DISK_DEVICE": "/dev/sda"}, sata(t)...)
 		caprf.requireStatuses(t, "init", "error")
 		requireOutput(t, output, `msg="ATA secure erase" device=/dev/sda`)
 		requireOutput(t, output, "secure erase not supported: the drive has no ATA security feature set")
@@ -79,7 +82,7 @@ func TestDiskWipeSecureEraseQEMU(t *testing.T) {
 	})
 
 	t.Run("ata without security and SECURE_ERASE_FALLBACK=wipe", func(t *testing.T) {
-		caprf, output := runSecureEraseQEMU(t, image, map[string]string{
+		caprf, output := runSecureEraseQEMU(t, image, ahci, map[string]string{
 			"DISK_DEVICE":           "/dev/sda",
 			"SECURE_ERASE_FALLBACK": "wipe",
 		}, sata(t)...)
@@ -97,7 +100,7 @@ func TestDiskWipeSecureEraseQEMU(t *testing.T) {
 
 // runSecureEraseQEMU provisions image with SECURE_ERASE=true onto the disk
 // that diskArgs attach and returns the fake CAPRF and the serial output.
-func runSecureEraseQEMU(t *testing.T, image string, extra map[string]string, diskArgs ...string) (*fakeCAPRF, []byte) {
+func runSecureEraseQEMU(t *testing.T, image string, files, extra map[string]string, diskArgs ...string) (*fakeCAPRF, []byte) {
 	t.Helper()
 	caprf := startFakeCAPRF(t, image)
 	vars := caprf.nativeVars("provision")
@@ -110,7 +113,7 @@ func runSecureEraseQEMU(t *testing.T, image string, extra map[string]string, dis
 	}
 	args := []string{
 		"-m", "1024", "-nographic", "-no-reboot",
-		"-kernel", findKernel(t), "-initrd", buildProvisionInitramfs(t, vars),
+		"-kernel", findKernel(t), "-initrd", buildProvisionInitramfsWithFiles(t, vars, files),
 		"-net", "nic,model=virtio,macaddr=52:54:00:12:34:56", "-net", "user",
 		"-append", "console=ttyS0 panic=1 net.ifnames=0",
 	}
@@ -143,4 +146,50 @@ func writeAt(t *testing.T, path string, off int64, data []byte) {
 	if _, err := f.WriteAt(data, off); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// flatModuleFiles returns module and its dependencies for the guest kernel
+// as initramfs files modules/<name>.ko, uncompressed, for the BOOTy module
+// loader (finit_module without decompression). Built-in modules are left
+// out.
+func flatModuleFiles(t *testing.T, module string) map[string]string {
+	t.Helper()
+	release := os.Getenv("BOOTY_KERNEL_RELEASE")
+	if release == "" {
+		release = kernelRelease()
+	}
+	files := map[string]string{}
+	var add func(name string)
+	add = func(name string) {
+		key := "modules/" + strings.ReplaceAll(name, "-", "_") + ".ko"
+		if _, done := files[key]; done {
+			return
+		}
+		files[key] = ""
+		for _, dep := range kernelModuleDependencies(t, release, name) {
+			add(dep)
+		}
+		path := kernelModulePath(t, release, name)
+		if path == "" {
+			delete(files, key)
+			return
+		}
+		var data []byte
+		var err error
+		switch filepath.Ext(path) {
+		case ".zst":
+			data, err = exec.Command("zstd", "-dc", path).Output()
+		case ".xz":
+			data, err = exec.Command("xz", "-dc", path).Output()
+		default:
+			data, err = os.ReadFile(path)
+		}
+		if err != nil {
+			t.Fatalf("read module %s: %v", path, err)
+		}
+		files[key] = string(data)
+	}
+	add(module)
+	t.Logf("guest modules for %s: %d files", module, len(files))
+	return files
 }
