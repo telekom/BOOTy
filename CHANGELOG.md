@@ -468,7 +468,7 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 - Every CI, KVM and Makefile build of BOOTy stamps the commit time
   (`BOOTY_COMMIT_TIME`), the floor of the time sync. The docs explain that
   the floor, not the backward-step check, is the boundary against an
-  on-path attacker (#PRNUM)
+  on-path attacker (#740)
 - config: `testdata/full.yaml` and `TestLoadFullYAMLReference` cover every native
   CAPRF parity option (#682)
 - The `WIPE_ALL_DISKS` target in-use test uses a fixture with only the target
