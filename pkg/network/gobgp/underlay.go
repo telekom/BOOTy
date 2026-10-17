@@ -17,12 +17,11 @@ import (
 	"syscall"
 	"time"
 
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/server"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/server"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/net/ipv6"
 	"golang.org/x/sys/unix"
-	"google.golang.org/protobuf/types/known/anypb"
 
 	exec "github.com/telekom/BOOTy/pkg/executil"
 	"github.com/telekom/BOOTy/pkg/network"
@@ -76,6 +75,7 @@ type UnderlayTier struct {
 	stopFIB      context.CancelFunc                            // stops the FIB writer
 	fibDone      chan struct{}                                 // closed when the FIB writer has removed its routes
 	peerDevs     map[string]string                             // unnumbered peer address -> interface
+	peerConfs    map[string]*apipb.Peer                        // unnumbered peer address -> GoBGP peer, for the carrier watch
 	discoverPeer func(context.Context, string) (string, error) // overridable in tests; nil = discoverLinkLocalPeer
 	connected    func(netip.Addr, string) bool                 // overridable in tests; nil = connectedInVRF
 	resetBGP     func(context.Context, string, string)         // overridable in tests; nil = resetPeer
@@ -463,7 +463,9 @@ func (u *UnderlayTier) setNICMTU() {
 }
 
 func (u *UnderlayTier) startBgpServer(ctx context.Context) error {
-	u.bgp = server.NewBgpServer()
+	// GoBGP v4 logs nothing without a logger (v3 logged at info to
+	// stderr), so it logs through BOOTy's handler.
+	u.bgp = server.NewBgpServer(server.LoggerOption(u.log.With("component", "gobgp"), nil))
 	go u.bgp.Serve()
 
 	global := &apipb.Global{
@@ -698,7 +700,7 @@ func (u *UnderlayTier) startCarrierWatch() {
 	if len(peers) == 0 {
 		return
 	}
-	w := newCarrierWatch(u.bgp, peers, u.log)
+	w := newCarrierWatch(u.bgp, peers, u.peerConfs, u.log)
 	u.stopCarrier = make(chan struct{})
 	done, err := w.start(u.stopCarrier)
 	if err != nil {
@@ -775,10 +777,10 @@ func (u *UnderlayTier) addSessionPeers(ctx context.Context) error {
 				continue
 			}
 		}
-		if s.Interface {
-			u.recordInterfacePeer(s.Name, addr)
-		}
 		peer := buildSessionPeer(u.cfg, s, addr)
+		if s.Interface {
+			u.recordInterfacePeer(s.Name, addr, peer)
+		}
 		if err := u.bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: peer}); err != nil {
 			u.log.Warn("Failed to add BGP peer", "neighbor", s.Name, "error", err)
 			lastErr = err
@@ -797,10 +799,14 @@ func (u *UnderlayTier) addSessionPeers(ctx context.Context) error {
 
 // recordInterfacePeer remembers an unnumbered peer for the FIB writer
 // (next hop device) and the carrier watch.
-func (u *UnderlayTier) recordInterfacePeer(iface, addr string) {
+func (u *UnderlayTier) recordInterfacePeer(iface, addr string, peer *apipb.Peer) {
 	if u.peerDevs == nil {
 		u.peerDevs = map[string]string{}
 	}
+	if u.peerConfs == nil {
+		u.peerConfs = map[string]*apipb.Peer{}
+	}
+	u.peerConfs[addr] = peer
 	host, _, _ := strings.Cut(addr, "%")
 	u.peerDevs[host] = iface
 	if u.ifacePeers == nil {
@@ -851,7 +857,7 @@ func (u *UnderlayTier) addInterfacePeer(ctx context.Context, iface string, famil
 	}
 
 	peer := buildInterfacePeer(u.cfg, iface, addr, families)
-	u.recordInterfacePeer(iface, addr)
+	u.recordInterfacePeer(iface, addr, peer)
 
 	if u.cfg.AuthPassword != "" {
 		u.log.Info("tcp-md5 authentication configured for BGP peer", "interface", iface)
@@ -889,7 +895,7 @@ func (u *UnderlayTier) countEstablishedPeers(ctx context.Context) int {
 	var count int
 
 	fn := func(p *apipb.Peer) {
-		if p.GetState().GetSessionState() == apipb.PeerState_ESTABLISHED {
+		if p.GetState().GetSessionState() == apipb.PeerState_SESSION_STATE_ESTABLISHED {
 			count++
 		}
 	}
@@ -910,41 +916,18 @@ func (u *UnderlayTier) announceUnderlayRoute(ctx context.Context) error {
 		return fmt.Errorf("invalid router ID %q", u.cfg.RouterID)
 	}
 
-	nlri, err := anypb.New(&apipb.IPAddressPrefix{
-		PrefixLen: 32,
-		Prefix:    u.cfg.RouterID,
-	})
-	if err != nil {
-		return fmt.Errorf("build NLRI: %w", err)
-	}
-
-	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0}) // IGP
-	if err != nil {
-		return fmt.Errorf("build origin attr: %w", err)
-	}
-
 	// Use 0.0.0.0 as next-hop so GoBGP replaces it with the session's
 	// local address for each peer. For numbered peers this resolves to the
 	// interface IPv4 address; for unnumbered peers GoBGP detects the IPv6
 	// link-local local address and uses RFC 5549 extended next-hop encoding
 	// (MP_REACH_NLRI with IPv6 next-hop for IPv4 unicast).
-	nexthop, err := anypb.New(&apipb.NextHopAttribute{NextHop: "0.0.0.0"})
-	if err != nil {
-		return fmt.Errorf("build nexthop attr: %w", err)
-	}
-
-	aspath, err := anypb.New(&apipb.AsPathAttribute{
-		Segments: []*apipb.AsSegment{},
-	})
-	if err != nil {
-		return fmt.Errorf("build as-path attr: %w", err)
-	}
-
-	_, err = u.bgp.AddPath(ctx, &apipb.AddPathRequest{
-		Path: &apipb.Path{
-			Family: &apipb.Family{Afi: apipb.Family_AFI_IP, Safi: apipb.Family_SAFI_UNICAST},
-			Nlri:   nlri,
-			Pattrs: []*anypb.Any{origin, nexthop, aspath},
+	err := addPath(u.bgp, &apipb.Path{
+		Family: &apipb.Family{Afi: apipb.Family_AFI_IP, Safi: apipb.Family_SAFI_UNICAST},
+		Nlri:   &apipb.NLRI{Nlri: &apipb.NLRI_Prefix{Prefix: &apipb.IPAddressPrefix{PrefixLen: 32, Prefix: u.cfg.RouterID}}},
+		Pattrs: []*apipb.Attribute{
+			{Attr: &apipb.Attribute_Origin{Origin: &apipb.OriginAttribute{Origin: 0}}}, // IGP
+			{Attr: &apipb.Attribute_NextHop{NextHop: &apipb.NextHopAttribute{NextHop: "0.0.0.0"}}},
+			{Attr: &apipb.Attribute_AsPath{AsPath: &apipb.AsPathAttribute{}}},
 		},
 	})
 	if err != nil {

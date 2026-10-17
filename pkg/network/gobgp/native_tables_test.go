@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"testing"
 
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/server"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/server"
 	"golang.org/x/sys/unix"
 
 	"github.com/telekom/BOOTy/pkg/network"
@@ -109,7 +109,7 @@ func TestNativeUnnumberedPeerSelector(t *testing.T) {
 		{Name: "eth9", Interface: true, VRF: "Vrf_underlay", LocalASN: 65501},
 		{Name: "198.51.100.1", VRF: "default"},
 	}}}
-	u.recordInterfacePeer("eth9", "fe80::2%eth9")
+	u.recordInterfacePeer("eth9", "fe80::2%eth9", nil)
 	sel, vrfs = u.fibSelector(testVRFTable)
 	if got := sel.table("fe80::2"); got != 10 || vrfs[10] != "Vrf_underlay" {
 		t.Errorf("table of the Vrf_underlay session = %d, vrfs %v; want 10", got, vrfs)

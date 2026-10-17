@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/server"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/server"
 
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/bfd"
@@ -188,14 +188,14 @@ func TestResetPeerReestablishes(t *testing.T) {
 	is := func(want apipb.PeerState_SessionState) func(apipb.PeerState_SessionState) bool {
 		return func(st apipb.PeerState_SessionState) bool { return st == want }
 	}
-	wait("Established", is(apipb.PeerState_ESTABLISHED), 30*time.Second)
+	wait("Established", is(apipb.PeerState_SESSION_STATE_ESTABLISHED), 30*time.Second)
 	if err := a.srv.ResetPeer(ctx, &apipb.ResetPeerRequest{Address: "127.0.0.1", Communication: "BFD down"}); err != nil {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	wait("Idle after the reset", is(apipb.PeerState_IDLE), 3*time.Second)
-	wait("leaving Idle", func(st apipb.PeerState_SessionState) bool { return st != apipb.PeerState_IDLE }, 3*time.Second)
+	wait("Idle after the reset", is(apipb.PeerState_SESSION_STATE_IDLE), 3*time.Second)
+	wait("leaving Idle", func(st apipb.PeerState_SessionState) bool { return st != apipb.PeerState_SESSION_STATE_IDLE }, 3*time.Second)
 	t.Logf("connecting %s after the reset", time.Since(start).Round(100*time.Millisecond))
-	wait("Established again", is(apipb.PeerState_ESTABLISHED), 15*time.Second)
+	wait("Established again", is(apipb.PeerState_SESSION_STATE_ESTABLISHED), 15*time.Second)
 	t.Logf("established again %s after the reset", time.Since(start).Round(100*time.Millisecond))
 }
