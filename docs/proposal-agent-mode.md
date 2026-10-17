@@ -7,6 +7,10 @@ The core standby loop, heartbeat, and command polling are implemented in
 `FetchCommands`). Both methods use real HTTP calls tested with `httptest.Server`.
 The E2E vrnetlab test suite validates standby heartbeat delivery end-to-end.
 
+> The limitations of the kexec handoff (firmware state, measured boot,
+> Secure Boot, boot loader semantics, networking, CAPRF interaction) are
+> documented in [kexec.md](kexec.md).
+
 ## Summary
 
 Extend BOOTy to support a **hot standby** mode where machines boot into the

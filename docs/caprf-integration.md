@@ -313,6 +313,9 @@ BOOTy skips kexec and reboots when one of these is true:
 - a step changed firmware values, for example the Mellanox SR-IOV setup,
 - the installed root has no usable `/boot/grub/grub.cfg` entry.
 
+[kexec.md](kexec.md) lists the limitations of the kexec handoff and when
+a reboot is required instead.
+
 An A/B upgrade with `AB_PRESERVE_EXISTING=true` needs kexec. If kexec does
 not happen, BOOTy powers off instead of a reboot. `SUCCESS_ACTION=poweroff`
 (also through the `CAPRF_LEGACY_COMPAT=true` preset) cannot be combined with
