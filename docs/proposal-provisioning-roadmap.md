@@ -179,6 +179,13 @@ proposals, not separate changes in this PR.
 | Supply-chain trust | [release-pipelines](proposal-release-pipelines.md), [image-signatures](proposal-image-signatures.md) |
 | Storage targets | [disk-partitioning](proposal-disk-partitioning.md) |
 
+## kexec limitations
+
+The kexec handoff skips the firmware, so boot counting, `BootNext`, measured
+boot, Secure Boot verification by shim and pending firmware changes do not
+apply to the kexec'd kernel. The full list, with a kexec or reboot decision
+table, is in `docs/kexec.md` (PR #705).
+
 ## Process
 
 - Each proposal lists small, independent PRs. Land them one at a time.

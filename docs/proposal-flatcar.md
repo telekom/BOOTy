@@ -330,6 +330,13 @@ Option A. Option C only as a fallback for very large configs.
 - Does Ignition remove `config.ign` after use on metal?
 - Which Flatcar channel and minimum version do we support?
 
+## kexec limitations
+
+The kexec handoff skips the firmware, so boot counting, `BootNext`, measured
+boot, Secure Boot verification by shim and pending firmware changes do not
+apply to the kexec'd kernel. The full list, with a kexec or reboot decision
+table, is in `docs/kexec.md` (PR #705).
+
 ## Related proposals
 
 - [proposal-os-targets.md](proposal-os-targets.md)
