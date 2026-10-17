@@ -4,6 +4,13 @@ Feature proposals for extending BOOTy and CAPRF beyond current capabilities.
 Each proposal follows a standard format: Status, Priority, Summary, Motivation,
 Design, Affected Files, Risks, and Effort Estimate.
 
+## Provisioning Roadmap Proposals
+
+[proposal-provisioning-roadmap.md](proposal-provisioning-roadmap.md) indexes
+the provisioning proposals (OS targets, measured boot for A/B, CAPI
+integration, BMC boot, UEFI, firmware, testing and more) with a prioritized
+order, effort and dependencies. None of them is implemented.
+
 ## Priority Legend
 
 | Priority | Meaning |
