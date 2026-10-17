@@ -81,6 +81,10 @@ type grubItem struct {
 	children  []*grubItem
 	linux     []string // raw commands
 	initrd    []string
+	// fallback holds the linux and initrd commands of the two branches of
+	// the generated initrdless boot fallback (initrdfailCond): [0] the
+	// then branch (with initrd), [1] the else branch (initrdless).
+	fallback [2]struct{ linux, initrd []string }
 	// problem is the first command of the entry that is not in the
 	// allow-list, or a kernel line inside a condition.
 	problem string
@@ -260,18 +264,49 @@ func insideCondition(stack []block) bool {
 
 // entryCommands are the commands that grub-mkconfig puts into an entry
 // and that do not change which kernel boots with which arguments.
-var entryCommands = []string{"insmod", "echo", "recordfail", "load_video", "gfxmode"}
+var entryCommands = []string{"insmod", "echo", "recordfail", "load_video", "gfxmode", "initrdfail"}
 
 func entryCommand(entry *grubItem, raw string, words []string, stack []block) {
+	isLinux := slices.Contains([]string{"linux", "linux16", "linuxefi"}, words[0])
+	isInitrd := slices.Contains([]string{"initrd", "initrd16", "initrdefi"}, words[0])
+	if branch, ok := initrdfailBranch(stack); ok && (isLinux || isInitrd) {
+		b := &entry.fallback[branch]
+		if isLinux {
+			b.linux = append(b.linux, raw)
+		} else {
+			b.initrd = append(b.initrd, raw)
+		}
+		return
+	}
 	switch {
-	case slices.Contains([]string{"linux", "linux16", "linuxefi"}, words[0]):
+	case isLinux:
 		entry.linux = append(entry.linux, raw)
-	case slices.Contains([]string{"initrd", "initrd16", "initrdefi"}, words[0]):
+	case isInitrd:
 		entry.initrd = append(entry.initrd, raw)
 	}
 	if problem := entryProblem(words, stack); problem != "" && entry.problem == "" {
 		entry.problem = problem
 	}
+}
+
+// initrdfailCond is the condition of the initrdless boot fallback that
+// grub-mkconfig writes with GRUB_FORCE_PARTUUID (Ubuntu cloud images).
+const initrdfailCond = `[ "${initrdfail}" = 1 ]`
+
+// initrdfailBranch reports a command whose only condition inside the
+// entry is the initrdless boot fallback, and its branch: 0 then, 1 else.
+func initrdfailBranch(stack []block) (int, bool) {
+	var conds []block
+	for i := len(stack) - 1; i >= 0 && stack[i].kind > blockSubmenu; i-- {
+		conds = append(conds, stack[i])
+	}
+	if len(conds) != 1 || conds[0].kind != blockIf || conds[0].cond != initrdfailCond {
+		return 0, false
+	}
+	if conds[0].inElse {
+		return 1, true
+	}
+	return 0, true
 }
 
 // entryProblem is why a command of an entry makes BOOTy reboot, or "".
@@ -604,6 +639,9 @@ func isDecimal(s string) bool {
 }
 
 func (s *grubScript) bootEntry(item *grubItem) (*BootEntry, error) {
+	if err := item.useInitrdFallback(); err != nil {
+		return nil, err
+	}
 	switch {
 	case item.problem != "":
 		return nil, fmt.Errorf("%w: entry %q: %s", ErrUnsupported, item.title, item.problem)
@@ -632,6 +670,33 @@ func (s *grubScript) bootEntry(item *grubItem) (*BootEntry, error) {
 		entry.Initramfs = initrd[1]
 	}
 	return entry, nil
+}
+
+// useInitrdFallback takes the initrd branch of the initrdless boot fallback
+// as the kernel and initrd of the entry. GRUB boots the initrdless branch
+// while grubenv has no initrdfail (DefaultEntry refuses a set initrdfail),
+// but BOOTy kexecs only with an initrd, and the initrd branch is GRUB's
+// own fallback for the same kernel and root: it boots on every image,
+// also when the initrdless boot would fail. BOOTy leaves grubenv as it is.
+// Both branches must load the same kernel, and the entry must have no
+// other kernel command.
+func (item *grubItem) useInitrdFallback() error {
+	then, els := item.fallback[0], item.fallback[1]
+	if len(then.linux)+len(then.initrd)+len(els.linux)+len(els.initrd) == 0 {
+		return nil
+	}
+	switch {
+	case len(item.linux) > 0 || len(item.initrd) > 0:
+		return fmt.Errorf("%w: entry %q has kernel commands inside and outside the initrd fallback", ErrUnsupported, item.title)
+	case len(then.linux) != 1 || len(then.initrd) != 1 || len(els.linux) != 1 || len(els.initrd) != 0:
+		return fmt.Errorf("%w: entry %q: initrd fallback of an unknown shape", ErrUnsupported, item.title)
+	}
+	thenWords, elseWords := literalWords(then.linux[0]), literalWords(els.linux[0])
+	if len(thenWords) < 2 || len(elseWords) < 2 || thenWords[1] != elseWords[1] {
+		return fmt.Errorf("%w: entry %q: the initrd fallback loads another kernel", ErrUnsupported, item.title)
+	}
+	item.linux, item.initrd = then.linux, then.initrd
+	return nil
 }
 
 // kernelArgs joins the words to a kernel command line. A word with blanks

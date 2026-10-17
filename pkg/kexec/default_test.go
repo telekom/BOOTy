@@ -87,8 +87,6 @@ func TestDefaultEntryRefusesWhatOnlyGRUBCanResolve(t *testing.T) {
 		env                    map[string]string
 		want                   string
 	}{
-		// Each entry has an initrd and an initrdless linux line in if/else.
-		{name: "conditional linux lines", fixture: "ubuntu-2404-gcp", grubDir: "boot/grub", want: "linux command inside a condition"},
 		{name: "BLS", fixture: "centos-stream-9", grubDir: "boot/grub2", want: "BLS"},
 		// linux$suf $gptprio_kernel: the kernel comes from gptprio.next.
 		{name: "Flatcar", fixture: "flatcar", grubDir: "boot/grub", want: "command smbios"},
@@ -400,5 +398,42 @@ func TestDefaultEntryLastGaps(t *testing.T) {
 				t.Fatalf("err = %v, want ErrUnsupported with %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// The initrdless boot fallback of Ubuntu cloud images (GRUB_FORCE_PARTUUID):
+// BOOTy kexecs the initrd branch, GRUB's own fallback for the same kernel.
+func TestDefaultEntryInitrdlessFallback(t *testing.T) {
+	root := copyFixture(t, "ubuntu-2404-gcp", "boot/grub", nil)
+	e, err := DefaultEntry(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Kernel != "/vmlinuz-7.0.0-1014-gcp" || e.Initramfs != "/initrd.img-7.0.0-1014-gcp" ||
+		e.KernelArgs != "root=PARTUUID=25738ee1-aeb2-42e1-895b-9a587dbb9157 ro console=ttyS0,115200" {
+		t.Fatalf("entry = %+v, want the initrd branch", e)
+	}
+	// A failed initrdless boot is pending: GRUB would take its own path.
+	if _, err := DefaultEntry(copyFixture(t, "ubuntu-2404-gcp", "boot/grub", map[string]string{"initrdfail": "1"})); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("initrdfail set: err = %v, want ErrUnsupported", err)
+	}
+	fallback := func(then, els string) string {
+		return "set default=0\nmenuentry 'x' {\n if [ \"${initrdfail}\" = 1 ]; then\n" + then + "\n else\n" + els + "\n fi\n initrdfail\n}\n"
+	}
+	for name, cfg := range map[string]string{
+		"other kernel":     fallback("  linux /a ro\n  initrd /i", "  linux /b ro panic=-1"),
+		"no initrd":        fallback("  linux /a ro", "  linux /a ro panic=-1"),
+		"initrd in else":   fallback("  linux /a ro\n  initrd /i", "  linux /a ro panic=-1\n  initrd /i"),
+		"kernel outside":   strings.Replace(fallback("  linux /a ro\n  initrd /i", "  linux /a ro panic=-1"), " initrdfail\n", " initrdfail\n linux /c\n", 1),
+		"nested condition": fallback("  if [ x = y ]; then\n  linux /a ro\n  fi\n  initrd /i", "  linux /a ro panic=-1"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := DefaultEntry(writeGrub(t, cfg, "")); !errors.Is(err, ErrUnsupported) {
+				t.Fatalf("err = %v, want ErrUnsupported", err)
+			}
+		})
+	}
+	if e, err := DefaultEntry(writeGrub(t, fallback("  linux /a ro\n  initrd /i", "  linux /a ro panic=-1"), "")); err != nil || e.Kernel != "/a" || e.Initramfs != "/i" {
+		t.Fatalf("minimal fallback: %+v, %v", e, err)
 	}
 }

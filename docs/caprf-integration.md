@@ -326,7 +326,14 @@ any doubt, reboot. It does not emulate GRUB; it accepts the shapes that
   `gnulinux-advanced-...>gnulinux-...`).
 - Entries of the generated commands only: `insmod`, `echo`, `recordfail`,
   `load_video`, `gfxmode`, `set root=`, `search --set=root`, one `linux`
-  and at most one `initrd` with one file, both outside conditions.
+  and at most one `initrd` with one file, both outside conditions. The one
+  exception is the initrdless boot fallback of Ubuntu cloud images
+  (`GRUB_FORCE_PARTUUID`): `if [ "${initrdfail}" = 1 ]` with `linux` and
+  `initrd` in the then branch and the same kernel without `initrd` in the
+  else branch. GRUB boots the initrdless branch while `grubenv` has no
+  `initrdfail`; BOOTy kexecs the initrd branch, GRUB's own fallback for
+  the same kernel and root, because kexec needs an initrd and that branch
+  boots on every image. `grubenv` stays as it is.
 - Outside entries only the generated commands: `set`, assignments,
   `export`, `insmod`, `load_env` (not `-f`), `save_env`, `terminal_input`,
   `terminal_output`, `terminal`, `serial`, `font`, `loadfont`,
