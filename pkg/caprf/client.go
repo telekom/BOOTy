@@ -321,6 +321,8 @@ func (c *Client) ReportStatus(ctx context.Context, status config.Status, message
 		url = c.cfg.Transport.SuccessURL
 	case config.StatusError:
 		url = c.cfg.Transport.ErrorURL
+	case config.StatusRebootRequired:
+		url = c.cfg.Transport.RebootURL
 	default:
 		return fmt.Errorf("unknown status: %s", status)
 	}
@@ -1197,6 +1199,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"LOG_URL":                     &cfg.Transport.LogURL,
 		"INIT_URL":                    &cfg.Transport.InitURL,
 		"ERROR_URL":                   &cfg.Transport.ErrorURL,
+		"REBOOT_URL":                  &cfg.Transport.RebootURL,
 		"SUCCESS_URL":                 &cfg.Transport.SuccessURL,
 		"DEBUG_URL":                   &cfg.Transport.DebugURL,
 		"RESCUE_MODE":                 &cfg.Rescue.Mode,

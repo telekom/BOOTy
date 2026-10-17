@@ -320,6 +320,12 @@ func (o *Orchestrator) executeStep(ctx context.Context, step Step, cp *Checkpoin
 	err = WithCode(step.Name, err)
 	tracker.EndStep(step.Name, err)
 
+	var rebootErr *RebootRequiredError
+	if errors.As(err, &rebootErr) {
+		// Not a failure: no error status, no debug dump, no failure count.
+		o.log.Info("provisioning step requests a reboot into the ramdisk", "step", step.Name, "status", rebootErr.Message())
+		return fmt.Errorf("provision step %s: %w", step.Name, err)
+	}
 	if err != nil {
 		msg := stepFailureMessage(step.Name, err)
 		o.log.Error("provisioning step failed", "step", step.Name, "error", err)
