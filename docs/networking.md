@@ -605,7 +605,26 @@ hostname, and the capabilities station, bridge and router (station
 enabled). With `LLDP_RECEIVE` (on by default) BOOTy also listens on every
 physical NIC, logs each new or changed neighbor and adds the current
 neighbors to the hardware inventory report; the legacy ramdisk only
-sends.
+sends. The receive joins the LLDP multicast groups (01:80:c2:00:00:0e,
+:03 and :00) like networkd and lldpd, which a NIC that is not
+promiscuous needs; the lab veths pass LLDP without them, so the lab does
+not show it (a root test checks the membership). It drops BOOTy's own
+frames that come back (our source MAC or chassis ID). It keeps one
+neighbor per NIC: a second chassis on the same link replaces the first.
+The inventory runs seconds after the receive starts, so while no
+neighbor is known it waits until the receive has run for 30 s, one
+transmit interval of lldpd and networkd.
+
+Intel ice and i40e NICs run an LLDP agent in firmware that takes the
+LLDP frames before the host sees them, and on ice it also blocks the
+frames the host sends. The legacy ramdisk does not switch the agent off
+(networkd `emit-lldp` only, no `ethtool --set-priv-flags`), so BOOTy does
+not either: on those NICs LLDP receive and send may see nothing. Turning
+the agent off (`disable-fw-lldp`) also turns off firmware DCBX, which
+RoCE and PFC in the installed OS may need, and some NVM versions keep
+the flag across reboots. An opt-in that turns it off for BOOTy's run and
+back on before the handoff comes with the cable check (one
+implementation in `pkg/firmware/nic`).
 
 ## GoBGP peer modes
 

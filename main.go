@@ -744,7 +744,7 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	if err != nil {
 		return nil, &provision.CodedError{Code: provision.CodeNetworkSetup, Err: err}
 	}
-	if config.BoolOr(cfg.Network.LLDPReceive, true) {
+	if lldpReceiveEnabled(cfg) {
 		startLLDPReceive(ctx)
 	}
 	connectivityTarget := cfg.Transport.InitURL
@@ -988,6 +988,11 @@ func networkWait(cfg *config.MachineConfig) (int, time.Duration) {
 }
 
 // setupNetworkMode detects and configures the appropriate network mode.
+// lldpReceiveEnabled is LLDP_RECEIVE, on by default.
+func lldpReceiveEnabled(cfg *config.MachineConfig) bool {
+	return config.BoolOr(cfg.Network.LLDPReceive, true)
+}
+
 // startLLDPReceive logs and records the LLDP neighbors of every physical
 // NIC for the rest of the run. The legacy ramdisk only sends LLDP.
 func startLLDPReceive(ctx context.Context) {

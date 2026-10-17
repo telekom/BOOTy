@@ -427,6 +427,15 @@ func (o *Orchestrator) reportInit(ctx context.Context) error {
 	return o.provider.ReportStatus(ctx, config.StatusInit, message)
 }
 
+// lldpNeighbors reads the LLDP neighbors for the inventory; tests replace
+// it. lldpInventoryWait is one transmit interval of the switch (lldpd and
+// networkd: 30 s): the inventory runs seconds after the receive started,
+// so it waits that long when no neighbor is known yet.
+var (
+	lldpNeighbors     = lldp.NeighborsWithin
+	lldpInventoryWait = 30 * time.Second
+)
+
 func (o *Orchestrator) collectInventory(ctx context.Context) error {
 	if !o.cfg.Provision.Inventory.Enabled {
 		o.log.Info("Hardware inventory collection disabled, skipping")
@@ -439,7 +448,7 @@ func (o *Orchestrator) collectInventory(ctx context.Context) error {
 		return nil // non-fatal
 	}
 
-	inv.LLDPNeighbors = lldp.Neighbors()
+	inv.LLDPNeighbors = lldpNeighbors(ctx, lldpInventoryWait)
 	data, err := json.Marshal(inv)
 	if err != nil {
 		o.log.Warn("Failed to marshal hardware inventory", "error", err)
