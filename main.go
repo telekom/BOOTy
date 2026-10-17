@@ -959,7 +959,18 @@ func networkWait(cfg *config.MachineConfig) (int, time.Duration) {
 }
 
 // setupNetworkMode detects and configures the appropriate network mode.
-func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.Mode, error) {
+// defaultNICWaitSeconds is the wait for configured NICs without
+// NIC_WAIT_SECONDS.
+const defaultNICWaitSeconds = 30
+
+func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (_ network.Mode, err error) {
+	defer func() {
+		// Every failure of the setup is visible in the log, also when the
+		// run ends without FAILURE_ACTION=wait.
+		if err != nil {
+			slog.Error("network setup failed", "error", err)
+		}
+	}()
 	netCfg := networkConfigFromMachineConfig(cfg)
 
 	// Auto-detect netplan configuration files injected by the provisioner.
@@ -991,6 +1002,10 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 	}
 
 	if config.BoolOr(cfg.Network.PredictableNames, true) {
+		netCfg.NICWait = defaultNICWaitSeconds * time.Second
+		if n := cfg.Network.NICWaitSeconds; n > 0 {
+			netCfg.NICWait = time.Duration(n) * time.Second
+		}
 		if err := network.ApplyPredictableNames(ctx, netCfg); err != nil {
 			return nil, fmt.Errorf("predictable NIC names: %w", err)
 		}

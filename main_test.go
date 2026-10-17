@@ -701,6 +701,23 @@ func TestSetupNetworkModeExplicitGoBGPFailsClosed(t *testing.T) {
 	}
 }
 
+// A setup error that ends before any stack logs it is logged at ERROR
+// (CI: the run ended without a trace after a failed network setup).
+func TestSetupNetworkModeLogsFailure(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	cfg := &config.MachineConfig{}
+	cfg.Network.VLAN.Config = "not-a-vlan"
+	if _, err := setupNetworkMode(context.Background(), cfg); err == nil {
+		t.Fatal("setupNetworkMode accepted an invalid VLAN config")
+	}
+	if !strings.Contains(buf.String(), "level=ERROR msg=\"network setup failed\"") {
+		t.Fatalf("log = %s, want the setup error at ERROR", buf.String())
+	}
+}
+
 func TestStartPID1ChildReaperNoopWhenNotPID1(t *testing.T) {
 	notified := false
 	started := startPID1ChildReaperWith(
