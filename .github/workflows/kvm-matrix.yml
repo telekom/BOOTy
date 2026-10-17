@@ -244,7 +244,8 @@ jobs:
           - scenario: iso-firmware
             qemu_extra: ""
             test_tag: e2e
-            test_regex: "^TestISOBoot(BIOS|UEFI|UEFIUSB|SecureBoot)QEMU$|^TestISOBootSecureBootRejectsUnsignedKernel$"
+            # The regex is interpolated unquoted into the shell: no ( ) or |.
+            test_regex: "^TestISOFirmware"
             privileged: true
             setup: |
               docker buildx build --platform linux/amd64 --target iso --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" --output type=local,dest=out-iso -f initrd.Dockerfile .

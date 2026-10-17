@@ -86,7 +86,7 @@ func isoQEMUArgs(t *testing.T, mode string, media []string) []string {
 	return append(args, splitExtraArgs(envOrDefault("QEMU_EXTRA_ARGS", ""))...)
 }
 
-func TestISOBootBIOSQEMU(t *testing.T) {
+func TestISOFirmwareBIOS(t *testing.T) {
 	qemuAvailable(t)
 	iso := bootyISO(t)
 	out := runQEMUSmoke(t, isoQEMUArgs(t, "bios", isoCDArgs(iso)), 4*time.Minute, "iso-bios", true)
@@ -95,7 +95,7 @@ func TestISOBootBIOSQEMU(t *testing.T) {
 	}
 }
 
-func TestISOBootUEFIQEMU(t *testing.T) {
+func TestISOFirmwareUEFI(t *testing.T) {
 	qemuAvailable(t)
 	iso := bootyISO(t)
 	out := runQEMUSmoke(t, isoQEMUArgs(t, "uefi", isoCDArgs(iso)), 4*time.Minute, "iso-uefi", true)
@@ -104,9 +104,9 @@ func TestISOBootUEFIQEMU(t *testing.T) {
 	}
 }
 
-// TestISOBootUEFIUSBQEMU boots the ISO as a USB disk (isohybrid GPT): the
+// TestISOFirmwareUEFIUSB boots the ISO as a USB disk (isohybrid GPT): the
 // firmware starts shim from the EFI system partition, not from El Torito.
-func TestISOBootUEFIUSBQEMU(t *testing.T) {
+func TestISOFirmwareUEFIUSB(t *testing.T) {
 	qemuAvailable(t)
 	iso := bootyISO(t)
 	media := []string{
@@ -117,10 +117,10 @@ func TestISOBootUEFIUSBQEMU(t *testing.T) {
 	runQEMUSmoke(t, isoQEMUArgs(t, "uefi", media), 4*time.Minute, "iso-uefi-usb", true)
 }
 
-// TestISOBootSecureBootQEMU checks the whole signature chain: the firmware
+// TestISOFirmwareSecureBoot checks the whole signature chain: the firmware
 // accepts shim (Microsoft UEFI CA), shim accepts GRUB (Debian CA), GRUB
 // accepts the kernel through shim, and the kernel locks itself down.
-func TestISOBootSecureBootQEMU(t *testing.T) {
+func TestISOFirmwareSecureBoot(t *testing.T) {
 	qemuAvailable(t)
 	iso := bootyISO(t)
 	out := runQEMUSmoke(t, isoQEMUArgs(t, "secureboot", isoCDArgs(iso)), 4*time.Minute, "iso-secureboot", true)
@@ -131,9 +131,9 @@ func TestISOBootSecureBootQEMU(t *testing.T) {
 	}
 }
 
-// TestISOBootSecureBootRejectsUnsignedKernel replaces the kernel in the ISO
+// TestISOFirmwareSecureBootRejectsUnsignedKernel replaces the kernel in the ISO
 // with a copy whose Authenticode signature is removed. GRUB must refuse it.
-func TestISOBootSecureBootRejectsUnsignedKernel(t *testing.T) {
+func TestISOFirmwareSecureBootRejectsUnsignedKernel(t *testing.T) {
 	qemuAvailable(t)
 	iso := bootyISO(t)
 	if _, err := exec.LookPath("xorriso"); err != nil {
