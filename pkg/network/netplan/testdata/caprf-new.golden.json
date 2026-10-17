@@ -78,6 +78,13 @@
     }
   ],
   "BGPMultipathRelax": false,
+  "BGPCapabilities": {
+    "GracefulRestart": false,
+    "GracefulRestartTime": 0,
+    "LLGRStaleTime": 0,
+    "AddPathReceive": false,
+    "SoftwareVersion": false
+  },
   "BGPRouteMaps": [],
   "BGPCommunityLists": [],
   "BGPRouteMapIn": "",

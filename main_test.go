@@ -2029,6 +2029,19 @@ func TestApplyBGPOptions(t *testing.T) {
 			t.Fatalf("native defaults = %+v", n)
 		}
 	})
+	// The OPEN capabilities default to FRR's; a set value wins.
+	t.Run("capabilities", func(t *testing.T) {
+		n := &network.Config{}
+		applyBGPOptions(&config.BGPConfig{}, n)
+		if want := (network.BGPCapabilities{GracefulRestart: true, GracefulRestartTime: 120, AddPathReceive: true}); n.BGPCapabilities != want {
+			t.Fatalf("default capabilities = %+v, want %+v", n.BGPCapabilities, want)
+		}
+		applyBGPOptions(&config.BGPConfig{GracefulRestart: new(false), GracefulRestartTime: 60, LLGRStaleTime: 30,
+			AddPathReceive: new(false), SoftwareVersion: new(true)}, n)
+		if want := (network.BGPCapabilities{GracefulRestartTime: 60, LLGRStaleTime: 30, SoftwareVersion: true}); n.BGPCapabilities != want {
+			t.Fatalf("set capabilities = %+v, want %+v", n.BGPCapabilities, want)
+		}
+	})
 	// The peer options are defaults: a session value wins.
 	t.Run("peer options are session defaults", func(t *testing.T) {
 		n := &network.Config{BGPSessions: frrSessions(), BGPMultipathRelax: true}

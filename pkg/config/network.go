@@ -238,6 +238,24 @@ type BGPConfig struct {
 	// (nil) keeps the frr.conf value, or off without frr.conf.
 	MultipathRelax *bool `yaml:"multipathRelax,omitempty" json:"multipathRelax,omitempty"`
 
+	// GracefulRestart sends the graceful restart and long-lived graceful
+	// restart capabilities like the FRR default helper mode (GoBGP). Unset
+	// (nil) means on.
+	GracefulRestart *bool `yaml:"gracefulRestart,omitempty" json:"gracefulRestart,omitempty"`
+	// GracefulRestartTime is the graceful restart time in seconds, 1 to
+	// 4095. 0 means 120, like FRR.
+	GracefulRestartTime uint32 `yaml:"gracefulRestartTime,omitempty" json:"gracefulRestartTime,omitempty"`
+	// LLGRStaleTime is the long-lived graceful restart stale time in
+	// seconds, 0 to 16777215 (FRR default 0).
+	LLGRStaleTime uint32 `yaml:"llgrStaleTime,omitempty" json:"llgrStaleTime,omitempty"`
+	// AddPathReceive sends the add-path capability with receive in every
+	// address family, like FRR (GoBGP). Unset (nil) means on.
+	AddPathReceive *bool `yaml:"addPathReceive,omitempty" json:"addPathReceive,omitempty"`
+	// SoftwareVersion also sends the software version capability to eBGP
+	// peers, like FRR "neighbor X capability software-version" (GoBGP).
+	// iBGP peers always get it. Unset (nil) means off.
+	SoftwareVersion *bool `yaml:"softwareVersion,omitempty" json:"softwareVersion,omitempty"`
+
 	// InstallRoutes installs the learned IPv4/IPv6 unicast routes into the
 	// kernel, like zebra (GoBGP). Unset (nil) means on with frr.conf
 	// sessions and off without them.

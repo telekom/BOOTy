@@ -2932,6 +2932,11 @@ BGP_MULTIPATH_RELAX=true
 BGP_INSTALL_ROUTES=false
 BGP_FAST_EXTERNAL_FAILOVER=true
 BFD_DETECT_MULTIPLIER=4
+BGP_GRACEFUL_RESTART=false
+BGP_GRACEFUL_RESTART_TIME=60
+BGP_LLGR_STALE_TIME=30
+BGP_ADDPATH_RX=false
+BGP_SOFTWARE_VERSION=true
 BGP_EBGP_REQUIRES_POLICY=false
 BRIDGE_MAC=02:54:c0:00:02:13
 VXLAN_LINK=dum.underlay
@@ -2949,6 +2954,10 @@ OVERLAY_VRF_TABLE_ID=20
 	}
 	if b.BFDDetectMultiplier != 4 {
 		t.Errorf("BFD_DETECT_MULTIPLIER = %d, want 4", b.BFDDetectMultiplier)
+	}
+	if b.GracefulRestart == nil || *b.GracefulRestart || b.GracefulRestartTime != 60 || b.LLGRStaleTime != 30 ||
+		b.AddPathReceive == nil || *b.AddPathReceive || b.SoftwareVersion == nil || !*b.SoftwareVersion {
+		t.Errorf("capabilities = %v %d %d %v %v", b.GracefulRestart, b.GracefulRestartTime, b.LLGRStaleTime, b.AddPathReceive, b.SoftwareVersion)
 	}
 	// An explicit 0 and an explicit false are set, not unset.
 	if b.AllowASIn == nil || *b.AllowASIn != 0 || b.InstallRoutes == nil || *b.InstallRoutes ||

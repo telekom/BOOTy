@@ -105,6 +105,8 @@ type Config struct {
 	BGPSessions []BGPSession
 	// BGPMultipathRelax is "bgp bestpath as-path multipath-relax".
 	BGPMultipathRelax bool
+	// BGPCapabilities are the optional capabilities of the OPEN message.
+	BGPCapabilities BGPCapabilities
 	// BGPRouteMaps and BGPCommunityLists define the route-maps that the
 	// sessions name; BGPRouteMapIn and BGPRouteMapOut apply to the native
 	// peers in every address family.
@@ -292,6 +294,27 @@ type CommunityList struct {
 type CommunityListEntry struct {
 	Deny        bool     `json:"deny,omitempty" yaml:"deny,omitempty"`
 	Communities []string `json:"communities" yaml:"communities"`
+}
+
+// BGPCapabilities are the optional BGP capabilities that BOOTy sends in
+// its OPEN message, with the FRR 10 defaults (bgpd/bgp_open.c).
+type BGPCapabilities struct {
+	// GracefulRestart is the graceful restart capability (RFC 4724) of the
+	// FRR default helper mode: no address family tuples, so a peer does
+	// not keep BOOTy's routes when the session ends, while BOOTy keeps the
+	// routes of a restarting peer. It also sends long-lived graceful
+	// restart (RFC 9494) with LLGRStaleTime.
+	GracefulRestart bool
+	// GracefulRestartTime is the restart time in seconds (FRR 120).
+	GracefulRestartTime uint32
+	// LLGRStaleTime is the long-lived stale time in seconds (FRR 0).
+	LLGRStaleTime uint32
+	// AddPathReceive is the add-path capability (RFC 7911) with receive in
+	// every address family, like FRR.
+	AddPathReceive bool
+	// SoftwareVersion also sends the software version capability to eBGP
+	// peers; iBGP peers always get it, like FRR.
+	SoftwareVersion bool
 }
 
 // VLANConfig holds configuration for a single 802.1Q VLAN interface.

@@ -269,6 +269,12 @@ func (c *Config) validateNetworkOptions() []string {
 	if n := c.Network.BGP.AllowASIn; n != nil && *n > 10 {
 		errs = append(errs, fmt.Sprintf("network.bgp.allowASIn %d must be 0 to 10", *n))
 	}
+	if n := c.Network.BGP.GracefulRestartTime; n > 4095 {
+		errs = append(errs, fmt.Sprintf("network.bgp.gracefulRestartTime %d must be 1 to 4095", n))
+	}
+	if n := c.Network.BGP.LLGRStaleTime; n > 1<<24-1 {
+		errs = append(errs, fmt.Sprintf("network.bgp.llgrStaleTime %d must be 0 to 16777215", n))
+	}
 	if mtu := c.Network.MTU; mtu != 0 && (mtu < 626 || mtu > 65535) {
 		errs = append(errs, fmt.Sprintf("network.mtu %d must be 626 to 65535 (576 IP + 50 VXLAN)", mtu))
 	}

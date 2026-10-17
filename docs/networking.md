@@ -335,6 +335,7 @@ rule of every key:
 | `BRIDGE_MTU`, `BRIDGE_IPV6_LINK_LOCAL`, `BRIDGE_ACCEPT_RA` | netplan bridge `mtu`, `link-local`, `accept-ra` | `network.overlay.*` | native wins |
 | `BRIDGE_STP` | netplan bridge `parameters` (`stp`, on when the block has no `stp`) | `network.overlay.bridgeSTP` | native wins |
 | `ACCEPT_RA_OFF`, `LLDP_EMIT` | netplan ethernet `accept-ra: false`, `emit-lldp: true` | `network.noAcceptRA`, `network.emitLLDP` | list replaces |
+| `BGP_GRACEFUL_RESTART`, `BGP_GRACEFUL_RESTART_TIME`, `BGP_LLGR_STALE_TIME`, `BGP_ADDPATH_RX`, `BGP_SOFTWARE_VERSION` | none: `frr.conf` graceful restart and capability statements are rejected | `network.bgp.gracefulRestart`, `gracefulRestartTime`, `llgrStaleTime`, `addPathReceive`, `softwareVersion` | native only; unset is the FRR default |
 | `IP_FORWARDING`, `IPV6_FORWARDING` | `frr.conf` `[no] ip[v6] forwarding` | `network.ipForwarding`, `network.ipv6Forwarding` | native wins |
 
 ### Strict input and the accepted grammar
@@ -503,12 +504,54 @@ Both stacks:
   default routing table. `VRF_TABLE_ID` defaults to 1000. GoBGP replaces
   table 1 with 1000 and logs a warning.
 
+### BGP capabilities
+
+The OPEN message of GoBGP has the capabilities that FRR 10 sends with the
+bm4x template (`TestProdTplOpenCapabilities` compares the leaf and route
+reflector views of BOOTy and the shadow FRR node):
+
+- route refresh, 4-octet AS, extended next hop;
+- the hostname (FQDN capability, from `HOSTNAME`, no domain);
+- the software version to iBGP peers (`BGP_SOFTWARE_VERSION` also to eBGP
+  peers, like `neighbor X capability software-version`);
+- graceful restart as helper with restart time 120 s
+  (`BGP_GRACEFUL_RESTART`, `BGP_GRACEFUL_RESTART_TIME`);
+- long-lived graceful restart with stale time 0 (`BGP_LLGR_STALE_TIME`);
+- add-path receive in every address family (`BGP_ADDPATH_RX`).
+
+The minimum route advertisement interval is 0 in both: FRR shows
+`minBtwnAdvertisementRunsTimerMsecs` 0 for these peers, and GoBGP sends
+updates without a timer.
+
+GoBGP 3.37 cannot send the following, so they are known deviations:
+
+| FRR 10 sends | GoBGP | Fabric impact |
+|---|---|---|
+| Enhanced route refresh (RFC 7313) | Not sent | A peer that refreshes its routes from BOOTy uses plain route refresh, without the begin and end markers. Nothing is lost; stale routes of BOOTy are not swept at the end of a refresh. |
+| Extended message (RFC 8654) | Not sent | Messages stay at 4096 bytes. The few routes of a server fit. |
+| Paths-limit (with add-path) | Not sent | FRR sends limit 0 (no limit), so the peer behaves the same. |
+| Dynamic capability (FRR 10.2.1 in kindmetal; FRR 10.3.1 with this template does not send it) | Not sent | A capability change needs a session reset. The fabric does not change capabilities at run time. |
+| Graceful restart Restart State (R) bit | Off | The R bit tells the peer that the speaker restarted. BOOTy is only a helper and keeps no forwarding state, so the peer's behaviour does not change. |
+| Long-lived graceful restart family tuples (stale time 0) | Without tuples in helper mode | With stale time 0 neither side keeps routes long-lived. |
+| Software version `FRRouting/10.x` | `GoBGP/3.37.0` | Information only. |
+| No extended next hop for l2vpn evpn | GoBGP also offers it for l2vpn evpn | The route reflectors do not offer it, so it is not negotiated. |
+
+Graceful restart and switch failures: as helper, BOOTy keeps the routes
+of a leaf or route reflector that restarts its BGP process with graceful
+restart (forwarding bit set) for the peer's restart time, like FRR, so a
+control plane restart of a switch does not take the server down. A switch
+that fails ends the session through BFD or the carrier with a NOTIFICATION
+and no N bit, so graceful restart does not apply and the routes go at
+once, as in FRR. When BOOTy restarts BGP (BFD down, the end of the run),
+its capability has no address family tuples, so the leaf removes BOOTy's
+routes at once, the same as for the legacy FRR.
+
 ## GoBGP peer modes
 
 | Mode | Sessions | Address families | Requirements |
 |---|---|---|---|
 | `unnumbered` (default) | One session per fabric NIC to the IPv6 link-local peer that NDP finds | IPv4 unicast, L2VPN EVPN | Fabric NICs |
-| `dual` | Unnumbered sessions per fabric NIC, plus numbered sessions to `BGP_NEIGHBORS` | Unnumbered: IPv4 unicast. Numbered: IPv4 unicast, L2VPN EVPN | `BGP_NEIGHBORS` |
+| `dual` | Unnumbered sessions per fabric NIC, plus numbered sessions to `BGP_NEIGHBORS` | Unnumbered: IPv4 unicast. Numbered: L2VPN EVPN only, like the bm4x template (`no bgp default ipv4-unicast`, `neighbor dcgw activate` only in `l2vpn evpn`) | `BGP_NEIGHBORS` |
 | `numbered` | Numbered sessions to `BGP_NEIGHBORS` | IPv4 unicast, L2VPN EVPN | `BGP_NEIGHBORS` (IPv4). The host must already reach the neighbors |
 
 Fabric NICs are the NICs in `BGP_INTERFACES`, or all detected physical NICs

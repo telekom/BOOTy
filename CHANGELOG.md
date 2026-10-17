@@ -257,6 +257,13 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   target OS with `WATCHDOG_HANDOFF=keep`. `WATCHDOG_TIMEOUT_SEC`,
   `WATCHDOG_DEVICE`, `WATCHDOG_STEP_BUDGETS`, YAML `watchdog.*`. See
   [hardware watchdog](docs/configuration.md#hardware-watchdog) (#721)
+- GoBGP mode sends the BGP OPEN capabilities of FRR 10 with the bm4x template:
+  graceful restart as helper (restart time 120 s), long-lived graceful restart
+  and add-path receive. New keys `BGP_GRACEFUL_RESTART`,
+  `BGP_GRACEFUL_RESTART_TIME`, `BGP_LLGR_STALE_TIME`, `BGP_ADDPATH_RX`,
+  `BGP_SOFTWARE_VERSION` (YAML `network.bgp.*`). In `BGP_PEER_MODE=dual` the
+  numbered peers (route reflectors) get only L2VPN EVPN, like the template;
+  before they also offered IPv4 unicast.
 - GoBGP mode applies the netplan device settings of the provision VXLAN device,
   the bridge and the NICs like systemd-networkd (MTU, MAC, learning, ARP proxy,
   hairpin, link-local, `accept-ra`), and `frr.conf` `[no] ip[v6] forwarding`.
