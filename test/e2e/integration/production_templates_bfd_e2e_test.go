@@ -61,6 +61,40 @@ func prodtplBFDPeers(ctx context.Context, container string) (map[string]bfdView,
 	return views, nil
 }
 
+// At the start, the route reflectors re-key their BFD session to a server
+// when the BGP session comes up ("update-source lo",
+// bgp_peer_bfd_update_source), so the server's new BFD session goes Down
+// in that second. FRR (the shadow node) keeps the BGP session, like bgpd's
+// last_event > peer->uptime; BOOTy must too. dcgw01 and dcgw02 must have
+// dropped the sessions of BOOTy no more often than the shadow node's. This
+// is the first test of the lab, so nothing else dropped them yet.
+func TestProdTplRRSessionsNotResetAtStart(t *testing.T) {
+	want := sessionView{State: "Established", RemoteAS: prodtplASN, LocalAS: prodtplASN,
+		HoldMsecs: 90000, KeepMsecs: 30000, Families: []string{"l2VpnEvpn"}}
+	for _, rr := range []string{prodtplDCGW1, prodtplDCGW2} {
+		for _, node := range prodtplServers {
+			waitView(t, rr, node.underlay, want)
+		}
+		time.Sleep(5 * time.Second) // a reset follows within a second
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		drops := map[string]float64{}
+		for _, node := range prodtplServers {
+			n, err := prodtplNeighbor(ctx, rr, node.underlay)
+			if err != nil {
+				cancel()
+				t.Fatal(err)
+			}
+			drops[node.name], _ = n["connectionsDropped"].(float64)
+		}
+		cancel()
+		for _, node := range prodtplServers {
+			if drops[node.name] > drops["shadow"] {
+				t.Errorf("%s dropped the %s session %v times at the start, the shadow's %v", rr, node.name, drops[node.name], drops["shadow"])
+			}
+		}
+	}
+}
+
 // Mirrors FRR bfd_profiles_topo1 test_bfd_profile_values: the fabric sees
 // the "fabric" profile (150/150/3) of every server, single-hop on the
 // uplinks at the leaf and multihop at the route reflectors.
