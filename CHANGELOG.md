@@ -169,7 +169,7 @@ behaviour.
   follows the media type: `nvme format` for NVMe, `hdparm` only for ATA disks
   (sysfs vendor `ATA`), `sg_sanitize` or `sg_format` for SAS disks, which took
   the `hdparm` path before. The ATA frozen check no longer reads `not frozen`
-  as frozen. The plain wipe and `CAPRF_LEGACY_COMPAT` do not change (#PRSE)
+  as frozen. The plain wipe and `CAPRF_LEGACY_COMPAT` do not change (#704)
 
 ### Behaviour behind `CAPRF_LEGACY_COMPAT=true`
 
