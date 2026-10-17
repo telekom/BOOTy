@@ -155,9 +155,6 @@ func (c *Config) validatePrimaryEnums() []string {
 		},
 		func() string { return validateLLDPPortIDFormat(&c.Network.LLDP) },
 		func() string {
-			return validateEnum(c.Network.NICFirmwareLLDP, "network.nicFirmwareLLDP (NIC_FW_LLDP)", NICFirmwareLLDPKeep, NICFirmwareLLDPDisable)
-		},
-		func() string {
 			return validateEnumLower(c.Network.WaitMode, "network.waitMode (NETWORK_WAIT_MODE)", NetworkWaitDefault, NetworkWaitRounds)
 		},
 		func() string {

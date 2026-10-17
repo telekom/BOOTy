@@ -113,14 +113,6 @@ type NetworkConfig struct {
 	// LLDP selects what BOOTy sends in its LLDP frames and on which NICs.
 	LLDP LLDPConfig `yaml:"lldp,omitempty" json:"lldp,omitempty"`
 
-	// NICFirmwareLLDP is "disable" to stop the firmware LLDP agent (and
-	// with it the firmware DCBX) of Intel NICs (i40e private flag
-	// disable-fw-lldp on, ice fw-lldp-agent off), so LLDP frames reach BOOTy
-	// and BOOTy's frames go out, or "keep". BOOTy restores the values it
-	// found before it hands off (reboot, kexec, power off).
-	// Default: "" (disable with the bm4x-cablecheck profile, else keep)
-	NICFirmwareLLDP string `yaml:"nicFirmwareLLDP,omitempty" json:"nicFirmwareLLDP,omitempty"`
-
 	// IPForwarding and IPv6Forwarding set the forwarding sysctls (GoBGP).
 	// Unset (nil) means the frr.conf "[no] ip[v6] forwarding", else IPv4 on
 	// and IPv6 off, like the legacy ramdisk.
@@ -175,6 +167,15 @@ type LLDPConfig struct {
 	// emitLLDP (netplan "emit-lldp: true") NICs, in every network mode.
 	// Default: nil (on with the bm4x-cablecheck profile, else off)
 	EmitAll *bool `yaml:"emitAll,omitempty" json:"emitAll,omitempty"`
+
+	// DisableFirmwareAgent stops the firmware LLDP agent (and with it the
+	// firmware DCBX) of Intel NICs (i40e private flag disable-fw-lldp on,
+	// ice fw-lldp-agent off) while BOOTy runs, so LLDP frames reach BOOTy
+	// and BOOTy's frames go out. BOOTy restores the values it found before
+	// it hands off (reboot, kexec, power off).
+	// Default: nil (on with the bm4x-cablecheck profile, else off; the
+	// legacy ramdisk never stops the agent)
+	DisableFirmwareAgent *bool `yaml:"disableFirmwareAgent,omitempty" json:"disableFirmwareAgent,omitempty"`
 }
 
 // EmitAllNICs reports whether BOOTy sends LLDP on every physical NIC.
@@ -182,20 +183,11 @@ func (l LLDPConfig) EmitAllNICs() bool {
 	return BoolOr(l.EmitAll, l.Profile == lldp.ProfileBM4XCableCheck)
 }
 
-// Values of NetworkConfig.NICFirmwareLLDP.
-const (
-	NICFirmwareLLDPKeep    = "keep"
-	NICFirmwareLLDPDisable = "disable"
-)
-
 // DisableNICFirmwareLLDP reports whether BOOTy stops the firmware LLDP
-// agent of the NICs: network.nicFirmwareLLDP, else only for the
+// agent of the NICs: network.lldp.disableFirmwareAgent, else only for the
 // bm4x-cablecheck LLDP profile.
 func (c *Config) DisableNICFirmwareLLDP() bool {
-	if c.Network.NICFirmwareLLDP == "" {
-		return c.Network.LLDP.Profile == lldp.ProfileBM4XCableCheck
-	}
-	return c.Network.NICFirmwareLLDP == NICFirmwareLLDPDisable
+	return BoolOr(c.Network.LLDP.DisableFirmwareAgent, c.Network.LLDP.Profile == lldp.ProfileBM4XCableCheck)
 }
 
 // BGPConfig holds BGP peering and tuning parameters.

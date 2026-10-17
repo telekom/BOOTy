@@ -89,30 +89,32 @@ func TestValidateLLDPPortIDFormat(t *testing.T) {
 }
 
 // The firmware LLDP agent is stopped only with the bm4x-cablecheck
-// profile unless kept, or when asked; a plain check run keeps it (ice
-// keeps the setting across boots).
+// profile unless disableFirmwareAgent says otherwise; a plain run keeps it
+// (ice keeps the setting across boots, and the legacy ramdisk never stops
+// it).
 func TestDisableNICFirmwareLLDP(t *testing.T) {
+	on, off := true, false
 	for _, tt := range []struct {
-		mode, profile, value string
-		want                 bool
+		mode, profile string
+		value         *bool
+		want          bool
 	}{
-		{"check", "", "", false},
-		{"check", "bm4x-cablecheck", "", true},
-		{"check", "bm4x-cablecheck", "keep", false},
-		{"provision", "bm4x-cablecheck", "", true},
-		{"provision", "", "", false},
-		{"provision", "", "disable", true},
+		{"check", "", nil, false},
+		{"check", "bm4x-cablecheck", nil, true},
+		{"check", "bm4x-cablecheck", &off, false},
+		{"provision", "bm4x-cablecheck", nil, true},
+		{"provision", "", nil, false},
+		{"provision", "", &on, true},
 	} {
 		c := &Config{Mode: tt.mode}
 		c.Network.LLDP.Profile = tt.profile
-		c.Network.NICFirmwareLLDP = tt.value
+		c.Network.LLDP.DisableFirmwareAgent = tt.value
 		if got := c.DisableNICFirmwareLLDP(); got != tt.want {
 			t.Errorf("%+v: %v, want %v", tt, got, tt.want)
 		}
 	}
-	c := &Config{}
-	c.Network.NICFirmwareLLDP = "off"
-	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "network.nicFirmwareLLDP (NIC_FW_LLDP)") {
-		t.Fatalf("Validate = %v, want a NIC_FW_LLDP error", err)
+	cfg, err := loadYAML(strings.NewReader("network:\n  lldp:\n    disableFirmwareAgent: true\n"), true)
+	if err != nil || !cfg.DisableNICFirmwareLLDP() {
+		t.Fatalf("YAML network.lldp.disableFirmwareAgent: %v", err)
 	}
 }

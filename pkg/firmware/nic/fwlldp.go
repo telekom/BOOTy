@@ -1,15 +1,15 @@
 //go:build linux
 
-package ethtool
+package nic
 
 import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
-	"path/filepath"
 	"slices"
 	"sync"
+
+	"github.com/telekom/BOOTy/pkg/network/ethtool"
 )
 
 // fwLLDPFlags are the private flags that stop the firmware LLDP agent of
@@ -29,13 +29,10 @@ type fwFlag struct {
 	on     bool
 }
 
-// sysClassNet is /sys/class/net; a test seam.
-var sysClassNet = "/sys/class/net"
-
 // Test seams for the flag access and the interface lookups.
 var (
-	getFlags = PrivateFlags
-	setFlag  = SetPrivateFlag
+	getFlags = ethtool.PrivateFlags
+	setFlag  = ethtool.SetPrivateFlag
 	ifIndex  = func(name string) (int, error) {
 		ifi, err := net.InterfaceByName(name)
 		if err != nil {
@@ -65,14 +62,8 @@ type fwChange struct {
 	original bool
 }
 
-// Driver returns the kernel driver of a NIC, "" for a virtual one.
-func Driver(ifname string) string {
-	link, err := os.Readlink(filepath.Join(sysClassNet, ifname, "device", "driver"))
-	if err != nil {
-		return ""
-	}
-	return filepath.Base(link)
-}
+// This is the one implementation of the firmware LLDP agent switch
+// (LLDP_DISABLE_FW_AGENT); the private flags go over ethtool netlink.
 
 // DisableFirmwareLLDP stops the firmware LLDP agent of a NIC through its
 // private flag, like "ethtool --set-priv-flags IF disable-fw-lldp on"
@@ -80,7 +71,7 @@ func Driver(ifname string) string {
 // for RestoreFirmwareLLDP. It returns the flag, "" for a driver without
 // such an agent.
 func DisableFirmwareLLDP(ifname string) (string, error) {
-	return disableFirmwareLLDP(ifname, Driver(ifname))
+	return disableFirmwareLLDP(ifname, ethtool.Driver(ifname))
 }
 
 func disableFirmwareLLDP(ifname, driver string) (string, error) {
@@ -93,7 +84,7 @@ func disableFirmwareLLDP(ifname, driver string) (string, error) {
 	if err != nil {
 		return f.flag, err
 	}
-	j := slices.IndexFunc(flags, func(fl Flag) bool { return fl.Name == f.flag })
+	j := slices.IndexFunc(flags, func(fl ethtool.Flag) bool { return fl.Name == f.flag })
 	switch {
 	case j < 0:
 		return f.flag, fmt.Errorf("%s has no private flag %s (driver too old)", ifname, f.flag)

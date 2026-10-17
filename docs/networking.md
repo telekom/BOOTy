@@ -388,7 +388,7 @@ rule of every key:
 | `BGP_GRACEFUL_RESTART`, `BGP_GRACEFUL_RESTART_TIME`, `BGP_ADDPATH_RX`, `BGP_SOFTWARE_VERSION` | none: `frr.conf` graceful restart and capability statements are rejected | `network.bgp.gracefulRestart`, `gracefulRestartTime`, `addPathReceive`, `softwareVersion` | native only; unset is the FRR default (for `BGP_SOFTWARE_VERSION`, of the `frr defaults` profile) |
 | `BGP_HOSTNAME` | none: FRR ignores the `frr.conf` `hostname` line and sends the system host name | `network.bgp.hostname` | native only; unset keeps the system host name |
 | `LLDP_RECEIVE` | none: the legacy ramdisk does not receive LLDP | `network.lldpReceive` | native only; unset is on |
-| `NIC_FW_LLDP` | none | `network.nicFirmwareLLDP` | native only; unset is `disable` with the bm4x-cablecheck profile, else `keep` |
+| `LLDP_DISABLE_FW_AGENT` | none: the legacy ramdisk never stops the agent | `network.lldp.disableFirmwareAgent` | native only; unset is on with the bm4x-cablecheck profile, else off |
 | `LLDP_PROFILE`, `LLDP_PORT_ID_FORMAT`, `LLDP_EMIT_ALL` | none | `network.lldp.profile`, `network.lldp.portIDFormat`, `network.lldp.emitAll` | native only; unset is the networkd identity on the `LLDP_EMIT` NICs |
 | `IP_FORWARDING`, `IPV6_FORWARDING` | `frr.conf` `[no] ip[v6] forwarding` | `network.ipForwarding`, `network.ipv6Forwarding` | native wins |
 
@@ -731,8 +731,9 @@ what a switch reports.
 
 Intel 700 and 800 series NICs run an LLDP agent in the firmware. While it
 runs, it takes the LLDP frames of the switch, and the host's own frames do
-not go out reliably. `NIC_FW_LLDP=disable` (YAML `network.nicFirmwareLLDP`,
-the default with the bm4x-cablecheck profile) stops it through the driver
+not go out reliably. `LLDP_DISABLE_FW_AGENT=true` (YAML
+`network.lldp.disableFirmwareAgent`, the default with the bm4x-cablecheck
+profile) stops it while BOOTy runs through the driver
 private flag over ethtool netlink: i40e `disable-fw-lldp` on, ice
 `fw-lldp-agent` off. BOOTy does this before the network setup, so a port
 reset of the driver cannot drop BGP sessions.

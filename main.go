@@ -28,10 +28,10 @@ import (
 	"github.com/telekom/BOOTy/pkg/crash"
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/executil"
+	nicfw "github.com/telekom/BOOTy/pkg/firmware/nic"
 	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/kexec"
 	"github.com/telekom/BOOTy/pkg/network"
-	"github.com/telekom/BOOTy/pkg/network/ethtool"
 	"github.com/telekom/BOOTy/pkg/network/frr"
 	"github.com/telekom/BOOTy/pkg/network/gobgp"
 	"github.com/telekom/BOOTy/pkg/network/lldp"
@@ -504,7 +504,7 @@ func requestPowerOff() error {
 // NIC firmware LLDP flags it changed (ice keeps them across boots) and
 // flushes the log shipping.
 func beforeHandoff() {
-	if n, err := ethtool.RestoreFirmwareLLDP(); err != nil {
+	if n, err := nicfw.RestoreFirmwareLLDP(); err != nil {
 		slog.Warn("firmware LLDP agent not restored", "error", err)
 	} else if n > 0 {
 		slog.Info("firmware LLDP agent restored", "flags", n)
@@ -1259,7 +1259,8 @@ func startLLDPReceive(ctx context.Context) {
 }
 
 // disableNICFirmwareLLDP stops the firmware LLDP agent of the Intel NICs
-// (NIC_FW_LLDP), which otherwise takes the LLDP frames of the switch. A
+// (LLDP_DISABLE_FW_AGENT), which otherwise takes the LLDP frames of the
+// switch. A
 // failure is only logged: the check can still run on the other NICs.
 func disableNICFirmwareLLDP(ctx context.Context) {
 	nics, err := network.DetectPhysicalNICsContext(ctx)
@@ -1268,7 +1269,7 @@ func disableNICFirmwareLLDP(ctx context.Context) {
 		return
 	}
 	for _, nic := range nics {
-		flag, err := ethtool.DisableFirmwareLLDP(nic)
+		flag, err := nicfw.DisableFirmwareLLDP(nic)
 		switch {
 		case err != nil:
 			slog.Warn("firmware LLDP agent not disabled", "interface", nic, "flag", flag, "error", err)
