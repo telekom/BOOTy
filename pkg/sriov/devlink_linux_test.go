@@ -5,6 +5,7 @@ package sriov
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/vishvananda/netlink/nl"
@@ -145,5 +146,29 @@ func TestModeNames(t *testing.T) {
 		inlineModeName(9) != "inline-9" || encapModeName(nl.DEVLINK_ESWITCH_ENCAP_MODE_NONE) != "none" ||
 		encapModeName(5) != "encap-5" {
 		t.Fatal("mode names")
+	}
+}
+
+func TestParseHeaderOnlyAnswers(t *testing.T) {
+	// A genl header without attributes is a valid, empty answer.
+	info, err := parseInfo(genlMsg(nl.DEVLINK_CMD_INFO_GET))
+	if err != nil || info.Driver != "" || len(info.Running) != 0 {
+		t.Fatalf("header-only info = %+v, %v", info, err)
+	}
+	if _, err := parseEswitch(genlMsg(nl.DEVLINK_CMD_ESWITCH_GET)); err == nil || !strings.Contains(err.Error(), "without a mode") {
+		t.Fatalf("header-only eswitch: %v", err)
+	}
+}
+
+func TestRunningFirmwarePrefersGenericName(t *testing.T) {
+	info := &DevlinkInfo{Running: []Version{{"fw.mgmt", "9.20"}, {"fw.psid", "MT_1"}, {"fw", "22.39"}}}
+	if got := runningFirmware(info); got != "22.39" {
+		t.Fatalf("runningFirmware = %q, want the generic fw", got)
+	}
+	if got := runningFirmware(&DevlinkInfo{Running: []Version{{"fw.psid", "MT_1"}, {"fw.mgmt", "9.20"}}}); got != "9.20" {
+		t.Fatalf("runningFirmware = %q, want fw.mgmt", got)
+	}
+	if got := runningFirmware(&DevlinkInfo{}); got != "" {
+		t.Fatalf("runningFirmware = %q", got)
 	}
 }
