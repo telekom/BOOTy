@@ -184,6 +184,14 @@ behaviour.
   (sysfs vendor `ATA`), `sg_sanitize` or `sg_format` for SAS disks, which took
   the `hdparm` path before. The ATA frozen check no longer reads `not frozen`
   as frozen. The plain wipe and `CAPRF_LEGACY_COMPAT` do not change (#704)
+- BOOTy sets the clock before the first request that checks a TLS
+  certificate: from `NTP_SERVERS`, the DHCP option 42 servers or the `Date`
+  header of the CAPRF connectivity target, whose certificate chain is checked
+  at the time it claims, within a window from the commit time of the build
+  (`BOOTY_COMMIT_TIME`) to five years after it. It writes the RTC. A host with a wrong RTC now
+  provisions over TLS without `SKIP_TLS_VERIFY`. `TIME_SYNC=off` keeps the old
+  behaviour. A certificate that is not valid at the local clock now gives an
+  error that names the skew (`BOOTY-TIM-002`) (#713).
 
 ### Behaviour behind `CAPRF_LEGACY_COMPAT=true`
 
@@ -332,6 +340,9 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   ESP changes to the other disk. Soft deprovision refuses a mirrored root (#581)
 - `RAID_SUPERBLOCK_CLEAR` (`wiped`|`all`): disks on which provisioning zeroes
   old RAID superblocks (#581)
+- Time sync before TLS: `TIME_SYNC` (`off`|`auto`|`require`), `NTP_SERVERS`,
+  `TIME_MAX_SKEW_SEC` and `TIME_WRITE_RTC`, YAML `time.*`. See
+  [time sync](docs/configuration.md#time-sync) (#713)
 
 ### Security
 
