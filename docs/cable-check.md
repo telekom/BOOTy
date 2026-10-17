@@ -59,14 +59,16 @@ checks the cabling from the host side, after `LLDP_NEIGHBOR_WAIT`:
 | `link-speed` | a NIC with carrier runs below `minSpeedMbps` or not at its expected `speedMbps` | warn |
 | `link-flaps` | a NIC lost carrier more than `maxFlaps` times (default 2) since the driver loaded (`carrier_down_count`) | warn |
 | `link-errors` | a NIC has more than `maxErrors` (default 0) receive and transmit errors since the driver loaded | warn |
-| `fec` | a NIC has uncorrectable FEC blocks, or runs 25G or faster without FEC | warn |
+| `fec` | a NIC has uncorrectable FEC blocks, or runs without FEC on lanes that need it: PAM4 lanes (50G and more per lane) always, 25G lanes (25G, 50G-R2, 100G-R4 such as SR4 and CR4) unless the module is a long-reach optic (LR, LR4, ER, ER4), a CA-N cable or a BER 1e-12 AOC/ACC (SFF-8024 compliance code). 10G lanes (10G, 40G) need no FEC | warn |
 | `pcie-link` | the PCIe link of a NIC runs below the speed or width that the device can (downtrained) | warn |
 | `optics-alarm` | a transceiver raised an alarm flag (temperature, supply voltage, Tx bias, Tx or Rx power, per lane) | block |
 | `optics-warning` | a transceiver raised a warning flag | warn |
 
 BOOTy reads the link state over ethtool netlink (`LINKMODES`, `LINKSTATE`,
 `FEC` with statistics), the error counters from the netdev statistics and
-the carrier losses and the PCIe link from sysfs. Values that a driver does
+the carrier losses and the PCIe link from sysfs. The lane count comes from
+the driver (`LINKMODES` lanes), else from the speed (40G, 100G and 200G
+have 4 lanes, 50G 2, 400G 8). Values that a driver does
 not report stay out of the document: virtio has no FEC, a veth no PCIe
 link. The counters are totals since the driver loaded, not rates.
 

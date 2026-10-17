@@ -15,6 +15,7 @@ func decode8636(read Reader, lower []byte) (*Module, error) {
 		Revision: text(up[184-128 : 186-128]), Serial: text(up[196-128 : 212-128]), DateCode: date(up[212-128 : 220-128]),
 		WavelengthNm: float64(u16(up[186-128:188-128])) / 20,
 	}
+	m.setCompliance(up[192-128])
 	if up[220-128]&0x30 == 0 { // no temperature and no supply voltage monitor
 		return m, nil
 	}

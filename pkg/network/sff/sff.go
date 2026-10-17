@@ -29,6 +29,11 @@ type Module struct {
 	Serial       string  `json:"serial,omitempty"`
 	DateCode     string  `json:"dateCode,omitempty"`
 	WavelengthNm float64 `json:"wavelengthNm,omitempty"`
+	// Compliance is the extended specification compliance code (SFF-8024
+	// table 4-4) of SFP and QSFP modules, for example 0x03 for
+	// 100GBASE-LR4 or 25GBASE-LR; 0 when the module sets none.
+	Compliance     byte   `json:"complianceCode,omitempty"`
+	ComplianceName string `json:"compliance,omitempty"`
 	// DOM reports whether the module has digital diagnostics; the values
 	// below are only set then.
 	DOM        bool        `json:"dom"`
@@ -98,6 +103,28 @@ var identifiers = map[byte]string{0x03: "SFP", 0x0c: "QSFP", 0x0d: "QSFP+", 0x11
 var connectors = map[byte]string{0x01: "SC", 0x07: "LC", 0x0b: "optical pigtail", 0x0c: "MPO 1x12", 0x0d: "MPO 2x16",
 	0x21: "copper pigtail", 0x22: "RJ45", 0x23: "no separable connector", 0x24: "MXC 2x16", 0x25: "CS",
 	0x26: "SN", 0x27: "MPO 2x12", 0x28: "MPO 1x16"}
+
+// extendedCompliance names the codes of SFF-8024 table 4-4 that matter
+// for 25G lanes.
+var extendedCompliance = map[byte]string{
+	0x01: "100G AOC or 25GAUI C2M AOC (BER 5e-5)", 0x02: "100GBASE-SR4 or 25GBASE-SR",
+	0x03: "100GBASE-LR4 or 25GBASE-LR", 0x04: "100GBASE-ER4 or 25GBASE-ER", 0x05: "100GBASE-SR10",
+	0x06: "100G CWDM4", 0x07: "100G PSM4", 0x08: "100G ACC or 25GAUI C2M ACC (BER 5e-5)",
+	0x0b: "100GBASE-CR4 or 25GBASE-CR CA-L", 0x0c: "25GBASE-CR CA-S", 0x0d: "25GBASE-CR CA-N",
+	0x18: "100G AOC or 25GAUI C2M AOC (BER 1e-12)", 0x19: "100G ACC or 25GAUI C2M ACC (BER 1e-12)",
+}
+
+func (m *Module) setCompliance(code byte) {
+	if code == 0 {
+		return
+	}
+	m.Compliance = code
+	if n, ok := extendedCompliance[code]; ok {
+		m.ComplianceName = n
+	} else {
+		m.ComplianceName = fmt.Sprintf("0x%02x", code)
+	}
+}
 
 func connector(b byte) string {
 	if c, ok := connectors[b]; ok {

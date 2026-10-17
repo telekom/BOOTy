@@ -58,6 +58,7 @@ type Link struct {
 // losses and error counters since the driver loaded.
 type LinkState struct {
 	SpeedMbps int       `json:"speedMbps,omitempty"`
+	Lanes     int       `json:"lanes,omitempty"`
 	Duplex    string    `json:"duplex,omitempty"`
 	Autoneg   bool      `json:"autoneg"`
 	ExtState  string    `json:"extState,omitempty"`

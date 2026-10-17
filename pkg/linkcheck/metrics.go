@@ -73,8 +73,8 @@ func speedProblems(l *Link, minMbps int) []string {
 	return out
 }
 
-// fecProblems: uncorrectable blocks, or no FEC on a 25G or faster link,
-// where the standards require it.
+// fecProblems: uncorrectable blocks, or no FEC on a link whose lanes need
+// it (fecRequired).
 func fecProblems(l *Link) []string {
 	f := l.State.FEC
 	if f == nil {
@@ -84,10 +84,51 @@ func fecProblems(l *Link) []string {
 	if f.Uncorrectable > 0 {
 		out = append(out, fmt.Sprintf("%s: %d uncorrectable FEC blocks", l.Ifname, f.Uncorrectable))
 	}
-	if l.Carrier && l.State.SpeedMbps >= 25000 && f.Active == "off" {
-		out = append(out, fmt.Sprintf("%s: no FEC at %d Mb/s", l.Ifname, l.State.SpeedMbps))
+	if l.Carrier && f.Active == "off" && fecRequired(l) {
+		out = append(out, fmt.Sprintf("%s: no FEC at %d Mb/s (%d Mb/s per lane)", l.Ifname, l.State.SpeedMbps, laneRate(l.State)))
 	}
 	return out
+}
+
+// laneRate is the speed of one lane: the speed divided by the lanes that
+// the driver reports, else by the usual lane count of the speed (40G and
+// 100G have 4 lanes, 50G 2, 400G 8).
+func laneRate(s *LinkState) int {
+	lanes := s.Lanes
+	if lanes == 0 {
+		switch s.SpeedMbps {
+		case 40000, 100000, 200000:
+			lanes = 4
+		case 50000:
+			lanes = 2
+		case 400000:
+			lanes = 8
+		default:
+			lanes = 1
+		}
+	}
+	return s.SpeedMbps / lanes
+}
+
+// fecRequired: PAM4 lanes (50G and more) always need RS-FEC. 25G lanes
+// (25G, 50G-R2, 100G-R4 such as CR4 and SR4) need it (IEEE 802.3 clauses
+// 91, 108, 110), except for the long-reach optics (LR, LR4, ER, ER4), the
+// short CA-N cables and the BER 1e-12 AOC and ACC (SFF-8024 codes 0x03,
+// 0x04, 0x0d, 0x18, 0x19). 10G lanes (10G, 40G) need none.
+func fecRequired(l *Link) bool {
+	switch rate := laneRate(l.State); {
+	case rate >= 50000:
+		return true
+	case rate >= 25000:
+		if m := l.Module; m != nil {
+			switch m.Compliance {
+			case 0x03, 0x04, 0x0d, 0x18, 0x19:
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // gts parses a PCIe link speed such as "16.0 GT/s PCIe"; 0 when unknown.

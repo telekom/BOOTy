@@ -10,6 +10,7 @@ func decodeSFP(read Reader, a0 []byte) (*Module, error) {
 		Vendor: text(a0[20:36]), OUI: oui(a0[37:40]), PartNumber: text(a0[40:56]), Revision: text(a0[56:60]),
 		Serial: text(a0[68:84]), DateCode: date(a0[84:92]),
 	}
+	m.setCompliance(a0[36])
 	if a0[8]&0x0c == 0 { // not a copper cable: bytes 60-61 are the wavelength
 		m.WavelengthNm = float64(u16(a0[60:62]))
 	}

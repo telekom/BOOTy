@@ -65,6 +65,7 @@ func sfp28() memory {
 	m.str(0x50, 0, 20, 16, "FINISAR CORP.")
 	m.set(0x50, 0, 37, 0x00, 0x90, 0x65)
 	m.str(0x50, 0, 40, 16, "FTLF8536P4BCL")
+	m.set(0x50, 0, 36, 0x02) // 25GBASE-SR
 	m.str(0x50, 0, 56, 4, "A")
 	m.set(0x50, 0, 60, u16s(850)...)
 	m.str(0x50, 0, 68, 16, "PXK1ABC")
@@ -102,6 +103,7 @@ func qsfp28() memory {
 	m.str(0x50, 0, 168, 16, "QSFP-100G-LR4")
 	m.str(0x50, 0, 184, 2, "01")
 	m.set(0x50, 0, 186, u16s(26200)...) // 1310 nm
+	m.set(0x50, 0, 192, 0x03)           // 100GBASE-LR4
 	m.str(0x50, 0, 196, 16, "XYZ123")
 	m.str(0x50, 0, 212, 8, "190102")
 	m.set(0x50, 0, 220, 0x3c)
@@ -153,6 +155,7 @@ func TestDecodeSFP28(t *testing.T) {
 	want := &Module{
 		Type: "SFP", Spec: "SFF-8472", Connector: "LC", Vendor: "FINISAR CORP.", OUI: "00:90:65",
 		PartNumber: "FTLF8536P4BCL", Revision: "A", Serial: "PXK1ABC", DateCode: "2021-03-15", WavelengthNm: 850,
+		Compliance: 0x02, ComplianceName: "100GBASE-SR4 or 25GBASE-SR",
 		DOM: true, TempC: 35.5, VccV: 3.3, Lanes: []Lane{{BiasMA: 7, TxPowerDBm: -3.01, RxPowerDBm: -23.98}},
 		Thresholds: &Thresholds{
 			TempC: Range{75, -5, 70, 0}, VccV: Range{3.6, 3, 3.5, 3.1}, BiasMA: Range{12, 2, 11.5, 3},
@@ -173,6 +176,7 @@ func TestDecodeQSFP28(t *testing.T) {
 	want := &Module{
 		Type: "QSFP28", Spec: "SFF-8636", Connector: "LC", Vendor: "Arista Networks", OUI: "00:1c:73",
 		PartNumber: "QSFP-100G-LR4", Revision: "01", Serial: "XYZ123", DateCode: "2019-01-02", WavelengthNm: 1310,
+		Compliance: 0x03, ComplianceName: "100GBASE-LR4 or 25GBASE-LR",
 		DOM: true, TempC: 40, VccV: 3.3,
 		Lanes: []Lane{
 			{BiasMA: 40, TxPowerDBm: 0, RxPowerDBm: -0.97}, {BiasMA: 40, TxPowerDBm: 0, RxPowerDBm: -40},

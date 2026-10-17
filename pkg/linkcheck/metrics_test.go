@@ -33,7 +33,7 @@ func TestLinkChecks(t *testing.T) {
 		{CheckLinkSpeed, []string{"ens1f0np0: 10000 Mb/s, want at least 25000", "ens1f0np0: 10000 Mb/s, want 25000"}},
 		{CheckLinkFlaps, []string{"ens1f0np0: carrier lost 3 times"}},
 		{CheckLinkErrors, []string{"ens1f0np0: 5 receive errors (CRC 5, frame 0), 0 transmit errors"}},
-		{CheckFEC, []string{"ens1f0np0: 2 uncorrectable FEC blocks", "ens1f1np1: no FEC at 25000 Mb/s"}},
+		{CheckFEC, []string{"ens1f0np0: 2 uncorrectable FEC blocks", "ens1f1np1: no FEC at 25000 Mb/s (25000 Mb/s per lane)"}},
 		{CheckPCIeLink, []string{"ens1f0np0: PCIe 8.0 GT/s PCIe x8, the device can 16.0 GT/s PCIe x8", "ens1f1np1: PCIe 16.0 GT/s PCIe x4, the device can 16.0 GT/s PCIe x8"}},
 	} {
 		r := findCheck(t, results, tt.name)
@@ -89,5 +89,45 @@ func TestOpticsChecks(t *testing.T) {
 	}
 	if r := findCheck(t, results, CheckOpticsWarning); r.Status != health.StatusSkip {
 		t.Errorf("warning with off = %+v", r)
+	}
+}
+
+// FEC is required by the lane rate, not the total speed: 40G (4x10G) and
+// 100G-LR4 run without it, 100G-SR4 and 25G DACs need it, PAM4 lanes
+// always do.
+func TestFECRequired(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		speed      int
+		lanes      int
+		compliance byte
+		want       bool
+	}{
+		{"10G", 10000, 0, 0, false},
+		{"40G", 40000, 0, 0, false},
+		{"40G 4 lanes", 40000, 4, 0, false},
+		{"25G DAC", 25000, 0, 0, true},
+		{"25G CA-N DAC", 25000, 1, 0x0d, false},
+		{"25G-LR", 25000, 1, 0x03, false},
+		{"100G-SR4", 100000, 4, 0x02, true},
+		{"100G-LR4", 100000, 0, 0x03, false},
+		{"100G-ER4", 100000, 4, 0x04, false},
+		{"100G CWDM4", 100000, 4, 0x06, true},
+		{"100G AOC 1e-12", 100000, 4, 0x18, false},
+		{"50G-R2", 50000, 0, 0, true},
+		{"50G PAM4", 50000, 1, 0x03, true},
+		{"200G-R4", 200000, 0, 0, true},
+		{"400G-R8", 400000, 0, 0x03, true},
+	} {
+		l := &Link{Carrier: true, State: &LinkState{SpeedMbps: tt.speed, Lanes: tt.lanes, FEC: &FEC{Active: "off"}}}
+		if tt.compliance != 0 {
+			l.Module = &sff.Module{Compliance: tt.compliance}
+		}
+		if got := fecRequired(l); got != tt.want {
+			t.Errorf("%s: fecRequired = %v, want %v", tt.name, got, tt.want)
+		}
+		if got := len(fecProblems(l)) > 0; got != tt.want {
+			t.Errorf("%s: FEC problem = %v, want %v", tt.name, got, tt.want)
+		}
 	}
 }

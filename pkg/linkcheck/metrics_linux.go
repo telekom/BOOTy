@@ -36,7 +36,7 @@ var (
 func linkState(nic string) *LinkState {
 	s := &LinkState{Flaps: sysInt(filepath.Join(sysClassNet, nic, "carrier_down_count")), Errors: getCounters(nic)}
 	if m, err := getLinkModes(nic); err == nil {
-		s.SpeedMbps, s.Duplex, s.Autoneg = m.SpeedMbps, m.Duplex, m.Autoneg
+		s.SpeedMbps, s.Lanes, s.Duplex, s.Autoneg = m.SpeedMbps, m.Lanes, m.Duplex, m.Autoneg
 	}
 	if st, err := getLinkState(nic); err == nil {
 		s.ExtState = st.ExtState

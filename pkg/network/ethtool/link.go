@@ -24,6 +24,7 @@ type LinkModes struct {
 	SpeedMbps int    // 0 when unknown
 	Duplex    string // full, half or ""
 	Autoneg   bool
+	Lanes     int // 0 when the driver does not report it
 }
 
 // LinkState is the link state with the reason of a link down
@@ -95,6 +96,8 @@ func parseLinkModes(b []byte) (LinkModes, error) {
 			}
 		case a.typ == unix.ETHTOOL_A_LINKMODES_DUPLEX && len(a.value) == 1:
 			m.Duplex = map[byte]string{0: "half", 1: "full"}[a.value[0]] // DUPLEX_HALF, DUPLEX_FULL
+		case a.typ == unix.ETHTOOL_A_LINKMODES_LANES && len(a.value) == 4:
+			m.Lanes = int(nl.NativeEndian().Uint32(a.value))
 		case a.typ == unix.ETHTOOL_A_LINKMODES_AUTONEG && len(a.value) == 1:
 			m.Autoneg = a.value[0] == 1 // AUTONEG_ENABLE
 		}

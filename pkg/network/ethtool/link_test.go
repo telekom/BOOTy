@@ -31,8 +31,9 @@ func TestParseLinkModes(t *testing.T) {
 		nl.NewRtAttr(unix.ETHTOOL_A_LINKMODES_AUTONEG, []byte{1}),
 		nl.NewRtAttr(unix.ETHTOOL_A_LINKMODES_SPEED, nl.Uint32Attr(25000)),
 		nl.NewRtAttr(unix.ETHTOOL_A_LINKMODES_DUPLEX, []byte{1}),
+		nl.NewRtAttr(unix.ETHTOOL_A_LINKMODES_LANES, nl.Uint32Attr(1)),
 	))
-	if err != nil || m != (LinkModes{SpeedMbps: 25000, Duplex: "full", Autoneg: true}) {
+	if err != nil || m != (LinkModes{SpeedMbps: 25000, Duplex: "full", Autoneg: true, Lanes: 1}) {
 		t.Fatalf("link modes = %+v, %v", m, err)
 	}
 	// No carrier: SPEED_UNKNOWN and DUPLEX_UNKNOWN.

@@ -109,8 +109,13 @@ func TestDisableNICFirmwareLLDP(t *testing.T) {
 		{"", "", nil, true},
 		{"provision", "", &off, false},
 		{"provision", "", &on, true},
+		{"check", "cabling", nil, true},
+		{"check", "cabling", &off, false},
 	} {
 		c := &Config{Mode: tt.mode}
+		if tt.profile == "cabling" {
+			c.Check.Profiles, tt.profile = []string{"health", "cabling"}, ""
+		}
 		c.Network.LLDP.Profile = tt.profile
 		c.Network.LLDP.DisableFirmwareAgent = tt.value
 		if got := c.DisableNICFirmwareLLDP(); got != tt.want {
