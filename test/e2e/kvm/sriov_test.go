@@ -88,8 +88,10 @@ func TestSRIOVIgbProvisionQEMU(t *testing.T) {
 		t.Fatal(err)
 	}
 	files := map[string]string{}
-	// tcp_diag (with inet_diag) lets the in-use guard read the TCP sockets.
-	addKernelModules(t, files, productionTemplateKernelRelease(t, real), "igb", "tcp_diag")
+	// No tcp_diag or inet_diag in the guest: the in-use guard of the VF
+	// count change must take the neighbor fallback (checked below). The
+	// netdevsim tests cover the sock_diag path on the runner kernel.
+	addKernelModules(t, files, productionTemplateKernelRelease(t, real), "igb")
 	if _, ok := files["modules/igb.ko"]; !ok {
 		t.Fatalf("igb module of the guest kernel not found; modules: %v", mapKeys(files))
 	}
@@ -177,6 +179,11 @@ func requireSRIOVFindings(t *testing.T, out string) {
 		if !found {
 			t.Errorf("no ok finding for %s. tail:\n%s", setting, tail([]byte(out), 4000))
 		}
+	}
+	// The guest has no sock_diag modules: the in-use guard of eth1 used the
+	// IPv6 neighbor fallback and found no BGP peer.
+	if !strings.Contains(out, "sock_diag unavailable, checking the IPv6 link-local BGP neighbors") {
+		t.Errorf("the in-use guard did not take the neighbor fallback. tail:\n%s", tail([]byte(out), 4000))
 	}
 	if !strings.Contains(out, "SR-IOV compliance") || !strings.Contains(out, "failed=0") {
 		t.Fatalf("no clean SR-IOV compliance summary. tail:\n%s", tail([]byte(out), 4000))
