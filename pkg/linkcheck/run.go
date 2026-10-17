@@ -47,6 +47,7 @@ func Cabling(doc *Document, cfg *config.CheckConfig, nics []string) {
 	doc.Diff = Diff(doc.Host.Hostname, doc.Links, unmatched)
 	doc.Checks = append(doc.Checks, cablingChecks(doc.Links, doc.Diff, len(expected) > 0, &cfg.Thresholds)...)
 	doc.Checks = append(doc.Checks, linkChecks(doc.Links, &cfg.Thresholds)...)
+	doc.Checks = append(doc.Checks, opticsChecks(doc.Links, &cfg.Thresholds)...)
 }
 
 // Finish sets the end time and the status: fail when a critical check

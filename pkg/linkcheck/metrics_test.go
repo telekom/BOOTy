@@ -6,6 +6,7 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/health"
+	"github.com/telekom/BOOTy/pkg/network/sff"
 )
 
 func metricLinks() []Link {
@@ -64,5 +65,29 @@ func TestGTS(t *testing.T) {
 		if got := gts(in); got != want {
 			t.Errorf("gts(%q) = %v, want %v", in, got, want)
 		}
+	}
+}
+
+func TestOpticsChecks(t *testing.T) {
+	links := []Link{
+		{Ifname: "ens1f0np0", Module: &sff.Module{PartNumber: "FTLF8536P4BCL", Alarms: []string{"rx-power low"}, Warnings: []string{"rx-power low"}}},
+		{Ifname: "ens1f1np1", Module: &sff.Module{PartNumber: "QSFP-100G-LR4", Warnings: []string{"temperature high"}}},
+		{Ifname: "eno1"},
+	}
+	results := opticsChecks(links, &config.CheckThresholds{})
+	if r := findCheck(t, results, CheckOpticsAlarm); r.Status != health.StatusFail || r.Severity != health.SeverityCritical ||
+		r.Details != "ens1f0np0: FTLF8536P4BCL rx-power low alarm" {
+		t.Errorf("alarm = %+v", r)
+	}
+	if r := findCheck(t, results, CheckOpticsWarning); r.Severity != health.SeverityWarning ||
+		r.Details != "ens1f0np0: FTLF8536P4BCL rx-power low warning; ens1f1np1: QSFP-100G-LR4 temperature high warning" {
+		t.Errorf("warning = %+v", r)
+	}
+	results = opticsChecks(links, &config.CheckThresholds{OpticsAlarm: "warn", OpticsWarning: "off"})
+	if r := findCheck(t, results, CheckOpticsAlarm); r.Severity != health.SeverityWarning {
+		t.Errorf("alarm with warn = %+v", r)
+	}
+	if r := findCheck(t, results, CheckOpticsWarning); r.Status != health.StatusSkip {
+		t.Errorf("warning with off = %+v", r)
 	}
 }

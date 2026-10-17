@@ -99,3 +99,30 @@ func TestLinkKernel(t *testing.T) {
 		t.Fatalf("veth FEC = %v, want EOPNOTSUPP", err)
 	}
 }
+
+func TestModuleDataOf(t *testing.T) {
+	data := []byte{0x11, 0x00, 0x04}
+	got, err := moduleDataOf(reply(nl.NewRtAttr(moduleData, data)))
+	if err != nil || string(got) != string(data) {
+		t.Fatalf("data = %x, %v", got, err)
+	}
+	if _, err := moduleDataOf(reply(nl.NewRtAttr(moduleLength, nl.Uint32Attr(3)))); err == nil {
+		t.Fatal("reply without data accepted")
+	}
+}
+
+// The kernel accepts the request: lo has no module, so a well formed
+// request ends with EOPNOTSUPP, a malformed one with EINVAL. The kernel
+// allows module reads only with CAP_NET_ADMIN.
+func TestModuleEEPROMKernel(t *testing.T) {
+	if _, err := familyID(); err != nil {
+		t.Skipf("no ethtool netlink family: %v", err)
+	}
+	_, err := ReadModuleEEPROM("lo", 0x50, 0, 0, 128)
+	if errors.Is(err, syscall.EPERM) {
+		t.Skip("needs CAP_NET_ADMIN")
+	}
+	if !IsNotSupported(err) {
+		t.Fatalf("ReadModuleEEPROM(lo) = %v, want EOPNOTSUPP", err)
+	}
+}
