@@ -9,6 +9,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/health"
 	"github.com/telekom/BOOTy/pkg/network/lldp"
+	"github.com/telekom/BOOTy/pkg/network/sff"
 )
 
 // Schema is the version of the result document.
@@ -47,6 +48,7 @@ type Link struct {
 	Carrier  bool                 `json:"carrier"`
 	State    *LinkState           `json:"link,omitempty"`
 	PCIe     *PCIe                `json:"pcie,omitempty"`
+	Module   *sff.Module          `json:"module,omitempty"`
 	LLDP     *lldp.Neighbor       `json:"lldp,omitempty"`
 	Expected *config.ExpectedLink `json:"expected,omitempty"`
 }

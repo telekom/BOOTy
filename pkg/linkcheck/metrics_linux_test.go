@@ -57,3 +57,24 @@ func TestLinkStateAndPCIe(t *testing.T) {
 		t.Fatalf("FEC = %+v", f)
 	}
 }
+
+// A NIC without a module has none; a module is decoded through the
+// ethtool reader.
+func TestModule(t *testing.T) {
+	orig := readModule
+	t.Cleanup(func() { readModule = orig })
+	readModule = func(string, int, int, int, int) ([]byte, error) { return nil, errors.New("EOPNOTSUPP") }
+	if m := module("eth0"); m != nil {
+		t.Fatalf("module without a cage = %+v", m)
+	}
+	readModule = func(_ string, addr, page, offset, length int) ([]byte, error) {
+		b := make([]byte, length)
+		if addr == 0x50 && page == 0 && offset == 0 {
+			b[0], b[2] = 0x03, 0x07 // SFP, LC, no diagnostics
+		}
+		return b, nil
+	}
+	if m := module("ens1f0np0"); m == nil || m.Type != "SFP" || m.Connector != "LC" || m.DOM {
+		t.Fatalf("module = %+v", m)
+	}
+}

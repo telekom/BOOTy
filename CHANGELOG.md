@@ -243,6 +243,11 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 - The cabling profile also checks the links: speed and duplex, carrier losses,
   error counters, FEC and its uncorrectable blocks (over ethtool netlink, no
   `ethtool` binary), and PCIe downtraining.
+- The cabling profile decodes the transceivers (SFF-8472, SFF-8636 and CMIS:
+  identity, temperature, voltage, per lane bias and Tx/Rx power, thresholds and
+  alarm and warning flags) from the module memory over ethtool netlink, and
+  fails on an alarm (`optics-alarm`, block) and warns on a warning
+  (`optics-warning`).
 - GoBGP mode applies the netplan device settings of the provision VXLAN device,
   the bridge and the NICs like systemd-networkd (MTU, MAC, learning, ARP proxy,
   hairpin, link-local, `accept-ra`), and `frr.conf` `[no] ip[v6] forwarding`.

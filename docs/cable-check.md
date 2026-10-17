@@ -48,12 +48,39 @@ checks the cabling from the host side, after `LLDP_NEIGHBOR_WAIT`:
 | `link-errors` | a NIC has more than `maxErrors` (default 0) receive and transmit errors since the driver loaded | warn |
 | `fec` | a NIC has uncorrectable FEC blocks, or runs 25G or faster without FEC | warn |
 | `pcie-link` | the PCIe link of a NIC runs below the speed or width that the device can (downtrained) | warn |
+| `optics-alarm` | a transceiver raised an alarm flag (temperature, supply voltage, Tx bias, Tx or Rx power, per lane) | block |
+| `optics-warning` | a transceiver raised a warning flag | warn |
 
 BOOTy reads the link state over ethtool netlink (`LINKMODES`, `LINKSTATE`,
 `FEC` with statistics), the error counters from the netdev statistics and
 the carrier losses and the PCIe link from sysfs. Values that a driver does
 not report stay out of the document: virtio has no FEC, a veth no PCIe
 link. The counters are totals since the driver loaded, not rates.
+
+### Transceivers
+
+BOOTy reads the transceiver memory over ethtool netlink
+(`MODULE_EEPROM_GET`, page by page; it needs `CAP_NET_ADMIN`, which PID 1
+has) and decodes it itself (`pkg/network/sff`), so neither the `ethtool`
+binary nor a library is needed:
+
+| Spec | Modules | Read |
+|---|---|---|
+| SFF-8472 | SFP, SFP+, SFP28 | A0h (identity), A2h (diagnostics, thresholds, flags) |
+| SFF-8636 | QSFP+, QSFP28 | lower page, page 00h, page 03h (thresholds) unless the memory is flat |
+| CMIS 4/5 | QSFP-DD, OSFP, QSFP with CMIS | lower page, pages 00h, 01h, 02h, 11h unless the memory is flat |
+
+Each NIC with a module gets `module` in the result document: type,
+connector, vendor, OUI, part number, revision, serial number, date code,
+wavelength, and with diagnostics the temperature, supply voltage, per lane
+Tx bias, Tx and Rx power (dBm), the alarm and warning thresholds and the
+raised flags. The checks use the flags that the module computes itself;
+SFF-8636 and CMIS flags are latched, so they also show an event since the
+last read. Limits of the decoder: SFF-8472 modules with external
+calibration get a note instead of diagnostics, and the CMIS lane count
+comes from the form factor (8 for QSFP-DD and OSFP, 4 for QSFP with
+CMIS). The decoder is tested with memories built from the specifications;
+no real module dumps were available.
 
 The switch port of a neighbor is its port ID when that is a name (subtype
 `ifname`, `interface-alias`, or a `local` ID that is not a number);
@@ -76,6 +103,8 @@ which makes the run fail (status `error`).
 | `linkErrors`, `maxErrors` | `link-errors` |
 | `fec` | `fec` |
 | `pcie` | `pcie-link` |
+| `opticsAlarm` | `optics-alarm` |
+| `opticsWarning` | `optics-warning` |
 
 Example: `CHECK_THRESHOLDS='{"lldpMissing":"block","dualHoming":"off"}'`.
 

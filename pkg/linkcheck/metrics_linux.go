@@ -11,6 +11,7 @@ import (
 	"github.com/vishvananda/netlink"
 
 	"github.com/telekom/BOOTy/pkg/network/ethtool"
+	"github.com/telekom/BOOTy/pkg/network/sff"
 )
 
 // Test seams for the ethtool and netlink reads.
@@ -18,6 +19,7 @@ var (
 	getLinkModes = ethtool.GetLinkModes
 	getLinkState = ethtool.GetLinkState
 	getFEC       = ethtool.GetFEC
+	readModule   = ethtool.ReadModuleEEPROM
 	getCounters  = func(nic string) *Counters {
 		link, err := netlink.LinkByName(nic)
 		if err != nil || link.Attrs().Statistics == nil {
@@ -43,6 +45,18 @@ func linkState(nic string) *LinkState {
 		s.FEC = &FEC{Active: f.Active, Corrected: f.Corrected, Uncorrectable: f.Uncorrectable, Stats: f.Stats}
 	}
 	return s
+}
+
+// module decodes the transceiver of a NIC; nil without one (no cage,
+// empty cage, virtual NIC) or for an unknown type.
+func module(nic string) *sff.Module {
+	m, err := sff.Decode(func(addr, page, offset, length int) ([]byte, error) {
+		return readModule(nic, addr, page, offset, length)
+	})
+	if err != nil {
+		return nil
+	}
+	return m
 }
 
 // pcie reads the PCIe link of the NIC function from sysfs.

@@ -11,11 +11,13 @@ import (
 
 // Link check names.
 const (
-	CheckLinkSpeed  = "link-speed"
-	CheckLinkFlaps  = "link-flaps"
-	CheckLinkErrors = "link-errors"
-	CheckFEC        = "fec"
-	CheckPCIeLink   = "pcie-link"
+	CheckLinkSpeed     = "link-speed"
+	CheckLinkFlaps     = "link-flaps"
+	CheckLinkErrors    = "link-errors"
+	CheckFEC           = "fec"
+	CheckPCIeLink      = "pcie-link"
+	CheckOpticsAlarm   = "optics-alarm"
+	CheckOpticsWarning = "optics-warning"
 )
 
 // defaultMaxFlaps is the carrier losses since the driver loaded that are
@@ -96,4 +98,25 @@ func gts(s string) float64 {
 	}
 	v, _ := strconv.ParseFloat(f[0], 64)
 	return v
+}
+
+// opticsChecks reports the alarm and warning flags of the transceivers.
+func opticsChecks(links []Link, t *config.CheckThresholds) []health.CheckResult {
+	var alarms, warnings []string
+	for i := range links {
+		m := links[i].Module
+		if m == nil {
+			continue
+		}
+		for _, a := range m.Alarms {
+			alarms = append(alarms, fmt.Sprintf("%s: %s %s alarm", links[i].Ifname, m.PartNumber, a))
+		}
+		for _, w := range m.Warnings {
+			warnings = append(warnings, fmt.Sprintf("%s: %s %s warning", links[i].Ifname, m.PartNumber, w))
+		}
+	}
+	return []health.CheckResult{
+		result(CheckOpticsAlarm, action(t.OpticsAlarm, config.CheckActionBlock), alarms),
+		result(CheckOpticsWarning, action(t.OpticsWarning, config.CheckActionWarn), warnings),
+	}
 }
