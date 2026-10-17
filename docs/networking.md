@@ -533,8 +533,11 @@ gateway. GoBGP still requires `provision_vni` in every overlay type.
 ### Routes BOOTy originates
 
 All routes use the route distinguisher `asn_server:provision_vni` and the
-router ID as next hop. The route target is `vpn_rt`, or
-`asn_server:provision_vni` when `vpn_rt` is empty.
+router ID as next hop. The route target follows the precedence in the
+`EVPN_RT_IMPORT` row of [Configuration](configuration.md): the native
+`EVPN_RT_IMPORT`/`EVPN_RT_EXPORT` lists, then the `frr.conf` route targets
+or FRR's auto route target of an `frr.conf` L3VNI, then `vpn_rt`, then
+`asn_server:provision_vni`.
 
 | Route | Content | Mode |
 |---|---|---|

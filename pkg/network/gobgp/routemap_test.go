@@ -526,3 +526,22 @@ func TestPolicyPeersNative(t *testing.T) {
 		t.Fatalf("policyPeers without options = %+v", got)
 	}
 }
+
+// An frr.conf iBGP session never gets "bgp ebgp-requires-policy", even with
+// the rule on and no route-maps; the same session as eBGP does.
+func TestPolicyPeersSessionsRequirePolicy(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		internal bool
+		asn      uint32
+		want     bool
+	}{{"iBGP", true, 0, false}, {"eBGP", false, 65500, true}} {
+		u := &UnderlayTier{cfg: &Config{ASN: 65000, Sessions: []network.BGPSession{
+			{Name: "10.10.10.1", Internal: tt.internal, RemoteASN: tt.asn, EBGPRequiresPolicy: true, L2VPNEVPN: true},
+		}}}
+		peers := u.policyPeers()
+		if len(peers) != 1 || peers[0].requirePolicy != tt.want {
+			t.Errorf("%s: policyPeers = %+v, want requirePolicy %v", tt.name, peers, tt.want)
+		}
+	}
+}
