@@ -194,3 +194,64 @@ runtime:
 		}
 	}
 }
+
+// TestValidateAcceptsBoundaries keeps every inclusive limit valid, so a
+// limit that moves by one fails here.
+func TestValidateAcceptsBoundaries(t *testing.T) {
+	cases := map[string]func(p *Profile){
+		"maxVFs 0 with SR-IOV off": func(p *Profile) {
+			p.Firmware = FirmwareSettings{SRIOVEnabled: ptr(false), MaxVFs: ptr(0)}
+			p.Runtime = RuntimeSettings{}
+		},
+		"numVFs 0 with SR-IOV off": func(p *Profile) {
+			p.Firmware = FirmwareSettings{SRIOVEnabled: ptr(false)}
+			p.Runtime = RuntimeSettings{NumVFs: ptr(0)}
+		},
+		"maxVFs 65535": func(p *Profile) {
+			p.Firmware.MaxVFs = ptr(65535)
+			p.Runtime.NumVFs = ptr(65535)
+		},
+		"numVFs equal to maxVFs": func(p *Profile) { p.Runtime.NumVFs = ptr(64) },
+		"vlan 4095 qos 7":        func(p *Profile) { p.Runtime.VFs[0].VLAN, p.Runtime.VFs[0].QoS = ptr(4095), ptr(7) },
+		"qos 0 without vlan":     func(p *Profile) { p.Runtime.VFs[0].VLAN, p.Runtime.VFs[0].QoS = ptr(0), ptr(0) },
+		"min rate equal to max":  func(p *Profile) { p.Runtime.VFs[0].MinTxRate, p.Runtime.VFs[0].MaxTxRate = ptr(100), ptr(100) },
+		"min rate with no max":   func(p *Profile) { p.Runtime.VFs[0].MinTxRate, p.Runtime.VFs[0].MaxTxRate = ptr(100), ptr(0) },
+		"last VF index":          func(p *Profile) { p.Runtime.VFs[0].Index = 7 },
+		"no VF settings":         func(p *Profile) { p.Runtime = RuntimeSettings{EswitchMode: "legacy"} },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			p := fullProfile()
+			mutate(&p)
+			if err := (&Config{Profiles: []Profile{p}}).Validate(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	// VF defaults alone also need VFs.
+	p := fullProfile()
+	p.Runtime = RuntimeSettings{VFDefaults: VFSettings{Trust: ptr(true)}}
+	if err := (&Config{Profiles: []Profile{p}}).Validate(); err == nil || !strings.Contains(err.Error(), "need runtime.numVFs") {
+		t.Fatalf("VF defaults without VFs: %v", err)
+	}
+	for v, ok := range map[int]bool{-1: false, 0: true, 7: true, 8: false} {
+		if got := intRange("x", &v, 0, 7) == ""; got != ok {
+			t.Errorf("intRange(%d) ok = %v", v, got)
+		}
+	}
+}
+
+func TestHasFirmwareSettings(t *testing.T) {
+	for name, f := range map[string]FirmwareSettings{
+		"sriovEnabled": {SRIOVEnabled: ptr(false)}, "maxVFs": {MaxVFs: ptr(0)}, "linkType": {LinkType: "eth"},
+		"fwLLDPAgent": {FWLLDPAgent: ptr(false)}, "nvConfig": {NVConfig: []Setting{{"A", "1"}}},
+		"devlinkParams": {DevlinkParams: []Setting{{"a", "1"}}},
+	} {
+		if !hasFirmwareSettings(&f) {
+			t.Errorf("%s alone is a firmware setting", name)
+		}
+	}
+	if hasFirmwareSettings(&FirmwareSettings{}) {
+		t.Fatal("empty firmware settings")
+	}
+}

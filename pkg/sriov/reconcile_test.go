@@ -112,6 +112,20 @@ func TestReconcileDiscoverAndAssignErrors(t *testing.T) {
 	}
 }
 
+func TestReconcileCountsMatchesAndLogsSummary(t *testing.T) {
+	p1 := cx6()
+	p1.Interface = "ens1f1np1"
+	res, logs, err := runReconcile(t, &Config{Profiles: []Profile{cx6Profile()}}, []PF{cx6(), p1}, compliantBackend())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 1 match finding plus 4 firmware findings on each of the two ports.
+	if !strings.Contains(logs, "msg=\"SR-IOV compliance\" findings=9 compliant=9 failed=0") ||
+		res.Findings[0].Setting != "pfPorts" || res.Findings[0].Got != "2" {
+		t.Fatalf("findings %+v logs:\n%s", res.Findings, logs)
+	}
+}
+
 func TestReconcileWarnLogsAndGoesOn(t *testing.T) {
 	b := compliantBackend()
 	b.stored.MaxVFs = ptr(32)
