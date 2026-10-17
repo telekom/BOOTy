@@ -202,6 +202,17 @@ Known differences, found with the CAPRF fabric snapshots (legacy ramdisk FRR
 - The minimum route advertisement interval (GoBGP has none) and the LLDP
   TLVs are compared by `fabric-parity-diff` in CAPRF !292.
 
+The production-shaped CAPRF fixture is proven with the legacy ramdisk (CAPRF
+!292, job 407514447): sessions to both leaves with the negotiated timers
+30/90, BFD 150/150/3 at the leaves and multihop BFD at both route
+reflectors, two next hops at the route reflector to every host VTEP, only
+IPv6 Type-5 routes with RT 65169:3000, LLDP frames from both NICs with the
+template port names, and recovery from both leaves going down one after the
+other, a BGP reset and a link flap while the image downloads. BOOTy
+0.2.0-rc.12 cannot set up this network yet (`provision gateway is required`,
+fixed by #662 on `main`); the BOOTy job turns green with a release that
+contains the GoBGP parity stack.
+
 `fabric-parity-diff` accepts a difference only when an entry of the CAPRF
 `test/e2e/evpn-bm4x/parity-allowlist.yaml` covers that field and names the
 gap. The capability gaps above are in that list, marked open: each must be
