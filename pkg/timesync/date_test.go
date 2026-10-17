@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -167,5 +168,42 @@ func TestDateProbeErrors(t *testing.T) {
 func TestVerifyAtWithoutCertificate(t *testing.T) {
 	if err := verifyAt(nil, "127.0.0.1", time.Now(), nil); err == nil {
 		t.Fatal("verifyAt(nil) succeeded")
+	}
+}
+
+// The chain is valid at the local clock, but the server claims a time after
+// the certificate expires: the Date time is not authenticated.
+func TestDateProbeRejectsDateOutsideValidity(t *testing.T) {
+	now := time.Now()
+	pki := newTestPKI(t, now.Add(-time.Hour), now.Add(24*time.Hour))
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Date", now.Add(2*365*24*time.Hour).UTC().Format(http.TimeFormat))
+	}))
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{pki.cert}, MinVersion: tls.VersionTLS12}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	_, err := DateProbe{Roots: pki.roots}.Probe(context.Background(), srv.URL)
+	if err == nil || !strings.Contains(err.Error(), "not valid at the Date header time") {
+		t.Fatalf("Probe error = %v, want a Date header validity error", err)
+	}
+}
+
+// The probe does not follow redirects: the Date of the first response
+// counts, and the redirect target gets no request.
+func TestDateProbeDoesNotFollowRedirects(t *testing.T) {
+	var targetHits atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		targetHits.Add(1)
+		w.Header().Set("Date", time.Now().Add(-48*time.Hour).UTC().Format(http.TimeFormat))
+	}))
+	t.Cleanup(target.Close)
+	redirect := httptest.NewServer(http.RedirectHandler(target.URL, http.StatusFound))
+	t.Cleanup(redirect.Close)
+	sample, err := DateProbe{}.Probe(context.Background(), redirect.URL)
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if targetHits.Load() != 0 || sample.Offset.Abs() > 2*time.Second {
+		t.Fatalf("redirect followed: target hits %d, offset %v", targetHits.Load(), sample.Offset)
 	}
 }

@@ -199,3 +199,86 @@ func TestBuildFloorIsPlausible(t *testing.T) {
 		t.Fatalf("BuildFloor() = %v", f)
 	}
 }
+
+func TestBuildFloorPrefersTheBuildStamp(t *testing.T) {
+	orig := commitTime
+	t.Cleanup(func() { commitTime = orig })
+
+	stamp := time.Date(2026, 10, 1, 8, 30, 0, 0, time.UTC)
+	commitTime = func() (time.Time, bool) { return stamp, true }
+	if got := BuildFloor(); !got.Equal(stamp) || !got.After(minPlausibleTime) {
+		t.Fatalf("BuildFloor() = %v, want the stamp %v", got, stamp)
+	}
+	commitTime = func() (time.Time, bool) { return time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), true }
+	if got := BuildFloor(); !got.Equal(minPlausibleTime) {
+		t.Fatalf("BuildFloor() with an old stamp = %v, want %v", got, minPlausibleTime)
+	}
+	commitTime = func() (time.Time, bool) { return time.Time{}, false }
+	if got := BuildFloor(); got.Before(minPlausibleTime) {
+		t.Fatalf("BuildFloor() without a stamp = %v", got)
+	}
+}
+
+// Sources outside [floor, floor+5y] never set the clock: with nothing else
+// left, require fails and auto keeps the RTC.
+func TestSyncRejectsSourcesOutsideTheWindow(t *testing.T) {
+	belowFloor := minPlausibleTime.Add(-time.Hour).Sub(rtcNow)
+	aboveCeiling := minPlausibleTime.Add(maxAheadOfFloor + time.Hour).Sub(rtcNow)
+	tests := []struct {
+		name      string
+		ntp, date func(context.Context, string) (Sample, error)
+	}{
+		{"ntp below the floor, date fails", source(ntpSample(belowFloor), nil), source(Sample{}, errDown)},
+		{"ntp below the floor, unauthenticated date below the floor", source(ntpSample(belowFloor), nil), source(dateSample(belowFloor, false), nil)},
+		{"date only, below the floor", source(Sample{}, errDown), source(dateSample(belowFloor, true), nil)},
+		{"ntp more than five years ahead", source(ntpSample(aboveCeiling), nil), source(Sample{}, errDown)},
+		{"date more than five years ahead", source(Sample{}, errDown), source(dateSample(aboveCeiling, true), nil)},
+	}
+	for _, tt := range tests {
+		for _, require := range []bool{true, false} {
+			clock := &fakeClock{now: rtcNow}
+			res, err := testSyncer(clock, tt.ntp, tt.date).Sync(context.Background(), Options{
+				Require: require, NTPServers: []string{"x"}, DateURL: "https://caprf.example", MaxSkew: 5 * time.Minute, WriteRTC: true,
+			})
+			if require != errors.Is(err, ErrNoTime) || (!require && err != nil) {
+				t.Errorf("%s, require=%v: err = %v", tt.name, require, err)
+			}
+			if res.Stepped || clock.setCalls != 0 || !clock.now.Equal(rtcNow) || !clock.rtc.IsZero() {
+				t.Errorf("%s, require=%v: the clock changed: %+v", tt.name, require, res)
+			}
+		}
+	}
+}
+
+func TestSyncRefusesLargeDateBackwardStep(t *testing.T) {
+	tests := []struct {
+		name      string
+		now       time.Time
+		ntp, date func(context.Context, string) (Sample, error)
+		wantStep  bool
+	}{
+		{"date sets a plausible clock back by an hour", realNow, source(Sample{}, errDown), source(dateSample(-time.Hour, true), nil), false},
+		{"date wins over NTP and sets a plausible clock back", realNow, source(ntpSample(time.Hour), nil), source(dateSample(-time.Hour, true), nil), false},
+		{"date sets the clock back within max skew", realNow, source(Sample{}, errDown), source(dateSample(-time.Minute, true), nil), true},
+		{"NTP sets a plausible clock back", realNow, source(ntpSample(-time.Hour), nil), source(Sample{}, errDown), true},
+		{"date sets a clock back that is far in the future", realNow.Add(10 * 365 * 24 * time.Hour), source(Sample{}, errDown),
+			source(dateSample(-10*365*24*time.Hour, true), nil), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clock := &fakeClock{now: tt.now}
+			res, err := testSyncer(clock, tt.ntp, tt.date).Sync(context.Background(), Options{
+				NTPServers: []string{"x"}, DateURL: "https://caprf.example", MaxSkew: 5 * time.Minute,
+			})
+			if err != nil || res.Stepped != tt.wantStep {
+				t.Fatalf("Sync = %+v, %v; want stepped %v", res, err, tt.wantStep)
+			}
+		})
+	}
+	clock := &fakeClock{now: realNow}
+	_, err := testSyncer(clock, source(Sample{}, errDown), source(dateSample(-time.Hour, true), nil)).Sync(context.Background(),
+		Options{Require: true, DateURL: "https://caprf.example", MaxSkew: 5 * time.Minute})
+	if !errors.Is(err, ErrNoTime) {
+		t.Fatalf("require with a refused backward step: err = %v, want ErrNoTime", err)
+	}
+}

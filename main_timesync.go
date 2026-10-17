@@ -19,6 +19,10 @@ type clockSyncer interface {
 	Sync(ctx context.Context, opts timesync.Options) (timesync.Result, error)
 }
 
+// dhcpNTPServers returns the option 42 servers of the DHCP lease; a seam
+// for tests.
+var dhcpNTPServers = network.DHCPNTPServers
+
 // newClockSyncer returns the syncer for the real clock.
 var newClockSyncer = func(skipTLSVerify bool) clockSyncer {
 	return timesync.NewSyncer(skipTLSVerify)
@@ -35,7 +39,7 @@ func syncClock(ctx context.Context, cfg *config.MachineConfig, dateURL string) e
 	}
 	opts := timesync.Options{
 		Require:    mode == config.TimeSyncRequire,
-		NTPServers: ntpServers(cfg.Time.NTPServers, network.DHCPNTPServers()),
+		NTPServers: ntpServers(cfg.Time.NTPServers, dhcpNTPServers()),
 		DateURL:    dateURL,
 		MaxSkew:    time.Duration(cfg.Time.MaxSkew()) * time.Second,
 		WriteRTC:   config.BoolOr(cfg.Time.WriteRTC, true),

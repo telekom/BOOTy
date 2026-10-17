@@ -164,7 +164,8 @@ behaviour.
 - BOOTy sets the clock before the first request that checks a TLS
   certificate: from `NTP_SERVERS`, the DHCP option 42 servers or the `Date`
   header of the CAPRF connectivity target, whose certificate chain is checked
-  at the time it claims. It writes the RTC. A host with a wrong RTC now
+  at the time it claims, within a window from the commit time of the build
+  (`BOOTY_COMMIT_TIME`) to five years after it. It writes the RTC. A host with a wrong RTC now
   provisions over TLS without `SKIP_TLS_VERIFY`. `TIME_SYNC=off` keeps the old
   behaviour. A certificate that is not valid at the local clock now gives an
   error that names the skew (`BOOTY-TIM-002`) (#713).

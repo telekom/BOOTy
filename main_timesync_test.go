@@ -84,3 +84,19 @@ func TestNTPServersDeduplicates(t *testing.T) {
 		t.Fatal("ntpServers(nil, nil) != nil")
 	}
 }
+
+// The DHCP option 42 servers follow NTP_SERVERS in the sync options.
+func TestSyncClockUsesDHCPNTPServers(t *testing.T) {
+	f := &fakeClockSyncer{}
+	withFakeClockSyncer(t, f)
+	orig := dhcpNTPServers
+	t.Cleanup(func() { dhcpNTPServers = orig })
+	dhcpNTPServers = func() []string { return []string{"10.0.2.3", "ntp.example.com"} }
+	cfg := &config.MachineConfig{Time: config.TimeConfig{NTPServers: []string{"ntp.example.com"}}}
+	if err := syncClock(context.Background(), cfg, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(f.opts.NTPServers, ","); got != "ntp.example.com,10.0.2.3" {
+		t.Fatalf("NTPServers = %q, want the configured server, then the DHCP one", got)
+	}
+}

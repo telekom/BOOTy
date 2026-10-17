@@ -36,6 +36,9 @@ type DateProbe struct {
 	Timeout time.Duration
 }
 
+// dateSource is the Sample.Source of the Date probe.
+const dateSource = "caprf-date"
+
 // errNoDate is returned when the response has no usable Date header.
 var errNoDate = errors.New("response has no valid Date header")
 
@@ -112,7 +115,7 @@ func (p DateProbe) head(ctx context.Context, rawURL string, tlsTime func() time.
 	// The header has a resolution of one second: take the middle of the
 	// second, at the middle of the round trip.
 	offset := date.Add(500 * time.Millisecond).Sub(t1.Add(rtt / 2))
-	return Sample{Source: "caprf-date", Offset: offset, RTT: rtt, Resolution: 2 * time.Second}, date, resp.TLS, nil
+	return Sample{Source: dateSource, Offset: offset, RTT: rtt, Resolution: 2 * time.Second}, date, resp.TLS, nil
 }
 
 func (p DateProbe) now() func() time.Time {

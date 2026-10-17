@@ -160,8 +160,21 @@ callbacks, the crash artifact upload and the image download.
 - Choice: NTP is the most precise. When the authenticated `Date` time also
   answers and differs from NTP by more than `TIME_MAX_SKEW_SEC`, BOOTy logs an
   error and uses the `Date` time, because plain NTP is not authenticated.
-  Without NTP, the `Date` time is used. A time before the commit time of the
-  BOOTy binary is never used.
+  Without NTP, the `Date` time is used.
+- Plausible window: BOOTy never sets the clock to a time before the floor or
+  more than five years after it. The floor is the committer time of the
+  built commit, which the build stamps into the binary
+  (`-X github.com/telekom/BOOTy/pkg/buildinfo.commitTime=$(git log -1 --format=%cI)`;
+  the Makefile, `initrd.Dockerfile` (build argument `BOOTY_COMMIT_TIME`) and
+  the CI, nightly and release workflows set it). A binary without the stamp
+  uses the Go VCS stamp (`vcs.time`, only in `go build` from a git checkout;
+  the Docker build has no `.git`), and the floor is never earlier than
+  2026-01-01. A local `go build` without the stamp therefore falls back to
+  2026-01-01.
+- When the clock is already plausible (inside that window), BOOTy does not
+  set it back by more than `TIME_MAX_SKEW_SEC` on the `Date` header alone; it
+  logs an error and keeps the clock (`TIME_SYNC=require` fails). NTP may set
+  it back.
 - BOOTy steps the clock when the skew is larger than the resolution of the
   source (0.5 s for NTP, 2 s for `Date`), logs the skew (`skew_seconds`) and
   writes the RTC in UTC (`TIME_WRITE_RTC`), so the installed OS starts with
@@ -177,7 +190,7 @@ callbacks, the crash artifact upload and the image download.
 |-----|---------|--------|-------------|
 | `TIME_SYNC` | (unset) (`auto`) | `off`, `auto`, `require` | `off` keeps the RTC time. `auto` syncs from the sources that answer and logs failures. `require` fails the run (`BOOTY-TIM-001`) when no source gives a usable time, or when the clock can not be set. Dry-run mode does not sync. YAML `time.sync`. |
 | `NTP_SERVERS` | (unset) | up to 8 hosts or `host:port`, comma or space separated | SNTP servers, queried before the DHCP option 42 servers. Default port 123. An IPv6 address with a port needs brackets (`[2001:db8::123]:123`). URLs are rejected. YAML `time.ntpServers` (list). |
-| `TIME_MAX_SKEW_SEC` | `0` (300) | integer, seconds, 1-86400 | Largest difference between the NTP time and the authenticated CAPRF `Date` time. Above it BOOTy uses the `Date` time. YAML `time.maxSkewSeconds`. |
+| `TIME_MAX_SKEW_SEC` | `0` (300) | integer, seconds, 1-86400 | Largest difference between the NTP time and the authenticated CAPRF `Date` time; above it BOOTy uses the `Date` time. Also the largest backward step of a plausible clock on the `Date` header alone. YAML `time.maxSkewSeconds`. |
 | `TIME_WRITE_RTC` | (unset) (`true`) | boolean (`true`, `false`, `1`, `0`, `yes`, `no`) | Write the synced time to the RTC in UTC after the clock was stepped. A failed write is logged. Other values are rejected. YAML `time.writeRTC`. |
 
 ## CAPRF legacy compatibility

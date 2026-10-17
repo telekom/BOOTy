@@ -96,6 +96,11 @@ func TestExplainCertTimeKeepsOtherErrors(t *testing.T) {
 	if got := ExplainCertTime(err, now); got != err { //nolint:errorlint // identity is the contract
 		t.Fatalf("ExplainCertTime changed %v to %v", err, got)
 	}
+	// Another x509 validity reason keeps its error too.
+	otherReason := fmt.Errorf("post: %w", x509.CertificateInvalidError{Cert: &x509.Certificate{}, Reason: x509.NotAuthorizedToSign})
+	if got := ExplainCertTime(otherReason, now); got != otherReason || IsCertTimeError(otherReason) { //nolint:errorlint // identity is the contract
+		t.Fatalf("ExplainCertTime changed a NotAuthorizedToSign error to %v", got)
+	}
 	if ExplainCertTime(nil, now) != nil {
 		t.Fatal("ExplainCertTime(nil) != nil")
 	}
