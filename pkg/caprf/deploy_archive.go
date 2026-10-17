@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -31,7 +32,8 @@ import (
 //   - files are created with O_EXCL|O_NOFOLLOW in a fresh staging directory,
 //     with normalized modes (0644, or 0755 with an execute bit) and the
 //     owner of BOOTy,
-//   - at most maxArchiveEntries entries and maxDeployArchive bytes,
+//   - at most maxArchiveEntries entries and created directories, paths of
+//     at most 512 bytes and 16 levels, and maxDeployArchive bytes,
 //   - deploy/vars is parsed and validated before /deploy changes.
 
 // deployRoot is the deploy directory of the ramdisk; tests change it.
@@ -120,6 +122,9 @@ func archiveVarsConfig(varsPath string) (cfg *config.MachineConfig, keys []strin
 	return cfg, keys, nil
 }
 
+// renameFunc is os.Rename; tests make it fail.
+var renameFunc = os.Rename
+
 // swapDeployDirs moves the per-job directories of root to old and the
 // ones of tree into root. A failure moves the old ones back.
 func swapDeployDirs(tree, root, old string) error {
@@ -130,18 +135,18 @@ func swapDeployDirs(tree, root, old string) error {
 	restore := func() {
 		for _, dir := range moved {
 			_ = os.RemoveAll(filepath.Join(root, dir))
-			_ = os.Rename(filepath.Join(old, dir), filepath.Join(root, dir))
+			_ = renameFunc(filepath.Join(old, dir), filepath.Join(root, dir))
 		}
 	}
 	for _, dir := range deployArchiveDirs {
-		if err := os.Rename(filepath.Join(root, dir), filepath.Join(old, dir)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := renameFunc(filepath.Join(root, dir), filepath.Join(old, dir)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			restore()
 			return fmt.Errorf("replace %s: %w", dir, err)
 		}
 		moved = append(moved, dir)
 	}
 	for _, dir := range deployArchiveDirs {
-		if err := os.Rename(filepath.Join(tree, dir), filepath.Join(root, dir)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := renameFunc(filepath.Join(tree, dir), filepath.Join(root, dir)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			restore()
 			return fmt.Errorf("replace %s: %w", dir, err)
 		}
@@ -159,9 +164,9 @@ func unpackDeployArchive(payload []byte, dst string) error {
 	if err := os.Mkdir(dst, 0o755); err != nil {
 		return fmt.Errorf("deploy archive: %w", err)
 	}
+	u := &unpacker{dst: dst, budget: maxDeployArchive}
 	tr := tar.NewReader(gz)
-	budget := maxDeployArchive
-	for entries := 0; ; entries++ {
+	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			return nil
@@ -169,38 +174,103 @@ func unpackDeployArchive(payload []byte, dst string) error {
 		if err != nil {
 			return fmt.Errorf("deploy archive: %w", err)
 		}
-		if entries >= maxArchiveEntries {
-			return fmt.Errorf("deploy archive has more than %d entries", maxArchiveEntries)
-		}
-		rel, err := archivePath(hdr.Name)
-		if err != nil {
+		if err := u.entry(tr, hdr); err != nil {
 			return err
-		}
-		if rel == "" {
-			continue
-		}
-		target := filepath.Join(dst, filepath.FromSlash(rel))
-		switch hdr.Typeflag {
-		case tar.TypeDir:
-			err = os.MkdirAll(target, 0o755)
-		case tar.TypeReg:
-			budget, err = writeArchiveFile(tr, target, hdr.Mode, budget)
-		default:
-			// Symlinks and hard links would let a later entry write through
-			// them, outside the staging directory.
-			return fmt.Errorf("deploy archive entry %q has the unsupported type %q: only directories and regular files", hdr.Name, hdr.Typeflag)
-		}
-		if err != nil {
-			return fmt.Errorf("deploy archive entry %q: %w", hdr.Name, err)
 		}
 	}
 }
+
+// unpacker writes the entries of one archive. nodes counts the entries and
+// every directory it creates, also the parents that an entry implies, so a
+// few long paths can not create many directories.
+type unpacker struct {
+	dst    string
+	budget int64
+	nodes  int
+}
+
+func (u *unpacker) entry(tr *tar.Reader, hdr *tar.Header) error {
+	if err := u.count(); err != nil {
+		return err
+	}
+	rel, err := archivePath(hdr.Name)
+	if err != nil || rel == "" {
+		return err
+	}
+	switch hdr.Typeflag {
+	case tar.TypeDir:
+		err = u.mkdirs(rel)
+	case tar.TypeReg:
+		if slices.Contains(deployArchiveDirs, rel) {
+			return fmt.Errorf("deploy archive entry %q must be a directory", hdr.Name)
+		}
+		if err = u.mkdirs(path.Dir(rel)); err == nil {
+			u.budget, err = writeArchiveFile(tr, filepath.Join(u.dst, filepath.FromSlash(rel)), hdr.Mode, u.budget)
+		}
+	default:
+		// Symlinks and hard links would let a later entry write through
+		// them, outside the staging directory.
+		return fmt.Errorf("deploy archive entry %q has the unsupported type %q: only directories and regular files", hdr.Name, hdr.Typeflag)
+	}
+	if err != nil {
+		return fmt.Errorf("deploy archive entry %q: %w", hdr.Name, err)
+	}
+	return nil
+}
+
+func (u *unpacker) count() error {
+	u.nodes++
+	if u.nodes > maxArchiveEntries {
+		return fmt.Errorf("deploy archive has more than %d entries and directories", maxArchiveEntries)
+	}
+	return nil
+}
+
+// mkdirs creates the directories of rel (slash separated, below dst) one by
+// one; each new one counts as a node. An existing non-directory fails.
+func (u *unpacker) mkdirs(rel string) error {
+	if rel == "." || rel == "" {
+		return nil
+	}
+	cur := u.dst
+	for _, part := range strings.Split(rel, "/") {
+		cur = filepath.Join(cur, part)
+		fi, err := os.Lstat(cur)
+		switch {
+		case err == nil && fi.IsDir():
+			continue
+		case err == nil:
+			return fmt.Errorf("%s is not a directory", part)
+		case !errors.Is(err, os.ErrNotExist):
+			return fmt.Errorf("check directory: %w", err)
+		}
+		if err := u.count(); err != nil {
+			return err
+		}
+		if err := os.Mkdir(cur, 0o755); err != nil {
+			return fmt.Errorf("create directory: %w", err)
+		}
+	}
+	return nil
+}
+
+// Path limits of an archive entry.
+const (
+	maxArchivePathLen   = 512
+	maxArchivePathDepth = 16
+)
 
 // archivePath returns the path of an entry below deploy/, or "" for the
 // deploy directory itself. Paths outside deploy/, with ".." or absolute
 // paths fail.
 func archivePath(name string) (string, error) {
+	if len(name) > maxArchivePathLen {
+		return "", fmt.Errorf("deploy archive entry path is longer than %d bytes", maxArchivePathLen)
+	}
 	trimmed := strings.TrimPrefix(name, "./")
+	if strings.Count(strings.TrimSuffix(trimmed, "/"), "/") >= maxArchivePathDepth {
+		return "", fmt.Errorf("deploy archive entry %q is deeper than %d levels", name, maxArchivePathDepth)
+	}
 	for _, part := range strings.Split(strings.TrimSuffix(trimmed, "/"), "/") {
 		if part == ".." {
 			return "", fmt.Errorf("deploy archive entry %q has a parent directory element", name)
@@ -221,9 +291,6 @@ func archivePath(name string) (string, error) {
 // O_NOFOLLOW on a symlink. The mode is 0644, or 0755 with an execute bit.
 // It returns the byte budget that is left.
 func writeArchiveFile(r io.Reader, target string, mode, budget int64) (int64, error) {
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return budget, fmt.Errorf("create directory: %w", err)
-	}
 	perm := os.FileMode(0o644)
 	if mode&0o111 != 0 {
 		perm = 0o755

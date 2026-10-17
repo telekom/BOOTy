@@ -264,8 +264,11 @@ files are files, not vars.
   file name may appear once. Files are created with `O_EXCL|O_NOFOLLOW`,
   mode 0644 (0755 when the archive mode has an execute bit), owned by root;
   the archive owner, setuid and setgid bits are ignored.
-- At most 10000 entries and 64 MiB of file content; the command response
-  at most 16 MiB.
+- `deploy/machine-files`, `deploy/machine-commands` and `deploy/file-system`
+  must be directories.
+- At most 10000 entries and created directories together (the parents
+  that a path implies count too), entry paths of at most 512 bytes and 16
+  levels, and 64 MiB of file content; the command response at most 16 MiB.
 
 ### End of a command
 

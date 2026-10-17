@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -148,6 +149,11 @@ func TestDeployArchiveRejectsUnsafeEntries(t *testing.T) {
 		"no vars":           {{name: "deploy/machine-files/a", body: "x"}},
 		"unknown vars key":  {{name: "deploy/vars", body: "HOSTNAME=x\nNOT_A_BOOTY_KEY=secret-value\n"}},
 		"bad vars line":     {{name: "deploy/vars", body: "HOSTNAME=x\nnot a line with secret-value\n"}},
+		// Two entries with long paths would create many directories.
+		"directory bomb":  {validVars, {name: "deploy/" + strings.Repeat("d/", 8) + "f", body: ""}},
+		"path too long":   {validVars, {name: "deploy/" + strings.Repeat("x", 520), body: ""}},
+		"path too deep":   {validVars, {name: "deploy/" + strings.Repeat("d/", 16) + "f", body: ""}},
+		"job dir is file": {validVars, {name: "deploy/machine-files", body: "x"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := useDeployRoot(t)
@@ -169,7 +175,8 @@ func TestDeployArchiveRejectsUnsafeEntries(t *testing.T) {
 // At the limits the archive still applies (the guards are not off by one).
 func TestDeployArchiveAtTheLimits(t *testing.T) {
 	defer func(b int64, n int) { maxDeployArchive, maxArchiveEntries = b, n }(maxDeployArchive, maxArchiveEntries)
-	maxDeployArchive, maxArchiveEntries = 64, 3
+	// Three entries and the implied directory machine-files: four nodes.
+	maxDeployArchive, maxArchiveEntries = 64, 4
 	useDeployRoot(t)
 	vars := "HOSTNAME=worker-7\n"
 	payload := deployArchive(t,
@@ -180,10 +187,60 @@ func TestDeployArchiveAtTheLimits(t *testing.T) {
 	if _, _, err := (&Client{vars: []byte(baseAgentVars)}).CommandConfig(payload); err != nil {
 		t.Fatalf("archive at the limits rejected: %v", err)
 	}
+	maxArchiveEntries = 3
+	useDeployRoot(t)
+	if _, _, err := (&Client{vars: []byte(baseAgentVars)}).CommandConfig(payload); err == nil {
+		t.Fatal("the implied directory did not count")
+	}
 }
 
 func TestIsDeployArchive(t *testing.T) {
 	if !isDeployArchive([]byte{0x1f, 0x8b, 8}) || isDeployArchive([]byte("HOSTNAME=x\n")) {
 		t.Fatal("isDeployArchive does not tell gzip from vars lines")
+	}
+}
+
+// A failure in the second rename loop moves the old directories back.
+func TestDeployArchiveSwapRollsBack(t *testing.T) {
+	root := useDeployRoot(t)
+	prev := renameFunc
+	t.Cleanup(func() { renameFunc = prev })
+	renameFunc = func(from, to string) error {
+		if strings.Contains(from, ".booty-archive-") && strings.HasSuffix(from, filepath.Join("deploy", "machine-commands")) {
+			return os.ErrPermission
+		}
+		return os.Rename(from, to)
+	}
+	payload := deployArchive(t, validVars,
+		archiveEntry{name: "deploy/machine-files/new", body: "new"},
+		archiveEntry{name: "deploy/machine-commands/new.sh", body: "new"})
+	if _, _, err := (&Client{vars: []byte(baseAgentVars)}).CommandConfig(payload); err == nil {
+		t.Fatal("swap error lost")
+	}
+	for _, f := range []string{"machine-files/old", "machine-commands/old.sh", "file-system/etc/old"} {
+		if b, err := os.ReadFile(filepath.Join(root, f)); err != nil || string(b) != "old" {
+			t.Fatalf("%s not restored: %q, %v", f, b, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "machine-files/new")); !os.IsNotExist(err) {
+		t.Fatalf("new file stayed after the rollback (%v)", err)
+	}
+}
+
+// The mode is set after the create, so the umask does not change it.
+func TestDeployArchiveModeIgnoresUmask(t *testing.T) {
+	old := syscall.Umask(0o077)
+	defer syscall.Umask(old)
+	root := useDeployRoot(t)
+	payload := deployArchive(t, validVars,
+		archiveEntry{name: "deploy/machine-commands/run.sh", body: "#!/bin/sh\n", mode: 0o700},
+		archiveEntry{name: "deploy/machine-files/data", body: "x", mode: 0o600})
+	if _, _, err := (&Client{vars: []byte(baseAgentVars)}).CommandConfig(payload); err != nil {
+		t.Fatal(err)
+	}
+	for f, want := range map[string]os.FileMode{"machine-commands/run.sh": 0o755, "machine-files/data": 0o644} {
+		if fi, err := os.Stat(filepath.Join(root, f)); err != nil || fi.Mode().Perm() != want {
+			t.Fatalf("%s mode = %v, %v; want %v", f, fi.Mode(), err, want)
+		}
 	}
 }
