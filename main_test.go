@@ -2074,7 +2074,7 @@ func TestApplyBGPOptions(t *testing.T) {
 			{"frr version 7.5.1", "", "", "datacenter", "7.5.1", true, false},
 			{"frr version 10.2.1", "", "", "datacenter", "10.2.1", true, true},
 			{"frr version 8 (8.0)", "", "", "datacenter", "8", true, false},
-			{"unparsable frr version", "", "", "datacenter", "git", true, true},
+			{"frr version git (below 8.3, like FRR)", "", "", "datacenter", "git", true, false},
 		} {
 			n := &network.Config{BGPDefaults: tt.parsed, BGPFRRVersion: tt.frrVersion}
 			applyBGPOptions(&config.BGPConfig{Defaults: tt.native}, n)
@@ -3045,16 +3045,18 @@ func TestLLDPWatchErrors(t *testing.T) {
 	}
 }
 
-// frrVersionBelow compares like FRR's frr_version_cmp: leading digits per
-// part, a missing minor is 0, "~" sorts older.
+// frrVersionBelow compares like FRR's frr_version_cmp: digit runs as
+// numbers ("8.10" is above "8.3"), the end below '.', "~" below the end,
+// letters below digits ("git" is below 8.3); only an empty version (no
+// "frr version" line) is never below.
 func TestFRRVersionBelow(t *testing.T) {
 	for v, want := range map[string]bool{
-		"8": true, "8.2-dev": true, "8.3~rc1": true, "8.2.2": true, "7.5.1": true,
-		"8.3": false, "8.3.1": false, "8.3.0~rc1": false, "10.2.1": false, "9": false,
-		"": false, "git": false,
+		"8": true, "8.2-dev": true, "8.3~rc1": true, "8.2.2": true, "7.5.1": true, "git": true,
+		"8.3": false, "8.3.1": false, "8.3.0~rc1": false, "8.9": false, "8.10": false, "10.2.1": false, "9": false,
+		"": false,
 	} {
-		if got := frrVersionBelow(v, 8, 3); got != want {
-			t.Errorf("frrVersionBelow(%q, 8, 3) = %v, want %v", v, got, want)
+		if got := frrVersionBelow(v, "8.3"); got != want {
+			t.Errorf("frrVersionBelow(%q, 8.3) = %v, want %v", v, got, want)
 		}
 	}
 }
