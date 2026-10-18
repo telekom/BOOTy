@@ -1,0 +1,60 @@
+name: Changelog
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+  workflow_dispatch:
+
+concurrency:
+  group: changelog-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Keep in sync with release-v2.yml.
+  GIT_CLIFF_VERSION: "2.14.2"
+
+jobs:
+  pr-title:
+    name: PR Title
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # The squash merge uses the PR title as the commit title, and the
+      # changelog line comes from it. See CONTRIBUTING.md#pull-request-titles.
+      - name: Check that the PR title is a Conventional Commit
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          types='feat|fix|perf|docs|build|ci|test|refactor|chore|revert|style'
+          if ! printf '%s\n' "$TITLE" | grep -Eq "^(${types})(\([a-z0-9._/,-]+\))?!?: [^ ]"; then
+            echo "::error::PR title \"$TITLE\" is not '<type>(<scope>): <description>' with type one of ${types//|/, }"
+            exit 1
+          fi
+
+  preview:
+    name: Changelog Preview
+    if: github.event.action != 'edited'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install git-cliff
+        run: pipx install "git-cliff==${GIT_CLIFF_VERSION}"
+
+      - name: Test the changelog generator
+        run: python3 -B hack/changelog_test.py
+
+      # Fails on a changes/*.md fragment without front matter.
+      - name: Generate the next release section
+        shell: bash
+        run: make changelog | tee -a "$GITHUB_STEP_SUMMARY"
