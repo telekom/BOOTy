@@ -251,6 +251,9 @@ func (u *UnderlayTier) Ready(ctx context.Context, timeout time.Duration) error {
 func (u *UnderlayTier) Teardown(_ context.Context) error {
 	if u.stopRA != nil {
 		close(u.stopRA)
+		// Wait, so the final RA with lifetime 0 is out before the
+		// handoff (kexec) can follow.
+		<-u.raDone
 		u.stopRA = nil
 	}
 	if u.stopRestart != nil {
