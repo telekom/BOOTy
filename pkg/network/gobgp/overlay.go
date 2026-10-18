@@ -2495,6 +2495,17 @@ func buildRouteTargetForSpec(spec string, fallbackASN, fallbackVNI uint32) (*api
 // vxlanTunnelType is the BGP encapsulation extended-community tunnel type for VXLAN.
 const vxlanTunnelType = 8
 
+// vxlanEncapCommunity is the BGP Encapsulation extended community with
+// tunnel type VXLAN. RFC 8365 section 5.1.3 includes it with every EVPN
+// route; without it a receiver assumes MPLS or a configured encapsulation.
+func vxlanEncapCommunity() (*anypb.Any, error) {
+	encap, err := anypb.New(&apipb.EncapExtended{TunnelType: vxlanTunnelType})
+	if err != nil {
+		return nil, fmt.Errorf("marshal vxlan encapsulation extended community: %w", err)
+	}
+	return encap, nil
+}
+
 const type5DirectGateway = "0.0.0.0"
 
 // pmsiTunnelTypeIngressReplication is the PMSI tunnel type for ingress
@@ -2517,6 +2528,10 @@ func buildType3PathAttrs(nlri *apipb.NLRI, nextHop string, asn, vni uint32, vpnR
 	rt, err := buildRouteTargetForSpec(vpnRT, asn, vni)
 	if err != nil {
 		return nil, fmt.Errorf("build route target: %w", err)
+	}
+	encap, err := vxlanEncapCommunity()
+	if err != nil {
+		return nil, err
 	}
 
 	pmsi := &apipb.Attribute{Attr: &apipb.Attribute_PmsiTunnel{PmsiTunnel: &apipb.PmsiTunnelAttribute{
