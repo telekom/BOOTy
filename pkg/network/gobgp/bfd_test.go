@@ -9,12 +9,14 @@ import (
 	"net"
 	"net/netip"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/apiutil"
 	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
 	"github.com/osrg/gobgp/v4/pkg/server"
 
@@ -199,7 +201,8 @@ func TestSessionState(t *testing.T) {
 }
 
 // Every peer waits idleHoldAfterReset (1 s, FRR BGP_INIT_START_TIMER)
-// after a reset, not the GoBGP default of 30 s.
+// after a reset, not the GoBGP default of 30 s, and connects at once
+// when it leaves Idle.
 func TestPeersIdleHoldAfterReset(t *testing.T) {
 	cfg := &Config{ASN: 65000}
 	for name, p := range map[string]*apipb.Peer{
@@ -209,6 +212,9 @@ func TestPeersIdleHoldAfterReset(t *testing.T) {
 	} {
 		if got := p.GetTimers().GetConfig().GetIdleHoldTimeAfterReset(); got != idleHoldAfterReset {
 			t.Errorf("%s peer: IdleHoldTimeAfterReset = %d, want %d", name, got, idleHoldAfterReset)
+		}
+		if !p.GetTimers().GetConfig().GetConnectAtOnce() {
+			t.Errorf("%s peer: ConnectAtOnce is off; FRR connects when BGP_Start runs", name)
 		}
 	}
 }
@@ -275,15 +281,56 @@ func TestResetPeerReestablishes(t *testing.T) {
 		return func(st apipb.PeerState_SessionState) bool { return st == want }
 	}
 	wait("Established", is(apipb.PeerState_SESSION_STATE_ESTABLISHED), 30*time.Second)
-	if err := a.srv.ResetPeer(ctx, &apipb.ResetPeerRequest{Address: "127.0.0.1", Communication: "BFD down"}); err != nil {
+	// Like FRR (bgp_bfd.c), the peer gets Cease/BFD Down (RFC 9384).
+	reasons := make(chan string, 16)
+	wctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if err := b.srv.WatchEvent(wctx, server.WatchEventMessageCallbacks{
+		OnPeerUpdate: func(e *apiutil.WatchEventMessage_PeerEvent, _ time.Time) {
+			if m := e.Peer.State.DisconnectMessage; m != "" {
+				select {
+				case reasons <- m:
+				default:
+				}
+			}
+		},
+	}, server.WatchPeer()); err != nil {
 		t.Fatal(err)
 	}
+	(&UnderlayTier{bgp: a.srv, log: slog.Default()}).resetPeer(ctx, "127.0.0.1", "BFD down")
 	start := time.Now()
 	wait("Idle after the reset", is(apipb.PeerState_SESSION_STATE_IDLE), 3*time.Second)
+	select {
+	case m := <-reasons:
+		if !strings.Contains(m, "subcode 10(bfd down)") {
+			t.Errorf("the peer saw %q, want Cease/BFD Down", m)
+		}
+	case <-time.After(3 * time.Second):
+		t.Error("the peer reported no disconnect reason")
+	}
 	wait("leaving Idle", func(st apipb.PeerState_SessionState) bool { return st != apipb.PeerState_SESSION_STATE_IDLE }, 3*time.Second)
 	t.Logf("connecting %s after the reset", time.Since(start).Round(100*time.Millisecond))
 	wait("Established again", is(apipb.PeerState_SESSION_STATE_ESTABLISHED), 15*time.Second)
 	t.Logf("established again %s after the reset", time.Since(start).Round(100*time.Millisecond))
+
+	// Carrier loss past BFD: the carrier code disables the peer, BFD then
+	// resets the peer without a session, and the carrier comes back. The
+	// peer must start with the 1 s idle hold after reset, not the 5 s
+	// holdtimeIdle (osrg/gobgp#3740, for BFD Down since the fork tag
+	// v4.10.0-booty.4).
+	if err := a.srv.DisablePeer(ctx, &apipb.DisablePeerRequest{Address: "127.0.0.1", Communication: "interface down"}); err != nil {
+		t.Fatal(err)
+	}
+	wait("Idle after the carrier loss", is(apipb.PeerState_SESSION_STATE_IDLE), 3*time.Second)
+	(&UnderlayTier{bgp: a.srv, log: slog.Default()}).resetPeer(ctx, "127.0.0.1", "BFD down")
+	time.Sleep(time.Second)
+	if err := a.srv.EnablePeer(ctx, &apipb.EnablePeerRequest{Address: "127.0.0.1"}); err != nil {
+		t.Fatal(err)
+	}
+	start = time.Now()
+	time.Sleep(50 * time.Millisecond)
+	wait("leaving Idle after the carrier came back", func(st apipb.PeerState_SessionState) bool { return st != apipb.PeerState_SESSION_STATE_IDLE }, 3*time.Second)
+	t.Logf("connecting %s after the carrier came back", time.Since(start).Round(100*time.Millisecond))
 }
 
 // The start race of the prodtpl lab, reproduced with a real GoBGP: a peer
