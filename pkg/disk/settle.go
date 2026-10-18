@@ -24,6 +24,10 @@ import (
 // After the devices settled once, a later call (the next standby command,
 // on this manager or a copy of it) returns at once while the set is the
 // same: the devices have been stable since then.
+//
+// With a block watch on the same sysfs (StartBlockWatch, from boot), the
+// stable window counts from the last change the watch saw, so disks that
+// settled while the network came up do not cost the window again.
 func (m *Manager) WaitForStableDisks(ctx context.Context, stable, poll, maxWait time.Duration) {
 	if maxWait <= 0 {
 		return
@@ -35,6 +39,9 @@ func (m *Manager) WaitForStableDisks(ctx context.Context, stable, poll, maxWait 
 		return
 	}
 	since := time.Now()
+	if changed, ok := blockWatchSince(m.sysfsRoot, last); ok {
+		since = changed
+	}
 	for time.Since(since) < stable {
 		if time.Now().After(deadline) {
 			slog.Warn("block devices still changing, continuing", "waited", maxWait, "devices", last)
@@ -117,4 +124,51 @@ func (m *Manager) HasDiskWithSerial(ctx context.Context, serial string, minSizeG
 		return false, fmt.Errorf("multiple disks found with serial %q: %s", serial, strings.Join(matches, ", "))
 	}
 	return len(matches) == 1, nil
+}
+
+// blockWatch records when the set of block devices last changed, from
+// early boot on.
+var blockWatch struct {
+	sync.Mutex
+	sysfsRoot string
+	devices   []string
+	changed   time.Time
+}
+
+// StartBlockWatch looks at sysfsRoot/block every poll until ctx ends and
+// records when the device set last changed, for WaitForStableDisks. Call
+// it right after the storage drivers are loaded.
+func StartBlockWatch(ctx context.Context, sysfsRoot string, poll time.Duration) {
+	m := &Manager{sysfsRoot: sysfsRoot}
+	blockWatch.Lock()
+	blockWatch.sysfsRoot, blockWatch.devices, blockWatch.changed = sysfsRoot, m.blockDevices(), time.Now()
+	blockWatch.Unlock()
+	go func() {
+		ticker := time.NewTicker(poll)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			cur := m.blockDevices()
+			blockWatch.Lock()
+			if !slices.Equal(cur, blockWatch.devices) {
+				blockWatch.devices, blockWatch.changed = cur, time.Now()
+			}
+			blockWatch.Unlock()
+		}
+	}()
+}
+
+// blockWatchSince returns when the watch on sysfsRoot last saw the device
+// set change, if it runs and its set is devices.
+func blockWatchSince(sysfsRoot string, devices []string) (time.Time, bool) {
+	blockWatch.Lock()
+	defer blockWatch.Unlock()
+	if blockWatch.sysfsRoot != sysfsRoot || !slices.Equal(blockWatch.devices, devices) {
+		return time.Time{}, false
+	}
+	return blockWatch.changed, true
 }

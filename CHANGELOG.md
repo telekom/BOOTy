@@ -31,6 +31,10 @@ behaviour.
 
 ### Behaviour changes in all modes
 
+- The block device settle wait before the disk selection counts from boot:
+  BOOTy watches `/sys/block` from the module load on, so disks that
+  settled while the network came up no longer cost another 2 s in
+  `detect-disk` and `select-deprovision-disk` (#762).
 - The `ERROR_URL` body of a failed provision or deprovision step now carries a
   stable failure code: `step <name> failed [BOOTY-<AREA>-<NNN>]: <error>`.
   [docs/failure-codes.md](docs/failure-codes.md) lists the codes (#706).

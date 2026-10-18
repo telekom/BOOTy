@@ -166,3 +166,35 @@ func TestHasDiskWithSerial(t *testing.T) {
 		})
 	}
 }
+
+// With a block watch that saw the devices stable for the window already,
+// WaitForStableDisks returns at once; a change after the watch started
+// still gets its full window.
+func TestWaitForStableDisksCountsFromTheBlockWatch(t *testing.T) {
+	sysfs := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sysfs, "block", "nvme0n1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	StartBlockWatch(ctx, sysfs, 5*time.Millisecond)
+	m := NewManager(newMockCommander())
+	m.SetSysfsRoot(sysfs)
+
+	time.Sleep(150 * time.Millisecond)
+	start := time.Now()
+	m.WaitForStableDisks(context.Background(), 100*time.Millisecond, 5*time.Millisecond, 5*time.Second)
+	if d := time.Since(start); d > 50*time.Millisecond {
+		t.Fatalf("waited %v for disks that were stable since the watch started", d)
+	}
+
+	if err := os.MkdirAll(filepath.Join(sysfs, "block", "sda"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond) // the watch sees sda
+	start = time.Now()
+	m.WaitForStableDisks(context.Background(), 100*time.Millisecond, 5*time.Millisecond, 5*time.Second)
+	if d := time.Since(start); d < 60*time.Millisecond {
+		t.Fatalf("returned after %v, want most of the window after the new disk", d)
+	}
+}
