@@ -374,6 +374,39 @@ func ConfigureResolvers(resolvers string) error {
 	if err != nil {
 		return err
 	}
+	return writeResolvConf(lines)
+}
+
+// ConfigureResolvConf writes nameserver lines and, with search domains, a
+// search line, like the stub resolv.conf of systemd-resolved. Nothing is
+// written without servers.
+func ConfigureResolvConf(servers, search []string) error {
+	lines, err := ResolverLines(strings.Join(servers, ","))
+	if err != nil {
+		return err
+	}
+	var domains []string
+	for _, d := range search {
+		if !validSearchDomain(d) {
+			return fmt.Errorf("invalid DNS search domain %q", d)
+		}
+		domains = append(domains, d)
+	}
+	if len(lines) > 0 && len(domains) > 0 {
+		lines = append(lines, "search "+strings.Join(domains, " "))
+	}
+	return writeResolvConf(lines)
+}
+
+// validSearchDomain accepts a DNS name of letters, digits, hyphens and dots.
+func validSearchDomain(d string) bool {
+	const nameChars = ".-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	return d != "" && len(d) <= 253 && strings.Trim(d, nameChars) == ""
+}
+
+// writeResolvConf replaces resolv.conf (also a symlink) with the lines; no
+// lines leave it alone.
+func writeResolvConf(lines []string) error {
 	if len(lines) == 0 {
 		return nil
 	}

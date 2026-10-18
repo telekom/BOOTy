@@ -336,3 +336,24 @@ func TestIsGoBGPMode(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigureResolvConfWritesSearchDomains(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "etc", "resolv.conf")
+	originalPath := resolvConfPath
+	resolvConfPath = path
+	t.Cleanup(func() { resolvConfPath = originalPath })
+
+	if err := ConfigureResolvConf([]string{"10.0.2.3"}, []string{"l2.example", "b.example"}); err != nil {
+		t.Fatalf("ConfigureResolvConf: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read resolv.conf: %v", err)
+	}
+	if got, want := string(data), "nameserver 10.0.2.3\nsearch l2.example b.example\n"; got != want {
+		t.Fatalf("resolv.conf = %q, want %q", got, want)
+	}
+	if err := ConfigureResolvConf([]string{"10.0.2.3"}, []string{"bad domain"}); err == nil {
+		t.Fatal("ConfigureResolvConf accepted a search domain with a space")
+	}
+}

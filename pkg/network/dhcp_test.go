@@ -253,7 +253,7 @@ func stubDHCPNetlink(t *testing.T) {
 		dhcpSetMTU, dhcpWriteResolvers = origMTU, origResolvers
 	})
 	dhcpSetMTU = func(netlink.Link, int) error { return nil }
-	dhcpWriteResolvers = func(string) error { t.Fatal("unexpected resolv.conf write"); return nil }
+	dhcpWriteResolvers = func([]string, []string) error { t.Fatal("unexpected resolv.conf write"); return nil }
 	dhcpAddrReplace = func(netlink.Link, *netlink.Addr) error { return nil }
 	dhcpAddrDel = func(netlink.Link, *netlink.Addr) error { return nil }
 	dhcpRouteAdd = func(*netlink.Route) error { return nil }
@@ -954,23 +954,28 @@ func TestOnExpireStopsLeaseExpiryTimer(t *testing.T) {
 }
 
 // TestOnBoundWritesLeaseDNS: like systemd-resolved with UseDNS=yes, the DNS
-// servers of every lease are used after the configured ones.
+// servers of every lease are used after the configured ones; the lease
+// domain is a search domain, as in the legacy resolv.conf.
 func TestOnBoundWritesLeaseDNS(t *testing.T) {
 	stubDHCPNetlink(t)
 	var written []string
-	dhcpWriteResolvers = func(s string) error { written = append(written, s); return nil }
+	dhcpWriteResolvers = func(servers, search []string) error {
+		written = append(written, strings.Join(servers, ",")+" search "+strings.Join(search, " "))
+		return nil
+	}
 
 	d := NewDHCPMode()
 	d.manageDNS, d.resolvers = true, []string{"10.9.9.9"}
 	l0 := lease24("10.0.2.15", "10.0.2.2")
 	l0.DNS = []net.IP{net.ParseIP("10.0.2.3")}
+	l0.DomainName = "l2.example"
 	l1 := lease24("10.0.3.15", "10.0.3.2")
 	l1.DNS = []net.IP{net.ParseIP("10.0.3.3"), net.ParseIP("10.0.2.3")}
 	d.onBound(dummyLink("eth1", 2), "eth1", make(chan string, 4))(l1)
 	d.onBound(dummyLink("eth0", 1), "eth0", make(chan string, 4))(l0)
 	d.onBound(dummyLink("eth0", 1), "eth0", make(chan string, 4))(l0) // renewal: no rewrite
 
-	want := []string{"10.9.9.9,10.0.3.3,10.0.2.3", "10.9.9.9,10.0.2.3,10.0.3.3"}
+	want := []string{"10.9.9.9,10.0.3.3,10.0.2.3 search ", "10.9.9.9,10.0.2.3,10.0.3.3 search l2.example"}
 	if !slices.Equal(written, want) {
 		t.Fatalf("resolv.conf writes = %q, want %q", written, want)
 	}
@@ -1019,7 +1024,7 @@ func TestSetupWritesConfiguredResolversUnlessKept(t *testing.T) {
 	linkList = func() ([]netlink.Link, error) { return nil, nil }
 	sleepFunc = func(time.Duration) {}
 	var written []string
-	dhcpWriteResolvers = func(s string) error { written = append(written, s); return nil }
+	dhcpWriteResolvers = func(servers, _ []string) error { written = append(written, strings.Join(servers, ",")); return nil }
 
 	_ = (&DHCPMode{}).Setup(context.Background(), &Config{DNSResolvers: "10.9.9.9, 10.9.9.8"})
 	_ = (&DHCPMode{}).Setup(context.Background(), &Config{DNSResolvers: "10.9.9.9", KeepResolvConf: true})
@@ -1033,7 +1038,7 @@ func TestSetupWritesConfiguredResolversUnlessKept(t *testing.T) {
 func TestEndLeaseDropsDNSAndMTU(t *testing.T) {
 	stubDHCPNetlink(t)
 	var written []string
-	dhcpWriteResolvers = func(s string) error { written = append(written, s); return nil }
+	dhcpWriteResolvers = func(servers, _ []string) error { written = append(written, strings.Join(servers, ",")); return nil }
 	var mtus []int
 	dhcpSetMTU = func(_ netlink.Link, mtu int) error { mtus = append(mtus, mtu); return nil }
 	d := NewDHCPMode()

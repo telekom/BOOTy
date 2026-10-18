@@ -47,7 +47,7 @@ type DHCPMode struct {
 
 	manageDNS bool     // false: the provisioner resolv.conf stays
 	resolvers []string // configured DNS servers, written before the lease ones
-	written   string   // the resolver list last written
+	written   string   // the resolv.conf content last written
 }
 
 // nicClient is the running DHCP client of one NIC and how to start a fresh
@@ -80,6 +80,9 @@ type dhcpApplied struct {
 	route *netlink.Route
 	dns   []string
 	ntp   []string
+	// domain is the lease domain (option 15), a search domain like
+	// networkd with netplan (the legacy resolv.conf has it as "search").
+	domain string
 }
 
 // dhcpClient is the part of a go-dhclient client that DHCPMode uses.
@@ -299,7 +302,7 @@ var (
 	dhcpRouteAdd       = netlink.RouteAppend
 	dhcpRouteDel       = netlink.RouteDel
 	dhcpSetMTU         = netlink.LinkSetMTU
-	dhcpWriteResolvers = ConfigureResolvers
+	dhcpWriteResolvers = ConfigureResolvConf
 )
 
 // replaceLeaseAddr sets addr on link. The kernel keys IPv4 addresses by
@@ -469,7 +472,7 @@ func (d *DHCPMode) apply(link netlink.Link, addr *netlink.Addr, lease *dhclient.
 			d.stale = append(d.stale, dhcpApplied{link: link, addr: prev.addr})
 		}
 	}
-	d.nics[idx] = dhcpApplied{link: link, addr: addr, route: route, dns: leaseDNS(lease), ntp: leaseNTPServers(lease)}
+	d.nics[idx] = dhcpApplied{link: link, addr: addr, route: route, dns: leaseDNS(lease), ntp: leaseNTPServers(lease), domain: strings.TrimSpace(lease.DomainName)}
 	d.applyMTU(link, lease.MTU)
 	d.writeResolvers()
 	return nil
@@ -513,29 +516,34 @@ func (d *DHCPMode) applyMTU(link netlink.Link, mtu uint16) {
 }
 
 // writeResolvers writes the configured DNS servers and then those of the
-// leases (by NIC index, without duplicates) to resolv.conf when the list
-// changed. The caller holds d.mu.
+// leases (by NIC index, without duplicates), and the lease domains as search
+// domains, to resolv.conf when the content changed. The caller holds d.mu.
 func (d *DHCPMode) writeResolvers() {
 	if !d.manageDNS {
 		return
 	}
-	list := slices.Clone(d.resolvers)
+	servers := slices.Clone(d.resolvers)
+	var search []string
 	for _, idx := range slices.Sorted(maps.Keys(d.nics)) {
-		for _, s := range d.nics[idx].dns {
-			if !slices.Contains(list, s) {
-				list = append(list, s)
+		n := d.nics[idx]
+		for _, s := range n.dns {
+			if !slices.Contains(servers, s) {
+				servers = append(servers, s)
 			}
 		}
+		if n.domain != "" && !slices.Contains(search, n.domain) {
+			search = append(search, n.domain)
+		}
 	}
-	joined := strings.Join(list, ",")
-	if joined == d.written {
+	content := strings.Join(servers, ",") + " search " + strings.Join(search, " ")
+	if len(servers) == 0 || content == d.written {
 		return
 	}
-	if err := dhcpWriteResolvers(joined); err != nil {
-		d.log.Warn("failed to write the DHCP DNS servers", "servers", joined, "error", err)
+	if err := dhcpWriteResolvers(servers, search); err != nil {
+		d.log.Warn("failed to write the DHCP DNS servers", "servers", servers, "search", search, "error", err)
 		return
 	}
-	d.written = joined
+	d.written = content
 }
 
 // applyRoute adds the default route of a lease (proto dhcp, the lease
