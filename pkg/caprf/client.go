@@ -49,6 +49,9 @@ type Client struct {
 	// vars is the raw /deploy/vars file, the base of standby command payloads.
 	vars         []byte
 	insecureWarn sync.Map
+	// stagedDeploy is the staging directory of the last deploy archive
+	// payload, until ApplyCommandFiles or DiscardCommandFiles.
+	stagedDeploy string
 }
 
 var errInsecureTransport = errors.New("insecure transport")
@@ -91,7 +94,7 @@ func (c *Client) CommandConfig(payload []byte) (cfg *config.MachineConfig, keys 
 		return nil, nil, fmt.Errorf("command payloads need a client created from a vars file")
 	}
 	if isDeployArchive(payload) {
-		return deployArchiveConfig(c.vars, payload)
+		return c.stageDeployArchive(payload)
 	}
 	return MergeCommandVars(c.vars, payload)
 }

@@ -246,24 +246,34 @@ files are files, not vars.
 | `deploy/machine-commands/` | Replaces `/deploy/machine-commands`. |
 | `deploy/file-system/` | Replaces `/deploy/file-system` (provisioner files). |
 
-- BOOTy unpacks the archive into a new staging directory, reads and
-  validates `deploy/vars` (an unknown key, a line that is not `KEY=VALUE`,
-  a value that does not parse or validate fails the command, and the error
-  names keys, never values), and only then replaces the three directories.
-  A directory that the archive does not have is removed, so no file of the
-  previous job stays. `/deploy/vars` itself is not changed.
+- BOOTy unpacks the archive into a new staging directory and reads and
+  validates `deploy/vars`: a line that is not `KEY=VALUE` or a value that
+  does not parse or validate fails the command, and the error names keys,
+  never values. An unknown key is logged and ignored, like in the vars of
+  an ISO. The three directories replace the ones in `/deploy` only after
+  every check of the command passed, right before the command runs; a
+  command that is rejected leaves `/deploy` unchanged. A directory that the
+  archive does not have is removed, so no file of the previous job stays.
+  `/deploy/vars` itself is not changed.
+- With `PROVISIONER_FILES_TARGET=ramdisk` (a `CAPRF_LEGACY_COMPAT` preset)
+  a `provision` command copies the new `deploy/file-system` into the
+  running ramdisk, as the boot does for `/deploy/file-system`. Settings
+  that the ramdisk already uses (the network) do not change.
 - The settings that the running ramdisk uses keep their values from
   `/deploy/vars`, as for a vars payload: transport (the agent token),
   agent, network, `MODE`, `DRY_RUN`, `CAPRF_LEGACY_COMPAT` and the URLs that
   carry the bearer token. The archive values of these keys are ignored, not
   rejected: CAPRF renders the archive with the same builder as an ISO.
+  The `CAPRF_LEGACY_COMPAT` presets follow the value of the running ramdisk
+  too.
 - The archive is untrusted input to a root process. Only directories and
   regular files are allowed: a symlink, a hard link or any other type fails
   the command, so machine files can not be symlinks in a deploy archive.
   Every entry must be below `deploy/`, without `..` and not absolute. A
   file name may appear once. Files are created with `O_EXCL|O_NOFOLLOW`,
-  mode 0644 (0755 when the archive mode has an execute bit), owned by root;
-  the archive owner, setuid and setgid bits are ignored.
+  with the permission bits of the archive entry (a 0600 file stays 0600),
+  owned by root; the archive owner and the setuid, setgid and sticky bits
+  are ignored.
 - `deploy/machine-files`, `deploy/machine-commands` and `deploy/file-system`
   must be directories.
 - At most 10000 entries and created directories together (the parents

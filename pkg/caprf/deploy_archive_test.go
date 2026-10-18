@@ -6,9 +6,12 @@ import (
 	"compress/gzip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/telekom/BOOTy/pkg/config"
 )
 
 type archiveEntry struct {
@@ -55,6 +58,16 @@ const baseAgentVars = "TOKEN=agent-token\nMODE=standby\nINIT_URL=https://caprf/s
 	"HEARTBEAT_URL=https://caprf/agent/heartbeat\nCOMMANDS_URL=https://caprf/agent/commands\n" +
 	"FIRMWARE_URL=https://caprf/firmware\nHOSTNAME=old\n"
 
+// applyArchive stages the archive like CommandConfig and swaps it into
+// /deploy like the standby command does after its checks.
+func applyArchive(c *Client, payload []byte) (*config.MachineConfig, []string, error) {
+	cfg, keys, err := c.CommandConfig(payload)
+	if err != nil {
+		return nil, nil, err
+	}
+	return cfg, keys, c.ApplyCommandFiles()
+}
+
 // validVars is a deploy/vars that passes, so in the unsafe-entry tests only
 // the guard under test can fail the archive.
 var validVars = archiveEntry{name: "deploy/vars", body: "HOSTNAME=worker-7\n"}
@@ -91,7 +104,7 @@ func TestDeployArchiveConfigReplacesJobFiles(t *testing.T) {
 	)
 
 	c := &Client{vars: []byte(baseAgentVars)}
-	cfg, keys, err := c.CommandConfig(payload)
+	cfg, keys, err := applyArchive(c, payload)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,8 +117,8 @@ func TestDeployArchiveConfigReplacesJobFiles(t *testing.T) {
 		t.Fatalf("keys = %v", keys)
 	}
 	for file, mode := range map[string]os.FileMode{
-		"machine-files/etc/cloud/nocloud/user-data": 0o644, // setuid and world write dropped
-		"machine-commands/10-run.sh":                0o755,
+		"machine-files/etc/cloud/nocloud/user-data": 0o666, // setuid dropped
+		"machine-commands/10-run.sh":                0o700,
 	} {
 		fi, err := os.Lstat(filepath.Join(root, file))
 		if err != nil || fi.Mode() != mode {
@@ -147,7 +160,6 @@ func TestDeployArchiveRejectsUnsafeEntries(t *testing.T) {
 		"too large":         {validVars, {name: "deploy/machine-files/big", body: strings.Repeat("x", 65)}},
 		"too many entries":  {validVars, {name: "deploy/a/1", body: ""}, {name: "deploy/a/2", body: ""}, {name: "deploy/a/3", body: ""}, {name: "deploy/a/4", body: ""}, {name: "deploy/a/5", body: ""}},
 		"no vars":           {{name: "deploy/machine-files/a", body: "x"}},
-		"unknown vars key":  {{name: "deploy/vars", body: "HOSTNAME=x\nNOT_A_BOOTY_KEY=secret-value\n"}},
 		"bad vars line":     {{name: "deploy/vars", body: "HOSTNAME=x\nnot a line with secret-value\n"}},
 		// Two entries with long paths would create many directories.
 		"directory bomb":  {validVars, {name: "deploy/" + strings.Repeat("d/", 8) + "f", body: ""}},
@@ -214,7 +226,7 @@ func TestDeployArchiveSwapRollsBack(t *testing.T) {
 	payload := deployArchive(t, validVars,
 		archiveEntry{name: "deploy/machine-files/new", body: "new"},
 		archiveEntry{name: "deploy/machine-commands/new.sh", body: "new"})
-	if _, _, err := (&Client{vars: []byte(baseAgentVars)}).CommandConfig(payload); err == nil {
+	if _, _, err := applyArchive(&Client{vars: []byte(baseAgentVars)}, payload); err == nil {
 		t.Fatal("swap error lost")
 	}
 	for _, f := range []string{"machine-files/old", "machine-commands/old.sh", "file-system/etc/old"} {
@@ -227,18 +239,20 @@ func TestDeployArchiveSwapRollsBack(t *testing.T) {
 	}
 }
 
-// The mode is set after the create, so the umask does not change it.
+// The mode is set after the create, so the umask does not change it, and
+// a private file stays private.
 func TestDeployArchiveModeIgnoresUmask(t *testing.T) {
 	old := syscall.Umask(0o077)
 	defer syscall.Umask(old)
 	root := useDeployRoot(t)
 	payload := deployArchive(t, validVars,
 		archiveEntry{name: "deploy/machine-commands/run.sh", body: "#!/bin/sh\n", mode: 0o700},
-		archiveEntry{name: "deploy/machine-files/data", body: "x", mode: 0o600})
-	if _, _, err := (&Client{vars: []byte(baseAgentVars)}).CommandConfig(payload); err != nil {
+		archiveEntry{name: "deploy/machine-files/data", body: "x", mode: 0o600},
+		archiveEntry{name: "deploy/machine-files/shared", body: "x", mode: 0o2755})
+	if _, _, err := applyArchive(&Client{vars: []byte(baseAgentVars)}, payload); err != nil {
 		t.Fatal(err)
 	}
-	for f, want := range map[string]os.FileMode{"machine-commands/run.sh": 0o755, "machine-files/data": 0o644} {
+	for f, want := range map[string]os.FileMode{"machine-commands/run.sh": 0o700, "machine-files/data": 0o600, "machine-files/shared": 0o755} {
 		if fi, err := os.Stat(filepath.Join(root, f)); err != nil || fi.Mode().Perm() != want {
 			t.Fatalf("%s mode = %v, %v; want %v", f, fi.Mode(), err, want)
 		}
@@ -273,6 +287,67 @@ func TestDeployArchivePathCaps(t *testing.T) {
 			if (err == nil) != tc.ok {
 				t.Fatalf("path of %d bytes: err = %v, want ok=%t", len(tc.path), err, tc.ok)
 			}
+		})
+	}
+}
+
+// /deploy changes only with ApplyCommandFiles: a command rejected after
+// CommandConfig leaves the files of the previous job, and the staging
+// directory goes.
+func TestDeployArchiveAppliesOnlyAfterTheChecks(t *testing.T) {
+	root := useDeployRoot(t)
+	c := &Client{vars: []byte(baseAgentVars)}
+	if _, _, err := c.CommandConfig(deployArchive(t, validVars, archiveEntry{name: "deploy/machine-files/new", body: "new"})); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(filepath.Join(root, "machine-files/old")); err != nil || string(b) != "old" {
+		t.Fatalf("/deploy changed before the apply: %q, %v", b, err)
+	}
+	staging := c.stagedDeploy
+	c.DiscardCommandFiles()
+	if _, err := os.Stat(staging); !os.IsNotExist(err) {
+		t.Fatalf("staging directory left after the discard (%v)", err)
+	}
+	if err := c.ApplyCommandFiles(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "machine-files/new")); !os.IsNotExist(err) {
+		t.Fatalf("a discarded archive was applied (%v)", err)
+	}
+}
+
+// Unknown keys are ignored like in the vars of an ISO, and the legacy
+// presets follow CAPRF_LEGACY_COMPAT of the running ramdisk, not of the
+// archive.
+func TestDeployArchiveVarsLikeTheISO(t *testing.T) {
+	for _, tc := range []struct {
+		name, base, archive string
+	}{
+		{"base legacy, archive not", baseAgentVars + "CAPRF_LEGACY_COMPAT=true\n", "CAPRF_LEGACY_COMPAT=false\n"},
+		{"archive legacy, base not", baseAgentVars, "CAPRF_LEGACY_COMPAT=true\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			useDeployRoot(t)
+			ref, err := ParseVars(strings.NewReader(tc.base))
+			if err != nil {
+				t.Fatal(err)
+			}
+			c := &Client{vars: []byte(tc.base)}
+			cfg, keys, err := c.CommandConfig(deployArchive(t,
+				archiveEntry{name: "deploy/vars", body: "HOSTNAME=x\nNOT_A_BOOTY_KEY=v\n" + tc.archive}))
+			if err != nil {
+				t.Fatalf("unknown key failed the archive: %v", err)
+			}
+			if slices.Contains(keys, "NOT_A_BOOTY_KEY") {
+				t.Fatalf("keys = %v, want the unknown key left out", keys)
+			}
+			if cfg.LegacyCompat != ref.LegacyCompat || cfg.PowerOffOnSuccess() != ref.PowerOffOnSuccess() ||
+				cfg.ProvisionerFilesInRamdisk() != ref.ProvisionerFilesInRamdisk() {
+				t.Fatalf("legacy %v poweroff %t ramdisk files %t, want those of the base vars (%v %t %t)",
+					cfg.LegacyCompat, cfg.PowerOffOnSuccess(), cfg.ProvisionerFilesInRamdisk(),
+					ref.LegacyCompat, ref.PowerOffOnSuccess(), ref.ProvisionerFilesInRamdisk())
+			}
+			c.DiscardCommandFiles()
 		})
 	}
 }

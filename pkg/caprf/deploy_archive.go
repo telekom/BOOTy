@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
@@ -30,8 +31,8 @@ import (
 //     other type fail the archive,
 //   - every entry is below deploy/, without "..",
 //   - files are created with O_EXCL|O_NOFOLLOW in a fresh staging directory,
-//     with normalized modes (0644, or 0755 with an execute bit) and the
-//     owner of BOOTy,
+//     with the permission bits of the entry (no setuid, setgid or sticky)
+//     and the owner of BOOTy,
 //   - at most maxArchiveEntries entries and created directories, paths of
 //     at most 512 bytes and 16 levels, and maxDeployArchive bytes,
 //   - deploy/vars is parsed and validated before /deploy changes.
@@ -57,13 +58,16 @@ func isDeployArchive(payload []byte) bool {
 // command ACK and the log.
 var errArchiveVars = errors.New("deploy archive vars do not parse or validate")
 
-// deployArchiveConfig unpacks a deploy archive, validates its vars, then
-// replaces the per-job directories of /deploy and returns the config of
-// the vars. The settings that the running ramdisk uses (transport, agent,
-// network, MODE, DRY_RUN, CAPRF_LEGACY_COMPAT and the bearer-token URLs)
-// keep the values of the base vars: the agent keeps its token and network.
-func deployArchiveConfig(base, payload []byte) (cfg *config.MachineConfig, keys []string, err error) {
-	ref, err := ParseVars(bytes.NewReader(base))
+// stageDeployArchive unpacks a deploy archive into a staging directory,
+// validates its vars and returns the config of the vars. /deploy does not
+// change yet: ApplyCommandFiles swaps the staged directories in once every
+// check of the command passed, DiscardCommandFiles drops them. The settings
+// that the running ramdisk uses (transport, agent, network, MODE, DRY_RUN,
+// CAPRF_LEGACY_COMPAT and the bearer-token URLs) keep the values of the base
+// vars: the agent keeps its token and network.
+func (c *Client) stageDeployArchive(payload []byte) (cfg *config.MachineConfig, keys []string, err error) {
+	c.DiscardCommandFiles()
+	ref, err := ParseVars(bytes.NewReader(c.vars))
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse base vars: %w", err)
 	}
@@ -71,19 +75,21 @@ func deployArchiveConfig(base, payload []byte) (cfg *config.MachineConfig, keys 
 	if err != nil {
 		return nil, nil, fmt.Errorf("deploy archive staging: %w", err)
 	}
-	defer os.RemoveAll(staging) //nolint:errcheck // best-effort cleanup of the staging tree
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(staging)
+		}
+	}()
 
 	tree := filepath.Join(staging, "deploy")
 	if err := unpackDeployArchive(payload, tree); err != nil {
 		return nil, nil, err
 	}
-	cfg, keys, err = archiveVarsConfig(filepath.Join(tree, "vars"))
+	cfg, keys, err = archiveVarsConfig(filepath.Join(tree, "vars"), c.vars, c.log)
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := swapDeployDirs(tree, deployRoot, filepath.Join(staging, "old")); err != nil {
-		return nil, nil, err
-	}
+	c.stagedDeploy = staging
 	cfg.Transport, cfg.Agent, cfg.Network = ref.Transport, ref.Agent, ref.Network
 	cfg.Mode, cfg.DryRun, cfg.LegacyCompat = ref.Mode, ref.DryRun, ref.LegacyCompat
 	cfg.Provision.Inventory.URL = ref.Provision.Inventory.URL
@@ -95,31 +101,78 @@ func deployArchiveConfig(base, payload []byte) (cfg *config.MachineConfig, keys 
 	return cfg, keys, nil
 }
 
+// ApplyCommandFiles swaps the staged per-job directories of the last deploy
+// archive into /deploy. Without a staged archive it does nothing.
+func (c *Client) ApplyCommandFiles() error {
+	if c.stagedDeploy == "" {
+		return nil
+	}
+	staging := c.stagedDeploy
+	c.stagedDeploy = ""
+	defer os.RemoveAll(staging) //nolint:errcheck // best-effort cleanup of the staging tree
+	return swapDeployDirs(filepath.Join(staging, "deploy"), deployRoot, filepath.Join(staging, "old"))
+}
+
+// DiscardCommandFiles drops the staged directories of a deploy archive whose
+// command does not run.
+func (c *Client) DiscardCommandFiles() {
+	if c.stagedDeploy != "" {
+		_ = os.RemoveAll(c.stagedDeploy)
+		c.stagedDeploy = ""
+	}
+}
+
 // archiveVarsConfig reads and validates deploy/vars of the staging tree.
-// Like a vars payload, an unknown key fails it; errors name keys only.
-func archiveVarsConfig(varsPath string) (cfg *config.MachineConfig, keys []string, err error) {
+// Unknown keys are logged and ignored, like the vars of an ISO (CAPRF
+// renders the archive with the same builder); errors name keys only.
+// CAPRF_LEGACY_COMPAT comes from the base vars, so the presets that it sets
+// match the running ramdisk.
+func archiveVarsConfig(varsPath string, base []byte, log *slog.Logger) (cfg *config.MachineConfig, keys []string, err error) {
 	vars, err := os.ReadFile(varsPath) //nolint:gosec // path in our staging directory
 	if err != nil {
 		return nil, nil, errors.New("deploy archive has no deploy/vars")
 	}
-	keys, err = payloadKeys(vars)
+	all, err := payloadKeys(vars)
 	if err != nil {
 		return nil, nil, errArchiveVars
 	}
 	var unknown []string
-	for _, k := range keys {
-		if !knownVarKey(k) {
+	for _, k := range all {
+		if knownVarKey(k) {
+			keys = append(keys, k)
+		} else {
 			unknown = append(unknown, k)
 		}
 	}
-	if len(unknown) > 0 {
-		return nil, nil, fmt.Errorf("deploy archive vars have unknown keys %s", strings.Join(unknown, ","))
+	if len(unknown) > 0 && log != nil {
+		log.Warn("deploy archive vars have unknown keys, ignored", "keys", strings.Join(unknown, ","))
 	}
-	cfg, err = ParseVars(bytes.NewReader(vars))
+	cfg, err = ParseVars(bytes.NewReader(withVarLines(vars, base, legacyCompatKey)))
 	if err != nil {
 		return nil, nil, errArchiveVars
 	}
 	return cfg, keys, nil
+}
+
+// legacyCompatKey selects the CAPRF legacy presets.
+const legacyCompatKey = "CAPRF_LEGACY_COMPAT"
+
+// withVarLines returns vars without its key lines, plus the key lines of
+// base.
+func withVarLines(vars, base []byte, key string) []byte {
+	var out bytes.Buffer
+	keep := func(src []byte, want bool) {
+		for line := range strings.Lines(string(src)) {
+			k, _, ok := parseVarLine(line)
+			if (ok && k == key) == want {
+				out.WriteString(strings.TrimRight(line, "\n"))
+				out.WriteByte('\n')
+			}
+		}
+	}
+	keep(vars, false)
+	keep(base, true)
+	return out.Bytes()
 }
 
 // renameFunc is os.Rename; tests make it fail.
@@ -289,13 +342,12 @@ func archivePath(name string) (string, error) {
 }
 
 // writeArchiveFile creates a new file: O_EXCL fails on any existing name,
-// O_NOFOLLOW on a symlink. The mode is 0644, or 0755 with an execute bit.
-// It returns the byte budget that is left.
+// O_NOFOLLOW on a symlink. The mode is the permission bits of the archive
+// entry, so a 0600 secret (SSH host key, kubeconfig, join token) stays
+// private; setuid, setgid and sticky are dropped. It returns the byte
+// budget that is left.
 func writeArchiveFile(r io.Reader, target string, mode, budget int64) (int64, error) {
-	perm := os.FileMode(0o644)
-	if mode&0o111 != 0 {
-		perm = 0o755
-	}
+	perm := os.FileMode(mode) & os.ModePerm                                                   //nolint:gosec // only the permission bits are kept
 	f, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY|syscall.O_NOFOLLOW, perm) //nolint:gosec // path checked by archivePath
 	if err != nil {
 		return budget, fmt.Errorf("create file: %w", err)

@@ -234,6 +234,13 @@ func (m *StandbyMode) handleCommand(ctx context.Context, cmd config.Command) *co
 	}
 }
 
+// commandFilesApplier is the optional provider capability that swaps the
+// staged files of a deploy archive payload into /deploy
+// (caprf.Client.ApplyCommandFiles).
+type commandFilesApplier interface {
+	ApplyCommandFiles() error
+}
+
 // commandConfigProvider is the optional provider capability that merges a
 // command payload over the base vars (caprf.Client.CommandConfig).
 type commandConfigProvider interface {
@@ -261,6 +268,16 @@ func (m *StandbyMode) handleRunCommand(ctx context.Context, cmd config.Command) 
 	if len(keys) > 0 {
 		slog.Info("running command with payload", "id", cmd.ID, "type", cmd.Type,
 			"keys", strings.Join(keys, ","), "hostname", runCfg.Hostname)
+	}
+	// The files of a deploy archive replace the ones in /deploy only now,
+	// after every check of the command: a rejected command leaves /deploy
+	// as it was.
+	if a, ok := m.deps.Client.(commandFilesApplier); ok {
+		if err := a.ApplyCommandFiles(); err != nil {
+			slog.Error("command not run", "id", cmd.ID, "type", cmd.Type, "error", err)
+			m.ack(ctx, cmd.ID, "failed", fmt.Sprintf("%s command failed: %v", cmd.Type, err))
+			return nil
+		}
 	}
 	if cmd.Type == "provision" {
 		return m.handleProvision(ctx, cmd, runCfg, keys)

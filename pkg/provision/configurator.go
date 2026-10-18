@@ -887,6 +887,12 @@ func HasProvisionerResolvConf() bool {
 // /deploy/file-system/ into the running ramdisk, like copy_files in the CAPRF
 // legacy common.sh. Netplan files get mode 0600, as in the legacy script.
 func ApplyProvisionerFilesToRamdisk(ctx context.Context) error {
+	return applyProvisionerFilesToRamdisk(ctx)
+}
+
+// applyProvisionerFilesToRamdisk is ApplyProvisionerFilesToRamdisk; tests
+// replace it.
+var applyProvisionerFilesToRamdisk = func(ctx context.Context) error {
 	if _, err := os.Stat(provisionerFilesDir); os.IsNotExist(err) {
 		slog.Info("no provisioner files to apply to the ramdisk", "path", provisionerFilesDir)
 		return nil

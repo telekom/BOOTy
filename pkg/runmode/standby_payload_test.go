@@ -233,3 +233,44 @@ func TestStandbyFailureAckSurvivesACanceledContext(t *testing.T) {
 		t.Fatalf("acks = %v, want both failure ACKs despite the canceled context", provider.acks)
 	}
 }
+
+// applyingProvider records the apply of the staged archive files.
+type applyingProvider struct {
+	*payloadProvider
+	applyErr error
+	applied  int
+}
+
+func (p *applyingProvider) ApplyCommandFiles() error {
+	p.applied++
+	return p.applyErr
+}
+
+// The staged files of a deploy archive are applied after the checks of the
+// command; a failed apply ACKs the command as failed and standby goes on.
+func TestStandbyAppliesCommandFilesBeforeTheRun(t *testing.T) {
+	for _, applyErr := range []error{nil, errors.New("rename failed")} {
+		ran := false
+		mode, provider := payloadStandby(t, []config.Command{
+			{ID: "d1", Type: "deprovision", Payload: []byte("HOSTNAME=t1\n")},
+			{ID: "r1", Type: "reboot"},
+		}, func(*config.MachineConfig) error { ran = true; return nil })
+		applier := &applyingProvider{payloadProvider: provider, applyErr: applyErr}
+		mode.deps.Client = applier
+
+		var rebootErr *RebootRequestedError
+		if err := mode.Run(context.Background()); !errors.As(err, &rebootErr) {
+			t.Fatalf("Run error = %v", err)
+		}
+		if applier.applied != 1 || ran != (applyErr == nil) {
+			t.Fatalf("applied %d times, ran %t; want one apply and a run only after a good apply", applier.applied, ran)
+		}
+		want := "d1:completed"
+		if applyErr != nil {
+			want = "d1:failed"
+		}
+		if provider.acks[0] != want {
+			t.Fatalf("acks = %v, want %s first", provider.acks, want)
+		}
+	}
+}

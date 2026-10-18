@@ -217,3 +217,23 @@ func TestConfigureDNSWriteResolvConfPrecedence(t *testing.T) {
 		})
 	}
 }
+
+// A standby command keeps the provisioner files in the ramdisk too: it
+// applies them there again, because a deploy archive brings the files of
+// its own job after main applied the boot files.
+func TestCopyProvisionerFilesStandbyCommandAppliesToRamdisk(t *testing.T) {
+	prev := applyProvisionerFilesToRamdisk
+	t.Cleanup(func() { applyProvisionerFilesToRamdisk = prev })
+	applied := 0
+	applyProvisionerFilesToRamdisk = func(context.Context) error { applied++; return nil }
+
+	cfg := &config.MachineConfig{ProvisionerFilesTarget: config.ProvisionerFilesRamdisk}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	if err := o.copyProvisionerFiles(context.Background()); err != nil || applied != 0 {
+		t.Fatalf("boot run: err %v, applied %d times; main applies the boot files", err, applied)
+	}
+	cfg.StandbyCommand = true
+	if err := o.copyProvisionerFiles(context.Background()); err != nil || applied != 1 {
+		t.Fatalf("standby command: err %v, applied %d times, want once", err, applied)
+	}
+}
