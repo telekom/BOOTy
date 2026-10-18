@@ -8,4 +8,4 @@ section: Behaviour changes in all modes
   `ipmitool.cpio.zst` payload any more: remove it from the initrd list of
   the boot loader. Only FRR is a payload now. The rescue shell has no
   `ipmitool`: read or change BMC settings over Redfish, the BMC web
-  interface or `ipmitool -I lanplus` from another host.
+  interface or `ipmitool -I lanplus` from another host (#816).
