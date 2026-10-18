@@ -334,7 +334,10 @@ func newDHCPClient(iface *net.Interface, hostname string, clientID []byte, onBou
 		Params:   networkdParams,
 		OnBound:  onBound,
 		OnExpire: onExpire,
-		Log:      slog.Default(),
+		// The legacy ramdisk releases its leases when it stops (networkd
+		// SendRelease=yes, captured in kindmetal).
+		SendRelease: true,
+		Log:         slog.Default(),
 	}
 }
 

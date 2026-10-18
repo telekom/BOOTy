@@ -345,7 +345,8 @@ func TestRebootAndRelease(t *testing.T) {
 		t.Errorf("INIT-REBOOT REQUEST = %s ciaddr %s options %v", r.kind, r.m.ciaddr, optionTypes(r.m))
 	}
 	rel := msgs[2]
-	if rel.m.typ != layers.DHCPMsgTypeRelease || rel.kind != "unicast" || !rel.dst.Equal(testServer) || !rel.m.ciaddr.Equal(testAddr) {
+	if rel.m.typ != layers.DHCPMsgTypeRelease || rel.kind != "unicast" || !rel.dst.Equal(testServer) || !rel.m.ciaddr.Equal(testAddr) ||
+		!slices.Equal(optionTypes(rel.m), []int{53, 61}) {
 		t.Errorf("RELEASE = %v %s to %s ciaddr %s", rel.m.typ, rel.kind, rel.dst, rel.m.ciaddr)
 	}
 }

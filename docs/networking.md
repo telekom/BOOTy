@@ -1126,7 +1126,12 @@ The client is BOOTy's own (`pkg/network/dhcp4`), with the states of RFC
 - REBINDING at T2: the same DHCPREQUEST as broadcast, until the lease
   expires.
 - INIT-REBOOT (`Reboot`): DHCPREQUEST with only the requested address.
-- No DHCPRELEASE at stop (`SendRelease` is off).
+- DHCPRELEASE at stop (Teardown, before kexec or reboot) from the lease
+  address to the server, with the client identifier only, like networkd
+  (`SendRelease=yes`; the legacy ramdisk sends it, captured in kindmetal).
+- The UDP socket of a unicast exchange stays open until the reply, so the
+  kernel does not answer the server's unicast ACK with ICMP port
+  unreachable.
 - DHCP packets carry the IP TOS of networkd (CS6). Debug logging only, one
   line per message.
 
