@@ -585,10 +585,15 @@ func runCAPRF(ctx context.Context) {
 	runCtx, stopRun := context.WithCancel(ctx)
 	defer stopRun()
 
-	netMode, err := setupNetworkAndTokenFlow(ctx, cfg, client, stopRun)
+	netMode, stopNetwork, err := setupNetworkAndTokenFlow(ctx, cfg, client, stopRun)
+	stopAndReboot := func() {
+		flushLogs()
+		stopNetwork()
+		rebootNow()
+	}
 	if err != nil {
 		code := provision.CodeOf(err)
-		failRun(ctx, cfg, client, "network-setup", code, fmt.Sprintf("network or token setup failed [%s]: %v", code, err), reboot)
+		failRun(ctx, cfg, client, "network-setup", code, fmt.Sprintf("network or token setup failed [%s]: %v", code, err), stopAndReboot)
 		return
 	}
 
@@ -612,9 +617,7 @@ func runCAPRF(ctx context.Context) {
 	})
 	if err != nil {
 		slog.Error("unknown operating mode", "mode", cfg.Mode, "error", err)
-		flushLogs()
-		stopNetworkOnce(ctx, netMode)()
-		reboot()
+		stopAndReboot()
 		return
 	}
 
@@ -628,11 +631,32 @@ func runCAPRF(ctx context.Context) {
 		stopTokenGraceReboot()
 	}
 	if runCtx.Err() != nil && ctx.Err() == nil && !isTerminalSuccess(modeErr) {
-		tokenShutdown(ctx, cfg, client, tokenStopMessage(), reboot)
+		tokenShutdown(ctx, cfg, client, tokenStopMessage(), stopAndReboot)
 		return
 	}
 
 	slog.Info("CAPRF run complete")
+	endRun(ctx, cfg, client, diskMgr, stopNetwork, mode.Name(), modeErr)
+}
+
+// rebootNow and endRunPause are reboot and the pause before the reboot of
+// a failed run; tests replace them.
+var (
+	rebootNow   = reboot
+	shellHook   = shell
+	endRunPause = 2 * time.Second
+)
+
+// endRun ends the run after the mode returned. Every path that leaves the
+// ramdisk ships the queued log lines, then stops the network (BGP Cease,
+// BFD AdminDown), then hands off; only the rescue shell keeps the network.
+func endRun(ctx context.Context, cfg *config.MachineConfig, client provisionStatusReporter,
+	diskMgr *disk.Manager, stopNetwork func(), modeName string, modeErr error) {
+	stopAndReboot := func() {
+		flushLogs()
+		stopNetwork()
+		rebootNow()
+	}
 
 	// Handle mode-specific exit behavior before network teardown,
 	// so rescue shell SSH access remains available.
@@ -644,20 +668,17 @@ func runCAPRF(ctx context.Context) {
 	case errors.As(modeErr, &rescueErr):
 		// Network teardown is intentionally skipped here so SSH access
 		// remains available in the rescue shell.
-		shell()
-		reboot()
+		shellHook()
+		rebootNow()
 		return
 	case errors.As(modeErr, &rebootErr):
-		flushLogs()
-		stopNetworkOnce(ctx, netMode)()
-		reboot()
+		stopAndReboot()
 		return
 	case errors.As(modeErr, &powerOffErr):
-		// Keep the network up, like the provision handoff, so a failed power
-		// off can still be reported. Do not reboot when the power off fails:
-		// CAPRF has not ejected the ISO yet, so a reboot would run the task
-		// again.
-		requestProvisionHandoff(ctx, client, "power off", provisionHandoff.powerOff, provisionHandoff,
+		// Do not reboot when the power off fails: CAPRF has not ejected the
+		// ISO yet, so a reboot would run the task again.
+		ops := withNetworkStopBeforeHandoff(provisionHandoff, stopNetwork, func() { restoreNetwork(ctx, cfg) })
+		requestProvisionHandoff(ctx, client, "power off", ops.powerOff, ops,
 			"power off handoff failed after deprovisioning success")
 		return
 	case errors.As(modeErr, &provisionErr):
@@ -665,7 +686,7 @@ func runCAPRF(ctx context.Context) {
 			// A standby command ran with its own config (payload).
 			cfg = provisionErr.Cfg
 		}
-		finishProvision(ctx, cfg, client, diskMgr, netMode, provisionErr)
+		finishProvision(ctx, cfg, client, diskMgr, stopNetwork, provisionErr)
 		return
 	}
 
@@ -673,12 +694,10 @@ func runCAPRF(ctx context.Context) {
 	// Log other unexpected errors at error level.
 	var healthErr *runmode.HealthCheckError
 	if modeErr != nil && !errors.As(modeErr, &healthErr) {
-		slog.Error("mode exited with error", "mode", mode.Name(), "error", modeErr)
+		slog.Error("mode exited with error", "mode", modeName, "error", modeErr)
 	}
-	flushLogs()
-	stopNetworkOnce(ctx, netMode)()
-	time.Sleep(2 * time.Second)
-	reboot()
+	time.Sleep(endRunPause)
+	stopAndReboot()
 }
 
 // networkStopTimeout bounds the network teardown before a kexec or reboot;
@@ -714,11 +733,10 @@ func stopNetworkOnce(ctx context.Context, netMode network.Mode) func() {
 
 // finishProvision starts the installed OS after a successful provision:
 // kexec, or the handoff (reboot or power off). BGP and BFD stop cleanly
-// before the kexec and the reboot, because the link stays up during both,
-// unlike a power off.
+// before each of them, like the legacy `shutdown now` stops FRR before the
+// power off.
 func finishProvision(ctx context.Context, cfg *config.MachineConfig, client provisionStatusReporter,
-	diskMgr *disk.Manager, netMode network.Mode, provisionErr *runmode.ProvisionCompleteError) {
-	stopNetwork := stopNetworkOnce(ctx, netMode)
+	diskMgr *disk.Manager, stopNetwork func(), provisionErr *runmode.ProvisionCompleteError) {
 	kexeced := tryKexec(cfg, provisionErr.FirmwareChanged, func() (disk.ReleaseReport, error) {
 		return diskMgr.UnmountOrRemountReadOnly(installedRootPath)
 	}, stopNetwork)
@@ -727,21 +745,51 @@ func finishProvision(ctx context.Context, cfg *config.MachineConfig, client prov
 	}
 	// No pause here: the handoff closes the CAPRF log handler, and that
 	// drains the queued log lines (at most 5 s) before it acts.
-	handleProvisionHandoff(ctx, cfg, client, provisionErr, kexeced, withNetworkStopBeforeReboot(provisionHandoff, stopNetwork))
+	handleProvisionHandoff(ctx, cfg, client, provisionErr, kexeced,
+		withNetworkStopBeforeHandoff(provisionHandoff, stopNetwork, func() { restoreNetwork(ctx, cfg) }))
 }
 
-// withNetworkStopBeforeReboot returns ops whose reboot ships the queued log
-// lines, then stops the network, then reboots. A power off keeps the
-// network: the link goes down with the power, and a failed power off can
-// still be reported.
-func withNetworkStopBeforeReboot(ops provisionHandoffOps, stopNetwork func()) provisionHandoffOps {
-	reboot := ops.reboot
-	ops.reboot = func() error {
-		flushLogs()
-		stopNetwork()
-		return reboot()
+// withNetworkStopBeforeHandoff returns ops whose reboot and power off ship
+// the queued log lines, then stop the network, then hand off. When the
+// handoff fails, restore brings the network back, so that the failure can
+// be reported and the rescue shell is reachable.
+func withNetworkStopBeforeHandoff(ops provisionHandoffOps, stopNetwork, restore func()) provisionHandoffOps {
+	wrap := func(handoff func() error) func() error {
+		return func() error {
+			flushLogs()
+			stopNetwork()
+			err := handoff()
+			if err != nil {
+				restore()
+			}
+			return err
+		}
 	}
+	ops.reboot = wrap(ops.reboot)
+	ops.powerOff = wrap(ops.powerOff)
 	return ops
+}
+
+// restoreNetwork sets the network up again after a failed handoff, so the
+// error report reaches CAPRF; tests replace it. The stopped mode is not
+// reused.
+var restoreNetwork = func(ctx context.Context, cfg *config.MachineConfig) {
+	slog.Warn("handoff failed after the network stop, setting the network up again")
+	netMode, err := setupNetworkMode(ctx, cfg)
+	if err != nil {
+		slog.Error("network setup after the failed handoff failed", "error", err)
+		return
+	}
+	target := cfg.Transport.ErrorURL
+	if target == "" {
+		target = cfg.Transport.InitURL
+	}
+	if target == "" {
+		return
+	}
+	if _, err := ensureNetworkConnectivity(ctx, cfg, netMode, target); err != nil {
+		slog.Error("no connectivity after the failed handoff", "error", err)
+	}
 }
 
 func handleProvisionHandoff(
@@ -796,17 +844,21 @@ func reportProvisionHandoffError(ctx context.Context, reporter provisionStatusRe
 	}
 }
 
-func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, client *caprf.Client, stopRun func()) (network.Mode, error) {
+// setupNetworkAndTokenFlow sets the network and the token up. It returns
+// the network mode and the function that stops it once (BGP Cease, BFD
+// AdminDown) before the run leaves the ramdisk; the stop is also valid
+// when a later setup step fails.
+func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, client *caprf.Client, stopRun func()) (network.Mode, func(), error) {
 	if cfg.Mode == "dry-run" {
 		slog.Info("dry-run mode: skipping active network setup and token renewal")
-		return noopNetworkMode{}, nil
+		return noopNetworkMode{}, func() {}, nil
 	}
 
 	// Set up networking with retry — if connectivity fails, teardown and
 	// rebuild the entire network stack before giving up.
 	netMode, err := setupNetworkMode(ctx, cfg)
 	if err != nil {
-		return nil, &provision.CodedError{Code: provision.CodeNetworkSetup, Err: err}
+		return nil, func() {}, &provision.CodedError{Code: provision.CodeNetworkSetup, Err: err}
 	}
 	if lldpReceiveEnabled(cfg) {
 		startLLDPReceive(ctx)
@@ -827,14 +879,15 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	if connectivityTarget != "" {
 		activeMode, err := ensureNetworkConnectivity(ctx, cfg, netMode, connectivityTarget)
 		if err != nil {
-			return nil, &provision.CodedError{Code: provision.CodeConnectivity, Err: err}
+			return nil, stopNetworkOnce(ctx, activeMode), &provision.CodedError{Code: provision.CodeConnectivity, Err: err}
 		}
 		netMode = activeMode
 	}
+	stopNetwork := stopNetworkOnce(ctx, netMode)
 
 	if err := syncClock(ctx, cfg, connectivityTarget); err != nil {
 		provision.DumpDebugState("time-sync")
-		return nil, err
+		return nil, stopNetwork, err
 	}
 
 	// Acquire JWT after network is ready so the token endpoint is reachable.
@@ -842,21 +895,27 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 		slog.Error("failed to acquire jwt token", "error", err)
 		if cfg.Transport.TokenURL != "" {
 			provision.DumpDebugState("jwt-acquire")
-			return nil, &provision.CodedError{Code: provision.CodeAuth, Err: err}
+			return nil, stopNetwork, &provision.CodedError{Code: provision.CodeAuth, Err: err}
 		}
 	}
 
-	client.SetTokenRenewalFatalHandler(func(err error) { tokenRenewalFatal(cfg, err, reboot, stopRun) })
+	client.SetTokenRenewalFatalHandler(func(err error) {
+		tokenRenewalFatal(cfg, err, func() {
+			flushLogs()
+			stopNetwork()
+			rebootNow()
+		}, stopRun)
+	})
 
 	if err := client.StartTokenRenewal(ctx); err != nil {
 		slog.Error("failed to start token renewal", "error", err)
 		if cfg.Transport.TokenURL != "" {
 			provision.DumpDebugState("jwt-renewal-start")
-			return nil, &provision.CodedError{Code: provision.CodeAuth, Err: err}
+			return nil, stopNetwork, &provision.CodedError{Code: provision.CodeAuth, Err: err}
 		}
 	}
 
-	return netMode, nil
+	return netMode, stopNetwork, nil
 }
 
 // failRun ends a run that failed outside a mode in step with the failure
