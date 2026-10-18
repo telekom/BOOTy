@@ -2,6 +2,7 @@ package dhcp4
 
 import (
 	"encoding/binary"
+	"errors"
 	"net"
 	"slices"
 	"sync"
@@ -37,6 +38,8 @@ type fakeNet struct {
 	answer  func(s sent) []byte // the server; nil answers nothing
 	tickCh  chan struct{}
 	stopped chan struct{}
+	// noAddr fails unicasts, like a NIC whose lease address is gone.
+	noAddr bool
 }
 
 func newFakeNet() *fakeNet {
@@ -108,6 +111,12 @@ func (t *fakeTransport) broadcast(src net.IP, m *message) error {
 }
 
 func (t *fakeTransport) unicast(src, dst net.IP, m *message) error {
+	t.f.mu.Lock()
+	noAddr := t.f.noAddr
+	t.f.mu.Unlock()
+	if noAddr {
+		return errors.New("bind: cannot assign requested address")
+	}
 	return t.send(sent{kind: "unicast", src: src, dst: dst, m: m})
 }
 
@@ -361,6 +370,48 @@ func TestRebootAndRelease(t *testing.T) {
 	}
 }
 
+// TestRebootEndsRenewal: the carrier comes back while the client waits
+// in RENEWING after a failed unicast (the lease address was removed with
+// the carrier). Reboot sends the INIT-REBOOT at once instead of after the
+// wait, like networkd, whose client restarts with the carrier.
+func TestRebootEndsRenewal(t *testing.T) {
+	f := newFakeNet()
+	f.answer = func(s sent) []byte {
+		if s.m.typ == layers.DHCPMsgTypeDiscover || s.kind == "broadcast" && s.m.ciaddr == nil {
+			return serverReply(s.m, layers.DHCPMsgTypeAck, layers.NewDHCPOption(optRapidCommit, nil))
+		}
+		return nil
+	}
+	bound := make(chan *Lease, 4)
+	c := f.client()
+	c.OnBound = func(l *Lease) { bound <- l }
+	c.Start()
+	<-bound
+	f.mu.Lock()
+	f.noAddr = true
+	f.mu.Unlock()
+	f.tick(t) // T1: the renewal fails to send and waits
+	waits := func() int { f.mu.Lock(); defer f.mu.Unlock(); return len(f.waits) }
+	for deadline := time.Now().Add(5 * time.Second); waits() < 2; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the renewal does not wait")
+		}
+	}
+	c.Reboot()
+	select {
+	case <-bound:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no INIT-REBOOT before the renewal wait ended")
+	}
+	close(f.stopped)
+	c.Stop()
+	msgs := f.messages()
+	last := msgs[len(msgs)-1]
+	if last.kind != "broadcast" || last.m.typ != layers.DHCPMsgTypeRequest || last.m.ciaddr != nil {
+		t.Fatalf("last message = %s %v ciaddr %s, want the INIT-REBOOT REQUEST", last.kind, last.m.typ, last.m.ciaddr)
+	}
+}
+
 // A reply for another client or another transaction is ignored.
 func TestIgnoresForeignReplies(t *testing.T) {
 	f := newFakeNet()
@@ -524,5 +575,37 @@ func TestNakFromOtherServerIgnored(t *testing.T) {
 	first := slices.IndexFunc(msgs, isRebind)
 	if n := count(msgs[:first], func(s sent) bool { return s.m.typ == layers.DHCPMsgTypeDiscover }); n != 1 {
 		t.Fatalf("%d DISCOVERs: a NAK from another server ended the lease", n)
+	}
+}
+
+// A lease kept after failed INIT-REBOOTs ends exactly at its expiry while
+// the client is in INIT.
+func TestLeaseExpiresInInitAfterFailedReboot(t *testing.T) {
+	f := newFakeNet()
+	first := true
+	f.answer = func(s sent) []byte {
+		if first && s.m.typ == layers.DHCPMsgTypeDiscover {
+			first = false
+			return serverReply(s.m, layers.DHCPMsgTypeAck, layers.NewDHCPOption(optRapidCommit, nil))
+		}
+		return nil
+	}
+	bound, expired := make(chan *Lease, 1), make(chan time.Time, 1)
+	c := f.client()
+	c.OnBound = func(l *Lease) { bound <- l }
+	c.OnExpire = func(*Lease) { expired <- c.now() }
+	c.Start()
+	l := <-bound
+	c.Reboot()
+	var at time.Time
+	select {
+	case at = <-expired:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the lease did not expire after the failed INIT-REBOOTs")
+	}
+	close(f.stopped)
+	c.Stop()
+	if !at.Equal(l.Expire) {
+		t.Fatalf("expired at %s, want at the lease expiry %s", at, l.Expire)
 	}
 }
