@@ -595,6 +595,9 @@ func stubDHCPSetup(t *testing.T, onBound func(name string, cb dhclient.Callback)
 	t.Cleanup(func() {
 		dhcpInterfaces, dhcpLinkByName, dhcpLinkSetUp, dhcpPrepareLink, dhcpNewClient, dhcpSetupTimeout = origIfaces, origByName, origUp, origPrep, origNew, origTimeout
 	})
+	origSub := dhcpSubscribe
+	t.Cleanup(func() { dhcpSubscribe = origSub })
+	dhcpSubscribe = func(chan<- netlink.LinkUpdate, <-chan struct{}) error { return nil }
 	dhcpInterfaces = func(context.Context) ([]net.Interface, error) {
 		return []net.Interface{{Name: "eth0", Index: 1}, {Name: "eth1", Index: 2}}, nil
 	}
@@ -605,8 +608,8 @@ func stubDHCPSetup(t *testing.T, onBound func(name string, cb dhclient.Callback)
 	var prepared []string
 	dhcpPrepareLink = func(name string) error { prepared = append(prepared, name); return nil }
 	t.Cleanup(func() {
-		if len(prepared) != 2 {
-			t.Errorf("promote_secondaries set on %v, want both NICs", prepared)
+		if len(prepared) < 2 {
+			t.Errorf("promote_secondaries set on %v, want every NIC", prepared)
 		}
 	})
 	clients := map[string]*fakeDHCPClient{}
@@ -1476,4 +1479,63 @@ func TestClientIDWithoutMachineID(t *testing.T) {
 		bytes.Equal(a, dhcpClientID("eth0", "x")) || fallbackMachineID() == "" {
 		t.Fatalf("client IDs %x %x", a, b)
 	}
+}
+
+// A NIC that appears after Setup gets a client, like networkd matches a
+// link that udev announces later; after Teardown no new client starts.
+func TestSetupStartsClientsOnNewNICs(t *testing.T) {
+	clients := stubDHCPSetup(t, func(name string, cb dhclient.Callback) {
+		if name == "eth0" {
+			cb(lease24("10.0.2.15", "10.0.2.2"))
+		}
+	})
+	var mu sync.Mutex
+	nics := make([]net.Interface, 0, 3)
+	nics = append(nics, net.Interface{Name: "eth0", Index: 1}, net.Interface{Name: "eth1", Index: 2})
+	dhcpInterfaces = func(context.Context) ([]net.Interface, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(nics), nil
+	}
+	updates := make(chan chan<- netlink.LinkUpdate, 1)
+	dhcpSubscribe = func(ch chan<- netlink.LinkUpdate, done <-chan struct{}) error {
+		updates <- ch
+		go func() { <-done; close(ch) }()
+		return nil
+	}
+	d := NewDHCPMode()
+	if err := d.Setup(context.Background(), &Config{}); err != nil {
+		t.Fatal(err)
+	}
+	ch := <-updates
+	mu.Lock()
+	nics = append(nics, net.Interface{Name: "eth3", Index: 4})
+	mu.Unlock()
+	newLink := func(idx int, name string) netlink.LinkUpdate {
+		u := netlink.LinkUpdate{Link: dummyLink(name, idx)}
+		u.Header.Type = unix.RTM_NEWLINK
+		return u
+	}
+	ch <- newLink(1, "eth0") // known: no second client
+	ch <- newLink(4, "eth3")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		d.mu.Lock()
+		_, ok := d.clients[4]
+		d.mu.Unlock()
+		if ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no client started for the new NIC eth3")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(clients) != 3 {
+		t.Fatalf("clients = %d, want eth0, eth1 and eth3", len(clients))
+	}
+	stoppedAll(t, clients, 1)
 }
