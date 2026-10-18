@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/telekom/BOOTy/pkg/network/dhcp4"
 	"github.com/vishvananda/netlink"
@@ -258,4 +259,58 @@ func enterTestNetns(t *testing.T) {
 		_ = orig.Close()
 		runtime.UnlockOSThread()
 	})
+}
+
+// TestWatchRAOnVeth: watchRA reports the M and O flags of a router
+// advertisement that arrives on its NIC and ignores other ICMPv6 messages.
+func TestWatchRAOnVeth(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("test requires root (run with sudo)")
+	}
+	enterTestNetns(t)
+	for _, k := range []string{"all", "default"} {
+		_ = os.WriteFile("/proc/sys/net/ipv6/conf/"+k+"/accept_dad", []byte("0"), 0o644) //nolint:gosec // test sysctl
+	}
+	veth := &netlink.Veth{LinkAttrs: netlink.LinkAttrs{Name: "ra-c0"}, PeerName: "ra-r0"}
+	if err := netlink.LinkAdd(veth); err != nil {
+		t.Fatalf("add veth: %v", err)
+	}
+	for _, n := range []string{"ra-c0", "ra-r0"} {
+		l, _ := netlink.LinkByName(n)
+		if err := netlink.LinkSetUp(l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ifi, _ := net.InterfaceByName("ra-c0")
+	flags := make(chan [2]bool, 4)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := watchRA(ctx, ifi, func(m, o bool) { flags <- [2]bool{m, o} }); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.ListenPacket("ip6:ipv6-icmp", "::")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	dst := &net.IPAddr{IP: net.ParseIP("ff02::1"), Zone: "ra-r0"}
+	var got [2]bool
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		echo := []byte{128, 0, 0, 0, 0, 1, 0, 1} // echo request: ignored
+		ra := []byte{134, 0, 0, 0, 64, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+		_, _ = conn.WriteTo(echo, dst)
+		_, _ = conn.WriteTo(ra, dst)
+		select {
+		case got = <-flags:
+		case <-time.After(500 * time.Millisecond):
+			if time.Now().After(deadline) {
+				t.Fatal("no RA reported") // link-local address not ready
+			}
+			continue
+		}
+		break
+	}
+	if got != [2]bool{true, false} {
+		t.Fatalf("flags = %v, want M only", got)
+	}
 }

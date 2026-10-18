@@ -1248,6 +1248,28 @@ DNS and NTP servers of that NIC and restores its MTU (RFC 2131 sections 3.2
 and 4.4.5), like networkd. The client starts over in INIT with a
 DHCPDISCOVER, and its next lease is applied again.
 
+### DHCPv6
+
+Like networkd with the legacy netplan, every NIC with a DHCP client also
+watches router advertisements (the kernel keeps doing SLAAC). The first RA
+with the M flag starts a stateful DHCPv6 client (`pkg/network/dhcp6`), one
+with only the O flag a stateless one (INFORMATION-REQUEST, options 6, 1,
+8). The stateful client sends the messages of systemd-networkd 255, as
+captured in the CAPRF L2 parity fixture:
+
+- SOLICIT with rapid commit, IA_NA, IA_PD, client FQDN (39, flag S and the
+  hostname), ORO 23, 31, 56, 82, 103, client identifier and elapsed time;
+  REQUEST after an ADVERTISE without rapid commit.
+- RENEW at T1 and REBIND at T2 with the IA address; RELEASE at stop.
+- Retransmission as in RFC 8415 section 15 (SOLICIT 1 s, up to 1 h).
+- The client identifier is the DUID-EN of DHCPv4 option 61 and the IAID
+  that of option 61, as in networkd.
+
+The leased address goes on the NIC as /128 with its preferred and valid
+lifetimes; the DNS servers (option 23) go to `/etc/resolv.conf` after
+those of DHCPv4. When the lease ends, or the NIC loses carrier, the client
+stops and the address and DNS servers go; the next RA starts it again.
+
 Because `bond*` names are not physical NICs, DHCP does not run on `bond0`.
 
 Planned (#608): handle DHCP leases without a subnet mask and leases on

@@ -44,6 +44,7 @@ type DHCPMode struct {
 	// watchDone ends the watch for new NICs.
 	watchDone chan struct{}
 	mtus      map[int]dhcpMTU // by link index: MTU before the first lease changed it
+	v6        map[int]*nic6   // by link index: DHCPv6 (dhcp6_mode.go)
 
 	manageDNS bool     // false: the provisioner resolv.conf stays
 	resolvers []string // configured DNS servers, written before the lease ones
@@ -236,6 +237,7 @@ func (d *DHCPMode) startClient(iface *net.Interface, hostname string, leased cha
 		return
 	}
 	d.clients[link.Attrs().Index] = nc
+	d.startRA(link, iface, hostname)
 	d.mu.Unlock()
 }
 
@@ -342,6 +344,9 @@ func (d *DHCPMode) carrierChange(u netlink.LinkUpdate) bool {
 		nc.down = true
 		_, nc.lost = d.nics[u.Attrs().Index]
 		d.log.Info("NIC lost carrier, keeping its DHCP lease until the carrier returns", "interface", nc.link.Attrs().Name)
+		d.mu.Unlock()
+		d.stop6(u.Attrs().Index, false) // the next RA starts it again
+		return true
 	case carrier && nc.down:
 		nc.down = false
 		_, leased := d.nics[u.Attrs().Index]
@@ -382,6 +387,7 @@ func (d *DHCPMode) stopClients() {
 	for _, c := range clients {
 		wg.Go(c.client.Stop)
 	}
+	wg.Go(d.stopAll6)
 	wg.Wait()
 }
 
@@ -626,6 +632,11 @@ func (d *DHCPMode) writeResolvers() {
 			if !slices.Contains(search, dom) {
 				search = append(search, dom)
 			}
+		}
+	}
+	for _, s := range d.dns6() {
+		if !slices.Contains(servers, s) {
+			servers = append(servers, s)
 		}
 	}
 	content := strings.Join(servers, ",") + " search " + strings.Join(search, " ")
