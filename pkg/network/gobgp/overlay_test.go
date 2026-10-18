@@ -5441,8 +5441,8 @@ func TestType2WithdrawKeepsFIBRoute(t *testing.T) {
 // route without the community counts as VXLAN, like FRR.
 func TestProcessRouteUpdateHonoursEncapsulation(t *testing.T) {
 	const mplsTunnelType = 10
-	nextHop := func(nh string) *anypb.Any {
-		mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+	nextHop := func(nh string) *apipb.Attribute {
+		mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
 			Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 			NextHops: []string{nh},
 		})
@@ -5451,29 +5451,29 @@ func TestProcessRouteUpdateHonoursEncapsulation(t *testing.T) {
 		}
 		return mp
 	}
-	communities := func(extra ...*anypb.Any) *anypb.Any {
-		c := append([]*anypb.Any{mustRT2(t, 65000, 4000)}, extra...)
-		a, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{Communities: c})
+	communities := func(extra ...*apipb.ExtendedCommunity) *apipb.Attribute {
+		c := append([]*apipb.ExtendedCommunity{mustRT2(t, 65000, 4000)}, extra...)
+		a, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{Communities: c})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return a
 	}
-	encap := func(tt uint32) *anypb.Any {
-		a, err := anypb.New(&apipb.EncapExtended{TunnelType: tt})
+	encap := func(tt uint32) *apipb.ExtendedCommunity {
+		a, err := wrapExt(&apipb.EncapExtended{TunnelType: tt})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return a
 	}
-	pathVia := func(nh string, route proto.Message, ec *anypb.Any) *apipb.Path {
-		n, err := anypb.New(route)
+	pathVia := func(nh string, route proto.Message, ec *apipb.Attribute) *apipb.Path {
+		n, err := wrapNLRI(route)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return &apipb.Path{Nlri: n, Pattrs: []*anypb.Any{nextHop(nh), ec}}
+		return &apipb.Path{Nlri: n, Pattrs: []*apipb.Attribute{nextHop(nh), ec}}
 	}
-	path := func(route proto.Message, ec *anypb.Any) *apipb.Path { return pathVia("192.168.4.1", route, ec) }
+	path := func(route proto.Message, ec *apipb.Attribute) *apipb.Path { return pathVia("192.168.4.1", route, ec) }
 	newOverlay := func(mock *mockOverlayNetlinkOps) *OverlayTier {
 		return &OverlayTier{
 			cfg:        &Config{RouterID: "192.168.4.10", ASN: 65000, ProvisionVNI: 4000, BridgeName: "br.provision", EnableL2: true},

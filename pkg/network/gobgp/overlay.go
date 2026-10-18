@@ -893,7 +893,7 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 	// not include VXLAN cannot be reached over BOOTy's VXLAN device; it is
 	// handled as a withdraw of its route key. A route without the community
 	// counts as VXLAN, like FRR (which does not check the community).
-	notVXLAN := !withdraw && o.notVXLAN(p, fmt.Sprintf("%T", nlri.GetNlri()), vtep)
+	notVXLAN := o.notVXLAN(p, nlri, vtep, withdraw)
 	withdraw = withdraw || notVXLAN
 
 	switch {
@@ -929,14 +929,17 @@ func (o *OverlayTier) handleType3Path(p *apipb.Path, route *apipb.EVPNInclusiveM
 	o.handleType3Route(route, vtep, withdraw)
 }
 
-// notVXLAN reports a route whose BGP Encapsulation communities do not
-// include VXLAN, and logs it.
-func (o *OverlayTier) notVXLAN(p *apipb.Path, typeURL, vtep string) bool {
+// notVXLAN reports an update (not a withdraw) whose BGP Encapsulation
+// communities do not include VXLAN, and logs it.
+func (o *OverlayTier) notVXLAN(p *apipb.Path, nlri *apipb.NLRI, vtep string, withdraw bool) bool {
+	if withdraw {
+		return false
+	}
 	types := encapTunnelTypes(p)
 	if len(types) == 0 || slices.Contains(types, vxlanTunnelType) {
 		return false
 	}
-	o.log.Warn("EVPN route without VXLAN encapsulation treated as withdraw", "type", typeURL, "vtep", vtep, "tunnel_types", types)
+	o.log.Warn("EVPN route without VXLAN encapsulation treated as withdraw", "type", fmt.Sprintf("%T", nlri.GetNlri()), "vtep", vtep, "tunnel_types", types)
 	return true
 }
 
