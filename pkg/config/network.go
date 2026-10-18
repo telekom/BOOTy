@@ -156,6 +156,13 @@ type LLDPConfig struct {
 	// Default: "" (networkd)
 	Profile string `yaml:"profile,omitempty" json:"profile,omitempty"`
 
+	// PortIDFormat is the port ID of the bm4x-cablecheck profile: "mac"
+	// (MAC port ID, subtype 3), "mac-string-colon" ("aa:bb:cc:dd:ee:ff",
+	// subtype 7), "mac-string-dotted" ("aabb.ccdd.eeff", subtype 7) or
+	// "ifname" (interface name, subtype 5). Only with that profile.
+	// Default: "" (mac)
+	PortIDFormat string `yaml:"portIDFormat,omitempty" json:"portIDFormat,omitempty"`
+
 	// EmitAll sends on every physical NIC with carrier, not only on the
 	// emitLLDP (netplan "emit-lldp: true") NICs, in every network mode.
 	// Default: nil (on with the bm4x-cablecheck profile, else off)

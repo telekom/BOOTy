@@ -752,7 +752,7 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 		startLLDPReceive(ctx)
 	}
 	if cfg.Network.LLDP.EmitAllNICs() {
-		startLLDPEmitAll(ctx, cfg.Network.LLDP.Profile)
+		startLLDPEmitAll(ctx, &cfg.Network.LLDP)
 	}
 	connectivityTarget := cfg.Transport.InitURL
 	if connectivityTarget == "" {
@@ -1012,16 +1012,16 @@ func startLLDPReceive(ctx context.Context) {
 
 // startLLDPEmitAll sends LLDP frames on every physical NIC with carrier for
 // the rest of the run (LLDP_EMIT_ALL), in every network mode.
-func startLLDPEmitAll(ctx context.Context, profile string) {
+func startLLDPEmitAll(ctx context.Context, l *config.LLDPConfig) {
 	nics, err := network.DetectPhysicalNICsContext(ctx)
 	if err != nil || len(nics) == 0 {
 		slog.Warn("LLDP not sent: no physical NICs", "error", err)
 		return
 	}
 	info := lldp.SystemInfo()
-	info.Profile = profile
+	info.Profile, info.PortIDFormat = l.Profile, l.PortIDFormat
 	info.CarrierOnly = true
-	lldp.Emit(ctx, nics, info, slog.With("component", "lldp"))
+	lldp.Emit(ctx, nics, &info, slog.With("component", "lldp"))
 }
 
 // setupNetworkMode detects and configures the appropriate network mode.
@@ -1194,6 +1194,7 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 		NoAcceptRA:        splitList(cfg.Network.NoAcceptRA),
 		EmitLLDP:          splitList(cfg.Network.EmitLLDP),
 		LLDPProfile:       cfg.Network.LLDP.Profile,
+		LLDPPortIDFormat:  cfg.Network.LLDP.PortIDFormat,
 		LLDPEmitAll:       cfg.Network.LLDP.EmitAllNICs(),
 		IPForwarding:      cfg.Network.IPForwarding,
 		IPv6Forwarding:    cfg.Network.IPv6Forwarding,

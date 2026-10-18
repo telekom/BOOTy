@@ -188,8 +188,9 @@ type Config struct {
 	// LLDPProfile is the identity of the sent LLDP frames (lldp.Profile*).
 	// LLDPEmitAll sends on every physical NIC; the caller starts that
 	// sender, so the network stacks then send nothing themselves.
-	LLDPProfile string
-	LLDPEmitAll bool
+	LLDPProfile      string
+	LLDPPortIDFormat string
+	LLDPEmitAll      bool
 	// IPForwarding and IPv6Forwarding set the forwarding sysctls; nil keeps
 	// the GoBGP default: IPv4 on, IPv6 off (the kernel default the legacy
 	// ramdisk keeps). frr.conf "[no] ip[v6] forwarding" sets them.

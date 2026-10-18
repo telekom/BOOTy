@@ -74,6 +74,14 @@ func (c bm4xConnection) resolve(macToInterface []struct {
 // does not match MAC_ADDRESS_PATTERN unless NSO converts it.
 func switchView(t *testing.T, frame []byte) (sysName, portID string) {
 	t.Helper()
+	return switchViewAs(t, frame, false)
+}
+
+// switchViewAs is switchView of a switch that shows a MAC port ID in the
+// colon form (lldpd, Junos) or, with dotted, in the NX-OS form. Both show
+// a locally assigned or interface name port ID unchanged.
+func switchViewAs(t *testing.T, frame []byte, dotted bool) (sysName, portID string) {
+	t.Helper()
 	pkt := gopacket.NewPacket(frame, layers.LayerTypeEthernet, gopacket.Default)
 	l, _ := pkt.Layer(layers.LayerTypeLinkLayerDiscovery).(*layers.LinkLayerDiscovery)
 	info, _ := pkt.Layer(layers.LayerTypeLinkLayerDiscoveryInfo).(*layers.LinkLayerDiscoveryInfo)
@@ -83,6 +91,9 @@ func switchView(t *testing.T, frame []byte) (sysName, portID string) {
 	portID = string(l.PortID.ID)
 	if l.PortID.Subtype == layers.LLDPPortIDSubtypeMACAddr {
 		portID = net.HardwareAddr(l.PortID.ID).String()
+		if dotted {
+			portID = dottedMAC(l.PortID.ID)
+		}
 	}
 	return info.SysName, portID
 }
@@ -98,7 +109,7 @@ func TestBM4XMatchesCableCheckFrames(t *testing.T) {
 		bm4xInterface
 	}{{"3C:FD:FE:A1:B2:C3", bm4xInterface{"site1com5k01", "ens1f0np0"}}}
 
-	frame, err := Frame("ens1f0np0", mac, Info{MachineID: "0123456789abcdef0123456789abcdef", SystemName: "booty", Profile: ProfileBM4XCableCheck})
+	frame, err := Frame("ens1f0np0", mac, &Info{MachineID: "0123456789abcdef0123456789abcdef", SystemName: "booty", Profile: ProfileBM4XCableCheck})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +127,7 @@ func TestBM4XMatchesCableCheckFrames(t *testing.T) {
 		t.Fatalf("resolved = %+v, want %+v", got, want)
 	}
 
-	frame, err = Frame("ens1f0np0", mac, Info{MachineID: "0123456789abcdef0123456789abcdef", SystemName: "booty"})
+	frame, err = Frame("ens1f0np0", mac, &Info{MachineID: "0123456789abcdef0123456789abcdef", SystemName: "booty"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,6 +152,40 @@ func TestBM4XIsToMacAddress(t *testing.T) {
 	} {
 		if got := tt.c.isToMacAddress(); got != tt.want {
 			t.Errorf("%+v: isToMacAddress = %v, want %v", tt.c, got, tt.want)
+		}
+	}
+}
+
+// Which port ID format bm4x matches, by how the switch shows it to NSO
+// (NSO and network-app pass the string through unchanged): the MAC port
+// ID only where the switch shows the colon form, the colon string
+// everywhere, the dotted string and the interface name nowhere.
+func TestBM4XMatchesPortIDFormats(t *testing.T) {
+	mac, _ := net.ParseMAC("3C:FD:FE:A1:B2:C3")
+	for _, tt := range []struct {
+		format            string
+		colonSwitch, nxos bool
+	}{
+		{"", true, false},
+		{PortIDMAC, true, false},
+		{PortIDMACStringColon, true, true},
+		{PortIDMACStringDotted, false, false},
+		{PortIDIfname, false, false},
+	} {
+		frame, err := Frame("ens1f0np0", mac, &Info{SystemName: "booty", Profile: ProfileBM4XCableCheck, PortIDFormat: tt.format})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, sw := range []struct {
+			name   string
+			dotted bool
+			want   bool
+		}{{"lldpd/Junos", false, tt.colonSwitch}, {"NX-OS", true, tt.nxos}} {
+			name, port := switchViewAs(t, frame, sw.dotted)
+			c := bm4xConnection{deviceA: "leaf", interfaceA: "Ethernet1/1", deviceB: name, interfaceB: port}
+			if got := c.isToMacAddress(); got != sw.want {
+				t.Errorf("format %q on %s (port ID %q): bm4x match = %v, want %v", tt.format, sw.name, port, got, sw.want)
+			}
 		}
 	}
 }

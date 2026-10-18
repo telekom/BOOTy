@@ -390,7 +390,7 @@ rule of every key:
 | `BGP_GRACEFUL_RESTART`, `BGP_GRACEFUL_RESTART_TIME`, `BGP_ADDPATH_RX`, `BGP_SOFTWARE_VERSION` | none: `frr.conf` graceful restart and capability statements are rejected | `network.bgp.gracefulRestart`, `gracefulRestartTime`, `addPathReceive`, `softwareVersion` | native only; unset is the FRR default (for `BGP_SOFTWARE_VERSION`, of the `frr defaults` profile) |
 | `BGP_HOSTNAME` | none: FRR ignores the `frr.conf` `hostname` line and sends the system host name | `network.bgp.hostname` | native only; unset keeps the system host name |
 | `LLDP_RECEIVE` | none: the legacy ramdisk does not receive LLDP | `network.lldpReceive` | native only; unset is on |
-| `LLDP_PROFILE`, `LLDP_EMIT_ALL` | none | `network.lldp.profile`, `network.lldp.emitAll` | native only; unset is the networkd identity on the `LLDP_EMIT` NICs |
+| `LLDP_PROFILE`, `LLDP_PORT_ID_FORMAT`, `LLDP_EMIT_ALL` | none | `network.lldp.profile`, `network.lldp.portIDFormat`, `network.lldp.emitAll` | native only; unset is the networkd identity on the `LLDP_EMIT` NICs |
 | `IP_FORWARDING`, `IPV6_FORWARDING` | `frr.conf` `[no] ip[v6] forwarding` | `network.ipForwarding`, `network.ipv6Forwarding` | native wins |
 
 ### Strict input and the accepted grammar
@@ -700,10 +700,26 @@ matching code to Go (the source lines are in the file) and runs it on
 BOOTy's frames; `TestCableCheckLLDP` (containerlab, an lldpd leaf) checks
 what a switch reports.
 
-Open point: the bm4x pattern needs the colon form of the MAC. lldpd and
-Junos show a MAC port ID in that form; NX-OS shows `aabb.ccdd.eeff`. bm4x-api
-passes the NSO string through unchanged, so on NX-OS leaves the match
-depends on NSO converting the form.
+#### Port ID format
+
+The bm4x pattern needs the MAC in the colon form `aa:bb:cc:dd:ee:ff`.
+bm4x-api and network-app pass the port ID string from NSO unchanged, so the
+switch decides the form: for a MAC port ID (subtype 3), lldpd and Junos show
+the colon form, NX-OS shows `aabb.ccdd.eeff`. A locally assigned port ID
+(subtype 7) is a string that the switch shows unchanged.
+`LLDP_PORT_ID_FORMAT` (YAML `network.lldp.portIDFormat`, only with
+`bm4x-cablecheck`) selects the port ID:
+
+| Format | Port ID | bm4x match on lldpd, Junos | bm4x match on NX-OS | Use |
+|---|---|---|---|---|
+| `mac` (default) | NIC MAC, subtype 3 | yes | no, unless NSO converts the form | Junos leaves; a switch or NSO that needs the MAC subtype |
+| `mac-string-colon` | `aa:bb:cc:dd:ee:ff`, subtype 7 | yes | yes | NX-OS leaves, or mixed fabrics |
+| `mac-string-dotted` | `aabb.ccdd.eeff`, subtype 7 | no | no | a consumer that expects the Cisco form |
+| `ifname` | interface name, subtype 5 | no | no | port ID as networkd sends it, with the other bm4x TLVs |
+
+`TestBM4XMatchesPortIDFormats` runs the bm4x matcher on each format, as
+both kinds of switch show it. The NX-OS column assumes that NX-OS shows a
+locally assigned port ID unchanged; check it on a leaf before relying on it.
 
 ## GoBGP peer modes
 

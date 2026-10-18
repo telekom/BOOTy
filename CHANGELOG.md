@@ -297,7 +297,10 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   `bare-minimal`, the identity that the bm4x connection check matches. It sends
   on every physical NIC with carrier; `LLDP_EMIT_ALL` (YAML
   `network.lldp.emitAll`) also does that for the default `networkd` identity.
-  The default frames do not change.
+  `LLDP_PORT_ID_FORMAT` (YAML `network.lldp.portIDFormat`) selects its port
+  ID: `mac` (default, subtype 3), `mac-string-colon` or `mac-string-dotted`
+  (subtype 7 strings, for NX-OS leaves that show a MAC port ID as
+  `aabb.ccdd.eeff`) or `ifname`. The default frames do not change.
 - GoBGP mode applies the netplan device settings of the provision VXLAN device,
   the bridge and the NICs like systemd-networkd (MTU, MAC, learning, ARP proxy,
   hairpin, link-local, `accept-ra`), and `frr.conf` `[no] ip[v6] forwarding`.

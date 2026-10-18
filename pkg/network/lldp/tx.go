@@ -50,12 +50,13 @@ type Info struct {
 	SystemName     string // hostname
 	PrettyHostname string // system description; omitted when empty
 	Profile        string // identity profile; "" is ProfileNetworkd
+	PortIDFormat   string // port ID of the bm4x-cablecheck profile; "" is PortIDMAC
 	// CarrierOnly skips NICs without carrier instead of trying to send
 	// (LLDP_EMIT_ALL). The bm4x-cablecheck profile always does.
 	CarrierOnly bool
 }
 
-func (i Info) carrierOnly() bool {
+func (i *Info) carrierOnly() bool {
 	return i.CarrierOnly || i.Profile == ProfileBM4XCableCheck
 }
 
@@ -111,10 +112,11 @@ func machineID() string {
 }
 
 // Frame returns the Ethernet frame that networkd sends on a NIC. The
-// bm4x-cablecheck profile sends the NIC MAC as port ID (subtype 3), the
-// interface name as port description, like lldpd, and the system name
-// "bare-minimal"; the rest stays as networkd sends it.
-func Frame(ifname string, mac net.HardwareAddr, info Info) ([]byte, error) {
+// bm4x-cablecheck profile sends the port ID of info.PortIDFormat (default
+// the NIC MAC, subtype 3), the interface name as port description, like
+// lldpd, and the system name "bare-minimal"; the rest stays as networkd
+// sends it.
+func Frame(ifname string, mac net.HardwareAddr, info *Info) ([]byte, error) {
 	chassis := layers.LLDPChassisID{Subtype: layers.LLDPChassisIDSubTypeLocal, ID: []byte(info.MachineID)}
 	if info.MachineID == "" {
 		chassis = layers.LLDPChassisID{Subtype: layers.LLDPChassisIDSubTypeMACAddr, ID: mac}
@@ -126,7 +128,7 @@ func Frame(ifname string, mac net.HardwareAddr, info Info) ([]byte, error) {
 	var values []layers.LinkLayerDiscoveryValue
 	sysName := info.SystemName
 	if info.Profile == ProfileBM4XCableCheck {
-		port = layers.LLDPPortID{Subtype: layers.LLDPPortIDSubtypeMACAddr, ID: mac}
+		port = bm4xPortID(info.PortIDFormat, ifname, mac)
 		values = append(values, tlv(layers.LLDPTLVPortDescription, ifname))
 		sysName = BM4XSystemName
 	}
@@ -159,7 +161,7 @@ func tlv(t layers.LLDPTLVType, s string) layers.LinkLayerDiscoveryValue {
 
 // Emit sends LLDP frames on every NIC until ctx ends, like networkd with
 // EmitLLDP=yes. It returns a function that waits for the senders.
-func Emit(ctx context.Context, ifaces []string, info Info, log *slog.Logger) (wait func()) {
+func Emit(ctx context.Context, ifaces []string, info *Info, log *slog.Logger) (wait func()) {
 	var wg sync.WaitGroup
 	for _, iface := range ifaces {
 		wg.Add(1)
@@ -171,7 +173,35 @@ func Emit(ctx context.Context, ifaces []string, info Info, log *slog.Logger) (wa
 	return wg.Wait
 }
 
-func emitOn(ctx context.Context, iface string, info Info, log *slog.Logger) {
+// bm4xPortID is the port ID of the bm4x-cablecheck profile in a format of
+// network.lldp.portIDFormat (validated by the config).
+func bm4xPortID(format, ifname string, mac net.HardwareAddr) layers.LLDPPortID {
+	switch format {
+	case PortIDMACStringColon:
+		return layers.LLDPPortID{Subtype: layers.LLDPPortIDSubtypeLocal, ID: []byte(mac.String())}
+	case PortIDMACStringDotted:
+		return layers.LLDPPortID{Subtype: layers.LLDPPortIDSubtypeLocal, ID: []byte(dottedMAC(mac))}
+	case PortIDIfname:
+		return layers.LLDPPortID{Subtype: layers.LLDPPortIDSubtypeIfaceName, ID: []byte(ifname)}
+	default:
+		return layers.LLDPPortID{Subtype: layers.LLDPPortIDSubtypeMACAddr, ID: mac}
+	}
+}
+
+// dottedMAC is the Cisco form of a MAC: groups of four hex digits.
+func dottedMAC(mac net.HardwareAddr) string {
+	h := hex.EncodeToString(mac)
+	var b strings.Builder
+	for i := 0; i < len(h); i += 4 {
+		if i > 0 {
+			b.WriteByte('.')
+		}
+		b.WriteString(h[i:min(i+4, len(h))])
+	}
+	return b.String()
+}
+
+func emitOn(ctx context.Context, iface string, info *Info, log *slog.Logger) {
 	if info.Profile == ProfileBM4XCableCheck {
 		log.Info("sending LLDP frames with the bm4x-cablecheck identity")
 	} else {
@@ -198,7 +228,7 @@ func emitOn(ctx context.Context, iface string, info Info, log *slog.Logger) {
 	}
 }
 
-func send(iface string, info Info) error {
+func send(iface string, info *Info) error {
 	ifi, err := net.InterfaceByName(iface)
 	if err != nil {
 		return fmt.Errorf("interface %s: %w", iface, err)

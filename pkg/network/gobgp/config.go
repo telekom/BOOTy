@@ -120,12 +120,13 @@ type Config struct {
 	ExportRTs []string
 	// OverlayDevices, NoAcceptRA and the forwarding settings come from
 	// netplan, frr.conf or the native options.
-	OverlayDevices network.OverlayDevices
-	NoAcceptRA     []string
-	EmitLLDP       []string
-	LLDPProfile    string
-	IPForwarding   *bool
-	IPv6Forwarding *bool
+	OverlayDevices   network.OverlayDevices
+	NoAcceptRA       []string
+	EmitLLDP         []string
+	LLDPProfile      string
+	LLDPPortIDFormat string
+	IPForwarding     *bool
+	IPv6Forwarding   *bool
 	// InstallRoutes runs the FIB writer, like zebra.
 	InstallRoutes bool
 	// FastExternalFailover stops unnumbered sessions on carrier loss.
@@ -214,6 +215,7 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		NoAcceptRA:           netCfg.NoAcceptRA,
 		EmitLLDP:             emitLLDP(netCfg),
 		LLDPProfile:          netCfg.LLDPProfile,
+		LLDPPortIDFormat:     netCfg.LLDPPortIDFormat,
 		IPForwarding:         netCfg.IPForwarding,
 		IPv6Forwarding:       netCfg.IPv6Forwarding,
 		RouteMaps:            netCfg.BGPRouteMaps,
