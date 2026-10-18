@@ -613,7 +613,9 @@ It fails for vfat.
 ## Image Formats
 
 BOOTy writes raw images, compressed raw images (gzip, zstd, lz4, xz, bzip2) and
-QCOW2 images. It converts a QCOW2 image to raw with `qemu-img` in a tmpfs
-ramdisk before it writes the disk. A QCOW2 image must be self-contained: BOOTy
-rejects images with a backing file or an external data file. See
+QCOW2 images. It converts a QCOW2 image to raw in process, in a tmpfs ramdisk,
+before it writes the disk; the ramdisk has no `qemu-img`. QCOW2 versions 2 and
+3 work, with zlib or zstd compressed clusters and extended L2 entries. A QCOW2
+image must be self-contained: BOOTy rejects images with a backing file, an
+external data file or encryption. See
 [README.md](../README.md#caprf-mode) for the image source rules.

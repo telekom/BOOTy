@@ -774,7 +774,8 @@ func TestDefaultContainsDiskToolsE2E(t *testing.T) {
 	assertContains(t, files, "bin/partprobe", "partprobe")
 	assertContains(t, files, "bin/partx", "partx online partition updater")
 	assertContains(t, files, "bin/lsblk", "util-linux lsblk")
-	assertContains(t, files, "bin/qemu-img", "qemu-img qcow2 converter")
+	// BOOTy converts qcow2 images in process.
+	assertNotContains(t, files, "bin/qemu-img", "qemu-img")
 	assertContains(t, files, "bin/efibootmgr", "efibootmgr")
 	assertNotContains(t, files, "bin/blkid", "BusyBox blkid applet shadowing util-linux blkid")
 }
@@ -915,7 +916,8 @@ func TestGoBGPContainsDiskToolsE2E(t *testing.T) {
 
 	assertContains(t, files, "bin/wipefs", "wipefs")
 	assertContains(t, files, "sbin/mdadm", "mdadm RAID")
-	assertContains(t, files, "bin/qemu-img", "qemu-img qcow2 converter")
+	// BOOTy converts qcow2 images in process.
+	assertNotContains(t, files, "bin/qemu-img", "qemu-img")
 	assertContains(t, files, "bin/efibootmgr", "efibootmgr")
 	assertContains(t, files, "bin/lsblk", "lsblk for rescue mode")
 	assertContains(t, files, "sbin/blkid", "util-linux blkid")
