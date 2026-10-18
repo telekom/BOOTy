@@ -4630,3 +4630,48 @@ func TestType5WithdrawOfUninstalledRouteIsQuiet(t *testing.T) {
 		t.Fatalf("warning for a route that was never installed:\n%s", logs.String())
 	}
 }
+
+// R4: a Type-2 change of a gateway IP does not touch a prefix whose
+// installed path does not use that gateway, even when another path sorts
+// first.
+func TestType5GatewayIPResolutionKeepsTheActivePath(t *testing.T) {
+	o, m := type2TestOverlay()
+	o.cfg.ResolveOverlayIndex = true
+	route := func(rd uint32, gw string) *apipb.EVPNIPPrefixRoute {
+		r, err := buildRouteDistinguisher(65000, rd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &apipb.EVPNIPPrefixRoute{Rd: r, IpPrefix: "10.100.0.0", IpPrefixLen: 24, GwAddress: gw}
+	}
+	o.handleType5Route(route(2, "0.0.0.0"), "10.0.0.2", nil, false) // "b", installed
+	o.handleType5Route(route(1, "0.0.0.0"), "10.0.0.1", nil, false) // "a", sorts first
+	o.handleType5Route(route(3, "10.1.0.5"), "10.0.0.3", nil, false)
+	before := len(m.routeReplaces)
+	t2 := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:00:00:05", IpAddress: "10.1.0.5"}
+	o.handleType2Route(t2, "10.0.0.9", 0, false)
+	o.handleType2Route(t2, "10.0.0.9", 0, true)
+	if len(m.routeReplaces) != before || len(m.routeDels) != 0 {
+		t.Fatalf("route replaces %v, deletes %v after the Type-2 changes; want none", m.routeReplaces[before:], m.routeDels)
+	}
+}
+
+// R5: a prefix route that is not in the kernel (ESRCH) still clears the
+// gateway state of the prefix.
+func TestRemoveType5PrefixClearsGatewayRefOnESRCH(t *testing.T) {
+	o, m := type2TestOverlay()
+	r := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, GwAddress: "0.0.0.0"}
+	o.handleType5Route(r, "10.0.0.1", mustParseMAC(t, "62:db:b8:c1:80:52"), false)
+	if _, ok := o.loadType5GatewayRef("10.100.0.0/24"); !ok {
+		t.Fatal("no gateway reference after the install")
+	}
+	m.routeDelErr = syscall.ESRCH
+	state, ok := o.type5RouteState(r, "10.0.0.1", net.ParseIP("10.0.0.1"))
+	if !ok {
+		t.Fatal("no route state")
+	}
+	o.removeType5Prefix(state)
+	if _, ok := o.loadType5GatewayRef("10.100.0.0/24"); ok {
+		t.Fatal("the gateway reference survived an ESRCH delete")
+	}
+}
