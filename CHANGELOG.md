@@ -366,6 +366,7 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 ### Fixes
 
+- gobgp: a test pins that a truncated EVPN NLRI does not panic the GoBGP decoder (RFC 7606) (#755)
 - GoBGP mode: an L3VNI provision VNI without `provision_gateway` (bm4x IPv6
   provisioning network) selects Type-5 only, instead of failing with
   `provision gateway is required for GoBGP VXLAN data plane` (#662).
