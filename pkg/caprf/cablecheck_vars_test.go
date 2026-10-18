@@ -25,8 +25,11 @@ func TestCableCheckVars(t *testing.T) {
 			t.Errorf("%q accepted", bad)
 		}
 	}
-	if cfg, err := ParseVars(strings.NewReader("LLDP_DISABLE_FW_AGENT=true\n")); err != nil || !cfg.DisableNICFirmwareLLDP() {
-		t.Fatalf("LLDP_DISABLE_FW_AGENT: %+v, %v", cfg.Network.LLDP, err)
+	if cfg, err := ParseVars(strings.NewReader("HOSTNAME=x\n")); err != nil || !cfg.DisableNICFirmwareLLDP() {
+		t.Fatalf("default: %+v, %v", cfg.Network.LLDP, err)
+	}
+	if cfg, err := ParseVars(strings.NewReader("LLDP_DISABLE_FW_AGENT=false\n")); err != nil || cfg.DisableNICFirmwareLLDP() {
+		t.Fatalf("LLDP_DISABLE_FW_AGENT=false: %+v, %v", cfg.Network.LLDP, err)
 	}
 	if _, err := ParseVars(strings.NewReader("LLDP_DISABLE_FW_AGENT=disable\n")); err == nil {
 		t.Fatal("LLDP_DISABLE_FW_AGENT=disable accepted")

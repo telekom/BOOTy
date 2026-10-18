@@ -99,11 +99,14 @@ func TestDisableNICFirmwareLLDP(t *testing.T) {
 		value         *bool
 		want          bool
 	}{
-		{"check", "", nil, false},
+		// On by default in every mode: the agent consumes the switch's
+		// LLDP frames. false (the opt-out) leaves the flag alone.
+		{"check", "", nil, true},
 		{"check", "bm4x-cablecheck", nil, true},
 		{"check", "bm4x-cablecheck", &off, false},
-		{"provision", "bm4x-cablecheck", nil, true},
-		{"provision", "", nil, false},
+		{"provision", "", nil, true},
+		{"", "", nil, true},
+		{"provision", "", &off, false},
 		{"provision", "", &on, true},
 	} {
 		c := &Config{Mode: tt.mode}
@@ -113,8 +116,8 @@ func TestDisableNICFirmwareLLDP(t *testing.T) {
 			t.Errorf("%+v: %v, want %v", tt, got, tt.want)
 		}
 	}
-	cfg, err := loadYAML(strings.NewReader("network:\n  lldp:\n    disableFirmwareAgent: true\n"), true)
-	if err != nil || !cfg.DisableNICFirmwareLLDP() {
-		t.Fatalf("YAML network.lldp.disableFirmwareAgent: %v", err)
+	cfg, err := loadYAML(strings.NewReader("network:\n  lldp:\n    disableFirmwareAgent: false\n"), true)
+	if err != nil || cfg.DisableNICFirmwareLLDP() {
+		t.Fatalf("YAML network.lldp.disableFirmwareAgent false: %v", err)
 	}
 }

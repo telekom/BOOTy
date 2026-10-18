@@ -41,6 +41,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/provision"
 	"github.com/telekom/BOOTy/pkg/realm"
 	"github.com/telekom/BOOTy/pkg/runmode"
+	"github.com/telekom/BOOTy/pkg/sriov"
 	"github.com/telekom/BOOTy/pkg/ux"
 )
 
@@ -484,35 +485,20 @@ func flushObservability() {
 
 func reboot() {
 	watchdogHandoff(false)
-	beforeHandoff()
+	flushObservability()
 	realm.Reboot()
 }
 
 func requestReboot() error {
 	watchdogHandoff(false)
-	beforeHandoff()
+	flushObservability()
 	return realm.RequestReboot()
 }
 
 func requestPowerOff() error {
 	watchdogHandoff(true)
-	beforeHandoff()
-	return realm.RequestPowerOff()
-}
-
-// restoreFirmwareLLDP is a seam for TestBeforeHandoffRestoresFirmwareLLDP.
-var restoreFirmwareLLDP = nicfw.RestoreFirmwareLLDP
-
-// beforeHandoff runs before BOOTy hands the machine on: it puts back the
-// NIC firmware LLDP flags it changed (ice keeps them across boots) and
-// flushes the log shipping.
-func beforeHandoff() {
-	if n, err := restoreFirmwareLLDP(); err != nil {
-		slog.Warn("firmware LLDP agent not restored", "error", err)
-	} else if n > 0 {
-		slog.Info("firmware LLDP agent restored", "flags", n)
-	}
 	flushObservability()
+	return realm.RequestPowerOff()
 }
 
 func shell() {
@@ -534,7 +520,7 @@ var (
 // goes quiet.
 func doKexecExecute(stopNetwork func()) error {
 	watchdogHandoff(false)
-	beforeHandoff()
+	flushLogs()
 	stopNetwork()
 	return kexecExecute()
 }
@@ -957,7 +943,7 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	// Before the network setup: a driver may reset the port when the flag
 	// changes, which would drop BGP sessions set up before.
 	if cfg.DisableNICFirmwareLLDP() {
-		disableNICFirmwareLLDP(ctx)
+		disableNICFirmwareLLDP(ctx, &cfg.Provision.SRIOV)
 	}
 
 	// Set up networking with retry — if connectivity fails, teardown and
@@ -1262,17 +1248,26 @@ func startLLDPReceive(ctx context.Context) {
 }
 
 // disableNICFirmwareLLDP stops the firmware LLDP agent of the Intel NICs
-// (LLDP_DISABLE_FW_AGENT), which otherwise takes the LLDP frames of the
-// switch. A
-// failure is only logged: the check can still run on the other NICs.
-func disableNICFirmwareLLDP(ctx context.Context) {
-	nics, err := network.DetectPhysicalNICsContext(ctx)
+// (LLDP_DISABLE_FW_AGENT, on by default), which otherwise consumes the
+// switch's LLDP frames. The ports whose agent an SR-IOV profile sets are
+// left to that profile. A failure is only logged.
+func disableNICFirmwareLLDP(ctx context.Context, sriovCfg *sriov.Config) {
+	nics, err := detectNICs(ctx)
 	if err != nil {
 		slog.Warn("firmware LLDP agent not disabled: no physical NICs", "error", err)
 		return
 	}
+	owned, err := sriovCfg.FWLLDPAgentOwners(discoverPFs)
+	if err != nil {
+		slog.Warn("firmware LLDP agent not disabled: SR-IOV ports unknown", "error", err)
+		return
+	}
 	for _, nic := range nics {
-		flag, err := nicfw.DisableFirmwareLLDP(nic)
+		if slices.Contains(owned, nic) {
+			slog.Info("firmware LLDP agent left to the SR-IOV profile", "interface", nic)
+			continue
+		}
+		flag, err := disableFirmwareLLDP(nic)
 		switch {
 		case err != nil:
 			slog.Warn("firmware LLDP agent not disabled", "interface", nic, "flag", flag, "error", err)
@@ -1281,6 +1276,13 @@ func disableNICFirmwareLLDP(ctx context.Context) {
 		}
 	}
 }
+
+// Seams of disableNICFirmwareLLDP.
+var (
+	detectNICs          = network.DetectPhysicalNICsContext
+	discoverPFs         = func() ([]sriov.PF, error) { return sriov.NewInspector().Discover() }
+	disableFirmwareLLDP = nicfw.DisableFirmwareLLDP
+)
 
 // startLLDPEmitAll sends LLDP frames on every physical NIC with carrier for
 // the rest of the run (LLDP_EMIT_ALL), in every network mode.

@@ -17,20 +17,8 @@ type fakeNIC struct {
 
 func fakeNICs(t *testing.T, nics map[string]*fakeNIC) {
 	t.Helper()
-	og, os, oi, on := getFlags, setFlag, ifIndex, ifName
-	t.Cleanup(func() {
-		getFlags, setFlag, ifIndex, ifName = og, os, oi, on
-		changed.Lock()
-		changed.list = nil
-		changed.Unlock()
-	})
-	index := map[string]int{}
-	names := map[int]string{}
-	n := 0
-	for name := range nics {
-		n++
-		index[name], names[n] = n, name
-	}
+	og, os := getFlags, setFlag
+	t.Cleanup(func() { getFlags, setFlag = og, os })
 	getFlags = func(name string) ([]ethtool.Flag, error) {
 		out := make([]ethtool.Flag, 0, len(nics[name].flags))
 		for k, v := range nics[name].flags {
@@ -44,12 +32,11 @@ func fakeNICs(t *testing.T, nics map[string]*fakeNIC) {
 		nic.sets = append(nic.sets, fmt.Sprintf("%s=%v", flag, on))
 		return nil
 	}
-	ifIndex = func(name string) (int, error) { return index[name], nil }
-	ifName = func(i int) (string, error) { return names[i], nil }
 }
 
-// BOOTy stops the agent with the driver's flag and puts back the value it
-// found; a flag that is already off is neither set nor restored.
+// BOOTy stops the agent with the driver's flag and keeps it off (there is
+// no restore); a flag that is already off is not written, so the driver
+// does not reset the port.
 func TestDisableFirmwareLLDP(t *testing.T) {
 	ice := &fakeNIC{flags: map[string]bool{"fw-lldp-agent": true, "link-down-on-close": false}}
 	i40e := &fakeNIC{flags: map[string]bool{"disable-fw-lldp": false}}
@@ -65,12 +52,8 @@ func TestDisableFirmwareLLDP(t *testing.T) {
 	if ice.flags["fw-lldp-agent"] || !i40e.flags["disable-fw-lldp"] || len(off.sets) != 0 {
 		t.Fatalf("after disable: ice %v, i40e %v, already off set %v", ice.flags, i40e.flags, off.sets)
 	}
-	n, err := RestoreFirmwareLLDP()
-	if err != nil || n != 2 || !ice.flags["fw-lldp-agent"] || i40e.flags["disable-fw-lldp"] || len(off.sets) != 0 {
-		t.Fatalf("restore: %d, %v; ice %v, i40e %v, already off set %v", n, err, ice.flags, i40e.flags, off.sets)
-	}
-	if n, _ := RestoreFirmwareLLDP(); n != 0 {
-		t.Fatalf("second restore changed %d flags", n)
+	if len(ice.sets) != 1 || len(i40e.sets) != 1 {
+		t.Fatalf("writes: ice %v, i40e %v, want one each", ice.sets, i40e.sets)
 	}
 	// A driver without the flag (too old) fails and changes nothing.
 	old := &fakeNIC{flags: map[string]bool{}}
