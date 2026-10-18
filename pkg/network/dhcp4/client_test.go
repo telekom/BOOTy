@@ -310,6 +310,16 @@ func TestExpiryAndNak(t *testing.T) {
 		if discovers != 2 {
 			t.Errorf("nak=%v: %d DISCOVERs, want a second one after the end of the lease", nak, discovers)
 		}
+		// networkd asks for the address of the ended lease (option 50).
+		var last sent
+		for _, s := range msgs {
+			if s.m.typ == layers.DHCPMsgTypeDiscover {
+				last = s
+			}
+		}
+		if got := optionTypes(last.m); !slices.Equal(got, []int{53, 61, 55, 57, 50, 80, 12}) || !net.IP(option(last.m, layers.DHCPOptRequestIP)).Equal(testAddr) {
+			t.Errorf("nak=%v: DISCOVER after the lease = %v, want 53,61,55,57,50,80,12 with the old address", nak, got)
+		}
 	}
 }
 

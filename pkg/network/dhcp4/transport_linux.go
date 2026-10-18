@@ -29,6 +29,11 @@ type rawTransport struct {
 	// another goroutine while the client sends.
 	mu     sync.Mutex
 	closed bool
+	// absorb is a socket on 0.0.0.0:68 of the NIC for the whole exchange:
+	// a server answers an INIT-REBOOT or a DISCOVER with option 50 unicast
+	// to the address the NIC may still have, and without a socket the
+	// kernel answers with ICMP port unreachable. Nothing reads it.
+	absorb int
 	// udp is the socket on lease-address:68 of the exchange. It stays open
 	// until the exchange ends, so the server's unicast reply (to a RENEW,
 	// or to a REBIND with ciaddr) finds a socket; without one the kernel
@@ -70,7 +75,14 @@ func openTransport(iface *net.Interface) (transport, error) {
 		_ = conn.Close()
 		return nil, fmt.Errorf("PACKET_AUXDATA on %s: %w", iface.Name, err)
 	}
-	return &rawTransport{iface: iface, conn: conn, udp: -1}, nil
+	t := &rawTransport{iface: iface, conn: conn, udp: -1, absorb: -1}
+	if fd, err := t.openUDP(net.IPv4zero); err == nil {
+		t.absorb = fd
+	} else if t.udp >= 0 {
+		_ = unix.Close(t.udp)
+	}
+	t.udp = -1
+	return t, nil
 }
 
 // broadcast sends with the IP TOS of networkd (CS6). A message with ciaddr
@@ -209,9 +221,11 @@ func checksumNotReady(oob []byte) bool {
 func (t *rawTransport) close() error {
 	t.mu.Lock()
 	t.closed = true
-	if t.udp >= 0 {
-		_ = unix.Close(t.udp)
-		t.udp = -1
+	for _, fd := range []*int{&t.udp, &t.absorb} {
+		if *fd >= 0 {
+			_ = unix.Close(*fd)
+			*fd = -1
+		}
 	}
 	t.mu.Unlock()
 	return t.conn.Close() //nolint:wrapcheck // closing
