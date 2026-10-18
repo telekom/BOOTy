@@ -33,7 +33,7 @@ func TestSplitRamdiskPayloadsQEMU(t *testing.T) {
 	vars := map[string]string{
 		"HOSTNAME":           "split-node",
 		"MODE":               "provision",
-		"underlay_subnet":    "10.0.0.0/24",
+		"underlay_ip":        "10.0.0.1",
 		"asn_server":         "65001",
 		"provision_vni":      "100",
 		"INSECURE_TRANSPORT": "true",
